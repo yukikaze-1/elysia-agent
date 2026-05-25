@@ -196,7 +196,8 @@ class DemoAgent:
         print(f"  {self._character.name} WebSocket Server")
         print(f"  地址: ws://{host}:{port}/ws")
         print(f"  前端: http://{host}:{port}/")
-        print(f"  STT: {'已连接' if stt_transcribe else '未连接（纯文本模式）'}")
+        print(f"  STT: {'已连接' if stt_transcribe else '未连接'}")
+        print(f"  TTS: {'已连接' if self._tts else '未连接'}")
         print(f"{'='*50}\n")
 
         try:

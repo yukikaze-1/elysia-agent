@@ -70,9 +70,21 @@ async def _handle_ws(
     if stt_transcribe:
         audio_buf = AudioBuffer(
             stt_transcribe=stt_transcribe,
+            silence_threshold=0.03,
             on_interrupt=lambda: _do_interrupt(agent),
-            on_transcription=lambda text: _do_transcription(agent, text),
+            on_transcription=lambda text: _do_transcription(agent, text, audio_buf),
         )
+
+        # Monitor FSM state to deafen mic when assistant is speaking (echo prevention)
+        async def _monitor_state():
+            prev_state = None
+            while not ws.closed:
+                await asyncio.sleep(0.1)
+                current = agent._fsm.state
+                if current != prev_state and current == "speaking" and audio_buf:
+                    audio_buf.deafen(2.0)  # Ignore mic for 2s while TTS plays
+                prev_state = current
+        asyncio.create_task(_monitor_state(), name=f"state-monitor-{client_id}")
 
     logger.info("WS client connected: %s (STT=%s)", client_id, "yes" if audio_buf else "no")
 
@@ -118,6 +130,9 @@ async def _do_interrupt(agent) -> None:
     agent._bus.post(EventType.INTERRUPT, {"source": "websocket"}, priority=EventPriority.INTERRUPT)
 
 
-async def _do_transcription(agent, text: str) -> None:
+async def _do_transcription(agent, text: str, audio_buf=None) -> None:
+    # Deafen mic when transcription is sent — TTS response is about to play
+    if audio_buf:
+        audio_buf.deafen(2.0)
     from core.event_bus import EventType
     agent._bus.post(EventType.USER_INPUT, {"text": text, "user_name": "妖梦"})

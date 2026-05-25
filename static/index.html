@@ -169,7 +169,7 @@ async function toggleMic() {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true }
     });
-    audioCtx = new AudioContext({ sampleRate: 16000 });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const source = audioCtx.createMediaStreamSource(stream);
     scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
 
@@ -187,9 +187,15 @@ async function toggleMic() {
     source.connect(scriptNode);
     scriptNode.connect(audioCtx.destination);
     document.getElementById('mic-btn').classList.add('active');
+    addStatusMsg('麦克风已开启');
   } catch (err) {
     console.error('Mic error:', err);
     document.getElementById('mic-btn').classList.remove('active');
+    let hint = '无法访问麦克风。';
+    if (err.name === 'NotAllowedError') hint = '请允许浏览器使用麦克风权限。';
+    else if (err.name === 'NotFoundError') hint = '未检测到麦克风设备。';
+    else if (err.name === 'NotReadableError') hint = '麦克风被其他应用占用。';
+    addStatusMsg(hint);
   }
 }
 
@@ -198,6 +204,17 @@ function stopMic() {
   if (audioCtx) { audioCtx.close(); audioCtx = null; }
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   document.getElementById('mic-btn').classList.remove('active');
+}
+
+function addStatusMsg(text) {
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  div.style.color = '#e94560';
+  div.style.fontSize = '13px';
+  div.textContent = '[系统] ' + text;
+  document.getElementById('chat').appendChild(div);
+  scrollDown();
+  setTimeout(() => { div.style.opacity = '0.5'; }, 3000);
 }
 </script>
 </body>

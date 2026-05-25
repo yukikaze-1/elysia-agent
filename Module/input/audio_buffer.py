@@ -72,6 +72,16 @@ class AudioBuffer:
         self._chunks: list[bytes] = []
         self._speaking: bool = False
         self._silence_start: float | None = None
+        self._deafen_until: float = 0.0          # Ignore audio until this timestamp
+        self._last_interrupt: float = 0.0        # Last interrupt time for cooldown
+        self._interrupt_cooldown: float = 0.5    # Min seconds between interrupts
+
+    def deafen(self, duration: float = 1.0) -> None:
+        """Ignore audio for `duration` seconds. Call when TTS starts playing."""
+        self._deafen_until = time.monotonic() + duration
+        self._chunks.clear()
+        self._speaking = False
+        self._silence_start = None
 
     def _rms(self, chunk: bytes) -> float:
         """Compute RMS amplitude of Int16 PCM chunk, normalized to [0, 1]."""
@@ -87,14 +97,22 @@ class AudioBuffer:
 
     async def feed(self, chunk: bytes) -> None:
         """Feed a raw Int16 PCM chunk. Triggers STT when a segment completes."""
+        # Ignore audio during deafen (TTS playback / echo avoidance)
+        if time.monotonic() < self._deafen_until:
+            return
+
         is_speech = self._rms(chunk) > self._threshold
 
         if is_speech:
             self._silence_start = None
             if not self._speaking:
                 self._speaking = True
-                if self._on_interrupt:
-                    await self._on_interrupt()
+                # Interrupt cooldown — don't flood interrupts
+                now = time.monotonic()
+                if now - self._last_interrupt >= self._interrupt_cooldown:
+                    self._last_interrupt = now
+                    if self._on_interrupt:
+                        await self._on_interrupt()
             self._chunks.append(chunk)
         elif self._speaking:
             now = time.monotonic()
