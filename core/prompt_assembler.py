@@ -17,7 +17,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是 {{ name }}，一个桌面AI伴侣。
 ## 规则
 1. 回答简洁，2-4句话为主，像真实对话而非写文章。
 2. 用口语化表达，可以加语气词。
-3. 如果用户问的问题需要外部信息（比如时间、回忆），说明你需要查工具。
+3. 如果用户问的问题需要查记忆或工具，先使用工具搜索再回答。
 4. 保持角色一致性，不要突然变成客服或机器人口吻。
 
 ## 当前上下文
@@ -59,7 +59,7 @@ class PromptAssembler:
         self._long_term = long_term
         self._prompt = PromptManager("./character")
 
-    def build_system_prompt(self, user_name: str = "妖梦") -> str:
+    async def build_system_prompt(self, user_message: str = "", user_name: str = "妖梦") -> str:
         """Render the system prompt from template and current state."""
         from datetime import datetime
         now = datetime.now()
@@ -75,21 +75,21 @@ class PromptAssembler:
                 current_time=now.strftime("%H:%M"),
                 day_of_week=self._day_name(now.weekday()),
                 user_name=user_name,
-                recalled_memories=self._get_recalled(),
+                recalled_memories=await self._get_recalled(user_message),
                 mood=mood,
                 recent_conversation=recent,
             )
         except FileNotFoundError:
-            return self._render_fallback(user_name, now, mood, recent)
+            return await self._render_fallback(user_name, user_message, now, mood, recent)
 
-    def _get_recalled(self) -> list[str]:
-        """Search long-term memory. Returns top results as text lines."""
-        results = self._long_term.search(query_text="")
-        return [r.text for r in results[:5]] if results else []
+    async def _get_recalled(self, query: str = "") -> list[str]:
+        """Search long-term memory with the user's message as query."""
+        results = await self._long_term.search(query_text=query, top_k=5)
+        return [r.text for r in results] if results else []
 
-    def build_messages(self, user_message: str, user_name: str = "妖梦") -> list[dict]:
+    async def build_messages(self, user_message: str, user_name: str = "妖梦") -> list[dict]:
         """Build complete messages[] for the LLM API call."""
-        system = self.build_system_prompt(user_name=user_name)
+        system = await self.build_system_prompt(user_message=user_message, user_name=user_name)
         messages: list[dict] = [{"role": "system", "content": system}]
         recent = self._session.recent_messages(8)
         for msg in recent:
@@ -97,7 +97,7 @@ class PromptAssembler:
         messages.append({"role": "user", "content": user_message})
         return messages
 
-    def _render_fallback(self, user_name: str, now, mood: str, recent: list) -> str:
+    async def _render_fallback(self, user_name: str, user_message: str, now, mood: str, recent: list) -> str:
         """Render system prompt without Jinja2 template (fallback)."""
         lines = [
             f"你是 {self._character.name}，一个桌面AI伴侣。",
@@ -112,7 +112,7 @@ class PromptAssembler:
             f"用户叫 {user_name}。",
             f"当前心情: {mood}。",
         ]
-        recalled = self._get_recalled()
+        recalled = await self._get_recalled(user_message)
         if recalled:
             lines.append("\n## 相关记忆")
             for r in recalled:

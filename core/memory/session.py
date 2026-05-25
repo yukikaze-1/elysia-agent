@@ -1,20 +1,26 @@
-"""Session context memory — in-memory with optional MongoDB persistence.
+"""Session context — in-memory with optional MongoDB persistence.
 
-Stores the recent conversation window and runtime parameters.
-Survives process restart if MongoDB is configured; otherwise ephemeral.
+Auto-detects MongoDB availability. When available, sessions survive
+process restarts via save_session() / load_session().
+Otherwise falls back to in-memory deque (existing behavior).
 """
 
+import logging
 from collections import deque
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 
 class SessionMemory:
-    """In-memory session context with a bounded message window."""
+    """Bounded conversation window with optional MongoDB persistence."""
 
-    def __init__(self, max_messages: int = 20):
+    def __init__(self, max_messages: int = 20, session_id: str = "default"):
         self._messages: deque[dict[str, Any]] = deque(maxlen=max_messages)
         self._params: dict[str, Any] = {}
         self._max_messages = max_messages
+        self._session_id = session_id
+        self._db: Any = None  # DocumentDBBackend or None
 
     # ---- messages ----
 
@@ -25,7 +31,6 @@ class SessionMemory:
         self._messages.append(entry)
 
     def recent_messages(self, n: int | None = None) -> list[dict[str, Any]]:
-        """Return the most recent N messages (default: all)."""
         msgs = list(self._messages)
         if n is not None:
             msgs = msgs[-n:]
@@ -39,18 +44,75 @@ class SessionMemory:
     def get_param(self, key: str, default: Any = None) -> Any:
         return self._params.get(key, default)
 
-    # ---- lifecycle ----
+    # ---- MongoDB persistence ----
 
-    def clear(self) -> None:
-        self._messages.clear()
-        self._params.clear()
+    async def connect_db(self) -> bool:
+        """Try to connect to MongoDB. Returns True if successful."""
+        try:
+            from Module.database.documentdb import DocumentDBFactory
+            self._db = DocumentDBFactory.create("mongodb/default")
+            await self._db.ensure_index("sessions", [("session_id", 1)])
+            await self._db.ensure_index("sessions", [("updated_at", -1)])
+            logger.info("SessionMemory: MongoDB connected")
+            return True
+        except Exception as e:
+            logger.info("SessionMemory: MongoDB unavailable (%s), using in-memory", e)
+            self._db = None
+            return False
+
+    async def save(self) -> bool:
+        """Persist current session to MongoDB. No-op if DB unavailable."""
+        if self._db is None:
+            return False
+        try:
+            doc = {
+                "session_id": self._session_id,
+                "messages": list(self._messages),
+                "params": dict(self._params),
+                "updated_at": __import__("datetime").datetime.now().isoformat(),
+            }
+            # Upsert by session_id
+            existing = await self._db.find("sessions", {"session_id": self._session_id}, limit=1)
+            if existing:
+                await self._db.update_one(
+                    "sessions",
+                    {"session_id": self._session_id},
+                    {"$set": doc},
+                )
+            else:
+                await self._db.insert_one("sessions", doc)
+            return True
+        except Exception as e:
+            logger.warning("SessionMemory save failed: %s", e)
+            return False
+
+    async def load(self, session_id: str | None = None) -> bool:
+        """Load session from MongoDB. Returns True if session was found."""
+        if self._db is None:
+            return False
+        sid = session_id or self._session_id
+        try:
+            results = await self._db.find("sessions", {"session_id": sid}, limit=1)
+            if results:
+                doc = results[0]
+                self._session_id = sid
+                msgs = doc.get("messages", [])
+                self._messages = deque(msgs[-self._max_messages:], maxlen=self._max_messages)
+                self._params = dict(doc.get("params", {}))
+                logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(msgs))
+                return True
+            return False
+        except Exception as e:
+            logger.warning("SessionMemory load failed: %s", e)
+            return False
 
     def snapshot(self) -> dict[str, Any]:
-        return {
-            "messages": list(self._messages),
-            "params": dict(self._params),
-        }
+        return {"messages": list(self._messages), "params": dict(self._params)}
 
     def restore(self, data: dict[str, Any]) -> None:
         self._messages = deque(data.get("messages", [])[-self._max_messages:], maxlen=self._max_messages)
         self._params = dict(data.get("params", {}))
+
+    def clear(self) -> None:
+        self._messages.clear()
+        self._params.clear()

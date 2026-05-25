@@ -508,7 +508,7 @@ class TestMultiTurnConversation:
         lt = LongTermMemory()
         pa = PromptAssembler(char, session, lt)
 
-        system = pa.build_system_prompt(user_name="测试员")
+        system = await pa.build_system_prompt(user_message="", user_name="测试员")
         assert "TestBot" in system
         assert "勇敢" in system
         assert "幽默" in system

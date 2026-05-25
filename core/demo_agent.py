@@ -25,6 +25,7 @@ from .cognitive_loop import CognitiveLoop
 from .idle_monitor import IdleMonitor
 from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
+from .consolidator import MemoryConsolidator
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,6 @@ class DemoAgent:
         # ---- L2: Memory ----
         self._session = SessionMemory(max_messages=20)
         self._long_term = LongTermMemory()
-        self._seed_memories()
 
         # ---- L2: Tools ----
         self._tools = ToolRegistry()
@@ -71,6 +71,12 @@ class DemoAgent:
             output=self._output,
         )
 
+        self._consolidator = MemoryConsolidator(
+            llm=self._llm,
+            memory=self._long_term,
+            character_name=self._character.name,
+        )
+
         self._cognitive = CognitiveLoop(
             llm=self._llm,
             fsm=self._fsm,
@@ -80,6 +86,7 @@ class DemoAgent:
             session=self._session,
             tools=self._tools,
             emotion=self._emotion,
+            consolidator=self._consolidator,
             tts=self._tts,
         )
 
@@ -95,25 +102,44 @@ class DemoAgent:
     # ---- Lifecycle ----
 
     async def start(self) -> None:
-        """Start the agent: idle monitor + event processing loop."""
+        """Start the agent: connect persistence, idle monitor, event loop."""
         self._running = True
+
+        # Connect persistence backends
+        mongo_ok = await self._session.connect_db()
+        milvus_ok = await self._long_term.connect()
+        await self._seed_memories()
+        if mongo_ok:
+            await self._session.load()
+
         await self._idle.start()
         self._event_task = asyncio.create_task(self._process_events())
+
+        db_status = []
+        if mongo_ok:
+            db_status.append("MongoDB")
+        if milvus_ok:
+            db_status.append("Milvus")
+        db_str = " + ".join(db_status) if db_status else "in-memory"
+
         print(f"\n{'='*50}")
         print(f"  {self._character.name} Demo Agent 已启动")
         print(f"  LLM: {self._llm.model}")
+        print(f"  记忆: {db_str}  ({self._long_term.count} entries)")
         print(f"  TTS: {'已连接' if self._tts else '未连接（纯文本模式）'}")
-        print(f"  唤醒词: {', '.join(self._character.wake_words) or '无'}")
         print(f"  人格: {', '.join(self._character.traits)}")
         print(f"  工具: {', '.join(self._tools.tool_names) or '无'}")
         print(f"{'='*50}\n")
 
     async def stop(self) -> None:
-        """Stop the agent and clean up resources."""
+        """Stop the agent, save session, clean up resources."""
         self._running = False
         await self._idle.stop()
         if self._event_task:
             self._event_task.cancel()
+        # Save session before closing
+        await self._session.save()
+        await self._long_term.close()
         await self._llm.close()
         if self._tts:
             await self._tts.close()
@@ -211,7 +237,7 @@ class DemoAgent:
 
     # ---- Internal: seed data + tools ----
 
-    def _seed_memories(self) -> None:
+    async def _seed_memories(self) -> None:
         """Seed long-term memory with demo entries."""
         entries = [
             ("上周和妖梦约定周六去爬香山", {"type": "plan", "date": "2026-05-23"}),
@@ -221,7 +247,7 @@ class DemoAgent:
             ("上次推荐的电影《星际穿越》妖梦还没看完", {"type": "interaction", "date": "2026-05-22"}),
         ]
         for text, meta in entries:
-            self._long_term.insert(text, **meta)
+            await self._long_term.insert(text, **meta)
 
     def _register_tools(self) -> None:
         """Register demo tools in the ToolRegistry."""
@@ -229,7 +255,7 @@ class DemoAgent:
         # --- search_memory ---
         async def search_memory(query: str, limit: int = 5) -> str:
             """Search long-term memory for relevant entries."""
-            results = self._long_term.search(query_text=query, top_k=limit)
+            results = await self._long_term.search(query_text=query, top_k=limit)
             if not results:
                 return "（记忆库中没有找到相关内容）"
             lines = [f"- {r.text} (meta: {r.metadata})" for r in results]
@@ -265,7 +291,7 @@ class DemoAgent:
         # --- save_memory ---
         async def save_memory(content: str, type: str = "fact") -> str:
             """Save a new entry to long-term memory."""
-            self._long_term.insert(content, type=type)
+            await self._long_term.insert(content, type=type)
             return f"已保存: {content}"
 
         self._tools.register(

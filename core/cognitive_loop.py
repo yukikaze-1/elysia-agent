@@ -20,6 +20,7 @@ from .memory.session import SessionMemory
 from .sentence_buffer import SentenceBuffer
 from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
+from .consolidator import MemoryConsolidator
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class CognitiveLoop:
         session: SessionMemory,
         tools: ToolRegistry,
         emotion: EmotionEngine | None = None,
+        consolidator: MemoryConsolidator | None = None,
         tts: TTSBackend | None = None,
     ):
         self._llm = llm
@@ -58,6 +60,7 @@ class CognitiveLoop:
         self._session = session
         self._tools = tools
         self._emotion = emotion
+        self._consolidator = consolidator
         self._tts = tts
         self._sentence_buf = SentenceBuffer()
         self._current_task: asyncio.Task | None = None
@@ -82,7 +85,7 @@ class CognitiveLoop:
         if self._emotion:
             self._emotion.analyze_user(user_message)
 
-        messages = self._prompt.build_messages(user_message, user_name=user_name)
+        messages = await self._prompt.build_messages(user_message, user_name=user_name)
         self._session.add_message("user", user_message)
         tool_defs = self._tools.tool_definitions() or None
 
@@ -165,14 +168,32 @@ class CognitiveLoop:
                     msg = _MessageObj(content=acc_text)
                     await self._output.send(msg)
                     self._session.add_message("assistant", acc_text)
+                    # Phase 2: consolidate memory + persist session
+                    await self._after_response(user_message, acc_text)
             else:
                 await self._output.typing(False)
                 if acc_text.strip():
                     msg = _MessageObj(content=acc_text)
                     await self._output.send(msg)
                     self._session.add_message("assistant", acc_text)
+                    await self._after_response(user_message, acc_text)
             await self._transition_idle()
             return
+
+    async def _after_response(self, user_message: str, assistant_response: str) -> None:
+        """Post-response hooks: consolidate memory, save session."""
+        if self._consolidator:
+            try:
+                items = await self._consolidator.consolidate(user_message, assistant_response)
+                if items:
+                    logger.debug("Consolidated %d items", len(items))
+            except Exception:
+                logger.debug("Consolidation failed", exc_info=True)
+        # Save session asynchronously (fire-and-forget)
+        try:
+            await self._session.save()
+        except Exception:
+            logger.debug("Session save failed", exc_info=True)
 
     async def _synthesize_sentence(self, sentence: str) -> None:
         """Send a complete sentence to TTS. Errors are silently ignored."""
