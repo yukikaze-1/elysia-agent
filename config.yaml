@@ -1,0 +1,16 @@
+# Elysia Agent 配置文件
+# 环境变量 > YAML > 默认值
+
+Agent:
+  character: character/elysia.yaml
+  user_name: 妖梦
+
+LLM:
+  model: deepseek/deepseek-chat
+
+Memory:
+  session_max_messages: 20
+
+Server:
+  host: 0.0.0.0
+  port: 8765

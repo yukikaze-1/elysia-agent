@@ -56,7 +56,7 @@ class AudioBuffer:
         self,
         *,
         silence_threshold: float = 0.02,
-        silence_duration: float = 1.0,
+        silence_duration: float = 1.5,
         sample_rate: int = 16000,
         on_interrupt: Callback | None = None,
         on_transcription: TranscriptionCallback | None = None,

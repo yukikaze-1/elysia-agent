@@ -72,7 +72,7 @@ async def _handle_ws(
             stt_transcribe=stt_transcribe,
             silence_threshold=0.03,
             on_interrupt=lambda: _do_interrupt(agent),
-            on_transcription=lambda text: _do_transcription(agent, text, audio_buf),
+            on_transcription=lambda text: _do_transcription(agent, ws, text, audio_buf),
         )
 
         # Monitor FSM state to deafen mic when assistant is speaking (echo prevention)
@@ -130,8 +130,13 @@ async def _do_interrupt(agent) -> None:
     agent._bus.post(EventType.INTERRUPT, {"source": "websocket"}, priority=EventPriority.INTERRUPT)
 
 
-async def _do_transcription(agent, text: str, audio_buf=None) -> None:
-    # Deafen mic when transcription is sent — TTS response is about to play
+async def _do_transcription(agent, ws, text: str, audio_buf=None) -> None:
+    # Send transcription back to client so it can display the user's speech
+    try:
+        await ws.send_json({"type": "transcription", "text": text})
+    except Exception:
+        pass
+
     if audio_buf:
         audio_buf.deafen(2.0)
     from core.event_bus import EventType

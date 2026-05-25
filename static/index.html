@@ -204,6 +204,9 @@ function handleWS(e) {
     case 'audio': bufferAudioChunk(msg.stream_id||0, msg.seq||0, msg.data); break;
     case 'audio_end': finalizeStream(msg.stream_id||0); break;
     case 'typing': msg.typing ? showTyping() : hideTyping(); break;
+    case 'transcription':
+      addUserMsg('🎤 ' + msg.text);
+      break;
     case 'error': console.warn('Server:', msg.message); break;
   }
 }
@@ -240,6 +243,13 @@ function appendDelta(text) {
   }
   currentDelta.textContent += text;
   scrollDown();
+  debounceSave();
+}
+
+let _saveTimer = null;
+function debounceSave() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveChat, 500);
 }
 
 function finalizeDelta() {
@@ -353,7 +363,7 @@ async function toggleMic() {
   if (stream) { stopMic(); return; }
   try {
     stream = await navigator.mediaDevices.getUserMedia({audio:{sampleRate:16000,channelCount:1,echoCancellation:true}});
-    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)({sampleRate: 16000});
     const source = audioCtx.createMediaStreamSource(stream);
     scriptNode = audioCtx.createScriptProcessor(4096,1,1);
     scriptNode.onaudioprocess = e => {

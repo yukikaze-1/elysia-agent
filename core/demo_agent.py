@@ -12,6 +12,8 @@ import asyncio
 import logging
 from pathlib import Path
 
+import yaml
+
 from Module.output import OutputManager, ConsoleChannel
 
 from .event_bus import EventBus, EventPriority, EventType
@@ -33,16 +35,31 @@ logger = logging.getLogger(__name__)
 class DemoAgent:
     """Complete Agent wired from L0/L1/L2 components."""
 
-    def __init__(self, character_path: str = "character/elysia.yaml"):
+    def __init__(self, character_path: str | None = None, config_path: str | None = None):
+        # Load config
+        cfg = {}
+        if config_path:
+            p = Path(config_path)
+            if p.exists():
+                cfg = yaml.safe_load(p.read_text("utf-8")) or {}
+
+        agent_cfg = cfg.get("Agent", {})
+        llm_cfg = cfg.get("LLM", {})
+        mem_cfg = cfg.get("Memory", {})
+
+        char_path = character_path or agent_cfg.get("character", "character/elysia.yaml")
+        self._user_name = agent_cfg.get("user_name", "妖梦")
+
         # ---- L0: Infrastructure (from Module/) ----
         self._output = OutputManager()
         self._output.add_channel(ConsoleChannel())
 
         # ---- Character ----
-        self._character = CharacterConfig.from_yaml(character_path)
+        self._character = CharacterConfig.from_yaml(char_path)
 
         # ---- L2: Memory ----
-        self._session = SessionMemory(max_messages=20)
+        session_max = mem_cfg.get("session_max_messages", 20)
+        self._session = SessionMemory(max_messages=session_max)
         self._long_term = LongTermMemory()
 
         # ---- L2: Tools ----
@@ -283,9 +300,6 @@ class DemoAgent:
                         await ch.on_state(state)
                     except Exception:
                         pass
-
-    async def _shutdown(self) -> None:
-        self._running = False
 
     # ---- Internal: seed data + tools ----
 

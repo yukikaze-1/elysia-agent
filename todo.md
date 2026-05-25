@@ -35,6 +35,18 @@
 
 ---
 
+## 已完成
+
+### Phase 6: 工程完善 — completion (2026-05-26)
+
+| 任务 | 说明 |
+|------|------|
+| 6.1 配置系统 | `config.yaml` 统一配置 (Agent/LLM/Memory/Server)，`DemoAgent` 接入，`demo.py --config` |
+| 6.2 代码清理 | 移除未使用的 `_shutdown`，更新签名 |
+| 6.3 文档 | README/CLAUDE 更新 |
+
+---
+
 ## 待做
 
 ### Phase 3: 输入端补齐
@@ -81,6 +93,9 @@
 ### 已知问题
 
 - **Module/prompt/test_prompt.py**: 4 个集成测试 fail，引用 `from core.Paths import PROMPT_DIR`。`core/Paths` 在上层 Elysia/Agent 应用中，本 repo 不存在。需要 mock 或移除这些测试。
+- **分句策略**: 短句（如"好嘞！"3字符）虽满足 min_chunk 但仍太短，TTS 启动/停止开销占比高。`～` 不是分隔符，导致 `\n` 前超长句。需要：`～` 加入分隔符，或提高 hold 阈值为 5-6 字符。
+- **文字和语音不同步**: LLM token 到达即显示，但 TTS 合成有延迟，首句音频晚于首字显示。预期：首字显示时第一句音频同时播放。需要：在首句 TTS chunk 到达前 hold 文字显示，或预合成。
+- **STT 识别效果**: SenseVoice 非流式（整句识别），RMS VAD 在嘈杂环境误触发。需要：更好的 VAD（webrtcvad），或持续监听 + 唤醒词模型。
 
 ### Phase 6: 工程完善
 
