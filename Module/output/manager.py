@@ -157,11 +157,24 @@ class OutputManager:
         self,
         chunk: bytes,
         *,
+        stream_id: int = 0,
         channels: list[OutputChannel] | None = None,
         capability: ChannelCapability | None = None,
     ) -> None:
         await self._broadcast(
-            "on_audio_chunk", chunk,
+            "on_audio_chunk", chunk, stream_id=stream_id,
+            channels=channels, capability=capability or ChannelCapability.AUDIO,
+        )
+
+    async def audio_end(
+        self,
+        stream_id: int = 0,
+        *,
+        channels: list[OutputChannel] | None = None,
+        capability: ChannelCapability | None = None,
+    ) -> None:
+        await self._broadcast(
+            "on_audio_end", stream_id,
             channels=channels, capability=capability or ChannelCapability.AUDIO,
         )
 

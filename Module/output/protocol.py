@@ -40,8 +40,11 @@ class OutputChannel(ABC):
     async def on_action(self, action: str, *, params: dict | None = None) -> None:
         """动作变更 — 如 wave, nod, surprised + 参数"""
 
-    async def on_audio_chunk(self, chunk: bytes) -> None:
-        """音频流 chunk — 预留"""
+    async def on_audio_chunk(self, chunk: bytes, *, stream_id: int = 0) -> None:
+        """音频流 chunk — stream_id 区分并发流"""
+
+    async def on_audio_end(self, stream_id: int = 0) -> None:
+        """音频流结束标记 — 前端可据此 finalize 播放"""
 
     async def on_command(self, cmd: str, *, params: dict | None = None) -> None:
         """前端指令 — 换背景、播放特效、弹出图片"""

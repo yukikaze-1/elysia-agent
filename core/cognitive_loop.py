@@ -64,6 +64,8 @@ class CognitiveLoop:
         self._tts = tts
         self._sentence_buf = SentenceBuffer()
         self._current_task: asyncio.Task | None = None
+        self._tts_task: asyncio.Task | None = None
+        self._tts_stream_id: int = 0
 
     async def process(self, user_message: str, user_name: str = "妖梦") -> None:
         if not self._fsm.can_transition(AgentState.THINKING):
@@ -115,7 +117,7 @@ class CognitiveLoop:
 
                         sentence = self._sentence_buf.feed(content)
                         if sentence and self._tts:
-                            await self._synthesize_sentence(sentence)
+                            self._start_tts_stream(sentence)
 
                     if tc_deltas:
                         self._merge_stream_tool_calls(raw_tool_calls, tc_deltas)
@@ -127,7 +129,7 @@ class CognitiveLoop:
             if self._tts:
                 remaining = self._sentence_buf.flush()
                 if remaining:
-                    await self._synthesize_sentence(remaining)
+                    self._start_tts_stream(remaining)
 
             # If tool calls were detected, execute them and loop
             if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
@@ -194,8 +196,36 @@ class CognitiveLoop:
         except Exception:
             logger.debug("Session save failed", exc_info=True)
 
+    def _start_tts_stream(self, sentence: str) -> None:
+        """Start streaming TTS for a sentence in a background task.
+
+        Cancels any previous TTS stream (newer speech takes priority).
+        Does NOT block — text streaming continues in parallel.
+        """
+        # Cancel previous TTS stream if still running
+        if self._tts_task and not self._tts_task.done():
+            self._tts_task.cancel()
+
+        self._tts_stream_id += 1
+        stream_id = self._tts_stream_id
+
+        async def _stream():
+            if not self._tts:
+                return
+            try:
+                char_name = self._prompt._character.name
+                async for chunk in self._tts.synthesize_stream(sentence, character=char_name):
+                    await self._output.audio_chunk(chunk, stream_id=stream_id)
+                await self._output.audio_end(stream_id)
+            except asyncio.CancelledError:
+                pass  # Newer sentence took priority — expected
+            except Exception:
+                logger.debug("TTS stream failed", exc_info=True)
+
+        self._tts_task = asyncio.create_task(_stream(), name=f"tts-{stream_id}")
+
     async def _synthesize_sentence(self, sentence: str) -> None:
-        """Send a complete sentence to TTS. Errors are silently ignored."""
+        """Legacy non-streaming TTS — kept for backward compat with tests."""
         if not self._tts:
             return
         try:
@@ -213,6 +243,8 @@ class CognitiveLoop:
     async def _handle_interrupt(self) -> None:
         """Clean up after interruption — stop output, clear buffers, return to IDLE."""
         self._sentence_buf.reset()
+        if self._tts_task and not self._tts_task.done():
+            self._tts_task.cancel()
         await self._output.typing(False)
         self._fsm.transition(AgentState.INTERRUPTED)
         self._bus.post(EventType.STATE_CHANGE, {"state": "interrupted"}, priority=EventPriority.STATE_CHANGE)

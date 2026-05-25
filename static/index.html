@@ -77,7 +77,10 @@ ws.onmessage = (e) => {
       updateState(msg.state);
       break;
     case 'audio':
-      playAudio(msg.data, msg.format);
+      bufferAudioChunk(msg.stream_id||0, msg.seq||0, msg.data, msg.is_final!==false);
+      break;
+    case 'audio_end':
+      finalizeStream(msg.stream_id||0);
       break;
     case 'typing':
       if (msg.typing) startTyping(); else stopTyping();
@@ -122,16 +125,47 @@ function stopTyping() {
   }
 }
 
-// ---- Audio playback ----
+// ---- Audio streaming playback ----
 
-function playAudio(b64, format) {
+const audioStreams = {};  // stream_id -> { chunks: Uint8Array[], totalBytes: number }
+
+function bufferAudioChunk(streamId, seq, b64, isFinal) {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  const blob = new Blob([bytes], {type: `audio/${format}`});
+
+  if (!audioStreams[streamId]) {
+    audioStreams[streamId] = { chunks: [], totalBytes: 0 };
+  }
+  const stream = audioStreams[streamId];
+  stream.chunks.push(bytes);
+  stream.totalBytes += bytes.length;
+
+  // If this chunk is marked final or audio_end was sent separately,
+  // attempt playback immediately.
+  if (isFinal) {
+    finalizeStream(streamId);
+  }
+}
+
+function finalizeStream(streamId) {
+  const stream = audioStreams[streamId];
+  if (!stream || stream.chunks.length === 0) return;
+  delete audioStreams[streamId];
+
+  // Concatenate all chunks into one buffer
+  const buf = new Uint8Array(stream.totalBytes);
+  let offset = 0;
+  for (const chunk of stream.chunks) {
+    buf.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  // Play as WAV blob
+  const blob = new Blob([buf], { type: 'audio/wav' });
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
-  audio.play().then(() => URL.revokeObjectURL(url));
+  audio.play().then(() => URL.revokeObjectURL(url)).catch(e => console.warn('Audio play failed:', e));
 }
 
 // ---- Text input ----

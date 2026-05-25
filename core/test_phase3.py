@@ -596,9 +596,9 @@ class TestOutputManagerConvenience:
         ch.capabilities = {ChannelCapability.AUDIO}
 
         mgr.add_channel(ch)
-        await mgr.audio_chunk(b"test audio")
+        await mgr.audio_chunk(b"test audio", stream_id=0)
 
-        ch.on_audio_chunk.assert_awaited_once_with(b"test audio")
+        ch.on_audio_chunk.assert_awaited_once_with(b"test audio", stream_id=0)
 
     @pytest.mark.asyncio
     async def test_audio_chunk_no_audio_channel(self, mgr):
@@ -658,13 +658,14 @@ class TestWebSocketChannelNew:
     async def test_on_audio_chunk(self, ws_mock):
         from Module.output import WebSocketChannel
         ch = WebSocketChannel(ws_mock)
-        await ch.on_audio_chunk(b"\x00\x01\x02")
+        await ch.on_audio_chunk(b"\x00\x01\x02", stream_id=0)
         ws_mock.send_json.assert_awaited_once()
         call_args = ws_mock.send_json.call_args[0][0]
         assert call_args["type"] == "audio"
-        assert call_args["format"] == "wav"
-        assert call_args["sample_rate"] == 32000
-        assert "data" in call_args  # base64 encoded
+        assert call_args["stream_id"] == 0
+        assert call_args["seq"] == 0
+        assert call_args["is_final"] is False
+        assert "data" in call_args
 
     @pytest.mark.asyncio
     async def test_on_state(self, ws_mock):
