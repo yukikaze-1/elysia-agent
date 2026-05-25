@@ -1,0 +1,83 @@
+"""LLM 后端注册表 + 工厂。按 provider/model 标识创建后端实例。"""
+
+import dataclasses
+import os
+from typing import TYPE_CHECKING
+
+from Module.logger import get_caller_logger
+from .openai_compat import OpenAICompatBackend
+
+if TYPE_CHECKING:
+    from .config import LLMConfig
+    from .protocol import LLMBackend
+
+_BACKENDS: dict[str, dict] = {
+    "deepseek": {
+        "base_url": "https://api.deepseek.com",
+        "beta_url": "https://api.deepseek.com/beta",
+        "env_key": "DEEPSEEK_API_KEY",
+        "supports_prefix": True,
+    },
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "env_key": "OPENAI_API_KEY",
+        "supports_prefix": False,
+    },
+    "ollama": {
+        "base_url": "http://localhost:11434/v1",
+        "env_key": "",
+        "supports_prefix": False,
+    },
+    "gemini": {
+        # placeholder — not yet implemented
+        "base_url": "",
+        "env_key": "GEMINI_API_KEY",
+        "supports_prefix": False,
+    },
+}
+
+
+class LLMFactory:
+    """静态工厂 — LLMFactory.create("deepseek/deepseek-v4-pro") 返回配置好的 backend。"""
+
+    @staticmethod
+    def create(model_id: str, **kwargs) -> "LLMBackend":
+        if "/" not in model_id:
+            raise ValueError(
+                f"Invalid model_id '{model_id}': expected 'provider/model-name' format"
+            )
+        provider, model = model_id.split("/", 1)
+
+        if provider not in _BACKENDS:
+            raise ValueError(
+                f"Unknown provider '{provider}'. Known: {', '.join(sorted(_BACKENDS))}"
+            )
+
+        if provider == "gemini":
+            raise NotImplementedError("Gemini backend is not yet implemented")
+
+        cfg = _BACKENDS[provider]
+        base_url = kwargs.pop("base_url", cfg["base_url"])
+        beta_url = kwargs.pop("beta_url", cfg.get("beta_url", ""))
+
+        env_key = cfg["env_key"]
+        api_key = kwargs.pop("api_key", "") or os.getenv(env_key, "")
+
+        if "logger" not in kwargs:
+            kwargs["logger"] = get_caller_logger()
+
+        return OpenAICompatBackend(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            beta_url=beta_url,
+            supports_prefix=cfg["supports_prefix"],
+            **kwargs,
+        )
+
+    @classmethod
+    def from_config(cls, model_id: str, config: "LLMConfig", **overrides) -> "LLMBackend":
+        """从 LLMConfig dataclass 创建后端，overrides 优先级最高。"""
+        kwargs = dataclasses.asdict(config)
+        kwargs.update(overrides)
+        return cls.create(model_id, **kwargs)

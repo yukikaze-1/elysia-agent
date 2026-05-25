@@ -1,0 +1,73 @@
+"""WebSocketChannel — JSON 消息推送。
+
+wire format:
+    {"type": "delta", "content": "..."}        — 流式 token
+    {"type": "typing", "typing": true/false}    — 输入状态
+    {"type": "expression", "expression": "...", "intensity": 0.8}
+    {"type": "action", "action": "wave", ...}
+    {"type": "command", "command": "...", ...}
+    {"type": "message", ...msg.to_dict()...}    — 完整消息
+"""
+
+import logging
+
+from Module.logger import get_caller_logger
+from .protocol import ChannelCapability, OutputChannel
+
+
+class WebSocketChannel(OutputChannel):
+    """WebSocket 输出通道 — 包装单个连接。连接生命周期由外部管理。"""
+
+    def __init__(self, ws, *, logger: logging.Logger | None = None):
+        self._ws = ws
+        self._logger = logger or get_caller_logger()
+
+    @property
+    def capabilities(self) -> set[ChannelCapability]:
+        return {
+            ChannelCapability.TEXT_DELTA,
+            ChannelCapability.TEXT_MESSAGE,
+            ChannelCapability.TYPING,
+            ChannelCapability.EXPRESSION,
+            ChannelCapability.ACTION,
+            ChannelCapability.COMMAND,
+        }
+
+    async def _send_json(self, data: dict) -> None:
+        try:
+            await self._ws.send_json(data)
+        except Exception:
+            self._logger.warning("WebSocket send failed", exc_info=True)
+
+    async def on_typing(self, typing: bool) -> None:
+        await self._send_json({"type": "typing", "typing": typing})
+
+    async def on_text_delta(self, delta: str) -> None:
+        await self._send_json({"type": "delta", "content": delta})
+
+    async def on_expression(self, expression: str, intensity: float = 1.0) -> None:
+        await self._send_json({
+            "type": "expression",
+            "expression": expression,
+            "intensity": intensity,
+        })
+
+    async def on_action(self, action: str, *, params: dict | None = None) -> None:
+        payload: dict[str, object] = {"type": "action", "action": action}
+        if params:
+            payload["params"] = params
+        await self._send_json(payload)
+
+    async def on_command(self, cmd: str, *, params: dict | None = None) -> None:
+        payload: dict[str, object] = {"type": "command", "command": cmd}
+        if params:
+            payload["params"] = params
+        await self._send_json(payload)
+
+    async def on_message(self, msg) -> None:
+        data = msg.to_dict() if hasattr(msg, "to_dict") else vars(msg)
+        data["type"] = "message"
+        await self._send_json(data)
+
+    async def close(self) -> None:
+        pass  # 连接生命周期由外部管理

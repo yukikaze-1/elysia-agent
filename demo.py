@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Elysia Agent Demo — 桌面虚拟角色完整流水线演示。
+
+基于 Architecture.md 三层架构:
+  L0 (Module/): LLM, TTS, Output, Config
+  L1 (core/):  EventBus, AgentFSM, CognitiveLoop, PromptAssembler
+  L2 (core/memory/): Session, LongTerm, ToolRegistry
+
+用法:
+  python demo.py              # 交互模式 (stdin)
+  python demo.py --once 你好   # 单次对话
+  python demo.py --verbose     # 详细日志
+"""
+
+import argparse
+import asyncio
+import logging
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv()
+
+# Ensure project root is on path
+sys.path.insert(0, str(Path(__file__).parent))
+
+from core.demo_agent import DemoAgent
+
+
+def setup_logging(verbose: bool) -> None:
+    level = logging.DEBUG if verbose else logging.ERROR
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+
+async def run_once(message: str, character_path: str) -> None:
+    """Single-shot: process one message and exit."""
+    agent = DemoAgent(character_path=character_path)
+    await agent.start()
+    print(f"\n你: {message}")
+    print(f"{agent._character.name}: ", end="", flush=True)
+    await agent.process_message(message)
+    # Wait for processing to complete
+    await asyncio.sleep(0.5)
+    while agent._fsm.state != "idle":
+        await asyncio.sleep(0.1)
+    await agent.stop()
+
+
+async def run_interactive(character_path: str) -> None:
+    """Interactive REPL mode."""
+    agent = DemoAgent(character_path=character_path)
+    await agent.start()
+
+    print("输入消息开始对话，/quit 退出，Ctrl+C 打断\n")
+
+    while True:
+        try:
+            line = await asyncio.to_thread(input, "你: ")
+            line = line.strip()
+            if not line:
+                continue
+            if line.lower() in ("/quit", "/exit", "/q"):
+                break
+            await agent.process_message(line)
+            # Wait for idle
+            await asyncio.sleep(0.3)
+            while agent._fsm.state != "idle":
+                await asyncio.sleep(0.1)
+        except (EOFError, KeyboardInterrupt):
+            print("\n")
+            break
+
+    await agent.stop()
+    print("\n再见！")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Elysia Agent Demo")
+    parser.add_argument("--once", type=str, metavar="MSG", help="单次对话模式")
+    parser.add_argument("--character", type=str, default="character/elysia.yaml", help="角色配置文件路径")
+    parser.add_argument("--verbose", "-v", action="store_true", help="详细日志")
+    args = parser.parse_args()
+
+    setup_logging(args.verbose)
+
+    char_path = Path(args.character)
+    if not char_path.exists():
+        print(f"错误: 角色配置文件不存在: {char_path}")
+        sys.exit(1)
+
+    if args.once:
+        asyncio.run(run_once(args.once, str(char_path)))
+    else:
+        asyncio.run(run_interactive(str(char_path)))
+
+
+if __name__ == "__main__":
+    main()
