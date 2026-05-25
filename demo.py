@@ -88,6 +88,10 @@ async def run_interactive(character_path: str) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Elysia Agent Demo")
     parser.add_argument("--once", type=str, metavar="MSG", help="单次对话模式")
+    parser.add_argument("--server", "-s", action="store_true", help="WebSocket 服务器模式")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Server bind address (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8765, help="Server port (default: 8765)")
+    parser.add_argument("--stt", action="store_true", help="Enable STT for audio input (requires SenseVoice)")
     parser.add_argument("--character", type=str, default="character/elysia.yaml", help="角色配置文件路径")
     parser.add_argument("--verbose", "-v", action="store_true", help="详细日志")
     args = parser.parse_args()
@@ -99,7 +103,12 @@ def main():
         print(f"错误: 角色配置文件不存在: {char_path}")
         sys.exit(1)
 
-    if args.once:
+    if args.server:
+        agent = DemoAgent(character_path=str(char_path))
+        asyncio.run(agent.run_server(
+            host=args.host, port=args.port, stt_enabled=args.stt,
+        ))
+    elif args.once:
         asyncio.run(run_once(args.once, str(char_path)))
     else:
         asyncio.run(run_interactive(str(char_path)))

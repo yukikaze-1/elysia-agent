@@ -1,0 +1,123 @@
+"""WebSocket server — bridges browser clients to the agent pipeline.
+
+Each client gets an independent WebSocketChannel (outbound) and AudioBuffer
+(inbound audio). Text and STT results are routed to the agent's EventBus.
+"""
+
+import asyncio
+import json
+import logging
+import uuid
+from pathlib import Path
+
+from aiohttp import web, WSMsgType
+
+from Module.output import WebSocketChannel
+from .audio_buffer import AudioBuffer
+
+logger = logging.getLogger(__name__)
+
+_STATIC_DIR = Path(__file__).parent.parent.parent / "static"
+
+
+def create_app(
+    agent,
+    stt_transcribe=None,
+    serve_static: bool = True,
+) -> web.Application:
+    """Create an aiohttp Application with WebSocket handler and optional static files.
+
+    Args:
+        agent: DemoAgent instance (needs _output, _bus, process_message())
+        stt_transcribe: async callable(bytes) -> str for STT (optional)
+        serve_static: serve static/index.html at /
+    """
+    app = web.Application()
+
+    # Inject agent + stt into app context for handler access
+    app["agent"] = agent
+
+    async def ws_handler(request: web.Request) -> web.WebSocketResponse:
+        return await _handle_ws(request, agent, stt_transcribe)
+
+    app.router.add_get("/ws", ws_handler)
+
+    if serve_static and _STATIC_DIR.is_dir():
+        app.router.add_static("/static/", _STATIC_DIR, show_index=True)
+        # Serve index.html at /
+        index_path = _STATIC_DIR / "index.html"
+        if index_path.is_file():
+            async def index_handler(_request: web.Request) -> web.FileResponse:
+                return web.FileResponse(index_path)
+            app.router.add_get("/", index_handler)
+
+    return app
+
+
+async def _handle_ws(
+    request: web.Request,
+    agent,
+    stt_transcribe,
+) -> web.WebSocketResponse:
+    ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024)
+    await ws.prepare(request)
+
+    client_id = uuid.uuid4().hex[:8]
+    channel = WebSocketChannel(ws)
+    agent._output.add_channel(channel)
+
+    audio_buf: AudioBuffer | None = None
+    if stt_transcribe:
+        audio_buf = AudioBuffer(
+            stt_transcribe=stt_transcribe,
+            on_interrupt=lambda: _do_interrupt(agent),
+            on_transcription=lambda text: _do_transcription(agent, text),
+        )
+
+    logger.info("WS client connected: %s (STT=%s)", client_id, "yes" if audio_buf else "no")
+
+    try:
+        async for msg in ws:
+            if msg.type == WSMsgType.TEXT:
+                try:
+                    data = json.loads(msg.data)
+                    await _handle_json(data, agent)
+                except json.JSONDecodeError:
+                    await ws.send_json({"type": "error", "message": "Invalid JSON"})
+
+            elif msg.type == WSMsgType.BINARY:
+                if audio_buf:
+                    await audio_buf.feed(msg.data)
+
+            elif msg.type == WSMsgType.ERROR:
+                logger.warning("WS error: %s", ws.exception())
+
+    except asyncio.CancelledError:
+        pass
+    finally:
+        if audio_buf:
+            await audio_buf.flush()
+        agent._output.remove_channel(channel)
+        logger.info("WS client disconnected: %s", client_id)
+
+    return ws
+
+
+async def _handle_json(data: dict, agent) -> None:
+    msg_type = data.get("type", "")
+    if msg_type == "text":
+        content = data.get("content", "").strip()
+        if content:
+            await agent.process_message(content)
+    elif msg_type == "interrupt":
+        await _do_interrupt(agent)
+
+
+async def _do_interrupt(agent) -> None:
+    from core.event_bus import EventType, EventPriority
+    agent._bus.post(EventType.INTERRUPT, {"source": "websocket"}, priority=EventPriority.INTERRUPT)
+
+
+async def _do_transcription(agent, text: str) -> None:
+    from core.event_bus import EventType
+    agent._bus.post(EventType.USER_INPUT, {"text": text, "user_name": "妖梦"})

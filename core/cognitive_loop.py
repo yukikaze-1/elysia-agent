@@ -201,12 +201,7 @@ class CognitiveLoop:
         try:
             char_name = self._prompt._character.name
             audio = await self._tts.synthesize(sentence, character=char_name)
-            for ch in self._output._channels:
-                if ChannelCapability.AUDIO in ch.capabilities:
-                    try:
-                        await ch.on_audio_chunk(audio)
-                    except Exception:
-                        pass
+            await self._output.audio_chunk(audio)
         except Exception:
             logger.debug("TTS synthesis failed", exc_info=True)
 

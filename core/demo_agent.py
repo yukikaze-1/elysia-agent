@@ -168,6 +168,47 @@ class DemoAgent:
 
     # ---- REPL ----
 
+    async def run_server(self, host: str = "0.0.0.0", port: int = 8765,
+                         stt_enabled: bool = False) -> None:
+        """Run agent in WebSocket server mode. Blocks until Ctrl+C."""
+        await self.start()
+
+        stt_transcribe = None
+        if stt_enabled:
+            try:
+                from Module.stt import STTFactory
+                stt_backend = STTFactory.create("sensevoice/sense-voice")
+                stt_transcribe = stt_backend.transcribe
+                logger.info("STT backend connected for server mode")
+            except Exception:
+                logger.info("STT not available — text-only mode")
+
+        from Module.input.server import create_app
+        from aiohttp import web
+
+        app = create_app(self, stt_transcribe=stt_transcribe, serve_static=True)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host, port)
+        await site.start()
+
+        print(f"\n{'='*50}")
+        print(f"  {self._character.name} WebSocket Server")
+        print(f"  地址: ws://{host}:{port}/ws")
+        print(f"  前端: http://{host}:{port}/")
+        print(f"  STT: {'已连接' if stt_transcribe else '未连接（纯文本模式）'}")
+        print(f"{'='*50}\n")
+
+        try:
+            while self._running:
+                await asyncio.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            await runner.cleanup()
+            await self.stop()
+            print("\n再见！")
+
     async def run_repl(self) -> None:
         """Run an interactive REPL loop (stdin). Blocks until /quit or Ctrl+D."""
         await self.start()
@@ -236,6 +277,11 @@ class DemoAgent:
             elif event.type == EventType.STATE_CHANGE:
                 state = event.data.get("state", "") if event.data else ""
                 logger.debug("FSM → %s", state)
+                for ch in self._output._channels:
+                    try:
+                        await ch.on_state(state)
+                    except Exception:
+                        pass
 
     async def _shutdown(self) -> None:
         self._running = False

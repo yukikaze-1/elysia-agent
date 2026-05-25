@@ -31,6 +31,7 @@ class WebSocketChannel(OutputChannel):
             ChannelCapability.EXPRESSION,
             ChannelCapability.ACTION,
             ChannelCapability.COMMAND,
+            ChannelCapability.AUDIO,
         }
 
     async def _send_json(self, data: dict) -> None:
@@ -63,6 +64,18 @@ class WebSocketChannel(OutputChannel):
         if params:
             payload["params"] = params
         await self._send_json(payload)
+
+    async def on_audio_chunk(self, chunk: bytes) -> None:
+        import base64
+        await self._send_json({
+            "type": "audio",
+            "data": base64.b64encode(chunk).decode("ascii"),
+            "format": "wav",
+            "sample_rate": 32000,
+        })
+
+    async def on_state(self, state: str) -> None:
+        await self._send_json({"type": "state", "state": state})
 
     async def on_message(self, msg) -> None:
         data = msg.to_dict() if hasattr(msg, "to_dict") else vars(msg)

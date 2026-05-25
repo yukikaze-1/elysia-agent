@@ -153,6 +153,18 @@ class OutputManager:
             channels=channels, capability=capability or ChannelCapability.COMMAND,
         )
 
+    async def audio_chunk(
+        self,
+        chunk: bytes,
+        *,
+        channels: list[OutputChannel] | None = None,
+        capability: ChannelCapability | None = None,
+    ) -> None:
+        await self._broadcast(
+            "on_audio_chunk", chunk,
+            channels=channels, capability=capability or ChannelCapability.AUDIO,
+        )
+
     async def close(self) -> None:
         tasks = [c.close() for c in self._channels]
         await asyncio.gather(*tasks)

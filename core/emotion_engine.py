@@ -114,13 +114,21 @@ class EmotionEngine:
             "curious": ("curious", intensity),
         }
         expr, val = expr_map.get(mood, ("neutral", 0.5))
-        import asyncio
-        asyncio.ensure_future(self._output.expression(expr, intensity=val))
+        self._schedule(self._output.expression(expr, intensity=val))
 
     def _push_idle(self) -> None:
         """Push one of the idle expressions."""
         import random
         if self._idle_expressions:
             expr = random.choice(self._idle_expressions)
-            import asyncio
-            asyncio.ensure_future(self._output.expression(expr, intensity=0.3))
+            self._schedule(self._output.expression(expr, intensity=0.3))
+
+    @staticmethod
+    def _schedule(coro) -> None:
+        """Schedule a coroutine on the event loop, if one is running."""
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(coro)
+        except RuntimeError:
+            pass  # no event loop running — test environment, ignore
