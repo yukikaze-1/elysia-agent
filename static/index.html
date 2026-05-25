@@ -3,258 +3,435 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Elysia Agent</title>
+<title>Elysia</title>
 <style>
+:root {
+  --bg: #1a1a2e; --surface: #16213e; --border: #0f3460;
+  --text: #e0e0e0; --muted: #888; --accent: #e94560; --accent2: #533483;
+  --user-bg: #1a3a5c; --assistant-bg: #1e2a3a;
+  --happy: #f0c040; --sad: #6090d0; --excited: #e060c0; --neutral: #808080;
+  --idle: #4caf50; --thinking: #ff9800; --speaking: #2196f3; --executing: #e040fb;
+  --radius: 16px; --radius-sm: 8px;
+}
 * { margin:0; padding:0; box-sizing:border-box; }
-body { font-family: system-ui, sans-serif; background:#1a1a2e; color:#e0e0e0; height:100vh; display:flex; flex-direction:column; }
-#header { background:#16213e; padding:12px 20px; display:flex; align-items:center; gap:12px; border-bottom:1px solid #0f3460; }
-#header h1 { font-size:18px; color:#e94560; }
-#state { font-size:12px; padding:4px 10px; border-radius:10px; background:#0f3460; }
-#state.idle { background:#1a4a1a; color:#4caf50; }
-#state.thinking { background:#4a3a1a; color:#ff9800; }
-#state.speaking { background:#1a3a4a; color:#2196f3; }
-#state.executing { background:#4a1a4a; color:#e040fb; }
-#state.interrupted { background:#4a1a1a; color:#f44336; }
-#chat { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
-.msg { max-width:80%; padding:10px 14px; border-radius:12px; line-height:1.5; white-space:pre-wrap; }
-.msg.user { align-self:flex-end; background:#0f3460; }
-.msg.assistant { align-self:flex-start; background:#16213e; }
-.msg .inner { font-style:italic; color:#aaa; margin-bottom:4px; }
-#expression { font-size:13px; color:#e94560; text-align:center; min-height:20px; padding:4px; }
-#input-area { padding:12px 20px; background:#16213e; border-top:1px solid #0f3460; display:flex; gap:8px; align-items:center; }
-#input-area input { flex:1; padding:10px 14px; border-radius:20px; border:1px solid #0f3460; background:#1a1a2e; color:#e0e0e0; font-size:14px; outline:none; }
-#input-area input:focus { border-color:#e94560; }
-#input-area button { padding:8px 16px; border-radius:20px; border:none; cursor:pointer; font-size:14px; }
-#send-btn { background:#e94560; color:white; }
-#mic-btn { background:#0f3460; color:#e0e0e0; }
-#mic-btn.active { background:#e94560; color:white; animation:pulse 1.5s infinite; }
-@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.6; } }
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text);
+  height: 100vh; display: flex; overflow: hidden;
+}
+
+/* ---- Left: Character Panel ---- */
+#char-panel {
+  width: 220px; flex-shrink: 0; background: var(--surface); display: flex;
+  flex-direction: column; align-items: center; padding: 30px 16px;
+  border-right: 1px solid var(--border);
+}
+#avatar-wrap { position: relative; margin-bottom: 16px; }
+#avatar-ring {
+  width: 100px; height: 100px; border-radius: 50%; border: 4px solid var(--neutral);
+  display: flex; align-items: center; justify-content: center; transition: border-color .6s;
+}
+#avatar-ring.happy { border-color: var(--happy); }
+#avatar-ring.sad { border-color: var(--sad); }
+#avatar-ring.excited { border-color: var(--excited); }
+#avatar-ring.neutral { border-color: var(--neutral); }
+#avatar-ring.curious { border-color: var(--accent2); }
+#avatar-face { font-size: 50px; line-height: 1; transition: transform .3s; }
+#state-dot {
+  position: absolute; bottom: 4px; right: 4px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--idle); border: 2px solid var(--surface);
+  transition: background .3s;
+}
+#state-dot.thinking { background: var(--thinking); animation: pulse-dot 1s infinite; }
+#state-dot.speaking { background: var(--speaking); }
+#state-dot.executing { background: var(--executing); animation: pulse-dot .5s infinite; }
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
+#char-name { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+#char-state { font-size: 12px; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+#mood-tag { font-size: 13px; color: var(--muted); text-align: center; min-height: 20px; transition: color .3s; }
+
+/* ---- Center: Chat ---- */
+#main { flex:1; display:flex; flex-direction:column; min-width: 0; }
+#chat-wrap { flex:1; overflow-y:auto; padding: 16px 20px; scroll-behavior: smooth; }
+#chat { display: flex; flex-direction: column; gap: 4px; }
+.time-divider {
+  text-align: center; font-size: 11px; color: var(--muted); padding: 8px 0;
+  border-bottom: 1px solid var(--border); margin-bottom: 8px;
+}
+.msg-row { display: flex; gap: 10px; max-width: 85%; animation: fadeIn .2s; }
+.msg-row.user { align-self: flex-end; flex-direction: row-reverse; }
+.msg-row.assistant { align-self: flex-start; }
+.msg-avatar { font-size: 28px; line-height: 1; flex-shrink: 0; margin-top: 4px; }
+.msg-bubble {
+  padding: 10px 14px; border-radius: var(--radius); line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word; font-size: 14px; position: relative;
+}
+.msg-row.assistant .msg-bubble { background: var(--assistant-bg); border-bottom-left-radius: 4px; }
+.msg-row.user .msg-bubble { background: var(--user-bg); border-bottom-right-radius: 4px; }
+.msg-mood { font-size: 12px; color: var(--muted); margin-left: 42px; margin-top: -2px; margin-bottom: 8px; }
+.msg-row.user .msg-mood { display: none; }
+.msg-status { font-size: 12px; color: var(--accent); margin-left: 42px; font-style: italic; }
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+
+/* typing indicator */
+.typing-dots { display: flex; gap: 4px; padding: 14px 14px; }
+.typing-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: bounce 1.4s infinite; }
+.typing-dots span:nth-child(2) { animation-delay: .2s; }
+.typing-dots span:nth-child(3) { animation-delay: .4s; }
+@keyframes bounce { 0%,60%,100%{transform:translateY(0);opacity:.4} 30%{transform:translateY(-6px);opacity:1} }
+
+/* ---- Right: Settings ---- */
+#settings-btn {
+  position: fixed; top: 12px; right: 16px; width: 32px; height: 32px; border-radius: 50%;
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  z-index: 10; transition: color .2s;
+}
+#settings-btn:hover { color: var(--text); }
+#settings-panel {
+  position: fixed; top: 52px; right: 16px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px; width: 220px; display: none; z-index: 10; box-shadow: 0 4px 20px rgba(0,0,0,.4);
+}
+#settings-panel.open { display: block; }
+#settings-panel label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+#settings-panel .row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+#settings-panel input[type=range] { width: 100px; accent-color: var(--accent); }
+#settings-panel button {
+  width: 100%; padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: transparent; color: var(--text); cursor: pointer; font-size: 13px; margin-top: 4px;
+}
+#settings-panel button:hover { background: var(--border); }
+.toggle { width: 40px; height: 22px; border-radius: 11px; background: var(--border); position: relative; cursor: pointer; transition: background .3s; }
+.toggle.on { background: var(--accent); }
+.toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: white; transition: left .3s; }
+.toggle.on::after { left: 20px; }
+#conn-status { font-size: 11px; text-align: center; margin-top: 8px; }
+#conn-status.connected { color: var(--idle); }
+#conn-status.disconnected { color: var(--accent); }
+
+/* ---- Bottom: Input ---- */
+#input-bar { padding: 10px 16px; background: var(--surface); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: flex-end; }
+#input-bar textarea {
+  flex:1; padding: 10px 14px; border-radius: 20px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font-size: 14px; outline: none; resize: none;
+  height: 42px; max-height: 120px; line-height: 1.4; font-family: inherit;
+}
+#input-bar textarea:focus { border-color: var(--accent); }
+#input-bar button {
+  width: 42px; height: 42px; border-radius: 50%; border: none; cursor: pointer; font-size: 18px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background .2s;
+}
+#send-btn { background: var(--accent); color: white; }
+#send-btn:hover { filter: brightness(1.1); }
+#mic-btn { background: var(--border); color: var(--text); }
+#mic-btn.active { background: var(--accent); animation: mic-pulse 1.5s infinite; }
+@keyframes mic-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(233,69,96,.4)} 50%{box-shadow:0 0 0 8px rgba(233,69,96,0)} }
+
+/* Responsive: collapse side panels on narrow windows */
+@media (max-width: 600px) {
+  #char-panel { width: 60px; padding: 16px 8px; }
+  #avatar-ring { width: 44px; height: 44px; }
+  #avatar-face { font-size: 24px; }
+  #char-name, #char-state, #mood-tag { display: none; }
+}
 </style>
 </head>
 <body>
-<div id="header">
-  <h1>Elysia</h1>
-  <span id="state" class="idle">idle</span>
+
+<!-- Left Panel -->
+<div id="char-panel">
+  <div id="avatar-wrap">
+    <div id="avatar-ring" class="neutral"><div id="avatar-face">🌸</div></div>
+    <div id="state-dot"></div>
+  </div>
+  <div id="char-name">Elysia</div>
+  <div id="char-state">idle</div>
+  <div id="mood-tag"></div>
 </div>
-<div id="chat"></div>
-<div id="expression"></div>
-<div id="input-area">
-  <input id="text-input" type="text" placeholder="输入消息..." autofocus>
-  <button id="mic-btn" title="麦克风">🎤</button>
-  <button id="send-btn">发送</button>
+
+<!-- Center -->
+<div id="main">
+  <div id="chat-wrap"><div id="chat"></div></div>
+  <div id="input-bar">
+    <button id="mic-btn" title="麦克风">🎤</button>
+    <textarea id="text-input" rows="1" placeholder="输入消息..." autofocus></textarea>
+    <button id="send-btn">➤</button>
+  </div>
+</div>
+
+<!-- Settings -->
+<button id="settings-btn" title="设置">⚙</button>
+<div id="settings-panel">
+  <div class="row"><span>TTS 语音</span><div class="toggle on" id="tts-toggle"></div></div>
+  <label>音量</label>
+  <div class="row"><input type="range" id="vol-slider" min="0" max="100" value="80"></div>
+  <button id="clear-btn">清空对话</button>
+  <div id="conn-status" class="disconnected">连接中...</div>
 </div>
 
 <script>
+// ---- State ----
 const host = location.host;
-const ws = new WebSocket(`ws://${host}/ws`);
-let audioCtx = null, scriptNode = null, stream = null;
-let currentDelta = null;
+let ws, audioCtx, scriptNode, stream, audioPlaying = false;
+const audioQueue = [];
+const chatHistory = JSON.parse(localStorage.getItem('elysia_chat') || '[]');
+let ttsEnabled = localStorage.getItem('elysia_tts') !== 'off';
+let volume = parseInt(localStorage.getItem('elysia_vol') || '80');
+let currentDelta = null, typingEl = null;
+let lastMsgTime = 0, lastRole = '';
+let userScrolledUp = false;
 
-// ---- WebSocket handlers ----
+// ---- Init ----
+document.getElementById('vol-slider').value = volume;
+if (!ttsEnabled) document.getElementById('tts-toggle').classList.remove('on');
+restoreChat();
+connect();
 
-ws.onopen = () => console.log('WS connected');
-ws.onclose = () => console.log('WS disconnected');
-ws.onmessage = (e) => {
+// ---- WebSocket ----
+function connect() {
+  ws = new WebSocket(`ws://${host}/ws`);
+  ws.onopen = () => setConnStatus('connected', '已连接');
+  ws.onclose = () => { setConnStatus('disconnected', '断开 — 3秒后重连'); setTimeout(connect, 3000); };
+  ws.onmessage = handleWS;
+}
+
+function handleWS(e) {
   const msg = JSON.parse(e.data);
   switch (msg.type) {
-    case 'delta':
-      if (!currentDelta) {
-        currentDelta = document.createElement('div');
-        currentDelta.className = 'msg assistant';
-        document.getElementById('chat').appendChild(currentDelta);
-      }
-      currentDelta.textContent += msg.content;
-      scrollDown();
-      break;
-    case 'message':
-      finalizeDelta();
-      scrollDown();
-      break;
-    case 'expression':
-      document.getElementById('expression').textContent = `${msg.expression} (${(msg.intensity*100)|0}%)`;
-      break;
-    case 'state':
-      updateState(msg.state);
-      break;
-    case 'audio':
-      bufferAudioChunk(msg.stream_id||0, msg.seq||0, msg.data, msg.is_final!==false);
-      break;
-    case 'audio_end':
-      finalizeStream(msg.stream_id||0);
-      break;
-    case 'typing':
-      if (msg.typing) startTyping(); else stopTyping();
-      break;
-    case 'error':
-      console.warn('Server error:', msg.message);
-      break;
+    case 'delta': appendDelta(msg.content); break;
+    case 'message': finalizeDelta(); break;
+    case 'expression': setMood(msg.expression, msg.intensity); break;
+    case 'state': setState(msg.state); break;
+    case 'audio': bufferAudioChunk(msg.stream_id||0, msg.seq||0, msg.data); break;
+    case 'audio_end': finalizeStream(msg.stream_id||0); break;
+    case 'typing': msg.typing ? showTyping() : hideTyping(); break;
+    case 'error': console.warn('Server:', msg.message); break;
   }
-};
+}
 
-// ---- Chat helpers ----
+// ---- Chat Display ----
+function appendDelta(text) {
+  if (!currentDelta) {
+    // Insert time divider if > 5 min gap
+    const now = Date.now();
+    if (now - lastMsgTime > 300000 && lastMsgTime > 0) {
+      const div = document.createElement('div'); div.className = 'time-divider';
+      div.textContent = new Date(now).toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'});
+      document.getElementById('chat').appendChild(div);
+    }
+    lastMsgTime = now;
+    if (lastRole === 'assistant') {
+      // Group with previous assistant message
+      const rows = document.querySelectorAll('.msg-row.assistant');
+      const last = rows[rows.length - 1];
+      if (last) {
+        const bubble = last.querySelector('.msg-bubble');
+        currentDelta = bubble;
+        currentDelta.textContent += text;
+        return;
+      }
+    }
+    lastRole = 'assistant';
+    const row = document.createElement('div'); row.className = 'msg-row assistant';
+    row.innerHTML = '<div class="msg-avatar">🌸</div>';
+    const bubble = document.createElement('div'); bubble.className = 'msg-bubble';
+    row.appendChild(bubble);
+    document.getElementById('chat').appendChild(row);
+    currentDelta = bubble;
+  }
+  currentDelta.textContent += text;
+  scrollDown();
+}
 
 function finalizeDelta() {
-  currentDelta = null;
-}
-
-function scrollDown() {
-  const chat = document.getElementById('chat');
-  chat.scrollTop = chat.scrollHeight;
-}
-
-function updateState(state) {
-  const el = document.getElementById('state');
-  el.textContent = state;
-  el.className = state;
-}
-
-let typingIndicator = null;
-function startTyping() {
-  if (!typingIndicator) {
-    typingIndicator = document.createElement('div');
-    typingIndicator.className = 'msg assistant';
-    typingIndicator.textContent = '...';
-    document.getElementById('chat').appendChild(typingIndicator);
-    scrollDown();
-  }
-}
-function stopTyping() {
-  if (typingIndicator) {
-    typingIndicator.remove();
-    typingIndicator = null;
-  }
-}
-
-// ---- Audio streaming playback ----
-
-const audioQueue = [];     // { url, streamId }
-let audioPlaying = false;
-
-function bufferAudioChunk(streamId, seq, b64, isFinal) {
-  if (!window._audioChunks) window._audioChunks = {};
-  if (!window._audioChunks[streamId]) window._audioChunks[streamId] = [];
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  window._audioChunks[streamId].push(bytes);
-}
-
-function finalizeStream(streamId) {
-  const chunks = window._audioChunks && window._audioChunks[streamId];
-  if (!chunks || chunks.length === 0) return;
-  delete window._audioChunks[streamId];
-
-  let total = 0;
-  for (const c of chunks) total += c.length;
-  const buf = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) { buf.set(c, off); off += c.length; }
-
-  const blob = new Blob([buf], { type: 'audio/wav' });
-  audioQueue.push({ url: URL.createObjectURL(blob), streamId });
-  playNextInQueue();
-}
-
-function playNextInQueue() {
-  if (audioPlaying || audioQueue.length === 0) return;
-  audioPlaying = true;
-
-  const item = audioQueue.shift();
-  const audio = new Audio(item.url);
-  audio.onended = () => {
-    URL.revokeObjectURL(item.url);
-    audioPlaying = false;
-    playNextInQueue();
-  };
-  audio.play().catch(e => {
-    console.warn('Audio play failed:', e, 'stream', item.streamId);
-    URL.revokeObjectURL(item.url);
-    audioPlaying = false;
-    playNextInQueue();
-  });
-}
-
-// ---- Text input ----
-
-document.getElementById('send-btn').onclick = sendText;
-document.getElementById('text-input').onkeydown = (e) => {
-  if (e.key === 'Enter') sendText();
-};
-
-function sendText() {
-  const input = document.getElementById('text-input');
-  const text = input.value.trim();
-  if (!text) return;
-  ws.send(JSON.stringify({type: 'text', content: text}));
-  addUserMsg(text);
-  input.value = '';
+  if (currentDelta) { currentDelta = null; saveChat(); }
 }
 
 function addUserMsg(text) {
   finalizeDelta();
-  const div = document.createElement('div');
-  div.className = 'msg user';
-  div.textContent = text;
-  document.getElementById('chat').appendChild(div);
+  lastRole = 'user';
+  const row = document.createElement('div'); row.className = 'msg-row user';
+  row.innerHTML = `<div class="msg-bubble">${esc(text)}</div><div class="msg-avatar">😎</div>`;
+  document.getElementById('chat').appendChild(row);
+  scrollDown();
+  saveChat();
+}
+
+function addStatusMsg(text) {
+  finalizeDelta();
+  const row = document.createElement('div'); row.className = 'msg-row assistant';
+  row.innerHTML = `<div class="msg-avatar"></div><div class="msg-status">${esc(text)}</div>`;
+  document.getElementById('chat').appendChild(row);
   scrollDown();
 }
 
-// ---- Microphone ----
+function showTyping() {
+  if (typingEl) return;
+  typingEl = document.createElement('div'); typingEl.className = 'msg-row assistant';
+  typingEl.innerHTML = '<div class="msg-avatar">🌸</div><div class="msg-bubble typing-dots"><span></span><span></span><span></span></div>';
+  document.getElementById('chat').appendChild(typingEl);
+  scrollDown();
+}
 
+function hideTyping() {
+  if (typingEl) { typingEl.remove(); typingEl = null; }
+}
+
+function setMood(mood, intensity) {
+  const ring = document.getElementById('avatar-ring');
+  ring.className = mood || 'neutral';
+  const tag = document.getElementById('mood-tag');
+  tag.textContent = mood ? `${moodEmoji(mood)} ${mood} ${Math.round(intensity*100)}%` : '';
+  tag.style.color = moodColor(mood);
+}
+
+function setState(state) {
+  document.getElementById('char-state').textContent = state;
+  document.getElementById('state-dot').className = state;
+}
+
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function moodEmoji(m) { return {happy:'😊',sad:'😢',excited:'🤩',curious:'🤔',neutral:'😐'}[m]||''; }
+function moodColor(m) { return {happy:'var(--happy)',sad:'var(--sad)',excited:'var(--excited)',neutral:'var(--muted)'}[m]||'var(--muted)'; }
+
+// ---- Scroll ----
+function scrollDown() {
+  if (userScrolledUp) return;
+  const wrap = document.getElementById('chat-wrap');
+  requestAnimationFrame(() => { wrap.scrollTop = wrap.scrollHeight; });
+}
+document.getElementById('chat-wrap').addEventListener('scroll', function() {
+  const w = this;
+  userScrolledUp = w.scrollTop + w.clientHeight < w.scrollHeight - 60;
+});
+
+// ---- Persistence ----
+function saveChat() {
+  const msgs = [];
+  document.querySelectorAll('.msg-row').forEach(r => {
+    if (r.querySelector('.msg-status')) return;
+    const role = r.classList.contains('user') ? 'user' : 'assistant';
+    const content = r.querySelector('.msg-bubble')?.textContent || '';
+    if (content) msgs.push({ role, content });
+  });
+  localStorage.setItem('elysia_chat', JSON.stringify(msgs.slice(-100)));
+}
+
+function restoreChat() {
+  chatHistory.forEach(m => {
+    if (m.role === 'user') addUserMsg(m.content);
+    else {
+      lastRole = 'assistant';
+      const row = document.createElement('div'); row.className = 'msg-row assistant';
+      row.innerHTML = `<div class="msg-avatar">🌸</div><div class="msg-bubble">${esc(m.content)}</div>`;
+      document.getElementById('chat').appendChild(row);
+    }
+  });
+  scrollDown();
+}
+
+// ---- Input ----
+const textInput = document.getElementById('text-input');
+document.getElementById('send-btn').onclick = sendText;
+textInput.onkeydown = e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(); }
+  // Auto-resize
+  setTimeout(() => { textInput.style.height = 'auto'; textInput.style.height = Math.min(textInput.scrollHeight, 120) + 'px'; }, 0);
+};
+
+function sendText() {
+  const text = textInput.value.trim();
+  if (!text || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({type:'text',content:text}));
+  addUserMsg(text);
+  textInput.value = ''; textInput.style.height = '42px';
+}
+
+// ---- Mic ----
 document.getElementById('mic-btn').onclick = toggleMic;
 
 async function toggleMic() {
   if (stream) { stopMic(); return; }
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true }
-    });
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    stream = await navigator.mediaDevices.getUserMedia({audio:{sampleRate:16000,channelCount:1,echoCancellation:true}});
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
     const source = audioCtx.createMediaStreamSource(stream);
-    scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
-
-    scriptNode.onaudioprocess = (e) => {
+    scriptNode = audioCtx.createScriptProcessor(4096,1,1);
+    scriptNode.onaudioprocess = e => {
       const input = e.inputBuffer.getChannelData(0);
       const int16 = new Int16Array(input.length);
-      for (let i = 0; i < input.length; i++) {
-        int16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
-      }
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(int16.buffer);
-      }
+      for (let i=0;i<input.length;i++) int16[i]=Math.max(-32768,Math.min(32767,input[i]*32768));
+      if (ws.readyState===WebSocket.OPEN) ws.send(int16.buffer);
     };
-
-    source.connect(scriptNode);
-    scriptNode.connect(audioCtx.destination);
+    source.connect(scriptNode); scriptNode.connect(audioCtx.destination);
     document.getElementById('mic-btn').classList.add('active');
     addStatusMsg('麦克风已开启');
-  } catch (err) {
-    console.error('Mic error:', err);
-    document.getElementById('mic-btn').classList.remove('active');
-    let hint = '无法访问麦克风。';
-    if (err.name === 'NotAllowedError') hint = '请允许浏览器使用麦克风权限。';
-    else if (err.name === 'NotFoundError') hint = '未检测到麦克风设备。';
-    else if (err.name === 'NotReadableError') hint = '麦克风被其他应用占用。';
-    addStatusMsg(hint);
+  } catch(err) {
+    let hint='无法访问麦克风。';
+    if (err.name==='NotAllowedError') hint='请允许浏览器使用麦克风权限。';
+    else if (err.name==='NotFoundError') hint='未检测到麦克风设备。';
+    addStatusMsg(hint); stopMic();
   }
 }
 
 function stopMic() {
-  if (scriptNode) { scriptNode.disconnect(); scriptNode = null; }
-  if (audioCtx) { audioCtx.close(); audioCtx = null; }
-  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (scriptNode) { scriptNode.disconnect(); scriptNode=null; }
+  if (audioCtx) { audioCtx.close(); audioCtx=null; }
+  if (stream) { stream.getTracks().forEach(t=>t.stop()); stream=null; }
   document.getElementById('mic-btn').classList.remove('active');
 }
 
-function addStatusMsg(text) {
-  const div = document.createElement('div');
-  div.className = 'msg assistant';
-  div.style.color = '#e94560';
-  div.style.fontSize = '13px';
-  div.textContent = '[系统] ' + text;
-  document.getElementById('chat').appendChild(div);
-  scrollDown();
-  setTimeout(() => { div.style.opacity = '0.5'; }, 3000);
+// ---- Audio ----
+function bufferAudioChunk(streamId, seq, b64) {
+  if (!window._ac) window._ac = {};
+  if (!window._ac[streamId]) window._ac[streamId] = [];
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+  window._ac[streamId].push(bytes);
+}
+
+function finalizeStream(streamId) {
+  if (!ttsEnabled) return;
+  const chunks = window._ac && window._ac[streamId];
+  if (!chunks||chunks.length===0) return;
+  delete window._ac[streamId];
+  let total=0; for(const c of chunks) total+=c.length;
+  const buf = new Uint8Array(total); let off=0;
+  for(const c of chunks){buf.set(c,off);off+=c.length;}
+  audioQueue.push({url:URL.createObjectURL(new Blob([buf],{type:'audio/wav'})),streamId});
+  playNext();
+}
+
+function playNext() {
+  if (audioPlaying||audioQueue.length===0) return;
+  audioPlaying=true;
+  const item=audioQueue.shift();
+  const a=new Audio(item.url); a.volume=volume/100;
+  a.onended=()=>{URL.revokeObjectURL(item.url);audioPlaying=false;playNext();};
+  a.play().catch(e=>{URL.revokeObjectURL(item.url);audioPlaying=false;playNext();});
+}
+
+// ---- Settings ----
+document.getElementById('settings-btn').onclick = () => {
+  document.getElementById('settings-panel').classList.toggle('open');
+};
+document.getElementById('tts-toggle').onclick = function() {
+  this.classList.toggle('on'); ttsEnabled = this.classList.contains('on');
+  localStorage.setItem('elysia_tts', ttsEnabled ? 'on' : 'off');
+  if (!ttsEnabled) { window._ac = {}; audioQueue.length = 0; }
+};
+document.getElementById('vol-slider').oninput = function() {
+  volume = parseInt(this.value);
+  localStorage.setItem('elysia_vol', volume);
+};
+document.getElementById('clear-btn').onclick = () => {
+  document.getElementById('chat').innerHTML = '';
+  localStorage.removeItem('elysia_chat');
+};
+
+function setConnStatus(cls, text) {
+  const el = document.getElementById('conn-status');
+  el.className = cls; el.textContent = text;
 }
 </script>
 </body>
