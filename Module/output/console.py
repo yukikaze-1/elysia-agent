@@ -4,7 +4,14 @@ from .protocol import ChannelCapability, OutputChannel
 
 
 class ConsoleChannel(OutputChannel):
-    """终端输出通道。支持流式 delta 和完整消息。"""
+    """终端输出通道。支持流式 delta 和完整消息。
+
+    When text is streamed via on_text_delta, on_message only prints the
+    inner_voice (if any) — the content was already delivered by the stream.
+    """
+
+    def __init__(self):
+        self._delta_printed = False
 
     @property
     def capabilities(self) -> set[ChannelCapability]:
@@ -12,17 +19,26 @@ class ConsoleChannel(OutputChannel):
 
     async def on_text_delta(self, delta: str) -> None:
         """逐字打印，无换行。"""
+        self._delta_printed = True
         print(delta, end="", flush=True)
 
     async def on_message(self, msg) -> None:
-        """打印带格式的完整消息（含 inner_voice）。"""
+        """Print formatted message. If deltas were already streamed, skip content."""
         inner = getattr(msg, "inner_voice", "")
         role = getattr(msg, "role", "?")
         content = getattr(msg, "content", "")
-        print()
-        if inner:
-            print(f"  [{role} 💭] {inner}")
-        print(f"  [{role}]: {content}")
+
+        if self._delta_printed:
+            # Content already streamed — just finalize the line and show inner_voice
+            print()
+            self._delta_printed = False
+            if inner:
+                print(f"  [{role} 💭] {inner}")
+        else:
+            # Non-streaming delivery — print full content
+            if inner:
+                print(f"  [{role} 💭] {inner}")
+            print(f"  [{role}]: {content}")
 
     async def close(self) -> None:
         pass

@@ -1,7 +1,7 @@
 """HuggingFace 本地 embedding 后端 — 使用 sentence-transformers 模型。
 
 同步推理通过 asyncio.to_thread() 包装为异步。
-模型缓存于本地，首次使用自动检测本地路径，避免从 HuggingFace Hub 下载。
+优先使用本地缓存，离线可用。
 """
 
 import asyncio
@@ -19,11 +19,34 @@ _KNOWN_DIMS: dict[str, int] = {
 }
 
 
+def _find_local_model(model_name: str, cache_folder: str) -> str | None:
+    """Find a model in local cache. Returns path or None."""
+    # 1. Explicit cache folder (e.g. /home/yomu/Elysia/model_cache/BAAI/bge-large-zh-v1.5)
+    explicit = os.path.join(cache_folder, model_name)
+    if os.path.isdir(explicit):
+        return explicit
+
+    # 2. HuggingFace hub cache (~/.cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5)
+    hub_name = "models--" + model_name.replace("/", "--")
+    hf_home = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+    for base in (hf_home, os.path.join(hf_home, "hub")):
+        hub_path = os.path.join(base, hub_name)
+        if os.path.isdir(hub_path):
+            # Find latest snapshot
+            snapshots = os.path.join(hub_path, "snapshots")
+            if os.path.isdir(snapshots):
+                for snap in sorted(os.listdir(snapshots), reverse=True):
+                    snap_path = os.path.join(snapshots, snap)
+                    if os.path.isfile(os.path.join(snap_path, "config.json")):
+                        return snap_path
+    return None
+
+
 class HuggingFaceBackend(EmbeddingBackend):
     """本地 HuggingFace sentence-transformers 后端。
 
     自动检测 CUDA/CPU 设备。优先使用本地缓存模型路径。
-    向量默认 L2 归一化。
+    向量默认 L2 归一化。离线可用。
     """
 
     def __init__(
@@ -37,19 +60,35 @@ class HuggingFaceBackend(EmbeddingBackend):
         logger: logging.Logger | None = None,
     ):
         if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available():
+                try:
+                    major, minor = torch.cuda.get_device_capability()
+                    if major >= 7:
+                        device = "cuda"
+                    else:
+                        device = "cpu"
+                except Exception:
+                    device = "cpu"
+            else:
+                device = "cpu"
 
         self._model_name = model_name
         self._dimension = dimension or _KNOWN_DIMS.get(model_name, 0)
         self._logger = logger or logging.getLogger(__name__)
 
-        # 优先使用本地缓存模型，避免从 HuggingFace Hub 下载
-        local_path = os.path.join(cache_folder, model_name)
-        model_path = local_path if os.path.exists(local_path) else model_name
+        # Find model in local cache — avoid network access entirely
+        local_path = _find_local_model(model_name, cache_folder)
+        if local_path:
+            self._logger.info("Using local model: %s", local_path)
+        model_path = local_path or model_name
 
         self._embeddings = HuggingFaceEmbeddings(
             model_name=model_path,
-            model_kwargs={"device": device, "trust_remote_code": True},
+            model_kwargs={
+                "device": device,
+                "trust_remote_code": True,
+                "local_files_only": True,
+            },
             encode_kwargs={"normalize_embeddings": normalize},
             cache_folder=cache_folder,
         )

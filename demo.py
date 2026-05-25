@@ -14,9 +14,24 @@
 
 import argparse
 import asyncio
-import logging
 import sys
+import warnings
 from pathlib import Path
+
+# Suppress noisy library warnings BEFORE any imports that trigger them
+warnings.filterwarnings("ignore", ".*pynvml.*", category=FutureWarning)
+warnings.filterwarnings("ignore", ".*cuda capability.*", category=UserWarning)
+warnings.filterwarnings("ignore", ".*Minimum and Maximum.*", category=UserWarning)
+warnings.filterwarnings("ignore", ".*Please install PyTorch.*", category=UserWarning)
+warnings.filterwarnings("ignore", ".*Tesla M40.*", category=UserWarning)
+warnings.filterwarnings("ignore", ".*Found GPU.*", category=UserWarning)
+warnings.filterwarnings("ignore", ".*encoder_attention_mask.*", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+# Disable CUDA GPU detection — GPU is incompatible (sm_52) and loading torch
+# with CUDA support triggers UserWarning spam in thread-pool workers.
+import os as _os
+_os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -24,16 +39,8 @@ load_dotenv()
 # Ensure project root is on path
 sys.path.insert(0, str(Path(__file__).parent))
 
+from core.log_setup import setup as setup_logging
 from core.demo_agent import DemoAgent
-
-
-def setup_logging(verbose: bool) -> None:
-    level = logging.DEBUG if verbose else logging.ERROR
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
 
 
 async def run_once(message: str, character_path: str) -> None:

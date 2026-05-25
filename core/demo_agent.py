@@ -105,12 +105,17 @@ class DemoAgent:
         """Start the agent: connect persistence, idle monitor, event loop."""
         self._running = True
 
-        # Connect persistence backends
-        mongo_ok = await self._session.connect_db()
-        milvus_ok = await self._long_term.connect()
+        # Connect persistence backends in parallel
+        mongo_ok, milvus_ok = await asyncio.gather(
+            self._session.connect_db(),
+            self._long_term.connect(),
+        )
         await self._seed_memories()
         if mongo_ok:
             await self._session.load()
+
+        # Preload embedding in background (runs in thread pool, won't block event loop)
+        asyncio.create_task(self._long_term._ensure_embedding(), name="embedding-preload")
 
         await self._idle.start()
         self._event_task = asyncio.create_task(self._process_events())
@@ -238,7 +243,7 @@ class DemoAgent:
     # ---- Internal: seed data + tools ----
 
     async def _seed_memories(self) -> None:
-        """Seed long-term memory with demo entries."""
+        """Seed long-term memory with demo entries (fast — in-memory only, no embedding)."""
         entries = [
             ("上周和妖梦约定周六去爬香山", {"type": "plan", "date": "2026-05-23"}),
             ("妖梦最喜欢的颜色是蓝色", {"type": "preference"}),
@@ -247,7 +252,9 @@ class DemoAgent:
             ("上次推荐的电影《星际穿越》妖梦还没看完", {"type": "interaction", "date": "2026-05-22"}),
         ]
         for text, meta in entries:
-            await self._long_term.insert(text, **meta)
+            # Insert directly to in-memory list to avoid triggering lazy embedding load
+            from core.memory.long_term import MemoryEntry
+            self._long_term._entries.append(MemoryEntry(text=text, metadata=meta))
 
     def _register_tools(self) -> None:
         """Register demo tools in the ToolRegistry."""

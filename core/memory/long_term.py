@@ -1,11 +1,13 @@
 """Long-term memory — in-memory fallback with optional Milvus + embedding.
 
-When Milvus and an embedding backend are available, uses semantic search.
-Otherwise falls back to character-overlap search (existing behavior).
+Startup is fast: only Milvus connection is attempted. Embedding is loaded
+lazily on first insert/search, with a short timeout to avoid blocking.
 """
 
+import asyncio
 import logging
 import math
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -35,34 +37,30 @@ class LongTermMemory:
     - No Milvus → in-memory list + character-overlap search
     - Embedding available → auto-embed on insert for better search
     - No embedding → text-only storage, substring search
+
+    Embedding is loaded lazily on first use (not at connect time),
+    with a 10s timeout to avoid blocking startup.
     """
 
     COLLECTION = "long_term_memory"
     DIMENSION = 1024  # Default for bge-large-zh-v1.5
+    EMBED_TIMEOUT = 10.0  # Max seconds to wait for embedding model load
 
     def __init__(self):
         self._entries: list[MemoryEntry] = []
         self._vector_db: "VectorDBBackend | None" = None
         self._embedding: "EmbeddingBackend | None" = None
+        self._embedding_tried = False  # Only try once lazily
         self._connected = False
 
     async def connect(self) -> bool:
-        """Try to connect to Milvus and embedding. Returns True if vector search is available."""
-        # Try embedding first (no external service needed for HuggingFace)
-        try:
-            from Module.embedding import EmbeddingFactory
-            self._embedding = EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")
-            logger.info("LongTermMemory: embedding backend connected (dim=%d)", self._embedding.dimension)
-        except Exception as e:
-            logger.info("LongTermMemory: embedding unavailable (%s), text-only mode", e)
-            self._embedding = None
-
-        # Try Milvus
+        """Connect to Milvus (fast). Embedding is deferred to first use. Returns True if Milvus available."""
+        # Try Milvus (fast — local connection, no model download)
         try:
             from Module.database.vectordb import VectorDBFactory
             self._vector_db = VectorDBFactory.create("milvus/memory")
+            dim = self.DIMENSION
             if not await self._vector_db.collection_exists(self.COLLECTION):
-                dim = self._embedding.dimension if self._embedding else self.DIMENSION
                 await self._vector_db.create_collection(self.COLLECTION, dimension=dim)
                 logger.info("LongTermMemory: created Milvus collection '%s' (dim=%d)", self.COLLECTION, dim)
             self._connected = True
@@ -74,10 +72,62 @@ class LongTermMemory:
             self._connected = False
             return False
 
+    async def _ensure_embedding(self) -> None:
+        """Load embedding backend lazily. Only tries once.
+
+        Runs in a thread pool so the blocking model load doesn't stall the event loop.
+        Does NOT block callers — if embedding isn't ready, callers use text-only fallback.
+        """
+        if self._embedding is not None or self._embedding_tried:
+            return
+        self._embedding_tried = True
+
+        loop = asyncio.get_event_loop()
+
+        async def _load():
+            try:
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, self._try_load_embedding_sync),
+                    timeout=self.EMBED_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.info("LongTermMemory: embedding load timed out after %.0fs, text-only mode", self.EMBED_TIMEOUT)
+            except Exception as e:
+                logger.info("LongTermMemory: embedding unavailable (%s), text-only mode", e)
+
+        # Fire-and-forget: don't block callers waiting for embedding
+        asyncio.create_task(_load(), name="embedding-load")
+
+    def _try_load_embedding_sync(self) -> None:
+        """Try OpenAI embedding first (fast), then HuggingFace (local). Runs in thread."""
+        from Module.embedding import EmbeddingFactory
+
+        # 1. Try OpenAI-compatible embedding (fast API call, no model download)
+        openai_key = os.getenv("OPENAI_API_KEY", "")
+        if openai_key:
+            try:
+                self._embedding = EmbeddingFactory.create("openai/text-embedding-3-small")
+                dim = self._embedding.dimension
+                logger.info("LongTermMemory: OpenAI embedding connected (dim=%d)", dim)
+                return
+            except Exception as e:
+                logger.debug("OpenAI embedding unavailable: %s", e)
+
+        # 2. Try HuggingFace local model (slower, loads model to memory)
+        try:
+            self._embedding = EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")
+            dim = self._embedding.dimension
+            logger.info("LongTermMemory: HuggingFace embedding connected (dim=%d)", dim)
+        except Exception as e:
+            logger.info("LongTermMemory: HuggingFace embedding unavailable: %s", e)
+            self._embedding = None
+
     # ---- Write ----
 
     async def insert(self, text: str, **metadata) -> None:
-        """Insert a memory entry. Auto-embeds if embedding backend is available."""
+        """Insert a memory entry. Auto-embeds lazily if embedding is available."""
+        await self._ensure_embedding()
+
         embedding: list[float] = []
         if self._embedding:
             try:
@@ -108,6 +158,8 @@ class LongTermMemory:
         top_k: int = 5,
     ) -> list[MemoryEntry]:
         """Search by embedding (if available) or text overlap (fallback)."""
+        await self._ensure_embedding()
+
         if not self._entries and not self._vector_db:
             return []
 

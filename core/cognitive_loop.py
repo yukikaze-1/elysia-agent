@@ -168,15 +168,14 @@ class CognitiveLoop:
                     msg = _MessageObj(content=acc_text)
                     await self._output.send(msg)
                     self._session.add_message("assistant", acc_text)
-                    # Phase 2: consolidate memory + persist session
-                    await self._after_response(user_message, acc_text)
+                    asyncio.create_task(self._after_response(user_message, acc_text), name="after-response")
             else:
                 await self._output.typing(False)
                 if acc_text.strip():
                     msg = _MessageObj(content=acc_text)
                     await self._output.send(msg)
                     self._session.add_message("assistant", acc_text)
-                    await self._after_response(user_message, acc_text)
+                    asyncio.create_task(self._after_response(user_message, acc_text), name="after-response")
             await self._transition_idle()
             return
 

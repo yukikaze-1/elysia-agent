@@ -457,13 +457,13 @@ class TestMultiTurnConversation:
         agent = DemoAgent()
         await agent.start()
 
-        # First turn
+        # First turn (may be slower due to lazy embedding loading)
         await agent.process_message("我叫妖梦")
-        await asyncio.sleep(3)
+        await asyncio.sleep(15)  # Generous timeout for embedding lazy load + LLM
         msgs_1 = agent._session.recent_messages()
         assert any("我叫妖梦" in m.get("content", "") for m in msgs_1)
 
-        # Second turn
+        # Second turn (embedding already loaded, should be fast)
         await agent.process_message("你还记得我叫什么吗")
         await asyncio.sleep(5)
         msgs_2 = agent._session.recent_messages()

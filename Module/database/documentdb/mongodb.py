@@ -19,9 +19,10 @@ class MongoDBBackend(DocumentDBBackend):
         uri: str = "mongodb://localhost:27017",
         database: str = "elysia",
         logger: logging.Logger | None = None,
+        server_selection_timeout_ms: int = 3000,
     ):
         self._logger = logger or logging.getLogger(__name__)
-        self._client = AsyncIOMotorClient(uri)
+        self._client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=server_selection_timeout_ms)
         self._db = self._client[database]
 
     # ---- Write ----
