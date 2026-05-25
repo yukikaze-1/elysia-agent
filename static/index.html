@@ -127,45 +127,51 @@ function stopTyping() {
 
 // ---- Audio streaming playback ----
 
-const audioStreams = {};  // stream_id -> { chunks: Uint8Array[], totalBytes: number }
+const audioQueue = [];     // { url, streamId }
+let audioPlaying = false;
 
 function bufferAudioChunk(streamId, seq, b64, isFinal) {
+  if (!window._audioChunks) window._audioChunks = {};
+  if (!window._audioChunks[streamId]) window._audioChunks[streamId] = [];
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-
-  if (!audioStreams[streamId]) {
-    audioStreams[streamId] = { chunks: [], totalBytes: 0 };
-  }
-  const stream = audioStreams[streamId];
-  stream.chunks.push(bytes);
-  stream.totalBytes += bytes.length;
-
-  // If this chunk is marked final or audio_end was sent separately,
-  // attempt playback immediately.
-  if (isFinal) {
-    finalizeStream(streamId);
-  }
+  window._audioChunks[streamId].push(bytes);
 }
 
 function finalizeStream(streamId) {
-  const stream = audioStreams[streamId];
-  if (!stream || stream.chunks.length === 0) return;
-  delete audioStreams[streamId];
+  const chunks = window._audioChunks && window._audioChunks[streamId];
+  if (!chunks || chunks.length === 0) return;
+  delete window._audioChunks[streamId];
 
-  // Concatenate all chunks into one buffer
-  const buf = new Uint8Array(stream.totalBytes);
-  let offset = 0;
-  for (const chunk of stream.chunks) {
-    buf.set(chunk, offset);
-    offset += chunk.length;
-  }
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const buf = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.length; }
 
-  // Play as WAV blob
   const blob = new Blob([buf], { type: 'audio/wav' });
-  const url = URL.createObjectURL(blob);
-  const audio = new Audio(url);
-  audio.play().then(() => URL.revokeObjectURL(url)).catch(e => console.warn('Audio play failed:', e));
+  audioQueue.push({ url: URL.createObjectURL(blob), streamId });
+  playNextInQueue();
+}
+
+function playNextInQueue() {
+  if (audioPlaying || audioQueue.length === 0) return;
+  audioPlaying = true;
+
+  const item = audioQueue.shift();
+  const audio = new Audio(item.url);
+  audio.onended = () => {
+    URL.revokeObjectURL(item.url);
+    audioPlaying = false;
+    playNextInQueue();
+  };
+  audio.play().catch(e => {
+    console.warn('Audio play failed:', e, 'stream', item.streamId);
+    URL.revokeObjectURL(item.url);
+    audioPlaying = false;
+    playNextInQueue();
+  });
 }
 
 // ---- Text input ----

@@ -40,12 +40,22 @@ class SentenceBuffer:
         complete = parts[0] + parts[1]
         remaining = "".join(parts[2:])
 
-        complete = complete.strip()
-        if len(complete) < self._min_chunk:
+        # Hold short sentences when followed by consecutive delimiters.
+        # "啊？" followed by "！" should stay as "啊？！" — not two sentences.
+        if remaining and remaining[0] in "。！？.!?\n":
+            return None
+
+        # Hold very short extractions when remaining is empty —
+        # the next token might be a continuation delimiter like "！"
+        stripped = complete.strip()
+        if len(stripped) < 3 and not remaining:
+            return None
+
+        if len(stripped) < self._min_chunk:
             return None
 
         self._buffer = remaining
-        return complete
+        return stripped
 
     def reset(self) -> None:
         self._buffer = ""
