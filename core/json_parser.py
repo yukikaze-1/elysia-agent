@@ -123,14 +123,31 @@ class TagParser:
         return self._scan_opening() if not self._buf else self.feed("")
 
     def _yield_safe_public(self) -> dict:
-        """Yield public_reply content, holding back a safety margin."""
-        if len(self._buf) <= self._HOLD:
-            return {"field": None, "content": None}
+        """Yield public_reply content immediately.
 
-        safe = self._buf[:-self._HOLD]
-        self._buf = self._buf[-self._HOLD:]
-        self._public_reply += safe
-        return {"field": Field.PUBLIC_REPLY, "content": safe}
+        Only holds back text that looks like a partial closing tag
+        (e.g. '</pub' → '</public_reply>'), to avoid emitting tag
+        fragments as visible text. All other content flows freely so
+        the text-delta / TTS pipeline isn't starved.
+        """
+        close = _TAGS[Field.PUBLIC_REPLY][1]  # "</public_reply>"
+        # Check if buffer ends with a prefix of the closing tag
+        for i in range(len(close) - 1, 0, -1):
+            if self._buf.endswith(close[:i]):
+                safe = self._buf[:-i]
+                if safe:
+                    self._public_reply += safe
+                    self._buf = self._buf[-i:]
+                    return {"field": Field.PUBLIC_REPLY, "content": safe}
+                return {"field": None, "content": None}
+
+        # No partial closing tag — yield everything
+        if self._buf:
+            safe = self._buf
+            self._buf = ""
+            self._public_reply += safe
+            return {"field": Field.PUBLIC_REPLY, "content": safe}
+        return {"field": None, "content": None}
 
     def finish(self) -> dict:
         """Call after the stream ends. Returns final extracted fields.

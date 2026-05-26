@@ -106,16 +106,17 @@ class LLMAdapter:
     If the real backend fails at API call time, switches to mock automatically.
     """
 
-    def __init__(self):
+    def __init__(self, model: str | None = None):
         self._backend: LLMBackend
         self._using_mock = False
+        self._requested_model = model or "deepseek/deepseek-chat"
 
         # Check if required API key is available before attempting real backend
         deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
         if deepseek_key:
             try:
-                self._backend = LLMFactory.create("deepseek/deepseek-chat")
-                logger.info("LLM backend: deepseek/deepseek-chat (real)")
+                self._backend = LLMFactory.create(self._requested_model)
+                logger.info("LLM backend: %s (real)", self._requested_model)
                 self._using_mock = False
                 return
             except Exception as e:
@@ -152,7 +153,9 @@ class LLMAdapter:
                 yield token
         except Exception as e:
             if not self._using_mock:
-                logger.info("Real LLM stream failed (%s), switching to mock", type(e).__name__)
+                detail = str(e)[:500]
+                logger.warning("Real LLM failed: %s: %s", type(e).__name__, detail)
+                logger.warning("Switching to mock LLM (model=%s)", self._requested_model)
                 self._switch_to_mock()
                 async for token in self._backend.chat_stream(messages):
                     yield token
@@ -190,7 +193,9 @@ class LLMAdapter:
                     yield {"content": char, "tool_calls": None}
         except Exception as e:
             if not self._using_mock:
-                logger.info("Real LLM stream failed (%s), switching to mock", type(e).__name__)
+                detail = str(e)[:500]
+                logger.warning("Real LLM failed: %s: %s", type(e).__name__, detail)
+                logger.warning("Switching to mock LLM (model=%s)", self._requested_model)
                 self._switch_to_mock()
                 text = await self._backend.chat(messages, **kwargs)
                 if text.startswith('{"tool_calls"'):
@@ -212,7 +217,9 @@ class LLMAdapter:
             return await self._backend.chat(messages, **kwargs)
         except Exception as e:
             if not self._using_mock:
-                logger.info("Real LLM unavailable (%s), using mock", type(e).__name__)
+                detail = str(e)[:500]
+                logger.warning("Real LLM unavailable: %s: %s", type(e).__name__, detail)
+                logger.warning("Switching to mock LLM (model=%s)", self._requested_model)
                 self._switch_to_mock()
                 return await self._backend.chat(messages, **kwargs)
             raise

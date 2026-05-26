@@ -72,7 +72,7 @@ class DemoAgent:
         # ---- L1: Cognitive ----
         self._bus = EventBus()
         self._fsm = AgentFSM()
-        self._llm = LLMAdapter()
+        self._llm = LLMAdapter(model=llm_cfg.get("model"))
         dual_track = prompt_cfg.get("dual_track", False)
         self._prompt = PromptAssembler(self._character, self._session, self._long_term,
                                        dual_track=dual_track)

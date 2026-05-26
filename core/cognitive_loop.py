@@ -129,12 +129,18 @@ class CognitiveLoop:
                 speaking_started = False
                 dual = self._prompt.dual_track
                 json_parser = TagParser() if dual else None
+                ttft_logged = False
 
                 stream = self._llm.stream_think(messages, tools=tool_defs)
                 try:
                     async for chunk in stream:
                         content = chunk.get("content")
                         tc_deltas = chunk.get("tool_calls")
+
+                        if content:
+                            if not ttft_logged:
+                                ttft_logged = True
+                                logger.info("Pipeline: 首 token 到达 (TTFT)")
 
                         if content:
                             if dual:
@@ -309,6 +315,8 @@ class CognitiveLoop:
         """
         self._tts_stream_id += 1
         stream_id = self._tts_stream_id
+        logger.info("Pipeline: TTS 句 %d 开始合成 (%d 字符): %s",
+                    stream_id, len(sentence), sentence[:50])
 
         async def _stream(_sid: int):
             if not self._tts:
@@ -320,7 +328,7 @@ class CognitiveLoop:
                     if first_chunk:
                         first_chunk = False
                         if not self._sync_event.is_set():
-                            logger.debug("Sync: 首块 TTS 音频到达，释放文本")
+                            logger.info("Pipeline: 首块 TTS 音频到达，释放文本-音频同步")
                         self._sync_event.set()
                     if not self._audio_flow:
                         self._audio_pending.append(('chunk', chunk, _sid))
@@ -375,6 +383,7 @@ class CognitiveLoop:
             logger.debug("TTS synthesis failed", exc_info=True)
 
     async def _transition_idle(self) -> None:
+        logger.info("Pipeline: 回复完成 → IDLE")
         await asyncio.sleep(0.1)
         # If sync held text and never fired (no TTS / no timeout yet),
         # FSM may still be in THINKING. Step through SPEAKING first.
