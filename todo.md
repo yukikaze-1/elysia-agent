@@ -106,11 +106,22 @@
 | 任务 | 说明 |
 |------|------|
 | 配置驱动入口 | `config.yaml` 新增 TTS.enabled / STT.enabled。`demo.py --tts`/`--stt`/`--host`/`--port` 默认值从 config 读取。优先级 CLI > config > 默认值。移除 `DEMO_ENABLE_TTS` 环境变量。 |
+| Architecture.md 完整重写 | 从三层架构、Protocol-Registry-Backend 模式、事件总线/FSM、认知循环、记忆模型、输入输出系统、TTS 流式管线、文字/语音同步、配置系统、工程规范等 8 个章节完整描述项目设计。 |
 
 ## 待做（按优先级）
 
-- **prompt 模板接入**: 将 `prompt/` 下的多层认知模板 (Brain/Amygdala/ActiveSpeak/Reflector) 接入 `PromptAssembler`/`CognitiveLoop`，实现双轨思维（inner_voice + public_reply）、Amygdala 情绪感知、ActiveSpeak 主动说话决策
-- **分句策略改进**: `～` 加入分隔符，提高 min_chunk 阈值为 5-6 字符，减少 TTS 短句开销
+### 模块升级（待逐一讨论设计）
+
+- **PromptAssembler 升级**: 接入 `prompt/` 多层认知模板 — Brain.j2 双轨思维（inner_voice + public_reply JSON 输出）、Amygdala.j2 LLM 情绪感知、ActiveSpeak.j2 主动说话决策、MicroReflector.j2 改进记忆提取 prompt。支持多 system prompt 组合。
+
+- **EmotionEngine 升级**: 关键词匹配 → 轻量 LLM 调用（Amygdala.j2）。引入生理状态模型（Drive/Social Battery/Energy）。情绪衰减改为时间曲线。支持混合情绪。
+
+- **SentenceBuffer 升级**: `～` `…` 加入分隔符。`min_chunk` 提升到 5-6 字符。分隔符集合可配置化。支持英文标点 `,` `;` `:` 软分隔。
+
+- **ToolRegistry 升级**: 执行超时（防止卡死）。工具结果截断（防止撑爆 context）。并行工具调用（多个 tool_calls 并发执行）。新增内置工具。执行前后 hook。
+
+### 其他待做
+
 - **STT 识别改进**: webrtcvad 替代 RMS VAD，减少嘈杂环境误触发
 - 唤醒词检测（openWakeWord 集成）
 - Web 前端: 更好的角色立绘/动画
