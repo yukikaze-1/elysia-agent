@@ -160,14 +160,13 @@ class LLMAdapter:
                 raise
 
     async def stream_think(
-        self, messages: list[dict], tools: list[dict] | None = None
+        self, messages: list[dict], tools: list[dict] | None = None, **kwargs
     ) -> AsyncIterator[dict]:
         """Stream structured chunks with tool_call detection.
 
         Yields dicts: {"content": str | None, "tool_calls": list | None}
         Works with both real (via stream_think) and mock (simulated) backends.
         """
-        kwargs: dict = {}
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"

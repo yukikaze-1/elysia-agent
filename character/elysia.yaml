@@ -16,7 +16,9 @@ emotion:
     - slight_smile
 wake_words:
   - Elysia
-  - 小伊
+  - 爱莉
+  - 爱莉希雅
+  - 妖精小姐
 proactive:
   enabled: false
   interval: 300

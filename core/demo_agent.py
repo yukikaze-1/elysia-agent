@@ -48,6 +48,7 @@ class DemoAgent:
         llm_cfg = cfg.get("LLM", {})
         mem_cfg = cfg.get("Memory", {})
         tts_cfg = cfg.get("TTS", {})
+        prompt_cfg = cfg.get("Prompt", {})
 
         char_path = character_path or agent_cfg.get("character", "character/elysia.yaml")
         self._user_name = agent_cfg.get("user_name", "妖梦")
@@ -72,7 +73,9 @@ class DemoAgent:
         self._bus = EventBus()
         self._fsm = AgentFSM()
         self._llm = LLMAdapter()
-        self._prompt = PromptAssembler(self._character, self._session, self._long_term)
+        dual_track = prompt_cfg.get("dual_track", False)
+        self._prompt = PromptAssembler(self._character, self._session, self._long_term,
+                                       dual_track=dual_track)
 
         # TTS is disabled by default (requires GPT-SoVits server at localhost:9880).
         # Enable via config.yaml (TTS.enabled: true) or CLI --tts flag.
