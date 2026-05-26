@@ -179,6 +179,9 @@ let volume = parseInt(localStorage.getItem('elysia_vol') || '80');
 let currentDelta = null, typingEl = null;
 let lastMsgTime = 0, lastRole = '';
 let userScrolledUp = false;
+let textQueue = [];            // buffered deltas while waiting for audio
+let audioStarted = false;     // true after first play() resolves
+let textFlushTimer = null;    // timeout to prevent stuck text
 
 // ---- Init ----
 document.getElementById('vol-slider').value = volume;
@@ -197,13 +200,46 @@ function connect() {
 function handleWS(e) {
   const msg = JSON.parse(e.data);
   switch (msg.type) {
-    case 'delta': appendDelta(msg.content); break;
-    case 'message': finalizeDelta(); break;
+    case 'delta':
+      if (ttsEnabled && !audioStarted) {
+        textQueue.push(msg.content);
+        resetTextFlushTimer();
+      } else {
+        appendDelta(msg.content);
+      }
+      break;
+    case 'message':
+      flushTextQueue();
+      if (!currentDelta && msg.content) {
+        // No deltas accumulated — render the full message directly
+        hideTyping();
+        lastRole = 'assistant';
+        const row = document.createElement('div'); row.className = 'msg-row assistant';
+        row.innerHTML = `<div class="msg-avatar">🌸</div><div class="msg-bubble">${esc(msg.content)}</div>`;
+        document.getElementById('chat').appendChild(row);
+        if (msg.mood) {
+          const moodEl = document.createElement('div'); moodEl.className = 'msg-mood';
+          moodEl.textContent = `心情: ${msg.mood}`;
+          document.getElementById('chat').appendChild(moodEl);
+        }
+        scrollDown();
+      }
+      finalizeDelta();
+      break;
     case 'expression': setMood(msg.expression, msg.intensity); break;
-    case 'state': setState(msg.state); break;
+    case 'state':
+      setState(msg.state);
+      if (msg.state === 'thinking') {
+        textQueue = []; audioStarted = false;
+        clearTimeout(textFlushTimer); textFlushTimer = null;
+      }
+      break;
     case 'audio': bufferAudioChunk(msg.stream_id||0, msg.seq||0, msg.data); break;
     case 'audio_end': finalizeStream(msg.stream_id||0); break;
-    case 'typing': msg.typing ? showTyping() : hideTyping(); break;
+    case 'typing':
+      if (msg.typing) { showTyping(); }
+      else if (textQueue.length === 0) { hideTyping(); }
+      break;
     case 'transcription':
       addUserMsg('🎤 ' + msg.text);
       break;
@@ -297,6 +333,21 @@ function setMood(mood, intensity) {
 function setState(state) {
   document.getElementById('char-state').textContent = state;
   document.getElementById('state-dot').className = state;
+}
+
+function flushTextQueue() {
+  if (textQueue.length === 0) return;
+  hideTyping();
+  for (const text of textQueue) appendDelta(text);
+  textQueue = [];
+  audioStarted = true;
+  clearTimeout(textFlushTimer);
+  textFlushTimer = null;
+}
+
+function resetTextFlushTimer() {
+  clearTimeout(textFlushTimer);
+  textFlushTimer = setTimeout(flushTextQueue, 8000);
 }
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
@@ -418,7 +469,8 @@ function playNext() {
   const item=audioQueue.shift();
   const a=new Audio(item.url); a.volume=volume/100;
   a.onended=()=>{URL.revokeObjectURL(item.url);audioPlaying=false;playNext();};
-  a.play().catch(e=>{URL.revokeObjectURL(item.url);audioPlaying=false;playNext();});
+  a.play().then(()=>{flushTextQueue();})
+    .catch(e=>{URL.revokeObjectURL(item.url);audioPlaying=false;playNext();});
 }
 
 // ---- Settings ----

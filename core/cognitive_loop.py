@@ -67,6 +67,10 @@ class CognitiveLoop:
         self._tts_task: asyncio.Task | None = None
         self._tts_tasks: list[asyncio.Task] = []
         self._tts_stream_id: int = 0
+        self._sync_event = asyncio.Event()
+        self._sync_buffer: list[str] = []
+        self._audio_pending: list[tuple] = []  # (type, chunk|None, stream_id)
+        self._audio_flow = False
 
     async def process(self, user_message: str, user_name: str = "妖梦") -> None:
         if not self._fsm.can_transition(AgentState.THINKING):
@@ -77,6 +81,10 @@ class CognitiveLoop:
         self._bus.post(EventType.STATE_CHANGE, {"state": "thinking"}, priority=EventPriority.STATE_CHANGE)
 
         self._sentence_buf.reset()
+        self._sync_event.clear()
+        self._sync_buffer.clear()
+        self._audio_pending.clear()
+        self._audio_flow = False
         self._current_task = asyncio.current_task()
         try:
             await self._think_loop(user_message, user_name)
@@ -94,93 +102,152 @@ class CognitiveLoop:
 
         await self._output.typing(True)
 
-        for round_num in range(self.MAX_TOOL_ROUNDS + 1):
-            # Stream the LLM response — text goes to output, tool_calls are accumulated
-            acc_text = ""
-            raw_tool_calls: list[dict] = []
-            speaking_started = False
+        # Text/audio sync: hold text deltas until first TTS audio chunk arrives.
+        # Without TTS, release immediately. A timeout prevents holding text forever.
+        _sync_timeout = 5.0
+        self._sync_event.clear()
+        self._sync_buffer.clear()
+        if not self._tts:
+            self._sync_event.set()
+            logger.debug("Sync: TTS disabled, text flows freely")
 
-            stream = self._llm.stream_think(messages, tools=tool_defs)
-            try:
-                async for chunk in stream:
-                    content = chunk.get("content")
-                    tc_deltas = chunk.get("tool_calls")
+        async def _release_after_timeout():
+            await asyncio.sleep(_sync_timeout)
+            if not self._sync_event.is_set():
+                logger.debug("Sync: timeout after %.1fs, releasing text (%d chars buffered)",
+                             _sync_timeout, sum(len(s) for s in self._sync_buffer))
+            self._sync_event.set()
 
-                    if content:
-                        acc_text += content
-                        if not speaking_started:
-                            await self._output.typing(False)
+        timeout_task = asyncio.create_task(_release_after_timeout(), name="sync-timeout")
+
+        try:
+            for round_num in range(self.MAX_TOOL_ROUNDS + 1):
+                # Stream the LLM response — text goes to output, tool_calls are accumulated
+                acc_text = ""
+                raw_tool_calls: list[dict] = []
+                speaking_started = False
+
+                stream = self._llm.stream_think(messages, tools=tool_defs)
+                try:
+                    async for chunk in stream:
+                        content = chunk.get("content")
+                        tc_deltas = chunk.get("tool_calls")
+
+                        if content:
+                            acc_text += content
+
+                            if not self._sync_event.is_set():
+                                self._sync_buffer.append(content)
+                            else:
+                                # First batch after sync: flush buffered deltas
+                                if self._sync_buffer:
+                                    n = len(self._sync_buffer)
+                                    logger.info("Sync: flushing %d buffered text chunks", n)
+                                    await self._output.typing(False)
+                                    self._fsm.transition(AgentState.SPEAKING)
+                                    self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
+                                    speaking_started = True
+                                    for buf_content in self._sync_buffer:
+                                        await self._output._broadcast("on_text_delta", buf_content, capability=ChannelCapability.TEXT_DELTA)
+                                    self._sync_buffer.clear()
+                                    # Release buffered audio now that text has been sent
+                                    await self._drain_audio_pending()
+
+                                if not speaking_started:
+                                    await self._output.typing(False)
+                                    self._fsm.transition(AgentState.SPEAKING)
+                                    self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
+                                    speaking_started = True
+
+                                await self._output._broadcast("on_text_delta", content, capability=ChannelCapability.TEXT_DELTA)
+
+                            sentence = self._sentence_buf.feed(content)
+                            if sentence and self._tts:
+                                self._start_tts_stream(sentence)
+
+                        if tc_deltas:
+                            self._merge_stream_tool_calls(raw_tool_calls, tc_deltas)
+                except asyncio.CancelledError:
+                    # Propagate cancellation — cleanup happens in process()
+                    raise
+
+                # Flush remaining text in sentence buffer
+                if self._tts:
+                    remaining = self._sentence_buf.flush()
+                    if remaining:
+                        self._start_tts_stream(remaining)
+
+                # If tool calls were detected, execute them and loop
+                if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
+                    await self._output.typing(False)
+                    self._fsm.transition(AgentState.EXECUTING)
+                    self._bus.post(EventType.STATE_CHANGE, {"state": "executing"}, priority=EventPriority.STATE_CHANGE)
+
+                    normalized = self._normalize_tool_calls(raw_tool_calls)
+                    assistant_entry: dict = {"role": "assistant", "content": acc_text or None}
+                    if normalized:
+                        assistant_entry["tool_calls"] = normalized
+                    messages.append(assistant_entry)
+
+                    for tc in normalized:
+                        func_name = tc["function"]["name"]
+                        try:
+                            args = json.loads(tc["function"]["arguments"])
+                        except (json.JSONDecodeError, KeyError):
+                            args = {}
+                        logger.info("Executing tool: %s(%s)", func_name, args)
+                        tool_result = await self._tools.execute(func_name, args)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", "unknown"),
+                            "content": tool_result,
+                        })
+
+                    self._fsm.transition(AgentState.THINKING)
+                    self._bus.post(EventType.STATE_CHANGE, {"state": "thinking"}, priority=EventPriority.STATE_CHANGE)
+                    await self._output.typing(True)
+                    continue
+
+                # Final answer — finalize the message
+                if speaking_started:
+                    if acc_text.strip():
+                        if self._emotion:
+                            self._emotion.analyze_assistant(acc_text)
+                        msg = _MessageObj(content=acc_text)
+                        await self._output.send(msg)
+                        self._session.add_message("assistant", acc_text)
+                        asyncio.create_task(self._after_response(user_message, acc_text), name="after-response")
+                else:
+                    await self._output.typing(False)
+                    if acc_text.strip():
+                        # Flush buffered deltas so browser DOM is built before finalize
+                        if self._sync_buffer:
                             self._fsm.transition(AgentState.SPEAKING)
                             self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
-                            speaking_started = True
+                            for buf_content in self._sync_buffer:
+                                await self._output._broadcast("on_text_delta", buf_content, capability=ChannelCapability.TEXT_DELTA)
+                            self._sync_buffer.clear()
+                            await self._drain_audio_pending()
+                        if self._emotion:
+                            self._emotion.analyze_assistant(acc_text)
+                        msg = _MessageObj(content=acc_text)
+                        await self._output.send(msg)
+                        self._session.add_message("assistant", acc_text)
+                        asyncio.create_task(self._after_response(user_message, acc_text), name="after-response")
+                await self._transition_idle()
+                return
 
-                        await self._output._broadcast("on_text_delta", content, capability=ChannelCapability.TEXT_DELTA)
-
-                        sentence = self._sentence_buf.feed(content)
-                        if sentence and self._tts:
-                            self._start_tts_stream(sentence)
-
-                    if tc_deltas:
-                        self._merge_stream_tool_calls(raw_tool_calls, tc_deltas)
-            except asyncio.CancelledError:
-                # Propagate cancellation — cleanup happens in process()
-                raise
-
-            # Flush remaining text in sentence buffer
-            if self._tts:
-                remaining = self._sentence_buf.flush()
-                if remaining:
-                    self._start_tts_stream(remaining)
-
-            # If tool calls were detected, execute them and loop
-            if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
+        finally:
+            timeout_task.cancel()
+            # Flush any remaining buffered text (e.g. response too short for TTS)
+            if self._sync_buffer:
                 await self._output.typing(False)
-                self._fsm.transition(AgentState.EXECUTING)
-                self._bus.post(EventType.STATE_CHANGE, {"state": "executing"}, priority=EventPriority.STATE_CHANGE)
-
-                normalized = self._normalize_tool_calls(raw_tool_calls)
-                assistant_entry: dict = {"role": "assistant", "content": acc_text or None}
-                if normalized:
-                    assistant_entry["tool_calls"] = normalized
-                messages.append(assistant_entry)
-
-                for tc in normalized:
-                    func_name = tc["function"]["name"]
-                    try:
-                        args = json.loads(tc["function"]["arguments"])
-                    except (json.JSONDecodeError, KeyError):
-                        args = {}
-                    logger.info("Executing tool: %s(%s)", func_name, args)
-                    tool_result = await self._tools.execute(func_name, args)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.get("id", "unknown"),
-                        "content": tool_result,
-                    })
-
-                self._fsm.transition(AgentState.THINKING)
-                self._bus.post(EventType.STATE_CHANGE, {"state": "thinking"}, priority=EventPriority.STATE_CHANGE)
-                await self._output.typing(True)
-                continue
-
-            # Final answer — finalize the message
-            if speaking_started:
-                if acc_text.strip():
-                    if self._emotion:
-                        self._emotion.analyze_assistant(acc_text)
-                    msg = _MessageObj(content=acc_text)
-                    await self._output.send(msg)
-                    self._session.add_message("assistant", acc_text)
-                    asyncio.create_task(self._after_response(user_message, acc_text), name="after-response")
-            else:
-                await self._output.typing(False)
-                if acc_text.strip():
-                    msg = _MessageObj(content=acc_text)
-                    await self._output.send(msg)
-                    self._session.add_message("assistant", acc_text)
-                    asyncio.create_task(self._after_response(user_message, acc_text), name="after-response")
-            await self._transition_idle()
-            return
+                for buf_content in self._sync_buffer:
+                    await self._output._broadcast("on_text_delta", buf_content, capability=ChannelCapability.TEXT_DELTA)
+                self._sync_buffer.clear()
+            # Always drain buffered audio — bg task may have accumulated chunks
+            # that arrived after the else-branch cleared sync_buffer
+            await self._drain_audio_pending()
 
     async def _after_response(self, user_message: str, assistant_response: str) -> None:
         """Post-response hooks: consolidate memory, save session."""
@@ -213,9 +280,21 @@ class CognitiveLoop:
                 return
             try:
                 char_name = self._prompt._character.name
+                first_chunk = True
                 async for chunk in self._tts.synthesize_stream(sentence, character=char_name):
-                    await self._output.audio_chunk(chunk, stream_id=_sid)
-                await self._output.audio_end(_sid)
+                    if first_chunk:
+                        first_chunk = False
+                        if not self._sync_event.is_set():
+                            logger.debug("Sync: first TTS chunk arrived, releasing text")
+                        self._sync_event.set()
+                    if not self._audio_flow:
+                        self._audio_pending.append(('chunk', chunk, _sid))
+                    else:
+                        await self._output.audio_chunk(chunk, stream_id=_sid)
+                if not self._audio_flow:
+                    self._audio_pending.append(('end', None, _sid))
+                else:
+                    await self._output.audio_end(_sid)
             except asyncio.CancelledError:
                 pass  # Interrupted by newer speech
             except Exception:
@@ -227,6 +306,27 @@ class CognitiveLoop:
 
         # Clean up completed tasks
         self._tts_tasks = [t for t in self._tts_tasks if not t.done()]
+
+    async def _drain_audio_pending(self) -> None:
+        """Send all buffered audio chunks + end markers, then enable direct flow.
+
+        Always sets _audio_flow=True so future TTS chunks bypass the buffer,
+        even if the buffer is currently empty (TTS may not have started yet).
+        """
+        self._audio_flow = True
+        if not self._audio_pending:
+            logger.debug("Sync: audio drain — buffer empty, flow enabled")
+            return
+        chunks = sum(1 for kind, _, _ in self._audio_pending if kind == 'chunk')
+        ends = sum(1 for kind, _, _ in self._audio_pending if kind == 'end')
+        logger.info("Sync: draining %d audio chunks + %d end(s)", chunks, ends)
+        for item in self._audio_pending:
+            kind, data, sid = item
+            if kind == 'chunk':
+                await self._output.audio_chunk(data, stream_id=sid)
+            elif kind == 'end':
+                await self._output.audio_end(sid)
+        self._audio_pending.clear()
 
     async def _synthesize_sentence(self, sentence: str) -> None:
         """Legacy non-streaming TTS — kept for backward compat with tests."""
@@ -241,12 +341,21 @@ class CognitiveLoop:
 
     async def _transition_idle(self) -> None:
         await asyncio.sleep(0.1)
+        # If sync held text and never fired (no TTS / no timeout yet),
+        # FSM may still be in THINKING. Step through SPEAKING first.
+        if self._fsm.state == AgentState.THINKING:
+            self._fsm.transition(AgentState.SPEAKING)
+            self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
         self._fsm.transition(AgentState.IDLE)
         self._bus.post(EventType.STATE_CHANGE, {"state": "idle"}, priority=EventPriority.STATE_CHANGE)
 
     async def _handle_interrupt(self) -> None:
         """Clean up after interruption — stop output, clear buffers, return to IDLE."""
         self._sentence_buf.reset()
+        self._sync_buffer.clear()
+        self._sync_event.clear()
+        self._audio_pending.clear()
+        self._audio_flow = False
         for t in self._tts_tasks:
             if not t.done():
                 t.cancel()

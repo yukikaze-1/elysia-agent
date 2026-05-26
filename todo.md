@@ -89,19 +89,18 @@
 
 ---
 
-## 已知问题
+### 文字/语音同步 (2026-05-26)
 
-- **分句策略**: 短句（如"好嘞！"3字符）虽满足 min_chunk 但仍太短，TTS 启动/停止开销占比高。`～` 不是分隔符，导致 `\n` 前超长句。需要：`～` 加入分隔符，或提高 hold 阈值为 5-6 字符。
-- **文字和语音不同步**: LLM token 到达即显示，但 TTS 合成有延迟，首句音频晚于首字显示。预期：首字显示时第一句音频同时播放。需要：在首句 TTS chunk 到达前 hold 文字显示，或预合成。
-- **STT 识别效果**: SenseVoice 非流式（整句识别），RMS VAD 在嘈杂环境误触发。需要：更好的 VAD（webrtcvad），或持续监听 + 唤醒词模型。
+| 任务 | 说明 |
+|------|------|
+| 同步文字与语音 | Server: `_sync_event` + `_audio_pending` 双向缓冲，首句 TTS chunk 触发释放，5s timeout。Browser: `textQueue` hold delta 直到 `Audio.play()` resolve，8s timeout。Sync 阶段 INFO 日志 + log propagation 修复。 |
 
----
-
-## 待做（可选）
+## 待做（按优先级）
 
 - **prompt 模板接入**: 将 `prompt/` 下的多层认知模板 (Brain/Amygdala/ActiveSpeak/Reflector) 接入 `PromptAssembler`/`CognitiveLoop`，实现双轨思维（inner_voice + public_reply）、Amygdala 情绪感知、ActiveSpeak 主动说话决策
+- **分句策略改进**: `～` 加入分隔符，提高 min_chunk 阈值为 5-6 字符，减少 TTS 短句开销
+- **STT 识别改进**: webrtcvad 替代 RMS VAD，减少嘈杂环境误触发
 - 唤醒词检测（openWakeWord 集成）
-- 更精细的 VAD（webrtcvad 替代 RMS）
 - Web 前端: 更好的角色立绘/动画
 - 单元测试补充 server.py 部分（当前通过集成覆盖）
 - 性能 profiling + 优化
