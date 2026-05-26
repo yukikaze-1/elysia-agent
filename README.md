@@ -1,110 +1,142 @@
 # Elysia Agent
 
-桌面虚拟角色 AI 伴侣。三层架构：L0 基础设施（Module/）→ L1 认知控制（core/）→ L2 记忆工具（core/memory/）。
+桌面 AI 伴侣，支持语音对话。六阶段全部完成。
 
 ## 快速开始
 
 ```bash
 conda activate Elysia
-
-# 设置 API Key
 export DEEPSEEK_API_KEY="sk-..."
 
-# 交互模式
+# 交互模式 (stdin)
 python demo.py
 
 # 单次对话
 python demo.py --once "你好"
 
-# 详细日志（显示 FSM 转换、情绪变化等）
+# WebSocket 服务器模式（浏览器访问 http://localhost:8765）
+python demo.py --server
+
+# 启用 TTS + STT
+DEMO_ENABLE_TTS=1 python demo.py --server --stt
+
+# 详细日志
 python demo.py --verbose
 ```
 
-需要 MongoDB + Milvus 获得持久化记忆，否则自动降级为内存模式。
+## 架构
+
+三层 Protocol-Registry-Backend：
+
+```
+L0  Module/        无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output
+L1  core/          认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
+L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegistry
+```
+
+数据流：
+
+```
+用户输入 → EventBus → FSM(THINKING) → PromptAssembler(角色+记忆)
+  → CognitiveLoop.stream_think()     # 流式 LLM + 工具调用检测
+    ├── text delta → Console/WS        # 逐 token 显示
+    ├── SentenceBuffer → TTS 流式 → 浏览器播放
+    └── tool_calls → EXECUTING → 回注
+  → EmotionEngine(心情) → Consolidator(记忆沉淀, 后台) → IDLE
+```
+
+## 功能
+
+| 功能 | 状态 |
+|------|------|
+| 流式对话 (Token 级延迟) | done |
+| 中断 + 恢复 | done |
+| 情绪检测 + 表情推送 | done |
+| MongoDB/Milvus 持久化 (自动降级) | done |
+| 记忆自动沉淀 (LLM 提取事实) | done |
+| HuggingFace embedding 离线加载 | done |
+| WebSocket 服务器 + HTML 客户端 | done |
+| 麦克风采集 + RMS VAD | done |
+| STT 语音识别 (SenseVoice) | done |
+| TTS 流式合成 (GPT-SoVits) + 句队列 + 顺序播放 | done |
+| 分句策略 (连续分隔符合并) | done |
+| 聊天历史 localStorage 持久化 | done |
+| 配置文件 (config.yaml) | done |
 
 ## 项目结构
 
 ```
 Agent/
-├── demo.py                    # 入口
-├── Architecture.md            # 架构设计
-├── todo.md                    # 开发计划
+├── demo.py              # 入口
+├── config.yaml           # 总配置
+├── Architecture.md       # 架构设计
+├── todo.md               # 开发计划 + 已知问题
+├── test_plan.md          # 测试计划
 │
-├── Module/                    # L0 基础设施层
-│   ├── llm/                   # DeepSeek / OpenAI / Ollama
-│   ├── stt/                   # SenseVoice
-│   ├── tts/                   # GPT-SoVits
-│   ├── embedding/             # HuggingFace / OpenAI
-│   ├── output/                # Console + WebSocket 多通道输出
-│   ├── config/                # YAML + env 配置系统
-│   ├── logger/                # 日志工厂 (plain / JSON)
-│   ├── prompt/                # Jinja2 模板引擎
-│   ├── schema/                # 共享数据模型
-│   ├── database/              # Milvus / MongoDB / GraphDB
-│   └── bench/                 # 延迟基准
+├── Module/               # L0 基础设施层
+│   ├── llm/              # DeepSeek / OpenAI / Ollama
+│   ├── stt/              # SenseVoice
+│   ├── tts/              # GPT-SoVits
+│   ├── embedding/        # HuggingFace / OpenAI
+│   ├── output/           # Console + WebSocket 多通道
+│   ├── config/           # YAML + env 配置系统
+│   ├── logger/           # 日志工厂
+│   ├── prompt/           # Jinja2 模板
+│   ├── schema/           # 共享数据模型
+│   ├── database/         # Milvus / MongoDB / GraphDB
+│   ├── input/            # AudioBuffer + WebSocket server
+│   └── bench/            # 延迟基准
 │
-├── core/                      # L1 认知控制 + L2 记忆工具
-│   ├── event_bus.py           # 优先级事件总线 (INTERRUPT > STATE > NORMAL)
-│   ├── agent_fsm.py           # 五状态机 (IDLE/THINKING/EXECUTING/SPEAKING/INTERRUPTED)
-│   ├── cognitive_loop.py      # ReAct 调度器 (流式 + tool_call 检测)
-│   ├── llm_adapter.py         # LLM 适配器 (真实 API + mock 降级)
-│   ├── prompt_assembler.py    # 系统提示词组装 (角色 + 记忆 + 会话)
-│   ├── emotion_engine.py      # 情绪引擎 (关键词检测 + 衰减)
-│   ├── sentence_buffer.py     # 分句缓冲 (供 TTS)
-│   ├── tool_registry.py       # OpenAI Tool Schema 工具注册
-│   ├── consolidator.py        # 记忆自动沉淀 (LLM 提取事实)
-│   ├── idle_monitor.py        # 空闲监控 (唤醒词 + 主动搭话)
-│   ├── character_config.py    # YAML 角色配置
-│   ├── log_setup.py           # 日志系统配置
-│   ├── demo_agent.py          # 组件组装
-│   ├── test_phase1.py         # Phase 1 测试 (38)
-│   ├── test_phase2.py         # Phase 2 测试 (48)
+├── core/                 # L1 认知控制 + L2 记忆工具
+│   ├── event_bus.py      # 优先级事件总线
+│   ├── agent_fsm.py      # 五状态机
+│   ├── cognitive_loop.py # ReAct 调度器
+│   ├── llm_adapter.py    # LLM 适配器 (真实 + mock)
+│   ├── prompt_assembler.py # 提示词组装
+│   ├── emotion_engine.py # 情绪引擎
+│   ├── sentence_buffer.py # 分句缓冲
+│   ├── tool_registry.py  # 工具注册 (OpenAI Schema)
+│   ├── consolidator.py   # 记忆沉淀
+│   ├── idle_monitor.py   # 空闲监控
+│   ├── character_config.py # 角色配置
+│   ├── log_setup.py      # 日志系统
+│   ├── demo_agent.py     # 组件组装
+│   ├── test_phase1.py    # Phase 1 测试 (38)
+│   ├── test_phase2.py    # Phase 2 测试 (48)
+│   ├── test_phase3.py    # Phase 3 测试 (70)
 │   └── memory/
-│       ├── session.py         # 会话上下文 (MongoDB + 内存降级)
-│       └── long_term.py       # 长期记忆 (Milvus + Embedding + 内存降级)
+│       ├── session.py    # 会话上下文
+│       └── long_term.py  # 长期记忆
 │
 ├── character/
-│   ├── elysia.yaml            # 角色定义
-│   └── system.j2              # 系统提示词模板
+│   ├── elysia.yaml       # 角色定义
+│   └── system.j2         # 系统提示词模板 (当前使用)
 │
-└── log/                       # 日志输出 (gitignore)
-    ├── http.log               # HTTP 请求/响应
-    ├── mongo.log              # MongoDB
-    ├── milvus.log             # Milvus
-    └── embedding.log          # 模型加载
-```
-
-## 数据流
-
-```
-用户输入 → EventBus(Priority 2) → AgentFSM(THINKING)
-  → PromptAssembler(角色 + 会话 + 长期记忆搜索)
-  → CognitiveLoop.stream_think()      # 结构化流式调用 LLM
-    ├── text delta → ConsoleChannel    # 逐 token 显示
-    ├── tool_calls → EXECUTING         # ReAct 循环
-    │     → ToolRegistry.execute → 结果回注
-    └── 流结束 → SPEAKING → IDLE
-      ├── EmotionEngine.analyze()      # 更新心情
-      ├── Consolidator.consolidate()   # 提取记忆 (后台)
-      └── SessionMemory.save()         # 持久化 (后台)
+├── prompt/               # 多层认知模板 (待接入)
+│   ├── Brain.j2          #   L1 主脑 — 双轨思维协议
+│   ├── Amygdala.j2       #   L0 潜意识 — 情绪感知
+│   ├── ActiveSpeak.j2    #   L1 主动说话决策
+│   ├── MicroReflector.j2 #   L2 即时反思 — 记忆提取
+│   ├── MacroReflector.j2 #   L2 日终反思 — 日记/情感趋势
+│   └── Utils.j2          #   工具宏
+│
+├── static/
+│   └── index.html        # 浏览器客户端
+│
+└── log/                  # 日志 (gitignore)
 ```
 
 ## 测试
 
 ```bash
-# 全部测试
-python -m pytest core/test_phase1.py core/test_phase2.py -v --asyncio-mode=auto
+# 全部测试 (core + Module) — 使用 conda env 运行
+conda run -n Elysia python -m pytest core/ Module/ -v --asyncio-mode=auto
 
-# 仅单元测试 (无网络)
-python -m pytest core/test_phase1.py core/test_phase2.py -v --asyncio-mode=auto -k "not Integration"
+# 仅 core (不含 Module)
+python -m pytest core/ -v --asyncio-mode=auto
 
-# Module 层测试
+# Module 层
 python -m pytest Module/ -v
 ```
 
-## 环境
-
-- Python 3.12+
-- Conda 环境: `conda activate Elysia`
-- 可选: MongoDB (session 持久化), Milvus (向量搜索)
-- API: DeepSeek API Key (`DEEPSEEK_API_KEY` 环境变量)
+**测试统计**: 197 (core) + 243 (Module) = 440 total

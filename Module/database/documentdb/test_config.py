@@ -25,7 +25,7 @@ class TestDocumentDBFromConfig:
     def test_from_config_passes_params(self, mock_client):
         cfg = DocumentDBConfig(base_url="mongodb://test:27017")
         backend = DocumentDBFactory.from_config("mongodb/testdb", cfg)
-        mock_client.assert_called_once_with("mongodb://test:27017")
+        mock_client.assert_called_once_with("mongodb://test:27017", serverSelectionTimeoutMS=3000)
 
     @patch("Module.database.documentdb.mongodb.AsyncIOMotorClient")
     def test_overrides_take_priority(self, mock_client):
@@ -33,4 +33,4 @@ class TestDocumentDBFromConfig:
         backend = DocumentDBFactory.from_config(
             "mongodb/db", cfg, base_url="mongodb://overridden:27017"
         )
-        mock_client.assert_called_once_with("mongodb://overridden:27017")
+        mock_client.assert_called_once_with("mongodb://overridden:27017", serverSelectionTimeoutMS=3000)

@@ -121,12 +121,15 @@ class TestDatetimeFilter:
             assert result == "[]"
 
 
+_PROMPT_DIR = str(Path(__file__).resolve().parent.parent.parent / "prompt")
+
+
 class TestIntegrationWithRealTemplates:
     """使用项目真实模板进行烟雾测试。"""
 
     def test_render_brain_system_prompt(self):
         """Brain.j2 → BrainSystemPrompt 能正常渲染。"""
-        from core.Paths import PROMPT_DIR
+        PROMPT_DIR = _PROMPT_DIR
 
         pm = PromptManager(str(PROMPT_DIR))
         result = pm.render_macro(
@@ -149,7 +152,7 @@ class TestIntegrationWithRealTemplates:
 
     def test_render_amygdala_prompts(self):
         """Amygdala.j2 的 system + user prompt 能正常渲染。"""
-        from core.Paths import PROMPT_DIR
+        PROMPT_DIR = _PROMPT_DIR
 
         pm = PromptManager(str(PROMPT_DIR))
         system = pm.render_macro(
@@ -173,7 +176,7 @@ class TestIntegrationWithRealTemplates:
 
     def test_render_active_speak_prompt(self):
         """ActiveSpeak.j2 能正常渲染。"""
-        from core.Paths import PROMPT_DIR
+        PROMPT_DIR = _PROMPT_DIR
 
         pm = PromptManager(str(PROMPT_DIR))
         result = pm.render_macro(
@@ -192,7 +195,7 @@ class TestIntegrationWithRealTemplates:
 
     def test_render_reflector_prompts(self):
         """MicroReflector / MacroReflector 的 prompt 能正常渲染。"""
-        from core.Paths import PROMPT_DIR
+        PROMPT_DIR = _PROMPT_DIR
 
         pm = PromptManager(str(PROMPT_DIR))
 

@@ -695,11 +695,16 @@ class TestMemoryStress:
     @pytest.mark.asyncio
     async def test_session_isolation_between_agents(self):
         """Two DemoAgent instances should have independent session memory."""
+        import uuid
         from dotenv import load_dotenv
         load_dotenv()
         from core.demo_agent import DemoAgent
 
+        sid1 = f"test-isolation-{uuid.uuid4()}"
+        sid2 = f"test-isolation-{uuid.uuid4()}"
+
         a1 = DemoAgent()
+        a1._session._session_id = sid1
         await a1.start()
         await a1.process_message("只有agent1知道的消息")
         await asyncio.sleep(3)
@@ -707,6 +712,7 @@ class TestMemoryStress:
         await a1.stop()
 
         a2 = DemoAgent()
+        a2._session._session_id = sid2
         await a2.start()
         a2_msgs = len(a2._session.recent_messages())
         # a2 should start fresh (no session messages from a1)
