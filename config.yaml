@@ -14,3 +14,9 @@ Memory:
 Server:
   host: 0.0.0.0
   port: 8765
+
+TTS:
+  enabled: false            # 替换 DEMO_ENABLE_TTS 环境变量
+
+STT:
+  enabled: false            # 替换 --stt flag 的默认值

@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 class DemoAgent:
     """Complete Agent wired from L0/L1/L2 components."""
 
-    def __init__(self, character_path: str | None = None, config_path: str | None = None):
+    def __init__(self, character_path: str | None = None, config_path: str | None = None,
+                 tts_enabled: bool | None = None):
         # Load config
         cfg = {}
         if config_path:
@@ -46,6 +47,7 @@ class DemoAgent:
         agent_cfg = cfg.get("Agent", {})
         llm_cfg = cfg.get("LLM", {})
         mem_cfg = cfg.get("Memory", {})
+        tts_cfg = cfg.get("TTS", {})
 
         char_path = character_path or agent_cfg.get("character", "character/elysia.yaml")
         self._user_name = agent_cfg.get("user_name", "妖梦")
@@ -72,9 +74,12 @@ class DemoAgent:
         self._llm = LLMAdapter()
         self._prompt = PromptAssembler(self._character, self._session, self._long_term)
 
-        # TTS is disabled by default for the demo (requires GPT-SoVits server at localhost:9880).
+        # TTS is disabled by default (requires GPT-SoVits server at localhost:9880).
+        # Enable via config.yaml (TTS.enabled: true) or CLI --tts flag.
+        # CLI flag overrides config: tts_enabled is None if not passed, True/False if passed.
+        _tts_on = tts_enabled if tts_enabled is not None else tts_cfg.get("enabled", False)
         self._tts = None
-        if __import__("os").getenv("DEMO_ENABLE_TTS") == "1":
+        if _tts_on:
             from Module.tts import TTSFactory
             try:
                 self._tts = TTSFactory.create("gpt-sovits/default")

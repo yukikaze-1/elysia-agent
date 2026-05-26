@@ -21,8 +21,12 @@ python demo.py --once "你好"
 # WebSocket 服务器模式（浏览器访问 http://localhost:8765）
 python demo.py --server
 
-# 启用 TTS + STT
-DEMO_ENABLE_TTS=1 python demo.py --server --stt
+# 启用 TTS + STT（或在 config.yaml 中设置 TTS.enabled / STT.enabled）
+python demo.py --server --tts --stt
+
+# Debug 面板（浏览器访问 http://localhost:8765/debug）
+python demo.py --server
+# 然后打开 http://localhost:8765/debug
 
 # 详细日志
 python demo.py --verbose
@@ -63,9 +67,11 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | 麦克风采集 + RMS VAD | done |
 | STT 语音识别 (SenseVoice) | done |
 | TTS 流式合成 (GPT-SoVits) + 句队列 + 顺序播放 | done |
+| 文字/语音同步 (双层缓冲: 服务端 + 浏览器) | done |
 | 分句策略 (连续分隔符合并) | done |
 | 聊天历史 localStorage 持久化 | done |
-| 配置文件 (config.yaml) | done |
+| 配置驱动入口 (CLI > config.yaml > 默认值) | done |
+| /debug 内部状态面板 (记忆/工具/沉淀/连接) | done |
 
 ## 项目结构
 

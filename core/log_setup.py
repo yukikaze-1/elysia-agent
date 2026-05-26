@@ -55,8 +55,8 @@ def setup(verbose: bool = False) -> None:
         logger.setLevel(app_level)
         logger.handlers.clear()
         logger.addHandler(stderr_handler)
-        # Keep propagate=True so child loggers (core.cognitive_loop etc.)
-        # inherit this handler and level. They have no own handlers.
+        # Keep propagate=True so child loggers' messages flow up through this
+        # handler. Child loggers (core.cognitive_loop etc.) have no own handlers.
 
     # Torch warnings → file
     _file_logger("torch", "torch.log", logging.WARNING)

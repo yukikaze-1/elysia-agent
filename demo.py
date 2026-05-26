@@ -43,9 +43,11 @@ from core.log_setup import setup as setup_logging
 from core.demo_agent import DemoAgent
 
 
-async def run_once(message: str, character_path: str | None, config_path: str | None) -> None:
+async def run_once(message: str, character_path: str | None, config_path: str | None,
+                   tts_enabled: bool | None = None) -> None:
     """Single-shot: process one message and exit."""
-    agent = DemoAgent(character_path=character_path, config_path=config_path)
+    agent = DemoAgent(character_path=character_path, config_path=config_path,
+                      tts_enabled=tts_enabled)
     await agent.start()
     print(f"\n你: {message}")
     print(f"{agent._character.name}: ", end="", flush=True)
@@ -58,9 +60,11 @@ async def run_once(message: str, character_path: str | None, config_path: str | 
     await agent.stop()
 
 
-async def run_interactive(character_path: str | None, config_path: str | None) -> None:
+async def run_interactive(character_path: str | None, config_path: str | None,
+                          tts_enabled: bool | None = None) -> None:
     """Interactive REPL mode."""
-    agent = DemoAgent(character_path=character_path, config_path=config_path)
+    agent = DemoAgent(character_path=character_path, config_path=config_path,
+                      tts_enabled=tts_enabled)
     await agent.start()
 
     print("输入消息开始对话，/quit 退出，Ctrl+C 打断\n")
@@ -86,14 +90,47 @@ async def run_interactive(character_path: str | None, config_path: str | None) -
     print("\n再见！")
 
 
+def _load_config_defaults(config_path: str) -> dict:
+    """Load config.yaml to use as CLI defaults. Returns empty dict on failure."""
+    try:
+        import yaml
+        p = Path(config_path)
+        if p.is_file():
+            cfg = yaml.safe_load(p.read_text("utf-8")) or {}
+            sv = cfg.get("Server", {})
+            tts = cfg.get("TTS", {})
+            stt = cfg.get("STT", {})
+            return {
+                "host": sv.get("host", "0.0.0.0"),
+                "port": sv.get("port", 8765),
+                "tts": tts.get("enabled", False),
+                "stt": stt.get("enabled", False),
+            }
+    except Exception:
+        pass
+    return {}
+
+
 def main():
+    # Parse --config first so we can read defaults from it
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--config", "-c", type=str, default="config.yaml")
+    pre_args, _ = pre_parser.parse_known_args()
+
+    cfg_defaults = _load_config_defaults(pre_args.config)
+
     parser = argparse.ArgumentParser(description="Elysia Agent Demo")
     parser.add_argument("--once", type=str, metavar="MSG", help="单次对话模式")
     parser.add_argument("--server", "-s", action="store_true", help="WebSocket 服务器模式")
-    parser.add_argument("--host", type=str, default="0.0.0.0", help="Server bind address (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8765, help="Server port (default: 8765)")
-    parser.add_argument("--stt", action="store_true", help="Enable STT for audio input (requires SenseVoice)")
-    parser.add_argument("--character", type=str, default=None, help="角色配置文件路径 (默认 config.yaml)")
+    parser.add_argument("--host", type=str, default=cfg_defaults.get("host", "0.0.0.0"),
+                        help="Server bind address")
+    parser.add_argument("--port", type=int, default=cfg_defaults.get("port", 8765),
+                        help="Server port")
+    parser.add_argument("--tts", action="store_true", default=cfg_defaults.get("tts", False),
+                        help="Enable TTS (requires GPT-SoVits)")
+    parser.add_argument("--stt", action="store_true", default=cfg_defaults.get("stt", False),
+                        help="Enable STT (requires SenseVoice)")
+    parser.add_argument("--character", type=str, default=None, help="角色配置文件路径")
     parser.add_argument("--config", "-c", type=str, default="config.yaml", help="总配置文件路径")
     parser.add_argument("--verbose", "-v", action="store_true", help="详细日志")
     args = parser.parse_args()
@@ -101,14 +138,15 @@ def main():
     setup_logging(args.verbose)
 
     if args.server:
-        agent = DemoAgent(character_path=args.character, config_path=args.config)
+        agent = DemoAgent(character_path=args.character, config_path=args.config,
+                          tts_enabled=args.tts)
         asyncio.run(agent.run_server(
             host=args.host, port=args.port, stt_enabled=args.stt,
         ))
     elif args.once:
-        asyncio.run(run_once(args.once, args.character, args.config))
+        asyncio.run(run_once(args.once, args.character, args.config, tts_enabled=args.tts))
     else:
-        asyncio.run(run_interactive(args.character, args.config))
+        asyncio.run(run_interactive(args.character, args.config, tts_enabled=args.tts))
 
 
 if __name__ == "__main__":

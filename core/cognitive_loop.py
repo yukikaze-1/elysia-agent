@@ -102,19 +102,19 @@ class CognitiveLoop:
 
         await self._output.typing(True)
 
-        # Text/audio sync: hold text deltas until first TTS audio chunk arrives.
-        # Without TTS, release immediately. A timeout prevents holding text forever.
+        # 文本/语音同步：首句 TTS 音频到达前，暂存 text delta 不发送
+        # 无 TTS 时立即释放。超时作为安全网防止永久持有。
         _sync_timeout = 5.0
         self._sync_event.clear()
         self._sync_buffer.clear()
         if not self._tts:
             self._sync_event.set()
-            logger.debug("Sync: TTS disabled, text flows freely")
+            logger.debug("Sync: TTS 未启用，文本直接放行")
 
         async def _release_after_timeout():
             await asyncio.sleep(_sync_timeout)
             if not self._sync_event.is_set():
-                logger.debug("Sync: timeout after %.1fs, releasing text (%d chars buffered)",
+                logger.debug("Sync: %.1fs 超时，释放文本 (%d 字符缓冲)",
                              _sync_timeout, sum(len(s) for s in self._sync_buffer))
             self._sync_event.set()
 
@@ -142,7 +142,7 @@ class CognitiveLoop:
                                 # First batch after sync: flush buffered deltas
                                 if self._sync_buffer:
                                     n = len(self._sync_buffer)
-                                    logger.info("Sync: flushing %d buffered text chunks", n)
+                                    logger.info("Sync: 刷新 %d 个缓冲文本块", n)
                                     await self._output.typing(False)
                                     self._fsm.transition(AgentState.SPEAKING)
                                     self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
@@ -285,7 +285,7 @@ class CognitiveLoop:
                     if first_chunk:
                         first_chunk = False
                         if not self._sync_event.is_set():
-                            logger.debug("Sync: first TTS chunk arrived, releasing text")
+                            logger.debug("Sync: 首块 TTS 音频到达，释放文本")
                         self._sync_event.set()
                     if not self._audio_flow:
                         self._audio_pending.append(('chunk', chunk, _sid))
@@ -308,18 +308,18 @@ class CognitiveLoop:
         self._tts_tasks = [t for t in self._tts_tasks if not t.done()]
 
     async def _drain_audio_pending(self) -> None:
-        """Send all buffered audio chunks + end markers, then enable direct flow.
+        """发送所有缓冲的音频块 + 结束标记，然后启用直通模式。
 
-        Always sets _audio_flow=True so future TTS chunks bypass the buffer,
-        even if the buffer is currently empty (TTS may not have started yet).
+        无论当前缓冲是否为空，始终将 _audio_flow 设为 True，
+        确保后续 TTS 块不再进入缓冲（TTS 可能尚未开始）。
         """
         self._audio_flow = True
         if not self._audio_pending:
-            logger.debug("Sync: audio drain — buffer empty, flow enabled")
+            logger.debug("Sync: 音频排空 — 缓冲为空，已启用直通")
             return
         chunks = sum(1 for kind, _, _ in self._audio_pending if kind == 'chunk')
         ends = sum(1 for kind, _, _ in self._audio_pending if kind == 'end')
-        logger.info("Sync: draining %d audio chunks + %d end(s)", chunks, ends)
+        logger.info("Sync: 排空 %d 音频块 + %d 结束标记", chunks, ends)
         for item in self._audio_pending:
             kind, data, sid = item
             if kind == 'chunk':

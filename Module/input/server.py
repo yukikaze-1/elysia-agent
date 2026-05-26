@@ -51,6 +51,19 @@ def create_app(
                 return web.FileResponse(index_path)
             app.router.add_get("/", index_handler)
 
+            # Debug page + API
+            debug_path = _STATIC_DIR / "debug.html"
+            if debug_path.is_file():
+                async def debug_handler(_request: web.Request) -> web.FileResponse:
+                    return web.FileResponse(debug_path)
+                app.router.add_get("/debug", debug_handler)
+
+            async def debug_api_handler(request: web.Request) -> web.Response:
+                from core.debug_info import collect, asdict
+                info = await collect(request.app["agent"])
+                return web.json_response(asdict(info))
+            app.router.add_get("/debug/api", debug_api_handler)
+
     return app
 
 

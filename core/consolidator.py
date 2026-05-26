@@ -34,6 +34,7 @@ class MemoryConsolidator:
         self._llm = llm
         self._memory = memory
         self._character_name = character_name
+        self._history: list[dict] = []  # recent consolidation results
 
     async def consolidate(self, user_message: str, assistant_response: str) -> list[dict]:
         """Extract key facts from a turn and store them. Returns extracted items."""
@@ -63,6 +64,11 @@ class MemoryConsolidator:
                     source="consolidation",
                 )
                 logger.debug("Consolidated: [%s] %s", item_type, content[:60])
+
+        for item in items:
+            self._history.append({"type": item.get("type", "?"), "content": item.get("content", "")})
+        if len(self._history) > 20:
+            self._history = self._history[-20:]
 
         return items
 

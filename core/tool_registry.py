@@ -15,6 +15,7 @@ class ToolRegistry:
 
     def __init__(self):
         self._tools: dict[str, tuple[dict, ToolFunc, dict]] = {}
+        self._history: list[dict] = []  # recent execute() calls
 
     def register(self, name: str, description: str, parameters: dict, func: ToolFunc) -> None:
         schema = {
@@ -42,9 +43,17 @@ class ToolRegistry:
         try:
             coerced = self._coerce(name, arguments)
             result = await func(**coerced)
-            return str(result)
+            result_str = str(result)
+            self._history.append({"name": name, "args": coerced, "result": result_str})
+            if len(self._history) > 20:
+                self._history = self._history[-20:]
+            return result_str
         except Exception as e:
-            return f"Error executing '{name}': {e}"
+            err_msg = f"Error executing '{name}': {e}"
+            self._history.append({"name": name, "args": arguments, "error": str(e)})
+            if len(self._history) > 20:
+                self._history = self._history[-20:]
+            return err_msg
 
     def _coerce(self, name: str, arguments: dict) -> dict:
         """Coerce argument values based on the tool's parameter schema."""

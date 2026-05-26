@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Elysia Debug</title>
+<style>
+:root {
+  --bg: #0f0f1a; --surface: #1a1a2e; --border: #2a2a4a;
+  --text: #ddd; --muted: #888; --accent: #e94560; --green: #4caf50;
+  --warn: #ff9800; --red: #f44336;
+  --radius: 8px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Segoe UI', system-ui, monospace; background: var(--bg);
+  color: var(--text); padding: 20px; max-width: 1100px; margin: 0 auto;
+  font-size: 13px; line-height: 1.5;
+}
+h1 { font-size: 18px; margin-bottom: 4px; }
+.sub { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 14px;
+}
+.card h2 {
+  font-size: 13px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--accent); margin-bottom: 8px; border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+.card-wide { grid-column: 1 / -1; }
+.row { display: flex; justify-content: space-between; padding: 2px 0; }
+.label { color: var(--muted); }
+.value { font-weight: 500; max-width: 70%; text-align: right; word-break: break-all; }
+.ok { color: var(--green); }
+.fail { color: var(--red); }
+.warn { color: var(--warn); }
+.list-item {
+  padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 12px;
+}
+.list-item:last-child { border-bottom: none; }
+.role-tag {
+  display: inline-block; padding: 1px 5px; border-radius: 3px;
+  font-size: 10px; font-weight: 600; margin-right: 4px;
+}
+.role-tag.user { background: #1a3a5c; color: #6af; }
+.role-tag.assistant { background: #2a1a3a; color: #f6a; }
+.type-tag {
+  display: inline-block; padding: 1px 5px; border-radius: 3px;
+  font-size: 10px; font-weight: 600; margin-right: 4px;
+  background: #1a2a1a; color: var(--green);
+}
+.tool-name { color: var(--warn); font-weight: 600; }
+.tool-args { color: var(--muted); font-size: 11px; }
+.tool-result { color: var(--text); }
+.tool-error { color: var(--red); }
+.empty { color: var(--muted); font-style: italic; padding: 4px 0; }
+#error-banner {
+  display: none; background: var(--red); color: white; padding: 8px 14px;
+  border-radius: var(--radius); margin-bottom: 12px; font-size: 12px;
+}
+#updated { font-size: 11px; color: var(--muted); }
+.header { display: flex; justify-content: space-between; align-items: flex-start; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
+</style>
+</head>
+<body>
+
+<div id="error-banner"></div>
+
+<div class="header">
+  <div>
+    <h1>Elysia Debug</h1>
+    <div class="sub">内部状态监控 — <span id="updated">等待数据...</span></div>
+  </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+const POLL_MS = 2000;
+let timer = null;
+
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function ok(v) { return v ? '<span class="ok">&#10003;</span>' : '<span class="fail">&#10007;</span>'; }
+function trunc(s, n) { return s && s.length > n ? s.slice(0,n)+'…' : s||''; }
+
+function render(info) {
+  document.getElementById('updated').textContent = new Date().toLocaleTimeString();
+  document.getElementById('error-banner').style.display = 'none';
+
+  const cards = [
+    // Row 1: System | Memory
+    [
+      { title:'System', wide:false, rows:[
+        ['FSM State', `<span class="${info.fsm_state==='idle'?'ok':'warn'}">${info.fsm_state}</span>`],
+        ['Previous', info.fsm_previous||'—'],
+        ['Processing', info.processing ? '<span class="warn">yes</span>' : '<span class="ok">no</span>'],
+        ['LLM Model', info.llm_model + (info.llm_mock ? ' <span class="warn">MOCK</span>' : '')],
+        ['TTS', ok(info.tts_ok)],
+        ['WebSocket Clients', info.ws_clients],
+      ]},
+      { title:'Memory', wide:false, rows:[
+        ['Session Messages', info.session_messages],
+        ['Long-term Entries', info.lt_count],
+        ['MongoDB', ok(info.mongodb_ok)],
+        ['Milvus', ok(info.milvus_ok)],
+        ['Embedding', ok(info.embedding_ok)],
+        ['Character', info.character_name + ' (' + (info.character_traits||[]).join(', ') + ')'],
+      ]},
+    ],
+    // Row 2: Session | Long-term
+    [
+      { title:'Recent Session', wide:false, items: (info.session_recent||[]).map(m =>
+        `<span class="role-tag ${m.role}">${m.role}</span>${esc(trunc(m.content,90))}`
+      )},
+      { title:'Long-term Memory', wide:false, items: (info.lt_recent||[]).map(e =>
+        `<span class="type-tag">${e.metadata?.type||'?'}</span>${esc(trunc(e.text,90))}`
+      )},
+    ],
+    // Row 3: Tools | Consolidation
+    [
+      { title:'Tool History', wide:false, items: (info.tool_history||[]).map(t =>
+        (t.error
+          ? `<span class="tool-name">${esc(t.name)}</span> <span class="tool-args">${esc(JSON.stringify(t.args))}</span><br><span class="tool-error">✗ ${esc(t.error)}</span>`
+          : `<span class="tool-name">${esc(t.name)}</span> <span class="tool-args">${esc(JSON.stringify(t.args))}</span><br><span class="tool-result">→ ${esc(trunc(t.result||'',120))}</span>`
+        )
+      )},
+      { title:'Consolidation', wide:false, items: (info.consolidation_history||[]).map(c =>
+        `<span class="type-tag">${esc(c.type||'?')}</span>${esc(trunc(c.content,100))}`
+      )},
+    ],
+  ];
+
+  let html = '';
+  for (const row of cards) {
+    for (const card of row) {
+      let cls = card.wide ? 'card card-wide' : 'card';
+      html += `<div class="${cls}"><h2>${card.title}</h2>`;
+      if (card.rows) {
+        for (const [label, value] of card.rows) {
+          html += `<div class="row"><span class="label">${label}</span><span class="value">${value}</span></div>`;
+        }
+      }
+      if (card.items) {
+        if (card.items.length === 0) {
+          html += '<div class="empty">暂无数据</div>';
+        } else {
+          for (const item of card.items) {
+            html += `<div class="list-item">${item}</div>`;
+          }
+        }
+      }
+      html += '</div>';
+    }
+  }
+  document.getElementById('grid').innerHTML = html;
+}
+
+function showError(msg) {
+  const b = document.getElementById('error-banner');
+  b.textContent = msg;
+  b.style.display = 'block';
+}
+
+async function poll() {
+  try {
+    const resp = await fetch('/debug/api');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    render(await resp.json());
+  } catch(e) {
+    showError('无法连接: ' + e.message);
+  }
+}
+
+poll();
+timer = setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>

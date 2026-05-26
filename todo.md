@@ -95,6 +95,18 @@
 |------|------|
 | 同步文字与语音 | Server: `_sync_event` + `_audio_pending` 双向缓冲，首句 TTS chunk 触发释放，5s timeout。Browser: `textQueue` hold delta 直到 `Audio.play()` resolve，8s timeout。Sync 阶段 INFO 日志 + log propagation 修复。 |
 
+### 内部状态可视化 /debug (2026-05-26)
+
+| 任务 | 说明 |
+|------|------|
+| 独立 /debug 页面 | `static/debug.html` 每 2s 轮询 `/debug/api` 获取 JSON 快照。`core/debug_info.py` 聚合 FSM/会话/长期记忆/工具调用/沉淀/连接等状态。`ToolRegistry` + `MemoryConsolidator` 各加 20 条 `_history`。 |
+
+### 配置驱动入口重构 (2026-05-26)
+
+| 任务 | 说明 |
+|------|------|
+| 配置驱动入口 | `config.yaml` 新增 TTS.enabled / STT.enabled。`demo.py --tts`/`--stt`/`--host`/`--port` 默认值从 config 读取。优先级 CLI > config > 默认值。移除 `DEMO_ENABLE_TTS` 环境变量。 |
+
 ## 待做（按优先级）
 
 - **prompt 模板接入**: 将 `prompt/` 下的多层认知模板 (Brain/Amygdala/ActiveSpeak/Reflector) 接入 `PromptAssembler`/`CognitiveLoop`，实现双轨思维（inner_voice + public_reply）、Amygdala 情绪感知、ActiveSpeak 主动说话决策
