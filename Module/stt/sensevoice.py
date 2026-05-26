@@ -62,6 +62,11 @@ class SenseVoiceBackend(STTBackend):
 
         if data.get("result") and data["result"].get("text"):
             yield data["result"]["text"]
+        else:
+            self._logger.warning(
+                "SenseVoice returned unexpected response shape: %s",
+                str(data)[:200],
+            )
 
     async def close(self) -> None:
         await self._client.aclose()

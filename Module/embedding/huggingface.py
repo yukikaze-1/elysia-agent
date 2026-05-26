@@ -7,6 +7,7 @@
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 import torch
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -54,7 +55,7 @@ class HuggingFaceBackend(EmbeddingBackend):
         *,
         model_name: str = "BAAI/bge-large-zh-v1.5",
         device: str | None = None,
-        cache_folder: str = "/home/yomu/Elysia/model_cache",
+        cache_folder: str | None = None,
         normalize: bool = True,
         dimension: int = 0,
         logger: logging.Logger | None = None,
@@ -71,6 +72,12 @@ class HuggingFaceBackend(EmbeddingBackend):
                     device = "cpu"
             else:
                 device = "cpu"
+
+        if cache_folder is None:
+            cache_folder = os.environ.get(
+                "MODEL_CACHE_DIR",
+                str(Path(__file__).parent.parent.parent / ".model_cache"),
+            )
 
         self._model_name = model_name
         self._dimension = dimension or _KNOWN_DIMS.get(model_name, 0)

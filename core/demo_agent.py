@@ -264,9 +264,10 @@ class DemoAgent:
                 logger.info("EventBus: INTERRUPT received")
                 if self._cognitive._current_task and not self._cognitive._current_task.done():
                     self._cognitive._current_task.cancel()
-                # Drain any pending USER_INPUT that arrived during the interrupted processing
+                # Drain pending USER_INPUT, preserve STATE_CHANGE for UI
                 for drained in self._bus.drain():
-                    pass
+                    if drained.type == EventType.STATE_CHANGE:
+                        self._bus.post(drained.type, drained.data, priority=drained.priority)
 
             elif event.type == EventType.USER_INPUT:
                 data = event.data or {}
@@ -299,7 +300,10 @@ class DemoAgent:
                     try:
                         await ch.on_state(state)
                     except Exception:
-                        pass
+                        logger.debug(
+                            "Channel %s on_state(%s) failed",
+                            type(ch).__name__, state, exc_info=True,
+                        )
 
     # ---- Internal: seed data + tools ----
 

@@ -53,16 +53,21 @@ class IdleMonitor:
         proactive_interval = self._character.proactive.interval
 
         while self._running:
-            await asyncio.sleep(1.0)  # Tick every second
+            try:
+                await asyncio.sleep(1.0)  # Tick every second
 
-            if self._fsm.state != AgentState.IDLE:
-                continue
+                if self._fsm.state != AgentState.IDLE:
+                    continue
 
-            # Check proactive triggers
-            if self._character.proactive.enabled:
-                elapsed = asyncio.get_event_loop().time() - self._last_interaction
-                if elapsed >= proactive_interval:
-                    await self._check_proactive()
+                # Check proactive triggers
+                if self._character.proactive.enabled:
+                    elapsed = asyncio.get_event_loop().time() - self._last_interaction
+                    if elapsed >= proactive_interval:
+                        await self._check_proactive()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("IdleMonitor loop error", exc_info=True)
 
     async def _check_proactive(self) -> None:
         """Evaluate whether to speak proactively."""

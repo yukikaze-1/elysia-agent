@@ -50,8 +50,9 @@ async def run_once(message: str, character_path: str | None, config_path: str | 
     print(f"\n你: {message}")
     print(f"{agent._character.name}: ", end="", flush=True)
     await agent.process_message(message)
-    # Wait for processing to complete
-    await asyncio.sleep(0.5)
+    # Wait for processing to start, then finish
+    while agent._fsm.state == "idle":
+        await asyncio.sleep(0.1)
     while agent._fsm.state != "idle":
         await asyncio.sleep(0.1)
     await agent.stop()

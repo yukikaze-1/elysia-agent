@@ -180,4 +180,10 @@ class OutputManager:
 
     async def close(self) -> None:
         tasks = [c.close() for c in self._channels]
-        await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for channel, result in zip(self._channels, results):
+            if isinstance(result, Exception):
+                self._logger.warning(
+                    "Failed to close channel %s: %s",
+                    type(channel).__name__, result,
+                )

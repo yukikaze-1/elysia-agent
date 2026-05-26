@@ -179,14 +179,29 @@ class LLMAdapter:
             else:
                 # Mock backend: use non-streaming then simulate streaming
                 text = await self._backend.chat(messages, **kwargs)
-                # Yield text character by character (simulated streaming)
-                for i, char in enumerate(text):
+                if text.startswith('{"tool_calls"'):
+                    try:
+                        parsed = json.loads(text)
+                        yield {"content": None, "tool_calls": parsed.get("tool_calls", [])}
+                    except json.JSONDecodeError:
+                        for char in text:
+                            yield {"content": char, "tool_calls": None}
+                    return
+                for char in text:
                     yield {"content": char, "tool_calls": None}
         except Exception as e:
             if not self._using_mock:
                 logger.info("Real LLM stream failed (%s), switching to mock", type(e).__name__)
                 self._switch_to_mock()
                 text = await self._backend.chat(messages, **kwargs)
+                if text.startswith('{"tool_calls"'):
+                    try:
+                        parsed = json.loads(text)
+                        yield {"content": None, "tool_calls": parsed.get("tool_calls", [])}
+                    except json.JSONDecodeError:
+                        for char in text:
+                            yield {"content": char, "tool_calls": None}
+                    return
                 for char in text:
                     yield {"content": char, "tool_calls": None}
             else:

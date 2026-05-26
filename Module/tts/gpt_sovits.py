@@ -97,19 +97,21 @@ class GPTSoVitsBackend(TTSBackend):
         async def _pull() -> None:
             """httpx 流式消费者 — 运行在独立 task 中。"""
             try:
-                async with self._client.stream("POST", "/tts", json=payload) as resp:
-                    resp.raise_for_status()
-                    async for chunk in resp.aiter_bytes(4096):
-                        await queue.put(chunk)
-            except httpx.RequestError as e:
-                self._logger.error(
-                    "GPT-SoVits connection failed (base_url=%s): %s",
-                    self._client.base_url, e,
-                )
-                raise RuntimeError(
-                    f"无法连接 GPT-SoVits 服务 ({self._client.base_url}): {e}"
-                ) from e
-            await queue.put(None)  # 哨兵：流结束
+                try:
+                    async with self._client.stream("POST", "/tts", json=payload) as resp:
+                        resp.raise_for_status()
+                        async for chunk in resp.aiter_bytes(4096):
+                            await queue.put(chunk)
+                except httpx.RequestError as e:
+                    self._logger.error(
+                        "GPT-SoVits connection failed (base_url=%s): %s",
+                        self._client.base_url, e,
+                    )
+                    raise RuntimeError(
+                        f"无法连接 GPT-SoVits 服务 ({self._client.base_url}): {e}"
+                    ) from e
+            finally:
+                await queue.put(None)  # 哨兵：流结束
 
         task = asyncio.create_task(_pull())
         try:

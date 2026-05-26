@@ -8,6 +8,10 @@
 conda activate Elysia
 export DEEPSEEK_API_KEY="sk-..."
 
+# 嵌入模型缓存（二选一）
+export MODEL_CACHE_DIR="/path/to/model_cache"   # 方式1：环境变量
+# 或在项目根创建 .model_cache/ 软链接          # 方式2：项目本地
+
 # 交互模式 (stdin)
 python demo.py
 

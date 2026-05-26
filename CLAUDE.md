@@ -110,6 +110,6 @@ cfg = ConfigLoader(MyConfig, yaml_path="config.yaml", yaml_key="Server").load()
 ## Rules
 
 1. readme.md用中文写。
-2. 代码注释用英文写。
+2. 代码注释用中文
 3. 使用conda环境.conda环境命令： conda activate Elysia
-4. 禁止读取.env文件中的变量，所有敏感信息必须通过环境变量传递。
+4. 所有敏感信息必须通过环境变量传递。

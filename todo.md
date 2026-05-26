@@ -72,6 +72,21 @@
 
 ### 测试: 197 passed (core) + 243 passed (Module) = 440 total
 
+### 代码审查修复 (2026-05-26)
+
+| 类别 | 修复项 | 说明 |
+|------|--------|------|
+| Bug | TTS 死锁 | `_pull()` 内 `try/finally` 确保哨兵始终投递，HTTP 异常不再导致永久挂起 |
+| Bug | `run_once` 竞态 | 先等待离开 idle 确认处理已开始，再等待回到 idle |
+| Bug | 事件排空丢 STATE_CHANGE | INTERRUPT drain 后把 STATE_CHANGE 重新 post 回 bus |
+| Bug | Mock backend 丢 tool calls | stream_think 检测 tool-call JSON 后直接 yield，不再逐字符分解 |
+| Bug | SenseVoice 静默失败 | 响应格式不匹配时记录 warning 日志 |
+| Bug | OutputManager.close 快速失败 | `return_exceptions=True` + 逐个记录失败 channel |
+| 健壮性 | 裸 except 无日志 | demo_agent on_state 失败增加 debug + exc_info |
+| 健壮性 | fire-and-forget 无异常处理 | idle_monitor / server 状态监控循环增加 try/except |
+| 架构 | stream_think 缺 ABC | LLMBackend 协议增加默认实现（chat + 逐字符 yield） |
+| 工程 | 嵌入模型缓存 | `MODEL_CACHE_DIR` 环境变量 + `.model_cache/` 默认路径，移除硬编码 |
+
 ---
 
 ## 已知问题

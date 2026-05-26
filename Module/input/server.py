@@ -79,11 +79,16 @@ async def _handle_ws(
         async def _monitor_state():
             prev_state = None
             while not ws.closed:
-                await asyncio.sleep(0.1)
-                current = agent._fsm.state
-                if current != prev_state and current == "speaking" and audio_buf:
-                    audio_buf.deafen(2.0)  # Ignore mic for 2s while TTS plays
-                prev_state = current
+                try:
+                    await asyncio.sleep(0.1)
+                    current = agent._fsm.state
+                    if current != prev_state and current == "speaking" and audio_buf:
+                        audio_buf.deafen(2.0)  # Ignore mic for 2s while TTS plays
+                    prev_state = current
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.debug("State monitor error", exc_info=True)
         asyncio.create_task(_monitor_state(), name=f"state-monitor-{client_id}")
 
     logger.info("WS client connected: %s (STT=%s)", client_id, "yes" if audio_buf else "no")

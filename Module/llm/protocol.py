@@ -20,6 +20,20 @@ class LLMBackend(ABC):
     async def chat_stream(self, messages: list[dict], **kwargs) -> AsyncGenerator[str, None]:
         """流式对话 — 逐 token 产出回复文本。"""
         ...
+        yield ""  # type: ignore[misc]  # pragma: no cover — 让抽象方法成为生成器
+
+    async def stream_think(
+        self, messages: list[dict], **kwargs
+    ) -> AsyncGenerator[dict, None]:
+        """流式思考 — 逐 chunk 产出结构化 dict，支持 tool_calls 检测。
+
+        每个 chunk: {"content": str | None, "tool_calls": list | None}
+        默认实现回退到 chat()，逐字符 yield 纯文本（无 tool_calls）。
+        支持 tool calling 的 backend 应覆盖此方法。
+        """
+        text = await self.chat(messages, **kwargs)
+        for char in text:
+            yield {"content": char, "tool_calls": None}
 
     @abstractmethod
     async def close(self) -> None:
