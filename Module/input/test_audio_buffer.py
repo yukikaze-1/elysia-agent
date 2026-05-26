@@ -10,7 +10,7 @@ from io import BytesIO
 
 import pytest
 
-from .audio_buffer import AudioBuffer, pcm_to_wav
+from .audio_buffer import AudioBuffer, pcm_to_wav, _FRAME_BYTES
 
 
 class TestPcmToWav:
@@ -70,17 +70,17 @@ class TestAudioBuffer:
             return struct.pack(f"<{count}h", *([20000] * count))
         return _make
 
-    def test_rms_silence(self, make_silence):
+    def test_vad_silence(self, make_silence):
+        """Near-silence PCM should be classified as non-speech by VAD."""
         buf = AudioBuffer()
-        chunk = make_silence(800)  # 50ms
-        rms = buf._rms(chunk)
-        assert rms < 0.01
+        chunk = make_silence(_FRAME_BYTES // 2)  # one 20ms frame at 16kHz
+        assert buf._is_speech(chunk) is False
 
-    def test_rms_loud(self, make_loud):
+    def test_vad_loud(self, make_loud):
+        """Loud PCM should be classified as speech by VAD."""
         buf = AudioBuffer()
-        chunk = make_loud(800)
-        rms = buf._rms(chunk)
-        assert rms > 0.5
+        chunk = make_loud(_FRAME_BYTES // 2)  # one 20ms frame at 16kHz
+        assert buf._is_speech(chunk) is True
 
     @pytest.mark.asyncio
     async def test_feed_loud_then_silence_triggers_stt(self, make_loud, make_silence):
@@ -165,9 +165,11 @@ class TestAudioBuffer:
             interrupt_calls.append(True)
 
         buf = AudioBuffer(on_interrupt=on_interrupt)
-        await buf.feed(make_loud(1600))
+        # Interrupt fires after MIN_SPEECH_CHUNKS_FOR_INTERRUPT=3 consecutive speech chunks
+        for _ in range(3):
+            await buf.feed(make_loud(1600))
 
-        assert len(interrupt_calls) == 1  # first loud chunk triggers interrupt
+        assert len(interrupt_calls) == 1  # 3rd loud chunk triggers interrupt
 
     @pytest.mark.asyncio
     async def test_interrupt_only_once_per_segment(self, make_loud):
@@ -177,7 +179,7 @@ class TestAudioBuffer:
             interrupt_calls.append(True)
 
         buf = AudioBuffer(on_interrupt=on_interrupt)
-        for _ in range(5):
+        for _ in range(8):
             await buf.feed(make_loud(1600))
 
-        assert len(interrupt_calls) == 1  # only on speech start, not every chunk
+        assert len(interrupt_calls) == 1  # fires once, not on every chunk beyond 3

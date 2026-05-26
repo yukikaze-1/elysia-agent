@@ -50,11 +50,11 @@ class TestSentenceBuffer:
         from core.sentence_buffer import SentenceBuffer
         buf = SentenceBuffer(min_chunk_length=4)
         result = None
-        for ch in "好。":  # "好。" is < 4 chars stripped
+        for ch in "好。":  # "好。" is 2 chars < 4, nothing follows → emit
             result = buf.feed(ch)
-        assert result is None
+        assert result == "好。"
         remaining = buf.flush()
-        assert remaining == "好。"
+        assert remaining is None
 
     def test_newline_split(self):
         from core.sentence_buffer import SentenceBuffer

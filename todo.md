@@ -70,7 +70,7 @@
 | 采样率修复 | AudioContext({sampleRate:16000}) 匹配 server 端 16kHz |
 | 转录显示 | server → client transcription 事件，浏览器显示 🎤 气泡 |
 
-### 测试: 197 passed (core) + 243 passed (Module) = 440 total
+### 测试: 197+70 passed (core) + 243 passed (Module) = 510 total
 
 ### 代码审查修复 (2026-05-26)
 
@@ -107,6 +107,9 @@
 |------|------|
 | 配置驱动入口 | `config.yaml` 新增 TTS.enabled / STT.enabled。`demo.py --tts`/`--stt`/`--host`/`--port` 默认值从 config 读取。优先级 CLI > config > 默认值。移除 `DEMO_ENABLE_TTS` 环境变量。 |
 | Architecture.md 完整重写 | 从三层架构、Protocol-Registry-Backend 模式、事件总线/FSM、认知循环、记忆模型、输入输出系统、TTS 流式管线、文字/语音同步、配置系统、工程规范等 8 个章节完整描述项目设计。 |
+| SentenceBuffer 升级 | 分隔符扩展 (～…〜)、英文句号上下文检测 (数字/缩写/URL)、连续分隔符合并、min_chunk 5 + 短句不卡死、构造参数可配置。70 tests (12 组)。 |
+
+### 测试: 197+70 (core) + 243 (Module) = 510 total
 
 ## 待做（按优先级）
 

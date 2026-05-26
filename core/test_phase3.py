@@ -770,15 +770,14 @@ class TestAudioBufferErrors:
         await buf.flush()  # Should not raise
 
     @pytest.mark.asyncio
-    async def test_rms_exact_threshold(self):
-        from Module.input.audio_buffer import AudioBuffer
-        buf = AudioBuffer(silence_threshold=0.02)
-        # RMS at threshold → not speech (strict > comparison)
+    async def test_vad_silence_detected(self):
+        """Near-silence PCM should be classified as non-speech by WebRTC VAD."""
+        from Module.input.audio_buffer import AudioBuffer, _FRAME_BYTES
+        buf = AudioBuffer(aggressiveness=3)
+        # Generate near-silence frame (very low amplitude)
         import struct
-        sample_val = int(32768 * 0.02)
-        chunk = struct.pack(f"<{100}h", *([sample_val] * 100))
-        rms = buf._rms(chunk)
-        assert rms <= 0.02
+        chunk = struct.pack(f"<{_FRAME_BYTES // 2}h", *([5] * (_FRAME_BYTES // 2)))
+        assert buf._is_speech(chunk) is False
 
 
 # ============================================================================

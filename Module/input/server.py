@@ -83,7 +83,7 @@ async def _handle_ws(
     if stt_transcribe:
         audio_buf = AudioBuffer(
             stt_transcribe=stt_transcribe,
-            silence_threshold=0.03,
+            aggressiveness=3,
             on_interrupt=lambda: _do_interrupt(agent),
             on_transcription=lambda text: _do_transcription(agent, ws, text, audio_buf),
         )

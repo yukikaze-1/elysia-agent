@@ -69,6 +69,7 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | TTS 流式合成 (GPT-SoVits) + 句队列 + 顺序播放 | done |
 | 文字/语音同步 (双层缓冲: 服务端 + 浏览器) | done |
 | 分句策略 (连续分隔符合并) | done |
+| SentenceBuffer 升级 (70 tests: ～…〜/.上下文/可配置) | done |
 | 聊天历史 localStorage 持久化 | done |
 | 配置驱动入口 (CLI > config.yaml > 默认值) | done |
 | /debug 内部状态面板 (记忆/工具/沉淀/连接) | done |
@@ -149,4 +150,4 @@ python -m pytest core/ -v --asyncio-mode=auto
 python -m pytest Module/ -v
 ```
 
-**测试统计**: 197 (core) + 243 (Module) = 440 total
+**测试统计**: 267 (core) + 243 (Module) = 510 total
