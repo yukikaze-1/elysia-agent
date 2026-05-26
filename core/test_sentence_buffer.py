@@ -156,10 +156,11 @@ class TestMinChunk:
         assert result is None
 
     def test_two_char_then_delimiter_held_when_more_follows(self):
-        """好嘞！(3 chars < 5) with nothing following → emits (no more to merge with)."""
+        """好嘞！(3 chars < 5) with nothing following → held, then flushed."""
         buf = SentenceBuffer(min_chunk_length=5)
         result = _feed_all(buf, "好嘞！")
-        assert result == "好嘞！"  # no more content → emit anyway
+        assert result is None  # held (too short, nothing follows)
+        assert buf.flush() == "好嘞！"  # flush releases it
 
     def test_two_char_then_delimiter_merged_when_more_follows(self):
         """好嘞！(3 chars < 5) then more text → held and merged."""
@@ -173,17 +174,19 @@ class TestMinChunk:
         assert result == "太好了吧！"  # 5 chars ≥ 5
 
     def test_short_then_long(self):
-        """Short sentence merges with next when fed together."""
+        """Short「嗯。」emitted immediately when text follows, buffer continues."""
         buf = SentenceBuffer(min_chunk_length=5)
-        buf.feed("嗯。今天天气真好。")
-        result = buf.flush()
-        assert "嗯。" in result
-        assert "今天天气真好。" in result
+        result = buf.feed("嗯。今天天气真好。")
+        assert result == "嗯。"  # 2 chars < 5 but text follows → emit (un-stick buffer)
+        # "今天天气真好。" was extracted to buffer, triggers on next feed
+        remaining = buf.flush()
+        assert remaining == "今天天气真好。"
 
     def test_default_min_chunk(self):
         buf = SentenceBuffer()  # default min_chunk=5
         result = _feed_all(buf, "好。")
-        assert result == "好。"  # 2 chars, nothing follows → emit anyway
+        assert result is None  # 2 chars < 5, nothing follows → held
+        assert buf.flush() == "好。"  # released on flush
 
     def test_min_chunk_exactly_on_boundary(self):
         buf = SentenceBuffer(min_chunk_length=4)
@@ -427,7 +430,8 @@ class TestConfigurableDelimiters:
         buf = SentenceBuffer(min_chunk_length=10)
         assert buf._min_chunk == 10
         result = _feed_all(buf, "你好。")
-        assert result == "你好。"  # nothing follows → emit anyway
+        assert result is None  # 3 chars < 10, nothing follows → held
+        assert buf.flush() == "你好。"  # released on flush
 
 
 # ============================================================================

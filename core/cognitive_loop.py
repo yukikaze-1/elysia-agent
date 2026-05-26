@@ -131,7 +131,8 @@ class CognitiveLoop:
                 json_parser = TagParser() if dual else None
                 ttft_logged = False
 
-                stream = self._llm.stream_think(messages, tools=tool_defs)
+                stream = self._llm.stream_think(messages, tools=tool_defs,
+                    extra_body={"thinking": {"type": "disabled"}})
                 try:
                     async for chunk in stream:
                         content = chunk.get("content")
@@ -183,6 +184,9 @@ class CognitiveLoop:
                                 await self._output._broadcast("on_text_delta", content, capability=ChannelCapability.TEXT_DELTA)
 
                             sentence = self._sentence_buf.feed(content)
+                            if sentence:
+                                logger.warning("Pipeline: SentenceBuffer 分句 (%d 字符): %s",
+                                             len(sentence), sentence[:40])
                             if sentence and self._tts:
                                 self._start_tts_stream(sentence)
 
@@ -196,6 +200,8 @@ class CognitiveLoop:
                 if self._tts:
                     remaining = self._sentence_buf.flush()
                     if remaining:
+                        logger.warning("Pipeline: SentenceBuffer flush 尾句 (%d 字符): %s",
+                                     len(remaining), remaining[:40])
                         self._start_tts_stream(remaining)
 
                 # If tool calls were detected, execute them and loop
@@ -341,7 +347,7 @@ class CognitiveLoop:
             except asyncio.CancelledError:
                 pass  # Interrupted by newer speech
             except Exception:
-                logger.debug("TTS stream failed", exc_info=True)
+                logger.warning("TTS stream failed", exc_info=True)
 
         task = asyncio.create_task(_stream(stream_id), name=f"tts-{stream_id}")
         self._tts_tasks.append(task)

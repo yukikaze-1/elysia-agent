@@ -48,7 +48,8 @@ class MemoryConsolidator:
         )
 
         try:
-            result = await self._llm.think([{"role": "user", "content": prompt}])
+            result = await self._llm.think([{"role": "user", "content": prompt}],
+                extra_body={"thinking": {"type": "disabled"}})
             items = self._parse_result(result.text)
         except Exception:
             logger.debug("Consolidation extraction failed", exc_info=True)

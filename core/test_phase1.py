@@ -25,9 +25,9 @@ class TestSentenceBuffer:
         buf = SentenceBuffer()
 
         result = None
-        for ch in "你好。":
+        for ch in "你好。":  # 3 chars < default min_chunk 5, held
             result = buf.feed(ch)
-        assert result == "你好。"
+        assert buf.flush() == "你好。"
 
     def test_multi_sentence(self):
         from core.sentence_buffer import SentenceBuffer
@@ -50,11 +50,11 @@ class TestSentenceBuffer:
         from core.sentence_buffer import SentenceBuffer
         buf = SentenceBuffer(min_chunk_length=4)
         result = None
-        for ch in "好。":  # "好。" is 2 chars < 4, nothing follows → emit
+        for ch in "好。":  # "好。" is 2 chars < 4, nothing follows → held
             result = buf.feed(ch)
-        assert result == "好。"
+        assert result is None  # held (too short, nothing following)
         remaining = buf.flush()
-        assert remaining is None
+        assert remaining == "好。"  # released on flush
 
     def test_newline_split(self):
         from core.sentence_buffer import SentenceBuffer

@@ -118,14 +118,16 @@ class SentenceBuffer:
             self._buffer = after
             return self._extract() if self._buffer else None
 
-        stripped = before.strip()
+        complete_stripped = complete.strip()
 
-        # Hold short extractions when more content follows (non-delimiter)
-        if len(stripped) < self._min_chunk and after.strip():
-            # If remaining starts with non-delimiter, merge into one unit
-            if after and after[0] not in _DELIMITER_RUN:
-                # Don't split — let the buffer grow
-                return None
+        # Hold only when consecutive delimiters follow (already merged, after is empty
+        # or starts with a delimiter). Holding with text after would block the buffer
+        # permanently — _find_split keeps hitting the same delimiter.
+        if len(complete_stripped) < self._min_chunk:
+            if not after.strip():
+                return None  # incomplete — wait for more
+            if after and after[0] in _DELIMITER_RUN:
+                return None  # consecutive delimiter — merge
 
         self._buffer = after
         return complete.rstrip(" ")  # trailing spaces only, preserve \n
