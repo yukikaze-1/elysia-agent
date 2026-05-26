@@ -46,6 +46,7 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 
 ```
 用户输入 → EventBus → FSM(THINKING) → PromptAssembler(角色+记忆)
+  ├── STT 情绪标签 (SenseVoice 自带) → EmotionEngine + Brain <perception>
   → CognitiveLoop.stream_think()     # 流式 LLM + 工具调用检测
     ├── text delta → Console/WS        # 逐 token 显示
     ├── SentenceBuffer → TTS 流式 → 浏览器播放
@@ -65,7 +66,8 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | HuggingFace embedding 离线加载 | done |
 | WebSocket 服务器 + HTML 客户端 | done |
 | 麦克风采集 + RMS VAD | done |
-| STT 语音识别 (SenseVoice) | done |
+| STT 语音识别 (SenseVoice) + 情绪标签 | done |
+| 用户情绪识别 (STT 声学 HAPPY/SAD/ANGRY...) | done |
 | TTS 流式合成 (GPT-SoVits) + 句队列 + 顺序播放 | done |
 | 文字/语音同步 (双层缓冲: 服务端 + 浏览器) | done |
 | 分句策略 (连续分隔符合并) | done |
@@ -123,9 +125,9 @@ Agent/
 │   ├── elysia.yaml       # 角色定义
 │   └── system.j2         # 系统提示词模板 (当前使用)
 │
-├── prompt/               # 多层认知模板 (待接入)
-│   ├── Brain.j2          #   L1 主脑 — 双轨思维协议
-│   ├── Amygdala.j2       #   L0 潜意识 — 情绪感知
+├── prompt/               # 多层认知模板
+│   ├── Brain.j2          #   L1 主脑 — 双轨思维协议 (已接入)
+│   ├── Amygdala.j2       #   L0 潜意识 — 情绪感知 (待接入)
 │   ├── ActiveSpeak.j2    #   L1 主动说话决策
 │   ├── MicroReflector.j2 #   L2 即时反思 — 记忆提取
 │   ├── MacroReflector.j2 #   L2 日终反思 — 日记/情感趋势
@@ -150,4 +152,4 @@ python -m pytest core/ -v --asyncio-mode=auto
 python -m pytest Module/ -v
 ```
 
-**测试统计**: 267 (core) + 243 (Module) = 510 total
+**测试统计**: 272 (core) + 243 (Module) = 515 total

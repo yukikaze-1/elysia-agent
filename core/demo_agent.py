@@ -48,7 +48,6 @@ class DemoAgent:
         llm_cfg = cfg.get("LLM", {})
         mem_cfg = cfg.get("Memory", {})
         tts_cfg = cfg.get("TTS", {})
-        prompt_cfg = cfg.get("Prompt", {})
 
         char_path = character_path or agent_cfg.get("character", "character/elysia.yaml")
         self._user_name = agent_cfg.get("user_name", "妖梦")
@@ -73,9 +72,7 @@ class DemoAgent:
         self._bus = EventBus()
         self._fsm = AgentFSM()
         self._llm = LLMAdapter(model=llm_cfg.get("model"))
-        dual_track = prompt_cfg.get("dual_track", False)
-        self._prompt = PromptAssembler(self._character, self._session, self._long_term,
-                                       dual_track=dual_track)
+        self._prompt = PromptAssembler(self._character, self._session, self._long_term)
 
         # TTS is disabled by default (requires GPT-SoVits server at localhost:9880).
         # Enable via config.yaml (TTS.enabled: true) or CLI --tts flag.
@@ -199,11 +196,22 @@ class DemoAgent:
         await self.start()
 
         stt_transcribe = None
+        stt_emotion_state: dict | None = None
         if stt_enabled:
             try:
                 from Module.stt import STTFactory
                 stt_backend = STTFactory.create("sensevoice/sense-voice")
-                stt_transcribe = stt_backend.transcribe
+
+                # 用可变容器传递 STT 情绪/事件 — server 读取、wrapper 更新
+                stt_emotion_state = {"emotion": "NEUTRAL", "events": []}
+
+                async def transcribe_wrapper(audio: bytes) -> str:
+                    text = await stt_backend.transcribe(audio)
+                    stt_emotion_state["emotion"] = stt_backend.last_emotion
+                    stt_emotion_state["events"] = list(stt_backend.last_events)
+                    return text
+
+                stt_transcribe = transcribe_wrapper
                 logger.info("STT backend connected for server mode")
             except Exception:
                 logger.info("STT not available — text-only mode")
@@ -211,7 +219,8 @@ class DemoAgent:
         from Module.input.server import create_app
         from aiohttp import web
 
-        app = create_app(self, stt_transcribe=stt_transcribe, serve_static=True)
+        app = create_app(self, stt_transcribe=stt_transcribe, serve_static=True,
+                        stt_emotion_state=stt_emotion_state)
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, host, port)
@@ -281,9 +290,13 @@ class DemoAgent:
                 data = event.data or {}
                 text = data.get("text", "")
                 user_name = data.get("user_name", "妖梦")
+                stt_emotion = data.get("emotion", "")
+                stt_events = data.get("events", [])
                 # Spawn cognitive processing as independent task — frees event loop
                 task = asyncio.create_task(
-                    self._cognitive.process(text, user_name=user_name),
+                    self._cognitive.process(text, user_name=user_name,
+                                            stt_emotion=stt_emotion,
+                                            stt_events=stt_events),
                     name=f"cognitive-{text[:20]}"
                 )
                 self._cognitive._current_task = task

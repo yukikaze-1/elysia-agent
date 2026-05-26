@@ -24,6 +24,7 @@ def create_app(
     agent,
     stt_transcribe=None,
     serve_static: bool = True,
+    stt_emotion_state: dict | None = None,
 ) -> web.Application:
     """Create an aiohttp Application with WebSocket handler and optional static files.
 
@@ -31,6 +32,8 @@ def create_app(
         agent: DemoAgent instance (needs _output, _bus, process_message())
         stt_transcribe: async callable(bytes) -> str for STT (optional)
         serve_static: serve static/index.html at /
+        stt_emotion_state: mutable dict with 'emotion' and 'events' keys,
+            updated by the STT wrapper after each transcription.
     """
     app = web.Application()
 
@@ -38,7 +41,7 @@ def create_app(
     app["agent"] = agent
 
     async def ws_handler(request: web.Request) -> web.WebSocketResponse:
-        return await _handle_ws(request, agent, stt_transcribe)
+        return await _handle_ws(request, agent, stt_transcribe, stt_emotion_state)
 
     app.router.add_get("/ws", ws_handler)
 
@@ -71,6 +74,7 @@ async def _handle_ws(
     request: web.Request,
     agent,
     stt_transcribe,
+    stt_emotion_state: dict | None = None,
 ) -> web.WebSocketResponse:
     ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024)
     await ws.prepare(request)
@@ -85,7 +89,9 @@ async def _handle_ws(
             stt_transcribe=stt_transcribe,
             aggressiveness=3,
             on_interrupt=lambda: _do_interrupt(agent),
-            on_transcription=lambda text: _do_transcription(agent, ws, text, audio_buf),
+            on_transcription=lambda text: _do_transcription(
+                agent, ws, text, audio_buf, stt_emotion_state,
+            ),
         )
 
         # Monitor FSM state to deafen mic when assistant is speaking (echo prevention)
@@ -148,14 +154,30 @@ async def _do_interrupt(agent) -> None:
     agent._bus.post(EventType.INTERRUPT, {"source": "websocket"}, priority=EventPriority.INTERRUPT)
 
 
-async def _do_transcription(agent, ws, text: str, audio_buf=None) -> None:
+async def _do_transcription(agent, ws, text: str, audio_buf=None,
+                           stt_emotion_state: dict | None = None) -> None:
+    # 从 STT emotion state 读取情绪和事件
+    emotion = ""
+    events: list[str] = []
+    if stt_emotion_state:
+        emotion = stt_emotion_state.get("emotion", "")
+        events = stt_emotion_state.get("events", [])
+
     # Send transcription back to client so it can display the user's speech
     try:
-        await ws.send_json({"type": "transcription", "text": text})
+        msg: dict = {"type": "transcription", "text": text}
+        if emotion:
+            msg["emotion"] = emotion
+        if events:
+            msg["events"] = events
+        await ws.send_json(msg)
     except Exception:
         pass
 
     if audio_buf:
         audio_buf.deafen(2.0)
     from core.event_bus import EventType
-    agent._bus.post(EventType.USER_INPUT, {"text": text, "user_name": "妖梦"})
+    agent._bus.post(EventType.USER_INPUT, {
+        "text": text, "user_name": "妖梦",
+        "emotion": emotion, "events": events,
+    })

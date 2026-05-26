@@ -337,7 +337,7 @@ class TestPromptAssembler:
         pa = PromptAssembler(char, session, lt)
         messages = await pa.build_messages("你好", "妖梦")
         system = messages[0]["content"]
-        assert "暂无相关历史记忆" in system
+        assert "No specific memories triggered" in system
 
 
 # ============================================================================

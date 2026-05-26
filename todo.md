@@ -111,21 +111,46 @@
 
 ### 测试: 197+70 (core) + 243 (Module) = 510 total
 
+### DeepSeek v4 适配 (2026-05-27)
+
+| 任务 | 说明 |
+|------|------|
+| model config 透传 | config.yaml → DemoAgent → LLMAdapter |
+| thinking mode 禁用 | `extra_body={"thinking": {"type": "disabled"}}` |
+| API 错误日志 | 完整 exception + model name 打印到 WARNING |
+
+### WebRTC VAD (2026-05-27)
+
+| 任务 | 说明 |
+|------|------|
+| webrtcvad 替代 RMS | GMM 声学模型区分语音/噪音，aggressiveness=3 |
+| 延迟中断 | 3 个连续 speech chunk 后才 interrupt |
+| nospeech 过滤 | `<|nospeech|>` 结果丢弃 |
+
+### 简化双轨 (2026-05-27)
+
+| 任务 | 说明 |
+|------|------|
+| 去除结构化输出 | Brain.j2 纯文本，删除 TagParser + inner_voice/mood |
+| 保留思维协议 | Step 1 内心独白 → Step 2 对外回复在 prompt 中 |
+| prompt_assembler | 始终用 Brain.j2，无分支
+
+### EmotionEngine STT 情绪集成 (2026-05-27)
+
+| 任务 | 说明 |
+|------|------|
+| SenseVoice 标签解析 | raw_text 正则提取情绪(HAPPY/SAD/...)和事件(Laughter/Cry/...)，存 last_emotion/last_events |
+| EmotionEngine.analyze_user_stt | STT 情绪 → AI mood 映射(HAPPY→warm, SAD→concerned, ...)，非 1:1 跟随 |
+| perception 富集 | Brain.j2 `<perception>` 注入 [语调: HAPPY 😊 | 事件: Laughter 😀] |
+| 浏览器显示 | transcription 气泡带情绪 emoji + 事件 emoji |
+| 测试: 510+13 (emotion) = 523 total |
+
 ## 待做（按优先级）
 
-### 模块升级（待逐一讨论设计）
-
-- **PromptAssembler 升级**: 接入 `prompt/` 多层认知模板 — Brain.j2 双轨思维（inner_voice + public_reply JSON 输出）、Amygdala.j2 LLM 情绪感知、ActiveSpeak.j2 主动说话决策、MicroReflector.j2 改进记忆提取 prompt。支持多 system prompt 组合。
-
-- **EmotionEngine 升级**: 关键词匹配 → 轻量 LLM 调用（Amygdala.j2）。引入生理状态模型（Drive/Social Battery/Energy）。情绪衰减改为时间曲线。支持混合情绪。
-
-- **SentenceBuffer 升级**: `～` `…` 加入分隔符。`min_chunk` 提升到 5-6 字符。分隔符集合可配置化。支持英文标点 `,` `;` `:` 软分隔。
-
+- **EmotionEngine 后续升级**: ~~关键词匹配 → STT 情绪标签~~ (done)。待做：生理状态模型（Drive/Social Battery/Energy）。情绪衰减改为时间曲线。支持混合情绪。Amygdala LLM 作为文字输入语义补充。
+- **STT 情绪→AI mood 映射升级**: 当前简单固定映射，后续升级为更复杂的：生理状态调制 + 性格调制 + 时间衰减曲线 + 混合情绪向量
 - **ToolRegistry 升级**: 执行超时（防止卡死）。工具结果截断（防止撑爆 context）。并行工具调用（多个 tool_calls 并发执行）。新增内置工具。执行前后 hook。
-
-### 其他待做
-
-- **STT 识别改进**: webrtcvad 替代 RMS VAD，减少嘈杂环境误触发
+- ~~**STT 识别改进**: webrtcvad 替代 RMS VAD~~ (done)
 - 唤醒词检测（openWakeWord 集成）
 - Web 前端: 更好的角色立绘/动画
 - 单元测试补充 server.py 部分（当前通过集成覆盖）

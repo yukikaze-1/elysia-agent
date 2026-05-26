@@ -20,6 +20,3 @@ TTS:
 
 STT:
   enabled: true        # 替换 --stt flag 的默认值
-
-Prompt:
-  dual_track: true    # true: Brain.j2 双轨思维 (inner_voice + public_reply JSON)

@@ -1,9 +1,11 @@
-"""EmotionEngine — keyword-based mood tracking + expression dispatch.
+"""EmotionEngine — keyword-based + STT emotion tag mood tracking + expression dispatch.
 
 Analyzes user and assistant messages to maintain an emotional state,
 then pushes expression changes through the OutputManager.
 
-Production path: replace keyword rules with a lightweight LLM call.
+Primary path (voice): STT emotion tags from SenseVoice
+Fallback (text): keyword matching
+Future: Amygdala LLM for text semantic analysis
 """
 
 import logging
@@ -38,6 +40,40 @@ MOOD_KEYWORDS: dict[str, tuple[list[str], list[str]]] = {
     ),
 }
 
+# STT 情绪 → AI mood 映射（非 1:1 — AI 不直接复制用户情绪）
+_STT_EMOTION_TO_MOOD: dict[str, str] = {
+    "HAPPY":     "warm",
+    "SAD":       "concerned",
+    "ANGRY":     "calming",
+    "FEARFUL":   "reassuring",
+    "DISGUSTED": "understanding",
+    "SURPRISED": "curious",
+    "NEUTRAL":   "",  # 不触发变化
+}
+
+# STT 情绪 emoji
+_STT_EMOTION_EMOJI: dict[str, str] = {
+    "HAPPY": "😊", "SAD": "😔", "ANGRY": "😡", "NEUTRAL": "",
+    "FEARFUL": "😰", "DISGUSTED": "🤢", "SURPRISED": "😮",
+}
+
+# 音频事件 emoji
+_STT_EVENT_EMOJI: dict[str, str] = {
+    "Speech": "", "BGM": "🎼", "Applause": "👏", "Laughter": "😀",
+    "Cry": "😭", "Cough": "😷", "Sneeze": "🤧", "Breath": "",
+    "Sing": "", "Speech_Noise": "", "GBG": "", "Event_UNK": "",
+}
+
+
+def stt_emotion_emoji(tag: str) -> str:
+    """返回 STT 情绪对应的 emoji。"""
+    return _STT_EMOTION_EMOJI.get(tag, "")
+
+
+def stt_event_emoji(event: str) -> str:
+    """返回音频事件对应的 emoji。"""
+    return _STT_EVENT_EMOJI.get(event, "")
+
 
 class EmotionEngine:
     """Tracks and updates the agent's emotional state.
@@ -58,8 +94,43 @@ class EmotionEngine:
         self._thresholds = character.emotion.thresholds
         self._idle_expressions = character.emotion.idle_expressions
 
+    def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None) -> str:
+        """基于 STT 声学情绪标签更新 AI mood（语音输入主路径）。
+
+        Returns: 更新后的 mood 字符串。
+        """
+        mood = _STT_EMOTION_TO_MOOD.get(emotion_tag, "")
+        if not mood:
+            return self._session.get_param("mood", "neutral")
+
+        current = self._session.get_param("mood", "neutral")
+        intensity = self._session.get_param("mood_intensity", 0.5)
+
+        if mood != current:
+            self._session.set_param("mood", mood)
+            self._session.set_param("mood_intensity", min(1.0, intensity + 0.1))
+            self._push_expression(mood, intensity)
+            emoji = _STT_EMOTION_EMOJI.get(emotion_tag, "")
+            logger.debug("Mood (STT %s%s): %s → %s (intensity=%.2f)",
+                        emotion_tag, f" {emoji}" if emoji else "",
+                        current, mood, intensity)
+        else:
+            self._session.set_param("mood_intensity", min(1.0, intensity + 0.05))
+
+        # 音频事件 → expression 推送
+        if events:
+            for evt in events:
+                if evt == "Laughter":
+                    self._schedule(self._output.expression("laugh", intensity=0.7))
+                elif evt == "Cry":
+                    self._schedule(self._output.expression("cry", intensity=0.8))
+                elif evt == "Applause":
+                    self._schedule(self._output.expression("surprised", intensity=0.5))
+
+        return mood
+
     def analyze_user(self, text: str) -> None:
-        """Analyze user message and update mood + push expressions."""
+        """Analyze user message and update mood + push expressions (keyword fallback)."""
         detected = self._detect_mood(text)
         if detected == "neutral":
             return

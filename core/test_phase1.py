@@ -234,6 +234,42 @@ class TestEmotionEngine:
         engine.analyze_user("好难过啊")
         assert engine._session.get_param("mood") == "sad"
 
+    # ---- STT emotion analysis ----
+
+    def test_analyze_user_stt_sets_mood(self, engine):
+        """STT HAPPY → AI mood warm"""
+        result = engine.analyze_user_stt("HAPPY")
+        assert result == "warm"
+        assert engine._session.get_param("mood") == "warm"
+
+    def test_analyze_user_stt_sad(self, engine):
+        """STT SAD → AI mood concerned (not sad)"""
+        result = engine.analyze_user_stt("SAD")
+        assert result == "concerned"
+        assert engine._session.get_param("mood") == "concerned"
+
+    def test_analyze_user_stt_neutral_no_change(self, engine):
+        """STT NEUTRAL — return current mood, no push"""
+        current = engine._session.get_param("mood", "neutral")
+        result = engine.analyze_user_stt("NEUTRAL")
+        assert result == current
+        # NEUTRAL and EMO_UNKNOWN both return empty string → no update
+        assert engine.analyze_user_stt("EMO_UNKNOWN") == current
+
+    def test_analyze_user_stt_with_laughter_event(self, engine):
+        """Laughter event pushes laugh expression"""
+        engine.analyze_user_stt("HAPPY", events=["Laughter"])
+        # mood should be set, expression should be scheduled
+        assert engine._session.get_param("mood") == "warm"
+
+    def test_analyze_user_stt_same_mood_increases_intensity(self, engine):
+        """Same STT mood → increase intensity"""
+        engine.analyze_user_stt("HAPPY")
+        i1 = engine._session.get_param("mood_intensity", 0)
+        engine.analyze_user_stt("HAPPY")
+        i2 = engine._session.get_param("mood_intensity", 0)
+        assert i2 >= i1
+
 
 # ============================================================================
 # 4. Mock LLM tests

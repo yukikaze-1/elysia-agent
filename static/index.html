@@ -240,9 +240,20 @@ function handleWS(e) {
       if (msg.typing) { showTyping(); }
       else if (textQueue.length === 0) { hideTyping(); }
       break;
-    case 'transcription':
-      addUserMsg('🎤 ' + msg.text);
+    case 'transcription': {
+      // Build display: text + emotion emoji + event emojis
+      let display = msg.text;
+      const emotionEmoji = getEmotionEmoji(msg.emotion);
+      if (emotionEmoji) display += ' ' + emotionEmoji;
+      if (msg.events && msg.events.length > 0) {
+        for (const evt of msg.events) {
+          const evtEmoji = getEventEmoji(evt);
+          if (evtEmoji) display += ' ' + evtEmoji;
+        }
+      }
+      addUserMsg('🎤 ' + display);
       break;
+    }
     case 'error': console.warn('Server:', msg.message); break;
   }
 }
@@ -351,6 +362,18 @@ function resetTextFlushTimer() {
 }
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+// STT emotion/event emoji mappings (synced with server-side)
+const EMOTION_EMOJI = {
+  HAPPY:'😊', SAD:'😔', ANGRY:'😡', NEUTRAL:'',
+  FEARFUL:'😰', DISGUSTED:'🤢', SURPRISED:'😮',
+};
+const EVENT_EMOJI = {
+  BGM:'🎼', Applause:'👏', Laughter:'😀', Cry:'😭',
+  Cough:'😷', Sneeze:'🤧',
+};
+function getEmotionEmoji(tag) { return EMOTION_EMOJI[tag] || ''; }
+function getEventEmoji(evt) { return EVENT_EMOJI[evt] || ''; }
 function moodEmoji(m) { return {happy:'😊',sad:'😢',excited:'🤩',curious:'🤔',neutral:'😐'}[m]||''; }
 function moodColor(m) { return {happy:'var(--happy)',sad:'var(--sad)',excited:'var(--excited)',neutral:'var(--muted)'}[m]||'var(--muted)'; }
 

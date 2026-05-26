@@ -21,8 +21,6 @@ from .sentence_buffer import SentenceBuffer
 from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
-from .json_parser import TagParser
-
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +71,8 @@ class CognitiveLoop:
         self._audio_pending: list[tuple] = []  # (type, chunk|None, stream_id)
         self._audio_flow = False
 
-    async def process(self, user_message: str, user_name: str = "妖梦") -> None:
+    async def process(self, user_message: str, user_name: str = "妖梦",
+                       stt_emotion: str = "", stt_events: list[str] | None = None) -> None:
         if not self._fsm.can_transition(AgentState.THINKING):
             logger.warning("Cannot transition to THINKING from %s", self._fsm.state)
             return
@@ -88,16 +87,24 @@ class CognitiveLoop:
         self._audio_flow = False
         self._current_task = asyncio.current_task()
         try:
-            await self._think_loop(user_message, user_name)
+            await self._think_loop(user_message, user_name,
+                                   stt_emotion=stt_emotion, stt_events=stt_events)
         except asyncio.CancelledError:
             logger.info("Cognitive loop interrupted")
             await self._handle_interrupt()
 
-    async def _think_loop(self, user_message: str, user_name: str) -> None:
+    async def _think_loop(self, user_message: str, user_name: str,
+                          stt_emotion: str = "", stt_events: list[str] | None = None) -> None:
         if self._emotion:
-            self._emotion.analyze_user(user_message)
+            if stt_emotion and stt_emotion != "NEUTRAL":
+                self._emotion.analyze_user_stt(stt_emotion, stt_events)
+            else:
+                self._emotion.analyze_user(user_message)
 
-        messages = await self._prompt.build_messages(user_message, user_name=user_name)
+        messages = await self._prompt.build_messages(
+            user_message, user_name=user_name,
+            stt_emotion=stt_emotion, stt_events=stt_events,
+        )
         self._session.add_message("user", user_message)
         tool_defs = self._tools.tool_definitions() or None
 
@@ -127,8 +134,6 @@ class CognitiveLoop:
                 acc_text = ""
                 raw_tool_calls: list[dict] = []
                 speaking_started = False
-                dual = self._prompt.dual_track
-                json_parser = TagParser() if dual else None
                 ttft_logged = False
 
                 stream = self._llm.stream_think(messages, tools=tool_defs,
@@ -142,21 +147,7 @@ class CognitiveLoop:
                             if not ttft_logged:
                                 ttft_logged = True
                                 logger.info("Pipeline: 首 token 到达 (TTFT)")
-
-                        if content:
-                            if dual:
-                                # Route through JSON parser — only public_reply goes to output
-                                parsed = json_parser.feed(content)
-                                if parsed.get("field") and parsed["field"].name == "PUBLIC_REPLY":
-                                    content = parsed["content"]
-                                    acc_text += content
-                                elif parsed.get("field") and parsed["field"].name == "INNER_VOICE":
-                                    logger.debug("inner_voice: %s", parsed["content"])
-                                    continue  # inner_voice → debug only
-                                else:
-                                    continue  # between fields or mood
-                            else:
-                                acc_text += content
+                            acc_text += content
 
                             if not self._sync_event.is_set():
                                 self._sync_buffer.append(content)
@@ -236,27 +227,7 @@ class CognitiveLoop:
                     continue
 
                 # Final answer — finalize the message
-                if dual:
-                    # Parse finished JSON to extract public_reply + inner_voice + mood
-                    result = json_parser.finish()
-                    reply = result["public_reply"].strip()
-                    inner = result["inner_voice"].strip()
-                    mood_val = result.get("mood", "").strip()
-                    if inner:
-                        logger.info("inner_voice: %s", inner[:200])
-                    if mood_val:
-                        logger.info("dual_track mood: %s", mood_val)
-                        self._session.set_param("mood", mood_val)
-                    if reply:
-                        if self._emotion:
-                            self._emotion.analyze_assistant(reply)
-                        if not speaking_started:
-                            await self._output.typing(False)
-                        msg = _MessageObj(content=reply)
-                        await self._output.send(msg)
-                        self._session.add_message("assistant", reply)
-                        asyncio.create_task(self._after_response(user_message, reply), name="after-response")
-                elif speaking_started:
+                if speaking_started:
                     if acc_text.strip():
                         if self._emotion:
                             self._emotion.analyze_assistant(acc_text)
