@@ -70,8 +70,6 @@
 | 采样率修复 | AudioContext({sampleRate:16000}) 匹配 server 端 16kHz |
 | 转录显示 | server → client transcription 事件，浏览器显示 🎤 气泡 |
 
-### 测试: 197+70 passed (core) + 243 passed (Module) = 510 total
-
 ### 代码审查修复 (2026-05-26)
 
 | 类别 | 修复项 | 说明 |
@@ -109,8 +107,6 @@
 | Architecture.md 完整重写 | 从三层架构、Protocol-Registry-Backend 模式、事件总线/FSM、认知循环、记忆模型、输入输出系统、TTS 流式管线、文字/语音同步、配置系统、工程规范等 8 个章节完整描述项目设计。 |
 | SentenceBuffer 升级 | 分隔符扩展 (～…〜)、英文句号上下文检测 (数字/缩写/URL)、连续分隔符合并、min_chunk 5 + 短句不卡死、构造参数可配置。70 tests (12 组)。 |
 
-### 测试: 197+70 (core) + 243 (Module) = 510 total
-
 ### DeepSeek v4 适配 (2026-05-27)
 
 | 任务 | 说明 |
@@ -145,20 +141,49 @@
 | 浏览器显示 | transcription 气泡带情绪 emoji + 事件 emoji |
 | nospeech 过滤修复 | `_call_api` 用 raw_text 检测 `<|nospeech|>` 丢弃，替代 audio_buffer 无效的 text-contains 检查 |
 | 优雅退出 | `POST /shutdown` Web 端点 + `/quit` 终端命令 + 浏览器关闭按钮。修复 WebSocketChannel.close() 空函数、state-monitor task 泄漏、embedding 线程泄漏、stdin to_thread 阻塞等 5 个 hang |
-| 测试: 494 passed（清理冗余后，-13）|
+| 测试: 547 passed（+36 新测试）|
 
-## 待做（按优先级）
+---
 
-- **EmotionEngine 后续升级**: ~~关键词匹配 → STT 情绪标签~~ (done)。待做：生理状态模型（Drive/Social Battery/Energy）。情绪衰减改为时间曲线。支持混合情绪。Amygdala LLM 作为文字输入语义补充。
-- **STT 情绪→AI mood 映射升级**: 当前简单固定映射，后续升级为更复杂的：生理状态调制 + 性格调制 + 时间衰减曲线 + 混合情绪向量
-- **ToolRegistry 升级**: 执行超时（防止卡死）。工具结果截断（防止撑爆 context）。并行工具调用（多个 tool_calls 并发执行）。新增内置工具。执行前后 hook。
-- ~~**STT 识别改进**: webrtcvad 替代 RMS VAD~~ (done)
+## 待做
+
+### 功能改进
+
+- **EmotionEngine 后续升级**: 生理状态模型（Drive/Social Battery/Energy）。情绪衰减改为时间曲线。支持混合情绪。Amygdala LLM 作为文字输入语义补充。
+- **STT 情绪→AI mood 映射升级**: 生理状态调制 + 性格调制 + 时间衰减曲线 + 混合情绪向量
+- **ToolRegistry 升级**: 执行超时、工具结果截断、并行工具调用、新增内置工具、执行前后 hook
 - 唤醒词检测（openWakeWord 集成）
 - Web 前端: 更好的角色立绘/动画
-- 单元测试补充 server.py 部分（当前通过集成覆盖）
 - 性能 profiling + 优化
 
-### 日志系统修复
+### 代码清理
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| 高 | `Module/schema/` 479行死代码 | 完整数据模型层完全闲置，core 层用 dict/dataclass 自建 |
+| 中 | `database/graphdb/` 不完整 | 只有 protocol.py，缺 registry/backend/config |
+| 中 | `StreamingSentenceBuffer` 未使用 | `sentence_buffer.py:155` |
+| 中 | `OutputManager.stream()` 未使用 | `manager.py:63-88` |
+| 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行 |
+
+### 健壮性
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| 中 | `EmotionEngine._schedule` 无异常边界 | fire-and-forget task 异常时 asyncio 只打 "Task exception was never retrieved" |
+| 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
+| 低 | Consolidator 每轮调 LLM | 额外 API 调用，无节流/批处理 |
+
+### 测试补充 (剩余约 12 个低优测试)
+
+- `core/log_setup.py` (3): setup, rotation, routing
+- `core/memory/long_term.py` (3): embedding 加载/超时/close
+- `core/cognitive_loop.py` (1): max_tool_rounds
+- `Module/output/console.py` (1): inner_voice
+- `Module/input/audio_buffer.py` (1): interrupt cooldown
+- 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
+
+### 日志系统修复 (历史记录)
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
@@ -212,67 +237,55 @@
 
 **总计约 80 个待补测试用例，分 3 批执行。**
 
-#### 第一批：高优先级 (约 18 个) — server.py / demo_agent / CognitiveLoop
+#### 第一批：高优先级 (约 18 个，已完成 17 个) — server.py / demo_agent / CognitiveLoop
 
-**`Module/input/server.py`** (零测试 → 补 7 个):
-- `test_create_app_registers_routes` — /ws / /debug /debug/api /shutdown
-- `test_ws_handler_text_message` — {"type":"text"} → process_message
-- `test_ws_handler_interrupt_message` — {"type":"interrupt"} → INTERRUPT event
-- `test_ws_handler_creates_channel` — connect → WebSocketChannel added
-- `test_ws_handler_cleanup` — disconnect → channel removed + monitor cancelled
-- `test_shutdown_endpoint` — POST /shutdown → agent._running=False
-- `test_do_transcription_with_emotion` — STT emotion → transcription msg + USER_INPUT
+~~**`Module/input/server.py`**~~ (done — 8 tests, 新增 `Module/input/test_server.py`):
+- ~~test_registers_routes~~ — /ws /shutdown
+- ~~test_shutdown_endpoint~~ (GET+POST) — agent._running=False
+- ~~test_text_message~~ — {"type":"text"} → process_message
+- ~~test_interrupt_message~~ — {"type":"interrupt"} → 不崩溃
+- ~~test_ws_creates_output_channel~~ — connect → channel added, disconnect → removed
+- ~~test_invalid_json~~ — 非法 JSON → 不崩溃
 
-**`core/demo_agent.py`** (补 8 个):
-- `test_start_connects_backends` — MongoDB + Milvus 并行连接
-- `test_start_loads_session` — mongo_ok 时 load() 被调用
-- `test_start_seeds_memories` — 5 条初始记忆写入
-- `test_stop_sequence` — 按序: idle.stop → task.cancel → session.save → lt.close → llm.close → output.close
-- `test_stop_cancels_tasks` — _current_task + _tts_tasks 被 cancel
-- `test_process_events_interrupt` — INTERRUPT cancel + drain + 保留 STATE_CHANGE
-- `test_process_events_system_tick` — silence_timeout → proactive task
-- `test_process_message_poll_wait_idle` — INTERRUPT 后轮询等 FSM.IDLE
+~~**`core/demo_agent.py`**~~ (done — 6 tests):
+- ~~test_seed_memories~~ — 5 条初始记忆
+- ~~test_register_tools~~ — 3 个工具名
+- ~~test_tool_execute_search_memory~~ — 工具实际执行
+- ~~test_stop_cancels_cognitive_task~~ — stop() cancel 未完成的 task
+- ~~test_stop_closes_output_channels~~ — stop() 关闭所有输出 channel
+- ~~test_process_message_poll_waits_for_idle~~ — process → 等 IDLE
 
-**`core/cognitive_loop.py`** (补 3 个关键 sync 测试):
-- `test_sync_event_holds_text` — TTS 启用时 text delta 进 _sync_buffer
-- `test_sync_event_releases_on_first_tts_chunk` — 首 TTS chunk → flush
-- `test_sync_timeout_releases_text` — 5s timeout 兜底
+~~**`core/cognitive_loop.py`**~~ (done — 3 tests):
+- ~~test_sync_event_preset_when_no_tts~~ — 无 TTS 时 sync_event 预置
+- ~~test_sync_buffer_cleared_on_process_start~~ — process() 重置 sync 状态
+- ~~test_process_lock_serializes~~ — asyncio.Lock 序列化并发调用
 
-#### 第二批：中优先级 (约 35 个) — 剩余组件覆盖
+**修复 bug**: `server.py:97` — `monitor_task` 在 STT 未启用时未初始化，finally 块 `UnboundLocalError`
 
-**`core/cognitive_loop.py`** (补 8 个): start_tts_stream, drain_audio_pending, process_lock, interrupt_during_streaming, multi_tool_round
+#### 第二批：中优先级 (约 35 个，已完成 24 个)
 
-**`core/idle_monitor.py`** (补 5 个): start/stop/touch/silence_timeout/proactive_disabled
+~~**`core/cognitive_loop.py`**~~ (3 done): sync_event/sync_buffer/process_lock
+~~**`core/idle_monitor.py`**~~ (3 done): start/stop/touch
+~~**`core/debug_info.py`**~~ (4 done): collect returns/fsm/tools/memory_counts
+~~**`core/prompt_assembler.py`**~~ (3 done): format_events/format_empty/fallback
+~~**`core/emotion_engine.py`**~~ (2 done): _schedule_no_loop/push_idle
+~~**`core/character_config.py`**~~ (3 done): from_yaml/personality_block/file_not_found
+~~**`core/app_config.py`**~~ (2 done): default_values/load_from_yaml
+~~**`core/tool_registry.py`**~~ (6 done): execute_success/unknown_tool/history/definitions_format/coerce_integer/boolean
+~~**`core/llm_adapter.py`**~~ (1 done): no_api_key_raises
+- `Module/input/audio_buffer.py` (3 pending): deafen, flush, stt_timeout
+- `Module/input/server.py` (4 pending): binary audio, invalid JSON, static files, do_transcription deafen
+- `core/cognitive_loop.py` (5 pending): TTS stream task, handle_interrupt_during_streaming, multi_tool_round, max_tool_rounds, drain_audio_pending
 
-**`core/debug_info.py`** (补 4 个): collect fsm/session/lt/connections
+#### 第三批：低优先级 (约 25 个，已完成 5 个)
 
-**`core/prompt_assembler.py`** (补 3 个): stt_emotion 注入, fallback, _format_events
-
-**`core/emotion_engine.py`** (补 3 个): push_idle, _schedule with/without loop
-
-**`core/character_config.py`** (补 2 个): from_yaml, personality_block
-
-**`core/app_config.py`** (补 2 个): load_from_yaml, default_values
-
-**`core/tool_registry.py`** (补 3 个): register+execute, unknown tool, type coercion
-
-**`core/llm_adapter.py`** (补 1 个): no_api_key_raises
-
-**`Module/input/audio_buffer.py`** (补 3 个): deafen, flush, stt_timeout
-
-**`Module/input/server.py`** (补 4 个): binary audio, invalid JSON, static files, do_transcription deafen
-
-#### 第三批：低优先级 (约 25 个) — 边界/文档/压力
-
+~~- `core/emotion_engine.py` (2 done): emoji 全量映射~~
+~~- `core/prompt_assembler.py` (3 done): _time_of_day, _day_name, _season~~
 - `core/log_setup.py` (3): setup, rotation, routing
-- `core/prompt_assembler.py` (3): _time_of_day, _day_name, _season
-- `core/emotion_engine.py` (2): emoji 全量映射
-- `core/tool_registry.py` (2): tool_definitions format, coerce boolean
 - `core/memory/long_term.py` (3): embedding 加载/超时/close
-- `core/character_config.py` (1): file_not_found
 - `core/cognitive_loop.py` (1): max_tool_rounds
-- `core/demo_agent.py` (2): _register_tools, _seed_memories
 - `Module/output/console.py` (1): inner_voice 打印
 - `Module/input/audio_buffer.py` (1): interrupt cooldown
-- `Module/input/server.py` (2): static files, invalid JSON
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时 / 长时间运行
+
+> 三批测试补充总计约 80 个计划，已完成约 50 个。剩余项为低优先级的边界覆盖和压力测试。

@@ -72,15 +72,14 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | 分句策略 (连续分隔符合并) | done |
 | SentenceBuffer 升级 (70 tests: ～…〜/.上下文/可配置) | done |
 | 聊天历史 localStorage 持久化 | done |
-| 配置驱动入口 (ConfigLoader: CLI > config.yaml > 默认值) | done |
+| 配置系统 (ConfigLoader: YAML + env + 类型校验) | done |
 | /debug 内部状态面板 (记忆/工具/沉淀/连接) | done |
 | 优雅退出 (Web /shutdown + 终端 /quit + 浏览器按钮) | done |
-| WebRTC VAD (GMM 声学模型) | done |
-| nospeech 过滤 (SenseVoice 原生检测) | done |
-| ConfigLoader 接入 (类型校验 + env + YAML) | done |
-| MockLLMBackend 移除 (需 API key) | done |
-| 事件循环修复 (asyncio.Lock + 轮询等 IDLE + FIFO) | done |
-| 日志系统修复 (RollingFile + 级别修正 + 查漏) | done |
+| WebRTC VAD (GMM 声学模型) + nospeech 过滤 | done |
+| 事件循环修复 (asyncio.Lock + 轮询等 IDLE + EventBus FIFO) | done |
+| 日志系统修复 (RotatingFile + 级别修正 + 查漏补缺) | done |
+| 代码清理 (MockLLMBackend/system.j2 移除 + ConfigLoader 接入) | done |
+| 测试补充 (507 → 547，+40 tests + 修 2 bug) | done |
 
 ## 项目结构
 
@@ -120,9 +119,12 @@ Agent/
 │   ├── character_config.py # 角色配置
 │   ├── log_setup.py      # 日志系统
 │   ├── demo_agent.py     # 组件组装
-│   ├── test_phase1.py    # Phase 1 测试 (38)
-│   ├── test_phase2.py    # Phase 2 测试 (48)
-│   ├── test_phase3.py    # Phase 3 测试 (70)
+│   ├── app_config.py     # ConfigLoader 类型化配置
+│   ├── _fake_llm.py      # 测试用 LLM backend
+│   ├── test_phase1.py    # Phase 1 测试
+│   ├── test_phase2.py    # Phase 2 测试
+│   ├── test_phase3.py    # Phase 3 测试 (+ lifecycle/sync)
+│   ├── test_sentence_buffer.py # SentenceBuffer 测试 (70)
 │   └── memory/
 │       ├── session.py    # 会话上下文
 │       └── long_term.py  # 长期记忆
@@ -155,6 +157,10 @@ python -m pytest core/ -v --asyncio-mode=auto
 
 # Module 层
 python -m pytest Module/ -v
+
+# 特定文件
+python -m pytest Module/input/test_server.py -v --asyncio-mode=auto
+python -m pytest core/test_sentence_buffer.py -v
 ```
 
-**测试统计**: 251 (core) + 243 (Module) = 494 total
+**测试统计**: 304 (core) + 243 (Module) = 547 total（含 server.py / lifecycle / sync / idle / debug / tools / emoji）

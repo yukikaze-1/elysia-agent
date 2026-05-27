@@ -183,3 +183,47 @@ class TestAudioBuffer:
             await buf.feed(make_loud(1600))
 
         assert len(interrupt_calls) == 1  # fires once, not on every chunk beyond 3
+
+    @pytest.mark.asyncio
+    async def test_deafen_ignores_audio(self, make_loud):
+        """deafen() makes feed() a no-op for the specified duration."""
+        stt_calls: list[bytes] = []
+
+        async def fake_stt(audio: bytes) -> str:
+            stt_calls.append(audio)
+            return "test"
+
+        buf = AudioBuffer(stt_transcribe=fake_stt)
+        buf.deafen(1.0)
+        await buf.feed(make_loud(16000))  # full second of loud audio
+        await buf.flush()
+        assert len(stt_calls) == 0  # all audio ignored during deafen
+
+    @pytest.mark.asyncio
+    async def test_deafen_clears_state(self, make_loud):
+        """deafen() resets speaking state."""
+        buf = AudioBuffer()
+        # Feed some audio to get into speaking state
+        for _ in range(5):
+            await buf.feed(make_loud(640))
+        buf.deafen(0.1)
+        # State should be cleared
+        assert buf._speaking is False
+        assert buf._chunks == []
+
+    @pytest.mark.asyncio
+    async def test_flush_processes_remaining(self, make_loud):
+        """flush() processes buffered audio even without silence gap."""
+        stt_calls: list[str] = []
+
+        async def fake_stt(audio: bytes) -> str:
+            stt_calls.append("called")
+            return "transcribed text"
+
+        buf = AudioBuffer(stt_transcribe=fake_stt)
+        # Feed enough to pass min segment length
+        for _ in range(30):
+            await buf.feed(make_loud(640))
+        # Don't wait for silence — flush immediately
+        await buf.flush()
+        assert "called" in stt_calls

@@ -94,6 +94,7 @@ async def _handle_ws(
     agent._output.add_channel(channel)
 
     audio_buf: AudioBuffer | None = None
+    monitor_task: asyncio.Task | None = None
     if stt_transcribe:
         audio_buf = AudioBuffer(
             stt_transcribe=stt_transcribe,

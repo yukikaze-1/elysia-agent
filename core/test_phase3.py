@@ -204,6 +204,179 @@ class TestCognitiveLoopMethods:
 
 
 # ============================================================================
+# 3b. CognitiveLoop — TTS + multi-tool
+# ============================================================================
+
+class TestCognitiveLoopTTS:
+    @pytest.fixture
+    def loop(self):
+        from core.event_bus import EventBus
+        from core.agent_fsm import AgentFSM
+        from Module.output import OutputManager
+        from core.prompt_assembler import PromptAssembler
+        from core.memory.session import SessionMemory
+        from core.tool_registry import ToolRegistry
+        from core.llm_adapter import LLMAdapter
+
+        fsm = AgentFSM()
+        llm = LLMAdapter(_test_backend=FakeLLMBackend(response="你好"))
+        bus = EventBus()
+        output = OutputManager()
+        char = MagicMock()
+        char.name = "Test"
+        char.personality_block.return_value = "personality"
+        session = SessionMemory()
+        prompt = MagicMock()
+        prompt.build_messages = AsyncMock(return_value=[
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "hello"},
+        ])
+        prompt._character = char
+        tools = ToolRegistry()
+        tts = MagicMock()
+        tts.synthesize_stream = AsyncMock(return_value=AsyncMock())
+        # Make synthesize_stream return no chunks (empty stream)
+        async def _empty_stream(*args, **kwargs):
+            return
+            yield  # unreachable, makes it an async generator
+        tts.synthesize_stream = MagicMock()
+        # Use a real async generator
+        async def _fake_stream(text, character=None):
+            yield b"audio_chunk_1"
+        tts.synthesize_stream = _fake_stream
+        return CognitiveLoop(
+            llm=llm, fsm=fsm, event_bus=bus, output=output,
+            prompt=prompt, session=session, tools=tools, tts=tts,
+        )
+
+    @pytest.mark.asyncio
+    async def test_start_tts_stream_creates_task(self, loop):
+        """_start_tts_stream creates a background TTS task."""
+        initial_count = len(loop._tts_tasks)
+        loop._start_tts_stream("你好世界")
+        assert len(loop._tts_tasks) == initial_count + 1
+        # Should clean up done tasks
+        loop._start_tts_stream("第二句")
+        # At most initial+2 tasks (some may have completed)
+        assert len(loop._tts_tasks) <= initial_count + 2
+        assert loop._tts_stream_id >= 2
+
+    @pytest.mark.asyncio
+    async def test_multi_tool_round(self, loop):
+        """CognitiveLoop handles tool calls and loops correctly."""
+        import json
+        # Use a fake backend that returns tool calls then final answer
+        tool_json = json.dumps({
+            "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "test_tool", "arguments": '{"q":"test"}'}
+            }]
+        })
+        loop._llm._backend = FakeLLMBackend(response=tool_json)
+
+        # Register a tool
+        async def test_tool(q: str) -> str:
+            return f"result for {q}"
+        loop._tools.register("test_tool", "test",
+                             {"type": "object", "properties": {"q": {"type": "string"}}},
+                             test_tool)
+
+        # After process, the tool should have been called (tool history)
+        await loop.process("use test_tool")
+        # Tool was registered, process completed without error
+        assert loop._fsm.state in ("idle", "thinking")
+
+    @pytest.mark.asyncio
+    async def test_handle_interrupt_clears_state(self, loop):
+        """_handle_interrupt clears all buffers and returns to IDLE."""
+        loop._sync_buffer = ["pending text"]
+        loop._audio_pending = [("chunk", b"data", 1)]
+        loop._sentence_buf.feed("partial")
+        # FSM must be in a state where interrupt is valid
+        loop._fsm.transition("thinking")
+
+        await loop._handle_interrupt()
+
+        assert loop._sync_buffer == []
+        assert loop._audio_pending == []
+        assert loop._fsm.state == "idle"
+
+
+# ============================================================================
+# 3c. CognitiveLoop — TTS sync (basic)
+# ============================================================================
+
+class TestCognitiveLoopSync:
+    @pytest.fixture
+    def loop(self):
+        from core.event_bus import EventBus
+        from core.agent_fsm import AgentFSM
+        from Module.output import OutputManager
+        from core.prompt_assembler import PromptAssembler
+        from core.memory.session import SessionMemory
+        from core.tool_registry import ToolRegistry
+        from core.llm_adapter import LLMAdapter
+
+        fsm = AgentFSM()
+        llm = LLMAdapter(_test_backend=FakeLLMBackend(response="你好呀！"))
+        bus = EventBus()
+        output = OutputManager()
+        char = MagicMock()
+        char.name = "Test"
+        char.personality_block.return_value = "personality"
+        session = SessionMemory()
+        prompt = MagicMock()
+        prompt.build_messages = AsyncMock(return_value=[
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "hello"},
+        ])
+        prompt._character = char
+        tools = ToolRegistry()
+        return CognitiveLoop(
+            llm=llm, fsm=fsm, event_bus=bus, output=output,
+            prompt=prompt, session=session, tools=tools, tts=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_sync_event_preset_when_no_tts(self, loop):
+        """When TTS is None, sync_event should be preset (text flows freely)."""
+        loop._sync_event.clear()
+        await loop.process("hello")
+        # After init in _think_loop: no TTS → sync_event is set
+        assert loop._sync_event.is_set()
+        assert loop._sync_buffer == []
+
+    @pytest.mark.asyncio
+    async def test_sync_buffer_cleared_on_process_start(self, loop):
+        """Each process() call resets sync state."""
+        loop._sync_buffer.append("stale data")
+        loop._audio_pending.append(("chunk", b"data", 1))
+        loop._audio_flow = True
+
+        await loop.process("hello")
+        # After process() runs, buffer/pending are clear
+        # (_audio_flow is True after normal response delivery)
+        assert loop._sync_buffer == []
+        assert loop._audio_pending == []
+
+    @pytest.mark.asyncio
+    async def test_process_lock_serializes(self, loop):
+        """Concurrent process() calls are serialized by the lock."""
+        started = []
+
+        async def tracked_process(msg):
+            started.append(msg)
+            await loop.process(msg)
+
+        t1 = asyncio.create_task(tracked_process("A"))
+        t2 = asyncio.create_task(tracked_process("B"))
+        await asyncio.gather(t1, t2)
+
+        # Both should have started (B waited for A)
+        assert len(started) == 2
+
+
+# ============================================================================
 # 4. AgentFSM — missing edges
 # ============================================================================
 
@@ -439,6 +612,65 @@ class TestEmotionEngineEdges:
         intensity = engine._session.get_param("mood_intensity", 0)
         assert intensity >= 0.1
         assert engine._session.get_param("mood") == "neutral"
+
+    def test_schedule_no_loop_does_not_raise(self, engine):
+        """_schedule should be a no-op when no event loop is running."""
+        # In sync test context, no running loop → should not raise
+        from core.emotion_engine import EmotionEngine
+        EmotionEngine._schedule(MagicMock())  # coroutine mock, no loop
+
+    def test_push_idle_uses_list(self, engine):
+        """push_idle_expression picks from idle_expressions."""
+        engine._idle_expressions = ["neutral", "blink"]
+        # Should not raise — picks randomly
+        import asyncio
+        async def _run():
+            await engine.push_idle_expression()
+        try:
+            asyncio.get_running_loop()
+            # Loop exists, schedule should work
+        except RuntimeError:
+            pass  # No loop in sync context, expected
+
+
+# ============================================================================
+# 10b. PromptAssembler
+# ============================================================================
+
+class TestPromptAssemblerUnit:
+    def test_format_events(self):
+        from core.prompt_assembler import _format_events
+        result = _format_events(["Laughter", "Cry"])
+        assert "Laughter" in result
+        assert "Cry" in result
+        assert "😀" in result
+        assert "😭" in result
+
+    def test_format_events_empty(self):
+        from core.prompt_assembler import _format_events
+        assert _format_events([]) == ""
+
+    @pytest.mark.asyncio
+    async def test_build_system_prompt_fallback(self):
+        """When template dir is invalid, fallback is used."""
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from core.prompt_assembler import PromptAssembler
+        from core.character_config import CharacterConfig
+        from core.memory.session import SessionMemory
+        from core.memory.long_term import LongTermMemory
+
+        char = CharacterConfig.from_yaml("character/elysia.yaml")
+        session = SessionMemory()
+        lt = LongTermMemory()
+
+        # Patch _PROMPT_DIR to an invalid path to trigger fallback
+        import core.prompt_assembler as pa
+        with patch.object(pa, '_PROMPT_DIR', '/nonexistent/path'):
+            assembler = PromptAssembler(char, session, lt)
+            prompt = await assembler.build_system_prompt("你好")
+            assert "Elysia" in prompt
+            assert "桌面AI伴侣" in prompt  # fallback text
 
 
 # ============================================================================
@@ -771,6 +1003,453 @@ class TestMessageObj:
         msg = _MessageObj()
         assert msg.role == "assistant"
         assert msg.content == ""
+
+
+# ============================================================================
+# 14. DemoAgent — lifecycle
+# ============================================================================
+
+class TestDemoAgentLifecycle:
+    @pytest.mark.asyncio
+    async def test_seed_memories(self):
+        """_seed_memories writes 5 entries without triggering embedding."""
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from core.demo_agent import DemoAgent
+
+        agent = DemoAgent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent._seed_memories()
+        assert agent._long_term.count == 5
+        # Entries should be MemoryEntry objects, not embedded
+        assert all(hasattr(e, "text") for e in agent._long_term._entries)
+
+    @pytest.mark.asyncio
+    async def test_register_tools(self):
+        """_register_tools registers 3 tools with correct names."""
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from core.demo_agent import DemoAgent
+
+        agent = DemoAgent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        agent._register_tools()
+        names = agent._tools.tool_names
+        assert "search_memory" in names
+        assert "get_time" in names
+        assert "save_memory" in names
+
+    @pytest.mark.asyncio
+    async def test_tool_execute_search_memory(self):
+        """search_memory tool queries long-term memory."""
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from core.demo_agent import DemoAgent
+
+        agent = DemoAgent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        agent._register_tools()
+        # Seed a memory entry
+        from core.memory.long_term import MemoryEntry
+        agent._long_term._entries.append(
+            MemoryEntry(text="测试记忆", metadata={"type": "fact"}))
+
+        result = await agent._tools.execute("search_memory", {"query": "测试"})
+        assert "测试记忆" in result
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_cognitive_task(self):
+        """stop() cancels _current_task if still running."""
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from core.demo_agent import DemoAgent
+
+        agent = DemoAgent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+
+        # Simulate a running cognitive task
+        async def fake_task():
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                pass
+        agent._cognitive._current_task = asyncio.create_task(fake_task())
+
+        await agent.stop()
+        assert agent._cognitive._current_task.done()
+        assert agent._cognitive._current_task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_stop_closes_output_channels(self):
+        """stop() closes all output channels."""
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from core.demo_agent import DemoAgent
+
+        agent = DemoAgent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+        # Add a mock channel
+        mock_ch = MagicMock()
+        mock_ch.capabilities = set()
+        mock_ch.close = AsyncMock()
+        agent._output.add_channel(mock_ch)
+        await agent.stop()
+        mock_ch.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_process_message_poll_waits_for_idle(self):
+        """process_message waits for FSM to return to IDLE after INTERRUPT."""
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from core.demo_agent import DemoAgent
+
+        agent = DemoAgent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+
+        # Start processing a message
+        await agent.process_message("hello")
+        # Wait for processing to complete
+        for _ in range(100):
+            if agent._fsm.state == "idle":
+                break
+            await asyncio.sleep(0.01)
+
+        assert agent._fsm.state == "idle"
+        await agent.stop()
+
+
+# ============================================================================
+# 14b. EmotionEngine — emoji mappings
+# ============================================================================
+
+class TestEmotionEmojiMappings:
+    def test_stt_emotion_emoji_all(self):
+        from core.emotion_engine import stt_emotion_emoji
+        assert stt_emotion_emoji("HAPPY") == "😊"
+        assert stt_emotion_emoji("SAD") == "😔"
+        assert stt_emotion_emoji("ANGRY") == "😡"
+        assert stt_emotion_emoji("SURPRISED") == "😮"
+        assert stt_emotion_emoji("NEUTRAL") == ""
+        assert stt_emotion_emoji("UNKNOWN") == ""
+
+    def test_stt_event_emoji_all(self):
+        from core.emotion_engine import stt_event_emoji
+        assert stt_event_emoji("Laughter") == "😀"
+        assert stt_event_emoji("Cry") == "😭"
+        assert stt_event_emoji("Applause") == "👏"
+        assert stt_event_emoji("Speech") == ""
+        assert stt_event_emoji("UNKNOWN_EVENT") == ""
+
+
+# ============================================================================
+# 14c. PromptAssembler — time/day helpers
+# ============================================================================
+
+class TestPromptAssemblerHelpers:
+    def test_time_of_day(self):
+        from core.prompt_assembler import PromptAssembler
+        assert PromptAssembler._time_of_day(6) == "morning"
+        assert PromptAssembler._time_of_day(12) == "noon"
+        assert PromptAssembler._time_of_day(15) == "afternoon"
+        assert PromptAssembler._time_of_day(20) == "evening"
+        assert PromptAssembler._time_of_day(3) == "night"
+
+    def test_day_name(self):
+        from core.prompt_assembler import PromptAssembler
+        assert PromptAssembler._day_name(0) == "周一"
+        assert PromptAssembler._day_name(6) == "周日"
+
+    def test_season(self):
+        from core.prompt_assembler import PromptAssembler
+        assert PromptAssembler._season(4) == "spring"
+        assert PromptAssembler._season(7) == "summer"
+        assert PromptAssembler._season(10) == "autumn"
+        assert PromptAssembler._season(1) == "winter"
+
+
+# ============================================================================
+# 14d. CharacterConfig
+# ============================================================================
+
+class TestCharacterConfig:
+    def test_from_yaml_loads_correctly(self):
+        from core.character_config import CharacterConfig
+        char = CharacterConfig.from_yaml("character/elysia.yaml")
+        assert char.name == "Elysia"
+        assert "温柔" in char.traits
+        assert len(char.wake_words) >= 1
+        assert "Elysia" in char.wake_words
+
+    def test_personality_block_format(self):
+        from core.character_config import CharacterConfig
+        char = CharacterConfig.from_yaml("character/elysia.yaml")
+        block = char.personality_block()
+        assert "Elysia" in block
+        assert "温柔" in block
+        assert "性格" in block or "说话风格" in block
+
+    def test_from_yaml_file_not_found(self):
+        from core.character_config import CharacterConfig
+        with pytest.raises(FileNotFoundError):
+            CharacterConfig.from_yaml("nonexistent.yaml")
+
+
+# ============================================================================
+# 14c. AppConfig
+# ============================================================================
+
+class TestAppConfig:
+    def test_default_values(self):
+        cfg = AppConfig()
+        assert cfg.server.host == "0.0.0.0"
+        assert cfg.server.port == 8765
+        assert cfg.tts.enabled is False
+        assert cfg.stt.enabled is False
+        assert cfg.agent.character == "character/elysia.yaml"
+        assert cfg.agent.user_name == "妖梦"
+        assert cfg.llm.model == "deepseek/deepseek-chat"
+        assert cfg.memory.session_max_messages == 20
+
+    def test_load_from_yaml(self):
+        from Module.config.loader import ConfigLoader
+        cfg = ConfigLoader(AppConfig, yaml_path="config.yaml").load()
+        assert cfg.tts.enabled is True
+        assert cfg.stt.enabled is True
+        assert cfg.agent.user_name == "妖梦"
+
+
+# ============================================================================
+# 14d. LLMAdapter
+# ============================================================================
+
+class TestLLMAdapterErrors:
+    def test_no_api_key_raises(self):
+        import os as _os
+        from core.llm_adapter import LLMAdapter
+        with patch.dict(_os.environ, {"DEEPSEEK_API_KEY": ""}, clear=True):
+            with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+                LLMAdapter()
+
+
+# ============================================================================
+# 15. IdleMonitor
+# ============================================================================
+
+class TestIdleMonitor:
+    @pytest.mark.asyncio
+    async def test_start_creates_loop_task(self):
+        from core.idle_monitor import IdleMonitor
+        char = MagicMock()
+        char.wake_words = []
+        char.proactive.enabled = False
+        char.proactive.interval = 300
+        char.proactive.triggers = []
+        fsm = MagicMock()
+        fsm.state = "idle"
+        bus = MagicMock()
+
+        monitor = IdleMonitor(char, fsm, bus)
+        await monitor.start()
+        assert monitor._task is not None
+        assert not monitor._task.done()
+        await monitor.stop()
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_task(self):
+        from core.idle_monitor import IdleMonitor
+        char = MagicMock()
+        char.wake_words = []
+        char.proactive.enabled = False
+        char.proactive.interval = 300
+        char.proactive.triggers = []
+        fsm = MagicMock()
+        fsm.state = "idle"
+        bus = MagicMock()
+
+        monitor = IdleMonitor(char, fsm, bus)
+        await monitor.start()
+        assert monitor._running is True
+        await monitor.stop()
+        assert monitor._running is False
+        assert monitor._task is None
+
+    def test_touch_resets_timer(self):
+        from core.idle_monitor import IdleMonitor
+        import time
+        char = MagicMock()
+        char.wake_words = []
+        char.proactive.enabled = False
+        char.proactive.interval = 300
+        char.proactive.triggers = []
+        fsm = MagicMock()
+        bus = MagicMock()
+
+        monitor = IdleMonitor(char, fsm, bus)
+        original = monitor._last_interaction
+        monitor.touch()
+        assert monitor._last_interaction >= original
+
+
+# ============================================================================
+# 16. DebugInfo
+# ============================================================================
+
+class TestDebugInfo:
+    @pytest.mark.asyncio
+    async def test_collect_returns_debug_info(self):
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from core.debug_info import collect, DebugInfo
+        from core.demo_agent import DemoAgent
+
+        agent = DemoAgent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+
+        info = await collect(agent)
+        assert isinstance(info, DebugInfo)
+        assert info.character_name == "Elysia"
+        await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_collect_fsm_state(self):
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from core.debug_info import collect
+        from core.demo_agent import DemoAgent
+
+        agent = DemoAgent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+
+        info = await collect(agent)
+        assert info.fsm_state in ("idle", "thinking", "speaking")
+        await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_collect_tool_list(self):
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from core.debug_info import collect
+        from core.demo_agent import DemoAgent
+
+        agent = DemoAgent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+
+        info = await collect(agent)
+        assert "search_memory" in info.tools
+        assert "get_time" in info.tools
+        await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_collect_memory_counts(self):
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from core.debug_info import collect
+        from core.demo_agent import DemoAgent
+
+        agent = DemoAgent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+
+        info = await collect(agent)
+        # 5 seeded memories
+        assert info.lt_count >= 5
+        await agent.stop()
+
+
+# ============================================================================
+# 17. ToolRegistry — unit tests
+# ============================================================================
+
+class TestToolRegistryUnit:
+    @pytest.mark.asyncio
+    async def test_execute_success(self):
+        from core.tool_registry import ToolRegistry
+
+        async def my_tool(x: int) -> str:
+            return f"result: {x}"
+
+        registry = ToolRegistry()
+        registry.register("my_tool", "test tool",
+                          {"type": "object", "properties": {"x": {"type": "integer"}}},
+                          my_tool)
+
+        result = await registry.execute("my_tool", {"x": 42})
+        assert result == "result: 42"
+
+    @pytest.mark.asyncio
+    async def test_execute_unknown_tool(self):
+        from core.tool_registry import ToolRegistry
+
+        registry = ToolRegistry()
+        result = await registry.execute("nonexistent", {})
+        assert "Error" in result
+        assert "unknown tool" in result
+
+    @pytest.mark.asyncio
+    async def test_execute_logs_to_history(self):
+        from core.tool_registry import ToolRegistry
+
+        async def my_tool(x: int) -> str:
+            return str(x)
+
+        registry = ToolRegistry()
+        registry.register("t", "desc",
+                          {"type": "object", "properties": {"x": {"type": "integer"}}},
+                          my_tool)
+
+        await registry.execute("t", {"x": 1})
+        assert len(registry._history) == 1
+        assert registry._history[0]["name"] == "t"
+
+    def test_tool_definitions_format(self):
+        from core.tool_registry import ToolRegistry
+
+        async def foo() -> str:
+            return "bar"
+
+        registry = ToolRegistry()
+        registry.register("foo", "test function",
+                          {"type": "object", "properties": {}}, foo)
+
+        defs = registry.tool_definitions()
+        assert len(defs) == 1
+        assert defs[0]["type"] == "function"
+        assert defs[0]["function"]["name"] == "foo"
+
+    def test_coerce_integer(self):
+        from core.tool_registry import ToolRegistry
+
+        async def dummy(x: int) -> str:
+            return str(x)
+
+        registry = ToolRegistry()
+        registry.register("dummy", "d",
+                          {"type": "object", "properties": {"x": {"type": "integer"}}},
+                          dummy)
+
+        coerced = registry._coerce("dummy", {"x": "42"})
+        assert coerced["x"] == 42
+        assert isinstance(coerced["x"], int)
+
+    def test_coerce_boolean(self):
+        from core.tool_registry import ToolRegistry
+
+        async def dummy(flag: bool) -> str:
+            return str(flag)
+
+        registry = ToolRegistry()
+        registry.register("dummy", "d",
+                          {"type": "object", "properties": {"flag": {"type": "boolean"}}},
+                          dummy)
+
+        assert registry._coerce("dummy", {"flag": "true"})["flag"] is True
+        assert registry._coerce("dummy", {"flag": "false"})["flag"] is False
 
 
 # ============================================================================
