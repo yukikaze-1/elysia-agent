@@ -194,10 +194,7 @@ class AudioBuffer:
             )
             if text and text.strip() and self._on_transcription:
                 stripped = text.strip()
-                # SenseVoice returns special tokens for silence/noise — skip these
-                if any(tok in stripped for tok in ("<|nospeech|>", "<|woitn|>")):
-                    logger.debug("STT returned nospeech token, discarding")
-                    return
+                # SenseVoice nospeech 已在 STT backend 层过滤 (raw_text 检测)
                 await self._on_transcription(stripped)
         except asyncio.TimeoutError:
             logger.warning("STT timed out (segment length=%d bytes)", len(audio))

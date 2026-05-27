@@ -107,6 +107,10 @@ class SenseVoiceBackend(STTBackend):
                 self.last_emotion = _parse_emotion(raw)
                 self.last_events = _parse_events(raw)
             if result.get("text"):
+                # <|nospeech|> 表示 SenseVoice 判定为非语音，丢弃（防止噪音误识别）
+                if "<|nospeech|>" in raw:
+                    self._logger.debug("SenseVoice returned nospeech, discarding text=%r", result["text"])
+                    return
                 yield result["text"]
             else:
                 self._logger.warning(

@@ -20,13 +20,12 @@ python demo.py --once "你好"
 
 # WebSocket 服务器模式（浏览器访问 http://localhost:8765）
 python demo.py --server
+#   退出: 终端输入 /quit、浏览器设置面板"关闭服务"、或 curl -X POST /shutdown
 
 # 启用 TTS + STT（或在 config.yaml 中设置 TTS.enabled / STT.enabled）
 python demo.py --server --tts --stt
 
 # Debug 面板（浏览器访问 http://localhost:8765/debug）
-python demo.py --server
-# 然后打开 http://localhost:8765/debug
 
 # 详细日志
 python demo.py --verbose
@@ -75,6 +74,7 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | 聊天历史 localStorage 持久化 | done |
 | 配置驱动入口 (CLI > config.yaml > 默认值) | done |
 | /debug 内部状态面板 (记忆/工具/沉淀/连接) | done |
+| 优雅退出 (Web /shutdown + 终端 /quit + 浏览器按钮) | done |
 
 ## 项目结构
 

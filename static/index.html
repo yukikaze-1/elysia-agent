@@ -100,6 +100,7 @@ body {
   background: transparent; color: var(--text); cursor: pointer; font-size: 13px; margin-top: 4px;
 }
 #settings-panel button:hover { background: var(--border); }
+#shutdown-btn:hover { background: #5c1a1a !important; border-color: #a33 !important; color: #f88 !important; }
 .toggle { width: 40px; height: 22px; border-radius: 11px; background: var(--border); position: relative; cursor: pointer; transition: background .3s; }
 .toggle.on { background: var(--accent); }
 .toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: white; transition: left .3s; }
@@ -165,6 +166,7 @@ body {
   <label>音量</label>
   <div class="row"><input type="range" id="vol-slider" min="0" max="100" value="80"></div>
   <button id="clear-btn">清空对话</button>
+  <button id="shutdown-btn">关闭服务</button>
   <div id="conn-status" class="disconnected">连接中...</div>
 </div>
 
@@ -508,6 +510,22 @@ document.getElementById('tts-toggle').onclick = function() {
 document.getElementById('vol-slider').oninput = function() {
   volume = parseInt(this.value);
   localStorage.setItem('elysia_vol', volume);
+};
+document.getElementById('shutdown-btn').onclick = async () => {
+  if (!confirm('确定要关闭 Elysia 服务吗？')) return;
+  try {
+    const res = await fetch('/shutdown', {method:'POST'});
+    if (res.ok) {
+      addStatusMsg('服务已关闭');
+      setTimeout(() => { document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--muted);font-size:18px;">Elysia 已关闭 🫧</div>'; }, 500);
+    } else {
+      addStatusMsg('关闭失败');
+    }
+  } catch(e) {
+    // Server may close before sending response — check if connection lost
+    addStatusMsg('服务已关闭');
+    setTimeout(() => { document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--muted);font-size:18px;">Elysia 已关闭 🫧</div>'; }, 500);
+  }
 };
 document.getElementById('clear-btn').onclick = () => {
   document.getElementById('chat').innerHTML = '';

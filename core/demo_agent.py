@@ -137,7 +137,8 @@ class DemoAgent:
             await self._session.load()
 
         # Preload embedding in background (runs in thread pool, won't block event loop)
-        asyncio.create_task(self._long_term._ensure_embedding(), name="embedding-preload")
+        self._embed_task = asyncio.create_task(
+            self._long_term._ensure_embedding(), name="embedding-preload")
 
         await self._idle.start()
         self._event_task = asyncio.create_task(self._process_events())
@@ -160,17 +161,74 @@ class DemoAgent:
 
     async def stop(self) -> None:
         """Stop the agent, save session, clean up resources."""
+        logger.info("Agent stopping...")
         self._running = False
+
+        # Cancel cognitive + TTS tasks (may be idle, but belt-and-suspenders)
+        for attr in ("_current_task", "_tts_task"):
+            t = getattr(self._cognitive, attr, None)
+            if t and not t.done():
+                t.cancel()
+        for t in list(getattr(self._cognitive, "_tts_tasks", [])):
+            if not t.done():
+                t.cancel()
+
+        # Cancel embedding preload if still running
+        if getattr(self, "_embed_task", None) and not self._embed_task.done():
+            self._embed_task.cancel()
+
+        logger.debug("Stopping idle monitor...")
         await self._idle.stop()
+
         if self._event_task:
+            logger.debug("Cancelling event task...")
             self._event_task.cancel()
-        # Save session before closing
-        await self._session.save()
-        await self._long_term.close()
-        await self._llm.close()
+            try:
+                await asyncio.wait_for(self._event_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+        # Cancel embedding task
+        if getattr(self, "_embed_task", None):
+            try:
+                await asyncio.wait_for(self._embed_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+        # Save session before closing (with timeout)
+        logger.debug("Saving session...")
+        try:
+            await asyncio.wait_for(self._session.save(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Session save timed out")
+        except Exception:
+            logger.debug("Session save failed", exc_info=True)
+
+        logger.debug("Closing long-term memory...")
+        try:
+            await asyncio.wait_for(self._long_term.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Long-term memory close timed out")
+
+        logger.debug("Closing LLM client...")
+        try:
+            await asyncio.wait_for(self._llm.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("LLM close timed out")
+
         if self._tts:
-            await self._tts.close()
-        await self._output.close()
+            logger.debug("Closing TTS backend...")
+            try:
+                await asyncio.wait_for(self._tts.close(), timeout=3.0)
+            except asyncio.TimeoutError:
+                logger.warning("TTS close timed out")
+
+        logger.debug("Closing output channels...")
+        try:
+            await asyncio.wait_for(self._output.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Output close timed out")
+
         logger.info("Agent stopped")
 
     async def process_message(self, text: str, user_name: str = "妖梦") -> None:
@@ -232,7 +290,21 @@ class DemoAgent:
         print(f"  前端: http://{host}:{port}/")
         print(f"  STT: {'已连接' if stt_transcribe else '未连接'}")
         print(f"  TTS: {'已连接' if self._tts else '未连接'}")
+        print(f"  退出: /quit / POST http://{host}:{port}/shutdown")
         print(f"{'='*50}\n")
+
+        async def _stdin_watcher():
+            while self._running:
+                try:
+                    line = await asyncio.to_thread(input)
+                except EOFError:
+                    break
+                if line.strip().lower() in ("/quit", "/exit", "/q"):
+                    print("\n正在关闭...")
+                    self._running = False
+                    break
+
+        stdin_task = asyncio.create_task(_stdin_watcher(), name="stdin-watcher")
 
         try:
             while self._running:
@@ -240,8 +312,21 @@ class DemoAgent:
         except KeyboardInterrupt:
             pass
         finally:
-            await runner.cleanup()
-            await self.stop()
+            # stdin_task 在 asyncio.to_thread(input) 中阻塞，cancel() 无法中断。
+            # 关闭 stdin fd 强制 input() 抛 EOFError，唤醒线程池线程，
+            # 否则 asyncio.run() 的 shutdown_default_executor() 会永久等待。
+            stdin_task.cancel()
+            try:
+                import sys as _sys
+                _sys.stdin.close()
+            except Exception:
+                pass
+            await asyncio.sleep(0.2)  # 让 HTTP 响应 flush 完毕
+            await self.stop()         # 先关 output channels (WS) + backends
+            try:
+                await asyncio.wait_for(runner.cleanup(), timeout=3.0)
+            except asyncio.TimeoutError:
+                logger.warning("HTTP server cleanup timed out — forcing exit")
             print("\n再见！")
 
     async def run_repl(self) -> None:

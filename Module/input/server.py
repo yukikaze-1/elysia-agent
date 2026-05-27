@@ -67,6 +67,16 @@ def create_app(
                 return web.json_response(asdict(info))
             app.router.add_get("/debug/api", debug_api_handler)
 
+    # Shutdown endpoint — triggers graceful agent stop
+    async def shutdown_handler(request: web.Request) -> web.Response:
+        import logging
+        _log = logging.getLogger(__name__)
+        _log.info("Shutdown requested via HTTP")
+        request.app["agent"]._running = False
+        return web.json_response({"status": "shutting_down"})
+    app.router.add_post("/shutdown", shutdown_handler)
+    app.router.add_get("/shutdown", shutdown_handler)  # 也接受浏览器直接访问
+
     return app
 
 
@@ -108,7 +118,7 @@ async def _handle_ws(
                     raise
                 except Exception:
                     logger.debug("State monitor error", exc_info=True)
-        asyncio.create_task(_monitor_state(), name=f"state-monitor-{client_id}")
+        monitor_task = asyncio.create_task(_monitor_state(), name=f"state-monitor-{client_id}")
 
     logger.info("WS client connected: %s (STT=%s)", client_id, "yes" if audio_buf else "no")
 
@@ -131,6 +141,8 @@ async def _handle_ws(
     except asyncio.CancelledError:
         pass
     finally:
+        if monitor_task and not monitor_task.done():
+            monitor_task.cancel()
         if audio_buf:
             await audio_buf.flush()
         agent._output.remove_channel(channel)

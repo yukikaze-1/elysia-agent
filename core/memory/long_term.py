@@ -51,6 +51,7 @@ class LongTermMemory:
         self._vector_db: "VectorDBBackend | None" = None
         self._embedding: "EmbeddingBackend | None" = None
         self._embedding_tried = False  # Only try once lazily
+        self._embed_task: asyncio.Task | None = None  # Tracked for cleanup
         self._connected = False
 
     async def connect(self) -> bool:
@@ -95,8 +96,8 @@ class LongTermMemory:
             except Exception as e:
                 logger.info("LongTermMemory: embedding unavailable (%s), text-only mode", e)
 
-        # Fire-and-forget: don't block callers waiting for embedding
-        asyncio.create_task(_load(), name="embedding-load")
+        # Fire-and-forget but tracked for cleanup on close()
+        self._embed_task = asyncio.create_task(_load(), name="embedding-load")
 
     def _try_load_embedding_sync(self) -> None:
         """Try OpenAI embedding first (fast), then HuggingFace (local). Runs in thread."""
@@ -211,6 +212,12 @@ class LongTermMemory:
         return len(self._entries)
 
     async def close(self) -> None:
+        # Cancel background embedding load if still running.
+        # Note: the thread in run_in_executor can't be interrupted,
+        # but the asyncio task is cleaned up. The thread will be
+        # killed when the process exits.
+        if self._embed_task and not self._embed_task.done():
+            self._embed_task.cancel()
         if self._vector_db:
             await self._vector_db.close()
         if self._embedding:

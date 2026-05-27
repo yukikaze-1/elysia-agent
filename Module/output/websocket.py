@@ -93,4 +93,8 @@ class WebSocketChannel(OutputChannel):
         await self._send_json(data)
 
     async def close(self) -> None:
-        pass  # 连接生命周期由外部管理
+        """关闭 WebSocket 连接，发送 close frame 并等待客户端确认。"""
+        try:
+            await self._ws.close()
+        except Exception:
+            pass  # 连接可能已经断开

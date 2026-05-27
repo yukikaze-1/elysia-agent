@@ -111,6 +111,46 @@ def _load_config_defaults(config_path: str) -> dict:
     return {}
 
 
+def _run_and_diagnose(coro):
+    """Replicate asyncio.run() with step-by-step diagnostic output."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        print("[diagnose] 1. running main coroutine...")
+        loop.run_until_complete(coro)
+        print("[diagnose] 2. main coroutine done, cancelling all tasks...")
+        import asyncio.tasks as _tasks
+        pending = _tasks.all_tasks(loop)
+        print(f"[diagnose]    {len(pending)} pending tasks: {[t.get_name() for t in pending]}")
+        for t in pending:
+            t.cancel()
+        loop.run_until_complete(
+            _tasks.gather(*pending, return_exceptions=True))
+        print("[diagnose] 3. shutting down async generators...")
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        print("[diagnose] 4. shutting down default executor (wait=False)...")
+        try:
+            # 用 wait=False 代替 loop.shutdown_default_executor() 的 wait=True，
+            # 因为 embedding 预加载线程可能还在下载模型，无法被 asyncio 取消。
+            executor = loop._default_executor
+            if executor is not None:
+                executor.shutdown(wait=False)
+        except Exception:
+            pass
+        print("[diagnose] 5. done — closing loop")
+    finally:
+        print("[diagnose] finally: closing loop...")
+        loop.close()
+        print("[diagnose] finally: loop closed, clearing...")
+        asyncio.set_event_loop(None)
+        print("[diagnose] finally: all done")
+        # 所有 cleanup 已完成（tasks cancelled, asyncgens closed, executor shut down）。
+        # 不走 Python exit sequence — 库（pymilvus/aiohttp/sentence_transformers）
+        # 的 atexit/__del__ 可能在已关闭的 event loop 上死锁。
+        import os as _os
+        _os._exit(0)
+
+
 def main():
     # Parse --config first so we can read defaults from it
     pre_parser = argparse.ArgumentParser(add_help=False)
@@ -140,7 +180,7 @@ def main():
     if args.server:
         agent = DemoAgent(character_path=args.character, config_path=args.config,
                           tts_enabled=args.tts)
-        asyncio.run(agent.run_server(
+        _run_and_diagnose(agent.run_server(
             host=args.host, port=args.port, stt_enabled=args.stt,
         ))
     elif args.once:
