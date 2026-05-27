@@ -62,6 +62,7 @@ class CognitiveLoop:
         self._consolidator = consolidator
         self._tts = tts
         self._sentence_buf = SentenceBuffer()
+        self._process_lock = asyncio.Lock()
         self._current_task: asyncio.Task | None = None
         self._tts_task: asyncio.Task | None = None
         self._tts_tasks: list[asyncio.Task] = []
@@ -73,25 +74,26 @@ class CognitiveLoop:
 
     async def process(self, user_message: str, user_name: str = "妖梦",
                        stt_emotion: str = "", stt_events: list[str] | None = None) -> None:
-        if not self._fsm.can_transition(AgentState.THINKING):
-            logger.warning("Cannot transition to THINKING from %s", self._fsm.state)
-            return
+        async with self._process_lock:
+            if not self._fsm.can_transition(AgentState.THINKING):
+                logger.warning("Cannot transition to THINKING from %s", self._fsm.state)
+                return
 
-        self._fsm.transition(AgentState.THINKING)
-        self._bus.post(EventType.STATE_CHANGE, {"state": "thinking"}, priority=EventPriority.STATE_CHANGE)
+            self._fsm.transition(AgentState.THINKING)
+            self._bus.post(EventType.STATE_CHANGE, {"state": "thinking"}, priority=EventPriority.STATE_CHANGE)
 
-        self._sentence_buf.reset()
-        self._sync_event.clear()
-        self._sync_buffer.clear()
-        self._audio_pending.clear()
-        self._audio_flow = False
-        self._current_task = asyncio.current_task()
-        try:
-            await self._think_loop(user_message, user_name,
-                                   stt_emotion=stt_emotion, stt_events=stt_events)
-        except asyncio.CancelledError:
-            logger.info("Cognitive loop interrupted")
-            await self._handle_interrupt()
+            self._sentence_buf.reset()
+            self._sync_event.clear()
+            self._sync_buffer.clear()
+            self._audio_pending.clear()
+            self._audio_flow = False
+            self._current_task = asyncio.current_task()
+            try:
+                await self._think_loop(user_message, user_name,
+                                       stt_emotion=stt_emotion, stt_events=stt_events)
+            except asyncio.CancelledError:
+                logger.info("Cognitive loop interrupted")
+                await self._handle_interrupt()
 
     async def _think_loop(self, user_message: str, user_name: str,
                           stt_emotion: str = "", stt_events: list[str] | None = None) -> None:
@@ -176,7 +178,7 @@ class CognitiveLoop:
 
                             sentence = self._sentence_buf.feed(content)
                             if sentence:
-                                logger.warning("Pipeline: SentenceBuffer 分句 (%d 字符): %s",
+                                logger.info("Pipeline: SentenceBuffer 分句 (%d 字符): %s",
                                              len(sentence), sentence[:40])
                             if sentence and self._tts:
                                 self._start_tts_stream(sentence)
@@ -191,7 +193,7 @@ class CognitiveLoop:
                 if self._tts:
                     remaining = self._sentence_buf.flush()
                     if remaining:
-                        logger.warning("Pipeline: SentenceBuffer flush 尾句 (%d 字符): %s",
+                        logger.info("Pipeline: SentenceBuffer flush 尾句 (%d 字符): %s",
                                      len(remaining), remaining[:40])
                         self._start_tts_stream(remaining)
 

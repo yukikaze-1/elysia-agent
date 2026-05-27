@@ -29,7 +29,7 @@ class Event:
     priority: int = field(compare=True)
     type: str = field(compare=False)
     data: Any = field(compare=False, default=None)
-    seq: int = field(compare=False, default=0)
+    seq: int = field(compare=True, default=0)
 
 
 class EventBus:

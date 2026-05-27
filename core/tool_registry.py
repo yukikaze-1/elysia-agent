@@ -5,9 +5,12 @@ Type coercion: JSON only has numbers/strings/booleans, so the registry inspects
 the schema's "type" field and coerces argument values automatically.
 """
 
+import logging
 from typing import Any, Callable, Coroutine
 
 ToolFunc = Callable[..., Coroutine[Any, Any, str]]
+
+logger = logging.getLogger(__name__)
 
 
 class ToolRegistry:
@@ -47,12 +50,14 @@ class ToolRegistry:
             self._history.append({"name": name, "args": coerced, "result": result_str})
             if len(self._history) > 20:
                 self._history = self._history[-20:]
+            logger.info("Tool %s(%s) → %s", name, coerced, result_str[:80])
             return result_str
         except Exception as e:
             err_msg = f"Error executing '{name}': {e}"
             self._history.append({"name": name, "args": arguments, "error": str(e)})
             if len(self._history) > 20:
                 self._history = self._history[-20:]
+            logger.warning("Tool %s(%s) failed: %s", name, arguments, e)
             return err_msg
 
     def _coerce(self, name: str, arguments: dict) -> dict:

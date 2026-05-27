@@ -167,15 +167,12 @@ class TestMemoryConsolidator:
 
     @pytest.mark.asyncio
     async def test_consolidate_empty_conversation(self):
-        from core.llm_adapter import MockLLMBackend
+        from core._fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
         from core.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
 
-        # Force mock LLM
-        adapter = LLMAdapter()
-        adapter._backend = MockLLMBackend()
-        adapter._using_mock = True
+        adapter = LLMAdapter(_test_backend=FakeLLMBackend())
 
         mem = LongTermMemory()
         consolidator = MemoryConsolidator(adapter, mem, "TestBot")
@@ -222,7 +219,8 @@ class TestMemoryIntegration:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         # Use the tool directly
@@ -239,7 +237,8 @@ class TestMemoryIntegration:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         await agent._tools.execute("save_memory", {"content": "测试保存的记忆", "type": "fact"})
@@ -257,7 +256,8 @@ class TestMemoryIntegration:
         from core.demo_agent import DemoAgent
         from core.agent_fsm import AgentState
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         # First turn: tell agent something memorable
@@ -282,7 +282,8 @@ class TestMemoryIntegration:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         # Multiple turns
@@ -563,14 +564,12 @@ class TestMemoryConsolidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_consolidate_stores_in_memory(self):
         """Consolidation should actually store extracted facts."""
-        from core.llm_adapter import MockLLMBackend
+        from core._fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
         from core.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
 
-        adapter = LLMAdapter()
-        adapter._backend = MockLLMBackend()
-        adapter._using_mock = True
+        adapter = LLMAdapter(_test_backend=FakeLLMBackend())
 
         mem = LongTermMemory()
         consolidator = MemoryConsolidator(adapter, mem, "TestBot")
@@ -588,14 +587,12 @@ class TestMemoryConsolidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_consolidate_very_long_messages(self):
         """Should handle messages at the character limit gracefully."""
-        from core.llm_adapter import MockLLMBackend
+        from core._fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
         from core.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
 
-        adapter = LLMAdapter()
-        adapter._backend = MockLLMBackend()
-        adapter._using_mock = True
+        adapter = LLMAdapter(_test_backend=FakeLLMBackend())
 
         mem = LongTermMemory()
         consolidator = MemoryConsolidator(adapter, mem, "TestBot")
@@ -703,7 +700,8 @@ class TestMemoryStress:
         sid1 = f"test-isolation-{uuid.uuid4()}"
         sid2 = f"test-isolation-{uuid.uuid4()}"
 
-        a1 = DemoAgent()
+        from core.app_config import AppConfig
+        a1 = DemoAgent(config=AppConfig())
         a1._session._session_id = sid1
         await a1.start()
         await a1.process_message("只有agent1知道的消息")
@@ -711,7 +709,7 @@ class TestMemoryStress:
         a1_msgs = len(a1._session.recent_messages())
         await a1.stop()
 
-        a2 = DemoAgent()
+        a2 = DemoAgent(config=AppConfig())
         a2._session._session_id = sid2
         await a2.start()
         a2_msgs = len(a2._session.recent_messages())

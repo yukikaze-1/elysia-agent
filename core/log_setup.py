@@ -8,6 +8,7 @@ Warning suppression happens in demo.py before imports.
 """
 
 import logging
+import logging.handlers
 import os
 import sys
 from pathlib import Path
@@ -70,7 +71,9 @@ def _file_logger(name: str, filename: str, level: int) -> None:
     logger = logging.getLogger(name)
     logger.setLevel(level)
     logger.handlers.clear()
-    handler = logging.FileHandler(LOG_DIR / filename, encoding="utf-8")
+    handler = logging.handlers.RotatingFileHandler(
+        LOG_DIR / filename, encoding="utf-8", maxBytes=10 * 1024 * 1024, backupCount=3
+    )
     handler.setLevel(level)
     handler.setFormatter(logging.Formatter(
         "%(asctime)s [%(levelname).1s] %(name)s: %(message)s",

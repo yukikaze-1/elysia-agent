@@ -54,7 +54,7 @@ class OutputManager:
         )
         for c, result in zip(targets, results):
             if isinstance(result, Exception):
-                self._logger.error(
+                self._logger.debug(
                     "broadcast %s to %s failed: %s", method, type(c).__name__, result
                 )
 

@@ -272,76 +272,22 @@ class TestEmotionEngine:
 
 
 # ============================================================================
-# 4. Mock LLM tests
-# ============================================================================
-
-class TestMockLLM:
-    @pytest.mark.asyncio
-    async def test_basic_response(self):
-        from core.llm_adapter import MockLLMBackend
-        backend = MockLLMBackend()
-
-        text = await backend.chat([{"role": "user", "content": "你好"}])
-        assert len(text) > 0
-        assert "今天过得怎么样" in text
-
-    @pytest.mark.asyncio
-    async def test_tool_trigger(self):
-        from core.llm_adapter import MockLLMBackend
-        import json
-        backend = MockLLMBackend()
-
-        response = await backend.chat(
-            [{"role": "user", "content": "帮我查一下回忆"}],
-            tools=[{"type": "function", "function": {"name": "search_memory"}}],
-        )
-        parsed = json.loads(response)
-        assert "tool_calls" in parsed
-        assert parsed["tool_calls"][0]["function"]["name"] == "search_memory"
-
-    @pytest.mark.asyncio
-    async def test_no_tool_without_trigger(self):
-        from core.llm_adapter import MockLLMBackend
-        import json
-        backend = MockLLMBackend()
-
-        response = await backend.chat(
-            [{"role": "user", "content": "你好"}],
-            tools=[{"type": "function", "function": {"name": "search_memory"}}],
-        )
-        # Should not be JSON tool call
-        try:
-            parsed = json.loads(response)
-            assert "tool_calls" not in parsed  # regular response matched a keyword
-        except json.JSONDecodeError:
-            pass  # Regular text response, expected
-
-    @pytest.mark.asyncio
-    async def test_generic_reply(self):
-        from core.llm_adapter import MockLLMBackend
-        backend = MockLLMBackend()
-
-        text = await backend.chat([{"role": "user", "content": "随机内容xyz"}])
-        assert "嗯" in text
-
-
 # ============================================================================
 # 5. Streaming integration tests
 # ============================================================================
 
 class TestStreamingIntegration:
     @pytest.mark.asyncio
-    async def test_mock_llm_streaming(self):
-        """Mock LLM simulates streaming by yielding characters."""
-        from core.llm_adapter import MockLLMBackend
-        backend = MockLLMBackend()
+    async def test_fake_llm_streaming(self):
+        """FakeLLMBackend simulates streaming by yielding characters."""
+        from core._fake_llm import FakeLLMBackend
+        backend = FakeLLMBackend(response="你好呀！今天过得怎么样？")
 
         chars = []
         async for ch in backend.chat_stream([{"role": "user", "content": "你好"}]):
             chars.append(ch)
 
         text = "".join(chars)
-        assert len(text) > 0
         assert "今天过得怎么样" in text
 
     @pytest.mark.asyncio
@@ -408,7 +354,8 @@ class TestInterruptIntegration:
         from core.demo_agent import DemoAgent
         from core.agent_fsm import AgentState
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         # Start a request
@@ -431,7 +378,8 @@ class TestInterruptIntegration:
         from core.demo_agent import DemoAgent
         from core.agent_fsm import AgentState
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         # Interrupt first request
@@ -464,7 +412,8 @@ class TestInterruptIntegration:
         from core.demo_agent import DemoAgent
         from core.agent_fsm import AgentState
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         for i in range(3):
@@ -490,7 +439,8 @@ class TestMultiTurnConversation:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         # First turn (may be slower due to lazy embedding loading)
@@ -517,7 +467,8 @@ class TestMultiTurnConversation:
         from core.demo_agent import DemoAgent
         from core.agent_fsm import AgentState
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         await agent.process_message("帮我查一下记忆里有什么")
@@ -562,7 +513,8 @@ class TestEdgeCases:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         await agent.process_message("")
@@ -577,7 +529,8 @@ class TestEdgeCases:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         long_text = "你好" * 500  # 1000 chars
@@ -593,7 +546,8 @@ class TestEdgeCases:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         # Send multiple messages rapidly
@@ -611,7 +565,8 @@ class TestEdgeCases:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        from core.app_config import AppConfig
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
 
         await agent.process_message("开心😊🎉✨")

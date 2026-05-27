@@ -145,7 +145,7 @@
 | 浏览器显示 | transcription 气泡带情绪 emoji + 事件 emoji |
 | nospeech 过滤修复 | `_call_api` 用 raw_text 检测 `<|nospeech|>` 丢弃，替代 audio_buffer 无效的 text-contains 检查 |
 | 优雅退出 | `POST /shutdown` Web 端点 + `/quit` 终端命令 + 浏览器关闭按钮。修复 WebSocketChannel.close() 空函数、state-monitor task 泄漏、embedding 线程泄漏、stdin to_thread 阻塞等 5 个 hang |
-| 测试: 515 passed |
+| 测试: 507 passed |
 
 ## 待做（按优先级）
 
@@ -157,3 +157,53 @@
 - Web 前端: 更好的角色立绘/动画
 - 单元测试补充 server.py 部分（当前通过集成覆盖）
 - 性能 profiling + 优化
+
+### 日志系统修复
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| ~~**高**~~ | ~~模板渲染静默失败~~ (done) | `prompt_assembler.py:82` 加 `logger.warning("Brain.j2 渲染失败，使用 fallback", exc_info=True)` |
+| ~~**高**~~ | ~~WARNING 刷屏~~ (done) | `cognitive_loop.py:179,194` `logger.warning` → `logger.info` |
+| ~~**高**~~ | ~~FileHandler 无滚动~~ (done) | `core/log_setup.py:73` `FileHandler` → `RotatingFileHandler`（maxBytes=10MB, backupCount=3） |
+| ~~**中**~~ | ~~ToolRegistry 无日志~~ (done) | `tool_registry.py` 加 `logger`，`execute()` 成功记 INFO，失败记 WARNING |
+| ~~**中**~~ | ~~WebSocket 双重日志~~ (done) | `manager.py:57` ERROR → DEBUG，保留 `websocket.py:41` WARNING |
+| ~~**中**~~ | ~~STATE_CHANGE 错误级别过低~~ (done) | `demo_agent.py:408` `logger.debug` → `logger.warning` |
+| **低** | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行未被任何生产代码使用，只有测试引用（暂不处理） |
+
+### 核心事件循环审查 (2026-05-27)
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| ~~**高**~~ | ~~快速连续消息丢失~~ (done) | `cognitive_loop.py:75` 加 `asyncio.Lock` 序列化 `process()` 调用，并发消息排队等待而非丢弃 |
+| ~~**高**~~ | ~~process() 并发 ValueError~~ (done) | 同上，Lock 确保只有一个 task 执行 transition |
+| ~~**高**~~ | ~~INTERRUPT 后 0.1s 魔数不可靠~~ (done) | `demo_agent.py:245` `asyncio.sleep(0.1)` → 轮询 `fsm.state == IDLE`（5s 超时） |
+| ~~**中**~~ | ~~EventBus 同优先级不保证 FIFO~~ (done) | `event_bus.py:32` `Event.seq` 的 `compare=False` → `compare=True` |
+| **中** | EmotionEngine._schedule 无异常边界 | `emotion_engine.py:197-205`。`loop.create_task(coro)` 创建的 task 若抛异常，asyncio 只打印 "Task exception was never retrieved" 到 stderr |
+| **低** | Consolidator 可能用 mock 提取记忆 | `consolidator.py:51` + `llm_adapter.py:130-143`。LLMAdapter API 失败时自动切 mock，consolidator 若此时运行会用 mock 输出尝试提取"事实"（JSON 解析大概率失败，当前侥幸无害） |
+
+### 架构审查 (2026-05-27)
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| **高** | `Module/schema/` 479 行死代码 | `message.py`(293行) + `event.py` + `io_models.py` + `media.py` 定义了完整的共享数据模型（`UserMessage`, `ChatMessage`, `Event`, `AudioData` 等），零个生产代码导入。core 层自己用 dict 和简单 dataclass 重新实现了一遍 |
+| ~~**高**~~ | ~~`MockLLMBackend` 放在 core/ 违反 L0/L1 分层~~ (done) | 删除 MockLLMBackend + fallback/_using_mock 逻辑，LLMAdapter 简化为 90 行。测试用新 `FakeLLMBackend` 替代 |
+| ~~**高**~~ | ~~`Module/config/` 配置系统未接入生产代码~~ (done) | 新建 `core/app_config.py`（6 个子 dataclass），`demo.py` 用 `ConfigLoader` 加载，CLI 覆盖后传入 `DemoAgent(config=config)`。删掉 `_load_config_defaults()` 和两处手动 `yaml.safe_load()` |
+| **中** | `database/graphdb/` 不完整 | 只有 `protocol.py`（ABC），缺少 `registry.py` + backend + `config.py`，无法通过 Factory 创建 |
+| **中** | `character/system.j2` 废弃但文档称"当前使用" | Architecture.md 3.6 节写 `character/system.j2 是当前使用的系统模板`，但 `PromptAssembler` 实际用 `prompt/Brain.j2`。两个模板目录职责不清 |
+| **中** | `StreamingSentenceBuffer` 未使用 | `sentence_buffer.py:155` 定义 25 行异步包装器，`CognitiveLoop` 直接调用 `SentenceBuffer.feed()` 而非通过它 |
+| **中** | `OutputManager.stream()` 未使用 | manager.py 37 行方法提供 typing→stream→finalize 管线，`CognitiveLoop` 绕过它直接调 `_broadcast()` + `send()` |
+| **低** | 单 Session 多客户端共享 | `SessionMemory.session_id = "default"` 硬编码，多浏览器标签共享同一对话状态。桌面伴侣场景问题不大，但未在架构文档说明此限制 |
+| **低** | Consolidator 每轮都调 LLM | `_after_response` 每次成功回复都调 `consolidator.consolidate()`，额外一次 LLM API 调用。无节流/批处理/最小轮次启发式 |
+
+### 测试覆盖审查 (2026-05-27)
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| **高** | `Module/input/server.py` 无测试 | 195 行 WebSocket 服务器，handle_ws / create_app / shutdown / STT emotion 传递 / monitor_task 生命周期等均无测试 |
+| **高** | `demo_agent.py` 生命周期无测试 | `start()`(MongoDB+Milvus并行连接/seed/load)、`stop()`(6步cleanup顺序)、`_process_events()`(事件分发loop) 仅有集成覆盖，无单元测试 |
+| **高** | `CognitiveLoop` TTS sync 无测试 | `_sync_event`/`_sync_buffer`/`_audio_pending`/`_drain_audio_pending`/`_start_tts_stream` — 文字/语音同步是最复杂的机制之一，仅靠 test_process_normal_flow 间接覆盖 |
+| **中** | `core/idle_monitor.py` 无测试 | 103 行，proactive trigger 逻辑（silence_timeout / time_of_day）无直接测试 |
+| **中** | `core/debug_info.py` 无测试 | 111 行，`collect()` 聚合 agent 状态，/debug API 依赖它但无测试 |
+| **中** | `core/log_setup.py` 无测试 | 83 行，`setup()` / `_file_logger()` 无直接测试（风险低但值得加） |
+| **低** | 并发/压力测试缺失 | 多 WS 连接、快速连续消息、STT+文本同时输入等场景无覆盖 |
+| **低** | `Module/config/` 555 行测试覆盖死代码 | ConfigLoader/ConfigField 未接入生产，但 test_config.py 有 34 个测试在维护 |

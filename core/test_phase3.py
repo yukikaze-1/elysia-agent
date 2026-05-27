@@ -11,7 +11,9 @@ import pytest
 from core.cognitive_loop import CognitiveLoop, _MessageObj
 from core.agent_fsm import AgentFSM, AgentState
 from core.event_bus import EventBus, EventType, EventPriority
-from core.llm_adapter import LLMAdapter, MockLLMBackend
+from core.llm_adapter import LLMAdapter
+from core._fake_llm import FakeLLMBackend
+from core.app_config import AppConfig
 
 
 # ============================================================================
@@ -293,89 +295,50 @@ class TestEventBusEdges:
 # ============================================================================
 
 class TestLLMAdapter:
-    def test_no_api_key_uses_mock(self):
-        import os
-        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": ""}, clear=True):
-            adapter = LLMAdapter()
-            assert adapter._using_mock is True
-            assert isinstance(adapter._backend, MockLLMBackend)
-
     def test_model_property(self):
-        adapter = LLMAdapter()
+        adapter = LLMAdapter(_test_backend=FakeLLMBackend())
         assert isinstance(adapter.model, str)
         assert len(adapter.model) > 0
 
     @pytest.mark.asyncio
     async def test_think_returns_text(self):
-        adapter = LLMAdapter()
-        adapter._backend = MockLLMBackend()
-        adapter._using_mock = True
+        adapter = LLMAdapter(_test_backend=FakeLLMBackend(response="你好呀！"))
 
         result = await adapter.think([{"role": "user", "content": "你好"}])
-        assert result.text != ""
+        assert result.text == "你好呀！"
         assert result.tool_calls == []
 
     @pytest.mark.asyncio
     async def test_think_returns_tool_calls(self):
-        adapter = LLMAdapter()
-        adapter._backend = MockLLMBackend()
-        adapter._using_mock = True
+        import json
+        fake = FakeLLMBackend(response=json.dumps({
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "search_memory", "arguments": "{}"},
+            }]
+        }))
+        adapter = LLMAdapter(_test_backend=fake)
 
         tools = [{"type": "function", "function": {"name": "search_memory"}}]
         result = await adapter.think(
-            [{"role": "user", "content": "查一下回忆"}],
+            [{"role": "user", "content": "查一下"}],
             tools=tools,
         )
         assert len(result.tool_calls) > 0
         assert result.tool_calls[0]["function"]["name"] == "search_memory"
 
     @pytest.mark.asyncio
-    async def test_stream_think_mock(self):
-        adapter = LLMAdapter()
-        adapter._backend = MockLLMBackend()
-        adapter._using_mock = True
+    async def test_stream_think(self):
+        adapter = LLMAdapter(_test_backend=FakeLLMBackend(response="你好呀！"))
 
         chunks = []
         async for chunk in adapter.stream_think([{"role": "user", "content": "你好"}]):
             chunks.append(chunk)
 
+        # FakeLLMBackend has no stream_think, falls back to chat() then streams chars
         text = "".join(c["content"] for c in chunks if c["content"])
-        assert "今天过得怎么样" in text
-
-
-# ============================================================================
-# 7. MockLLMBackend — missing tests
-# ============================================================================
-
-class TestMockLLMBackend:
-    @pytest.mark.asyncio
-    async def test_chat_stream_tool_json(self):
-        backend = MockLLMBackend()
-        chunks = []
-        async for chunk in backend.chat_stream(
-            [{"role": "user", "content": "查一下回忆"}],
-            tools=[{"type": "function", "function": {"name": "search_memory"}}],
-        ):
-            chunks.append(chunk)
-        text = "".join(chunks)
-        import json
-        parsed = json.loads(text)
-        assert "tool_calls" in parsed
-
-    @pytest.mark.asyncio
-    async def test_generic_reply(self):
-        backend = MockLLMBackend()
-        text = await backend.chat([{"role": "user", "content": "xyz随机"}])
-        assert "嗯" in text
-        assert "这件事" in text
-
-    @pytest.mark.asyncio
-    async def test_chat_stream_normal(self):
-        backend = MockLLMBackend()
-        chars = []
-        async for c in backend.chat_stream([{"role": "user", "content": "你好"}]):
-            chars.append(c)
-        assert len(chars) > 1  # Should yield multiple chars
+        assert "你好呀" in text
 
 
 # ============================================================================
@@ -530,7 +493,7 @@ class TestDemoAgentProcessMessage:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
         await agent.process_message("")
         assert agent._fsm.state == AgentState.IDLE
@@ -542,7 +505,7 @@ class TestDemoAgentProcessMessage:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
         await agent.process_message("   ")
         assert agent._fsm.state == AgentState.IDLE
@@ -554,7 +517,7 @@ class TestDemoAgentProcessMessage:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
         agent._idle.touch = MagicMock()
         await agent.process_message("hi")
@@ -567,7 +530,7 @@ class TestDemoAgentProcessMessage:
         load_dotenv()
         from core.demo_agent import DemoAgent
 
-        agent = DemoAgent()
+        agent = DemoAgent(config=AppConfig())
         await agent.start()
         agent._fsm.transition(AgentState.THINKING)
 

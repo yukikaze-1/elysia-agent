@@ -1,7 +1,7 @@
 """DemoAgent — wires all L0/L1/L2 components into a runnable Agent.
 
 Usage:
-    agent = DemoAgent()
+    agent = DemoAgent(config=config)
     await agent.start()
     await agent.process_message("你好")       # single turn
     await agent.run_repl()                   # interactive REPL
@@ -10,12 +10,10 @@ Usage:
 
 import asyncio
 import logging
-from pathlib import Path
-
-import yaml
 
 from Module.output import OutputManager, ConsoleChannel
 
+from .app_config import AppConfig
 from .event_bus import EventBus, EventPriority, EventType
 from .agent_fsm import AgentFSM, AgentState
 from .character_config import CharacterConfig
@@ -35,33 +33,19 @@ logger = logging.getLogger(__name__)
 class DemoAgent:
     """Complete Agent wired from L0/L1/L2 components."""
 
-    def __init__(self, character_path: str | None = None, config_path: str | None = None,
-                 tts_enabled: bool | None = None):
-        # Load config
-        cfg = {}
-        if config_path:
-            p = Path(config_path)
-            if p.exists():
-                cfg = yaml.safe_load(p.read_text("utf-8")) or {}
-
-        agent_cfg = cfg.get("Agent", {})
-        llm_cfg = cfg.get("LLM", {})
-        mem_cfg = cfg.get("Memory", {})
-        tts_cfg = cfg.get("TTS", {})
-
-        char_path = character_path or agent_cfg.get("character", "character/elysia.yaml")
-        self._user_name = agent_cfg.get("user_name", "妖梦")
+    def __init__(self, *, config: AppConfig):
+        self._config = config
+        self._user_name = config.agent.user_name
 
         # ---- L0: Infrastructure (from Module/) ----
         self._output = OutputManager()
         self._output.add_channel(ConsoleChannel())
 
         # ---- Character ----
-        self._character = CharacterConfig.from_yaml(char_path)
+        self._character = CharacterConfig.from_yaml(config.agent.character)
 
         # ---- L2: Memory ----
-        session_max = mem_cfg.get("session_max_messages", 20)
-        self._session = SessionMemory(max_messages=session_max)
+        self._session = SessionMemory(max_messages=config.memory.session_max_messages)
         self._long_term = LongTermMemory()
 
         # ---- L2: Tools ----
@@ -71,15 +55,13 @@ class DemoAgent:
         # ---- L1: Cognitive ----
         self._bus = EventBus()
         self._fsm = AgentFSM()
-        self._llm = LLMAdapter(model=llm_cfg.get("model"))
+        self._llm = LLMAdapter(model=config.llm.model)
         self._prompt = PromptAssembler(self._character, self._session, self._long_term)
 
         # TTS is disabled by default (requires GPT-SoVits server at localhost:9880).
         # Enable via config.yaml (TTS.enabled: true) or CLI --tts flag.
-        # CLI flag overrides config: tts_enabled is None if not passed, True/False if passed.
-        _tts_on = tts_enabled if tts_enabled is not None else tts_cfg.get("enabled", False)
         self._tts = None
-        if _tts_on:
+        if config.tts.enabled:
             from Module.tts import TTSFactory
             try:
                 self._tts = TTSFactory.create("gpt-sovits/default")
@@ -242,16 +224,22 @@ class DemoAgent:
         if self._fsm.state != AgentState.IDLE:
             logger.info("Interrupting current processing (state=%s)", self._fsm.state)
             self._bus.post(EventType.INTERRUPT, {"source": "user_input"}, priority=EventPriority.INTERRUPT)
-            await asyncio.sleep(0.1)
+            # Wait for interrupt to complete (FSM → IDLE), with 5s timeout
+            for _ in range(500):
+                if self._fsm.state == AgentState.IDLE:
+                    break
+                await asyncio.sleep(0.01)
 
         self._bus.post(EventType.USER_INPUT, {"text": text, "user_name": user_name})
 
     # ---- REPL ----
 
-    async def run_server(self, host: str = "0.0.0.0", port: int = 8765,
-                         stt_enabled: bool = False) -> None:
+    async def run_server(self) -> None:
         """Run agent in WebSocket server mode. Blocks until Ctrl+C."""
         await self.start()
+        host = self._config.server.host
+        port = self._config.server.port
+        stt_enabled = self._config.stt.enabled
 
         stt_transcribe = None
         stt_emotion_state: dict | None = None
@@ -406,7 +394,7 @@ class DemoAgent:
                     try:
                         await ch.on_state(state)
                     except Exception:
-                        logger.debug(
+                        logger.warning(
                             "Channel %s on_state(%s) failed",
                             type(ch).__name__, state, exc_info=True,
                         )

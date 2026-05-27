@@ -5,6 +5,7 @@ Combines: CharacterConfig + SessionMemory + LongTermMemory + Brain.j2 template.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from Module.prompt import PromptManager
@@ -12,6 +13,8 @@ from .character_config import CharacterConfig
 from .memory.session import SessionMemory
 from .memory.long_term import LongTermMemory
 from .emotion_engine import stt_emotion_emoji, stt_event_emoji
+
+logger = logging.getLogger(__name__)
 
 
 # Prompt/ template directory, relative to project root.
@@ -80,6 +83,7 @@ class PromptAssembler:
                 state=state,
             )
         except Exception:
+            logger.warning("Brain.j2 渲染失败，使用 fallback", exc_info=True)
             return await self._render_fallback(user_name, user_message, now, mood)
 
     async def _get_recalled(self, query: str = "") -> list[str]:

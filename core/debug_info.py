@@ -46,7 +46,6 @@ class DebugInfo:
 
     # LLM
     llm_model: str = ""
-    llm_mock: bool = False
 
 
 def _truncate(text: str, n: int = 80) -> str:
@@ -108,6 +107,5 @@ async def collect(agent) -> DebugInfo:
 
     # ---- LLM ----
     info.llm_model = getattr(getattr(agent, "_llm", None), "model", "") or "?"
-    info.llm_mock = getattr(getattr(agent, "_llm", None), "_using_mock", False)
 
     return info

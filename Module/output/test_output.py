@@ -382,7 +382,7 @@ class TestOutputManagerErrorIsolation:
 
         # 给 manager 注入一个可以被 caplog 捕获的 logger
         mgr._logger = logging.getLogger("test_output")
-        mgr._logger.setLevel(logging.ERROR)
+        mgr._logger.setLevel(logging.DEBUG)
 
         msg = MagicMock()
         await mgr.send(msg)

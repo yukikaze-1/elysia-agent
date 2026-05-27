@@ -72,9 +72,15 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | 分句策略 (连续分隔符合并) | done |
 | SentenceBuffer 升级 (70 tests: ～…〜/.上下文/可配置) | done |
 | 聊天历史 localStorage 持久化 | done |
-| 配置驱动入口 (CLI > config.yaml > 默认值) | done |
+| 配置驱动入口 (ConfigLoader: CLI > config.yaml > 默认值) | done |
 | /debug 内部状态面板 (记忆/工具/沉淀/连接) | done |
 | 优雅退出 (Web /shutdown + 终端 /quit + 浏览器按钮) | done |
+| WebRTC VAD (GMM 声学模型) | done |
+| nospeech 过滤 (SenseVoice 原生检测) | done |
+| ConfigLoader 接入 (类型校验 + env + YAML) | done |
+| MockLLMBackend 移除 (需 API key) | done |
+| 事件循环修复 (asyncio.Lock + 轮询等 IDLE + FIFO) | done |
+| 日志系统修复 (RollingFile + 级别修正 + 查漏) | done |
 
 ## 项目结构
 
@@ -152,4 +158,4 @@ python -m pytest core/ -v --asyncio-mode=auto
 python -m pytest Module/ -v
 ```
 
-**测试统计**: 272 (core) + 243 (Module) = 515 total
+**测试统计**: 264 (core) + 243 (Module) = 507 total
