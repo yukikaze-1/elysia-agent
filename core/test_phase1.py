@@ -16,72 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 # ============================================================================
-# 1. SentenceBuffer tests
-# ============================================================================
-
-class TestSentenceBuffer:
-    def test_single_sentence(self):
-        from core.sentence_buffer import SentenceBuffer
-        buf = SentenceBuffer()
-
-        result = None
-        for ch in "你好。":  # 3 chars < default min_chunk 5, held
-            result = buf.feed(ch)
-        assert buf.flush() == "你好。"
-
-    def test_multi_sentence(self):
-        from core.sentence_buffer import SentenceBuffer
-        buf = SentenceBuffer()
-        sentences = []
-
-        for ch in "你好。今天天气不错呀！真的吗？":
-            s = buf.feed(ch)
-            if s:
-                sentences.append(s)
-        remaining = buf.flush()
-        if remaining:
-            sentences.append(remaining)
-
-        assert "你好。" in sentences
-        assert "今天天气不错呀！" in sentences
-        assert "真的吗？" in sentences or any("真的吗" in s for s in sentences)
-
-    def test_no_split_on_short(self):
-        from core.sentence_buffer import SentenceBuffer
-        buf = SentenceBuffer(min_chunk_length=4)
-        result = None
-        for ch in "好。":  # "好。" is 2 chars < 4, nothing follows → held
-            result = buf.feed(ch)
-        assert result is None  # held (too short, nothing following)
-        remaining = buf.flush()
-        assert remaining == "好。"  # released on flush
-
-    def test_newline_split(self):
-        from core.sentence_buffer import SentenceBuffer
-        buf = SentenceBuffer()
-        result = None
-        for ch in "line1\nline2\n":
-            result = buf.feed(ch)
-        # Should split on newline
-        assert result is not None
-
-    def test_empty_input(self):
-        from core.sentence_buffer import SentenceBuffer
-        buf = SentenceBuffer()
-        assert buf.feed("") is None
-        assert buf.feed("  ") is None
-
-    def test_reset(self):
-        from core.sentence_buffer import SentenceBuffer
-        buf = SentenceBuffer()
-        buf.feed("hello")
-        assert len(buf._buffer) > 0
-        buf.reset()
-        assert buf._buffer == ""
-
-
-# ============================================================================
-# 2. EventBus + FSM tests
+# 1. EventBus + FSM tests
 # ============================================================================
 
 class TestEventBus:
@@ -523,56 +458,6 @@ class TestEdgeCases:
         assert agent._fsm.state in ("idle", "thinking")  # Could be idle or still in prev state
         await agent.stop()
 
-    @pytest.mark.asyncio
-    async def test_very_long_message(self):
-        from dotenv import load_dotenv
-        load_dotenv()
-        from core.demo_agent import DemoAgent
-
-        from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
-        await agent.start()
-
-        long_text = "你好" * 500  # 1000 chars
-        await agent.process_message(long_text)
-        await asyncio.sleep(5)
-
-        # Should not crash
-        await agent.stop()
-
-    @pytest.mark.asyncio
-    async def test_rapid_messages(self):
-        from dotenv import load_dotenv
-        load_dotenv()
-        from core.demo_agent import DemoAgent
-
-        from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
-        await agent.start()
-
-        # Send multiple messages rapidly
-        for m in ["你好", "再见", "哈哈"]:
-            await agent.process_message(m)
-            await asyncio.sleep(0.1)
-
-        await asyncio.sleep(5)
-        # Should not crash, agent should be IDLE at end
-        await agent.stop()
-
-    @pytest.mark.asyncio
-    async def test_unicode_emoji_handling(self):
-        from dotenv import load_dotenv
-        load_dotenv()
-        from core.demo_agent import DemoAgent
-
-        from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
-        await agent.start()
-
-        await agent.process_message("开心😊🎉✨")
-        await asyncio.sleep(3)
-        # Should not crash on emoji
-        await agent.stop()
 
 
 # ============================================================================

@@ -233,7 +233,7 @@ PromptAssembler.build_messages(user_message)
   ├── SessionMemory.recent_messages(10)             # 最近对话
   ├── LongTermMemory.search(user_message, top_k=5)  # 语义召回记忆
   ├── SessionMemory.get_param("mood")               # 当前心情
-  └── character/system.j2 (Jinja2)                  # 系统提示词模板
+  └── prompt/Brain.j2 (Jinja2)                       # 系统提示词模板
         │
         ▼
   [{"role": "system", "content": "..."},
@@ -241,7 +241,7 @@ PromptAssembler.build_messages(user_message)
    {"role": "user", "content": user_message}]
 ```
 
-`character/system.j2` 是当前使用的系统模板（简单单层）。`prompt/` 目录有 6 个多层认知模板（Brain/Amygdala/ActiveSpeak/Reflectors + Utils）待接入。
+`prompt/Brain.j2` 是当前使用的系统模板（双轨思维协议）。`prompt/` 目录还有 5 个多层认知模板（Amygdala/ActiveSpeak/Reflectors + Utils）待接入。
 
 ### 3.7 DemoAgent — 组件组装
 
@@ -486,24 +486,24 @@ cfg = ConfigLoader(MyConfig, yaml_path="config.yaml", yaml_key="Server").load()
 ### 7.2 config.yaml
 
 ```yaml
-Agent:
+agent:
   character: character/elysia.yaml
   user_name: 妖梦
 
-LLM:
+llm:
   model: deepseek/deepseek-chat
 
-Memory:
+memory:
   session_max_messages: 20
 
-Server:
+server:
   host: 0.0.0.0
   port: 8765
 
-TTS:
+tts:
   enabled: false            # CLI --tts 可覆盖
 
-STT:
+stt:
   enabled: false            # CLI --stt 可覆盖
 ```
 
@@ -610,8 +610,7 @@ Agent/
 │       └── long_term.py     # 长期记忆 (Milvus + Embedding)
 │
 ├── character/
-│   ├── elysia.yaml          # 角色定义
-│   └── system.j2            # 系统提示词模板 (当前使用)
+│   └── elysia.yaml          # 角色定义
 │
 ├── prompt/                  # 多层认知模板 (待接入)
 │   ├── Brain.j2             #   L1 主脑 — 双轨思维协议

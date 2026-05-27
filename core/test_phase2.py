@@ -146,22 +146,29 @@ class TestLongTermMemory:
 class TestMemoryConsolidator:
     @pytest.mark.asyncio
     async def test_consolidate_extracts_facts(self):
-        from core.llm_adapter import LLMAdapter
+        import json
+        from core._fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
         from core.consolidator import MemoryConsolidator
+        from core.llm_adapter import LLMAdapter
 
-        adapter = LLMAdapter()
+        adapter = LLMAdapter(_test_backend=FakeLLMBackend(response=json.dumps([
+            {"type": "preference", "content": "喜欢蓝色"},
+            {"type": "plan", "content": "明天去爬山"},
+        ])))
         mem = LongTermMemory()
         consolidator = MemoryConsolidator(adapter, mem, "TestBot")
 
         items = await consolidator.consolidate(
             "我最喜欢蓝色，明天要去爬山",
-            "好的妖梦！我记住了，你喜欢蓝色，而且明天要去爬山。爬山记得带水和防晒哦～"
+            "好的妖梦！我记住了，你喜欢蓝色，而且明天要去爬山。"
         )
 
-        # Should extract at least 1 fact (may vary by LLM)
         assert isinstance(items, list)
-        assert mem.count >= 0  # may or may not have stored items
+        # With the fake response, 2 items should be extracted
+        types = {item.get("type") for item in items}
+        assert "preference" in types
+        assert "plan" in types
 
         await adapter.close()
 
@@ -692,9 +699,10 @@ class TestMemoryStress:
     @pytest.mark.asyncio
     async def test_session_isolation_between_agents(self):
         """Two DemoAgent instances should have independent session memory."""
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         import uuid
-        from dotenv import load_dotenv
-        load_dotenv()
+        from core._fake_llm import FakeLLMBackend
         from core.demo_agent import DemoAgent
 
         sid1 = f"test-isolation-{uuid.uuid4()}"
@@ -702,18 +710,28 @@ class TestMemoryStress:
 
         from core.app_config import AppConfig
         a1 = DemoAgent(config=AppConfig())
+        a1._llm._backend = FakeLLMBackend(response="好的我记住了")
         a1._session._session_id = sid1
         await a1.start()
         await a1.process_message("只有agent1知道的消息")
-        await asyncio.sleep(3)
+        # Wait for cognitive task to start
+        for _ in range(100):
+            if a1._fsm.state != "idle":
+                break
+            await asyncio.sleep(0.01)
+        # Wait for it to finish
+        for _ in range(100):
+            if a1._fsm.state == "idle":
+                break
+            await asyncio.sleep(0.01)
         a1_msgs = len(a1._session.recent_messages())
         await a1.stop()
 
         a2 = DemoAgent(config=AppConfig())
+        a2._llm._backend = FakeLLMBackend(response="你好")
         a2._session._session_id = sid2
         await a2.start()
         a2_msgs = len(a2._session.recent_messages())
-        # a2 should start fresh (no session messages from a1)
         assert a1_msgs >= 2  # user msg + assistant reply
         assert a2_msgs == 0  # fresh session
         await a2.stop()

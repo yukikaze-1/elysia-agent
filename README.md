@@ -128,8 +128,7 @@ Agent/
 │       └── long_term.py  # 长期记忆
 │
 ├── character/
-│   ├── elysia.yaml       # 角色定义
-│   └── system.j2         # 系统提示词模板 (当前使用)
+│   └── elysia.yaml       # 角色定义
 │
 ├── prompt/               # 多层认知模板
 │   ├── Brain.j2          #   L1 主脑 — 双轨思维协议 (已接入)
@@ -158,4 +157,4 @@ python -m pytest core/ -v --asyncio-mode=auto
 python -m pytest Module/ -v
 ```
 
-**测试统计**: 264 (core) + 243 (Module) = 507 total
+**测试统计**: 251 (core) + 243 (Module) = 494 total
