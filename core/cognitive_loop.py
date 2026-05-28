@@ -16,6 +16,7 @@ from Module.tts import TTSBackend
 from .agent_fsm import AgentFSM, AgentState
 from .event_bus import EventBus, EventPriority, EventType
 from Module.tool import ToolRegistry, ToolContext
+from Module.tool.protocol import ToolResult
 from .prompt_assembler import PromptAssembler
 from .memory.session import SessionMemory
 from .sentence_buffer import SentenceBuffer
@@ -210,7 +211,8 @@ class CognitiveLoop:
                         assistant_entry["tool_calls"] = normalized
                     messages.append(assistant_entry)
 
-                    for tc in normalized:
+                    # 并行执行所有工具 — 无依赖工具同时跑，减少总等待时间
+                    async def _execute_one(tc: dict):
                         func_name = tc["function"]["name"]
                         try:
                             args = json.loads(tc["function"]["arguments"])
@@ -221,11 +223,19 @@ class CognitiveLoop:
                             "tool": func_name,
                             "args": {k: str(v)[:80] for k, v in args.items()},
                         })
-                        tool_result = await self._tools.execute(func_name, args, ctx=self._ctx)
+                        try:
+                            tr = await self._tools.execute(func_name, args, ctx=self._ctx)
+                        except Exception as e:
+                            logger.warning("Tool %s failed: %s", func_name, e)
+                            tr = ToolResult.fail(name=func_name, error=str(e))
                         await self._output.action("tool_done", params={
                             "tool": func_name,
-                            "success": tool_result.success,
+                            "success": tr.success,
                         })
+                        return tc, tr
+
+                    results = await asyncio.gather(*[_execute_one(tc) for tc in normalized])
+                    for tc, tool_result in results:
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc.get("id", "unknown"),

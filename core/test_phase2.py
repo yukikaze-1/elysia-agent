@@ -157,7 +157,7 @@ class TestMemoryConsolidator:
             {"type": "plan", "content": "明天去爬山"},
         ])))
         mem = LongTermMemory()
-        consolidator = MemoryConsolidator(adapter, mem, "TestBot")
+        consolidator = MemoryConsolidator(adapter, mem, "TestBot", buffer_threshold=1)
 
         items = await consolidator.consolidate(
             "我最喜欢蓝色，明天要去爬山",
@@ -182,7 +182,7 @@ class TestMemoryConsolidator:
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
 
         mem = LongTermMemory()
-        consolidator = MemoryConsolidator(adapter, mem, "TestBot")
+        consolidator = MemoryConsolidator(adapter, mem, "TestBot", buffer_threshold=1)
 
         # Empty messages should produce no items
         items = await consolidator.consolidate("", "")
@@ -580,7 +580,7 @@ class TestMemoryConsolidatorEdgeCases:
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
 
         mem = LongTermMemory()
-        consolidator = MemoryConsolidator(adapter, mem, "TestBot")
+        consolidator = MemoryConsolidator(adapter, mem, "TestBot", buffer_threshold=1)
         count_before = mem.count
 
         await consolidator.consolidate(
@@ -603,7 +603,7 @@ class TestMemoryConsolidatorEdgeCases:
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
 
         mem = LongTermMemory()
-        consolidator = MemoryConsolidator(adapter, mem, "TestBot")
+        consolidator = MemoryConsolidator(adapter, mem, "TestBot", buffer_threshold=1)
 
         long_msg = "长消息" * 300
         items = await consolidator.consolidate(long_msg, long_msg)

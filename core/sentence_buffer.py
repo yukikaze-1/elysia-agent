@@ -7,8 +7,6 @@ ensuring GPT-SoVITS receives natural prosodic units rather than single chars.
 from __future__ import annotations
 
 import re
-from typing import AsyncIterator
-
 _HARD_DELIMITERS = "。！？!?\n～…〜"
 _DELIMITER_RUN = set(_HARD_DELIMITERS + ".")
 
@@ -151,29 +149,3 @@ class SentenceBuffer:
         # The next char after the dot might clarify things
         return None
 
-
-class StreamingSentenceBuffer:
-    """Async wrapper: consumes a token stream, yields complete sentences."""
-
-    def __init__(
-        self,
-        *,
-        delimiters: str | None = None,
-        min_chunk_length: int = 5,
-    ):
-        self._buffer = SentenceBuffer(
-            delimiters=delimiters, min_chunk_length=min_chunk_length
-        )
-
-    async def consume(self, deltas: AsyncIterator[str]) -> AsyncIterator[str]:
-        """Consume a token stream and yield complete sentences."""
-        async for delta in deltas:
-            sentence = self._buffer.feed(delta)
-            if sentence:
-                yield sentence
-        remaining = self._buffer.flush()
-        if remaining:
-            yield remaining
-
-    def reset(self) -> None:
-        self._buffer.reset()

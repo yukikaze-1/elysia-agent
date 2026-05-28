@@ -65,7 +65,7 @@ User_Latency: {{ sensory_ctx.latency | default(0) }}s
 {% if memory_ctx.micro %}
 
     {%- for mem in memory_ctx.micro %}
-    - {{ mem.timestamp }} (Poignancy: {{ mem.poignancy }}) {{ mem.content }}
+    - [{{ mem.type }}] {{ mem.timestamp }} (Poignancy: {{ mem.poignancy }}) {{ mem.content }}
     {% endfor %}
 {%- else %}
 

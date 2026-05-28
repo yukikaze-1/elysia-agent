@@ -511,63 +511,6 @@ class TestLLMAdapter:
         assert "你好呀" in text
 
 
-# ============================================================================
-# 8. StreamingSentenceBuffer
-# ============================================================================
-
-class TestStreamingSentenceBuffer:
-    @pytest.mark.asyncio
-    async def test_consume_basic(self):
-        from core.sentence_buffer import StreamingSentenceBuffer
-        buf = StreamingSentenceBuffer()
-
-        async def stream():
-            for ch in "你好。今天不错。":
-                yield ch
-
-        sentences = []
-        async for s in buf.consume(stream()):
-            sentences.append(s)
-
-        assert len(sentences) == 2
-        assert "你好。" in sentences
-        assert "今天不错。" in sentences
-
-    @pytest.mark.asyncio
-    async def test_consume_no_delimiter_flushes_at_end(self):
-        from core.sentence_buffer import StreamingSentenceBuffer
-        buf = StreamingSentenceBuffer()
-
-        async def stream():
-            for ch in "hello world":
-                yield ch
-
-        sentences = []
-        async for s in buf.consume(stream()):
-            sentences.append(s)
-        # No delimiter in text, entire content flushed at end as one chunk
-        assert sentences == ["hello world"]
-
-    @pytest.mark.asyncio
-    async def test_reset_reuse(self):
-        from core.sentence_buffer import StreamingSentenceBuffer
-        buf = StreamingSentenceBuffer()
-
-        async def stream1():
-            for ch in "hello.":
-                yield ch
-
-        async def stream2():
-            for ch in "world!":
-                yield ch
-
-        s1 = [s async for s in buf.consume(stream1())]
-        buf.reset()
-        s2 = [s async for s in buf.consume(stream2())]
-
-        assert "hello." in s1
-        assert "world!" in s2
-
 
 # ============================================================================
 # 9. EmotionEngine — missing edges
@@ -1469,7 +1412,7 @@ if __name__ == "__main__":
         test_classes = [
             TestMergeStreamToolCalls, TestNormalizeToolCalls,
             TestFSMEdges, TestEventBusEdges,
-            TestSentenceBufferEdges, TestStreamingSentenceBuffer,
+            TestSentenceBufferEdges,
             TestEmotionEngineEdges, TestMessageObj,
         ]
         passed = 0

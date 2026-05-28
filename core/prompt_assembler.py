@@ -64,11 +64,12 @@ class PromptAssembler:
 
         recalled = await self._get_recalled(user_message)
         memory = {"micro": [], "macro": []}
-        for text in recalled:
+        for entry in recalled:
             memory["micro"].append({
-                "content": text,
-                "timestamp": int(now.timestamp()),
-                "poignancy": 5,
+                "content": entry.text,
+                "type": entry.memory_type,
+                "timestamp": int(entry.timestamp) if entry.timestamp else int(now.timestamp()),
+                "poignancy": entry.poignancy,
             })
 
         state = {"mood": mood}
@@ -86,10 +87,11 @@ class PromptAssembler:
             logger.warning("Brain.j2 渲染失败，使用 fallback", exc_info=True)
             return await self._render_fallback(user_name, user_message, now, mood)
 
-    async def _get_recalled(self, query: str = "") -> list[str]:
+    async def _get_recalled(self, query: str = "") -> "list[MemoryEntry]":
         """Search long-term memory with the user's message as query."""
+        from .memory.long_term import MemoryEntry
         results = await self._long_term.search(query_text=query, top_k=5)
-        return [r.text for r in results] if results else []
+        return results if results else []
 
     async def build_messages(self, user_message: str, user_name: str = "妖梦",
                               stt_emotion: str = "", stt_events: list[str] | None = None) -> list[dict]:

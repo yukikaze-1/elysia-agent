@@ -178,6 +178,7 @@
 
 ### 功能改进
 
+- **MacroMemory + MacroReflector**: 参考 Elysia 项目架构。每天一次将高重要性微记忆合成为日记条目（MacroMemory），含叙事段落 + 主导情绪。需要新增 Milvus 集合 + MacroReflector 后台任务 + MacroReflector.j2 模板。等微记忆积累到一定量后再考虑实现。
 - **EmotionEngine 后续升级**: 生理状态模型（Drive/Social Battery/Energy）。情绪衰减改为时间曲线。支持混合情绪。Amygdala LLM 作为文字输入语义补充。
 - **STT 情绪→AI mood 映射升级**: 生理状态调制 + 性格调制 + 时间衰减曲线 + 混合情绪向量
 - **ToolRegistry 升级**: ~~执行超时、工具结果截断、新增内置工具、执行前后 hook~~ — done，见 `Module/tool/`

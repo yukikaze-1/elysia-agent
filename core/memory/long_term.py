@@ -8,6 +8,7 @@ import asyncio
 import logging
 import math
 import os
+import time as _time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 class MemoryEntry:
     text: str
     embedding: list[float] = field(default_factory=list, repr=False)
+    memory_type: str = "note"      # Fact / Preference / Event / Plan / Note
+    poignancy: int = 5             # 重要性 1-10
+    timestamp: float = 0.0         # Unix 时间戳
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -126,7 +130,11 @@ class LongTermMemory:
     # ---- Write ----
 
     async def insert(self, text: str, **metadata) -> None:
-        """Insert a memory entry. Auto-embeds lazily if embedding is available."""
+        """Insert a memory entry. Auto-embeds lazily if embedding is available.
+
+        Keyword metadata may include: memory_type, poignancy, timestamp, source, etc.
+        These become structured fields on MemoryEntry and are stored in Milvus.
+        """
         await self._ensure_embedding()
 
         embedding: list[float] = []
@@ -136,14 +144,27 @@ class LongTermMemory:
             except Exception:
                 logger.debug("Embedding failed for insert, storing text-only", exc_info=True)
 
-        entry = MemoryEntry(text=text, embedding=embedding, metadata=metadata)
+        entry = MemoryEntry(
+            text=text,
+            embedding=embedding,
+            memory_type=metadata.pop("memory_type", "note"),
+            poignancy=metadata.pop("poignancy", 5),
+            timestamp=metadata.pop("timestamp", _time.time()),
+            metadata=metadata,
+        )
 
         if self._vector_db and embedding:
             try:
                 await self._vector_db.insert(
                     self.COLLECTION,
                     vectors=[embedding],
-                    metadata=[{"text": text, **metadata}],
+                    metadata=[{
+                        "text": text,
+                        "memory_type": entry.memory_type,
+                        "poignancy": entry.poignancy,
+                        "timestamp": entry.timestamp,
+                        **metadata,
+                    }],
                 )
             except Exception as e:
                 logger.warning("Milvus insert failed: %s, falling back to in-memory", e)
@@ -158,13 +179,16 @@ class LongTermMemory:
         query_embedding: list[float] | None = None,
         top_k: int = 5,
     ) -> list[MemoryEntry]:
-        """Search by embedding (if available) or text overlap (fallback)."""
+        """向量搜索 + rerank（相似度 + 重要性 + 新鲜度）。"""
         await self._ensure_embedding()
 
         if not self._entries and not self._vector_db:
             return []
 
-        # Try Milvus semantic search
+        candidates: list[MemoryEntry] = []
+        distances: dict[str, float] = {}  # text → L2 distance (for rerank)
+
+        # Try Milvus — fetch top_k * 4 for rerank candidate pool
         if self._vector_db and self._connected:
             vec = query_embedding
             if vec is None and query_text and self._embedding:
@@ -175,35 +199,78 @@ class LongTermMemory:
 
             if vec:
                 try:
-                    results = await self._vector_db.search(
+                    raw = await self._vector_db.search(
                         self.COLLECTION,
                         vector=vec,
-                        top_k=top_k,
-                        output_fields=["text"],
+                        top_k=min(top_k * 4, 20),
+                        output_fields=["text", "memory_type", "poignancy", "timestamp"],
                     )
-                    return [
-                        MemoryEntry(text=r.get("text", ""), metadata=r)
-                        for r in results
-                    ]
+                    for r in raw:
+                        text = r.get("text", "")
+                        entry = MemoryEntry(
+                            text=text,
+                            memory_type=r.get("memory_type", "note"),
+                            poignancy=int(r.get("poignancy", 5)),
+                            timestamp=float(r.get("timestamp", 0)),
+                            metadata=r,
+                        )
+                        candidates.append(entry)
+                        distances[text] = float(r.get("distance", r.get("score", 1.0)))
                 except Exception as e:
                     logger.warning("Milvus search failed: %s", e)
 
-        # Fall back to in-memory search
-        return self._search_fallback(query_text, top_k)
+        # Fall back to in-memory if no candidates from Milvus
+        fb_scores: dict[str, float] = {}
+        if not candidates:
+            fallback_results = self._search_fallback(
+                query_text, min(top_k * 2, len(self._entries))
+            )
+            fb_scores = {e.text: s for s, e in fallback_results}
+            for fb_score, entry in fallback_results:
+                candidates.append(entry)
+                distances[entry.text] = None  # flag for rerank to use fb_score
 
-    def _search_fallback(self, query: str, top_k: int) -> list[MemoryEntry]:
-        if not query:
-            return self._entries[-top_k:] if self._entries else []
+        if not candidates:
+            return []
 
-        query_lower = query.lower()
-        scored: list[tuple[int, MemoryEntry]] = []
-        for e in self._entries:
-            text_lower = e.text.lower()
-            score = sum(1 for ch in query_lower if ch != " " and ch in text_lower)
-            if score > 0:
-                scored.append((score, e))
+        # Rerank: 0.5 × similarity + 0.3 × poignancy + 0.2 × recency
+        now = _time.time()
+        scored: list[tuple[float, MemoryEntry]] = []
+        for entry in candidates:
+            # Similarity: 1/(1+L2_distance) for Milvus, or fallback overlap score
+            dist = distances.get(entry.text, 0.0)
+            if dist is not None:
+                sim = 1.0 / (1.0 + dist)
+            else:
+                sim = fb_scores.get(entry.text, 0.3)
+
+            poi = min(entry.poignancy, 10) / 10.0  # normalize to [0,1]
+
+            age_days = (now - entry.timestamp) / 86400 if entry.timestamp > 0 else 30
+            rec = math.exp(-0.1 * age_days)  # exponential decay, half-life ~6.9 days
+
+            score = 0.5 * sim + 0.3 * poi + 0.2 * rec
+            scored.append((score, entry))
+
         scored.sort(key=lambda x: x[0], reverse=True)
         return [e for _, e in scored[:top_k]]
+
+    def _search_fallback(self, query: str, top_k: int) -> list[tuple[float, MemoryEntry]]:
+        """In-memory text overlap search. Returns (score, entry) pairs for rerank."""
+        if not query:
+            return [(0.0, e) for e in self._entries[-top_k:]] if self._entries else []
+
+        query_lower = query.lower()
+        scored: list[tuple[float, MemoryEntry]] = []
+        for e in self._entries:
+            text_lower = e.text.lower()
+            raw = sum(1 for ch in query_lower if ch != " " and ch in text_lower)
+            if raw > 0:
+                # Normalize overlap score relative to query length
+                score = raw / max(len(query.strip()), 1)
+                scored.append((score, e))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[:top_k]
 
     # ---- Lifecycle ----
 
