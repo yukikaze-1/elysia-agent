@@ -4,28 +4,11 @@ States: IDLE → THINKING → EXECUTING → THINKING → SPEAKING → IDLE
 INTERRUPTED can be entered from any state (except IDLE).
 """
 
-from enum import StrEnum, auto
 import logging
 
+from .schema import AgentState, VALID_TRANSITIONS  # noqa: F401 — re-export
+
 logger = logging.getLogger(__name__)
-
-
-class AgentState(StrEnum):
-    IDLE = auto()
-    THINKING = auto()
-    EXECUTING = auto()
-    SPEAKING = auto()
-    INTERRUPTED = auto()
-
-
-VALID_TRANSITIONS: dict[AgentState, set[AgentState]] = {
-    AgentState.IDLE:        {AgentState.THINKING},
-    AgentState.THINKING:    {AgentState.EXECUTING, AgentState.SPEAKING, AgentState.INTERRUPTED},
-    AgentState.EXECUTING:   {AgentState.THINKING, AgentState.INTERRUPTED},
-    # SPEAKING can go to EXECUTING or THINKING when tool_calls arrive mid-stream
-    AgentState.SPEAKING:    {AgentState.IDLE, AgentState.EXECUTING, AgentState.THINKING, AgentState.INTERRUPTED},
-    AgentState.INTERRUPTED: {AgentState.IDLE},
-}
 
 
 class AgentFSM:

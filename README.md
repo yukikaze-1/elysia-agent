@@ -101,11 +101,13 @@ Agent/
 │   ├── logger/           # 日志工厂
 │   ├── prompt/           # Jinja2 模板
 │   ├── schema/           # 共享数据模型
+│   ├── tool/             # 跨 Provider 工具系统 (172 tests)
 │   ├── database/         # Milvus / MongoDB / GraphDB
 │   ├── input/            # AudioBuffer + WebSocket server
 │   └── bench/            # 延迟基准
 │
-├── core/                 # L1 认知控制 + L2 记忆工具
+├── core/                 # L1 认知控制
+│   ├── schema.py         # 共享类型 (AgentState/EventType/EventPriority)
 │   ├── event_bus.py      # 优先级事件总线
 │   ├── agent_fsm.py      # 五状态机
 │   ├── cognitive_loop.py # ReAct 调度器
@@ -113,11 +115,11 @@ Agent/
 │   ├── prompt_assembler.py # 提示词组装
 │   ├── emotion_engine.py # 情绪引擎
 │   ├── sentence_buffer.py # 分句缓冲
-│   ├── tool_registry.py  # 工具注册 (OpenAI Schema)
 │   ├── consolidator.py   # 记忆沉淀
 │   ├── idle_monitor.py   # 空闲监控
 │   ├── character_config.py # 角色配置
 │   ├── log_setup.py      # 日志系统
+│   ├── tools/            # Agent 工具集 (@tool 装饰器)
 │   ├── demo_agent.py     # 组件组装
 │   ├── app_config.py     # ConfigLoader 类型化配置
 │   ├── _fake_llm.py      # 测试用 LLM backend
@@ -163,4 +165,4 @@ python -m pytest Module/input/test_server.py -v --asyncio-mode=auto
 python -m pytest core/test_sentence_buffer.py -v
 ```
 
-**测试统计**: 304 (core) + 243 (Module) = 547 total（含 server.py / lifecycle / sync / idle / debug / tools / emoji）
+**测试统计**: 181 (core) + 477 (Module) = 658 total

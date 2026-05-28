@@ -20,7 +20,8 @@ from .character_config import CharacterConfig
 from .memory.session import SessionMemory
 from .memory.long_term import LongTermMemory
 from .prompt_assembler import PromptAssembler
-from .tool_registry import ToolRegistry
+from Module.tool import ToolRegistry, ToolContext
+from core.tools import register_all
 from .cognitive_loop import CognitiveLoop
 from .idle_monitor import IdleMonitor
 from .llm_adapter import LLMAdapter
@@ -117,6 +118,14 @@ class DemoAgent:
         await self._seed_memories()
         if mongo_ok:
             await self._session.load()
+
+        # 注入运行时上下文 — 工具通过 ctx.get("memory") 访问 L2 记忆
+        self._tool_ctx = ToolContext(
+            session_id=getattr(self._session, "_session_id", "default"),
+            user_id="妖梦",
+            services={"memory": self._long_term},
+        )
+        self._cognitive._ctx = self._tool_ctx
 
         # Preload embedding in background (runs in thread pool, won't block event loop)
         self._embed_task = asyncio.create_task(
@@ -416,60 +425,5 @@ class DemoAgent:
             self._long_term._entries.append(MemoryEntry(text=text, metadata=meta))
 
     def _register_tools(self) -> None:
-        """Register demo tools in the ToolRegistry."""
-
-        # --- search_memory ---
-        async def search_memory(query: str, limit: int = 5) -> str:
-            """Search long-term memory for relevant entries."""
-            results = await self._long_term.search(query_text=query, top_k=limit)
-            if not results:
-                return "（记忆库中没有找到相关内容）"
-            lines = [f"- {r.text} (meta: {r.metadata})" for r in results]
-            return "\n".join(lines)
-
-        self._tools.register(
-            name="search_memory",
-            description="在长期记忆中搜索相关信息，比如计划、偏好、历史对话等",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "搜索关键词"},
-                    "limit": {"type": "integer", "description": "返回结果数量"},
-                },
-                "required": ["query"],
-            },
-            func=search_memory,
-        )
-
-        # --- get_time ---
-        async def get_time() -> str:
-            """Return the current time."""
-            from datetime import datetime
-            return datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
-
-        self._tools.register(
-            name="get_time",
-            description="获取当前日期和时间",
-            parameters={"type": "object", "properties": {}, "required": []},
-            func=get_time,
-        )
-
-        # --- save_memory ---
-        async def save_memory(content: str, type: str = "fact") -> str:
-            """Save a new entry to long-term memory."""
-            await self._long_term.insert(content, type=type)
-            return f"已保存: {content}"
-
-        self._tools.register(
-            name="save_memory",
-            description="将重要信息保存到长期记忆",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "content": {"type": "string", "description": "要保存的内容"},
-                    "type": {"type": "string", "enum": ["fact", "plan", "preference", "note"], "default": "fact"},
-                },
-                "required": ["content"],
-            },
-            func=save_memory,
-        )
+        """注册 Agent 工具到 Module.tool.ToolRegistry。"""
+        register_all(self._tools)

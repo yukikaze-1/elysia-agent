@@ -30,7 +30,7 @@ class DebugInfo:
     mongodb_ok: bool = False
 
     # Tools
-    tools: list[str] = field(default_factory=list)
+    tools: list[dict] = field(default_factory=list)
     tool_history: list[dict] = field(default_factory=list)
 
     # Consolidation
@@ -88,8 +88,25 @@ async def collect(agent) -> DebugInfo:
     info.mongodb_ok = agent._session._db is not None
 
     # ---- Tools ----
-    info.tools = list(agent._tools.tool_names)
-    info.tool_history = list(getattr(agent._tools, "_history", []))[-5:]
+    info.tools = [
+        {
+            "name": name,
+            "description": defn.description,
+            "parameters": [
+                {
+                    "name": pname,
+                    "type": p.type,
+                    "description": p.description,
+                    "required": p.required,
+                }
+                for pname, p in defn.parameters.items()
+                if pname not in defn._hidden_params
+            ],
+            "requires": defn.requires,
+        }
+        for name, defn in sorted(agent._tools._tools.items())
+    ]
+    info.tool_history = list(agent._tools.history)[-5:]
 
     # ---- Consolidation ----
     info.consolidation_history = list(getattr(agent._consolidator, "_history", []))[-5:]

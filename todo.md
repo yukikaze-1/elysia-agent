@@ -141,7 +141,7 @@
 | 浏览器显示 | transcription 气泡带情绪 emoji + 事件 emoji |
 | nospeech 过滤修复 | `_call_api` 用 raw_text 检测 `<|nospeech|>` 丢弃，替代 audio_buffer 无效的 text-contains 检查 |
 | 优雅退出 | `POST /shutdown` Web 端点 + `/quit` 终端命令 + 浏览器关闭按钮。修复 WebSocketChannel.close() 空函数、state-monitor task 泄漏、embedding 线程泄漏、stdin to_thread 阻塞等 5 个 hang |
-| 测试: 547 passed（+36 新测试）|
+| 测试: 658 passed（Module/tool/ +172，迁移 + 清理）|
 
 ---
 
@@ -151,16 +151,55 @@
 
 - **EmotionEngine 后续升级**: 生理状态模型（Drive/Social Battery/Energy）。情绪衰减改为时间曲线。支持混合情绪。Amygdala LLM 作为文字输入语义补充。
 - **STT 情绪→AI mood 映射升级**: 生理状态调制 + 性格调制 + 时间衰减曲线 + 混合情绪向量
-- **ToolRegistry 升级**: 执行超时、工具结果截断、并行工具调用、新增内置工具、执行前后 hook
+- **ToolRegistry 升级**: ~~执行超时、工具结果截断、新增内置工具、执行前后 hook~~ — done，见 `Module/tool/`
 - 唤醒词检测（openWakeWord 集成）
 - Web 前端: 更好的角色立绘/动画
 - 性能 profiling + 优化
+
+### 后台任务系统
+
+当前模型是严格串行的对话式处理（用户说一句 → AI 回一句），存在三个缺失的能力：
+
+| # | 能力 | 说明 | 复杂度 |
+|---|------|------|--------|
+| 1 | **任务队列** | 多个请求排队，AI 逐个消化，不丢 | 低 |
+| 2 | **并行执行** | 独立任务同时跑（asyncio.gather），不互相阻塞 | 中 |
+| 3 | **后台任务** | 脱离对话流，AI 边聊天边干长活 | 高 |
+
+核心洞察：对话线（快速响应，秒级）和任务线（长时执行）应共享 EventBus 但独立运行，不能混在同一个 CognitiveLoop 里。
+
+#### 阶段 1：并行工具调用（小改，~20 行）
+
+CognitiveLoop 内 `asyncio.gather()` 执行无依赖工具，替代当前逐个串行 `for tc in normalized: await execute()`。
+
+- 改动范围: `core/cognitive_loop.py` 工具执行循环
+- 风险: 零架构改动，LLM 原生支持并行 tool_calls
+- 收益: 独立工具并行执行，减少总等待时间
+
+#### 阶段 2：TaskQueue + TaskWorker（中改）
+
+新增 `core/task_queue.py`，长任务 spawn 为独立 asyncio.Task，不阻塞对话。
+
+- EventBus 新增事件: `TASK_PROGRESS` / `TASK_COMPLETE`
+- FSM 叠加态: THINKING 时可以同时有后台 task 运行
+- 1 个 worker 足够（瓶颈是 LLM API 延迟，不是 CPU），多 worker 带来状态一致性风险
+- 关键设计: 后台任务完成 → EventBus TASK_COMPLETE → AI 主动推送结果。用户下长任务后可以继续正常聊天
+
+#### 阶段 3：并行 Worker Pool + 任务依赖 DAG（大改，可能不需要）
+
+多 TaskWorker 实例 + 任务依赖图（DAG）+ 共享状态锁 + 结果合并。
+
+- 需要解决: 并发写 Session/LongTerm memory、LLM 调用合并、用户理解多任务并行输出
+- **先看阶段 2 够不够用再做**
 
 ### 代码清理
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| 高 | `Module/schema/` 479行死代码 | 完整数据模型层完全闲置，core 层用 dict/dataclass 自建 |
+| 高 | ~~`core/tool_registry.py` → `Module/tool/`~~ (done) | Module/tool/ 完成。 |
+| 高 | ~~Stage B: demo_agent 迁移到 `Module/tool/`~~ (done) | `demo_agent` 使用 `@tool` 装饰器 + `Module.tool.ToolRegistry`，旧代码已删除。 |
+| 高 | ~~工具结构化~~ (done) | 工具从闭包迁移到 `core/tools/`（memory.py / time.py / \_\_init\_\_.py），ToolContext 依赖注入，CognitiveLoop 支持 ctx 传递 |
+| 高 | `Module/schema/` 479行预留设计 | 为 L0/L1/L2 多层架构设计，当前简化架构未使用。已保留。core 实际类型已抽到 `core/schema.py`（AgentState/EventType/EventPriority/VALID_TRANSITIONS） |
 | 中 | `database/graphdb/` 不完整 | 只有 protocol.py，缺 registry/backend/config |
 | 中 | `StreamingSentenceBuffer` 未使用 | `sentence_buffer.py:155` |
 | 中 | `OutputManager.stream()` 未使用 | `manager.py:63-88` |
@@ -170,6 +209,7 @@
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
+| 高 | **EXECUTING 阶段不应接受 VAD 打断** | 当前 VAD 检测到语音后无条件 post INTERRUPT，无论 FSM 是什么状态。THINKING/SPEAKING 时合理（用户想插话），但 EXECUTING 时用户随便发出声音就可能取消正在执行的长任务。应改为：EXECUTING 时 VAD 忽略，只接受显式打断指令（按钮/`{"type":"interrupt"}`）。文本输入同理，EXECUTING 时应跳过打断+user input 投递 |
 | 中 | `EmotionEngine._schedule` 无异常边界 | fire-and-forget task 异常时 asyncio 只打 "Task exception was never retrieved" |
 | 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
 | 低 | Consolidator 每轮调 LLM | 额外 API 调用，无节流/批处理 |
@@ -210,7 +250,7 @@
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| **高** | `Module/schema/` 479 行死代码 | `message.py`(293行) + `event.py` + `io_models.py` + `media.py` 定义了完整的共享数据模型（`UserMessage`, `ChatMessage`, `Event`, `AudioData` 等），零个生产代码导入。core 层自己用 dict 和简单 dataclass 重新实现了一遍 |
+| ~~**高**~~ | ~~`Module/schema/` 闲置~~ (保留) | 为 L0/L1/L2 多层架构设计，当前简化架构未使用。保留作为未来参考。core 实际使用的类型已抽到 `core/schema.py`（62 lines: AgentState/EventType/EventPriority/VALID_TRANSITIONS） |
 | ~~**高**~~ | ~~`MockLLMBackend` 放在 core/ 违反 L0/L1 分层~~ (done) | 删除 MockLLMBackend + fallback/_using_mock 逻辑，LLMAdapter 简化为 90 行。测试用新 `FakeLLMBackend` 替代 |
 | ~~**高**~~ | ~~`Module/config/` 配置系统未接入生产代码~~ (done) | 新建 `core/app_config.py`（6 个子 dataclass），`demo.py` 用 `ConfigLoader` 加载，CLI 覆盖后传入 `DemoAgent(config=config)`。删掉 `_load_config_defaults()` 和两处手动 `yaml.safe_load()` |
 | **中** | `database/graphdb/` 不完整 | 只有 `protocol.py`（ABC），缺少 `registry.py` + backend + `config.py`，无法通过 Factory 创建 |

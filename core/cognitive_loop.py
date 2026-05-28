@@ -14,7 +14,7 @@ from Module.tts import TTSBackend
 
 from .agent_fsm import AgentFSM, AgentState
 from .event_bus import EventBus, EventPriority, EventType
-from .tool_registry import ToolRegistry
+from Module.tool import ToolRegistry, ToolContext
 from .prompt_assembler import PromptAssembler
 from .memory.session import SessionMemory
 from .sentence_buffer import SentenceBuffer
@@ -50,6 +50,7 @@ class CognitiveLoop:
         emotion: EmotionEngine | None = None,
         consolidator: MemoryConsolidator | None = None,
         tts: TTSBackend | None = None,
+        ctx: ToolContext | None = None,
     ):
         self._llm = llm
         self._fsm = fsm
@@ -61,6 +62,7 @@ class CognitiveLoop:
         self._emotion = emotion
         self._consolidator = consolidator
         self._tts = tts
+        self._ctx = ctx
         self._sentence_buf = SentenceBuffer()
         self._process_lock = asyncio.Lock()
         self._current_task: asyncio.Task | None = None
@@ -108,7 +110,7 @@ class CognitiveLoop:
             stt_emotion=stt_emotion, stt_events=stt_events,
         )
         self._session.add_message("user", user_message)
-        tool_defs = self._tools.tool_definitions() or None
+        tool_defs = self._tools.definitions() or None
 
         await self._output.typing(True)
 
@@ -216,11 +218,11 @@ class CognitiveLoop:
                         except (json.JSONDecodeError, KeyError):
                             args = {}
                         logger.info("Executing tool: %s(%s)", func_name, args)
-                        tool_result = await self._tools.execute(func_name, args)
+                        tool_result = await self._tools.execute(func_name, args, ctx=self._ctx)
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc.get("id", "unknown"),
-                            "content": tool_result,
+                            "content": tool_result.llm_content,
                         })
 
                     self._fsm.transition(AgentState.THINKING)

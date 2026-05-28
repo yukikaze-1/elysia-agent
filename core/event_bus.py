@@ -7,21 +7,9 @@ Priority 2: USER_INPUT, SYSTEM_TICK — normal I/O
 
 import asyncio
 from dataclasses import dataclass, field
-from enum import IntEnum
 from typing import Any
 
-
-class EventPriority(IntEnum):
-    INTERRUPT = 0
-    STATE_CHANGE = 1
-    NORMAL = 2
-
-
-class EventType(str):
-    INTERRUPT = "interrupt"
-    STATE_CHANGE = "state_change"
-    USER_INPUT = "user_input"
-    SYSTEM_TICK = "system_tick"
+from .schema import EventPriority, EventType  # noqa: F401 — re-export
 
 
 @dataclass(order=True)

@@ -112,7 +112,7 @@ class TestCognitiveLoopMethods:
         """Create a minimal CognitiveLoop with mocks for all dependencies."""
         from Module.output import OutputManager, ChannelCapability
         from core.prompt_assembler import PromptAssembler
-        from core.tool_registry import ToolRegistry
+        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
         from core.memory.session import SessionMemory
         from core.character_config import CharacterConfig
         from core.emotion_engine import EmotionEngine
@@ -215,7 +215,7 @@ class TestCognitiveLoopTTS:
         from Module.output import OutputManager
         from core.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
-        from core.tool_registry import ToolRegistry
+        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
         from core.llm_adapter import LLMAdapter
 
         fsm = AgentFSM()
@@ -265,6 +265,7 @@ class TestCognitiveLoopTTS:
     async def test_multi_tool_round(self, loop):
         """CognitiveLoop handles tool calls and loops correctly."""
         import json
+        from Module.tool import ToolDefinition, ToolParameter
         # Use a fake backend that returns tool calls then final answer
         tool_json = json.dumps({
             "tool_calls": [{
@@ -277,9 +278,11 @@ class TestCognitiveLoopTTS:
         # Register a tool
         async def test_tool(q: str) -> str:
             return f"result for {q}"
-        loop._tools.register("test_tool", "test",
-                             {"type": "object", "properties": {"q": {"type": "string"}}},
-                             test_tool)
+        loop._tools.register(ToolDefinition(
+            name="test_tool", description="test",
+            func=test_tool,
+            parameters={"q": ToolParameter(type="string", required=True)},
+        ))
 
         # After process, the tool should have been called (tool history)
         await loop.process("use test_tool")
@@ -314,7 +317,7 @@ class TestCognitiveLoopSync:
         from Module.output import OutputManager
         from core.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
-        from core.tool_registry import ToolRegistry
+        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
         from core.llm_adapter import LLMAdapter
 
         fsm = AgentFSM()
@@ -1044,6 +1047,7 @@ class TestDemoAgentLifecycle:
         """search_memory tool queries long-term memory."""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from Module.tool import ToolContext
         from core.demo_agent import DemoAgent
 
         agent = DemoAgent(config=AppConfig())
@@ -1054,8 +1058,10 @@ class TestDemoAgentLifecycle:
         agent._long_term._entries.append(
             MemoryEntry(text="测试记忆", metadata={"type": "fact"}))
 
-        result = await agent._tools.execute("search_memory", {"query": "测试"})
-        assert "测试记忆" in result
+        ctx = ToolContext(services={"memory": agent._long_term})
+        result = await agent._tools.execute("search_memory", {"query": "测试"}, ctx=ctx)
+        assert result.success
+        assert "测试记忆" in result.content
 
     @pytest.mark.asyncio
     async def test_stop_cancels_cognitive_task(self):
@@ -1341,8 +1347,13 @@ class TestDebugInfo:
         await agent.start()
 
         info = await collect(agent)
-        assert "search_memory" in info.tools
-        assert "get_time" in info.tools
+        tool_names = [t["name"] for t in info.tools]
+        assert "search_memory" in tool_names
+        assert "get_time" in tool_names
+        # 验证元数据结构
+        search = next(t for t in info.tools if t["name"] == "search_memory")
+        assert "在长期记忆中搜索" in search["description"]
+        assert any(p["name"] == "query" for p in search["parameters"])
         await agent.stop()
 
     @pytest.mark.asyncio
@@ -1363,93 +1374,95 @@ class TestDebugInfo:
 
 
 # ============================================================================
-# 17. ToolRegistry — unit tests
+# 17. ToolRegistry (Module.tool) — integration smoke tests
 # ============================================================================
 
 class TestToolRegistryUnit:
+    """验证 Module.tool.ToolRegistry 在 core 上下文中的集成。"""
+
     @pytest.mark.asyncio
     async def test_execute_success(self):
-        from core.tool_registry import ToolRegistry
+        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
 
         async def my_tool(x: int) -> str:
             return f"result: {x}"
 
         registry = ToolRegistry()
-        registry.register("my_tool", "test tool",
-                          {"type": "object", "properties": {"x": {"type": "integer"}}},
-                          my_tool)
+        registry.register(ToolDefinition(
+            name="my_tool", description="test tool",
+            func=my_tool,
+            parameters={"x": ToolParameter(type="integer", required=True)},
+        ))
 
         result = await registry.execute("my_tool", {"x": 42})
-        assert result == "result: 42"
+        assert result.success
+        assert "result: 42" in result.content
 
     @pytest.mark.asyncio
     async def test_execute_unknown_tool(self):
-        from core.tool_registry import ToolRegistry
+        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
 
         registry = ToolRegistry()
         result = await registry.execute("nonexistent", {})
-        assert "Error" in result
-        assert "unknown tool" in result
+        assert not result.success
+        assert result.error_type is not None
+        assert result.error_type.value == "unknown_tool"
 
     @pytest.mark.asyncio
     async def test_execute_logs_to_history(self):
-        from core.tool_registry import ToolRegistry
+        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
 
         async def my_tool(x: int) -> str:
             return str(x)
 
         registry = ToolRegistry()
-        registry.register("t", "desc",
-                          {"type": "object", "properties": {"x": {"type": "integer"}}},
-                          my_tool)
+        registry.register(ToolDefinition(
+            name="t", description="desc",
+            func=my_tool,
+            parameters={"x": ToolParameter(type="integer", required=True)},
+        ))
 
         await registry.execute("t", {"x": 1})
-        assert len(registry._history) == 1
-        assert registry._history[0]["name"] == "t"
+        assert len(registry.history) == 1
+        assert registry.history[0]["name"] == "t"
 
     def test_tool_definitions_format(self):
-        from core.tool_registry import ToolRegistry
+        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
 
         async def foo() -> str:
             return "bar"
 
         registry = ToolRegistry()
-        registry.register("foo", "test function",
-                          {"type": "object", "properties": {}}, foo)
+        registry.register(ToolDefinition(
+            name="foo", description="test function",
+            func=foo, parameters={},
+        ))
 
-        defs = registry.tool_definitions()
+        defs = registry.definitions()
         assert len(defs) == 1
         assert defs[0]["type"] == "function"
         assert defs[0]["function"]["name"] == "foo"
 
-    def test_coerce_integer(self):
-        from core.tool_registry import ToolRegistry
+    def test_type_coercion(self):
+        """validate_args 自动将字符串强制为声明的类型。"""
+        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
+        from Module.tool.safety import validate_args
 
-        async def dummy(x: int) -> str:
-            return str(x)
-
-        registry = ToolRegistry()
-        registry.register("dummy", "d",
-                          {"type": "object", "properties": {"x": {"type": "integer"}}},
-                          dummy)
-
-        coerced = registry._coerce("dummy", {"x": "42"})
+        params = {"x": ToolParameter(type="integer", required=True)}
+        coerced, errors = validate_args(params, {"x": "42"})
+        assert not errors
         assert coerced["x"] == 42
         assert isinstance(coerced["x"], int)
 
-    def test_coerce_boolean(self):
-        from core.tool_registry import ToolRegistry
+    def test_boolean_coercion(self):
+        """validate_args 对 str 'true'/'1'/'yes' 进行布尔强制。"""
+        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
+        from Module.tool.safety import validate_args
 
-        async def dummy(flag: bool) -> str:
-            return str(flag)
-
-        registry = ToolRegistry()
-        registry.register("dummy", "d",
-                          {"type": "object", "properties": {"flag": {"type": "boolean"}}},
-                          dummy)
-
-        assert registry._coerce("dummy", {"flag": "true"})["flag"] is True
-        assert registry._coerce("dummy", {"flag": "false"})["flag"] is False
+        params = {"flag": ToolParameter(type="boolean", required=True)}
+        coerced, errors = validate_args(params, {"flag": "true"})
+        assert not errors
+        assert coerced["flag"] is True
 
 
 # ============================================================================

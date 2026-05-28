@@ -56,6 +56,12 @@ h1 { font-size: 18px; margin-bottom: 4px; }
 .tool-args { color: var(--muted); font-size: 11px; }
 .tool-result { color: var(--text); }
 .tool-error { color: var(--red); }
+.tool-desc { color: var(--muted); font-size: 12px; display: block; margin: 2px 0 4px; }
+.param-tag { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 11px; margin-right: 3px; color: var(--text); }
+.param-tag i { color: var(--muted); margin-left: 3px; font-style: italic; }
+.req-tag { background: #1a3a5c; color: #6ba3d6; border-radius: 3px; padding: 1px 6px; font-size: 10px; margin-right: 3px; }
+.tool-card { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.tool-card:last-child { border-bottom: none; }
 .empty { color: var(--muted); font-style: italic; padding: 4px 0; }
 #error-banner {
   display: none; background: var(--red); color: white; padding: 8px 14px;
@@ -121,7 +127,22 @@ function render(info) {
         `<span class="type-tag">${e.metadata?.type||'?'}</span>${esc(trunc(e.text,90))}`
       )},
     ],
-    // Row 3: Tools | Consolidation
+    // Row 3: Tools | Tool History | Consolidation
+    [
+      { title:'Tools', wide:true, items: (info.tools||[]).map(t =>
+        `<div class="tool-card">
+          <span class="tool-name">${esc(t.name)}</span>
+          <span class="tool-desc">${esc(t.description)}</span>
+          <div class="tool-params">${(t.parameters||[]).map(p =>
+            `<span class="param-tag">${esc(p.name)}<i>${esc(p.type)}</i>${p.required?'*':''}</span>`
+          ).join(' ')}</div>
+          <div class="tool-tags">${(t.requires||[]).map(r =>
+            `<span class="req-tag">${esc(r)}</span>`
+          ).join('')}</div>
+        </div>`
+      )},
+    ],
+    // Row 4: Tool History | Consolidation
     [
       { title:'Tool History', wide:false, items: (info.tool_history||[]).map(t =>
         (t.error

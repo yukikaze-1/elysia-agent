@@ -231,9 +231,10 @@ class TestMemoryIntegration:
         await agent.start()
 
         # Use the tool directly
-        result = await agent._tools.execute("search_memory", {"query": "爬山"})
-        assert "爬山" in result or "香山" in result
-        assert "记忆库中没有找到" not in result
+        result = await agent._tools.execute("search_memory", {"query": "爬山"}, ctx=agent._tool_ctx)
+        assert result.success
+        assert "爬山" in result.content or "香山" in result.content
+        assert "记忆库中没有找到" not in result.content
 
         await agent.stop()
 
@@ -248,7 +249,7 @@ class TestMemoryIntegration:
         agent = DemoAgent(config=AppConfig())
         await agent.start()
 
-        await agent._tools.execute("save_memory", {"content": "测试保存的记忆", "type": "fact"})
+        await agent._tools.execute("save_memory", {"content": "测试保存的记忆", "type": "fact"}, ctx=agent._tool_ctx)
         results = await agent._long_term.search(query_text="测试保存")
         assert len(results) > 0
         assert any("测试保存" in r.text for r in results)
