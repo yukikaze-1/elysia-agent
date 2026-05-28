@@ -24,6 +24,11 @@ class ConsoleChannel(OutputChannel):
 
     async def on_message(self, msg) -> None:
         """Print formatted message. If deltas were already streamed, skip content."""
+        if isinstance(msg, str):
+            if self._delta_printed:
+                print()
+                self._delta_printed = False
+            return
         inner = getattr(msg, "inner_voice", "")
         role = getattr(msg, "role", "?")
         content = getattr(msg, "content", "")

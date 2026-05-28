@@ -115,6 +115,13 @@
 | thinking mode 禁用 | `extra_body={"thinking": {"type": "disabled"}}` |
 | API 错误日志 | 完整 exception + model name 打印到 WARNING |
 
+### 消息气泡分离修复 (2026-05-28)
+
+| 任务 | 说明 |
+|------|------|
+| 根因定位 | `send("")` 发送空字符串到 `WebSocketChannel.on_message()`，`vars("")` 抛出 `TypeError`，被 `_broadcast(return_exceptions=True)` 静默吞掉。所有 `send("")` 调用都未到达前端，`finalizeDelta()` 从未被触发，`currentDelta` 保持非 null，导致 `appendDelta` 将所有句子追加到同一气泡 |
+| 修复 | `WebSocketChannel.on_message()` 增加 `isinstance(msg, str)` 分支，将纯字符串包裹为 `{"content": msg}`。`ConsoleChannel.on_message()` 同步防御 |
+
 ### WebRTC VAD (2026-05-27)
 
 | 任务 | 说明 |

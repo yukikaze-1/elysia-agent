@@ -69,7 +69,7 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | 用户情绪识别 (STT 声学 HAPPY/SAD/ANGRY...) | done |
 | TTS 流式合成 (GPT-SoVits) + 句队列 + 顺序播放 | done |
 | 文字/语音同步 (双层缓冲: 服务端 + 浏览器) | done |
-| 分句策略 (连续分隔符合并) | done |
+| 分句策略 (连续分隔符合并) + 逐句独立消息气泡 | done |
 | SentenceBuffer 升级 (70 tests: ～…〜/.上下文/可配置) | done |
 | 聊天历史 localStorage 持久化 | done |
 | 配置系统 (ConfigLoader: YAML + env + 类型校验) | done |

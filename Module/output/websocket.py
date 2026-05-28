@@ -88,7 +88,12 @@ class WebSocketChannel(OutputChannel):
         await self._send_json({"type": "state", "state": state})
 
     async def on_message(self, msg) -> None:
-        data = msg.to_dict() if hasattr(msg, "to_dict") else vars(msg)
+        if isinstance(msg, str):
+            data = {"content": msg}
+        elif hasattr(msg, "to_dict"):
+            data = msg.to_dict()
+        else:
+            data = vars(msg)
         data["type"] = "message"
         await self._send_json(data)
 

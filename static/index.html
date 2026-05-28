@@ -300,6 +300,7 @@ function debounceSave() {
 
 function finalizeDelta() {
   if (currentDelta) { currentDelta = null; saveChat(); }
+  lastRole = null;  // 下一句 delta 创建新气泡，不复用上一个
 }
 
 function addUserMsg(text) {
