@@ -1,7 +1,8 @@
 """GPT-SoVits TTS 后端 — HTTP API 调用。
 
-流式通过 asyncio.Queue + create_task 桥接 httpx 流式响应和调用方异步生成器。
-取消安全：finally 块中 cancel 任务并忽略 CancelledError。
+每次 TTS 请求创建独立的 httpx.AsyncClient，用完即关。
+避免连接池复用导致的服务端空闲断开问题。
+流式通过 asyncio.Queue + create_task 桥接。
 """
 
 import asyncio
@@ -17,6 +18,8 @@ from .text_preprocess import strip_all_markup
 
 # 32000 Hz * 1 channel * 2 bytes/sample
 BYTES_PER_SECOND = 64000
+
+_TTS_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
 
 
 class GPTSoVitsBackend(TTSBackend):
@@ -34,10 +37,7 @@ class GPTSoVitsBackend(TTSBackend):
         logger: logging.Logger | None = None,
     ):
         self._logger = logger or logging.getLogger(__name__)
-        self._client = httpx.AsyncClient(
-            base_url=base_url,
-            timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0),
-        )
+        self._base_url = base_url
         if voices_config:
             path = Path(voices_config)
         else:
@@ -64,8 +64,8 @@ class GPTSoVitsBackend(TTSBackend):
     ) -> AsyncIterator[bytes]:
         """统一的 HTTP 调用入口。
 
-        使用 asyncio.Queue 桥接 httpx 流式消费者（_pull task）和调用方异步生成器。
-        finally 块确保 task 被 cancel 且异常被吞掉（stream teardown 可能引发 ReadError）。
+        每次请求创建独立的 httpx.AsyncClient，用完即关。
+        避免连接池复用时服务端空闲断开导致后续请求失败。
         """
         voice_cfg = self._voices[character]
         text = self._preprocess(text)
@@ -96,21 +96,22 @@ class GPTSoVitsBackend(TTSBackend):
 
         async def _pull() -> None:
             """httpx 流式消费者 — 运行在独立 task 中。"""
+            client = httpx.AsyncClient(base_url=self._base_url, timeout=_TTS_TIMEOUT)
             try:
-                try:
-                    async with self._client.stream("POST", "/tts", json=payload) as resp:
-                        resp.raise_for_status()
-                        async for chunk in resp.aiter_bytes(4096):
-                            await queue.put(chunk)
-                except httpx.RequestError as e:
-                    self._logger.error(
-                        "GPT-SoVits connection failed (base_url=%s): %s",
-                        self._client.base_url, e,
-                    )
-                    raise RuntimeError(
-                        f"无法连接 GPT-SoVits 服务 ({self._client.base_url}): {e}"
-                    ) from e
+                async with client.stream("POST", "/tts", json=payload) as resp:
+                    resp.raise_for_status()
+                    async for chunk in resp.aiter_bytes(4096):
+                        await queue.put(chunk)
+            except httpx.RequestError as e:
+                self._logger.error(
+                    "GPT-SoVits connection failed (base_url=%s): %s",
+                    self._base_url, e,
+                )
+                raise RuntimeError(
+                    f"无法连接 GPT-SoVits 服务 ({self._base_url}): {e}"
+                ) from e
             finally:
+                await client.aclose()
                 await queue.put(None)  # 哨兵：流结束
 
         task = asyncio.create_task(_pull())
@@ -126,7 +127,7 @@ class GPTSoVitsBackend(TTSBackend):
             try:
                 await task
             except (asyncio.CancelledError, Exception):
-                pass  # 提前中断时 cancel 引发的异常，安全吞掉
+                pass
 
     async def close(self) -> None:
-        await self._client.aclose()
+        pass  # 无共享 client，无需清理

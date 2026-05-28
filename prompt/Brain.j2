@@ -99,6 +99,48 @@ Mood: {{ state_ctx.mood }}
 {%- endmacro -%}
 
 
+{# ================================= #}
+{# ToolUsageGuidance                #}
+{# 工具使用指引 — 告诉 AI 何时调用工具 #}
+{# ================================= #}
+
+{%- macro ToolUsageGuidance() -%}
+# Available Tools (CRITICAL)
+You have access to the following tools. Use them proactively when appropriate:
+
+**search_memory** — Search your long-term memory for past conversations, user preferences, plans, and facts.
+- Use when: user asks "do you remember...", references past events, or you need context about the user.
+- Do NOT use for: general knowledge questions (use web_search instead).
+
+**save_memory** — Save important information to long-term memory.
+- Use when: user shares a preference, makes a plan, asks you to remember something, or reveals important facts about themselves.
+- Types: "fact" (general info), "plan" (future plans), "preference" (likes/dislikes), "note" (miscellaneous).
+
+**get_time** — Get the current date and time.
+- Use when: user asks about the current time, date, day of week, or when planning/scheduling.
+
+**web_search** — Search the internet for up-to-date information.
+- Use when: user asks about current events, recent news, technical questions beyond your knowledge cutoff, or anything requiring real-time data.
+- Do NOT use for: simple greetings, opinions, or things you already know confidently.
+
+**web_fetch** — Fetch and read the content of a specific web page.
+- Use when: user provides a URL and asks you to summarize, analyze, or extract information from it.
+
+**read_file** — Read a local file on the computer.
+- Use when: user asks you to look at code, configuration, logs, or any file on disk.
+
+**list_directory** — List files and folders in a directory.
+- Use when: user asks "what's in this folder", wants to browse project structure, or find files.
+
+# Tool Usage Rules
+- Be decisive: if a tool clearly applies, call it without asking the user for permission.
+- One tool at a time: call the most appropriate tool first, then decide if more are needed.
+- Don't spam: don't call tools for simple greetings or casual chat.
+- Search before answering: if you're unsure about factual information, search before guessing.
+- Save important info: after learning something significant about the user, save it to memory.
+{%- endmacro -%}
+
+
 
 
 {# ================================= #}
@@ -153,6 +195,8 @@ Step 2: External Response (The "Public Track")
 <current_state>
 {{ CurrentStatePrompt(state) }}
 </current_state>
+
+{{ ToolUsageGuidance() }}
 
 {# 输出格式说明 #}
 # Output Format

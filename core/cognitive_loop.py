@@ -201,6 +201,27 @@ class CognitiveLoop:
 
                 # If tool calls were detected, execute them and loop
                 if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
+                    # 工具调用前：立即释放已缓冲的文字，不等 TTS 首块音频
+                    # 用户需要马上看到 Agent 的意图确认（"好嘞，我搜搜看哈～"）
+                    if not self._sync_event.is_set():
+                        self._sync_event.set()
+                    if self._sync_buffer:
+                        logger.info("Sync: 工具调用前刷新 %d 个缓冲文本块", len(self._sync_buffer))
+                        if not speaking_started:
+                            await self._output.typing(False)
+                            self._fsm.transition(AgentState.SPEAKING)
+                            self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
+                            speaking_started = True
+                        for buf_content in self._sync_buffer:
+                            await self._output._broadcast("on_text_delta", buf_content, capability=ChannelCapability.TEXT_DELTA)
+                        self._sync_buffer.clear()
+                        await self._drain_audio_pending()
+
+                    # 切断当前消息气泡 — 工具调用前后分成两个独立气泡
+                    # 前端 message handler → finalizeDelta() → currentDelta = null
+                    # 下一轮 deltas 自动创建新气泡
+                    await self._output.send("")
+
                     await self._output.typing(False)
                     self._fsm.transition(AgentState.EXECUTING)
                     self._bus.post(EventType.STATE_CHANGE, {"state": "executing"}, priority=EventPriority.STATE_CHANGE)
@@ -218,7 +239,15 @@ class CognitiveLoop:
                         except (json.JSONDecodeError, KeyError):
                             args = {}
                         logger.info("Executing tool: %s(%s)", func_name, args)
+                        await self._output.action("tool_executing", params={
+                            "tool": func_name,
+                            "args": {k: str(v)[:80] for k, v in args.items()},
+                        })
                         tool_result = await self._tools.execute(func_name, args, ctx=self._ctx)
+                        await self._output.action("tool_done", params={
+                            "tool": func_name,
+                            "success": tool_result.success,
+                        })
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc.get("id", "unknown"),

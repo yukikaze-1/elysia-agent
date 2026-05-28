@@ -33,6 +33,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import os as _os
 _os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
+# 使用 conda 环境的 SSL 证书，避免系统证书权限问题
+_conda_prefix = _os.environ.get("CONDA_PREFIX", "")
+_conda_cert = _os.path.join(_conda_prefix, "ssl/cert.pem")
+if _os.path.exists(_conda_cert):
+    _os.environ["SSL_CERT_FILE"] = _conda_cert
+
 from dotenv import load_dotenv
 load_dotenv()
 

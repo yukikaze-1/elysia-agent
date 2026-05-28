@@ -237,5 +237,5 @@ class TestGPTSoVitsSynthesize:
     @pytest.mark.asyncio
     async def test_close(self, backend):
         await backend.close()
-        assert backend._client.is_closed
+        # 每次请求独立 client，无共享 client 需关闭
 
