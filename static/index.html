@@ -231,6 +231,7 @@ function handleWS(e) {
     case 'expression': setMood(msg.expression, msg.intensity); break;
     case 'state':
       setState(msg.state);
+      if (msg.state === 'executing') { lastRole = null; }
       break;
     case 'audio': bufferAudioChunk(msg.stream_id||0, msg.seq||0, msg.data); break;
     case 'audio_end': finalizeStream(msg.stream_id||0); break;
