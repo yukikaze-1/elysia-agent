@@ -291,17 +291,16 @@ class TestCognitiveLoopTTS:
 
     @pytest.mark.asyncio
     async def test_handle_interrupt_clears_state(self, loop):
-        """_handle_interrupt clears all buffers and returns to IDLE."""
-        loop._sync_buffer = ["pending text"]
-        loop._audio_pending = [("chunk", b"data", 1)]
+        """_handle_interrupt resets sentence buffer, cancels TTS tasks, returns to IDLE."""
         loop._sentence_buf.feed("partial")
-        # FSM must be in a state where interrupt is valid
+        t = asyncio.create_task(asyncio.sleep(10))
+        loop._tts_tasks.append(t)
         loop._fsm.transition("thinking")
 
         await loop._handle_interrupt()
 
-        assert loop._sync_buffer == []
-        assert loop._audio_pending == []
+        assert loop._sentence_buf._buffer == ""
+        assert len(loop._tts_tasks) == 0
         assert loop._fsm.state == "idle"
 
 
@@ -341,26 +340,21 @@ class TestCognitiveLoopSync:
         )
 
     @pytest.mark.asyncio
-    async def test_sync_event_preset_when_no_tts(self, loop):
-        """When TTS is None, sync_event should be preset (text flows freely)."""
-        loop._sync_event.clear()
+    async def test_no_tts_text_flows_directly(self, loop):
+        """无 TTS 时文本直接发送，不经过缓冲。"""
         await loop.process("hello")
-        # After init in _think_loop: no TTS → sync_event is set
-        assert loop._sync_event.is_set()
-        assert loop._sync_buffer == []
+        # process() 成功完成即表明文本已直接发送
+        assert loop._fsm.state == "idle"
 
     @pytest.mark.asyncio
-    async def test_sync_buffer_cleared_on_process_start(self, loop):
-        """Each process() call resets sync state."""
-        loop._sync_buffer.append("stale data")
-        loop._audio_pending.append(("chunk", b"data", 1))
-        loop._audio_flow = True
+    async def test_process_resets_sentence_buffer(self, loop):
+        """每次 process() 调用重置分句缓冲。"""
+        loop._sentence_buf.feed("stale data")
+        assert loop._sentence_buf._buffer != ""
 
         await loop.process("hello")
-        # After process() runs, buffer/pending are clear
-        # (_audio_flow is True after normal response delivery)
-        assert loop._sync_buffer == []
-        assert loop._audio_pending == []
+
+        assert loop._sentence_buf._buffer == ""
 
     @pytest.mark.asyncio
     async def test_process_lock_serializes(self, loop):

@@ -24,6 +24,19 @@ from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
 logger = logging.getLogger(__name__)
 
+_EMOJI_RE = re.compile(
+    r"[\U0001F300-\U0001F9FF"
+    r"\U0001F600-\U0001F64F"
+    r"\U00002600-\U000027BF"
+    r"\U00002300-\U000023FF]+",
+    flags=re.UNICODE,
+)
+
+
+def _is_emoji_only(text: str) -> bool:
+    """句子去掉 emoji 后是否只剩空白 — 用于跳过 TTS 合成。"""
+    return not _EMOJI_RE.sub("", text).strip()
+
 
 @dataclass
 class _MessageObj:
@@ -70,11 +83,6 @@ class CognitiveLoop:
         self._tts_task: asyncio.Task | None = None
         self._tts_tasks: list[asyncio.Task] = []
         self._tts_stream_id: int = 0
-        self._sync_event = asyncio.Event()
-        self._sync_buffer: list[str] = []
-        self._sync_sentences: list[str] = []
-        self._audio_pending: list[tuple] = []  # (type, chunk|None, stream_id)
-        self._audio_flow = False
 
     async def process(self, user_message: str, user_name: str = "妖梦",
                        stt_emotion: str = "", stt_events: list[str] | None = None) -> None:
@@ -87,11 +95,6 @@ class CognitiveLoop:
             self._bus.post(EventType.STATE_CHANGE, {"state": "thinking"}, priority=EventPriority.STATE_CHANGE)
 
             self._sentence_buf.reset()
-            self._sync_event.clear()
-            self._sync_buffer.clear()
-            self._sync_sentences.clear()
-            self._audio_pending.clear()
-            self._audio_flow = False
             self._current_task = asyncio.current_task()
             try:
                 await self._think_loop(user_message, user_name,
@@ -117,28 +120,8 @@ class CognitiveLoop:
 
         await self._output.typing(True)
 
-        # 文本/语音同步：首句 TTS 音频到达前，暂存 text delta 不发送
-        # 无 TTS 时立即释放。超时作为安全网防止永久持有。
-        _sync_timeout = 5.0
-        self._sync_event.clear()
-        self._sync_buffer.clear()
-        self._sync_sentences.clear()
-        if not self._tts:
-            self._sync_event.set()
-            logger.debug("Sync: TTS 未启用，文本直接放行")
-
-        async def _release_after_timeout():
-            await asyncio.sleep(_sync_timeout)
-            if not self._sync_event.is_set():
-                logger.debug("Sync: %.1fs 超时，释放文本 (%d 字符缓冲)",
-                             _sync_timeout, sum(len(s) for s in self._sync_buffer))
-            self._sync_event.set()
-
-        timeout_task = asyncio.create_task(_release_after_timeout(), name="sync-timeout")
-
         try:
             for round_num in range(self.MAX_TOOL_ROUNDS + 1):
-                # Stream the LLM response — text goes to output, tool_calls are accumulated
                 acc_text = ""
                 raw_tool_calls: list[dict] = []
                 speaking_started = False
@@ -157,94 +140,69 @@ class CognitiveLoop:
                                 logger.info("Pipeline: 首 token 到达 (TTFT)")
                             acc_text += content
 
-                            if not self._sync_event.is_set():
-                                self._sync_buffer.append(content)
-                            else:
-                                # First batch after sync: flush buffered deltas
-                                if self._sync_buffer:
-                                    logger.info("Sync: 刷新 %d 句缓冲文字 (%d 原始块)",
-                                                 len(self._sync_sentences), len(self._sync_buffer))
-                                    await self._output.typing(False)
-                                    self._fsm.transition(AgentState.SPEAKING)
-                                    self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
-                                    speaking_started = True
-                                    # 逐句发送完整句子 — 不受原始 chunk 大小影响
-                                    for s in self._sync_sentences:
-                                        await self._output._broadcast("on_text_delta", s,
-                                            capability=ChannelCapability.TEXT_DELTA)
-                                        await self._output.send("")
-                                    self._sync_buffer.clear()
-                                    self._sync_sentences.clear()
-                                    # Release buffered audio now that text has been sent
-                                    await self._drain_audio_pending()
-
-                                if not speaking_started:
-                                    await self._output.typing(False)
-                                    self._fsm.transition(AgentState.SPEAKING)
-                                    self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
-                                    speaking_started = True
-
-                                await self._output._broadcast("on_text_delta", content, capability=ChannelCapability.TEXT_DELTA)
+                            # TTS 关闭时流式逐字发送；TTS 开启时不发（由 _start_tts_stream 发送完整句）
+                            if not self._tts:
+                                await self._output._broadcast("on_text_delta", content,
+                                    capability=ChannelCapability.TEXT_DELTA)
 
                             sentence = self._sentence_buf.feed(content)
                             if sentence:
                                 logger.info("Pipeline: SentenceBuffer 分句 (%d 字符): %s",
                                              len(sentence), sentence[:40])
-                                # 逐句拆分气泡 — 每句独立一个消息框
-                                if speaking_started:
-                                    await self._output.send("")
+
+                                if not speaking_started:
+                                    await self._output.typing(False)
+                                    self._fsm.transition(AgentState.SPEAKING)
+                                    self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"},
+                                                   priority=EventPriority.STATE_CHANGE)
+                                    speaking_started = True
+
+                                # 纯 emoji 跳过 TTS，直接发文字
+                                if self._tts and not _is_emoji_only(sentence):
+                                    self._start_tts_stream(sentence)
                                 else:
-                                    # 缓冲期完成的句子，等 sync 释放后逐句发送
-                                    self._sync_sentences.append(sentence)
-                            if sentence and self._tts:
-                                self._start_tts_stream(sentence)
+                                    await self._output._broadcast("on_text_delta", sentence,
+                                        capability=ChannelCapability.TEXT_DELTA)
+                                    await self._output.send("")
 
                         if tc_deltas:
                             self._merge_stream_tool_calls(raw_tool_calls, tc_deltas)
                 except asyncio.CancelledError:
-                    # Propagate cancellation — cleanup happens in process()
                     raise
 
                 # Flush remaining text in sentence buffer
-                if self._tts:
-                    remaining = self._sentence_buf.flush()
-                    if remaining:
-                        logger.info("Pipeline: SentenceBuffer flush 尾句 (%d 字符): %s",
-                                     len(remaining), remaining[:40])
+                remaining = self._sentence_buf.flush()
+                if remaining:
+                    logger.info("Pipeline: SentenceBuffer flush 尾句 (%d 字符): %s",
+                                 len(remaining), remaining[:40])
+                    if not speaking_started:
+                        await self._output.typing(False)
+                        self._fsm.transition(AgentState.SPEAKING)
+                        self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"},
+                                       priority=EventPriority.STATE_CHANGE)
+                        speaking_started = True
+                    if self._tts and not _is_emoji_only(remaining):
                         self._start_tts_stream(remaining)
+                    else:
+                        await self._output._broadcast("on_text_delta", remaining,
+                            capability=ChannelCapability.TEXT_DELTA)
+                        await self._output.send("")
 
                 # If tool calls were detected, execute them and loop
                 if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
-                    # 工具调用前：立即释放已缓冲的文字，不等 TTS 首块音频
-                    # 用户需要马上看到 Agent 的意图确认（"好嘞，我搜搜看哈～"）
-                    if not self._sync_event.is_set():
-                        self._sync_event.set()
-                    if self._sync_buffer:
-                        logger.info("Sync: 工具调用前刷新 %d 个缓冲文本块", len(self._sync_buffer))
-                        if not speaking_started:
-                            await self._output.typing(False)
-                            self._fsm.transition(AgentState.SPEAKING)
-                            self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
-                            speaking_started = True
-                        if self._sync_sentences:
-                            for s in self._sync_sentences:
-                                await self._output._broadcast("on_text_delta", s, capability=ChannelCapability.TEXT_DELTA)
-                                await self._output.send("")
-                        else:
-                            for buf_content in self._sync_buffer:
-                                await self._output._broadcast("on_text_delta", buf_content, capability=ChannelCapability.TEXT_DELTA)
-                        self._sync_buffer.clear()
-                        self._sync_sentences.clear()
-                        await self._drain_audio_pending()
+                    # Cancel pending TTS tasks, send their text without audio
+                    for t in self._tts_tasks:
+                        if not t.done():
+                            t.cancel()
+                    self._tts_tasks.clear()
 
-                    # 切断当前消息气泡 — 工具调用前后分成两个独立气泡
-                    # 前端 message handler → finalizeDelta() → currentDelta = null
-                    # 下一轮 deltas 自动创建新气泡
+                    # 切断气泡
                     await self._output.send("")
 
                     await self._output.typing(False)
                     self._fsm.transition(AgentState.EXECUTING)
-                    self._bus.post(EventType.STATE_CHANGE, {"state": "executing"}, priority=EventPriority.STATE_CHANGE)
+                    self._bus.post(EventType.STATE_CHANGE, {"state": "executing"},
+                                   priority=EventPriority.STATE_CHANGE)
 
                     normalized = self._normalize_tool_calls(raw_tool_calls)
                     assistant_entry: dict = {"role": "assistant", "content": acc_text or None}
@@ -275,55 +233,34 @@ class CognitiveLoop:
                         })
 
                     self._fsm.transition(AgentState.THINKING)
-                    self._bus.post(EventType.STATE_CHANGE, {"state": "thinking"}, priority=EventPriority.STATE_CHANGE)
+                    self._bus.post(EventType.STATE_CHANGE, {"state": "thinking"},
+                                   priority=EventPriority.STATE_CHANGE)
                     await self._output.typing(True)
                     continue
 
-                # Final answer — finalize the message
-                if speaking_started:
-                    if acc_text.strip():
-                        if self._emotion:
-                            self._emotion.analyze_assistant(acc_text)
+                # Final answer — TTS tasks streaming in background, don't block
+                if acc_text.strip():
+                    if self._emotion:
+                        self._emotion.analyze_assistant(acc_text)
+                    if not speaking_started:
+                        # 无标点的极短回复，直接发完整消息
+                        await self._output.typing(False)
                         msg = _MessageObj(content=acc_text)
                         await self._output.send(msg)
-                        self._session.add_message("assistant", acc_text)
-                        asyncio.create_task(self._after_response(user_message, acc_text), name="after-response")
-                else:
-                    await self._output.typing(False)
-                    if acc_text.strip():
-                        if self._emotion:
-                            self._emotion.analyze_assistant(acc_text)
-                        # Flush buffered deltas so browser DOM is built before finalize
-                        if self._sync_buffer:
-                            self._fsm.transition(AgentState.SPEAKING)
-                            self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
-                            for s in self._sync_sentences:
-                                await self._output._broadcast("on_text_delta", s, capability=ChannelCapability.TEXT_DELTA)
-                                await self._output.send("")
-                            self._sync_buffer.clear()
-                            self._sync_sentences.clear()
-                            await self._drain_audio_pending()
-                        else:
-                            # 无缓冲 delta，发完整消息
-                            msg = _MessageObj(content=acc_text)
-                            await self._output.send(msg)
-                        self._session.add_message("assistant", acc_text)
-                        asyncio.create_task(self._after_response(user_message, acc_text), name="after-response")
+                if acc_text.strip():
+                    self._session.add_message("assistant", acc_text)
+                    asyncio.create_task(self._after_response(user_message, acc_text),
+                                       name="after-response")
+
                 await self._transition_idle()
                 return
 
-        finally:
-            timeout_task.cancel()
-            # Flush any remaining buffered text (e.g. response too short for TTS)
-            if self._sync_buffer:
-                await self._output.typing(False)
-                for buf_content in self._sync_buffer:
-                    await self._output._broadcast("on_text_delta", buf_content, capability=ChannelCapability.TEXT_DELTA)
-                self._sync_buffer.clear()
-                self._sync_sentences.clear()
-            # Always drain buffered audio — bg task may have accumulated chunks
-            # that arrived after the else-branch cleared sync_buffer
-            await self._drain_audio_pending()
+        except Exception:
+            for t in self._tts_tasks:
+                if not t.done():
+                    t.cancel()
+            self._tts_tasks.clear()
+            raise
 
     async def _after_response(self, user_message: str, assistant_response: str) -> None:
         """Post-response hooks: consolidate memory, save session."""
@@ -341,26 +278,20 @@ class CognitiveLoop:
             logger.debug("Session save failed", exc_info=True)
 
     def _start_tts_stream(self, sentence: str) -> None:
-        """Start streaming TTS for a sentence in a background task.
+        """后台 TTS task — 等首块音频到达后绑在一起发送文字+音频。
 
-        Synthesis starts immediately (pipeline with previous sentence).
-        Audio chunks are sent as they arrive; the browser queues playback.
-        Only interrupt cancels the current TTS stream.
-        Does NOT block — text streaming continues in parallel.
+        文字和音频绑定发送，前端收到即可渲染+播放，无需任何同步逻辑。
+        TTS workers=1 FIFO 保证句间顺序。
         """
-        # 跳过纯 emoji/空白句 — strip_all_markup 后为空，GPT-SoVits 会返回 400
-        _clean = re.sub(
-            r"[\U0001F300-\U0001F9FF\U0001F600-\U0001F64F"
-            r"\U00002600-\U000027BF\U00002300-\U000023FF]+",
-            "", sentence, flags=re.UNICODE,
-        ).strip()
+        # 跳过纯 emoji/空白句 — strip 后为空，GPT-SoVits 会返回 400
+        _clean = _EMOJI_RE.sub("", sentence).strip()
         if not _clean:
             return
 
         self._tts_stream_id += 1
-        stream_id = self._tts_stream_id
+        sid = self._tts_stream_id
         logger.info("Pipeline: TTS 句 %d 开始合成 (%d 字符): %s",
-                    stream_id, len(sentence), _clean[:50])
+                    sid, len(sentence), _clean[:50])
 
         async def _stream(_sid: int):
             if not self._tts:
@@ -371,49 +302,33 @@ class CognitiveLoop:
                 async for chunk in self._tts.synthesize_stream(sentence, character=char_name):
                     if first_chunk:
                         first_chunk = False
-                        if not self._sync_event.is_set():
-                            logger.info("Pipeline: 首块 TTS 音频到达，释放文本-音频同步")
-                        self._sync_event.set()
-                    if not self._audio_flow:
-                        self._audio_pending.append(('chunk', chunk, _sid))
-                    else:
-                        await self._output.audio_chunk(chunk, stream_id=_sid)
-                if not self._audio_flow:
-                    self._audio_pending.append(('end', None, _sid))
-                else:
-                    await self._output.audio_end(_sid)
+                        logger.info("Pipeline: 首块 TTS 音频到达，发送文字+音频")
+                        # 绑定发送：文字先行，再流式音频
+                        await self._output._broadcast("on_text_delta", sentence,
+                            capability=ChannelCapability.TEXT_DELTA)
+                        await self._output.send("")
+                        # 排空此前可能缓冲的音频块（应该为空）
+                    await self._output.audio_chunk(chunk, stream_id=_sid)
+                await self._output.audio_end(_sid)
             except asyncio.CancelledError:
-                pass  # Interrupted by newer speech
+                pass  # INTERRUPT 打断
             except Exception:
-                logger.warning("TTS stream failed", exc_info=True)
+                logger.warning("TTS stream failed — fallback 发送文字", exc_info=True)
+                # TTS 失败兜底: 至少把文字发出去
+                if first_chunk:
+                    try:
+                        await self._output._broadcast("on_text_delta", sentence,
+                            capability=ChannelCapability.TEXT_DELTA)
+                        await self._output.send("")
+                    except Exception:
+                        pass
 
-        task = asyncio.create_task(_stream(stream_id), name=f"tts-{stream_id}")
+        task = asyncio.create_task(_stream(sid), name=f"tts-{sid}")
         self._tts_tasks.append(task)
         self._tts_task = task
 
         # Clean up completed tasks
         self._tts_tasks = [t for t in self._tts_tasks if not t.done()]
-
-    async def _drain_audio_pending(self) -> None:
-        """发送所有缓冲的音频块 + 结束标记，然后启用直通模式。
-
-        无论当前缓冲是否为空，始终将 _audio_flow 设为 True，
-        确保后续 TTS 块不再进入缓冲（TTS 可能尚未开始）。
-        """
-        self._audio_flow = True
-        if not self._audio_pending:
-            logger.debug("Sync: 音频排空 — 缓冲为空，已启用直通")
-            return
-        chunks = sum(1 for kind, _, _ in self._audio_pending if kind == 'chunk')
-        ends = sum(1 for kind, _, _ in self._audio_pending if kind == 'end')
-        logger.info("Sync: 排空 %d 音频块 + %d 结束标记", chunks, ends)
-        for item in self._audio_pending:
-            kind, data, sid = item
-            if kind == 'chunk':
-                await self._output.audio_chunk(data, stream_id=sid)
-            elif kind == 'end':
-                await self._output.audio_end(sid)
-        self._audio_pending.clear()
 
     async def _synthesize_sentence(self, sentence: str) -> None:
         """Legacy non-streaming TTS — kept for backward compat with tests."""
@@ -429,8 +344,6 @@ class CognitiveLoop:
     async def _transition_idle(self) -> None:
         logger.info("Pipeline: 回复完成 → IDLE")
         await asyncio.sleep(0.1)
-        # If sync held text and never fired (no TTS / no timeout yet),
-        # FSM may still be in THINKING. Step through SPEAKING first.
         if self._fsm.state == AgentState.THINKING:
             self._fsm.transition(AgentState.SPEAKING)
             self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
@@ -438,13 +351,8 @@ class CognitiveLoop:
         self._bus.post(EventType.STATE_CHANGE, {"state": "idle"}, priority=EventPriority.STATE_CHANGE)
 
     async def _handle_interrupt(self) -> None:
-        """Clean up after interruption — stop output, clear buffers, return to IDLE."""
+        """Clean up after interruption — cancel TTS tasks, return to IDLE."""
         self._sentence_buf.reset()
-        self._sync_buffer.clear()
-        self._sync_sentences.clear()
-        self._sync_event.clear()
-        self._audio_pending.clear()
-        self._audio_flow = False
         for t in self._tts_tasks:
             if not t.done():
                 t.cancel()
@@ -452,7 +360,7 @@ class CognitiveLoop:
         await self._output.typing(False)
         self._fsm.transition(AgentState.INTERRUPTED)
         self._bus.post(EventType.STATE_CHANGE, {"state": "interrupted"}, priority=EventPriority.STATE_CHANGE)
-        await asyncio.sleep(0.05)  # Brief pause for UI to register INTERRUPTED
+        await asyncio.sleep(0.05)
         self._fsm.transition(AgentState.IDLE)
         self._bus.post(EventType.STATE_CHANGE, {"state": "idle"}, priority=EventPriority.STATE_CHANGE)
         logger.debug("Interrupt complete — agent is IDLE")

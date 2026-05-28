@@ -64,12 +64,13 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | 记忆自动沉淀 (LLM 提取事实) | done |
 | HuggingFace embedding 离线加载 | done |
 | WebSocket 服务器 + HTML 客户端 | done |
-| 麦克风采集 + RMS VAD | done |
+| 麦克风采集 + WebRTC VAD | done |
 | STT 语音识别 (SenseVoice) + 情绪标签 | done |
 | 用户情绪识别 (STT 声学 HAPPY/SAD/ANGRY...) | done |
 | TTS 流式合成 (GPT-SoVits) + 句队列 + 顺序播放 | done |
-| 文字/语音同步 (双层缓冲: 服务端 + 浏览器) | done |
-| 分句策略 (连续分隔符合并) + 逐句独立消息气泡 | done |
+| 文字/语音绑定发送 (TTS task 等音频后绑在一起发 delta+audio) | done |
+| 逐句独立消息气泡 + 音频播放完才弹出下一条 | done |
+| 分句策略 (连续分隔符合并) | done |
 | SentenceBuffer 升级 (70 tests: ～…〜/.上下文/可配置) | done |
 | 聊天历史 localStorage 持久化 | done |
 | 配置系统 (ConfigLoader: YAML + env + 类型校验) | done |
@@ -165,4 +166,4 @@ python -m pytest Module/input/test_server.py -v --asyncio-mode=auto
 python -m pytest core/test_sentence_buffer.py -v
 ```
 
-**测试统计**: 181 (core) + 477 (Module) = 658 total
+**测试统计**: 251 (core) + 465 (Module) = 716 total

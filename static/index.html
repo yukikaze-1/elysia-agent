@@ -57,7 +57,7 @@ body {
   text-align: center; font-size: 11px; color: var(--muted); padding: 8px 0;
   border-bottom: 1px solid var(--border); margin-bottom: 8px;
 }
-.msg-row { display: flex; gap: 10px; max-width: 85%; animation: fadeIn .2s; }
+.msg-row { display: flex; gap: 10px; max-width: 85%; animation: fadeIn .2s ease; }
 .msg-row.user { align-self: flex-end; flex-direction: row-reverse; }
 .msg-row.assistant { align-self: flex-start; }
 .msg-avatar { font-size: 28px; line-height: 1; flex-shrink: 0; margin-top: 4px; }
@@ -181,9 +181,7 @@ let volume = parseInt(localStorage.getItem('elysia_vol') || '80');
 let currentDelta = null, typingEl = null;
 let lastMsgTime = 0, lastRole = '';
 let userScrolledUp = false;
-let textQueue = [];            // buffered deltas while waiting for audio
-let audioStarted = false;     // true after first play() resolves
-let textFlushTimer = null;    // timeout to prevent stuck text
+let nextBubbleQueue = [];  // 气泡已到达但音频还在播放 → 暂存，等音频结束再弹出
 
 // ---- Init ----
 document.getElementById('vol-slider').value = volume;
@@ -203,17 +201,10 @@ function handleWS(e) {
   const msg = JSON.parse(e.data);
   switch (msg.type) {
     case 'delta':
-      if (ttsEnabled && !audioStarted) {
-        textQueue.push(msg.content);
-        resetTextFlushTimer();
-      } else {
-        appendDelta(msg.content);
-      }
+      appendDelta(msg.content);
       break;
     case 'message':
-      flushTextQueue();
-      if (!currentDelta && msg.content) {
-        // No deltas accumulated — render the full message directly
+      if (msg.content) {
         hideTyping();
         lastRole = 'assistant';
         const row = document.createElement('div'); row.className = 'msg-row assistant';
@@ -237,7 +228,7 @@ function handleWS(e) {
     case 'audio_end': finalizeStream(msg.stream_id||0); break;
     case 'typing':
       if (msg.typing) { showTyping(); }
-      else if (textQueue.length === 0) { hideTyping(); }
+      else { hideTyping(); }
       break;
     case 'transcription': {
       // Build display: text + emotion emoji + event emojis
@@ -260,7 +251,6 @@ function handleWS(e) {
 // ---- Chat Display ----
 function appendDelta(text) {
   if (!currentDelta) {
-    // Insert time divider if > 5 min gap
     const now = Date.now();
     if (now - lastMsgTime > 300000 && lastMsgTime > 0) {
       const div = document.createElement('div'); div.className = 'time-divider';
@@ -269,7 +259,6 @@ function appendDelta(text) {
     }
     lastMsgTime = now;
     if (lastRole === 'assistant') {
-      // Group with previous assistant message
       const rows = document.querySelectorAll('.msg-row.assistant');
       const last = rows[rows.length - 1];
       if (last) {
@@ -284,7 +273,16 @@ function appendDelta(text) {
     row.innerHTML = '<div class="msg-avatar">🌸</div>';
     const bubble = document.createElement('div'); bubble.className = 'msg-bubble';
     row.appendChild(bubble);
-    document.getElementById('chat').appendChild(row);
+    // 音频在播：不挂 DOM，等弹出时再 append（避免占位空白）
+    if (audioPlaying) {
+      row.style.animation = 'none';
+      row.style.opacity = '0';
+      row.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+      row.style.transform = 'translateY(8px)';
+      nextBubbleQueue.push(row);
+    } else {
+      document.getElementById('chat').appendChild(row);
+    }
     currentDelta = bubble;
   }
   currentDelta.textContent += text;
@@ -303,10 +301,22 @@ function finalizeDelta() {
   lastRole = null;  // 下一句 delta 创建新气泡，不复用上一个
 }
 
+function revealNextQueuedBubble() {
+  if (!nextBubbleQueue.length) return;
+  const row = nextBubbleQueue.shift();
+  document.getElementById('chat').appendChild(row);
+  // 触发 CSS transition 淡入
+  requestAnimationFrame(() => {
+    row.style.opacity = '1';
+    row.style.transform = 'translateY(0)';
+  });
+  scrollDown();
+  debounceSave();
+}
+
 function addUserMsg(text) {
   finalizeDelta();
-  textQueue = []; audioStarted = false;  // 每轮对话重置
-  clearTimeout(textFlushTimer); textFlushTimer = null;
+  nextBubbleQueue = [];  // 新消息清除排队气泡
   lastRole = 'user';
   const row = document.createElement('div'); row.className = 'msg-row user';
   row.innerHTML = `<div class="msg-bubble">${esc(text)}</div><div class="msg-avatar">😎</div>`;
@@ -346,21 +356,6 @@ function setMood(mood, intensity) {
 function setState(state) {
   document.getElementById('char-state').textContent = state;
   document.getElementById('state-dot').className = state;
-}
-
-function flushTextQueue() {
-  if (textQueue.length === 0) return;
-  hideTyping();
-  for (const text of textQueue) appendDelta(text);
-  textQueue = [];
-  audioStarted = true;
-  clearTimeout(textFlushTimer);
-  textFlushTimer = null;
-}
-
-function resetTextFlushTimer() {
-  clearTimeout(textFlushTimer);
-  textFlushTimer = setTimeout(flushTextQueue, 8000);
 }
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
@@ -493,9 +488,17 @@ function playNext() {
   audioPlaying=true;
   const item=audioQueue.shift();
   const a=new Audio(item.url); a.volume=volume/100;
-  a.onended=()=>{URL.revokeObjectURL(item.url);audioPlaying=false;playNext();};
-  a.play().then(()=>{flushTextQueue();})
+  a.onended=()=>{
+    URL.revokeObjectURL(item.url);
+    audioPlaying=false;
+    // 上一句播放完，弹出排队中的下一个气泡
+    if (!audioQueue.length) revealNextQueuedBubble();
+    playNext();
+  };
+  a.play().then(()=>{})
     .catch(e=>{URL.revokeObjectURL(item.url);audioPlaying=false;playNext();});
+  // 开始播放新音频时立即弹出对应的排队气泡
+  revealNextQueuedBubble();
 }
 
 // ---- Settings ----
