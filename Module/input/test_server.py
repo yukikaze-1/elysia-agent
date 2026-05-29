@@ -18,9 +18,9 @@ def _make_agent():
     import os as _os
     _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
     from core.app_config import AppConfig
-    from core.demo_agent import DemoAgent
+    from core.agent import Agent
 
-    agent = DemoAgent(config=AppConfig())
+    agent = Agent(config=AppConfig())
     from core.tests.fake_llm import FakeLLMBackend
     agent._llm._backend = FakeLLMBackend(response="test")
     return agent

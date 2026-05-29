@@ -21,25 +21,26 @@ body {
 
 /* ---- Left: Character Panel ---- */
 #char-panel {
-  width: 220px; flex-shrink: 0; background: var(--surface); display: flex;
-  flex-direction: column; align-items: center; padding: 30px 16px;
+  width: 35vw; max-width: 500px; min-width: 220px; flex-shrink: 0;
+  background: var(--surface); display: flex;
+  flex-direction: column; align-items: center; padding: 20px 16px;
   border-right: 1px solid var(--border);
 }
-#avatar-wrap { position: relative; margin-bottom: 16px; }
-#avatar-ring {
-  width: 100px; height: 100px; border-radius: 50%; border: 4px solid var(--neutral);
-  display: flex; align-items: center; justify-content: center; transition: border-color .6s;
+#avatar-wrap {
+  position: relative; flex: 1; width: 100%; min-height: 0; margin-bottom: 12px;
+  overflow: hidden; border-radius: var(--radius);
+  background: var(--surface);
+  display: flex; align-items: center; justify-content: center;
 }
-#avatar-ring.happy { border-color: var(--happy); }
-#avatar-ring.sad { border-color: var(--sad); }
-#avatar-ring.excited { border-color: var(--excited); }
-#avatar-ring.neutral { border-color: var(--neutral); }
-#avatar-ring.curious { border-color: var(--accent2); }
-#avatar-face { font-size: 50px; line-height: 1; transition: transform .3s; }
+#avatar-wrap::before {
+  content: '🌸'; font-size: 60px; position: absolute;
+}
+#live2d-frame { width: 100%; height: 100%; border: none; position: relative; z-index: 1; }
+#char-info { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 #state-dot {
-  position: absolute; bottom: 4px; right: 4px; width: 16px; height: 16px;
-  border-radius: 50%; background: var(--idle); border: 2px solid var(--surface);
-  transition: background .3s;
+  display: inline-block; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--idle);
+  transition: background .3s; vertical-align: middle;
 }
 #state-dot.thinking { background: var(--thinking); animation: pulse-dot 1s infinite; }
 #state-dot.speaking { background: var(--speaking); }
@@ -127,12 +128,46 @@ body {
 #mic-btn.active { background: var(--accent); animation: mic-pulse 1.5s infinite; }
 @keyframes mic-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(233,69,96,.4)} 50%{box-shadow:0 0 0 8px rgba(233,69,96,0)} }
 
+/* Tool call cards */
+.tool-card {
+  margin: 4px 0; border-radius: var(--radius-sm);
+  background: var(--surface); border-left: 3px solid var(--thinking);
+  font-size: 13px; overflow: hidden; animation: fadeIn .2s ease;
+}
+.tool-card.executing { border-left-color: var(--thinking); }
+.tool-card.done { border-left-color: var(--idle); }
+.tool-card.fail { border-left-color: var(--accent); }
+.tool-card-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer; user-select: none;
+}
+.tool-card-header:hover { background: rgba(255,255,255,.03); }
+.tool-card-header .tool-icon { font-size: 15px; flex-shrink: 0; }
+.tool-card-header .tool-name { font-weight: 600; }
+.tool-card-header .tool-status {
+  margin-left: auto; font-size: 11px; color: var(--muted);
+  display: flex; align-items: center; gap: 4px;
+}
+.tool-spinner {
+  display: inline-block; width: 12px; height: 12px;
+  border: 2px solid var(--border); border-top-color: var(--thinking);
+  border-radius: 50%; animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.tool-card-body { padding: 0 12px 8px; display: none; }
+.tool-card.expanded .tool-card-body { display: block; }
+.tool-card-args { font-size: 12px; color: var(--muted); margin-bottom: 6px; word-break: break-all; }
+.tool-card-result { font-size: 12px; padding: 6px 8px; border-radius: 4px; background: rgba(0,0,0,.2); max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+.tool-card-result.success { border-left: 2px solid var(--idle); }
+.tool-card-result.fail { border-left: 2px solid var(--accent); }
+.tool-card-chevron { font-size: 12px; color: var(--muted); transition: transform .2s; }
+.tool-card.expanded .tool-card-chevron { transform: rotate(180deg); }
+
 /* Responsive: collapse side panels on narrow windows */
 @media (max-width: 600px) {
-  #char-panel { width: 60px; padding: 16px 8px; }
-  #avatar-ring { width: 44px; height: 44px; }
-  #avatar-face { font-size: 24px; }
-  #char-name, #char-state, #mood-tag { display: none; }
+  #char-panel { width: 60px; padding: 16px 8px; min-width: 0; }
+  #avatar-wrap { flex: 0 0 72px; }
+  #char-name, #char-state, #mood-tag, #char-info { display: none; }
 }
 </style>
 </head>
@@ -141,10 +176,12 @@ body {
 <!-- Left Panel -->
 <div id="char-panel">
   <div id="avatar-wrap">
-    <div id="avatar-ring" class="neutral"><div id="avatar-face">🌸</div></div>
-    <div id="state-dot"></div>
+    <iframe id="live2d-frame" src="/static/live2d-demo/index.html" sandbox="allow-scripts allow-same-origin"></iframe>
   </div>
-  <div id="char-name">Elysia</div>
+  <div id="char-info">
+    <div id="state-dot"></div>
+    <div id="char-name">Elysia</div>
+  </div>
   <div id="char-state">idle</div>
   <div id="mood-tag"></div>
 </div>
@@ -182,6 +219,7 @@ let currentDelta = null, typingEl = null;
 let lastMsgTime = 0, lastRole = '';
 let userScrolledUp = false;
 let nextBubbleQueue = [];  // 气泡已到达但音频还在播放 → 暂存，等音频结束再弹出
+let _toolCards = {};       // tool name → card DOM element
 
 // ---- Init ----
 document.getElementById('vol-slider').value = volume;
@@ -244,6 +282,13 @@ function handleWS(e) {
       addUserMsg('🎤 ' + display);
       break;
     }
+    case 'action':
+      if (msg.action === 'tool_executing') {
+        addToolCard(msg.params.tool, msg.params.args);
+      } else if (msg.action === 'tool_done') {
+        updateToolCard(msg.params.tool, msg.params.success);
+      }
+      break;
     case 'error': console.warn('Server:', msg.message); break;
   }
 }
@@ -333,6 +378,44 @@ function addStatusMsg(text) {
   scrollDown();
 }
 
+// ---- Tool Cards ----
+function addToolCard(name, args) {
+  finalizeDelta();
+  const argsStr = args ? Object.entries(args).map(([k,v]) => `${k}: ${v}`).join(', ') : '';
+  const card = document.createElement('div');
+  card.className = 'tool-card executing';
+  card.id = `tool-${name}`;
+  card.innerHTML = `
+    <div class="tool-card-header" onclick="this.parentElement.classList.toggle('expanded')">
+      <span class="tool-icon">🔧</span>
+      <span class="tool-name">${esc(name)}</span>
+      <span class="tool-status"><span class="tool-spinner"></span> 执行中</span>
+      <span class="tool-card-chevron">▾</span>
+    </div>
+    <div class="tool-card-body">
+      <div class="tool-card-args">${esc(argsStr)}</div>
+    </div>`;
+  document.getElementById('chat').appendChild(card);
+  _toolCards[name] = card;
+  scrollDown();
+}
+
+function updateToolCard(name, success) {
+  const card = _toolCards[name];
+  if (!card) return;
+  card.classList.remove('executing');
+  card.classList.add(success ? 'done' : 'fail');
+  const status = card.querySelector('.tool-status');
+  const icon = card.querySelector('.tool-icon');
+  if (success) {
+    status.innerHTML = '<span style="color:var(--idle)">✓</span> 完成';
+    icon.textContent = '🔧';
+  } else {
+    status.innerHTML = '<span style="color:var(--accent)">✗</span> 失败';
+    icon.textContent = '⚠️';
+  }
+}
+
 function showTyping() {
   if (typingEl) return;
   typingEl = document.createElement('div'); typingEl.className = 'msg-row assistant';
@@ -346,8 +429,6 @@ function hideTyping() {
 }
 
 function setMood(mood, intensity) {
-  const ring = document.getElementById('avatar-ring');
-  ring.className = mood || 'neutral';
   const tag = document.getElementById('mood-tag');
   tag.textContent = mood ? `${moodEmoji(mood)} ${mood} ${Math.round(intensity*100)}%` : '';
   tag.style.color = moodColor(mood);
@@ -532,6 +613,7 @@ document.getElementById('shutdown-btn').onclick = async () => {
 };
 document.getElementById('clear-btn').onclick = () => {
   document.getElementById('chat').innerHTML = '';
+  _toolCards = {};
   localStorage.removeItem('elysia_chat');
 };
 

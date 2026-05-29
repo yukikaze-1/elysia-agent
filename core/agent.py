@@ -1,7 +1,7 @@
-"""DemoAgent — wires all L0/L1/L2 components into a runnable Agent.
+"""Agent — wires all L0/L1/L2 components into a runnable Agent.
 
 Usage:
-    agent = DemoAgent(config=config)
+    agent = Agent(config=config)
     await agent.start()
     await agent.process_message("你好")       # single turn
     await agent.run_repl()                   # interactive REPL
@@ -32,7 +32,7 @@ from .consolidator import MemoryConsolidator
 logger = logging.getLogger(__name__)
 
 
-class DemoAgent:
+class Agent:
     """Complete Agent wired from L0/L1/L2 components."""
 
     def __init__(self, *, config: AppConfig):
@@ -144,7 +144,7 @@ class DemoAgent:
         db_str = " + ".join(db_status) if db_status else "in-memory"
 
         print(f"\n{'='*50}")
-        print(f"  {self._character.name} Demo Agent 已启动")
+        print(f"  {self._character.name} Agent 已启动")
         print(f"  LLM: {self._llm.model}")
         print(f"  记忆: {db_str}  ({self._long_term.count} entries)")
         print(f"  TTS: {'已连接' if self._tts else '未连接（纯文本模式）'}")
@@ -300,21 +300,8 @@ class DemoAgent:
         print(f"  前端: http://{host}:{port}/")
         print(f"  STT: {'已连接' if stt_transcribe else '未连接'}")
         print(f"  TTS: {'已连接' if self._tts else '未连接'}")
-        print(f"  退出: /quit / POST http://{host}:{port}/shutdown")
+        print(f"  退出: Ctrl+C 或浏览器关闭服务按钮")
         print(f"{'='*50}")
-
-        async def _stdin_watcher():
-            while self._running:
-                try:
-                    line = await asyncio.to_thread(input)
-                except EOFError:
-                    break
-                if line.strip().lower() in ("/quit", "/exit", "/q"):
-                    print("正在关闭...")
-                    self._running = False
-                    break
-
-        stdin_task = asyncio.create_task(_stdin_watcher(), name="stdin-watcher")
 
         try:
             while self._running:
@@ -322,17 +309,7 @@ class DemoAgent:
         except KeyboardInterrupt:
             pass
         finally:
-            # stdin_task 在 asyncio.to_thread(input) 中阻塞，cancel() 无法中断。
-            # 关闭 stdin fd 强制 input() 抛 EOFError，唤醒线程池线程，
-            # 否则 asyncio.run() 的 shutdown_default_executor() 会永久等待。
-            stdin_task.cancel()
-            try:
-                import sys as _sys
-                _sys.stdin.close()
-            except Exception:
-                pass
-            await asyncio.sleep(0.2)  # 让 HTTP 响应 flush 完毕
-            await self.stop()         # 先关 output channels (WS) + backends
+            await self.stop()
             try:
                 await asyncio.wait_for(runner.cleanup(), timeout=3.0)
             except asyncio.TimeoutError:
@@ -434,7 +411,7 @@ class DemoAgent:
     # ---- Internal: seed data + tools ----
 
     async def _seed_memories(self) -> None:
-        """Seed long-term memory with demo entries (fast — in-memory only, no embedding)."""
+        """Seed long-term memory with initial entries (fast — in-memory only, no embedding)."""
         entries = [
             ("上周和妖梦约定周六去爬香山", {"type": "plan", "date": "2026-05-23"}),
             ("妖梦最喜欢的颜色是蓝色", {"type": "preference"}),

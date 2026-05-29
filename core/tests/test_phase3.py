@@ -1,4 +1,4 @@
-"""Phase 3 tests: CognitiveLoop, server, DemoAgent, LLM adapter, edge cases.
+"""Phase 3 tests: CognitiveLoop, server, Agent, LLM adapter, edge cases.
 
 Run: python -m pytest core/test_phase3.py -v --asyncio-mode=auto
 """
@@ -663,17 +663,17 @@ class TestPromptAssemblerUnit:
 
 
 # ============================================================================
-# 11. DemoAgent — process_message
+# 11. Agent — process_message
 # ============================================================================
 
-class TestDemoAgentProcessMessage:
+class TestAgentProcessMessage:
     @pytest.mark.asyncio
     async def test_empty_message_returns(self):
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
         await agent.process_message("")
         assert agent._fsm.state == AgentState.IDLE
@@ -683,9 +683,9 @@ class TestDemoAgentProcessMessage:
     async def test_whitespace_only(self):
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
         await agent.process_message("   ")
         assert agent._fsm.state == AgentState.IDLE
@@ -695,9 +695,9 @@ class TestDemoAgentProcessMessage:
     async def test_idle_touch_called(self):
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="你好")
         await agent.start()
         agent._idle.touch = MagicMock()
@@ -718,9 +718,9 @@ class TestDemoAgentProcessMessage:
     async def test_interrupt_when_not_idle(self):
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="你好")
         await agent.start()
 
@@ -995,18 +995,18 @@ class TestMessageObj:
 
 
 # ============================================================================
-# 14. DemoAgent — lifecycle
+# 14. Agent — lifecycle
 # ============================================================================
 
-class TestDemoAgentLifecycle:
+class TestAgentLifecycle:
     @pytest.mark.asyncio
     async def test_seed_memories(self):
         """_seed_memories writes 5 entries without triggering embedding."""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         await agent._seed_memories()
         assert agent._long_term.count == 5
@@ -1018,9 +1018,9 @@ class TestDemoAgentLifecycle:
         """_register_tools registers 3 tools with correct names."""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         agent._register_tools()
         names = agent._tools.tool_names
@@ -1034,9 +1034,9 @@ class TestDemoAgentLifecycle:
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from Module.tool import ToolContext
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         agent._register_tools()
         # Seed a memory entry
@@ -1054,9 +1054,9 @@ class TestDemoAgentLifecycle:
         """stop() cancels _current_task if still running."""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         await agent.start()
 
@@ -1077,9 +1077,9 @@ class TestDemoAgentLifecycle:
         """stop() closes all output channels."""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         await agent.start()
         # Add a mock channel
@@ -1095,9 +1095,9 @@ class TestDemoAgentLifecycle:
         """process_message waits for FSM to return to IDLE after INTERRUPT."""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         await agent.start()
 
@@ -1295,9 +1295,9 @@ class TestDebugInfo:
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.debug_info import collect, DebugInfo
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         await agent.start()
 
@@ -1311,9 +1311,9 @@ class TestDebugInfo:
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.debug_info import collect
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         await agent.start()
 
@@ -1326,9 +1326,9 @@ class TestDebugInfo:
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.debug_info import collect
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         await agent.start()
 
@@ -1347,9 +1347,9 @@ class TestDebugInfo:
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.debug_info import collect
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         await agent.start()
 

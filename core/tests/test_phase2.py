@@ -224,10 +224,10 @@ class TestMemoryIntegration:
         """search_memory tool should find relevant entries."""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
         from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
 
         # Use the tool directly
@@ -243,10 +243,10 @@ class TestMemoryIntegration:
         """save_memory tool should persist an entry."""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
         from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
 
         await agent._tools.execute("save_memory", {"content": "测试保存的记忆", "type": "fact"}, ctx=agent._tool_ctx)
@@ -261,11 +261,11 @@ class TestMemoryIntegration:
         """Full pipeline: conversation that stores and retrieves memories."""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
         from core.agent_fsm import AgentState
 
         from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
 
         # First turn: tell agent something memorable
@@ -288,10 +288,10 @@ class TestMemoryIntegration:
         """Session should maintain state across multiple turns."""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
         from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
 
         # Multiple turns
@@ -699,18 +699,18 @@ class TestMemoryStress:
 
     @pytest.mark.asyncio
     async def test_session_isolation_between_agents(self):
-        """Two DemoAgent instances should have independent session memory."""
+        """Two Agent instances should have independent session memory."""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         import uuid
         from core.tests.fake_llm import FakeLLMBackend
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
         sid1 = f"test-isolation-{uuid.uuid4()}"
         sid2 = f"test-isolation-{uuid.uuid4()}"
 
         from core.app_config import AppConfig
-        a1 = DemoAgent(config=AppConfig())
+        a1 = Agent(config=AppConfig())
         a1._llm._backend = FakeLLMBackend(response="好的我记住了")
         a1._session._session_id = sid1
         await a1.start()
@@ -728,7 +728,7 @@ class TestMemoryStress:
         a1_msgs = len(a1._session.recent_messages())
         await a1.stop()
 
-        a2 = DemoAgent(config=AppConfig())
+        a2 = Agent(config=AppConfig())
         a2._llm._backend = FakeLLMBackend(response="你好")
         a2._session._session_id = sid2
         await a2.start()

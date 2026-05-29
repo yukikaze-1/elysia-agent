@@ -286,11 +286,11 @@ class TestInterruptIntegration:
         """Interrupt during LLM processing should return agent to IDLE."""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
         from core.agent_fsm import AgentState
 
         from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
 
         # Start a request
@@ -310,11 +310,11 @@ class TestInterruptIntegration:
         """After interrupt, a new message should be processable."""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
         from core.agent_fsm import AgentState
 
         from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
 
         # Interrupt first request
@@ -344,11 +344,11 @@ class TestInterruptIntegration:
         """Multiple rapid interrupts should not crash the agent."""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
         from core.agent_fsm import AgentState
 
         from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
 
         for i in range(3):
@@ -372,10 +372,10 @@ class TestMultiTurnConversation:
         """Messages from previous turns appear in the system prompt context."""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
         from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
 
         # First turn (may be slower due to lazy embedding loading)
@@ -399,11 +399,11 @@ class TestMultiTurnConversation:
         """Real LLM may or may not call tools — verify both paths work."""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
         from core.agent_fsm import AgentState
 
         from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
 
         await agent.process_message("帮我查一下记忆里有什么")
@@ -446,10 +446,10 @@ class TestEdgeCases:
     async def test_empty_message(self):
         from dotenv import load_dotenv
         load_dotenv()
-        from core.demo_agent import DemoAgent
+        from core.agent import Agent
 
         from core.app_config import AppConfig
-        agent = DemoAgent(config=AppConfig())
+        agent = Agent(config=AppConfig())
         await agent.start()
 
         await agent.process_message("")

@@ -5,7 +5,7 @@
 ```
                         ┌──────────────────────────┐
                         │     Entry Points          │
-                        │  demo.py (argparse)       │
+                        │  app.py (argparse)       │
                         │  ├── interactive (stdin)  │
                         │  ├── once (single-shot)   │
                         │  └── server (WebSocket)   │
@@ -14,7 +14,7 @@
               ┌────────────────────┼────────────────────┐
               │                    │                    │
     ┌─────────▼─────────┐  ┌──────▼──────┐  ┌─────────▼─────────┐
-    │   config.yaml      │  │  DemoAgent  │  │  character/*.yaml │
+    │   config.yaml      │  │  Agent  │  │  character/*.yaml │
     │   (AppConfig)       │  │  (组装)     │  │  (CharacterConfig) │
     └───────────────────┘  └──────┬──────┘  └───────────────────┘
                                   │
@@ -719,10 +719,10 @@ proactive:
 
 ---
 
-## 9. 组件组装 (DemoAgent)
+## 9. 组件组装 (Agent)
 
 ```python
-class DemoAgent:
+class Agent:
     def __init__(self, *, config: AppConfig):
         # L0: OutputManager + ConsoleChannel
         # Character: CharacterConfig.from_yaml(config.agent.character)
@@ -793,7 +793,7 @@ core/tests/
 ├── test_phase2.py             # L2 记忆持久化 (48 tests)
 │   SessionMemory, LongTermMemory, MemoryConsolidator
 ├── test_phase3.py             # 集成 + 组件测试 (148 tests)
-│   CognitiveLoop TTS/tools, DemoAgent lifecycle, IdleMonitor,
+│   CognitiveLoop TTS/tools, Agent lifecycle, IdleMonitor,
 │   DebugInfo, ToolRegistry, VAD interrupt, PromptAssembler,
 │   CharacterConfig, AppConfig, LLMAdapter errors
 ├── test_sentence_buffer.py    # SentenceBuffer 专项 (70 tests)
@@ -826,7 +826,7 @@ python -m pytest core/tests/ Module/ -q --asyncio-mode=auto
 
 ```
 Agent/
-├── demo.py                  # 入口 (argparse + ConfigLoader + CLI overrides)
+├── app.py                  # 入口 (argparse + ConfigLoader + CLI overrides)
 ├── config.yaml              # 总配置
 ├── Architecture.md          # 本文档
 ├── CLAUDE.md                # AI 助手指令
@@ -863,7 +863,7 @@ Agent/
 │   ├── app_config.py        #   App 配置
 │   ├── log_setup.py         #   日志系统
 │   ├── debug_info.py        #   /debug 面板
-│   ├── demo_agent.py        #   组件组装 + 生命周期
+│   ├── agent.py        #   组件组装 + 生命周期
 │   ├── tools/               #   Agent 工具集
 │   ├── memory/              #   记忆子系统
 │   │   ├── session.py       #     会话上下文

@@ -54,7 +54,7 @@ def _truncate(text: str, n: int = 80) -> str:
 
 
 async def collect(agent) -> DebugInfo:
-    """Gather all debug data from a DemoAgent instance."""
+    """Gather all debug data from a Agent instance."""
     info = DebugInfo()
 
     # ---- System ----

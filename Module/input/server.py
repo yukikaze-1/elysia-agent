@@ -18,6 +18,7 @@ from .audio_buffer import AudioBuffer
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).parent.parent.parent / "static"
+_LIVE2D_DIR = Path(__file__).parent.parent.parent / "live2d"
 
 
 def create_app(
@@ -29,7 +30,7 @@ def create_app(
     """Create an aiohttp Application with WebSocket handler and optional static files.
 
     Args:
-        agent: DemoAgent instance (needs _output, _bus, process_message())
+        agent: Agent instance (needs _output, _bus, process_message())
         stt_transcribe: async callable(bytes) -> str for STT (optional)
         serve_static: serve static/index.html at /
         stt_emotion_state: mutable dict with 'emotion' and 'events' keys,
@@ -47,25 +48,29 @@ def create_app(
 
     if serve_static and _STATIC_DIR.is_dir():
         app.router.add_static("/static/", _STATIC_DIR, show_index=True)
-        # Serve index.html at /
-        index_path = _STATIC_DIR / "index.html"
-        if index_path.is_file():
-            async def index_handler(_request: web.Request) -> web.FileResponse:
-                return web.FileResponse(index_path)
-            app.router.add_get("/", index_handler)
 
-            # Debug page + API
-            debug_path = _STATIC_DIR / "debug.html"
-            if debug_path.is_file():
-                async def debug_handler(_request: web.Request) -> web.FileResponse:
-                    return web.FileResponse(debug_path)
-                app.router.add_get("/debug", debug_handler)
+    if _LIVE2D_DIR.is_dir():
+        app.router.add_static("/live2d/", _LIVE2D_DIR, show_index=False)
 
-            async def debug_api_handler(request: web.Request) -> web.Response:
-                from core.debug_info import collect, asdict
-                info = await collect(request.app["agent"])
-                return web.json_response(asdict(info))
-            app.router.add_get("/debug/api", debug_api_handler)
+    # Serve index.html at /
+    index_path = _STATIC_DIR / "index.html"
+    if index_path.is_file():
+        async def index_handler(_request: web.Request) -> web.FileResponse:
+            return web.FileResponse(index_path)
+        app.router.add_get("/", index_handler)
+
+        # Debug page + API
+        debug_path = _STATIC_DIR / "debug.html"
+        if debug_path.is_file():
+            async def debug_handler(_request: web.Request) -> web.FileResponse:
+                return web.FileResponse(debug_path)
+            app.router.add_get("/debug", debug_handler)
+
+        async def debug_api_handler(request: web.Request) -> web.Response:
+            from core.debug_info import collect, asdict
+            info = await collect(request.app["agent"])
+            return web.json_response(asdict(info))
+        app.router.add_get("/debug/api", debug_api_handler)
 
     # Shutdown endpoint — triggers graceful agent stop
     async def shutdown_handler(request: web.Request) -> web.Response:

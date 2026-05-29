@@ -13,22 +13,22 @@ export MODEL_CACHE_DIR="/path/to/model_cache"   # 方式1：环境变量
 # 或在项目根创建 .model_cache/ 软链接          # 方式2：项目本地
 
 # 交互模式 (stdin)
-python demo.py
+python app.py
 
 # 单次对话
-python demo.py --once "你好"
+python app.py --once "你好"
 
 # WebSocket 服务器模式（浏览器访问 http://localhost:8765）
-python demo.py --server
+python app.py --server
 #   退出: 终端输入 /quit、浏览器设置面板"关闭服务"、或 curl -X POST /shutdown
 
 # 启用 TTS + STT（或在 config.yaml 中设置 TTS.enabled / STT.enabled）
-python demo.py --server --tts --stt
+python app.py --server --tts --stt
 
 # Debug 面板（浏览器访问 http://localhost:8765/debug）
 
 # 详细日志
-python demo.py --verbose
+python app.py --verbose
 ```
 
 ## 架构
@@ -93,7 +93,7 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 
 ```
 Agent/
-├── demo.py              # 入口
+├── app.py              # 入口
 ├── config.yaml           # 总配置
 ├── Architecture.md       # 架构设计
 ├── todo.md               # 开发计划 + 已知问题
@@ -129,7 +129,7 @@ Agent/
 │   ├── log_setup.py      #   日志系统
 │   ├── app_config.py     #   ConfigLoader 类型化配置
 │   ├── debug_info.py     #   /debug 面板数据聚合
-│   ├── demo_agent.py     #   组件组装 + 生命周期
+│   ├── agent.py     #   组件组装 + 生命周期
 │   ├── tools/            #   Agent 工具集
 │   ├── memory/           #   记忆子系统
 │   │   ├── session.py    #     会话上下文

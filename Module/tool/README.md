@@ -194,7 +194,7 @@ class ToolDefinition:
 
 `requires` 常用值: `"web_search"`, `"database:read"`, `"database:write"`, `"network"`, `"filesystem"`, `"browser"`
 
-运行时（DemoAgent）据此检查后端是否可用，决定工具能否执行。
+运行时（Agent）据此检查后端是否可用，决定工具能否执行。
 
 ## 安全机制
 
@@ -245,7 +245,7 @@ from Module.tool import tool, ToolContext, ToolRegistry
 @tool(description="在长期记忆中搜索", requires=["database:read"])
 async def search_memory(query: str, limit: int = 5, ctx: ToolContext = None) -> ToolResult:
     """搜索长期记忆。"""
-    memory = ctx.get("memory")  # LongTermMemory 由 DemoAgent 注入
+    memory = ctx.get("memory")  # LongTermMemory 由 Agent 注入
     results = await memory.search(query, top_k=limit)
     return ToolResult.ok("search_memory", str(results), duration_ms=0)
 

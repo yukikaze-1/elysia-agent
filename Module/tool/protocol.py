@@ -45,7 +45,7 @@ class ErrorType(str, Enum):
 class ToolContext:
     """工具执行上下文 — 运行时注入，对 LLM 不可见。
 
-    调用方（DemoAgent）创建此对象并传入 execute()，
+    调用方（Agent）创建此对象并传入 execute()，
     工具函数通过 ctx 参数获取所需资源。
 
     用法:

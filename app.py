@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Elysia Agent Demo — 桌面虚拟角色完整流水线演示。
+"""Elysia Agent — 桌面虚拟角色完整流水线。
 
 基于 Architecture.md 三层架构:
   L0 (Module/): LLM, TTS, Output, Config
@@ -7,9 +7,9 @@
   L2 (core/memory/): Session, LongTerm, ToolRegistry
 
 用法:
-  python demo.py              # 交互模式 (stdin)
-  python demo.py --once 你好   # 单次对话
-  python demo.py --verbose     # 详细日志
+  python app.py              # 交互模式 (stdin)
+  python app.py --once 你好   # 单次对话
+  python app.py --verbose     # 详细日志
 """
 
 import argparse
@@ -46,12 +46,12 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.log_setup import setup as setup_logging
-from core.demo_agent import DemoAgent
+from core.agent import Agent
 
 
 async def run_once(message: str, config) -> None:
     """Single-shot: process one message and exit."""
-    agent = DemoAgent(config=config)
+    agent = Agent(config=config)
     await agent.start()
     print(f"\n你: {message}")
     print(f"{agent._character.name}: ", end="", flush=True)
@@ -66,7 +66,7 @@ async def run_once(message: str, config) -> None:
 
 async def run_interactive(config) -> None:
     """Interactive REPL mode."""
-    agent = DemoAgent(config=config)
+    agent = Agent(config=config)
     await agent.start()
 
     print("输入消息开始对话，/quit 退出，Ctrl+C 打断")
@@ -92,41 +92,6 @@ async def run_interactive(config) -> None:
     print("再见！")
 
 
-def _run_and_diagnose(coro):
-    """Replicate asyncio.run() with step-by-step diagnostic output."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        print("[diagnose] 1. running main coroutine...")
-        loop.run_until_complete(coro)
-        print("[diagnose] 2. main coroutine done, cancelling all tasks...")
-        import asyncio.tasks as _tasks
-        pending = _tasks.all_tasks(loop)
-        print(f"[diagnose]    {len(pending)} pending tasks: {[t.get_name() for t in pending]}")
-        for t in pending:
-            t.cancel()
-        loop.run_until_complete(
-            _tasks.gather(*pending, return_exceptions=True))
-        print("[diagnose] 3. shutting down async generators...")
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        print("[diagnose] 4. shutting down default executor (wait=False)...")
-        try:
-            executor = loop._default_executor
-            if executor is not None:
-                executor.shutdown(wait=False)
-        except Exception:
-            pass
-        print("[diagnose] 5. done — closing loop")
-    finally:
-        print("[diagnose] finally: closing loop...")
-        loop.close()
-        print("[diagnose] finally: loop closed, clearing...")
-        asyncio.set_event_loop(None)
-        print("[diagnose] finally: all done")
-        import os as _os
-        _os._exit(0)
-
-
 def main():
     # Parse --config first so we can load AppConfig for CLI defaults
     pre_parser = argparse.ArgumentParser(add_help=False)
@@ -142,7 +107,7 @@ def main():
         print(f"配置加载失败: {e}")
         sys.exit(1)
 
-    parser = argparse.ArgumentParser(description="Elysia Agent Demo")
+    parser = argparse.ArgumentParser(description="Elysia Agent")
     parser.add_argument("--once", type=str, metavar="MSG", help="单次对话模式")
     parser.add_argument("--server", "-s", action="store_true", help="WebSocket 服务器模式")
     parser.add_argument("--host", type=str, default=config.server.host,
@@ -170,8 +135,8 @@ def main():
     config.agent.character = args.character
 
     if args.server:
-        agent = DemoAgent(config=config)
-        _run_and_diagnose(agent.run_server())
+        agent = Agent(config=config)
+        asyncio.run(agent.run_server())
     elif args.once:
         asyncio.run(run_once(args.once, config))
     else:
