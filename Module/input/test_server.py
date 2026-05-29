@@ -21,7 +21,7 @@ def _make_agent():
     from core.demo_agent import DemoAgent
 
     agent = DemoAgent(config=AppConfig())
-    from core._fake_llm import FakeLLMBackend
+    from core.tests.fake_llm import FakeLLMBackend
     agent._llm._backend = FakeLLMBackend(response="test")
     return agent
 

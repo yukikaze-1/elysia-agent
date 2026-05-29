@@ -147,7 +147,7 @@ class TestMemoryConsolidator:
     @pytest.mark.asyncio
     async def test_consolidate_extracts_facts(self):
         import json
-        from core._fake_llm import FakeLLMBackend
+        from core.tests.fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
         from core.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
@@ -174,7 +174,7 @@ class TestMemoryConsolidator:
 
     @pytest.mark.asyncio
     async def test_consolidate_empty_conversation(self):
-        from core._fake_llm import FakeLLMBackend
+        from core.tests.fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
         from core.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
@@ -572,7 +572,7 @@ class TestMemoryConsolidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_consolidate_stores_in_memory(self):
         """Consolidation should actually store extracted facts."""
-        from core._fake_llm import FakeLLMBackend
+        from core.tests.fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
         from core.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
@@ -595,7 +595,7 @@ class TestMemoryConsolidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_consolidate_very_long_messages(self):
         """Should handle messages at the character limit gracefully."""
-        from core._fake_llm import FakeLLMBackend
+        from core.tests.fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
         from core.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
@@ -703,7 +703,7 @@ class TestMemoryStress:
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         import uuid
-        from core._fake_llm import FakeLLMBackend
+        from core.tests.fake_llm import FakeLLMBackend
         from core.demo_agent import DemoAgent
 
         sid1 = f"test-isolation-{uuid.uuid4()}"

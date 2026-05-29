@@ -12,7 +12,7 @@ from core.cognitive_loop import CognitiveLoop, _MessageObj
 from core.agent_fsm import AgentFSM, AgentState
 from core.event_bus import EventBus, EventType, EventPriority
 from core.llm_adapter import LLMAdapter
-from core._fake_llm import FakeLLMBackend
+from core.tests.fake_llm import FakeLLMBackend
 from core.app_config import AppConfig
 
 

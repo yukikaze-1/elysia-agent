@@ -215,7 +215,7 @@ class TestStreamingIntegration:
     @pytest.mark.asyncio
     async def test_fake_llm_streaming(self):
         """FakeLLMBackend simulates streaming by yielding characters."""
-        from core._fake_llm import FakeLLMBackend
+        from core.tests.fake_llm import FakeLLMBackend
         backend = FakeLLMBackend(response="你好呀！今天过得怎么样？")
 
         chars = []

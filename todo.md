@@ -59,6 +59,23 @@
 | database 测试 | `serverSelectionTimeoutMS` 参数匹配，47 个测试全部通过 |
 | session 隔离测试 | UUID-based session_id 确保 agent 间隔离 |
 
+### 记忆系统升级 (2026-05-29)
+
+| 任务 | 说明 |
+|------|------|
+| Consolidator prompt 改进 | 事件合并、重要性 1-10、memory_type 枚举、第一人称叙事 |
+| 结构化 Schema | `MemoryEntry` 增加 `poignancy`/`memory_type`/`timestamp` 字段 |
+| Rerank | `0.5×sim + 0.3×poi + 0.2×rec`，recency 指数衰减 (半衰期 ~6.9 天) |
+| 缓冲阈值提取 | 攒 6 条消息再调 LLM，减少 API 调用，更多上下文提升提取质量 |
+
+### 代码整理 (2026-05-29)
+
+| 任务 | 说明 |
+|------|------|
+| 测试文件迁移 | `core/test_*.py` + `_fake_llm.py` → `core/tests/` |
+| 死代码清理 | 删除 `StreamingSentenceBuffer`、TTS 临时文件 |
+| 文档整理 | `ref_memory-architecture.md` → `docs/` |
+
 ### 基础设施优化
 
 | 任务 | 说明 |
@@ -198,13 +215,9 @@
 
 核心洞察：对话线（快速响应，秒级）和任务线（长时执行）应共享 EventBus 但独立运行，不能混在同一个 CognitiveLoop 里。
 
-#### 阶段 1：并行工具调用（小改，~20 行）
+#### 阶段 1：并行工具调用（~~2026-05-29 done~~）
 
-CognitiveLoop 内 `asyncio.gather()` 执行无依赖工具，替代当前逐个串行 `for tc in normalized: await execute()`。
-
-- 改动范围: `core/cognitive_loop.py` 工具执行循环
-- 风险: 零架构改动，LLM 原生支持并行 tool_calls
-- 收益: 独立工具并行执行，减少总等待时间
+CognitiveLoop 内 `asyncio.gather()` 执行无依赖工具，替代逐个串行。每个工具独立 try/except，单失败不影响其他。测试用例文档: `core/tools/test_tool_parallel.md`。
 
 #### 阶段 2：TaskQueue + TaskWorker（中改）
 
@@ -231,7 +244,7 @@ CognitiveLoop 内 `asyncio.gather()` 执行无依赖工具，替代当前逐个�
 | 高 | ~~工具结构化~~ (done) | 工具从闭包迁移到 `core/tools/`（memory.py / time.py / \_\_init\_\_.py），ToolContext 依赖注入，CognitiveLoop 支持 ctx 传递 |
 | 高 | `Module/schema/` 479行预留设计 | 为 L0/L1/L2 多层架构设计，当前简化架构未使用。已保留。core 实际类型已抽到 `core/schema.py`（AgentState/EventType/EventPriority/VALID_TRANSITIONS） |
 | 中 | `database/graphdb/` 不完整 | 只有 protocol.py，缺 registry/backend/config |
-| 中 | `StreamingSentenceBuffer` 未使用 | `sentence_buffer.py:155` |
+| 中 | ~~`StreamingSentenceBuffer` 未使用~~ (2026-05-29 removed) | 已删除 |
 | 中 | `OutputManager.stream()` 未使用 | `manager.py:63-88` |
 | 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行 |
 
@@ -242,7 +255,7 @@ CognitiveLoop 内 `asyncio.gather()` 执行无依赖工具，替代当前逐个�
 | 高 | **EXECUTING 阶段不应接受 VAD 打断** | 当前 VAD 检测到语音后无条件 post INTERRUPT，无论 FSM 是什么状态。THINKING/SPEAKING 时合理（用户想插话），但 EXECUTING 时用户随便发出声音就可能取消正在执行的长任务。应改为：EXECUTING 时 VAD 忽略，只接受显式打断指令（按钮/`{"type":"interrupt"}`）。文本输入同理，EXECUTING 时应跳过打断+user input 投递 |
 | 中 | `EmotionEngine._schedule` 无异常边界 | fire-and-forget task 异常时 asyncio 只打 "Task exception was never retrieved" |
 | 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
-| 低 | Consolidator 每轮调 LLM | 额外 API 调用，无节流/批处理 |
+| ~~低~~ | ~~Consolidator 每轮调 LLM~~ (2026-05-29 fixed) | 已改为缓冲 6 条消息再调 LLM |
 
 ### 测试补充 (剩余约 12 个低优测试)
 

@@ -4,7 +4,7 @@ Default config: delimiters=。！？.!?\n～…〜, min_chunk=5
 """
 
 import pytest
-from .sentence_buffer import SentenceBuffer
+from core.sentence_buffer import SentenceBuffer
 
 
 # ============================================================================

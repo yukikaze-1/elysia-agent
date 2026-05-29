@@ -71,6 +71,8 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | 文字/语音绑定发送 (TTS task 等音频后绑在一起发 delta+audio) | done |
 | 逐句独立消息气泡 + 音频播放完才弹出下一条 | done |
 | 分句策略 (连续分隔符合并) | done |
+| 并行工具调用 (asyncio.gather) | done |
+| 记忆结构化 Schema + rerank + 缓冲提取 | done |
 | SentenceBuffer 升级 (70 tests: ～…〜/.上下文/可配置) | done |
 | 聊天历史 localStorage 持久化 | done |
 | 配置系统 (ConfigLoader: YAML + env + 类型校验) | done |
@@ -108,29 +110,31 @@ Agent/
 │   └── bench/            # 延迟基准
 │
 ├── core/                 # L1 认知控制
-│   ├── schema.py         # 共享类型 (AgentState/EventType/EventPriority)
-│   ├── event_bus.py      # 优先级事件总线
-│   ├── agent_fsm.py      # 五状态机
-│   ├── cognitive_loop.py # ReAct 调度器
-│   ├── llm_adapter.py    # LLM 适配器 (真实 + mock)
-│   ├── prompt_assembler.py # 提示词组装
-│   ├── emotion_engine.py # 情绪引擎
+│   ├── schema.py         #   共享类型 (AgentState/EventType/EventPriority)
+│   ├── event_bus.py      #   优先级事件总线
+│   ├── agent_fsm.py      #   五状态机
+│   ├── cognitive_loop.py #   ReAct 调度器
+│   ├── llm_adapter.py    #   LLM 适配器
+│   ├── prompt_assembler.py # 提示词组装 + 记忆检索
+│   ├── emotion_engine.py #   情绪引擎
 │   ├── sentence_buffer.py # 分句缓冲
-│   ├── consolidator.py   # 记忆沉淀
-│   ├── idle_monitor.py   # 空闲监控
+│   ├── consolidator.py   #   记忆沉淀 (缓冲6条+rerank)
+│   ├── idle_monitor.py   #   空闲监控
 │   ├── character_config.py # 角色配置
-│   ├── log_setup.py      # 日志系统
-│   ├── tools/            # Agent 工具集 (@tool 装饰器)
-│   ├── demo_agent.py     # 组件组装
-│   ├── app_config.py     # ConfigLoader 类型化配置
-│   ├── _fake_llm.py      # 测试用 LLM backend
-│   ├── test_phase1.py    # Phase 1 测试
-│   ├── test_phase2.py    # Phase 2 测试
-│   ├── test_phase3.py    # Phase 3 测试 (+ lifecycle/sync)
-│   ├── test_sentence_buffer.py # SentenceBuffer 测试 (70)
-│   └── memory/
-│       ├── session.py    # 会话上下文
-│       └── long_term.py  # 长期记忆
+│   ├── log_setup.py      #   日志系统
+│   ├── app_config.py     #   ConfigLoader 类型化配置
+│   ├── debug_info.py     #   /debug 面板数据聚合
+│   ├── demo_agent.py     #   组件组装 + 生命周期
+│   ├── tools/            #   Agent 工具集
+│   ├── memory/           #   记忆子系统
+│   │   ├── session.py    #     会话上下文
+│   │   └── long_term.py  #     长期记忆
+│   └── tests/            #   测试
+│       ├── fake_llm.py           # 测试用 LLM backend
+│       ├── test_phase1.py        # Phase 1 (认知核心)
+│       ├── test_phase2.py        # Phase 2 (记忆 + 工具)
+│       ├── test_phase3.py        # Phase 3 (生命周期)
+│       └── test_sentence_buffer.py # SentenceBuffer (70)
 │
 ├── character/
 │   └── elysia.yaml       # 角色定义
@@ -152,18 +156,18 @@ Agent/
 ## 测试
 
 ```bash
-# 全部测试 (core + Module) — 使用 conda env 运行
-conda run -n Elysia python -m pytest core/ Module/ -v --asyncio-mode=auto
+# 全部测试
+python -m pytest core/tests/ Module/ -v --asyncio-mode=auto
 
-# 仅 core (不含 Module)
-python -m pytest core/ -v --asyncio-mode=auto
+# 仅 core
+python -m pytest core/tests/ -v --asyncio-mode=auto
 
 # Module 层
 python -m pytest Module/ -v
 
 # 特定文件
+python -m pytest core/tests/test_sentence_buffer.py -v
 python -m pytest Module/input/test_server.py -v --asyncio-mode=auto
-python -m pytest core/test_sentence_buffer.py -v
 ```
 
 **测试统计**: 251 (core) + 465 (Module) = 716 total
