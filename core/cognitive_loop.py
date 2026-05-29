@@ -84,6 +84,8 @@ class CognitiveLoop:
         self._tts_task: asyncio.Task | None = None
         self._tts_tasks: list[asyncio.Task] = []
         self._tts_stream_id: int = 0
+        self._executing_tools: list[str] = []  # 当前正在执行中的工具名 (供 debug 面板)
+        self._pending_emojis: dict[int, list[str]] = {}  # TTS句N后面的emoji队列
 
     async def process(self, user_message: str, user_name: str = "妖梦",
                        stt_emotion: str = "", stt_events: list[str] | None = None) -> None:
@@ -158,9 +160,12 @@ class CognitiveLoop:
                                                    priority=EventPriority.STATE_CHANGE)
                                     speaking_started = True
 
-                                # 纯 emoji 跳过 TTS，直接发文字
+                                # TTS 句: 后台 task 绑在一起发送；emoji: 排队跟在上一句后面
                                 if self._tts and not _is_emoji_only(sentence):
                                     self._start_tts_stream(sentence)
+                                elif self._tts:
+                                    self._pending_emojis.setdefault(
+                                        self._tts_stream_id, []).append(sentence)
                                 else:
                                     await self._output._broadcast("on_text_delta", sentence,
                                         capability=ChannelCapability.TEXT_DELTA)
@@ -184,6 +189,9 @@ class CognitiveLoop:
                         speaking_started = True
                     if self._tts and not _is_emoji_only(remaining):
                         self._start_tts_stream(remaining)
+                    elif self._tts:
+                        self._pending_emojis.setdefault(
+                            self._tts_stream_id, []).append(remaining)
                     else:
                         await self._output._broadcast("on_text_delta", remaining,
                             capability=ChannelCapability.TEXT_DELTA)
@@ -191,13 +199,7 @@ class CognitiveLoop:
 
                 # If tool calls were detected, execute them and loop
                 if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
-                    # Cancel pending TTS tasks, send their text without audio
-                    for t in self._tts_tasks:
-                        if not t.done():
-                            t.cancel()
-                    self._tts_tasks.clear()
-
-                    # 切断气泡
+                    # 切断气泡 — TTS tasks 独立运行，不 cancel
                     await self._output.send("")
 
                     await self._output.typing(False)
@@ -214,28 +216,41 @@ class CognitiveLoop:
                     # 并行执行所有工具 — 无依赖工具同时跑，减少总等待时间
                     async def _execute_one(tc: dict):
                         func_name = tc["function"]["name"]
+                        self._executing_tools.append(func_name)
                         try:
-                            args = json.loads(tc["function"]["arguments"])
-                        except (json.JSONDecodeError, KeyError):
-                            args = {}
-                        logger.info("Executing tool: %s(%s)", func_name, args)
-                        await self._output.action("tool_executing", params={
-                            "tool": func_name,
-                            "args": {k: str(v)[:80] for k, v in args.items()},
-                        })
-                        try:
-                            tr = await self._tools.execute(func_name, args, ctx=self._ctx)
-                        except Exception as e:
-                            logger.warning("Tool %s failed: %s", func_name, e)
-                            tr = ToolResult.fail(name=func_name, error=str(e))
-                        await self._output.action("tool_done", params={
-                            "tool": func_name,
-                            "success": tr.success,
-                        })
-                        return tc, tr
+                            try:
+                                args = json.loads(tc["function"]["arguments"])
+                            except (json.JSONDecodeError, KeyError):
+                                args = {}
+                            logger.info("Executing tool: %s(%s)", func_name, args)
+                            await self._output.action("tool_executing", params={
+                                "tool": func_name,
+                                "args": {k: str(v)[:80] for k, v in args.items()},
+                            })
+                            try:
+                                tr = await self._tools.execute(func_name, args, ctx=self._ctx)
+                            except asyncio.CancelledError:
+                                logger.info("Tool %s cancelled by user interrupt", func_name)
+                                tr = ToolResult.fail(name=func_name, error="用户取消")
+                            except Exception as e:
+                                logger.warning("Tool %s failed: %s", func_name, e)
+                                tr = ToolResult.fail(name=func_name, error=str(e))
+                            await self._output.action("tool_done", params={
+                                "tool": func_name,
+                                "success": tr.success,
+                            })
+                            return tc, tr
+                        finally:
+                            self._executing_tools.remove(func_name)
 
-                    results = await asyncio.gather(*[_execute_one(tc) for tc in normalized])
-                    for tc, tool_result in results:
+                    results = await asyncio.gather(
+                        *[_execute_one(tc) for tc in normalized],
+                        return_exceptions=True,
+                    )
+                    for item in results:
+                        if isinstance(item, BaseException):
+                            continue  # 工具被 cancel，跳过 — LLM 从缺失结果推断
+                        tc, tool_result = item
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc.get("id", "unknown"),
@@ -249,6 +264,14 @@ class CognitiveLoop:
                     continue
 
                 # Final answer — TTS tasks streaming in background, don't block
+                # 发送还未排出的 emoji（最后一句 TTS 之后的）
+                for seq in sorted(self._pending_emojis):
+                    for e in self._pending_emojis[seq]:
+                        await self._output._broadcast("on_text_delta", e,
+                            capability=ChannelCapability.TEXT_DELTA)
+                        await self._output.send("")
+                self._pending_emojis.clear()
+
                 if acc_text.strip():
                     if self._emotion:
                         self._emotion.analyze_assistant(acc_text)
@@ -266,6 +289,7 @@ class CognitiveLoop:
                 return
 
         except Exception:
+            self._executing_tools.clear()
             for t in self._tts_tasks:
                 if not t.done():
                     t.cancel()
@@ -313,13 +337,22 @@ class CognitiveLoop:
                     if first_chunk:
                         first_chunk = False
                         logger.info("Pipeline: 首块 TTS 音频到达，发送文字+音频")
-                        # 绑定发送：文字先行，再流式音频
+                        # 先发排在本句之前的 emoji
+                        for e in self._pending_emojis.pop(_sid - 1, []):
+                            await self._output._broadcast("on_text_delta", e,
+                                capability=ChannelCapability.TEXT_DELTA)
+                            await self._output.send("")
+                        # 发本句文字
                         await self._output._broadcast("on_text_delta", sentence,
                             capability=ChannelCapability.TEXT_DELTA)
                         await self._output.send("")
-                        # 排空此前可能缓冲的音频块（应该为空）
                     await self._output.audio_chunk(chunk, stream_id=_sid)
                 await self._output.audio_end(_sid)
+                # 发排在本句之后的 emoji
+                for e in self._pending_emojis.pop(_sid, []):
+                    await self._output._broadcast("on_text_delta", e,
+                        capability=ChannelCapability.TEXT_DELTA)
+                    await self._output.send("")
             except asyncio.CancelledError:
                 pass  # INTERRUPT 打断
             except Exception:
@@ -363,6 +396,8 @@ class CognitiveLoop:
     async def _handle_interrupt(self) -> None:
         """Clean up after interruption — cancel TTS tasks, return to IDLE."""
         self._sentence_buf.reset()
+        self._executing_tools.clear()
+        self._pending_emojis.clear()
         for t in self._tts_tasks:
             if not t.done():
                 t.cancel()

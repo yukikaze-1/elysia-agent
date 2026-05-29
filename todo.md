@@ -157,6 +157,14 @@
 | CSS 踩坑 | `animation: fadeIn` 执行期间覆盖 inline `opacity:0`，需同时设 `animation:none`；`opacity:0` 仍占 flex 布局空间，排队气泡直接不 `appendChild` |
 | 测试: 716 passed（+3 pre-existing failures）|
 
+### 调试工具 + Emoji 排序 + 阻塞修复 (2026-05-29)
+
+| 任务 | 说明 |
+|------|------|
+| /debug 工具状态 | `_executing_tools` 追踪当前执行工具，/debug 始终显示 "Idle" 或 "Executing: xxx" |
+| Emoji 按序排队 | `_pending_emojis[stream_id]` 挂靠 TTS 句，等 TTS 发完后按序发送，不再乱序 |
+| DDGS 阻塞修复 | `ddgs.text()` 同步阻塞事件循环 → `asyncio.to_thread()` 扔线程池，TTS 不再卡 22s |
+
 ### WebRTC VAD (2026-05-27)
 
 | 任务 | 说明 |
@@ -191,7 +199,10 @@
 
 ### 已知 Bug
 
-当前无已知高优 bug。
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| ~~高~~ | ~~**工具执行时文字不显示**~~ (2026-05-29 fixed) | ~~`DDGS().text()` 同步阻塞事件循环 22s，TTS HTTP 响应数据到内核缓冲区但 asyncio 无法处理。修复：`asyncio.to_thread()` 扔到线程池~~
+| 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | TTS 句的 `send("")` 和 INTERRUPT 取消几乎同时发生，`finalizeDelta` 和下一句 delta 的时序竞争导致 emoji 追加上一气泡 |
 
 ### 功能改进
 

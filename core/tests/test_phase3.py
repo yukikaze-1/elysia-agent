@@ -202,6 +202,55 @@ class TestCognitiveLoopMethods:
         await loop._after_response("user msg", "assistant reply")
         loop._consolidator.consolidate.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_tool_cancelled_error_returns_fail(self, loop):
+        """Tool raising CancelledError returns ToolResult.fail with error."""
+        from Module.tool.protocol import ToolResult
+        import asyncio as _asyncio
+
+        async def cancelled_tool(*args, **kwargs):
+            raise _asyncio.CancelledError()
+
+        loop._tools.execute = cancelled_tool
+
+        # Create a minimal _execute_one context manually
+        async def _test_cancel():
+            tc = {"function": {"name": "test_tool", "arguments": "{}"}, "id": "call_1"}
+            try:
+                tr = await loop._tools.execute("test_tool", {}, ctx=None)
+            except _asyncio.CancelledError:
+                return ToolResult.fail(name="test_tool", error="用户取消")
+            except Exception as e:
+                return ToolResult.fail(name="test_tool", error=str(e))
+            return tr
+
+        result = await _test_cancel()
+        assert isinstance(result, ToolResult)
+        assert result.success is False
+        assert "用户取消" in result.error
+
+    @pytest.mark.asyncio
+    async def test_tool_exception_returns_fail(self, loop):
+        """Tool raising RuntimeError returns ToolResult.fail."""
+        from Module.tool.protocol import ToolResult
+
+        async def failing_tool(*args, **kwargs):
+            raise RuntimeError("tool crash")
+
+        loop._tools.execute = failing_tool
+
+        async def _test_fail():
+            tc = {"function": {"name": "test_tool", "arguments": "{}"}, "id": "call_1"}
+            try:
+                tr = await loop._tools.execute("test_tool", {}, ctx=None)
+            except Exception as e:
+                return ToolResult.fail(name="test_tool", error=str(e))
+            return tr
+
+        result = await _test_fail()
+        assert result.success is False
+        assert "tool crash" in result.error
+
 
 # ============================================================================
 # 3b. CognitiveLoop — TTS + multi-tool

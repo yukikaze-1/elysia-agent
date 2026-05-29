@@ -73,6 +73,8 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | 分句策略 (连续分隔符合并) | done |
 | 并行工具调用 (asyncio.gather) | done |
 | 记忆结构化 Schema + rerank + 缓冲提取 | done |
+| VAD 打断保护 (THINKING/EXECUTING 不打断) | done |
+| Emoji 按 TTS 句排队发送 | done |
 | SentenceBuffer 升级 (70 tests: ～…〜/.上下文/可配置) | done |
 | 聊天历史 localStorage 持久化 | done |
 | 配置系统 (ConfigLoader: YAML + env + 类型校验) | done |

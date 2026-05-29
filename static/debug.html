@@ -129,7 +129,17 @@ function render(info) {
     ],
     // Row 3: Tools | Tool History | Consolidation
     [
-      { title:'Tools', wide:true, items: (info.tools||[]).map(t =>
+      { title:'Tools', wide:true, items: [
+        // 工具执行状态 — 始终显示
+        (info.currently_executing||[]).length > 0
+          ? `<div style="background:#e94560;color:#fff;padding:4px 8px;border-radius:4px;margin-bottom:6px;font-size:13px">
+               Executing: ${info.currently_executing.map(e=>esc(e)).join(', ')}
+             </div>`
+          : `<div style="color:var(--muted);padding:4px 8px;margin-bottom:6px;font-size:13px">
+               Idle
+             </div>`,
+        // 工具定义列表
+        ...(info.tools||[]).map(t =>
         `<div class="tool-card">
           <span class="tool-name">${esc(t.name)}</span>
           <span class="tool-desc">${esc(t.description)}</span>
@@ -140,7 +150,7 @@ function render(info) {
             `<span class="req-tag">${esc(r)}</span>`
           ).join('')}</div>
         </div>`
-      )},
+      )].filter(Boolean)},
     ],
     // Row 4: Tool History | Consolidation
     [

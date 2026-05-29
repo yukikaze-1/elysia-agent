@@ -79,9 +79,9 @@
                      ┌── 语音路径 ──────────────────────────────────────┐
                      │                                                  │
   Browser Mic ──► AudioBuffer ──► VAD ──► STT ──► emotion tag          │
-   (Int16 PCM)     (WebRTC)      (RMS)   (SenseVoice)  (HAPPY/SAD...)  │
+   (Int16 PCM)     (WebRTC)     (WebRTC)  (SenseVoice)  (HAPPY/SAD...)  │
                      │                                    │             │
-                     │ INTERRUPT (voice onset)             │             │
+                     │ INTERRUPT (skip THINKING/EXECUTING)   │             │
                      │                                    ▼             │
                      │                         stt_emotion_state{}       │
                      │                                    │             │
@@ -114,26 +114,21 @@
   ┌──────────────────────────────────────────────────────────────────┐  │
   │  CognitiveLoop._think_loop()                                       │  │
   │                                                                   │  │
-  │  for round in 0..MAX_TOOL_ROUNDS(3):                              │  │
-  │    LLM.stream_think(messages, tools=tool_defs)                    │  │
-  │      │                                                            │  │
-  │      ├── content delta ──► sync_buffer (hold)                     │  │
-  │      │    │                ├── TTS chunk #1 ──► sync_event.set()  │  │
-  │      │    │                │     ├── flush sync_buffer → text Δ   │  │
-  │      │    │                │     └── drain audio_pending → audio  │  │
-  │      │    │                └── timeout 5s ──► force release       │  │
-  │      │    │                                                       │  │
-  │      │    ├── SentenceBuffer.feed(token)                          │  │
-  │      │    │    └── sentence complete ──► TTS synthesize_stream()  │  │
-  │      │    │                            (background task)          │  │
-  │      │    │                                                       │  │
-  │      │    └── OutputManager ──┬── ConsoleChannel (stderr)         │  │
-  │      │                        └── WebSocketChannel → Browser      │  │
-  │      │                              ├── text delta (逐字)          │  │
-  │      │                              └── audio chunk (流式)         │  │
-  │      │                                                       │    │  │
-  │      └── tool_calls ──► execute ──► inject results ──► continue──┘    │
-  │                                                                   │  │
+  │  for round in 0..MAX_TOOL_ROUNDS(3):                              │
+  │    LLM.stream_think(messages, tools=tool_defs)                    │
+  │      │                                                            │
+  │      ├── content delta ──► SentenceBuffer.feed(token)             │
+  │      │    │    └── sentence complete                               │
+  │      │    │          ├── [TTS on]  _start_tts_stream(sentence)    │
+  │      │    │          │     └── bind-send delta + audio            │
+  │      │    │          └── [TTS off] direct delta + send("")        │
+  │      │    │                                                       │
+  │      │    └── OutputManager ──┬── ConsoleChannel (stderr)         │
+  │      │                        └── WebSocketChannel → Browser      │
+  │      │                              ├── text delta (sentence)      │
+  │      │                              └── audio chunk (stream)       │
+  │      │                                                       │    │
+  │      └── tool_calls ──► asyncio.gather ──► inject ──► loop───────┘
   │  EmotionEngine.analyze_assistant() ──► expression 推送            │  │
   │  MemoryConsolidator.consolidate() ──► LongTermMemory (fire-forget)│  │
   │  SessionMemory.save() ──► MongoDB                                 │  │
@@ -149,31 +144,24 @@
     └── localStorage persistence (debounce 500ms)                      │
 ```
 
-### 2.1 文字/语音同步（双层缓冲）
+### 2.1 文字/语音同步（绑定发送）
 
-这是系统中最精细的同步机制：
+服务端 TTS 后台 task 等首块音频到达后，绑在一起发送文字+音频：
 
 **Server 端** (CognitiveLoop):
 ```
-TTS 未就绪: text delta → _sync_buffer[] (暂存)
-            audio chunk → _audio_pending[] (暂存)
-
-TTS 首 chunk 到达: _sync_event.set()
-  → flush _sync_buffer → WS text delta events
-  → drain _audio_pending → WS audio events
-  → _audio_flow = True → 后续 audio chunk 直通
-
-超时兜底(5s): _sync_event.set() → 强制释放
+SentenceBuffer 分句 → _start_tts_stream(sentence) [background task]
+  → TTS 首 chunk 到达
+    → 绑定发送: delta(完整句) + send("") + audio_chunks + audio_end
+    → workers=1 FIFO 保证句间顺序
+  → TTS 关闭时: 直接发 delta + send("")
 ```
 
 **Browser 端** (index.html):
 ```
-delta 到达 → textQueue[] (hold)
-audio chunk 到达 → audioQueue → playNext()
-  → Audio.play().then(() => flushTextQueue())
-  → appendDelta 批量渲染
-
-超时兜底(8s): force flush
+delta 到达 → appendDelta() 直接渲染气泡
+audio chunk 到达 → audioQueue → playNext() 顺序播放
+audioPlaying=true 时新气泡暂存 nextBubbleQueue → 等音频结束再弹出
 ```
 
 ---
@@ -335,7 +323,7 @@ INTERRUPTED → IDLE
 
 ### 4.3 认知循环 (CognitiveLoop)
 
-ReAct 调度器的完整实现 (424 行)：
+ReAct 调度器的完整实现 (~400 行)：
 
 ```python
 class CognitiveLoop:
@@ -346,12 +334,7 @@ class CognitiveLoop:
             if not can_transition(THINKING):     # 已在处理中 → skip
                 return
             fsm.transition(THINKING)
-            # 清理上一轮状态
             sentence_buf.reset()
-            sync_event.clear()
-            sync_buffer.clear()
-            audio_pending.clear()
-            audio_flow = False
             try:
                 await self._think_loop(user_message, ...)
             except CancelledError:
@@ -359,81 +342,54 @@ class CognitiveLoop:
 
     async def _think_loop(self, ...):
         # 1. 情绪分析 (STT 优先，关键词 fallback)
-        if stt_emotion and stt_emotion != "NEUTRAL":
-            emotion.analyze_user_stt(stt_emotion, stt_events)
-        else:
-            emotion.analyze_user(text)
+        # 2. 组装消息: prompt.build_messages()
+        # 3. TTS 关闭: delta 直通 / TTS 开启: _start_tts_stream 绑定发送
 
-        # 2. 组装消息
-        messages = await prompt.build_messages(user_message, ...)
-
-        # 3. 无 TTS → 文本直通；有 TTS → hold 到首块音频
-        if not self._tts:
-            sync_event.set()
-
-        # 4. 同步超时兜底 (5s)
-        timeout_task = create_task(_release_after_timeout())
-
-        # 5. ReAct 循环
         for round in range(MAX_TOOL_ROUNDS + 1):
             async for chunk in llm.stream_think(messages, tools=tool_defs):
                 if content:
-                    # --- 文字/语音同步 ---
-                    if not sync_event.is_set():
-                        sync_buffer.append(content)   # hold
-                    else:
-                        flush sync_buffer → text deltas  # 放行
-                        drain audio_pending → audio
-                        send current content delta
-
-                    # --- 分句 → TTS ---
                     sentence = sentence_buf.feed(content)
-                    if sentence and tts:
-                        start_tts_stream(sentence)      # background task
+                    if sentence:
+                        if tts and not emoji_only:
+                            start_tts_stream(sentence)  # 绑定发送 text+audio
+                        else:
+                            output delta + send("")     # 直接发送
 
                 if tool_calls:
                     merge into accumulated list
 
-            # --- 工具调用 ---
+            # 工具调用: asyncio.gather 并行执行，单失败不影响其他
             if raw_tool_calls and round < MAX_TOOL_ROUNDS:
-                fsm → EXECUTING
-                execute tools → inject results → continue loop
+                cancel TTS tasks → fsm → EXECUTING
+                results = await asyncio.gather(*tools, return_exceptions=True)
+                inject results → continue loop
 
-            # --- 最终回复 ---
-            emotion.analyze_assistant(text)
-            output.send(message)
-            session.add_message("assistant", text)
-            create_task(_after_response(...))  # fire-and-forget
+            # 最终回复: emotion → session.save → _after_response (fire-forget)
             fsm → IDLE
             return
-
-    async def _after_response(self, ...):
-        # 后台执行，不阻塞 IDLE
-        await consolidator.consolidate(user_msg, assistant_msg)
-        await session.save()
 ```
 
 关键设计决策：
 - **asyncio.Lock**: 确保 `process()` 不可重入，防止并发消息导致状态混乱
 - **Fire-and-forget 后处理**: consolidation + session save 异步执行，用户可立即发下一条消息
-- **INTERRUPT 轮询等待**: `process_message()` 使用 `for _ in range(500): sleep(0.01)` 等待 IDLE，比 magic sleep(0.1) 可靠
-- **stream_think()**: 结构化流式 — `{"content": str|None, "tool_calls": list|None}` — 文字和工具调用同时检测，不互斥
+- **TTS 绑定发送**: 文字和音频在服务端绑在一起发送，前端无需同步逻辑
+- **并行工具调用**: `asyncio.gather` + `return_exceptions=True`，单工具失败不影响其他
+- **VAD 状态保护**: THINKING/EXECUTING 时 VAD 不打断，STT 文本和显式按钮始终生效
 
-### 4.4 TTS 流式合成 + 句队列
+### 4.4 TTS 绑定发送 + 句队列
 
 ```
 LLM token stream
   → SentenceBuffer.feed(token)
     → sentence complete → CognitiveLoop._start_tts_stream(sentence)
       → TTS.synthesize_stream(sentence) [background task]
-        → audio chunk → _audio_pending 或直通
-          → WebSocket audio events → browser audioQueue → playNext()
+        → 首 chunk 到达 → 绑定发送: delta(完整句) + send("") + audio_chunks
+          → WebSocket → browser appendDelta + audioQueue → playNext()
 
 句队列: 多句并行合成
   stream_id = ++tts_stream_id
   create_task(_stream(stream_id))   # 不 cancel 前句，自然排队
-  首 chunk → sync_event.set()      # 触发文字/音频同步
-  _audio_flow=True → 后续 chunk 直通，不进入 pending
+  workers=1 FIFO 保证句间顺序，前端 nextBubbleQueue 等音频播完再弹出
 ```
 
 ### 4.5 情绪引擎 (EmotionEngine)
@@ -564,16 +520,15 @@ class LongTermMemory:
 
 ### 5.4 MemoryConsolidator
 
-每轮对话后 LLM 提取关键信息，fire-and-forget 执行：
+攒 6 条消息后调 LLM 提取，fire-and-forget 执行。提取 Prompt 要求事件合并、重要性评分 1-10、第一人称叙事。
 
 ```
-用户: "我最近在学 Rust"
-Elysia: "Rust 很有意思呢，学到哪里了？"
-  → EXTRACTION_PROMPT (JSON format)
-  → LLM 提取: [{"type": "fact", "content": "妖梦最近在学习 Rust"}]
-  → LongTermMemory.insert(...)
+缓冲 6 条消息 → EXTRACTION_PROMPT (事件合并 + poignancy)
+  → LLM 提取: [{"type":"Fact","content":"...","poignancy":7}]
+  → LongTermMemory.insert(poignancy=7, memory_type="Fact")
 
 _history: 最近 20 条 (供 /debug 面板)
+_buffer: 未达阈值的待处理对话
 ```
 
 ### 5.5 ToolRegistry
@@ -594,12 +549,18 @@ tools.register(
 # type coercion: "5" → 5 (integer), "true" → True (boolean)
 ```
 
-已注册工具：
+已注册工具（7 个）：
 | 工具 | 参数 | 功能 |
 |------|------|------|
 | `search_memory` | query, limit | 语义搜索长期记忆 |
+| `save_memory` | content, type, poignancy | 保存新记忆 |
 | `get_time` | — | 获取当前日期时间 |
-| `save_memory` | content, type | 保存新记忆 |
+| `web_search` | query, engine | DuckDuckGo / Brave 搜索 |
+| `web_fetch` | url | 抓取网页内容 |
+| `read_file` | path | 读取本地文件 |
+| `list_directory` | path | 列出目录内容 |
+
+CognitiveLoop 使用 `asyncio.gather` 并行执行无依赖工具。
 
 ---
 
@@ -666,7 +627,7 @@ aiohttp Application:
   └── disconnect: cleanup channel + audio_buf + monitor
 ```
 
-### 6.4 浏览器客户端 (static/index.html, 541 行)
+### 6.4 浏览器客户端 (static/index.html)
 
 三栏布局：
 - **左栏** (220px): 角色面板 — 表情 ring (CSS border-color)、状态灯 (pulse 动画)、心情标签
@@ -824,37 +785,39 @@ Child loggers (core.cognitive_loop 等)
 ## 11. 测试架构
 
 ```
-547 passed (304 core + 243 Module)
+708 passed (243 core + 465 Module)
 
-core/
+core/tests/
 ├── test_phase1.py             # L1 认知核心 (38 tests)
 │   EventBus, AgentFSM, CognitiveLoop, EmotionEngine, SentenceBuffer
 ├── test_phase2.py             # L2 记忆持久化 (48 tests)
 │   SessionMemory, LongTermMemory, MemoryConsolidator
 ├── test_phase3.py             # 集成 + 组件测试 (148 tests)
-│   CognitiveLoop sync/TTS/tools, DemoAgent lifecycle, IdleMonitor,
-│   DebugInfo, ToolRegistry unit, EmotionEngine emoji, PromptAssembler,
+│   CognitiveLoop TTS/tools, DemoAgent lifecycle, IdleMonitor,
+│   DebugInfo, ToolRegistry, VAD interrupt, PromptAssembler,
 │   CharacterConfig, AppConfig, LLMAdapter errors
-└── test_sentence_buffer.py    # SentenceBuffer 专项 (70 tests)
+├── test_sentence_buffer.py    # SentenceBuffer 专项 (70 tests)
+└── fake_llm.py                # 测试用 LLM backend
 
 Module/
-├── llm/test_llm.py            # LLM backend (mock + stream_think)
-├── stt/test_stt.py            # STT backend
-├── tts/test_tts.py            # TTS backend
+├── llm/test_llm.py
+├── stt/test_stt.py
+├── tts/test_tts.py
 ├── embedding/test_embedding.py
-├── output/test_output.py      # OutputManager + ConsoleChannel
+├── output/test_output.py      # OutputManager + WebSocketChannel
 ├── config/test_config.py
 ├── logger/test_logger.py
-├── prompt/test_prompt.py      # PromptManager + template integration
-├── database/vectordb/         # Milvus tests
-├── database/documentdb/       # MongoDB tests
-├── input/test_audio_buffer.py # AudioBuffer + VAD (13 tests)
-└── input/test_server.py       # WebSocket server (9 tests)
+├── prompt/test_prompt.py
+├── tool/test_tool.py           # ToolRegistry + decorator + safety (172 tests)
+├── database/vectordb/
+├── database/documentdb/
+├── input/test_audio_buffer.py # AudioBuffer + WebRTC VAD (15 tests)
+└── input/test_server.py       # WebSocket server + _do_interrupt (13 tests)
 ```
 
 运行：
 ```bash
-conda run -n Elysia python -m pytest core/ Module/ -v --asyncio-mode=auto
+python -m pytest core/tests/ Module/ -q --asyncio-mode=auto
 ```
 
 ---
@@ -886,29 +849,31 @@ Agent/
 │   └── bench/               # Bench: 延迟基准
 │
 ├── core/                    # L1 认知控制
-│   ├── schema.py            # 共享类型 (AgentState, EventType, EventPriority)
-│   ├── event_bus.py         # 优先级事件总线 (Event + EventBus)
-│   ├── agent_fsm.py         # 五状态机 (IDLE→THINKING→EXECUTING↔THINKING→SPEAKING)
-│   ├── cognitive_loop.py    # ReAct 调度器 (流式 + 工具 + TTS sync)
-│   ├── llm_adapter.py       # LLM 适配器 (Factory 封装)
-│   ├── prompt_assembler.py  # 提示词组装 (角色 + 记忆 + Brain.j2)
-│   ├── emotion_engine.py    # 情绪引擎 (STT 主路径 + 关键词 fallback)
-│   ├── sentence_buffer.py   # 分句缓冲 (正则 + hold + flush)
-│   ├── consolidator.py      # 记忆沉淀 (LLM 提取事实)
-│   ├── idle_monitor.py      # 空闲监控 (silence_timeout + time_of_day)
-│   ├── character_config.py  # 角色配置 (YAML → dataclass)
-│   ├── app_config.py        # App 配置 (AppConfig dataclass)
-│   ├── log_setup.py         # 日志系统 (RotatingFile + stderr 路由)
-│   ├── debug_info.py        # Debug Dashboard 状态聚合 + JSON API
-│   ├── demo_agent.py        # 组件组装 (L0+L1+L2 全量 wiring)
-│   ├── _fake_llm.py         # 测试用最小 LLM double
-│   ├── test_phase1.py       # L1 测试
-│   ├── test_phase2.py       # L2 测试
-│   ├── test_phase3.py       # 集成 + 组件测试
-│   ├── test_sentence_buffer.py # SentenceBuffer 专项 (70 tests)
-│   └── memory/
-│       ├── session.py       # 会话上下文 (MongoDB + deque)
-│       └── long_term.py     # 长期记忆 (Milvus + Embedding lazy load)
+│   ├── schema.py            #   共享类型 (AgentState, EventType, EventPriority)
+│   ├── event_bus.py         #   优先级事件总线
+│   ├── agent_fsm.py         #   五状态机
+│   ├── cognitive_loop.py    #   ReAct 调度器 (~400 行)
+│   ├── llm_adapter.py       #   LLM 适配器
+│   ├── prompt_assembler.py  #   提示词组装 + 记忆检索
+│   ├── emotion_engine.py    #   情绪引擎
+│   ├── sentence_buffer.py   #   分句缓冲
+│   ├── consolidator.py      #   记忆沉淀 (缓冲6条+rerank)
+│   ├── idle_monitor.py      #   空闲监控
+│   ├── character_config.py  #   角色配置
+│   ├── app_config.py        #   App 配置
+│   ├── log_setup.py         #   日志系统
+│   ├── debug_info.py        #   /debug 面板
+│   ├── demo_agent.py        #   组件组装 + 生命周期
+│   ├── tools/               #   Agent 工具集
+│   ├── memory/              #   记忆子系统
+│   │   ├── session.py       #     会话上下文
+│   │   └── long_term.py     #     长期记忆
+│   └── tests/               #   测试
+│       ├── fake_llm.py              #  测试用 LLM backend
+│       ├── test_phase1.py           #  Phase 1
+│       ├── test_phase2.py           #  Phase 2
+│       ├── test_phase3.py           #  Phase 3
+│       └── test_sentence_buffer.py  #  SentenceBuffer (70)
 │
 ├── character/
 │   └── elysia.yaml          # Elysia 角色定义

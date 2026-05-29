@@ -1,5 +1,6 @@
 """网络工具 — 搜索互联网、抓取网页内容。"""
 
+import asyncio
 import re
 from html.parser import HTMLParser
 
@@ -39,7 +40,9 @@ async def _ddg_search(query: str, limit: int) -> str:
         from duckduckgo_search import DDGS  # 旧包名 fallback
     try:
         with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=limit))
+            results = await asyncio.to_thread(
+                lambda: list(ddgs.text(query, max_results=limit))
+            )
     except Exception as e:
         return f"搜索失败: {e}"
 

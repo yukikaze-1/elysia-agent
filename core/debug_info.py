@@ -30,6 +30,7 @@ class DebugInfo:
     mongodb_ok: bool = False
 
     # Tools
+    currently_executing: list[str] = field(default_factory=list)
     tools: list[dict] = field(default_factory=list)
     tool_history: list[dict] = field(default_factory=list)
 
@@ -88,6 +89,7 @@ async def collect(agent) -> DebugInfo:
     info.mongodb_ok = agent._session._db is not None
 
     # ---- Tools ----
+    info.currently_executing = list(getattr(agent._cognitive, "_executing_tools", []))
     info.tools = [
         {
             "name": name,

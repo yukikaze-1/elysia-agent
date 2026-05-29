@@ -201,3 +201,64 @@ class TestWebSocketHandler:
             await asyncio.sleep(0.1)
 
         await agent.stop()
+
+
+# ── _do_interrupt skip_if tests ──────────────────────────────────────────────
+
+class TestDoInterruptSkipIf:
+    """VAD interrupt should skip during THINKING/EXECUTING, but allow
+    during SPEAKING and when no skip_if is set (explicit button)."""
+
+    @pytest.mark.asyncio
+    async def test_vad_skips_during_thinking(self):
+        from Module.input.server import _do_interrupt
+
+        agent = MagicMock()
+        agent._fsm.state = "thinking"
+        agent._bus.post = MagicMock()
+
+        await _do_interrupt(agent, skip_if={"thinking", "executing"})
+
+        agent._bus.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_vad_skips_during_executing(self):
+        from Module.input.server import _do_interrupt
+
+        agent = MagicMock()
+        agent._fsm.state = "executing"
+        agent._bus.post = MagicMock()
+
+        await _do_interrupt(agent, skip_if={"thinking", "executing"})
+
+        agent._bus.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_vad_allows_during_speaking(self):
+        from Module.input.server import _do_interrupt
+        from core.event_bus import EventType
+
+        agent = MagicMock()
+        agent._fsm.state = "speaking"
+        agent._bus.post = MagicMock()
+
+        await _do_interrupt(agent, skip_if={"thinking", "executing"})
+
+        agent._bus.post.assert_called_once()
+        args, _ = agent._bus.post.call_args
+        assert args[0] == EventType.INTERRUPT
+
+    @pytest.mark.asyncio
+    async def test_explicit_interrupt_always_allowed(self):
+        from Module.input.server import _do_interrupt
+        from core.event_bus import EventType
+
+        agent = MagicMock()
+        agent._fsm.state = "executing"
+        agent._bus.post = MagicMock()
+
+        await _do_interrupt(agent)  # no skip_if
+
+        agent._bus.post.assert_called_once()
+        args, _ = agent._bus.post.call_args
+        assert args[0] == EventType.INTERRUPT

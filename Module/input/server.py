@@ -99,7 +99,7 @@ async def _handle_ws(
         audio_buf = AudioBuffer(
             stt_transcribe=stt_transcribe,
             aggressiveness=3,
-            on_interrupt=lambda: _do_interrupt(agent),
+            on_interrupt=lambda: _do_interrupt(agent, skip_if={"thinking", "executing"}),
             on_transcription=lambda text: _do_transcription(
                 agent, ws, text, audio_buf, stt_emotion_state,
             ),
@@ -162,7 +162,10 @@ async def _handle_json(data: dict, agent) -> None:
         await _do_interrupt(agent)
 
 
-async def _do_interrupt(agent) -> None:
+async def _do_interrupt(agent, skip_if: set | None = None) -> None:
+    """Post INTERRUPT event. skip_if 可阻止特定状态下的 VAD 误触发。"""
+    if skip_if and agent._fsm.state in skip_if:
+        return
     from core.event_bus import EventType, EventPriority
     agent._bus.post(EventType.INTERRUPT, {"source": "websocket"}, priority=EventPriority.INTERRUPT)
 
