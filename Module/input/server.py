@@ -158,8 +158,12 @@ async def _handle_json(data: dict, agent) -> None:
         content = data.get("content", "").strip()
         if content:
             await agent.process_message(content)
+            logger.info("WS 收到文本: %s", content[:100])
     elif msg_type == "interrupt":
+        logger.info("WS 收到打断指令")
         await _do_interrupt(agent)
+    else:
+        logger.debug("WS 未知消息类型: %s", msg_type)
 
 
 async def _do_interrupt(agent, skip_if: set | None = None) -> None:
@@ -192,8 +196,11 @@ async def _do_transcription(agent, ws, text: str, audio_buf=None,
 
     if audio_buf:
         audio_buf.deafen(2.0)
+    rid = agent.next_request_id()
+    logger.info("STT 识别: %s%s", text[:100], f" [{emotion}]" if emotion and emotion != "NEUTRAL" else "")
     from core.event_bus import EventType
     agent._bus.post(EventType.USER_INPUT, {
         "text": text, "user_name": "妖梦",
         "emotion": emotion, "events": events,
+        "request_id": rid,
     })

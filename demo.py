@@ -69,7 +69,7 @@ async def run_interactive(config) -> None:
     agent = DemoAgent(config=config)
     await agent.start()
 
-    print("输入消息开始对话，/quit 退出，Ctrl+C 打断\n")
+    print("输入消息开始对话，/quit 退出，Ctrl+C 打断")
 
     while True:
         try:
@@ -85,11 +85,11 @@ async def run_interactive(config) -> None:
             while agent._fsm.state != "idle":
                 await asyncio.sleep(0.1)
         except (EOFError, KeyboardInterrupt):
-            print("\n")
+            print()
             break
 
     await agent.stop()
-    print("\n再见！")
+    print("再见！")
 
 
 def _run_and_diagnose(coro):

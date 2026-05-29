@@ -85,6 +85,9 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | 日志系统修复 (RotatingFile + 级别修正 + 查漏补缺) | done |
 | 代码清理 (MockLLMBackend/system.j2 移除 + ConfigLoader 接入) | done |
 | 测试补充 (507 → 547，+40 tests + 修 2 bug) | done |
+| 日志链路完整追踪 (request ID + 毫秒时间戳 + 全管线计时) | done |
+| 对话日志分离 (log/conversation.log) | done |
+| TTS 句编号 (本轮/全局双计数) | done |
 
 ## 项目结构
 
@@ -172,4 +175,4 @@ python -m pytest core/tests/test_sentence_buffer.py -v
 python -m pytest Module/input/test_server.py -v --asyncio-mode=auto
 ```
 
-**测试统计**: 251 (core) + 465 (Module) = 716 total
+**测试统计**: 251 (core) + 463 (Module) = 714 total (+3 pre-existing failures)

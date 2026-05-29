@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 
 from Module.output import OutputManager, ChannelCapability
@@ -15,6 +16,7 @@ from Module.tts import TTSBackend
 
 from .agent_fsm import AgentFSM, AgentState
 from .event_bus import EventBus, EventPriority, EventType
+from .log_setup import set_request_id, get_request_id, log_conversation
 from Module.tool import ToolRegistry, ToolContext
 from Module.tool.protocol import ToolResult
 from .prompt_assembler import PromptAssembler
@@ -52,6 +54,7 @@ class CognitiveLoop:
     """ReAct cognitive loop with streaming delivery and tool-call detection."""
 
     MAX_TOOL_ROUNDS = 3
+    _req_counter: int = 0
 
     def __init__(
         self,
@@ -83,7 +86,8 @@ class CognitiveLoop:
         self._current_task: asyncio.Task | None = None
         self._tts_task: asyncio.Task | None = None
         self._tts_tasks: list[asyncio.Task] = []
-        self._tts_stream_id: int = 0
+        self._tts_total: int = 0   # 全局计数器，跨轮次持续递增
+        self._tts_seq: int = 0     # 本轮计数器，process() 开始时重置
         self._executing_tools: list[str] = []  # 当前正在执行中的工具名 (供 debug 面板)
         self._pending_emojis: dict[int, list[str]] = {}  # TTS句N后面的emoji队列
 
@@ -94,16 +98,33 @@ class CognitiveLoop:
                 logger.warning("Cannot transition to THINKING from %s", self._fsm.state)
                 return
 
+            rid = get_request_id()
+            if rid == "-":
+                # Fallback: idle monitor proactive messages have no request_id yet
+                self._req_counter += 1
+                rid = f"P{self._req_counter:03d}"
+                set_request_id(rid)
+            self._tts_seq = 0
+            t_start = time.perf_counter()
+
+            # 用户输入到达 — 记录时间和内容
+            emo_tag = f" [{stt_emotion}]" if stt_emotion and stt_emotion != "NEUTRAL" else ""
+            logger.info(">>> 用户输入 (%s)%s: %s", user_name, emo_tag, user_message[:200])
+            log_conversation("user", user_name, user_message)
+
             self._fsm.transition(AgentState.THINKING)
-            self._bus.post(EventType.STATE_CHANGE, {"state": "thinking"}, priority=EventPriority.STATE_CHANGE)
+            self._bus.post(EventType.STATE_CHANGE, {"state": "thinking", "request_id": rid},
+                          priority=EventPriority.STATE_CHANGE)
 
             self._sentence_buf.reset()
             self._current_task = asyncio.current_task()
             try:
                 await self._think_loop(user_message, user_name,
                                        stt_emotion=stt_emotion, stt_events=stt_events)
+                elapsed = (time.perf_counter() - t_start) * 1000
+                logger.info("<<< 回复生成完成 (%d ms), TTS 后台继续", int(elapsed))
             except asyncio.CancelledError:
-                logger.info("Cognitive loop interrupted")
+                logger.info("<<< 用户打断")
                 await self._handle_interrupt()
 
     async def _think_loop(self, user_message: str, user_name: str,
@@ -114,12 +135,15 @@ class CognitiveLoop:
             else:
                 self._emotion.analyze_user(user_message)
 
+        t0 = time.perf_counter()
         messages = await self._prompt.build_messages(
             user_message, user_name=user_name,
             stt_emotion=stt_emotion, stt_events=stt_events,
         )
+        t_prompt = (time.perf_counter() - t0) * 1000
         self._session.add_message("user", user_message)
         tool_defs = self._tools.definitions() or None
+        logger.info("提示词构建: %d ms, %d 条消息, %d 个工具", int(t_prompt), len(messages), len(tool_defs or []))
 
         await self._output.typing(True)
 
@@ -129,6 +153,7 @@ class CognitiveLoop:
                 raw_tool_calls: list[dict] = []
                 speaking_started = False
                 ttft_logged = False
+                t_think_start = time.perf_counter()
 
                 stream = self._llm.stream_think(messages, tools=tool_defs,
                     extra_body={"thinking": {"type": "disabled"}})
@@ -140,7 +165,8 @@ class CognitiveLoop:
                         if content:
                             if not ttft_logged:
                                 ttft_logged = True
-                                logger.info("Pipeline: 首 token 到达 (TTFT)")
+                                t_ttft = (time.perf_counter() - t_think_start) * 1000
+                                logger.info("首 token (TTFT): %d ms", int(t_ttft))
                             acc_text += content
 
                             # TTS 关闭时流式逐字发送；TTS 开启时不发（由 _start_tts_stream 发送完整句）
@@ -150,13 +176,13 @@ class CognitiveLoop:
 
                             sentence = self._sentence_buf.feed(content)
                             if sentence:
-                                logger.info("Pipeline: SentenceBuffer 分句 (%d 字符): %s",
-                                             len(sentence), sentence[:40])
+                                logger.info("分句 (%d 字符)", len(sentence))
+                                logger.debug("分句内容: %s", sentence[:60])
 
                                 if not speaking_started:
                                     await self._output.typing(False)
                                     self._fsm.transition(AgentState.SPEAKING)
-                                    self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"},
+                                    self._bus.post(EventType.STATE_CHANGE, {"state": "speaking", "request_id": get_request_id()},
                                                    priority=EventPriority.STATE_CHANGE)
                                     speaking_started = True
 
@@ -165,7 +191,7 @@ class CognitiveLoop:
                                     self._start_tts_stream(sentence)
                                 elif self._tts:
                                     self._pending_emojis.setdefault(
-                                        self._tts_stream_id, []).append(sentence)
+                                        self._tts_total, []).append(sentence)
                                 else:
                                     await self._output._broadcast("on_text_delta", sentence,
                                         capability=ChannelCapability.TEXT_DELTA)
@@ -179,19 +205,22 @@ class CognitiveLoop:
                 # Flush remaining text in sentence buffer
                 remaining = self._sentence_buf.flush()
                 if remaining:
-                    logger.info("Pipeline: SentenceBuffer flush 尾句 (%d 字符): %s",
-                                 len(remaining), remaining[:40])
+                    if _is_emoji_only(remaining):
+                        logger.info("flush emoji: %s", remaining)
+                    else:
+                        logger.info("flush 尾句 (%d 字符)", len(remaining))
+                        logger.debug("尾句内容: %s", remaining[:60])
                     if not speaking_started:
                         await self._output.typing(False)
                         self._fsm.transition(AgentState.SPEAKING)
-                        self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"},
+                        self._bus.post(EventType.STATE_CHANGE, {"state": "speaking", "request_id": get_request_id()},
                                        priority=EventPriority.STATE_CHANGE)
                         speaking_started = True
                     if self._tts and not _is_emoji_only(remaining):
                         self._start_tts_stream(remaining)
                     elif self._tts:
                         self._pending_emojis.setdefault(
-                            self._tts_stream_id, []).append(remaining)
+                            self._tts_total, []).append(remaining)
                     else:
                         await self._output._broadcast("on_text_delta", remaining,
                             capability=ChannelCapability.TEXT_DELTA)
@@ -204,7 +233,7 @@ class CognitiveLoop:
 
                     await self._output.typing(False)
                     self._fsm.transition(AgentState.EXECUTING)
-                    self._bus.post(EventType.STATE_CHANGE, {"state": "executing"},
+                    self._bus.post(EventType.STATE_CHANGE, {"state": "executing", "request_id": get_request_id()},
                                    priority=EventPriority.STATE_CHANGE)
 
                     normalized = self._normalize_tool_calls(raw_tool_calls)
@@ -217,12 +246,13 @@ class CognitiveLoop:
                     async def _execute_one(tc: dict):
                         func_name = tc["function"]["name"]
                         self._executing_tools.append(func_name)
+                        t_tool = time.perf_counter()
                         try:
                             try:
                                 args = json.loads(tc["function"]["arguments"])
                             except (json.JSONDecodeError, KeyError):
                                 args = {}
-                            logger.info("Executing tool: %s(%s)", func_name, args)
+                            logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
                             await self._output.action("tool_executing", params={
                                 "tool": func_name,
                                 "args": {k: str(v)[:80] for k, v in args.items()},
@@ -230,11 +260,14 @@ class CognitiveLoop:
                             try:
                                 tr = await self._tools.execute(func_name, args, ctx=self._ctx)
                             except asyncio.CancelledError:
-                                logger.info("Tool %s cancelled by user interrupt", func_name)
+                                logger.info("工具取消: %s", func_name)
                                 tr = ToolResult.fail(name=func_name, error="用户取消")
                             except Exception as e:
-                                logger.warning("Tool %s failed: %s", func_name, e)
+                                logger.warning("工具失败: %s — %s", func_name, e)
                                 tr = ToolResult.fail(name=func_name, error=str(e))
+                            t_tool_elapsed = (time.perf_counter() - t_tool) * 1000
+                            logger.info("工具完成: %s (%s) — %d ms",
+                                        func_name, "OK" if tr.success else "FAIL", int(t_tool_elapsed))
                             await self._output.action("tool_done", params={
                                 "tool": func_name,
                                 "success": tr.success,
@@ -258,7 +291,7 @@ class CognitiveLoop:
                         })
 
                     self._fsm.transition(AgentState.THINKING)
-                    self._bus.post(EventType.STATE_CHANGE, {"state": "thinking"},
+                    self._bus.post(EventType.STATE_CHANGE, {"state": "thinking", "request_id": get_request_id()},
                                    priority=EventPriority.STATE_CHANGE)
                     await self._output.typing(True)
                     continue
@@ -282,6 +315,7 @@ class CognitiveLoop:
                         await self._output.send(msg)
                 if acc_text.strip():
                     self._session.add_message("assistant", acc_text)
+                    log_conversation("assistant", self._prompt._character.name, acc_text)
                     asyncio.create_task(self._after_response(user_message, acc_text),
                                        name="after-response")
 
@@ -300,16 +334,18 @@ class CognitiveLoop:
         """Post-response hooks: consolidate memory, save session."""
         if self._consolidator:
             try:
+                t0 = time.perf_counter()
                 items = await self._consolidator.consolidate(user_message, assistant_response)
                 if items:
-                    logger.debug("Consolidated %d items", len(items))
+                    t_elapsed = (time.perf_counter() - t0) * 1000
+                    logger.info("记忆沉淀: %d 条 (%d ms)", len(items), int(t_elapsed))
             except Exception:
-                logger.debug("Consolidation failed", exc_info=True)
+                logger.debug("记忆沉淀失败", exc_info=True)
         # Save session asynchronously (fire-and-forget)
         try:
             await self._session.save()
         except Exception:
-            logger.debug("Session save failed", exc_info=True)
+            logger.debug("会话保存失败", exc_info=True)
 
     def _start_tts_stream(self, sentence: str) -> None:
         """后台 TTS task — 等首块音频到达后绑在一起发送文字+音频。
@@ -322,21 +358,24 @@ class CognitiveLoop:
         if not _clean:
             return
 
-        self._tts_stream_id += 1
-        sid = self._tts_stream_id
-        logger.info("Pipeline: TTS 句 %d 开始合成 (%d 字符): %s",
-                    sid, len(sentence), _clean[:50])
+        self._tts_total += 1
+        self._tts_seq += 1
+        sid = self._tts_total
+        seq = self._tts_seq
+        logger.info("TTS 句 %d/%d 开始 (%d 字符)", seq, sid, len(sentence))
+        logger.debug("TTS 句内容: %s", _clean[:60])
 
-        async def _stream(_sid: int):
+        async def _stream(_sid: int, _seq: int):
             if not self._tts:
                 return
             try:
                 char_name = self._prompt._character.name
                 first_chunk = True
+                t_tts = time.perf_counter()
                 async for chunk in self._tts.synthesize_stream(sentence, character=char_name):
                     if first_chunk:
                         first_chunk = False
-                        logger.info("Pipeline: 首块 TTS 音频到达，发送文字+音频")
+                        logger.info("TTS 句 %d/%d 首块音频到达，发送文字+音频", _seq, _sid)
                         # 先发排在本句之前的 emoji
                         for e in self._pending_emojis.pop(_sid - 1, []):
                             await self._output._broadcast("on_text_delta", e,
@@ -348,6 +387,8 @@ class CognitiveLoop:
                         await self._output.send("")
                     await self._output.audio_chunk(chunk, stream_id=_sid)
                 await self._output.audio_end(_sid)
+                t_tts_elapsed = (time.perf_counter() - t_tts) * 1000
+                logger.info("TTS 句 %d/%d 播放完成 (%d ms)", _seq, _sid, int(t_tts_elapsed))
                 # 发排在本句之后的 emoji
                 for e in self._pending_emojis.pop(_sid, []):
                     await self._output._broadcast("on_text_delta", e,
@@ -366,7 +407,7 @@ class CognitiveLoop:
                     except Exception:
                         pass
 
-        task = asyncio.create_task(_stream(sid), name=f"tts-{sid}")
+        task = asyncio.create_task(_stream(sid, seq), name=f"tts-{sid}")
         self._tts_tasks.append(task)
         self._tts_task = task
 
@@ -385,13 +426,13 @@ class CognitiveLoop:
             logger.debug("TTS synthesis failed", exc_info=True)
 
     async def _transition_idle(self) -> None:
-        logger.info("Pipeline: 回复完成 → IDLE")
+        logger.info("→ IDLE")
         await asyncio.sleep(0.1)
         if self._fsm.state == AgentState.THINKING:
             self._fsm.transition(AgentState.SPEAKING)
-            self._bus.post(EventType.STATE_CHANGE, {"state": "speaking"}, priority=EventPriority.STATE_CHANGE)
+            self._bus.post(EventType.STATE_CHANGE, {"state": "speaking", "request_id": get_request_id()}, priority=EventPriority.STATE_CHANGE)
         self._fsm.transition(AgentState.IDLE)
-        self._bus.post(EventType.STATE_CHANGE, {"state": "idle"}, priority=EventPriority.STATE_CHANGE)
+        self._bus.post(EventType.STATE_CHANGE, {"state": "idle", "request_id": get_request_id()}, priority=EventPriority.STATE_CHANGE)
 
     async def _handle_interrupt(self) -> None:
         """Clean up after interruption — cancel TTS tasks, return to IDLE."""
@@ -404,10 +445,10 @@ class CognitiveLoop:
         self._tts_tasks.clear()
         await self._output.typing(False)
         self._fsm.transition(AgentState.INTERRUPTED)
-        self._bus.post(EventType.STATE_CHANGE, {"state": "interrupted"}, priority=EventPriority.STATE_CHANGE)
+        self._bus.post(EventType.STATE_CHANGE, {"state": "interrupted", "request_id": get_request_id()}, priority=EventPriority.STATE_CHANGE)
         await asyncio.sleep(0.05)
         self._fsm.transition(AgentState.IDLE)
-        self._bus.post(EventType.STATE_CHANGE, {"state": "idle"}, priority=EventPriority.STATE_CHANGE)
+        self._bus.post(EventType.STATE_CHANGE, {"state": "idle", "request_id": get_request_id()}, priority=EventPriority.STATE_CHANGE)
         logger.debug("Interrupt complete — agent is IDLE")
 
     # ---- Tool call helpers ----

@@ -111,9 +111,7 @@ class EmotionEngine:
             self._session.set_param("mood_intensity", min(1.0, intensity + 0.1))
             self._push_expression(mood, intensity)
             emoji = _STT_EMOTION_EMOJI.get(emotion_tag, "")
-            logger.debug("Mood (STT %s%s): %s → %s (intensity=%.2f)",
-                        emotion_tag, f" {emoji}" if emoji else "",
-                        current, mood, intensity)
+            logger.info("心情 (STT %s%s): %s → %s", emotion_tag, f" {emoji}" if emoji else "", current, mood)
         else:
             self._session.set_param("mood_intensity", min(1.0, intensity + 0.05))
 
@@ -142,7 +140,7 @@ class EmotionEngine:
             self._session.set_param("mood", detected)
             self._session.set_param("mood_intensity", min(1.0, intensity + 0.1))
             self._push_expression(detected, intensity)
-            logger.debug("Mood: %s → %s (intensity=%.2f)", current, detected, intensity)
+            logger.info("心情 (关键词): %s → %s", current, detected)
         else:
             # Same mood, increase intensity
             self._session.set_param("mood_intensity", min(1.0, intensity + 0.05))

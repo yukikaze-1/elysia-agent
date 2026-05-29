@@ -155,7 +155,7 @@
 | 前端简化 | 删除 `textQueue`/`pendingBubbles`/`scheduleReveal`/`onAudioStart`(~40行)，delta 直接 appendDelta 渲染 |
 | 排队弹出 | 新增 `nextBubbleQueue`：当前句音频播放中到达的后句气泡暂不挂 DOM，等 `playNext`/`onended` 触发弹出。防止文字在语音播完前出现 |
 | CSS 踩坑 | `animation: fadeIn` 执行期间覆盖 inline `opacity:0`，需同时设 `animation:none`；`opacity:0` 仍占 flex 布局空间，排队气泡直接不 `appendChild` |
-| 测试: 716 passed（+3 pre-existing failures）|
+| 测试: 714 passed（+3 pre-existing failures）|
 
 ### 调试工具 + Emoji 排序 + 阻塞修复 (2026-05-29)
 
@@ -191,7 +191,26 @@
 | 浏览器显示 | transcription 气泡带情绪 emoji + 事件 emoji |
 | nospeech 过滤修复 | `_call_api` 用 raw_text 检测 `<|nospeech|>` 丢弃，替代 audio_buffer 无效的 text-contains 检查 |
 | 优雅退出 | `POST /shutdown` Web 端点 + `/quit` 终端命令 + 浏览器关闭按钮。修复 WebSocketChannel.close() 空函数、state-monitor task 泄漏、embedding 线程泄漏、stdin to_thread 阻塞等 5 个 hang |
-| 测试: 716 passed（+3 pre-existing failures）|
+| 测试: 714 passed（+3 pre-existing failures）|
+
+### 日志链路系统 (2026-05-29)
+
+完整重做日志系统，覆盖信息缺失、格式噪音、结构性缺陷三方面。
+
+| 类别 | 任务 | 说明 |
+|------|------|------|
+| 基础设施 | 毫秒级时间戳 | `19:19:23.456 [I]`，替代秒级 `19:19:23` |
+| 基础设施 | 请求 ID | ContextVar + logging Filter，每轮对话分配 `[001]`，自动注入所有日志行 |
+| 信息可见 | 用户输入日志 | `>>> 用户输入 (妖梦): ...`，含 STT 情绪标签，到达即记 |
+| 信息可见 | FSM 状态 → INFO | `FSM → thinking/speaking/executing/idle/interrupted` |
+| 信息可见 | 心情变化 → INFO | `心情 (STT ANGRY): neutral → calming` |
+| 管线计时 | 提示词构建/首token/工具/TTS | 全链路耗时可见，毫秒精度 |
+| 请求边界 | 轮次标记 | `>>>` 开始 + `<<< 回复生成完成 (XXX ms)` 结束 |
+| 格式清理 | 去空行 + emoji区分 | `print()` 去 `\n`；`flush emoji: 😊` 独立标记 |
+| WS/STT | 消息日志 | `WS 收到文本` / `WS 收到打断指令` / `STT 识别: ... [ANGRY]` |
+| 对话分离 | conversation.log | 独立 FileHandler，不与 stderr 混杂 |
+| 跨 task 传播 | request_id 传递 | process_message 生成 → event data 携带 → _process_events 提取 → IDLE/INTERRUPT 重置 |
+| TTS 编号 | 本轮/全局双计数 | `TTS 句 3/11 开始` = 本轮第3句 / 全局第11句 |
 
 ---
 
@@ -263,7 +282,7 @@ CognitiveLoop 内 `asyncio.gather()` 执行无依赖工具，替代逐个串行�
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| 高 | **EXECUTING 阶段不应接受 VAD 打断** | 当前 VAD 检测到语音后无条件 post INTERRUPT，无论 FSM 是什么状态。THINKING/SPEAKING 时合理（用户想插话），但 EXECUTING 时用户随便发出声音就可能取消正在执行的长任务。应改为：EXECUTING 时 VAD 忽略，只接受显式打断指令（按钮/`{"type":"interrupt"}`）。文本输入同理，EXECUTING 时应跳过打断+user input 投递 |
+| ~~高~~ | ~~**EXECUTING 阶段不应接受 VAD 打断**~~ (2026-05-29 done) | _do_interrupt 增加 skip_if 参数，VAD 回调传 `skip_if={"thinking", "executing"}`。显式打断按钮不传 skip_if，始终有效 | 当前 VAD 检测到语音后无条件 post INTERRUPT，无论 FSM 是什么状态。THINKING/SPEAKING 时合理（用户想插话），但 EXECUTING 时用户随便发出声音就可能取消正在执行的长任务。应改为：EXECUTING 时 VAD 忽略，只接受显式打断指令（按钮/`{"type":"interrupt"}`）。文本输入同理，EXECUTING 时应跳过打断+user input 投递 |
 | 中 | `EmotionEngine._schedule` 无异常边界 | fire-and-forget task 异常时 asyncio 只打 "Task exception was never retrieved" |
 | 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
 | ~~低~~ | ~~Consolidator 每轮调 LLM~~ (2026-05-29 fixed) | 已改为缓冲 6 条消息再调 LLM |

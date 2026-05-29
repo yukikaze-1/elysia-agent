@@ -308,7 +308,7 @@ class TestCognitiveLoopTTS:
         loop._start_tts_stream("第二句")
         # At most initial+2 tasks (some may have completed)
         assert len(loop._tts_tasks) <= initial_count + 2
-        assert loop._tts_stream_id >= 2
+        assert loop._tts_total >= 2
 
     @pytest.mark.asyncio
     async def test_multi_tool_round(self, loop):

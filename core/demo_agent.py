@@ -16,6 +16,7 @@ from Module.output import OutputManager, ConsoleChannel
 from .app_config import AppConfig
 from .event_bus import EventBus, EventPriority, EventType
 from .agent_fsm import AgentFSM, AgentState
+from .log_setup import set_request_id, get_request_id
 from .character_config import CharacterConfig
 from .memory.session import SessionMemory
 from .memory.long_term import LongTermMemory
@@ -103,6 +104,7 @@ class DemoAgent:
 
         self._running = False
         self._event_task: asyncio.Task | None = None
+        self._req_counter: int = 0
 
     # ---- Lifecycle ----
 
@@ -148,7 +150,7 @@ class DemoAgent:
         print(f"  TTS: {'已连接' if self._tts else '未连接（纯文本模式）'}")
         print(f"  人格: {', '.join(self._character.traits)}")
         print(f"  工具: {', '.join(self._tools.tool_names) or '无'}")
-        print(f"{'='*50}\n")
+        print(f"{'='*50}")
 
     async def stop(self) -> None:
         """Stop the agent, save session, clean up resources."""
@@ -222,24 +224,35 @@ class DemoAgent:
 
         logger.info("Agent stopped")
 
+    def next_request_id(self) -> str:
+        """生成并返回请求 ID，同时设置 ContextVar。供外部模块（STT 等）使用。"""
+        self._req_counter += 1
+        rid = f"{self._req_counter:03d}"
+        set_request_id(rid)
+        return rid
+
     async def process_message(self, text: str, user_name: str = "妖梦") -> None:
         """Process a single user message through the pipeline."""
         if not text.strip():
             return
+
+        rid = self.next_request_id()
 
         self._idle.touch()
 
         # Interrupt if currently processing
         if self._fsm.state != AgentState.IDLE:
             logger.info("Interrupting current processing (state=%s)", self._fsm.state)
-            self._bus.post(EventType.INTERRUPT, {"source": "user_input"}, priority=EventPriority.INTERRUPT)
+            self._bus.post(EventType.INTERRUPT, {"source": "user_input", "request_id": rid},
+                          priority=EventPriority.INTERRUPT)
             # Wait for interrupt to complete (FSM → IDLE), with 5s timeout
             for _ in range(500):
                 if self._fsm.state == AgentState.IDLE:
                     break
                 await asyncio.sleep(0.01)
 
-        self._bus.post(EventType.USER_INPUT, {"text": text, "user_name": user_name})
+        self._bus.post(EventType.USER_INPUT, {"text": text, "user_name": user_name,
+                                               "request_id": rid})
 
     # ---- REPL ----
 
@@ -288,7 +301,7 @@ class DemoAgent:
         print(f"  STT: {'已连接' if stt_transcribe else '未连接'}")
         print(f"  TTS: {'已连接' if self._tts else '未连接'}")
         print(f"  退出: /quit / POST http://{host}:{port}/shutdown")
-        print(f"{'='*50}\n")
+        print(f"{'='*50}")
 
         async def _stdin_watcher():
             while self._running:
@@ -297,7 +310,7 @@ class DemoAgent:
                 except EOFError:
                     break
                 if line.strip().lower() in ("/quit", "/exit", "/q"):
-                    print("\n正在关闭...")
+                    print("正在关闭...")
                     self._running = False
                     break
 
@@ -324,7 +337,7 @@ class DemoAgent:
                 await asyncio.wait_for(runner.cleanup(), timeout=3.0)
             except asyncio.TimeoutError:
                 logger.warning("HTTP server cleanup timed out — forcing exit")
-            print("\n再见！")
+            print("再见！")
 
     async def run_repl(self) -> None:
         """Run an interactive REPL loop (stdin). Blocks until /quit or Ctrl+D."""
@@ -359,8 +372,14 @@ class DemoAgent:
             except RuntimeError:
                 break
 
+            # 从事件数据提取 request_id 并设置 ContextVar（修复跨 task 传播）
+            rid = (event.data or {}).get("request_id", "")
+            if rid:
+                set_request_id(rid)
+
             if event.type == EventType.INTERRUPT:
-                logger.info("EventBus: INTERRUPT received")
+                set_request_id("-")
+                logger.info("EventBus: INTERRUPT (%s)", event.data.get("source", "?") if event.data else "?")
                 if self._cognitive._current_task and not self._cognitive._current_task.done():
                     self._cognitive._current_task.cancel()
                 # Drain pending USER_INPUT, preserve STATE_CHANGE for UI
@@ -374,6 +393,8 @@ class DemoAgent:
                 user_name = data.get("user_name", "妖梦")
                 stt_emotion = data.get("emotion", "")
                 stt_events = data.get("events", [])
+                logger.info("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
+                           "websocket" if stt_emotion else "text", stt_emotion or "无")
                 # Spawn cognitive processing as independent task — frees event loop
                 task = asyncio.create_task(
                     self._cognitive.process(text, user_name=user_name,
@@ -398,7 +419,9 @@ class DemoAgent:
 
             elif event.type == EventType.STATE_CHANGE:
                 state = event.data.get("state", "") if event.data else ""
-                logger.debug("FSM → %s", state)
+                logger.info("FSM → %s", state)
+                if state == "idle":
+                    set_request_id("-")
                 for ch in self._output._channels:
                     try:
                         await ch.on_state(state)

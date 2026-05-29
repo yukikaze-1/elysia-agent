@@ -91,6 +91,8 @@ class PromptAssembler:
         """Search long-term memory with the user's message as query."""
         from .memory.long_term import MemoryEntry
         results = await self._long_term.search(query_text=query, top_k=5)
+        if results:
+            logger.info("记忆召回: %d 条", len(results))
         return results if results else []
 
     async def build_messages(self, user_message: str, user_name: str = "妖梦",
