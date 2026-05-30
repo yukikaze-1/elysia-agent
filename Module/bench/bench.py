@@ -2,6 +2,7 @@
 
 >> 备注：此模块后续将移动至 tools/bench/，不作为 Module 的子模块。"""
 
+import asyncio
 import os
 import time
 import wave
@@ -68,8 +69,71 @@ class LatencyBench:
         await self.bench_llm("deepseek/deepseek-v4-flash", "V4 Flash")
         await self.bench_tts()
         await self.bench_stt()
+        await self.bench_e2e()
         print()
         print("全部测试完成!")
+
+    # ---- 端到端管线 ----
+
+    async def bench_e2e(self) -> None:
+        """端到端管线延迟: start → first delta → complete (不含 TTS/STT)."""
+        print("=" * 50)
+        print("端到端管线 (Agent process_message)")
+        print("=" * 50)
+
+        if not os.getenv("DEEPSEEK_API_KEY"):
+            print("  [跳过] 未设置 DEEPSEEK_API_KEY")
+            return
+
+        try:
+            from core.app_config import AppConfig
+            from Module.config.loader import ConfigLoader
+            config = ConfigLoader(AppConfig, yaml_path="config.yaml").load()
+            # 纯文本模式，不依赖 TTS/STT
+            config.tts.enabled = False
+            config.stt.enabled = False
+        except Exception as e:
+            print(f"  [跳过] 配置加载失败: {e}")
+            return
+
+        from core.agent import Agent
+        agent = Agent(config=config)
+
+        try:
+            t_setup = time.perf_counter()
+            await agent.start()
+            setup_ms = (time.perf_counter() - t_setup) * 1000
+            print(f"  启动耗时: {int(setup_ms)} ms")
+            print(f"  记忆条目: {agent._long_term.count}")
+            print()
+
+            messages = [
+                ("简单问候", "你好，简单打个招呼"),
+                ("记忆搜索", "我叫妖梦，你还记得我最喜欢的颜色吗？"),
+                ("Web 搜索", "帮我查一下今天北京的天气"),
+            ]
+
+            for label, msg in messages:
+                t0 = time.perf_counter()
+                await agent.process_message(msg)
+                # 等离开 IDLE（处理已开始），再等回到 IDLE（处理完成）
+                for _ in range(500):
+                    if agent._fsm.state != "idle":
+                        break
+                    await asyncio.sleep(0.01)
+                for _ in range(5000):
+                    if agent._fsm.state == "idle":
+                        break
+                    await asyncio.sleep(0.01)
+                total_ms = (time.perf_counter() - t0) * 1000
+                print(f"  {label}: {self._fmt(total_ms / 1000)}  "
+                      f"({int(total_ms)} ms)  — \"{msg[:30]}...\"")
+                await asyncio.sleep(0.5)  # 间隔，避免 API 限流
+
+        except Exception as e:
+            print(f"  [错误] {e}")
+        finally:
+            await agent.stop()
 
     # ---- LLM ----
 

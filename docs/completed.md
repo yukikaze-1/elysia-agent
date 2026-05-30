@@ -213,3 +213,35 @@
 | TTS 编号 | 本轮/全局双计数 | `TTS 句 3/11 开始` = 本轮第3句 / 全局第11句 |
 
 ---
+
+### Bug 修复 + 性能优化 (2026-05-30)
+
+| 类别 | 修复项 | 说明 |
+|------|--------|------|
+| Bug | `PromptAssembler._prompt` 死代码 | 指向错误的 `character/` 目录且从未使用 → 改为正确复用 `PromptManager(prompt/)` |
+| Bug | `SentenceBuffer._skip_dot_and_retry()` 死代码 | `_find_split()` 已过滤假阳性句号，此路径永远不可达 → 删除 |
+| Bug | `ToolContext.user_id` 硬编码 | `"妖梦"` → `config.agent.user_name` |
+| Bug | filesystem `.env` 拒绝过于宽泛 | 子串匹配 → 逐级路径组件匹配（`part == pattern or part.startswith(pattern+".")`） |
+| Bug | `_transition_idle()` 无条件发 SPEAKING | 仅 tool_calls 无文本时不再发多余的 SPEAKING 事件 |
+| 性能 | `core/timing.py` 计时工具 | `Timer` context manager + `TimingClock` 请求级聚合，替换 ad-hoc `time.perf_counter()` |
+| 性能 | 认知循环计时汇总 | `<<< 回复生成完成 — 2340ms \| tools(2):1520ms \| ttft:380ms \| prompt:45ms` 单行输出 |
+| 性能 | `Module/bench/` 端到端 benchmark | 新增 `bench_e2e()`，测试 Agent 完整管线（启动/问候/记忆搜索/Web搜索） |
+| 修复 | TTS 句编号格式 | `TTS 句 1/1`(误导) → `TTS 句 1 (总#1)`(本轮序号+全局计数) |
+| 修复 | FSM → IDLE 时机 | `_transition_idle()` 等待所有 TTS 任务完成后才进入 IDLE，避免模型生成完但 TTS 还在播时提前空闲 |
+| 通用 | 移除 `_os._exit(0)` + stdin watcher | 删除 `_run_and_diagnose()` + `_stdin_watcher`，server 模式统一 `asyncio.run()` |
+
+### 前端体验优化 (2026-05-30)
+
+| 任务 | 说明 |
+|------|------|
+| 当前播放气泡高亮 | TTS 播放时对应气泡蓝色光晕 + `bubble-pulse` 呼吸动画，播放完自动取消 |
+| 新消息提示箭头 | 用户上翻历史时底部 fixed 显示 "↓ 新消息" 红色按钮，点击滚回底部自动隐藏 |
+
+### /debug 延迟 + 内存面板 (2026-05-30)
+
+| 任务 | 说明 |
+|------|------|
+| 延迟历史 ring buffer | `CognitiveLoop._timing_history` 存最近 100 轮请求的计时数据 |
+| /debug/api 暴露延迟 | `DebugInfo.timing_history` + `timing_stats`（p50/p95/p99/avg/last） |
+| /debug 前端延迟卡片 | debug.html 新增 Latency 卡片，表格展示百分位数 |
+| 内存统计 | `psutil.Process()` 获取 RSS/VMS/占比/线程数，/debug/api + 前端展示 |

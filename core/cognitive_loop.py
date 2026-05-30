@@ -11,6 +11,8 @@ import re
 import time
 from dataclasses import dataclass
 
+from .timing import TimingClock
+
 from Module.output import OutputManager, ChannelCapability
 from Module.tts import TTSBackend
 
@@ -89,6 +91,7 @@ class CognitiveLoop:
         self._tts_total: int = 0   # 全局计数器，跨轮次持续递增
         self._tts_seq: int = 0     # 本轮计数器，process() 开始时重置
         self._executing_tools: list[str] = []  # 当前正在执行中的工具名 (供 debug 面板)
+        self._timing_history: list[dict] = []  # 最近 100 轮请求的计时数据 (供 debug 面板)
         self._pending_emojis: dict[int, list[str]] = {}  # TTS句N后面的emoji队列
 
     async def process(self, user_message: str, user_name: str = "妖梦",
@@ -105,7 +108,9 @@ class CognitiveLoop:
                 rid = f"P{self._req_counter:03d}"
                 set_request_id(rid)
             self._tts_seq = 0
-            t_start = time.perf_counter()
+            clock = TimingClock()
+            clock.start()
+            self._clock = clock  # 供 _think_loop / _after_response 使用
 
             # 用户输入到达 — 记录时间和内容
             emo_tag = f" [{stt_emotion}]" if stt_emotion and stt_emotion != "NEUTRAL" else ""
@@ -121,11 +126,20 @@ class CognitiveLoop:
             try:
                 await self._think_loop(user_message, user_name,
                                        stt_emotion=stt_emotion, stt_events=stt_events)
-                elapsed = (time.perf_counter() - t_start) * 1000
-                logger.info("<<< 回复生成完成 (%d ms), TTS 后台继续", int(elapsed))
+                clock.stop()
+                logger.info("<<< 回复生成完成 — %s", clock.summary())
+                # 存入 ring buffer 供 /debug 面板
+                self._timing_history.append({
+                    "total_ms": clock.total_ms,
+                    "spans": dict(clock._spans),
+                })
+                if len(self._timing_history) > 100:
+                    self._timing_history = self._timing_history[-100:]
             except asyncio.CancelledError:
                 logger.info("<<< 用户打断")
                 await self._handle_interrupt()
+            finally:
+                self._clock = None  # type: ignore[assignment]
 
     async def _think_loop(self, user_message: str, user_name: str,
                           stt_emotion: str = "", stt_events: list[str] | None = None) -> None:
@@ -135,15 +149,14 @@ class CognitiveLoop:
             else:
                 self._emotion.analyze_user(user_message)
 
-        t0 = time.perf_counter()
-        messages = await self._prompt.build_messages(
-            user_message, user_name=user_name,
-            stt_emotion=stt_emotion, stt_events=stt_events,
-        )
-        t_prompt = (time.perf_counter() - t0) * 1000
+        with self._clock.span("prompt") as t:
+            messages = await self._prompt.build_messages(
+                user_message, user_name=user_name,
+                stt_emotion=stt_emotion, stt_events=stt_events,
+            )
         self._session.add_message("user", user_message)
         tool_defs = self._tools.definitions() or None
-        logger.info("提示词构建: %d ms, %d 条消息, %d 个工具", int(t_prompt), len(messages), len(tool_defs or []))
+        logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs or []))
 
         await self._output.typing(True)
 
@@ -152,7 +165,7 @@ class CognitiveLoop:
                 acc_text = ""
                 raw_tool_calls: list[dict] = []
                 speaking_started = False
-                ttft_logged = False
+                ttft_done = False
                 t_think_start = time.perf_counter()
 
                 stream = self._llm.stream_think(messages, tools=tool_defs,
@@ -163,10 +176,11 @@ class CognitiveLoop:
                         tc_deltas = chunk.get("tool_calls")
 
                         if content:
-                            if not ttft_logged:
-                                ttft_logged = True
-                                t_ttft = (time.perf_counter() - t_think_start) * 1000
-                                logger.info("首 token (TTFT): %d ms", int(t_ttft))
+                            if not ttft_done:
+                                ttft_done = True
+                                ttft_ms = int((time.perf_counter() - t_think_start) * 1000)
+                                self._clock._spans["ttft"] = ttft_ms
+                                logger.debug("TTFT: %d ms", ttft_ms)
                             acc_text += content
 
                             # TTS 关闭时流式逐字发送；TTS 开启时不发（由 _start_tts_stream 发送完整句）
@@ -276,10 +290,11 @@ class CognitiveLoop:
                         finally:
                             self._executing_tools.remove(func_name)
 
-                    results = await asyncio.gather(
-                        *[_execute_one(tc) for tc in normalized],
-                        return_exceptions=True,
-                    )
+                    with self._clock.span("tools"):
+                        results = await asyncio.gather(
+                            *[_execute_one(tc) for tc in normalized],
+                            return_exceptions=True,
+                        )
                     for item in results:
                         if isinstance(item, BaseException):
                             continue  # 工具被 cancel，跳过 — LLM 从缺失结果推断
@@ -337,8 +352,8 @@ class CognitiveLoop:
                 t0 = time.perf_counter()
                 items = await self._consolidator.consolidate(user_message, assistant_response)
                 if items:
-                    t_elapsed = (time.perf_counter() - t0) * 1000
-                    logger.info("记忆沉淀: %d 条 (%d ms)", len(items), int(t_elapsed))
+                    logger.debug("记忆沉淀: %d 条 (%d ms)", len(items),
+                                 int((time.perf_counter() - t0) * 1000))
             except Exception:
                 logger.debug("记忆沉淀失败", exc_info=True)
         # Save session asynchronously (fire-and-forget)
@@ -362,7 +377,7 @@ class CognitiveLoop:
         self._tts_seq += 1
         sid = self._tts_total
         seq = self._tts_seq
-        logger.info("TTS 句 %d/%d 开始 (%d 字符)", seq, sid, len(sentence))
+        logger.info("TTS 句 %d (总#%d) 开始 (%d 字符)", seq, sid, len(sentence))
         logger.debug("TTS 句内容: %s", _clean[:60])
 
         async def _stream(_sid: int, _seq: int):
@@ -375,7 +390,7 @@ class CognitiveLoop:
                 async for chunk in self._tts.synthesize_stream(sentence, character=char_name):
                     if first_chunk:
                         first_chunk = False
-                        logger.info("TTS 句 %d/%d 首块音频到达，发送文字+音频", _seq, _sid)
+                        logger.info("TTS 句 %d (总#%d) 首块音频到达，发送文字+音频", _seq, _sid)
                         # 先发排在本句之前的 emoji
                         for e in self._pending_emojis.pop(_sid - 1, []):
                             await self._output._broadcast("on_text_delta", e,
@@ -388,7 +403,7 @@ class CognitiveLoop:
                     await self._output.audio_chunk(chunk, stream_id=_sid)
                 await self._output.audio_end(_sid)
                 t_tts_elapsed = (time.perf_counter() - t_tts) * 1000
-                logger.info("TTS 句 %d/%d 播放完成 (%d ms)", _seq, _sid, int(t_tts_elapsed))
+                logger.info("TTS 句 %d (总#%d) 播放完成 (%d ms)", _seq, _sid, int(t_tts_elapsed))
                 # 发排在本句之后的 emoji
                 for e in self._pending_emojis.pop(_sid, []):
                     await self._output._broadcast("on_text_delta", e,
@@ -426,11 +441,17 @@ class CognitiveLoop:
             logger.debug("TTS synthesis failed", exc_info=True)
 
     async def _transition_idle(self) -> None:
+        # 等待所有 TTS 任务完成（或被 interrupt 取消）
+        pending = [t for t in self._tts_tasks if not t.done()]
+        if pending:
+            logger.debug("等待 %d 个 TTS 任务完成", len(pending))
+            await asyncio.gather(*pending, return_exceptions=True)
+            self._tts_tasks.clear()
+
         logger.info("→ IDLE")
-        await asyncio.sleep(0.1)
         if self._fsm.state == AgentState.THINKING:
+            # 仅 tool_calls 无文本时 FSM 仍在 THINKING，需经过 SPEAKING 才能到 IDLE
             self._fsm.transition(AgentState.SPEAKING)
-            self._bus.post(EventType.STATE_CHANGE, {"state": "speaking", "request_id": get_request_id()}, priority=EventPriority.STATE_CHANGE)
         self._fsm.transition(AgentState.IDLE)
         self._bus.post(EventType.STATE_CHANGE, {"state": "idle", "request_id": get_request_id()}, priority=EventPriority.STATE_CHANGE)
 

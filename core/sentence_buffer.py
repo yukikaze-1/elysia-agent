@@ -84,11 +84,6 @@ class SentenceBuffer:
 
         # Split into [before delim, delim, rest]
         delim = text[idx]
-        if delim == "." and not _is_dot_boundary(text, idx):
-            # False positive — abbreviation/number dot, skip this one
-            # Advance past this dot and try again
-            return self._skip_dot_and_retry(text, idx)
-
         before = text[:idx]
         after = text[idx + 1:]
 
@@ -143,9 +138,4 @@ class SentenceBuffer:
                 best = pos
         return best
 
-    def _skip_dot_and_retry(self, text: str, dot_pos: int) -> str | None:
-        """Advance past a false-positive dot and try extracting again."""
-        # We can't easily skip; just return None and wait for more context
-        # The next char after the dot might clarify things
-        return None
 

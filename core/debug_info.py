@@ -48,6 +48,12 @@ class DebugInfo:
     # LLM
     llm_model: str = ""
 
+    # Latency (ring buffer — last 100 requests)
+    timing_history: list[dict] = field(default_factory=list)
+    timing_stats: dict = field(default_factory=dict)
+
+    # Memory
+    memory: dict = field(default_factory=dict)
 
 def _truncate(text: str, n: int = 80) -> str:
     return text if len(text) <= n else text[:n] + "…"
@@ -126,5 +132,34 @@ async def collect(agent) -> DebugInfo:
 
     # ---- LLM ----
     info.llm_model = getattr(getattr(agent, "_llm", None), "model", "") or "?"
+
+    # ---- Latency ----
+    info.timing_history = list(getattr(agent._cognitive, "_timing_history", []))
+    if info.timing_history:
+        totals = sorted(h["total_ms"] for h in info.timing_history)
+        n = len(totals)
+        info.timing_stats = {
+            "count": n,
+            "avg_ms": sum(totals) // n,
+            "p50_ms": totals[n // 2],
+            "p95_ms": totals[int(n * 0.95)],
+            "p99_ms": totals[int(n * 0.99)] if n >= 100 else totals[-1],
+            "last_ms": totals[-1],
+        }
+
+    # ---- Memory ----
+    try:
+        import os as _os
+        import psutil
+        proc = psutil.Process(_os.getpid())
+        mem = proc.memory_info()
+        info.memory = {
+            "rss_mb": round(mem.rss / 1024 / 1024, 1),
+            "vms_mb": round(mem.vms / 1024 / 1024, 1),
+            "pct": round(proc.memory_percent(), 1),
+            "num_threads": proc.num_threads(),
+        }
+    except Exception:
+        info.memory = {"error": "psutil not available"}
 
     return info

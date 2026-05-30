@@ -124,7 +124,7 @@ class Agent:
         # 注入运行时上下文 — 工具通过 ctx.get("memory") 访问 L2 记忆
         self._tool_ctx = ToolContext(
             session_id=getattr(self._session, "_session_id", "default"),
-            user_id="妖梦",
+            user_id=self._user_name,
             services={"memory": self._long_term},
         )
         self._cognitive._ctx = self._tool_ctx

@@ -8,15 +8,19 @@ from pathlib import Path
 from Module.tool import ToolContext, tool
 
 
-# 默认禁止访问的路径模式
-_DEFAULT_DENIED: list[str] = [
+# 按路径前缀拒绝的模式（子串匹配完整路径）
+_DENIED_PATHS: list[str] = [
     "/etc/shadow",
     "/etc/passwd",
-    ".ssh",
-    ".gnupg",
     "/proc",
     "/sys",
+]
+
+# 按文件名/目录名拒绝的 dotfile 模式（逐级路径组件匹配）
+_DENIED_NAMES: list[str] = [
     ".env",
+    ".ssh",
+    ".gnupg",
 ]
 
 
@@ -28,18 +32,21 @@ def _resolve(path: str) -> Path:
 def _validate(path: str, ctx: ToolContext | None = None) -> str | None:
     """校验路径安全性。返回错误消息或 None（通过）。"""
     resolved = _resolve(path)
-
-    # 从 ctx 读取自定义黑名单/白名单
-    denied = _DEFAULT_DENIED
-    if ctx:
-        extra_denied = ctx.get("filesystem_denied", [])
-        if extra_denied:
-            denied = list(_DEFAULT_DENIED) + list(extra_denied)
-
     path_str = str(resolved)
-    for pattern in denied:
+
+    # 从 ctx 读取自定义黑名单
+    extra_denied = ctx.get("filesystem_denied", []) if ctx else []
+    denied_paths = list(_DENIED_PATHS) + [p for p in extra_denied if p.startswith("/")]
+    denied_names = list(_DENIED_NAMES) + [p for p in extra_denied if p.startswith(".")]
+
+    for pattern in denied_paths:
         if pattern in path_str:
-            return f"安全限制: 禁止访问包含 '{pattern}' 的路径"
+            return f"安全限制: 禁止访问 '{pattern}' 相关路径"
+
+    for pattern in denied_names:
+        for part in resolved.parts:
+            if part == pattern or part.startswith(pattern + "."):
+                return f"安全限制: 禁止访问 '{pattern}' 文件/目录"
 
     if not resolved.exists():
         return f"路径不存在: {path}"

@@ -118,7 +118,31 @@ function render(info) {
         ['Character', info.character_name + ' (' + (info.character_traits||[]).join(', ') + ')'],
       ]},
     ],
-    // Row 2: Session | Long-term
+    // Row 2: Latency | Memory stats
+    [
+      { title:'Latency', wide:false, rows: (() => {
+        const s = info.timing_stats;
+        if (!s || !s.count) return [['—', '暂无数据']];
+        return [
+          ['轮次', `${s.count} (avg ${s.avg_ms}ms)`],
+          ['P50', `${s.p50_ms}ms`],
+          ['P95', `${s.p95_ms}ms`],
+          ['P99', `${s.p99_ms}ms`],
+          ['最近', `${s.last_ms}ms`],
+        ];
+      })()},
+      { title:'Memory', wide:false, rows: (() => {
+        const m = info.memory;
+        if (!m || m.error) return [['—', m?.error || 'N/A']];
+        return [
+          ['RSS', `${m.rss_mb} MB`],
+          ['VMS', `${m.vms_mb} MB`],
+          ['占比', `${m.pct}%`],
+          ['线程', m.num_threads],
+        ];
+      })()},
+    ],
+    // Row 3: Session | Long-term
     [
       { title:'Recent Session', wide:false, items: (info.session_recent||[]).map(m =>
         `<span class="role-tag ${m.role}">${m.role}</span>${esc(trunc(m.content,90))}`

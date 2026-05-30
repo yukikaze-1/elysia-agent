@@ -20,7 +20,7 @@ python app.py --once "你好"
 
 # WebSocket 服务器模式（浏览器访问 http://localhost:8765）
 python app.py --server
-#   退出: 终端输入 /quit、浏览器设置面板"关闭服务"、或 curl -X POST /shutdown
+#   退出: Ctrl+C、浏览器设置面板"关闭服务"、或 curl -X POST /shutdown
 
 # 启用 TTS + STT（或在 config.yaml 中设置 TTS.enabled / STT.enabled）
 python app.py --server --tts --stt
@@ -88,6 +88,16 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | 日志链路完整追踪 (request ID + 毫秒时间戳 + 全管线计时) | done |
 | 对话日志分离 (log/conversation.log) | done |
 | TTS 句编号 (本轮/全局双计数) | done |
+| Live2D 虚拟角色渲染 (Cubism SDK for Web) | done |
+| 前端布局重构 (响应式三栏, Live2D 满高) | done |
+| 工具调用内联卡片 (展开/折叠, spinner→✓/✗) | done |
+| 统一命名移除 demo 前缀 (app.py, core/agent.py) | done |
+| 文档整理 (已完成记录分离到 docs/completed.md) | done |
+| PromptAssembler 复用 PromptManager | done |
+| SentenceBuffer 死代码清理 (_skip_dot_and_retry) | done |
+| ToolContext.user_id 配置化 | done |
+| filesystem .env 精确匹配 | done |
+| os._exit(0) + stdin watcher 移除 (优雅退出) | done |
 
 ## 项目结构
 

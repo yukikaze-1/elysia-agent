@@ -38,7 +38,11 @@ class PromptAssembler:
         self._character = character
         self._session = session
         self._long_term = long_term
-        self._prompt = PromptManager("./character")
+        try:
+            self._prompt = PromptManager(_PROMPT_DIR)
+        except FileNotFoundError:
+            logger.warning("模板目录不存在: %s，将使用 fallback", _PROMPT_DIR)
+            self._prompt = None
 
     async def build_system_prompt(self, user_message: str = "", user_name: str = "妖梦",
                                    stt_emotion: str = "", stt_events: list[str] | None = None) -> str:
@@ -74,18 +78,18 @@ class PromptAssembler:
 
         state = {"mood": mood}
 
-        try:
-            brain_prompt = PromptManager(_PROMPT_DIR)
-            return brain_prompt.render_macro(
-                "Brain.j2", "BrainSystemPrompt",
-                l3_personality_block=self._character.personality_block(),
-                sensory=sensory,
-                memory=memory,
-                state=state,
-            )
-        except Exception:
-            logger.warning("Brain.j2 渲染失败，使用 fallback", exc_info=True)
-            return await self._render_fallback(user_name, user_message, now, mood)
+        if self._prompt is not None:
+            try:
+                return self._prompt.render_macro(
+                    "Brain.j2", "BrainSystemPrompt",
+                    l3_personality_block=self._character.personality_block(),
+                    sensory=sensory,
+                    memory=memory,
+                    state=state,
+                )
+            except Exception:
+                logger.warning("Brain.j2 渲染失败，使用 fallback", exc_info=True)
+        return await self._render_fallback(user_name, user_message, now, mood)
 
     async def _get_recalled(self, query: str = "") -> "list[MemoryEntry]":
         """Search long-term memory with the user's message as query."""

@@ -68,6 +68,24 @@ body {
 }
 .msg-row.assistant .msg-bubble { background: var(--assistant-bg); border-bottom-left-radius: 4px; }
 .msg-row.user .msg-bubble { background: var(--user-bg); border-bottom-right-radius: 4px; }
+.msg-bubble.playing {
+  box-shadow: 0 0 14px rgba(124,179,255,0.35), inset 0 0 8px rgba(124,179,255,0.08);
+  border-color: rgba(124,179,255,0.45);
+  transition: box-shadow .3s ease, border-color .3s ease;
+}
+@keyframes bubble-pulse {
+  0%,100% { box-shadow: 0 0 10px rgba(124,179,255,0.25), inset 0 0 4px rgba(124,179,255,0.04); }
+  50%      { box-shadow: 0 0 20px rgba(124,179,255,0.50), inset 0 0 12px rgba(124,179,255,0.12); }
+}
+.msg-bubble.playing.pulse { animation: bubble-pulse 1.8s ease-in-out infinite; }
+#new-msg-indicator {
+  display: none; position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+  background: var(--accent); color: white; border: none; border-radius: 20px;
+  padding: 8px 18px; font-size: 13px; cursor: pointer; z-index: 20; white-space: nowrap;
+  box-shadow: 0 2px 12px rgba(233,69,96,0.4); transition: transform .15s ease;
+}
+#new-msg-indicator:hover { transform: translateX(-50%) scale(1.04); }
+#new-msg-indicator.visible { display: block; }
 .msg-mood { font-size: 12px; color: var(--muted); margin-left: 42px; margin-top: -2px; margin-bottom: 8px; }
 .msg-row.user .msg-mood { display: none; }
 .msg-status { font-size: 12px; color: var(--accent); margin-left: 42px; font-style: italic; }
@@ -124,6 +142,7 @@ body {
 }
 #send-btn { background: var(--accent); color: white; }
 #send-btn:hover { filter: brightness(1.1); }
+#send-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; filter: none; }
 #mic-btn { background: var(--border); color: var(--text); }
 #mic-btn.active { background: var(--accent); animation: mic-pulse 1.5s infinite; }
 @keyframes mic-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(233,69,96,.4)} 50%{box-shadow:0 0 0 8px rgba(233,69,96,0)} }
@@ -191,8 +210,8 @@ body {
   <div id="chat-wrap"><div id="chat"></div></div>
   <div id="input-bar">
     <button id="mic-btn" title="麦克风">🎤</button>
-    <textarea id="text-input" rows="1" placeholder="输入消息..." autofocus></textarea>
-    <button id="send-btn">➤</button>
+    <textarea id="text-input" rows="1" placeholder="连接中..." autofocus></textarea>
+    <button id="send-btn" disabled>➤</button>
   </div>
 </div>
 
@@ -220,6 +239,7 @@ let lastMsgTime = 0, lastRole = '';
 let userScrolledUp = false;
 let nextBubbleQueue = [];  // 气泡已到达但音频还在播放 → 暂存，等音频结束再弹出
 let _toolCards = {};       // tool name → card DOM element
+let _playingBubble = null; // 当前正在播放 TTS 的气泡 DOM
 
 // ---- Init ----
 document.getElementById('vol-slider').value = volume;
@@ -230,8 +250,17 @@ connect();
 // ---- WebSocket ----
 function connect() {
   ws = new WebSocket(`ws://${host}/ws`);
-  ws.onopen = () => setConnStatus('connected', '已连接');
-  ws.onclose = () => { setConnStatus('disconnected', '断开 — 3秒后重连'); setTimeout(connect, 3000); };
+  ws.onopen = () => {
+    setConnStatus('connected', '已连接');
+    document.getElementById('send-btn').disabled = false;
+    document.getElementById('text-input').placeholder = '输入消息...';
+  };
+  ws.onclose = () => {
+    setConnStatus('disconnected', '断开 — 3秒后重连');
+    document.getElementById('send-btn').disabled = true;
+    document.getElementById('text-input').placeholder = '连接断开，重连中...';
+    setTimeout(connect, 3000);
+  };
   ws.onmessage = handleWS;
 }
 
@@ -355,13 +384,35 @@ function revealNextQueuedBubble() {
     row.style.opacity = '1';
     row.style.transform = 'translateY(0)';
   });
+  // 当前 TTS 正在播放 → 高亮对应气泡
+  const bubble = row.querySelector('.msg-bubble');
+  if (bubble && (audioPlaying || audioQueue.length > 0)) {
+    highlightPlaying(bubble);
+  }
   scrollDown();
   debounceSave();
+}
+
+function highlightPlaying(bubble) {
+  if (_playingBubble) {
+    _playingBubble.classList.remove('playing', 'pulse');
+  }
+  _playingBubble = bubble;
+  bubble.classList.add('playing');
+  bubble.classList.add('pulse');
+}
+
+function clearPlayingHighlight() {
+  if (_playingBubble) {
+    _playingBubble.classList.remove('playing', 'pulse');
+    _playingBubble = null;
+  }
 }
 
 function addUserMsg(text) {
   finalizeDelta();
   nextBubbleQueue = [];  // 新消息清除排队气泡
+  clearPlayingHighlight();
   lastRole = 'user';
   const row = document.createElement('div'); row.className = 'msg-row user';
   row.innerHTML = `<div class="msg-bubble">${esc(text)}</div><div class="msg-avatar">😎</div>`;
@@ -457,14 +508,36 @@ function moodColor(m) { return {happy:'var(--happy)',sad:'var(--sad)',excited:'v
 
 // ---- Scroll ----
 function scrollDown() {
-  if (userScrolledUp) return;
+  if (userScrolledUp) { showNewMsgIndicator(); return; }
   const wrap = document.getElementById('chat-wrap');
   requestAnimationFrame(() => { wrap.scrollTop = wrap.scrollHeight; });
 }
 document.getElementById('chat-wrap').addEventListener('scroll', function() {
   const w = this;
+  const wasUp = userScrolledUp;
   userScrolledUp = w.scrollTop + w.clientHeight < w.scrollHeight - 60;
+  if (!userScrolledUp && wasUp) hideNewMsgIndicator();
 });
+
+// ---- New Message Indicator ----
+function showNewMsgIndicator() {
+  let el = document.getElementById('new-msg-indicator');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'new-msg-indicator';
+    el.textContent = '↓ 新消息';
+    el.onclick = () => {
+      userScrolledUp = false;
+      scrollDown();
+    };
+    document.getElementById('chat-wrap').appendChild(el);
+  }
+  el.classList.add('visible');
+}
+function hideNewMsgIndicator() {
+  const el = document.getElementById('new-msg-indicator');
+  if (el) el.classList.remove('visible');
+}
 
 // ---- Persistence ----
 function saveChat() {
@@ -574,6 +647,8 @@ function playNext() {
     audioPlaying=false;
     // 上一句播放完，弹出排队中的下一个气泡
     if (!audioQueue.length) revealNextQueuedBubble();
+    // 队列空了 → 取消高亮
+    if (!audioQueue.length) clearPlayingHighlight();
     playNext();
   };
   a.play().then(()=>{})
