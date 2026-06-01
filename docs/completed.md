@@ -356,3 +356,40 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 |------|------|
 | 根因定位 | Delta 消息不含 `stream_id`，前端只能通过 `nextBubbleQueue` 推断高亮时机。首句气泡在音频开始前已挂 DOM，`revealNextQueuedBubble()` 无法处理，导致首句永不高亮；后续句依赖队列时序偶有错位 |
 | 修复 | 后端 `on_text_delta` 增加 `stream_id` 参数（WebSocket/Console/协议），CognitiveLoop TTS delta 广播携带 `stream_id=_sid`。前端 `_streamBubbles[streamId]` 映射气泡，`playNext()` 直接查表高亮 |
+| 测试 | 727 通过 (5 pre-existing failures) |
+
+### 前端模块化重构 (2026-06-01)
+
+将 `static/index.html` 从 741 行单文件拆分为 12 个模块化文件，同时修复 12 个 bug + 4 个 UX 增强。
+
+| 改进 | 说明 |
+|------|------|
+| 模块拆分 | HTML 47 行 + CSS 206 行 + JS 863 行（10 个 ES module） |
+| 状态封装 | 15+ 散落全局变量 → `AppState` 单例 (`state.js`)，`resetConnection()` 统一状态重置 |
+| 退避重连 | 固定 3s → 指数退避 1s→2s→4s→8s→max 30s ± 20% jitter |
+| 协议检测 | 硬编码 `ws://` → `location.protocol` 自动选 `wss://` |
+| JSON 解析防护 | 无防护 → try-catch + console.warn |
+| Tool card ID | 工具名 key（可冲突）→ `name-counter` 唯一 ID |
+| 设置面板 | 图标切换 → 外部点击关闭 + 清空 confirm 对话框 |
+| 增量保存 | `querySelectorAll` 全量扫描 DOM → 内存 `messages[]` 数组直接序列化 |
+| 恢复历史 | 走 `addUserMsg()`（副作用）→ 直接构建 DOM（独立路径） |
+| `window._ac` 泄漏 | 全局命名空间 → `state.audioChunks`，重连时清空 |
+| `_streamBubbles` 泄漏 | 永不清除 → 30s TTL 超时自动清理 |
+| `playNext()` 错误 | 静默吞掉 → `console.warn` 日志 |
+| Escape 快捷键 | 无 → Escape 发送 `{type: "interrupt"}` WS 消息 |
+| `prefers-reduced-motion` | 无 → 全部动画禁用 |
+| 基本 ARIA | 无 → `role="article"`, `aria-label`, `aria-hidden` |
+| Live2D sandbox 修复 | 去掉 `allow-same-origin` 导致资源加载失败 → 恢复（Live2D 需同源 fetch 模型文件）|
+
+### Debug 页面优化 (2026-06-01)
+
+| 改进 | 说明 |
+|------|------|
+| 数据补全 | 新增 `session_params` 展示；`llm_mock` 死代码 → `/mock/i.test(model)`；工具参数加 `title` tooltip |
+| XSS 防护 | `fsm_state`、`previous`、role、type 等遗漏的动态值加 `esc()` |
+| 轮询退避 | 固定 2s → 指数退避 2s→4s→8s→max 30s，成功后重置 |
+| 暂停/恢复 | 点击暂停停止轮询，恢复后立即刷新 |
+| 跳过无变化渲染 | 浅比较 7 个关键字段，相同跳过 DOM 重建（消除闪烁）|
+| 复制 JSON | 一键复制完整 debug 数据到剪贴板 |
+| 可展开消息 | 截断文本点击展开/收起全文 |
+| 响应式 | 700px 断点切换单列布局 |

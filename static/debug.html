@@ -71,6 +71,14 @@ h1 { font-size: 18px; margin-bottom: 4px; }
 .header { display: flex; justify-content: space-between; align-items: flex-start; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
+.truncated { color: var(--text); }
+.truncated:hover { color: #fff; }
+@media (max-width: 700px) {
+  .grid { grid-template-columns: 1fr; }
+  .card-wide { grid-column: auto; }
+  body { padding: 10px; font-size: 12px; }
+  .header { flex-direction: column; gap: 8px; }
+}
 </style>
 </head>
 <body>
@@ -82,30 +90,71 @@ h1 { font-size: 18px; margin-bottom: 4px; }
     <h1>Elysia Debug</h1>
     <div class="sub">内部状态监控 — <span id="updated">等待数据...</span></div>
   </div>
+  <div style="display:flex;gap:8px;">
+    <button id="pause-btn" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">暂停</button>
+    <button id="copy-btn" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">复制 JSON</button>
+  </div>
 </div>
 
 <div class="grid" id="grid"></div>
 
 <script>
 const POLL_MS = 2000;
+const POLL_MAX_MS = 30000;
 let timer = null;
+let pollInterval = POLL_MS;
+let paused = false;
+let lastInfo = null;
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 function ok(v) { return v ? '<span class="ok">&#10003;</span>' : '<span class="fail">&#10007;</span>'; }
 function trunc(s, n) { return s && s.length > n ? s.slice(0,n)+'…' : s||''; }
 
+function expandable(text, maxLen) {
+  if (!text || text.length <= maxLen) return esc(text);
+  const id = 'ex-' + Math.random().toString(36).slice(2, 10);
+  return `<span id="${id}" class="truncated" onclick="
+    var el=document.getElementById('${id}');
+    if(el.classList.contains('truncated')){
+      el.textContent=el.getAttribute('data-full');
+      el.classList.remove('truncated');
+    }else{
+      el.textContent=el.getAttribute('data-short');
+      el.classList.add('truncated');
+    }
+  " style="cursor:pointer;" title="点击展开/收起"
+    data-full="${esc(text).replace(/"/g, '&quot;')}"
+    data-short="${esc(text.slice(0, maxLen)).replace(/"/g, '&quot;')}…"
+  >${esc(text.slice(0, maxLen))}…</span>`;
+}
+
 function render(info) {
   document.getElementById('updated').textContent = new Date().toLocaleTimeString();
   document.getElementById('error-banner').style.display = 'none';
+
+  // 关键字段未变化则跳过 DOM 重建
+  if (lastInfo) {
+    const same = (
+      lastInfo.fsm_state === info.fsm_state &&
+      lastInfo.processing === info.processing &&
+      lastInfo.session_messages === info.session_messages &&
+      lastInfo.lt_count === info.lt_count &&
+      lastInfo.ws_clients === info.ws_clients &&
+      JSON.stringify(lastInfo.currently_executing) === JSON.stringify(info.currently_executing) &&
+      JSON.stringify(lastInfo.timing_stats) === JSON.stringify(info.timing_stats)
+    );
+    if (same) return;
+  }
+  lastInfo = info;
 
   const cards = [
     // Row 1: System | Memory
     [
       { title:'System', wide:false, rows:[
-        ['FSM State', `<span class="${info.fsm_state==='idle'?'ok':'warn'}">${info.fsm_state}</span>`],
-        ['Previous', info.fsm_previous||'—'],
+        ['FSM State', `<span class="${info.fsm_state==='idle'?'ok':'warn'}">${esc(info.fsm_state)}</span>`],
+        ['Previous', esc(info.fsm_previous||'—')],
         ['Processing', info.processing ? '<span class="warn">yes</span>' : '<span class="ok">no</span>'],
-        ['LLM Model', info.llm_model + (info.llm_mock ? ' <span class="warn">MOCK</span>' : '')],
+        ['LLM Model', esc(info.llm_model) + (/mock/i.test(info.llm_model || '') ? ' <span class="warn">MOCK</span>' : '')],
         ['TTS', ok(info.tts_ok)],
         ['WebSocket Clients', info.ws_clients],
       ]},
@@ -115,6 +164,7 @@ function render(info) {
         ['MongoDB', ok(info.mongodb_ok)],
         ['Milvus', ok(info.milvus_ok)],
         ['Embedding', ok(info.embedding_ok)],
+        ['Session Params', esc(trunc(JSON.stringify(info.session_params || {}), 80))],
         ['Character', info.character_name + ' (' + (info.character_traits||[]).join(', ') + ')'],
       ]},
     ],
@@ -153,10 +203,10 @@ function render(info) {
     // Row 3: Session | Long-term
     [
       { title:'Recent Session', wide:false, items: (info.session_recent||[]).map(m =>
-        `<span class="role-tag ${m.role}">${m.role}</span>${esc(trunc(m.content,90))}`
+        `<span class="role-tag ${esc(m.role)}">${esc(m.role)}</span>${expandable(m.content, 90)}`
       )},
       { title:'Long-term Memory', wide:false, items: (info.lt_recent||[]).map(e =>
-        `<span class="type-tag">${e.metadata?.type||'?'}</span>${esc(trunc(e.text,90))}`
+        `<span class="type-tag">${esc(e.metadata?.type||'?')}</span>${expandable(e.text, 90)}`
       )},
     ],
     // Row 3: Tools | Tool History | Consolidation
@@ -176,7 +226,7 @@ function render(info) {
           <span class="tool-name">${esc(t.name)}</span>
           <span class="tool-desc">${esc(t.description)}</span>
           <div class="tool-params">${(t.parameters||[]).map(p =>
-            `<span class="param-tag">${esc(p.name)}<i>${esc(p.type)}</i>${p.required?'*':''}</span>`
+            `<span class="param-tag" title="${esc(p.description||'')}">${esc(p.name)}<i>${esc(p.type)}</i>${p.required?'*':''}</span>`
           ).join(' ')}</div>
           <div class="tool-tags">${(t.requires||[]).map(r =>
             `<span class="req-tag">${esc(r)}</span>`
@@ -230,17 +280,49 @@ function showError(msg) {
 }
 
 async function poll() {
+  if (paused) return;
   try {
     const resp = await fetch('/debug/api');
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    render(await resp.json());
+    const info = await resp.json();
+    render(info);
+    pollInterval = POLL_MS;
   } catch(e) {
     showError('无法连接: ' + e.message);
+    pollInterval = Math.min(pollInterval * 2, POLL_MAX_MS);
   }
+  scheduleNext();
+}
+
+function scheduleNext() {
+  if (timer) clearTimeout(timer);
+  if (paused) return;
+  timer = setTimeout(poll, pollInterval);
 }
 
 poll();
-timer = setInterval(poll, POLL_MS);
+
+document.getElementById('pause-btn').onclick = () => {
+  paused = !paused;
+  const btn = document.getElementById('pause-btn');
+  if (paused) {
+    btn.textContent = '恢复';
+    if (timer) { clearTimeout(timer); timer = null; }
+  } else {
+    btn.textContent = '暂停';
+    poll();
+  }
+};
+
+document.getElementById('copy-btn').onclick = async () => {
+  if (!lastInfo) return;
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(lastInfo, null, 2));
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = '已复制';
+    setTimeout(() => { btn.textContent = '复制 JSON'; }, 2000);
+  } catch {}
+};
 </script>
 </body>
 </html>

@@ -100,6 +100,48 @@ cfg = ConfigLoader(MyConfig, yaml_path="config.yaml", yaml_key="Server").load()
 - **DeepSeek prefix continuation**: Messages with `{"role": "assistant", "content": "...", "prefix": True}` trigger beta endpoint routing and `extra_body={"prefix": True}`. Non-DeepSeek providers raise `ValueError` on prefix.
 - **Naming convention**: Backend classes end in `Backend` (not `Provider` or `Client`): `OpenAICompatBackend`, `SenseVoiceBackend`, `GPTSoVitsBackend`, etc.
 
+## Frontend static files (`static/`)
+
+The frontend is vanilla HTML/CSS/JS served directly by aiohttp. No build step, no framework.
+
+### Chat interface (`static/index.html`)
+
+Minimal 47-line HTML shell. All logic lives in `static/js/*.js` (ES modules, loaded via `<script type="module">`).
+
+```
+static/
+├── index.html          # HTML shell (47 lines)
+├── debug.html           # Internal debug/monitoring page
+├── css/
+│   └── chat.css         # All styles (~200 lines)
+└── js/
+    ├── config.js         # Named constants (timeouts, buffer sizes, storage keys)
+    ├── state.js          # AppState singleton — all mutable state in one place
+    ├── ws.js             # WebSocket: connect, reconnect (exponential backoff + jitter), send
+    ├── chat.js           # Chat display: bubbles, delta streaming, typing, tool cards, mood
+    ├── audio.js          # TTS buffer/playback: base64 decode, queue, bubble highlight
+    ├── mic.js            # Microphone: getUserMedia, ScriptProcessor, PCM→Int16
+    ├── settings.js       # Settings panel: TTS toggle, volume, clear, shutdown
+    ├── persistence.js    # localStorage save/restore (incremental, messages array)
+    └── main.js           # Entry point: WS message routing, input, keyboard shortcuts
+```
+
+### Debug page (`static/debug.html`)
+
+Single-file (no split). Polls `/debug/api` every 2s with backoff on failure. Displays: FSM state, session/long-term memory, latency stats, process memory, scheduler, tools, consolidation history. Pause/resume button, JSON export, expandable truncated messages, responsive layout.
+
+### Server routing
+
+Defined in `Module/input/server.py`:
+- `/` → `static/index.html`
+- `/debug` → `static/debug.html`
+- `/debug/api` → JSON debug info
+- `/static/*` → static files
+- `/live2d/*` → Live2D Cubism SDK assets
+- `/ws` → WebSocket endpoint
+- `/health`, `/ready` → health checks
+- `/shutdown` → graceful shutdown
+
 ## Adding a new backend
 
 1. Create `<module>/your_backend.py` — implement the protocol ABC
