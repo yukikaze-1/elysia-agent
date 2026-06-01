@@ -245,3 +245,49 @@
 | /debug/api 暴露延迟 | `DebugInfo.timing_history` + `timing_stats`（p50/p95/p99/avg/last） |
 | /debug 前端延迟卡片 | debug.html 新增 Latency 卡片，表格展示百分位数 |
 | 内存统计 | `psutil.Process()` 获取 RSS/VMS/占比/线程数，/debug/api + 前端展示 |
+
+---
+
+### TaskScheduler 统一任务调度中心 (2026-05-31)
+
+| 任务 | 说明 |
+|------|------|
+| Task 模型 | `core/task.py` — Task dataclass, Future 双向绑定, retry policy, 工厂方法, 序列化 |
+| Worker Pool | `core/task_scheduler.py` — N=5 Worker, callback 模式被 CognitiveLoop 调用 |
+| Future 取消传播 | INTERRUPT → `dispatch_tool_calls` CancelledError → 显式 cancel 每个子任务 → Worker 取消执行 |
+| 工具执行通过 Scheduler | `_on_tool_calls` callback → `dispatch_tool_calls()` → Worker Pool 并行执行 → 结果回传 |
+| 消息排队 FIFO | busy 时 `_pending_messages` 入队, STATE_CHANGE idle 时出队, INTERRUPT 清空 |
+| 重试 | 工具 2 次 retry (指数退避 1→2→4s), 后台任务 3 次 (1→2→4→8s) |
+| 超时保护 | `asyncio.wait_for(_execute_tool, timeout=60s)` |
+| 内存管理 | `_prune_tasks()` 定期清理终态, `cancel()` 即删, `stop()` drain + clear |
+| Checkpoint | BACKGROUND 任务 JSON 持久化, 原子写入, crash-safe, `.tmp` 残留清理 |
+| /debug 面板 | Scheduler 卡片 (pending/running/total + task_tree) |
+| 测试 | 40 tests — 14 model + 26 scheduler (含 7 集成测试), 无回归 |
+| 代码审查修复 | 18 个问题 (4 高 + 8 中 + 6 低), 全部修复 |
+
+**架构**:
+
+```
+EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
+                              │
+                      检测 tool_calls
+                              │
+                              ▼
+                    Scheduler.dispatch_tool_calls()
+                              │
+                              ▼
+                    Worker Pool (N=5)
+                    ├── 工具子任务 (超时/重试/cancel)
+                    └── 后台任务 (checkpoint/resume)
+```
+
+**关键设计**: 认知循环不经 Scheduler, Scheduler 是纯 Worker Pool。Future 双向绑定。`cancel()` 级联取消子树 + 清理 _tasks。shutdown 先停 event_task 再停 scheduler。
+
+### Ctrl+C 修复 + data/ 目录 (2026-06-01)
+
+| 任务 | 说明 |
+|------|------|
+| Ctrl+C traceback 修复 | `run_server()` 同时捕获 `(KeyboardInterrupt, asyncio.CancelledError)`，避免 `asyncio.sleep(1)` 取消导致的双重 traceback |
+| `data/` 目录自动创建 | Scheduler `start()` 时 `mkdir(parents=True)`，无 BACKGROUND 任务时也确保目录存在 |
+| VAD 环境音敏感 | 加入 todo — 需调整 aggressiveness 或加降噪 |
+| 工具超时手动测试 | 加入 todo — 需构造慢工具场景验证 60s timeout |

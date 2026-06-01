@@ -95,7 +95,8 @@ class CognitiveLoop:
         self._pending_emojis: dict[int, list[str]] = {}  # TTS句N后面的emoji队列
 
     async def process(self, user_message: str, user_name: str = "妖梦",
-                       stt_emotion: str = "", stt_events: list[str] | None = None) -> None:
+                       stt_emotion: str = "", stt_events: list[str] | None = None,
+                       _on_tool_calls=None) -> None:
         async with self._process_lock:
             if not self._fsm.can_transition(AgentState.THINKING):
                 logger.warning("Cannot transition to THINKING from %s", self._fsm.state)
@@ -125,7 +126,8 @@ class CognitiveLoop:
             self._current_task = asyncio.current_task()
             try:
                 await self._think_loop(user_message, user_name,
-                                       stt_emotion=stt_emotion, stt_events=stt_events)
+                                       stt_emotion=stt_emotion, stt_events=stt_events,
+                                       _on_tool_calls=_on_tool_calls)
                 clock.stop()
                 logger.info("<<< 回复生成完成 — %s", clock.summary())
                 # 存入 ring buffer 供 /debug 面板
@@ -142,7 +144,8 @@ class CognitiveLoop:
                 self._clock = None  # type: ignore[assignment]
 
     async def _think_loop(self, user_message: str, user_name: str,
-                          stt_emotion: str = "", stt_events: list[str] | None = None) -> None:
+                          stt_emotion: str = "", stt_events: list[str] | None = None,
+                          _on_tool_calls=None) -> None:
         if self._emotion:
             if stt_emotion and stt_emotion != "NEUTRAL":
                 self._emotion.analyze_user_stt(stt_emotion, stt_events)
@@ -256,45 +259,25 @@ class CognitiveLoop:
                         assistant_entry["tool_calls"] = normalized
                     messages.append(assistant_entry)
 
-                    # 并行执行所有工具 — 无依赖工具同时跑，减少总等待时间
-                    async def _execute_one(tc: dict):
+                    # Emit tool_executing actions for UI (before dispatch)
+                    for tc in normalized:
                         func_name = tc["function"]["name"]
-                        self._executing_tools.append(func_name)
-                        t_tool = time.perf_counter()
                         try:
-                            try:
-                                args = json.loads(tc["function"]["arguments"])
-                            except (json.JSONDecodeError, KeyError):
-                                args = {}
-                            logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
-                            await self._output.action("tool_executing", params={
-                                "tool": func_name,
-                                "args": {k: str(v)[:80] for k, v in args.items()},
-                            })
-                            try:
-                                tr = await self._tools.execute(func_name, args, ctx=self._ctx)
-                            except asyncio.CancelledError:
-                                logger.info("工具取消: %s", func_name)
-                                tr = ToolResult.fail(name=func_name, error="用户取消")
-                            except Exception as e:
-                                logger.warning("工具失败: %s — %s", func_name, e)
-                                tr = ToolResult.fail(name=func_name, error=str(e))
-                            t_tool_elapsed = (time.perf_counter() - t_tool) * 1000
-                            logger.info("工具完成: %s (%s) — %d ms",
-                                        func_name, "OK" if tr.success else "FAIL", int(t_tool_elapsed))
-                            await self._output.action("tool_done", params={
-                                "tool": func_name,
-                                "success": tr.success,
-                            })
-                            return tc, tr
-                        finally:
-                            self._executing_tools.remove(func_name)
+                            args = json.loads(tc["function"]["arguments"])
+                        except (json.JSONDecodeError, KeyError):
+                            args = {}
+                        self._executing_tools.append(func_name)
+                        await self._output.action("tool_executing", params={
+                            "tool": func_name,
+                            "args": {k: str(v)[:80] for k, v in args.items()},
+                        })
 
                     with self._clock.span("tools"):
-                        results = await asyncio.gather(
-                            *[_execute_one(tc) for tc in normalized],
-                            return_exceptions=True,
-                        )
+                        if _on_tool_calls is not None:
+                            results = await _on_tool_calls(normalized)
+                        else:
+                            results = await self._execute_tools_directly(normalized)
+
                     for item in results:
                         if isinstance(item, BaseException):
                             continue  # 工具被 cancel，跳过 — LLM 从缺失结果推断
@@ -304,6 +287,19 @@ class CognitiveLoop:
                             "tool_call_id": tc.get("id", "unknown"),
                             "content": tool_result.llm_content,
                         })
+                        # Emit tool_done for each completed tool
+                        await self._output.action("tool_done", params={
+                            "tool": tc["function"]["name"],
+                            "success": tool_result.success,
+                        })
+
+                    # Clean up executing tools tracking
+                    for tc in normalized:
+                        func_name = tc["function"]["name"]
+                        try:
+                            self._executing_tools.remove(func_name)
+                        except ValueError:
+                            pass
 
                     self._fsm.transition(AgentState.THINKING)
                     self._bus.post(EventType.STATE_CHANGE, {"state": "thinking", "request_id": get_request_id()},
@@ -439,6 +435,40 @@ class CognitiveLoop:
             await self._output.audio_chunk(audio)
         except Exception:
             logger.debug("TTS synthesis failed", exc_info=True)
+
+    async def _execute_tools_directly(
+        self, normalized: list[dict],
+    ) -> list:
+        """直接执行工具调用 — 向后兼容，不经过 Scheduler Worker Pool。
+
+        每个工具在独立的 asyncio.Task 中并行执行，
+        CancelledError 由 asyncio.gather 的 return_exceptions 捕获。
+        """
+        async def _execute_one(tc: dict):
+            func_name = tc["function"]["name"]
+            t_tool = time.perf_counter()
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except (json.JSONDecodeError, KeyError):
+                args = {}
+            logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
+            try:
+                tr = await self._tools.execute(func_name, args, ctx=self._ctx)
+            except asyncio.CancelledError:
+                logger.info("工具取消: %s", func_name)
+                tr = ToolResult.fail(name=func_name, error="用户取消")
+            except Exception as e:
+                logger.warning("工具失败: %s — %s", func_name, e)
+                tr = ToolResult.fail(name=func_name, error=str(e))
+            t_tool_elapsed = (time.perf_counter() - t_tool) * 1000
+            logger.info("工具完成: %s (%s) — %d ms",
+                        func_name, "OK" if tr.success else "FAIL", int(t_tool_elapsed))
+            return tc, tr
+
+        return await asyncio.gather(
+            *[_execute_one(tc) for tc in normalized],
+            return_exceptions=True,
+        )
 
     async def _transition_idle(self) -> None:
         # 等待所有 TTS 任务完成（或被 interrupt 取消）

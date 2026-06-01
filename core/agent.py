@@ -28,6 +28,7 @@ from .idle_monitor import IdleMonitor
 from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
+from .task_scheduler import TaskScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +103,19 @@ class Agent:
             event_bus=self._bus,
         )
 
+        # Worker Pool — 执行 AI 规划的工具子任务 + 后台任务
+        self._scheduler = TaskScheduler(
+            tools=self._tools,
+            tool_ctx=None,  # 在 start() 中赋值 tool_ctx 后更新
+            num_workers=5,
+            checkpoint_path="data/scheduler_checkpoint.json",
+        )
+
         self._running = False
         self._event_task: asyncio.Task | None = None
         self._req_counter: int = 0
+        # FIFO 消息排队 — FSM != IDLE 时暂存消息
+        self._pending_messages: list[dict] = []
 
     # ---- Lifecycle ----
 
@@ -128,6 +139,10 @@ class Agent:
             services={"memory": self._long_term},
         )
         self._cognitive._ctx = self._tool_ctx
+        self._scheduler._tool_ctx = self._tool_ctx  # 更新 Scheduler 的 ToolContext
+
+        # Start Worker Pool
+        await self._scheduler.start()
 
         # Preload embedding in background (runs in thread pool, won't block event loop)
         self._embed_task = asyncio.create_task(
@@ -157,6 +172,19 @@ class Agent:
         logger.info("Agent stopping...")
         self._running = False
 
+        # 清空排队 — shutdown 期间不处理新消息
+        self._pending_messages.clear()
+
+        # 先停 _process_events — 防止它在 shutdown 期间继续 post 新任务
+        if self._event_task:
+            logger.debug("Cancelling event task...")
+            self._event_task.cancel()
+            try:
+                await asyncio.wait_for(self._event_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            self._event_task = None
+
         # Cancel cognitive + TTS tasks (may be idle, but belt-and-suspenders)
         for attr in ("_current_task", "_tts_task"):
             t = getattr(self._cognitive, attr, None)
@@ -170,16 +198,11 @@ class Agent:
         if getattr(self, "_embed_task", None) and not self._embed_task.done():
             self._embed_task.cancel()
 
+        logger.debug("Stopping scheduler Worker Pool...")
+        await self._scheduler.stop()
+
         logger.debug("Stopping idle monitor...")
         await self._idle.stop()
-
-        if self._event_task:
-            logger.debug("Cancelling event task...")
-            self._event_task.cancel()
-            try:
-                await asyncio.wait_for(self._event_task, timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
 
         # Cancel embedding task
         if getattr(self, "_embed_task", None):
@@ -232,7 +255,11 @@ class Agent:
         return rid
 
     async def process_message(self, text: str, user_name: str = "妖梦") -> None:
-        """Process a single user message through the pipeline."""
+        """Process a single user message through the pipeline.
+
+        If the agent is busy, the message is queued and processed when IDLE.
+        Explicit interrupt (stop button, VAD) still works via EventBus INTERRUPT.
+        """
         if not text.strip():
             return
 
@@ -240,16 +267,14 @@ class Agent:
 
         self._idle.touch()
 
-        # Interrupt if currently processing
         if self._fsm.state != AgentState.IDLE:
-            logger.info("Interrupting current processing (state=%s)", self._fsm.state)
-            self._bus.post(EventType.INTERRUPT, {"source": "user_input", "request_id": rid},
-                          priority=EventPriority.INTERRUPT)
-            # Wait for interrupt to complete (FSM → IDLE), with 5s timeout
-            for _ in range(500):
-                if self._fsm.state == AgentState.IDLE:
-                    break
-                await asyncio.sleep(0.01)
+            # Queue message instead of interrupting
+            logger.info("Agent busy — 消息排队 (state=%s, queue=%d)",
+                       self._fsm.state, len(self._pending_messages) + 1)
+            self._pending_messages.append({
+                "text": text, "user_name": user_name, "request_id": rid,
+            })
+            return
 
         self._bus.post(EventType.USER_INPUT, {"text": text, "user_name": user_name,
                                                "request_id": rid})
@@ -306,7 +331,7 @@ class Agent:
         try:
             while self._running:
                 await asyncio.sleep(1)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:
             await self.stop()
@@ -359,10 +384,11 @@ class Agent:
                 logger.info("EventBus: INTERRUPT (%s)", event.data.get("source", "?") if event.data else "?")
                 if self._cognitive._current_task and not self._cognitive._current_task.done():
                     self._cognitive._current_task.cancel()
-                # Drain pending USER_INPUT, preserve STATE_CHANGE for UI
+                # Drain pending USER_INPUT and message queue, preserve STATE_CHANGE for UI
                 for drained in self._bus.drain():
                     if drained.type == EventType.STATE_CHANGE:
                         self._bus.post(drained.type, drained.data, priority=drained.priority)
+                self._pending_messages.clear()
 
             elif event.type == EventType.USER_INPUT:
                 data = event.data or {}
@@ -372,11 +398,15 @@ class Agent:
                 stt_events = data.get("events", [])
                 logger.info("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
                            "websocket" if stt_emotion else "text", stt_emotion or "无")
-                # Spawn cognitive processing as independent task — frees event loop
+                # Wire tool-call dispatch to Scheduler Worker Pool
+                _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
+                    parent_id=rid, calls=calls,
+                )
                 task = asyncio.create_task(
                     self._cognitive.process(text, user_name=user_name,
                                             stt_emotion=stt_emotion,
-                                            stt_events=stt_events),
+                                            stt_events=stt_events,
+                                            _on_tool_calls=_on_tool_calls),
                     name=f"cognitive-{text[:20]}"
                 )
                 self._cognitive._current_task = task
@@ -386,9 +416,16 @@ class Agent:
                 reason = data.get("reason", "")
                 if reason == "silence_timeout":
                     elapsed = data.get("elapsed", 0)
+                    # 生成 request_id — SYSTEM_TICK 不带 rid，需主动创建
+                    rid = self.next_request_id()
+                    set_request_id(rid)
+                    _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
+                        parent_id=rid, calls=calls,
+                    )
                     task = asyncio.create_task(
                         self._cognitive.process(
-                            f"（系统提示：用户已经{int(elapsed)}秒没有说话了，请自然地开启一个话题）"
+                            f"（系统提示：用户已经{int(elapsed)}秒没有说话了，请自然地开启一个话题）",
+                            _on_tool_calls=_on_tool_calls,
                         ),
                         name="cognitive-proactive"
                     )
@@ -399,6 +436,11 @@ class Agent:
                 logger.info("FSM → %s", state)
                 if state == "idle":
                     set_request_id("-")
+                    # 检查排队消息 — FIFO 出队
+                    if self._pending_messages:
+                        pending = self._pending_messages.pop(0)
+                        logger.info("排队消息出队 (%d 条剩余)", len(self._pending_messages))
+                        self._bus.post(EventType.USER_INPUT, pending)
                 for ch in self._output._channels:
                     try:
                         await ch.on_state(state)

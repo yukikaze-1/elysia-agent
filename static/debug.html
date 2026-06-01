@@ -118,7 +118,7 @@ function render(info) {
         ['Character', info.character_name + ' (' + (info.character_traits||[]).join(', ') + ')'],
       ]},
     ],
-    // Row 2: Latency | Memory stats
+    // Row 2: Latency | Memory stats | Scheduler
     [
       { title:'Latency', wide:false, rows: (() => {
         const s = info.timing_stats;
@@ -141,6 +141,14 @@ function render(info) {
           ['线程', m.num_threads],
         ];
       })()},
+      { title:'Scheduler', wide:false, rows: [
+        ['Pending', info.scheduler_pending ?? '—'],
+        ['Running', info.scheduler_running ?? '—'],
+        ['Total', info.scheduler_total ?? '—'],
+        ['Task Tree', info.task_tree && Object.keys(info.task_tree).length
+          ? esc(JSON.stringify(info.task_tree).slice(0, 120)+'…')
+          : '暂无'],
+      ]},
     ],
     // Row 3: Session | Long-term
     [

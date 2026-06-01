@@ -55,6 +55,12 @@ class DebugInfo:
     # Memory
     memory: dict = field(default_factory=dict)
 
+    # Scheduler Worker Pool
+    scheduler_pending: int = 0
+    scheduler_running: int = 0
+    scheduler_total: int = 0
+    task_tree: dict = field(default_factory=dict)
+
 def _truncate(text: str, n: int = 80) -> str:
     return text if len(text) <= n else text[:n] + "…"
 
@@ -146,6 +152,21 @@ async def collect(agent) -> DebugInfo:
             "p99_ms": totals[int(n * 0.99)] if n >= 100 else totals[-1],
             "last_ms": totals[-1],
         }
+
+    # ---- Scheduler ----
+    try:
+        sched = getattr(agent, "_scheduler", None)
+        if sched is not None:
+            info.scheduler_pending = sched.pending_count
+            info.scheduler_running = sched.running_count
+            info.scheduler_total = sched.total_count
+            # 找第一个活跃的工具子任务展示 task tree
+            for t in sched.all_tasks():
+                if t.type.value == "tool_call" and t.status.value in ("pending", "dispatched"):
+                    info.task_tree = sched.get_tree(t.id)
+                    break
+    except Exception:
+        pass
 
     # ---- Memory ----
     try:
