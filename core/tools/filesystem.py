@@ -47,8 +47,8 @@ class ReadFilePlugin(ToolPlugin):
     async def execute(
         self, *, ctx: ToolContext, emit=None, params: ReadFileParams,
     ) -> str:
-        path = params.path
-        resolved = Path(path).expanduser().resolve()
+        path = ctx.get("_safe_path") or params.path
+        resolved = Path(path)
 
         if not resolved.exists():
             return f"路径不存在: {path}"
@@ -66,21 +66,21 @@ class ReadFilePlugin(ToolPlugin):
         # 二进制检测 + 逐行读取（不预加载全部到内存）
         try:
             with open(resolved, "r", encoding="utf-8") as f:
+                # 二进制探针：读取首个 1KB 触发 UnicodeDecodeError
                 probe = f.read(1024)
-        except UnicodeDecodeError:
-            return f"无法读取（可能是二进制文件）: {path}"
+                # 回到文件开头
+                f.seek(0)
 
-        try:
-            with open(resolved, "r", encoding="utf-8") as f:
                 result_lines: list[str] = []
-                total = 0
                 for i, line in enumerate(f):
-                    total = i + 1
                     if i < params.start_line:
                         continue
                     if len(result_lines) >= params.max_lines:
                         break
                     result_lines.append(f"{i+1:4d} | {line.rstrip()}")
+                total = i + 1  # 文件总行数
+        except UnicodeDecodeError:
+            return f"无法读取（可能是二进制文件）: {path}"
         except Exception as e:
             return f"读取失败: {e}"
 
@@ -88,9 +88,9 @@ class ReadFilePlugin(ToolPlugin):
         if not output.strip():
             output = "（文件为空）"
 
-        end_line = params.start_line + len(result_lines)
-        if end_line < total:
-            output += f"\n\n…[第 {end_line+1}-{total} 行未显示，共 {total} 行]"
+        last_shown = params.start_line + len(result_lines)
+        if last_shown < total:
+            output += f"\n\n…[显示 {params.start_line+1}-{last_shown} 行，共 {total} 行]"
 
         return output
 
@@ -119,8 +119,8 @@ class ListDirPlugin(ToolPlugin):
     async def execute(
         self, *, ctx: ToolContext, emit=None, params: ListDirParams,
     ) -> str:
-        path = params.path
-        resolved = Path(path).expanduser().resolve()
+        path = ctx.get("_safe_path") or params.path
+        resolved = Path(path)
 
         if not resolved.exists():
             return f"路径不存在: {path}"

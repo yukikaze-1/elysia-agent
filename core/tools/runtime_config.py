@@ -1,5 +1,6 @@
 """运行时配置工具插件 — 查看 agent 配置和状态。"""
 
+import asyncio
 import os
 from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin, ToolContext
@@ -60,17 +61,14 @@ class RuntimeConfigPlugin(ToolPlugin):
         )
 
         if HAS_PSUTIL:
-            proc = psutil.Process()
-            mem = proc.memory_info()
+            def _get_memory():
+                proc = psutil.Process()
+                mem = proc.memory_info()
+                return mem, proc.num_threads()
+            mem, threads = await asyncio.to_thread(_get_memory)
             lines.append(
                 f"进程内存: RSS={mem.rss / 1024 / 1024:.1f}MB, "
-                f"VMS={mem.vms / 1024 / 1024:.1f}MB, "
-                f"线程数={proc.num_threads()}"
+                f"VMS={mem.vms / 1024 / 1024:.1f}MB, 线程数={threads}"
             )
-
-        env_vars = ["DEEPSEEK_API_KEY", "OPENAI_API_KEY", "BRAVE_API_KEY"]
-        for var in env_vars:
-            val = os.getenv(var)
-            lines.append(f"环境变量 {var}: {'已设置' if val else '未设置'}")
 
         return "\n".join(lines)

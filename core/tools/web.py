@@ -171,7 +171,7 @@ class WebFetchPlugin(ToolPlugin):
 
         try:
             async with httpx.AsyncClient(
-                timeout=15.0,
+                timeout=self.safety.request_timeout,
                 follow_redirects=True,
                 max_redirects=self.safety.max_redirects,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; Elysia-Agent/1.0)"},

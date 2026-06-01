@@ -283,7 +283,7 @@ class TestMemoryIntegration:
         await agent.start()
 
         # Use the tool directly
-        result = await agent._tools.execute("search_memory", {"query": "爬山"}, ctx=agent._tool_ctx)
+        result = await agent._tool_manager.execute("search_memory", ctx=agent._tool_ctx, query="爬山")
         assert result.success
         assert "爬山" in result.content or "香山" in result.content
         assert "记忆库中没有找到" not in result.content
@@ -292,7 +292,7 @@ class TestMemoryIntegration:
 
     @pytest.mark.asyncio
     async def test_save_memory_tool(self):
-        """save_memory tool should persist an entry."""
+        """save_memory tool should persist an entry (with HITL auto-approved for test)."""
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
@@ -300,8 +300,13 @@ class TestMemoryIntegration:
         from core.app_config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
+        # Mock HITL to auto-approve in test environment
+        original_run_hitl = agent._tool_manager._pipeline._run_hitl
+        async def _auto_approve(plugin, name, params):
+            return True, "confirmed"
+        agent._tool_manager._pipeline._run_hitl = _auto_approve
 
-        await agent._tools.execute("save_memory", {"content": "测试保存的记忆", "type": "fact"}, ctx=agent._tool_ctx)
+        await agent._tool_manager.execute("save_memory", ctx=agent._tool_ctx, content="测试保存的记忆", type="fact")
         results = await agent._long_term.search(query_text="测试保存")
         assert len(results) > 0
         assert any("测试保存" in r.text for r in results)
@@ -319,6 +324,10 @@ class TestMemoryIntegration:
         from core.app_config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
+        # Mock HITL to auto-approve in test environment
+        async def _auto_approve(plugin, name, params):
+            return True, "confirmed"
+        agent._tool_manager._pipeline._run_hitl = _auto_approve
 
         # First turn: tell agent something memorable
         await agent.process_message("记住，我下周要去东京出差")
@@ -345,6 +354,10 @@ class TestMemoryIntegration:
         from core.app_config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
+        # Mock HITL to auto-approve in test environment
+        async def _auto_approve(plugin, name, params):
+            return True, "confirmed"
+        agent._tool_manager._pipeline._run_hitl = _auto_approve
 
         # Multiple turns
         await agent.process_message("我叫妖梦")

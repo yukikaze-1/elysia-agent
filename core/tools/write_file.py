@@ -27,17 +27,20 @@ class WriteFilePlugin(ToolPlugin):
     async def execute(
         self, *, ctx: ToolContext, emit=None, params: WriteFileParams,
     ) -> str:
-        session_id = ctx.session_id or "default"
-        write_dir = Path(
-            self.safety.write_dir.replace("{session_id}", session_id)
-        ).resolve()
-        write_dir.mkdir(parents=True, exist_ok=True)
+        path = ctx.get("_safe_path") or params.path
+        resolved = Path(path)
 
-        file_path = write_dir / params.path
-        resolved = file_path.resolve()
+        # 确保父目录存在
+        session_id = ctx.session_id or "default"
+        safe_sid = session_id.replace("/", "_").replace("\\", "_")
+        write_dir = Path(
+            self.safety.write_dir.replace("{session_id}", safe_sid)
+        ).resolve()
 
         if not str(resolved).startswith(str(write_dir)):
             return f"拒绝写入: 路径 '{params.path}' 越过了 sandbox 边界"
+
+        write_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             resolved.write_text(params.content, encoding="utf-8")

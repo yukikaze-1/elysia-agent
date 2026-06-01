@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .capability import Capability
 from .protocol import ToolParameter, ToolProgress  # ToolParameter 旧版参数类型 — 过渡期保留
 
 logger = logging.getLogger(__name__)
@@ -199,6 +200,14 @@ class SafetyPipeline:
 
     def request_exists(self, request_id: str) -> bool:
         return request_id in self._hitl_requests
+
+    def set_hitl_broadcast(self, callback):
+        """Set the HITL approval broadcast callback.
+
+        callback(request_id, tool_name, params) -> None
+        Should broadcast approval request to frontend via OutputManager.
+        """
+        self._broadcast_hitl = callback
 
     # ---- Pipeline execution ----
 
@@ -391,6 +400,11 @@ class SafetyPipeline:
             return None
         session_id = getattr(ctx, "session_id", "default") or "default"
 
+        # Network capability enforcement: plugins that access the network MUST declare Capability.NETWORK
+        if profile.network_allowed:
+            if Capability.NETWORK not in getattr(plugin, "capabilities", set()):
+                return "插件声明了 network_allowed 但未声明 Capability.NETWORK"
+
         if "url" in raw_params and profile.network_allowed:
             err = _validate_url(raw_params["url"], profile)
             if err:
@@ -398,7 +412,7 @@ class SafetyPipeline:
 
         if "path" in raw_params and profile.filesystem_allowed:
             raw_path = raw_params["path"]
-            is_write = "write" in tool_name.lower() if (tool_name := getattr(plugin, "name", "")) else False
+            is_write = Capability.FILESYSTEM_WRITE in getattr(plugin, "capabilities", set())
             resolved, err = _resolve_sandbox_path(
                 raw_path, profile, session_id, is_write,
             )
@@ -407,6 +421,8 @@ class SafetyPipeline:
             err = _validate_path(resolved, profile)
             if err:
                 return err
+            # 将验证后的安全路径注入 ctx，插件不再自行从 CWD 解析
+            ctx.services["_safe_path"] = str(resolved)
 
         return None
 

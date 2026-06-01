@@ -150,6 +150,9 @@ class Agent:
                 "scheduler": self._scheduler,
                 "config": self._config,
                 "_tool_names": list(self._tool_manager.tool_names),
+                "_fsm_state": str(self._fsm.state),
+                "_session_msg_count": len(self._session._messages),
+                "_tool_count": len(self._tool_manager._plugins),
             },
         )
         self._cognitive.set_tool_context(self._tool_ctx)
@@ -159,6 +162,7 @@ class Agent:
         self._plugin_ctx.memory = self._long_term
         self._plugin_ctx.scheduler = self._scheduler
         await self._tool_manager.load_all(ALL_PLUGINS, self._plugin_ctx)
+        self._tool_manager.set_hitl_broadcast(self._output)
         self._scheduler.set_tool_context(self._tool_ctx)
 
         # Start Worker Pool

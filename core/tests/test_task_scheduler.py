@@ -7,62 +7,106 @@ from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
+from pydantic import BaseModel, Field
 
 from core.task import Task, TaskType, TaskStatus
 from core.task_scheduler import TaskScheduler
-from Module.tool import ToolRegistry, ToolContext
-from Module.tool.protocol import ToolDefinition, ToolParameter, ToolResult
+from Module.tool import ToolManager, ToolContext, PluginContext
+from Module.tool.protocol import ToolPlugin, ToolResult, ErrorType
+from Module.tool.safety import SafetyProfile
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Param models
+# ═══════════════════════════════════════════════════════════════════
+
+class MsgParams(BaseModel):
+    """匹配现有测试的 msg 参数。"""
+    msg: str = Field(default="", description="message to echo")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Plugin classes
+# ═══════════════════════════════════════════════════════════════════
+
+class EchoPlugin(ToolPlugin):
+    """回显工具 — 返回 msg 内容。"""
+    name = "echo"
+    description = "Echoes back the message"
+    param_model = MsgParams
+    capabilities = set()
+    safety = SafetyProfile()
+
+    async def execute(self, *, ctx, emit=None, params):
+        return params.msg
+
+
+class FailingPlugin(ToolPlugin):
+    """永远返回失败的工具（非异常，直接返回 ToolResult.fail）。"""
+    name = "failing"
+    description = "Always fails"
+    param_model = MsgParams
+    capabilities = set()
+    safety = SafetyProfile()
+
+    async def execute(self, *, ctx, emit=None, params):
+        return ToolResult.fail(name="failing", error="always fails")
+
+
+class CrashPlugin(ToolPlugin):
+    """执行中抛出 CancelledError 的工具。"""
+    name = "crashing"
+    description = "Crashes badly"
+    param_model = None
+    capabilities = set()
+    safety = SafetyProfile()
+
+    async def execute(self, *, ctx, emit=None, params=None):
+        raise asyncio.CancelledError()
+
+
+class WaiterPlugin(ToolPlugin):
+    """阻塞在 barrier 上的工具，用于测试执行中取消。"""
+    name = "waiter"
+    description = "Blocks on a barrier"
+    param_model = None
+    capabilities = set()
+    safety = SafetyProfile()
+
+    async def execute(self, *, ctx, emit=None, params=None):
+        await self._barrier.wait()
+        return ToolResult.ok(name="waiter", content="woke", duration_ms=0.0)
 
 
 # ═══════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════
 
-def _make_registry() -> ToolRegistry:
-    """Minimal ToolRegistry — echo 工具。"""
-    reg = ToolRegistry()
-    async def echo(msg: str = "", ctx=None):
-        return ToolResult.ok(name="echo", content=msg, duration_ms=0.0)
-    reg.register(ToolDefinition(
-        name="echo",
-        description="Echo tool",
-        func=echo,
-        parameters={"msg": ToolParameter(type="str", description="message")},
-    ))
-    return reg
+async def _make_manager() -> ToolManager:
+    """单一 EchoPlugin 的 ToolManager。"""
+    tm = ToolManager()
+    await tm.load_all([EchoPlugin], PluginContext(session_id="test"))
+    return tm
 
 
-def _make_multi_registry() -> ToolRegistry:
-    """ToolRegistry — echo + failing + crashing。"""
-    reg = ToolRegistry()
-    async def echo(msg: str = "", ctx=None):
-        return ToolResult.ok(name="echo", content=msg, duration_ms=0.0)
-    async def failing(msg: str = "", ctx=None):
-        return ToolResult.fail(name="failing", error="always fails")
-    async def crashing(ctx=None):
-        raise RuntimeError("boom")
-    async def slow(ctx=None):
-        await asyncio.sleep(60)
-        return ToolResult.ok(name="slow", content="done", duration_ms=0.0)
-    reg.register_many([
-        ToolDefinition(name="echo", description="", func=echo,
-                       parameters={"msg": ToolParameter(type="str", description="")}),
-        ToolDefinition(name="failing", description="", func=failing,
-                       parameters={"msg": ToolParameter(type="str", description="")}),
-        ToolDefinition(name="crashing", description="", func=crashing, parameters={}),
-        ToolDefinition(name="slow", description="", func=slow, parameters={}),
-    ])
-    return reg
+async def _make_multi_manager() -> ToolManager:
+    """Echo + Failing + Crashing 的 ToolManager。"""
+    tm = ToolManager()
+    await tm.load_all(
+        [EchoPlugin, FailingPlugin, CrashPlugin],
+        PluginContext(session_id="test"),
+    )
+    return tm
 
 
-def _make_sleep_tool(barrier: asyncio.Event):
-    """工具在 barrier.wait() 处阻塞，用于测试执行中取消。"""
-    reg = ToolRegistry()
-    async def waiter(ctx=None):
-        await barrier.wait()
-        return ToolResult.ok(name="waiter", content="woke", duration_ms=0.0)
-    reg.register(ToolDefinition(name="waiter", description="", func=waiter, parameters={}))
-    return reg
+async def _make_sleep_manager(barrier: asyncio.Event) -> ToolManager:
+    """包含 WaiterPlugin 的 ToolManager — barrier 控制执行。"""
+    tm = ToolManager()
+    plugin = WaiterPlugin()
+    plugin._barrier = barrier
+    await plugin.setup(PluginContext(session_id="test"))
+    tm._plugins["waiter"] = plugin
+    return tm
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -72,8 +116,8 @@ def _make_sleep_tool(barrier: asyncio.Event):
 @pytest.mark.asyncio
 async def test_submit_and_dispatch():
     """单任务: submit → Worker 执行 → Future 返回结果。"""
-    reg = _make_registry()
-    sched = TaskScheduler(reg, num_workers=2, checkpoint_path=None)
+    tm = await _make_manager()
+    sched = TaskScheduler(tool_executor=tm, num_workers=2, checkpoint_path=None)
     await sched.start()
 
     t = Task.new_tool_call("parent-1", "echo", {"msg": "hello"})
@@ -91,8 +135,8 @@ async def test_submit_and_dispatch():
 @pytest.mark.asyncio
 async def test_dispatch_tool_calls_parallel():
     """3 个工具并行 dispatch → 全部成功。"""
-    reg = _make_registry()
-    sched = TaskScheduler(reg, num_workers=5, checkpoint_path=None)
+    tm = await _make_manager()
+    sched = TaskScheduler(tool_executor=tm, num_workers=5, checkpoint_path=None)
     await sched.start()
 
     calls = [
@@ -118,16 +162,20 @@ async def test_priority_ordering():
     """高优先级 (数值小) 的任务先于低优先级执行。"""
     completed: list[str] = []
 
-    async def ordered(msg: str = "", ctx=None):
-        completed.append(msg)
-        return ToolResult.ok(name="echo", content=msg, duration_ms=0.0)
+    class OrderedPlugin(ToolPlugin):
+        name = "echo"
+        description = ""
+        param_model = MsgParams
+        capabilities = set()
+        safety = SafetyProfile()
 
-    reg = ToolRegistry()
-    reg.register(ToolDefinition(
-        name="echo", description="", func=ordered,
-        parameters={"msg": ToolParameter(type="str", description="")},
-    ))
-    sched = TaskScheduler(reg, num_workers=1, checkpoint_path=None)
+        async def execute(self, *, ctx, emit=None, params):
+            completed.append(params.msg)
+            return params.msg
+
+    tm = ToolManager()
+    await tm.load_all([OrderedPlugin], PluginContext(session_id="test"))
+    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
     t_low = Task.new_tool_call("p1", "echo", {"msg": "low"}, priority=9)
@@ -151,8 +199,8 @@ async def test_priority_ordering():
 @pytest.mark.asyncio
 async def test_worker_pool_saturation():
     """提交 10 个任务 > 5 个 worker，全部完成。"""
-    reg = _make_registry()
-    sched = TaskScheduler(reg, num_workers=5, checkpoint_path=None)
+    tm = await _make_manager()
+    sched = TaskScheduler(tool_executor=tm, num_workers=5, checkpoint_path=None)
     await sched.start()
 
     futures = []
@@ -175,8 +223,8 @@ async def test_worker_pool_saturation():
 @pytest.mark.asyncio
 async def test_dispatch_tool_calls_mixed_results():
     """dispatch 混合: 成功 + 失败 + 异常。"""
-    reg = _make_multi_registry()
-    sched = TaskScheduler(reg, num_workers=3, checkpoint_path=None)
+    tm = await _make_multi_manager()
+    sched = TaskScheduler(tool_executor=tm, num_workers=3, checkpoint_path=None)
     await sched.start()
 
     calls = [
@@ -201,8 +249,8 @@ async def test_dispatch_tool_calls_mixed_results():
 @pytest.mark.asyncio
 async def test_dispatch_tool_calls_unknown_tool():
     """dispatch 未注册工具 → ToolResult.fail。"""
-    reg = _make_registry()
-    sched = TaskScheduler(reg, num_workers=1, checkpoint_path=None)
+    tm = await _make_manager()
+    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
     calls = [
@@ -218,8 +266,8 @@ async def test_dispatch_tool_calls_unknown_tool():
 @pytest.mark.asyncio
 async def test_dispatch_tool_calls_empty():
     """空 calls 列表 → 空结果。"""
-    reg = _make_registry()
-    sched = TaskScheduler(reg, num_workers=1, checkpoint_path=None)
+    tm = await _make_manager()
+    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
     results = await sched.dispatch_tool_calls("p1", [])
@@ -235,8 +283,8 @@ async def test_dispatch_tool_calls_empty():
 @pytest.mark.asyncio
 async def test_cancel_removes_future():
     """cancel → Future 传播 CancelledError。"""
-    reg = _make_registry()
-    sched = TaskScheduler(reg, num_workers=2, checkpoint_path=None)
+    tm = await _make_manager()
+    sched = TaskScheduler(tool_executor=tm, num_workers=2, checkpoint_path=None)
     await sched.start()
 
     t = Task.new_tool_call("p1", "echo", {"msg": "x"})
@@ -255,8 +303,8 @@ async def test_cancel_removes_future():
 @pytest.mark.asyncio
 async def test_cancel_cascades_to_children():
     """cancel 父任务 → 级联取消所有子任务。"""
-    reg = _make_registry()
-    sched = TaskScheduler(reg, num_workers=2, checkpoint_path=None)
+    tm = await _make_manager()
+    sched = TaskScheduler(tool_executor=tm, num_workers=2, checkpoint_path=None)
     await sched.start()
 
     parent = Task(id="root", type=TaskType.TOOL_CALL)
@@ -280,8 +328,8 @@ async def test_cancel_cascades_to_children():
 async def test_cancel_during_execution():
     """执行中 cancel → Worker task 被取消，Future 传播 CancelledError。"""
     barrier = asyncio.Event()
-    reg = _make_sleep_tool(barrier)
-    sched = TaskScheduler(reg, num_workers=1, checkpoint_path=None)
+    tm = await _make_sleep_manager(barrier)
+    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
     t = Task.new_tool_call("p1", "waiter", {})
@@ -310,8 +358,8 @@ async def test_cancel_during_execution():
 async def test_dispatch_tool_calls_cancelled():
     """dispatch 期间取消 → 所有子任务被 cancel。"""
     barrier = asyncio.Event()
-    reg = _make_sleep_tool(barrier)
-    sched = TaskScheduler(reg, num_workers=2, checkpoint_path=None)
+    tm = await _make_sleep_manager(barrier)
+    sched = TaskScheduler(tool_executor=tm, num_workers=2, checkpoint_path=None)
     await sched.start()
 
     calls = [
@@ -343,20 +391,28 @@ async def test_dispatch_tool_calls_cancelled():
 async def test_tool_retries_on_failure():
     """工具首次异常→重试→成功。"""
     call_count = 0
-    reg = ToolRegistry()
 
-    async def flaky_once(ctx=None):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise RuntimeError("临时错误")
-        return ToolResult.ok(name="flaky", content="ok", duration_ms=0.0)
+    class FlakyPlugin(ToolPlugin):
+        name = "flaky"
+        description = ""
+        param_model = None
+        capabilities = set()
+        safety = SafetyProfile()
 
-    reg.register(ToolDefinition(
-        name="flaky", description="", func=flaky_once, parameters={},
-    ))
+        async def execute(self, *, ctx, emit=None, params=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ToolResult.fail(
+                    name="flaky", error="临时错误",
+                    error_type=ErrorType.NETWORK_ERROR,
+                )
+            return ToolResult.ok(name="flaky", content="ok", duration_ms=0.0)
 
-    sched = TaskScheduler(reg, num_workers=1, checkpoint_path=None)
+    tm = ToolManager()
+    await tm.load_all([FlakyPlugin], PluginContext(session_id="test"))
+
+    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
     t = Task.new_tool_call("p1", "flaky", {})
@@ -374,18 +430,26 @@ async def test_tool_retries_on_failure():
 async def test_tool_gives_up_after_max_retries():
     """工具持续失败 → retry_count 达到 max_retries → 返回 failed。"""
     call_count = 0
-    reg = ToolRegistry()
 
-    async def always_fail(ctx=None):
-        nonlocal call_count
-        call_count += 1
-        raise RuntimeError("永久错误")
+    class FailerPlugin(ToolPlugin):
+        name = "failer"
+        description = ""
+        param_model = None
+        capabilities = set()
+        safety = SafetyProfile()
 
-    reg.register(ToolDefinition(
-        name="failer", description="", func=always_fail, parameters={},
-    ))
+        async def execute(self, *, ctx, emit=None, params=None):
+            nonlocal call_count
+            call_count += 1
+            return ToolResult.fail(
+                name="failer", error="永久错误",
+                error_type=ErrorType.NETWORK_ERROR,
+            )
 
-    sched = TaskScheduler(reg, num_workers=1, checkpoint_path=None)
+    tm = ToolManager()
+    await tm.load_all([FailerPlugin], PluginContext(session_id="test"))
+
+    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
     t = Task.new_tool_call("p1", "failer", {})
@@ -408,8 +472,8 @@ async def test_tool_gives_up_after_max_retries():
 @pytest.mark.asyncio
 async def test_get_tree():
     """get_tree 返回嵌套结构。"""
-    reg = _make_registry()
-    sched = TaskScheduler(reg, checkpoint_path=None)
+    tm = await _make_manager()
+    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
     await sched.start()
 
     t = Task.new_tool_call("p1", "echo", {"msg": "t"})
@@ -429,8 +493,8 @@ async def test_get_tree():
 @pytest.mark.asyncio
 async def test_get_tree_nested():
     """get_tree 三层嵌套结构。"""
-    reg = _make_registry()
-    sched = TaskScheduler(reg, checkpoint_path=None)
+    tm = await _make_manager()
+    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
     await sched.start()
 
     root = Task.new_tool_call("p1", "echo", {"msg": "r"})
@@ -450,8 +514,8 @@ async def test_get_tree_nested():
 @pytest.mark.asyncio
 async def test_get_tree_nonexistent():
     """get_tree 查不存在的 id → 空 dict。"""
-    reg = _make_registry()
-    sched = TaskScheduler(reg, checkpoint_path=None)
+    tm = await _make_manager()
+    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
     await sched.start()
     assert sched.get_tree("nonexistent") == {}
     await sched.stop()
@@ -464,12 +528,12 @@ async def test_get_tree_nonexistent():
 @pytest.mark.asyncio
 async def test_checkpoint_save_and_restore():
     """单 BACKGROUND 任务持久化 → 恢复。"""
-    reg = _make_registry()
+    tm = await _make_manager()
     tmpdir = tempfile.mkdtemp()
     cp = str(Path(tmpdir) / "cp.json")
 
     try:
-        sched1 = TaskScheduler(reg, checkpoint_path=cp)
+        sched1 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
         await sched1.start()
         t = Task(id="bg-1", type=TaskType.BACKGROUND, status=TaskStatus.PENDING,
                  payload={"msg": "persist"}, run_in_background=True)
@@ -480,7 +544,7 @@ async def test_checkpoint_save_and_restore():
 
         assert Path(cp).is_file()
 
-        sched2 = TaskScheduler(reg, checkpoint_path=cp)
+        sched2 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
         sched2._restore_checkpoint()
         restored = sched2._tasks.get("bg-1")
         assert restored is not None
@@ -495,12 +559,12 @@ async def test_checkpoint_save_and_restore():
 @pytest.mark.asyncio
 async def test_checkpoint_multiple_tasks():
     """多个 BACKGROUND 任务同时保存/恢复。"""
-    reg = _make_registry()
+    tm = await _make_manager()
     tmpdir = tempfile.mkdtemp()
     cp = str(Path(tmpdir) / "cp2.json")
 
     try:
-        sched1 = TaskScheduler(reg, checkpoint_path=cp)
+        sched1 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
         await sched1.start()
         for i in range(3):
             t = Task.new_background(payload={"idx": i})
@@ -509,7 +573,7 @@ async def test_checkpoint_multiple_tasks():
         sched1._save_checkpoint()
         await sched1.stop()
 
-        sched2 = TaskScheduler(reg, checkpoint_path=cp)
+        sched2 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
         sched2._restore_checkpoint()
         assert sched2._tasks["bg-0"].payload["idx"] == 0
         assert sched2._tasks["bg-1"].payload["idx"] == 1
@@ -525,12 +589,12 @@ async def test_checkpoint_multiple_tasks():
 @pytest.mark.asyncio
 async def test_checkpoint_ignores_non_background():
     """TOOL_CALL 任务不持久化。"""
-    reg = _make_registry()
+    tm = await _make_manager()
     tmpdir = tempfile.mkdtemp()
     cp = str(Path(tmpdir) / "cp3.json")
 
     try:
-        sched = TaskScheduler(reg, checkpoint_path=cp)
+        sched = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
         await sched.start()
         t = Task.new_tool_call("p1", "echo", {"msg": "x"})
         sched._tasks[t.id] = t
@@ -538,7 +602,7 @@ async def test_checkpoint_ignores_non_background():
         sched._save_checkpoint()
         await sched.stop()
 
-        sched2 = TaskScheduler(reg, checkpoint_path=cp)
+        sched2 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
         sched2._restore_checkpoint()
         assert len(sched2._tasks) == 0
     finally:
@@ -551,8 +615,8 @@ async def test_checkpoint_ignores_non_background():
 @pytest.mark.asyncio
 async def test_checkpoint_no_path():
     """无 checkpoint_path 时不崩溃。"""
-    reg = _make_registry()
-    sched = TaskScheduler(reg, checkpoint_path=None)
+    tm = await _make_manager()
+    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
     await sched.start()
     sched._save_checkpoint()  # 不应抛异常
 
@@ -600,7 +664,7 @@ async def test_cognitive_loop_callback_wired():
     output = OutputManager()
     fsm = AgentFSM()
     bus = EventBus()
-    tools_reg = ToolRegistry()
+    tm = ToolManager()
     prompt = AsyncMock()
     prompt._character = MagicMock(name="TestBot")
     prompt._character.traits = []
@@ -613,7 +677,7 @@ async def test_cognitive_loop_callback_wired():
 
     loop = CognitiveLoop(
         llm=llm, fsm=fsm, event_bus=bus, output=output,
-        prompt=prompt, session=session, tools=tools_reg,
+        prompt=prompt, session=session, tool_executor=tm,
     )
 
     callback_called = []
@@ -655,7 +719,7 @@ async def test_cognitive_loop_no_callback_backward_compat():
     output = OutputManager()
     fsm = AgentFSM()
     bus = EventBus()
-    tools_reg = ToolRegistry()
+    tm = ToolManager()
     prompt = AsyncMock()
     prompt._character = MagicMock(name="TestBot")
     prompt._character.traits = []
@@ -668,7 +732,7 @@ async def test_cognitive_loop_no_callback_backward_compat():
 
     loop = CognitiveLoop(
         llm=llm, fsm=fsm, event_bus=bus, output=output,
-        prompt=prompt, session=session, tools=tools_reg,
+        prompt=prompt, session=session, tool_executor=tm,
     )
 
     await loop.process("hello")

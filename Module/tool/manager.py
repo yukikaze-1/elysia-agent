@@ -208,6 +208,24 @@ class ToolManager:
         self._executing.clear()
         self._tasks.clear()
 
+    def set_hitl_broadcast(self, output_manager) -> None:
+        """Wire HITL approval broadcast through OutputManager."""
+        if output_manager is not None:
+            async def _broadcast(request_id: str, tool_name: str,
+                                 params: dict) -> None:
+                try:
+                    await output_manager.command(
+                        "tool_approval",
+                        params={
+                            "tool": tool_name,
+                            "params": str(params)[:200],
+                            "request_id": request_id,
+                        },
+                    )
+                except Exception:
+                    pass  # broadcast failure should not block pipeline
+            self._pipeline.set_hitl_broadcast(_broadcast)
+
     async def reload_plugin(self, name: str) -> bool:
         """热重载单个插件 — 不中断正在执行的任务。"""
         old = self._plugins.get(name)

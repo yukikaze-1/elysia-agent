@@ -1,6 +1,5 @@
 """提醒工具插件 — 设置定时提醒。"""
 
-import asyncio
 from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin, ToolContext
 from Module.tool.capability import Capability
@@ -29,8 +28,8 @@ class SetReminderPlugin(ToolPlugin):
         if scheduler is None:
             return "提醒功能当前不可用（调度器未加载）。"
 
-        # 创建 BACKGROUND 任务
         async def _remind():
+            import asyncio
             await asyncio.sleep(params.delay_seconds)
             return f"⏰ 提醒: {params.message}"
 

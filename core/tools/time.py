@@ -1,6 +1,13 @@
 """时间工具插件 — 获取当前时间（支持时区和格式）。"""
 
 from datetime import datetime, timezone, timedelta
+
+try:
+    import zoneinfo as _zoneinfo
+    HAS_ZONEINFO = True
+except ImportError:
+    HAS_ZONEINFO = False
+
 from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin, ToolContext
 from Module.tool.safety import SafetyProfile
@@ -38,11 +45,12 @@ class TimePlugin(ToolPlugin):
         elif tz_str == "UTC":
             tz = timezone.utc
         else:
+            if not HAS_ZONEINFO:
+                return "时区功能不可用（缺少 zoneinfo 模块）"
             try:
-                import zoneinfo
-                tz = zoneinfo.ZoneInfo(tz_str)
+                tz = _zoneinfo.ZoneInfo(tz_str)
             except Exception:
-                tz = timezone.utc
+                return f"无效的时区名称: '{tz_str}'，请使用 'UTC'、'Asia/Shanghai' 或 '+8'"
 
         now = datetime.now(tz)
 

@@ -172,6 +172,15 @@ class TaskScheduler:
                 out.append((tc, raw))
         return out
 
+    async def dispatch_background(self, coro) -> str:
+        """提交一个后台协程，返回 task_id。"""
+        t = Task.new_background(payload={"coro": coro})
+        self._tasks[t.id] = t
+        self._seq += 1
+        await self._queue.put((t.priority, self._seq, t))
+        logger.info("Background task dispatched: %s", t.id)
+        return t.id
+
     def cancel(self, task_id: str, _visited: set | None = None) -> bool:
         """取消任务 — 级联取消子任务 + 取消 Worker 执行 + 取消 Future。"""
         if _visited is None:
@@ -258,7 +267,12 @@ class TaskScheduler:
                 if task.type == TaskType.TOOL_CALL:
                     result = await self._execute_tool(task)
                 else:
-                    result = task.payload.get("result")
+                    # BACKGROUND 任务 — 若有效载荷中包含协程则执行
+                    coro = task.payload.get("coro")
+                    if coro is not None and hasattr(coro, "__await__"):
+                        result = str(await coro)
+                    else:
+                        result = task.payload.get("result")
                 task.result = result
                 task.status = TaskStatus.COMPLETED
                 task.touch()

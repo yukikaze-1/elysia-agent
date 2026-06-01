@@ -8,11 +8,6 @@ from Module.tool.safety import SafetyProfile
 
 logger = logging.getLogger(__name__)
 
-_RUNTIME_KEY_BLACKLIST = {
-    "model", "tts_enabled", "stt_enabled", "mood", "mood_intensity",
-    "silence_timeout", "proactive_interval", "max_pending_messages",
-}
-
 
 class SearchMemoryParams(BaseModel):
     query: str = Field(..., description="搜索关键词或语义描述")
@@ -83,23 +78,11 @@ class MemorySavePlugin(ToolPlugin):
         if params.type not in self._VALID_TYPES:
             return f"无效的记忆类型 '{params.type}'，允许: {', '.join(sorted(self._VALID_TYPES))}"
 
-        content = params.content
-        try:
-            import json
-            data = json.loads(content)
-            if isinstance(data, dict):
-                data = {
-                    k: v for k, v in data.items()
-                    if k not in _RUNTIME_KEY_BLACKLIST
-                }
-                content = json.dumps(data, ensure_ascii=False)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
         memory = ctx.get("memory")
         if memory is None:
             return "记忆系统当前不可用。"
 
+        content = params.content
         try:
             await memory.insert(content, type=params.type)
         except Exception as e:

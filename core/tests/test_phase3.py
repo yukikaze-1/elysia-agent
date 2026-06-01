@@ -7,6 +7,10 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel, Field
+
+from Module.tool.protocol import ToolPlugin
+from Module.tool.safety import SafetyProfile
 
 from core.cognitive_loop import CognitiveLoop, _MessageObj
 from core.agent_fsm import AgentFSM, AgentState
@@ -112,7 +116,7 @@ class TestCognitiveLoopMethods:
         """Create a minimal CognitiveLoop with mocks for all dependencies."""
         from Module.output import OutputManager, ChannelCapability
         from core.prompt_assembler import PromptAssembler
-        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
+        from Module.tool import ToolManager, PluginContext, ToolContext
         from core.memory.session import SessionMemory
         from core.character_config import CharacterConfig
         from core.emotion_engine import EmotionEngine
@@ -127,14 +131,14 @@ class TestCognitiveLoopMethods:
         session = SessionMemory()
         lt = LongTermMemory()
         prompt = PromptAssembler(char, session, lt)
-        tools = ToolRegistry()
+        tools = ToolManager()
         emotion = EmotionEngine(char, session, output)
         consolidator = MemoryConsolidator(llm, lt, "TestBot")
         tts = AsyncMock()
 
         loop = CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
-            prompt=prompt, session=session, tools=tools,
+            prompt=prompt, session=session, tool_executor=tools,
             emotion=emotion, consolidator=consolidator, tts=tts,
         )
         return loop
@@ -211,13 +215,13 @@ class TestCognitiveLoopMethods:
         async def cancelled_tool(*args, **kwargs):
             raise _asyncio.CancelledError()
 
-        loop._tools.execute = cancelled_tool
+        loop._tool_executor.execute = cancelled_tool
 
         # Create a minimal _execute_one context manually
         async def _test_cancel():
             tc = {"function": {"name": "test_tool", "arguments": "{}"}, "id": "call_1"}
             try:
-                tr = await loop._tools.execute("test_tool", {}, ctx=None)
+                tr = await loop._tool_executor.execute("test_tool", ctx=None)
             except _asyncio.CancelledError:
                 return ToolResult.fail(name="test_tool", error="用户取消")
             except Exception as e:
@@ -237,12 +241,12 @@ class TestCognitiveLoopMethods:
         async def failing_tool(*args, **kwargs):
             raise RuntimeError("tool crash")
 
-        loop._tools.execute = failing_tool
+        loop._tool_executor.execute = failing_tool
 
         async def _test_fail():
             tc = {"function": {"name": "test_tool", "arguments": "{}"}, "id": "call_1"}
             try:
-                tr = await loop._tools.execute("test_tool", {}, ctx=None)
+                tr = await loop._tool_executor.execute("test_tool", ctx=None)
             except Exception as e:
                 return ToolResult.fail(name="test_tool", error=str(e))
             return tr
@@ -264,7 +268,7 @@ class TestCognitiveLoopTTS:
         from Module.output import OutputManager
         from core.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
-        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
+        from Module.tool import ToolManager, PluginContext, ToolContext
         from core.llm_adapter import LLMAdapter
 
         fsm = AgentFSM()
@@ -281,7 +285,7 @@ class TestCognitiveLoopTTS:
             {"role": "user", "content": "hello"},
         ])
         prompt._character = char
-        tools = ToolRegistry()
+        tools = ToolManager()
         tts = MagicMock()
         tts.synthesize_stream = AsyncMock(return_value=AsyncMock())
         # Make synthesize_stream return no chunks (empty stream)
@@ -295,7 +299,7 @@ class TestCognitiveLoopTTS:
         tts.synthesize_stream = _fake_stream
         return CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
-            prompt=prompt, session=session, tools=tools, tts=tts,
+            prompt=prompt, session=session, tool_executor=tools, tts=tts,
         )
 
     @pytest.mark.asyncio
@@ -314,7 +318,10 @@ class TestCognitiveLoopTTS:
     async def test_multi_tool_round(self, loop):
         """CognitiveLoop handles tool calls and loops correctly."""
         import json
-        from Module.tool import ToolDefinition, ToolParameter
+        from Module.tool import PluginContext, ToolContext
+        from Module.tool.protocol import ToolPlugin
+        from Module.tool.safety import SafetyProfile
+        from pydantic import BaseModel, Field
         # Use a fake backend that returns tool calls then final answer
         tool_json = json.dumps({
             "tool_calls": [{
@@ -324,14 +331,20 @@ class TestCognitiveLoopTTS:
         })
         loop._llm._backend = FakeLLMBackend(response=tool_json)
 
-        # Register a tool
-        async def test_tool(q: str) -> str:
-            return f"result for {q}"
-        loop._tools.register(ToolDefinition(
-            name="test_tool", description="test",
-            func=test_tool,
-            parameters={"q": ToolParameter(type="string", required=True)},
-        ))
+        # Register a tool using Plugin pattern
+        class _QParams(BaseModel):
+            q: str = Field(default="")
+
+        class _TestTool(ToolPlugin):
+            name = "test_tool"
+            description = "test"
+            param_model = _QParams
+            capabilities = set()
+            safety = SafetyProfile()
+            async def execute(self, *, ctx, emit=None, params):
+                return f"result for {params.q}"
+
+        await loop._tool_executor.load_all([_TestTool], PluginContext(session_id="test"))
 
         # After process, the tool should have been called (tool history)
         await loop.process("use test_tool")
@@ -365,7 +378,7 @@ class TestCognitiveLoopSync:
         from Module.output import OutputManager
         from core.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
-        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
+        from Module.tool import ToolManager, PluginContext, ToolContext
         from core.llm_adapter import LLMAdapter
 
         fsm = AgentFSM()
@@ -382,10 +395,10 @@ class TestCognitiveLoopSync:
             {"role": "user", "content": "hello"},
         ])
         prompt._character = char
-        tools = ToolRegistry()
+        tools = ToolManager()
         return CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
-            prompt=prompt, session=session, tools=tools, tts=None,
+            prompt=prompt, session=session, tool_executor=tools, tts=None,
         )
 
     @pytest.mark.asyncio
@@ -1020,15 +1033,18 @@ class TestAgentLifecycle:
 
     @pytest.mark.asyncio
     async def test_register_tools(self):
-        """_register_tools registers 3 tools with correct names."""
+        """Tools load via ToolManager.load_all with correct names."""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
+        from core.tools import ALL_PLUGINS
+        from Module.tool import PluginContext
 
         agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
-        agent._register_tools()
-        names = agent._tools.tool_names
+        # Load tools directly (normally done in start())
+        await agent._tool_manager.load_all(ALL_PLUGINS, PluginContext(session_id="test"))
+        names = agent._tool_manager.tool_names
         assert "search_memory" in names
         assert "get_time" in names
         assert "save_memory" in names
@@ -1038,19 +1054,21 @@ class TestAgentLifecycle:
         """search_memory tool queries long-term memory."""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from Module.tool import ToolContext
+        from Module.tool import ToolContext, PluginContext
         from core.agent import Agent
+        from core.tools import ALL_PLUGINS
 
         agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
-        agent._register_tools()
+        # Load tools directly (normally done in start())
+        await agent._tool_manager.load_all(ALL_PLUGINS, PluginContext(session_id="test"))
         # Seed a memory entry
         from core.memory.long_term import MemoryEntry
         agent._long_term._entries.append(
             MemoryEntry(text="测试记忆", metadata={"type": "fact"}))
 
         ctx = ToolContext(services={"memory": agent._long_term})
-        result = await agent._tools.execute("search_memory", {"query": "测试"}, ctx=ctx)
+        result = await agent._tool_manager.execute("search_memory", ctx=ctx, query="测试")
         assert result.success
         assert "测试记忆" in result.content
 
@@ -1067,10 +1085,7 @@ class TestAgentLifecycle:
 
         # Simulate a running cognitive task
         async def fake_task():
-            try:
-                await asyncio.sleep(10)
-            except asyncio.CancelledError:
-                pass
+            await asyncio.sleep(10)
         agent._cognitive._current_task = asyncio.create_task(fake_task())
 
         await agent.stop()
@@ -1409,10 +1424,11 @@ class TestDebugInfo:
         tool_names = [t["name"] for t in info.tools]
         assert "search_memory" in tool_names
         assert "get_time" in tool_names
-        # 验证元数据结构
+        # 验证元数据结构 (plugin_list format)
         search = next(t for t in info.tools if t["name"] == "search_memory")
         assert "在长期记忆中搜索" in search["description"]
-        assert any(p["name"] == "query" for p in search["parameters"])
+        assert "capabilities" in search
+        assert search["active"] is True
         await agent.stop()
 
     @pytest.mark.asyncio
@@ -1433,95 +1449,55 @@ class TestDebugInfo:
 
 
 # ============================================================================
-# 17. ToolRegistry (Module.tool) — integration smoke tests
+# 17. ToolManager (Module.tool) — integration smoke tests
 # ============================================================================
 
-class TestToolRegistryUnit:
-    """验证 Module.tool.ToolRegistry 在 core 上下文中的集成。"""
+# Helper to create a minimal ToolManager with an echo plugin
+class _EchoParams(BaseModel):
+    x: int = Field(default=0)
+
+class _EchoPlugin(ToolPlugin):
+    name = "echo"
+    description = "echoes x"
+    param_model = _EchoParams
+    capabilities = set()
+    safety = SafetyProfile()
+    async def execute(self, *, ctx, emit=None, params):
+        return f"result={params.x}"
+
+
+class TestToolManagerUnit:
+    """验证 ToolManager 在 core 上下文中的集成。"""
 
     @pytest.mark.asyncio
-    async def test_execute_success(self):
-        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
-
-        async def my_tool(x: int) -> str:
-            return f"result: {x}"
-
-        registry = ToolRegistry()
-        registry.register(ToolDefinition(
-            name="my_tool", description="test tool",
-            func=my_tool,
-            parameters={"x": ToolParameter(type="integer", required=True)},
-        ))
-
-        result = await registry.execute("my_tool", {"x": 42})
-        assert result.success
-        assert "result: 42" in result.content
+    async def test_load_and_execute_echo(self):
+        from Module.tool import ToolManager, PluginContext, ToolContext
+        tm = ToolManager()
+        await tm.load_all([_EchoPlugin], PluginContext(session_id="test"))
+        result = await tm.execute("echo", ctx=ToolContext(), x=42)
+        assert result.success is True
+        assert "result=42" in result.content
+        await tm.shutdown()
 
     @pytest.mark.asyncio
-    async def test_execute_unknown_tool(self):
-        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
-
-        registry = ToolRegistry()
-        result = await registry.execute("nonexistent", {})
-        assert not result.success
+    async def test_unknown_tool(self):
+        from Module.tool import ToolManager, PluginContext, ToolContext
+        tm = ToolManager()
+        await tm.load_all([], PluginContext(session_id="test"))
+        result = await tm.execute("nonexistent", ctx=ToolContext())
+        assert result.success is False
         assert result.error_type is not None
-        assert result.error_type.value == "unknown_tool"
+        await tm.shutdown()
 
     @pytest.mark.asyncio
-    async def test_execute_logs_to_history(self):
-        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
-
-        async def my_tool(x: int) -> str:
-            return str(x)
-
-        registry = ToolRegistry()
-        registry.register(ToolDefinition(
-            name="t", description="desc",
-            func=my_tool,
-            parameters={"x": ToolParameter(type="integer", required=True)},
-        ))
-
-        await registry.execute("t", {"x": 1})
-        assert len(registry.history) == 1
-        assert registry.history[0]["name"] == "t"
-
-    def test_tool_definitions_format(self):
-        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
-
-        async def foo() -> str:
-            return "bar"
-
-        registry = ToolRegistry()
-        registry.register(ToolDefinition(
-            name="foo", description="test function",
-            func=foo, parameters={},
-        ))
-
-        defs = registry.definitions()
+    async def test_definitions_exported(self):
+        from Module.tool import ToolManager, PluginContext
+        tm = ToolManager()
+        await tm.load_all([_EchoPlugin], PluginContext(session_id="test"))
+        defs = tm.definitions()
         assert len(defs) == 1
-        assert defs[0]["type"] == "function"
-        assert defs[0]["function"]["name"] == "foo"
-
-    def test_type_coercion(self):
-        """validate_args 自动将字符串强制为声明的类型。"""
-        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
-        from Module.tool.safety import validate_args
-
-        params = {"x": ToolParameter(type="integer", required=True)}
-        coerced, errors = validate_args(params, {"x": "42"})
-        assert not errors
-        assert coerced["x"] == 42
-        assert isinstance(coerced["x"], int)
-
-    def test_boolean_coercion(self):
-        """validate_args 对 str 'true'/'1'/'yes' 进行布尔强制。"""
-        from Module.tool import ToolRegistry, ToolDefinition, ToolParameter
-        from Module.tool.safety import validate_args
-
-        params = {"flag": ToolParameter(type="boolean", required=True)}
-        coerced, errors = validate_args(params, {"flag": "true"})
-        assert not errors
-        assert coerced["flag"] is True
+        assert defs[0]["function"]["name"] == "echo"
+        await tm.shutdown()
 
 
 # ============================================================================
@@ -1561,14 +1537,11 @@ if __name__ == "__main__":
     asyncio.run(run_all())
 
 
-def test_filesystem_tool_blocks_sensitive_paths():
-    """文件系统工具应拒绝访问敏感路径。"""
-    from core.tools.filesystem import _DENIED_PATHS, _DENIED_NAMES
-
-    assert ".aws" in _DENIED_NAMES
-    assert ".kube" in _DENIED_NAMES
-    assert ".bash_history" in _DENIED_NAMES
-    assert ".gitconfig" in _DENIED_NAMES
-    assert "/root" in _DENIED_PATHS
-    assert "/var/log" in _DENIED_PATHS
-    assert "/etc" in _DENIED_PATHS
+def test_filesystem_safety_profile():
+    """文件系统安全配置通过 SafetyProfile 白名单控制。"""
+    from core.tools.filesystem import ReadFilePlugin
+    p = ReadFilePlugin()
+    assert p.safety.filesystem_allowed is True
+    assert p.safety.read_dirs == ["data/sandbox"]
+    assert p.safety.allow_symlinks is False
+    assert p.safety.max_file_bytes == 10 * 1024 * 1024
