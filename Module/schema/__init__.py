@@ -1,3 +1,13 @@
+"""
+DEPRECATED: 本模块为旧版预留架构，当前未被 core/ 使用。
+core/ 使用自己的内部数据结构。保留本模块仅作为未来架构演进参考。
+
+core/ 中的等价或替代:
+- core/schema.py          — AgentState, EventType 等枚举
+- core/memory/session.py   — SessionMemory
+- core/memory/long_term.py — MemoryEntry
+"""
+
 from Module.schema.constants import (
     DEFAULT_ERROR_PUBLIC_REPLY,
     DEFAULT_ERROR_INNER_THOUGHT,

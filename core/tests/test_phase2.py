@@ -770,3 +770,35 @@ if __name__ == "__main__":
         print(f"  Results: {passed} passed, {failed} failed")
 
     asyncio.run(run_all())
+
+
+# ---- LongTermMemory extended tests (Phase 2 review) ----
+
+import time as _time_module
+
+@pytest.mark.asyncio
+async def test_long_term_memory_in_memory_fallback_search():
+    """Milvus 不可用时回退到字符重叠搜索。"""
+    from core.memory.long_term import LongTermMemory, MemoryEntry
+
+    ltm = LongTermMemory()
+    ltm._entries = [
+        MemoryEntry(text="妖梦喜欢爬山", metadata={"type": "preference"}),
+        MemoryEntry(text="昨天去了香山看红叶", metadata={"type": "event"}),
+        MemoryEntry(text="妖梦在学习 Rust 语言", metadata={"type": "fact"}),
+    ]
+
+    results = await ltm.search("爬山", top_k=5)
+    assert len(results) > 0
+    assert any("爬山" in r.text for r in results)
+
+
+@pytest.mark.asyncio
+async def test_long_term_memory_empty_search():
+    """空记忆库搜索应返回空列表不崩溃。"""
+    from core.memory.long_term import LongTermMemory
+
+    ltm = LongTermMemory()
+    ltm._entries = []
+    results = await ltm.search("任何东西", top_k=5)
+    assert results == []
