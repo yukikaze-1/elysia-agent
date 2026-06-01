@@ -81,13 +81,21 @@ class LongTermMemory:
             self._connected = False
             return False
 
-    async def _ensure_embedding(self) -> None:
+    async def _ensure_embedding(self, wait: bool = False) -> None:
         """Load embedding backend lazily. Only tries once.
 
         Runs in a thread pool so the blocking model load doesn't stall the event loop.
-        Does NOT block callers — if embedding isn't ready, callers use text-only fallback.
+        When wait=True, awaits the loading task so the caller gets embeddings.
+        Otherwise fire-and-forget (search can fall back to text).
         """
-        if self._embedding is not None or self._embedding_tried:
+        if self._embedding is not None:
+            return
+        if self._embedding_tried:
+            if wait and self._embed_task and not self._embed_task.done():
+                try:
+                    await asyncio.wait_for(self._embed_task, timeout=self.EMBED_TIMEOUT)
+                except (asyncio.TimeoutError, Exception):
+                    pass
             return
         self._embedding_tried = True
 
@@ -104,8 +112,13 @@ class LongTermMemory:
             except Exception as e:
                 logger.info("LongTermMemory: embedding unavailable (%s), text-only mode", e)
 
-        # Fire-and-forget but tracked for cleanup on close()
         self._embed_task = asyncio.create_task(_load(), name="embedding-load")
+
+        if wait:
+            try:
+                await asyncio.wait_for(asyncio.shield(self._embed_task), timeout=self.EMBED_TIMEOUT)
+            except (asyncio.TimeoutError, Exception):
+                pass
 
     def _try_load_embedding_sync(self) -> None:
         """Try OpenAI embedding first (fast), then HuggingFace (local). Runs in thread."""
@@ -136,10 +149,11 @@ class LongTermMemory:
     async def insert(self, text: str, **metadata) -> None:
         """Insert a memory entry. Auto-embeds lazily if embedding is available.
 
-        Keyword metadata may include: memory_type, poignancy, timestamp, source, etc.
+        Keyword metadata may include: type (alias for memory_type), memory_type,
+        poignancy, timestamp, source, etc.
         These become structured fields on MemoryEntry and are stored in Milvus.
         """
-        await self._ensure_embedding()
+        await self._ensure_embedding(wait=True)
 
         embedding: list[float] = []
         if self._embedding:
@@ -149,14 +163,18 @@ class LongTermMemory:
                 logger.debug("Embedding failed for insert, storing text-only", exc_info=True)
 
         import uuid
+        # Work on a copy to avoid mutating caller's dict
+        meta = dict(metadata)
+        # Accept 'type' as alias for 'memory_type'
+        memory_type = meta.pop("memory_type", meta.pop("type", "note"))
         entry = MemoryEntry(
             id=uuid.uuid4().hex[:12],
             text=text,
             embedding=embedding,
-            memory_type=metadata.pop("memory_type", "note"),
-            poignancy=metadata.pop("poignancy", 5),
-            timestamp=metadata.pop("timestamp", _time.time()),
-            metadata=metadata,
+            memory_type=memory_type,
+            poignancy=meta.pop("poignancy", 5),
+            timestamp=meta.pop("timestamp", _time.time()),
+            metadata=meta,
         )
 
         if self._vector_db and embedding:
@@ -169,7 +187,7 @@ class LongTermMemory:
                         "memory_type": entry.memory_type,
                         "poignancy": entry.poignancy,
                         "timestamp": entry.timestamp,
-                        **metadata,
+                        **meta,
                     }],
                 )
             except Exception as e:
@@ -189,6 +207,7 @@ class LongTermMemory:
         now = _time.time()
         cutoff = now - (self._MAX_AGE_DAYS * 86400)
         removed = 0
+        evicted_ids: set[str] = set()
 
         # 移除过期条目
         new_entries = []
@@ -196,6 +215,7 @@ class LongTermMemory:
             if e.timestamp >= cutoff:
                 new_entries.append(e)
             else:
+                evicted_ids.add(e.id)
                 removed += 1
         self._entries = new_entries
 
@@ -203,8 +223,14 @@ class LongTermMemory:
         if len(self._entries) > self._MAX_ENTRIES:
             self._entries.sort(key=lambda e: e.timestamp, reverse=True)
             overflow = len(self._entries) - self._MAX_ENTRIES
+            for e in self._entries[-overflow:]:
+                evicted_ids.add(e.id)
             self._entries = self._entries[:self._MAX_ENTRIES]
             removed += overflow
+
+        # 同步清理 dirty_ids
+        if evicted_ids:
+            self._dirty_ids -= evicted_ids
 
         if removed:
             logger.info("Long-term memory: 驱逐 %d 条过期/超限条目 (剩余 %d)",
@@ -281,17 +307,18 @@ class LongTermMemory:
                         top_k=min(top_k * 4, 20),
                         output_fields=["text", "memory_type", "poignancy", "timestamp"],
                     )
+                    # Build text->distance lookup from Milvus results
+                    milvus_texts: dict[str, float] = {}
                     for r in raw:
                         text = r.get("text", "")
-                        entry = MemoryEntry(
-                            text=text,
-                            memory_type=r.get("memory_type", "note"),
-                            poignancy=int(r.get("poignancy", 5)),
-                            timestamp=float(r.get("timestamp", 0)),
-                            metadata=r,
-                        )
-                        candidates.append(entry)
-                        distances[text] = float(r.get("distance", r.get("score", 1.0)))
+                        milvus_texts[text] = float(r.get("distance", r.get("score", 1.0)))
+
+                    # Match Milvus results against in-memory entries by text
+                    # so returned entries have proper ids, embeddings, and metadata
+                    for e in self._entries:
+                        if e.text in milvus_texts:
+                            candidates.append(e)
+                            distances[e.text] = milvus_texts[e.text]
                 except Exception as e:
                     logger.warning("Milvus search failed: %s", e)
 

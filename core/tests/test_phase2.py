@@ -138,6 +138,21 @@ class TestLongTermMemory:
         results = await mem.search(query_text="test")
         assert len(results) == 1
 
+    @pytest.mark.asyncio
+    async def test_insert_awaits_embedding_on_first_call(self):
+        """First insert() should wait for embedding load, so entry gets embedding
+        if any backend is available. Verifies the await pattern works."""
+        from core.memory.long_term import LongTermMemory
+        mem = LongTermMemory()
+
+        await mem._ensure_embedding(wait=True)
+        await mem.insert("test cold start", memory_type="fact")
+
+        entry = mem._entries[0] if mem._entries else None
+        assert entry is not None
+        if mem._embedding is not None:
+            assert len(entry.embedding) > 0, "Entry should have embedding after await"
+
 
 # ============================================================================
 # 3. MemoryConsolidator tests
@@ -563,6 +578,35 @@ class TestLongTermMemoryEdgeCases:
         # "苹果是一种水果" should rank higher (matches both "苹果" and "水果")
         assert results[0].text == "苹果是一种水果"
 
+    @pytest.mark.asyncio
+    async def test_insert_supports_type_alias_for_memory_type(self):
+        """insert() should accept 'type' as alias for 'memory_type'."""
+        from core.memory.long_term import LongTermMemory
+        mem = LongTermMemory()
+        await mem.insert("test content", type="plan", poignancy=8)
+
+        assert mem.count == 1
+        entry = mem._entries[0]
+        assert entry.memory_type == "plan", (
+            f"Expected memory_type='plan', got {entry.memory_type!r}"
+        )
+        # 'type' should NOT end up in metadata
+        assert "type" not in entry.metadata
+
+    @pytest.mark.asyncio
+    async def test_search_returns_entries_with_ids(self):
+        """Search results should link back to _entries with proper IDs."""
+        from core.memory.long_term import LongTermMemory
+        mem = LongTermMemory()
+        await mem.insert("妖梦最喜欢的颜色是蓝色", memory_type="preference", poignancy=9)
+        await mem.insert("明天要去爬山", memory_type="plan", poignancy=7)
+
+        results = await mem.search(query_text="颜色")
+        assert len(results) >= 1
+        for r in results:
+            assert r.id, f"Expected non-empty id, got {r.id!r} for text={r.text!r}"
+            assert isinstance(r.embedding, list)
+
 
 # ============================================================================
 # 8. MemoryConsolidator edge cases
@@ -872,3 +916,27 @@ async def test_long_term_memory_sync_handles_milvus_down():
     await ltm.insert("离线数据")
     synced = await ltm._sync_dirty_entries()
     assert synced == 0
+
+
+@pytest.mark.asyncio
+async def test_long_term_memory_eviction_cleans_dirty_ids():
+    """Evicted entries should also be removed from _dirty_ids."""
+    from core.memory.long_term import LongTermMemory, MemoryEntry
+    import time as _time
+    mem = LongTermMemory()
+    entry = MemoryEntry(
+        id="test_dirty_evict",
+        text="old entry",
+        embedding=[0.1] * 10,
+        memory_type="fact",
+        poignancy=5,
+        timestamp=_time.time() - 100 * 86400,  # 100 days old — should evict
+    )
+    mem._entries.append(entry)
+    mem._dirty_ids.add("test_dirty_evict")
+
+    removed = mem._evict_old_entries()
+    assert removed >= 1
+    assert "test_dirty_evict" not in mem._dirty_ids, (
+        "Evicted entry should be removed from _dirty_ids"
+    )
