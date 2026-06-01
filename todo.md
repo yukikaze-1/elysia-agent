@@ -4,7 +4,7 @@
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争 |
+| 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec |
 | 中 | **TTS 播放高亮不同步** | 语音还在前一句，下一句气泡已经渲染并高亮；有时前几句无高亮只有后面有 |
 | 低 | **消息气泡尾部偶现空行** | 文本/emoji 后面出现空白行，可能是 `send("")` 导致的 |
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
@@ -21,23 +21,21 @@
   - 性能回归测试（bench 模块加断言，CI 可跑）
 - **多角色 prompt 模板**: `PromptAssembler._prompt` 当前指向 `prompt/`，多角色时改为 `character/<name>/`
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
-
-### 前端体验优化
-
-| # | 任务 | 说明 |
-|---|------|------|
-| 3 | 消息悬停复制 | hover 气泡出现复制按钮 |
-| 4 | 发送状态反馈 | send 后 input 区显示勾动画 |
+- **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + MongoDB + Milvus + SenseVoice + GPT-SoVits）。等架构稳定后实施。
 
 ### 后台任务系统 — 后续迭代
 
-后台任务分级 + DAG 依赖解析（预留 `run_in_background` / `depends_on` 字段）。
+后台任务分级 + DAG 依赖解析（`core/task.py` 中预留了 `run_in_background` / `depends_on` 字段，当前未使用）。
+
+- `depends_on: list[str]` — TaskScheduler 需在出队前检查依赖是否完成
+- `run_in_background: bool` — Worker Loop 需对 BACKGROUND 类型任务走独立执行路径
+- `progress: float` — Worker 执行期间更新进度，前端可轮询
 
 ## 代码清理
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| 高 | `Module/schema/` 479行预留设计 | 多层架构预留，保留参考 |
+| 高 | `Module/schema/` 479行预留设计 | 已添加 deprecation 注释，保留参考 |
 | 中 | `database/graphdb/` 不完整 | 只有 protocol.py，保留参考 |
 | 中 | `OutputManager.stream()` 未使用 | `manager.py:63-88`，保留参考 |
 | 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行，保留参考 |
@@ -46,13 +44,13 @@
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| **高** | `.env` API key 需要轮换 | `DEEPSEEK_API_KEY` / `MILVUS_TOKEN` |
-| 中 | `EmotionEngine._schedule` 无异常边界 | fire-and-forget task 异常静默丢失 |
+| **高** | `.env` API key 需要轮换 | 已添加 `.env.example`；实际轮换需在 DeepSeek/Milvus 后台手动操作 |
 | 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
-| 低 | Consolidator 每轮调 LLM | `_after_response` 无节流/批处理 |
+| 低 | 会话管理 | 无法新建/切换/列出对话。SessionMemory 的 MongoDB 持久化已为此做好准备，需前后端联动 |
 
-## 测试补充 (~15 个)
+## 测试补充
 
-- `core/log_setup.py` (3), `core/memory/long_term.py` (3), `core/cognitive_loop.py` (5)
-- `Module/input/audio_buffer.py` (3), `Module/input/server.py` (4), `Module/output/console.py` (1)
+- `Module/input/audio_buffer.py` (3)
+- `Module/input/server.py` (4)
+- `Module/output/console.py` (1)
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时

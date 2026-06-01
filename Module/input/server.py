@@ -72,6 +72,26 @@ def create_app(
             return web.json_response(asdict(info))
         app.router.add_get("/debug/api", debug_api_handler)
 
+    # Health check endpoint — for Docker/Kubernetes probes
+    async def health_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        try:
+            fsm_state = agent._fsm.state
+        except Exception:
+            fsm_state = "unknown"
+        return web.json_response({
+            "status": "ok",
+            "fsm": fsm_state,
+            "llm": getattr(agent._llm, 'model', 'unknown'),
+            "memory": {
+                "session_count": len(getattr(agent._session, '_messages', [])),
+                "long_term_count": getattr(agent._long_term, 'count', 0),
+            },
+            "tools": getattr(agent._tools, 'tool_names', []),
+        })
+    app.router.add_get("/health", health_handler)
+    app.router.add_get("/ready", health_handler)
+
     # Shutdown endpoint — triggers graceful agent stop
     async def shutdown_handler(request: web.Request) -> web.Response:
         import logging

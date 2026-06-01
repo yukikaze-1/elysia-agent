@@ -140,9 +140,18 @@ body {
   width: 42px; height: 42px; border-radius: 50%; border: none; cursor: pointer; font-size: 18px;
   display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background .2s;
 }
-#send-btn { background: var(--accent); color: white; }
+#send-btn { background: var(--accent); color: white; position: relative; transition: all 0.2s; }
 #send-btn:hover { filter: brightness(1.1); }
 #send-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; filter: none; }
+#send-btn.sent { animation: send-flash 0.4s ease; }
+#send-btn.sent::after { content: '✓'; position: absolute; top: -6px; right: -6px; background: #4ade80; color: #000; border-radius: 50%; width: 16px; height: 16px; font-size: 0.6rem; display: flex; align-items: center; justify-content: center; animation: check-pop 0.3s ease 0.1s both; }
+@keyframes send-flash { 0% { transform: scale(1); } 30% { transform: scale(0.85); } 60% { transform: scale(1.08); } 100% { transform: scale(1); } }
+@keyframes check-pop { 0% { transform: scale(0); } 100% { transform: scale(1); } }
+.copy-btn { display: none; position: absolute; top: 6px; right: 6px; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: #aaa; padding: 2px 8px; font-size: 0.75rem; cursor: pointer; backdrop-filter: blur(4px); transition: all 0.15s; }
+.copy-btn:hover { background: rgba(255,255,255,0.25); color: #fff; }
+.copy-btn.copied { color: #4ade80; border-color: #4ade80; }
+.msg-bubble { position: relative; }
+.msg-bubble:hover .copy-btn { display: block; }
 #mic-btn { background: var(--border); color: var(--text); }
 #mic-btn.active { background: var(--accent); animation: mic-pulse 1.5s infinite; }
 @keyframes mic-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(233,69,96,.4)} 50%{box-shadow:0 0 0 8px rgba(233,69,96,0)} }
@@ -346,6 +355,9 @@ function appendDelta(text) {
     const row = document.createElement('div'); row.className = 'msg-row assistant';
     row.innerHTML = '<div class="msg-avatar">🌸</div>';
     const bubble = document.createElement('div'); bubble.className = 'msg-bubble';
+    const copyBtn = document.createElement('span'); copyBtn.className = 'copy-btn'; copyBtn.textContent = '复制';
+    copyBtn.onclick = async (e) => { e.stopPropagation(); try { const t = bubble.textContent.replace('复制','').trim(); await navigator.clipboard.writeText(t); copyBtn.textContent = '已复制'; copyBtn.classList.add('copied'); setTimeout(() => { copyBtn.textContent = '复制'; copyBtn.classList.remove('copied'); }, 2000); } catch {} };
+    bubble.appendChild(copyBtn);
     row.appendChild(bubble);
     // 音频在播：不挂 DOM，等弹出时再 append（避免占位空白）
     if (audioPlaying) {
@@ -579,6 +591,10 @@ function sendText() {
   ws.send(JSON.stringify({type:'text',content:text}));
   addUserMsg(text);
   textInput.value = ''; textInput.style.height = '42px';
+  const btn = document.getElementById('send-btn');
+  btn.classList.add('sent');
+  btn.disabled = true;
+  setTimeout(() => { btn.classList.remove('sent'); btn.disabled = false; }, 800);
 }
 
 // ---- Mic ----

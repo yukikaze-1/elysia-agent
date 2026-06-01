@@ -7,6 +7,7 @@ memory for future recall.
 Uses the same LLM backend as the cognitive loop (or mock).
 """
 
+import asyncio
 import json
 import logging
 
@@ -51,9 +52,13 @@ class MemoryConsolidator:
         self._history: list[dict] = []  # recent consolidation results
         self._buffer: list[tuple[str, str]] = []  # (user_msg, assistant_msg) 缓冲
         self._threshold = buffer_threshold if buffer_threshold is not None else self.BUFFER_THRESHOLD
+        self._consolidate_lock = asyncio.Lock()
 
     async def consolidate(self, user_message: str, assistant_response: str) -> list[dict]:
-        """缓冲对话，攒够阈值后调 LLM 提取。返回本次提取的条目（可能为空）。"""
+        """缓冲对话，攒够阈值后调 LLM 提取。返回本次提取的条目（可能为空）。
+
+        如果已有 consolidation 正在运行则跳过本轮（防止并发 LLM 调用）。
+        """
         if not assistant_response.strip() or not user_message.strip():
             return []
 
@@ -62,6 +67,15 @@ class MemoryConsolidator:
         if len(self._buffer) < self._threshold:
             return []
 
+        if self._consolidate_lock.locked():
+            logger.debug("Consolidation skipped — previous run still active")
+            return []
+
+        async with self._consolidate_lock:
+            return await self._do_consolidate()
+
+    async def _do_consolidate(self) -> list[dict]:
+        """执行实际的 LLM 提取和存储（需持有 consolidate_lock）。"""
         # 合并缓冲中的多轮对话为一段文本
         turns: list[str] = []
         for u, a in self._buffer:

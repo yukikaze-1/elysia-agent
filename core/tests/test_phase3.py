@@ -1225,6 +1225,74 @@ class TestLLMAdapterErrors:
             with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
                 LLMAdapter()
 
+    @pytest.mark.asyncio
+    async def test_retry_on_429_then_succeed(self):
+        """429 错误应触发重试并最终成功。"""
+        from core.llm_adapter import LLMAdapter
+
+        call_count = [0]
+
+        class RetryBackend:
+            async def stream_think(self, messages, **kwargs):
+                call_count[0] += 1
+                if call_count[0] < 3:
+                    # simulate httpx.HTTPStatusError
+                    import httpx
+                    req = object()
+                    resp = type('R', (), {'status_code': 429})()
+                    raise httpx.HTTPStatusError("rate limit", request=req, response=resp)
+                yield {"content": "成功", "tool_calls": None}
+
+        adapter = LLMAdapter(_test_backend=RetryBackend())
+        chunks = []
+        async for chunk in adapter.stream_think([{"role": "user", "content": "hi"}]):
+            chunks.append(chunk)
+
+        assert call_count[0] == 3
+        assert chunks == [{"content": "成功", "tool_calls": None}]
+
+    @pytest.mark.asyncio
+    async def test_retry_on_503_then_succeed(self):
+        """503 错误应触发重试并最终成功。"""
+        from core.llm_adapter import LLMAdapter
+
+        call_count = [0]
+
+        class RetryBackend:
+            async def stream_think(self, messages, **kwargs):
+                call_count[0] += 1
+                if call_count[0] < 2:
+                    import httpx
+                    req = object()
+                    resp = type('R', (), {'status_code': 503})()
+                    raise httpx.HTTPStatusError("unavailable", request=req, response=resp)
+                yield {"content": "恢复", "tool_calls": None}
+
+        adapter = LLMAdapter(_test_backend=RetryBackend())
+        chunks = []
+        async for chunk in adapter.stream_think([{"role": "user", "content": "hi"}]):
+            chunks.append(chunk)
+
+        assert call_count[0] == 2
+        assert chunks == [{"content": "恢复", "tool_calls": None}]
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_error_propagates(self):
+        """非可重试错误（如 400）应直接抛出不重试。"""
+        from core.llm_adapter import LLMAdapter
+
+        class FailBackend:
+            async def stream_think(self, messages, **kwargs):
+                import httpx
+                req = object()
+                resp = type('R', (), {'status_code': 400})()
+                raise httpx.HTTPStatusError("bad request", request=req, response=resp)
+
+        adapter = LLMAdapter(_test_backend=FailBackend())
+        with pytest.raises(Exception):
+            async for _ in adapter.stream_think([{"role": "user", "content": "hi"}]):
+                pass
+
 
 # ============================================================================
 # 15. IdleMonitor

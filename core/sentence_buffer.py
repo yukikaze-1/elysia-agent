@@ -123,7 +123,7 @@ class SentenceBuffer:
                 return None  # consecutive delimiter — merge
 
         self._buffer = after
-        return complete.rstrip(" ")  # trailing spaces only, preserve \n
+        return complete.rstrip()  # strip trailing whitespace including \n (delimiters, not content)
 
     def _find_split(self, text: str) -> int:
         """Find the index of the first sentence delimiter in text. Returns -1 if none."""

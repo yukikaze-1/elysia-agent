@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MemoryEntry:
-    text: str
+    id: str = ""                    # 唯一标识（insert 时自动生成）
+    text: str = ""
     embedding: list[float] = field(default_factory=list, repr=False)
     memory_type: str = "note"      # Fact / Preference / Event / Plan / Note
     poignancy: int = 5             # 重要性 1-10
@@ -49,6 +50,8 @@ class LongTermMemory:
     COLLECTION = "long_term_memory"
     DIMENSION = 1024  # Default for bge-large-zh-v1.5
     EMBED_TIMEOUT = 10.0  # Max seconds to wait for embedding model load
+    _MAX_ENTRIES = 10000  # 内存列表最大条目数
+    _MAX_AGE_DAYS = 90    # 最大保留天数
 
     def __init__(self):
         self._entries: list[MemoryEntry] = []
@@ -57,6 +60,7 @@ class LongTermMemory:
         self._embedding_tried = False  # Only try once lazily
         self._embed_task: asyncio.Task | None = None  # Tracked for cleanup
         self._connected = False
+        self._dirty_ids: set[str] = set()  # 未同步到 Milvus 的条目 ID
 
     async def connect(self) -> bool:
         """Connect to Milvus (fast). Embedding is deferred to first use. Returns True if Milvus available."""
@@ -144,7 +148,9 @@ class LongTermMemory:
             except Exception:
                 logger.debug("Embedding failed for insert, storing text-only", exc_info=True)
 
+        import uuid
         entry = MemoryEntry(
+            id=uuid.uuid4().hex[:12],
             text=text,
             embedding=embedding,
             memory_type=metadata.pop("memory_type", "note"),
@@ -168,8 +174,78 @@ class LongTermMemory:
                 )
             except Exception as e:
                 logger.warning("Milvus insert failed: %s, falling back to in-memory", e)
+                self._dirty_ids.add(entry.id)
+        elif not self._vector_db:
+            self._dirty_ids.add(entry.id)
 
         self._entries.append(entry)
+        self._evict_old_entries()
+
+    def _evict_old_entries(self) -> int:
+        """驱逐过期和超过上限的条目。返回驱逐数量。
+
+        在每次 insert() 后调用，保持内存列表健康。
+        """
+        now = _time.time()
+        cutoff = now - (self._MAX_AGE_DAYS * 86400)
+        removed = 0
+
+        # 移除过期条目
+        new_entries = []
+        for e in self._entries:
+            if e.timestamp >= cutoff:
+                new_entries.append(e)
+            else:
+                removed += 1
+        self._entries = new_entries
+
+        # 移除超过上限的条目（保留最新的）
+        if len(self._entries) > self._MAX_ENTRIES:
+            self._entries.sort(key=lambda e: e.timestamp, reverse=True)
+            overflow = len(self._entries) - self._MAX_ENTRIES
+            self._entries = self._entries[:self._MAX_ENTRIES]
+            removed += overflow
+
+        if removed:
+            logger.info("Long-term memory: 驱逐 %d 条过期/超限条目 (剩余 %d)",
+                       removed, len(self._entries))
+        return removed
+
+    def _get_by_id(self, entry_id: str) -> MemoryEntry | None:
+        """通过 ID 查找条目。"""
+        for e in self._entries:
+            if e.id == entry_id:
+                return e
+        return None
+
+    async def _sync_dirty_entries(self) -> int:
+        """尝试将脏条目同步到 Milvus。返回成功同步数。"""
+        if not self._vector_db or not self._dirty_ids:
+            return 0
+        synced = 0
+        for eid in list(self._dirty_ids):
+            entry = self._get_by_id(eid)
+            if entry is None or not entry.embedding:
+                continue
+            try:
+                await self._vector_db.insert(
+                    self.COLLECTION,
+                    vectors=[entry.embedding],
+                    metadata=[{
+                        "text": entry.text,
+                        "memory_type": entry.memory_type,
+                        "poignancy": entry.poignancy,
+                        "timestamp": entry.timestamp,
+                        **entry.metadata,
+                    }],
+                )
+                self._dirty_ids.discard(eid)
+                synced += 1
+            except Exception:
+                break  # Milvus 仍然不可用
+        if synced:
+            logger.info("Synced %d dirty entries to Milvus", synced)
+        return synced
 
     # ---- Read ----
 

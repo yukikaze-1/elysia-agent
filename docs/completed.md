@@ -291,3 +291,42 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | `data/` 目录自动创建 | Scheduler `start()` 时 `mkdir(parents=True)`，无 BACKGROUND 任务时也确保目录存在 |
 | VAD 环境音敏感 | 加入 todo — 需调整 aggressiveness 或加降噪 |
 | 工具超时手动测试 | 加入 todo — 需构造慢工具场景验证 60s timeout |
+
+---
+
+### Review 修复 Phase 1 — 基础清理 (2026-06-01)
+
+| 任务 | 说明 |
+|------|------|
+| `requirements.txt` | Python 依赖声明文件，含 core/optional 分组 |
+| `_seed_memories()` demo 标注 | 添加 docstring 注明为演示脚手架数据 |
+| `can_retry()` 修复 | COMPLETED/CANCELLED 终态任务不可重试 |
+| `_pending_messages` 容量上限 | 默认 32 条，防止消息风暴导致内存无限增长 |
+| 文件系统安全强化 | denylist 从 4 条扩展到 17 条路径 + 16 个敏感文件名 |
+| `.env.example` 模板 | 环境变量模板 + API key 轮换指引 |
+
+### Review 修复 Phase 2 — 代码质量 & 解耦 (2026-06-01)
+
+| 任务 | 说明 |
+|------|------|
+| CognitiveLoop/TaskScheduler 公开 API | `cancel_current()` + `set_tool_context()`，消除私有属性访问 |
+| EmotionEngine 异常边界 | `_safe_wrapper()` 捕获 fire-and-forget 异常并记日志 |
+| TaskScheduler prune 并发安全 | 从 worker loop 移出为独立 `_prune_loop()` 周期任务 |
+| SessionMemory MongoDB 原子 upsert | `update_one(upsert=True)` 替代 find-then-update 竞态 |
+| DocumentDB protocol upsert 支持 | `update_one()` 增加可选 `upsert` 参数，MongoDB backend 透传 |
+| 测试补充: `test_log_setup.py` | 3 tests — request_id 读写 + ContextVar 隔离 |
+| 测试补充: long_term_memory | 2 tests — fallback search + empty search |
+| `Module/schema/` deprecation 标注 | 添加模块级注释说明当前未被 core/ 使用 |
+
+### Review 修复 Phase 3 — 韧性 & 可观测性 (2026-06-01)
+
+| 任务 | 说明 |
+|------|------|
+| LLM 请求自动重试 | 429/500/502/503/504 指数退避重试 (最多 3 次)，非可重试错误立即抛出 |
+| LongTermMemory TTL 驱逐 | 90 天过期 + 1 万条上限，`insert()` 后自动触发 |
+| `/health` `/ready` 端点 | JSON 响应含 FSM 状态、LLM model、memory 计数、tools 列表 |
+| LongTermMemory 脏数据回写 | `_dirty_ids` 追踪 Milvus 不可用时的离线条目，`_sync_dirty_entries()` 重连后同步 |
+| MemoryConsolidator 节流 | `asyncio.Lock` 防止并发 LLM 调用，已有运行中的 consolidation 时跳过 |
+| 前端: 消息悬停复制 | hover 气泡出现复制按钮，clipboard API 写入，2s "已复制" 反馈 |
+| 前端: 发送按钮动画 | 发送后 0.8s 勾动画 + scale flash，按钮禁用防重复发送 |
+| MemoryEntry.id 字段 | 添加唯一标识符，`insert()` 时 `uuid4().hex[:12]` 自动生成 |

@@ -63,7 +63,7 @@ class TestBasicDelimiters:
     def test_newline_is_delimiter(self):
         buf = SentenceBuffer(min_chunk_length=3)
         results = _collect_all(buf, "AAA\nBBB\n")
-        assert results == ["AAA\n", "BBB\n"]
+        assert results == ["AAA", "BBB"]  # \n 是分隔符，不应保留在句尾
 
     def test_multiple_sentences(self):
         buf = SentenceBuffer(min_chunk_length=3)
@@ -347,7 +347,7 @@ class TestEdgeCases:
     def test_newline_mid_sentence(self):
         buf = SentenceBuffer(min_chunk_length=3)
         results = _collect_all(buf, "第一行\n第二行。")
-        assert results == ["第一行\n", "第二行。"]
+        assert results == ["第一行", "第二行。"]  # \n 是分隔符，不应保留在句尾
 
     def test_carriage_return_not_delimiter(self):
         buf = SentenceBuffer(min_chunk_length=3)

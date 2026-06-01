@@ -15,6 +15,11 @@ from Module.llm import LLMBackend, LLMFactory
 
 logger = logging.getLogger(__name__)
 
+# 重试配置
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+_MAX_RETRIES = 3
+_RETRY_BACKOFF_BASE = 1.0
+
 
 @dataclass
 class ThoughtResult:
@@ -75,22 +80,54 @@ class LLMAdapter:
     async def stream_think(
         self, messages: list[dict], tools: list[dict] | None = None, **kwargs
     ) -> AsyncIterator[dict]:
-        """Stream structured chunks with tool_call detection.
+        """Stream structured chunks with tool_call detection + retry on 429/5xx.
 
         Yields dicts: {"content": str | None, "tool_calls": list | None}
-        Works with real backends via stream_think.
+        Retries on transient server errors (429, 500-504) with exponential backoff.
+        Only retries if streaming hasn't started yet (no duplicate content).
         """
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
-        if hasattr(self._backend, "stream_think"):
-            async for chunk in self._backend.stream_think(messages, **kwargs):
-                yield chunk
-        else:
-            text = await self._backend.chat(messages, **kwargs)
-            for char in text:
-                yield {"content": char, "tool_calls": None}
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                if hasattr(self._backend, "stream_think"):
+                    started = False
+                    async for chunk in self._backend.stream_think(messages, **kwargs):
+                        started = True
+                        yield chunk
+                    return
+                else:
+                    text = await self._backend.chat(messages, **kwargs)
+                    for char in text:
+                        yield {"content": char, "tool_calls": None}
+                    return
+            except Exception as e:
+                last_exc = e
+                status = self._extract_status(e)
+                if status not in _RETRYABLE_STATUS or attempt >= _MAX_RETRIES:
+                    raise
+                backoff = _RETRY_BACKOFF_BASE * (2 ** attempt)
+                logger.warning("LLM 调用失败 (status=%s), %d/%d 重试 (%.0fs)",
+                              status, attempt + 1, _MAX_RETRIES, backoff)
+                await asyncio.sleep(backoff)
+        raise last_exc  # type: ignore[misc]
+
+    @staticmethod
+    def _extract_status(exc: Exception) -> int | None:
+        """从异常中提取 HTTP 状态码。"""
+        if hasattr(exc, 'status_code'):
+            return exc.status_code
+        # httpx.HTTPStatusError
+        if hasattr(exc, 'response') and hasattr(exc.response, 'status_code'):
+            return exc.response.status_code
+        # openai.APIStatusError
+        status = getattr(exc, 'status_code', None)
+        if status is not None:
+            return status
+        return None
 
     async def close(self) -> None:
         if self._backend:

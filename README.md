@@ -1,6 +1,8 @@
 # Elysia Agent
 
-桌面 AI 伴侣，支持语音对话。六阶段全部完成。
+桌面 AI 伴侣，支持语音对话。核心功能完整，持续迭代优化中。
+
+> 最近: 2026-06-01 完成全面代码审查，分 3 阶段修复了 18 个问题，详见 `docs/review-2026-06-01.md`
 
 ## 快速开始
 
@@ -98,16 +100,33 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | ToolContext.user_id 配置化 | done |
 | filesystem .env 精确匹配 | done |
 | os._exit(0) + stdin watcher 移除 (优雅退出) | done |
+| TaskScheduler Worker Pool (5 workers, retry, cancel) | done |
+| FIFO 消息排队 (busy 时暂存 + 容量上限 32) | done |
+| LLM 请求自动重试 (429/5xx, 指数退避) | done |
+| MemoryConsolidator 并发保护 (asyncio.Lock) | done |
+| LongTermMemory TTL 驱逐 (90 天 + 1 万条上限) | done |
+| LongTermMemory Milvus 脏数据回写同步 | done |
+| CognitiveLoop/TaskScheduler 公开 API 封装 | done |
+| EmotionEngine 异步任务异常边界 | done |
+| SessionMemory MongoDB 原子 upsert | done |
+| TaskScheduler prune 并发安全 (独立周期任务) | done |
+| 文件系统安全强化 (扩展 denylist) | done |
+| 消息气泡悬停复制按钮 | done |
+| 发送按钮状态动画 (✓ 反馈) | done |
+| /health /ready 健康检查端点 | done |
+| `.env.example` 模板 + API key 轮换指引 | done |
+| `requirements.txt` 依赖声明 | done |
 
 ## 项目结构
 
 ```
 Agent/
+├── requirements.txt       # Python 依赖
+├── .env.example           # 环境变量模板
 ├── app.py              # 入口
 ├── config.yaml           # 总配置
 ├── Architecture.md       # 架构设计
 ├── todo.md               # 开发计划 + 已知问题
-├── test_plan.md          # 测试计划
 │
 ├── Module/               # L0 基础设施层
 │   ├── llm/              # DeepSeek / OpenAI / Ollama
@@ -129,27 +148,33 @@ Agent/
 │   ├── event_bus.py      #   优先级事件总线
 │   ├── agent_fsm.py      #   五状态机
 │   ├── cognitive_loop.py #   ReAct 调度器
-│   ├── llm_adapter.py    #   LLM 适配器
+│   ├── llm_adapter.py    #   LLM 适配器 (含重试)
 │   ├── prompt_assembler.py # 提示词组装 + 记忆检索
-│   ├── emotion_engine.py #   情绪引擎
+│   ├── emotion_engine.py #   情绪引擎 (含异常边界)
 │   ├── sentence_buffer.py # 分句缓冲
-│   ├── consolidator.py   #   记忆沉淀 (缓冲6条+rerank)
+│   ├── consolidator.py   #   记忆沉淀 (缓冲6条 + 并发锁)
 │   ├── idle_monitor.py   #   空闲监控
 │   ├── character_config.py # 角色配置
 │   ├── log_setup.py      #   日志系统
 │   ├── app_config.py     #   ConfigLoader 类型化配置
 │   ├── debug_info.py     #   /debug 面板数据聚合
-│   ├── agent.py     #   组件组装 + 生命周期
+│   ├── task.py           #   Task 数据模型
+│   ├── task_scheduler.py #   Worker Pool (5 workers + prune loop)
+│   ├── timing.py         #   性能计时
+│   ├── agent.py          #   组件组装 + 生命周期
 │   ├── tools/            #   Agent 工具集
 │   ├── memory/           #   记忆子系统
-│   │   ├── session.py    #     会话上下文
-│   │   └── long_term.py  #     长期记忆
+│   │   ├── session.py    #     会话上下文 (原子 upsert)
+│   │   └── long_term.py  #     长期记忆 (TTL + 脏回写)
 │   └── tests/            #   测试
 │       ├── fake_llm.py           # 测试用 LLM backend
 │       ├── test_phase1.py        # Phase 1 (认知核心)
 │       ├── test_phase2.py        # Phase 2 (记忆 + 工具)
 │       ├── test_phase3.py        # Phase 3 (生命周期)
-│       └── test_sentence_buffer.py # SentenceBuffer (70)
+│       ├── test_sentence_buffer.py # SentenceBuffer (70)
+│       ├── test_task_model.py    # Task model (15)
+│       ├── test_task_scheduler.py # Scheduler (26)
+│       └── test_log_setup.py     # Log setup (3)
 │
 ├── character/
 │   └── elysia.yaml       # 角色定义
@@ -163,7 +188,20 @@ Agent/
 │   └── Utils.j2          #   工具宏
 │
 ├── static/
-│   └── index.html        # 浏览器客户端
+│   └── index.html        # 浏览器客户端 (含复制按钮、发送动画)
+│
+├── docs/                  # 文档归档
+│   ├── review-2026-06-01.md          # 全面代码审查报告
+│   ├── architecture.md               # 架构详解
+│   ├── completed.md                  # 已完成开发记录
+│   ├── sync-lessons.md               # 文字/音频同步经验教训
+│   ├── ref_memory-architecture.md    # 记忆架构参考
+│   └── superpowers/plans/            # 实现计划
+│       ├── 2026-06-01-review-master-plan.md   # 总计划
+│       ├── 2026-06-01-review-fixes-phase-1.md # Phase 1 详细
+│       ├── 2026-06-01-review-fixes-phase-2.md # Phase 2 详细
+│       ├── 2026-06-01-review-fixes-phase-3.md # Phase 3 详细
+│       └── 2026-06-01-review-fixes-phase-4.md # Phase 4 详细
 │
 └── log/                  # 日志 (gitignore)
 ```
@@ -171,18 +209,20 @@ Agent/
 ## 测试
 
 ```bash
+conda activate Elysia
+
 # 全部测试
-python -m pytest core/tests/ Module/ -v --asyncio-mode=auto
+python -m pytest Module/ core/ -v
 
 # 仅 core
-python -m pytest core/tests/ -v --asyncio-mode=auto
+python -m pytest core/tests/ -v
 
 # Module 层
 python -m pytest Module/ -v
 
 # 特定文件
 python -m pytest core/tests/test_sentence_buffer.py -v
-python -m pytest Module/input/test_server.py -v --asyncio-mode=auto
+python -m pytest core/tests/test_task_scheduler.py -v
 ```
 
-**测试统计**: 251 (core) + 463 (Module) = 714 total (+3 pre-existing failures)
+**测试统计**: ~300 (core) + ~466 (Module) = 766 total (5 pre-existing failures)

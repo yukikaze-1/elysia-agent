@@ -802,3 +802,73 @@ async def test_long_term_memory_empty_search():
     ltm._entries = []
     results = await ltm.search("任何东西", top_k=5)
     assert results == []
+
+
+def test_long_term_memory_evicts_old_entries():
+    """验证过期条目被驱逐。"""
+    from core.memory.long_term import LongTermMemory, MemoryEntry
+
+    ltm = LongTermMemory()
+    now = _time_module.time()
+    ltm._MAX_AGE_DAYS = 90
+
+    ltm._entries = [
+        MemoryEntry(text="过期数据", metadata={}, timestamp=now - 100 * 86400),
+        MemoryEntry(text="新数据", metadata={}, timestamp=now),
+    ]
+
+    removed = ltm._evict_old_entries()
+    assert removed >= 1
+    remaining_texts = [e.text for e in ltm._entries]
+    assert "新数据" in remaining_texts
+    assert "过期数据" not in remaining_texts
+
+
+def test_long_term_memory_evicts_overflow():
+    """验证超过上限的条目被驱逐（保留最新的）。"""
+    from core.memory.long_term import LongTermMemory, MemoryEntry
+
+    ltm = LongTermMemory()
+    now = _time_module.time()
+    ltm._MAX_ENTRIES = 5
+
+    ltm._entries = [
+        MemoryEntry(text=f"entry-{i}", metadata={}, timestamp=now - 100 + i)
+        for i in range(10)
+    ]
+
+    removed = ltm._evict_old_entries()
+    assert removed >= 5
+    assert len(ltm._entries) <= 5
+    for e in ltm._entries:
+        assert int(e.text.split("-")[1]) >= 5
+
+
+@pytest.mark.asyncio
+async def test_long_term_memory_tracks_dirty_entries():
+    """Milvus 不可用时插入的条目应标记为 dirty。"""
+    from core.memory.long_term import LongTermMemory
+
+    ltm = LongTermMemory()
+    ltm._vector_db = None  # 模拟 Milvus 不可用
+    assert len(ltm._dirty_ids) == 0
+
+    await ltm.insert("离线数据", memory_type="fact")
+    assert len(ltm._dirty_ids) >= 1
+
+    # 验证 ID 生成
+    entry = ltm._entries[-1]
+    assert len(entry.id) == 12
+
+
+@pytest.mark.asyncio
+async def test_long_term_memory_sync_handles_milvus_down():
+    """Milvus 仍然不可用时 sync 应安全返回 0。"""
+    from core.memory.long_term import LongTermMemory
+
+    ltm = LongTermMemory()
+    ltm._vector_db = None  # Milvus 不可用
+
+    await ltm.insert("离线数据")
+    synced = await ltm._sync_dirty_entries()
+    assert synced == 0
