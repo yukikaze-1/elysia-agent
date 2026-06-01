@@ -87,7 +87,7 @@ def create_app(
                 "session_count": len(getattr(agent._session, '_messages', [])),
                 "long_term_count": getattr(agent._long_term, 'count', 0),
             },
-            "tools": getattr(agent._tools, 'tool_names', []),
+            "tools": getattr(agent._tool_manager, 'tool_names', ["<loading>"]),
         })
     app.router.add_get("/health", health_handler)
     app.router.add_get("/ready", health_handler)

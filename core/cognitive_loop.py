@@ -19,7 +19,7 @@ from Module.tts import TTSBackend
 from .agent_fsm import AgentFSM, AgentState
 from .event_bus import EventBus, EventPriority, EventType
 from .log_setup import set_request_id, get_request_id, log_conversation
-from Module.tool import ToolRegistry, ToolContext
+from Module.tool import ToolContext
 from Module.tool.protocol import ToolResult
 from .prompt_assembler import PromptAssembler
 from .memory.session import SessionMemory
@@ -66,7 +66,7 @@ class CognitiveLoop:
         output: OutputManager,
         prompt: PromptAssembler,
         session: SessionMemory,
-        tools: ToolRegistry,
+        tool_executor=None,  # ToolExecutor Protocol
         emotion: EmotionEngine | None = None,
         consolidator: MemoryConsolidator | None = None,
         tts: TTSBackend | None = None,
@@ -78,7 +78,7 @@ class CognitiveLoop:
         self._output = output
         self._prompt = prompt
         self._session = session
-        self._tools = tools
+        self._tool_executor = tool_executor
         self._emotion = emotion
         self._consolidator = consolidator
         self._tts = tts
@@ -119,6 +119,12 @@ class CognitiveLoop:
                 self._req_counter += 1
                 rid = f"P{self._req_counter:03d}"
                 set_request_id(rid)
+
+            # 生成 trace_id（跨 Agent、跨工具串联）
+            import uuid
+            if self._ctx is not None:
+                self._ctx.trace_id = uuid.uuid4().hex
+
             self._tts_seq = 0
             clock = TimingClock()
             clock.start()
@@ -169,7 +175,7 @@ class CognitiveLoop:
                 stt_emotion=stt_emotion, stt_events=stt_events,
             )
         self._session.add_message("user", user_message)
-        tool_defs = self._tools.definitions() or None
+        tool_defs = self._tool_executor.definitions() if self._tool_executor else None
         logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs or []))
 
         await self._output.typing(True)
@@ -464,7 +470,7 @@ class CognitiveLoop:
                 args = {}
             logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
             try:
-                tr = await self._tools.execute(func_name, args, ctx=self._ctx)
+                tr = await self._tool_executor.execute(func_name, ctx=self._ctx, **args)
             except asyncio.CancelledError:
                 logger.info("工具取消: %s", func_name)
                 tr = ToolResult.fail(name=func_name, error="用户取消")

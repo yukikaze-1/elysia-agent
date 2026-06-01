@@ -21,8 +21,8 @@ from .character_config import CharacterConfig
 from .memory.session import SessionMemory
 from .memory.long_term import LongTermMemory
 from .prompt_assembler import PromptAssembler
-from Module.tool import ToolRegistry, ToolContext
-from core.tools import register_all
+from Module.tool import ToolManager, ToolContext, PluginContext
+from core.tools import ALL_PLUGINS
 from .cognitive_loop import CognitiveLoop
 from .idle_monitor import IdleMonitor
 from .llm_adapter import LLMAdapter
@@ -56,8 +56,13 @@ class Agent:
         )
 
         # ---- L2: Tools ----
-        self._tools = ToolRegistry()
-        self._register_tools()
+        self._tool_manager = ToolManager()
+
+        # 构造 PluginContext（服务在 start() 中注入）
+        self._plugin_ctx = PluginContext(
+            session_id=self._session_id,
+            config=self._config,
+        )
 
         # ---- L1: Cognitive ----
         self._bus = EventBus()
@@ -95,7 +100,7 @@ class Agent:
             output=self._output,
             prompt=self._prompt,
             session=self._session,
-            tools=self._tools,
+            tool_executor=self._tool_manager,
             emotion=self._emotion,
             consolidator=self._consolidator,
             tts=self._tts,
@@ -109,7 +114,7 @@ class Agent:
 
         # Worker Pool — 执行 AI 规划的工具子任务 + 后台任务
         self._scheduler = TaskScheduler(
-            tools=self._tools,
+            tool_executor=self._tool_manager,
             tool_ctx=None,  # 在 start() 中赋值 tool_ctx 后更新
             num_workers=5,
             checkpoint_path="data/scheduler_checkpoint.json",
@@ -140,9 +145,19 @@ class Agent:
         self._tool_ctx = ToolContext(
             session_id=getattr(self._session, "_session_id", "default"),
             user_id=self._user_name,
-            services={"memory": self._long_term},
+            services={
+                "memory": self._long_term,
+                "scheduler": self._scheduler,
+                "config": self._config,
+                "_tool_names": list(self._tool_manager.tool_names),
+            },
         )
         self._cognitive.set_tool_context(self._tool_ctx)
+
+        # 加载工具插件（setup() 中检测能力，失败则跳过）
+        self._plugin_ctx.memory = self._long_term
+        self._plugin_ctx.scheduler = self._scheduler
+        await self._tool_manager.load_all(ALL_PLUGINS, self._plugin_ctx)
         self._scheduler.set_tool_context(self._tool_ctx)
 
         # Start Worker Pool
@@ -168,7 +183,7 @@ class Agent:
         print(f"  记忆: {db_str}  ({self._long_term.count} entries)")
         print(f"  TTS: {'已连接' if self._tts else '未连接（纯文本模式）'}")
         print(f"  人格: {', '.join(self._character.traits)}")
-        print(f"  工具: {', '.join(self._tools.tool_names) or '无'}")
+        print(f"  工具: {', '.join(self._tool_manager.tool_names) or '无'}")
         print(f"{'='*50}")
 
     async def stop(self) -> None:
@@ -215,6 +230,9 @@ class Agent:
 
         logger.debug("Stopping scheduler Worker Pool...")
         await self._scheduler.stop()
+
+        logger.debug("Stopping ToolManager...")
+        await self._tool_manager.shutdown()
 
         logger.debug("Stopping idle monitor...")
         await self._idle.stop()
@@ -482,6 +500,4 @@ class Agent:
         for text, meta in entries:
             await self._long_term.insert(text, **meta)
 
-    def _register_tools(self) -> None:
-        """注册 Agent 工具到 Module.tool.ToolRegistry。"""
-        register_all(self._tools)
+    # Tool registration is now done via ToolManager.load_all() in start()

@@ -14,7 +14,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from Module.tool import ToolRegistry, ToolContext, ToolResult
+from Module.tool import ToolContext, ToolResult
+from Module.tool.protocol import ErrorType
 
 from .task import Task, TaskType, TaskStatus
 
@@ -32,16 +33,15 @@ class TaskScheduler:
 
     def __init__(
         self,
-        tools: ToolRegistry,
+        tool_executor=None,  # ToolExecutor
         tool_ctx: ToolContext | None = None,
         num_workers: int = 5,
         checkpoint_path: str | None = None,
     ):
-        self._tools = tools
+        self._tool_executor = tool_executor  # ToolExecutor Protocol
         self._tool_ctx = tool_ctx
         self._num_workers = num_workers
         self._checkpoint_path = checkpoint_path
-
         self._queue: asyncio.PriorityQueue[tuple[int, int, Task]] = asyncio.PriorityQueue()
         self._tasks: dict[str, Task] = {}
         self._workers: list[asyncio.Task] = []
@@ -172,8 +172,14 @@ class TaskScheduler:
                 out.append((tc, raw))
         return out
 
-    def cancel(self, task_id: str) -> bool:
+    def cancel(self, task_id: str, _visited: set | None = None) -> bool:
         """取消任务 — 级联取消子任务 + 取消 Worker 执行 + 取消 Future。"""
+        if _visited is None:
+            _visited = set()
+        if task_id in _visited:
+            return False
+        _visited.add(task_id)
+
         task = self._tasks.get(task_id)
         if task is None:
             return False
@@ -186,9 +192,9 @@ class TaskScheduler:
         if task._future is not None and not task._future.done():
             task._future.cancel()
 
-        # 级联取消子树
+        # 级联取消子树（含循环检测）
         for child_id in task.children_ids:
-            self.cancel(child_id)
+            self.cancel(child_id, _visited)
 
         del self._tasks[task_id]
         logger.debug("Scheduler: 任务取消 %s (type=%s)", task_id, task.type.value)
@@ -314,38 +320,47 @@ class TaskScheduler:
         while True:
             try:
                 result = await asyncio.wait_for(
-                    self._tools.execute(tool_name, arguments, ctx=self._tool_ctx),
+                    self._tool_executor.execute(
+                        tool_name, ctx=self._tool_ctx, **arguments,
+                    ),
                     timeout=_TOOL_TIMEOUT,
                 )
-                if result.success:
-                    return result
-                if task.can_retry():
-                    task.retry_count += 1
-                    backoff = task.retry_backoff_seconds()
-                    logger.info("工具 '%s' 失败，%d/%d 重试 (%.0fs)",
-                                tool_name, task.retry_count, task.max_retries, backoff)
-                    await asyncio.sleep(backoff)
-                    continue
-                return result
             except asyncio.CancelledError:
                 raise
             except asyncio.TimeoutError:
-                logger.warning("工具 '%s' 超时 (%.0fs)", tool_name, _TOOL_TIMEOUT)
-                if task.can_retry():
-                    task.retry_count += 1
-                    backoff = task.retry_backoff_seconds()
-                    await asyncio.sleep(backoff)
-                    continue
-                return ToolResult.fail(name=tool_name, error=f"超时 ({_TOOL_TIMEOUT:.0f}s)")
+                result = ToolResult.fail(
+                    name=tool_name,
+                    error=f"执行超时 ({_TOOL_TIMEOUT:.0f}s)",
+                    error_type=ErrorType.TIMEOUT,
+                )
             except Exception as e:
-                if task.can_retry():
-                    task.retry_count += 1
-                    backoff = task.retry_backoff_seconds()
-                    logger.info("工具 '%s' 异常，%d/%d 重试 (%.0fs): %s",
-                                tool_name, task.retry_count, task.max_retries, backoff, e)
-                    await asyncio.sleep(backoff)
-                    continue
-                return ToolResult.fail(name=tool_name, error=str(e))
+                result = ToolResult.fail(
+                    name=tool_name, error=str(e),
+                    error_type=ErrorType.TOOL_ERROR,
+                )
+
+            if result.success:
+                return result
+
+            # 仅对可重试的错误类型重试
+            error_type = result.error_type
+            retryable = (
+                error_type is not None
+                and hasattr(error_type, "is_retryable")
+                and error_type.is_retryable
+                and task.can_retry()
+            )
+            if not retryable:
+                return result
+
+            task.retry_count += 1
+            backoff = task.retry_backoff_seconds()
+            logger.info(
+                "工具 '%s' 失败 (%s)，%d/%d 重试 (%.0fs)",
+                tool_name, error_type.value if error_type else "unknown",
+                task.retry_count, task.max_retries, backoff,
+            )
+            await asyncio.sleep(backoff)
 
     # ---- Checkpoint ----
 
