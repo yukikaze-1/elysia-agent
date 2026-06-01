@@ -14,6 +14,7 @@ Module/
 ├── config/               # 配置基础设施
 ├── logger/               # 日志工厂
 ├── prompt/               # Jinja2 模板引擎
+├── tool/                 # 工具执行框架
 ├── schema/               # 共享数据模型
 ├── database/             # 数据库后端
 │   ├── vectordb/         # 向量数据库（Milvus）
@@ -152,6 +153,34 @@ pm = PromptManager("prompt/")
 system = pm.render_macro("Brain.j2", "BrainSystemPrompt", character_name="Elysia")
 ```
 
+### Tool — 工具执行框架
+
+为 AI Agent 提供声明式、安全、可观测的工具执行系统。基于 ToolPlugin-ToolManager-SafetyPipeline 架构，支持 Pydantic 参数校验、安全检查、HITL 审批、并发控制、流式进度、热重载。
+
+```python
+from pydantic import BaseModel, Field
+from Module.tool import ToolPlugin, ToolManager, SafetyProfile, Capability
+
+class SearchParams(BaseModel):
+    query: str = Field(..., description="搜索关键词")
+
+class SearchPlugin(ToolPlugin):
+    name = "web_search"
+    description = "搜索互联网"
+    param_model = SearchParams
+    capabilities = {Capability.NETWORK}
+    safety = SafetyProfile(network_allowed=True, max_concurrency=3)
+
+    async def execute(self, *, ctx, emit=None, params: SearchParams) -> str:
+        return await do_search(params.query)
+
+tm = ToolManager()
+await tm.load_all([SearchPlugin], PluginContext(session_id="demo"))
+result = await tm.execute("web_search", ctx=ToolContext(), query="hello")
+print(tm.definitions())  # OpenAI function calling schema
+await tm.shutdown()
+```
+
 ### Schema — 共享数据模型
 
 定义全链路通用的数据结构：
@@ -194,6 +223,7 @@ python -m pytest Module/output/test_output.py -v
 python -m pytest Module/config/test_config.py -v
 python -m pytest Module/prompt/test_prompt.py -v
 python -m pytest Module/logger/test_logger.py -v
+python -m pytest Module/tool/test_framework.py -v
 python -m pytest Module/database/vectordb/test_vectordb.py -v
 python -m pytest Module/database/documentdb/test_documentdb.py -v
 
