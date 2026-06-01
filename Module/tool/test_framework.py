@@ -257,7 +257,7 @@ class TestSafetyProfile:
 
 
 # ============================================================================
-# Token / URL helpers
+# Token / URL 辅助函数
 # ============================================================================
 
 class TestTokenEstimation:
@@ -295,7 +295,7 @@ class TestTokenTruncation:
         assert len(result) < len(text)
 
     def test_head_tail_truncation(self):
-        text = "ABCDEFGHIJ" * 1000  # ~10000 chars, ~2500 tokens
+        text = "ABCDEFGHIJ" * 1000  # 约10000字符，约2500 token
         result, truncated = _truncate_text(text, 500, "head_tail")
         assert truncated is True
         assert "...[省略约" in result
@@ -494,10 +494,10 @@ class TestToolManagerExecute:
 
     @pytest.mark.asyncio
     async def test_pydantic_validation_error(self):
-        """缺少必填参数 name 应返回 INVALID_ARGUMENT。"""
+        """缺少必填参数 target 应返回 INVALID_ARGUMENT。"""
         tm = ToolManager()
         await tm.load_all([GreetPlugin], PluginContext(session_id="test"))
-        result = await tm.execute("greet", ctx=ToolContext())  # 没传 name
+        result = await tm.execute("greet", ctx=ToolContext())  # 没传 target
         assert result.success is False
         assert result.error_type == ErrorType.INVALID_ARGUMENT
         assert "target" in result.error.lower()
@@ -557,7 +557,7 @@ class TestToolManagerDefinitions:
         assert func["name"] == "schema_test"
         assert "description" in func
         assert "parameters" in func
-        # Pydantic 生成的 schema
+        # Pydantic 模型生成的 schema
         params = func["parameters"]
         assert "properties" in params
         assert "name" in params["properties"]
@@ -688,7 +688,7 @@ class TestToolManagerStream:
             "streamer", ctx=ToolContext(), steps=2,
         ):
             chunks.append(c)
-        # 应有 2 个 progress + 1 个 result
+        # 应有 2 个进度事件 + 1 个结果
         assert len(chunks) >= 2
         final = chunks[-1]
         assert isinstance(final, ToolResult)

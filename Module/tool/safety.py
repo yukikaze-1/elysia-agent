@@ -7,14 +7,11 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from pydantic import ValidationError
 
-if TYPE_CHECKING:
-    from .protocol import ToolResult, ErrorType
-
-from .protocol import ToolParameter  # 旧版参数类型 — 过渡期保留
+from .protocol import ToolParameter, ToolProgress  # ToolParameter 旧版参数类型 — 过渡期保留
 
 logger = logging.getLogger(__name__)
 
@@ -358,9 +355,7 @@ class SafetyPipeline:
                 if isinstance(chunk, ToolResult):
                     yield self._wrap_result(chunk, name, 0, plugin.safety if plugin.safety else None)
                     return
-                if hasattr(chunk, "message"):
-                    acc_text += str(getattr(chunk, "message", ""))
-                else:
+                if not isinstance(chunk, ToolProgress):
                     acc_text += str(chunk)
                 if _estimate_tokens(acc_text) > max_tokens:
                     truncated, _ = _truncate_text(acc_text, max_tokens, "head_only")
@@ -374,7 +369,10 @@ class SafetyPipeline:
                 yield chunk
         except asyncio.CancelledError:
             if gen is not None:
-                await gen.aclose()
+                try:
+                    await gen.aclose()
+                except Exception:
+                    pass  # aclose() 失败不应阻止返回取消结果
             yield ToolResult.fail(name=name, error="用户取消", error_type=ErrorType.CANCELLED)
         except Exception as e:
             yield ToolResult.fail(name=name, error=str(e), error_type=ErrorType.TOOL_ERROR)
@@ -400,7 +398,7 @@ class SafetyPipeline:
 
         if "path" in raw_params and profile.filesystem_allowed:
             raw_path = raw_params["path"]
-            is_write = "write" in name.lower() if (name := getattr(plugin, "name", "")) else False
+            is_write = "write" in tool_name.lower() if (tool_name := getattr(plugin, "name", "")) else False
             resolved, err = _resolve_sandbox_path(
                 raw_path, profile, session_id, is_write,
             )
@@ -459,7 +457,8 @@ class SafetyPipeline:
                 result.truncated = True
 
         result.tool_name = name
-        result.duration_ms = duration_ms
+        if not isinstance(raw, ToolResult):
+            result.duration_ms = duration_ms
         return result
 
     # ---- Debug ----

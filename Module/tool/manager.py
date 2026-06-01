@@ -10,7 +10,8 @@ from typing import Any, AsyncIterator
 
 from .capability import Capability
 from .protocol import (
-    ErrorType, PluginContext, ToolContext, ToolPlugin, ToolResult, ToolExecutor,
+    ErrorType, PluginContext, ToolContext, ToolDefinition,
+    ToolPlugin, ToolResult, ToolExecutor,
 )
 from .safety import SafetyPipeline
 
@@ -87,14 +88,17 @@ class ToolManager:
 
         sem = self._semaphores.get(name)
         self._executing.add(name)
+        task = asyncio.ensure_future(
+            self._pipeline.execute(plugin, name, ctx, raw_params, sem),
+        )
+        self._tasks[name] = task
         try:
-            result = await self._pipeline.execute(
-                plugin, name, ctx, raw_params, sem,
-            )
+            result = await task
             self._record(result)
             return result
         finally:
             self._executing.discard(name)
+            self._tasks.pop(name, None)
 
     async def execute_stream(
         self, name: str, *, ctx: ToolContext, emit: Any = None, **raw_params,
@@ -107,20 +111,57 @@ class ToolManager:
 
         sem = self._semaphores.get(name)
         self._executing.add(name)
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def _drive() -> None:
+            try:
+                async for chunk in self._pipeline.execute_stream(
+                    plugin, name, ctx, raw_params, sem,
+                ):
+                    await queue.put(chunk)
+            except asyncio.CancelledError:
+                await queue.put(ToolResult.fail(
+                    name=name, error="用户取消",
+                    error_type=ErrorType.CANCELLED,
+                ))
+            except Exception as e:
+                await queue.put(ToolResult.fail(
+                    name=name, error=str(e),
+                    error_type=ErrorType.TOOL_ERROR,
+                ))
+            finally:
+                await queue.put(None)  # sentinel
+
+        task = asyncio.ensure_future(_drive())
+        self._tasks[name] = task
         try:
-            async for chunk in self._pipeline.execute_stream(
-                plugin, name, ctx, raw_params, sem,
-            ):
-                if isinstance(chunk, ToolResult):
-                    self._record(chunk)
-                yield chunk
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                if isinstance(item, ToolResult):
+                    self._record(item)
+                yield item
         finally:
             self._executing.discard(name)
+            self._tasks.pop(name, None)
 
     # ---- Schema Export ----
 
     def definitions(self, format: str = "openai") -> list[dict]:
-        """导出已激活插件的 LLM function calling schema。"""
+        """导出已激活插件的 LLM function calling schema。
+
+        支持 openai / anthropic / gemini 三种格式。
+        """
+        format_methods = {
+            "openai": "to_openai",
+            "anthropic": "to_anthropic",
+            "gemini": "to_gemini",
+        }
+        method = format_methods.get(format)
+        if method is None:
+            raise ValueError(f"不支持的格式: {format!r}，可选: {list(format_methods)}")
+
         schemas = []
         for name, plugin in self._plugins.items():
             if plugin.param_model is not None:
@@ -129,18 +170,18 @@ class ToolManager:
             else:
                 schema = {"type": "object", "properties": {}}
 
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": plugin.description,
-                    "parameters": schema,
-                },
-            })
+            td = ToolDefinition(
+                name=name,
+                description=plugin.description,
+                _schema=schema,
+                timeout=plugin.safety.request_timeout if plugin.safety else 30.0,
+            )
+            schemas.append(getattr(td, method)())
         return schemas
 
     def _flatten_refs(self, schema: dict) -> dict:
         """内联展开 $defs/$ref，确保 LLM 兼容性。"""
+        schema = dict(schema)  # 浅拷贝避免修改原始 schema
         defs = schema.pop("$defs", {})
         if not defs:
             return schema

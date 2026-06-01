@@ -262,6 +262,8 @@ class ToolDefinition:
         # 对 LLM 隐藏的参数名（如 ctx）— 不输出到 JSON Schema
     _ctx_required: bool = False
         # True → ctx 参数无默认值，execute() 时必须提供，否则 Fail Fast
+    _schema: dict | None = field(default=None, repr=False)
+        # 预构建的 JSON Schema — 设置后 _build_json_schema() 直接返回，跳过 ToolParameter 推导
 
     # ---- Provider-specific export ----
 
@@ -298,7 +300,11 @@ class ToolDefinition:
         """将 parameters + required 组装为标准 JSON Schema object。
 
         _hidden_params 中的参数不出现在 schema 中（对 LLM 不可见）。
+        若 _schema 已设置则直接返回（Pydantic 模型路径）。
         """
+        if self._schema is not None:
+            return self._schema
+
         properties: dict[str, dict] = {}
         required_list: list[str] = []
 
