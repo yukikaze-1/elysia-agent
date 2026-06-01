@@ -12,8 +12,21 @@ from Module.tool import ToolContext, tool
 _DENIED_PATHS: list[str] = [
     "/etc/shadow",
     "/etc/passwd",
+    "/etc",
     "/proc",
     "/sys",
+    "/dev",
+    "/root",
+    "/var/log",
+    "/var/run",
+    "/boot",
+    "/lib",
+    "/lib64",
+    "/usr/lib",
+    "/usr/lib64",
+    "/usr/bin",
+    "/usr/sbin",
+    "/snap",
 ]
 
 # 按文件名/目录名拒绝的 dotfile 模式（逐级路径组件匹配）
@@ -21,6 +34,20 @@ _DENIED_NAMES: list[str] = [
     ".env",
     ".ssh",
     ".gnupg",
+    ".aws",
+    ".config",
+    ".kube",
+    ".kaggle",
+    ".bash_history",
+    ".zsh_history",
+    ".mysql_history",
+    ".pgpass",
+    ".netrc",
+    ".docker",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+    ".gitconfig",
 ]
 
 

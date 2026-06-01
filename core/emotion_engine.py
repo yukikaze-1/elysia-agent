@@ -194,10 +194,24 @@ class EmotionEngine:
 
     @staticmethod
     def _schedule(coro) -> None:
-        """Schedule a coroutine on the event loop, if one is running."""
+        """Schedule a coroutine on the event loop, if one is running.
+
+        Wrapped so exceptions in the fire-and-forget task are logged
+        rather than silently swallowed.
+        """
         import asyncio
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(coro)
+
+            async def _safe_wrapper():
+                try:
+                    await coro
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger = logging.getLogger(__name__)
+                    logger.warning("EmotionEngine scheduled task 异常", exc_info=True)
+
+            loop.create_task(_safe_wrapper())
         except RuntimeError:
             pass  # no event loop running — test environment, ignore

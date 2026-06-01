@@ -40,11 +40,12 @@ def test_can_retry_exceeded():
 
 
 def test_can_retry_wrong_status():
+    """COMPLETED/CANCELLED 终态任务不可重试，即使 retry_count < max_retries。"""
     t = Task.new_tool_call("p1", "x", {})
     t.status = TaskStatus.COMPLETED
     t.retry_count = 0
     t.max_retries = 2
-    assert t.can_retry() is True  # 只看 retry_count < max_retries
+    assert t.can_retry() is False  # 终态不可重试
 
 
 def test_retry_backoff_first():
@@ -108,3 +109,27 @@ def test_depends_on_reserved():
     assert t.depends_on == []
     t.depends_on = ["task-a", "task-b"]
     assert len(t.depends_on) == 2
+
+
+def test_can_retry_requires_non_terminal_status():
+    """can_retry() 应对终态任务返回 False。"""
+    from core.task import Task, TaskType, TaskStatus
+
+    # COMPLETED with retries remaining — should still return False
+    t = Task.new_tool_call(parent_id="p1", tool_name="echo", arguments={})
+    t.status = TaskStatus.COMPLETED
+    assert not t.can_retry(), "COMPLETED task should not be retryable"
+
+    # FAILED with retries remaining — should return True
+    t2 = Task.new_tool_call(parent_id="p1", tool_name="echo", arguments={})
+    t2.status = TaskStatus.FAILED
+    assert t2.can_retry(), "FAILED task with retries remaining should be retryable"
+
+    # CANCELLED — should return False
+    t3 = Task.new_tool_call(parent_id="p1", tool_name="echo", arguments={})
+    t3.status = TaskStatus.CANCELLED
+    assert not t3.can_retry(), "CANCELLED task should not be retryable"
+
+    # PENDING — should return True if under max_retries
+    t4 = Task.new_tool_call(parent_id="p1", tool_name="echo", arguments={})
+    assert t4.can_retry(), "PENDING task should be retryable"

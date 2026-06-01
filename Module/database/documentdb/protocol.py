@@ -34,9 +34,9 @@ class DocumentDBBackend(ABC):
 
     @abstractmethod
     async def update_one(
-        self, collection: str, filter_expr: dict, update: dict
+        self, collection: str, filter_expr: dict, update: dict, upsert: bool = False,
     ) -> int:
-        """更新单条文档，返回修改数。"""
+        """更新单条文档，返回修改数。设置 upsert=True 实现原子 upsert。"""
         ...
 
     @abstractmethod

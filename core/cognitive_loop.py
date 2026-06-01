@@ -94,6 +94,17 @@ class CognitiveLoop:
         self._timing_history: list[dict] = []  # 最近 100 轮请求的计时数据 (供 debug 面板)
         self._pending_emojis: dict[int, list[str]] = {}  # TTS句N后面的emoji队列
 
+    def cancel_current(self) -> bool:
+        """取消当前认知任务（如有）。返回 True 表示确实取消了任务。"""
+        if self._current_task is not None and not self._current_task.done():
+            self._current_task.cancel()
+            return True
+        return False
+
+    def set_tool_context(self, ctx) -> None:
+        """设置当前 turn 的工具上下文。"""
+        self._ctx = ctx
+
     async def process(self, user_message: str, user_name: str = "妖梦",
                        stt_emotion: str = "", stt_events: list[str] | None = None,
                        _on_tool_calls=None) -> None:

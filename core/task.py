@@ -84,6 +84,11 @@ class Task:
     # ---- 重试 ----
 
     def can_retry(self) -> bool:
+        """只有非终态或 FAILED 状态且未达重试上限才能重试。"""
+        if self.status == TaskStatus.CANCELLED:
+            return False
+        if self.status == TaskStatus.COMPLETED:
+            return False
         return self.retry_count < self.max_retries
 
     def retry_backoff_seconds(self) -> float:

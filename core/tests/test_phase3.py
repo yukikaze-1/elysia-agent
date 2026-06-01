@@ -1486,3 +1486,16 @@ if __name__ == "__main__":
                         failed += 1
         print(f"\n{'='*60}\n  Results: {passed} passed, {failed} failed\n{'='*60}")
     asyncio.run(run_all())
+
+
+def test_filesystem_tool_blocks_sensitive_paths():
+    """文件系统工具应拒绝访问敏感路径。"""
+    from core.tools.filesystem import _DENIED_PATHS, _DENIED_NAMES
+
+    assert ".aws" in _DENIED_NAMES
+    assert ".kube" in _DENIED_NAMES
+    assert ".bash_history" in _DENIED_NAMES
+    assert ".gitconfig" in _DENIED_NAMES
+    assert "/root" in _DENIED_PATHS
+    assert "/var/log" in _DENIED_PATHS
+    assert "/etc" in _DENIED_PATHS

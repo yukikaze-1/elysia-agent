@@ -62,9 +62,9 @@ class MongoDBBackend(DocumentDBBackend):
         return docs
 
     async def update_one(
-        self, collection: str, filter_expr: dict, update: dict
+        self, collection: str, filter_expr: dict, update: dict, upsert: bool = False,
     ) -> int:
-        result = await self._db[collection].update_one(filter_expr, update)
+        result = await self._db[collection].update_one(filter_expr, update, upsert=upsert)
         return result.modified_count
 
     async def delete_many(self, collection: str, filter_expr: dict) -> int:

@@ -4,6 +4,7 @@
 agent:
   character: character/elysia.yaml
   user_name: 妖梦
+  max_pending_messages: 32
 
 llm:
   model: deepseek/deepseek-v4-flash

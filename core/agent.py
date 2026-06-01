@@ -138,8 +138,8 @@ class Agent:
             user_id=self._user_name,
             services={"memory": self._long_term},
         )
-        self._cognitive._ctx = self._tool_ctx
-        self._scheduler._tool_ctx = self._tool_ctx  # 更新 Scheduler 的 ToolContext
+        self._cognitive.set_tool_context(self._tool_ctx)
+        self._scheduler.set_tool_context(self._tool_ctx)
 
         # Start Worker Pool
         await self._scheduler.start()
@@ -269,6 +269,10 @@ class Agent:
 
         if self._fsm.state != AgentState.IDLE:
             # Queue message instead of interrupting
+            max_queue = self._config.agent.max_pending_messages
+            if len(self._pending_messages) >= max_queue:
+                logger.warning("消息队列已满 (%d) — 丢弃消息", max_queue)
+                return
             logger.info("Agent busy — 消息排队 (state=%s, queue=%d)",
                        self._fsm.state, len(self._pending_messages) + 1)
             self._pending_messages.append({
@@ -382,8 +386,7 @@ class Agent:
             if event.type == EventType.INTERRUPT:
                 set_request_id("-")
                 logger.info("EventBus: INTERRUPT (%s)", event.data.get("source", "?") if event.data else "?")
-                if self._cognitive._current_task and not self._cognitive._current_task.done():
-                    self._cognitive._current_task.cancel()
+                self._cognitive.cancel_current()
                 # Drain pending USER_INPUT and message queue, preserve STATE_CHANGE for UI
                 for drained in self._bus.drain():
                     if drained.type == EventType.STATE_CHANGE:
@@ -453,7 +456,12 @@ class Agent:
     # ---- Internal: seed data + tools ----
 
     async def _seed_memories(self) -> None:
-        """Seed long-term memory with initial entries (fast — in-memory only, no embedding)."""
+        """Seed long-term memory with demo entries.
+
+        NOTE: These are demo scaffolding entries that bypass the normal
+        insert() path (no embedding). Replace with real seed data or remove
+        for production deployment.
+        """
         entries = [
             ("上周和妖梦约定周六去爬香山", {"type": "plan", "date": "2026-05-23"}),
             ("妖梦最喜欢的颜色是蓝色", {"type": "preference"}),

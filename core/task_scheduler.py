@@ -45,9 +45,13 @@ class TaskScheduler:
         self._queue: asyncio.PriorityQueue[tuple[int, int, Task]] = asyncio.PriorityQueue()
         self._tasks: dict[str, Task] = {}
         self._workers: list[asyncio.Task] = []
+        self._prune_task: asyncio.Task | None = None
         self._running = False
         self._seq: int = 0
-        self._completed_count: int = 0
+
+    def set_tool_context(self, ctx) -> None:
+        """更新工具上下文（用于 Agent.start() 中延迟注入）。"""
+        self._tool_ctx = ctx
 
     # ---- 生命周期 ----
 
@@ -60,18 +64,27 @@ class TaskScheduler:
         for i in range(self._num_workers):
             w = asyncio.create_task(self._worker_loop(f"w-{i}"), name=f"scheduler-w-{i}")
             self._workers.append(w)
+        # 独立周期性清理任务 — 避免 worker 间竞态
+        self._prune_task = asyncio.create_task(self._prune_loop(), name="scheduler-prune")
         logger.info("Scheduler Worker Pool 启动 (%d workers)", self._num_workers)
 
     async def stop(self) -> None:
         self._running = False
         self._save_checkpoint()
+        # Cancel prune task first
+        if self._prune_task and not self._prune_task.done():
+            self._prune_task.cancel()
         # Cancel workers — workers will drain their current task then exit
         for w in self._workers:
             if not w.done():
                 w.cancel()
-        if self._workers:
-            await asyncio.gather(*self._workers, return_exceptions=True)
+        gathers = [w for w in self._workers]
+        if self._prune_task:
+            gathers.append(self._prune_task)
+        if gathers:
+            await asyncio.gather(*gathers, return_exceptions=True)
         self._workers.clear()
+        self._prune_task = None
         # Drain queue and clear registry
         while not self._queue.empty():
             try:
@@ -266,10 +279,15 @@ class TaskScheduler:
             if task.is_terminal and not task.children_ids:
                 self._tasks.pop(task.id, None)
 
-            self._completed_count += 1
-            if self._completed_count % 5 == 0:
-                self._save_checkpoint()
-                self._prune_tasks()
+    async def _prune_loop(self, interval: float = 10.0) -> None:
+        """周期性清理终态任务和保存 checkpoint（单线程，无竞态）。"""
+        while self._running:
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                break
+            self._save_checkpoint()
+            self._prune_tasks()
 
     def _prune_tasks(self) -> None:
         """移除终态且无活跃子任务的历史条目，防止 _tasks 无界增长。"""

@@ -61,7 +61,7 @@ class SessionMemory:
             return False
 
     async def save(self) -> bool:
-        """Persist current session to MongoDB. No-op if DB unavailable."""
+        """Persist current session to MongoDB (atomically upsert). No-op if DB unavailable."""
         if self._db is None:
             return False
         try:
@@ -71,16 +71,12 @@ class SessionMemory:
                 "params": dict(self._params),
                 "updated_at": __import__("datetime").datetime.now().isoformat(),
             }
-            # Upsert by session_id
-            existing = await self._db.find("sessions", {"session_id": self._session_id}, limit=1)
-            if existing:
-                await self._db.update_one(
-                    "sessions",
-                    {"session_id": self._session_id},
-                    {"$set": doc},
-                )
-            else:
-                await self._db.insert_one("sessions", doc)
+            await self._db.update_one(
+                "sessions",
+                {"session_id": self._session_id},
+                {"$set": doc},
+                upsert=True,
+            )
             return True
         except Exception as e:
             logger.warning("SessionMemory save failed: %s", e)
