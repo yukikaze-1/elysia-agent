@@ -401,11 +401,11 @@ class CognitiveLoop:
                         # 先发排在本句之前的 emoji
                         for e in self._pending_emojis.pop(_sid - 1, []):
                             await self._output._broadcast("on_text_delta", e,
-                                capability=ChannelCapability.TEXT_DELTA)
+                                capability=ChannelCapability.TEXT_DELTA, stream_id=_sid)
                             await self._output.send("")
                         # 发本句文字
                         await self._output._broadcast("on_text_delta", sentence,
-                            capability=ChannelCapability.TEXT_DELTA)
+                            capability=ChannelCapability.TEXT_DELTA, stream_id=_sid)
                         await self._output.send("")
                     await self._output.audio_chunk(chunk, stream_id=_sid)
                 await self._output.audio_end(_sid)
@@ -414,7 +414,7 @@ class CognitiveLoop:
                 # 发排在本句之后的 emoji
                 for e in self._pending_emojis.pop(_sid, []):
                     await self._output._broadcast("on_text_delta", e,
-                        capability=ChannelCapability.TEXT_DELTA)
+                        capability=ChannelCapability.TEXT_DELTA, stream_id=_sid)
                     await self._output.send("")
             except asyncio.CancelledError:
                 pass  # INTERRUPT 打断
@@ -424,7 +424,7 @@ class CognitiveLoop:
                 if first_chunk:
                     try:
                         await self._output._broadcast("on_text_delta", sentence,
-                            capability=ChannelCapability.TEXT_DELTA)
+                            capability=ChannelCapability.TEXT_DELTA, stream_id=_sid)
                         await self._output.send("")
                     except Exception:
                         pass

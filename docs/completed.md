@@ -330,3 +330,20 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 前端: 消息悬停复制 | hover 气泡出现复制按钮，clipboard API 写入，2s "已复制" 反馈 |
 | 前端: 发送按钮动画 | 发送后 0.8s 勾动画 + scale flash，按钮禁用防重复发送 |
 | MemoryEntry.id 字段 | 添加唯一标识符，`insert()` 时 `uuid4().hex[:12]` 自动生成 |
+
+---
+
+### Bug 修复: 消息气泡尾部空行 (2026-06-01)
+
+| 任务 | 说明 |
+|------|------|
+| 根因定位 | `SentenceBuffer._extract()` 返回的句子包含尾部 `\n`（来自分隔符 run）。CSS `white-space: pre-wrap` 将尾部 `\n` 渲染为可见空行 |
+| 修复 | `complete.rstrip(" ")` → `complete.rstrip()`，strip 所有尾部空白包括 `\n` |
+| 测试 | 65 个 SentenceBuffer 测试全部通过，2 个旧测试更新为正确的预期值 |
+
+### Bug 修复: 复制按钮文字泄漏到气泡内容 (2026-06-01)
+
+| 任务 | 说明 |
+|------|------|
+| 根因定位 | Phase 3.8 复制按钮 `<span>复制</span>` 放在 `.msg-bubble` 内部，`appendDelta()` 的 `textContent +=` 吞入按钮文字并销毁按钮元素 |
+| 修复 | 文字隔离到 `<span class="msg-text">`，`currentDelta` 指向 text span，复制按钮读取 `textSpan.textContent`。`saveChat()` 优先读 `.msg-text` |

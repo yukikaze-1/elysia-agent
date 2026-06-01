@@ -6,7 +6,8 @@
 |--------|------|------|
 | 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec |
 | 中 | **TTS 播放高亮不同步** | 语音还在前一句，下一句气泡已经渲染并高亮；有时前几句无高亮只有后面有 |
-| 低 | **消息气泡尾部偶现空行** | 文本/emoji 后面出现空白行，可能是 `send("")` 导致的 |
+| 低 | **消息气泡尾部偶现空行** | ~~fixed~~ — `SentenceBuffer._extract()` `rstrip(" ")` → `rstrip()`，尾部 `\n` 不再保留 |
+| 低 | **复制按钮文字泄漏到气泡内容** | ~~fixed~~ (Phase 3.8 regression) — 文字隔离到 `.msg-text` span，避免 `textContent` 吞入按钮文字 |
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
 

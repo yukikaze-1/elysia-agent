@@ -192,7 +192,7 @@ class _TestChannel(OutputChannel):
     async def on_typing(self, typing: bool) -> None:
         self.events.append(("typing", (typing,)))
 
-    async def on_text_delta(self, delta: str) -> None:
+    async def on_text_delta(self, delta: str, *, stream_id: int | None = None) -> None:
         self.events.append(("delta", (delta,)))
 
     async def on_message(self, msg) -> None:

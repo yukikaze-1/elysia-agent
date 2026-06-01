@@ -249,6 +249,7 @@ let userScrolledUp = false;
 let nextBubbleQueue = [];  // 气泡已到达但音频还在播放 → 暂存，等音频结束再弹出
 let _toolCards = {};       // tool name → card DOM element
 let _playingBubble = null; // 当前正在播放 TTS 的气泡 DOM
+let _streamBubbles = {};    // stream_id → .msg-bubble 元素映射，用于高亮
 
 // ---- Init ----
 document.getElementById('vol-slider').value = volume;
@@ -277,14 +278,22 @@ function handleWS(e) {
   const msg = JSON.parse(e.data);
   switch (msg.type) {
     case 'delta':
-      appendDelta(msg.content);
+      appendDelta(msg.content, msg.stream_id);
       break;
     case 'message':
       if (msg.content) {
         hideTyping();
         lastRole = 'assistant';
         const row = document.createElement('div'); row.className = 'msg-row assistant';
-        row.innerHTML = `<div class="msg-avatar">🌸</div><div class="msg-bubble">${esc(msg.content)}</div>`;
+        row.innerHTML = '<div class="msg-avatar">🌸</div>';
+        const bubble = document.createElement('div'); bubble.className = 'msg-bubble';
+        const textSpan = document.createElement('span'); textSpan.className = 'msg-text';
+        textSpan.textContent = msg.content;
+        bubble.appendChild(textSpan);
+        const copyBtn = document.createElement('span'); copyBtn.className = 'copy-btn'; copyBtn.textContent = '复制';
+        copyBtn.onclick = async (e) => { e.stopPropagation(); try { await navigator.clipboard.writeText(textSpan.textContent.trim()); copyBtn.textContent = '已复制'; copyBtn.classList.add('copied'); setTimeout(() => { copyBtn.textContent = '复制'; copyBtn.classList.remove('copied'); }, 2000); } catch {} };
+        bubble.appendChild(copyBtn);
+        row.appendChild(bubble);
         document.getElementById('chat').appendChild(row);
         if (msg.mood) {
           const moodEl = document.createElement('div'); moodEl.className = 'msg-mood';
@@ -332,7 +341,7 @@ function handleWS(e) {
 }
 
 // ---- Chat Display ----
-function appendDelta(text) {
+function appendDelta(text, streamId) {
   if (!currentDelta) {
     const now = Date.now();
     if (now - lastMsgTime > 300000 && lastMsgTime > 0) {
@@ -345,20 +354,26 @@ function appendDelta(text) {
       const rows = document.querySelectorAll('.msg-row.assistant');
       const last = rows[rows.length - 1];
       if (last) {
-        const bubble = last.querySelector('.msg-bubble');
-        currentDelta = bubble;
-        currentDelta.textContent += text;
-        return;
+        const textSpan = last.querySelector('.msg-text');
+        if (textSpan) {
+          currentDelta = textSpan;
+          currentDelta.textContent += text;
+          return;
+        }
       }
     }
     lastRole = 'assistant';
     const row = document.createElement('div'); row.className = 'msg-row assistant';
     row.innerHTML = '<div class="msg-avatar">🌸</div>';
     const bubble = document.createElement('div'); bubble.className = 'msg-bubble';
+    const textSpan = document.createElement('span'); textSpan.className = 'msg-text';
+    bubble.appendChild(textSpan);
     const copyBtn = document.createElement('span'); copyBtn.className = 'copy-btn'; copyBtn.textContent = '复制';
-    copyBtn.onclick = async (e) => { e.stopPropagation(); try { const t = bubble.textContent.replace('复制','').trim(); await navigator.clipboard.writeText(t); copyBtn.textContent = '已复制'; copyBtn.classList.add('copied'); setTimeout(() => { copyBtn.textContent = '复制'; copyBtn.classList.remove('copied'); }, 2000); } catch {} };
+    copyBtn.onclick = async (e) => { e.stopPropagation(); try { await navigator.clipboard.writeText(textSpan.textContent.trim()); copyBtn.textContent = '已复制'; copyBtn.classList.add('copied'); setTimeout(() => { copyBtn.textContent = '复制'; copyBtn.classList.remove('copied'); }, 2000); } catch {} };
     bubble.appendChild(copyBtn);
     row.appendChild(bubble);
+    // stream_id → bubble 映射，用于 TTS 播放时高亮
+    if (streamId != null) _streamBubbles[streamId] = bubble;
     // 音频在播：不挂 DOM，等弹出时再 append（避免占位空白）
     if (audioPlaying) {
       row.style.animation = 'none';
@@ -369,7 +384,7 @@ function appendDelta(text) {
     } else {
       document.getElementById('chat').appendChild(row);
     }
-    currentDelta = bubble;
+    currentDelta = textSpan;
   }
   currentDelta.textContent += text;
   scrollDown();
@@ -424,6 +439,7 @@ function clearPlayingHighlight() {
 function addUserMsg(text) {
   finalizeDelta();
   nextBubbleQueue = [];  // 新消息清除排队气泡
+  _streamBubbles = {};   // 清除 stream 映射
   clearPlayingHighlight();
   lastRole = 'user';
   const row = document.createElement('div'); row.className = 'msg-row user';
@@ -557,7 +573,8 @@ function saveChat() {
   document.querySelectorAll('.msg-row').forEach(r => {
     if (r.querySelector('.msg-status')) return;
     const role = r.classList.contains('user') ? 'user' : 'assistant';
-    const content = r.querySelector('.msg-bubble')?.textContent || '';
+    const textSpan = r.querySelector('.msg-text');
+    const content = textSpan ? textSpan.textContent : (r.querySelector('.msg-bubble')?.textContent || '');
     if (content) msgs.push({ role, content });
   });
   localStorage.setItem('elysia_chat', JSON.stringify(msgs.slice(-100)));
@@ -660,6 +677,8 @@ function playNext() {
   const a=new Audio(item.url); a.volume=volume/100;
   a.onended=()=>{
     URL.revokeObjectURL(item.url);
+    // 清除已播 stream 的 bubble 映射
+    if (item.streamId != null) delete _streamBubbles[item.streamId];
     audioPlaying=false;
     // 上一句播放完，弹出排队中的下一个气泡
     if (!audioQueue.length) revealNextQueuedBubble();
@@ -671,6 +690,11 @@ function playNext() {
     .catch(e=>{URL.revokeObjectURL(item.url);audioPlaying=false;playNext();});
   // 开始播放新音频时立即弹出对应的排队气泡
   revealNextQueuedBubble();
+  // 高亮当前 stream 对应的气泡（含首句已在 DOM 中的情况）
+  if (item.streamId != null) {
+    const bubble = _streamBubbles[item.streamId];
+    if (bubble) highlightPlaying(bubble);
+  }
 }
 
 // ---- Settings ----

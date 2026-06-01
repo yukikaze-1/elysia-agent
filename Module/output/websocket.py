@@ -43,8 +43,11 @@ class WebSocketChannel(OutputChannel):
     async def on_typing(self, typing: bool) -> None:
         await self._send_json({"type": "typing", "typing": typing})
 
-    async def on_text_delta(self, delta: str) -> None:
-        await self._send_json({"type": "delta", "content": delta})
+    async def on_text_delta(self, delta: str, *, stream_id: int | None = None) -> None:
+        payload: dict = {"type": "delta", "content": delta}
+        if stream_id is not None:
+            payload["stream_id"] = stream_id
+        await self._send_json(payload)
 
     async def on_expression(self, expression: str, intensity: float = 1.0) -> None:
         await self._send_json({

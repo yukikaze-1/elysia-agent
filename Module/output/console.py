@@ -17,7 +17,7 @@ class ConsoleChannel(OutputChannel):
     def capabilities(self) -> set[ChannelCapability]:
         return {ChannelCapability.TEXT_DELTA, ChannelCapability.TEXT_MESSAGE}
 
-    async def on_text_delta(self, delta: str) -> None:
+    async def on_text_delta(self, delta: str, *, stream_id: int | None = None) -> None:
         """逐字打印，无换行。"""
         self._delta_printed = True
         print(delta, end="", flush=True)
