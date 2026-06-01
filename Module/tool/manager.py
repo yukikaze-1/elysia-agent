@@ -1,0 +1,299 @@
+"""ToolManager — 实现 ToolExecutor，管理插件生命周期、安全管道、并发、热重载。"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+import logging
+from collections import deque
+from typing import Any, AsyncIterator
+
+from .capability import Capability
+from .protocol import (
+    ErrorType, PluginContext, ToolContext, ToolPlugin, ToolResult, ToolExecutor,
+)
+from .safety import SafetyPipeline
+
+logger = logging.getLogger(__name__)
+
+
+class ToolManager:
+    """工具管理器 — 实现 ToolExecutor Protocol。"""
+
+    def __init__(self) -> None:
+        self._plugins: dict[str, ToolPlugin] = {}
+        self._plugin_classes: dict[str, type[ToolPlugin]] = {}
+        self._plugin_modules: dict[str, str] = {}
+        self._plugin_context: PluginContext | None = None
+        self._pipeline = SafetyPipeline()
+        self._history: deque[ToolResult] = deque(maxlen=50)
+        self._executing: set[str] = set()
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._semaphores: dict[str, asyncio.Semaphore] = {}
+
+    # ---- Lifecycle ----
+
+    async def load_all(
+        self,
+        plugin_classes: list[type[ToolPlugin]],
+        ctx: PluginContext,
+    ) -> None:
+        """加载并检测所有插件。setup() 失败则跳过并 log warning。"""
+        self._plugin_context = ctx
+        for cls in plugin_classes:
+            instance = cls()
+            try:
+                await instance.setup(ctx)
+                self._plugins[instance.name] = instance
+                self._plugin_classes[instance.name] = cls
+                self._plugin_modules[instance.name] = cls.__module__
+
+                if instance.safety and instance.safety.max_concurrency > 0:
+                    self._semaphores[instance.name] = asyncio.Semaphore(
+                        instance.safety.max_concurrency,
+                    )
+
+                logger.info("工具 '%s' 已加载", instance.name)
+            except Exception as e:
+                logger.warning(
+                    "工具 '%s' setup() 失败，跳过: %s", instance.name, e,
+                )
+
+    async def shutdown(self) -> None:
+        """优雅关闭：取消所有 in-flight 任务，调用所有 teardown()。"""
+        await self.cancel_all()
+        teardowns = [
+            p.teardown()
+            for p in self._plugins.values()
+        ]
+        results = await asyncio.gather(*teardowns, return_exceptions=True)
+        for name, result in zip(self._plugins.keys(), results):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "工具 '%s' teardown() 异常: %s", name, result,
+                )
+        self._plugins.clear()
+        logger.info("ToolManager 已关闭")
+
+    # ---- Execution ----
+
+    async def execute(
+        self, name: str, *, ctx: ToolContext, **raw_params,
+    ) -> ToolResult:
+        """执行工具（非流式）。"""
+        plugin = self._plugins.get(name)
+        if plugin is None:
+            return self._unknown_tool_result(name)
+
+        sem = self._semaphores.get(name)
+        self._executing.add(name)
+        try:
+            result = await self._pipeline.execute(
+                plugin, name, ctx, raw_params, sem,
+            )
+            self._record(result)
+            return result
+        finally:
+            self._executing.discard(name)
+
+    async def execute_stream(
+        self, name: str, *, ctx: ToolContext, emit: Any = None, **raw_params,
+    ) -> AsyncIterator[Any]:
+        """执行工具（流式）。"""
+        plugin = self._plugins.get(name)
+        if plugin is None:
+            yield self._unknown_tool_result(name)
+            return
+
+        sem = self._semaphores.get(name)
+        self._executing.add(name)
+        try:
+            async for chunk in self._pipeline.execute_stream(
+                plugin, name, ctx, raw_params, sem,
+            ):
+                if isinstance(chunk, ToolResult):
+                    self._record(chunk)
+                yield chunk
+        finally:
+            self._executing.discard(name)
+
+    # ---- Schema Export ----
+
+    def definitions(self, format: str = "openai") -> list[dict]:
+        """导出已激活插件的 LLM function calling schema。"""
+        schemas = []
+        for name, plugin in self._plugins.items():
+            if plugin.param_model is not None:
+                schema = plugin.param_model.model_json_schema()
+                schema = self._flatten_refs(schema)
+            else:
+                schema = {"type": "object", "properties": {}}
+
+            schemas.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": plugin.description,
+                    "parameters": schema,
+                },
+            })
+        return schemas
+
+    def _flatten_refs(self, schema: dict) -> dict:
+        """内联展开 $defs/$ref，确保 LLM 兼容性。"""
+        defs = schema.pop("$defs", {})
+        if not defs:
+            return schema
+        return self._resolve_refs(schema, defs)
+
+    def _resolve_refs(self, node: Any, defs: dict) -> Any:
+        if isinstance(node, dict):
+            if "$ref" in node:
+                ref_name = node["$ref"].split("/")[-1]
+                return self._resolve_refs(defs.get(ref_name, {}), defs)
+            return {k: self._resolve_refs(v, defs) for k, v in node.items()}
+        if isinstance(node, list):
+            return [self._resolve_refs(item, defs) for item in node]
+        return node
+
+    # ---- Control ----
+
+    async def cancel_all(self) -> None:
+        """显式取消所有 in-flight 工具执行。"""
+        for name in list(self._executing):
+            task = self._tasks.get(name)
+            if task and not task.done():
+                task.cancel()
+        self._executing.clear()
+        self._tasks.clear()
+
+    async def reload_plugin(self, name: str) -> bool:
+        """热重载单个插件 — 不中断正在执行的任务。"""
+        old = self._plugins.get(name)
+        module_path = self._plugin_modules.get(name)
+        if old is None or module_path is None:
+            return False
+
+        try:
+            await old.teardown()
+        except Exception as e:
+            logger.warning("旧插件 '%s' teardown() 异常: %s", name, e)
+
+        self._plugins.pop(name, None)
+        self._semaphores.pop(name, None)
+
+        try:
+            module = importlib.import_module(module_path)
+            module = importlib.reload(module)
+            cls = self._plugin_classes.get(name)
+            if cls is None:
+                for attr in dir(module):
+                    obj = getattr(module, attr)
+                    if (
+                        isinstance(obj, type)
+                        and issubclass(obj, ToolPlugin)
+                        and obj is not ToolPlugin
+                        and getattr(obj, "name", "") == name
+                    ):
+                        cls = obj
+                        break
+            if cls is None:
+                logger.error("无法在模块 '%s' 中找到插件类", module_path)
+                return False
+
+            new_instance = cls()
+            await new_instance.setup(self._plugin_context)
+            self._plugins[name] = new_instance
+            self._plugin_classes[name] = cls
+            self._plugin_modules[name] = module_path
+
+            if new_instance.safety and new_instance.safety.max_concurrency > 0:
+                self._semaphores[name] = asyncio.Semaphore(
+                    new_instance.safety.max_concurrency,
+                )
+
+            logger.info("工具 '%s' 已热重载", name)
+            return True
+        except Exception as e:
+            logger.error("工具 '%s' 热重载失败: %s", name, e)
+            return False
+
+    # ---- Debug Interface ----
+
+    @property
+    def tool_names(self) -> list[str]:
+        """保留旧接口兼容性 — server.py health endpoint 使用。"""
+        return list(self._plugins.keys())
+
+    @property
+    def plugin_list(self) -> list[dict]:
+        return [
+            {
+                "name": p.name,
+                "description": p.description,
+                "capabilities": [c.value for c in p.capabilities],
+                "safety": {
+                    "requires_human_approval": p.safety.requires_human_approval if p.safety else False,
+                    "max_concurrency": p.safety.max_concurrency if p.safety else 0,
+                    "network_allowed": p.safety.network_allowed if p.safety else False,
+                    "filesystem_allowed": p.safety.filesystem_allowed if p.safety else False,
+                },
+                "active": True,
+            }
+            for p in self._plugins.values()
+        ]
+
+    @property
+    def executing_now(self) -> list[str]:
+        return list(self._executing)
+
+    @property
+    def history(self) -> list[dict]:
+        return [
+            {
+                "name": h.tool_name,
+                "success": h.success,
+                "error": h.error,
+                "error_type": h.error_type.value if h.error_type else None,
+                "duration_ms": h.duration_ms,
+                "truncated": h.truncated,
+                "result": h.content[:200] if h.content else "",
+            }
+            for h in self._history
+        ]
+
+    @property
+    def capability_status(self) -> dict[str, bool]:
+        caps: dict[str, bool] = {}
+        for plugin in self._plugins.values():
+            for cap in plugin.capabilities:
+                caps[cap.value] = True
+        return caps
+
+    @property
+    def pipeline_stats(self) -> dict:
+        return self._pipeline.stats
+
+    def _record(self, result: ToolResult) -> None:
+        self._history.append(result)
+
+    def _unknown_tool_result(self, name: str) -> ToolResult:
+        return ToolResult.fail(
+            name=name,
+            error=(
+                f"工具 '{name}' 当前未激活"
+                f"（可能未加载或依赖的后端不可用），请使用其他可用工具完成该任务。"
+            ),
+            error_type=ErrorType.UNKNOWN_TOOL,
+        )
+
+    # ---- Container protocol (旧接口兼容) ----
+
+    def __len__(self) -> int:
+        return len(self._plugins)
+
+    def __contains__(self, name: str) -> bool:
+        return name in self._plugins
+
+    def __repr__(self) -> str:
+        return f"ToolManager(plugins={list(self._plugins.keys())})"

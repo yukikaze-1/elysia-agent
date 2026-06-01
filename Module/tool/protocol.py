@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Coroutine, Literal
+from typing import Any, Callable, Coroutine, Literal, Protocol, AsyncIterator
 
 ToolFunc = Callable[..., Coroutine[Any, Any, Any]]
 ResultType = Literal["text", "image", "audio", "file", "mixed"]
@@ -24,17 +24,45 @@ ResultType = Literal["text", "image", "audio", "file", "mixed"]
 class ErrorType(str, Enum):
     """工具执行错误类型 — 帮助认知循环决定重试策略。"""
 
-    INVALID_ARGUMENT = "invalid_argument"   # LLM 传错了参数 → 反馈后可重试
-    TIMEOUT = "timeout"                     # 超时 → 可重试
-    UNAVAILABLE = "unavailable"             # 依赖后端不可用 → 重试无意义
-    CANCELLED = "cancelled"                 # 被打断 → 不重试
-    TOOL_ERROR = "tool_error"               # 工具内部异常 → 不重试
-    UNKNOWN_TOOL = "unknown_tool"           # 工具未注册 → 不重试
+    INVALID_ARGUMENT = "invalid_argument"    # LLM 传错了参数 → 反馈后可重试
+    TIMEOUT = "timeout"                      # 超时 → 可重试（缩小范围后）
+    PERMISSION_DENIED = "permission_denied"  # 安全/权限拒绝 → 不可重试
+    RATE_LIMITED = "rate_limited"            # 并发/频率限制 → 可重试（退避后）
+    NETWORK_ERROR = "network_error"          # 短暂网络故障 → 可重试
+    UNAVAILABLE = "unavailable"              # 依赖后端不可用 → 重试无意义
+    CANCELLED = "cancelled"                  # 被打断 → 不重试
+    TOOL_ERROR = "tool_error"                # 工具内部异常 → 不重试
+    UNKNOWN_TOOL = "unknown_tool"            # 工具未注册 → 不重试
 
     @property
     def is_retryable(self) -> bool:
         """是否适合重试。"""
-        return self in (ErrorType.INVALID_ARGUMENT, ErrorType.TIMEOUT)
+        return self in (
+            ErrorType.TIMEOUT,
+            ErrorType.RATE_LIMITED,
+            ErrorType.NETWORK_ERROR,
+        )
+
+
+# ---------------------------------------------------------------------------
+# PluginContext — 类型化依赖注入
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PluginContext:
+    """类型化的依赖注入容器 — 插件 setup() 时注入。"""
+
+    session_id: str = ""
+    # 数据库
+    memory: Any = None             # LongTermMemory | None
+    mongodb: Any = None            # DocumentDB | None
+    milvus: Any = None             # MilvusClient | None
+    # 网络
+    http_client: Any = None        # httpx.AsyncClient | None
+    # 调度
+    scheduler: Any = None          # TaskScheduler | None
+    # 配置
+    config: Any = None             # AppConfig | None
 
 
 # ---------------------------------------------------------------------------
@@ -43,32 +71,17 @@ class ErrorType(str, Enum):
 
 @dataclass
 class ToolContext:
-    """工具执行上下文 — 运行时注入，对 LLM 不可见。
+    """每次工具调用的运行时上下文 — 支持多 Agent 链路追踪。
 
     调用方（Agent）创建此对象并传入 execute()，
     工具函数通过 ctx 参数获取所需资源。
-
-    用法:
-        # 创建
-        ctx = ToolContext(session_id="abc", services={
-            "memory": long_term_memory,
-            "database": mongo_client,
-        })
-
-        # 工具中
-        memory = ctx.get("memory")
-        results = await memory.search(query)
-
-    未来方向: 可考虑用 contextvars.ContextVar 绑定 Session 级资源到协程上下文，
-    免去深层调用链中手动透传 ctx。
     """
 
     session_id: str = ""
     user_id: str = ""
-
-    # 调用方可附加任意资源
+    trace_id: str = ""              # 一次请求的全局追踪 ID（跨 Agent、跨工具串联）
+    agent_id: str = "default"       # 触发该工具的 Agent 实例标识
     services: dict[str, Any] = field(default_factory=dict)
-        # {"memory": LongTermMemory, "database": DocumentDB, "llm": LLMAdapter}
 
     def get(self, name: str, default: Any = None) -> Any:
         """获取已注册的服务。"""
@@ -304,6 +317,75 @@ class ToolDefinition:
         if required_list:
             schema["required"] = required_list
         return schema
+
+
+# ---------------------------------------------------------------------------
+# ToolPlugin — 工具插件基类
+# ---------------------------------------------------------------------------
+
+class ToolPlugin:
+    """工具插件基类 — 每个工具一个子类。
+
+    插件开发约束:
+    - 模块级无状态（Stateless at Module Level）：所有持久化状态必须依托于
+      PluginContext 或 self 属性，禁止模块级全局变量或静态类属性。
+    - execute_stream 的 finally 块禁止耗时异步清理（如 HTTP 请求），
+      此类清理应在 teardown() 中完成。
+    """
+
+    # 元数据（子类必须定义）
+    name: str = ""
+    description: str = ""
+    param_model: type | None = None  # Pydantic BaseModel subclass
+
+    # 能力与安全声明（子类覆盖）
+    capabilities: set = set()
+    safety: Any = None  # SafetyProfile — 子类覆盖
+
+    # ---- 生命周期 ----
+
+    async def setup(self, ctx: PluginContext) -> None:
+        """初始化 — 检测能力可用性，失败则抛出异常（工具不注册）。"""
+
+    async def teardown(self) -> None:
+        """清理资源 — 关闭连接池、释放锁等。"""
+
+    # ---- 执行 ----
+
+    async def execute(
+        self, *, ctx: ToolContext, emit: Any = None, params: Any = None,
+    ) -> Any:
+        """执行工具 — params 是 Pydantic Model 实例。"""
+        raise NotImplementedError
+
+    async def execute_stream(
+        self, *, ctx: ToolContext, emit: Any, params: Any = None,
+    ) -> AsyncIterator[Any]:
+        """流式执行 — yield ToolProgress | ToolResult。"""
+        raise NotImplementedError
+        yield  # make this an async generator
+
+
+# ---------------------------------------------------------------------------
+# ToolExecutor — 接口抽象（CognitiveLoop 依赖此 Protocol）
+# ---------------------------------------------------------------------------
+
+class ToolExecutor(Protocol):
+    """CognitiveLoop 通过此接口使用工具系统 — 接口抽象，不依赖具体实现。"""
+
+    async def execute(
+        self, name: str, *, ctx: ToolContext, **raw_params,
+    ) -> ToolResult: ...
+
+    async def execute_stream(
+        self, name: str, *, ctx: ToolContext, emit: Any, **raw_params,
+    ) -> AsyncIterator[Any]: ...
+
+    def definitions(self, format: str = "openai") -> list[dict]: ...
+
+    async def cancel_all(self) -> None: ...
+
+    def execute_now(self) -> list[str]: ...
 
 
 # ---------------------------------------------------------------------------
