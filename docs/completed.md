@@ -347,3 +347,12 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 |------|------|
 | 根因定位 | Phase 3.8 复制按钮 `<span>复制</span>` 放在 `.msg-bubble` 内部，`appendDelta()` 的 `textContent +=` 吞入按钮文字并销毁按钮元素 |
 | 修复 | 文字隔离到 `<span class="msg-text">`，`currentDelta` 指向 text span，复制按钮读取 `textSpan.textContent`。`saveChat()` 优先读 `.msg-text` |
+
+---
+
+### Bug 修复: TTS 播放高亮不同步 (2026-06-01)
+
+| 任务 | 说明 |
+|------|------|
+| 根因定位 | Delta 消息不含 `stream_id`，前端只能通过 `nextBubbleQueue` 推断高亮时机。首句气泡在音频开始前已挂 DOM，`revealNextQueuedBubble()` 无法处理，导致首句永不高亮；后续句依赖队列时序偶有错位 |
+| 修复 | 后端 `on_text_delta` 增加 `stream_id` 参数（WebSocket/Console/协议），CognitiveLoop TTS delta 广播携带 `stream_id=_sid`。前端 `_streamBubbles[streamId]` 映射气泡，`playNext()` 直接查表高亮 |
