@@ -7,6 +7,7 @@ Otherwise falls back to in-memory deque (existing behavior).
 
 import logging
 from collections import deque
+from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,15 @@ class SessionMemory:
             self._db = DocumentDBFactory.create("mongodb/default")
             await self._db.ensure_index("sessions", [("session_id", 1)])
             await self._db.ensure_index("sessions", [("updated_at", -1)])
+            # Try TTL index for auto-cleanup of stale sessions (30 days)
+            try:
+                await self._db.ensure_index(
+                    "sessions",
+                    [("updated_at", 1)],
+                    expireAfterSeconds=30 * 86400,
+                )
+            except Exception:
+                pass  # TTL index not supported by all MongoDB-compatible backends
             logger.info("SessionMemory: MongoDB connected")
             return True
         except Exception as e:
@@ -69,7 +79,7 @@ class SessionMemory:
                 "session_id": self._session_id,
                 "messages": list(self._messages),
                 "params": dict(self._params),
-                "updated_at": __import__("datetime").datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
             }
             await self._db.update_one(
                 "sessions",

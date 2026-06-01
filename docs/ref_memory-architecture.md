@@ -1,3 +1,11 @@
+> **DEPRECATED (2026-06-01):** This document describes a legacy three-layer architecture
+> (L0 SessionState / L1 MicroMemory / L2 MacroMemory) that no longer matches the
+> current implementation. The active memory system uses a two-layer design:
+> `SessionMemory` (short-term, `core/memory/session.py`) +
+> `LongTermMemory` (vector search + embedding, `core/memory/long_term.py`) +
+> `MemoryConsolidator` (LLM extraction, `core/consolidator.py`).
+> See [architecture.md](architecture.md) for the current design.
+
 # Elysia 记忆系统架构
 
 ## 1. 总览

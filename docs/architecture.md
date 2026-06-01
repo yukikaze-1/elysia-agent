@@ -279,13 +279,16 @@ _start_tts_stream(sentence)
 ```
 SessionMemory (短期)
 ├── deque(maxlen=20)        内存窗口
-├── MongoDB                 持久化 (save/load)
+├── MongoDB                 持久化 (save/load, TTL 30天)
 └── params dict             mood, mood_intensity 等运行时状态
 
 LongTermMemory (长期)
-├── list[MemoryEntry]       内存列表
-├── Milvus                  向量存储 (ANN 搜索)
-├── Embedding               文本向量化 (HuggingFace/OpenAI)
+├── list[MemoryEntry]       内存列表 (max_entries=10000, max_age_days=90 可配置)
+├── Milvus                  向量存储 (ANN 搜索, 结果按 text 回链 _entries 保留 id/embedding)
+├── Embedding               文本向量化 (HuggingFace/OpenAI, insert 时 await, search 时 fire-and-forget)
+├── search(memory_type=)    按类型过滤 (Fact/Preference/Event/Plan/Note)
+├── insert(type=)           type 作为 memory_type 别名, metadata 防 mutation
+├── _evict_old_entries()    过期/超限驱逐 + _dirty_ids 同步清理
 └── Rerank: 0.5×sim + 0.3×poignancy + 0.2×recency
 ```
 
@@ -313,6 +316,9 @@ _after_response() [fire-and-forget]
    ├── 解析 JSON → MemoryEntry
    ├── insert 到 LongTermMemory (自动 embedding)
    └── 记录 _history (最近 20 条)
+
+agent.stop():
+└── consolidator.flush()    强制整合剩余缓冲 (5s 超时), 防止关闭时丢失未达标轮次
 ```
 
 ## 6. 当前后台任务全景
@@ -347,7 +353,7 @@ INTERRUPT:
 | 5 | cognitive_loop.py:334 | `_after_response` | fire-and-forget，无追踪 |
 | 6 | cognitive_loop.py:425 | TTS 流式合成 | `_tts_tasks[]`，gather/cancel |
 | 7 | idle_monitor.py:37 | idle 监控 tick | 常驻，stop 时 cancel |
-| 8 | long_term.py:104 | embedding 加载 | fire-and-forget + tracked |
+| 8 | long_term.py:108 | embedding 加载 | insert 时 await (wait=True), search 时 fire-and-forget |
 | 9 | emotion_engine.py:201 | expression 输出 | 纯 fire-and-forget，无追踪 |
 | 10 | tool/registry.py:327 | ToolEmitter 执行 | ToolEmitter 内部追踪 |
 

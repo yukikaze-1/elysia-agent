@@ -1001,17 +1001,22 @@ class TestMessageObj:
 class TestAgentLifecycle:
     @pytest.mark.asyncio
     async def test_seed_memories(self):
-        """_seed_memories writes 5 entries without triggering embedding."""
+        """_seed_memories writes 5 entries via normal insert() path."""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
+        # Skip embedding load in test — seed uses insert() which awaits it
+        agent._long_term._embedding_tried = True
         await agent._seed_memories()
         assert agent._long_term.count == 5
-        # Entries should be MemoryEntry objects, not embedded
-        assert all(hasattr(e, "text") for e in agent._long_term._entries)
+        for e in agent._long_term._entries:
+            assert e.id, "Every entry should have an id"
+            assert e.memory_type != "note" or e.metadata, (
+                "Entries should have metadata from seed data"
+            )
 
     @pytest.mark.asyncio
     async def test_register_tools(self):

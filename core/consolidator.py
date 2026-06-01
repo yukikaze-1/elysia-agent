@@ -74,6 +74,22 @@ class MemoryConsolidator:
         async with self._consolidate_lock:
             return await self._do_consolidate()
 
+    async def flush(self) -> list[dict]:
+        """Force consolidation of buffered turns regardless of threshold.
+
+        Called on shutdown to avoid losing unconsolidated messages.
+        Returns extracted items (may be empty if buffer was empty or LLM fails).
+        """
+        if not self._buffer:
+            return []
+
+        if self._consolidate_lock.locked():
+            logger.debug("Flush skipped — consolidation already in progress")
+            return []
+
+        async with self._consolidate_lock:
+            return await self._do_consolidate()
+
     async def _do_consolidate(self) -> list[dict]:
         """执行实际的 LLM 提取和存储（需持有 consolidate_lock）。"""
         # 合并缓冲中的多轮对话为一段文本

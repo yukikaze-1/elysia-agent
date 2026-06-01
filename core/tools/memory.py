@@ -16,7 +16,10 @@ async def search_memory(query: str, limit: int = 5, ctx: ToolContext = None) -> 
     results = await memory.search(query_text=query, top_k=limit)
     if not results:
         return "（记忆库中没有找到相关内容）"
-    lines = [f"- {r.text} (meta: {r.metadata})" for r in results]
+    lines = []
+    for r in results:
+        meta_str = f" (id={r.id}, type={r.memory_type}, poignancy={r.poignancy})"
+        lines.append(f"- {r.text}{meta_str}")
     return "\n".join(lines)
 
 

@@ -5,14 +5,19 @@
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
 | 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec |
-| 中 | **TTS 播放高亮不同步** | ~~fixed~~ — delta 消息增加 `stream_id`，前端 `_streamBubbles` 映射直接高亮 |
-| 低 | **消息气泡尾部偶现空行** | ~~fixed~~ — `SentenceBuffer._extract()` `rstrip(" ")` → `rstrip()`，尾部 `\n` 不再保留 |
-| 低 | **复制按钮文字泄漏到气泡内容** | ~~fixed~~ (Phase 3.8 regression) — 文字隔离到 `.msg-text` span，避免 `textContent` 吞入按钮文字 |
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
+| 中 | **无去重机制** | 延后 — 现有测试确认重复文本+不同元数据是设计意图。需独立设计去重方案 |
 
 ## 功能改进
 
+- **poignancy 时间衰减**: rerank 含时效衰减但 poignancy 本身不变，长期不访问的记忆应逐渐降级
+- **记忆去重**: insert 时检查相似内容，避免重复条目（延后）
+- **按 ID 更新/删除记忆**: search() 返回记忆 ID，LLM 可引用修改；新增 update/delete API
+- **记忆导出/备份**: 支持 JSON 导出和恢复
+- **记忆统计**: 按类型/年龄/poignancy 分布统计，接入 DebugInfo 仪表板
+- **冲突检测**: 检测矛盾记忆 (如 "最喜欢蓝色" vs "最喜欢绿色")，提示 LLM 确认
+- **Claude 原生持久记忆**: `.claude/projects/-home-yomu-Agent/memory/` 目录为空，从未启用
 - **MacroMemory + MacroReflector**: 每日合成日记条目。需新增 Milvus 集合 + MacroReflector 后台任务
 - **EmotionEngine 升级**: 生理状态模型、时间衰减曲线、混合情绪、Amygdala LLM 补充
 - **STT 情绪→mood 映射升级**: 生理状态调制 + 性格调制 + 时间衰减

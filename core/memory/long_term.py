@@ -49,11 +49,9 @@ class LongTermMemory:
 
     COLLECTION = "long_term_memory"
     DIMENSION = 1024  # Default for bge-large-zh-v1.5
-    EMBED_TIMEOUT = 10.0  # Max seconds to wait for embedding model load
-    _MAX_ENTRIES = 10000  # 内存列表最大条目数
-    _MAX_AGE_DAYS = 90    # 最大保留天数
 
-    def __init__(self):
+    def __init__(self, max_entries: int = 10000, max_age_days: int = 90,
+                 embed_timeout: float = 10.0):
         self._entries: list[MemoryEntry] = []
         self._vector_db: "VectorDBBackend | None" = None
         self._embedding: "EmbeddingBackend | None" = None
@@ -61,6 +59,9 @@ class LongTermMemory:
         self._embed_task: asyncio.Task | None = None  # Tracked for cleanup
         self._connected = False
         self._dirty_ids: set[str] = set()  # 未同步到 Milvus 的条目 ID
+        self._max_entries = max_entries
+        self._max_age_days = max_age_days
+        self._embed_timeout = embed_timeout
 
     async def connect(self) -> bool:
         """Connect to Milvus (fast). Embedding is deferred to first use. Returns True if Milvus available."""
@@ -93,7 +94,7 @@ class LongTermMemory:
         if self._embedding_tried:
             if wait and self._embed_task and not self._embed_task.done():
                 try:
-                    await asyncio.wait_for(self._embed_task, timeout=self.EMBED_TIMEOUT)
+                    await asyncio.wait_for(self._embed_task, timeout=self._embed_timeout)
                 except (asyncio.TimeoutError, Exception):
                     pass
             return
@@ -105,10 +106,10 @@ class LongTermMemory:
             try:
                 await asyncio.wait_for(
                     loop.run_in_executor(None, self._try_load_embedding_sync),
-                    timeout=self.EMBED_TIMEOUT,
+                    timeout=self._embed_timeout,
                 )
             except asyncio.TimeoutError:
-                logger.info("LongTermMemory: embedding load timed out after %.0fs, text-only mode", self.EMBED_TIMEOUT)
+                logger.info("LongTermMemory: embedding load timed out after %.0fs, text-only mode", self._embed_timeout)
             except Exception as e:
                 logger.info("LongTermMemory: embedding unavailable (%s), text-only mode", e)
 
@@ -116,7 +117,7 @@ class LongTermMemory:
 
         if wait:
             try:
-                await asyncio.wait_for(asyncio.shield(self._embed_task), timeout=self.EMBED_TIMEOUT)
+                await asyncio.wait_for(asyncio.shield(self._embed_task), timeout=self._embed_timeout)
             except (asyncio.TimeoutError, Exception):
                 pass
 
@@ -205,7 +206,7 @@ class LongTermMemory:
         在每次 insert() 后调用，保持内存列表健康。
         """
         now = _time.time()
-        cutoff = now - (self._MAX_AGE_DAYS * 86400)
+        cutoff = now - (self._max_age_days * 86400)
         removed = 0
         evicted_ids: set[str] = set()
 
@@ -220,12 +221,12 @@ class LongTermMemory:
         self._entries = new_entries
 
         # 移除超过上限的条目（保留最新的）
-        if len(self._entries) > self._MAX_ENTRIES:
+        if len(self._entries) > self._max_entries:
             self._entries.sort(key=lambda e: e.timestamp, reverse=True)
-            overflow = len(self._entries) - self._MAX_ENTRIES
+            overflow = len(self._entries) - self._max_entries
             for e in self._entries[-overflow:]:
                 evicted_ids.add(e.id)
-            self._entries = self._entries[:self._MAX_ENTRIES]
+            self._entries = self._entries[:self._max_entries]
             removed += overflow
 
         # 同步清理 dirty_ids
@@ -280,6 +281,7 @@ class LongTermMemory:
         query_text: str = "",
         query_embedding: list[float] | None = None,
         top_k: int = 5,
+        memory_type: str | None = None,
     ) -> list[MemoryEntry]:
         """向量搜索 + rerank（相似度 + 重要性 + 新鲜度）。"""
         await self._ensure_embedding()
@@ -354,6 +356,10 @@ class LongTermMemory:
 
             score = 0.5 * sim + 0.3 * poi + 0.2 * rec
             scored.append((score, entry))
+
+        # Filter by memory_type if requested
+        if memory_type:
+            scored = [(s, e) for s, e in scored if e.memory_type == memory_type]
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [e for _, e in scored[:top_k]]

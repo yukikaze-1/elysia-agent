@@ -153,6 +153,20 @@ class TestLongTermMemory:
         if mem._embedding is not None:
             assert len(entry.embedding) > 0, "Entry should have embedding after await"
 
+    @pytest.mark.asyncio
+    async def test_insert_allows_duplicates_with_different_metadata(self):
+        """Identical text with different metadata should create distinct entries.
+
+        Note: dedup is deferred to a separate feature plan. Consolidator
+        may re-extract the same fact in different rounds, and those are
+        treated as independent confirmations rather than duplicates.
+        """
+        from core.memory.long_term import LongTermMemory
+        mem = LongTermMemory()
+        await mem.insert("妖梦喜欢蓝色", memory_type="preference")
+        await mem.insert("妖梦喜欢蓝色", memory_type="preference", source="consolidation")
+        assert mem.count == 2  # distinct entries with different metadata/timestamps
+
 
 # ============================================================================
 # 3. MemoryConsolidator tests
@@ -227,6 +241,29 @@ class TestMemoryConsolidator:
         assert MemoryConsolidator._parse_result("") == []
         assert MemoryConsolidator._parse_result("not json") == []
         assert MemoryConsolidator._parse_result("[]") == []
+
+    @pytest.mark.asyncio
+    async def test_flush_consolidates_below_threshold(self):
+        """flush() should consolidate buffered turns even below threshold."""
+        from core.consolidator import MemoryConsolidator
+        from core.memory.long_term import LongTermMemory
+
+        class FakeLLM:
+            async def think(self, messages, extra_body=None):
+                class R:
+                    text = '[{"type": "Fact", "content": "测试flush", "poignancy": 5}]'
+                return R()
+
+        mem = LongTermMemory()
+        c = MemoryConsolidator(FakeLLM(), mem, buffer_threshold=10)
+        await c.consolidate("user msg 1", "assistant reply 1")
+        await c.consolidate("user msg 2", "assistant reply 2")
+        await c.consolidate("user msg 3", "assistant reply 3")
+        assert mem.count == 0  # below threshold, not yet consolidated
+
+        items = await c.flush()
+        assert len(items) > 0
+        assert mem.count > 0
 
 
 # ============================================================================
@@ -461,6 +498,17 @@ class TestSessionMemoryEdgeCases:
         msgs = s.recent_messages()
         assert msgs[0]["meta"] == {"timestamp": 12345, "source": "web"}
 
+    def test_save_caps_messages_to_max(self):
+        """snapshot() should only expose max_messages worth of messages."""
+        from core.memory.session import SessionMemory
+        s = SessionMemory(max_messages=3)
+        for i in range(10):
+            s.add_message("user", f"msg{i}")
+        snap = s.snapshot()
+        assert len(snap["messages"]) == 3
+        assert snap["messages"][0]["content"] == "msg7"
+        assert snap["messages"][2]["content"] == "msg9"
+
     def test_clear_preserves_session_id(self):
         """Clear should empty messages but not change session_id."""
         from core.memory.session import SessionMemory
@@ -592,6 +640,23 @@ class TestLongTermMemoryEdgeCases:
         )
         # 'type' should NOT end up in metadata
         assert "type" not in entry.metadata
+
+    @pytest.mark.asyncio
+    async def test_search_filter_by_memory_type(self):
+        """search() with memory_type should only return matching types."""
+        from core.memory.long_term import LongTermMemory
+        mem = LongTermMemory()
+        await mem.insert("工作计划A", memory_type="plan")
+        await mem.insert("工作计划B", memory_type="plan")
+        await mem.insert("用户偏好蓝色", memory_type="preference")
+
+        plans = await mem.search(query_text="工作", memory_type="plan", top_k=10)
+        assert len(plans) >= 2
+        assert all(e.memory_type == "plan" for e in plans)
+
+        prefs = await mem.search(query_text="蓝色", memory_type="preference", top_k=10)
+        assert len(prefs) >= 1
+        assert all(e.memory_type == "preference" for e in prefs)
 
     @pytest.mark.asyncio
     async def test_search_returns_entries_with_ids(self):
@@ -854,7 +919,7 @@ def test_long_term_memory_evicts_old_entries():
 
     ltm = LongTermMemory()
     now = _time_module.time()
-    ltm._MAX_AGE_DAYS = 90
+    ltm._max_age_days = 90
 
     ltm._entries = [
         MemoryEntry(text="过期数据", metadata={}, timestamp=now - 100 * 86400),
@@ -874,7 +939,7 @@ def test_long_term_memory_evicts_overflow():
 
     ltm = LongTermMemory()
     now = _time_module.time()
-    ltm._MAX_ENTRIES = 5
+    ltm._max_entries = 5
 
     ltm._entries = [
         MemoryEntry(text=f"entry-{i}", metadata={}, timestamp=now - 100 + i)

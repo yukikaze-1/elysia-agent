@@ -49,7 +49,11 @@ class Agent:
 
         # ---- L2: Memory ----
         self._session = SessionMemory(max_messages=config.memory.session_max_messages)
-        self._long_term = LongTermMemory()
+        self._long_term = LongTermMemory(
+            max_entries=config.memory.ltm_max_entries,
+            max_age_days=config.memory.ltm_max_age_days,
+            embed_timeout=config.memory.ltm_embed_timeout,
+        )
 
         # ---- L2: Tools ----
         self._tools = ToolRegistry()
@@ -174,6 +178,17 @@ class Agent:
 
         # 清空排队 — shutdown 期间不处理新消息
         self._pending_messages.clear()
+
+        # Flush consolidator buffer before shutdown
+        if self._consolidator:
+            try:
+                items = await asyncio.wait_for(self._consolidator.flush(), timeout=5.0)
+                if items:
+                    logger.info("Flushed %d consolidator items on shutdown", len(items))
+            except asyncio.TimeoutError:
+                logger.warning("Consolidator flush timed out during shutdown")
+            except Exception:
+                logger.debug("Consolidator flush failed", exc_info=True)
 
         # 先停 _process_events — 防止它在 shutdown 期间继续 post 新任务
         if self._event_task:
@@ -456,23 +471,16 @@ class Agent:
     # ---- Internal: seed data + tools ----
 
     async def _seed_memories(self) -> None:
-        """Seed long-term memory with demo entries.
-
-        NOTE: These are demo scaffolding entries that bypass the normal
-        insert() path (no embedding). Replace with real seed data or remove
-        for production deployment.
-        """
+        """Seed long-term memory with demo entries via normal insert() path."""
         entries = [
-            ("上周和妖梦约定周六去爬香山", {"type": "plan", "date": "2026-05-23"}),
-            ("妖梦最喜欢的颜色是蓝色", {"type": "preference"}),
-            ("昨天妖梦说他最近在学习 Rust 语言", {"type": "fact", "date": "2026-05-24"}),
-            ("Elysia 这个名字来源于希腊神话的极乐净土", {"type": "knowledge"}),
-            ("上次推荐的电影《星际穿越》妖梦还没看完", {"type": "interaction", "date": "2026-05-22"}),
+            ("上周和妖梦约定周六去爬香山", {"memory_type": "plan", "poignancy": 7}),
+            ("妖梦最喜欢的颜色是蓝色", {"memory_type": "preference", "poignancy": 8}),
+            ("昨天妖梦说他最近在学习 Rust 语言", {"memory_type": "fact", "poignancy": 6}),
+            ("Elysia 这个名字来源于希腊神话的极乐净土", {"memory_type": "knowledge", "poignancy": 5}),
+            ("上次推荐的电影《星际穿越》妖梦还没看完", {"memory_type": "interaction", "poignancy": 4}),
         ]
         for text, meta in entries:
-            # Insert directly to in-memory list to avoid triggering lazy embedding load
-            from core.memory.long_term import MemoryEntry
-            self._long_term._entries.append(MemoryEntry(text=text, metadata=meta))
+            await self._long_term.insert(text, **meta)
 
     def _register_tools(self) -> None:
         """注册 Agent 工具到 Module.tool.ToolRegistry。"""
