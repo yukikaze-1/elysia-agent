@@ -1,0 +1,712 @@
+"""框架层单元测试 — ErrorType, Capability, SafetyProfile, SafetyPipeline, ToolManager, Plugins。"""
+
+import asyncio
+
+import pytest
+from pydantic import BaseModel, Field
+
+from Module.tool.capability import Capability
+from Module.tool.protocol import (
+    ErrorType, PluginContext, ToolContext, ToolPlugin, ToolResult,
+)
+from Module.tool.safety import (
+    SafetyPipeline, SafetyProfile, _estimate_tokens, _format_validation_error,
+    _truncate_text, _validate_url,
+)
+from Module.tool.manager import ToolManager
+
+
+# ============================================================================
+# ErrorType
+# ============================================================================
+
+class TestErrorType:
+    def test_all_values_present(self):
+        expected = {
+            "invalid_argument", "timeout", "permission_denied",
+            "rate_limited", "network_error", "unavailable",
+            "cancelled", "tool_error", "unknown_tool",
+        }
+        assert {e.value for e in ErrorType} == expected
+
+    def test_is_retryable_true(self):
+        assert ErrorType.TIMEOUT.is_retryable is True
+        assert ErrorType.RATE_LIMITED.is_retryable is True
+        assert ErrorType.NETWORK_ERROR.is_retryable is True
+
+    def test_is_retryable_false(self):
+        assert ErrorType.INVALID_ARGUMENT.is_retryable is False
+        assert ErrorType.PERMISSION_DENIED.is_retryable is False
+        assert ErrorType.UNAVAILABLE.is_retryable is False
+        assert ErrorType.CANCELLED.is_retryable is False
+        assert ErrorType.TOOL_ERROR.is_retryable is False
+        assert ErrorType.UNKNOWN_TOOL.is_retryable is False
+
+
+# ============================================================================
+# Capability
+# ============================================================================
+
+class TestCapability:
+    def test_values(self):
+        assert Capability.NETWORK.value == "network"
+        assert Capability.DATABASE_READ.value == "database:read"
+        assert Capability.FILESYSTEM_WRITE.value == "filesystem:write"
+        assert Capability.SCHEDULE.value == "schedule"
+
+    def test_uniqueness(self):
+        values = [c.value for c in Capability]
+        assert len(values) == len(set(values))
+
+    def test_count(self):
+        assert len(Capability) == 8
+
+
+# ============================================================================
+# ToolContext
+# ============================================================================
+
+class TestToolContext:
+    def test_defaults(self):
+        tc = ToolContext()
+        assert tc.session_id == ""
+        assert tc.user_id == ""
+        assert tc.trace_id == ""
+        assert tc.agent_id == "default"
+        assert tc.services == {}
+
+    def test_trace_and_agent(self):
+        tc = ToolContext(
+            session_id="s1", trace_id="abc123", agent_id="agent-7",
+        )
+        assert tc.trace_id == "abc123"
+        assert tc.agent_id == "agent-7"
+
+    def test_get_service(self):
+        tc = ToolContext(services={"memory": "mock_memory"})
+        assert tc.get("memory") == "mock_memory"
+        assert tc.get("missing", "fallback") == "fallback"
+
+
+# ============================================================================
+# PluginContext
+# ============================================================================
+
+class TestPluginContext:
+    def test_defaults(self):
+        pc = PluginContext()
+        assert pc.session_id == ""
+        assert pc.memory is None
+        assert pc.mongodb is None
+        assert pc.milvus is None
+        assert pc.http_client is None
+        assert pc.scheduler is None
+        assert pc.config is None
+
+    def test_with_deps(self):
+        pc = PluginContext(
+            session_id="test",
+            memory="mock_memory",
+            config="mock_config",
+        )
+        assert pc.session_id == "test"
+        assert pc.memory == "mock_memory"
+        assert pc.config == "mock_config"
+
+
+# ============================================================================
+# ToolPlugin
+# ============================================================================
+
+class TestToolPlugin:
+    def test_base_class_defaults(self):
+        """未配置的子类应有合理的默认值。"""
+
+        class BarePlugin(ToolPlugin):
+            name = "bare"
+            description = "minimal"
+            param_model = None
+
+        p = BarePlugin()
+        assert p.name == "bare"
+        assert p.capabilities == set()
+        assert p.safety is None  # 子类未设置
+        assert p.param_model is None
+
+    def test_safety_profile_set(self):
+        """子类设置 SafetyProfile 后 safety 属性可用。"""
+
+        class SafePlugin(ToolPlugin):
+            name = "safe"
+            description = "with safety"
+            param_model = None
+            safety = SafetyProfile(network_allowed=True, max_concurrency=5)
+
+        p = SafePlugin()
+        assert p.safety.network_allowed is True
+        assert p.safety.max_concurrency == 5
+
+    def test_capabilities_set(self):
+        """Capability set 正确存储。"""
+
+        class CapPlugin(ToolPlugin):
+            name = "cap"
+            description = "with caps"
+            param_model = None
+            capabilities = {Capability.NETWORK, Capability.FILESYSTEM_READ}
+
+        p = CapPlugin()
+        assert Capability.NETWORK in p.capabilities
+        assert Capability.FILESYSTEM_READ in p.capabilities
+
+    def test_setup_noop(self):
+        """默认 setup() 为空操作。"""
+
+        class P(ToolPlugin):
+            name = "p"
+            description = "d"
+            param_model = None
+
+        p = P()
+        import asyncio
+        asyncio.run(p.setup(PluginContext()))
+
+    def test_teardown_noop(self):
+        """默认 teardown() 为空操作。"""
+
+        class P(ToolPlugin):
+            name = "p"
+            description = "d"
+            param_model = None
+
+        p = P()
+        asyncio.run(p.teardown())
+
+    def test_execute_raises_not_implemented(self):
+        class P(ToolPlugin):
+            name = "p"
+            description = "d"
+            param_model = None
+
+        p = P()
+        with pytest.raises(NotImplementedError):
+            asyncio.run(p.execute(ctx=ToolContext(), params=None))
+
+
+# ============================================================================
+# SafetyProfile
+# ============================================================================
+
+class TestSafetyProfile:
+    def test_defaults(self):
+        sp = SafetyProfile()
+        assert sp.block_private_ips is True
+        assert sp.max_concurrency == 0
+        assert sp.max_result_tokens == 2000
+        assert sp.requires_human_approval is False
+        assert sp.allow_symlinks is False
+        assert sp.database_readonly is True
+
+    def test_network_profile(self):
+        sp = SafetyProfile(
+            network_allowed=True,
+            max_concurrency=3,
+            block_private_ips=False,
+            max_response_bytes=1024,
+        )
+        assert sp.network_allowed is True
+        assert sp.max_concurrency == 3
+        assert sp.block_private_ips is False
+        assert sp.max_response_bytes == 1024
+
+    def test_filesystem_profile(self):
+        sp = SafetyProfile(
+            filesystem_allowed=True,
+            read_dirs=["data/sandbox", "/tmp"],
+            write_dir="data/out/{session_id}",
+            max_file_bytes=1024,
+            allow_symlinks=True,
+            max_dir_depth=5,
+        )
+        assert sp.filesystem_allowed is True
+        assert sp.read_dirs == ["data/sandbox", "/tmp"]
+        assert sp.write_dir == "data/out/{session_id}"
+        assert sp.max_file_bytes == 1024
+        assert sp.allow_symlinks is True
+        assert sp.max_dir_depth == 5
+
+    def test_database_profile(self):
+        sp = SafetyProfile(
+            database_allowed=True,
+            database_readonly=False,
+        )
+        assert sp.database_allowed is True
+        assert sp.database_readonly is False
+
+    def test_hitl_profile(self):
+        sp = SafetyProfile(requires_human_approval=True)
+        assert sp.requires_human_approval is True
+
+    def test_truncate_settings(self):
+        sp = SafetyProfile(
+            max_result_tokens=500,
+            truncate_strategy="head_only",
+        )
+        assert sp.max_result_tokens == 500
+        assert sp.truncate_strategy == "head_only"
+
+
+# ============================================================================
+# Token / URL helpers
+# ============================================================================
+
+class TestTokenEstimation:
+    def test_english(self):
+        text = "Hello world this is a test sentence"
+        tokens = _estimate_tokens(text)
+        assert 5 < tokens < 15
+
+    def test_chinese(self):
+        text = "这是一段中文测试文本"
+        tokens = _estimate_tokens(text)
+        assert 8 <= tokens <= 12
+
+    def test_mixed(self):
+        text = "Hello 世界 test 测试"
+        tokens = _estimate_tokens(text)
+        assert tokens > 0
+
+    def test_empty(self):
+        assert _estimate_tokens("") == 0
+
+
+class TestTokenTruncation:
+    def test_no_truncation_needed(self):
+        text = "short"
+        result, truncated = _truncate_text(text, 1000, "head_only")
+        assert truncated is False
+        assert result == "short"
+
+    def test_head_only_truncation(self):
+        text = "x" * 10000
+        result, truncated = _truncate_text(text, 50, "head_only")
+        assert truncated is True
+        assert "...[截断]" in result
+        assert len(result) < len(text)
+
+    def test_head_tail_truncation(self):
+        text = "ABCDEFGHIJ" * 1000  # ~10000 chars, ~2500 tokens
+        result, truncated = _truncate_text(text, 500, "head_tail")
+        assert truncated is True
+        assert "...[省略约" in result
+
+
+class TestURLValidation:
+    def test_invalid_scheme(self):
+        err = _validate_url("ftp://example.com", SafetyProfile())
+        assert err and "scheme" in err
+
+    def test_private_ip_blocked(self):
+        err = _validate_url("http://127.0.0.1/admin", SafetyProfile())
+        assert err and "内网地址" in err
+
+    def test_private_ip_allowed_when_disabled(self):
+        err = _validate_url(
+            "http://10.0.0.1/admin",
+            SafetyProfile(block_private_ips=False),
+        )
+        assert err is None
+
+    def test_public_url_ok(self):
+        err = _validate_url(
+            "https://example.com/page",
+            SafetyProfile(),
+        )
+        assert err is None
+
+
+# ============================================================================
+# SafetyPipeline
+# ============================================================================
+
+class TestSafetyPipeline:
+    def test_initial_stats(self):
+        sp = SafetyPipeline()
+        assert sp.stats == {
+            "total": 0, "timeout": 0, "denied": 0, "rate_limited": 0,
+        }
+
+    def test_hitl_request_lifecycle(self):
+        sp = SafetyPipeline()
+        rid = "test-request-1"
+        # 请求不存在
+        assert sp.request_exists(rid) is False
+        # 提交审批 — 但请求未创建（内部机制），应返回 False
+        assert sp.submit_approval(rid, True) is False
+
+
+# ============================================================================
+# ToolManager — 基础操作
+# ============================================================================
+
+class TestToolManagerEmpty:
+    """空 ToolManager 测试。"""
+
+    def test_plugin_list_empty(self):
+        tm = ToolManager()
+        assert len(tm.plugin_list) == 0
+
+    def test_capability_status_empty(self):
+        tm = ToolManager()
+        assert tm.capability_status == {}
+
+    def test_tool_names_empty(self):
+        tm = ToolManager()
+        assert tm.tool_names == []
+
+    def test_executing_now_empty(self):
+        tm = ToolManager()
+        assert tm.executing_now == []
+
+    def test_history_empty(self):
+        tm = ToolManager()
+        assert tm.history == []
+
+    def test_pipeline_stats(self):
+        tm = ToolManager()
+        assert tm.pipeline_stats["total"] == 0
+
+    def test_unknown_tool(self):
+        tm = ToolManager()
+        result = asyncio.run(
+            tm.execute("nonexistent", ctx=ToolContext()),
+        )
+        assert result.success is False
+        assert result.error_type == ErrorType.UNKNOWN_TOOL
+        assert "未激活" in result.error
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_stream(self):
+        tm = ToolManager()
+        chunks = []
+        async for c in tm.execute_stream("nonexistent", ctx=ToolContext()):
+            chunks.append(c)
+        assert len(chunks) == 1
+        assert chunks[0].error_type == ErrorType.UNKNOWN_TOOL
+
+    def test_len_and_contains(self):
+        tm = ToolManager()
+        assert len(tm) == 0
+        assert ("anything" in tm) is False
+
+    def test_repr(self):
+        tm = ToolManager()
+        assert "ToolManager" in repr(tm)
+
+
+class TestToolManagerLoad:
+    """ToolManager load_all / shutdown 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_load_empty(self):
+        tm = ToolManager()
+        await tm.load_all([], PluginContext(session_id="test"))
+        assert len(tm.plugin_list) == 0
+        await tm.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_load_failing_plugin(self):
+        """setup() 失败的插件应被跳过，不影响其他插件。"""
+
+        class BadPlugin(ToolPlugin):
+            name = "bad"
+            description = "fails setup"
+            param_model = None
+
+            async def setup(self, ctx):
+                raise RuntimeError("intentional failure")
+
+        class GoodPlugin(ToolPlugin):
+            name = "good"
+            description = "works"
+            param_model = None
+
+        tm = ToolManager()
+        await tm.load_all(
+            [BadPlugin, GoodPlugin],
+            PluginContext(session_id="test"),
+        )
+        # bad 被跳过，good 被加载
+        assert "bad" not in tm.tool_names
+        assert "good" in tm.tool_names
+        await tm.shutdown()
+
+
+# ============================================================================
+# ToolManager — 插件执行
+# ============================================================================
+
+class GreetParams(BaseModel):
+    target: str = Field(..., description="要问候的名字")
+
+
+class GreetPlugin(ToolPlugin):
+    name = "greet"
+    description = "打招呼"
+    param_model = GreetParams
+    capabilities = set()
+    safety = SafetyProfile()
+
+    async def execute(self, *, ctx, emit=None, params: GreetParams) -> str:
+        return f"你好, {params.target}!"
+
+
+class FailingPlugin(ToolPlugin):
+    name = "failing"
+    description = "always fails"
+    param_model = None
+
+    async def execute(self, *, ctx, emit=None, params=None) -> str:
+        raise ValueError("boom")
+
+
+class TestToolManagerExecute:
+    """ToolManager execute() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_successful_execute(self):
+        tm = ToolManager()
+        await tm.load_all([GreetPlugin], PluginContext(session_id="test"))
+        result = await tm.execute("greet", ctx=ToolContext(), target="世界")
+        assert result.success is True
+        assert result.content == "你好, 世界!"
+        await tm.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_execute_updates_history(self):
+        tm = ToolManager()
+        await tm.load_all([GreetPlugin], PluginContext(session_id="test"))
+        await tm.execute("greet", ctx=ToolContext(), target="test")
+        assert len(tm.history) == 1
+        assert tm.history[0]["name"] == "greet"
+        assert tm.history[0]["success"] is True
+        await tm.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_pydantic_validation_error(self):
+        """缺少必填参数 name 应返回 INVALID_ARGUMENT。"""
+        tm = ToolManager()
+        await tm.load_all([GreetPlugin], PluginContext(session_id="test"))
+        result = await tm.execute("greet", ctx=ToolContext())  # 没传 name
+        assert result.success is False
+        assert result.error_type == ErrorType.INVALID_ARGUMENT
+        assert "target" in result.error.lower()
+        await tm.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_plugin_error(self):
+        tm = ToolManager()
+        await tm.load_all([FailingPlugin], PluginContext(session_id="test"))
+        result = await tm.execute("failing", ctx=ToolContext())
+        assert result.success is False
+        assert result.error_type == ErrorType.TOOL_ERROR
+        assert "boom" in result.error
+        await tm.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_executing_now_tracks(self):
+        """执行中应被 tracking。"""
+        tm = ToolManager()
+        await tm.load_all([GreetPlugin], PluginContext(session_id="test"))
+        # 执行前为空
+        assert tm.executing_now == []
+        await tm.execute("greet", ctx=ToolContext(), target="test")
+        # 执行后应清空
+        assert tm.executing_now == []
+        await tm.shutdown()
+
+
+# ============================================================================
+# ToolManager — Schema 导出
+# ============================================================================
+
+class NameParams(BaseModel):
+    """测试参数模型。"""
+    name: str = Field(..., description="名字")
+
+
+class SchemaPlugin(ToolPlugin):
+    name = "schema_test"
+    description = "测试 schema 导出"
+    param_model = NameParams
+    capabilities = set()
+    safety = SafetyProfile()
+
+
+class TestToolManagerDefinitions:
+    """ToolManager definitions() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_definitions_format(self):
+        tm = ToolManager()
+        await tm.load_all([SchemaPlugin], PluginContext(session_id="test"))
+        defs = tm.definitions()
+        assert len(defs) == 1
+        assert defs[0]["type"] == "function"
+        func = defs[0]["function"]
+        assert func["name"] == "schema_test"
+        assert "description" in func
+        assert "parameters" in func
+        # Pydantic 生成的 schema
+        params = func["parameters"]
+        assert "properties" in params
+        assert "name" in params["properties"]
+        await tm.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_empty_definitions(self):
+        tm = ToolManager()
+        assert tm.definitions() == []
+
+    @pytest.mark.asyncio
+    async def test_no_param_model(self):
+        """无 param_model 的插件应有空 properties schema。"""
+
+        class NoParamPlugin(ToolPlugin):
+            name = "no_param"
+            description = "no params"
+            param_model = None
+            capabilities = set()
+            safety = SafetyProfile()
+
+        tm = ToolManager()
+        await tm.load_all([NoParamPlugin], PluginContext(session_id="test"))
+        defs = tm.definitions()
+        assert len(defs) == 1
+        params = defs[0]["function"]["parameters"]
+        assert params == {"type": "object", "properties": {}}
+        await tm.shutdown()
+
+
+# ============================================================================
+# ToolManager — 能力状态
+# ============================================================================
+
+class TestToolManagerCapabilityStatus:
+    """capability_status 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_capability_status_reflects_plugins(self):
+        class NetPlugin(ToolPlugin):
+            name = "net"
+            description = "with network"
+            param_model = None
+            capabilities = {Capability.NETWORK, Capability.WEB_SEARCH}
+            safety = SafetyProfile()
+
+        tm = ToolManager()
+        await tm.load_all([NetPlugin], PluginContext(session_id="test"))
+        caps = tm.capability_status
+        assert caps["network"] is True
+        assert caps["web_search"] is True
+        await tm.shutdown()
+
+
+# ============================================================================
+# ToolManager — HITL 审批
+# ============================================================================
+
+class TestToolManagerHITL:
+    """HITL 审批测试。"""
+
+    @pytest.mark.asyncio
+    async def test_hitl_plugin_triggers_approval(self):
+        """requires_human_approval=True 的插件应触发审批并等待确认。
+        当前审批无前端响应时超时默认拒绝。"""
+
+        class HITLPlugin(ToolPlugin):
+            name = "hitl_test"
+            description = "needs approval"
+            param_model = None
+            capabilities = set()
+            safety = SafetyProfile(requires_human_approval=True)
+
+            async def execute(self, *, ctx, emit=None, params=None) -> str:
+                return "approved action done"
+
+        tm = ToolManager()
+        # 将 HITL 超时调短以加速测试
+        tm._pipeline._hitl_timeout = 0.1
+        await tm.load_all([HITLPlugin], PluginContext(session_id="test"))
+        result = await tm.execute("hitl_test", ctx=ToolContext())
+        # 无人确认 → 超时拒绝
+        assert result.success is False
+        assert result.error_type == ErrorType.PERMISSION_DENIED
+        await tm.shutdown()
+
+    def test_submit_approval_unknown_request(self):
+        """对不存在的 request_id 提交审批应返回 False。"""
+        pipeline = SafetyPipeline()
+        assert pipeline.submit_approval("nonexistent", True) is False
+
+    def test_request_exists_false(self):
+        pipeline = SafetyPipeline()
+        assert pipeline.request_exists("random") is False
+
+
+# ============================================================================
+# ToolManager — 流式执行
+# ============================================================================
+
+class StreamParams(BaseModel):
+    steps: int = Field(default=3, ge=1, le=10)
+
+
+class StreamPlugin(ToolPlugin):
+    name = "streamer"
+    description = "streams progress"
+    param_model = StreamParams
+    capabilities = set()
+    safety = SafetyProfile()
+
+    async def execute_stream(self, *, ctx, emit, params: StreamParams):
+        for i in range(params.steps):
+            from Module.tool.protocol import ToolProgress
+            yield ToolProgress(message=f"step {i+1}", percent=(i + 1) / params.steps)
+        yield ToolResult.ok(name=self.name, content="all done", duration_ms=0)
+
+
+class TestToolManagerStream:
+    """ToolManager execute_stream() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_stream_yields_progress_and_result(self):
+        tm = ToolManager()
+        await tm.load_all([StreamPlugin], PluginContext(session_id="test"))
+        chunks = []
+        async for c in tm.execute_stream(
+            "streamer", ctx=ToolContext(), steps=2,
+        ):
+            chunks.append(c)
+        # 应有 2 个 progress + 1 个 result
+        assert len(chunks) >= 2
+        final = chunks[-1]
+        assert isinstance(final, ToolResult)
+        assert final.content == "all done"
+        await tm.shutdown()
+
+
+# ============================================================================
+# Pydantic 格式化
+# ============================================================================
+
+class TestPydanticErrorFormatting:
+    def test_format_simple_error(self):
+        from pydantic import ValidationError
+        try:
+            GreetParams()
+        except ValidationError as e:
+            formatted = _format_validation_error(e)
+            assert "target" in formatted.lower()
+            assert "必填" in formatted or "required" in formatted.lower()
+            assert len(formatted) <= 200

@@ -121,7 +121,7 @@
 | 任务 | 说明 |
 |------|------|
 | 配置驱动入口 | `config.yaml` 新增 TTS.enabled / STT.enabled。`app.py --tts`/`--stt`/`--host`/`--port` 默认值从 config 读取。优先级 CLI > config > 默认值。移除 `DEMO_ENABLE_TTS` 环境变量。 |
-| Architecture.md 完整重写 | 从三层架构、Protocol-Registry-Backend 模式、事件总线/FSM、认知循环、记忆模型、输入输出系统、TTS 流式管线、文字/语音同步、配置系统、工程规范等 8 个章节完整描述项目设计。 |
+| docs/architecture.md 完整重写 | 从三层架构、Protocol-Registry-Backend 模式、事件总线/FSM、认知循环、记忆模型、输入输出系统、TTS 流式管线、文字/语音同步、配置系统、工程规范等 8 个章节完整描述项目设计。 |
 | SentenceBuffer 升级 | 分隔符扩展 (～…〜)、英文句号上下文检测 (数字/缩写/URL)、连续分隔符合并、min_chunk 5 + 短句不卡死、构造参数可配置。70 tests (12 组)。 |
 
 ### DeepSeek v4 适配 (2026-05-27)
@@ -393,3 +393,40 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 复制 JSON | 一键复制完整 debug 数据到剪贴板 |
 | 可展开消息 | 截断文本点击展开/收起全文 |
 | 响应式 | 700px 断点切换单列布局 |
+
+---
+
+### 工具系统深度重构 (2026-06-02)
+
+全面 review 发现 14 个问题（安全/资源/执行管道/功能缺口），深度重构为 Pydantic + ToolPlugin 架构。
+
+| 类别 | 任务 | 说明 |
+|------|------|------|
+| 架构 | `@tool` 装饰器 → `ToolPlugin` 基类 | Pydantic `BaseModel` 参数校验，`model.model_json_schema()` 零成本生成 Schema |
+| 架构 | `ToolRegistry` → `ToolManager` | `load_all()`、`execute()`、`execute_stream()`、`reload_plugin()`、`shutdown()`、Debug 接口 |
+| 架构 | 接口依赖反转 | CognitiveLoop 依赖 `ToolExecutor` Protocol，不直接 import `ToolManager` |
+| 安全 | `SafetyProfile` + `SafetyPipeline` | 6 阶段管道：Pydantic 校验 → 安全检查 → HITL 审批 → 信号量 → 超时执行 → Token 截断 |
+| 安全 | SSRF 防护 | `web_fetch` 内网 IP 拒绝 + 重定向目标校验 + 响应体大小限制 |
+| 安全 | 路径沙箱 | `Path.resolve()` + 白名单 + 符号链接检测 + 文件大小预检 + session 隔离 |
+| 安全 | 并发控制 | `asyncio.Semaphore` + `RATE_LIMITED` 错误类型 |
+| 安全 | Token 截断 | 中英文混合估算，`head_tail` / `head_only` 策略，流式强制降级 |
+| 功能 | 新增 4 个工具 | `write_file`、`set_reminder`、`get_runtime_config`、`get_self_state` |
+| 功能 | HITL 审批 | `requires_human_approval=True` → 管道暂停 → 前端确认 → 继续/拒绝/超时/过期 |
+| 功能 | 流式执行 | `execute_stream()` yield `ToolProgress`，背压控制，进度超时检测 |
+| 功能 | 热重载 | `reload_plugin(name)` 不中断正在执行的任务 |
+| 功能 | 链路追踪 | `ToolContext.trace_id` + `agent_id`，CognitiveLoop 每轮生成 UUID4 |
+| 功能 | 类型化 DI | `PluginContext` 替代弱类型 `services: dict` |
+| 工程 | `ErrorType` 扩展 | 新增 `PERMISSION_DENIED`、`RATE_LIMITED`、`NETWORK_ERROR`，`is_retryable` 收紧 |
+| 工程 | `Capability` 枚举 | 8 种能力值替代字符串 `requires`，支持可用性检测 |
+| 工程 | Debug 接口 | `plugin_list`、`executing_now`、`history`、`capability_status`、`pipeline_stats` |
+| Bug 修复 | `list_directory` 符号链接循环 | inode visited set 防无限递归 |
+| Bug 修复 | `read_file` OOM | `f.readlines()` → 逐行读取 + early stop |
+| Bug 修复 | `search_memory` limit 上限 | 上限 20，加 try/except |
+| Bug 修复 | `save_memory` type 校验 | 枚举约束 (fact/plan/preference/note) + 运行时参数过滤 |
+| Bug 修复 | `get_time` 时区 | 增加 `timezone` + `format` 参数，默认 ISO 8601 |
+| Bug 修复 | TaskScheduler 重试 | `ErrorType.is_retryable` 检查，cancel 循环检测 |
+| 文件变更 | 新增 | `capability.py`、`manager.py`、`test_framework.py`、4 个插件文件、README.md |
+| 文件变更 | 修改 | `protocol.py`、`safety.py`、`__init__.py`×3、`agent.py`、`cognitive_loop.py`、`task_scheduler.py`、`debug_info.py`、`server.py`、4 个迁移插件 |
+| 文件变更 | 删除 | `registry.py`、`decorator.py`、`schema.py` |
+| 测试 | 310/311 passed | 1 pre-existing failure (TTS config) |
+| 文档 | spec + plan + README | `docs/superpowers/specs/2026-06-02-tool-system-refactor-design.md` + `docs/superpowers/plans/2026-06-02-tool-system-refactor.md` + `Module/tool/README.md` |

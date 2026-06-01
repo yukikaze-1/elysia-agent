@@ -125,7 +125,7 @@ Agent/
 ├── .env.example           # 环境变量模板
 ├── app.py              # 入口
 ├── config.yaml           # 总配置
-├── Architecture.md       # 架构设计
+├── docs/architecture.md  # 架构设计
 ├── todo.md               # 开发计划 + 已知问题
 │
 ├── Module/               # L0 基础设施层

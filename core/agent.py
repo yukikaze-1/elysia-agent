@@ -58,9 +58,9 @@ class Agent:
         # ---- L2: Tools ----
         self._tool_manager = ToolManager()
 
-        # 构造 PluginContext（服务在 start() 中注入）
+        # 构造 PluginContext（session_id 在 start() 中注入）
         self._plugin_ctx = PluginContext(
-            session_id=self._session_id,
+            session_id="",  # 在 start() 中更新
             config=self._config,
         )
 
@@ -155,6 +155,7 @@ class Agent:
         self._cognitive.set_tool_context(self._tool_ctx)
 
         # 加载工具插件（setup() 中检测能力，失败则跳过）
+        self._plugin_ctx.session_id = getattr(self._session, "_session_id", "default")
         self._plugin_ctx.memory = self._long_term
         self._plugin_ctx.scheduler = self._scheduler
         await self._tool_manager.load_all(ALL_PLUGINS, self._plugin_ctx)

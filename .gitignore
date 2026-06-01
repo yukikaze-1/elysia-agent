@@ -10,3 +10,4 @@ node_modules/
 ref/
 static/live2d-demo/
 .playwright-mcp/
+CLAUDE.md
