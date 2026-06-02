@@ -33,6 +33,7 @@
 
 <!-- Settings -->
 <button id="settings-btn" title="设置">⚙</button>
+<button id="tools-btn" title="工具">🔧</button>
 <div id="settings-panel">
   <div class="row"><span>TTS 语音</span><div class="toggle on" id="tts-toggle"></div></div>
   <label>音量</label>
@@ -41,6 +42,12 @@
   <button id="restart-btn">重启服务</button>
   <button id="shutdown-btn">关闭服务</button>
   <div id="conn-status" class="disconnected">连接中...</div>
+</div>
+
+<!-- Tools Panel -->
+<div id="tools-panel">
+  <div class="tools-title">工具插件管理</div>
+  <div id="tools-list"></div>
 </div>
 
 <script type="module" src="/static/js/main.js"></script>

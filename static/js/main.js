@@ -9,6 +9,7 @@ import {
 import { bufferAudioChunk, finalizeStream } from './audio.js';
 import { toggleMic, stopMic } from './mic.js';
 import { setupSettings } from './settings.js';
+import { setupTools } from './tools.js';
 import { restoreChat } from './persistence.js';
 import { SEND_COOLDOWN_MS } from './config.js';
 
@@ -110,6 +111,7 @@ function init() {
   setupInput();
 
   setupSettings();
+  setupTools();
 
   document.getElementById('send-btn').onclick = sendText;
 

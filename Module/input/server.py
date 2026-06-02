@@ -112,6 +112,37 @@ def create_app(
         return web.json_response({"status": "restarting"})
     app.router.add_post("/restart", restart_handler)
 
+    # Tools endpoint — list loaded plugins
+    async def tools_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        return web.json_response({
+            "plugins": agent._tool_manager.plugin_list,
+        })
+    app.router.add_get("/tools", tools_handler)
+
+    # Tool reload endpoint — hot-reload a single plugin
+    async def tool_reload_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        try:
+            body = await request.json()
+            name = body.get("name", "")
+        except Exception:
+            return web.json_response(
+                {"ok": False, "error": "无效的请求体"}, status=400,
+            )
+        if not name:
+            return web.json_response(
+                {"ok": False, "error": "缺少插件名称"}, status=400,
+            )
+        ok = await agent._tool_manager.reload_plugin(name)
+        if ok:
+            return web.json_response({"ok": True, "name": name})
+        else:
+            return web.json_response(
+                {"ok": False, "name": name, "error": f"插件 '{name}' 重载失败"},
+            )
+    app.router.add_post("/tools/reload", tool_reload_handler)
+
     return app
 
 

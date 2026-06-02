@@ -10,6 +10,7 @@ export function setupSettings() {
 
   // 设置按钮
   document.getElementById('settings-btn').onclick = () => {
+    document.getElementById('tools-panel').classList.remove('open');
     document.getElementById('settings-panel').classList.toggle('open');
   };
 

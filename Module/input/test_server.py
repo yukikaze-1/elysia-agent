@@ -406,6 +406,71 @@ class TestEndpoints:
 
 
 # ============================================================
+# Tool plugin endpoints
+# ============================================================
+
+class TestToolEndpoints:
+    @pytest.fixture
+    def app(self):
+        from Module.input.server import create_app
+
+        agent = MagicMock()
+        agent._fsm.state = "idle"
+        agent._output = MagicMock()
+        agent._bus = MagicMock()
+        agent._tool_manager.plugin_list = [
+            {"name": "web_search", "description": "搜索网页", "capabilities": ["network"], "safety": {}, "active": True},
+            {"name": "read_file", "description": "读取文件", "capabilities": ["filesystem_read"], "safety": {}, "active": True},
+        ]
+        agent._tool_manager.reload_plugin = AsyncMock(return_value=True)
+        return create_app(agent, serve_static=False)
+
+    @pytest.mark.asyncio
+    async def test_list_plugins(self, app, aiohttp_client):
+        client = await aiohttp_client(app)
+        resp = await client.get("/tools")
+        assert resp.status == 200
+        data = await resp.json()
+        assert "plugins" in data
+        assert len(data["plugins"]) == 2
+        assert data["plugins"][0]["name"] == "web_search"
+
+    @pytest.mark.asyncio
+    async def test_reload_plugin_success(self, app, aiohttp_client):
+        client = await aiohttp_client(app)
+        resp = await client.post("/tools/reload", json={"name": "web_search"})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["ok"] is True
+        assert data["name"] == "web_search"
+
+    @pytest.mark.asyncio
+    async def test_reload_plugin_missing_name(self, app, aiohttp_client):
+        client = await aiohttp_client(app)
+        resp = await client.post("/tools/reload", json={})
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["ok"] is False
+
+    @pytest.mark.asyncio
+    async def test_reload_plugin_invalid_body(self, app, aiohttp_client):
+        client = await aiohttp_client(app)
+        resp = await client.post("/tools/reload", data="not json")
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["ok"] is False
+
+    @pytest.mark.asyncio
+    async def test_reload_plugin_failure(self, app, aiohttp_client):
+        app["agent"]._tool_manager.reload_plugin = AsyncMock(return_value=False)
+        client = await aiohttp_client(app)
+        resp = await client.post("/tools/reload", json={"name": "unknown"})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["ok"] is False
+
+
+# ============================================================
 # Fix assertion-less tests
 # ============================================================
 
