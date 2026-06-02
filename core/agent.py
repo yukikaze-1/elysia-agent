@@ -9,6 +9,7 @@ Usage:
 """
 
 import asyncio
+from enum import Enum, auto
 import logging
 
 from Module.output import OutputManager, ConsoleChannel
@@ -34,11 +35,20 @@ from .task_scheduler import TaskScheduler
 logger = logging.getLogger(__name__)
 
 
+class RunState(Enum):
+    """Agent 生命周期状态"""
+    STOPPED = auto()      # 初始 / 已停止
+    RUNNING = auto()      # 运行中
+    STOPPING = auto()     # 正常关机中
+    RESTARTING = auto()   # 重启中
+
+
 class Agent:
     """Complete Agent wired from L0/L1/L2 components."""
 
-    def __init__(self, *, config: AppConfig):
+    def __init__(self, *, config: AppConfig, config_path: str | None = None):
         self._config = config
+        self._config_path = config_path
         self._user_name = config.agent.user_name
 
         # ---- L0: Infrastructure (from Module/) ----
@@ -121,7 +131,7 @@ class Agent:
             checkpoint_path="data/scheduler_checkpoint.json",
         )
 
-        self._running = False
+        self._state = RunState.STOPPED
         self._event_task: asyncio.Task | None = None
         self._req_counter: int = 0
         # FIFO 消息排队 — FSM != IDLE 时暂存消息
@@ -131,7 +141,7 @@ class Agent:
 
     async def start(self) -> None:
         """Start the agent: connect persistence, idle monitor, event loop."""
-        self._running = True
+        self._state = RunState.RUNNING
 
         # Connect persistence backends in parallel
         mongo_ok, milvus_ok = await asyncio.gather(
@@ -195,7 +205,7 @@ class Agent:
     async def stop(self) -> None:
         """Stop the agent, save session, clean up resources."""
         logger.info("Agent stopping...")
-        self._running = False
+        self._state = RunState.STOPPED
 
         # 清空排队 — shutdown 期间不处理新消息
         self._pending_messages.clear()
@@ -331,64 +341,80 @@ class Agent:
     # ---- REPL ----
 
     async def run_server(self) -> None:
-        """Run agent in WebSocket server mode. Blocks until Ctrl+C."""
-        await self.start()
-        host = self._config.server.host
-        port = self._config.server.port
-        stt_enabled = self._config.stt.enabled
+        """Run agent in WebSocket server mode. Blocks until Ctrl+C or shutdown.
 
-        stt_transcribe = None
-        stt_emotion_state: dict | None = None
-        if stt_enabled:
-            try:
-                from Module.stt import STTFactory
-                stt_backend = STTFactory.create("sensevoice/sense-voice")
-
-                # 用可变容器传递 STT 情绪/事件 — server 读取、wrapper 更新
-                stt_emotion_state = {"emotion": "NEUTRAL", "events": []}
-
-                async def transcribe_wrapper(audio: bytes) -> str:
-                    text = await stt_backend.transcribe(audio)
-                    stt_emotion_state["emotion"] = stt_backend.last_emotion
-                    stt_emotion_state["events"] = list(stt_backend.last_events)
-                    return text
-
-                stt_transcribe = transcribe_wrapper
-                logger.info("STT backend connected for server mode")
-            except Exception:
-                logger.info("STT not available — text-only mode")
-
+        支持通过 /restart 端点在停止后重新加载配置并重启服务。
+        """
         from Module.input.server import create_app
         from aiohttp import web
 
-        app = create_app(self, stt_transcribe=stt_transcribe, serve_static=True,
-                        stt_emotion_state=stt_emotion_state)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, host, port)
-        await site.start()
+        await self.start()
 
-        print(f"\n{'='*50}")
-        print(f"  {self._character.name} WebSocket Server")
-        print(f"  地址: ws://{host}:{port}/ws")
-        print(f"  前端: http://{host}:{port}/")
-        print(f"  STT: {'已连接' if stt_transcribe else '未连接'}")
-        print(f"  TTS: {'已连接' if self._tts else '未连接'}")
-        print(f"  退出: Ctrl+C 或浏览器关闭服务按钮")
-        print(f"{'='*50}")
+        while True:
+            host = self._config.server.host
+            port = self._config.server.port
+            stt_enabled = self._config.stt.enabled
 
-        try:
-            while self._running:
-                await asyncio.sleep(1)
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            pass
-        finally:
+            stt_transcribe = None
+            stt_emotion_state: dict | None = None
+            if stt_enabled:
+                try:
+                    from Module.stt import STTFactory
+                    stt_backend = STTFactory.create("sensevoice/sense-voice")
+
+                    stt_emotion_state = {"emotion": "NEUTRAL", "events": []}
+
+                    async def transcribe_wrapper(audio: bytes) -> str:
+                        text = await stt_backend.transcribe(audio)
+                        stt_emotion_state["emotion"] = stt_backend.last_emotion
+                        stt_emotion_state["events"] = list(stt_backend.last_events)
+                        return text
+
+                    stt_transcribe = transcribe_wrapper
+                    logger.info("STT backend connected for server mode")
+                except Exception:
+                    logger.info("STT not available — text-only mode")
+
+            app = create_app(self, stt_transcribe=stt_transcribe, serve_static=True,
+                            stt_emotion_state=stt_emotion_state)
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, host, port)
+            await site.start()
+
+            print(f"\n{'='*50}")
+            print(f"  {self._character.name} WebSocket Server")
+            print(f"  地址: ws://{host}:{port}/ws")
+            print(f"  前端: http://{host}:{port}/")
+            print(f"  STT: {'已连接' if stt_transcribe else '未连接'}")
+            print(f"  TTS: {'已连接' if self._tts else '未连接'}")
+            print(f"  退出: Ctrl+C 或浏览器关闭服务按钮")
+            print(f"{'='*50}")
+
+            try:
+                while self._state == RunState.RUNNING:
+                    await asyncio.sleep(1)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                pass
+
+            was_restarting = self._state == RunState.RESTARTING
             await self.stop()
             try:
                 await asyncio.wait_for(runner.cleanup(), timeout=3.0)
             except asyncio.TimeoutError:
                 logger.warning("HTTP server cleanup timed out — forcing exit")
-            print("再见！")
+
+            if was_restarting:
+                from Module.config.loader import ConfigLoader
+                from core.app_config import AppConfig
+                self._config = ConfigLoader(AppConfig, yaml_path=self._config_path).load()
+                print("配置已重新加载，正在重启服务...")
+                await self.start()
+                continue
+            else:
+                break
+
+        print("再见！")
 
     async def run_repl(self) -> None:
         """Run an interactive REPL loop (stdin). Blocks until /quit or Ctrl+D."""
@@ -397,7 +423,7 @@ class Agent:
         print("输入消息开始对话，/quit 退出，Ctrl+C 打断\n")
 
         try:
-            while self._running:
+            while self._state == RunState.RUNNING:
                 line = await asyncio.to_thread(input, "你: ")
                 if line.strip().lower() in ("/quit", "/exit", "/q"):
                     break
@@ -417,7 +443,7 @@ class Agent:
         Cognitive processing runs in a separate task so the event loop stays
         responsive to INTERRUPT events during LLM streaming.
         """
-        while self._running:
+        while self._state == RunState.RUNNING:
             try:
                 event = await self._bus.next()
             except RuntimeError:

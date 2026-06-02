@@ -135,7 +135,7 @@ def main():
     config.agent.character = args.character
 
     if args.server:
-        agent = Agent(config=config)
+        agent = Agent(config=config, config_path=args.config)
         asyncio.run(agent.run_server())
     elif args.once:
         asyncio.run(run_once(args.once, config))

@@ -10,6 +10,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
+from core.agent import RunState
+
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -57,19 +59,35 @@ class TestCreateApp:
         agent = MagicMock()
         agent._output = MagicMock()
         agent._bus = MagicMock()
-        agent._running = True
+        agent._state = RunState.RUNNING
 
         app = create_app(agent, serve_static=False)
 
         # Find and call shutdown handler
         for r in app.router.routes():
             if hasattr(r, 'resource') and 'shutdown' in str(r.resource):
-                # Shutdown endpoint sets _running = False
                 pass  # tested via integration
 
         # Simulate: POST /shutdown
-        agent._running = False
-        assert agent._running is False
+        agent._state = RunState.STOPPING
+        assert agent._state == RunState.STOPPING
+
+    def test_restart_endpoint(self):
+        from Module.input.server import create_app
+
+        agent = MagicMock()
+        agent._output = MagicMock()
+        agent._bus = MagicMock()
+        agent._state = RunState.RUNNING
+
+        app = create_app(agent, serve_static=False)
+
+        for r in app.router.routes():
+            if hasattr(r, 'resource') and 'restart' in str(r.resource):
+                pass  # route exists
+
+        agent._state = RunState.RESTARTING
+        assert agent._state == RunState.RESTARTING
 
 
 class TestCreateAppIntegration:
@@ -82,7 +100,7 @@ class TestCreateAppIntegration:
         agent = MagicMock()
         agent._output = MagicMock()
         agent._bus = MagicMock()
-        agent._running = True
+        agent._state = RunState.RUNNING
 
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
@@ -91,7 +109,7 @@ class TestCreateAppIntegration:
         assert resp.status == 200
         data = await resp.json()
         assert data['status'] == 'shutting_down'
-        assert agent._running is False
+        assert agent._state == RunState.STOPPING
 
     @pytest.mark.asyncio
     async def test_shutdown_get(self, aiohttp_client):
@@ -100,14 +118,32 @@ class TestCreateAppIntegration:
         agent = MagicMock()
         agent._output = MagicMock()
         agent._bus = MagicMock()
-        agent._running = True
+        agent._state = RunState.RUNNING
 
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
 
         resp = await client.get('/shutdown')
         assert resp.status == 200
-        assert agent._running is False
+        assert agent._state == RunState.STOPPING
+
+    @pytest.mark.asyncio
+    async def test_restart_endpoint(self, aiohttp_client):
+        from Module.input.server import create_app
+
+        agent = MagicMock()
+        agent._output = MagicMock()
+        agent._bus = MagicMock()
+        agent._state = RunState.RUNNING
+
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+
+        resp = await client.post('/restart')
+        assert resp.status == 200
+        data = await resp.json()
+        assert data['status'] == 'restarting'
+        assert agent._state == RunState.RESTARTING
 
 
 class TestWebSocketHandler:
@@ -351,13 +387,22 @@ class TestEndpoints:
         assert data["status"] == "ok"
 
     @pytest.mark.asyncio
-    async def test_shutdown_sets_running_false(self, app, aiohttp_client):
+    async def test_shutdown_sets_state_stopping(self, app, aiohttp_client):
         client = await aiohttp_client(app)
         resp = await client.post("/shutdown")
         assert resp.status == 200
         data = await resp.json()
         assert data["status"] == "shutting_down"
-        assert app["agent"]._running is False
+        assert app["agent"]._state == RunState.STOPPING
+
+    @pytest.mark.asyncio
+    async def test_restart_sets_state_restarting(self, app, aiohttp_client):
+        client = await aiohttp_client(app)
+        resp = await client.post("/restart")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "restarting"
+        assert app["agent"]._state == RunState.RESTARTING
 
 
 # ============================================================

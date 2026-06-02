@@ -12,6 +12,7 @@ from pathlib import Path
 
 from aiohttp import web, WSMsgType
 
+from core.agent import RunState
 from Module.output import WebSocketChannel
 from .audio_buffer import AudioBuffer
 
@@ -97,10 +98,19 @@ def create_app(
         import logging
         _log = logging.getLogger(__name__)
         _log.info("Shutdown requested via HTTP")
-        request.app["agent"]._running = False
+        request.app["agent"]._state = RunState.STOPPING
         return web.json_response({"status": "shutting_down"})
     app.router.add_post("/shutdown", shutdown_handler)
     app.router.add_get("/shutdown", shutdown_handler)  # 也接受浏览器直接访问
+
+    # Restart endpoint — triggers graceful restart with config reload
+    async def restart_handler(request: web.Request) -> web.Response:
+        import logging
+        _log = logging.getLogger(__name__)
+        _log.info("Restart requested via HTTP")
+        request.app["agent"]._state = RunState.RESTARTING
+        return web.json_response({"status": "restarting"})
+    app.router.add_post("/restart", restart_handler)
 
     return app
 

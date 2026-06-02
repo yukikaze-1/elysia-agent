@@ -40,6 +40,29 @@ export function setupSettings() {
     localStorage.setItem(SETTINGS_STORAGE_KEYS.VOL, state.volume);
   };
 
+  // 重启服务
+  document.getElementById('restart-btn').onclick = async () => {
+    if (!confirm('确定要重启 Elysia 服务吗？')) return;
+    try {
+      const res = await fetch('/restart', { method: 'POST' });
+      if (res.ok) {
+        addStatusMsg('服务正在重启…');
+      }
+    } catch (_) {
+      // fetch 失败说明服务已断开，静默等待恢复
+    }
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--muted);font-size:18px;">服务重启中…</div>';
+    // 轮询 /health 等待服务恢复后自动刷新
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        const hr = await fetch('/health');
+        if (hr.ok) { location.reload(); return; }
+      } catch (_) {}
+    }
+    location.reload();  // 60 秒超时，强制刷新
+  };
+
   // 关闭服务
   document.getElementById('shutdown-btn').onclick = async () => {
     if (!confirm('确定要关闭 Elysia 服务吗？')) return;
