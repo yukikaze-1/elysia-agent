@@ -40,7 +40,8 @@ class WriteFilePlugin(ToolPlugin):
         if not str(resolved).startswith(str(write_dir)):
             return f"拒绝写入: 路径 '{params.path}' 越过了 sandbox 边界"
 
-        write_dir.mkdir(parents=True, exist_ok=True)
+        # 确保父目录存在（同时也会创建 write_dir 自身）
+        resolved.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             resolved.write_text(params.content, encoding="utf-8")

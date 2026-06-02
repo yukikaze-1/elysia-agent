@@ -192,25 +192,15 @@ Agent/
 ├── static/
 │   └── index.html        # 浏览器客户端 (含复制按钮、发送动画)
 │
-├── docs/                  # 文档归档
-│   ├── review-2026-06-01.md          # 全面代码审查报告
+├── docs/                  # 文档
 │   ├── architecture.md               # 架构详解
-│   ├── completed.md                  # 已完成开发记录
+│   ├── completed.md                  # 已完成开发记录（归档）
+│   ├── review-2026-06-01.md          # 全面代码审查报告
 │   ├── sync-lessons.md               # 文字/音频同步经验教训
 │   ├── ref_memory-architecture.md    # 记忆架构参考
 │   └── superpowers/
-│       ├── specs/                    # 设计规范
-│       │   ├── 2026-06-02-tool-system-refactor-design.md
-│       │   └── 2026-06-02-embedding-singleton-design.md
-│       └── plans/                    # 实现计划
-│           ├── 2026-06-01-review-master-plan.md
-│           ├── 2026-06-01-review-fixes-phase-1.md
-│           ├── 2026-06-01-review-fixes-phase-2.md
-│           ├── 2026-06-01-review-fixes-phase-3.md
-│           ├── 2026-06-01-review-fixes-phase-4.md
-│           ├── 2026-06-02-tool-system-refactor.md
-│           ├── 2026-06-02-core-tools-bugfix.md
-│           └── 2026-06-02-embedding-singleton.md
+│       ├── specs/                    # 设计规范（5 篇）
+│       └── plans/archive/            # 实现计划（22 篇，全部已完成）
 │
 └── log/                  # 日志 (gitignore)
 ```

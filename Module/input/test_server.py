@@ -262,3 +262,124 @@ class TestDoInterruptSkipIf:
         agent._bus.post.assert_called_once()
         args, _ = agent._bus.post.call_args
         assert args[0] == EventType.INTERRUPT
+
+
+# ============================================================
+# _handle_json edges
+# ============================================================
+
+class TestHandleJsonEdges:
+    @pytest.mark.asyncio
+    async def test_empty_text_not_processed(self):
+        from Module.input.server import _handle_json
+
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+        await _handle_json({"type": "text", "content": ""}, agent)
+        agent.process_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_whitespace_text_not_processed(self):
+        from Module.input.server import _handle_json
+
+        agent = MagicMock()
+        agent.process_message = AsyncMock()
+        await _handle_json({"type": "text", "content": "   "}, agent)
+        agent.process_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unknown_type_noop(self):
+        from Module.input.server import _handle_json
+
+        agent = MagicMock()
+        await _handle_json({"type": "unknown_cmd"}, agent)
+        # Should not crash
+
+    @pytest.mark.asyncio
+    async def test_interrupt_type(self):
+        from Module.input.server import _handle_json
+
+        agent = MagicMock()
+        agent._fsm.state = "speaking"
+        agent._bus.post = MagicMock()
+        await _handle_json({"type": "interrupt"}, agent)
+        agent._bus.post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_type_field(self):
+        from Module.input.server import _handle_json
+
+        agent = MagicMock()
+        await _handle_json({}, agent)  # no "type" field
+        # Should not crash — defaults to "" → else branch
+
+
+# ============================================================
+# Health / ready endpoints
+# ============================================================
+
+class TestEndpoints:
+    @pytest.fixture
+    def app(self):
+        from Module.input.server import create_app
+
+        agent = MagicMock()
+        agent._fsm.state = "idle"
+        agent._llm.model = "test-model"
+        agent._session._messages = [1, 2, 3]
+        agent._long_term.count = 42
+        agent._tool_manager.tool_names = ["t1", "t2"]
+        agent._output = MagicMock()
+        agent._bus = MagicMock()
+        return create_app(agent, serve_static=False)
+
+    @pytest.mark.asyncio
+    async def test_health_returns_ok(self, app, aiohttp_client):
+        client = await aiohttp_client(app)
+        resp = await client.get("/health")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "ok"
+        assert data["fsm"] == "idle"
+
+    @pytest.mark.asyncio
+    async def test_ready_returns_ok(self, app, aiohttp_client):
+        client = await aiohttp_client(app)
+        resp = await client.get("/ready")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_shutdown_sets_running_false(self, app, aiohttp_client):
+        client = await aiohttp_client(app)
+        resp = await client.post("/shutdown")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "shutting_down"
+        assert app["agent"]._running is False
+
+
+# ============================================================
+# Fix assertion-less tests
+# ============================================================
+
+class TestAssertionFixes:
+    @pytest.mark.asyncio
+    async def test_invalid_json_returns_error_message(self, aiohttp_client):
+        from Module.input.server import create_app
+
+        agent = _make_agent()
+        await agent.start()
+
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+
+        async with client.session.ws_connect(client.make_url('/ws')) as ws:
+            await ws.send_str("not valid json")
+            msg = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
+            assert msg["type"] == "error"
+            assert "Invalid JSON" in msg["message"]
+
+            await ws.close()
+        await agent.stop()

@@ -200,3 +200,151 @@ class TestMongoDBClose:
     async def test_close(self, backend):
         await backend.close()  # should not raise
         backend._client.close.assert_called_once()
+
+
+# ============================================================
+# Protocol — remaining abstract enforcement (6 methods)
+# ============================================================
+
+class TestProtocolRemaining:
+    def test_missing_insert_many(self):
+        with pytest.raises(TypeError):
+            class Bad(DocumentDBBackend):
+                async def insert_one(self, c, d): return ""
+                async def find(self, c, f, *, sort=None, limit=100, skip=0): return []
+                async def update_one(self, c, f, u): return 0
+                async def delete_many(self, c, f): return 0
+                async def count(self, c, f): return 0
+                async def ensure_index(self, c, k, **kw): return ""
+                async def close(self): pass
+            Bad()  # type: ignore[abstract]
+
+    def test_missing_find(self):
+        with pytest.raises(TypeError):
+            class Bad(DocumentDBBackend):
+                async def insert_one(self, c, d): return ""
+                async def insert_many(self, c, d): return []
+                async def update_one(self, c, f, u): return 0
+                async def delete_many(self, c, f): return 0
+                async def count(self, c, f): return 0
+                async def ensure_index(self, c, k, **kw): return ""
+                async def close(self): pass
+            Bad()  # type: ignore[abstract]
+
+    def test_missing_update_one(self):
+        with pytest.raises(TypeError):
+            class Bad(DocumentDBBackend):
+                async def insert_one(self, c, d): return ""
+                async def insert_many(self, c, d): return []
+                async def find(self, c, f, *, sort=None, limit=100, skip=0): return []
+                async def delete_many(self, c, f): return 0
+                async def count(self, c, f): return 0
+                async def ensure_index(self, c, k, **kw): return ""
+                async def close(self): pass
+            Bad()  # type: ignore[abstract]
+
+    def test_missing_delete_many(self):
+        with pytest.raises(TypeError):
+            class Bad(DocumentDBBackend):
+                async def insert_one(self, c, d): return ""
+                async def insert_many(self, c, d): return []
+                async def find(self, c, f, *, sort=None, limit=100, skip=0): return []
+                async def update_one(self, c, f, u): return 0
+                async def count(self, c, f): return 0
+                async def ensure_index(self, c, k, **kw): return ""
+                async def close(self): pass
+            Bad()  # type: ignore[abstract]
+
+    def test_missing_count(self):
+        with pytest.raises(TypeError):
+            class Bad(DocumentDBBackend):
+                async def insert_one(self, c, d): return ""
+                async def insert_many(self, c, d): return []
+                async def find(self, c, f, *, sort=None, limit=100, skip=0): return []
+                async def update_one(self, c, f, u): return 0
+                async def delete_many(self, c, f): return 0
+                async def ensure_index(self, c, k, **kw): return ""
+                async def close(self): pass
+            Bad()  # type: ignore[abstract]
+
+    def test_missing_ensure_index(self):
+        with pytest.raises(TypeError):
+            class Bad(DocumentDBBackend):
+                async def insert_one(self, c, d): return ""
+                async def insert_many(self, c, d): return []
+                async def find(self, c, f, *, sort=None, limit=100, skip=0): return []
+                async def update_one(self, c, f, u): return 0
+                async def delete_many(self, c, f): return 0
+                async def count(self, c, f): return 0
+                async def close(self): pass
+            Bad()  # type: ignore[abstract]
+
+
+# ============================================================
+# MongoDB — zero results / upsert / edge cases
+# ============================================================
+
+class TestMongoDBEdges:
+    @pytest.mark.asyncio
+    async def test_find_empty_results(self, backend):
+        mock_coll = _setup_mock_collection(backend, "test")
+        mock_cursor = MagicMock()
+        mock_cursor.sort.return_value = mock_cursor
+        mock_cursor.skip.return_value = mock_cursor
+        mock_cursor.limit.return_value = mock_cursor
+        mock_cursor.to_list = AsyncMock(return_value=[])
+        mock_coll.find.return_value = mock_cursor
+        result = await backend.find("test", {})
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_update_one_zero_modified(self, backend):
+        mock_coll = _setup_mock_collection(backend, "test")
+        mock_result = MagicMock()
+        mock_result.modified_count = 0
+        mock_coll.update_one = AsyncMock(return_value=mock_result)
+        result = await backend.update_one("test", {}, {"$set": {"x": 1}})
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_many_zero_deleted(self, backend):
+        mock_coll = _setup_mock_collection(backend, "test")
+        mock_result = MagicMock()
+        mock_result.deleted_count = 0
+        mock_coll.delete_many = AsyncMock(return_value=mock_result)
+        result = await backend.delete_many("test", {})
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_count_returns_zero(self, backend):
+        mock_coll = _setup_mock_collection(backend, "test")
+        mock_coll.count_documents = AsyncMock(return_value=0)
+        result = await backend.count("test", {})
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_update_one_with_upsert(self, backend):
+        mock_coll = _setup_mock_collection(backend, "test")
+        mock_result = MagicMock()
+        mock_result.modified_count = 1
+        mock_coll.update_one = AsyncMock(return_value=mock_result)
+        await backend.update_one("test", {"k": "v"}, {"$set": {"x": 1}}, upsert=True)
+        mock_coll.update_one.assert_called_with(
+            {"k": "v"}, {"$set": {"x": 1}}, upsert=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_ensure_index_with_kwargs(self, backend):
+        mock_coll = _setup_mock_collection(backend, "test")
+        mock_coll.create_index = AsyncMock(return_value="idx_unique")
+        result = await backend.ensure_index("test", [("email", 1)], unique=True)
+        assert result == "idx_unique"
+        mock_coll.create_index.assert_called_with([("email", 1)], unique=True)
+
+    @pytest.mark.asyncio
+    async def test_connection_failure_propagates(self, backend):
+        from pymongo.errors import ServerSelectionTimeoutError
+        mock_coll = _setup_mock_collection(backend, "test")
+        mock_coll.find = MagicMock(side_effect=ServerSelectionTimeoutError("timeout"))
+        with pytest.raises(ServerSelectionTimeoutError):
+            await backend.find("test", {})

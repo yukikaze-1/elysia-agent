@@ -241,3 +241,144 @@ class TestOpenAICompatEmbedding:
         with patch.object(openai_backend._client, "close", mock_close):
             await openai_backend.close()
         mock_close.assert_called_once()
+
+
+# ============================================================
+# EmbeddingFactory — shutdown
+# ============================================================
+
+class TestEmbeddingFactoryShutdown:
+    @pytest.mark.asyncio
+    async def test_shutdown_closes_all_instances(self):
+        """shutdown() 关闭所有缓存的实例。"""
+        with patch(
+            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
+        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+            b1 = EmbeddingFactory.create("huggingface/bge-m3")
+            b2 = EmbeddingFactory.create("huggingface/bge-large-zh-v1.5")
+
+        mock_close1 = AsyncMock()
+        mock_close2 = AsyncMock()
+        b1.close = mock_close1
+        b2.close = mock_close2
+
+        await EmbeddingFactory.shutdown()
+        mock_close1.assert_called_once()
+        mock_close2.assert_called_once()
+        assert len(EmbeddingFactory._instances) == 0
+
+    @pytest.mark.asyncio
+    async def test_shutdown_handles_close_exception(self):
+        """某个实例 close() 异常不影响其他实例关闭和清理。"""
+        with patch(
+            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
+        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+            b1 = EmbeddingFactory.create("huggingface/bge-m3")
+            b2 = EmbeddingFactory.create("huggingface/bge-large-zh-v1.5")
+
+        b1.close = AsyncMock(side_effect=RuntimeError("close failed"))
+        mock_close2 = AsyncMock()
+        b2.close = mock_close2
+
+        await EmbeddingFactory.shutdown()
+        mock_close2.assert_called_once()
+        assert len(EmbeddingFactory._instances) == 0
+
+    @pytest.mark.asyncio
+    async def test_create_after_shutdown_returns_new_instance(self):
+        """shutdown 后 create() 返回新实例而非旧缓存。"""
+        with patch(
+            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
+        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+            b1 = EmbeddingFactory.create("huggingface/bge-m3")
+            await EmbeddingFactory.shutdown()
+            b2 = EmbeddingFactory.create("huggingface/bge-m3")
+        assert b1 is not b2
+
+    @pytest.mark.asyncio
+    async def test_shutdown_on_empty_is_noop(self):
+        """空实例池 shutdown 不崩溃。"""
+        EmbeddingFactory._instances.clear()
+        await EmbeddingFactory.shutdown()
+
+
+# ============================================================
+# EmbeddingFactory — singleton cache
+# ============================================================
+
+class TestEmbeddingFactorySingleton:
+    def test_same_model_returns_same_instance(self):
+        with patch(
+            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
+        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+            b1 = EmbeddingFactory.create("huggingface/bge-m3")
+            b2 = EmbeddingFactory.create("huggingface/bge-m3")
+        assert b1 is b2
+
+    def test_different_model_returns_different_instance(self):
+        with patch(
+            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
+        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+            b1 = EmbeddingFactory.create("huggingface/bge-m3")
+            b2 = EmbeddingFactory.create("huggingface/bge-large-zh-v1.5")
+        assert b1 is not b2
+
+    def test_instances_dict_tracks_correctly(self):
+        with patch(
+            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
+        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+            b1 = EmbeddingFactory.create("huggingface/bge-m3")
+            b2 = EmbeddingFactory.create("huggingface/bge-large-zh-v1.5")
+        assert EmbeddingFactory._instances["huggingface/bge-m3"] is b1
+        assert EmbeddingFactory._instances["huggingface/bge-large-zh-v1.5"] is b2
+
+
+# ============================================================
+# HuggingFaceBackend — from_config
+# ============================================================
+
+class TestHuggingFaceFromConfig:
+    def test_from_config_creates_backend(self):
+        from .config import EmbeddingConfig
+
+        cfg = EmbeddingConfig(api_key="")
+        with patch(
+            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
+        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+            backend = EmbeddingFactory.from_config("huggingface/BAAI/bge-large-zh-v1.5", cfg)
+        assert backend.dimension == 1024
+
+
+# ============================================================
+# API errors / empty input
+# ============================================================
+
+class TestEmbeddingErrors:
+    @pytest.mark.asyncio
+    async def test_openai_api_error_propagates(self, openai_backend):
+        from openai import APIStatusError
+        mock_create = AsyncMock(side_effect=APIStatusError(
+            "rate limit", response=MagicMock(status_code=429), body=None
+        ))
+        with patch.object(openai_backend._client.embeddings, "create", mock_create):
+            with pytest.raises(APIStatusError):
+                await openai_backend.embed_query("hello")
+
+    @pytest.mark.asyncio
+    async def test_embed_documents_empty_list(self, openai_backend):
+        """空列表输入行为。"""
+        mock_create = AsyncMock(return_value=_make_embedding_response([]))
+        with patch.object(openai_backend._client.embeddings, "create", mock_create):
+            result = await openai_backend.embed_documents([])
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_embed_query_empty_string(self, openai_backend):
+        """空字符串查询行为。"""
+        mock_create = AsyncMock(
+            return_value=_make_embedding_response([[0.0] * 3])
+        )
+        with patch.object(openai_backend._client.embeddings, "create", mock_create):
+            result = await openai_backend.embed_query("")
+        assert isinstance(result, list)
+        assert len(result) > 0

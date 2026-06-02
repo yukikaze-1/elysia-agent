@@ -202,3 +202,112 @@ class TestMilvusClose:
     @pytest.mark.asyncio
     async def test_close(self, backend):
         await backend.close()  # should not raise
+
+
+# ============================================================
+# Protocol — remaining abstract enforcement (5 methods)
+# ============================================================
+
+class TestProtocolRemaining:
+    def test_missing_drop_collection(self):
+        with pytest.raises(TypeError):
+            class Bad(VectorDBBackend):
+                async def create_collection(self, n, d, **kw): pass
+                async def collection_exists(self, n) -> bool: return False
+                async def insert(self, c, v, m): return []
+                async def search(self, c, v, *, top_k=10, filter_expr="", output_fields=None): return []
+                async def query(self, c, *, filter_expr, output_fields=None, limit=10000): return []
+                async def close(self): pass
+            Bad()  # type: ignore[abstract]
+
+    def test_missing_collection_exists(self):
+        with pytest.raises(TypeError):
+            class Bad(VectorDBBackend):
+                async def create_collection(self, n, d, **kw): pass
+                async def drop_collection(self, n): pass
+                async def insert(self, c, v, m): return []
+                async def search(self, c, v, *, top_k=10, filter_expr="", output_fields=None): return []
+                async def query(self, c, *, filter_expr, output_fields=None, limit=10000): return []
+                async def close(self): pass
+            Bad()  # type: ignore[abstract]
+
+    def test_missing_search(self):
+        with pytest.raises(TypeError):
+            class Bad(VectorDBBackend):
+                async def create_collection(self, n, d, **kw): pass
+                async def drop_collection(self, n): pass
+                async def collection_exists(self, n) -> bool: return False
+                async def insert(self, c, v, m): return []
+                async def query(self, c, *, filter_expr, output_fields=None, limit=10000): return []
+                async def close(self): pass
+            Bad()  # type: ignore[abstract]
+
+    def test_missing_query(self):
+        with pytest.raises(TypeError):
+            class Bad(VectorDBBackend):
+                async def create_collection(self, n, d, **kw): pass
+                async def drop_collection(self, n): pass
+                async def collection_exists(self, n) -> bool: return False
+                async def insert(self, c, v, m): return []
+                async def search(self, c, v, *, top_k=10, filter_expr="", output_fields=None): return []
+                async def close(self): pass
+            Bad()  # type: ignore[abstract]
+
+    def test_missing_close(self):
+        with pytest.raises(TypeError):
+            class Bad(VectorDBBackend):
+                async def create_collection(self, n, d, **kw): pass
+                async def drop_collection(self, n): pass
+                async def collection_exists(self, n) -> bool: return False
+                async def insert(self, c, v, m): return []
+                async def search(self, c, v, *, top_k=10, filter_expr="", output_fields=None): return []
+                async def query(self, c, *, filter_expr, output_fields=None, limit=10000): return []
+            Bad()  # type: ignore[abstract]
+
+
+# ============================================================
+# index_preset / metric_type
+# ============================================================
+
+class TestIndexPreset:
+    @pytest.mark.asyncio
+    async def test_default_metric_type_is_l2(self, backend):
+        from .milvus import INDEX_PRESETS
+        preset = INDEX_PRESETS["default"]
+        assert preset["metric_type"] == "L2"
+
+    @pytest.mark.asyncio
+    async def test_cosine_preset(self):
+        from .milvus import INDEX_PRESETS
+        preset = INDEX_PRESETS["cosine"]
+        assert preset["metric_type"] == "COSINE"
+
+    @pytest.mark.asyncio
+    async def test_ip_preset(self):
+        from .milvus import INDEX_PRESETS
+        preset = INDEX_PRESETS["ip"]
+        assert preset["metric_type"] == "IP"
+
+    @pytest.mark.asyncio
+    async def test_hnsw_l2_preset(self):
+        from .milvus import INDEX_PRESETS
+        preset = INDEX_PRESETS["hnsw_l2"]
+        assert preset["index_type"] == "HNSW"
+
+    @pytest.mark.asyncio
+    async def test_unknown_preset_raises(self):
+        """未知 index_preset 抛 ValueError。"""
+        from .milvus import INDEX_PRESETS
+        assert "nonexistent" not in INDEX_PRESETS
+
+
+# ============================================================
+# Connection failure
+# ============================================================
+
+class TestMilvusConnectionFailure:
+    @pytest.mark.asyncio
+    async def test_search_connection_error_propagates(self, backend):
+        with patch.object(backend, "search", side_effect=ConnectionError("milvus down")):
+            with pytest.raises(ConnectionError):
+                await backend.search("col", [0.1] * 128, top_k=5)

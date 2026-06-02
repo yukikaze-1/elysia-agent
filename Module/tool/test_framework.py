@@ -1,6 +1,7 @@
 """框架层单元测试 — ErrorType, Capability, SafetyProfile, SafetyPipeline, ToolManager, Plugins。"""
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel, Field
@@ -710,3 +711,394 @@ class TestPydanticErrorFormatting:
             assert "target" in formatted.lower()
             assert "必填" in formatted or "required" in formatted.lower()
             assert len(formatted) <= 200
+
+
+# ============================================================================
+# ToolParameter — 参数定义与 JSON Schema 导出
+# ============================================================================
+
+class TestToolParameter:
+    """ToolParameter 数据类与 to_json_schema_property() 测试。"""
+
+    def test_basic_string_param(self):
+        """基本 string 类型参数 — type, description, required。"""
+        from Module.tool.protocol import ToolParameter
+        param = ToolParameter(type="string", description="用户名", required=True)
+        assert param.type == "string"
+        assert param.description == "用户名"
+        assert param.required is True
+
+    def test_to_json_schema_property_string(self):
+        """string 类型输出 {"type": "string", "description": "..."}。"""
+        from Module.tool.protocol import ToolParameter
+        param = ToolParameter(type="string", description="用户名")
+        schema = param.to_json_schema_property()
+        assert schema == {"type": "string", "description": "用户名"}
+
+    def test_to_json_schema_property_with_enum(self):
+        """enum 参数应包含 "enum" key。"""
+        from Module.tool.protocol import ToolParameter
+        param = ToolParameter(type="string", description="颜色", enum=["red", "green", "blue"])
+        schema = param.to_json_schema_property()
+        assert schema["type"] == "string"
+        assert schema["enum"] == ["red", "green", "blue"]
+
+    def test_to_json_schema_property_with_default_set(self):
+        """default_set=True 时应包含 "default" key。"""
+        from Module.tool.protocol import ToolParameter
+        param = ToolParameter(type="string", description="可选字段", default=None, default_set=True)
+        schema = param.to_json_schema_property()
+        assert "default" in schema
+        assert schema["default"] is None
+
+    def test_to_json_schema_property_with_min_max(self):
+        """minimum / maximum 应出现在 schema 中。"""
+        from Module.tool.protocol import ToolParameter
+        param = ToolParameter(type="integer", description="年龄", minimum=0, maximum=150)
+        schema = param.to_json_schema_property()
+        assert schema["minimum"] == 0
+        assert schema["maximum"] == 150
+
+    def test_to_json_schema_property_with_pattern(self):
+        """pattern 应出现在 schema 中。"""
+        from Module.tool.protocol import ToolParameter
+        param = ToolParameter(type="string", description="邮箱", pattern=r"^.+@.+\..+$")
+        schema = param.to_json_schema_property()
+        assert schema["pattern"] == r"^.+@.+\..+$"
+
+    def test_to_json_schema_property_object_with_properties(self):
+        """object 类型 + 嵌套 properties → 输出带 properties 和 required 的 schema。"""
+        from Module.tool.protocol import ToolParameter
+        name_param = ToolParameter(type="string", description="姓名", required=True)
+        age_param = ToolParameter(type="integer", description="年龄", required=False)
+        param = ToolParameter(
+            type="object",
+            description="用户信息",
+            properties={"name": name_param, "age": age_param},
+        )
+        schema = param.to_json_schema_property()
+        assert schema["type"] == "object"
+        assert "properties" in schema
+        assert "name" in schema["properties"]
+        assert "age" in schema["properties"]
+        assert schema["required"] == ["name"]
+
+    def test_to_json_schema_property_array_with_items(self):
+        """array 类型 + items → 输出带 items 的 schema。"""
+        from Module.tool.protocol import ToolParameter
+        item_param = ToolParameter(type="string", description="标签")
+        param = ToolParameter(type="array", description="标签列表", items=item_param)
+        schema = param.to_json_schema_property()
+        assert schema["type"] == "array"
+        assert "items" in schema
+        assert schema["items"]["type"] == "string"
+
+
+# ============================================================================
+# MediaItem — 媒体数据
+# ============================================================================
+
+class TestMediaItem:
+    """MediaItem 数据类测试。"""
+
+    def test_create_with_url(self):
+        """通过 URL 创建 MediaItem。"""
+        from Module.tool.protocol import MediaItem
+        item = MediaItem(url="https://example.com/img.png", mime_type="image/png", label="示例图片")
+        assert item.url == "https://example.com/img.png"
+        assert item.mime_type == "image/png"
+        assert item.label == "示例图片"
+        assert item.data == b""
+
+    def test_create_with_data(self):
+        """通过 bytes 数据创建 MediaItem。"""
+        from Module.tool.protocol import MediaItem
+        raw = b"\x89PNG fake image data"
+        item = MediaItem(data=raw, mime_type="image/png", label="截图")
+        assert item.data == raw
+        assert item.mime_type == "image/png"
+        assert item.label == "截图"
+        assert item.url == ""
+
+
+# ============================================================================
+# ToolEmitter — 进度上报与取消检测
+# ============================================================================
+
+class TestToolEmitter:
+    """ToolEmitter 进度上报与 is_cancelled() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_progress_noop_when_queue_none(self):
+        """_queue 为 None 时 progress() 是空操作（不抛出异常）。"""
+        from Module.tool.protocol import ToolEmitter
+        emit = ToolEmitter()
+        # 不应抛出异常
+        await emit.progress(0.5, "testing")
+
+    @pytest.mark.asyncio
+    async def test_progress_puts_into_queue(self):
+        """_queue 已设置时 progress() 应将 ToolProgress 放入队列。"""
+        from Module.tool.protocol import ToolEmitter, ToolProgress
+        queue = asyncio.Queue()
+        emit = ToolEmitter(_queue=queue)
+        await emit.progress(0.75, "几乎完成", data={"step": 3})
+        item = queue.get_nowait()
+        assert isinstance(item, ToolProgress)
+        assert item.percent == 0.75
+        assert item.message == "几乎完成"
+        assert item.data == {"step": 3}
+
+    def test_is_cancelled_false_when_no_task(self):
+        """没有关联 task 时 is_cancelled() 返回 False。"""
+        from Module.tool.protocol import ToolEmitter
+        emit = ToolEmitter()
+        assert emit.is_cancelled() is False
+
+    @pytest.mark.asyncio
+    async def test_is_cancelled_false_when_task_not_cancelled(self):
+        """task 未取消时 is_cancelled() 返回 False。"""
+        from Module.tool.protocol import ToolEmitter
+
+        async def dummy():
+            pass
+
+        task = asyncio.ensure_future(dummy())
+        try:
+            emit = ToolEmitter(_task=task)
+            assert emit.is_cancelled() is False
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    @pytest.mark.asyncio
+    async def test_is_cancelled_true_when_task_cancelled(self):
+        """task 已取消时 is_cancelled() 返回 True。"""
+        from Module.tool.protocol import ToolEmitter
+
+        async def dummy():
+            await asyncio.sleep(10)
+
+        task = asyncio.ensure_future(dummy())
+        emit = ToolEmitter(_task=task)
+        assert emit.is_cancelled() is False
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert emit.is_cancelled() is True
+
+
+# ============================================================================
+# ToolResult.llm_content — LLM 上下文生成
+# ============================================================================
+
+class TestToolResultExtended:
+    """ToolResult.llm_content 属性测试。"""
+
+    def test_ok_text_content(self):
+        """成功文本结果 — llm_content 直接返回 content。"""
+        result = ToolResult.ok("tool", "hello", 0)
+        assert result.llm_content == "hello"
+
+    def test_ok_truncated_content(self):
+        """截断结果应包含截断提示中文信息。"""
+        result = ToolResult.ok("tool", "hello", 0, truncated=True)
+        content = result.llm_content
+        assert "结果已截断" in content
+        assert "hello" in content
+
+    def test_ok_image_result_with_llm_summary(self):
+        """image 结果使用 llm_summary 作为 llm_content。"""
+        from Module.tool.protocol import MediaItem
+        item = MediaItem(url="https://example.com/chart.png", mime_type="image/png", label="图表")
+        result = ToolResult.ok(
+            "chart_tool", "raw content", 500.0,
+            result_type="image",
+            llm_summary="图表显示 Q1 营收增长 30%",
+            images=[item],
+        )
+        assert "图表显示 Q1 营收增长 30%" in result.llm_content
+
+    def test_ok_image_result_fallback_to_content(self):
+        """image 结果无 llm_summary 时 fallback 到 content。"""
+        from Module.tool.protocol import MediaItem
+        item = MediaItem(url="https://example.com/chart.png", mime_type="image/png")
+        result = ToolResult.ok(
+            "chart_tool", "fallback content", 500.0,
+            result_type="image",
+            images=[item],
+        )
+        assert result.llm_content == "fallback content"
+
+    def test_fail_invalid_argument(self):
+        """INVALID_ARGUMENT 错误 — llm_content 包含 invalid arguments 提示。"""
+        result = ToolResult.fail("tool", "bad arg", error_type=ErrorType.INVALID_ARGUMENT)
+        content = result.llm_content
+        assert "invalid arguments" in content.lower()
+        assert "bad arg" in content
+
+    def test_fail_timeout(self):
+        """TIMEOUT 错误 — llm_content 包含 timed out 提示。"""
+        result = ToolResult.fail("tool", "took too long", error_type=ErrorType.TIMEOUT)
+        content = result.llm_content
+        assert "timed out" in content.lower()
+        assert "took too long" in content
+
+    def test_fail_unavailable(self):
+        """UNAVAILABLE 错误 — llm_content 包含 unavailable 提示。"""
+        result = ToolResult.fail("tool", "service down", error_type=ErrorType.UNAVAILABLE)
+        content = result.llm_content
+        assert "unavailable" in content.lower()
+        assert "service down" in content
+
+    def test_fail_no_error_type(self):
+        """无显式 error_type — llm_content 包含 failed 提示。"""
+        result = ToolResult.fail("tool", "something broke")
+        content = result.llm_content
+        assert "failed" in content.lower()
+        assert "something broke" in content
+
+
+# ============================================================
+# ToolManager — definitions (anthropic/gemini/invalid)
+# ============================================================
+
+class TestToolManagerDefinitionsExtended:
+    @pytest.mark.asyncio
+    async def test_definitions_anthropic_format(self):
+        tm = ToolManager()
+        await tm.load_all([], PluginContext())
+        result = tm.definitions("anthropic")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_definitions_gemini_format(self):
+        tm = ToolManager()
+        await tm.load_all([], PluginContext())
+        result = tm.definitions("gemini")
+        assert result == []
+
+    def test_definitions_invalid_format_raises(self):
+        tm = ToolManager()
+        with pytest.raises(ValueError, match="不支持的格式"):
+            tm.definitions("invalid")
+
+
+# ============================================================
+# ToolManager — cancel_all / executing_now / history
+# ============================================================
+
+class TestToolManagerControl:
+    @pytest.mark.asyncio
+    async def test_cancel_all_clears_executing(self):
+        tm = ToolManager()
+        t1 = MagicMock(spec=asyncio.Task)
+        t1.done.return_value = False
+        t2 = MagicMock(spec=asyncio.Task)
+        t2.done.return_value = False
+        tm._executing.add("tool_a")
+        tm._executing.add("tool_b")
+        tm._tasks["tool_a"] = t1
+        tm._tasks["tool_b"] = t2
+        await tm.cancel_all()
+        assert len(tm._executing) == 0
+        assert len(tm._tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_executing_now_tracks_active_tools(self):
+        tm = ToolManager()
+        tm._executing = {"search", "read"}
+        assert set(tm.executing_now) == {"search", "read"}
+
+    def test_history_maxlen_enforced(self):
+        tm = ToolManager()
+        for i in range(55):
+            tm._history.append(ToolResult.ok(f"tool_{i % 5}", f"result_{i}", 1))
+        assert len(tm._history) == 50
+        assert tm._history[0].content == "result_5"  # first 5 were evicted
+
+
+# ============================================================
+# ToolManager — reload_plugin
+# ============================================================
+
+class SimplePlugin(ToolPlugin):
+    name = "simple"
+    description = "A simple plugin"
+    param_model = None
+    capabilities = set()
+    safety = SafetyProfile()
+
+
+class TestReloadPlugin:
+    @pytest.mark.asyncio
+    async def test_reload_nonexistent_returns_false(self):
+        tm = ToolManager()
+        assert await tm.reload_plugin("nonexistent") is False
+
+    @pytest.mark.asyncio
+    async def test_reload_existing_plugin(self):
+        tm = ToolManager()
+        ctx = PluginContext()
+        await tm.load_all([SimplePlugin], ctx)
+        assert "simple" in tm._plugins
+
+        result = await tm.reload_plugin("simple")
+        assert result is True
+        assert "simple" in tm._plugins
+
+
+# ============================================================
+# ToolManager — set_hitl_broadcast
+# ============================================================
+
+class TestSetHITLBroadcast:
+    @pytest.mark.asyncio
+    async def test_set_hitl_broadcast_registers_callback(self):
+        tm = ToolManager()
+        output_mgr = MagicMock()
+        output_mgr.command = AsyncMock()
+
+        tm.set_hitl_broadcast(output_mgr)
+        assert tm._pipeline._broadcast_hitl is not None
+
+    def test_set_hitl_broadcast_with_none_is_noop(self):
+        tm = ToolManager()
+        tm.set_hitl_broadcast(None)
+        # Should not crash
+
+
+# ============================================================
+# Concurrent execution
+# ============================================================
+
+class SlowEchoPlugin(ToolPlugin):
+    name = "slow_echo"
+    description = "Echo with delay"
+    param_model = None
+    capabilities = set()
+    safety = SafetyProfile()
+
+    async def execute(self, *, ctx, emit=None, params=None):
+        await asyncio.sleep(0.05)
+        return ToolResult.ok("slow_echo", "done", 50)
+
+
+class TestConcurrentExecution:
+    @pytest.mark.asyncio
+    async def test_concurrent_execute_tracks_correctly(self):
+        tm = ToolManager()
+        await tm.load_all([SlowEchoPlugin], PluginContext())
+        ctx = ToolContext()
+
+        t1 = asyncio.create_task(tm.execute("slow_echo", ctx=ctx))
+        t2 = asyncio.create_task(tm.execute("slow_echo", ctx=ctx))
+        await asyncio.sleep(0.01)
+        assert "slow_echo" in tm.executing_now
+        await asyncio.gather(t1, t2)
+        assert "slow_echo" not in tm.executing_now

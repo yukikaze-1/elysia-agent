@@ -154,3 +154,187 @@ class TestClose:
         with patch.object(backend._client, "aclose", mock_close):
             await backend.close()
         mock_close.assert_called_once()
+
+
+# ============================================================
+# _parse_emotion / _parse_events
+# ============================================================
+
+class TestParseEmotion:
+    def test_extracts_happy(self):
+        from .sensevoice import _parse_emotion
+        assert _parse_emotion("<|zh|><|HAPPY|><|Speech|><|withitn|>hello") == "HAPPY"
+
+    def test_extracts_sad(self):
+        from .sensevoice import _parse_emotion
+        assert _parse_emotion("<|zh|><|SAD|><|Speech|>sorry") == "SAD"
+
+    def test_neutral_tag_returns_neutral(self):
+        from .sensevoice import _parse_emotion
+        assert _parse_emotion("<|zh|><|NEUTRAL|><|Speech|>hello") == "NEUTRAL"
+
+    def test_emo_unknown_returns_neutral(self):
+        from .sensevoice import _parse_emotion
+        assert _parse_emotion("<|zh|><|EMO_UNKNOWN|><|Speech|>hello") == "NEUTRAL"
+
+    def test_no_emotion_tag_returns_neutral(self):
+        from .sensevoice import _parse_emotion
+        assert _parse_emotion("<|zh|><|Speech|>hello") == "NEUTRAL"
+
+    def test_empty_string(self):
+        from .sensevoice import _parse_emotion
+        assert _parse_emotion("") == "NEUTRAL"
+
+
+class TestParseEvents:
+    def test_extracts_laughter(self):
+        from .sensevoice import _parse_events
+        result = _parse_events("<|zh|><|NEUTRAL|><|Speech|><|Laughter|>hello")
+        assert "Laughter" in result
+
+    def test_speech_is_filtered_out(self):
+        from .sensevoice import _parse_events
+        result = _parse_events("<|zh|><|Speech|>hello")
+        assert "Speech" not in result
+
+    def test_no_events_returns_empty_list(self):
+        from .sensevoice import _parse_events
+        assert _parse_events("<|zh|><|NEUTRAL|>hello") == []
+
+    def test_empty_string(self):
+        from .sensevoice import _parse_events
+        assert _parse_events("") == []
+
+    def test_multiple_events(self):
+        from .sensevoice import _parse_events
+        result = _parse_events("<|Speech|><|Laughter|><|Applause|>text")
+        assert "Laughter" in result
+        assert "Applause" in result
+        assert "Speech" not in result  # Speech is always filtered
+
+
+# ============================================================
+# SenseVoice — emotion/events state tracking + nospeech
+# ============================================================
+
+class TestSenseVoiceStateTracking:
+    @pytest.mark.asyncio
+    async def test_last_emotion_updated_after_transcribe(self, backend):
+        resp = MagicMock()
+        resp.json.return_value = {
+            "result": {"text": "hello", "raw_text": "<|zh|><|HAPPY|><|Speech|>hello"}
+        }
+        resp.raise_for_status = MagicMock()
+        mock_post = AsyncMock(return_value=resp)
+        with patch.object(backend._client, "post", mock_post):
+            await backend.transcribe(b"audio")
+        assert backend.last_emotion == "HAPPY"
+
+    @pytest.mark.asyncio
+    async def test_last_events_updated_after_transcribe(self, backend):
+        resp = MagicMock()
+        resp.json.return_value = {
+            "result": {"text": "hello", "raw_text": "<|zh|><|Speech|><|Laughter|>hello"}
+        }
+        resp.raise_for_status = MagicMock()
+        mock_post = AsyncMock(return_value=resp)
+        with patch.object(backend._client, "post", mock_post):
+            await backend.transcribe(b"audio")
+        assert "Laughter" in backend.last_events
+
+    @pytest.mark.asyncio
+    async def test_emotion_stays_when_no_raw_text(self, backend):
+        """raw_text 为空时 last_emotion 保持旧值。"""
+        backend.last_emotion = "HAPPY"
+        resp = MagicMock()
+        resp.json.return_value = {"result": {"text": "hello"}}
+        resp.raise_for_status = MagicMock()
+        mock_post = AsyncMock(return_value=resp)
+        with patch.object(backend._client, "post", mock_post):
+            await backend.transcribe(b"audio")
+        assert backend.last_emotion == "HAPPY"
+
+    @pytest.mark.asyncio
+    async def test_nospeech_discards_text(self, backend):
+        """<|nospeech|> 丢弃识别结果，返回空。"""
+        resp = MagicMock()
+        resp.json.return_value = {
+            "result": {"text": "noise text", "raw_text": "<|zh|><|nospeech|>noise text"}
+        }
+        resp.raise_for_status = MagicMock()
+        mock_post = AsyncMock(return_value=resp)
+        with patch.object(backend._client, "post", mock_post):
+            result = await backend.transcribe(b"silence")
+        assert result == ""
+
+
+# ============================================================
+# SenseVoice — HTTP error handling
+# ============================================================
+
+class TestSenseVoiceErrors:
+    @pytest.mark.asyncio
+    async def test_request_error_wraps_to_runtime_error(self, backend):
+        import httpx
+        mock_post = AsyncMock(side_effect=httpx.RequestError("connection refused"))
+        with patch.object(backend._client, "post", mock_post):
+            with pytest.raises(RuntimeError, match="无法连接"):
+                await backend.transcribe(b"audio")
+
+    @pytest.mark.asyncio
+    async def test_http_4xx_propagates(self, backend):
+        import httpx
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "bad request", request=MagicMock(), response=MagicMock(status_code=400)
+        )
+        mock_post = AsyncMock(return_value=resp)
+        with patch.object(backend._client, "post", mock_post):
+            with pytest.raises(httpx.HTTPStatusError):
+                await backend.transcribe(b"audio")
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_propagates(self, backend):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.side_effect = ValueError("not JSON")
+        mock_post = AsyncMock(return_value=resp)
+        with patch.object(backend._client, "post", mock_post):
+            with pytest.raises(ValueError, match="not JSON"):
+                await backend.transcribe(b"audio")
+
+
+# ============================================================
+# SenseVoice — edge cases
+# ============================================================
+
+class TestSenseVoiceEdges:
+    @pytest.mark.asyncio
+    async def test_result_without_text_key(self, backend):
+        """result dict 无 'text' key — warning log — 返回空。"""
+        resp = MagicMock()
+        resp.json.return_value = {"result": {"raw_text": "<|zh|>hello"}}
+        resp.raise_for_status = MagicMock()
+        mock_post = AsyncMock(return_value=resp)
+        with patch.object(backend._client, "post", mock_post):
+            result = await backend.transcribe(b"audio")
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_result_is_falsy(self, backend):
+        """data.get('result') 是 falsy — warning log。"""
+        resp = MagicMock()
+        resp.json.return_value = {"result": None}
+        resp.raise_for_status = MagicMock()
+        mock_post = AsyncMock(return_value=resp)
+        with patch.object(backend._client, "post", mock_post):
+            result = await backend.transcribe(b"audio")
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_kwargs_passed_through(self, backend):
+        """验证 kwargs 透传到 _call_api。"""
+        mock_post = AsyncMock(return_value=_make_response("ok"))
+        with patch.object(backend._client, "post", mock_post):
+            await backend.transcribe(b"audio", language="zh")
+        # kwargs 目前被 _call_api 接受但不使用 — 至少不崩溃

@@ -553,3 +553,124 @@ class TestConfigValidationError:
         assert "2 config error(s)" in s
         assert "field_a" in s
         assert "field_b" in s
+
+
+# ============================================================
+# Constraint describe()
+# ============================================================
+
+class TestConstraintDescribe:
+    def test_range_describe(self):
+        from Module.config.validator import Range
+        assert "1" in Range(min=1, max=10).describe()
+        assert "10" in Range(min=1, max=10).describe()
+
+    def test_range_single_bound(self):
+        from Module.config.validator import Range
+        r = Range(min=1)
+        assert r.describe() == "Range(1, +inf)"
+        r2 = Range(max=10)
+        assert r2.describe() == "Range(-inf, 10)"
+
+    def test_range_no_bounds(self):
+        from Module.config.validator import Range
+        r = Range()
+        assert r.describe() == "Range(-inf, +inf)"
+        r.check(999)  # should not raise
+
+    def test_choices_describe(self):
+        from Module.config.validator import Choices
+        assert "a" in Choices(["a", "b"]).describe()
+
+    def test_choices_empty_raises(self):
+        from Module.config.validator import Choices
+        with pytest.raises(ValueError, match="at least one"):
+            Choices([])
+
+    def test_regex_describe(self):
+        from Module.config.validator import Regex
+        assert r"\d+" in Regex(r"\d+").describe()
+
+    def test_regex_custom_message(self):
+        from Module.config.validator import Regex
+        r = Regex(r"\d+", message="must be digits")
+        with pytest.raises(ValueError, match="must be digits"):
+            r.check("abc")
+
+    def test_regex_non_string_value(self):
+        from Module.config.validator import Regex
+        r = Regex(r"\d+")
+        with pytest.raises(ValueError):
+            r.check(12345)
+
+
+# ============================================================
+# EnvManager Optional[X]
+# ============================================================
+
+class TestEnvManagerOptional:
+    def test_optional_int_unwrap(self):
+        from Module.config.loader import EnvManager
+        import typing
+        result = EnvManager.coerce("42", typing.Optional[int])
+        assert result == 42
+        assert isinstance(result, int)
+
+    def test_optional_str_unwrap(self):
+        from Module.config.loader import EnvManager
+        import typing
+        result = EnvManager.coerce("hello", typing.Optional[str])
+        assert result == "hello"
+
+
+# ============================================================
+# YAML edges
+# ============================================================
+
+class TestYAMLEdges:
+    def test_multi_level_yaml_key(self, tmp_path):
+        from dataclasses import dataclass
+        from Module.config import ConfigField, ConfigLoader
+        import yaml
+
+        @dataclass
+        class Cfg:
+            name: str = ConfigField(default="default")
+
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text(yaml.dump({"A": {"B": {"C": {"name": "deep"}}}}))
+
+        loader = ConfigLoader(Cfg, yaml_path=str(yaml_path), yaml_key="A.B.C")
+        loaded = loader.load()
+        assert loaded.name == "deep"
+
+    def test_yaml_root_is_list_returns_defaults(self, tmp_path):
+        from dataclasses import dataclass
+        from Module.config import ConfigField, ConfigLoader
+        import yaml
+
+        @dataclass
+        class Cfg:
+            name: str = ConfigField(default="default")
+
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text(yaml.dump([1, 2, 3]))
+
+        loader = ConfigLoader(Cfg, yaml_path=str(yaml_path))
+        loaded = loader.load()
+        assert loaded.name == "default"  # list root → fallback to {}
+
+    def test_malformed_yaml_raises(self, tmp_path):
+        from dataclasses import dataclass
+        from Module.config import ConfigField, ConfigLoader
+
+        @dataclass
+        class Cfg:
+            name: str = ConfigField(default="default")
+
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text(": bad yaml: [")
+
+        loader = ConfigLoader(Cfg, yaml_path=str(yaml_path))
+        with pytest.raises(Exception):  # YAMLError or similar
+            loader.load()

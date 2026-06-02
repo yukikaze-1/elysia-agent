@@ -1027,3 +1027,45 @@ async def test_long_term_memory_eviction_cleans_dirty_ids():
     assert "test_dirty_evict" not in mem._dirty_ids, (
         "Evicted entry should be removed from _dirty_ids"
     )
+
+
+# ============================================================
+# Consolidator — BUFFER_THRESHOLD=6
+# ============================================================
+
+class TestConsolidatorThreshold:
+    @pytest.mark.asyncio
+    async def test_threshold_6_buffers_below_limit(self):
+        """buffer_threshold=6 — 5条消息不触发_do_consolidate。"""
+        from core.consolidator import MemoryConsolidator
+        from core.llm_adapter import LLMAdapter
+        from core.tests.fake_llm import FakeLLMBackend
+        from unittest.mock import AsyncMock, MagicMock
+
+        adapter = LLMAdapter(_test_backend=FakeLLMBackend(response="[]"))
+        mem = MagicMock()
+        mem.insert = AsyncMock()
+        mem.search = AsyncMock(return_value=[])
+        consolidator = MemoryConsolidator(adapter, mem, buffer_threshold=6)
+
+        for i in range(5):
+            await consolidator.consolidate(f"msg{i}", "reply")
+        assert len(consolidator._buffer) == 5
+
+    @pytest.mark.asyncio
+    async def test_threshold_6_flushes_on_sixth(self):
+        """buffer_threshold=6 — 第6条触发_do_consolidate，buffer清空。"""
+        from core.consolidator import MemoryConsolidator
+        from core.llm_adapter import LLMAdapter
+        from core.tests.fake_llm import FakeLLMBackend
+        from unittest.mock import AsyncMock, MagicMock
+
+        adapter = LLMAdapter(_test_backend=FakeLLMBackend(response="[]"))
+        mem = MagicMock()
+        mem.insert = AsyncMock()
+        mem.search = AsyncMock(return_value=[])
+        consolidator = MemoryConsolidator(adapter, mem, buffer_threshold=6)
+
+        for i in range(6):
+            await consolidator.consolidate(f"msg{i}", "reply")
+        assert len(consolidator._buffer) == 0

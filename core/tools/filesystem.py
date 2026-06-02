@@ -72,6 +72,7 @@ class ReadFilePlugin(ToolPlugin):
                 f.seek(0)
 
                 result_lines: list[str] = []
+                i = 0
                 for i, line in enumerate(f):
                     if i < params.start_line:
                         continue
@@ -87,6 +88,7 @@ class ReadFilePlugin(ToolPlugin):
         output = "\n".join(result_lines)
         if not output.strip():
             output = "（文件为空）"
+            return output
 
         last_shown = params.start_line + len(result_lines)
         if last_shown < total:

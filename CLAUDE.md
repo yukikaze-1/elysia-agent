@@ -25,6 +25,13 @@ python -m pytest Module/prompt/test_prompt.py -v
 python -m pytest Module/logger/test_logger.py -v
 python -m pytest Module/database/vectordb/test_vectordb.py -v
 python -m pytest Module/database/documentdb/test_documentdb.py -v
+python -m pytest Module/tool/test_framework.py -v
+python -m pytest Module/tool/test_tool_safety.py -v
+
+# Core tests
+python -m pytest core/tests/ -v
+python -m pytest core/tools/ -v
+python -m pytest core/test_timing.py -v
 
 # Integration smoke tests (require live services)
 python -m Module.llm          # Needs DEEPSEEK_API_KEY in .env

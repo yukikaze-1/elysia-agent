@@ -204,6 +204,18 @@ class _TestChannel(OutputChannel):
     async def on_action(self, action: str, *, params: dict | None = None) -> None:
         self.events.append(("action", (action, params)))
 
+    async def on_command(self, cmd: str, *, params: dict | None = None) -> None:
+        self.events.append(("command", (cmd, params)))
+
+    async def on_audio_chunk(self, chunk: bytes, *, stream_id: int = 0) -> None:
+        self.events.append(("audio_chunk", (chunk, stream_id)))
+
+    async def on_audio_end(self, stream_id: int = 0) -> None:
+        self.events.append(("audio_end", (stream_id,)))
+
+    async def on_state(self, state: str) -> None:
+        self.events.append(("state", (state,)))
+
     async def close(self) -> None:
         pass
 
@@ -415,3 +427,310 @@ class TestWebSocketChannelErrorHandling:
         await ch.on_text_delta("hello")  # should not raise
 
         assert "WebSocket send failed" in caplog.text
+
+
+# ============================================================
+# AUDIO capability + command + stream lifecycle
+# ============================================================
+
+class TestAudioCapability:
+    def test_console_no_audio(self):
+        ch = ConsoleChannel()
+        assert ChannelCapability.AUDIO not in ch.capabilities
+
+    def test_websocket_has_audio(self):
+        ch = WebSocketChannel(MagicMock())
+        assert ChannelCapability.AUDIO in ch.capabilities
+
+    @pytest.mark.asyncio
+    async def test_audio_chunk_routes_to_capable_channels(self):
+        mgr = OutputManager()
+        ch = _TestChannel({ChannelCapability.AUDIO})
+        mgr.add_channel(ch)
+        ch2 = _TestChannel({ChannelCapability.TEXT_MESSAGE})
+        mgr.add_channel(ch2)
+
+        await mgr.audio_chunk(b"test")
+        assert len(ch.events) == 1
+        assert ch.events[0][0] == "audio_chunk"
+        assert len(ch2.events) == 0
+
+    @pytest.mark.asyncio
+    async def test_audio_end_routes_to_capable_channels(self):
+        mgr = OutputManager()
+        ch = _TestChannel({ChannelCapability.AUDIO})
+        mgr.add_channel(ch)
+
+        await mgr.audio_end(stream_id=1)
+        assert len(ch.events) == 1
+        assert ch.events[0][0] == "audio_end"
+
+
+class TestCommandMethod:
+    @pytest.mark.asyncio
+    async def test_command_routes_to_capable_channels(self):
+        mgr = OutputManager()
+        ch = _TestChannel({ChannelCapability.COMMAND})
+        mgr.add_channel(ch)
+
+        await mgr.command("reload", params={"plugin": "x"})
+        assert len(ch.events) == 1
+        assert ch.events[0][0] == "command"
+        assert ch.events[0][1] == ("reload", {"plugin": "x"})
+
+
+class TestStreamLifecycle:
+    @pytest.mark.asyncio
+    async def test_stream_with_typing_brackets(self):
+        """typing(True) → stream → typing(False) 完整流程。"""
+        mgr = OutputManager()
+        ch = _TestChannel({ChannelCapability.TEXT_DELTA, ChannelCapability.TYPING, ChannelCapability.TEXT_MESSAGE})
+        mgr.add_channel(ch)
+
+        await mgr.typing(True)
+        assert ch.events[-1] == ("typing", (True,))
+
+        async def _deltas():
+            yield "a"
+            yield "b"
+
+        result = await mgr.stream(_deltas(), finalize=lambda t: t)
+        assert result == "ab"
+        assert ("delta", ("a",)) in ch.events
+        assert ("delta", ("b",)) in ch.events
+        assert ("message", ("ab",)) in ch.events
+
+        await mgr.typing(False)
+        assert ch.events[-1] == ("typing", (False,))
+
+
+# ============================================================
+# Error isolation — more methods + close
+# ============================================================
+
+class _FullFailingChannel(OutputChannel):
+    """支持更多 fail_method 的 failing channel。"""
+    def __init__(self, caps: set[ChannelCapability], fail_method: str):
+        self._caps = caps
+        self._fail_method = fail_method
+
+    @property
+    def capabilities(self) -> set[ChannelCapability]:
+        return self._caps
+
+    async def on_typing(self, typing: bool) -> None:
+        if self._fail_method == "on_typing":
+            raise RuntimeError("boom")
+
+    async def on_text_delta(self, delta: str, *, stream_id: int | None = None) -> None:
+        if self._fail_method == "on_text_delta":
+            raise RuntimeError("delta fail")
+
+    async def on_expression(self, expression: str, intensity: float = 1.0) -> None:
+        if self._fail_method == "on_expression":
+            raise RuntimeError("expression fail")
+
+    async def on_action(self, action: str, *, params: dict | None = None) -> None:
+        if self._fail_method == "on_action":
+            raise RuntimeError("action fail")
+
+    async def on_command(self, cmd: str, *, params: dict | None = None) -> None:
+        if self._fail_method == "on_command":
+            raise RuntimeError("command fail")
+
+    async def on_message(self, msg) -> None:
+        if self._fail_method == "on_message":
+            raise RuntimeError("boom")
+
+    async def close(self) -> None:
+        if self._fail_method == "close":
+            raise RuntimeError("close fail")
+
+
+class TestMoreErrorIsolation:
+    @pytest.mark.asyncio
+    async def test_on_text_delta_failure_isolated(self):
+        mgr = OutputManager()
+        good = _TestChannel({ChannelCapability.TEXT_DELTA})
+        bad = _FullFailingChannel({ChannelCapability.TEXT_DELTA}, fail_method="on_text_delta")
+        mgr.add_channel(good)
+        mgr.add_channel(bad)
+
+        async def _deltas():
+            yield "x"
+
+        await mgr.stream(_deltas(), finalize=lambda t: t)
+        assert len(good.events) >= 1
+
+    @pytest.mark.asyncio
+    async def test_on_expression_failure_isolated(self):
+        mgr = OutputManager()
+        good = _TestChannel({ChannelCapability.EXPRESSION})
+        bad = _FullFailingChannel({ChannelCapability.EXPRESSION}, fail_method="on_expression")
+        mgr.add_channel(good)
+        mgr.add_channel(bad)
+
+        await mgr.expression("happy")
+        assert len(good.events) == 1
+
+    @pytest.mark.asyncio
+    async def test_on_action_failure_isolated(self):
+        mgr = OutputManager()
+        good = _TestChannel({ChannelCapability.ACTION})
+        bad = _FullFailingChannel({ChannelCapability.ACTION}, fail_method="on_action")
+        mgr.add_channel(good)
+        mgr.add_channel(bad)
+
+        await mgr.action("wave")
+        assert len(good.events) == 1
+
+    @pytest.mark.asyncio
+    async def test_close_error_isolation(self):
+        """close 时某个 channel 异常不影响其他 channel 关闭。"""
+        mgr = OutputManager()
+        bad = _FullFailingChannel({ChannelCapability.TEXT_MESSAGE}, fail_method="close")
+        mgr.add_channel(bad)
+        await mgr.close()  # should not raise
+
+
+# ============================================================
+# WebSocketChannel — method coverage
+# ============================================================
+
+class TestWebSocketChannelCoverage:
+    @pytest.fixture
+    def ws(self):
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        return ws
+
+    @pytest.mark.asyncio
+    async def test_on_typing(self, ws):
+        ch = WebSocketChannel(ws)
+        await ch.on_typing(True)
+        ws.send_json.assert_called_with({"type": "typing", "typing": True})
+
+    @pytest.mark.asyncio
+    async def test_on_expression(self, ws):
+        ch = WebSocketChannel(ws)
+        await ch.on_expression("happy", intensity=0.8)
+        ws.send_json.assert_called_with({
+            "type": "expression", "expression": "happy", "intensity": 0.8,
+        })
+
+    @pytest.mark.asyncio
+    async def test_on_action_with_params(self, ws):
+        ch = WebSocketChannel(ws)
+        await ch.on_action("wave", params={"speed": 2})
+        ws.send_json.assert_called_with({
+            "type": "action", "action": "wave", "params": {"speed": 2},
+        })
+
+    @pytest.mark.asyncio
+    async def test_on_action_without_params(self, ws):
+        ch = WebSocketChannel(ws)
+        await ch.on_action("nod")
+        called = ws.send_json.call_args[0][0]
+        assert called["type"] == "action"
+        assert "params" not in called
+
+    @pytest.mark.asyncio
+    async def test_on_command_with_params(self, ws):
+        ch = WebSocketChannel(ws)
+        await ch.on_command("reload", params={"p": 1})
+        ws.send_json.assert_called_with({
+            "type": "command", "command": "reload", "params": {"p": 1},
+        })
+
+    @pytest.mark.asyncio
+    async def test_on_command_without_params(self, ws):
+        ch = WebSocketChannel(ws)
+        await ch.on_command("reload")
+        called = ws.send_json.call_args[0][0]
+        assert called["type"] == "command"
+        assert "params" not in called
+
+    @pytest.mark.asyncio
+    async def test_on_message_str(self, ws):
+        ch = WebSocketChannel(ws)
+        await ch.on_message("plain text")
+        ws.send_json.assert_called_with({
+            "type": "message", "content": "plain text",
+        })
+
+    @pytest.mark.asyncio
+    async def test_on_message_dict_like(self, ws):
+        msg = MagicMock()
+        msg.to_dict.return_value = {"role": "Elysia", "content": "hi"}
+        ch = WebSocketChannel(ws)
+        await ch.on_message(msg)
+        called = ws.send_json.call_args[0][0]
+        assert called["type"] == "message"
+        assert called["role"] == "Elysia"
+
+    @pytest.mark.asyncio
+    async def test_on_audio_chunk(self, ws):
+        import base64
+        ch = WebSocketChannel(ws)
+        await ch.on_audio_chunk(b"\x00\x01", stream_id=0)
+        called = ws.send_json.call_args[0][0]
+        assert called["type"] == "audio"
+        assert called["data"] == base64.b64encode(b"\x00\x01").decode("ascii")
+        assert called["is_final"] is False
+
+    @pytest.mark.asyncio
+    async def test_on_audio_end(self, ws):
+        ch = WebSocketChannel(ws)
+        await ch.on_audio_end(stream_id=0)
+        ws.send_json.assert_called_with({
+            "type": "audio_end", "stream_id": 0,
+        })
+
+    @pytest.mark.asyncio
+    async def test_on_state(self, ws):
+        ch = WebSocketChannel(ws)
+        await ch.on_state("thinking")
+        ws.send_json.assert_called_with({
+            "type": "state", "state": "thinking",
+        })
+
+    @pytest.mark.asyncio
+    async def test_close_already_disconnected(self, ws):
+        ws.close = AsyncMock(side_effect=ConnectionError("already closed"))
+        ch = WebSocketChannel(ws)
+        await ch.close()  # should not raise
+
+
+# ============================================================
+# ConsoleChannel — non-streaming paths
+# ============================================================
+
+class TestConsoleChannelNonStreaming:
+    def test_on_message_str_path(self, capsys):
+        """on_message with str when _delta_printed=False — short return。"""
+        ch = ConsoleChannel()
+        asyncio.run(ch.on_message("hello"))
+        # str path with _delta_printed=False prints nothing
+        captured = capsys.readouterr()
+        assert captured.out == ""
+
+    def test_on_message_after_delta(self, capsys):
+        """on_message after on_text_delta — _delta_printed=True path。"""
+        ch = ConsoleChannel()
+        asyncio.run(ch.on_text_delta("streamed"))
+        asyncio.run(ch.on_message(MagicMock(role="?", inner_voice="", content="")))
+        captured = capsys.readouterr()
+        # Just prints newline, no content
+        assert "\n" in captured.out
+
+    def test_on_message_with_inner_voice_non_streaming(self, capsys):
+        """_delta_printed=False with inner_voice — prints both。"""
+        ch = ConsoleChannel()
+        msg = MagicMock()
+        msg.role = "Elysia"
+        msg.inner_voice = "thinking..."
+        msg.content = "hello"
+        asyncio.run(ch.on_message(msg))
+        captured = capsys.readouterr()
+        assert "Elysia" in captured.out
+        assert "hello" in captured.out

@@ -274,3 +274,73 @@ class TestExcInfo:
         assert record["message"] == "Math error"
         assert "exc_info" in record
         assert "ZeroDivisionError" in record["exc_info"]
+
+
+# ============================================================
+# CRITICAL level
+# ============================================================
+
+class TestCriticalLevel:
+    def test_set_level_to_critical(self, lf):
+        lg = lf.get("test_crit_set")
+        lf.set_level("test_crit_set", "CRITICAL")
+        assert lg.level == logging.CRITICAL
+
+
+# ============================================================
+# get_caller_logger
+# ============================================================
+
+class TestGetCallerLogger:
+    def test_returns_logger_with_module_name(self):
+        from .factory import get_caller_logger
+        def _inner():
+            return get_caller_logger()
+        lg = _inner()
+        assert "test_logger" in lg.name
+
+
+# ============================================================
+# Unicode in JSON
+# ============================================================
+
+class TestJsonUnicode:
+    def test_json_format_with_unicode(self, logdir):
+        import json
+        lf = LoggerFactory(json_format=True, log_dir=str(logdir), setup_root=False)
+        lg = lf.get("test_unicode")
+        lg.info("中文测试 😀")
+        lf.close()
+        fpath = Path(logdir) / "logger_test_unicode.log"
+        content = fpath.read_text().strip()
+        record = json.loads(content)
+        assert "中文测试" in record["message"]
+
+
+# ============================================================
+# Thread safety (smoke test)
+# ============================================================
+
+class TestConcurrency:
+    def test_concurrent_get_is_safe(self, lf):
+        import threading
+        import queue as qmod
+
+        results: qmod.Queue = qmod.Queue()
+
+        def _get():
+            try:
+                lg = lf.get("concurrent_test")
+                results.put(("ok", lg.name))
+            except Exception as e:
+                results.put(("error", str(e)))
+
+        threads = [threading.Thread(target=_get) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        for _ in range(10):
+            status, _ = results.get_nowait()
+            assert status == "ok"

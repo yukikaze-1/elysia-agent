@@ -501,3 +501,44 @@ if __name__ == "__main__":
         print(f"{'='*60}")
 
     asyncio.run(run_all())
+
+
+# ============================================================
+# IdleMonitor — _check_proactive (basic smoke tests)
+# ============================================================
+
+class TestProactiveTriggers:
+    @pytest.mark.asyncio
+    async def test_empty_triggers_does_nothing(self):
+        from core.idle_monitor import IdleMonitor
+        from core.event_bus import EventBus
+        from core.agent_fsm import AgentFSM
+        from unittest.mock import MagicMock
+
+        cfg = MagicMock()
+        cfg.proactive.enabled = True
+        cfg.proactive.triggers = []
+        cfg.proactive.interval = 300
+        fsm = AgentFSM()
+        bus = EventBus()
+        monitor = IdleMonitor(cfg, fsm, bus)
+        await monitor._check_proactive()  # should not crash
+
+    @pytest.mark.asyncio
+    async def test_silence_timeout_posts_event(self):
+        from core.idle_monitor import IdleMonitor
+        from core.event_bus import EventBus
+        from core.agent_fsm import AgentFSM
+        from unittest.mock import MagicMock
+
+        cfg = MagicMock()
+        cfg.proactive.enabled = True
+        cfg.proactive.triggers = [{"type": "silence_timeout", "duration": 1}]
+        cfg.proactive.interval = 300
+        fsm = AgentFSM()
+        bus = EventBus()
+        monitor = IdleMonitor(cfg, fsm, bus)
+        monitor._last_interaction = 0
+        await monitor._check_proactive()
+        events = list(bus.drain())
+        assert any(e.type.value == "system_tick" for e in events)

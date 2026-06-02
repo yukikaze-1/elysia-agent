@@ -237,5 +237,87 @@ class TestGPTSoVitsSynthesize:
     @pytest.mark.asyncio
     async def test_close(self, backend):
         await backend.close()
+
+
+# ============================================================
+# Emoji stripping
+# ============================================================
+
+class TestEmojiStripping:
+    def test_strip_all_markup_removes_emoji_smile(self):
+        assert strip_all_markup("hello 😀 world") == "hello  world"
+
+    def test_strip_all_markup_removes_multi_emoji(self):
+        result = strip_all_markup("🎉 congratulations 🎉")
+        assert "🎉" not in result
+        assert "congratulations" in result
+
+    def test_strip_action_only_removes_emoji(self):
+        result = strip_action_only("hello 😀 world")
+        assert "😀" not in result
+
+    def test_strip_all_markup_pure_markup_returns_empty(self):
+        assert strip_all_markup("（语气轻柔地）") == ""
+
+    def test_strip_all_markup_mixed_markup_and_text(self):
+        assert strip_all_markup("（语气）hello（动作）") == "hello"
+
+
+# ============================================================
+# GPTSoVitsBackend — payload verification
+# ============================================================
+
+class TestGPTSoVitsErrors:
+    @pytest.mark.asyncio
+    async def test_request_error_wraps_to_runtime_error(self, backend):
+        import httpx
+
+        async def fake_call_api(text, character, emotion, streaming):
+            raise httpx.RequestError("connection refused")
+            yield b""  # type: ignore[unreachable] — 让函数成为 generator
+
+        backend._call_api = fake_call_api
+        with pytest.raises((RuntimeError, httpx.RequestError)):
+            await backend.synthesize("hi", character="Elysia")
+
+    @pytest.mark.asyncio
+    async def test_http_error_from_call_api_propagates(self, backend):
+        async def fake_call_api(text, character, emotion, streaming):
+            raise RuntimeError("simulated HTTP error")
+            yield b""  # type: ignore[unreachable] — 让函数成为 generator
+
+        backend._call_api = fake_call_api
+        with pytest.raises(RuntimeError, match="simulated"):
+            await backend.synthesize("hi", character="Elysia")
+
+    @pytest.mark.asyncio
+    async def test_character_not_in_voices_raises_keyerror(self, backend):
+        with pytest.raises(KeyError):
+            await backend.synthesize("hi", character="UnknownCharacter")
+
+
+# ============================================================
+# GPTSoVitsBackend — queue cancel path
+# ============================================================
+
+class TestGPTSoVitsCancel:
+    @pytest.mark.asyncio
+    async def test_consumer_early_break_cancels_task(self, backend):
+        """consumer 提前停止迭代时 task 被取消。"""
+        cancel_called = False
+
+        async def fake_call_api(text, character, emotion, streaming):
+            nonlocal cancel_called
+            try:
+                yield b"chunk1"
+                yield b"chunk2"
+                yield b"chunk3"
+            except asyncio.CancelledError:
+                cancel_called = True
+                raise
+
+        backend._call_api = fake_call_api
+        async for _ in backend.synthesize_stream("hi", character="Elysia"):
+            break  # 只取第一个 chunk 就退出
         # 每次请求独立 client，无共享 client 需关闭
 

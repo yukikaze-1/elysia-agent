@@ -9,8 +9,17 @@ import wave
 from io import BytesIO
 
 import pytest
+from unittest.mock import patch
 
 from .audio_buffer import AudioBuffer, pcm_to_wav, _FRAME_BYTES
+
+
+def _loud(samples: int) -> bytes:
+    return struct.pack(f"<{samples}h", *([20000] * samples))
+
+
+def _sil(samples: int) -> bytes:
+    return struct.pack(f"<{samples}h", *([5] * samples))
 
 
 class TestPcmToWav:
@@ -227,3 +236,155 @@ class TestAudioBuffer:
         # Don't wait for silence — flush immediately
         await buf.flush()
         assert "called" in stt_calls
+
+
+# ============================================================
+# VAD frame processing edges (using module-level _loud/_sil)
+# ============================================================
+
+class TestVADFrameEdges:
+    def test_multi_frame_chunk_all_speech(self):
+        buf = AudioBuffer()
+        chunk = _loud(640)  # 640 samples × 2 = 1280 bytes = 2 frames
+        assert buf._is_speech(chunk) is True
+
+    def test_chunk_with_trailing_bytes(self):
+        buf = AudioBuffer()
+        chunk = b"\x00" * 700  # 640 processed, 60 dropped
+        result = buf._is_speech(chunk)
+        assert isinstance(result, bool)
+
+    def test_vad_exception_is_suppressed(self):
+        import webrtcvad
+        buf = AudioBuffer()
+        loud = _loud(320)
+        with patch.object(webrtcvad.Vad, "is_speech", side_effect=RuntimeError("vad error")):
+            result = buf._is_speech(loud)
+        assert isinstance(result, bool)
+
+    def test_chunk_exactly_one_frame(self):
+        buf = AudioBuffer()
+        loud = _loud(320)  # 320 samples = 640 bytes = exactly 1 frame
+        result = buf._is_speech(loud)
+        assert isinstance(result, bool)
+
+
+# ============================================================
+# Interrupt cooldown
+# ============================================================
+
+class TestInterruptCooldown:
+    @pytest.mark.asyncio
+    async def test_cooldown_prevents_immediate_second_interrupt(self):
+        interrupt_count = 0
+
+        async def on_interrupt():
+            nonlocal interrupt_count
+            interrupt_count += 1
+
+        buf = AudioBuffer(on_interrupt=on_interrupt)
+        for _ in range(4):
+            await buf.feed(_loud(320))
+        assert interrupt_count == 1
+
+        buf.reset()
+        for _ in range(4):
+            await buf.feed(_loud(320))
+        assert interrupt_count == 1  # cooldown active
+
+    @pytest.mark.asyncio
+    async def test_interrupt_after_cooldown_expires(self):
+        interrupt_count = 0
+
+        async def on_interrupt():
+            nonlocal interrupt_count
+            interrupt_count += 1
+
+        buf = AudioBuffer(on_interrupt=on_interrupt)
+        buf._interrupt_cooldown = 0.01
+
+        for _ in range(4):
+            await buf.feed(_loud(320))
+        assert interrupt_count == 1
+
+        buf.reset()
+        await asyncio.sleep(0.02)
+
+        for _ in range(4):
+            await buf.feed(_loud(320))
+        assert interrupt_count == 2
+
+
+# ============================================================
+# STT timeout / exception
+# ============================================================
+
+class TestSTTErrors:
+    @pytest.mark.asyncio
+    async def test_stt_timeout_does_not_crash(self):
+        import logging
+
+        async def slow_stt(audio: bytes) -> str:
+            await asyncio.sleep(99)
+            return "late"
+
+        buf = AudioBuffer(stt_transcribe=slow_stt, silence_duration=0.05)
+        buf._logger = logging.getLogger("test_audio")
+        buf._logger.setLevel(logging.WARNING)
+
+        for _ in range(30):
+            await buf.feed(_loud(320))
+        for _ in range(10):
+            await buf.feed(_sil(320))
+        # Should not crash despite timeout
+
+    @pytest.mark.asyncio
+    async def test_stt_exception_does_not_crash(self):
+        import logging
+
+        async def failing_stt(audio: bytes) -> str:
+            raise RuntimeError("STT down")
+
+        buf = AudioBuffer(stt_transcribe=failing_stt, silence_duration=0.05)
+        buf._logger = logging.getLogger("test_audio")
+        buf._logger.setLevel(logging.WARNING)
+
+        for _ in range(30):
+            await buf.feed(_loud(320))
+        for _ in range(10):
+            await buf.feed(_sil(320))
+
+
+# ============================================================
+# on_transcription=None
+# ============================================================
+
+class TestOnTranscriptionNone:
+    @pytest.mark.asyncio
+    async def test_no_callback_does_not_crash(self):
+        stt_called = False
+
+        async def fake_stt(audio: bytes) -> str:
+            nonlocal stt_called
+            stt_called = True
+            return "result"
+
+        buf = AudioBuffer(stt_transcribe=fake_stt, on_transcription=None, silence_duration=0.05)
+        for _ in range(30):
+            await buf.feed(_loud(320))
+        for _ in range(10):
+            await buf.feed(_sil(320))
+
+
+# ============================================================
+# reset() preserves _deafen_until
+# ============================================================
+
+class TestResetDeafen:
+    def test_reset_preserves_deafen_until(self):
+        buf = AudioBuffer()
+        buf.deafen(5.0)
+        deafen_before = buf._deafen_until
+        buf.reset()
+        assert buf._deafen_until == deafen_before
+        assert buf._deafen_until > 0
