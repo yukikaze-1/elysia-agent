@@ -5,7 +5,7 @@ import pytest
 from Module.tool.protocol import ToolContext
 from Module.tool.safety import SafetyProfile
 
-from core.tools.write_file import WriteFilePlugin, WriteFileParams
+from core.tools.filesystem.plugin import WriteFilePlugin, WriteFileParams
 
 
 class TestWriteFilePlugin:

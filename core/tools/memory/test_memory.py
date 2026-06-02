@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from Module.tool.protocol import ToolContext
-from core.tools.memory import (
+from core.tools.memory.plugin import (
     MemorySearchPlugin,
     SearchMemoryParams,
     MemorySavePlugin,

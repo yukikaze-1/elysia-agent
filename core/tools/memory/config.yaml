@@ -1,0 +1,4 @@
+# 记忆工具配置
+database_allowed: true
+database_readonly: true
+max_result_tokens: 2000

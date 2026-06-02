@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import logging
 from collections import deque
+from pathlib import Path
 from typing import Any, AsyncIterator
+
+import yaml
 
 from .capability import Capability
 from .protocol import (
@@ -44,6 +48,21 @@ class ToolManager:
         for cls in plugin_classes:
             instance = cls()
             try:
+                # 从插件所在目录加载 config.yaml，覆盖 SafetyProfile 字段
+                module_file = inspect.getfile(cls)
+                plugin_dir = Path(module_file).parent
+                config_file = plugin_dir / "config.yaml"
+                if config_file.is_file():
+                    try:
+                        raw = yaml.safe_load(config_file.read_text("utf-8"))
+                        if isinstance(raw, dict):
+                            for key, value in raw.items():
+                                if hasattr(instance.safety, key):
+                                    setattr(instance.safety, key, value)
+                    except (yaml.YAMLError, OSError) as e:
+                        logger.warning(
+                            "工具 '%s' config.yaml 加载失败: %s", cls.__name__, e,
+                        )
                 await instance.setup(ctx)
                 self._plugins[instance.name] = instance
                 self._plugin_classes[instance.name] = cls

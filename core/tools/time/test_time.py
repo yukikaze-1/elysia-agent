@@ -4,7 +4,7 @@ import pytest
 
 from Module.tool.protocol import ToolContext
 
-from core.tools.time import TimePlugin, TimeParams
+from core.tools.time.plugin import TimePlugin, TimeParams
 
 
 # ============================================================================

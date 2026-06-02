@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from core.tools.runtime_config import RuntimeConfigPlugin, RuntimeConfigParams
+from core.tools.runtime_config.plugin import RuntimeConfigPlugin, RuntimeConfigParams
 from Module.tool.protocol import ToolContext
 
 

@@ -15,7 +15,7 @@ class TestTextExtractor:
 
     def test_extracts_visible_text_from_html(self):
         """从 HTML 中提取可见文本（段落、正文）。"""
-        from core.tools.web import _extract_text
+        from core.tools.web.plugin import _extract_text
 
         html = (
             "<html><head><title>Test</title></head>"
@@ -28,7 +28,7 @@ class TestTextExtractor:
 
     def test_skips_script_tag_content(self):
         """跳过 <script> 标签内的内容。"""
-        from core.tools.web import _extract_text
+        from core.tools.web.plugin import _extract_text
 
         html = (
             "<html><body>"
@@ -46,7 +46,7 @@ class TestTextExtractor:
 
     def test_skips_style_tag_content(self):
         """跳过 <style> 标签内的内容。"""
-        from core.tools.web import _extract_text
+        from core.tools.web.plugin import _extract_text
 
         html = (
             "<html><body>"
@@ -63,7 +63,7 @@ class TestTextExtractor:
 
     def test_block_tags_produce_line_breaks(self):
         """br/p/div 等块级标签在输出中产生换行。"""
-        from core.tools.web import _extract_text
+        from core.tools.web.plugin import _extract_text
 
         html = "<p>第一行</p><p>第二行</p><div>第三行</div>"
         result = _extract_text(html)
@@ -71,14 +71,14 @@ class TestTextExtractor:
 
     def test_empty_html_returns_empty_string(self):
         """空 HTML 返回 ''。"""
-        from core.tools.web import _extract_text
+        from core.tools.web.plugin import _extract_text
 
         result = _extract_text("")
         assert result == ""
 
     def test_malformed_html_does_not_crash(self):
         """畸形 HTML 不抛出异常。"""
-        from core.tools.web import _extract_text
+        from core.tools.web.plugin import _extract_text
 
         html = "<html><body><p>未闭合段落<span>嵌套<span>混乱</body>"
         result = _extract_text(html)
@@ -87,7 +87,7 @@ class TestTextExtractor:
 
     def test_noscript_tag_skipped(self):
         """跳过 <noscript> 标签内容。"""
-        from core.tools.web import _extract_text
+        from core.tools.web.plugin import _extract_text
 
         html = (
             "<html><body>"
@@ -103,7 +103,7 @@ class TestTextExtractor:
 
     def test_head_tag_metadata_skipped(self):
         """<head> 内的元数据被跳过。"""
-        from core.tools.web import _extract_text
+        from core.tools.web.plugin import _extract_text
 
         html = (
             "<html><head><title>页面标题</title><meta charset='utf-8'></head>"
@@ -124,13 +124,13 @@ class TestWebSearchPlugin:
     def test_default_backend_uses_ddg(self):
         """默认后端（无 backend 配置）使用 DDG。"""
         import asyncio
-        from core.tools.web import WebSearchPlugin, WebSearchParams
+        from core.tools.web.plugin import WebSearchPlugin, WebSearchParams
 
         plugin = WebSearchPlugin()
         ctx = ToolContext(session_id="test")
 
         with patch(
-            "core.tools.web._ddg_search",
+            "core.tools.web.plugin._ddg_search",
             AsyncMock(return_value="DDG 结果"),
         ) as mock_ddg:
             result = asyncio.run(
@@ -142,16 +142,16 @@ class TestWebSearchPlugin:
     def test_brave_without_api_key_falls_back_to_ddg(self):
         """brave 后端但无 api_key → 回退到 DDG。"""
         import asyncio
-        from core.tools.web import WebSearchPlugin, WebSearchParams
+        from core.tools.web.plugin import WebSearchPlugin, WebSearchParams
 
         plugin = WebSearchPlugin()
         ctx = ToolContext(services={"web_search": "brave"})
 
         with patch(
-            "core.tools.web._ddg_search",
+            "core.tools.web.plugin._ddg_search",
             AsyncMock(return_value="DDG 回退结果"),
         ) as mock_ddg, patch(
-            "core.tools.web._brave_search",
+            "core.tools.web.plugin._brave_search",
             AsyncMock(),
         ) as mock_brave:
             result = asyncio.run(
@@ -164,7 +164,7 @@ class TestWebSearchPlugin:
     def test_brave_with_api_key_uses_brave(self):
         """brave 后端且有 api_key → 使用 Brave。"""
         import asyncio
-        from core.tools.web import WebSearchPlugin, WebSearchParams
+        from core.tools.web.plugin import WebSearchPlugin, WebSearchParams
 
         plugin = WebSearchPlugin()
         ctx = ToolContext(services={
@@ -173,10 +173,10 @@ class TestWebSearchPlugin:
         })
 
         with patch(
-            "core.tools.web._brave_search",
+            "core.tools.web.plugin._brave_search",
             AsyncMock(return_value="Brave 结果"),
         ) as mock_brave, patch(
-            "core.tools.web._ddg_search",
+            "core.tools.web.plugin._ddg_search",
             AsyncMock(),
         ) as mock_ddg:
             result = asyncio.run(
@@ -189,13 +189,13 @@ class TestWebSearchPlugin:
     def test_ddg_no_results_returns_not_found_message(self):
         """DDG 无结果时返回包含"未找到"的消息。"""
         import asyncio
-        from core.tools.web import WebSearchPlugin, WebSearchParams
+        from core.tools.web.plugin import WebSearchPlugin, WebSearchParams
 
         plugin = WebSearchPlugin()
         ctx = ToolContext(session_id="test")
 
         with patch(
-            "core.tools.web._ddg_search",
+            "core.tools.web.plugin._ddg_search",
             AsyncMock(return_value="未找到与 'xyz' 相关的结果。"),
         ) as mock_ddg:
             result = asyncio.run(
@@ -206,13 +206,13 @@ class TestWebSearchPlugin:
     def test_ddg_with_custom_limit(self):
         """自定义 limit 参数传递给 DDG。"""
         import asyncio
-        from core.tools.web import WebSearchPlugin, WebSearchParams
+        from core.tools.web.plugin import WebSearchPlugin, WebSearchParams
 
         plugin = WebSearchPlugin()
         ctx = ToolContext(session_id="test")
 
         with patch(
-            "core.tools.web._ddg_search",
+            "core.tools.web.plugin._ddg_search",
             AsyncMock(return_value="DDG 结果"),
         ) as mock_ddg:
             asyncio.run(
@@ -251,7 +251,7 @@ class TestWebFetchPlugin:
     def test_rejects_non_http_url(self):
         """非 http/https URL 返回"无效的 URL"。"""
         import asyncio
-        from core.tools.web import WebFetchPlugin, WebFetchParams
+        from core.tools.web.plugin import WebFetchPlugin, WebFetchParams
 
         plugin = WebFetchPlugin()
         ctx = ToolContext(session_id="test")
@@ -263,7 +263,7 @@ class TestWebFetchPlugin:
     def test_rejects_plain_string_not_url(self):
         """非 URL 字符串返回"无效的 URL"。"""
         import asyncio
-        from core.tools.web import WebFetchPlugin, WebFetchParams
+        from core.tools.web.plugin import WebFetchPlugin, WebFetchParams
 
         plugin = WebFetchPlugin()
         ctx = ToolContext(session_id="test")
@@ -275,7 +275,7 @@ class TestWebFetchPlugin:
     def test_successful_html_fetch_returns_extracted_text(self):
         """成功抓取 HTML 页面返回提取后的纯文本。"""
         import asyncio
-        from core.tools.web import WebFetchPlugin, WebFetchParams
+        from core.tools.web.plugin import WebFetchPlugin, WebFetchParams
 
         plugin = WebFetchPlugin()
         ctx = ToolContext(session_id="test")
@@ -293,7 +293,7 @@ class TestWebFetchPlugin:
     def test_http_404_returns_http_error(self):
         """HTTP 404 返回"HTTP 错误"。"""
         import asyncio
-        from core.tools.web import WebFetchPlugin, WebFetchParams
+        from core.tools.web.plugin import WebFetchPlugin, WebFetchParams
         import httpx
 
         plugin = WebFetchPlugin()
@@ -322,7 +322,7 @@ class TestWebFetchPlugin:
     def test_non_html_content_type_returns_unsupported_message(self):
         """非 HTML 内容类型返回"不支持的内容类型"。"""
         import asyncio
-        from core.tools.web import WebFetchPlugin, WebFetchParams
+        from core.tools.web.plugin import WebFetchPlugin, WebFetchParams
 
         plugin = WebFetchPlugin()
         ctx = ToolContext(session_id="test")
@@ -341,7 +341,7 @@ class TestWebFetchPlugin:
     def test_empty_page_returns_no_content_message(self):
         """空页面或无文本内容返回提示信息。"""
         import asyncio
-        from core.tools.web import WebFetchPlugin, WebFetchParams
+        from core.tools.web.plugin import WebFetchPlugin, WebFetchParams
 
         plugin = WebFetchPlugin()
         ctx = ToolContext(session_id="test")
@@ -358,7 +358,7 @@ class TestWebFetchPlugin:
     def test_text_plain_content_type_accepted(self):
         """text/plain 内容类型也被接受。"""
         import asyncio
-        from core.tools.web import WebFetchPlugin, WebFetchParams
+        from core.tools.web.plugin import WebFetchPlugin, WebFetchParams
 
         plugin = WebFetchPlugin()
         ctx = ToolContext(session_id="test")

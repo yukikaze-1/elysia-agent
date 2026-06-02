@@ -4,7 +4,7 @@ import pytest
 
 from Module.tool.protocol import ToolContext
 
-from core.tools.filesystem import (
+from core.tools.filesystem.plugin import (
     _format_size,
     ReadFilePlugin,
     ReadFileParams,

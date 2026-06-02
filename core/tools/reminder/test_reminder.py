@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock
 
 from Module.tool.protocol import ToolContext
-from core.tools.reminder import SetReminderPlugin, ReminderParams
+from core.tools.reminder.plugin import SetReminderPlugin, ReminderParams
 
 
 class TestSetReminderPlugin:

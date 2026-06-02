@@ -1539,9 +1539,9 @@ if __name__ == "__main__":
 
 def test_filesystem_safety_profile():
     """文件系统安全配置通过 SafetyProfile 白名单控制。"""
-    from core.tools.filesystem import ReadFilePlugin
+    from core.tools.filesystem.plugin import ReadFilePlugin
     p = ReadFilePlugin()
     assert p.safety.filesystem_allowed is True
-    assert p.safety.read_dirs == ["data/sandbox"]
+    assert p.safety.read_dirs == ["/home/yomu/data/sandbox"]
     assert p.safety.allow_symlinks is False
     assert p.safety.max_file_bytes == 10 * 1024 * 1024

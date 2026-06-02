@@ -1,0 +1,6 @@
+# 网络工具配置
+block_private_ips: true
+max_redirects: 5
+max_response_bytes: 5242880
+request_timeout: 30.0
+max_concurrency: 3

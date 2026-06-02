@@ -1,0 +1,7 @@
+# 文件系统沙箱配置
+read_dirs:
+  - /home/yomu/data/sandbox
+write_dir: data/sandbox/{session_id}
+max_file_bytes: 10485760
+allow_symlinks: false
+max_dir_depth: 3

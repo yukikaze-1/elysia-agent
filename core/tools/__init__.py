@@ -1,13 +1,12 @@
 """Elysia 工具插件集合。"""
 
-from .memory import MemorySearchPlugin, MemorySavePlugin
-from .time import TimePlugin
-from .web import WebSearchPlugin, WebFetchPlugin
-from .filesystem import ReadFilePlugin, ListDirPlugin
-from .write_file import WriteFilePlugin
-from .reminder import SetReminderPlugin
-from .runtime_config import RuntimeConfigPlugin
-from .self_state import SelfStatePlugin
+from .filesystem.plugin import ReadFilePlugin, ListDirPlugin, WriteFilePlugin
+from .web.plugin import WebSearchPlugin, WebFetchPlugin
+from .memory.plugin import MemorySearchPlugin, MemorySavePlugin
+from .time.plugin import TimePlugin
+from .reminder.plugin import SetReminderPlugin
+from .runtime_config.plugin import RuntimeConfigPlugin
+from .self_state.plugin import SelfStatePlugin
 
 # 所有插件类（按顺序加载）
 ALL_PLUGINS: list[type] = [

@@ -1,4 +1,4 @@
-"""文件系统工具插件 — 读取文件和列出目录。"""
+"""文件系统工具插件 — 读取文件、列出目录、写入文件。"""
 
 import os
 import time
@@ -39,7 +39,7 @@ class ReadFilePlugin(ToolPlugin):
     capabilities = {Capability.FILESYSTEM_READ}
     safety = SafetyProfile(
         filesystem_allowed=True,
-        read_dirs=["data/sandbox"],
+        read_dirs=["/home/yomu/data/sandbox"],
         max_file_bytes=10 * 1024 * 1024,
         allow_symlinks=False,
     )
@@ -55,7 +55,6 @@ class ReadFilePlugin(ToolPlugin):
         if not resolved.is_file():
             return f"不是文件: {path}"
 
-        # 文件大小预检
         try:
             fsize = resolved.stat().st_size
             if fsize > self.safety.max_file_bytes:
@@ -63,12 +62,9 @@ class ReadFilePlugin(ToolPlugin):
         except OSError as e:
             return f"无法读取文件信息: {e}"
 
-        # 二进制检测 + 逐行读取（不预加载全部到内存）
         try:
             with open(resolved, "r", encoding="utf-8") as f:
-                # 二进制探针：读取首个 1KB 触发 UnicodeDecodeError
                 probe = f.read(1024)
-                # 回到文件开头
                 f.seek(0)
 
                 result_lines: list[str] = []
@@ -79,7 +75,7 @@ class ReadFilePlugin(ToolPlugin):
                     if len(result_lines) >= params.max_lines:
                         break
                     result_lines.append(f"{i+1:4d} | {line.rstrip()}")
-                total = i + 1  # 文件总行数
+                total = i + 1
         except UnicodeDecodeError:
             return f"无法读取（可能是二进制文件）: {path}"
         except Exception as e:
@@ -113,7 +109,7 @@ class ListDirPlugin(ToolPlugin):
     capabilities = {Capability.FILESYSTEM_READ}
     safety = SafetyProfile(
         filesystem_allowed=True,
-        read_dirs=["data/sandbox"],
+        read_dirs=["/home/yomu/data/sandbox"],
         max_dir_depth=3,
         allow_symlinks=False,
     )
@@ -130,7 +126,7 @@ class ListDirPlugin(ToolPlugin):
             return f"不是目录: {path}"
 
         depth = max(1, min(params.depth, self.safety.max_dir_depth))
-        visited: set[int] = set()  # inode set — 防符号链接循环
+        visited: set[int] = set()
 
         def _walk(p: Path, d: int) -> list[str]:
             lines: list[str] = []
@@ -174,3 +170,49 @@ class ListDirPlugin(ToolPlugin):
         if len(output) > 6000:
             output = output[:6000] + "\n\n…[输出已截断]"
         return output
+
+
+# ============================================================================
+# write_file
+# ============================================================================
+
+class WriteFileParams(BaseModel):
+    path: str = Field(..., description="文件路径（相对路径，自动限定在 sandbox 目录下）")
+    content: str = Field(..., description="要写入的内容")
+
+
+class WriteFilePlugin(ToolPlugin):
+    name = "write_file"
+    description = "在安全目录下写入文件（需用户确认）"
+    param_model = WriteFileParams
+    capabilities = {Capability.FILESYSTEM_WRITE}
+    safety = SafetyProfile(
+        filesystem_allowed=True,
+        write_dir="data/sandbox/{session_id}",
+        max_file_bytes=10 * 1024 * 1024,
+        requires_human_approval=True,
+    )
+
+    async def execute(
+        self, *, ctx: ToolContext, emit=None, params: WriteFileParams,
+    ) -> str:
+        path = ctx.get("_safe_path") or params.path
+        resolved = Path(path)
+
+        session_id = ctx.session_id or "default"
+        safe_sid = session_id.replace("/", "_").replace("\\", "_")
+        write_dir = Path(
+            self.safety.write_dir.replace("{session_id}", safe_sid)
+        ).resolve()
+
+        if not str(resolved).startswith(str(write_dir)):
+            return f"拒绝写入: 路径 '{params.path}' 越过了 sandbox 边界"
+
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            resolved.write_text(params.content, encoding="utf-8")
+            size = resolved.stat().st_size
+            return f"已写入 {resolved.name} ({size} bytes)"
+        except Exception as e:
+            return f"写入失败: {e}"
