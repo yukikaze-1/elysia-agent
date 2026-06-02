@@ -10,7 +10,7 @@ import { bufferAudioChunk, finalizeStream } from './audio.js';
 import { toggleMic, stopMic } from './mic.js';
 import { setupSettings } from './settings.js';
 import { setupTools } from './tools.js';
-import { restoreChat } from './persistence.js';
+import { restoreChat, restoreFromServer } from './persistence.js';
 import { SEND_COOLDOWN_MS } from './config.js';
 
 /* ---- STT emoji mappings (与服务端同步) ---- */
@@ -28,6 +28,9 @@ function getEventEmoji(evt) { return EVENT_EMOJI[evt] || ''; }
 /* ---- WebSocket 消息处理 ---- */
 function handleMessage(msg) {
   switch (msg.type) {
+    case 'session':
+      restoreFromServer(msg.messages);
+      break;
     case 'delta':
       appendDelta(msg.content, msg.stream_id);
       break;

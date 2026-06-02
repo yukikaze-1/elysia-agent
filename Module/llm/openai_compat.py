@@ -9,6 +9,7 @@ Prefix Continuation:
 import logging
 from typing import AsyncIterator
 
+import httpx
 from openai import AsyncOpenAI
 
 from .protocol import LLMBackend
@@ -36,10 +37,14 @@ class OpenAICompatBackend(LLMBackend):
         self._model = model
         self._supports_prefix = supports_prefix
         self._logger = logger or logging.getLogger(__name__)
-        self._client = AsyncOpenAI(api_key=key, base_url=base_url)
+        self._api_key = key
+        self._base_url = base_url
+        self._beta_url = beta_url
+        _timeout = httpx.Timeout(60.0, connect=10.0)
+        self._client = AsyncOpenAI(api_key=key, base_url=base_url, timeout=_timeout)
         self._beta_client: AsyncOpenAI | None = None
         if beta_url:
-            self._beta_client = AsyncOpenAI(api_key=key, base_url=beta_url)
+            self._beta_client = AsyncOpenAI(api_key=key, base_url=beta_url, timeout=_timeout)
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
         """非流式对话 — 内部调用 _call_api(stream=False)，拼接所有 chunk 返回。"""
@@ -166,6 +171,32 @@ class OpenAICompatBackend(LLMBackend):
         await self._client.close()
         if self._beta_client:
             await self._beta_client.close()
+
+    async def reconnect(self) -> None:
+        """Recreate HTTP clients — used on service restart after stop() closed them."""
+        # Close old client if still open
+        try:
+            await self._client.close()
+        except Exception:
+            pass
+        if self._beta_client:
+            try:
+                await self._beta_client.close()
+            except Exception:
+                pass
+        # Create new clients with timeout
+        timeout = httpx.Timeout(60.0, connect=10.0)
+        self._client = AsyncOpenAI(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            timeout=timeout,
+        )
+        if self._beta_url:
+            self._beta_client = AsyncOpenAI(
+                api_key=self._api_key,
+                base_url=self._beta_url,
+                timeout=timeout,
+            )
 
 
 def _extract_prefix(messages: list[dict]) -> tuple[list[dict], bool]:

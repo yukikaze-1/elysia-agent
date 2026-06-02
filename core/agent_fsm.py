@@ -44,3 +44,9 @@ class AgentFSM:
             self.transition(AgentState.INTERRUPTED)
             return True
         return False
+
+    def reset(self) -> None:
+        """Force reset to IDLE. Used on service restart to clear any stuck state."""
+        self._previous = self._state
+        self._state = AgentState.IDLE
+        logger.debug("FSM: reset %s → IDLE", self._previous)

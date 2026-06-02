@@ -133,6 +133,11 @@ class LLMAdapter:
         if self._backend:
             await self._backend.close()
 
+    async def reconnect(self) -> None:
+        """Recreate the underlying backend's HTTP client. Used on agent restart."""
+        if hasattr(self._backend, 'reconnect'):
+            await self._backend.reconnect()
+
     @property
     def model(self) -> str:
         return self._requested_model

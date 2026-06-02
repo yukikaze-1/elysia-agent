@@ -143,6 +143,12 @@ class Agent:
         """Start the agent: connect persistence, idle monitor, event loop."""
         self._state = RunState.RUNNING
 
+        # Reset FSM — may be stuck from a previous run that was interrupted
+        self._fsm.reset()
+
+        # Recreate LLM HTTP client (may have been closed by previous stop())
+        await self._llm.reconnect()
+
         # Connect persistence backends in parallel
         mongo_ok, milvus_ok = await asyncio.gather(
             self._session.connect_db(),

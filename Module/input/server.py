@@ -159,6 +159,13 @@ async def _handle_ws(
     channel = WebSocketChannel(ws)
     agent._output.add_channel(channel)
 
+    # 发送会话历史给新连接的客户端
+    try:
+        session_msgs = agent._session.messages_for_client()
+        await ws.send_json({"type": "session", "messages": session_msgs})
+    except Exception:
+        logger.warning("Failed to send session on connect", exc_info=True)
+
     audio_buf: AudioBuffer | None = None
     monitor_task: asyncio.Task | None = None
     if stt_transcribe:

@@ -37,6 +37,18 @@ class SessionMemory:
             msgs = msgs[-n:]
         return msgs
 
+    def messages_for_client(self, n: int | None = None) -> list[dict[str, Any]]:
+        """返回客户端友好的消息格式，将 sentences 提升到顶层。"""
+        msgs = self.recent_messages(n)
+        result = []
+        for m in msgs:
+            entry = {"role": m["role"], "content": m["content"]}
+            meta = m.get("meta", {})
+            if "sentences" in meta:
+                entry["sentences"] = meta["sentences"]
+            result.append(entry)
+        return result
+
     # ---- runtime params ----
 
     def set_param(self, key: str, value: Any) -> None:

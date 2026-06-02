@@ -185,6 +185,7 @@ class CognitiveLoop:
                 acc_text = ""
                 raw_tool_calls: list[dict] = []
                 speaking_started = False
+                all_sentences: list[str] = []
                 ttft_done = False
                 t_think_start = time.perf_counter()
 
@@ -210,6 +211,7 @@ class CognitiveLoop:
 
                             sentence = self._sentence_buf.feed(content)
                             if sentence:
+                                all_sentences.append(sentence)
                                 logger.info("分句 (%d 字符)", len(sentence))
                                 logger.debug("分句内容: %s", sentence[:60])
 
@@ -242,6 +244,7 @@ class CognitiveLoop:
                     if _is_emoji_only(remaining):
                         logger.info("flush emoji: %s", remaining)
                     else:
+                        all_sentences.append(remaining)
                         logger.info("flush 尾句 (%d 字符)", len(remaining))
                         logger.debug("尾句内容: %s", remaining[:60])
                     if not speaking_started:
@@ -345,7 +348,7 @@ class CognitiveLoop:
                         msg = _MessageObj(content=acc_text)
                         await self._output.send(msg)
                 if acc_text.strip():
-                    self._session.add_message("assistant", acc_text)
+                    self._session.add_message("assistant", acc_text, sentences=all_sentences)
                     log_conversation("assistant", self._prompt._character.name, acc_text)
                     asyncio.create_task(self._after_response(user_message, acc_text),
                                        name="after-response")

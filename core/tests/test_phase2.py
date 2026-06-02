@@ -542,6 +542,28 @@ class TestSessionMemoryEdgeCases:
         assert len(s.recent_messages()) == 0
         assert s.get_param("key") is None
 
+    def test_messages_for_client_with_sentences(self):
+        """messages_for_client should lift meta.sentences to top level."""
+        from core.memory.session import SessionMemory
+        s = SessionMemory()
+        s.add_message("assistant", "Hello world", sentences=["Hello", "world"])
+        s.add_message("user", "Hi")
+        result = s.messages_for_client()
+        assert result[0] == {"role": "assistant", "content": "Hello world", "sentences": ["Hello", "world"]}
+        assert result[1] == {"role": "user", "content": "Hi"}
+
+    def test_messages_for_client_empty(self):
+        from core.memory.session import SessionMemory
+        s = SessionMemory()
+        assert s.messages_for_client() == []
+
+    def test_messages_for_client_with_n(self):
+        from core.memory.session import SessionMemory
+        s = SessionMemory()
+        for i in range(5):
+            s.add_message("user", f"msg{i}")
+        assert len(s.messages_for_client(2)) == 2
+
 
 # ============================================================================
 # 7. LongTermMemory edge cases

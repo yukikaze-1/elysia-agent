@@ -486,6 +486,9 @@ class TestAssertionFixes:
         client = await aiohttp_client(app)
 
         async with client.session.ws_connect(client.make_url('/ws')) as ws:
+            # 先接收连接时推送的 session 消息
+            session_msg = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
+            assert session_msg["type"] == "session"
             await ws.send_str("not valid json")
             msg = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
             assert msg["type"] == "error"
