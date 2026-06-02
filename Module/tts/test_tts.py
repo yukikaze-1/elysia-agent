@@ -144,13 +144,6 @@ class TestTTSFactory:
 # GPTSoVitsBackend
 # ============================================================
 
-FAKE_YAML = """
-Elysia:
-  ref_audio: "/fake/ref.wav"
-  prompt_text: "测试文本"
-"""
-
-
 def _make_stream_chunks(*chunks: bytes):
     """Build an async context manager that yields bytes from aiter_bytes."""
 
@@ -170,14 +163,8 @@ def _make_stream_chunks(*chunks: bytes):
 
 
 @pytest.fixture
-def backend():
-    with patch(
-        "builtins.open",
-        MagicMock(side_effect=FileNotFoundError),
-    ), patch("pathlib.Path.read_text", return_value=FAKE_YAML):
-        from .gpt_sovits import GPTSoVitsBackend
-
-        return GPTSoVitsBackend(base_url="http://fake:9880")
+def backend(tts_backend):
+    return tts_backend
 
 
 class TestGPTSoVitsConstruction:

@@ -10,13 +10,6 @@ from .protocol import EmbeddingBackend
 from .registry import EmbeddingFactory
 
 
-@pytest.fixture(autouse=True)
-def _clear_factory_cache():
-    """每个测试前清空 Factory 缓存，确保测试独立性。"""
-    EmbeddingFactory._instances.clear()
-    yield
-
-
 # ============================================================
 # Protocol — ABC constraints
 # ============================================================
@@ -127,11 +120,8 @@ class TestEmbeddingFactory:
 # ============================================================
 
 @pytest.fixture
-def hf_backend():
-    with patch(
-        "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
-    ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
-        yield EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")
+def hf_backend(huggingface_backend):
+    return huggingface_backend
 
 
 class TestHuggingFaceBackend:
@@ -187,9 +177,8 @@ def _make_embedding_response(embeddings: list[list[float]], model: str = "text-e
 
 
 @pytest.fixture
-def openai_backend():
-    with patch("Module.embedding.registry.os.getenv", return_value="sk-test"):
-        return EmbeddingFactory.create("openai/text-embedding-3-large")
+def openai_backend(openai_embedding_backend):
+    return openai_embedding_backend
 
 
 class TestOpenAICompatEmbedding:

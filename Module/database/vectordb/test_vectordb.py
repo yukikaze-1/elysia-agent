@@ -96,9 +96,8 @@ class TestVectorDBFactory:
 # ============================================================
 
 @pytest.fixture
-def backend():
-    with patch("Module.database.vectordb.milvus.MilvusClient", MagicMock()):
-        yield VectorDBFactory.create("milvus/test")
+def backend(vectordb_backend):
+    return vectordb_backend
 
 
 class TestMilvusCollection:

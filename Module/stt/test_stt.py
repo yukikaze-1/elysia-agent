@@ -95,8 +95,8 @@ def _make_response(text: str):
 
 
 @pytest.fixture
-def backend():
-    return STTFactory.create("sensevoice/sense-voice")
+def backend(stt_backend):
+    return stt_backend
 
 
 class TestSenseVoiceTranscribe:

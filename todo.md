@@ -65,6 +65,8 @@
 
 | 日期 | 内容 |
 |------|------|
-| 06-02 | **EmbeddingFactory 全局单例缓存** — 同一模型只加载一次，多个 LongTermMemory 实例共享。`test_phase2` 从 8-9 分钟 OOM → 46 秒全部通过。改动：`registry.py`（缓存 + shutdown）、`huggingface.py`（close 释放模型）、`long_term.py`（close 仅解引用）、`agent.py`（stop 调用 shutdown） |
-| 06-02 | **工具系统重构（方案 C）** — Plugin 架构，SafetyPipeline 6 阶段中间件，ToolExecutor Protocol，ToolManager。删除旧 ToolRegistry/@tool 装饰器。测试：`agent._tools` → `agent._tool_manager`，execute() 用 kwargs |
-| 06-02 | **core/tools/ bugfix (15/16)** — ReadFile 单文件打开 + 正确行数、网络能力检查、NETWORK capability 强制、HITL 广播 wiring、测试 mock HITL 超时等 |
+| 06-02 | **测试缺口修复（5 阶段）** — 511 个新测试覆盖 core/tools、LLM/STT/TTS/Embedding、Output/Input、Database/Config/Logger/Prompt、Module/tool 剩余。修复 3 个源码 bug |
+| 06-02 | **文档整理归档** — 16 篇已完成计划 → `superpowers/plans/archive/`，删除冗余 `task_scheduler_test.md`，更新 README 结构 |
+| 06-02 | **EmbeddingFactory 全局单例缓存** — 同一模型只加载一次，多个 LongTermMemory 实例共享。`test_phase2` 从 8-9 分钟 OOM → 46 秒全部通过 |
+| 06-02 | **工具系统重构（方案 C）** — Plugin 架构，SafetyPipeline 6 阶段中间件，ToolExecutor Protocol，ToolManager。删除旧 ToolRegistry/@tool 装饰器 |
+| 06-02 | **core/tools/ bugfix (15/16)** — ReadFile 单文件打开 + 正确行数、网络能力检查、NETWORK capability 强制、HITL 广播 wiring

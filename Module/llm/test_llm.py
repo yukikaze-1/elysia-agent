@@ -150,8 +150,8 @@ def _make_stream_chunks(*chunks: str):
 
 
 @pytest.fixture
-def backend():
-    return LLMFactory.create("deepseek/deepseek-v4-pro", api_key="sk-test")
+def backend(llm_backend):
+    return llm_backend
 
 
 class TestOpenAICompatChat:

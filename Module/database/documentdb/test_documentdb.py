@@ -87,12 +87,8 @@ def _setup_mock_collection(backend, collection: str):
 
 
 @pytest.fixture
-def backend():
-    with patch("motor.motor_asyncio.AsyncIOMotorClient", MagicMock()):
-        b = DocumentDBFactory.create("mongodb/elysia")
-        b._client = MagicMock()
-        b._db = {}
-        return b
+def backend(documentdb_backend):
+    return documentdb_backend
 
 
 class TestMongoDBInsert:

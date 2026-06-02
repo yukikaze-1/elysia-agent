@@ -212,17 +212,19 @@ class TestIntegrationWithRealTemplates:
         assert "Elysia" in macro_sys
 
 
+@pytest.fixture
+def pm(tmp_path):
+    """Shared PromptManager with tmp_path templates dir."""
+    tpl_dir = tmp_path / "templates"
+    tpl_dir.mkdir()
+    return PromptManager(str(tpl_dir))
+
+
 # ============================================================
 # datetime filter custom formats
 # ============================================================
 
 class TestDatetimeFilterExtended:
-    @pytest.fixture
-    def pm(self, tmp_path):
-        tpl_dir = tmp_path / "templates"
-        tpl_dir.mkdir()
-        return PromptManager(str(tpl_dir))
-
     def test_custom_format_date_only(self, pm):
         from pathlib import Path
         tpl_path = Path(pm.template_dir) / "t.j2"
@@ -250,12 +252,6 @@ class TestDatetimeFilterExtended:
 # ============================================================
 
 class TestRenderErrors:
-    @pytest.fixture
-    def pm(self, tmp_path):
-        tpl_dir = tmp_path / "templates"
-        tpl_dir.mkdir()
-        return PromptManager(str(tpl_dir))
-
     def test_missing_variable_renders_empty(self, pm):
         from pathlib import Path
         tpl_path = Path(pm.template_dir) / "t.j2"

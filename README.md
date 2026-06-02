@@ -2,7 +2,7 @@
 
 桌面 AI 伴侣，支持语音对话。核心功能完整，持续迭代优化中。
 
-> 最近: 2026-06-02 完成工具系统插件化重构 + EmbeddingFactory 全局单例缓存，详见 `todo.md` 已完成归档
+> 最近: 2026-06-02 工具系统重构 + Embedding 单例 + 511 新测试 + 文档归档，详见 `todo.md` 已完成
 
 ## 快速开始
 
@@ -86,7 +86,7 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolManage
 | 事件循环修复 (asyncio.Lock + 轮询等 IDLE + EventBus FIFO) | done |
 | 日志系统修复 (RotatingFile + 级别修正 + 查漏补缺) | done |
 | 代码清理 (MockLLMBackend/system.j2 移除 + ConfigLoader 接入) | done |
-| 测试补充 (507 → 547，+40 tests + 修 2 bug) | done |
+| 测试补充 (766 → 883，+117 tests) | done |
 | 日志链路完整追踪 (request ID + 毫秒时间戳 + 全管线计时) | done |
 | 对话日志分离 (log/conversation.log) | done |
 | TTS 句编号 (本轮/全局双计数) | done |
@@ -224,4 +224,4 @@ python -m pytest core/tests/test_sentence_buffer.py -v
 python -m pytest core/tests/test_task_scheduler.py -v
 ```
 
-**测试统计**: ~300 (core) + ~466 (Module) = 766 total (5 pre-existing failures)
+**测试统计**: 883 total（5 pre-existing failures）
