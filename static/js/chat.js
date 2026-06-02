@@ -136,11 +136,10 @@ export function addStatusMsg(text) {
 }
 
 /* ---- Tool Cards ---- */
-let _toolCounter = 0;
 
-export function addToolCard(name, args) {
+export function addToolCard(name, callId, args) {
   finalizeDelta();
-  const id = `${name}-${++_toolCounter}`;
+  const id = callId || `${name}-${Date.now()}`;
   const argsStr = args ? Object.entries(args).map(([k, v]) => `${k}: ${v}`).join(', ') : '';
   const card = document.createElement('div');
   card.className = 'tool-card executing';

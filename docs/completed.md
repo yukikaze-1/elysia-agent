@@ -430,3 +430,90 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 文件变更 | 删除 | `registry.py`、`decorator.py`、`schema.py` |
 | 测试 | 310/311 passed | 1 pre-existing failure (TTS config) |
 | 文档 | spec + plan + README | `docs/superpowers/specs/2026-06-02-tool-system-refactor-design.md` + `docs/superpowers/plans/2026-06-02-tool-system-refactor.md` + `Module/tool/README.md` |
+
+---
+
+### 测试审查 & 补充 (2026-06-02)
+
+**背景:** 对项目 19 个测试文件、~302 个测试用例进行全面审查，发现 100+ 覆盖缺口，分 5 个 Phase 补充。
+
+#### Phase 1: core/tools 插件 + Module/tool 框架 + timing (212 tests, 12 commits)
+
+| 任务 | 说明 |
+|------|------|
+| test_tool_safety.py | `_resolve_sandbox_path`、`_validate_path`、`_coerce_value`、`validate_args` 33 测试 |
+| test_framework.py 追加 | ToolParameter(8)、MediaItem(2)、ToolEmitter(5)、ToolResult.llm_content(7) |
+| test_filesystem.py | ReadFilePlugin(8) + ListDirPlugin(4) + `_format_size`(4) |
+| test_web.py | WebSearchPlugin(5) + WebFetchPlugin(7) + `_TextExtractor`(8) |
+| test_time.py | TimePlugin(8) |
+| test_memory.py | MemorySearchPlugin(4) + MemorySavePlugin(8) |
+| test_reminder.py | SetReminderPlugin(3) |
+| test_runtime_config.py | RuntimeConfigPlugin(5) |
+| test_self_state.py | SelfStatePlugin(3) |
+| test_write_file.py | WriteFilePlugin(11) |
+| test_timing.py | Timer(6) + TimingClock(10) |
+
+**Bug 修复:** `filesystem.py` 空文件 `UnboundLocalError` (i 未初始化) + 空文件截断提示错误 + `write_file.py` 嵌套路径 mkdir 缺失
+
+#### Phase 2: LLM/STT/TTS/Embedding 服务模块 (135 tests, 4 commits)
+
+| 任务 | 说明 |
+|------|------|
+| LLM (35 tests) | `stream_think`/`_stream_structured`(4)、API错误(4)、prefix边缘(3)、factory(2)、beta close(1) |
+| STT (37 tests) | `_parse_emotion`(6)、`_parse_events`(5)、状态跟踪(3)、nospeech(1)、HTTP错误(3)、边缘(3) |
+| TTS (32 tests) | emoji脱敏(5)、HTTP错误(3)、KeyError(1)、queue取消(1) |
+| Embedding (31 tests) | shutdown(4)、单例缓存(3)、from_config(1)、API错误(3)、空输入(2) |
+
+#### Phase 3: Output/Input 模块 (101 tests, 3 commits)
+
+| 任务 | 说明 |
+|------|------|
+| Output (54 tests) | AUDIO路由(4)、command(1)、stream生命周期(1)、错误隔离(4)、WS全覆盖(10)、ConsoleChannel(3) |
+| AudioBuffer (25 tests) | VAD帧边缘(4)、interrupt cooldown(2)、STT超时/异常(2)、on_transcription=None(1) |
+| Server (22 tests) | `_handle_json`边缘(5)、/health/ready/shutdown端点(3)、修复无断言测试(1) |
+
+#### Phase 4: Database/Config/Logger/Prompt 模块 (48 tests, 5 commits)
+
+| 任务 | 说明 |
+|------|------|
+| VectorDB (12 tests) | 协议抽象强制(5)、index_preset(5)、连接失败 |
+| DocumentDB (13 tests) | 协议抽象强制(6)、零结果(4)、upsert、ensure_index kwargs、连接失败 |
+| Config (13 tests) | 约束describe(8)、Optional[X](2)、yaml_key多级、root-list、畸形YAML |
+| Logger (4 tests) | CRITICAL、get_caller_logger、Unicode JSON、并发 |
+| Prompt (6 tests) | datetime自定义格式、None值、缺失变量、空模板 |
+
+#### Phase 5: Module/tool 剩余 + Core + emotion_engine 修复 (15 tests, 3 commits)
+
+| 任务 | 说明 |
+|------|------|
+| ToolManager (11 tests) | definitions(anthropic/gemini/invalid)、cancel_all、reload_plugin、HITL broadcast、history maxlen、并发 |
+| Core proactive (2 tests) | `_check_proactive` silence_timeout + empty triggers |
+| Core consolidator (2 tests) | buffer_threshold=6 缓冲5条不触发 + 第6条触发清空 |
+| emotion_engine 修复 | warm/concerned/calming/reassuring/understanding 关键词 fallback |
+
+### 插件目录化重构 (2026-06-02)
+
+| 任务 | 说明 |
+|------|------|
+| 目录化布局 | 8 个平铺 .py 文件 → 7 个插件目录，每个含 plugin.py / config.yaml / README.md / __init__.py |
+| filesystem 合并 | filesystem.py + write_file.py → filesystem/plugin.py（ReadFile + ListDir + WriteFile） |
+| config.yaml 加载 | ToolManager.load_all() 从各插件目录读取 config.yaml，覆盖 SafetyProfile 字段 |
+| 沙箱配置可改 | 修改 core/tools/filesystem/config.yaml 的 read_dirs 即可调整允许访问的目录，无需改代码 |
+
+### HITL 审批回路修复 (2026-06-02)
+
+| 任务 | 说明 |
+|------|------|
+| 入站通路补全 | server.py `_handle_json()` 新增 `tool_approval` 路由，调用 `submit_approval()` |
+| 前端审批对话框 | main.js `case 'command'` → `showApprovalDialog()` 弹模态确认框，允许/拒绝 + Escape |
+| ToolManager 桥接 | 新增 `submit_approval()` 公共方法，不暴露 `_pipeline` 内部 |
+
+### 工具卡片状态修复 (2026-06-02)
+
+| 任务 | 说明 |
+|------|------|
+| call_id 匹配 | 后端 `tool_executing` / `tool_done` 都带上 LLM 的 `call_id`，前端用 `call_id` 做卡片 key 精确匹配，修复工具执行完后卡片永远显示"执行中"的 bug |
+
+**总计: 29 commits, 511 新增测试, 5 个源码 bug 修复, 959 passed + 2 known failures = 961 total**
+
+**文档:** `docs/superpowers/specs/2026-06-02-test-audit-design.md` + 5 phase plans in `docs/superpowers/plans/`

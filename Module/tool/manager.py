@@ -227,6 +227,10 @@ class ToolManager:
         self._executing.clear()
         self._tasks.clear()
 
+    def submit_approval(self, request_id: str, approved: bool) -> bool:
+        """提交 HITL 审批结果。由 server 层在收到前端审批响应后调用。"""
+        return self._pipeline.submit_approval(request_id, approved)
+
     def set_hitl_broadcast(self, output_manager) -> None:
         """Wire HITL approval broadcast through OutputManager."""
         if output_manager is not None:

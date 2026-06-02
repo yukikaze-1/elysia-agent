@@ -279,6 +279,7 @@ class CognitiveLoop:
                     # Emit tool_executing actions for UI (before dispatch)
                     for tc in normalized:
                         func_name = tc["function"]["name"]
+                        call_id = tc.get("id", "unknown")
                         try:
                             args = json.loads(tc["function"]["arguments"])
                         except (json.JSONDecodeError, KeyError):
@@ -286,6 +287,7 @@ class CognitiveLoop:
                         self._executing_tools.append(func_name)
                         await self._output.action("tool_executing", params={
                             "tool": func_name,
+                            "call_id": call_id,
                             "args": {k: str(v)[:80] for k, v in args.items()},
                         })
 
@@ -307,6 +309,7 @@ class CognitiveLoop:
                         # Emit tool_done for each completed tool
                         await self._output.action("tool_done", params={
                             "tool": tc["function"]["name"],
+                            "call_id": tc.get("id", "unknown"),
                             "success": tool_result.success,
                         })
 

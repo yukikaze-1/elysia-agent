@@ -149,12 +149,50 @@ Defined in `Module/input/server.py`:
 - `/health`, `/ready` → health checks
 - `/shutdown` → graceful shutdown
 
+## Tool plugin layout (`core/tools/`)
+
+Each plugin group lives in its own directory with code, config, and docs:
+
+```
+core/tools/
+├── __init__.py          # ALL_PLUGINS list (imports from subdirectories)
+├── filesystem/          # ReadFile, ListDir, WriteFile
+│   ├── plugin.py        # Plugin classes
+│   ├── config.yaml      # SafetyProfile overrides (read_dirs, write_dir, etc.)
+│   └── README.md
+├── web/                 # WebSearch, WebFetch
+├── memory/              # MemorySearch, MemorySave
+├── time/                # TimePlugin
+├── reminder/            # SetReminderPlugin
+├── runtime_config/      # RuntimeConfigPlugin
+└── self_state/          # SelfStatePlugin
+```
+
+Each plugin's `config.yaml` overrides `SafetyProfile` fields at load time via `ToolManager.load_all()`. Only the plugin directory's config is read — there is no global config for tool safety.
+
+## HITL approval flow
+
+Tools with `requires_human_approval=True` (e.g., `write_file`) trigger a round-trip:
+1. `SafetyPipeline._run_hitl()` broadcasts `command: tool_approval` to frontend
+2. Frontend shows approval dialog (modal overlay with approve/deny)
+3. User choice sent back as `{type: "tool_approval", request_id, approved}`
+4. Server `_handle_json()` routes to `ToolManager.submit_approval()` → `SafetyPipeline.submit_approval()`
+5. Tool proceeds or returns PERMISSION_DENIED
+
 ## Adding a new backend
 
 1. Create `<module>/your_backend.py` — implement the protocol ABC
 2. Register in `registry.py` `_BACKENDS` dict with provider metadata
 3. Export in `__init__.py` if the class should be public
 4. Follow the existing pattern: `__init__` takes `model`, `api_key`, `base_url`, optional `logger`, creates async client
+
+## Adding a new tool plugin
+
+1. Create `core/tools/<name>/` directory with `plugin.py`, `config.yaml`, `__init__.py`, `README.md`
+2. Implement `ToolPlugin` subclass in `plugin.py` — set `name`, `description`, `param_model`, `capabilities`, `safety`
+3. Write `config.yaml` with SafetyProfile field overrides (optional — empty file if no config needed)
+4. Re-export the plugin class from `__init__.py`
+5. Add to `ALL_PLUGINS` list in `core/tools/__init__.py`
 
 ## Rules
 

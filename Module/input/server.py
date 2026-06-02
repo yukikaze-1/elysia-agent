@@ -187,6 +187,17 @@ async def _handle_json(data: dict, agent) -> None:
     elif msg_type == "interrupt":
         logger.info("WS 收到打断指令")
         await _do_interrupt(agent)
+    elif msg_type == "tool_approval":
+        request_id = data.get("request_id", "")
+        approved = data.get("approved", False)
+        if request_id:
+            ok = agent._tool_manager.submit_approval(request_id, approved)
+            if ok:
+                logger.info(
+                    "WS 审批结果: request=%s approved=%s", request_id, approved,
+                )
+            else:
+                logger.debug("WS 审批结果: request=%s 不存在或已过期", request_id)
     else:
         logger.debug("WS 未知消息类型: %s", msg_type)
 

@@ -73,9 +73,14 @@ function handleMessage(msg) {
     }
     case 'action':
       if (msg.action === 'tool_executing') {
-        addToolCard(msg.params.tool, msg.params.args);
+        addToolCard(msg.params.tool, msg.params.call_id, msg.params.args);
       } else if (msg.action === 'tool_done') {
-        updateToolCard(msg.params.tool, msg.params.success);
+        updateToolCard(msg.params.call_id, msg.params.success);
+      }
+      break;
+    case 'command':
+      if (msg.command === 'tool_approval') {
+        showApprovalDialog(msg.params);
       }
       break;
     case 'error': console.warn('Server:', msg.message); break;
@@ -124,6 +129,46 @@ function init() {
       stopMic();
     }
   });
+}
+
+/* ---- HITL 审批对话框 ---- */
+function showApprovalDialog(params) {
+  const { tool, params: toolParams, request_id } = params;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'approval-overlay';
+  overlay.id = 'approval-overlay';
+
+  const dialog = document.createElement('div');
+  dialog.className = 'approval-dialog';
+  dialog.innerHTML =
+    '<div class="approval-icon">&#9888;</div>' +
+    '<div class="approval-title">工具操作确认</div>' +
+    '<div class="approval-tool">工具: <strong>' + esc(tool) + '</strong></div>' +
+    '<div class="approval-detail">参数: ' + esc(toolParams || '(无)') + '</div>' +
+    '<div class="approval-buttons">' +
+      '<button class="approval-approve" id="approval-approve">允许</button>' +
+      '<button class="approval-deny" id="approval-deny">拒绝</button>' +
+    '</div>';
+
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  function respond(approved) {
+    send({ type: 'tool_approval', request_id: request_id, approved: approved });
+    document.body.removeChild(overlay);
+  }
+
+  document.getElementById('approval-approve').onclick = function() { respond(true); };
+  document.getElementById('approval-deny').onclick = function() { respond(false); };
+
+  function onKey(e) {
+    if (e.key === 'Escape') {
+      respond(false);
+      document.removeEventListener('keydown', onKey);
+    }
+  }
+  document.addEventListener('keydown', onKey);
 }
 
 init();
