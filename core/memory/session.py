@@ -25,11 +25,20 @@ class SessionMemory:
 
     # ---- messages ----
 
-    def add_message(self, role: str, content: str, **meta) -> None:
-        entry = {"role": role, "content": content}
-        if meta:
-            entry["meta"] = meta
-        self._messages.append(entry)
+    def add_message(self, *args, **meta) -> None:
+        """存储一条消息。兼容新旧两种格式。
+
+        旧格式: add_message(role, content, **meta)
+        新格式: add_message({id, role, parts, content_type, timestamp})
+        """
+        if len(args) == 1 and isinstance(args[0], dict):
+            self._messages.append(args[0])
+        else:
+            role, content = args[0], args[1] if len(args) > 1 else ""
+            entry = {"role": role, "content": content}
+            if meta:
+                entry["meta"] = meta
+            self._messages.append(entry)
 
     def recent_messages(self, n: int | None = None) -> list[dict[str, Any]]:
         msgs = list(self._messages)
@@ -38,15 +47,21 @@ class SessionMemory:
         return msgs
 
     def messages_for_client(self, n: int | None = None) -> list[dict[str, Any]]:
-        """返回客户端友好的消息格式，将 sentences 提升到顶层。"""
+        """返回客户端友好的消息格式。旧格式消息自动转换为 parts 数组。"""
         msgs = self.recent_messages(n)
         result = []
         for m in msgs:
-            entry = {"role": m["role"], "content": m["content"]}
-            meta = m.get("meta", {})
-            if "sentences" in meta:
-                entry["sentences"] = meta["sentences"]
-            result.append(entry)
+            if "parts" in m:
+                result.append(m)
+            else:
+                entry: dict[str, Any] = {"role": m["role"]}
+                meta = m.get("meta", {})
+                if "sentences" in meta:
+                    entry["parts"] = [{"content": s} for s in meta["sentences"]]
+                else:
+                    entry["parts"] = [{"content": m.get("content", "")}]
+                entry["content_type"] = {}
+                result.append(entry)
         return result
 
     # ---- runtime params ----

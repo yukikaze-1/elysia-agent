@@ -2,6 +2,71 @@ import { state } from './state.js';
 import { CHAT_SAVE_DEBOUNCE_MS, CHAT_MAX_STORED, SETTINGS_STORAGE_KEYS } from './config.js';
 import { esc, createAssistantRow } from './chat.js';
 
+/* ---- 代码块 / Markdown 渲染辅助 ---- */
+
+function createCodeBlock(content, language) {
+  const row = document.createElement('div');
+  row.className = 'msg-row assistant';
+
+  const langLabel = language || 'code';
+  const highlighted = typeof hljs !== 'undefined'
+    ? hljs.highlight(content, { language: language || 'plaintext' }).value
+    : esc(content);
+
+  row.innerHTML =
+    `<div class="msg-avatar" aria-hidden="true">🌸</div>` +
+    `<div class="code-block">` +
+      `<div class="code-header">` +
+        `<span class="code-lang">${esc(langLabel)}</span>` +
+        `<button class="code-copy" data-code="${esc(content).replace(/"/g, '&quot;')}">复制</button>` +
+      `</div>` +
+      `<pre><code class="language-${esc(langLabel)}">${highlighted}</code></pre>` +
+    `</div>`;
+
+  // 复制按钮事件
+  const copyBtn = row.querySelector('.code-copy');
+  copyBtn.onclick = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(content);
+      copyBtn.textContent = '已复制';
+      copyBtn.classList.add('copied');
+      setTimeout(() => {
+        copyBtn.textContent = '复制';
+        copyBtn.classList.remove('copied');
+      }, 2000);
+    } catch { /* clipboard denied */ }
+  };
+
+  return row;
+}
+
+function createMarkdownBubble(content) {
+  const row = document.createElement('div');
+  row.className = 'msg-row assistant';
+
+  const html = typeof marked !== 'undefined'
+    ? marked.parse(content)
+    : `<pre>${esc(content)}</pre>`;
+
+  // marked.parse() returns async promise in newer versions, handle both
+  const render = (result) => {
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble markdown-body';
+    bubble.innerHTML = result;
+    row.innerHTML = '<div class="msg-avatar" aria-hidden="true">🌸</div>';
+    row.appendChild(bubble);
+  };
+
+  if (html instanceof Promise) {
+    html.then(render);
+  } else {
+    render(html);
+  }
+
+  return row;
+}
+
 /** 防抖保存 */
 export function debounceSave() {
   clearTimeout(state.saveTimer);
@@ -81,24 +146,35 @@ export function restoreFromServer(messages) {
   state.saveTimer = null;
 
   for (const m of messages) {
-    if (m.role === 'user') {
-      const row = document.createElement('div');
-      row.className = 'msg-row user';
-      row.innerHTML = `<div class="msg-bubble">${esc(m.content)}</div><div class="msg-avatar">😎</div>`;
-      chat.appendChild(row);
-      state.messages.push({ role: 'user', content: m.content });
-    } else {
-      // assistant: 优先使用 sentences 数组，否则 fallback 到完整 content
-      const sentences = (Array.isArray(m.sentences) && m.sentences.length > 0)
-        ? m.sentences
-        : [m.content];
-      for (const sentence of sentences) {
-        if (!sentence) continue;
+    const parts = m.parts || [];
+    const ct = m.content_type || {};
+
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (!p.content) continue;
+
+      if (m.role === 'user') {
+        const row = document.createElement('div');
+        row.className = 'msg-row user';
+        row.innerHTML = `<div class="msg-bubble">${esc(p.content)}</div><div class="msg-avatar">😎</div>`;
+        chat.appendChild(row);
+        state.messages.push({ role: 'user', content: p.content });
+      } else if (ct.code && ct.code.includes(i)) {
+        state.lastRole = 'assistant';
+        const row = createCodeBlock(p.content, p.language || '');
+        chat.appendChild(row);
+        state.messages.push({ role: 'assistant', content: p.content });
+      } else if (ct.markdown && ct.markdown.includes(i)) {
+        state.lastRole = 'assistant';
+        const row = createMarkdownBubble(p.content);
+        chat.appendChild(row);
+        state.messages.push({ role: 'assistant', content: p.content });
+      } else {
         state.lastRole = 'assistant';
         const { row, textSpan } = createAssistantRow();
-        textSpan.textContent = sentence;
+        textSpan.textContent = p.content;
         chat.appendChild(row);
-        state.messages.push({ role: 'assistant', content: sentence });
+        state.messages.push({ role: 'assistant', content: p.content });
       }
     }
   }

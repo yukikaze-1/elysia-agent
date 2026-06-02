@@ -201,9 +201,27 @@ Step 2: External Response (The "Public Track")
 {# 输出格式说明 #}
 # Output Format
 After completing both steps internally, output ONLY the external response
-(Step 2). Do NOT include your inner monologue, tags, or any other formatting.
-Just output the plain text you would say to the user.
+(Step 2). Do NOT include your inner monologue.
 
 Your response should be natural, conversational, and human-like.
 Speak in Chinese. Keep it concise — 2-4 sentences for casual chat.
+
+When your response needs code examples, formatted lists, tables, or
+structured markdown content, place ALL conversational text FIRST, then
+append the structured blocks at the END using these markers:
+
+<|markdown|>
+(markdown content: lists, tables, headers, bold, links, etc.)
+</|markdown|>
+
+<|code|python>
+(code content here)
+</|code|>
+
+Rules:
+- Conversational text ALWAYS comes first. Never put markers mid-conversation.
+- Markers go at the very end of your response, after all conversation text.
+- The markdown block is for rich formatting — NOT for the initial chat reply.
+- If your response is purely conversational (no code/markdown), omit all markers.
+- Each marker block can appear at most once per response.
 {%- endmacro -%}

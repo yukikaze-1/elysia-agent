@@ -11,7 +11,7 @@ from pathlib import Path
 from Module.prompt import PromptManager
 from .character_config import CharacterConfig
 from .memory.session import SessionMemory
-from .memory.long_term import LongTermMemory
+from .memory.long_term import LongTermMemory, MemoryEntry
 from .emotion_engine import stt_emotion_emoji, stt_event_emoji
 
 logger = logging.getLogger(__name__)
@@ -90,10 +90,11 @@ class PromptAssembler:
             except Exception:
                 logger.warning("Brain.j2 渲染失败，使用 fallback", exc_info=True)
         return await self._render_fallback(user_name, user_message, now, mood)
-
+    
+    
     async def _get_recalled(self, query: str = "") -> "list[MemoryEntry]":
         """Search long-term memory with the user's message as query."""
-        from .memory.long_term import MemoryEntry
+        
         results = await self._long_term.search(query_text=query, top_k=5)
         if results:
             logger.info("记忆召回: %d 条", len(results))
@@ -109,7 +110,11 @@ class PromptAssembler:
         messages: list[dict] = [{"role": "system", "content": system}]
         recent = self._session.recent_messages(8)
         for msg in recent:
-            messages.append({"role": msg["role"], "content": msg["content"]})
+            if "parts" in msg:
+                content = "".join(p["content"] for p in msg["parts"])
+            else:
+                content = msg.get("content", "")
+            messages.append({"role": msg["role"], "content": content})
         messages.append({"role": "user", "content": user_message})
         return messages
 
@@ -133,6 +138,13 @@ class PromptAssembler:
             lines.append("\n## 相关记忆")
             for r in recalled:
                 lines.append(f"- {r}")
+        lines.append("")
+        lines.append("# 输出格式")
+        lines.append("当需要展示代码、列表、表格等结构化内容时，先输出对话文本，")
+        lines.append("然后把结构化内容放在最后，用以下标记包裹：")
+        lines.append("<|markdown|>markdown内容</|markdown|>")
+        lines.append("<|code|语言>代码</|code|>")
+        lines.append("如果只是纯对话，不要使用任何标记。")
         return "\n".join(lines)
 
     @staticmethod

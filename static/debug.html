@@ -202,9 +202,16 @@ function render(info) {
     ],
     // Row 3: Session | Long-term
     [
-      { title:'Recent Session', wide:false, items: (info.session_recent||[]).map(m =>
-        `<span class="role-tag ${esc(m.role)}">${esc(m.role)}</span>${expandable(m.content, 90)}`
-      )},
+      { title:'Recent Session', wide:false, items: (info.session_recent||[]).map(m => {
+        const parts = m.parts || [];
+        const ct = m.content_type || {};
+        return parts.map((p, i) => {
+          let typeTag = '';
+          if (ct.markdown && ct.markdown.includes(i)) typeTag = '<span class="type-tag">md</span>';
+          if (ct.code && ct.code.includes(i)) typeTag = '<span class="type-tag">code</span>';
+          return `<span class="role-tag ${esc(m.role)}">${esc(m.role)}</span>${typeTag}${expandable(p.content, 90)}`;
+        }).join('');
+      })},
       { title:'Long-term Memory', wide:false, items: (info.lt_recent||[]).map(e =>
         `<span class="type-tag">${esc(e.metadata?.type||'?')}</span>${expandable(e.text, 90)}`
       )},

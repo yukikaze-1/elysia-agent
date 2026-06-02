@@ -81,7 +81,8 @@ async def collect(agent) -> DebugInfo:
     info.session_recent = [
         {
             "role": m.get("role", "?"),
-            "content": _truncate(m.get("content", ""), 100),
+            "parts": m.get("parts", [{"content": m.get("content", "")}]),
+            "content_type": m.get("content_type", {}),
         }
         for m in msgs[-5:]
     ]

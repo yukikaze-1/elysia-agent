@@ -382,7 +382,11 @@ class TestMultiTurnConversation:
         await agent.process_message("我叫妖梦")
         await asyncio.sleep(15)  # Generous timeout for embedding lazy load + LLM
         msgs_1 = agent._session.recent_messages()
-        assert any("我叫妖梦" in m.get("content", "") for m in msgs_1)
+        assert any(
+            "我叫妖梦" in m.get("content", "")
+            or any("我叫妖梦" in p.get("content", "") for p in m.get("parts", []))
+            for m in msgs_1
+        )
 
         # Second turn (embedding already loaded, should be fast)
         await agent.process_message("你还记得我叫什么吗")

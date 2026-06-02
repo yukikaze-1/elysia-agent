@@ -299,3 +299,59 @@ body {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* ---- Code Block ---- */
+.code-block {
+  margin: 6px 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  font-size: 13px;
+  max-width: 100%;
+}
+.code-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+.code-lang {
+  font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.code-copy {
+  font-size: 11px; color: #8b949e; background: none; border: 1px solid #30363d;
+  border-radius: 4px; padding: 2px 8px; cursor: pointer; transition: all .15s;
+}
+.code-copy:hover { color: #c9d1d9; border-color: #58a6ff; }
+.code-copy.copied { color: #3fb950; border-color: #3fb950; }
+.code-block pre {
+  margin: 0; padding: 12px; overflow-x: auto;
+  line-height: 1.5; white-space: pre;
+}
+.code-block pre code { background: none; padding: 0; font-size: 13px; }
+
+/* ---- Markdown Body (inside bubble) ---- */
+.msg-bubble.markdown-body { padding: 12px 16px; }
+.msg-bubble.markdown-body h1, .msg-bubble.markdown-body h2, .msg-bubble.markdown-body h3 {
+  margin: 8px 0 4px; font-size: 15px;
+}
+.msg-bubble.markdown-body ul, .msg-bubble.markdown-body ol { padding-left: 20px; margin: 4px 0; }
+.msg-bubble.markdown-body li { margin: 2px 0; }
+.msg-bubble.markdown-body p { margin: 4px 0; }
+.msg-bubble.markdown-body code {
+  background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 3px; font-size: 13px;
+}
+.msg-bubble.markdown-body pre {
+  background: #0d1117; border-radius: 6px; padding: 10px; overflow-x: auto; margin: 6px 0;
+}
+.msg-bubble.markdown-body pre code { background: none; padding: 0; }
+.msg-bubble.markdown-body table { border-collapse: collapse; margin: 6px 0; font-size: 13px; }
+.msg-bubble.markdown-body th, .msg-bubble.markdown-body td {
+  border: 1px solid #30363d; padding: 4px 8px; text-align: left;
+}
+.msg-bubble.markdown-body th { background: #161b22; }
+.msg-bubble.markdown-body blockquote {
+  border-left: 3px solid #58a6ff; padding-left: 10px; margin: 6px 0; color: #8b949e;
+}
+.msg-bubble.markdown-body a { color: #58a6ff; }

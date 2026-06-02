@@ -543,14 +543,23 @@ class TestSessionMemoryEdgeCases:
         assert s.get_param("key") is None
 
     def test_messages_for_client_with_sentences(self):
-        """messages_for_client should lift meta.sentences to top level."""
+        """messages_for_client should convert old meta.sentences to parts array."""
         from core.memory.session import SessionMemory
         s = SessionMemory()
         s.add_message("assistant", "Hello world", sentences=["Hello", "world"])
         s.add_message("user", "Hi")
         result = s.messages_for_client()
-        assert result[0] == {"role": "assistant", "content": "Hello world", "sentences": ["Hello", "world"]}
-        assert result[1] == {"role": "user", "content": "Hi"}
+        assert result[0] == {"role": "assistant", "parts": [{"content": "Hello"}, {"content": "world"}], "content_type": {}}
+        assert result[1] == {"role": "user", "parts": [{"content": "Hi"}], "content_type": {}}
+
+    def test_messages_for_client_new_format(self):
+        """messages_for_client should pass through new-format messages unchanged."""
+        from core.memory.session import SessionMemory
+        s = SessionMemory()
+        msg = {"id": "msg_abc", "role": "assistant", "parts": [{"content": "Hello"}], "content_type": {}, "timestamp": "2026-01-01T00:00:00+08:00"}
+        s.add_message(msg)
+        result = s.messages_for_client()
+        assert result[0] == msg
 
     def test_messages_for_client_empty(self):
         from core.memory.session import SessionMemory

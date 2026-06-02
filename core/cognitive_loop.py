@@ -5,11 +5,14 @@ Uses structured streaming for sub-100ms TTFT and simultaneous tool-call detectio
 """
 
 import asyncio
+import datetime
 import json
 import logging
 import re
 import time
 from dataclasses import dataclass
+
+from .message_id import new_message_id
 
 from .timing import TimingClock
 
@@ -41,6 +44,110 @@ _EMOJI_RE = re.compile(
 def _is_emoji_only(text: str) -> bool:
     """句子去掉 emoji 后是否只剩空白 — 用于跳过 TTS 合成。"""
     return not _EMOJI_RE.sub("", text).strip()
+
+
+_BLOCK_PATTERN: re.Pattern = re.compile(
+    r'<\|markdown\|>(.*?)</\|markdown\|>|'
+    r'<\|code\|(\w+)?>(.*?)</\|code\|>',
+    re.DOTALL,
+)
+
+_BLOCK_START_RE: re.Pattern = re.compile(r'<\|(markdown|code)(?:\|(\w*))?\|?>')
+
+# 最长标记 "</|markdown|>" 为 13 字符，流式处理时保留末尾这么多以防截断
+_BLOCK_LOOKBEHIND = 13
+
+
+class _BlockFilter:
+    """流式过滤结构化块标记，阻止代码/markdown 内容进入 TTS。"""
+
+    def __init__(self):
+        self._buf = ""
+        self._depth = 0
+
+    def feed(self, chunk: str) -> str:
+        """喂入一个 chunk，返回可以去 TTS/分句的干净文本。"""
+        self._buf += chunk
+        out: list[str] = []
+        i = 0
+
+        while i < len(self._buf):
+            if self._depth > 0:
+                # 在块内 — 找结束标记
+                end_md = self._buf.find("</|markdown|>", i)
+                end_code = self._buf.find("</|code|>", i)
+                candidates = []
+                if end_md >= 0:
+                    candidates.append(end_md)
+                if end_code >= 0:
+                    candidates.append(end_code)
+                if candidates:
+                    end_pos = min(candidates)
+                    end_len = len("</|markdown|>") if self._buf.startswith("</|markdown|>", end_pos) else len("</|code|>")
+                    i = end_pos + end_len
+                    self._depth -= 1
+                else:
+                    # 没有结束标记 — 保留末尾以防截断
+                    keep = min(len(self._buf) - i, _BLOCK_LOOKBEHIND)
+                    i = len(self._buf) - keep
+                    break
+            else:
+                # 不在块内 — 找开始标记
+                m = _BLOCK_START_RE.search(self._buf, i)
+                if m:
+                    out.append(self._buf[i:m.start()])
+                    i = m.end()
+                    self._depth += 1
+                else:
+                    # 没有开始标记 — 安全地输出大部分，保留末尾防截断
+                    safe = len(self._buf) - _BLOCK_LOOKBEHIND
+                    if safe > i:
+                        out.append(self._buf[i:safe])
+                        i = safe
+                    break
+
+        self._buf = self._buf[i:]
+        return "".join(out)
+
+    def flush(self) -> str:
+        """清空缓冲区，返回剩余的未被标记包裹的文本。"""
+        result = self._buf
+        self._buf = ""
+        self._depth = 0
+        # 去掉可能残留的未闭合标记
+        cleaned = _BLOCK_START_RE.sub("", result)
+        return cleaned
+
+
+def _build_parts_with_blocks(
+    acc_text: str, sentences: list[str],
+) -> tuple[list[dict], dict[str, list[int]]]:
+    """从 LLM 输出文本中解析结构化块标记，构建 parts 和 content_type。
+
+    对话文本的句子作为 text parts，标记包裹的内容作为 markdown/code parts，
+    追加在句子之后。
+    """
+    parts: list[dict] = [{"content": s} for s in sentences]
+    content_type: dict[str, list[int]] = {"markdown": [], "code": []}
+
+    if "<|markdown|>" not in acc_text and "<|code|" not in acc_text:
+        return parts, content_type
+
+    for m in _BLOCK_PATTERN.finditer(acc_text):
+        md_content = m.group(1)
+        if md_content is not None:
+            content_type["markdown"].append(len(parts))
+            parts.append({"content": md_content.strip()})
+        else:
+            lang = m.group(2) or ""
+            code_content = m.group(3)
+            content_type["code"].append(len(parts))
+            p: dict = {"content": code_content.strip()}
+            if lang:
+                p["language"] = lang
+            parts.append(p)
+
+    return parts, content_type
 
 
 @dataclass
@@ -174,7 +281,13 @@ class CognitiveLoop:
                 user_message, user_name=user_name,
                 stt_emotion=stt_emotion, stt_events=stt_events,
             )
-        self._session.add_message("user", user_message)
+        self._session.add_message({
+            "id": new_message_id(),
+            "role": "user",
+            "parts": [{"content": user_message}],
+            "content_type": {},
+            "timestamp": datetime.datetime.now().astimezone().isoformat(),
+        })
         tool_defs = self._tool_executor.definitions() if self._tool_executor else None
         logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs or []))
 
@@ -186,6 +299,7 @@ class CognitiveLoop:
                 raw_tool_calls: list[dict] = []
                 speaking_started = False
                 all_sentences: list[str] = []
+                block_filter = _BlockFilter()
                 ttft_done = False
                 t_think_start = time.perf_counter()
 
@@ -204,12 +318,15 @@ class CognitiveLoop:
                                 logger.debug("TTFT: %d ms", ttft_ms)
                             acc_text += content
 
+                            # 过滤结构化块标记 — 代码和 markdown 不走 TTS
+                            clean = block_filter.feed(content)
+
                             # TTS 关闭时流式逐字发送；TTS 开启时不发（由 _start_tts_stream 发送完整句）
-                            if not self._tts:
-                                await self._output._broadcast("on_text_delta", content,
+                            if not self._tts and clean:
+                                await self._output._broadcast("on_text_delta", clean,
                                     capability=ChannelCapability.TEXT_DELTA)
 
-                            sentence = self._sentence_buf.feed(content)
+                            sentence = self._sentence_buf.feed(clean) if clean else None
                             if sentence:
                                 all_sentences.append(sentence)
                                 logger.info("分句 (%d 字符)", len(sentence))
@@ -238,7 +355,10 @@ class CognitiveLoop:
                 except asyncio.CancelledError:
                     raise
 
-                # Flush remaining text in sentence buffer
+                # Flush remaining text in sentence buffer + block filter
+                trailing = block_filter.flush()
+                if trailing:
+                    self._sentence_buf.feed(trailing)
                 remaining = self._sentence_buf.flush()
                 if remaining:
                     if _is_emoji_only(remaining):
@@ -348,7 +468,14 @@ class CognitiveLoop:
                         msg = _MessageObj(content=acc_text)
                         await self._output.send(msg)
                 if acc_text.strip():
-                    self._session.add_message("assistant", acc_text, sentences=all_sentences)
+                    parts, content_type = _build_parts_with_blocks(acc_text, all_sentences)
+                    self._session.add_message({
+                        "id": new_message_id(),
+                        "role": "assistant",
+                        "parts": parts,
+                        "content_type": content_type,
+                        "timestamp": datetime.datetime.now().astimezone().isoformat(),
+                    })
                     log_conversation("assistant", self._prompt._character.name, acc_text)
                     asyncio.create_task(self._after_response(user_message, acc_text),
                                        name="after-response")
