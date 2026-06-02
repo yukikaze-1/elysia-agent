@@ -396,5 +396,6 @@ class LongTermMemory:
             self._embed_task.cancel()
         if self._vector_db:
             await self._vector_db.close()
+        # 仅解引用，模型释放由 EmbeddingFactory.shutdown() 统一负责
         if self._embedding:
-            await self._embedding.close()
+            self._embedding = None

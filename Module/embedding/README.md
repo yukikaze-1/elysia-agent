@@ -9,7 +9,7 @@ embedding/
 ├── __init__.py            # 导出 EmbeddingBackend, EmbeddingFactory
 ├── __main__.py            # 真实 API 集成测试 (python -m Module.embedding)
 ├── protocol.py            # EmbeddingBackend ABC
-├── registry.py            # 后端注册表 + EmbeddingFactory.create() / from_config()
+├── registry.py            # 后端注册表 + EmbeddingFactory（内置缓存 + shutdown()）
 ├── huggingface.py         # HuggingFaceBackend — 本地 sentence-transformers
 ├── openai_compat.py       # OpenAICompatEmbeddingBackend — OpenAI/Cohere 兼容协议
 ├── config.py              # EmbeddingConfig — dataclass 配置
@@ -23,7 +23,7 @@ embedding/
 ```python
 from Module.embedding import EmbeddingFactory
 
-# 本地模型
+# 本地模型（首次调用创建并缓存，后续命中缓存）
 backend = EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")
 
 # 云端模型
@@ -35,7 +35,11 @@ vec = await backend.embed_query("今天天气怎么样？")
 # 批量文本 → 向量列表（用于插入）
 vecs = await backend.embed_documents(["文本1", "文本2", "文本3"])
 
-await backend.close()
+# 不再使用时：只解引用，不释放模型
+backend = None
+
+# 程序退出时：统一释放所有缓存的模型
+await EmbeddingFactory.shutdown()
 ```
 
 ## 接口
@@ -54,6 +58,23 @@ class EmbeddingBackend(ABC):
 - `embed_documents(texts)` — 批量文本 → 向量列表
 - `embed_query(text)` — 单条文本 → 单个向量（等价于 `embed_documents([text])[0]`）
 - `kwargs` — 透传参数（如 OpenAI 的 `dimensions` 参数可缩减维度）
+
+## Factory 缓存与生命周期
+
+`EmbeddingFactory.create()` 内部维护类级缓存 `_instances`，同一 `provider/model` 只创建一次。后续调用命中缓存直接返回，避免重复加载模型（本地模型 ~3GB）。
+
+```
+首次: Factory.create("huggingface/BAAI/bge-large-zh-v1.5") → 创建 → 缓存 → 返回
+后续: Factory.create("huggingface/BAAI/bge-large-zh-v1.5") → 命中缓存 → 返回同一实例
+```
+
+**调用方不应手动 `close()` 缓存的实例**（会破坏共享）。程序退出前调用 `Factory.shutdown()` 统一释放所有缓存模型：
+
+```python
+await EmbeddingFactory.shutdown()  # 释放所有缓存的模型 + CUDA cache 清理
+```
+
+`shutdown()` 幂等，多次调用安全。
 
 ## 支持的后端
 

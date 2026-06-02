@@ -27,8 +27,12 @@ _BACKENDS: dict[str, dict] = {
 class EmbeddingFactory:
     """静态工厂 — EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")。"""
 
-    @staticmethod
-    def create(model_id: str, **kwargs) -> "EmbeddingBackend":
+    _instances: dict[str, "EmbeddingBackend"] = {}
+
+    @classmethod
+    def create(cls, model_id: str, **kwargs) -> "EmbeddingBackend":
+        if model_id in cls._instances:
+            return cls._instances[model_id]
         if "/" not in model_id:
             raise ValueError(
                 f"Invalid model_id '{model_id}': expected 'provider/model-name' format"
@@ -49,13 +53,26 @@ class EmbeddingFactory:
         if provider == "huggingface":
             if "logger" not in kwargs:
                 kwargs["logger"] = get_caller_logger()
-            return HuggingFaceBackend(model_name=model, **kwargs)
+            instance = HuggingFaceBackend(model_name=model, **kwargs)
         elif provider == "openai":
             if "logger" not in kwargs:
                 kwargs["logger"] = get_caller_logger()
-            return OpenAICompatEmbeddingBackend(model=model, api_key=api_key, base_url=base_url, **kwargs)
+            instance = OpenAICompatEmbeddingBackend(model=model, api_key=api_key, base_url=base_url, **kwargs)
         else:
             raise NotImplementedError(f"{provider} backend is not yet implemented")
+
+        cls._instances[model_id] = instance
+        return instance
+
+    @classmethod
+    async def shutdown(cls) -> None:
+        """关闭所有缓存的 embedding 实例，释放显存/内存。幂等。"""
+        for name, instance in list(cls._instances.items()):
+            try:
+                await instance.close()
+            except Exception:
+                pass
+        cls._instances.clear()
 
     @classmethod
     def from_config(cls, model_id: str, config: "EmbeddingConfig", **overrides) -> "EmbeddingBackend":

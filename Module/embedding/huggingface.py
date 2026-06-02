@@ -118,4 +118,9 @@ class HuggingFaceBackend(EmbeddingBackend):
         return await asyncio.to_thread(self._embeddings.embed_query, text)
 
     async def close(self) -> None:
-        pass  # 本地模型，无连接管理
+        """释放模型，清理显存。"""
+        if hasattr(self, "_embeddings") and self._embeddings is not None:
+            del self._embeddings
+            self._embeddings = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

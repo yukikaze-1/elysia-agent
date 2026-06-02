@@ -10,7 +10,16 @@ from pathlib import Path
 
 import pytest
 
+from Module.embedding import EmbeddingFactory
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _cleanup_embedding():
+    """所有测试完成后清理共享的 embedding 缓存。"""
+    yield
+    EmbeddingFactory._instances.clear()
 
 
 # ============================================================================

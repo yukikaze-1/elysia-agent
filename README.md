@@ -2,7 +2,7 @@
 
 桌面 AI 伴侣，支持语音对话。核心功能完整，持续迭代优化中。
 
-> 最近: 2026-06-01 完成全面代码审查，分 3 阶段修复了 18 个问题，详见 `docs/review-2026-06-01.md`
+> 最近: 2026-06-02 完成工具系统插件化重构 + EmbeddingFactory 全局单例缓存，详见 `todo.md` 已完成归档
 
 ## 快速开始
 
@@ -40,7 +40,7 @@ python app.py --verbose
 ```
 L0  Module/        无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output
 L1  core/          认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
-L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegistry
+L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolManager (Plugin 架构)
 ```
 
 数据流：
@@ -93,6 +93,8 @@ L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolRegist
 | Live2D 虚拟角色渲染 (Cubism SDK for Web) | done |
 | 前端布局重构 (响应式三栏, Live2D 满高) | done |
 | 工具调用内联卡片 (展开/折叠, spinner→✓/✗) | done |
+| 工具系统 Plugin 架构 (SafetyPipeline 6 阶段中间件) | done |
+| EmbeddingFactory 全局单例缓存 (多实例共享模型) | done |
 | 统一命名移除 demo 前缀 (app.py, core/agent.py) | done |
 | 文档整理 (已完成记录分离到 docs/completed.md) | done |
 | PromptAssembler 复用 PromptManager | done |
@@ -138,7 +140,7 @@ Agent/
 │   ├── logger/           # 日志工厂
 │   ├── prompt/           # Jinja2 模板
 │   ├── schema/           # 共享数据模型
-│   ├── tool/             # 跨 Provider 工具系统 (172 tests)
+│   ├── tool/             # 工具框架 — ToolPlugin/SafetyPipeline/ToolManager (172 tests)
 │   ├── database/         # Milvus / MongoDB / GraphDB
 │   ├── input/            # AudioBuffer + WebSocket server
 │   └── bench/            # 延迟基准
@@ -196,12 +198,19 @@ Agent/
 │   ├── completed.md                  # 已完成开发记录
 │   ├── sync-lessons.md               # 文字/音频同步经验教训
 │   ├── ref_memory-architecture.md    # 记忆架构参考
-│   └── superpowers/plans/            # 实现计划
-│       ├── 2026-06-01-review-master-plan.md   # 总计划
-│       ├── 2026-06-01-review-fixes-phase-1.md # Phase 1 详细
-│       ├── 2026-06-01-review-fixes-phase-2.md # Phase 2 详细
-│       ├── 2026-06-01-review-fixes-phase-3.md # Phase 3 详细
-│       └── 2026-06-01-review-fixes-phase-4.md # Phase 4 详细
+│   └── superpowers/
+│       ├── specs/                    # 设计规范
+│       │   ├── 2026-06-02-tool-system-refactor-design.md
+│       │   └── 2026-06-02-embedding-singleton-design.md
+│       └── plans/                    # 实现计划
+│           ├── 2026-06-01-review-master-plan.md
+│           ├── 2026-06-01-review-fixes-phase-1.md
+│           ├── 2026-06-01-review-fixes-phase-2.md
+│           ├── 2026-06-01-review-fixes-phase-3.md
+│           ├── 2026-06-01-review-fixes-phase-4.md
+│           ├── 2026-06-02-tool-system-refactor.md
+│           ├── 2026-06-02-core-tools-bugfix.md
+│           └── 2026-06-02-embedding-singleton.md
 │
 └── log/                  # 日志 (gitignore)
 ```

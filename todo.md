@@ -60,3 +60,11 @@
 - `Module/input/server.py` (4)
 - `Module/output/console.py` (1)
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
+
+## 已完成 (2026-06-02)
+
+| 日期 | 内容 |
+|------|------|
+| 06-02 | **EmbeddingFactory 全局单例缓存** — 同一模型只加载一次，多个 LongTermMemory 实例共享。`test_phase2` 从 8-9 分钟 OOM → 46 秒全部通过。改动：`registry.py`（缓存 + shutdown）、`huggingface.py`（close 释放模型）、`long_term.py`（close 仅解引用）、`agent.py`（stop 调用 shutdown） |
+| 06-02 | **工具系统重构（方案 C）** — Plugin 架构，SafetyPipeline 6 阶段中间件，ToolExecutor Protocol，ToolManager。删除旧 ToolRegistry/@tool 装饰器。测试：`agent._tools` → `agent._tool_manager`，execute() 用 kwargs |
+| 06-02 | **core/tools/ bugfix (15/16)** — ReadFile 单文件打开 + 正确行数、网络能力检查、NETWORK capability 强制、HITL 广播 wiring、测试 mock HITL 超时等 |

@@ -28,6 +28,7 @@ from .idle_monitor import IdleMonitor
 from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
+from Module.embedding import EmbeddingFactory
 from .task_scheduler import TaskScheduler
 
 logger = logging.getLogger(__name__)
@@ -263,6 +264,12 @@ class Agent:
             await asyncio.wait_for(self._long_term.close(), timeout=3.0)
         except asyncio.TimeoutError:
             logger.warning("Long-term memory close timed out")
+
+        logger.debug("Shutting down embedding factory...")
+        try:
+            await asyncio.wait_for(EmbeddingFactory.shutdown(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Embedding factory shutdown timed out")
 
         logger.debug("Closing LLM client...")
         try:

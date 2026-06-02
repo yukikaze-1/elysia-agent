@@ -10,6 +10,13 @@ from .protocol import EmbeddingBackend
 from .registry import EmbeddingFactory
 
 
+@pytest.fixture(autouse=True)
+def _clear_factory_cache():
+    """每个测试前清空 Factory 缓存，确保测试独立性。"""
+    EmbeddingFactory._instances.clear()
+    yield
+
+
 # ============================================================
 # Protocol — ABC constraints
 # ============================================================
