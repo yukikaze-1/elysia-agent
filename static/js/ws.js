@@ -72,10 +72,14 @@ function scheduleReconnect() {
   }, delay);
 }
 
-/** 发送 JSON 消息 */
+/** 发送消息（自动选择 TEXT 或 BINARY 帧） */
 export function send(data) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(typeof data === 'string' ? data : JSON.stringify(data));
+    if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+      state.ws.send(data);
+    } else {
+      state.ws.send(typeof data === 'string' ? data : JSON.stringify(data));
+    }
   }
 }
 

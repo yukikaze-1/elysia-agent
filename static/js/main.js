@@ -10,7 +10,7 @@ import { bufferAudioChunk, finalizeStream } from './audio.js';
 import { toggleMic, stopMic } from './mic.js';
 import { setupSettings } from './settings.js';
 import { setupTools } from './tools.js';
-import { restoreChat, restoreFromServer } from './persistence.js';
+import { restoreChat, restoreFromServer, createCodeBlock, createMarkdownBubble } from './persistence.js';
 import { SEND_COOLDOWN_MS } from './config.js';
 
 /* ---- STT emoji mappings (与服务端同步) ---- */
@@ -85,6 +85,15 @@ function handleMessage(msg) {
     case 'command':
       if (msg.command === 'tool_approval') {
         showApprovalDialog(msg.params);
+      } else if (msg.command === 'block') {
+        const p = msg.params || {};
+        const chat = document.getElementById('chat');
+        if (p.block_type === 'code') {
+          chat.appendChild(createCodeBlock(p.content, p.language || ''));
+        } else if (p.block_type === 'markdown') {
+          chat.appendChild(createMarkdownBubble(p.content));
+        }
+        scrollDown();
       }
       break;
     case 'error': console.warn('Server:', msg.message); break;

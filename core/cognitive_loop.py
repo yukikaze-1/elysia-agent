@@ -480,6 +480,21 @@ class CognitiveLoop:
                     asyncio.create_task(self._after_response(user_message, acc_text),
                                        name="after-response")
 
+                    # 推送结构化块到前端（不走 TTS，单独渲染）
+                    for idx in content_type.get("markdown", []):
+                        if idx < len(parts):
+                            await self._output.command("block", params={
+                                "block_type": "markdown",
+                                "content": parts[idx]["content"],
+                            })
+                    for idx in content_type.get("code", []):
+                        if idx < len(parts):
+                            await self._output.command("block", params={
+                                "block_type": "code",
+                                "content": parts[idx]["content"],
+                                "language": parts[idx].get("language", ""),
+                            })
+
                 await self._transition_idle()
                 return
 

@@ -4,7 +4,7 @@ import { esc, createAssistantRow } from './chat.js';
 
 /* ---- 代码块 / Markdown 渲染辅助 ---- */
 
-function createCodeBlock(content, language) {
+export function createCodeBlock(content, language) {
   const row = document.createElement('div');
   row.className = 'msg-row assistant';
 
@@ -41,7 +41,7 @@ function createCodeBlock(content, language) {
   return row;
 }
 
-function createMarkdownBubble(content) {
+export function createMarkdownBubble(content) {
   const row = document.createElement('div');
   row.className = 'msg-row assistant';
 
@@ -149,33 +149,48 @@ export function restoreFromServer(messages) {
     const parts = m.parts || [];
     const ct = m.content_type || {};
 
-    for (let i = 0; i < parts.length; i++) {
-      const p = parts[i];
-      if (!p.content) continue;
-
-      if (m.role === 'user') {
+    if (m.role === 'user') {
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i];
+        if (!p.content) continue;
         const row = document.createElement('div');
         row.className = 'msg-row user';
         row.innerHTML = `<div class="msg-bubble">${esc(p.content)}</div><div class="msg-avatar">😎</div>`;
         chat.appendChild(row);
         state.messages.push({ role: 'user', content: p.content });
-      } else if (ct.code && ct.code.includes(i)) {
-        state.lastRole = 'assistant';
-        const row = createCodeBlock(p.content, p.language || '');
-        chat.appendChild(row);
-        state.messages.push({ role: 'assistant', content: p.content });
-      } else if (ct.markdown && ct.markdown.includes(i)) {
-        state.lastRole = 'assistant';
-        const row = createMarkdownBubble(p.content);
-        chat.appendChild(row);
-        state.messages.push({ role: 'assistant', content: p.content });
-      } else {
-        state.lastRole = 'assistant';
-        const { row, textSpan } = createAssistantRow();
-        textSpan.textContent = p.content;
-        chat.appendChild(row);
-        state.messages.push({ role: 'assistant', content: p.content });
       }
+    } else {
+      let textBuf = [];
+      const flushText = () => {
+        if (textBuf.length > 0) {
+          state.lastRole = 'assistant';
+          const { row, textSpan } = createAssistantRow();
+          textSpan.textContent = textBuf.join('');
+          chat.appendChild(row);
+          state.messages.push({ role: 'assistant', content: textBuf.join('') });
+          textBuf = [];
+        }
+      };
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i];
+        if (!p.content) continue;
+        if (ct.code && ct.code.includes(i)) {
+          flushText();
+          state.lastRole = 'assistant';
+          const row = createCodeBlock(p.content, p.language || '');
+          chat.appendChild(row);
+          state.messages.push({ role: 'assistant', content: p.content });
+        } else if (ct.markdown && ct.markdown.includes(i)) {
+          flushText();
+          state.lastRole = 'assistant';
+          const row = createMarkdownBubble(p.content);
+          chat.appendChild(row);
+          state.messages.push({ role: 'assistant', content: p.content });
+        } else {
+          textBuf.push(p.content);
+        }
+      }
+      flushText();
     }
   }
 
