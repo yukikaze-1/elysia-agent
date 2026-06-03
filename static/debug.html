@@ -541,7 +541,8 @@ function renderSessionPanel(status) {
   const s = status.session || {};
   const sessions = _sessionData;
   const rows = sessions.map(ses =>
-    `<div class="db-item">
+    `<div class="db-item" style="align-items:center;">
+      <input type="checkbox" class="session-check" value="${esc(ses.session_id)}" style="flex-shrink:0;">
       <span class="text">
         <b>${esc(ses.session_id)}</b>
         <span style="color:var(--muted);font-size:11px;"> — ${ses.message_count} 条消息</span>
@@ -561,6 +562,17 @@ function renderSessionPanel(status) {
     </div>
     <div style="max-height:400px;overflow-y:auto;">
       ${rows || '<div class="empty">暂无会话</div>'}
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+      <span style="font-size:11px;color:var(--muted);">
+        <a href="#" onclick="event.preventDefault();document.querySelectorAll('.session-check').forEach(c=>c.checked=true);" style="color:var(--accent);font-size:11px;">全选</a>
+        &nbsp;/&nbsp;
+        <a href="#" onclick="event.preventDefault();document.querySelectorAll('.session-check').forEach(c=>c.checked=false);" style="color:var(--accent);font-size:11px;">取消</a>
+      </span>
+      <span>
+        <button class="db-btn danger" onclick="deleteSelectedSessions()">删除选中</button>
+        <button class="db-btn danger" onclick="confirmClearSessions()">清空全部</button>
+      </span>
     </div>
     <div id="session-detail" style="margin-top:8px;"></div>
   </div>`;
@@ -633,7 +645,9 @@ async function viewSession(sid) {
           const parts = m.parts || [];
           const content = parts.map(p => p.content || '').join('');
           const text = content || m.content || '';
+          const ts = m.timestamp ? m.timestamp.slice(0, 19).replace('T', ' ') : '';
           return `<div class="msg">
+            ${ts ? `<span style="color:var(--muted);font-size:10px;margin-right:4px;">${esc(ts)}</span>` : ''}
             <span class="role-tag ${esc(m.role||'?')}">${esc(m.role||'?')}</span>
             ${expandable(text, 120)}
           </div>`;
@@ -642,6 +656,25 @@ async function viewSession(sid) {
   } catch (e) {
     document.getElementById('session-detail').innerHTML = '<span class="fail">加载失败</span>';
   }
+}
+
+async function deleteSelectedSessions() {
+  const checked = document.querySelectorAll('.session-check:checked');
+  if (checked.length === 0) { alert('请先选择要删除的会话'); return; }
+  document.getElementById('confirm-title').textContent = '删除选中会话';
+  document.getElementById('confirm-msg').textContent = `确认删除 ${checked.length} 个会话吗？此操作不可撤销。`;
+  document.getElementById('confirm-yes-btn').onclick = async () => {
+    closeConfirmModal();
+    let deleted = 0;
+    for (const cb of checked) {
+      try {
+        await fetch('/debug/api/sessions/' + encodeURIComponent(cb.value), { method: 'DELETE' });
+        deleted++;
+      } catch (e) { /* continue */ }
+    }
+    loadDbPanel();
+  };
+  document.getElementById('confirm-modal').classList.add('show');
 }
 
 async function deleteSession(sid) {
@@ -653,6 +686,19 @@ async function deleteSession(sid) {
       await fetch('/debug/api/sessions/' + encodeURIComponent(sid), { method: 'DELETE' });
       loadDbPanel();
     } catch (e) { alert('删除失败: ' + e.message); }
+  };
+  document.getElementById('confirm-modal').classList.add('show');
+}
+
+function confirmClearSessions() {
+  document.getElementById('confirm-title').textContent = '清空全部会话';
+  document.getElementById('confirm-msg').textContent = '将删除 MongoDB 中所有 sessions。当前内存中的会话也会清空。此操作不可撤销。';
+  document.getElementById('confirm-yes-btn').onclick = async () => {
+    closeConfirmModal();
+    try {
+      await fetch('/debug/api/sessions', { method: 'DELETE' });
+      loadDbPanel();
+    } catch (e) { alert('清空失败: ' + e.message); }
   };
   document.getElementById('confirm-modal').classList.add('show');
 }

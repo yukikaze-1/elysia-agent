@@ -243,7 +243,7 @@ def create_app(
             })
         try:
             docs = await session._db.find(
-                "sessions", {}, sort=[("updated_at", -1)], limit=50)
+                "sessions", {}, sort=[("updated_at", -1)], limit=500)
             return web.json_response({
                 "sessions": [
                     {
@@ -303,6 +303,21 @@ def create_app(
             return web.json_response(
                 {"error": f"删除失败: {e}"}, status=500)
     app.router.add_delete("/debug/api/sessions/{session_id}", session_delete_handler)
+
+    async def sessions_clear_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        session = agent._session
+        if session._db is None:
+            return web.json_response(
+                {"error": "MongoDB 不可用"}, status=503)
+        try:
+            deleted = await session._db.delete_many("sessions", {})
+            session._messages.clear()
+            return web.json_response({"ok": True, "deleted": deleted})
+        except Exception as e:
+            return web.json_response(
+                {"error": f"清空失败: {e}"}, status=500)
+    app.router.add_delete("/debug/api/sessions", sessions_clear_handler)
 
     return app
 
