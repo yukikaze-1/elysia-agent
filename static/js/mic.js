@@ -43,3 +43,14 @@ export function stopMic() {
   if (state.micStream) { state.micStream.getTracks().forEach((t) => t.stop()); state.micStream = null; }
   document.getElementById('mic-btn').classList.remove('active');
 }
+
+export function flashWakeIndicator() {
+  const btn = document.getElementById('mic-btn');
+  if (!btn) return;
+  btn.style.boxShadow = '0 0 12px 3px rgba(99, 200, 255, 0.9)';
+  btn.style.transform = 'scale(1.15)';
+  setTimeout(() => {
+    btn.style.boxShadow = '';
+    btn.style.transform = '';
+  }, 800);
+}

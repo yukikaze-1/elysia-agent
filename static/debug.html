@@ -79,6 +79,66 @@ h1 { font-size: 18px; margin-bottom: 4px; }
   body { padding: 10px; font-size: 12px; }
   .header { flex-direction: column; gap: 8px; }
 }
+/* Tab 导航 */
+.tabs { display: flex; gap: 2px; margin-bottom: 16px; }
+.tab-btn {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--muted); padding: 6px 16px; border-radius: var(--radius) var(--radius) 0 0;
+  cursor: pointer; font-size: 13px; transition: color 0.15s;
+}
+.tab-btn.active { color: var(--text); border-bottom-color: var(--surface); font-weight: 600; }
+.tab-btn:hover { color: var(--text); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+/* 数据库面板 */
+.db-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.db-panel-full { grid-template-columns: 1fr; }
+@media (max-width: 900px) { .db-panel { grid-template-columns: 1fr; } }
+.db-btn {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); padding: 4px 10px; border-radius: 4px;
+  cursor: pointer; font-size: 12px; margin-right: 4px;
+}
+.db-btn:hover { border-color: var(--accent); }
+.db-btn.danger { color: var(--red); }
+.db-btn.danger:hover { background: var(--red); color: #fff; border-color: var(--red); }
+.db-stat { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.db-stat b { color: var(--text); }
+.db-search { display: flex; gap: 6px; margin-bottom: 10px; }
+.db-search input, .db-search select {
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: 12px;
+}
+.db-search input { flex: 1; }
+.db-search select { min-width: 80px; }
+.db-item {
+  padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 12px; display: flex; align-items: flex-start; gap: 6px;
+}
+.db-item:last-child { border-bottom: none; }
+.db-item .text { flex: 1; word-break: break-all; }
+.db-item .meta { flex-shrink: 0; display: flex; gap: 4px; align-items: center; }
+.db-item .delete-btn {
+  color: var(--red); cursor: pointer; font-size: 14px; line-height: 1;
+  padding: 0 4px; opacity: 0.5; transition: opacity 0.15s;
+}
+.db-item .delete-btn:hover { opacity: 1; }
+/* Modal */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  z-index: 100; justify-content: center; align-items: center;
+}
+.modal-overlay.show { display: flex; }
+.modal-box {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px; max-width: 400px; width: 90%;
+}
+.modal-box h3 { margin-bottom: 10px; }
+.modal-box p { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+.modal-box .actions { display: flex; gap: 8px; justify-content: flex-end; }
+/* Session detail */
+.session-detail { margin-top: 8px; padding: 8px; background: var(--bg); border-radius: 4px; }
+.session-detail .msg { padding: 2px 0; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -96,7 +156,55 @@ h1 { font-size: 18px; margin-bottom: 4px; }
   </div>
 </div>
 
-<div class="grid" id="grid"></div>
+<div class="tabs">
+  <button class="tab-btn active" data-tab="overview">概览</button>
+  <button class="tab-btn" data-tab="database">数据库</button>
+</div>
+
+<div class="tab-content active" id="tab-overview">
+  <div class="grid" id="grid"></div>
+</div>
+
+<div class="tab-content" id="tab-database">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div class="sub" id="db-updated">点击「刷新」加载数据</div>
+    <button class="db-btn" id="db-refresh-btn" style="font-weight:600;">刷新</button>
+  </div>
+  <div class="db-panel" id="db-panels"></div>
+
+  <!-- 新增条目 Modal -->
+  <div class="modal-overlay" id="add-entry-modal">
+    <div class="modal-box">
+      <h3>新增 Long-Term Memory 条目</h3>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <input id="add-text" placeholder="记忆内容" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12px;">
+        <div style="display:flex;gap:8px;">
+          <select id="add-type" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;">
+            <option value="fact">fact</option><option value="plan">plan</option>
+            <option value="preference">preference</option><option value="note">note</option>
+          </select>
+          <input id="add-poignancy" type="number" min="1" max="10" value="5" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;width:60px;">
+        </div>
+      </div>
+      <div class="actions" style="margin-top:12px;">
+        <button class="db-btn" onclick="closeAddModal()">取消</button>
+        <button class="db-btn" id="add-submit-btn" style="background:var(--accent);color:#fff;">新增</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 确认 Modal -->
+  <div class="modal-overlay" id="confirm-modal">
+    <div class="modal-box">
+      <h3 id="confirm-title">确认操作</h3>
+      <p id="confirm-msg"></p>
+      <div class="actions">
+        <button class="db-btn" onclick="closeConfirmModal()">取消</button>
+        <button class="db-btn danger" id="confirm-yes-btn">确认</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 const POLL_MS = 2000;
@@ -331,6 +439,225 @@ document.getElementById('copy-btn').onclick = async () => {
     setTimeout(() => { btn.textContent = '复制 JSON'; }, 2000);
   } catch {}
 };
+
+// ---- Tab 切换 ----
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'database') loadDbPanel();
+  };
+});
+
+// ---- 数据库面板 ----
+
+async function loadDbPanel() {
+  document.getElementById('db-updated').textContent = '加载中...';
+  try {
+    const [status, ltm, sessions] = await Promise.all([
+      fetch('/debug/api/db-status').then(r => r.json()),
+      fetch('/debug/api/ltm?limit=200').then(r => r.json()),
+      fetch('/debug/api/sessions').then(r => r.json()),
+    ]);
+    document.getElementById('db-updated').textContent = '最后刷新: ' + new Date().toLocaleTimeString();
+    renderDbPanels(status, ltm, sessions);
+  } catch (e) {
+    document.getElementById('db-updated').textContent = '加载失败: ' + e.message;
+  }
+}
+
+let _ltmData = { entries: [], total: 0 };
+let _sessionData = [];
+
+function renderDbPanels(status, ltm, sessions) {
+  _ltmData = ltm;
+  _sessionData = sessions.sessions || [];
+
+  const ltmPanel = renderLtmPanel(status);
+  const sessionPanel = renderSessionPanel(status);
+  document.getElementById('db-panels').innerHTML = ltmPanel + sessionPanel;
+
+  // 绑定搜索事件
+  document.getElementById('ltm-search')?.addEventListener('input', () => {
+    renderDbPanels(status, filterLtm(), sessions);
+  });
+  document.getElementById('ltm-type-filter')?.addEventListener('change', () => {
+    renderDbPanels(status, filterLtm(), sessions);
+  });
+}
+
+function filterLtm() {
+  const search = (document.getElementById('ltm-search')?.value || '').trim().toLowerCase();
+  const type = document.getElementById('ltm-type-filter')?.value || '';
+  let entries = _ltmData.entries || [];
+  if (search) entries = entries.filter(e => e.text.toLowerCase().includes(search));
+  if (type) entries = entries.filter(e => e.memory_type === type);
+  return { entries, total: entries.length };
+}
+
+function renderLtmPanel(status) {
+  const s = status.ltm || {};
+  const data = _ltmData;
+  const rows = (data.entries || []).map(e =>
+    `<div class="db-item">
+      <span class="text">${expandable(e.text, 80)}</span>
+      <span class="meta">
+        <span class="type-tag">${esc(e.memory_type||'?')}</span>
+        <span style="font-size:10px;color:var(--muted)">P${e.poignancy||0}</span>
+        <span class="delete-btn" title="删除" onclick="deleteLtmEntry('${esc(e.id)}')">✕</span>
+      </span>
+    </div>`
+  ).join('');
+
+  return `<div class="card">
+    <h2>Long-Term Memory (Milvus)</h2>
+    <div class="db-stat">
+      条目: <b>${data.total}</b> &nbsp; Milvus: ${ok(s.milvus_ok)} &nbsp; dirty: <b>${s.dirty_count||0}</b>
+    </div>
+    <div class="db-search">
+      <input id="ltm-search" placeholder="搜索记忆内容...">
+      <select id="ltm-type-filter">
+        <option value="">全部</option>
+        <option value="fact">fact</option><option value="plan">plan</option>
+        <option value="preference">preference</option><option value="note">note</option>
+      </select>
+    </div>
+    <div style="max-height:400px;overflow-y:auto;margin-bottom:8px;">
+      ${rows || '<div class="empty">暂无条目</div>'}
+    </div>
+    <div style="display:flex;justify-content:space-between;">
+      <span style="font-size:11px;color:var(--muted)">${data.total > 50 ? '显示前200条' : ''}</span>
+      <span>
+        <button class="db-btn" onclick="showAddModal()">新增</button>
+        <button class="db-btn danger" onclick="confirmClearLtm()">清空全部</button>
+      </span>
+    </div>
+  </div>`;
+}
+
+function renderSessionPanel(status) {
+  const s = status.session || {};
+  const sessions = _sessionData;
+  const rows = sessions.map(ses =>
+    `<div class="db-item">
+      <span class="text">
+        <b>${esc(ses.session_id)}</b>
+        <span style="color:var(--muted);font-size:11px;"> — ${ses.message_count} 条消息</span>
+        ${ses.updated_at ? `<span style="color:var(--muted);font-size:10px;"> ${ses.updated_at.slice(0,16)}</span>` : ''}
+      </span>
+      <span class="meta">
+        <button class="db-btn" onclick="viewSession('${esc(ses.session_id)}')" style="font-size:10px;padding:2px 6px;">查看</button>
+        <span class="delete-btn" title="删除" onclick="deleteSession('${esc(ses.session_id)}')">✕</span>
+      </span>
+    </div>`
+  ).join('');
+
+  return `<div class="card">
+    <h2>Session 管理 (MongoDB)</h2>
+    <div class="db-stat">
+      会话数: <b>${sessions.length}</b> &nbsp; MongoDB: ${ok(s.mongodb_ok)} &nbsp; 当前: <b>${esc(s.current_id||'—')}</b>
+    </div>
+    <div style="max-height:400px;overflow-y:auto;">
+      ${rows || '<div class="empty">暂无会话</div>'}
+    </div>
+    <div id="session-detail" style="margin-top:8px;"></div>
+  </div>`;
+}
+
+// ---- CRUD 操作 ----
+
+async function deleteLtmEntry(id) {
+  try {
+    const r = await fetch('/debug/api/ltm/' + encodeURIComponent(id), { method: 'DELETE' });
+    const d = await r.json();
+    if (d.ok) loadDbPanel();
+    else alert('删除失败');
+  } catch (e) { alert('删除失败: ' + e.message); }
+}
+
+function confirmClearLtm() {
+  document.getElementById('confirm-title').textContent = '清空全部记忆';
+  document.getElementById('confirm-msg').textContent = '将删除所有 Long-Term Memory 条目并在 Milvus 中重建 collection。此操作不可撤销。';
+  document.getElementById('confirm-yes-btn').onclick = async () => {
+    closeConfirmModal();
+    try {
+      await fetch('/debug/api/ltm', { method: 'DELETE' });
+      loadDbPanel();
+    } catch (e) { alert('清空失败: ' + e.message); }
+  };
+  document.getElementById('confirm-modal').classList.add('show');
+}
+
+function closeConfirmModal() {
+  document.getElementById('confirm-modal').classList.remove('show');
+}
+
+function showAddModal() {
+  document.getElementById('add-entry-modal').classList.add('show');
+}
+
+function closeAddModal() {
+  document.getElementById('add-entry-modal').classList.remove('show');
+}
+
+document.getElementById('add-submit-btn').onclick = async () => {
+  const text = document.getElementById('add-text').value.trim();
+  if (!text) { alert('请输入内容'); return; }
+  const memory_type = document.getElementById('add-type').value;
+  const poignancy = parseInt(document.getElementById('add-poignancy').value) || 5;
+  try {
+    const r = await fetch('/debug/api/ltm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, memory_type, poignancy }),
+    });
+    const d = await r.json();
+    if (d.ok) { closeAddModal(); document.getElementById('add-text').value = ''; loadDbPanel(); }
+    else alert('新增失败: ' + (d.error || 'unknown'));
+  } catch (e) { alert('新增失败: ' + e.message); }
+};
+
+async function viewSession(sid) {
+  document.getElementById('session-detail').innerHTML = '<span style="color:var(--muted)">加载中...</span>';
+  try {
+    const r = await fetch('/debug/api/sessions/' + encodeURIComponent(sid));
+    const ses = await r.json();
+    if (ses.error) { document.getElementById('session-detail').innerHTML = `<span class="fail">${esc(ses.error)}</span>`; return; }
+    const msgs = ses.messages || [];
+    document.getElementById('session-detail').innerHTML =
+      `<div class="session-detail">
+        <div style="font-weight:600;margin-bottom:6px;">${esc(sid)} (${msgs.length} 条消息)</div>
+        ${msgs.map((m, i) => {
+          const parts = m.parts || [];
+          const content = parts.map(p => p.content || '').join('');
+          const text = content || m.content || '';
+          return `<div class="msg">
+            <span class="role-tag ${esc(m.role||'?')}">${esc(m.role||'?')}</span>
+            ${expandable(text, 120)}
+          </div>`;
+        }).join('')}
+      </div>`;
+  } catch (e) {
+    document.getElementById('session-detail').innerHTML = '<span class="fail">加载失败</span>';
+  }
+}
+
+async function deleteSession(sid) {
+  document.getElementById('confirm-title').textContent = '删除会话';
+  document.getElementById('confirm-msg').textContent = `确认删除会话 "${sid}" 吗？此操作不可撤销。`;
+  document.getElementById('confirm-yes-btn').onclick = async () => {
+    closeConfirmModal();
+    try {
+      await fetch('/debug/api/sessions/' + encodeURIComponent(sid), { method: 'DELETE' });
+      loadDbPanel();
+    } catch (e) { alert('删除失败: ' + e.message); }
+  };
+  document.getElementById('confirm-modal').classList.add('show');
+}
+
+document.getElementById('db-refresh-btn').onclick = loadDbPanel;
 </script>
 </body>
 </html>

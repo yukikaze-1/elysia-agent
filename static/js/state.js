@@ -36,6 +36,9 @@ class AppState {
 
     // 内存消息数组 (增量保存用)
     this.messages = [];
+
+    // 唤醒词 (默认关闭)
+    this.wakeEnabled = localStorage.getItem(SETTINGS_STORAGE_KEYS.WAKE) === 'on';
   }
 
   /** WebSocket 重连时重置所有运行时状态 */

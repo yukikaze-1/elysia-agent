@@ -21,3 +21,6 @@ tts:
 
 stt:
   enabled: true
+
+wake_word:
+  enabled: false

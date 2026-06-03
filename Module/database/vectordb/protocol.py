@@ -65,4 +65,9 @@ class VectorDBBackend(ABC):
         ...
 
     @abstractmethod
+    async def delete(self, collection: str, ids: list[int]) -> int:
+        """按主键删除向量。返回删除数量。"""
+        ...
+
+    @abstractmethod
     async def close(self) -> None: ...

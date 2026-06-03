@@ -6,6 +6,7 @@ Run: python -m pytest core/test_phase3.py -v --asyncio-mode=auto
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 from pydantic import BaseModel, Field
 
@@ -1013,25 +1014,6 @@ class TestMessageObj:
 
 class TestAgentLifecycle:
     @pytest.mark.asyncio
-    async def test_seed_memories(self):
-        """_seed_memories writes 5 entries via normal insert() path."""
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.agent import Agent
-
-        agent = Agent(config=AppConfig())
-        agent._llm._backend = FakeLLMBackend(response="ok")
-        # Skip embedding load in test — seed uses insert() which awaits it
-        agent._long_term._embedding_tried = True
-        await agent._seed_memories()
-        assert agent._long_term.count == 5
-        for e in agent._long_term._entries:
-            assert e.id, "Every entry should have an id"
-            assert e.memory_type != "note" or e.metadata, (
-                "Entries should have metadata from seed data"
-            )
-
-    @pytest.mark.asyncio
     async def test_register_tools(self):
         """Tools load via ToolManager.load_all with correct names."""
         import os as _os
@@ -1443,13 +1425,156 @@ class TestDebugInfo:
         await agent.start()
 
         info = await collect(agent)
-        # 5 seeded memories
-        assert info.lt_count >= 5
+        assert info.lt_count == 0
         await agent.stop()
 
 
 # ============================================================================
-# 17. ToolManager (Module.tool) — integration smoke tests
+# 17. 数据库调试 API
+# ============================================================================
+
+class TestDebugDbApi:
+    @pytest.mark.asyncio
+    async def test_db_status_endpoint(self):
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from Module.input.server import create_app
+        from core.agent import Agent
+
+        agent = Agent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+
+        app = create_app(agent, serve_static=False)
+        async with aiohttp.test_utils.TestServer(app) as srv:
+            async with aiohttp.test_utils.TestClient(srv) as client:
+                resp = await client.get("/debug/api/db-status")
+                assert resp.status == 200
+                data = await resp.json()
+                assert "ltm" in data
+                assert "session" in data
+                assert isinstance(data["ltm"]["count"], int)
+
+        await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_ltm_list_and_insert(self):
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from Module.input.server import create_app
+        from core.agent import Agent
+
+        agent = Agent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+
+        app = create_app(agent, serve_static=False)
+        async with aiohttp.test_utils.TestServer(app) as srv:
+            async with aiohttp.test_utils.TestClient(srv) as client:
+                resp = await client.get("/debug/api/ltm")
+                data = await resp.json()
+                assert data["total"] == 0
+
+                resp = await client.post("/debug/api/ltm", json={
+                    "text": "测试记忆内容", "memory_type": "fact", "poignancy": 7,
+                })
+                assert resp.status == 200
+
+                resp = await client.get("/debug/api/ltm")
+                data = await resp.json()
+                assert data["total"] == 1
+                assert data["entries"][0]["text"] == "测试记忆内容"
+                entry_id = data["entries"][0]["id"]
+
+                resp = await client.delete(f"/debug/api/ltm/{entry_id}")
+                assert resp.status == 200
+
+                resp = await client.get("/debug/api/ltm")
+                data = await resp.json()
+                assert data["total"] == 0
+
+        await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_ltm_clear_all(self):
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from Module.input.server import create_app
+        from core.agent import Agent
+
+        agent = Agent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+
+        await agent._long_term.insert("entry 1", type="note")
+        await agent._long_term.insert("entry 2", type="note")
+        assert agent._long_term.count == 2
+
+        app = create_app(agent, serve_static=False)
+        async with aiohttp.test_utils.TestServer(app) as srv:
+            async with aiohttp.test_utils.TestClient(srv) as client:
+                resp = await client.delete("/debug/api/ltm")
+                data = await resp.json()
+                assert data["ok"] is True
+                assert data["deleted"] == 2
+                assert agent._long_term.count == 0
+
+        await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_session_list_endpoint(self):
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from Module.input.server import create_app
+        from core.agent import Agent
+
+        agent = Agent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+
+        app = create_app(agent, serve_static=False)
+        async with aiohttp.test_utils.TestServer(app) as srv:
+            async with aiohttp.test_utils.TestClient(srv) as client:
+                resp = await client.get("/debug/api/sessions")
+                assert resp.status == 200
+                data = await resp.json()
+                assert "sessions" in data
+
+        await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_session_detail_endpoint(self):
+        import os as _os
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        from Module.input.server import create_app
+        from core.agent import Agent
+
+        agent = Agent(config=AppConfig())
+        agent._llm._backend = FakeLLMBackend(response="ok")
+        await agent.start()
+
+        # 先存一条消息让它有东西
+        agent._session.add_message({
+            "id": "msg-test", "role": "user", "parts": [{"content": "hello"}],
+            "content_type": {}, "timestamp": "2026-06-04T00:00:00",
+        })
+        if agent._session._db:
+            await agent._session.save()
+
+        app = create_app(agent, serve_static=False)
+        async with aiohttp.test_utils.TestServer(app) as srv:
+            async with aiohttp.test_utils.TestClient(srv) as client:
+                resp = await client.get(
+                    "/debug/api/sessions/" + agent._session._session_id)
+                assert resp.status == 200
+                data = await resp.json()
+                assert "messages" in data
+
+        await agent.stop()
+
+
+# ============================================================================
+# 18. ToolManager (Module.tool) — integration smoke tests
 # ============================================================================
 
 # Helper to create a minimal ToolManager with an echo plugin

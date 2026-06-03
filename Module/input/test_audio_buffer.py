@@ -388,3 +388,70 @@ class TestResetDeafen:
         buf.reset()
         assert buf._deafen_until == deafen_before
         assert buf._deafen_until > 0
+
+
+# ============================================================
+# Wake word gate tests
+# ============================================================
+
+class TestWakeWordGate:
+    @pytest.mark.asyncio
+    async def test_wake_words_none_still_works(self):
+        """wake_words=None: behavior unchanged (backward compat)."""
+        stt_calls: list[str] = []
+
+        async def fake_stt(audio: bytes) -> str:
+            stt_calls.append("called")
+            return "text"
+
+        buf = AudioBuffer(
+            stt_transcribe=fake_stt,
+            silence_duration=0.1,
+            wake_words=None,
+        )
+        for _ in range(30):
+            await buf.feed(_loud(1600))
+        for _ in range(3):
+            await buf.feed(_sil(1600))
+        await asyncio.sleep(0.15)
+        await buf.feed(_sil(1600))
+
+        assert len(stt_calls) >= 1
+
+    @pytest.mark.asyncio
+    async def test_wake_words_not_installed_passthrough(self):
+        """When openwakeword not installed, gate is open (passthrough)."""
+        stt_calls: list[str] = []
+
+        async def fake_stt(audio: bytes) -> str:
+            stt_calls.append("text")
+            return "recognized"
+
+        buf = AudioBuffer(
+            stt_transcribe=fake_stt,
+            silence_duration=0.1,
+            wake_words=["Elysia"],
+        )
+        for _ in range(30):
+            await buf.feed(_loud(1600))
+        for _ in range(3):
+            await buf.feed(_sil(1600))
+        await asyncio.sleep(0.15)
+        await buf.feed(_sil(1600))
+
+        assert len(stt_calls) >= 1  # gate open, passthrough works
+
+    @pytest.mark.asyncio
+    async def test_init_default_wake_words_none(self):
+        """Default constructor has wake_words=None, state=None."""
+        buf = AudioBuffer()
+        assert buf._wake_state is None
+        assert buf._wake_detector is None
+
+    @pytest.mark.asyncio
+    async def test_wake_state_passthrough_when_disabled(self):
+        """When models unavailable, _wake_state is None (passthrough)."""
+        buf = AudioBuffer(wake_words=["test"])
+        assert buf._wake_detector is not None
+        assert buf._wake_detector.enabled is False
+        assert buf._wake_state is None

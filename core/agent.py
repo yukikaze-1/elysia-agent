@@ -154,7 +154,6 @@ class Agent:
             self._session.connect_db(),
             self._long_term.connect(),
         )
-        await self._seed_memories()
         if mongo_ok:
             await self._session.load()
 
@@ -346,6 +345,10 @@ class Agent:
 
     # ---- REPL ----
 
+    def get_wake_words(self) -> list[str]:
+        """Return wake words from character config, for AudioBuffer in server mode."""
+        return getattr(self._character, 'wake_words', [])
+
     async def run_server(self) -> None:
         """Run agent in WebSocket server mode. Blocks until Ctrl+C or shutdown.
 
@@ -360,6 +363,7 @@ class Agent:
             host = self._config.server.host
             port = self._config.server.port
             stt_enabled = self._config.stt.enabled
+            wake_word_enabled = self._config.wake_word.enabled
 
             stt_transcribe = None
             stt_emotion_state: dict | None = None
@@ -382,7 +386,8 @@ class Agent:
                     logger.info("STT not available — text-only mode")
 
             app = create_app(self, stt_transcribe=stt_transcribe, serve_static=True,
-                            stt_emotion_state=stt_emotion_state)
+                            stt_emotion_state=stt_emotion_state,
+                            wake_word_enabled=wake_word_enabled)
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, host, port)
@@ -530,18 +535,4 @@ class Agent:
                             type(ch).__name__, state, exc_info=True,
                         )
 
-    # ---- Internal: seed data + tools ----
-
-    async def _seed_memories(self) -> None:
-        """Seed long-term memory with demo entries via normal insert() path."""
-        entries = [
-            ("上周和妖梦约定周六去爬香山", {"memory_type": "plan", "poignancy": 7}),
-            ("妖梦最喜欢的颜色是蓝色", {"memory_type": "preference", "poignancy": 8}),
-            ("昨天妖梦说他最近在学习 Rust 语言", {"memory_type": "fact", "poignancy": 6}),
-            ("Elysia 这个名字来源于希腊神话的极乐净土", {"memory_type": "knowledge", "poignancy": 5}),
-            ("上次推荐的电影《星际穿越》妖梦还没看完", {"memory_type": "interaction", "poignancy": 4}),
-        ]
-        for text, meta in entries:
-            await self._long_term.insert(text, **meta)
-
-    # Tool registration is now done via ToolManager.load_all() in start()
+    # Tool registration is done via ToolManager.load_all() in start()

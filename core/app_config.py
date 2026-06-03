@@ -42,6 +42,11 @@ class STTConfig:
 
 
 @dataclass
+class WakeWordConfig:
+    enabled: bool = ConfigField(default=False)
+
+
+@dataclass
 class AppConfig:
     agent: AgentConfig = ConfigField(default_factory=AgentConfig)
     llm: LLMConfig = ConfigField(default_factory=LLMConfig)
@@ -49,3 +54,4 @@ class AppConfig:
     server: ServerConfig = ConfigField(default_factory=ServerConfig)
     tts: TTSConfig = ConfigField(default_factory=TTSConfig)
     stt: STTConfig = ConfigField(default_factory=STTConfig)
+    wake_word: WakeWordConfig = ConfigField(default_factory=WakeWordConfig)

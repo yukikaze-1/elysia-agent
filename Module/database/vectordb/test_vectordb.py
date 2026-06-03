@@ -52,6 +52,7 @@ class TestVectorDBBackendProtocol:
             async def insert(self, c, v, m): return []
             async def search(self, c, v, *, top_k=10, filter_expr="", output_fields=None): return []
             async def query(self, c, *, filter_expr, output_fields=None, limit=10000): return []
+            async def delete(self, c, ids): return 0
             async def close(self): pass
 
         assert isinstance(Good(), VectorDBBackend)

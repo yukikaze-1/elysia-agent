@@ -7,7 +7,7 @@ import {
   resetInput, scrollDown, hideNewMsgIndicator,
 } from './chat.js';
 import { bufferAudioChunk, finalizeStream } from './audio.js';
-import { toggleMic, stopMic } from './mic.js';
+import { toggleMic, stopMic, flashWakeIndicator } from './mic.js';
 import { setupSettings } from './settings.js';
 import { setupTools } from './tools.js';
 import { restoreChat, restoreFromServer, createCodeBlock, createMarkdownBubble } from './persistence.js';
@@ -94,6 +94,11 @@ function handleMessage(msg) {
           chat.appendChild(createMarkdownBubble(p.content));
         }
         scrollDown();
+      }
+      break;
+    case 'wake':
+      if (state.wakeEnabled) {
+        flashWakeIndicator();
       }
       break;
     case 'error': console.warn('Server:', msg.message); break;

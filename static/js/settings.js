@@ -2,6 +2,7 @@ import { state } from './state.js';
 import { SETTINGS_STORAGE_KEYS } from './config.js';
 import { clearChat } from './persistence.js';
 import { addStatusMsg } from './chat.js';
+import { send } from './ws.js';
 
 /** 初始化设置面板事件 */
 export function setupSettings() {
@@ -33,6 +34,16 @@ export function setupSettings() {
       state.audioChunks = {};
       state.audioQueue.length = 0;
     }
+  };
+
+  // 唤醒词开关
+  if (state.wakeEnabled) document.getElementById('wake-toggle').classList.add('on');
+  document.getElementById('wake-toggle').onclick = function () {
+    this.classList.toggle('on');
+    state.wakeEnabled = this.classList.contains('on');
+    localStorage.setItem(SETTINGS_STORAGE_KEYS.WAKE, state.wakeEnabled ? 'on' : 'off');
+    send({ type: 'wake_toggle', enabled: state.wakeEnabled });
+    addStatusMsg(state.wakeEnabled ? '唤醒词已开启' : '唤醒词已关闭');
   };
 
   // 音量

@@ -11,9 +11,19 @@ import struct
 import time
 from typing import Callable, Coroutine
 
+import enum
+
 import webrtcvad
 
+from .wakeword import WakeWordDetector
+
 logger = logging.getLogger(__name__)
+
+
+class WakeState(enum.Enum):
+    AWAITING = "awaiting"    # 等待唤醒词，STT 结果丢弃
+    WOKEN = "woken"          # 已唤醒，等待用户开始说话 (5s 超时)
+    LISTENING = "listening"  # 用户正在说话，VAD 累积中
 
 Callback = Callable[[], Coroutine[object, object, None]]
 TranscriptionCallback = Callable[[str], Coroutine[object, object, None]]
@@ -63,6 +73,8 @@ class AudioBuffer:
 
     # Minimum segment length in seconds (shorter segments are likely noise)
     MIN_SEGMENT_SECONDS = 0.3
+    # WOKEN timeout — user has this many seconds to start speaking after wake word
+    WOKEN_TIMEOUT = 5.0
     # Consecutive speech chunks required before firing interrupt (avoids
     # single-frame false positives from background noise).
     MIN_SPEECH_CHUNKS_FOR_INTERRUPT = 3
@@ -76,6 +88,8 @@ class AudioBuffer:
         on_interrupt: Callback | None = None,
         on_transcription: TranscriptionCallback | None = None,
         stt_transcribe=None,  # async callable(bytes) -> str
+        wake_words: list[str] | None = None,
+        on_wake_notify: Callback | None = None,
     ):
         # WebRTC VAD aggressiveness: 0 (least) to 3 (most).
         # 3 is best for desktop companion — aggressively filters non-speech.
@@ -85,6 +99,7 @@ class AudioBuffer:
         self._on_interrupt = on_interrupt
         self._on_transcription = on_transcription
         self._stt_transcribe = stt_transcribe      # STT callable
+        self._on_wake_notify = on_wake_notify
 
         self._chunks: list[bytes] = []
         self._speaking: bool = False
@@ -95,6 +110,23 @@ class AudioBuffer:
         self._last_interrupt: float = 0.0          # Last interrupt time for cooldown
         self._interrupt_cooldown: float = 0.5      # Min seconds between interrupts
 
+        # Wake word state
+        if wake_words:
+            self._wake_detector = WakeWordDetector(
+                wake_words=wake_words,
+                on_wake=self._on_wake,
+            )
+            self._wake_state = WakeState.AWAITING if self._wake_detector.enabled else None
+            if not self._wake_detector.enabled:
+                logger.warning(
+                    "Wake words configured but openwakeword unavailable. "
+                    "STT will pass through unfiltered."
+                )
+        else:
+            self._wake_detector = None
+            self._wake_state = None
+        self._woken_at: float = 0.0
+
     def deafen(self, duration: float = 1.0) -> None:
         """Ignore audio for `duration` seconds. Call when TTS starts playing."""
         self._deafen_until = time.monotonic() + duration
@@ -103,6 +135,23 @@ class AudioBuffer:
         self._speech_chunk_count = 0
         self._interrupt_fired = False
         self._silence_start = None
+        if self._wake_detector:
+            self._wake_detector.reset()
+
+    def _on_wake(self) -> None:
+        """Called by WakeWordDetector when a wake word is detected."""
+        if self._wake_state == WakeState.LISTENING:
+            return  # already listening, keep accumulating
+
+        self._wake_state = WakeState.WOKEN
+        self._woken_at = time.monotonic()
+        self._chunks.clear()
+        self._speaking = False
+        self._speech_chunk_count = 0
+        self._interrupt_fired = False
+        self._silence_start = None
+
+        logger.debug("Wake word detected → WOKEN")
 
     def _is_speech(self, chunk: bytes) -> bool:
         """Check if a PCM chunk contains speech using WebRTC VAD.
@@ -139,6 +188,21 @@ class AudioBuffer:
         if time.monotonic() < self._deafen_until:
             return
 
+        # Wake word streaming detection (parallel to VAD)
+        if self._wake_detector and self._wake_detector.enabled:
+            prev_state = self._wake_state
+            self._wake_detector.feed(chunk)
+            # Notify if wake word was just detected (must be in async context)
+            if prev_state != self._wake_state and self._wake_state == WakeState.WOKEN:
+                if self._on_wake_notify:
+                    await self._on_wake_notify()
+
+        # WOKEN timeout check
+        if self._wake_state == WakeState.WOKEN:
+            if time.monotonic() - self._woken_at > self.WOKEN_TIMEOUT:
+                self._wake_state = WakeState.AWAITING
+                logger.debug("WOKEN timeout → AWAITING")
+
         is_speech = self._is_speech(chunk)
 
         if is_speech:
@@ -149,6 +213,11 @@ class AudioBuffer:
                 self._interrupt_fired = False
             self._speech_chunk_count += 1
             self._chunks.append(chunk)
+
+            # Transition WOKEN → LISTENING on first speech
+            if self._wake_state == WakeState.WOKEN:
+                self._wake_state = WakeState.LISTENING
+
             # Only fire interrupt after enough consecutive speech chunks
             if not self._interrupt_fired and self._speech_chunk_count >= self.MIN_SPEECH_CHUNKS_FOR_INTERRUPT:
                 now = time.monotonic()
@@ -182,6 +251,10 @@ class AudioBuffer:
         if len(audio) < min_bytes:
             return  # too short, probably noise
 
+        # Gate: if wake words active, only process in LISTENING state
+        if self._wake_state is not None and self._wake_state != WakeState.LISTENING:
+            return
+
         if self._stt_transcribe is None:
             logger.debug("No STT configured, dropping %d bytes of audio", len(audio))
             return
@@ -200,6 +273,19 @@ class AudioBuffer:
             logger.warning("STT timed out (segment length=%d bytes)", len(audio))
         except Exception:
             logger.warning("STT transcription failed", exc_info=True)
+        finally:
+            # Back to AWAITING after STT (pass or fail)
+            if self._wake_state == WakeState.LISTENING:
+                self._wake_state = WakeState.AWAITING
+
+    def set_wake_enabled(self, enabled: bool) -> None:
+        """Enable or disable wake word detection at runtime."""
+        if enabled and self._wake_detector and self._wake_detector.enabled:
+            self._wake_state = WakeState.AWAITING
+            logger.debug("Wake word detection enabled → AWAITING")
+        else:
+            self._wake_state = None  # passthrough
+            logger.debug("Wake word detection disabled → passthrough")
 
     def reset(self) -> None:
         """Clear all buffered state (e.g., on interruption)."""
@@ -208,3 +294,5 @@ class AudioBuffer:
         self._speech_chunk_count = 0
         self._interrupt_fired = False
         self._silence_start = None
+        if self._wake_detector:
+            self._wake_detector.reset()

@@ -25,4 +25,5 @@ export const SETTINGS_STORAGE_KEYS = {
   CHAT: 'elysia_chat',
   TTS: 'elysia_tts',
   VOL: 'elysia_vol',
+  WAKE: 'elysia_wake',
 };

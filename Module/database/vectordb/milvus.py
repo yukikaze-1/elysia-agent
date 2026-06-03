@@ -166,6 +166,15 @@ class MilvusBackend(VectorDBBackend):
             kwargs["output_fields"] = output_fields
         return await asyncio.to_thread(self._client.query, **kwargs)
 
+    async def delete(self, collection: str, ids: list[int]) -> int:
+        """按主键删除向量。"""
+        if not ids:
+            return 0
+        result = await asyncio.to_thread(
+            self._client.delete, collection, ids=ids,
+        )
+        return result.get("delete_count", len(ids))
+
     # ---- Management ----
 
     async def close(self) -> None:

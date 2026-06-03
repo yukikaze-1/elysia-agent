@@ -27,6 +27,7 @@ def create_app(
     stt_transcribe=None,
     serve_static: bool = True,
     stt_emotion_state: dict | None = None,
+    wake_word_enabled: bool = False,
 ) -> web.Application:
     """Create an aiohttp Application with WebSocket handler and optional static files.
 
@@ -43,7 +44,7 @@ def create_app(
     app["agent"] = agent
 
     async def ws_handler(request: web.Request) -> web.WebSocketResponse:
-        return await _handle_ws(request, agent, stt_transcribe, stt_emotion_state)
+        return await _handle_ws(request, agent, stt_transcribe, stt_emotion_state, wake_word_enabled)
 
     app.router.add_get("/ws", ws_handler)
 
@@ -143,6 +144,166 @@ def create_app(
             )
     app.router.add_post("/tools/reload", tool_reload_handler)
 
+    # ---- Debug: 数据库管理 API ----
+
+    async def db_status_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        ltm = agent._long_term
+        session = agent._session
+        return web.json_response({
+            "ltm": {
+                "count": ltm.count,
+                "milvus_ok": ltm._connected,
+                "dirty_count": len(ltm._dirty_ids),
+            },
+            "session": {
+                "count": 1,  # 当前只有单个 session
+                "current_id": getattr(session, "_session_id", "default"),
+                "mongodb_ok": session._db is not None,
+            },
+        })
+    app.router.add_get("/debug/api/db-status", db_status_handler)
+
+    async def ltm_list_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        search = request.query.get("search", "").strip()
+        mem_type = request.query.get("type", "").strip()
+        try:
+            limit = int(request.query.get("limit", "50"))
+            offset = int(request.query.get("offset", "0"))
+        except ValueError:
+            return web.json_response({"error": "无效的分页参数"}, status=400)
+
+        entries = agent._long_term._entries
+        if search:
+            entries = [e for e in entries if search in e.text]
+        if mem_type:
+            entries = [e for e in entries if e.memory_type == mem_type]
+
+        total = len(entries)
+        page = entries[offset:offset + limit]
+        return web.json_response({
+            "total": total,
+            "entries": [
+                {
+                    "id": e.id,
+                    "text": e.text,
+                    "memory_type": e.memory_type,
+                    "poignancy": e.poignancy,
+                    "timestamp": e.timestamp,
+                    "metadata": e.metadata,
+                }
+                for e in page
+            ],
+        })
+    app.router.add_get("/debug/api/ltm", ltm_list_handler)
+
+    async def ltm_insert_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        try:
+            body = await request.json()
+            text = body.get("text", "").strip()
+            if not text:
+                return web.json_response({"error": "text 不能为空"}, status=400)
+            mem_type = body.get("memory_type", "note")
+            poignancy = int(body.get("poignancy", 5))
+        except (json.JSONDecodeError, ValueError):
+            return web.json_response({"error": "无效的请求体"}, status=400)
+
+        await agent._long_term.insert(text, memory_type=mem_type, poignancy=poignancy)
+        return web.json_response({"ok": True})
+    app.router.add_post("/debug/api/ltm", ltm_insert_handler)
+
+    async def ltm_delete_single_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        entry_id = request.match_info.get("entry_id", "")
+        if not entry_id:
+            return web.json_response({"error": "缺少 entry_id"}, status=400)
+        ok = await agent._long_term.delete(entry_id)
+        return web.json_response({"ok": ok})
+    app.router.add_delete("/debug/api/ltm/{entry_id}", ltm_delete_single_handler)
+
+    async def ltm_clear_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        count = await agent._long_term.clear_all()
+        return web.json_response({"ok": True, "deleted": count})
+    app.router.add_delete("/debug/api/ltm", ltm_clear_handler)
+
+    async def sessions_list_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        session = agent._session
+        if session._db is None:
+            # MongoDB 不可用，返回内存中的当前 session
+            return web.json_response({
+                "sessions": [{
+                    "session_id": session._session_id,
+                    "message_count": len(session._messages),
+                    "updated_at": "",
+                }],
+            })
+        try:
+            docs = await session._db.find(
+                "sessions", {}, sort=[("updated_at", -1)], limit=50)
+            return web.json_response({
+                "sessions": [
+                    {
+                        "session_id": d.get("session_id", "?"),
+                        "message_count": len(d.get("messages", [])),
+                        "updated_at": d.get("updated_at", ""),
+                    }
+                    for d in docs
+                ],
+            })
+        except Exception as e:
+            return web.json_response(
+                {"error": f"查询失败: {e}"}, status=500)
+    app.router.add_get("/debug/api/sessions", sessions_list_handler)
+
+    async def session_detail_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        sid = request.match_info.get("session_id", "")
+        if not sid:
+            return web.json_response({"error": "缺少 session_id"}, status=400)
+        session = agent._session
+        if session._db is None:
+            return web.json_response({"error": "MongoDB 不可用"}, status=503)
+        try:
+            docs = await session._db.find(
+                "sessions", {"session_id": sid}, limit=1)
+            if not docs:
+                return web.json_response({"error": "会话不存在"}, status=404)
+            doc = docs[0]
+            return web.json_response({
+                "session_id": doc.get("session_id", sid),
+                "messages": doc.get("messages", []),
+                "params": doc.get("params", {}),
+                "updated_at": doc.get("updated_at", ""),
+            })
+        except Exception as e:
+            return web.json_response(
+                {"error": f"查询失败: {e}"}, status=500)
+    app.router.add_get("/debug/api/sessions/{session_id}", session_detail_handler)
+
+    async def session_delete_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        sid = request.match_info.get("session_id", "")
+        if not sid:
+            return web.json_response({"error": "缺少 session_id"}, status=400)
+        session = agent._session
+        if session._db is None:
+            return web.json_response(
+                {"error": "MongoDB 不可用"}, status=503)
+        try:
+            deleted = await session._db.delete_many(
+                "sessions", {"session_id": sid})
+            if sid == session._session_id:
+                session._messages.clear()
+            return web.json_response({"ok": True, "deleted": deleted})
+        except Exception as e:
+            return web.json_response(
+                {"error": f"删除失败: {e}"}, status=500)
+    app.router.add_delete("/debug/api/sessions/{session_id}", session_delete_handler)
+
     return app
 
 
@@ -151,6 +312,7 @@ async def _handle_ws(
     agent,
     stt_transcribe,
     stt_emotion_state: dict | None = None,
+    wake_word_enabled: bool = False,
 ) -> web.WebSocketResponse:
     ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024)
     await ws.prepare(request)
@@ -169,6 +331,13 @@ async def _handle_ws(
     audio_buf: AudioBuffer | None = None
     monitor_task: asyncio.Task | None = None
     if stt_transcribe:
+        wake_words = None
+        if wake_word_enabled:
+            try:
+                wake_words = agent.get_wake_words()
+            except Exception:
+                logger.debug("Could not read wake_words from agent", exc_info=True)
+
         audio_buf = AudioBuffer(
             stt_transcribe=stt_transcribe,
             aggressiveness=3,
@@ -176,6 +345,8 @@ async def _handle_ws(
             on_transcription=lambda text: _do_transcription(
                 agent, ws, text, audio_buf, stt_emotion_state,
             ),
+            wake_words=wake_words,
+            on_wake_notify=lambda: _send_wake(ws),
         )
 
         # Monitor FSM state to deafen mic when assistant is speaking (echo prevention)
@@ -201,7 +372,7 @@ async def _handle_ws(
             if msg.type == WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
-                    await _handle_json(data, agent)
+                    await _handle_json(data, agent, audio_buf)
                 except json.JSONDecodeError:
                     await ws.send_json({"type": "error", "message": "Invalid JSON"})
 
@@ -225,9 +396,14 @@ async def _handle_ws(
     return ws
 
 
-async def _handle_json(data: dict, agent) -> None:
+async def _handle_json(data: dict, agent, audio_buf=None) -> None:
     msg_type = data.get("type", "")
-    if msg_type == "text":
+    if msg_type == "wake_toggle":
+        enabled = data.get("enabled", False)
+        if audio_buf:
+            audio_buf.set_wake_enabled(enabled)
+            logger.info("唤醒词开关: %s", "开启" if enabled else "关闭")
+    elif msg_type == "text":
         content = data.get("content", "").strip()
         if content:
             await agent.process_message(content)
@@ -288,3 +464,11 @@ async def _do_transcription(agent, ws, text: str, audio_buf=None,
         "emotion": emotion, "events": events,
         "request_id": rid,
     })
+
+
+async def _send_wake(ws) -> None:
+    """Notify frontend that a wake word was detected."""
+    try:
+        await ws.send_json({"type": "wake"})
+    except Exception:
+        pass

@@ -8,6 +8,11 @@
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
 | 中 | **无去重机制** | 延后 — 现有测试确认重复文本+不同元数据是设计意图。需独立设计去重方案 |
+| **高** | **`llm_adapter.py` `started` 标记未用于阻止中流产错重试** | `stream_think()` L98-100: `started` 设为 True 后从未在重试判断中使用。若 LLM 流式响应中途断开（已产出部分内容），重试会从头重新 yield，调用方收到重复 token。注释明确说 "Only retries if streaming hasn't started yet"，但代码未实现该逻辑。需在 L110 加 `if started: raise` |
+| ~~**高**~~ | ~~**`_seed_memories()` 每次启动重复插入种子数据**~~ | **已修复 (2026-06-03)**: 移除 `_seed_memories()` 方法及其在 `start()` 中的调用。demo 遗留代码，不属于生产路径。 |
+| 中 | **`emotion_engine.py` `_push_expression()` 缺失 6 种 mood 映射** | `emotion_engine.py:197-206`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
+| 中 | **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** | `plugin.py:37`: `_remind()` 被调用生成 coroutine 对象后传入 `dispatch_background`。调度器 checkpoint 恢复时 payload 中的 coroutine 不可 JSON 序列化（不持久化），且 `from_dict` 重建后 `hasattr(coro, "__await__")` 为 False。边缘场景，当前提醒工具很少跨重启执行。 |
+| 低 | **`long_term.py` Milvus 匹配用 text 做 key 丢失同文异构条目** | `long_term.py:320-323`: Milvus 结果回连 in-memory 条目时用 `e.text` 做 dict key，若多条记忆文本相同但元数据不同（时间戳/重要性），仅最后一条进入候选池。当前 `insert` 端无去重，容易因种子数据重复插入触发。 |
 
 ## 功能改进
 
@@ -21,7 +26,9 @@
 - **MacroMemory + MacroReflector**: 每日合成日记条目。需新增 Milvus 集合 + MacroReflector 后台任务
 - **EmotionEngine 升级**: 生理状态模型、时间衰减曲线、混合情绪、Amygdala LLM 补充
 - **STT 情绪→mood 映射升级**: 生理状态调制 + 性格调制 + 时间衰减
-- 唤醒词检测（openWakeWord）
+- 唤醒词检测（openWakeWord）— 已完成实现，待办：
+  - 测试唤醒词开关：启动服务端，打开前端设置面板，点击开关确认 ON/OFF 切换正常
+  - 训练自定义唤醒词模型 (.onnx)：录制每个唤醒词 100-500 样本 → 用 openWakeWord Colab 训练 → 将 .onnx 文件导入 `model_paths`
 - **性能 profiling + 优化**:
   - 时钟补上 TTS span（`_transition_idle` 里的 TTS 等待）
   - 性能回归测试（bench 模块加断言，CI 可跑）
@@ -60,6 +67,14 @@
 - `Module/input/server.py` (4)
 - `Module/output/console.py` (1)
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
+
+## 已完成 (2026-06-04)
+
+| 日期 | 内容 |
+|------|------|
+| 06-04 | **数据库调试接口** — 新增 8 个 REST 端点 + Web UI 面板（/debug 数据库 Tab），支持 LTM 和 Session 的查看/新增/删除/清空。扩展 VectorDBBackend 协议新增 `delete` 方法，LongTermMemory 新增 `delete()` / `clear_all()` |
+| 06-04 | **移除 `_seed_memories()`** — demo 遗留代码，每次启动重复插入 5 条种子数据 |
+| 06-03 | **测试卫生** — `test_session_isolation` 测试后清理 MongoDB 中遗留的 session 文档 |
 
 ## 已完成 (2026-06-02)
 

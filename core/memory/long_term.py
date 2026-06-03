@@ -28,6 +28,7 @@ class MemoryEntry:
     poignancy: int = 5             # 重要性 1-10
     timestamp: float = 0.0         # Unix 时间戳
     metadata: dict = field(default_factory=dict)
+    _milvus_pk: int | None = field(default=None, repr=False, compare=False)
 
     @property
     def dimension(self) -> int:
@@ -180,7 +181,7 @@ class LongTermMemory:
 
         if self._vector_db and embedding:
             try:
-                await self._vector_db.insert(
+                pk_list = await self._vector_db.insert(
                     self.COLLECTION,
                     vectors=[embedding],
                     metadata=[{
@@ -191,6 +192,8 @@ class LongTermMemory:
                         **meta,
                     }],
                 )
+                if pk_list:
+                    entry._milvus_pk = pk_list[0]
             except Exception as e:
                 logger.warning("Milvus insert failed: %s, falling back to in-memory", e)
                 self._dirty_ids.add(entry.id)
@@ -273,6 +276,34 @@ class LongTermMemory:
         if synced:
             logger.info("Synced %d dirty entries to Milvus", synced)
         return synced
+
+    # ---- Delete ----
+
+    async def delete(self, entry_id: str) -> bool:
+        """删除单条记忆（内存 + Milvus）。返回 True 表示成功删除。"""
+        for i, e in enumerate(self._entries):
+            if e.id == entry_id:
+                self._entries.pop(i)
+                self._dirty_ids.discard(entry_id)
+                if self._vector_db and e._milvus_pk is not None:
+                    try:
+                        await self._vector_db.delete(
+                            self.COLLECTION, [e._milvus_pk])
+                    except Exception:
+                        logger.debug("Milvus delete failed for %s", entry_id, exc_info=True)
+                return True
+        return False
+
+    async def clear_all(self) -> int:
+        """清空所有记忆（内存 + Milvus 重建 collection）。返回删除数量。"""
+        count = len(self._entries)
+        self._entries.clear()
+        self._dirty_ids.clear()
+        if self._vector_db:
+            await self._vector_db.drop_collection(self.COLLECTION)
+            await self._vector_db.create_collection(
+                self.COLLECTION, dimension=self.DIMENSION)
+        return count
 
     # ---- Read ----
 

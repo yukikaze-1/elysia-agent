@@ -129,6 +129,47 @@ class TestLongTermMemory:
         assert mem.count == 2
 
     @pytest.mark.asyncio
+    async def test_delete_entry(self):
+        """删除单条记忆应从内存列表移除并减少 count。"""
+        from core.memory.long_term import LongTermMemory
+        mem = LongTermMemory()
+        await mem.insert("test entry", type="note")
+        eid = mem._entries[0].id
+        ok = await mem.delete(eid)
+        assert ok is True
+        assert mem.count == 0
+        assert len(mem._entries) == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent(self):
+        """删除不存在的 ID 返回 False。"""
+        from core.memory.long_term import LongTermMemory
+        mem = LongTermMemory()
+        ok = await mem.delete("nonexistent-id")
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_clear_all(self):
+        """清空所有记忆，count 归零。"""
+        from core.memory.long_term import LongTermMemory
+        mem = LongTermMemory()
+        await mem.insert("entry 1", type="note")
+        await mem.insert("entry 2", type="note")
+        assert mem.count == 2
+        deleted = await mem.clear_all()
+        assert deleted == 2
+        assert mem.count == 0
+
+    @pytest.mark.asyncio
+    async def test_insert_stores_milvus_pk(self):
+        """insert 时应为 entry 分配 id。"""
+        from core.memory.long_term import LongTermMemory
+        mem = LongTermMemory()
+        await mem.insert("test entry", type="note")
+        assert mem._entries[0].id
+        # _milvus_pk 仅在 Milvus 可用时设置，否则为 None
+
+    @pytest.mark.asyncio
     async def test_connect_fallback(self):
         """connect should work or gracefully fall back."""
         from core.memory.long_term import LongTermMemory
@@ -291,11 +332,14 @@ class TestMemoryIntegration:
         agent = Agent(config=AppConfig())
         await agent.start()
 
+        # 插入测试数据
+        await agent._long_term.insert("上周和妖梦约定周六去爬香山", memory_type="plan", poignancy=7)
+
         # Use the tool directly
         result = await agent._tool_manager.execute("search_memory", ctx=agent._tool_ctx, query="爬山")
         assert result.success
         assert "爬山" in result.content or "香山" in result.content
-        assert "记忆库中没有找到" not in result.content
+        assert "未找到相关记忆" not in result.content
 
         await agent.stop()
 
@@ -898,6 +942,15 @@ class TestMemoryStress:
         assert a1_msgs >= 2  # user msg + assistant reply
         assert a2_msgs == 0  # fresh session
         await a2.stop()
+
+        # 清理测试遗留的 session 文档
+        db = a1._session._db
+        if db is not None:
+            try:
+                await db.delete_many("sessions", {"session_id": sid1})
+                await db.delete_many("sessions", {"session_id": sid2})
+            except Exception:
+                pass
 
 
 # ============================================================================
