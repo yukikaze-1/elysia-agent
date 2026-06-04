@@ -2,14 +2,14 @@ import re
 
 
 _EMOJI_RE = re.compile(
-    "[\U0001F300-\U0001F9FF"   # Miscellaneous Symbols, Emoticons, etc.
-    "\U0001F600-\U0001F64F"    # Emoticons
-    "\U00002600-\U000027BF"    # Misc Symbols + Dingbats (✨ ♥ ★ etc.)
-    "\U0001F900-\U0001F9FF"    # Supplemental Symbols
-    "\U0001FA00-\U0001FA6F"    # Chess Symbols
-    "\U0001FA70-\U0001FAFF"    # Symbols Extended-A
-    "\U00002300-\U000023FF"    # Misc Technical
-    "\U00002B50"               # ⭐
+    "[\U0001F300-\U0001F9FF"   # 杂项符号、表情符号等
+    "\U0001F600-\U0001F64F"    # 表情符号
+    "\U00002600-\U000027BF"    # 杂项符号 + 装饰符号
+    "\U0001F900-\U0001F9FF"    # 补充符号
+    "\U0001FA00-\U0001FA6F"    # 象棋符号
+    "\U0001FA70-\U0001FAFF"    # 扩展符号-A
+    "\U00002300-\U000023FF"    # 杂项技术符号
+    "\U00002B50"               # 星号
     "]+", flags=re.UNICODE,
 )
 

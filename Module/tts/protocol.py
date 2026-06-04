@@ -14,14 +14,17 @@ class TTSBackend(ABC):
     async def synthesize(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> bytes:
-        """非流式合成 — 返回完整 WAV bytes (32000Hz / mono / int16)。"""
+        """非流式合成 — 返回完整 WAV bytes。
+
+        采样率因后端而异：GPT-SoVits 为 32000Hz/mono/int16，OpenAI TTS 为 24000Hz。
+        """
         ...
 
     @abstractmethod
     async def synthesize_stream(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> AsyncGenerator[bytes, None]:
-        """流式合成 — 边生成边产出音频 chunk。首 chunk 为 WAV header。"""
+        """流式合成 — 边生成边产出音频 chunk。首 chunk 包含 WAV header 及初始音频数据。"""
         ...
 
     @abstractmethod

@@ -35,7 +35,7 @@ class TestTTSFromConfig:
         backend = TTSFactory.from_config(
             "gpt-sovits/elysia", cfg, base_url="http://overridden:9880"
         )
-        from Module.tts import GPTSoVitsBackend
+        from Module.tts.gpt_sovits import GPTSoVitsBackend
         from typing import cast
         backend = cast(GPTSoVitsBackend, backend)
         assert "overridden" in backend._base_url

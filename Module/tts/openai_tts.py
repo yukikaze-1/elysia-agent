@@ -10,6 +10,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from .protocol import TTSBackend
+from .text_preprocess import strip_all_markup
 
 
 class OpenAICompatTTSBackend(TTSBackend):
@@ -28,6 +29,7 @@ class OpenAICompatTTSBackend(TTSBackend):
         logger: logging.Logger | None = None,
     ):
         self._model = model
+        self._base_url = base_url
         self._logger = logger or logging.getLogger(__name__)
         self._client = AsyncOpenAI(
             api_key=api_key or "tts",
@@ -38,6 +40,7 @@ class OpenAICompatTTSBackend(TTSBackend):
     async def synthesize(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> bytes:
+        text = strip_all_markup(text)
         chunks: list[bytes] = []
         async for chunk in self.synthesize_stream(text, character=character, emotion=emotion):
             chunks.append(chunk)
@@ -47,6 +50,7 @@ class OpenAICompatTTSBackend(TTSBackend):
         self, text: str, *, character: str, emotion: str | None = None
     ) -> AsyncIterator[bytes]:
         """流式合成 — OpenAI TTS 非真正流式，一次返回完整音频。"""
+        text = strip_all_markup(text)
         async with self._client.audio.speech.with_streaming_response.create(
             model=self._model,
             voice=character,
@@ -60,24 +64,15 @@ class OpenAICompatTTSBackend(TTSBackend):
         await self._client.close()
 
     async def test(self) -> dict:
-        """测试连通性：发最小合成请求。5 秒超时。"""
+        """测试连通性：GET 根路径检查服务可用。5 秒超时。"""
         import asyncio
         import time
         t0 = time.perf_counter()
         try:
-            async with self._client.audio.speech.with_streaming_response.create(
-                model=self._model,
-                voice="alloy",
-                input="test",
-                response_format="wav",
-            ) as response:
-                # 只读第一个 chunk 验证 API 可达
-                await asyncio.wait_for(
-                    response.iter_bytes(4096).__anext__(),
-                    timeout=5.0,
-                )
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            return {"ok": True, "latency_ms": latency_ms}
+            async with httpx.AsyncClient(base_url=self._base_url, timeout=httpx.Timeout(5.0)) as client:
+                resp = await asyncio.wait_for(client.get("/"), timeout=5.0)
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                return {"ok": resp.status_code < 400, "latency_ms": latency_ms}
         except Exception as e:
             latency_ms = int((time.perf_counter() - t0) * 1000)
             return {"ok": False, "latency_ms": latency_ms, "error": str(e)}

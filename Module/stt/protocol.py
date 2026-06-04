@@ -9,6 +9,14 @@ class STTBackend(ABC):
 
     audio 为原始音频 bytes（WAV 等格式，由后端决定支持哪些）。
     kwargs 透传 language / task 等参数。
+
+    可选属性（由 transcribe() 调用后设置）：
+        last_emotion: str — 最近一次转录检测到的情绪标签。
+            SenseVoice 提供真实值（HAPPY/SAD/ANGRY/NEUTRAL 等），
+            OpenAI 兼容后端设为 "NEUTRAL"。
+        last_events: list[str] — 最近一次转录检测到的音频事件。
+            SenseVoice 提供真实值（Applause/Laughter/Cough 等），
+            OpenAI 兼容后端设为空列表。
     """
 
     @abstractmethod

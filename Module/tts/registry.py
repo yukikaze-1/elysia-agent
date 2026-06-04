@@ -1,4 +1,4 @@
-"""TTS 后端注册表 + 工厂。按 provider/backend-name 标识创建后端实例。"""
+"""TTS 后端注册表 + 工厂。按 provider/model 标识创建后端实例。"""
 
 import dataclasses
 import os
@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from .config import TTSConfig
     from .protocol import TTSBackend
 
+# 注意：TTS/STT 使用 {MODULE}_API_URL 环境变量命名格式，
+# LLM 使用 {MODULE}_API_BASE 格式。后续应统一。
 _BACKENDS: dict[str, dict] = {
     "gpt-sovits": {
         "base_url": "http://localhost:9880",
@@ -41,12 +43,12 @@ class TTSFactory:
     """静态工厂 — TTSFactory.create("gpt-sovits/default")。"""
 
     @staticmethod
-    def create(provider_id: str, **kwargs) -> "TTSBackend":
-        if "/" not in provider_id:
+    def create(model_id: str, **kwargs) -> "TTSBackend":
+        if "/" not in model_id:
             raise ValueError(
-                f"Invalid provider_id '{provider_id}': expected 'provider/backend-name' format"
+                f"Invalid model_id '{model_id}': expected 'provider/model-name' format"
             )
-        provider, backend_name = provider_id.split("/", 1)
+        provider, backend_name = model_id.split("/", 1)
 
         if provider not in _BACKENDS:
             raise ValueError(
@@ -73,8 +75,6 @@ class TTSFactory:
         # custom provider: 使用 OpenAI 兼容 TTS 协议
         if provider == "custom":
             from .openai_tts import OpenAICompatTTSBackend
-            if not base_url:
-                raise ValueError("custom TTS provider requires base_url")
             api_key = kwargs.pop("api_key", "") or os.getenv(cfg["env_key"], "")
             if "logger" not in kwargs:
                 kwargs["logger"] = get_caller_logger()
@@ -87,11 +87,10 @@ class TTSFactory:
         return GPTSoVitsBackend(model=backend_name, base_url=base_url, **kwargs)
 
     @classmethod
-    def from_config(cls, provider_id: str, config: "TTSConfig", **overrides) -> "TTSBackend":
+    def from_config(cls, model_id: str, config: "TTSConfig", **overrides) -> "TTSBackend":
         """从 TTSConfig dataclass 创建后端，overrides 优先级最高。"""
-        kwargs = dataclasses.asdict(config)
-        # model/api_key 由 registry.create() 处理，不通过 config 传递
-        kwargs.pop("model", None)
-        kwargs.pop("api_key", None)
+        kwargs = {"base_url": config.base_url}
+        if config.voices_config:
+            kwargs["voices_config"] = config.voices_config
         kwargs.update(overrides)
-        return cls.create(provider_id, **kwargs)
+        return cls.create(model_id, **kwargs)

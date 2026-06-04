@@ -69,7 +69,12 @@ class GPTSoVitsBackend(TTSBackend):
         每次请求创建独立的 httpx.AsyncClient，用完即关。
         避免连接池复用时服务端空闲断开导致后续请求失败。
         """
-        voice_cfg = self._voices[character]
+        try:
+            voice_cfg = self._voices[character]
+        except KeyError:
+            raise KeyError(
+                f"未知发音人 '{character}'，可用: {list(self._voices.keys())}"
+            ) from None
         text = self._preprocess(text)
 
         payload: dict = {
@@ -128,8 +133,12 @@ class GPTSoVitsBackend(TTSBackend):
                 task.cancel()
             try:
                 await task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
+            except Exception as e:
+                logging.getLogger("Module.tts.gpt_sovits").warning(
+                    "TTS _pull task failed: %s", e, exc_info=True
+                )
 
     async def test(self) -> dict:
         """测试连通性：GET 根路径检查服务可用。5 秒超时。"""
@@ -140,7 +149,7 @@ class GPTSoVitsBackend(TTSBackend):
             async with httpx.AsyncClient(base_url=self._base_url, timeout=httpx.Timeout(5.0)) as client:
                 resp = await _asyncio.wait_for(client.get("/"), timeout=5.0)
                 latency_ms = int((_time.perf_counter() - t0) * 1000)
-                return {"ok": resp.status_code < 500, "latency_ms": latency_ms}
+                return {"ok": resp.status_code < 400, "latency_ms": latency_ms}
         except Exception as e:
             latency_ms = int((_time.perf_counter() - t0) * 1000)
             return {"ok": False, "latency_ms": latency_ms, "error": str(e)}

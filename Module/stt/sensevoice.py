@@ -87,6 +87,7 @@ class SenseVoiceBackend(STTBackend):
             response = await self._client.post(
                 "/predict/sentence",
                 files={"file": audio},
+                data=kwargs,
             )
         except httpx.RequestError as e:
             self._logger.error(
@@ -134,7 +135,7 @@ class SenseVoiceBackend(STTBackend):
                 timeout=5.0,
             )
             latency_ms = int((time.perf_counter() - t0) * 1000)
-            return {"ok": resp.status_code < 500, "latency_ms": latency_ms}
+            return {"ok": resp.status_code < 400, "latency_ms": latency_ms}
         except Exception as e:
             latency_ms = int((time.perf_counter() - t0) * 1000)
             return {"ok": False, "latency_ms": latency_ms, "error": str(e)}

@@ -42,11 +42,8 @@ class OpenAICompatBackend(LLMBackend):
         self._api_key = key
         self._base_url = base_url
         self._beta_url = beta_url
-        _timeout = httpx.Timeout(60.0, connect=10.0)
-        self._client = AsyncOpenAI(api_key=key, base_url=base_url, timeout=_timeout)
         self._beta_client: AsyncOpenAI | None = None
-        if beta_url:
-            self._beta_client = AsyncOpenAI(api_key=key, base_url=beta_url, timeout=_timeout)
+        self._create_clients()
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
         """非流式对话 — 内部调用 _call_api(stream=False)，拼接所有 chunk 返回。"""
@@ -195,8 +192,8 @@ class OpenAICompatBackend(LLMBackend):
             return {"ok": False, "latency_ms": latency_ms, "error": str(e)}
 
     async def reconnect(self) -> None:
-        """Recreate HTTP clients — used on service restart after stop() closed them."""
-        # Close old client if still open
+        """重建 HTTP 客户端 — 用于服务重启后恢复连接（close() 之后调用）。"""
+        # 关闭尚存的旧 client
         try:
             await self._client.close()
         except Exception:
@@ -206,7 +203,10 @@ class OpenAICompatBackend(LLMBackend):
                 await self._beta_client.close()
             except Exception:
                 pass
-        # Create new clients with timeout
+        self._create_clients()
+
+    def _create_clients(self) -> None:
+        """创建/重建 OpenAI client，共用超时配置。"""
         timeout = httpx.Timeout(60.0, connect=10.0)
         self._client = AsyncOpenAI(
             api_key=self._api_key,

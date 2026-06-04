@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from .config import LLMConfig
     from .protocol import LLMBackend
 
+# 注意：TTS/STT 使用 {MODULE}_API_URL 环境变量命名格式，
+# LLM 使用 {MODULE}_API_BASE 格式。后续应统一。
 _BACKENDS: dict[str, dict] = {
     "deepseek": {
         "base_url": "https://api.deepseek.com",

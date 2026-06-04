@@ -53,10 +53,14 @@ class OpenAICompatSTTBackend(STTBackend):
             file=("audio.wav", BytesIO(audio), "audio/wav"),
             **kwargs,
         )
+        self.last_emotion = "NEUTRAL"
+        self.last_events = []
         return result.text
 
     async def transcribe_stream(self, audio: bytes, **kwargs) -> AsyncIterator[str]:
         text = await self.transcribe(audio, **kwargs)
+        self.last_emotion = "NEUTRAL"
+        self.last_events = []
         yield text
 
     async def close(self) -> None:

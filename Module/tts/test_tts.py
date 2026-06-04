@@ -127,7 +127,7 @@ class TestTTSBackendProtocol:
 
 class TestTTSFactory:
     def test_invalid_format_raises(self):
-        with pytest.raises(ValueError, match="Invalid provider_id"):
+        with pytest.raises(ValueError, match="Invalid model_id"):
             TTSFactory.create("gpt-sovits")
 
     def test_unknown_provider_raises(self):

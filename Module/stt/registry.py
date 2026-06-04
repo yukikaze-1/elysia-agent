@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from .config import STTConfig
     from .protocol import STTBackend
 
+# 注意：TTS/STT 使用 {MODULE}_API_URL 环境变量命名格式，
+# LLM 使用 {MODULE}_API_BASE 格式。后续应统一。
 _BACKENDS: dict[str, dict] = {
     "sensevoice": {
         "base_url": "http://localhost:20042",
