@@ -34,9 +34,9 @@
   - 时钟补上 TTS span（`_transition_idle` 里的 TTS 等待）
   - 性能回归测试（bench 模块加断言，CI 可跑）
 - **角色切换**: 加载不同角色配置（名字、性格、发音人、prompt 模板），需独立 spec。涉及 CharacterConfig 重新加载、TTS voice lookup 逻辑修复（`voice` 字段当前是死代码）、CognitiveLoop 角色引用更新。`gpt_sovits_voices.yaml` 目前只有 `Elysia` 一个发音人
-- **模型切换与自定义接入**: Spec 已定（`docs/superpowers/specs/2026-06-04-model-switching-design.md`），待实现。三阶段：配置驱动 → custom provider → 运行时热切换 + 前端面板
+- **模型切换与自定义接入**: ✅ 已完成 (2026-06-04)。三阶段：配置驱动 → custom provider → 运行时热切换 + 前端面板。三/四/五 Section 待测
 - **多角色 prompt 模板**: `PromptAssembler._prompt` 当前指向 `prompt/`，多角色时改为 `character/<name>/`
-- **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
+- **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + MongoDB + Milvus + SenseVoice + GPT-SoVits）。等架构稳定后实施。
 
 ### 后台任务系统 — 后续迭代
@@ -124,6 +124,7 @@
 | 06-04 | **TTS 重启重建** — TTS 创建从 `__init__` 移到 `start()`，`/restart` 使用重载配置重建。TTS toggle 跟随服务端实际状态 |
 | 06-04 | **TTSFactory model 验证** — model 参数传入 GPTSoVitsBackend，`gpt-sovits` provider 验证 model 为 "default" 或已知 voice 名（大小写不敏感），custom 走 OpenAICompatTTSBackend |
 | 06-04 | **启动横幅显示 model** — Agent/Server 启动横幅显示 TTS/STT 实际使用的 model 名 |
+| 06-04 | **Live2D 开关** — 设置面板新增开关，关闭时移除 iframe 释放 ~500KB 资源，显示静态图片或 🌸 emoji。配置驱动图片路径（`live2d.static_image`），localStorage 持久化，WS capabilities 下发。Spec: `docs/superpowers/specs/2026-06-04-live2d-toggle-design.md` |
 | 06-04 | **数据库调试接口** — 新增 8 个 REST 端点 + Web UI 面板（/debug 数据库 Tab），支持 LTM 和 Session 的查看/新增/删除/清空。扩展 VectorDBBackend 协议新增 `delete` 方法，LongTermMemory 新增 `delete()` / `clear_all()` |
 | 06-04 | **移除 `_seed_memories()`** — demo 遗留代码，每次启动重复插入 5 条种子数据 |
 | 06-03 | **测试卫生** — `test_session_isolation` 测试后清理 MongoDB 中遗留的 session 文档 |
