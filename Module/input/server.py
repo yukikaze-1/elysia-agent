@@ -304,6 +304,116 @@ def create_app(
                 {"error": f"删除失败: {e}"}, status=500)
     app.router.add_delete("/debug/api/sessions/{session_id}", session_delete_handler)
 
+    # ---- 模型切换 API ----
+
+    async def providers_list_handler(request: web.Request) -> web.Response:
+        """返回可用 provider 列表（注册表 + custom_providers.yaml）。"""
+        from core.custom_providers import load as load_custom
+
+        llm_registry = {
+            "deepseek": {"models": ["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro"]},
+            "openai": {"models": ["gpt-4", "gpt-4o", "gpt-5"]},
+            "ollama": {"models": ["qwen3:latest"]},
+            "gemini": {"models": []},
+            "custom": {"models": []},
+        }
+        stt_registry = {
+            "sensevoice": {"models": ["sense-voice"]},
+            "custom": {"models": []},
+        }
+        tts_registry = {
+            "gpt-sovits": {"models": ["default"]},
+            "custom": {"models": []},
+        }
+
+        custom_data = load_custom()
+        # 合并 custom providers 到注册表
+        for entry in custom_data.get("llm", []):
+            name = entry["name"]
+            llm_registry["custom"]["models"].append(name)
+        for entry in custom_data.get("stt", []):
+            name = entry["name"]
+            stt_registry["custom"]["models"].append(name)
+        for entry in custom_data.get("tts", []):
+            name = entry["name"]
+            tts_registry["custom"]["models"].append(name)
+
+        return web.json_response({
+            "llm": llm_registry,
+            "stt": stt_registry,
+            "tts": tts_registry,
+            "custom": custom_data,
+        })
+    app.router.add_get("/api/providers", providers_list_handler)
+
+    async def providers_save_handler(request: web.Request) -> web.Response:
+        """保存自定义 provider 到 custom_providers.yaml。"""
+        from core.custom_providers import add_provider
+        try:
+            body = await request.json()
+            service = body.get("service", "")
+            entry = body.get("entry", {})
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效的请求体"}, status=400)
+        if service not in ("llm", "stt", "tts"):
+            return web.json_response({"ok": False, "error": f"未知 service: {service}"}, status=400)
+        if not entry.get("name") or not entry.get("base_url"):
+            return web.json_response({"ok": False, "error": "缺少 name 或 base_url"}, status=400)
+        try:
+            data = add_provider(service, entry)
+            return web.json_response({"ok": True, "data": data})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+    app.router.add_post("/api/providers", providers_save_handler)
+
+    async def providers_delete_handler(request: web.Request) -> web.Response:
+        """删除一个自定义 provider。"""
+        from core.custom_providers import remove_provider
+        service = request.match_info.get("service", "")
+        name = request.match_info.get("name", "")
+        if service not in ("llm", "stt", "tts"):
+            return web.json_response({"ok": False, "error": f"未知 service: {service}"}, status=400)
+        try:
+            data = remove_provider(service, name)
+            return web.json_response({"ok": True, "data": data})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+    app.router.add_delete("/api/providers/{service}/{name}", providers_delete_handler)
+
+    async def providers_test_handler(request: web.Request) -> web.Response:
+        """测试 provider 连通性。"""
+        try:
+            body = await request.json()
+            service = body.get("service", "")
+            base_url = body.get("base_url", "")
+            api_key = body.get("api_key", "")
+            model = body.get("model", "")
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效的请求体"}, status=400)
+
+        try:
+            if service == "llm":
+                from Module.llm import LLMFactory
+                backend = LLMFactory.create(f"custom/{model}", base_url=base_url, api_key=api_key)
+            elif service == "stt":
+                from Module.stt import STTFactory
+                backend = STTFactory.create(f"custom/{model}", base_url=base_url, api_key=api_key)
+            elif service == "tts":
+                from Module.tts import TTSFactory
+                backend = TTSFactory.create(f"custom/{model}", base_url=base_url, api_key=api_key)
+            else:
+                return web.json_response({"ok": False, "error": f"未知 service: {service}"}, status=400)
+
+            result = await backend.test()
+            try:
+                await backend.close()
+            except Exception:
+                pass
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)})
+    app.router.add_post("/api/providers/test", providers_test_handler)
+
     async def sessions_clear_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
         session = agent._session
@@ -342,6 +452,16 @@ async def _handle_ws(
         await ws.send_json({"type": "session", "messages": session_msgs})
     except Exception:
         logger.warning("Failed to send session on connect", exc_info=True)
+
+    # 发送服务能力状态（STT / TTS 是否可用）
+    try:
+        await ws.send_json({
+            "type": "capabilities",
+            "stt": stt_transcribe is not None,
+            "tts": agent._tts is not None,
+        })
+    except Exception:
+        pass
 
     audio_buf: AudioBuffer | None = None
     monitor_task: asyncio.Task | None = None
@@ -387,7 +507,7 @@ async def _handle_ws(
             if msg.type == WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
-                    await _handle_json(data, agent, audio_buf)
+                    await _handle_json(data, agent, audio_buf, ws)
                 except json.JSONDecodeError:
                     await ws.send_json({"type": "error", "message": "Invalid JSON"})
 
@@ -411,7 +531,7 @@ async def _handle_ws(
     return ws
 
 
-async def _handle_json(data: dict, agent, audio_buf=None) -> None:
+async def _handle_json(data: dict, agent, audio_buf=None, ws=None) -> None:
     msg_type = data.get("type", "")
     if msg_type == "wake_toggle":
         enabled = data.get("enabled", False)
@@ -426,6 +546,31 @@ async def _handle_json(data: dict, agent, audio_buf=None) -> None:
     elif msg_type == "interrupt":
         logger.info("WS 收到打断指令")
         await _do_interrupt(agent)
+    elif msg_type == "switch_model":
+        service = data.get("service", "")
+        model = data.get("model", "")
+        if service == "llm":
+            result = await agent.switch_llm(model)
+        elif service == "stt":
+            result = await agent.switch_stt(model)
+        elif service == "tts":
+            result = await agent.switch_tts(model)
+        else:
+            result = {"ok": False, "error": f"未知 service: {service}"}
+        from Module.output import WebSocketChannel
+        for ch in agent._output._channels:
+            if isinstance(ch, WebSocketChannel) and ch._ws is ws:
+                try:
+                    await ws.send_json({
+                        "type": "switch_model_result",
+                        "service": service,
+                        "model": model,
+                        **result,
+                    })
+                except Exception:
+                    pass
+                break
+        logger.info("WS 切换模型: service=%s model=%s ok=%s", service, model, result.get("ok"))
     elif msg_type == "tool_approval":
         request_id = data.get("request_id", "")
         approved = data.get("approved", False)

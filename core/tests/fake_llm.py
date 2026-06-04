@@ -19,5 +19,8 @@ class FakeLLMBackend(LLMBackend):
         for char in self.response:
             yield char
 
+    async def test(self) -> dict:
+        return {"ok": True, "latency_ms": 0}
+
     async def close(self) -> None:
         pass

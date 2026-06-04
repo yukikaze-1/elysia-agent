@@ -24,6 +24,10 @@ _BACKENDS: dict[str, dict] = {
         "base_url": "https://api.deepgram.com/v1",
         "env_key": "DEEPGRAM_API_KEY",
     },
+    "custom": {
+        "base_url": "",
+        "env_key": "CUSTOM_STT_API_KEY",
+    },
 }
 
 
@@ -52,6 +56,15 @@ class STTFactory:
         env_key = cfg["env_key"]
         api_key = kwargs.pop("api_key", "") or os.getenv(env_key, "")
 
+        # custom provider — 使用 OpenAI 兼容 STT 后端
+        if provider == "custom":
+            from .openai_stt import OpenAICompatSTTBackend
+            if not base_url:
+                raise ValueError("custom STT provider requires base_url")
+            if "logger" not in kwargs:
+                kwargs["logger"] = get_caller_logger()
+            return OpenAICompatSTTBackend(model=model, api_key=api_key, base_url=base_url, **kwargs)
+
         if "logger" not in kwargs:
             kwargs["logger"] = get_caller_logger()
 
@@ -66,5 +79,8 @@ class STTFactory:
     def from_config(cls, model_id: str, config: "STTConfig", **overrides) -> "STTBackend":
         """从 STTConfig dataclass 创建后端，overrides 优先级最高。"""
         kwargs = dataclasses.asdict(config)
+        # model/api_key 由 registry.create() 处理，不通过 config 传递
+        kwargs.pop("model", None)
+        kwargs.pop("api_key", None)
         kwargs.update(overrides)
         return cls.create(model_id, **kwargs)

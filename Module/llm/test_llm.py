@@ -45,6 +45,9 @@ class TestLLMBackendProtocol:
             async def chat_stream(self, messages, **kwargs):
                 yield "ok"
 
+            async def test(self) -> dict:
+                return {"ok": True, "latency_ms": 0}
+
             async def close(self) -> None:
                 pass
 
@@ -286,6 +289,8 @@ class TestStreamThink:
                 return "ab"
             async def chat_stream(self, messages, **kwargs):
                 yield ""
+            async def test(self) -> dict:
+                return {"ok": True, "latency_ms": 0}
             async def close(self) -> None:
                 pass
 

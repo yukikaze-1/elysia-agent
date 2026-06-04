@@ -81,16 +81,7 @@ class Agent:
         self._llm = LLMAdapter(model=config.llm.model)
         self._prompt = PromptAssembler(self._character, self._session, self._long_term)
 
-        # TTS is disabled by default (requires GPT-SoVits server at localhost:9880).
-        # Enable via config.yaml (TTS.enabled: true) or CLI --tts flag.
-        self._tts = None
-        if config.tts.enabled:
-            from Module.tts import TTSFactory
-            try:
-                self._tts = TTSFactory.create("gpt-sovits/default")
-                logger.info("TTS backend connected")
-            except Exception:
-                logger.info("TTS not available — text-only mode")
+        self._tts = None  # 在 start() 中创建
 
         self._emotion = EmotionEngine(
             character=self._character,
@@ -191,6 +182,16 @@ class Agent:
         await self._idle.start()
         self._event_task = asyncio.create_task(self._process_events())
 
+        # TTS — 在 start() 中创建，确保重启时使用重载后的 config
+        if self._config.tts.enabled:
+            from Module.tts import TTSFactory
+            try:
+                self._tts = TTSFactory.create(self._config.tts.model)
+                self._cognitive._tts = self._tts
+                logger.info("TTS backend connected")
+            except Exception:
+                logger.info("TTS not available — text-only mode")
+
         db_status = []
         if mongo_ok:
             db_status.append("MongoDB")
@@ -202,7 +203,8 @@ class Agent:
         print(f"  {self._character.name} Agent 已启动")
         print(f"  LLM: {self._llm.model}")
         print(f"  记忆: {db_str}  ({self._long_term.count} entries)")
-        print(f"  TTS: {'已连接' if self._tts else '未连接（纯文本模式）'}")
+        tts_model = self._config.tts.model
+        print(f"  TTS: {'已连接' if self._tts else '未连接（纯文本模式）'}  (model={tts_model})")
         print(f"  人格: {', '.join(self._character.traits)}")
         print(f"  工具: {', '.join(self._tool_manager.tool_names) or '无'}")
         print(f"{'='*50}")
@@ -314,6 +316,38 @@ class Agent:
         set_request_id(rid)
         return rid
 
+    async def switch_llm(self, model_id: str) -> dict:
+        """热切换 LLM 模型。返回 {"ok": bool, "error": str}"""
+        try:
+            self._llm.switch_model(model_id)
+            return {"ok": True}
+        except Exception as e:
+            logger.error("LLM switch failed: %s", e)
+            return {"ok": False, "error": str(e)}
+
+    async def switch_stt(self, model_id: str) -> dict:
+        """运行时更新 STT model_id（下次 transcribe 请求生效）。"""
+        self._config.stt.model = model_id
+        logger.info("STT model set to: %s (takes effect on next request)", model_id)
+        return {"ok": True}
+
+    async def switch_tts(self, model_id: str) -> dict:
+        """热切换 TTS 后端。更新 self._tts 和 self._cognitive._tts 引用。"""
+        from Module.tts import TTSFactory
+        try:
+            if self._tts:
+                try:
+                    await self._tts.close()
+                except Exception:
+                    pass
+            self._tts = TTSFactory.create(model_id)
+            self._cognitive._tts = self._tts  # 同步 CognitiveLoop 中的引用
+            logger.info("TTS switched to: %s", model_id)
+            return {"ok": True}
+        except Exception as e:
+            logger.error("TTS switch failed: %s", e)
+            return {"ok": False, "error": str(e)}
+
     async def process_message(self, text: str, user_name: str = "妖梦") -> None:
         """Process a single user message through the pipeline.
 
@@ -370,7 +404,7 @@ class Agent:
             if stt_enabled:
                 try:
                     from Module.stt import STTFactory
-                    stt_backend = STTFactory.create("sensevoice/sense-voice")
+                    stt_backend = STTFactory.create(self._config.stt.model)
 
                     stt_emotion_state = {"emotion": "NEUTRAL", "events": []}
 
@@ -383,7 +417,7 @@ class Agent:
                     stt_transcribe = transcribe_wrapper
                     logger.info("STT backend connected for server mode")
                 except Exception:
-                    logger.info("STT not available — text-only mode")
+                    logger.info("STT not available — text-only mode", exc_info=True)
 
             app = create_app(self, stt_transcribe=stt_transcribe, serve_static=True,
                             stt_emotion_state=stt_emotion_state,
@@ -397,8 +431,9 @@ class Agent:
             print(f"  {self._character.name} WebSocket Server")
             print(f"  地址: ws://{host}:{port}/ws")
             print(f"  前端: http://{host}:{port}/")
-            print(f"  STT: {'已连接' if stt_transcribe else '未连接'}")
-            print(f"  TTS: {'已连接' if self._tts else '未连接'}")
+            stt_model = self._config.stt.model
+            print(f"  STT: {'已连接' if stt_transcribe else '未连接'}  (model={stt_model})")
+            print(f"  TTS: {'已连接' if self._tts else '未连接'}  (model={self._config.tts.model})")
             print(f"  退出: Ctrl+C 或浏览器关闭服务按钮")
             print(f"{'='*50}")
 

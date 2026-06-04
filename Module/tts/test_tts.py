@@ -96,6 +96,9 @@ class TestTTSBackendProtocol:
             ):
                 yield b""
 
+            async def test(self) -> dict:
+                return {"ok": True, "latency_ms": 0}
+
             async def close(self) -> None:
                 pass
 
@@ -111,6 +114,9 @@ class TestTTSBackendProtocol:
 
                 async def synthesize_stream(self, text, *, character, emotion=None):
                     yield b""
+
+                async def test(self) -> dict:
+                    return {"ok": True, "latency_ms": 0}
 
             BadBackend()  # type: ignore[abstract]
 

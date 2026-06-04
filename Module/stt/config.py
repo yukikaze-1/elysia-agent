@@ -7,8 +7,18 @@ from Module.config import ConfigField
 
 @dataclass
 class STTConfig:
+    model: str = ConfigField(
+        default="sensevoice/sense-voice",
+        help="STT provider/model 标识，格式: provider/model-name",
+    )
     base_url: str = ConfigField(
         default="http://localhost:20042",
-        env="SENSEVOICE_API_URL",
+        env="STT_API_URL",
         help="STT 服务端点",
+    )
+    api_key: str = ConfigField(
+        default="",
+        env="STT_API_KEY",
+        secret=True,
+        help="API 密钥（自定义端点使用）",
     )

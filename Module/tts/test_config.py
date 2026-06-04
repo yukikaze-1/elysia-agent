@@ -14,7 +14,7 @@ class TestTTSConfigDefaults:
         assert cfg.voices_config == ""
 
     def test_env_override(self, monkeypatch):
-        monkeypatch.setenv("GPT_SOVITS_URL", "http://192.168.1.100:9880")
+        monkeypatch.setenv("TTS_API_URL", "http://192.168.1.100:9880")
         cfg = ConfigLoader(TTSConfig).load()
         assert cfg.base_url == "http://192.168.1.100:9880"
 
@@ -38,4 +38,4 @@ class TestTTSFromConfig:
         from Module.tts import GPTSoVitsBackend
         from typing import cast
         backend = cast(GPTSoVitsBackend, backend)
-        assert "overridden" in str(backend._client.base_url)
+        assert "overridden" in backend._base_url

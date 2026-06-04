@@ -7,10 +7,20 @@ from Module.config import ConfigField
 
 @dataclass
 class TTSConfig:
+    model: str = ConfigField(
+        default="gpt-sovits/default",
+        help="TTS provider/model 标识，格式: provider/model-name",
+    )
     base_url: str = ConfigField(
         default="http://localhost:9880",
-        env="GPT_SOVITS_URL",
+        env="TTS_API_URL",
         help="TTS 服务端点",
+    )
+    api_key: str = ConfigField(
+        default="",
+        env="TTS_API_KEY",
+        secret=True,
+        help="API 密钥（自定义端点使用）",
     )
     voices_config: str = ConfigField(
         default="",

@@ -13,6 +13,7 @@
 | 中 | **`emotion_engine.py` `_push_expression()` 缺失 6 种 mood 映射** | `emotion_engine.py:197-206`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
 | 中 | **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** | `plugin.py:37`: `_remind()` 被调用生成 coroutine 对象后传入 `dispatch_background`。调度器 checkpoint 恢复时 payload 中的 coroutine 不可 JSON 序列化（不持久化），且 `from_dict` 重建后 `hasattr(coro, "__await__")` 为 False。边缘场景，当前提醒工具很少跨重启执行。 |
 | 低 | **`long_term.py` Milvus 匹配用 text 做 key 丢失同文异构条目** | `long_term.py:320-323`: Milvus 结果回连 in-memory 条目时用 `e.text` 做 dict key，若多条记忆文本相同但元数据不同（时间戳/重要性），仅最后一条进入候选池。当前 `insert` 端无去重，容易因种子数据重复插入触发。 |
+| 低 | **数据库连接失败静默降级无 warning** | `agent.py:start()` L153-158: MongoDB/Milvus 连接失败时 `mongo_ok`/`milvus_ok` 为 False，仅跳过 `load()`，无 `logger.warning`。底层 SessionMemory/LongTermMemory 有降级保护（`if self._db`/`if self._vector_db`），但管理员无法从日志发现问题。需加 warning + 前端状态提示。 |
 
 ## 功能改进
 
@@ -32,6 +33,8 @@
 - **性能 profiling + 优化**:
   - 时钟补上 TTS span（`_transition_idle` 里的 TTS 等待）
   - 性能回归测试（bench 模块加断言，CI 可跑）
+- **角色切换**: 加载不同角色配置（名字、性格、发音人、prompt 模板），需独立 spec。涉及 CharacterConfig 重新加载、TTS voice lookup 逻辑修复（`voice` 字段当前是死代码）、CognitiveLoop 角色引用更新。`gpt_sovits_voices.yaml` 目前只有 `Elysia` 一个发音人
+- **模型切换与自定义接入**: Spec 已定（`docs/superpowers/specs/2026-06-04-model-switching-design.md`），待实现。三阶段：配置驱动 → custom provider → 运行时热切换 + 前端面板
 - **多角色 prompt 模板**: `PromptAssembler._prompt` 当前指向 `prompt/`，多角色时改为 `character/<name>/`
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + MongoDB + Milvus + SenseVoice + GPT-SoVits）。等架构稳定后实施。
@@ -72,6 +75,12 @@
 
 | 日期 | 内容 |
 |------|------|
+| 06-04 | **模型切换与自定义接入** — 3 阶段实现：配置驱动（LLM/TTS/STT model 字段 + app_config）、custom provider（registries + custom_providers.yaml + OpenAICompatSTTBackend + OpenAICompatTTSBackend）、运行时热切换（protocol test() + Agent switch_*() + REST + WS + 前端设置面板下拉选择器 + 自定义端点模态框 + 测试连接）。915 tests |
+| 06-04 | **ConfigLoader None 修复** — YAML 空值(`model:`)不再覆盖 dataclass 默认值。`_merge_yaml` 跳过 `None` |
+| 06-04 | **前端 STT/TTS 状态指示** — WS capabilities 消息同步服务能力，麦克风按钮/tts toggle 在服务不可用时禁用+灰显 |
+| 06-04 | **TTS 重启重建** — TTS 创建从 `__init__` 移到 `start()`，`/restart` 使用重载配置重建。TTS toggle 跟随服务端实际状态 |
+| 06-04 | **TTSFactory model 验证** — model 参数传入 GPTSoVitsBackend，`gpt-sovits` provider 验证 model 为 "default" 或已知 voice 名（大小写不敏感），custom 走 OpenAICompatTTSBackend |
+| 06-04 | **启动横幅显示 model** — Agent/Server 启动横幅显示 TTS/STT 实际使用的 model 名 |
 | 06-04 | **数据库调试接口** — 新增 8 个 REST 端点 + Web UI 面板（/debug 数据库 Tab），支持 LTM 和 Session 的查看/新增/删除/清空。扩展 VectorDBBackend 协议新增 `delete` 方法，LongTermMemory 新增 `delete()` / `clear_all()` |
 | 06-04 | **移除 `_seed_memories()`** — demo 遗留代码，每次启动重复插入 5 条种子数据 |
 | 06-03 | **测试卫生** — `test_session_isolation` 测试后清理 MongoDB 中遗留的 session 文档 |

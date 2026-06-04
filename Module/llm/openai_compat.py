@@ -6,7 +6,9 @@ Prefix Continuation:
   并自动切换至 beta_url（DeepSeek 专用）。
 """
 
+import asyncio
 import logging
+import time
 from typing import AsyncIterator
 
 import httpx
@@ -171,6 +173,24 @@ class OpenAICompatBackend(LLMBackend):
         await self._client.close()
         if self._beta_client:
             await self._beta_client.close()
+
+    async def test(self) -> dict:
+        """测试连通性：发最小 chat 请求，测延迟。5 秒超时。"""
+        t0 = time.perf_counter()
+        try:
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=1,
+                ),
+                timeout=5.0,
+            )
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            return {"ok": True, "latency_ms": latency_ms}
+        except Exception as e:
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            return {"ok": False, "latency_ms": latency_ms, "error": str(e)}
 
     async def reconnect(self) -> None:
         """Recreate HTTP clients — used on service restart after stop() closed them."""

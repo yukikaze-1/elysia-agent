@@ -5,6 +5,10 @@ import { addStatusMsg } from './chat.js';
 
 export async function toggleMic() {
   if (state.micStream) { stopMic(); return; }
+  if (!state.sttAvailable) {
+    addStatusMsg('STT 服务不可用，语音识别已禁用');
+    return;
+  }
   try {
     state.micStream = await navigator.mediaDevices.getUserMedia({
       audio: {

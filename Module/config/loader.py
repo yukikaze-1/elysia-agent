@@ -170,6 +170,8 @@ class ConfigLoader(Generic[T]):
                 continue
 
             yaml_value = yaml_data[field_name]
+            if yaml_value is None:
+                continue  # YAML 空值视为"未设置"，不覆盖默认值
             current = getattr(instance, field_name)
 
             if self._is_dataclass_instance(current) and isinstance(yaml_value, dict):

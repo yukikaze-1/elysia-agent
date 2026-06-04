@@ -13,7 +13,7 @@ class TestSTTConfigDefaults:
         assert cfg.base_url == "http://localhost:20042"
 
     def test_env_override(self, monkeypatch):
-        monkeypatch.setenv("SENSEVOICE_API_URL", "http://192.168.1.18:20042")
+        monkeypatch.setenv("STT_API_URL", "http://192.168.1.18:20042")
         cfg = ConfigLoader(STTConfig).load()
         assert cfg.base_url == "http://192.168.1.18:20042"
 

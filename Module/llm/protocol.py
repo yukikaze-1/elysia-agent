@@ -36,6 +36,11 @@ class LLMBackend(ABC):
             yield {"content": char, "tool_calls": None}
 
     @abstractmethod
+    async def test(self) -> dict:
+        """测试连通性。返回 {"ok": bool, "latency_ms": int, "error": str}"""
+        ...
+
+    @abstractmethod
     async def close(self) -> None:
         """关闭底层连接。"""
         ...

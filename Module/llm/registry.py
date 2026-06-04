@@ -34,6 +34,11 @@ _BACKENDS: dict[str, dict] = {
         "env_key": "GEMINI_API_KEY",
         "supports_prefix": False,
     },
+    "custom": {
+        "base_url": "",
+        "env_key": "CUSTOM_LLM_API_KEY",
+        "supports_prefix": False,
+    },
 }
 
 
@@ -63,6 +68,10 @@ class LLMFactory:
         env_key = cfg["env_key"]
         api_key = kwargs.pop("api_key", "") or os.getenv(env_key, "")
 
+        # custom provider 必须提供 base_url
+        if provider == "custom" and not base_url:
+            raise ValueError("custom provider requires base_url")
+
         if "logger" not in kwargs:
             kwargs["logger"] = get_caller_logger()
 
@@ -79,5 +88,8 @@ class LLMFactory:
     def from_config(cls, model_id: str, config: "LLMConfig", **overrides) -> "LLMBackend":
         """从 LLMConfig dataclass 创建后端，overrides 优先级最高。"""
         kwargs = dataclasses.asdict(config)
+        # model/api_key 由 registry.create() 处理，不通过 config 传递
+        kwargs.pop("model", None)
+        kwargs.pop("api_key", None)
         kwargs.update(overrides)
         return cls.create(model_id, **kwargs)

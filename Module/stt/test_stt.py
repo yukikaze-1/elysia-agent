@@ -44,6 +44,9 @@ class TestSTTBackendProtocol:
             async def transcribe_stream(self, audio, **kwargs):
                 yield "ok"
 
+            async def test(self) -> dict:
+                return {"ok": True, "latency_ms": 0}
+
             async def close(self) -> None:
                 pass
 

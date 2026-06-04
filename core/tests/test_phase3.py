@@ -1220,12 +1220,12 @@ class TestAppConfig:
 # ============================================================================
 
 class TestLLMAdapterErrors:
-    def test_no_api_key_raises(self):
-        import os as _os
+    def test_no_api_key_uses_factory(self):
+        """LLMAdapter 不再直接检查 API key；key 检查由 registry 层处理。"""
         from core.llm_adapter import LLMAdapter
-        with patch.dict(_os.environ, {"DEEPSEEK_API_KEY": ""}, clear=True):
-            with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
-                LLMAdapter()
+        from core.tests.fake_llm import FakeLLMBackend
+        adapter = LLMAdapter(_test_backend=FakeLLMBackend())
+        assert adapter.model == "deepseek/deepseek-chat"
 
     @pytest.mark.asyncio
     async def test_retry_on_429_then_succeed(self):

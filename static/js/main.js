@@ -8,7 +8,7 @@ import {
 } from './chat.js';
 import { bufferAudioChunk, finalizeStream } from './audio.js';
 import { toggleMic, stopMic, flashWakeIndicator } from './mic.js';
-import { setupSettings } from './settings.js';
+import { setupSettings, updateCapabilityIndicators } from './settings.js';
 import { setupTools } from './tools.js';
 import { restoreChat, restoreFromServer, createCodeBlock, createMarkdownBubble } from './persistence.js';
 import { SEND_COOLDOWN_MS } from './config.js';
@@ -30,6 +30,11 @@ function handleMessage(msg) {
   switch (msg.type) {
     case 'session':
       restoreFromServer(msg.messages);
+      break;
+    case 'capabilities':
+      state.sttAvailable = msg.stt !== false;
+      state.ttsAvailable = msg.tts !== false;
+      updateCapabilityIndicators();
       break;
     case 'delta':
       appendDelta(msg.content, msg.stream_id);
@@ -99,6 +104,13 @@ function handleMessage(msg) {
     case 'wake':
       if (state.wakeEnabled) {
         flashWakeIndicator();
+      }
+      break;
+    case 'switch_model_result':
+      if (msg.ok) {
+        addStatusMsg(msg.service.toUpperCase() + ' 已切换至 ' + msg.model);
+      } else {
+        addStatusMsg(msg.service.toUpperCase() + ' 切换失败: ' + (msg.error || '未知错误'));
       }
       break;
     case 'error': console.warn('Server:', msg.message); break;

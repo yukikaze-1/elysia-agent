@@ -7,7 +7,6 @@ think() API that detects tool calls from non-streaming responses.
 import asyncio
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
@@ -32,10 +31,7 @@ class ThoughtResult:
 
 
 class LLMAdapter:
-    """Unified LLM interface with tool-calling support.
-
-    Requires DEEPSEEK_API_KEY env var. Raises RuntimeError if not set.
-    """
+    """Unified LLM interface with tool-calling support."""
 
     def __init__(self, model: str | None = None, *,
                  _test_backend: "LLMBackend | None" = None):
@@ -45,11 +41,6 @@ class LLMAdapter:
             self._backend: LLMBackend = _test_backend
             logger.info("LLM backend: test double")
             return
-
-        if not os.getenv("DEEPSEEK_API_KEY", ""):
-            raise RuntimeError(
-                "DEEPSEEK_API_KEY not set. Set the env var to use the LLM."
-            )
 
         self._backend = LLMFactory.create(self._requested_model)
         logger.info("LLM backend: %s", self._requested_model)
@@ -137,6 +128,22 @@ class LLMAdapter:
         """Recreate the underlying backend's HTTP client. Used on agent restart."""
         if hasattr(self._backend, 'reconnect'):
             await self._backend.reconnect()
+
+    def switch_model(self, new_model_id: str) -> None:
+        """热切换 LLM 模型。关闭当前后端，用新 model_id 创建后端。"""
+        if hasattr(self._backend, 'close'):
+            try:
+                import asyncio as _asyncio
+                try:
+                    loop = _asyncio.get_running_loop()
+                    loop.create_task(self._backend.close())
+                except RuntimeError:
+                    pass
+            except Exception:
+                pass
+        self._requested_model = new_model_id
+        self._backend = LLMFactory.create(new_model_id)
+        logger.info("LLM switched to: %s", new_model_id)
 
     @property
     def model(self) -> str:

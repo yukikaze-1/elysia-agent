@@ -24,6 +24,11 @@ class STTBackend(ABC):
         ...
 
     @abstractmethod
+    async def test(self) -> dict:
+        """测试连通性。返回 {"ok": bool, "latency_ms": int, "error": str}"""
+        ...
+
+    @abstractmethod
     async def close(self) -> None:
         """关闭 HTTP client。"""
         ...

@@ -18,9 +18,11 @@ server:
 
 tts:
   enabled: true
+  model: gpt-sovits/default
 
 stt:
   enabled: true
+  model: sensevoice/sense-voice
 
 wake_word:
   enabled: false

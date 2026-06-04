@@ -123,5 +123,21 @@ class SenseVoiceBackend(STTBackend):
                 str(data)[:200],
             )
 
+    async def test(self) -> dict:
+        """测试连通性：GET 根路径检查服务可用。5 秒超时。"""
+        import asyncio
+        import time
+        t0 = time.perf_counter()
+        try:
+            resp = await asyncio.wait_for(
+                self._client.get("/"),
+                timeout=5.0,
+            )
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            return {"ok": resp.status_code < 500, "latency_ms": latency_ms}
+        except Exception as e:
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            return {"ok": False, "latency_ms": latency_ms, "error": str(e)}
+
     async def close(self) -> None:
         await self._client.aclose()
