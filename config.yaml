@@ -26,3 +26,6 @@ stt:
 
 wake_word:
   enabled: false
+
+live2d:
+  static_image: "/static/Elysia.png"

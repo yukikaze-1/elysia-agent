@@ -26,4 +26,5 @@ export const SETTINGS_STORAGE_KEYS = {
   TTS: 'elysia_tts',
   VOL: 'elysia_vol',
   WAKE: 'elysia_wake',
+  LIVE2D: 'elysia_live2d',
 };

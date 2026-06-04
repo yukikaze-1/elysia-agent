@@ -35,6 +35,13 @@ function handleMessage(msg) {
       state.sttAvailable = msg.stt !== false;
       state.ttsAvailable = msg.tts !== false;
       state.llmModel = msg.llm_model || '';
+      state.live2dStaticImage = msg.live2d_static_image || '';
+      // 如果 Live2D 已关闭且有静态图片元素，更新 src
+      const staticImg = document.getElementById('live2d-static-img');
+      if (staticImg) {
+        staticImg.src = state.live2dStaticImage || '';
+        staticImg.style.display = state.live2dStaticImage ? '' : 'none';
+      }
       updateCapabilityIndicators();
       break;
     case 'delta':

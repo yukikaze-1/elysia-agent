@@ -461,6 +461,7 @@ async def _handle_ws(
             "stt": stt_transcribe is not None,
             "tts": agent._tts is not None,
             "llm_model": agent._llm.model,
+            "live2d_static_image": agent._config.live2d.static_image,
         })
     except Exception:
         pass

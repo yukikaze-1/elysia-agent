@@ -56,6 +56,12 @@ class WakeWordConfig:
 
 
 @dataclass
+class Live2DConfig:
+    """Live2D 看板娘配置"""
+    static_image: str = ConfigField(default="", env="LIVE2D_STATIC_IMAGE")
+
+
+@dataclass
 class AppConfig:
     agent: AgentConfig = ConfigField(default_factory=AgentConfig)
     llm: LLMConfig = ConfigField(default_factory=LLMConfig)
@@ -64,3 +70,4 @@ class AppConfig:
     tts: TTSConfig = ConfigField(default_factory=TTSConfig)
     stt: STTConfig = ConfigField(default_factory=STTConfig)
     wake_word: WakeWordConfig = ConfigField(default_factory=WakeWordConfig)
+    live2d: Live2DConfig = ConfigField(default_factory=Live2DConfig)

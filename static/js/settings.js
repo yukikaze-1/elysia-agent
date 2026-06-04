@@ -46,6 +46,21 @@ export function setupSettings() {
     addStatusMsg(state.wakeEnabled ? '唤醒词已开启' : '唤醒词已关闭');
   };
 
+  // Live2D 初始状态同步
+  if (!state.live2dEnabled) {
+    document.getElementById('live2d-toggle').classList.remove('on');
+    toggleLive2D();
+  }
+
+  // Live2D 开关
+  document.getElementById('live2d-toggle').onclick = function () {
+    this.classList.toggle('on');
+    state.live2dEnabled = this.classList.contains('on');
+    localStorage.setItem(SETTINGS_STORAGE_KEYS.LIVE2D, state.live2dEnabled ? 'on' : 'off');
+    toggleLive2D();
+    addStatusMsg(state.live2dEnabled ? 'Live2D 已开启' : 'Live2D 已关闭');
+  };
+
   // 音量
   document.getElementById('vol-slider').oninput = function () {
     state.volume = parseInt(this.value, 10);
@@ -325,5 +340,36 @@ export function setModelTag(modelId) {
   if (tag) {
     tag.textContent = modelId || '';
     tag.style.display = modelId ? '' : 'none';
+  }
+}
+
+/** 切换 Live2D iframe / 静态图片 */
+export function toggleLive2D() {
+  const wrap = document.getElementById('avatar-wrap');
+  if (!wrap) return;
+  const iframe = document.getElementById('live2d-frame');
+  const staticImg = document.getElementById('live2d-static-img');
+
+  if (state.live2dEnabled) {
+    // 开启 Live2D — 移除静态图，重建 iframe
+    if (staticImg) staticImg.remove();
+    if (!iframe) {
+      const newIframe = document.createElement('iframe');
+      newIframe.id = 'live2d-frame';
+      newIframe.src = '/static/live2d-demo/index.html';
+      newIframe.sandbox = 'allow-scripts allow-same-origin';
+      wrap.appendChild(newIframe);
+    }
+  } else {
+    // 关闭 Live2D — 移除 iframe 释放资源，显示静态图
+    if (iframe) iframe.remove();
+    if (!staticImg) {
+      const img = document.createElement('img');
+      img.id = 'live2d-static-img';
+      img.src = state.live2dStaticImage || '';
+      img.alt = '';
+      if (!state.live2dStaticImage) img.style.display = 'none';
+      wrap.appendChild(img);
+    }
   }
 }
