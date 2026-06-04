@@ -42,6 +42,13 @@ body {
 #char-name { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
 #char-state { font-size: 12px; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
 #mood-tag { font-size: 13px; color: var(--muted); text-align: center; min-height: 20px; transition: color .3s; }
+#llm-model-tag {
+  font-size: 10px; color: var(--accent); text-align: center;
+  margin-bottom: 4px; min-height: 14px; letter-spacing: 0.5px;
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 6px; max-width: 200px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* ---- Center: Chat ---- */
 #main { flex:1; display:flex; flex-direction:column; min-width: 0; }

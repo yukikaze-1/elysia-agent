@@ -8,7 +8,7 @@ import {
 } from './chat.js';
 import { bufferAudioChunk, finalizeStream } from './audio.js';
 import { toggleMic, stopMic, flashWakeIndicator } from './mic.js';
-import { setupSettings, updateCapabilityIndicators } from './settings.js';
+import { setupSettings, updateCapabilityIndicators, setModelTag } from './settings.js';
 import { setupTools } from './tools.js';
 import { restoreChat, restoreFromServer, createCodeBlock, createMarkdownBubble } from './persistence.js';
 import { SEND_COOLDOWN_MS } from './config.js';
@@ -34,6 +34,7 @@ function handleMessage(msg) {
     case 'capabilities':
       state.sttAvailable = msg.stt !== false;
       state.ttsAvailable = msg.tts !== false;
+      state.llmModel = msg.llm_model || '';
       updateCapabilityIndicators();
       break;
     case 'delta':
@@ -109,6 +110,10 @@ function handleMessage(msg) {
     case 'switch_model_result':
       if (msg.ok) {
         addStatusMsg(msg.service.toUpperCase() + ' 已切换至 ' + msg.model);
+        if (msg.service === 'llm') {
+          state.llmModel = msg.model;
+          setModelTag(msg.model);
+        }
       } else {
         addStatusMsg(msg.service.toUpperCase() + ' 切换失败: ' + (msg.error || '未知错误'));
       }

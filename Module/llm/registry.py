@@ -34,6 +34,11 @@ _BACKENDS: dict[str, dict] = {
         "env_key": "GEMINI_API_KEY",
         "supports_prefix": False,
     },
+    "mimo": {
+        "base_url": "https://api.xiaomimimo.com/v1",
+        "env_key": "MIMO_API_KEY",
+        "supports_prefix": False,
+    },
     "custom": {
         "base_url": "",
         "env_key": "CUSTOM_LLM_API_KEY",

@@ -317,9 +317,11 @@ class Agent:
         return rid
 
     async def switch_llm(self, model_id: str) -> dict:
-        """热切换 LLM 模型。返回 {"ok": bool, "error": str}"""
+        """热切换 LLM 模型。切换前打断当前 cognitive task 防止卡 thinking。"""
         try:
+            self._cognitive.cancel_current()  # 打断正在进行的 LLM 调用
             self._llm.switch_model(model_id)
+            logger.info("LLM switched to: %s", model_id)
             return {"ok": True}
         except Exception as e:
             logger.error("LLM switch failed: %s", e)

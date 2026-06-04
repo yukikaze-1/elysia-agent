@@ -71,11 +71,54 @@
 - `Module/output/console.py` (1)
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
 
+## Module 层代码审查发现 (2026-06-04)
+
+审查范围：`Module/llm`、`Module/tts`、`Module/stt` — 结构一致性、逻辑错误、接口层、功能完备性。118/118 测试通过。
+
+### 已知 Bug（审查新增）
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| **高** | **TTS `gpt_sovits.py:127-132` — `_pull()` 异常被静默吞噬** | `asyncio.Task` 中 HTTP 读取抛出 `RuntimeError` 后，`finally` 块 `except Exception: pass` 吞掉异常。非流式 `synthesize()` 返回 `b""` 作为有效音频，调用方无任何错误指示 |
+| **高** | **TTS `gpt_sovits.py:141-145` + STT `sensevoice.py:134-137` — `test()` 对 4xx 返回 `ok: True`** | 两个 `test()` 用 `status_code < 500` 判定健康。401/403/404 时监控系统认为服务正常，无法检测配置错误 |
+| **高** | **STT `openai_stt.py:47-48` — `last_emotion`/`last_events` 从不更新** | 初始化为 `"NEUTRAL"`/`[]`，`transcribe()` 未更新。Agent 核心 `agent.py:413-414` 每次转录后读取这两个值送入情绪管线，自定义 STT 情绪检测静默失效 |
+| **高** | **TTS `openai_tts.py:46-57` — 缺少文本预处理** | `GPTSoVitsBackend` 通过 `strip_all_markup()` 移除 emoji/`[动作]`/`<<心情>>`/`<表情>`/`（语气）`，`OpenAICompatTTSBackend` 直接传原始文本。OpenAI TTS 会朗读标记如 `[点头思索]`，输出不连贯语音。GPT-SoVits 已在 commit `31bd27d` 修复，未同步到新后端 |
+| **高** | **TTS `registry.py:90-97` — `from_config()` 自定义 TTS 触发 `TypeError`** | `from_config()` 将 `voices_config` 通过 `**kwargs` 传给 `OpenAICompatTTSBackend.__init__()`，该构造函数不接受此参数。`gpt-sovits` 路径正常。目前 `from_config` 未被生产代码调用，潜伏 bug |
+| 中 | **LLM `openai_compat.py:195-219` — `reconnect()` 与 `__init__()` 重复客户端创建** | 两处独立构造 `AsyncOpenAI` + `httpx.Timeout(60.0, connect=10.0)`，调整超时时容易遗漏同步 |
+| 中 | **STT `sensevoice.py:85` — `**kwargs` 接受但未转发到 HTTP** | `_call_api(audio, **kwargs)` 不将 kwargs 传给 `self._client.post()`，违反协议"透传"约定 |
+| 中 | **TTS `gpt_sovits.py:72` — 未知角色抛出裸 `KeyError`** | `self._voices[character]` 无 try/except 包裹，调用方只看到 `KeyError: '角色名'`，不知道哪个后端/配置文件 |
+| 中 | **TTS `registry.py:76-77` — 不可达的 `base_url` 检查** | `custom` 块内检查与 line 59-60 重复，提前 `raise ValueError` 使此处永不可达 |
+| 低 | **TTS `protocol.py:17` — 承诺 32000Hz 但 OpenAI TTS 输出 24000Hz** | 协议声明 32000Hz/mono/int16，OpenAI `tts-1`/`tts-1-hd` 实际 24000Hz。`OpenAICompatTTSBackend` 未重采样也未注释差异 |
+| 低 | **LLM `openai_compat.py:196` — `reconnect()` 文档引用不存在的 `stop()` 方法** | 实际方法是 `close()` |
+| 低 | **TTS `protocol.py:24` — `synthesize_stream` 文档不精确** | 称"首 chunk 为 WAV header"，实际首 chunk = 44字节 header + ~4052字节音频 |
+| 低 | **TTS `openai_tts.py:70` — `test()` 硬编码 `voice="alloy"`** | OpenAI 专用 voice 名，自定义端点可能不支持 |
+
+### 架构改进
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| 中 | **`__init__.py` 导出不一致** | LLM/STT 导出 3 符号，TTS 导出 6 符号（含 `GPTSoVitsBackend` + `strip_all_markup`/`strip_action_only`）。需统一策略：后端走工厂则全部不导出类；需公开则全部导出 |
+| 中 | **环境变量命名不统一** | LLM 用 `LLM_API_BASE`，TTS/STT 用 `TTS_API_URL`/`STT_API_URL`。建议统一为 `{MODULE}_API_URL` 或 `{MODULE}_API_BASE` |
+| 低 | **`create()` 参数名不统一** | TTS 用 `provider_id`，LLM/STT 用 `model_id` |
+| 低 | **新建后端模式遵循不完整** | `OpenAICompatTTSBackend`(commit `2ad625e`) 和 `OpenAICompatSTTBackend`(commit `b105c77`) 未完全复制 LLM `OpenAICompatBackend` 的最佳实践：缺文本预处理、`reconnect()`、`test()` 逻辑不严谨 |
+| 低 | **STT 有 `last_emotion`/`last_events` 状态，LLM/TTS 无** | 合理的领域差异，但应文档化作为接口约定 |
+
+### 代码风格
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| 低 | **LLM `openai_compat.py:196-207` — 英文注释违反 CLAUDE.md** | `reconnect()` 的 docstring 和内联注释用了英文，违反"代码注释用中文"规则 |
+| 低 | **TTS `text_preprocess.py:5-12` — 英文注释** | `_EMOJI_RE` 的 Unicode block 注释用了英文 |
+
 ## 已完成 (2026-06-04)
 
 | 日期 | 内容 |
 |------|------|
-| 06-04 | **模型切换与自定义接入** — 3 阶段实现：配置驱动（LLM/TTS/STT model 字段 + app_config）、custom provider（registries + custom_providers.yaml + OpenAICompatSTTBackend + OpenAICompatTTSBackend）、运行时热切换（protocol test() + Agent switch_*() + REST + WS + 前端设置面板下拉选择器 + 自定义端点模态框 + 测试连接）。915 tests |
+| 06-04 | **模型切换与自定义接入** — 3 阶段实现：配置驱动（LLM/TTS/STT model 字段 + app_config）、custom provider（registries + custom_providers.yaml + OpenAICompatSTTBackend + OpenAICompatTTSBackend）、运行时热切换（protocol test() + Agent switch_*() + REST + WS + 前端设置面板下拉选择器 + 自定义端点模态框 + 测试连接）。915 tests。测试结果：一/二/六(Section) 全部通过；三/四/五 待测 |
+| 06-04 | **6.4 错误提示修复** — LLM 调用失败时 broadcast 错误消息到前端（如 `❌ LLM 调用失败: Connection error`），不再静默失败 |
+| 06-04 | **MIMO 接入** — 新增 `mimo` provider (mimo-v2.5 / mimo-v2.5-pro)，OpenAI 兼容协议。顺便修复空 `choices` 流式响应兼容 |
+| 06-04 | **前端模型标签** — 角色名下方显示当前 LLM 模型名（如 `deepseek/deepseek-v4-flash`），切换时实时更新 |
+| 06-04 | **模型切换测试修复（3 项）** — 修正 provider model 列表（deepseek 去 chat、ollama 改 qwen2.5:3b）；`switch_llm()` 切换前 `cancel_current()` 打断当前 thinking 防止 FSM 卡住；`cognitive_loop.process()` 加 `except Exception` 兜底，LLM 连接失败时回 IDLE |
 | 06-04 | **ConfigLoader None 修复** — YAML 空值(`model:`)不再覆盖 dataclass 默认值。`_merge_yaml` 跳过 `None` |
 | 06-04 | **前端 STT/TTS 状态指示** — WS capabilities 消息同步服务能力，麦克风按钮/tts toggle 在服务不可用时禁用+灰显 |
 | 06-04 | **TTS 重启重建** — TTS 创建从 `__init__` 移到 `start()`，`/restart` 使用重载配置重建。TTS toggle 跟随服务端实际状态 |

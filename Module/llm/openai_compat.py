@@ -98,6 +98,8 @@ class OpenAICompatBackend(LLMBackend):
             **kwargs,
         )
         async for chunk in response:  # type: ignore[union-attr]
+            if not chunk.choices:
+                continue  # 某些 provider（MiMo 等）返回空 choices 表示流结束
             delta = chunk.choices[0].delta
             content = delta.content if delta and delta.content else None
             raw_tc = delta.tool_calls if delta and delta.tool_calls else None

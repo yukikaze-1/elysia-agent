@@ -264,6 +264,20 @@ class CognitiveLoop:
             except asyncio.CancelledError:
                 logger.info("<<< 用户打断")
                 await self._handle_interrupt()
+            except Exception as e:
+                logger.exception("<<< LLM 调用异常，回退到 IDLE")
+                # 通知前端错误信息
+                err_msg = str(e)[:200]
+                try:
+                    await self._output._broadcast(
+                        "on_text_delta",
+                        f"\n❌ LLM 调用失败: {err_msg}",
+                        capability=ChannelCapability.TEXT_DELTA,
+                    )
+                    await self._output.send("")
+                except Exception:
+                    pass
+                await self._handle_interrupt()
             finally:
                 self._clock = None  # type: ignore[assignment]
 

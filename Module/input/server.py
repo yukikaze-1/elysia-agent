@@ -311,9 +311,10 @@ def create_app(
         from core.custom_providers import load as load_custom
 
         llm_registry = {
-            "deepseek": {"models": ["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro"]},
+            "deepseek": {"models": ["deepseek-v4-flash", "deepseek-v4-pro"]},
             "openai": {"models": ["gpt-4", "gpt-4o", "gpt-5"]},
-            "ollama": {"models": ["qwen3:latest"]},
+            "ollama": {"models": ["qwen2.5:3b"]},
+            "mimo": {"models": ["mimo-v2.5", "mimo-v2.5-pro"]},
             "gemini": {"models": []},
             "custom": {"models": []},
         }
@@ -459,6 +460,7 @@ async def _handle_ws(
             "type": "capabilities",
             "stt": stt_transcribe is not None,
             "tts": agent._tts is not None,
+            "llm_model": agent._llm.model,
         })
     except Exception:
         pass

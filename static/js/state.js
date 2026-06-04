@@ -43,6 +43,7 @@ class AppState {
     // 服务能力状态 (由 WS capabilities 消息更新)
     this.sttAvailable = true;   // 乐观默认 true，收到 capabilities 后更新
     this.ttsAvailable = true;
+    this.llmModel = '';         // 当前 LLM 模型名
   }
 
   /** WebSocket 重连时重置所有运行时状态 */

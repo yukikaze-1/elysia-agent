@@ -310,3 +310,6 @@ python -m pytest core/tests/test_phase3.py -v
 - **WS capabilities 消息** — 前端获取 STT/TTS 实际可用状态，禁用不可用的控件
 - **TTS 创建移至 start()** — 支持 `/restart` 后重建 TTS
 - **启动横幅** — 显示实际使用的 model 名
+- **模型列表修正** — deepseek 去掉不存在的 `deepseek-chat`；ollama 改为 `qwen2.5:3b`
+- **switch_llm 打断当前 thinking** — 切换模型时调用 `cognitive.cancel_current()`，防止卡在 thinking 状态
+- **cognitive_loop 异常兜底** — `process()` 捕获非 CancelledError 异常，FSM 回 IDLE

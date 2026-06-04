@@ -315,4 +315,15 @@ export function updateCapabilityIndicators() {
       ttsToggle.style.cursor = '';
     }
   }
+  // 更新模型标签
+  setModelTag(state.llmModel || '');
+}
+
+/** 在角色名下方显示当前 LLM 模型 */
+export function setModelTag(modelId) {
+  const tag = document.getElementById('llm-model-tag');
+  if (tag) {
+    tag.textContent = modelId || '';
+    tag.style.display = modelId ? '' : 'none';
+  }
 }
