@@ -164,13 +164,13 @@ class LongTermMemory:
             except Exception:
                 logger.debug("Embedding failed for insert, storing text-only", exc_info=True)
 
-        import uuid
+        from core.message_id import new_message_id
         # Work on a copy to avoid mutating caller's dict
         meta = dict(metadata)
         # Accept 'type' as alias for 'memory_type'
         memory_type = meta.pop("memory_type", meta.pop("type", "note"))
         entry = MemoryEntry(
-            id=uuid.uuid4().hex[:12],
+            id=new_message_id(),
             text=text,
             embedding=embedding,
             memory_type=memory_type,

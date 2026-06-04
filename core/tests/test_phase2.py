@@ -1071,9 +1071,10 @@ async def test_long_term_memory_tracks_dirty_entries():
     await ltm.insert("离线数据", memory_type="fact")
     assert len(ltm._dirty_ids) >= 1
 
-    # 验证 ID 生成
+    # 验证 ID 生成 (new_message_id() 返回 "msg_" + 26 hex)
     entry = ltm._entries[-1]
-    assert len(entry.id) == 12
+    assert entry.id.startswith("msg_")
+    assert len(entry.id) == 30
 
 
 @pytest.mark.asyncio

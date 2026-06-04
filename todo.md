@@ -9,7 +9,6 @@
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
 | 中 | **无去重机制** | 延后 — 现有测试确认重复文本+不同元数据是设计意图。需独立设计去重方案 |
 | **高** | **`llm_adapter.py` `started` 标记未用于阻止中流产错重试** | `stream_think()` L98-100: `started` 设为 True 后从未在重试判断中使用。若 LLM 流式响应中途断开（已产出部分内容），重试会从头重新 yield，调用方收到重复 token。注释明确说 "Only retries if streaming hasn't started yet"，但代码未实现该逻辑。需在 L110 加 `if started: raise` |
-| ~~**高**~~ | ~~**`_seed_memories()` 每次启动重复插入种子数据**~~ | **已修复 (2026-06-03)**: 移除 `_seed_memories()` 方法及其在 `start()` 中的调用。demo 遗留代码，不属于生产路径。 |
 | 中 | **`emotion_engine.py` `_push_expression()` 缺失 6 种 mood 映射** | `emotion_engine.py:197-206`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
 | 中 | **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** | `plugin.py:37`: `_remind()` 被调用生成 coroutine 对象后传入 `dispatch_background`。调度器 checkpoint 恢复时 payload 中的 coroutine 不可 JSON 序列化（不持久化），且 `from_dict` 重建后 `hasattr(coro, "__await__")` 为 False。边缘场景，当前提醒工具很少跨重启执行。 |
 | 低 | **`long_term.py` Milvus 匹配用 text 做 key 丢失同文异构条目** | `long_term.py:320-323`: Milvus 结果回连 in-memory 条目时用 `e.text` 做 dict key，若多条记忆文本相同但元数据不同（时间戳/重要性），仅最后一条进入候选池。当前 `insert` 端无去重，容易因种子数据重复插入触发。 |
@@ -34,7 +33,6 @@
   - 时钟补上 TTS span（`_transition_idle` 里的 TTS 等待）
   - 性能回归测试（bench 模块加断言，CI 可跑）
 - **角色切换**: 加载不同角色配置（名字、性格、发音人、prompt 模板），需独立 spec。涉及 CharacterConfig 重新加载、TTS voice lookup 逻辑修复（`voice` 字段当前是死代码）、CognitiveLoop 角色引用更新。`gpt_sovits_voices.yaml` 目前只有 `Elysia` 一个发音人
-- **模型切换与自定义接入**: ✅ 已完成 (2026-06-04)。三阶段：配置驱动 → custom provider → 运行时热切换 + 前端面板。三/四/五 Section 待测
 - **多角色 prompt 模板**: `PromptAssembler._prompt` 当前指向 `prompt/`，多角色时改为 `character/<name>/`
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + MongoDB + Milvus + SenseVoice + GPT-SoVits）。等架构稳定后实施。
@@ -55,6 +53,7 @@
 | 中 | `database/graphdb/` 不完整 | 只有 protocol.py，保留参考 |
 | 中 | `OutputManager.stream()` 未使用 | `manager.py:63-88`，保留参考 |
 | 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行，保留参考 |
+| 中 | `Module/bench/` 位置不当 | bench.py 自注释"将移至 tools/bench/"，依赖 core/，后续考虑迁移 |
 
 ## 健壮性 & 架构
 
@@ -71,11 +70,11 @@
 - `Module/output/console.py` (1)
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
 
-## Module 层代码审查发现 (2026-06-04) — ✅ 全部修复 (06-04)
+## 已完成 (2026-06-05)
 
-审查范围：`Module/llm`、`Module/tts`、`Module/stt`。20 项全部修复，594/595 tests 通过（1 个预存失败）。
-
-5 HIGH + 4 MEDIUM + 4 LOW bug + 5 架构改进 + 2 风格 = 20 项。Commits: `458fedf` `3e85ed3` `18720ab` `5a0728a` `8f6af2a`。
+| 日期 | 内容 |
+|------|------|
+| 06-05 | **项目清理** — 磁盘清理（删除~280MB：log/、.playwright-mcp/、过期 worktree、所有 __pycache__/、static/live2d-demo/、data/sandbox/）；UUID 生成统一（8 个文件改用 `core.message_id.new_message_id()`）；补缺失 `__main__.py`（config/input/prompt/logger）；补 `Module/input/README.md`；`core/tools/test_tool_parallel.md` 移至 docs/；清理 `.claude/settings.local.json` 中 9 条过期 `demo.py` 引用。spec: `docs/superpowers/specs/2026-06-05-cleanup-design.md` 待写 |
 
 ## 已完成 (2026-06-04)
 

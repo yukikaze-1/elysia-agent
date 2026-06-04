@@ -517,3 +517,91 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 **总计: 29 commits, 511 新增测试, 5 个源码 bug 修复, 959 passed + 2 known failures = 961 total**
 
 **文档:** `docs/superpowers/specs/2026-06-02-test-audit-design.md` + 5 phase plans in `docs/superpowers/plans/`
+
+---
+
+### 测试卫生 (2026-06-03)
+
+| 任务 | 说明 |
+|------|------|
+| `test_session_isolation` 清理 | 测试后清理 MongoDB 中遗留的 session 文档 |
+
+### 移除种子数据 (2026-06-03)
+
+| 任务 | 说明 |
+|------|------|
+| 删除 `_seed_memories()` | demo 遗留代码，每次启动重复插入 5 条种子数据。从 `start()` 中移除调用 |
+
+---
+
+### 模型切换与自定义接入 (2026-06-04)
+
+完整架构：配置驱动 provider 选择 → custom provider 端点 → 运行时热切换 + 前端 UI。915 tests。
+
+| 阶段 | 任务 | 说明 |
+|------|------|------|
+| 配置驱动 | TTS/STT/LLM model 字段 | `app_config.py` 新增 model/base_url/api_key 字段，`config.yaml` 可配置默认模型 |
+| 配置驱动 | ConfigLoader None 修复 | YAML 空值不再覆盖 dataclass 默认值 |
+| custom provider | registries 扩展 | TTS/STT 新增 custom 条目，`custom_providers.yaml` 持久化自定义端点 |
+| custom provider | OpenAICompatSTT/TTSBackend | 通用 OpenAI Whisper 协议 STT + TTS 后端，支持任意兼容端点 |
+| custom provider | MiMo provider | 新增 `mimo` provider (mimo-v2.5 / mimo-v2.5-pro)，OpenAI 兼容协议 |
+| 运行时热切换 | protocol `test()` 方法 | 所有后端新增连通性检测，返回 latency_ms |
+| 运行时热切换 | Agent `switch_llm/stt/tts()` | 运行时替换后端实例，`switch_llm()` 先 cancel_current() 防 FSM 卡住 |
+| 运行时热切换 | REST + WS | 4 个 `/api/providers*` REST 端点 + `switch_model` WS 消息 |
+| 前端 | 设置面板下拉选择器 | 模型选择 + 自定义端点模态框 + 测试连接按钮 |
+| 前端 | LLM 模型标签 | 角色名下方显示当前模型名，切换时实时更新 |
+| 前端 | STT/TTS 能力指示 | `capabilities` WS 消息同步，不可用时禁用按钮 |
+| 修复 | CognitiveLoop 异常兜底 | `except Exception` 广播错误到前端 + FSM 回 IDLE |
+| 修复 | 空 `choices` 流式兼容 | MiMo 等返回 `choices: []` 时不再 IndexError |
+| 修复 | TTS 重启重建 | TTS 创建从 `__init__` 移到 `start()` |
+| 修复 | TTSFactory model 验证 | 大小写不敏感 voice 名验证 + custom 后端分发 |
+
+**Spec:** `docs/superpowers/specs/2026-06-04-model-switching-design.md`
+**计划:** `docs/superpowers/plans/2026-06-04-model-switching.md`
+
+---
+
+### 数据库调试接口 (2026-06-04)
+
+开发阶段的调试工具，在 `/debug` 页面增加数据库管理面板。
+
+| 任务 | 说明 |
+|------|------|
+| VectorDB 协议扩展 | 新增 `delete()` 抽象方法 + Milvus 实现 |
+| LongTermMemory CRUD | `delete_entry()` + `clear_all()` |
+| 8 个 REST 端点 | `/debug/api/ltm`（CRUD）、`/debug/api/sessions`（列表/详情/删除/清空）、`/debug/api/db-status` |
+| Web UI 面板 | /debug 数据库 Tab，LTM 面板（搜索/过滤/新增/删除/清空）+ Session 面板 |
+
+---
+
+### Module 层代码审查修复 (2026-06-04)
+
+代码审查发现 20 项问题，涉及 `Module/llm`、`Module/tts`、`Module/stt`。全部修复，594/595 tests 通过。
+
+| 优先级 | 数量 | 内容 |
+|--------|------|------|
+| HIGH | 5 | 静默吞异常 → warning 日志、`test()` `<500` → `<400`、`last_emotion`/`last_events` 更新、文本预处理缺失、`from_config()` TypeError |
+| MEDIUM | 4 | `_create_clients()` DRY 提取、`**kwargs` 转发 HTTP、KeyError 描述性包装、删除不可达代码 |
+| LOW | 4 | 协议文档修正（32000Hz、首 chunk）、`stop()`→`close()` docstring、`test()` voice 硬编码→GET / |
+| 架构 | 5 | `__init__.py` 统一 3 符号导出、`provider_id`→`model_id` 重命名、`last_emotion`/`last_events` 协议文档化、env var 命名注释 |
+| 风格 | 2 | openai_compat.py + text_preprocess.py 英文注释→中文 |
+
+**Commits:** `458fedf` `3e85ed3` `18720ab` `5a0728a` `8f6af2a`
+
+---
+
+### Live2D 开关 (2026-06-04)
+
+设置面板新增 Live2D 开关，关闭时移除 iframe 释放 ~500KB Cubism 运行时资源。
+
+| 任务 | 说明 |
+|------|------|
+| 配置层 | `Live2DConfig.static_image` 字段，env `LIVE2D_STATIC_IMAGE`，`config.yaml` |
+| 服务端 | WS `capabilities` 消息下发 `live2d_static_image` |
+| 前端状态 | `state.live2dEnabled`（localStorage 持久化）+ `state.live2dStaticImage`（capabilities 同步） |
+| 开关 UI | 设置面板 Live2D 开关行 + CSS toggle + 点击状态提示 |
+| iframe/image 切换 | `toggleLive2D()` — ON 时创建 iframe，OFF 时移除并显示 `<img>` / 🌸 emoji |
+| 竞态修复 | capabilities 到达后更新已存在的 `#live2d-static-img` src |
+
+**Spec:** `docs/superpowers/specs/2026-06-04-live2d-toggle-design.md`
+**计划:** `docs/superpowers/plans/2026-06-04-live2d-toggle.md`

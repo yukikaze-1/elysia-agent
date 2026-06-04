@@ -228,9 +228,8 @@ class CognitiveLoop:
                 set_request_id(rid)
 
             # 生成 trace_id（跨 Agent、跨工具串联）
-            import uuid
             if self._ctx is not None:
-                self._ctx.trace_id = uuid.uuid4().hex
+                self._ctx.trace_id = new_message_id()
 
             self._tts_seq = 0
             clock = TimingClock()

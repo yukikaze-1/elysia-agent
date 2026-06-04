@@ -7,7 +7,6 @@ Each client gets an independent WebSocketChannel (outbound) and AudioBuffer
 import asyncio
 import json
 import logging
-import uuid
 from pathlib import Path
 
 from aiohttp import web, WSMsgType
@@ -443,7 +442,8 @@ async def _handle_ws(
     ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024)
     await ws.prepare(request)
 
-    client_id = uuid.uuid4().hex[:8]
+    from core.message_id import new_message_id
+    client_id = new_message_id()
     channel = WebSocketChannel(ws)
     agent._output.add_channel(channel)
 

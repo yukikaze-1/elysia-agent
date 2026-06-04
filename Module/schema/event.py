@@ -3,7 +3,8 @@ from enum import Enum
 from typing import Any
 from datetime import datetime
 import time
-import uuid
+
+from core.message_id import new_message_id
 
 
 class EventType(str, Enum):
@@ -40,7 +41,7 @@ class Event:
     content: Any
     source: EventSource
     timestamp: float = field(default_factory=time.time)
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    id: str = field(default_factory=lambda: new_message_id())
     metadata: dict[str, Any] | None = None
 
     def __str__(self):

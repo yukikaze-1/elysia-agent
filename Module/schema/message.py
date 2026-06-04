@@ -3,11 +3,11 @@ from datetime import datetime
 from enum import StrEnum
 import logging
 import time
-import uuid
 from typing import Optional
 
 from openai.types.chat import ChatCompletionMessage
 
+from core.message_id import new_message_id
 from Module.schema.io_models import L0InputSourceType
 from Module.schema.media import AudioData, ImageData, VideoData, FileData
 
@@ -48,7 +48,7 @@ class UserMessage:
     #   L0InputSourceType.TELEGRAM   — Telegram Bot (未来)
     #   L0InputSourceType.INVALID    — 未识别来源，兜底
 
-    message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    message_id: str = field(default_factory=lambda: new_message_id())
     # 全链路追踪 ID，从入站到 ChatMessage 保持同一 ID
 
     session_id: str = ""
@@ -141,7 +141,7 @@ class EnvironmentMessage:
     #   power_low:        {"level_percent": int}
     #   其他事件按需扩展
 
-    message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    message_id: str = field(default_factory=lambda: new_message_id())
 
     session_id: str = ""
 
@@ -183,7 +183,7 @@ class ChatMessage:
     inner_voice: str = ""
     timestamp: float = field(default_factory=time.time)
     type: MessageType = MessageType.TEXT
-    message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    message_id: str = field(default_factory=lambda: new_message_id())
     session_id: str = ""
     reply_to: str | None = None
     images: list[ImageData] = field(default_factory=list)
@@ -210,7 +210,7 @@ class ChatMessage:
             inner_voice=data.get("inner_voice", ""),
             timestamp=data.get("timestamp", time.time()),
             type=MessageType(data.get("type", "text")),
-            message_id=data.get("message_id", str(uuid.uuid4())),
+            message_id=data.get("message_id", new_message_id()),
             session_id=data.get("session_id", ""),
             reply_to=data.get("reply_to"),
             images=[ImageData(**img) if isinstance(img, dict) else img for img in data.get("images", [])],

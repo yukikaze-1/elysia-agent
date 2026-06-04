@@ -2,8 +2,6 @@
 
 import asyncio
 import time
-import uuid
-
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -39,7 +37,8 @@ async def main():
     # 2. Insert one
     print()
     print("=== 插入单条 ===")
-    msg_id = str(uuid.uuid4())
+    from core.message_id import new_message_id
+    msg_id = new_message_id()
     t0 = time.perf_counter()
     doc_id = await backend.insert_one(TEST_COLLECTION, {
         "message_id": msg_id,
@@ -57,7 +56,7 @@ async def main():
     docs = []
     for i in range(100):
         docs.append({
-            "message_id": str(uuid.uuid4()),
+            "message_id": new_message_id(),
             "session_id": "test_session",
             "role": "user" if i % 2 == 0 else "assistant",
             "content": f"消息内容 {i}",

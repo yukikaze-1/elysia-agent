@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import time
-import uuid
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
+
+from .message_id import new_message_id
 
 
 class TaskType(Enum):
@@ -112,7 +113,7 @@ class Task:
         priority: int = 5,
     ) -> "Task":
         return cls(
-            id=uuid.uuid4().hex[:12],
+            id=new_message_id(),
             type=TaskType.TOOL_CALL,
             parent_id=parent_id,
             priority=priority,
@@ -127,7 +128,7 @@ class Task:
     ) -> "Task":
         """创建后台任务。"""
         return cls(
-            id=uuid.uuid4().hex[:12],
+            id=new_message_id(),
             type=TaskType.BACKGROUND,
             priority=priority,
             run_in_background=True,
