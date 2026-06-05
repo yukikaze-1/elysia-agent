@@ -668,3 +668,19 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 
 **Spec:** `docs/superpowers/specs/2026-06-05-vision-tool-design.md`
 **计划:** `docs/superpowers/plans/2026-06-05-vision-tool.md`
+
+---
+
+### 工具调用详情可见性 (2026-06-05)
+
+工具调用在 web 端和日志都看不到详情的问题修复。
+
+| 任务 | 说明 |
+|------|------|
+| SafetyPipeline 统一日志 | `_finish` 闭包覆盖全部 8 个返回路径，所有工具自动获得开始/完成/失败日志 |
+| `tool_done` 消息扩展 | 从 `{tool, call_id, success}` 扩展到 7 字段含 `content`/`error`/`error_type`/`duration_ms`/`truncated` |
+| `tool_executing` args | 移除 `str(v)[:80]` 截断，传完整参数值 |
+| 前端可展开卡片 | 收起态：工具名 + ✓/✗ + 耗时；展开态：参数 JSON + 返回结果 + 错误详情；失败默认展开红色边框 |
+
+**Spec:** `docs/superpowers/specs/2026-06-05-tool-visibility-design.md`
+**计划:** `docs/superpowers/plans/2026-06-05-tool-visibility.md`

@@ -451,7 +451,7 @@ class CognitiveLoop:
                         await self._output.action("tool_executing", params={
                             "tool": func_name,
                             "call_id": call_id,
-                            "args": {k: str(v)[:80] for k, v in args.items()},
+                            "args": {k: str(v) for k, v in args.items()},
                         })
 
                     with self._clock.span("tools"):
@@ -470,10 +470,16 @@ class CognitiveLoop:
                             "content": tool_result.llm_content,
                         })
                         # Emit tool_done for each completed tool
+                        error_type_str = tool_result.error_type.value if tool_result.error_type else None
                         await self._output.action("tool_done", params={
                             "tool": tc["function"]["name"],
                             "call_id": tc.get("id", "unknown"),
                             "success": tool_result.success,
+                            "content": tool_result.content[:500] if tool_result.content else "",
+                            "error": tool_result.error,
+                            "error_type": error_type_str,
+                            "duration_ms": tool_result.duration_ms,
+                            "truncated": tool_result.truncated,
                         })
 
                     # Clean up executing tools tracking

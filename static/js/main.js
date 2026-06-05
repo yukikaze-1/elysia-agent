@@ -93,7 +93,7 @@ function handleMessage(msg) {
       if (msg.action === 'tool_executing') {
         addToolCard(msg.params.tool, msg.params.call_id, msg.params.args);
       } else if (msg.action === 'tool_done') {
-        updateToolCard(msg.params.call_id, msg.params.success);
+        updateToolCard(msg.params.call_id, msg.params);
       }
       break;
     case 'command':

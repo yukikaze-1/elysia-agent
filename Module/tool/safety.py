@@ -74,6 +74,19 @@ def _format_validation_error(exc: ValidationError) -> str:
     return "; ".join(messages)[:200]
 
 
+def _format_args(raw_params: dict, max_len: int = 60) -> str:
+    """格式化工具参数用于日志，截断长值。"""
+    if not raw_params:
+        return ""
+    parts = []
+    for k, v in raw_params.items():
+        s = str(v)
+        if len(s) > max_len:
+            s = s[:max_len] + "…"
+        parts.append(f"{k}={s}")
+    return ", ".join(parts)
+
+
 def _truncate_text(
     text: str, max_tokens: int, strategy: str,
 ) -> tuple[str, bool]:
@@ -225,17 +238,29 @@ class SafetyPipeline:
         start = asyncio.get_event_loop().time()
         self._stats["total"] += 1
 
+        logger.info("工具开始: %s(%s)", name, _format_args(raw_params))
+
+        # 统一日志 + 返回
+        def _finish(result):
+            elapsed = int((asyncio.get_event_loop().time() - start) * 1000)
+            if result.success:
+                logger.info("工具完成: %s — OK — %dms", name, elapsed)
+            else:
+                et = result.error_type.value if result.error_type else "UNKNOWN"
+                logger.warning("工具失败: %s — %s — %s", name, et, result.error or "unknown")
+            return result
+
         # 1. Pydantic 校验
         if plugin.param_model is not None:
             try:
                 params = plugin.param_model(**raw_params)
             except ValidationError as e:
                 self._stats["denied"] += 1
-                return ToolResult.fail(
+                return _finish(ToolResult.fail(
                     name=name,
                     error=_format_validation_error(e),
                     error_type=ErrorType.INVALID_ARGUMENT,
-                )
+                ))
         else:
             params = None
 
@@ -243,20 +268,20 @@ class SafetyPipeline:
         safety_err = await self._check_safety(plugin, ctx, raw_params)
         if safety_err:
             self._stats["denied"] += 1
-            return ToolResult.fail(
+            return _finish(ToolResult.fail(
                 name=name, error=safety_err,
                 error_type=ErrorType.PERMISSION_DENIED,
-            )
+            ))
 
         # 3. HITL approval
         if plugin.safety and plugin.safety.requires_human_approval:
             hitl_ok, hitl_status = await self._run_hitl(plugin, name, raw_params)
             if not hitl_ok:
-                return ToolResult.fail(
+                return _finish(ToolResult.fail(
                     name=name,
                     error=f"操作被{'拒绝' if hitl_status == 'denied' else '超时' if hitl_status == 'timeout' else '过期'}",
                     error_type=ErrorType.PERMISSION_DENIED,
-                )
+                ))
 
         # 4. Acquire semaphore
         if semaphore is not None:
@@ -264,10 +289,10 @@ class SafetyPipeline:
                 await asyncio.wait_for(semaphore.acquire(), timeout=10.0)
             except asyncio.TimeoutError:
                 self._stats["rate_limited"] += 1
-                return ToolResult.fail(
+                return _finish(ToolResult.fail(
                     name=name, error="并发限制，请稍后重试",
                     error_type=ErrorType.RATE_LIMITED,
-                )
+                ))
 
         # 5. Execute with timeout
         timeout = plugin.safety.request_timeout if plugin.safety else 30.0
@@ -279,29 +304,29 @@ class SafetyPipeline:
                 )
             except asyncio.TimeoutError:
                 self._stats["timeout"] += 1
-                return ToolResult.fail(
+                return _finish(ToolResult.fail(
                     name=name, error=f"执行超时 ({timeout}s)",
                     error_type=ErrorType.TIMEOUT,
-                )
+                ))
             except asyncio.CancelledError:
-                return ToolResult.fail(
+                return _finish(ToolResult.fail(
                     name=name, error="用户取消",
                     error_type=ErrorType.CANCELLED,
-                )
+                ))
         except Exception as e:
-            return ToolResult.fail(
+            return _finish(ToolResult.fail(
                 name=name, error=str(e),
                 error_type=ErrorType.TOOL_ERROR,
-            )
+            ))
         finally:
             if semaphore is not None:
                 semaphore.release()
 
         # 6. Wrap + truncate result
-        return self._wrap_result(
+        return _finish(self._wrap_result(
             raw, name, asyncio.get_event_loop().time() - start,
             plugin.safety,
-        )
+        ))
 
     async def execute_stream(
         self,

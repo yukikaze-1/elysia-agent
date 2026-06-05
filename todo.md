@@ -93,6 +93,7 @@
 | 06-05 | **Bug 修复: MIMO 相对路径 URL** — `_resolve_image_source()` 处理 `/uploads/...` 相对路径，提取文件名查本地目录转 base64 |
 | 06-05 | **MAX_TOOL_ROUNDS 3→5** — 防止 MIMO 工具调用轮次不足导致无最终回复 |
 | 06-05 | **Bug 修复: debug 页面看不到图片** — `debug_info.py` collect() 补上 content 字段；`server.py` session_detail_handler 对齐 messages_for_client() 格式；`debug.html` 新增 renderImages() + 缩略图渲染 + lightbox。spec: `docs/superpowers/specs/2026-06-05-debug-page-image-display-design.md` |
+| 06-05 | **工具调用详情可见性** — SafetyPipeline 统一日志（`_finish` 闭包覆盖所有返回路径）；`tool_done` WS 消息从 3 字段扩展到 7 字段（含结果/错误/耗时）；前端工具卡片可展开详情（完整参数 JSON + 返回结果 + 错误详情）。spec: `docs/superpowers/specs/2026-06-05-tool-visibility-design.md` |
 
 ## 已完成 (2026-06-04)
 

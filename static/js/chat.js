@@ -240,7 +240,8 @@ export function addStatusMsg(text) {
 export function addToolCard(name, callId, args) {
   finalizeDelta();
   const id = callId || `${name}-${Date.now()}`;
-  const argsStr = args ? Object.entries(args).map(([k, v]) => `${k}: ${v}`).join(', ') : '';
+  const argsJson = args ? JSON.stringify(args, null, 2) : '{}';
+  const argsSummary = args ? Object.entries(args).map(([k, v]) => `${k}: ${v}`).join(', ') : '';
   const card = document.createElement('div');
   card.className = 'tool-card executing';
   card.id = `tool-${id}`;
@@ -252,7 +253,16 @@ export function addToolCard(name, callId, args) {
       <span class="tool-card-chevron">▾</span>
     </div>
     <div class="tool-card-body">
-      <div class="tool-card-args">${esc(argsStr)}</div>
+      <div class="tool-card-args">${esc(argsSummary)}</div>
+      <div class="tool-card-section">
+        <div class="label">参数</div>
+        <div class="value mono">${esc(argsJson)}</div>
+      </div>
+      <div class="tool-card-section tool-result-section" style="display:none">
+        <div class="label">结果</div>
+        <div class="value tool-result-content"></div>
+      </div>
+      <div class="tool-card-error" style="display:none"></div>
     </div>`;
   document.getElementById('chat').appendChild(card);
   state.toolCards[id] = card;
@@ -260,19 +270,43 @@ export function addToolCard(name, callId, args) {
   return id;
 }
 
-export function updateToolCard(id, success) {
+export function updateToolCard(id, data) {
+  // data: { success, content, error, error_type, duration_ms, truncated }
   const card = state.toolCards[id];
   if (!card) return;
   card.classList.remove('executing');
+  const success = data.success !== false;
   card.classList.add(success ? 'done' : 'fail');
+
   const status = card.querySelector('.tool-status');
   const icon = card.querySelector('.tool-icon');
+  const durationStr = data.duration_ms ? ` ${(data.duration_ms / 1000).toFixed(1)}s` : '';
+
   if (success) {
-    status.innerHTML = '<span style="color:var(--idle)">✓</span> 完成';
+    status.innerHTML = `<span style="color:var(--idle)">✓</span> 完成${durationStr}`;
     icon.textContent = '🔧';
+    // Show result content if present
+    if (data.content) {
+      const resultSection = card.querySelector('.tool-result-section');
+      const resultContent = card.querySelector('.tool-result-content');
+      if (resultSection && resultContent) {
+        resultSection.style.display = '';
+        const truncated = data.truncated ? ' (已截断)' : '';
+        resultContent.textContent = data.content + truncated;
+      }
+    }
   } else {
-    status.innerHTML = '<span style="color:var(--accent)">✗</span> 失败';
+    status.innerHTML = `<span style="color:var(--accent)">✗</span> 失败${durationStr}`;
     icon.textContent = '⚠️';
+    // Show error details
+    const errorEl = card.querySelector('.tool-card-error');
+    if (errorEl && data.error) {
+      errorEl.style.display = '';
+      const et = data.error_type ? `[${data.error_type}] ` : '';
+      errorEl.textContent = `❌ ${et}${data.error}`;
+    }
+    // Auto-expand on failure
+    card.classList.add('expanded');
   }
 }
 
