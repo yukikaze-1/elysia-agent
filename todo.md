@@ -80,6 +80,15 @@
 - `Module/output/console.py` (1)
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
 
+## 已完成 (2026-06-06)
+
+| 日期 | 内容 |
+|------|------|
+| 06-06 | **describe_image 多图批量** — 新增 `image_indices: list[int]` 参数，一次 MIMO 调用处理多张图片。`prompt_assembler.py` 提示文本更新为建议使用 `image_indices=[...]` |
+| 06-06 | **Session 完整化 — 工具消息持久化 + 历史降级渲染** — `cognitive_loop.py` 将 assistant(tool_calls) + tool(result) 写入 Session；`build_messages()` 历史图片→`[用户曾发送N张图片]`，工具调用→`[已调用: xxx]`；`messages_for_client()` 透传工具字段；前端 `restoreFromServer()` 重建工具卡片；`saveChat()`/`restoreChat()` 支持工具卡片 |
+| 06-06 | **工具卡片内容不再截断** — 移除 `cognitive_loop.py` `tool_done` 的 `[:500]` 硬限制；CSS max-height 200→400px |
+| 06-05 | **工具调用详情可见性** — SafetyPipeline 统一日志、tool_done 扩展到 7 字段（含结果/错误/耗时）、前端可展开卡片（完整参数 JSON + 返回结果 + 错误详情）|
+
 ## 已完成 (2026-06-05)
 
 | 日期 | 内容 |

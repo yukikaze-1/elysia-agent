@@ -671,6 +671,37 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 
 ---
 
+### describe_image 多图批量 (2026-06-06)
+
+| 任务 | 说明 |
+|------|------|
+| `image_indices` 参数 | `DescribeImageParams` 新增 `image_indices: list[int] \| None`，一次 MIMO 调用处理多张图片 |
+| 批量执行逻辑 | `_describe_batch()`：校验索引 → 解析所有图片 → 构建多图消息（N 个 image_url + 1 个 text）→ 一次 MIMO 调用 |
+| 提示文本更新 | `prompt_assembler.py` 多图提示改为 `describe_image(image_indices=[0,1,...]) 一次性查看` |
+| 向后兼容 | 不传 `image_indices` 走原 `_describe_single()` 路径，行为不变 |
+
+### Session 完整化 — 工具消息持久化 + 历史降级渲染 (2026-06-06)
+
+| 任务 | 说明 |
+|------|------|
+| 工具消息写入 Session | `cognitive_loop.py` 在工具执行后将 assistant(tool_calls) + tool(result) 写入 Session |
+| 历史图片降级 | `build_messages()` 剥离图片时注入 `[用户曾发送N张图片]` 提示，多模态 LLM 原生传图 |
+| 工具调用摘要 | 历史 assistant 消息的 tool_calls 转为 `[已调用: describe_image(...)]` 摘要注入 LLM 上下文 |
+| 工具结果跳过 | role="tool" 消息不传给 LLM（摘要已在 assistant 中体现）|
+| 前端透传 | `messages_for_client()` 透传 tool_calls/tool 字段（含 tool_call_id, name, content, success, error, duration_ms, truncated）|
+| 前端恢复 | `restoreFromServer()` 遍历消息重建工具卡片（assistant+tool_calls → addToolCard，tool → updateToolCard）|
+| localStorage | `saveChat()` 采集 `.tool-card` DOM，`restoreChat()` 支持还原 |
+| Bug 修复 | `add_message()` 将 str content 包装为 TextPart 数组 → `messages_for_client()` tool 分支提取回纯文本，避免前端 `[object Object]` |
+| Bug 修复 | `content_to_openai()` 返回 list 不能和 str `+` → 手动提取纯文本拼接 |
+| Bug 修复 | 循环内局部变量 `content` 覆盖函数参数 → 改名 `msg_content` |
+
+### 工具卡片内容不再截断 (2026-06-06)
+
+| 任务 | 说明 |
+|------|------|
+| 移除 500 字符限制 | `cognitive_loop.py` `tool_done` 的 `content[:500]` → `content or ""` |
+| CSS 调大可视区 | `.tool-card-section .value` max-height 200→400px |
+
 ### 工具调用详情可见性 (2026-06-05)
 
 工具调用在 web 端和日志都看不到详情的问题修复。

@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { CHAT_SAVE_DEBOUNCE_MS, CHAT_MAX_STORED, SETTINGS_STORAGE_KEYS } from './config.js';
-import { esc, createAssistantRow } from './chat.js';
+import { esc, createAssistantRow, addToolCard, updateToolCard } from './chat.js';
 
 /* ---- 代码块 / Markdown 渲染辅助 ---- */
 
@@ -73,7 +73,7 @@ export function debounceSave() {
   state.saveTimer = setTimeout(saveChat, CHAT_SAVE_DEBOUNCE_MS);
 }
 
-/** 从 DOM 读取消息并保存到 localStorage（增量保存） */
+/** 从 DOM 读取消息并保存到 localStorage（增量保存，含工具卡片） */
 export function saveChat() {
   const rows = document.querySelectorAll('#chat .msg-row');
   const msgs = [];
@@ -102,6 +102,39 @@ export function saveChat() {
       }
     }
   }
+
+  // 采集工具卡片数据
+  const toolCards = document.querySelectorAll('#chat .tool-card');
+  for (const card of toolCards) {
+    const id = card.id.replace('tool-', '');
+    const name = card.querySelector('.tool-name')?.textContent || '';
+    // 从 args 区域重建参数对象
+    const argsEl = card.querySelector('.tool-card-args');
+    const argsText = argsEl?.textContent || '';
+    // 简易解析 "key: value, key2: value2" 格式
+    const args = {};
+    if (argsText) {
+      argsText.split(', ').forEach(pair => {
+        const colon = pair.indexOf(': ');
+        if (colon > 0) args[pair.slice(0, colon)] = pair.slice(colon + 2);
+      });
+    }
+    const resultContent = card.querySelector('.tool-result-content')?.textContent || '';
+    const success = card.classList.contains('done');
+    const fail = card.classList.contains('fail');
+    const executing = card.classList.contains('executing');
+    msgs.push({
+      role: 'tool_card',
+      call_id: id,
+      name: name,
+      args: args,
+      content: resultContent,
+      success: executing ? undefined : success,
+      fail: fail || undefined,
+      executing: executing || undefined,
+    });
+  }
+
   state.messages = msgs;
   localStorage.setItem(SETTINGS_STORAGE_KEYS.CHAT, JSON.stringify(msgs.slice(-CHAT_MAX_STORED)));
 }
@@ -150,7 +183,7 @@ export function restoreChat() {
 
   const chat = document.getElementById('chat');
   for (const m of msgs) {
-    if (!m.content) continue;
+    if (!m.content && m.role !== 'tool_card') continue;
     if (m.role === 'user') {
       const row = document.createElement('div');
       row.className = 'msg-row user';
@@ -161,6 +194,20 @@ export function restoreChat() {
       row.appendChild(avatar);
       chat.appendChild(row);
       state.messages.push({ role: 'user', content: m.content });
+    } else if (m.role === 'tool_card') {
+      // 重建工具卡片
+      const cardId = addToolCard(m.name, m.call_id, m.args || {});
+      if (m.executing) {
+        // 仍在执行中 — 保持 executing 状态
+      } else {
+        updateToolCard(cardId, {
+          success: m.success !== false,
+          content: m.content || '',
+          error: m.fail ? m.content : undefined,
+          duration_ms: 0,
+          truncated: false,
+        });
+      }
     } else {
       state.lastRole = 'assistant';
       const { row, textSpan } = createAssistantRow();
@@ -194,6 +241,29 @@ export function restoreFromServer(messages) {
   state.saveTimer = null;
 
   for (const m of messages) {
+    // 工具结果消息 — 更新对应工具卡片
+    if (m.role === 'tool') {
+      updateToolCard(m.tool_call_id, {
+        success: m.success !== false,
+        content: m.content || '',
+        error: m.error,
+        error_type: m.error_type,
+        duration_ms: m.duration_ms || 0,
+        truncated: m.truncated || false,
+      });
+      continue;
+    }
+
+    // assistant 消息可能带有 tool_calls — 先创建工具卡片占位
+    const toolCalls = m.tool_calls || [];
+    for (const tc of toolCalls) {
+      let args = {};
+      try {
+        args = JSON.parse(tc.function?.arguments || '{}');
+      } catch { /* ignore parse errors */ }
+      addToolCard(tc.function?.name || 'unknown', tc.id, args);
+    }
+
     const parts = m.parts || [];
     const ct = m.content_type || {};
 

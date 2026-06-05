@@ -58,10 +58,42 @@ class SessionMemory:
         msgs = self.recent_messages(n)
         result = []
         for m in msgs:
+            role = m.get("role", "")
+
+            # 工具结果消息 — 透传完整字段给前端渲染工具卡片
+            if role == "tool":
+                tool_content = m.get("content", "")
+                # add_message 将 str content 包装成了 TextPart 数组，提取回纯文本
+                if isinstance(tool_content, list):
+                    tool_content = "".join(
+                        p.get("content", "") for p in tool_content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    )
+                entry: dict[str, Any] = {
+                    "role": "tool",
+                    "tool_call_id": m.get("tool_call_id", ""),
+                    "name": m.get("name", ""),
+                    "content": tool_content,
+                    "success": m.get("success", False),
+                    "error": m.get("error"),
+                    "error_type": m.get("error_type"),
+                    "duration_ms": m.get("duration_ms", 0),
+                    "truncated": m.get("truncated", False),
+                }
+                result.append(entry)
+                continue
+
             if "parts" in m:
-                result.append(m)
+                entry = dict(m)
+                # 保留 tool_calls
+                if "tool_calls" in m:
+                    entry["tool_calls"] = m["tool_calls"]
+                result.append(entry)
             else:
-                entry: dict[str, Any] = {"role": m["role"]}
+                entry: dict[str, Any] = {"role": role}
+                # 保留 tool_calls（assistant 发起工具调用的信息）
+                if "tool_calls" in m:
+                    entry["tool_calls"] = m["tool_calls"]
                 content = m.get("content", "")
                 # 旧格式 meta.sentences 优先（add_message 旧调用路径）
                 meta = m.get("meta", {})
@@ -77,7 +109,7 @@ class SessionMemory:
                     ]
                     entry["parts"] = text_parts if text_parts else [{"content": ""}]
                 else:
-                    entry["parts"] = [{"content": ""}]
+                    entry["parts"] = [{"content": str(content)}] if content else [{"content": ""}]
 
                 if isinstance(content, list):
                     entry["content"] = content  # 保留完整 content 给前端渲染图片

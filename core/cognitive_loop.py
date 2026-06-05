@@ -329,6 +329,10 @@ class CognitiveLoop:
             "timestamp": datetime.datetime.now().astimezone().isoformat(),
         })
         tool_defs = self._tool_executor.definitions() if self._tool_executor else None
+        # 多模态 LLM 可直接看图，排除 describe_image 避免 LLM 只调用一次
+        # （只处理 image_index=0 而忽略其余图片）
+        if tool_defs and supports_mm:
+            tool_defs = [t for t in tool_defs if t.get("function", {}).get("name") != "describe_image"]
         logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs or []))
 
         await self._output.typing(True)
@@ -439,6 +443,13 @@ class CognitiveLoop:
                         assistant_entry["tool_calls"] = normalized
                     messages.append(assistant_entry)
 
+                    # 工具调用消息写入 Session（刷新后前端可恢复工具卡片）
+                    self._session.add_message({
+                        "id": new_message_id(),
+                        **assistant_entry,
+                        "timestamp": datetime.datetime.now().astimezone().isoformat(),
+                    })
+
                     # Emit tool_executing actions for UI (before dispatch)
                     for tc in normalized:
                         func_name = tc["function"]["name"]
@@ -475,11 +486,25 @@ class CognitiveLoop:
                             "tool": tc["function"]["name"],
                             "call_id": tc.get("id", "unknown"),
                             "success": tool_result.success,
-                            "content": tool_result.content[:500] if tool_result.content else "",
+                            "content": tool_result.content or "",
                             "error": tool_result.error,
                             "error_type": error_type_str,
                             "duration_ms": tool_result.duration_ms,
                             "truncated": tool_result.truncated,
+                        })
+                        # 工具结果写入 Session（刷新后前端可恢复工具卡片内容）
+                        self._session.add_message({
+                            "id": new_message_id(),
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", "unknown"),
+                            "name": tc["function"]["name"],
+                            "content": tool_result.content or "",
+                            "success": tool_result.success,
+                            "error": tool_result.error,
+                            "error_type": error_type_str,
+                            "duration_ms": tool_result.duration_ms,
+                            "truncated": tool_result.truncated,
+                            "timestamp": datetime.datetime.now().astimezone().isoformat(),
                         })
 
                     # Clean up executing tools tracking
