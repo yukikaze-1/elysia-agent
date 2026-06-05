@@ -125,6 +125,106 @@ export function addUserMsg(text) {
   saveChat();
 }
 
+/* ---- 图片预览管理 ---- */
+export function addImageToPreview(url, mime) {
+  state.previewImages.push({ url, mime });
+  const bar = document.getElementById('preview-bar');
+
+  const item = document.createElement('div');
+  item.className = 'preview-item';
+  item.innerHTML = `<img src="${esc(url)}" alt="预览"><span class="preview-remove">×</span>`;
+
+  item.querySelector('.preview-remove').onclick = (e) => {
+    e.stopPropagation();
+    const idx = state.previewImages.findIndex(p => p.url === url);
+    if (idx >= 0) state.previewImages.splice(idx, 1);
+    item.remove();
+    if (state.previewImages.length === 0) {
+      bar.style.display = 'none';
+    }
+  };
+
+  bar.appendChild(item);
+  bar.style.display = 'flex';
+}
+
+export function clearPreview() {
+  state.previewImages = [];
+  const bar = document.getElementById('preview-bar');
+  bar.innerHTML = '';
+  bar.style.display = 'none';
+}
+
+/* ---- 图片气泡渲染 ---- */
+export function createImageBubble(source) {
+  const img = document.createElement('img');
+  img.className = 'msg-image';
+  img.src = source;
+  img.loading = 'lazy';
+  img.onclick = () => openLightbox(source);
+  return img;
+}
+
+/* ---- Lightbox ---- */
+export function openLightbox(url) {
+  document.getElementById('lightbox-img').src = url;
+  document.getElementById('lightbox').classList.remove('lightbox-hidden');
+}
+
+export function closeLightbox() {
+  document.getElementById('lightbox').classList.add('lightbox-hidden');
+  document.getElementById('lightbox-img').src = '';
+}
+
+/* ---- 用户消息（含图片）---- */
+export function renderUserMsg(content) {
+  finalizeDelta();
+  state.nextBubbleQueue = [];
+  state.streamBubbles = {};
+  if (state.playingBubble) {
+    state.playingBubble.classList.remove('playing', 'pulse');
+    state.playingBubble = null;
+  }
+  state.lastRole = 'user';
+  const row = document.createElement('div');
+  row.className = 'msg-row user';
+  row.setAttribute('role', 'article');
+  row.setAttribute('aria-label', '用户消息');
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (part.type === 'image' && part.source) {
+        bubble.appendChild(createImageBubble(part.source));
+      }
+    }
+    // 文本部分
+    const texts = content.filter(p => p.type === 'text').map(p => p.content).join('');
+    if (texts) {
+      const textEl = document.createElement('span');
+      textEl.textContent = texts;
+      bubble.appendChild(textEl);
+    }
+    // 持久化
+    state.messages.push({ role: 'user', content });
+  } else {
+    bubble.textContent = content;
+    state.messages.push({ role: 'user', content });
+  }
+
+  row.appendChild(bubble);
+  const avatar = document.createElement('div');
+  avatar.className = 'msg-avatar';
+  avatar.setAttribute('aria-hidden', 'true');
+  avatar.textContent = '😎';
+  row.appendChild(avatar);
+  document.getElementById('chat').appendChild(row);
+  scrollDown();
+  saveChat();
+}
+
 /* ---- 状态消息 ---- */
 export function addStatusMsg(text) {
   finalizeDelta();

@@ -80,7 +80,21 @@ export function saveChat() {
   for (const row of rows) {
     if (row.classList.contains('user')) {
       const bubble = row.querySelector('.msg-bubble');
-      if (bubble) msgs.push({ role: 'user', content: bubble.textContent });
+      if (!bubble) continue;
+      // 检查是否有图片
+      const images = bubble.querySelectorAll('.msg-image');
+      if (images.length > 0) {
+        const content = [];
+        for (const img of images) {
+          content.push({ type: 'image', source: img.src, mime: 'image/png' });
+        }
+        // 提取文本（排除图片 alt 文本）
+        const text = bubble.textContent.trim();
+        if (text) content.push({ type: 'text', content: text });
+        msgs.push({ role: 'user', content });
+      } else {
+        msgs.push({ role: 'user', content: bubble.textContent });
+      }
     } else if (row.classList.contains('assistant')) {
       const textSpan = row.querySelector('.msg-text');
       if (textSpan && textSpan.textContent.trim()) {
@@ -90,6 +104,36 @@ export function saveChat() {
   }
   state.messages = msgs;
   localStorage.setItem(SETTINGS_STORAGE_KEYS.CHAT, JSON.stringify(msgs.slice(-CHAT_MAX_STORED)));
+}
+
+/** 从数组 content 构建用户气泡 DOM */
+function buildUserBubble(content) {
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (part.type === 'image' && part.source) {
+        const img = document.createElement('img');
+        img.className = 'msg-image';
+        img.src = part.source;
+        img.loading = 'lazy';
+        img.onclick = () => {
+          // 动态导入 lightbox（避免循环依赖）
+          import('./chat.js').then(m => m.openLightbox(part.source));
+        };
+        bubble.appendChild(img);
+      }
+    }
+    const texts = content.filter(p => p.type === 'text').map(p => p.content).join('');
+    if (texts) {
+      const span = document.createElement('span');
+      span.textContent = texts;
+      bubble.appendChild(span);
+    }
+  } else {
+    bubble.textContent = content;
+  }
+  return bubble;
 }
 
 /** 直接构建 DOM 恢复历史（不走 addUserMsg 避免副作用） */
@@ -110,13 +154,17 @@ export function restoreChat() {
     if (m.role === 'user') {
       const row = document.createElement('div');
       row.className = 'msg-row user';
-      row.innerHTML = `<div class="msg-bubble">${esc(m.content)}</div><div class="msg-avatar">😎</div>`;
+      row.appendChild(buildUserBubble(m.content));
+      const avatar = document.createElement('div');
+      avatar.className = 'msg-avatar';
+      avatar.textContent = '😎';
+      row.appendChild(avatar);
       chat.appendChild(row);
       state.messages.push({ role: 'user', content: m.content });
     } else {
       state.lastRole = 'assistant';
       const { row, textSpan } = createAssistantRow();
-      textSpan.textContent = m.content;
+      textSpan.textContent = typeof m.content === 'string' ? m.content : '';
       chat.appendChild(row);
       state.messages.push({ role: 'assistant', content: m.content });
     }
@@ -150,14 +198,28 @@ export function restoreFromServer(messages) {
     const ct = m.content_type || {};
 
     if (m.role === 'user') {
-      for (let i = 0; i < parts.length; i++) {
-        const p = parts[i];
-        if (!p.content) continue;
+      const fullContent = m.content || [];
+      if (Array.isArray(fullContent) && fullContent.some(p => p.type === 'image')) {
+        // 多模态用户消息 — 使用完整 content 渲染图片
         const row = document.createElement('div');
         row.className = 'msg-row user';
-        row.innerHTML = `<div class="msg-bubble">${esc(p.content)}</div><div class="msg-avatar">😎</div>`;
+        row.appendChild(buildUserBubble(fullContent));
+        const avatar = document.createElement('div');
+        avatar.className = 'msg-avatar';
+        avatar.textContent = '😎';
+        row.appendChild(avatar);
         chat.appendChild(row);
-        state.messages.push({ role: 'user', content: p.content });
+        state.messages.push({ role: 'user', content: fullContent });
+      } else {
+        for (let i = 0; i < parts.length; i++) {
+          const p = parts[i];
+          if (!p.content) continue;
+          const row = document.createElement('div');
+          row.className = 'msg-row user';
+          row.innerHTML = `<div class="msg-bubble">${esc(p.content)}</div><div class="msg-avatar">😎</div>`;
+          chat.appendChild(row);
+          state.messages.push({ role: 'user', content: p.content });
+        }
       }
     } else {
       let textBuf = [];

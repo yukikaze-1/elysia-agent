@@ -117,21 +117,31 @@ Minimal 47-line HTML shell. All logic lives in `static/js/*.js` (ES modules, loa
 
 ```
 static/
-├── index.html          # HTML shell (47 lines)
+├── index.html          # HTML shell (~55 lines): input bar + preview bar + lightbox
 ├── debug.html           # Internal debug/monitoring page
 ├── css/
-│   └── chat.css         # All styles (~200 lines)
+│   └── chat.css         # All styles (~440 lines): bubbles, preview, lightbox, tool cards
 └── js/
     ├── config.js         # Named constants (timeouts, buffer sizes, storage keys)
     ├── state.js          # AppState singleton — all mutable state in one place
     ├── ws.js             # WebSocket: connect, reconnect (exponential backoff + jitter), send
-    ├── chat.js           # Chat display: bubbles, delta streaming, typing, tool cards, mood
+    ├── chat.js           # Chat display: bubbles, delta streaming, typing, tool cards, mood,
+    │                       image preview, lightbox, multimodal user messages
     ├── audio.js          # TTS buffer/playback: base64 decode, queue, bubble highlight
     ├── mic.js            # Microphone: getUserMedia, ScriptProcessor, PCM→Int16
     ├── settings.js       # Settings panel: TTS toggle, volume, clear, shutdown
-    ├── persistence.js    # localStorage save/restore (incremental, messages array)
-    └── main.js           # Entry point: WS message routing, input, keyboard shortcuts
+    ├── persistence.js    # localStorage save/restore (incremental, with image support)
+    └── main.js           # Entry point: WS message routing, input, keyboard shortcuts,
+                            image upload (paste/drag/file), sendText with multimodal content
 ```
+
+### Image support (multimodal Phase 1+2)
+
+- **Upload**: paste (Ctrl+V), drag-and-drop, or 📷 button → `POST /api/images` → saves to `data/uploads/images/`
+- **Preview**: thumbnails in `#preview-bar` above input, × to remove
+- **Send**: images + text combined as multimodal `content` array via WS `{type:"text", content:[...]}`
+- **Render**: user bubbles show `<img>` thumbnails (max 200px), click to open lightbox
+- **Persistence**: session history and localStorage both preserve image metadata
 
 ### Debug page (`static/debug.html`)
 
@@ -144,8 +154,11 @@ Defined in `Module/input/server.py`:
 - `/debug` → `static/debug.html`
 - `/debug/api` → JSON debug info
 - `/static/*` → static files
+- `/uploads/*` → user uploaded files (`data/uploads/`)
 - `/live2d/*` → Live2D Cubism SDK assets
 - `/ws` → WebSocket endpoint
+- `/api/images` → image upload (multipart)
+- `/api/chat` → multimodal test endpoint
 - `/health`, `/ready` → health checks
 - `/shutdown` → graceful shutdown
 

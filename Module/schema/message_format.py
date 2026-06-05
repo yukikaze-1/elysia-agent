@@ -190,7 +190,7 @@ def has_video(parts: list[Part]) -> bool:
 # OpenAI API 格式转换
 # ============================================================
 
-_IMAGES_DIR = _Path(__file__).resolve().parent.parent.parent / "data" / "images"
+_IMAGES_DIR = _Path(__file__).resolve().parent.parent.parent / "data" / "uploads" / "images"
 _STATIC_DIR = _Path(__file__).resolve().parent.parent.parent / "static"
 
 
@@ -205,6 +205,15 @@ def _resolve_image_source(source: str) -> str:
         if "localhost" in source or "127.0.0.1" in source:
             # 从 URL 中提取文件名（如 /static/images/abc.png → abc.png）
             filename = source.rsplit("/", 1)[-1]
+            for search_dir in (_IMAGES_DIR, _STATIC_DIR):
+                local_path = search_dir / filename
+                if local_path.exists():
+                    return _to_data_uri(local_path)
+        return source
+    # 本地服务相对路径（如 /uploads/images/abc.png）→ 转为 base64
+    if source.startswith("/"):
+        filename = source.rsplit("/", 1)[-1]
+        if filename:
             for search_dir in (_IMAGES_DIR, _STATIC_DIR):
                 local_path = search_dir / filename
                 if local_path.exists():

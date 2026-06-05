@@ -60,7 +60,7 @@
 | 优先级 | 项目 | 说明 |
 |--------|------|------|
 | 中 | **AI → 用户图片输出** | 工具返回图片（WebFetch 截图、图片生成）+ LLM 生成图片 → OutputManager 广播 → 前端渲染。`ToolResult.images: list[MediaItem]` 已设计，需打通 CognitiveLoop → session → 前端链路 |
-| 中 | **前端图片交互** | 粘贴/拖拽/文件选择上传 + 图片气泡渲染 + base64 解码/Blob URL |
+| ~~中~~ | ~~**前端图片交互**~~ | ✅ 已完成 — 粘贴/拖拽/文件选择上传 + 预览栏 + 气泡缩略图 + lightbox |
 | 低 | **文件支持** | `type: "file"` content part 实现（上传 + LLM context + 前端渲染） |
 | 低 | **音频/视频 Part** | `VideoPart`/`AudioPart` 已定义 dataclass，需实现全链路 |
 | 低 | **content_type 迁入 content** | assistant 消息的 markdown/code block 索引迁入 content array，减少独立字段 |
@@ -86,6 +86,12 @@
 |------|------|
 | 06-05 | **项目清理** — 磁盘清理（删除~280MB）、UUID 生成统一（8 文件改用 `new_message_id()`）、补缺失 `__main__.py`（config/input/prompt/logger）、补 `Module/input/README.md`、`test_tool_parallel.md` 移至 docs/、清理 settings.local.json 过期引用。spec: `docs/superpowers/specs/2026-06-05-cleanup-design.md` |
 | 06-05 | **多模态图片支持 Phase 1 — 用户→AI** — 新增 `Module/schema/message_format.py`（TextPart/ImagePart/FilePart/AudioPart/VideoPart + ChatMessageV2）；SessionMemory/PromptAssembler content 统一为 list[dict]；CognitiveLoop/Agent 支持 content 参数；Server 新增 `/api/images`（上传）和 `/api/chat`（测试）端点；本地图片自动转 base64 data URI 发送 MIMO API。删除废弃的 `Module/schema/message.py`。spec: `docs/superpowers/specs/2026-06-05-multimodal-phase1-design.md` |
+| 06-05 | **多模态 Phase 2 — 前端图片交互** — 粘贴/拖拽/文件选择上传图片 → 预览栏缩略图 → 与文字一起发送 → 聊天气泡渲染缩略图 → 点击 lightbox 放大。上传目录迁至 `data/uploads/images/`，独立 `/uploads/` 路由。session 恢复/localStorage 持久化支持图片。spec: `docs/superpowers/specs/2026-06-05-multimodal-phase2-frontend-design.md` |
+| 06-05 | **Bug 修复: DeepSeek 收到 image_url 块 400** — `build_messages()` 历史消息只提取 text parts，过滤图片/文件等非文本 part，防止纯文本 provider 报 unknown variant image_url |
+| 06-05 | **Bug 修复: TTS 400 — markup-only 句子** — `_start_tts_stream()` 守卫改用 `strip_all_markup()` 替代 `_EMOJI_RE`，与 TTS 后端预处理一致；gpt_sovits.py 加空文本守卫+错误响应体日志 |
+| 06-05 | **Bug 修复: debug 页面 Session 管理显示 [object Object]** — `collect()` 改用 `messages_for_client()`；`session_detail_handler` 格式化消息加上 `parts` 字段 |
+| 06-05 | **Bug 修复: MIMO 相对路径 URL** — `_resolve_image_source()` 处理 `/uploads/...` 相对路径，提取文件名查本地目录转 base64 |
+| 06-05 | **MAX_TOOL_ROUNDS 3→5** — 防止 MIMO 工具调用轮次不足导致无最终回复 |
 
 ## 已完成 (2026-06-04)
 

@@ -18,6 +18,7 @@ from .timing import TimingClock
 
 from Module.output import OutputManager, ChannelCapability
 from Module.tts import TTSBackend
+from Module.tts.text_preprocess import strip_all_markup
 
 from .agent_fsm import AgentFSM, AgentState
 from .event_bus import EventBus, EventPriority, EventType
@@ -170,7 +171,7 @@ class _MessageObj:
 class CognitiveLoop:
     """ReAct cognitive loop with streaming delivery and tool-call detection."""
 
-    MAX_TOOL_ROUNDS = 3
+    MAX_TOOL_ROUNDS = 5
     _req_counter: int = 0
 
     def __init__(
@@ -570,8 +571,8 @@ class CognitiveLoop:
         文字和音频绑定发送，前端收到即可渲染+播放，无需任何同步逻辑。
         TTS workers=1 FIFO 保证句间顺序。
         """
-        # 跳过纯 emoji/空白句 — strip 后为空，GPT-SoVits 会返回 400
-        _clean = _EMOJI_RE.sub("", sentence).strip()
+        # 跳过空句 — 用 strip_all_markup 预处理后为空会导致 GPT-SoVits 返回 400
+        _clean = strip_all_markup(sentence)
         if not _clean:
             return
 

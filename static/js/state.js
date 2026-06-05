@@ -37,6 +37,9 @@ class AppState {
     // 内存消息数组 (增量保存用)
     this.messages = [];
 
+    // 图片预览队列 [{url: "/uploads/images/abc.png", mime: "image/png"}]
+    this.previewImages = [];
+
     // 唤醒词 (默认关闭)
     this.wakeEnabled = localStorage.getItem(SETTINGS_STORAGE_KEYS.WAKE) === 'on';
 
@@ -64,6 +67,7 @@ class AppState {
     this.audioQueue = [];
     this.audioPlaying = false;
     this.audioChunks = {};
+    this.previewImages = [];
   }
 }
 

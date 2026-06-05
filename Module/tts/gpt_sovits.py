@@ -76,6 +76,9 @@ class GPTSoVitsBackend(TTSBackend):
                 f"未知发音人 '{character}'，可用: {list(self._voices.keys())}"
             ) from None
         text = self._preprocess(text)
+        if not text.strip():
+            # 预处理后为空（如纯 markup 句子），跳过 TTS
+            return
 
         payload: dict = {
             "text": text,
@@ -106,6 +109,12 @@ class GPTSoVitsBackend(TTSBackend):
             client = httpx.AsyncClient(base_url=self._base_url, timeout=_TTS_TIMEOUT)
             try:
                 async with client.stream("POST", "/tts", json=payload) as resp:
+                    if resp.status_code >= 400:
+                        body = await resp.aread()
+                        self._logger.warning(
+                            "GPT-SoVits 返回 %d: %s (text=%r)",
+                            resp.status_code, body.decode("utf-8", errors="replace")[:500], text,
+                        )
                     resp.raise_for_status()
                     async for chunk in resp.aiter_bytes(4096):
                         await queue.put(chunk)

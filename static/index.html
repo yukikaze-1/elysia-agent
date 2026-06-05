@@ -28,7 +28,10 @@
 <!-- Center -->
 <div id="main">
   <div id="chat-wrap"><div id="chat"></div></div>
+  <div id="preview-bar" style="display:none"></div>
   <div id="input-bar">
+    <button id="attach-btn" title="添加图片">📷</button>
+    <input type="file" id="file-input" hidden accept="image/png,image/jpeg,image/gif,image/webp">
     <button id="mic-btn" title="麦克风">🎤</button>
     <textarea id="text-input" rows="1" placeholder="连接中..." autofocus></textarea>
     <button id="send-btn" disabled>➤</button>
@@ -102,6 +105,11 @@
 <div id="tools-panel">
   <div class="tools-title">工具插件管理</div>
   <div id="tools-list"></div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox" class="lightbox-hidden">
+  <img id="lightbox-img" src="">
 </div>
 
 <script type="module" src="/static/js/main.js"></script>

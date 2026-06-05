@@ -76,12 +76,12 @@ async def collect(agent) -> DebugInfo:
     info.processing = ct is not None and not ct.done()
 
     # ---- Session ----
-    msgs = agent._session.recent_messages()
+    msgs = agent._session.messages_for_client()
     info.session_messages = len(msgs)
     info.session_recent = [
         {
             "role": m.get("role", "?"),
-            "parts": m.get("parts", [{"content": m.get("content", "")}]),
+            "parts": m.get("parts", [{"content": ""}]),
             "content_type": m.get("content_type", {}),
         }
         for m in msgs[-5:]

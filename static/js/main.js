@@ -5,6 +5,7 @@ import {
   addToolCard, updateToolCard, showTyping, hideTyping,
   setMood, setState, esc, createAssistantRow, setupInput,
   resetInput, scrollDown, hideNewMsgIndicator,
+  addImageToPreview, clearPreview, renderUserMsg, openLightbox, closeLightbox,
 } from './chat.js';
 import { bufferAudioChunk, finalizeStream } from './audio.js';
 import { toggleMic, stopMic, flashWakeIndicator } from './mic.js';
@@ -129,18 +130,51 @@ function handleMessage(msg) {
   }
 }
 
-/* ---- 发送文本 ---- */
+/* ---- 发送文本（支持多模态图片）---- */
 function sendText() {
   const textInput = document.getElementById('text-input');
   const text = textInput.value.trim();
-  if (!text || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-  send({ type: 'text', content: text });
-  addUserMsg(text);
+  const hasImages = state.previewImages.length > 0;
+  if (!text && !hasImages) return;
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+
+  if (hasImages) {
+    const content = [];
+    for (const img of state.previewImages) {
+      content.push({ type: 'image', source: img.url, mime: img.mime });
+    }
+    if (text) content.push({ type: 'text', content: text });
+    send({ type: 'text', content });
+    renderUserMsg(content);
+  } else {
+    send({ type: 'text', content: text });
+    addUserMsg(text);
+  }
+
+  clearPreview();
   resetInput();
   const btn = document.getElementById('send-btn');
   btn.classList.add('sent');
   btn.disabled = true;
   setTimeout(() => { btn.classList.remove('sent'); btn.disabled = false; }, SEND_COOLDOWN_MS);
+}
+
+/* ---- 图片上传 ---- */
+async function uploadImage(file) {
+  const form = new FormData();
+  form.append('image', file);
+  try {
+    const resp = await fetch('/api/images', { method: 'POST', body: form });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      addStatusMsg('图片上传失败: ' + (err.error || resp.status));
+      return;
+    }
+    const { url, mime } = await resp.json();
+    addImageToPreview(url, mime);
+  } catch (e) {
+    addStatusMsg('图片上传失败: ' + e.message);
+  }
 }
 
 /* ---- 初始化 ---- */
@@ -158,7 +192,53 @@ function init() {
 
   document.getElementById('mic-btn').onclick = toggleMic;
 
-  document.getElementById('chat-wrap').addEventListener('scroll', function () {
+  // 附件按钮 → 触发文件选择
+  document.getElementById('attach-btn').onclick = () => {
+    document.getElementById('file-input').click();
+  };
+
+  // 文件选择 → 上传
+  document.getElementById('file-input').onchange = (e) => {
+    const file = e.target.files[0];
+    if (file) uploadImage(file);
+    e.target.value = '';  // 允许重复选同一文件
+  };
+
+  // 粘贴图片
+  document.addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        uploadImage(item.getAsFile());
+        break;
+      }
+    }
+  });
+
+  // 拖拽图片到聊天区
+  const chatWrap = document.getElementById('chat-wrap');
+  chatWrap.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    chatWrap.classList.add('drag-over');
+  });
+  chatWrap.addEventListener('dragleave', () => {
+    chatWrap.classList.remove('drag-over');
+  });
+  chatWrap.addEventListener('drop', (e) => {
+    e.preventDefault();
+    chatWrap.classList.remove('drag-over');
+    const file = e.dataTransfer && e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) uploadImage(file);
+  });
+
+  // Lightbox 关闭
+  document.getElementById('lightbox').onclick = (e) => {
+    if (e.target !== document.getElementById('lightbox-img')) closeLightbox();
+  };
+
+  chatWrap.addEventListener('scroll', function () {
     const w = this;
     const wasUp = state.userScrolledUp;
     state.userScrolledUp = w.scrollTop + w.clientHeight < w.scrollHeight - 60;
@@ -168,6 +248,12 @@ function init() {
   // 键盘快捷键
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // 如果 lightbox 打开，先关闭
+      const lb = document.getElementById('lightbox');
+      if (!lb.classList.contains('lightbox-hidden')) {
+        closeLightbox();
+        return;
+      }
       send({ type: 'interrupt' });
       stopMic();
     }

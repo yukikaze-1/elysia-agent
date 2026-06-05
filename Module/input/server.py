@@ -272,9 +272,31 @@ def create_app(
             if not docs:
                 return web.json_response({"error": "会话不存在"}, status=404)
             doc = docs[0]
+            raw_msgs = doc.get("messages", [])
+            # 格式化消息，确保前端渲染时有 parts 字段
+            formatted = []
+            for m in raw_msgs:
+                entry = {"role": m.get("role", "?"),
+                         "timestamp": m.get("timestamp", ""),
+                         "content_type": m.get("content_type", {})}
+                content = m.get("content", "")
+                if isinstance(content, list):
+                    # 多模态格式 — 提取 text parts
+                    entry["parts"] = [
+                        {"content": p.get("content", "")}
+                        for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ]
+                elif isinstance(content, str):
+                    entry["parts"] = [{"content": content}]
+                elif "parts" in m:
+                    entry["parts"] = m["parts"]
+                else:
+                    entry["parts"] = [{"content": str(content)}]
+                formatted.append(entry)
             return web.json_response({
                 "session_id": doc.get("session_id", sid),
-                "messages": doc.get("messages", []),
+                "messages": formatted,
                 "params": doc.get("params", {}),
                 "updated_at": doc.get("updated_at", ""),
             })
@@ -416,7 +438,7 @@ def create_app(
 
     # ---- 图片上传 ----
 
-    _IMAGES_DIR = Path(__file__).parent.parent.parent / "data" / "images"
+    _IMAGES_DIR = Path(__file__).parent.parent.parent / "data" / "uploads" / "images"
 
     async def image_upload_handler(request: web.Request) -> web.Response:
         """接收图片上传，保存到 data/images/，返回 URL。"""
@@ -453,7 +475,7 @@ def create_app(
             saved_path = _IMAGES_DIR / saved_name
             saved_path.write_bytes(data)
 
-            url = f"/static/images/{saved_name}"
+            url = f"/uploads/images/{saved_name}"
             return web.json_response({"url": url, "mime": mime, "size": len(data)})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
@@ -485,10 +507,10 @@ def create_app(
 
     app.router.add_post("/api/chat", chat_api_handler)
 
-    # ---- 静态图片目录 ----
-
-    if _IMAGES_DIR.is_dir():
-        app.router.add_static("/static/images/", str(_IMAGES_DIR), show_index=False)
+    # ---- 用户上传文件目录 ----
+    _UPLOADS_DIR = Path(__file__).parent.parent.parent / "data" / "uploads"
+    _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    app.router.add_static("/uploads/", str(_UPLOADS_DIR), show_index=False)
 
     async def sessions_clear_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]

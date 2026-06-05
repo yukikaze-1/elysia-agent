@@ -379,3 +379,66 @@ body {
   border: 1px solid var(--border); border-radius: 4px;
 }
 #custom-providers-list { max-height: 180px; overflow-y: auto; }
+
+/* ---- 图片附件按钮 ---- */
+#attach-btn {
+  width: 42px; height: 42px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--muted); font-size: 18px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: color 0.2s, border-color 0.2s;
+  margin-right: 4px; flex-shrink: 0;
+}
+#attach-btn:hover { color: var(--text); border-color: var(--accent); }
+#file-input { display: none; }
+
+/* ---- 图片预览栏 ---- */
+#preview-bar {
+  display: flex; gap: 8px; padding: 8px;
+  background: var(--surface); border-radius: var(--radius-sm);
+  margin-bottom: 4px; min-height: 48px;
+  align-items: center; flex-wrap: wrap;
+}
+.preview-item {
+  position: relative; width: 56px; height: 56px;
+  border-radius: 6px; overflow: hidden; flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+.preview-item img { width: 100%; height: 100%; object-fit: cover; }
+.preview-item .preview-remove {
+  position: absolute; top: 2px; right: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: rgba(0,0,0,0.65); color: #fff;
+  font-size: 10px; line-height: 16px; text-align: center;
+  cursor: pointer; display: none;
+}
+.preview-item:hover .preview-remove { display: block; }
+.preview-item .preview-remove:hover { background: var(--accent); }
+
+/* ---- 聊天气泡中的图片 ---- */
+.msg-image {
+  max-width: 200px; max-height: 200px;
+  border-radius: 8px; cursor: pointer;
+  display: block; margin: 4px 0;
+  border: 1px solid var(--border);
+  transition: opacity 0.2s;
+}
+.msg-image:hover { opacity: 0.9; }
+
+/* ---- Lightbox ---- */
+#lightbox {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.85); cursor: pointer;
+}
+.lightbox-hidden { display: none !important; }
+#lightbox-img {
+  max-width: 90vw; max-height: 90vh;
+  object-fit: contain; border-radius: 4px;
+}
+
+/* ---- 拖拽高亮 ---- */
+#chat-wrap.drag-over {
+  border: 2px dashed var(--accent);
+  background: rgba(233,69,96,0.05);
+}

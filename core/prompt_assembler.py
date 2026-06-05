@@ -122,11 +122,16 @@ class PromptAssembler:
         for msg in recent:
             content_raw = msg.get("content", "")
             if isinstance(content_raw, list):
-                # ChatMessageV2 格式 — 转为 OpenAI 格式
-                messages.append({
-                    "role": msg["role"],
-                    "content": content_to_openai(content_raw),
-                })
+                # ChatMessageV2 格式 — 历史只取文本部分。
+                # 图片/文件等非文本 part 对文本 LLM 无意义，且会导致
+                # DeepSeek 等纯文本 provider 报 400 (unknown variant image_url)。
+                text_only = [p for p in content_raw if p.get("type") == "text"]
+                if text_only:
+                    messages.append({
+                        "role": msg["role"],
+                        "content": content_to_openai(text_only),
+                    })
+                # 纯图片消息（无文本）跳过，不贡献上下文
             elif isinstance(content_raw, str):
                 messages.append({"role": msg["role"], "content": content_raw})
             elif "parts" in msg:
