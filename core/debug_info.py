@@ -82,6 +82,7 @@ async def collect(agent) -> DebugInfo:
         {
             "role": m.get("role", "?"),
             "parts": m.get("parts", [{"content": ""}]),
+            "content": m.get("content", []),
             "content_type": m.get("content_type", {}),
         }
         for m in msgs[-5:]

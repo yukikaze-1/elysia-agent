@@ -605,3 +605,66 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 
 **Spec:** `docs/superpowers/specs/2026-06-04-live2d-toggle-design.md`
 **计划:** `docs/superpowers/plans/2026-06-04-live2d-toggle.md`
+
+---
+
+### 项目清理 (2026-06-05)
+
+| 任务 | 说明 |
+|------|------|
+| 磁盘清理 | 删除 ~280MB 垃圾文件（`__pycache__`、`.pyc`、node_modules、临时文件） |
+| UUID 统一 | 8 文件改用 `new_message_id()`，消除 `uuid4().hex[:12]` 散落 |
+| 补缺失文件 | `Module/config/__main__.py`、`Module/input/__main__.py`、`Module/prompt/__main__.py`、`Module/logger/__main__.py`、`Module/input/README.md` |
+| 文档整理 | `test_tool_parallel.md` 移至 `docs/`，清理 `settings.local.json` 过期引用 |
+
+**Spec:** `docs/superpowers/specs/2026-06-05-cleanup-design.md`
+
+### 多模态图片支持 Phase 1 — 用户→AI (2026-06-05)
+
+| 任务 | 说明 |
+|------|------|
+| 消息格式 | `Module/schema/message_format.py` — TextPart/ImagePart/FilePart/AudioPart/VideoPart + ChatMessageV2 |
+| 统一 content | SessionMemory/PromptAssembler content 统一为 `list[dict]` |
+| 上传端点 | Server 新增 `/api/images`（multipart）+ `/api/chat`（测试）|
+| base64 转换 | 本地图片自动转 data URI 发送 MIMO API |
+| content_to_openai | 内部格式转 OpenAI API format |
+
+**Spec:** `docs/superpowers/specs/2026-06-05-multimodal-phase1-design.md`
+
+### 多模态 Phase 2 — 前端图片交互 (2026-06-05)
+
+| 任务 | 说明 |
+|------|------|
+| 上传交互 | 粘贴(Ctrl+V) / 拖拽 / 📷 按钮 — 3 种方式上传 |
+| 预览栏 | Slack 风格缩略图预览，× 移除 |
+| 气泡渲染 | 用户气泡显示 200px 缩略图，点击打开 lightbox |
+| 持久化 | session 恢复 + localStorage 支持图片 |
+| 上传目录 | `data/uploads/images/`，独立 `/uploads/` 路由 |
+
+**Spec:** `docs/superpowers/specs/2026-06-05-multimodal-phase2-frontend-design.md`
+
+### Bug 修复集合 (2026-06-05)
+
+| 优先级 | 问题 | 根因 | 修复 |
+|--------|------|------|------|
+| 高 | DeepSeek 收到 image_url 400 | `build_messages()` 历史消息含 MIMO 的 image_url blocks | 历史消息只提取 text parts |
+| 高 | TTS 400 — markup-only 句子 | `_EMOJI_RE` 守卫漏过 `**动作**` 等 markup | `strip_all_markup()` 替代 `_EMOJI_RE` |
+| 中 | Debug 页面显示 [object Object] | `collect()` 返回原始 content list，JS toString 变 [object Object] | 改用 `messages_for_client()` 格式化为 parts |
+| 中 | MIMO 相对路径 URL 无效 | 前端发 `/uploads/...`，`_resolve_image_source()` 不处理 `/` 开头 | 处理好 `/` 前缀相对路径转 base64 |
+| 中 | MIMO 工具耗尽无回复 | MAX_TOOL_ROUNDS=3，MIMO 用完后无最终回答 | → 5 |
+| 中 | Debug 页面看不到图片 | `collect()` 和 `session_detail_handler` 丢弃 content 数组；前端只渲染文本 | 透传 content + 新增 renderImages() + 缩略图 + lightbox |
+
+### describe_image 视觉工具 (2026-06-05)
+
+| 任务 | 说明 |
+|------|------|
+| 工具插件 | `core/tools/vision/plugin.py` — DescribeImagePlugin，委托 MIMO 看图返回描述 |
+| 自动注入 | `prompt_assembler.py` — 文本 LLM + 有图片时注入工具提示 |
+| 缓存 | SHA256(image_bytes + model_id) → `data/cache/vision/{hash}.json` |
+| 配置 | `config.yaml` vision.model 可配视觉模型 |
+| Bug: setup async | `def setup()` → `async def setup()`，ToolProtocol 要求 async |
+| Bug: chat() 返回 str | `response.get("content")` → `response.strip()`，chat() 返回 str 非 dict |
+| Bug: timeout | `SafetyProfile.request_timeout` 30s → 120s |
+
+**Spec:** `docs/superpowers/specs/2026-06-05-vision-tool-design.md`
+**计划:** `docs/superpowers/plans/2026-06-05-vision-tool.md`

@@ -281,12 +281,13 @@ def create_app(
                          "content_type": m.get("content_type", {})}
                 content = m.get("content", "")
                 if isinstance(content, list):
-                    # 多模态格式 — 提取 text parts
+                    # 多模态格式 — 提取 text parts + 保留完整 content
                     entry["parts"] = [
                         {"content": p.get("content", "")}
                         for p in content
                         if isinstance(p, dict) and p.get("type") == "text"
                     ]
+                    entry["content"] = content
                 elif isinstance(content, str):
                     entry["parts"] = [{"content": content}]
                 elif "parts" in m:

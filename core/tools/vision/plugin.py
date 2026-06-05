@@ -39,9 +39,9 @@ class DescribeImagePlugin(ToolPlugin):
     )
     param_model: type = DescribeImageParams
     capabilities: set = set()
-    safety = SafetyProfile(requires_human_approval=False)
+    safety = SafetyProfile(requires_human_approval=False, request_timeout=120.0)
 
-    def setup(self, ctx) -> None:
+    async def setup(self, ctx) -> None:
         self._ctx = ctx
 
     async def execute(self, *, ctx, emit=None, params: DescribeImageParams) -> ToolResult:
@@ -113,7 +113,7 @@ class DescribeImagePlugin(ToolPlugin):
                 ]},
             ]
             response = await backend.chat(messages)
-            description = response.get("content", "").strip()
+            description = response.strip()
         except Exception as e:
             logger.exception("describe_image 失败")
             return ToolResult.fail(name=self.name, error=str(e))

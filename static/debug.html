@@ -139,6 +139,21 @@ h1 { font-size: 18px; margin-bottom: 4px; }
 /* Session detail */
 .session-detail { margin-top: 8px; padding: 8px; background: var(--bg); border-radius: 4px; }
 .session-detail .msg { padding: 2px 0; font-size: 12px; }
+/* 图片缩略图 */
+.msg-images { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+.msg-image {
+  max-width: 120px; max-height: 120px; border-radius: 6px;
+  cursor: pointer; display: block; border: 1px solid var(--border);
+  object-fit: cover; transition: transform 0.15s;
+}
+.msg-image:hover { transform: scale(1.05); }
+/* Debug lightbox */
+#debug-lightbox {
+  display: none; position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,0.85); justify-content: center; align-items: center;
+}
+#debug-lightbox.show { display: flex; }
+#debug-lightbox img { max-width: 90vw; max-height: 90vh; object-fit: contain; border-radius: 8px; }
 </style>
 </head>
 <body>
@@ -217,6 +232,27 @@ let lastInfo = null;
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 function ok(v) { return v ? '<span class="ok">&#10003;</span>' : '<span class="fail">&#10007;</span>'; }
 function trunc(s, n) { return s && s.length > n ? s.slice(0,n)+'…' : s||''; }
+
+function renderImages(content) {
+  if (!content || !Array.isArray(content)) return '';
+  const images = content.filter(p => p && p.type === 'image' && p.source);
+  if (!images.length) return '';
+  return '<div class="msg-images">' + images.map(img =>
+    `<img class="msg-image" src="${esc(img.source)}" loading="lazy"
+          onclick="event.stopPropagation(); openDebugLightbox('${esc(img.source)}')"
+          title="点击放大">`
+  ).join('') + '</div>';
+}
+
+function openDebugLightbox(url) {
+  document.getElementById('debug-lightbox-img').src = url;
+  document.getElementById('debug-lightbox').classList.add('show');
+}
+
+function closeDebugLightbox() {
+  document.getElementById('debug-lightbox').classList.remove('show');
+  document.getElementById('debug-lightbox-img').src = '';
+}
 
 function expandable(text, maxLen) {
   if (!text || text.length <= maxLen) return esc(text);
@@ -314,12 +350,14 @@ function render(info) {
         const parts = m.parts || [];
         const ct = m.content_type || {};
         const roleTag = `<span class="role-tag ${esc(m.role)}">${esc(m.role)}</span>`;
-        return roleTag + parts.map((p, i) => {
+        const textHtml = parts.map((p, i) => {
           let typeTag = '';
           if (ct.markdown && ct.markdown.includes(i)) typeTag = '<span class="type-tag">md</span>';
           if (ct.code && ct.code.includes(i)) typeTag = '<span class="type-tag">code</span>';
           return `${typeTag}${expandable(p.content, 90)}`;
         }).join('');
+        const imgHtml = renderImages(m.content);
+        return roleTag + textHtml + imgHtml;
       })},
       { title:'Long-term Memory', wide:false, items: (info.lt_recent||[]).map(e =>
         `<span class="type-tag">${esc(e.metadata?.type||'?')}</span>${expandable(e.text, 90)}`
@@ -643,13 +681,13 @@ async function viewSession(sid) {
         <div style="font-weight:600;margin-bottom:6px;">${esc(sid)} (${msgs.length} 条消息)</div>
         ${msgs.map((m, i) => {
           const parts = m.parts || [];
-          const content = parts.map(p => p.content || '').join('');
-          const text = content || m.content || '';
+          const text = parts.map(p => p.content || '').join('');
           const ts = m.timestamp ? m.timestamp.slice(0, 19).replace('T', ' ') : '';
           return `<div class="msg">
             ${ts ? `<span style="color:var(--muted);font-size:10px;margin-right:4px;">${esc(ts)}</span>` : ''}
             <span class="role-tag ${esc(m.role||'?')}">${esc(m.role||'?')}</span>
             ${expandable(text, 120)}
+            ${renderImages(m.content)}
           </div>`;
         }).join('')}
       </div>`;
@@ -705,5 +743,8 @@ function confirmClearSessions() {
 
 document.getElementById('db-refresh-btn').onclick = loadDbPanel;
 </script>
+<div id="debug-lightbox" onclick="closeDebugLightbox()">
+  <img id="debug-lightbox-img" src="">
+</div>
 </body>
 </html>

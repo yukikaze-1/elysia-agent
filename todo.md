@@ -92,6 +92,7 @@
 | 06-05 | **Bug 修复: debug 页面 Session 管理显示 [object Object]** — `collect()` 改用 `messages_for_client()`；`session_detail_handler` 格式化消息加上 `parts` 字段 |
 | 06-05 | **Bug 修复: MIMO 相对路径 URL** — `_resolve_image_source()` 处理 `/uploads/...` 相对路径，提取文件名查本地目录转 base64 |
 | 06-05 | **MAX_TOOL_ROUNDS 3→5** — 防止 MIMO 工具调用轮次不足导致无最终回复 |
+| 06-05 | **Bug 修复: debug 页面看不到图片** — `debug_info.py` collect() 补上 content 字段；`server.py` session_detail_handler 对齐 messages_for_client() 格式；`debug.html` 新增 renderImages() + 缩略图渲染 + lightbox。spec: `docs/superpowers/specs/2026-06-05-debug-page-image-display-design.md` |
 
 ## 已完成 (2026-06-04)
 
