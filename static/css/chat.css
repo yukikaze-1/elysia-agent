@@ -459,3 +459,71 @@ body {
   border: 2px dashed var(--accent);
   background: rgba(233,69,96,0.05);
 }
+
+/* ---- Session Token Bar ---- */
+#session-token-bar {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  padding: 2px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Token Label (AI 气泡底部) ---- */
+.token-label {
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.token-summary {
+  display: inline-block;
+}
+
+.token-summary:hover {
+  color: var(--text);
+}
+
+.token-detail {
+  display: none;
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.token-label.expanded .token-detail {
+  display: block;
+}
+
+.token-label.expanded .token-summary {
+  color: var(--accent);
+}
+
+.token-round {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.token-round-num {
+  font-weight: 600;
+  min-width: 32px;
+}
+
+.token-round-item {
+  color: var(--muted);
+}
+
+.token-round-total {
+  font-weight: 600;
+  margin-left: auto;
+}

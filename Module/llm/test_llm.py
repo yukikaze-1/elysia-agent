@@ -312,6 +312,7 @@ class TestStreamThink:
                 ch.choices[0].delta = MagicMock()
                 ch.choices[0].delta.content = content
                 ch.choices[0].delta.tool_calls = None
+                ch.usage = None
                 yield ch
 
         mock_create = AsyncMock(return_value=_gen())
@@ -339,6 +340,7 @@ class TestStreamThink:
             tc.function.name = "search"
             tc.function.arguments = '{"q":"test"}'
             ch.choices[0].delta.tool_calls = [tc]
+            ch.usage = None
             yield ch
 
         mock_create = AsyncMock(return_value=_gen())
@@ -483,3 +485,100 @@ class TestFactoryEdges:
         backend = cast(OpenAICompatBackend, backend)
         assert backend._logger is not None
         assert backend._logger.name.endswith("test_llm")
+
+
+# ============================================================
+# Usage tracking
+# ============================================================
+
+class TestUsageTracking:
+    """测试 API usage 捕获。"""
+
+    @pytest.mark.asyncio
+    async def test_stream_structured_yields_usage_chunk(self, llm_backend):
+        """流式 streaming 中检测到 usage 时产出 usage chunk。"""
+        from unittest.mock import MagicMock, AsyncMock
+
+        usage_obj = MagicMock()
+        usage_obj.prompt_tokens = 100
+        usage_obj.completion_tokens = 50
+        usage_obj.total_tokens = 150
+
+        delta = MagicMock()
+        delta.content = "hello"
+        delta.tool_calls = None
+
+        chunk_no_usage = MagicMock()
+        chunk_no_usage.choices = [MagicMock(delta=delta)]
+        chunk_no_usage.usage = None
+
+        chunk_with_usage = MagicMock()
+        chunk_with_usage.choices = []  # usage chunk 的 choices 为空（真实 API 行为）
+        chunk_with_usage.usage = usage_obj
+
+        async def async_iter():
+            for item in [chunk_no_usage, chunk_with_usage]:
+                yield item
+
+        llm_backend._client.chat.completions.create = AsyncMock(return_value=async_iter())
+
+        chunks = []
+        async for chunk in llm_backend._stream_structured([{"role": "user", "content": "hi"}]):
+            chunks.append(chunk)
+
+        assert len(chunks) == 2
+        assert chunks[0] == {"content": "hello", "tool_calls": None}
+        assert chunks[1] == {
+            "content": None,
+            "tool_calls": None,
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+        }
+        assert llm_backend.last_usage == {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+
+    @pytest.mark.asyncio
+    async def test_stream_structured_no_usage_when_none(self, llm_backend):
+        """无 usage 时不产出额外 chunk。"""
+        from unittest.mock import MagicMock, AsyncMock
+
+        delta = MagicMock()
+        delta.content = "ok"
+        delta.tool_calls = None
+
+        chunk = MagicMock()
+        chunk.choices = [MagicMock(delta=delta)]
+        chunk.usage = None
+
+        async def async_iter():
+            yield chunk
+
+        llm_backend._client.chat.completions.create = AsyncMock(return_value=async_iter())
+
+        chunks = []
+        async for chunk in llm_backend._stream_structured([{"role": "user", "content": "hi"}]):
+            chunks.append(chunk)
+
+        assert len(chunks) == 1
+        assert "usage" not in chunks[0]
+
+    @pytest.mark.asyncio
+    async def test_call_api_nonstreaming_captures_usage(self, llm_backend):
+        """非流式路径捕获 usage。"""
+        from unittest.mock import MagicMock, AsyncMock
+
+        usage_obj = MagicMock()
+        usage_obj.prompt_tokens = 10
+        usage_obj.completion_tokens = 5
+        usage_obj.total_tokens = 15
+
+        choice = MagicMock()
+        choice.message.content = "resp"
+
+        mock_response = MagicMock()
+        mock_response.choices = [choice]
+        mock_response.usage = usage_obj
+
+        llm_backend._client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        result = await llm_backend.chat([{"role": "user", "content": "hi"}])
+        assert result == "resp"
+        assert llm_backend.last_usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}

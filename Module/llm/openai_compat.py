@@ -43,6 +43,7 @@ class OpenAICompatBackend(LLMBackend):
         self._base_url = base_url
         self._beta_url = beta_url
         self._beta_client: AsyncOpenAI | None = None
+        self.last_usage: dict | None = None  # 最近一次 API 调用的 token 消耗
         self._create_clients()
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
@@ -92,9 +93,21 @@ class OpenAICompatBackend(LLMBackend):
             messages=cleaned,  # type: ignore[arg-type]
             stream=True,
             extra_body=extra_body_final,
+            stream_options={"include_usage": True},
             **kwargs,
         )
         async for chunk in response:  # type: ignore[union-attr]
+            # 流式最后一个 chunk 可能携带 usage 统计（choices 通常为空）
+            if getattr(chunk, "usage", None):
+                u = chunk.usage
+                usage = {
+                    "prompt_tokens": u.prompt_tokens or 0,
+                    "completion_tokens": u.completion_tokens or 0,
+                    "total_tokens": u.total_tokens or 0,
+                }
+                self.last_usage = usage
+                yield {"content": None, "tool_calls": None, "usage": usage}
+                continue  # usage chunk 没有实质内容，跳过后续处理
             if not chunk.choices:
                 continue  # 某些 provider（MiMo 等）返回空 choices 表示流结束
             delta = chunk.choices[0].delta
@@ -165,6 +178,13 @@ class OpenAICompatBackend(LLMBackend):
                 **kwargs,
             )
             content = response.choices[0].message.content
+            # 捕获 usage 统计
+            if getattr(response, "usage", None):
+                self.last_usage = {
+                    "prompt_tokens": response.usage.prompt_tokens or 0,
+                    "completion_tokens": response.usage.completion_tokens or 0,
+                    "total_tokens": response.usage.total_tokens or 0,
+                }
             if content:
                 yield content
 

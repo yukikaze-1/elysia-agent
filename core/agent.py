@@ -95,6 +95,9 @@ class Agent:
             character_name=self._character.name,
         )
 
+        # ---- Token 统计 ----
+        self._token_tracker = None  # 在 start() 中创建（需要 session_id）
+
         self._cognitive = CognitiveLoop(
             llm=self._llm,
             fsm=self._fsm,
@@ -106,6 +109,7 @@ class Agent:
             emotion=self._emotion,
             consolidator=self._consolidator,
             tts=self._tts,
+            token_tracker=self._token_tracker,
         )
 
         self._idle = IdleMonitor(
@@ -147,6 +151,18 @@ class Agent:
         )
         if mongo_ok:
             await self._session.load()
+
+        # ---- Token 统计 ----
+        from core.token_tracker import TokenTracker
+        self._token_tracker = TokenTracker(
+            session_id=getattr(self._session, "_session_id", "default"),
+            output_manager=self._output,
+            document_db=self._session._db if mongo_ok else None,
+        )
+        self._cognitive._token_tracker = self._token_tracker
+        # MongoDB 可用时 flush 积压的 pending 文件
+        if mongo_ok:
+            await self._token_tracker.flush_pending()
 
         # 注入运行时上下文 — 工具通过 ctx.get("memory") 访问 L2 记忆
         self._tool_ctx = ToolContext(

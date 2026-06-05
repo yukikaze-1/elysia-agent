@@ -153,6 +153,18 @@ class OutputManager:
             channels=channels, capability=capability or ChannelCapability.COMMAND,
         )
 
+    async def token_usage(
+        self,
+        data: dict,
+        *,
+        channels: list[OutputChannel] | None = None,
+    ) -> None:
+        """广播 token 消耗统计到所有通道（前端实时更新用量）。"""
+        await self._broadcast(
+            "on_token_usage", data,
+            channels=channels,
+        )
+
     async def audio_chunk(
         self,
         chunk: bytes,

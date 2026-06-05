@@ -52,6 +52,9 @@ class OutputChannel(ABC):
     async def on_state(self, state: str) -> None:
         """FSM 状态变更 — 前端据此切换动画（待机/思考/说话）"""
 
+    async def on_token_usage(self, data: dict) -> None:
+        """Token 消耗统计 — 前端展示用量条形图/标签"""
+
     @abstractmethod
     async def on_message(self, msg) -> None:
         """完整消息 — 流式结束后发送，或非流式消息直接发送。"""

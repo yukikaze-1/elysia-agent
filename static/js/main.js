@@ -6,6 +6,7 @@ import {
   setMood, setState, esc, createAssistantRow, setupInput,
   resetInput, scrollDown, hideNewMsgIndicator,
   addImageToPreview, clearPreview, renderUserMsg, openLightbox, closeLightbox,
+  attachTokenLabel, updateSessionTokenDisplay,
 } from './chat.js';
 import { bufferAudioChunk, finalizeStream } from './audio.js';
 import { toggleMic, stopMic, flashWakeIndicator } from './mic.js';
@@ -31,6 +32,10 @@ function handleMessage(msg) {
   switch (msg.type) {
     case 'session':
       restoreFromServer(msg.messages);
+      if (msg.token_stats) {
+        state.sessionTokens = msg.token_stats;
+        updateSessionTokenDisplay();
+      }
       break;
     case 'capabilities':
       state.sttAvailable = msg.stt !== false;
@@ -64,6 +69,15 @@ function handleMessage(msg) {
         state.messages.push({ role: 'assistant', content: msg.content });
       }
       finalizeDelta();
+      break;
+    case 'token_usage':
+      state.currentTurnTokens = msg.turn ? msg.turn.rounds || [] : [];
+      state.activeTurnTotal = msg.turn ? msg.turn.turn_total || 0 : 0;
+      if (msg.session) {
+        state.sessionTokens = msg.session;
+      }
+      attachTokenLabel();
+      updateSessionTokenDisplay();
       break;
     case 'expression': setMood(msg.expression, msg.intensity); break;
     case 'state':

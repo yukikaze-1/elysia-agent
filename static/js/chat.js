@@ -431,5 +431,86 @@ export function clearPlayingHighlight() {
   }
 }
 
+/* ---- Token 标签 ---- */
+
+/**
+ * 将 token_usage 数据附加到最近的 AI 气泡。
+ * 每次收到 token_usage 消息时调用，会替换之前的标签。
+ */
+export function attachTokenLabel() {
+  const rows = document.querySelectorAll('.msg-row.assistant');
+  if (!rows.length) return;
+  const lastRow = rows[rows.length - 1];
+  const bubble = lastRow.querySelector('.msg-bubble');
+  if (!bubble) return;
+
+  // 移除旧标签
+  const existing = bubble.querySelector('.token-label');
+  if (existing) existing.remove();
+
+  const rounds = state.currentTurnTokens;
+  if (!rounds || !rounds.length) return;
+
+  const turnTotal = state.activeTurnTotal;
+  const totalStr = turnTotal >= 1000 ? (turnTotal / 1000).toFixed(1) + 'k' : String(turnTotal);
+
+  const label = document.createElement('div');
+  label.className = 'token-label';
+
+  // 紧凑摘要
+  const summary = document.createElement('span');
+  summary.className = 'token-summary';
+  summary.textContent = '\u{1FA99} ' + totalStr + ' tokens ▼';
+  label.appendChild(summary);
+
+  // 展开明细
+  const detail = document.createElement('div');
+  detail.className = 'token-detail';
+  const lines = rounds.map(r =>
+    `<div class="token-round">
+      <span class="token-round-num">第${r.round_num + 1}轮</span>
+      <span class="token-round-item">prompt: ${formatTokens(r.prompt_tokens)}</span>
+      <span class="token-round-item">completion: ${formatTokens(r.completion_tokens)}</span>
+      <span class="token-round-total">= ${formatTokens(r.total_tokens)}</span>
+    </div>`
+  ).join('');
+  detail.innerHTML = lines;
+  label.appendChild(detail);
+
+  // 点击展开/收起
+  label.onclick = (e) => {
+    e.stopPropagation();
+    label.classList.toggle('expanded');
+  };
+
+  bubble.appendChild(label);
+}
+
+function formatTokens(n) {
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+  return String(n);
+}
+
+/**
+ * 更新顶栏 session 累计 token 显示。
+ */
+export function updateSessionTokenDisplay() {
+  const bar = document.getElementById('session-token-bar');
+  if (!bar) return;
+  const st = state.sessionTokens;
+  if (!st || !st.total) {
+    bar.textContent = '';
+    bar.style.display = 'none';
+    return;
+  }
+  const models = Object.entries(st.byModel || {});
+  const parts = models.map(([m, t]) => {
+    const short = m.split('/').pop();
+    return short + ': ' + formatTokens(t);
+  });
+  bar.textContent = '\u{1FA99} 总计 ' + formatTokens(st.total) + (parts.length ? ' (' + parts.join(', ') + ')' : '');
+  bar.style.display = '';
+}
+
 // 从 persistence.js 导入 (底部导入解决循环依赖)
 import { debounceSave, saveChat } from './persistence.js';

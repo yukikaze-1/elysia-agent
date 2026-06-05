@@ -25,9 +25,11 @@ class LLMBackend(ABC):
     async def stream_think(
         self, messages: list[dict], **kwargs
     ) -> AsyncGenerator[dict, None]:
-        """流式思考 — 逐 chunk 产出结构化 dict，支持 tool_calls 检测。
+        """流式思考 — 逐 chunk 产出结构化 dict，支持 tool_calls 检测和 usage 统计。
 
         每个 chunk: {"content": str | None, "tool_calls": list | None}
+        最后一个 chunk 可能包含可选的 "usage" 键:
+          {"content": None, "tool_calls": None, "usage": {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}}
         默认实现回退到 chat()，逐字符 yield 纯文本（无 tool_calls）。
         支持 tool calling 的 backend 应覆盖此方法。
         """

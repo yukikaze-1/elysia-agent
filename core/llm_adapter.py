@@ -74,6 +74,8 @@ class LLMAdapter:
         """Stream structured chunks with tool_call detection + retry on 429/5xx.
 
         Yields dicts: {"content": str | None, "tool_calls": list | None}
+        流最后一个 chunk 可能包含可选的 "usage" 键:
+          {"content": None, "tool_calls": None, "usage": {prompt_tokens, completion_tokens, total_tokens}}
         Retries on transient server errors (429, 500-504) with exponential backoff.
         Only retries if streaming hasn't started yet (no duplicate content).
         """

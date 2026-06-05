@@ -549,7 +549,10 @@ async def _handle_ws(
     # 发送会话历史给新连接的客户端
     try:
         session_msgs = agent._session.messages_for_client()
-        await ws.send_json({"type": "session", "messages": session_msgs})
+        token_stats = {}
+        if hasattr(agent, '_token_tracker') and agent._token_tracker is not None:
+            token_stats = await agent._token_tracker.get_session_stats()
+        await ws.send_json({"type": "session", "messages": session_msgs, "token_stats": token_stats})
     except Exception:
         logger.warning("Failed to send session on connect", exc_info=True)
 

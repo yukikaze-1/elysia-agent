@@ -7,6 +7,7 @@ wire format:
     {"type": "action", "action": "wave", ...}
     {"type": "command", "command": "...", ...}
     {"type": "message", ...msg.to_dict()...}    — 完整消息
+    {"type": "token_usage", "turn": {...}, "session": {...}}  — Token 消耗统计
 """
 
 import logging
@@ -89,6 +90,9 @@ class WebSocketChannel(OutputChannel):
 
     async def on_state(self, state: str) -> None:
         await self._send_json({"type": "state", "state": state})
+
+    async def on_token_usage(self, data: dict) -> None:
+        await self._send_json({"type": "token_usage", **data})
 
     async def on_message(self, msg) -> None:
         if isinstance(msg, str):

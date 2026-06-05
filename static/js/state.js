@@ -51,6 +51,11 @@ class AppState {
     this.sttAvailable = true;   // 乐观默认 true，收到 capabilities 后更新
     this.ttsAvailable = true;
     this.llmModel = '';         // 当前 LLM 模型名
+
+    // Token 统计
+    this.sessionTokens = { total: 0, byModel: {} };
+    this.currentTurnTokens = [];        // 当前轮各 round 的 usage
+    this.activeTurnTotal = 0;          // 当前轮总 token
   }
 
   /** WebSocket 重连时重置所有运行时状态 */
@@ -68,6 +73,9 @@ class AppState {
     this.audioPlaying = false;
     this.audioChunks = {};
     this.previewImages = [];
+    this.sessionTokens = { total: 0, byModel: {} };
+    this.currentTurnTokens = [];
+    this.activeTurnTotal = 0;
   }
 }
 

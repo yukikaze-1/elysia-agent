@@ -48,6 +48,9 @@ class DebugInfo:
     # LLM
     llm_model: str = ""
 
+    # Token 统计
+    token_stats: dict = field(default_factory=dict)
+
     # Latency (ring buffer — last 100 requests)
     timing_history: list[dict] = field(default_factory=list)
     timing_stats: dict = field(default_factory=dict)
@@ -169,5 +172,23 @@ async def collect(agent) -> DebugInfo:
         }
     except Exception:
         info.memory = {"error": "psutil not available"}
+
+    # ---- Token 统计 ----
+    tracker = getattr(agent, "_token_tracker", None)
+    if tracker is not None:
+        info.token_stats = {
+            "session_total": tracker.session_total,
+            "per_model": dict(tracker.per_model),
+            "current_turn": [
+                {
+                    "model": u.model,
+                    "prompt_tokens": u.prompt_tokens,
+                    "completion_tokens": u.completion_tokens,
+                    "total_tokens": u.total_tokens,
+                    "round_num": u.round_num,
+                }
+                for u in tracker.current_turn_usages[-10:]
+            ],
+        }
 
     return info

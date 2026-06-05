@@ -188,6 +188,7 @@ class CognitiveLoop:
         consolidator: MemoryConsolidator | None = None,
         tts: TTSBackend | None = None,
         ctx: ToolContext | None = None,
+        token_tracker=None,  # TokenTracker | None
     ):
         self._llm = llm
         self._fsm = fsm
@@ -200,6 +201,7 @@ class CognitiveLoop:
         self._consolidator = consolidator
         self._tts = tts
         self._ctx = ctx
+        self._token_tracker = token_tracker
         self._sentence_buf = SentenceBuffer()
         self._process_lock = asyncio.Lock()
         self._current_task: asyncio.Task | None = None
@@ -335,6 +337,10 @@ class CognitiveLoop:
             tool_defs = [t for t in tool_defs if t.get("function", {}).get("name") != "describe_image"]
         logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs or []))
 
+        # 新一轮对话开始，清空 turn 缓存
+        if self._token_tracker is not None:
+            self._token_tracker.start_turn()
+
         await self._output.typing(True)
 
         try:
@@ -396,6 +402,15 @@ class CognitiveLoop:
 
                         if tc_deltas:
                             self._merge_stream_tool_calls(raw_tool_calls, tc_deltas)
+
+                        # Token 消耗: stream 最后可能带 usage
+                        if "usage" in chunk:
+                            if self._token_tracker is not None:
+                                await self._token_tracker.record(
+                                    usage=chunk["usage"],
+                                    model=self._llm.model,
+                                    round_num=round_num,
+                                )
                 except asyncio.CancelledError:
                     raise
 
