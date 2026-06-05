@@ -414,6 +414,82 @@ def create_app(
             return web.json_response({"ok": False, "error": str(e)})
     app.router.add_post("/api/providers/test", providers_test_handler)
 
+    # ---- 图片上传 ----
+
+    _IMAGES_DIR = Path(__file__).parent.parent.parent / "data" / "images"
+
+    async def image_upload_handler(request: web.Request) -> web.Response:
+        """接收图片上传，保存到 data/images/，返回 URL。"""
+        import uuid as _uuid
+        import os as _os
+
+        agent = request.app["agent"]
+        cfg = getattr(agent._config, "server", None)
+        max_bytes = (getattr(cfg, "image_max_mb", 10) or 10) * 1024 * 1024
+        allowed = getattr(cfg, "image_allowed_types", None) or ["image/png", "image/jpeg", "image/gif", "image/webp"]
+
+        try:
+            reader = await request.multipart()
+            field = await reader.next()
+            if field is None:
+                return web.json_response({"error": "未找到图片字段"}, status=400)
+
+            data = await field.read()
+            if len(data) > max_bytes:
+                return web.json_response({"error": f"图片过大，上限 {max_bytes // 1024 // 1024}MB"}, status=413)
+
+            # 从文件名推断扩展名
+            filename = getattr(field, "filename", "") or "image.png"
+            ext = _os.path.splitext(filename)[1].lower()
+            ext_to_mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                           ".gif": "image/gif", ".webp": "image/webp"}
+            mime = ext_to_mime.get(ext, "image/png")
+
+            if mime not in allowed:
+                return web.json_response({"error": f"不支持的图片类型: {mime}"}, status=415)
+
+            _os.makedirs(str(_IMAGES_DIR), exist_ok=True)
+            saved_name = f"{_uuid.uuid4().hex[:12]}{ext}"
+            saved_path = _IMAGES_DIR / saved_name
+            saved_path.write_bytes(data)
+
+            url = f"/static/images/{saved_name}"
+            return web.json_response({"url": url, "mime": mime, "size": len(data)})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    app.router.add_post("/api/images", image_upload_handler)
+
+    # ---- Chat API（curl 测试用） ----
+
+    async def chat_api_handler(request: web.Request) -> web.Response:
+        """接收 JSON 消息并触发 agent 处理，返回 assistant 回复。
+
+        请求: {"content": [{"type": "text", "content": "..."}, {"type": "image", "source": "...", "mime": "..."}], "user_name": "妖梦"}
+        响应: {"ok": true, "reply": "..."}  — 注：当前为异步处理，不等待回复
+        """
+        agent = request.app["agent"]
+        try:
+            body = await request.json()
+            content = body.get("content")
+            user_name = body.get("user_name", "妖梦")
+            text = body.get("text", "")
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效的 JSON 请求体"}, status=400)
+
+        if not content and not text:
+            return web.json_response({"ok": False, "error": "缺少 content 或 text"}, status=400)
+
+        await agent.process_message(text=text, user_name=user_name, content=content)
+        return web.json_response({"ok": True})
+
+    app.router.add_post("/api/chat", chat_api_handler)
+
+    # ---- 静态图片目录 ----
+
+    if _IMAGES_DIR.is_dir():
+        app.router.add_static("/static/images/", str(_IMAGES_DIR), show_index=False)
+
     async def sessions_clear_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
         session = agent._session
@@ -542,10 +618,15 @@ async def _handle_json(data: dict, agent, audio_buf=None, ws=None) -> None:
             audio_buf.set_wake_enabled(enabled)
             logger.info("唤醒词开关: %s", "开启" if enabled else "关闭")
     elif msg_type == "text":
-        content = data.get("content", "").strip()
-        if content:
-            await agent.process_message(content)
-            logger.info("WS 收到文本: %s", content[:100])
+        text_content = data.get("content", "")
+        if isinstance(text_content, list):
+            # 多模态 content 数组
+            from Module.schema.message_format import content_text
+            await agent.process_message(text=content_text(text_content), user_name="妖梦", content=text_content)
+            logger.info("WS 收到多模态消息")
+        elif isinstance(text_content, str) and text_content.strip():
+            await agent.process_message(text=text_content.strip())
+            logger.info("WS 收到文本: %s", text_content.strip()[:100])
     elif msg_type == "interrupt":
         logger.info("WS 收到打断指令")
         await _do_interrupt(agent)

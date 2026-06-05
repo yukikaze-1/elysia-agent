@@ -1,11 +1,12 @@
 """
 DEPRECATED: 本模块为旧版预留架构，当前未被 core/ 使用。
-core/ 使用自己的内部数据结构。保留本模块仅作为未来架构演进参考。
+保留本模块仅作为未来架构演进参考。
 
 core/ 中的等价或替代:
 - core/schema.py          — AgentState, EventType 等枚举
 - core/memory/session.py   — SessionMemory
 - core/memory/long_term.py — MemoryEntry
+- Module/schema/message_format.py — TextPart, ImagePart, ChatMessageV2 等（当前主力）
 """
 
 from Module.schema.constants import (
@@ -24,13 +25,6 @@ from Module.schema.media import (
     VideoData,
     ImageData,
     FileData,
-)
-from Module.schema.message import (
-    MessageType,
-    UserMessage,
-    EnvironmentMessage,
-    ChatMessage,
-    ConversationSegment,
 )
 from Module.schema.io_models import (
     L0InputSourceType,
@@ -55,12 +49,6 @@ __all__ = [
     "VideoData",
     "ImageData",
     "FileData",
-    # message
-    "MessageType",
-    "UserMessage",
-    "EnvironmentMessage",
-    "ChatMessage",
-    "ConversationSegment",
     # io_models
     "L0InputSourceType",
     "WebClientMessage",

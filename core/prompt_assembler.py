@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 from Module.prompt import PromptManager
+from Module.schema.message_format import content_to_openai, content_text
 from .character_config import CharacterConfig
 from .memory.session import SessionMemory
 from .memory.long_term import LongTermMemory, MemoryEntry
@@ -100,22 +101,46 @@ class PromptAssembler:
             logger.info("记忆召回: %d 条", len(results))
         return results if results else []
 
-    async def build_messages(self, user_message: str, user_name: str = "妖梦",
-                              stt_emotion: str = "", stt_events: list[str] | None = None) -> list[dict]:
-        """Build complete messages[] for the LLM API call."""
+    async def build_messages(self, user_message: str = "",
+                              user_name: str = "妖梦",
+                              stt_emotion: str = "",
+                              stt_events: list[str] | None = None,
+                              content: list[dict] | None = None) -> list[dict]:
+        """Build complete messages[] for the LLM API call.
+
+        content: 多模态内容数组 (ChatMessageV2 content dicts)。
+                 纯文本时可为 None，自动从 user_message 构建。
+        """
+        # 文本摘要给 system prompt 渲染用
+        text = content_text_from_raw(content) if content else user_message
         system = await self.build_system_prompt(
-            user_message=user_message, user_name=user_name,
+            user_message=text, user_name=user_name,
             stt_emotion=stt_emotion, stt_events=stt_events,
         )
         messages: list[dict] = [{"role": "system", "content": system}]
         recent = self._session.recent_messages(8)
         for msg in recent:
-            if "parts" in msg:
-                content = "".join(p["content"] for p in msg["parts"])
+            content_raw = msg.get("content", "")
+            if isinstance(content_raw, list):
+                # ChatMessageV2 格式 — 转为 OpenAI 格式
+                messages.append({
+                    "role": msg["role"],
+                    "content": content_to_openai(content_raw),
+                })
+            elif isinstance(content_raw, str):
+                messages.append({"role": msg["role"], "content": content_raw})
+            elif "parts" in msg:
+                # 旧格式 — parts 数组
+                text_from_parts = "".join(p["content"] for p in msg["parts"])
+                messages.append({"role": msg["role"], "content": text_from_parts})
             else:
-                content = msg.get("content", "")
-            messages.append({"role": msg["role"], "content": content})
-        messages.append({"role": "user", "content": user_message})
+                messages.append({"role": msg["role"], "content": str(content_raw)})
+
+        # 当前用户消息
+        if content:
+            messages.append({"role": "user", "content": content_to_openai(content)})
+        else:
+            messages.append({"role": "user", "content": user_message})
         return messages
 
     async def _render_fallback(self, user_name: str, user_message: str, now, mood: str) -> str:
@@ -175,6 +200,18 @@ class PromptAssembler:
             return "autumn"
         else:
             return "winter"
+
+
+def content_text_from_raw(content: list[dict] | str | None) -> str:
+    """从原始 content 提取纯文本（给 system prompt 渲染用）。"""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    return "".join(
+        p.get("content", "") for p in content
+        if isinstance(p, dict) and p.get("type") == "text"
+    )
 
 
 def _format_events(events: list[str]) -> str:

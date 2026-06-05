@@ -350,13 +350,17 @@ class Agent:
             logger.error("TTS switch failed: %s", e)
             return {"ok": False, "error": str(e)}
 
-    async def process_message(self, text: str, user_name: str = "妖梦") -> None:
+    async def process_message(self, text: str = "", user_name: str = "妖梦",
+                               content: list[dict] | None = None) -> None:
         """Process a single user message through the pipeline.
+
+        text: 纯文本消息（兼容旧调用）
+        content: 多模态内容数组（ChatMessageV2 content）— 新接口
 
         If the agent is busy, the message is queued and processed when IDLE.
         Explicit interrupt (stop button, VAD) still works via EventBus INTERRUPT.
         """
-        if not text.strip():
+        if not text.strip() and not content:
             return
 
         rid = self.next_request_id()
@@ -373,11 +377,13 @@ class Agent:
                        self._fsm.state, len(self._pending_messages) + 1)
             self._pending_messages.append({
                 "text": text, "user_name": user_name, "request_id": rid,
+                "content": content,
             })
             return
 
         self._bus.post(EventType.USER_INPUT, {"text": text, "user_name": user_name,
-                                               "request_id": rid})
+                                               "request_id": rid,
+                                               "content": content})
 
     # ---- REPL ----
 
@@ -518,6 +524,7 @@ class Agent:
                 user_name = data.get("user_name", "妖梦")
                 stt_emotion = data.get("emotion", "")
                 stt_events = data.get("events", [])
+                content = data.get("content")
                 logger.info("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
                            "websocket" if stt_emotion else "text", stt_emotion or "无")
                 # Wire tool-call dispatch to Scheduler Worker Pool
@@ -528,8 +535,9 @@ class Agent:
                     self._cognitive.process(text, user_name=user_name,
                                             stt_emotion=stt_emotion,
                                             stt_events=stt_events,
-                                            _on_tool_calls=_on_tool_calls),
-                    name=f"cognitive-{text[:20]}"
+                                            _on_tool_calls=_on_tool_calls,
+                                            content=content),
+                    name=f"cognitive-{text[:20] if text else 'multimodal'}"
                 )
                 self._cognitive._current_task = task
 

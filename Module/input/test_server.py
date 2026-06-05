@@ -163,7 +163,7 @@ class TestWebSocketHandler:
             # Give event loop time to process
             await asyncio.sleep(0.1)
 
-        agent.process_message.assert_called_with("hello")
+        agent.process_message.assert_called_with(text="hello")
         await agent.stop()
 
     @pytest.mark.asyncio

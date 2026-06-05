@@ -26,16 +26,23 @@ class SessionMemory:
     # ---- messages ----
 
     def add_message(self, *args, **meta) -> None:
-        """存储一条消息。兼容新旧两种格式。
+        """存储一条消息。兼容新旧格式。
 
-        旧格式: add_message(role, content, **meta)
-        新格式: add_message({id, role, parts, content_type, timestamp})
+        旧格式: add_message(role, content, **meta)       — content 为 str
+        新格式: add_message({role, content, message_id, ...}) — content 为 list[dict] (ChatMessageV2.to_dict())
         """
         if len(args) == 1 and isinstance(args[0], dict):
-            self._messages.append(args[0])
+            msg = args[0]
+            # 向后兼容：content 为 str 时包装为 TextPart 数组
+            if isinstance(msg.get("content"), str):
+                msg["content"] = [{"type": "text", "content": msg["content"]}]
+            self._messages.append(msg)
         else:
             role, content = args[0], args[1] if len(args) > 1 else ""
-            entry = {"role": role, "content": content}
+            entry: dict[str, Any] = {
+                "role": role,
+                "content": [{"type": "text", "content": content}],
+            }
             if meta:
                 entry["meta"] = meta
             self._messages.append(entry)
@@ -47,7 +54,7 @@ class SessionMemory:
         return msgs
 
     def messages_for_client(self, n: int | None = None) -> list[dict[str, Any]]:
-        """返回客户端友好的消息格式。旧格式消息自动转换为 parts 数组。"""
+        """返回客户端友好的消息格式。旧格式消息自动转换为 parts + content 数组。"""
         msgs = self.recent_messages(n)
         result = []
         for m in msgs:
@@ -55,12 +62,30 @@ class SessionMemory:
                 result.append(m)
             else:
                 entry: dict[str, Any] = {"role": m["role"]}
+                content = m.get("content", "")
+                # 旧格式 meta.sentences 优先（add_message 旧调用路径）
                 meta = m.get("meta", {})
                 if "sentences" in meta:
                     entry["parts"] = [{"content": s} for s in meta["sentences"]]
+                elif isinstance(content, list):
+                    # ChatMessageV2 格式 — content 是 Part 数组
+                    # 提取 text parts 作为 parts 数组传给前端
+                    text_parts = [
+                        {"content": p["content"]}
+                        for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ]
+                    entry["parts"] = text_parts if text_parts else [{"content": ""}]
                 else:
-                    entry["parts"] = [{"content": m.get("content", "")}]
-                entry["content_type"] = {}
+                    entry["parts"] = [{"content": ""}]
+
+                if isinstance(content, list):
+                    entry["content"] = content  # 保留完整 content 给前端渲染图片
+                elif isinstance(content, str):
+                    entry["content"] = [{"type": "text", "content": content}]
+                else:
+                    entry["content"] = [{"type": "text", "content": ""}]
+                entry["content_type"] = m.get("content_type", {})
                 result.append(entry)
         return result
 

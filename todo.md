@@ -55,6 +55,16 @@
 | 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行，保留参考 |
 | 中 | `Module/bench/` 位置不当 | bench.py 自注释"将移至 tools/bench/"，依赖 core/，后续考虑迁移 |
 
+## 多模态 Phase 2
+
+| 优先级 | 项目 | 说明 |
+|--------|------|------|
+| 中 | **AI → 用户图片输出** | 工具返回图片（WebFetch 截图、图片生成）+ LLM 生成图片 → OutputManager 广播 → 前端渲染。`ToolResult.images: list[MediaItem]` 已设计，需打通 CognitiveLoop → session → 前端链路 |
+| 中 | **前端图片交互** | 粘贴/拖拽/文件选择上传 + 图片气泡渲染 + base64 解码/Blob URL |
+| 低 | **文件支持** | `type: "file"` content part 实现（上传 + LLM context + 前端渲染） |
+| 低 | **音频/视频 Part** | `VideoPart`/`AudioPart` 已定义 dataclass，需实现全链路 |
+| 低 | **content_type 迁入 content** | assistant 消息的 markdown/code block 索引迁入 content array，减少独立字段 |
+
 ## 健壮性 & 架构
 
 | 优先级 | 问题 | 说明 |
@@ -74,7 +84,8 @@
 
 | 日期 | 内容 |
 |------|------|
-| 06-05 | **项目清理** — 磁盘清理（删除~280MB：log/、.playwright-mcp/、过期 worktree、所有 __pycache__/、static/live2d-demo/、data/sandbox/）；UUID 生成统一（8 个文件改用 `core.message_id.new_message_id()`）；补缺失 `__main__.py`（config/input/prompt/logger）；补 `Module/input/README.md`；`core/tools/test_tool_parallel.md` 移至 docs/；清理 `.claude/settings.local.json` 中 9 条过期 `demo.py` 引用。spec: `docs/superpowers/specs/2026-06-05-cleanup-design.md` 待写 |
+| 06-05 | **项目清理** — 磁盘清理（删除~280MB）、UUID 生成统一（8 文件改用 `new_message_id()`）、补缺失 `__main__.py`（config/input/prompt/logger）、补 `Module/input/README.md`、`test_tool_parallel.md` 移至 docs/、清理 settings.local.json 过期引用。spec: `docs/superpowers/specs/2026-06-05-cleanup-design.md` |
+| 06-05 | **多模态图片支持 Phase 1 — 用户→AI** — 新增 `Module/schema/message_format.py`（TextPart/ImagePart/FilePart/AudioPart/VideoPart + ChatMessageV2）；SessionMemory/PromptAssembler content 统一为 list[dict]；CognitiveLoop/Agent 支持 content 参数；Server 新增 `/api/images`（上传）和 `/api/chat`（测试）端点；本地图片自动转 base64 data URI 发送 MIMO API。删除废弃的 `Module/schema/message.py`。spec: `docs/superpowers/specs/2026-06-05-multimodal-phase1-design.md` |
 
 ## 已完成 (2026-06-04)
 

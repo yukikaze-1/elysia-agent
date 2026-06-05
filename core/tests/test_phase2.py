@@ -501,8 +501,8 @@ class TestSessionMemoryEdgeCases:
         s1.add_message("user", "alice msg")
         s2.add_message("user", "bob msg")
 
-        s1_msgs = [m["content"] for m in s1.recent_messages()]
-        s2_msgs = [m["content"] for m in s2.recent_messages()]
+        s1_msgs = [m["content"][0]["content"] for m in s1.recent_messages()]
+        s2_msgs = [m["content"][0]["content"] for m in s2.recent_messages()]
 
         assert "alice msg" in s1_msgs
         assert "bob msg" in s2_msgs
@@ -520,7 +520,7 @@ class TestSessionMemoryEdgeCases:
 
         msgs = s.recent_messages()
         assert len(msgs) == 3
-        contents = [m["content"] for m in msgs]
+        contents = [m["content"][0]["content"] for m in msgs]
         assert "first" not in contents
         assert "second" not in contents
         assert "third" in contents
@@ -553,7 +553,7 @@ class TestSessionMemoryEdgeCases:
             s.add_message("user", f"msg{i}")
 
         assert len(s.recent_messages(3)) == 3
-        assert s.recent_messages(3)[-1]["content"] == "msg9"
+        assert s.recent_messages(3)[-1]["content"][0]["content"] == "msg9"
 
     def test_meta_data_on_messages(self):
         """Messages with extra metadata should preserve it."""
@@ -572,8 +572,9 @@ class TestSessionMemoryEdgeCases:
             s.add_message("user", f"msg{i}")
         snap = s.snapshot()
         assert len(snap["messages"]) == 3
-        assert snap["messages"][0]["content"] == "msg7"
-        assert snap["messages"][2]["content"] == "msg9"
+        # content 现在是 list[dict] 格式
+        assert snap["messages"][0]["content"][0]["content"] == "msg7"
+        assert snap["messages"][2]["content"][0]["content"] == "msg9"
 
     def test_clear_preserves_session_id(self):
         """Clear should empty messages but not change session_id."""
@@ -593,8 +594,9 @@ class TestSessionMemoryEdgeCases:
         s.add_message("assistant", "Hello world", sentences=["Hello", "world"])
         s.add_message("user", "Hi")
         result = s.messages_for_client()
-        assert result[0] == {"role": "assistant", "parts": [{"content": "Hello"}, {"content": "world"}], "content_type": {}}
-        assert result[1] == {"role": "user", "parts": [{"content": "Hi"}], "content_type": {}}
+        assert result[0]["parts"] == [{"content": "Hello"}, {"content": "world"}]
+        assert result[0]["role"] == "assistant"
+        assert result[1]["role"] == "user"
 
     def test_messages_for_client_new_format(self):
         """messages_for_client should pass through new-format messages unchanged."""

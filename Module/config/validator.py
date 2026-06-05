@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from typing import Any
+from typing import Any, get_origin
 
 from .errors import (
     ConfigConstraintError,
@@ -116,7 +116,9 @@ class Validator:
             # 2. type check
             expected_type = hints.get(field_name)
             if expected_type is not None and value is not None:
-                if not isinstance(value, expected_type):
+                # strip parameterized generics (e.g. list[str] → list) for isinstance
+                check_type = get_origin(expected_type) or expected_type
+                if not isinstance(value, check_type):
                     errors.append(ConfigTypeError(class_name, field_name, expected_type, value))
                     continue  # skip constraint + recursion on wrong type
 

@@ -32,6 +32,14 @@ from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
 logger = logging.getLogger(__name__)
 
+def content_text_from_content(content: list[dict]) -> str:
+    """从 content 数组提取纯文本（给日志用）。"""
+    return "".join(
+        p.get("content", "") for p in content
+        if isinstance(p, dict) and p.get("type") == "text"
+    )
+
+
 _EMOJI_RE = re.compile(
     r"[\U0001F300-\U0001F9FF"
     r"\U0001F600-\U0001F64F"
@@ -212,9 +220,15 @@ class CognitiveLoop:
         """设置当前 turn 的工具上下文。"""
         self._ctx = ctx
 
-    async def process(self, user_message: str, user_name: str = "妖梦",
+    async def process(self, user_message: str = "", user_name: str = "妖梦",
                        stt_emotion: str = "", stt_events: list[str] | None = None,
-                       _on_tool_calls=None) -> None:
+                       _on_tool_calls=None,
+                       content: list[dict] | None = None) -> None:
+        """处理用户消息。
+
+        user_message: 纯文本（STT/键盘输入）— 兼容旧调用
+        content: 多模态内容数组（ChatMessageV2 content）— 新接口
+        """
         async with self._process_lock:
             if not self._fsm.can_transition(AgentState.THINKING):
                 logger.warning("Cannot transition to THINKING from %s", self._fsm.state)
@@ -236,10 +250,17 @@ class CognitiveLoop:
             clock.start()
             self._clock = clock  # 供 _think_loop / _after_response 使用
 
+            # 提取纯文本给日志
+            log_text = user_message
+            if content:
+                log_text = content_text_from_content(content)
+                if not log_text:
+                    log_text = "[多模态消息]"
+
             # 用户输入到达 — 记录时间和内容
             emo_tag = f" [{stt_emotion}]" if stt_emotion and stt_emotion != "NEUTRAL" else ""
-            logger.info(">>> 用户输入 (%s)%s: %s", user_name, emo_tag, user_message[:200])
-            log_conversation("user", user_name, user_message)
+            logger.info(">>> 用户输入 (%s)%s: %s", user_name, emo_tag, log_text[:200])
+            log_conversation("user", user_name, log_text)
 
             self._fsm.transition(AgentState.THINKING)
             self._bus.post(EventType.STATE_CHANGE, {"state": "thinking", "request_id": rid},
@@ -250,7 +271,7 @@ class CognitiveLoop:
             try:
                 await self._think_loop(user_message, user_name,
                                        stt_emotion=stt_emotion, stt_events=stt_events,
-                                       _on_tool_calls=_on_tool_calls)
+                                       _on_tool_calls=_on_tool_calls, content=content)
                 clock.stop()
                 logger.info("<<< 回复生成完成 — %s", clock.summary())
                 # 存入 ring buffer 供 /debug 面板
@@ -282,7 +303,8 @@ class CognitiveLoop:
 
     async def _think_loop(self, user_message: str, user_name: str,
                           stt_emotion: str = "", stt_events: list[str] | None = None,
-                          _on_tool_calls=None) -> None:
+                          _on_tool_calls=None,
+                          content: list[dict] | None = None) -> None:
         if self._emotion:
             if stt_emotion and stt_emotion != "NEUTRAL":
                 self._emotion.analyze_user_stt(stt_emotion, stt_events)
@@ -291,14 +313,15 @@ class CognitiveLoop:
 
         with self._clock.span("prompt") as t:
             messages = await self._prompt.build_messages(
-                user_message, user_name=user_name,
+                user_message=user_message, user_name=user_name,
                 stt_emotion=stt_emotion, stt_events=stt_events,
+                content=content,
             )
+        user_content = content if content else [{"type": "text", "content": user_message}]
         self._session.add_message({
             "id": new_message_id(),
             "role": "user",
-            "parts": [{"content": user_message}],
-            "content_type": {},
+            "content": user_content,
             "timestamp": datetime.datetime.now().astimezone().isoformat(),
         })
         tool_defs = self._tool_executor.definitions() if self._tool_executor else None
@@ -482,10 +505,15 @@ class CognitiveLoop:
                         await self._output.send(msg)
                 if acc_text.strip():
                     parts, content_type = _build_parts_with_blocks(acc_text, all_sentences)
+                    # 构建 assistant 消息的 content 数组（text parts + 保留 content_type 信息）
+                    assistant_content: list[dict] = []
+                    for p in parts:
+                        if isinstance(p, dict) and "content" in p:
+                            assistant_content.append({"type": "text", "content": p["content"]})
                     self._session.add_message({
                         "id": new_message_id(),
                         "role": "assistant",
-                        "parts": parts,
+                        "content": assistant_content,
                         "content_type": content_type,
                         "timestamp": datetime.datetime.now().astimezone().isoformat(),
                     })

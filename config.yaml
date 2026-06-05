@@ -15,6 +15,12 @@ memory:
 server:
   host: 0.0.0.0
   port: 8765
+  image_max_mb: 10                  # 图片上传上限 (MB)
+  image_allowed_types:              # 允许的 MIME 类型
+    - image/png
+    - image/jpeg
+    - image/gif
+    - image/webp
 
 tts:
   enabled: true
