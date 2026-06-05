@@ -19,32 +19,38 @@ _BACKENDS: dict[str, dict] = {
         "beta_url": "https://api.deepseek.com/beta",
         "env_key": "DEEPSEEK_API_KEY",
         "supports_prefix": True,
+        "supports_multimodal": False,
     },
     "openai": {
         "base_url": "https://api.openai.com/v1",
         "env_key": "OPENAI_API_KEY",
         "supports_prefix": False,
+        "supports_multimodal": False,
     },
     "ollama": {
         "base_url": "http://localhost:11434/v1",
         "env_key": "",
         "supports_prefix": False,
+        "supports_multimodal": False,
     },
     "gemini": {
         # placeholder — not yet implemented
         "base_url": "",
         "env_key": "GEMINI_API_KEY",
         "supports_prefix": False,
+        "supports_multimodal": False,
     },
     "mimo": {
         "base_url": "https://api.xiaomimimo.com/v1",
         "env_key": "MIMO_API_KEY",
         "supports_prefix": False,
+        "supports_multimodal": True,
     },
     "custom": {
         "base_url": "",
         "env_key": "CUSTOM_LLM_API_KEY",
         "supports_prefix": False,
+        "supports_multimodal": False,
     },
 }
 
@@ -100,3 +106,9 @@ class LLMFactory:
         kwargs.pop("api_key", None)
         kwargs.update(overrides)
         return cls.create(model_id, **kwargs)
+
+    @classmethod
+    def supports_multimodal(cls, model_id: str) -> bool:
+        """检测 provider 是否支持多模态（图片输入）。"""
+        provider = model_id.split("/")[0] if "/" in model_id else model_id
+        return bool(_BACKENDS.get(provider, {}).get("supports_multimodal", False))

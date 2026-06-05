@@ -156,6 +156,7 @@ class Agent:
                 "memory": self._long_term,
                 "scheduler": self._scheduler,
                 "config": self._config,
+                "session": self._session,
                 "_tool_names": list(self._tool_manager.tool_names),
                 "_fsm_state": str(self._fsm.state),
                 "_session_msg_count": len(self._session._messages),

@@ -64,6 +64,12 @@ class Live2DConfig:
 
 
 @dataclass
+class VisionConfig:
+    """Vision model config — used by describe_image tool."""
+    model: str = ConfigField(default="mimo/mimo-v2.5")
+
+
+@dataclass
 class AppConfig:
     agent: AgentConfig = ConfigField(default_factory=AgentConfig)
     llm: LLMConfig = ConfigField(default_factory=LLMConfig)
@@ -73,3 +79,4 @@ class AppConfig:
     stt: STTConfig = ConfigField(default_factory=STTConfig)
     wake_word: WakeWordConfig = ConfigField(default_factory=WakeWordConfig)
     live2d: Live2DConfig = ConfigField(default_factory=Live2DConfig)
+    vision: VisionConfig = ConfigField(default_factory=VisionConfig)

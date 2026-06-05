@@ -31,6 +31,7 @@ from .sentence_buffer import SentenceBuffer
 from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
+from Module.llm.registry import LLMFactory
 logger = logging.getLogger(__name__)
 
 def content_text_from_content(content: list[dict]) -> str:
@@ -313,10 +314,12 @@ class CognitiveLoop:
                 self._emotion.analyze_user(user_message)
 
         with self._clock.span("prompt") as t:
+            supports_mm = LLMFactory.supports_multimodal(self._llm.model)
             messages = await self._prompt.build_messages(
                 user_message=user_message, user_name=user_name,
                 stt_emotion=stt_emotion, stt_events=stt_events,
                 content=content,
+                supports_multimodal=supports_mm,
             )
         user_content = content if content else [{"type": "text", "content": user_message}]
         self._session.add_message({

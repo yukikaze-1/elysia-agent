@@ -35,3 +35,7 @@ wake_word:
 
 live2d:
   static_image: "/static/Elysia.png"
+
+# Vision model for describe_image tool (e.g., mimo/mimo-v2.5)
+vision:
+  model: mimo/mimo-v2.5

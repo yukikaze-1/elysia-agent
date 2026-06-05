@@ -105,7 +105,8 @@ class PromptAssembler:
                               user_name: str = "妖梦",
                               stt_emotion: str = "",
                               stt_events: list[str] | None = None,
-                              content: list[dict] | None = None) -> list[dict]:
+                              content: list[dict] | None = None,
+                              supports_multimodal: bool = False) -> list[dict]:
         """Build complete messages[] for the LLM API call.
 
         content: 多模态内容数组 (ChatMessageV2 content dicts)。
@@ -143,7 +144,15 @@ class PromptAssembler:
 
         # 当前用户消息
         if content:
-            messages.append({"role": "user", "content": content_to_openai(content)})
+            has_images = any(p.get("type") == "image" for p in content)
+            if has_images and not supports_multimodal:
+                # 纯文本 LLM → 注入工具提示，不发 image_url
+                text = content_text_from_raw(content)
+                hint = "[用户发送了一张图片。使用 describe_image 工具查看。]"
+                user_text = f"{hint}\n{text}" if text else hint
+                messages.append({"role": "user", "content": user_text})
+            else:
+                messages.append({"role": "user", "content": content_to_openai(content)})
         else:
             messages.append({"role": "user", "content": user_message})
         return messages
