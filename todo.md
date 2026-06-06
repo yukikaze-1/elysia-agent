@@ -84,6 +84,7 @@
 
 | 日期 | 内容 |
 |------|------|
+| 06-06 | **Token 消耗追踪** — 新增 `core/token_tracker.py` 组件，捕获 OpenAI API `usage` 字段（prompt/completion/total tokens），按模型分别统计。Session 级实时显示 + MongoDB 持久化（不可用时降级 JSONL）。前端 AI 气泡底部可展开 token 标签，顶栏 session 累计，`/debug` 页面 Token 卡片 + Session 管理 Token 列。Session 加 JSONL 降级持久化，断线重连自动合并恢复。spec: `docs/superpowers/specs/2026-06-06-token-consumption-tracking-design.md` |
 | 06-06 | **describe_image 多图批量** — 新增 `image_indices: list[int]` 参数，一次 MIMO 调用处理多张图片。`prompt_assembler.py` 提示文本更新为建议使用 `image_indices=[...]` |
 | 06-06 | **Session 完整化 — 工具消息持久化 + 历史降级渲染** — `cognitive_loop.py` 将 assistant(tool_calls) + tool(result) 写入 Session；`build_messages()` 历史图片→`[用户曾发送N张图片]`，工具调用→`[已调用: xxx]`；`messages_for_client()` 透传工具字段；前端 `restoreFromServer()` 重建工具卡片；`saveChat()`/`restoreChat()` 支持工具卡片 |
 | 06-06 | **工具卡片内容不再截断** — 移除 `cognitive_loop.py` `tool_done` 的 `[:500]` 硬限制；CSS max-height 200→400px |

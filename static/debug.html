@@ -345,17 +345,24 @@ function render(info) {
       ]},
       { title:'Token 消耗', wide:false, rows: (() => {
         const ts = info.token_stats || {};
-        if (!ts.session_total) return [['—', '暂无数据']];
+        if (!ts.session_total && !info.pending_token_count && !info.pending_session_exists) return [['—', '暂无数据']];
         const models = ts.per_model || {};
-        const rows = [
-          ['Session 总计', `<b>${ts.session_total.toLocaleString()}</b> tokens`],
-        ];
+        const rows = [];
+        if (ts.session_total) {
+          rows.push(['Session 总计', `<b>${ts.session_total.toLocaleString()}</b> tokens`]);
+        }
         if (Object.keys(models).length) {
           rows.push(['按模型', Object.entries(models)
             .map(([m, t]) => `${m.split('/').pop()}: ${t.toLocaleString()}`)
             .join('<br>')]);
         }
-        return rows;
+        if (info.pending_token_count > 0) {
+          rows.push(['⚠ Pending', `${info.pending_token_count} 条 token 待导入 MongoDB`]);
+        }
+        if (info.pending_session_exists) {
+          rows.push(['⚠ Session 快照', '本地有未导入的 session']);
+        }
+        return rows.length ? rows : [['—', '暂无数据']];
       })()},
     ],
     // Row 3: Session | Long-term

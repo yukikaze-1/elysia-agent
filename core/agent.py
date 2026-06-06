@@ -9,6 +9,7 @@ Usage:
 """
 
 import asyncio
+import os
 from enum import Enum, auto
 import logging
 
@@ -151,6 +152,14 @@ class Agent:
         )
         if mongo_ok:
             await self._session.load()
+            # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
+            if os.path.exists(self._session._pending_file):
+                if await self._session._load_from_jsonl(merge=True):
+                    if await self._session.save():
+                        os.remove(self._session._pending_file)
+                        logger.info("Session JSONL 已导入 MongoDB 并删除")
+                    else:
+                        logger.warning("Session MongoDB 写入失败，保留 JSONL")
 
         # ---- Token 统计 ----
         from core.token_tracker import TokenTracker

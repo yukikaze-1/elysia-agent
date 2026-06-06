@@ -50,6 +50,8 @@ class DebugInfo:
 
     # Token 统计
     token_stats: dict = field(default_factory=dict)
+    pending_token_count: int = 0
+    pending_session_exists: bool = False
 
     # Latency (ring buffer — last 100 requests)
     timing_history: list[dict] = field(default_factory=list)
@@ -190,5 +192,12 @@ async def collect(agent) -> DebugInfo:
                 for u in tracker.current_turn_usages[-10:]
             ],
         }
+        # Pending 文件状态
+        import os as _os2
+        token_pending = "data/token_usage_pending.jsonl"
+        if _os2.path.exists(token_pending):
+            with open(token_pending) as f:
+                info.pending_token_count = sum(1 for _ in f)
+        info.pending_session_exists = _os2.path.exists("data/session_pending.jsonl")
 
     return info

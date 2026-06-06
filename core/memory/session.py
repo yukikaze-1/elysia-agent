@@ -5,7 +5,9 @@ process restarts via save_session() / load_session().
 Otherwise falls back to in-memory deque (existing behavior).
 """
 
+import json
 import logging
+import os
 from collections import deque
 from datetime import datetime
 from typing import Any
@@ -15,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 class SessionMemory:
     """Bounded conversation window with optional MongoDB persistence."""
+
+    _pending_file = "data/session_pending.jsonl"
 
     def __init__(self, max_messages: int = 20, session_id: str = "default"):
         self._messages: deque[dict[str, Any]] = deque(maxlen=max_messages)
@@ -157,31 +161,71 @@ class SessionMemory:
             return False
 
     async def save(self) -> bool:
-        """Persist current session to MongoDB (atomically upsert). No-op if DB unavailable."""
+        """Persist current session。MongoDB 不可用时降级到本地 JSONL 文件。"""
+        doc = {
+            "session_id": self._session_id,
+            "messages": list(self._messages),
+            "params": dict(self._params),
+            "updated_at": datetime.now().astimezone().isoformat(),
+        }
         if self._db is None:
-            return False
+            try:
+                os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
+                with open(self._pending_file, "w") as f:
+                    f.write(json.dumps(doc, ensure_ascii=False) + "\n")
+                logger.debug("MongoDB 不可用，session 保存到 %s", self._pending_file)
+                return True
+            except Exception:
+                logger.warning("session JSONL 写入失败", exc_info=True)
+                return False
         try:
-            doc = {
-                "session_id": self._session_id,
-                "messages": list(self._messages),
-                "params": dict(self._params),
-                "updated_at": datetime.now().isoformat(),
-            }
+            logger.info("Session save to MongoDB: session=%s, messages=%d",
+                        self._session_id, len(doc["messages"]))
             await self._db.update_one(
                 "sessions",
                 {"session_id": self._session_id},
                 {"$set": doc},
                 upsert=True,
             )
+            logger.info("Session save to MongoDB OK: %d messages", len(doc["messages"]))
             return True
-        except Exception as e:
-            logger.warning("SessionMemory save failed: %s", e)
+        except Exception:
+            logger.warning("session MongoDB 写入失败", exc_info=True)
+            return False
+
+    async def _load_from_jsonl(self, merge: bool = False) -> bool:
+        """从本地 JSONL 文件恢复 session。
+
+        merge=False: 直接替换 _messages（用于 MongoDB 不可用时的独立恢复）
+        merge=True:  合并到现有 _messages 后面（用于 MongoDB 恢复后补充 JSONL 数据）
+        """
+        if not os.path.exists(self._pending_file):
+            return False
+        try:
+            with open(self._pending_file) as f:
+                doc = json.loads(f.readline())
+            msgs = doc.get("messages", [])
+            if merge and self._messages:
+                # 合并：现有消息（from MongoDB）+ JSONL 消息，按 id 去重
+                existing_ids = {m.get("id") for m in self._messages if m.get("id")}
+                new_msgs = [m for m in msgs if m.get("id") not in existing_ids]
+                all_msgs = list(self._messages) + new_msgs
+                self._messages = deque(all_msgs[-self._max_messages:], maxlen=self._max_messages)
+                logger.info("从 %s 合并 session（已有 %d + 新增 %d）",
+                           self._pending_file, len(self._messages) - len(new_msgs), len(new_msgs))
+            else:
+                self._messages = deque(msgs[-self._max_messages:], maxlen=self._max_messages)
+                logger.info("从 %s 恢复 session（%d 条消息）", self._pending_file, len(msgs))
+            self._params = dict(doc.get("params", {}))
+            return True
+        except Exception:
+            logger.warning("从 %s 恢复 session 失败", self._pending_file, exc_info=True)
             return False
 
     async def load(self, session_id: str | None = None) -> bool:
-        """Load session from MongoDB. Returns True if session was found."""
+        """Load session from MongoDB。MongoDB 不可用时尝试本地 JSONL 恢复。"""
         if self._db is None:
-            return False
+            return await self._load_from_jsonl()
         sid = session_id or self._session_id
         try:
             results = await self._db.find("sessions", {"session_id": sid}, limit=1)
@@ -194,9 +238,9 @@ class SessionMemory:
                 logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(msgs))
                 return True
             return False
-        except Exception as e:
-            logger.warning("SessionMemory load failed: %s", e)
-            return False
+        except Exception:
+            logger.warning("SessionMemory load from MongoDB failed, trying JSONL", exc_info=True)
+            return await self._load_from_jsonl()
 
     def snapshot(self) -> dict[str, Any]:
         return {"messages": list(self._messages), "params": dict(self._params)}

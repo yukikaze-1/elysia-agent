@@ -10,10 +10,13 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, asdict
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from Module.output import OutputManager
@@ -151,9 +154,10 @@ class TokenTracker:
                 records = [json.loads(line) for line in f if line.strip()]
             if records:
                 await self._db.insert_many("token_usage", records)
+                logger.info("pending 文件导入完成: %d 条 token 记录已写入 MongoDB", len(records))
             os.remove(self._pending_file)
         except Exception:
-            pass  # 下次再试
+            logger.warning("pending 文件导入失败，下次启动重试", exc_info=True)
 
     async def _persist(self, usage: TokenUsage) -> None:
         """持久化单条记录：MongoDB 优先，失败则写本地 JSONL。"""
@@ -163,7 +167,7 @@ class TokenTracker:
                 await self._db.insert_one("token_usage", doc)
                 return
             except Exception:
-                pass  # 降级到文件
+                logger.debug("MongoDB 不可用，token 记录写入 %s", self._pending_file)
         # 追加到本地 JSONL
         os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
         doc.pop("_id", None)  # PyMongo insert_one 会原地注入 ObjectId，JSON 不可序列化
