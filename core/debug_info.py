@@ -53,6 +53,9 @@ class DebugInfo:
     pending_token_count: int = 0
     pending_session_exists: bool = False
 
+    # Prompt 记录
+    prompt_summary: dict = field(default_factory=dict)
+
     # Latency (ring buffer — last 100 requests)
     timing_history: list[dict] = field(default_factory=list)
     timing_stats: dict = field(default_factory=dict)
@@ -199,5 +202,10 @@ async def collect(agent) -> DebugInfo:
             with open(token_pending) as f:
                 info.pending_token_count = sum(1 for _ in f)
         info.pending_session_exists = _os2.path.exists("data/session_pending.jsonl")
+
+    # ---- Prompt 记录 ----
+    recorder = getattr(agent, '_prompt_recorder', None)
+    if recorder is not None:
+        info.prompt_summary = recorder.list_summaries()
 
     return info

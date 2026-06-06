@@ -189,6 +189,7 @@ class CognitiveLoop:
         tts: TTSBackend | None = None,
         ctx: ToolContext | None = None,
         token_tracker=None,  # TokenTracker | None
+        prompt_recorder=None,  # PromptRecorder | None
     ):
         self._llm = llm
         self._fsm = fsm
@@ -202,6 +203,7 @@ class CognitiveLoop:
         self._tts = tts
         self._ctx = ctx
         self._token_tracker = token_tracker
+        self._prompt_recorder = prompt_recorder
         self._sentence_buf = SentenceBuffer()
         self._process_lock = asyncio.Lock()
         self._current_task: asyncio.Task | None = None
@@ -337,6 +339,15 @@ class CognitiveLoop:
             tool_defs = [t for t in tool_defs if t.get("function", {}).get("name") != "describe_image"]
         logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs or []))
 
+        # 捕获第一轮的完整 prompt（后续轮次在工具循环内捕获）
+        if self._prompt_recorder is not None:
+            self._prompt_recorder.record(
+                messages=list(messages),  # 浅拷贝，防止后续工具循环修改
+                tools=tool_defs,
+                round_num=0,
+                model=self._llm.model,
+            )
+
         # 新一轮对话开始，清空 turn 缓存
         if self._token_tracker is not None:
             self._token_tracker.start_turn()
@@ -352,6 +363,15 @@ class CognitiveLoop:
                 block_filter = _BlockFilter()
                 ttft_done = False
                 t_think_start = time.perf_counter()
+
+                # 工具循环的后续轮次也捕获 prompt
+                if round_num > 0 and self._prompt_recorder is not None:
+                    self._prompt_recorder.record(
+                        messages=list(messages),
+                        tools=tool_defs,
+                        round_num=round_num,
+                        model=self._llm.model,
+                    )
 
                 stream = self._llm.stream_think(messages, tools=tool_defs,
                     extra_body={"thinking": {"type": "disabled"}})

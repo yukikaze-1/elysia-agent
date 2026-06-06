@@ -63,6 +63,8 @@ h1 { font-size: 18px; margin-bottom: 4px; }
 .tool-card { padding: 6px 0; border-bottom: 1px solid var(--border); }
 .tool-card:last-child { border-bottom: none; }
 .empty { color: var(--muted); font-style: italic; padding: 4px 0; }
+.prompt-item { border-bottom: 1px solid rgba(255,255,255,0.04); }
+.prompt-item:last-child { border-bottom: none; }
 #error-banner {
   display: none; background: var(--red); color: white; padding: 8px 14px;
   border-radius: var(--radius); margin-bottom: 12px; font-size: 12px;
@@ -219,6 +221,24 @@ h1 { font-size: 18px; margin-bottom: 4px; }
       </div>
     </div>
   </div>
+
+</div>
+
+<!-- LLM Prompt 详情面板 (必须在 tab 容器外部，否则 display:none 的 tab 会阻止渲染) -->
+<div id="prompt-overlay" class="modal-overlay" onclick="if(event.target===this)closePrompt()">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;max-width:95vw;width:1200px;max-height:85vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px;">
+      <h3 style="margin:0;color:var(--accent);" id="prompt-title">📝 Prompt #-</h3>
+      <div>
+        <button onclick="copyPromptJSON()" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:4px;padding:4px 10px;font-size:12px;margin-right:6px;">📋 复制 JSON</button>
+        <button onclick="navigatePrompt(-1)" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:4px;padding:4px 8px;font-size:12px;">◀</button>
+        <button onclick="navigatePrompt(1)" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:4px;padding:4px 8px;font-size:12px;margin-right:6px;">▶</button>
+        <button onclick="closePrompt()" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:4px;padding:4px 10px;font-size:12px;">关闭</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="prompt-content"></div>
+    <div id="prompt-tools" style="margin-top:12px;"></div>
+  </div>
 </div>
 
 <script>
@@ -285,7 +305,8 @@ function render(info) {
       lastInfo.lt_count === info.lt_count &&
       lastInfo.ws_clients === info.ws_clients &&
       JSON.stringify(lastInfo.currently_executing) === JSON.stringify(info.currently_executing) &&
-      JSON.stringify(lastInfo.timing_stats) === JSON.stringify(info.timing_stats)
+      JSON.stringify(lastInfo.timing_stats) === JSON.stringify(info.timing_stats) &&
+      JSON.stringify(lastInfo.prompt_summary) === JSON.stringify(info.prompt_summary)
     );
     if (same) return;
   }
@@ -363,6 +384,25 @@ function render(info) {
           rows.push(['⚠ Session 快照', '本地有未导入的 session']);
         }
         return rows.length ? rows : [['—', '暂无数据']];
+      })()},
+      { title:'📝 LLM Prompt', wide:false, items: (() => {
+        const ps = info.prompt_summary || {};
+        const records = ps.records || [];
+        if (!records.length) return [];
+        const recent = records.slice(-3);
+        return recent.map(r => {
+          const time = r.timestamp ? r.timestamp.split('T')[1].split('.')[0] : '--:--:--';
+          const round = r.round_num !== undefined ? `R${r.round_num + 1}` : '';
+          const chars = r.total_chars ? `${r.total_chars.toLocaleString()}字` : '';
+          const shortModel = (r.model || '').split('/').pop();
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;">
+            <span><span class="role-tag">#${r.index}</span> ${round} ${r.message_count}msg ${chars}</span>
+            <span style="color:var(--muted);font-size:11px;">${esc(time)} · ${esc(shortModel)}</span>
+            <button onclick="viewPrompt(${r.index})" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:4px;padding:2px 6px;font-size:11px;">查看</button>
+          </div>`;
+        }).concat(records.length > 3
+          ? [`<div style="text-align:center;padding:4px 0;color:var(--accent);cursor:pointer;" onclick="viewPromptList()">查看全部 (${records.length}条) ▼</div>`]
+          : []);
       })()},
     ],
     // Row 3: Session | Long-term
@@ -446,6 +486,131 @@ function render(info) {
     }
   }
   document.getElementById('grid').innerHTML = html;
+}
+
+let currentPromptIndex = null;
+let promptCache = {};
+
+async function viewPrompt(index) {
+  currentPromptIndex = index;
+  await loadPrompt(index);
+  document.getElementById('prompt-overlay').classList.add('show');
+}
+
+function closePrompt() {
+  document.getElementById('prompt-overlay').classList.remove('show');
+}
+
+async function loadPrompt(index) {
+  let data = promptCache[index];
+  if (!data) {
+    try {
+      const resp = await fetch('/debug/api/prompts/' + index);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      data = await resp.json();
+      promptCache[index] = data;
+    } catch(e) {
+      document.getElementById('prompt-content').innerHTML = '<div class="empty">加载失败: ' + esc(e.message) + '</div>';
+      return;
+    }
+  }
+
+  const time = data.timestamp ? data.timestamp.split('T')[1].split('.')[0] : '';
+  document.getElementById('prompt-title').textContent =
+    `📝 Prompt #${data.index}  第 ${data.round_num + 1} 轮  ${data.model}  ${time}`;
+
+  let leftHtml = '<div style="overflow-y:auto;max-height:65vh;">';
+  const msgs = data.messages || [];
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    const role = m.role || '?';
+    let content = m.content || '';
+    if (Array.isArray(content)) {
+      content = content.map(p => {
+        if (p.type === 'text') return p.content || p.text || '';
+        if (p.type === 'image_url') return '[图片]';
+        return JSON.stringify(p);
+      }).join('');
+    }
+    const len = content.length;
+    const roleClass = role === 'system' ? 'role-tag fail' : (role === 'user' ? 'role-tag user' : 'role-tag assistant');
+    const isSystem = role === 'system';
+    const msgId = 'msg-' + data.index + '-' + i;
+    const preview = content.length > 200 ? content.slice(0, 200) + '…' : content;
+    leftHtml += '<div style="margin-bottom:6px;border:1px solid var(--border);border-radius:4px;overflow:hidden;">';
+    leftHtml += '<div onclick="toggleMsg(\'' + msgId + '\')" style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:rgba(255,255,255,0.03);cursor:pointer;">';
+    leftHtml += '<span><span class="' + roleClass + '">' + esc(role) + '</span> (' + len.toLocaleString() + ' 字)</span>';
+    leftHtml += '<span style="color:var(--muted);font-size:11px;">' + (isSystem ? '收起 ▲' : '收起 ▲') + '</span>';
+    leftHtml += '</div>';
+    leftHtml += '<div id="' + msgId + '" style="padding:8px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto;">' + esc(content) + '</div>';
+    leftHtml += '</div>';
+  }
+  leftHtml += '</div>';
+
+  let rightHtml = '<div style="overflow-y:auto;max-height:65vh;">';
+  const tmpl = data.template_source;
+  if (tmpl) {
+    rightHtml += '<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">模板: ' + esc(tmpl.path) + '</div>';
+    rightHtml += '<pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.3);padding:8px;border-radius:4px;max-height:60vh;overflow-y:auto;">' + esc(tmpl.content) + '</pre>';
+  } else {
+    rightHtml += '<div class="empty">模板文件不可用</div>';
+  }
+  rightHtml += '</div>';
+
+  document.getElementById('prompt-content').innerHTML = leftHtml + rightHtml;
+
+  let toolsHtml = '';
+  const tools = data.tools;
+  if (tools && tools.length > 0) {
+    const toolNames = tools.map(t => (t.function || {}).name || '?').join(', ');
+    toolsHtml += '<div style="font-size:12px;color:var(--muted);">Tools (' + tools.length + '): ' + esc(toolNames) + '</div>';
+    toolsHtml += '<pre id="prompt-tools-json" style="display:none;font-size:11px;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.3);padding:8px;border-radius:4px;max-height:200px;overflow-y:auto;">' + esc(JSON.stringify(tools, null, 2)) + '</pre>';
+    toolsHtml += '<button onclick="var el=document.getElementById(\'prompt-tools-json\');el.style.display=\'block\';this.style.display=\'none\'" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:4px;padding:2px 8px;font-size:11px;margin-top:4px;">展开 tools JSON</button>';
+  }
+  document.getElementById('prompt-tools').innerHTML = toolsHtml;
+}
+
+function toggleMsg(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function navigatePrompt(delta) {
+  const ps = (lastInfo && lastInfo.prompt_summary) ? lastInfo.prompt_summary : null;
+  if (!ps || !ps.records || !ps.records.length) return;
+  const indices = ps.records.map(r => r.index);
+  const pos = indices.indexOf(currentPromptIndex);
+  if (pos < 0 || (pos + delta) < 0 || (pos + delta) >= indices.length) return;
+  viewPrompt(indices[pos + delta]);
+}
+
+async function copyPromptJSON() {
+  if (!currentPromptIndex) return;
+  let data = promptCache[currentPromptIndex];
+  if (!data) {
+    const resp = await fetch('/debug/api/prompts/' + currentPromptIndex);
+    if (!resp.ok) return;
+    data = await resp.json();
+    promptCache[currentPromptIndex] = data;
+  }
+  const json = JSON.stringify(data.messages, null, 2);
+  try {
+    await navigator.clipboard.writeText(json);
+  } catch(e) {
+    const ta = document.createElement('textarea');
+    ta.value = json;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+}
+
+function viewPromptList() {
+  const ps = (lastInfo && lastInfo.prompt_summary) ? lastInfo.prompt_summary : null;
+  if (ps && ps.records && ps.records.length) {
+    viewPrompt(ps.records[ps.records.length - 1].index);
+  }
 }
 
 function showError(msg) {

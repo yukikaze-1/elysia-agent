@@ -526,6 +526,45 @@ def create_app(
     _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     app.router.add_static("/uploads/", str(_UPLOADS_DIR), show_index=False)
 
+    async def prompts_list_handler(request: web.Request) -> web.Response:
+        """返回最近 N 次 LLM 调用的 prompt 摘要列表。"""
+        agent = request.app["agent"]
+        recorder = getattr(agent, "_prompt_recorder", None)
+        if recorder is None:
+            return web.json_response({"records": [], "total": 0, "max": 0})
+        return web.json_response(recorder.list_summaries())
+
+
+    async def prompt_detail_handler(request: web.Request) -> web.Response:
+        """返回指定记录的完整 prompt 内容 + 模板源码。"""
+        index = int(request.match_info["index"])
+        agent = request.app["agent"]
+        recorder = getattr(agent, "_prompt_recorder", None)
+        if recorder is None:
+            raise web.HTTPNotFound(text="PromptRecorder 未初始化")
+        record = recorder.get_full(index)
+        if record is None:
+            raise web.HTTPNotFound(text=f"记录 #{index} 不存在")
+
+        # 读取模板源码
+        template_source = None
+        template_path = "prompt/Brain.j2"
+        try:
+            with open(template_path) as f:
+                template_source = {"path": template_path, "content": f.read()}
+        except Exception:
+            pass
+
+        return web.json_response({
+            "index": record.index,
+            "timestamp": record.timestamp,
+            "round_num": record.round_num,
+            "model": record.model,
+            "messages": record.messages,
+            "tools": record.tools,
+            "template_source": template_source,
+        })
+
     async def sessions_clear_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
         session = agent._session
@@ -540,6 +579,8 @@ def create_app(
             return web.json_response(
                 {"error": f"清空失败: {e}"}, status=500)
     app.router.add_delete("/debug/api/sessions", sessions_clear_handler)
+    app.router.add_get("/debug/api/prompts", prompts_list_handler)
+    app.router.add_get(r"/debug/api/prompts/{index:\d+}", prompt_detail_handler)
 
     return app
 

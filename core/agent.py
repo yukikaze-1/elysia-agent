@@ -173,6 +173,11 @@ class Agent:
         if mongo_ok:
             await self._token_tracker.flush_pending()
 
+        # ---- Prompt 记录 ----
+        from core.prompt_recorder import PromptRecorder
+        self._prompt_recorder = PromptRecorder(max_records=20)
+        self._cognitive._prompt_recorder = self._prompt_recorder
+
         # 注入运行时上下文 — 工具通过 ctx.get("memory") 访问 L2 记忆
         self._tool_ctx = ToolContext(
             session_id=getattr(self._session, "_session_id", "default"),
