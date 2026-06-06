@@ -166,5 +166,6 @@ class TokenTracker:
                 pass  # 降级到文件
         # 追加到本地 JSONL
         os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
+        doc.pop("_id", None)  # PyMongo insert_one 会原地注入 ObjectId，JSON 不可序列化
         with open(self._pending_file, "a") as f:
             f.write(json.dumps(doc, ensure_ascii=False) + "\n")

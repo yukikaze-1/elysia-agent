@@ -76,13 +76,14 @@ function handleMessage(msg) {
       if (msg.session) {
         state.sessionTokens = msg.session;
       }
-      attachTokenLabel();
       updateSessionTokenDisplay();
+      // attachTokenLabel() 延迟到 state=idle 时调用，确保标签挂在最后一句话上
       break;
     case 'expression': setMood(msg.expression, msg.intensity); break;
     case 'state':
       setState(msg.state);
       if (msg.state === 'executing') { state.lastRole = null; }
+      if (msg.state === 'idle') { attachTokenLabel(); }  // 回复完全结束后，把 token 标签移到最后一句话
       break;
     case 'audio': bufferAudioChunk(msg.stream_id || 0, msg.seq || 0, msg.data); break;
     case 'audio_end': finalizeStream(msg.stream_id || 0); break;

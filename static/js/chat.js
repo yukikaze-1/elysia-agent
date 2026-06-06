@@ -437,7 +437,7 @@ export function clearPlayingHighlight() {
  * 将 token_usage 数据附加到最近的 AI 气泡。
  * 每次收到 token_usage 消息时调用，会替换之前的标签。
  */
-export function attachTokenLabel() {
+export function attachTokenLabel(rounds, turnTotal) {
   const rows = document.querySelectorAll('.msg-row.assistant');
   if (!rows.length) return;
   const lastRow = rows[rows.length - 1];
@@ -448,11 +448,11 @@ export function attachTokenLabel() {
   const existing = bubble.querySelector('.token-label');
   if (existing) existing.remove();
 
-  const rounds = state.currentTurnTokens;
-  if (!rounds || !rounds.length) return;
+  const r = rounds || state.currentTurnTokens;
+  if (!r || !r.length) return;
 
-  const turnTotal = state.activeTurnTotal;
-  const totalStr = turnTotal >= 1000 ? (turnTotal / 1000).toFixed(1) + 'k' : String(turnTotal);
+  const tt = turnTotal !== undefined ? turnTotal : state.activeTurnTotal;
+  const totalStr = tt >= 1000 ? (tt / 1000).toFixed(1) + 'k' : String(tt);
 
   const label = document.createElement('div');
   label.className = 'token-label';
@@ -466,12 +466,12 @@ export function attachTokenLabel() {
   // 展开明细
   const detail = document.createElement('div');
   detail.className = 'token-detail';
-  const lines = rounds.map(r =>
+  const lines = r.map(rd =>
     `<div class="token-round">
-      <span class="token-round-num">第${r.round_num + 1}轮</span>
-      <span class="token-round-item">prompt: ${formatTokens(r.prompt_tokens)}</span>
-      <span class="token-round-item">completion: ${formatTokens(r.completion_tokens)}</span>
-      <span class="token-round-total">= ${formatTokens(r.total_tokens)}</span>
+      <span class="token-round-num">第${rd.round_num + 1}轮</span>
+      <span class="token-round-item">prompt: ${formatTokens(rd.prompt_tokens)}</span>
+      <span class="token-round-item">completion: ${formatTokens(rd.completion_tokens)}</span>
+      <span class="token-round-total">= ${formatTokens(rd.total_tokens)}</span>
     </div>`
   ).join('');
   detail.innerHTML = lines;

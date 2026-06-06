@@ -238,17 +238,30 @@ def create_app(
                     "session_id": session._session_id,
                     "message_count": len(session._messages),
                     "updated_at": "",
+                    "token_total": 0,
                 }],
             })
         try:
             docs = await session._db.find(
                 "sessions", {}, sort=[("updated_at", -1)], limit=500)
+            # 查询 token_usage 集合，按 session_id 聚合
+            from collections import defaultdict
+            token_totals: dict[str, int] = defaultdict(int)
+            try:
+                token_docs = await session._db.find(
+                    "token_usage", {}, limit=100000)
+                for td in token_docs:
+                    sid = td.get("session_id", "")
+                    token_totals[sid] += td.get("total_tokens", 0)
+            except Exception:
+                pass  # token_usage 集合可能不存在，静默降级
             return web.json_response({
                 "sessions": [
                     {
                         "session_id": d.get("session_id", "?"),
                         "message_count": len(d.get("messages", [])),
                         "updated_at": d.get("updated_at", ""),
+                        "token_total": token_totals.get(d.get("session_id", ""), 0),
                     }
                     for d in docs
                 ],

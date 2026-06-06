@@ -10,7 +10,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 from .message_id import new_message_id
 
@@ -566,6 +566,10 @@ class CognitiveLoop:
                         "content": assistant_content,
                         "content_type": content_type,
                         "timestamp": datetime.datetime.now().astimezone().isoformat(),
+                        "token_usage": {
+                            "rounds": [asdict(r) for r in self._token_tracker.current_turn_usages],
+                            "turn_total": sum(r.total_tokens for r in self._token_tracker.current_turn_usages),
+                        } if self._token_tracker and self._token_tracker.current_turn_usages else None,
                     })
                     log_conversation("assistant", self._prompt._character.name, acc_text)
                     asyncio.create_task(self._after_response(user_message, acc_text),

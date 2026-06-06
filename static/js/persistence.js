@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { CHAT_SAVE_DEBOUNCE_MS, CHAT_MAX_STORED, SETTINGS_STORAGE_KEYS } from './config.js';
-import { esc, createAssistantRow, addToolCard, updateToolCard } from './chat.js';
+import { esc, createAssistantRow, addToolCard, updateToolCard, finalizeDelta, attachTokenLabel } from './chat.js';
 
 /* ---- 代码块 / Markdown 渲染辅助 ---- */
 
@@ -216,6 +216,8 @@ export function restoreChat() {
       state.messages.push({ role: 'assistant', content: m.content });
     }
   }
+  // 恢复后重置流式状态，防止下次 delta 合并到历史气泡
+  finalizeDelta();
   // 恢复后滚动到底部
   const wrap = document.getElementById('chat-wrap');
   requestAnimationFrame(() => { wrap.scrollTop = wrap.scrollHeight; });
@@ -292,42 +294,36 @@ export function restoreFromServer(messages) {
         }
       }
     } else {
-      let textBuf = [];
-      const flushText = () => {
-        if (textBuf.length > 0) {
-          state.lastRole = 'assistant';
-          const { row, textSpan } = createAssistantRow();
-          textSpan.textContent = textBuf.join('');
-          chat.appendChild(row);
-          state.messages.push({ role: 'assistant', content: textBuf.join('') });
-          textBuf = [];
-        }
-      };
       for (let i = 0; i < parts.length; i++) {
         const p = parts[i];
         if (!p.content) continue;
         if (ct.code && ct.code.includes(i)) {
-          flushText();
-          state.lastRole = 'assistant';
           const row = createCodeBlock(p.content, p.language || '');
           chat.appendChild(row);
           state.messages.push({ role: 'assistant', content: p.content });
         } else if (ct.markdown && ct.markdown.includes(i)) {
-          flushText();
-          state.lastRole = 'assistant';
           const row = createMarkdownBubble(p.content);
           chat.appendChild(row);
           state.messages.push({ role: 'assistant', content: p.content });
         } else {
-          textBuf.push(p.content);
+          // 每个 text part 创建独立气泡（保持分句显示）
+          const { row, textSpan } = createAssistantRow();
+          textSpan.textContent = p.content;
+          chat.appendChild(row);
+          state.messages.push({ role: 'assistant', content: p.content });
         }
       }
-      flushText();
+      // 如果该消息附带了 token_usage，渲染 token 标签
+      if (m.token_usage && m.token_usage.rounds && m.token_usage.rounds.length) {
+        attachTokenLabel(m.token_usage.rounds, m.token_usage.turn_total);
+      }
     }
   }
 
   // 同步到 localStorage 作为缓存
   saveChat();
+  // 重置流式状态，防止下次 delta 合并到历史气泡
+  finalizeDelta();
 
   const wrap = document.getElementById('chat-wrap');
   requestAnimationFrame(() => { wrap.scrollTop = wrap.scrollHeight; });

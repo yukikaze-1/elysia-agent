@@ -343,6 +343,20 @@ function render(info) {
           ? esc(JSON.stringify(info.task_tree).slice(0, 120)+'…')
           : '暂无'],
       ]},
+      { title:'Token 消耗', wide:false, rows: (() => {
+        const ts = info.token_stats || {};
+        if (!ts.session_total) return [['—', '暂无数据']];
+        const models = ts.per_model || {};
+        const rows = [
+          ['Session 总计', `<b>${ts.session_total.toLocaleString()}</b> tokens`],
+        ];
+        if (Object.keys(models).length) {
+          rows.push(['按模型', Object.entries(models)
+            .map(([m, t]) => `${m.split('/').pop()}: ${t.toLocaleString()}`)
+            .join('<br>')]);
+        }
+        return rows;
+      })()},
     ],
     // Row 3: Session | Long-term
     [
@@ -584,6 +598,7 @@ function renderSessionPanel(status) {
       <span class="text">
         <b>${esc(ses.session_id)}</b>
         <span style="color:var(--muted);font-size:11px;"> — ${ses.message_count} 条消息</span>
+        ${ses.token_total ? `<span style="color:var(--accent);font-size:11px;"> · ${Number(ses.token_total).toLocaleString()} tokens</span>` : ''}
         ${ses.updated_at ? `<span style="color:var(--muted);font-size:10px;"> ${ses.updated_at.slice(0,16)}</span>` : ''}
       </span>
       <span class="meta">

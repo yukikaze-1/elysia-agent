@@ -118,6 +118,8 @@ class SessionMemory:
                 else:
                     entry["content"] = [{"type": "text", "content": ""}]
                 entry["content_type"] = m.get("content_type", {})
+                if "token_usage" in m:
+                    entry["token_usage"] = m["token_usage"]
                 result.append(entry)
         return result
 
