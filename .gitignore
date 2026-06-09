@@ -15,3 +15,4 @@ data/sandbox/
 data/uploads/
 data/cache/
 data/token_usage_pending.jsonl
+.superpowers/
