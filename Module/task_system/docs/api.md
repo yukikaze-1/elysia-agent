@@ -70,7 +70,7 @@ class TaskSystem:
         """
         提交任务。内部先创建 Mailbox → 再启动 Planner/Executor。
         context: DelegationPreparer.prepare() 的产出，包含 intent/hints/
-                 capabilities/task_constraints/summarized_context/session_id。
+                 tools/task_constraints/summarized_context/session_id。
         """
 ```
 
@@ -279,9 +279,11 @@ class TaskStatus(StrEnum):
 ```
 GET /debug/api/tasks/stream
 
-event: node_status    data: {"task_id", "node_id", "status"}
-event: task_status    data: {"task_id", "status"}
-event: agent_change   data: {"available_slots", "active_sub_agents", "active_workers"}
+event: node_status    data: {"task_id": "t1", "node_id": "A", "status": "success"}
+                      # status 使用 NodeStatus 枚举: pending/running/success/failed/skipped/unrecoverable
+event: task_status    data: {"task_id": "t1", "status": "completed"}
+                      # status 使用 TaskStatus 枚举: pending/planning/running/.../completed/failed
+event: agent_change   data: {"available_slots": 3, "active_sub_agents": 1, "active_workers": 2}
 ```
 
 使用模式：初始拉全量 DAG → 监听 SSE 增量 → 收到变更后按需 Fetch。
@@ -318,19 +320,45 @@ NodeId = NewType("NodeId", str)
 
 ## 11. 错误码
 
+三层错误码模型：API 层 → 任务层 → 节点层。
+
 ```python
-class TaskErrorCode(StrEnum):
+class SubmitRejectionCode(StrEnum):
+    """submit() 同步拒绝码——4 项。参数校验不通过时返回。"""
     INVALID_PARAM = "invalid_param"
     PLAN_TOO_LARGE = "plan_too_large"
     CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"
-    FAILURE_MELTDOWN = "failure_meltdown"
-    MUTATION_LIMIT_REACHED = "mutation_limit_reached"
-    TIMEOUT = "timeout"
-    PERMISSION_DENIED = "permission_denied"
+    TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"
+
+class TaskErrorCode(StrEnum):
+    """任务运行时错误码——10 项。TaskState.error_code + TaskEvent error_type。"""
+    # 规划阶段
+    PLANNING_FAILED = "planning_failed"
+    PLAN_TOO_LARGE = "plan_too_large"
+    # 执行阶段
     TOOL_ERROR = "tool_error"
+    PERMISSION_DENIED = "permission_denied"
+    TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"
+    MUTATION_LIMIT_REACHED = "mutation_limit_reached"
+    # 资源耗尽
+    FAILURE_MELTDOWN = "failure_meltdown"
+    TIMEOUT = "timeout"
+    # 外部 / 兜底
     CANCELLED_BY_USER = "cancelled_by_user"
+    INTERNAL_ERROR = "internal_error"
+
+class NodeErrorCode(StrEnum):
+    """节点执行错误码——7 项。NodeResult.error 使用。"""
+    TOOL_ERROR = "tool_error"
+    TOOL_TIMEOUT = "tool_timeout"
+    TOOL_NOT_FOUND = "tool_not_found"
+    PERMISSION_DENIED = "permission_denied"
+    WORKER_CRASH = "worker_crash"
+    CONTEXT_OVERFLOW = "context_overflow"
+    NETWORK_ERROR = "network_error"
 
 class ResumeErrorCode(StrEnum):
+    """resume() 失败时的错误码——7 项。"""
     CHECKPOINT_NOT_FOUND = "checkpoint_not_found"
     CHECKPOINT_CORRUPTED = "checkpoint_corrupted"
     CHECKPOINT_VERSION_MISMATCH = "checkpoint_version_mismatch"
@@ -359,7 +387,7 @@ class DelegationContext:
     """status=ok 时传入。Planner 的工作说明书——所有信息在此，不分散传参。"""
     intent: str                          # LLM 输出的完整任务意图（非用户原始输入）
     hints: str | None                    # LLM 观察到的元信息（紧急程度、偏好等）
-    capabilities: list[Tool]             # 本次任务可用的工具列表（从全量工具中筛选）
+    tools: list[Tool]             # 本次任务可用的工具列表（从全量工具中筛选）
     task_constraints: TaskConstraints    # 任务级限制（与 ConstraintConfig 取 min）
     summarized_context: str              # LLM 摘要的相关上下文（≤ 500 字）
     session_id: SessionId                # 日志关联
@@ -374,7 +402,7 @@ class DelegationResult:
     status: Literal["ok", "no_matching_tools", "too_vague"]
     context: DelegationContext | None    # ok 时有值
     reasoning: str                       # 始终有
-    missing_capabilities: list[str]      # no_matching_tools
+    missing_tools: list[str]      # no_matching_tools
     suggestion: str | None               # too_vague
 ```
 
@@ -385,7 +413,7 @@ class DelegationResult:
 ```python
 class SubmitError:
     """submit() 拒绝时的结构化错误。"""
-    code: TaskErrorCode
+    code: SubmitRejectionCode
     message: str
     details: dict
     suggestions: list[str]               # 修复建议

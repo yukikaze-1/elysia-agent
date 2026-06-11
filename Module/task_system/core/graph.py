@@ -42,40 +42,43 @@ class PlanGraph:
 
     def __init__(self, g: nx.DiGraph, nodes: dict[NodeId, DAGNode]) -> None:
         self._g = g
-        self._nodes = nodes  # NodeId → DAGNode（含 description, expected_outcome, required 等）
+        self._nodes = nodes  # NodeId → DAGNode（含 description, output_contract, required 等）
 
     # ── 构造 / 导出 ──────────────────────────────────────────────────────────
 
     @classmethod
     def from_plan(cls, plan: Plan) -> PlanGraph:
-        """从 Pydantic Plan 构建 PlanGraph。"""
+        """从 Pydantic Plan 构建 PlanGraph。
+
+        plan.dag 持有 nodes + edges，直接建图，无需遍历 node.depends_on。
+        """
         g = nx.DiGraph()
         nodes: dict[NodeId, DAGNode] = {}
 
-        for node in plan.nodes:
+        for node in plan.dag.nodes:
             g.add_node(node.node_id)
             nodes[node.node_id] = node
 
-        for node in plan.nodes:
-            for dep_id in node.depends_on:
-                if dep_id not in g.nodes:
-                    logger.warning("PlanGraph: 依赖节点不存在 node=%s dep=%s", node.node_id, dep_id)
-                    continue
-                g.add_edge(dep_id, node.node_id)
+        for from_id, to_id in plan.dag.edges:
+            if from_id not in g.nodes or to_id not in g.nodes:
+                logger.warning("PlanGraph: edge 端点不存在 (%s → %s)", from_id, to_id)
+                continue
+            g.add_edge(from_id, to_id)
 
         return cls(g, nodes)
 
     def to_plan(self, plan: Plan | None = None) -> Plan:
-        """将当前图状态写回 Plan（更新 depends_on）。
+        """将当前图状态写回 Plan（更新 dag.nodes + dag.edges）。
 
-        若 plan 为 None，创建新的 Plan（task_id 为空，调用方自行填充）。
+        若 plan 为 None，创建新 Plan。调用方通常传入已有 Plan 实例。
         """
-        from Module.task_system.schema import Plan, TaskId
+        from Module.task_system.schema import DAG, Plan
         if plan is None:
-            plan = Plan(task_id=TaskId(""))
-        plan.nodes = list(self._nodes.values())
-        for node in plan.nodes:
-            node.depends_on = list(self._g.predecessors(node.node_id))
+            plan = Plan()
+        plan.dag = DAG(
+            nodes=list(self._nodes.values()),
+            edges=[(u, v) for u, v in self._g.edges],
+        )
         return plan
 
     @property
@@ -141,14 +144,18 @@ class PlanGraph:
         """收集失败节点的诊断信息，供 Sub-Agent 传给 Planner.replan()。"""
         failed: list[str] = []
         reasons: list[str] = []
+        error_codes: dict[str, str] = {}
         for node_id, ns in node_states.items():
             if ns.status in (NodeStatus.FAILED, NodeStatus.UNRECOVERABLE):
                 failed.append(node_id)
+                if ns.error_code:
+                    error_codes[node_id] = ns.error_code.value
                 if ns.error:
                     reasons.append(f"{node_id}: {ns.error}")
         return {
             "failed_nodes": failed,
             "reason": "; ".join(reasons) if reasons else "节点执行失败",
+            "error_codes": error_codes,
         }
 
     # ── 结构校验 ─────────────────────────────────────────────────────────────
@@ -227,27 +234,42 @@ class PlanGraph:
     # ── DAGPatch ─────────────────────────────────────────────────────────────
 
     def apply_patch(self, patch: DAGPatch) -> None:
-        """应用 DAGPatch 到当前图。
+        """应用 DAGPatch 到当前图——五种操作，按序执行。
 
-        full_replan 时重建整张图，其余 patch 为增量修改。
+        顺序保证了依赖一致性：
+            1. replace_nodes — 先删旧节点，再加新节点
+            2. remove_nodes  — 移除不需要的节点
+            3. add_nodes     — 新增节点
+            4. remove_edges  — 移除不需要的边
+            5. update_edges  — 新增边
+
+        full_replan 不在此处理——由 Sub-Agent 层创建新 Plan + 重建 PlanGraph。
         """
-        if patch.patch_type == "full_replan":
-            # 保留已完成节点的 SUCCESS 状态，重建整个图
-            # 实现时由调用方从 checkpoint_state 恢复 node_states
-            pass
+        # 1. 替换节点（先删后加，新节点可能不同 node_id）
+        for old_id, new_node in patch.replace_nodes:
+            if old_id in self._g.nodes:
+                self._g.remove_node(old_id)
+                self._nodes.pop(old_id, None)
+            self._g.add_node(new_node.node_id)
+            self._nodes[new_node.node_id] = new_node
 
+        # 2. 移除节点
         for node_id in patch.remove_nodes:
             if node_id in self._g.nodes:
                 self._g.remove_node(node_id)
                 self._nodes.pop(node_id, None)
 
+        # 3. 新增节点
         for node in patch.add_nodes:
             self._g.add_node(node.node_id)
             self._nodes[node.node_id] = node
-            for dep_id in node.depends_on:
-                if dep_id in self._g.nodes:
-                    self._g.add_edge(dep_id, node.node_id)
 
+        # 4. 移除边
+        for from_id, to_id in patch.remove_edges:
+            if self._g.has_edge(from_id, to_id):
+                self._g.remove_edge(from_id, to_id)
+
+        # 5. 新增边
         for from_id, to_id in patch.update_edges:
             if from_id in self._g.nodes and to_id in self._g.nodes:
                 self._g.add_edge(from_id, to_id)
@@ -268,9 +290,10 @@ class PlanGraph:
                 status=st,
                 progress=1.0 if st == NodeStatus.SUCCESS else 0.0,
                 error=ns.error if ns else None,
+                error_code=ns.error_code if ns else None,
             ))
 
-        edges: list[tuple[str, str]] = [
+        edges: list[tuple[NodeId, NodeId]] = [
             (u, v) for u, v in self._g.edges
         ]
 

@@ -13,7 +13,7 @@ from Module.task_system.schema import (
     DelegationContext,
     ExperienceRecord,
     NodeId,
-    NodeResult,
+    NodeResultEvaluation,
     Plan,
 )
 
@@ -44,7 +44,7 @@ class Planner:
         """首次规划——DelegationContext → DAG 骨架。
 
         Args:
-            context:            委派上下文（intent/hints/capabilities/task_constraints/…）
+            context:            委派上下文（intent/hints/tools/task_constraints/…）
             global_constraints: 全局约束天花板，与 task_constraints 取 min
             experience_records: 已知失败模式（可为 None / 空列表，Milvus 不可用时跳过）
 
@@ -62,7 +62,7 @@ class Planner:
         original_plan: Plan,
         failed_node_id: NodeId,
         failure_diagnosis: str,
-        node_results: dict[str, NodeResult],
+        node_results: dict[str, NodeResultEvaluation],
     ) -> DAGPatch:
         """Replan——失败诊断 → 增量 DAG 修改。
 
@@ -73,12 +73,16 @@ class Planner:
             original_plan:      当前生效的 Plan（含已完成节点的结果）
             failed_node_id:     哪个节点失败了
             failure_diagnosis:  Evaluator 的诊断（为什么失败、建议如何修复）
-            node_results:       所有已完成节点的结果
+            node_results:       所有已完成节点的评估结果（含原始 NodeResult）
 
         Returns:
             DAGPatch——增量修改。调用方（Orchestrator）负责 apply。
 
         Raises:
             NotImplementedError: 骨架阶段
+
+        TODO: 并行执行时可能多个节点同时失败触发 Replan，届时
+              failed_node_id 改为 failed_node_ids: list[NodeId]，
+              与 DAGPatch.trigger_nodes 对齐。
         """
         raise NotImplementedError("Planner.replan() 尚未实现")

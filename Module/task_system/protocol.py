@@ -42,6 +42,7 @@ class HITLNotifier(ABC):
                 - node_task: str         # 当前节点的目标任务描述
                 - tool_name: str
                 - params: dict
+                - rbac_level: RBACLevel  # 工具权限级别
                 - risk_summary: str      # 操作类型、影响范围、参数预览
         """
         ...

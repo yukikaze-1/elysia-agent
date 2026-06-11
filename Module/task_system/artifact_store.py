@@ -23,11 +23,10 @@ logger = logging.getLogger(__name__)
 class ArtifactStore:
     """节点产物的类型化存储。
 
-    与 NodeResult.output（小结果内联）互补：
-        - 小结果（< 几 KB）→ inline 在 NodeResult.output
-        - 大结果（搜索结果、文档全文、表格）→ ArtifactStore
+    所有节点产物统一存于此，NodeResult.artifact_refs 持有引用。
+    v1 不区分大小——全部进 ArtifactStore。
 
-    Artifact 有 artifact_type（对应 OutputContract.artifact_type），
+    Artifact 有 artifact_type（对应 OutputContract.output_type），
     便于按类型检索和校验。
 
     v1 实现：内存 dict[str, Artifact]。

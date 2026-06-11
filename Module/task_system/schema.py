@@ -50,6 +50,13 @@ Planner 生成 DAGNode 时分配，Executor 生成 DBTNode 时沿用或派生。
 NewType 防止调用方把 task_id / artifact_id 误当 node_id 传入。
 """
 
+ArtifactId = NewType("ArtifactId", str)
+"""产物唯一标识符。
+
+ArtifactStore 存储时的 key，与 DAGNode.output_as 对应。
+NewType 防止调用方把 node_id / task_id 误当 artifact_id 传入。
+"""
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 基础枚举
@@ -58,11 +65,24 @@ NewType 防止调用方把 task_id / artifact_id 误当 node_id 传入。
 class TaskStatus(StrEnum):
     """任务状态机——11 态。
 
-    TaskSystem 内部状态流转：
-    PENDING → PLANNING → RUNNING → COMPLETED / FAILED / CANCELLED
-                        RUNNING → PAUSE_REQUESTED → PAUSED → RESUMING → RUNNING
-                        RUNNING → CANCEL_REQUESTED → CANCELLED
-                        RUNNING → WAITING_APPROVAL → RUNNING
+    入口阶段
+        PENDING → PLANNING → RUNNING
+
+    执行中分支（从 RUNNING 出发）
+        软暂停:   RUNNING → PAUSE_REQUESTED → PAUSED → RESUMING → RUNNING
+        取消暂停: PAUSED → CANCELLED（直接取消，无需 resume）
+        审批:     RUNNING → WAITING_APPROVAL → RUNNING
+                  WAITING_APPROVAL → CANCELLED（等待审批时取消）
+        软取消:   RUNNING → CANCEL_REQUESTED → CANCELLED
+        完成:     RUNNING → COMPLETED
+
+    早期退出
+        PENDING → CANCELLED（submit 后立即取消）
+        PLANNING → CANCELLED（规划阶段取消）
+        PLANNING → FAILED（规划阶段异常）
+
+    终态: COMPLETED / FAILED / CANCELLED（不可逆）
+    内部: REPLAN 在 RUNNING 内部完成（Planner.replan → apply_patch → 继续 RUNNING），不暴露为独立状态。
     """
     PENDING = "pending"
     PLANNING = "planning"
@@ -77,20 +97,43 @@ class TaskStatus(StrEnum):
     COMPLETED = "completed"
 
 
-class TaskErrorCode(StrEnum):
-    """submit() 拒绝时的错误码。
+class SubmitRejectionCode(StrEnum):
+    """submit() 同步拒绝码——4 项。
 
-    调用方（CognitiveLoop）据此生成用户可见的错误信息。
+    TaskSystem.submit() 参数校验不通过时返回，
+    CognitiveLoop 据此生成用户可见的错误信息。
+    不会出现在 TaskState 或 TaskEvent 中。
     """
-    INVALID_PARAM = "invalid_param"               # 参数校验不通过
-    PLAN_TOO_LARGE = "plan_too_large"             # DAG 节点数超限
+    INVALID_PARAM = "invalid_param"                     # 参数校验不通过
+    PLAN_TOO_LARGE = "plan_too_large"                   # DAG 预估节点数超限
     CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"  # 上下文窗口不足
-    FAILURE_MELTDOWN = "failure_meltdown"         # 资源耗尽，禁止 Replan
-    MUTATION_LIMIT_REACHED = "mutation_limit_reached"   # 敏感操作次数达上限
-    TIMEOUT = "timeout"                           # 任务整体超时
-    PERMISSION_DENIED = "permission_denied"       # 审批被拒
-    TOOL_ERROR = "tool_error"                     # 工具执行错误
-    CANCELLED_BY_USER = "cancelled_by_user"       # 用户主动取消
+    TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"     # 预估 token 消耗超用户剩余配额
+
+
+class TaskErrorCode(StrEnum):
+    """任务运行时错误码——10 项。
+
+    TaskState.error_code 使用，checkpoint 持久化，
+    TaskEvent(type="failed") 的 error_type 字段。
+    调用方（CognitiveLoop）据此生成用户可见的错误信息。
+
+    按发生阶段分组：
+        规划阶段:    PLANNING_FAILED, PLAN_TOO_LARGE
+        执行阶段:    TOOL_ERROR, PERMISSION_DENIED, TOKEN_BUDGET_EXCEEDED
+        资源耗尽:    FAILURE_MELTDOWN, TIMEOUT, MUTATION_LIMIT_REACHED
+        外部:        CANCELLED_BY_USER
+        兜底:        INTERNAL_ERROR
+    """
+    PLANNING_FAILED = "planning_failed"                # Planner LLM 调用失败，无法生成 Plan
+    PLAN_TOO_LARGE = "plan_too_large"                  # Planner 生成的 DAG 节点数超限
+    TOOL_ERROR = "tool_error"                          # 工具执行错误（任务级）
+    PERMISSION_DENIED = "permission_denied"            # 审批被拒（任务级）
+    TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"    # 任务总 token 消耗达上限
+    FAILURE_MELTDOWN = "failure_meltdown"              # 失败次数达上限，禁止 Replan
+    TIMEOUT = "timeout"                                 # 任务整体超时
+    MUTATION_LIMIT_REACHED = "mutation_limit_reached"  # 敏感操作次数达上限
+    CANCELLED_BY_USER = "cancelled_by_user"            # 用户主动取消
+    INTERNAL_ERROR = "internal_error"                  # 内部异常（unexpected 兜底）
 
 
 class ResumeErrorCode(StrEnum):
@@ -107,16 +150,35 @@ class ResumeErrorCode(StrEnum):
 
 
 class NodeStatus(StrEnum):
-    """DAG 节点的运行时状态。
+    """DAG 节点的运行时状态——8 态。
 
     Orchestrator 主循环中 NodeState 使用，DAGNodeInfo（查询视图）复用。
+
+    正常流程
+        PENDING → RUNNING → SUCCESS
+
+    重试
+        RUNNING → FAILED → PENDING → RUNNING（达到上限 → UNRECOVERABLE）
+
+    审批阻断
+        RUNNING → WAITING_APPROVAL → RUNNING（审批通过）
+        WAITING_APPROVAL → FAILED（审批拒绝）
+
+    任务取消（批量标记）
+        PENDING / RUNNING / WAITING_APPROVAL → CANCELLED
+
+    跳过
+        PENDING → SKIPPED（可选节点在 replan 后被移除）
     """
+
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
     SKIPPED = "skipped"
     UNRECOVERABLE = "unrecoverable"
+    WAITING_APPROVAL = "waiting_approval"
+    CANCELLED = "cancelled"
 
 
 class RBACLevel(StrEnum):
@@ -146,15 +208,18 @@ class ConstraintConfig(BaseModel):
     字段：
         max_total_tokens:     整个任务 LLM 调用总 token 上限（硬）
         max_context_tokens:   单次 prompt 最大 token 数（硬）
-        max_failure_count:    连续失败 N 次后熔断（硬）
+        max_failure_count:    连续失败 N 次后熔断（硬）。
+                              当前 v1 中 replan 只能由 failure 触发，故此值
+                              同时充当 max_replans。若以后引入非失败驱动的 replan
+                              （如"换个更优方案"），需拆为独立字段。
         max_dag_nodes:        DAG 节点数上限（硬）
         max_retries_per_node: 单节点最大重试次数（硬）
         max_mutations:        敏感操作次数上限（硬）
         max_task_duration_s:  整个任务最大执行时间（秒）（硬）
         max_tool_error_chars: 工具错误消息截断长度（软）
     """
-    max_total_tokens: int       = Field(default=100_000,  ge=0)
-    max_context_tokens: int     = Field(default=32_000,   ge=0)
+    max_total_tokens: int       = Field(default=100_000,  ge=1)   # 至少 1 token，否则无法执行
+    max_context_tokens: int     = Field(default=32_000,   ge=1)   # 至少 1 token，否则无法投 prompt
     max_failure_count: int      = Field(default=5,         ge=1)
     max_dag_nodes: int          = Field(default=20,        ge=1)
     max_retries_per_node: int   = Field(default=3,         ge=0)
@@ -167,14 +232,20 @@ class TaskConstraints(BaseModel):
     """任务级约束（DelegationPreparer 产出）。
 
     与全局 ConstraintConfig 取 min 后生效。
-    只设两个值——其余约束用全局就够了。
+    None 表示不覆盖，使用全局默认。
 
     字段：
-        max_dag_nodes:   本次任务 DAG 步数上限
-        max_mutations:   本次任务敏感操作次数上限
+        max_dag_nodes:       本次任务 DAG 步数上限（LLM 根据意图复杂度估算）
+        max_mutations:       本次任务敏感操作次数上限（LLM 根据意图风险等级估算）
+        max_total_tokens:    本次任务总 token 上限（None=全局默认，LLM 估算或调用方指定）
+        max_task_duration_s: 本次任务最大时长秒数（None=全局默认）
+        max_failure_count:   本次任务最大连续失败次数（None=全局默认）
     """
     max_dag_nodes: int = Field(default=10, ge=1)
     max_mutations: int = Field(default=5,  ge=0)
+    max_total_tokens: int | None = None
+    max_task_duration_s: float | None = None
+    max_failure_count: int | None = None
 
 
 # ── CognitiveLoop 侧类型（TaskSystem 只引用，不拥有）─────────────────────────────
@@ -201,10 +272,17 @@ class Tool(BaseModel):
 
     TODO: 字段由 ToolRegistry / ToolPlugin 侧定义。当前占位，防止裸 dict。
     """
+    name: str                   # 工具唯一标识符（例："search"）
     model_config = {"extra": "allow"}  # 暂时允许任意字段
 
 
 # ── 委派上下文 ──────────────────────────────────────────────────────────────────
+
+class ReturnMode(StrEnum):
+    """Planner / Evaluator 产出报告模式。"""
+    NATURAL_LANGUAGE = "natural_language"  # 自然语言总结（默认）
+    STRUCTURED = "structured"              # 结构化数据（node_results）
+
 
 class DelegationContext(BaseModel):
     """DelegationPreparer 产出的委派沙盒。
@@ -217,17 +295,28 @@ class DelegationContext(BaseModel):
     字段：
         intent:              LLM 输出的完整任务意图（非用户原始输入）
         hints:               LLM 观察到的元信息（紧急程度、偏好等），可为 None
-        capabilities:        本次任务可用的工具列表（从全量工具中筛选）
+        tools:              本次任务可用的工具列表（从全量工具中筛选）
         task_constraints:    本次任务级限制
         summarized_context:  LLM 摘要的相关上下文（≤ 500 字）
         session_id:          关联会话 ID，用于日志和 Debug 追踪
+        return_mode:         产出报告模式——自然语言总结 或 结构化数据
     """
     intent: str
     hints: str | None = None
-    capabilities: list[Tool] = Field(default_factory=list)
+    tools: list[Tool] = Field(default_factory=list)
     task_constraints: TaskConstraints = Field(default_factory=TaskConstraints)
     summarized_context: str = ""
     session_id: SessionId
+    return_mode: ReturnMode = ReturnMode.NATURAL_LANGUAGE
+
+
+class DelegationStatus(StrEnum):
+    """DelegationPreparer.prepare() 的三态判定结果。"""
+    OK = "ok"                              # 委派上下文准备完成，可 submit
+    NO_MATCHING_TOOLS = "no_matching_tools"  # 工具库缺所需工具
+    # TODO: v1 不区分"零工具匹配"和"部分工具缺失"，两者都返回 NO_MATCHING_TOOLS。
+    #       后续可拆为 NO_TOOLS_AVAILABLE（全缺）和 PARTIAL_TOOLS_MISSING（部分缺）。
+    TOO_VAGUE = "too_vague"                # 意图模糊，需用户澄清
 
 
 class DelegationResult(BaseModel):
@@ -241,14 +330,14 @@ class DelegationResult(BaseModel):
     字段：
         status:              三态判定结果
         context:             status=ok 时的委派上下文
-        reasoning:           LLM 判定理由（始终有，用于调试）
-        missing_capabilities:status=no_matching_tools 时，缺少的工具类型名
+        reason:              LLM 判定理由（始终有，用于调试）
+        missing_tools:      status=no_matching_tools 时，缺少的工具列表
         suggestion:          status=too_vague 时，给用户的澄清建议
     """
-    status: Literal["ok", "no_matching_tools", "too_vague"]
+    status: DelegationStatus
     context: DelegationContext | None = None
-    reasoning: str = ""
-    missing_capabilities: list[str] = Field(default_factory=list)
+    reason: str = ""
+    missing_tools: list[Tool] = Field(default_factory=list)
     suggestion: str | None = None
 
     # TODO: UserProfile / Tool 字段由 CognitiveLoop 侧定义，当前占位。
@@ -266,7 +355,7 @@ class SubmitError(BaseModel):
         details:     额外上下文（如超限值 vs 限制值）
         suggestions: 修复建议列表
     """
-    code: TaskErrorCode
+    code: SubmitRejectionCode
     message: str
     details: dict[str, Any] = Field(default_factory=dict)
     suggestions: list[str] = Field(default_factory=list)
@@ -286,8 +375,9 @@ class ResumeError(BaseModel):
             → 告知用户"部分已完成步骤丢失"，建议重新提交
     """
     code: ResumeErrorCode
-    message: str       # 人类可读的错误描述
+    message: str                            # 人类可读的错误描述
     details: dict[str, Any] = Field(default_factory=dict)
+    suggestions: list[str] = Field(default_factory=list)  # 修复建议
 
 
 # ── HITL 审批数据 ──────────────────────────────────────────────────────────────
@@ -307,6 +397,7 @@ class HITLData(BaseModel):
                        （例："搜索昨天天气数据"），帮助用户理解 MUTATION 的上下文
         tool_name:     即将执行的工具名（例："send_email"）
         params:        工具参数预览（脱敏后）
+        rbac_level:    工具权限级别，前端据此渲染审批卡片危险程度
         risk_summary:  风险摘要（操作类型、影响范围、参数预览）
     """
     task_id: TaskId
@@ -316,6 +407,7 @@ class HITLData(BaseModel):
     node_task: str                       # 当前节点的目标任务描述
     tool_name: str
     params: dict[str, Any] = Field(default_factory=dict)
+    rbac_level: RBACLevel = RBACLevel.MUTATION
     risk_summary: str = ""
 
 
@@ -325,65 +417,80 @@ class HITLData(BaseModel):
 
 # ── TaskMailbox 事件 ────────────────────────────────────────────────────────────
 
+class TaskEventType(StrEnum):
+    """TaskMailbox 事件类型——6 种。"""
+    PROGRESS = "progress"
+    APPROVAL_NEEDED = "approval_needed"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    PAUSED = "paused"
+
+
 class TaskEvent(BaseModel):
     """TaskMailbox 中传输的事件。
 
-    type 决定 data 的 shape：
-        progress:         进度更新
-        approval_needed:  审批请求（审计流副本，快通道由 HITLNotifier 推送）
+    type 决定 data 的 shape（注释为参考 shape，不强制校验）：
+        progress:         进度更新（来自 Orchestrator）
+        approval_needed:  审批请求审计流副本（快通道由 HITLNotifier 推送）
         completed:        任务成功完成
         failed:           任务失败
         cancelled:        任务被取消
+        paused:           任务已暂停并保存 checkpoint
 
     字段：
         type: 事件类型
-        data: 事件负载，shape 随 type 变化（见下方 _*Schema 内部模型）
+        data: 事件负载，shape 随 type 变化
     """
-    type: Literal["progress", "approval_needed", "completed", "failed", "cancelled"]
+    type: TaskEventType
     data: dict[str, Any] = Field(default_factory=dict)
 
-    # data shape 参考（不强制校验，因为不同来源的填充程度不同）：
+    # ── data shape 参考 ──────────────────────────────────────────────────────
 
     # progress: {
     #     "task_id": TaskId,
-    #     "node_id": str,
-    #     "node_index": "2/5",
-    #     "node_description": str,  # 当前节点的人类可读描述
-    #     "percent": float,         # 0~1，如果可估算
-    #     "message": str,
+    #     "node_id": NodeId,
+    #     "node_description": str,  # 当前节点在做什么
+    #     "percent": float,         # 0~1，整个任务的完成比例
+    #     "message": str,           # 简短描述
     # }
-    #
-    # approval_needed: {
-    #     "approval_id": str,
-    #     "task_id": str,
-    #     "agent_id": str,
-    #     "node_id": str,
-    #     "node_task": str,        # 当前节点在做什么
+
+    # approval_needed: {            # 与 HITLData 字段一一对应
+    #     "task_id": TaskId,
+    #     "approval_id": ApprovalId,
+    #     "agent_id": AgentId,
+    #     "node_id": NodeId,
+    #     "node_task": str,
     #     "tool_name": str,
-    #     "params": dict,
+    #     "params": dict[str, Any],
+    #     "rbac_level": str,
     #     "risk_summary": str,
     # }
-    #
+
     # completed: {
-    #     "result": str,           # 任务结果（自然语言或结构化 JSON 字符串）
-    #     "summary": str,          # 简短摘要
-    #     # TODO: 字段待第三层（内部编排）讨论后细化——
-    #     #   - 是否需要 task_result: TaskResult 结构化引用？
-    #     #   - summary 长度限制？
+    #     "task_id": TaskId,
+    #     "result": str,            # 自然语言摘要
+    #     "summary": str,           # 简短摘要
+    #     "total_nodes": int,
+    #     "completed_nodes": int,
+    #     "failed_nodes": int,
     # }
-    #
+
     # failed: {
-    #     "error": str,
-    #     "error_type": str,       # TaskErrorCode 值
-    #     # TODO: 字段待第三层（内部编排）讨论后细化——
-    #     #   - 是否需要 failed_node_id？
-    #     #   - 是否需要 node_results（已完成节点的部分结果）？
+    #     "task_id": TaskId,
+    #     "error": str,             # 人类可读错误描述
+    #     "error_type": TaskErrorCode,  # 任务级错误码
     # }
-    #
-    # cancelled: {}               # 空
-    # TODO: 字段待第三层讨论后细化——
-    #   - 是否需要 cancelled_reason？
-    #   - 是否需要 partial_results（取消前已完成的部分）？
+
+    # cancelled: {
+    #     "task_id": TaskId,
+    #     "reason": str,            # 取消原因
+    # }
+
+    # paused: {
+    #     "task_id": TaskId,
+    #     "message": str,           # 暂停说明
+    # }
 
 
 # ── 查询视图：任务摘要 ──────────────────────────────────────────────────────────
@@ -392,23 +499,27 @@ class TaskSummary(BaseModel):
     """任务完成后/查询时的摘要视图。
 
     Debug WebUI 和用户查询（"刚才那个任务怎么样了？"）使用。
+    字段偏展示——tools_used 用字符串名而非完整 Tool 对象，
+    errors 用扁平字符串列表而非结构化 error+error_code。
     """
     task_id: TaskId
     status: TaskStatus
     intent: str
-    started_at: str = ""          # ISO 8601
-    duration_ms: int = 0
-    nodes: dict[str, int] = Field(   # {"total": N, "completed": N, "failed": N, "skipped": N}
+    created_at: str = ""                  # ISO 8601，对齐 TaskState.created_at
+    duration_ms: int = 0                  # 总耗时（查询视图预计算，方便直接展示）
+    nodes: dict[str, int] = Field(        # {"total": N, "completed": N, "failed": N, "skipped": N}
         default_factory=lambda: {"total": 0, "completed": 0, "failed": 0, "skipped": 0}
     )
-    tools_used: list[str] = Field(default_factory=list)
+    tools_used: list[Tool] = Field(default_factory=list)  # 审计：本任务调用了哪些工具
     token_usage: dict[str, int] = Field(  # {"planner": N, "executor": N, "evaluator": N, ...}
         default_factory=dict
     )
-    approvals: dict[str, int] = Field(   # {"requested": N, "approved": N}
-        default_factory=lambda: {"requested": 0, "approved": 0}
+    approvals: dict[str, int] = Field(    # {"requested": N, "approved": N, "denied": N}
+        default_factory=lambda: {"requested": 0, "approved": 0, "denied": 0}
     )
-    errors: list[str] = Field(default_factory=list)
+    error: str | None = None                    # 任务级错误消息（来自 TaskState.error，对齐 TaskResult）
+    error_code: TaskErrorCode | None = None     # 任务级错误码（来自 TaskState.error_code）
+    # 节点级诊断见 TaskResult.node_results
     replans: int = 0
 
 
@@ -417,42 +528,61 @@ class TaskSummary(BaseModel):
 class TaskProgress(BaseModel):
     """单任务执行进度快照。"""
     task_id: TaskId
-    current_node_id: NodeId | None = None
-    completed: int = 0
-    total: int = 0
-    elapsed_ms: int = 0
-    estimated_remaining_ms: int | None = None
+    status: TaskStatus = TaskStatus.PENDING
+    current_node_id: NodeId | None = None       # 当前正在执行的节点
+    completed_nodes: int = 0                    # 已完成节点数
+    total_nodes: int = 0                        # 总节点数
+    elapsed_ms: int = 0                         # 已耗时
+    estimated_remaining_ms: int | None = None   # 预估剩余时间（None=无法估算）
 
 
 # ── 查询视图：DAG ───────────────────────────────────────────────────────────────
 
 class DAGNodeInfo(BaseModel):
-    """DAG 图中单个节点的展示信息（查询用，非内部编排数据）。"""
+    """DAG 图中单个节点的展示信息（查询用，非内部编排数据）。
+
+    注意：当前不包含 tool_name——v1 工具由 Executor 运行时匹配，
+    整个管线（NodeResult → NodeState → DAGNodeInfo）尚未携带工具名。
+    后续在 NodeResult 上补 tool_name 时同步加回。
+    """
     node_id: NodeId
     description: str = ""
     status: NodeStatus = NodeStatus.PENDING
-    tool_name: str | None = None
     progress: float = 0.0
-    error: str | None = None
+    error: str | None = None            # 人类可读，来自 NodeState.error
+    error_code: NodeErrorCode | None = None  # 机器可读，来自 NodeState.error_code
 
 
 class TaskDAG(BaseModel):
     """任务 DAG 的可视化数据（Debug WebUI 渲染用）。"""
     nodes: list[DAGNodeInfo] = Field(default_factory=list)
-    edges: list[tuple[str, str]] = Field(default_factory=list)   # [(from_node, to_node), ...]
+    edges: list[tuple[NodeId, NodeId]] = Field(default_factory=list)
 
 
 # ── 查询视图：Agent 池状态 ──────────────────────────────────────────────────────
 
+class AgentType(StrEnum):
+    """Agent 类型。"""
+    SUB = "sub"        # Sub-Agent：任务级执行单元
+    WORKER = "worker"  # Worker Agent：节点级执行单元
+
+
+class AgentStatus(StrEnum):
+    """Agent 运行时状态——TaskStatus 的子集（只含 Agent 可能的状态）。"""
+    RUNNING = "running"
+    PAUSED = "paused"
+    AWAITING_APPROVAL = "awaiting_approval"
+
+
 class AgentInfo(BaseModel):
     """单个 Agent 的运行信息。"""
     agent_id: AgentId
-    agent_type: Literal["sub", "worker"]   # Sub-Agent / Worker Agent
+    agent_type: AgentType
     task_id: TaskId
     node_id: NodeId | None = None          # Worker 专用
-    status: Literal["running", "paused", "awaiting_approval"] = "running"
-    started_at: float = 0.0                # 启动时间戳
-    last_seen_ts: float = 0.0
+    status: AgentStatus = AgentStatus.RUNNING
+    started_at: str = ""                   # ISO 8601
+    last_seen_at: str = ""                 # ISO 8601
     duration_ms: int = 0
 
 
@@ -466,13 +596,33 @@ class AgentList(BaseModel):
 
 # ── 查询视图：Token 统计 ────────────────────────────────────────────────────────
 
+class TokenComponentType(StrEnum):
+    """Token 消耗来源组件。"""
+    PLANNER = "planner"
+    EXECUTOR = "executor"
+    EVALUATOR = "evaluator"
+    REFLECTOR = "reflector"    # TODO: 尚未实现，Token 统计预留
+    SCHEDULER = "scheduler"    # TODO: v2 调度器
+    SYNTHESIZER = "synthesizer"  # TODO: v2 结果合成器
+    REPLANNER = "replanner"    # TODO: v2 独立 Replanner（与 Planner LLM 调用不同）
+    REDUCER = "reducer"        # TODO: v2 结果归约器
+
+
+class TokenPeriod(StrEnum):
+    """Token 统计时间段。"""
+    TODAY = "today"
+    WEEK = "week"
+    MONTH = "month"
+    ALL = "all"
+
+
 class TokenComponent(BaseModel):
     """单个组件的 token 消耗记录。"""
-    component: str             # "planner" | "executor" | "evaluator" | "reflector"
+    component: TokenComponentType
     node_id: NodeId | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    total_tokens: int = 0
+    total_tokens: int = 0       # prompt + completion（查询视图预计算）
     model: str = ""
 
 
@@ -484,9 +634,9 @@ class TokenUsage(BaseModel):
 
 class TokenStats(BaseModel):
     """聚合 token 统计（按时间段）。"""
-    period: Literal["today", "week", "all"] = "today"
+    period: TokenPeriod = TokenPeriod.TODAY
     total_tokens: int = 0
-    by_component: dict[str, int] = Field(default_factory=dict)
+    by_component: dict[str, int] = Field(default_factory=dict)  # TokenComponentType → 总量
     by_model: dict[str, int] = Field(default_factory=dict)
 
 
@@ -498,16 +648,25 @@ class TokenStats(BaseModel):
 
 # ── Orchestrator 运行状态 ─────────────────────────────────────────────────────
 
-class RunStatus(StrEnum):
-    """Orchestrator.run() 的返回状态。
+class OrchestratorRunStatus(StrEnum):
+    """Orchestrator.run() 的返回状态——5 态。
 
-    Orchestrator 负责驱动 Plan 直到完成或遇到结构性障碍。
-    遇到障碍时返回非 SUCCESS 状态，由 Sub-Agent 做决策。
+    Orchestrator 驱动 Plan 直到完成、遇到障碍、或被外部中断。
+    非 SUCCESS 状态由 Sub-Agent 做决策。
+
+    内部出向
+        SUCCESS       — 所有 required 节点完成
+        FAILED        — 不可恢复（资源耗尽、内部异常）
+        NEEDS_REPLAN  — 结构性失败，DAG 走不通，需要修改 Plan
+        BLOCKED       — 等待用户审批回传
+    外部中断
+        PAUSED        — 收到暂停请求，已保存 checkpoint，可恢复
     """
-    SUCCESS = "success"            # 所有 required 节点完成
-    FAILED = "failed"              # 不可恢复（资源耗尽、内部异常）
-    NEEDS_REPLAN = "needs_replan"  # 结构性失败——DAG 走不通，需要修改 Plan
-    BLOCKED = "blocked"            # 等待用户审批回传
+    SUCCESS = "success"
+    FAILED = "failed"
+    NEEDS_REPLAN = "needs_replan"
+    BLOCKED = "blocked"
+    PAUSED = "paused"
 
 
 class OrchestratorResult(BaseModel):
@@ -516,12 +675,18 @@ class OrchestratorResult(BaseModel):
     SUCCESS 时 checkpoint_state 有最终快照。
     NEEDS_REPLAN 时 error_context 包含失败节点和诊断信息。
     BLOCKED 时等待外部审批回传。
+    PAUSED 时保存了 checkpoint，TaskSystem 可调用 resume() 恢复。
     """
-    status: RunStatus
+    status: OrchestratorRunStatus
     error_context: dict[str, Any] = Field(default_factory=dict)
-    # ↑ NEEDS_REPLAN 时包含: {"node_id": NodeId, "reason": str, "failed_nodes": list[NodeId]}
+    # ↑ NEEDS_REPLAN / FAILED 时包含:
+    #     {"reason": str, "failed_nodes": list[NodeId]}
+    #     特殊情况（死锁、内部异常）只有 reason，无 failed_nodes
     checkpoint_state: dict[str, Any] = Field(default_factory=dict)
-    # ↑ 当前 TaskState 的可序列化快照，Sub-Agent 用于恢复或 Replan 上下文
+    # ↑ 当前 TaskState 的可序列化快照。Sub-Agent 用于:
+    #     PAUSED       → CheckpointManager.save()，等 resume 后恢复
+    #     BLOCKED      → 等审批回传后恢复执行
+    #     NEEDS_REPLAN → 提取 node_states 传给 Planner.replan()
 
 
 # ── Orchestrator 状态追踪 ─────────────────────────────────────────────────────────
@@ -529,43 +694,45 @@ class OrchestratorResult(BaseModel):
 class NodeState(BaseModel):
     """Orchestrator 内部：单个节点的运行时状态。
 
-    与 DAGNode（声明式）和 NodeResult（Evaluator 产出）不同——
+    与 DAGNode（声明式）和 NodeResult/NodeResultEvaluation（执行/评估产出）不同——
     NodeState 是 Orchestrator 主循环中追踪"这个节点现在什么状态"的记录。
 
-    对应的是 DAGNode（非 DBTNode）。DBT 是 Executor 内部实现细节，
-    Orchestrator 不感知 DBT 层的状态。
+    对应的是 DAGNode（非 DBTNode）。v1 不做 DBT，单工具直接调用。
     """
     node_id: NodeId
     status: NodeStatus = NodeStatus.PENDING
-    attempt: int = 0                       # 已尝试次数（含当前）
-    started_at: str = ""                   # ISO 8601（可读 + JSON 友好；若性能敏感可加 _duration_ms 缓存）
+    attempt: int = 0                       # 已尝试次数（0=尚未首次执行）
+    started_at: str = ""                   # ISO 8601
     finished_at: str = ""
-    artifact_refs: list[str] = Field(default_factory=list)
-    # ↑ ArtifactStore 中存储的大产物 ID 列表。
-    #   小结果（< 几 KB）inline 在 NodeResult.output 中，
-    #   大结果（搜索结果全文、文档、表格）存入 ArtifactStore，
-    #   NodeState 只存引用，不存内容。
-    #   v1: 内存 dict，引用即 artifact_id。
-    #   v2: 考虑文件 / 数据库后端。
+    artifact_refs: list[ArtifactId] = Field(default_factory=list)
+    # ↑ ArtifactStore 中该节点完成后的产物引用列表。
+    #   从 NodeResult.artifact_refs 复制而来（_apply_evaluation 的 continue 分支）。
+    #   NodeResult 存"本次执行产生"，NodeState 存"节点最终关联"（checkpoint 用）。
+    #   所有产物统一存 ArtifactStore，引用即 artifact_id。
+    #   v1: 内存 dict，v2: 文件 / 数据库。
     summary: str = ""                      # 节点完成后的简短摘要
-    error: str | None = None
+    error: str | None = None               # 人类可读的错误诊断（Evaluator 产出的 reason），
+    #                                          retry / replan / abort 时写入。
+    error_code: NodeErrorCode | None = None  # 机器可读错误码（来自 NodeResult.error），
+    #                                          retry / replan / abort 时写入。
+    #                                          ExperienceRecord / Planner 做结构化匹配用。
 
 
 class TaskState(BaseModel):
-    """Orchestrator 内部：任务级运行时状态。
+    """SubAgent 管理：任务级运行时状态。
 
-    Orchestrator 主循环中唯一可变的状态对象。
-    每次循环迭代后更新，checkpoint 时持久化。
+    SubAgent 创建并控制生命周期。Orchestrator 运行时读取 status/plan，
+    写入 status（终态转换），但不拥有 TaskState。
+
+    checkpoint 时与 ExecutionState 合并持久化。
     """
     task_id: TaskId
     status: TaskStatus = TaskStatus.PENDING
-    plan: Plan | None = None               # 当前生效的 Plan
-    plan_version: int = 1                  # Replan 时递增
-    node_states: dict[str, NodeState] = Field(default_factory=dict)
-    current_phase: Literal["planning", "executing", "evaluating", "replanning", "finalizing"] = "planning"
-    created_at: str = ""                   # ISO 8601
+    plan: Plan | None = None                   # 当前生效的 Plan（Replan 后更新）
+    created_at: str = ""                       # ISO 8601
     updated_at: str = ""
-    waiting_for_user: bool = False         # 等待审批回传
+    error: str | None = None                   # 人类可读的错误原因（终态 FAILED 时写入）
+    error_code: TaskErrorCode | None = None    # 机器可读的任务级错误码（终态 FAILED 时写入）
 
     def is_terminal(self) -> bool:
         """任务是否已到达终态。"""
@@ -576,50 +743,168 @@ class TaskState(BaseModel):
         )
 
 
+class ExecutionPhase(StrEnum):
+    """Orchestrator 主循环的执行阶段。
+
+    比 TaskStatus 更细粒度——TaskStatus.RUNNING 内部有三个阶段轮转。
+    """
+    EXECUTING = "executing"
+    EVALUATING = "evaluating"
+    FINALIZING = "finalizing"
+
+
+class ExecutionState(BaseModel):
+    """Orchestrator 内部：Plan 执行层的运行时状态。
+
+    Orchestrator 主循环中唯一可变的状态对象。
+    每次循环迭代后更新，与 TaskState 合并后 checkpoint 持久化。
+
+    SubAgent 不读 node_states 内容——它只负责在 checkpoint/resume 时传递。
+    """
+    node_states: dict[NodeId, NodeState] = Field(default_factory=dict)
+    current_phase: ExecutionPhase = ExecutionPhase.EXECUTING
+    waiting_for_approval: bool = False         # 等待审批回传
+    pause_requested: bool = False          # 外部请求暂停（Orchestrator 检查后返回 PAUSED）
+    created_at: str = ""                   # Orchestrator._init_exec_state() 时赋值
+    updated_at: str = ""
+
+
+# ── 节点产出契约 ──────────────────────────────────────────────────────────────
+
+class OutputContract(BaseModel):
+    """节点产出的结构化契约。
+
+    Planner 在 DAGNode 上声明，Evaluator 用来判定 business_status。
+    当前 v1 两字段紧凑实现，够用且边界清晰。
+
+    TODO: 后续版本考虑拆分为四字段，覆盖从"产出什么"到"怎么校验"的完整链路：
+        expected_outcome: str          — 人类可读说明（替代当前 description）
+        output_contract: dict | None   — 机器可校验 JSON Schema（当前 json_schema）
+        success_criteria: str          — 质量要求/门槛（LLM 语义评判，如"温度误差 ±2°C"）
+        validation_rules: list[dict]   — 可执行校验规则（如 [{"path":"$.temp","op":"gte","value":-100}]）
+        v1 暂不实施。JSON Schema 本身可延伸（minimum/maximum/pattern/enum），不会堵死路。
+
+        output_type 为 v2 类型注册表预留——v1 留空；非空时走 OutputTypeRegistry 查预定义
+        schema + 特化校验器。一条字段，零额外复杂度。
+
+    例（v1 当前实现）：
+        {
+            "description": "返回北京未来3天天气，包含温度、湿度、降水概率",
+            "json_schema": {
+                "type": "object",
+                "properties": {
+                    "temperature": {"type": "number"},
+                    "humidity": {"type": "number"},
+                    "precipitation": {"type": "number"},
+                },
+                "required": ["temperature"],
+            },
+            "output_type": "",
+        }
+    """
+    description: str = ""                           # 自然语言期望（LLM Evaluator 语义比对）
+    json_schema: dict[str, Any] | None = None      # JSON Schema（程序化校验，可选）
+    output_type: str = ""                          # v2 类型注册表 key，v1 留空
+
+
 # ── DAG 与行为树 ────────────────────────────────────────────────────────────────
 
 class DAGNode(BaseModel):
     """Planner 产出的单个 DAG 节点。
 
     只声明目标和期望结果，不包含执行策略——DBT 由 Executor 运行时生成。
+    图结构（依赖关系）提升到 DAG.edges，节点不持有。
+    数据流通过 input_bindings 声明（正交于 edges 执行顺序）。
+
+    字段：
+        node_id:         节点唯一标识
+        description:     做什么（给 Executor 看的任务描述）
+        output_contract: 期望产出什么（给 Evaluator 做 business_status 判定）
+        required:        是否必须成功（False → 失败可跳过，不阻塞后续节点）
+        input_bindings:  从 ArtifactStore 取的产物 ID 列表（数据依赖，正交于 edges 执行依赖）
+        output_as:       产出物存在 ArtifactStore 中的 ArtifactId
+        max_retries:     per-node 最大重试次数（None → 使用全局 ConstraintConfig.max_retries_per_node）
+        max_duration_s:  per-node 最大执行时长秒数（None → 无限制，与 ConstraintConfig.max_task_duration_s 命名对齐）
     """
     node_id: NodeId
-    description: str = ""               # 节点目标描述
-    expected_outcome: str = ""          # 期望结果（Evaluator 比对用）
-    depends_on: list[NodeId] = Field(default_factory=list)  # 依赖的 node_id 列表
-    required: bool = True               # 是否必须成功（False → 可跳过）
+    description: str = ""                         # 节点目标描述
+    output_contract: OutputContract = Field(default_factory=OutputContract)  # 期望产出 + 约束
+    required: bool = True                         # 是否必须成功（False → 可跳过）
+    input_bindings: list[ArtifactId] = Field(default_factory=list)   # 从 ArtifactStore 取哪些产物
+    output_as: ArtifactId = ArtifactId("")        # 产出存到 ArtifactStore 的 ID
+    max_retries: int | None = None                # None=使用全局默认
+    max_duration_s: float | None = None           # None=无限制
+
+
+class DAG(BaseModel):
+    """有向无环图。
+
+    edges 方向: (from, to) → from 必须先完成，to 才能开始。
+    等价于 from 是 to 的前置依赖。
+    """
+    nodes: list[DAGNode] = Field(default_factory=list)
+    edges: list[tuple[NodeId, NodeId]] = Field(default_factory=list)
 
 
 class Plan(BaseModel):
     """Planner 产出的 DAG 骨架。
 
-    TaskSystem 内部使用。node_results 在执行过程中逐步填充。
+    纯数据结构。dag 持有完整的图信息（nodes + edges）。
+    metadata（task_id）归 TaskState，委派上下文由 SubAgent 持有。
+
+    字段：
+        dag:          完整的 DAG（nodes + edges）
+        plan_version: Replan 时递增
+        created_at:   Planner.plan() 首次产出时赋值（ISO 8601）
+        updated_at:   每次 Replan 后更新（ISO 8601）
     """
-    task_id: TaskId
-    plan_version: int = 1                      # Replan 时递增
-    nodes: list[DAGNode] = Field(default_factory=list)
-    context: DelegationContext | None = None  # 本次规划的委派上下文
-    replan_count: int = 0                     # 已重规划次数
+    dag: DAG = Field(default_factory=DAG)
+    plan_version: int = 1                  # Replan 时递增
+    created_at: str = ""                   # Planner 首次产出时赋值
+    updated_at: str = ""                   # 每次 Replan 后更新
+
+
+class DAGPatchType(StrEnum):
+    """DAG 补丁类型——3 种。
+
+    Planner.replan() 根据失败诊断选择合适的补丁策略。
+    注意：full_replan 不属于 DAGPatch 职责——
+    全量重建由 Sub-Agent 层直接创建新 Plan + 重建 PlanGraph。
+    """
+    REPLACE_NODES = "replace_nodes"  # 替换指定节点（replace_nodes 字段）
+    ADD_NODES = "add_nodes"          # 仅新增节点（add_nodes 字段）
+    REMOVE_NODES = "remove_nodes"    # 仅移除节点（remove_nodes 字段）
 
 
 class DAGPatch(BaseModel):
     """Replan 产出的 DAG 增量修改。
 
     局部修改——不动已完成节点，只改失败/未执行的部分。
-    full_replan 是兜底：局部修改无法覆盖时退回全量重规划。
+    五种操作按 apply_patch 顺序：replace → remove nodes → add nodes → remove edges → add edges。
+
+    full_replan 不属于 DAGPatch 职责——
+    全量重建由 Sub-Agent 层直接创建新 Plan + 重建 PlanGraph。
 
     字段：
-        patch_type:    修改类型
-        reason:        为什么需要修改（来自 Evaluator 诊断）
-        remove_nodes:  要移除的 node_id 列表
-        add_nodes:     要新增的节点列表
-        update_edges:  要新增/替换的边
+        patch_type:     修改类型（元数据，primary intent）
+        reason:         为什么需要修改（来自 Evaluator 诊断）
+        trigger_nodes:  哪些失败节点触发了这次 Replan（并行执行时可能多个）
+        created_at:     Planner.replan() 产出时赋值（ISO 8601）
+        replace_nodes:  要替换的节点映射，(old_id, new_node)
+        remove_nodes:   要移除的 node_id 列表（不包含 replace 中的 old_id）
+        add_nodes:      要新增的节点列表（不包含 replace 中的 new_node）
+        remove_edges:   要移除的边
+        update_edges:   要新增的边
     """
-    patch_type: Literal["replace_nodes", "add_nodes", "remove_nodes", "full_replan"]
+    patch_type: DAGPatchType = DAGPatchType.REPLACE_NODES
     reason: str = ""
+    trigger_nodes: list[NodeId] = Field(default_factory=list)
+    created_at: str = ""
+    replace_nodes: list[tuple[NodeId, DAGNode]] = Field(default_factory=list)
     remove_nodes: list[NodeId] = Field(default_factory=list)
     add_nodes: list[DAGNode] = Field(default_factory=list)
-    update_edges: list[tuple[str, str]] = Field(default_factory=list)
+    remove_edges: list[tuple[NodeId, NodeId]] = Field(default_factory=list)
+    update_edges: list[tuple[NodeId, NodeId]] = Field(default_factory=list)
 
 
 # ── Plan 校验 ──────────────────────────────────────────────────────────────────
@@ -628,7 +913,7 @@ class ValidationIssueType(StrEnum):
     """Plan 校验问题类型。"""
     CYCLE = "cycle"                              # DAG 有环
     DUPLICATE_ID = "duplicate_id"                # node_id 重复
-    MISSING_DEPENDENCY = "missing_dependency"    # depends_on 引用不存在的节点
+    MISSING_DEPENDENCY = "missing_dependency"    # edges 引用了不存在的节点
     UNKNOWN_TOOL = "unknown_tool"                # 工具名不在可用工具列表中
     INVALID_INPUT = "invalid_input"              # 节点 input 不满足工具 schema
     MISSING_CONTRACT = "missing_contract"        # output_contract 缺失或非法
@@ -646,11 +931,18 @@ class ValidationIssue(BaseModel):
     message: str = ""
 
 
+class ValidationAction(StrEnum):
+    """Plan 校验后的行动。"""
+    PROCEED = "proceed"    # 校验通过，继续执行
+    FIX_PLAN = "fix_plan"  # 有问题但可修复，重新规划
+    ABORT = "abort"        # 不可修复，中止任务
+
+
 class ValidationResult(BaseModel):
     """Plan 校验结果。"""
     valid: bool = False
     issues: list[ValidationIssue] = Field(default_factory=list)
-    action: Literal["proceed", "fix_plan", "abort"] = "proceed"
+    action: ValidationAction = ValidationAction.PROCEED
 
 
 # ── 节点产物 ──────────────────────────────────────────────────────────────────
@@ -658,14 +950,16 @@ class ValidationResult(BaseModel):
 class Artifact(BaseModel):
     """节点产出的结构化数据，存于 ArtifactStore。
 
-    与 NodeResult.output（小结果内联）互补。
+    所有产物统一走 ArtifactStore，NodeResult.artifact_refs 持有引用。
+    artifact_id 与 DAGNode.output_as 对应——上游产出时以此 key 存入，
+    下游通过 input_bindings 以此 key 取出。
     """
-    artifact_id: str
-    artifact_type: str                         # 对应 OutputContract.artifact_type
+    artifact_id: ArtifactId
+    artifact_type: str                         # 对应 OutputContract.output_type（v1 自然语言，v2 类型注册表 key）
     node_id: NodeId
     task_id: TaskId
-    content: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    content: Any = None                        # 实际产物数据——dict、list、str、bytes 等不做限制
+    metadata: dict[str, Any] = Field(default_factory=dict)  # 附加信息：大小、格式、来源等
     created_at: str = ""                       # ISO 8601
 
 
@@ -694,27 +988,90 @@ class DBTNode(BaseModel):
     condition: str | None = None         # CONDITION 节点专用
     children: list[DBTNode] = Field(default_factory=list)
     max_retries: int = 1
-    timeout_s: float | None = None
+    max_duration_s: float | None = None
 
 
-# ── 节点结果 ────────────────────────────────────────────────────────────────────
+# ── 节点执行/评估结果 ────────────────────────────────────────────────────────────────
+
+class ExecutionStatus(StrEnum):
+    """Executor 工具执行状态——5 态。
+
+    工具是否正常返回？Orchestrator 据此决定 retry / skip / abort 等路由。
+    """
+    OK = "ok"                            # 工具正常返回
+    TIMEOUT = "timeout"                  # 工具调用超时
+    ERROR = "error"                      # 工具返回错误
+    PERMISSION_DENIED = "permission_denied"  # 用户拒绝审批
+    CANCELLED = "cancelled"              # 外部取消（任务级中断）
+
+
+class BusinessStatus(StrEnum):
+    """Evaluator 业务结果判定——3 态。
+
+    Plan 中声明的期望结果是否达成？
+    """
+    GOAL_ACHIEVED = "goal_achieved"      # 完全达成
+    GOAL_PARTIAL = "goal_partial"        # 部分达成
+    GOAL_FAILED = "goal_failed"          # 未达成
+
+
+class NodeErrorCode(StrEnum):
+    """节点执行错误码——NodeResult.error 使用。
+
+    只覆盖 Executor 层（单节点工具调用）的失败原因。
+    任务级错误（PLANNING_FAILED、FAILURE_MELTDOWN 等）在 TaskErrorCode 中。
+    """
+    TOOL_ERROR = "tool_error"              # 工具返回错误（runtime error）
+    TOOL_TIMEOUT = "tool_timeout"          # 工具调用超时（区别于 ExecutionStatus.TIMEOUT 的语义）
+    TOOL_NOT_FOUND = "tool_not_found"      # Executor 无法匹配到合适的工具
+    PERMISSION_DENIED = "permission_denied"  # 用户拒绝审批
+    WORKER_CRASH = "worker_crash"          # Worker Agent 异常退出
+    CONTEXT_OVERFLOW = "context_overflow"  # 单节点 prompt 超上下文窗口
+    TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"  # 单节点 LLM 调用 token 超限
+    NETWORK_ERROR = "network_error"        # 瞬态网络故障（可重试）
+
+
+class EvaluatorAction(StrEnum):
+    """Evaluator 建议的下一步动作——6 态。
+
+    Orchestrator._apply_evaluation() 据此决定 NodeStatus 转换和执行流。
+    并非所有 action 在所有上下文中都合法（如 skip 仅用于 required=False 的节点）。
+    """
+    CONTINUE = "continue"       # 节点成功，继续下一个
+    RETRY = "retry"             # 重新入队（attempt+1 后重试）
+    SKIP = "skip"               # 跳过（仅非必需节点，标记 SKIPPED 后继续）
+    REPLAN = "replan"           # 结构性失败，触发 NEEDS_REPLAN
+    ASK_APPROVAL = "ask_approval"  # 需要用户审批，触发 BLOCKED
+    ABORT = "abort"             # 不可恢复，触发 FAILED
+
 
 class NodeResult(BaseModel):
-    """Evaluator 双重判定后的节点结果。
+    """Executor 产出——工具执行的原始结果。
 
-    execution_status: 工具是否正常返回？
-    business_status:  Plan 中声明的期望结果是否达成？
+    v1 走单工具直接调用（不做 DBT）。所有产物统一存 ArtifactStore，
+    NodeResult 只持有引用，不内联数据。
 
-    例：搜索返回 "没有结果" →
-        execution_status="ok"（HTTP 200）、business_status="goal_failed"（没拿到信息）
+    Evaluator 不修改 NodeResult，而是产出 NodeResultEvaluation 包裹它。
     """
     node_id: NodeId
-    execution_status: Literal["ok", "timeout", "error", "permission_denied"] = "ok"
-    business_status: Literal["goal_achieved", "goal_partial", "goal_failed"] = "goal_achieved"
-    evidence: str = ""                   # 判定依据（工具返回了什么）
-    artifact_refs: list[str] = Field(default_factory=list)  # ArtifactStore 引用
-    output: dict[str, Any] = Field(default_factory=dict)   # 小结果内联
-    error: str | None = None
+    artifact_refs: list[ArtifactId] = Field(default_factory=list)  # ArtifactStore 引用（含所有产物）
+    error: NodeErrorCode | None = None                       # 节点级执行错误码
+    attempt: int = 0                                        # 第几次尝试（0=尚未执行，与 NodeState 一致）
+    duration_ms: int = 0                                    # 本次工具调用耗时（毫秒）。Executor 填写，ExperienceRecord 消费
+
+
+class NodeResultEvaluation(BaseModel):
+    """Evaluator 产出——对 NodeResult 的双重判定。
+
+    不修改 NodeResult。Evaluator 读 DAGNode.output_contract 和 ArtifactStore 中
+    的实际产物，得出两个维度的判定，包裹原始 NodeResult 一起返回。
+    """
+    node_id: NodeId
+    execution_status: ExecutionStatus = ExecutionStatus.OK   # 工具是否正常返回？（5 态）
+    business_status: BusinessStatus = BusinessStatus.GOAL_ACHIEVED  # Plan 期望是否达成？（3 态）
+    reason: str = ""                       # 判定依据（为什么判这个结果）
+    suggested_action: EvaluatorAction = EvaluatorAction.CONTINUE  # Orchestrator 执行的下一步
+    result: NodeResult                     # 被评定的原始执行结果
 
 
 class TaskResult(BaseModel):
@@ -722,12 +1079,24 @@ class TaskResult(BaseModel):
 
     包含所有节点结果 + 任务级摘要。
     CognitiveLoop 根据 return_mode 决定用自然语言还是结构化数据向用户汇报。
+
+    错误分工：
+        任务级  → error (str) + error_code (TaskErrorCode)，来自 TaskState
+        节点级  → node_results[node_id].reason + result.error，来自 NodeResultEvaluation
     """
     task_id: TaskId
     status: TaskStatus
-    node_results: dict[str, NodeResult] = Field(default_factory=dict)
-    summary: str = ""                    # 自然语言摘要
-    errors: list[str] = Field(default_factory=list)
+    node_results: dict[NodeId, NodeResultEvaluation] = Field(default_factory=dict)
+    summary: str = ""                           # 自然语言摘要
+    created_at: str = ""                        # TaskState.created_at（ISO 8601）
+    completed_at: str = ""                      # 终态时间（ISO 8601），duration = completed_at - created_at
+    token_usage: dict[str, int] = Field(        # {"planner": N, "executor": N, "evaluator": N, ...}
+        default_factory=dict
+    )
+    tools_used: list[Tool] = Field(default_factory=list)  # 审计：本任务调用了哪些工具
+    # 任务级错误（仅在 failed/cancelled 时有值）
+    error: str | None = None                    # 人类可读，来自 TaskState.error
+    error_code: TaskErrorCode | None = None     # 机器可读，来自 TaskState.error_code
 
 
 # ── 经验记忆 ────────────────────────────────────────────────────────────────────
@@ -736,6 +1105,10 @@ class ExperienceRecord(BaseModel):
     """单条任务经验记忆。
 
     存于 TaskSystem 专属 Milvus namespace，与用户 LTM 独立。
+
+    ⚠️ v1 不做——经验记忆（ExperienceRecord / Reflector / Milvus 写入）
+    属于渐进式学习闭环，v1 骨架阶段仅保留类型定义占位。
+    字段和 Milvus schema 待 v2 敲定。
     """
     tool_name: str
     error_pattern: str

@@ -4,8 +4,9 @@
     1. 初始规划（Planner.plan()）
     2. 校验（PlanValidator.validate()）
     3. 构建 PlanGraph（NetworkX DAG）
-    4. 驱动执行（Orchestrator.run()）
-    5. 决策仲裁——Replan / 熔断 / 等待审批
+    4. 创建 TaskState（任务级）
+    5. 驱动执行（Orchestrator.run()，内部自建 ExecutionState）
+    6. 决策仲裁——Replan / 熔断 / 等待审批 / 暂停
 
 一个用户任务一个 Sub-Agent。完成后 AgentState 丢弃，wrapper 归还池。
 """
@@ -17,9 +18,13 @@ from typing import TYPE_CHECKING
 
 from Module.task_system.schema import (
     DelegationContext,
-    RunStatus,
+    ExecutionState,
+    OrchestratorRunStatus,
     TaskErrorCode,
     TaskId,
+    TaskState,
+    TaskStatus,
+    ValidationAction,
 )
 
 if TYPE_CHECKING:
@@ -40,8 +45,11 @@ class SubAgent:
     """任务级执行单元。
 
     职责层次：
-        Sub-Agent  → 决策层（规划 / Replan / 熔断 / 审批等待）
+        Sub-Agent  → 决策层（规划 / Replan / 熔断 / 审批等待 / 暂停）
         Orchestrator → 执行层（按 Plan 推进 DAG，遇到结构性障碍时返回中断信号）
+
+    TaskState 归 SubAgent 管理（任务生命周期），ExecutionState 归 Orchestrator（执行追踪）。
+    两者合并为 checkpoint 持久化。
 
     依赖（7 个）:
         infra, hitl_notifier, planner, plan_validator, orchestrator,
@@ -82,21 +90,32 @@ class SubAgent:
     ) -> None:
         """任务主入口——规划 → 构建 PlanGraph → 执行 → 决策循环。
 
-        1. Planner.plan() → Plan
-        2. PlanValidator.validate() → 校验
-        3. PlanGraph.from_plan(plan) → NetworkX DAG
-        4. Orchestrator.run(graph, mailbox) → 驱动执行
-        5. 根据返回值决策：
+        1. 创建 TaskState（任务级）
+        2. Planner.plan() → Plan
+        3. PlanValidator.validate() → 校验
+        4. PlanGraph.from_plan(plan) → NetworkX DAG
+        5. Orchestrator.run(task_state, exec_state, graph, mailbox) → 驱动执行
+        6. 根据返回值决策：
             SUCCESS       → 终态
-            NEEDS_REPLAN  → Planner.replan() → PlanGraph.apply_patch() → 回到 4
-            BLOCKED       → 等待审批 → 回到 4
+            NEEDS_REPLAN  → Planner.replan() → PlanGraph.apply_patch() → 回到 5
+            BLOCKED       → 等待审批
+            PAUSED        → 保存 checkpoint，等待 resume
             FAILED        → 终态
         """
         from Module.task_system.core.graph import PlanGraph
 
         task_id = mailbox.task_id
 
+        # 0. 创建 TaskState
+        task_state = TaskState(
+            task_id=task_id,
+            status=TaskStatus.PENDING,
+            created_at=self._now(),
+            updated_at=self._now(),
+        )
+
         # 1. 初始规划
+        task_state.status = TaskStatus.PLANNING
         logger.info("SubAgent: 开始规划 task_id=%s", task_id)
         plan = await self._planner.plan(
             context=context,
@@ -111,13 +130,12 @@ class SubAgent:
         )
 
         if not validation.valid:
-            if validation.action == "abort":
+            if validation.action == ValidationAction.ABORT:
                 logger.error(
                     "SubAgent: Plan 校验 abort task_id=%s: %s",
                     task_id, [i.message for i in validation.issues],
                 )
-                # TODO: SubAgent.run() 需要返回结果类型，
-                # 供 TaskSystem.submit() 转换后返回给 CognitiveLoop。
+                task_state.status = TaskStatus.FAILED
                 await self._push_mailbox(mailbox, "failed", {
                     "error": f"Plan 校验失败: {[i.message for i in validation.issues]}",
                     "error_type": TaskErrorCode.PLAN_TOO_LARGE.value,
@@ -127,38 +145,42 @@ class SubAgent:
             logger.warning("SubAgent: Plan 校验失败，重试规划 task_id=%s", task_id)
             raise NotImplementedError("Plan 校验 retry 尚未实现")
 
-        # 3. 构建 PlanGraph（NetworkX DAG）
+        # 3. 构建 PlanGraph（NetworkX DAG）→ 存入 TaskState
         graph = PlanGraph.from_plan(plan)
+        task_state.plan = graph.to_plan(plan)
+        task_state.status = TaskStatus.RUNNING
 
         # 4. 执行-决策循环
-        await self._run_loop(task_id, graph, mailbox)
+        await self._run_loop(task_state, graph, mailbox)
 
     async def _run_loop(
         self,
-        task_id: TaskId,
+        task_state: TaskState,
         graph: PlanGraph,
         mailbox: TaskMailbox,
     ) -> None:
         """执行-决策主循环。
 
+        Orchestrator 内部自建 ExecutionState，SubAgent 不感知。
         大部分任务 Orchestrator 内部一次跑完，这个循环只跑一次。
         只在结构性失败（NEEDS_REPLAN）或审批阻塞（BLOCKED）时循环多次。
         """
         while True:
-            result = await self._orchestrator.run(task_id, graph, mailbox)
+            result = await self._orchestrator.run(task_state, graph, mailbox)
 
-            if result.status == RunStatus.SUCCESS:
-                logger.info("SubAgent: task_id=%s 成功完成", task_id)
+            if result.status == OrchestratorRunStatus.SUCCESS:
+                logger.info("SubAgent: task_id=%s 成功完成", task_state.task_id)
                 return
 
-            elif result.status == RunStatus.NEEDS_REPLAN:
+            elif result.status == OrchestratorRunStatus.NEEDS_REPLAN:
                 # 熔断检查
-                plan = graph.to_plan(None)  # 导出当前 Plan 用于熔断检查
-                meltdown_reason = self._check_meltdown(plan)
+                meltdown_reason = self._check_meltdown(task_state)
                 if meltdown_reason:
                     logger.warning(
-                        "SubAgent: task_id=%s 熔断: %s", task_id, meltdown_reason,
+                        "SubAgent: task_id=%s 熔断: %s",
+                        task_state.task_id, meltdown_reason,
                     )
+                    task_state.status = TaskStatus.FAILED
                     await self._push_mailbox(mailbox, "failed", {
                         "error": meltdown_reason,
                         "error_type": TaskErrorCode.FAILURE_MELTDOWN.value,
@@ -166,42 +188,82 @@ class SubAgent:
                     return
 
                 # Replan —— 调 Planner.replan()，产出 DAGPatch
+                task_state.plan.plan_version += 1
+
                 error_ctx = result.error_context
                 logger.info(
                     "SubAgent: task_id=%s 触发 Replan, failed_nodes=%s",
-                    task_id, error_ctx.get("failed_nodes", []),
+                    task_state.task_id, error_ctx.get("failed_nodes", []),
                 )
 
+                plan = graph.to_plan(task_state.plan)
                 patch = await self._planner.replan(
                     original_plan=plan,
                     failed_node_id=error_ctx.get("failed_nodes", [None])[0],
                     failure_diagnosis=error_ctx.get("reason", "节点执行失败"),
-                    node_results={},  # TODO: 从 OrchestratorResult 恢复
+                    node_results=self._extract_node_results(result.checkpoint_state),
                 )
 
                 # 应用 DAGPatch 到 PlanGraph
                 graph.apply_patch(patch)
+                task_state.plan = graph.to_plan(plan)
                 logger.info(
                     "SubAgent: task_id=%s Replan 完成, patch_type=%s, nodes=%d",
-                    task_id, patch.patch_type, graph.node_count,
+                    task_state.task_id, patch.patch_type, graph.node_count,
                 )
+                # Orchestrator 下次 run() 时从新 graph 重建 ExecutionState
                 continue
 
-            elif result.status == RunStatus.BLOCKED:
-                logger.info("SubAgent: task_id=%s 等待审批", task_id)
-                # TODO: await approval_future
+            elif result.status == OrchestratorRunStatus.BLOCKED:
+                logger.info("SubAgent: task_id=%s 等待审批", task_state.task_id)
+                await self._push_mailbox(mailbox, "approval_needed", {
+                    "task_id": str(task_state.task_id),
+                    "message": "任务等待用户审批",
+                })
+                # Orchestrator 已将 task_state.status 设为 WAITING_APPROVAL。
+                # 返回后由 TaskSystem 主类接管：
+                #   1. 等待 HITLNotifier.submit_approval() 回调
+                #   2. 审批通过后从 checkpoint 重建 exec_state → 继续 run()
                 return
 
-            elif result.status == RunStatus.FAILED:
+            elif result.status == OrchestratorRunStatus.PAUSED:
+                logger.info(
+                    "SubAgent: task_id=%s 收到暂停信号，已保存 checkpoint",
+                    task_state.task_id,
+                )
+                await self._checkpoint_mgr.save(
+                    task_state.task_id, result.checkpoint_state,
+                )
+                await self._push_mailbox(mailbox, "paused", {
+                    "task_id": str(task_state.task_id),
+                    "message": "任务已暂停",
+                })
+                return
+
+            elif result.status == OrchestratorRunStatus.FAILED:
                 logger.error(
                     "SubAgent: task_id=%s 失败: %s",
-                    task_id, result.error_context.get("reason", "未知"),
+                    task_state.task_id,
+                    result.error_context.get("reason", "未知"),
                 )
                 return
+
+    def _extract_node_results(self, checkpoint_state: dict) -> dict:
+        """从 checkpoint_state 中提取 node_states，供 Planner.replan() 使用。"""
+        exec_dict = checkpoint_state.get("exec", {})
+        node_states_raw: dict = exec_dict.get("node_states", {})
+        # 提取已完成节点的 summary + error（供 Planner.replan() 参考）
+        return {
+            nid: {
+                "summary": ns.get("summary", ""),
+                "error": ns.get("error"),
+            }
+            for nid, ns in node_states_raw.items()
+        }
 
     # ── 熔断检查 ───────────────────────────────────────────────────────────────
 
-    def _check_meltdown(self, plan) -> str | None:
+    def _check_meltdown(self, task_state: TaskState) -> str | None:
         """检查是否触发熔断。
 
         Returns:
@@ -210,9 +272,9 @@ class SubAgent:
         """
         constraints = self._infra.constraints
 
-        if plan.replan_count >= constraints.max_failure_count:
+        if task_state.plan.plan_version >= constraints.max_failure_count:
             return (
-                f"连续失败 {plan.replan_count} 次（上限 {constraints.max_failure_count}），"
+                f"已 Replan {task_state.plan.plan_version} 次（上限 {constraints.max_failure_count}），"
                 "已触发熔断"
             )
 
@@ -232,3 +294,9 @@ class SubAgent:
         )
         # TODO: event = TaskEvent(type=event_type, data=data)
         # TODO: mailbox._push(event)
+
+    @staticmethod
+    def _now() -> str:
+        """返回当前时间 ISO 8601 字符串。"""
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()

@@ -219,21 +219,35 @@ Module/task_system/
 
 ```python
 # Plan / DAG / DBT 模型
-class Plan(BaseModel): ...
-class DAGNode(BaseModel): ...
+class Plan(BaseModel): ...            # dag + plan_version + created_at + updated_at
+class DAGNode(BaseModel): ...         # node_id, description, output_contract, required, input_bindings, output_as, max_retries, max_duration_s
+class OutputContract(BaseModel): ...  # description + json_schema + output_type (v2 类型注册表预留)
+class DAGPatchType(StrEnum): REPLACE_NODES, ADD_NODES, REMOVE_NODES
+class DAGPatch(BaseModel): ...        # patch_type + reason + trigger_nodes + created_at + 5 种操作列表
 class DBTNode(BaseModel): ...
-class DBTNodeType(str, Enum): SEQUENCE, SELECTOR, PARALLEL, ACTION, CONDITION
+class DBTNodeType(StrEnum): SEQUENCE, SELECTOR, PARALLEL, ACTION, CONDITION
 
 # 上下文与结果
-class DelegationResult(BaseModel): ...
-class DelegationContext(BaseModel): ...
-class TaskConstraints(BaseModel): ...
-class TaskResult(BaseModel): ...
-class NodeResult(BaseModel): ...
+class DelegationResult(BaseModel): ... # status(DelegationStatus) + context + reason + missing_tools(Tool[]) + suggestion
+class DelegationContext(BaseModel): ...  # intent + hints + tools + task_constraints + summarized_context + session_id + return_mode(ReturnMode)
+class TaskConstraints(BaseModel): ...  # max_dag_nodes + max_mutations + max_total_tokens/max_task_duration_s/max_failure_count(None=全局)
+class TaskResult(BaseModel): ...   # task_id + status + node_results + summary + created_at/completed_at + token_usage + tools_used(Tool[]) + error/error_code
+class NodeResult(BaseModel): ...          # Executor 产出：artifact_refs + error (NodeErrorCode) + attempt + duration_ms
+class NodeResultEvaluation(BaseModel): ...  # Evaluator 产出：包裹 NodeResult + execution_status + business_status + reason + suggested_action
 class TaskSummary(BaseModel): ...
 
+# 经验记忆（⚠️ v1 不做）
+class ExperienceRecord(BaseModel): ...  # tool_name + error_pattern + diagnosis + fix + confidence + status + ...
+
+# Token 统计
+class TokenComponentType(StrEnum): PLANNER, EXECUTOR, EVALUATOR, REFLECTOR
+class TokenComponent(BaseModel): ...  # component + node_id + prompt/completion/total_tokens + model
+class TokenUsage(BaseModel): ...      # task_id + components
+class TokenStats(BaseModel): ...      # period(TokenPeriod) + total_tokens + by_component + by_model
+
 # 通知
-class TaskEvent(BaseModel): ...
+class TaskEvent(BaseModel): ...      # type(TaskEventType) + data：6 种事件（progress/approval_needed/completed/failed/cancelled/paused）
+class HITLData(BaseModel): ...          # task_id + approval_id + agent_id + node_id + node_task + tool_name + params + rbac_level + risk_summary
 ```
 
 > **注意**：`errors.py` 已合并到 `schema.py`。所有数据模型、状态码、错误码、枚举统一在 `schema.py` 中定义。不单独拆分 error 文件。
@@ -368,21 +382,24 @@ DAG 执行中的失败有两种——
 |---|---|---|
 | 面向 | 任务 | Plan |
 | 输入 | DelegationContext | Plan + Mailbox |
-| 拥有 | Planner, PlanValidator | Executor, Evaluator |
+| 拥有 | Planner, PlanValidator, TaskState | Executor, Evaluator, ExecutionState |
 | 职责 | 初始规划 → 校验 → 驱动执行 → Replan 决策 → 熔断检查 → 审批等待 | 找 ready → 执行 → 评估 → 更新状态 → checkpoint |
 | 调 Planner | ✅ plan() + replan() | ❌ |
 | 调 Executor/Evaluator | ❌ | ✅ |
-| 返回 | 终态（SUCCESS/FAILED） | 中断信号（SUCCESS/FAILED/NEEDS_REPLAN/BLOCKED） |
+| 返回 | 终态（SUCCESS/FAILED） | 中断信号（SUCCESS/FAILED/NEEDS_REPLAN/BLOCKED/PAUSED） |
 
 **Sub-Agent 主循环**：
 
 ```
 SubAgent.run(context, mailbox):
+    task_state = TaskState(task_id=task_id)
     plan = Planner.plan(context)
     PlanValidator.validate(plan)
+    graph = PlanGraph.from_plan(plan)
+    exec_state = ExecutionState(node_states=...)
 
     while True:
-        result = Orchestrator.run(plan, mailbox)
+        result = Orchestrator.run(task_state, exec_state, graph, mailbox)
 
         SUCCESS       → 终态，返回
         FAILED        → 终态，返回
@@ -390,6 +407,7 @@ SubAgent.run(context, mailbox):
             ├─ 通过 → Planner.replan() → DAGPatch → 应用到 Plan → continue
             └─ 熔断 → FAILED
         BLOCKED       → 等待审批回传 → 恢复到 checkpoint → continue
+        PAUSED        → 保存 checkpoint → 返回 PAUSED，等待 resume() 调用后恢复
 ```
 
 大部分任务 Orchestrator 内部一次跑完，Sub-Agent 的 while 循环只跑一次。
@@ -398,21 +416,27 @@ SubAgent.run(context, mailbox):
 **Orchestrator 内部循环**：
 
 ```
-Orchestrator.run(plan, mailbox) → OrchestratorResult:
-    while not terminal:
-        1. get_ready_nodes(state)
+Orchestrator.run(task_state, exec_state, graph, mailbox) → OrchestratorResult:
+    while not task_state.is_terminal():
+        0. 检查 exec_state.pause_requested → 返回 PAUSED
+        1. get_ready_nodes(exec_state)
         2. 审批检查
-        3. execute_nodes(ready, state)   → Executor
-        4. evaluate_node(result, state)  → Evaluator
-        5. apply_evaluation(...)
+        3. execute_nodes(ready, exec_state)   → Executor
+        4. evaluate_node(result, task_state)  → Evaluator
+        5. apply_evaluation(task_state, exec_state, ...)
            ├─ continue → mark success
            ├─ retry    → back to pending
            ├─ replan   → return NEEDS_REPLAN（不调 Planner！）
-           ├─ ask_user → return BLOCKED
+           ├─ ask_approval → return BLOCKED
            └─ abort    → return FAILED
-        6. save_checkpoint(state)
+        6. save_checkpoint(task_state, exec_state)
     return SUCCESS
 ```
+
+**状态归属**：
+- **TaskState**（任务级）→ SubAgent 创建并管理生命周期。字段：task_id, status, plan。
+- **ExecutionState**（执行层）→ Orchestrator 拥有并在循环中修改。字段：node_states, current_phase(ExecutionPhase), waiting_for_approval, pause_requested。
+- **Checkpoint** = TaskState + ExecutionState 合并序列化。SubAgent 负责存/取，Orchestrator 不感知 checkpoint 细节。
 
 **Orchestrator 依赖（6 个）**：infra, hitl_notifier, executor, evaluator, checkpoint_manager, artifact_store（注意：没有 Planner、PlanValidator——它们属于 Sub-Agent 层）。
 
@@ -467,7 +491,7 @@ DAG (Plan)                     DBT (每个节点内部)
 ### 5.2 Planner
 
 - 输入：用户意图 + 能力令牌 + 工具列表 + (可选) 经验记忆查询
-- 输出：DAG 骨架（节点列表 + depends_on 依赖关系）
+- 输出：DAG 骨架（nodes + edges，边方向 = 依赖方向）
 - 不填满细节——每个节点只声明目标和期望结果，DBT 由 Executor 运行时生成
 
 ### 5.3 Executor
@@ -492,17 +516,29 @@ DAG (Plan)                     DBT (每个节点内部)
 
 ### 5.4 Evaluator
 
-**双重判定** — 区分代码状态和业务状态：
+**双重判定** — 两类分离：Executor 产出 → Evaluator 包裹判定。
 
 ```python
+# Executor 产出——工具原始返回值
 class NodeResult:
-    execution_status: str   # "ok" | "timeout" | "error" | "permission_denied"
-    business_status: str    # "goal_achieved" | "goal_partial" | "goal_failed"
-    evidence: str           # 判定依据（工具返回了什么）
+    node_id: NodeId
+    artifact_refs: list[str]         # ArtifactStore 产物引用
+    error: NodeErrorCode | None      # 节点级错误码
+    attempt: int                     # 第几次尝试
+    duration_ms: int                 # 执行耗时
+
+# Evaluator 产出——包裹 NodeResult + 双重判定
+class NodeResultEvaluation:
+    node_id: NodeId
+    execution_status: ExecutionStatus  # ok | timeout | error | permission_denied | cancelled
+    business_status: BusinessStatus    # goal_achieved | goal_partial | goal_failed
+    reason: str                       # 判定依据
+    suggested_action: EvaluatorAction  # continue | retry | skip | replan | ask_approval | abort
+    result: NodeResult                 # 被评定的原始结果
 ```
 
-- **ExecutionStatus**：代码是否报错？工具是否正常返回？
-- **BusinessStatus**：Plan 中声明的期望结果是否达成？
+- **ExecutionStatus**：代码是否报错？工具是否正常返回？（ok / timeout / error / permission_denied / cancelled）
+- **BusinessStatus**：Plan 中声明的期望结果是否达成？（goal_achieved / goal_partial / goal_failed）
 
 **例子**：搜索工具返回 `"抱歉，没有找到相关结果"`
 
@@ -512,12 +548,6 @@ class NodeResult:
 | BusinessStatus | `"goal_failed"` | 没拿到所需信息 |
 
 Evaluator 的 LLM prompt 强制要求：**校验"是否达成了 Plan 中声明的期望结果"，而非仅检查有无异常**。
-
-判定输出：
-- `goal_achieved` → 节点成功
-- `goal_partial` → 部分成功，标记 warning，后续节点可使用部分结果
-- `goal_failed` → 上报 DAG 层 Replan
-- 失败时携带诊断信息上报 DAG 层
 
 ### 5.5 双层错误恢复
 
@@ -871,7 +901,7 @@ CognitiveLoop LLM 调用 submit_task(intent, hints)
 **`session_id`** 字段从 CognitiveLoop 直接透传，不做处理。用于日志关联和 Debug 追踪。
 
 **边界条件：**
-- `no_matching_tools`：工具库缺少所需类别。返回 `missing_capabilities` 告知缺什么。
+- `no_matching_tools`：工具库缺少所需类别。返回 `missing_tools` 告知缺什么。
 - `too_vague`：意图无法确定工具。建议用户澄清。
 - 后处理校验：LLM 可能幻觉出不存在的工具名，`_validate_output()` 剔除它们。如果剔除后为空 → `no_matching_tools`。
 
@@ -963,7 +993,7 @@ MUTATION 节点执行流程：
 **级联防护**：MUTATION 节点被标记为 `unrecoverable` 后，Scheduler 不能盲目跳到下一个依赖它的节点（如下游节点需要该 MUTATION 的输出，会直接 KeyError 崩溃）。必须阻断所有依赖子图：
 
 ```
-MUTATION 节点 unrecoverable → 阻断所有 depends_on 包含该节点的下游子图
+MUTATION 节点 unrecoverable → 阻断所有以该节点为前置依赖的下游子图
   → TaskMailbox 发送 HITL_RECOVERY_REQUEST：
       "步骤 C（创建虚拟机）可能已执行，请确认：
        [已成功] → 补录完整 NodeResult（结构化 JSON，含 server_id、IP、网络配置等该节点本应产出的所有派生字段）
@@ -990,6 +1020,9 @@ MUTATION 节点 unrecoverable → 阻断所有 depends_on 包含该节点的下�
 ## 11. 记忆与学习
 
 ### 11.1 任务经验记忆
+
+> **⚠️ v1 不做**：ExperienceRecord / Reflector / Milvus 写入属于渐进式学习闭环，
+> v1 骨架阶段仅保留类型定义和设计文档占位，暂不实现。
 
 TaskSystem 专属，独立于用户 LongTermMemory（同一 Milvus 实例，不同 namespace）。
 
@@ -1164,7 +1197,7 @@ class AgentState:
     current_node: str | None = None
     tool_cache: dict = field(default_factory=dict)
     context: DelegationContext | None = None
-    node_results: dict[str, NodeResult] = field(default_factory=dict)
+    node_results: dict[str, NodeResultEvaluation] = field(default_factory=dict)
 
 class SubAgent:
     def __init__(self, infra: AgentInfra):
@@ -1364,7 +1397,7 @@ class TaskSystem:
         唯一入口，简单任务不进这里（CognitiveLoop 自己处理了）。
         参数验证在 TaskSystem 侧执行，不合法直接拒绝，不创建 Sub-Agent。
         context: DelegationPreparer.prepare() 的产出，包含 intent/hints/
-                 capabilities/task_constraints/summarized_context/session_id。
+                 tools/task_constraints/summarized_context/session_id。
         """
         ...
 
@@ -1412,10 +1445,16 @@ class TaskSystem:
     def get_token_stats(self, period: str = "today") -> TokenStats: ...
 
 class SubmitError:
-    code: str           # INVALID_PARAM, PLAN_TOO_LARGE, ...
+    code: SubmitRejectionCode
     message: str
     details: dict
     suggestions: list[str]  # 修复建议
+
+class ResumeError:
+    code: ResumeErrorCode
+    message: str
+    details: dict
+    suggestions: list[str]
 ```
 
 ### 18.2 TaskMailbox API
@@ -1492,7 +1531,7 @@ async def _execute_tool(self, name: str, **args) -> ToolResult:
         )
 
         if prep_result.status == "no_matching_tools":
-            missing = ", ".join(prep_result.missing_capabilities)
+            missing = ", ".join(prep_result.missing_tools)
             return ToolResult.fail(
                 name="submit_task",
                 error=f"缺少 {missing} 相关能力，这不是参数问题，"
@@ -1698,7 +1737,7 @@ class TaskMailbox:
 
 | 术语 | 定义 |
 |------|------|
-| **DAG** (有向无环图) | Planner 产出的高层任务结构：节点列表 + depends_on 依赖关系 |
+| **DAG** (有向无环图) | Planner 产出的高层任务结构：nodes + edges（边方向 = 依赖方向） |
 | **DBT** (动态行为树) | ⚠️ 实验性质。每个 DAG 节点内部的执行策略，运行时动态生成，含 Sequence/Selector/Fallback 等 |
 | **Sub-Agent** | 拥有完整 Plan → Execute → Evaluate → Replan 能力的自主执行单元 |
 | **Worker Agent** | DBT 执行引擎，接收一个 DAG Node 并执行整棵行为树，不规划不生成子 Agent |

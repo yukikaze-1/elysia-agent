@@ -12,6 +12,7 @@ from Module.task_system.schema import (
     ConstraintConfig,
     Plan,
     TaskConstraints,
+    ValidationAction,
     ValidationIssue,
     ValidationIssueType,
     ValidationResult,
@@ -72,7 +73,7 @@ class PlanValidator:
 
         # 5. node_id 唯一性（NetworkX 构建时保证，但显式复检输出友好信息）
         seen: set[str] = set()
-        for node in plan.nodes:
+        for node in plan.dag.nodes:
             nid = str(node.node_id)
             if nid in seen:
                 issues.append(ValidationIssue(
@@ -82,15 +83,37 @@ class PlanValidator:
                 ))
             seen.add(nid)
 
-        # 7. output_contract 合法性 —— 暂时无法检查（DAGNode 尚未添加 output_contract 字段）
-        # TODO: DAGNode 添加 output_contract: OutputContract 后启用
+        # 7. output_contract 合法性
+        for node in plan.dag.nodes:
+            contract = node.output_contract
+            # 只检查 required 节点——可选节点可以没有严格的产出契约
+            if node.required and not contract.description and not contract.json_schema:
+                issues.append(ValidationIssue(
+                    type=ValidationIssueType.MISSING_CONTRACT,
+                    node_id=node.node_id,
+                    message=f"required 节点 {node.node_id} 缺少 output_contract（description 和 json_schema 均为空）",
+                ))
+            # JSON Schema 基本校验（如果提供了 json_schema）
+            if contract.json_schema is not None:
+                if not isinstance(contract.json_schema, dict):
+                    issues.append(ValidationIssue(
+                        type=ValidationIssueType.MISSING_CONTRACT,
+                        node_id=node.node_id,
+                        message=f"节点 {node.node_id} 的 output_contract.json_schema 不是有效的 dict",
+                    ))
+                elif "type" not in contract.json_schema:
+                    issues.append(ValidationIssue(
+                        type=ValidationIssueType.MISSING_CONTRACT,
+                        node_id=node.node_id,
+                        message=f"节点 {node.node_id} 的 output_contract.json_schema 缺少 'type' 字段",
+                    ))
 
         # 9. 节点数检查 —— 取 min(全局, 任务)
         max_nodes = min(global_constraints.max_dag_nodes, task_constraints.max_dag_nodes)
-        if len(plan.nodes) > max_nodes:
+        if len(plan.dag.nodes) > max_nodes:
             issues.append(ValidationIssue(
                 type=ValidationIssueType.MAX_NODES_EXCEEDED,
-                message=f"DAG 节点数 {len(plan.nodes)} 超过上限 {max_nodes}",
+                message=f"DAG 节点数 {len(plan.dag.nodes)} 超过上限 {max_nodes}",
             ))
 
         # 10. DAG 深度检查 —— 使用拓扑排序计算最长路径
@@ -116,7 +139,7 @@ class PlanValidator:
 
         # ── 汇总 ──────────────────────────────────────────────────────────
         if not issues:
-            return ValidationResult(valid=True, action="proceed")
+            return ValidationResult(valid=True, action=ValidationAction.PROCEED)
 
         # 区分 fix_plan vs abort
         fatal_types = {
@@ -127,5 +150,5 @@ class PlanValidator:
         return ValidationResult(
             valid=False,
             issues=issues,
-            action="abort" if has_fatal else "fix_plan",
+            action=ValidationAction.ABORT if has_fatal else ValidationAction.FIX_PLAN,
         )

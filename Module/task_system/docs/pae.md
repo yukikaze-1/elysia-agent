@@ -892,7 +892,7 @@ class Orchestrator:
 
             self.state_manager.apply_dag_patch(task_id, patch)
 
-        elif evaluation.action == "ask_user":
+        elif evaluation.action == "ask_approval":
             self.state_manager.mark_waiting_for_user(
                 task_id=task_id,
                 node_id=result.node_id,
@@ -1028,7 +1028,7 @@ Human Review Queue
 12. Executor 通过 Tool Manager 调用工具
 13. Artifact Store 保存节点产物
 14. Output Validator 校验 artifact schema
-15. Evaluator 根据 contract 和结果决定 continue/retry/replan/ask_user/abort
+15. Evaluator 根据 contract 和结果决定 continue/retry/skip/replan/ask_approval/abort
 16. Orchestrator 根据 evaluation 更新状态
 17. Checkpoint Manager 保存 checkpoint
 18. 如计划失效，Replanner 生成 DAG patch

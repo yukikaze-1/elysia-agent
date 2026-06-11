@@ -7,23 +7,31 @@
 不调 Planner，不修改 Plan——只负责"在给定 Plan 的框架内尽最大努力推进"。
 
 图操作委托给 PlanGraph（NetworkX），Orchestrator 不再手搓 DAG 遍历。
+
+TaskState（任务级）归 SubAgent 管理，ExecutionState（执行层）归 Orchestrator 管理。
+Orchestrator 读写 task_state.status 做终态转换，读写 exec_state 做循环内追踪。
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from Module.task_system.schema import (
     DAGNode,
+    EvaluatorAction,
+    ExecutionPhase,
+    ExecutionState,
+    ExecutionStatus,
+    BusinessStatus,
     NodeId,
     NodeResult,
+    NodeResultEvaluation,
     NodeState,
     NodeStatus,
     OrchestratorResult,
-    Plan,
-    RunStatus,
-    TaskId,
+    OrchestratorRunStatus,
+    TaskErrorCode,
     TaskState,
     TaskStatus,
 )
@@ -53,10 +61,13 @@ class Orchestrator:
 
     不负责：
         - 生成 Plan / Replan（Planner —— Sub-Agent 层拥有）
+          TODO: v2 考虑拆分为 Planner（首次规划）和 Replanner（增量修复），
+                两者输入/输出/LLM prompt 差异大，但 v1 均未实现，暂不拆。
         - 校验 Plan（PlanValidator —— Sub-Agent 层拥有）
         - 生成 DBT（Executor）
         - 校验输出（Evaluator —— 但 Orchestrator 调它）
         - 推送审批卡片（HITLNotifier —— 但 Orchestrator 决定"何时需要审批"）
+        - 管理 TaskState 生命周期（SubAgent 拥有 TaskState）
 
     依赖（6 个）:
         infra, hitl_notifier, executor, evaluator, checkpoint_manager, artifact_store
@@ -87,54 +98,75 @@ class Orchestrator:
 
     async def run(
         self,
-        task_id: TaskId,
+        task_state: TaskState,
         graph: PlanGraph,
         mailbox: TaskMailbox,
     ) -> OrchestratorResult:
         """驱动 PlanGraph 直到完成或遇到结构性障碍。
 
+        task_state: SubAgent 创建的任务级状态（Orchestrator 只读写 status）。
+        exec_state 由 Orchestrator 内部从 graph 构建，调用方无需传入。
+
         SUCCESS  → 所有 required 节点完成。
         FAILED   → 不可恢复。
         NEEDS_REPLAN → 结构性失败，携带 error_context 和 checkpoint_state。
         BLOCKED  → 等待用户审批。
+        PAUSED   → 收到外部暂停请求，已保存 checkpoint。
 
         Sub-Agent 收到 NEEDS_REPLAN 后调 Planner.replan()，得到 DAGPatch，
         应用到 PlanGraph 后可再次调用 run() 恢复执行。
+
+        TODO: 增加 resume_from: ExecutionState | None = None 参数。
+              从 checkpoint 恢复时 SubAgent 传入，Orchestrator 跳过 _init_exec_state。
         """
-        state = self._init_state(task_id, graph)
+        task_id = task_state.task_id
+        # TODO: if resume_from is not None: exec_state = resume_from
+        #       else:
+        exec_state = self._init_exec_state(graph)
         logger.info("Orchestrator.run 开始: task_id=%s, nodes=%d", task_id, graph.node_count)
 
         try:
-            while not state.is_terminal():
-                state.updated_at = self._now()
+            while not task_state.is_terminal():
+                exec_state.updated_at = self._now()
+
+                # 0. 检查外部中断信号
+                if exec_state.pause_requested:
+                    logger.info("Orchestrator: task_id=%s 收到暂停请求", task_id)
+                    task_state.status = TaskStatus.PAUSED
+                    await self._save_checkpoint(task_state, exec_state)
+                    return OrchestratorResult(
+                        status=OrchestratorRunStatus.PAUSED,
+                        checkpoint_state=self._build_checkpoint(task_state, exec_state),
+                    )
 
                 # 1. 找就绪节点（PlanGraph 负责图遍历）
-                ready_ids = graph.get_ready_nodes(state.node_states)
+                ready_ids = graph.get_ready_nodes(exec_state.node_states)
 
                 if not ready_ids:
-                    if graph.is_terminal(state.node_states):
+                    if graph.is_terminal(exec_state.node_states):
                         break
 
-                    if self._has_blocked_nodes(state):
-                        await self._save_checkpoint(state)
+                    if self._has_blocked_nodes(exec_state):
+                        task_state.status = TaskStatus.WAITING_APPROVAL
+                        await self._save_checkpoint(task_state, exec_state)
                         return OrchestratorResult(
-                            status=RunStatus.BLOCKED,
-                            checkpoint_state=state.model_dump(),
+                            status=OrchestratorRunStatus.BLOCKED,
+                            checkpoint_state=self._build_checkpoint(task_state, exec_state),
                         )
 
-                    if graph.has_failed_required(state.node_states):
-                        failed_info = graph.collect_failure_info(state.node_states)
-                        await self._save_checkpoint(state)
+                    if graph.has_failed_required(exec_state.node_states):
+                        failed_info = graph.collect_failure_info(exec_state.node_states)
+                        await self._save_checkpoint(task_state, exec_state)
                         return OrchestratorResult(
-                            status=RunStatus.NEEDS_REPLAN,
+                            status=OrchestratorRunStatus.NEEDS_REPLAN,
                             error_context=failed_info,
-                            checkpoint_state=state.model_dump(),
+                            checkpoint_state=self._build_checkpoint(task_state, exec_state),
                         )
 
                     logger.error("Orchestrator 死锁: task_id=%s", task_id)
-                    state.status = TaskStatus.FAILED
+                    task_state.status = TaskStatus.FAILED
                     return OrchestratorResult(
-                        status=RunStatus.FAILED,
+                        status=OrchestratorRunStatus.FAILED,
                         error_context={"reason": "检测到死锁——无可执行节点但任务未完成"},
                     )
 
@@ -146,115 +178,113 @@ class Orchestrator:
                         continue
                     ready_nodes.append(node)
                     if self._needs_approval(node):
-                        state.waiting_for_user = True
+                        exec_state.waiting_for_approval = True
                         logger.warning(
                             "Orchestrator: node=%s 需要审批，骨架阶段跳过",
                             node.node_id,
                         )
 
-                # 3. 执行就绪节点
-                state.current_phase = "executing"
-                results = await self._execute_nodes(ready_nodes, state)
+                # 3. 执行就绪节点（Executor 产出 NodeResult）
+                exec_state.current_phase = ExecutionPhase.EXECUTING
+                results = await self._execute_nodes(ready_nodes, exec_state)
 
-                # 4. 评估每个结果
-                state.current_phase = "evaluating"
+                # 4. 评估每个结果（Evaluator 包裹为 NodeResultEvaluation）
+                exec_state.current_phase = ExecutionPhase.EVALUATING
                 for result in results:
-                    evaluation = await self._evaluate_node(result, state)
+                    evaluation = await self._evaluate_node(result, task_state)
                     action = await self._apply_evaluation(
-                        state, result, evaluation, mailbox, graph,
+                        task_state, exec_state, evaluation, mailbox, graph,
                     )
 
                     if action == "needs_replan":
-                        failed_info = graph.collect_failure_info(state.node_states)
-                        await self._save_checkpoint(state)
+                        failed_info = graph.collect_failure_info(exec_state.node_states)
+                        await self._save_checkpoint(task_state, exec_state)
                         return OrchestratorResult(
-                            status=RunStatus.NEEDS_REPLAN,
+                            status=OrchestratorRunStatus.NEEDS_REPLAN,
                             error_context=failed_info,
-                            checkpoint_state=state.model_dump(),
+                            checkpoint_state=self._build_checkpoint(task_state, exec_state),
                         )
                     elif action == "blocked":
-                        await self._save_checkpoint(state)
+                        task_state.status = TaskStatus.WAITING_APPROVAL
+                        await self._save_checkpoint(task_state, exec_state)
                         return OrchestratorResult(
-                            status=RunStatus.BLOCKED,
-                            checkpoint_state=state.model_dump(),
+                            status=OrchestratorRunStatus.BLOCKED,
+                            checkpoint_state=self._build_checkpoint(task_state, exec_state),
                         )
                     elif action == "abort":
-                        state.status = TaskStatus.FAILED
-                        await self._save_checkpoint(state)
+                        task_state.status = TaskStatus.FAILED
+                        await self._save_checkpoint(task_state, exec_state)
                         return OrchestratorResult(
-                            status=RunStatus.FAILED,
-                            error_context={"reason": evaluation.get("reason", "评估判定终止")},
+                            status=OrchestratorRunStatus.FAILED,
+                            error_context={"reason": evaluation.reason},
                         )
 
                 # 5. 写 checkpoint
-                state.current_phase = "executing"
-                await self._save_checkpoint(state)
+                exec_state.current_phase = ExecutionPhase.EXECUTING
+                await self._save_checkpoint(task_state, exec_state)
 
             # ── 终态 ──
-            if state.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
-                state.current_phase = "finalizing"
-                await self._finalize(state, mailbox, graph)
+            if task_state.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+                exec_state.current_phase = ExecutionPhase.FINALIZING
+                await self._finalize(task_state, exec_state, mailbox, graph)
 
             return OrchestratorResult(
-                status=RunStatus.SUCCESS,
-                checkpoint_state=state.model_dump(),
+                status=OrchestratorRunStatus.SUCCESS,
+                checkpoint_state=self._build_checkpoint(task_state, exec_state),
             )
 
         except Exception:
             logger.exception("Orchestrator 异常终止: task_id=%s", task_id)
-            state.status = TaskStatus.FAILED
+            task_state.status = TaskStatus.FAILED
             await self._push_mailbox(mailbox, "failed", {
                 "error": "Orchestrator 内部异常",
-                "error_type": "internal_error",
+                "error_type": TaskErrorCode.INTERNAL_ERROR.value,
             })
             return OrchestratorResult(
-                status=RunStatus.FAILED,
+                status=OrchestratorRunStatus.FAILED,
                 error_context={"reason": "内部异常"},
-                checkpoint_state=state.model_dump(),
+                checkpoint_state=self._build_checkpoint(task_state, exec_state),
             )
 
-    # ── 状态初始化 ────────────────────────────────────────────────────────────
+    # ── 状态初始化 ───────────────────────────────────────────────────────────────
 
-    def _init_state(self, task_id: TaskId, graph: PlanGraph) -> TaskState:
-        """从 PlanGraph 构建初始 TaskState。
+    def _init_exec_state(self, graph: PlanGraph) -> ExecutionState:
+        """从 PlanGraph 构建初始 ExecutionState。
 
-        同时导出 Plan 存入 TaskState（用于 checkpoint 序列化）。
+        遍历所有 DAG 节点，为每个节点创建初始 NodeState（全部 PENDING）。
+        新任务和 Replan 后均调用此方法重建。
         """
         node_states: dict[NodeId, NodeState] = {}
         for nid in graph.nodes:
             node_states[nid] = NodeState(node_id=nid)
 
-        temp_plan = Plan(task_id=task_id)
-        graph.to_plan(temp_plan)
-
-        return TaskState(
-            task_id=task_id,
-            status=TaskStatus.RUNNING,
-            plan=temp_plan,
+        return ExecutionState(
             node_states=node_states,
-            current_phase="executing",
-            created_at=self._now(),
+            current_phase=ExecutionPhase.EXECUTING,
             updated_at=self._now(),
         )
 
     # ── 阻塞判定 ──────────────────────────────────────────────────────────────
 
-    def _has_blocked_nodes(self, state: TaskState) -> bool:
+    def _has_blocked_nodes(self, exec_state: ExecutionState) -> bool:
         """是否有节点因等待审批而阻塞。"""
-        return state.waiting_for_user
+        return exec_state.waiting_for_approval
 
     # ── 执行与评估 ────────────────────────────────────────────────────────────
 
     async def _execute_nodes(
-        self, nodes: list[DAGNode], state: TaskState,
+        self, nodes: list[DAGNode], exec_state: ExecutionState,
     ) -> list[NodeResult]:
-        """执行就绪节点——生成 DBT → 分配 Worker → 收集结果。
+        """执行就绪节点——v1 单工具直接调用，不做 DBT。
 
-        TODO: 调用 Executor.generate_dbt() + Worker Agent 池执行。
+        NodeResult 仅包含 Executor 产出（ArtifactStore 引用 + 错误码 + 耗时），
+        不含 Evaluator 判定——判定由 _evaluate_node 产出 NodeResultEvaluation。
+
+        TODO: 调用 Executor.execute()。
         """
         results: list[NodeResult] = []
         for node in nodes:
-            ns = state.node_states[node.node_id]
+            ns = exec_state.node_states[node.node_id]
             ns.status = NodeStatus.RUNNING
             ns.attempt += 1
             ns.started_at = self._now()
@@ -262,71 +292,87 @@ class Orchestrator:
             logger.info("Orchestrator: 骨架执行 node=%s", node.node_id)
             results.append(NodeResult(
                 node_id=node.node_id,
-                execution_status="ok",
-                business_status="goal_achieved",
-                evidence="[骨架占位]",
+                attempt=ns.attempt,
+                duration_ms=0,
             ))
         return results
 
     async def _evaluate_node(
-        self, result: NodeResult, state: TaskState,
-    ) -> dict:
-        """评估单个节点结果。
+        self, result: NodeResult, task_state: TaskState,
+    ) -> NodeResultEvaluation:
+        """评估单个节点结果——Executor 产出 → Evaluator 双重判定。
 
         TODO: 调用 Evaluator.evaluate(result, node, plan)。
         """
-        return {"action": "continue", "reason": "[骨架占位]"}
+        return NodeResultEvaluation(
+            node_id=result.node_id,
+            execution_status=ExecutionStatus.OK,
+            business_status=BusinessStatus.GOAL_ACHIEVED,
+            reason="[骨架占位]",
+            suggested_action=EvaluatorAction.CONTINUE,
+            result=result,
+        )
 
     async def _apply_evaluation(
         self,
-        state: TaskState,
-        result: NodeResult,
-        evaluation: dict,
+        task_state: TaskState,
+        exec_state: ExecutionState,
+        evaluation: NodeResultEvaluation,
         mailbox: TaskMailbox,
         graph: PlanGraph,
     ) -> str:
-        """根据评估结果更新 NodeState + 推送 Mailbox 事件。
+        """根据 NodeResultEvaluation 更新 NodeState + 推送 Mailbox 事件。
 
         Returns:
-            "continue" | "retry" | "needs_replan" | "blocked" | "abort"
+            "continue" | "skip" | "retry" | "needs_replan" | "blocked" | "abort"
         """
-        node_id = result.node_id
-        ns = state.node_states[node_id]
+        node_id = evaluation.node_id
+        ns = exec_state.node_states[node_id]
         ns.finished_at = self._now()
-        action = evaluation.get("action", "continue")
+        action = evaluation.suggested_action
 
-        if action == "continue":
+        if action == EvaluatorAction.CONTINUE:
             ns.status = NodeStatus.SUCCESS
-            ns.summary = result.evidence
-            ns.artifact_refs = result.artifact_refs
+            ns.summary = evaluation.reason
+            ns.artifact_refs = evaluation.result.artifact_refs
             await self._push_mailbox(mailbox, "progress", {
-                "task_id": str(state.task_id),
+                "task_id": str(task_state.task_id),
                 "node_id": node_id,
                 "node_description": f"节点 {node_id} 完成",
-                "percent": graph.compute_progress(state.node_states),
+                "percent": graph.compute_progress(exec_state.node_states),
                 "message": ns.summary,
             })
             return "continue"
 
-        elif action == "retry":
+        elif action == EvaluatorAction.SKIP:
+            ns.status = NodeStatus.SKIPPED
+            ns.summary = evaluation.reason
+            logger.info("Orchestrator: node=%s 跳过（非必需节点）", node_id)
+            return "continue"
+
+        elif action == EvaluatorAction.RETRY:
             ns.status = NodeStatus.PENDING
+            ns.error = evaluation.reason
+            ns.error_code = evaluation.result.error
             logger.info("Orchestrator: node=%s 评估 retry, attempt=%d", node_id, ns.attempt)
             return "retry"
 
-        elif action == "replan":
+        elif action == EvaluatorAction.REPLAN:
             ns.status = NodeStatus.FAILED
-            ns.error = evaluation.get("reason", "评估判定需要重新规划")
+            ns.error = evaluation.reason
+            ns.error_code = evaluation.result.error
             logger.info("Orchestrator: node=%s 需要 Replan, reason=%s", node_id, ns.error)
             return "needs_replan"
 
-        elif action == "ask_user":
-            state.waiting_for_user = True
-            ns.status = NodeStatus.RUNNING
+        elif action == EvaluatorAction.ASK_APPROVAL:
+            exec_state.waiting_for_approval = True
+            ns.status = NodeStatus.WAITING_APPROVAL
             return "blocked"
 
-        elif action == "abort":
+        elif action == EvaluatorAction.ABORT:
             ns.status = NodeStatus.FAILED
-            ns.error = evaluation.get("reason", "评估判定终止")
+            ns.error = evaluation.reason
+            ns.error_code = evaluation.result.error
             return "abort"
 
         return "continue"
@@ -334,30 +380,34 @@ class Orchestrator:
     # ── 终止处理 ───────────────────────────────────────────────────────────────
 
     async def _finalize(
-        self, state: TaskState, mailbox: TaskMailbox, graph: PlanGraph,
+        self,
+        task_state: TaskState,
+        exec_state: ExecutionState,
+        mailbox: TaskMailbox,
+        graph: PlanGraph,
     ) -> None:
         """任务终态处理——推送 completed 事件 + 写最终 checkpoint。"""
-        state.status = TaskStatus.COMPLETED
-        await self._save_checkpoint(state)
+        task_state.status = TaskStatus.COMPLETED
+        await self._save_checkpoint(task_state, exec_state)
 
         completed_nodes = sum(
-            1 for ns in state.node_states.values()
+            1 for ns in exec_state.node_states.values()
             if ns.status == NodeStatus.SUCCESS
         )
         failed_nodes = sum(
-            1 for ns in state.node_states.values()
+            1 for ns in exec_state.node_states.values()
             if ns.status in (NodeStatus.FAILED, NodeStatus.UNRECOVERABLE)
         )
 
         await self._push_mailbox(mailbox, "completed", {
             "result": f"任务完成。{completed_nodes} 个节点成功"
                       + (f"，{failed_nodes} 个节点失败" if failed_nodes else ""),
-            "summary": f"共 {len(state.node_states)} 个节点，"
+            "summary": f"共 {len(exec_state.node_states)} 个节点，"
                        f"成功 {completed_nodes}，失败 {failed_nodes}",
         })
         logger.info(
             "Orchestrator: task_id=%s 完成。nodes: %d/%d success",
-            state.task_id, completed_nodes, len(state.node_states),
+            task_state.task_id, completed_nodes, len(exec_state.node_states),
         )
 
     # ── 审批判定 ────────────────────────────────────────────────────────────────
@@ -365,18 +415,30 @@ class Orchestrator:
     def _needs_approval(self, node: DAGNode) -> bool:
         """判断节点是否需要用户审批。
 
-        TODO: 基于工具的 RBACLevel 判定。
+        TODO: 工具由 Executor 做 DBT 生成时匹配，DAGNode 不直接持有工具信息。
+              审批判定需要 Executor 先回传工具名，或 Planner 在 DAGNode 上预先标注 risk_level。
         """
         return False
 
     # ── 工具方法 ───────────────────────────────────────────────────────────────
 
-    async def _save_checkpoint(self, state: TaskState) -> None:
+    def _build_checkpoint(
+        self, task_state: TaskState, exec_state: ExecutionState,
+    ) -> dict[str, Any]:
+        """组合 TaskState + ExecutionState 为 checkpoint 快照。"""
+        return {
+            "task": task_state.model_dump(),
+            "exec": exec_state.model_dump(),
+        }
+
+    async def _save_checkpoint(
+        self, task_state: TaskState, exec_state: ExecutionState,
+    ) -> None:
         """保存当前状态快照。
 
-        TODO: 调用 CheckpointManager.save(state)。
+        TODO: 调用 CheckpointManager.save(checkpoint)。
         """
-        logger.debug("Orchestrator: checkpoint 骨架跳过 task_id=%s", state.task_id)
+        logger.debug("Orchestrator: checkpoint 骨架跳过 task_id=%s", task_state.task_id)
 
     async def _push_mailbox(
         self, mailbox: TaskMailbox, event_type: str, data: dict,
