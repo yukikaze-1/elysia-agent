@@ -8,6 +8,7 @@ from Module.task_system.core.sub_agent import SubAgent
 from Module.task_system.delegation_preparer import DelegationPreparer
 from Module.task_system.infra import AgentInfra
 from Module.task_system.protocol import HITLNotifier
+from Module.task_system.task_system import TaskSystem
 from Module.task_system.schema import (
     # 基础
     TaskId,
@@ -89,6 +90,7 @@ __all__ = [
     "HITLNotifier",
     "AgentInfra",
     "DelegationPreparer",
+    "TaskSystem",
     "SubAgent",
     "Orchestrator",
     # 基础

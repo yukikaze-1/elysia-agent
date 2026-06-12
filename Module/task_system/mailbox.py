@@ -8,44 +8,115 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from collections import deque
 
-if TYPE_CHECKING:
-    from Module.task_system.schema import TaskEvent, TaskId
+from Module.task_system.schema import TaskEvent, TaskEventType, TaskId
 
 logger = logging.getLogger(__name__)
+
+# 有界队列上限。溢出时丢弃最旧的 progress 事件，保留关键事件（approval_needed/
+# completed/failed/cancelled/paused）。
+_MAXSIZE = 100
 
 
 class TaskMailbox:
     """单播事件队列——TaskSystem 写入，Agent 消费。
 
-    内部 asyncio.Queue(maxsize=100)。
-    溢出策略：丢最旧的 progress，保留 approval_needed/completed/failed。
+    内部用 deque + asyncio.Event 实现 SPSC 队列。
+    不用 asyncio.Queue——因为溢出时需要精准删除特定类型事件（最旧的 progress），
+    asyncio.Queue 不支持从中间移除元素。
+
+    溢出策略：
+        队列满时找最旧的 progress 删除。progress 丢失可接受（进度快照，后续会覆盖）。
+        若无 progress 可删且新事件非 progress，删最旧事件腾位。
+        若无 progress 可删且新事件也是 progress，静默丢弃。
 
     生命周期：
         - submit()/resume() 返回即用，调用方直接 await mailbox.get()
-        - 任务终态后 GC 回收，无 close()——调用方检测到 completed/failed 后停止消费
+        - 任务终态后 GC 回收，无 close()——调用方检测到终态事件后停止消费
     """
 
-    # TODO: 实现 _push() 溢出策略
-    # TODO: 队列满时丢弃旧 progress 事件，保留关键事件
-
     def __init__(self, task_id: TaskId) -> None:
-        self.task_id = task_id
-        self._queue: asyncio.Queue[TaskEvent] = asyncio.Queue(maxsize=100)
+        self.task_id: TaskId = task_id
+        self._deque: deque[TaskEvent] = deque()
+        self._event = asyncio.Event()
+
+    # ── 消费者 API ─────────────────────────────────────────────────────────
 
     async def get(self, timeout: float | None = None) -> TaskEvent | None:
-        """阻塞等待下一个事件。timeout 秒后返回 None。"""
-        raise NotImplementedError("TaskMailbox.get() 尚未实现")
+        """阻塞等待下一个事件。timeout 秒后返回 None。
+
+        timeout=None 时无限等待。
+        """
+        self._event.clear()  # 先清再检查——避免"if 后 clear 前"的视觉竞态窗口
+        if not self._deque:
+            try:
+                await asyncio.wait_for(self._event.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                return None
+        return self._deque.popleft()
 
     def get_nowait(self) -> TaskEvent | None:
         """非阻塞获取，无事件时返回 None。"""
-        raise NotImplementedError("TaskMailbox.get_nowait() 尚未实现")
+        return self._deque.popleft() if self._deque else None
 
     def count(self) -> int:
         """待消费事件数量。"""
-        return self._queue.qsize()
+        return len(self._deque)
 
-    def _push(self, event: TaskEvent) -> None:
-        """TaskSystem 内部写入事件。"""
-        raise NotImplementedError("TaskMailbox._push() 尚未实现")
+    # ── 内部 ────────────────────────────────────────────────────────────────
+
+    def _evict_one(self, new_type: TaskEventType) -> None:
+        """队列满时腾出一个位置。
+
+        优先删除最旧的 progress。若没有 progress 可删：
+        - 新事件非 progress → 删最旧事件（关键事件不能丢）
+        - 新事件是 progress → 不放入，静默丢弃（进度丢失可接受）
+        """
+        for i, item in enumerate(self._deque):
+            if item.type == TaskEventType.PROGRESS:
+                del self._deque[i]
+                logger.debug(
+                    "TaskMailbox: task_id=%s 溢出，丢弃旧 progress 事件",
+                    self.task_id,
+                )
+                return
+
+        # 队列里全是关键事件，没有 progress 可牺牲
+        if new_type == TaskEventType.PROGRESS:
+            # 新事件也是 progress，丢弃新事件（不放入）
+            # 通过抛出特殊异常让 _push 跳过 append
+            raise _EvictNewEvent
+        else:
+            # 新事件是关键事件，丢弃最旧事件
+            old = self._deque.popleft()
+            logger.warning(
+                "TaskMailbox: task_id=%s 队列满且全是关键事件，"
+                "丢弃最旧事件 type=%s，为新事件 type=%s 腾位",
+                self.task_id, old.type.value, new_type.value,
+            )
+
+    def _push(self, event: TaskEvent) -> None:  # noqa: F811
+        """写入事件——TaskSystem 内部调用。
+
+        无线程安全问题——TaskSystem 全部 asyncio 协程，单生产者单消费者，
+        _push 和 get_nowait 都是同步方法（无 await），不存在竞态。
+        CPU 密集工具走按需子进程，通过 JSON stdin/stdout 通信，不直接 push。
+        """
+        if len(self._deque) >= _MAXSIZE:
+            try:
+                self._evict_one(event.type)
+            except _EvictNewEvent:
+                logger.debug(
+                    "TaskMailbox: task_id=%s 队列满且全是关键事件，"
+                    "丢弃新 progress 事件",
+                    self.task_id,
+                )
+                return
+        self._deque.append(event)
+        self._event.set()
+
+
+class _EvictNewEvent(Exception):
+    """内部信号：溢出时新事件被丢弃（而非旧事件被置换）。"""
+    pass
