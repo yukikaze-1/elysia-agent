@@ -1,7 +1,7 @@
 """PlanValidator — 校验 Planner 产出的 DAG 合法性。
 
-图结构检查（环、依赖引用、孤立、可达）委托给 PlanGraph（NetworkX）。
-业务检查（工具存在、output_contract、约束上限）由本模块补充。
+图结构检查（环、依赖引用、孤立、可达性、最大深度）委托给 PlanGraph（NetworkX）。
+业务检查（output_contract、节点数上限）由本模块补充。
 """
 
 from __future__ import annotations
@@ -27,19 +27,20 @@ class PlanValidator:
     Planner 产出 Plan 后、Orchestrator 执行前调用。
     校验失败 → 返回 fix_plan（Planner 重试）或 abort（放弃）。
 
-    10 项检查分为两类：
+    当前 v1 共 8 项有效检查（2 项待 v2 补充）：
         A. 图结构（委托 PlanGraph）:
             1. 环检测
             2. 依赖引用存在
             3. 孤立节点
             4. 不可达节点
+            5. 最大深度（最长路径 ≤ max_nodes，因深度上限复用节点数上限）
         B. 业务规则（本模块）:
-            5. node_id 唯一性（构建时保证，复检）
-            6. 工具名是否在可用工具列表中
-            7. output_contract 是否合法
-            8. 高风险工具节点是否有确认标记
-            9. 节点数是否超过 max_dag_nodes
-            10. DAG 深度是否超过限制
+            6. node_id 唯一性（显式复检，提供友好错误信息）
+            7. output_contract 合法性（required 节点必须有 description 或 json_schema）
+            8. 节点数是否超过 max_dag_nodes（取 min(全局, 任务)）
+        ⚠️ 待 v2 补充:
+            - 工具名检查（需 DAGNode 有 tool_name 字段）
+            - 高风险工具确认标记（需 RBAC 集成）
     """
 
     def validate(
@@ -47,7 +48,6 @@ class PlanValidator:
         plan: Plan,
         global_constraints: ConstraintConfig,
         task_constraints: TaskConstraints,
-        available_tools: set[str] | None = None,
     ) -> ValidationResult:
         """校验 DAG 合法性。
 
@@ -55,7 +55,6 @@ class PlanValidator:
             plan:               Planner 产出的 Plan
             global_constraints: 全局约束天花板
             task_constraints:   任务级约束（与 global 取 min）
-            available_tools:    可用工具名集合（用于工具存在性检查）
 
         Returns:
             ValidationResult（valid + issues + action）
@@ -66,12 +65,28 @@ class PlanValidator:
         from Module.task_system.core.graph import PlanGraph
         graph = PlanGraph.from_plan(plan)
 
-        structural_issues = graph.validate_structure(available_tools)
+        # 1-4. 环检测 / 依赖引用 / 孤立 / 不可达
+        structural_issues = graph.validate_structure()
         issues.extend(structural_issues)
+
+        # 5. 最大深度 —— 复用 max_nodes 作为深度上限（深度 ≤ 节点数）。
+        #    对于链状 DAG（最坏情况），深度 = 节点数。
+        #    没有独立的 max_depth 字段——节点数已经约束了规模的物理上限。
+        max_nodes = min(global_constraints.max_dag_nodes, task_constraints.max_dag_nodes)
+        try:
+            max_depth = graph.compute_max_depth()
+            if max_depth > max_nodes:
+                issues.append(ValidationIssue(
+                    type=ValidationIssueType.MAX_DEPTH_EXCEEDED,
+                    message=f"DAG 深度 {max_depth} 超过上限 {max_nodes}（深度上限 = 节点数上限）",
+                ))
+        except Exception:
+            # 有环时拓扑排序失败，环已在 structural_issues 中报告
+            pass
 
         # ── B. 业务规则检查 ──────────────────────────────────────────────
 
-        # 5. node_id 唯一性（NetworkX 构建时保证，但显式复检输出友好信息）
+        # 6. node_id 唯一性（PlanGraph 构建时保证，显式复检输出友好信息）
         seen: set[str] = set()
         for node in plan.dag.nodes:
             nid = str(node.node_id)
@@ -108,34 +123,12 @@ class PlanValidator:
                         message=f"节点 {node.node_id} 的 output_contract.json_schema 缺少 'type' 字段",
                     ))
 
-        # 9. 节点数检查 —— 取 min(全局, 任务)
-        max_nodes = min(global_constraints.max_dag_nodes, task_constraints.max_dag_nodes)
+        # 8. 节点数检查 —— 取 min(全局, 任务)
         if len(plan.dag.nodes) > max_nodes:
             issues.append(ValidationIssue(
                 type=ValidationIssueType.MAX_NODES_EXCEEDED,
                 message=f"DAG 节点数 {len(plan.dag.nodes)} 超过上限 {max_nodes}",
             ))
-
-        # 10. DAG 深度检查 —— 使用拓扑排序计算最长路径
-        try:
-            topo = graph.topological_order()
-            # 计算从每个节点开始的最长路径
-            longest: dict[str, int] = {}
-            for nid in reversed(topo):
-                max_succ = 0
-                for succ in graph._graph.successors(nid):
-                    max_succ = max(max_succ, longest.get(str(succ), 0))
-                longest[str(nid)] = 1 + max_succ
-            max_depth = max(longest.values()) if longest else 0
-            # 深度上限：使用 max_dag_nodes 作为隐式深度上限（深度 ≤ 节点数）
-            if max_depth > max_nodes:
-                issues.append(ValidationIssue(
-                    type=ValidationIssueType.MAX_DEPTH_EXCEEDED,
-                    message=f"DAG 深度 {max_depth} 超过上限 {max_nodes}",
-                ))
-        except Exception:
-            # 拓扑排序失败（有环时），已在 structural_issues 中报告
-            pass
 
         # ── 汇总 ──────────────────────────────────────────────────────────
         if not issues:

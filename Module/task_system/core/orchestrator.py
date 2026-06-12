@@ -34,6 +34,8 @@ from Module.task_system.schema import (
     TaskErrorCode,
     TaskState,
     TaskStatus,
+    TaskId,
+    Tool
 )
 
 if TYPE_CHECKING:
@@ -186,7 +188,9 @@ class Orchestrator:
 
                 # 3. 执行就绪节点（Executor 产出 NodeResult）
                 exec_state.current_phase = ExecutionPhase.EXECUTING
-                results = await self._execute_nodes(ready_nodes, exec_state)
+                results = await self._execute_nodes(
+                    ready_nodes, exec_state, task_state.task_id, task_state.tools,
+                )
 
                 # 4. 评估每个结果（Evaluator 包裹为 NodeResultEvaluation）
                 exec_state.current_phase = ExecutionPhase.EVALUATING
@@ -273,14 +277,18 @@ class Orchestrator:
     # ── 执行与评估 ────────────────────────────────────────────────────────────
 
     async def _execute_nodes(
-        self, nodes: list[DAGNode], exec_state: ExecutionState,
+        self,
+        nodes: list[DAGNode],
+        exec_state: ExecutionState,
+        task_id: TaskId,
+        tools: list[Tool],
     ) -> list[NodeResult]:
-        """执行就绪节点——v1 单工具直接调用，不做 DBT。
+        """执行就绪节点——v1 逐个调用 Executor.execute()。
 
+        对每个就绪节点：更新 NodeState → 调 Executor → 收集 NodeResult。
+        v1 不做并发（顺序执行），v2 考虑 Worker Agent 池并发。
         NodeResult 仅包含 Executor 产出（ArtifactStore 引用 + 错误码 + 耗时），
         不含 Evaluator 判定——判定由 _evaluate_node 产出 NodeResultEvaluation。
-
-        TODO: 调用 Executor.execute()。
         """
         results: list[NodeResult] = []
         for node in nodes:
@@ -289,12 +297,11 @@ class Orchestrator:
             ns.attempt += 1
             ns.started_at = self._now()
 
-            logger.info("Orchestrator: 骨架执行 node=%s", node.node_id)
-            results.append(NodeResult(
-                node_id=node.node_id,
-                attempt=ns.attempt,
-                duration_ms=0,
-            ))
+            logger.info("Orchestrator: 执行 node=%s attempt=%d", node.node_id, ns.attempt)
+            result = await self._executor.execute(node, task_id, tools)
+            # Executor 返回的 attempt=0，用 Orchestrator 追踪的实际 attempt 覆盖
+            result.attempt = ns.attempt
+            results.append(result)
         return results
 
     async def _evaluate_node(
@@ -434,11 +441,9 @@ class Orchestrator:
     async def _save_checkpoint(
         self, task_state: TaskState, exec_state: ExecutionState,
     ) -> None:
-        """保存当前状态快照。
-
-        TODO: 调用 CheckpointManager.save(checkpoint)。
-        """
-        logger.debug("Orchestrator: checkpoint 骨架跳过 task_id=%s", task_state.task_id)
+        """保存当前状态快照。"""
+        checkpoint = self._build_checkpoint(task_state, exec_state)
+        await self._checkpoint_mgr.save(task_state.task_id, checkpoint)
 
     async def _push_mailbox(
         self, mailbox: TaskMailbox, event_type: str, data: dict,

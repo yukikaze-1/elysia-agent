@@ -160,21 +160,17 @@ class PlanGraph:
 
     # ── 结构校验 ─────────────────────────────────────────────────────────────
 
-    def validate_structure(
-        self,
-        available_tools: set[str] | None = None,
-    ) -> list[ValidationIssue]:
+    def validate_structure(self) -> list[ValidationIssue]:
         """DAG 结构合法性检查（使用 NetworkX 算法）。
 
-        覆盖 Plan Validator 10 项中的以下图结构项：
+        覆盖以下图结构项：
             1. DAG 是否有环
-            2. node_id 唯一性（构建时保证）
-            3. 依赖引用是否存在
-            7. 孤立节点
-            8. 不可达节点
+            2. 依赖引用是否存在
+            3. 孤立节点
+            4. 不可达节点
 
-        工具相关检查（4-6）由 PlanValidator 调用方补充。
-        约束检查（9-10）由 PlanValidator 调用方补充。
+        注意：不检查工具名——v1 的 DAGNode 没有 tool_name 字段，
+        工具匹配由 Executor 运行时完成。待 v2 补充。
         """
         issues: list[ValidationIssue] = []
 
@@ -199,13 +195,6 @@ class PlanGraph:
                         node_id=node_id,
                         message=f"依赖的节点 {pred} 不存在",
                     ))
-            # 工具存在性检查（如果提供了工具列表）
-            if available_tools is not None:
-                node = self._nodes.get(node_id)
-                # 注意：DAGNode 目前没有 tool_name 字段——
-                # 工具筛选在 DelegationPreparer 阶段完成，
-                # DAG Node 声明的是目标而非工具。此检查暂且跳过。
-
         # 3. 孤立节点（>1 节点时为异常，单节点任务正常）
         if len(self._g.nodes) > 1:
             for node_id in self._g.nodes:
@@ -310,6 +299,27 @@ class PlanGraph:
             and node_states[nid].status in (NodeStatus.SUCCESS, NodeStatus.SKIPPED)
         )
         return completed / total
+
+    def compute_max_depth(self) -> int:
+        """计算 DAG 的最长路径长度（节点数）。
+
+        拓扑排序后动态规划：从叶子到根反向计算每个节点的最长路径。
+        空 DAG 返回 0，单节点返回 1。
+        """
+        if not self._g.nodes:
+            return 0
+        try:
+            topo = self.topological_order()
+        except Exception:
+            return 0  # 有环时拓扑排序失败，深度无意义（环检测由 validate_structure 负责）
+
+        longest: dict[NodeId, int] = {}
+        for nid in reversed(topo):
+            max_succ = 0
+            for succ in self._g.successors(nid):
+                max_succ = max(max_succ, longest.get(succ, 0))
+            longest[nid] = 1 + max_succ
+        return max(longest.values()) if longest else 0
 
     # ── 内部访问（调试/测试用）────────────────────────────────────────────
 

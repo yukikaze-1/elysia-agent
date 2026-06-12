@@ -30,6 +30,8 @@ from Module.task_system.schema import (
 if TYPE_CHECKING:
     from Module.task_system.artifact_store import ArtifactStore
     from Module.task_system.checkpoint import CheckpointManager
+    from Module.task_system.core.evaluator import Evaluator
+    from Module.task_system.core.executor import Executor
     from Module.task_system.core.graph import PlanGraph
     from Module.task_system.core.orchestrator import Orchestrator
     from Module.task_system.core.planner import Planner
@@ -51,28 +53,42 @@ class SubAgent:
     TaskState 归 SubAgent 管理（任务生命周期），ExecutionState 归 Orchestrator（执行追踪）。
     两者合并为 checkpoint 持久化。
 
-    依赖（7 个）:
-        infra, hitl_notifier, planner, plan_validator, orchestrator,
+    依赖（8 个）:
+        infra, hitl_notifier, planner, plan_validator, executor, evaluator,
         checkpoint_manager, artifact_store
+        Orchestrator 由 SubAgent 内部自建（per-SubAgent）
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         infra: AgentInfra,
         hitl_notifier: HITLNotifier,
         planner: Planner,
         plan_validator: PlanValidator,
-        orchestrator: Orchestrator,
+        executor: Executor,
+        evaluator: Evaluator,
         checkpoint_manager: CheckpointManager,
         artifact_store: ArtifactStore,
     ) -> None:
+        from Module.task_system.core.orchestrator import Orchestrator
+
         self._infra = infra
         self._hitl = hitl_notifier
         self._planner = planner
         self._plan_validator = plan_validator
-        self._orchestrator = orchestrator
         self._checkpoint_mgr = checkpoint_manager
         self._artifact_store = artifact_store
+
+        # Orchestrator 是 per-SubAgent 的——面向单个 Plan 的执行循环
+        # Executor/Evaluator 由 TaskSystem 共享注入
+        self._orchestrator = Orchestrator(
+            infra=infra,
+            hitl_notifier=hitl_notifier,
+            executor=executor,
+            evaluator=evaluator,
+            checkpoint_manager=checkpoint_manager,
+            artifact_store=artifact_store,
+        )
 
         # ── 扩展点（v1 不启用）─────────────────────────────────────────────
         # self._state_manager: StateManager | None = None
@@ -110,6 +126,7 @@ class SubAgent:
         task_state = TaskState(
             task_id=task_id,
             status=TaskStatus.PENDING,
+            tools=context.tools,
             created_at=self._now(),
             updated_at=self._now(),
         )

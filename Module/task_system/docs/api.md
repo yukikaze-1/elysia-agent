@@ -41,7 +41,7 @@ CognitiveLoop 工具执行器识别 submit_task
     │     ├── PlanValidator.validate()
     │     ├── PlanGraph.from_plan()
     │     └── Orchestrator.run()
-    │           ├── Executor.execute()      ← 工具匹配 + Worker 派发
+    │           ├── Executor.execute()      ← v1 LLM 工具匹配 + ToolManager 调用，v2 Worker 派发
     │           └── Evaluator.evaluate()    ← 可能调 LLM 做语义判定
     │
     ├── TaskMailbox ──→ Agent ──→ OutputManager → WebSocket → 前端 (进度/结果)

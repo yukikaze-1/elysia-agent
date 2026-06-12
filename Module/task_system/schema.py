@@ -98,12 +98,13 @@ class TaskStatus(StrEnum):
 
 
 class SubmitRejectionCode(StrEnum):
-    """submit() 同步拒绝码——4 项。
+    """submit() 同步拒绝码——5 项。
 
     TaskSystem.submit() 参数校验不通过时返回，
     CognitiveLoop 据此生成用户可见的错误信息。
     不会出现在 TaskState 或 TaskEvent 中。
     """
+    NOT_READY = "not_ready"                              # TaskSystem 尚未 start()
     INVALID_PARAM = "invalid_param"                     # 参数校验不通过
     PLAN_TOO_LARGE = "plan_too_large"                   # DAG 预估节点数超限
     CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"  # 上下文窗口不足
@@ -273,6 +274,7 @@ class Tool(BaseModel):
     TODO: 字段由 ToolRegistry / ToolPlugin 侧定义。当前占位，防止裸 dict。
     """
     name: str                   # 工具唯一标识符（例："search"）
+    description: str            # 工具功能描述（例："搜索互联网获取实时信息"）
     model_config = {"extra": "allow"}  # 暂时允许任意字段
 
 
@@ -729,6 +731,7 @@ class TaskState(BaseModel):
     task_id: TaskId
     status: TaskStatus = TaskStatus.PENDING
     plan: Plan | None = None                   # 当前生效的 Plan（Replan 后更新）
+    tools: list[Tool] = Field(default_factory=list)  # 本次任务可用的工具列表（从 DelegationContext 透传，Executor 消费）
     created_at: str = ""                       # ISO 8601
     updated_at: str = ""
     error: str | None = None                   # 人类可读的错误原因（终态 FAILED 时写入）

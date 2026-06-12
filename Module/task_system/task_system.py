@@ -8,14 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from typing import TYPE_CHECKING
 
+from Module.task_system.mailbox import TaskMailbox
 from Module.task_system.schema import (
     AgentId,
     AgentList,
     DelegationContext,
     ResumeError,
     SubmitError,
+    SubmitRejectionCode,
     TaskDAG,
     TaskId,
     TaskProgress,
@@ -29,12 +32,13 @@ from Module.task_system.schema import (
 if TYPE_CHECKING:
     from Module.task_system.artifact_store import ArtifactStore
     from Module.task_system.checkpoint import CheckpointManager
+    from Module.task_system.core.evaluator import Evaluator
+    from Module.task_system.core.executor import Executor
     from Module.task_system.core.orchestrator import Orchestrator
     from Module.task_system.core.planner import Planner
     from Module.task_system.core.plan_validator import PlanValidator
     from Module.task_system.core.sub_agent import SubAgent
     from Module.task_system.infra import AgentInfra
-    from Module.task_system.mailbox import TaskMailbox
     from Module.task_system.protocol import HITLNotifier
 
 logger = logging.getLogger(__name__)
@@ -68,42 +72,68 @@ class TaskSystem:
     ) -> None:
         self._infra = infra
         self._hitl = hitl_notifier
+        self._max_sub_agents = max_sub_agents
 
-        # ── 并发控制 ──
-        self._semaphore = asyncio.BoundedSemaphore(max_sub_agents)
+        # ── 并发控制（start() 时创建）──
+        self._semaphore: asyncio.BoundedSemaphore | None = None
 
         # ── 运行时注册表 ──
-        self._tasks: dict[TaskId, SubAgent] = {}       # 活跃任务 → SubAgent
-        self._mailboxes: dict[TaskId, TaskMailbox] = {}  # 活跃任务 → Mailbox
+        self._tasks: dict[TaskId, SubAgent] = {}
+        self._mailboxes: dict[TaskId, TaskMailbox] = {}
 
-        # ── 内部组件（骨架占位，后续逐步实例化）─────────────────────
+        # ── 内部组件（start() 时实例化）────────────────────────────────
         self._planner: Planner | None = None
         self._plan_validator: PlanValidator | None = None
-        self._orchestrator: Orchestrator | None = None
+        self._executor: Executor | None = None
+        self._evaluator: Evaluator | None = None
         self._checkpoint_mgr: CheckpointManager | None = None
         self._artifact_store: ArtifactStore | None = None
+
+        # 防误用：submit() 前必须调 start()
+        self._started = False
 
     # ── 生命周期 ─────────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """启动 TaskSystem。
+        """启动 TaskSystem——初始化所有内部组件。
 
-        初始化内部组件（Planner/Orchestrator/CheckpointManager/ArtifactStore），
-        恢复 pending checkpoints（服务重启后的任务恢复）。
+        调用方必须在 submit() 之前调用 start()。
         """
-        # TODO: 实例化 Planner、PlanValidator、Orchestrator、
-        #       CheckpointManager、ArtifactStore
-        # TODO: 扫描 checkpoint 目录，恢复 PAUSED 状态的任务
-        logger.info("TaskSystem.start: max_sub_agents=%d", self._semaphore._bound_value)
+        from Module.task_system.artifact_store import ArtifactStore
+        from Module.task_system.checkpoint import CheckpointManager
+        from Module.task_system.core.evaluator import Evaluator
+        from Module.task_system.core.executor import Executor
+        from Module.task_system.core.planner import Planner
+        from Module.task_system.core.plan_validator import PlanValidator
+
+        self._semaphore = asyncio.BoundedSemaphore(self._max_sub_agents)
+
+        # 共享组件（无状态服务 + 存储层）
+        self._artifact_store = ArtifactStore()
+        self._checkpoint_mgr = CheckpointManager()
+        self._planner = Planner()
+        self._plan_validator = PlanValidator()
+        self._executor = Executor(
+            infra=self._infra,
+            artifact_store=self._artifact_store,
+            hitl_notifier=self._hitl,
+        )
+        self._evaluator = Evaluator()
+        # Orchestrator 不在此构造——per-SubAgent，SubAgent.__init__ 自建
+
+        self._started = True
+        logger.info("TaskSystem.start: max_sub_agents=%d, 组件初始化完成",
+                     self._max_sub_agents)
 
     async def stop(self) -> None:
         """软关停。
 
         等所有运行中的 Sub-Agent 完成当前节点 → 写 checkpoint → 清理。
         """
+        logger.info("TaskSystem.stop: 活跃任务数=%d", len(self._tasks))
         # TODO: 遍历 self._tasks，逐个通知暂停
         # TODO: 等待所有任务 checkpoint 完成后 cleanup
-        logger.info("TaskSystem.stop: 活跃任务数=%d", len(self._tasks))
+        self._started = False
 
     # ── 核心入口 ─────────────────────────────────────────────────────────
 
@@ -120,12 +150,55 @@ class TaskSystem:
             TaskMailbox — 调用方直接 await mailbox.get() 消费事件流
             SubmitError — 参数校验不通过时直接拒绝，不创建 Sub-Agent
         """
-        # TODO: 参数校验（context.intent 非空、context.tools 非空等）
-        # TODO: 创建 TaskId、TaskMailbox
-        # TODO: 构造 SubAgent 实例（注入 infra + hitl + planner + orchestrator + ...）
-        # TODO: 获取 semaphore → asyncio.create_task(sub_agent.run(context, mailbox))
-        # TODO: 注册到 self._tasks / self._mailboxes
-        raise NotImplementedError("TaskSystem.submit() 尚未实现")
+        if not self._started:
+            return SubmitError(
+                code=SubmitRejectionCode.NOT_READY,
+                message="TaskSystem 尚未 start()，请先调用 start()",
+            )
+
+        # ── 参数校验 ──
+        if not context.intent.strip():
+            return SubmitError(
+                code=SubmitRejectionCode.INVALID_PARAM,
+                message="intent 不能为空",
+            )
+
+        # ── 创建任务标识 ──
+        task_id = TaskId(uuid.uuid4().hex[:8])
+
+        # ── 创建 Mailbox（先于 SubAgent——保证返回时已有队列可用）──
+        mailbox: TaskMailbox = TaskMailbox(task_id)
+
+        # ── 构造 SubAgent ──
+        sub_agent = SubAgent(
+            infra=self._infra,
+            hitl_notifier=self._hitl,
+            planner=self._planner,
+            plan_validator=self._plan_validator,
+            executor=self._executor,
+            evaluator=self._evaluator,
+            checkpoint_manager=self._checkpoint_mgr,
+            artifact_store=self._artifact_store,
+        )
+
+        # ── 获取并发槽位 + 注册 ──
+        await self._semaphore.acquire()
+        self._tasks[task_id] = sub_agent
+        self._mailboxes[task_id] = mailbox
+
+        # ── fire-and-forget 启动 ──
+        async def _run_and_cleanup() -> None:
+            try:
+                await sub_agent.run(context, mailbox)
+            except Exception:
+                logger.exception("TaskSystem: task_id=%s 执行异常", task_id)
+            finally:
+                self._cleanup_task(task_id)
+                self._semaphore.release()
+
+        asyncio.create_task(_run_and_cleanup())
+        logger.info("TaskSystem.submit: task_id=%s, intent=%.60s...", task_id, context.intent)
+        return mailbox
 
     # ── 任务控制 ─────────────────────────────────────────────────────────
 

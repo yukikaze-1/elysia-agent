@@ -1,15 +1,19 @@
 """CheckpointManager — 任务状态持久化。
 
-每轮 DAG 迭代后保存 TaskState 快照。支持 pause/resume 和崩溃恢复。
+每轮 DAG 迭代后保存 TaskState + ExecutionState 快照。
+支持 pause/resume 和崩溃恢复。
+
+v1: 内存 dict，进程重启后丢失。
+v2: 文件持久化（write-to-tmp + atomic rename）。
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from Module.task_system.schema import TaskId, TaskState
+    from Module.task_system.schema import TaskId
 
 logger = logging.getLogger(__name__)
 
@@ -17,45 +21,39 @@ logger = logging.getLogger(__name__)
 class CheckpointManager:
     """任务状态快照的持久化管理。
 
-    写入策略：write-to-tmp + atomic rename（进程中途崩溃不留下损坏文件）。
+    v1 实现：内存 dict[TaskId, checkpoint]。
+    每轮 Orchestrator 迭代后保存，resume 时加载，终态后清理。
 
-    职责：
-        - save:  每轮迭代后保存 TaskState
-        - load:  resume 时恢复 TaskState
-        - delete: 任务终态后清理
+    写入策略（v2）：
+        write-to-tmp + atomic rename（进程中途崩溃不留下损坏文件）。
 
-    MUTATION 节点的特殊处理：
+    MUTATION 节点的特殊处理（v2）：
         执行前写 node.status="executing" + idempotency_key
         崩溃恢复时 node.status="executing" → 标记为 "unrecoverable"，绝不重试
     """
 
-    # TODO: __init__ 接收 checkpoint 目录路径
-    # TODO: write-to-tmp + atomic rename 实现
-    # TODO: TTL 清理（按文件日期）
+    def __init__(self) -> None:
+        self._store: dict[TaskId, dict[str, Any]] = {}
 
-    async def save(self, state: TaskState) -> None:
-        """保存当前 TaskState 快照。
+    # ── 持久化 ──────────────────────────────────────────────────────────
 
-        Raises:
-            NotImplementedError: 骨架阶段
+    async def save(self, task_id: TaskId, checkpoint: dict[str, Any]) -> None:
+        """保存 checkpoint 快照。
+
+        checkpoint 结构：{"task": TaskState.model_dump(), "exec": ExecutionState.model_dump()}
         """
-        raise NotImplementedError("CheckpointManager.save() 尚未实现")
+        self._store[task_id] = checkpoint
+        logger.debug("CheckpointManager.save: task_id=%s", task_id)
 
-    async def load(self, task_id: TaskId) -> TaskState | None:
-        """加载 TaskState 快照。
-
-        Returns:
-            TaskState 如果 checkpoint 存在，否则 None
-
-        Raises:
-            NotImplementedError: 骨架阶段
-        """
-        raise NotImplementedError("CheckpointManager.load() 尚未实现")
+    async def load(self, task_id: TaskId) -> dict[str, Any] | None:
+        """加载 checkpoint 快照。不存在返回 None。"""
+        cp = self._store.get(task_id)
+        if cp is not None:
+            logger.debug("CheckpointManager.load: task_id=%s", task_id)
+        return cp
 
     async def delete(self, task_id: TaskId) -> None:
-        """删除任务的 checkpoint。
-
-        Raises:
-            NotImplementedError: 骨架阶段
-        """
-        raise NotImplementedError("CheckpointManager.delete() 尚未实现")
+        """删除任务的 checkpoint。"""
+        existed = self._store.pop(task_id, None) is not None
+        if existed:
+            logger.debug("CheckpointManager.delete: task_id=%s", task_id)

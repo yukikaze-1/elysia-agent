@@ -1,39 +1,111 @@
-"""Planner — LLM 调用：委派上下文 → DAG 骨架。
+"""Planner — LLM 调用：DelegationContext → DAG 骨架。
 
 TaskSystem 编排循环的起点。首次规划产出 Plan，Replan 产出 DAGPatch。
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+from openai import AsyncOpenAI
 
 from Module.task_system.schema import (
+    ArtifactId,
     ConstraintConfig,
+    DAG,
+    DAGNode,
     DAGPatch,
     DelegationContext,
     ExperienceRecord,
     NodeId,
     NodeResultEvaluation,
+    OutputContract,
     Plan,
 )
 
 logger = logging.getLogger(__name__)
 
+# ── LLM 输出 JSON Schema（嵌入 prompt 中，不直接用 response_format json_schema）──
+# 用 json_object 模式 + prompt 描述，兼容 DeepSeek / OpenAI / Ollama
+
+_OUTPUT_SCHEMA_DESCRIPTION = """{
+  "nodes": [
+    {
+      "node_id": "string (唯一标识，如 search_weather)",
+      "description": "string (这一步做什么，给 Executor 看的自然语言任务描述)",
+      "output_contract": {
+        "description": "string (期望产出什么，给 Evaluator 做业务判定用)"
+      },
+      "required": true,
+      "input_bindings": ["output:search_weather"],
+      "output_as": "output:send_email"
+    }
+  ],
+  "edges": [["from_node_id", "to_node_id"]]
+}"""
+
+# ── System Prompt 模板 ──────────────────────────────────────────────────────────
+
+_SYSTEM_PROMPT = """你是任务规划器。根据用户意图、可用工具和约束，将任务拆解为有向无环图（DAG）。
+
+## DAG 构建规则
+1. 每个节点有唯一的 node_id（短名，如 "search_weather"、"send_email"）
+2. edges 定义执行顺序：(from, to) 表示 from 完成后 to 才能开始
+3. input_bindings 引用上游节点的 output_as，声明数据依赖
+4. output_as 用 "output:<node_id>" 格式
+5. 可选步骤（失败后不影响整体）设 required: false
+6. output_contract.description 是自然语言期望——Evaluator 用它判断步骤是否成功
+
+## 可用工具
+{tools}
+
+## 约束
+- DAG 节点数上限: {max_nodes}
+- 敏感操作上限: {max_mutations}
+
+## 输出格式
+严格返回以下 JSON（只返回 JSON，不要 markdown 代码块）：
+{output_schema}"""
+
+_USER_PROMPT = """## 任务意图
+{intent}
+
+## 提示
+{hints}
+
+## 上下文摘要
+{context}"""
+
 
 class Planner:
     """一次 LLM 调用，生成 DAG 骨架（首次）或增量 Patch（Replan）。
 
-    输入 DelegationContext（DelegationPreparer 已筛选工具、约束、上下文摘要），
-    产出结构化的执行计划。不填 DBT——那是 Executor 的事。
+    plan() 流程:
+        1. 构建 prompt（含可用工具、约束、输出 schema）
+        2. LLM 调用（json_object 模式）
+        3. 解析 JSON → Plan
+        4. 返回 Plan（校验由 PlanValidator 在 SubAgent 层完成）
 
-    两条路径：
-        plan()   —— 首次规划，产出完整 Plan
-        replan() —— 失败后修复，产出增量 DAGPatch（不动已完成节点）
+    replan() 流程:
+        v1 暂不实现——当前只处理正常完成路径。
     """
 
-    # TODO: __init__ 接收 LLM client + planner prompt template
-    # TODO: 经验记忆查询（Milvus）由调用方注入 experience_records，
-    #       Planner 本身不访问数据库
+    def __init__(self) -> None:
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "DEEPSEEK_API_KEY 环境变量未设置，Planner 无法创建 DeepSeek client"
+            )
+        self._client = AsyncOpenAI(
+            api_key=api_key,
+            base_url="https://api.deepseek.com",
+        )
+
+    # ── 首次规划 ──────────────────────────────────────────────────────────────
 
     async def plan(
         self,
@@ -46,16 +118,45 @@ class Planner:
         Args:
             context:            委派上下文（intent/hints/tools/task_constraints/…）
             global_constraints: 全局约束天花板，与 task_constraints 取 min
-            experience_records: 已知失败模式（可为 None / 空列表，Milvus 不可用时跳过）
+            experience_records: v1 忽略（经验记忆未实现）
 
         Returns:
-            Plan（DAG 节点列表 + 依赖关系 + 期望结果）
-            Planner 不负责校验 DAG 合法性——PlanValidator 来做。
+            Plan（DAG 节点列表 + 依赖关系）
 
         Raises:
-            NotImplementedError: 骨架阶段
+            ValueError: LLM 返回的 JSON 无法解析为合法 Plan
         """
-        raise NotImplementedError("Planner.plan() 尚未实现")
+        # ── 计算生效约束 ──
+        tc = context.task_constraints
+        max_nodes = min(global_constraints.max_dag_nodes, tc.max_dag_nodes)
+        max_mutations = min(global_constraints.max_mutations, tc.max_mutations)
+
+        # ── 构建 prompt ──
+        tools_desc = self._format_tools(context.tools)
+        hints = context.hints or "（无）"
+        ctx_text = context.summarized_context or "（无）"
+
+        system = _SYSTEM_PROMPT.format(
+            tools=tools_desc,
+            max_nodes=max_nodes,
+            max_mutations=max_mutations,
+            output_schema=_OUTPUT_SCHEMA_DESCRIPTION,
+        )
+        user = _USER_PROMPT.format(
+            intent=context.intent,
+            hints=hints,
+            context=ctx_text,
+        )
+
+        # ── LLM 调用 ──
+        logger.debug("Planner system prompt:\n%s", system)
+        logger.debug("Planner user prompt:\n%s", user)
+        raw = await self._call_llm(system, user)
+        logger.debug("Planner LLM 响应:\n%s", raw)
+        plan = self._parse_response(raw)
+        return plan
+
+    # ── Replan ─────────────────────────────────────────────────────────────────
 
     async def replan(
         self,
@@ -66,23 +167,114 @@ class Planner:
     ) -> DAGPatch:
         """Replan——失败诊断 → 增量 DAG 修改。
 
-        只修改失败/未执行的部分，已完成节点不动。
-        full_replan 是兜底——补丁式修改无法覆盖时退回全量重规划。
-
-        Args:
-            original_plan:      当前生效的 Plan（含已完成节点的结果）
-            failed_node_id:     哪个节点失败了
-            failure_diagnosis:  Evaluator 的诊断（为什么失败、建议如何修复）
-            node_results:       所有已完成节点的评估结果（含原始 NodeResult）
-
-        Returns:
-            DAGPatch——增量修改。调用方（Orchestrator）负责 apply。
-
-        Raises:
-            NotImplementedError: 骨架阶段
-
-        TODO: 并行执行时可能多个节点同时失败触发 Replan，届时
-              failed_node_id 改为 failed_node_ids: list[NodeId]，
-              与 DAGPatch.trigger_nodes 对齐。
+        v1 暂不实现。
         """
         raise NotImplementedError("Planner.replan() 尚未实现")
+
+    # ── 内部：LLM 调用 ────────────────────────────────────────────────────────
+
+    async def _call_llm(self, system: str, user: str) -> str:
+        """调用 DeepSeek v4，推理模式 + JSON Output。"""
+        response = await self._client.chat.completions.create(
+            model="deepseek-v4-pro",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            response_format={"type": "json_object"},
+            # reasoning_effort="max",
+            reasoning_effort="high",
+            extra_body={"thinking": {"type": "enabled"}},
+            max_tokens=8192,
+        )
+        content = response.choices[0].message.content
+        if not content:
+            raise _PlanParseError("LLM 返回空响应")
+        return content
+
+    # ── 内部：解析 ────────────────────────────────────────────────────────────
+
+    def _parse_response(self, raw: str) -> Plan:
+        """解析 LLM 返回的 JSON → Plan。
+
+        Raises:
+            _PlanParseError: JSON 不合法或缺少必要字段
+        """
+        # 去除可能的 markdown 代码块包裹
+        text = raw.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            # 去掉第一行 (```json) 和最后一行 (```)
+            text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise _PlanParseError(f"JSON 解析失败: {e}") from e
+
+        if not isinstance(data, dict):
+            raise _PlanParseError(f"期望 JSON object，收到 {type(data).__name__}")
+
+        # 解析 nodes
+        raw_nodes = data.get("nodes")
+        if not isinstance(raw_nodes, list) or not raw_nodes:
+            raise _PlanParseError("nodes 为空或不是数组")
+
+        nodes: list[DAGNode] = []
+        for i, rn in enumerate(raw_nodes):
+            if not isinstance(rn, dict):
+                raise _PlanParseError(f"nodes[{i}] 不是 object")
+            nid = rn.get("node_id", "")
+            if not nid:
+                raise _PlanParseError(f"nodes[{i}] 缺少 node_id")
+
+            oc_data = rn.get("output_contract", {}) or {}
+            nodes.append(DAGNode(
+                node_id=NodeId(nid),
+                description=rn.get("description", ""),
+                output_contract=OutputContract(
+                    description=oc_data.get("description", ""),
+                ),
+                required=rn.get("required", True),
+                input_bindings=[ArtifactId(b) for b in rn.get("input_bindings", []) or []],
+                output_as=ArtifactId(rn.get("output_as", "")),
+            ))
+
+        # 解析 edges
+        raw_edges = data.get("edges", [])
+        if not isinstance(raw_edges, list):
+            raise _PlanParseError("edges 不是数组")
+
+        edges: list[tuple[NodeId, NodeId]] = []
+        for i, e in enumerate(raw_edges):
+            if not isinstance(e, list) or len(e) != 2:
+                raise _PlanParseError(f"edges[{i}] 不是二元组 [from, to]")
+            edges.append((NodeId(str(e[0])), NodeId(str(e[1]))))
+
+        now = datetime.now(timezone.utc).isoformat()
+        return Plan(
+            dag=DAG(nodes=nodes, edges=edges),
+            plan_version=1,
+            created_at=now,
+            updated_at=now,
+        )
+
+    # ── 内部：工具列表格式化 ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _format_tools(tools: list) -> str:
+        """将 Tool 列表格式化为 LLM prompt 可读的文本。"""
+        if not tools:
+            return "（无可用工具）"
+        lines: list[str] = []
+        for t in tools:
+            name = getattr(t, 'name', str(t))
+            desc = getattr(t, 'description', '') or ''
+            lines.append(f"- {name}: {desc}" if desc else f"- {name}")
+        return "\n".join(lines)
+
+
+# ── 内部异常 ────────────────────────────────────────────────────────────────────
+
+class _PlanParseError(Exception):
+    """LLM 输出的 JSON 无法解析为 Plan。"""

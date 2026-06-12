@@ -36,7 +36,7 @@ Module/task_system/           # 全新模块
 │   ├── graph.py               # PlanGraph: NetworkX DiGraph 封装（图算法层）
 │   ├── planner.py             # Planner: LLM → DAG 骨架 / DAGPatch
 │   ├── plan_validator.py      # PlanValidator: DAG 静态校验（纯逻辑，10 项）
-│   ├── executor.py            # Executor: DBT 生成 + Worker Agent 调度
+│   ├── executor.py            # Executor: v1 单节点工具调用（LLM匹配+ToolManager），v2 DBT + Worker
 │   └── evaluator.py           # Evaluator: 双重判定（ExecutionStatus + BusinessStatus）
 ├── safety/                    # 安全护栏（纯逻辑，无副作用）
 │   ├── __init__.py

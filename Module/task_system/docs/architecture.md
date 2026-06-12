@@ -52,8 +52,8 @@
                     │  │  │ 执行层           │  │  │
                     │  │  │ Orchestrator     │  │  │
                     │  │  │  ├ PlanGraph(NX) │  │  │
-                    │  │  │  ├ Executor      │  │  │
-                    │  │  │  │  └ WorkerPool │  │  │
+                    │  │  │  ├ Executor      │  │  │  ← v1: 单节点工具调用
+                    │  │  │  │  └ WorkerPool │  │  │  ← v2: Worker Agent 池
                     │  │  │  └ Evaluator     │  │  │
                     │  │  └─────────────────┘  │  │
                     │  └───────────────────────┘  │
@@ -476,7 +476,7 @@ Orchestrator.run(task_state, exec_state, graph, mailbox) → OrchestratorResult:
 
 **Orchestrator 依赖（6 个）**：infra, hitl_notifier, executor, evaluator, checkpoint_manager, artifact_store（注意：没有 Planner、PlanValidator——它们属于 Sub-Agent 层）。
 
-**Sub-Agent 依赖（7 个）**：infra, hitl_notifier, planner, plan_validator, orchestrator, checkpoint_manager, artifact_store（Executor + Evaluator 在 Orchestrator 内部）。
+**Sub-Agent 依赖（8 个）**：infra, hitl_notifier, planner, plan_validator, executor, evaluator, checkpoint_manager, artifact_store。Orchestrator 由 SubAgent 内部自建（per-SubAgent），注入 executor/evaluator。
 
 **PlanGraph —— NetworkX 图存储层**
 
@@ -532,23 +532,22 @@ DAG (Plan)                     DBT (每个节点内部)
 
 ### 5.3 Executor
 
-- 接收 Plan → 拓扑排序
-- 为每个节点生成 DBT（按需调用 LLM 或使用模板）
-- **审批风暴检测**：执行前扫描所有节点 → 汇总 MUTATION 步骤 → 生成批量审批预览卡片
-- 无依赖的节点分配 Worker Agent 并发执行
-- **上下文传递**（push 模式）：调度节点 B 时，若 B 依赖 A，Executor 将 A 的 `NodeResult` 注入 B 的 context。Worker 不主动 pull，避免跨 Worker 状态共享
+**v1（已实现）**：单节点工具调用——每个 DAGNode 直接匹配工具并调用，不做 DBT。
+
+- 接收单个 DAGNode → LLM function-calling 匹配工具 + 填写参数 → ToolRegistry 直接调用 → 存储结果到 ArtifactStore
+- **工具匹配**：LLM function-calling（一次调用完成选工具+填参数），从 `TaskState.tools` 可用工具列表中匹配
+- **工具调用**：透传参数到 `ToolManager.execute()`，由其内部处理参数验证、安全检查、HITL 审批、超时控制
+- **结果存储**：`ToolResult → Artifact`，以 `node.output_as` 为 key 存入 ArtifactStore
+- **上下文传递**（push 模式）：上游节点产出 → `ArtifactStore.put(output_as)` → 下游节点 `input_bindings` → `ArtifactStore.get()`
+- **审批**：v1 全靠 ToolManager 内置 HITL（`SafetyPipeline._run_hitl()`），Executor 不主动推送审批
+- **错误处理**：`ToolResult.error_type` → `NodeErrorCode` 映射（TOOL_NOT_FOUND、TOOL_TIMEOUT、PERMISSION_DENIED 等）
+
+**v2（规划中）**：DBT 生成 + Worker Agent 池分配 + 审批风暴检测。
+
+- 为每个节点生成 DBT（行为树：Sequence/Selector/Parallel/Action/Condition），优先模板匹配，匹配不上才调 LLM
+- **Worker Agent 池**：无依赖的节点分配 Worker Agent 并发执行
+- **审批风暴检测**：执行前扫描所有节点 → 汇总 MUTATION 步骤 → 生成批量审批预览卡片，通过 HITLNotifier 推送
 - 运行时窗口内多个 MUTATION 自动合并为批量审批
-
-**DBT 模板**：常见节点类型有预定义模板，优先匹配模板（零 LLM 调用），匹配不上才调 LLM 生成：
-
-| 模板 | 适用场景 | DBT 结构 |
-|------|---------|---------|
-| `retry-once` | 简单查询、可能偶发超时 | Sequence → Action → 失败 → Retry(1) |
-| `search-then-fetch` | 先搜索再取详情 | Sequence → Action(search) → Action(fetch) |
-| `transform-validate` | 数据处理 + 校验 | Sequence → Action(parse) → Condition(valid?) |
-| `fallback-search` | 搜索可能无结果 | Selector → Action(primary) → Action(fallback_search) |
-
-> **MVP 阶段**：可以先 stubb 模板匹配，全走 LLM 生成 DBT。模板是成本优化手段，非功能必需。
 
 ### 5.4 Evaluator
 
