@@ -100,12 +100,12 @@
 > 将复杂多步骤任务提交到后台异步执行。适用场景：涉及多步操作、状态变更、或长时间运行的任务。
 > 简单单步操作（如单次搜索、单次文件读取）请直接用对应工具。
 
-LLM 调用 `submit_task` → CognitiveLoop 工具执行器识别到此工具 → 路由到 `TaskSystem.submit()`。**零额外 LLM 调用、零额外字段、零分类逻辑**——LLM 选择工具本身就是复杂度判断。
+LLM 调用 `submit_task` → CognitiveLoop 工具执行器识别到此工具 → `DelegationPreparer.prepare()`（一次 LLM，准备委派上下文）→ `TaskSystem.submit(context)`。**零额外字段、零分类逻辑**——LLM 选择工具本身就是复杂度判断。
 
 ```
 用户: "帮我查最近三天天气，下雨的日子给老板发邮件"
 LLM 思考 → 多步骤（搜索 + 条件判断 + 发邮件）→ 调用 submit_task(intent="...")
-CognitiveLoop → 识别 submit_task → TaskSystem.submit(intent, ctx)
+CognitiveLoop → 识别 submit_task → DelegationPreparer.prepare() → TaskSystem.submit(context)
 Agent → "好的，已经在后台执行了" → IDLE_BACKGROUND_TASK
 ```
 
@@ -180,29 +180,31 @@ Module/task_system/
 ├── __init__.py          # 公开 API facade
 ├── protocol.py          # HITLNotifier 等对外依赖协议（ABC）
 ├── delegation_preparer.py # DelegationPreparer: LLM 准备委派上下文（将来独立）
-├── schema.py            # 基础 Pydantic 数据结构（所有子包共用）
+├── schema.py            # 基础 Pydantic 数据结构（所有子包共用，60 个类型）
 ├── infra.py             # AgentInfra + 共享基础设施（将来移出 TaskSystem）
 ├── mailbox.py           # TaskMailbox（单播，Agent 唯一消费者）
 ├── checkpoint.py        # 节点级 Checkpoint
-├── pool.py              # Agent 并发控制（BoundedSemaphore）
-├── summary_store.py     # 任务摘要存储（JSONL, TTL 7天）
+├── artifact_store.py    # ArtifactStore: 节点产物统一存储
 ├── core/                # Plan-Execute-Evaluate 编排循环
+│   ├── __init__.py
 │   ├── sub_agent.py     # SubAgent: 决策层——规划/Replan/熔断
 │   ├── orchestrator.py  # Orchestrator: 执行层——按 Plan 推进 DAG
 │   ├── graph.py         # PlanGraph: NetworkX DiGraph 封装（图算法层）
 │   ├── planner.py       # Planner: LLM → DAG 骨架 / DAGPatch
 │   ├── plan_validator.py # PlanValidator: DAG 静态校验（纯逻辑）
-│   ├── executor.py      # Executor: 拓扑排序 + DBT 生成
+│   ├── executor.py      # Executor: v1 单工具直接调用，v2 DBT 生成
 │   └── evaluator.py     # Evaluator: 双重判定
-├── safety/              # 安全护栏（纯逻辑，无副作用）
-│   ├── constraint.py    # 统一约束层
-│   └── rbac.py          # RBAC 权限矩阵
-├── learning/            # 经验记忆与学习（双向反馈闭环）
-│   ├── reflector.py     # Reflector: 失败经验提炼
-│   ├── experience_memory.py  # 任务经验记忆（独立于用户 LTM）
-│   └── dedup.py         # 时间滑动窗口去重
-├── tool_runner.py       # CPU 密集工具子进程入口
-├── debug_api.py         # Debug WebUI 数据接口
+├── safety/              # TODO: 安全护栏（纯逻辑，无副作用）—— 骨架阶段尚未创建
+│   ├── constraint.py    # TODO: 统一约束层
+│   └── rbac.py          # TODO: RBAC 权限矩阵
+├── learning/            # ⚠️ v2 经验记忆与学习（v1 不做）
+│   ├── reflector.py     # TODO(v2): Reflector: 失败经验提炼
+│   ├── experience_memory.py  # TODO(v2): 任务经验记忆（独立于用户 LTM）
+│   └── dedup.py         # TODO(v2): 时间滑动窗口去重
+├── pool.py              # TODO: Agent 并发控制（BoundedSemaphore）
+├── summary_store.py     # TODO: 任务摘要存储（JSONL, TTL 7天）
+├── tool_runner.py       # TODO: CPU 密集工具子进程入口
+├── debug_api.py         # TODO: Debug WebUI 数据接口
 └── __main__.py          # 独立运行测试
 ```
 
@@ -218,36 +220,70 @@ Module/task_system/
 **schema.py** — 所有基础数据结构集中定义：
 
 ```python
-# Plan / DAG / DBT 模型
-class Plan(BaseModel): ...            # dag + plan_version + created_at + updated_at
-class DAGNode(BaseModel): ...         # node_id, description, output_contract, required, input_bindings, output_as, max_retries, max_duration_s
-class OutputContract(BaseModel): ...  # description + json_schema + output_type (v2 类型注册表预留)
-class DAGPatchType(StrEnum): REPLACE_NODES, ADD_NODES, REMOVE_NODES
-class DAGPatch(BaseModel): ...        # patch_type + reason + trigger_nodes + created_at + 5 种操作列表
-class DBTNode(BaseModel): ...
-class DBTNodeType(StrEnum): SEQUENCE, SELECTOR, PARALLEL, ACTION, CONDITION
+# ══ 基础 NewType ID ──
+TaskId, AgentId, ApprovalId, SessionId, NodeId, ArtifactId
 
-# 上下文与结果
-class DelegationResult(BaseModel): ... # status(DelegationStatus) + context + reason + missing_tools(Tool[]) + suggestion
-class DelegationContext(BaseModel): ...  # intent + hints + tools + task_constraints + summarized_context + session_id + return_mode(ReturnMode)
-class TaskConstraints(BaseModel): ...  # max_dag_nodes + max_mutations + max_total_tokens/max_task_duration_s/max_failure_count(None=全局)
-class TaskResult(BaseModel): ...   # task_id + status + node_results + summary + created_at/completed_at + token_usage + tools_used(Tool[]) + error/error_code
-class NodeResult(BaseModel): ...          # Executor 产出：artifact_refs + error (NodeErrorCode) + attempt + duration_ms
-class NodeResultEvaluation(BaseModel): ...  # Evaluator 产出：包裹 NodeResult + execution_status + business_status + reason + suggested_action
-class TaskSummary(BaseModel): ...
+# ══ 基础枚举 ──
+class TaskStatus(StrEnum):          # 11 态: PENDING → PLANNING → RUNNING → COMPLETED/FAILED/CANCELLED
+class NodeStatus(StrEnum):          # 8 态: PENDING → RUNNING → SUCCESS/FAILED/SKIPPED/UNRECOVERABLE/...
+class SubmitRejectionCode(StrEnum): # 4 项: INVALID_PARAM/PLAN_TOO_LARGE/CONTEXT_WINDOW_EXCEEDED/TOKEN_BUDGET_EXCEEDED
+class TaskErrorCode(StrEnum):       # 10 项: PLANNING_FAILED/TOOL_ERROR/PERMISSION_DENIED/FAILURE_MELTDOWN/...
+class ResumeErrorCode(StrEnum):     # 6 项: CHECKPOINT_NOT_FOUND/CORRUPTED/VERSION_MISMATCH/...
+class NodeErrorCode(StrEnum):       # 8 项: TOOL_ERROR/TOOL_TIMEOUT/TOOL_NOT_FOUND/PERMISSION_DENIED/...
+class RBACLevel(StrEnum):           # READ_ONLY / SAFE_WRITE / MUTATION
 
-# 经验记忆（⚠️ v1 不做）
-class ExperienceRecord(BaseModel): ...  # tool_name + error_pattern + diagnosis + fix + confidence + status + ...
+# ══ 第一层：跨层协议（CognitiveLoop ↔ TaskSystem）──
+class ConstraintConfig(BaseModel):     # 全局约束天花板: max_total_tokens/max_failure_count/max_dag_nodes/... (8 字段)
+class TaskConstraints(BaseModel):      # 任务级约束: max_dag_nodes/max_mutations + 3 个可选(None=全局默认)
+class DelegationContext(BaseModel):    # 委派沙盒: intent/hints/tools/task_constraints/summarized_context/session_id/return_mode
+class DelegationResult(BaseModel):     # DelegationPreparer 产出: status(DelegationStatus)/context/reason/missing_tools/suggestion
+class DelegationStatus(StrEnum):       # OK / NO_MATCHING_TOOLS / TOO_VAGUE
+class ReturnMode(StrEnum):             # NATURAL_LANGUAGE / STRUCTURED
+class SubmitError(BaseModel):          # code(SubmitRejectionCode) + message + details + suggestions
+class ResumeError(BaseModel):          # code(ResumeErrorCode) + message + details + suggestions
+class HITLData(BaseModel):             # task_id/approval_id/agent_id/node_id/node_task/tool_name/params/rbac_level/risk_summary
+class UserProfile(BaseModel):          # 占位——CognitiveLoop 侧定义
+class Tool(BaseModel):                 # 占位——ToolRegistry 侧定义
 
-# Token 统计
-class TokenComponentType(StrEnum): PLANNER, EXECUTOR, EVALUATOR, REFLECTOR
-class TokenComponent(BaseModel): ...  # component + node_id + prompt/completion/total_tokens + model
-class TokenUsage(BaseModel): ...      # task_id + components
-class TokenStats(BaseModel): ...      # period(TokenPeriod) + total_tokens + by_component + by_model
+# ══ 第二层：核心输出（TaskMailbox 事件 + 查询视图）──
+class TaskEvent(BaseModel):           # type(TaskEventType) + data: 6 种事件
+class TaskEventType(StrEnum):         # progress/approval_needed/completed/failed/cancelled/paused
+class TaskSummary(BaseModel):         # 查询视图: task_id/status/intent/created_at/nodes/tools_used/token_usage/approvals/error/error_code/replans
+class TaskProgress(BaseModel):        # 进度快照: status/current_node_id/completed_nodes/total_nodes/elapsed_ms/estimated_remaining_ms
+class DAGNodeInfo(BaseModel):         # 节点展示: node_id/description/status/progress/error/error_code
+class TaskDAG(BaseModel):             # DAG 可视化: nodes(list[DAGNodeInfo]) + edges(list[tuple[NodeId,NodeId]])
+class AgentInfo/AgentList:            # Agent 池查询视图
+class TokenUsage/TokenComponent/TokenStats:  # Token 统计
+class TokenComponentType(StrEnum):    # PLANNER/EXECUTOR/EVALUATOR/REFLECTOR + 4 个 TODO(v2)
+class TokenPeriod(StrEnum):           # TODAY/WEEK/MONTH/ALL
 
-# 通知
-class TaskEvent(BaseModel): ...      # type(TaskEventType) + data：6 种事件（progress/approval_needed/completed/failed/cancelled/paused）
-class HITLData(BaseModel): ...          # task_id + approval_id + agent_id + node_id + node_task + tool_name + params + rbac_level + risk_summary
+# ══ 第三层：内部编排（Planner/Executor/Evaluator/Orchestrator）──
+class DAG(BaseModel):                 # nodes(list[DAGNode]) + edges(list[tuple[NodeId,NodeId]])
+class Plan(BaseModel):                # dag + plan_version + created_at + updated_at
+class DAGNode(BaseModel):             # node_id/description/output_contract/required/input_bindings/output_as/max_retries/max_duration_s
+class OutputContract(BaseModel):      # description + json_schema + output_type(v2)
+class DAGPatch(BaseModel):            # patch_type/reason/trigger_nodes/created_at + 5 种操作列表
+class DAGPatchType(StrEnum):          # REPLACE_NODES/ADD_NODES/REMOVE_NODES
+class DBTNode/DBTNodeType:            # ⚠️ 实验性质，v1 不做
+class NodeResult(BaseModel):          # Executor 产出: artifact_refs(list[ArtifactId]) + error(NodeErrorCode) + attempt + duration_ms
+class NodeResultEvaluation(BaseModel): # Evaluator 产出: execution_status + business_status + reason + suggested_action + result
+class TaskResult(BaseModel):          # 终态结构化结果: node_results + summary + token_usage + tools_used + error/error_code
+class ExecutionStatus(StrEnum):       # OK/TIMEOUT/ERROR/PERMISSION_DENIED/CANCELLED
+class BusinessStatus(StrEnum):        # GOAL_ACHIEVED/GOAL_PARTIAL/GOAL_FAILED
+class EvaluatorAction(StrEnum):       # CONTINUE/RETRY/SKIP/REPLAN/ASK_APPROVAL/ABORT
+class ValidationResult/ValidationIssue/ValidationIssueType/ValidationAction:  # Plan 校验
+class Artifact(BaseModel):            # artifact_id(ArtifactId)/artifact_type/node_id/task_id/content/metadata/created_at
+
+# ══ 运行时状态（Orchestrator/SubAgent）──
+class TaskState(BaseModel):           # SubAgent 管理: task_id/status/plan/created_at/updated_at/error/error_code
+class ExecutionState(BaseModel):      # Orchestrator 管理: node_states/current_phase/waiting_for_approval/pause_requested/created_at/updated_at
+class NodeState(BaseModel):           # 单节点运行时: node_id/status/attempt/started_at/finished_at/artifact_refs/summary/error/error_code
+class OrchestratorRunStatus(StrEnum): # SUCCESS/FAILED/NEEDS_REPLAN/BLOCKED/PAUSED
+class OrchestratorResult(BaseModel):  # status + error_context + checkpoint_state
+class ExecutionPhase(StrEnum):        # EXECUTING/EVALUATING/FINALIZING
+
+# ══ 经验记忆（⚠️ v1 不做）──
+class ExperienceRecord(BaseModel):    # tool_name/error_pattern/diagnosis/fix/confidence/status/...
 ```
 
 > **注意**：`errors.py` 已合并到 `schema.py`。所有数据模型、状态码、错误码、枚举统一在 `schema.py` 中定义。不单独拆分 error 文件。
@@ -522,7 +558,7 @@ DAG (Plan)                     DBT (每个节点内部)
 # Executor 产出——工具原始返回值
 class NodeResult:
     node_id: NodeId
-    artifact_refs: list[str]         # ArtifactStore 产物引用
+    artifact_refs: list[ArtifactId]     # ArtifactStore 产物引用
     error: NodeErrorCode | None      # 节点级错误码
     attempt: int                     # 第几次尝试
     duration_ms: int                 # 执行耗时
@@ -927,9 +963,12 @@ CognitiveLoop LLM 调用 submit_task(intent, hints)
   └─ 任务约束 (TaskConstraints)   ← DelegationPreparer 本次设置，更严格
        └─ 取 min(全局, 任务) 作为实际生效值
 
-任务约束只设两个值（其余用全局就够了）:
-  - max_dag_nodes: DAG 复杂度上限
-  - max_mutations: 敏感操作上限
+任务约束（TaskConstraints）共 5 个字段：
+  - max_dag_nodes:       DAG 复杂度上限（必设）
+  - max_mutations:       敏感操作上限（必设）
+  - max_total_tokens:    本次任务 token 上限（None=全局默认）
+  - max_task_duration_s: 本次任务最大时长秒数（None=全局默认）
+  - max_failure_count:   本次任务最大连续失败次数（None=全局默认）
 ```
 
 例：全局 `max_dag_nodes=20`，DelegationPreparer 判断这是简单查询 → 任务 `max_dag_nodes=3`。实际生效 `3`。
@@ -1230,13 +1269,14 @@ Sub-Agent 完成（或失败/取消）后：
   "task_id": "xxx",
   "status": "completed",
   "intent": "查询三天天气并给老板发邮件",
-  "started_at": "2026-06-08T10:00:00",
+  "created_at": "2026-06-08T10:00:00",
   "duration_ms": 15420,
   "nodes": {"total": 3, "completed": 2, "failed": 0, "skipped": 1},
   "tools_used": ["web_search", "send_email"],
   "token_usage": {"planner": 500, "executor": 800, "evaluator": 200},
-  "approvals": {"requested": 1, "approved": 1},
-  "errors": [],
+  "approvals": {"requested": 1, "approved": 1, "denied": 0},
+  "error": null,
+  "error_code": null,
   "replans": 0
 }
 ```
@@ -1390,14 +1430,13 @@ class TaskSystem:
     async def submit(
         self,
         context: DelegationContext,
-        return_mode: Literal["structured", "natural"] = "structured",
     ) -> TaskMailbox | SubmitError:
         """
         提交任务。内部 Planner → Executor → Mailbox 回传。
         唯一入口，简单任务不进这里（CognitiveLoop 自己处理了）。
         参数验证在 TaskSystem 侧执行，不合法直接拒绝，不创建 Sub-Agent。
         context: DelegationPreparer.prepare() 的产出，包含 intent/hints/
-                 tools/task_constraints/summarized_context/session_id。
+                 tools/task_constraints/summarized_context/session_id/return_mode。
         """
         ...
 
@@ -1442,7 +1481,7 @@ class TaskSystem:
 
     def get_token_usage(self, task_id: TaskId) -> TokenUsage | None: ...
 
-    def get_token_stats(self, period: str = "today") -> TokenStats: ...
+    def get_token_stats(self, period: TokenPeriod = TokenPeriod.TODAY) -> TokenStats: ...
 
 class SubmitError:
     code: SubmitRejectionCode
@@ -1477,7 +1516,7 @@ class TaskMailbox:
         ...
 
 class TaskEvent:
-    type: str  # "progress" | "approval_needed" | "completed" | "failed" | "cancelled"
+    type: TaskEventType  # progress | approval_needed | completed | failed | cancelled | paused
     data: dict
 
 # progress 事件的 data schema:
@@ -1504,7 +1543,7 @@ class TaskEvent:
 ```
 submit_task 工具执行
   → DelegationPreparer.prepare(...)   ← 一次 LLM 调用，准备上下文
-  → TaskSystem.submit(intent, context, hints)
+  → TaskSystem.submit(context)        ← context 已含 intent/hints/tools/...
 ```
 
 ```python

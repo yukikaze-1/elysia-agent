@@ -15,19 +15,40 @@
 ## 通信架构
 
 ```
-CognitiveLoop
-    │  submit_task(...)
+用户 → LLM 调用 submit_task 工具(intent="查三天天气，下雨给老板发邮件")
+  ↓
+CognitiveLoop 工具执行器识别 submit_task
+  │
+  ├─ ① DelegationPreparer.prepare(intent, hints, 全量tools, 对话历史, ...)
+  │      │  一次 LLM 调用，调用者是 CognitiveLoop（代码在 TaskSystem 模块内）
+  │      ▼
+  │   DelegationResult
+  │      ├── status=NO_MATCHING_TOOLS → CognitiveLoop 回复用户"缺工具"（不进 TaskSystem）
+  │      ├── status=TOO_VAGUE         → CognitiveLoop 请用户澄清（不进 TaskSystem）
+  │      └── status=OK → DelegationContext（含筛选后的 tools + 摘要上下文 + 任务约束）
+  │                           │
+  └─ ② TaskSystem.submit(context) ────────────────────────────┐
+         │  调用者仍是 CognitiveLoop                           │
+         │  返回 (TaskId, TaskMailbox)，fire-and-forget       │
+         └────────────────────────────────────────────────────┘
+                                                               │
+    ┌──────────────────────────────────────────────────────────┘
     ▼
-DelegationPreparer (TaskSystem 模块内)  ← 一次 LLM 调用，准备委派上下文
-    │  DelegationResult
-    ▼
-TaskSystem
+  TaskSystem 内部
+    ├── TaskId + TaskMailbox 创建（Mailbox 创建在 Planner 之前）
+    ├── SubAgent.run(context, mailbox)
+    │     ├── Planner.plan(context)        ← 第二次 LLM: DelegationContext → Plan(DAG)
+    │     ├── PlanValidator.validate()
+    │     ├── PlanGraph.from_plan()
+    │     └── Orchestrator.run()
+    │           ├── Executor.execute()      ← 工具匹配 + Worker 派发
+    │           └── Evaluator.evaluate()    ← 可能调 LLM 做语义判定
+    │
     ├── TaskMailbox ──→ Agent ──→ OutputManager → WebSocket → 前端 (进度/结果)
-    └── HITLNotifier ─→ [实现者] → 前端 (审批收件箱)
-                              ↑
-                    今天: EventBus
-                    将来: 任意
+    └── HITLNotifier ─→ [EventBus] → 前端审批收件箱 (审批快速通道)
 ```
+
+**关键顺序**：`DelegationPreparer.prepare()` 和 `TaskSystem.submit()` 都是 CognitiveLoop 调用的，不是 TaskSystem 内部链式调用。DelegationPreparer 需要全量工具列表（CognitiveLoop 持有），TaskSystem 只需要筛选后的 DelegationContext。
 
 - **TaskMailbox**：单播。消费者只有 Agent。WebUI 通过查询 API + SSE 拉数据，不从 Mailbox 消费。
 - **HITLNotifier**：审批快速通道。TaskSystem 依赖抽象协议，不依赖 EventBus。
@@ -65,12 +86,11 @@ class TaskSystem:
     async def submit(
         self,
         context: DelegationContext,
-        return_mode: Literal["structured", "natural"] = "structured",
     ) -> TaskMailbox | SubmitError:
         """
         提交任务。内部先创建 Mailbox → 再启动 Planner/Executor。
         context: DelegationPreparer.prepare() 的产出，包含 intent/hints/
-                 tools/task_constraints/summarized_context/session_id。
+                 tools/task_constraints/summarized_context/session_id/return_mode。
         """
 ```
 
@@ -135,7 +155,7 @@ class HITLNotifier(ABC):
         HITLData 字段:
           - task_id, approval_id, agent_id
           - node_id, node_task（当前节点在做什么）
-          - tool_name, params, risk_summary
+          - tool_name, params, rbac_level, risk_summary
         """
         ...
 
@@ -158,7 +178,7 @@ EventBusHITLNotifier 演示实现见 protocol.py。
 > **调用者**：CognitiveLoop
 > **将来**：可独立为 delegation 服务
 
-`submit_task` 被调用后、`TaskSystem.submit()` 之前，用一个 LLM 调用准备干净的委派上下文。
+`submit_task` 被调用后、`TaskSystem.submit()` 之前，用一次 LLM 调用准备干净的委派上下文。
 
 ```python
 class DelegationPreparer:
@@ -177,7 +197,7 @@ class DelegationPreparer:
 
 | status | 含义 | context | CognitiveLoop 处理 |
 |--------|------|---------|-------------------|
-| `ok` | 有匹配工具 | DelegationContext（含 intent/hints） | 调用 TaskSystem.submit(context) |
+| `ok` | 有匹配工具 | DelegationContext（含 intent/hints/tools/return_mode） | 调用 TaskSystem.submit(context) |
 | `no_matching_tools` | 工具库缺少所需工具 | None | fail——不是参数问题，直接告知用户 |
 | `too_vague` | 意图过于模糊 | None | fail——请用户澄清，不反复猜测 |
 
@@ -198,20 +218,22 @@ class TaskMailbox:
     def count(self) -> int: ...
 
 class TaskEvent:
-    type: Literal["progress", "approval_needed", "completed", "failed", "cancelled"]
+    type: TaskEventType  # progress | approval_needed | completed | failed | cancelled | paused
     data: dict
-    # progress:          {"task_id", "node_id", "node_index": "2/5",
-    #                      "node_description", "percent", "message"}
-    # approval_needed:   {"approval_id", "task_id", "agent_id", "node_id",
-    #                      "node_task", "tool_name", "params", "risk_summary"}
-    # completed:         {"result", "summary"}         ← TODO: 字段待第三层细化
-    # failed:            {"error", "error_type"}        ← TODO: 字段待第三层细化
-    # cancelled:         {}                             ← TODO: 字段待第三层细化
+    # progress:          {"task_id", "node_id", "node_description",
+    #                      "percent", "message"}
+    # approval_needed:   {"task_id", "approval_id", "agent_id", "node_id",
+    #                      "node_task", "tool_name", "params", "rbac_level", "risk_summary"}
+    # completed:         {"task_id", "result", "summary", "total_nodes",
+    #                      "completed_nodes", "failed_nodes"}
+    # failed:            {"task_id", "error", "error_type"}
+    # cancelled:         {"task_id", "reason"}
+    # paused:            {"task_id", "message"}
 ```
 
 > `approval_needed` 两条路径，顺序执行（非并发）：
 > 1. Mailbox._push(approval_needed) — 系统记录（可靠）
-> 2. HITLNotifier.request_approval(data) — 前端收件箱（best-effort，Audit 流兜底）
+> 2. HITLNotifier.request_approval(data) — 前端收件箱（best-effort，审计流兜底）
 
 **生命周期**：任务终态后 Mailbox 销毁（无 close，GC 回收即可），调用方无需手动管理。
 **队列溢出策略**：`maxsize=100`，溢出时丢最旧的 progress，保留 approval_needed/completed/failed。
@@ -222,6 +244,7 @@ class TaskEvent:
 
 ```python
 class TaskStatus(StrEnum):
+    """任务状态机——11 态。"""
     PENDING = "pending"
     PLANNING = "planning"
     RUNNING = "running"
@@ -268,7 +291,7 @@ class TaskStatus(StrEnum):
     def list_agents(self) -> AgentList: ...
     """当前活跃的 Sub-Agent 和 Worker Agent 列表。Debug 用。"""
 
-    def get_token_stats(self, period: str = "today") -> TokenStats: ...
+    def get_token_stats(self, period: TokenPeriod = TokenPeriod.TODAY) -> TokenStats: ...
     """聚合 token 统计。Debug 仪表盘用。"""
 ```
 
@@ -280,9 +303,9 @@ class TaskStatus(StrEnum):
 GET /debug/api/tasks/stream
 
 event: node_status    data: {"task_id": "t1", "node_id": "A", "status": "success"}
-                      # status 使用 NodeStatus 枚举: pending/running/success/failed/skipped/unrecoverable
+                      # status 使用 NodeStatus 枚举
 event: task_status    data: {"task_id": "t1", "status": "completed"}
-                      # status 使用 TaskStatus 枚举: pending/planning/running/.../completed/failed
+                      # status 使用 TaskStatus 枚举
 event: agent_change   data: {"available_slots": 3, "active_sub_agents": 1, "active_workers": 2}
 ```
 
@@ -292,7 +315,7 @@ event: agent_change   data: {"available_slots": 3, "active_sub_agents": 1, "acti
 
 # 第三部分：辅助类型
 
-> 上面所有方法签名中出现的类型汇总。按归属分组。
+> 上面所有方法签名中出现的类型汇总。按归属分组。与 schema.py 同步。
 
 ---
 
@@ -314,6 +337,9 @@ SessionId = NewType("SessionId", str)
 NodeId = NewType("NodeId", str)
 """DAG 节点唯一标识符。出现在 DAGNodeInfo、TaskProgress、TokenComponent 中。
 调用方不需要自己构造——查询结果中包含，日志追踪用。"""
+
+ArtifactId = NewType("ArtifactId", str)
+"""产物唯一标识符。ArtifactStore 存储时的 key，与 DAGNode.output_as 对应。"""
 ```
 
 ---
@@ -339,26 +365,27 @@ class TaskErrorCode(StrEnum):
     TOOL_ERROR = "tool_error"
     PERMISSION_DENIED = "permission_denied"
     TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"
-    MUTATION_LIMIT_REACHED = "mutation_limit_reached"
     # 资源耗尽
     FAILURE_MELTDOWN = "failure_meltdown"
     TIMEOUT = "timeout"
+    MUTATION_LIMIT_REACHED = "mutation_limit_reached"
     # 外部 / 兜底
     CANCELLED_BY_USER = "cancelled_by_user"
     INTERNAL_ERROR = "internal_error"
 
 class NodeErrorCode(StrEnum):
-    """节点执行错误码——7 项。NodeResult.error 使用。"""
+    """节点执行错误码——8 项。NodeResult.error 使用。"""
     TOOL_ERROR = "tool_error"
     TOOL_TIMEOUT = "tool_timeout"
     TOOL_NOT_FOUND = "tool_not_found"
     PERMISSION_DENIED = "permission_denied"
     WORKER_CRASH = "worker_crash"
     CONTEXT_OVERFLOW = "context_overflow"
+    TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"
     NETWORK_ERROR = "network_error"
 
 class ResumeErrorCode(StrEnum):
-    """resume() 失败时的错误码——7 项。"""
+    """resume() 失败时的错误码——6 项。"""
     CHECKPOINT_NOT_FOUND = "checkpoint_not_found"
     CHECKPOINT_CORRUPTED = "checkpoint_corrupted"
     CHECKPOINT_VERSION_MISMATCH = "checkpoint_version_mismatch"
@@ -383,27 +410,42 @@ class ConstraintConfig:
     max_task_duration_s: float = 600.0    # 整个任务最大执行时间（秒）
     max_tool_error_chars: int = 2000      # 工具错误消息截断长度
 
+class TaskConstraints:
+    """任务级约束。与全局 ConstraintConfig 取 min。None 表示使用全局默认。"""
+    max_dag_nodes: int                    # DAG 节点数上限
+    max_mutations: int                    # 敏感操作次数上限
+    max_total_tokens: int | None          # None=全局默认
+    max_task_duration_s: float | None     # None=全局默认
+    max_failure_count: int | None         # None=全局默认
+
 class DelegationContext:
     """status=ok 时传入。Planner 的工作说明书——所有信息在此，不分散传参。"""
     intent: str                          # LLM 输出的完整任务意图（非用户原始输入）
-    hints: str | None                    # LLM 观察到的元信息（紧急程度、偏好等）
-    tools: list[Tool]             # 本次任务可用的工具列表（从全量工具中筛选）
-    task_constraints: TaskConstraints    # 任务级限制（与 ConstraintConfig 取 min）
-    summarized_context: str              # LLM 摘要的相关上下文（≤ 500 字）
-    session_id: SessionId                # 日志关联
+    hints: str | None                     # LLM 观察到的元信息（紧急程度、偏好等）
+    tools: list[Tool]                     # 本次任务可用的工具列表（从全量工具中筛选）
+    task_constraints: TaskConstraints     # 任务级限制（与 ConstraintConfig 取 min）
+    summarized_context: str               # LLM 摘要的相关上下文（≤ 500 字）
+    session_id: SessionId                 # 日志关联
+    return_mode: ReturnMode               # 产出报告模式——自然语言 or 结构化
 
-class TaskConstraints:
-    """任务级约束。与全局 ConstraintConfig 取更严格者。"""
-    max_dag_nodes: int                   # DAG 节点数上限
-    max_mutations: int                   # 敏感操作次数上限
+class ReturnMode(StrEnum):
+    """产出报告模式。"""
+    NATURAL_LANGUAGE = "natural_language"  # 自然语言总结（默认）
+    STRUCTURED = "structured"              # 结构化数据（node_results）
+
+class DelegationStatus(StrEnum):
+    """DelegationPreparer 的三态判定结果。"""
+    OK = "ok"
+    NO_MATCHING_TOOLS = "no_matching_tools"
+    TOO_VAGUE = "too_vague"
 
 class DelegationResult:
     """DelegationPreparer 的产出。status 决定 context 是否有值。"""
-    status: Literal["ok", "no_matching_tools", "too_vague"]
+    status: DelegationStatus             # ok / no_matching_tools / too_vague
     context: DelegationContext | None    # ok 时有值
-    reasoning: str                       # 始终有
-    missing_tools: list[str]      # no_matching_tools
-    suggestion: str | None               # too_vague
+    reason: str                          # LLM 判定理由（始终有）
+    missing_tools: list[Tool]            # no_matching_tools 时，缺少的工具
+    suggestion: str | None               # too_vague 时，给用户的澄清建议
 ```
 
 ---
@@ -423,6 +465,7 @@ class ResumeError:
     code: ResumeErrorCode
     message: str
     details: dict
+    suggestions: list[str]               # 修复建议
 ```
 
 ---
@@ -430,6 +473,12 @@ class ResumeError:
 ## 14. 审批
 
 ```python
+class RBACLevel(StrEnum):
+    """工具权限级别。"""
+    READ_ONLY = "read_only"       # 只读，完全自主
+    SAFE_WRITE = "safe_write"     # 安全写入（沙箱内），条件自主
+    MUTATION = "mutation"         # 外部变更，必须审批
+
 class HITLData:
     """HITL 审批请求数据。同一份数据走 HITLNotifier（强类型）和 Mailbox（审计流）。"""
     task_id: TaskId
@@ -439,6 +488,7 @@ class HITLData:
     node_task: str                       # 当前节点在做什么（来自 DAGNode.description）
     tool_name: str
     params: dict
+    rbac_level: RBACLevel                # 工具权限级别，前端据此渲染危险程度
     risk_summary: str
 ```
 
@@ -452,46 +502,65 @@ class TaskSummary:
     task_id: TaskId
     status: TaskStatus
     intent: str
-    started_at: str              # ISO 8601
-    duration_ms: int
-    nodes: dict                  # {"total": N, "completed": N, "failed": N, "skipped": N}
-    tools_used: list[str]
-    token_usage: dict            # {"planner": N, "executor": N, "evaluator": N, ...}
-    approvals: dict              # {"requested": N, "approved": N}
-    errors: list[str]
+    created_at: str                      # ISO 8601，对齐 TaskState.created_at
+    duration_ms: int                     # 总耗时（预计算）
+    nodes: dict                          # {"total": N, "completed": N, "failed": N, "skipped": N}
+    tools_used: list[Tool]               # 审计：本任务调用了哪些工具
+    token_usage: dict                    # {"planner": N, "executor": N, "evaluator": N, ...}
+    approvals: dict                      # {"requested": N, "approved": N, "denied": N}
+    error: str | None                    # 任务级错误消息（来自 TaskState.error）
+    error_code: TaskErrorCode | None     # 任务级错误码（来自 TaskState.error_code）
     replans: int
 
 class TaskProgress:
     """单任务执行进度快照。"""
     task_id: TaskId
+    status: TaskStatus
     current_node_id: NodeId | None
-    completed: int
-    total: int
+    completed_nodes: int                 # 已完成节点数
+    total_nodes: int                     # 总节点数
     elapsed_ms: int
-    estimated_remaining_ms: int | None
+    estimated_remaining_ms: int | None   # None=无法估算
 
 class TaskDAG:
     """任务 DAG 的可视化数据。"""
     nodes: list[DAGNodeInfo]
-    edges: list[tuple[str, str]]
+    edges: list[tuple[NodeId, NodeId]]
 
 class DAGNodeInfo:
-    """DAG 图中单个节点的展示信息。"""
+    """DAG 图中单个节点的展示信息（查询用，非内部编排数据）。
+
+    注意：当前不包含 tool_name——v1 工具由 Executor 运行时匹配，
+    整个管线尚未携带工具名。后续在 NodeResult 上补 tool_name 时同步加回。
+    """
     node_id: NodeId
     description: str
-    status: NodeStatus            # pending / running / success / failed / skipped / unrecoverable
-    tool_name: str | None
+    status: NodeStatus                   # pending / running / success / failed / skipped / unrecoverable / waiting_approval / cancelled
     progress: float
-    error: str | None
+    error: str | None                    # 人类可读，来自 NodeState.error
+    error_code: NodeErrorCode | None     # 机器可读，来自 NodeState.error_code
 
 class NodeStatus(StrEnum):
-    """DAG 节点的运行时状态。出现在 DAGNodeInfo 中。"""
+    """DAG 节点的运行时状态——8 态。出现在 DAGNodeInfo 中。"""
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
     SKIPPED = "skipped"
     UNRECOVERABLE = "unrecoverable"
+    WAITING_APPROVAL = "waiting_approval"
+    CANCELLED = "cancelled"
+
+class AgentType(StrEnum):
+    """Agent 类型。"""
+    SUB = "sub"        # Sub-Agent：任务级执行单元
+    WORKER = "worker"  # Worker Agent：节点级执行单元
+
+class AgentStatus(StrEnum):
+    """Agent 运行时状态。"""
+    RUNNING = "running"
+    PAUSED = "paused"
+    AWAITING_APPROVAL = "awaiting_approval"
 
 class AgentList:
     """Agent 池当前状态。"""
@@ -503,13 +572,27 @@ class AgentList:
 class AgentInfo:
     """单个 Agent 的运行信息。"""
     agent_id: AgentId
-    agent_type: Literal["sub", "worker"]
+    agent_type: AgentType
     task_id: TaskId
-    node_id: NodeId | None          # Worker 专用
-    status: str                     # "running" | "paused" | "awaiting_approval"
-    started_at: float
-    last_seen_ts: float
+    node_id: NodeId | None               # Worker 专用
+    status: AgentStatus
+    started_at: str                      # ISO 8601
+    last_seen_at: str                    # ISO 8601
     duration_ms: int
+
+class TokenPeriod(StrEnum):
+    """Token 统计时间段。"""
+    TODAY = "today"
+    WEEK = "week"
+    MONTH = "month"
+    ALL = "all"
+
+class TokenComponentType(StrEnum):
+    """Token 消耗来源组件。"""
+    PLANNER = "planner"
+    EXECUTOR = "executor"
+    EVALUATOR = "evaluator"
+    REFLECTOR = "reflector"    # TODO: 尚未实现，Token 统计预留
 
 class TokenUsage:
     """单个任务的 token 消耗明细。"""
@@ -518,18 +601,18 @@ class TokenUsage:
 
 class TokenComponent:
     """单个组件的 token 消耗记录。"""
-    component: str                  # "planner" | "executor" | "evaluator" | "reflector"
+    component: TokenComponentType
     node_id: NodeId | None
     prompt_tokens: int
     completion_tokens: int
-    total_tokens: int
+    total_tokens: int                    # prompt + completion（预计算）
     model: str
 
 class TokenStats:
     """聚合 token 统计（按时间段）。Debug 仪表盘用。"""
-    period: str                     # "today" | "week" | "all"
+    period: TokenPeriod
     total_tokens: int
-    by_component: dict[str, int]
+    by_component: dict[str, int]         # TokenComponentType → 总量
     by_model: dict[str, int]
 ```
 
@@ -544,5 +627,6 @@ class UserProfile(BaseModel):
 
 class Tool(BaseModel):
     """工具描述。ToolRegistry 管理，DelegationPreparer 从全量中筛选。"""
-    # TODO: 字段由 ToolRegistry / ToolPlugin 侧定义，当前占位
+    name: str                            # 工具唯一标识符
+    # TODO: 其余字段由 ToolRegistry / ToolPlugin 侧定义，当前占位
 ```
