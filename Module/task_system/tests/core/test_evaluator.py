@@ -239,13 +239,47 @@ def test_derive_action_permission_denied():
 
 
 def test_derive_action_cancelled():
-    """CANCELLED → ABORT。"""
+    """CANCELLED → ABORT。
+
+    注意：error=None 是有意的——CANCELLED 不由 _determine_execution_status 产出，
+    而是 Orchestrator 在任务级取消时直接传入，此时 NodeResult 可能尚未设置 error。
+    """
     action = Evaluator._derive_action(
         ExecutionStatus.CANCELLED, BusinessStatus.GOAL_FAILED,
         DAGNode(node_id=NodeId("n1"), required=True),
         NodeResult(node_id=NodeId("n1"), error=None, attempt=1, duration_ms=100),
     )
     assert action == EvaluatorAction.ABORT
+
+
+def test_derive_action_tool_not_found_optional():
+    """TOOL_NOT_FOUND + !required → SKIP。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.ERROR, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=False),
+        NodeResult(node_id=NodeId("n1"), error=NodeErrorCode.TOOL_NOT_FOUND, attempt=1, duration_ms=100),
+    )
+    assert action == EvaluatorAction.SKIP
+
+
+def test_derive_action_context_overflow_required():
+    """CONTEXT_OVERFLOW + required → REPLAN。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.ERROR, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=True),
+        NodeResult(node_id=NodeId("n1"), error=NodeErrorCode.CONTEXT_OVERFLOW, attempt=1, duration_ms=100),
+    )
+    assert action == EvaluatorAction.REPLAN
+
+
+def test_derive_action_context_overflow_optional():
+    """CONTEXT_OVERFLOW + !required → SKIP。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.ERROR, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=False),
+        NodeResult(node_id=NodeId("n1"), error=NodeErrorCode.CONTEXT_OVERFLOW, attempt=1, duration_ms=100),
+    )
+    assert action == EvaluatorAction.SKIP
 
 
 # ── 完整 evaluate() 流程测试 ────────────────────────────────────────────────
@@ -350,8 +384,8 @@ async def test_evaluate_with_artifact_data(evaluator, sample_node, sample_plan, 
 
 
 @pytest.mark.asyncio
-async def test_evaluate_no_artifacts(evaluator, sample_node, sample_plan):
-    """无 artifact_refs → LLM 判定时产物为空。"""
+async def test_evaluate_no_artifacts(evaluator, sample_node, sample_plan, mock_llm_client):
+    """无 artifact_refs → LLM 判定时产物为空，LLM prompt 包含"（无产物数据）"。"""
     result = NodeResult(
         node_id=NodeId("node_1"),
         artifact_refs=[],
@@ -362,3 +396,148 @@ async def test_evaluate_no_artifacts(evaluator, sample_node, sample_plan):
     assert evaluation.execution_status == ExecutionStatus.OK
     # LLM mock 返回 goal_achieved，验证流程不崩溃
     assert evaluation.business_status == BusinessStatus.GOAL_ACHIEVED
+
+    # 验证 LLM 收到了包含"（无产物数据）"的 prompt
+    call_args = mock_llm_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "（无产物数据）" in user_msg
+
+
+@pytest.mark.asyncio
+async def test_evaluate_llm_empty_content(evaluator, sample_node, sample_plan, mock_llm_client):
+    """LLM 返回空 content → fallback goal_failed。"""
+    async def _empty(**kwargs):
+        return ChatCompletion(
+            id="eval-test",
+            choices=[{
+                "index": 0,
+                "message": ChatCompletionMessage(role="assistant", content=""),
+                "finish_reason": "stop",
+            }],
+            created=1234567890,
+            model="deepseek-v4-pro",
+            object="chat.completion",
+        )
+    mock_llm_client.chat.completions.create = AsyncMock(side_effect=_empty)
+
+    result = NodeResult(
+        node_id=NodeId("node_1"),
+        artifact_refs=[],
+        error=None, attempt=1, duration_ms=100,
+    )
+    evaluation = await evaluator.evaluate(result, sample_node, sample_plan)
+
+    assert evaluation.business_status == BusinessStatus.GOAL_FAILED
+    assert "空响应" in evaluation.reason
+
+
+@pytest.mark.asyncio
+async def test_evaluate_llm_missing_biz_status(evaluator, sample_node, sample_plan, mock_llm_client):
+    """LLM 返回 JSON 缺少 business_status 键 → fallback goal_failed。"""
+    async def _missing_key(**kwargs):
+        return ChatCompletion(
+            id="eval-test",
+            choices=[{
+                "index": 0,
+                "message": ChatCompletionMessage(
+                    role="assistant",
+                    content='{"reason": "忘了写 business_status 字段"}',
+                ),
+                "finish_reason": "stop",
+            }],
+            created=1234567890,
+            model="deepseek-v4-pro",
+            object="chat.completion",
+        )
+    mock_llm_client.chat.completions.create = AsyncMock(side_effect=_missing_key)
+
+    result = NodeResult(
+        node_id=NodeId("node_1"),
+        artifact_refs=[],
+        error=None, attempt=1, duration_ms=100,
+    )
+    evaluation = await evaluator.evaluate(result, sample_node, sample_plan)
+
+    assert evaluation.business_status == BusinessStatus.GOAL_FAILED
+    assert "缺少 business_status" in evaluation.reason
+
+
+@pytest.mark.asyncio
+async def test_evaluate_llm_unknown_biz_status(evaluator, sample_node, sample_plan, mock_llm_client):
+    """LLM 返回未知 business_status 值 → fallback goal_failed。"""
+    async def _unknown(**kwargs):
+        return ChatCompletion(
+            id="eval-test",
+            choices=[{
+                "index": 0,
+                "message": ChatCompletionMessage(
+                    role="assistant",
+                    content='{"business_status": "total_disaster", "reason": "完全失败"}',
+                ),
+                "finish_reason": "stop",
+            }],
+            created=1234567890,
+            model="deepseek-v4-pro",
+            object="chat.completion",
+        )
+    mock_llm_client.chat.completions.create = AsyncMock(side_effect=_unknown)
+
+    result = NodeResult(
+        node_id=NodeId("node_1"),
+        artifact_refs=[],
+        error=None, attempt=1, duration_ms=100,
+    )
+    evaluation = await evaluator.evaluate(result, sample_node, sample_plan)
+
+    assert evaluation.business_status == BusinessStatus.GOAL_FAILED
+    assert "total_disaster" in evaluation.reason
+
+
+@pytest.mark.asyncio
+async def test_evaluate_contract_fallback_to_description(evaluator, sample_plan, mock_llm_client):
+    """output_contract.description 为空 → fallback 到 node.description。"""
+    node = DAGNode(
+        node_id=NodeId("node_2"),
+        description="发送邮件通知",
+        output_contract=OutputContract(description=""),  # 空
+        required=True,
+    )
+    result = NodeResult(
+        node_id=NodeId("node_2"),
+        artifact_refs=[],
+        error=None, attempt=1, duration_ms=100,
+    )
+    evaluation = await evaluator.evaluate(result, node, sample_plan)
+
+    assert evaluation.execution_status == ExecutionStatus.OK
+
+    # 验证 LLM prompt 使用了 node.description 而非空的 output_contract.description
+    call_args = mock_llm_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "发送邮件通知" in user_msg
+
+
+@pytest.mark.asyncio
+async def test_evaluate_json_schema_in_prompt(evaluator, sample_plan, mock_llm_client):
+    """output_contract.json_schema 被拼入 LLM prompt。"""
+    node = DAGNode(
+        node_id=NodeId("node_3"),
+        description="返回天气数据",
+        output_contract=OutputContract(
+            description="温度数据",
+            json_schema={"type": "object", "properties": {"temp": {"type": "number"}}},
+        ),
+        required=True,
+    )
+    result = NodeResult(
+        node_id=NodeId("node_3"),
+        artifact_refs=[],
+        error=None, attempt=1, duration_ms=100,
+    )
+    await evaluator.evaluate(result, node, sample_plan)
+
+    # 验证 LLM prompt 包含 json_schema
+    call_args = mock_llm_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "JSON Schema" in user_msg
+    assert '"type": "object"' in user_msg

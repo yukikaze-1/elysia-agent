@@ -120,3 +120,27 @@ class TaskMailbox:
 class _EvictNewEvent(Exception):
     """内部信号：溢出时新事件被丢弃（而非旧事件被置换）。"""
     pass
+
+
+def push_mailbox_event(
+    mailbox: TaskMailbox,
+    event_type: TaskEventType,
+    data: dict,
+    *,
+    caller: str = "",
+) -> None:
+    """构造 TaskEvent 并写入 Mailbox 队列——Orchestrator / SubAgent 共用。
+
+    生产者（单协程，无竞态）。消费者是 CognitiveLoop 的 Agent。
+    caller 用于日志标识（如 "Orchestrator" / "SubAgent"）。
+    """
+    from Module.task_system.schema import TaskEvent
+
+    event = TaskEvent(type=event_type, data=data)
+    mailbox._push(event)
+    logger.debug(
+        "%s: 推送 Mailbox type=%s data_keys=%s",
+        caller or "push_mailbox_event",
+        event_type.value,
+        list(data.keys()),
+    )

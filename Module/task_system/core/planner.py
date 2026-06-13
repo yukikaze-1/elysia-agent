@@ -200,12 +200,7 @@ class Planner:
         Raises:
             _PlanParseError: JSON 不合法或缺少必要字段
         """
-        # 去除可能的 markdown 代码块包裹
-        text = raw.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            # 去掉第一行 (```json) 和最后一行 (```)
-            text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        text = self._strip_markdown_fence(raw)
 
         try:
             data = json.loads(text)
@@ -225,8 +220,10 @@ class Planner:
             if not isinstance(rn, dict):
                 raise _PlanParseError(f"nodes[{i}] 不是 object")
             nid = rn.get("node_id", "")
-            if not nid:
-                raise _PlanParseError(f"nodes[{i}] 缺少 node_id")
+            if not nid or not isinstance(nid, str):
+                raise _PlanParseError(
+                    f"nodes[{i}].node_id 为空或不是字符串: {nid!r}"
+                )
 
             oc_data = rn.get("output_contract", {}) or {}
             nodes.append(DAGNode(
@@ -259,18 +256,36 @@ class Planner:
             updated_at=now,
         )
 
+    @staticmethod
+    def _strip_markdown_fence(text: str) -> str:
+        """去除 LLM 响应中可能的 markdown 代码块包裹。
+
+        处理 ```json ... ``` 和 ``` ... ``` 两种格式，
+        容忍首尾空白、尾随空行等情况。
+        """
+        import re
+        text = text.strip()
+        # 去掉开头的 ```json 或 ```（含可能的行尾空白）
+        text = re.sub(r'^```[a-z]*\s*\n', '', text)
+        # 去掉末尾的 ```（前面可能有任意空白行）
+        text = re.sub(r'\n```\s*$', '', text)
+        return text
+
     # ── 内部：工具列表格式化 ──────────────────────────────────────────────────
 
     @staticmethod
     def _format_tools(tools: list) -> str:
-        """将 Tool 列表格式化为 LLM prompt 可读的文本。"""
+        """将 Tool 列表格式化为 LLM prompt 可读的文本。
+
+        Tool.name 和 Tool.description 是必需字段，直接用属性访问。
+        如果对象缺少字段，让 AttributeError 抛出——静默降级会掩盖 LLM prompt 中的垃圾文本。
+        """
         if not tools:
             return "（无可用工具）"
         lines: list[str] = []
         for t in tools:
-            name = getattr(t, 'name', str(t))
-            desc = getattr(t, 'description', '') or ''
-            lines.append(f"- {name}: {desc}" if desc else f"- {name}")
+            desc = t.description or ""
+            lines.append(f"- {t.name}: {desc}" if desc else f"- {t.name}")
         return "\n".join(lines)
 
 

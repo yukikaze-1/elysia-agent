@@ -139,7 +139,14 @@ class Evaluator:
             NodeErrorCode.CONTEXT_OVERFLOW: ExecutionStatus.ERROR,
             NodeErrorCode.TOKEN_BUDGET_EXCEEDED: ExecutionStatus.ERROR,
         }
-        return mapping.get(result.error, ExecutionStatus.ERROR)
+        mapped = mapping.get(result.error)
+        if mapped is None:
+            logger.warning(
+                "Evaluator: 未知 NodeErrorCode=%s，fallback ExecutionStatus.ERROR",
+                result.error,
+            )
+            return ExecutionStatus.ERROR
+        return mapped
 
     # ── 业务状态判定 ────────────────────────────────────────────────────────
 
@@ -178,6 +185,10 @@ class Evaluator:
         logger.debug("Evaluator: node=%s LLM 业务判定上下文:\n%s", node.node_id, user_message)
 
         # 调用 LLM
+        # TODO: model 名称可配置（从 AgentInfra 或环境变量读取），
+        #       当前与 Planner/Executor 统一硬编码 deepseek-v4-pro。
+        # TODO: 大产物 / 复杂 json_schema 可能超出上下文窗口，
+        #       后续参考 ConstraintConfig.max_context_tokens 做截断。
         try:
             response = await self._infra.llm.chat.completions.create(
                 model="deepseek-v4-pro",
@@ -190,23 +201,34 @@ class Evaluator:
             )
             content = response.choices[0].message.content
             if not content:
-                raise _EvalError("LLM 返回空响应")
+                logger.warning("Evaluator: LLM 返回空响应，fallback goal_failed")
+                return BusinessStatus.GOAL_FAILED, "LLM 返回空响应"
 
             data = json.loads(content.strip())
-            biz_str = data.get("business_status", "goal_achieved")
+            biz_str = data.get("business_status")
             reason = data.get("reason", "")
+
+            if biz_str is None:
+                logger.warning(
+                    "Evaluator: LLM 返回 JSON 缺少 business_status 键，"
+                    "fallback goal_failed。keys=%s", list(data.keys()),
+                )
+                return BusinessStatus.GOAL_FAILED, (
+                    f"LLM 响应缺少 business_status 字段（keys={list(data.keys())}）"
+                )
 
             try:
                 biz = BusinessStatus(biz_str)
             except ValueError:
-                logger.warning("Evaluator: LLM 返回未知 business_status=%s，fallback goal_achieved", biz_str)
-                biz = BusinessStatus.GOAL_ACHIEVED
+                logger.warning(
+                    "Evaluator: LLM 返回未知 business_status=%s，fallback goal_failed",
+                    biz_str,
+                )
+                biz = BusinessStatus.GOAL_FAILED
                 reason = f"（LLM 返回未知状态 {biz_str}，fallback）{reason}"
 
             return biz, reason
 
-        except _EvalError:
-            raise
         except Exception as e:
             logger.exception("Evaluator: LLM 业务判定异常，fallback goal_failed")
             return BusinessStatus.GOAL_FAILED, f"LLM 判定异常: {e}"
@@ -243,7 +265,9 @@ class Evaluator:
             PERMISSION_DENIED         → ABORT
             CANCELLED                 → ABORT
         """
-        # 权限拒绝 / 取消 → 直接中止
+        # 权限拒绝 → 直接中止
+        # 取消：_determine_execution_status 当前不产出 CANCELLED，
+        # 此分支为外部预留——Orchestrator 可能在任务级取消时直接传 CANCELLED
         if execution_status in (ExecutionStatus.PERMISSION_DENIED, ExecutionStatus.CANCELLED):
             return EvaluatorAction.ABORT
 
@@ -267,8 +291,3 @@ class Evaluator:
             return EvaluatorAction.RETRY if node.required else EvaluatorAction.SKIP
 
         return EvaluatorAction.CONTINUE
-
-
-class _EvalError(Exception):
-    """Evaluator 内部异常。"""
-    pass

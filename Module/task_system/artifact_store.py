@@ -99,6 +99,8 @@ class ArtifactStore:
         return artifacts
 
     # ── 清理 ──────────────────────────────────────────────────────────────
+    # TODO: v2 增加 delete_by_node(node_id)——DAGPatch 删除节点时需清理对应 artifact，
+    #       当前 Replan stub 不会触发此场景
 
     async def delete_by_task(self, task_id: TaskId) -> None:
         """清理任务的所有 artifact（终态时调用）。
@@ -123,6 +125,7 @@ class ArtifactStore:
                     task_id, aid,
                 )
                 # 从 _by_node 反查 node_id（扫描所有 node，适用于少量残留）
+                # TODO: v2 artifact 数量大时，可维护 aid→nid 反向索引以 O(1) 查找
                 for nid, node_ids in self._by_node.items():
                     if aid in node_ids:
                         aid_to_nid[aid] = nid

@@ -459,12 +459,15 @@ Orchestrator.run(task_state, exec_state, graph, mailbox) → OrchestratorResult:
         2. 审批检查
         3. execute_nodes(ready, exec_state)   → Executor
         4. evaluate_node(result, task_state)  → Evaluator
-        5. apply_evaluation(task_state, exec_state, ...)
-           ├─ continue → mark success
-           ├─ retry    → back to pending
-           ├─ replan   → return NEEDS_REPLAN（不调 Planner！）
-           ├─ ask_approval → return BLOCKED
-           └─ abort    → return FAILED
+        5. apply_evaluation(task_state, exec_state, ...) → EvaluatorAction
+           ├─ CONTINUE      → mark SUCCESS, push progress event
+           ├─ SKIP          → mark SKIPPED（非必需节点）
+           ├─ RETRY         → 检查 attempt >= max_retries
+           │     ├─ 未超限 → back to PENDING
+           │     └─ 超限   → mark FAILED + return REPLAN
+           ├─ REPLAN        → mark FAILED + return NEEDS_REPLAN
+           ├─ ASK_APPROVAL  → mark WAITING_APPROVAL + return BLOCKED
+           └─ ABORT         → mark FAILED + return FAILED
         6. save_checkpoint(task_state, exec_state)
     return SUCCESS
 ```
@@ -771,11 +774,38 @@ Worker 等待期间: 不消耗 CPU/LLM/IO。前端收件箱持续展示待审批
 
 ### 7.2 审批风暴防护
 
-**第一层：Plan 预审批**
-Executor 执行前扫描所有 DAG 节点 → MUTATION 步骤汇总为批量预览卡片 → 用户一次性批准。
+**v1（当前实现）：ToolManager 内部 HITL**
 
-**第二层：运行时窗口合并**
-多个 Worker 在短时间窗口内同时触发 MUTATION → 自动合并为一张批量卡片。
+Orchestrator / Executor 不参与审批判定。执行流程中：
+
+1. Executor 调用 `tool_registry.execute(name, ctx, **params)`
+2. ToolManager → SafetyPipeline 检测 `SafetyProfile.requires_human_approval`
+3. 需要审批时，SafetyPipeline 内部挂起等待前端用户决策
+4. 用户批准 → 继续执行，返回结果
+5. 用户拒绝 → 返回 `ToolResult.fail(PERMISSION_DENIED)` → Evaluator → ABORT
+
+`Orchestrator._needs_approval()` 始终返回 False。审批由 ToolManager 全权处理，Orchestrator 不感知。
+
+此方案的局限：不支持执行前汇总审批——Executor 的 LLM 匹配调用已经消耗后才进入 ToolManager 审批。
+
+**v2（规划中）：Plan 预审批 + Planner 标注 risk_level**
+
+DAGNode 新增可选字段 `risk_level: "safe" | "mutation" | None`。
+
+Planner 在生成 DAG 时根据节点 description 估算风险级别，prompt 强制保守策略：
+"涉及文件写、邮件发送、数据库修改、外部 API 调用的操作，一律标注 mutation"。
+
+Orchestrator 执行前扫描所有 ready nodes → 汇总 mutation 节点 → 通过 HITLNotifier 批量推送审批预览卡片 → 用户一次性批准 → 继续执行。
+
+此方案无需改动 Executor（仍走 ToolManager 内部 HITL 作为最后防线），
+也无需 DAGNode 持有 tool_name——Planner 根据自然语言描述足以判断风险级别。
+
+**设计选择：不走 Executor 两阶段拆分（先 match 后 execute）**
+
+拆为 `match_tool()` + `execute_with_params()` 的方案被否决。理由：
+- 每个节点多一次 LLM 调用（匹配 + 执行的双重延迟）
+- 状态机变复杂（match → approve → execute 三阶段）
+- Planner 估算方案在安全侧偏差（safe 误判为 mutation）仅多弹一次审批，用户不反感
 
 ### 7.3 审批拒绝处理（三层降级）
 

@@ -56,6 +56,11 @@ class PlanGraph:
         nodes: dict[NodeId, DAGNode] = {}
 
         for node in plan.dag.nodes:
+            if node.node_id in nodes:
+                logger.warning(
+                    "PlanGraph.from_plan: 重复 node_id=%s，后面的覆盖前面的",
+                    node.node_id,
+                )
             g.add_node(node.node_id)
             nodes[node.node_id] = node
 
@@ -94,7 +99,11 @@ class PlanGraph:
     def get_ready_nodes(
         self, node_states: dict[NodeId, NodeState],
     ) -> list[NodeId]:
-        """所有前置节点 SUCCESS 且自身 PENDING 的节点。
+        """所有前置节点已完成（SUCCESS 或 SKIPPED）且自身 PENDING 的节点。
+
+        SKIPPED 视为完成——可选节点被跳过时不应阻塞下游。
+        数据依赖（input_bindings）正交于执行顺序（edges），
+        Executor 会容错处理缺失的 artifact。
 
         遍历 DAG 中每个节点，检查其所有前驱（predecessors）的状态。
         时间复杂度 O(n+e)。
@@ -105,10 +114,10 @@ class PlanGraph:
             if ns is None or ns.status != NodeStatus.PENDING:
                 continue
 
-            # 所有前置节点必须 SUCCESS
+            # 所有前置节点必须已完成（SUCCESS 或 SKIPPED）
             preds_ok = all(
                 node_states.get(p) is not None
-                and node_states[p].status == NodeStatus.SUCCESS
+                and node_states[p].status in (NodeStatus.SUCCESS, NodeStatus.SKIPPED)
                 for p in self._g.predecessors(node_id)
             )
             if preds_ok:
@@ -310,8 +319,9 @@ class PlanGraph:
             return 0
         try:
             topo = self.topological_order()
-        except Exception:
-            return 0  # 有环时拓扑排序失败，深度无意义（环检测由 validate_structure 负责）
+        except nx.NetworkXUnfeasible:
+            # 有环时拓扑排序失败，深度无意义（环检测由 validate_structure 负责）
+            return 0
 
         longest: dict[NodeId, int] = {}
         for nid in reversed(topo):

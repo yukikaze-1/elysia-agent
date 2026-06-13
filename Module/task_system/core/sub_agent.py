@@ -21,6 +21,7 @@ from Module.task_system.schema import (
     ExecutionState,
     OrchestratorRunStatus,
     TaskErrorCode,
+    TaskEventType,
     TaskId,
     TaskState,
     TaskStatus,
@@ -153,7 +154,7 @@ class SubAgent:
                     task_id, [i.message for i in validation.issues],
                 )
                 task_state.status = TaskStatus.FAILED
-                await self._push_mailbox(mailbox, "failed", {
+                await self._push_mailbox(mailbox, TaskEventType.FAILED, {
                     "error": f"Plan 校验失败: {[i.message for i in validation.issues]}",
                     "error_type": TaskErrorCode.PLAN_TOO_LARGE.value,
                 })
@@ -198,7 +199,7 @@ class SubAgent:
                         task_state.task_id, meltdown_reason,
                     )
                     task_state.status = TaskStatus.FAILED
-                    await self._push_mailbox(mailbox, "failed", {
+                    await self._push_mailbox(mailbox, TaskEventType.FAILED, {
                         "error": meltdown_reason,
                         "error_type": TaskErrorCode.FAILURE_MELTDOWN.value,
                     })
@@ -233,7 +234,7 @@ class SubAgent:
 
             elif result.status == OrchestratorRunStatus.BLOCKED:
                 logger.info("SubAgent: task_id=%s 等待审批", task_state.task_id)
-                await self._push_mailbox(mailbox, "approval_needed", {
+                await self._push_mailbox(mailbox, TaskEventType.APPROVAL_NEEDED, {
                     "task_id": str(task_state.task_id),
                     "message": "任务等待用户审批",
                 })
@@ -251,7 +252,7 @@ class SubAgent:
                 await self._checkpoint_mgr.save(
                     task_state.task_id, result.checkpoint_state,
                 )
-                await self._push_mailbox(mailbox, "paused", {
+                await self._push_mailbox(mailbox, TaskEventType.PAUSED, {
                     "task_id": str(task_state.task_id),
                     "message": "任务已暂停",
                 })
@@ -301,16 +302,13 @@ class SubAgent:
 
     # ── 工具方法 ───────────────────────────────────────────────────────────────
 
+    @staticmethod
     async def _push_mailbox(
-        self, mailbox: TaskMailbox, event_type: str, data: dict,
+        mailbox: TaskMailbox, event_type: TaskEventType, data: dict,
     ) -> None:
-        """推送事件到 TaskMailbox。"""
-        logger.debug(
-            "SubAgent: 推送 Mailbox type=%s data_keys=%s",
-            event_type, list(data.keys()),
-        )
-        # TODO: event = TaskEvent(type=event_type, data=data)
-        # TODO: mailbox._push(event)
+        """推送事件到 TaskMailbox——委托 push_mailbox_event（mailbox.py 公共函数）。"""
+        from Module.task_system.mailbox import push_mailbox_event
+        push_mailbox_event(mailbox, event_type, data, caller="SubAgent")
 
     @staticmethod
     def _now() -> str:

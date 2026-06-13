@@ -8,11 +8,15 @@ AgentInfra 最终可能上提到 Core 层或独立的共享层。
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import httpx
 from openai import AsyncOpenAI
 
 from Module.task_system.schema import ConstraintConfig
+
+if TYPE_CHECKING:
+    from pymilvus import MilvusClient
 
 
 @dataclass
@@ -25,16 +29,16 @@ class AgentInfra:
 
     字段：
         llm:            LLM 客户端（AsyncOpenAI），跨所有 Agent 共享
-        milvus:         Milvus 向量数据库客户端
+        milvus:         Milvus 向量数据库客户端（None 表示向量搜索不可用）
         http:           httpx 异步 HTTP 客户端
-        tool_registry:  ToolRegistry，全量工具注册表
+        tool_registry:  ToolRegistry，全量工具注册表（类型为 object 避免循环导入）
         constraints:    全局约束配置（天花板）。这是 TaskSystem 全生命周期的
                         全局约束，DelegationPreparer 产出的 TaskConstraints
                         与其取 min 后生效。
     """
 
     llm: AsyncOpenAI
-    milvus: object  # MilvusClient，避免强依赖 milvus 包
-    http: httpx.AsyncClient
+    milvus: MilvusClient | None
+    http: httpx.AsyncClient | None  # v1 预留，工具通过 ToolContext 接收 HTTP 客户端
     tool_registry: object  # ToolRegistry，避免循环导入
     constraints: ConstraintConfig
