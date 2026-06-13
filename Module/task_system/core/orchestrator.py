@@ -195,7 +195,11 @@ class Orchestrator:
                 # 4. 评估每个结果（Evaluator 包裹为 NodeResultEvaluation）
                 exec_state.current_phase = ExecutionPhase.EVALUATING
                 for result in results:
-                    evaluation = await self._evaluate_node(result, task_state)
+                    node = graph.nodes.get(result.node_id)
+                    if node is None:
+                        logger.error("Orchestrator: node=%s 在 graph 中不存在，跳过评估", result.node_id)
+                        continue
+                    evaluation = await self._evaluate_node(result, node, task_state)
                     action = await self._apply_evaluation(
                         task_state, exec_state, evaluation, mailbox, graph,
                     )
@@ -305,20 +309,29 @@ class Orchestrator:
         return results
 
     async def _evaluate_node(
-        self, result: NodeResult, task_state: TaskState,
+        self,
+        result: NodeResult,
+        node: DAGNode,
+        task_state: TaskState,
     ) -> NodeResultEvaluation:
-        """评估单个节点结果——Executor 产出 → Evaluator 双重判定。
+        """评估单个节点结果——调 Evaluator 产出 NodeResultEvaluation。
 
-        TODO: 调用 Evaluator.evaluate(result, node, plan)。
+        传入 DAGNode（含 output_contract）和 Plan（上下文），
+        Evaluator 内部做双重判定：ExecutionStatus + BusinessStatus。
         """
-        return NodeResultEvaluation(
-            node_id=result.node_id,
-            execution_status=ExecutionStatus.OK,
-            business_status=BusinessStatus.GOAL_ACHIEVED,
-            reason="[骨架占位]",
-            suggested_action=EvaluatorAction.CONTINUE,
-            result=result,
-        )
+        plan = task_state.plan
+        if plan is None:
+            # Plan 缺失时 fallback：直接 CONTINUE（不应发生，但防御性处理）
+            logger.error("Orchestrator: node=%s Plan 为 None，无法评估", result.node_id)
+            return NodeResultEvaluation(
+                node_id=result.node_id,
+                execution_status=ExecutionStatus.OK,
+                business_status=BusinessStatus.GOAL_ACHIEVED,
+                reason="[Plan 缺失，fallback]",
+                suggested_action=EvaluatorAction.CONTINUE,
+                result=result,
+            )
+        return await self._evaluator.evaluate(result, node, plan)
 
     async def _apply_evaluation(
         self,

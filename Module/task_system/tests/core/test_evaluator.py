@@ -1,0 +1,364 @@
+"""Evaluator 单元测试。
+
+测试双重判定全流程：ExecutionStatus 映射 + BusinessStatus LLM 判定 + action 推导。
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from openai.types.chat import ChatCompletion, ChatCompletionMessage
+
+from Module.task_system.core.evaluator import Evaluator
+from Module.task_system.schema import (
+    Artifact,
+    ArtifactId,
+    BusinessStatus,
+    DAGNode,
+    EvaluatorAction,
+    ExecutionStatus,
+    NodeErrorCode,
+    NodeId,
+    NodeResult,
+    OutputContract,
+    Plan,
+    TaskId,
+)
+
+
+# ── 测试固件 ────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def mock_llm_client():
+    """Mock AsyncOpenAI——返回 goal_achieved 的 LLM 响应。"""
+    client = MagicMock()
+
+    async def _respond(**kwargs):
+        return ChatCompletion(
+            id="eval-test",
+            choices=[{
+                "index": 0,
+                "message": ChatCompletionMessage(
+                    role="assistant",
+                    content='{"business_status": "goal_achieved", "reason": "产物完全符合期望"}',
+                ),
+                "finish_reason": "stop",
+            }],
+            created=1234567890,
+            model="deepseek-v4-pro",
+            object="chat.completion",
+        )
+
+    client.chat = MagicMock()
+    client.chat.completions = MagicMock()
+    client.chat.completions.create = AsyncMock(side_effect=_respond)
+    return client
+
+
+@pytest.fixture
+def mock_artifact_store():
+    """Mock ArtifactStore——返回预设产物。"""
+    store = MagicMock()
+    store._artifacts: dict = {}
+    store.get = AsyncMock(side_effect=lambda aid: store._artifacts.get(aid))
+    store.put = AsyncMock()
+    return store
+
+
+@pytest.fixture
+def mock_infra(mock_llm_client):
+    """Mock AgentInfra。"""
+    infra = MagicMock()
+    infra.llm = mock_llm_client
+    return infra
+
+
+@pytest.fixture
+def evaluator(mock_infra, mock_artifact_store):
+    """创建被测 Evaluator 实例。"""
+    return Evaluator(infra=mock_infra, artifact_store=mock_artifact_store)
+
+
+@pytest.fixture
+def sample_plan():
+    """创建示例 Plan。"""
+    return Plan(
+        plan_version=1,
+        created_at="2026-01-01T00:00:00",
+        updated_at="2026-01-01T00:00:00",
+    )
+
+
+@pytest.fixture
+def sample_node():
+    """创建示例 DAGNode（必需节点）。"""
+    return DAGNode(
+        node_id=NodeId("node_1"),
+        description="搜索今天的天气",
+        output_contract=OutputContract(
+            description="天气信息的 JSON 对象，包含温度和湿度",
+        ),
+        required=True,
+        output_as=ArtifactId("artifact_1"),
+    )
+
+
+@pytest.fixture
+def sample_result_success():
+    """执行成功的 NodeResult。"""
+    return NodeResult(
+        node_id=NodeId("node_1"),
+        artifact_refs=[ArtifactId("artifact_1")],
+        error=None,
+        attempt=1,
+        duration_ms=100,
+    )
+
+
+# ── ExecutionStatus 映射测试 ────────────────────────────────────────────────
+
+
+def test_execution_status_ok():
+    """无错误 → ExecutionStatus.OK。"""
+    result = NodeResult(node_id=NodeId("n1"), error=None, attempt=1, duration_ms=100)
+    status = Evaluator._determine_execution_status(result)
+    assert status == ExecutionStatus.OK
+
+
+def test_execution_status_mappings():
+    """所有 NodeErrorCode → ExecutionStatus 映射。"""
+    cases = [
+        (NodeErrorCode.TOOL_TIMEOUT, ExecutionStatus.TIMEOUT),
+        (NodeErrorCode.PERMISSION_DENIED, ExecutionStatus.PERMISSION_DENIED),
+        (NodeErrorCode.TOOL_ERROR, ExecutionStatus.ERROR),
+        (NodeErrorCode.TOOL_NOT_FOUND, ExecutionStatus.ERROR),
+        (NodeErrorCode.NETWORK_ERROR, ExecutionStatus.ERROR),
+        (NodeErrorCode.WORKER_CRASH, ExecutionStatus.ERROR),
+        (NodeErrorCode.CONTEXT_OVERFLOW, ExecutionStatus.ERROR),
+        (NodeErrorCode.TOKEN_BUDGET_EXCEEDED, ExecutionStatus.ERROR),
+    ]
+    for error_code, expected in cases:
+        result = NodeResult(node_id=NodeId("n1"), error=error_code, attempt=1, duration_ms=100)
+        status = Evaluator._determine_execution_status(result)
+        assert status == expected, f"{error_code} → {status}, 期望 {expected}"
+
+
+# ── Action 推导测试 ─────────────────────────────────────────────────────────
+
+
+def test_derive_action_ok_achieved():
+    """OK + goal_achieved → CONTINUE。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.OK, BusinessStatus.GOAL_ACHIEVED,
+        DAGNode(node_id=NodeId("n1"), required=True),
+        NodeResult(node_id=NodeId("n1"), error=None, attempt=1, duration_ms=100),
+    )
+    assert action == EvaluatorAction.CONTINUE
+
+
+def test_derive_action_ok_partial():
+    """OK + goal_partial → CONTINUE。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.OK, BusinessStatus.GOAL_PARTIAL,
+        DAGNode(node_id=NodeId("n1"), required=True),
+        NodeResult(node_id=NodeId("n1"), error=None, attempt=1, duration_ms=100),
+    )
+    assert action == EvaluatorAction.CONTINUE
+
+
+def test_derive_action_ok_failed_required():
+    """OK + goal_failed + required → RETRY。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.OK, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=True),
+        NodeResult(node_id=NodeId("n1"), error=None, attempt=1, duration_ms=100),
+    )
+    assert action == EvaluatorAction.RETRY
+
+
+def test_derive_action_ok_failed_optional():
+    """OK + goal_failed + !required → SKIP。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.OK, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=False),
+        NodeResult(node_id=NodeId("n1"), error=None, attempt=1, duration_ms=100),
+    )
+    assert action == EvaluatorAction.SKIP
+
+
+def test_derive_action_timeout_required():
+    """TIMEOUT + required → RETRY。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.TIMEOUT, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=True),
+        NodeResult(node_id=NodeId("n1"), error=NodeErrorCode.TOOL_TIMEOUT, attempt=1, duration_ms=30000),
+    )
+    assert action == EvaluatorAction.RETRY
+
+
+def test_derive_action_timeout_optional():
+    """TIMEOUT + !required → SKIP。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.TIMEOUT, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=False),
+        NodeResult(node_id=NodeId("n1"), error=NodeErrorCode.TOOL_TIMEOUT, attempt=1, duration_ms=30000),
+    )
+    assert action == EvaluatorAction.SKIP
+
+
+def test_derive_action_error_required():
+    """ERROR + required → RETRY。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.ERROR, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=True),
+        NodeResult(node_id=NodeId("n1"), error=NodeErrorCode.TOOL_ERROR, attempt=1, duration_ms=100),
+    )
+    assert action == EvaluatorAction.RETRY
+
+
+def test_derive_action_tool_not_found():
+    """TOOL_NOT_FOUND + required → REPLAN。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.ERROR, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=True),
+        NodeResult(node_id=NodeId("n1"), error=NodeErrorCode.TOOL_NOT_FOUND, attempt=1, duration_ms=100),
+    )
+    assert action == EvaluatorAction.REPLAN
+
+
+def test_derive_action_permission_denied():
+    """PERMISSION_DENIED → ABORT。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.PERMISSION_DENIED, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=True),
+        NodeResult(node_id=NodeId("n1"), error=NodeErrorCode.PERMISSION_DENIED, attempt=1, duration_ms=100),
+    )
+    assert action == EvaluatorAction.ABORT
+
+
+def test_derive_action_cancelled():
+    """CANCELLED → ABORT。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.CANCELLED, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=True),
+        NodeResult(node_id=NodeId("n1"), error=None, attempt=1, duration_ms=100),
+    )
+    assert action == EvaluatorAction.ABORT
+
+
+# ── 完整 evaluate() 流程测试 ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_evaluate_success_goal_achieved(evaluator, sample_node, sample_result_success, sample_plan):
+    """执行成功 + LLM 判定 goal_achieved → CONTINUE。"""
+    evaluation = await evaluator.evaluate(sample_result_success, sample_node, sample_plan)
+
+    assert evaluation.execution_status == ExecutionStatus.OK
+    assert evaluation.business_status == BusinessStatus.GOAL_ACHIEVED
+    assert evaluation.suggested_action == EvaluatorAction.CONTINUE
+    assert evaluation.result == sample_result_success
+
+
+@pytest.mark.asyncio
+async def test_evaluate_success_goal_failed(evaluator, sample_node, sample_plan, mock_llm_client):
+    """执行成功 + LLM 判定 goal_failed + required → RETRY。"""
+    async def _respond_failed(**kwargs):
+        return ChatCompletion(
+            id="eval-test",
+            choices=[{
+                "index": 0,
+                "message": ChatCompletionMessage(
+                    role="assistant",
+                    content='{"business_status": "goal_failed", "reason": "产物缺少温度数据"}',
+                ),
+                "finish_reason": "stop",
+            }],
+            created=1234567890,
+            model="deepseek-v4-pro",
+            object="chat.completion",
+        )
+    mock_llm_client.chat.completions.create = AsyncMock(side_effect=_respond_failed)
+
+    result = NodeResult(
+        node_id=NodeId("node_1"),
+        artifact_refs=[ArtifactId("artifact_1")],
+        error=None, attempt=1, duration_ms=100,
+    )
+    evaluation = await evaluator.evaluate(result, sample_node, sample_plan)
+
+    assert evaluation.business_status == BusinessStatus.GOAL_FAILED
+    assert evaluation.suggested_action == EvaluatorAction.RETRY
+
+
+@pytest.mark.asyncio
+async def test_evaluate_execution_error(evaluator, sample_node, sample_plan):
+    """执行失败（TOOL_ERROR）→ 直接 goal_failed，不调 LLM。"""
+    result = NodeResult(
+        node_id=NodeId("node_1"),
+        error=NodeErrorCode.TOOL_ERROR,
+        attempt=1, duration_ms=100,
+    )
+    evaluation = await evaluator.evaluate(result, sample_node, sample_plan)
+
+    assert evaluation.execution_status == ExecutionStatus.ERROR
+    assert evaluation.business_status == BusinessStatus.GOAL_FAILED
+    # TOOL_ERROR + required → RETRY
+    assert evaluation.suggested_action == EvaluatorAction.RETRY
+
+
+@pytest.mark.asyncio
+async def test_evaluate_llm_error_fallback(evaluator, sample_node, sample_plan, mock_llm_client):
+    """LLM 调用异常 → fallback goal_failed。"""
+    mock_llm_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("LLM 不可用"))
+
+    result = NodeResult(
+        node_id=NodeId("node_1"),
+        artifact_refs=[ArtifactId("artifact_1")],
+        error=None, attempt=1, duration_ms=100,
+    )
+    evaluation = await evaluator.evaluate(result, sample_node, sample_plan)
+
+    assert evaluation.business_status == BusinessStatus.GOAL_FAILED
+    assert "LLM 判定异常" in evaluation.reason
+
+
+@pytest.mark.asyncio
+async def test_evaluate_with_artifact_data(evaluator, sample_node, sample_plan, mock_artifact_store):
+    """产物数据被正确读取并传给 LLM。"""
+    # 预存产物
+    mock_artifact_store._artifacts[ArtifactId("artifact_1")] = Artifact(
+        artifact_id=ArtifactId("artifact_1"),
+        artifact_type="text",
+        node_id=NodeId("node_1"),
+        task_id=TaskId("task_1"),
+        content={"temperature": 25, "humidity": 60},
+    )
+
+    result = NodeResult(
+        node_id=NodeId("node_1"),
+        artifact_refs=[ArtifactId("artifact_1")],
+        error=None, attempt=1, duration_ms=100,
+    )
+    evaluation = await evaluator.evaluate(result, sample_node, sample_plan)
+
+    assert evaluation.execution_status == ExecutionStatus.OK
+    # ArtifactStore.get 被调用
+    mock_artifact_store.get.assert_called_once_with(ArtifactId("artifact_1"))
+
+
+@pytest.mark.asyncio
+async def test_evaluate_no_artifacts(evaluator, sample_node, sample_plan):
+    """无 artifact_refs → LLM 判定时产物为空。"""
+    result = NodeResult(
+        node_id=NodeId("node_1"),
+        artifact_refs=[],
+        error=None, attempt=1, duration_ms=100,
+    )
+    evaluation = await evaluator.evaluate(result, sample_node, sample_plan)
+
+    assert evaluation.execution_status == ExecutionStatus.OK
+    # LLM mock 返回 goal_achieved，验证流程不崩溃
+    assert evaluation.business_status == BusinessStatus.GOAL_ACHIEVED

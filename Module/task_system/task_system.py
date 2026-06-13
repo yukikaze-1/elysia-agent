@@ -118,7 +118,10 @@ class TaskSystem:
             artifact_store=self._artifact_store,
             hitl_notifier=self._hitl,
         )
-        self._evaluator = Evaluator()
+        self._evaluator = Evaluator(
+            infra=self._infra,
+            artifact_store=self._artifact_store,
+        )
         # Orchestrator 不在此构造——per-SubAgent，SubAgent.__init__ 自建
 
         self._started = True

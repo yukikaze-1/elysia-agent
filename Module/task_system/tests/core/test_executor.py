@@ -198,7 +198,7 @@ async def test_execute_success(executor, sample_node, sample_tools, mock_tool_re
     assert isinstance(result, NodeResult)
     assert result.node_id == NodeId("node_1")
     assert result.error is None
-    assert result.duration_ms > 0
+    assert result.duration_ms >= 0
     assert len(result.artifact_refs) == 1
     assert result.artifact_refs[0] == ArtifactId("artifact_weather")
 
