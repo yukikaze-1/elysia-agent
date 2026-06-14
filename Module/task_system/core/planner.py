@@ -8,8 +8,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI
 
@@ -25,6 +23,8 @@ from Module.task_system.schema import (
     NodeResultEvaluation,
     OutputContract,
     Plan,
+    Tool,
+    now_iso,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ class Planner:
 
         Args:
             context:            委派上下文（intent/hints/tools/task_constraints/…）
-            global_constraints: 全局约束天花板，与 task_constraints 取 min
+            global_constraints: 全局约束天花板，TaskConstraints.resolve() 的填充来源
             experience_records: v1 忽略（经验记忆未实现）
 
         Returns:
@@ -127,9 +127,10 @@ class Planner:
             ValueError: LLM 返回的 JSON 无法解析为合法 Plan
         """
         # ── 计算生效约束 ──
-        tc = context.task_constraints
-        max_nodes = min(global_constraints.max_dag_nodes, tc.max_dag_nodes)
-        max_mutations = min(global_constraints.max_mutations, tc.max_mutations)
+        # resolve: None → 全局值；> 全局 → clamp + warn
+        tc = context.task_constraints.resolve(global_constraints)
+        max_nodes = tc.max_dag_nodes
+        max_mutations = tc.max_mutations
 
         # ── 构建 prompt ──
         tools_desc = self._format_tools(context.tools)
@@ -234,7 +235,7 @@ class Planner:
                 ),
                 required=rn.get("required", True),
                 input_bindings=[ArtifactId(b) for b in rn.get("input_bindings", []) or []],
-                output_as=ArtifactId(rn.get("output_as", "")),
+                output_as=ArtifactId(str(raw_as)) if (raw_as := rn.get("output_as", "").strip()) else None,
             ))
 
         # 解析 edges
@@ -248,7 +249,7 @@ class Planner:
                 raise _PlanParseError(f"edges[{i}] 不是二元组 [from, to]")
             edges.append((NodeId(str(e[0])), NodeId(str(e[1]))))
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = now_iso()
         return Plan(
             dag=DAG(nodes=nodes, edges=edges),
             plan_version=1,
@@ -274,7 +275,7 @@ class Planner:
     # ── 内部：工具列表格式化 ──────────────────────────────────────────────────
 
     @staticmethod
-    def _format_tools(tools: list) -> str:
+    def _format_tools(tools: list[Tool]) -> str:
         """将 Tool 列表格式化为 LLM prompt 可读的文本。
 
         Tool.name 和 Tool.description 是必需字段，直接用属性访问。

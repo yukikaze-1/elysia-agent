@@ -2,11 +2,16 @@
 
 图结构检查（环、依赖引用、孤立、可达性、最大深度）委托给 PlanGraph（NetworkX）。
 业务检查（output_contract、节点数上限）由本模块补充。
+
+validate() 返回 (ValidationResult, PlanGraph) 元组——
+校验通过时调用方直接使用返回的 graph，无需重复构造。
 """
 
 from __future__ import annotations
 
 import logging
+
+import networkx as nx
 
 from Module.task_system.schema import (
     ConstraintConfig,
@@ -17,6 +22,7 @@ from Module.task_system.schema import (
     ValidationIssueType,
     ValidationResult,
 )
+from Module.task_system.core.graph import PlanGraph
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +43,7 @@ class PlanValidator:
         B. 业务规则（本模块）:
             6. node_id 唯一性（显式复检，提供友好错误信息）
             7. output_contract 合法性（required 节点必须有 description 或 json_schema）
-            8. 节点数是否超过 max_dag_nodes（取 min(全局, 任务)）
+            8. 节点数是否超过有效 max_dag_nodes（经 TaskConstraints.resolve 合并）
         ⚠️ 待 v2 补充:
             - 工具名检查（需 DAGNode 有 tool_name 字段）
             - 高风险工具确认标记（需 RBAC 集成）
@@ -48,21 +54,24 @@ class PlanValidator:
         plan: Plan,
         global_constraints: ConstraintConfig,
         task_constraints: TaskConstraints,
-    ) -> ValidationResult:
-        """校验 DAG 合法性。
+    ) -> tuple[ValidationResult, PlanGraph]:
+        """校验 DAG 合法性，同时返回构建好的 PlanGraph。
+
+        调用方无需重复构造 PlanGraph——校验通过后直接使用返回的 graph，
+        避免在 SubAgent 中 from_plan() 两次。
 
         Args:
             plan:               Planner 产出的 Plan
             global_constraints: 全局约束天花板
-            task_constraints:   任务级约束（与 global 取 min）
+            task_constraints:   任务级约束（调用 resolve 后所有字段均已填充）
 
         Returns:
-            ValidationResult（valid + issues + action）
+            (ValidationResult, PlanGraph) —— PlanGraph 始终返回（即使校验失败），
+            失败时 graph 仍可用于调试/日志。
         """
         issues: list[ValidationIssue] = []
 
         # ── A. 图结构检查（PlanGraph，使用 NetworkX）─────────────────────
-        from Module.task_system.core.graph import PlanGraph
         graph = PlanGraph.from_plan(plan)
 
         # 1-4. 环检测 / 依赖引用 / 孤立 / 不可达
@@ -72,7 +81,9 @@ class PlanValidator:
         # 5. 最大深度 —— 复用 max_nodes 作为深度上限（深度 ≤ 节点数）。
         #    对于链状 DAG（最坏情况），深度 = 节点数。
         #    没有独立的 max_depth 字段——节点数已经约束了规模的物理上限。
-        max_nodes = min(global_constraints.max_dag_nodes, task_constraints.max_dag_nodes)
+        tc = task_constraints.resolve(global_constraints)
+        max_nodes = tc.max_dag_nodes
+        assert max_nodes is not None  # resolve() 保证所有字段已填充
         try:
             max_depth = graph.compute_max_depth()
             if max_depth > max_nodes:
@@ -80,7 +91,7 @@ class PlanValidator:
                     type=ValidationIssueType.MAX_DEPTH_EXCEEDED,
                     message=f"DAG 深度 {max_depth} 超过上限 {max_nodes}（深度上限 = 节点数上限）",
                 ))
-        except Exception:
+        except nx.NetworkXUnfeasible:
             # 有环时拓扑排序失败，环已在 structural_issues 中报告
             pass
 
@@ -123,7 +134,7 @@ class PlanValidator:
                         message=f"节点 {node.node_id} 的 output_contract.json_schema 缺少 'type' 字段",
                     ))
 
-        # 8. 节点数检查 —— 取 min(全局, 任务)
+        # 8. 节点数检查 —— max_nodes 已通过 TaskConstraints.resolve() 合并全局与任务级约束
         if len(plan.dag.nodes) > max_nodes:
             issues.append(ValidationIssue(
                 type=ValidationIssueType.MAX_NODES_EXCEEDED,
@@ -132,7 +143,7 @@ class PlanValidator:
 
         # ── 汇总 ──────────────────────────────────────────────────────────
         if not issues:
-            return ValidationResult(valid=True, action=ValidationAction.PROCEED)
+            return ValidationResult(valid=True, action=ValidationAction.PROCEED), graph
 
         # 区分 fix_plan vs abort
         fatal_types = {
@@ -144,4 +155,4 @@ class PlanValidator:
             valid=False,
             issues=issues,
             action=ValidationAction.ABORT if has_fatal else ValidationAction.FIX_PLAN,
-        )
+        ), graph

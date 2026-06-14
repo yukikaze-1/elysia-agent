@@ -305,7 +305,7 @@ async def test_node_without_output_as(executor, sample_tools):
         output_contract=OutputContract(description="临时数据"),
         required=False,
         input_bindings=[],
-        output_as="",  # 空字符串——没有 output_as
+        output_as=None,  # None=无产物
     )
 
     result = await executor.execute(node, TaskId("task_1"), sample_tools)

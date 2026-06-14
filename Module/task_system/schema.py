@@ -10,10 +10,21 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal, NewType
 
 from pydantic import BaseModel, Field
+
+
+def now_iso() -> str:
+    """返回当前 UTC 时间的 ISO 8601 字符串。
+
+    TaskSystem 内所有 timestamp 字段统一使用此函数生成，
+    替代各模块内重复的 _now() / datetime.now(timezone.utc).isoformat() 样板代码。
+    """
+    return datetime.now(timezone.utc).isoformat()
+
 
 # ── 基础类型 ────────────────────────────────────────────────────────────────────
 
@@ -204,7 +215,7 @@ class ConstraintConfig(BaseModel):
     """全局约束配置（TaskSystem 构造时注入）。
 
     TaskSystem 内所有执行路径强制遵守。这些是"天花板"——
-    DelegationPreparer 产出的 TaskConstraints 与其取 min 后生效。
+    通过 TaskConstraints.resolve(global) 合并，任务级 None → 全局值，超限 → clamp。
 
     字段：
         max_total_tokens:     整个任务 LLM 调用总 token 上限（硬）
@@ -232,8 +243,9 @@ class ConstraintConfig(BaseModel):
 class TaskConstraints(BaseModel):
     """任务级约束（DelegationPreparer 产出）。
 
-    与全局 ConstraintConfig 取 min 后生效。
-    None 表示不覆盖，使用全局默认。
+    所有字段 None 表示"不覆盖，使用全局默认"。
+    调用 resolve(global) 后得到所有字段均已填充的有效约束，
+    Planner / PlanValidator 直接使用，不再手写 min/fallback。
 
     字段：
         max_dag_nodes:       本次任务 DAG 步数上限（LLM 根据意图复杂度估算）
@@ -242,17 +254,66 @@ class TaskConstraints(BaseModel):
         max_task_duration_s: 本次任务最大时长秒数（None=全局默认）
         max_failure_count:   本次任务最大连续失败次数（None=全局默认）
     """
-    max_dag_nodes: int = Field(default=10, ge=1)
-    max_mutations: int = Field(default=5,  ge=0)
-    max_total_tokens: int | None = None
-    max_task_duration_s: float | None = None
-    max_failure_count: int | None = None
+    max_dag_nodes: int | None = Field(default=None, ge=1)
+    max_mutations: int | None = Field(default=None, ge=0)
+    max_total_tokens: int | None = Field(default=None, ge=1)
+    max_task_duration_s: float | None = Field(default=None, ge=0)
+    max_failure_count: int | None = Field(default=None, ge=1)
+
+    def resolve(self, global_: ConstraintConfig) -> TaskConstraints:
+        """用全局约束填充所有 None 字段，返回全量有效约束。
+
+        规则：
+            1. None → 取全局值
+            2. 非 None 但超过全局 → 以全局为准（clamp），记录 warning
+            3. 非 None 且 ≤ 全局 → 保留任务级值
+
+        任务级约束是全局的"子集天花板"——只应更严格，不应更宽松。
+        DelegationPreparer 产出超过全局的值是 bug，但不会导致崩溃。
+        """
+        import logging
+        _log = logging.getLogger(__name__)
+
+        def _resolve_field(name: str, task_val, global_val, clamp_reason: str = ""):
+            """解析单个字段：None → global；> global → clamp+warn；≤ global → task。"""
+            if task_val is None:
+                return global_val
+            if task_val > global_val:
+                _log.warning(
+                    "TaskConstraints.resolve: %s=%s 超过全局上限 %s，clamp 到全局值（%s）",
+                    name, task_val, global_val, clamp_reason,
+                )
+                return global_val
+            return task_val
+
+        return TaskConstraints(
+            max_dag_nodes=_resolve_field(
+                "max_dag_nodes", self.max_dag_nodes, global_.max_dag_nodes,
+                "DAG 节点数",
+            ),
+            max_mutations=_resolve_field(
+                "max_mutations", self.max_mutations, global_.max_mutations,
+                "敏感操作次数",
+            ),
+            max_total_tokens=_resolve_field(
+                "max_total_tokens", self.max_total_tokens, global_.max_total_tokens,
+                "总 token",
+            ),
+            max_task_duration_s=_resolve_field(
+                "max_task_duration_s", self.max_task_duration_s, global_.max_task_duration_s,
+                "任务时长",
+            ),
+            max_failure_count=_resolve_field(
+                "max_failure_count", self.max_failure_count, global_.max_failure_count,
+                "连续失败次数",
+            ),
+        )
 
 
 # ── CognitiveLoop 侧类型（TaskSystem 只引用，不拥有）─────────────────────────────
 
-# TODO: 以下两个类型属于 CognitiveLoop，最终定义在 Core 层。
-# DelegationPreparer 暂时在此引用占位，待 CognitiveLoop 侧实现后替换。
+# Tool 已升级为正式描述符模型（对齐 Module/tool.ToolPlugin 的描述层字段）。
+# UserProfile 仍为占位——字段由 CognitiveLoop 侧定义。
 
 class UserProfile(BaseModel):
     """用户画像（CognitiveLoop 管理）。
@@ -266,16 +327,20 @@ class UserProfile(BaseModel):
 
 
 class Tool(BaseModel):
-    """工具描述（CognitiveLoop / ToolRegistry 管理）。
+    """工具描述符——TaskSystem 对 Module/tool 工具的轻量投影。
 
-    全量工具列表中单个工具的抽象——名称、描述、参数 schema 等。
-    DelegationPreparer 从全量列表中筛选相关工具。
+    只持有 TaskSystem 层需要的字段：
+        name:         工具唯一标识符（与 ToolPlugin.name 对应，Executor 据此过滤 definitions）
+        description:  工具功能描述（Planner 注入 prompt 供 LLM 选工具）
+        capabilities: 工具能力标签（对齐 Module/tool.Capability，v2 RBAC 校验用）
 
-    TODO: 字段由 ToolRegistry / ToolPlugin 侧定义。当前占位，防止裸 dict。
+    注意：参数 schema 不在此重复——Executor 运行时从 ToolManager.definitions() 获取
+    完整的 OpenAI function-calling 格式 schema，此模型仅作为"许可列表"传递。
+    不含执行逻辑，不含 SafetyProfile——这些由 ToolManager 内部持有。
     """
-    name: str                   # 工具唯一标识符（例："search"）
-    description: str            # 工具功能描述（例："搜索互联网获取实时信息"）
-    model_config = {"extra": "allow"}  # 暂时允许任意字段
+    name: str
+    description: str = ""
+    capabilities: list[str] = Field(default_factory=list)
 
 
 # ── 委派上下文 ──────────────────────────────────────────────────────────────────
@@ -298,7 +363,7 @@ class DelegationContext(BaseModel):
         intent:              LLM 输出的完整任务意图（非用户原始输入）
         hints:               LLM 观察到的元信息（紧急程度、偏好等），可为 None
         tools:              本次任务可用的工具列表（从全量工具中筛选）
-        task_constraints:    本次任务级限制
+        task_constraints:    本次任务级限制（None 字段 = 不覆盖全局约束）
         summarized_context:  LLM 摘要的相关上下文（≤ 500 字）
         session_id:          关联会话 ID，用于日志和 Debug 追踪
         return_mode:         产出报告模式——自然语言总结 或 结构化数据
@@ -339,10 +404,10 @@ class DelegationResult(BaseModel):
     status: DelegationStatus
     context: DelegationContext | None = None
     reason: str = ""
-    missing_tools: list[Tool] = Field(default_factory=list)
+    missing_tools: list[str] = Field(default_factory=list)
     suggestion: str | None = None
 
-    # TODO: UserProfile / Tool 字段由 CognitiveLoop 侧定义，当前占位。
+    # UserProfile 字段由 CognitiveLoop 侧定义，当前占位。
     # session_messages 截断策略后续讨论。
 
 
@@ -501,8 +566,8 @@ class TaskSummary(BaseModel):
     """任务完成后/查询时的摘要视图。
 
     Debug WebUI 和用户查询（"刚才那个任务怎么样了？"）使用。
-    字段偏展示——tools_used 用字符串名而非完整 Tool 对象，
-    errors 用扁平字符串列表而非结构化 error+error_code。
+    字段偏展示——tools_used 用字符串名，errors 用扁平字符串列表
+    而非结构化 error+error_code。
     """
     task_id: TaskId
     status: TaskStatus
@@ -512,7 +577,7 @@ class TaskSummary(BaseModel):
     nodes: dict[str, int] = Field(        # {"total": N, "completed": N, "failed": N, "skipped": N}
         default_factory=lambda: {"total": 0, "completed": 0, "failed": 0, "skipped": 0}
     )
-    tools_used: list[Tool] = Field(default_factory=list)  # 审计：本任务调用了哪些工具
+    tools_used: list[str] = Field(default_factory=list)   # 审计：本任务调用了哪些工具名
     token_usage: dict[str, int] = Field(  # {"planner": N, "executor": N, "evaluator": N, ...}
         default_factory=dict
     )
@@ -684,11 +749,12 @@ class OrchestratorResult(BaseModel):
     # ↑ NEEDS_REPLAN / FAILED 时包含:
     #     {"reason": str, "failed_nodes": list[NodeId]}
     #     特殊情况（死锁、内部异常）只有 reason，无 failed_nodes
-    checkpoint_state: dict[str, Any] = Field(default_factory=dict)
-    # ↑ 当前 TaskState 的可序列化快照。Sub-Agent 用于:
-    #     PAUSED       → CheckpointManager.save()，等 resume 后恢复
+    checkpoint_state: TaskCheckpoint | None = None
+    # ↑ 当前 TaskState + ExecutionState 快照。Sub-Agent 用于:
+    #     PAUSED       → CheckpointManager.save(checkpoint_state)，等 resume 后恢复
     #     BLOCKED      → 等审批回传后恢复执行
-    #     NEEDS_REPLAN → 提取 node_states 传给 Planner.replan()
+    #     NEEDS_REPLAN → checkpoint_state.exec.node_states 传给 Planner.replan()
+    #     死锁 / ABORT 时为 None（快照无意义）
 
 
 # ── Orchestrator 状态追踪 ─────────────────────────────────────────────────────────
@@ -772,6 +838,22 @@ class ExecutionState(BaseModel):
     updated_at: str = ""
 
 
+# ── Checkpoint ──────────────────────────────────────────────────────────────────
+
+
+class TaskCheckpoint(BaseModel):
+    """任务执行快照——TaskState + ExecutionState 的组合容器。
+
+    Orchestrator._build_checkpoint() 产出，CheckpointManager 持久化，
+    SubAgent 在 resume / NEEDS_REPLAN / PAUSED 路径消费。
+
+    两个字段均为 Pydantic 模型实例（非 dict）——checkpoint 在内存中保持强类型，
+    CheckpointManager 在 save/load 边界做 model_dump / model_validate 转换。
+    """
+    task: TaskState
+    exec: ExecutionState
+
+
 # ── 节点产出契约 ──────────────────────────────────────────────────────────────
 
 class OutputContract(BaseModel):
@@ -834,7 +916,7 @@ class DAGNode(BaseModel):
     output_contract: OutputContract = Field(default_factory=OutputContract)  # 期望产出 + 约束
     required: bool = True                         # 是否必须成功（False → 可跳过）
     input_bindings: list[ArtifactId] = Field(default_factory=list)   # 从 ArtifactStore 取哪些产物
-    output_as: ArtifactId = ArtifactId("")        # 产出存到 ArtifactStore 的 ID
+    output_as: ArtifactId | None = None            # 产出存到 ArtifactStore 的 ID（None=无产物）
     max_retries: int | None = None                # None=使用全局默认
     max_duration_s: float | None = None           # None=无限制
 
@@ -897,7 +979,7 @@ class DAGPatch(BaseModel):
         remove_nodes:   要移除的 node_id 列表（不包含 replace 中的 old_id）
         add_nodes:      要新增的节点列表（不包含 replace 中的 new_node）
         remove_edges:   要移除的边
-        update_edges:   要新增的边
+        add_edges:      要新增的边
     """
     patch_type: DAGPatchType = DAGPatchType.REPLACE_NODES
     reason: str = ""
@@ -907,7 +989,7 @@ class DAGPatch(BaseModel):
     remove_nodes: list[NodeId] = Field(default_factory=list)
     add_nodes: list[DAGNode] = Field(default_factory=list)
     remove_edges: list[tuple[NodeId, NodeId]] = Field(default_factory=list)
-    update_edges: list[tuple[NodeId, NodeId]] = Field(default_factory=list)
+    add_edges: list[tuple[NodeId, NodeId]] = Field(default_factory=list)
 
 
 # ── Plan 校验 ──────────────────────────────────────────────────────────────────
@@ -958,7 +1040,8 @@ class Artifact(BaseModel):
     下游通过 input_bindings 以此 key 取出。
     """
     artifact_id: ArtifactId
-    artifact_type: str                         # 对应 OutputContract.output_type（v1 自然语言，v2 类型注册表 key）
+    artifact_type: str                         # 产物类型。v1 来自 tool_result.result_type（如 "text"），
+                                                # v2 对齐 OutputContract.output_type 类型注册表 key
     node_id: NodeId
     task_id: TaskId
     content: Any = None                        # 实际产物数据——dict、list、str、bytes 等不做限制
@@ -1059,7 +1142,8 @@ class NodeResult(BaseModel):
     node_id: NodeId
     artifact_refs: list[ArtifactId] = Field(default_factory=list)  # ArtifactStore 引用（含所有产物）
     error: NodeErrorCode | None = None                       # 节点级执行错误码
-    attempt: int = 0                                        # 第几次尝试（0=尚未执行，与 NodeState 一致）
+    attempt: int = 0                                        # 当前是第几次执行尝试。Executor 始终返回 0（不追踪重试），
+                                                            # 实际值由 Orchestrator 在 _execute_nodes 中用 NodeState.attempt 覆盖。
     duration_ms: int = 0                                    # 本次工具调用耗时（毫秒）。Executor 填写，ExperienceRecord 消费
 
 
@@ -1096,7 +1180,7 @@ class TaskResult(BaseModel):
     token_usage: dict[str, int] = Field(        # {"planner": N, "executor": N, "evaluator": N, ...}
         default_factory=dict
     )
-    tools_used: list[Tool] = Field(default_factory=list)  # 审计：本任务调用了哪些工具
+    tools_used: list[str] = Field(default_factory=list)   # 审计：本任务调用了哪些工具名
     # 任务级错误（仅在 failed/cancelled 时有值）
     error: str | None = None                    # 人类可读，来自 TaskState.error
     error_code: TaskErrorCode | None = None     # 机器可读，来自 TaskState.error_code

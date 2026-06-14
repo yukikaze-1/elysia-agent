@@ -24,11 +24,11 @@ Module/task_system/           # 全新模块
 ├── mailbox.py                 # TaskMailbox（单播，Agent 唯一消费者）
 ├── checkpoint.py              # CheckpointManager: 节点级 TaskState 快照
 ├── artifact_store.py          # ArtifactStore: 节点大产物存储（v1 内存）
-├── pool.py                    # Agent 并发控制（BoundedSemaphore）
-├── summary_store.py           # 任务摘要存储（JSONL, TTL 7天）
-├── tool_runner.py             # CPU 密集工具子进程入口
-├── debug_api.py               # Debug WebUI 数据接口 + SSE 推送端点
-├── __main__.py                # 独立运行测试
+├── pool.py                    # v2 TODO: Agent 并发控制（BoundedSemaphore）
+├── summary_store.py           # v2 TODO: 任务摘要存储（JSONL, TTL 7天）
+├── tool_runner.py             # v2 TODO: CPU 密集工具子进程入口
+├── debug_api.py               # v2 TODO: Debug WebUI 数据接口 + SSE 推送端点
+├── __main__.py                # v2 TODO: 独立运行测试
 ├── core/                      # 编排循环
 │   ├── __init__.py
 │   ├── sub_agent.py           # SubAgent: 决策层——规划/Replan/熔断（7 deps）
@@ -40,13 +40,13 @@ Module/task_system/           # 全新模块
 │   └── evaluator.py           # Evaluator: 双重判定（ExecutionStatus + BusinessStatus）
 ├── safety/                    # 安全护栏（纯逻辑，无副作用）
 │   ├── __init__.py
-│   ├── constraint.py          # 统一约束层
-│   └── rbac.py                # RBAC 权限矩阵
+│   ├── constraint.py          # v2 TODO: 统一约束层
+│   └── rbac.py                # v2 TODO: RBAC 权限矩阵
 └── learning/                  # 经验记忆与学习
     ├── __init__.py
-    ├── reflector.py           # Reflector: 失败经验提炼
-    ├── experience_memory.py   # 任务经验记忆（独立于用户 LTM）
-    └── dedup.py               # 时间滑动窗口去重
+    ├── reflector.py           # v2 TODO: Reflector: 失败经验提炼
+    ├── experience_memory.py   # v2 TODO: 任务经验记忆（独立于用户 LTM）
+    └── dedup.py               # v2 TODO: 时间滑动窗口去重
 
 Module/task_system/tests/      # 独立测试
 ├── test_schema.py

@@ -1,19 +1,24 @@
 """CheckpointManager — 任务状态持久化。
 
-每轮 DAG 迭代后保存 TaskState + ExecutionState 快照。
+每轮 DAG 迭代后保存 TaskCheckpoint（TaskState + ExecutionState）快照。
 支持 pause/resume 和崩溃恢复。
 
 v1: 内存 dict，进程重启后丢失。
 v2: 文件持久化（write-to-tmp + atomic rename）。
+
+接口边界：
+    外部 → TaskCheckpoint（强类型 Pydantic 模型）
+    内部 → 直接存储 TaskCheckpoint 对象（v1 内存，零开销）
+    v2 文件持久化时在文件 I/O 边界做序列化/反序列化。
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from Module.task_system.schema import TaskId
+    from Module.task_system.schema import TaskCheckpoint, TaskId
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +26,11 @@ logger = logging.getLogger(__name__)
 class CheckpointManager:
     """任务状态快照的持久化管理。
 
-    v1 实现：内存 dict[TaskId, checkpoint]。
+    v1 实现：内存 dict[TaskId, TaskCheckpoint]（直接存储 Pydantic 对象）。
     每轮 Orchestrator 迭代后保存，resume 时加载，终态后清理。
+
+    接口对外暴露 TaskCheckpoint（强类型 Pydantic 模型），内部直接存储对象——
+    v1 无序列化开销。v2 文件持久化时在文件读写边界做 model_dump / model_validate。
 
     写入策略（v2）：
         write-to-tmp + atomic rename（进程中途崩溃不留下损坏文件）。
@@ -33,27 +41,32 @@ class CheckpointManager:
     """
 
     def __init__(self) -> None:
-        self._store: dict[TaskId, dict[str, Any]] = {}
+        self._store: dict[str, TaskCheckpoint] = {}
 
     # ── 持久化 ──────────────────────────────────────────────────────────
 
-    async def save(self, task_id: TaskId, checkpoint: dict[str, Any]) -> None:
-        """保存 checkpoint 快照。
+    async def save(self, task_id: TaskId, checkpoint: TaskCheckpoint) -> None:
+        """保存 TaskCheckpoint 快照。
 
-        checkpoint 结构：{"task": TaskState.model_dump(), "exec": ExecutionState.model_dump()}
+        v1 直接存储 Pydantic 对象（内存，零序列化开销）。
+        v2 在此基础上增加文件写入（model_dump → 文件）。
         """
-        self._store[task_id] = checkpoint
+        self._store[str(task_id)] = checkpoint
         logger.debug("CheckpointManager.save: task_id=%s", task_id)
 
-    async def load(self, task_id: TaskId) -> dict[str, Any] | None:
-        """加载 checkpoint 快照。不存在返回 None。"""
-        cp = self._store.get(task_id)
+    async def load(self, task_id: TaskId) -> TaskCheckpoint | None:
+        """加载 checkpoint 快照。不存在返回 None。
+
+        v1 直接返回内存中的 Pydantic 对象。
+        v2 从文件读取 + model_validate 恢复。
+        """
+        cp = self._store.get(str(task_id))
         if cp is not None:
             logger.debug("CheckpointManager.load: task_id=%s", task_id)
         return cp
 
     async def delete(self, task_id: TaskId) -> None:
         """删除任务的 checkpoint。"""
-        existed = self._store.pop(task_id, None) is not None
+        existed = self._store.pop(str(task_id), None) is not None
         if existed:
             logger.debug("CheckpointManager.delete: task_id=%s", task_id)

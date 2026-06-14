@@ -300,7 +300,7 @@ class Executor:
         artifact_id 使用 node.output_as，下游节点通过 input_bindings 引用，
         形成 DAG 的数据流（push 模式：上游产出 → 下游引用）。
         """
-        if not node.output_as:
+        if not node.output_as:  # None 或空串均视为无产物
             logger.warning("Executor: node=%s 没有 output_as，跳过存储", node.node_id)
             return None
 

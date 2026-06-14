@@ -239,7 +239,7 @@ class PlanGraph:
             2. remove_nodes  — 移除不需要的节点
             3. add_nodes     — 新增节点
             4. remove_edges  — 移除不需要的边
-            5. update_edges  — 新增边
+            5. add_edges     — 新增边
 
         full_replan 不在此处理——由 Sub-Agent 层创建新 Plan + 重建 PlanGraph。
         """
@@ -268,7 +268,7 @@ class PlanGraph:
                 self._g.remove_edge(from_id, to_id)
 
         # 5. 新增边
-        for from_id, to_id in patch.update_edges:
+        for from_id, to_id in patch.add_edges:
             if from_id in self._g.nodes and to_id in self._g.nodes:
                 self._g.add_edge(from_id, to_id)
 

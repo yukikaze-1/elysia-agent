@@ -83,6 +83,7 @@ from Module.task_system.schema import (
     TaskState,
     ExecutionState,
     NodeState,
+    TaskCheckpoint,
 )
 
 __all__ = [
@@ -165,4 +166,5 @@ __all__ = [
     "TaskState",
     "ExecutionState",
     "NodeState",
+    "TaskCheckpoint",
 ]

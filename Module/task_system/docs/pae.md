@@ -524,7 +524,7 @@ Artifact Store 中保存真实内容：
       "dependencies": []
     }
   ],
-  "update_edges": []
+  "add_edges": []
 }
 ```
 

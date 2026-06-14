@@ -1,7 +1,7 @@
 # TaskSystem 重构设计文档
 
 > 日期: 2026-06-08  
-> 状态: 设计完成，待实现
+> 状态: 设计完成，核心编排已实现（v1）
 
 ---
 
@@ -194,18 +194,18 @@ Module/task_system/
 │   ├── plan_validator.py # PlanValidator: DAG 静态校验（纯逻辑）
 │   ├── executor.py      # Executor: v1 单工具直接调用，v2 DBT 生成
 │   └── evaluator.py     # Evaluator: 双重判定
-├── safety/              # TODO: 安全护栏（纯逻辑，无副作用）—— 骨架阶段尚未创建
-│   ├── constraint.py    # TODO: 统一约束层
-│   └── rbac.py          # TODO: RBAC 权限矩阵
-├── learning/            # ⚠️ v2 经验记忆与学习（v1 不做）
-│   ├── reflector.py     # TODO(v2): Reflector: 失败经验提炼
-│   ├── experience_memory.py  # TODO(v2): 任务经验记忆（独立于用户 LTM）
-│   └── dedup.py         # TODO(v2): 时间滑动窗口去重
-├── pool.py              # TODO: Agent 并发控制（BoundedSemaphore）
-├── summary_store.py     # TODO: 任务摘要存储（JSONL, TTL 7天）
-├── tool_runner.py       # TODO: CPU 密集工具子进程入口
-├── debug_api.py         # TODO: Debug WebUI 数据接口
-└── __main__.py          # 独立运行测试
+├── safety/              # ⚠️ v2 TODO：安全护栏（纯逻辑，无副作用）—— 文件尚未创建
+│   ├── constraint.py    # ⚠️ v2 TODO：统一约束层
+│   └── rbac.py          # ⚠️ v2 TODO：RBAC 权限矩阵
+├── learning/            # ⚠️ v2 TODO：经验记忆与学习（v1 不做）
+│   ├── reflector.py     # ⚠️ v2 TODO：Reflector — 失败经验提炼
+│   ├── experience_memory.py  # ⚠️ v2 TODO：任务经验记忆（独立于用户 LTM）
+│   └── dedup.py         # ⚠️ v2 TODO：时间滑动窗口去重
+├── pool.py              # ⚠️ v2 TODO：Agent 并发控制（BoundedSemaphore）
+├── summary_store.py     # ⚠️ v2 TODO：任务摘要存储（JSONL, TTL 7天）
+├── tool_runner.py       # ⚠️ v2 TODO：CPU 密集工具子进程入口
+├── debug_api.py         # ⚠️ v2 TODO：Debug WebUI 数据接口
+└── __main__.py          # ⚠️ v2 TODO：独立运行测试
 ```
 
 **子包职责**：
@@ -236,19 +236,19 @@ class RBACLevel(StrEnum):           # READ_ONLY / SAFE_WRITE / MUTATION
 class ConstraintConfig(BaseModel):     # 全局约束天花板: max_total_tokens/max_failure_count/max_dag_nodes/... (8 字段)
 class TaskConstraints(BaseModel):      # 任务级约束: max_dag_nodes/max_mutations + 3 个可选(None=全局默认)
 class DelegationContext(BaseModel):    # 委派沙盒: intent/hints/tools/task_constraints/summarized_context/session_id/return_mode
-class DelegationResult(BaseModel):     # DelegationPreparer 产出: status(DelegationStatus)/context/reason/missing_tools/suggestion
+class DelegationResult(BaseModel):     # DelegationPreparer 产出: status(DelegationStatus)/context/reason/missing_tools(list[str])/suggestion
 class DelegationStatus(StrEnum):       # OK / NO_MATCHING_TOOLS / TOO_VAGUE
 class ReturnMode(StrEnum):             # NATURAL_LANGUAGE / STRUCTURED
 class SubmitError(BaseModel):          # code(SubmitRejectionCode) + message + details + suggestions
 class ResumeError(BaseModel):          # code(ResumeErrorCode) + message + details + suggestions
 class HITLData(BaseModel):             # task_id/approval_id/agent_id/node_id/node_task/tool_name/params/rbac_level/risk_summary
-class UserProfile(BaseModel):          # 占位——CognitiveLoop 侧定义
-class Tool(BaseModel):                 # 占位——ToolRegistry 侧定义
+class UserProfile(BaseModel):          # 占位——CognitiveLoop 侧定义（v2 完善）
+class Tool(BaseModel):                 # name/description/capabilities — 与 ToolRegistry 共用的基础模型
 
 # ══ 第二层：核心输出（TaskMailbox 事件 + 查询视图）──
 class TaskEvent(BaseModel):           # type(TaskEventType) + data: 6 种事件
 class TaskEventType(StrEnum):         # progress/approval_needed/completed/failed/cancelled/paused
-class TaskSummary(BaseModel):         # 查询视图: task_id/status/intent/created_at/nodes/tools_used/token_usage/approvals/error/error_code/replans
+class TaskSummary(BaseModel):         # 查询视图: task_id/status/intent/created_at/nodes/tools_used(list[str])/token_usage/approvals/error/error_code/replans
 class TaskProgress(BaseModel):        # 进度快照: status/current_node_id/completed_nodes/total_nodes/elapsed_ms/estimated_remaining_ms
 class DAGNodeInfo(BaseModel):         # 节点展示: node_id/description/status/progress/error/error_code
 class TaskDAG(BaseModel):             # DAG 可视化: nodes(list[DAGNodeInfo]) + edges(list[tuple[NodeId,NodeId]])
@@ -277,9 +277,10 @@ class Artifact(BaseModel):            # artifact_id(ArtifactId)/artifact_type/no
 # ══ 运行时状态（Orchestrator/SubAgent）──
 class TaskState(BaseModel):           # SubAgent 管理: task_id/status/plan/created_at/updated_at/error/error_code
 class ExecutionState(BaseModel):      # Orchestrator 管理: node_states/current_phase/waiting_for_approval/pause_requested/created_at/updated_at
+class TaskCheckpoint(BaseModel):      # 检查点快照: task(TaskState) + exec(ExecutionState) — 两层 Pydantic model_dump / model_validate
 class NodeState(BaseModel):           # 单节点运行时: node_id/status/attempt/started_at/finished_at/artifact_refs/summary/error/error_code
 class OrchestratorRunStatus(StrEnum): # SUCCESS/FAILED/NEEDS_REPLAN/BLOCKED/PAUSED
-class OrchestratorResult(BaseModel):  # status + error_context + checkpoint_state
+class OrchestratorResult(BaseModel):  # status + error_context + checkpoint_state (TaskCheckpoint | None; deadlock/abort 时为 None)
 class ExecutionPhase(StrEnum):        # EXECUTING/EVALUATING/FINALIZING
 
 # ══ 经验记忆（⚠️ v1 不做）──
@@ -310,12 +311,13 @@ class ExperienceRecord(BaseModel):    # tool_name/error_pattern/diagnosis/fix/co
 ```
 SubAgent.run(context, mailbox)           ← 决策层
   ├─ Planner.plan(context) → Plan
-  ├─ PlanValidator.validate(plan)
+  ├─ validation, graph = PlanValidator.validate(plan, ...)  ← 校验通过后直接产出 PlanGraph
   └─ while True:                         ← 决策循环
-       result = Orchestrator.run(plan)    ← 执行层（保持内部循环）
+       result = Orchestrator.run(task_state, exec_state, graph, mailbox)
        if NEEDS_REPLAN:
            patch = Planner.replan(...)    ← 决策层调 Planner
            plan.apply_patch(patch)
+           graph = PlanGraph.from_plan(plan)  ← patch 应用后重建图
            continue
 ```
 
@@ -430,8 +432,7 @@ DAG 执行中的失败有两种——
 SubAgent.run(context, mailbox):
     task_state = TaskState(task_id=task_id)
     plan = Planner.plan(context)
-    PlanValidator.validate(plan)
-    graph = PlanGraph.from_plan(plan)
+    validation, graph = PlanValidator.validate(plan, ...)
     exec_state = ExecutionState(node_states=...)
 
     while True:
@@ -440,7 +441,8 @@ SubAgent.run(context, mailbox):
         SUCCESS       → 终态，返回
         FAILED        → 终态，返回
         NEEDS_REPLAN  → 熔断检查
-            ├─ 通过 → Planner.replan() → DAGPatch → 应用到 Plan → continue
+            ├─ 通过 → Planner.replan() → DAGPatch → plan.apply_patch(patch)
+            │         → graph = PlanGraph.from_plan(plan) → continue
             └─ 熔断 → FAILED
         BLOCKED       → 等待审批回传 → 恢复到 checkpoint → continue
         PAUSED        → 保存 checkpoint → 返回 PAUSED，等待 resume() 调用后恢复
@@ -1012,27 +1014,31 @@ CognitiveLoop LLM 调用 submit_task(intent, hints)
 
 ```json
 {
-  "task_id": "xxx",
-  "plan": {...},
-  "completed_nodes": ["A", "B"],
-  "current_node": "C",
-  "pending_nodes": ["D", "E"],
-  "pending_approvals": [
-    {
-      "approval_id": "appr-001",
-      "node_id": "D",
-      "tool_name": "send_email",
-      "params": {"to": "boss@example.com", "body": "..."},
-      "requested_at": "2026-06-09T..."
-    }
-  ],
-  "node_results": {
-    "A": {"status": "completed", "output": {...}},
-    "B": {"status": "completed", "output": {...}}
+  "task": { /* TaskState.model_dump() */
+    "task_id": "xxx",
+    "status": "RUNNING",
+    "plan": { /* Plan — DAG + 版本 */ },
+    "created_at": "2026-06-08T...",
+    "updated_at": "2026-06-08T..."
   },
-  "timestamp": "2026-06-08T..."
+  "exec": { /* ExecutionState.model_dump() */
+    "node_states": {
+      "A": { "node_id": "A", "status": "SUCCESS", "attempt": 1, "artifact_refs": [...], ... },
+      "B": { "node_id": "B", "status": "SUCCESS", "attempt": 1, "artifact_refs": [...], ... },
+      "C": { "node_id": "C", "status": "RUNNING", "attempt": 1, ... },
+      "D": { "node_id": "D", "status": "WAITING_APPROVAL", "approval_id": "appr-001", ... },
+      "E": { "node_id": "E", "status": "PENDING", ... }
+    },
+    "current_phase": "EXECUTING",
+    "waiting_for_approval": true,
+    "pause_requested": false,
+    "created_at": "2026-06-08T...",
+    "updated_at": "2026-06-08T..."
+  }
 }
 ```
+
+`TaskCheckpoint` 由两个 Pydantic 模型组成：`task: TaskState`（任务级状态 — id/status/plan）和 `exec: ExecutionState`（执行层状态 — 各节点运行时信息、当前 phase、审批等待标志）。两层分离，各自 `model_dump()` / `model_validate()`，独立演化。序列化不再是一层平铺的 dict。
 
 **写入策略**：write-to-tmp + atomic rename（与现有 `TaskScheduler._save_checkpoint()` 同模式，`core/task_scheduler.py:394`），进程中途崩溃不留下损坏文件。
 

@@ -15,7 +15,6 @@ Orchestrator 读写 task_state.status 做终态转换，读写 exec_state 做循
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from Module.task_system.schema import (
@@ -36,8 +35,10 @@ from Module.task_system.schema import (
     TaskEventType,
     TaskState,
     TaskStatus,
+    TaskCheckpoint,
     TaskId,
     Tool,
+    now_iso,
 )
 
 if TYPE_CHECKING:
@@ -127,16 +128,26 @@ class Orchestrator:
         # TODO: if resume_from is not None: exec_state = resume_from
         #       else:
         exec_state = self._init_exec_state(graph)
+        # 每次 run() 调用视为"审批已解决"边界，显式复位。
+        # 设计假设：调用 run() 前审批已由外部（TaskSystem/SubAgent）处理完毕。
+        # 若审批通过 → 继续执行；若拒绝 → 节点已标记 FAILED，不会重新进入审批。
+        # ⚠️ 后续实现 resume 时需重新评估：
+        #   - resume 的 checkpoint 可能包含 waiting_for_approval=True（审批中途暂停）
+        #   - 但暂停的唯一路径是 PAUSE_REQUESTED，审批阻塞是 BLOCKED 退出 run()
+        #   - BLOCKED 退出后 TaskSystem 等待外部审批回传，不会调 resume()
+        #   - 所以当前假设在 v1 设计下成立，v2 审批风暴检测时重新审视
+        exec_state.waiting_for_approval = False
         logger.info("Orchestrator.run 开始: task_id=%s, nodes=%d", task_id, graph.node_count)
 
         try:
             while not task_state.is_terminal():
-                exec_state.updated_at = self._now()
+                exec_state.updated_at = now_iso()
 
                 # 0. 检查外部中断信号
                 if exec_state.pause_requested:
                     logger.info("Orchestrator: task_id=%s 收到暂停请求", task_id)
                     task_state.status = TaskStatus.PAUSED
+                    task_state.updated_at = now_iso()
                     await self._save_checkpoint(task_state, exec_state)
                     return OrchestratorResult(
                         status=OrchestratorRunStatus.PAUSED,
@@ -152,6 +163,7 @@ class Orchestrator:
 
                     if self._has_blocked_nodes(exec_state):
                         task_state.status = TaskStatus.WAITING_APPROVAL
+                        task_state.updated_at = now_iso()
                         await self._save_checkpoint(task_state, exec_state)
                         return OrchestratorResult(
                             status=OrchestratorRunStatus.BLOCKED,
@@ -171,6 +183,7 @@ class Orchestrator:
                     # 已覆盖所有导致 ready 为空的情况。若到达此处 → 内部状态损坏的 bug，让 FAILED 暴露。
                     logger.error("Orchestrator 死锁: task_id=%s", task_id)
                     task_state.status = TaskStatus.FAILED
+                    task_state.updated_at = now_iso()
                     return OrchestratorResult(
                         status=OrchestratorRunStatus.FAILED,
                         error_context={"reason": "检测到死锁——无可执行节点但任务未完成"},
@@ -218,6 +231,7 @@ class Orchestrator:
                         )
                     elif action == EvaluatorAction.ASK_APPROVAL:
                         task_state.status = TaskStatus.WAITING_APPROVAL
+                        task_state.updated_at = now_iso()
                         await self._save_checkpoint(task_state, exec_state)
                         return OrchestratorResult(
                             status=OrchestratorRunStatus.BLOCKED,
@@ -225,6 +239,7 @@ class Orchestrator:
                         )
                     elif action == EvaluatorAction.ABORT:
                         task_state.status = TaskStatus.FAILED
+                        task_state.updated_at = now_iso()
                         await self._save_checkpoint(task_state, exec_state)
                         return OrchestratorResult(
                             status=OrchestratorRunStatus.FAILED,
@@ -239,7 +254,7 @@ class Orchestrator:
             # 显式检查 RUNNING：防止因 bug 导致非终态（WAITING_APPROVAL/PAUSED）被覆盖为 COMPLETED
             if task_state.status == TaskStatus.RUNNING:
                 exec_state.current_phase = ExecutionPhase.FINALIZING
-                await self._finalize(task_state, exec_state, mailbox, graph)
+                await self._finalize(task_state, exec_state, mailbox)
 
             return OrchestratorResult(
                 status=OrchestratorRunStatus.SUCCESS,
@@ -249,6 +264,7 @@ class Orchestrator:
         except Exception:
             logger.exception("Orchestrator 异常终止: task_id=%s", task_id)
             task_state.status = TaskStatus.FAILED
+            task_state.updated_at = now_iso()
             await self._push_mailbox(mailbox, TaskEventType.FAILED, {
                 "error": "Orchestrator 内部异常",
                 "error_type": TaskErrorCode.INTERNAL_ERROR.value,
@@ -267,7 +283,7 @@ class Orchestrator:
         遍历所有 DAG 节点，为每个节点创建初始 NodeState（全部 PENDING）。
         新任务和 Replan 后均调用此方法重建。
         """
-        now = self._now()
+        now = now_iso()
         node_states: dict[NodeId, NodeState] = {}
         for nid in graph.nodes:
             node_states[nid] = NodeState(node_id=nid)
@@ -310,7 +326,7 @@ class Orchestrator:
             ns = exec_state.node_states[node.node_id]
             ns.status = NodeStatus.RUNNING
             ns.attempt += 1
-            ns.started_at = self._now()
+            ns.started_at = now_iso()
 
             logger.info("Orchestrator: 执行 node=%s attempt=%d", node.node_id, ns.attempt)
             result = await self._executor.execute(node, task_id, tools)
@@ -363,7 +379,7 @@ class Orchestrator:
         """
         node_id = evaluation.node_id
         ns = exec_state.node_states[node_id]
-        ns.finished_at = self._now()
+        ns.finished_at = now_iso()
         action = evaluation.suggested_action
 
         if action == EvaluatorAction.CONTINUE:
@@ -440,10 +456,10 @@ class Orchestrator:
         task_state: TaskState,
         exec_state: ExecutionState,
         mailbox: TaskMailbox,
-        graph: PlanGraph,
     ) -> None:
         """任务终态处理——推送 completed 事件 + 写最终 checkpoint。"""
         task_state.status = TaskStatus.COMPLETED
+        task_state.updated_at = now_iso()
         await self._save_checkpoint(task_state, exec_state)
 
         completed_nodes = sum(
@@ -454,16 +470,20 @@ class Orchestrator:
             1 for ns in exec_state.node_states.values()
             if ns.status in (NodeStatus.FAILED, NodeStatus.UNRECOVERABLE)
         )
+        total_nodes = len(exec_state.node_states)
 
         await self._push_mailbox(mailbox, TaskEventType.COMPLETED, {
+            "task_id": str(task_state.task_id),
             "result": f"任务完成。{completed_nodes} 个节点成功"
                       + (f"，{failed_nodes} 个节点失败" if failed_nodes else ""),
-            "summary": f"共 {len(exec_state.node_states)} 个节点，"
-                       f"成功 {completed_nodes}，失败 {failed_nodes}",
+            "summary": f"共 {total_nodes} 个节点，成功 {completed_nodes}，失败 {failed_nodes}",
+            "total_nodes": total_nodes,
+            "completed_nodes": completed_nodes,
+            "failed_nodes": failed_nodes,
         })
         logger.info(
             "Orchestrator: task_id=%s 完成。nodes: %d/%d success",
-            task_state.task_id, completed_nodes, len(exec_state.node_states),
+            task_state.task_id, completed_nodes, total_nodes,
         )
 
     # ── 审批判定 ────────────────────────────────────────────────────────────────
@@ -493,12 +513,9 @@ class Orchestrator:
 
     def _build_checkpoint(
         self, task_state: TaskState, exec_state: ExecutionState,
-    ) -> dict[str, Any]:
-        """组合 TaskState + ExecutionState 为 checkpoint 快照。"""
-        return {
-            "task": task_state.model_dump(),
-            "exec": exec_state.model_dump(),
-        }
+    ) -> TaskCheckpoint:
+        """组合 TaskState + ExecutionState 为类型化 checkpoint 快照。"""
+        return TaskCheckpoint(task=task_state, exec=exec_state)
 
     async def _save_checkpoint(
         self, task_state: TaskState, exec_state: ExecutionState,
@@ -514,8 +531,3 @@ class Orchestrator:
         """推送事件到 TaskMailbox——委托 push_mailbox_event（mailbox.py 公共函数）。"""
         from Module.task_system.mailbox import push_mailbox_event
         push_mailbox_event(mailbox, event_type, data, caller="Orchestrator")
-
-    @staticmethod
-    def _now() -> str:
-        """返回当前时间 ISO 8601 字符串。"""
-        return datetime.now(timezone.utc).isoformat()

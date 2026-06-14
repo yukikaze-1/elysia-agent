@@ -33,6 +33,7 @@ from Module.task_system.schema import (
     TaskStatus,
     TaskId,
     Tool,
+    Plan
 )
 
 
@@ -266,7 +267,7 @@ async def test_apply_retry_node_max_retries(orchestrator, mock_mailbox):
     assert action == EvaluatorAction.REPLAN  # 节点上限 2，attempt=2 触发
 
 
-def _make_plan_with_node(nid: NodeId, **kwargs) -> "Plan":
+def _make_plan_with_node(nid: NodeId, **kwargs) -> Plan:
     from Module.task_system.schema import DAG, Plan
     return Plan(dag=DAG(
         nodes=[DAGNode(node_id=nid, **kwargs)],
@@ -333,7 +334,7 @@ async def test_finalize_counts_skipped(orchestrator, mock_mailbox):
     es.node_states[NodeId("b")].status = NodeStatus.SKIPPED
     es.node_states[NodeId("c")].status = NodeStatus.FAILED
 
-    await orchestrator._finalize(ts, es, mock_mailbox, graph)
+    await orchestrator._finalize(ts, es, mock_mailbox)
 
     assert ts.status == TaskStatus.COMPLETED
 
@@ -342,10 +343,14 @@ async def test_finalize_counts_skipped(orchestrator, mock_mailbox):
                   if c[0][0].type.value == "completed"]
     assert len(push_calls) == 1, "应推送一次 completed 事件"
     data = push_calls[0][0][0].data
-    assert "2 个节点成功" in data["result"]    # SUCCESS + SKIPPED = 2
-    assert "1 个节点失败" in data["result"]    # FAILED = 1
-    assert "成功 2" in data["summary"]         # 成功 2
-    assert "失败 1" in data["summary"]         # 失败 1
+    assert data["task_id"] == str(ts.task_id)
+    assert data["total_nodes"] == 3
+    assert data["completed_nodes"] == 2        # SUCCESS + SKIPPED
+    assert data["failed_nodes"] == 1           # FAILED
+    assert "2 个节点成功" in data["result"]
+    assert "1 个节点失败" in data["result"]
+    assert "成功 2" in data["summary"]
+    assert "失败 1" in data["summary"]
 
 
 # ── 单元测试：_needs_approval ──────────────────────────────────────────────
@@ -620,23 +625,20 @@ async def test_evaluate_node_plan_none_abort(orchestrator, mock_mailbox):
 
 
 def test_build_checkpoint(orchestrator):
-    """_build_checkpoint 正确合并 task + exec。"""
+    """_build_checkpoint 返回 TaskCheckpoint（task + exec 类型化）。"""
     graph = _make_graph(["a"], [])
     ts = _task_state(graph=graph)
     es = orchestrator._init_exec_state(graph)
 
     cp = orchestrator._build_checkpoint(ts, es)
 
-    assert "task" in cp
-    assert "exec" in cp
-    assert cp["task"]["task_id"] == "t1"
-    assert "node_states" in cp["exec"]
-    assert "a" in cp["exec"]["node_states"]
+    assert cp.task.task_id == TaskId("t1")
+    assert "a" in cp.exec.node_states
 
 
 @pytest.mark.asyncio
 async def test_save_checkpoint_calls_mgr(orchestrator, mock_checkpoint):
-    """_save_checkpoint 调用 checkpoint_mgr.save。"""
+    """_save_checkpoint 调用 checkpoint_mgr.save(TaskCheckpoint)。"""
     graph = _make_graph(["a"], [])
     ts = _task_state(graph=graph)
     es = orchestrator._init_exec_state(graph)
@@ -645,8 +647,8 @@ async def test_save_checkpoint_calls_mgr(orchestrator, mock_checkpoint):
 
     mock_checkpoint.save.assert_called_once()
     args = mock_checkpoint.save.call_args
-    assert args[0][0] == TaskId("t1")  # task_id
-    assert "task" in args[0][1]        # checkpoint dict
+    assert args[0][0] == TaskId("t1")         # task_id
+    assert args[0][1].task.task_id == TaskId("t1")  # TaskCheckpoint.task
 
 
 @pytest.mark.asyncio

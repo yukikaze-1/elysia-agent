@@ -471,10 +471,10 @@ def test_apply_patch_replace_node():
     assert pg.nodes[NodeId("a")].description == "new"
 
 
-def test_apply_patch_update_edges():
-    """patch.update_edges 新增边。"""
+def test_apply_patch_add_edges():
+    """patch.add_edges 新增边。"""
     pg = _graph(_make_plan([{"id": "a"}, {"id": "b"}], []))
-    patch = DAGPatch(update_edges=[(NodeId("a"), NodeId("b"))])
+    patch = DAGPatch(add_edges=[(NodeId("a"), NodeId("b"))])
     pg.apply_patch(patch)
 
     assert pg._graph.has_edge(NodeId("a"), NodeId("b"))

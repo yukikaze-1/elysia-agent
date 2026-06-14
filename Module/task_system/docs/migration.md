@@ -18,7 +18,7 @@
 - **当前位置**: `Module/task_system/schema.py`
 - **应移至**: `Module/tool/`（ToolRegistry / ToolPlugin 侧）
 - **原因**: 工具描述由 ToolRegistry 定义和管理。DelegationPreparer 从全量工具列表中筛选，只读引用。
-- **当前状态**: 占位（`model_config = {"extra": "allow"}`），字段由 ToolPlugin 侧定义
+- **当前状态**: ✅ 已完成 — 已升级为具体模型：`name: str`, `description: str = ""`, `capabilities: list[str]`。TaskSystem 仅持有轻量投影（许可列表），不含执行逻辑或 SafetyProfile。
 - **迁移后**: TaskSystem 改为 `from Module.tool import Tool`
 
 ## 3. SessionId
@@ -70,7 +70,7 @@
 | 时机 | 迁移项 |
 |------|--------|
 | CognitiveLoop 定义 UserProfile 实际字段时 | #1 UserProfile |
-| ToolPlugin 定义 Tool 实际字段时 | #2 Tool |
+| ✅ 已完成（Tool 模型已具名化） | #2 Tool |
 | Core 层抽取共享类型时 | #3 SessionId |
 | TaskSystem 开发完成、上提基础设施时 | #4 AgentInfra |
 | DelegationPreparer Prompt 调优完成、稳定后 | #5 DelegationPreparer |

@@ -159,6 +159,15 @@ class TaskSystem:
                 message="TaskSystem 尚未 start()，请先调用 start()",
             )
 
+        # start() 已调用，所有组件和信号量必定初始化
+        assert self._planner is not None
+        assert self._plan_validator is not None
+        assert self._executor is not None
+        assert self._evaluator is not None
+        assert self._checkpoint_mgr is not None
+        assert self._artifact_store is not None
+        assert self._semaphore is not None
+
         # ── 参数校验 ──
         if not context.intent.strip():
             return SubmitError(
@@ -197,6 +206,8 @@ class TaskSystem:
                 logger.exception("TaskSystem: task_id=%s 执行异常", task_id)
             finally:
                 self._cleanup_task(task_id)
+                await self._cleanup_storage(task_id)
+                assert self._semaphore is not None
                 self._semaphore.release()
 
         asyncio.create_task(_run_and_cleanup())
@@ -288,10 +299,23 @@ class TaskSystem:
     # ── 内部方法 ─────────────────────────────────────────────────────────
 
     def _cleanup_task(self, task_id: TaskId) -> None:
-        """任务终态后清理注册表。
+        """任务终态后清理注册表 + 存储层。
 
-        SubAgent 调用此方法通知 TaskSystem 任务已结束。
+        调用方：_run_and_cleanup() finally 块。
         """
         self._tasks.pop(task_id, None)
         self._mailboxes.pop(task_id, None)
-        logger.info("TaskSystem: task_id=%s 清理完成", task_id)
+        # 异步存储清理由调用方在 await 后执行，此处仅标记
+        logger.info("TaskSystem: task_id=%s 注册表清理完成", task_id)
+
+    async def _cleanup_storage(self, task_id: TaskId) -> None:
+        """清理任务关联的 checkpoint 和 artifact 存储。
+
+        必须在 _cleanup_task() 之后调用——存储清理可能涉及 I/O（v2），
+        不阻塞注册表释放。
+        """
+        if self._checkpoint_mgr:
+            await self._checkpoint_mgr.delete(task_id)
+        if self._artifact_store:
+            await self._artifact_store.delete_by_task(task_id)
+        logger.debug("TaskSystem: task_id=%s 存储清理完成", task_id)

@@ -38,8 +38,7 @@ CognitiveLoop 工具执行器识别 submit_task
     ├── TaskId + TaskMailbox 创建（Mailbox 创建在 Planner 之前）
     ├── SubAgent.run(context, mailbox)
     │     ├── Planner.plan(context)        ← 第二次 LLM: DelegationContext → Plan(DAG)
-    │     ├── PlanValidator.validate()
-    │     ├── PlanGraph.from_plan()
+    │     ├── plan, plan_graph = PlanValidator.validate(plan)
     │     └── Orchestrator.run()
     │           ├── Executor.execute()      ← v1 LLM 工具匹配 + ToolManager 调用，v2 Worker 派发
     │           └── Evaluator.evaluate()    ← 可能调 LLM 做语义判定
@@ -65,10 +64,11 @@ CognitiveLoop 工具执行器识别 submit_task
 
 ```python
 class TaskSystem:
-    def __init__(self, infra: AgentInfra, hitl_notifier: HITLNotifier):
+    def __init__(self, infra: AgentInfra, hitl_notifier: HITLNotifier, max_sub_agents: int = 5):
         """
         infra: LLM Client, Milvus, HTTP, ToolRegistry, ConstraintConfig
         hitl_notifier: 审批快速通道实现。TaskSystem 不关心另一端是什么。
+        max_sub_agents: Sub-Agent 并发上限，默认 5。
         """
 
     async def start(self) -> None:
@@ -96,7 +96,7 @@ class TaskSystem:
 
 没有 `classify()`，没有 `execute_simple()`。一个 `submit()`。
 
-> **内部保证**：Mailbox 创建在 Planner 启动之前。内部 asyncio.Queue，返回即用，零绑定。
+> **内部保证**：Mailbox 创建在 Planner 启动之前。内部 collections.deque + asyncio.Event，返回即用，零绑定。
 
 ---
 
@@ -350,11 +350,12 @@ ArtifactId = NewType("ArtifactId", str)
 
 ```python
 class SubmitRejectionCode(StrEnum):
-    """submit() 同步拒绝码——4 项。参数校验不通过时返回。"""
+    """submit() 同步拒绝码——5 项。参数校验不通过时返回。"""
     INVALID_PARAM = "invalid_param"
     PLAN_TOO_LARGE = "plan_too_large"
     CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"
     TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"
+    NOT_READY = "not_ready"
 
 class TaskErrorCode(StrEnum):
     """任务运行时错误码——10 项。TaskState.error_code + TaskEvent error_type。"""
@@ -412,11 +413,15 @@ class ConstraintConfig:
 
 class TaskConstraints:
     """任务级约束。与全局 ConstraintConfig 取 min。None 表示使用全局默认。"""
-    max_dag_nodes: int                    # DAG 节点数上限
-    max_mutations: int                    # 敏感操作次数上限
+    max_dag_nodes: int | None = None      # DAG 节点数上限
+    max_mutations: int | None = None      # 敏感操作次数上限
     max_total_tokens: int | None          # None=全局默认
     max_task_duration_s: float | None     # None=全局默认
     max_failure_count: int | None         # None=全局默认
+
+    def resolve(self, global_: ConstraintConfig) -> TaskConstraints:
+        """用全局 ConstraintConfig 填充所有 None 字段，返回一个新的 TaskConstraints。
+        每个字段取 min(self.field, global_.field)，确保任务级约束不会超过全局天花板。"""
 
 class DelegationContext:
     """status=ok 时传入。Planner 的工作说明书——所有信息在此，不分散传参。"""
@@ -444,7 +449,7 @@ class DelegationResult:
     status: DelegationStatus             # ok / no_matching_tools / too_vague
     context: DelegationContext | None    # ok 时有值
     reason: str                          # LLM 判定理由（始终有）
-    missing_tools: list[Tool]            # no_matching_tools 时，缺少的工具
+    missing_tools: list[str]            # no_matching_tools 时，缺少的工具名称
     suggestion: str | None               # too_vague 时，给用户的澄清建议
 ```
 
@@ -505,7 +510,7 @@ class TaskSummary:
     created_at: str                      # ISO 8601，对齐 TaskState.created_at
     duration_ms: int                     # 总耗时（预计算）
     nodes: dict                          # {"total": N, "completed": N, "failed": N, "skipped": N}
-    tools_used: list[Tool]               # 审计：本任务调用了哪些工具
+    tools_used: list[str]               # 审计：本任务调用了哪些工具名称
     token_usage: dict                    # {"planner": N, "executor": N, "evaluator": N, ...}
     approvals: dict                      # {"requested": N, "approved": N, "denied": N}
     error: str | None                    # 任务级错误消息（来自 TaskState.error）
@@ -628,5 +633,6 @@ class UserProfile(BaseModel):
 class Tool(BaseModel):
     """工具描述。ToolRegistry 管理，DelegationPreparer 从全量中筛选。"""
     name: str                            # 工具唯一标识符
-    # TODO: 其余字段由 ToolRegistry / ToolPlugin 侧定义，当前占位
+    description: str = ""                # 工具功能描述
+    capabilities: list[str]              # 工具能力标签
 ```
