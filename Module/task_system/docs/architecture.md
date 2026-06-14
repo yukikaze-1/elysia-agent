@@ -945,8 +945,9 @@ CognitiveLoop LLM 调用 submit_task(intent, hints)
 | `hints` | LLM 输出 | 元信息（紧急程度、偏好等）。**写入 DelegationContext，Planner 直接消费** |
 | `session_messages` | SessionMemory | **全部对话消息（不截断）** |
 | `user_profile` | CognitiveLoop (`UserProfile`) | 用户画像：偏好、禁止事项、联系方式。CognitiveLoop 管理，DelegationPreparer 只读消费 |
-| `tools` | ToolRegistry (`list[Tool]`) | 全量工具列表。CognitiveLoop 管理，占位类型 |
+| `tools` | ToolRegistry (`list[Tool]`) | 全量工具列表。CognitiveLoop 管理，DelegationPreparer 从中筛选相关工具 |
 | `global_constraints` | ConstraintConfig | TaskSystem 全局约束（天花板）|
+| `session_id` | CognitiveLoop (`SessionId`) | 会话 ID。**透传给 DelegationContext，用于日志和 Debug 追踪** |
 
 **输出 —— DelegationResult：**
 
@@ -959,11 +960,14 @@ CognitiveLoop LLM 调用 submit_task(intent, hints)
 **四个职责（仅 status=ok 时产出）：**
 
 1. **意图透传**：`intent` 和 `hints` 原样写入 DelegationContext。不修改——DelegationPreparer 不做意图改写，只做工具筛选 + 上下文整理。
-2. **工具筛选**：从 tools 中选出相关工具名（字符串列表，如 `["web_search", "send_email"]`）。后处理校验剔除 LLM 幻觉出的不存在的工具。
+2. **工具筛选**：从全量 tools 中筛选出相关 Tool 对象（含 name + description + capabilities）。后处理校验剔除 LLM 幻觉出的不存在的工具。
 3. **上下文摘要**：从完整对话历史中提取相关信息。解析指代（"那个方案"），提取相关偏好。
-4. **任务级约束**：
+4. **任务级约束**（TaskConstraints，与全局 ConstraintConfig 取 min）：
    - `max_dag_nodes`：估计 DAG 步数。简单查询 3，复杂任务 10。
    - `max_mutations`：估计敏感操作次数。
+   - `max_total_tokens`：估计 token 消耗上限（None=使用全局默认）。
+   - `max_task_duration_s`：估计任务时长上限（None=使用全局默认）。
+   - `max_failure_count`：允许的最大失败次数（None=使用全局默认）。
 
 **`session_id`** 字段从 CognitiveLoop 直接透传，不做处理。用于日志关联和 Debug 追踪。
 

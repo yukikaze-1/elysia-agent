@@ -41,6 +41,7 @@ def make_tools() -> list[Tool]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_simple_task():
     """测试：简单单步任务。"""
     print("=" * 60)
@@ -72,6 +73,7 @@ async def test_simple_task():
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_multi_step_task():
     """测试：多步骤任务。"""
     print("=" * 60)

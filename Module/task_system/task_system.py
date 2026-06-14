@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from Module.task_system.checkpoint import CheckpointManager
     from Module.task_system.core.evaluator import Evaluator
     from Module.task_system.core.executor import Executor
-    from Module.task_system.core.orchestrator import Orchestrator
     from Module.task_system.core.planner import Planner
     from Module.task_system.core.plan_validator import PlanValidator
     from Module.task_system.core.sub_agent import SubAgent
@@ -98,7 +97,12 @@ class TaskSystem:
         """启动 TaskSystem——初始化所有内部组件。
 
         调用方必须在 submit() 之前调用 start()。
+        幂等——重复调用无副作用。
         """
+        if self._started:
+            logger.warning("TaskSystem.start: 已启动，跳过重复调用")
+            return
+
         from Module.task_system.artifact_store import ArtifactStore
         from Module.task_system.checkpoint import CheckpointManager
         from Module.task_system.core.evaluator import Evaluator
@@ -204,6 +208,19 @@ class TaskSystem:
                 await sub_agent.run(context, mailbox)
             except Exception:
                 logger.exception("TaskSystem: task_id=%s 执行异常", task_id)
+                # 补推送 FAILED 事件——SubAgent 在 run() 前期阶段
+                # （Planner/Validator）抛异常时可能来不及推送，
+                # TaskSystem 在此兜底，确保 mailbox 消费者不会永久阻塞
+                from Module.task_system.mailbox import push_mailbox_event
+                from Module.task_system.schema import TaskErrorCode, TaskEventType
+                push_mailbox_event(
+                    mailbox, TaskEventType.FAILED, {
+                        "task_id": str(task_id),
+                        "error": "任务执行异常",
+                        "error_type": TaskErrorCode.INTERNAL_ERROR.value,
+                    },
+                    caller="TaskSystem",
+                )
             finally:
                 self._cleanup_task(task_id)
                 await self._cleanup_storage(task_id)

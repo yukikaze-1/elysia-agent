@@ -176,22 +176,43 @@ EventBusHITLNotifier 演示实现见 protocol.py。
 
 > **代码位置**：`Module/task_system/delegation_preparer.py`
 > **调用者**：CognitiveLoop
+> **状态**：v1 已实现（2026-06-14）
 > **将来**：可独立为 delegation 服务
 
 `submit_task` 被调用后、`TaskSystem.submit()` 之前，用一次 LLM 调用准备干净的委派上下文。
 
 ```python
 class DelegationPreparer:
+    # v1: 内部创建 AsyncOpenAI（读 DEEPSEEK_API_KEY），与 Planner 方案一致。
+    #     后续独立为 delegation 服务时改为 LLM client 注入。
+    def __init__(self) -> None: ...
+
     async def prepare(
         self,
-        intent: str,                       # 用户原始意图（透传）
+        intent: str,                       # LLM 输出的完整任务意图（透传，不修改）
         hints: str | None,                  # LLM 观察到的元信息
-        session_messages: list[dict],       # 全部对话消息（不截断）
-        user_profile: UserProfile,         # 用户画像（CognitiveLoop 管理）
+        session_messages: list[dict],       # 全部对话消息（不截断，LLM 自己判断相关性）
+                                            # TODO: 裸 dict，后续统一为 ChatMessageV2
+        user_profile: UserProfile,         # 用户画像（CognitiveLoop 管理，v1 占位符）
         tools: list[Tool],                  # 全量工具注册表（CognitiveLoop 管理）
         global_constraints: ConstraintConfig,  # 全局约束（天花板）
+        session_id: SessionId,              # 会话 ID（CognitiveLoop 透传）
     ) -> DelegationResult: ...
 ```
+
+**四个职责（仅 status=ok 时产出 DelegationContext）**：
+
+1. **意图透传**：intent/hints 原样写入 DelegationContext，不做修改。
+2. **工具筛选**：从全量 Tool 列表中选出与任务直接相关的工具，传给 Planner。
+3. **上下文摘要**：从对话历史中提取与任务相关的信息（≤500 字）。
+4. **任务级约束**：LLM 根据意图复杂度估算 `max_dag_nodes`/`max_mutations` 等字段。
+
+**后处理校验 `_validate_output()`**：
+
+LLM 返回的 tools 与输入 tools 做交集（按 name 精确匹配）：
+- 幻觉工具名（LLM 编造的不存在的工具）→ 剔除 + warning
+- status=ok 但筛选后 tools 为空 → 降级为 `no_matching_tools`
+- 剔除的幻觉工具名写入 `missing_tools`
 
 **输出 `DelegationResult`：**
 
@@ -200,6 +221,24 @@ class DelegationPreparer:
 | `ok` | 有匹配工具 | DelegationContext（含 intent/hints/tools/return_mode） | 调用 TaskSystem.submit(context) |
 | `no_matching_tools` | 工具库缺少所需工具 | None | fail——不是参数问题，直接告知用户 |
 | `too_vague` | 意图过于模糊 | None | fail——请用户澄清，不反复猜测 |
+
+**LLM 输出 JSON Schema**：
+
+```json
+{
+  "status": "ok | no_matching_tools | too_vague",
+  "reason": "判定理由",
+  "tools": ["tool_name_1"],
+  "summarized_context": "≤500字",
+  "max_dag_nodes": 3,
+  "max_mutations": 1,
+  "max_total_tokens": null,
+  "max_task_duration_s": null,
+  "max_failure_count": null,
+  "missing_tools": [],
+  "suggestion": null
+}
+```
 
 DelegationPreparer Prompt 全文见 architecture.md Section 9。
 

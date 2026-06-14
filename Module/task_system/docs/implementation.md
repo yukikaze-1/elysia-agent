@@ -18,7 +18,7 @@
 Module/task_system/           # 全新模块
 ├── __init__.py                # 公开 API facade
 ├── protocol.py                # HITLNotifier 等对外依赖协议（ABC）
-├── delegation_preparer.py     # DelegationPreparer: LLM 准备委派上下文（将来独立）
+├── delegation_preparer.py     # DelegationPreparer: LLM 准备委派上下文（v1 已实现，将来可独立）
 ├── schema.py                  # 所有 Pydantic 数据模型（含状态码、错误码、枚举）
 ├── infra.py                   # AgentInfra + 共享基础设施（将来移出 TaskSystem）
 ├── mailbox.py                 # TaskMailbox（单播，Agent 唯一消费者）
