@@ -42,7 +42,7 @@
 - **当前位置**: `Module/task_system/delegation_preparer.py`
 - **应移至**: 独立 delegation 服务，或 CognitiveLoop 侧
 - **原因**: 调用者是 CognitiveLoop（在 `submit_task` 工具执行器中调用 `prepare()`）。代码虽在 TaskSystem 模块内，但职责是"提交前的预处理"，将来可独立为 delegation 服务。
-- **当前状态**: skeleton，`prepare()` 抛出 NotImplementedError
+- **当前状态**: 已完整实现——`prepare()` 真实调 LLM（DeepSeek v4），含 JSON 解析、工具名防幻觉校验、约束估算、全局约束注入 system prompt
 - **迁移后**: delegation_preparer.py 移走，CognitiveLoop 改为 `from delegation import DelegationPreparer`
 
 ## 6. EventBusHITLNotifier

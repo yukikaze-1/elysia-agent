@@ -1,7 +1,7 @@
 # TaskSystem 重构设计文档
 
-> 日期: 2026-06-08  
-> 状态: 设计完成，核心编排已实现（v1）
+> 日期: 2026-06-16  
+> 状态: 设计完成，核心编排已实现（v1），e2e 修复完成
 
 ---
 
@@ -183,14 +183,14 @@ Module/task_system/
 ├── schema.py            # 基础 Pydantic 数据结构（所有子包共用，60 个类型）
 ├── infra.py             # AgentInfra + 共享基础设施（将来移出 TaskSystem）
 ├── mailbox.py           # TaskMailbox（单播，Agent 唯一消费者）
-├── checkpoint.py        # 节点级 Checkpoint
+├── checkpoint.py        # 任务级 Checkpoint（含节点粒度）
 ├── artifact_store.py    # ArtifactStore: 节点产物统一存储
 ├── core/                # Plan-Execute-Evaluate 编排循环
 │   ├── __init__.py
 │   ├── sub_agent.py     # SubAgent: 决策层——规划/Replan/熔断
 │   ├── orchestrator.py  # Orchestrator: 执行层——按 Plan 推进 DAG
 │   ├── graph.py         # PlanGraph: NetworkX DiGraph 封装（图算法层）
-│   ├── planner.py       # Planner: LLM → DAG 骨架 / DAGPatch
+│   ├── planner.py       # Planner: LLM → DAG 骨架（plan）/ DAGPatch 或 Plan（replan）
 │   ├── plan_validator.py # PlanValidator: DAG 静态校验（纯逻辑）
 │   ├── executor.py      # Executor: v1 单工具直接调用，v2 DBT 生成
 │   └── evaluator.py     # Evaluator: 双重判定
@@ -278,7 +278,7 @@ class Artifact(BaseModel):            # artifact_id(ArtifactId)/artifact_type/no
 class TaskState(BaseModel):           # SubAgent 管理: task_id/status/plan/created_at/updated_at/error/error_code
 class ExecutionState(BaseModel):      # Orchestrator 管理: node_states/current_phase/waiting_for_approval/pause_requested/created_at/updated_at
 class TaskCheckpoint(BaseModel):      # 检查点快照: task(TaskState) + exec(ExecutionState) — 两层 Pydantic model_dump / model_validate
-class NodeState(BaseModel):           # 单节点运行时: node_id/status/attempt/started_at/finished_at/artifact_refs/summary/error/error_code
+class NodeState(BaseModel):           # 单节点运行时: node_id/status/attempt/started_at/finished_at/artifact_refs/summary/error/error_code/evaluation(NodeResultEvaluation|None)
 class OrchestratorRunStatus(StrEnum): # SUCCESS/FAILED/NEEDS_REPLAN/BLOCKED/PAUSED
 class OrchestratorResult(BaseModel):  # status + error_context + checkpoint_state (TaskCheckpoint | None; deadlock/abort 时为 None)
 class ExecutionPhase(StrEnum):        # EXECUTING/EVALUATING/FINALIZING
@@ -297,7 +297,7 @@ class ExperienceRecord(BaseModel):    # tool_name/error_pattern/diagnosis/fix/co
 
 **决策层**——持有 Planner + PlanValidator，负责：
 - 初始规划（`Planner.plan()`）
-- Plan 校验（`PlanValidator.validate()`）
+- Plan 校验（`PlanValidator.validate()`）——ABORT / FIX_PLAN（v1 降级为 FAILED）
 - Replan 决策 + 熔断检查
 - 审批等待管理
 
@@ -309,17 +309,37 @@ class ExperienceRecord(BaseModel):    # tool_name/error_pattern/diagnosis/fix/co
 **两层关系**：
 
 ```
-SubAgent.run(context, mailbox)           ← 决策层
-  ├─ Planner.plan(context) → Plan
-  ├─ validation, graph = PlanValidator.validate(plan, ...)  ← 校验通过后直接产出 PlanGraph
-  └─ while True:                         ← 决策循环
-       result = Orchestrator.run(task_state, exec_state, graph, mailbox)
-       if NEEDS_REPLAN:
-           patch = Planner.replan(...)    ← 决策层调 Planner
-           plan.apply_patch(patch)
-           graph = PlanGraph.from_plan(plan)  ← patch 应用后重建图
-           continue
+SubAgent.run(context, mailbox)                    ← 入口
+  ├─ _plan_and_validate(context, task_state, mailbox) → PlanGraph | None
+  │    ├─ Planner.plan(context) → Plan
+  │    ├─ PlanValidator.validate(plan, ...) → (ValidationResult, PlanGraph)
+  │    ├─ ABORT  → push FAILED, return None
+  │    └─ FIX_PLAN → try/except NotImplementedError → push FAILED, return None
+  └─ _execute(task_state, graph, mailbox, context)  ← 执行-决策循环
+       └─ while True:
+            result = Orchestrator.run(ts, graph, mailbox, resume_from=...)
+            should_continue, next_resume = _dispatch_result(result, ...)
+            ├─ SUCCESS       → _handle_success(), return
+            ├─ FAILED        → _handle_failed(), return
+            ├─ BLOCKED       → _handle_blocked(), return
+            ├─ PAUSED        → _handle_paused(), return
+            └─ NEEDS_REPLAN  → _handle_replan()
+                 ├─ 熔断检查 → 触发则 push FAILED, return
+                 ├─ Planner.replan(plan, failed_node_ids, diagnosis, node_states)
+                 │    └─ NotImplementedError → 优雅降级 FAILED
+                 ├─ graph.apply_patch(patch)
+                 ├─ plan_version += 1（在成功后才递增）
+                 └─ return (True, checkpoint.exec) → 下次 run() 的 resume_from
 ```
+
+Replan 恢复机制：
+- `Orchestrator.run()` 接受 `resume_from: ExecutionState | None`
+- 非 None 时调用 `_merge_exec_state(old, graph)`：
+  - SUCCESS/SKIPPED/PENDING → 保留
+  - FAILED/UNRECOVERABLE → 重置为 PENDING
+  - 新 graph 中有但旧 state 中无 → 新建 PENDING
+  - 旧 state 中有但新 graph 中无 → 移除
+- 避免已成功节点重复执行
 
 大部分任务 Orchestrator 内部一次跑完，Sub-Agent 的 while 循环只跑一次。
 
@@ -426,35 +446,46 @@ DAG 执行中的失败有两种——
 | 调 Executor/Evaluator | ❌ | ✅ |
 | 返回 | 终态（SUCCESS/FAILED） | 中断信号（SUCCESS/FAILED/NEEDS_REPLAN/BLOCKED/PAUSED） |
 
-**Sub-Agent 主循环**：
+**Sub-Agent 主循环**（详见 Section 3.3）：
 
 ```
 SubAgent.run(context, mailbox):
     task_state = TaskState(task_id=task_id)
-    plan = Planner.plan(context)
-    validation, graph = PlanValidator.validate(plan, ...)
-    exec_state = ExecutionState(node_states=...)
+    graph = _plan_and_validate(context, task_state, mailbox)  → PlanGraph | None
+    _execute(task_state, graph, mailbox, context)
 
+_execute(task_state, graph, mailbox, context):
+    resume_from = None
     while True:
-        result = Orchestrator.run(task_state, exec_state, graph, mailbox)
-
-        SUCCESS       → 终态，返回
-        FAILED        → 终态，返回
-        NEEDS_REPLAN  → 熔断检查
-            ├─ 通过 → Planner.replan() → DAGPatch → plan.apply_patch(patch)
-            │         → graph = PlanGraph.from_plan(plan) → continue
-            └─ 熔断 → FAILED
-        BLOCKED       → 等待审批回传 → 恢复到 checkpoint → continue
-        PAUSED        → 保存 checkpoint → 返回 PAUSED，等待 resume() 调用后恢复
+        result = Orchestrator.run(ts, graph, mailbox, resume_from=resume_from)
+        should_continue, resume_from = _dispatch_result(result, ...)
+            ├─ SUCCESS       → _handle_success(), return
+            ├─ FAILED        → _handle_failed(), return
+            ├─ BLOCKED       → _handle_blocked(), return
+            ├─ PAUSED        → _handle_paused(), return
+            └─ NEEDS_REPLAN  → _handle_replan()
+                 ├─ 熔断检查 → 触发则 FAILED
+                 ├─ Planner.replan(plan, failed_node_ids, ...) → DAGPatch | Plan
+                 │    ├─ DAGPatch → graph.apply_patch() → validate_structure()
+                 │    │              → plan_version += 1 → resume_from = checkpoint.exec
+                 │    └─ Plan     → PlanValidator.validate() → graph.replace(new_graph)
+                 │                  → plan_version = old_plan.plan_version + 1
+                 │                  → resume_from = None（全量重建不复用旧状态）
+                 └─ return (True, resume_from)
 ```
-
-大部分任务 Orchestrator 内部一次跑完，Sub-Agent 的 while 循环只跑一次。
-只有在结构性失败或审批阻塞时循环多次。
 
 **Orchestrator 内部循环**：
 
 ```
-Orchestrator.run(task_state, exec_state, graph, mailbox) → OrchestratorResult:
+Orchestrator.run(task_state, graph, mailbox, resume_from=None) → OrchestratorResult:
+    if resume_from is not None:
+        exec_state = _merge_exec_state(resume_from, graph)
+          # 保留 SUCCESS/SKIPPED/PENDING，重置 FAILED/UNRECOVERABLE → PENDING
+          # 新 graph 中有但旧 state 中无 → 新建 PENDING
+          # 旧 state 中有但新 graph 中无 → 移除
+    else:
+        exec_state = _init_exec_state(graph)   # 全部 PENDING
+
     while not task_state.is_terminal():
         0. 检查 exec_state.pause_requested → 返回 PAUSED
         1. get_ready_nodes(exec_state)
@@ -462,14 +493,14 @@ Orchestrator.run(task_state, exec_state, graph, mailbox) → OrchestratorResult:
         3. execute_nodes(ready, exec_state)   → Executor
         4. evaluate_node(result, task_state)  → Evaluator
         5. apply_evaluation(task_state, exec_state, ...) → EvaluatorAction
-           ├─ CONTINUE      → mark SUCCESS, push progress event
-           ├─ SKIP          → mark SKIPPED（非必需节点）
-           ├─ RETRY         → 检查 attempt >= max_retries
+           ├─ CONTINUE      → ns.evaluation = evaluation, mark SUCCESS, push progress
+           ├─ SKIP          → ns.evaluation = evaluation, mark SKIPPED（非必需节点）
+           ├─ RETRY         → ns.evaluation = evaluation, 检查 attempt >= max_retries
            │     ├─ 未超限 → back to PENDING
            │     └─ 超限   → mark FAILED + return REPLAN
-           ├─ REPLAN        → mark FAILED + return NEEDS_REPLAN
+           ├─ REPLAN        → ns.evaluation = evaluation, mark FAILED + return NEEDS_REPLAN
            ├─ ASK_APPROVAL  → mark WAITING_APPROVAL + return BLOCKED
-           └─ ABORT         → mark FAILED + return FAILED
+           └─ ABORT         → ns.evaluation = evaluation, mark FAILED + return FAILED
         6. save_checkpoint(task_state, exec_state)
     return SUCCESS
 ```
@@ -505,6 +536,7 @@ edges 方向：`dep → node`（前置节点必须先完成）。
 | `has_failed_required(states)` | 有 required 节点 FAILED？ | `G.nodes` 遍历 |
 | `validate_structure()` | 环/依赖引用/孤立/不可达 | `nx.is_directed_acyclic_graph`, `nx.find_cycle`, `nx.descendants` |
 | `apply_patch(patch)` | 增量修改 DAG | `G.add_node`, `G.remove_node`, `G.add_edge` |
+| `replace(other)` | 全量替换图（全量重建 Replan 用） | `self._g = other._g; self._nodes = other._nodes` |
 | `to_dag_view(states)` | Debug WebUI 视图 | `list(G.edges)` |
 | `compute_progress(states)` | 完成百分比 | `G.nodes` 遍历 |
 
@@ -589,6 +621,22 @@ class NodeResultEvaluation:
 
 Evaluator 的 LLM prompt 强制要求：**校验"是否达成了 Plan 中声明的期望结果"，而非仅检查有无异常**。
 
+**动作推导规则**（`_derive_action`）：
+
+| ExecutionStatus | BusinessStatus | required | 动作 | 说明 |
+|:-|:-|:-|:-|:--|
+| OK | goal_achieved | — | CONTINUE | 完全达标 |
+| OK | goal_partial | — | CONTINUE | 部分达标可接受 |
+| OK | goal_failed | True | **REPLAN** | 即使有产物也不静默传播——Evaluator 判定不达标即应重规划 |
+| OK | goal_failed | False | SKIP | 可选节点失败跳过 |
+| TIMEOUT | — | True | RETRY | |
+| TIMEOUT | — | False | SKIP | |
+| ERROR | — | True | RETRY¹ | ¹ TOOL_NOT_FOUND / CONTEXT_OVERFLOW → REPLAN |
+| ERROR | — | False | SKIP | |
+| PERMISSION_DENIED | — | — | ABORT | 不可恢复 |
+
+> **设计决策**（2026-06-16）：原先 `OK + goal_failed + 有产物 → CONTINUE`（"让下游自行判断"），但 e2e 实测表明垃圾数据沿 DAG 传播会导致最终节点也失败，且 Replan 机制被完全绕过——任务报告 `failed_nodes=0` 但输出无意义。现改为 `REPLAN`，让 Planner 根据 Evaluator 反馈换策略重试。熔断计数器（`plan_version > max_failure_count`）提供上限保护。
+
 ### 5.5 双层错误恢复
 
 ```
@@ -627,7 +675,7 @@ HITLNotifier.request_approval(data)            # 2. 再推前端投影（外部�
 ```
 
 **为什么这个顺序：**
-- Mailbox 是系统记录（本地 `asyncio.Queue`，可靠）
+- Mailbox 是系统记录（本地 `deque + asyncio.Event`，可靠——实现细节见 `mailbox.py`）
 - HITLNotifier 是前端投影（可能失败——WebSocket 断开、EventBus 满等）
 - Mailbox 先写成功 → 即使 HITLNotifier 失败，Agent 审计流仍检测到"有审批在等待"→ 可恢复："前端好像没收到审批卡片，重新推送"
 
@@ -1012,9 +1060,9 @@ CognitiveLoop LLM 调用 submit_task(intent, hints)
 
 ## 10. 恢复与持久化
 
-### 10.1 节点级 Checkpoint
+### 10.1 任务级 Checkpoint（含节点粒度）
 
-每个 DAG 节点完成后立即写检查点：
+`TaskCheckpoint = TaskState + ExecutionState`（含所有节点状态），每个 DAG 节点完成后立即写检查点：
 
 ```json
 {
@@ -1714,7 +1762,8 @@ class Agent:
 class TaskMailbox:
     def __init__(self, task_id: TaskId):
         self.task_id = task_id
-        self._queue: asyncio.Queue[TaskEvent] = asyncio.Queue(maxsize=100)
+        self._events: deque[TaskEvent] = deque()      # v1: deque + Event
+        self._event_arrived = asyncio.Event()          # 零轮询等待
 
     async def get(self, timeout: float | None = None) -> TaskEvent | None:
         ...
@@ -1726,17 +1775,21 @@ class TaskMailbox:
         CPU 密集工具走按需子进程（create_subprocess_exec），
         通过 JSON stdin/stdout 通信，不直接 push Mailbox。
         """
-        try:
-            self._queue.put_nowait(event)
-        except asyncio.QueueFull:
-            # 溢出策略：丢最旧的 progress，保留关键事件
+        if len(self._events) >= 100:
+            # 溢出策略：精准删除特定类型旧事件（如旧的 progress），
+            # 保留关键事件（completed/failed/approval）。
+            # deque + 遍历删除——asyncio.Queue 不支持从中间移除。
             ...
+        self._events.append(event)
+        self._event_arrived.set()
 ```
+
+> **为什么用 `deque + Event` 而非 `asyncio.Queue`**：溢出时需要精准删除特定类型的旧事件（如丢弃最早的 progress 为关键事件腾空间），`asyncio.Queue` 不支持从中间移除元素。`deque` 允许 O(n) 遍历删除，`asyncio.Event` 提供零轮询等待。**
 
 **关键优势**：
 - submit()/resume() 返回的 Mailbox 到手即用，调用方直接 `await mailbox.get()`
 - 零绑定、零配置——Agent 不需要知道内部队列机制
-- 内部 asyncio.Queue，零轮询 CPU 开销
+- 内部 deque + Event，零轮询 CPU 开销
 
 ---
 
@@ -1790,7 +1843,7 @@ class TaskMailbox:
 - **MVP 可精简**：审批先走单条
 
 ### Phase 5：恢复 + 记忆 + 可观测性
-- 节点级 Checkpoint
+- 任务级 Checkpoint（含节点粒度）
 - 经验记忆 + Reflector
 - Debug WebUI
 - 工具执行模式（coroutine/process）

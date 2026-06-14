@@ -784,6 +784,9 @@ class NodeState(BaseModel):
     error_code: NodeErrorCode | None = None  # 机器可读错误码（来自 NodeResult.error），
     #                                          retry / replan / abort 时写入。
     #                                          ExperienceRecord / Planner 做结构化匹配用。
+    evaluation: NodeResultEvaluation | None = None  # Evaluator 完整判定（含 execution_status、
+    #                                                  business_status、suggested_action），
+    #                                                  Planner.replan() 做诊断决策用。
 
 
 class TaskState(BaseModel):
@@ -798,6 +801,9 @@ class TaskState(BaseModel):
     status: TaskStatus = TaskStatus.PENDING
     plan: Plan | None = None                   # 当前生效的 Plan（Replan 后更新）
     tools: list[Tool] = Field(default_factory=list)  # 本次任务可用的工具列表（从 DelegationContext 透传，Executor 消费）
+    session_id: SessionId = Field(
+        default_factory=lambda: SessionId("")
+    )  # 关联会话 ID（从 DelegationContext 透传，保持 NewType 类型安全）
     created_at: str = ""                       # ISO 8601
     updated_at: str = ""
     error: str | None = None                   # 人类可读的错误原因（终态 FAILED 时写入）

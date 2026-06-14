@@ -1,6 +1,7 @@
 """网络工具插件 — 网页搜索和抓取。"""
 
 import asyncio
+import os
 import re
 from html.parser import HTMLParser
 
@@ -54,6 +55,24 @@ def _extract_text(html: str) -> str:
     return raw.strip()
 
 
+def _get_proxy() -> str | None:
+    """从环境变量读取代理 URL。
+
+    优先级: DDGS_PROXY > HTTPS_PROXY > https_proxy > HTTP_PROXY > http_proxy > all_proxy
+    返回 None 表示不使用代理。
+    """
+    return (
+        os.environ.get("DDGS_PROXY")
+        or os.environ.get("HTTPS_PROXY")
+        or os.environ.get("https_proxy")
+        or os.environ.get("HTTP_PROXY")
+        or os.environ.get("http_proxy")
+        or os.environ.get("ALL_PROXY")
+        or os.environ.get("all_proxy")
+        or None
+    )
+
+
 # ============================================================================
 # web_search — DuckDuckGo (默认) + Brave API (可选)
 # ============================================================================
@@ -91,13 +110,11 @@ async def _ddg_search(query: str, limit: int) -> str:
         from ddgs import DDGS
     except ImportError:
         from duckduckgo_search import DDGS
-    try:
-        with DDGS() as ddgs:
-            results = await asyncio.to_thread(
-                lambda: list(ddgs.text(query, max_results=limit))
-            )
-    except Exception as e:
-        return f"搜索失败: {e}"
+    proxy = _get_proxy()
+    with DDGS(proxy=proxy) as ddgs:
+        results = await asyncio.to_thread(
+            lambda: list(ddgs.text(query, max_results=limit))
+        )
 
     if not results:
         return f"未找到与 '{query}' 相关的结果。"
@@ -112,21 +129,18 @@ async def _ddg_search(query: str, limit: int) -> str:
 
 
 async def _brave_search(query: str, limit: int, api_key: str) -> str:
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                "https://api.search.brave.com/res/v1/web/search",
-                params={"q": query, "count": limit},
-                headers={
-                    "Accept": "application/json",
-                    "Accept-Encoding": "gzip",
-                    "X-Subscription-Token": api_key,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as e:
-        return f"Brave 搜索失败: {e}"
+    async with httpx.AsyncClient(timeout=15.0, proxy=_get_proxy()) as client:
+        resp = await client.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": query, "count": limit},
+            headers={
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip",
+                "X-Subscription-Token": api_key,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
     results = (data.get("web") or {}).get("results") or []
     if not results:
@@ -175,6 +189,7 @@ class WebFetchPlugin(ToolPlugin):
                 follow_redirects=True,
                 max_redirects=self.safety.max_redirects,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; Elysia-Agent/1.0)"},
+                proxy=_get_proxy(),
             ) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()

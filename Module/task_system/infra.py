@@ -7,7 +7,8 @@ AgentInfra 最终可能上提到 Core 层或独立的共享层。
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import httpx
@@ -42,3 +43,6 @@ class AgentInfra:
     http: httpx.AsyncClient | None  # v1 预留，工具通过 ToolContext 接收 HTTP 客户端
     tool_registry: object  # ToolRegistry，避免循环导入
     constraints: ConstraintConfig
+    llm_model: str = field(
+        default_factory=lambda: os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro")
+    )  # LLM 模型名，Planner/Executor/Evaluator 共用（env: TASK_SYSTEM_MODEL）

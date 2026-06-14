@@ -192,9 +192,9 @@ class DelegationPreparer:
     # ── 内部：LLM 调用 ────────────────────────────────────────────────────────
 
     async def _call_llm(self, system: str, user: str) -> str:
-        """调用 DeepSeek v4，JSON output 模式。"""
+        """调用 LLM，JSON output 模式。模型名由环境变量 TASK_SYSTEM_MODEL 控制。"""
         response = await self._client.chat.completions.create(
-            model="deepseek-v4-pro",
+            model=os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro"),
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},

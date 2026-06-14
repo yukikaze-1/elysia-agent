@@ -106,11 +106,16 @@ class Orchestrator:
         task_state: TaskState,
         graph: PlanGraph,
         mailbox: TaskMailbox,
+        resume_from: ExecutionState | None = None,
     ) -> OrchestratorResult:
         """驱动 PlanGraph 直到完成或遇到结构性障碍。
 
         task_state: SubAgent 创建的任务级状态（Orchestrator 只读写 status）。
-        exec_state 由 Orchestrator 内部从 graph 构建，调用方无需传入。
+
+        resume_from 用于 Replan 后恢复：
+            - None（首次执行）→ 从 graph 全量初始化 ExecutionState
+            - 非 None（Replan 后）→ 保留已成功节点的状态，移除不存在于新 graph
+              的节点，新节点 PENDING，失败节点重置为 PENDING 重新执行
 
         SUCCESS  → 所有 required 节点完成。
         FAILED   → 不可恢复。
@@ -120,14 +125,12 @@ class Orchestrator:
 
         Sub-Agent 收到 NEEDS_REPLAN 后调 Planner.replan()，得到 DAGPatch，
         应用到 PlanGraph 后可再次调用 run() 恢复执行。
-
-        TODO: 增加 resume_from: ExecutionState | None = None 参数。
-              从 checkpoint 恢复时 SubAgent 传入，Orchestrator 跳过 _init_exec_state。
         """
         task_id = task_state.task_id
-        # TODO: if resume_from is not None: exec_state = resume_from
-        #       else:
-        exec_state = self._init_exec_state(graph)
+        if resume_from is not None:
+            exec_state = self._merge_exec_state(resume_from, graph)
+        else:
+            exec_state = self._init_exec_state(graph)
         # 每次 run() 调用视为"审批已解决"边界，显式复位。
         # 设计假设：调用 run() 前审批已由外部（TaskSystem/SubAgent）处理完毕。
         # 若审批通过 → 继续执行；若拒绝 → 节点已标记 FAILED，不会重新进入审批。
@@ -208,6 +211,7 @@ class Orchestrator:
                 exec_state.current_phase = ExecutionPhase.EXECUTING
                 results = await self._execute_nodes(
                     ready_nodes, exec_state, task_state.task_id, task_state.tools,
+                    task_state.session_id,
                 )
 
                 # 4. 评估每个结果（Evaluator 包裹为 NodeResultEvaluation）
@@ -281,7 +285,7 @@ class Orchestrator:
         """从 PlanGraph 构建初始 ExecutionState。
 
         遍历所有 DAG 节点，为每个节点创建初始 NodeState（全部 PENDING）。
-        新任务和 Replan 后均调用此方法重建。
+        新任务首次执行时调用。Replan 恢复时用 _merge_exec_state 代替。
         """
         now = now_iso()
         node_states: dict[NodeId, NodeState] = {}
@@ -292,6 +296,40 @@ class Orchestrator:
             node_states=node_states,
             current_phase=ExecutionPhase.EXECUTING,
             created_at=now,
+            updated_at=now,
+        )
+
+    def _merge_exec_state(
+        self,
+        old: ExecutionState,
+        graph: PlanGraph,
+    ) -> ExecutionState:
+        """从旧 ExecutionState 合并到新 graph——Replan 后恢复执行。
+
+        规则：
+            1. 保留旧 graph 中存在节点的 SUCCESS / SKIPPED / PENDING 状态
+            2. 移除旧 graph 中已不存在的节点（replan 删除的节点）
+            3. 旧 graph 中不存在的节点 → 新建 PENDING
+            4. FAILED / UNRECOVERABLE 节点 → 重置为 PENDING（replan 已处理，需重新执行）
+        """
+        now = now_iso()
+        merged: dict[NodeId, NodeState] = {}
+
+        for nid in graph.nodes:
+            old_ns = old.node_states.get(nid)
+            if old_ns is not None and old_ns.status in (
+                NodeStatus.SUCCESS, NodeStatus.SKIPPED, NodeStatus.PENDING,
+            ):
+                # 已完成 / 已跳过 / 尚未开始 → 保留
+                merged[nid] = old_ns
+            else:
+                # 新节点、失败节点、或旧状态不可用 → 新建 PENDING
+                merged[nid] = NodeState(node_id=nid)
+
+        return ExecutionState(
+            node_states=merged,
+            current_phase=ExecutionPhase.EXECUTING,
+            created_at=old.created_at,
             updated_at=now,
         )
 
@@ -313,6 +351,7 @@ class Orchestrator:
         exec_state: ExecutionState,
         task_id: TaskId,
         tools: list[Tool],
+        session_id: str = "",
     ) -> list[NodeResult]:
         """执行就绪节点——v1 逐个调用 Executor.execute()。
 
@@ -329,7 +368,7 @@ class Orchestrator:
             ns.started_at = now_iso()
 
             logger.info("Orchestrator: 执行 node=%s attempt=%d", node.node_id, ns.attempt)
-            result = await self._executor.execute(node, task_id, tools)
+            result = await self._executor.execute(node, task_id, tools, session_id)
             # Executor 返回的 attempt=0，用 Orchestrator 追踪的实际 attempt 覆盖
             result.attempt = ns.attempt
             results.append(result)
@@ -380,16 +419,25 @@ class Orchestrator:
         node_id = evaluation.node_id
         ns = exec_state.node_states[node_id]
         ns.finished_at = now_iso()
+        ns.evaluation = evaluation  # 保留 Evaluator 完整判定，供 Planner.replan() 诊断用
         action = evaluation.suggested_action
 
         if action == EvaluatorAction.CONTINUE:
             ns.status = NodeStatus.SUCCESS
             ns.summary = evaluation.reason
             ns.artifact_refs = evaluation.result.artifact_refs
+            # 计算当前节点是第几个完成的（已完成节点数 / 总节点数）
+            # ns.status 已在上方设为 SUCCESS，所以直接统计 SUCCESS 数量即可
+            completed_count = sum(
+                1 for s in exec_state.node_states.values()
+                if s.status in (NodeStatus.SUCCESS, NodeStatus.SKIPPED)
+            )
+            total_count = graph.node_count
             await self._push_mailbox(mailbox, TaskEventType.PROGRESS, {
                 "task_id": str(task_state.task_id),
                 "node_id": node_id,
                 "node_description": f"节点 {node_id} 完成",
+                "node_index": f"{completed_count}/{total_count}",
                 "percent": graph.compute_progress(exec_state.node_states),
                 "message": ns.summary,
             })
@@ -407,6 +455,20 @@ class Orchestrator:
                 return EvaluatorAction.REPLAN
             ns.status = NodeStatus.SKIPPED
             ns.summary = evaluation.reason
+            # SKIP 也是进度——通知前端可选节点被跳过
+            completed_count = sum(
+                1 for s in exec_state.node_states.values()
+                if s.status in (NodeStatus.SUCCESS, NodeStatus.SKIPPED)
+            )
+            total_count = graph.node_count
+            await self._push_mailbox(mailbox, TaskEventType.PROGRESS, {
+                "task_id": str(task_state.task_id),
+                "node_id": node_id,
+                "node_description": f"节点 {node_id} 跳过（非必需）",
+                "node_index": f"{completed_count}/{total_count}",
+                "percent": graph.compute_progress(exec_state.node_states),
+                "message": ns.summary,
+            })
             logger.info("Orchestrator: node=%s 跳过（非必需节点）", node_id)
 
         elif action == EvaluatorAction.RETRY:
@@ -426,16 +488,58 @@ class Orchestrator:
                 ns.status = NodeStatus.FAILED
                 ns.error = f"重试次数已达上限 ({max_retries})"
                 ns.error_code = evaluation.result.error
+                # 重试耗竭 → REPLAN，但先发 progress 告知前端
+                completed_count = sum(
+                    1 for s in exec_state.node_states.values()
+                    if s.status in (NodeStatus.SUCCESS, NodeStatus.SKIPPED)
+                )
+                total_count = graph.node_count
+                await self._push_mailbox(mailbox, TaskEventType.PROGRESS, {
+                    "task_id": str(task_state.task_id),
+                    "node_id": node_id,
+                    "node_description": f"节点 {node_id} 重试耗尽——触发 Replan",
+                    "node_index": f"{completed_count}/{total_count}",
+                    "percent": graph.compute_progress(exec_state.node_states),
+                    "message": ns.error,
+                })
                 return EvaluatorAction.REPLAN
             ns.status = NodeStatus.PENDING
             ns.error = evaluation.reason
             ns.error_code = evaluation.result.error
+            # 为每次重试发 progress 事件——防止 Mailbox 在长重试链中沉默超时
+            completed_count = sum(
+                1 for s in exec_state.node_states.values()
+                if s.status in (NodeStatus.SUCCESS, NodeStatus.SKIPPED)
+            )
+            total_count = graph.node_count
+            await self._push_mailbox(mailbox, TaskEventType.PROGRESS, {
+                "task_id": str(task_state.task_id),
+                "node_id": node_id,
+                "node_description": f"节点 {node_id} 重试中 ({ns.attempt}/{max_retries})",
+                "node_index": f"{completed_count}/{total_count}",
+                "percent": graph.compute_progress(exec_state.node_states),
+                "message": ns.error,
+            })
             logger.info("Orchestrator: node=%s 评估 retry, attempt=%d", node_id, ns.attempt)
 
         elif action == EvaluatorAction.REPLAN:
             ns.status = NodeStatus.FAILED
             ns.error = evaluation.reason
             ns.error_code = evaluation.result.error
+            # REPLAN 也是推进——通知前端 DAG 即将被修复
+            completed_count = sum(
+                1 for s in exec_state.node_states.values()
+                if s.status in (NodeStatus.SUCCESS, NodeStatus.SKIPPED)
+            )
+            total_count = graph.node_count
+            await self._push_mailbox(mailbox, TaskEventType.PROGRESS, {
+                "task_id": str(task_state.task_id),
+                "node_id": node_id,
+                "node_description": f"节点 {node_id} 失败——触发 Replan",
+                "node_index": f"{completed_count}/{total_count}",
+                "percent": graph.compute_progress(exec_state.node_states),
+                "message": ns.error,
+            })
             logger.info("Orchestrator: node=%s 需要 Replan, reason=%s", node_id, ns.error)
 
         elif action == EvaluatorAction.ASK_APPROVAL:

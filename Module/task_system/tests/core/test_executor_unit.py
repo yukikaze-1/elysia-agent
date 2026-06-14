@@ -201,7 +201,7 @@ async def test_execute_success(executor, sample_node, sample_tools, mock_tool_re
 
 @pytest.mark.asyncio
 async def test_execute_tool_match_failure(executor, sample_node, sample_tools, mock_llm_client):
-    """LLM 返回空 tool_calls → NodeErrorCode.TOOL_NOT_FOUND。"""
+    """LLM 返回空 tool_calls 且空 content → NodeErrorCode.TOOL_NOT_FOUND。"""
     async def _no_tool_calls(**kwargs):
         return ChatCompletion(
             id="test-id",
@@ -209,7 +209,7 @@ async def test_execute_tool_match_failure(executor, sample_node, sample_tools, m
                 "index": 0,
                 "message": ChatCompletionMessage(
                     role="assistant",
-                    content="I cannot find a suitable tool.",
+                    content=None,  # 既无 tool_call 也无文本 → 真正的失败
                     tool_calls=None,
                 ),
                 "finish_reason": "stop",
@@ -225,6 +225,34 @@ async def test_execute_tool_match_failure(executor, sample_node, sample_tools, m
 
     assert result.error == NodeErrorCode.TOOL_NOT_FOUND
     assert len(result.artifact_refs) == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_llm_direct_text(executor, sample_node, sample_tools, mock_llm_client):
+    """LLM 不调工具直接返回文本 → 文本作为有效产物（汇总/分析类节点）。"""
+    async def _direct_text(**kwargs):
+        return ChatCompletion(
+            id="test-id",
+            choices=[{
+                "index": 0,
+                "message": ChatCompletionMessage(
+                    role="assistant",
+                    content="汇总结果：AI 安全领域最新进展包括...",
+                    tool_calls=None,
+                ),
+                "finish_reason": "stop",
+            }],
+            created=1234567890,
+            model="deepseek-v4-pro",
+            object="chat.completion",
+        )
+
+    mock_llm_client.chat.completions.create = AsyncMock(side_effect=_direct_text)
+
+    result = await executor.execute(sample_node, TaskId("task_1"), sample_tools)
+
+    assert result.error is None, f"LLM 直出文本不应为错误，实际: {result.error}"
+    assert len(result.artifact_refs) == 1
 
 
 @pytest.mark.asyncio

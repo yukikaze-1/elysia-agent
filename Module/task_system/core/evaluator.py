@@ -40,7 +40,12 @@ _BUSINESS_JUDGE_SYSTEM = """你是一个任务执行结果的评估专家。你�
 - goal_failed: 实际产出完全没有满足要求，或者工具返回了无意义的内容
 
 请严格依据 output_contract 的 description 和 json_schema（如有）来判断。
-只返回 JSON，不要有其他内容。"""
+
+输出格式——严格返回以下 JSON（只返回 JSON，不要 markdown 代码块）：
+{
+  "business_status": "goal_achieved | goal_partial | goal_failed",
+  "reason": "判定依据（说明实际产出与期望的差距，或为何满足要求）"
+}"""
 
 
 class Evaluator:
@@ -184,25 +189,13 @@ class Evaluator:
 
         logger.debug("Evaluator: node=%s LLM 业务判定上下文:\n%s", node.node_id, user_message)
 
-        # 调用 LLM
-        # TODO: model 名称可配置（从 AgentInfra 或环境变量读取），
-        #       当前与 Planner/Executor 统一硬编码 deepseek-v4-pro。
-        # TODO: 大产物 / 复杂 json_schema 可能超出上下文窗口，
-        #       后续参考 ConstraintConfig.max_context_tokens 做截断。
         try:
-            response = await self._infra.llm.chat.completions.create(
-                model="deepseek-v4-pro",
-                messages=[
-                    {"role": "system", "content": _BUSINESS_JUDGE_SYSTEM},
-                    {"role": "user", "content": user_message},
-                ],
-                response_format={"type": "json_object"},
-                max_tokens=1024,
-            )
-            content = response.choices[0].message.content
+            # 调用 LLM（空响应重试 1 次——DeepSeek 偶发）
+            content = await self._call_llm_for_judge(user_message)
             if not content:
-                logger.warning("Evaluator: LLM 返回空响应，fallback goal_failed")
-                return BusinessStatus.GOAL_FAILED, "LLM 返回空响应"
+                logger.warning("Evaluator: node=%s LLM 返回空响应(已重试)，fallback goal_failed",
+                               node.node_id)
+                return BusinessStatus.GOAL_FAILED, "LLM 返回空响应（已重试1次仍为空）"
 
             data = json.loads(content.strip())
             biz_str = data.get("business_status")
@@ -233,6 +226,45 @@ class Evaluator:
             logger.exception("Evaluator: LLM 业务判定异常，fallback goal_failed")
             return BusinessStatus.GOAL_FAILED, f"LLM 判定异常: {e}"
 
+    async def _call_llm_for_judge(self, user_message: str) -> str | None:
+        """调用 LLM 做业务判定。空响应时重试 1 次（DeepSeek 偶发空 content）。
+
+        Returns:
+            LLM 响应文本，两次都失败时返回 None。
+        """
+        # TODO: 大产物 / 复杂 json_schema 可能超出上下文窗口，
+        #       后续参考 ConstraintConfig.max_context_tokens 做截断。
+        for attempt in range(2):
+            try:
+                response = await self._infra.llm.chat.completions.create(
+                    model=self._infra.llm_model,
+                    messages=[
+                        {"role": "system", "content": _BUSINESS_JUDGE_SYSTEM},
+                        {"role": "user", "content": user_message},
+                    ],
+                    response_format={"type": "json_object"},
+                    max_tokens=1024,
+                )
+            except Exception:
+                logger.warning(
+                    "Evaluator: LLM 调用异常 (attempt %d/2)，%s",
+                    attempt + 1,
+                    "重试中..." if attempt == 0 else "放弃",
+                    exc_info=True,
+                )
+                if attempt == 0:
+                    continue
+                return None
+            content = response.choices[0].message.content
+            if content:
+                return content
+            logger.warning(
+                "Evaluator: LLM 返回空响应 (attempt %d/2)，%s",
+                attempt + 1,
+                "重试中..." if attempt == 0 else "放弃",
+            )
+        return None
+
     async def _fetch_artifacts(self, result: NodeResult) -> dict[str, Any]:
         """从 ArtifactStore 按 artifact_refs 获取实际产物数据。"""
         data: dict[str, Any] = {}
@@ -256,8 +288,8 @@ class Evaluator:
         规则表：
             OK + goal_achieved        → CONTINUE
             OK + goal_partial         → CONTINUE（部分达成但可接受）
-            OK + goal_failed + req    → RETRY（让 Executor 重新匹配工具）
-            OK + goal_failed + !req   → SKIP
+            OK + goal_failed + 有产物  → CONTINUE（下游自行判断）
+            OK + goal_failed + 无产物  → REPLAN/SKIP（工具可能吞了异常）
             TIMEOUT + req             → RETRY
             TIMEOUT + !req            → SKIP
             ERROR + req               → RETRY
@@ -277,8 +309,17 @@ class Evaluator:
                 return EvaluatorAction.CONTINUE
             elif business_status == BusinessStatus.GOAL_PARTIAL:
                 return EvaluatorAction.CONTINUE
-            else:  # goal_failed
-                return EvaluatorAction.RETRY if node.required else EvaluatorAction.SKIP
+            else:  # goal_failed —— 工具声称成功但 Evaluator 判定目标未达成
+                # Evaluator 已明确判定产出不满足 output_contract。
+                # 即使有 artifact（如搜索结果不相关），也不应静默放行——
+                # 垃圾数据沿 DAG 传播会导致下游也失败，最终无声产出无用结果。
+                # REPLAN 让 Planner 根据评估反馈换策略重试（熔断上限兜底）。
+                logger.warning(
+                    "Evaluator: node=%s exec=OK biz=goal_failed — %s",
+                    node.node_id,
+                    "REPLAN" if node.required else "SKIP",
+                )
+                return EvaluatorAction.REPLAN if node.required else EvaluatorAction.SKIP
 
         # 执行失败（TIMEOUT / ERROR）
         if execution_status == ExecutionStatus.TIMEOUT:

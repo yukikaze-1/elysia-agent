@@ -235,21 +235,43 @@ class PlanGraph:
         """应用 DAGPatch 到当前图——五种操作，按序执行。
 
         顺序保证了依赖一致性：
-            1. replace_nodes — 先删旧节点，再加新节点
+            1. replace_nodes — 替换节点（同 ID 仅更新元数据，异 ID 自动重连边）
             2. remove_nodes  — 移除不需要的节点
             3. add_nodes     — 新增节点
             4. remove_edges  — 移除不需要的边
             5. add_edges     — 新增边
 
+        替换节点的边处理：
+            - 同 ID 替换：仅更新 DAGNode 元数据，边保持不变（最常见场景）
+            - 异 ID 替换：自动将旧节点的入边/出边重连到新节点；
+              后续 remove_edges/add_edges 可以覆盖自动重连的结果。
+
         full_replan 不在此处理——由 Sub-Agent 层创建新 Plan + 重建 PlanGraph。
         """
-        # 1. 替换节点（先删后加，新节点可能不同 node_id）
+        # 1. 替换节点
         for old_id, new_node in patch.replace_nodes:
+            new_id = new_node.node_id
             if old_id in self._g.nodes:
-                self._g.remove_node(old_id)
-                self._nodes.pop(old_id, None)
-            self._g.add_node(new_node.node_id)
-            self._nodes[new_node.node_id] = new_node
+                if old_id == new_id:
+                    # 同 ID 替换——仅更新节点元数据，保留所有边
+                    self._nodes[new_id] = new_node
+                else:
+                    # 异 ID 替换——保存旧边，删旧加新，自动重连
+                    in_edges = list(self._g.predecessors(old_id))
+                    out_edges = list(self._g.successors(old_id))
+                    self._g.remove_node(old_id)
+                    self._nodes.pop(old_id, None)
+                    self._g.add_node(new_id)
+                    self._nodes[new_id] = new_node
+                    # 自动重连：旧入边 → 新节点，新节点 → 旧出边
+                    for pred in in_edges:
+                        self._g.add_edge(pred, new_id)
+                    for succ in out_edges:
+                        self._g.add_edge(new_id, succ)
+            else:
+                # 被替换节点不存在（可能已被之前的操作删除）——直接添加
+                self._g.add_node(new_id)
+                self._nodes[new_id] = new_node
 
         # 2. 移除节点
         for node_id in patch.remove_nodes:
@@ -262,12 +284,12 @@ class PlanGraph:
             self._g.add_node(node.node_id)
             self._nodes[node.node_id] = node
 
-        # 4. 移除边
+        # 4. 移除边（可以覆盖自动重连的边）
         for from_id, to_id in patch.remove_edges:
             if self._g.has_edge(from_id, to_id):
                 self._g.remove_edge(from_id, to_id)
 
-        # 5. 新增边
+        # 5. 新增边（可以覆盖 remove_edges 的结果）
         for from_id, to_id in patch.add_edges:
             if from_id in self._g.nodes and to_id in self._g.nodes:
                 self._g.add_edge(from_id, to_id)
@@ -330,6 +352,17 @@ class PlanGraph:
                 max_succ = max(max_succ, longest.get(succ, 0))
             longest[nid] = 1 + max_succ
         return max(longest.values()) if longest else 0
+
+    # ── 图替换 ─────────────────────────────────────────────────────────────
+
+    def replace(self, other: PlanGraph) -> None:
+        """用另一个 PlanGraph 替换当前图的所有内容——全量重建 Replan 用。
+
+        直接替换内部的 NetworkX DiGraph 和 nodes 字典，
+        外部持有此 PlanGraph 引用的调用方无需替换引用。
+        """
+        self._g = other._g
+        self._nodes = other._nodes
 
     # ── 内部访问（调试/测试用）────────────────────────────────────────────
 

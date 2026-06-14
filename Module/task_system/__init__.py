@@ -161,6 +161,7 @@ __all__ = [
     "OutputContract",
     "Artifact",
     # Orchestrator / Sub-Agent 运行时
+    "ExecutionPhase",
     "OrchestratorRunStatus",
     "OrchestratorResult",
     "TaskState",

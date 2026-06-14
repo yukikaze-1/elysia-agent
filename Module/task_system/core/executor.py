@@ -32,6 +32,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# LLM 直出文本的哨兵值——当 _match_tool 返回此 tool_name 时，
+# 表示 LLM 判断不需要外部工具，直接用自身能力完成了节点（如汇总/分析/改写）。
+_DIRECT_TEXT_SENTINEL = "__llm_direct__"
+
 # LLM 工具匹配的系统提示词
 _TOOL_MATCH_SYSTEM = """你是一个任务执行专家。根据节点的描述和可用的工具列表，选择最合适的工具并填写参数。
 
@@ -86,14 +90,17 @@ class Executor:
         node: DAGNode,
         task_id: TaskId,
         tools: list[Tool],
+        session_id: str = "",
     ) -> NodeResult:
-        """执行单个 DAGNode——LLM 匹配工具 → 调用 → 存储结果。
+        """执行单个 DAGNode——LLM 匹配工具（或直出文本）→ 调用/存储结果。
 
-        四步流程：
+        流程：
             1. 解析上游输入：input_bindings → ArtifactStore.get()
-            2. LLM 工具匹配：node.description + tools schema → function-calling → {tool_name, params}
-            3. 调用工具：tool_registry.execute(tool_name, ctx, **params) → ToolResult
-            4. 存储结果：ToolResult → Artifact → artifact_store.put()
+            2. LLM 工具匹配：node.description + tools schema → function-calling →
+               - 匹配到工具: (tool_name, params)
+               - LLM 直出文本: ("__llm_direct__", {"content": ...})  ← 汇总/分析类节点
+            3. 调用工具（仅匹配到工具时）/ 直接存储 LLM 文本
+            4. 存储结果：→ Artifact → artifact_store.put()
 
         Args:
             node:   待执行的 DAG 节点（含 description、input_bindings、output_as）
@@ -111,10 +118,24 @@ class Executor:
             upstream_data = await self._resolve_inputs(node, task_id)
 
             # 2. LLM 工具匹配（function-calling：选工具 + 填参数）
+            #    或 LLM 直出文本（汇总/分析类节点不需要外部工具）
             tool_name, params = await self._match_tool(node, tools, upstream_data)
 
-            # 3. 调用工具（ToolManager.execute——内部处理验证/安全/审批/超时）
-            tool_result = await self._call_tool(tool_name, params, task_id, node.node_id)
+            # 3. 调用工具（或直接使用 LLM 直出的文本）
+            if tool_name == _DIRECT_TEXT_SENTINEL:
+                # LLM 直出文本——不需要外部工具
+                content = params["content"]
+                tool_result = ToolResult.ok(
+                    name="llm_direct",
+                    content=content,
+                    duration_ms=0.0,
+                )
+                logger.info(
+                    "Executor: node=%s LLM 直出文本作为产物 (%d chars)",
+                    node.node_id, len(content),
+                )
+            else:
+                tool_result = await self._call_tool(tool_name, params, task_id, node.node_id, session_id)
 
             # 4. 存储结果（ToolResult → Artifact → ArtifactStore）
             artifact = await self._store_result(node, task_id, tool_result)
@@ -192,14 +213,17 @@ class Executor:
         流程：
             1. 从 ToolRegistry 获取完整的 OpenAI function-calling 格式 schema
             2. 按 tools 列表过滤（只保留本次任务允许的工具）
-            3. 调用 LLM（DeepSeek v4），传入 tools + tool_choice="required"
+            3. 调用 LLM（DeepSeek v4），传入 tools + tool_choice="auto"
+               - 匹配到工具 → 返回 (tool_name, params)
+               - LLM 直出文本 → 返回 ("__llm_direct__", {"content": ...})
             4. 解析返回的 tool_calls → (tool_name, params)
 
         Returns:
             (tool_name, params_dict)
+            tool_name 为 "__llm_direct__" 时表示 LLM 直出文本（汇总/分析类节点）
 
         Raises:
-            _ToolMatchError: LLM 未返回工具调用或参数解析失败
+            _ToolMatchError: LLM 未返回 tool_call 且无文本内容，或参数解析失败
         """
         # 从 ToolRegistry 获取完整 schema，按 tools 列表过滤
         allowed_names = {t.name for t in tools}
@@ -229,8 +253,18 @@ class Executor:
         # 调用 LLM（function-calling）
         # 注意：DeepSeek v4 thinking 模式不支持 tool_choice="required"，
         # 使用 "auto" 让模型自行判断是否需要调用工具。
+        #
+        # TODO: tool_choice="auto" + LLM 直出文本的设计有职责越界的问题。
+        #   Planner 在生成 DAG 时就知道哪些节点是"纯 LLM 任务"（汇总/分析/改写），
+        #   哪些需要外部工具。当前 Executor 替 Planner 做了这个决策——
+        #   LLM 判断不需要工具 → 返回文本 → Executor 当作有效产物。
+        #
+        #   更好的方案：DAGNode 增加 execution_mode 字段（tool_call / llm_direct），
+        #   Planner 在生成 DAG 时显式指定。Executor 按标注执行，不需要猜测。
+        #   llm_direct 模式跳过 tool matching，直接调 LLM 生成内容，省一次调用。
+        #   当前方案作为 MVP 够用，后续 Planner 成熟后迁移到方案 C。
         response = await self._infra.llm.chat.completions.create(
-            model="deepseek-v4-pro",
+            model=self._infra.llm_model,
             messages=[
                 {"role": "system", "content": _TOOL_MATCH_SYSTEM},
                 {"role": "user", "content": user_message},
@@ -242,7 +276,15 @@ class Executor:
 
         msg = response.choices[0].message
         if not msg.tool_calls:
-            raise _ToolMatchError("LLM 未返回工具调用（tool_calls 为空）")
+            # tool_choice="auto" 时 LLM 可能判断不需要外部工具，
+            # 直接返回文本完成节点（如汇总、分析、改写等纯 LLM 任务）
+            if msg.content:
+                logger.info(
+                    "Executor: node=%s LLM 直出文本（无 tool_call），作为有效产物",
+                    node.node_id,
+                )
+                return _DIRECT_TEXT_SENTINEL, {"content": msg.content}
+            raise _ToolMatchError("LLM 未返回工具调用且无文本内容")
 
         tc = msg.tool_calls[0]
         tool_name = tc.function.name
@@ -265,6 +307,7 @@ class Executor:
         params: dict[str, Any],
         task_id: TaskId,
         node_id: Any,
+        session_id: str = "",
     ) -> ToolResult:
         """通过 ToolRegistry 执行工具——v1 直接透传。
 
@@ -272,7 +315,7 @@ class Executor:
         Executor 只负责透传参数和收集结果。
         """
         ctx = ToolContext(
-            session_id="",  # TODO: 从 DelegationContext 透传 session_id
+            session_id=session_id,
             trace_id=f"{task_id}/{node_id}",
         )
         # infra.tool_registry 类型为 object（避免循环导入），运行时是 ToolManager

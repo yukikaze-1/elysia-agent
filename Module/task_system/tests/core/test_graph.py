@@ -471,6 +471,116 @@ def test_apply_patch_replace_node():
     assert pg.nodes[NodeId("a")].description == "new"
 
 
+def test_apply_patch_replace_same_id_preserves_edges():
+    """同 ID 替换——只更新元数据，边保持不变。"""
+    pg = _graph(_make_plan(
+        [{"id": "a"}, {"id": "b"}, {"id": "c"}],
+        [("a", "b"), ("b", "c")],
+    ))
+    patch = DAGPatch(
+        replace_nodes=[
+            (NodeId("b"), DAGNode(node_id=NodeId("b"), description="updated_b")),
+        ],
+    )
+    pg.apply_patch(patch)
+
+    # 元数据已更新
+    assert pg.nodes[NodeId("b")].description == "updated_b"
+    # 边保持不变
+    assert pg._graph.has_edge(NodeId("a"), NodeId("b"))
+    assert pg._graph.has_edge(NodeId("b"), NodeId("c"))
+    # 无孤立节点
+    assert pg.validate_structure() == []
+
+
+def test_apply_patch_replace_diff_id_auto_rewires_edges():
+    """异 ID 替换——自动将旧边重连到新节点。"""
+    pg = _graph(_make_plan(
+        [{"id": "a"}, {"id": "b"}, {"id": "c"}],
+        [("a", "b"), ("b", "c")],
+    ))
+    patch = DAGPatch(
+        replace_nodes=[
+            (NodeId("b"), DAGNode(node_id=NodeId("b_v2"), description="new_b")),
+        ],
+    )
+    pg.apply_patch(patch)
+
+    # 旧节点已删除
+    assert NodeId("b") not in pg.nodes
+    # 新节点存在
+    assert NodeId("b_v2") in pg.nodes
+    assert pg.nodes[NodeId("b_v2")].description == "new_b"
+    # 边自动重连：a→b_v2, b_v2→c
+    assert pg._graph.has_edge(NodeId("a"), NodeId("b_v2"))
+    assert pg._graph.has_edge(NodeId("b_v2"), NodeId("c"))
+    # 无孤立节点
+    assert pg.validate_structure() == []
+
+
+def test_apply_patch_replace_diff_id_with_explicit_edges():
+    """异 ID 替换 + 显式 remove_edges/add_edges——显式操作覆盖自动重连。"""
+    pg = _graph(_make_plan(
+        [{"id": "a"}, {"id": "b"}, {"id": "c"}],
+        [("a", "b"), ("b", "c")],
+    ))
+    patch = DAGPatch(
+        replace_nodes=[
+            (NodeId("b"), DAGNode(node_id=NodeId("b_v2"), description="new_b")),
+        ],
+        # 显式移除 a→b（旧边）
+        remove_edges=[(NodeId("a"), NodeId("b"))],
+        # 显式添加 b_v2→c（新边）
+        add_edges=[(NodeId("b_v2"), NodeId("c"))],
+    )
+    pg.apply_patch(patch)
+
+    # a→b 已删除（自动重连的 a→b_v2 仍存在，见 remove_edges 的旧 ID 语义）
+    # 注：remove_edges 用旧 ID (a→b) 无法匹配自动重连后的 (a→b_v2)，
+    # 所以 a→b_v2 实际仍保留。这是预期行为——要用 remove_edges
+    # 去掉自动重连的边，应使用新 ID (a→b_v2)。
+    assert pg._graph.has_edge(NodeId("a"), NodeId("b_v2")), (
+        "自动重连的 a→b_v2 保留（remove_edges 用旧 ID 不匹配）"
+    )
+    # b_v2→c 通过显式 add_edges 补回（自动重连已添加，add_edges 为 no-op）
+    assert pg._graph.has_edge(NodeId("b_v2"), NodeId("c"))
+
+
+def test_apply_patch_replace_all_nodes_replan_scenario():
+    """模拟真实 replan 场景——全部节点同 ID 替换后 DAG 仍然有效。"""
+    pg = _graph(_make_plan(
+        [{"id": "get_time"}, {"id": "search_a"}, {"id": "search_b"}, {"id": "summarize"}],
+        [("get_time", "search_a"), ("get_time", "search_b"),
+         ("search_a", "summarize"), ("search_b", "summarize")],
+    ))
+    # replan 替换三个搜索节点（同 ID）——最典型的 replan 场景
+    patch = DAGPatch(
+        replace_nodes=[
+            (NodeId("search_a"), DAGNode(
+                node_id=NodeId("search_a"),
+                description="更新后的搜索A——更精确的查询",
+            )),
+            (NodeId("search_b"), DAGNode(
+                node_id=NodeId("search_b"),
+                description="更新后的搜索B",
+            )),
+        ],
+    )
+    pg.apply_patch(patch)
+
+    # 节点数不变
+    assert pg.node_count == 4
+    # 描述已更新
+    assert "更新后" in pg.nodes[NodeId("search_a")].description
+    # 所有边保持不变
+    assert pg._graph.has_edge(NodeId("get_time"), NodeId("search_a"))
+    assert pg._graph.has_edge(NodeId("get_time"), NodeId("search_b"))
+    assert pg._graph.has_edge(NodeId("search_a"), NodeId("summarize"))
+    assert pg._graph.has_edge(NodeId("search_b"), NodeId("summarize"))
+    # 无结构问题
+    assert pg.validate_structure() == []
+
+
 def test_apply_patch_add_edges():
     """patch.add_edges 新增边。"""
     pg = _graph(_make_plan([{"id": "a"}, {"id": "b"}], []))
@@ -517,3 +627,26 @@ def test_topological_order():
     ))
     order = pg.topological_order()
     assert order == [NodeId("a"), NodeId("b"), NodeId("c")]
+
+
+# ── replace() 测试 ──────────────────────────────────────────────────────────
+
+
+def test_replace_graph():
+    """PlanGraph.replace() 全量替换内部状态。"""
+    old_pg = _graph(_make_plan(
+        [{"id": "a"}, {"id": "b"}],
+        [("a", "b")],
+    ))
+    new_pg = _graph(_make_plan(
+        [{"id": "x"}, {"id": "y"}, {"id": "z"}],
+        [("x", "y"), ("y", "z")],
+    ))
+
+    old_pg.replace(new_pg)
+
+    assert old_pg.node_count == 3
+    assert NodeId("x") in old_pg.nodes
+    assert NodeId("y") in old_pg.nodes
+    assert NodeId("z") in old_pg.nodes
+    assert NodeId("a") not in old_pg.nodes  # 旧节点已清空

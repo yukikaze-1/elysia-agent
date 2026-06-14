@@ -168,18 +168,40 @@ def test_derive_action_ok_partial():
     assert action == EvaluatorAction.CONTINUE
 
 
-def test_derive_action_ok_failed_required():
-    """OK + goal_failed + required → RETRY。"""
+def test_derive_action_ok_failed_with_artifacts():
+    """OK + goal_failed + required + 有产物 → REPLAN（垃圾数据不应静默传播）。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.OK, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=True),
+        NodeResult(node_id=NodeId("n1"), error=None, attempt=1, duration_ms=100,
+                   artifact_refs=[ArtifactId("art_1")]),
+    )
+    assert action == EvaluatorAction.REPLAN
+
+
+def test_derive_action_ok_failed_with_artifacts_optional():
+    """OK + goal_failed + !required + 有产物 → SKIP（可选节点失败跳过即可）。"""
+    action = Evaluator._derive_action(
+        ExecutionStatus.OK, BusinessStatus.GOAL_FAILED,
+        DAGNode(node_id=NodeId("n1"), required=False),
+        NodeResult(node_id=NodeId("n1"), error=None, attempt=1, duration_ms=100,
+                   artifact_refs=[ArtifactId("art_1")]),
+    )
+    assert action == EvaluatorAction.SKIP
+
+
+def test_derive_action_ok_failed_no_artifacts_required():
+    """OK + goal_failed + required + 无产物 → REPLAN（工具可能吞了异常）。"""
     action = Evaluator._derive_action(
         ExecutionStatus.OK, BusinessStatus.GOAL_FAILED,
         DAGNode(node_id=NodeId("n1"), required=True),
         NodeResult(node_id=NodeId("n1"), error=None, attempt=1, duration_ms=100),
     )
-    assert action == EvaluatorAction.RETRY
+    assert action == EvaluatorAction.REPLAN
 
 
-def test_derive_action_ok_failed_optional():
-    """OK + goal_failed + !required → SKIP。"""
+def test_derive_action_ok_failed_no_artifacts_optional():
+    """OK + goal_failed + !required + 无产物 → SKIP。"""
     action = Evaluator._derive_action(
         ExecutionStatus.OK, BusinessStatus.GOAL_FAILED,
         DAGNode(node_id=NodeId("n1"), required=False),
@@ -298,7 +320,7 @@ async def test_evaluate_success_goal_achieved(evaluator, sample_node, sample_res
 
 @pytest.mark.asyncio
 async def test_evaluate_success_goal_failed(evaluator, sample_node, sample_plan, mock_llm_client):
-    """执行成功 + LLM 判定 goal_failed + required → RETRY。"""
+    """执行成功 + LLM 判定 goal_failed + required + 有产物 → REPLAN。"""
     async def _respond_failed(**kwargs):
         return ChatCompletion(
             id="eval-test",
@@ -324,7 +346,8 @@ async def test_evaluate_success_goal_failed(evaluator, sample_node, sample_plan,
     evaluation = await evaluator.evaluate(result, sample_node, sample_plan)
 
     assert evaluation.business_status == BusinessStatus.GOAL_FAILED
-    assert evaluation.suggested_action == EvaluatorAction.RETRY
+    # required + goal_failed → REPLAN（即使有产物，也不静默传播垃圾数据）
+    assert evaluation.suggested_action == EvaluatorAction.REPLAN
 
 
 @pytest.mark.asyncio
@@ -356,7 +379,8 @@ async def test_evaluate_llm_error_fallback(evaluator, sample_node, sample_plan, 
     evaluation = await evaluator.evaluate(result, sample_node, sample_plan)
 
     assert evaluation.business_status == BusinessStatus.GOAL_FAILED
-    assert "LLM 判定异常" in evaluation.reason
+    # 重试 2 次都异常 → 返回 None → fallback
+    assert "LLM 返回空响应" in evaluation.reason
 
 
 @pytest.mark.asyncio

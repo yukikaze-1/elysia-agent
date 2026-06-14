@@ -1,6 +1,7 @@
 """Planner 单元测试——不依赖 LLM，测试解析和格式化逻辑。
 
-覆盖 _parse_response（JSON → Plan）和 _format_tools（Tool → prompt 文本）。
+覆盖 _parse_response（JSON → Plan）、_format_tools（Tool → prompt 文本）、
+_parse_replan_response（JSON → DAGPatch | Plan）、_format_nodes_by_status。
 """
 
 from __future__ import annotations
@@ -12,8 +13,16 @@ import pytest
 from Module.task_system.core.planner import Planner, _PlanParseError
 from Module.task_system.schema import (
     ArtifactId,
+    DAG,
+    DAGPatch,
+    DAGPatchType,
+    DAGNode,
     NodeId,
+    NodeState,
+    NodeStatus,
+    Plan,
     Tool,
+    OutputContract,
 )
 
 
@@ -285,3 +294,225 @@ def test_parse_edge_not_pair(planner):
         planner._parse_response(
             '{"nodes": [{"node_id": "s1", "description": "x"}], "edges": [["only_one"]]}'
         )
+
+
+# ── _format_nodes_by_status 测试 ────────────────────────────────────────────
+
+
+def test_format_nodes_by_status_success(planner):
+    """成功节点 → 包含 node_id + description + summary + evaluation。"""
+    from Module.task_system.schema import (
+        BusinessStatus, EvaluatorAction, ExecutionStatus,
+        NodeResult, NodeResultEvaluation,
+    )
+
+    node_results = {
+        "search": NodeState(
+            node_id=NodeId("search"),
+            status=NodeStatus.SUCCESS,
+            summary="找到 5 条结果",
+            evaluation=NodeResultEvaluation(
+                node_id=NodeId("search"),
+                execution_status=ExecutionStatus.OK,
+                business_status=BusinessStatus.GOAL_ACHIEVED,
+                reason="搜索成功",
+                suggested_action=EvaluatorAction.CONTINUE,
+                result=NodeResult(node_id=NodeId("search")),
+            ),
+        ),
+    }
+    plan = Plan(dag=DAG(nodes=[
+        DAGNode(node_id=NodeId("search"), description="搜索最新 AI 新闻"),
+    ], edges=[]), plan_version=1)
+
+    result = planner._format_nodes_by_status(
+        node_results, plan, {NodeStatus.SUCCESS, NodeStatus.SKIPPED},
+    )
+    assert "search" in result
+    assert "搜索最新 AI 新闻" in result
+    assert "找到 5 条结果" in result
+    assert "goal_achieved" in result
+
+
+def test_format_nodes_by_status_failed(planner):
+    """失败节点 → 包含 error + evaluation 信息。"""
+    from Module.task_system.schema import (
+        BusinessStatus, EvaluatorAction, ExecutionStatus,
+        NodeResult, NodeResultEvaluation,
+    )
+
+    node_results = {
+        "search": NodeState(
+            node_id=NodeId("search"),
+            status=NodeStatus.FAILED,
+            error="工具超时",
+            evaluation=NodeResultEvaluation(
+                node_id=NodeId("search"),
+                execution_status=ExecutionStatus.TIMEOUT,
+                business_status=BusinessStatus.GOAL_FAILED,
+                reason="搜索超时",
+                suggested_action=EvaluatorAction.REPLAN,
+                result=NodeResult(node_id=NodeId("search")),
+            ),
+        ),
+    }
+    plan = Plan(dag=DAG(nodes=[
+        DAGNode(node_id=NodeId("search"), description="搜索最新 AI 新闻"),
+    ], edges=[]), plan_version=1)
+
+    result = planner._format_nodes_by_status(
+        node_results, plan, {NodeStatus.FAILED, NodeStatus.UNRECOVERABLE},
+    )
+    assert "工具超时" in result
+    assert "timeout" in result
+    assert "goal_failed" in result
+
+
+def test_format_nodes_by_status_empty(planner):
+    """无匹配状态的节点 → 返回空文本。"""
+    node_results: dict = {}
+    plan = Plan(dag=DAG(nodes=[
+        DAGNode(node_id=NodeId("search"), description="搜索"),
+    ], edges=[]), plan_version=1)
+
+    result = planner._format_nodes_by_status(
+        node_results, plan, {NodeStatus.SUCCESS},
+    )
+    assert result == ""
+
+
+def test_format_nodes_by_status_truncates_long_summary(planner):
+    """超过 200 字符的 summary → 截断。"""
+    node_results = {
+        "search": NodeState(
+            node_id=NodeId("search"),
+            status=NodeStatus.SUCCESS,
+            summary="A" * 300,
+        ),
+    }
+    plan = Plan(dag=DAG(nodes=[
+        DAGNode(node_id=NodeId("search"), description="搜索"),
+    ], edges=[]), plan_version=1)
+
+    result = planner._format_nodes_by_status(
+        node_results, plan, {NodeStatus.SUCCESS},
+    )
+    assert "..." in result
+    assert len(result) < 350  # 截断后不超过 200 + 前后缀
+
+
+# ── _parse_replan_response 测试 ─────────────────────────────────────────────
+
+
+def test_parse_replan_full_replan(planner):
+    """full_replan=true → 返回 Plan。"""
+    data = {
+        "full_replan": True,
+        "nodes": [
+            {
+                "node_id": "new_search",
+                "description": "用新关键词搜索",
+                "output_contract": {"description": "搜索结果的 JSON 数组"},
+                "required": True,
+                "output_as": "output:new_search",
+            },
+        ],
+        "edges": [],
+    }
+    result = planner._parse_replan_response(json.dumps(data))
+    assert isinstance(result, Plan)
+    assert len(result.dag.nodes) == 1
+    assert result.dag.nodes[0].node_id == NodeId("new_search")
+
+
+def test_parse_replan_full_replan_with_edges(planner):
+    """全量重建含 edges → Plan 包含正确的依赖关系。"""
+    data = {
+        "full_replan": True,
+        "nodes": [
+            {"node_id": "a", "description": "第一步", "output_as": "output:a"},
+            {"node_id": "b", "description": "第二步", "input_bindings": ["output:a"], "output_as": "output:b"},
+        ],
+        "edges": [["a", "b"]],
+    }
+    result = planner._parse_replan_response(json.dumps(data))
+    assert isinstance(result, Plan)
+    assert len(result.dag.nodes) == 2
+    assert len(result.dag.edges) == 1
+
+
+def test_parse_replan_dagpatch_replace(planner):
+    """full_replan=false → 返回 DAGPatch（replace_nodes）。"""
+    data = {
+        "full_replan": False,
+        "patch_type": "replace_nodes",
+        "reason": "工具报错，换一个搜索工具",
+        "trigger_nodes": ["old_search"],
+        "replace_nodes": [
+            ["old_search", {
+                "node_id": "new_search",
+                "description": "用 web_fetch 替代 web_search",
+                "output_contract": {"description": "搜索结果"},
+                "required": True,
+                "output_as": "output:new_search",
+            }]
+        ],
+    }
+    result = planner._parse_replan_response(json.dumps(data))
+    assert isinstance(result, DAGPatch)
+    assert result.patch_type == DAGPatchType.REPLACE_NODES
+    assert result.reason == "工具报错，换一个搜索工具"
+    assert len(result.trigger_nodes) == 1
+    assert len(result.replace_nodes) == 1
+    old_id, new_node = result.replace_nodes[0]
+    assert old_id == NodeId("old_search")
+    assert new_node.node_id == NodeId("new_search")
+
+
+def test_parse_replan_dagpatch_add(planner):
+    """full_replan=false → 返回 DAGPatch（add_nodes + add_edges）。"""
+    data = {
+        "full_replan": False,
+        "patch_type": "add_nodes",
+        "reason": "缺少前置步骤",
+        "trigger_nodes": ["failed_search"],
+        "add_nodes": [
+            {"node_id": "get_timestamp", "description": "获取当前时间",
+             "output_as": "output:get_timestamp", "required": True},
+        ],
+        "add_edges": [["get_timestamp", "failed_search"]],
+    }
+    result = planner._parse_replan_response(json.dumps(data))
+    assert isinstance(result, DAGPatch)
+    assert result.patch_type == DAGPatchType.ADD_NODES
+    assert len(result.add_nodes) == 1
+    assert len(result.add_edges) == 1
+
+
+def test_parse_replan_invalid_json(planner):
+    """非法 JSON → _PlanParseError。"""
+    with pytest.raises(_PlanParseError, match="JSON 解析失败"):
+        planner._parse_replan_response("not json")
+
+
+def test_parse_replan_not_object(planner):
+    """JSON 数组而非对象 → _PlanParseError。"""
+    with pytest.raises(_PlanParseError, match="JSON object"):
+        planner._parse_replan_response("[]")
+
+
+def test_parse_replan_unknown_patch_type(planner):
+    """未知 patch_type → _PlanParseError。"""
+    data = {
+        "full_replan": False,
+        "patch_type": "unknown_type",
+    }
+    with pytest.raises(_PlanParseError, match="未知 patch_type"):
+        planner._parse_replan_response(json.dumps(data))
+
+
+def test_parse_replan_full_missing_nodes(planner):
+    """全量重建但 nodes 为空 → _PlanParseError。"""
+    data = {"full_replan": True, "nodes": []}
+    with pytest.raises(_PlanParseError, match="nodes 为空"):
+        planner._parse_replan_response(json.dumps(data))

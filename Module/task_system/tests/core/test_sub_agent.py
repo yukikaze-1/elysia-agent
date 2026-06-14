@@ -2,7 +2,7 @@
 
 覆盖 SubAgent 决策层所有路径：
     - run() 主流程（成功 / 校验 abort）
-    - _run_loop() 5 条 Orchestrator 返回路径
+    - _execute() / _dispatch_result() 5 条 Orchestrator 返回路径
     - _check_meltdown() 熔断判断
     - _extract_node_results() 从 checkpoint 提取节点状态
     - _abort_error_code() 校验问题 → 错误码映射
@@ -16,9 +16,12 @@ import pytest
 
 from Module.task_system.mailbox import TaskMailbox
 from Module.task_system.schema import (
+    ArtifactId,
     ConstraintConfig,
     DAG,
     DAGNode,
+    DAGPatch,
+    DAGPatchType,
     DelegationContext,
     ExecutionState,
     NodeId,
@@ -206,7 +209,7 @@ async def test_run_validation_abort():
     assert "plan_too_large" in events[0].data.get("error_type", "")
 
 
-# ── _run_loop() 路径 ────────────────────────────────────────────────────────
+# ── _execute() / _dispatch_result() 路径 ────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -220,7 +223,7 @@ async def test_run_loop_success():
     from Module.task_system.core.graph import PlanGraph
     graph = PlanGraph.from_plan(_mock_plan())
 
-    await agent._run_loop(_task_state(), graph, TaskMailbox(TaskId("t1")))
+    await agent._execute(_task_state(), graph, TaskMailbox(TaskId("t1")), _delegation_context())
 
     mock_orch.run.assert_called_once()
 
@@ -238,7 +241,7 @@ async def test_run_loop_blocked():
     graph = PlanGraph.from_plan(_mock_plan())
     mailbox = TaskMailbox(TaskId("t1"))
 
-    await agent._run_loop(_task_state(), graph, mailbox)
+    await agent._execute(_task_state(), graph, mailbox, _delegation_context())
 
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
@@ -259,7 +262,7 @@ async def test_run_loop_paused():
     graph = PlanGraph.from_plan(_mock_plan())
     mailbox = TaskMailbox(TaskId("t1"))
 
-    await agent._run_loop(_task_state(), graph, mailbox)
+    await agent._execute(_task_state(), graph, mailbox, _delegation_context())
 
     # 验证 checkpoint 被保存
     agent._checkpoint_mgr.save.assert_called_once_with(TaskId("t1"), cp)
@@ -283,7 +286,7 @@ async def test_run_loop_failed():
     graph = PlanGraph.from_plan(_mock_plan())
     mailbox = TaskMailbox(TaskId("t1"))
 
-    await agent._run_loop(_task_state(), graph, mailbox)
+    await agent._execute(_task_state(), graph, mailbox, _delegation_context())
 
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
@@ -310,12 +313,250 @@ async def test_run_loop_needs_replan_meltdown():
     ts.plan = Plan(dag=DAG(nodes=[], edges=[]), plan_version=2)  # 2 > 1
 
     mailbox = TaskMailbox(TaskId("t1"))
-    await agent._run_loop(ts, graph, mailbox)
+    await agent._execute(ts, graph, mailbox, _delegation_context())
 
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
     assert events[0].type == TaskEventType.FAILED
     assert "failure_meltdown" in events[0].data.get("error_type", "")
+
+
+# ── _handle_replan 路径 ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_replan_dagpatch_success():
+    """replan 返回 DAGPatch → apply_patch + version += 1 + 返回 (True, resume_state)。"""
+    agent, mock_orch = _make_sub_agent()
+
+    patch = DAGPatch(
+        patch_type=DAGPatchType.ADD_NODES,
+        reason="需要前置步骤获取时间",
+        add_nodes=[
+            DAGNode(node_id=NodeId("get_time"), description="获取当前时间",
+                    output_as=ArtifactId("output:get_time"))
+        ],
+        add_edges=[(NodeId("get_time"), NodeId("a"))],
+    )
+    agent._planner.replan = AsyncMock(return_value=patch)
+
+    # 第一次 run() 返回 NEEDS_REPLAN，第二次返回 SUCCESS
+    mock_orch.run = AsyncMock(side_effect=[
+        OrchestratorResult(
+            status=OrchestratorRunStatus.NEEDS_REPLAN,
+            error_context={"failed_nodes": [NodeId("a")], "reason": "工具超时"},
+            checkpoint_state=_checkpoint("t1"),
+        ),
+        OrchestratorResult(status=OrchestratorRunStatus.SUCCESS),
+    ])
+
+    from Module.task_system.core.graph import PlanGraph
+    graph = PlanGraph.from_plan(_mock_plan())
+    ts = _task_state()
+    ts.plan = graph.to_plan(_mock_plan())
+    ts.plan.plan_version = 3
+
+    mailbox = TaskMailbox(TaskId("t1"))
+    await agent._execute(ts, graph, mailbox, _delegation_context())
+
+    # 验证 DAGPatch 已应用
+    assert graph.node_count == 2  # 原 1 个节点 + 1 个新增
+    assert NodeId("get_time") in graph.nodes
+
+    # 版本号正确递增
+    assert ts.plan.plan_version == 4  # 3 + 1
+
+    # 没有 FAILED 事件
+    events = _collect_mailbox_events(mailbox)
+    event_types = [e.type for e in events]
+    assert TaskEventType.FAILED not in event_types
+
+
+@pytest.mark.asyncio
+async def test_handle_replan_dagpatch_validation_failure():
+    """replan 返回 DAGPatch 引入结构问题（如孤立节点）→ FAILED。"""
+    agent, mock_orch = _make_sub_agent()
+
+    # 构造一个会引入孤立节点的 patch（add_nodes 不加边，>1 节点时触发 ORPHAN）
+    patch = DAGPatch(
+        patch_type=DAGPatchType.ADD_NODES,
+        reason="添加孤立节点",
+        add_nodes=[
+            DAGNode(node_id=NodeId("orphan"), description="无依赖无被依赖的节点")
+        ],
+    )
+    agent._planner.replan = AsyncMock(return_value=patch)
+
+    mock_orch.run.return_value = OrchestratorResult(
+        status=OrchestratorRunStatus.NEEDS_REPLAN,
+        error_context={"failed_nodes": [NodeId("a")], "reason": "失败"},
+        checkpoint_state=_checkpoint("t1"),
+    )
+
+    from Module.task_system.core.graph import PlanGraph
+    graph = PlanGraph.from_plan(_mock_plan())
+    ts = _task_state()
+    ts.plan = graph.to_plan(_mock_plan())
+
+    mailbox = TaskMailbox(TaskId("t1"))
+    await agent._execute(ts, graph, mailbox, _delegation_context())
+
+    events = _collect_mailbox_events(mailbox)
+    assert len(events) == 1
+    assert events[0].type == TaskEventType.FAILED
+    assert "DAGPatch 校验失败" in events[0].data["error"]
+
+
+@pytest.mark.asyncio
+async def test_handle_replan_full_replan_success():
+    """replan 返回 Plan → 校验通过 → graph.replace() + version 继承 + resume_from=None。"""
+    agent, mock_orch = _make_sub_agent()
+
+    new_plan = Plan(
+        dag=DAG(nodes=[
+            DAGNode(node_id=NodeId("new_search"), description="新搜索方案",
+                    output_as=ArtifactId("output:new_search")),
+        ], edges=[]),
+        plan_version=0,  # sentinel——应被 SubAgent 覆写
+    )
+    agent._planner.replan = AsyncMock(return_value=new_plan)
+
+    # PlanValidator 返回 valid
+    from Module.task_system.core.graph import PlanGraph
+    valid_graph = PlanGraph.from_plan(new_plan)
+    agent._plan_validator.validate = MagicMock(
+        return_value=(ValidationResult(valid=True, action=ValidationAction.PROCEED), valid_graph)
+    )
+
+    # 第一次 run() 返回 NEEDS_REPLAN，第二次返回 SUCCESS
+    mock_orch.run = AsyncMock(side_effect=[
+        OrchestratorResult(
+            status=OrchestratorRunStatus.NEEDS_REPLAN,
+            error_context={"failed_nodes": [NodeId("a")], "reason": "DAG 结构根本错了"},
+            checkpoint_state=_checkpoint("t1"),
+        ),
+        OrchestratorResult(status=OrchestratorRunStatus.SUCCESS),
+    ])
+
+    graph = PlanGraph.from_plan(_mock_plan())
+    ts = _task_state()
+    ts.plan = graph.to_plan(_mock_plan())
+    old_version = 5
+    ts.plan.plan_version = old_version
+
+    mailbox = TaskMailbox(TaskId("t1"))
+    await agent._execute(ts, graph, mailbox, _delegation_context())
+
+    # 图已被替换
+    assert graph.node_count == 1
+    assert NodeId("new_search") in graph.nodes
+    assert NodeId("a") not in graph.nodes  # 旧节点不存在
+
+    # 版本号从旧 plan 继承 + 1
+    assert ts.plan.plan_version == old_version + 1  # 5 + 1 = 6
+
+    # 没有 FAILED 事件
+    events = _collect_mailbox_events(mailbox)
+    event_types = [e.type for e in events]
+    assert TaskEventType.FAILED not in event_types
+
+
+@pytest.mark.asyncio
+async def test_handle_replan_full_replan_validation_failure():
+    """replan 返回 Plan 但校验不通过 → FAILED。"""
+    agent, mock_orch = _make_sub_agent()
+
+    new_plan = Plan(
+        dag=DAG(nodes=[
+            DAGNode(node_id=NodeId("bad"), description="缺少 output_contract 的 required 节点"),
+        ], edges=[]),
+    )
+    agent._planner.replan = AsyncMock(return_value=new_plan)
+
+    # PlanValidator 返回 invalid
+    agent._plan_validator.validate = MagicMock(
+        return_value=(
+            ValidationResult(
+                valid=False,
+                issues=[ValidationIssue(
+                    type=ValidationIssueType.MISSING_CONTRACT,
+                    node_id=NodeId("bad"),
+                    message="缺少 output_contract",
+                )],
+            ),
+            MagicMock(),  # graph
+        )
+    )
+
+    mock_orch.run.return_value = OrchestratorResult(
+        status=OrchestratorRunStatus.NEEDS_REPLAN,
+        error_context={"failed_nodes": [NodeId("a")], "reason": "失败"},
+        checkpoint_state=_checkpoint("t1"),
+    )
+
+    from Module.task_system.core.graph import PlanGraph
+    graph = PlanGraph.from_plan(_mock_plan())
+    ts = _task_state()
+    ts.plan = graph.to_plan(_mock_plan())
+
+    mailbox = TaskMailbox(TaskId("t1"))
+    await agent._execute(ts, graph, mailbox, _delegation_context())
+
+    events = _collect_mailbox_events(mailbox)
+    assert len(events) == 1
+    assert events[0].type == TaskEventType.FAILED
+    assert "全量重建校验失败" in events[0].data["error"]
+
+
+@pytest.mark.asyncio
+async def test_handle_replan_checkpoint_none():
+    """NEEDS_REPLAN 但 checkpoint_state=None → FAILED。"""
+    agent, mock_orch = _make_sub_agent()
+
+    mock_orch.run.return_value = OrchestratorResult(
+        status=OrchestratorRunStatus.NEEDS_REPLAN,
+        error_context={"failed_nodes": [NodeId("a")], "reason": "失败"},
+        checkpoint_state=None,  # 缺少快照
+    )
+
+    from Module.task_system.core.graph import PlanGraph
+    graph = PlanGraph.from_plan(_mock_plan())
+    ts = _task_state()
+    ts.plan = graph.to_plan(_mock_plan())
+
+    mailbox = TaskMailbox(TaskId("t1"))
+    await agent._execute(ts, graph, mailbox, _delegation_context())
+
+    events = _collect_mailbox_events(mailbox)
+    assert len(events) == 1
+    assert events[0].type == TaskEventType.FAILED
+    assert "checkpoint 缺失" in events[0].data["error"]
+
+
+@pytest.mark.asyncio
+async def test_handle_replan_not_implemented():
+    """replan 抛出 NotImplementedError → 优雅降级 FAILED。"""
+    agent, mock_orch = _make_sub_agent()
+    agent._planner.replan = AsyncMock(side_effect=NotImplementedError("replan 未实现"))
+
+    mock_orch.run.return_value = OrchestratorResult(
+        status=OrchestratorRunStatus.NEEDS_REPLAN,
+        error_context={"failed_nodes": [NodeId("a")], "reason": "工具超时"},
+        checkpoint_state=_checkpoint("t1"),
+    )
+
+    from Module.task_system.core.graph import PlanGraph
+    graph = PlanGraph.from_plan(_mock_plan())
+    ts = _task_state()
+    ts.plan = graph.to_plan(_mock_plan())
+
+    mailbox = TaskMailbox(TaskId("t1"))
+    await agent._execute(ts, graph, mailbox, _delegation_context())
+
+    events = _collect_mailbox_events(mailbox)
+    assert len(events) == 1
+    assert events[0].type == TaskEventType.FAILED
+    assert "Replan 尚未实现" in events[0].data["error"]
 
 
 # ── _check_meltdown ─────────────────────────────────────────────────────────
@@ -349,7 +590,7 @@ def test_check_meltdown_triggers():
 
 
 def test_extract_node_results():
-    """从 TaskCheckpoint 提取 node summary + error。"""
+    """从 TaskCheckpoint 提取 node_states（NodeState 对象含 evaluation 字段）。"""
     agent, _ = _make_sub_agent()
     cp = TaskCheckpoint(
         task=_task_state(),
@@ -371,10 +612,11 @@ def test_extract_node_results():
 
     results = agent._extract_node_results(cp)
 
-    assert results[NodeId("a")]["summary"] == "搜索完成"
-    assert results[NodeId("a")]["error"] is None
-    assert results[NodeId("b")]["summary"] == ""
-    assert results[NodeId("b")]["error"] == "工具超时"
+    assert isinstance(results, dict)
+    assert results[NodeId("a")].summary == "搜索完成"
+    assert results[NodeId("a")].error is None
+    assert results[NodeId("b")].summary == ""
+    assert results[NodeId("b")].error == "工具超时"
 
 
 # ── _abort_error_code ───────────────────────────────────────────────────────
@@ -405,7 +647,7 @@ def test_abort_error_code_max_depth():
 
 
 def test_abort_error_code_other():
-    """非 fatal issue → INTERNAL_ERROR。"""
+    """非结构问题（MISSING_CONTRACT）→ INTERNAL_ERROR。"""
     agent, _ = _make_sub_agent()
     issues = [
         ValidationIssue(
@@ -415,6 +657,44 @@ def test_abort_error_code_other():
         ),
     ]
     assert agent._abort_error_code(issues) == TaskErrorCode.INTERNAL_ERROR.value
+
+
+def test_abort_error_code_cycle():
+    """CYCLE → PLAN_TOO_LARGE（结构不合法）。"""
+    agent, _ = _make_sub_agent()
+    issues = [
+        ValidationIssue(
+            type=ValidationIssueType.CYCLE,
+            message="DAG 有环: A → B → A",
+        ),
+    ]
+    assert agent._abort_error_code(issues) == TaskErrorCode.PLAN_TOO_LARGE.value
+
+
+def test_abort_error_code_duplicate_id():
+    """DUPLICATE_ID → PLAN_TOO_LARGE（结构不合法）。"""
+    agent, _ = _make_sub_agent()
+    issues = [
+        ValidationIssue(
+            type=ValidationIssueType.DUPLICATE_ID,
+            node_id=NodeId("a"),
+            message="node_id 重复: a",
+        ),
+    ]
+    assert agent._abort_error_code(issues) == TaskErrorCode.PLAN_TOO_LARGE.value
+
+
+def test_abort_error_code_missing_dependency():
+    """MISSING_DEPENDENCY → PLAN_TOO_LARGE（结构不合法）。"""
+    agent, _ = _make_sub_agent()
+    issues = [
+        ValidationIssue(
+            type=ValidationIssueType.MISSING_DEPENDENCY,
+            node_id=NodeId("b"),
+            message="依赖的节点 x 不存在",
+        ),
+    ]
+    assert agent._abort_error_code(issues) == TaskErrorCode.PLAN_TOO_LARGE.value
 
 
 # ── 辅助函数 ────────────────────────────────────────────────────────────────

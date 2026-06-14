@@ -64,18 +64,18 @@ CognitiveLoop 工具执行器识别 submit_task
 
 ```python
 class TaskSystem:
-    def __init__(self, infra: AgentInfra, hitl_notifier: HITLNotifier, max_sub_agents: int = 5):
+    def __init__(self, infra: AgentInfra, hitl_notifier: HITLNotifier, *, max_sub_agents: int = 5):
         """
         infra: LLM Client, Milvus, HTTP, ToolRegistry, ConstraintConfig
         hitl_notifier: 审批快速通道实现。TaskSystem 不关心另一端是什么。
-        max_sub_agents: Sub-Agent 并发上限，默认 5。
+        max_sub_agents: Sub-Agent 并发上限（keyword-only），默认 5。
         """
 
     async def start(self) -> None:
-        """启动 Sub-Agent 并发控制、SummaryWriterWorker、恢复 pending checkpoints"""
+        """创建 Sub-Agent 并发控制、初始化 ArtifactStore/CheckpointManager/Planner/Validator/Executor/Evaluator"""
 
     async def stop(self) -> None:
-        """软关停：等当前节点完成 → checkpoint → 清理"""
+        """软关停：等当前节点完成 → checkpoint → 清理（v1: TODO 注释，no-op）"""
 ```
 
 ---
@@ -636,7 +636,11 @@ class TokenComponentType(StrEnum):
     PLANNER = "planner"
     EXECUTOR = "executor"
     EVALUATOR = "evaluator"
-    REFLECTOR = "reflector"    # TODO: 尚未实现，Token 统计预留
+    REFLECTOR = "reflector"        # TODO: v2 经验反思器
+    SCHEDULER = "scheduler"        # TODO: v2 调度器
+    SYNTHESIZER = "synthesizer"    # TODO: v2 结果合成器
+    REPLANNER = "replanner"        # TODO: v2 独立 Replanner
+    REDUCER = "reducer"            # TODO: v2 结果归约器
 
 class TokenUsage:
     """单个任务的 token 消耗明细。"""

@@ -29,6 +29,8 @@ from Module.task_system.schema import (
     TokenUsage,
 )
 
+from Module.task_system.core.sub_agent import SubAgent
+
 if TYPE_CHECKING:
     from Module.task_system.artifact_store import ArtifactStore
     from Module.task_system.checkpoint import CheckpointManager
@@ -36,7 +38,6 @@ if TYPE_CHECKING:
     from Module.task_system.core.executor import Executor
     from Module.task_system.core.planner import Planner
     from Module.task_system.core.plan_validator import PlanValidator
-    from Module.task_system.core.sub_agent import SubAgent
     from Module.task_system.infra import AgentInfra
     from Module.task_system.protocol import HITLNotifier
 
