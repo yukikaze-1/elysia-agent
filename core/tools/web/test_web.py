@@ -121,8 +121,8 @@ class TestTextExtractor:
 class TestWebSearchPlugin:
     """测试 WebSearchPlugin — 搜索后端路由。"""
 
-    def test_default_backend_uses_ddg(self):
-        """默认后端（无 backend 配置）使用 DDG。"""
+    def test_default_backend_uses_tavily(self):
+        """默认后端（无 backend 配置）使用 Tavily。"""
         import asyncio
         from core.tools.web.plugin import WebSearchPlugin, WebSearchParams
 
@@ -130,17 +130,17 @@ class TestWebSearchPlugin:
         ctx = ToolContext(session_id="test")
 
         with patch(
-            "core.tools.web.plugin._ddg_search",
-            AsyncMock(return_value="DDG 结果"),
-        ) as mock_ddg:
+            "core.tools.web.plugin._tavily_search",
+            AsyncMock(return_value="Tavily 结果"),
+        ) as mock_tavily:
             result = asyncio.run(
                 plugin.execute(ctx=ctx, emit=None, params=WebSearchParams(query="test"))
             )
-            mock_ddg.assert_called_once_with("test", 5)
-            assert result == "DDG 结果"
+            mock_tavily.assert_called_once_with("test", 5)
+            assert result == "Tavily 结果"
 
-    def test_brave_without_api_key_falls_back_to_ddg(self):
-        """brave 后端但无 api_key → 回退到 DDG。"""
+    def test_brave_without_api_key_falls_back_to_tavily(self):
+        """brave 后端但无 api_key → 回退到 Tavily。"""
         import asyncio
         from core.tools.web.plugin import WebSearchPlugin, WebSearchParams
 
@@ -148,18 +148,18 @@ class TestWebSearchPlugin:
         ctx = ToolContext(services={"web_search": "brave"})
 
         with patch(
-            "core.tools.web.plugin._ddg_search",
-            AsyncMock(return_value="DDG 回退结果"),
-        ) as mock_ddg, patch(
+            "core.tools.web.plugin._tavily_search",
+            AsyncMock(return_value="Tavily 回退结果"),
+        ) as mock_tavily, patch(
             "core.tools.web.plugin._brave_search",
             AsyncMock(),
         ) as mock_brave:
             result = asyncio.run(
                 plugin.execute(ctx=ctx, emit=None, params=WebSearchParams(query="test"))
             )
-            mock_ddg.assert_called_once()
+            mock_tavily.assert_called_once()
             mock_brave.assert_not_called()
-            assert result == "DDG 回退结果"
+            assert result == "Tavily 回退结果"
 
     def test_brave_with_api_key_uses_brave(self):
         """brave 后端且有 api_key → 使用 Brave。"""
@@ -176,18 +176,18 @@ class TestWebSearchPlugin:
             "core.tools.web.plugin._brave_search",
             AsyncMock(return_value="Brave 结果"),
         ) as mock_brave, patch(
-            "core.tools.web.plugin._ddg_search",
+            "core.tools.web.plugin._tavily_search",
             AsyncMock(),
-        ) as mock_ddg:
+        ) as mock_tavily:
             result = asyncio.run(
                 plugin.execute(ctx=ctx, emit=None, params=WebSearchParams(query="test"))
             )
             mock_brave.assert_called_once_with("test", 5, "sk-test-key-123")
-            mock_ddg.assert_not_called()
+            mock_tavily.assert_not_called()
             assert result == "Brave 结果"
 
-    def test_ddg_no_results_returns_not_found_message(self):
-        """DDG 无结果时返回包含"未找到"的消息。"""
+    def test_tavily_no_results_returns_not_found_message(self):
+        """Tavily 无结果时返回包含"未找到"的消息。"""
         import asyncio
         from core.tools.web.plugin import WebSearchPlugin, WebSearchParams
 
@@ -195,16 +195,16 @@ class TestWebSearchPlugin:
         ctx = ToolContext(session_id="test")
 
         with patch(
-            "core.tools.web.plugin._ddg_search",
+            "core.tools.web.plugin._tavily_search",
             AsyncMock(return_value="未找到与 'xyz' 相关的结果。"),
-        ) as mock_ddg:
+        ):
             result = asyncio.run(
                 plugin.execute(ctx=ctx, emit=None, params=WebSearchParams(query="xyz"))
             )
             assert "未找到" in result
 
-    def test_ddg_with_custom_limit(self):
-        """自定义 limit 参数传递给 DDG。"""
+    def test_tavily_with_custom_limit(self):
+        """自定义 limit 参数传递给 Tavily。"""
         import asyncio
         from core.tools.web.plugin import WebSearchPlugin, WebSearchParams
 
@@ -212,13 +212,13 @@ class TestWebSearchPlugin:
         ctx = ToolContext(session_id="test")
 
         with patch(
-            "core.tools.web.plugin._ddg_search",
-            AsyncMock(return_value="DDG 结果"),
-        ) as mock_ddg:
+            "core.tools.web.plugin._tavily_search",
+            AsyncMock(return_value="Tavily 结果"),
+        ) as mock_tavily:
             asyncio.run(
                 plugin.execute(ctx=ctx, emit=None, params=WebSearchParams(query="test", limit=8))
             )
-            mock_ddg.assert_called_once_with("test", 8)
+            mock_tavily.assert_called_once_with("test", 8)
 
 
 # ============================================================================

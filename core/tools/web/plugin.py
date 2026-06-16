@@ -74,7 +74,7 @@ def _get_proxy() -> str | None:
 
 
 # ============================================================================
-# web_search — DuckDuckGo (默认) + Brave API (可选)
+# web_search — Tavily (默认) + Brave API (可选)
 # ============================================================================
 
 class WebSearchParams(BaseModel):
@@ -102,29 +102,40 @@ class WebSearchPlugin(ToolPlugin):
             if brave_key:
                 return await _brave_search(params.query, params.limit, brave_key)
 
-        return await _ddg_search(params.query, params.limit)
+        return await _tavily_search(params.query, params.limit)
 
 
-async def _ddg_search(query: str, limit: int) -> str:
-    try:
-        from ddgs import DDGS
-    except ImportError:
-        from duckduckgo_search import DDGS
-    proxy = _get_proxy()
-    with DDGS(proxy=proxy) as ddgs:
-        results = await asyncio.to_thread(
-            lambda: list(ddgs.text(query, max_results=limit))
+async def _tavily_search(query: str, limit: int) -> str:
+    """Tavily Search API — 默认搜索后端。"""
+    from tavily import AsyncTavilyClient
+
+    api_key = os.environ.get("TAVILY_API_KEY", "")
+    proxy_url = _get_proxy()
+
+    client_kwargs: dict = {}
+    if api_key:
+        client_kwargs["api_key"] = api_key
+    if proxy_url:
+        client_kwargs["proxies"] = {"http": proxy_url, "https": proxy_url}
+
+    async with AsyncTavilyClient(**client_kwargs) as client:
+        response = await client.search(
+            query=query,
+            search_depth="basic",
+            max_results=limit,
+            include_answer=False,
         )
 
+    results = response.get("results") or []
     if not results:
         return f"未找到与 '{query}' 相关的结果。"
 
     lines = []
     for i, r in enumerate(results, 1):
         title = r.get("title", "无标题")
-        href = r.get("href", "")
-        body = r.get("body", "")
-        lines.append(f"{i}. {title}\n   {href}\n   {body}")
+        url = r.get("url", "")
+        content = r.get("content", "")
+        lines.append(f"{i}. {title}\n   {url}\n   {content}")
     return "\n\n".join(lines)
 
 
