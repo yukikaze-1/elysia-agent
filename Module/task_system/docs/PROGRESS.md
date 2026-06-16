@@ -1,7 +1,7 @@
 # TaskSystem 项目进度
 
-> 日期: 2026-06-16  
-> 状态: v1 核心完成，待接入 CognitiveLoop
+> 日期: 2026-06-17  
+> 状态: v1 核心完成，查询 API 全部就绪，待接入 CognitiveLoop
 
 ---
 
@@ -13,7 +13,7 @@
 | 测试代码 | 21 文件 |
 | 单元测试 | **281 tests**, ~4.3s |
 | 集成测试 | 26 tests (含 4 e2e), ~4min |
-| 最近提交 | `8e6ab1d` — 6 个正确性 bug 修复 |
+| 最近提交 | `aca5926` — 6 个集成测试修复 |
 
 ---
 
@@ -78,7 +78,7 @@ TaskSystem
 
 | 层级 | 文件 | 测试数 | 覆盖 |
 |------|------|--------|------|
-| unit/ | `test_task_system.py` | 10 | stop + pause |
+| unit/ | `test_task_system.py` | 25 | stop / pause / token / 查询 API |
 | unit/ | `test_orchestrator.py` | 26 | 执行循环 / 重试 / 审批 / 暂停 |
 | unit/ | `test_sub_agent.py` | 22 | 决策循环 / 熔断 / replan |
 | unit/ | `test_graph.py` | 21 | PlanGraph + DAGPatch |
@@ -182,3 +182,22 @@ TaskSystem 完全未接入 CognitiveLoop——`core/` 目录没有任何 TaskSys
 - architecture.md：21 处与代码不一致修复
 - api.md：SSE 事件名、方法签名、实现状态同步
 - evaluator.py：`_derive_action` docstring 更新（CONTINUE → REPLAN）
+
+### 查询 API + 集成测试修复（2026-06-17）
+
+**查询 API 补全**：
+
+| # | 方法 | 说明 |
+|---|------|------|
+| 1 | `get_task_status()` | 查询任务当前状态，不存在时 raise KeyError |
+| 2 | `get_progress()` | 进度快照（current_node_id + 完成数/总数 + 耗时 + 线性预估剩余） |
+| 3 | `list_agents()` | 活跃 Sub-Agent 列表，TaskStatus→AgentStatus 自动映射 |
+
+**集成测试修复**：
+
+| # | 文件 | 问题 |
+|---|------|------|
+| 1 | `test_planner.py` | `Planner()` 无参调用——适配构造函数 `Planner(infra=make_infra())` |
+| 2 | `test_task_system_lifecycle.py` | token 竞态——`get_token_usage()` 清理后 None → 从 COMPLETED 事件 data 读取 |
+| 3 | `test_task_system_lifecycle.py` | `test_goal_failed_triggers_replan` mock 签名多了 `self`（patch 不自动传 self） |
+| 4 | 同上 | 完整套件中 LLM 限速 → `max_failure_count=2` + deadline 300s |

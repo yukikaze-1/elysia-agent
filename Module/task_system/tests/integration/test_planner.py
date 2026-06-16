@@ -107,7 +107,7 @@ async def test_multi_step_task():
     print("测试 2: 多步骤任务（查天气 → 条件判断 → 发邮件）")
     print("=" * 60)
 
-    planner = Planner()
+    planner = Planner(infra=make_infra())
     context = DelegationContext(
         intent="查询北京最近三天天气，如果有下雨的日子就发邮件给 boss@example.com",
         hints="老板邮箱是 boss@example.com，用户很着急",
@@ -226,7 +226,7 @@ async def test_replan_tool_timeout():
     print("Replan 集成测试 1: 工具超时 → 局部修复")
     print("=" * 60)
 
-    planner = Planner()
+    planner = Planner(infra=make_infra())
     plan = _make_sample_plan()
     node_states = _make_node_states_for_failed_search()
 
@@ -308,7 +308,7 @@ async def test_replan_business_goal_failed():
     print("Replan 集成测试 2: 业务目标未达成 (goal_failed) → 修复")
     print("=" * 60)
 
-    planner = Planner()
+    planner = Planner(infra=make_infra())
     plan = _make_sample_plan()
     node_states = _make_node_states_with_success()
 
