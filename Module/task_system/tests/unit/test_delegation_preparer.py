@@ -530,7 +530,7 @@ class TestPrepareIntegration:
             "missing_tools": [],
             "suggestion": None,
         })
-        with patch.object(preparer, "_call_llm", AsyncMock(return_value=mock_response)):
+        with patch.object(preparer, "_call_llm_with_usage", AsyncMock(return_value=(mock_response, {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}))):
             result = await preparer.prepare(
                 intent="查天气",
                 hints="着急",
@@ -548,6 +548,7 @@ class TestPrepareIntegration:
         assert len(result.context.tools) == 1
         assert result.context.tools[0].name == "web_search"
         assert result.context.tools[0].description == "搜索互联网"
+        assert result.token_usage == {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
 
     @pytest.mark.asyncio
     async def test_prepare_no_matching_tools(self, preparer, sample_tools):
@@ -557,7 +558,7 @@ class TestPrepareIntegration:
             "reason": "当前工具库缺少数据库查询能力",
             "missing_tools": ["database_query"],
         })
-        with patch.object(preparer, "_call_llm", AsyncMock(return_value=mock_response)):
+        with patch.object(preparer, "_call_llm_with_usage", AsyncMock(return_value=(mock_response, {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70}))):
             result = await preparer.prepare(
                 intent="查询数据库",
                 hints=None,
@@ -579,7 +580,7 @@ class TestPrepareIntegration:
             "reason": "意图过于模糊",
             "suggestion": "请问您想做什么？",
         })
-        with patch.object(preparer, "_call_llm", AsyncMock(return_value=mock_response)):
+        with patch.object(preparer, "_call_llm_with_usage", AsyncMock(return_value=(mock_response, {"prompt_tokens": 40, "completion_tokens": 15, "total_tokens": 55}))):
             result = await preparer.prepare(
                 intent="帮我弄一下",
                 hints=None,
@@ -609,7 +610,7 @@ class TestPrepareIntegration:
             "max_task_duration_s": None,
             "max_failure_count": None,
         })
-        with patch.object(preparer, "_call_llm", AsyncMock(return_value=mock_response)):
+        with patch.object(preparer, "_call_llm_with_usage", AsyncMock(return_value=(mock_response, {"prompt_tokens": 80, "completion_tokens": 30, "total_tokens": 110}))):
             result = await preparer.prepare(
                 intent="测试",
                 hints=None,
@@ -642,7 +643,7 @@ class TestPrepareIntegration:
             "max_task_duration_s": None,
             "max_failure_count": None,
         })
-        with patch.object(preparer, "_call_llm", AsyncMock(return_value=mock_response)):
+        with patch.object(preparer, "_call_llm_with_usage", AsyncMock(return_value=(mock_response, {"prompt_tokens": 30, "completion_tokens": 10, "total_tokens": 40}))):
             result = await preparer.prepare(
                 intent="测试",
                 hints=None,
@@ -660,7 +661,7 @@ class TestPrepareIntegration:
     async def test_prepare_llm_error(self, preparer, sample_tools):
         """LLM 调用异常向上传播。"""
         with patch.object(
-            preparer, "_call_llm", AsyncMock(side_effect=RuntimeError("API 错误")),
+            preparer, "_call_llm_with_usage", AsyncMock(side_effect=RuntimeError("API 错误")),
         ):
             with pytest.raises(RuntimeError, match="API 错误"):
                 await preparer.prepare(
@@ -677,7 +678,7 @@ class TestPrepareIntegration:
     async def test_prepare_parse_error(self, preparer, sample_tools):
         """LLM 返回非法 JSON。"""
         with patch.object(
-            preparer, "_call_llm", AsyncMock(return_value="not valid json !!!"),
+            preparer, "_call_llm_with_usage", AsyncMock(return_value=("not valid json !!!", {})),
         ):
             with pytest.raises(_PrepareParseError, match="JSON 解析失败"):
                 await preparer.prepare(
@@ -706,7 +707,7 @@ class TestPrepareIntegration:
             "max_task_duration_s": None,
             "max_failure_count": None,
         })
-        with patch.object(preparer, "_call_llm", AsyncMock(return_value=mock_response)):
+        with patch.object(preparer, "_call_llm_with_usage", AsyncMock(return_value=(mock_response, {"prompt_tokens": 60, "completion_tokens": 25, "total_tokens": 85}))):
             result = await preparer.prepare(
                 intent="发邮件",
                 hints=None,
@@ -725,7 +726,7 @@ class TestPrepareIntegration:
     async def test_prepare_global_constraints_injected(self, preparer, sample_tools):
         """验证 global_constraints 被注入 system prompt 且 prepare 正常完成。
 
-        mock _call_llm 直接返回 ok 响应，重点是验证 prepare()
+        mock _call_llm_with_usage 直接返回 ok 响应，重点是验证 prepare()
         能用非默认的 ConstraintConfig 正常走完整个流程不崩溃。
         """
         tight = ConstraintConfig(
@@ -744,7 +745,7 @@ class TestPrepareIntegration:
             "max_task_duration_s": None,
             "max_failure_count": None,
         })
-        with patch.object(preparer, "_call_llm", AsyncMock(return_value=mock_response)):
+        with patch.object(preparer, "_call_llm_with_usage", AsyncMock(return_value=(mock_response, {"prompt_tokens": 70, "completion_tokens": 30, "total_tokens": 100}))):
             result = await preparer.prepare(
                 intent="简单查询",
                 hints=None,

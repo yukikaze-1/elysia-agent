@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from Module.task_system.infra import AgentInfra
     from Module.task_system.mailbox import TaskMailbox
     from Module.task_system.protocol import HITLNotifier
+    from Module.task_system.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)
 
@@ -74,54 +75,41 @@ class SubAgent:
     TaskState 归 SubAgent 管理（任务生命周期），ExecutionState 归 Orchestrator（执行追踪）。
     两者合并为 checkpoint 持久化。
 
-    依赖（8 个）:
-        infra, hitl_notifier, planner, plan_validator, executor, evaluator,
-        checkpoint_manager, artifact_store
-        Orchestrator 由 SubAgent 内部自建（per-SubAgent）
+    跨任务共享依赖（2 个）：
+        infra, hitl_notifier
+    Per-task 组件（run() 内部创建）：
+        TokenLedger / Planner / PlanValidator / Executor / Evaluator /
+        ArtifactStore / CheckpointManager / Orchestrator
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         infra: AgentInfra,
         hitl_notifier: HITLNotifier,
-        planner: Planner,
-        plan_validator: PlanValidator,
-        executor: Executor,
-        evaluator: Evaluator,
-        checkpoint_manager: CheckpointManager,
-        artifact_store: ArtifactStore,
     ) -> None:
-        from Module.task_system.core.orchestrator import Orchestrator
+        """SubAgent 构造——只接收两个跨任务共享的资源。
 
+        所有 per-task 组件（TokenLedger / Planner / Executor / Evaluator /
+        ArtifactStore / CheckpointManager / PlanValidator / Orchestrator）
+        在 run() 中创建——因为 TokenLedger 需要 task_state 作为构造参数。
+        """
         self._infra = infra
         self._hitl = hitl_notifier
-        self._planner = planner
-        self._plan_validator = plan_validator
-        self._checkpoint_mgr = checkpoint_manager
-        self._artifact_store = artifact_store
 
-        # Orchestrator 是 per-SubAgent 的——面向单个 Plan 的执行循环
-        # Executor/Evaluator 由 TaskSystem 共享注入
-        self._orchestrator = Orchestrator(
-            infra=infra,
-            hitl_notifier=hitl_notifier,
-            executor=executor,
-            evaluator=evaluator,
-            checkpoint_manager=checkpoint_manager,
-            artifact_store=artifact_store,
-        )
+        # ── per-task 组件——run() 入口赋值，初始为 None ──
+        self._planner: Planner | None = None
+        self._plan_validator: PlanValidator | None = None
+        self._executor: Executor | None = None
+        self._evaluator: Evaluator | None = None
+        self._orchestrator: Orchestrator | None = None
+        self._checkpoint_mgr: CheckpointManager | None = None
+        self._artifact_store: ArtifactStore | None = None
+        self._token_ledger: TokenLedger | None = None
 
         # ── 运行时状态——run() 入口赋值，初始为 None ──
         # None = 尚未启动 / 已结束
         self._task_state: TaskState | None = None
         self._graph: PlanGraph | None = None
-
-        # ── 扩展点（v1 不启用）─────────────────────────────────────────────
-        # self._state_manager: StateManager | None = None
-        # self._scheduler: Scheduler | None = None
-        # self._event_log: EventLog | None = None
-        # self._synthesizer: Synthesizer | None = None
-        # self._reducer: Reducer | None = None
 
     # ── 主入口 ─────────────────────────────────────────────────────────────────
 
@@ -148,6 +136,41 @@ class SubAgent:
             updated_at=now_iso(),
         )
         self._task_state = task_state
+
+        # ── 创建 per-task 组件 ──
+        from Module.task_system.artifact_store import ArtifactStore
+        from Module.task_system.checkpoint import CheckpointManager
+        from Module.task_system.core.evaluator import Evaluator
+        from Module.task_system.core.executor import Executor
+        from Module.task_system.core.orchestrator import Orchestrator
+        from Module.task_system.core.planner import Planner
+        from Module.task_system.core.plan_validator import PlanValidator
+        from Module.task_system.token_ledger import TokenLedger
+
+        self._token_ledger = TokenLedger(task_state)
+        self._artifact_store = ArtifactStore()
+        self._checkpoint_mgr = CheckpointManager()
+        self._plan_validator = PlanValidator()
+        self._planner = Planner(token_ledger=self._token_ledger)
+        self._executor = Executor(
+            infra=self._infra,
+            artifact_store=self._artifact_store,
+            hitl_notifier=self._hitl,
+            token_ledger=self._token_ledger,
+        )
+        self._evaluator = Evaluator(
+            infra=self._infra,
+            artifact_store=self._artifact_store,
+            token_ledger=self._token_ledger,
+        )
+        self._orchestrator = Orchestrator(
+            infra=self._infra,
+            hitl_notifier=self._hitl,
+            executor=self._executor,
+            evaluator=self._evaluator,
+            checkpoint_manager=self._checkpoint_mgr,
+            artifact_store=self._artifact_store,
+        )
 
         # 1. 规划 + 校验 → PlanGraph
         graph = await self._plan_and_validate(context, task_state, mailbox)

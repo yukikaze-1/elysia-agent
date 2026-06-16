@@ -411,6 +411,10 @@ class DelegationResult(BaseModel):
     missing_tools: list[str] = Field(default_factory=list)
     suggestion: str | None = None
 
+    token_usage: dict | None = None
+    # LLM 调用消耗: {"prompt_tokens": N, "completion_tokens": N, "total_tokens": N}
+    # status=ok 时始终有值；异常时可能为 None
+
     # UserProfile 字段由 CognitiveLoop 侧定义，当前占位。
     # session_messages 截断策略后续讨论。
 

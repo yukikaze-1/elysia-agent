@@ -160,7 +160,7 @@ class DelegationPreparer:
 
         # ── LLM 调用 ──
         logger.debug("DelegationPreparer user prompt:\n%s", user)
-        raw = await self._call_llm(system, user)
+        raw, token_usage = await self._call_llm_with_usage(system, user)
         logger.debug("DelegationPreparer LLM 响应:\n%s", raw)
 
         # ── 解析 + 校验 ──
@@ -168,7 +168,9 @@ class DelegationPreparer:
         validated = self._validate_output(parsed, tools)
 
         # ── 构建结果 ──
-        return self._build_result(validated, intent, hints, tools, session_id)
+        result = self._build_result(validated, intent, hints, tools, session_id)
+        result.token_usage = token_usage
+        return result
 
     # ── 内部：构建 prompt ────────────────────────────────────────────────────
 
@@ -191,8 +193,12 @@ class DelegationPreparer:
 
     # ── 内部：LLM 调用 ────────────────────────────────────────────────────────
 
-    async def _call_llm(self, system: str, user: str) -> str:
-        """调用 LLM，JSON output 模式。模型名由环境变量 TASK_SYSTEM_MODEL 控制。"""
+    async def _call_llm_with_usage(self, system: str, user: str) -> tuple[str, dict]:
+        """调用 LLM，返回 (响应文本, token_usage dict)。
+
+        token_usage 格式: {"prompt_tokens": N, "completion_tokens": N, "total_tokens": N}
+        usage 为 None 时返回空 dict。
+        """
         response = await self._client.chat.completions.create(
             model=os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro"),
             messages=[
@@ -204,10 +210,17 @@ class DelegationPreparer:
             extra_body={"thinking": {"type": "enabled"}},
             max_tokens=4096,
         )
+        usage = {}
+        if response.usage:
+            usage = {
+                "prompt_tokens": response.usage.prompt_tokens or 0,
+                "completion_tokens": response.usage.completion_tokens or 0,
+                "total_tokens": response.usage.total_tokens or 0,
+            }
         content = response.choices[0].message.content
         if not content:
             raise _PrepareParseError("LLM 返回空响应")
-        return content
+        return content, usage
 
     # ── 内部：解析 ────────────────────────────────────────────────────────────
 

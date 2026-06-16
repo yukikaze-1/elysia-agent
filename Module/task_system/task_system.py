@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
 
 from Module.task_system.mailbox import TaskMailbox
@@ -37,12 +37,6 @@ from Module.task_system.schema import (
 from Module.task_system.core.sub_agent import SubAgent
 
 if TYPE_CHECKING:
-    from Module.task_system.artifact_store import ArtifactStore
-    from Module.task_system.checkpoint import CheckpointManager
-    from Module.task_system.core.evaluator import Evaluator
-    from Module.task_system.core.executor import Executor
-    from Module.task_system.core.planner import Planner
-    from Module.task_system.core.plan_validator import PlanValidator
     from Module.task_system.infra import AgentInfra
     from Module.task_system.protocol import HITLNotifier
 
@@ -87,13 +81,10 @@ class TaskSystem:
         self._mailboxes: dict[TaskId, TaskMailbox] = {}
         self._task_futures: dict[TaskId, asyncio.Task[None]] = {}  # 追踪 fire-and-forget 协程，供 stop() 等待/取消
 
-        # ── 内部组件（start() 时实例化）────────────────────────────────
-        self._planner: Planner | None = None
-        self._plan_validator: PlanValidator | None = None
-        self._executor: Executor | None = None
-        self._evaluator: Evaluator | None = None
-        self._checkpoint_mgr: CheckpointManager | None = None
-        self._artifact_store: ArtifactStore | None = None
+        # ── 内部组件（per-task 化——由 SubAgent.run() 内部创建）──
+        # 不再在此持有组件引用。移除了以下字段：
+        # self._planner, self._plan_validator, self._executor,
+        # self._evaluator, self._checkpoint_mgr, self._artifact_store
 
         # 防误用：submit() 前必须调 start()
         self._started = False
@@ -101,7 +92,7 @@ class TaskSystem:
     # ── 生命周期 ─────────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """启动 TaskSystem——初始化所有内部组件。
+        """启动 TaskSystem——初始化并发控制。
 
         调用方必须在 submit() 之前调用 start()。
         幂等——重复调用无副作用。
@@ -110,34 +101,9 @@ class TaskSystem:
             logger.warning("TaskSystem.start: 已启动，跳过重复调用")
             return
 
-        from Module.task_system.artifact_store import ArtifactStore
-        from Module.task_system.checkpoint import CheckpointManager
-        from Module.task_system.core.evaluator import Evaluator
-        from Module.task_system.core.executor import Executor
-        from Module.task_system.core.planner import Planner
-        from Module.task_system.core.plan_validator import PlanValidator
-
         self._semaphore = asyncio.BoundedSemaphore(self._max_sub_agents)
-
-        # 共享组件（无状态服务 + 存储层）
-        self._artifact_store = ArtifactStore()
-        self._checkpoint_mgr = CheckpointManager()
-        self._planner = Planner()
-        self._plan_validator = PlanValidator()
-        self._executor = Executor(
-            infra=self._infra,
-            artifact_store=self._artifact_store,
-            hitl_notifier=self._hitl,
-        )
-        self._evaluator = Evaluator(
-            infra=self._infra,
-            artifact_store=self._artifact_store,
-        )
-        # Orchestrator 不在此构造——per-SubAgent，SubAgent.__init__ 自建
-
         self._started = True
-        logger.info("TaskSystem.start: max_sub_agents=%d, 组件初始化完成",
-                     self._max_sub_agents)
+        logger.info("TaskSystem.start: max_sub_agents=%d", self._max_sub_agents)
 
     async def stop(self, timeout: float = 10.0) -> None:
         """Graceful shutdown。
@@ -199,13 +165,7 @@ class TaskSystem:
                 message="TaskSystem 尚未 start()，请先调用 start()",
             )
 
-        # start() 已调用，所有组件和信号量必定初始化
-        assert self._planner is not None
-        assert self._plan_validator is not None
-        assert self._executor is not None
-        assert self._evaluator is not None
-        assert self._checkpoint_mgr is not None
-        assert self._artifact_store is not None
+        # start() 已调用，信号量必定初始化
         assert self._semaphore is not None
 
         # ── 参数校验 ──
@@ -225,12 +185,6 @@ class TaskSystem:
         sub_agent = SubAgent(
             infra=self._infra,
             hitl_notifier=self._hitl,
-            planner=self._planner,
-            plan_validator=self._plan_validator,
-            executor=self._executor,
-            evaluator=self._evaluator,
-            checkpoint_manager=self._checkpoint_mgr,
-            artifact_store=self._artifact_store,
         )
 
         # ── 获取并发槽位 + 注册 ──
@@ -269,7 +223,7 @@ class TaskSystem:
             finally:
                 self._cleanup_task(task_id)
                 try:
-                    await self._cleanup_storage(task_id)
+                    await self._cleanup_storage(task_id, sub_agent)
                 except Exception:
                     logger.exception(
                         "TaskSystem: task_id=%s 存储清理失败，槽位仍会释放", task_id,
@@ -401,8 +355,8 @@ class TaskSystem:
             if ts is None:
                 continue  # 尚未完成 run() 初始化，跳过
             checkpoint = (
-                await self._checkpoint_mgr.load(task_id)
-                if self._checkpoint_mgr else None
+                await sub_agent._checkpoint_mgr.load(task_id)
+                if sub_agent._checkpoint_mgr else None
             )
             exec_state = checkpoint.exec if checkpoint else None
 
@@ -462,15 +416,9 @@ class TaskSystem:
         """获取任务的 DAG 可视化数据。"""
         sub_agent = self._tasks.get(task_id)
         if sub_agent is None:
-            checkpoint = (
-                await self._checkpoint_mgr.load(task_id)
-                if self._checkpoint_mgr else None
-            )
-            if checkpoint is None or checkpoint.task is None or checkpoint.task.plan is None:
-                return None
-            from Module.task_system.core.graph import PlanGraph
-            graph = PlanGraph.from_plan(checkpoint.task.plan)
-            return graph.to_dag_view(checkpoint.exec.node_states if checkpoint.exec else {})
+            # CheckpointManager 现为 per-task（由 SubAgent.run() 创建），
+            # 任务不活跃时无对应 CheckpointManager，直接返回 None
+            return None
 
         graph = sub_agent._graph
         if graph is None:
@@ -479,16 +427,71 @@ class TaskSystem:
         return graph.to_dag_view(exec_state.node_states if exec_state else {})
 
     def get_token_usage(self, task_id: TaskId) -> TokenUsage | None:
-        """查询单任务的 token 消耗。LLM 报成本 / WebUI 展示。"""
-        raise NotImplementedError
+        """查询单任务的 token 消耗明细（含完整审计日志）。
+
+        返回 TokenUsage（含 components 列表），每次 LLM 调用一条记录。
+        任务不存在或尚未初始化时返回 None。
+        """
+        sub_agent = self._tasks.get(task_id)
+        ts = sub_agent._task_state if sub_agent else None
+        if ts is None:
+            return None
+        return TokenUsage(
+            task_id=task_id,
+            components=list(ts.token_entries),
+        )
 
     def list_agents(self) -> AgentList:
         """当前活跃的 Sub-Agent 和 Worker Agent 列表。Debug 用。"""
         raise NotImplementedError
 
     def get_token_stats(self, period: TokenPeriod = TokenPeriod.TODAY) -> TokenStats:
-        """聚合 token 统计。Debug 仪表盘用。"""
-        raise NotImplementedError
+        """聚合 token 统计（按时间段 + 组件 + 模型）。
+
+        遍历所有活跃任务，按 period 过滤，按 component/model 聚合。
+        只统计活跃任务（_tasks dict 中的），已清理的任务不可查询。
+        """
+        now = datetime.now(timezone.utc)
+        cutoff: datetime | None = None
+        if period == TokenPeriod.TODAY:
+            cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif period == TokenPeriod.WEEK:
+            cutoff = now - timedelta(days=7)
+        elif period == TokenPeriod.MONTH:
+            cutoff = now - timedelta(days=30)
+        # ALL: cutoff = None（不过滤）
+
+        total = 0
+        by_component: dict[str, int] = {}
+        by_model: dict[str, int] = {}
+
+        for sub_agent in self._tasks.values():
+            ts = sub_agent._task_state
+            if ts is None:
+                continue
+            # 按时间段过滤
+            if cutoff is not None and ts.created_at:
+                try:
+                    created = datetime.fromisoformat(ts.created_at)
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    if created < cutoff:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            for entry in ts.token_entries:
+                total += entry.total_tokens
+                key = entry.component.value
+                by_component[key] = by_component.get(key, 0) + entry.total_tokens
+                if entry.model:
+                    by_model[entry.model] = by_model.get(entry.model, 0) + entry.total_tokens
+
+        return TokenStats(
+            period=period,
+            total_tokens=total,
+            by_component=by_component,
+            by_model=by_model,
+        )
 
     # ── 内部方法 ─────────────────────────────────────────────────────────
 
@@ -502,14 +505,14 @@ class TaskSystem:
         self._task_futures.pop(task_id, None)  # 允许 asyncio.Task 被 GC
         logger.info("TaskSystem: task_id=%s 注册表清理完成", task_id)
 
-    async def _cleanup_storage(self, task_id: TaskId) -> None:
+    async def _cleanup_storage(self, task_id: TaskId, sub_agent: SubAgent) -> None:
         """清理任务关联的 checkpoint 和 artifact 存储。
 
         必须在 _cleanup_task() 之后调用——存储清理可能涉及 I/O（v2），
         不阻塞注册表释放。
         """
-        if self._checkpoint_mgr:
-            await self._checkpoint_mgr.delete(task_id)
-        if self._artifact_store:
-            await self._artifact_store.delete_by_task(task_id)
+        if sub_agent._checkpoint_mgr:
+            await sub_agent._checkpoint_mgr.delete(task_id)
+        if sub_agent._artifact_store:
+            await sub_agent._artifact_store.delete_by_task(task_id)
         logger.debug("TaskSystem: task_id=%s 存储清理完成", task_id)

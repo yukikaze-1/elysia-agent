@@ -23,6 +23,11 @@ from Module.task_system.schema import (
     TaskId,
     TaskState,
     TaskStatus,
+    TokenComponent,
+    TokenComponentType,
+    TokenPeriod,
+    TokenStats,
+    TokenUsage,
     now_iso,
 )
 
@@ -278,3 +283,80 @@ async def test_pause_raises_for_not_started():
 
     with pytest.raises(RuntimeError, match="尚未开始执行"):
         await ts.pause(tid)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# get_token_usage() / get_token_stats()
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_get_token_usage_returns_none_for_missing_task():
+    """不存在的 task_id 返回 None。"""
+    ts = await _build_task_system()
+    assert ts.get_token_usage(TaskId("nonexistent")) is None
+
+
+@pytest.mark.asyncio
+async def test_get_token_usage_returns_usage():
+    """活跃任务的 token_usage 可通过查询 API 获取。"""
+    ts = await _build_task_system()
+    # 手动构造一个有 token 数据的 task_state
+    task_state = _make_task_state("t1")
+    task_state.token_entries.append(TokenComponent(
+        component=TokenComponentType.PLANNER,
+        prompt_tokens=100, completion_tokens=50, total_tokens=150, model="m",
+    ))
+    task_state.token_usage["planner"] = 150
+    sub_agent = MagicMock()
+    sub_agent._task_state = task_state
+    ts._tasks[TaskId("t1")] = sub_agent
+
+    usage = ts.get_token_usage(TaskId("t1"))
+    assert usage is not None
+    assert len(usage.components) == 1
+    assert usage.components[0].total_tokens == 150
+
+
+@pytest.mark.asyncio
+async def test_get_token_stats_aggregates():
+    """get_token_stats 跨任务聚合 token 数据。"""
+    ts = await _build_task_system()
+    task_state = _make_task_state("t1")
+    task_state.created_at = "2026-06-16T10:00:00"
+    task_state.token_entries.append(TokenComponent(
+        component=TokenComponentType.PLANNER,
+        prompt_tokens=100, completion_tokens=50, total_tokens=150, model="deepseek",
+    ))
+    task_state.token_usage["planner"] = 150
+    sub_agent = MagicMock()
+    sub_agent._task_state = task_state
+    ts._tasks[TaskId("t1")] = sub_agent
+
+    stats = ts.get_token_stats(TokenPeriod.ALL)
+    assert stats.total_tokens == 150
+    assert stats.by_component["planner"] == 150
+    assert stats.by_model["deepseek"] == 150
+
+
+@pytest.mark.asyncio
+async def test_get_token_stats_filters_by_period():
+    """TODAY period 过滤掉昨天的任务。"""
+    from datetime import datetime, timezone, timedelta
+
+    ts = await _build_task_system()
+
+    # 昨天的任务
+    task_state = _make_task_state("old")
+    task_state.created_at = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    task_state.token_entries.append(TokenComponent(
+        component=TokenComponentType.PLANNER,
+        prompt_tokens=10, completion_tokens=5, total_tokens=15, model="m",
+    ))
+    task_state.token_usage["planner"] = 15
+    sub_agent = MagicMock()
+    sub_agent._task_state = task_state
+    ts._tasks[TaskId("old")] = sub_agent
+
+    stats = ts.get_token_stats(TokenPeriod.TODAY)
+    assert stats.total_tokens == 0  # 昨天的被过滤
