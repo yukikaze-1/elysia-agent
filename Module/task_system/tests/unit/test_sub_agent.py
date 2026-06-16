@@ -6,6 +6,9 @@
     - _check_meltdown() 熔断判断
     - _extract_node_results() 从 checkpoint 提取节点状态
     - _abort_error_code() 校验问题 → 错误码映射
+
+SubAgent.__init__ 签名为 (infra, hitl_notifier) —— 组件在 run() 内创建。
+测试通过直接赋值 agent._planner / agent._orchestrator 等 mock 属性来注入依赖。
 """
 
 from __future__ import annotations
@@ -99,14 +102,12 @@ def _make_sub_agent(
     *,
     infra=None,
     hitl=None,
-    planner=None,
-    validator=None,
-    executor=None,
-    evaluator=None,
-    checkpoint_mgr=None,
-    artifact_store=None,
 ):
-    """构造 SubAgent，自动填充未指定的 mock 依赖。"""
+    """构造 SubAgent（新 2-arg 签名）。
+
+    返回 agent 实例。调用方需自行赋值 mock 到 agent._planner、
+    agent._orchestrator 等属性，再调用被测方法。
+    """
     from Module.task_system.core.sub_agent import SubAgent
 
     if infra is None:
@@ -114,40 +115,83 @@ def _make_sub_agent(
         infra.constraints = ConstraintConfig(max_failure_count=5)
     if hitl is None:
         hitl = MagicMock()
-    if planner is None:
-        planner = MagicMock()
-        planner.plan = AsyncMock(return_value=_mock_plan())
-    if validator is None:
-        validator = MagicMock()
-    if executor is None:
-        executor = MagicMock()
-    if evaluator is None:
-        evaluator = MagicMock()
-    if checkpoint_mgr is None:
-        checkpoint_mgr = MagicMock()
-        checkpoint_mgr.save = AsyncMock()
-        checkpoint_mgr.load = AsyncMock()
-        checkpoint_mgr.delete = AsyncMock()
-    if artifact_store is None:
-        artifact_store = MagicMock()
 
-    # Mock Orchestrator 构造——SubAgent.__init__ 内部 local import
-    with patch("Module.task_system.core.orchestrator.Orchestrator") as mock_orch_cls:
+    agent = SubAgent(infra=infra, hitl_notifier=hitl)
+    return agent
+
+
+def _assign_execute_mocks(agent, *, mock_orch=None):
+    """为 _execute() 路径测试预赋值 mock 组件到 agent。
+
+    _execute() 内部使用的组件：
+        - _orchestrator.run()
+        - _planner.replan()（_handle_replan）
+        - _plan_validator.validate()（_handle_replan 全量重建）
+        - _checkpoint_mgr.save()（_handle_paused）
+        - _infra.constraints（_check_meltdown）
+    """
+    if mock_orch is None:
         mock_orch = MagicMock()
         mock_orch.run = AsyncMock()
-        mock_orch_cls.return_value = mock_orch
-        agent = SubAgent(
-            infra=infra,
-            hitl_notifier=hitl,
-            planner=planner,
-            plan_validator=validator,
-            executor=executor,
-            evaluator=evaluator,
-            checkpoint_manager=checkpoint_mgr,
-            artifact_store=artifact_store,
-        )
+    agent._orchestrator = mock_orch
 
-    return agent, mock_orch
+    # 默认 mock planner / validator / checkpoint_mgr ——
+    # 各测试按需覆盖具体行为
+    if agent._planner is None:
+        agent._planner = MagicMock()
+        agent._planner.replan = AsyncMock()
+    if agent._plan_validator is None:
+        agent._plan_validator = MagicMock()
+    if agent._checkpoint_mgr is None:
+        agent._checkpoint_mgr = MagicMock()
+        agent._checkpoint_mgr.save = AsyncMock()
+
+    return mock_orch
+
+
+# ── run() 测试辅助：patch 所有 run() 内部创建的组件 ─────────────────────────
+
+# run() 内部通过 `from X import Y` 创建组件实例，
+# patch 需要打到源模块上（`from X import Y` 从 X.__dict__ 取 Y）
+_RUN_COMPONENT_PATCHES = [
+    "Module.task_system.core.planner.Planner",
+    "Module.task_system.core.plan_validator.PlanValidator",
+    "Module.task_system.core.orchestrator.Orchestrator",
+    "Module.task_system.core.executor.Executor",
+    "Module.task_system.core.evaluator.Evaluator",
+    "Module.task_system.checkpoint.CheckpointManager",
+    "Module.task_system.artifact_store.ArtifactStore",
+    "Module.task_system.token_ledger.TokenLedger",
+]
+
+
+def _make_run_test_agent():
+    """为 run() 端到端测试构造 agent + mock 组件字典。
+
+    Returns:
+        agent, mocks dict with keys: planner, validator, orchestrator
+    """
+    from Module.task_system.core.sub_agent import SubAgent
+
+    infra = MagicMock()
+    infra.constraints = ConstraintConfig(max_failure_count=5)
+    hitl = MagicMock()
+
+    agent = SubAgent(infra=infra, hitl_notifier=hitl)
+
+    mock_planner = MagicMock()
+    mock_planner.plan = AsyncMock(return_value=_mock_plan())
+    mock_validator = MagicMock()
+    mock_orch = MagicMock()
+    mock_orch.run = AsyncMock()
+
+    mocks = {
+        "planner": mock_planner,
+        "validator": mock_validator,
+        "orchestrator": mock_orch,
+    }
+
+    return agent, mocks
 
 
 # ── run() 主流程 ────────────────────────────────────────────────────────────
@@ -156,23 +200,36 @@ def _make_sub_agent(
 @pytest.mark.asyncio
 async def test_run_success():
     """完整成功路径——规划 → 校验通过 → 执行完成。"""
-    agent, mock_orch = _make_sub_agent()
-    mock_orch.run.return_value = OrchestratorResult(
-        status=OrchestratorRunStatus.SUCCESS,
-    )
-    # PlanValidator 返回 (ValidationResult, PlanGraph)
+    agent, mocks = _make_run_test_agent()
+    mock_planner = mocks["planner"]
+    mock_validator = mocks["validator"]
+    mock_orch = mocks["orchestrator"]
+
     from Module.task_system.core.graph import PlanGraph
     graph = PlanGraph.from_plan(_mock_plan())
-    agent._plan_validator.validate.return_value = (
+    mock_validator.validate.return_value = (
         ValidationResult(valid=True, action=ValidationAction.PROCEED),
         graph,
     )
+    mock_orch.run.return_value = OrchestratorResult(
+        status=OrchestratorRunStatus.SUCCESS,
+    )
 
     mailbox = TaskMailbox(TaskId("t1"))
-    await agent.run(_delegation_context(), mailbox)
+
+    # patch 所有 run() 内部创建的组件类
+    with patch(_RUN_COMPONENT_PATCHES[0], return_value=mock_planner), \
+         patch(_RUN_COMPONENT_PATCHES[1], return_value=mock_validator), \
+         patch(_RUN_COMPONENT_PATCHES[2], return_value=mock_orch), \
+         patch(_RUN_COMPONENT_PATCHES[3]), \
+         patch(_RUN_COMPONENT_PATCHES[4]), \
+         patch(_RUN_COMPONENT_PATCHES[5]), \
+         patch(_RUN_COMPONENT_PATCHES[6]), \
+         patch(_RUN_COMPONENT_PATCHES[7]):
+        await agent.run(_delegation_context(), mailbox)
 
     # 验证 Planner 被调用
-    agent._planner.plan.assert_called_once()
+    mock_planner.plan.assert_called_once()
     # 验证 Orchestrator 被调用（task_state + graph + mailbox）
     mock_orch.run.assert_called_once()
     call_args = mock_orch.run.call_args[0]
@@ -183,7 +240,10 @@ async def test_run_success():
 @pytest.mark.asyncio
 async def test_run_validation_abort():
     """校验 ABORT → 任务 FAILED + 推送 FAILED 事件。"""
-    agent, mock_orch = _make_sub_agent()
+    agent, mocks = _make_run_test_agent()
+    mock_planner = mocks["planner"]
+    mock_validator = mocks["validator"]
+    mock_orch = mocks["orchestrator"]
 
     issues = [
         ValidationIssue(
@@ -191,13 +251,22 @@ async def test_run_validation_abort():
             message="DAG 节点数 25 超过上限 20",
         )
     ]
-    agent._plan_validator.validate.return_value = (
+    mock_validator.validate.return_value = (
         ValidationResult(valid=False, issues=issues, action=ValidationAction.ABORT),
         MagicMock(),  # graph——校验失败但 graph 仍返回
     )
 
     mailbox = TaskMailbox(TaskId("t1"))
-    await agent.run(_delegation_context(), mailbox)
+
+    with patch(_RUN_COMPONENT_PATCHES[0], return_value=mock_planner), \
+         patch(_RUN_COMPONENT_PATCHES[1], return_value=mock_validator), \
+         patch(_RUN_COMPONENT_PATCHES[2], return_value=mock_orch), \
+         patch(_RUN_COMPONENT_PATCHES[3]), \
+         patch(_RUN_COMPONENT_PATCHES[4]), \
+         patch(_RUN_COMPONENT_PATCHES[5]), \
+         patch(_RUN_COMPONENT_PATCHES[6]), \
+         patch(_RUN_COMPONENT_PATCHES[7]):
+        await agent.run(_delegation_context(), mailbox)
 
     # 不应调用 Orchestrator——校验失败直接返回
     mock_orch.run.assert_not_called()
@@ -215,7 +284,8 @@ async def test_run_validation_abort():
 @pytest.mark.asyncio
 async def test_run_loop_success():
     """Orchestrator 返回 SUCCESS → 循环结束。"""
-    agent, mock_orch = _make_sub_agent()
+    agent = _make_sub_agent()
+    mock_orch = _assign_execute_mocks(agent)
     mock_orch.run.return_value = OrchestratorResult(
         status=OrchestratorRunStatus.SUCCESS,
     )
@@ -231,7 +301,8 @@ async def test_run_loop_success():
 @pytest.mark.asyncio
 async def test_run_loop_blocked():
     """Orchestrator 返回 BLOCKED → 推送 APPROVAL_NEEDED → 返回。"""
-    agent, mock_orch = _make_sub_agent()
+    agent = _make_sub_agent()
+    mock_orch = _assign_execute_mocks(agent)
     mock_orch.run.return_value = OrchestratorResult(
         status=OrchestratorRunStatus.BLOCKED,
         checkpoint_state=_checkpoint("t1"),
@@ -251,7 +322,8 @@ async def test_run_loop_blocked():
 @pytest.mark.asyncio
 async def test_run_loop_paused():
     """Orchestrator 返回 PAUSED → 保存 checkpoint + 推送 PAUSED → 返回。"""
-    agent, mock_orch = _make_sub_agent()
+    agent = _make_sub_agent()
+    mock_orch = _assign_execute_mocks(agent)
     cp = _checkpoint("t1")
     mock_orch.run.return_value = OrchestratorResult(
         status=OrchestratorRunStatus.PAUSED,
@@ -276,7 +348,8 @@ async def test_run_loop_paused():
 @pytest.mark.asyncio
 async def test_run_loop_failed():
     """Orchestrator 返回 FAILED → 推送 FAILED → 返回。"""
-    agent, mock_orch = _make_sub_agent()
+    agent = _make_sub_agent()
+    mock_orch = _assign_execute_mocks(agent)
     mock_orch.run.return_value = OrchestratorResult(
         status=OrchestratorRunStatus.FAILED,
         error_context={"reason": "检测到死锁"},
@@ -297,7 +370,8 @@ async def test_run_loop_failed():
 @pytest.mark.asyncio
 async def test_run_loop_needs_replan_meltdown():
     """Orchestrator 返回 NEEDS_REPLAN + 达到熔断上限 → FAILED。"""
-    agent, mock_orch = _make_sub_agent()
+    agent = _make_sub_agent()
+    mock_orch = _assign_execute_mocks(agent)
     # 设置极低的熔断上限
     agent._infra.constraints = ConstraintConfig(max_failure_count=1)
     mock_orch.run.return_value = OrchestratorResult(
@@ -327,7 +401,8 @@ async def test_run_loop_needs_replan_meltdown():
 @pytest.mark.asyncio
 async def test_handle_replan_dagpatch_success():
     """replan 返回 DAGPatch → apply_patch + version += 1 + 返回 (True, resume_state)。"""
-    agent, mock_orch = _make_sub_agent()
+    agent = _make_sub_agent()
+    mock_orch = _assign_execute_mocks(agent)
 
     patch = DAGPatch(
         patch_type=DAGPatchType.ADD_NODES,
@@ -375,7 +450,8 @@ async def test_handle_replan_dagpatch_success():
 @pytest.mark.asyncio
 async def test_handle_replan_dagpatch_validation_failure():
     """replan 返回 DAGPatch 引入结构问题（如孤立节点）→ FAILED。"""
-    agent, mock_orch = _make_sub_agent()
+    agent = _make_sub_agent()
+    mock_orch = _assign_execute_mocks(agent)
 
     # 构造一个会引入孤立节点的 patch（add_nodes 不加边，>1 节点时触发 ORPHAN）
     patch = DAGPatch(
@@ -410,7 +486,8 @@ async def test_handle_replan_dagpatch_validation_failure():
 @pytest.mark.asyncio
 async def test_handle_replan_full_replan_success():
     """replan 返回 Plan → 校验通过 → graph.replace() + version 继承 + resume_from=None。"""
-    agent, mock_orch = _make_sub_agent()
+    agent = _make_sub_agent()
+    mock_orch = _assign_execute_mocks(agent)
 
     new_plan = Plan(
         dag=DAG(nodes=[
@@ -464,7 +541,8 @@ async def test_handle_replan_full_replan_success():
 @pytest.mark.asyncio
 async def test_handle_replan_full_replan_validation_failure():
     """replan 返回 Plan 但校验不通过 → FAILED。"""
-    agent, mock_orch = _make_sub_agent()
+    agent = _make_sub_agent()
+    mock_orch = _assign_execute_mocks(agent)
 
     new_plan = Plan(
         dag=DAG(nodes=[
@@ -511,7 +589,8 @@ async def test_handle_replan_full_replan_validation_failure():
 @pytest.mark.asyncio
 async def test_handle_replan_checkpoint_none():
     """NEEDS_REPLAN 但 checkpoint_state=None → FAILED。"""
-    agent, mock_orch = _make_sub_agent()
+    agent = _make_sub_agent()
+    mock_orch = _assign_execute_mocks(agent)
 
     mock_orch.run.return_value = OrchestratorResult(
         status=OrchestratorRunStatus.NEEDS_REPLAN,
@@ -536,7 +615,8 @@ async def test_handle_replan_checkpoint_none():
 @pytest.mark.asyncio
 async def test_handle_replan_not_implemented():
     """replan 抛出 NotImplementedError → 优雅降级 FAILED。"""
-    agent, mock_orch = _make_sub_agent()
+    agent = _make_sub_agent()
+    mock_orch = _assign_execute_mocks(agent)
     agent._planner.replan = AsyncMock(side_effect=NotImplementedError("replan 未实现"))
 
     mock_orch.run.return_value = OrchestratorResult(
@@ -564,7 +644,7 @@ async def test_handle_replan_not_implemented():
 
 def test_check_meltdown_ok():
     """plan_version ≤ max_failure_count → 不触发熔断。"""
-    agent, _ = _make_sub_agent()
+    agent = _make_sub_agent()
     agent._infra.constraints = ConstraintConfig(max_failure_count=5)
 
     ts = _task_state()
@@ -576,7 +656,7 @@ def test_check_meltdown_ok():
 
 def test_check_meltdown_triggers():
     """plan_version > max_failure_count → 触发熔断。"""
-    agent, _ = _make_sub_agent()
+    agent = _make_sub_agent()
     agent._infra.constraints = ConstraintConfig(max_failure_count=3)
 
     ts = _task_state()
@@ -593,7 +673,7 @@ def test_check_meltdown_triggers():
 
 def test_extract_node_results():
     """从 TaskCheckpoint 提取 node_states（NodeState 对象含 evaluation 字段）。"""
-    agent, _ = _make_sub_agent()
+    agent = _make_sub_agent()
     cp = TaskCheckpoint(
         task=_task_state(),
         exec=ExecutionState(
@@ -626,7 +706,7 @@ def test_extract_node_results():
 
 def test_abort_error_code_max_nodes():
     """MAX_NODES_EXCEEDED → PLAN_TOO_LARGE。"""
-    agent, _ = _make_sub_agent()
+    agent = _make_sub_agent()
     issues = [
         ValidationIssue(
             type=ValidationIssueType.MAX_NODES_EXCEEDED,
@@ -638,7 +718,7 @@ def test_abort_error_code_max_nodes():
 
 def test_abort_error_code_max_depth():
     """MAX_DEPTH_EXCEEDED → PLAN_TOO_LARGE。"""
-    agent, _ = _make_sub_agent()
+    agent = _make_sub_agent()
     issues = [
         ValidationIssue(
             type=ValidationIssueType.MAX_DEPTH_EXCEEDED,
@@ -650,7 +730,7 @@ def test_abort_error_code_max_depth():
 
 def test_abort_error_code_other():
     """非结构问题（MISSING_CONTRACT）→ INTERNAL_ERROR。"""
-    agent, _ = _make_sub_agent()
+    agent = _make_sub_agent()
     issues = [
         ValidationIssue(
             type=ValidationIssueType.MISSING_CONTRACT,
@@ -663,7 +743,7 @@ def test_abort_error_code_other():
 
 def test_abort_error_code_cycle():
     """CYCLE → PLAN_TOO_LARGE（结构不合法）。"""
-    agent, _ = _make_sub_agent()
+    agent = _make_sub_agent()
     issues = [
         ValidationIssue(
             type=ValidationIssueType.CYCLE,
@@ -675,7 +755,7 @@ def test_abort_error_code_cycle():
 
 def test_abort_error_code_duplicate_id():
     """DUPLICATE_ID → PLAN_TOO_LARGE（结构不合法）。"""
-    agent, _ = _make_sub_agent()
+    agent = _make_sub_agent()
     issues = [
         ValidationIssue(
             type=ValidationIssueType.DUPLICATE_ID,
@@ -688,7 +768,7 @@ def test_abort_error_code_duplicate_id():
 
 def test_abort_error_code_missing_dependency():
     """MISSING_DEPENDENCY → PLAN_TOO_LARGE（结构不合法）。"""
-    agent, _ = _make_sub_agent()
+    agent = _make_sub_agent()
     issues = [
         ValidationIssue(
             type=ValidationIssueType.MISSING_DEPENDENCY,

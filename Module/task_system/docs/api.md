@@ -72,7 +72,7 @@ class TaskSystem:
         """
 
     async def start(self) -> None:
-        """创建 Sub-Agent 并发控制、初始化 ArtifactStore/CheckpointManager/Planner/Validator/Executor/Evaluator"""
+        """初始化 BoundedSemaphore 并发控制。所有业务组件（Planner/Executor/Evaluator 等）现在是 per-task 的，由 SubAgent.run() 内部创建。"""
 
     async def stop(self, timeout: float = 10.0) -> None:
         """Graceful shutdown：拒绝新提交 → 等待活跃任务完成（timeout 秒）→ 超时 cancel → 兜底清理"""
@@ -325,13 +325,13 @@ class TaskStatus(StrEnum):
     """⚠️ 未实现。"""
 
     def get_token_usage(self, task_id: TaskId) -> TokenUsage | None: ...
-    """⚠️ 未实现。"""
+    """✅ 已实现——返回完整审计日志（TokenComponent 列表）。"""
 
     def list_agents(self) -> AgentList: ...
     """⚠️ 未实现。"""
 
     def get_token_stats(self, period: TokenPeriod = TokenPeriod.TODAY) -> TokenStats: ...
-    """聚合 token 统计。Debug 仪表盘用。"""
+    """✅ 已实现——按时间段/组件/模型聚合。"""
 ```
 
 ---
@@ -495,6 +495,7 @@ class DelegationResult:
     reason: str                          # LLM 判定理由（始终有）
     missing_tools: list[str]            # no_matching_tools 时，缺少的工具名称
     suggestion: str | None               # too_vague 时，给用户的澄清建议
+    token_usage: dict | None = None        # LLM 调用消耗: {"prompt_tokens": N, "completion_tokens": N, "total_tokens": N}
 ```
 
 ---
@@ -556,6 +557,7 @@ class TaskSummary:
     nodes: dict                          # {"total": N, "completed": N, "failed": N, "skipped": N}
     tools_used: list[str]               # 审计：本任务调用了哪些工具名称
     token_usage: dict                    # {"planner": N, "executor": N, "evaluator": N, ...}
+    token_total: int = 0                  # 任务总 token 消耗
     approvals: dict                      # {"requested": N, "approved": N, "denied": N}
     error: str | None                    # 任务级错误消息（来自 TaskState.error）
     error_code: TaskErrorCode | None     # 任务级错误码（来自 TaskState.error_code）

@@ -318,15 +318,16 @@ async def test_goal_failed_triggers_replan():
     ts = await _build_task_system()
     tools = _tools_from_manager(ts._infra.tool_registry)
 
-    # monkeypatch Evaluator——所有节点都返回 goal_failed
+    # Evaluator 已改为 per-task 组件（SubAgent.run() 内部创建），
+    # 不再暴露在 TaskSystem 层——需要通过类级 monkeypatch 注入 mock。
+    # patch 打在 Evaluator 源类上，所有实例化后的 evaluate() 都会被替换。
+    from unittest.mock import patch
     from Module.task_system.schema import (
         BusinessStatus, EvaluatorAction, ExecutionStatus,
         NodeResultEvaluation,
     )
 
-    original_evaluate = ts._evaluator.evaluate
-
-    async def _always_goal_failed(result, node, plan):
+    async def _always_goal_failed(self, result, node, plan):
         """返回 goal_failed → REPLAN（模拟业务评估失败）。"""
         return NodeResultEvaluation(
             node_id=result.node_id,
@@ -337,9 +338,11 @@ async def test_goal_failed_triggers_replan():
             result=result,
         )
 
-    ts._evaluator.evaluate = _always_goal_failed
-
-    try:
+    # 类级 patch：所有 SubAgent.run() 创建的 Evaluator 实例都使用 mock
+    with patch(
+        "Module.task_system.core.evaluator.Evaluator.evaluate",
+        side_effect=_always_goal_failed,
+    ):
         ctx = DelegationContext(
             intent="现在几点了",
             tools=tools,
@@ -374,9 +377,7 @@ async def test_goal_failed_triggers_replan():
         assert "熔断" in event.data.get("error", ""), \
             f"期望熔断错误，实际: {event.data}"
 
-    finally:
-        # 恢复 evaluator——无论测试成败都不能泄漏 mock
-        ts._evaluator.evaluate = original_evaluate
+    # patch 上下文结束后自动恢复 Evaluator.evaluate
 
     await ts.stop(timeout=10.0)
     # 关闭 LLM client 连接池——避免 event loop closed 错误

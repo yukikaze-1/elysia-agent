@@ -58,6 +58,8 @@
                     │  │  └─────────────────┘  │  │
                     │  └───────────────────────┘  │
                     │                             │
+                    │ │ TokenLedger              │   │
+                    │ │ (per-task 账本)          │   │
                     │ ┌───────────────────────┐   │
                     │ │ Checkpoint + Artifact │   │
                     │ │ 经验记忆 + Reflector   │   │
@@ -187,6 +189,7 @@ Module/task_system/
 ├── checkpoint.py        # 任务级 Checkpoint（含节点粒度）
 ├── artifact_store.py    # ArtifactStore: 节点产物统一存储
 ├── debug_api.py          # TaskDebugAPI: SSE 推送 + 内部轮询 + diff 事件
+├── token_ledger.py       # TokenLedger: per-task token 账本（write-through 到 TaskState）
 ├── core/                # Plan-Execute-Evaluate 编排循环
 │   ├── __init__.py
 │   ├── sub_agent.py     # SubAgent: 决策层——规划/Replan/熔断
@@ -211,7 +214,7 @@ Module/task_system/
 └── __main__.py          # ⚠️ v2 TODO：独立运行测试
 
 tests/
-├── unit/                 # 纯 mock，无外部依赖，252 tests，~6s
+├── unit/                 # 纯 mock，无外部依赖，269 tests，~6s
 │   ├── test_task_system.py    # stop, pause 单元测试
 │   ├── test_orchestrator.py   # Orchestrator 执行循环
 │   ├── test_sub_agent.py      # SubAgent 决策层
@@ -221,7 +224,8 @@ tests/
 │   ├── test_planner.py        # Planner plan + replan 解析
 │   ├── test_delegation_preparer.py  # DelegationPreparer 校验 + 格式化
 │   ├── test_checkpoint.py     # CheckpointManager
-│   └── test_mailbox.py        # TaskMailbox
+│   ├── test_mailbox.py        # TaskMailbox
+│   └── test_token_ledger.py     # TokenLedger write-through + 审计
 └── integration/          # 需要 LLM / 外部服务，5 tests，~4min
     ├── test_task_system_lifecycle.py  # stop, pause, 并发, goal_failed→REPLAN
     ├── test_delegation_preparer.py    # DelegationPreparer LLM 调用
@@ -535,7 +539,7 @@ Orchestrator.run(task_state, graph, mailbox, resume_from=None) → OrchestratorR
 
 **Orchestrator 依赖（6 个）**：infra, hitl_notifier, executor, evaluator, checkpoint_manager, artifact_store（注意：没有 Planner、PlanValidator——它们属于 Sub-Agent 层）。
 
-**Sub-Agent 依赖（8 个）**：infra, hitl_notifier, planner, plan_validator, executor, evaluator, checkpoint_manager, artifact_store。Orchestrator 由 SubAgent 内部自建（per-SubAgent），注入 executor/evaluator。
+**Sub-Agent 依赖（2 个）**：infra, hitl_notifier。所有 per-task 组件（Planner/PlanValidator/Executor/Evaluator/CheckpointManager/ArtifactStore/TokenLedger/Orchestrator）在 run() 中创建——TokenLedger 需要 task_state，因此不能在 __init__ 阶段构造。
 
 **PlanGraph —— NetworkX 图存储层**
 
@@ -1433,14 +1437,18 @@ class SummaryWriterWorker:
 
 ## 15. Token 消耗统计
 
-### 15.1 统计点
+> **状态：✅ 已实现。** TokenLedger（`token_ledger.py`）通过 write-through 模式实现 per-call 审计日志。
+> Planner/Executor/Evaluator 在每个 LLM 调用后立即 record()，数据写入 TaskState.token_entries。
+> 查询 API: `get_token_usage(task_id)` 和 `get_token_stats(period)`。
+
+### 15.1 已实现的统计点
 
 TaskSystem 内部的 LLM 调用点：
 
 | 组件 | 调用场景 | 统计粒度 |
 |------|---------|---------|
 | Planner | 生成 DAG 骨架 | 每次 Plan 生成 |
-| Executor | 为每个 DAG Node 生成 DBT | 每个 Node |
+| Executor | 匹配工具并调用（_match_tool） | 每个 Node |
 | Evaluator | 检查节点结果 | 每个 Node |
 | Reflector | 分析失败、提炼经验 | 每次 Reflect |
 | Sub-Agent 模式② | 自然语言摘要 | 每次摘要生成 |

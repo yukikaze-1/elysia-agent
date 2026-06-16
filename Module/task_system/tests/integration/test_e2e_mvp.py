@@ -332,10 +332,9 @@ async def _build_task_system() -> TaskSystem:
     ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=2)
     await ts.start()
 
-    # Planner 内部创建了自己的 AsyncOpenAI，不共享 infra.llm——
-    # 需要单独包装以捕获其 LLM 调用
-    assert ts._planner is not None
-    _wrap_llm_client(ts._planner._client, label="Planner")
+    # Planner 已改为 per-task 组件（SubAgent.run() 内部创建），
+    # 不再暴露在 TaskSystem 层——其 LLM 调用无法在 init 时拦截。
+    # 如需调试 Planner 调用，可通过 infra.llm 的全局拦截器观察。
 
     return ts
 
