@@ -725,7 +725,7 @@ class TokenStats(BaseModel):
 # ── Orchestrator 运行状态 ─────────────────────────────────────────────────────
 
 class OrchestratorRunStatus(StrEnum):
-    """Orchestrator.run() 的返回状态——5 态。
+    """Orchestrator.run() 的返回状态——6 态。
 
     Orchestrator 驱动 Plan 直到完成、遇到障碍、或被外部中断。
     非 SUCCESS 状态由 Sub-Agent 做决策。
@@ -737,12 +737,14 @@ class OrchestratorRunStatus(StrEnum):
         BLOCKED       — 等待用户审批回传
     外部中断
         PAUSED        — 收到暂停请求，已保存 checkpoint，可恢复
+        CANCELED      — 收到取消请求，已保存 checkpoint（终态，不可恢复）
     """
     SUCCESS = "success"
     FAILED = "failed"
     NEEDS_REPLAN = "needs_replan"
     BLOCKED = "blocked"
     PAUSED = "paused"
+    CANCELED = "canceled"
 
 
 class OrchestratorResult(BaseModel):
@@ -851,6 +853,7 @@ class ExecutionState(BaseModel):
     current_phase: ExecutionPhase = ExecutionPhase.EXECUTING
     waiting_for_approval: bool = False         # 等待审批回传
     pause_requested: bool = False          # 外部请求暂停（Orchestrator 检查后返回 PAUSED）
+    cancel_requested: bool = False         # 外部请求取消（Orchestrator 检查后返回 CANCELED）
     created_at: str = ""                   # Orchestrator._init_exec_state() 时赋值
     updated_at: str = ""
 
