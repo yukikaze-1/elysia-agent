@@ -120,6 +120,9 @@ async def test_integration_simple_task_ok():
     assert result.context.intent == "查询北京今天和明天的天气"
     assert result.context.hints == "用户在北京"
     assert result.context.session_id == SessionId("integration-test-1")
+    assert result.token_usage is not None, "token_usage 应非 None"
+    assert result.token_usage.get("total_tokens", 0) > 0, \
+        f"DP token 消耗应 > 0，实际: {result.token_usage}"
 
 
 @pytest.mark.asyncio

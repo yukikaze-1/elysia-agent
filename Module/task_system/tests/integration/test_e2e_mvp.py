@@ -249,6 +249,44 @@ def _wrap_llm_client(llm: AsyncOpenAI, label: str = "LLM") -> AsyncOpenAI:
 # TaskSystem 状态快照
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Token 汇总输出
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _log_token_summary(ts: TaskSystem, task_id: Any, event_data: dict | None = None) -> None:
+    """打印任务的 token 消耗汇总。
+
+    优先从 COMPLETED 事件 data 中读取（SubAgent 清理后仍可用），
+    回退到 get_token_usage()（仅任务仍在注册表中时可用）。
+    """
+    token_usage = None
+    token_total = 0
+
+    # 优先读事件数据——COMPLETED 事件中的 token 数据在 push 时捕获，不受清理影响
+    if event_data:
+        token_usage = event_data.get("token_usage")
+        token_total = event_data.get("token_total", 0)
+
+    # 回退：从 TaskSystem 查询（仅任务尚未被 finally 清理时有效）
+    if not token_usage:
+        usage = ts.get_token_usage(task_id)
+        if usage is not None and usage.components:
+            token_usage = {}
+            for c in usage.components:
+                token_usage[c.component.value] = token_usage.get(c.component.value, 0) + c.total_tokens
+            token_total = sum(token_usage.values())
+
+    if not token_usage:
+        print("  🔹 Token: （无记录）")
+        return
+
+    print(f"\n  ┌─ 🔹 Token 消耗汇总 (task_id={task_id})")
+    print(f"  │  总消耗: {token_total:,} tokens")
+    for comp_name in sorted(token_usage):
+        print(f"  │  {comp_name}: {token_usage[comp_name]:,} tokens")
+    print(f"  └─")
+
+
 def _show_event_summary(event_type: str, data: dict, event_count: int) -> None:
     """从 Mailbox 事件数据中提取并展示任务/节点状态摘要。
 
@@ -405,6 +443,12 @@ async def _run_task(
     _log_info(f"上下文摘要: {result.context.summarized_context[:200] if result.context.summarized_context else '(空)'}")
     tc = result.context.task_constraints
     _log_info(f"任务约束: max_dag_nodes={tc.max_dag_nodes}, max_mutations={tc.max_mutations}")
+    if result.token_usage:
+        tu = result.token_usage
+        _log_info(f"🔹 DelegationPreparer token: "
+                  f"prompt={tu.get('prompt_tokens', 0)}, "
+                  f"completion={tu.get('completion_tokens', 0)}, "
+                  f"total={tu.get('total_tokens', 0)}")
     _log_ok("委派上下文就绪")
     _record_timeline("1.DelegationPreparer", _elapsed() - step_start)
 
@@ -448,6 +492,7 @@ async def _run_task(
             total_nodes = data.get("total_nodes", 0)
             completed_nodes = data.get("completed_nodes", 0)
             _show_event_summary(event_type, data, event_count)
+            _log_token_summary(ts, task_id, event_data=data)
             _log_ok("任务完成 ✅")
             break
 
@@ -666,6 +711,12 @@ async def test_e2e_replan_recovery():
     )
     assert result.context is not None
     _log_info(f"筛选工具: {[t.name for t in result.context.tools]}")
+    if result.token_usage:
+        tu = result.token_usage
+        _log_info(f"🔹 DelegationPreparer token: "
+                  f"prompt={tu.get('prompt_tokens', 0)}, "
+                  f"completion={tu.get('completion_tokens', 0)}, "
+                  f"total={tu.get('total_tokens', 0)}")
     _log_ok("委派上下文就绪")
     _record_timeline("1.DelegationPreparer", _elapsed() - step_start)
 
@@ -712,6 +763,7 @@ async def test_e2e_replan_recovery():
             total_nodes = data.get("total_nodes", 0)
             completed_nodes = data.get("completed_nodes", 0)
             _show_event_summary(event_type, data, event_count)
+            _log_token_summary(ts, task_id, event_data=data)
             _log_ok("任务完成 ✅")
             break
 

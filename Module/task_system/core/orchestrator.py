@@ -600,6 +600,8 @@ class Orchestrator:
             "total_nodes": total_nodes,
             "completed_nodes": completed_nodes,
             "failed_nodes": failed_nodes,
+            "token_usage": task_state.token_usage,
+            "token_total": sum(task_state.token_usage.values()),
         })
         logger.info(
             "Orchestrator: task_id=%s 完成。nodes: %d/%d success",

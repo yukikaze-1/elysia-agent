@@ -49,6 +49,7 @@ from Module.task_system.schema import (
 from Module.task_system.task_system import TaskSystem
 from Module.task_system.delegation_preparer import DelegationPreparer
 from Module.task_system.mailbox import TaskMailbox
+from Module.task_system.schema import TokenPeriod
 from Module.tool.manager import ToolManager
 from Module.tool.protocol import PluginContext
 from core.tools.time.plugin import TimePlugin
@@ -137,6 +138,18 @@ async def test_stop_after_task_completion():
 
     assert event is not None, "未收到任何事件"
     assert event.type.value == "completed", f"期望 completed，实际 {event.type.value}: {event.data}"
+
+    # 验证 token 追踪已激活
+    usage = ts.get_token_usage(result.task_id)
+    assert usage is not None, "get_token_usage 应返回非 None"
+    assert len(usage.components) > 0, f"应有 token 记录，实际: {len(usage.components)}"
+    total = sum(c.total_tokens for c in usage.components)
+    assert total > 0, f"token 总消耗应 > 0，实际: {total}"
+    # 至少应有 Planner（plan）+ Executor（工具匹配）+ Evaluator（业务判定）
+    component_names = {c.component.value for c in usage.components}
+    assert "planner" in component_names, f"应有 planner 记录，实际: {component_names}"
+    assert "executor" in component_names, f"应有 executor 记录，实际: {component_names}"
+    assert "evaluator" in component_names, f"应有 evaluator 记录，实际: {component_names}"
 
     # stop 应该正常返回
     await ts.stop(timeout=10.0)
@@ -376,6 +389,13 @@ async def test_goal_failed_triggers_replan():
             f"期望 FAILED（熔断），实际 {event.type}: {event.data}"
         assert "熔断" in event.data.get("error", ""), \
             f"期望熔断错误，实际: {event.data}"
+
+        # 验证 token 追踪——replan 场景应有多次 Planner 调用
+        usage = ts.get_token_usage(result.task_id)
+        assert usage is not None
+        planner_calls = [c for c in usage.components if c.component.value == "planner"]
+        assert len(planner_calls) >= 2, \
+            f"replan 场景应有 ≥2 次 Planner 调用（初始 plan + 至少1次 replan），实际: {len(planner_calls)}"
 
     # patch 上下文结束后自动恢复 Evaluator.evaluate
 

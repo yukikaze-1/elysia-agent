@@ -41,11 +41,18 @@ _DIRECT_TEXT_SENTINEL = "__llm_direct__"
 # LLM 工具匹配的系统提示词
 _TOOL_MATCH_SYSTEM = """你是一个任务执行专家。根据节点的描述和可用的工具列表，选择最合适的工具并填写参数。
 
-规则：
+## 规则
 1. 仔细阅读节点的 description，理解需要做什么
 2. 从可用工具中选择最匹配的工具
 3. 根据 description 和上游上下文数据填写工具参数
 4. 如果没有任何工具能匹配，不要强行选择
+
+## 重要：何时不调用工具
+- 如果节点的工作是**汇总/编译/整理/改写/总结**上游已有数据，**不要调用任何工具**，
+  直接返回处理后的文本即可（即使工具列表中有 get_time、web_search 等）。
+- **只有**在需要获取**新的外部数据**时才调用工具。
+- 判断标准：上游数据中是否已经包含了完成此节点所需的全部信息？
+  如果是 → 不调工具，直接输出文本。
 """
 
 
@@ -262,10 +269,11 @@ class Executor:
         # 调用 LLM（function-calling）
         # 注意：DeepSeek v4 thinking 模式不支持 tool_choice="required"，
         # 使用 "auto" 让模型自行判断是否需要调用工具。
+        # _TOOL_MATCH_SYSTEM prompt 已强化"何时不调工具"规则，降低 LLM 对汇总节点误选工具的概率。
         #
-        # TODO: tool_choice="auto" + LLM 直出文本的设计有职责越界的问题。
-        #   Planner 在生成 DAG 时就知道哪些节点是"纯 LLM 任务"（汇总/分析/改写），
-        #   哪些需要外部工具。当前 Executor 替 Planner 做了这个决策——
+        # TODO: 长期方案——DAGNode 增加 execution_mode 字段（tool_call / llm_direct），
+        #   Planner 在生成 DAG 时显式标注。llm_direct 节点跳过 tool matching，
+        #   直接调 LLM 生成内容，省一次 function-calling + 消除误选工具风险。
         #   LLM 判断不需要工具 → 返回文本 → Executor 当作有效产物。
         #
         #   更好的方案：DAGNode 增加 execution_mode 字段（tool_call / llm_direct），
