@@ -111,6 +111,11 @@ class SubAgent:
             artifact_store=artifact_store,
         )
 
+        # ── 运行时状态——run() 入口赋值，初始为 None ──
+        # None = 尚未启动 / 已结束
+        self._task_state: TaskState | None = None
+        self._graph: PlanGraph | None = None
+
         # ── 扩展点（v1 不启用）─────────────────────────────────────────────
         # self._state_manager: StateManager | None = None
         # self._scheduler: Scheduler | None = None

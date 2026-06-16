@@ -178,6 +178,7 @@ X 锁持有超过 3 轮对话或 2 分钟 → 租约超时 → 强制释放 → 
 ```
 Module/task_system/
 ├── __init__.py          # 公开 API facade
+├── task_system.py        # TaskSystem 主类：生命周期 + submit/pause/stop + 查询 API
 ├── protocol.py          # HITLNotifier 等对外依赖协议（ABC）
 ├── delegation_preparer.py # DelegationPreparer: LLM 准备委派上下文（将来独立）
 ├── schema.py            # 基础 Pydantic 数据结构（所有子包共用，60 个类型）
@@ -185,6 +186,7 @@ Module/task_system/
 ├── mailbox.py           # TaskMailbox（单播，Agent 唯一消费者）
 ├── checkpoint.py        # 任务级 Checkpoint（含节点粒度）
 ├── artifact_store.py    # ArtifactStore: 节点产物统一存储
+├── debug_api.py          # TaskDebugAPI: SSE 推送 + 内部轮询 + diff 事件
 ├── core/                # Plan-Execute-Evaluate 编排循环
 │   ├── __init__.py
 │   ├── sub_agent.py     # SubAgent: 决策层——规划/Replan/熔断
@@ -194,18 +196,38 @@ Module/task_system/
 │   ├── plan_validator.py # PlanValidator: DAG 静态校验（纯逻辑）
 │   ├── executor.py      # Executor: v1 单工具直接调用，v2 DBT 生成
 │   └── evaluator.py     # Evaluator: 双重判定
-├── safety/              # ⚠️ v2 TODO：安全护栏（纯逻辑，无副作用）—— 文件尚未创建
+├── safety/              # ⚠️ v2 TODO：安全护栏（纯逻辑，无副作用）
+│   ├── __init__.py       # 占位
 │   ├── constraint.py    # ⚠️ v2 TODO：统一约束层
 │   └── rbac.py          # ⚠️ v2 TODO：RBAC 权限矩阵
 ├── learning/            # ⚠️ v2 TODO：经验记忆与学习（v1 不做）
+│   ├── __init__.py       # 占位
 │   ├── reflector.py     # ⚠️ v2 TODO：Reflector — 失败经验提炼
 │   ├── experience_memory.py  # ⚠️ v2 TODO：任务经验记忆（独立于用户 LTM）
 │   └── dedup.py         # ⚠️ v2 TODO：时间滑动窗口去重
 ├── pool.py              # ⚠️ v2 TODO：Agent 并发控制（BoundedSemaphore）
 ├── summary_store.py     # ⚠️ v2 TODO：任务摘要存储（JSONL, TTL 7天）
 ├── tool_runner.py       # ⚠️ v2 TODO：CPU 密集工具子进程入口
-├── debug_api.py         # ⚠️ v2 TODO：Debug WebUI 数据接口
 └── __main__.py          # ⚠️ v2 TODO：独立运行测试
+
+tests/
+├── unit/                 # 纯 mock，无外部依赖，252 tests，~6s
+│   ├── test_task_system.py    # stop, pause 单元测试
+│   ├── test_orchestrator.py   # Orchestrator 执行循环
+│   ├── test_sub_agent.py      # SubAgent 决策层
+│   ├── test_graph.py          # PlanGraph + DAGPatch
+│   ├── test_evaluator.py      # Evaluator 双重判定 + _derive_action
+│   ├── test_executor.py       # Executor tool-calling + LLM 直出
+│   ├── test_planner.py        # Planner plan + replan 解析
+│   ├── test_delegation_preparer.py  # DelegationPreparer 校验 + 格式化
+│   ├── test_checkpoint.py     # CheckpointManager
+│   └── test_mailbox.py        # TaskMailbox
+└── integration/          # 需要 LLM / 外部服务，5 tests，~4min
+    ├── test_task_system_lifecycle.py  # stop, pause, 并发, goal_failed→REPLAN
+    ├── test_delegation_preparer.py    # DelegationPreparer LLM 调用
+    ├── test_executor.py               # Executor LLM tool-calling
+    ├── test_planner.py                # Planner LLM DAG 生成
+    └── test_e2e_mvp.py                # 完整 4 链路 e2e
 ```
 
 **子包职责**：
@@ -297,7 +319,7 @@ class ExperienceRecord(BaseModel):    # tool_name/error_pattern/diagnosis/fix/co
 
 **决策层**——持有 Planner + PlanValidator，负责：
 - 初始规划（`Planner.plan()`）
-- Plan 校验（`PlanValidator.validate()`）——ABORT / FIX_PLAN（v1 降级为 FAILED）
+- Plan 校验（`PlanValidator.validate()`）——ABORT / FIX_PLAN（最多 2 次带错误反馈重试）
 - Replan 决策 + 熔断检查
 - 审批等待管理
 
@@ -314,7 +336,7 @@ SubAgent.run(context, mailbox)                    ← 入口
   │    ├─ Planner.plan(context) → Plan
   │    ├─ PlanValidator.validate(plan, ...) → (ValidationResult, PlanGraph)
   │    ├─ ABORT  → push FAILED, return None
-  │    └─ FIX_PLAN → try/except NotImplementedError → push FAILED, return None
+  │    └─ FIX_PLAN → 重试规划（最多 2 次，带校验错误反馈）→ 仍失败则 push FAILED
   └─ _execute(task_state, graph, mailbox, context)  ← 执行-决策循环
        └─ while True:
             result = Orchestrator.run(ts, graph, mailbox, resume_from=...)
@@ -326,9 +348,10 @@ SubAgent.run(context, mailbox)                    ← 入口
             └─ NEEDS_REPLAN  → _handle_replan()
                  ├─ 熔断检查 → 触发则 push FAILED, return
                  ├─ Planner.replan(plan, failed_node_ids, diagnosis, node_states)
-                 │    └─ NotImplementedError → 优雅降级 FAILED
-                 ├─ graph.apply_patch(patch)
-                 ├─ plan_version += 1（在成功后才递增）
+                 │    ├─ full_replan=false → DAGPatch（局部修复，保留已成功节点）
+                 │    └─ full_replan=true  → Plan 全量重建
+                 ├─ graph.apply_patch(patch) / graph.replace(new_graph)
+                 ├─ plan_version += 1（在成功后才递增——避免异常时虚增）
                  └─ return (True, checkpoint.exec) → 下次 run() 的 resume_from
 ```
 

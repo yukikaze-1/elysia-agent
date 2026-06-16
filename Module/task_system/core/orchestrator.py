@@ -14,6 +14,7 @@ Orchestrator 读写 task_state.status 做终态转换，读写 exec_state 做循
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -94,6 +95,10 @@ class Orchestrator:
         self._evaluator = evaluator
         self._checkpoint_mgr = checkpoint_manager
         self._artifact_store = artifact_store
+
+        # 运行时状态——run() 入口创建，循环中原地更新。
+        # None = Orchestrator 尚未启动（或已结束），非 None = 执行中。
+        self._exec_state: ExecutionState | None = None
 
         # ── 扩展点（v1 不启用）─────────────────────────────────────────────
         # self._scheduler: Scheduler | None = None
@@ -266,6 +271,16 @@ class Orchestrator:
                 checkpoint_state=self._build_checkpoint(task_state, exec_state),
             )
 
+        except asyncio.CancelledError:
+            logger.warning("Orchestrator: task_id=%s 被取消", task_id)
+            task_state.status = TaskStatus.FAILED
+            task_state.updated_at = now_iso()
+            await self._push_mailbox(mailbox, TaskEventType.FAILED, {
+                "task_id": str(task_id),
+                "error": "任务被取消",
+                "error_type": TaskErrorCode.INTERNAL_ERROR.value,
+            })
+            raise
         except Exception:
             logger.exception("Orchestrator 异常终止: task_id=%s", task_id)
             task_state.status = TaskStatus.FAILED
@@ -481,7 +496,7 @@ class Orchestrator:
                 if node.max_retries is not None
                 else self._infra.constraints.max_retries_per_node
             )
-            if ns.attempt >= max_retries:
+            if ns.attempt > max_retries:
                 logger.warning(
                     "Orchestrator: node=%s 重试次数已达上限 attempt=%d max=%d",
                     node_id, ns.attempt, max_retries,

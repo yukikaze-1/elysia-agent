@@ -288,14 +288,16 @@ class Evaluator:
         规则表：
             OK + goal_achieved        → CONTINUE
             OK + goal_partial         → CONTINUE（部分达成但可接受）
-            OK + goal_failed + 有产物  → CONTINUE（下游自行判断）
-            OK + goal_failed + 无产物  → REPLAN/SKIP（工具可能吞了异常）
+            OK + goal_failed + req    → REPLAN（即使有产物也不静默传播垃圾数据）
+            OK + goal_failed + !req   → SKIP
             TIMEOUT + req             → RETRY
             TIMEOUT + !req            → SKIP
-            ERROR + req               → RETRY
+            ERROR + req               → RETRY¹
             ERROR + !req              → SKIP
             PERMISSION_DENIED         → ABORT
             CANCELLED                 → ABORT
+
+            ¹ TOOL_NOT_FOUND / CONTEXT_OVERFLOW → REPLAN
         """
         # 权限拒绝 → 直接中止
         # 取消：_determine_execution_status 当前不产出 CANCELLED，

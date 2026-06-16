@@ -262,29 +262,19 @@ async def test_pause_raises_for_already_paused():
 
 @pytest.mark.asyncio
 async def test_pause_raises_for_not_started():
-    """暂停尚未启动执行的任务 → RuntimeError。"""
+    """暂停尚未启动执行的任务 → RuntimeError（_exec_state is None）。"""
     ts = await _build_task_system()
 
     tid = TaskId("t1")
     task_state = _make_task_state("t1", TaskStatus.RUNNING)
-    # sub_agent 没有 _orchestrator——模拟 Orchestrator 尚未 run()
+
+    # 构造 SubAgent，Orchestrator._exec_state = None（尚未 run）
     sub_agent = MagicMock()
     sub_agent._task_state = task_state
-    # 不设 _orchestrator 属性
-    del sub_agent._orchestrator  # 确保 AttributeError
-
+    orch = MagicMock()
+    orch._exec_state = None  # __init__ 初始化为 None，run() 前保持 None
+    sub_agent._orchestrator = orch
     ts._tasks[tid] = sub_agent
-
-    # 需要给 sub_agent 加一个 _orchestrator 不存在的情况
-    # MagicMock 默认对任何属性访问返回新的 MagicMock，所以需要用 spec 或手动处理
-    # 这里换个方式：直接构造一个没有 _exec_state 的 orchestrator
-
-    # 重新构造：有 orchestrator 但没有 _exec_state
-    sub_agent2 = MagicMock()
-    sub_agent2._task_state = task_state
-    orch = MagicMock(spec=[])  # spec=[] 意味着没有任何属性
-    sub_agent2._orchestrator = orch
-    ts._tasks[tid] = sub_agent2
 
     with pytest.raises(RuntimeError, match="尚未开始执行"):
         await ts.pause(tid)

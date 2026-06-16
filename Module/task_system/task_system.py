@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from Module.task_system.mailbox import TaskMailbox
+from Module.task_system.mailbox import push_mailbox_event
 from Module.task_system.schema import (
     AgentId,
     AgentList,
@@ -22,6 +23,8 @@ from Module.task_system.schema import (
     SubmitError,
     SubmitRejectionCode,
     TaskDAG,
+    TaskErrorCode,
+    TaskEventType,
     TaskId,
     TaskProgress,
     TaskStatus,
@@ -239,13 +242,22 @@ class TaskSystem:
         async def _run_and_cleanup() -> None:
             try:
                 await sub_agent.run(context, mailbox)
+            except asyncio.CancelledError:
+                # stop() 触发的取消——推送 FAILED 后重新抛出，让 cancel 正确传播
+                push_mailbox_event(
+                    mailbox, TaskEventType.FAILED, {
+                        "task_id": str(task_id),
+                        "error": "任务被取消",
+                        "error_type": TaskErrorCode.INTERNAL_ERROR.value,
+                    },
+                    caller="TaskSystem",
+                )
+                raise
             except Exception:
                 logger.exception("TaskSystem: task_id=%s 执行异常", task_id)
                 # 补推送 FAILED 事件——SubAgent 在 run() 前期阶段
                 # （Planner/Validator）抛异常时可能来不及推送，
                 # TaskSystem 在此兜底，确保 mailbox 消费者不会永久阻塞
-                from Module.task_system.mailbox import push_mailbox_event
-                from Module.task_system.schema import TaskErrorCode, TaskEventType
                 push_mailbox_event(
                     mailbox, TaskEventType.FAILED, {
                         "task_id": str(task_id),
@@ -256,7 +268,12 @@ class TaskSystem:
                 )
             finally:
                 self._cleanup_task(task_id)
-                await self._cleanup_storage(task_id)
+                try:
+                    await self._cleanup_storage(task_id)
+                except Exception:
+                    logger.exception(
+                        "TaskSystem: task_id=%s 存储清理失败，槽位仍会释放", task_id,
+                    )
                 assert self._semaphore is not None
                 self._semaphore.release()
 
@@ -279,20 +296,10 @@ class TaskSystem:
         """
         tasks = []
         for task_id, sub_agent in self._tasks.items():
-            # exec_state 可能为 None——任务刚创建、Orchestrator 尚未 run()
-            try:
-                exec_state = sub_agent._orchestrator._exec_state
-            except AttributeError:
-                exec_state = None
-            # graph 可能为 None——尚未完成首次规划
-            try:
-                graph = sub_agent._graph
-            except AttributeError:
-                graph = None
             tasks.append({
                 "task_state": sub_agent._task_state,
-                "graph": graph,
-                "exec_state": exec_state,
+                "graph": sub_agent._graph,
+                "exec_state": sub_agent._orchestrator._exec_state,
                 "mailbox_depth": self._mailboxes[task_id].count(),
             })
         return {
@@ -325,12 +332,11 @@ class TaskSystem:
         if ts.status == TaskStatus.PAUSED:
             raise RuntimeError(f"task_id={task_id} 已经暂停")
 
-        try:
-            exec_state = sub_agent._orchestrator._exec_state
-        except AttributeError:
+        exec_state = sub_agent._orchestrator._exec_state
+        if exec_state is None:
             raise RuntimeError(
                 f"task_id={task_id} 尚未开始执行（Orchestrator 未启动）"
-            ) from None
+            )
 
         exec_state.pause_requested = True
         logger.info("TaskSystem.pause: task_id=%s 暂停请求已发送", task_id)
@@ -392,6 +398,8 @@ class TaskSystem:
         summaries: list[TaskSummary] = []
         for task_id, sub_agent in self._tasks.items():
             ts = sub_agent._task_state
+            if ts is None:
+                continue  # 尚未完成 run() 初始化，跳过
             checkpoint = (
                 await self._checkpoint_mgr.load(task_id)
                 if self._checkpoint_mgr else None
@@ -464,14 +472,10 @@ class TaskSystem:
             graph = PlanGraph.from_plan(checkpoint.task.plan)
             return graph.to_dag_view(checkpoint.exec.node_states if checkpoint.exec else {})
 
-        try:
-            graph = sub_agent._graph
-        except AttributeError:
+        graph = sub_agent._graph
+        if graph is None:
             return None
-        try:
-            exec_state = sub_agent._orchestrator._exec_state
-        except AttributeError:
-            exec_state = None
+        exec_state = sub_agent._orchestrator._exec_state
         return graph.to_dag_view(exec_state.node_states if exec_state else {})
 
     def get_token_usage(self, task_id: TaskId) -> TokenUsage | None:

@@ -74,8 +74,8 @@ class TaskSystem:
     async def start(self) -> None:
         """创建 Sub-Agent 并发控制、初始化 ArtifactStore/CheckpointManager/Planner/Validator/Executor/Evaluator"""
 
-    async def stop(self) -> None:
-        """软关停：等当前节点完成 → checkpoint → 清理（v1: TODO 注释，no-op）"""
+    async def stop(self, timeout: float = 10.0) -> None:
+        """Graceful shutdown：拒绝新提交 → 等待活跃任务完成（timeout 秒）→ 超时 cancel → 兜底清理"""
 ```
 
 ---
@@ -103,25 +103,21 @@ class TaskSystem:
 ## 3. 任务控制
 
 ```python
-    async def pause(self, task_id: TaskId) -> bool:
-        """暂停任务。RUNNING → PAUSE_REQUESTED → PAUSED。v1 不支持注入新参数。"""
+    async def pause(self, task_id: TaskId) -> None:
+        """暂停任务。设置 exec_state.pause_requested → Orchestrator 检测 → PAUSED。
+        Raises: KeyError（任务不存在）/ RuntimeError（已终态/已暂停/未启动）。"""
 
     async def resume(self, task_id: TaskId) -> TaskMailbox | ResumeError:
-        """从 checkpoint 恢复。仅 PAUSED 可 resume（CAS 防双 resume）。
-
-        成功返回已有的 TaskMailbox（pause 时不销毁，保持同一实例）。
-        失败返回 ResumeError，调用方据此生成用户可见的错误信息。
-
-        v1 限制：resume() 使用原始 DelegationContext，不支持注入新上下文。
-        如需修改任务参数，必须 cancel → 重新 submit。
-        """
+        """⚠️ 未实现——raise NotImplementedError。"""
 
     async def cancel(self, task_id: TaskId) -> bool:
-        """软取消。二次确认由 CognitiveLoop 在上层处理。"""
+        """⚠️ 未实现——raise NotImplementedError。"""
 
     async def submit_approval(
         self, task_id: TaskId, agent_id: AgentId, approved: bool,
         feedback: str | None = None,
+    ) -> None:
+        """⚠️ 未实现——raise NotImplementedError。"""
     ) -> bool:
         """
         审批结果回传。路由到等待审批的 Worker，解除 await。
@@ -309,26 +305,30 @@ class TaskStatus(StrEnum):
 ## 8. Pull —— 查询方法
 
 ```python
+    # ── 已实现 ──
+
+    async def get_task_summary(self, task_id: TaskId) -> TaskSummary | None: ...
+    """查询任务摘要（✅ 已实现）。"""
+
+    async def list_active_tasks(self) -> list[TaskSummary]: ...
+    """列出所有活跃任务（✅ 已实现）。"""
+
+    async def get_task_dag(self, task_id: TaskId) -> TaskDAG | None: ...
+    """查询 DAG 图（✅ 已实现）。"""
+
+    # ── 未实现（⚠️ NotImplementedError）──
+
     def get_task_status(self, task_id: TaskId) -> TaskStatus: ...
-    """查询任务当前状态。最轻量——用户问"做完了吗？"时 LLM 调用。"""
-
-    def get_task_summary(self, task_id: TaskId) -> TaskSummary | None: ...
-    """查询任务摘要。用户问"刚才那个任务做了什么？"时 LLM 调用。"""
-
-    def list_active_tasks(self) -> list[TaskSummary]: ...
-    """列出所有活跃任务。用户问"我有几个后台任务？"时 LLM 调用。"""
+    """⚠️ 未实现。"""
 
     def get_progress(self, task_id: TaskId) -> TaskProgress | None: ...
-    """查询任务进度。用户问"到哪一步了？"时 LLM 调用。"""
-
-    def get_task_dag(self, task_id: TaskId) -> TaskDAG | None: ...
-    """查询 DAG 图。用户问"分了几个步骤？"时 LLM 调用。"""
+    """⚠️ 未实现。"""
 
     def get_token_usage(self, task_id: TaskId) -> TokenUsage | None: ...
-    """查询单任务的 token 消耗。LLM 报成本 / WebUI 展示。"""
+    """⚠️ 未实现。"""
 
     def list_agents(self) -> AgentList: ...
-    """当前活跃的 Sub-Agent 和 Worker Agent 列表。Debug 用。"""
+    """⚠️ 未实现。"""
 
     def get_token_stats(self, period: TokenPeriod = TokenPeriod.TODAY) -> TokenStats: ...
     """聚合 token 统计。Debug 仪表盘用。"""
@@ -338,14 +338,19 @@ class TaskStatus(StrEnum):
 
 ## 9. Push —— SSE 端点（Debug 专用）
 
-```
-GET /debug/api/tasks/stream
+由 `TaskDebugAPI`（`debug_api.py`）管理：内部 500ms 轮询 TaskSystem → diff → SSE 推送。
 
-event: node_status    data: {"task_id": "t1", "node_id": "A", "status": "success"}
-                      # status 使用 NodeStatus 枚举
-event: task_status    data: {"task_id": "t1", "status": "completed"}
-                      # status 使用 TaskStatus 枚举
-event: agent_change   data: {"available_slots": 3, "active_sub_agents": 1, "active_workers": 2}
+```
+GET /debug/api/tasks          → JSON 全量快照（TaskDebugAPI.snapshot_handler）
+GET /debug/api/tasks/stream   → SSE 事件流（TaskDebugAPI.sse_handler）
+
+SSE 事件类型：
+  event: snapshot     data: [全量 tasks 数组]              ← 新客户端连接
+  event: task_new     data: {task_id, status, nodes, ...}  ← 新任务
+  event: task_update  data: {task_id, status, nodes}       ← 状态/进度变化
+  event: task_done    data: {task_id, status, error}       ← 终态
+  event: node_update  data: {task_id, node_id, status, attempt} ← 节点状态变化
+  event: heartbeat    data: {}                             ← 30s 保活
 ```
 
 使用模式：初始拉全量 DAG → 监听 SSE 增量 → 收到变更后按需 Fetch。

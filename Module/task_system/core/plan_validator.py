@@ -33,7 +33,7 @@ class PlanValidator:
     Planner 产出 Plan 后、Orchestrator 执行前调用。
     校验失败 → 返回 fix_plan（Planner 重试）或 abort（放弃）。
 
-    当前 v1 共 8 项有效检查（2 项待 v2 补充）：
+    当前 v1 共 9 项有效检查（2 项待 v2 补充）：
         A. 图结构（委托 PlanGraph）:
             1. 环检测
             2. 依赖引用存在
@@ -98,16 +98,34 @@ class PlanValidator:
         # ── B. 业务规则检查 ──────────────────────────────────────────────
 
         # 6. node_id 唯一性（PlanGraph 构建时保证，显式复检输出友好信息）
-        seen: set[str] = set()
+        seen_ids: set[str] = set()
         for node in plan.dag.nodes:
             nid = str(node.node_id)
-            if nid in seen:
+            if nid in seen_ids:
                 issues.append(ValidationIssue(
                     type=ValidationIssueType.DUPLICATE_ID,
                     node_id=node.node_id,
                     message=f"node_id 重复: {node.node_id}",
                 ))
-            seen.add(nid)
+            seen_ids.add(nid)
+
+        # 6b. output_as 唯一性——重复的 output_as 会导致 ArtifactStore 静默覆盖
+        seen_outputs: set[str] = set()
+        for node in plan.dag.nodes:
+            oa = node.output_as
+            if oa and not isinstance(oa, str):
+                continue  # ArtifactId 实例，str() 后检查
+            oa_str = str(oa) if oa else None
+            if oa_str is None:
+                continue
+            if oa_str in seen_outputs:
+                issues.append(ValidationIssue(
+                    type=ValidationIssueType.DUPLICATE_ID,
+                    node_id=node.node_id,
+                    message=f"output_as 重复: {oa_str}（多个节点输出到同一 key，"
+                            f"ArtifactStore 会静默覆盖）",
+                ))
+            seen_outputs.add(oa_str)
 
         # 7. output_contract 合法性
         for node in plan.dag.nodes:

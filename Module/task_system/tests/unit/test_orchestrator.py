@@ -240,8 +240,8 @@ async def test_apply_retry_exceeded(orchestrator, mock_mailbox):
     graph = _make_graph(["a"], [])
     ts = _task_state(graph=graph)
     es = orchestrator._init_exec_state(graph)
-    # 设置 attempt=3（等于上限）
-    es.node_states[NodeId("a")].attempt = 3
+    # attempt > max_retries(3) 触发耗尽——即第 4 次尝试（初始 + 3 次重试）
+    es.node_states[NodeId("a")].attempt = 4
 
     action = await orchestrator._apply_evaluation(
         ts, es, _make_eval("a", EvaluatorAction.RETRY), mock_mailbox, graph,
@@ -258,7 +258,7 @@ async def test_apply_retry_node_max_retries(orchestrator, mock_mailbox):
     graph = PlanGraph.from_plan(_make_plan_with_node(NodeId("a"), max_retries=2))
     ts = _task_state(graph=graph)
     es = orchestrator._init_exec_state(graph)
-    es.node_states[NodeId("a")].attempt = 2
+    es.node_states[NodeId("a")].attempt = 3  # > max_retries(2) 触发耗尽
 
     action = await orchestrator._apply_evaluation(
         ts, es, _make_eval("a", EvaluatorAction.RETRY), mock_mailbox, graph,

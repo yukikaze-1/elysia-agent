@@ -232,10 +232,14 @@ class Executor:
         tool_defs = [d for d in all_defs if d["function"]["name"] in allowed_names]
 
         if not tool_defs:
-            raise _ToolMatchError(
-                f"没有可用的工具（allowed={allowed_names}, "
-                f"registered={[d['function']['name'] for d in all_defs]}）"
+            # 无可用工具——LLM 可能仍能通过直出文本完成（如 compose_answer 节点）
+            logger.info(
+                "Executor: node=%s 无可用的工具（allowed=%s），尝试 LLM 直出文本",
+                node.node_id, allowed_names,
             )
+            # 继续走 LLM 调用——tool_choice="auto" 且 tool_defs=[] 时，
+            # LLM 将返回纯文本 content → 走 _DIRECT_TEXT_SENTINEL 路径
+            # 如果 LLM 仍返回 tool_call（幻觉），由下方正常流程处理
 
         # 构建上下文消息：node 描述 + 期望输出 + 上游数据
         context_parts = [f"节点目标: {node.description}"]
