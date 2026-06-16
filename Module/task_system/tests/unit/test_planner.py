@@ -1,26 +1,31 @@
 """Planner 单元测试——不依赖 LLM，测试解析和格式化逻辑。
 
 覆盖 _parse_response（JSON → Plan）、_format_tools（Tool → prompt 文本）、
-_parse_replan_response（JSON → DAGPatch | Plan）、_format_nodes_by_status。
+_parse_replan_response（JSON → DAGPatch | Plan）、_format_nodes_by_status、
+token_ledger 注入与 record 调用。
 """
 
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from Module.task_system.core.planner import Planner, _PlanParseError
 from Module.task_system.schema import (
     ArtifactId,
+    ConstraintConfig,
     DAG,
     DAGPatch,
     DAGPatchType,
     DAGNode,
+    DelegationContext,
     NodeId,
     NodeState,
     NodeStatus,
     Plan,
+    TokenComponentType,
     Tool,
     OutputContract,
 )
@@ -111,7 +116,7 @@ def planner():
     key = os.environ.get("DEEPSEEK_API_KEY")
     os.environ["DEEPSEEK_API_KEY"] = "test-dummy-key"
     try:
-        yield Planner()
+        yield Planner(token_ledger=None)
     finally:
         if key is None:
             del os.environ["DEEPSEEK_API_KEY"]
@@ -516,3 +521,124 @@ def test_parse_replan_full_missing_nodes(planner):
     data = {"full_replan": True, "nodes": []}
     with pytest.raises(_PlanParseError, match="nodes 为空"):
         planner._parse_replan_response(json.dumps(data))
+
+
+# ── token_ledger 注入与 record 测试 ──────────────────────────────────────────
+
+
+@pytest.fixture
+def planner_with_mock_llm():
+    """创建 Planner，mock _client.chat.completions.create 以返回可控响应。"""
+    import os
+    key = os.environ.get("DEEPSEEK_API_KEY")
+    os.environ["DEEPSEEK_API_KEY"] = "test-dummy-key"
+    mock_ledger = MagicMock()
+    try:
+        planner = Planner(token_ledger=mock_ledger)
+        planner._client.chat.completions.create = AsyncMock()
+        yield planner, mock_ledger
+    finally:
+        if key is None:
+            del os.environ["DEEPSEEK_API_KEY"]
+        else:
+            os.environ["DEEPSEEK_API_KEY"] = key
+
+
+def _set_mock_response(planner, content: str, prompt_tokens: int = 100, completion_tokens: int = 50):
+    """设置 mock LLM 响应——返回指定 JSON content 和 usage。"""
+    mock_choice = MagicMock()
+    mock_choice.message.content = content
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_response.usage = MagicMock(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+    planner._client.chat.completions.create.return_value = mock_response
+
+
+def test_plan_records_token_usage(planner_with_mock_llm):
+    """plan() 中 LLM 调用成功后 token_ledger.record() 被调用，参数正确。"""
+    planner, mock_ledger = planner_with_mock_llm
+
+    valid_json = json.dumps({
+        "nodes": [{"node_id": "step1", "description": "搜索"}],
+        "edges": [],
+    })
+    _set_mock_response(planner, valid_json, prompt_tokens=100, completion_tokens=50)
+
+    context = DelegationContext(
+        intent="搜索最新 AI 新闻",
+        hints="使用 web_search 工具",
+        tools=[],
+        summarized_context="无",
+        session_id="test-session-1",
+    )
+    global_constraints = ConstraintConfig(max_dag_nodes=20, max_mutations=10)
+
+    import asyncio
+    plan = asyncio.run(planner.plan(context, global_constraints))
+
+    assert plan is not None
+    assert len(plan.dag.nodes) == 1
+
+    # 验证 token_ledger.record 被调用
+    mock_ledger.record.assert_called_once()
+
+    call_kwargs = mock_ledger.record.call_args.kwargs
+    assert call_kwargs["component"] == TokenComponentType.PLANNER
+    assert call_kwargs["prompt_tokens"] == 100
+    assert call_kwargs["completion_tokens"] == 50
+    assert "model" in call_kwargs
+
+
+def test_replan_records_token_usage(planner_with_mock_llm):
+    """replan() 中 LLM 调用成功后 token_ledger.record() 被调用，参数正确。"""
+    planner, mock_ledger = planner_with_mock_llm
+
+    valid_json = json.dumps({
+        "full_replan": False,
+        "patch_type": "replace_nodes",
+        "reason": "换工具",
+        "trigger_nodes": ["search"],
+        "replace_nodes": [
+            ["search", {"node_id": "new_search", "description": "新搜索",
+             "output_as": "output:new_search", "required": True}]
+        ],
+    })
+    _set_mock_response(planner, valid_json, prompt_tokens=200, completion_tokens=80)
+
+    original_plan = Plan(
+        dag=DAG(nodes=[
+            DAGNode(node_id=NodeId("search"), description="搜索"),
+        ], edges=[]),
+        plan_version=1,
+    )
+    node_results: dict[str, NodeState] = {
+        "search": NodeState(
+            node_id=NodeId("search"),
+            status=NodeStatus.FAILED,
+            error="工具超时",
+        ),
+    }
+
+    import asyncio
+    result = asyncio.run(planner.replan(
+        original_plan=original_plan,
+        failed_node_ids=[NodeId("search")],
+        failure_diagnosis="搜索超时",
+        node_results=node_results,
+        intent="搜索新闻",
+        tools=[],
+        max_nodes=10,
+        max_mutations=5,
+    ))
+
+    assert isinstance(result, DAGPatch)
+    assert result.patch_type == DAGPatchType.REPLACE_NODES
+
+    # 验证 token_ledger.record 被调用
+    mock_ledger.record.assert_called_once()
+
+    call_kwargs = mock_ledger.record.call_args.kwargs
+    assert call_kwargs["component"] == TokenComponentType.PLANNER
+    assert call_kwargs["prompt_tokens"] == 200
+    assert call_kwargs["completion_tokens"] == 80
+    assert "model" in call_kwargs

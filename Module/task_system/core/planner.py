@@ -10,6 +10,7 @@ import logging
 import os
 
 from openai import AsyncOpenAI
+from typing import TYPE_CHECKING
 
 from Module.task_system.schema import (
     ArtifactId,
@@ -25,9 +26,13 @@ from Module.task_system.schema import (
     NodeStatus,
     OutputContract,
     Plan,
+    TokenComponentType,
     Tool,
     now_iso,
 )
+
+if TYPE_CHECKING:
+    from Module.task_system.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +191,7 @@ class Planner:
         4. SubAgent 根据返回类型走增量路径或全量重建路径
     """
 
-    def __init__(self) -> None:
+    def __init__(self, token_ledger: TokenLedger | None = None) -> None:
         api_key = os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
             raise ValueError(
@@ -196,6 +201,7 @@ class Planner:
             api_key=api_key,
             base_url="https://api.deepseek.com",
         )
+        self._token_ledger = token_ledger
 
     # ── 首次规划 ──────────────────────────────────────────────────────────────
 
@@ -593,8 +599,9 @@ class Planner:
 
     async def _call_llm(self, system: str, user: str) -> str:
         """调用 LLM，推理模式 + JSON Output。模型名由环境变量 TASK_SYSTEM_MODEL 控制。"""
+        model = os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro")
         response = await self._client.chat.completions.create(
-            model=os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro"),
+            model=model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -605,6 +612,17 @@ class Planner:
             extra_body={"thinking": {"type": "enabled"}},
             max_tokens=8192,
         )
+        # ── token 追踪 ──
+        if self._token_ledger and (usage := response.usage):
+            try:
+                self._token_ledger.record(
+                    component=TokenComponentType.PLANNER,
+                    prompt_tokens=usage.prompt_tokens or 0,
+                    completion_tokens=usage.completion_tokens or 0,
+                    model=model,
+                )
+            except Exception:
+                logger.warning("TokenLedger.record 失败，跳过", exc_info=True)
         content = response.choices[0].message.content
         if not content:
             raise _PlanParseError("LLM 返回空响应")

@@ -21,6 +21,7 @@ from Module.task_system.schema import (
     NodeResult,
     OutputContract,
     TaskId,
+    TokenComponentType,
     Tool,
 )
 from Module.tool.protocol import ErrorType, ToolResult
@@ -74,6 +75,11 @@ def mock_llm_client():
             created=1234567890,
             model="deepseek-v4-pro",
             object="chat.completion",
+            usage={
+                "prompt_tokens": 150,
+                "completion_tokens": 50,
+                "total_tokens": 200,
+            },
         )
 
     client.chat = MagicMock()
@@ -150,6 +156,7 @@ def executor(mock_infra, mock_artifact_store, mock_hitl):
         infra=mock_infra,
         artifact_store=mock_artifact_store,
         hitl_notifier=mock_hitl,
+        token_ledger=MagicMock(),
     )
 
 
@@ -325,6 +332,41 @@ async def test_node_without_output_as(executor, sample_tools):
 
     assert result.error is None
     assert len(result.artifact_refs) == 0
+
+
+# ── TokenLedger 注入与 record 测试 ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_token_ledger_record_called(executor, sample_node, sample_tools):
+    """LLM 调用后 token_ledger.record() 被调用，参数正确。"""
+    result = await executor.execute(sample_node, TaskId("task_1"), sample_tools)
+
+    assert result.error is None
+    # 验证 record 被调用
+    token_ledger = executor._token_ledger
+    token_ledger.record.assert_called_once()
+    call_kwargs = token_ledger.record.call_args.kwargs
+    assert call_kwargs["component"] == TokenComponentType.EXECUTOR
+    assert call_kwargs["node_id"] == sample_node.node_id
+    assert call_kwargs["prompt_tokens"] == 150
+    assert call_kwargs["completion_tokens"] == 50
+    assert call_kwargs["model"] is not None
+
+
+@pytest.mark.asyncio
+async def test_token_ledger_none_skips_record(mock_infra, mock_artifact_store, mock_hitl, sample_node, sample_tools):
+    """token_ledger 为 None 时不调用 record（不传 ledger 的向后兼容路径）。"""
+    executor_no_ledger = Executor(
+        infra=mock_infra,
+        artifact_store=mock_artifact_store,
+        hitl_notifier=mock_hitl,
+        token_ledger=None,
+    )
+    result = await executor_no_ledger.execute(sample_node, TaskId("task_1"), sample_tools)
+
+    assert result.error is None
+    assert len(result.artifact_refs) == 1
 
 
 # ── 错误映射单元测试 ────────────────────────────────────────────────────────

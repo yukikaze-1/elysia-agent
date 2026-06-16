@@ -585,6 +585,7 @@ class TaskSummary(BaseModel):
     token_usage: dict[str, int] = Field(  # {"planner": N, "executor": N, "evaluator": N, ...}
         default_factory=dict
     )
+    token_total: int = 0                    # 任务总 token 消耗（来自 TokenLedger.total_tokens）
     approvals: dict[str, int] = Field(    # {"requested": N, "approved": N, "denied": N}
         default_factory=lambda: {"requested": 0, "approved": 0, "denied": 0}
     )
@@ -812,6 +813,8 @@ class TaskState(BaseModel):
     updated_at: str = ""
     error: str | None = None                   # 人类可读的错误原因（终态 FAILED 时写入）
     error_code: TaskErrorCode | None = None    # 机器可读的任务级错误码（终态 FAILED 时写入）
+    token_entries: list[TokenComponent] = Field(default_factory=list)  # TokenLedger write-through 逐条记录
+    token_usage: dict[str, int] = Field(default_factory=dict)  # 按组件汇总 {"planner": N, "executor": N, ...}
 
     def is_terminal(self) -> bool:
         """任务是否已到达终态。"""

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
+from openai.types.completion_usage import CompletionUsage
 
 from Module.task_system.core.evaluator import Evaluator
 from Module.task_system.schema import (
@@ -24,6 +25,7 @@ from Module.task_system.schema import (
     OutputContract,
     Plan,
     TaskId,
+    TokenComponentType,
 )
 
 
@@ -76,9 +78,15 @@ def mock_infra(mock_llm_client):
 
 
 @pytest.fixture
-def evaluator(mock_infra, mock_artifact_store):
+def token_ledger_mock():
+    """Mock TokenLedger。"""
+    return MagicMock()
+
+
+@pytest.fixture
+def evaluator(mock_infra, mock_artifact_store, token_ledger_mock):
     """创建被测 Evaluator 实例。"""
-    return Evaluator(infra=mock_infra, artifact_store=mock_artifact_store)
+    return Evaluator(infra=mock_infra, artifact_store=mock_artifact_store, token_ledger=token_ledger_mock)
 
 
 @pytest.fixture
@@ -565,3 +573,52 @@ async def test_evaluate_json_schema_in_prompt(evaluator, sample_plan, mock_llm_c
     user_msg = call_args[1]["messages"][1]["content"]
     assert "JSON Schema" in user_msg
     assert '"type": "object"' in user_msg
+
+
+# ── TokenLedger 集成测试 ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_token_ledger_record_after_llm(evaluator, sample_node, sample_plan,
+                                              mock_llm_client, mock_infra, token_ledger_mock):
+    """LLM 调用成功后 token_ledger.record() 被调用。"""
+    # 构造带 usage 的 CompletionUsage
+    usage = CompletionUsage(prompt_tokens=150, completion_tokens=50, total_tokens=200)
+
+    # 设置 llm_model，确保 token record 中 model 字段正确
+    mock_infra.llm_model = "deepseek-v4-pro"
+
+    async def _respond_with_usage(**kwargs):
+        return ChatCompletion(
+            id="eval-test",
+            choices=[{
+                "index": 0,
+                "message": ChatCompletionMessage(
+                    role="assistant",
+                    content='{"business_status": "goal_achieved", "reason": "产物完全符合期望"}',
+                ),
+                "finish_reason": "stop",
+            }],
+            created=1234567890,
+            model="deepseek-v4-pro",
+            object="chat.completion",
+            usage=usage,
+        )
+
+    mock_llm_client.chat.completions.create = AsyncMock(side_effect=_respond_with_usage)
+
+    result = NodeResult(
+        node_id=NodeId("node_1"),
+        artifact_refs=[],
+        error=None, attempt=1, duration_ms=100,
+    )
+    await evaluator.evaluate(result, sample_node, sample_plan)
+
+    # 验证 record 被调用
+    token_ledger_mock.record.assert_called_once()
+    call_kwargs = token_ledger_mock.record.call_args[1]
+    assert call_kwargs["component"] == TokenComponentType.EVALUATOR
+    assert call_kwargs["node_id"] == sample_node.node_id
+    assert call_kwargs["prompt_tokens"] == 150
+    assert call_kwargs["completion_tokens"] == 50
+    assert call_kwargs["model"] == "deepseek-v4-pro"

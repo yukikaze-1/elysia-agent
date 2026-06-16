@@ -22,12 +22,14 @@ from Module.task_system.schema import (
     NodeErrorCode,
     NodeResult,
     NodeResultEvaluation,
+    TokenComponentType,
 )
 
 if TYPE_CHECKING:
     from Module.task_system.artifact_store import ArtifactStore
     from Module.task_system.infra import AgentInfra
     from Module.task_system.schema import Plan
+    from Module.task_system.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +68,11 @@ class Evaluator:
         self,
         infra: AgentInfra,
         artifact_store: ArtifactStore,
+        token_ledger: TokenLedger | None = None,
     ) -> None:
         self._infra = infra
         self._artifact_store = artifact_store
+        self._token_ledger = token_ledger
 
     async def evaluate(
         self,
@@ -191,7 +195,7 @@ class Evaluator:
 
         try:
             # 调用 LLM（空响应重试 1 次——DeepSeek 偶发）
-            content = await self._call_llm_for_judge(user_message)
+            content = await self._call_llm_for_judge(user_message, node)
             if not content:
                 logger.warning("Evaluator: node=%s LLM 返回空响应(已重试)，fallback goal_failed",
                                node.node_id)
@@ -226,7 +230,7 @@ class Evaluator:
             logger.exception("Evaluator: LLM 业务判定异常，fallback goal_failed")
             return BusinessStatus.GOAL_FAILED, f"LLM 判定异常: {e}"
 
-    async def _call_llm_for_judge(self, user_message: str) -> str | None:
+    async def _call_llm_for_judge(self, user_message: str, node: DAGNode) -> str | None:
         """调用 LLM 做业务判定。空响应时重试 1 次（DeepSeek 偶发空 content）。
 
         Returns:
@@ -245,6 +249,18 @@ class Evaluator:
                     response_format={"type": "json_object"},
                     max_tokens=1024,
                 )
+                # ── token 追踪 ──
+                if self._token_ledger and (usage := response.usage):
+                    try:
+                        self._token_ledger.record(
+                            component=TokenComponentType.EVALUATOR,
+                            node_id=node.node_id,
+                            prompt_tokens=usage.prompt_tokens or 0,
+                            completion_tokens=usage.completion_tokens or 0,
+                            model=self._infra.llm_model,
+                        )
+                    except Exception:
+                        logger.warning("TokenLedger.record 失败，跳过", exc_info=True)
             except Exception:
                 logger.warning(
                     "Evaluator: LLM 调用异常 (attempt %d/2)，%s",

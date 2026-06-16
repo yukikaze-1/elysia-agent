@@ -21,6 +21,7 @@ from Module.task_system.schema import (
     NodeErrorCode,
     NodeResult,
     TaskId,
+    TokenComponentType,
     Tool,
 )
 from Module.tool.protocol import ToolContext, ToolResult
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from Module.task_system.artifact_store import ArtifactStore
     from Module.task_system.infra import AgentInfra
     from Module.task_system.protocol import HITLNotifier
+    from Module.task_system.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,7 @@ class Executor:
         infra: AgentInfra,
         artifact_store: ArtifactStore,
         hitl_notifier: HITLNotifier,
+        token_ledger: TokenLedger | None = None,
     ) -> None:
         """注入 Executor 依赖。
 
@@ -80,10 +83,12 @@ class Executor:
             infra:          共享基础设施（llm 用于工具匹配, tool_registry 用于工具执行）
             artifact_store: 产物存储（解析 input_bindings + 存储执行结果）
             hitl_notifier:  v2 审批风暴检测用，v1 不调用，仅持有引用
+            token_ledger:   可选的 token 账本，用于记录 LLM 调用消耗
         """
         self._infra = infra
         self._artifact_store = artifact_store
         self._hitl = hitl_notifier  # v2 审批风暴检测用，v1 不调用
+        self._token_ledger = token_ledger
 
     async def execute(
         self,
@@ -277,6 +282,19 @@ class Executor:
             tool_choice="auto",
             max_tokens=2048,
         )
+
+        # ── token 追踪 ──
+        if self._token_ledger and (usage := response.usage):
+            try:
+                self._token_ledger.record(
+                    component=TokenComponentType.EXECUTOR,
+                    node_id=node.node_id,
+                    prompt_tokens=usage.prompt_tokens or 0,
+                    completion_tokens=usage.completion_tokens or 0,
+                    model=self._infra.llm_model,
+                )
+            except Exception:
+                logger.warning("TokenLedger.record 失败，跳过", exc_info=True)
 
         msg = response.choices[0].message
         if not msg.tool_calls:
