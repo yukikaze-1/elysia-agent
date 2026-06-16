@@ -1,7 +1,7 @@
 # TaskSystem Debug WebUI 设计文档
 
 > 日期: 2026-06-16
-> 状态: 设计完成，待实现
+> 状态: 后端+前端已实现，待 TaskSystem 接入应用层（app['task_system'] 注册）即可激活
 
 ---
 

@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-06-16-task-debug-webui-design.md`
 
+**状态：** Tasks 1-6 已实现（2026-06-16）。待 TaskSystem 接入应用层（`app['task_system']` 注册）后 Debug WebUI 激活。
+
 ---
 
 ## 文件结构

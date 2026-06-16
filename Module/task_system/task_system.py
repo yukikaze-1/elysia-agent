@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from Module.task_system.mailbox import TaskMailbox
@@ -16,6 +17,7 @@ from Module.task_system.schema import (
     AgentId,
     AgentList,
     DelegationContext,
+    NodeStatus,
     ResumeError,
     SubmitError,
     SubmitRejectionCode,
@@ -232,6 +234,42 @@ class TaskSystem:
         logger.info("TaskSystem.submit: task_id=%s, intent=%.60s...", task_id, context.intent)
         return mailbox
 
+    def _get_debug_snapshot(self) -> dict:
+        """供 TaskDebugAPI 内部轮询使用。
+
+        线程安全说明：
+            本方法在 TaskDebugAPI._poll_loop() 中调用，与 Orchestrator 主循环
+            运行在同一个 asyncio event loop 中。CPython + asyncio 的协作式调度
+            保证本方法在遍历 _tasks / _exec_state 期间不会在非 await 点被挂起——
+            因此读取 exec_state.node_states 等可变 dict 时不需显式加锁。
+
+            约束：本方法内禁止加 await。若将来需要异步 I/O，必须在 await 之前
+            复制快照，await 之后重新获取 exec_state 引用。
+        """
+        tasks = []
+        for task_id, sub_agent in self._tasks.items():
+            # exec_state 可能为 None——任务刚创建、Orchestrator 尚未 run()
+            try:
+                exec_state = sub_agent._orchestrator._exec_state
+            except AttributeError:
+                exec_state = None
+            # graph 可能为 None——尚未完成首次规划
+            try:
+                graph = sub_agent._graph
+            except AttributeError:
+                graph = None
+            tasks.append({
+                "task_state": sub_agent._task_state,
+                "graph": graph,
+                "exec_state": exec_state,
+                "mailbox_depth": self._mailboxes[task_id].count(),
+            })
+        return {
+            "tasks": tasks,
+            "slots_total": self._max_sub_agents,
+            "slots_used": len(self._tasks),
+        }
+
     # ── 任务控制 ─────────────────────────────────────────────────────────
 
     async def pause(self, task_id: TaskId) -> bool:
@@ -286,21 +324,94 @@ class TaskSystem:
         # TODO: 从 self._tasks[task_id].task_state.status 读取
         raise NotImplementedError
 
-    def get_task_summary(self, task_id: TaskId) -> TaskSummary | None:
-        """查询任务摘要。用户问"刚才那个任务做了什么？"时 LLM 调用。"""
-        raise NotImplementedError
+    async def get_task_summary(self, task_id: TaskId) -> TaskSummary | None:
+        """获取单个任务摘要。"""
+        summaries = await self.list_active_tasks()
+        for s in summaries:
+            if s.task_id == task_id:
+                return s
+        return None
 
-    def list_active_tasks(self) -> list[TaskSummary]:
-        """列出所有活跃任务。用户问"我有几个后台任务？"时 LLM 调用。"""
-        raise NotImplementedError
+    async def list_active_tasks(self) -> list[TaskSummary]:
+        """列出所有活跃任务。"""
+        summaries: list[TaskSummary] = []
+        for task_id, sub_agent in self._tasks.items():
+            ts = sub_agent._task_state
+            checkpoint = await self._checkpoint_mgr.load(task_id)
+            exec_state = checkpoint.exec if checkpoint else None
+
+            nodes_total = 0
+            nodes_completed = 0
+            nodes_failed = 0
+            nodes_skipped = 0
+            if exec_state:
+                nodes_total = len(exec_state.node_states)
+                for ns in exec_state.node_states.values():
+                    if ns.status == NodeStatus.SUCCESS:
+                        nodes_completed += 1
+                    elif ns.status in (NodeStatus.FAILED, NodeStatus.UNRECOVERABLE):
+                        nodes_failed += 1
+                    elif ns.status == NodeStatus.SKIPPED:
+                        nodes_skipped += 1
+
+            # extract intent from plan
+            intent = ""
+            if ts.plan and ts.plan.dag.nodes:
+                intent = ts.plan.dag.nodes[0].description
+
+            # calculate duration
+            duration_ms = 0
+            if ts.created_at:
+                try:
+                    created = datetime.fromisoformat(ts.created_at)
+                    # 兼容无时区的 datetime——默认当作 UTC
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    duration_ms = int((datetime.now(timezone.utc) - created).total_seconds() * 1000)
+                except (ValueError, TypeError):
+                    pass
+
+            summaries.append(TaskSummary(
+                task_id=ts.task_id,
+                status=ts.status,
+                intent=intent,
+                created_at=ts.created_at,
+                duration_ms=duration_ms,
+                nodes={"total": nodes_total, "completed": nodes_completed,
+                       "failed": nodes_failed, "skipped": nodes_skipped},
+                tools_used=[n.description for n in ts.plan.dag.nodes] if ts.plan else [],
+                token_usage={},
+                approvals={"requested": 0, "approved": 0, "denied": 0},
+                error=ts.error,
+                error_code=ts.error_code,
+                replans=ts.plan.plan_version - 1 if ts.plan else 0,
+            ))
+        return summaries
 
     def get_progress(self, task_id: TaskId) -> TaskProgress | None:
         """查询任务进度。用户问"到哪一步了？"时 LLM 调用。"""
         raise NotImplementedError
 
-    def get_task_dag(self, task_id: TaskId) -> TaskDAG | None:
-        """查询 DAG 图。用户问"分了几个步骤？"时 LLM 调用。"""
-        raise NotImplementedError
+    async def get_task_dag(self, task_id: TaskId) -> TaskDAG | None:
+        """获取任务的 DAG 可视化数据。"""
+        sub_agent = self._tasks.get(task_id)
+        if sub_agent is None:
+            checkpoint = await self._checkpoint_mgr.load(task_id)
+            if checkpoint is None or checkpoint.task is None or checkpoint.task.plan is None:
+                return None
+            from Module.task_system.core.graph import PlanGraph
+            graph = PlanGraph.from_plan(checkpoint.task.plan)
+            return graph.to_dag_view(checkpoint.exec.node_states if checkpoint.exec else {})
+
+        try:
+            graph = sub_agent._graph
+        except AttributeError:
+            return None
+        try:
+            exec_state = sub_agent._orchestrator._exec_state
+        except AttributeError:
+            exec_state = None
+        return graph.to_dag_view(exec_state.node_states if exec_state else {})
 
     def get_token_usage(self, task_id: TaskId) -> TokenUsage | None:
         """查询单任务的 token 消耗。LLM 报成本 / WebUI 展示。"""

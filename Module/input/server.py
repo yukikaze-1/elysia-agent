@@ -73,6 +73,22 @@ def create_app(
             return web.json_response(asdict(info))
         app.router.add_get("/debug/api", debug_api_handler)
 
+        # TaskSystem debug API — SSE 实时推送任务状态
+        # TODO: 需先在 create_app() 调用方将 TaskSystem 实例注册到 app['task_system']，
+        #       之后 /debug/api/tasks 和 /debug/api/tasks/stream 才会激活。
+        #       注册方式：app['task_system'] = task_system_instance
+        from Module.task_system.debug_api import TaskDebugAPI
+
+        ts = app.get('task_system')
+        if ts is not None:
+            task_debug_api = TaskDebugAPI(ts)
+            app['task_debug_api'] = task_debug_api
+
+            app.router.add_get("/debug/api/tasks", task_debug_api.snapshot_handler)
+            app.router.add_get("/debug/api/tasks/stream", task_debug_api.sse_handler)
+        else:
+            app['task_debug_api'] = None
+
     # Health check endpoint — for Docker/Kubernetes probes
     async def health_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
@@ -581,6 +597,20 @@ def create_app(
     app.router.add_delete("/debug/api/sessions", sessions_clear_handler)
     app.router.add_get("/debug/api/prompts", prompts_list_handler)
     app.router.add_get(r"/debug/api/prompts/{index:\d+}", prompt_detail_handler)
+
+    # TaskDebugAPI 生命周期管理
+    async def on_startup(app):
+        task_api = app.get('task_debug_api')
+        if task_api:
+            await task_api.start()
+
+    async def on_shutdown(app):
+        task_api = app.get('task_debug_api')
+        if task_api:
+            await task_api.stop()
+
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
 
     return app
 

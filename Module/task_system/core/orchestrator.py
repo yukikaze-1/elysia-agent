@@ -131,6 +131,7 @@ class Orchestrator:
             exec_state = self._merge_exec_state(resume_from, graph)
         else:
             exec_state = self._init_exec_state(graph)
+        self._exec_state = exec_state
         # 每次 run() 调用视为"审批已解决"边界，显式复位。
         # 设计假设：调用 run() 前审批已由外部（TaskSystem/SubAgent）处理完毕。
         # 若审批通过 → 继续执行；若拒绝 → 节点已标记 FAILED，不会重新进入审批。

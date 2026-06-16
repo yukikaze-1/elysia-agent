@@ -156,6 +156,47 @@ h1 { font-size: 18px; margin-bottom: 4px; }
 }
 #debug-lightbox.show { display: flex; }
 #debug-lightbox img { max-width: 90vw; max-height: 90vh; object-fit: contain; border-radius: 8px; }
+/* ── 任务 Tab ── */
+.task-card {
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 0.8em 1em;
+  margin-bottom: 0.6em;
+  border-left: 3px solid var(--accent);
+}
+.task-card.status-running  { border-left-color: #4fc3f7; }
+.task-card.status-completed { border-left-color: #66bb6a; opacity: 0.8; }
+.task-card.status-failed   { border-left-color: #ef5350; }
+.task-card.status-cancelled { border-left-color: #888; opacity: 0.6; }
+
+.task-card .task-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 0.4em;
+}
+.task-card .task-id { font-family: monospace; font-size: 0.85em; color: var(--muted); }
+.task-card .task-status { font-weight: bold; font-size: 0.85em; }
+.task-card .task-status.status-running { color: #4fc3f7; }
+.task-card .task-status.status-completed { color: #66bb6a; }
+.task-card .task-status.status-failed { color: #ef5350; }
+
+.task-card .task-intent { font-size: 0.9em; margin-bottom: 0.3em; }
+.task-card .task-meta { font-size: 0.8em; color: var(--muted); margin-bottom: 0.4em; }
+
+.task-card .task-dag {
+  font-family: monospace; font-size: 0.82em; line-height: 1.6;
+  white-space: pre; background: var(--bg); padding: 0.5em;
+  border-radius: 4px; margin-top: 0.3em; overflow-x: auto;
+}
+
+.task-progress-bar {
+  height: 4px; background: var(--bg); border-radius: 2px; margin: 0.4em 0;
+}
+.task-progress-bar .fill { height: 100%; border-radius: 2px; background: var(--accent); }
+
+.task-done-row {
+  font-size: 0.85em; padding: 0.3em 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
 </style>
 </head>
 <body>
@@ -176,6 +217,7 @@ h1 { font-size: 18px; margin-bottom: 4px; }
 <div class="tabs">
   <button class="tab-btn active" data-tab="overview">概览</button>
   <button class="tab-btn" data-tab="database">数据库</button>
+  <button class="tab-btn" data-tab="tasks">任务</button>
 </div>
 
 <div class="tab-content active" id="tab-overview">
@@ -223,6 +265,17 @@ h1 { font-size: 18px; margin-bottom: 4px; }
   </div>
 
 </div>
+
+<section id="tab-tasks" style="display:none;">
+  <div id="tasks-overview" class="card" style="margin-bottom:1em; padding:0.5em 1em; font-size:0.9em; color:var(--muted);">
+    <span id="tasks-stats">运行中: 0 | SSE: ⏳连接中</span>
+  </div>
+  <div id="tasks-active"></div>
+  <details id="tasks-done-section" style="margin-top:1em;">
+    <summary>已完成/失败的任务</summary>
+    <div id="tasks-done-list"></div>
+  </details>
+</section>
 
 <!-- LLM Prompt 详情面板 (必须在 tab 容器外部，否则 display:none 的 tab 会阻止渲染) -->
 <div id="prompt-overlay" class="modal-overlay" onclick="if(event.target===this)closePrompt()">
@@ -665,14 +718,26 @@ document.getElementById('copy-btn').onclick = async () => {
 };
 
 // ---- Tab 切换 ----
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-tasks').style.display = 'none';
+  if (name === 'overview') {
+    document.querySelector('[data-tab="overview"]').classList.add('active');
+    document.getElementById('tab-overview').classList.add('active');
+  } else if (name === 'database') {
+    document.querySelector('[data-tab="database"]').classList.add('active');
+    document.getElementById('tab-database').classList.add('active');
+    loadDbPanel();
+  } else if (name === 'tasks') {
+    document.querySelector('[data-tab="tasks"]').classList.add('active');
+    document.getElementById('tab-tasks').style.display = '';
+    connectTasksSSE();
+  }
+}
+
 document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.onclick = () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    if (btn.dataset.tab === 'database') loadDbPanel();
-  };
+  btn.onclick = () => switchTab(btn.dataset.tab);
 });
 
 // ---- 数据库面板 ----
@@ -929,6 +994,254 @@ function confirmClearSessions() {
 }
 
 document.getElementById('db-refresh-btn').onclick = loadDbPanel;
+
+// ═══════════════════════════════════════════════════════════════════
+// TaskSystem Debug Tab — SSE 实时推送
+// ═══════════════════════════════════════════════════════════════════
+
+let taskES = null;
+let taskReconnectTimer = null;
+let taskReconnectDelay = 1000;
+
+function connectTasksSSE() {
+  if (taskES && taskES.readyState <= 1) return;
+  if (taskReconnectTimer) { clearTimeout(taskReconnectTimer); taskReconnectTimer = null; }
+
+  document.getElementById('tasks-stats').textContent = '运行中: ... | SSE: ⏳连接中';
+
+  taskES = new EventSource('/debug/api/tasks/stream');
+
+  taskES.addEventListener('snapshot', function(e) {
+    const tasks = JSON.parse(e.data);
+    renderAllTasks(tasks);
+    document.getElementById('tasks-stats').innerHTML =
+      '运行中: ' + tasks.filter(t => t.status === 'running').length +
+      ' | SSE: <span style="color:#66bb6a">●已连接</span>';
+    taskReconnectDelay = 1000;
+  });
+
+  taskES.addEventListener('task_new', function(e) {
+    const t = JSON.parse(e.data);
+    insertTaskCard(t);
+    updateTasksStats();
+  });
+
+  taskES.addEventListener('task_update', function(e) {
+    const d = JSON.parse(e.data);
+    updateTaskCard(d.task_id, d.status, d.nodes);
+    updateTasksStats();
+  });
+
+  taskES.addEventListener('task_done', function(e) {
+    const d = JSON.parse(e.data);
+    moveTaskToDone(d.task_id, d.status, d.error);
+    updateTasksStats();
+  });
+
+  taskES.addEventListener('node_update', function(e) {
+    const d = JSON.parse(e.data);
+    updateNodeInCard(d.task_id, d.node_id, d.status, d.attempt);
+  });
+
+  taskES.addEventListener('heartbeat', function(e) { /* silent */ });
+
+  taskES.onerror = function() {
+    document.getElementById('tasks-stats').innerHTML =
+      '运行中: ... | SSE: <span style="color:#ef5350">●已断开</span> (重连中...)';
+    taskES.close();
+    taskES = null;
+    taskReconnectTimer = setTimeout(function() {
+      connectTasksSSE();
+      taskReconnectDelay = Math.min(taskReconnectDelay * 2, 30000);
+    }, taskReconnectDelay);
+  };
+}
+
+// ── DAG 渲染 ──
+
+function findMergeNodes(edges) {
+  const counts = {};
+  edges.forEach(function(e) { counts[e[1]] = (counts[e[1]] || 0) + 1; });
+  const merges = new Set();
+  for (var nid in counts) { if (counts[nid] > 1) merges.add(nid); }
+  return merges;
+}
+
+function renderDAG(nodes, edges) {
+  if (!nodes || nodes.length === 0) return '(空 DAG)';
+  var merges = findMergeNodes(edges || []);
+  var hasSplit = merges.size > 0;
+  if (!hasSplit || nodes.length <= 1) {
+    return nodes.map(function(n) { return statusIcon(n.status) + ' ' + n.node_id; }).join('\n');
+  }
+  var mergePredecessors = {};
+  (edges || []).forEach(function(e) {
+    if (merges.has(e[1])) {
+      if (!mergePredecessors[e[1]]) mergePredecessors[e[1]] = [];
+      mergePredecessors[e[1]].push(e[0]);
+    }
+  });
+  var lines = [];
+  var byId = {};
+  nodes.forEach(function(n) { byId[n.node_id] = n; });
+  var rendered = new Set();
+  nodes.forEach(function(n) {
+    if (merges.has(n.node_id)) return;
+    if (rendered.has(n.node_id)) return;
+    rendered.add(n.node_id);
+    var isPred = false;
+    for (var mid in mergePredecessors) {
+      if (mergePredecessors[mid].indexOf(n.node_id) >= 0) isPred = true;
+    }
+    if (isPred) {
+      lines.push(statusIcon(n.status) + ' ' + n.node_id + ' ─────────────┐');
+    } else {
+      lines.push(statusIcon(n.status) + ' ' + n.node_id);
+    }
+  });
+  merges.forEach(function(mid) {
+    var node = byId[mid];
+    if (!node || rendered.has(mid)) return;
+    rendered.add(mid);
+    lines.push('      ├→ ' + statusIcon(node.status) + ' ' + node.node_id);
+  });
+  return lines.join('\n');
+}
+
+function statusIcon(status) {
+  switch (status) {
+    case 'success': return '✅';
+    case 'running': return '⏳';
+    case 'pending': return '⬜';
+    case 'failed':
+    case 'unrecoverable': return '⊗';
+    case 'skipped': return '⏭️';
+    default: return '⬜';
+  }
+}
+
+// ── 渲染 ──
+
+function renderAllTasks(tasks) {
+  var active = document.getElementById('tasks-active');
+  var doneList = document.getElementById('tasks-done-list');
+  active.innerHTML = '';
+  doneList.innerHTML = '';
+  var hasDone = false;
+  tasks.forEach(function(t) {
+    if (t.status === 'running' || t.status === 'pending' || t.status === 'planning') {
+      insertTaskCardDOM(active, t);
+    } else {
+      renderDoneRow(doneList, t);
+      hasDone = true;
+    }
+  });
+  document.getElementById('tasks-done-section').style.display = hasDone ? '' : 'none';
+}
+
+function insertTaskCard(t) {
+  if (t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') {
+    renderDoneRow(document.getElementById('tasks-done-list'), t);
+    document.getElementById('tasks-done-section').style.display = '';
+    return;
+  }
+  insertTaskCardDOM(document.getElementById('tasks-active'), t);
+}
+
+function insertTaskCardDOM(container, t) {
+  var existing = document.getElementById('task-card-' + t.task_id);
+  if (existing) existing.remove();
+  var progress = 0;
+  if (t.nodes && t.nodes.length > 0) {
+    var done = t.nodes.filter(function(n) { return n.status === 'success' || n.status === 'skipped'; }).length;
+    progress = Math.round(done / t.nodes.length * 100);
+  }
+  var edgesJson = JSON.stringify(t.edges || []);
+  var html = '<div class="task-card status-' + t.status + '" id="task-card-' + t.task_id + '" data-edges=\'' + edgesJson + '\'>' +
+    '<div class="task-header">' +
+      '<span class="task-id">' + t.task_id + '</span>' +
+      '<span class="task-status status-' + t.status + '">' + t.status.toUpperCase() + '</span>' +
+    '</div>' +
+    '<div class="task-meta">Replan: ' + (t.plan_version - 1) + '/' + t.plan_version +
+    ' | 节点: ' + (t.nodes ? t.nodes.length : 0) + ' | 队列: ' + (t.mailbox_depth || 0) + '</div>' +
+    '<div class="task-progress-bar"><div class="fill" style="width:' + progress + '%"></div></div>' +
+    '<div class="task-dag">' + renderDAG(t.nodes, t.edges) + '</div>' +
+  '</div>';
+  container.insertAdjacentHTML('afterbegin', html);
+}
+
+function updateTaskCard(taskId, newStatus, nodes) {
+  var card = document.getElementById('task-card-' + taskId);
+  if (!card) return;
+  var statusEl = card.querySelector('.task-status');
+  if (statusEl) {
+    statusEl.textContent = newStatus.toUpperCase();
+    statusEl.className = 'task-status status-' + newStatus;
+  }
+  card.className = 'task-card status-' + newStatus;
+  if (nodes) {
+    var dagEl = card.querySelector('.task-dag');
+    if (dagEl) {
+      var edges = [];
+      try { edges = JSON.parse(card.getAttribute('data-edges') || '[]'); } catch(e) {}
+      dagEl.textContent = renderDAG(nodes, edges);
+    }
+    var progress = 0;
+    if (nodes.length > 0) {
+      var done = nodes.filter(function(n) { return n.status === 'success' || n.status === 'skipped'; }).length;
+      progress = Math.round(done / nodes.length * 100);
+    }
+    var fill = card.querySelector('.task-progress-bar .fill');
+    if (fill) fill.style.width = progress + '%';
+  }
+}
+
+function updateNodeInCard(taskId, nodeId, newStatus, attempt) {
+  var card = document.getElementById('task-card-' + taskId);
+  if (!card) return;
+  var dagEl = card.querySelector('.task-dag');
+  if (!dagEl) return;
+  var lines = dagEl.textContent.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].indexOf(nodeId) >= 0) {
+      var rest = lines[i].substring(2);
+      lines[i] = statusIcon(newStatus) + rest;
+      if (attempt > 1) lines[i] += ' (retry ' + attempt + ')';
+    }
+  }
+  dagEl.textContent = lines.join('\n');
+}
+
+function moveTaskToDone(taskId, status, error) {
+  var card = document.getElementById('task-card-' + taskId);
+  if (!card) return;
+  card.remove();
+  var doneList = document.getElementById('tasks-done-list');
+  var msg = status.toUpperCase();
+  if (error) msg += ' — ' + error;
+  var row = document.createElement('div');
+  row.className = 'task-done-row';
+  row.innerHTML = '<b>' + taskId + '</b>: ' + msg;
+  doneList.insertBefore(row, doneList.firstChild);
+  document.getElementById('tasks-done-section').style.display = '';
+  updateTasksStats();
+}
+
+function renderDoneRow(container, t) {
+  var msg = t.status.toUpperCase();
+  if (t.error) msg += ' — ' + t.error;
+  var row = document.createElement('div');
+  row.className = 'task-done-row';
+  row.innerHTML = '<b>' + t.task_id + '</b>: ' + msg;
+  container.appendChild(row);
+}
+
+function updateTasksStats() {
+  var active = document.getElementById('tasks-active');
+  var cards = active.querySelectorAll('.task-card');
+  document.getElementById('tasks-stats').innerHTML =
+    '运行中: ' + cards.length + ' | SSE: <span style="color:#66bb6a">●已连接</span>';
+}
 </script>
 <div id="debug-lightbox" onclick="closeDebugLightbox()">
   <img id="debug-lightbox-img" src="">

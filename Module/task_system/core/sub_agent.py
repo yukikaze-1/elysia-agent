@@ -142,11 +142,13 @@ class SubAgent:
             created_at=now_iso(),
             updated_at=now_iso(),
         )
+        self._task_state = task_state
 
         # 1. 规划 + 校验 → PlanGraph
         graph = await self._plan_and_validate(context, task_state, mailbox)
         if graph is None:
             return  # 校验 ABORT，已在 _plan_and_validate 中处理
+        self._graph = graph
 
         # 2. 执行-决策循环
         await self._execute(task_state, graph, mailbox, context)
@@ -543,6 +545,7 @@ class SubAgent:
 
             # 全量重建——用新 graph 替换旧 graph 内部状态
             graph.replace(new_graph)
+            self._graph = graph
             # 从旧 plan 继承版本号 + 1，避免全量重建绕过熔断计数器
             task_state.plan = new_graph.to_plan(replan_result)
             task_state.plan.plan_version = plan.plan_version + 1
@@ -558,6 +561,7 @@ class SubAgent:
             # 局部修复路径——应用 DAGPatch
             replan_patch: DAGPatch = replan_result
             graph.apply_patch(replan_patch)
+            self._graph = graph
 
             # 校验 patch 后的图结构——LLM 可能引入环、重复 ID 等
             structural_issues = graph.validate_structure()
