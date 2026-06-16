@@ -11,10 +11,16 @@ This repo has no build system (`pyproject.toml`, `setup.py`, etc.) — it's a de
 ## Running tests
 
 ```bash
-# Unit tests (all modules — mock-based, no external services needed)
-python -m pytest Module/ -v
+# TaskSystem unit tests (mock-based, no external services, ~6s)
+python -m pytest Module/task_system/tests/unit/ -v
 
-# Single module tests
+# TaskSystem integration tests (require LLM / external services)
+python -m pytest Module/task_system/tests/integration/ -v
+
+# All TaskSystem tests
+python -m pytest Module/task_system/tests/ -v
+
+# Other module tests
 python -m pytest Module/llm/test_llm.py -v
 python -m pytest Module/tts/test_tts.py -v
 python -m pytest Module/stt/test_stt.py -v

@@ -82,6 +82,7 @@ class TaskSystem:
         # ── 运行时注册表 ──
         self._tasks: dict[TaskId, SubAgent] = {}
         self._mailboxes: dict[TaskId, TaskMailbox] = {}
+        self._task_futures: dict[TaskId, asyncio.Task[None]] = {}  # 追踪 fire-and-forget 协程，供 stop() 等待/取消
 
         # ── 内部组件（start() 时实例化）────────────────────────────────
         self._planner: Planner | None = None
@@ -135,15 +136,44 @@ class TaskSystem:
         logger.info("TaskSystem.start: max_sub_agents=%d, 组件初始化完成",
                      self._max_sub_agents)
 
-    async def stop(self) -> None:
-        """软关停。
+    async def stop(self, timeout: float = 10.0) -> None:
+        """Graceful shutdown。
 
-        等所有运行中的 Sub-Agent 完成当前节点 → 写 checkpoint → 清理。
+        1. 拒绝新提交（_started = False）
+        2. 等待活跃任务自然完成（最多 timeout 秒）
+        3. 超时后 cancel 剩余任务——CancelledError 传播到 Orchestrator 的
+           下一个 await 点，finally 块自动执行 cleanup + semaphore.release
+        4. 兜底清理（防止 finally 未执行的情况）
         """
-        logger.info("TaskSystem.stop: 活跃任务数=%d", len(self._tasks))
-        # TODO: 遍历 self._tasks，逐个通知暂停
-        # TODO: 等待所有任务 checkpoint 完成后 cleanup
+        logger.info("TaskSystem.stop: 活跃任务数=%d, timeout=%.0fs", len(self._tasks), timeout)
         self._started = False
+
+        futures = list(self._task_futures.values())
+        if futures:
+            # 等待自然完成
+            done, pending = await asyncio.wait(futures, timeout=timeout)
+
+            if pending:
+                logger.warning(
+                    "TaskSystem.stop: %d/%d 个任务超时，强制取消",
+                    len(pending), len(futures),
+                )
+                for task in pending:
+                    task.cancel()
+
+                # 等 cancel 在 finally 块中传播（cleanup + semaphore.release）
+                # 给一个较短的等待——cancel 依赖下一个 await 点，通常 <1s
+                cancelled_done, cancelled_pending = await asyncio.wait(pending, timeout=3.0)
+                if cancelled_pending:
+                    logger.error(
+                        "TaskSystem.stop: %d 个任务 cancel 后仍未完成，强制清理",
+                        len(cancelled_pending),
+                    )
+
+        # 兜底清理——防止 finally 块因异常未执行（即使无 futures 也要跑）
+        for task_id in list(self._tasks.keys()):
+            self._cleanup_task(task_id)
+        logger.info("TaskSystem.stop: 完成")
 
     # ── 核心入口 ─────────────────────────────────────────────────────────
 
@@ -230,7 +260,8 @@ class TaskSystem:
                 assert self._semaphore is not None
                 self._semaphore.release()
 
-        asyncio.create_task(_run_and_cleanup())
+        task = asyncio.create_task(_run_and_cleanup())
+        self._task_futures[task_id] = task
         logger.info("TaskSystem.submit: task_id=%s, intent=%.60s...", task_id, context.intent)
         return mailbox
 
@@ -272,13 +303,37 @@ class TaskSystem:
 
     # ── 任务控制 ─────────────────────────────────────────────────────────
 
-    async def pause(self, task_id: TaskId) -> bool:
-        """暂停任务。RUNNING → PAUSE_REQUESTED → 当前节点完成后 → PAUSED。
+    async def pause(self, task_id: TaskId) -> None:
+        """暂停任务——在下一个安全点停止执行并保存 checkpoint。
 
-        v1 限制：不支持注入新参数。如需修改任务参数，cancel → 重新 submit。
+        Orchestrator 在当前节点执行完成后检测到 pause_requested，
+        保存 checkpoint 后返回 PAUSED，SubAgent 推送 PAUSED 事件后退出循环。
+
+        Raises:
+            KeyError: task_id 不存在（已结束或从未创建）
+            RuntimeError: 任务不在可暂停状态（已终态 / 已暂停 / 尚未开始执行）
         """
-        # TODO: 查找 self._tasks[task_id]，设置 exec_state.pause_requested = True
-        raise NotImplementedError("TaskSystem.pause() 尚未实现")
+        sub_agent = self._tasks.get(task_id)
+        if sub_agent is None:
+            raise KeyError(f"task_id={task_id} 不存在或已清理")
+
+        ts = sub_agent._task_state
+        if ts.is_terminal():
+            raise RuntimeError(
+                f"task_id={task_id} 已终态 ({ts.status.value})，无法暂停"
+            )
+        if ts.status == TaskStatus.PAUSED:
+            raise RuntimeError(f"task_id={task_id} 已经暂停")
+
+        try:
+            exec_state = sub_agent._orchestrator._exec_state
+        except AttributeError:
+            raise RuntimeError(
+                f"task_id={task_id} 尚未开始执行（Orchestrator 未启动）"
+            ) from None
+
+        exec_state.pause_requested = True
+        logger.info("TaskSystem.pause: task_id=%s 暂停请求已发送", task_id)
 
     async def resume(self, task_id: TaskId) -> TaskMailbox | ResumeError:
         """从 checkpoint 恢复暂停的任务。
@@ -430,11 +485,11 @@ class TaskSystem:
     def _cleanup_task(self, task_id: TaskId) -> None:
         """任务终态后清理注册表 + 存储层。
 
-        调用方：_run_and_cleanup() finally 块。
+        调用方：_run_and_cleanup() finally 块、stop() 兜底。
         """
         self._tasks.pop(task_id, None)
         self._mailboxes.pop(task_id, None)
-        # 异步存储清理由调用方在 await 后执行，此处仅标记
+        self._task_futures.pop(task_id, None)  # 允许 asyncio.Task 被 GC
         logger.info("TaskSystem: task_id=%s 注册表清理完成", task_id)
 
     async def _cleanup_storage(self, task_id: TaskId) -> None:
