@@ -179,7 +179,7 @@ EventBusHITLNotifier 演示实现见 protocol.py。
 
 ```python
 class DelegationPreparer:
-    # v1: 内部创建 AsyncOpenAI（读 DEEPSEEK_API_KEY），与 Planner 方案一致。
+    # v1: 内部创建 AsyncOpenAI（读 DEEPSEEK_API_KEY）。Planner 已改用 infra.llm。
     #     后续独立为 delegation 服务时改为 LLM client 注入。
     def __init__(self) -> None: ...
 

@@ -21,6 +21,7 @@ if _env_path.exists():
                     os.environ[key] = value
 
 from Module.task_system.core.planner import Planner
+from Module.task_system.infra import AgentInfra
 from Module.task_system.schema import (
     BusinessStatus,
     ConstraintConfig,
@@ -53,6 +54,19 @@ def make_tools() -> list[Tool]:
     ]
 
 
+def make_infra():
+    """构造测试用的 AgentInfra。"""
+    from openai import AsyncOpenAI
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    return AgentInfra(
+        llm=AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com"),
+        milvus=None,
+        http=None,
+        tool_registry=object(),
+        constraints=ConstraintConfig(),
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_simple_task():
@@ -61,7 +75,7 @@ async def test_simple_task():
     print("测试 1: 简单单步任务")
     print("=" * 60)
 
-    planner = Planner()
+    planner = Planner(infra=make_infra())
     context = DelegationContext(
         intent="查询今天北京的天气",
         hints="用户在北京",

@@ -137,7 +137,7 @@ TaskSystem 完全未接入 CognitiveLoop——`core/` 目录没有任何 TaskSys
 | Token 追踪 | ✅ 已实现（TokenLedger write-through + per-call 审计日志） |
 | 大产物截断 | Evaluator 传入完整 artifact，可能超出 LLM 上下文 |
 | Plan 预审批 | 设计文档有，代码无 |
-| 模型名可配置 | `TASK_SYSTEM_MODEL` env var 已支持，但 Planner 仍硬编码 DeepSeek 客户端 |
+| 模型名可配置 | ✅ 已修复——Planner 改用 `infra.llm`，模型名统一由 `AgentInfra.llm_model` 管理 |
 
 ---
 

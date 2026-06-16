@@ -332,9 +332,8 @@ async def _build_task_system() -> TaskSystem:
     ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=2)
     await ts.start()
 
-    # Planner 已改为 per-task 组件（SubAgent.run() 内部创建），
-    # 不再暴露在 TaskSystem 层——其 LLM 调用无法在 init 时拦截。
-    # 如需调试 Planner 调用，可通过 infra.llm 的全局拦截器观察。
+    # Planner 现在使用 infra.llm，其 LLM 调用会被 _wrap_llm_client 自动拦截。
+    # DelegationPreparer 自建客户端，在 _run_task 中单独包装。
 
     return ts
 

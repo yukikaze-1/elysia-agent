@@ -151,7 +151,7 @@ class SubAgent:
         self._artifact_store = ArtifactStore()
         self._checkpoint_mgr = CheckpointManager()
         self._plan_validator = PlanValidator()
-        self._planner = Planner(token_ledger=self._token_ledger)
+        self._planner = Planner(infra=self._infra, token_ledger=self._token_ledger)
         self._executor = Executor(
             infra=self._infra,
             artifact_store=self._artifact_store,
@@ -206,6 +206,8 @@ class SubAgent:
         task_state.status = TaskStatus.PLANNING
         task_state.updated_at = now_iso()
         logger.info("SubAgent: 开始规划 task_id=%s", task_id)
+        assert self._planner is not None
+        assert self._plan_validator is not None
         plan = await self._planner.plan(
             context=context,
             global_constraints=self._infra.constraints,
@@ -310,6 +312,7 @@ class SubAgent:
         Orchestrator 合并后保留已成功节点的状态，避免重复执行。
         """
         resume_from: ExecutionState | None = None
+        assert self._orchestrator is not None
         while True:
             result = await self._orchestrator.run(
                 task_state, graph, mailbox, resume_from=resume_from,
@@ -430,6 +433,7 @@ class SubAgent:
             "SubAgent: task_id=%s 收到暂停信号，已保存 checkpoint",
             task_state.task_id,
         )
+        assert self._checkpoint_mgr is not None
         await self._checkpoint_mgr.save(
             task_state.task_id, result.checkpoint_state,
         )
@@ -498,6 +502,7 @@ class SubAgent:
         try:
             plan = graph.to_plan(task_state.plan)
             # 解析生效约束——与 plan() 一致的 resolve 逻辑
+            assert self._planner is not None
             tc = context.task_constraints.resolve(self._infra.constraints)
             replan_result = await self._planner.replan(
                 original_plan=plan,
@@ -551,6 +556,7 @@ class SubAgent:
                 "SubAgent: task_id=%s Replan 全量重建, nodes=%d",
                 task_state.task_id, len(replan_result.dag.nodes),
             )
+            assert self._plan_validator is not None
             validation, new_graph = self._plan_validator.validate(
                 plan=replan_result,
                 global_constraints=self._infra.constraints,

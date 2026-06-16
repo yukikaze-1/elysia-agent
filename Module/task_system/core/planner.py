@@ -7,9 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 
-from openai import AsyncOpenAI
 from typing import TYPE_CHECKING
 
 from Module.task_system.schema import (
@@ -32,6 +30,7 @@ from Module.task_system.schema import (
 )
 
 if TYPE_CHECKING:
+    from Module.task_system.infra import AgentInfra
     from Module.task_system.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)
@@ -191,16 +190,12 @@ class Planner:
         4. SubAgent 根据返回类型走增量路径或全量重建路径
     """
 
-    def __init__(self, token_ledger: TokenLedger | None = None) -> None:
-        api_key = os.environ.get("DEEPSEEK_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "DEEPSEEK_API_KEY 环境变量未设置，Planner 无法创建 DeepSeek client"
-            )
-        self._client = AsyncOpenAI(
-            api_key=api_key,
-            base_url="https://api.deepseek.com",
-        )
+    def __init__(
+        self,
+        infra: AgentInfra,
+        token_ledger: TokenLedger | None = None,
+    ) -> None:
+        self._infra = infra
         self._token_ledger = token_ledger
 
     # ── 首次规划 ──────────────────────────────────────────────────────────────
@@ -598,9 +593,9 @@ class Planner:
     # ── 内部：LLM 调用 ────────────────────────────────────────────────────────
 
     async def _call_llm(self, system: str, user: str) -> str:
-        """调用 LLM，推理模式 + JSON Output。模型名由环境变量 TASK_SYSTEM_MODEL 控制。"""
-        model = os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro")
-        response = await self._client.chat.completions.create(
+        """调用 LLM，推理模式 + JSON Output。"""
+        model = self._infra.llm_model
+        response = await self._infra.llm.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": system},

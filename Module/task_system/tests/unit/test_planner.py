@@ -110,18 +110,18 @@ def test_strip_leading_whitespace():
 
 
 @pytest.fixture
-def planner():
-    """创建 Planner 实例（设置 dummy API key，因为解析不需要真实 LLM）。"""
-    import os
-    key = os.environ.get("DEEPSEEK_API_KEY")
-    os.environ["DEEPSEEK_API_KEY"] = "test-dummy-key"
-    try:
-        yield Planner(token_ledger=None)
-    finally:
-        if key is None:
-            del os.environ["DEEPSEEK_API_KEY"]
-        else:
-            os.environ["DEEPSEEK_API_KEY"] = key
+def mock_infra():
+    """创建 mock AgentInfra——仅用于 Planner 构造。"""
+    from unittest.mock import MagicMock
+    infra = MagicMock()
+    infra.llm_model = "deepseek-v4"
+    return infra
+
+
+@pytest.fixture
+def planner(mock_infra):
+    """创建 Planner 实例（注入 mock infra，解析不需要真实 LLM）。"""
+    return Planner(infra=mock_infra, token_ledger=None)
 
 
 def _make_plan_json(nodes=None, edges=None):
@@ -528,20 +528,13 @@ def test_parse_replan_full_missing_nodes(planner):
 
 @pytest.fixture
 def planner_with_mock_llm():
-    """创建 Planner，mock _client.chat.completions.create 以返回可控响应。"""
-    import os
-    key = os.environ.get("DEEPSEEK_API_KEY")
-    os.environ["DEEPSEEK_API_KEY"] = "test-dummy-key"
+    """创建 Planner，mock infra.llm.chat.completions.create 以返回可控响应。"""
     mock_ledger = MagicMock()
-    try:
-        planner = Planner(token_ledger=mock_ledger)
-        planner._client.chat.completions.create = AsyncMock()
-        yield planner, mock_ledger
-    finally:
-        if key is None:
-            del os.environ["DEEPSEEK_API_KEY"]
-        else:
-            os.environ["DEEPSEEK_API_KEY"] = key
+    mock_infra = MagicMock()
+    mock_infra.llm_model = "deepseek-v4"
+    mock_infra.llm.chat.completions.create = AsyncMock()
+    planner = Planner(infra=mock_infra, token_ledger=mock_ledger)
+    return planner, mock_ledger
 
 
 def _set_mock_response(planner, content: str, prompt_tokens: int = 100, completion_tokens: int = 50):
@@ -551,7 +544,7 @@ def _set_mock_response(planner, content: str, prompt_tokens: int = 100, completi
     mock_response = MagicMock()
     mock_response.choices = [mock_choice]
     mock_response.usage = MagicMock(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
-    planner._client.chat.completions.create.return_value = mock_response
+    planner._infra.llm.chat.completions.create.return_value = mock_response
 
 
 def test_plan_records_token_usage(planner_with_mock_llm):

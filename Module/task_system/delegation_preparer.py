@@ -3,8 +3,8 @@
 CognitiveLoop 调用 submit_task 后、TaskSystem.submit() 之前，
 用一次 LLM 调用准备干净的委派上下文。
 
-v1: 使用 DeepSeek v4，方案与 Planner 一致（内部创建 AsyncOpenAI）。
-    后续可独立为 delegation 服务时改为 LLM client 注入。
+v1: 使用 DeepSeek v4，内部创建 AsyncOpenAI（DelegationPreparer 在 TaskSystem 创建前运行，
+    无法使用 AgentInfra，因此自建客户端。Planner 已改用 infra.llm）。
 Prompt 全文见 architecture.md Section 9。
 """
 
@@ -106,7 +106,7 @@ class DelegationPreparer:
     3. 上下文摘要（从对话历史中提取相关信息，≤500 字）
     4. 任务级约束（估算 max_dag_nodes / max_mutations 等 TaskConstraints 字段）
 
-    v1: 内部创建 AsyncOpenAI（读 DEEPSEEK_API_KEY），与 Planner 模式一致。
+    v1: 内部创建 AsyncOpenAI（读 DEEPSEEK_API_KEY）。Planner 已改用 infra.llm。
         后续独立为 delegation 服务时改为 LLM client 注入。
     """
 
