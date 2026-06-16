@@ -22,6 +22,7 @@ from Module.task_system.schema import (
     AgentType,
     DelegationContext,
     NodeStatus,
+    now_iso,
     ResumeError,
     SubmitError,
     SubmitRejectionCode,
@@ -313,11 +314,46 @@ class TaskSystem:
     async def cancel(self, task_id: TaskId) -> bool:
         """软取消任务。二次确认由 CognitiveLoop 在上层处理。
 
-        流程：写 checkpoint → 安全停止 Worker → 清理 Mailbox → GC 回收。
+        幂等——所有路径返回 True：
+        - RUNNING → 设置 exec_state.cancel_requested → Orchestrator 检测 → CANCELLED
+        - PAUSED  → 直接标记 CANCELLED，已有 checkpoint
+        - 已终态   → True（无需操作）
+        - 已清理   → True（任务已不存在）
         """
-        # TODO: 设置 task_state.status = CANCEL_REQUESTED
-        # TODO: 等待当前节点完成 → 写 checkpoint → 清理
-        raise NotImplementedError("TaskSystem.cancel() 尚未实现")
+        # TODO: v1 只设标志，无超时反馈。
+        #   若 Orchestrator 因异常永远不到达下一个循环迭代，
+        #   cancel 信号可能永远不被处理。后续考虑 await + 超时机制。
+        sub_agent = self._tasks.get(task_id)
+        if sub_agent is None:
+            return True  # 已清理 = 已取消
+
+        ts = sub_agent._task_state
+        if ts is None or ts.is_terminal():
+            return True  # 已终态 = 已取消
+
+        # ── 分支 1: PAUSED → 直接 CANCELLED ──
+        if ts.status == TaskStatus.PAUSED:
+            ts.status = TaskStatus.CANCELLED
+            ts.updated_at = now_iso()
+            mailbox = self._mailboxes.get(task_id)
+            if mailbox:
+                push_mailbox_event(mailbox, TaskEventType.CANCELLED, {
+                    "task_id": str(task_id),
+                    "reason": "用户取消",
+                })
+            # cleanup 由 _run_and_cleanup finally 块负责
+            return True
+
+        # ── 分支 2: RUNNING / PLANNING → 设取消标志 ──
+        exec_state = sub_agent._orchestrator._exec_state
+        if exec_state is None:
+            # 尚未进入 Orchestrator（规划/校验阶段）
+            ts.status = TaskStatus.CANCELLED
+            ts.updated_at = now_iso()
+            return True
+
+        exec_state.cancel_requested = True
+        return True
 
     async def submit_approval(
         self,

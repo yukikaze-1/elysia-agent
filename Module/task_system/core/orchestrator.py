@@ -163,6 +163,21 @@ class Orchestrator:
                         checkpoint_state=self._build_checkpoint(task_state, exec_state),
                     )
 
+                # 0. 检查外部取消信号
+                if exec_state.cancel_requested:
+                    logger.info(
+                        "Orchestrator: task_id=%s 收到取消请求", task_id,
+                    )
+                    task_state.status = TaskStatus.CANCELLED
+                    task_state.updated_at = now_iso()
+                    await self._save_checkpoint(task_state, exec_state)
+                    return OrchestratorResult(
+                        status=OrchestratorRunStatus.CANCELED,
+                        checkpoint_state=self._build_checkpoint(
+                            task_state, exec_state,
+                        ),
+                    )
+
                 # 1. 找就绪节点（PlanGraph 负责图遍历）
                 ready_ids = graph.get_ready_nodes(exec_state.node_states)
 

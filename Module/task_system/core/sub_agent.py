@@ -352,6 +352,10 @@ class SubAgent:
             await self._handle_paused(result, task_state, mailbox)
             return False, None
 
+        elif result.status == OrchestratorRunStatus.CANCELED:
+            await self._handle_cancelled(result, task_state, mailbox)
+            return False, None
+
         elif result.status == OrchestratorRunStatus.FAILED:
             await self._handle_failed(result, task_state, mailbox)
             return False, None
@@ -391,6 +395,25 @@ class SubAgent:
             "task_id": str(task_state.task_id),
             "error": error_reason,
             "error_type": TaskErrorCode.INTERNAL_ERROR.value,
+        })
+
+    # ── 结果处理：CANCELED ────────────────────────────────────────────────────
+
+    async def _handle_cancelled(
+        self,
+        result: OrchestratorResult,
+        task_state: TaskState,
+        mailbox: TaskMailbox,
+    ) -> None:
+        """外部取消——推送 CANCELLED 事件。
+
+        Orchestrator 已将 task_state.status 设为 CANCELLED 并保存了 checkpoint。
+        推送事件后退出执行循环，_run_and_cleanup finally 块负责清理。
+        """
+        logger.info("SubAgent: task_id=%s 已取消", task_state.task_id)
+        await self._push_mailbox(mailbox, TaskEventType.CANCELLED, {
+            "task_id": str(task_state.task_id),
+            "reason": "用户取消",
         })
 
     # ── 结果处理：BLOCKED ─────────────────────────────────────────────────────
