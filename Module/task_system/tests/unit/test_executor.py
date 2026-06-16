@@ -407,3 +407,22 @@ def test_error_mapping_none_error_type():
     tr = ToolResult.fail(name="test_tool", error="unknown error", error_type=None)
     mapped = Executor._map_error(tr)
     assert mapped == NodeErrorCode.TOOL_ERROR
+
+
+@pytest.mark.asyncio
+async def test_execute_llm_direct_mode(executor, sample_tools):
+    """execution_mode=llm_direct 时跳过 tool matching，直接调 LLM。"""
+    from Module.task_system.schema import ExecutionMode
+
+    node = DAGNode(
+        node_id=NodeId("summarize"),
+        description="汇总搜索结果，生成报告",
+        output_contract=OutputContract(description="结构化的汇总报告"),
+        execution_mode=ExecutionMode.LLM_DIRECT,
+        input_bindings=[ArtifactId("output:search")],
+        output_as=ArtifactId("output:summarize"),
+    )
+    result = await executor.execute(node, TaskId("t1"), sample_tools)
+    assert result.error is None
+    # llm_direct 路径不应调用 tool_registry
+    executor._infra.tool_registry.execute.assert_not_called()

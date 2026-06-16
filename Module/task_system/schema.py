@@ -911,6 +911,16 @@ class OutputContract(BaseModel):
 
 # ── DAG 与行为树 ────────────────────────────────────────────────────────────────
 
+class ExecutionMode(StrEnum):
+    """DAG 节点的执行模式——Planner 显式标注，Executor 按标注执行。
+
+    tool_call:  正常 function-calling 匹配工具并执行（默认，向后兼容）
+    llm_direct: 跳过工具匹配，直接调 LLM 生成文本（汇总/编译/改写/整理类节点）
+    """
+    TOOL_CALL = "tool_call"
+    LLM_DIRECT = "llm_direct"
+
+
 class DAGNode(BaseModel):
     """Planner 产出的单个 DAG 节点。
 
@@ -925,6 +935,7 @@ class DAGNode(BaseModel):
         required:        是否必须成功（False → 失败可跳过，不阻塞后续节点）
         input_bindings:  从 ArtifactStore 取的产物 ID 列表（数据依赖，正交于 edges 执行依赖）
         output_as:       产出物存在 ArtifactStore 中的 ArtifactId
+        execution_mode:  执行模式——tool_call（默认，匹配工具调用）或 llm_direct（直接调 LLM）
         max_retries:     per-node 最大重试次数（None → 使用全局 ConstraintConfig.max_retries_per_node）
         max_duration_s:  per-node 最大执行时长秒数（None → 无限制，与 ConstraintConfig.max_task_duration_s 命名对齐）
     """
@@ -934,6 +945,7 @@ class DAGNode(BaseModel):
     required: bool = True                         # 是否必须成功（False → 可跳过）
     input_bindings: list[ArtifactId] = Field(default_factory=list)   # 从 ArtifactStore 取哪些产物
     output_as: ArtifactId | None = None            # 产出存到 ArtifactStore 的 ID（None=无产物）
+    execution_mode: ExecutionMode = ExecutionMode.TOOL_CALL  # 默认 tool_call，向后兼容
     max_retries: int | None = None                # None=使用全局默认
     max_duration_s: float | None = None           # None=无限制
 

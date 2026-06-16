@@ -11,7 +11,7 @@
 |------|------|
 | 生产代码 | 20 文件, ~4,500 行 |
 | 测试代码 | 21 文件 |
-| 单元测试 | **269 tests**, ~6s |
+| 单元测试 | **281 tests**, ~4.3s |
 | 集成测试 | 26 tests (含 4 e2e), ~4min |
 | 最近提交 | `8e6ab1d` — 6 个正确性 bug 修复 |
 
@@ -114,10 +114,10 @@ TaskSystem
 | `list_active_tasks()` | ✅ 已实现 |
 | `get_task_summary()` | ✅ 已实现 |
 | `get_task_dag()` | ✅ 已实现 |
-| `get_task_status()` | ⚠️ `NotImplementedError` |
-| `get_progress()` | ⚠️ `NotImplementedError` |
+| `get_task_status()` | ✅ 已实现 |
+| `get_progress()` | ✅ 已实现 |
 | `get_token_usage()` | ✅ 已实现 |
-| `list_agents()` | ⚠️ `NotImplementedError` |
+| `list_agents()` | ✅ 已实现 |
 | `get_token_stats()` | ✅ 已实现 |
 
 ### 接入 CognitiveLoop（最大缺口）
@@ -138,6 +138,7 @@ TaskSystem 完全未接入 CognitiveLoop——`core/` 目录没有任何 TaskSys
 | 大产物截断 | Evaluator 传入完整 artifact，可能超出 LLM 上下文 |
 | Plan 预审批 | 设计文档有，代码无 |
 | 模型名可配置 | ✅ 已修复——Planner 改用 `infra.llm`，模型名统一由 `AgentInfra.llm_model` 管理 |
+| DAGNode.execution_mode | ✅ 已实现——Planner 标注 llm_direct/tool_call，Executor 按标注执行，根治误选工具 |
 
 ---
 

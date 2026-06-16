@@ -116,10 +116,8 @@ class TaskSystem:
     async def submit_approval(
         self, task_id: TaskId, agent_id: AgentId, approved: bool,
         feedback: str | None = None,
-    ) -> None:
-        """⚠️ 未实现——raise NotImplementedError。"""
     ) -> bool:
-        """
+        """⚠️ 未实现——raise NotImplementedError。
         审批结果回传。路由到等待审批的 Worker，解除 await。
         task_id: 任务 ID。
         agent_id: 审批发起者 ID，TaskSystem 内部用 (task_id, agent_id)
@@ -316,19 +314,17 @@ class TaskStatus(StrEnum):
     async def get_task_dag(self, task_id: TaskId) -> TaskDAG | None: ...
     """查询 DAG 图（✅ 已实现）。"""
 
-    # ── 未实现（⚠️ NotImplementedError）──
-
     def get_task_status(self, task_id: TaskId) -> TaskStatus: ...
-    """⚠️ 未实现。"""
+    """✅ 已实现——查询任务当前状态。任务不存在时 raise KeyError。"""
 
     def get_progress(self, task_id: TaskId) -> TaskProgress | None: ...
-    """⚠️ 未实现。"""
+    """✅ 已实现——查询执行进度。含 current_node_id/完成数/耗时/预估剩余时间。"""
 
     def get_token_usage(self, task_id: TaskId) -> TokenUsage | None: ...
     """✅ 已实现——返回完整审计日志（TokenComponent 列表）。"""
 
     def list_agents(self) -> AgentList: ...
-    """⚠️ 未实现。"""
+    """✅ 已实现——当前活跃的 Sub-Agent 列表。v1 无 Worker Agent。"""
 
     def get_token_stats(self, period: TokenPeriod = TokenPeriod.TODAY) -> TokenStats: ...
     """✅ 已实现——按时间段/组件/模型聚合。"""

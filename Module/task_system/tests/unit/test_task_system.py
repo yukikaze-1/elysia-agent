@@ -13,6 +13,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from Module.task_system.schema import (
+    AgentId,
+    AgentInfo,
+    AgentList,
+    AgentStatus,
+    AgentType,
     ConstraintConfig,
     ExecutionState,
     ExecutionPhase,
@@ -360,3 +365,230 @@ async def test_get_token_stats_filters_by_period():
 
     stats = ts.get_token_stats(TokenPeriod.TODAY)
     assert stats.total_tokens == 0  # 昨天的被过滤
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# get_task_status()
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_returns_status():
+    """活跃任务——返回当前状态。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    assert ts.get_task_status(tid) == TaskStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_missing_task():
+    """任务不存在或已清理 → KeyError。"""
+    ts = await _build_task_system()
+
+    with pytest.raises(KeyError, match="不存在或已完成清理"):
+        ts.get_task_status(TaskId("nonexistent"))
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_pending_before_init():
+    """SubAgent.run() 尚未初始化 _task_state → 返回 PENDING。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    sub_agent = MagicMock()
+    sub_agent._task_state = None  # 尚未初始化
+    ts._tasks[tid] = sub_agent
+
+    assert ts.get_task_status(tid) == TaskStatus.PENDING
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# get_progress()
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_get_progress_active_task():
+    """活跃任务——返回完整进度快照。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    exec_state = ExecutionState(
+        node_states={
+            NodeId("a"): NodeState(
+                node_id=NodeId("a"),
+                status=NodeStatus.SUCCESS,
+            ),
+            NodeId("b"): NodeState(
+                node_id=NodeId("b"),
+                status=NodeStatus.RUNNING,
+            ),
+            NodeId("c"): NodeState(
+                node_id=NodeId("c"),
+                status=NodeStatus.PENDING,
+            ),
+        },
+        current_phase=ExecutionPhase.EXECUTING,
+    )
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    progress = ts.get_progress(tid)
+    assert progress is not None
+    assert progress.task_id == tid
+    assert progress.status == TaskStatus.RUNNING
+    assert progress.completed_nodes == 1
+    assert progress.total_nodes == 3
+    assert progress.current_node_id == NodeId("b")
+    assert progress.elapsed_ms >= 0
+    # 1 节点完成, 3 total → 预估剩余 = elapsed / 1 * 2
+    if progress.elapsed_ms > 0:
+        assert progress.estimated_remaining_ms is not None
+        assert progress.estimated_remaining_ms >= 0
+
+
+@pytest.mark.asyncio
+async def test_get_progress_missing_task():
+    """任务不存在 → None。"""
+    ts = await _build_task_system()
+
+    assert ts.get_progress(TaskId("nonexistent")) is None
+
+
+@pytest.mark.asyncio
+async def test_get_progress_no_exec_state():
+    """尚未进入 Orchestrator（_exec_state=None）→ 基础进度，无节点统计。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.PLANNING)
+
+    # exec_state 为 None
+    sub_agent = MagicMock()
+    sub_agent._task_state = task_state
+    orch = MagicMock()
+    orch._exec_state = None
+    sub_agent._orchestrator = orch
+    ts._tasks[tid] = sub_agent
+
+    progress = ts.get_progress(tid)
+    assert progress is not None
+    assert progress.task_id == tid
+    assert progress.status == TaskStatus.PLANNING
+    assert progress.total_nodes == 0  # 无 plan，默认 0
+    assert progress.completed_nodes == 0
+    assert progress.current_node_id is None
+
+
+@pytest.mark.asyncio
+async def test_get_progress_no_estimation_when_none_done():
+    """所有节点 PENDING——无节点完成时预估为 None。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    exec_state = ExecutionState(
+        node_states={
+            NodeId("a"): NodeState(
+                node_id=NodeId("a"),
+                status=NodeStatus.PENDING,
+            ),
+        },
+        current_phase=ExecutionPhase.EXECUTING,
+    )
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    progress = ts.get_progress(tid)
+    assert progress is not None
+    assert progress.completed_nodes == 0
+    assert progress.total_nodes == 1
+    # 没完成任何节点 → 无法估算
+    assert progress.estimated_remaining_ms is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# list_agents()
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_list_agents_empty():
+    """无活跃任务时——sub_agents 为空，capacity 正确。"""
+    ts = await _build_task_system()
+
+    agents = ts.list_agents()
+    assert isinstance(agents, AgentList)
+    assert len(agents.sub_agents) == 0
+    assert len(agents.worker_agents) == 0  # v1 无 Worker
+    assert agents.total_capacity == 5
+    assert agents.available_slots == 5
+
+
+@pytest.mark.asyncio
+async def test_list_agents_with_tasks():
+    """有活跃任务时——每个任务对应一个 AgentInfo。"""
+    ts = await _build_task_system()
+
+    tid1 = TaskId("t1")
+    task_state1 = _make_task_state("t1", TaskStatus.RUNNING)
+    exec_state1 = _make_exec_state()
+    sub_agent1 = _make_mock_sub_agent(task_state1, exec_state1)
+    ts._tasks[tid1] = sub_agent1
+
+    tid2 = TaskId("t2")
+    task_state2 = _make_task_state("t2", TaskStatus.PAUSED)
+    exec_state2 = _make_exec_state()
+    sub_agent2 = _make_mock_sub_agent(task_state2, exec_state2)
+    ts._tasks[tid2] = sub_agent2
+
+    agents = ts.list_agents()
+    assert len(agents.sub_agents) == 2
+    assert agents.available_slots == 3  # 5 - 2
+
+    # 按 task_id 排序验证
+    agents_sorted = sorted(agents.sub_agents, key=lambda a: str(a.task_id))
+    assert agents_sorted[0].task_id == tid1
+    assert agents_sorted[0].agent_type == AgentType.SUB
+    assert agents_sorted[0].status == AgentStatus.RUNNING
+
+    assert agents_sorted[1].task_id == tid2
+    assert agents_sorted[1].status == AgentStatus.PAUSED
+
+
+@pytest.mark.asyncio
+async def test_list_agents_task_state_none():
+    """_task_state=None（尚未初始化）→ RUNNING（默认）。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    sub_agent = MagicMock()
+    sub_agent._task_state = None
+    ts._tasks[tid] = sub_agent
+
+    agents = ts.list_agents()
+    assert len(agents.sub_agents) == 1
+    assert agents.sub_agents[0].status == AgentStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_list_agents_waiting_approval():
+    """WAITING_APPROVAL → AgentStatus.AWAITING_APPROVAL。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.WAITING_APPROVAL)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    agents = ts.list_agents()
+    assert len(agents.sub_agents) == 1
+    assert agents.sub_agents[0].status == AgentStatus.AWAITING_APPROVAL

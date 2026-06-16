@@ -18,6 +18,7 @@ from Module.task_system.schema import (
     DAGPatch,
     DAGPatchType,
     DelegationContext,
+    ExecutionMode,
     ExperienceRecord,
     NodeId,
     NodeState,
@@ -47,6 +48,7 @@ _OUTPUT_SCHEMA_DESCRIPTION = """{
         "description": "string (期望产出什么，给 Evaluator 做业务判定用)"
       },
       "required": true,
+      "execution_mode": "tool_call",
       "input_bindings": ["output:search_weather"],
       "output_as": "output:send_email"
     }
@@ -70,6 +72,21 @@ _SYSTEM_PROMPT = """你是任务规划器。根据用户意图、可用工具和
    所有独立并行节点必须汇聚到一个最终汇总/报告/输出节点。
 8. **始终包含一个最终输出节点**（如 compile_report、compose_answer）——
    它汇总上游所有节点的结果，生成用户可读的最终产物。
+
+## execution_mode 字段
+每个节点必须标注 execution_mode：
+- **tool_call**（默认）: 节点需要调用外部工具（搜索、读文件、发邮件等）。Executor 会匹配工具并执行。
+- **llm_direct**: 节点不需要外部工具。Executor 直接调 LLM 处理上游数据。
+  **仅在以下情况使用 llm_direct**：
+  · 汇总/编译/总结上游搜索结果
+  · 改写/润色/翻译已有文本
+  · 综合多个上游产物生成报告
+  · 注意：llm_direct 节点仍可引用 input_bindings 读取上游数据
+
+**关键规则**：
+- 搜索/查询/调用工具 → tool_call（即使是"搜索 X"也标注 tool_call）
+- 汇总/编写/整理报告 → llm_direct（禁止为这类节点标注 tool_call）
+- 最终输出节点（compile_report、compose_answer、summarize 等）→ 一律 llm_direct
 
 ## 可用工具
 {tools}
@@ -129,8 +146,8 @@ _REPLAN_SYSTEM_PROMPT = """你是任务修复器。一个 DAG 执行过程中有
   "patch_type": "replace_nodes | add_nodes | remove_nodes",
   "reason": "修复理由",
   "trigger_nodes": ["failed_node_id"],
-  "replace_nodes": [["old_node_id", {{"node_id": "new_id", "description": "...", "output_contract": {{"description": "..."}}, "required": true, "input_bindings": ["output:upstream"], "output_as": "output:new_id"}}]],
-  "add_nodes": [{{"node_id": "...", "description": "...", ...}}],
+  "replace_nodes": [["old_node_id", {{"node_id": "new_id", "description": "...", "output_contract": {{"description": "..."}}, "required": true, "execution_mode": "tool_call", "input_bindings": ["output:upstream"], "output_as": "output:new_id"}}]],
+  "add_nodes": [{{"node_id": "...", "description": "...", "execution_mode": "tool_call", ...}}],
   "remove_nodes": ["node_id_to_remove"],
   "remove_edges": [["from_id", "to_id"]],
   "add_edges": [["from_id", "to_id"]]
@@ -145,6 +162,7 @@ _REPLAN_SYSTEM_PROMPT = """你是任务修复器。一个 DAG 执行过程中有
       "description": "string",
       "output_contract": {{"description": "string"}},
       "required": true,
+      "execution_mode": "tool_call",
       "input_bindings": ["output:upstream"],
       "output_as": "output:this_node"
     }}
@@ -448,6 +466,7 @@ class Planner:
                     description=oc_data.get("description", ""),
                 ),
                 required=rn.get("required", True),
+                execution_mode=self._parse_execution_mode(rn.get("execution_mode")),
                 input_bindings=[ArtifactId(b) for b in rn.get("input_bindings", []) or []],
                 output_as=ArtifactId(str(raw_as)) if (raw_as := rn.get("output_as", "").strip()) else None,
             ))
@@ -664,6 +683,7 @@ class Planner:
                     description=oc_data.get("description", ""),
                 ),
                 required=rn.get("required", True),
+                execution_mode=self._parse_execution_mode(rn.get("execution_mode")),
                 input_bindings=[ArtifactId(b) for b in rn.get("input_bindings", []) or []],
                 output_as=ArtifactId(str(raw_as)) if (raw_as := rn.get("output_as", "").strip()) else None,
             ))
@@ -686,6 +706,19 @@ class Planner:
             created_at=now,
             updated_at=now,
         )
+
+    @staticmethod
+    def _parse_execution_mode(raw) -> ExecutionMode:
+        """解析 execution_mode 字段，容错 LLM 输出。"""
+        if raw is None:
+            return ExecutionMode.TOOL_CALL
+        if isinstance(raw, ExecutionMode):
+            return raw
+        try:
+            return ExecutionMode(str(raw))
+        except ValueError:
+            logger.warning("Planner: 未知 execution_mode=%r，fallback tool_call", raw)
+            return ExecutionMode.TOOL_CALL
 
     @staticmethod
     def _strip_markdown_fence(text: str) -> str:

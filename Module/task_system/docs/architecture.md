@@ -214,8 +214,8 @@ Module/task_system/
 └── __main__.py          # ⚠️ v2 TODO：独立运行测试
 
 tests/
-├── unit/                 # 纯 mock，无外部依赖，269 tests，~6s
-│   ├── test_task_system.py    # stop, pause 单元测试
+├── unit/                 # 纯 mock，无外部依赖，281 tests，~4.3s
+│   ├── test_task_system.py    # stop, pause, 查询 API 单元测试
 │   ├── test_orchestrator.py   # Orchestrator 执行循环
 │   ├── test_sub_agent.py      # SubAgent 决策层
 │   ├── test_graph.py          # PlanGraph + DAGPatch
@@ -226,7 +226,7 @@ tests/
 │   ├── test_checkpoint.py     # CheckpointManager
 │   ├── test_mailbox.py        # TaskMailbox
 │   └── test_token_ledger.py     # TokenLedger write-through + 审计
-└── integration/          # 需要 LLM / 外部服务，5 tests，~4min
+└── integration/          # 需要 LLM / 外部服务，26 tests（5 文件），~4min
     ├── test_task_system_lifecycle.py  # stop, pause, 并发, goal_failed→REPLAN
     ├── test_delegation_preparer.py    # DelegationPreparer LLM 调用
     ├── test_executor.py               # Executor LLM tool-calling

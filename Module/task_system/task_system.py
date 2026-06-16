@@ -16,7 +16,10 @@ from Module.task_system.mailbox import TaskMailbox
 from Module.task_system.mailbox import push_mailbox_event
 from Module.task_system.schema import (
     AgentId,
+    AgentInfo,
     AgentList,
+    AgentStatus,
+    AgentType,
     DelegationContext,
     NodeStatus,
     ResumeError,
@@ -335,9 +338,22 @@ class TaskSystem:
     # ── 查询（Pull 模式，供 CognitiveLoop + Debug WebUI）────────────────
 
     def get_task_status(self, task_id: TaskId) -> TaskStatus:
-        """查询任务当前状态。最轻量——用户问"做完了吗？"时 LLM 调用。"""
-        # TODO: 从 self._tasks[task_id].task_state.status 读取
-        raise NotImplementedError
+        """查询任务当前状态。最轻量——用户问"做完了吗？"时 LLM 调用。
+
+        只查活跃任务（仍在 _tasks 注册表中）。任务终态清理后不可查询——
+        此时应通过上层缓存（如 CognitiveLoop 的任务摘要）获取历史状态。
+        """
+        sub_agent = self._tasks.get(task_id)
+        if sub_agent is None:
+            raise KeyError(
+                f"task_id={task_id} 不存在或已完成清理。"
+                f"活跃任务: {list(self._tasks.keys())}"
+            )
+        ts = sub_agent._task_state
+        if ts is None:
+            # SubAgent.run() 尚未完成初始化——task_state 为 None
+            return TaskStatus.PENDING
+        return ts.status
 
     async def get_task_summary(self, task_id: TaskId) -> TaskSummary | None:
         """获取单个任务摘要。"""
@@ -410,8 +426,72 @@ class TaskSystem:
         return summaries
 
     def get_progress(self, task_id: TaskId) -> TaskProgress | None:
-        """查询任务进度。用户问"到哪一步了？"时 LLM 调用。"""
-        raise NotImplementedError
+        """查询任务执行进度。用户问"到哪一步了？"时 LLM 调用。
+
+        返回当前执行节点、完成数/总数、耗时、预估剩余时间。
+        任务不存在或尚未开始执行时返回 None。
+        """
+        sub_agent = self._tasks.get(task_id)
+        if sub_agent is None:
+            return None
+
+        ts = sub_agent._task_state
+        if ts is None:
+            return None
+
+        exec_state = sub_agent._orchestrator._exec_state
+        if exec_state is None:
+            # 尚未进入 Orchestrator（规划/校验阶段）
+            return TaskProgress(
+                task_id=task_id,
+                status=ts.status,
+                total_nodes=len(
+                    ts.plan.dag.nodes) if ts.plan else 0,
+            )
+
+        # 统计节点完成数
+        completed = 0
+        failed = 0
+        current_node_id: NodeId | None = None
+        for nid, ns in exec_state.node_states.items():
+            if ns.status == NodeStatus.SUCCESS:
+                completed += 1
+            elif ns.status in (NodeStatus.FAILED, NodeStatus.UNRECOVERABLE):
+                failed += 1
+            elif ns.status == NodeStatus.RUNNING:
+                current_node_id = nid
+
+        total = len(exec_state.node_states)
+
+        # 耗时
+        elapsed_ms = 0
+        if ts.created_at:
+            try:
+                from datetime import datetime, timezone as tz
+                created = datetime.fromisoformat(ts.created_at)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=tz.utc)
+                elapsed_ms = int(
+                    (datetime.now(tz.utc) - created).total_seconds() * 1000)
+            except (ValueError, TypeError):
+                pass
+
+        # 预估剩余时间（简单线性估算）
+        estimated_remaining_ms: int | None = None
+        done = completed + failed
+        if done > 0 and elapsed_ms > 0 and total > done:
+            avg_per_node = elapsed_ms / done
+            estimated_remaining_ms = int(avg_per_node * (total - done))
+
+        return TaskProgress(
+            task_id=task_id,
+            status=ts.status,
+            current_node_id=current_node_id,
+            completed_nodes=completed,
+            total_nodes=total,
+            elapsed_ms=elapsed_ms,
+            estimated_remaining_ms=estimated_remaining_ms,
+        )
 
     async def get_task_dag(self, task_id: TaskId) -> TaskDAG | None:
         """获取任务的 DAG 可视化数据。"""
@@ -443,8 +523,66 @@ class TaskSystem:
         )
 
     def list_agents(self) -> AgentList:
-        """当前活跃的 Sub-Agent 和 Worker Agent 列表。Debug 用。"""
-        raise NotImplementedError
+        """当前活跃的 Sub-Agent 和 Worker Agent 列表。Debug 用。
+
+        v1 只有 SubAgent（无 Worker），worker_agents 固定为空列表。
+        """
+        from datetime import datetime, timezone as tz
+
+        now = datetime.now(tz.utc)
+        sub_agents: list[AgentInfo] = []
+
+        for task_id, sub_agent in self._tasks.items():
+            ts = sub_agent._task_state
+
+            # 映射 TaskStatus → AgentStatus
+            if ts is None:
+                agent_status = AgentStatus.RUNNING
+            elif ts.status in (TaskStatus.RUNNING, TaskStatus.PLANNING,
+                               TaskStatus.PAUSE_REQUESTED, TaskStatus.RESUMING):
+                agent_status = AgentStatus.RUNNING
+            elif ts.status == TaskStatus.PAUSED:
+                agent_status = AgentStatus.PAUSED
+            elif ts.status == TaskStatus.WAITING_APPROVAL:
+                agent_status = AgentStatus.AWAITING_APPROVAL
+            else:
+                # 终态（COMPLETED/FAILED/CANCELLED）——理论上已清理，
+                # 但如果在清理窗口期内仍可见，标记为 RUNNING
+                agent_status = AgentStatus.RUNNING
+
+            # 耗时
+            duration_ms = 0
+            started_at = ""
+            if ts and ts.created_at:
+                started_at = ts.created_at
+                try:
+                    created = datetime.fromisoformat(ts.created_at)
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=tz.utc)
+                    duration_ms = int(
+                        (now - created).total_seconds() * 1000)
+                except (ValueError, TypeError):
+                    pass
+
+            sub_agents.append(AgentInfo(
+                agent_id=AgentId(str(task_id)),
+                agent_type=AgentType.SUB,
+                task_id=task_id,
+                status=agent_status,
+                started_at=started_at,
+                last_seen_at=now.isoformat(),
+                duration_ms=duration_ms,
+            ))
+
+        return AgentList(
+            sub_agents=sub_agents,
+            worker_agents=[],  # v1 无 Worker Agent
+            total_capacity=self._max_sub_agents,
+            available_slots=(
+                self._max_sub_agents - len(self._tasks)
+                if self._semaphore is not None else 0
+            ),
+        )
 
     def get_token_stats(self, period: TokenPeriod = TokenPeriod.TODAY) -> TokenStats:
         """聚合 token 统计（按时间段 + 组件 + 模型）。

@@ -18,6 +18,7 @@ from Module.task_system.schema import (
     Artifact,
     ArtifactId,
     DAGNode,
+    ExecutionMode,
     NodeErrorCode,
     NodeResult,
     TaskId,
@@ -129,25 +130,37 @@ class Executor:
             # 1. 解析上游输入（input_bindings → ArtifactStore）
             upstream_data = await self._resolve_inputs(node, task_id)
 
-            # 2. LLM 工具匹配（function-calling：选工具 + 填参数）
-            #    或 LLM 直出文本（汇总/分析类节点不需要外部工具）
-            tool_name, params = await self._match_tool(node, tools, upstream_data)
-
-            # 3. 调用工具（或直接使用 LLM 直出的文本）
-            if tool_name == _DIRECT_TEXT_SENTINEL:
-                # LLM 直出文本——不需要外部工具
-                content = params["content"]
+            # 2. 按 execution_mode 分派
+            if node.execution_mode == ExecutionMode.LLM_DIRECT:
+                # Planner 显式标注的纯 LLM 任务——跳过工具匹配，直接调 LLM
+                content = await self._call_llm_direct(node, upstream_data)
                 tool_result = ToolResult.ok(
                     name="llm_direct",
                     content=content,
                     duration_ms=0.0,
                 )
                 logger.info(
-                    "Executor: node=%s LLM 直出文本作为产物 (%d chars)",
+                    "Executor: node=%s llm_direct 产出 (%d chars)",
                     node.node_id, len(content),
                 )
             else:
-                tool_result = await self._call_tool(tool_name, params, task_id, node.node_id, session_id)
+                # tool_call 模式：function-calling 匹配工具 → 调用
+                # 或 LLM 自行判断不需要工具 → __llm_direct__
+                tool_name, params = await self._match_tool(node, tools, upstream_data)
+
+                if tool_name == _DIRECT_TEXT_SENTINEL:
+                    content = params["content"]
+                    tool_result = ToolResult.ok(
+                        name="llm_direct",
+                        content=content,
+                        duration_ms=0.0,
+                    )
+                    logger.info(
+                        "Executor: node=%s LLM 直出文本作为产物 (%d chars)",
+                        node.node_id, len(content),
+                    )
+                else:
+                    tool_result = await self._call_tool(tool_name, params, task_id, node.node_id, session_id)
 
             # 4. 存储结果（ToolResult → Artifact → ArtifactStore）
             artifact = await self._store_result(node, task_id, tool_result)
@@ -266,20 +279,8 @@ class Executor:
                      node.node_id, allowed_names)
         logger.debug("Executor: node=%s LLM 上下文:\n%s", node.node_id, user_message)
 
-        # 调用 LLM（function-calling）
-        # 注意：DeepSeek v4 thinking 模式不支持 tool_choice="required"，
-        # 使用 "auto" 让模型自行判断是否需要调用工具。
-        # _TOOL_MATCH_SYSTEM prompt 已强化"何时不调工具"规则，降低 LLM 对汇总节点误选工具的概率。
-        #
-        # TODO: 长期方案——DAGNode 增加 execution_mode 字段（tool_call / llm_direct），
-        #   Planner 在生成 DAG 时显式标注。llm_direct 节点跳过 tool matching，
-        #   直接调 LLM 生成内容，省一次 function-calling + 消除误选工具风险。
-        #   LLM 判断不需要工具 → 返回文本 → Executor 当作有效产物。
-        #
-        #   更好的方案：DAGNode 增加 execution_mode 字段（tool_call / llm_direct），
-        #   Planner 在生成 DAG 时显式指定。Executor 按标注执行，不需要猜测。
-        #   llm_direct 模式跳过 tool matching，直接调 LLM 生成内容，省一次调用。
-        #   当前方案作为 MVP 够用，后续 Planner 成熟后迁移到方案 C。
+        # 调用 LLM（function-calling）——仅 execution_mode=tool_call 节点进入此分支。
+        # llm_direct 节点已在 execute() 入口分流到 _call_llm_direct()，不经过 tool matching。
         response = await self._infra.llm.chat.completions.create(
             model=self._infra.llm_model,
             messages=[
@@ -328,6 +329,58 @@ class Executor:
             node.node_id, tool_name, list(params.keys()),
         )
         return tool_name, params
+
+    # ── LLM 直出文本（execution_mode=llm_direct）─────────────────────────
+
+    async def _call_llm_direct(
+        self,
+        node: DAGNode,
+        upstream_data: dict[ArtifactId, Any],
+    ) -> str:
+        """Planner 标注了 llm_direct——直接调 LLM 生成文本，跳过工具匹配。
+
+        建模为简单的 chat completion（无 tools），让 LLM 基于上游数据
+        和节点描述生成内容。token 消耗由 token_ledger 记录。
+        """
+        system = "你是一个任务执行助手。根据上游数据和节点描述，直接产出结果。"
+
+        parts = [f"任务: {node.description}"]
+        if node.output_contract and node.output_contract.description:
+            parts.append(f"期望产出: {node.output_contract.description}")
+        if upstream_data:
+            # 截断过长数据，保留足够上下文
+            data_text = json.dumps(upstream_data, ensure_ascii=False, default=str)
+            if len(data_text) > 30000:
+                data_text = data_text[:30000] + f"\n...[截断 {len(data_text) - 30000} chars]"
+            parts.append(f"上游数据:\n{data_text}")
+
+        user = "\n\n".join(parts)
+        logger.debug("Executor: node=%s llm_direct prompt (%d chars)", node.node_id, len(user))
+
+        response = await self._infra.llm.chat.completions.create(
+            model=self._infra.llm_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=8192,
+        )
+
+        # ── token 追踪 ──
+        if self._token_ledger and (usage := response.usage):
+            try:
+                self._token_ledger.record(
+                    component=TokenComponentType.EXECUTOR,
+                    node_id=node.node_id,
+                    prompt_tokens=usage.prompt_tokens or 0,
+                    completion_tokens=usage.completion_tokens or 0,
+                    model=self._infra.llm_model,
+                )
+            except Exception:
+                logger.warning("TokenLedger.record 失败，跳过", exc_info=True)
+
+        content = response.choices[0].message.content or ""
+        return content
 
     # ── 工具调用 ────────────────────────────────────────────────────────────
 
