@@ -592,3 +592,98 @@ async def test_list_agents_waiting_approval():
     agents = ts.list_agents()
     assert len(agents.sub_agents) == 1
     assert agents.sub_agents[0].status == AgentStatus.AWAITING_APPROVAL
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# cancel()
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_cancel_missing_task_returns_true():
+    """不存在的 task_id → True（幂等——已清理 = 已取消）。"""
+    ts = await _build_task_system()
+    assert await ts.cancel(TaskId("nonexistent")) is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_terminal_task_returns_true():
+    """已终态任务 → True（幂等——已完成/已失败 = 已取消）。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.COMPLETED)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    assert await ts.cancel(tid) is True
+    # 状态不变
+    assert task_state.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_sets_cancel_requested():
+    """RUNNING 任务 → 设 exec_state.cancel_requested=True，不立即改 status。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    assert await ts.cancel(tid) is True
+    assert exec_state.cancel_requested is True
+    # RUNNING → 状态不变（由 Orchestrator 改为 CANCELLED）
+    assert task_state.status == TaskStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_cancel_paused_sets_cancelled_directly():
+    """PAUSED 任务 → 直接 CANCELLED，不依赖 Orchestrator。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.PAUSED)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    assert await ts.cancel(tid) is True
+    assert task_state.status == TaskStatus.CANCELLED
+    # cancel_requested 不应被设置（直接跳过了）
+    assert exec_state.cancel_requested is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_before_orchestrator_sets_cancelled():
+    """尚未进入 Orchestrator（_exec_state=None）→ 直接 CANCELLED。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.PLANNING)
+
+    # exec_state 为 None（尚未 run）
+    sub_agent = MagicMock()
+    sub_agent._task_state = task_state
+    orch = MagicMock()
+    orch._exec_state = None
+    sub_agent._orchestrator = orch
+    ts._tasks[tid] = sub_agent
+
+    assert await ts.cancel(tid) is True
+    assert task_state.status == TaskStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_state_none_returns_true():
+    """_task_state=None（尚未初始化）→ True（幂等）。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    sub_agent = MagicMock()
+    sub_agent._task_state = None
+    ts._tasks[tid] = sub_agent
+
+    assert await ts.cancel(tid) is True

@@ -111,7 +111,8 @@ class TaskSystem:
         """⚠️ 未实现——raise NotImplementedError。"""
 
     async def cancel(self, task_id: TaskId) -> bool:
-        """⚠️ 未实现——raise NotImplementedError。"""
+        """✅ 已实现——幂等软取消。设置 exec_state.cancel_requested 标志，Orchestrator 安全点停止。
+        所有路径返回 True（幂等）。二次确认由 CognitiveLoop 在上层处理。"""
 
     async def submit_approval(
         self, task_id: TaskId, agent_id: AgentId, approved: bool,

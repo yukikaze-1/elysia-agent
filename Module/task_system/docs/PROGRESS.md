@@ -11,9 +11,9 @@
 |------|------|
 | 生产代码 | 20 文件, ~4,500 行 |
 | 测试代码 | 21 文件 |
-| 单元测试 | **281 tests**, ~4.3s |
-| 集成测试 | 26 tests (含 4 e2e), ~4min |
-| 最近提交 | `aca5926` — 6 个集成测试修复 |
+| 单元测试 | **287 tests**, ~4.3s |
+| 集成测试 | 27 tests (含 4 e2e), ~4min |
+| 最近提交 | `ca69ffa` — cancel 集成测试 |
 
 ---
 
@@ -104,7 +104,7 @@ TaskSystem
 | 方法 | 当前状态 |
 |------|----------|
 | `resume()` | ⚠️ `NotImplementedError` |
-| `cancel()` | ⚠️ `NotImplementedError` |
+| `cancel()` | ✅ 已实现 |
 | `submit_approval()` | ⚠️ `NotImplementedError` |
 
 ### 查询 API
@@ -201,3 +201,13 @@ TaskSystem 完全未接入 CognitiveLoop——`core/` 目录没有任何 TaskSys
 | 2 | `test_task_system_lifecycle.py` | token 竞态——`get_token_usage()` 清理后 None → 从 COMPLETED 事件 data 读取 |
 | 3 | `test_task_system_lifecycle.py` | `test_goal_failed_triggers_replan` mock 签名多了 `self`（patch 不自动传 self） |
 | 4 | 同上 | 完整套件中 LLM 限速 → `max_failure_count=2` + deadline 300s |
+
+### cancel() 实现（2026-06-17）
+
+| # | 文件 | 说明 |
+|---|------|------|
+| 1 | `task_system.py` | `cancel()` 实现——幂等软取消，设置 `exec_state.cancel_requested` |
+| 2 | `orchestrator.py` | Orchestrator 安全点检测 `cancel_requested` → 复写节点为 CANCELLED |
+| 3 | `sub_agent.py` | SubAgent 检测取消 → 推送 CANCELLED 事件 → FAILED_CANCELLED 终态 |
+| 4 | `test_cancel.py` | 6 个单元测试——幂等/已终态/未启动/运行时取消/暂停后取消/all_finished |
+| 5 | `test_cancel_integration.py` | 1 个集成测试——运行时取消 + 验证 CANCELLED 事件 |

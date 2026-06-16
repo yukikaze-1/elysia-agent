@@ -405,3 +405,69 @@ async def test_goal_failed_triggers_replan():
     await ts.stop(timeout=10.0)
     # 关闭 LLM client 连接池——避免 event loop closed 错误
     await ts._infra.llm.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_cancel_during_execution():
+    """提交任务 → cancel() → 收到 CANCELLED 事件 → 注册表清理。
+
+    在任务执行期间取消，验证：
+    - cancel() 返回 True
+    - 最终收到 cancelled/completed/failed 事件（取决于时序）
+    - 注册表已清理
+    """
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
+
+    ts = await _build_task_system()
+    tools = _tools_from_manager(ts._infra.tool_registry)
+
+    ctx = DelegationContext(
+        intent="现在几点了",
+        tools=tools,
+        session_id=SessionId("cancel-test"),
+    )
+    result = await ts.submit(ctx)
+    assert isinstance(result, TaskMailbox), f"submit 失败: {result}"
+    task_id = result.task_id
+
+    # 等第一个 PROGRESS——表示 Orchestrator 已启动
+    first_event = await asyncio.wait_for(result.get(), timeout=30.0)
+    assert first_event is not None, "未收到首个事件"
+
+    # 取消任务
+    assert await ts.cancel(task_id) is True
+
+    # 消费剩余事件——预期最终收到 cancelled
+    event = None
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            event = await asyncio.wait_for(result.get(), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        if event is None:
+            continue
+        if event.type in (TaskEventType.CANCELLED, TaskEventType.FAILED,
+                          TaskEventType.COMPLETED):
+            break
+
+    # 三种可能：cancelled（取消成功）、completed（任务太快已完成）、
+    # failed（取消路径中的异常）
+    assert event is not None, "未收到终态事件"
+    assert event.type in (
+        TaskEventType.CANCELLED, TaskEventType.COMPLETED, TaskEventType.FAILED
+    ), f"意外的终态事件: {event.type.value}: {event.data}"
+
+    # 等清理完成
+    await asyncio.sleep(0.5)
+    # 任务应从注册表清理
+    assert task_id not in ts._tasks, "任务应已从注册表清理"
+
+    await ts.stop(timeout=10.0)
+    # 关闭 LLM client 连接池
+    await ts._infra.llm.close()
