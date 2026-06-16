@@ -148,6 +148,11 @@ class Orchestrator:
         exec_state.waiting_for_approval = False
         logger.info("Orchestrator.run 开始: task_id=%s, nodes=%d", task_id, graph.node_count)
 
+        # 恢复执行——将瞬时 RESUMING 转为 RUNNING
+        if task_state.status == TaskStatus.RESUMING:
+            task_state.status = TaskStatus.RUNNING
+            task_state.updated_at = now_iso()
+
         try:
             while not task_state.is_terminal():
                 exec_state.updated_at = now_iso()

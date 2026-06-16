@@ -110,6 +110,8 @@ class SubAgent:
         # None = 尚未启动 / 已结束
         self._task_state: TaskState | None = None
         self._graph: PlanGraph | None = None
+        self._context: DelegationContext | None = None
+        self._mailbox: TaskMailbox | None = None
 
     # ── 主入口 ─────────────────────────────────────────────────────────────────
 
@@ -136,6 +138,8 @@ class SubAgent:
             updated_at=now_iso(),
         )
         self._task_state = task_state
+        self._context = context   # resume 时需要 intent/tools/constraints
+        self._mailbox = mailbox   # resume 时复用同一个 mailbox
 
         # ── 创建 per-task 组件 ──
         from Module.task_system.artifact_store import ArtifactStore
@@ -180,6 +184,42 @@ class SubAgent:
 
         # 2. 执行-决策循环
         await self._execute(task_state, graph, mailbox, context)
+
+    # ── 恢复 ─────────────────────────────────────────────────────────────────
+
+    async def resume_from_pause(self) -> None:
+        """从 PAUSED 恢复——CAS 检查 → 加载 checkpoint → _execute。
+
+        Raises:
+            RuntimeError: 非 PAUSED 状态 / checkpoint 缺失 / graph 缺失
+        """
+        ts = self._task_state
+        if ts is None or ts.status != TaskStatus.PAUSED:
+            raise RuntimeError(
+                f"task_id={self._mailbox.task_id if self._mailbox else 'N/A'} 非 PAUSED 状态"
+                f"（{ts.status if ts else 'None'}），无法 resume"
+            )
+
+        ts.status = TaskStatus.RESUMING
+        ts.updated_at = now_iso()
+
+        checkpoint = await self._checkpoint_mgr.load(self._mailbox.task_id)
+        if checkpoint is None:
+            ts.status = TaskStatus.FAILED
+            ts.updated_at = now_iso()
+            raise RuntimeError("checkpoint 缺失，无法恢复")
+
+        if self._graph is None:
+            ts.status = TaskStatus.FAILED
+            ts.updated_at = now_iso()
+            raise RuntimeError("graph 缺失，无法恢复")
+
+        assert self._context is not None, "run() 必须先于 resume_from_pause()"
+
+        await self._execute(
+            ts, self._graph, self._mailbox, self._context,
+            resume_from=checkpoint.exec,
+        )
 
     # ── 规划阶段 ─────────────────────────────────────────────────────────────
 
@@ -301,6 +341,7 @@ class SubAgent:
         graph: PlanGraph,
         mailbox: TaskMailbox,
         context: DelegationContext,
+        resume_from: ExecutionState | None = None,
     ) -> None:
         """执行-决策主循环。
 
@@ -310,8 +351,8 @@ class SubAgent:
 
         resume_from 在 Replan 后携带旧 ExecutionState，
         Orchestrator 合并后保留已成功节点的状态，避免重复执行。
+        resume 时传入 pause checkpoint 的 ExecutionState。
         """
-        resume_from: ExecutionState | None = None
         assert self._orchestrator is not None
         while True:
             result = await self._orchestrator.run(

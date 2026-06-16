@@ -24,6 +24,7 @@ from Module.task_system.schema import (
     NodeStatus,
     now_iso,
     ResumeError,
+    ResumeErrorCode,
     SubmitError,
     SubmitRejectionCode,
     TaskDAG,
@@ -225,6 +226,11 @@ class TaskSystem:
                     caller="TaskSystem",
                 )
             finally:
+                # PAUSED 任务保持存活——checkpoint/mailbox/SubAgent/semaphore
+                # 全部保留，等待 resume() 恢复执行。
+                if (sub_agent._task_state is not None and
+                    sub_agent._task_state.status == TaskStatus.PAUSED):
+                    return
                 self._cleanup_task(task_id)
                 try:
                     await self._cleanup_storage(task_id, sub_agent)
@@ -300,16 +306,95 @@ class TaskSystem:
         logger.info("TaskSystem.pause: task_id=%s 暂停请求已发送", task_id)
 
     async def resume(self, task_id: TaskId) -> TaskMailbox | ResumeError:
-        """从 checkpoint 恢复暂停的任务。
+        """从 PAUSED 恢复执行。
 
-        仅 PAUSED 状态可 resume（CAS 防双 resume）。
-        成功返回已有的 TaskMailbox（pause 时不销毁）。
+        幂等——已在 RUNNING/RESUMING 的任务直接返回 mailbox。
+        仅 PAUSED 状态经过 CAS 检查后进入实际恢复流程。
         v1 限制：使用原始 DelegationContext，不支持注入新上下文。
         """
-        # TODO: 从 CheckpointManager 加载 checkpoint
-        # TODO: CAS 检查 task_state.status == PAUSED
-        # TODO: 重建 SubAgent → 注入 checkpoint → 恢复执行
-        raise NotImplementedError("TaskSystem.resume() 尚未实现")
+        sub_agent = self._tasks.get(task_id)
+        if sub_agent is None:
+            return ResumeError(
+                code=ResumeErrorCode.CHECKPOINT_NOT_FOUND,
+                message=f"task_id={task_id} 不存在或已清理",
+            )
+
+        ts = sub_agent._task_state
+        if ts is None:
+            return ResumeError(
+                code=ResumeErrorCode.INVALID_STATE,
+                message="任务尚未初始化",
+            )
+        if ts.is_terminal():
+            return ResumeError(
+                code=ResumeErrorCode.INVALID_STATE,
+                message=f"任务已终态（{ts.status.value}），无法 resume",
+            )
+        if ts.status in (TaskStatus.RUNNING, TaskStatus.RESUMING):
+            # 幂等——已经在跑了
+            mailbox = self._mailboxes.get(task_id)
+            if mailbox is not None:
+                return mailbox
+            return ResumeError(
+                code=ResumeErrorCode.INVALID_STATE,
+                message="任务正在运行但 mailbox 缺失，内部状态不一致",
+            )
+        if ts.status != TaskStatus.PAUSED:
+            return ResumeError(
+                code=ResumeErrorCode.INVALID_STATE,
+                message=f"任务状态为 {ts.status.value}，仅 PAUSED 可 resume",
+            )
+
+        mailbox = self._mailboxes.get(task_id)
+        if mailbox is None:
+            return ResumeError(
+                code=ResumeErrorCode.CHECKPOINT_NOT_FOUND,
+                message="mailbox 缺失，内部状态不一致",
+            )
+
+        async def _run_resume() -> None:
+            """包装 resume_from_pause，处理异常 + 终态清理。
+
+            和 submit() 的 _run_and_cleanup 对称——resume 后的终态
+            （COMPLETED/FAILED/CANCELLED）由此 finally 块负责清理。
+            """
+            try:
+                await sub_agent.resume_from_pause()
+            except asyncio.CancelledError:
+                push_mailbox_event(
+                    mailbox, TaskEventType.FAILED, {
+                        "task_id": str(task_id),
+                        "error": "任务被取消",
+                        "error_type": TaskErrorCode.INTERNAL_ERROR.value,
+                    },
+                    caller="TaskSystem",
+                )
+                raise
+            except Exception:
+                logger.exception("TaskSystem: task_id=%s resume 异常", task_id)
+                push_mailbox_event(
+                    mailbox, TaskEventType.FAILED, {
+                        "task_id": str(task_id),
+                        "error": "resume 执行异常",
+                        "error_type": TaskErrorCode.INTERNAL_ERROR.value,
+                    },
+                    caller="TaskSystem",
+                )
+            finally:
+                self._cleanup_task(task_id)
+                try:
+                    await self._cleanup_storage(task_id, sub_agent)
+                except Exception:
+                    logger.exception(
+                        "TaskSystem: task_id=%s resume 后存储清理失败", task_id,
+                    )
+                assert self._semaphore is not None
+                self._semaphore.release()
+
+        task = asyncio.create_task(_run_resume())
+        self._task_futures[task_id] = task
+        logger.info("TaskSystem.resume: task_id=%s 已恢复", task_id)
+        return mailbox
 
     async def cancel(self, task_id: TaskId) -> bool:
         """软取消任务。二次确认由 CognitiveLoop 在上层处理。
