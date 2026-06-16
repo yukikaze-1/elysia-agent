@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from Module.task_system.core.planner import Planner, _PlanParseError
+from Module.task_system.utils import strip_markdown_fence, format_tools
 from Module.task_system.schema import (
     ArtifactId,
     ConstraintConfig,
@@ -28,6 +29,7 @@ from Module.task_system.schema import (
     TokenComponentType,
     Tool,
     OutputContract,
+    SessionId,
 )
 
 
@@ -36,14 +38,14 @@ from Module.task_system.schema import (
 
 def test_format_tools_empty():
     """空列表 → 占位文本。"""
-    result = Planner._format_tools([])
+    result = format_tools([], include_capabilities=False)
     assert "无可用工具" in result
 
 
 def test_format_tools_single():
     """单个工具 → 一行 name: description。"""
     tools = [Tool(name="web_search", description="搜索互联网")]
-    result = Planner._format_tools(tools)
+    result = format_tools(tools, include_capabilities=False)
     assert result == "- web_search: 搜索互联网"
 
 
@@ -53,7 +55,7 @@ def test_format_tools_multiple():
         Tool(name="web_search", description="搜索互联网"),
         Tool(name="send_email", description="发送邮件"),
     ]
-    result = Planner._format_tools(tools)
+    result = format_tools(tools, include_capabilities=False)
     lines = result.split("\n")
     assert len(lines) == 2
     assert lines[0] == "- web_search: 搜索互联网"
@@ -63,7 +65,7 @@ def test_format_tools_multiple():
 def test_format_tools_no_description():
     """工具无 description → 只显示名称。"""
     tools = [Tool(name="get_time", description="")]
-    result = Planner._format_tools(tools)
+    result = format_tools(tools, include_capabilities=False)
     assert result == "- get_time"
 
 
@@ -72,37 +74,37 @@ def test_format_tools_no_description():
 
 def test_strip_no_fence():
     """无代码块 → 原样返回。"""
-    result = Planner._strip_markdown_fence('{"nodes": []}')
+    result = strip_markdown_fence('{"nodes": []}')
     assert result == '{"nodes": []}'
 
 
 def test_strip_json_fence():
     """"```json ... ```" → 去掉包裹。"""
-    result = Planner._strip_markdown_fence('```json\n{"nodes": []}\n```')
+    result = strip_markdown_fence('```json\n{"nodes": []}\n```')
     assert result == '{"nodes": []}'
 
 
 def test_strip_plain_fence():
     """"``` ... ```"（无语言标记）→ 去掉包裹。"""
-    result = Planner._strip_markdown_fence('```\n{"nodes": []}\n```')
+    result = strip_markdown_fence('```\n{"nodes": []}\n```')
     assert result == '{"nodes": []}'
 
 
 def test_strip_fence_with_trailing_spaces():
     """尾随空白 → 正确处理。"""
-    result = Planner._strip_markdown_fence('```json\n{"nodes": []}\n```   ')
+    result = strip_markdown_fence('```json\n{"nodes": []}\n```   ')
     assert result == '{"nodes": []}'
 
 
 def test_strip_fence_with_trailing_newlines():
     """末尾有空行 → 正确处理。"""
-    result = Planner._strip_markdown_fence('```\n{"nodes": []}\n```\n\n')
+    result = strip_markdown_fence('```\n{"nodes": []}\n```\n\n')
     assert result == '{"nodes": []}'
 
 
 def test_strip_leading_whitespace():
     """开头空白 → 先 strip 再处理。"""
-    result = Planner._strip_markdown_fence('  \n  ```json\n{"nodes": []}\n```')
+    result = strip_markdown_fence('  \n  ```json\n{"nodes": []}\n```')
     assert result == '{"nodes": []}'
 
 
@@ -562,7 +564,7 @@ def test_plan_records_token_usage(planner_with_mock_llm):
         hints="使用 web_search 工具",
         tools=[],
         summarized_context="无",
-        session_id="test-session-1",
+        session_id= SessionId("test-session-1"),
     )
     global_constraints = ConstraintConfig(max_dag_nodes=20, max_mutations=10)
 

@@ -10,6 +10,8 @@ import logging
 
 from typing import TYPE_CHECKING
 
+from Module.task_system.utils import format_tools, strip_markdown_fence
+
 from Module.task_system.schema import (
     ArtifactId,
     ConstraintConfig,
@@ -244,7 +246,7 @@ class Planner:
         max_mutations = tc.max_mutations
 
         # ── 构建 prompt ──
-        tools_desc = self._format_tools(context.tools)
+        tools_desc = format_tools(context.tools, include_capabilities=False)
         hints = context.hints or "（无）"
         ctx_text = context.summarized_context or "（无）"
 
@@ -330,7 +332,7 @@ class Planner:
         # 与 plan() 保持一致——使用相同的解析后约束值
 
         # ── 构建 prompt ──
-        tools_desc = self._format_tools(tools)
+        tools_desc = format_tools(tools, include_capabilities=False)
         system = _REPLAN_SYSTEM_PROMPT.format(
             max_nodes=max_nodes,
             max_mutations=max_mutations,
@@ -405,7 +407,7 @@ class Planner:
         Raises:
             _PlanParseError: JSON 不合法或缺少必要字段
         """
-        text = self._strip_markdown_fence(raw)
+        text = strip_markdown_fence(raw)
 
         try:
             data = json.loads(text)
@@ -650,7 +652,7 @@ class Planner:
         Raises:
             _PlanParseError: JSON 不合法或缺少必要字段
         """
-        text = self._strip_markdown_fence(raw)
+        text = strip_markdown_fence(raw)
 
         try:
             data = json.loads(text)
@@ -720,37 +722,6 @@ class Planner:
             logger.warning("Planner: 未知 execution_mode=%r，fallback tool_call", raw)
             return ExecutionMode.TOOL_CALL
 
-    @staticmethod
-    def _strip_markdown_fence(text: str) -> str:
-        """去除 LLM 响应中可能的 markdown 代码块包裹。
-
-        处理 ```json ... ``` 和 ``` ... ``` 两种格式，
-        容忍首尾空白、尾随空行等情况。
-        """
-        import re
-        text = text.strip()
-        # 去掉开头的 ```json 或 ```（含可能的行尾空白）
-        text = re.sub(r'^```[a-z]*\s*\n', '', text)
-        # 去掉末尾的 ```（前面可能有任意空白行）
-        text = re.sub(r'\n```\s*$', '', text)
-        return text
-
-    # ── 内部：工具列表格式化 ──────────────────────────────────────────────────
-
-    @staticmethod
-    def _format_tools(tools: list[Tool]) -> str:
-        """将 Tool 列表格式化为 LLM prompt 可读的文本。
-
-        Tool.name 和 Tool.description 是必需字段，直接用属性访问。
-        如果对象缺少字段，让 AttributeError 抛出——静默降级会掩盖 LLM prompt 中的垃圾文本。
-        """
-        if not tools:
-            return "（无可用工具）"
-        lines: list[str] = []
-        for t in tools:
-            desc = t.description or ""
-            lines.append(f"- {t.name}: {desc}" if desc else f"- {t.name}")
-        return "\n".join(lines)
 
 
 # ── 内部异常 ────────────────────────────────────────────────────────────────────

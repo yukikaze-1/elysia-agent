@@ -391,11 +391,10 @@ async def test_get_task_status_returns_status():
 
 @pytest.mark.asyncio
 async def test_get_task_status_missing_task():
-    """任务不存在或已清理 → KeyError。"""
+    """任务不存在或已清理 → None。"""
     ts = await _build_task_system()
 
-    with pytest.raises(KeyError, match="不存在或已完成清理"):
-        ts.get_task_status(TaskId("nonexistent"))
+    assert ts.get_task_status(TaskId("nonexistent")) is None
 
 
 @pytest.mark.asyncio
@@ -644,7 +643,7 @@ async def test_cancel_running_sets_cancel_requested():
 
 @pytest.mark.asyncio
 async def test_cancel_paused_sets_cancelled_directly():
-    """PAUSED 任务 → 直接 CANCELLED，不依赖 Orchestrator。"""
+    """PAUSED 任务 → 直接 CANCELLED + 显式清理（不依赖 _run_and_cleanup）。"""
     ts = await _build_task_system()
 
     tid = TaskId("t1")
@@ -653,10 +652,22 @@ async def test_cancel_paused_sets_cancelled_directly():
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
 
+    # PAUSED→CANCELED 分支需要 AsyncMock checkpoint/artifact_store
+    sub_agent._checkpoint_mgr = MagicMock()
+    sub_agent._checkpoint_mgr.delete = AsyncMock()
+    sub_agent._artifact_store = MagicMock()
+    sub_agent._artifact_store.delete_by_task = AsyncMock()
+
+    # BoundedSemaphore 需要至少 1 个槽位被占用才能 release
+    # _build_task_system 创建了 max=5 的 semaphore，当前无占用（值=5）
+    # cancel 会 release → 从 5 到 6 超上限
+    # 模拟占用一个槽位：acquire 后 release 就会回到 5
+    await ts._semaphore.acquire()
+
     assert await ts.cancel(tid) is True
     assert task_state.status == TaskStatus.CANCELLED
-    # cancel_requested 不应被设置（直接跳过了）
-    assert exec_state.cancel_requested is False
+    # 验证清理被调用
+    sub_agent._checkpoint_mgr.delete.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -771,3 +782,55 @@ async def test_resume_paused_returns_mailbox():
     assert isinstance(result, TaskMailbox)
     # resume() 返回后恢复任务已创建
     assert tid in ts._task_futures
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PAUSED 查询可见性
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_paused_task_visible_in_query_apis():
+    """PAUSED 任务在查询 API 中可见——注册表未清理。
+
+    验证 pause+cleanup guard 正确工作——PAUSED 不被清理，
+    get_task_status / list_active_tasks / list_agents 都能看到。
+    """
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.PAUSED)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+
+    # 设置 plan 使其在 list_active_tasks 中可见
+    from Module.task_system.schema import DAG, DAGNode, NodeId, Plan
+    task_state.plan = Plan(
+        dag=DAG(nodes=[DAGNode(
+            node_id=NodeId("n1"),
+            description="获取时间",
+            output_as="output:time",
+        )]),
+        plan_version=1,
+    )
+    ts._tasks[tid] = sub_agent
+
+    # list_active_tasks 会 await checkpoint_mgr.load()，需要 AsyncMock
+    sub_agent._checkpoint_mgr = MagicMock()
+    sub_agent._checkpoint_mgr.load = AsyncMock(return_value=None)
+
+    # get_task_status 可见
+    assert ts.get_task_status(tid) == TaskStatus.PAUSED
+
+    # list_active_tasks 可见
+    summaries = await ts.list_active_tasks()
+    paused_summaries = [s for s in summaries if s.task_id == tid]
+    assert len(paused_summaries) == 1, \
+        f"PAUSED 任务应在活跃列表中，实际: {[s.task_id for s in summaries]}"
+    assert paused_summaries[0].status == TaskStatus.PAUSED
+
+    # list_agents 可见
+    agents = ts.list_agents()
+    paused_agents = [a for a in agents.sub_agents if a.task_id == tid]
+    assert len(paused_agents) == 1
+    assert paused_agents[0].status == AgentStatus.PAUSED

@@ -292,14 +292,13 @@ class Orchestrator:
             )
 
         except asyncio.CancelledError:
+            # asyncio 级取消（stop() → task.cancel()）——Orchestrator 负责
+            # 状态清理 + checkpoint，事件推送由外层 TaskSystem._run_and_cleanup
+            # 统一处理，避免重复 FAILED 事件。
             logger.warning("Orchestrator: task_id=%s 被取消", task_id)
-            task_state.status = TaskStatus.FAILED
+            task_state.status = TaskStatus.CANCELLED
             task_state.updated_at = now_iso()
-            await self._push_mailbox(mailbox, TaskEventType.FAILED, {
-                "task_id": str(task_id),
-                "error": "任务被取消",
-                "error_type": TaskErrorCode.INTERNAL_ERROR.value,
-            })
+            await self._save_checkpoint(task_state, exec_state)
             raise
         except Exception:
             logger.exception("Orchestrator 异常终止: task_id=%s", task_id)

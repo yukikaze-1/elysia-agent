@@ -339,6 +339,7 @@ async def test_run_loop_paused():
     await agent._execute(_task_state(), graph, mailbox, _delegation_context())
 
     # 验证 checkpoint 被保存
+    assert agent._checkpoint_mgr is not None
     agent._checkpoint_mgr.save.assert_called_once_with(TaskId("t1"), cp)
 
     # 验证 PAUSED 事件
@@ -415,6 +416,7 @@ async def test_handle_replan_dagpatch_success():
         ],
         add_edges=[(NodeId("get_time"), NodeId("a"))],
     )
+    assert agent._planner is not None
     agent._planner.replan = AsyncMock(return_value=patch)
 
     # 第一次 run() 返回 NEEDS_REPLAN，第二次返回 SUCCESS
@@ -463,6 +465,7 @@ async def test_handle_replan_dagpatch_validation_failure():
             DAGNode(node_id=NodeId("orphan"), description="无依赖无被依赖的节点")
         ],
     )
+    assert agent._planner is not None
     agent._planner.replan = AsyncMock(return_value=patch)
 
     mock_orch.run.return_value = OrchestratorResult(
@@ -498,11 +501,13 @@ async def test_handle_replan_full_replan_success():
         ], edges=[]),
         plan_version=0,  # sentinel——应被 SubAgent 覆写
     )
+    assert agent._planner is not None
     agent._planner.replan = AsyncMock(return_value=new_plan)
 
     # PlanValidator 返回 valid
     from Module.task_system.core.graph import PlanGraph
     valid_graph = PlanGraph.from_plan(new_plan)
+    assert agent._plan_validator is not None
     agent._plan_validator.validate = MagicMock(
         return_value=(ValidationResult(valid=True, action=ValidationAction.PROCEED), valid_graph)
     )
@@ -551,9 +556,11 @@ async def test_handle_replan_full_replan_validation_failure():
             DAGNode(node_id=NodeId("bad"), description="缺少 output_contract 的 required 节点"),
         ], edges=[]),
     )
+    assert agent._planner is not None
     agent._planner.replan = AsyncMock(return_value=new_plan)
 
     # PlanValidator 返回 invalid
+    assert agent._plan_validator is not None
     agent._plan_validator.validate = MagicMock(
         return_value=(
             ValidationResult(
@@ -619,6 +626,7 @@ async def test_handle_replan_not_implemented():
     """replan 抛出 NotImplementedError → 优雅降级 FAILED。"""
     agent = _make_sub_agent()
     mock_orch = _assign_execute_mocks(agent)
+    assert agent._planner is not None
     agent._planner.replan = AsyncMock(side_effect=NotImplementedError("replan 未实现"))
 
     mock_orch.run.return_value = OrchestratorResult(

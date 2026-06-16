@@ -3,10 +3,24 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from openai import AsyncOpenAI
+
+# ── 加载 .env ────────────────────────────────────────────────────────────────
+_env_path = Path(__file__).resolve().parents[4] / ".env"
+if _env_path.exists():
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                key, _, value = _line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key not in os.environ:
+                    os.environ[key] = value
 
 from Module.task_system.core.executor import Executor
 from Module.task_system.artifact_store import ArtifactStore
@@ -15,6 +29,7 @@ from Module.task_system.schema import (
     ArtifactId,
     ConstraintConfig,
     DAGNode,
+    ExecutionMode,
     NodeErrorCode,
     NodeId,
     OutputContract,
@@ -138,3 +153,103 @@ async def test_integration_no_matching_tool():
     else:
         print(f"\n    LLM 直出文本: duration={result.duration_ms}ms, "
               f"artifacts={len(result.artifact_refs)}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_integration_execute_llm_direct_mode():
+    """execution_mode=LLM_DIRECT → 跳过 tool matching，直接调 LLM 生成文本。
+
+    验证：
+    - 不调用 tool_registry.execute()
+    - 返回成功（无 error）
+    - 产物是 LLM 生成的文本内容
+    """
+    executor = await _build_integration_executor()
+    if executor is None:
+        pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
+
+    # 汇总类任务——Planner 会标注为 llm_direct
+    node = DAGNode(
+        node_id=NodeId("summarize"),
+        description="你是一位 AI 研究员。请用中文简要说明什么是 Transformer 架构，"
+                    "包括自注意力机制的核心思想。控制在 100 字以内。",
+        output_contract=OutputContract(description="简洁的中文解释，≤100 字"),
+        execution_mode=ExecutionMode.LLM_DIRECT,
+        input_bindings=[],
+        output_as=ArtifactId("output:summary"),
+    )
+
+    # 提供工具列表——llm_direct 模式跳过 tool matching，不应调用任何工具
+    tools = [
+        Tool(name="get_time", description="获取当前日期和时间"),
+    ]
+
+    result = await executor.execute(node, TaskId("task_llm_direct"), tools)
+
+    assert result.error is None, f"llm_direct 不应失败: {result.error}"
+    assert result.duration_ms > 0
+    assert len(result.artifact_refs) == 1
+
+    artifact = await executor._artifact_store.get(result.artifact_refs[0])
+    assert artifact is not None
+    assert artifact.content is not None
+    # 产物应是 LLM 生成的 Transformer 解释，不是 get_time 的时间字符串
+    content = str(artifact.content)
+    assert len(content) > 20, \
+        f"LLM 应生成有意义的内容，实际: {content}"
+    assert "Transformer" in content or "transformer" in content.lower() or \
+           "注意力" in content or "attention" in content.lower(), \
+        f"产物应包含 Transformer/注意力相关内容，实际: {content[:200]}"
+    print(f"\n    llm_direct 模式——LLM 直出文本，跳过工具匹配")
+    print(f"    产物长度: {len(content)} chars")
+    print(f"    耗时: {result.duration_ms}ms")
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_integration_execute_llm_direct_sentinel():
+    """tool_call 模式下 LLM 判断无需工具 → __llm_direct__ 哨兵路径。
+
+    节点描述为纯文本汇总任务——虽然 execution_mode=tool_call，
+    但 LLM（在 _match_tool 中）应自行判断不需要外部工具，
+    返回纯文本 → Executor 走 __llm_direct__ 哨兵路径。
+
+    验证：
+    - 不调用 tool_registry.execute()
+    - 返回成功
+    - 产物是 LLM 文本
+    """
+    executor = await _build_integration_executor()
+    if executor is None:
+        pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
+
+    node = DAGNode(
+        node_id=NodeId("compile"),
+        description="汇总以下信息：今天天气晴，气温 25°C，湿度 60%。"
+                    "请用一句中文总结今天的天气情况。",
+        output_contract=OutputContract(description="一句话天气总结"),
+        execution_mode=ExecutionMode.TOOL_CALL,  # 走 tool matching
+        input_bindings=[],
+        output_as=ArtifactId("output:compile"),
+    )
+
+    # 只提供不相关的工具——LLM 应判断无需调用
+    tools = [
+        Tool(name="get_time", description="获取当前日期和时间，支持指定时区和格式"),
+    ]
+
+    result = await executor.execute(node, TaskId("task_sentinel"), tools)
+
+    assert result.error is None, \
+        f"哨兵路径应成功（LLM 直出文本），实际 error={result.error}"
+    assert len(result.artifact_refs) == 1
+
+    artifact = await executor._artifact_store.get(result.artifact_refs[0])
+    assert artifact is not None
+    assert artifact.content is not None
+    assert len(str(artifact.content)) > 5, \
+        f"LLM 应生成有意义的内容，实际: {artifact.content}"
+    print(f"\n    tool_call 模式 → LLM 判为 __llm_direct__ 哨兵")
+    print(f"    产物内容: {artifact.content}")
+    print(f"    耗时: {result.duration_ms}ms")

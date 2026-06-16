@@ -57,9 +57,10 @@ class PlanGraph:
 
         for node in plan.dag.nodes:
             if node.node_id in nodes:
-                logger.warning(
-                    "PlanGraph.from_plan: 重复 node_id=%s，后面的覆盖前面的",
-                    node.node_id,
+                raise ValueError(
+                    f"PlanGraph.from_plan: 重复 node_id={node.node_id}——"
+                    "Planner 产出了两个同 ID 节点。每个节点必须有唯一 ID，"
+                    "请检查 Planner prompt 或 DAG 生成逻辑。"
                 )
             g.add_node(node.node_id)
             nodes[node.node_id] = node

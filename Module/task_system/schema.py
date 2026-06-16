@@ -1112,15 +1112,19 @@ class DBTNode(BaseModel):
 # ── 节点执行/评估结果 ────────────────────────────────────────────────────────────────
 
 class ExecutionStatus(StrEnum):
-    """Executor 工具执行状态——5 态。
+    """Executor 工具执行状态——5 态（v1 活跃 4 态）。
 
     工具是否正常返回？Orchestrator 据此决定 retry / skip / abort 等路由。
+
+    CANCELLED 为 v2 预留——Orchestrator 可能在任务级取消时直接传 CANCELLED
+    到 Evaluator._derive_action()。当前 v1 的 cancel 路径在 Orchestrator 循环
+    顶直接返回 CANCELED，绕过 Evaluator。
     """
     OK = "ok"                            # 工具正常返回
     TIMEOUT = "timeout"                  # 工具调用超时
     ERROR = "error"                      # 工具返回错误
     PERMISSION_DENIED = "permission_denied"  # 用户拒绝审批
-    CANCELLED = "cancelled"              # 外部取消（任务级中断）
+    CANCELLED = "cancelled"              # ⚠️ TODO(v2): 任务级取消路径预留
 
 
 class BusinessStatus(StrEnum):

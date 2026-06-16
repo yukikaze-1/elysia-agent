@@ -91,20 +91,21 @@ def test_from_plan_edge_missing_endpoint(caplog):
     assert "不存在" in caplog.text
 
 
-def test_from_plan_duplicate_node_id(caplog):
-    """重复 node_id → warning，后一个覆盖前一个。"""
-    plan = Plan(dag=DAG(
-        nodes=[
-            DAGNode(node_id=NodeId("a"), description="first"),
-            DAGNode(node_id=NodeId("a"), description="second"),
-        ],
-        edges=[],
-    ), plan_version=1)
-    pg = _graph(plan)
-
-    assert "重复" in caplog.text
-    assert pg.node_count == 1  # 只有一个
-    assert pg.nodes[NodeId("a")].description == "second"  # 后面覆盖
+def test_from_plan_duplicate_node_id():
+    """重复 node_id → ValueError（拒绝构建，防止旧边+新语义错配）。"""
+    from Module.task_system.schema import DAGNode, OutputContract, NodeId as NID
+    plan = Plan(
+        dag=DAG(
+            nodes=[
+                DAGNode(node_id=NID("a"), description="desc"),
+                DAGNode(node_id=NID("a"), description="different desc"),
+            ],
+            edges=[],
+        ),
+        plan_version=1,
+    )
+    with pytest.raises(ValueError, match="重复 node_id"):
+        PlanGraph.from_plan(plan)
 
 
 def test_to_plan_roundtrip():

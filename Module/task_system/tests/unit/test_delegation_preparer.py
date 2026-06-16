@@ -26,6 +26,7 @@ from Module.task_system.delegation_preparer import (
     DelegationPreparer,
     _PrepareParseError,
 )
+from Module.task_system.utils import strip_markdown_fence, format_tools
 from Module.task_system.schema import (
     ConstraintConfig,
     DelegationContext,
@@ -78,30 +79,30 @@ class TestStripMarkdownFence:
     """测试 markdown 代码块剥离。"""
 
     def test_no_fence(self):
-        result = DelegationPreparer._strip_markdown_fence('{"status": "ok"}')
+        result = strip_markdown_fence('{"status": "ok"}')
         assert result == '{"status": "ok"}'
 
     def test_json_fence(self):
-        result = DelegationPreparer._strip_markdown_fence(
+        result = strip_markdown_fence(
             '```json\n{"status": "ok"}\n```'
         )
         assert result == '{"status": "ok"}'
 
     def test_plain_fence(self):
-        result = DelegationPreparer._strip_markdown_fence(
+        result = strip_markdown_fence(
             '```\n{"status": "ok"}\n```'
         )
         assert result == '{"status": "ok"}'
 
     def test_fence_with_whitespace(self):
-        result = DelegationPreparer._strip_markdown_fence(
+        result = strip_markdown_fence(
             '  \n```json\n{"status": "ok"}\n```\n  '
         )
         assert result == '{"status": "ok"}'
 
     def test_multiline_json(self):
         json_str = '{\n  "status": "ok",\n  "tools": ["web_search"]\n}'
-        result = DelegationPreparer._strip_markdown_fence(
+        result = strip_markdown_fence(
             f'```json\n{json_str}\n```'
         )
         assert result == json_str
@@ -403,28 +404,28 @@ class TestFormatTools:
     """测试工具列表格式化。"""
 
     def test_empty_tools(self):
-        result = DelegationPreparer._format_tools([])
+        result = format_tools([])
         assert "无可用工具" in result
 
     def test_tool_with_description(self):
         tools = [Tool(name="search", description="搜索")]
-        result = DelegationPreparer._format_tools(tools)
+        result = format_tools(tools)
         assert "search" in result
         assert "搜索" in result
 
     def test_tool_with_capabilities(self):
         tools = [Tool(name="write", capabilities=["write", "mutation"])]
-        result = DelegationPreparer._format_tools(tools)
+        result = format_tools(tools)
         assert "write" in result
         assert "write, mutation" in result
 
     def test_tool_no_description_no_caps(self):
         tools = [Tool(name="bare_tool")]
-        result = DelegationPreparer._format_tools(tools)
+        result = format_tools(tools)
         assert "bare_tool" in result
 
     def test_multiple_tools(self, sample_tools):
-        result = DelegationPreparer._format_tools(sample_tools)
+        result = format_tools(sample_tools)
         assert "web_search" in result
         assert "send_email" in result
         assert "memory_search" in result

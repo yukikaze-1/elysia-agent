@@ -22,6 +22,7 @@ from Module.task_system.schema import (
     AgentType,
     DelegationContext,
     NodeStatus,
+    NodeId,
     now_iso,
     ResumeError,
     ResumeErrorCode,
@@ -426,7 +427,17 @@ class TaskSystem:
                     "task_id": str(task_id),
                     "reason": "用户取消",
                 })
-            # cleanup 由 _run_and_cleanup finally 块负责
+            # PAUSED 时 _run_and_cleanup 的 finally 已跳过清理（early return），
+            # 此处必须显式清理注册表 + storage + semaphore，否则永久泄漏。
+            self._cleanup_task(task_id)
+            try:
+                await self._cleanup_storage(task_id, sub_agent)
+            except Exception:
+                logger.exception(
+                    "TaskSystem: task_id=%s cancel(PAUSED) 存储清理失败", task_id,
+                )
+            assert self._semaphore is not None
+            self._semaphore.release()
             return True
 
         # ── 分支 2: RUNNING / PLANNING → 设取消标志 ──
@@ -457,22 +468,22 @@ class TaskSystem:
         raise NotImplementedError("TaskSystem.submit_approval() 尚未实现")
 
     # ── 查询（Pull 模式，供 CognitiveLoop + Debug WebUI）────────────────
+    #
+    # 注意：所有查询方法只在活跃任务（仍在 _tasks 注册表中的）上工作。
+    # 任务终态清理后不可查询——需要上层（CognitiveLoop / Debug WebUI）
+    # 缓存历史数据，或在 v2 引入 TaskSummaryStore 持久化。
 
-    def get_task_status(self, task_id: TaskId) -> TaskStatus:
+    def get_task_status(self, task_id: TaskId) -> TaskStatus | None:
         """查询任务当前状态。最轻量——用户问"做完了吗？"时 LLM 调用。
 
         只查活跃任务（仍在 _tasks 注册表中）。任务终态清理后不可查询——
-        此时应通过上层缓存（如 CognitiveLoop 的任务摘要）获取历史状态。
+        此时返回 None，调用方应通过上层缓存获取历史状态。
         """
         sub_agent = self._tasks.get(task_id)
         if sub_agent is None:
-            raise KeyError(
-                f"task_id={task_id} 不存在或已完成清理。"
-                f"活跃任务: {list(self._tasks.keys())}"
-            )
+            return None
         ts = sub_agent._task_state
         if ts is None:
-            # SubAgent.run() 尚未完成初始化——task_state 为 None
             return TaskStatus.PENDING
         return ts.status
 
@@ -536,7 +547,7 @@ class TaskSystem:
                 duration_ms=duration_ms,
                 nodes={"total": nodes_total, "completed": nodes_completed,
                        "failed": nodes_failed, "skipped": nodes_skipped},
-                tools_used=[n.description for n in ts.plan.dag.nodes] if ts.plan else [],
+                tools_used=await self._collect_tools_used(sub_agent, exec_state),
                 token_usage=ts.token_usage,
                 token_total=sum(ts.token_usage.values()),
                 approvals={"requested": 0, "approved": 0, "denied": 0},
@@ -588,12 +599,11 @@ class TaskSystem:
         elapsed_ms = 0
         if ts.created_at:
             try:
-                from datetime import datetime, timezone as tz
                 created = datetime.fromisoformat(ts.created_at)
                 if created.tzinfo is None:
-                    created = created.replace(tzinfo=tz.utc)
+                    created = created.replace(tzinfo=timezone.utc)
                 elapsed_ms = int(
-                    (datetime.now(tz.utc) - created).total_seconds() * 1000)
+                    (datetime.now(timezone.utc) - created).total_seconds() * 1000)
             except (ValueError, TypeError):
                 pass
 
@@ -648,9 +658,8 @@ class TaskSystem:
 
         v1 只有 SubAgent（无 Worker），worker_agents 固定为空列表。
         """
-        from datetime import datetime, timezone as tz
 
-        now = datetime.now(tz.utc)
+        now = datetime.now(timezone.utc)
         sub_agents: list[AgentInfo] = []
 
         for task_id, sub_agent in self._tasks.items():
@@ -752,6 +761,42 @@ class TaskSystem:
             by_component=by_component,
             by_model=by_model,
         )
+
+    # ── 内部辅助 ───────────────────────────────────────────────────────────
+
+    async def _collect_tools_used(
+        self,
+        sub_agent: SubAgent,
+        exec_state,  # ExecutionState | None
+    ) -> list[str]:
+        """从执行状态 + ArtifactStore 收集实际被调用的工具名。
+
+        遍历已完成节点的 artifact_refs → ArtifactStore.get() →
+        读取 metadata.tool_name，生成真实的工具审计列表。
+        无 exec_state / 无 artifact_store 时回退为空列表。
+        """
+        tool_names: list[str] = []
+        if exec_state is None:
+            return tool_names
+        store = sub_agent._artifact_store
+        if store is None:
+            return tool_names
+
+        for ns in exec_state.node_states.values():
+            if ns.status == NodeStatus.SUCCESS and ns.artifact_refs:
+                for ref in ns.artifact_refs:
+                    try:
+                        artifact = await store.get(ref)
+                        if artifact is not None and artifact.metadata:
+                            name = artifact.metadata.get("tool_name")
+                            if name and name not in tool_names:
+                                tool_names.append(str(name))
+                    except Exception:
+                        logger.debug(
+                            "_collect_tools_used: artifact %s 读取失败", ref,
+                            exc_info=True,
+                        )
+        return tool_names
 
     # ── 内部方法 ─────────────────────────────────────────────────────────
 

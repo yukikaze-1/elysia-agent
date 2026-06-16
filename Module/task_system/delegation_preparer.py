@@ -17,6 +17,8 @@ import re
 
 from openai import AsyncOpenAI
 
+from Module.task_system.utils import format_tools, strip_markdown_fence
+
 from Module.task_system.schema import (
     ConstraintConfig,
     DelegationContext,
@@ -187,7 +189,7 @@ class DelegationPreparer:
             intent=intent,
             hints=hints or "（无）",
             user_profile=self._format_user_profile(user_profile),
-            tools=self._format_tools(tools),
+            tools=format_tools(tools),
             session_messages=self._format_session_messages(session_messages),
         )
 
@@ -230,7 +232,7 @@ class DelegationPreparer:
         Raises:
             _PrepareParseError: JSON 不合法或缺少必要字段
         """
-        text = self._strip_markdown_fence(raw)
+        text = strip_markdown_fence(raw)
 
         try:
             data = json.loads(text)
@@ -246,14 +248,6 @@ class DelegationPreparer:
             raise _PrepareParseError(f"status 无效: {status!r}（期望 ok/no_matching_tools/too_vague）")
 
         return data
-
-    @staticmethod
-    def _strip_markdown_fence(text: str) -> str:
-        """去除 LLM 响应中可能的 markdown 代码块包裹。"""
-        text = text.strip()
-        text = re.sub(r'^```[a-z]*\s*\n', '', text)
-        text = re.sub(r'\n```\s*$', '', text)
-        return text
 
     # ── 内部：校验 ────────────────────────────────────────────────────────────
 
@@ -385,20 +379,6 @@ class DelegationPreparer:
 
     # ── 内部：格式化 ──────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _format_tools(tools: list[Tool]) -> str:
-        """将 Tool 列表格式化为 LLM prompt 可读的文本。"""
-        if not tools:
-            return "（无可用工具）"
-        lines: list[str] = []
-        for t in tools:
-            desc = t.description or ""
-            caps = ", ".join(t.capabilities) if t.capabilities else ""
-            line = f"- {t.name}: {desc}"
-            if caps:
-                line += f" [能力: {caps}]"
-            lines.append(line)
-        return "\n".join(lines)
 
     @staticmethod
     def _format_session_messages(messages: list[dict]) -> str:

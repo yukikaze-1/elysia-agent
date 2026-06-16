@@ -573,3 +573,246 @@ async def test_pause_and_resume():
 
     await ts.stop(timeout=10.0)
     await ts._infra.llm.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_cancel_on_paused_task():
+    """暂停后取消——PAUSED → CANCELLED 直接转换。
+
+    验证：
+    - pause 后 PAUSED 事件被推送
+    - cancel() 返回 True
+    - 收到 CANCELLED 事件（不是 COMPLETED 或 FAILED）
+    - 注册表清理
+    """
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
+
+    ts = await _build_task_system()
+    tools = _tools_from_manager(ts._infra.tool_registry)
+
+    ctx = DelegationContext(
+        intent="现在几点了",
+        tools=tools,
+        session_id=SessionId("cancel-paused-test"),
+    )
+    result = await ts.submit(ctx)
+    assert isinstance(result, TaskMailbox), f"submit 失败: {result}"
+    task_id = result.task_id
+
+    # 等第一个 PROGRESS——表示 Orchestrator 已启动
+    first_event = await asyncio.wait_for(result.get(), timeout=30.0)
+    assert first_event is not None, "未收到首个事件"
+
+    # pause
+    try:
+        await ts.pause(task_id)
+    except KeyError:
+        await ts.stop(timeout=10.0)
+        await ts._infra.llm.close()
+        return
+
+    # 等 PAUSED 事件
+    paused_received = False
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            event = await asyncio.wait_for(result.get(), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        if event is not None and event.type == TaskEventType.PAUSED:
+            paused_received = True
+            break
+        if event is not None and event.type in (
+            TaskEventType.COMPLETED, TaskEventType.FAILED,
+        ):
+            break
+
+    if not paused_received:
+        await ts.stop(timeout=10.0)
+        await ts._infra.llm.close()
+        return
+
+    # 验证 PAUSED 未清理注册表
+    assert task_id in ts._tasks, "PAUSED 任务应在注册表中"
+
+    # cancel → PAUSED 直接转 CANCELLED
+    assert await ts.cancel(task_id) is True
+
+    # 消费 CANCELLED 事件
+    event = None
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            event = await asyncio.wait_for(result.get(), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        if event is None:
+            continue
+        if event.type in (TaskEventType.CANCELLED, TaskEventType.FAILED):
+            break
+
+    assert event is not None, "未收到终态事件"
+    assert event.type == TaskEventType.CANCELLED, \
+        f"期望 CANCELLED，实际 {event.type.value}: {event.data}"
+
+    await asyncio.sleep(0.5)
+    assert task_id not in ts._tasks, "任务应已从注册表清理"
+
+    await ts.stop(timeout=10.0)
+    await ts._infra.llm.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_resume_idempotent_on_running():
+    """RUNNING 任务上调 resume → 幂等返回 TaskMailbox。
+
+    验证：
+    - resume() 对 RUNNING 任务返回 TaskMailbox（不是 ResumeError）
+    - 任务正常完成不受影响
+    """
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
+
+    ts = await _build_task_system()
+    tools = _tools_from_manager(ts._infra.tool_registry)
+
+    ctx = DelegationContext(
+        intent="现在几点了",
+        tools=tools,
+        session_id=SessionId("resume-idempotent-test"),
+    )
+    result = await ts.submit(ctx)
+    assert isinstance(result, TaskMailbox), f"submit 失败: {result}"
+    task_id = result.task_id
+
+    # 等第一个 PROGRESS——确认 Orchestrator 已启动（此时 status=RUNNING）
+    first_event = await asyncio.wait_for(result.get(), timeout=30.0)
+    assert first_event is not None, "未收到首个事件"
+
+    # 对 RUNNING 任务调 resume——应幂等返回 mailbox
+    resume_result = await ts.resume(task_id)
+    assert isinstance(resume_result, TaskMailbox), \
+        f"RUNNING 任务 resume 应幂等返回 TaskMailbox，实际: {type(resume_result)}"
+
+    # 任务应照常完成
+    event = None
+    deadline = time.monotonic() + 45.0
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            event = await asyncio.wait_for(result.get(), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        if event is None:
+            continue
+        if event.type in (TaskEventType.COMPLETED, TaskEventType.FAILED):
+            break
+
+    assert event is not None, "未收到终态事件"
+    assert event.type == TaskEventType.COMPLETED, \
+        f"期望 COMPLETED，实际 {event.type.value}: {event.data}"
+
+    await asyncio.sleep(0.5)
+    assert task_id not in ts._tasks, "任务应已从注册表清理"
+
+    await ts.stop(timeout=10.0)
+    await ts._infra.llm.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_concurrent_tasks_no_interference():
+    """max_sub_agents=2 时两个任务并发执行，互不干扰。
+
+    验证：
+    - 两个任务都拿到 mailbox 且不同 task_id
+    - 两个任务都正常完成（COMPLETED）
+    - 各自有独立的 token 记录
+    - 注册表均清理
+    """
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
+
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    llm = AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+    tm = ToolManager()
+    ctx_p = PluginContext(session_id="concurrent-isolation-test")
+    await tm.load_all([TimePlugin], ctx_p)
+
+    infra = AgentInfra(
+        llm=llm, milvus=None, http=None,
+        tool_registry=tm, constraints=ConstraintConfig(),
+    )
+    ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=2)
+    await ts.start()
+
+    tools = _tools_from_manager(ts._infra.tool_registry)
+
+    ctx1 = DelegationContext(
+        intent="现在几点了",
+        tools=tools,
+        session_id=SessionId("concurrent-iso-1"),
+    )
+    ctx2 = DelegationContext(
+        intent="现在几点了",
+        tools=tools,
+        session_id=SessionId("concurrent-iso-2"),
+    )
+
+    result1 = await ts.submit(ctx1)
+    result2 = await ts.submit(ctx2)
+    assert isinstance(result1, TaskMailbox), f"task1 submit 失败: {result1}"
+    assert isinstance(result2, TaskMailbox), f"task2 submit 失败: {result2}"
+    assert result1.task_id != result2.task_id, "两个任务应有不同 task_id"
+
+    async def _consume(mailbox: TaskMailbox, label: str) -> dict:
+        event = None
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                event = await asyncio.wait_for(mailbox.get(), timeout=remaining)
+            except asyncio.TimeoutError:
+                break
+            if event is None:
+                continue
+            if event.type in (TaskEventType.COMPLETED, TaskEventType.FAILED):
+                break
+        return {"label": label, "event": event}
+
+    r1, r2 = await asyncio.gather(
+        _consume(result1, "task1"),
+        _consume(result2, "task2"),
+    )
+
+    assert r1["event"] is not None, "task1 未收到终态事件"
+    assert r1["event"].type == TaskEventType.COMPLETED, \
+        f"task1 期望 COMPLETED，实际 {r1['event'].type.value}"
+    assert r2["event"] is not None, "task2 未收到终态事件"
+    assert r2["event"].type == TaskEventType.COMPLETED, \
+        f"task2 期望 COMPLETED，实际 {r2['event'].type.value}"
+
+    t1_data = r1["event"].data
+    t2_data = r2["event"].data
+    assert t1_data.get("token_total", 0) > 0, "task1 应有 token 消耗"
+    assert t2_data.get("token_total", 0) > 0, "task2 应有 token 消耗"
+
+    await asyncio.sleep(0.5)
+    assert result1.task_id not in ts._tasks, "task1 应已清理"
+    assert result2.task_id not in ts._tasks, "task2 应已清理"
+
+    await ts.stop(timeout=10.0)
+    await ts._infra.llm.close()
