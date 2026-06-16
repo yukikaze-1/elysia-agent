@@ -11,9 +11,9 @@
 |------|------|
 | 生产代码 | 20 文件, ~4,500 行 |
 | 测试代码 | 21 文件 |
-| 单元测试 | **287 tests**, ~4.3s |
-| 集成测试 | 27 tests (含 4 e2e), ~4min |
-| 最近提交 | `ca69ffa` — cancel 集成测试 |
+| 单元测试 | **294 tests**, ~4.3s |
+| 集成测试 | 28 tests (含 4 e2e), ~4min |
+| 最近提交 | `0daa907` — resume 集成测试 |
 
 ---
 
@@ -103,7 +103,7 @@ TaskSystem
 
 | 方法 | 当前状态 |
 |------|----------|
-| `resume()` | ⚠️ `NotImplementedError` |
+| `resume()` | ✅ 已实现 |
 | `cancel()` | ✅ 已实现 |
 | `submit_approval()` | ⚠️ `NotImplementedError` |
 

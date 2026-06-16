@@ -24,6 +24,8 @@ from Module.task_system.schema import (
     NodeState,
     NodeStatus,
     NodeId,
+    ResumeError,
+    ResumeErrorCode,
     SubmitError,
     TaskId,
     TaskState,
@@ -35,6 +37,7 @@ from Module.task_system.schema import (
     TokenUsage,
     now_iso,
 )
+from Module.task_system.mailbox import TaskMailbox
 
 
 # ── 工厂函数 ────────────────────────────────────────────────────────────────
@@ -687,3 +690,84 @@ async def test_cancel_task_state_none_returns_true():
     ts._tasks[tid] = sub_agent
 
     assert await ts.cancel(tid) is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# resume()
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_resume_missing_task_returns_error():
+    """不存在的 task_id → ResumeError(CHECKPOINT_NOT_FOUND)。"""
+    ts = await _build_task_system()
+    result = await ts.resume(TaskId("nonexistent"))
+    assert isinstance(result, ResumeError)
+    assert result.code == ResumeErrorCode.CHECKPOINT_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_resume_terminal_task_returns_error():
+    """已终态任务 → ResumeError(INVALID_STATE)。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.COMPLETED)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    result = await ts.resume(tid)
+    assert isinstance(result, ResumeError)
+    assert result.code == ResumeErrorCode.INVALID_STATE
+
+
+@pytest.mark.asyncio
+async def test_resume_running_is_idempotent():
+    """RUNNING 任务 → 直接返回 mailbox（幂等）。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+    ts._mailboxes[tid] = TaskMailbox(tid)
+
+    result = await ts.resume(tid)
+    # 幂等——返回 mailbox 而非 ResumeError
+    assert isinstance(result, TaskMailbox)
+
+
+@pytest.mark.asyncio
+async def test_resume_not_paused_returns_error():
+    """非 PAUSED/非 RUNNING 状态（PLANNING）→ ResumeError。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.PLANNING)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    result = await ts.resume(tid)
+    assert isinstance(result, ResumeError)
+    assert result.code == ResumeErrorCode.INVALID_STATE
+
+
+@pytest.mark.asyncio
+async def test_resume_paused_returns_mailbox():
+    """PAUSED 任务 → 返回 mailbox（恢复任务异步创建）。"""
+    ts = await _build_task_system()
+
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.PAUSED)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+    ts._mailboxes[tid] = TaskMailbox(tid)
+
+    result = await ts.resume(tid)
+    assert isinstance(result, TaskMailbox)
+    # resume() 返回后恢复任务已创建
+    assert tid in ts._task_futures

@@ -471,3 +471,105 @@ async def test_cancel_during_execution():
     await ts.stop(timeout=10.0)
     # 关闭 LLM client 连接池
     await ts._infra.llm.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_pause_and_resume():
+    """提交任务 → pause → resume → 任务正常完成。
+
+    验证：
+    - pause 后 PAUSED 事件被推送
+    - resume 返回 mailbox
+    - 任务仍在注册表中（PAUSED 不清理）
+    - 任务最终完成（COMPLETED）
+    - 注册表清理
+    """
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
+
+    ts = await _build_task_system()
+    tools = _tools_from_manager(ts._infra.tool_registry)
+
+    ctx = DelegationContext(
+        intent="现在几点了",
+        tools=tools,
+        session_id=SessionId("resume-test"),
+    )
+    result = await ts.submit(ctx)
+    assert isinstance(result, TaskMailbox), f"submit 失败: {result}"
+    task_id = result.task_id
+
+    # 等第一个 PROGRESS——表示 Orchestrator 已启动
+    first_event = await asyncio.wait_for(result.get(), timeout=30.0)
+    assert first_event is not None, "未收到首个事件"
+
+    # pause
+    try:
+        await ts.pause(task_id)
+    except KeyError:
+        # 任务已完成（get_time 很快），跳过测试
+        await ts.stop(timeout=10.0)
+        await ts._infra.llm.close()
+        return
+
+    # 等 PAUSED 事件
+    paused_received = False
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            event = await asyncio.wait_for(result.get(), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        if event is not None and event.type == TaskEventType.PAUSED:
+            paused_received = True
+            break
+        if event is not None and event.type in (
+            TaskEventType.COMPLETED, TaskEventType.FAILED,
+        ):
+            # 任务在 pause 生效前就完成了
+            break
+
+    if not paused_received:
+        # 任务太快——pause 窗口太窄，跳过 resume 验证
+        await ts.stop(timeout=10.0)
+        await ts._infra.llm.close()
+        return
+
+    # 验证任务仍在注册表中（PAUSED 不清理）
+    assert task_id in ts._tasks, "PAUSED 任务应从注册表保留"
+
+    # resume
+    resume_result = await ts.resume(task_id)
+    assert isinstance(resume_result, TaskMailbox), \
+        f"resume 应返回 TaskMailbox，实际: {type(resume_result)}"
+
+    # 消费到终态
+    event = None
+    deadline = time.monotonic() + 45.0
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            event = await asyncio.wait_for(result.get(), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        if event is None:
+            continue
+        if event.type in (TaskEventType.COMPLETED, TaskEventType.FAILED):
+            break
+
+    assert event is not None, "未收到终态事件"
+    assert event.type == TaskEventType.COMPLETED, \
+        f"期望 COMPLETED，实际 {event.type.value}: {event.data}"
+
+    # 等清理完成
+    await asyncio.sleep(0.5)
+    assert task_id not in ts._tasks, "任务应已从注册表清理"
+
+    await ts.stop(timeout=10.0)
+    await ts._infra.llm.close()

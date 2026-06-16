@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from Module.task_system.core.sub_agent import SubAgent
+from Module.task_system.infra import AgentInfra
 from Module.task_system.mailbox import TaskMailbox
 from Module.task_system.schema import (
     ArtifactId,
@@ -791,3 +793,70 @@ def _collect_mailbox_events(mailbox: TaskMailbox) -> list:
             break
         events.append(ev)
     return events
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# resume_from_pause()
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_resume_from_pause_not_paused_raises():
+    """非 PAUSED 状态调 resume_from_pause → RuntimeError。"""
+    from Module.task_system.mailbox import TaskMailbox
+
+    infra = AgentInfra(
+        llm=MagicMock(),
+        milvus=None,
+        http=None,
+        tool_registry=MagicMock(),
+        constraints=ConstraintConfig(),
+    )
+    sub_agent = SubAgent(infra=infra, hitl_notifier=MagicMock())
+
+    # 手动设 task_state 为非 PAUSED
+    sub_agent._task_state = TaskState(
+        task_id=TaskId("t1"),
+        status=TaskStatus.RUNNING,
+        created_at=now_iso(),
+        updated_at=now_iso(),
+    )
+    sub_agent._mailbox = TaskMailbox(TaskId("t1"))
+
+    with pytest.raises(RuntimeError, match="非 PAUSED"):
+        await sub_agent.resume_from_pause()
+
+
+@pytest.mark.asyncio
+async def test_resume_from_pause_no_checkpoint_raises():
+    """PAUSED 但 checkpoint 缺失 → RuntimeError + 状态切到 FAILED。"""
+    from Module.task_system.mailbox import TaskMailbox
+
+    infra = AgentInfra(
+        llm=MagicMock(),
+        milvus=None,
+        http=None,
+        tool_registry=MagicMock(),
+        constraints=ConstraintConfig(),
+    )
+    sub_agent = SubAgent(infra=infra, hitl_notifier=MagicMock())
+
+    task_state = TaskState(
+        task_id=TaskId("t1"),
+        status=TaskStatus.PAUSED,
+        created_at=now_iso(),
+        updated_at=now_iso(),
+    )
+    sub_agent._task_state = task_state
+    sub_agent._mailbox = TaskMailbox(TaskId("t1"))
+
+    # 注入 mock CheckpointManager——load 返回 None（模拟缺失）
+    mock_cm = MagicMock()
+    mock_cm.load = AsyncMock(return_value=None)
+    sub_agent._checkpoint_mgr = mock_cm
+
+    with pytest.raises(RuntimeError, match="checkpoint 缺失"):
+        await sub_agent.resume_from_pause()
+
+    # 验证状态切到了 FAILED
+    assert task_state.status == TaskStatus.FAILED

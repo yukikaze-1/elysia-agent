@@ -108,7 +108,7 @@ class TaskSystem:
         Raises: KeyError（任务不存在）/ RuntimeError（已终态/已暂停/未启动）。"""
 
     async def resume(self, task_id: TaskId) -> TaskMailbox | ResumeError:
-        """⚠️ 未实现——raise NotImplementedError。"""
+        """✅ 已实现——从 PAUSED 恢复执行。幂等——RUNNING 直接返回 mailbox。"""
 
     async def cancel(self, task_id: TaskId) -> bool:
         """✅ 已实现——幂等软取消。设置 exec_state.cancel_requested 标志，Orchestrator 安全点停止。
