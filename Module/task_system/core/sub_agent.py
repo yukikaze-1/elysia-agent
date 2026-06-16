@@ -478,8 +478,8 @@ class SubAgent:
                 node_results=self._extract_node_results(checkpoint),
                 intent=context.intent,
                 tools=context.tools,
-                max_nodes=tc.max_dag_nodes,
-                max_mutations=tc.max_mutations,
+                max_nodes=tc.max_dag_nodes or self._infra.constraints.max_dag_nodes,
+                max_mutations=tc.max_mutations or self._infra.constraints.max_mutations,
             )
         except NotImplementedError:
             # 优雅降级：replan 未实现 → 任务失败

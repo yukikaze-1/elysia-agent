@@ -530,10 +530,12 @@ async def test_integration_global_constraints_with_resolve():
 
     # 验证 resolve() 强制 clamp——真正的安全保障
     resolved = result.context.task_constraints.resolve(custom_constraints)
+    assert resolved.max_dag_nodes is not None
     assert resolved.max_dag_nodes <= custom_constraints.max_dag_nodes, (
         f"resolve() 后 max_dag_nodes={resolved.max_dag_nodes} "
         f"超出 {custom_constraints.max_dag_nodes}"
     )
+    assert resolved.max_mutations is not None
     assert resolved.max_mutations <= custom_constraints.max_mutations, (
         f"resolve() 后 max_mutations={resolved.max_mutations} "
         f"超出 {custom_constraints.max_mutations}"

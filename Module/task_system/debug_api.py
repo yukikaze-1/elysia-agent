@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _HEARTBEAT_INTERVAL = 30.0   # 30s 无事件则发心跳
 _POLL_INTERVAL = 0.5         # 500ms 内部轮询
+_SENTINEL: dict = {}          # shutdown 信号，替代 None（Queue[dict] 不接受 None）
 
 
 class TaskDebugAPI:
@@ -59,7 +60,7 @@ class TaskDebugAPI:
             self._poll_task = None
         # 通知所有订阅者关闭连接
         for q in self._subscribers.values():
-            await q.put(None)  # sentinel
+            await q.put(_SENTINEL)  # sentinel——通知 SSE handler 退出
         self._subscribers.clear()
         logger.info("TaskDebugAPI: 已停止")
 
@@ -271,7 +272,7 @@ class TaskDebugAPI:
         try:
             while True:
                 event = await q.get()
-                if event is None:  # sentinel——stop()
+                if event is _SENTINEL:  # sentinel——stop() 发送
                     break
                 data = json.dumps(event["data"], ensure_ascii=False, default=str)
                 await resp.write(

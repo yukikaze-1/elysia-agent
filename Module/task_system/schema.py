@@ -325,6 +325,10 @@ class UserProfile(BaseModel):
     """
     model_config = {"extra": "allow"}  # 暂时允许任意字段
 
+    # 占位字段——供集成测试使用，后续由 CognitiveLoop 填充
+    preferences: str | dict[str, str] = ""
+    language: str = "zh"
+
 
 class Tool(BaseModel):
     """工具描述符——TaskSystem 对 Module/tool 工具的轻量投影。

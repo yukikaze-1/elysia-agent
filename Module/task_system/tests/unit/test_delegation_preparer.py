@@ -294,6 +294,7 @@ class TestBuildResult:
         result = DelegationPreparer._build_result(
             parsed, "intent", None, sample_tools, SessionId("s1"),
         )
+        assert result.context
         tc = result.context.task_constraints
         assert tc.max_dag_nodes == 5
         assert tc.max_mutations == 2
@@ -490,14 +491,20 @@ class TestFormatUserProfile:
     def test_empty_profile(self):
         profile = UserProfile()
         result = DelegationPreparer._format_user_profile(profile)
-        assert "无用户画像" in result
+        # 默认字段 prefs={} + lang="zh" → JSON 输出
+        assert "preferences" in result
+        assert "language" in result
 
     def test_profile_with_extra_fields(self):
-        """UserProfile 当前 extra="allow"，任意字段都接受。"""
-        profile = UserProfile(preferences="喜欢简洁回答", language="zh")
+        """UserProfile 接受 declared 字段 + extra 字段。"""
+        profile = UserProfile(
+            preferences={"style": "简洁回答"},
+            language="zh",
+            extra_field="任意值",  # extra="allow" 仍然生效
+        )
         result = DelegationPreparer._format_user_profile(profile)
-        assert "喜欢简洁回答" in result
-        assert "language" in result
+        assert "简洁回答" in result
+        assert "extra_field" in result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

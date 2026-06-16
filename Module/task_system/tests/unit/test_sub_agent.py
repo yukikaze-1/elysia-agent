@@ -568,6 +568,7 @@ def test_check_meltdown_ok():
     agent._infra.constraints = ConstraintConfig(max_failure_count=5)
 
     ts = _task_state()
+    assert ts.plan is not None
     ts.plan.plan_version = 5  # 5 ≤ 5，不触发
 
     assert agent._check_meltdown(ts) is None
@@ -579,6 +580,7 @@ def test_check_meltdown_triggers():
     agent._infra.constraints = ConstraintConfig(max_failure_count=3)
 
     ts = _task_state()
+    assert ts.plan is not None
     ts.plan.plan_version = 4  # 4 > 3，触发
 
     reason = agent._check_meltdown(ts)

@@ -392,7 +392,10 @@ class TaskSystem:
         summaries: list[TaskSummary] = []
         for task_id, sub_agent in self._tasks.items():
             ts = sub_agent._task_state
-            checkpoint = await self._checkpoint_mgr.load(task_id)
+            checkpoint = (
+                await self._checkpoint_mgr.load(task_id)
+                if self._checkpoint_mgr else None
+            )
             exec_state = checkpoint.exec if checkpoint else None
 
             nodes_total = 0
@@ -451,7 +454,10 @@ class TaskSystem:
         """获取任务的 DAG 可视化数据。"""
         sub_agent = self._tasks.get(task_id)
         if sub_agent is None:
-            checkpoint = await self._checkpoint_mgr.load(task_id)
+            checkpoint = (
+                await self._checkpoint_mgr.load(task_id)
+                if self._checkpoint_mgr else None
+            )
             if checkpoint is None or checkpoint.task is None or checkpoint.task.plan is None:
                 return None
             from Module.task_system.core.graph import PlanGraph

@@ -19,6 +19,7 @@ from Module.task_system.schema import (
     NodeState,
     NodeStatus,
     NodeId,
+    SubmitError,
     TaskId,
     TaskState,
     TaskStatus,
@@ -172,7 +173,7 @@ async def test_stop_rejects_new_submissions():
     ctx = DelegationContext(intent="测试", session_id=SessionId("s1"))
     result = await ts.submit(ctx)
 
-    assert hasattr(result, 'code')
+    assert isinstance(result, SubmitError)
     assert result.code == SubmitRejectionCode.NOT_READY
 
 

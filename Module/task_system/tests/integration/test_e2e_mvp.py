@@ -55,6 +55,7 @@ from Module.tool.manager import ToolManager
 from Module.tool.protocol import PluginContext
 from core.tools.time.plugin import TimePlugin
 from core.tools.web.plugin import WebSearchPlugin
+from Module.task_system.mailbox import TaskMailbox
 
 # ── 格式化 ────────────────────────────────────────────────────────────────────
 
@@ -333,6 +334,7 @@ async def _build_task_system() -> TaskSystem:
 
     # Planner 内部创建了自己的 AsyncOpenAI，不共享 infra.llm——
     # 需要单独包装以捕获其 LLM 调用
+    assert ts._planner is not None
     _wrap_llm_client(ts._planner._client, label="Planner")
 
     return ts
@@ -370,15 +372,13 @@ async def _run_task(
     hints: str | None,
     session_id: str,
     test_label: str,
-    *,
-    tight_constraints: ConstraintConfig | None = None,
 ) -> None:
     """运行一次完整的 MVP 任务：DelegationPreparer → submit → 消费事件。
 
     所有 LLM 调用由 _wrap_llm_client 自动拦截并打印。
     """
     TOTAL_STEPS = 6
-    constraints = tight_constraints or ConstraintConfig()
+    constraints = ConstraintConfig()
 
     # ── Step 1: DelegationPreparer ──
     step_start = _log_step(1, TOTAL_STEPS, "DelegationPreparer 准备委派上下文")
@@ -413,9 +413,8 @@ async def _run_task(
     # ── Step 2: TaskSystem.submit ──
     step_start = _log_step(2, TOTAL_STEPS, "TaskSystem.submit() → 启动 SubAgent")
     submit_result = await ts.submit(result.context)
-    assert not hasattr(submit_result, "code"), (
-        f"submit 失败: {getattr(submit_result, 'message', str(submit_result))}"
-    )
+    assert isinstance(submit_result, TaskMailbox), f"submit 失败: {submit_result}"
+    
     mailbox = submit_result
     task_id = mailbox.task_id
     _log_ok(f"task_id={task_id}, Mailbox 就绪, fire-and-forget 已启动")
@@ -675,9 +674,8 @@ async def test_e2e_replan_recovery():
     # ── Step 2: TaskSystem.submit ──
     step_start = _log_step(2, 6, "TaskSystem.submit() → 启动 SubAgent")
     submit_result = await ts.submit(result.context)
-    assert not hasattr(submit_result, "code"), (
-        f"submit 失败: {getattr(submit_result, 'message', str(submit_result))}"
-    )
+    assert isinstance(submit_result, TaskMailbox), f"submit 失败: {submit_result}"
+
     mailbox = submit_result
     task_id = mailbox.task_id
     _log_ok(f"task_id={task_id}, fire-and-forget 已启动")

@@ -23,10 +23,12 @@ def test_push_and_get_nowait():
 
     assert mb.count() == 2
     e1 = mb.get_nowait()
+    assert e1 is not None
     assert e1.type == TaskEventType.PROGRESS
     assert e1.data["n"] == 1
 
     e2 = mb.get_nowait()
+    assert e2 is not None
     assert e2.type == TaskEventType.COMPLETED
 
     assert mb.get_nowait() is None
@@ -40,6 +42,7 @@ async def test_get_blocking():
 
     mb._push(TaskEvent(type=TaskEventType.PROGRESS, data={"n": 1}))
     e = await mb.get(timeout=0.1)
+    assert e is not None
     assert e.type == TaskEventType.PROGRESS
 
     # 无事件应超时
@@ -79,6 +82,7 @@ def test_overflow_drops_oldest_progress():
     assert mb.count() == 100
     first = mb.get_nowait()
     # n=0 被踢，n=1 还在
+    assert isinstance(first, TaskEvent)
     assert first.data["n"] == 1
 
 
@@ -97,6 +101,7 @@ def test_overflow_all_critical_keeps_new():
 
     assert mb.count() == 100
     first = mb.get_nowait()
+    assert isinstance(first, TaskEvent)
     assert first.data["n"] == 1  # n=0 被踢
     # n=100 在队尾
     last = None
@@ -105,6 +110,7 @@ def test_overflow_all_critical_keeps_new():
         if e is None:
             break
         last = e
+    assert isinstance(last, TaskEvent)
     assert last.data["n"] == 100
 
 
@@ -124,6 +130,7 @@ def test_overflow_all_critical_drops_new_progress():
     assert mb.count() == 100  # 不应增加
     # 确认全是 completed
     first = mb.get_nowait()
+    assert isinstance(first, TaskEvent)
     assert first.type == TaskEventType.COMPLETED
 
 
@@ -138,6 +145,7 @@ def test_overflow_progress_is_discarded():
     # n=0 被踢掉，n=100 进入队尾
     assert mb.count() == 100
     first = mb.get_nowait()
+    assert isinstance(first, TaskEvent)
     assert first.data["n"] == 1
 
 
