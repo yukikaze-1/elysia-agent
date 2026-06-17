@@ -318,8 +318,7 @@ class Agent:
             self._event_task = None
 
         # Cancel cognitive + TTS tasks (may be idle, but belt-and-suspenders)
-        if self._cognitive._current_task and not self._cognitive._current_task.done():
-            self._cognitive._current_task.cancel()
+        self._cognitive.cancel_current()
         self._cognitive._tts_mgr.cancel_all()
 
         # Cancel embedding preload if still running

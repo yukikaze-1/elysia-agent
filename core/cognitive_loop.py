@@ -382,7 +382,11 @@ class CognitiveLoop:
                 # Flush remaining text in sentence buffer + block filter
                 trailing = block_filter.flush()
                 if trailing:
-                    self._sentence_buf.feed(trailing)
+                    # feed() 可能产出完整句子，需捕获处理
+                    maybe_sentence = self._sentence_buf.feed(trailing)
+                    if maybe_sentence:
+                        all_sentences.append(maybe_sentence)
+                        logger.info("分句 (trailing) (%d 字符)", len(maybe_sentence))
                 remaining = self._sentence_buf.flush()
                 if remaining:
                     if is_emoji_only(remaining):
@@ -435,17 +439,19 @@ class CognitiveLoop:
                     # submit_task 的 tool result 在 assistant_entry 之后追加，
                     # 确保 OpenAI 协议: assistant(tool_calls) → tool(result)
                     if submit_tcs:
-                        for tc in submit_tcs:
+                        for i, tc in enumerate(submit_tcs):
                             result = await self._handle_submit_task(tc)
                             # 注入 tool result 到 messages（必须在 assistant 之后）
+                            # 使用唯一 ID——避免多个 submit_task 共享 "unknown" 导致协议冲突
+                            tc_id = tc.get("id") or f"submit_{i}_{id(result)}"
                             messages.append({
                                 "role": "tool",
-                                "tool_call_id": tc.get("id", "unknown"),
+                                "tool_call_id": tc_id,
                                 "content": result.llm_content,
                             })
                             await self._output.action("tool_done", params={
                                 "tool": "submit_task",
-                                "call_id": tc.get("id", "unknown"),
+                                "call_id": tc_id,
                                 "success": result.success,
                                 "content": result.content or "",
                                 "error": result.error,
@@ -456,7 +462,7 @@ class CognitiveLoop:
                             self._session.add_message({
                                 "id": new_message_id(),
                                 "role": "tool",
-                                "tool_call_id": tc.get("id", "unknown"),
+                                "tool_call_id": tc_id,
                                 "name": "submit_task",
                                 "content": result.content or "",
                                 "success": result.success,
@@ -467,7 +473,7 @@ class CognitiveLoop:
                                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                             })
                             # 注册后台任务（result.success 时有 async_task_id）
-                            if result.success and result.async_task_id and self._on_background_task:
+                            if result.success and result.async_task_id and self._on_background_task and self._task_system:
                                 mailbox = self._task_system.get_task_mailbox(result.async_task_id)
                                 if mailbox:
                                     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -616,6 +622,7 @@ class CognitiveLoop:
         except Exception:
             self._executing_tools.clear()
             self._tts_mgr.cancel_all()
+            await self._output.typing(False)
             raise
 
     # ---- Post-response ----

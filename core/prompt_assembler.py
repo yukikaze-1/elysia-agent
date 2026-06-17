@@ -250,16 +250,7 @@ class PromptAssembler:
             return "winter"
 
 
-def content_text_from_raw(content: list[dict] | str | None) -> str:
-    """从原始 content 提取纯文本（给 system prompt 渲染用）。"""
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    return "".join(
-        p.get("content", "") for p in content
-        if isinstance(p, dict) and p.get("type") == "text"
-    )
+from .text_utils import content_text_from_content as content_text_from_raw  # noqa: F401 — 别名留存
 
 
 def _format_events(events: list[str]) -> str:

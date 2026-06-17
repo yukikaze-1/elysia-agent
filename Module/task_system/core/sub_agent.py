@@ -204,6 +204,7 @@ class SubAgent:
         ts.updated_at = now_iso()
 
         assert self._checkpoint_mgr is not None, "run() 必须先于 resume_from_pause()"
+        assert self._mailbox is not None, "run() 必须先于 resume_from_pause()"
         checkpoint = await self._checkpoint_mgr.load(self._mailbox.task_id)
         if checkpoint is None:
             ts.status = TaskStatus.FAILED
@@ -223,8 +224,10 @@ class SubAgent:
         checkpoint.exec.pause_requested = False
         checkpoint.exec.cancel_requested = False
 
+        mailbox = self._mailbox
+        assert mailbox is not None, "run() 必须先于 resume_from_pause()"
         await self._execute(
-            ts, self._graph, self._mailbox, self._context,
+            ts, self._graph, mailbox, self._context,
             resume_from=checkpoint.exec,
         )
 
@@ -575,9 +578,9 @@ class SubAgent:
         # pause()/cancel() 设置的是旧的 exec_state 上的标志位，
         # 而 _execute 循环下一次进入 Orchestrator.run(resume_from=...) 会创建
         # 新 exec_state（_merge_exec_state），标志会丢失。在此拦截避免浪费 LLM 调用。
-        if self._orchestrator._exec_state is not None:
-            if getattr(self._orchestrator._exec_state,
-                       "cancel_requested", False) is True:
+        exec_state = self._orchestrator._exec_state
+        if exec_state is not None:
+            if getattr(exec_state, "cancel_requested", False) is True:
                 logger.info(
                     "SubAgent: task_id=%s Replan 前检测到取消信号，短路",
                     task_state.task_id,
@@ -589,8 +592,7 @@ class SubAgent:
                     "reason": "用户取消",
                 })
                 return False, None
-            if getattr(self._orchestrator._exec_state,
-                       "pause_requested", False) is True:
+            if getattr(exec_state, "pause_requested", False) is True:
                 logger.info(
                     "SubAgent: task_id=%s Replan 前检测到暂停信号，短路",
                     task_state.task_id,

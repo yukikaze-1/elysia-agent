@@ -63,11 +63,13 @@ class TimingClock:
         """开始一个计时段。返回 Timer context manager。
         结束时自动将耗时累计到 label 名下。
         """
+        clock = self  # 捕获 TimingClock 引用供内部类访问
+
         class _AccumTimer(Timer):
-            def __exit__(self2, *args: object) -> None:
+            def __exit__(_self, *args: object) -> None:
                 super().__exit__(*args)
-                self._spans[label] += self2._elapsed_ms
-                self._counts[label] += 1
+                clock._spans[label] += _self._elapsed_ms
+                clock._counts[label] += 1
 
         return _AccumTimer(label)
 

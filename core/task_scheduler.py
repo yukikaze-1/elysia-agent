@@ -127,7 +127,7 @@ class TaskScheduler:
                 except json.JSONDecodeError:
                     arguments = {}
             t = Task.new_tool_call(
-                parent_id=parent_id if parent_id else None,
+                parent_id=parent_id or "",
                 tool_name=func.get("name", "unknown"),
                 arguments=arguments,
             )
@@ -331,6 +331,7 @@ class TaskScheduler:
         tool_name = task.payload.get("tool_name", "")
         arguments = task.payload.get("arguments", {})
 
+        assert self._tool_executor is not None, "Scheduler 启动前 tool_executor 必须已注入"
         while True:
             try:
                 result = await asyncio.wait_for(

@@ -14,6 +14,7 @@ import logging
 import networkx as nx
 
 from Module.task_system.schema import (
+    ArtifactId,
     ConstraintConfig,
     Plan,
     TaskConstraints,
@@ -74,7 +75,7 @@ class PlanValidator:
         # 的 FIX_PLAN 重试，不如直接补全。修复后的 plan 用于后续校验和图构建。
         for node in plan.dag.nodes:
             if node.required and not node.output_as:
-                node.output_as = f"output:{node.node_id}"
+                node.output_as = ArtifactId(f"output:{node.node_id}")
                 logger.warning(
                     "PlanValidator: required 节点 %s 缺少 output_as，"
                     "自动填充为 %s",

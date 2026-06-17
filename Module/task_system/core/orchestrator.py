@@ -613,7 +613,12 @@ class Orchestrator:
 
         # 收集各节点的产出摘要——供 CognitiveLoop 渐进式唤醒时使用
         node_summaries: list[str] = []
-        for node in task_state.plan.dag.nodes:
+        plan = task_state.plan
+        if plan is None:
+            plan_nodes = []
+        else:
+            plan_nodes = plan.dag.nodes
+        for node in plan_nodes:
             ns = exec_state.node_states.get(node.node_id)
             if ns is None:
                 continue

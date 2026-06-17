@@ -111,15 +111,14 @@ class LLMAdapter:
     @staticmethod
     def _extract_status(exc: Exception) -> int | None:
         """从异常中提取 HTTP 状态码。"""
-        if hasattr(exc, 'status_code'):
-            return exc.status_code
-        # httpx.HTTPStatusError
-        if hasattr(exc, 'response') and hasattr(exc.response, 'status_code'):
-            return exc.response.status_code
-        # openai.APIStatusError
-        status = getattr(exc, 'status_code', None)
+        # httpx.HTTPStatusError / openai.APIStatusError
+        status: int | None = getattr(exc, 'status_code', None)  # type: ignore[union-attr]
         if status is not None:
             return status
+        # httpx.HTTPStatusError — response.status_code
+        resp: object | None = getattr(exc, 'response', None)  # type: ignore[union-attr]
+        if resp is not None:
+            return getattr(resp, 'status_code', None)  # type: ignore[union-attr]
         return None
 
     async def close(self) -> None:
@@ -128,8 +127,10 @@ class LLMAdapter:
 
     async def reconnect(self) -> None:
         """Recreate the underlying backend's HTTP client. Used on agent restart."""
-        if hasattr(self._backend, 'reconnect'):
-            await self._backend.reconnect()
+        # LLMBackend protocol 未声明 reconnect，但部分后端实现了它
+        reconnect_meth = getattr(self._backend, 'reconnect', None)  # type: ignore[union-attr]
+        if reconnect_meth is not None:
+            await reconnect_meth()
 
     def switch_model(self, new_model_id: str) -> None:
         """热切换 LLM 模型。关闭当前后端，用新 model_id 创建后端。"""
