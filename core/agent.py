@@ -516,7 +516,8 @@ class Agent:
 
             app = create_app(self, stt_transcribe=stt_transcribe, serve_static=True,
                             stt_emotion_state=stt_emotion_state,
-                            wake_word_enabled=wake_word_enabled)
+                            wake_word_enabled=wake_word_enabled,
+                            task_system=self._task_system)
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, host, port)

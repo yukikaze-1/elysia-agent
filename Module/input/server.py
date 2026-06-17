@@ -27,6 +27,7 @@ def create_app(
     serve_static: bool = True,
     stt_emotion_state: dict | None = None,
     wake_word_enabled: bool = False,
+    task_system=None,  # TaskSystem | None
 ) -> web.Application:
     """Create an aiohttp Application with WebSocket handler and optional static files.
 
@@ -36,11 +37,14 @@ def create_app(
         serve_static: serve static/index.html at /
         stt_emotion_state: mutable dict with 'emotion' and 'events' keys,
             updated by the STT wrapper after each transcription.
+        task_system: TaskSystem instance for debug routes (optional)
     """
     app = web.Application()
 
-    # Inject agent + stt into app context for handler access
+    # Inject agent + stt + task_system into app context for handler access
     app["agent"] = agent
+    if task_system is not None:
+        app["task_system"] = task_system
 
     async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         return await _handle_ws(request, agent, stt_transcribe, stt_emotion_state, wake_word_enabled)
@@ -74,9 +78,7 @@ def create_app(
         app.router.add_get("/debug/api", debug_api_handler)
 
         # TaskSystem debug API — SSE 实时推送任务状态
-        # TODO: 需先在 create_app() 调用方将 TaskSystem 实例注册到 app['task_system']，
-        #       之后 /debug/api/tasks 和 /debug/api/tasks/stream 才会激活。
-        #       注册方式：app['task_system'] = task_system_instance
+        # 通过 create_app(task_system=...) 参数注册，app['task_system'] 已设置
         from Module.task_system.debug_api import TaskDebugAPI
 
         ts = app.get('task_system')

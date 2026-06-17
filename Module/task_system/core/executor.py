@@ -281,6 +281,8 @@ class Executor:
 
         # 调用 LLM（function-calling）——仅 execution_mode=tool_call 节点进入此分支。
         # llm_direct 节点已在 execute() 入口分流到 _call_llm_direct()，不经过 tool matching。
+        # max_tokens 需足够大以容纳上游数据（如完整报告正文）作为函数参数的节点。
+        # 2048 不够（4000+ char 报告会被截断），4096 作为安全下限。
         response = await self._infra.llm.chat.completions.create(
             model=self._infra.llm_model,
             messages=[
@@ -289,7 +291,7 @@ class Executor:
             ],
             tools=tool_defs,
             tool_choice="auto",
-            max_tokens=2048,
+            max_tokens=4096,
         )
 
         # ── token 追踪 ──

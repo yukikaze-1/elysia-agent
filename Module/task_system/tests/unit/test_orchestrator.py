@@ -347,8 +347,8 @@ async def test_finalize_counts_skipped(orchestrator, mock_mailbox):
     assert data["total_nodes"] == 3
     assert data["completed_nodes"] == 2        # SUCCESS + SKIPPED
     assert data["failed_nodes"] == 1           # FAILED
-    assert "2 个节点成功" in data["result"]
-    assert "1 个节点失败" in data["result"]
+    assert "2/3" in data["result"]
+    assert "1 个失败" in data["result"]
     assert "成功 2" in data["summary"]
     assert "失败 1" in data["summary"]
 

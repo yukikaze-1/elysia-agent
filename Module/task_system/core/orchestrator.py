@@ -611,10 +611,39 @@ class Orchestrator:
         )
         total_nodes = len(exec_state.node_states)
 
+        # 收集各节点的产出摘要——供 CognitiveLoop 渐进式唤醒时使用
+        node_summaries: list[str] = []
+        for node in task_state.plan.dag.nodes:
+            ns = exec_state.node_states.get(node.node_id)
+            if ns is None:
+                continue
+            if ns.status == NodeStatus.SUCCESS:
+                desc = node.description or node.node_id
+                # 优先用 evaluation.reason（Evaluator 判定摘要），
+                # 其次用 result.summary（Executor 产出摘要）
+                detail = ""
+                if ns.evaluation and ns.evaluation.reason:
+                    detail = ns.evaluation.reason
+                elif ns.summary:
+                    detail = ns.summary
+                if detail:
+                    node_summaries.append(f"- {desc}: {detail}")
+                else:
+                    node_summaries.append(f"- {desc}（已完成）")
+            elif ns.status == NodeStatus.FAILED:
+                desc = node.description or node.node_id
+                reason = ns.error or "未知错误"
+                node_summaries.append(f"- {desc}（失败: {reason}）")
+
+        result_text = f"任务完成。{completed_nodes}/{total_nodes} 个节点成功"
+        if failed_nodes:
+            result_text += f"，{failed_nodes} 个失败"
+        if node_summaries:
+            result_text += "。\n\n节点产出:\n" + "\n".join(node_summaries)
+
         await self._push_mailbox(mailbox, TaskEventType.COMPLETED, {
             "task_id": str(task_state.task_id),
-            "result": f"任务完成。{completed_nodes} 个节点成功"
-                      + (f"，{failed_nodes} 个节点失败" if failed_nodes else ""),
+            "result": result_text,
             "summary": f"共 {total_nodes} 个节点，成功 {completed_nodes}，失败 {failed_nodes}",
             "total_nodes": total_nodes,
             "completed_nodes": completed_nodes,
