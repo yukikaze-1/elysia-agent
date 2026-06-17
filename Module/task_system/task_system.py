@@ -451,21 +451,34 @@ class TaskSystem:
         exec_state.cancel_requested = True
         return True
 
-    async def submit_approval(
+    def submit_approval(
         self,
         task_id: TaskId,
         agent_id: AgentId,
         approved: bool,
         feedback: str | None = None,
     ) -> bool:
-        """审批结果回传。路由到等待审批的 Worker。
+        """审批结果回传。v1 桥接到 ToolManager 的 SafetyPipeline。
 
-        approved=True  → Worker 继续执行 MUTATION。
-        approved=False → Worker 收到 PERMISSION_DENIED → Evaluator → 三层降级。
-        feedback:       拒绝审批时的修正建议，注入 Planner prompt。
+        将 agent_id 作为 request_id 委托给 infra.tool_registry.submit_approval()。
+        ToolManager 内部 SafetyPipeline 设置 asyncio.Event 唤醒等待中的工具调用。
+
+        task_id / feedback 为 v2 预留——Orchestrator BLOCKED 路径启用后，
+        task_id 用于查找等待审批的 Worker Agent，feedback 注入 Planner prompt。
+
+        Returns:
+            True:  审批请求已找到并处理
+            False: 审批请求不存在（可能已超时或从未创建）
         """
-        # TODO: 查找等待审批的 Worker，set approval_future 结果
-        raise NotImplementedError("TaskSystem.submit_approval() 尚未实现")
+        # infra.tool_registry 运行时是 ToolManager，submit_approval 方法
+        # 在 v1 的 SafetyPipeline 路径中始终可用。
+        tool_mgr = self._infra.tool_registry
+        if not hasattr(tool_mgr, "submit_approval"):
+            return False
+        return tool_mgr.submit_approval(  # type: ignore[attr-defined]
+            request_id=str(agent_id),
+            approved=approved,
+        )
 
     # ── 查询（Pull 模式，供 CognitiveLoop + Debug WebUI）────────────────
     #

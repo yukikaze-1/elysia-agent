@@ -11,7 +11,7 @@
 |------|------|
 | 生产代码 | 20 文件, ~4,500 行 |
 | 测试代码 | 21 文件 |
-| 单元测试 | **294 tests**, ~4.3s |
+| 单元测试 | **298 tests**, ~4.3s |
 | 集成测试 | 28 tests (含 4 e2e), ~4min |
 | 最近提交 | `0daa907` — resume 集成测试 |
 
@@ -105,7 +105,7 @@ TaskSystem
 |------|----------|
 | `resume()` | ✅ 已实现 |
 | `cancel()` | ✅ 已实现 |
-| `submit_approval()` | ⚠️ `NotImplementedError` |
+| `submit_approval()` | ✅ 已实现（v1 桥接到 ToolManager SafetyPipeline） |
 
 ### 查询 API
 
@@ -139,6 +139,7 @@ TaskSystem 完全未接入 CognitiveLoop——`core/` 目录没有任何 TaskSys
 | Plan 预审批 | 设计文档有，代码无 |
 | 模型名可配置 | ✅ 已修复——Planner 改用 `infra.llm`，模型名统一由 `AgentInfra.llm_model` 管理 |
 | DAGNode.execution_mode | ✅ 已实现——Planner 标注 llm_direct/tool_call，Executor 按标注执行，根治误选工具 |
+| 时间戳类型化 | `created_at`/`updated_at` 全为裸 `str`，try/except+replace(tzinfo) 模式重复 10+ 处。后续用 Pydantic `IsoTimestamp`(Annotated str + BeforeValidator 归一化 UTC) + `parse_iso()` 消除 |
 
 ---
 

@@ -118,8 +118,9 @@ class TaskSystem:
         self, task_id: TaskId, agent_id: AgentId, approved: bool,
         feedback: str | None = None,
     ) -> bool:
-        """⚠️ 未实现——raise NotImplementedError。
-        审批结果回传。路由到等待审批的 Worker，解除 await。
+        """✅ 已实现（v1）：桥接到 ToolManager.submit_approval()。
+        agent_id 作为 request_id 委托给 SafetyPipeline 处理。
+        task_id / feedback 为 v2 预留。
         task_id: 任务 ID。
         agent_id: 审批发起者 ID，TaskSystem 内部用 (task_id, agent_id)
                   定位正在 await approval_future 的 Worker。

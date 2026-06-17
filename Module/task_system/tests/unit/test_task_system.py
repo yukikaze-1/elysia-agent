@@ -104,6 +104,31 @@ async def _build_task_system():
     return ts
 
 
+def _build_task_system_raw():
+    """构造 TaskSystem + mock ToolManager，供 submit_approval 同步测试使用。"""
+    from Module.task_system.task_system import TaskSystem
+    from Module.task_system.infra import AgentInfra
+
+    tool_mgr = MagicMock()
+    tool_mgr.submit_approval = MagicMock(return_value=True)
+
+    mock_llm = MagicMock()
+    mock_llm.chat = MagicMock()
+    mock_llm.chat.completions = MagicMock()
+    mock_llm.chat.completions.create = AsyncMock()
+
+    infra = AgentInfra(
+        llm=mock_llm,
+        milvus=None,
+        http=None,
+        tool_registry=tool_mgr,
+        constraints=ConstraintConfig(),
+    )
+    with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-test"}):
+        ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=5)
+    return {"ts": ts, "tool_mgr": tool_mgr}
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # stop()
 # ═══════════════════════════════════════════════════════════════════════════
@@ -834,3 +859,61 @@ async def test_paused_task_visible_in_query_apis():
     paused_agents = [a for a in agents.sub_agents if a.task_id == tid]
     assert len(paused_agents) == 1
     assert paused_agents[0].status == AgentStatus.PAUSED
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# submit_approval()
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_submit_approval_delegates_to_tool_manager():
+    """submit_approval 将 agent_id 作为 request_id 委托给 ToolManager。"""
+    ts_wrapper = _build_task_system_raw()
+    tool_mgr = ts_wrapper["tool_mgr"]
+    ts = ts_wrapper["ts"]
+
+    # 预设 SafetyPipeline 中有等待的审批
+    tool_mgr.submit_approval = MagicMock(return_value=True)
+
+    result = ts.submit_approval(
+        task_id=TaskId("t1"),
+        agent_id=AgentId("req-001"),
+        approved=True,
+    )
+    assert result is True
+    tool_mgr.submit_approval.assert_called_once_with(
+        request_id="req-001",
+        approved=True,
+    )
+
+
+def test_submit_approval_returns_false_when_not_found():
+    """审批请求不存在 → 返回 False。"""
+    ts_wrapper = _build_task_system_raw()
+    tool_mgr = ts_wrapper["tool_mgr"]
+    ts = ts_wrapper["ts"]
+
+    tool_mgr.submit_approval = MagicMock(return_value=False)
+
+    result = ts.submit_approval(
+        task_id=TaskId("t1"),
+        agent_id=AgentId("unknown"),
+        approved=True,
+    )
+    assert result is False
+
+
+def test_submit_approval_no_tool_manager():
+    """tool_registry 没有 submit_approval 方法 → 返回 False。"""
+    ts_wrapper = _build_task_system_raw()
+    ts = ts_wrapper["ts"]
+
+    # 替换为没有 submit_approval 的对象
+    ts._infra.tool_registry = object()
+
+    result = ts.submit_approval(
+        task_id=TaskId("t1"),
+        agent_id=AgentId("req-001"),
+        approved=True,
+    )
+    assert result is False
