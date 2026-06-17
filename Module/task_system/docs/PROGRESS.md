@@ -62,7 +62,7 @@ TaskSystem
 | `start()` | 初始化所有组件 + 并发控制 | ✅ |
 | `submit()` | Fire-and-forget 任务提交 | ✅ |
 | `stop(timeout)` | Graceful shutdown：等自然完成 → 超时 cancel → 兜底清理 | ✅ |
-| `pause()` | 设置 `exec_state.pause_requested` → Orchestrator 检测 → PAUSED | ✅ |
+| `pause()` | 设置 `exec_state.pause_requested` → Orchestrator 检测 → PAUSED（幂等） | ✅ |
 | `_cleanup_task()` | 注册表 + asyncio.Task 引用清理 | ✅ |
 
 ### Debug WebUI

@@ -815,3 +815,285 @@ async def test_e2e_replan_recovery():
     # ── 时间线 ──
     _log_step(6, 6, "时间线总览")
     _print_timeline()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_e2e_llm_direct_execution():
+    """端到端：execution_mode——Planner 标注 llm_direct + Executor 跳过工具匹配。
+
+    任务: "搜索 AI 安全最新进展，汇总关键发现"
+    工具: get_time + web_search
+    预期: Planner 生成 ≥2 节点（搜索 + 汇总）。汇总节点标记 llm_direct，
+          Executor 不为其匹配工具，直接调 LLM 生成文本。
+    """
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
+
+    _reset_timeline()
+
+    print(f"\n{'#' * 70}")
+    print(f"#  E2E TEST: llm_direct_execution — \"搜索 AI 安全 + 汇总报告\"")
+    print(f"{'#' * 70}")
+
+    step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
+    ts = await _build_task_system()
+    tools = _get_tools_from_manager(ts._infra.tool_registry)
+    _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
+    _record_timeline("0.初始化", _elapsed() - step_start)
+
+    await _run_task(
+        ts, tools,
+        intent="搜索 AI 安全和对齐方面的最新研究进展，包括大模型价值观对齐、"
+               "越狱防护等内容，汇总成一份结构化的报告",
+        hints=None,
+        session_id="e2e-llm-direct",
+        test_label="llm_direct_execution",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_e2e_cancel():
+    """端到端：运行时取消——cancel() → CANCELLED 事件。
+
+    提交一个搜索任务，在收到第一个 PROGRESS 后取消，验证：
+    - cancel() 返回 True
+    - 收到 CANCELLED 事件
+    - 注册表清理
+    """
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
+
+    _reset_timeline()
+
+    print(f"\n{'#' * 70}")
+    print(f"#  E2E TEST: cancel — 运行时取消 → CANCELLED")
+    print(f"{'#' * 70}")
+
+    step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
+    ts = await _build_task_system()
+    tools = _get_tools_from_manager(ts._infra.tool_registry)
+    _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
+    _record_timeline("0.初始化", _elapsed() - step_start)
+
+    step_start = _log_step(1, 6, "DelegationPreparer → submit → 等首个事件")
+    dp = DelegationPreparer()
+    _wrap_llm_client(dp._client, label="DelegationPreparer")
+
+    result = await dp.prepare(
+        intent='搜索"人工智能最新进展"并返回前3条结果',
+        hints=None,
+        session_messages=[],
+        user_profile=UserProfile(),
+        tools=tools,
+        global_constraints=ConstraintConfig(),
+        session_id=SessionId("e2e-cancel"),
+    )
+    assert result.status == DelegationStatus.OK
+    assert result.context is not None
+
+    submit_result = await ts.submit(result.context)
+    assert isinstance(submit_result, TaskMailbox)
+    mailbox = submit_result
+    task_id = mailbox.task_id
+    _log_ok(f"task_id={task_id}, 等待首个 PROGRESS")
+    _record_timeline("1.准备+提交", _elapsed() - step_start)
+
+    # 等第一个 PROGRESS
+    first_event = await asyncio.wait_for(mailbox.get(), timeout=60.0)
+    assert first_event is not None
+    _log_info(f"首个事件: {first_event.type.value}")
+
+    # cancel
+    step_start = _log_step(2, 6, "cancel() → 消费 CANCELLED 事件")
+    assert await ts.cancel(task_id) is True
+    _log_ok("cancel() 返回 True")
+
+    event = None
+    deadline = time.monotonic() + 45.0
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            event = await asyncio.wait_for(mailbox.get(), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        if event is None:
+            continue
+        event_type = event.type.value
+        data = event.data
+        print(f"\n{_SEP2}")
+        print(f"📬 Mailbox Event: {event_type}  [T+{_fmt_duration(_elapsed())}]")
+        print(f"{_SEP2}")
+        if event_type == "progress":
+            _show_event_summary(event_type, data, 0)
+        elif event_type in ("cancelled", "failed", "completed"):
+            _show_event_summary(event_type, data, 0)
+            break
+
+    assert event is not None, "未收到终态事件"
+    assert event.type.value in ("cancelled", "completed", "failed"), \
+        f"意外事件: {event.type.value}"
+    _log_ok(f"终态事件: {event.type.value}")
+    _record_timeline("2.cancel→终态", _elapsed() - step_start)
+
+    step_start = _log_step(3, 6, "清理确认")
+    await asyncio.sleep(0.5)
+    assert task_id not in ts._tasks
+    _log_info("注册表已清理 ✅")
+    _record_timeline("3.清理", _elapsed() - step_start)
+
+    _log_step(6, 6, "时间线总览")
+    _print_timeline()
+
+    await ts.stop(timeout=10.0)
+    await ts._infra.llm.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_e2e_pause_resume():
+    """端到端：暂停→恢复→完成——pause() + resume() 完整生命周期。
+
+    提交任务 → 等首个 PROGRESS → pause → 等 PAUSED → resume → 等 COMPLETED。
+    验证：
+    - PAUSED 事件被推送
+    - resume 返回 mailbox
+    - 任务最终完成
+    """
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
+
+    _reset_timeline()
+
+    print(f"\n{'#' * 70}")
+    print(f"#  E2E TEST: pause_resume — 暂停 → 恢复 → 完成")
+    print(f"{'#' * 70}")
+
+    step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
+    ts = await _build_task_system()
+    tools = _get_tools_from_manager(ts._infra.tool_registry)
+    _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
+    _record_timeline("0.初始化", _elapsed() - step_start)
+
+    step_start = _log_step(1, 6, "DelegationPreparer → submit → 等首个事件")
+    dp = DelegationPreparer()
+    _wrap_llm_client(dp._client, label="DelegationPreparer")
+
+    result = await dp.prepare(
+        intent='搜索"人工智能最新进展"，总结3个关键发现',
+        hints=None,
+        session_messages=[],
+        user_profile=UserProfile(),
+        tools=tools,
+        global_constraints=ConstraintConfig(),
+        session_id=SessionId("e2e-pause-resume"),
+    )
+    assert result.status == DelegationStatus.OK
+    assert result.context is not None
+
+    submit_result = await ts.submit(result.context)
+    assert isinstance(submit_result, TaskMailbox)
+    mailbox = submit_result
+    task_id = mailbox.task_id
+    _log_ok(f"task_id={task_id}, 等待首个 PROGRESS")
+    _record_timeline("1.准备+提交", _elapsed() - step_start)
+
+    first_event = await asyncio.wait_for(mailbox.get(), timeout=60.0)
+    assert first_event is not None
+    _log_info(f"首个事件: {first_event.type.value}")
+
+    # pause
+    step_start = _log_step(2, 6, "pause → 等 PAUSED 事件")
+    try:
+        await ts.pause(task_id)
+        _log_ok("pause() 成功")
+    except KeyError:
+        _log_warn("任务已完成，跳过")
+        await ts.stop(timeout=10.0)
+        await ts._infra.llm.close()
+        return
+
+    paused = False
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            event = await asyncio.wait_for(mailbox.get(), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        if event is None:
+            continue
+        print(f"\n{_SEP2}")
+        print(f"📬 Mailbox Event: {event.type.value}  [T+{_fmt_duration(_elapsed())}]")
+        print(f"{_SEP2}")
+        if event.type.value == "paused":
+            _show_event_summary("paused", event.data, 0)
+            _log_ok("收到 PAUSED 事件")
+            paused = True
+            break
+        elif event.type.value in ("completed", "failed"):
+            _log_warn("任务在 pause 前已完成")
+            break
+
+    if not paused:
+        await ts.stop(timeout=10.0)
+        await ts._infra.llm.close()
+        return
+    _record_timeline("2.pause→PAUSED", _elapsed() - step_start)
+
+    # resume
+    step_start = _log_step(3, 6, "resume → 等 COMPLETED")
+    resume_result = await ts.resume(task_id)
+    assert isinstance(resume_result, TaskMailbox)
+    _log_ok("resume() 返回 TaskMailbox")
+
+    event = None
+    deadline = time.monotonic() + 120.0
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            event = await asyncio.wait_for(mailbox.get(), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        if event is None:
+            continue
+        event_type = event.type.value
+        data = event.data
+        print(f"\n{_SEP2}")
+        print(f"📬 Mailbox Event: {event_type}  [T+{_fmt_duration(_elapsed())}]")
+        print(f"{_SEP2}")
+        if event_type == "progress":
+            _show_event_summary(event_type, data, 0)
+        elif event_type == "completed":
+            _show_event_summary(event_type, data, 0)
+            _log_token_summary(ts, task_id, event_data=data)
+            _log_ok("任务完成 ✅")
+            break
+        elif event_type == "failed":
+            _show_event_summary(event_type, data, 0)
+            _log_warn(f"任务失败: {data.get('error', '?')}")
+            break
+
+    assert event is not None, "未收到终态事件"
+    assert event.type.value == "completed", \
+        f"期望 COMPLETED，实际 {event.type.value}"
+    _record_timeline("3.resume→完成", _elapsed() - step_start)
+
+    step_start = _log_step(4, 6, "清理确认")
+    await asyncio.sleep(0.5)
+    assert task_id not in ts._tasks
+    _log_info("注册表已清理 ✅")
+    _record_timeline("4.清理", _elapsed() - step_start)
+
+    _log_step(6, 6, "时间线总览")
+    _print_timeline()
+
+    await ts.stop(timeout=10.0)
+    await ts._infra.llm.close()

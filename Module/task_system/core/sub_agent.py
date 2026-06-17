@@ -355,6 +355,33 @@ class SubAgent:
         """
         assert self._orchestrator is not None
         while True:
+            # 检查外部中断信号——拦截 Orchestrator.run() 入口。
+            # _handle_replan 后 _merge_exec_state 会创建新 exec_state 丢失标志位，
+            # 此处在每次循环顶检查旧 exec_state 兜底。
+            if self._orchestrator._exec_state is not None:
+                if getattr(self._orchestrator._exec_state,
+                           "cancel_requested", False) is True:
+                    task_state.status = TaskStatus.CANCELLED
+                    task_state.updated_at = now_iso()
+                    await self._push_mailbox(
+                        mailbox, TaskEventType.CANCELLED, {
+                            "task_id": str(task_state.task_id),
+                            "reason": "用户取消",
+                        },
+                    )
+                    return
+                if getattr(self._orchestrator._exec_state,
+                           "pause_requested", False) is True:
+                    task_state.status = TaskStatus.PAUSED
+                    task_state.updated_at = now_iso()
+                    await self._push_mailbox(
+                        mailbox, TaskEventType.PAUSED, {
+                            "task_id": str(task_state.task_id),
+                            "message": "任务已暂停",
+                        },
+                    )
+                    return
+
             result = await self._orchestrator.run(
                 task_state, graph, mailbox, resume_from=resume_from,
             )
@@ -536,6 +563,45 @@ class SubAgent:
                 "error_type": TaskErrorCode.FAILURE_MELTDOWN.value,
             })
             return False, None
+
+        # 1.5. 检查外部中断信号——在昂贵的 Planner.replan() 之前拦截。
+        # pause()/cancel() 设置的是旧的 exec_state 上的标志位，
+        # 而 _execute 循环下一次进入 Orchestrator.run(resume_from=...) 会创建
+        # 新 exec_state（_merge_exec_state），标志会丢失。在此拦截避免浪费 LLM 调用。
+        if self._orchestrator._exec_state is not None:
+            if getattr(self._orchestrator._exec_state,
+                       "cancel_requested", False) is True:
+                logger.info(
+                    "SubAgent: task_id=%s Replan 前检测到取消信号，短路",
+                    task_state.task_id,
+                )
+                task_state.status = TaskStatus.CANCELLED
+                task_state.updated_at = now_iso()
+                await self._push_mailbox(mailbox, TaskEventType.CANCELLED, {
+                    "task_id": str(task_state.task_id),
+                    "reason": "用户取消",
+                })
+                return False, None
+            if getattr(self._orchestrator._exec_state,
+                       "pause_requested", False) is True:
+                logger.info(
+                    "SubAgent: task_id=%s Replan 前检测到暂停信号，短路",
+                    task_state.task_id,
+                )
+                task_state.status = TaskStatus.PAUSED
+                task_state.updated_at = now_iso()
+                # PAUSED 需要 checkpoint——复用上一次 run() 返回的 checkpoint
+                checkpoint = result.checkpoint_state
+                if checkpoint is not None:
+                    assert self._checkpoint_mgr is not None
+                    await self._checkpoint_mgr.save(
+                        task_state.task_id, checkpoint,
+                    )
+                await self._push_mailbox(mailbox, TaskEventType.PAUSED, {
+                    "task_id": str(task_state.task_id),
+                    "message": "任务已暂停",
+                })
+                return False, None
 
         # 2. Replan——调 Planner.replan()，产出 DAGPatch
         assert task_state.plan is not None, "NEEDS_REPLAN 时 plan 不应为 None"

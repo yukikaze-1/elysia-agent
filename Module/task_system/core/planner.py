@@ -50,7 +50,7 @@ _OUTPUT_SCHEMA_DESCRIPTION = """{
         "description": "string (期望产出什么，给 Evaluator 做业务判定用)"
       },
       "required": true,
-      "execution_mode": "tool_call",
+      "execution_mode": "tool_call 或 llm_direct（按上述规则）",
       "input_bindings": ["output:search_weather"],
       "output_as": "output:send_email"
     }
@@ -131,6 +131,15 @@ _REPLAN_SYSTEM_PROMPT = """你是任务修复器。一个 DAG 执行过程中有
 - 如果原因是"工具本身报错/超时/找不到"，尝试替代方案
 - 新节点数不要超过 {max_nodes}（含已成功的节点）
 - 敏感操作不要超过 {max_mutations}
+- **汇总/编译/整理/报告节点必须标注 execution_mode: "llm_direct"**——见下方 execution_mode 规则
+
+## execution_mode 字段
+新增或替换节点时必须标注 execution_mode：
+- **tool_call**: 节点需要调用外部工具（搜索、读文件、发邮件等）
+- **llm_direct**: 节点不需要外部工具，Executor 直接调 LLM 处理上游数据。
+  **仅在以下情况使用 llm_direct**：汇总/编译/总结上游结果、改写/润色/翻译文本、
+  综合多个上游产物生成报告、最终输出节点（compile_report、compose_answer、summarize 等）
+- 搜索/查询/调用工具 → tool_call；汇总/编写/整理报告 → llm_direct
 
 ## 可用工具
 {tools}
@@ -148,8 +157,8 @@ _REPLAN_SYSTEM_PROMPT = """你是任务修复器。一个 DAG 执行过程中有
   "patch_type": "replace_nodes | add_nodes | remove_nodes",
   "reason": "修复理由",
   "trigger_nodes": ["failed_node_id"],
-  "replace_nodes": [["old_node_id", {{"node_id": "new_id", "description": "...", "output_contract": {{"description": "..."}}, "required": true, "execution_mode": "tool_call", "input_bindings": ["output:upstream"], "output_as": "output:new_id"}}]],
-  "add_nodes": [{{"node_id": "...", "description": "...", "execution_mode": "tool_call", ...}}],
+  "replace_nodes": [["old_node_id", {{"node_id": "new_id", "description": "...", "output_contract": {{"description": "..."}}, "required": true, "execution_mode": "tool_call 或 llm_direct（按上述规则）", "input_bindings": ["output:upstream"], "output_as": "output:new_id"}}]],
+  "add_nodes": [{{"node_id": "...", "description": "...", "execution_mode": "tool_call 或 llm_direct（按上述规则）", ...}}],
   "remove_nodes": ["node_id_to_remove"],
   "remove_edges": [["from_id", "to_id"]],
   "add_edges": [["from_id", "to_id"]]
@@ -164,7 +173,7 @@ _REPLAN_SYSTEM_PROMPT = """你是任务修复器。一个 DAG 执行过程中有
       "description": "string",
       "output_contract": {{"description": "string"}},
       "required": true,
-      "execution_mode": "tool_call",
+      "execution_mode": "tool_call 或 llm_direct（按上述规则）",
       "input_bindings": ["output:upstream"],
       "output_as": "output:this_node"
     }}

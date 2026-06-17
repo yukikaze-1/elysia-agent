@@ -278,30 +278,26 @@ class TaskSystem:
     async def pause(self, task_id: TaskId) -> None:
         """暂停任务——在下一个安全点停止执行并保存 checkpoint。
 
+        幂等——无论任务处于什么状态都不会报错：
+        - RUNNING → 设置 pause_requested 标志
+        - PAUSED / 已终态 / 已清理 / 尚未启动 → 无操作（成功）
+
         Orchestrator 在当前节点执行完成后检测到 pause_requested，
         保存 checkpoint 后返回 PAUSED，SubAgent 推送 PAUSED 事件后退出循环。
-
-        Raises:
-            KeyError: task_id 不存在（已结束或从未创建）
-            RuntimeError: 任务不在可暂停状态（已终态 / 已暂停 / 尚未开始执行）
         """
         sub_agent = self._tasks.get(task_id)
         if sub_agent is None:
-            raise KeyError(f"task_id={task_id} 不存在或已清理")
+            return  # 已清理——无需暂停
 
         ts = sub_agent._task_state
-        if ts.is_terminal():
-            raise RuntimeError(
-                f"task_id={task_id} 已终态 ({ts.status.value})，无法暂停"
-            )
+        if ts is None or ts.is_terminal():
+            return  # 已终态——无需暂停
         if ts.status == TaskStatus.PAUSED:
-            raise RuntimeError(f"task_id={task_id} 已经暂停")
+            return  # 已暂停——幂等
 
         exec_state = sub_agent._orchestrator._exec_state
         if exec_state is None:
-            raise RuntimeError(
-                f"task_id={task_id} 尚未开始执行（Orchestrator 未启动）"
-            )
+            return  # 尚未启动——无需暂停
 
         exec_state.pause_requested = True
         logger.info("TaskSystem.pause: task_id=%s 暂停请求已发送", task_id)

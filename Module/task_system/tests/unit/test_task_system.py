@@ -257,65 +257,58 @@ async def test_pause_sets_pause_requested():
 
 
 @pytest.mark.asyncio
-async def test_pause_raises_keyerror_for_missing_task():
-    """暂停不存在的任务 → KeyError。"""
+async def test_pause_missing_task_no_error():
+    """不存在的任务 → 无操作（幂等——已清理即已暂停）。"""
     ts = await _build_task_system()
-
-    with pytest.raises(KeyError, match="不存在"):
-        await ts.pause(TaskId("nonexistent"))
+    await ts.pause(TaskId("nonexistent"))  # 不抛异常
 
 
 @pytest.mark.asyncio
-async def test_pause_raises_for_terminal_task():
-    """暂停已终态的任务 → RuntimeError。"""
+async def test_pause_terminal_task_no_error():
+    """已终态任务 → 无操作（幂等）。"""
     ts = await _build_task_system()
 
     tid = TaskId("t1")
     task_state = _make_task_state("t1", TaskStatus.COMPLETED)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
-
     ts._tasks[tid] = sub_agent
 
-    with pytest.raises(RuntimeError, match="已终态"):
-        await ts.pause(tid)
+    await ts.pause(tid)  # 不抛异常
+    # pause_requested 不应被设置
+    assert exec_state.pause_requested is False
 
 
 @pytest.mark.asyncio
-async def test_pause_raises_for_already_paused():
-    """暂停已暂停的任务 → RuntimeError。"""
+async def test_pause_already_paused_no_error():
+    """已暂停任务 → 无操作（幂等）。"""
     ts = await _build_task_system()
 
     tid = TaskId("t1")
     task_state = _make_task_state("t1", TaskStatus.PAUSED)
     exec_state = _make_exec_state()
-    exec_state.pause_requested = True  # 模拟已暂停
+    exec_state.pause_requested = True
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
-
     ts._tasks[tid] = sub_agent
 
-    with pytest.raises(RuntimeError, match="已经暂停"):
-        await ts.pause(tid)
+    await ts.pause(tid)  # 不抛异常
 
 
 @pytest.mark.asyncio
-async def test_pause_raises_for_not_started():
-    """暂停尚未启动执行的任务 → RuntimeError（_exec_state is None）。"""
+async def test_pause_not_started_no_error():
+    """尚未启动执行（_exec_state=None）→ 无操作。"""
     ts = await _build_task_system()
 
     tid = TaskId("t1")
     task_state = _make_task_state("t1", TaskStatus.RUNNING)
-
-    # 构造 SubAgent，Orchestrator._exec_state = None（尚未 run）
     sub_agent = MagicMock()
     sub_agent._task_state = task_state
     orch = MagicMock()
-    orch._exec_state = None  # __init__ 初始化为 None，run() 前保持 None
+    orch._exec_state = None
     sub_agent._orchestrator = orch
     ts._tasks[tid] = sub_agent
 
-    with pytest.raises(RuntimeError, match="尚未开始执行"):
-        await ts.pause(tid)
+    await ts.pause(tid)  # 不抛异常
 
 
 # ═══════════════════════════════════════════════════════════════════════════

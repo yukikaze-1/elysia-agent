@@ -69,6 +69,18 @@ class PlanValidator:
             (ValidationResult, PlanGraph) —— PlanGraph 始终返回（即使校验失败），
             失败时 graph 仍可用于调试/日志。
         """
+        # ── 0. 自动修复：required 节点 output_as 为 null → 自动填充 ──
+        # Planner 偶尔遗漏 output_as——与其让 PlanValidator ABORT 或进入昂贵
+        # 的 FIX_PLAN 重试，不如直接补全。修复后的 plan 用于后续校验和图构建。
+        for node in plan.dag.nodes:
+            if node.required and not node.output_as:
+                node.output_as = f"output:{node.node_id}"
+                logger.warning(
+                    "PlanValidator: required 节点 %s 缺少 output_as，"
+                    "自动填充为 %s",
+                    node.node_id, node.output_as,
+                )
+
         issues: list[ValidationIssue] = []
 
         # ── A. 图结构检查（PlanGraph，使用 NetworkX）─────────────────────
