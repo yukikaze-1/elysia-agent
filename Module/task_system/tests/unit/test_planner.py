@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from Module.task_system.core.planner import Planner, _PlanParseError
+from Module.task_system.core.planner import Planner, Replanner, PlanParseError
 from Module.task_system.utils import strip_markdown_fence, format_tools
 from Module.task_system.schema import (
     ArtifactId,
@@ -124,6 +124,12 @@ def mock_infra():
 def planner(mock_infra):
     """创建 Planner 实例（注入 mock infra，解析不需要真实 LLM）。"""
     return Planner(infra=mock_infra, token_ledger=None)
+
+
+@pytest.fixture
+def replanner(mock_infra):
+    """创建 Replanner 实例（注入 mock infra，解析不需要真实 LLM）。"""
+    return Replanner(infra=mock_infra, token_ledger=None)
 
 
 def _make_plan_json(nodes=None, edges=None):
@@ -240,64 +246,64 @@ def test_parse_missing_output_contract(planner):
 
 
 def test_parse_empty_string(planner):
-    """空字符串 → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="JSON 解析失败"):
+    """空字符串 → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="JSON 解析失败"):
         planner._parse_response("")
 
 
 def test_parse_not_json(planner):
-    """非 JSON 文本 → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="JSON 解析失败"):
+    """非 JSON 文本 → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="JSON 解析失败"):
         planner._parse_response("这不是 JSON")
 
 
 def test_parse_not_object(planner):
-    """JSON 数组而非对象 → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="JSON object"):
+    """JSON 数组而非对象 → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="JSON object"):
         planner._parse_response('[{"node_id": "x"}]')
 
 
 def test_parse_nodes_not_list(planner):
-    """nodes 不是数组 → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="nodes 为空或不是数组"):
+    """nodes 不是数组 → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="nodes 为空或不是数组"):
         planner._parse_response('{"nodes": "not a list"}')
 
 
 def test_parse_nodes_empty(planner):
-    """nodes 为空数组 → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="nodes 为空或不是数组"):
+    """nodes 为空数组 → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="nodes 为空或不是数组"):
         planner._parse_response('{"nodes": []}')
 
 
 def test_parse_node_not_object(planner):
-    """nodes 中某项不是 object → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="不是 object"):
+    """nodes 中某项不是 object → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="不是 object"):
         planner._parse_response('{"nodes": ["string_instead_of_object"]}')
 
 
 def test_parse_node_missing_id(planner):
-    """节点缺少 node_id → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="node_id"):
+    """节点缺少 node_id → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="node_id"):
         planner._parse_response('{"nodes": [{"description": "no id"}]}')
 
 
 def test_parse_node_id_not_string(planner):
-    """节点 node_id 是数字 → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="不是字符串"):
+    """节点 node_id 是数字 → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="不是字符串"):
         planner._parse_response('{"nodes": [{"node_id": 123, "description": "x"}]}')
 
 
 def test_parse_edges_not_list(planner):
-    """edges 不是数组 → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="edges 不是数组"):
+    """edges 不是数组 → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="edges 不是数组"):
         planner._parse_response(
             '{"nodes": [{"node_id": "s1", "description": "x"}], "edges": "bad"}'
         )
 
 
 def test_parse_edge_not_pair(planner):
-    """edges 中某项不是二元组 → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="二元组"):
+    """edges 中某项不是二元组 → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="二元组"):
         planner._parse_response(
             '{"nodes": [{"node_id": "s1", "description": "x"}], "edges": [["only_one"]]}'
         )
@@ -306,7 +312,7 @@ def test_parse_edge_not_pair(planner):
 # ── _format_nodes_by_status 测试 ────────────────────────────────────────────
 
 
-def test_format_nodes_by_status_success(planner):
+def test_format_nodes_by_status_success(replanner):
     """成功节点 → 包含 node_id + description + summary + evaluation。"""
     from Module.task_system.schema import (
         BusinessStatus, EvaluatorAction, ExecutionStatus,
@@ -332,7 +338,7 @@ def test_format_nodes_by_status_success(planner):
         DAGNode(node_id=NodeId("search"), description="搜索最新 AI 新闻"),
     ], edges=[]), plan_version=1)
 
-    result = planner._format_nodes_by_status(
+    result = replanner._format_nodes_by_status(
         node_results, plan, {NodeStatus.SUCCESS, NodeStatus.SKIPPED},
     )
     assert "search" in result
@@ -341,7 +347,7 @@ def test_format_nodes_by_status_success(planner):
     assert "goal_achieved" in result
 
 
-def test_format_nodes_by_status_failed(planner):
+def test_format_nodes_by_status_failed(replanner):
     """失败节点 → 包含 error + evaluation 信息。"""
     from Module.task_system.schema import (
         BusinessStatus, EvaluatorAction, ExecutionStatus,
@@ -367,7 +373,7 @@ def test_format_nodes_by_status_failed(planner):
         DAGNode(node_id=NodeId("search"), description="搜索最新 AI 新闻"),
     ], edges=[]), plan_version=1)
 
-    result = planner._format_nodes_by_status(
+    result = replanner._format_nodes_by_status(
         node_results, plan, {NodeStatus.FAILED, NodeStatus.UNRECOVERABLE},
     )
     assert "工具超时" in result
@@ -375,20 +381,20 @@ def test_format_nodes_by_status_failed(planner):
     assert "goal_failed" in result
 
 
-def test_format_nodes_by_status_empty(planner):
+def test_format_nodes_by_status_empty(replanner):
     """无匹配状态的节点 → 返回空文本。"""
     node_results: dict = {}
     plan = Plan(dag=DAG(nodes=[
         DAGNode(node_id=NodeId("search"), description="搜索"),
     ], edges=[]), plan_version=1)
 
-    result = planner._format_nodes_by_status(
+    result = replanner._format_nodes_by_status(
         node_results, plan, {NodeStatus.SUCCESS},
     )
     assert result == ""
 
 
-def test_format_nodes_by_status_truncates_long_summary(planner):
+def test_format_nodes_by_status_truncates_long_summary(replanner):
     """超过 200 字符的 summary → 截断。"""
     node_results = {
         "search": NodeState(
@@ -401,7 +407,7 @@ def test_format_nodes_by_status_truncates_long_summary(planner):
         DAGNode(node_id=NodeId("search"), description="搜索"),
     ], edges=[]), plan_version=1)
 
-    result = planner._format_nodes_by_status(
+    result = replanner._format_nodes_by_status(
         node_results, plan, {NodeStatus.SUCCESS},
     )
     assert "..." in result
@@ -411,7 +417,7 @@ def test_format_nodes_by_status_truncates_long_summary(planner):
 # ── _parse_replan_response 测试 ─────────────────────────────────────────────
 
 
-def test_parse_replan_full_replan(planner):
+def test_parse_replan_full_replan(replanner):
     """full_replan=true → 返回 Plan。"""
     data = {
         "full_replan": True,
@@ -426,13 +432,13 @@ def test_parse_replan_full_replan(planner):
         ],
         "edges": [],
     }
-    result = planner._parse_replan_response(json.dumps(data))
+    result = replanner._parse_replan_response(json.dumps(data))
     assert isinstance(result, Plan)
     assert len(result.dag.nodes) == 1
     assert result.dag.nodes[0].node_id == NodeId("new_search")
 
 
-def test_parse_replan_full_replan_with_edges(planner):
+def test_parse_replan_full_replan_with_edges(replanner):
     """全量重建含 edges → Plan 包含正确的依赖关系。"""
     data = {
         "full_replan": True,
@@ -442,13 +448,13 @@ def test_parse_replan_full_replan_with_edges(planner):
         ],
         "edges": [["a", "b"]],
     }
-    result = planner._parse_replan_response(json.dumps(data))
+    result = replanner._parse_replan_response(json.dumps(data))
     assert isinstance(result, Plan)
     assert len(result.dag.nodes) == 2
     assert len(result.dag.edges) == 1
 
 
-def test_parse_replan_dagpatch_replace(planner):
+def test_parse_replan_dagpatch_replace(replanner):
     """full_replan=false → 返回 DAGPatch（replace_nodes）。"""
     data = {
         "full_replan": False,
@@ -465,7 +471,7 @@ def test_parse_replan_dagpatch_replace(planner):
             }]
         ],
     }
-    result = planner._parse_replan_response(json.dumps(data))
+    result = replanner._parse_replan_response(json.dumps(data))
     assert isinstance(result, DAGPatch)
     assert result.patch_type == DAGPatchType.REPLACE_NODES
     assert result.reason == "工具报错，换一个搜索工具"
@@ -476,7 +482,7 @@ def test_parse_replan_dagpatch_replace(planner):
     assert new_node.node_id == NodeId("new_search")
 
 
-def test_parse_replan_dagpatch_add(planner):
+def test_parse_replan_dagpatch_add(replanner):
     """full_replan=false → 返回 DAGPatch（add_nodes + add_edges）。"""
     data = {
         "full_replan": False,
@@ -489,40 +495,40 @@ def test_parse_replan_dagpatch_add(planner):
         ],
         "add_edges": [["get_timestamp", "failed_search"]],
     }
-    result = planner._parse_replan_response(json.dumps(data))
+    result = replanner._parse_replan_response(json.dumps(data))
     assert isinstance(result, DAGPatch)
     assert result.patch_type == DAGPatchType.ADD_NODES
     assert len(result.add_nodes) == 1
     assert len(result.add_edges) == 1
 
 
-def test_parse_replan_invalid_json(planner):
-    """非法 JSON → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="JSON 解析失败"):
-        planner._parse_replan_response("not json")
+def test_parse_replan_invalid_json(replanner):
+    """非法 JSON → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="JSON 解析失败"):
+        replanner._parse_replan_response("not json")
 
 
-def test_parse_replan_not_object(planner):
-    """JSON 数组而非对象 → _PlanParseError。"""
-    with pytest.raises(_PlanParseError, match="JSON object"):
-        planner._parse_replan_response("[]")
+def test_parse_replan_not_object(replanner):
+    """JSON 数组而非对象 → PlanParseError。"""
+    with pytest.raises(PlanParseError, match="JSON object"):
+        replanner._parse_replan_response("[]")
 
 
-def test_parse_replan_unknown_patch_type(planner):
-    """未知 patch_type → _PlanParseError。"""
+def test_parse_replan_unknown_patch_type(replanner):
+    """未知 patch_type → PlanParseError。"""
     data = {
         "full_replan": False,
         "patch_type": "unknown_type",
     }
-    with pytest.raises(_PlanParseError, match="未知 patch_type"):
-        planner._parse_replan_response(json.dumps(data))
+    with pytest.raises(PlanParseError, match="未知 patch_type"):
+        replanner._parse_replan_response(json.dumps(data))
 
 
-def test_parse_replan_full_missing_nodes(planner):
-    """全量重建但 nodes 为空 → _PlanParseError。"""
+def test_parse_replan_full_missing_nodes(replanner):
+    """全量重建但 nodes 为空 → PlanParseError。"""
     data = {"full_replan": True, "nodes": []}
-    with pytest.raises(_PlanParseError, match="nodes 为空"):
-        planner._parse_replan_response(json.dumps(data))
+    with pytest.raises(PlanParseError, match="nodes 为空"):
+        replanner._parse_replan_response(json.dumps(data))
 
 
 # ── token_ledger 注入与 record 测试 ──────────────────────────────────────────
@@ -537,6 +543,17 @@ def planner_with_mock_llm():
     mock_infra.llm.chat.completions.create = AsyncMock()
     planner = Planner(infra=mock_infra, token_ledger=mock_ledger)
     return planner, mock_ledger
+
+
+@pytest.fixture
+def replanner_with_mock_llm():
+    """创建 Replanner，mock infra.llm.chat.completions.create 以返回可控响应。"""
+    mock_ledger = MagicMock()
+    mock_infra = MagicMock()
+    mock_infra.llm_model = "deepseek-v4"
+    mock_infra.llm.chat.completions.create = AsyncMock()
+    replanner = Replanner(infra=mock_infra, token_ledger=mock_ledger)
+    return replanner, mock_ledger
 
 
 def _set_mock_response(planner, content: str, prompt_tokens: int = 100, completion_tokens: int = 50):
@@ -584,9 +601,9 @@ def test_plan_records_token_usage(planner_with_mock_llm):
     assert "model" in call_kwargs
 
 
-def test_replan_records_token_usage(planner_with_mock_llm):
+def test_replan_records_token_usage(replanner_with_mock_llm):
     """replan() 中 LLM 调用成功后 token_ledger.record() 被调用，参数正确。"""
-    planner, mock_ledger = planner_with_mock_llm
+    replanner, mock_ledger = replanner_with_mock_llm
 
     valid_json = json.dumps({
         "full_replan": False,
@@ -598,7 +615,7 @@ def test_replan_records_token_usage(planner_with_mock_llm):
              "output_as": "output:new_search", "required": True}]
         ],
     })
-    _set_mock_response(planner, valid_json, prompt_tokens=200, completion_tokens=80)
+    _set_mock_response(replanner, valid_json, prompt_tokens=200, completion_tokens=80)
 
     original_plan = Plan(
         dag=DAG(nodes=[
@@ -615,7 +632,7 @@ def test_replan_records_token_usage(planner_with_mock_llm):
     }
 
     import asyncio
-    result = asyncio.run(planner.replan(
+    result = asyncio.run(replanner.replan(
         original_plan=original_plan,
         failed_node_ids=[NodeId("search")],
         failure_diagnosis="搜索超时",

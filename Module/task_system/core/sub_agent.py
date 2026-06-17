@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from Module.task_system.core.executor import Executor
     from Module.task_system.core.graph import PlanGraph
     from Module.task_system.core.orchestrator import Orchestrator
-    from Module.task_system.core.planner import Planner
+    from Module.task_system.core.planner import Planner, Replanner
     from Module.task_system.core.plan_validator import PlanValidator
     from Module.task_system.infra import AgentInfra
     from Module.task_system.mailbox import TaskMailbox
@@ -78,8 +78,8 @@ class SubAgent:
     跨任务共享依赖（2 个）：
         infra, hitl_notifier
     Per-task 组件（run() 内部创建）：
-        TokenLedger / Planner / PlanValidator / Executor / Evaluator /
-        ArtifactStore / CheckpointManager / Orchestrator
+        TokenLedger / Planner / Replanner / PlanValidator / Executor /
+        Evaluator / ArtifactStore / CheckpointManager / Orchestrator
     """
 
     def __init__(
@@ -98,6 +98,7 @@ class SubAgent:
 
         # ── per-task 组件——run() 入口赋值，初始为 None ──
         self._planner: Planner | None = None
+        self._replanner: Replanner | None = None
         self._plan_validator: PlanValidator | None = None
         self._executor: Executor | None = None
         self._evaluator: Evaluator | None = None
@@ -147,7 +148,7 @@ class SubAgent:
         from Module.task_system.core.evaluator import Evaluator
         from Module.task_system.core.executor import Executor
         from Module.task_system.core.orchestrator import Orchestrator
-        from Module.task_system.core.planner import Planner
+        from Module.task_system.core.planner import Planner, Replanner
         from Module.task_system.core.plan_validator import PlanValidator
         from Module.task_system.token_ledger import TokenLedger
 
@@ -156,6 +157,7 @@ class SubAgent:
         self._checkpoint_mgr = CheckpointManager()
         self._plan_validator = PlanValidator()
         self._planner = Planner(infra=self._infra, token_ledger=self._token_ledger)
+        self._replanner = Replanner(infra=self._infra, token_ledger=self._token_ledger)
         self._executor = Executor(
             infra=self._infra,
             artifact_store=self._artifact_store,
@@ -574,10 +576,11 @@ class SubAgent:
             })
             return False, None
 
-        # 1.5. 检查外部中断信号——在昂贵的 Planner.replan() 之前拦截。
+        # 1.5. 检查外部中断信号——在昂贵的 Replanner.replan() 之前拦截。
         # pause()/cancel() 设置的是旧的 exec_state 上的标志位，
         # 而 _execute 循环下一次进入 Orchestrator.run(resume_from=...) 会创建
         # 新 exec_state（_merge_exec_state），标志会丢失。在此拦截避免浪费 LLM 调用。
+        assert self._orchestrator is not None
         exec_state = self._orchestrator._exec_state
         if exec_state is not None:
             if getattr(exec_state, "cancel_requested", False) is True:
@@ -612,7 +615,7 @@ class SubAgent:
                 })
                 return False, None
 
-        # 2. Replan——调 Planner.replan()，产出 DAGPatch
+        # 2. Replan——调 Replanner.replan()，产出 DAGPatch
         assert task_state.plan is not None, "NEEDS_REPLAN 时 plan 不应为 None"
 
         error_ctx = result.error_context
@@ -637,13 +640,13 @@ class SubAgent:
             })
             return False, None
 
-        # 调 Planner.replan()，产出 DAGPatch（局部修复）或 Plan（全量重建）
+        # 调 Replanner.replan()，产出 DAGPatch（局部修复）或 Plan（全量重建）
         try:
             plan = graph.to_plan(task_state.plan)
             # 解析生效约束——与 plan() 一致的 resolve 逻辑
-            assert self._planner is not None
+            assert self._replanner is not None
             tc = context.task_constraints.resolve(self._infra.constraints)
-            replan_result = await self._planner.replan(
+            replan_result = await self._replanner.replan(
                 original_plan=plan,
                 failed_node_ids=failed_node_ids,
                 failure_diagnosis=error_ctx.get("reason", "节点执行失败"),
@@ -653,25 +656,6 @@ class SubAgent:
                 max_nodes=tc.max_dag_nodes or self._infra.constraints.max_dag_nodes,
                 max_mutations=tc.max_mutations or self._infra.constraints.max_mutations,
             )
-        except NotImplementedError:
-            # 优雅降级：replan 未实现 → 任务失败
-            logger.warning(
-                "SubAgent: task_id=%s NEEDS_REPLAN 但 Planner.replan() 尚未实现，"
-                "优雅降级为 FAILED。failed_nodes=%s, reason=%s",
-                task_state.task_id, failed_node_ids,
-                error_ctx.get("reason", "未知"),
-            )
-            task_state.status = TaskStatus.FAILED
-            task_state.updated_at = now_iso()
-            await self._push_mailbox(mailbox, TaskEventType.FAILED, {
-                "task_id": str(task_state.task_id),
-                "error": (
-                    f"节点 {failed_node_ids} 执行失败，需要 Replan，"
-                    "但 Replan 尚未实现（v2 规划中）"
-                ),
-                "error_type": TaskErrorCode.INTERNAL_ERROR.value,
-            })
-            return False, None
         except Exception as e:
             # LLM 返回空响应 / JSON 解析失败 / 网络错误 → 降级为 FAILED
             logger.warning(
@@ -795,10 +779,10 @@ class SubAgent:
     # ── 内部：节点结果提取 ────────────────────────────────────────────────────
 
     def _extract_node_results(self, checkpoint: TaskCheckpoint) -> dict[str, NodeState]:
-        """从 TaskCheckpoint 中提取 node_states，供 Planner.replan() 使用。
+        """从 TaskCheckpoint 中提取 node_states，供 Replanner.replan() 使用。
 
         NodeState 现包含 evaluation 字段（Evaluator 完整判定），
-        Planner.replan() 可直接读取每个节点的：
+        Replanner.replan() 可直接读取每个节点的：
             - status（SUCCESS/FAILED/SKIPPED/PENDING）
             - summary（简短摘要）
             - error / error_code

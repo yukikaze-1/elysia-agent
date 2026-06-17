@@ -151,7 +151,7 @@ class PlanGraph:
         return False
 
     def collect_failure_info(self, node_states: dict[NodeId, NodeState]) -> dict:
-        """收集失败节点的诊断信息，供 Sub-Agent 传给 Planner.replan()。"""
+        """收集失败节点的诊断信息，供 Sub-Agent 传给 Replanner.replan()。"""
         failed: list[str] = []
         reasons: list[str] = []
         error_codes: dict[str, str] = {}

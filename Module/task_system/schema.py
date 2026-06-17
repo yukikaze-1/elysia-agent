@@ -133,7 +133,7 @@ class TaskStatus(StrEnum):
         PLANNING → FAILED（规划阶段异常）
 
     终态: COMPLETED / FAILED / CANCELLED（不可逆）
-    内部: REPLAN 在 RUNNING 内部完成（Planner.replan → apply_patch → 继续 RUNNING），不暴露为独立状态。
+    内部: REPLAN 在 RUNNING 内部完成（Replanner.replan → apply_patch → 继续 RUNNING），不暴露为独立状态。
     """
     PENDING = "pending"
     PLANNING = "planning"
@@ -804,7 +804,7 @@ class OrchestratorResult(BaseModel):
     # ↑ 当前 TaskState + ExecutionState 快照。Sub-Agent 用于:
     #     PAUSED       → CheckpointManager.save(checkpoint_state)，等 resume 后恢复
     #     BLOCKED      → 等审批回传后恢复执行
-    #     NEEDS_REPLAN → checkpoint_state.exec.node_states 传给 Planner.replan()
+    #     NEEDS_REPLAN → checkpoint_state.exec.node_states 传给 Replanner.replan()
     #     死锁 / ABORT 时为 None（快照无意义）
 
 
@@ -837,7 +837,7 @@ class NodeState(BaseModel):
     #                                          ExperienceRecord / Planner 做结构化匹配用。
     evaluation: NodeResultEvaluation | None = None  # Evaluator 完整判定（含 execution_status、
     #                                                  business_status、suggested_action），
-    #                                                  Planner.replan() 做诊断决策用。
+    #                                                  Replanner.replan() 做诊断决策用。
 
 
 class TaskState(BaseModel):
@@ -1024,7 +1024,7 @@ class Plan(BaseModel):
 class DAGPatchType(StrEnum):
     """DAG 补丁类型——3 种。
 
-    Planner.replan() 根据失败诊断选择合适的补丁策略。
+    Replanner.replan() 根据失败诊断选择合适的补丁策略。
     注意：full_replan 不属于 DAGPatch 职责——
     全量重建由 Sub-Agent 层直接创建新 Plan + 重建 PlanGraph。
     """
@@ -1046,7 +1046,7 @@ class DAGPatch(BaseModel):
         patch_type:     修改类型（元数据，primary intent）
         reason:         为什么需要修改（来自 Evaluator 诊断）
         trigger_nodes:  哪些失败节点触发了这次 Replan（并行执行时可能多个）
-        created_at:     Planner.replan() 产出时赋值（ISO 8601）
+        created_at:     Replanner.replan() 产出时赋值（ISO 8601）
         replace_nodes:  要替换的节点映射，(old_id, new_node)
         remove_nodes:   要移除的 node_id 列表（不包含 replace 中的 old_id）
         add_nodes:      要新增的节点列表（不包含 replace 中的 new_node）

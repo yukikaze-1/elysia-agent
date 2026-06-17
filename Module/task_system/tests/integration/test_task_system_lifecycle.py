@@ -319,7 +319,7 @@ async def test_concurrent_slot_limit():
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_goal_failed_triggers_replan():
-    """Evaluator 返回 goal_failed → Orchestrator 返回 NEEDS_REPLAN → Planner.replan()。
+    """Evaluator 返回 goal_failed → Orchestrator 返回 NEEDS_REPLAN → Replanner.replan()。
 
     用 monkeypatch 让 Evaluator 对特定节点返回 goal_failed，
     验证 Replan 机制被触发（plan_version > 1）。
@@ -331,7 +331,7 @@ async def test_goal_failed_triggers_replan():
     tools = _tools_from_manager(ts._infra.tool_registry)
 
     # 缩小熔断阈值——2 次 replan 即触发熔断（而非默认 5），大幅缩短测试耗时。
-    # 在完整套件中 LLM 可能被限速，每次 Planner.replan() 耗时更长。
+    # 在完整套件中 LLM 可能被限速，每次 Replanner.replan() 耗时更长。
     ts._infra.constraints.max_failure_count = 2
 
     # Evaluator 已改为 per-task 组件（SubAgent.run() 内部创建），

@@ -2,7 +2,7 @@
 
 严格按照 Plan 中的 DAG 拓扑推进节点：找 ready → 执行 → 评估 → 更新状态。
 遇到结构性失败（DAG 走不通）时主动退出，返回 NEEDS_REPLAN，
-由 Sub-Agent 层调 Planner.replan() 后再恢复执行。
+由 Sub-Agent 层调 Replanner.replan() 后再恢复执行。
 
 不调 Planner，不修改 Plan——只负责"在给定 Plan 的框架内尽最大努力推进"。
 
@@ -128,7 +128,7 @@ class Orchestrator:
         BLOCKED  → 等待用户审批。
         PAUSED   → 收到外部暂停请求，已保存 checkpoint。
 
-        Sub-Agent 收到 NEEDS_REPLAN 后调 Planner.replan()，得到 DAGPatch，
+        Sub-Agent 收到 NEEDS_REPLAN 后调 Replanner.replan()，得到 DAGPatch，
         应用到 PlanGraph 后可再次调用 run() 恢复执行。
         """
         task_id = task_state.task_id
@@ -454,7 +454,7 @@ class Orchestrator:
         node_id = evaluation.node_id
         ns = exec_state.node_states[node_id]
         ns.finished_at = now_iso()
-        ns.evaluation = evaluation  # 保留 Evaluator 完整判定，供 Planner.replan() 诊断用
+        ns.evaluation = evaluation  # 保留 Evaluator 完整判定，供 Replanner.replan() 诊断用
         action = evaluation.suggested_action
 
         if action == EvaluatorAction.CONTINUE:

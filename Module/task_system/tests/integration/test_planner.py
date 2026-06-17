@@ -20,7 +20,7 @@ if _env_path.exists():
                 if key not in os.environ:
                     os.environ[key] = value
 
-from Module.task_system.core.planner import Planner
+from Module.task_system.core.planner import Planner, Replanner
 from Module.task_system.infra import AgentInfra
 from Module.task_system.schema import (
     BusinessStatus,
@@ -226,11 +226,11 @@ async def test_replan_tool_timeout():
     print("Replan 集成测试 1: 工具超时 → 局部修复")
     print("=" * 60)
 
-    planner = Planner(infra=make_infra())
+    replanner = Replanner(infra=make_infra())
     plan = _make_sample_plan()
     node_states = _make_node_states_for_failed_search()
 
-    result = await planner.replan(
+    result = await replanner.replan(
         original_plan=plan,
         failed_node_ids=[NodeId("search_weather")],
         failure_diagnosis="search_weather 节点执行超时（30s），工具可能负载过高。请尝试其他搜索方式或拆分查询。",
@@ -308,11 +308,11 @@ async def test_replan_business_goal_failed():
     print("Replan 集成测试 2: 业务目标未达成 (goal_failed) → 修复")
     print("=" * 60)
 
-    planner = Planner(infra=make_infra())
+    replanner = Replanner(infra=make_infra())
     plan = _make_sample_plan()
     node_states = _make_node_states_with_success()
 
-    result = await planner.replan(
+    result = await replanner.replan(
         original_plan=plan,
         failed_node_ids=[NodeId("search_weather")],
         failure_diagnosis=(
