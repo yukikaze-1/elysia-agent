@@ -927,16 +927,18 @@ INTERRUPT:
 
 | # | 位置 | 用途 | 管理模式 |
 |---|------|------|----------|
-| 1 | agent.py:133 | embedding 预加载 | fire-and-forget + tracked |
-| 2 | agent.py:137 | `_process_events` 主循环 | 常驻，stop 时 cancel |
-| 3 | agent.py:376 | cognitive process (USER_INPUT) | `_current_task`，INTERRUPT cancel |
-| 4 | agent.py:389 | cognitive process (SYSTEM_TICK) | 同上 |
+| 1 | agent.py | embedding 预加载 | fire-and-forget + tracked |
+| 2 | agent.py | `_process_events` 主循环 | 常驻，stop 时 cancel |
+| 3 | agent.py | cognitive process (USER_INPUT) | `_current_task`，INTERRUPT cancel |
+| 4 | agent.py | cognitive process (SYSTEM_TICK) | 同上 |
 | 5 | cognitive_loop.py | `_after_response` | fire-and-forget，无追踪 |
 | 6 | tts_stream.py | TTS 流式合成 | `TTSStreamManager._tasks[]`，gather/cancel |
-| 7 | idle_monitor.py:37 | idle 监控 tick | 常驻，stop 时 cancel |
-| 8 | long_term.py:108 | embedding 加载 | insert 时 await (wait=True), search 时 fire-and-forget |
-| 9 | emotion_engine.py:201 | expression 输出 | 纯 fire-and-forget，无追踪 |
-| 10 | tool/registry.py:327 | ToolEmitter 执行 | ToolEmitter 内部追踪 |
+| 7 | idle_monitor.py | idle 监控 tick | 常驻，stop 时 cancel |
+| 8 | long_term.py | embedding 加载 | insert 时 await (wait=True), search 时 fire-and-forget |
+| 9 | emotion_engine.py | expression 输出 | 纯 fire-and-forget，无追踪 |
+| 10 | tool/registry.py | ToolEmitter 执行 | ToolEmitter 内部追踪 |
+| 11 | agent.py | `_poll_mailboxes()` | TaskSystem mailbox 500ms 轮询，常驻，stop 时 cancel |
+| 12 | agent.py | cognitive process (TASK_RESULT) | `_current_task`，新增 |
 
 ---
 

@@ -596,7 +596,7 @@ class Orchestrator:
         exec_state: ExecutionState,
         mailbox: TaskMailbox,
     ) -> None:
-        """任务终态处理——推送 completed 事件 + 写最终 checkpoint。"""
+        """任务终态处理——推送 completed 事件（含节点产出摘要，供 CognitiveLoop 渐进式唤醒）+ 写最终 checkpoint。"""
         task_state.status = TaskStatus.COMPLETED
         task_state.updated_at = now_iso()
         await self._save_checkpoint(task_state, exec_state)

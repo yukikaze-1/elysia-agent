@@ -1,7 +1,7 @@
 # TaskSystem 项目进度
 
-> 日期: 2026-06-17  
-> 状态: v1 核心完成，查询 API 全部就绪，待接入 CognitiveLoop
+> 日期: 2026-06-18  
+> 状态: v1 核心完成，CognitiveLoop 异步任务集成已完成并 e2e 验证通过
 
 ---
 
@@ -128,7 +128,7 @@ TaskSystem
 | `submit_task` 注册为 LLM 工具 | ✅ function definition 在 tool_defs 合并 |
 | `DelegationPreparer` 调用 | ✅ CognitiveLoop._handle_submit_task() |
 | Mailbox 事件消费 | ✅ Agent._poll_mailboxes() 500ms 轮询 |
-| Debug WebUI 路由 | ⏳ `app['task_system']` 注册（后续） |
+| Debug WebUI 路由 | ✅ `app['task_system']` 通过 create_app(task_system=...) 参数注册 |
 
 ### 内部功能缺口
 
@@ -153,7 +153,6 @@ TaskSystem
 | 安全护栏 (RBAC) | `safety/` 目录仅有 `__init__.py` |
 | 经验记忆 (Reflector) | `learning/` 目录仅有 `__init__.py` |
 | 审批风暴检测 | `_needs_approval()` 硬编码 False |
-| Debug WebUI 激活 | 等待 `app['task_system']` 注册 |
 
 ---
 
@@ -265,3 +264,17 @@ TaskSystem
 | 3 | `agent.py` | TaskSystem 生命周期 + `_poll_mailboxes()` + TASK_RESULT 处理 |
 | 4 | `protocol.py` | `ToolResult.async_task_id` 字段 |
 | 5 | `task_system.py` | `get_task_mailbox()` 查询方法 |
+
+### CognitiveLoop 异步任务——e2e 调试修复（2026-06-18）
+
+| # | 文件 | 问题 | 修复 |
+|---|------|------|------|
+| 1 | `cognitive_loop.py` | `self._session.messages` 不存在 | → `self._session.recent_messages()` |
+| 2 | `cognitive_loop.py` | `user_profile=None` → `.model_dump()` 崩溃 | → `UserProfile()` 默认空实例 |
+| 3 | `cognitive_loop.py` | assistant_entry 缺少 submit_task 的 tool_calls | normalized 保留 submit_task，只 dispatch other_tcs |
+| 4 | `cognitive_loop.py` | tool result 先于 assistant_entry 追加到 messages | 调整顺序：assistant_entry → submit_task tool result |
+| 5 | `Brain.j2` | ToolUsageGuidance 缺少 submit_task 使用指引 | 加入 submit_task 说明 + 偏好规则 |
+| 6 | `planner.py` | `dict.get("output_as", "")` 对 `null` 返回 None | → `(d.get("output_as") or "").strip()` |
+| 7 | `executor.py` | `max_tokens=2048` 不足以传递 4000+ char 报告 | → `4096` |
+| 8 | `server.py` | `app['task_system']` 未赋值，Debug SSE 断连 | `create_app(task_system=...)` 参数注入 |
+| 9 | `orchestrator.py` | COMPLETED 事件仅含节点计数，无产出摘要 | 加入节点级 `node_summaries`（description + evaluation.reason） |
