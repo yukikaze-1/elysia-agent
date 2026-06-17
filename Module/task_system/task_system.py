@@ -264,7 +264,7 @@ class TaskSystem:
             tasks.append({
                 "task_state": sub_agent._task_state,
                 "graph": sub_agent._graph,
-                "exec_state": sub_agent._orchestrator._exec_state,
+                "exec_state": sub_agent._orchestrator._exec_state if sub_agent._orchestrator else None,
                 "mailbox_depth": self._mailboxes[task_id].count(),
             })
         return {
@@ -295,6 +295,8 @@ class TaskSystem:
         if ts.status == TaskStatus.PAUSED:
             return  # 已暂停——幂等
 
+        if sub_agent._orchestrator is None:
+            return  # 尚未启动——无需暂停
         exec_state = sub_agent._orchestrator._exec_state
         if exec_state is None:
             return  # 尚未启动——无需暂停
@@ -437,6 +439,10 @@ class TaskSystem:
             return True
 
         # ── 分支 2: RUNNING / PLANNING → 设取消标志 ──
+        if sub_agent._orchestrator is None:
+            ts.status = TaskStatus.CANCELLED
+            ts.updated_at = now_iso()
+            return True
         exec_state = sub_agent._orchestrator._exec_state
         if exec_state is None:
             # 尚未进入 Orchestrator（规划/校验阶段）
@@ -580,7 +586,10 @@ class TaskSystem:
         if ts is None:
             return None
 
-        exec_state = sub_agent._orchestrator._exec_state
+        exec_state = (
+            sub_agent._orchestrator._exec_state
+            if sub_agent._orchestrator else None
+        )
         if exec_state is None:
             # 尚未进入 Orchestrator（规划/校验阶段）
             return TaskProgress(
@@ -644,7 +653,10 @@ class TaskSystem:
         graph = sub_agent._graph
         if graph is None:
             return None
-        exec_state = sub_agent._orchestrator._exec_state
+        exec_state = (
+            sub_agent._orchestrator._exec_state
+            if sub_agent._orchestrator else None
+        )
         return graph.to_dag_view(exec_state.node_states if exec_state else {})
 
     def get_token_usage(self, task_id: TaskId) -> TokenUsage | None:
@@ -697,7 +709,7 @@ class TaskSystem:
                 try:
                     created = datetime.fromisoformat(ts.created_at)
                     if created.tzinfo is None:
-                        created = created.replace(tzinfo=tz.utc)
+                        created = created.replace(tzinfo=timezone.utc)
                     duration_ms = int(
                         (now - created).total_seconds() * 1000)
                 except (ValueError, TypeError):

@@ -21,7 +21,7 @@ class TTSBackend(ABC):
         ...
 
     @abstractmethod
-    async def synthesize_stream(
+    def synthesize_stream(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> AsyncGenerator[bytes, None]:
         """流式合成 — 边生成边产出音频 chunk。首 chunk 包含 WAV header 及初始音频数据。"""

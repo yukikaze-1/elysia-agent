@@ -233,3 +233,25 @@ TaskSystem 完全未接入 CognitiveLoop——`core/` 目录没有任何 TaskSys
 | 2 | `task_system.py` | `pause()` 幂等——移除 RuntimeError/KeyError，所有路径静默成功 |
 | 3 | 多文件 | code review #1-#10 修复（tools_used 语义/资源泄漏/重复事件等）|
 | 4 | `utils.py` | 新建——`strip_markdown_fence()` + `format_tools()` 公共函数 |
+
+### CognitiveLoop 拆分 + IDE 类型错误修复（2026-06-17）
+
+**CognitiveLoop 拆分**：
+
+| # | 文件 | 说明 |
+|---|------|------|
+| 1 | `cognitive_loop.py` | 815→612 行，移除 block filter/TTS/tool_call parser/text utils |
+| 2 | `block_filter.py` | 新建——`BlockFilter` 流式块过滤 + `build_parts_with_blocks` 块解析 |
+| 3 | `tts_stream.py` | 新建——`TTSStreamManager` 类，管理 TTS 流式播放 + emoji 排队 |
+| 4 | `tool_call_parser.py` | 新建——`merge_stream_tool_calls` + `normalize_tool_calls` 纯函数 |
+| 5 | `text_utils.py` | 新建——`content_text_from_content` + `MessageObj` |
+| 6 | `agent.py` | `_tts`/`_token_tracker`/`_prompt_recorder` 私有属性访问 → 公开 setter |
+
+**IDE 类型错误修复**：
+
+| # | 文件 | 问题 | 修复 |
+|---|------|------|------|
+| 1 | `sub_agent.py` | `_checkpoint_mgr` 可空直接调 `.load()` | 加 `assert ... is not None` |
+| 2-6 | `task_system.py` | `_orchestrator._exec_state` 5 处可空访问 | 加 orchestrator None 守卫或三元表达式 |
+| 7 | `task_system.py` | `tz.utc` 未定义 | → `timezone.utc` |
+| 8 | `tts/protocol.py` | `async def synthesize_stream` 协程类型问题 | 改为 `def`（非 async），子类仍可 `async def` |

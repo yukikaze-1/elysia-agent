@@ -203,6 +203,7 @@ class SubAgent:
         ts.status = TaskStatus.RESUMING
         ts.updated_at = now_iso()
 
+        assert self._checkpoint_mgr is not None, "run() 必须先于 resume_from_pause()"
         checkpoint = await self._checkpoint_mgr.load(self._mailbox.task_id)
         if checkpoint is None:
             ts.status = TaskStatus.FAILED

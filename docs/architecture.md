@@ -852,7 +852,11 @@ Agent/
 │   ├── schema.py            #   共享类型 (AgentState, EventType, EventPriority)
 │   ├── event_bus.py         #   优先级事件总线
 │   ├── agent_fsm.py         #   五状态机
-│   ├── cognitive_loop.py    #   ReAct 调度器 (~400 行)
+│   ├── cognitive_loop.py    #   ReAct 调度器 (~610 行)
+│   ├── block_filter.py      #   流式块过滤 + 结构化块解析
+│   ├── tts_stream.py        #   TTS 流式播放管理 (TTSStreamManager)
+│   ├── tool_call_parser.py  #   流式 tool call 合并/归一化
+│   ├── text_utils.py        #   文本提取 + MessageObj
 │   ├── llm_adapter.py       #   LLM 适配器
 │   ├── prompt_assembler.py  #   提示词组装 + 记忆检索
 │   ├── emotion_engine.py    #   情绪引擎
@@ -927,8 +931,8 @@ INTERRUPT:
 | 2 | agent.py:137 | `_process_events` 主循环 | 常驻，stop 时 cancel |
 | 3 | agent.py:376 | cognitive process (USER_INPUT) | `_current_task`，INTERRUPT cancel |
 | 4 | agent.py:389 | cognitive process (SYSTEM_TICK) | 同上 |
-| 5 | cognitive_loop.py:334 | `_after_response` | fire-and-forget，无追踪 |
-| 6 | cognitive_loop.py:425 | TTS 流式合成 | `_tts_tasks[]`，gather/cancel |
+| 5 | cognitive_loop.py | `_after_response` | fire-and-forget，无追踪 |
+| 6 | tts_stream.py | TTS 流式合成 | `TTSStreamManager._tasks[]`，gather/cancel |
 | 7 | idle_monitor.py:37 | idle 监控 tick | 常驻，stop 时 cancel |
 | 8 | long_term.py:108 | embedding 加载 | insert 时 await (wait=True), search 时 fire-and-forget |
 | 9 | emotion_engine.py:201 | expression 输出 | 纯 fire-and-forget，无追踪 |

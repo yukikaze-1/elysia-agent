@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin
 from Module.tool.safety import SafetyProfile
 
-from core.cognitive_loop import CognitiveLoop, _MessageObj
+from core.cognitive_loop import CognitiveLoop
+from core.text_utils import MessageObj
+from core.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from core.agent_fsm import AgentFSM, AgentState
 from core.event_bus import EventBus, EventType, EventPriority
 from core.llm_adapter import LLMAdapter
@@ -29,7 +31,7 @@ class TestMergeStreamToolCalls:
     def test_single_delta_new_entry(self):
         accum: list[dict] = []
         delta = [{"index": 0, "id": "call_1", "function": {"name": "search", "arguments": '{"q"'}}]
-        CognitiveLoop._merge_stream_tool_calls(accum, delta)
+        merge_stream_tool_calls(accum, delta)
         assert len(accum) == 1
         assert accum[0]["id"] == "call_1"
         assert accum[0]["function"]["name"] == "search"
@@ -37,10 +39,10 @@ class TestMergeStreamToolCalls:
 
     def test_same_index_accumulates(self):
         accum: list[dict] = []
-        CognitiveLoop._merge_stream_tool_calls(accum, [
+        merge_stream_tool_calls(accum, [
             {"index": 0, "function": {"name": "se", "arguments": ""}}
         ])
-        CognitiveLoop._merge_stream_tool_calls(accum, [
+        merge_stream_tool_calls(accum, [
             {"index": 0, "function": {"name": "arch", "arguments": '{"q":1}'}}
         ])
         assert accum[0]["function"]["name"] == "search"
@@ -49,13 +51,13 @@ class TestMergeStreamToolCalls:
     def test_delta_id_only_no_function(self):
         accum: list[dict] = []
         delta = [{"index": 0, "id": "call_x"}]
-        CognitiveLoop._merge_stream_tool_calls(accum, delta)
+        merge_stream_tool_calls(accum, delta)
         assert accum[0]["id"] == "call_x"
         assert accum[0]["function"]["name"] == ""
 
     def test_multi_index_interleaved(self):
         accum: list[dict] = []
-        CognitiveLoop._merge_stream_tool_calls(accum, [
+        merge_stream_tool_calls(accum, [
             {"index": 0, "function": {"name": "fn0"}},
             {"index": 1, "function": {"name": "fn1"}},
         ])
@@ -65,13 +67,13 @@ class TestMergeStreamToolCalls:
 
     def test_empty_deltas_noop(self):
         accum: list[dict] = []
-        CognitiveLoop._merge_stream_tool_calls(accum, [])
+        merge_stream_tool_calls(accum, [])
         assert accum == []
 
     def test_missing_function_field(self):
         accum: list[dict] = []
         delta = [{"index": 0, "id": "x"}]
-        CognitiveLoop._merge_stream_tool_calls(accum, delta)
+        merge_stream_tool_calls(accum, delta)
         # Should not crash
         assert accum[0]["id"] == "x"
 
@@ -86,23 +88,23 @@ class TestNormalizeToolCalls:
             {"id": "a", "function": {"name": "f1", "arguments": "{}"}},
             {"id": "b", "function": {"name": "f2", "arguments": "{}"}},
         ]
-        result = CognitiveLoop._normalize_tool_calls(raw)
+        result = normalize_tool_calls(raw)
         assert len(result) == 2
 
     def test_all_incomplete_missing_id(self):
         raw = [{"id": "", "function": {"name": "f1", "arguments": "{}"}}]
-        assert CognitiveLoop._normalize_tool_calls(raw) == []
+        assert normalize_tool_calls(raw) == []
 
     def test_all_incomplete_missing_name(self):
         raw = [{"id": "x", "function": {"name": "", "arguments": "{}"}}]
-        assert CognitiveLoop._normalize_tool_calls(raw) == []
+        assert normalize_tool_calls(raw) == []
 
     def test_mixed(self):
         raw = [
             {"id": "a", "function": {"name": "ok", "arguments": "{}"}},
             {"id": "", "function": {"name": "bad", "arguments": "{}"}},
         ]
-        result = CognitiveLoop._normalize_tool_calls(raw)
+        result = normalize_tool_calls(raw)
         assert len(result) == 1
         assert result[0]["id"] == "a"
 
@@ -306,14 +308,14 @@ class TestCognitiveLoopTTS:
     @pytest.mark.asyncio
     async def test_start_tts_stream_creates_task(self, loop):
         """_start_tts_stream creates a background TTS task."""
-        initial_count = len(loop._tts_tasks)
+        initial_count = len(loop._tts_mgr._tasks)
         loop._start_tts_stream("你好世界")
-        assert len(loop._tts_tasks) == initial_count + 1
+        assert len(loop._tts_mgr._tasks) == initial_count + 1
         # Should clean up done tasks
         loop._start_tts_stream("第二句")
         # At most initial+2 tasks (some may have completed)
-        assert len(loop._tts_tasks) <= initial_count + 2
-        assert loop._tts_total >= 2
+        assert len(loop._tts_mgr._tasks) <= initial_count + 2
+        assert loop._tts_mgr._total >= 2
 
     @pytest.mark.asyncio
     async def test_multi_tool_round(self, loop):
@@ -357,13 +359,13 @@ class TestCognitiveLoopTTS:
         """_handle_interrupt resets sentence buffer, cancels TTS tasks, returns to IDLE."""
         loop._sentence_buf.feed("partial")
         t = asyncio.create_task(asyncio.sleep(10))
-        loop._tts_tasks.append(t)
+        loop._tts_mgr._tasks.append(t)
         loop._fsm.transition("thinking")
 
         await loop._handle_interrupt()
 
         assert loop._sentence_buf._buffer == ""
-        assert len(loop._tts_tasks) == 0
+        assert len(loop._tts_mgr._tasks) == 0
         assert loop._fsm.state == "idle"
 
 
@@ -801,7 +803,7 @@ class TestOutputManagerConvenience:
                 yield  # never yields
             return
 
-        msg = await mgr.stream(empty(), finalize=lambda t: _MessageObj(content=t))
+        msg = await mgr.stream(empty(), finalize=lambda t: MessageObj(content=t))
         ch.on_text_delta.assert_not_awaited()
         assert msg.content == ""
 
@@ -958,7 +960,7 @@ class TestConsoleChannelDedup:
         # Simulate streaming
         await ch.on_text_delta("hello")
         # on_message after streaming should not print content line
-        msg = _MessageObj(content="hello")
+        msg = MessageObj(content="hello")
         # We can't easily capture stdout in pytest, but we verify no crash
         await ch.on_message(msg)
         assert ch._delta_printed is False  # reset after on_message
@@ -967,7 +969,7 @@ class TestConsoleChannelDedup:
     async def test_on_message_without_stream(self):
         from Module.output import ConsoleChannel
         ch = ConsoleChannel()
-        msg = _MessageObj(content="direct message")
+        msg = MessageObj(content="direct message")
         await ch.on_message(msg)
         # No delta was printed, should not crash
 
@@ -993,17 +995,17 @@ class TestConsoleChannelDedup:
 
 
 # ============================================================================
-# 16. _MessageObj
+# 16. MessageObj
 # ============================================================================
 
 class TestMessageObj:
     def test_to_dict(self):
-        msg = _MessageObj(role="assistant", content="hello world")
+        msg = MessageObj(role="assistant", content="hello world")
         d = msg.to_dict()
         assert d == {"role": "assistant", "content": "hello world"}
 
     def test_defaults(self):
-        msg = _MessageObj()
+        msg = MessageObj()
         assert msg.role == "assistant"
         assert msg.content == ""
 

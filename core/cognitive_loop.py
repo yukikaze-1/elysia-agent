@@ -2,15 +2,20 @@
 
 Orchestrates THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE.
 Uses structured streaming for sub-100ms TTFT and simultaneous tool-call detection.
+
+Sub-modules extracted for focus:
+  block_filter.py   — streaming block tag filter + post-hoc block parsing
+  tts_stream.py     — TTS stream manager + emoji queuing
+  tool_call_parser.py — merge/normalize streaming tool_call deltas
+  text_utils.py     — content text extraction + MessageObj
 """
 
 import asyncio
 import datetime
 import json
 import logging
-import re
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 
 from .message_id import new_message_id
 
@@ -18,7 +23,6 @@ from .timing import TimingClock
 
 from Module.output import OutputManager, ChannelCapability
 from Module.tts import TTSBackend
-from Module.tts.text_preprocess import strip_all_markup
 
 from .agent_fsm import AgentFSM, AgentState
 from .event_bus import EventBus, EventPriority, EventType
@@ -32,141 +36,13 @@ from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
+
+from .block_filter import BlockFilter, build_parts_with_blocks
+from .tts_stream import is_emoji_only, TTSStreamManager
+from .tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
+from .text_utils import content_text_from_content, MessageObj
+
 logger = logging.getLogger(__name__)
-
-def content_text_from_content(content: list[dict]) -> str:
-    """从 content 数组提取纯文本（给日志用）。"""
-    return "".join(
-        p.get("content", "") for p in content
-        if isinstance(p, dict) and p.get("type") == "text"
-    )
-
-
-_EMOJI_RE = re.compile(
-    r"[\U0001F300-\U0001F9FF"
-    r"\U0001F600-\U0001F64F"
-    r"\U00002600-\U000027BF"
-    r"\U00002300-\U000023FF]+",
-    flags=re.UNICODE,
-)
-
-
-def _is_emoji_only(text: str) -> bool:
-    """句子去掉 emoji 后是否只剩空白 — 用于跳过 TTS 合成。"""
-    return not _EMOJI_RE.sub("", text).strip()
-
-
-_BLOCK_PATTERN: re.Pattern = re.compile(
-    r'<\|markdown\|>(.*?)</\|markdown\|>|'
-    r'<\|code\|(\w+)?>(.*?)</\|code\|>',
-    re.DOTALL,
-)
-
-_BLOCK_START_RE: re.Pattern = re.compile(r'<\|(markdown|code)(?:\|(\w*))?\|?>')
-
-# 最长标记 "</|markdown|>" 为 13 字符，流式处理时保留末尾这么多以防截断
-_BLOCK_LOOKBEHIND = 13
-
-
-class _BlockFilter:
-    """流式过滤结构化块标记，阻止代码/markdown 内容进入 TTS。"""
-
-    def __init__(self):
-        self._buf = ""
-        self._depth = 0
-
-    def feed(self, chunk: str) -> str:
-        """喂入一个 chunk，返回可以去 TTS/分句的干净文本。"""
-        self._buf += chunk
-        out: list[str] = []
-        i = 0
-
-        while i < len(self._buf):
-            if self._depth > 0:
-                # 在块内 — 找结束标记
-                end_md = self._buf.find("</|markdown|>", i)
-                end_code = self._buf.find("</|code|>", i)
-                candidates = []
-                if end_md >= 0:
-                    candidates.append(end_md)
-                if end_code >= 0:
-                    candidates.append(end_code)
-                if candidates:
-                    end_pos = min(candidates)
-                    end_len = len("</|markdown|>") if self._buf.startswith("</|markdown|>", end_pos) else len("</|code|>")
-                    i = end_pos + end_len
-                    self._depth -= 1
-                else:
-                    # 没有结束标记 — 保留末尾以防截断
-                    keep = min(len(self._buf) - i, _BLOCK_LOOKBEHIND)
-                    i = len(self._buf) - keep
-                    break
-            else:
-                # 不在块内 — 找开始标记
-                m = _BLOCK_START_RE.search(self._buf, i)
-                if m:
-                    out.append(self._buf[i:m.start()])
-                    i = m.end()
-                    self._depth += 1
-                else:
-                    # 没有开始标记 — 安全地输出大部分，保留末尾防截断
-                    safe = len(self._buf) - _BLOCK_LOOKBEHIND
-                    if safe > i:
-                        out.append(self._buf[i:safe])
-                        i = safe
-                    break
-
-        self._buf = self._buf[i:]
-        return "".join(out)
-
-    def flush(self) -> str:
-        """清空缓冲区，返回剩余的未被标记包裹的文本。"""
-        result = self._buf
-        self._buf = ""
-        self._depth = 0
-        # 去掉可能残留的未闭合标记
-        cleaned = _BLOCK_START_RE.sub("", result)
-        return cleaned
-
-
-def _build_parts_with_blocks(
-    acc_text: str, sentences: list[str],
-) -> tuple[list[dict], dict[str, list[int]]]:
-    """从 LLM 输出文本中解析结构化块标记，构建 parts 和 content_type。
-
-    对话文本的句子作为 text parts，标记包裹的内容作为 markdown/code parts，
-    追加在句子之后。
-    """
-    parts: list[dict] = [{"content": s} for s in sentences]
-    content_type: dict[str, list[int]] = {"markdown": [], "code": []}
-
-    if "<|markdown|>" not in acc_text and "<|code|" not in acc_text:
-        return parts, content_type
-
-    for m in _BLOCK_PATTERN.finditer(acc_text):
-        md_content = m.group(1)
-        if md_content is not None:
-            content_type["markdown"].append(len(parts))
-            parts.append({"content": md_content.strip()})
-        else:
-            lang = m.group(2) or ""
-            code_content = m.group(3)
-            content_type["code"].append(len(parts))
-            p: dict = {"content": code_content.strip()}
-            if lang:
-                p["language"] = lang
-            parts.append(p)
-
-    return parts, content_type
-
-
-@dataclass
-class _MessageObj:
-    role: str = "assistant"
-    content: str = ""
-
-    def to_dict(self) -> dict:
-        return {"role": self.role, "content": self.content}
 
 
 class CognitiveLoop:
@@ -200,20 +76,23 @@ class CognitiveLoop:
         self._tool_executor = tool_executor
         self._emotion = emotion
         self._consolidator = consolidator
-        self._tts = tts
+        self._tts = tts  # 保留供 agent.py stop() 读取
         self._ctx = ctx
         self._token_tracker = token_tracker
         self._prompt_recorder = prompt_recorder
         self._sentence_buf = SentenceBuffer()
         self._process_lock = asyncio.Lock()
         self._current_task: asyncio.Task | None = None
-        self._tts_task: asyncio.Task | None = None
-        self._tts_tasks: list[asyncio.Task] = []
-        self._tts_total: int = 0   # 全局计数器，跨轮次持续递增
-        self._tts_seq: int = 0     # 本轮计数器，process() 开始时重置
+        self._tts_task: asyncio.Task | None = None  # 保留供 agent.py stop() 读取
+        # TTS streaming manager — extracted sub-system
+        self._tts_mgr = TTSStreamManager(
+            tts, output,
+            prompt._character.name if prompt and hasattr(prompt, '_character') else "unknown",
+        )
         self._executing_tools: list[str] = []  # 当前正在执行中的工具名 (供 debug 面板)
         self._timing_history: list[dict] = []  # 最近 100 轮请求的计时数据 (供 debug 面板)
-        self._pending_emojis: dict[int, list[str]] = {}  # TTS句N后面的emoji队列
+
+    # ---- Public API ----
 
     def cancel_current(self) -> bool:
         """取消当前认知任务（如有）。返回 True 表示确实取消了任务。"""
@@ -225,6 +104,21 @@ class CognitiveLoop:
     def set_tool_context(self, ctx) -> None:
         """设置当前 turn 的工具上下文。"""
         self._ctx = ctx
+
+    def set_tts(self, tts: TTSBackend | None) -> None:
+        """设置/热切换 TTS 后端。"""
+        self._tts = tts
+        self._tts_mgr.set_backend(tts)
+
+    def set_token_tracker(self, tracker) -> None:
+        """设置 token 追踪器（agent.py 在 start() 中延迟注入）。"""
+        self._token_tracker = tracker
+
+    def set_prompt_recorder(self, recorder) -> None:
+        """设置 prompt 记录器（agent.py 在 start() 中延迟注入）。"""
+        self._prompt_recorder = recorder
+
+    # ---- Main entry ----
 
     async def process(self, user_message: str = "", user_name: str = "妖梦",
                        stt_emotion: str = "", stt_events: list[str] | None = None,
@@ -251,7 +145,7 @@ class CognitiveLoop:
             if self._ctx is not None:
                 self._ctx.trace_id = new_message_id()
 
-            self._tts_seq = 0
+            self._tts_mgr.reset_for_turn()
             clock = TimingClock()
             clock.start()
             self._clock = clock  # 供 _think_loop / _after_response 使用
@@ -307,6 +201,8 @@ class CognitiveLoop:
             finally:
                 self._clock = None  # type: ignore[assignment]
 
+    # ---- Core loop ----
+
     async def _think_loop(self, user_message: str, user_name: str,
                           stt_emotion: str = "", stt_events: list[str] | None = None,
                           _on_tool_calls=None,
@@ -317,6 +213,7 @@ class CognitiveLoop:
             else:
                 self._emotion.analyze_user(user_message)
 
+        assert self._clock is not None
         with self._clock.span("prompt") as t:
             supports_mm = LLMFactory.supports_multimodal(self._llm.model)
             messages = await self._prompt.build_messages(
@@ -360,7 +257,7 @@ class CognitiveLoop:
                 raw_tool_calls: list[dict] = []
                 speaking_started = False
                 all_sentences: list[str] = []
-                block_filter = _BlockFilter()
+                block_filter = BlockFilter()
                 ttft_done = False
                 t_think_start = time.perf_counter()
 
@@ -384,6 +281,7 @@ class CognitiveLoop:
                             if not ttft_done:
                                 ttft_done = True
                                 ttft_ms = int((time.perf_counter() - t_think_start) * 1000)
+                                assert self._clock is not None
                                 self._clock._spans["ttft"] = ttft_ms
                                 logger.debug("TTFT: %d ms", ttft_ms)
                             acc_text += content
@@ -391,8 +289,8 @@ class CognitiveLoop:
                             # 过滤结构化块标记 — 代码和 markdown 不走 TTS
                             clean = block_filter.feed(content)
 
-                            # TTS 关闭时流式逐字发送；TTS 开启时不发（由 _start_tts_stream 发送完整句）
-                            if not self._tts and clean:
+                            # TTS 关闭时流式逐字发送；TTS 开启时不发（由 TTSStreamManager 发送完整句）
+                            if not self._tts_mgr.active and clean:
                                 await self._output._broadcast("on_text_delta", clean,
                                     capability=ChannelCapability.TEXT_DELTA)
 
@@ -410,18 +308,15 @@ class CognitiveLoop:
                                     speaking_started = True
 
                                 # TTS 句: 后台 task 绑在一起发送；emoji: 排队跟在上一句后面
-                                if self._tts and not _is_emoji_only(sentence):
-                                    self._start_tts_stream(sentence)
-                                elif self._tts:
-                                    self._pending_emojis.setdefault(
-                                        self._tts_total, []).append(sentence)
+                                if self._tts_mgr.active:
+                                    self._tts_mgr.stream_sentence(sentence)
                                 else:
                                     await self._output._broadcast("on_text_delta", sentence,
                                         capability=ChannelCapability.TEXT_DELTA)
                                     await self._output.send("")
 
                         if tc_deltas:
-                            self._merge_stream_tool_calls(raw_tool_calls, tc_deltas)
+                            merge_stream_tool_calls(raw_tool_calls, tc_deltas)
 
                         # Token 消耗: stream 最后可能带 usage
                         if "usage" in chunk:
@@ -440,7 +335,7 @@ class CognitiveLoop:
                     self._sentence_buf.feed(trailing)
                 remaining = self._sentence_buf.flush()
                 if remaining:
-                    if _is_emoji_only(remaining):
+                    if is_emoji_only(remaining):
                         logger.info("flush emoji: %s", remaining)
                     else:
                         all_sentences.append(remaining)
@@ -452,11 +347,8 @@ class CognitiveLoop:
                         self._bus.post(EventType.STATE_CHANGE, {"state": "speaking", "request_id": get_request_id()},
                                        priority=EventPriority.STATE_CHANGE)
                         speaking_started = True
-                    if self._tts and not _is_emoji_only(remaining):
-                        self._start_tts_stream(remaining)
-                    elif self._tts:
-                        self._pending_emojis.setdefault(
-                            self._tts_total, []).append(remaining)
+                    if self._tts_mgr.active:
+                        self._tts_mgr.stream_sentence(remaining)
                     else:
                         await self._output._broadcast("on_text_delta", remaining,
                             capability=ChannelCapability.TEXT_DELTA)
@@ -472,7 +364,7 @@ class CognitiveLoop:
                     self._bus.post(EventType.STATE_CHANGE, {"state": "executing", "request_id": get_request_id()},
                                    priority=EventPriority.STATE_CHANGE)
 
-                    normalized = self._normalize_tool_calls(raw_tool_calls)
+                    normalized = normalize_tool_calls(raw_tool_calls)
                     assistant_entry: dict = {"role": "assistant", "content": acc_text or None}
                     if normalized:
                         assistant_entry["tool_calls"] = normalized
@@ -499,7 +391,8 @@ class CognitiveLoop:
                             "call_id": call_id,
                             "args": {k: str(v) for k, v in args.items()},
                         })
-
+                    
+                    assert self._clock is not None
                     with self._clock.span("tools"):
                         if _on_tool_calls is not None:
                             results = await _on_tool_calls(normalized)
@@ -558,12 +451,7 @@ class CognitiveLoop:
 
                 # Final answer — TTS tasks streaming in background, don't block
                 # 发送还未排出的 emoji（最后一句 TTS 之后的）
-                for seq in sorted(self._pending_emojis):
-                    for e in self._pending_emojis[seq]:
-                        await self._output._broadcast("on_text_delta", e,
-                            capability=ChannelCapability.TEXT_DELTA)
-                        await self._output.send("")
-                self._pending_emojis.clear()
+                await self._tts_mgr.flush_emojis()
 
                 if acc_text.strip():
                     if self._emotion:
@@ -571,10 +459,10 @@ class CognitiveLoop:
                     if not speaking_started:
                         # 无标点的极短回复，直接发完整消息
                         await self._output.typing(False)
-                        msg = _MessageObj(content=acc_text)
+                        msg = MessageObj(content=acc_text)
                         await self._output.send(msg)
                 if acc_text.strip():
-                    parts, content_type = _build_parts_with_blocks(acc_text, all_sentences)
+                    parts, content_type = build_parts_with_blocks(acc_text, all_sentences)
                     # 构建 assistant 消息的 content 数组（text parts + 保留 content_type 信息）
                     assistant_content: list[dict] = []
                     for p in parts:
@@ -615,11 +503,10 @@ class CognitiveLoop:
 
         except Exception:
             self._executing_tools.clear()
-            for t in self._tts_tasks:
-                if not t.done():
-                    t.cancel()
-            self._tts_tasks.clear()
+            self._tts_mgr.cancel_all()
             raise
+
+    # ---- Post-response ----
 
     async def _after_response(self, user_message: str, assistant_response: str) -> None:
         """Post-response hooks: consolidate memory, save session."""
@@ -638,75 +525,24 @@ class CognitiveLoop:
         except Exception:
             logger.debug("会话保存失败", exc_info=True)
 
+    # ---- Deprecated: legacy TTS methods (kept for test backward-compat) ----
+
     def _start_tts_stream(self, sentence: str) -> None:
-        """后台 TTS task — 等首块音频到达后绑在一起发送文字+音频。
+        """[Deprecated] 代理到 TTSStreamManager.stream_sentence()。
 
-        文字和音频绑定发送，前端收到即可渲染+播放，无需任何同步逻辑。
-        TTS workers=1 FIFO 保证句间顺序。
+        保留供外部旧代码/测试兼容，新代码应直接使用 self._tts_mgr.stream_sentence()。
         """
-        # 跳过空句 — 用 strip_all_markup 预处理后为空会导致 GPT-SoVits 返回 400
-        _clean = strip_all_markup(sentence)
-        if not _clean:
-            return
-
-        self._tts_total += 1
-        self._tts_seq += 1
-        sid = self._tts_total
-        seq = self._tts_seq
-        logger.info("TTS 句 %d (总#%d) 开始 (%d 字符)", seq, sid, len(sentence))
-        logger.debug("TTS 句内容: %s", _clean[:60])
-
-        async def _stream(_sid: int, _seq: int):
-            if not self._tts:
-                return
-            try:
-                char_name = self._prompt._character.name
-                first_chunk = True
-                t_tts = time.perf_counter()
-                async for chunk in self._tts.synthesize_stream(sentence, character=char_name):
-                    if first_chunk:
-                        first_chunk = False
-                        logger.info("TTS 句 %d (总#%d) 首块音频到达，发送文字+音频", _seq, _sid)
-                        # 先发排在本句之前的 emoji
-                        for e in self._pending_emojis.pop(_sid - 1, []):
-                            await self._output._broadcast("on_text_delta", e,
-                                capability=ChannelCapability.TEXT_DELTA, stream_id=_sid)
-                            await self._output.send("")
-                        # 发本句文字
-                        await self._output._broadcast("on_text_delta", sentence,
-                            capability=ChannelCapability.TEXT_DELTA, stream_id=_sid)
-                        await self._output.send("")
-                    await self._output.audio_chunk(chunk, stream_id=_sid)
-                await self._output.audio_end(_sid)
-                t_tts_elapsed = (time.perf_counter() - t_tts) * 1000
-                logger.info("TTS 句 %d (总#%d) 播放完成 (%d ms)", _seq, _sid, int(t_tts_elapsed))
-                # 发排在本句之后的 emoji
-                for e in self._pending_emojis.pop(_sid, []):
-                    await self._output._broadcast("on_text_delta", e,
-                        capability=ChannelCapability.TEXT_DELTA, stream_id=_sid)
-                    await self._output.send("")
-            except asyncio.CancelledError:
-                pass  # INTERRUPT 打断
-            except Exception:
-                logger.warning("TTS stream failed — fallback 发送文字", exc_info=True)
-                # TTS 失败兜底: 至少把文字发出去
-                if first_chunk:
-                    try:
-                        await self._output._broadcast("on_text_delta", sentence,
-                            capability=ChannelCapability.TEXT_DELTA, stream_id=_sid)
-                        await self._output.send("")
-                    except Exception:
-                        pass
-
-        task = asyncio.create_task(_stream(sid, seq), name=f"tts-{sid}")
-        self._tts_tasks.append(task)
-        self._tts_task = task
-
-        # Clean up completed tasks
-        self._tts_tasks = [t for t in self._tts_tasks if not t.done()]
+        self._tts_mgr.stream_sentence(sentence)
+        # 更新 _tts_task 供 agent.py stop() 读取
+        if self._tts_mgr._tasks:
+            self._tts_task = self._tts_mgr._tasks[-1]
 
     async def _synthesize_sentence(self, sentence: str) -> None:
-        """Legacy non-streaming TTS — kept for backward compat with tests."""
+        """[Deprecated] Legacy non-streaming TTS — 直接使用 self._tts。
+
+        保留供 test_phase3.py 兼容。不走 TTSStreamManager 以保持测试直接设置
+        loop._tts = AsyncMock() 的行为不变。
+        """
         if not self._tts:
             return
         try:
@@ -715,6 +551,8 @@ class CognitiveLoop:
             await self._output.audio_chunk(audio)
         except Exception:
             logger.debug("TTS synthesis failed", exc_info=True)
+
+    # ---- Tool execution ----
 
     async def _execute_tools_directly(
         self, normalized: list[dict],
@@ -733,6 +571,7 @@ class CognitiveLoop:
                 args = {}
             logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
             try:
+                assert self._tool_executor is not None
                 tr = await self._tool_executor.execute(func_name, ctx=self._ctx, **args)
             except asyncio.CancelledError:
                 logger.info("工具取消: %s", func_name)
@@ -750,13 +589,11 @@ class CognitiveLoop:
             return_exceptions=True,
         )
 
+    # ---- State transitions ----
+
     async def _transition_idle(self) -> None:
-        # 等待所有 TTS 任务完成（或被 interrupt 取消）
-        pending = [t for t in self._tts_tasks if not t.done()]
-        if pending:
-            logger.debug("等待 %d 个 TTS 任务完成", len(pending))
-            await asyncio.gather(*pending, return_exceptions=True)
-            self._tts_tasks.clear()
+        """等待所有 TTS 任务完成，然后转换到 IDLE。"""
+        await self._tts_mgr.wait_all()
 
         logger.info("→ IDLE")
         if self._fsm.state == AgentState.THINKING:
@@ -769,11 +606,7 @@ class CognitiveLoop:
         """Clean up after interruption — cancel TTS tasks, return to IDLE."""
         self._sentence_buf.reset()
         self._executing_tools.clear()
-        self._pending_emojis.clear()
-        for t in self._tts_tasks:
-            if not t.done():
-                t.cancel()
-        self._tts_tasks.clear()
+        self._tts_mgr.cancel_all()
         await self._output.typing(False)
         self._fsm.transition(AgentState.INTERRUPTED)
         self._bus.post(EventType.STATE_CHANGE, {"state": "interrupted", "request_id": get_request_id()}, priority=EventPriority.STATE_CHANGE)
@@ -781,34 +614,3 @@ class CognitiveLoop:
         self._fsm.transition(AgentState.IDLE)
         self._bus.post(EventType.STATE_CHANGE, {"state": "idle", "request_id": get_request_id()}, priority=EventPriority.STATE_CHANGE)
         logger.debug("Interrupt complete — agent is IDLE")
-
-    # ---- Tool call helpers ----
-
-    @staticmethod
-    def _merge_stream_tool_calls(accumulated: list[dict], deltas: list[dict]) -> None:
-        """Merge streaming tool_call deltas into the accumulated list (mutates in place)."""
-        for delta in deltas:
-            idx = delta.get("index", 0)
-            while len(accumulated) <= idx:
-                accumulated.append({
-                    "id": "",
-                    "type": "function",
-                    "function": {"name": "", "arguments": ""},
-                })
-            if delta.get("id"):
-                accumulated[idx]["id"] = delta["id"]
-            if "function" in delta:
-                func = delta["function"]
-                if func.get("name"):
-                    accumulated[idx]["function"]["name"] += func["name"]
-                if func.get("arguments"):
-                    accumulated[idx]["function"]["arguments"] += func["arguments"]
-
-    @staticmethod
-    def _normalize_tool_calls(raw: list[dict]) -> list[dict]:
-        """Return only tool calls that have an id and name (complete)."""
-        result = []
-        for tc in raw:
-            if tc.get("id") and tc["function"].get("name"):
-                result.append(tc)
-        return result

@@ -168,7 +168,7 @@ class Agent:
             output_manager=self._output,
             document_db=self._session._db if mongo_ok else None,
         )
-        self._cognitive._token_tracker = self._token_tracker
+        self._cognitive.set_token_tracker(self._token_tracker)
         # MongoDB 可用时 flush 积压的 pending 文件
         if mongo_ok:
             await self._token_tracker.flush_pending()
@@ -176,7 +176,7 @@ class Agent:
         # ---- Prompt 记录 ----
         from core.prompt_recorder import PromptRecorder
         self._prompt_recorder = PromptRecorder(max_records=20)
-        self._cognitive._prompt_recorder = self._prompt_recorder
+        self._cognitive.set_prompt_recorder(self._prompt_recorder)
 
         # 注入运行时上下文 — 工具通过 ctx.get("memory") 访问 L2 记忆
         self._tool_ctx = ToolContext(
@@ -218,7 +218,7 @@ class Agent:
             from Module.tts import TTSFactory
             try:
                 self._tts = TTSFactory.create(self._config.tts.model)
-                self._cognitive._tts = self._tts
+                self._cognitive.set_tts(self._tts)
                 logger.info("TTS backend connected")
             except Exception:
                 logger.info("TTS not available — text-only mode")
@@ -270,13 +270,9 @@ class Agent:
             self._event_task = None
 
         # Cancel cognitive + TTS tasks (may be idle, but belt-and-suspenders)
-        for attr in ("_current_task", "_tts_task"):
-            t = getattr(self._cognitive, attr, None)
-            if t and not t.done():
-                t.cancel()
-        for t in list(getattr(self._cognitive, "_tts_tasks", [])):
-            if not t.done():
-                t.cancel()
+        if self._cognitive._current_task and not self._cognitive._current_task.done():
+            self._cognitive._current_task.cancel()
+        self._cognitive._tts_mgr.cancel_all()
 
         # Cancel embedding preload if still running
         if getattr(self, "_embed_task", None) and not self._embed_task.done():
@@ -374,7 +370,7 @@ class Agent:
                 except Exception:
                     pass
             self._tts = TTSFactory.create(model_id)
-            self._cognitive._tts = self._tts  # 同步 CognitiveLoop 中的引用
+            self._cognitive.set_tts(self._tts)  # 同步 CognitiveLoop 中的引用
             logger.info("TTS switched to: %s", model_id)
             return {"ok": True}
         except Exception as e:
