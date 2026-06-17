@@ -441,6 +441,10 @@ class ToolResult:
     # 例: 图片工具 → llm_summary="图表显示 Q1 营收增长 30%" 注入 LLM
     llm_summary: str = ""
 
+    # 异步任务 ID（submit_task 等 fire-and-forget 工具）
+    # 非空表示此工具调用了后台任务，CognitiveLoop 检测后结束当前回合
+    async_task_id: str | None = None
+
     # ---- Factory methods ----
 
     @classmethod
@@ -450,6 +454,7 @@ class ToolResult:
         images: list[MediaItem] | None = None,
         audio: MediaItem | None = None,
         files: list[MediaItem] | None = None,
+        async_task_id: str | None = None,
     ) -> "ToolResult":
         """创建成功结果。
 
@@ -461,6 +466,7 @@ class ToolResult:
             duration_ms=duration_ms, truncated=truncated,
             result_type=result_type, llm_summary=llm_summary,
             images=images or [], audio=audio, files=files or [],
+            async_task_id=async_task_id,
         )
 
     @classmethod

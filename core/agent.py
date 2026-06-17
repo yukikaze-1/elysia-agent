@@ -133,6 +133,12 @@ class Agent:
         # FIFO 消息排队 — FSM != IDLE 时暂存消息
         self._pending_messages: list[dict] = []
 
+        # ---- TaskSystem ----
+        self._task_system = None   # TaskSystem | None
+        self._delegation_preparer = None  # DelegationPreparer | None
+        self._background_tasks: dict[str, dict] = {}  # task_id -> {intent, dispatched_at, mailbox}
+        self._mailbox_task: asyncio.Task | None = None
+
     # ---- Lifecycle ----
 
     async def start(self) -> None:
@@ -223,6 +229,48 @@ class Agent:
             except Exception:
                 logger.info("TTS not available — text-only mode")
 
+        # ---- TaskSystem ----
+        from Module.task_system.task_system import TaskSystem
+        from Module.task_system.delegation_preparer import DelegationPreparer
+        from Module.task_system.infra import AgentInfra
+        from Module.task_system.schema import ConstraintConfig
+
+        # TaskSystem 基础设施
+        _ts_infra = AgentInfra(
+            llm=self._llm._backend._client if hasattr(self._llm, '_backend') and hasattr(self._llm._backend, '_client') else None,
+            milvus=None,
+            http=None,
+            tool_registry=self._tool_manager,
+            constraints=ConstraintConfig(),
+        )
+
+        # HITLNotifier 简单实现——委托给 EventBus
+        class _EventBusHITLNotifier:
+            def __init__(self, bus):
+                self._bus = bus
+
+            async def request_approval(self, event_data):
+                pass  # v1: 审批由 ToolManager 直接处理，不经过此通道
+
+            async def cancel_approval(self, approval_ids):
+                pass
+
+        _hitl = _EventBusHITLNotifier(self._bus)
+
+        self._task_system = TaskSystem(infra=_ts_infra, hitl_notifier=_hitl)
+        await self._task_system.start()
+
+        self._delegation_preparer = DelegationPreparer()
+
+        # 注入到 CognitiveLoop
+        self._cognitive.set_task_system(self._task_system)
+        self._cognitive.set_delegation_preparer(self._delegation_preparer)
+        self._cognitive.set_user_profile(None)  # v1: UserProfile 未实现
+        self._cognitive.set_on_background_task(self._register_background_task)
+
+        # 启动 mailbox 轮询
+        self._mailbox_task = asyncio.create_task(self._poll_mailboxes())
+
         db_status = []
         if mongo_ok:
             db_status.append("MongoDB")
@@ -277,6 +325,18 @@ class Agent:
         # Cancel embedding preload if still running
         if getattr(self, "_embed_task", None) and not self._embed_task.done():
             self._embed_task.cancel()
+
+        # 停止 mailbox 轮询
+        if self._mailbox_task:
+            self._mailbox_task.cancel()
+            self._mailbox_task = None
+
+        # 停止 TaskSystem
+        if self._task_system:
+            try:
+                await asyncio.wait_for(self._task_system.stop(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("TaskSystem stop timed out")
 
         logger.debug("Stopping scheduler Worker Pool...")
         await self._scheduler.stop()
@@ -394,7 +454,7 @@ class Agent:
 
         self._idle.touch()
 
-        if self._fsm.state != AgentState.IDLE:
+        if self._fsm.state not in (AgentState.IDLE, AgentState.IDLE_BACKGROUND_TASK):
             # Queue message instead of interrupting
             max_queue = self._config.agent.max_pending_messages
             if len(self._pending_messages) >= max_queue:
@@ -516,6 +576,58 @@ class Agent:
             await self.stop()
             print("再见！")
 
+    # ---- Background task lifecycle ----
+
+    def _register_background_task(self, task_id: str, mailbox, intent: str, dispatched_at: str) -> None:
+        """CognitiveLoop 提交后台任务后调用——注册到轮询列表。"""
+        self._background_tasks[task_id] = {
+            "intent": intent,
+            "dispatched_at": dispatched_at,
+            "mailbox": mailbox,
+        }
+
+    async def _poll_mailboxes(self):
+        """轮询所有活跃后台任务的 mailbox。每 500ms 一次。"""
+        while self._state == RunState.RUNNING:
+            await asyncio.sleep(0.5)
+            for task_id, info in list(self._background_tasks.items()):
+                mailbox = info.get("mailbox")
+                if mailbox is None:
+                    continue
+                try:
+                    # 内层 while: 清空当前 mailbox 的所有待消费事件
+                    while True:
+                        event = mailbox.get_nowait()
+                        if event is None:
+                            break  # 退出内层 while（当前 mailbox 已清空），继续 for 下一个 task
+                        data = event.data or {}
+                        if event.type.value == "completed":
+                            self._bus.post(EventType.TASK_RESULT, {
+                                "task_id": task_id,
+                                "result": data.get("result", ""),
+                                "original_intent": info["intent"],
+                                "dispatched_at": info["dispatched_at"],
+                            })
+                            self._background_tasks.pop(task_id, None)
+                            break  # 退出内层 while（task 已终态），继续 for 下一个 task
+                        elif event.type.value == "failed":
+                            self._bus.post(EventType.TASK_RESULT, {
+                                "task_id": task_id,
+                                "result": f"任务执行失败: {data.get('error', '未知错误')}",
+                                "original_intent": info["intent"],
+                                "dispatched_at": info["dispatched_at"],
+                            })
+                            self._background_tasks.pop(task_id, None)
+                            break  # 退出内层 while（task 已终态），继续 for 下一个 task
+                        elif event.type.value == "cancelled":
+                            self._background_tasks.pop(task_id, None)
+                            break  # 退出内层 while（task 已取消），继续 for 下一个 task
+                        # PROGRESS / PAUSED: v1 忽略
+                        # 注意：以上所有 break 退出的是内层 while True，
+                        #      而非外层 for 循环
+                except Exception:
+                    logger.debug("mailbox poll error", exc_info=True)
+
     # ---- Event processing loop ----
 
     async def _process_events(self) -> None:
@@ -588,10 +700,26 @@ class Agent:
                     )
                     self._cognitive._current_task = task
 
+            elif event.type == EventType.TASK_RESULT:
+                data = event.data or {}
+                rid = self.next_request_id()
+                set_request_id(rid)
+                # TODO: 多任务并发时用队列或锁保护 _current_task
+                #      详见 spec 第 11 节"多任务并发唤醒锁 + 租约超时"
+                task = asyncio.create_task(
+                    self._cognitive.process(
+                        user_message="",
+                        is_task_result=True,
+                        task_result_context=data,
+                    ),
+                    name=f"task-result-{data.get('task_id', 'unknown')}",
+                )
+                self._cognitive._current_task = task
+
             elif event.type == EventType.STATE_CHANGE:
                 state = event.data.get("state", "") if event.data else ""
                 logger.info("FSM → %s", state)
-                if state == "idle":
+                if state in ("idle", "idle_background_task"):
                     set_request_id("-")
                     # 检查排队消息 — FIFO 出队
                     if self._pending_messages:

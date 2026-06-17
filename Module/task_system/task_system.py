@@ -502,6 +502,13 @@ class TaskSystem:
             return TaskStatus.PENDING
         return ts.status
 
+    def get_task_mailbox(self, task_id: TaskId) -> TaskMailbox | None:
+        """获取指定任务的 mailbox（供 Agent 轮询消费）。
+
+        任务不存在或已清理时返回 None。
+        """
+        return self._mailboxes.get(task_id)
+
     async def get_task_summary(self, task_id: TaskId) -> TaskSummary | None:
         """获取单个任务摘要。"""
         summaries = await self.list_active_tasks()

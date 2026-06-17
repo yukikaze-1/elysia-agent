@@ -8,24 +8,26 @@ from enum import IntEnum, StrEnum, auto
 
 
 # ---------------------------------------------------------------------------
-# AgentState — 五状态机
+# AgentState — Agent 状态机
 # ---------------------------------------------------------------------------
 
 class AgentState(StrEnum):
-    """Agent 认知流水线的五个状态。"""
+    """Agent 认知流水线的状态。"""
     IDLE = auto()
     THINKING = auto()
     EXECUTING = auto()
     SPEAKING = auto()
     INTERRUPTED = auto()
+    IDLE_BACKGROUND_TASK = auto()  # 可对话，但后台有任务
 
 
 VALID_TRANSITIONS: dict[AgentState, set[AgentState]] = {
     AgentState.IDLE:        {AgentState.THINKING},
     AgentState.THINKING:    {AgentState.EXECUTING, AgentState.SPEAKING, AgentState.INTERRUPTED},
     AgentState.EXECUTING:   {AgentState.THINKING, AgentState.INTERRUPTED},
-    AgentState.SPEAKING:    {AgentState.IDLE, AgentState.EXECUTING, AgentState.THINKING, AgentState.INTERRUPTED},
+    AgentState.SPEAKING:    {AgentState.IDLE, AgentState.EXECUTING, AgentState.THINKING, AgentState.INTERRUPTED, AgentState.IDLE_BACKGROUND_TASK},
     AgentState.INTERRUPTED: {AgentState.IDLE},
+    AgentState.IDLE_BACKGROUND_TASK: {AgentState.THINKING, AgentState.INTERRUPTED},
 }
 
 
@@ -46,3 +48,4 @@ class EventType(StrEnum):
     STATE_CHANGE = "state_change"
     USER_INPUT = "user_input"
     SYSTEM_TICK = "system_tick"
+    TASK_RESULT = "task_result"  # 后台任务结果

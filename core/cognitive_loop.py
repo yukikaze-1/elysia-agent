@@ -16,6 +16,7 @@ import json
 import logging
 import time
 from dataclasses import asdict
+from typing import Callable, TYPE_CHECKING
 
 from .message_id import new_message_id
 
@@ -36,6 +37,9 @@ from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
+
+if TYPE_CHECKING:
+    from Module.task_system.delegation_preparer import DelegationPreparer
 
 from .block_filter import BlockFilter, build_parts_with_blocks
 from .tts_stream import is_emoji_only, TTSStreamManager
@@ -91,6 +95,10 @@ class CognitiveLoop:
         )
         self._executing_tools: list[str] = []  # 当前正在执行中的工具名 (供 debug 面板)
         self._timing_history: list[dict] = []  # 最近 100 轮请求的计时数据 (供 debug 面板)
+        self._task_system = None            # TaskSystem | None（agent.py 在 start() 中注入）
+        self._delegation_preparer = None    # DelegationPreparer | None（agent.py 在 start() 中注入）
+        self._on_background_task: Callable | None = None  # Agent 注入的回调
+        self._user_profile = None           # UserProfile | None
 
     # ---- Public API ----
 
@@ -118,12 +126,31 @@ class CognitiveLoop:
         """设置 prompt 记录器（agent.py 在 start() 中延迟注入）。"""
         self._prompt_recorder = recorder
 
+    def set_task_system(self, ts) -> None:
+        """设置 TaskSystem 引用（agent.py 在 start() 中注入）。"""
+        self._task_system = ts
+
+    def set_delegation_preparer(self, dp) -> None:
+        """设置 DelegationPreparer 引用（agent.py 在 start() 中注入）。"""
+        self._delegation_preparer = dp
+
+    def set_on_background_task(self, callback: Callable | None) -> None:
+        """设置后台任务注册回调（agent.py 注入）。"""
+        self._on_background_task = callback
+
+    def set_user_profile(self, profile) -> None:
+        """设置用户画像引用。"""
+        self._user_profile = profile
+
     # ---- Main entry ----
 
     async def process(self, user_message: str = "", user_name: str = "妖梦",
                        stt_emotion: str = "", stt_events: list[str] | None = None,
                        _on_tool_calls=None,
-                       content: list[dict] | None = None) -> None:
+                       content: list[dict] | None = None,
+                       is_task_result: bool = False,
+                       task_result_context: dict | None = None,
+                       ) -> None:
         """处理用户消息。
 
         user_message: 纯文本（STT/键盘输入）— 兼容旧调用
@@ -171,7 +198,9 @@ class CognitiveLoop:
             try:
                 await self._think_loop(user_message, user_name,
                                        stt_emotion=stt_emotion, stt_events=stt_events,
-                                       _on_tool_calls=_on_tool_calls, content=content)
+                                       _on_tool_calls=_on_tool_calls, content=content,
+                                       is_task_result=is_task_result,
+                                       task_result_context=task_result_context)
                 clock.stop()
                 logger.info("<<< 回复生成完成 — %s", clock.summary())
                 # 存入 ring buffer 供 /debug 面板
@@ -206,12 +235,19 @@ class CognitiveLoop:
     async def _think_loop(self, user_message: str, user_name: str,
                           stt_emotion: str = "", stt_events: list[str] | None = None,
                           _on_tool_calls=None,
-                          content: list[dict] | None = None) -> None:
+                          content: list[dict] | None = None,
+                          is_task_result: bool = False,
+                          task_result_context: dict | None = None,
+                          ) -> None:
         if self._emotion:
             if stt_emotion and stt_emotion != "NEUTRAL":
                 self._emotion.analyze_user_stt(stt_emotion, stt_events)
             else:
                 self._emotion.analyze_user(user_message)
+
+        # 渐进式唤醒——后台任务完成后的通知
+        if is_task_result and task_result_context:
+            user_message = self._build_wake_up_message(task_result_context)
 
         assert self._clock is not None
         with self._clock.span("prompt") as t:
@@ -223,17 +259,25 @@ class CognitiveLoop:
                 supports_multimodal=supports_mm,
             )
         user_content = content if content else [{"type": "text", "content": user_message}]
-        self._session.add_message({
-            "id": new_message_id(),
-            "role": "user",
-            "content": user_content,
-            "timestamp": datetime.datetime.now().astimezone().isoformat(),
-        })
+        # 系统唤醒消息不写入 session（Step 4: 唤醒模板不需要存放在 session 中）
+        if not is_task_result:
+            self._session.add_message({
+                "id": new_message_id(),
+                "role": "user",
+                "content": user_content,
+                "timestamp": datetime.datetime.now().astimezone().isoformat(),
+            })
         tool_defs = self._tool_executor.definitions() if self._tool_executor else None
         # 多模态 LLM 可直接看图，排除 describe_image 避免 LLM 只调用一次
         # （只处理 image_index=0 而忽略其余图片）
         if tool_defs and supports_mm:
             tool_defs = [t for t in tool_defs if t.get("function", {}).get("name") != "describe_image"]
+        # 合并 submit_task function definition（让 LLM 可以调用）
+        if tool_defs is None:
+            tool_defs = []
+        # 附加 submit_task（如果 TaskSystem 和 DelegationPreparer 都已注入）
+        if self._task_system is not None and self._delegation_preparer is not None:
+            tool_defs = list(tool_defs) + [self._submit_task_definition()]
         logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs or []))
 
         # 捕获第一轮的完整 prompt（后续轮次在工具循环内捕获）
@@ -365,6 +409,63 @@ class CognitiveLoop:
                                    priority=EventPriority.STATE_CHANGE)
 
                     normalized = normalize_tool_calls(raw_tool_calls)
+
+                    # 分离 submit_task 和其他工具——submit_task 走专用路径
+                    if self._delegation_preparer is not None:
+                        submit_tcs = [tc for tc in normalized if tc["function"]["name"] == "submit_task"]
+                        other_tcs  = [tc for tc in normalized if tc["function"]["name"] != "submit_task"]
+                    else:
+                        submit_tcs = []
+                        other_tcs  = normalized
+
+                    # submit_task 工具调用——拦截处理
+                    if submit_tcs:
+                        from datetime import datetime, timezone
+                        for tc in submit_tcs:
+                            result = await self._handle_submit_task(tc)
+                            # 注入 tool result 到 messages
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", "unknown"),
+                                "content": result.llm_content,
+                            })
+                            await self._output.action("tool_done", params={
+                                "tool": "submit_task",
+                                "call_id": tc.get("id", "unknown"),
+                                "success": result.success,
+                                "content": result.content or "",
+                                "error": result.error,
+                                "error_type": None,
+                                "duration_ms": result.duration_ms,
+                                "truncated": result.truncated,
+                            })
+                            self._session.add_message({
+                                "id": new_message_id(),
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", "unknown"),
+                                "name": "submit_task",
+                                "content": result.content or "",
+                                "success": result.success,
+                                "error": result.error,
+                                "error_type": None,
+                                "duration_ms": result.duration_ms,
+                                "truncated": result.truncated,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            })
+                            # 注册后台任务（result.success 时有 async_task_id）
+                            if result.success and result.async_task_id and self._on_background_task:
+                                mailbox = self._task_system.get_task_mailbox(result.async_task_id)
+                                if mailbox:
+                                    now_iso = datetime.now(timezone.utc).isoformat()
+                                    self._on_background_task(
+                                        result.async_task_id, mailbox, intent=(
+                                            json.loads(tc["function"]["arguments"]).get("intent", "")
+                                        ), dispatched_at=now_iso,
+                                    )
+
+                        # 遇到 submit_task → 其他工具的结果也先发完再结束
+                        normalized = other_tcs
+
                     assistant_entry: dict = {"role": "assistant", "content": acc_text or None}
                     if normalized:
                         assistant_entry["tool_calls"] = normalized
@@ -589,12 +690,156 @@ class CognitiveLoop:
             return_exceptions=True,
         )
 
+    # ---- submit_task 拦截框架 ----
+
+    @staticmethod
+    def _build_wake_up_message(ctx: dict) -> str:
+        """构建渐进式唤醒消息。
+
+        v1: 统一礼貌询问。后续 TODO(v2): 检查对话上下文动态调整。
+        """
+        return (
+            f"[系统通知] 你此前委派的后台任务"
+            f"（{ctx.get('original_intent', '')}）"
+            f"已执行完毕。结果摘要: {ctx.get('result', '')}。"
+            f"请自然地告知用户任务已完成，询问是否现在汇报详细结果，还是稍后再说。"
+        )
+
+    @staticmethod
+    def _submit_task_definition() -> dict:
+        """submit_task 工具的 function definition。
+
+        不注册为 ToolPlugin——只在 tool_defs 中合并，LLM 可调用，
+        但 ToolManager 永远不执行它（CognitiveLoop 拦截处理）。
+        """
+        return {
+            "type": "function",
+            "function": {
+                "name": "submit_task",
+                "description": (
+                    "将复杂多步骤任务提交到后台异步执行。"
+                    "适用：涉及多步操作、状态变更、或长时间运行的任务。"
+                    "简单单步操作（如单次搜索、单次文件读取）请直接用对应工具。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "intent": {
+                            "type": "string",
+                            "description": "完整任务意图描述，包含目标和约束",
+                        },
+                        "hints": {
+                            "type": "string",
+                            "description": (
+                                "对任务执行有帮助的额外信息，"
+                                "如用户情绪、紧急程度、偏好等"
+                            ),
+                        },
+                    },
+                    "required": ["intent"],
+                },
+            },
+        }
+
+    async def _handle_submit_task(self, tc: dict) -> ToolResult:
+        """处理 submit_task function call。
+
+        校验 intent → DelegationPreparer.prepare() → TaskSystem.submit()。
+        返回 ToolResult——LLM 在下一轮看到成功/失败。
+        """
+        from Module.task_system.schema import SubmitError
+
+        args = json.loads(tc["function"]["arguments"])
+        intent = (args.get("intent") or "").strip()
+
+        # 1. 校验
+        if not intent:
+            return ToolResult.fail(name="submit_task",
+                error="intent 不能为空，请修正参数后重试。")
+        if len(intent) > 10000:
+            return ToolResult.fail(name="submit_task",
+                error="intent 过长（超过 10000 字符），请缩短描述后重试。")
+
+        hints = (args.get("hints") or "").strip() or None
+
+        # 2. DelegationPreparer
+        if self._delegation_preparer is None:
+            return ToolResult.fail(name="submit_task",
+                error="DelegationPreparer 未初始化，请告知用户后台任务系统暂不可用。")
+
+        # 将 ToolManager.definitions() 的 dict 格式转换为 DelegationPreparer 期望的 Tool 列表
+        from Module.task_system.schema import Tool
+        tool_defs = self._tool_executor.definitions() if self._tool_executor else []
+        tool_list = [
+            Tool(
+                name=d["function"]["name"],
+                description=d["function"].get("description", ""),
+                capabilities=[],
+            )
+            for d in tool_defs
+        ]
+
+        prep_result = await self._delegation_preparer.prepare(
+            intent=intent,
+            hints=hints,
+            session_messages=self._session.messages,
+            user_profile=self._user_profile,
+            tools=tool_list,
+            global_constraints=(self._task_system._infra.constraints
+                                if self._task_system else None),
+            session_id=getattr(self._session, "_session_id", "default"),
+        )
+
+        if prep_result.status.value == "no_matching_tools":
+            missing = getattr(prep_result, 'missing_tools', [])
+            missing_str = ", ".join(missing) if missing else "未知"
+            return ToolResult.fail(name="submit_task",
+                error=f"缺少能力: {missing_str}。请直接告知用户当前不支持此功能，不要重复尝试。")
+        if prep_result.status.value == "too_vague":
+            suggestion = getattr(prep_result, 'suggestion', '') or '能再具体一点吗？'
+            return ToolResult.fail(name="submit_task",
+                error=f"意图不够明确: {suggestion}。请向用户澄清，不要重复尝试。")
+
+        # 3. TaskSystem.submit
+        if self._task_system is None:
+            return ToolResult.fail(name="submit_task",
+                error="TaskSystem 未初始化，请告知用户后台任务系统暂不可用。")
+
+        mailbox_or_error = await self._task_system.submit(prep_result.context)
+        if isinstance(mailbox_or_error, SubmitError):
+            return ToolResult.fail(name="submit_task",
+                error=f"任务提交失败: {mailbox_or_error.message}。请告知用户具体原因。")
+
+        # 4. 成功
+        return ToolResult.ok(
+            name="submit_task",
+            content="好的，已经在后台执行了。",
+            duration_ms=0.0,
+            async_task_id=str(mailbox_or_error.task_id),
+        )
+
     # ---- State transitions ----
 
     async def _transition_idle(self) -> None:
         """等待所有 TTS 任务完成，然后转换到 IDLE。"""
         await self._tts_mgr.wait_all()
 
+        # 如果有后台任务活跃 → 进入 IDLE_BACKGROUND_TASK 而非 IDLE
+        if self._on_background_task is not None and self._task_system is not None:
+            active = await self._task_system.list_active_tasks()
+            if active:
+                if self._fsm.state == AgentState.SPEAKING:
+                    self._fsm.transition(AgentState.IDLE_BACKGROUND_TASK)
+                else:
+                    # 防御性: 确保经过 SPEAKING
+                    if self._fsm.can_transition(AgentState.SPEAKING):
+                        self._fsm.transition(AgentState.SPEAKING)
+                    self._fsm.transition(AgentState.IDLE_BACKGROUND_TASK)
+                self._bus.post(EventType.STATE_CHANGE, {"state": "idle_background_task", "request_id": get_request_id()},
+                               priority=EventPriority.STATE_CHANGE)
+                return
+
+        # 原有 IDLE 转换
         logger.info("→ IDLE")
         if self._fsm.state == AgentState.THINKING:
             # 仅 tool_calls 无文本时 FSM 仍在 THINKING，需经过 SPEAKING 才能到 IDLE

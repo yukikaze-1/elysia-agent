@@ -1,6 +1,8 @@
 """Agent finite state machine.
 
 States: IDLE → THINKING → EXECUTING → THINKING → SPEAKING → IDLE
+        SPEAKING → IDLE_BACKGROUND_TASK
+        IDLE_BACKGROUND_TASK → THINKING / INTERRUPTED
 INTERRUPTED can be entered from any state (except IDLE).
 """
 
