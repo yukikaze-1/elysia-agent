@@ -24,6 +24,7 @@ from Module.task_system.schema import (
     NodeStatus,
     NodeId,
     now_iso,
+    parse_iso,
     ResumeError,
     ResumeErrorCode,
     SubmitError,
@@ -553,10 +554,7 @@ class TaskSystem:
             duration_ms = 0
             if ts.created_at:
                 try:
-                    created = datetime.fromisoformat(ts.created_at)
-                    # 兼容无时区的 datetime——默认当作 UTC
-                    if created.tzinfo is None:
-                        created = created.replace(tzinfo=timezone.utc)
+                    created = parse_iso(ts.created_at)
                     duration_ms = int((datetime.now(timezone.utc) - created).total_seconds() * 1000)
                 except (ValueError, TypeError):
                     pass
@@ -624,9 +622,7 @@ class TaskSystem:
         elapsed_ms = 0
         if ts.created_at:
             try:
-                created = datetime.fromisoformat(ts.created_at)
-                if created.tzinfo is None:
-                    created = created.replace(tzinfo=timezone.utc)
+                created = parse_iso(ts.created_at)
                 elapsed_ms = int(
                     (datetime.now(timezone.utc) - created).total_seconds() * 1000)
             except (ValueError, TypeError):
@@ -714,9 +710,7 @@ class TaskSystem:
             if ts and ts.created_at:
                 started_at = ts.created_at
                 try:
-                    created = datetime.fromisoformat(ts.created_at)
-                    if created.tzinfo is None:
-                        created = created.replace(tzinfo=timezone.utc)
+                    created = parse_iso(ts.created_at)
                     duration_ms = int(
                         (now - created).total_seconds() * 1000)
                 except (ValueError, TypeError):
@@ -769,9 +763,7 @@ class TaskSystem:
             # 按时间段过滤
             if cutoff is not None and ts.created_at:
                 try:
-                    created = datetime.fromisoformat(ts.created_at)
-                    if created.tzinfo is None:
-                        created = created.replace(tzinfo=timezone.utc)
+                    created = parse_iso(ts.created_at)
                     if created < cutoff:
                         continue
                 except (ValueError, TypeError):

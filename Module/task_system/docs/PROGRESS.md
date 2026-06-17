@@ -139,7 +139,7 @@ TaskSystem
 | Plan 预审批 | 设计文档有，代码无 |
 | 模型名可配置 | ✅ 已修复——Planner 改用 `infra.llm`，模型名统一由 `AgentInfra.llm_model` 管理 |
 | DAGNode.execution_mode | ✅ 已实现——Planner 标注 llm_direct/tool_call，Executor 按标注执行，根治误选工具 |
-| 时间戳类型化 | `created_at`/`updated_at` 全为裸 `str`，try/except+replace(tzinfo) 模式重复 10+ 处。后续用 Pydantic `IsoTimestamp`(Annotated str + BeforeValidator 归一化 UTC) + `parse_iso()` 消除 |
+| 时间戳类型化 | ✅ 已实现——`IsoTimestamp`(Annotated str + BeforeValidator 归一化 UTC) + `parse_iso()` 消除 4 处样板代码 |
 
 ---
 
@@ -278,3 +278,12 @@ TaskSystem
 | 7 | `executor.py` | `max_tokens=2048` 不足以传递 4000+ char 报告 | → `4096` |
 | 8 | `server.py` | `app['task_system']` 未赋值，Debug SSE 断连 | `create_app(task_system=...)` 参数注入 |
 | 9 | `orchestrator.py` | COMPLETED 事件仅含节点计数，无产出摘要 | 加入节点级 `node_summaries`（description + evaluation.reason） |
+
+### 时间戳类型化（2026-06-18）
+
+| # | 文件 | 说明 |
+|---|------|------|
+| 1 | `schema.py` | 新增 `IsoTimestamp`(Annotated str + BeforeValidator) + `parse_iso()` + `_normalize_utc()` |
+| 2 | `schema.py` | 所有 `created_at`/`updated_at`/`started_at`/`finished_at` 从 `str` 改为 `IsoTimestamp` |
+| 3 | `task_system.py` | 4 处 `fromisoformat+replace(tzinfo)` 样板代码 → `parse_iso()` |
+| 4 | `now_iso()` | 格式统一为 `Z` 后缀（`2026-06-18T12:00:00Z`） |

@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, Literal, NewType
+from typing import Annotated, Any, Literal, NewType
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 
 def now_iso() -> str:
@@ -23,7 +23,47 @@ def now_iso() -> str:
     TaskSystem 内所有 timestamp 字段统一使用此函数生成，
     替代各模块内重复的 _now() / datetime.now(timezone.utc).isoformat() 样板代码。
     """
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _normalize_utc(v: object) -> str:
+    """Pydantic BeforeValidator——归一化 ISO 8601 字符串到 UTC。
+
+    接受 datetime 或 str，输出 UTC ISO 8601 字符串（Z 后缀）。
+    空字符串直通（未设置的时间戳）。
+    naive datetime（无 tzinfo）视为 UTC。
+    """
+    if isinstance(v, str) and v == "":
+        return v
+    if isinstance(v, datetime):
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if isinstance(v, str):
+        dt = datetime.fromisoformat(v)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    raise ValueError(f"无法解析为 IsoTimestamp: {v!r}")
+
+
+def parse_iso(ts: str) -> datetime:
+    """将 IsoTimestamp 字符串解析为 offset-aware UTC datetime。
+
+    替代各处重复的 try/except + fromisoformat + replace(tzinfo=...) 样板代码。
+    空字符串返回 epoch（1970-01-01 UTC）。
+    """
+    if not ts:
+        return datetime(1970, 1, 1, tzinfo=timezone.utc)
+    dt = datetime.fromisoformat(ts)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+# Pydantic 注解类型——声明为 Annotated[str, BeforeValidator(...)]，
+# Pydantic 在 model_dump/model_validate 时自动归一化。
+IsoTimestamp = Annotated[str, BeforeValidator(_normalize_utc)]
 
 
 # ── 基础类型 ────────────────────────────────────────────────────────────────────
@@ -580,7 +620,7 @@ class TaskSummary(BaseModel):
     task_id: TaskId
     status: TaskStatus
     intent: str
-    created_at: str = ""                  # ISO 8601，对齐 TaskState.created_at
+    created_at: IsoTimestamp = Field(default_factory=now_iso)                  # ISO 8601，对齐 TaskState.created_at
     duration_ms: int = 0                  # 总耗时（查询视图预计算，方便直接展示）
     nodes: dict[str, int] = Field(        # {"total": N, "completed": N, "failed": N, "skipped": N}
         default_factory=lambda: {"total": 0, "completed": 0, "failed": 0, "skipped": 0}
@@ -657,7 +697,7 @@ class AgentInfo(BaseModel):
     task_id: TaskId
     node_id: NodeId | None = None          # Worker 专用
     status: AgentStatus = AgentStatus.RUNNING
-    started_at: str = ""                   # ISO 8601
+    started_at: IsoTimestamp = Field(default_factory=now_iso)
     last_seen_at: str = ""                 # ISO 8601
     duration_ms: int = 0
 
@@ -781,8 +821,8 @@ class NodeState(BaseModel):
     node_id: NodeId
     status: NodeStatus = NodeStatus.PENDING
     attempt: int = 0                       # 已尝试次数（0=尚未首次执行）
-    started_at: str = ""                   # ISO 8601
-    finished_at: str = ""
+    started_at: IsoTimestamp = Field(default_factory=now_iso)
+    finished_at: IsoTimestamp = Field(default_factory=now_iso)
     artifact_refs: list[ArtifactId] = Field(default_factory=list)
     # ↑ ArtifactStore 中该节点完成后的产物引用列表。
     #   从 NodeResult.artifact_refs 复制而来（_apply_evaluation 的 continue 分支）。
@@ -815,8 +855,8 @@ class TaskState(BaseModel):
     session_id: SessionId = Field(
         default_factory=lambda: SessionId("")
     )  # 关联会话 ID（从 DelegationContext 透传，保持 NewType 类型安全）
-    created_at: str = ""                       # ISO 8601
-    updated_at: str = ""
+    created_at: IsoTimestamp = Field(default_factory=now_iso)                       # ISO 8601
+    updated_at: IsoTimestamp = Field(default_factory=now_iso)
     error: str | None = None                   # 人类可读的错误原因（终态 FAILED 时写入）
     error_code: TaskErrorCode | None = None    # 机器可读的任务级错误码（终态 FAILED 时写入）
     token_entries: list[TokenComponent] = Field(default_factory=list)  # TokenLedger write-through 逐条记录
@@ -854,8 +894,8 @@ class ExecutionState(BaseModel):
     waiting_for_approval: bool = False         # 等待审批回传
     pause_requested: bool = False          # 外部请求暂停（Orchestrator 检查后返回 PAUSED）
     cancel_requested: bool = False         # 外部请求取消（Orchestrator 检查后返回 CANCELED）
-    created_at: str = ""                   # Orchestrator._init_exec_state() 时赋值
-    updated_at: str = ""
+    created_at: IsoTimestamp = Field(default_factory=now_iso)                   # Orchestrator._init_exec_state() 时赋值
+    updated_at: IsoTimestamp = Field(default_factory=now_iso)
 
 
 # ── Checkpoint ──────────────────────────────────────────────────────────────────
@@ -977,8 +1017,8 @@ class Plan(BaseModel):
     """
     dag: DAG = Field(default_factory=DAG)
     plan_version: int = 1                  # Replan 时递增
-    created_at: str = ""                   # Planner 首次产出时赋值
-    updated_at: str = ""                   # 每次 Replan 后更新
+    created_at: IsoTimestamp = Field(default_factory=now_iso)                   # Planner 首次产出时赋值
+    updated_at: IsoTimestamp = Field(default_factory=now_iso)                   # 每次 Replan 后更新
 
 
 class DAGPatchType(StrEnum):
@@ -1016,7 +1056,7 @@ class DAGPatch(BaseModel):
     patch_type: DAGPatchType = DAGPatchType.REPLACE_NODES
     reason: str = ""
     trigger_nodes: list[NodeId] = Field(default_factory=list)
-    created_at: str = ""
+    created_at: IsoTimestamp = Field(default_factory=now_iso)
     replace_nodes: list[tuple[NodeId, DAGNode]] = Field(default_factory=list)
     remove_nodes: list[NodeId] = Field(default_factory=list)
     add_nodes: list[DAGNode] = Field(default_factory=list)
@@ -1078,7 +1118,7 @@ class Artifact(BaseModel):
     task_id: TaskId
     content: Any = None                        # 实际产物数据——dict、list、str、bytes 等不做限制
     metadata: dict[str, Any] = Field(default_factory=dict)  # 附加信息：大小、格式、来源等
-    created_at: str = ""                       # ISO 8601
+    created_at: IsoTimestamp = Field(default_factory=now_iso)                       # ISO 8601
 
 
 class DBTNodeType(StrEnum):
@@ -1211,7 +1251,7 @@ class TaskResult(BaseModel):
     status: TaskStatus
     node_results: dict[NodeId, NodeResultEvaluation] = Field(default_factory=dict)
     summary: str = ""                           # 自然语言摘要
-    created_at: str = ""                        # TaskState.created_at（ISO 8601）
+    created_at: IsoTimestamp = Field(default_factory=now_iso)                        # TaskState.created_at（ISO 8601）
     completed_at: str = ""                      # 终态时间（ISO 8601），duration = completed_at - created_at
     token_usage: dict[str, int] = Field(        # {"planner": N, "executor": N, "evaluator": N, ...}
         default_factory=dict
