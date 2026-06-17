@@ -479,7 +479,7 @@ class Planner:
                 required=rn.get("required", True),
                 execution_mode=self._parse_execution_mode(rn.get("execution_mode")),
                 input_bindings=[ArtifactId(b) for b in rn.get("input_bindings", []) or []],
-                output_as=ArtifactId(str(raw_as)) if (raw_as := rn.get("output_as", "").strip()) else None,
+                output_as=ArtifactId(str(raw_as)) if (raw_as := (rn.get("output_as") or "").strip()) else None,
             ))
 
         raw_edges = data.get("edges", [])
@@ -550,7 +550,7 @@ class Planner:
                     ArtifactId(b) for b in new_node_dict.get("input_bindings", []) or []
                 ],
                 output_as=ArtifactId(str(raw_as))
-                if (raw_as := new_node_dict.get("output_as", "").strip())
+                if (raw_as := (new_node_dict.get("output_as") or "").strip())
                 else None,
             )
             replace_nodes.append((old_id, new_node))
@@ -578,7 +578,7 @@ class Planner:
                 required=rn.get("required", True),
                 input_bindings=[ArtifactId(b) for b in rn.get("input_bindings", []) or []],
                 output_as=ArtifactId(str(raw_as))
-                if (raw_as := rn.get("output_as", "").strip())
+                if (raw_as := (rn.get("output_as") or "").strip())
                 else None,
             ))
 
@@ -696,7 +696,7 @@ class Planner:
                 required=rn.get("required", True),
                 execution_mode=self._parse_execution_mode(rn.get("execution_mode")),
                 input_bindings=[ArtifactId(b) for b in rn.get("input_bindings", []) or []],
-                output_as=ArtifactId(str(raw_as)) if (raw_as := rn.get("output_as", "").strip()) else None,
+                output_as=ArtifactId(str(raw_as)) if (raw_as := (rn.get("output_as") or "").strip()) else None,
             ))
 
         # 解析 edges

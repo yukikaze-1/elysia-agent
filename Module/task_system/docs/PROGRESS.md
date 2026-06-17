@@ -120,15 +120,15 @@ TaskSystem
 | `list_agents()` | ✅ 已实现 |
 | `get_token_stats()` | ✅ 已实现 |
 
-### 接入 CognitiveLoop（最大缺口）
+### 接入 CognitiveLoop
 
-TaskSystem 完全未接入 CognitiveLoop——`core/` 目录没有任何 TaskSystem 引用：
-
-1. ❌ `TaskSystem` 实例未创建 / `start()` 未调用
-2. ❌ `submit_task` 未注册为 LLM 工具——LLM 无法委派后台任务
-3. ❌ `DelegationPreparer` 未被 CognitiveLoop 调用
-4. ❌ Mailbox 事件无人消费——任务完成后不通知用户
-5. ❌ Debug WebUI 路由未激活（`app['task_system']` 未赋值）
+| 项目 | 状态 |
+|------|------|
+| `TaskSystem` 实例创建 / `start()` | ✅ Agent.start() 中创建 |
+| `submit_task` 注册为 LLM 工具 | ✅ function definition 在 tool_defs 合并 |
+| `DelegationPreparer` 调用 | ✅ CognitiveLoop._handle_submit_task() |
+| Mailbox 事件消费 | ✅ Agent._poll_mailboxes() 500ms 轮询 |
+| Debug WebUI 路由 | ⏳ `app['task_system']` 注册（后续） |
 
 ### 内部功能缺口
 
@@ -255,3 +255,13 @@ TaskSystem 完全未接入 CognitiveLoop——`core/` 目录没有任何 TaskSys
 | 2-6 | `task_system.py` | `_orchestrator._exec_state` 5 处可空访问 | 加 orchestrator None 守卫或三元表达式 |
 | 7 | `task_system.py` | `tz.utc` 未定义 | → `timezone.utc` |
 | 8 | `tts/protocol.py` | `async def synthesize_stream` 协程类型问题 | 改为 `def`（非 async），子类仍可 `async def` |
+
+### CognitiveLoop 异步任务支持（2026-06-17）
+
+| # | 文件 | 说明 |
+|---|------|------|
+| 1 | `schema.py` | FSM 加 `IDLE_BACKGROUND_TASK` + EventBus 加 `TASK_RESULT` |
+| 2 | `cognitive_loop.py` | `_handle_submit_task()` 拦截 + `_submit_task_definition()` + 4 setter |
+| 3 | `agent.py` | TaskSystem 生命周期 + `_poll_mailboxes()` + TASK_RESULT 处理 |
+| 4 | `protocol.py` | `ToolResult.async_task_id` 字段 |
+| 5 | `task_system.py` | `get_task_mailbox()` 查询方法 |

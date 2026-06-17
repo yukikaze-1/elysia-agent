@@ -849,10 +849,10 @@ Agent/
 │   └── bench/               # Bench: 延迟基准
 │
 ├── core/                    # L1 认知控制
-│   ├── schema.py            #   共享类型 (AgentState, EventType, EventPriority)
+│   ├── schema.py            #   共享类型 (AgentState+IDLE_BACKGROUND_TASK, EventType+TASK_RESULT, EventPriority)
 │   ├── event_bus.py         #   优先级事件总线
 │   ├── agent_fsm.py         #   五状态机
-│   ├── cognitive_loop.py    #   ReAct 调度器 (~610 行)
+│   ├── cognitive_loop.py    #   ReAct 调度器 (~610 行) + _handle_submit_task() 异步任务拦截 + _submit_task_definition()
 │   ├── block_filter.py      #   流式块过滤 + 结构化块解析
 │   ├── tts_stream.py        #   TTS 流式播放管理 (TTSStreamManager)
 │   ├── tool_call_parser.py  #   流式 tool call 合并/归一化
@@ -867,7 +867,7 @@ Agent/
 │   ├── app_config.py        #   App 配置
 │   ├── log_setup.py         #   日志系统
 │   ├── debug_info.py        #   /debug 面板
-│   ├── agent.py        #   组件组装 + 生命周期
+│   ├── agent.py        #   组件组装 + 生命周期 + TaskSystem 集成 (_poll_mailboxes 500ms 轮询 + TASK_RESULT 处理)
 │   ├── tools/               #   Agent 工具集
 │   ├── memory/              #   记忆子系统
 │   │   ├── session.py       #     会话上下文
@@ -966,6 +966,6 @@ INTERRUPT:
 
 缺失:
   1. 任务队列 (多请求排队)           — 新消息要么打断当前回复，要么被忽略
-  2. 后台任务 (脱离对话流的长时执行)  — 无跨轮次后台任务, 无进度回报
+  2. 后台任务 (脱离对话流的长时执行)  — ✅ 已接入 TaskSystem：Agent 启动时创建 + submit_task 注册为 LLM 工具 + DelegationPreparer 筛选工具 + Mailbox 500ms 轮询通知
   3. 并行 Worker Pool + DAG         — 无 (当前工具并行仅限于单轮内)
 ```

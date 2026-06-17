@@ -1628,6 +1628,157 @@ class TestToolManagerUnit:
 
 
 # ============================================================================
+# 19. submit_task definition 测试
+# ============================================================================
+
+class TestSubmitTaskDefinition:
+    def test_schema_has_required_intent(self):
+        """submit_task function schema 的 required 包含 intent。"""
+        from core.cognitive_loop import CognitiveLoop
+        defn = CognitiveLoop._submit_task_definition()
+        func = defn["function"]
+        assert func["name"] == "submit_task"
+        assert "intent" in func["parameters"]["required"]
+        assert "intent" in func["parameters"]["properties"]
+
+    def test_schema_is_valid_openai_format(self):
+        """返回的是标准 OpenAI function-calling 格式。"""
+        from core.cognitive_loop import CognitiveLoop
+        defn = CognitiveLoop._submit_task_definition()
+        assert defn["type"] == "function"
+        assert "function" in defn
+        assert "name" in defn["function"]
+        assert "parameters" in defn["function"]
+
+
+# ============================================================================
+# 20. _handle_submit_task 测试
+# ============================================================================
+
+class TestHandleSubmitTask:
+    @pytest.fixture
+    def loop_with_ts(self):
+        """创建带 mock TaskSystem + DelegationPreparer 的 CognitiveLoop。"""
+        from core.cognitive_loop import CognitiveLoop
+        from core.agent_fsm import AgentFSM
+        from core.event_bus import EventBus
+        from Module.output import OutputManager
+        from core.memory.session import SessionMemory
+
+        fsm = AgentFSM()
+        bus = EventBus()
+        output = OutputManager()
+        session = SessionMemory()
+        session.messages = []  # _handle_submit_task 需要此属性
+        prompt = MagicMock()
+        prompt._character = MagicMock(name="Test")
+        llm = MagicMock()
+
+        loop = CognitiveLoop(
+            llm=llm, fsm=fsm, event_bus=bus, output=output,
+            prompt=prompt, session=session,
+        )
+
+        # Mock TaskSystem
+        ts = MagicMock()
+        ts_mailbox = MagicMock()
+        ts_mailbox.task_id = "task-001"
+        ts.submit = AsyncMock(return_value=ts_mailbox)
+        ts.get_task_mailbox = MagicMock(return_value=ts_mailbox)
+        ts._infra = MagicMock()
+        ts._infra.constraints = MagicMock()
+        ts.list_active_tasks = MagicMock(return_value=[])
+
+        # Mock DelegationPreparer
+        dp = MagicMock()
+        from Module.task_system.schema import (
+            DelegationResult, DelegationStatus, DelegationContext, SessionId,
+        )
+        delegation_context = DelegationContext(
+            intent="查天气",
+            session_id=SessionId("test-session"),
+        )
+        dp.prepare = AsyncMock(return_value=DelegationResult(
+            status=DelegationStatus.OK,
+            context=delegation_context,
+        ))
+
+        loop.set_task_system(ts)
+        loop.set_delegation_preparer(dp)
+        loop.set_user_profile(None)
+        return loop
+
+    @pytest.mark.asyncio
+    async def test_intent_empty_returns_fail(self, loop_with_ts):
+        """空 intent → ToolResult.fail。"""
+        tc = {"function": {"name": "submit_task", "arguments": '{"intent": ""}'}}
+        result = await loop_with_ts._handle_submit_task(tc)
+        assert result.success is False
+        assert "不能为空" in result.error
+
+    @pytest.mark.asyncio
+    async def test_success_returns_async_task_id(self, loop_with_ts):
+        """成功后返回 async_task_id 非空。"""
+        tc = {"function": {"name": "submit_task", "arguments": '{"intent": "查天气"}'}}
+        result = await loop_with_ts._handle_submit_task(tc)
+        assert result.success is True
+        assert result.async_task_id == "task-001"
+        assert "已在后台执行" in result.content or "已经在后台执行" in result.content
+
+    @pytest.mark.asyncio
+    async def test_delegation_no_matching_tools_returns_fail(self, loop_with_ts):
+        """DelegationPreparer 返回 no_matching_tools → fail。"""
+        from Module.task_system.schema import DelegationResult, DelegationStatus
+        dp = loop_with_ts._delegation_preparer
+        dp.prepare = AsyncMock(return_value=DelegationResult(
+            status=DelegationStatus.NO_MATCHING_TOOLS,
+            missing_tools=["email"],
+        ))
+        tc = {"function": {"name": "submit_task", "arguments": '{"intent": "查天气"}'}}
+        result = await loop_with_ts._handle_submit_task(tc)
+        assert result.success is False
+        assert "email" in result.error
+
+    @pytest.mark.asyncio
+    async def test_task_system_none_returns_fail(self, loop_with_ts):
+        """TaskSystem 未注入 → fail。"""
+        loop_with_ts.set_task_system(None)
+        tc = {"function": {"name": "submit_task", "arguments": '{"intent": "查天气"}'}}
+        result = await loop_with_ts._handle_submit_task(tc)
+        assert result.success is False
+        assert "未初始化" in result.error
+
+
+# ============================================================================
+# 21. 唤醒消息测试
+# ============================================================================
+
+class TestWakeUpMessage:
+    def test_wake_up_message_includes_intent_and_result(self):
+        """唤醒模板拼接 intent 和 result。"""
+        from core.cognitive_loop import CognitiveLoop
+        from core.agent_fsm import AgentFSM
+        from Module.output import OutputManager
+        from core.event_bus import EventBus
+        from core.memory.session import SessionMemory
+        loop = CognitiveLoop(
+            llm=MagicMock(), fsm=AgentFSM(), event_bus=EventBus(),
+            output=OutputManager(), prompt=MagicMock(),
+            session=SessionMemory(),
+        )
+        ctx = {
+            "original_intent": "查天气",
+            "result": "明天晴天",
+            "task_id": "t1",
+            "dispatched_at": "2026-06-17T00:00:00+00:00",
+        }
+        msg = loop._build_wake_up_message(ctx)
+        assert "查天气" in msg
+        assert "明天晴天" in msg
+        assert "汇报" in msg or "稍后" in msg
+
+
+# ============================================================================
 # Runner
 # ============================================================================
 

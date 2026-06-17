@@ -49,6 +49,12 @@ from .text_utils import content_text_from_content, MessageObj
 logger = logging.getLogger(__name__)
 
 
+def _default_user_profile():
+    """返回默认 UserProfile（v1: 空实例，后续由 CognitiveLoop 填充偏好/语言等）。"""
+    from Module.task_system.schema import UserProfile
+    return UserProfile()
+
+
 class CognitiveLoop:
     """ReAct cognitive loop with streaming delivery and tool-call detection."""
 
@@ -418,12 +424,20 @@ class CognitiveLoop:
                         submit_tcs = []
                         other_tcs  = normalized
 
+                    # 构建 assistant_entry（先于 tool results，OpenAI 协议要求）
+                    # 使用完整的 normalized（含 submit_task）
+                    assistant_entry: dict = {"role": "assistant", "content": acc_text or None}
+                    if normalized:
+                        assistant_entry["tool_calls"] = normalized
+                    messages.append(assistant_entry)
+
                     # submit_task 工具调用——拦截处理
+                    # submit_task 的 tool result 在 assistant_entry 之后追加，
+                    # 确保 OpenAI 协议: assistant(tool_calls) → tool(result)
                     if submit_tcs:
-                        from datetime import datetime, timezone
                         for tc in submit_tcs:
                             result = await self._handle_submit_task(tc)
-                            # 注入 tool result 到 messages
+                            # 注入 tool result 到 messages（必须在 assistant 之后）
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": tc.get("id", "unknown"),
@@ -450,26 +464,23 @@ class CognitiveLoop:
                                 "error_type": None,
                                 "duration_ms": result.duration_ms,
                                 "truncated": result.truncated,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                             })
                             # 注册后台任务（result.success 时有 async_task_id）
                             if result.success and result.async_task_id and self._on_background_task:
                                 mailbox = self._task_system.get_task_mailbox(result.async_task_id)
                                 if mailbox:
-                                    now_iso = datetime.now(timezone.utc).isoformat()
+                                    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
                                     self._on_background_task(
                                         result.async_task_id, mailbox, intent=(
                                             json.loads(tc["function"]["arguments"]).get("intent", "")
                                         ), dispatched_at=now_iso,
                                     )
 
-                        # 遇到 submit_task → 其他工具的结果也先发完再结束
-                        normalized = other_tcs
-
-                    assistant_entry: dict = {"role": "assistant", "content": acc_text or None}
-                    if normalized:
-                        assistant_entry["tool_calls"] = normalized
-                    messages.append(assistant_entry)
+                        # submit_task 已处理完毕，只 dispatch 其他工具
+                        dispatch_tcs = other_tcs
+                    else:
+                        dispatch_tcs = normalized
 
                     # 工具调用消息写入 Session（刷新后前端可恢复工具卡片）
                     self._session.add_message({
@@ -479,7 +490,7 @@ class CognitiveLoop:
                     })
 
                     # Emit tool_executing actions for UI (before dispatch)
-                    for tc in normalized:
+                    for tc in dispatch_tcs:
                         func_name = tc["function"]["name"]
                         call_id = tc.get("id", "unknown")
                         try:
@@ -496,9 +507,9 @@ class CognitiveLoop:
                     assert self._clock is not None
                     with self._clock.span("tools"):
                         if _on_tool_calls is not None:
-                            results = await _on_tool_calls(normalized)
+                            results = await _on_tool_calls(dispatch_tcs)
                         else:
-                            results = await self._execute_tools_directly(normalized)
+                            results = await self._execute_tools_directly(dispatch_tcs)
 
                     for item in results:
                         if isinstance(item, BaseException):
@@ -537,7 +548,7 @@ class CognitiveLoop:
                         })
 
                     # Clean up executing tools tracking
-                    for tc in normalized:
+                    for tc in dispatch_tcs:
                         func_name = tc["function"]["name"]
                         try:
                             self._executing_tools.remove(func_name)
@@ -782,8 +793,8 @@ class CognitiveLoop:
         prep_result = await self._delegation_preparer.prepare(
             intent=intent,
             hints=hints,
-            session_messages=self._session.messages,
-            user_profile=self._user_profile,
+            session_messages=self._session.recent_messages(),
+            user_profile=self._user_profile or _default_user_profile(),
             tools=tool_list,
             global_constraints=(self._task_system._infra.constraints
                                 if self._task_system else None),
