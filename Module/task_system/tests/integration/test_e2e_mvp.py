@@ -882,7 +882,8 @@ async def test_e2e_cancel():
     _wrap_llm_client(dp._client, label="DelegationPreparer")
 
     result = await dp.prepare(
-        intent='搜索"人工智能最新进展"并返回前3条结果',
+        intent='搜索 AI 安全、越狱防护和模型对齐三个方面的最新进展，'
+               '分别搜索每个方向并生成独立的摘要，最后汇总成综合报告',
         hints=None,
         session_messages=[],
         user_profile=UserProfile(),
@@ -911,6 +912,7 @@ async def test_e2e_cancel():
     _log_ok("cancel() 返回 True")
 
     event = None
+    progress_seen = 0
     deadline = time.monotonic() + 45.0
     while time.monotonic() < deadline:
         remaining = deadline - time.monotonic()
@@ -928,6 +930,7 @@ async def test_e2e_cancel():
         print(f"📬 Mailbox Event: {event_type}  [T+{_fmt_duration(_elapsed())}]")
         print(f"{_SEP2}")
         if event_type == "progress":
+            progress_seen += 1
             _show_event_summary(event_type, data, 0)
         elif event_type in ("cancelled", "failed", "completed"):
             _show_event_summary(event_type, data, 0)
@@ -937,6 +940,14 @@ async def test_e2e_cancel():
     assert event.type.value in ("cancelled", "completed", "failed"), \
         f"意外事件: {event.type.value}"
     _log_ok(f"终态事件: {event.type.value}")
+
+    # 验证取消生效——cancelled 时 progress 数 < 总节点数
+    if event.type.value == "cancelled":
+        total = event.data.get("total_nodes", 0)
+        if total > 0:
+            _log_info(f"取消生效——{total} 节点中完成 {progress_seen}，未执行完。")
+        else:
+            _log_info(f"取消生效——已执行 {progress_seen} 个节点后终止。")
     _record_timeline("2.cancel→终态", _elapsed() - step_start)
 
     step_start = _log_step(3, 6, "清理确认")

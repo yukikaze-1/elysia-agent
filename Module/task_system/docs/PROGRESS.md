@@ -9,11 +9,11 @@
 
 | 指标 | 数值 |
 |------|------|
-| 生产代码 | 20 文件, ~4,500 行 |
+| 生产代码 | 22 文件, ~5,000 行 |
 | 测试代码 | 21 文件 |
 | 单元测试 | **298 tests**, ~4.3s |
-| 集成测试 | 28 tests (含 4 e2e), ~4min |
-| 最近提交 | `0daa907` — resume 集成测试 |
+| 集成测试 | 36 tests (含 7 e2e), ~15min |
+| 最近提交 | `78cfc59` — cancel e2e 测试改进 |
 
 ---
 
@@ -89,11 +89,11 @@ TaskSystem
 | unit/ | `test_checkpoint.py` | 5 | |
 | unit/ | `test_mailbox.py` | 4 | |
 | unit/ | `test_token_ledger.py` | 8 | write-through + 审计 + 损耗 |
-| integration/ | `test_task_system_lifecycle.py` | 5 | stop / pause / 并发 / goal_failed→REPLAN |
-| integration/ | `test_e2e_mvp.py` | 4 | 完整 4 链路 |
-| integration/ | `test_delegation_preparer.py` | 10 | LLM 工具筛选 |
-| integration/ | `test_executor.py` | 2 | LLM tool-calling |
-| integration/ | `test_planner.py` | 5 | LLM DAG 生成 |
+| integration/ | `test_task_system_lifecycle.py` | 10 | stop / pause / cancel / resume / 并发 / replan |
+| integration/ | `test_e2e_mvp.py` | 7 | 完整 7 链路（含 llm_direct / cancel / resume） |
+| integration/ | `test_delegation_preparer.py` | 11 | LLM 工具筛选 |
+| integration/ | `test_executor.py` | 4 | LLM tool-calling + llm_direct + 哨兵 |
+| integration/ | `test_planner.py` | 5 | LLM DAG 生成 + replan |
 
 ---
 
@@ -212,3 +212,24 @@ TaskSystem 完全未接入 CognitiveLoop——`core/` 目录没有任何 TaskSys
 | 3 | `sub_agent.py` | SubAgent 检测取消 → 推送 CANCELLED 事件 → FAILED_CANCELLED 终态 |
 | 4 | `test_cancel.py` | 6 个单元测试——幂等/已终态/未启动/运行时取消/暂停后取消/all_finished |
 | 5 | `test_cancel_integration.py` | 1 个集成测试——运行时取消 + 验证 CANCELLED 事件 |
+
+### resume() 实现 + cancel/pause 中断信号修复（2026-06-17）
+
+| # | 文件 | 说明 |
+|---|------|------|
+| 1 | `task_system.py` | `resume()` 实现——CAS PAUSED→RESUMING→RUNNING，幂等，PAUSED 不清理 |
+| 2 | `sub_agent.py` | `resume_from_pause()` + 保存 `_context`/`_mailbox` + `_execute` 参数化 |
+| 3 | `sub_agent.py` | cancel/pause 信号 SubAgent 层拦截——`_handle_replan` 前 + `_execute` 循环顶 |
+| 4 | `sub_agent.py` | resume 时清零 checkpoint 的 pause/cancel_requested 标志（防立即重触发） |
+| 5 | `plan_validator.py` | required 节点 output_as=null 自动填充 `output:<node_id>` |
+| 6 | `orchestrator.py` | RESUMING→RUNNING 转换 |
+| 7 | `planner.py` | Replan prompt 补充 execution_mode 规则 |
+
+### submit_approval() 实现 + pause 幂等 + code review 修复（2026-06-17）
+
+| # | 文件 | 说明 |
+|---|------|------|
+| 1 | `task_system.py` | `submit_approval()` v1 桥接到 ToolManager.submit_approval() |
+| 2 | `task_system.py` | `pause()` 幂等——移除 RuntimeError/KeyError，所有路径静默成功 |
+| 3 | 多文件 | code review #1-#10 修复（tools_used 语义/资源泄漏/重复事件等）|
+| 4 | `utils.py` | 新建——`strip_markdown_fence()` + `format_tools()` 公共函数 |

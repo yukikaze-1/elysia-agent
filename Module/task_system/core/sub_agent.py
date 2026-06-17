@@ -216,6 +216,12 @@ class SubAgent:
 
         assert self._context is not None, "run() 必须先于 resume_from_pause()"
 
+        # 清零中断标志——checkpoint 在 pause 时保存的标志位会导致
+        # Orchestrator._merge_exec_state 重建后立即再次触发暂停，
+        # 形成无限 PAUSED 循环。
+        checkpoint.exec.pause_requested = False
+        checkpoint.exec.cancel_requested = False
+
         await self._execute(
             ts, self._graph, self._mailbox, self._context,
             resume_from=checkpoint.exec,
