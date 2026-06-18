@@ -190,6 +190,17 @@ class OutputManager:
             channels=channels, capability=capability or ChannelCapability.AUDIO,
         )
 
+    async def notify_state(self, state: str) -> None:
+        """通知所有通道 FSM 状态变更（前端据此切换动画）。"""
+        for ch in self._channels:
+            try:
+                await ch.on_state(state)
+            except Exception:
+                self._logger.warning(
+                    "Channel %s on_state(%s) failed",
+                    type(ch).__name__, state, exc_info=True,
+                )
+
     async def close(self) -> None:
         tasks = [c.close() for c in self._channels]
         results = await asyncio.gather(*tasks, return_exceptions=True)

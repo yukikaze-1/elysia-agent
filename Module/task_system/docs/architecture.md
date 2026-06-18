@@ -180,7 +180,7 @@ X 锁持有超过 3 轮对话或 2 分钟 → 租约超时 → 强制释放 → 
 ```
 Module/task_system/
 ├── __init__.py          # 公开 API facade
-├── task_system.py        # TaskSystem 主类：生命周期 + submit/resume + 薄封装（~430行）
+├── task_system.py        # TaskSystem 主类：生命周期 + submit/resume + 薄封装（~478行）
 ├── query.py              # 查询 API：11 个只读模块函数
 ├── lifecycle.py          # 任务操作：pause / cancel / submit_approval 模块函数
 ├── protocol.py           # HITLNotifier 等对外依赖协议（ABC）
@@ -199,8 +199,14 @@ Module/task_system/
 │   └── internal.py       #   编排数据模型（DAGNode, Plan, TaskState, NodeResult）
 ├── core/                 # Plan-Execute-Evaluate 编排循环
 │   ├── __init__.py
-│   ├── sub_agent.py      # SubAgent: 决策层——规划/Replan/熔断
-│   ├── orchestrator.py   # Orchestrator: run() 主循环 + 薄封装
+│   ├── orchestrator.py   # Orchestrator: run() 主循环 + 薄封装（~421行）
+│   ├── sub_agent/          #   任务级执行单元
+│   │   ├── __init__.py     #     公开导出 SubAgent
+│   │   ├── sub_agent.py    #     SubAgent 类 + _dispatch_result + 薄封装
+│   │   ├── planning.py     #     plan_and_validate() 规划+校验
+│   │   ├── execution_loop.py #   execute_loop() 执行-决策循环
+│   │   ├── result_handlers.py #  5 个 handler（成功/失败/取消/阻塞/暂停）
+│   │   └── replan.py       #     handle_replan() + check_meltdown()
 │   ├── execution.py       #   节点执行管线（execute → evaluate → apply）
 │   ├── finalize.py        #   收尾 + checkpoint 工具
 │   ├── graph.py          # PlanGraph: NetworkX DiGraph 封装（图算法层）
@@ -265,9 +271,9 @@ TaskId, AgentId, ApprovalId, SessionId, NodeId, ArtifactId
 # ══ 基础枚举 ──
 class TaskStatus(StrEnum):          # 11 态: PENDING → PLANNING → RUNNING → COMPLETED/FAILED/CANCELLED
 class NodeStatus(StrEnum):          # 8 态: PENDING → RUNNING → SUCCESS/FAILED/SKIPPED/UNRECOVERABLE/...
-class SubmitRejectionCode(StrEnum): # 4 项: INVALID_PARAM/PLAN_TOO_LARGE/CONTEXT_WINDOW_EXCEEDED/TOKEN_BUDGET_EXCEEDED
+class SubmitRejectionCode(StrEnum): # 5 项: NOT_READY/INVALID_PARAM/PLAN_TOO_LARGE/CONTEXT_WINDOW_EXCEEDED/TOKEN_BUDGET_EXCEEDED
 class TaskErrorCode(StrEnum):       # 10 项: PLANNING_FAILED/TOOL_ERROR/PERMISSION_DENIED/FAILURE_MELTDOWN/...
-class ResumeErrorCode(StrEnum):     # 6 项: CHECKPOINT_NOT_FOUND/CORRUPTED/VERSION_MISMATCH/...
+class ResumeErrorCode(StrEnum):     # 6 项: CHECKPOINT_NOT_FOUND / CHECKPOINT_CORRUPTED / CHECKPOINT_VERSION_MISMATCH / INVALID_STATE / PENDING_APPROVALS_FAILED / NODE_RECOVERY_FAILED
 class NodeErrorCode(StrEnum):       # 8 项: TOOL_ERROR/TOOL_TIMEOUT/TOOL_NOT_FOUND/PERMISSION_DENIED/...
 class RBACLevel(StrEnum):           # READ_ONLY / SAFE_WRITE / MUTATION
 
@@ -330,7 +336,7 @@ class ExperienceRecord(BaseModel):    # tool_name/error_pattern/diagnosis/fix/co
 
 ### 3.3 Sub-Agent
 
-> **代码位置**：`Module/task_system/core/sub_agent.py`
+> **代码位置**：`Module/task_system/core/sub_agent/sub_agent.py`
 
 **定义**：TaskSystem 池中的任务级执行单元。一个用户任务一个 Sub-Agent。
 
@@ -348,21 +354,22 @@ class ExperienceRecord(BaseModel):    # tool_name/error_pattern/diagnosis/fix/co
 **两层关系**：
 
 ```
-SubAgent.run(context, mailbox)                    ← 入口
-  ├─ _plan_and_validate(context, task_state, mailbox) → PlanGraph | None
+SubAgent.run(context, mailbox)                    ← 入口（sub_agent/sub_agent.py）
+  ├─ _plan_and_validate(context, task_state, mailbox) → PlanGraph | None  (→ planning.py)
   │    ├─ Planner.plan(context) → Plan
   │    ├─ PlanValidator.validate(plan, ...) → (ValidationResult, PlanGraph)
   │    ├─ ABORT  → push FAILED, return None
   │    └─ FIX_PLAN → 重试规划（最多 2 次，带校验错误反馈）→ 仍失败则 push FAILED
-  └─ _execute(task_state, graph, mailbox, context)  ← 执行-决策循环
+  └─ _execute_loop(task_state, graph, mailbox, context)  ← 执行-决策循环 (→ execution_loop.py)
        └─ while True:
             result = Orchestrator.run(ts, graph, mailbox, resume_from=...)
-            should_continue, next_resume = _dispatch_result(result, ...)
+            should_continue, next_resume = _dispatch_result(result, ...)  (→ result_handlers.py)
             ├─ SUCCESS       → _handle_success(), return
             ├─ FAILED        → _handle_failed(), return
             ├─ BLOCKED       → _handle_blocked(), return
             ├─ PAUSED        → _handle_paused(), return
-            └─ NEEDS_REPLAN  → _handle_replan()
+            ├─ CANCELLED     → _handle_cancelled(), return
+            └─ NEEDS_REPLAN  → _handle_replan()  (→ replan.py)
                  ├─ 熔断检查 → 触发则 push FAILED, return
                  ├─ Replanner.replan(plan, failed_node_ids, diagnosis, node_states)
                  │    ├─ full_replan=false → DAGPatch（局部修复，保留已成功节点）
@@ -462,7 +469,7 @@ LLM → tool_call: submit_task(intent="查最近三天天气...")   ← 路由�
 
 ### 5.0 两层编排——Sub-Agent 与 Orchestrator
 
-> **代码位置**：`Module/task_system/core/sub_agent.py`、`core/orchestrator.py`
+> **代码位置**：`Module/task_system/core/sub_agent/sub_agent.py`、`core/orchestrator.py`
 
 编排分两层：Sub-Agent（决策层）和 Orchestrator（执行层）。
 
@@ -529,21 +536,32 @@ Orchestrator.run(task_state, graph, mailbox, resume_from=None) → OrchestratorR
     while not task_state.is_terminal():
         0. 检查 exec_state.pause_requested → 返回 PAUSED
         1. get_ready_nodes(exec_state)
-        2. 审批检查
-        3. execute_nodes(ready, exec_state)   → Executor
-        4. evaluate_node(result, task_state)  → Evaluator
-        5. apply_evaluation(task_state, exec_state, ...) → EvaluatorAction
-           ├─ CONTINUE      → ns.evaluation = evaluation, mark SUCCESS, push progress
-           ├─ SKIP          → ns.evaluation = evaluation, mark SKIPPED（非必需节点）
-           ├─ RETRY         → ns.evaluation = evaluation, 检查 attempt >= max_retries
-           │     ├─ 未超限 → back to PENDING
-           │     └─ 超限   → mark FAILED + return REPLAN
-           ├─ REPLAN        → ns.evaluation = evaluation, mark FAILED + return NEEDS_REPLAN
-           ├─ ASK_APPROVAL  → mark WAITING_APPROVAL + return BLOCKED
-           └─ ABORT         → ns.evaluation = evaluation, mark FAILED + return FAILED
-        6. save_checkpoint(task_state, exec_state)
+           ├─ ready_ids 非空 → 继续步骤 2
+           ├─ ready_ids 为空 + graph.is_terminal() → break（任务完成）
+           └─ ready_ids 为空 + 非终态 → _handle_no_ready()
+                ├─ _has_blocked_nodes → BLOCKED
+                ├─ has_failed_required → NEEDS_REPLAN
+                └─ 都不满足 → 死锁 → FAILED
+        2. 审批检查（_filter_approval）
+        3. execute_nodes(ready, exec_state)   → Executor（委托到 execution.py）
+        4. _evaluate_and_dispatch(results, ...)  → Evaluator（委托到 execution.py）
+           ├─ evaluate_node → NodeResultEvaluation
+           ├─ apply_evaluation（委托到 execution.py）→ EvaluatorAction
+           │   ├─ CONTINUE      → _handle_continue(ns, ...)  标记 SUCCESS + push progress
+           │   ├─ SKIP          → _handle_skip(ns, ...)      标记 SKIPPED（非必需节点）
+           │   ├─ RETRY         → _handle_retry(ns, ...)     检查 attempt >= max_retries
+           │   │     ├─ 未超限 → back to PENDING
+           │   │     └─ 超限   → mark FAILED + return REPLAN
+           │   ├─ REPLAN        → _handle_replan_progress(ns, ...)  mark FAILED + push progress
+           │   ├─ ASK_APPROVAL  → mark WAITING_APPROVAL
+           │   └─ ABORT         → mark FAILED
+           ├─ REPLAN/ASK_APPROVAL/ABORT → 返回对应 OrchestratorResult
+           └─ 无中断信号 → 继续循环
+        5. save_checkpoint(task_state, exec_state)  → 委托到 finalize.py
     return SUCCESS
 ```
+
+> **注**：`apply_evaluation()`（位于 `execution.py`）已拆分为 4 个 action handler —— `_handle_continue` / `_handle_skip` / `_handle_retry` / `_handle_replan_progress`，外加共享辅助 `_push_progress()`。ASK_APPROVAL 和 ABORT 的简单标记逻辑保留在 `apply_evaluation` 的 elif 分支中，无需独立函数。
 
 **状态归属**：
 - **TaskState**（任务级）→ SubAgent 创建并管理生命周期。字段：task_id, status, plan。
@@ -1347,48 +1365,62 @@ Demo 阶段 CPU 密集工具少、频率低，启动开销可忽略。真杀 > �
 ```python
 @dataclass
 class AgentInfra:
-    """跨任务共享的底层资源。创建成本高、不含任务状态、协程安全。"""
+    """跨任务共享的底层资源容器。创建成本高、不含任务状态、协程安全。"""
     llm: AsyncOpenAI
-    milvus: MilvusClient
-    http: httpx.AsyncClient
-    tool_registry: ToolRegistry
-    constraints: ConstraintConfig
-
-@dataclass
-class AgentState:
-    """每个任务独有的状态。新建 → 丢弃，绝不跨任务复用。"""
-    plan: Plan | None = None
-    dag_nodes: dict[str, DAGNode] = field(default_factory=dict)
-    dbts: dict[str, DBTNode] = field(default_factory=dict)
-    current_node: str | None = None
-    tool_cache: dict = field(default_factory=dict)
-    context: DelegationContext | None = None
-    node_results: dict[str, NodeResultEvaluation] = field(default_factory=dict)
+    milvus: MilvusClient | None          # None 表示向量搜索不可用
+    http: httpx.AsyncClient | None       # v1 预留，工具通过 ToolContext 接收 HTTP 客户端
+    tool_registry: object                # ToolRegistry，避免循环导入
+    constraints: ConstraintConfig        # 全局约束天花板
+    llm_model: str = field(
+        default_factory=lambda: os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro")
+    )  # Planner/Executor/Evaluator 共用模型名
 
 class SubAgent:
-    def __init__(self, infra: AgentInfra):
-        self._infra = infra            # 跨任务共享，永不重置
-        self._state: AgentState | None = None
+    """任务级执行单元。跨任务共享 infra + hitl_notifier；per-task 组件在 run() 中创建。"""
 
-    def assign_task(self, ctx: DelegationContext) -> None:
-        self._state = AgentState(context=ctx)  # 全新对象
+    def __init__(self, infra: AgentInfra, hitl_notifier: HITLNotifier) -> None:
+        self._infra = infra              # 跨任务共享，永不重置
+        self._hitl = hitl_notifier        # 审批快通道
+        # per-task 组件（run() 入口赋值，初始为 None）：
+        self._planner = self._replanner = self._plan_validator = None
+        self._executor = self._evaluator = self._orchestrator = None
+        self._checkpoint_mgr = self._artifact_store = self._token_ledger = None
+        # 运行时状态（run() 入口赋值，初始为 None）：
+        self._task_state: TaskState | None = None
+        self._graph: PlanGraph | None = None
+        self._context: DelegationContext | None = None
+        self._mailbox: TaskMailbox | None = None
 
-    def complete_task(self) -> None:
-        self._state = None  # GC 一把回收，零泄漏
+    async def run(self, context: DelegationContext, mailbox: TaskMailbox) -> None:
+        """任务主入口——创建 TaskState → 规划 → 校验 → 执行-决策循环。
+        1. 创建 TaskState + per-task 组件（TokenLedger/Planner/.../Orchestrator）
+        2. self._plan_and_validate()  ── 委托到 planning.py
+        3. self._execute_loop()       ── 委托到 execution_loop.py
+             └─ _dispatch_result()    ── 委托到 result_handlers.py（5 个 handler）
+                ├─ SUCCESS       → _handle_success()
+                ├─ FAILED        → _handle_failed()
+                ├─ CANCELLED     → _handle_cancelled()
+                ├─ BLOCKED       → _handle_blocked()
+                ├─ PAUSED        → _handle_paused()
+                └─ NEEDS_REPLAN  → _handle_replan()  ── 委托到 replan.py（含 check_meltdown）
+        """
+
+    async def resume_from_pause(self) -> None:
+        """从 PAUSED 恢复——读取 checkpoint → 重建组件 → 重新进入 execute_loop。"""
 ```
 
 **三个保证**：
 
 | 保证 | 机制 |
 |------|------|
-| 不会漏字段 | `AgentState(...)` 是 dataclass，所有字段必须初始化，编译器级别保证 |
-| 不会忘重置 | `self._state = None` 是一行，不存在"忘了清某个字段"的问题 |
-| 不会跨任务污染 | 新任务 = 新 AgentState 实例，旧实例被 GC 完整回收 |
+| 不会漏字段 | run() 入口显式创建 TaskState + 所有 per-task 组件，无隐式依赖 |
+| 不会忘重置 | 每次 run() 调用建立全新的 TaskState 和组件引用，旧引用被 GC 完整回收 |
+| 不会跨任务污染 | 新任务 = 新的 TaskState + 新的 per-task 组件实例，SubAgent 只持有跨任务共享的 infra + hitl_notifier |
 
 ### 14.2 任务完成后
 
 Sub-Agent 完成（或失败/取消）后：
-1. **丢弃状态**：`self._state = None`，wrapper 归还，可承接下一任务
+1. **丢弃状态**：per-task 组件引用在下次 `run()` 调用时被覆盖，旧实例被 GC 回收。SubAgent wrapper 可承接下一任务
 2. **生成任务摘要**：轻量日志保留在 TaskSystem 内部（非 Milvus），TTL 默认 7 天
 
 ```json

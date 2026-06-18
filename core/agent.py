@@ -237,7 +237,7 @@ class Agent:
 
         # TaskSystem 基础设施
         _ts_infra = AgentInfra(
-            llm=self._llm._backend._client if hasattr(self._llm, '_backend') and hasattr(self._llm._backend, '_client') else None,
+            llm=self._llm.get_raw_client(),
             milvus=None,
             http=None,
             tool_registry=self._tool_manager,
@@ -253,7 +253,7 @@ class Agent:
                 pass  # v1: 审批由 ToolManager 直接处理，不经过此通道
 
             async def cancel_approval(self, approval_ids):
-                pass
+                pass  # v1: 同上，审批全流程走 ToolManager，不经过此通道
 
         _hitl = _EventBusHITLNotifier(self._bus)
 
@@ -546,10 +546,17 @@ class Agent:
                 logger.warning("HTTP server cleanup timed out — forcing exit")
 
             if was_restarting:
-                from Module.config.loader import ConfigLoader
-                from core.app_config import AppConfig
-                self._config = ConfigLoader(AppConfig, yaml_path=self._config_path).load()
-                print("配置已重新加载，正在重启服务...")
+                if self._config_path is not None:
+                    from Module.config.loader import ConfigLoader
+                    from core.app_config import AppConfig
+                    self._config = ConfigLoader(AppConfig, yaml_path=self._config_path).load()
+                    print("配置已重新加载，正在重启服务...")
+                else:
+                    # 无 config_path 时无法重新加载，复用当前配置
+                    logger.warning(
+                        "重启请求但缺少 config_path（Agent 可能以 config= 直接构造），"
+                        "复用当前配置"
+                    )
                 await self.start()
                 continue
             else:
@@ -595,11 +602,7 @@ class Agent:
                 if mailbox is None:
                     continue
                 try:
-                    # 内层 while: 清空当前 mailbox 的所有待消费事件
-                    while True:
-                        event = mailbox.get_nowait()
-                        if event is None:
-                            break  # 退出内层 while（当前 mailbox 已清空），继续 for 下一个 task
+                    while (event := mailbox.get_nowait()) is not None:
                         data = event.data or {}
                         if event.type.value == "completed":
                             self._bus.post(EventType.TASK_RESULT, {
@@ -609,7 +612,7 @@ class Agent:
                                 "dispatched_at": info["dispatched_at"],
                             })
                             self._background_tasks.pop(task_id, None)
-                            break  # 退出内层 while（task 已终态），继续 for 下一个 task
+                            break  # task 已终态，跳出 while 处理下一个 task
                         elif event.type.value == "failed":
                             self._bus.post(EventType.TASK_RESULT, {
                                 "task_id": task_id,
@@ -618,13 +621,11 @@ class Agent:
                                 "dispatched_at": info["dispatched_at"],
                             })
                             self._background_tasks.pop(task_id, None)
-                            break  # 退出内层 while（task 已终态），继续 for 下一个 task
+                            break  # task 已终态，跳出 while 处理下一个 task
                         elif event.type.value == "cancelled":
                             self._background_tasks.pop(task_id, None)
-                            break  # 退出内层 while（task 已取消），继续 for 下一个 task
-                        # PROGRESS / PAUSED: v1 忽略
-                        # 注意：以上所有 break 退出的是内层 while True，
-                        #      而非外层 for 循环
+                            break  # task 已取消，跳出 while 处理下一个 task
+                        # PROGRESS / PAUSED / unknown: v1 忽略，继续消费队列剩余事件
                 except Exception:
                     logger.debug("mailbox poll error", exc_info=True)
 
@@ -726,13 +727,6 @@ class Agent:
                         pending = self._pending_messages.pop(0)
                         logger.info("排队消息出队 (%d 条剩余)", len(self._pending_messages))
                         self._bus.post(EventType.USER_INPUT, pending)
-                for ch in self._output._channels:
-                    try:
-                        await ch.on_state(state)
-                    except Exception:
-                        logger.warning(
-                            "Channel %s on_state(%s) failed",
-                            type(ch).__name__, state, exc_info=True,
-                        )
+                await self._output.notify_state(state)
 
     # Tool registration is done via ToolManager.load_all() in start()

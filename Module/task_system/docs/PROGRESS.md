@@ -9,11 +9,11 @@
 
 | 指标 | 数值 |
 |------|------|
-| 生产代码 | 26 文件, ~7,500 行 |
+| 生产代码 | 37 文件, 8,107 行 |
 | 测试代码 | 24 文件 |
 | 单元测试 | **298 tests**, ~4.3s |
 | 集成测试 | 36 tests (含 7 e2e), ~15min |
-| 最近提交 | `dbb7195` — refactor: 拆分 orchestrator.py — 提取 execution.py + finalize.py |
+| 最近提交 | `698a819` — fix: sub_agent/ 包补全类型注解 + None 断言 |
 
 ---
 
@@ -25,13 +25,19 @@ TaskSystem
 ├── TaskSystem             # 主类：生命周期 + submit/resume + 薄封装委托
 │   ├── query.py           #   查询 API（11 个模块函数）
 │   ├── lifecycle.py       #   任务操作（pause / cancel / submit_approval）
-│   └── task_system.py     #   生命周期 + 薄封装 (~430 行)
+│   └── task_system.py     #   生命周期 + 薄封装 (478 行)
 ├── SubAgent (per-task)    # 决策层：规划 → 校验 → 执行循环
 │   ├── planner/           #   规划与修复
 │   │   ├── planner.py     #     Planner：plan() 首次规划
 │   │   ├── replanner.py   #     Replanner：replan() 失败修复
 │   │   ├── prompts.py     #     Prompt 模板（5 个常量）
 │   │   └── parser.py      #     共享解析 + call_llm + PlanParseError
+│   ├── sub_agent/          #   决策循环
+│   │   ├── planning.py     #     plan_and_validate() 规划+校验
+│   │   ├── execution_loop.py #   execute_loop() 执行-决策循环
+│   │   ├── result_handlers.py #  5 个结果处理器
+│   │   ├── replan.py       #     handle_replan() + check_meltdown()
+│   │   └── sub_agent.py    #     SubAgent 类 + _dispatch_result + 薄封装
 │   ├── PlanValidator      #   9 项 DAG 静态校验
 │   └── Orchestrator       #   执行层：DAG 拓扑驱动
 │       ├── execution.py   #     节点执行管线（execute → evaluate → apply）
@@ -107,19 +113,19 @@ TaskSystem
 | unit/ | `test_task_system.py` | 25→40 | stop / pause / token / 查询 API |
 | unit/ | `test_orchestrator.py` | 26 | 执行循环 / 重试 / 审批 / 暂停 |
 | unit/ | `test_sub_agent.py` | 22→24 | 决策循环 / 熔断 / replan |
-| unit/ | `test_graph.py` | 21 | PlanGraph + DAGPatch |
-| unit/ | `test_evaluator.py` | 28 | 双重判定 + `_derive_action` |
-| unit/ | `test_executor.py` | 8 | tool-calling + llm_direct |
+| unit/ | `test_graph.py` | 46 | PlanGraph + DAGPatch |
+| unit/ | `test_evaluator.py` | 29 | 双重判定 + `_derive_action` |
+| unit/ | `test_executor.py` | 12 | tool-calling + llm_direct |
 | unit/ | `test_planner.py` | 17→41 | plan + replan 解析（适配 Planner/Replanner 拆分） |
-| unit/ | `test_delegation_preparer.py` | 16 | 校验 + 格式化 |
-| unit/ | `test_checkpoint.py` | 5 | |
-| unit/ | `test_mailbox.py` | 4 | |
+| unit/ | `test_delegation_preparer.py` | 53 | 校验 + 格式化 |
+| unit/ | `test_checkpoint.py` | 9 | |
+| unit/ | `test_mailbox.py` | 10 | |
 | unit/ | `test_token_ledger.py` | 8 | write-through + 审计 + 损耗 |
 | integration/ | `test_task_system_lifecycle.py` | 10 | stop / pause / cancel / resume / 并发 / replan |
 | integration/ | `test_e2e_mvp.py` | 7 | 完整 7 链路（含 llm_direct / cancel / resume） |
 | integration/ | `test_delegation_preparer.py` | 11 | LLM 工具筛选 |
 | integration/ | `test_executor.py` | 4 | LLM tool-calling + llm_direct + 哨兵 |
-| integration/ | `test_planner.py` | 5 | LLM DAG 生成 + replan |
+| integration/ | `test_planner.py` | 4 | LLM DAG 生成 + replan |
 
 ### 接入 CognitiveLoop
 
@@ -181,21 +187,35 @@ TaskSystem
 `task_system.py` (843行) → 3 文件：
 - `query.py` — 11 个只读查询函数（`get_progress`, `list_active_tasks`, `get_token_stats` 等）
 - `lifecycle.py` — 3 个任务操作函数（`pause`, `cancel`, `submit_approval`）
-- `task_system.py` (~430行) — 生命周期 + 薄封装委托
+- `task_system.py` (478行) — 生命周期 + 薄封装委托
 
 所有提取函数接受显式参数替代 `self._xxx`，TaskSystem 公开 API 签名不变。
 
-### Orchestrator 拆分（1 commit + 类型修复）
+### Orchestrator 拆分（3 commits + 类型修复）
 `orchestrator.py` (708行) → 3 文件：
 - `execution.py` — 节点执行管线：`execute_nodes()` + `evaluate_node()` + `apply_evaluation()`
 - `finalize.py` — 收尾 + checkpoint 工具（8 个函数）：`init_exec_state`, `merge_exec_state`, `has_blocked_nodes`, `needs_approval`, `finalize`, `build_checkpoint`, `save_checkpoint`, `push_mailbox`
-- `orchestrator.py` (~340行) — `run()` 主循环 + 薄封装
+- `orchestrator.py` (421行) — `run()` 主循环 + 薄封装
 
-薄封装签名与当前方法完全一致，`run()` 调用点零改动。后续补全了全部类型注解。
+`apply_evaluation()` 后续拆分为独立 handler（`40d64d5`），`run()` 方法独立拆分（`325d37c`）。薄封装签名与当前方法完全一致，`run()` 调用点零改动。后续补全了全部类型注解。
+
+### apply_evaluation 拆分（1 commit）
+`execution.py` 的 `apply_evaluation()` (150行) → 按 action 提取：
+- `_handle_continue` / `_handle_skip` / `_handle_retry` / `_handle_replan_progress`
+- `_push_progress` 共用 helper（4 分支复用 progress 事件构造）
+- ASK_APPROVAL / ABORT 保留内联（各 3 行）
+
+### SubAgent 拆分（1 commit）
+`sub_agent.py` (825行) → `sub_agent/` 包：
+- `planning.py` — `plan_and_validate()` 规划+校验
+- `execution_loop.py` — `execute_loop()` 执行-决策循环
+- `result_handlers.py` — 5 个结果处理器
+- `replan.py` — `handle_replan()` + `check_meltdown()` + `extract_node_results()`
+- `sub_agent.py` (403行) — `SubAgent` 类 + `_dispatch_result` + 薄封装
 
 ### 项目目录整理（2 commits）
 - `core/test_*.py` ×3 → `core/tests/` 归位
-- `code-review-report.md` → `docs/`、`app_log.txt` → `log/app.log`
+- `code-review-report.md` → 仓库顶层 `docs/`、`app_log.txt` → `log/app.log`
 - 清理 17 个零字节 `logger_*.log` 测试残留
 
 ---

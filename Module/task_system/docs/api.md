@@ -316,8 +316,8 @@ class TaskStatus(StrEnum):
     async def get_task_dag(self, task_id: TaskId) -> TaskDAG | None: ...
     """查询 DAG 图（✅ 已实现）。"""
 
-    def get_task_status(self, task_id: TaskId) -> TaskStatus: ...
-    """✅ 已实现——查询任务当前状态。任务不存在时 raise KeyError。"""
+    def get_task_status(self, task_id: TaskId) -> TaskStatus | None: ...
+    """✅ 已实现——查询任务当前状态。任务不存在时返回 None。"""
 
     def get_progress(self, task_id: TaskId) -> TaskProgress | None: ...
     """✅ 已实现——查询执行进度。含 current_node_id/完成数/耗时/预估剩余时间。"""
@@ -357,7 +357,7 @@ SSE 事件类型：
 
 # 第三部分：辅助类型
 
-> 上面所有方法签名中出现的类型汇总。按归属分组。与 schema.py 同步。
+> 上面所有方法签名中出现的类型汇总。按归属分组。与 schema/ 包同步。
 
 ---
 

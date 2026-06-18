@@ -151,3 +151,15 @@ class LLMAdapter:
     @property
     def model(self) -> str:
         return self._requested_model
+
+    def get_raw_client(self):
+        """返回底层异步 HTTP 客户端，供 TaskSystem Planner/Executor 使用。
+
+        Returns:
+            openai.AsyncOpenAI | httpx.AsyncClient | None
+            如果后端不支持或客户端未初始化，返回 None。
+        """
+        backend = getattr(self, '_backend', None)
+        if backend is not None:
+            return getattr(backend, '_client', None)
+        return None
