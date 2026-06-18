@@ -55,7 +55,7 @@ def pause(
         return  # 尚未启动——无需暂停
 
     exec_state.pause_requested = True
-    logger.info("TaskSystem.pause: task_id=%s 暂停请求已发送", task_id)
+    logger.info("lifecycle.pause: task_id=%s 暂停请求已发送", task_id)
 
 
 async def cancel(
@@ -107,7 +107,7 @@ async def cancel(
             await cleanup_storage(task_id, sub_agent)
         except Exception:
             logger.exception(
-                "TaskSystem: task_id=%s cancel(PAUSED) 存储清理失败", task_id,
+                "lifecycle: task_id=%s cancel(PAUSED) 存储清理失败", task_id,
             )
         assert semaphore is not None
         semaphore.release()

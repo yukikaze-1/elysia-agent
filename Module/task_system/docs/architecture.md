@@ -86,7 +86,7 @@
 - **进度/结果**：Orchestrator → TaskMailbox → Agent → OutputManager → WebSocket → 前端
 - **审批收件箱**：Orchestrator → HITLNotifier（快通道，不绕 Agent）→ 前端收件箱列表
 - **WebUI 查询**：前端 → `/debug/api/tasks` → TaskSystem 查询 API（拉模式，不消费 Mailbox）
-- **编排循环**：SubAgent（决策层: Planner + PlanValidator）→ Orchestrator（执行层: PlanGraph + Executor + Evaluator）
+- **编排循环**：SubAgent（决策层: Planner + Replanner + PlanValidator）→ Orchestrator（执行层: PlanGraph + Executor + Evaluator）
 
 ---
 
@@ -175,63 +175,69 @@ X 锁持有超过 3 轮对话或 2 分钟 → 租约超时 → 强制释放 → 
 
 ### 3.2 TaskSystem（新建）
 
-主模块，对外提供统一 API。
+主模块，对外提供统一 API。查询方法（`get_progress`, `list_active_tasks` 等）和任务操作（`pause`, `cancel`, `submit_approval`）已提取到独立模块（`query.py` / `lifecycle.py`），`task_system.py` 保留生命周期方法 + 薄封装委托。
 
 ```
 Module/task_system/
 ├── __init__.py          # 公开 API facade
-├── task_system.py        # TaskSystem 主类：生命周期 + submit/pause/stop + 查询 API
-├── protocol.py          # HITLNotifier 等对外依赖协议（ABC）
-├── delegation_preparer.py # DelegationPreparer: LLM 准备委派上下文（将来独立）
-├── schema.py            # 基础 Pydantic 数据结构（所有子包共用，60 个类型）
-├── infra.py             # AgentInfra + 共享基础设施（将来移出 TaskSystem）
-├── mailbox.py           # TaskMailbox（单播，Agent 唯一消费者）
-├── checkpoint.py        # 任务级 Checkpoint（含节点粒度）
-├── artifact_store.py    # ArtifactStore: 节点产物统一存储
+├── task_system.py        # TaskSystem 主类：生命周期 + submit/resume + 薄封装（~430行）
+├── query.py              # 查询 API：11 个只读模块函数
+├── lifecycle.py          # 任务操作：pause / cancel / submit_approval 模块函数
+├── protocol.py           # HITLNotifier 等对外依赖协议（ABC）
+├── delegation_preparer.py # DelegationPreparer: LLM 准备委派上下文
+├── infra.py              # AgentInfra + 共享基础设施
+├── mailbox.py            # TaskMailbox（单播，Agent 唯一消费者）
+├── checkpoint.py         # 任务级 Checkpoint（含节点粒度）
+├── artifact_store.py     # ArtifactStore: 节点产物统一存储
 ├── debug_api.py          # TaskDebugAPI: SSE 推送 + 内部轮询 + diff 事件
 ├── token_ledger.py       # TokenLedger: per-task token 账本（write-through 到 TaskState）
-├── core/                # Plan-Execute-Evaluate 编排循环
+├── schema/               # 核心数据结构（4 子模块 + __init__ re-export）
+│   ├── __init__.py       #   全部 re-export，向后兼容
+│   ├── types.py          #   工具函数 + NewType 别名 + 基础枚举（含 NodeErrorCode）
+│   ├── protocol.py       #   跨层协议（ConstraintConfig, DelegationContext, HITLData）
+│   ├── output.py         #   事件 + 查询视图（TaskEvent, TaskSummary, TokenStats）
+│   └── internal.py       #   编排数据模型（DAGNode, Plan, TaskState, NodeResult）
+├── core/                 # Plan-Execute-Evaluate 编排循环
 │   ├── __init__.py
-│   ├── sub_agent.py     # SubAgent: 决策层——规划/Replan/熔断
-│   ├── orchestrator.py  # Orchestrator: 执行层——按 Plan 推进 DAG
-│   ├── graph.py         # PlanGraph: NetworkX DiGraph 封装（图算法层）
-│   ├── planner.py       # Planner: LLM → DAG 骨架（plan）/ DAGPatch 或 Plan（replan）
+│   ├── sub_agent.py      # SubAgent: 决策层——规划/Replan/熔断
+│   ├── orchestrator.py   # Orchestrator: run() 主循环 + 薄封装
+│   ├── execution.py       #   节点执行管线（execute → evaluate → apply）
+│   ├── finalize.py        #   收尾 + checkpoint 工具
+│   ├── graph.py          # PlanGraph: NetworkX DiGraph 封装（图算法层）
+│   ├── planner/          #   规划与修复
+│   │   ├── __init__.py   #     公开导出 Planner, Replanner, PlanParseError
+│   │   ├── planner.py    #     Planner: plan() 首次规划
+│   │   ├── replanner.py  #     Replanner: replan() 失败修复
+│   │   ├── prompts.py    #     Prompt 模板（5 个常量）
+│   │   └── parser.py     #     共享 call_llm + parse_plan_from_dict + parse_patch_from_dict
 │   ├── plan_validator.py # PlanValidator: DAG 静态校验（纯逻辑）
-│   ├── executor.py      # Executor: v1 单工具直接调用，v2 DBT 生成
-│   └── evaluator.py     # Evaluator: 双重判定
-├── safety/              # ⚠️ v2 TODO：安全护栏（纯逻辑，无副作用）
-│   ├── __init__.py       # 占位
-│   ├── constraint.py    # ⚠️ v2 TODO：统一约束层
-│   └── rbac.py          # ⚠️ v2 TODO：RBAC 权限矩阵
-├── learning/            # ⚠️ v2 TODO：经验记忆与学习（v1 不做）
-│   ├── __init__.py       # 占位
-│   ├── reflector.py     # ⚠️ v2 TODO：Reflector — 失败经验提炼
-│   ├── experience_memory.py  # ⚠️ v2 TODO：任务经验记忆（独立于用户 LTM）
-│   └── dedup.py         # ⚠️ v2 TODO：时间滑动窗口去重
-├── pool.py              # ⚠️ v2 TODO：Agent 并发控制（BoundedSemaphore）
-├── summary_store.py     # ⚠️ v2 TODO：任务摘要存储（JSONL, TTL 7天）
-├── tool_runner.py       # ⚠️ v2 TODO：CPU 密集工具子进程入口
-└── __main__.py          # ⚠️ v2 TODO：独立运行测试
+│   ├── executor.py       # Executor: v1 单工具直接调用，v2 DBT 生成
+│   └── evaluator.py      # Evaluator: 双重判定
+├── safety/              # ⚠️ v2 TODO：安全护栏
+│   └── __init__.py       # 占位
+├── learning/            # ⚠️ v2 TODO：经验记忆与学习
+│   └── __init__.py       # 占位
+└── utils.py             # 公共工具函数
 
 tests/
-├── unit/                 # 纯 mock，无外部依赖，281 tests，~4.3s
-│   ├── test_task_system.py    # stop, pause, 查询 API 单元测试
+├── unit/                 # 纯 mock，无外部依赖，298 tests
+│   ├── test_task_system.py    # stop, pause, 查询 API
 │   ├── test_orchestrator.py   # Orchestrator 执行循环
 │   ├── test_sub_agent.py      # SubAgent 决策层
 │   ├── test_graph.py          # PlanGraph + DAGPatch
 │   ├── test_evaluator.py      # Evaluator 双重判定 + _derive_action
 │   ├── test_executor.py       # Executor tool-calling + LLM 直出
-│   ├── test_planner.py        # Planner plan + replan 解析
+│   ├── test_planner.py        # Planner + Replanner 解析
 │   ├── test_delegation_preparer.py  # DelegationPreparer 校验 + 格式化
 │   ├── test_checkpoint.py     # CheckpointManager
 │   ├── test_mailbox.py        # TaskMailbox
-│   └── test_token_ledger.py     # TokenLedger write-through + 审计
-└── integration/          # 需要 LLM / 外部服务，26 tests（5 文件），~4min
-    ├── test_task_system_lifecycle.py  # stop, pause, 并发, goal_failed→REPLAN
+│   └── test_token_ledger.py   # TokenLedger write-through + 审计
+└── integration/          # 需要 LLM / 外部服务，36 tests
+    ├── test_task_system_lifecycle.py  # stop, pause, cancel, resume, 并发, replan
     ├── test_delegation_preparer.py    # DelegationPreparer LLM 调用
     ├── test_executor.py               # Executor LLM tool-calling
-    ├── test_planner.py                # Planner LLM DAG 生成
-    └── test_e2e_mvp.py                # 完整 4 链路 e2e
+    ├── test_planner.py                # Planner + Replanner LLM DAG 生成
+    └── test_e2e_mvp.py                # 完整 7 链路 e2e
 ```
 
 **子包职责**：
@@ -243,7 +249,14 @@ tests/
 | `learning/` | Reflector + 经验记忆 + 去重 | `schema`, Milvus Client | 换学习范式（规则→LLM→RL） |
 | `infra.py` / `mailbox.py` 等 | 基础设施、信箱、检查点、并发控制、摘要 | `schema` | 换存储后端（文件→Redis→数据库），将来移出 TaskSystem |
 
-**schema.py** — 所有基础数据结构集中定义：
+**schema/** — 所有基础数据结构，按三层分到子模块，`__init__.py` 全部 re-export：
+
+```
+types.py     — 工具函数 (now_iso, parse_iso) + NewType 别名 + 基础枚举 (含 NodeErrorCode)
+protocol.py  — 第一层：跨层协议 (ConstraintConfig, DelegationContext, HITLData 等)
+output.py    — 第二层：事件 + 查询视图 (TaskEvent, TaskSummary, TokenStats 等)
+internal.py  — 第三层：编排数据模型 (DAGNode, Plan, TaskState, NodeResult 等)
+```
 
 ```python
 # ══ 基础 NewType ID ──
@@ -313,7 +326,7 @@ class ExecutionPhase(StrEnum):        # EXECUTING/EVALUATING/FINALIZING
 class ExperienceRecord(BaseModel):    # tool_name/error_pattern/diagnosis/fix/confidence/status/...
 ```
 
-> **注意**：`errors.py` 已合并到 `schema.py`。所有数据模型、状态码、错误码、枚举统一在 `schema.py` 中定义。不单独拆分 error 文件。
+> **注意**：错误码和异常已统一在 `schema/types.py` 中定义。所有数据模型按三层分到 `schema/` 包的 4 个子模块中。不单独拆分 error 文件。
 
 ### 3.3 Sub-Agent
 
@@ -321,7 +334,7 @@ class ExperienceRecord(BaseModel):    # tool_name/error_pattern/diagnosis/fix/co
 
 **定义**：TaskSystem 池中的任务级执行单元。一个用户任务一个 Sub-Agent。
 
-**决策层**——持有 Planner + PlanValidator，负责：
+**决策层**——持有 Planner + Replanner + PlanValidator，负责：
 - 初始规划（`Planner.plan()`）
 - Plan 校验（`PlanValidator.validate()`）——ABORT / FIX_PLAN（最多 2 次带错误反馈重试）
 - Replan 决策 + 熔断检查
@@ -351,7 +364,7 @@ SubAgent.run(context, mailbox)                    ← 入口
             ├─ PAUSED        → _handle_paused(), return
             └─ NEEDS_REPLAN  → _handle_replan()
                  ├─ 熔断检查 → 触发则 push FAILED, return
-                 ├─ Planner.replan(plan, failed_node_ids, diagnosis, node_states)
+                 ├─ Replanner.replan(plan, failed_node_ids, diagnosis, node_states)
                  │    ├─ full_replan=false → DAGPatch（局部修复，保留已成功节点）
                  │    └─ full_replan=true  → Plan 全量重建
                  ├─ graph.apply_patch(patch) / graph.replace(new_graph)

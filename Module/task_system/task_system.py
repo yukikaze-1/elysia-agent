@@ -17,14 +17,17 @@ from Module.task_system.mailbox import TaskMailbox
 from Module.task_system.mailbox import push_mailbox_event
 from Module.task_system.schema import (
     AgentId,
+    AgentList,
     DelegationContext,
     ResumeError,
     ResumeErrorCode,
     SubmitError,
     SubmitRejectionCode,
+    TaskDAG,
     TaskErrorCode,
     TaskEventType,
     TaskId,
+    TaskProgress,
     TaskStatus,
     TaskSummary,
     TokenPeriod,
