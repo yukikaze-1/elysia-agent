@@ -498,7 +498,7 @@ async def test_e2e_simple_query():
     step_start = _log_step(0, 6, "初始化 TaskSystem + ToolManager")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
-        use_mocks=True,
+        use_mocks=False,
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
@@ -539,7 +539,7 @@ async def test_e2e_multi_step_success():
     step_start = _log_step(0, 6, "初始化 TaskSystem + ToolManager")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
-        use_mocks=True,
+        use_mocks=False,
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
@@ -578,7 +578,7 @@ async def test_e2e_search_and_report():
     step_start = _log_step(0, 6, "初始化 TaskSystem + ToolManager")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
-        use_mocks=True,
+        use_mocks=False,
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
@@ -616,11 +616,11 @@ async def test_e2e_replan_recovery():
     print(f"#  E2E TEST: replan_recovery — 节点失败触发 replan 恢复")
     print(f"{'#' * 70}")
 
-    # ── 使用完整工具集（get_time + web_search）──
+    # ── 使用完整工具集（get_time + 真实 WebSearchPlugin）──
     step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
-        use_mocks=True,
+        use_mocks=False,
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
@@ -780,7 +780,7 @@ async def test_e2e_llm_direct_execution():
     step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
-        use_mocks=True,
+        use_mocks=False,
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
@@ -820,7 +820,7 @@ async def test_e2e_cancel():
     step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
-        use_mocks=True,
+        use_mocks=False,
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
@@ -937,7 +937,7 @@ async def test_e2e_pause_resume():
     step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
-        use_mocks=True,
+        use_mocks=False,
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)

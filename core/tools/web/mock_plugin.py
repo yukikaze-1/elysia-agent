@@ -135,28 +135,28 @@ _ENTERTAINMENT_RESULTS = [
 
 _GENERAL_RESULTS = [
     {
-        "title": "维基百科 — 自由的百科全书",
-        "url": "https://zh.wikipedia.org/wiki/Main_Page",
-        "content": "维基百科是一个多语言的网络百科全书，由全球志愿者共同维护，现有超过 140 万篇中文条目。",
+        "title": "相关领域研究综述（2024-2025）— 学术期刊",
+        "url": "https://scholar.example.com/survey-2025",
+        "content": "近年来该领域取得了显著进展，多项研究在方法论和应用层面实现突破。2025 年发布的几项关键研究进一步推动了技术成熟度的提升，主要贡献集中在性能优化、安全增强和可扩展性方面。学术界和产业界均对此保持高度关注。",
     },
     {
-        "title": "如何高效获取信息 — 研究方法论",
-        "url": "https://example.com/research-methods",
-        "content": "信息获取应遵循交叉验证原则：使用多个独立来源互相印证，优先选择权威和一手来源。",
+        "title": "最新技术发展报告 — 行业研究机构",
+        "url": "https://research.example.com/tech-report-2025",
+        "content": "本报告梳理了 2024-2025 年间该方向的核心进展，包括：新算法框架的提出、基准测试成绩的提升、以及落地场景的扩展。报告指出，当前的主要挑战已从理论可行性转向工程化部署和大规模应用。",
     },
     {
-        "title": "搜索引擎使用技巧 — 数字素养指南",
-        "url": "https://example.com/search-tips",
-        "content": "使用精确关键词、引号匹配、site: 限定域名、filetype: 限定文件类型等技巧可显著提高搜索效率。",
+        "title": "前沿技术进展与趋势分析 — 科技媒体",
+        "url": "https://techreview.example.com/trends-2025",
+        "content": "多位行业专家在近期访谈中一致认为，该技术正处于从实验室走向产业化的关键阶段。跨学科融合（计算机科学、认知科学、伦理学）成为新的研究范式，预计未来 2-3 年内将出现更多可商用成果。",
     },
     {
-        "title": "信息检索技术综述 — 学术论文",
-        "url": "https://example.com/ir-survey",
-        "content": "现代信息检索系统结合倒排索引、BM25 排序、语义向量检索等技术，提供高效准确的结果。",
+        "title": "相关领域权威论文汇编 — 学术数据库",
+        "url": "https://papers.example.com/collection/2025",
+        "content": "收录 2024-2025 年发表的高引用论文，涵盖理论分析、算法改进、系统设计和应用案例四大类别。其中多篇论文提出了创新性的解决方案，已被主要国际会议接收。",
     },
     {
-        "title": "知识图谱在搜索中的应用 — 技术博客",
-        "url": "https://example.com/knowledge-graph-search",
-        "content": "知识图谱通过实体链接、关系推理提升搜索结果的相关性和完整性，Google、Bing 已广泛应用。",
+        "title": "综合研究报告：方法、挑战与展望 — 研究基金会",
+        "url": "https://foundation.example.com/comprehensive-study",
+        "content": "本研究汇总了全球 50+ 研究团队的成果，系统评估了当前技术水平、主要瓶颈和未来方向。报告建议优先关注数据质量、评估标准的统一性以及跨团队协作机制的建立。",
     },
 ]
