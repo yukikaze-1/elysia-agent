@@ -9,31 +9,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
 
+from Module.task_system import lifecycle
+from Module.task_system import query
 from Module.task_system.mailbox import TaskMailbox
 from Module.task_system.mailbox import push_mailbox_event
 from Module.task_system.schema import (
     AgentId,
-    AgentInfo,
-    AgentList,
-    AgentStatus,
-    AgentType,
     DelegationContext,
-    NodeStatus,
-    NodeId,
-    now_iso,
-    parse_iso,
     ResumeError,
     ResumeErrorCode,
     SubmitError,
     SubmitRejectionCode,
-    TaskDAG,
     TaskErrorCode,
     TaskEventType,
     TaskId,
-    TaskProgress,
     TaskStatus,
     TaskSummary,
     TokenPeriod,
@@ -249,61 +240,16 @@ class TaskSystem:
         return mailbox
 
     def _get_debug_snapshot(self) -> dict:
-        """供 TaskDebugAPI 内部轮询使用。
-
-        线程安全说明：
-            本方法在 TaskDebugAPI._poll_loop() 中调用，与 Orchestrator 主循环
-            运行在同一个 asyncio event loop 中。CPython + asyncio 的协作式调度
-            保证本方法在遍历 _tasks / _exec_state 期间不会在非 await 点被挂起——
-            因此读取 exec_state.node_states 等可变 dict 时不需显式加锁。
-
-            约束：本方法内禁止加 await。若将来需要异步 I/O，必须在 await 之前
-            复制快照，await 之后重新获取 exec_state 引用。
-        """
-        tasks = []
-        for task_id, sub_agent in self._tasks.items():
-            tasks.append({
-                "task_state": sub_agent._task_state,
-                "graph": sub_agent._graph,
-                "exec_state": sub_agent._orchestrator._exec_state if sub_agent._orchestrator else None,
-                "mailbox_depth": self._mailboxes[task_id].count(),
-            })
-        return {
-            "tasks": tasks,
-            "slots_total": self._max_sub_agents,
-            "slots_used": len(self._tasks),
-        }
+        """供 TaskDebugAPI 内部轮询使用。"""
+        return query.get_debug_snapshot(
+            self._tasks, self._mailboxes, self._max_sub_agents,
+        )
 
     # ── 任务控制 ─────────────────────────────────────────────────────────
 
     async def pause(self, task_id: TaskId) -> None:
-        """暂停任务——在下一个安全点停止执行并保存 checkpoint。
-
-        幂等——无论任务处于什么状态都不会报错：
-        - RUNNING → 设置 pause_requested 标志
-        - PAUSED / 已终态 / 已清理 / 尚未启动 → 无操作（成功）
-
-        Orchestrator 在当前节点执行完成后检测到 pause_requested，
-        保存 checkpoint 后返回 PAUSED，SubAgent 推送 PAUSED 事件后退出循环。
-        """
-        sub_agent = self._tasks.get(task_id)
-        if sub_agent is None:
-            return  # 已清理——无需暂停
-
-        ts = sub_agent._task_state
-        if ts is None or ts.is_terminal():
-            return  # 已终态——无需暂停
-        if ts.status == TaskStatus.PAUSED:
-            return  # 已暂停——幂等
-
-        if sub_agent._orchestrator is None:
-            return  # 尚未启动——无需暂停
-        exec_state = sub_agent._orchestrator._exec_state
-        if exec_state is None:
-            return  # 尚未启动——无需暂停
-
-        exec_state.pause_requested = True
-        logger.info("TaskSystem.pause: task_id=%s 暂停请求已发送", task_id)
+        """暂停任务——委托给 lifecycle.pause()。"""
+        lifecycle.pause(self._tasks, task_id)
 
     async def resume(self, task_id: TaskId) -> TaskMailbox | ResumeError:
         """从 PAUSED 恢复执行。
@@ -397,62 +343,15 @@ class TaskSystem:
         return mailbox
 
     async def cancel(self, task_id: TaskId) -> bool:
-        """软取消任务。二次确认由 CognitiveLoop 在上层处理。
+        """软取消任务——委托给 lifecycle.cancel()。
 
-        幂等——所有路径返回 True：
-        - RUNNING → 设置 exec_state.cancel_requested → Orchestrator 检测 → CANCELLED
-        - PAUSED  → 直接标记 CANCELLED，已有 checkpoint
-        - 已终态   → True（无需操作）
-        - 已清理   → True（任务已不存在）
+        PAUSED 分支的 semaphore 释放 + 清理已由 lifecycle.cancel() 内部完成。
+        调用方不得再次释放。
         """
-        # TODO: v1 只设标志，无超时反馈。
-        #   若 Orchestrator 因异常永远不到达下一个循环迭代，
-        #   cancel 信号可能永远不被处理。后续考虑 await + 超时机制。
-        sub_agent = self._tasks.get(task_id)
-        if sub_agent is None:
-            return True  # 已清理 = 已取消
-
-        ts = sub_agent._task_state
-        if ts is None or ts.is_terminal():
-            return True  # 已终态 = 已取消
-
-        # ── 分支 1: PAUSED → 直接 CANCELLED ──
-        if ts.status == TaskStatus.PAUSED:
-            ts.status = TaskStatus.CANCELLED
-            ts.updated_at = now_iso()
-            mailbox = self._mailboxes.get(task_id)
-            if mailbox:
-                push_mailbox_event(mailbox, TaskEventType.CANCELLED, {
-                    "task_id": str(task_id),
-                    "reason": "用户取消",
-                })
-            # PAUSED 时 _run_and_cleanup 的 finally 已跳过清理（early return），
-            # 此处必须显式清理注册表 + storage + semaphore，否则永久泄漏。
-            self._cleanup_task(task_id)
-            try:
-                await self._cleanup_storage(task_id, sub_agent)
-            except Exception:
-                logger.exception(
-                    "TaskSystem: task_id=%s cancel(PAUSED) 存储清理失败", task_id,
-                )
-            assert self._semaphore is not None
-            self._semaphore.release()
-            return True
-
-        # ── 分支 2: RUNNING / PLANNING → 设取消标志 ──
-        if sub_agent._orchestrator is None:
-            ts.status = TaskStatus.CANCELLED
-            ts.updated_at = now_iso()
-            return True
-        exec_state = sub_agent._orchestrator._exec_state
-        if exec_state is None:
-            # 尚未进入 Orchestrator（规划/校验阶段）
-            ts.status = TaskStatus.CANCELLED
-            ts.updated_at = now_iso()
-            return True
-
-        exec_state.cancel_requested = True
-        return True
+        return await lifecycle.cancel(
+            self._tasks, self._mailboxes, self._semaphore,
+            self._cleanup_task, self._cleanup_storage, task_id,
+        )
 
     def submit_approval(
         self,
@@ -461,26 +360,12 @@ class TaskSystem:
         approved: bool,
         feedback: str | None = None,
     ) -> bool:
-        """审批结果回传。v1 桥接到 ToolManager 的 SafetyPipeline。
+        """审批结果回传——委托给 lifecycle.submit_approval()。
 
-        将 agent_id 作为 request_id 委托给 infra.tool_registry.submit_approval()。
-        ToolManager 内部 SafetyPipeline 设置 asyncio.Event 唤醒等待中的工具调用。
-
-        task_id / feedback 为 v2 预留——Orchestrator BLOCKED 路径启用后，
-        task_id 用于查找等待审批的 Worker Agent，feedback 注入 Planner prompt。
-
-        Returns:
-            True:  审批请求已找到并处理
-            False: 审批请求不存在（可能已超时或从未创建）
+        task_id / feedback 为 v2 预留，v1 不使用。
         """
-        # infra.tool_registry 运行时是 ToolManager，submit_approval 方法
-        # 在 v1 的 SafetyPipeline 路径中始终可用。
-        tool_mgr = self._infra.tool_registry
-        if not hasattr(tool_mgr, "submit_approval"):
-            return False
-        return tool_mgr.submit_approval(  # type: ignore[attr-defined]
-            request_id=str(agent_id),
-            approved=approved,
+        return lifecycle.submit_approval(
+            self._infra.tool_registry, str(agent_id), approved,
         )
 
     # ── 查询（Pull 模式，供 CognitiveLoop + Debug WebUI）────────────────
@@ -495,87 +380,22 @@ class TaskSystem:
         只查活跃任务（仍在 _tasks 注册表中）。任务终态清理后不可查询——
         此时返回 None，调用方应通过上层缓存获取历史状态。
         """
-        sub_agent = self._tasks.get(task_id)
-        if sub_agent is None:
-            return None
-        ts = sub_agent._task_state
-        if ts is None:
-            return TaskStatus.PENDING
-        return ts.status
+        return query.get_task_status(self._tasks, task_id)
 
     def get_task_mailbox(self, task_id: TaskId) -> TaskMailbox | None:
         """获取指定任务的 mailbox（供 Agent 轮询消费）。
 
         任务不存在或已清理时返回 None。
         """
-        return self._mailboxes.get(task_id)
+        return query.get_task_mailbox(self._mailboxes, task_id)
 
     async def get_task_summary(self, task_id: TaskId) -> TaskSummary | None:
         """获取单个任务摘要。"""
-        summaries = await self.list_active_tasks()
-        for s in summaries:
-            if s.task_id == task_id:
-                return s
-        return None
+        return await query.get_task_summary(self._tasks, task_id)
 
     async def list_active_tasks(self) -> list[TaskSummary]:
         """列出所有活跃任务。"""
-        summaries: list[TaskSummary] = []
-        for task_id, sub_agent in self._tasks.items():
-            ts = sub_agent._task_state
-            if ts is None:
-                continue  # 尚未完成 run() 初始化，跳过
-            checkpoint = (
-                await sub_agent._checkpoint_mgr.load(task_id)
-                if sub_agent._checkpoint_mgr else None
-            )
-            exec_state = checkpoint.exec if checkpoint else None
-
-            nodes_total = 0
-            nodes_completed = 0
-            nodes_failed = 0
-            nodes_skipped = 0
-            if exec_state:
-                nodes_total = len(exec_state.node_states)
-                for ns in exec_state.node_states.values():
-                    if ns.status == NodeStatus.SUCCESS:
-                        nodes_completed += 1
-                    elif ns.status in (NodeStatus.FAILED, NodeStatus.UNRECOVERABLE):
-                        nodes_failed += 1
-                    elif ns.status == NodeStatus.SKIPPED:
-                        nodes_skipped += 1
-
-            # extract intent from plan
-            intent = ""
-            if ts.plan and ts.plan.dag.nodes:
-                intent = ts.plan.dag.nodes[0].description
-
-            # calculate duration
-            duration_ms = 0
-            if ts.created_at:
-                try:
-                    created = parse_iso(ts.created_at)
-                    duration_ms = int((datetime.now(timezone.utc) - created).total_seconds() * 1000)
-                except (ValueError, TypeError):
-                    pass
-
-            summaries.append(TaskSummary(
-                task_id=ts.task_id,
-                status=ts.status,
-                intent=intent,
-                created_at=ts.created_at,
-                duration_ms=duration_ms,
-                nodes={"total": nodes_total, "completed": nodes_completed,
-                       "failed": nodes_failed, "skipped": nodes_skipped},
-                tools_used=await self._collect_tools_used(sub_agent, exec_state),
-                token_usage=ts.token_usage,
-                token_total=sum(ts.token_usage.values()),
-                approvals={"requested": 0, "approved": 0, "denied": 0},
-                error=ts.error,
-                error_code=ts.error_code,
-                replans=ts.plan.plan_version - 1 if ts.plan else 0,
-            ))
-        return summaries
+        return await query.list_active_tasks(self._tasks)
 
     def get_progress(self, task_id: TaskId) -> TaskProgress | None:
         """查询任务执行进度。用户问"到哪一步了？"时 LLM 调用。
@@ -583,84 +403,11 @@ class TaskSystem:
         返回当前执行节点、完成数/总数、耗时、预估剩余时间。
         任务不存在或尚未开始执行时返回 None。
         """
-        sub_agent = self._tasks.get(task_id)
-        if sub_agent is None:
-            return None
-
-        ts = sub_agent._task_state
-        if ts is None:
-            return None
-
-        exec_state = (
-            sub_agent._orchestrator._exec_state
-            if sub_agent._orchestrator else None
-        )
-        if exec_state is None:
-            # 尚未进入 Orchestrator（规划/校验阶段）
-            return TaskProgress(
-                task_id=task_id,
-                status=ts.status,
-                total_nodes=len(
-                    ts.plan.dag.nodes) if ts.plan else 0,
-            )
-
-        # 统计节点完成数
-        completed = 0
-        failed = 0
-        current_node_id: NodeId | None = None
-        for nid, ns in exec_state.node_states.items():
-            if ns.status == NodeStatus.SUCCESS:
-                completed += 1
-            elif ns.status in (NodeStatus.FAILED, NodeStatus.UNRECOVERABLE):
-                failed += 1
-            elif ns.status == NodeStatus.RUNNING:
-                current_node_id = nid
-
-        total = len(exec_state.node_states)
-
-        # 耗时
-        elapsed_ms = 0
-        if ts.created_at:
-            try:
-                created = parse_iso(ts.created_at)
-                elapsed_ms = int(
-                    (datetime.now(timezone.utc) - created).total_seconds() * 1000)
-            except (ValueError, TypeError):
-                pass
-
-        # 预估剩余时间（简单线性估算）
-        estimated_remaining_ms: int | None = None
-        done = completed + failed
-        if done > 0 and elapsed_ms > 0 and total > done:
-            avg_per_node = elapsed_ms / done
-            estimated_remaining_ms = int(avg_per_node * (total - done))
-
-        return TaskProgress(
-            task_id=task_id,
-            status=ts.status,
-            current_node_id=current_node_id,
-            completed_nodes=completed,
-            total_nodes=total,
-            elapsed_ms=elapsed_ms,
-            estimated_remaining_ms=estimated_remaining_ms,
-        )
+        return query.get_progress(self._tasks, task_id)
 
     async def get_task_dag(self, task_id: TaskId) -> TaskDAG | None:
         """获取任务的 DAG 可视化数据。"""
-        sub_agent = self._tasks.get(task_id)
-        if sub_agent is None:
-            # CheckpointManager 现为 per-task（由 SubAgent.run() 创建），
-            # 任务不活跃时无对应 CheckpointManager，直接返回 None
-            return None
-
-        graph = sub_agent._graph
-        if graph is None:
-            return None
-        exec_state = (
-            sub_agent._orchestrator._exec_state
-            if sub_agent._orchestrator else None
-        )
-        return graph.to_dag_view(exec_state.node_states if exec_state else {})
+        return await query.get_task_dag(self._tasks, task_id)
 
     def get_token_usage(self, task_id: TaskId) -> TokenUsage | None:
         """查询单任务的 token 消耗明细（含完整审计日志）。
@@ -668,72 +415,16 @@ class TaskSystem:
         返回 TokenUsage（含 components 列表），每次 LLM 调用一条记录。
         任务不存在或尚未初始化时返回 None。
         """
-        sub_agent = self._tasks.get(task_id)
-        ts = sub_agent._task_state if sub_agent else None
-        if ts is None:
-            return None
-        return TokenUsage(
-            task_id=task_id,
-            components=list(ts.token_entries),
-        )
+        return query.get_token_usage(self._tasks, task_id)
 
     def list_agents(self) -> AgentList:
         """当前活跃的 Sub-Agent 和 Worker Agent 列表。Debug 用。
 
         v1 只有 SubAgent（无 Worker），worker_agents 固定为空列表。
         """
-
-        now = datetime.now(timezone.utc)
-        sub_agents: list[AgentInfo] = []
-
-        for task_id, sub_agent in self._tasks.items():
-            ts = sub_agent._task_state
-
-            # 映射 TaskStatus → AgentStatus
-            if ts is None:
-                agent_status = AgentStatus.RUNNING
-            elif ts.status in (TaskStatus.RUNNING, TaskStatus.PLANNING,
-                               TaskStatus.PAUSE_REQUESTED, TaskStatus.RESUMING):
-                agent_status = AgentStatus.RUNNING
-            elif ts.status == TaskStatus.PAUSED:
-                agent_status = AgentStatus.PAUSED
-            elif ts.status == TaskStatus.WAITING_APPROVAL:
-                agent_status = AgentStatus.AWAITING_APPROVAL
-            else:
-                # 终态（COMPLETED/FAILED/CANCELLED）——理论上已清理，
-                # 但如果在清理窗口期内仍可见，标记为 RUNNING
-                agent_status = AgentStatus.RUNNING
-
-            # 耗时
-            duration_ms = 0
-            started_at = ""
-            if ts and ts.created_at:
-                started_at = ts.created_at
-                try:
-                    created = parse_iso(ts.created_at)
-                    duration_ms = int(
-                        (now - created).total_seconds() * 1000)
-                except (ValueError, TypeError):
-                    pass
-
-            sub_agents.append(AgentInfo(
-                agent_id=AgentId(str(task_id)),
-                agent_type=AgentType.SUB,
-                task_id=task_id,
-                status=agent_status,
-                started_at=started_at,
-                last_seen_at=now.isoformat(),
-                duration_ms=duration_ms,
-            ))
-
-        return AgentList(
-            sub_agents=sub_agents,
-            worker_agents=[],  # v1 无 Worker Agent
-            total_capacity=self._max_sub_agents,
-            available_slots=(
-                self._max_sub_agents - len(self._tasks)
-                if self._semaphore is not None else 0
-            ),
+        return query.list_agents(
+            self._tasks, self._max_sub_agents,
+            self._semaphore is not None,
         )
 
     def get_token_stats(self, period: TokenPeriod = TokenPeriod.TODAY) -> TokenStats:
@@ -742,45 +433,7 @@ class TaskSystem:
         遍历所有活跃任务，按 period 过滤，按 component/model 聚合。
         只统计活跃任务（_tasks dict 中的），已清理的任务不可查询。
         """
-        now = datetime.now(timezone.utc)
-        cutoff: datetime | None = None
-        if period == TokenPeriod.TODAY:
-            cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        elif period == TokenPeriod.WEEK:
-            cutoff = now - timedelta(days=7)
-        elif period == TokenPeriod.MONTH:
-            cutoff = now - timedelta(days=30)
-        # ALL: cutoff = None（不过滤）
-
-        total = 0
-        by_component: dict[str, int] = {}
-        by_model: dict[str, int] = {}
-
-        for sub_agent in self._tasks.values():
-            ts = sub_agent._task_state
-            if ts is None:
-                continue
-            # 按时间段过滤
-            if cutoff is not None and ts.created_at:
-                try:
-                    created = parse_iso(ts.created_at)
-                    if created < cutoff:
-                        continue
-                except (ValueError, TypeError):
-                    pass
-            for entry in ts.token_entries:
-                total += entry.total_tokens
-                key = entry.component.value
-                by_component[key] = by_component.get(key, 0) + entry.total_tokens
-                if entry.model:
-                    by_model[entry.model] = by_model.get(entry.model, 0) + entry.total_tokens
-
-        return TokenStats(
-            period=period,
-            total_tokens=total,
-            by_component=by_component,
-            by_model=by_model,
-        )
+        return query.get_token_stats(self._tasks, period)
 
     # ── 内部辅助 ───────────────────────────────────────────────────────────
 
@@ -795,28 +448,7 @@ class TaskSystem:
         读取 metadata.tool_name，生成真实的工具审计列表。
         无 exec_state / 无 artifact_store 时回退为空列表。
         """
-        tool_names: list[str] = []
-        if exec_state is None:
-            return tool_names
-        store = sub_agent._artifact_store
-        if store is None:
-            return tool_names
-
-        for ns in exec_state.node_states.values():
-            if ns.status == NodeStatus.SUCCESS and ns.artifact_refs:
-                for ref in ns.artifact_refs:
-                    try:
-                        artifact = await store.get(ref)
-                        if artifact is not None and artifact.metadata:
-                            name = artifact.metadata.get("tool_name")
-                            if name and name not in tool_names:
-                                tool_names.append(str(name))
-                    except Exception:
-                        logger.debug(
-                            "_collect_tools_used: artifact %s 读取失败", ref,
-                            exc_info=True,
-                        )
-        return tool_names
+        return await query.collect_tools_used(sub_agent, exec_state)
 
     # ── 内部方法 ─────────────────────────────────────────────────────────
 
