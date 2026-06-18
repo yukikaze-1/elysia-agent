@@ -13,25 +13,11 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from openai import AsyncOpenAI
 
-# ── 加载 .env ────────────────────────────────────────────────────────────────
-
-_env_path = Path(__file__).resolve().parents[4] / ".env"
-if _env_path.exists():
-    with open(_env_path) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                key, _, value = _line.partition("=")
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                if key not in os.environ:
-                    os.environ[key] = value
 
 from Module.task_system.infra import AgentInfra
 from Module.task_system.schema import (
@@ -40,55 +26,16 @@ from Module.task_system.schema import (
     DelegationStatus,
     SessionId,
     SubmitError,
-    TaskId,
-    TaskStatus,
     TaskEventType,
-    Tool,
-    UserProfile,
 )
 from Module.task_system.task_system import TaskSystem
 from Module.task_system.delegation_preparer import DelegationPreparer
 from Module.task_system.mailbox import TaskMailbox
-from Module.task_system.schema import TokenPeriod
+
 from Module.tool.manager import ToolManager
 from Module.tool.protocol import PluginContext
 from core.tools.time.plugin import TimePlugin
-
-
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-
-async def _build_task_system() -> TaskSystem:
-    """构建并启动 TaskSystem（真实 LLM + TimePlugin）。"""
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    if not api_key:
-        raise RuntimeError("DEEPSEEK_API_KEY 未设置")
-
-    llm = AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-
-    tm = ToolManager()
-    ctx = PluginContext(session_id="lifecycle-test")
-    await tm.load_all([TimePlugin], ctx)
-
-    infra = AgentInfra(
-        llm=llm, milvus=None, http=None,
-        tool_registry=tm, constraints=ConstraintConfig(),
-    )
-    ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=2)
-    await ts.start()
-    return ts
-
-
-def _tools_from_manager(tm: ToolManager) -> list[Tool]:
-    """从 ToolManager 提取 TaskSystem 格式的 Tool 列表。"""
-    tools: list[Tool] = []
-    for name, plugin in tm._plugins.items():
-        caps = getattr(plugin, "capabilities", [])
-        if isinstance(caps, str):
-            caps = [caps]
-        desc = getattr(plugin, "description", "") or getattr(plugin, "tool_description", "") or ""
-        tools.append(Tool(name=name, description=desc, capabilities=list(caps) if caps else []))
-    return tools
+from Module.task_system.tests.helpers import build_test_task_system, get_tools_from_manager
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -109,8 +56,8 @@ async def test_stop_after_task_completion():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await _build_task_system()
-    tools = _tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(plugins=[TimePlugin])
+    tools = get_tools_from_manager(ts._infra.tool_registry)
 
     # 提交简单任务
     ctx = DelegationContext(
@@ -164,7 +111,7 @@ async def test_stop_rejects_submit_after_shutdown():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await _build_task_system()
+    ts = await build_test_task_system(plugins=[TimePlugin])
     await ts.stop(timeout=10.0)
 
     from Module.task_system.schema import SubmitRejectionCode
@@ -189,8 +136,8 @@ async def test_pause_sets_flag_and_cleanly_stops():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await _build_task_system()
-    tools = _tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(plugins=[TimePlugin])
+    tools = get_tools_from_manager(ts._infra.tool_registry)
 
     ctx = DelegationContext(
         intent="现在几点了",
@@ -247,7 +194,7 @@ async def test_concurrent_slot_limit():
     ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=1)
     await ts.start()
 
-    tools = _tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)
 
     # 提交第一个任务——立刻拿到 mailbox
     ctx1 = DelegationContext(
@@ -327,8 +274,8 @@ async def test_goal_failed_triggers_replan():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await _build_task_system()
-    tools = _tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(plugins=[TimePlugin])
+    tools = get_tools_from_manager(ts._infra.tool_registry)
 
     # 缩小熔断阈值——2 次 replan 即触发熔断（而非默认 5），大幅缩短测试耗时。
     # 在完整套件中 LLM 可能被限速，每次 Replanner.replan() 耗时更长。
@@ -420,8 +367,8 @@ async def test_cancel_during_execution():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await _build_task_system()
-    tools = _tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(plugins=[TimePlugin])
+    tools = get_tools_from_manager(ts._infra.tool_registry)
 
     ctx = DelegationContext(
         intent="现在几点了",
@@ -488,8 +435,8 @@ async def test_pause_and_resume():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await _build_task_system()
-    tools = _tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(plugins=[TimePlugin])
+    tools = get_tools_from_manager(ts._infra.tool_registry)
 
     ctx = DelegationContext(
         intent="现在几点了",
@@ -589,8 +536,8 @@ async def test_cancel_on_paused_task():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await _build_task_system()
-    tools = _tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(plugins=[TimePlugin])
+    tools = get_tools_from_manager(ts._infra.tool_registry)
 
     ctx = DelegationContext(
         intent="现在几点了",
@@ -682,8 +629,8 @@ async def test_resume_idempotent_on_running():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await _build_task_system()
-    tools = _tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(plugins=[TimePlugin])
+    tools = get_tools_from_manager(ts._infra.tool_registry)
 
     ctx = DelegationContext(
         intent="现在几点了",
@@ -757,7 +704,7 @@ async def test_concurrent_tasks_no_interference():
     ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=2)
     await ts.start()
 
-    tools = _tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)
 
     ctx1 = DelegationContext(
         intent="现在几点了",

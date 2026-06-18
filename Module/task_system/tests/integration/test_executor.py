@@ -3,24 +3,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from openai import AsyncOpenAI
-
-# ── 加载 .env ────────────────────────────────────────────────────────────────
-_env_path = Path(__file__).resolve().parents[4] / ".env"
-if _env_path.exists():
-    with open(_env_path) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                key, _, value = _line.partition("=")
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                if key not in os.environ:
-                    os.environ[key] = value
 
 from Module.task_system.core.executor import Executor
 from Module.task_system.artifact_store import ArtifactStore

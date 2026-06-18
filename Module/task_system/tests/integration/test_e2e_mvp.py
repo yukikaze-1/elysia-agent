@@ -18,31 +18,12 @@ import asyncio
 import json
 import os
 import time
-from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from openai import AsyncOpenAI
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 环境准备（必须在 TaskSystem 相关 import 之前——组件构造时读 env）
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_env_path = Path(__file__).resolve().parents[4] / ".env"
-if _env_path.exists():
-    with open(_env_path) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                _key, _, _value = _line.partition("=")
-                _key = _key.strip()
-                _value = _value.strip().strip('"').strip("'")
-                if _key not in os.environ:
-                    os.environ[_key] = _value
-
 from Module.task_system.delegation_preparer import DelegationPreparer
-from Module.task_system.infra import AgentInfra
 from Module.task_system.schema import (
     ConstraintConfig,
     DelegationStatus,
@@ -51,11 +32,13 @@ from Module.task_system.schema import (
     UserProfile,
 )
 from Module.task_system.task_system import TaskSystem
-from Module.tool.manager import ToolManager
-from Module.tool.protocol import PluginContext
 from core.tools.time.plugin import TimePlugin
 from core.tools.web.plugin import WebSearchPlugin
 from Module.task_system.mailbox import TaskMailbox
+from Module.task_system.tests.helpers import (
+    build_test_task_system,
+    get_tools_from_manager,
+)
 
 # ── 格式化 ────────────────────────────────────────────────────────────────────
 
@@ -335,68 +318,6 @@ def _show_event_summary(event_type: str, data: dict, event_count: int) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 准备工具：TaskSystem + 真实 ToolManager
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-async def _build_task_system() -> TaskSystem:
-    """创建并启动 TaskSystem，注入真实 LLM + ToolManager。
-
-    使用最小工具集：TimePlugin + WebSearchPlugin。
-    LLM client 被包装以自动记录所有 LLM 调用。
-    """
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    if not api_key:
-        raise RuntimeError("DEEPSEEK_API_KEY 未设置，无法创建 AsyncOpenAI")
-
-    llm = _wrap_llm_client(AsyncOpenAI(
-        api_key=api_key,
-        base_url="https://api.deepseek.com",
-    ))
-
-    tm = ToolManager()
-    ctx = PluginContext(session_id="e2e-test")
-    await tm.load_all([TimePlugin, WebSearchPlugin], ctx)
-    _log_info(f"已加载工具: {list(tm._plugins.keys())}")
-
-    infra = AgentInfra(
-        llm=llm,
-        milvus=None,
-        http=None,
-        tool_registry=tm,
-        constraints=ConstraintConfig(),
-    )
-
-    ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=2)
-    await ts.start()
-
-    # Planner 现在使用 infra.llm，其 LLM 调用会被 _wrap_llm_client 自动拦截。
-    # DelegationPreparer 自建客户端，在 _run_task 中单独包装。
-
-    return ts
-
-
-def _get_tools_from_manager(tm: ToolManager) -> list[Tool]:
-    """从 ToolManager 提取 TaskSystem 格式的 Tool 列表。"""
-    tools: list[Tool] = []
-    for name, plugin in tm._plugins.items():
-        caps = getattr(plugin, "capabilities", [])
-        if isinstance(caps, str):
-            caps = [caps]
-        desc = (
-            getattr(plugin, "description", "")
-            or getattr(plugin, "tool_description", "")
-            or ""
-        )
-        tools.append(Tool(
-            name=name,
-            description=desc,
-            capabilities=list(caps) if caps else [],
-        ))
-    return tools
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # 共享 helper：运行委派 → submit → 消费事件
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -575,8 +496,13 @@ async def test_e2e_simple_query():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 TaskSystem + ToolManager")
-    ts = await _build_task_system()
-    tools = _get_tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(
+        plugins=[TimePlugin, WebSearchPlugin],
+        use_mocks=True,
+        wrap_llm=False,
+    )
+    ts._infra.llm = _wrap_llm_client(ts._infra.llm)
+    tools = get_tools_from_manager(ts._infra.tool_registry)
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -611,8 +537,13 @@ async def test_e2e_multi_step_success():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 TaskSystem + ToolManager")
-    ts = await _build_task_system()
-    tools = _get_tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(
+        plugins=[TimePlugin, WebSearchPlugin],
+        use_mocks=True,
+        wrap_llm=False,
+    )
+    ts._infra.llm = _wrap_llm_client(ts._infra.llm)
+    tools = get_tools_from_manager(ts._infra.tool_registry)
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -645,8 +576,13 @@ async def test_e2e_search_and_report():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 TaskSystem + ToolManager")
-    ts = await _build_task_system()
-    tools = _get_tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(
+        plugins=[TimePlugin, WebSearchPlugin],
+        use_mocks=True,
+        wrap_llm=False,
+    )
+    ts._infra.llm = _wrap_llm_client(ts._infra.llm)
+    tools = get_tools_from_manager(ts._infra.tool_registry)
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -682,8 +618,13 @@ async def test_e2e_replan_recovery():
 
     # ── 使用完整工具集（get_time + web_search）──
     step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
-    ts = await _build_task_system()
-    tools = _get_tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(
+        plugins=[TimePlugin, WebSearchPlugin],
+        use_mocks=True,
+        wrap_llm=False,
+    )
+    ts._infra.llm = _wrap_llm_client(ts._infra.llm)
+    tools = get_tools_from_manager(ts._infra.tool_registry)
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -837,8 +778,13 @@ async def test_e2e_llm_direct_execution():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
-    ts = await _build_task_system()
-    tools = _get_tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(
+        plugins=[TimePlugin, WebSearchPlugin],
+        use_mocks=True,
+        wrap_llm=False,
+    )
+    ts._infra.llm = _wrap_llm_client(ts._infra.llm)
+    tools = get_tools_from_manager(ts._infra.tool_registry)
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -872,8 +818,13 @@ async def test_e2e_cancel():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
-    ts = await _build_task_system()
-    tools = _get_tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(
+        plugins=[TimePlugin, WebSearchPlugin],
+        use_mocks=True,
+        wrap_llm=False,
+    )
+    ts._infra.llm = _wrap_llm_client(ts._infra.llm)
+    tools = get_tools_from_manager(ts._infra.tool_registry)
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -984,8 +935,13 @@ async def test_e2e_pause_resume():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
-    ts = await _build_task_system()
-    tools = _get_tools_from_manager(ts._infra.tool_registry)
+    ts = await build_test_task_system(
+        plugins=[TimePlugin, WebSearchPlugin],
+        use_mocks=True,
+        wrap_llm=False,
+    )
+    ts._infra.llm = _wrap_llm_client(ts._infra.llm)
+    tools = get_tools_from_manager(ts._infra.tool_registry)
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 

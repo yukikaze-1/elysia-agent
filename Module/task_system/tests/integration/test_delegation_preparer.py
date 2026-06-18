@@ -3,22 +3,8 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
-
-# 加载项目根目录的 .env（CI/本地开发环境）
-_env_path = Path(__file__).resolve().parents[4] / ".env"
-if _env_path.exists():
-    with open(_env_path) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                _key, _, _value = _line.partition("=")
-                _key = _key.strip()
-                _value = _value.strip().strip('"').strip("'")
-                if _key not in os.environ:
-                    os.environ[_key] = _value
 
 from Module.task_system.delegation_preparer import DelegationPreparer
 from Module.task_system.schema import (
