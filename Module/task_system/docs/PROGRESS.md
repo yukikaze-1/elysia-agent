@@ -1,7 +1,7 @@
 # TaskSystem 项目进度
 
-> 日期: 2026-06-18  
-> 状态: v1 核心完成，CognitiveLoop 异步任务集成已完成并 e2e 验证通过，目录结构重构完成
+> 日期: 2026-06-22  
+> 状态: v1 核心完成，CognitiveLoop 异步任务集成 + e2e 验证通过，目录结构重构完成，Agent/CognitiveLoop 类内拆分完成
 
 ---
 
@@ -13,7 +13,7 @@
 | 测试代码 | 24 文件 |
 | 单元测试 | **298 tests**, ~4.3s |
 | 集成测试 | 36 tests (含 7 e2e), ~15min |
-| 最近提交 | `698a819` — fix: sub_agent/ 包补全类型注解 + None 断言 |
+| 最近提交 | `3582295` — fix: prompt 引导 LLM 对复杂任务直接 submit_task + 唤醒消息注入时间上下文 |
 
 ---
 
@@ -217,6 +217,28 @@ TaskSystem
 - `core/test_*.py` ×3 → `core/tests/` 归位
 - `code-review-report.md` → 仓库顶层 `docs/`、`app_log.txt` → `log/app.log`
 - 清理 17 个零字节 `logger_*.log` 测试残留
+
+---
+
+## 2026-06-22 Agent/CognitiveLoop 重构
+
+### Agent 类内拆分（4 commits）
+`core/agent.py` (738行→520行) 按职责提取私有方法：
+- `start()` (145行→35行)：拆分为 `_start_persistence`、`_start_token_and_prompt`、`_start_tool_context`、`_start_worker_pool`、`_start_idle_and_events`、`_start_tts`、`_start_task_system`、`_start_mailbox_polling`、`_print_startup_banner` 共 9 个方法
+- `stop()` (105行→42行)：拆分为 `_flush_consolidator`、`_stop_event_task`、`_stop_cognitive_and_tts`、`_stop_embedding_if_running`、`_stop_mailbox`、`_stop_task_system`、`_stop_scheduler`、`_stop_tool_manager`、`_stop_idle`、`_stop_persistence`、`_stop_llm_and_tts`、`_stop_output` 共 12 个方法
+- `_process_events()` (100行→28行)：拆分为 `_handle_interrupt`、`_handle_user_input`、`_handle_system_tick`、`_handle_task_result`、`_handle_state_change` 共 5 个 handler
+
+### Agent bug 修复（1 commit）
+- `_config_path` 为 None 时重启不再崩溃，降级复用当前配置
+- `LLMAdapter.get_raw_client()` 替代 `self._llm._backend._client` 私有属性链
+- `OutputManager.notify_state()` 替代 `self._output._channels` 直接访问
+- `_poll_mailboxes` 内层 `while True` 改为 walrus `while (event := ...) is not None`
+- `_EventBusHITLNotifier.cancel_approval` 补充注释
+
+### CognitiveLoop prompt 修复（1 commit）
+- `Brain.j2` ToolUsageGuidance 新增请求分类规则：Type A (复杂多步) → submit_task 立即委托，Type B (简单) → DIY
+- `submit_task` function definition 强调后台有自己的 LLM，无需调用前做准备工作
+- `_build_wake_up_message` 注入当前时间 + 周几，避免 LLM 时间幻觉 (凌晨说"今早")
 
 ---
 

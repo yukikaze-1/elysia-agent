@@ -619,7 +619,7 @@ class CognitiveLoop:
                 await self._transition_idle()
                 return
 
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             self._executing_tools.clear()
             self._tts_mgr.cancel_all()
             await self._output.typing(False)
@@ -636,11 +636,15 @@ class CognitiveLoop:
                 if items:
                     logger.debug("记忆沉淀: %d 条 (%d ms)", len(items),
                                  int((time.perf_counter() - t0) * 1000))
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.debug("记忆沉淀失败", exc_info=True)
         # Save session asynchronously (fire-and-forget)
         try:
             await self._session.save()
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.debug("会话保存失败", exc_info=True)
 
@@ -668,6 +672,8 @@ class CognitiveLoop:
             char_name = self._prompt._character.name
             audio = await self._tts.synthesize(sentence, character=char_name)
             await self._output.audio_chunk(audio)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.debug("TTS synthesis failed", exc_info=True)
 

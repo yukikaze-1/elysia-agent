@@ -13,6 +13,7 @@ from Module.task_system.schema import (
     ExecutionState,
     ExecutionStatus,
     NodeId,
+    NodeState,
     NodeResult,
     NodeResultEvaluation,
     NodeStatus,
@@ -70,7 +71,7 @@ async def evaluate_node(
     evaluator: Evaluator,
     node: DAGNode,
     result: NodeResult,
-    plan: Plan | None,  # Plan | None
+    plan: Plan | None
 ) -> NodeResultEvaluation:
     """评估单个节点结果——调 Evaluator 产出 NodeResultEvaluation。
 
