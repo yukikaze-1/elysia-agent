@@ -151,7 +151,35 @@ class Agent:
         # Recreate LLM HTTP client (may have been closed by previous stop())
         await self._llm.reconnect()
 
-        # Connect persistence backends in parallel
+        # 1. 持久化连接 + session 加载
+        mongo_ok, milvus_ok = await self._start_persistence()
+
+        # 2. Token + Prompt 统计
+        await self._start_token_and_prompt(mongo_ok)
+
+        # 3. 工具上下文 + 插件加载
+        await self._start_tool_context()
+
+        # 4. Worker Pool + embedding 预加载
+        await self._start_worker_pool()
+
+        # 5. IdleMonitor + 主事件循环
+        await self._start_idle_and_events()
+
+        # 6. TTS（条件启动）
+        await self._start_tts()
+
+        # 7. TaskSystem + DelegationPreparer
+        await self._start_task_system()
+
+        # 8. Mailbox 轮询
+        self._start_mailbox_polling()
+
+        # 9. 启动横幅
+        self._print_startup_banner(mongo_ok, milvus_ok)
+
+    async def _start_persistence(self) -> tuple[bool, bool]:
+        """连接 MongoDB/Milvus，加载 session，恢复 JSONL 快照。"""
         mongo_ok, milvus_ok = await asyncio.gather(
             self._session.connect_db(),
             self._long_term.connect(),
@@ -166,8 +194,10 @@ class Agent:
                         logger.info("Session JSONL 已导入 MongoDB 并删除")
                     else:
                         logger.warning("Session MongoDB 写入失败，保留 JSONL")
+        return mongo_ok, milvus_ok
 
-        # ---- Token 统计 ----
+    async def _start_token_and_prompt(self, mongo_ok: bool) -> None:
+        """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""
         from core.token_tracker import TokenTracker
         self._token_tracker = TokenTracker(
             session_id=getattr(self._session, "_session_id", "default"),
@@ -175,16 +205,15 @@ class Agent:
             document_db=self._session._db if mongo_ok else None,
         )
         self._cognitive.set_token_tracker(self._token_tracker)
-        # MongoDB 可用时 flush 积压的 pending 文件
         if mongo_ok:
             await self._token_tracker.flush_pending()
 
-        # ---- Prompt 记录 ----
         from core.prompt_recorder import PromptRecorder
         self._prompt_recorder = PromptRecorder(max_records=20)
         self._cognitive.set_prompt_recorder(self._prompt_recorder)
 
-        # 注入运行时上下文 — 工具通过 ctx.get("memory") 访问 L2 记忆
+    async def _start_tool_context(self) -> None:
+        """注入 ToolContext，加载工具插件，设置 HITL broadcast。"""
         self._tool_ctx = ToolContext(
             session_id=getattr(self._session, "_session_id", "default"),
             user_id=self._user_name,
@@ -201,7 +230,6 @@ class Agent:
         )
         self._cognitive.set_tool_context(self._tool_ctx)
 
-        # 加载工具插件（setup() 中检测能力，失败则跳过）
         self._plugin_ctx.session_id = getattr(self._session, "_session_id", "default")
         self._plugin_ctx.memory = self._long_term
         self._plugin_ctx.scheduler = self._scheduler
@@ -209,17 +237,19 @@ class Agent:
         self._tool_manager.set_hitl_broadcast(self._output)
         self._scheduler.set_tool_context(self._tool_ctx)
 
-        # Start Worker Pool
+    async def _start_worker_pool(self) -> None:
+        """启动 Worker Pool + embedding 预加载后台任务。"""
         await self._scheduler.start()
-
-        # Preload embedding in background (runs in thread pool, won't block event loop)
         self._embed_task = asyncio.create_task(
             self._long_term._ensure_embedding(), name="embedding-preload")
 
+    async def _start_idle_and_events(self) -> None:
+        """启动 IdleMonitor + 主事件循环（独立 asyncio.Task）。"""
         await self._idle.start()
         self._event_task = asyncio.create_task(self._process_events())
 
-        # TTS — 在 start() 中创建，确保重启时使用重载后的 config
+    async def _start_tts(self) -> None:
+        """创建 TTS 后端（条件执行——由 config.tts.enabled 控制）。"""
         if self._config.tts.enabled:
             from Module.tts import TTSFactory
             try:
@@ -229,13 +259,13 @@ class Agent:
             except Exception:
                 logger.info("TTS not available — text-only mode")
 
-        # ---- TaskSystem ----
+    async def _start_task_system(self) -> None:
+        """创建 TaskSystem + DelegationPreparer + HITLNotifier，注入 CognitiveLoop。"""
         from Module.task_system.task_system import TaskSystem
         from Module.task_system.delegation_preparer import DelegationPreparer
         from Module.task_system.infra import AgentInfra
         from Module.task_system.schema import ConstraintConfig
 
-        # TaskSystem 基础设施
         _ts_infra = AgentInfra(
             llm=self._llm.get_raw_client(),
             milvus=None,
@@ -244,22 +274,17 @@ class Agent:
             constraints=ConstraintConfig(),
         )
 
-        # HITLNotifier 简单实现——委托给 EventBus
         class _EventBusHITLNotifier:
             def __init__(self, bus):
                 self._bus = bus
-
             async def request_approval(self, event_data):
-                pass  # v1: 审批由 ToolManager 直接处理，不经过此通道
-
+                pass  # v1: 审批由 ToolManager SafetyPipeline 直接处理，不经过此通道
             async def cancel_approval(self, approval_ids):
                 pass  # v1: 同上，审批全流程走 ToolManager，不经过此通道
 
         _hitl = _EventBusHITLNotifier(self._bus)
-
         self._task_system = TaskSystem(infra=_ts_infra, hitl_notifier=_hitl)
         await self._task_system.start()
-
         self._delegation_preparer = DelegationPreparer()
 
         # 注入到 CognitiveLoop
@@ -268,9 +293,12 @@ class Agent:
         self._cognitive.set_user_profile(None)  # v1: UserProfile 未实现
         self._cognitive.set_on_background_task(self._register_background_task)
 
-        # 启动 mailbox 轮询
+    def _start_mailbox_polling(self) -> None:
+        """启动后台任务 mailbox 轮询（独立 asyncio.Task）。"""
         self._mailbox_task = asyncio.create_task(self._poll_mailboxes())
 
+    def _print_startup_banner(self, mongo_ok: bool, milvus_ok: bool) -> None:
+        """打印启动横幅。"""
         db_status = []
         if mongo_ok:
             db_status.append("MongoDB")
@@ -296,7 +324,48 @@ class Agent:
         # 清空排队 — shutdown 期间不处理新消息
         self._pending_messages.clear()
 
-        # Flush consolidator buffer before shutdown
+        # 1. Flush memory consolidation buffer
+        await self._flush_consolidator()
+
+        # 2. 先停事件循环 — 防止它在 shutdown 期间继续 post 新任务
+        await self._stop_event_task()
+
+        # 3. Cancel cognitive + TTS tasks（belt-and-suspenders）
+        self._stop_cognitive_and_tts()
+
+        # 4. 停止 mailbox 轮询
+        self._stop_mailbox()
+
+        # 5. 停止 TaskSystem
+        await self._stop_task_system()
+
+        # 6. 停止 Scheduler Worker Pool
+        await self._stop_scheduler()
+
+        # 7. 关闭 ToolManager
+        await self._stop_tool_manager()
+
+        # 8. 停止 IdleMonitor
+        await self._stop_idle()
+
+        # 9. 等待 embedding 任务完成（cancel + await）
+        await self._stop_embedding_if_running()
+
+        # 10. 持久化关闭（save → close → shutdown embedding）
+        await self._stop_persistence()
+
+        # 11. 关闭 LLM / TTS 客户端
+        await self._stop_llm_and_tts()
+
+        # 12. 关闭输出通道
+        await self._stop_output()
+
+        logger.info("Agent stopped")
+
+    # ---- stop() sub-methods ----
+
+    async def _flush_consolidator(self) -> None:
+        """Memor consolidation buffer 落盘，防止未持久化的记忆丢失。"""
         if self._consolidator:
             try:
                 items = await asyncio.wait_for(self._consolidator.flush(), timeout=5.0)
@@ -307,7 +376,8 @@ class Agent:
             except Exception:
                 logger.debug("Consolidator flush failed", exc_info=True)
 
-        # 先停 _process_events — 防止它在 shutdown 期间继续 post 新任务
+    async def _stop_event_task(self) -> None:
+        """停止 _process_events 事件循环——防止它在 shutdown 期间继续 post 新任务。"""
         if self._event_task:
             logger.debug("Cancelling event task...")
             self._event_task.cancel()
@@ -317,43 +387,56 @@ class Agent:
                 pass
             self._event_task = None
 
-        # Cancel cognitive + TTS tasks (may be idle, but belt-and-suspenders)
+    def _stop_cognitive_and_tts(self) -> None:
+        """Cancel 当前 cognitive task + TTS 任务（belt-and-suspenders）。"""
         self._cognitive.cancel_current()
         self._cognitive._tts_mgr.cancel_all()
 
-        # Cancel embedding preload if still running
+    async def _stop_embedding_if_running(self) -> None:
+        """取消并等待 embedding 预加载任务完成。"""
         if getattr(self, "_embed_task", None) and not self._embed_task.done():
             self._embed_task.cancel()
-
-        # 停止 mailbox 轮询
-        if self._mailbox_task:
-            self._mailbox_task.cancel()
-            self._mailbox_task = None
-
-        # 停止 TaskSystem
-        if self._task_system:
-            try:
-                await asyncio.wait_for(self._task_system.stop(), timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning("TaskSystem stop timed out")
-
-        logger.debug("Stopping scheduler Worker Pool...")
-        await self._scheduler.stop()
-
-        logger.debug("Stopping ToolManager...")
-        await self._tool_manager.shutdown()
-
-        logger.debug("Stopping idle monitor...")
-        await self._idle.stop()
-
-        # Cancel embedding task
+        # 等待 task 完成——cancel 后仍需 await 消耗 CancelledError
         if getattr(self, "_embed_task", None):
             try:
                 await asyncio.wait_for(self._embed_task, timeout=3.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 
-        # Save session before closing (with timeout)
+    def _stop_mailbox(self) -> None:
+        """停止后台任务 mailbox 轮询。"""
+        if self._mailbox_task:
+            self._mailbox_task.cancel()
+            self._mailbox_task = None
+
+    async def _stop_task_system(self) -> None:
+        """停止 TaskSystem（5s 超时）。"""
+        if self._task_system:
+            try:
+                await asyncio.wait_for(self._task_system.stop(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("TaskSystem stop timed out")
+
+    async def _stop_scheduler(self) -> None:
+        """停止 Scheduler Worker Pool。"""
+        logger.debug("Stopping scheduler Worker Pool...")
+        await self._scheduler.stop()
+
+    async def _stop_tool_manager(self) -> None:
+        """关闭 ToolManager（清理所有工具插件）。"""
+        logger.debug("Stopping ToolManager...")
+        await self._tool_manager.shutdown()
+
+    async def _stop_idle(self) -> None:
+        """停止 IdleMonitor。"""
+        logger.debug("Stopping idle monitor...")
+        await self._idle.stop()
+
+    async def _stop_persistence(self) -> None:
+        """持久化关闭：session.save() → long_term.close() → EmbeddingFactory.shutdown()。
+
+        顺序要求：先 save session（需要 L2 连接仍然有效），再关闭 L2，最后关 embedding。
+        """
         logger.debug("Saving session...")
         try:
             await asyncio.wait_for(self._session.save(), timeout=3.0)
@@ -374,6 +457,8 @@ class Agent:
         except asyncio.TimeoutError:
             logger.warning("Embedding factory shutdown timed out")
 
+    async def _stop_llm_and_tts(self) -> None:
+        """关闭 LLM 和 TTS 客户端连接。"""
         logger.debug("Closing LLM client...")
         try:
             await asyncio.wait_for(self._llm.close(), timeout=3.0)
@@ -387,13 +472,13 @@ class Agent:
             except asyncio.TimeoutError:
                 logger.warning("TTS close timed out")
 
+    async def _stop_output(self) -> None:
+        """关闭所有输出通道。"""
         logger.debug("Closing output channels...")
         try:
             await asyncio.wait_for(self._output.close(), timeout=3.0)
         except asyncio.TimeoutError:
             logger.warning("Output close timed out")
-
-        logger.info("Agent stopped")
 
     def next_request_id(self) -> str:
         """生成并返回请求 ID，同时设置 ContextVar。供外部模块（STT 等）使用。"""
@@ -649,84 +734,99 @@ class Agent:
                 set_request_id(rid)
 
             if event.type == EventType.INTERRUPT:
-                set_request_id("-")
-                logger.info("EventBus: INTERRUPT (%s)", event.data.get("source", "?") if event.data else "?")
-                self._cognitive.cancel_current()
-                # Drain pending USER_INPUT and message queue, preserve STATE_CHANGE for UI
-                for drained in self._bus.drain():
-                    if drained.type == EventType.STATE_CHANGE:
-                        self._bus.post(drained.type, drained.data, priority=drained.priority)
-                self._pending_messages.clear()
-
+                self._handle_interrupt(event.data or {})
             elif event.type == EventType.USER_INPUT:
-                data = event.data or {}
-                text = data.get("text", "")
-                user_name = data.get("user_name", "妖梦")
-                stt_emotion = data.get("emotion", "")
-                stt_events = data.get("events", [])
-                content = data.get("content")
-                logger.info("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
-                           "websocket" if stt_emotion else "text", stt_emotion or "无")
-                # Wire tool-call dispatch to Scheduler Worker Pool
-                _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
-                    parent_id=rid, calls=calls,
-                )
-                task = asyncio.create_task(
-                    self._cognitive.process(text, user_name=user_name,
-                                            stt_emotion=stt_emotion,
-                                            stt_events=stt_events,
-                                            _on_tool_calls=_on_tool_calls,
-                                            content=content),
-                    name=f"cognitive-{text[:20] if text else 'multimodal'}"
-                )
-                self._cognitive._current_task = task
-
+                self._handle_user_input(event.data or {})
             elif event.type == EventType.SYSTEM_TICK:
-                data = event.data or {}
-                reason = data.get("reason", "")
-                if reason == "silence_timeout":
-                    elapsed = data.get("elapsed", 0)
-                    # 生成 request_id — SYSTEM_TICK 不带 rid，需主动创建
-                    rid = self.next_request_id()
-                    set_request_id(rid)
-                    _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
-                        parent_id=rid, calls=calls,
-                    )
-                    task = asyncio.create_task(
-                        self._cognitive.process(
-                            f"（系统提示：用户已经{int(elapsed)}秒没有说话了，请自然地开启一个话题）",
-                            _on_tool_calls=_on_tool_calls,
-                        ),
-                        name="cognitive-proactive"
-                    )
-                    self._cognitive._current_task = task
-
+                self._handle_system_tick(event.data or {})
             elif event.type == EventType.TASK_RESULT:
-                data = event.data or {}
-                rid = self.next_request_id()
-                set_request_id(rid)
-                # TODO: 多任务并发时用队列或锁保护 _current_task
-                #      详见 spec 第 11 节"多任务并发唤醒锁 + 租约超时"
-                task = asyncio.create_task(
-                    self._cognitive.process(
-                        user_message="",
-                        is_task_result=True,
-                        task_result_context=data,
-                    ),
-                    name=f"task-result-{data.get('task_id', 'unknown')}",
-                )
-                self._cognitive._current_task = task
-
+                self._handle_task_result(event.data or {})
             elif event.type == EventType.STATE_CHANGE:
-                state = event.data.get("state", "") if event.data else ""
-                logger.info("FSM → %s", state)
-                if state in ("idle", "idle_background_task"):
-                    set_request_id("-")
-                    # 检查排队消息 — FIFO 出队
-                    if self._pending_messages:
-                        pending = self._pending_messages.pop(0)
-                        logger.info("排队消息出队 (%d 条剩余)", len(self._pending_messages))
-                        self._bus.post(EventType.USER_INPUT, pending)
-                await self._output.notify_state(state)
+                await self._handle_state_change(event.data or {})
+
+    def _handle_interrupt(self, data: dict) -> None:
+        """处理 INTERRUPT 事件：cancel cognitive task，清空队列。
+
+        保留 STATE_CHANGE 事件（前端 UI 需要），丢弃其余排队事件。
+        """
+        set_request_id("-")
+        logger.info("EventBus: INTERRUPT (%s)", data.get("source", "?") if data else "?")
+        self._cognitive.cancel_current()
+        for drained in self._bus.drain():
+            if drained.type == EventType.STATE_CHANGE:
+                self._bus.post(drained.type, drained.data, priority=drained.priority)
+        self._pending_messages.clear()
+
+    def _handle_user_input(self, data: dict) -> None:
+        """处理 USER_INPUT 事件：创建 cognitive task 异步运行。"""
+        text = data.get("text", "")
+        user_name = data.get("user_name", "妖梦")
+        stt_emotion = data.get("emotion", "")
+        stt_events = data.get("events", [])
+        content = data.get("content")
+        rid = data.get("request_id", "")
+        logger.info("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
+                   "websocket" if stt_emotion else "text", stt_emotion or "无")
+        _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
+            parent_id=rid, calls=calls,
+        )
+        task = asyncio.create_task(
+            self._cognitive.process(text, user_name=user_name,
+                                    stt_emotion=stt_emotion,
+                                    stt_events=stt_events,
+                                    _on_tool_calls=_on_tool_calls,
+                                    content=content),
+            name=f"cognitive-{text[:20] if text else 'multimodal'}"
+        )
+        self._cognitive._current_task = task
+
+    def _handle_system_tick(self, data: dict) -> None:
+        """处理 SYSTEM_TICK 事件——silence_timeout 时主动开启话题。"""
+        reason = data.get("reason", "")
+        if reason == "silence_timeout":
+            elapsed = data.get("elapsed", 0)
+            rid = self.next_request_id()
+            set_request_id(rid)
+            _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
+                parent_id=rid, calls=calls,
+            )
+            task = asyncio.create_task(
+                self._cognitive.process(
+                    f"（系统提示：用户已经{int(elapsed)}秒没有说话了，请自然地开启一个话题）",
+                    _on_tool_calls=_on_tool_calls,
+                ),
+                name="cognitive-proactive"
+            )
+            self._cognitive._current_task = task
+
+    def _handle_task_result(self, data: dict) -> None:
+        """处理 TASK_RESULT 事件——后台任务完成，唤醒 CognitiveLoop。"""
+        rid = self.next_request_id()
+        set_request_id(rid)
+        task = asyncio.create_task(
+            self._cognitive.process(
+                user_message="",
+                is_task_result=True,
+                task_result_context=data,
+            ),
+            name=f"task-result-{data.get('task_id', 'unknown')}",
+        )
+        self._cognitive._current_task = task
+
+    async def _handle_state_change(self, data: dict) -> None:
+        """处理 STATE_CHANGE 事件——FSM 状态变更。
+
+        IDLE/IDLE_BACKGROUND_TASK 时检查排队消息（FIFO 出队），
+        通知所有输出通道状态变更（前端据此切换动画）。
+        """
+        state = data.get("state", "") if data else ""
+        logger.info("FSM → %s", state)
+        if state in ("idle", "idle_background_task"):
+            set_request_id("-")
+            if self._pending_messages:
+                pending = self._pending_messages.pop(0)
+                logger.info("排队消息出队 (%d 条剩余)", len(self._pending_messages))
+                self._bus.post(EventType.USER_INPUT, pending)
+        await self._output.notify_state(state)
 
     # Tool registration is done via ToolManager.load_all() in start()
