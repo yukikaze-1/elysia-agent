@@ -711,13 +711,19 @@ class CognitiveLoop:
     # ---- submit_task 拦截框架 ----
 
     @staticmethod
+    @staticmethod
     def _build_wake_up_message(ctx: dict) -> str:
         """构建渐进式唤醒消息。
 
+        注入当前时间避免 LLM 产生时间幻觉（如凌晨说"今早"）。
         v1: 统一礼貌询问。后续 TODO(v2): 检查对话上下文动态调整。
         """
+        now = datetime.datetime.now()
+        time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        weekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][now.weekday()]
         return (
-            f"[系统通知] 你此前委派的后台任务"
+            f"[系统通知] 当前时间: {time_str}（{weekday}）。"
+            f"你此前委派的后台任务"
             f"（{ctx.get('original_intent', '')}）"
             f"已执行完毕。结果摘要: {ctx.get('result', '')}。"
             f"请自然地告知用户任务已完成，询问是否现在汇报详细结果，还是稍后再说。"
@@ -736,6 +742,8 @@ class CognitiveLoop:
                 "name": "submit_task",
                 "description": (
                     "将复杂多步骤任务提交到后台异步执行。"
+                    "后台 TaskSystem 有自己的 LLM，会自动规划、搜索、执行所有步骤。"
+                    "你不需要在调用前做任何准备工作（如搜索、分析）——直接提交即可。"
                     "适用：涉及多步操作、状态变更、或长时间运行的任务。"
                     "简单单步操作（如单次搜索、单次文件读取）请直接用对应工具。"
                 ),

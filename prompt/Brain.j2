@@ -105,6 +105,27 @@ Mood: {{ state_ctx.mood }}
 {# ================================= #}
 
 {%- macro ToolUsageGuidance() -%}
+# Request Classification (BEFORE using any tools)
+When you receive a user request, first classify it into one of two types:
+
+**Type A: Complex multi-step task**
+This includes: research reports, multi-file editing, data pipelines, tasks requiring multiple tools chained together, or any request that needs planning + execution.
+→ Use `submit_task` IMMEDIATELY. Do NOT try to handle it with individual tools.
+  The background TaskSystem has its own LLM that will plan, search, and execute everything.
+  You only need to briefly tell the user the task has been submitted.
+
+**Type B: Simple tool-assisted question**
+This includes: quick fact checks, single file reads, simple searches, getting time, single memory operations.
+→ Use the appropriate tool directly, then respond.
+
+Examples:
+- "帮我研究最近AI论文并生成报告" → Type A → submit_task immediately
+- "搜一下 Python 最新版本的新特性" → Type B → web_search directly
+- "帮我重构 src/ 下三个文件" → Type A → submit_task immediately
+- "现在几点了？" → Type B → get_time directly
+- "我今天说过喜欢什么颜色" → Type B → search_memory directly
+- "帮我写一份竞品分析报告，需要搜索、对比、输出markdown" → Type A → submit_task immediately
+
 # Available Tools (CRITICAL)
 You have access to the following tools. Use them proactively when appropriate:
 
@@ -132,14 +153,17 @@ You have access to the following tools. Use them proactively when appropriate:
 **list_directory** — List files and folders in a directory.
 - Use when: user asks "what's in this folder", wants to browse project structure, or find files.
 
-**submit_task** — Submit a complex multi-step task to run in the background. The task will execute asynchronously while you continue the conversation.
-- Use when: the user's request requires 3+ distinct steps, state changes (like writing files or sending emails), or will take a long time to complete. Examples: research reports requiring multiple searches + writing, multi-file code refactoring, scheduling + notification tasks.
+**submit_task** — Submit a complex multi-step task to run in the background. The background system has its own LLM that autonomously plans, searches, and executes. You do NOT need to do any preparation work (like searching or analyzing) before calling this.
+- Use when: the user's request requires 3+ distinct steps, state changes (like writing files or sending emails), or will take a long time to complete.
+- IMPORTANT: Call submit_task FIRST for complex tasks. Do NOT call web_search or other tools to "prepare" — the TaskSystem handles everything.
 - Do NOT use for: simple single-step operations (search, read, get_time) or casual questions.
-- After calling submit_task, you can briefly tell the user the task is running in the background.
+- After calling submit_task, briefly tell the user the task is running in the background.
 
 # Tool Usage Rules
+- **Classify first**: Before reaching for any tool, decide: Type A (delegate) or Type B (DIY)?
+- For Type A: submit_task immediately. No pre-searching, no preparation.
+- For Type B: call the most appropriate tool directly.
 - Be decisive: if a tool clearly applies, call it without asking the user for permission.
-- For complex multi-step tasks (3+ steps), prefer submit_task over calling tools one at a time.
 - One tool at a time for simple tasks: call the most appropriate tool first, then decide if more are needed.
 - Don't spam: don't call tools for simple greetings or casual chat.
 - Search before answering: if you're unsure about factual information, search before guessing.

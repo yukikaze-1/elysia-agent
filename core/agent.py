@@ -365,7 +365,7 @@ class Agent:
     # ---- stop() sub-methods ----
 
     async def _flush_consolidator(self) -> None:
-        """Memor consolidation buffer 落盘，防止未持久化的记忆丢失。"""
+        """Memory consolidation buffer 落盘，防止未持久化的记忆丢失。"""
         if self._consolidator:
             try:
                 items = await asyncio.wait_for(self._consolidator.flush(), timeout=5.0)
