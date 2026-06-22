@@ -156,7 +156,7 @@ def _resolve_sandbox_path(
             write_dir = profile.write_dir.replace("{session_id}", safe_sid)
             raw = Path(write_dir) / raw
         elif profile.read_dirs:
-            raw = Path(profile.read_dirs[0]) / raw
+            raw = Path(profile.read_dirs[0].replace("{session_id}", safe_sid)) / raw
     try:
         resolved = raw.expanduser().resolve()
     except (OSError, RuntimeError) as e:

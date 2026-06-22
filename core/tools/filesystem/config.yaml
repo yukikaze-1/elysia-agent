@@ -1,5 +1,7 @@
 # 文件系统沙箱配置
+# {session_id} 在运行时替换为当前会话 ID（sanitized）
 read_dirs:
+  - /home/yomu/data/sandbox/{session_id}
   - /home/yomu/data/sandbox
 write_dir: /home/yomu/data/sandbox/{session_id}
 max_file_bytes: 10485760
