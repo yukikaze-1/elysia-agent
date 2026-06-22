@@ -375,6 +375,7 @@ function render(info) {
         ['Processing', info.processing ? '<span class="warn">yes</span>' : '<span class="ok">no</span>'],
         ['LLM Model', esc(info.llm_model) + (/mock/i.test(info.llm_model || '') ? ' <span class="warn">MOCK</span>' : '')],
         ['TTS', ok(info.tts_ok)],
+        ['STT', ok(info.stt_ok)],
         ['WebSocket Clients', info.ws_clients],
       ]},
       { title:'Memory', wide:false, rows:[

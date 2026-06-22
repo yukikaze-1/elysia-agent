@@ -119,8 +119,8 @@ class GPTSoVitsBackend(TTSBackend):
                     async for chunk in resp.aiter_bytes(4096):
                         await queue.put(chunk)
             except httpx.RequestError as e:
-                self._logger.error(
-                    "GPT-SoVits connection failed (base_url=%s): %s",
+                self._logger.debug(
+                    "GPT-SoVits 连接失败 (base_url=%s): %s",
                     self._base_url, e,
                 )
                 raise RuntimeError(
@@ -145,8 +145,8 @@ class GPTSoVitsBackend(TTSBackend):
             except asyncio.CancelledError:
                 pass
             except Exception as e:
-                logging.getLogger("Module.tts.gpt_sovits").warning(
-                    "TTS _pull task failed: %s", e, exc_info=True
+                logging.getLogger("Module.tts.gpt_sovits").debug(
+                    "TTS _pull task failed: %s", e
                 )
 
     async def test(self) -> dict:

@@ -90,8 +90,8 @@ class SenseVoiceBackend(STTBackend):
                 data=kwargs,
             )
         except httpx.RequestError as e:
-            self._logger.error(
-                "SenseVoice connection failed (base_url=%s): %s",
+            self._logger.debug(
+                "SenseVoice 连接失败 (base_url=%s): %s",
                 self._client.base_url, e,
             )
             raise RuntimeError(

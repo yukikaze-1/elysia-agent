@@ -43,6 +43,7 @@ class DebugInfo:
 
     # Connections
     tts_ok: bool = False
+    stt_ok: bool = False
     ws_clients: int = 0
 
     # LLM
@@ -126,6 +127,7 @@ async def collect(agent) -> DebugInfo:
 
     # ---- Connections ----
     info.tts_ok = agent._tts is not None
+    info.stt_ok = getattr(agent, '_stt_ok', False)
     info.ws_clients = sum(
         1 for ch in agent._output._channels
         if type(ch).__name__ == "WebSocketChannel"

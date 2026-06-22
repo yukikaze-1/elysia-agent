@@ -192,9 +192,8 @@ class TTSStreamManager:
         except asyncio.CancelledError:
             pass  # INTERRUPT 打断
         except Exception:
-            logger.warning(
-                "TTS stream failed — fallback 发送文字", exc_info=True,
-            )
+            # TTS 不可用时静默降级到纯文本——不打印堆栈以免误导
+            logger.debug("TTS stream failed — fallback 发送文字", exc_info=False)
             # TTS 失败兜底: 至少把文字发出去
             if first_chunk:
                 try:

@@ -83,7 +83,8 @@ class Agent:
         self._llm = LLMAdapter(model=config.llm.model)
         self._prompt = PromptAssembler(self._character, self._session, self._long_term)
 
-        self._tts = None  # 在 start() 中创建
+        self._tts = None  # 在 _start_tts() 中创建
+        self._stt_ok = False  # STT 连通性标志 — 在 run_server() 中设置
 
         self._emotion = EmotionEngine(
             character=self._character,
@@ -257,14 +258,25 @@ class Agent:
         self._event_task = asyncio.create_task(self._process_events())
 
     async def _start_tts(self) -> None:
-        """创建 TTS 后端（条件执行——由 config.tts.enabled 控制）。"""
+        """创建 TTS 后端（条件执行——由 config.tts.enabled 控制）。
+
+        创建后测试连通性，不可用时自动降级为纯文本模式。
+        """
         if self._config.tts.enabled:
             from Module.tts import TTSFactory
             try:
                 self._tts = TTSFactory.create(self._config.tts.model)
-                self._cognitive.set_tts(self._tts)
-                logger.info("TTS backend connected")
+                # 快速连通性测试——1s 超时，避免卡启动
+                import asyncio as _asyncio
+                result = await _asyncio.wait_for(self._tts.test(), timeout=1.0)
+                if result.get("ok"):
+                    self._cognitive.set_tts(self._tts)
+                    logger.info("TTS backend connected")
+                else:
+                    self._tts = None
+                    logger.info("TTS not available — text-only mode (%s)", result.get("error", "unknown"))
             except Exception:
+                self._tts = None
                 logger.info("TTS not available — text-only mode")
 
     async def _start_task_system(self) -> None:
@@ -599,6 +611,12 @@ class Agent:
                     from Module.stt import STTFactory
                     stt_backend = STTFactory.create(self._config.stt.model)
 
+                    # 快速连通性测试——1s 超时，避免卡启动
+                    import asyncio as _asyncio
+                    result = await _asyncio.wait_for(stt_backend.test(), timeout=1.0)
+                    if not result.get("ok"):
+                        raise RuntimeError(result.get("error", "服务不可用"))
+
                     stt_emotion_state = {"emotion": "NEUTRAL", "events": []}
 
                     async def transcribe_wrapper(audio: bytes) -> str:
@@ -608,9 +626,10 @@ class Agent:
                         return text
 
                     stt_transcribe = transcribe_wrapper
+                    self._stt_ok = True
                     logger.info("STT backend connected for server mode")
                 except Exception:
-                    logger.info("STT not available — text-only mode", exc_info=True)
+                    logger.info("STT not available — text-only mode", exc_info=False)
 
             app = create_app(self, stt_transcribe=stt_transcribe, serve_static=True,
                             stt_emotion_state=stt_emotion_state,
