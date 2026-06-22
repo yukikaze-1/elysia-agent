@@ -76,6 +76,10 @@ class AppState {
     this.sessionTokens = { total: 0, byModel: {} };
     this.currentTurnTokens = [];
     this.activeTurnTotal = 0;
+    this.lastRole = null;
+    this.sttAvailable = false;
+    this.ttsAvailable = false;
+    this.llmModel = '';
   }
 }
 

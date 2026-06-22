@@ -236,6 +236,7 @@ def _handle_retry(
         if node.max_retries is not None
         else constraints.max_retries_per_node
     )
+    # 用 > 而非 >=：attempt 从 1 开始，max_retries=3 允许 attempt 1,2,3（共 3 次）
     if ns.attempt > max_retries:
         # ── 重试耗竭 → REPLAN ──
         logger.warning(

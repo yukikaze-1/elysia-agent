@@ -29,7 +29,8 @@ export async function toggleMic() {
       send(int16.buffer);
     };
     source.connect(state.scriptNode);
-    state.scriptNode.connect(state.audioCtx.destination);
+    // 不连接 destination——避免音频反馈回路（回声）
+    // state.scriptNode 仅用于捕获 PCM 数据，不播放
     document.getElementById('mic-btn').classList.add('active');
     addStatusMsg('麦克风已开启');
   } catch (err) {

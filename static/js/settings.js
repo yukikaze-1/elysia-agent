@@ -3,6 +3,7 @@ import { SETTINGS_STORAGE_KEYS } from './config.js';
 import { clearChat } from './persistence.js';
 import { addStatusMsg } from './chat.js';
 import { send } from './ws.js';
+import { esc } from './esc.js';
 
 /** 初始化设置面板事件 */
 export function setupSettings() {
@@ -188,19 +189,20 @@ function renderCustomProviders(customData) {
     div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:6px;font-size:12px;';
     div.innerHTML =
       '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-        '<span style="font-weight:600;">' + escHtml(entry.name) + '</span>' +
+        '<span style="font-weight:600;">' + esc(entry.name) + '</span>' +
         '<span style="color:var(--muted);font-size:10px;">' + entry.service + '</span>' +
       '</div>' +
-      '<div style="color:var(--muted);margin:4px 0;">' + escHtml(entry.base_url) + '</div>' +
+      '<div style="color:var(--muted);margin:4px 0;">' + esc(entry.base_url) + '</div>' +
       '<div style="color:var(--muted);">models: ' + (entry.models || []).join(', ') + '</div>' +
-      '<button data-delete="' + entry.service + '/' + entry.name + '" style="margin-top:4px;padding:2px 8px;font-size:11px;background:transparent;border:1px solid #a33;color:#f88;border-radius:4px;cursor:pointer;">删除</button>';
+      '<button data-delete-svc="' + esc(entry.service) + '" data-delete-name="' + esc(entry.name) + '" style="margin-top:4px;padding:2px 8px;font-size:11px;background:transparent;border:1px solid #a33;color:#f88;border-radius:4px;cursor:pointer;">删除</button>';
     container.appendChild(div);
   }
 
   // 删除按钮事件
-  container.querySelectorAll('button[data-delete]').forEach(btn => {
+  container.querySelectorAll('button[data-delete-svc]').forEach(btn => {
     btn.onclick = async () => {
-      const [service, name] = btn.dataset.delete.split('/');
+      const service = btn.dataset.deleteSvc;
+      const name = btn.dataset.deleteName;
       if (!confirm('确定删除 ' + name + '？')) return;
       try {
         const res = await fetch('/api/providers/' + service + '/' + encodeURIComponent(name), { method: 'DELETE' });
@@ -213,12 +215,6 @@ function renderCustomProviders(customData) {
       }
     };
   });
-}
-
-function escHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
 }
 
 // ---- 自定义端点模态框 ----
@@ -294,10 +290,10 @@ function setupCustomModal() {
       if (data.ok) {
         resultEl.innerHTML = '<span style="color:#4caf50;">连接成功 (' + data.latency_ms + 'ms)</span>';
       } else {
-        resultEl.innerHTML = '<span style="color:#f88;">' + escHtml(data.error || '连接失败') + '</span>';
+        resultEl.innerHTML = '<span style="color:#f88;">' + esc(data.error || '连接失败') + '</span>';
       }
     } catch (e) {
-      resultEl.innerHTML = '<span style="color:#f88;">' + escHtml(e.message) + '</span>';
+      resultEl.innerHTML = '<span style="color:#f88;">' + esc(e.message) + '</span>';
     }
   };
 }

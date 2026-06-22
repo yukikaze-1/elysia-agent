@@ -103,9 +103,9 @@ class TaskSystem:
 ## 3. 任务控制
 
 ```python
-    async def pause(self, task_id: TaskId) -> None:
-        """暂停任务。设置 exec_state.pause_requested → Orchestrator 检测 → PAUSED。
-        Raises: KeyError（任务不存在）/ RuntimeError（已终态/已暂停/未启动）。"""
+    async def pause(self, task_id: TaskId, timeout: float = 30.0) -> bool:
+        """✅ 已实现——暂停任务。设置 exec_state.pause_requested → Orchestrator 检测 → PAUSED。
+        轮询等待确认（默认 30s），返回 True=暂停确认，False=超时/已终态/不存在。幂等。"""
 
     async def resume(self, task_id: TaskId) -> TaskMailbox | ResumeError:
         """✅ 已实现——从 PAUSED 恢复执行。幂等——RUNNING 直接返回 mailbox。"""

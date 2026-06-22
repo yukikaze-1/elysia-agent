@@ -59,7 +59,6 @@ class CognitiveLoop:
     """ReAct cognitive loop with streaming delivery and tool-call detection."""
 
     MAX_TOOL_ROUNDS = 5
-    _req_counter: int = 0
 
     def __init__(
         self,
@@ -84,6 +83,7 @@ class CognitiveLoop:
         self._prompt = prompt
         self._session = session
         self._tool_executor = tool_executor
+        self._req_counter: int = 0
         self._emotion = emotion
         self._consolidator = consolidator
         self._tts = tts  # 保留供 agent.py stop() 读取
@@ -716,7 +716,6 @@ class CognitiveLoop:
 
     # ---- submit_task 拦截框架 ----
 
-    @staticmethod
     @staticmethod
     def _build_wake_up_message(ctx: dict) -> str:
         """构建渐进式唤醒消息。

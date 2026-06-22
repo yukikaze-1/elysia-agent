@@ -8,10 +8,15 @@ import {
 
 /** Base64 解码为 Uint8Array */
 function decodeBase64(b64) {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+  try {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch (e) {
+    console.warn('Audio: 无效 base64 数据', e.message);
+    return new Uint8Array(0);
+  }
 }
 
 /** 合并 Uint8Array 数组 */

@@ -177,6 +177,9 @@ class OpenAICompatBackend(LLMBackend):
                 extra_body=extra_body_final,
                 **kwargs,
             )
+            if not response.choices:
+                logger.error("LLM 返回空 choices — 模型=%s", self._model)
+                return
             content = response.choices[0].message.content
             # 捕获 usage 统计
             if getattr(response, "usage", None):

@@ -141,7 +141,7 @@ class ConfigLoader(Generic[T]):
         """Read and (optionally) scope a YAML file. Returns {} if no path given."""
         if not yaml_path:
             return {}
-        with open(yaml_path, "r") as fh:
+        with open(yaml_path, "r", encoding="utf-8") as fh:
             raw = yaml.safe_load(fh) or {}
 
         if yaml_key:

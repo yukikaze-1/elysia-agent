@@ -1,4 +1,6 @@
 import { state } from './state.js';
+import { esc } from './esc.js';
+export { esc };  // 向后兼容：tools.js / persistence.js 等仍从 chat.js 导入 esc
 import {
   TIME_DIVIDER_GAP_MS,
   SCROLL_FOLLOW_THRESHOLD,
@@ -6,13 +8,6 @@ import {
   INPUT_MAX_HEIGHT,
   INPUT_INITIAL_HEIGHT,
 } from './config.js';
-
-/* ---- 工具函数 ---- */
-export function esc(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
 
 /* ---- 统一工厂: 创建助理消息行 ---- */
 export function createAssistantRow() {
@@ -132,7 +127,8 @@ export function addImageToPreview(url, mime) {
 
   const item = document.createElement('div');
   item.className = 'preview-item';
-  item.innerHTML = `<img src="${esc(url)}" alt="预览"><span class="preview-remove">×</span>`;
+  // 使用 encodeURI 而非 esc()——后者会把 & 转为 &amp; 损坏 URL
+  item.innerHTML = `<img src="${url.replace(/"/g, '&quot;')}" alt="预览"><span class="preview-remove">×</span>`;
 
   item.querySelector('.preview-remove').onclick = (e) => {
     e.stopPropagation();
@@ -245,6 +241,7 @@ export function addToolCard(name, callId, args) {
   const card = document.createElement('div');
   card.className = 'tool-card executing';
   card.id = `tool-${id}`;
+  card.dataset.toolArgs = args ? JSON.stringify(args) : '{}';
   card.innerHTML = `
     <div class="tool-card-header" onclick="this.parentElement.classList.toggle('expanded')">
       <span class="tool-icon">🔧</span>

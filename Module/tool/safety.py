@@ -9,6 +9,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _sanitize_session_id(session_id: str) -> str:
+    """Sanitize session_id 防止路径穿越攻击。
+
+    仅允许 [a-zA-Z0-9_-]。不匹配时返回 "default"。
+    """
+    if _SESSION_ID_RE.match(session_id):
+        return session_id
+    logger.warning("session_id 包含非法字符，降级为 default: %r", session_id[:100])
+    return "default"
+
 from pydantic import ValidationError
 
 from .capability import Capability
@@ -137,9 +150,10 @@ def _resolve_sandbox_path(
 ) -> tuple[Path, str | None]:
     """Sandbox 路径解析。返回 (resolved_path, error_or_none)。"""
     raw = Path(path)
+    safe_sid = _sanitize_session_id(session_id)
     if not raw.is_absolute():
         if is_write:
-            write_dir = profile.write_dir.replace("{session_id}", session_id)
+            write_dir = profile.write_dir.replace("{session_id}", safe_sid)
             raw = Path(write_dir) / raw
         elif profile.read_dirs:
             raw = Path(profile.read_dirs[0]) / raw
@@ -423,31 +437,39 @@ class SafetyPipeline:
         profile = plugin.safety
         if profile is None:
             return None
-        session_id = getattr(ctx, "session_id", "default") or "default"
+        session_id = _sanitize_session_id(
+            getattr(ctx, "session_id", "default") or "default"
+        )
 
         # Network capability enforcement: plugins that access the network MUST declare Capability.NETWORK
         if profile.network_allowed:
             if Capability.NETWORK not in getattr(plugin, "capabilities", set()):
                 return "插件声明了 network_allowed 但未声明 Capability.NETWORK"
 
-        if "url" in raw_params and profile.network_allowed:
-            err = _validate_url(raw_params["url"], profile)
-            if err:
-                return err
+        # URL safety: check params whose name contains "url" (e.g. url, source_url, api_url)
+        if profile.network_allowed:
+            for key, value in raw_params.items():
+                if "url" in key.lower() and isinstance(value, str):
+                    err = _validate_url(value, profile)
+                    if err:
+                        return err
 
-        if "path" in raw_params and profile.filesystem_allowed:
-            raw_path = raw_params["path"]
+        # Path safety: check params whose name contains "path" (e.g. path, file_path, output_path)
+        if profile.filesystem_allowed:
             is_write = Capability.FILESYSTEM_WRITE in getattr(plugin, "capabilities", set())
-            resolved, err = _resolve_sandbox_path(
-                raw_path, profile, session_id, is_write,
-            )
-            if err:
-                return err
-            err = _validate_path(resolved, profile)
-            if err:
-                return err
-            # 将验证后的安全路径注入 ctx，插件不再自行从 CWD 解析
-            ctx.services["_safe_path"] = str(resolved)
+            for key, value in raw_params.items():
+                if "path" in key.lower() and isinstance(value, str):
+                    resolved, err = _resolve_sandbox_path(
+                        value, profile, session_id, is_write,
+                    )
+                    if err:
+                        return err
+                    err = _validate_path(resolved, profile)
+                    if err:
+                        return err
+                    # 将验证后的安全路径注入 ctx
+                    if key == "path":  # 只对主 "path" 参数注入 _safe_path
+                        ctx.services["_safe_path"] = str(resolved)
 
         return None
 

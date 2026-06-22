@@ -7,7 +7,7 @@
 
 ## 1. UserProfile
 
-- **当前位置**: `Module/task_system/schema.py`
+- **当前位置**: `Module/task_system/schema/protocol.py`
 - **应移至**: CognitiveLoop 侧（`core/` 或专属模块）
 - **原因**: 用户画像由 CognitiveLoop 管理，DelegationPreparer 只读消费。TaskSystem 不应拥有此类型。
 - **当前状态**: 占位（`model_config = {"extra": "allow"}`），字段由 CognitiveLoop 侧定义
@@ -15,7 +15,7 @@
 
 ## 2. Tool
 
-- **当前位置**: `Module/task_system/schema.py`
+- **当前位置**: `Module/task_system/schema/protocol.py`
 - **应移至**: `Module/tool/`（ToolRegistry / ToolPlugin 侧）
 - **原因**: 工具描述由 ToolRegistry 定义和管理。DelegationPreparer 从全量工具列表中筛选，只读引用。
 - **当前状态**: ✅ 已完成 — 已升级为具体模型：`name: str`, `description: str = ""`, `capabilities: list[str]`。TaskSystem 仅持有轻量投影（许可列表），不含执行逻辑或 SafetyProfile。
@@ -23,7 +23,7 @@
 
 ## 3. SessionId
 
-- **当前位置**: `Module/task_system/schema.py`
+- **当前位置**: `Module/task_system/schema/types.py`
 - **应移至**: CognitiveLoop 侧或 Core 共享类型层
 - **原因**: 会话 ID 由 CognitiveLoop 生成和管理。TaskSystem 仅用于日志关联和 Debug 追踪，不生成 SessionId。
 - **当前状态**: NewType，已正确定义。TaskSystem 侧只读使用。
@@ -55,7 +55,7 @@
 
 ## 7. RBACLevel（待定）
 
-- **当前位置**: `Module/task_system/schema.py`
+- **当前位置**: `Module/task_system/schema/types.py`
 - **应移至**: 待定（建议 `Module/tool/` 为 canonical home）
 - **原因**: Tools 在 `Module/tool/` 注册时声明权限级别，TaskSystem 执行时校验。两个模块都需要此枚举。以 Tool 侧为 canonical home 更合理——权限级别是工具的属性，应在工具定义处声明。
 - **当前状态**: 已标记 TODO，暂留 TaskSystem

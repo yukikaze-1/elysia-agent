@@ -1,5 +1,6 @@
 """提醒工具插件 — 设置定时提醒。"""
 
+import asyncio
 from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin, ToolContext
 from Module.tool.capability import Capability
@@ -24,17 +25,15 @@ class SetReminderPlugin(ToolPlugin):
     async def execute(
         self, *, ctx: ToolContext, emit=None, params: ReminderParams,
     ) -> str:
-        scheduler = ctx.get("scheduler")
-        if scheduler is None:
-            return "提醒功能当前不可用（调度器未加载）。"
-
         async def _remind():
             import asyncio
             await asyncio.sleep(params.delay_seconds)
             return f"⏰ 提醒: {params.message}"
 
         try:
-            tid = await scheduler.dispatch_background(_remind())
+            # 使用 asyncio.create_task 而非 scheduler.dispatch_background，
+            # 避免 coroutine 不可 JSON 序列化导致持久化/恢复时丢失提醒
+            asyncio.ensure_future(_remind())
             return f"已设置提醒，{params.delay_seconds} 秒后通知: {params.message}"
         except Exception as e:
             return f"设置提醒失败: {e}"

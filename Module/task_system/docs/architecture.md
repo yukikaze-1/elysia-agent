@@ -780,53 +780,43 @@ Worker 遇到 MUTATION
 
 **HITLNotifier 协议**：TaskSystem 不依赖 EventBus。定义在 `Module/task_system/protocol.py`。CognitiveLoop 重构时只需换实现，TaskSystem 一行不改。
 
-### 6.3 软 INTERRUPT（二次确认 + 优雅停止）
+### 6.3 暂停与取消（pause_requested 标志 + PAUSED 状态）
+
+> **注意**：早期设计文档使用了 `PAUSING` 状态名，实际代码使用 `ExecutionState.pause_requested` 标志
+> + `TaskStatus.PAUSED`。本节描述实际实现机制。
+
+**暂停流程（v1 已实现）**：
 
 ```
-用户明确表达打断意图（"停"、"别干了"、"先帮我做别的"），非普通对话输入
-  → task.status = PAUSING（立即！不等用户回复）
-      └─ Executor 在调度下一个 DAG 节点或执行下一个工具前必须检查此标签
-         若 PAUSING → 挂起等待，不产生新的输出/审批/进度事件
-  → Agent 回复："你有一个后台任务正在执行，确定要取消吗？"
-  → 用户确认"是，取消" → 启动软取消
-  → 用户说"不用取消" → task.status 恢复，Agent 回到 IDLE_BACKGROUND_TASK
+pause(task_id) 调用：
+  → exec_state.pause_requested = True（设置标志）
+  → Orchestrator._check_interrupts() 在每个节点执行前检测此标志
+     若 pause_requested=True → 当前节点完成后停止调度 → task.status = PAUSED
+  → pause() 轮询等待 PAUSED 确认（默认 30s 超时）
+     返回 True=暂停确认，False=超时/已终态/不存在
+  → 幂等——已 PAUSED 直接返回 True
 ```
 
-**普通输入不触发 PAUSING**：用户正常聊天、提问不应暂停后台任务。只有明确的打断意图（关键词匹配或 LLM 意图识别为 INTERRUPT）才触发。
-
-**在途事件拦截**：PAUSING 瞬间可能已有事件在队列中。`_dispatch_task_event` 消费时必须二次校验：
-
+**resume 流程（v1 已实现）**：
 ```
-_dispatch_task_event(msg):
-    task = get_task(msg.task_id)
-    if task.status == PAUSING and msg.type not in ("cancelled",):
-        # 拦截所有在途事件，包括 progress、approval_needed、completed
-        # approval_needed 被拦截避免了取消确认弹窗与审批卡片同时出现
-        暂存到 per-task 拦截缓冲区
-    else:
-        正常处理
-
-用户选"不取消" → 重放缓冲区
-用户选"取消" → 遍历缓冲区中所有 `approval_needed` 事件
-  → 向对应的 Worker Future 灌入 `CancelledError` 或 ABORT 信号
-  → 强制唤醒并终止后台悬挂等待的 Worker
-  → 清空缓冲区
+resume(task_id)：
+  → CAS 检查：PAUSED → RESUMING → 加载 checkpoint → Orchestrator.run(resume_from=exec_state)
+  → 清零 pause_requested / cancel_requested 标志
+  → 幂等——RUNNING 直接返回 mailbox
 ```
 
-**为什么需要 PAUSING**：确认弹窗期间，后台任务仍在运行。如果不暂停，极短时间窗内可能：
-- 任务刚好完成 → `completed` 事件冲掉确认弹窗上下文
-- 任务触发新的 MUTATION → HITL 审批卡片与取消确认弹窗同时出现 → 状态机卡死
-
+**取消流程（v1 已实现）**：
 ```
-软取消流程（用户确认后才触发）：
-  → task.status = CANCELLING
-  → 不再接受新的 user input 给此任务
-  → 当前 DAG 节点执行到安全停止点（不是立即杀）
-  → 启动硬超时看门狗：asyncio.wait_for(worker_cleanup(), timeout=5.0)
-  → 5s 内收到 ACK → 正常保存 checkpoint → 清理 → CANCELLED
-  → 5s 超时（工具卡死/死循环/无超时网络请求）：
-      → 协程模式：强制 task.cancel() 引发 CancelledError
-      → 进程模式：ProcessPoolExecutor 直接 SIGTERM
+cancel(task_id)：
+  → 设置 exec_state.cancel_requested = True
+  → Orchestrator._check_interrupts() 检测到 cancel_requested
+  → 当前节点在安全停止点终止 → task.status = CANCELLED
+  → 幂等——所有路径返回 True
+```
+
+**为什么用标志而非状态**：`pause_requested` / `cancel_requested` 是 `ExecutionState` 上的布尔标志，
+而非 `TaskStatus` 枚举值。这样 Orchestrator 在每个节点执行前只需检查标志位，
+无需在状态机中插入中间状态（如 `PAUSING`/`CANCELLING`），简化了并发下的状态一致性。
   → task.status = CANCELLED_FORCE（或仍为 CANCELLED）
 ```
 

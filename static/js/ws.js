@@ -39,6 +39,10 @@ export function connect(handler) {
     if (textInput) textInput.placeholder = '输入消息...';
   };
 
+  state.ws.onerror = () => {
+    console.warn('WS: 传输层错误');
+  };
+
   state.ws.onclose = () => {
     setConnStatus('disconnected', '断开 — 重连中...');
     const sendBtn = document.getElementById('send-btn');
@@ -74,12 +78,14 @@ function scheduleReconnect() {
 
 /** 发送消息（自动选择 TEXT 或 BINARY 帧） */
 export function send(data) {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
-      state.ws.send(data);
-    } else {
-      state.ws.send(typeof data === 'string' ? data : JSON.stringify(data));
-    }
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    console.warn('WS: 未连接，消息丢弃', typeof data === 'string' ? data.slice(0, 50) : typeof data);
+    return;
+  }
+  if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+    state.ws.send(data);
+  } else {
+    state.ws.send(typeof data === 'string' ? data : JSON.stringify(data));
   }
 }
 

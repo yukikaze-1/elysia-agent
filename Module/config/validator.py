@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from typing import Any, get_origin
+import types
+from typing import Any, Union, get_origin, get_args
 
 from .errors import (
     ConfigConstraintError,
@@ -116,11 +117,19 @@ class Validator:
             # 2. type check
             expected_type = hints.get(field_name)
             if expected_type is not None and value is not None:
-                # strip parameterized generics (e.g. list[str] → list) for isinstance
-                check_type = get_origin(expected_type) or expected_type
-                if not isinstance(value, check_type):
-                    errors.append(ConfigTypeError(class_name, field_name, expected_type, value))
-                    continue  # skip constraint + recursion on wrong type
+                # handle Optional[X] (Union[X, None]) — cannot isinstance against raw Union
+                origin = get_origin(expected_type)
+                if origin is not None and origin in (Union, types.UnionType):
+                    # Optional[X] = Union[X, None]; X | None = UnionType
+                    check_types = [t for t in get_args(expected_type) if t is not type(None)]
+                    if not any(isinstance(value, t) for t in check_types):
+                        errors.append(ConfigTypeError(class_name, field_name, expected_type, value))
+                        continue
+                else:
+                    check_type = origin or expected_type
+                    if not isinstance(value, check_type):
+                        errors.append(ConfigTypeError(class_name, field_name, expected_type, value))
+                        continue
 
             # 3. constraints
             for constraint in get_constraints(fld):

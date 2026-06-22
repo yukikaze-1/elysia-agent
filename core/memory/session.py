@@ -18,14 +18,31 @@ logger = logging.getLogger(__name__)
 class SessionMemory:
     """Bounded conversation window with optional MongoDB persistence."""
 
-    _pending_file = "data/session_pending.jsonl"
-
     def __init__(self, max_messages: int = 20, session_id: str = "default"):
         self._messages: deque[dict[str, Any]] = deque(maxlen=max_messages)
         self._params: dict[str, Any] = {}
         self._max_messages = max_messages
         self._session_id = session_id
         self._db: Any = None  # DocumentDBBackend or None
+        self._pending_file = os.path.join("data", f"session_{session_id}.json")
+
+    # ---- public properties (替代直接访问私有属性) ----
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @property
+    def db(self) -> Any:
+        return self._db
+
+    @property
+    def messages(self) -> deque[dict[str, Any]]:
+        return self._messages
+
+    @property
+    def pending_file(self) -> str:
+        return self._pending_file
 
     # ---- messages ----
 
@@ -171,12 +188,14 @@ class SessionMemory:
         if self._db is None:
             try:
                 os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
-                with open(self._pending_file, "w") as f:
+                tmp = self._pending_file + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
                     f.write(json.dumps(doc, ensure_ascii=False) + "\n")
+                os.replace(tmp, self._pending_file)  # 原子替换，崩溃不丢数据
                 logger.debug("MongoDB 不可用，session 保存到 %s", self._pending_file)
                 return True
             except Exception:
-                logger.warning("session JSONL 写入失败", exc_info=True)
+                logger.warning("session JSON 写入失败", exc_info=True)
                 return False
         try:
             logger.info("Session save to MongoDB: session=%s, messages=%d",
@@ -192,6 +211,10 @@ class SessionMemory:
         except Exception:
             logger.warning("session MongoDB 写入失败", exc_info=True)
             return False
+
+    async def load_from_jsonl(self, merge: bool = False) -> bool:
+        """公开接口——从本地 JSONL 文件恢复 session。"""
+        return await self._load_from_jsonl(merge=merge)
 
     async def _load_from_jsonl(self, merge: bool = False) -> bool:
         """从本地 JSONL 文件恢复 session。

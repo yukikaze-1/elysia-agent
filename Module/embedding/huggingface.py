@@ -89,6 +89,7 @@ class HuggingFaceBackend(EmbeddingBackend):
             self._logger.info("Using local model: %s", local_path)
         model_path = local_path or model_name
 
+        self._lock = asyncio.Lock()  # 保护 embed() 和 close() 之间的竞态
         self._embeddings = HuggingFaceEmbeddings(
             model_name=model_path,
             model_kwargs={
@@ -111,16 +112,23 @@ class HuggingFaceBackend(EmbeddingBackend):
 
     async def embed_documents(self, texts: list[str], **kwargs) -> list[list[float]]:
         """批量文本 → 向量列表。同步推理在线程池中执行。"""
-        return await asyncio.to_thread(self._embeddings.embed_documents, texts)
+        async with self._lock:
+            if self._embeddings is None:
+                raise RuntimeError("Embedding 模型已关闭")
+            return await asyncio.to_thread(self._embeddings.embed_documents, texts)
 
     async def embed_query(self, text: str, **kwargs) -> list[float]:
         """单条文本 → 单个向量。"""
-        return await asyncio.to_thread(self._embeddings.embed_query, text)
+        async with self._lock:
+            if self._embeddings is None:
+                raise RuntimeError("Embedding 模型已关闭")
+            return await asyncio.to_thread(self._embeddings.embed_query, text)
 
     async def close(self) -> None:
-        """释放模型，清理显存。"""
-        if hasattr(self, "_embeddings") and self._embeddings is not None:
-            del self._embeddings
-            self._embeddings = None
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        """释放模型，清理显存。与 embed 互斥，防止 segfault。"""
+        async with self._lock:
+            if hasattr(self, "_embeddings") and self._embeddings is not None:
+                del self._embeddings
+                self._embeddings = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()

@@ -108,16 +108,21 @@ export function saveChat() {
   for (const card of toolCards) {
     const id = card.id.replace('tool-', '');
     const name = card.querySelector('.tool-name')?.textContent || '';
-    // 从 args 区域重建参数对象
-    const argsEl = card.querySelector('.tool-card-args');
-    const argsText = argsEl?.textContent || '';
-    // 简易解析 "key: value, key2: value2" 格式
-    const args = {};
-    if (argsText) {
-      argsText.split(', ').forEach(pair => {
-        const colon = pair.indexOf(': ');
-        if (colon > 0) args[pair.slice(0, colon)] = pair.slice(colon + 2);
-      });
+    // 从 data 属性恢复结构化参数（避免字符串解析的逗号问题）
+    let args = {};
+    try {
+      const raw = card.dataset.toolArgs;
+      if (raw) args = JSON.parse(raw);
+    } catch (_) {
+      // 兼容旧格式：回退到文本解析
+      const argsEl = card.querySelector('.tool-card-args');
+      const argsText = argsEl?.textContent || '';
+      if (argsText) {
+        argsText.split(', ').forEach(pair => {
+          const colon = pair.indexOf(': ');
+          if (colon > 0) args[pair.slice(0, colon)] = pair.slice(colon + 2);
+        });
+      }
     }
     const resultContent = card.querySelector('.tool-result-content')?.textContent || '';
     const success = card.classList.contains('done');
@@ -136,7 +141,16 @@ export function saveChat() {
   }
 
   state.messages = msgs;
-  localStorage.setItem(SETTINGS_STORAGE_KEYS.CHAT, JSON.stringify(msgs.slice(-CHAT_MAX_STORED)));
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEYS.CHAT, JSON.stringify(msgs.slice(-CHAT_MAX_STORED)));
+  } catch (e) {
+    if (e.name === 'QuotaExceededError') {
+      console.warn('localStorage 配额已满，丢弃最旧消息后重试');
+      try {
+        localStorage.setItem(SETTINGS_STORAGE_KEYS.CHAT, JSON.stringify(msgs.slice(-Math.floor(CHAT_MAX_STORED / 2))));
+      } catch (_) { /* 静默降级 */ }
+    }
+  }
 }
 
 /** 从数组 content 构建用户气泡 DOM */

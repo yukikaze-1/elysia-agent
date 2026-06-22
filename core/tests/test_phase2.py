@@ -77,13 +77,23 @@ class TestSessionPersistence:
 
     @pytest.mark.asyncio
     async def test_save_load_no_db(self):
-        """save/load should return False when no DB connected."""
+        """无 DB 时，save/load 应使用本地 JSON 文件（原子写入），返回 True。"""
+        import os as _os
         from core.memory.session import SessionMemory
-        s = SessionMemory(session_id="test")
+        s = SessionMemory(session_id="test-save-load")
         s.add_message("user", "hello")
-        # No connect_db called, so _db is None
-        assert await s.save() is False
-        assert await s.load() is False
+        # No connect_db called, so _db is None — local file fallback
+        assert await s.save() is True
+        s2 = SessionMemory(session_id="test-save-load")
+        ok = await s2.load()
+        assert ok is True
+        assert len(s2._messages) == 1
+        assert s2._messages[0]["role"] == "user"
+        # cleanup
+        try:
+            _os.remove(s._pending_file)
+        except Exception:
+            pass
 
 
 # ============================================================================

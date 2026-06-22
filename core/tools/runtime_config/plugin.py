@@ -307,17 +307,15 @@ class RuntimeConfigPlugin(ToolPlugin):
         if tracker is None:
             return ""
         try:
-            input_tokens = getattr(tracker, 'input_tokens', 0)
-            output_tokens = getattr(tracker, 'output_tokens', 0)
-            total = input_tokens + output_tokens
+            total = getattr(tracker, 'session_total', 0)
             if total == 0:
                 return ""
-            return (
-                f"💾 Token 消耗: "
-                f"输入 {input_tokens / 1000:.1f}K / "
-                f"输出 {output_tokens / 1000:.1f}K / "
-                f"合计 {total / 1000:.1f}K"
-            )
+            per_model = getattr(tracker, 'per_model', {})
+            parts = [f"合计 {total / 1000:.1f}K"]
+            if per_model:
+                model_parts = [f"{m}: {t / 1000:.1f}K" for m, t in per_model.items()]
+                parts.append("(" + ", ".join(model_parts) + ")")
+            return f"💾 Token 消耗: " + " ".join(parts)
         except Exception:
             return ""
 

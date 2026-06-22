@@ -237,7 +237,13 @@ class TaskSystem:
                 assert self._semaphore is not None
                 self._semaphore.release()
 
-        task = asyncio.create_task(_run_and_cleanup())
+        try:
+            task = asyncio.create_task(_run_and_cleanup())
+        except Exception:
+            logger.exception("TaskSystem.submit: task_id=%s create_task 失败", task_id)
+            self._cleanup_task(task_id)
+            self._semaphore.release()
+            raise
         self._task_futures[task_id] = task
         logger.info("TaskSystem.submit: task_id=%s, intent=%.60s...", task_id, context.intent)
         return mailbox
@@ -347,7 +353,13 @@ class TaskSystem:
                 assert self._semaphore is not None
                 self._semaphore.release()
 
-        task = asyncio.create_task(_run_resume())
+        try:
+            task = asyncio.create_task(_run_resume())
+        except Exception:
+            logger.exception("TaskSystem.resume: task_id=%s create_task 失败", task_id)
+            self._cleanup_task(task_id)
+            self._semaphore.release()
+            raise
         self._task_futures[task_id] = task
         logger.info("TaskSystem.resume: task_id=%s 已恢复", task_id)
         return mailbox

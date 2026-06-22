@@ -226,9 +226,10 @@ class Evaluator:
 
             return biz, reason
 
-        except Exception as e:
-            logger.exception("Evaluator: LLM 业务判定异常，fallback goal_failed")
-            return BusinessStatus.GOAL_FAILED, f"LLM 判定异常: {e}"
+        except (ValueError, KeyError, json.JSONDecodeError) as e:
+            # LLM 返回格式异常（非 JSON、缺字段等），合理降级
+            logger.warning("Evaluator: LLM 业务判定解析失败，fallback goal_failed: %s", e)
+            return BusinessStatus.GOAL_FAILED, f"LLM 判定解析失败: {e}"
 
     async def _call_llm_for_judge(self, user_message: str, node: DAGNode) -> str | None:
         """调用 LLM 做业务判定。空响应时重试 1 次（DeepSeek 偶发空 content）。

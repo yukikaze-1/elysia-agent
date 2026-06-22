@@ -45,7 +45,7 @@ Module/task_system/
 │   │   ├── execution_loop.py  # 执行循环：orchestrator.run() + 结果处理
 │   │   ├── result_handlers.py # 结果处理函数
 │   │   └── replan.py          # Replan 决策：evaluator 判定 → replan 触发
-│   ├── orchestrator.py        # Orchestrator: 执行层——按 Plan 推进 DAG (~340 行)
+│   ├── orchestrator.py        # Orchestrator: 执行层——按 Plan 推进 DAG (421 行)
 │   ├── graph.py               # PlanGraph: NetworkX DiGraph 封装（图算法层）
 │   ├── planner/               # Planner: LLM → DAG 骨架 / DAGPatch（拆分自 planner.py）
 │   │   ├── __init__.py        # 公开导出

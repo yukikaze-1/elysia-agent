@@ -41,10 +41,17 @@ class EventBus:
         return await self._queue.get()
 
     def drain(self) -> list[Event]:
-        """Drain all pending events from the queue. Non-blocking."""
+        """Drain all pending events from the queue. Non-blocking.
+
+        Safe to call concurrently with next() — catches QueueEmpty
+        if another consumer steals an event between empty() and get_nowait().
+        """
         events: list[Event] = []
         while not self._queue.empty():
-            events.append(self._queue.get_nowait())
+            try:
+                events.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
         return events
 
     @property

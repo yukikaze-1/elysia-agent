@@ -1,4 +1,5 @@
 # 记忆工具配置
+# 注意: database_readonly 由各插件代码自行设置（search=True, save=False），
+# 不要在此统一覆盖，否则会阻止 MemorySavePlugin 写入。
 database_allowed: true
-database_readonly: true
 max_result_tokens: 2000

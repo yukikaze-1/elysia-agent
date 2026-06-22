@@ -189,10 +189,10 @@ class Agent:
         if mongo_ok:
             await self._session.load()
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
-            if os.path.exists(self._session._pending_file):
-                if await self._session._load_from_jsonl(merge=True):
+            if os.path.exists(self._session.pending_file):
+                if await self._session.load_from_jsonl(merge=True):
                     if await self._session.save():
-                        os.remove(self._session._pending_file)
+                        os.remove(self._session.pending_file)
                         logger.info("Session JSONL 已导入 MongoDB 并删除")
                     else:
                         logger.warning("Session MongoDB 写入失败，保留 JSONL")
@@ -202,9 +202,9 @@ class Agent:
         """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""
         from core.token_tracker import TokenTracker
         self._token_tracker = TokenTracker(
-            session_id=getattr(self._session, "_session_id", "default"),
+            session_id=self._session.session_id,
             output_manager=self._output,
-            document_db=self._session._db if mongo_ok else None,
+            document_db=self._session.db if mongo_ok else None,
         )
         self._cognitive.set_token_tracker(self._token_tracker)
         if mongo_ok:
@@ -217,7 +217,7 @@ class Agent:
     async def _start_tool_context(self) -> None:
         """注入 ToolContext，加载工具插件，设置 HITL broadcast。"""
         self._tool_ctx = ToolContext(
-            session_id=getattr(self._session, "_session_id", "default"),
+            session_id=self._session.session_id,
             user_id=self._user_name,
             services={
                 "memory": self._long_term,
@@ -229,13 +229,13 @@ class Agent:
                 "_token_tracker": self._token_tracker,         # TokenTracker 实例
                 "_tool_names": list(self._tool_manager.tool_names),
                 "_fsm_state": str(self._fsm.state),
-                "_session_msg_count": len(self._session._messages),
+                "_session_msg_count": len(self._session.messages),
                 "_tool_count": len(self._tool_manager._plugins),
             },
         )
         self._cognitive.set_tool_context(self._tool_ctx)
 
-        self._plugin_ctx.session_id = getattr(self._session, "_session_id", "default")
+        self._plugin_ctx.session_id = self._session.session_id
         self._plugin_ctx.memory = self._long_term
         self._plugin_ctx.scheduler = self._scheduler
         await self._tool_manager.load_all(ALL_PLUGINS, self._plugin_ctx)
@@ -344,7 +344,7 @@ class Agent:
         self._stop_cognitive_and_tts()
 
         # 4. 停止 mailbox 轮询
-        self._stop_mailbox()
+        await self._stop_mailbox()
 
         # 5. 停止 TaskSystem
         await self._stop_task_system()
@@ -413,10 +413,14 @@ class Agent:
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 
-    def _stop_mailbox(self) -> None:
-        """停止后台任务 mailbox 轮询。"""
+    async def _stop_mailbox(self) -> None:
+        """停止后台任务 mailbox 轮询——cancel 后必须 await 消耗 CancelledError。"""
         if self._mailbox_task:
             self._mailbox_task.cancel()
+            try:
+                await asyncio.wait_for(self._mailbox_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
             self._mailbox_task = None
 
     async def _stop_task_system(self) -> None:

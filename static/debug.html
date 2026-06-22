@@ -302,7 +302,8 @@ let pollInterval = POLL_MS;
 let paused = false;
 let lastInfo = null;
 
-function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+// esc() 定义与 js/esc.js 保持一致，debug.html 为非模块页无法 import
+function esc(s) { const d=document.createElement('div'); d.textContent=s??''; return d.innerHTML; }
 function ok(v) { return v ? '<span class="ok">&#10003;</span>' : '<span class="fail">&#10007;</span>'; }
 function trunc(s, n) { return s && s.length > n ? s.slice(0,n)+'…' : s||''; }
 

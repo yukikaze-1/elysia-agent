@@ -191,6 +191,8 @@ def create_app(
         except ValueError:
             return web.json_response({"error": "无效的分页参数"}, status=400)
 
+        if agent._long_term is None:
+            return web.json_response({"error": "长期记忆未初始化"}, status=503)
         entries = agent._long_term._entries
         if search:
             entries = [e for e in entries if search in e.text]
@@ -479,7 +481,8 @@ def create_app(
 
         agent = request.app["agent"]
         cfg = getattr(agent._config, "server", None)
-        max_bytes = (getattr(cfg, "image_max_mb", 10) or 10) * 1024 * 1024
+        mb = getattr(cfg, "image_max_mb", None)
+        max_bytes = (mb if mb is not None and mb > 0 else 10) * 1024 * 1024
         allowed = getattr(cfg, "image_allowed_types", None) or ["image/png", "image/jpeg", "image/gif", "image/webp"]
 
         try:

@@ -28,7 +28,7 @@ def _format_size(size: int) -> str:
 
 class ReadFileParams(BaseModel):
     path: str = Field(..., description="文件路径（相对或绝对）")
-    start_line: int = Field(default=0, ge=0, description="起始行号（0-indexed）")
+    start_line: int = Field(default=0, ge=0, description="起始行号（1-indexed，1 表示第一行）。设为 0 等效于 1")
     max_lines: int = Field(default=200, ge=1, le=500, description="最大读取行数")
 
 
@@ -69,8 +69,9 @@ class ReadFilePlugin(ToolPlugin):
 
                 result_lines: list[str] = []
                 i = 0
+                start = max(params.start_line, 1)  # 归一化到 1-indexed
                 for i, line in enumerate(f):
-                    if i < params.start_line:
+                    if i + 1 < start:  # i 是 0-indexed，start 是 1-indexed
                         continue
                     if len(result_lines) >= params.max_lines:
                         break
@@ -86,9 +87,9 @@ class ReadFilePlugin(ToolPlugin):
             output = "（文件为空）"
             return output
 
-        last_shown = params.start_line + len(result_lines)
+        last_shown = start - 1 + len(result_lines)
         if last_shown < total:
-            output += f"\n\n…[显示 {params.start_line+1}-{last_shown} 行，共 {total} 行]"
+            output += f"\n\n…[显示 {start}-{last_shown} 行，共 {total} 行]"
 
         return output
 
@@ -205,7 +206,10 @@ class WriteFilePlugin(ToolPlugin):
             self.safety.write_dir.replace("{session_id}", safe_sid)
         ).resolve()
 
-        if not str(resolved).startswith(str(write_dir)):
+        if not (
+            str(resolved) == str(write_dir)
+            or str(resolved).startswith(str(write_dir) + os.sep)
+        ):
             return f"拒绝写入: 路径 '{params.path}' 越过了 sandbox 边界"
 
         resolved.parent.mkdir(parents=True, exist_ok=True)

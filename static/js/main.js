@@ -142,6 +142,7 @@ function handleMessage(msg) {
       }
       break;
     case 'error': console.warn('Server:', msg.message); break;
+    default: console.warn('Unknown message type:', msg.type, msg); break;
   }
 }
 
@@ -276,12 +277,17 @@ function init() {
 }
 
 /* ---- HITL 审批对话框 ---- */
+let _approvalSeq = 0;
+
 function showApprovalDialog(params) {
   const { tool, params: toolParams, request_id } = params;
+  const seq = ++_approvalSeq;
+  const approveId = 'approval-approve-' + seq;
+  const denyId = 'approval-deny-' + seq;
 
   const overlay = document.createElement('div');
   overlay.className = 'approval-overlay';
-  overlay.id = 'approval-overlay';
+  overlay.id = 'approval-overlay-' + seq;
 
   const dialog = document.createElement('div');
   dialog.className = 'approval-dialog';
@@ -291,8 +297,8 @@ function showApprovalDialog(params) {
     '<div class="approval-tool">工具: <strong>' + esc(tool) + '</strong></div>' +
     '<div class="approval-detail">参数: ' + esc(toolParams || '(无)') + '</div>' +
     '<div class="approval-buttons">' +
-      '<button class="approval-approve" id="approval-approve">允许</button>' +
-      '<button class="approval-deny" id="approval-deny">拒绝</button>' +
+      '<button class="approval-approve" id="' + approveId + '">允许</button>' +
+      '<button class="approval-deny" id="' + denyId + '">拒绝</button>' +
     '</div>';
 
   overlay.appendChild(dialog);
@@ -303,16 +309,21 @@ function showApprovalDialog(params) {
     document.body.removeChild(overlay);
   }
 
-  document.getElementById('approval-approve').onclick = function() { respond(true); };
-  document.getElementById('approval-deny').onclick = function() { respond(false); };
+  document.getElementById(approveId).onclick = function() { respond(true); };
+  document.getElementById(denyId).onclick = function() { respond(false); };
 
   function onKey(e) {
     if (e.key === 'Escape') {
       respond(false);
-      document.removeEventListener('keydown', onKey);
     }
   }
   document.addEventListener('keydown', onKey);
+  // 弹窗关闭后自动清理监听器（respond 内部已 remove overlay）
+  const origRespond = respond;
+  respond = function(v) {
+    document.removeEventListener('keydown', onKey);
+    origRespond(v);
+  };
 }
 
 init();
