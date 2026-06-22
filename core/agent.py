@@ -178,8 +178,9 @@ class Agent:
         # 8. Mailbox 轮询
         self._start_mailbox_polling()
 
-        # 9. 启动横幅
-        self._print_startup_banner(mongo_ok, milvus_ok)
+        # 9. 保存启动状态供入口打印横幅
+        self._mongo_ok = mongo_ok
+        self._milvus_ok = milvus_ok
 
     async def _start_persistence(self) -> tuple[bool, bool]:
         """连接 MongoDB/Milvus，加载 session，恢复 JSONL 快照。"""
@@ -319,24 +320,26 @@ class Agent:
         """启动后台任务 mailbox 轮询（独立 asyncio.Task）。"""
         self._mailbox_task = asyncio.create_task(self._poll_mailboxes())
 
-    def _print_startup_banner(self, mongo_ok: bool, milvus_ok: bool) -> None:
-        """打印启动横幅。"""
-        db_status = []
-        if mongo_ok:
-            db_status.append("MongoDB")
-        if milvus_ok:
-            db_status.append("Milvus")
-        db_str = " + ".join(db_status) if db_status else "in-memory"
-
-        print(f"\n{'='*50}")
-        print(f"  {self._character.name} Agent 已启动")
-        print(f"  LLM: {self._llm.model}")
-        print(f"  记忆: {db_str}  ({self._long_term.count} entries)")
+    def _print_startup_banner(self, mongo_ok: bool, milvus_ok: bool) -> str:
+        """构建启动横幅字符串。调用方负责打印/记录。"""
+        db_parts = []
+        if mongo_ok: db_parts.append("MongoDB")
+        if milvus_ok: db_parts.append("Milvus")
+        db_str = " + ".join(db_parts) if db_parts else "in-memory"
         tts_model = self._config.tts.model
-        print(f"  TTS: {'已连接' if self._tts else '未连接（纯文本模式）'}  (model={tts_model})")
-        print(f"  人格: {', '.join(self._character.traits)}")
-        print(f"  工具: {', '.join(self._tool_manager.tool_names) or '无'}")
-        print(f"{'='*50}")
+
+        lines = [
+            f"\n{'='*50}",
+            f"  {self._character.name} Agent 已启动",
+            f"  LLM: {self._llm.model}",
+            f"  记忆: {db_str}  ({self._long_term.count} entries)",
+            f"  人格: {', '.join(self._character.traits)}",
+            f"  工具: {', '.join(self._tool_manager.tool_names) or '无'}",
+            f"{'='*50}",
+        ]
+        banner = "\n".join(lines)
+        logger.info(banner)
+        return banner  # 调用方可 continue 追加服务器信息
 
     async def stop(self) -> None:
         """Stop the agent, save session, clean up resources."""
@@ -640,15 +643,21 @@ class Agent:
             site = web.TCPSite(runner, host, port)
             await site.start()
 
-            print(f"\n{'='*50}")
-            print(f"  {self._character.name} WebSocket Server")
-            print(f"  地址: ws://{host}:{port}/ws")
-            print(f"  前端: http://{host}:{port}/")
+            banner = self._print_startup_banner(
+                getattr(self, '_mongo_ok', False),
+                getattr(self, '_milvus_ok', False),
+            )
             stt_model = self._config.stt.model
-            print(f"  STT: {'已连接' if stt_transcribe else '未连接'}  (model={stt_model})")
-            print(f"  TTS: {'已连接' if self._tts else '未连接'}  (model={self._config.tts.model})")
-            print(f"  退出: Ctrl+C 或浏览器关闭服务按钮")
-            print(f"{'='*50}")
+            tts_model = self._config.tts.model
+            server_info = "\n".join([
+                f"  ---",
+                f"  WebSocket: ws://{host}:{port}/ws  |  前端: http://{host}:{port}/",
+                f"  STT: {'已连接' if stt_transcribe else '未连接'}  (model={stt_model})",
+                f"  TTS: {'已连接' if self._tts else '未连接'}  (model={tts_model})",
+                f"  退出: Ctrl+C 或浏览器关闭服务按钮",
+                f"{'='*50}",
+            ])
+            logger.info(server_info)
 
             try:
                 while self._state == RunState.RUNNING:
@@ -685,8 +694,11 @@ class Agent:
     async def run_repl(self) -> None:
         """Run an interactive REPL loop (stdin). Blocks until /quit or Ctrl+D."""
         await self.start()
-
-        print("输入消息开始对话，/quit 退出，Ctrl+C 打断\n")
+        self._print_startup_banner(
+            getattr(self, '_mongo_ok', False),
+            getattr(self, '_milvus_ok', False),
+        )
+        print("\n输入消息开始对话，/quit 退出，Ctrl+C 打断\n")
 
         try:
             while self._state == RunState.RUNNING:
