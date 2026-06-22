@@ -183,9 +183,8 @@ h1 { font-size: 18px; margin-bottom: 4px; }
 .task-card .task-meta { font-size: 0.8em; color: var(--muted); margin-bottom: 0.4em; }
 
 .task-card .task-dag {
-  font-family: monospace; font-size: 0.82em; line-height: 1.6;
-  white-space: pre; background: var(--bg); padding: 0.5em;
-  border-radius: 4px; margin-top: 0.3em; overflow-x: auto;
+  background: var(--bg); padding: 0; border-radius: 4px;
+  margin-top: 0.3em; overflow: hidden;
 }
 
 .task-progress-bar {
@@ -294,6 +293,7 @@ h1 { font-size: 18px; margin-bottom: 4px; }
   </div>
 </div>
 
+<script src="https://unpkg.com/vis-network@9.1.6/dist/vis-network.min.js"></script>
 <script>
 const POLL_MS = 2000;
 const POLL_MAX_MS = 30000;
@@ -1001,6 +1001,71 @@ document.getElementById('db-refresh-btn').onclick = loadDbPanel;
 // TaskSystem Debug Tab — SSE 实时推送
 // ═══════════════════════════════════════════════════════════════════
 
+// ── 工具函数 ──
+
+function truncate(s, n) {
+  if (!s) return '';
+  return s.length <= n ? s : s.slice(0, n - 1) + '…';
+}
+
+// ── vis-network 配置 ──
+
+const STATUS_COLORS = {
+  pending: '#9e9e9e',
+  running: '#42a5f5',
+  success: '#66bb6a',
+  failed: '#ef5350',
+  unrecoverable: '#c62828',
+  skipped: '#e0e0e0',
+  waiting_approval: '#ffa726',
+  cancelled: '#bdbdbd',
+};
+
+const DAG_OPTIONS = {
+  layout: { hierarchical: { direction: 'UD', levelSeparation: 80, nodeSpacing: 50, sortMethod: 'directed' } },
+  edges: { arrows: 'to', color: '#aaa', width: 1 },
+  nodes: { shape: 'box', font: { size: 11, color: '#ccc' }, margin: 6, widthConstraint: { maximum: 160 } },
+  physics: false,
+  interaction: { dragNodes: false, zoomView: false },
+};
+
+const dagInstances = new Map();  // taskId → { network, nodes: DataSet, edges: Array }
+
+// ── node_id → vis.js 节点映射（initDAG 和 updateTaskCard 共用）──
+
+function makeNodeItem(n) {
+  return {
+    id: n.node_id,
+    label: truncate(n.node_id, 20),
+    color: STATUS_COLORS[n.status] || '#9e9e9e',
+    title: n.node_id + '\n' + (n.summary || '') + '\nattempt: ' + (n.attempt || 0),
+  };
+}
+
+// ── dagInstances 生命周期 ──
+
+function destroyDAG(taskId) {
+  var inst = dagInstances.get(taskId);
+  if (inst) { inst.network.destroy(); }
+  dagInstances.delete(taskId);
+}
+
+function destroyAllDAGs() {
+  dagInstances.forEach(function(inst) { inst.network.destroy(); });
+  dagInstances.clear();
+}
+
+// ── DAG 图初始化 ──
+
+function initDAG(container, taskId, nodes, edges) {
+  const items = nodes.map(makeNodeItem);
+  const edgeItems = (edges || []).map(function(e) { return { from: e[0], to: e[1] }; });
+  const data = { nodes: new vis.DataSet(items), edges: new vis.DataSet(edgeItems) };
+  const network = new vis.Network(container, data, DAG_OPTIONS);
+  dagInstances.set(taskId, { network: network, nodes: data.nodes, edges: edges || [] });
+  return network;
+}
+
 let taskES = null;
 let taskReconnectTimer = null;
 let taskReconnectDelay = 1000;
@@ -1014,6 +1079,7 @@ function connectTasksSSE() {
   taskES = new EventSource('/debug/api/tasks/stream');
 
   taskES.addEventListener('snapshot', function(e) {
+    destroyAllDAGs();  // SSE 重连/首次连接时销毁旧实例 + 清理，防止内存泄漏
     const tasks = JSON.parse(e.data);
     renderAllTasks(tasks);
     document.getElementById('tasks-stats').innerHTML =
@@ -1059,69 +1125,6 @@ function connectTasksSSE() {
   };
 }
 
-// ── DAG 渲染 ──
-
-function findMergeNodes(edges) {
-  const counts = {};
-  edges.forEach(function(e) { counts[e[1]] = (counts[e[1]] || 0) + 1; });
-  const merges = new Set();
-  for (var nid in counts) { if (counts[nid] > 1) merges.add(nid); }
-  return merges;
-}
-
-function renderDAG(nodes, edges) {
-  if (!nodes || nodes.length === 0) return '(空 DAG)';
-  var merges = findMergeNodes(edges || []);
-  var hasSplit = merges.size > 0;
-  if (!hasSplit || nodes.length <= 1) {
-    return nodes.map(function(n) { return statusIcon(n.status) + ' ' + n.node_id; }).join('\n');
-  }
-  var mergePredecessors = {};
-  (edges || []).forEach(function(e) {
-    if (merges.has(e[1])) {
-      if (!mergePredecessors[e[1]]) mergePredecessors[e[1]] = [];
-      mergePredecessors[e[1]].push(e[0]);
-    }
-  });
-  var lines = [];
-  var byId = {};
-  nodes.forEach(function(n) { byId[n.node_id] = n; });
-  var rendered = new Set();
-  nodes.forEach(function(n) {
-    if (merges.has(n.node_id)) return;
-    if (rendered.has(n.node_id)) return;
-    rendered.add(n.node_id);
-    var isPred = false;
-    for (var mid in mergePredecessors) {
-      if (mergePredecessors[mid].indexOf(n.node_id) >= 0) isPred = true;
-    }
-    if (isPred) {
-      lines.push(statusIcon(n.status) + ' ' + n.node_id + ' ─────────────┐');
-    } else {
-      lines.push(statusIcon(n.status) + ' ' + n.node_id);
-    }
-  });
-  merges.forEach(function(mid) {
-    var node = byId[mid];
-    if (!node || rendered.has(mid)) return;
-    rendered.add(mid);
-    lines.push('      ├→ ' + statusIcon(node.status) + ' ' + node.node_id);
-  });
-  return lines.join('\n');
-}
-
-function statusIcon(status) {
-  switch (status) {
-    case 'success': return '✅';
-    case 'running': return '⏳';
-    case 'pending': return '⬜';
-    case 'failed':
-    case 'unrecoverable': return '⊗';
-    case 'skipped': return '⏭️';
-    default: return '⬜';
-  }
-}
-
 // ── 渲染 ──
 
 function renderAllTasks(tasks) {
@@ -1154,25 +1157,41 @@ function insertTaskCardDOM(container, t) {
   var existing = document.getElementById('task-card-' + t.task_id);
   if (existing) existing.remove();
   var progress = 0;
-  if (t.nodes && t.nodes.length > 0) {
-    var done = t.nodes.filter(function(n) { return n.status === 'success' || n.status === 'skipped'; }).length;
-    progress = Math.round(done / t.nodes.length * 100);
+  var nodes = t.nodes || [];
+  if (nodes.length > 0) {
+    var done = nodes.filter(function(n) { return n.status === 'success' || n.status === 'skipped'; }).length;
+    progress = Math.round(done / nodes.length * 100);
   }
-  var edgesJson = JSON.stringify(t.edges || []);
-  var html = '<div class="task-card status-' + t.status + '" id="task-card-' + t.task_id + '" data-edges=\'' + edgesJson + '\'>' +
+  var dagId = 'dag-' + t.task_id;
+  var height = Math.min(400, Math.max(150, nodes.length * 60));
+  var html = '<div class="task-card status-' + t.status + '" id="task-card-' + t.task_id + '">' +
     '<div class="task-header">' +
       '<span class="task-id">' + t.task_id + '</span>' +
       '<span class="task-status status-' + t.status + '">' + t.status.toUpperCase() + '</span>' +
     '</div>' +
     '<div class="task-meta">Replan: ' + (t.plan_version - 1) + '/' + t.plan_version +
-    ' | 节点: ' + (t.nodes ? t.nodes.length : 0) + ' | 队列: ' + (t.mailbox_depth || 0) + '</div>' +
+    ' | 节点: ' + (nodes.length) + ' | 队列: ' + (t.mailbox_depth || 0) + '</div>' +
     '<div class="task-progress-bar"><div class="fill" style="width:' + progress + '%"></div></div>' +
-    '<div class="task-dag">' + renderDAG(t.nodes, t.edges) + '</div>' +
+    '<div class="task-dag" id="' + dagId + '" style="height:' + height + 'px;"></div>' +
   '</div>';
   container.insertAdjacentHTML('afterbegin', html);
+
+  // 创建 vis-network 图
+  if (nodes.length > 0) {
+    initDAG(document.getElementById(dagId), t.task_id, nodes, t.edges || []);
+  }
 }
 
-function updateTaskCard(taskId, newStatus, nodes) {
+function updateTaskCard(taskId, newStatus, newNodes) {
+  // 1. 更新 vis-network 图
+  var inst = dagInstances.get(taskId);
+  if (inst && newNodes && newNodes.length > 0) {
+    var items = newNodes.map(makeNodeItem);
+    inst.network.setData({ nodes: items, edges: inst.edges.map(function(e) { return { from: e[0], to: e[1] }; }) });
+    inst.nodes = inst.network.body.data.nodes;  // setData 创建新 DataSet，必须同步引用
+  }
+
+  // 2. 更新 card DOM 元信息
   var card = document.getElementById('task-card-' + taskId);
   if (!card) return;
   var statusEl = card.querySelector('.task-status');
@@ -1181,40 +1200,26 @@ function updateTaskCard(taskId, newStatus, nodes) {
     statusEl.className = 'task-status status-' + newStatus;
   }
   card.className = 'task-card status-' + newStatus;
-  if (nodes) {
-    var dagEl = card.querySelector('.task-dag');
-    if (dagEl) {
-      var edges = [];
-      try { edges = JSON.parse(card.getAttribute('data-edges') || '[]'); } catch(e) {}
-      dagEl.textContent = renderDAG(nodes, edges);
-    }
-    var progress = 0;
-    if (nodes.length > 0) {
-      var done = nodes.filter(function(n) { return n.status === 'success' || n.status === 'skipped'; }).length;
-      progress = Math.round(done / nodes.length * 100);
-    }
+
+  // 3. 更新进度条
+  if (newNodes && newNodes.length > 0) {
+    var done = newNodes.filter(function(n) { return n.status === 'success' || n.status === 'skipped'; }).length;
+    var progress = Math.round(done / newNodes.length * 100);
     var fill = card.querySelector('.task-progress-bar .fill');
     if (fill) fill.style.width = progress + '%';
   }
 }
 
 function updateNodeInCard(taskId, nodeId, newStatus, attempt) {
-  var card = document.getElementById('task-card-' + taskId);
-  if (!card) return;
-  var dagEl = card.querySelector('.task-dag');
-  if (!dagEl) return;
-  var lines = dagEl.textContent.split('\n');
-  for (var i = 0; i < lines.length; i++) {
-    if (lines[i].indexOf(nodeId) >= 0) {
-      var rest = lines[i].substring(2);
-      lines[i] = statusIcon(newStatus) + rest;
-      if (attempt > 1) lines[i] += ' (retry ' + attempt + ')';
-    }
-  }
-  dagEl.textContent = lines.join('\n');
+  var inst = dagInstances.get(taskId);
+  if (!inst) return;
+  var color = STATUS_COLORS[newStatus] || '#9e9e9e';
+  inst.nodes.update({ id: nodeId, color: color });  // 只更新颜色，title 由 initDAG/task_update 设置，此处保持不变
 }
 
 function moveTaskToDone(taskId, status, error) {
+  destroyDAG(taskId);  // 销毁 Network 实例并清理，后续 node_update/task_update 自然 no-op
+
   var card = document.getElementById('task-card-' + taskId);
   if (!card) return;
   card.remove();
