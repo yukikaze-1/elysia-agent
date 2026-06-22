@@ -681,6 +681,55 @@ def test_check_meltdown_triggers():
     assert "熔断" in reason
 
 
+def test_meltdown_time_budget():
+    """任务超过 max_task_duration_s 时触发时间熔断。"""
+    from datetime import datetime, timezone, timedelta
+    from Module.task_system.core.sub_agent.replan import check_meltdown
+
+    old_time = (datetime.now(timezone.utc) - timedelta(seconds=601)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    reason = check_meltdown(
+        plan_version=1, max_failure_count=5,
+        max_task_duration_s=600.0, created_at=old_time,
+        token_ledger=None, max_total_tokens=100_000,
+    )
+    assert reason is not None
+    assert "600" in reason
+
+
+def test_meltdown_token_budget():
+    """Token 消耗超过 max_total_tokens 时触发 token 熔断。"""
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock
+    from Module.task_system.core.sub_agent.replan import check_meltdown
+
+    mock_ledger = MagicMock()
+    mock_ledger.total_tokens = 150_000
+
+    # 使用当前时间避免触发时间熔断
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    reason = check_meltdown(
+        plan_version=1, max_failure_count=5,
+        max_task_duration_s=600.0, created_at=now_str,
+        token_ledger=mock_ledger, max_total_tokens=100_000,
+    )
+    assert reason is not None
+    assert "150000" in reason
+
+
+def test_meltdown_no_token_ledger_skips_token_check():
+    """token_ledger=None 时跳过 token 检查。"""
+    from datetime import datetime, timezone
+    from Module.task_system.core.sub_agent.replan import check_meltdown
+
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    reason = check_meltdown(
+        plan_version=1, max_failure_count=5,
+        max_task_duration_s=600.0, created_at=now_str,
+        token_ledger=None, max_total_tokens=100_000,
+    )
+    assert reason is None
+
+
 # ── _extract_node_results ───────────────────────────────────────────────────
 
 

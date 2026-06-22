@@ -33,25 +33,60 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def check_meltdown(plan_version: int, max_failure_count: int) -> str | None:
-    """检查是否触发熔断。
+def check_meltdown(
+    plan_version: int,
+    max_failure_count: int,
+    max_task_duration_s: float,
+    created_at: str,
+    token_ledger,           # TokenLedger | None
+    max_total_tokens: int,
+) -> str | None:
+    """检查是否触发熔断——plan_version / 时间预算 / token 预算。
 
     plan_version 从 1 开始，每次 Replan 递增。用 > 比较意味着
     max_failure_count=5 时允许多达 5 次 Replan（version 2→6），
     version 7 触发熔断。
 
     Returns:
-        None → 可以 Replan
-        str  → 熔断原因（不能 Replan）
+        None → 可以继续
+        str  → 熔断原因（不能继续）
     """
+    # 1. 计划版本
     if plan_version > max_failure_count:
         return (
             f"已 Replan {plan_version - 1} 次（上限 {max_failure_count}），"
             "已触发熔断"
         )
-    # TODO: 检查剩余 token
-    # TODO: 检查剩余时间（max_task_duration_s）
+
+    # 2. 时间预算
+    elapsed_s = _elapsed_seconds(created_at)
+    if elapsed_s > max_task_duration_s:
+        return (
+            f"任务耗时已超过 {elapsed_s:.0f} 秒"
+            f"（上限 {max_task_duration_s:.0f} 秒），已触发熔断"
+        )
+
+    # 3. Token 预算
+    if token_ledger is not None:
+        used = token_ledger.total_tokens
+        if used > max_total_tokens:
+            return (
+                f"任务已消耗 {used} tokens"
+                f"（上限 {max_total_tokens}），已触发熔断"
+            )
+
     return None
+
+
+def _elapsed_seconds(created_at: str) -> float:
+    """从 IsoTimestamp 计算已过去秒数。解析失败返回 0.0（优雅降级）。"""
+    from datetime import datetime, timezone
+
+    try:
+        created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        return (datetime.now(timezone.utc) - created_dt).total_seconds()
+    except (ValueError, TypeError):
+        return 0.0
 
 
 def extract_node_results(checkpoint: TaskCheckpoint) -> dict[str, NodeState]:
@@ -82,6 +117,7 @@ async def handle_replan(
     checkpoint_mgr: CheckpointManager,
     constraints: ConstraintConfig,
     push_mailbox_fn: Callable[..., Awaitable[None]],
+    token_ledger=None,                     # TokenLedger | None
 ) -> tuple[bool, ExecutionState | None]:
     """结构性失败——熔断检查 → Replan → DAGPatch 应用 → 构建 resume_state。
 
@@ -93,6 +129,8 @@ async def handle_replan(
     assert task_state.plan is not None, "NEEDS_REPLAN 时 plan 不应为 None"
     meltdown_reason = check_meltdown(
         task_state.plan.plan_version, constraints.max_failure_count,
+        constraints.max_task_duration_s, task_state.created_at,
+        token_ledger, constraints.max_total_tokens,
     )
     if meltdown_reason:
         logger.warning(

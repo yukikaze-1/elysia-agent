@@ -359,6 +359,7 @@ class SubAgent:
             result, task_state, graph, mailbox, context,
             self._replanner, self._plan_validator, self._orchestrator,
             self._checkpoint_mgr, self._infra.constraints, self._push_mailbox,
+            self._token_ledger,
         )
 
     def _check_meltdown(self, task_state: TaskState) -> str | None:
@@ -366,6 +367,10 @@ class SubAgent:
         return replan.check_meltdown(
             task_state.plan.plan_version,
             self._infra.constraints.max_failure_count,
+            self._infra.constraints.max_task_duration_s,
+            task_state.created_at,
+            self._token_ledger,
+            self._infra.constraints.max_total_tokens,
         )
 
     def _extract_node_results(
