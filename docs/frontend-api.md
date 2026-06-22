@@ -41,10 +41,12 @@ WS 断开后 session 保留在服务端。重连时：
 ### 发送方向总览
 
 ```
-Server ──→ Client (15 种):
+Server ──→ Client (16 种 type，action/command 含子类型):
   session, capabilities, state
   delta, message, typing
-  expression, action, command
+  expression
+  action  → tool_executing | tool_done | (Live2D)
+  command → tool_approval | block
   audio, audio_end
   transcription, wake
   token_usage, switch_model_result, error
@@ -169,23 +171,36 @@ Client ──→ Server (5 种):
 | `executing` | 正在执行工具调用 |
 | `speaking` | 正在输出回复 |
 | `interrupted` | 被打断，正在重置 |
+| `idle_background_task` | 空闲但后台有异步任务运行（可继续对话） |
 
-前端可用此状态显示加载动画、禁用输入框等。
+前端可用此状态显示加载动画、禁用输入框等。注意 `idle_background_task` 下用户仍可发消息——行为同 `idle`。
 
 ### 4. `delta` — 流式文本增量
 
 ```json
 { "type": "delta", "content": "你好" }
+{ "type": "delta", "content": "今天天气真好。", "stream_id": 3 }
 ```
 
-每次推送一个或多个字符。前端应逐字追加到当前 AI 气泡中。
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `content` | string | 文本内容（单字、短语或完整句子） |
+| `stream_id` | int（可选） | TTS 开启时存在，绑定了同一句的音频流，可作为气泡 key |
 
-可选字段 `stream_id`（int）用于多流场景。
+**TTS 关闭时**：无 `stream_id`，逐字推送，前端累积到当前气泡。
+**TTS 开启时**：有 `stream_id`，每条 `delta` 是完整句子，直接创建新气泡。
 
-### 5. `message` — 完整消息
+### 5. `message` — 完整消息 / 句边界
 
-非流式场景推送完整消息（系统通知、历史重放等）：
+两种用途：
 
+**句边界标记**（TTS 关闭时）：
+```json
+{ "type": "message", "content": "" }
+```
+`content` 为空字符串 → 表示上一句结束。前端应归档当前气泡，下一句 `delta` 创建新气泡。
+
+**完整消息**（非流式场景、系统通知）：
 ```json
 {
   "type": "message",
@@ -214,21 +229,82 @@ LLM 开始/结束生成时推送。前端可显示/隐藏 "..." 动画。
 }
 ```
 
-用于驱动 Live2D 或静态图的表情切换。
+用于驱动 Live2D 或静态图的表情切换。纯 .NET 客户端可忽略此消息。
 
-### 8. `action` — 角色动作
+### 8. `action` — 工具执行状态
+
+`action` 用于推送工具执行的生命周期事件。子类型由 `action` 字段区分：
+
+#### 8a. `tool_executing` — 工具开始执行
 
 ```json
 {
   "type": "action",
-  "action": "wave",
-  "params": { "duration": 2.0 }
+  "action": "tool_executing",
+  "params": {
+    "tool": "web_search",
+    "call_id": "call_abc123",
+    "args": { "query": "Python 3.13 新特性" }
+  }
 }
 ```
 
-用于 Live2D 动作触发。`params` 可选。
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `params.tool` | string | 工具名 |
+| `params.call_id` | string | 工具调用唯一 ID（后续 `tool_done` 用此 ID 匹配） |
+| `params.args` | object | 工具参数（key-value，value 已转为字符串） |
+
+**前端应**：创建一张"执行中"卡片（旋转动画），用 `call_id` 作为卡片 key。
+
+#### 8b. `tool_done` — 工具执行完成
+
+```json
+{
+  "type": "action",
+  "action": "tool_done",
+  "params": {
+    "tool": "web_search",
+    "call_id": "call_abc123",
+    "success": true,
+    "content": "搜索结果...",
+    "error": null,
+    "error_type": null,
+    "duration_ms": 1234,
+    "truncated": false
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `params.tool` | string | 工具名 |
+| `params.call_id` | string | 与 `tool_executing` 的 `call_id` 对应 |
+| `params.success` | bool | 执行是否成功 |
+| `params.content` | string | 工具返回内容（文本） |
+| `params.error` | string\|null | 错误信息（成功时为 null） |
+| `params.error_type` | string\|null | 错误类型码 |
+| `params.duration_ms` | int | 执行耗时（毫秒） |
+| `params.truncated` | bool | 结果是否被截断 |
+
+**前端应**：找到 `call_id` 对应的执行中卡片，更新状态：
+- 成功：绿色 ✓ + 耗时 + 展开显示结果内容
+- 失败：红色 ✗ + 错误信息，**默认展开**（失败信息需要可见）
+- `truncated: true` → 追加"(已截断)"提示
+
+#### 8c. Live2D 动作（可选）
+
+```json
+{ "type": "action", "action": "wave", "params": { "duration": 2.0 } }
+```
+
+纯功能型客户端可忽略。仅 Live2D 前端使用。
 
 ### 9. `command` — 指令
+
+`command` 用于推送需要前端交互的指令。子类型由 `command` 字段区分：
+
+#### 9a. `tool_approval` — 工具审批
 
 ```json
 {
@@ -242,7 +318,34 @@ LLM 开始/结束生成时推送。前端可显示/隐藏 "..." 动画。
 }
 ```
 
-当前唯一的 `command` 是 `tool_approval`——需要用户确认的危险操作。前端应弹出确认对话框，用户选 approve/deny 后通过 `tool_approval` 消息回复。
+需要用户确认的危险操作（如 `write_file`）。前端应弹出确认对话框，用户选 approve/deny 后发送 `tool_approval` 消息回复。
+
+#### 9b. `block` — 结构化内容块
+
+```json
+{
+  "type": "command",
+  "command": "block",
+  "params": {
+    "block_type": "code",
+    "content": "print('hello')",
+    "language": "python"
+  }
+}
+
+{
+  "type": "command",
+  "command": "block",
+  "params": {
+    "block_type": "markdown",
+    "content": "# 标题\n这是 **markdown** 内容"
+  }
+}
+```
+
+LLM 回复中的代码块或 Markdown 块单独推送。`block_type` 取值：`"code"`（language 字段为编程语言名）| `"markdown"`（无 language 字段）。
+
+**前端应**：代码块用等宽字体 + 语法高亮渲染，Markdown 块渲染为富文本。这些块独立于流式 delta 文字，作为独立 UI 元素插入。
 
 ### 10. `audio` + `audio_end` — TTS 音频流
 
@@ -331,6 +434,91 @@ LLM 开始/结束生成时推送。前端可显示/隐藏 "..." 动画。
 ```json
 { "type": "error", "message": "Invalid JSON" }
 ```
+
+---
+
+## 流式文字与 TTS 音频同步
+
+### 分句策略
+
+服务端使用 `SentenceBuffer` 按标点符号（`。！？.!?\n～…` 等）切分 LLM 输出流。每检测到一个完整句子，根据 TTS 是否可用走不同路径。
+
+### TTS 开启时（绑定发送）
+
+服务端**不发送**逐字 delta。每个完整句子触发一次 TTS 合成，等首块音频到达后**绑定发送**：
+
+```
+每个句子 (stream_id=N):
+  delta     { stream_id: N, content: "完整句子文字" }   ← 创建新气泡
+  audio     { stream_id: N, seq: 0, data: "<base64>" }  ← 第 0 块音频
+  audio     { stream_id: N, seq: 1, data: "<base64>" }  ← 第 1 块音频
+  ...
+  audio_end { stream_id: N }                             ← 本句音频结束
+```
+
+**前端处理规则：**
+
+1. 收到带 `stream_id` 的 `delta` → 创建新气泡，渲染完整句子文字
+2. 收到 `audio` → 按 `stream_id` 分组缓冲，按 `seq` 排序播放
+3. 收到 `audio_end` → 标记该 `stream_id` 音频流结束
+4. 多个 `stream_id` 可并发——前一句音频还在播放时，后一句的 delta 已到（文字先行）
+5. 音频播放队列：收到 `audio_end` 之前不可播放下一句音频（保证顺序），但文字气泡可以先渲染
+
+**emoji 句**：纯 emoji 句不送 TTS，作为 `delta`（带 `stream_id`）插在相邻句子之间。
+
+### TTS 关闭时（纯文字流）
+
+LLM 逐 token 产出 → 逐字 `delta`（无 `stream_id`）推送给前端：
+
+```
+delta { content: "今" }
+delta { content: "天" }
+delta { content: "天" }
+delta { content: "气" }
+...
+delta { content: "今天天气真好。" }   ← 完整句（SentenceBuffer 切出）
+message { content: "" }              ← 句边界标记
+delta { content: "我" }
+delta { content: "们" }
+...
+```
+
+**前端处理规则：**
+
+1. `delta` 逐字追加到当前气泡（`appendDelta`）
+2. `message` 且 `content: ""` → **句边界**：归档当前气泡，下一句 `delta` 创建新气泡
+3. `state` 变为 `idle` → 全部句子完成，最后一个气泡也归档
+
+### audio 格式
+
+详见 [10. audio + audio_end](#10-audio--audio_end---tts-音频流)。
+
+---
+
+## 工具执行生命周期
+
+LLM 决定调用工具后，前端收到一系列消息来展示工具执行进度：
+
+```
+state { state: "executing" }
+  → action { action: "tool_executing", params: { tool, call_id, args } }   ← 工具 1 开始
+  → action { action: "tool_executing", params: { tool, call_id, args } }   ← 工具 2 开始（可并行）
+  ...
+  → action { action: "tool_done", params: { call_id, success, content, ... } }  ← 工具 1 完成
+  → action { action: "tool_done", params: { call_id, success, content, ... } }  ← 工具 2 完成
+state { state: "thinking" }   （或 "speaking" → 流式文字）
+```
+
+**前端渲染规则：**
+
+1. 收到 `tool_executing` → 创建工具卡片（旋转动画 + "执行中"），用 `call_id` 做 key
+2. 收到 `tool_done` → 找到对应 `call_id` 的卡片，更新为完成/失败状态
+3. `state` 变为 `executing` → 可显示"使用工具…"全局状态提示
+4. 多个工具并行：`tool_executing` 可能连续来多个，独立建卡
+5. 工具结果也会在 `session` 消息中作为 `role: "tool"` 出现（用于历史重放）
+6. 会话重放时：assistant 消息含 `tool_calls` → 先建卡片；立即跟 tool 消息 → 更新卡片
+
+详见 [8a. tool_executing](#8a-tool_executing---工具开始执行) 和 [8b. tool_done](#8b-tool_done---工具执行完成)。
 
 ---
 
@@ -508,12 +696,13 @@ Content-Type: application/json
 
 ```
 POST /shutdown       → {"status": "shutting_down"}
-POST /restart        → {"status": "restarting"}
+GET  /shutdown       → 同上（浏览器直接访问）
+POST /restart        → {"status": "restarting"}（仅 POST，不支持 GET）
 GET  /tools          → {"plugins": [{ "name": "web_search", "description": "...", "safety": {...} }, ...]}
 POST /tools/reload   → 请求: {"name": "web_search"} 响应: {"ok": true, "name": "web_search"}
 ```
 
-`/shutdown` 和 `/restart` 均接受 GET（浏览器直接访问）和 POST。
+`/shutdown` 接受 GET 和 POST。`/restart` 仅接受 POST。
 
 ### Debug API（开发用）
 
@@ -534,10 +723,18 @@ GET  /debug/api/prompts      → Prompt 历史记录
 
 1. **WebSocket 客户端** — 使用 `System.Net.WebSockets.ClientWebSocket`，连接 `/ws`
 2. **JSON 序列化** — 使用 `System.Text.Json`，收到消息先读 `type` 字段路由
-3. **音频** — `audio` 消息的 `data` 是 base64，decode 后用 NAudio 等库播放
-4. **Live2D / 表情** — 非必须，忽略 `expression`/`action` 消息即可
-5. **图片上传** — 先 POST `/api/images` 拿到 `path`，再通过 WS 发送含 `source` 的多模态 `text` 消息
-6. **审批弹窗** — 收到 `type: "command", command: "tool_approval"` 时弹出确认框，用户选择后发回 `tool_approval` 消息
+3. **流式文字** —
+   - 检测 `capabilities.tts`：true → TTS 模式（delta 带 stream_id，完整句）；false → 纯文字模式（逐字 delta）
+   - TTS 模式：每条 delta 创建新气泡，stream_id 关联音频流
+   - 纯文字模式：逐字追加到气泡，遇到 `message { content: "" }` 归档当前气泡
+4. **音频播放** —
+   - `audio` 的 `data` 是 base64 WAV，decode 后用 NAudio 等库播放
+   - 按 `stream_id` 分组，按 `seq` 排序，收到 `audio_end` 才播下一句
+5. **Live2D / 表情** — 非必须，忽略 `expression`/`action` 消息即可
+6. **工具卡片** — 收到 `action.action === "tool_executing"` 创建执行中卡片，收到 `action.action === "tool_done"` 更新为完成/失败。`call_id` 关联两张消息
+7. **结构化内容** — 收到 `command.command === "block"` 独立渲染代码块（等宽字体+语法高亮）或 Markdown 块（富文本），不混入流式文字
+8. **图片上传** — 先 POST `/api/images` 拿到 `path`，再通过 WS 发送含 `source` 的多模态 `text` 消息
+9. **审批弹窗** — 收到 `type: "command", command: "tool_approval"` 时弹出确认框，用户选择后发回 `tool_approval` 消息
 
 ### 最小接入代码（伪 C#）
 
@@ -555,10 +752,38 @@ while (ws.State == WebSocketState.Open) {
     
     switch (type) {
         case "session":   /* 恢复历史 */ break;
-        case "delta":     /* 追加文本 */ break;
+        case "delta":
+            var sid = msg.TryGet("stream_id", out var s) ? (int)s : (int?)null;
+            if (sid != null) {
+                // TTS 模式：完整句子，创建新气泡
+                AppendBubble(sid.Value, (string)msg["content"]);
+            } else {
+                // 纯文字模式：逐字追加到当前气泡
+                AppendToCurrentBubble((string)msg["content"]);
+            }
+            break;
+        case "message":
+            if (string.IsNullOrEmpty((string)msg["content"])) {
+                FinalizeCurrentBubble();  // 句边界
+            }
+            break;
         case "state":     /* 更新状态 */ break;
-        case "audio":     /* 播放音频 */ break;
-        case "command":   /* 处理审批 */ break;
+        case "audio":     /* 按 stream_id 缓冲，seq 排序播放 */ break;
+        case "audio_end": /* 标记 stream_id 结束，可播下一句 */ break;
+        case "action":
+            if ((string)msg["action"] == "tool_executing") {
+                AddToolCard(msg["params"]);   // call_id 做 key，执行中动画
+            } else if ((string)msg["action"] == "tool_done") {
+                UpdateToolCard(msg["params"]); // call_id 匹配，显示结果
+            }
+            break;
+        case "command":
+            if ((string)msg["command"] == "tool_approval") {
+                ShowApprovalDialog(msg["params"]);
+            } else if ((string)msg["command"] == "block") {
+                RenderBlock(msg["params"]);    // code → 语法高亮, markdown → 富文本
+            }
+            break;
         // ...
     }
 }
