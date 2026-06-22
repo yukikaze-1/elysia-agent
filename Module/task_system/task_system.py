@@ -250,9 +250,16 @@ class TaskSystem:
 
     # ── 任务控制 ─────────────────────────────────────────────────────────
 
-    async def pause(self, task_id: TaskId) -> None:
-        """暂停任务——委托给 lifecycle.pause()。"""
-        lifecycle.pause(self._tasks, task_id)
+    async def pause(self, task_id: TaskId, timeout: float = 30.0) -> bool:
+        """暂停任务——委托给 lifecycle.pause()。
+
+        等待 orchestrator 确认 PAUSED 状态，带超时。
+
+        Returns:
+            True:  暂停已确认
+            False: 超时——orchestrator 未在 timeout 秒内到达检查点
+        """
+        return await lifecycle.pause(self._tasks, task_id, timeout=timeout)
 
     async def resume(self, task_id: TaskId) -> TaskMailbox | ResumeError:
         """从 PAUSED 恢复执行。

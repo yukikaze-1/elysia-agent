@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from Module.task_system.mailbox import push_mailbox_event
@@ -25,37 +26,61 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def pause(
+async def pause(
     tasks: dict[TaskId, SubAgent],
     task_id: TaskId,
-) -> None:
+    timeout: float = 30.0,
+) -> bool:
     """暂停任务——在下一个安全点停止执行并保存 checkpoint。幂等。
 
+    设 pause_requested 标志后，轮询等待 orchestrator 确认 PAUSED 状态。
+
     幂等——无论任务处于什么状态都不会报错：
-    - RUNNING → 设置 pause_requested 标志
-    - PAUSED / 已终态 / 已清理 / 尚未启动 → 无操作（成功）
+    - RUNNING → 设置 pause_requested 标志，等待 PAUSED 确认
+    - PAUSED → 立即返回 True（幂等）
+    - 已终态 / 已清理 / 尚未启动 → 返回 False
 
     Orchestrator 在当前节点执行完成后检测到 pause_requested，
     保存 checkpoint 后返回 PAUSED，SubAgent 推送 PAUSED 事件后退出循环。
+
+    Returns:
+        True:  暂停已确认（task_state.status == PAUSED）
+        False: 超时——orchestrator 在 timeout 秒内未到达检查点
+                （可能正在执行长 LLM 调用，稍后可重试）
     """
     sub_agent = tasks.get(task_id)
     if sub_agent is None:
-        return  # 已清理——无需暂停
+        return False  # 已清理——无需暂停
 
     ts = sub_agent._task_state
     if ts is None or ts.is_terminal():
-        return  # 已终态——无需暂停
+        return False  # 已终态——无需暂停
     if ts.status == TaskStatus.PAUSED:
-        return  # 已暂停——幂等
+        return True   # 已暂停——幂等
 
     if sub_agent._orchestrator is None:
-        return  # 尚未启动——无需暂停
+        return False  # 尚未启动——无需暂停
     exec_state = sub_agent._orchestrator._exec_state
     if exec_state is None:
-        return  # 尚未启动——无需暂停
+        return False  # 尚未启动——无需暂停
 
     exec_state.pause_requested = True
     logger.info("lifecycle.pause: task_id=%s 暂停请求已发送", task_id)
+
+    # 等待 orchestrator 确认 PAUSED
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if ts.status == TaskStatus.PAUSED:
+            logger.info("lifecycle.pause: task_id=%s 暂停已确认", task_id)
+            return True
+        # 任务可能在等待期间进入终态（LLM 恰好在检查点前完成）
+        if ts.is_terminal():
+            logger.info("lifecycle.pause: task_id=%s 在等待期间已进入终态", task_id)
+            return False
+        await asyncio.sleep(0.1)
+
+    logger.warning("lifecycle.pause: task_id=%s 暂停超时 (%.0fs)", task_id, timeout)
+    return False
 
 
 async def cancel(

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -309,6 +310,96 @@ async def test_pause_not_started_no_error():
     ts._tasks[tid] = sub_agent
 
     await ts.pause(tid)  # 不抛异常
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# pause() 超时确认
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_pause_confirmed():
+    """pause() 在 orchestrator 确认 PAUSED 后返回 True（≤1s）。"""
+    ts = await _build_task_system()
+    tid = TaskId("t1")
+    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    # 模拟 orchestrator 在检测到 pause_requested 后切换状态
+    async def simulate_orch():
+        await asyncio.sleep(0.05)
+        task_state.status = TaskStatus.PAUSED
+    asyncio.create_task(simulate_orch())
+
+    t0 = time.monotonic()
+    result = await ts.pause(tid, timeout=5.0)
+    elapsed = time.monotonic() - t0
+
+    assert result is True
+    assert elapsed < 1.0
+
+
+@pytest.mark.asyncio
+async def test_pause_timeout():
+    """pause() 在 orchestrator 不响应时超时返回 False。"""
+    ts = await _build_task_system()
+    tid = TaskId("t2")
+    task_state = _make_task_state("t2", TaskStatus.RUNNING)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    # 不切换状态——模拟 orchestrator 卡在长 LLM 调用中
+    t0 = time.monotonic()
+    result = await ts.pause(tid, timeout=0.5)
+    elapsed = time.monotonic() - t0
+
+    assert result is False
+    assert elapsed >= 0.4   # 应等待接近 timeout
+
+
+@pytest.mark.asyncio
+async def test_pause_terminal_during_wait():
+    """pause() 等待期间任务进入终态——提前返回 False。"""
+    ts = await _build_task_system()
+    tid = TaskId("t3")
+    task_state = _make_task_state("t3", TaskStatus.RUNNING)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    # 模拟：orchestrator 在 pause 轮询期间完成执行
+    async def delayed_complete():
+        await asyncio.sleep(0.15)
+        task_state.status = TaskStatus.COMPLETED
+    asyncio.create_task(delayed_complete())
+
+    t0 = time.monotonic()
+    result = await ts.pause(tid, timeout=2.0)
+    elapsed = time.monotonic() - t0
+
+    assert result is False
+    assert elapsed < 0.5
+
+
+@pytest.mark.asyncio
+async def test_pause_idempotent():
+    """对已 PAUSED 的任务——立即返回 True，不进入轮询。"""
+    ts = await _build_task_system()
+    tid = TaskId("t4")
+    task_state = _make_task_state("t4", TaskStatus.PAUSED)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+    ts._tasks[tid] = sub_agent
+
+    t0 = time.monotonic()
+    result = await ts.pause(tid, timeout=5.0)
+    elapsed = time.monotonic() - t0
+
+    assert result is True
+    assert elapsed < 0.1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
