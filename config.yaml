@@ -10,7 +10,7 @@ llm:
   model: deepseek/deepseek-v4-flash
 
 memory:
-  session_max_messages: 20
+  session_max_messages: 200
 
 server:
   host: 0.0.0.0
