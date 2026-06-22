@@ -6,7 +6,7 @@
                         ┌──────────────────────────┐
                         │     Entry Points          │
                         │  app.py (argparse)       │
-                        │  ├── interactive (stdin)  │
+                        │  ├── repl (stdin)         │
                         │  ├── once (single-shot)   │
                         │  └── server (WebSocket)   │
                         └──────────┬───────────────┘
@@ -482,14 +482,14 @@ proactive.enabled: false → 整个机制关闭
 | 层 | 存储 | 生命周期 | 容量 | 用途 |
 |------|------|------|------|------|
 | Working | 内存 (单次推理) | 单次 LLM 调用 | 动态 | PromptAssembler 组装 |
-| Session | MongoDB / deque | 跨进程重启 | 最近 20 轮 | 对话上下文 + 运行时参数 |
+| Session | MongoDB / deque | 跨进程重启 | config.yaml 可配 (默认 200) | 对话上下文 + 运行时参数 |
 | Long-term | Milvus + 内存 | 跨会话 | 无上限 | 事实/偏好/计划 语义搜索 |
 
 ### 5.2 SessionMemory
 
 ```python
 class SessionMemory:
-    _messages: deque[dict]        # 最多 max_messages 条
+    _messages: deque[dict]        # 最多 max_messages 条 (config.yaml session_max_messages)
     _params: dict                 # mood, mood_intensity 等
     _db: DocumentDBBackend | None # MongoDB 或降级
 
@@ -531,25 +531,30 @@ _history: 最近 20 条 (供 /debug 面板)
 _buffer: 未达阈值的待处理对话
 ```
 
-### 5.5 ToolRegistry
+### 5.5 ToolManager
 
-OpenAI Function Calling Schema 标准化：
+Pydantic ToolPlugin 架构：
 
 ```python
-tools.register(
-    name="search_memory",
-    description="在长期记忆中搜索相关信息",
-    parameters={...},       # JSON Schema
-    func=async_search_memory,
-)
+# 每个工具是 ToolPlugin 子类，Pydantic BaseModel 参数校验
+class WebSearchPlugin(ToolPlugin):
+    name = "web_search"
+    description = "搜索互联网信息"
+    param_model = WebSearchParams  # Pydantic BaseModel
+    capabilities = {Capability.NETWORK}
+    safety = SafetyProfile(network_allowed=True, block_private_ips=True, ...)
+
+# ToolManager 统一管理: 加载、执行、HITL 审批、热重载
+tool_manager.load_all(ALL_PLUGINS, plugin_ctx)
 
 # CognitiveLoop 自动:
 # tool_definitions() → LLM 请求
-# LLM 返回 tool_calls → execute() → 结果回注 messages
-# type coercion: "5" → 5 (integer), "true" → True (boolean)
+# LLM 返回 tool_calls → SafetyPipeline (validate→safety→hitl→execute→truncate) → 结果回注 messages
 ```
 
-已注册工具（7 个）：
+详见 `Module/tool/README.md`。
+
+已注册工具（12 个）：
 | 工具 | 参数 | 功能 |
 |------|------|------|
 | `search_memory` | query, limit | 语义搜索长期记忆 |
@@ -557,8 +562,13 @@ tools.register(
 | `get_time` | — | 获取当前日期时间 |
 | `web_search` | query, engine | DuckDuckGo / Brave 搜索 |
 | `web_fetch` | url | 抓取网页内容 |
-| `read_file` | path | 读取本地文件 |
+| `read_file` | path, start_line, max_lines | 读取本地文件（沙箱内） |
 | `list_directory` | path | 列出目录内容 |
+| `write_file` | path, content | 写入文件（需审批） |
+| `set_reminder` | text, delay_seconds | 设置定时提醒 |
+| `get_runtime_config` | query | 查询运行时配置和状态 |
+| `get_self_state` | — | 查询 Agent 自身状态 |
+| `describe_image` | image_indices | 视觉模型描述图片 |
 
 CognitiveLoop 使用 `asyncio.gather` 并行执行无依赖工具。
 
@@ -656,7 +666,7 @@ llm:
   model: deepseek/deepseek-v4-flash  # LLM 模型标识
 
 memory:
-  session_max_messages: 20           # 会话窗口大小
+  session_max_messages: 200          # 会话窗口大小
 
 server:
   host: 0.0.0.0
@@ -697,25 +707,15 @@ proactive:
 
 ## 8. Debug Dashboard
 
-`GET /debug` → `static/debug.html` (183 行)，每 2s 轮询 `GET /debug/api`:
+`GET /debug` → `static/debug.html`（多标签页仪表板）
 
-```
-┌──────────────────────┬──────────────────────┐
-│ System               │ Memory               │
-│ FSM state/previous   │ Session messages     │
-│ Processing flag      │ Session params       │
-│ LLM model            │ LT count + entries   │
-│ TTS connected        │ Milvus / Embedding   │
-│ WS clients           │ MongoDB connected    │
-├──────────────────────┼──────────────────────┤
-│ Tools                │ Consolidation        │
-│ tool_names list      │ Recent history       │
-│ Recent history (5)   │                      │
-├──────────────────────┼──────────────────────┤
-│ Recent Session (5)   │ Long-term Memory (5) │
-│ role + content       │ text + metadata      │
-└──────────────────────┴──────────────────────┘
-```
+**标签页：**
+| 标签 | 数据来源 | 功能 |
+|------|---------|------|
+| System | `/debug/api` 轮询 | FSM 状态、Session/LTM、工具执行、Token 消耗、延迟统计、内存占用、Scheduler |
+| 数据库 | `/debug/api/ltm` + `/debug/api/sessions` | 长期记忆 CRUD、Session 管理 |
+| 任务 | `/debug/api/tasks/stream` SSE | TaskSystem DAG 可视化 (vis-network) |
+| Config | Provider REST API | LLM/STT/TTS 端点管理、连通性测试 |
 
 ---
 
@@ -726,7 +726,7 @@ class Agent:
     def __init__(self, *, config: AppConfig):
         # L0: OutputManager + ConsoleChannel
         # Character: CharacterConfig.from_yaml(config.agent.character)
-        # L2: SessionMemory + LongTermMemory + ToolRegistry
+        # L2: SessionMemory + LongTermMemory + ToolManager
         #     + register 3 tools
         # L1: EventBus + AgentFSM + LLMAdapter + PromptAssembler
         #     + EmotionEngine + MemoryConsolidator
@@ -735,16 +735,22 @@ class Agent:
 
     async def start():
         # MongoDB + Milvus 并行连接
-        # _seed_memories() — 5 条初始记忆 (in-memory only, no embedding)
         # SessionMemory.load() — 恢复历史会话
-        # embedding 预加载 (background task, thread pool)
+        # TokenTracker + PromptRecorder 初始化
+        # ToolManager.load_all(ALL_PLUGINS) — 加载工具插件
+        # TaskScheduler Worker Pool 启动
         # IdleMonitor.start()
+        # TTS/STT 条件启动
+        # TaskSystem 启动 + Mailbox 轮询
         # 事件处理循环 (_process_events)
 
     async def stop():
         # cancel cognitive + TTS tasks
-        # cancel embedding preload
+        # cancel embedding preload + mailbox polling
         # idle_monitor.stop()
+        # scheduler.stop()
+        # tool_manager.shutdown()
+        # task_system.stop()
         # event_task.cancel()
         # session.save() (3s timeout)
         # long_term.close()
@@ -794,7 +800,7 @@ core/tests/
 │   SessionMemory, LongTermMemory, MemoryConsolidator
 ├── test_phase3.py             # 集成 + 组件测试 (148 tests)
 │   CognitiveLoop TTS/tools, Agent lifecycle, IdleMonitor,
-│   DebugInfo, ToolRegistry, VAD interrupt, PromptAssembler,
+│   DebugInfo, ToolManager, VAD interrupt, PromptAssembler,
 │   CharacterConfig, AppConfig, LLMAdapter errors
 ├── test_sentence_buffer.py    # SentenceBuffer 专项 (70 tests)
 └── fake_llm.py                # 测试用 LLM backend
@@ -808,7 +814,8 @@ Module/
 ├── config/test_config.py
 ├── logger/test_logger.py
 ├── prompt/test_prompt.py
-├── tool/test_tool.py           # ToolRegistry + decorator + safety (172 tests)
+├── tool/test_framework.py      # ToolManager + ToolPlugin + SafetyPipeline (96 tests)
+├── tool/test_tool_safety.py     # 路径验证 + URL检查 + 参数校验 (33 tests)
 ├── database/vectordb/
 ├── database/documentdb/
 ├── input/test_audio_buffer.py # AudioBuffer + WebRTC VAD (15 tests)
@@ -829,30 +836,31 @@ Agent/
 ├── app.py                  # 入口 (argparse + ConfigLoader + CLI overrides)
 ├── config.yaml              # 总配置
 ├── docs/architecture.md     # 本文档
+├── docs/frontend-api.md     # 前端接入 API 文档
 ├── CLAUDE.md                # AI 助手指令
 ├── README.md                # 项目说明
-├── todo.md                  # 开发计划 + 已知问题
-├── test_plan.md             # 测试计划
 │
 ├── Module/                  # L0 基础设施层
 │   ├── llm/                 # LLM: DeepSeek / OpenAI / Ollama
-│   ├── stt/                 # STT: SenseVoice
-│   ├── tts/                 # TTS: GPT-SoVits
+│   ├── stt/                 # STT: SenseVoice / OpenAI-compatible
+│   ├── tts/                 # TTS: GPT-SoVits / OpenAI-compatible
 │   ├── embedding/           # Embedding: HuggingFace / OpenAI
 │   ├── output/              # Output: Console + WebSocket 多通道
 │   ├── config/              # Config: YAML + env 加载器 + 验证
 │   ├── logger/              # Logger: caller-aware 工厂
 │   ├── prompt/              # Prompt: Jinja2 模板管理
-│   ├── schema/              # Schema: 共享数据模型 (Event/Message/Media)
+│   ├── schema/              # Schema: 共享数据模型
 │   ├── database/            # Database: Milvus / MongoDB / GraphDB
+│   ├── tool/                # Tool: ToolPlugin框架 + SafetyPipeline + ToolManager
 │   ├── input/               # Input: AudioBuffer (VAD) + WebSocket server
+│   ├── task_system/         # TaskSystem: 异步任务编排 (Planner/Orchestrator/Executor)
 │   └── bench/               # Bench: 延迟基准
 │
 ├── core/                    # L1 认知控制
-│   ├── schema.py            #   共享类型 (AgentState+IDLE_BACKGROUND_TASK, EventType+TASK_RESULT, EventPriority)
+│   ├── schema.py            #   共享类型 (AgentState, EventType, EventPriority)
 │   ├── event_bus.py         #   优先级事件总线
 │   ├── agent_fsm.py         #   五状态机
-│   ├── cognitive_loop.py    #   ReAct 调度器 (~610 行) + _handle_submit_task() 异步任务拦截 + _submit_task_definition()
+│   ├── cognitive_loop.py    #   ReAct 调度器 + submit_task 拦截
 │   ├── block_filter.py      #   流式块过滤 + 结构化块解析
 │   ├── tts_stream.py        #   TTS 流式播放管理 (TTSStreamManager)
 │   ├── tool_call_parser.py  #   流式 tool call 合并/归一化
@@ -866,36 +874,33 @@ Agent/
 │   ├── character_config.py  #   角色配置
 │   ├── app_config.py        #   App 配置
 │   ├── log_setup.py         #   日志系统
-│   ├── debug_info.py        #   /debug 面板
-│   ├── agent.py        #   组件组装 + 生命周期 + TaskSystem 集成 (_poll_mailboxes 500ms 轮询 + TASK_RESULT 处理)
-│   ├── tools/               #   Agent 工具集
+│   ├── token_tracker.py     #   Token 消耗统计 + 持久化
+│   ├── task.py              #   调度任务数据模型
+│   ├── task_scheduler.py    #   Worker Pool 调度器
+│   ├── debug_info.py        #   /debug 数据聚合
+│   ├── agent.py             #   组件组装 + 生命周期 + TaskSystem 集成
+│   ├── tools/               #   Agent 工具集 (12 个插件)
 │   ├── memory/              #   记忆子系统
-│   │   ├── session.py       #     会话上下文
-│   │   └── long_term.py     #     长期记忆
+│   │   ├── session.py       #     会话上下文 (MongoDB + deque)
+│   │   └── long_term.py     #     长期记忆 (Milvus + Embedding)
 │   └── tests/               #   测试
-│       ├── fake_llm.py              #  测试用 LLM backend
-│       ├── test_phase1.py           #  Phase 1
-│       ├── test_phase2.py           #  Phase 2
-│       ├── test_phase3.py           #  Phase 3
-│       └── test_sentence_buffer.py  #  SentenceBuffer (70)
 │
 ├── character/
 │   └── elysia.yaml          # Elysia 角色定义
 │
 ├── prompt/                  # 多层认知模板
-│   ├── Brain.j2             #   L1 主脑 — 双轨思维协议 (已接入)
-│   ├── Amygdala.j2          #   L0 潜意识 — 情绪感知 (待接入)
-│   ├── ActiveSpeak.j2       #   L1 主动说话决策 (待接入)
-│   ├── MicroReflector.j2    #   L2 即时反思 — 记忆提取 (待接入)
-│   ├── MacroReflector.j2    #   L2 日终反思 — 日记/情感趋势 (待接入)
+│   ├── Brain.j2             #   主脑 — 双轨思维协议
+│   ├── Amygdala.j2          #   潜意识 — 情绪感知
+│   ├── ActiveSpeak.j2       #   主动说话决策
+│   ├── MicroReflector.j2    #   即时反思 — 记忆提取
+│   ├── MacroReflector.j2    #   日终反思
 │   └── Utils.j2             #   工具宏 (FormatHistory, datetime filter)
 │
-├── static/
-│   ├── index.html           # 浏览器客户端 (541 行)
-│   └── debug.html           # Debug 面板 (183 行)
-│
-├── ref/                     # 参考资源
-│   └── Elysia/Elysia.wav    # 唤醒音效
+├── static/                  # Web 前端
+│   ├── index.html           # 聊天页面
+│   ├── debug.html           # Debug 仪表板
+│   ├── css/chat.css         # 聊天样式
+│   └── js/                  # ES modules (chat/audio/mic/ws/state/persistence/settings/main)
 │
 └── log/                     # 日志文件 (gitignore)
 ```
@@ -936,7 +941,7 @@ INTERRUPT:
 | 7 | idle_monitor.py | idle 监控 tick | 常驻，stop 时 cancel |
 | 8 | long_term.py | embedding 加载 | insert 时 await (wait=True), search 时 fire-and-forget |
 | 9 | emotion_engine.py | expression 输出 | 纯 fire-and-forget，无追踪 |
-| 10 | tool/registry.py | ToolEmitter 执行 | ToolEmitter 内部追踪 |
+| 10 | tool/manager.py | SafetyPipeline 执行 | Pipeline 内部追踪 |
 | 11 | agent.py | `_poll_mailboxes()` | TaskSystem mailbox 500ms 轮询，常驻，stop 时 cancel |
 | 12 | agent.py | cognitive process (TASK_RESULT) | `_current_task`，新增 |
 

@@ -62,7 +62,7 @@
 | `updated_at`（TTL） | — | 30 天过期（`expireAfterSeconds=2592000`） |
 
 **操作**: 原子 upsert（`update_one(upsert=True)`）
-**降级**: MongoDB 不可用时纯内存运行（deque，maxlen=20）
+**降级**: MongoDB 不可用时纯内存运行（deque，maxlen 默认 200，config.yaml session_max_messages 可配）
 
 ---
 
@@ -72,7 +72,7 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `_messages` | deque[dict]（maxlen=20） | 当前会话消息缓冲 |
+| `_messages` | deque[dict] | 当前会话消息缓冲 (maxlen config.yaml 可配, 默认 200) |
 | `_params` | dict | 运行时参数 |
 | `_session_id` | str | 会话 ID |
 
