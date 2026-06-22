@@ -9,6 +9,7 @@ Usage:
 """
 
 import asyncio
+import time
 import os
 from enum import Enum, auto
 import logging
@@ -144,6 +145,7 @@ class Agent:
     async def start(self) -> None:
         """Start the agent: connect persistence, idle monitor, event loop."""
         self._state = RunState.RUNNING
+        self._started_at = time.monotonic()  # 启动时刻打点，用于 get_runtime_config 显示运行时长
 
         # Reset FSM — may be stuck from a previous run that was interrupted
         self._fsm.reset()
@@ -222,6 +224,9 @@ class Agent:
                 "scheduler": self._scheduler,
                 "config": self._config,
                 "session": self._session,
+                "_tool_manager": self._tool_manager,          # ToolManager 实例
+                "_started_at": self._started_at,               # 启动时刻
+                "_token_tracker": self._token_tracker,         # TokenTracker 实例
                 "_tool_names": list(self._tool_manager.tool_names),
                 "_fsm_state": str(self._fsm.state),
                 "_session_msg_count": len(self._session._messages),
@@ -234,6 +239,9 @@ class Agent:
         self._plugin_ctx.memory = self._long_term
         self._plugin_ctx.scheduler = self._scheduler
         await self._tool_manager.load_all(ALL_PLUGINS, self._plugin_ctx)
+        # 修复：load_all 后更新工具名列表（之前在此处快照时 _plugins 为空）
+        self._tool_ctx.services["_tool_names"] = list(self._tool_manager.tool_names)
+        self._tool_ctx.services["_tool_count"] = len(self._tool_manager._plugins)
         self._tool_manager.set_hitl_broadcast(self._output)
         self._scheduler.set_tool_context(self._tool_ctx)
 
@@ -285,6 +293,8 @@ class Agent:
         _hitl = _EventBusHITLNotifier(self._bus)
         self._task_system = TaskSystem(infra=_ts_infra, hitl_notifier=_hitl)
         await self._task_system.start()
+        # 注入 TaskSystem 到 ToolContext，供 get_runtime_config 查询活跃任务
+        self._tool_ctx.services["_task_system"] = self._task_system
         self._delegation_preparer = DelegationPreparer()
 
         # 注入到 CognitiveLoop

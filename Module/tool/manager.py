@@ -319,6 +319,19 @@ class ToolManager:
                     "max_concurrency": p.safety.max_concurrency if p.safety else 0,
                     "network_allowed": p.safety.network_allowed if p.safety else False,
                     "filesystem_allowed": p.safety.filesystem_allowed if p.safety else False,
+                    # 新增 — 文件系统
+                    "read_dirs": p.safety.read_dirs if p.safety else None,
+                    "write_dir": p.safety.write_dir if p.safety else "",
+                    "max_file_bytes": p.safety.max_file_bytes if p.safety else 0,
+                    "allow_symlinks": p.safety.allow_symlinks if p.safety else False,
+                    "max_dir_depth": p.safety.max_dir_depth if p.safety else 0,
+                    # 新增 — 网络
+                    "block_private_ips": p.safety.block_private_ips if p.safety else True,
+                    "max_redirects": p.safety.max_redirects if p.safety else 5,
+                    "max_response_bytes": p.safety.max_response_bytes if p.safety else 0,
+                    "request_timeout": p.safety.request_timeout if p.safety else 30.0,
+                    # 新增 — 数据库
+                    "database_allowed": p.safety.database_allowed if p.safety else False,
                 },
                 "active": True,
             }
