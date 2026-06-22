@@ -125,13 +125,13 @@ class SenseVoiceBackend(STTBackend):
             )
 
     async def test(self) -> dict:
-        """测试连通性：GET 根路径检查服务可用。5 秒超时。"""
+        """测试连通性：GET /health。5 秒超时。"""
         import asyncio
         import time
         t0 = time.perf_counter()
         try:
             resp = await asyncio.wait_for(
-                self._client.get("/"),
+                self._client.get("/health"),
                 timeout=5.0,
             )
             latency_ms = int((time.perf_counter() - t0) * 1000)

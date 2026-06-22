@@ -150,13 +150,13 @@ class GPTSoVitsBackend(TTSBackend):
                 )
 
     async def test(self) -> dict:
-        """测试连通性：GET 根路径检查服务可用。5 秒超时。"""
+        """测试连通性：GET /health。5 秒超时。"""
         import asyncio as _asyncio
         import time as _time
         t0 = _time.perf_counter()
         try:
             async with httpx.AsyncClient(base_url=self._base_url, timeout=httpx.Timeout(5.0)) as client:
-                resp = await _asyncio.wait_for(client.get("/"), timeout=5.0)
+                resp = await _asyncio.wait_for(client.get("/health"), timeout=5.0)
                 latency_ms = int((_time.perf_counter() - t0) * 1000)
                 return {"ok": resp.status_code < 400, "latency_ms": latency_ms}
         except Exception as e:
