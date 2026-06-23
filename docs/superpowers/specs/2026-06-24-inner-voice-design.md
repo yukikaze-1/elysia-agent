@@ -197,16 +197,34 @@ inner_voice 气泡出现在 Elysia 回复气泡的**上方**。时间顺序上�
 ## 不做的
 
 - 前端 inner_voice 显示/隐藏 toggle（后续加）
-- inner_voice 内容持久化到会话历史（后续）
 - inner_voice 影响情绪/记忆系统（后续步骤）
 - 流式显示 inner_voice（当前版本在 `</inner_voice>` 闭合后才一次性广播）
 
 ---
 
+## 实施结果 (2026-06-24)
+
+已实现：
+- ✅ `prompt/Brain.j2`: few-shot 示例 + 强制输出 inner_voice
+- ✅ `core/cognitive_loop.py`: PRE→THINK→REPLY 三状态流式分流 + `_handle_sentence` 共用
+- ✅ `static/`: inner_voice 淡色气泡 + session restore 恢复
+- ✅ `core/memory/session.py`: `inner_voice` 字段存储/恢复/注入 LLM 历史
+- ✅ `core/response_recorder.py`: 原始回复环形缓冲区
+- ✅ `static/debug.html`: 📤 Raw Response 查看器 + Session 渲染 inner_voice
+- ✅ `core/debug_info.py`, `Module/input/server.py`: `/debug/api/responses` API
+- ✅ 日志: conversation.log + 终端 logger.info
+
+已变更设计决策：
+- 标签名从 `<think>` 统一为 `<inner_voice>`（和 Brain.j2 指引区一致）
+- 流式状态机从两状态改为三状态（PRE-THINK-REPLY，处理开标签不在流开头的情况）
+- `acc_text`（完整原文）用于 LLM 上下文，`public_text`（剥离标签）用于数据库/前端/情绪/日志
+
+---
+
 ## 验证
 
-1. 启动 agent → 发送一条消息 → 确认前端出现淡色 inner_voice 气泡（如果有） + 正常回复
-2. 发送一条简单问候（"你好"）→ inner_voice 可能为空，回复正常
-3. 发送一条情感性消息 → inner_voice 应有内容，且内容和回复有关联但不完全一致
-4. `git diff` 确认无回归
+1. 启动 agent → 发送一条消息 → 确认前端出现淡色 inner_voice 气泡 + 正常回复 ✅
+2. 发送一条简单问候 → inner_voice 应有内容（已强制要求） ✅
+3. debug 页面 Raw Response 可查看完整原始回复（含标签） ✅
+4. 305 tests passed ✅
 5. `python -m pytest Module/task_system/tests/unit/ -v` 确认测试通过

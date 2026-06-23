@@ -26,29 +26,39 @@ Elysia 目前是一个**反应式系统**——你说一句，她回一段。真
 
 ## 优先级
 
-### 🥇 第一步：对话风格改造
+### 🥇 第一步：对话风格改造 ✅
 
-**目标**: 让 Elysia 说话像人，不像客服
+**状态**: 已完成 (2026-06-24)
 
-**方向**:
-- 默认说 1-3 句话，不是 3-5 段
-- 会用 `…`、`嗯`、表情、沉默来表达
-- 思考但不说——有时候她想了，但觉得没必要说出来
-- 对话节奏感：不急着把所有信息堆在一轮里
+**做了什么**:
+- Brain.j2 全面中文重写——身份/关系/对话风格分离
+- 回复从"写文章"变成 1-3 句自然对话
+- 加了"嗯"、"哦"、"好嘛"作为合法回复
+- 加了克制约束——"不是客服，不需要每句话都有用"
 
-**方法**: 改 Brain.j2 prompt + 分句策略。我写 draft，妖梦判断"对味不对味"
+**关键文件**: `prompt/Brain.j2`, `docs/companion-prompt-guide.md`
 
 ---
 
-### 🥈 第二步：内心世界
+### 🥈 第二步：内心世界 ✅
 
-**目标**: Elysia 有自己的小心思，有些话她想了但不说
+**状态**: 已完成 (2026-06-24)
 
-**方向**:
-- inner_voice 变成真正的内心独白
-- 前端可选展示（类似字幕，可开关）
-- 偶尔让她说出"一部分"真实想法——"其实我想说…算了"
-- 利用现有 dual-track 基础设施（TagParser 已支持）
+**做了什么**:
+- LLM 输出 `<inner_voice>...</inner_voice>` 标签，公开回复跟在后面
+- cognitive_loop 流式状态机（PRE → THINK → REPLY）分流 inner_voice 和 public_reply
+- 前端淡色斜体 think 气泡，出现在回复上方
+- inner_voice 持久化到 session，刷新后恢复
+- debug 页面新增 📤 LLM Raw Response 查看器
+- debug 页面 Recent Session 和 Session 管理渲染 inner_voice
+- inner_voice 写入对话日志（conversation.log + 终端）
+- LLM 对话历史注入 inner_voice 标签（格式延续）
+- prompt 加入 few-shot 示例确保标签输出稳定
+- ResponseRecorder 环形缓冲区
+
+**关键文件**: `prompt/Brain.j2`, `core/cognitive_loop.py`, `core/response_recorder.py`, `core/prompt_assembler.py`, `core/memory/session.py`, `static/js/main.js`, `static/js/persistence.js`, `static/css/chat.css`, `static/debug.html`, `core/debug_info.py`, `Module/input/server.py`
+
+**待做**: 前端 think 显示/隐藏 toggle
 
 ---
 
