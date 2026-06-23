@@ -329,6 +329,29 @@ class CognitiveLoop:
                 iv_tail = ""          # 跨 chunk 检测缓冲
                 iv_think_buf = ""     # 已确认的 inner_voice 内容
 
+                # 句子处理 helper — PRE/THINK/REPLY 三状态共用
+                async def _handle_sentence(clean_text: str) -> str | None:
+                    nonlocal speaking_started
+                    sentence = self._sentence_buf.feed(clean_text) if clean_text else None
+                    if not sentence:
+                        return None
+                    all_sentences.append(sentence)
+                    logger.info("分句 (%d 字符)", len(sentence))
+                    if not speaking_started:
+                        await self._output.typing(False)
+                        self._fsm.transition(AgentState.SPEAKING)
+                        self._bus.post(EventType.STATE_CHANGE,
+                                       {"state": "speaking", "request_id": get_request_id()},
+                                       priority=EventPriority.STATE_CHANGE)
+                        speaking_started = True
+                    if self._tts_mgr.active:
+                        self._tts_mgr.stream_sentence(sentence)
+                    else:
+                        await self._output._broadcast("on_text_delta", sentence,
+                            capability=ChannelCapability.TEXT_DELTA)
+                        await self._output.send("")
+                    return sentence
+
                 stream = self._llm.stream_think(messages, tools=tool_defs,
                     extra_body={"thinking": {"type": "disabled"}})
                 try:
@@ -346,18 +369,13 @@ class CognitiveLoop:
                                 if idx >= 0:
                                     before = combined[:idx].lstrip()
                                     if before:
-                                        # 开标签之前的文本当 public_reply 处理
                                         clean = block_filter.feed(before)
                                         if not self._tts_mgr.active and clean:
                                             await self._output._broadcast("on_text_delta", clean,
                                                 capability=ChannelCapability.TEXT_DELTA)
-                                        sentence = self._sentence_buf.feed(clean) if clean else None
-                                        if sentence:
-                                            all_sentences.append(sentence)
-                                            logger.info("分句 (%d 字符)", len(sentence))
+                                        await _handle_sentence(clean)
                                     iv_state = "THINK"
                                     iv_tail = ""
-                                    # 将开标签后的剩余内容留给 THINK 状态处理
                                     content = combined[idx + len(TAG_OPEN):]
                                 else:
                                     safe_len = max(0, len(combined) - len(TAG_OPEN) + 1)
@@ -366,12 +384,9 @@ class CognitiveLoop:
                                         if not self._tts_mgr.active and clean:
                                             await self._output._broadcast("on_text_delta", clean,
                                                 capability=ChannelCapability.TEXT_DELTA)
-                                        sentence = self._sentence_buf.feed(clean) if clean else None
-                                        if sentence:
-                                            all_sentences.append(sentence)
-                                            logger.info("分句 (%d 字符)", len(sentence))
+                                        await _handle_sentence(clean)
                                     iv_tail = combined[safe_len:]
-                                    continue  # 跳过 TTFT + TTS 处理
+                                    continue
 
                             if iv_state == "THINK":
                                 combined = iv_tail + content
@@ -381,21 +396,19 @@ class CognitiveLoop:
                                     after = combined[idx + len(TAG_CLOSE):].lstrip()
                                     iv_state = "REPLY"
                                     iv_tail = ""
-                                    # 广播 inner_voice 到前端
                                     if iv_think_buf.strip():
                                         try:
                                             await self._output.command("inner_voice",
                                                 params={"content": iv_think_buf.strip()})
                                         except Exception:
                                             logger.debug("inner_voice broadcast failed", exc_info=True)
-                                    # 闭标签后的内容送入正常流
                                     content = after
                                 else:
                                     keep_len = min(len(TAG_CLOSE) - 1, len(combined))
                                     if len(combined) > keep_len:
                                         iv_think_buf += combined[:-keep_len]
                                     iv_tail = combined[-keep_len:]
-                                    continue  # 跳过 TTFT + TTS 处理
+                                    continue
 
                             if iv_state == "REPLY":
                                 pass  # 正常流，继续下面的处理
@@ -418,26 +431,7 @@ class CognitiveLoop:
                                 await self._output._broadcast("on_text_delta", clean,
                                     capability=ChannelCapability.TEXT_DELTA)
 
-                            sentence = self._sentence_buf.feed(clean) if clean else None
-                            if sentence:
-                                all_sentences.append(sentence)
-                                logger.info("分句 (%d 字符)", len(sentence))
-                                logger.debug("分句内容: %s", sentence[:60])
-
-                                if not speaking_started:
-                                    await self._output.typing(False)
-                                    self._fsm.transition(AgentState.SPEAKING)
-                                    self._bus.post(EventType.STATE_CHANGE, {"state": "speaking", "request_id": get_request_id()},
-                                                   priority=EventPriority.STATE_CHANGE)
-                                    speaking_started = True
-
-                                # TTS 句: 后台 task 绑在一起发送；emoji: 排队跟在上一句后面
-                                if self._tts_mgr.active:
-                                    self._tts_mgr.stream_sentence(sentence)
-                                else:
-                                    await self._output._broadcast("on_text_delta", sentence,
-                                        capability=ChannelCapability.TEXT_DELTA)
-                                    await self._output.send("")
+                            await _handle_sentence(clean)
 
                         if tc_deltas:
                             merge_stream_tool_calls(raw_tool_calls, tc_deltas)
