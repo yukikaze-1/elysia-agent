@@ -603,6 +603,37 @@ def create_app(
     app.router.add_get("/debug/api/prompts", prompts_list_handler)
     app.router.add_get(r"/debug/api/prompts/{index:\d+}", prompt_detail_handler)
 
+    async def responses_list_handler(request: web.Request) -> web.Response:
+        """返回最近 N 次 LLM 调用的原始回复摘要列表。"""
+        agent = request.app["agent"]
+        recorder = getattr(agent, "_response_recorder", None)
+        if recorder is None:
+            return web.json_response({"records": [], "total": 0, "max": 0})
+        return web.json_response(recorder.list_summaries())
+
+    async def response_detail_handler(request: web.Request) -> web.Response:
+        """返回指定记录的完整原始回复。"""
+        index = int(request.match_info["index"])
+        agent = request.app["agent"]
+        recorder = getattr(agent, "_response_recorder", None)
+        if recorder is None:
+            raise web.HTTPNotFound(text="ResponseRecorder 未初始化")
+        record = recorder.get_full(index)
+        if record is None:
+            raise web.HTTPNotFound(text=f"记录 #{index} 不存在")
+        return web.json_response({
+            "index": record.index,
+            "timestamp": record.timestamp,
+            "round_num": record.round_num,
+            "raw_text": record.raw_text,
+            "inner_voice": record.inner_voice,
+            "text_len": record.text_len,
+            "inner_voice_len": record.inner_voice_len,
+        })
+
+    app.router.add_get("/debug/api/responses", responses_list_handler)
+    app.router.add_get(r"/debug/api/responses/{index:\d+}", response_detail_handler)
+
     # TaskDebugAPI 生命周期管理
     async def on_startup(app):
         task_api = app.get('task_debug_api')

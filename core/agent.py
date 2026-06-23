@@ -216,6 +216,10 @@ class Agent:
         self._prompt_recorder = PromptRecorder(max_records=20)
         self._cognitive.set_prompt_recorder(self._prompt_recorder)
 
+        from core.response_recorder import ResponseRecorder
+        self._response_recorder = ResponseRecorder(max_records=20)
+        self._cognitive.set_response_recorder(self._response_recorder)
+
     async def _start_tool_context(self) -> None:
         """注入 ToolContext，加载工具插件，设置 HITL broadcast。"""
         self._tool_ctx = ToolContext(

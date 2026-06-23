@@ -134,6 +134,10 @@ class CognitiveLoop:
         """设置 prompt 记录器（agent.py 在 start() 中延迟注入）。"""
         self._prompt_recorder = recorder
 
+    def set_response_recorder(self, recorder) -> None:
+        """设置 response 记录器（agent.py 在 start() 中延迟注入）。"""
+        self._response_recorder = recorder
+
     def set_task_system(self, ts) -> None:
         """设置 TaskSystem 引用（agent.py 在 start() 中注入）。"""
         self._task_system = ts
@@ -687,6 +691,14 @@ class CognitiveLoop:
                             "turn_total": sum(r.total_tokens for r in self._token_tracker.current_turn_usages),
                         } if self._token_tracker and self._token_tracker.current_turn_usages else None,
                     })
+                    # 记录原始 LLM 回复（供 debug 页面查看）
+                    if self._response_recorder is not None:
+                        self._response_recorder.record(
+                            raw_text=acc_text,
+                            inner_voice=iv_think_buf.strip() or None,
+                            round_num=round_num,
+                        )
+
                     log_conversation("assistant", self._prompt._character.name, public_text)
                     asyncio.create_task(self._after_response(user_message, public_text),
                                        name="after-response")

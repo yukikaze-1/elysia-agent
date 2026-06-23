@@ -56,6 +56,7 @@ class DebugInfo:
 
     # Prompt 记录
     prompt_summary: dict = field(default_factory=dict)
+    response_summary: dict = field(default_factory=dict)
 
     # Latency (ring buffer — last 100 requests)
     timing_history: list[dict] = field(default_factory=list)
@@ -209,5 +210,10 @@ async def collect(agent) -> DebugInfo:
     recorder = getattr(agent, '_prompt_recorder', None)
     if recorder is not None:
         info.prompt_summary = recorder.list_summaries()
+
+    # ---- Response 记录 ----
+    resp_recorder = getattr(agent, '_response_recorder', None)
+    if resp_recorder is not None:
+        info.response_summary = resp_recorder.list_summaries()
 
     return info

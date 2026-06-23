@@ -293,6 +293,22 @@ h1 { font-size: 18px; margin-bottom: 4px; }
   </div>
 </div>
 
+<!-- LLM Raw Response 详情面板 -->
+<div id="response-overlay" class="modal-overlay" onclick="if(event.target===this)closeResponse()">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;max-width:95vw;width:1000px;max-height:85vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px;">
+      <h3 style="margin:0;color:var(--accent);" id="response-title">📤 Raw Response #-</h3>
+      <div>
+        <button onclick="navigateResponse(-1)" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:4px;padding:4px 8px;font-size:12px;">◀</button>
+        <button onclick="navigateResponse(1)" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:4px;padding:4px 8px;font-size:12px;margin-right:6px;">▶</button>
+        <button onclick="closeResponse()" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:4px;padding:4px 10px;font-size:12px;">关闭</button>
+      </div>
+    </div>
+    <div id="response-inner-voice" style="color:#888;font-style:italic;font-size:13px;padding:8px 12px;border-left:2px solid #888;margin-bottom:12px;display:none;"></div>
+    <pre id="response-raw" style="background:var(--bg);color:var(--text);padding:12px;border-radius:4px;font-size:12px;white-space:pre-wrap;word-break:break-word;margin:0;"></pre>
+  </div>
+</div>
+
 <script src="https://unpkg.com/vis-network@9.1.6/dist/vis-network.min.js"></script>
 <script>
 const POLL_MS = 2000;
@@ -360,7 +376,8 @@ function render(info) {
       lastInfo.ws_clients === info.ws_clients &&
       JSON.stringify(lastInfo.currently_executing) === JSON.stringify(info.currently_executing) &&
       JSON.stringify(lastInfo.timing_stats) === JSON.stringify(info.timing_stats) &&
-      JSON.stringify(lastInfo.prompt_summary) === JSON.stringify(info.prompt_summary)
+      JSON.stringify(lastInfo.prompt_summary) === JSON.stringify(info.prompt_summary) &&
+      JSON.stringify(lastInfo.response_summary) === JSON.stringify(info.response_summary)
     );
     if (same) return;
   }
@@ -457,6 +474,25 @@ function render(info) {
           </div>`;
         }).concat(records.length > 3
           ? [`<div style="text-align:center;padding:4px 0;color:var(--accent);cursor:pointer;" onclick="viewPromptList()">查看全部 (${records.length}条) ▼</div>`]
+          : []);
+      })()},
+      { title:'📤 LLM Raw Response', wide:false, items: (() => {
+        const prs = info.response_summary || {};
+        const records = prs.records || [];
+        if (!records.length) return [];
+        const recent = records.slice(-3);
+        return recent.map(r => {
+          const time = r.timestamp ? r.timestamp.split('T')[1].split('.')[0] : '--:--:--';
+          const round = r.round_num !== undefined ? `R${r.round_num + 1}` : '';
+          const chars = r.text_len ? `${r.text_len.toLocaleString()}字` : '';
+          const ivLen = r.inner_voice_len ? ` (+${r.inner_voice_len} think)` : '';
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;">
+            <span><span class="role-tag">#${r.index}</span> ${round} ${chars}${ivLen}</span>
+            <span style="color:var(--muted);font-size:11px;">${esc(time)}</span>
+            <button onclick="viewResponse(${r.index})" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:4px;padding:2px 6px;font-size:11px;">查看</button>
+          </div>`;
+        }).concat(records.length > 3
+          ? [`<div style="text-align:center;padding:4px 0;color:var(--accent);cursor:pointer;" onclick="viewResponseList()">查看全部 (${records.length}条) ▼</div>`]
           : []);
       })()},
     ],
@@ -666,6 +702,68 @@ function viewPromptList() {
   const ps = (lastInfo && lastInfo.prompt_summary) ? lastInfo.prompt_summary : null;
   if (ps && ps.records && ps.records.length) {
     viewPrompt(ps.records[ps.records.length - 1].index);
+  }
+}
+
+// ---- Raw Response 查看器 ----
+let currentResponseIndex = null;
+let responseCache = {};
+
+async function viewResponse(index) {
+  currentResponseIndex = index;
+  await loadResponse(index);
+  document.getElementById('response-overlay').classList.add('show');
+}
+
+function closeResponse() {
+  document.getElementById('response-overlay').classList.remove('show');
+}
+
+async function loadResponse(index) {
+  let data = responseCache[index];
+  if (!data) {
+    try {
+      const resp = await fetch('/debug/api/responses/' + index);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      data = await resp.json();
+      responseCache[index] = data;
+    } catch(e) {
+      document.getElementById('response-raw').textContent = '加载失败: ' + e.message;
+      return;
+    }
+  }
+
+  const time = data.timestamp ? data.timestamp.split('T')[1].split('.')[0] : '';
+  document.getElementById('response-title').textContent =
+    `📤 Raw Response #${data.index}  第 ${data.round_num + 1} 轮  ${data.text_len} 字  ${time}`;
+
+  // 显示 inner_voice
+  const ivEl = document.getElementById('response-inner-voice');
+  if (data.inner_voice) {
+    ivEl.textContent = '💭 ' + data.inner_voice;
+    ivEl.style.display = 'block';
+  } else {
+    ivEl.style.display = 'none';
+  }
+
+  document.getElementById('response-raw').textContent = data.raw_text || '(空)';
+}
+
+function navigateResponse(delta) {
+  if (currentResponseIndex === null) return;
+  const prs = (lastInfo && lastInfo.response_summary) ? lastInfo.response_summary : null;
+  if (!prs || !prs.records || !prs.records.length) return;
+  const records = prs.records;
+  let idx = records.findIndex(r => r.index === currentResponseIndex);
+  if (idx < 0) idx = records.length - 1;
+  idx = (idx + delta + records.length) % records.length;
+  viewResponse(records[idx].index);
+}
+
+function viewResponseList() {
+  const prs = (lastInfo && lastInfo.response_summary) ? lastInfo.response_summary : null;
+  if (prs && prs.records && prs.records.length) {
+    viewResponse(prs.records[prs.records.length - 1].index);
   }
 }
 
