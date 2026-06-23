@@ -72,7 +72,6 @@
 | 优先级 | 项目 | 说明 |
 |--------|------|------|
 | 中 | **AI → 用户图片输出** | 工具返回图片（WebFetch 截图、图片生成）+ LLM 生成图片 → OutputManager 广播 → 前端渲染。`ToolResult.images: list[MediaItem]` 已设计，需打通 CognitiveLoop → session → 前端链路 |
-| ~~中~~ | ~~**前端图片交互**~~ | ✅ 已完成 — 粘贴/拖拽/文件选择上传 + 预览栏 + 气泡缩略图 + lightbox |
 | 低 | **文件支持** | `type: "file"` content part 实现（上传 + LLM context + 前端渲染） |
 | 低 | **音频/视频 Part** | `VideoPart`/`AudioPart` 已定义 dataclass，需实现全链路 |
 | 低 | **content_type 迁入 content** | assistant 消息的 markdown/code block 索引迁入 content array，减少独立字段 |
@@ -92,57 +91,5 @@
 - `Module/output/console.py` (1)
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
 
-## 已完成 (2026-06-06)
 
-| 日期 | 内容 |
-|------|------|
-| 06-06 | **Token 消耗追踪** — 新增 `core/token_tracker.py` 组件，捕获 OpenAI API `usage` 字段（prompt/completion/total tokens），按模型分别统计。Session 级实时显示 + MongoDB 持久化（不可用时降级 JSONL）。前端 AI 气泡底部可展开 token 标签，顶栏 session 累计，`/debug` 页面 Token 卡片 + Session 管理 Token 列。Session 加 JSONL 降级持久化，断线重连自动合并恢复。spec: `docs/superpowers/specs/2026-06-06-token-consumption-tracking-design.md` |
-| 06-06 | **describe_image 多图批量** — 新增 `image_indices: list[int]` 参数，一次 MIMO 调用处理多张图片。`prompt_assembler.py` 提示文本更新为建议使用 `image_indices=[...]` |
-| 06-06 | **Session 完整化 — 工具消息持久化 + 历史降级渲染** — `cognitive_loop.py` 将 assistant(tool_calls) + tool(result) 写入 Session；`build_messages()` 历史图片→`[用户曾发送N张图片]`，工具调用→`[已调用: xxx]`；`messages_for_client()` 透传工具字段；前端 `restoreFromServer()` 重建工具卡片；`saveChat()`/`restoreChat()` 支持工具卡片 |
-| 06-06 | **工具卡片内容不再截断** — 移除 `cognitive_loop.py` `tool_done` 的 `[:500]` 硬限制；CSS max-height 200→400px |
-| 06-05 | **工具调用详情可见性** — SafetyPipeline 统一日志、tool_done 扩展到 7 字段（含结果/错误/耗时）、前端可展开卡片（完整参数 JSON + 返回结果 + 错误详情）|
-
-## 已完成 (2026-06-05)
-
-| 日期 | 内容 |
-|------|------|
-| 06-05 | **项目清理** — 磁盘清理（删除~280MB）、UUID 生成统一（8 文件改用 `new_message_id()`）、补缺失 `__main__.py`（config/input/prompt/logger）、补 `Module/input/README.md`、`test_tool_parallel.md` 移至 docs/、清理 settings.local.json 过期引用。spec: `docs/superpowers/specs/2026-06-05-cleanup-design.md` |
-| 06-05 | **多模态图片支持 Phase 1 — 用户→AI** — 新增 `Module/schema/message_format.py`（TextPart/ImagePart/FilePart/AudioPart/VideoPart + ChatMessageV2）；SessionMemory/PromptAssembler content 统一为 list[dict]；CognitiveLoop/Agent 支持 content 参数；Server 新增 `/api/images`（上传）和 `/api/chat`（测试）端点；本地图片自动转 base64 data URI 发送 MIMO API。删除废弃的 `Module/schema/message.py`。spec: `docs/superpowers/specs/2026-06-05-multimodal-phase1-design.md` |
-| 06-05 | **多模态 Phase 2 — 前端图片交互** — 粘贴/拖拽/文件选择上传图片 → 预览栏缩略图 → 与文字一起发送 → 聊天气泡渲染缩略图 → 点击 lightbox 放大。上传目录迁至 `data/uploads/images/`，独立 `/uploads/` 路由。session 恢复/localStorage 持久化支持图片。spec: `docs/superpowers/specs/2026-06-05-multimodal-phase2-frontend-design.md` |
-| 06-05 | **Bug 修复: DeepSeek 收到 image_url 块 400** — `build_messages()` 历史消息只提取 text parts，过滤图片/文件等非文本 part，防止纯文本 provider 报 unknown variant image_url |
-| 06-05 | **Bug 修复: TTS 400 — markup-only 句子** — `_start_tts_stream()` 守卫改用 `strip_all_markup()` 替代 `_EMOJI_RE`，与 TTS 后端预处理一致；gpt_sovits.py 加空文本守卫+错误响应体日志 |
-| 06-05 | **Bug 修复: debug 页面 Session 管理显示 [object Object]** — `collect()` 改用 `messages_for_client()`；`session_detail_handler` 格式化消息加上 `parts` 字段 |
-| 06-05 | **Bug 修复: MIMO 相对路径 URL** — `_resolve_image_source()` 处理 `/uploads/...` 相对路径，提取文件名查本地目录转 base64 |
-| 06-05 | **MAX_TOOL_ROUNDS 3→5** — 防止 MIMO 工具调用轮次不足导致无最终回复 |
-| 06-05 | **Bug 修复: debug 页面看不到图片** — `debug_info.py` collect() 补上 content 字段；`server.py` session_detail_handler 对齐 messages_for_client() 格式；`debug.html` 新增 renderImages() + 缩略图渲染 + lightbox。spec: `docs/superpowers/specs/2026-06-05-debug-page-image-display-design.md` |
-| 06-05 | **工具调用详情可见性** — SafetyPipeline 统一日志（`_finish` 闭包覆盖所有返回路径）；`tool_done` WS 消息从 3 字段扩展到 7 字段（含结果/错误/耗时）；前端工具卡片可展开详情（完整参数 JSON + 返回结果 + 错误详情）。spec: `docs/superpowers/specs/2026-06-05-tool-visibility-design.md` |
-
-## 已完成 (2026-06-04)
-
-| 日期 | 内容 |
-|------|------|
-| 06-04 | **模型切换与自定义接入** — 3 阶段实现：配置驱动（LLM/TTS/STT model 字段 + app_config）、custom provider（registries + custom_providers.yaml + OpenAICompatSTTBackend + OpenAICompatTTSBackend）、运行时热切换（protocol test() + Agent switch_*() + REST + WS + 前端设置面板下拉选择器 + 自定义端点模态框 + 测试连接）。915 tests。测试结果：一/二/六(Section) 全部通过；三/四/五 待测 |
-| 06-04 | **6.4 错误提示修复** — LLM 调用失败时 broadcast 错误消息到前端（如 `❌ LLM 调用失败: Connection error`），不再静默失败 |
-| 06-04 | **MIMO 接入** — 新增 `mimo` provider (mimo-v2.5 / mimo-v2.5-pro)，OpenAI 兼容协议。顺便修复空 `choices` 流式响应兼容 |
-| 06-04 | **前端模型标签** — 角色名下方显示当前 LLM 模型名（如 `deepseek/deepseek-v4-flash`），切换时实时更新 |
-| 06-04 | **模型切换测试修复（3 项）** — 修正 provider model 列表（deepseek 去 chat、ollama 改 qwen2.5:3b）；`switch_llm()` 切换前 `cancel_current()` 打断当前 thinking 防止 FSM 卡住；`cognitive_loop.process()` 加 `except Exception` 兜底，LLM 连接失败时回 IDLE |
-| 06-04 | **ConfigLoader None 修复** — YAML 空值(`model:`)不再覆盖 dataclass 默认值。`_merge_yaml` 跳过 `None` |
-| 06-04 | **前端 STT/TTS 状态指示** — WS capabilities 消息同步服务能力，麦克风按钮/tts toggle 在服务不可用时禁用+灰显 |
-| 06-04 | **TTS 重启重建** — TTS 创建从 `__init__` 移到 `start()`，`/restart` 使用重载配置重建。TTS toggle 跟随服务端实际状态 |
-| 06-04 | **TTSFactory model 验证** — model 参数传入 GPTSoVitsBackend，`gpt-sovits` provider 验证 model 为 "default" 或已知 voice 名（大小写不敏感），custom 走 OpenAICompatTTSBackend |
-| 06-04 | **启动横幅显示 model** — Agent/Server 启动横幅显示 TTS/STT 实际使用的 model 名 |
-| 06-04 | **Module 层代码审查修复** — 修复 20 项：5 HIGH（静默吞异常、test() 4xx、last_emotion 不更新、缺文本预处理、from_config TypeError）+ 4 MEDIUM（DRY client 创建、kwargs 转发、KeyError 包装、死代码删除）+ 4 LOW（文档修正、stop→close、voice 硬编码）+ 5 架构（导出统一、参数重命名、协议文档）+ 2 风格（中文化注释）
-| 06-04 | **Live2D 开关** — 设置面板新增开关，关闭时移除 iframe 释放 ~500KB 资源，显示静态图片或 🌸 emoji。配置驱动图片路径（`live2d.static_image`），localStorage 持久化，WS capabilities 下发。Spec: `docs/superpowers/specs/2026-06-04-live2d-toggle-design.md`
-| 06-04 | **数据库调试接口** — 新增 8 个 REST 端点 + Web UI 面板（/debug 数据库 Tab），支持 LTM 和 Session 的查看/新增/删除/清空。扩展 VectorDBBackend 协议新增 `delete` 方法，LongTermMemory 新增 `delete()` / `clear_all()` |
-| 06-04 | **移除 `_seed_memories()`** — demo 遗留代码，每次启动重复插入 5 条种子数据 |
-| 06-03 | **测试卫生** — `test_session_isolation` 测试后清理 MongoDB 中遗留的 session 文档 |
-
-## 已完成 (2026-06-02)
-
-| 日期 | 内容 |
-|------|------|
-| 06-02 | **测试缺口修复（5 阶段）** — 511 个新测试覆盖 core/tools、LLM/STT/TTS/Embedding、Output/Input、Database/Config/Logger/Prompt、Module/tool 剩余。修复 3 个源码 bug |
-| 06-02 | **文档整理归档** — 16 篇已完成计划 → `superpowers/plans/archive/`，删除冗余 `task_scheduler_test.md`，更新 README 结构 |
-| 06-02 | **EmbeddingFactory 全局单例缓存** — 同一模型只加载一次，多个 LongTermMemory 实例共享。`test_phase2` 从 8-9 分钟 OOM → 46 秒全部通过 |
-| 06-02 | **工具系统重构（方案 C）** — Plugin 架构，SafetyPipeline 6 阶段中间件，ToolExecutor Protocol，ToolManager。删除旧 ToolRegistry/@tool 装饰器 |
-| 06-02 | **core/tools/ bugfix (15/16)** — ReadFile 单文件打开 + 正确行数、网络能力检查、NETWORK capability 强制、HITL 广播 wiring
+> 已完成的工作归档在 [docs/completed.md](docs/completed.md)。

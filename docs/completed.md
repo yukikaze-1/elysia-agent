@@ -715,3 +715,20 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 
 **Spec:** `docs/superpowers/specs/2026-06-05-tool-visibility-design.md`
 **计划:** `docs/superpowers/plans/2026-06-05-tool-visibility.md`
+
+---
+
+### 近期完成 (2026-06-22 ~ 2026-06-23)
+
+| 日期 | 内容 |
+|------|------|
+| 06-23 | **前端接入 API 文档** — `docs/frontend-api.md`，完整 WebSocket 协议（16 种 Server→Client + 5 种 Client→Server）+ REST API + .NET/WPF 接入指南。含分句策略、流式 TTS 同步、工具执行生命周期、结构化内容块。经 3 轮 review 修正 |
+| 06-23 | **TaskSystem debug DAG 图可视化** — 引入 vis-network CDN，替换 ASCII DAG 渲染为交互式有向图。仅改 `static/debug.html`，后端不动。spec: `docs/superpowers/specs/2026-06-23-task-dag-graph-visualization-design.md`，plan: `docs/superpowers/plans/2026-06-23-task-dag-graph-visualization.md` |
+| 06-23 | **read_dirs 相对路径 session_id 修复** — `_resolve_sandbox_path()` 没对 `read_dirs` 做 `{session_id}` 替换，导致相对路径读文件找不到（缺 `default/` 子目录） |
+| 06-23 | **STT/TTS test() 改用 GET /health** — 3 个 backend 的 `test()` 从 `GET /` 改为 `GET /health`，避免服务无根路由返回 404 误判不可用 |
+| 06-23 | **启动横幅去重** — 去掉 `print()`，统一用 `logger.info()`；合并两个横幅为一个 |
+| 06-22 | **runtime_config 工具增强** — `get_runtime_config` 从 ~75 行扩展到 ~344 行，7 个 section builder，支持 query 参数按需展开 |
+| 06-22 | **代码审查修复** — 修复 ~35 backend + ~14 frontend bugs，含 SafetyProfile session_id sanitization、空 choices 兼容、embedding close() 竞态保护、Optional[X] 类型检查等 |
+| 06-22 | **文档清理** — 删除过期文档 `ref_memory-architecture.md` + `test_tool_parallel.md`，更新 `architecture.md`（工具数/接口名/文件结构/session limit），修正 `database-storage.md` maxlen |
+| 06-22 | **TTS/STT 连通性显示修复** — agent 启动时 `test()` 验证 TTS/STT 可用性；debug 页面补 STT 行 |
+| 06-22 | **Token 追踪** — TokenTracker + PromptRecorder 注入 CognitiveLoop；debug 页面 Token 卡片；session-token-bar 顶栏 |
