@@ -123,6 +123,8 @@ function handleMessage(msg) {
           chat.appendChild(createMarkdownBubble(p.content));
         }
         scrollDown();
+      } else if (msg.command === 'inner_voice') {
+        showInnerVoice(msg.params.content);
       }
       break;
     case 'wake':
@@ -278,6 +280,16 @@ function init() {
 
 /* ---- HITL 审批对话框 ---- */
 let _approvalSeq = 0;
+
+function showInnerVoice(content) {
+  if (!content) return;
+  const chat = document.getElementById('chat');
+  const bubble = document.createElement('div');
+  bubble.className = 'inner-voice-bubble';
+  bubble.textContent = content;
+  chat.appendChild(bubble);
+  scrollDown();
+}
 
 function showApprovalDialog(params) {
   const { tool, params: toolParams, request_id } = params;

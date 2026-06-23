@@ -75,7 +75,7 @@ chunk N+1: "oice>嗯，在呢。"
 ```
 
 **方案**：保持一个长度为 `len("</inner_voice>") - 1 = 14` 字节的前向缓冲（tail buffer）。每次新 chunk 到达时，检查 `(tail + chunk)` 是否包含 `</inner_voice>`：
-
+```
 tail = ""       # 用于跨 chunk 检测标签的尾部缓冲
 think_buf = ""  # 已确认的 think 内容
 state = PRE     # PRE: 等开标签 / THINK: 等闭标签 / REPLY: 正常流
@@ -117,6 +117,7 @@ for chunk in stream:
 
     if state == REPLY:
         feed_to_pipeline(chunk)
+```
 
 ### `</inner_voice>` 后空白处理
 

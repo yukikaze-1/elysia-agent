@@ -322,6 +322,13 @@ class CognitiveLoop:
                         model=self._llm.model,
                     )
 
+                # inner_voice 标签检测状态机
+                TAG_OPEN = "<inner_voice>"
+                TAG_CLOSE = "</inner_voice>"
+                iv_state = "PRE"      # PRE / THINK / REPLY
+                iv_tail = ""          # 跨 chunk 检测缓冲
+                iv_think_buf = ""     # 已确认的 inner_voice 内容
+
                 stream = self._llm.stream_think(messages, tools=tool_defs,
                     extra_body={"thinking": {"type": "disabled"}})
                 try:
@@ -330,13 +337,78 @@ class CognitiveLoop:
                         tc_deltas = chunk.get("tool_calls")
 
                         if content:
+                            acc_text += content
+
+                            # --- inner_voice 标签检测 ---
+                            if iv_state == "PRE":
+                                combined = iv_tail + content
+                                idx = combined.find(TAG_OPEN)
+                                if idx >= 0:
+                                    before = combined[:idx].lstrip()
+                                    if before:
+                                        # 开标签之前的文本当 public_reply 处理
+                                        clean = block_filter.feed(before)
+                                        if not self._tts_mgr.active and clean:
+                                            await self._output._broadcast("on_text_delta", clean,
+                                                capability=ChannelCapability.TEXT_DELTA)
+                                        sentence = self._sentence_buf.feed(clean) if clean else None
+                                        if sentence:
+                                            all_sentences.append(sentence)
+                                            logger.info("分句 (%d 字符)", len(sentence))
+                                    iv_state = "THINK"
+                                    iv_tail = ""
+                                    # 将开标签后的剩余内容留给 THINK 状态处理
+                                    content = combined[idx + len(TAG_OPEN):]
+                                else:
+                                    safe_len = max(0, len(combined) - len(TAG_OPEN) + 1)
+                                    if safe_len > 0:
+                                        clean = block_filter.feed(combined[:safe_len])
+                                        if not self._tts_mgr.active and clean:
+                                            await self._output._broadcast("on_text_delta", clean,
+                                                capability=ChannelCapability.TEXT_DELTA)
+                                        sentence = self._sentence_buf.feed(clean) if clean else None
+                                        if sentence:
+                                            all_sentences.append(sentence)
+                                            logger.info("分句 (%d 字符)", len(sentence))
+                                    iv_tail = combined[safe_len:]
+                                    continue  # 跳过 TTFT + TTS 处理
+
+                            if iv_state == "THINK":
+                                combined = iv_tail + content
+                                idx = combined.find(TAG_CLOSE)
+                                if idx >= 0:
+                                    iv_think_buf += combined[:idx]
+                                    after = combined[idx + len(TAG_CLOSE):].lstrip()
+                                    iv_state = "REPLY"
+                                    iv_tail = ""
+                                    # 广播 inner_voice 到前端
+                                    if iv_think_buf.strip():
+                                        try:
+                                            await self._output.command("inner_voice",
+                                                params={"content": iv_think_buf.strip()})
+                                        except Exception:
+                                            logger.debug("inner_voice broadcast failed", exc_info=True)
+                                    # 闭标签后的内容送入正常流
+                                    content = after
+                                else:
+                                    keep_len = min(len(TAG_CLOSE) - 1, len(combined))
+                                    if len(combined) > keep_len:
+                                        iv_think_buf += combined[:-keep_len]
+                                    iv_tail = combined[-keep_len:]
+                                    continue  # 跳过 TTFT + TTS 处理
+
+                            if iv_state == "REPLY":
+                                pass  # 正常流，继续下面的处理
+
+                            if not content:
+                                continue
+
                             if not ttft_done:
                                 ttft_done = True
                                 ttft_ms = int((time.perf_counter() - t_think_start) * 1000)
                                 assert self._clock is not None
                                 self._clock._spans["ttft"] = ttft_ms
                                 logger.debug("TTFT: %d ms", ttft_ms)
-                            acc_text += content
 
                             # 过滤结构化块标记 — 代码和 markdown 不走 TTS
                             clean = block_filter.feed(content)
