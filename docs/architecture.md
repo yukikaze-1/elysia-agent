@@ -375,6 +375,7 @@ class CognitiveLoop:
 - **TTS 绑定发送**: 文字和音频在服务端绑在一起发送，前端无需同步逻辑
 - **并行工具调用**: `asyncio.gather` + `return_exceptions=True`，单工具失败不影响其他
 - **VAD 状态保护**: THINKING/EXECUTING 时 VAD 不打断，STT 文本和显式按钮始终生效
+- **inner_voice 流式分流**: PRE→THINK→REPLY 三状态机检测 `<inner_voice>` 标签。THINK 内容不进 TTS/前端 delta，闭标签后一次性广播 `command: inner_voice` 到前端渲染淡色思考气泡。详见 `docs/superpowers/specs/2026-06-24-inner-voice-design.md`
 
 ### 4.4 TTS 绑定发送 + 句队列
 
@@ -608,6 +609,9 @@ Browser Microphone
 | `audio` | `{"data":"base64...","stream_id":...,"seq":...}` | 音频 chunk |
 | `audio_end` | `{"stream_id": ...}` | 音频流结束 |
 | `transcription` | `{"text":"...","emotion":"HAPPY","events":["Laughter"]}` | STT 结果 |
+| `command` | `{"command":"inner_voice","params":{"content":"..."}}` | AI 内心独白（淡色气泡） |
+| `command` | `{"command":"tool_approval","params":{...}}` | 工具审批请求 |
+| `command` | `{"command":"block","params":{...}}` | 结构化内容块 |
 
 **Browser → Server:**
 
@@ -791,35 +795,34 @@ Child loggers (core.cognitive_loop 等)
 ## 11. 测试架构
 
 ```
-708 passed (243 core + 465 Module)
+~1,366 tests total (305 TaskSystem unit + 36 TaskSystem integration + ~367 core + ~598 Module + ~82 tools)
 
 core/tests/
-├── test_phase1.py             # L1 认知核心 (38 tests)
-│   EventBus, AgentFSM, CognitiveLoop, EmotionEngine, SentenceBuffer
-├── test_phase2.py             # L2 记忆持久化 (48 tests)
-│   SessionMemory, LongTermMemory, MemoryConsolidator
-├── test_phase3.py             # 集成 + 组件测试 (148 tests)
-│   CognitiveLoop TTS/tools, Agent lifecycle, IdleMonitor,
-│   DebugInfo, ToolManager, VAD interrupt, PromptAssembler,
-│   CharacterConfig, AppConfig, LLMAdapter errors
-├── test_sentence_buffer.py    # SentenceBuffer 专项 (70 tests)
+├── test_phase1.py             # L1 认知核心 (32 tests)
+├── test_phase2.py             # L2 记忆持久化 (72 tests)
+├── test_phase3.py             # 集成 + 组件测试 (114 tests)
+├── test_sentence_buffer.py    # SentenceBuffer 专项 (65 tests)
 └── fake_llm.py                # 测试用 LLM backend
+
+Module/task_system/tests/
+├── unit/                       # 单元测试 (305 tests, ~37s)
+└── integration/                # 集成测试 (36 tests, 含 7 e2e)
 
 Module/
 ├── llm/test_llm.py
 ├── stt/test_stt.py
 ├── tts/test_tts.py
 ├── embedding/test_embedding.py
-├── output/test_output.py      # OutputManager + WebSocketChannel
+├── output/test_output.py
 ├── config/test_config.py
 ├── logger/test_logger.py
 ├── prompt/test_prompt.py
 ├── tool/test_framework.py      # ToolManager + ToolPlugin + SafetyPipeline (96 tests)
-├── tool/test_tool_safety.py     # 路径验证 + URL检查 + 参数校验 (33 tests)
+├── tool/test_tool_safety.py    # 路径验证 + URL检查 + 参数校验 (33 tests)
 ├── database/vectordb/
 ├── database/documentdb/
-├── input/test_audio_buffer.py # AudioBuffer + WebRTC VAD (15 tests)
-└── input/test_server.py       # WebSocket server + _do_interrupt (13 tests)
+├── input/test_audio_buffer.py
+└── input/test_server.py
 ```
 
 运行：
@@ -875,8 +878,11 @@ Agent/
 │   ├── app_config.py        #   App 配置
 │   ├── log_setup.py         #   日志系统
 │   ├── token_tracker.py     #   Token 消耗统计 + 持久化
+│   ├── prompt_recorder.py   #   LLM Prompt 记录器 (环形缓冲)
+│   ├── response_recorder.py #   LLM Response 记录器 (环形缓冲)
 │   ├── task.py              #   调度任务数据模型
 │   ├── task_scheduler.py    #   Worker Pool 调度器
+│   ├── message_id.py        #   消息 ID 生成
 │   ├── debug_info.py        #   /debug 数据聚合
 │   ├── agent.py             #   组件组装 + 生命周期 + TaskSystem 集成
 │   ├── tools/               #   Agent 工具集 (12 个插件)
@@ -889,7 +895,7 @@ Agent/
 │   └── elysia.yaml          # Elysia 角色定义
 │
 ├── prompt/                  # 多层认知模板
-│   ├── Brain.j2             #   主脑 — 双轨思维协议
+│   ├── Brain.j2             #   主脑 — 性格/关系/内心世界/工具 四段式 prompt
 │   ├── Amygdala.j2          #   潜意识 — 情绪感知
 │   ├── ActiveSpeak.j2       #   主动说话决策
 │   ├── MicroReflector.j2    #   即时反思 — 记忆提取
@@ -971,8 +977,14 @@ INTERRUPT:
 ```
 当前模型: 用户说一句 → AI 回一句 (串行)
 
-缺失:
-  1. 任务队列 (多请求排队)           — 新消息要么打断当前回复，要么被忽略
-  2. 后台任务 (脱离对话流的长时执行)  — ✅ 已接入 TaskSystem：Agent 启动时创建 + submit_task 注册为 LLM 工具 + DelegationPreparer 筛选工具 + Mailbox 500ms 轮询通知
-  3. 并行 Worker Pool + DAG         — 无 (当前工具并行仅限于单轮内)
+已解决:
+  1. ✅ 消息排队 — pending_messages + 容量上限，busy 时暂存
+  2. ✅ 后台任务 — TaskSystem v1: Planner/Executor/Evaluator DAG 编排 + Mailbox 轮询
+  3. ✅ 流式中断 — CancelledError 防御 + FSM 幂等
+
+待解决:
+  4. 主动对话 — Elysia 只能在用户说话后回复（伴侣化改造 Step 4）
+  5. 记忆人格化 — 记忆融入对话，不是机械引用（伴侣化改造 Step 3）
+  6. 多 Session — 当前 session_id 硬编码为 "default"，无多会话管理
+  7. 角色切换 — CharacterConfig 重载 + TTS voice 热切换
 ```
