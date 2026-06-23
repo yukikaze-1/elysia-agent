@@ -145,10 +145,14 @@ class TestIntegrationWithRealTemplates:
             },
             memory={"micro": [], "macro": []},
             state={"mood": "neutral"},
+            name="Elysia",
+            user_name="妖梦",
+            user_preferences="",
         )
         assert "[persona]" in result
         assert "2024-01-01 12:00:00" in result
         assert "neutral" in result
+        assert "妖梦" in result
 
     def test_render_amygdala_prompts(self):
         """Amygdala.j2 的 system + user prompt 能正常渲染。"""

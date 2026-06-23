@@ -147,6 +147,7 @@ class UserProfile(BaseModel):
     # 占位字段——供集成测试使用，后续由 CognitiveLoop 填充
     preferences: str | dict[str, str] = ""
     language: str = "zh"
+    display_name: str = ""  # 用户显示名——来自 config.agent.user_name
 
 
 class Tool(BaseModel):

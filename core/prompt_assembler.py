@@ -54,7 +54,11 @@ class PromptAssembler:
 
         mood = self._session.get_param("mood", "neutral")
 
-        perception = f"{user_name}说：{user_message[:200]}"
+        parts = [f"{user_name}说：{user_message}"]
+        if stt_emotion and stt_emotion != "NEUTRAL":
+            parts.append(f"[语调: {stt_emotion}]")
+        parts.append(f"[当前心情: {mood}]")
+        perception = "\n".join(parts)
 
         sensory = {
             "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -74,7 +78,7 @@ class PromptAssembler:
             memory["micro"].append({
                 "content": entry.text,
                 "type": entry.memory_type,
-                "timestamp": int(entry.timestamp) if entry.timestamp else int(now.timestamp()),
+                "timestamp": entry.timestamp if entry.timestamp else now.timestamp(),
                 "poignancy": entry.poignancy,
             })
 
@@ -88,6 +92,9 @@ class PromptAssembler:
                     sensory=sensory,
                     memory=memory,
                     state=state,
+                    name=self._character.name,
+                    user_name=user_name,
+                    user_preferences="",
                 )
             except Exception:
                 logger.warning("Brain.j2 渲染失败，使用 fallback", exc_info=True)
@@ -194,7 +201,7 @@ class PromptAssembler:
     async def _render_fallback(self, user_name: str, user_message: str, now, mood: str) -> str:
         """Render system prompt without Jinja2 template (fallback)."""
         lines = [
-            f"你是 {self._character.name}，一个桌面AI伴侣。",
+            f"{self._character.name}，一个桌面AI伴侣。",
             "",
             f"## 性格",
             self._character.personality_block(),

@@ -313,7 +313,10 @@ class Agent:
         # 注入到 CognitiveLoop
         self._cognitive.set_task_system(self._task_system)
         self._cognitive.set_delegation_preparer(self._delegation_preparer)
-        self._cognitive.set_user_profile(None)  # v1: UserProfile 未实现
+        from Module.task_system.schema import UserProfile
+        self._cognitive.set_user_profile(
+            UserProfile(display_name=self._user_name)
+        )
         self._cognitive.set_on_background_task(self._register_background_task)
 
     def _start_mailbox_polling(self) -> None:

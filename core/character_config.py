@@ -63,4 +63,4 @@ class CharacterConfig:
     def personality_block(self) -> str:
         """Render a compact personality description for prompt injection."""
         traits_str = "、".join(self.traits)
-        return f"角色名: {self.name}\n性格: {traits_str}\n说话风格: {self.speaking_style}"
+        return f"你是 {self.name}。\n性格: {traits_str}\n说话风格: {self.speaking_style}"

@@ -13,10 +13,10 @@
 | 中 | **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** | `plugin.py:37`: `_remind()` 被调用生成 coroutine 对象后传入 `dispatch_background`。调度器 checkpoint 恢复时 payload 中的 coroutine 不可 JSON 序列化（不持久化），且 `from_dict` 重建后 `hasattr(coro, "__await__")` 为 False。边缘场景，当前提醒工具很少跨重启执行。 |
 | 低 | **`long_term.py` Milvus 匹配用 text 做 key 丢失同文异构条目** | `long_term.py:320-323`: Milvus 结果回连 in-memory 条目时用 `e.text` 做 dict key，若多条记忆文本相同但元数据不同（时间戳/重要性），仅最后一条进入候选池。当前 `insert` 端无去重，容易因种子数据重复插入触发。 |
 | 低 | **数据库连接失败静默降级无 warning** | `agent.py:start()` L153-158: MongoDB/Milvus 连接失败时 `mongo_ok`/`milvus_ok` 为 False，仅跳过 `load()`，无 `logger.warning`。底层 SessionMemory/LongTermMemory 有降级保护（`if self._db`/`if self._vector_db`），但管理员无法从日志发现问题。需加 warning + 前端状态提示。 |
-| **高** | **Brain.j2 硬编码工具列表严重过时（7/12）** | `Brain.j2:107-141`: 系统提示列了 7 个工具，实际注册 12 个。缺 `write_file`、`set_reminder`、`get_runtime_config`、`get_self_state`、`describe_image`。LLM 通过 API `tools` 参数能拿到 schema，但提示里说"你有以下工具"只列 7 个会误导模型。需改为动态生成工具列表或从 ToolManager 读取。 |
-| **高** | **Brain.j2 缺少 "你是谁/用户是谁" 的明确定义** | `Brain.j2:155+`: 整个提示没有一句 "你是 Elysia，你在和妖梦对话"。模型只能从 `<perception>妖梦说：xxx</perception>` 推断关系。`prompt_assembler.py` fallback 分支反而写了 `你是 {name}, 用户叫 {user_name}`。需在 BrainSystemPrompt 中补充 Interaction 块。 |
-| **高** | **Dual-Track Protocol 要求模型提取不存在的情绪数据** | `Brain.j2:164-175`: 模板要求模型"采纳 `<perception>` 中的 Core Emotion 和 Behavioral Tendency"，但 perception 里只有 `妖梦说：<原始文本>`，没有结构化情绪字段。STT 关闭时尤其空洞。需要么在 perception 中注入情绪数据，要么修改 Protocol 措辞。 |
-| 中 | **Brain.j2 记忆时间戳渲染为 Unix 整数** | `Brain.j2:68,80`: `{{ mem.timestamp }}` 直接渲染为原始 epoch（如 `1718150400`），`datetime` filter 已在 `PromptManager` 注册但从未使用。需改成 `{{ mem.timestamp | datetime }}`。 |
+| ~~高~~ | ~~**Brain.j2 硬编码工具列表严重过时（7/12）**~~ | ✅ 已修复 — Brain.j2 已列出全部 12 个工具 |
+| ~~高~~ | ~~**Brain.j2 缺少 "你是谁/用户是谁" 的明确定义**~~ | ✅ 已修复 — 新增 Interaction 块 + personality_block 第一人称 + UserProfile.display_name |
+| ~~高~~ | ~~**Dual-Track Protocol 要求模型提取不存在的情绪数据**~~ | ✅ 已修复 — perception 注入 mood/STT 标签 + Protocol 措辞软化 |
+| ~~中~~ | ~~**Brain.j2 记忆时间戳渲染为 Unix 整数**~~ | ✅ 已修复 — 使用 datetime filter |
 | 中 | **`"妖梦"` 默认值在 4 处硬编码** | `app_config.py:11`、`prompt_assembler.py:49,105`、`agent.py:384,555`。只有 `app_config.py` 是权威配置来源，其余应 fallback 到 config 而非硬编码。 |
 | 低 | **Brain.j2 中英混杂标签** | `Brain.j2`: 结构标签用英文 (`# Role Definition`, `# Sensory Input`, `# Output Format`)，人格内容/用户名/输出语言用中文。不一致且浪费 token。 |
 
