@@ -376,13 +376,11 @@
 - `fix: STT/TTS test() 改用 GET /health 替代 GET /`
 > 2→1
 
-### 58. `docs: frontend-api 补全——分句策略/流式TTS/工具执行/音频格式/音字同步`
+### 58a. `docs: frontend-api 补全——分句策略/流式TTS/工具执行`
 - `docs: frontend-api 补充分句策略和流式 TTS 同步`
 - `docs: frontend-api 补全工具执行状态和结构化块`
 - `docs: fix 3 frontend-api.md 错误`
-- `docs: frontend-api 补全音频流式播放和音字同步实现细节`
-- `docs: 澄清音频块格式——仅首块含WAV头，后续为裸PCM续流`
-> 5→1
+> 3→1
 
 ### 59. `chore: 归档已完成任务 + 清理 todo.md`
 - `chore: 归档已完成任务到 completed.md，清理 todo.md`
@@ -395,12 +393,22 @@
 - `docs: fix plan——Brain.j2 行号 252-254 为未改动的 Output Format`
 > 4→1
 
-### 61. `fix: Brain.j2 prompt 修复——Identity/情绪Protocol/时间戳/Perception/Interaction + 测试`
+### 61a. `fix: Brain.j2 prompt 修复——Identity/情绪Protocol/时间戳/Perception + 测试`
 - `fix: Brain.j2 prompt——Identity/情绪Protocol/时间戳/Perception`
 - `chore: 划掉 todo.md 中已修复的 4 条 Brain.j2 问题`
 - `fix(test): BrainSystemPrompt 测试补缺失的 name/user_name/user_preferences 参数`
+> 3→1
+
+### 58b. `docs: frontend-api 音频格式补全——音字同步/音频块格式`
+- `docs: frontend-api 补全音频流式播放和音字同步实现细节`
+- `docs: 澄清音频块格式——仅首块含WAV头，后续为裸PCM续流`
+> 2→1
+
+### 61b. `fix: Brain.j2 Interaction——禁止第三人称叙述用户`
 - `fix: Brain.j2 Interaction——禁止第三人称叙述用户，强制直接对话`
-> 4→1
+> 1→1
+
+> **注意**：58a/58b 和 61a/61b 因为实际 git 历史中 frontend-api 文档和 Brain.j2 修复交替提交，无法合并为单一的 Group 58 和 Group 61。它们操作不同文件（frontend-api.md vs Brain.j2），但 git 时间线交错。
 
 ---
 
@@ -409,13 +417,23 @@
 | 指标 | 值 |
 |------|-----|
 | 原始提交数 | 200 |
-| 合并后提交数 | **61** |
-| 减少比例 | 69.5% |
-| 平均每组合并 | 3.3 → 1 |
+| 实际合并组数 | **63**（因 git 历史交替，58/61 拆分为子组） |
+| 最终提交数 | **65**（63 合并组 + 2 spec 提交） |
+| 减少比例 | 67.5% |
+| 平均每组合并 | 3.2 → 1 |
 
 ---
 
-## 验证
+## 实施结果（2026-06-23）
+
+| 检查项 | 结果 |
+|--------|------|
+| `git diff backup/pre-rebase..main` | **0 行差异** — 树内容完全一致 |
+| 单元测试 (305 tests) | **全部通过** |
+| `git status --porcelain` | 干净 |
+| 最终提交数 | **65**（63 合并 + 2 spec） |
+
+原始 200 提交已成功合并为 65 提交，工作树内容与原始历史完全一致。
 
 0. `git status --porcelain` 确认工作区干净（无脏文件被 rebase 误吞）
 1. `git log --oneline` 确认提交数为 61 + (前 524 个未改动提交)
