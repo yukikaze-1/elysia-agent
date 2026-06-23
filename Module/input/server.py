@@ -657,6 +657,24 @@ async def _handle_ws(
     except Exception:
         pass
 
+    # 重新广播挂起的 HITL 审批请求（前端重连后恢复审批弹窗）
+    try:
+        if hasattr(agent, '_tool_manager') and agent._tool_manager is not None:
+            pending = agent._tool_manager.get_pending_approvals()
+            for request_id, tool_name, params in pending:
+                await ws.send_json({
+                    "command": "tool_approval",
+                    "params": {
+                        "request_id": request_id,
+                        "tool_name": tool_name,
+                        "params": params,
+                    },
+                })
+                logger.debug("Re-broadcast pending approval to new client: %s (%s)",
+                             request_id, tool_name)
+    except Exception:
+        logger.debug("Failed to re-send pending approvals", exc_info=True)
+
     audio_buf: AudioBuffer | None = None
     monitor_task: asyncio.Task | None = None
     if stt_transcribe:

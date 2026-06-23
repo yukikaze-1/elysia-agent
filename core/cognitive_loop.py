@@ -112,7 +112,9 @@ class CognitiveLoop:
         """取消当前认知任务（如有）。返回 True 表示确实取消了任务。"""
         if self._current_task is not None and not self._current_task.done():
             self._current_task.cancel()
+            self._current_task = None
             return True
+        self._current_task = None
         return False
 
     def set_tool_context(self, ctx) -> None:
@@ -880,6 +882,8 @@ class CognitiveLoop:
 
     async def _handle_interrupt(self) -> None:
         """Clean up after interruption — cancel TTS tasks, return to IDLE."""
+        if self._fsm.state == AgentState.IDLE:
+            return  # 重启后旧 task 的 CancelledError 可能触发重复清理
         self._sentence_buf.reset()
         self._executing_tools.clear()
         self._tts_mgr.cancel_all()

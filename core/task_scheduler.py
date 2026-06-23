@@ -357,10 +357,11 @@ class TaskScheduler:
             if result.success:
                 return result
 
-            # 仅对可重试的错误类型重试
+            # 仅对可重试的错误类型重试；shutdown 期间不重试
             error_type = result.error_type
             retryable = (
-                error_type is not None
+                self._running
+                and error_type is not None
                 and hasattr(error_type, "is_retryable")
                 and error_type.is_retryable
                 and task.can_retry()

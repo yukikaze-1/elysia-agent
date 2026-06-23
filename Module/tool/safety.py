@@ -206,7 +206,7 @@ class SafetyPipeline:
     """工具执行中间件管道：validate → safety → hitl → execute → truncate。"""
 
     def __init__(self) -> None:
-        self._hitl_requests: dict[str, asyncio.Event] = {}
+        self._hitl_requests: dict[str, tuple[asyncio.Event, str, dict]] = {}  # request_id → (event, tool_name, params)
         self._hitl_results: dict[str, tuple[bool, str]] = {}
         self._hitl_timeout: float = 60.0
         self._stats: dict[str, int] = {
@@ -222,11 +222,20 @@ class SafetyPipeline:
         self._hitl_results[request_id] = (
             approved, "confirmed" if approved else "denied",
         )
-        self._hitl_requests[request_id].set()
+        self._hitl_requests[request_id][0].set()
         return True
 
     def request_exists(self, request_id: str) -> bool:
         return request_id in self._hitl_requests
+
+    def get_pending_approvals(self) -> list[tuple[str, str, dict]]:
+        """返回所有待审批请求的 (request_id, tool_name, params)。
+        用于 WS 重连时重新广播审批弹窗到新客户端。"""
+        return [
+            (rid, tool_name, params)
+            for rid, (event, tool_name, params) in self._hitl_requests.items()
+            if not event.is_set()
+        ]
 
     def set_hitl_broadcast(self, callback):
         """Set the HITL approval broadcast callback.
@@ -480,7 +489,7 @@ class SafetyPipeline:
         from core.message_id import new_message_id
         request_id = new_message_id()
         event = asyncio.Event()
-        self._hitl_requests[request_id] = event
+        self._hitl_requests[request_id] = (event, name, params)
 
         # 广播审批请求 — 由 ToolManager 通过 callback 注入
         if hasattr(self, "_broadcast_hitl"):

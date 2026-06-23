@@ -32,6 +32,8 @@ class AgentFSM:
         return to_state in VALID_TRANSITIONS.get(self._state, set())
 
     def transition(self, to_state: AgentState) -> None:
+        if to_state == self._state:
+            return  # 同状态幂等，避免 idle→idle 抛异常
         if not self.can_transition(to_state):
             raise ValueError(f"Invalid transition: {self._state} → {to_state}")
         self._previous = self._state

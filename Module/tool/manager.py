@@ -231,6 +231,10 @@ class ToolManager:
         """提交 HITL 审批结果。由 server 层在收到前端审批响应后调用。"""
         return self._pipeline.submit_approval(request_id, approved)
 
+    def get_pending_approvals(self) -> list[tuple[str, str, dict]]:
+        """返回待审批请求列表，用于 WS 重连时重新广播审批弹窗。"""
+        return self._pipeline.get_pending_approvals()
+
     def set_hitl_broadcast(self, output_manager) -> None:
         """Wire HITL approval broadcast through OutputManager."""
         if output_manager is not None:
