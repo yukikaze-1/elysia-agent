@@ -135,6 +135,10 @@ class PromptAssembler:
             if role == "tool":
                 continue
 
+            # 注入 inner_voice — 让 LLM 在历史中看到自己之前的内心独白，延续输出格式
+            inner_voice = msg.get("inner_voice")
+            iv_prefix = f"<inner_voice>{inner_voice}</inner_voice>\n" if inner_voice else ""
+
             # assistant 消息可能带 tool_calls — 提取摘要
             tool_calls = msg.get("tool_calls")
             tool_summary = _format_tool_summary(tool_calls) if tool_calls else ""
@@ -150,6 +154,11 @@ class PromptAssembler:
                             msg_content.append({"type": "text", "text": tool_summary})
                         else:
                             msg_content = msg_content + tool_summary
+                    if iv_prefix:
+                        if isinstance(msg_content, list):
+                            msg_content.insert(0, {"type": "text", "text": iv_prefix.rstrip()})
+                        else:
+                            msg_content = iv_prefix + msg_content
                     messages.append({
                         "role": role,
                         "content": msg_content,
@@ -164,19 +173,19 @@ class PromptAssembler:
                         text_content = hint + text_content if text_content else hint
                     if text_content or tool_summary:
                         msg_content = (text_content or "") + (tool_summary or "")
-                        messages.append({"role": role, "content": msg_content})
+                        messages.append({"role": role, "content": iv_prefix + msg_content})
             elif isinstance(content_raw, str):
                 msg_content = content_raw + (tool_summary or "")
-                messages.append({"role": role, "content": msg_content})
+                messages.append({"role": role, "content": iv_prefix + msg_content})
             elif "parts" in msg:
                 # 旧格式 — parts 数组
                 text_from_parts = "".join(p["content"] for p in msg["parts"])
                 msg_content = text_from_parts + (tool_summary or "")
-                messages.append({"role": role, "content": msg_content})
+                messages.append({"role": role, "content": iv_prefix + msg_content})
             elif tool_summary:
-                messages.append({"role": role, "content": tool_summary})
+                messages.append({"role": role, "content": iv_prefix + tool_summary})
             else:
-                messages.append({"role": role, "content": str(content_raw)})
+                messages.append({"role": role, "content": iv_prefix + str(content_raw)})
 
         # 当前用户消息
         if content:
