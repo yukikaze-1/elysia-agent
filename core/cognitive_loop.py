@@ -447,14 +447,27 @@ class CognitiveLoop:
                 except asyncio.CancelledError:
                     raise
 
+                # Flush state machine tail (流结束时的残留缓冲区)
+                if iv_state == "PRE" and iv_tail:
+                    # 整个流都没找到 <inner_voice>，全部当 public_reply
+                    clean = block_filter.feed(iv_tail)
+                    await _handle_sentence(clean)
+                elif iv_state == "THINK":
+                    # 有 <inner_voice> 但没有 </inner_voice>，剩余归入 think
+                    if iv_tail:
+                        iv_think_buf += iv_tail
+                    # 广播 inner_voice（如果有的话）
+                    if iv_think_buf.strip():
+                        try:
+                            await self._output.command("inner_voice",
+                                params={"content": iv_think_buf.strip()})
+                        except Exception:
+                            logger.debug("inner_voice broadcast failed", exc_info=True)
+
                 # Flush remaining text in sentence buffer + block filter
                 trailing = block_filter.flush()
                 if trailing:
-                    # feed() 可能产出完整句子，需捕获处理
-                    maybe_sentence = self._sentence_buf.feed(trailing)
-                    if maybe_sentence:
-                        all_sentences.append(maybe_sentence)
-                        logger.info("分句 (trailing) (%d 字符)", len(maybe_sentence))
+                    await _handle_sentence(trailing)
                 remaining = self._sentence_buf.flush()
                 if remaining:
                     if is_emoji_only(remaining):
