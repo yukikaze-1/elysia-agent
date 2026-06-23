@@ -701,6 +701,7 @@ class CognitiveLoop:
 
                     log_conversation("assistant", self._prompt._character.name, public_text)
                     if iv_think_buf.strip():
+                        logger.info("💭 %s", iv_think_buf.strip())
                         log_conversation("inner_voice", self._prompt._character.name,
                                          iv_think_buf.strip())
                     asyncio.create_task(self._after_response(user_message, public_text),
