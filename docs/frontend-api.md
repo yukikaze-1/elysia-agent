@@ -355,12 +355,28 @@ LLM 回复中的代码块或 Markdown 块单独推送。`block_type` 取值：`"
 { "type": "audio_end", "stream_id": 0 }
 ```
 
-- `data`：base64 编码的 **WAV** 音频块（含 RIFF 头），MIME: `audio/wav`
+- `data`：base64 编码的音频数据。**只有每句第一块（seq=0）含 WAV/RIFF 头**，后续块为裸 PCM 续流。拼接全部块后得到完整 WAV 文件
 - `stream_id`：区分并发音频流（通常为 0）
 - `seq`：递增序号，用于排序和去重
 - `is_final`：始终为 `false`，音频结束由 `audio_end` 标记
 
-**音频格式：** WAV, 32000Hz 或 24000Hz（取决于 TTS 后端）, mono, int16。第一个 `audio` 消息的 WAV 头已包含完整格式信息，客户端从中读取采样率即可。解码后用 NAudio（.NET）/ Web Audio API（Web）/ AVAudioEngine（macOS）播放。
+**音频流模型：**
+
+```
+每个 stream_id:
+  audio { seq: 0 }  ← WAV header + PCM 开头
+  audio { seq: 1 }  ← 纯 PCM 续流（无 header）
+  audio { seq: 2 }  ← 纯 PCM 续流
+  ...
+  audio_end          ← 流结束，触发合并播放
+```
+
+**处理规则：**
+- 收到 `audio` → 按 `stream_id` 分组，按 `seq` 排序缓冲
+- 收到 `audio_end` → 按 `seq` 顺序拼接所有块 → 完整 WAV → 播放
+- **不要**逐块播放——只有第一块有 WAV 头，后续块单独播放是噪音
+
+**音频格式：** 解码方式从首块 WAV 头读取（采样率/声道/位深）。GPT-SoVits 为 32000Hz/mono/int16，OpenAI TTS 为 24000Hz/mono/int16。播放库：Web 用 `Audio` 元素 + `Blob`，.NET 用 NAudio/MediaPlayer。
 
 ### 11. `transcription` — STT 识别结果
 
@@ -456,15 +472,108 @@ LLM 回复中的代码块或 Markdown 块单独推送。`block_type` 取值：`"
   audio_end { stream_id: N }                             ← 本句音频结束
 ```
 
-**前端处理规则：**
+#### 音频缓冲与合并播放
 
-1. 收到带 `stream_id` 的 `delta` → 创建新气泡，渲染完整句子文字
-2. 收到 `audio` → 按 `stream_id` 分组缓冲，按 `seq` 排序播放
-3. 收到 `audio_end` → 标记该 `stream_id` 音频流结束
-4. 多个 `stream_id` 可并发——前一句音频还在播放时，后一句的 delta 已到（文字先行）
-5. 音频播放队列：收到 `audio_end` 之前不可播放下一句音频（保证顺序），但文字气泡可以先渲染
+**不要**收到一块音频就播一块。必须等 `audio_end` 后合并为完整 WAV 再播放：
 
-**emoji 句**：纯 emoji 句不送 TTS，作为 `delta`（带 `stream_id`）插在相邻句子之间。
+```
+// 缓冲阶段
+audio 到达 → base64 decode → byte[] → push 到 audioChunks[streamId]
+
+// 合并播放
+audio_end 到达:
+  1. concat 所有 chunks → 完整 WAV bytes
+  2. 创建可播放对象 (Web: Blob + URL.createObjectURL / .NET: MemoryStream)
+  3. push { url, streamId } 到 audioQueue (FIFO)
+  4. 调用 playNext()
+```
+
+**`playNext()` 实现逻辑：**
+
+```
+if (正在播放 || 队列空) return
+取队首 { url, streamId }:
+  player = new AudioPlayer(url)
+  player.volume = volume
+  player.play()
+
+  player.onEnded:
+    释放音频资源 (Web: URL.revokeObjectURL / .NET: stream.Dispose)
+    清理 streamBubbles[streamId]
+    audioPlaying = false
+    revealNextQueuedBubble()   ← 弹出下一个隐藏气泡
+    clearPlayingHighlight()    ← 取消蓝光
+    playNext()                 ← 递归播放下一句
+```
+
+关键设计：**FIFO 串行播放**。上一句播完才播下一句，保证句间顺序。
+
+#### 文字-语音同步（核心）
+
+`stream_id` 是文字和音频的桥梁：
+
+**delta 处理 (appendDelta)：**
+
+```
+delta 到达 (带 stream_id):
+  创建新气泡
+  streamBubbles[streamId] = bubble    ← 记录映射
+
+  if (audioPlaying):
+    气泡放入 nextBubbleQueue（隐藏，不挂 DOM）  ← 音字同步关键
+  else:
+    气泡直接 appendChild 到聊天区
+```
+
+**为什么排队：** TTS 开启时，服务端文字和音频绑定发送，但文字可能比音频先到。如果当前句音频还在播，下一句文字不应该提前显示——否则用户看到还没听到的话。所以 `audioPlaying == true` 时，新气泡暂存 `nextBubbleQueue`（`opacity: 0`，不挂 DOM）。
+
+**播放完成后的弹出：**
+
+```
+onEnded → revealNextQueuedBubble():
+  row = nextBubbleQueue.shift()
+  DOM.appendChild(row)
+  requestAnimationFrame:
+    row.opacity = 1               ← 淡入
+    row.transform = translateY(0) ← 从下方滑入
+```
+
+#### 播放高亮
+
+当前正在播放的句子对应气泡高亮：
+
+```
+playNext() → highlightPlaying(bubble):
+  playingBubble = bubble
+  bubble.classList.add('playing', 'pulse')   ← 蓝光 + 呼吸动画
+
+onEnded → clearPlayingHighlight():
+  playingBubble.classList.remove('playing', 'pulse')
+  playingBubble = null
+```
+
+#### 用户打断时的清理
+
+用户发新消息时，清空所有排队和映射：
+
+```
+用户发消息:
+  finalizeDelta()              ← 归档当前气泡
+  nextBubbleQueue = []         ← 丢弃排队气泡
+  streamBubbles = {}           ← 清空 stream→bubble 映射
+  playingBubble 高亮取消
+```
+
+#### .NET 端需要的状态字段
+
+| 变量 | 类型 | 用途 |
+|------|------|------|
+| `audioChunks` | `Dictionary<int, List<byte[]>>` | 按 stream_id 缓冲音频块 |
+| `audioQueue` | `Queue<AudioItem>` | 待播放的完整 WAV（FIFO） |
+| `audioPlaying` | `bool` | 当前是否正在播放 |
+| `streamBubbles` | `Dictionary<int, BubbleView>` | stream_id → 气泡控件映射 |
+| `nextBubbleQueue` | `Queue<BubbleView>` | 音频播放中暂缓显示的气泡 |
+| `playingBubble` | `BubbleView?` | 当前高亮的控件 |
 
 ### TTS 关闭时（纯文字流）
 
@@ -473,19 +582,14 @@ LLM 逐 token 产出 → 逐字 `delta`（无 `stream_id`）推送给前端：
 ```
 delta { content: "今" }
 delta { content: "天" }
-delta { content: "天" }
-delta { content: "气" }
 ...
 delta { content: "今天天气真好。" }   ← 完整句（SentenceBuffer 切出）
 message { content: "" }              ← 句边界标记
-delta { content: "我" }
-delta { content: "们" }
-...
 ```
 
 **前端处理规则：**
 
-1. `delta` 逐字追加到当前气泡（`appendDelta`）
+1. `delta` 逐字追加到当前气泡
 2. `message` 且 `content: ""` → **句边界**：归档当前气泡，下一句 `delta` 创建新气泡
 3. `state` 变为 `idle` → 全部句子完成，最后一个气泡也归档
 
