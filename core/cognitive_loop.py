@@ -639,16 +639,24 @@ class CognitiveLoop:
                 # 发送还未排出的 emoji（最后一句 TTS 之后的）
                 await self._tts_mgr.flush_emojis()
 
-                if acc_text.strip():
+                # 从 acc_text 中剥离 <inner_voice> 标签——数据库/前端/情绪分析用清洗后的文本
+                public_text = acc_text
+                iv_start = public_text.find("<inner_voice>")
+                if iv_start >= 0:
+                    iv_close = public_text.find("</inner_voice>", iv_start)
+                    if iv_close >= 0:
+                        public_text = (public_text[:iv_start] + public_text[iv_close + len("</inner_voice>"):]).strip()
+
+                if public_text.strip():
                     if self._emotion:
-                        self._emotion.analyze_assistant(acc_text)
+                        self._emotion.analyze_assistant(public_text)
                     if not speaking_started:
                         # 无标点的极短回复，直接发完整消息
                         await self._output.typing(False)
-                        msg = MessageObj(content=acc_text)
+                        msg = MessageObj(content=public_text)
                         await self._output.send(msg)
-                if acc_text.strip():
-                    parts, content_type = build_parts_with_blocks(acc_text, all_sentences)
+                if public_text.strip():
+                    parts, content_type = build_parts_with_blocks(public_text, all_sentences)
                     # 构建 assistant 消息的 content 数组（text parts + 保留 content_type 信息）
                     assistant_content: list[dict] = []
                     for p in parts:
@@ -665,8 +673,8 @@ class CognitiveLoop:
                             "turn_total": sum(r.total_tokens for r in self._token_tracker.current_turn_usages),
                         } if self._token_tracker and self._token_tracker.current_turn_usages else None,
                     })
-                    log_conversation("assistant", self._prompt._character.name, acc_text)
-                    asyncio.create_task(self._after_response(user_message, acc_text),
+                    log_conversation("assistant", self._prompt._character.name, public_text)
+                    asyncio.create_task(self._after_response(user_message, public_text),
                                        name="after-response")
 
                     # 推送结构化块到前端（不走 TTS，单独渲染）
