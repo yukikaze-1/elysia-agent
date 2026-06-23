@@ -668,6 +668,7 @@ class CognitiveLoop:
                         "content": assistant_content,
                         "content_type": content_type,
                         "timestamp": datetime.datetime.now().astimezone().isoformat(),
+                        "inner_voice": iv_think_buf.strip() or None,
                         "token_usage": {
                             "rounds": [asdict(r) for r in self._token_tracker.current_turn_usages],
                             "turn_total": sum(r.total_tokens for r in self._token_tracker.current_turn_usages),

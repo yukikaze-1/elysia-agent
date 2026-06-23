@@ -106,15 +106,19 @@ class SessionMemory:
 
             if "parts" in m:
                 entry = dict(m)
-                # 保留 tool_calls
+                # 保留 tool_calls / inner_voice
                 if "tool_calls" in m:
                     entry["tool_calls"] = m["tool_calls"]
+                if "inner_voice" in m:
+                    entry["inner_voice"] = m["inner_voice"]
                 result.append(entry)
             else:
                 entry: dict[str, Any] = {"role": role}
-                # 保留 tool_calls（assistant 发起工具调用的信息）
+                # 保留 tool_calls / inner_voice
                 if "tool_calls" in m:
                     entry["tool_calls"] = m["tool_calls"]
+                if "inner_voice" in m:
+                    entry["inner_voice"] = m["inner_voice"]
                 content = m.get("content", "")
                 # 旧格式 meta.sentences 优先（add_message 旧调用路径）
                 meta = m.get("meta", {})

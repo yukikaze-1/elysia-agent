@@ -308,6 +308,13 @@ export function restoreFromServer(messages) {
         }
       }
     } else {
+      // 渲染 inner_voice（如果存在）——在公开回复之前
+      if (m.inner_voice) {
+        const thinkBubble = document.createElement('div');
+        thinkBubble.className = 'inner-voice-bubble';
+        thinkBubble.textContent = m.inner_voice;
+        chat.appendChild(thinkBubble);
+      }
       for (let i = 0; i < parts.length; i++) {
         const p = parts[i];
         if (!p.content) continue;
