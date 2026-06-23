@@ -97,7 +97,7 @@ for chunk in stream:
             safe_len = max(0, len(combined) - len(TAG_OPEN) + 1)
             if safe_len > 0:
                 feed_to_pipeline(combined[:safe_len])
-            tail = combined[-safe_len:] if safe_len > 0 else combined
+            tail = combined[safe_len:]  # 保留危险区 = 尾部 len(TAG_OPEN)-1 字节
             continue  # 跳过 THINK/REPLY 逻辑
 
     if state == THINK:
