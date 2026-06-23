@@ -417,6 +417,7 @@
 
 ## 验证
 
+0. `git status --porcelain` 确认工作区干净（无脏文件被 rebase 误吞）
 1. `git log --oneline` 确认提交数为 61 + (前 524 个未改动提交)
 2. `git diff backup/pre-rebase..main` 应无差异（最终树内容完全一致）
 3. 运行 `python -m pytest Module/task_system/tests/unit/ -v` 确认测试通过
