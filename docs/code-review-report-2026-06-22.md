@@ -360,8 +360,8 @@ while not self._queue.empty():
 - `.env.example` 使用看起来真实的占位符（`sk-your-key-here`）
 - `config.yaml` 指定 `deepseek-v4-flash` 但 `app_config.py` 默认为 `deepseek-chat`
 - README.md 报告 883 个测试，architecture.md 报告 708 个——不一致
-- `docs/ref_memory-architecture.md` 完全废弃但仍在仓库中——积极误导
-- `todo.md` 被 architecture.md 引用但不存在
+- `docs/ref_memory-architecture.md` ~~完全废弃但仍在仓库中——积极误导~~ ✅ 已删除 (06-22)
+- `todo.md` ~~被 architecture.md 引用但不存在~~ ✅ 已存在 (06-22)
 
 ---
 

@@ -11,9 +11,9 @@
 |------|------|
 | 生产代码 | 37 文件, 8,107 行 |
 | 测试代码 | 24 文件 |
-| 单元测试 | **298 tests**, ~4.3s |
+| 单元测试 | **305 tests**, ~37s |
 | 集成测试 | 36 tests (含 7 e2e), ~15min |
-| 最近提交 | `c63637c` — fix: 修复 5 个工具 bug (read_file/set_reminder/memory config/write_file/Brain.j2) |
+| 最近提交 | `1c3f26f` — docs: README 全面更新 (2026-06-24) |
 
 ---
 

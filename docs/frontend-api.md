@@ -46,7 +46,7 @@ Server ──→ Client (16 种 type，action/command 含子类型):
   delta, message, typing
   expression
   action  → tool_executing | tool_done | (Live2D)
-  command → tool_approval | block
+  command → tool_approval | inner_voice | block
   audio, audio_end
   transcription, wake
   token_usage, switch_model_result, error
@@ -320,7 +320,21 @@ LLM 开始/结束生成时推送。前端可显示/隐藏 "..." 动画。
 
 需要用户确认的危险操作（如 `write_file`）。前端应弹出确认对话框，用户选 approve/deny 后发送 `tool_approval` 消息回复。
 
-#### 9b. `block` — 结构化内容块
+#### 9b. `inner_voice` — AI 内心独白
+
+```json
+{
+  "type": "command",
+  "command": "inner_voice",
+  "params": {
+    "content": "她今天好像不太一样…但又说不上来哪里不对。"
+  }
+}
+```
+
+Elysia 的内心独白——她想了但没说出来的话。前端应以淡色/斜体/小字渲染，出现在公开回复气泡的上方。inner_voice 在流式输出结束后一次性发送。
+
+#### 9c. `block` — 结构化内容块
 
 ```json
 {

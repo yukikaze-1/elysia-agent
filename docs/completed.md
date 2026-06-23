@@ -177,7 +177,7 @@
 
 | 任务 | 说明 |
 |------|------|
-| 去除结构化输出 | Brain.j2 纯文本，删除 TagParser + inner_voice/mood |
+| 去除结构化输出 | Brain.j2 纯文本，移除旧版 TagParser。2026-06-24 重新引入 inner_voice 输出标签（伴侣化改造 Step 2） |
 | 保留思维协议 | Step 1 内心独白 → Step 2 对外回复在 prompt 中 |
 | prompt_assembler | 始终用 Brain.j2，无分支
 
@@ -732,3 +732,14 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 06-22 | **文档清理** — 删除过期文档 `ref_memory-architecture.md` + `test_tool_parallel.md`，更新 `architecture.md`（工具数/接口名/文件结构/session limit），修正 `database-storage.md` maxlen |
 | 06-22 | **TTS/STT 连通性显示修复** — agent 启动时 `test()` 验证 TTS/STT 可用性；debug 页面补 STT 行 |
 | 06-22 | **Token 追踪** — TokenTracker + PromptRecorder 注入 CognitiveLoop；debug 页面 Token 卡片；session-token-bar 顶栏 |
+
+### 近期完成 (2026-06-23 ~ 2026-06-24)
+
+| 日期 | 内容 |
+|------|------|
+| 06-24 | **伴侣化改造 Step 1: 对话风格** — Brain.j2 全面中文重写：身份/关系/内心世界/说话方式分离。回复从长文变 1-3 句自然对话。"嗯"/"哦"/"好嘛"作为合法回复；克制约束——不是客服不需要每句话都有用。详见 `docs/companion-roadmap.md`、`docs/companion-prompt-guide.md` |
+| 06-24 | **伴侣化改造 Step 2: 内心世界 (inner_voice)** — LLM 输出 `<inner_voice>...</inner_voice>` 标签，cognitive_loop 流式状态机（PRE→THINK→REPLY）分流，前端淡色斜体 think 气泡。持久化到 session（刷新恢复），debug 页面新增 📤 LLM Raw Response 查看器。ResponseRecorder 环形缓冲区。prompt 加入 few-shot 示例确保标签输出稳定。LLM 对话历史注入 inner_voice 格式延续。spec: `docs/superpowers/specs/2026-06-24-inner-voice-design.md` |
+| 06-24 | **WS 重连恢复修复** — FSM 同状态幂等 (idle→idle no-op)、CancelledError 泄漏防御、HITL 审批重发（新客户端重连后恢复审批弹窗）、shutdown 期间工具不重试 |
+| 06-24 | **Git 历史清理** — 全量 rebase: 724→164 提交（77% 缩减），按功能/主题合并。spec: `docs/superpowers/specs/2026-06-23-git-history-cleanup-design.md` |
+| 06-24 | **文档全面更新** — README、companion-roadmap、companion-prompt-guide、completed、todo 同步到最新状态 |
+| 06-23 | **Brain.j2 prompt 修复** — Identity/情绪Protocol/时间戳/Perception/Interaction 修复，拒绝第三人称叙述用户 |
