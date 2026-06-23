@@ -466,6 +466,7 @@ function render(info) {
         const parts = m.parts || [];
         const ct = m.content_type || {};
         const roleTag = `<span class="role-tag ${esc(m.role)}">${esc(m.role)}</span>`;
+        const thinkHtml = m.inner_voice ? `<div style="color:#888;font-style:italic;font-size:11px;padding:2px 4px;border-left:2px solid #888;margin:2px 0;">💭 ${expandable(m.inner_voice, 80)}</div>` : '';
         const textHtml = parts.map((p, i) => {
           let typeTag = '';
           if (ct.markdown && ct.markdown.includes(i)) typeTag = '<span class="type-tag">md</span>';
@@ -473,7 +474,7 @@ function render(info) {
           return `${typeTag}${expandable(p.content, 90)}`;
         }).join('');
         const imgHtml = renderImages(m.content);
-        return roleTag + textHtml + imgHtml;
+        return roleTag + thinkHtml + textHtml + imgHtml;
       })},
       { title:'Long-term Memory', wide:false, items: (info.lt_recent||[]).map(e =>
         `<span class="type-tag">${esc(e.metadata?.type||'?')}</span>${expandable(e.text, 90)}`
@@ -937,9 +938,11 @@ async function viewSession(sid) {
           const parts = m.parts || [];
           const text = parts.map(p => p.content || '').join('');
           const ts = m.timestamp ? m.timestamp.slice(0, 19).replace('T', ' ') : '';
+          const thinkHtml = m.inner_voice ? `<div style="color:#888;font-style:italic;font-size:11px;border-left:2px solid #888;padding-left:4px;margin:1px 0;">💭 ${esc(m.inner_voice)}</div>` : '';
           return `<div class="msg">
             ${ts ? `<span style="color:var(--muted);font-size:10px;margin-right:4px;">${esc(ts)}</span>` : ''}
             <span class="role-tag ${esc(m.role||'?')}">${esc(m.role||'?')}</span>
+            ${thinkHtml}
             ${expandable(text, 120)}
             ${renderImages(m.content)}
           </div>`;
