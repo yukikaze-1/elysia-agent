@@ -49,15 +49,20 @@
 ```
 LLM 输出流进入 cognitive_loop._think_loop:
 
-State THINK (初始):
+State PRE (初始): 等待 <inner_voice> 开标签
+  - 累积文本，检测 <inner_voice>
+  - 开标签之前的文本 → 正常流（降级容错）
+  - 检测到 <inner_voice> → 切换到 THINK
+
+State THINK: 等待 </inner_voice> 闭标签
   - 累积文本到 think_buf
   - 不送入 SentenceBuffer（不触发 TTS）
   - 不广播 text_delta 到前端
-  - 检测到 "</inner_voice>" → 切换到 REPLY
+  - 检测到 </inner_voice> → 切换到 REPLY
 
-State REPLY:
+State REPLY: 正常流式处理
   - 提取 </inner_voice> 之后的内容
-  - 正常流式处理：SentenceBuffer → TTS → 前端
+  - SentenceBuffer → TTS → 前端
   - 行为与现在完全一致
 ```
 
@@ -71,31 +76,47 @@ chunk N+1: "oice>嗯，在呢。"
 
 **方案**：保持一个长度为 `len("</inner_voice>") - 1 = 14` 字节的前向缓冲（tail buffer）。每次新 chunk 到达时，检查 `(tail + chunk)` 是否包含 `</inner_voice>`：
 
-```
-pseudo:
-
-tail = ""  # 最后 14 字节
-state = THINK
+tail = ""       # 用于跨 chunk 检测标签的尾部缓冲
+think_buf = ""  # 已确认的 think 内容
+state = PRE     # PRE: 等开标签 / THINK: 等闭标签 / REPLY: 正常流
+TAG_OPEN = "<inner_voice>"
+TAG_CLOSE = "</inner_voice>"
 
 for chunk in stream:
+    if state == PRE:
+        combined = tail + chunk
+        idx = combined.find(TAG_OPEN)
+        if idx >= 0:
+            before = combined[:idx].lstrip()
+            if before:
+                feed_to_pipeline(before)  # 开标签之前的文本归 public_reply
+            state = THINK
+            tail = ""
+            chunk = combined[idx + len(TAG_OPEN):]
+        else:
+            safe_len = max(0, len(combined) - len(TAG_OPEN) + 1)
+            if safe_len > 0:
+                feed_to_pipeline(combined[:safe_len])
+            tail = combined[-safe_len:] if safe_len > 0 else combined
+            continue  # 跳过 THINK/REPLY 逻辑
+
     if state == THINK:
         combined = tail + chunk
-        idx = combined.find("</inner_voice>")
+        idx = combined.find(TAG_CLOSE)
         if idx >= 0:
-            # 找到了
-            think_content = combined[:idx]
-            after = combined[idx + len("</inner_voice>"):].lstrip()
+            think_content = think_buf + combined[:idx]
+            after = combined[idx + len(TAG_CLOSE):].lstrip()
             state = REPLY
-            # 广播 think 到前端
             broadcast_think(think_content)
-            # after 送入正常流
             feed_to_pipeline(after)
         else:
-            # 没找到，保留尾部用于下次拼接
-            tail = combined[-14:] if len(combined) > 14 else combined
-    else:  # REPLY
+            keep_len = min(len(TAG_CLOSE) - 1, len(combined))
+            if len(combined) > keep_len:
+                think_buf += combined[:-keep_len]
+            tail = combined[-keep_len:]
+
+    if state == REPLY:
         feed_to_pipeline(chunk)
-```
 
 ### `</inner_voice>` 后空白处理
 
