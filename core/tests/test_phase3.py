@@ -1297,6 +1297,31 @@ class TestLLMAdapterErrors:
             async for _ in adapter.stream_think([{"role": "user", "content": "hi"}]):
                 pass
 
+    @pytest.mark.asyncio
+    async def test_no_retry_after_stream_started(self):
+        """流开始产出后遇到可重试错误 → 不重试，直接抛异常。"""
+        from core.llm_adapter import LLMAdapter
+
+        call_count = [0]
+
+        class StartThenFailBackend:
+            async def stream_think(self, messages, **kwargs):
+                call_count[0] += 1
+                yield {"content": "前半部分", "tool_calls": None}
+                import httpx
+                req = object()
+                resp = type('R', (), {'status_code': 503})()
+                raise httpx.HTTPStatusError("mid-stream failure", request=req, response=resp)
+
+        adapter = LLMAdapter(_test_backend=StartThenFailBackend())
+        chunks = []
+        with pytest.raises(Exception):
+            async for chunk in adapter.stream_think([{"role": "user", "content": "hi"}]):
+                chunks.append(chunk)
+
+        assert chunks == [{"content": "前半部分", "tool_calls": None}]
+        assert call_count[0] == 1
+
 
 # ============================================================================
 # 15. IdleMonitor

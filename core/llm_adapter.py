@@ -100,7 +100,9 @@ class LLMAdapter:
             except Exception as e:
                 last_exc = e
                 status = self._extract_status(e)
-                if status not in _RETRYABLE_STATUS or attempt >= _MAX_RETRIES:
+                if status not in _RETRYABLE_STATUS or attempt >= _MAX_RETRIES or started:
+                    if started:
+                        logger.warning("LLM 流已开始输出，跳过重试（避免重复内容）")
                     raise
                 backoff = _RETRY_BACKOFF_BASE * (2 ** attempt)
                 logger.warning("LLM 调用失败 (status=%s), %d/%d 重试 (%.0fs)",
