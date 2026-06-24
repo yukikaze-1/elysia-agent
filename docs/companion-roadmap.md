@@ -58,7 +58,7 @@ Elysia 目前是一个**反应式系统**——你说一句，她回一段。真
 
 **关键文件**: `prompt/Brain.j2`, `core/cognitive_loop.py`, `core/response_recorder.py`, `core/prompt_assembler.py`, `core/memory/session.py`, `static/js/main.js`, `static/js/persistence.js`, `static/css/chat.css`, `static/debug.html`, `core/debug_info.py`, `Module/input/server.py`
 
-**待做**: 前端 think 显示/隐藏 toggle
+**已完成**: 前端 inner_voice 显示/隐藏 toggle（设置面板"内心独白"开关，localStorage 持久化）
 
 ---
 

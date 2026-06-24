@@ -742,4 +742,6 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 06-24 | **WS 重连恢复修复** — FSM 同状态幂等 (idle→idle no-op)、CancelledError 泄漏防御、HITL 审批重发（新客户端重连后恢复审批弹窗）、shutdown 期间工具不重试 |
 | 06-24 | **Git 历史清理** — 全量 rebase: 724→164 提交（77% 缩减），按功能/主题合并。spec: `docs/superpowers/specs/2026-06-23-git-history-cleanup-design.md` |
 | 06-24 | **文档全面更新** — README、companion-roadmap、companion-prompt-guide、completed、todo 同步到最新状态 |
+| 06-24 | **Step 2 收尾: inner_voice toggle** — 设置面板"内心独白"开关（localStorage 持久化，默认开启）。spec: `docs/superpowers/specs/2026-06-24-inner-voice-toggle.md` |
+| 06-24 | **感官/记忆模块标签汉化** — Brain.j2 `<facts>` 标签 + prompt_assembler `_time_of_day()`/`_season()` 返回值全部中文化。spec: `docs/superpowers/specs/2026-06-24-brain-sensory-zh.md` |
 | 06-23 | **Brain.j2 prompt 修复** — Identity/情绪Protocol/时间戳/Perception/Interaction 修复，拒绝第三人称叙述用户 |

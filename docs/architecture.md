@@ -106,7 +106,7 @@
   │    ├── SessionMemory.recent_messages(8)      # 最近对话           │  │
   │    ├── LongTermMemory.search(query, top_k=5) # 语义召回           │  │
   │    ├── SessionMemory.get_param("mood")       # 当前心情           │  │
-  │    ├── stt_emotion / stt_events              # 声学情绪           │  │
+  │    ├── stt_emotion / stt_events              # 声学情绪（感官标签已中文化）  │  │
   │    └── prompt/Brain.j2 ──► system prompt                          │  │
   └────────────────────────────┬─────────────────────────────────────┘  │
                                │                                        │
@@ -454,7 +454,7 @@ build_messages(user_message, stt_emotion, stt_events)
 Fallback: Brain.j2 渲染失败 → _render_fallback() 硬编码模板
 ```
 
-`prompt/Brain.j2` 当前使用的系统模板（双轨思维协议：内部独白 → 外部回复）。其余模板 (Amygdala/ActiveSpeak/MicroReflector/MacroReflector) 待接入。
+`prompt/Brain.j2` 当前使用的系统模板。结构：身份 → 关系 → 感官数据 → 记忆 → 请求分类 → 内心想法 → 说话方式 → 输出格式。输出使用 `<inner_voice>...</inner_voice>` XML 标签实现内心独白，cognitive_loop 通过 PRE→THINK→REPLY 三状态机流式分流。详见 `docs/superpowers/specs/2026-06-24-inner-voice-design.md`。其余模板 (Amygdala/ActiveSpeak/MicroReflector/MacroReflector) 待接入。
 
 ### 4.8 空闲监控 (IdleMonitor)
 
@@ -549,7 +549,7 @@ class WebSearchPlugin(ToolPlugin):
 tool_manager.load_all(ALL_PLUGINS, plugin_ctx)
 
 # CognitiveLoop 自动:
-# tool_definitions() → LLM 请求
+# tool_definitions() → LLM 请求（通过 API tools 参数传递，不再注入 system prompt）
 # LLM 返回 tool_calls → SafetyPipeline (validate→safety→hitl→execute→truncate) → 结果回注 messages
 ```
 
@@ -895,11 +895,11 @@ Agent/
 │   └── elysia.yaml          # Elysia 角色定义
 │
 ├── prompt/                  # 多层认知模板
-│   ├── Brain.j2             #   主脑 — 性格/关系/内心世界/工具 四段式 prompt
-│   ├── Amygdala.j2          #   潜意识 — 情绪感知
-│   ├── ActiveSpeak.j2       #   主动说话决策
-│   ├── MicroReflector.j2    #   即时反思 — 记忆提取
-│   ├── MacroReflector.j2    #   日终反思
+│   ├── Brain.j2             #   主脑 — 身份/关系/感官/记忆/请求分类/怎么想/怎么说/输出
+│   ├── Amygdala.j2          #   潜意识 — 情绪感知（待接入）
+│   ├── ActiveSpeak.j2       #   主动说话决策（待接入）
+│   ├── MicroReflector.j2    #   即时反思 — 记忆提取（待接入）
+│   ├── MacroReflector.j2    #   日终反思（待接入）
 │   └── Utils.j2             #   工具宏 (FormatHistory, datetime filter)
 │
 ├── static/                  # Web 前端

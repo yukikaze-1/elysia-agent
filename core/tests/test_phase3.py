@@ -1147,11 +1147,11 @@ class TestEmotionEmojiMappings:
 class TestPromptAssemblerHelpers:
     def test_time_of_day(self):
         from core.prompt_assembler import PromptAssembler
-        assert PromptAssembler._time_of_day(6) == "morning"
-        assert PromptAssembler._time_of_day(12) == "noon"
-        assert PromptAssembler._time_of_day(15) == "afternoon"
-        assert PromptAssembler._time_of_day(20) == "evening"
-        assert PromptAssembler._time_of_day(3) == "night"
+        assert PromptAssembler._time_of_day(6) == "早晨"
+        assert PromptAssembler._time_of_day(12) == "中午"
+        assert PromptAssembler._time_of_day(15) == "下午"
+        assert PromptAssembler._time_of_day(20) == "傍晚"
+        assert PromptAssembler._time_of_day(3) == "夜晚"
 
     def test_day_name(self):
         from core.prompt_assembler import PromptAssembler
@@ -1160,10 +1160,10 @@ class TestPromptAssemblerHelpers:
 
     def test_season(self):
         from core.prompt_assembler import PromptAssembler
-        assert PromptAssembler._season(4) == "spring"
-        assert PromptAssembler._season(7) == "summer"
-        assert PromptAssembler._season(10) == "autumn"
-        assert PromptAssembler._season(1) == "winter"
+        assert PromptAssembler._season(4) == "春"
+        assert PromptAssembler._season(7) == "夏"
+        assert PromptAssembler._season(10) == "秋"
+        assert PromptAssembler._season(1) == "冬"
 
 
 # ============================================================================

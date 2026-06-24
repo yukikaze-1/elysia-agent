@@ -137,10 +137,9 @@ class TestIntegrationWithRealTemplates:
             l3_personality_block="[persona]",
             sensory={
                 "current_time": "2024-01-01 12:00:00",
-                "time_of_day": "afternoon",
-                "day_of_week": "Monday",
-                "season": "winter",
-                "latency": 0.5,
+                "time_of_day": "下午",
+                "day_of_week": "周一",
+                "season": "冬",
                 "perception": "user looks happy",
             },
             memory={"micro": [], "macro": []},
@@ -169,9 +168,9 @@ class TestIntegrationWithRealTemplates:
         user = pm.render_macro(
             "Amygdala.j2", "AmygdalaUserPrompt",
             current_time="2024-01-01 12:00:00",
-            time_of_day="afternoon",
-            day_of_week="Monday",
-            season="winter",
+            time_of_day="下午",
+            day_of_week="周一",
+            season="冬",
             user_reaction_latency=1200,
             user_message="Hello",
         )
@@ -190,7 +189,7 @@ class TestIntegrationWithRealTemplates:
             silence_duration="30s",
             current_mood="happy",
             current_psyche_state="energy: 80%",
-            current_time_envs={"time_of_day": "morning"},
+            current_time_envs={"time_of_day": "早晨"},
             recent_conversations=[],
         )
         assert "妖梦" in result

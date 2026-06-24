@@ -19,7 +19,7 @@
 | ~~高~~ | ~~**Dual-Track Protocol 要求模型提取不存在的情绪数据**~~ | ✅ 已修复 — perception 注入 mood/STT 标签 + Protocol 措辞软化 |
 | ~~中~~ | ~~**Brain.j2 记忆时间戳渲染为 Unix 整数**~~ | ✅ 已修复 — 使用 datetime filter |
 | 中 | **`"妖梦"` 默认值在 4 处硬编码** | `app_config.py:11`、`prompt_assembler.py:49,105`、`agent.py:384,555`。只有 `app_config.py` 是权威配置来源，其余应 fallback 到 config 而非硬编码。 |
-| 低 | **Brain.j2 中英混杂标签** | `Brain.j2`: 结构标签用英文 (`# Role Definition`, `# Sensory Input`, `# Output Format`)，人格内容/用户名/输出语言用中文。不一致且浪费 token。 |
+| ✅ | **Brain.j2 中英混杂标签** | 感官/记忆标签已中文化（当前时间/时段/星期/季节/重要度），仅 `Mood:` 残留英文 |
 
 ## 功能改进
 
@@ -44,7 +44,7 @@
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + MongoDB + Milvus + SenseVoice + GPT-SoVits）。等架构稳定后实施。
 - **Brain.j2 模板改进（低优先级）**:
-  - `personality_block` traits/speaking_style 为空时渲染出空字段（如 `性格: `），需加守卫
+  - `personality_block` traits/speaking_style 为空时渲染出空字段（如 `性格: `），需加守卫（实际渲染在 `character_config.py` 中）
   - Jinja2 `lstrip_blocks`/`trim_blocks` 在 memory 块产生不可预测空行
   - `macro` 记忆层始终为空，死代码路径
   - L0/L2/l3 命名不一致，无 L1 层

@@ -138,7 +138,7 @@ prompt 中必须明确描述**关系**，而不是只描述**性格**：
 
 inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出来的话**。两者不一定一致。
 
-当前 Brain.j2 已有 dual-track 的概念框架（prompt_assembler 注入 thinking protocol），但 inner_voice 标签尚未在 prompt 模板中实现。第一步改造时需要加入。
+当前 Brain.j2 已完整实现 inner_voice 标签输出（`<inner_voice>...</inner_voice>`），包含 few-shot 示例和强制输出指令。cognitive_loop 通过 PRE→THINK→REPLY 三状态机流式检测标签并分流：THINK 内容不进 TTS/前端 delta，闭合后一次性广播。详见 `docs/superpowers/specs/2026-06-24-inner-voice-design.md`。
 
 ### 4.2 设计原则
 

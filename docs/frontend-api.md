@@ -334,6 +334,8 @@ LLM 开始/结束生成时推送。前端可显示/隐藏 "..." 动画。
 
 Elysia 的内心独白——她想了但没说出来的话。前端应以淡色/斜体/小字渲染，出现在公开回复气泡的上方。inner_voice 在流式输出结束后一次性发送。
 
+前端设置面板提供"内心独白" toggle（`#inner-voice-toggle`）控制气泡显示/隐藏。关闭时 body 添加 `inner-voice-hidden` class，CSS 隐藏已有气泡 + JS guard 阻止新气泡创建。
+
 #### 9c. `block` — 结构化内容块
 
 ```json

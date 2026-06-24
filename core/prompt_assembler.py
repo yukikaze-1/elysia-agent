@@ -70,7 +70,6 @@ class PromptAssembler:
             "time_of_day": self._time_of_day(now.hour),
             "day_of_week": self._day_name(now.weekday()),
             "season": self._season(now.month),
-            "latency": 0.0,
             "perception": perception,
             "stt_emotion": stt_emotion,
             "stt_emotion_emoji": stt_emotion_emoji(stt_emotion) if stt_emotion else "",
@@ -249,26 +248,26 @@ class PromptAssembler:
     @staticmethod
     def _time_of_day(hour: int) -> str:
         if 5 <= hour < 12:
-            return "morning"
+            return "早晨"
         elif 12 <= hour < 14:
-            return "noon"
+            return "中午"
         elif 14 <= hour < 18:
-            return "afternoon"
+            return "下午"
         elif 18 <= hour < 22:
-            return "evening"
+            return "傍晚"
         else:
-            return "night"
+            return "夜晚"
 
     @staticmethod
     def _season(month: int) -> str:
         if 3 <= month <= 5:
-            return "spring"
+            return "春"
         elif 6 <= month <= 8:
-            return "summer"
+            return "夏"
         elif 9 <= month <= 11:
-            return "autumn"
+            return "秋"
         else:
-            return "winter"
+            return "冬"
 
 
 from .text_utils import content_text_from_content as content_text_from_raw  # noqa: F401 — 别名留存

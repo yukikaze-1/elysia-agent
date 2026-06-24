@@ -8,7 +8,6 @@
 {#  - time_of_day: str               #}
 {#  - day_of_week: str               #}
 {#  - season: str                    #}
-{#  - latency: float                 #}
 {#  - perception: str                #}
 {#  - stt_emotion: str (optional)    #}
 {#  - stt_emotion_emoji: str         #}
@@ -18,11 +17,10 @@
 {# L0 感官模块：接收 sensory 对象 #}
 {%- macro L0SensoryBlockPrompt(sensory_ctx) -%}
 <facts>
-Current_Time: {{ sensory_ctx.current_time }}
-Time of day: {{ sensory_ctx.time_of_day }}
-Day of Week: {{ sensory_ctx.day_of_week }}
-Season: {{ sensory_ctx.season }}
-User_Latency: {{ sensory_ctx.latency | default(0) }}s
+当前时间: {{ sensory_ctx.current_time }}
+时段: {{ sensory_ctx.time_of_day }}
+星期: {{ sensory_ctx.day_of_week }}
+季节: {{ sensory_ctx.season }}
 </facts>
 <perception>
 {{ sensory_ctx.perception }}
@@ -65,11 +63,11 @@ User_Latency: {{ sensory_ctx.latency | default(0) }}s
 {% if memory_ctx.micro %}
 
     {%- for mem in memory_ctx.micro %}
-    - [{{ mem.type }}] {{ mem.timestamp | datetime }} (Poignancy: {{ mem.poignancy }}) {{ mem.content }}
+    - [{{ mem.type }}] {{ mem.timestamp | datetime }} (重要度: {{ mem.poignancy }}) {{ mem.content }}
     {% endfor %}
 {%- else %}
 
-    (No micro memories)
+    （无微记忆）
 {%- endif %}
 </micro memory>
 
@@ -77,11 +75,11 @@ User_Latency: {{ sensory_ctx.latency | default(0) }}s
 {% if memory_ctx.macro %}
 
     {%- for mem in memory_ctx.macro %}
-    - {{ mem.timestamp | datetime }} (Poignancy: {{ mem.poignancy }}){% if mem.dominant_emotion %} (Dominant Emotion: {{ mem.dominant_emotion }}){% endif %} {{ mem.diary_content }}
+    - {{ mem.timestamp | datetime }} (重要度: {{ mem.poignancy }}){% if mem.dominant_emotion %} (主导情绪: {{ mem.dominant_emotion }}){% endif %} {{ mem.diary_content }}
     {% endfor %}
 {%- else %}
 
-    (No macro memories)
+    （无宏记忆）
 {% endif %}
 </macro memory>
 {% endmacro %}
@@ -95,7 +93,7 @@ User_Latency: {{ sensory_ctx.latency | default(0) }}s
 {# ================================= #}
 
 {%- macro CurrentStatePrompt(state_ctx) -%}
-Mood: {{ state_ctx.mood }}
+心情: {{ state_ctx.mood }}
 {%- endmacro -%}
 
 
@@ -162,9 +160,8 @@ Mood: {{ state_ctx.mood }}
 - 果断：工具明显适用就直接调，不用问妖梦。
 - 别乱调：寒暄闲聊不用工具。不确定的先搜再答。
 - 了解了妖梦的重要信息后，存到记忆里。
-{# ========================================== #}
-{# 你是怎么想的（内心 + 对外）                     #}
-{# ========================================== #}
+
+# 怎么回复
 每次回复前，你先在心里想一下（这是你自己的事），再决定说出来什么。
 
 **心里想的**：你的真实想法——不用对外解释。感受<perception>里的情绪信号，注意到<facts>里的时间背景，想起相关记忆时自然地感受。这里你可以真实、感性、不理性、腹诽、矛盾。
