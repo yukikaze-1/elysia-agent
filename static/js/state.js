@@ -83,6 +83,7 @@ class AppState {
     this.sttAvailable = false;
     this.ttsAvailable = false;
     this.llmModel = '';
+    this.live2dStaticImage = '';
   }
 }
 

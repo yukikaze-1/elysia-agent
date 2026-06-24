@@ -118,6 +118,7 @@ export function saveChat() {
       const argsEl = card.querySelector('.tool-card-args');
       const argsText = argsEl?.textContent || '';
       if (argsText) {
+        // 旧格式兼容——工具卡片参数按 ', ' 分割仅用于旧数据回退
         argsText.split(', ').forEach(pair => {
           const colon = pair.indexOf(': ');
           if (colon > 0) args[pair.slice(0, colon)] = pair.slice(colon + 2);

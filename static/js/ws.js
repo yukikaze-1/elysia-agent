@@ -80,7 +80,7 @@ function scheduleReconnect() {
 export function send(data) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
     console.warn('WS: 未连接，消息丢弃', typeof data === 'string' ? data.slice(0, 50) : typeof data);
-    return;
+    return false;
   }
   if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
     state.ws.send(data);
