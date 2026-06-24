@@ -43,7 +43,7 @@
 {#  - keywords: list[str]                    #}
 {#  - timestamp: float (unix)                #}
 {#                                           #}
-{# MacroMemory:                              #}
+{# MacroMemory: 待实现                        #}
 {#  - diary_content: str                     #}
 {#  - subject: str                           #}
 {#  - memory_type: str                       #}
@@ -71,6 +71,7 @@
 {%- endif %}
 </micro memory>
 
+{# TODO: MacroMemory 待实现 — 每日合成日记条目，需新增 Milvus 集合 + MacroReflector 后台任务
 <macro memory>
 {% if memory_ctx.macro %}
 
@@ -82,6 +83,7 @@
     （无宏记忆）
 {% endif %}
 </macro memory>
+#}
 {% endmacro %}
 
 
