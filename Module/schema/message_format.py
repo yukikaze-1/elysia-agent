@@ -202,7 +202,7 @@ def _resolve_image_source(source: str) -> str:
     # 远程 URL，直接返回
     if source.startswith("http://") or source.startswith("https://"):
         # 本地回环地址 → 尝试读取对应文件
-        if "localhost" in source or "127.0.0.1" in source:
+        if "://localhost" in source or "://127.0.0.1" in source:
             # 从 URL 中提取文件名（如 /static/images/abc.png → abc.png）
             filename = source.rsplit("/", 1)[-1]
             for search_dir in (_IMAGES_DIR, _STATIC_DIR):

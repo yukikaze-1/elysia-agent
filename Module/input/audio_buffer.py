@@ -174,7 +174,7 @@ class AudioBuffer:
                 if vad.is_speech(frame, self._sample_rate):
                     speech_frames += 1
             except Exception:
-                pass
+                logger.warning("VAD 帧处理失败", exc_info=True)
             total_frames += 1
 
         if total_frames == 0:

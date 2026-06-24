@@ -72,6 +72,8 @@ class WebSocketChannel(OutputChannel):
     async def on_audio_chunk(self, chunk: bytes, *, stream_id: int = 0) -> None:
         import base64
         self._audio_seq = getattr(self, "_audio_seq", {})
+        if len(self._audio_seq) > 32:
+            self._audio_seq = dict(list(self._audio_seq.items())[-16:])
         seq = self._audio_seq.get(stream_id, 0)
         self._audio_seq[stream_id] = seq + 1
         await self._send_json({

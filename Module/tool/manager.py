@@ -107,7 +107,7 @@ class ToolManager:
 
         sem = self._semaphores.get(name)
         self._executing.add(name)
-        task = asyncio.ensure_future(
+        task = asyncio.create_task(
             self._pipeline.execute(plugin, name, ctx, raw_params, sem),
         )
         self._tasks[name] = task
@@ -151,7 +151,7 @@ class ToolManager:
             finally:
                 await queue.put(None)  # sentinel
 
-        task = asyncio.ensure_future(_drive())
+        task = asyncio.create_task(_drive())
         self._tasks[name] = task
         try:
             while True:

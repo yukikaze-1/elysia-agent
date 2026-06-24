@@ -269,7 +269,7 @@ def create_app(
             token_totals: dict[str, int] = defaultdict(int)
             try:
                 token_docs = await session._db.find(
-                    "token_usage", {}, limit=100000)
+                    "token_usage", {}, limit=2000)
                 for td in token_docs:
                     sid = td.get("session_id", "")
                     token_totals[sid] += td.get("total_tokens", 0)
