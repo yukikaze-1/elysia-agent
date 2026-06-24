@@ -62,6 +62,21 @@ export function setupSettings() {
     addStatusMsg(state.live2dEnabled ? 'Live2D 已开启' : 'Live2D 已关闭');
   };
 
+  // 内心独白 toggle — 初始状态同步
+  if (!state.innerVoiceEnabled) {
+    document.getElementById('inner-voice-toggle').classList.remove('on');
+    document.body.classList.add('inner-voice-hidden');
+  }
+
+  // 内心独白 toggle — 点击事件
+  document.getElementById('inner-voice-toggle').onclick = function () {
+    this.classList.toggle('on');
+    state.innerVoiceEnabled = this.classList.contains('on');
+    localStorage.setItem(SETTINGS_STORAGE_KEYS.INNER_VOICE, state.innerVoiceEnabled ? 'on' : 'off');
+    // 切换已有气泡的可见性
+    document.body.classList.toggle('inner-voice-hidden', !state.innerVoiceEnabled);
+  };
+
   // 音量
   document.getElementById('vol-slider').oninput = function () {
     state.volume = parseInt(this.value, 10);
