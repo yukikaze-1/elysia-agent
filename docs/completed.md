@@ -748,3 +748,4 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 06-24 | **llm_adapter started 标记修复** — 流已开始产出 token 后遇到 429/503 不再重试，避免用户收到重复内容。spec: `docs/superpowers/specs/2026-06-24-llm-adapter-started-fix.md` |
 | 06-24 | **硬编码 "妖梦" 清理** — agent.py/server.py/prompt_assembler.py 5 处硬编码全部改为从 `agent._user_name` 来源。`app_config.py` 保留为唯一权威源。personality_block 空字段守卫 + macro 记忆层标 TODO。spec: `docs/superpowers/specs/2026-06-24-hardcoded-username-cleanup.md` |
 | 06-24 | **Brain.j2 渲染优化** — `Mood:`→`心情:`、工具规则+怎么回复间加空行+可见标题、latency 字段移除 |
+| 06-25 | **code-review 中低危项修复** — 9 项（Python 6 + 前端 3）：_audio_seq cap、token limit、VAD log、broadcast log level、ensure_future→create_task、localhost harden、live2dStaticImage reset、ws.send return false、legacy comment。报告删除，遗留问题迁入 todo。spec: `docs/superpowers/specs/2026-06-25-code-review-fixes.md` |

@@ -19,7 +19,7 @@
 | ~~高~~ | ~~**Dual-Track Protocol 要求模型提取不存在的情绪数据**~~ | ✅ 已修复 — perception 注入 mood/STT 标签 + Protocol 措辞软化 |
 | ~~中~~ | ~~**Brain.j2 记忆时间戳渲染为 Unix 整数**~~ | ✅ 已修复 — 使用 datetime filter |
 | ✅ | **`"妖梦"` 默认值在 4 处硬编码** | 已修复——agent.py/server.py/prompt_assembler.py 全部改为从 `agent._user_name` 来源。`app_config.py` 保留为唯一权威源。spec: `docs/superpowers/specs/2026-06-24-hardcoded-username-cleanup.md` |
-| ✅ | **Brain.j2 中英混杂标签** | 感官/记忆标签已中文化（当前时间/时段/星期/季节/重要度），仅 `Mood:` 残留英文 |
+| ✅ | **Brain.j2 中英混杂标签** | 感官/记忆标签已中文化（当前时间/时段/星期/季节/重要度），`Mood:`→`心情:` 已修复 |
 
 ## 功能改进
 
@@ -107,12 +107,12 @@
 
 | 问题 | 文件 |
 |------|------|
-| Token 用量 O(n) 聚合（应用 MongoDB `$group`） | `input/server.py:268` |
+| Token 用量 O(n) 聚合（已降 limit 100k→2k，长期用 MongoDB `$group`） | `input/server.py:271` |
 | llm_adapter close fire-and-forget | `llm_adapter.py:140-143` |
 | openai_tts test() 假阴性 | `tts/openai_tts.py:73` |
 | TTS 取消+HTTP 流清理交互可能泄漏 | `tts/gpt_sovits.py:134-150` |
 | Optional 嵌套 dataclass | `config/loader.py:176-180` |
-| `_audio_seq` websocket 对象保留（已加 cap，长期方案应绑定 ws 生命周期） | `output/websocket.py:74` |
+| `_audio_seq` 长期方案绑定 ws 生命周期（已加 32→16 cap 缓解） | `output/websocket.py` |
 | 不稳定测试 ×N | 硬编码 `sleep(15)`、`sleep(8)`、10ms 精度断言 |
 | 缺失测试覆盖 | DescribeImagePlugin (0)、CognitiveLoop 边界、OutputManager 错误隔离 |
 
