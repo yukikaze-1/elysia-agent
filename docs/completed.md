@@ -745,3 +745,6 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 06-24 | **Step 2 收尾: inner_voice toggle** — 设置面板"内心独白"开关（localStorage 持久化，默认开启）。spec: `docs/superpowers/specs/2026-06-24-inner-voice-toggle.md` |
 | 06-24 | **感官/记忆模块标签汉化** — Brain.j2 `<facts>` 标签 + prompt_assembler `_time_of_day()`/`_season()` 返回值全部中文化。spec: `docs/superpowers/specs/2026-06-24-brain-sensory-zh.md` |
 | 06-23 | **Brain.j2 prompt 修复** — Identity/情绪Protocol/时间戳/Perception/Interaction 修复，拒绝第三人称叙述用户 |
+| 06-24 | **llm_adapter started 标记修复** — 流已开始产出 token 后遇到 429/503 不再重试，避免用户收到重复内容。spec: `docs/superpowers/specs/2026-06-24-llm-adapter-started-fix.md` |
+| 06-24 | **硬编码 "妖梦" 清理** — agent.py/server.py/prompt_assembler.py 5 处硬编码全部改为从 `agent._user_name` 来源。`app_config.py` 保留为唯一权威源。personality_block 空字段守卫 + macro 记忆层标 TODO。spec: `docs/superpowers/specs/2026-06-24-hardcoded-username-cleanup.md` |
+| 06-24 | **Brain.j2 渲染优化** — `Mood:`→`心情:`、工具规则+怎么回复间加空行+可见标题、latency 字段移除 |
