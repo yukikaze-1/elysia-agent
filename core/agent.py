@@ -558,7 +558,7 @@ class Agent:
             logger.error("TTS switch failed: %s", e)
             return {"ok": False, "error": str(e)}
 
-    async def process_message(self, text: str = "", user_name: str = "妖梦",
+    async def process_message(self, text: str = "", user_name: str = "",
                                content: list[dict] | None = None) -> None:
         """Process a single user message through the pipeline.
 
@@ -568,6 +568,7 @@ class Agent:
         If the agent is busy, the message is queued and processed when IDLE.
         Explicit interrupt (stop button, VAD) still works via EventBus INTERRUPT.
         """
+        user_name = user_name or self._user_name
         if not text.strip() and not content:
             return
 
@@ -813,7 +814,7 @@ class Agent:
     def _handle_user_input(self, data: dict) -> None:
         """处理 USER_INPUT 事件：创建 cognitive task 异步运行。"""
         text = data.get("text", "")
-        user_name = data.get("user_name", "妖梦")
+        user_name = data.get("user_name", self._user_name)
         stt_emotion = data.get("emotion", "")
         stt_events = data.get("events", [])
         content = data.get("content")
