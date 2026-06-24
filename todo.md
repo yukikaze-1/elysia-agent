@@ -85,6 +85,37 @@
 | 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
 | 低 | 会话管理 | 无法新建/切换/列出对话。SessionMemory 的 MongoDB 持久化已为此做好准备，需前后端联动 |
 
+## 来自 code-review-report-2026-06-22 的遗留问题
+
+### 严重（需独立 spec）
+
+| 问题 | 文件 |
+|------|------|
+| Milvus `_metric_type` 跨集合污染 | `database/vectordb/milvus.py:39` |
+| NoSQL 注入 — MongoDB collection 名无校验 | `database/documentdb/mongodb.py:31` |
+| Embedding 工厂缓存忽略 kwargs | `embedding/registry.py:30-35` |
+
+### 需独立 spec
+
+| 类别 | 数量 | 说明 |
+|------|------|------|
+| 无障碍 (a11y) | 12 | `aria-*`、颜色对比度、`:focus-visible`、键盘导航、toggle 非 button |
+| CSP/安全头 | 2 | CDN `integrity`、Content-Security-Policy |
+| ScriptProcessorNode→AudioWorklet | 1 | 麦克风管线换新 API |
+
+### 中低危（待排期）
+
+| 问题 | 文件 |
+|------|------|
+| Token 用量 O(n) 聚合（应用 MongoDB `$group`） | `input/server.py:268` |
+| llm_adapter close fire-and-forget | `llm_adapter.py:140-143` |
+| openai_tts test() 假阴性 | `tts/openai_tts.py:73` |
+| TTS 取消+HTTP 流清理交互可能泄漏 | `tts/gpt_sovits.py:134-150` |
+| Optional 嵌套 dataclass | `config/loader.py:176-180` |
+| `_audio_seq` websocket 对象保留（已加 cap，长期方案应绑定 ws 生命周期） | `output/websocket.py:74` |
+| 不稳定测试 ×N | 硬编码 `sleep(15)`、`sleep(8)`、10ms 精度断言 |
+| 缺失测试覆盖 | DescribeImagePlugin (0)、CognitiveLoop 边界、OutputManager 错误隔离 |
+
 ## 测试补充
 
 - `Module/input/audio_buffer.py` (3)
