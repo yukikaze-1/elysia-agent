@@ -539,3 +539,6 @@ body {
   opacity: 0.8;
   max-width: 80%;
 }
+
+/* inner_voice 隐藏（toggle 关闭时） */
+body.inner-voice-hidden .inner-voice-bubble { display: none; }

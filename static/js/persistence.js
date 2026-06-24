@@ -309,7 +309,7 @@ export function restoreFromServer(messages) {
       }
     } else {
       // 渲染 inner_voice（如果存在）——在公开回复之前
-      if (m.inner_voice) {
+      if (m.inner_voice && state.innerVoiceEnabled) {
         const thinkBubble = document.createElement('div');
         thinkBubble.className = 'inner-voice-bubble';
         thinkBubble.textContent = m.inner_voice;

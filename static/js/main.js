@@ -282,6 +282,7 @@ function init() {
 let _approvalSeq = 0;
 
 function showInnerVoice(content) {
+  if (!state.innerVoiceEnabled) return;
   if (!content) return;
   const chat = document.getElementById('chat');
   const bubble = document.createElement('div');
