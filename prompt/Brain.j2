@@ -299,18 +299,5 @@ Elysia: <inner_voice>不太想说话的样子。那我就安静陪着好了</inn
 - 公开回复直接跟在 </inner_voice> 后面
 - 用中文说话
 
-如果你的回复需要代码块、表格、列表等结构化内容，把对话文本放前面，结构化块放最后：
-
-<|markdown|>
-(markdown 内容)
-</|markdown|>
-
-<|code|python>
-(代码)
-</|code|>
-
-规则：
-- 对话文本在最前面。结构化标记在最后面。
-- 纯闲聊时不用任何标记。
-- 每种标记最多出现一次。
+需要输出代码或格式化内容时，用 <|code|python>...</|code|> 或 <|markdown|>...</|markdown|> 包裹，放在对话文本后面。比如 <|code|c++>、<|code|javascript>，语言名写对就行。
 {%- endmacro -%}
