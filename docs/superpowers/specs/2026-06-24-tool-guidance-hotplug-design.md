@@ -34,7 +34,7 @@ Brain.j2: {{ tool_guidance }}  ← 替换硬编码宏
 | `Module/tool/manager.py` | 新增 `to_prompt_text()` — 遍历 `_plugins`，拼成 `**name** — description\n  参数: ...\n  prompt_hint` 格式 |
 | `core/prompt_assembler.py` | 新增 `set_tool_manager()` + `build_system_prompt()` 中调用 `to_prompt_text()` 传入 Brain.j2 |
 | `core/agent.py` | `start()` 中 `prompt.set_tool_manager(tool_manager)` |
-| `prompt/Brain.j2` | 删除 `ToolUsageGuidance` 宏 → 保留分类规则 + `{{ tool_guidance }}` 变量 |
+| `prompt/Brain.j2` | 删除 `ToolUsageGuidance` 宏 → 保留分类规则 + `{{ tool_guidance }}` 变量。`BrainSystemPrompt` macro 签名追加 `tool_guidance=""` 参数（默认 `""` 匹配 ToolManager 未注入时的降级） |
 
 ### 生成格式示例
 
@@ -51,9 +51,15 @@ Brain.j2: {{ tool_guidance }}  ← 替换硬编码宏
 
 请求分类（A/B 类）和使用规则保留在 Brain.j2 中——这些是逻辑性内容，不随工具变化。
 
-### 降级
+### Brain.j2 签名变更
 
-ToolManager 未注入时 `tool_guidance` 为空字符串，Brain.j2 只渲染分类规则，不崩溃。
+```jinja2
+{%- macro BrainSystemPrompt(l3_personality_block, sensory, memory, state,
+                            name, user_name, user_preferences,
+                            tool_guidance="") -%}
+```
+
+`tool_guidance` 有默认值 `""`——ToolManager 未注入时 PromptAssembler 传空字符串，Brain.j2 只渲染分类规则，工具列表段为空，不崩溃。
 
 ---
 
