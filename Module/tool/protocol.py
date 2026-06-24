@@ -343,6 +343,7 @@ class ToolPlugin:
     name: str = ""
     description: str = ""
     param_model: type | None = None  # Pydantic BaseModel subclass
+    prompt_hint: str = ""  # 注入 prompt 的用法提示（何时用/不要用于/特殊注意）
 
     # 能力与安全声明（子类覆盖）
     capabilities: set = set()

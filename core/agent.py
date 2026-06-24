@@ -215,6 +215,7 @@ class Agent:
         from core.prompt_recorder import PromptRecorder
         self._prompt_recorder = PromptRecorder(max_records=20)
         self._cognitive.set_prompt_recorder(self._prompt_recorder)
+        self._prompt.set_tool_manager(self._tool_manager)
 
         from core.response_recorder import ResponseRecorder
         self._response_recorder = ResponseRecorder(max_records=20)

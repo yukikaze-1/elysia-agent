@@ -304,6 +304,35 @@ class ToolManager:
             logger.error("工具 '%s' 热重载失败: %s", name, e)
             return False
 
+    # ---- Prompt Generation ----
+
+    def to_prompt_text(self) -> str:
+        """从已加载的工具插件自动生成 prompt 中的工具列表。
+
+        遍历 self._plugins，将每个工具的 name/description/param_model/prompt_hint
+        拼成 LLM 可读的格式。热重载后下次 prompt 自动反映最新工具。
+        """
+        if not self._plugins:
+            return "（无可用工具）"
+
+        lines: list[str] = []
+        for plugin in self._plugins.values():
+            lines.append(f"**{plugin.name}** — {plugin.description or ''}")
+            if plugin.prompt_hint:
+                lines.append(f"  {plugin.prompt_hint}")
+            if plugin.param_model is not None:
+                params: list[str] = []
+                for field_name, field_info in plugin.param_model.model_fields.items():
+                    ptype = field_info.annotation
+                    type_name = ptype.__name__ if hasattr(ptype, '__name__') else str(ptype)
+                    type_name = type_name.replace('typing.', '').replace('builtins.', '')
+                    d = field_info.description or ""
+                    params.append(f"{field_name}({type_name}): {d}")
+                if params:
+                    lines.append("  参数: " + "; ".join(params))
+            lines.append("")
+        return "\n".join(lines).rstrip()
+
     # ---- Debug Interface ----
 
     @property

@@ -40,11 +40,16 @@ class PromptAssembler:
         self._character = character
         self._session = session
         self._long_term = long_term
+        self._tool_manager = None
         try:
             self._prompt = PromptManager(_PROMPT_DIR)
         except FileNotFoundError:
             logger.warning("模板目录不存在: %s，将使用 fallback", _PROMPT_DIR)
             self._prompt = None
+
+    def set_tool_manager(self, tm) -> None:
+        """注入 ToolManager，用于自动生成工具列表 prompt。"""
+        self._tool_manager = tm
 
     async def build_system_prompt(self, user_message: str = "", user_name: str = "妖梦",
                                    stt_emotion: str = "", stt_events: list[str] | None = None) -> str:
@@ -86,6 +91,9 @@ class PromptAssembler:
 
         if self._prompt is not None:
             try:
+                tool_guidance = ""
+                if self._tool_manager is not None:
+                    tool_guidance = self._tool_manager.to_prompt_text()
                 return self._prompt.render_macro(
                     "Brain.j2", "BrainSystemPrompt",
                     l3_personality_block=self._character.personality_block(),
@@ -95,6 +103,7 @@ class PromptAssembler:
                     name=self._character.name,
                     user_name=user_name,
                     user_preferences="",
+                    tool_guidance=tool_guidance,
                 )
             except Exception:
                 logger.warning("Brain.j2 渲染失败，使用 fallback", exc_info=True)
