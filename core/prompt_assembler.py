@@ -51,7 +51,7 @@ class PromptAssembler:
         """注入 ToolManager，用于自动生成工具列表 prompt。"""
         self._tool_manager = tm
 
-    async def build_system_prompt(self, user_message: str = "", user_name: str = "妖梦",
+    async def build_system_prompt(self, user_message: str = "", user_name: str = "",
                                    stt_emotion: str = "", stt_events: list[str] | None = None) -> str:
         """Render the system prompt from Brain.j2 and current state."""
         from datetime import datetime
@@ -114,7 +114,7 @@ class PromptAssembler:
         return results if results else []
 
     async def build_messages(self, user_message: str = "",
-                              user_name: str = "妖梦",
+                              user_name: str = "",
                               stt_emotion: str = "",
                               stt_events: list[str] | None = None,
                               content: list[dict] | None = None,

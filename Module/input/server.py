@@ -529,7 +529,7 @@ def create_app(
         try:
             body = await request.json()
             content = body.get("content")
-            user_name = body.get("user_name", "妖梦")
+            user_name = body.get("user_name", agent._user_name)
             text = body.get("text", "")
         except Exception:
             return web.json_response({"ok": False, "error": "无效的 JSON 请求体"}, status=400)
@@ -786,7 +786,7 @@ async def _handle_json(data: dict, agent, audio_buf=None, ws=None) -> None:
         if isinstance(text_content, list):
             # 多模态 content 数组
             from Module.schema.message_format import content_text
-            await agent.process_message(text=content_text(text_content), user_name="妖梦", content=text_content)
+            await agent.process_message(text=content_text(text_content), user_name=agent._user_name, content=text_content)
             logger.info("WS 收到多模态消息")
         elif isinstance(text_content, str) and text_content.strip():
             await agent.process_message(text=text_content.strip())
@@ -868,7 +868,7 @@ async def _do_transcription(agent, ws, text: str, audio_buf=None,
     logger.info("STT 识别: %s%s", text[:100], f" [{emotion}]" if emotion and emotion != "NEUTRAL" else "")
     from core.event_bus import EventType
     agent._bus.post(EventType.USER_INPUT, {
-        "text": text, "user_name": "妖梦",
+        "text": text, "user_name": agent._user_name,
         "emotion": emotion, "events": events,
         "request_id": rid,
     })
