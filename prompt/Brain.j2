@@ -109,7 +109,7 @@ Mood: {{ state_ctx.mood }}
 {# state: state_ctx                 #}
 {# ================================= #}
 
-{%- macro BrainSystemPrompt(l3_personality_block, sensory, memory, state, name, user_name, user_preferences, tool_guidance="") -%}
+{%- macro BrainSystemPrompt(l3_personality_block, sensory, memory, state, name, user_name, user_preferences) -%}
 {# ========================================== #}
 {# 你是谁                                     #}
 {# ========================================== #}
@@ -155,10 +155,6 @@ Mood: {{ state_ctx.mood }}
 → 直接调对应工具，然后回复。
 
 示例："帮我写一份竞品分析报告" → A 类 → submit_task；"现在几点了？" → B 类 → 直接调对应工具
-
-# 可用工具
-
-{{ tool_guidance }}
 
 # 工具使用规则
 
