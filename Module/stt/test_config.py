@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-from Module.config import ConfigLoader
+from Module._common.config_test_helpers import make_config_test_classes
 from Module.stt.config import STTConfig
 from Module.stt.registry import STTFactory
 
+# 替换原来的 TestSTTConfigDefaults（工厂生成，取 [0]）
+TestSTTConfigDefaults = make_config_test_classes(
+    STTConfig,
+    defaults={"base_url": "http://localhost:20042"},
+    overrides={"base_url": "http://test:20042"},
+    env_key="STT_API_URL",
+    yaml_key="STT",
+)[0]
 
-class TestSTTConfigDefaults:
-    def test_defaults(self):
-        cfg = ConfigLoader(STTConfig).load()
-        assert cfg.base_url == "http://localhost:20042"
-
-    def test_env_override(self, monkeypatch):
-        monkeypatch.setenv("STT_API_URL", "http://192.168.1.18:20042")
-        cfg = ConfigLoader(STTConfig).load()
-        assert cfg.base_url == "http://192.168.1.18:20042"
-
-
+# 保留原始 TestSTTFromConfig（含 Factory 集成测试）
 class TestSTTFromConfig:
     def test_from_config_passes_params(self):
         cfg = STTConfig(base_url="http://test:20042")

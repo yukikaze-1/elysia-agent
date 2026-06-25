@@ -2,31 +2,20 @@
 
 from __future__ import annotations
 
-from Module.config import ConfigLoader
+from Module._common.config_test_helpers import make_config_test_classes
 from Module.llm.config import LLMConfig
 from Module.llm.registry import LLMFactory
 
+# 替换原来的 TestLLMConfigDefaults（工厂生成，取 [0]）
+TestLLMConfigDefaults = make_config_test_classes(
+    LLMConfig,
+    defaults={"model": "deepseek/deepseek-chat", "base_url": "https://api.deepseek.com", "api_key": ""},
+    overrides={"model": "custom/model", "base_url": "http://test:8080", "api_key": "test-key"},
+    env_key="LLM_API_BASE",
+    yaml_key="LLM",
+)[0]
 
-class TestLLMConfigDefaults:
-    def test_defaults(self, monkeypatch):
-        monkeypatch.setenv("LLM_API_KEY", "")
-        cfg = ConfigLoader(LLMConfig).load()
-        assert cfg.base_url == "https://api.deepseek.com"
-        assert cfg.api_key == ""
-
-    def test_env_override(self, monkeypatch):
-        monkeypatch.setenv("LLM_API_BASE", "https://custom.api/v1")
-        monkeypatch.setenv("LLM_API_KEY", "sk-test")
-        cfg = ConfigLoader(LLMConfig).load()
-        assert cfg.base_url == "https://custom.api/v1"
-        assert cfg.api_key == "sk-test"
-
-    def test_api_key_is_secret(self, monkeypatch):
-        monkeypatch.setenv("LLM_API_KEY", "")
-        cfg = ConfigLoader(LLMConfig).load_from_dict({"api_key": "should-be-ignored"})
-        assert cfg.api_key == ""
-
-
+# 保留原始 TestLLMFromConfig（含 Factory 集成测试）
 class TestLLMFromConfig:
     def test_from_config_passes_params(self, monkeypatch):
         monkeypatch.delenv("LLM_API_KEY", raising=False)

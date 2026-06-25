@@ -2,27 +2,20 @@
 
 from __future__ import annotations
 
-from Module.config import ConfigLoader
+from Module._common.config_test_helpers import make_config_test_classes
 from Module.tts.config import TTSConfig
 from Module.tts.registry import TTSFactory
 
+# 替换原来的 TestTTSConfigDefaults（工厂生成，取 [0]）
+TestTTSConfigDefaults = make_config_test_classes(
+    TTSConfig,
+    defaults={"model": "gpt-sovits/default", "base_url": "http://localhost:9880", "api_key": "", "voices_config": ""},
+    overrides={"model": "openai/tts-1", "base_url": "http://test:9880", "api_key": "sk-test", "voices_config": "/tmp/voices.yaml"},
+    env_key="TTS_API_URL",
+    yaml_key="TTS",
+)[0]
 
-class TestTTSConfigDefaults:
-    def test_defaults(self):
-        cfg = ConfigLoader(TTSConfig).load()
-        assert cfg.base_url == "http://localhost:9880"
-        assert cfg.voices_config == ""
-
-    def test_env_override(self, monkeypatch):
-        monkeypatch.setenv("TTS_API_URL", "http://192.168.1.100:9880")
-        cfg = ConfigLoader(TTSConfig).load()
-        assert cfg.base_url == "http://192.168.1.100:9880"
-
-    def test_voices_config_from_yaml(self):
-        cfg = ConfigLoader(TTSConfig).load_from_dict({"voices_config": "/path/to/voices.yaml"})
-        assert cfg.voices_config == "/path/to/voices.yaml"
-
-
+# 保留原始 TestTTSFromConfig（含 Factory 集成测试）
 class TestTTSFromConfig:
     def test_from_config_passes_params(self):
         cfg = TTSConfig(base_url="http://test:9880")

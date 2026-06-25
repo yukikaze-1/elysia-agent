@@ -2,30 +2,20 @@
 
 from __future__ import annotations
 
-from Module.config import ConfigLoader
+from Module._common.config_test_helpers import make_config_test_classes
 from Module.embedding.config import EmbeddingConfig
 from Module.embedding.registry import EmbeddingFactory
 
+# 替换原来的 TestEmbeddingConfigDefaults（工厂生成，取 [0]）
+TestEmbeddingConfigDefaults = make_config_test_classes(
+    EmbeddingConfig,
+    defaults={"base_url": "https://api.openai.com/v1"},
+    overrides={"base_url": "http://test:8080/v1"},
+    env_key="OPENAI_API_BASE",
+    yaml_key="Embedding",
+)[0]
 
-class TestEmbeddingConfigDefaults:
-    def test_defaults(self):
-        cfg = ConfigLoader(EmbeddingConfig).load()
-        assert cfg.base_url == "https://api.openai.com/v1"
-        assert cfg.api_key == ""
-
-    def test_env_override(self, monkeypatch):
-        monkeypatch.setenv("OPENAI_API_BASE", "https://custom.api/v1")
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-        cfg = ConfigLoader(EmbeddingConfig).load()
-        assert cfg.base_url == "https://custom.api/v1"
-        assert cfg.api_key == "sk-test"
-
-    def test_api_key_is_secret(self, monkeypatch):
-        monkeypatch.setenv("OPENAI_API_KEY", "")
-        cfg = ConfigLoader(EmbeddingConfig).load_from_dict({"api_key": "should-be-ignored"})
-        assert cfg.api_key == ""
-
-
+# 保留原始 TestEmbeddingFromConfig（含 Factory 集成测试）
 class TestEmbeddingFromConfig:
     def test_from_config_openai(self):
         cfg = EmbeddingConfig(api_key="sk-xxx", base_url="https://custom.api/v1")

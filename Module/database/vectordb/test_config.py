@@ -4,32 +4,20 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from Module.config import ConfigLoader
+from Module._common.config_test_helpers import make_config_test_classes
 from Module.database.vectordb.config import VectorDBConfig
 from Module.database.vectordb.registry import VectorDBFactory
 
+# 替换原来的 TestVectorDBConfigDefaults（工厂生成，取 [0]）
+TestVectorDBConfigDefaults = make_config_test_classes(
+    VectorDBConfig,
+    defaults={"base_url": "http://localhost:19530"},
+    overrides={"base_url": "http://test:19530"},
+    env_key="MILVUS_URI",
+    yaml_key="VectorDB",
+)[0]
 
-class TestVectorDBConfigDefaults:
-    def test_defaults(self, monkeypatch):
-        monkeypatch.delenv("MILVUS_URI", raising=False)
-        monkeypatch.delenv("MILVUS_TOKEN", raising=False)
-        cfg = ConfigLoader(VectorDBConfig).load()
-        assert cfg.base_url == "http://localhost:19530"
-        assert cfg.token == ""
-
-    def test_env_override(self, monkeypatch):
-        monkeypatch.setenv("MILVUS_URI", "http://remote:19530")
-        monkeypatch.setenv("MILVUS_TOKEN", "test-token")
-        cfg = ConfigLoader(VectorDBConfig).load()
-        assert cfg.base_url == "http://remote:19530"
-        assert cfg.token == "test-token"
-
-    def test_token_is_secret(self, monkeypatch):
-        monkeypatch.delenv("MILVUS_TOKEN", raising=False)
-        cfg = ConfigLoader(VectorDBConfig).load_from_dict({"token": "should-be-ignored"})
-        assert cfg.token == ""
-
-
+# 保留原始 TestVectorDBFromConfig（含 Factory 集成测试）
 class TestVectorDBFromConfig:
     @patch("Module.database.vectordb.milvus.MilvusClient", autospec=True)
     def test_from_config_passes_params(self, mock_client, monkeypatch):
