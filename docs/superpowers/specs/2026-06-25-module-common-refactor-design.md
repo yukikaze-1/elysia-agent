@@ -102,10 +102,16 @@ def resolve_base_url(
     provider_cfg: dict,
     explicit_url: str | None = None,
 ) -> str:
-    """解析 base URL：explicit > env var > provider 默认值。"""
-    if explicit_url:
+    """解析 base URL：explicit > env var > provider 默认值。
+
+    注意：显式传入的空字符串被视为有效值（不是未指定），与 os.getenv 行为一致。
+    """
+    if explicit_url is not None:
         return explicit_url
-    return os.getenv(env_key, provider_cfg.get("base_url", ""))
+    env_val = os.getenv(env_key)
+    if env_val is not None:
+        return env_val
+    return provider_cfg.get("base_url", "")
 
 
 def inject_logger(
@@ -147,7 +153,7 @@ logger = inject_logger(__name__, logger)
 
 消除 5 个 backend 中逐字相同的 `test()` 方法（llm/openai_compat、stt/sensevoice、stt/openai_stt、tts/gpt_sovits、tts/openai_tts）。
 
-LLM 与其他不同——它发最小请求而非 GET /health——通过传 `health_fn` 覆盖。
+所有 5 个 backend 的实际 `test()` 都使用特定于客户端的调用（现有 httpx 客户端、现有 OpenAI 客户端，或新创建的 httpx 客户端）——没有一个从 URL 字符串构造简单的 GET。统一使用 `health_fn` 参数，赋值在 `__init__` 内（此时 `self._client` 或 `self._base_url` 已可用）。
 
 ```python
 """test() 工厂：消除 5 个 backend 中逐字相同的 test() 实现。"""
@@ -156,30 +162,18 @@ from collections.abc import Awaitable, Callable
 
 
 def make_test_method(
-    *,
-    health_url: str | None = None,
-    health_fn: Callable[[], Awaitable[bool]] | None = None,
+    health_fn: Callable[[], Awaitable[bool]],
 ) -> Callable[[], Awaitable[dict]]:
-    """返回标准 test() 协程：计时 + 健康检查 + {ok, latency_ms, error}。
+    """返回标准 test() 协程：计时 + 调用 health_fn + {ok, latency_ms, error}。
 
-    health_url — GET 此 URL，200 表示健康（SenseVoice、GPT-SoVits、OpenAI TTS 用此方式）
-    health_fn  — 调用此协程，返回 True 表示健康（LLM 发最小 chat 请求）
-
-    至少提供一个参数。
+    health_fn — 异步函数，返回 True 表示健康。
+    调用方在 __init__ 中将 health_fn 绑定到 self 之后调用：
+        self.test = make_test_method(self._health_check)
     """
-    if health_url is None and health_fn is None:
-        raise ValueError("health_url 和 health_fn 至少提供一个")
-
     async def test(self) -> dict:
         t0 = time.perf_counter()
         try:
-            if health_fn is not None:
-                ok = await health_fn(self)
-            elif health_url is not None:
-                import httpx
-                async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-                    resp = await client.get(health_url)
-                    ok = resp.status_code == 200
+            ok = await health_fn(self)
             latency_ms = int((time.perf_counter() - t0) * 1000)
             return {"ok": ok, "latency_ms": latency_ms}
         except Exception as e:
@@ -189,15 +183,19 @@ def make_test_method(
     return test
 ```
 
-**各 backend 改动：**
+**各 backend 改动模式：**
 
-| Backend | 原来 | 改为 |
-|---------|------|------|
-| `stt/sensevoice.py` | 内联 test() (15行) | `test = make_test_method(health_url=f"{self._base_url}/health")` |
-| `stt/openai_stt.py` | 内联 test() (19行) | `test = make_test_method(health_url=f"{self._base_url}/health")` |
-| `tts/gpt_sovits.py` | 内联 test() (13行) | `test = make_test_method(health_url=f"{self._base_url}/health")` |
-| `tts/openai_tts.py` | 内联 test() (13行) | `test = make_test_method(health_url=f"{self._base_url}/health")` |
-| `llm/openai_compat.py` | 内联 test() (17行) | `test = make_test_method(health_fn=_llm_health_check)` + 定义 3 行的 `_llm_health_check` 协程 |
+在 `__init__` 末尾添加 `_health_check` 方法 + `self.test = make_test_method(self._health_check)`。
+
+| Backend | `_health_check` 实现 |
+|---------|---------------------|
+| `stt/sensevoice.py` | `await self._client.get("/health")` → `resp.status_code < 400` |
+| `stt/openai_stt.py` | 发最小 transcription 请求，不抛异常即健康 |
+| `tts/gpt_sovits.py` | `httpx.AsyncClient(base_url=self._base_url).get("/health")` → `resp.status_code < 400` |
+| `tts/openai_tts.py` | `httpx.AsyncClient(base_url=self._base_url).get("/health")` → `resp.status_code < 400` |
+| `llm/openai_compat.py` | 发最小 chat completion 请求 (max_tokens=1)，不抛异常即健康 |
+
+每个 backend 删除原来的内联 `test()` 方法（13-19 行），在 `__init__` 末尾加 ~3 行 `_health_check` + 1 行 `make_test_method` 调用。
 
 ---
 
@@ -292,7 +290,7 @@ def make_config_test_classes(
 
 ### 5. `_common/main_runner.py` — 统一 __main__ 入口
 
-替代 8 个 `__main__.py` 的 `load_dotenv()` + `asyncio.run()` 样板。
+替代 9 个 `__main__.py` 的样板代码。其中 6 个使用 `load_dotenv()` + `asyncio.run()`（llm、stt、embedding、config、prompt、input），3 个仅使用 `asyncio.run()` 无 load_dotenv（bench、tts、output）。
 
 ```python
 """统一 __main__ 入口：ensure_dotenv + asyncio.run。"""
@@ -371,10 +369,12 @@ from Module.config.loader import _safe_get_type_hints, _is_dataclass_instance
 | Registry (`registry.py`) | — | 6 个（llm/stt/tts/embedding/vectordb/documentdb） |
 | Backend (`test()`) | — | 5 个（llm/stt×2/tts×2） |
 | Config test (`test_config.py`) | — | 6 个（llm/stt/tts/embedding/vectordb/documentdb） |
-| Smoke test (`__main__.py`) | — | 8 个（llm/stt/tts/embedding/output/config/logger/prompt/bench/vectordb/documentdb） |
+| Smoke test (`__main__.py`) | — | 11 个（llm/stt/tts/embedding/output/config/prompt/input/bench/vectordb/documentdb） |
 | `config/` 去重 | — | 2 个（loader.py + validator.py） |
 
-不改的模块：output、logger、prompt、schema、bench、tool、input、database/graphdb
+`__main__.py` 改造覆盖 11 个模块：7 个使用 `load_dotenv` + `asyncio.run`（llm/stt/embedding/config/prompt/input/documentdb），4 个仅使用 `asyncio.run`（tts/output/bench/vectordb）。`logger/__main__.py` 不改造——它是同步代码，不匹配 `run_module_main(async_fn)` 模式。
+
+不改内部结构的模块：config（infra）/ logger（utility）/ prompt（utility）/ schema（data）/ bench（tool）/ tool（plugin）/ input（server）/ graphdb（stub）——仅其 `__main__.py` 和 `test_config.py` 受机械性影响。
 
 ---
 
