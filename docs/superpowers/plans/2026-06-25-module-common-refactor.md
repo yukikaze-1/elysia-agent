@@ -225,8 +225,11 @@ def make_config_test_classes(
 
         @pytest.mark.skipif(not env_key, reason="no env var to test")
         def test_env_override(self, monkeypatch):
+            # 局限性：通用工厂不知道哪个字段绑定了 env_key，
+            # 因此无法断言具体字段被覆盖为 env 值。
+            # 仅验证加载不崩溃 + 得到非 None 的配置对象。
+            # 各模块如需真正验证 env→field 绑定，可覆盖此方法。
             val = next(iter(overrides.values()))
-            field = next(iter(overrides.keys()))
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".yaml", delete=False
             ) as f:
@@ -238,6 +241,7 @@ def make_config_test_classes(
                     yaml_path=f.name,
                     yaml_key=yaml_key or "test",
                 ).load()
+            assert cfg is not None
 
     return TestDefaults, TestFromConfig
 ```
@@ -361,6 +365,8 @@ llm/registry.py 的关键行（L78-89）：
 3. `kwargs.pop("base_url", cfg["base_url"])` → `resolve_base_url("", cfg, kwargs.pop("base_url", None))` （如有 env var 绑定，传 env_key 而非 ""）
 4. `get_caller_logger()` → `inject_logger(__name__)`
 5. 移除不再需要的 `import os` 和 `from Module.logger import get_caller_logger`
+
+**例外：vectordb/registry.py** 的 L47 有 `token = kwargs.pop("token", "") or os.getenv("MILVUS_TOKEN", "")` — token 不是 api_key 也不是 base_url，不匹配任何共享函数。该 registry 必须保留 `import os`。
 
 - [ ] **Step 4: 运行所有 registry 相关的测试**
 
@@ -645,31 +651,69 @@ class TestSTTFromConfig:
         assert str(backend._client.base_url).rstrip("/") == "http://overridden:20042"
 ```
 
-- [ ] **Step 2: 重构 stt/test_config.py**
+- [ ] **Step 2: 重构 Group A — 部分替换（stt, tts, llm）**
 
-改为：
+这三个模块的 test_config.py 包含 Factory 集成测试（如 `STTFactory.from_config(...)`），这些测试依赖 backend 实现，`make_config_test_classes` 无法生成。**仅替换 TestDefaults 类**，保留原有的 TestFromConfig。
+
+以 stt/test_config.py 为例，改后：
 ```python
 """STTConfig 单元测试 — 默认值、env 覆盖、from_config()。"""
 
 from __future__ import annotations
 
 from Module._common.config_test_helpers import make_config_test_classes
+from Module.config import ConfigLoader
 from Module.stt.config import STTConfig
+from Module.stt.registry import STTFactory
 
-TestSTTConfigDefaults, TestSTTFromConfig = make_config_test_classes(
+# 替换原来的 TestSTTConfigDefaults（工厂生成）
+TestSTTConfigDefaults = make_config_test_classes(
     STTConfig,
     defaults={"base_url": "http://localhost:20042"},
     overrides={"base_url": "http://test:20042"},
     env_key="STT_API_URL",
     yaml_key="STT",
-)
+)[0]  # 只取 TestDefaults，丢弃工厂的 TestFromConfig
+
+# 保留原始 TestSTTFromConfig（含 Factory 集成测试）
+class TestSTTFromConfig:
+    def test_from_config_passes_params(self):
+        cfg = STTConfig(base_url="http://test:20042")
+        backend = STTFactory.from_config("sensevoice/sense-voice", cfg)
+        assert backend._model == "sense-voice"
+        assert str(backend._client.base_url).rstrip("/") == "http://test:20042"
+
+    def test_overrides_take_priority(self):
+        cfg = STTConfig(base_url="http://default:20042")
+        backend = STTFactory.from_config(
+            "sensevoice/custom", cfg, base_url="http://overridden:20042"
+        )
+        assert backend._model == "custom"
+        assert str(backend._client.base_url).rstrip("/") == "http://overridden:20042"
 ```
 
-注意：各模块的 `test_config.py` 原先包含 `from_config()` 和 `overrides` 测试，它们测试的是 Factory + Backend 集成。`make_config_test_classes` 仅测试 ConfigLoader 级别（dataclass 默认值 + YAML + env）。原先的 Factory 集成测试（如 `STTFactory.from_config(...)`）应保留在原文件中或迁到对应模块的主测试文件中。
+tts/test_config.py 和 llm/test_config.py 同样模式：`[0]` 取 TestDefaults，保留原始 TestFromConfig。
 
-对于需要保留 Factory 集成测试的模块，保留原文件中的 `TestFromConfig` 类不变，仅替换 `TestDefaults` 为工厂生成的版本。
+- [ ] **Step 3: 重构 Group B — 完整替换（embedding, vectordb, documentdb）**
 
-- [ ] **Step 3: 按相同模式重构其他 5 个 test_config.py**
+这三个模块的 test_config.py **仅有 ConfigLoader 级别测试**（无 Factory 集成），可完整替换为工厂生成的两个 class。
+
+```python
+"""<Module>Config 单元测试 — 默认值、env 覆盖、from_config()。"""
+
+from __future__ import annotations
+
+from Module._common.config_test_helpers import make_config_test_classes
+from Module.<module>.config import <Module>Config
+
+Test<Module>ConfigDefaults, Test<Module>FromConfig = make_config_test_classes(
+    <Module>Config,
+    defaults={...},      # 见下表
+    overrides={...},     # 见下表
+    env_key="...",       # 见下表
+    yaml_key="...",      # 见下表
+)
+```
 
 每个模块的参数（defaults 取 ConfigClass 声明的所有字段默认值，overrides 取不同值）：
 
