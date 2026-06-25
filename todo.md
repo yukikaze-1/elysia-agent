@@ -112,4 +112,6 @@
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
 
 
+| ✅ | **Module/_common/ 轻量共享层** | 已重构——新建 `Module/_common/`（env、registry_helpers、test_helpers、config_test_helpers、main_runner），消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config + config/ 内部的重复代码。spec: `docs/superpowers/specs/2026-06-25-module-common-refactor-design.md` |
+
 > 已完成的工作归档在 [docs/completed.md](docs/completed.md)。

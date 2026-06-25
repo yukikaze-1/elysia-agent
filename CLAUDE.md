@@ -63,8 +63,9 @@ Module/<service>/
 ```
 
 - **protocol** — async ABC with `chat`/`chat_stream`, `transcribe`/`transcribe_stream`, `synthesize`/`synthesize_stream`, etc. All backends expose both streaming and non-streaming paths.
-- **registry** — `_BACKENDS` dict stores provider metadata (base_url, env_key, supports_prefix). `Factory.create("provider/model")` reads env vars, creates the appropriate backend instance, and injects a caller-aware logger.
-- **backend** — Concrete implementation. All use `httpx.AsyncClient` or `openai.AsyncOpenAI` for async I/O. Streaming is bridged via `asyncio.Queue` + `create_task`.
+- **registry** — `_BACKENDS` dict stores provider metadata (base_url, env_key, supports_prefix). `Factory.create("provider/model")` uses `Module/_common/registry_helpers` for api_key/base_url resolution and logger injection.
+- **backend** — Concrete implementation. All use `httpx.AsyncClient` or `openai.AsyncOpenAI` for async I/O. Streaming is bridged via `asyncio.Queue` + `create_task`. `test()` methods use `Module/_common/test_helpers.make_test_method()` factory.
+- **`Module/_common/`** — Shared utility layer (not a service module). Provides `env.py` (dotenv), `registry_helpers.py` (api_key/base_url/logger), `test_helpers.py` (make_test_method), `config_test_helpers.py` (make_config_test_classes), `main_runner.py` (run_module_main). Does NOT expose public API via `Module/__init__.py`.
 
 ## Module index
 
@@ -83,6 +84,7 @@ Module/<service>/
 | `Module.database.documentdb` | Document DB | `mongodb` | — |
 | `Module.database.graphdb` | Graph DB | stub only | — |
 | `Module.bench` | Latency benchmarking | Covers LLM/TTS/STT streaming and non-streaming | — |
+| `Module._common` | Shared utility layer (internal) | `env.py`, `registry_helpers.py`, `test_helpers.py`, `config_test_helpers.py`, `main_runner.py` | — |
 
 ## Config system (`Module.config`)
 

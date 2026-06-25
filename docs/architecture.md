@@ -181,13 +181,26 @@ Module/<service>/
 ├── __init__.py      # 重导出 ABC + Factory + Config
 ├── __main__.py      # 集成烟雾测试
 └── test_*.py        # 单元测试 (mock)
+
+Module/_common/      # 共享工具层（不属于任何服务模块）
+├── env.py           #   dotenv 统一入口
+├── registry_helpers.py  # api_key / base_url 解析 + logger 注入
+├── test_helpers.py  #   make_test_method() 工厂
+├── config_test_helpers.py  # make_config_test_classes() 工厂
+├── main_runner.py   #   run_module_main() 统一 __main__ 入口
+└── tests/           #   自身单元测试
 ```
 
 Factory 模式：
 ```python
 # 使用示例
 llm = LLMFactory.create("deepseek/deepseek-chat")
-# Factory 自动: 读取 DEEPSEEK_API_KEY env var → 注入 caller-aware logger → 返回实例
+# Factory 自动: 读取 DEEPSEEK_API_KEY env var → 解析 base_url → 注入 logger → 返回实例
+
+# Registry 使用 Module/_common/registry_helpers 共享函数:
+#   resolve_api_key(env_key, cfg, explicit) → api_key
+#   resolve_base_url(env_key, cfg, explicit) → base_url
+#   inject_logger(__name__, explicit) → logger
 
 # Registry 注册
 _BACKENDS = {
@@ -819,6 +832,7 @@ Module/
 ├── prompt/test_prompt.py
 ├── tool/test_framework.py      # ToolManager + ToolPlugin + SafetyPipeline (96 tests)
 ├── tool/test_tool_safety.py    # 路径验证 + URL检查 + 参数校验 (33 tests)
+├── _common/tests/              # 共享工具函数单元测试
 ├── database/vectordb/
 ├── database/documentdb/
 ├── input/test_audio_buffer.py
@@ -844,6 +858,7 @@ Agent/
 ├── README.md                # 项目说明
 │
 ├── Module/                  # L0 基础设施层
+│   ├── _common/              #   共享工具 (registry_helpers, test_helpers, main_runner, ...)
 │   ├── llm/                 # LLM: DeepSeek / OpenAI / Ollama
 │   ├── stt/                 # STT: SenseVoice / OpenAI-compatible
 │   ├── tts/                 # TTS: GPT-SoVits / OpenAI-compatible
@@ -934,7 +949,7 @@ INTERRUPT:
 ├── cancel _current_task → cancel _tts_tasks[] → drain queue → → IDLE
 ```
 
-**10 个 `asyncio.create_task` 调用点一览：**
+**13 个 `asyncio.create_task` 调用点一览：**
 
 | # | 位置 | 用途 | 管理模式 |
 |---|------|------|----------|
@@ -949,7 +964,8 @@ INTERRUPT:
 | 9 | emotion_engine.py | expression 输出 | 纯 fire-and-forget，无追踪 |
 | 10 | tool/manager.py | SafetyPipeline 执行 | Pipeline 内部追踪 |
 | 11 | agent.py | `_poll_mailboxes()` | TaskSystem mailbox 500ms 轮询，常驻，stop 时 cancel |
-| 12 | agent.py | cognitive process (TASK_RESULT) | `_current_task`，新增 |
+| 12 | agent.py | cognitive process (TASK_RESULT) | `_current_task` |
+| 13 | agent.py | `_db_health_loop()` | 数据库健康检查 120s 间隔，常驻，stop 时 cancel |
 
 ---
 
