@@ -651,9 +651,9 @@ class TestSTTFromConfig:
         assert str(backend._client.base_url).rstrip("/") == "http://overridden:20042"
 ```
 
-- [ ] **Step 2: 重构 Group A — 部分替换（stt, tts, llm）**
+- [ ] **Step 2: 重构 Group A — 部分替换（全部 6 个模块）**
 
-这三个模块的 test_config.py 包含 Factory 集成测试（如 `STTFactory.from_config(...)`），这些测试依赖 backend 实现，`make_config_test_classes` 无法生成。**仅替换 TestDefaults 类**，保留原有的 TestFromConfig。
+全部 6 个 test_config.py 都包含 Factory 集成测试（如 `STTFactory.from_config(...)`），这些测试依赖 backend 实现，`make_config_test_classes` 无法生成。**仅替换 TestDefaults 类**，保留原有的 TestFromConfig。
 
 以 stt/test_config.py 为例，改后：
 ```python
@@ -666,14 +666,14 @@ from Module.config import ConfigLoader
 from Module.stt.config import STTConfig
 from Module.stt.registry import STTFactory
 
-# 替换原来的 TestSTTConfigDefaults（工厂生成）
+# 替换原来的 TestSTTConfigDefaults（工厂生成，取 [0]）
 TestSTTConfigDefaults = make_config_test_classes(
     STTConfig,
     defaults={"base_url": "http://localhost:20042"},
     overrides={"base_url": "http://test:20042"},
     env_key="STT_API_URL",
     yaml_key="STT",
-)[0]  # 只取 TestDefaults，丢弃工厂的 TestFromConfig
+)[0]
 
 # 保留原始 TestSTTFromConfig（含 Factory 集成测试）
 class TestSTTFromConfig:
@@ -692,28 +692,9 @@ class TestSTTFromConfig:
         assert str(backend._client.base_url).rstrip("/") == "http://overridden:20042"
 ```
 
-tts/test_config.py 和 llm/test_config.py 同样模式：`[0]` 取 TestDefaults，保留原始 TestFromConfig。
+其他 5 个模块同样模式：`make_config_test_classes(...)[0]` 取 TestDefaults，保留原始 TestFromConfig。
 
-- [ ] **Step 3: 重构 Group B — 完整替换（embedding, vectordb, documentdb）**
-
-这三个模块的 test_config.py **仅有 ConfigLoader 级别测试**（无 Factory 集成），可完整替换为工厂生成的两个 class。
-
-```python
-"""<Module>Config 单元测试 — 默认值、env 覆盖、from_config()。"""
-
-from __future__ import annotations
-
-from Module._common.config_test_helpers import make_config_test_classes
-from Module.<module>.config import <Module>Config
-
-Test<Module>ConfigDefaults, Test<Module>FromConfig = make_config_test_classes(
-    <Module>Config,
-    defaults={...},      # 见下表
-    overrides={...},     # 见下表
-    env_key="...",       # 见下表
-    yaml_key="...",      # 见下表
-)
-```
+- [ ] **Step 3: 按上表参数重构其他 5 个 test_config.py**
 
 每个模块的参数（defaults 取 ConfigClass 声明的所有字段默认值，overrides 取不同值）：
 
