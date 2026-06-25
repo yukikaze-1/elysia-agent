@@ -140,6 +140,7 @@ class Agent:
         self._delegation_preparer = None  # DelegationPreparer | None
         self._background_tasks: dict[str, dict] = {}  # task_id -> {intent, dispatched_at, mailbox}
         self._mailbox_task: asyncio.Task | None = None
+        self._db_health_task: asyncio.Task | None = None
 
     # ---- Lifecycle ----
 
@@ -178,7 +179,10 @@ class Agent:
         # 8. Mailbox 轮询
         self._start_mailbox_polling()
 
-        # 9. 保存启动状态供入口打印横幅
+        # 9. 数据库健康检查循环（120s 间隔自动重连）
+        self._db_health_task = asyncio.create_task(self._db_health_loop())
+
+        # 10. 保存启动状态供入口打印横幅
         self._mongo_ok = mongo_ok
         self._milvus_ok = milvus_ok
 
@@ -203,6 +207,18 @@ class Agent:
         if not milvus_ok:
             logger.warning("Milvus 不可用，长期记忆检索降级为纯本地匹配")
         return mongo_ok, milvus_ok
+
+    async def _db_health_loop(self) -> None:
+        """每 120s 检查数据库连接，失败时尝试自动重连。"""
+        while True:
+            await asyncio.sleep(120)
+            try:
+                mongo_ok = await self._session.health_check()
+                milvus_ok = await self._long_term.health_check()
+                self._mongo_available = mongo_ok
+                self._milvus_available = milvus_ok
+            except Exception:
+                logger.debug("Database health check failed", exc_info=True)
 
     async def _start_token_and_prompt(self, mongo_ok: bool) -> None:
         """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""
@@ -370,6 +386,9 @@ class Agent:
         # 3. Cancel cognitive + TTS tasks（belt-and-suspenders）
         self._stop_cognitive_and_tts()
 
+        # 3.5. 停止数据库健康检查
+        await self._stop_db_health()
+
         # 4. 停止 mailbox 轮询
         await self._stop_mailbox()
 
@@ -439,6 +458,17 @@ class Agent:
                 await asyncio.wait_for(self._embed_task, timeout=3.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
+
+    async def _stop_db_health(self) -> None:
+        """停止数据库健康检查循环。"""
+        if self._db_health_task:
+            logger.debug("Cancelling db health task...")
+            self._db_health_task.cancel()
+            try:
+                await asyncio.wait_for(self._db_health_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            self._db_health_task = None
 
     async def _stop_mailbox(self) -> None:
         """停止后台任务 mailbox 轮询——cancel 后必须 await 消耗 CancelledError。"""
