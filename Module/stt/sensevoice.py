@@ -13,6 +13,7 @@ from typing import AsyncIterator
 import httpx
 
 from .protocol import STTBackend
+from Module._common.test_helpers import make_test_method
 
 # SenseVoice 情绪标签
 _EMOTION_TAGS: dict[str, str] = {
@@ -72,6 +73,16 @@ class SenseVoiceBackend(STTBackend):
         self.last_emotion: str = "NEUTRAL"
         self.last_events: list[str] = []
 
+        async def _health_check(self) -> bool:
+            resp = await self._client.get("/health")
+            return resp.status_code < 400
+
+        self._test_fn = make_test_method(_health_check)
+
+    async def test(self) -> dict:
+        """测试连通性：GET /health。5 秒超时。"""
+        return await self._test_fn(self)
+
     async def transcribe(self, audio: bytes, **kwargs) -> str:
         chunks: list[str] = []
         async for chunk in self._call_api(audio, **kwargs):
@@ -123,22 +134,6 @@ class SenseVoiceBackend(STTBackend):
                 "SenseVoice returned unexpected response shape: %s",
                 str(data)[:200],
             )
-
-    async def test(self) -> dict:
-        """测试连通性：GET /health。5 秒超时。"""
-        import asyncio
-        import time
-        t0 = time.perf_counter()
-        try:
-            resp = await asyncio.wait_for(
-                self._client.get("/health"),
-                timeout=5.0,
-            )
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            return {"ok": resp.status_code < 400, "latency_ms": latency_ms}
-        except Exception as e:
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            return {"ok": False, "latency_ms": latency_ms, "error": str(e)}
 
     async def close(self) -> None:
         await self._client.aclose()

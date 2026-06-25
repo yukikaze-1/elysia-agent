@@ -15,6 +15,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from .protocol import LLMBackend
+from Module._common.test_helpers import make_test_method
 
 
 class OpenAICompatBackend(LLMBackend):
@@ -45,6 +46,23 @@ class OpenAICompatBackend(LLMBackend):
         self._beta_client: AsyncOpenAI | None = None
         self.last_usage: dict | None = None  # 最近一次 API 调用的 token 消耗
         self._create_clients()
+
+        async def _health_check(self) -> bool:
+            await asyncio.wait_for(
+                self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=1,
+                ),
+                timeout=5.0,
+            )
+            return True
+
+        self._test_fn = make_test_method(_health_check)
+
+    async def test(self) -> dict:
+        """测试连通性：发最小 chat 请求，测延迟。5 秒超时。"""
+        return await self._test_fn(self)
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
         """非流式对话 — 内部调用 _call_api(stream=False)，拼接所有 chunk 返回。"""
@@ -195,24 +213,6 @@ class OpenAICompatBackend(LLMBackend):
         await self._client.close()
         if self._beta_client:
             await self._beta_client.close()
-
-    async def test(self) -> dict:
-        """测试连通性：发最小 chat 请求，测延迟。5 秒超时。"""
-        t0 = time.perf_counter()
-        try:
-            response = await asyncio.wait_for(
-                self._client.chat.completions.create(
-                    model=self._model,
-                    messages=[{"role": "user", "content": "hi"}],
-                    max_tokens=1,
-                ),
-                timeout=5.0,
-            )
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            return {"ok": True, "latency_ms": latency_ms}
-        except Exception as e:
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            return {"ok": False, "latency_ms": latency_ms, "error": str(e)}
 
     async def reconnect(self) -> None:
         """重建 HTTP 客户端 — 用于服务重启后恢复连接（close() 之后调用）。"""

@@ -9,6 +9,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from .protocol import STTBackend
+from Module._common.test_helpers import make_test_method
 
 
 def _make_silence_wav(duration_sec: float = 1.0, sample_rate: int = 16000) -> bytes:
@@ -47,6 +48,28 @@ class OpenAICompatSTTBackend(STTBackend):
         self.last_emotion: str = "NEUTRAL"
         self.last_events: list[str] = []
 
+        async def _health_check(self) -> bool:
+            import asyncio
+            silence_wav = (
+                b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00"
+                b"\x01\x00\x01\x00\x80>\x00\x00\x00}\x00\x00"
+                b"\x02\x00\x10\x00data\x00\x00\x00\x00"
+            )
+            await asyncio.wait_for(
+                self._client.audio.transcriptions.create(
+                    model=self._model,
+                    file=("silence.wav", silence_wav, "audio/wav"),
+                ),
+                timeout=5.0,
+            )
+            return True
+
+        self._test_fn = make_test_method(_health_check)
+
+    async def test(self) -> dict:
+        """测试连通性：发最小转录请求（静音 WAV）。5 秒超时。"""
+        return await self._test_fn(self)
+
     async def transcribe(self, audio: bytes, **kwargs) -> str:
         result = await self._client.audio.transcriptions.create(
             model=self._model,
@@ -66,22 +89,3 @@ class OpenAICompatSTTBackend(STTBackend):
     async def close(self) -> None:
         await self._client.close()
 
-    async def test(self) -> dict:
-        """测试连通性：发最小转录请求（静音 WAV）。5 秒超时。"""
-        import asyncio
-        import time
-        t0 = time.perf_counter()
-        try:
-            silence = _make_silence_wav()
-            await asyncio.wait_for(
-                self._client.audio.transcriptions.create(
-                    model=self._model,
-                    file=("silence.wav", BytesIO(silence), "audio/wav"),
-                ),
-                timeout=5.0,
-            )
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            return {"ok": True, "latency_ms": latency_ms}
-        except Exception as e:
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            return {"ok": False, "latency_ms": latency_ms, "error": str(e)}

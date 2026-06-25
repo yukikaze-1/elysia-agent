@@ -15,6 +15,7 @@ import yaml
 
 from .protocol import TTSBackend
 from .text_preprocess import strip_all_markup
+from Module._common.test_helpers import make_test_method
 
 # 32000 Hz * 1 channel * 2 bytes/sample
 BYTES_PER_SECOND = 64000
@@ -46,6 +47,19 @@ class GPTSoVitsBackend(TTSBackend):
             path = Path(__file__).parent / "gpt_sovits_voices.yaml"
         self._voices = yaml.safe_load(path.read_text(encoding="utf-8"))
         self._preprocess = strip_all_markup
+
+        async def _health_check(self) -> bool:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=httpx.Timeout(5.0)
+            ) as client:
+                resp = await asyncio.wait_for(client.get("/health"), timeout=5.0)
+                return resp.status_code < 400
+
+        self._test_fn = make_test_method(_health_check)
+
+    async def test(self) -> dict:
+        """测试连通性：GET /health。5 秒超时。"""
+        return await self._test_fn(self)
 
     async def synthesize(
         self, text: str, *, character: str, emotion: str | None = None
@@ -148,20 +162,6 @@ class GPTSoVitsBackend(TTSBackend):
                 logging.getLogger("Module.tts.gpt_sovits").debug(
                     "TTS _pull task failed: %s", e
                 )
-
-    async def test(self) -> dict:
-        """测试连通性：GET /health。5 秒超时。"""
-        import asyncio as _asyncio
-        import time as _time
-        t0 = _time.perf_counter()
-        try:
-            async with httpx.AsyncClient(base_url=self._base_url, timeout=httpx.Timeout(5.0)) as client:
-                resp = await _asyncio.wait_for(client.get("/health"), timeout=5.0)
-                latency_ms = int((_time.perf_counter() - t0) * 1000)
-                return {"ok": resp.status_code < 400, "latency_ms": latency_ms}
-        except Exception as e:
-            latency_ms = int((_time.perf_counter() - t0) * 1000)
-            return {"ok": False, "latency_ms": latency_ms, "error": str(e)}
 
     async def close(self) -> None:
         pass  # 无共享 client，无需清理

@@ -11,6 +11,7 @@ from openai import AsyncOpenAI
 
 from .protocol import TTSBackend
 from .text_preprocess import strip_all_markup
+from Module._common.test_helpers import make_test_method
 
 
 class OpenAICompatTTSBackend(TTSBackend):
@@ -36,6 +37,19 @@ class OpenAICompatTTSBackend(TTSBackend):
             base_url=base_url,
             timeout=httpx.Timeout(60.0, connect=5.0),
         )
+
+        async def _health_check(self) -> bool:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=httpx.Timeout(5.0)
+            ) as client:
+                resp = await client.get("/health")
+                return resp.status_code < 400
+
+        self._test_fn = make_test_method(_health_check)
+
+    async def test(self) -> dict:
+        """测试连通性：GET /health。5 秒超时。"""
+        return await self._test_fn(self)
 
     async def synthesize(
         self, text: str, *, character: str, emotion: str | None = None
@@ -63,16 +77,3 @@ class OpenAICompatTTSBackend(TTSBackend):
     async def close(self) -> None:
         await self._client.close()
 
-    async def test(self) -> dict:
-        """测试连通性：GET /health。5 秒超时。"""
-        import asyncio
-        import time
-        t0 = time.perf_counter()
-        try:
-            async with httpx.AsyncClient(base_url=self._base_url, timeout=httpx.Timeout(5.0)) as client:
-                resp = await asyncio.wait_for(client.get("/health"), timeout=5.0)
-                latency_ms = int((time.perf_counter() - t0) * 1000)
-                return {"ok": resp.status_code < 400, "latency_ms": latency_ms}
-        except Exception as e:
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            return {"ok": False, "latency_ms": latency_ms, "error": str(e)}
