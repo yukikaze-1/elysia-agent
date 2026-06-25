@@ -3,6 +3,8 @@ from __future__ import annotations
 import dataclasses
 import re
 import types
+
+from ._utils import is_dataclass_instance, safe_get_type_hints
 from typing import Any, Union, get_origin, get_args
 
 from .errors import (
@@ -144,15 +146,5 @@ class Validator:
             if Validator._is_dataclass_instance(value):
                 Validator._validate_one(value, errors)
 
-    @staticmethod
-    def _is_dataclass_instance(obj: Any) -> bool:
-        return dataclasses.is_dataclass(obj) and not isinstance(obj, type)
-
-    @staticmethod
-    def _safe_get_type_hints(target_type: type) -> dict[str, type]:
-        """Return resolved type hints for *target_type*, or empty dict on failure."""
-        import typing
-        try:
-            return typing.get_type_hints(target_type)
-        except Exception:
-            return {}
+    _is_dataclass_instance = staticmethod(is_dataclass_instance)
+    _safe_get_type_hints = staticmethod(safe_get_type_hints)

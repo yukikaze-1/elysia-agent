@@ -9,6 +9,7 @@ import yaml
 from .errors import ConfigEnvFormatError, ConfigValidationError
 from .field import MISSING, get_env_name, is_secret
 from .validator import Validator
+from ._utils import is_dataclass_instance, safe_get_type_hints
 
 T = TypeVar("T")
 
@@ -212,14 +213,5 @@ class ConfigLoader(Generic[T]):
 
     # ── helpers ────────────────────────────────────────────────────
 
-    @staticmethod
-    def _is_dataclass_instance(obj: Any) -> bool:
-        return dataclasses.is_dataclass(obj) and not isinstance(obj, type)
-
-    @staticmethod
-    def _safe_get_type_hints(target_type: type) -> dict[str, type]:
-        """Return resolved type hints for *target_type*, or empty dict on failure."""
-        try:
-            return __import__("typing").get_type_hints(target_type)
-        except Exception:
-            return {}
+    _is_dataclass_instance = staticmethod(is_dataclass_instance)
+    _safe_get_type_hints = staticmethod(safe_get_type_hints)
