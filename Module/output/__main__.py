@@ -2,6 +2,7 @@
 
 import asyncio
 
+from Module._common.main_runner import run_module_main
 from .console import ConsoleChannel
 from .manager import OutputManager
 from .websocket import WebSocketChannel
@@ -87,4 +88,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_module_main(main, load_env=False)

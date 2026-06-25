@@ -1,13 +1,9 @@
 """集成测试：启动最小测试服务器验证 AudioBuffer 和 WS 路由。运行: python -m Module.input"""
 
-import asyncio
 import os
 import sys
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
+from Module._common.main_runner import run_module_main
 from .audio_buffer import AudioBuffer, pcm_to_wav
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -50,12 +46,12 @@ async def test_audio_buffer():
     print()
 
 
-def main():
+async def main():
     print("Input 模块 — 集成测试")
     print()
-    asyncio.run(test_audio_buffer())
+    await test_audio_buffer()
     print("全部测试完成!")
 
 
 if __name__ == "__main__":
-    main()
+    run_module_main(main)

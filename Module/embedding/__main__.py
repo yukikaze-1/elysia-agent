@@ -1,12 +1,8 @@
 """真实 API 集成测试。运行: python -m Module.embedding"""
 
-import asyncio
 import time
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
+from Module._common.main_runner import run_module_main
 from . import EmbeddingFactory
 
 
@@ -66,4 +62,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_module_main(main)

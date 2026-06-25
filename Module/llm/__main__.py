@@ -1,11 +1,6 @@
 """真实 API 集成测试。运行: python -m Module.llm"""
 
-import asyncio
-
-from dotenv import load_dotenv
-
-load_dotenv()
-
+from Module._common.main_runner import run_module_main
 from . import LLMFactory
 
 
@@ -66,4 +61,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_module_main(main)

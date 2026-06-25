@@ -1,6 +1,6 @@
-import asyncio
 from pathlib import Path
 
+from Module._common.main_runner import run_module_main
 from . import TTSFactory
 
 TMP = Path(__file__).parent / "tmp"
@@ -42,4 +42,5 @@ async def main():
     print("\nDone.")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    run_module_main(main, load_env=False)

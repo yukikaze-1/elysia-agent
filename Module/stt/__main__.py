@@ -1,13 +1,9 @@
 """真实 API 集成测试。运行: python -m Module.stt"""
 
-import asyncio
 import os
 import sys
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
+from Module._common.main_runner import run_module_main
 from . import STTFactory
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -50,4 +46,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_module_main(main)

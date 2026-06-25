@@ -2,17 +2,14 @@
 
 import os
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
+from Module._common.main_runner import run_module_main
 from .manager import PromptManager
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PROMPT_DIR = os.path.join(PROJECT_ROOT, "prompt")
 
 
-def main():
+async def main():
     print("Prompt 模块 — 模板渲染测试")
     print(f"  模板目录: {PROMPT_DIR}")
     print()
@@ -51,4 +48,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run_module_main(main)

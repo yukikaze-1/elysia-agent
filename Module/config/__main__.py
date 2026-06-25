@@ -3,17 +3,14 @@
 import os
 import sys
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
+from Module._common.main_runner import run_module_main
 from .loader import ConfigLoader
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 
-def main():
+async def main():
     print("Config 模块 — 配置加载测试")
     print(f"  配置文件: {CONFIG_PATH}")
     print()
@@ -43,4 +40,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run_module_main(main)
