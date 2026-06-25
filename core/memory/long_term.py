@@ -83,6 +83,19 @@ class LongTermMemory:
             self._connected = False
             return False
 
+    async def health_check(self) -> bool:
+        """尝试重连 Milvus。已连接则直接返回 True。"""
+        if self._connected:
+            return True
+        try:
+            from Module.database.vectordb import VectorDBFactory
+            self._vector_db = VectorDBFactory.create("milvus/memory")
+            self._connected = True
+            logger.info("LongTermMemory: Milvus 已恢复连接")
+            return True
+        except Exception:
+            return False
+
     async def _ensure_embedding(self, wait: bool = False) -> None:
         """Load embedding backend lazily. Only tries once.
 

@@ -181,6 +181,18 @@ class SessionMemory:
             self._db = None
             return False
 
+    async def health_check(self) -> bool:
+        """尝试重连 MongoDB。已连接则直接返回 True。"""
+        if self._db is not None:
+            return True
+        try:
+            from Module.database.documentdb import DocumentDBFactory
+            self._db = DocumentDBFactory.create("mongodb/default")
+            logger.info("SessionMemory: MongoDB 已恢复连接")
+            return True
+        except Exception:
+            return False
+
     async def save(self) -> bool:
         """Persist current session。MongoDB 不可用时降级到本地 JSONL 文件。"""
         doc = {
