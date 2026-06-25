@@ -8,18 +8,8 @@
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
 | 中 | **无去重机制** | 延后 — 现有测试确认重复文本+不同元数据是设计意图。需独立设计去重方案 |
-| ✅ | **inner_voice 气泡不显示** | 已修复——加入 few-shot 示例 + 对话历史注入 inner_voice 标签，LLM 现已稳定输出 |
-| ✅ | **`llm_adapter.py` `started` 标记未用于阻止中流产错重试** | 已修复——重试条件加 `or started`，流开始后不再重试 |
 | 中 | **`emotion_engine.py` `_push_expression()` 缺失 6 种 mood 映射** | `emotion_engine.py:197-206`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
 | 中 | **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** | `plugin.py:37`: `_remind()` 被调用生成 coroutine 对象后传入 `dispatch_background`。调度器 checkpoint 恢复时 payload 中的 coroutine 不可 JSON 序列化（不持久化），且 `from_dict` 重建后 `hasattr(coro, "__await__")` 为 False。边缘场景，当前提醒工具很少跨重启执行。 |
-| ✅ | **`long_term.py` Milvus 匹配用 text 做 key 丢失同文异构条目** | 已修复——search() 改用 `id(entry)` + Milvus PK 精确匹配，text 回退兜底。spec: `docs/superpowers/specs/2026-06-25-db-warning-and-milvus-pk-match-design.md` |
-| ✅ | **数据库连接失败静默降级无 warning** | 已修复——`logger.info`→`logger.warning` + 启动告警 + 120s health_check 自动重连。spec: `docs/superpowers/specs/2026-06-25-db-warning-and-milvus-pk-match-design.md` |
-| ~~高~~ | ~~**Brain.j2 硬编码工具列表严重过时（7/12）**~~ | ✅ 已修复 — Brain.j2 已列出全部 12 个工具 |
-| ~~高~~ | ~~**Brain.j2 缺少 "你是谁/用户是谁" 的明确定义**~~ | ✅ 已修复 — 新增 Interaction 块 + personality_block 第一人称 + UserProfile.display_name |
-| ~~高~~ | ~~**Dual-Track Protocol 要求模型提取不存在的情绪数据**~~ | ✅ 已修复 — perception 注入 mood/STT 标签 + Protocol 措辞软化 |
-| ~~中~~ | ~~**Brain.j2 记忆时间戳渲染为 Unix 整数**~~ | ✅ 已修复 — 使用 datetime filter |
-| ✅ | **`"妖梦"` 默认值在 4 处硬编码** | 已修复——agent.py/server.py/prompt_assembler.py 全部改为从 `agent._user_name` 来源。`app_config.py` 保留为唯一权威源。spec: `docs/superpowers/specs/2026-06-24-hardcoded-username-cleanup.md` |
-| ✅ | **Brain.j2 中英混杂标签** | 感官/记忆标签已中文化（当前时间/时段/星期/季节/重要度），`Mood:`→`心情:` 已修复 |
 
 ## 功能改进
 
@@ -44,9 +34,7 @@
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + MongoDB + Milvus + SenseVoice + GPT-SoVits）。等架构稳定后实施。
 - **Brain.j2 模板改进（低优先级）**:
-  - ✅ ~~`personality_block` traits/speaking_style 为空时渲染出空字段~~ — 已加守卫
   - Jinja2 `lstrip_blocks`/`trim_blocks` 在 memory 块产生不可预测空行
-  - ✅ ~~`macro` 记忆层始终为空，死代码路径~~ — 已注释标 TODO
   - L0/L2/l3 命名不一致，无 L1 层
   - `user_name` 作为 `user_id` 传入 ToolContext，名称和标识符耦合
 
