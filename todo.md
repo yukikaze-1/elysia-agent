@@ -12,8 +12,8 @@
 | ✅ | **`llm_adapter.py` `started` 标记未用于阻止中流产错重试** | 已修复——重试条件加 `or started`，流开始后不再重试 |
 | 中 | **`emotion_engine.py` `_push_expression()` 缺失 6 种 mood 映射** | `emotion_engine.py:197-206`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
 | 中 | **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** | `plugin.py:37`: `_remind()` 被调用生成 coroutine 对象后传入 `dispatch_background`。调度器 checkpoint 恢复时 payload 中的 coroutine 不可 JSON 序列化（不持久化），且 `from_dict` 重建后 `hasattr(coro, "__await__")` 为 False。边缘场景，当前提醒工具很少跨重启执行。 |
-| 低 | **`long_term.py` Milvus 匹配用 text 做 key 丢失同文异构条目** | `long_term.py:320-323`: Milvus 结果回连 in-memory 条目时用 `e.text` 做 dict key，若多条记忆文本相同但元数据不同（时间戳/重要性），仅最后一条进入候选池。当前 `insert` 端无去重，容易因种子数据重复插入触发。 |
-| 低 | **数据库连接失败静默降级无 warning** | `agent.py:start()` L153-158: MongoDB/Milvus 连接失败时 `mongo_ok`/`milvus_ok` 为 False，仅跳过 `load()`，无 `logger.warning`。底层 SessionMemory/LongTermMemory 有降级保护（`if self._db`/`if self._vector_db`），但管理员无法从日志发现问题。需加 warning + 前端状态提示。 |
+| ✅ | **`long_term.py` Milvus 匹配用 text 做 key 丢失同文异构条目** | 已修复——search() 改用 `id(entry)` + Milvus PK 精确匹配，text 回退兜底。spec: `docs/superpowers/specs/2026-06-25-db-warning-and-milvus-pk-match-design.md` |
+| ✅ | **数据库连接失败静默降级无 warning** | 已修复——`logger.info`→`logger.warning` + 启动告警 + 120s health_check 自动重连。spec: `docs/superpowers/specs/2026-06-25-db-warning-and-milvus-pk-match-design.md` |
 | ~~高~~ | ~~**Brain.j2 硬编码工具列表严重过时（7/12）**~~ | ✅ 已修复 — Brain.j2 已列出全部 12 个工具 |
 | ~~高~~ | ~~**Brain.j2 缺少 "你是谁/用户是谁" 的明确定义**~~ | ✅ 已修复 — 新增 Interaction 块 + personality_block 第一人称 + UserProfile.display_name |
 | ~~高~~ | ~~**Dual-Track Protocol 要求模型提取不存在的情绪数据**~~ | ✅ 已修复 — perception 注入 mood/STT 标签 + Protocol 措辞软化 |
