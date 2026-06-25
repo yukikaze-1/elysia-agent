@@ -1,10 +1,9 @@
 """STT 后端注册表 + 工厂。按 provider/model 标识创建后端实例。"""
 
 import dataclasses
-import os
 from typing import TYPE_CHECKING
 
-from Module.logger import get_caller_logger
+from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from .sensevoice import SenseVoiceBackend
 
 if TYPE_CHECKING:
@@ -53,10 +52,10 @@ class STTFactory:
             raise NotImplementedError(f"{provider} backend is not yet implemented")
 
         cfg = _BACKENDS[provider]
-        base_url = kwargs.pop("base_url", cfg["base_url"])
+        base_url = resolve_base_url("", cfg, kwargs.pop("base_url", None))
 
         env_key = cfg["env_key"]
-        api_key = kwargs.pop("api_key", "") or os.getenv(env_key, "")
+        api_key = resolve_api_key(env_key, cfg, kwargs.pop("api_key", None))
 
         # custom provider — 使用 OpenAI 兼容 STT 后端
         if provider == "custom":
@@ -64,11 +63,11 @@ class STTFactory:
             if not base_url:
                 raise ValueError("custom STT provider requires base_url")
             if "logger" not in kwargs:
-                kwargs["logger"] = get_caller_logger()
+                kwargs["logger"] = inject_logger(__name__)
             return OpenAICompatSTTBackend(model=model, api_key=api_key, base_url=base_url, **kwargs)
 
         if "logger" not in kwargs:
-            kwargs["logger"] = get_caller_logger()
+            kwargs["logger"] = inject_logger(__name__)
 
         return SenseVoiceBackend(
             model=model,

@@ -1,10 +1,9 @@
 """Embedding 后端注册表 + 工厂。按 provider/model 标识创建后端实例。"""
 
 import dataclasses
-import os
 from typing import TYPE_CHECKING
 
-from Module.logger import get_caller_logger
+from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from .huggingface import HuggingFaceBackend
 from .openai_compat import OpenAICompatEmbeddingBackend
 
@@ -47,16 +46,16 @@ class EmbeddingFactory:
         cfg = _BACKENDS[provider]
 
         env_key = cfg["env_key"]
-        api_key = kwargs.pop("api_key", "") or os.getenv(env_key, "")
-        base_url = kwargs.pop("base_url", "") or cfg["base_url"]
+        api_key = resolve_api_key(env_key, cfg, kwargs.pop("api_key", None))
+        base_url = resolve_base_url("", cfg, kwargs.pop("base_url", None))
 
         if provider == "huggingface":
             if "logger" not in kwargs:
-                kwargs["logger"] = get_caller_logger()
+                kwargs["logger"] = inject_logger(__name__)
             instance = HuggingFaceBackend(model_name=model, **kwargs)
         elif provider == "openai":
             if "logger" not in kwargs:
-                kwargs["logger"] = get_caller_logger()
+                kwargs["logger"] = inject_logger(__name__)
             instance = OpenAICompatEmbeddingBackend(model=model, api_key=api_key, base_url=base_url, **kwargs)
         else:
             raise NotImplementedError(f"{provider} backend is not yet implemented")

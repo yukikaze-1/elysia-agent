@@ -64,7 +64,7 @@ def huggingface_backend():
 
 @pytest.fixture
 def openai_embedding_backend():
-    with patch("Module.embedding.registry.os.getenv", return_value="sk-test"):
+    with patch("Module._common.registry_helpers.os.getenv", return_value="sk-test"):
         from Module.embedding.registry import EmbeddingFactory
         return EmbeddingFactory.create("openai/text-embedding-3-large")
 

@@ -1,14 +1,13 @@
 """TTS 后端注册表 + 工厂。按 provider/model 标识创建后端实例。"""
 
 import dataclasses
-import os
 from typing import TYPE_CHECKING
 
 from pathlib import Path
 
 import yaml
 
-from Module.logger import get_caller_logger
+from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from .gpt_sovits import GPTSoVitsBackend
 
 
@@ -56,7 +55,7 @@ class TTSFactory:
             )
 
         cfg = _BACKENDS[provider]
-        base_url = kwargs.pop("base_url", "") or os.getenv(cfg["env_key"], "") or cfg["base_url"]
+        base_url = resolve_base_url(cfg["env_key"], cfg, kwargs.pop("base_url", None))
 
         if provider == "custom" and not base_url:
             raise ValueError("custom TTS provider requires base_url")
@@ -75,14 +74,14 @@ class TTSFactory:
         # custom provider: 使用 OpenAI 兼容 TTS 协议
         if provider == "custom":
             from .openai_tts import OpenAICompatTTSBackend
-            api_key = kwargs.pop("api_key", "") or os.getenv(cfg["env_key"], "")
+            api_key = resolve_api_key(cfg["env_key"], cfg, kwargs.pop("api_key", None))
             if "logger" not in kwargs:
-                kwargs["logger"] = get_caller_logger()
+                kwargs["logger"] = inject_logger(__name__)
             return OpenAICompatTTSBackend(model=backend_name, api_key=api_key, base_url=base_url, **kwargs)
 
         # gpt-sovits: GPT-SoVits 专有协议
         if "logger" not in kwargs:
-            kwargs["logger"] = get_caller_logger()
+            kwargs["logger"] = inject_logger(__name__)
 
         return GPTSoVitsBackend(model=backend_name, base_url=base_url, **kwargs)
 

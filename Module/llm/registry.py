@@ -1,10 +1,9 @@
 """LLM 后端注册表 + 工厂。按 provider/model 标识创建后端实例。"""
 
 import dataclasses
-import os
 from typing import TYPE_CHECKING
 
-from Module.logger import get_caller_logger
+from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from .openai_compat import OpenAICompatBackend
 
 if TYPE_CHECKING:
@@ -75,18 +74,18 @@ class LLMFactory:
             raise NotImplementedError("Gemini backend is not yet implemented")
 
         cfg = _BACKENDS[provider]
-        base_url = kwargs.pop("base_url", cfg["base_url"])
+        base_url = resolve_base_url("", cfg, kwargs.pop("base_url", None))
         beta_url = kwargs.pop("beta_url", cfg.get("beta_url", ""))
 
         env_key = cfg["env_key"]
-        api_key = kwargs.pop("api_key", "") or os.getenv(env_key, "")
+        api_key = resolve_api_key(env_key, cfg, kwargs.pop("api_key", None))
 
         # custom provider 必须提供 base_url
         if provider == "custom" and not base_url:
             raise ValueError("custom provider requires base_url")
 
         if "logger" not in kwargs:
-            kwargs["logger"] = get_caller_logger()
+            kwargs["logger"] = inject_logger(__name__)
 
         return OpenAICompatBackend(
             model=model,

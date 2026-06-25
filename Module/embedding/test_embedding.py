@@ -108,7 +108,7 @@ class TestEmbeddingFactory:
         assert backend.dimension == 512
 
     def test_openai_model_parsing(self):
-        with patch("Module.embedding.registry.os.getenv", return_value="sk-test"):
+        with patch("Module._common.registry_helpers.os.getenv", return_value="sk-test"):
             backend = EmbeddingFactory.create("openai/text-embedding-3-large")
         backend = cast(OpenAICompatEmbeddingBackend, backend)
         assert backend._model == "text-embedding-3-large"

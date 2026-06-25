@@ -1,8 +1,7 @@
 import dataclasses
-import os
 from typing import TYPE_CHECKING
 
-from Module.logger import get_caller_logger
+from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from .mongodb import MongoDBBackend
 
 if TYPE_CHECKING:
@@ -32,10 +31,10 @@ class DocumentDBFactory:
             )
 
         cfg = _BACKENDS[provider]
-        base_url = kwargs.pop("base_url", "") or os.getenv(cfg["env_key"], "") or cfg["base_url"]
+        base_url = resolve_base_url(cfg["env_key"], cfg, kwargs.pop("base_url", None))
 
         if "logger" not in kwargs:
-            kwargs["logger"] = get_caller_logger()
+            kwargs["logger"] = inject_logger(__name__)
 
         return MongoDBBackend(uri=base_url, database=database, **kwargs)
 

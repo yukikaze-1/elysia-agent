@@ -107,7 +107,7 @@ class TestLLMFactory:
             LLMFactory.create("gemini/gemini-2.5-pro")
 
     def test_deepseek_model_parsing(self):
-        with patch("Module.llm.registry.os.getenv", return_value="sk-test"):
+        with patch("Module._common.registry_helpers.os.getenv", return_value="sk-test"):
             backend = LLMFactory.create("deepseek/deepseek-v4-pro")
         backend = cast(OpenAICompatBackend, backend)
         assert backend._model == "deepseek-v4-pro"
@@ -119,7 +119,7 @@ class TestLLMFactory:
         assert backend._supports_prefix is False
 
     def test_custom_base_url(self):
-        with patch("Module.llm.registry.os.getenv", return_value="sk-test"):
+        with patch("Module._common.registry_helpers.os.getenv", return_value="sk-test"):
             backend = LLMFactory.create(
                 "openai/gpt-5", base_url="https://custom.openai.com/v1"
             )
@@ -473,18 +473,18 @@ class TestPrefixContinuationEdges:
 class TestFactoryEdges:
     def test_model_id_with_multiple_slashes(self):
         """model_id "provider/model/variant" 解析为 provider="provider"。"""
-        with patch("Module.llm.registry.os.getenv", return_value="sk-test"):
+        with patch("Module._common.registry_helpers.os.getenv", return_value="sk-test"):
             backend = LLMFactory.create("openai/gpt-5/variant")
         backend = cast(OpenAICompatBackend, backend)
         assert backend._model == "gpt-5/variant"
 
     def test_factory_injects_logger(self):
         """LLMFactory.create() 注入 caller-aware logger。"""
-        with patch("Module.llm.registry.os.getenv", return_value="sk-test"):
+        with patch("Module._common.registry_helpers.os.getenv", return_value="sk-test"):
             backend = LLMFactory.create("deepseek/deepseek-v4-pro")
         backend = cast(OpenAICompatBackend, backend)
         assert backend._logger is not None
-        assert backend._logger.name.endswith("test_llm")
+        assert backend._logger.name == "Module.llm.registry"
 
 
 # ============================================================
