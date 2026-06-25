@@ -78,7 +78,7 @@ class LongTermMemory:
             logger.info("LongTermMemory: Milvus connected")
             return True
         except Exception as e:
-            logger.info("LongTermMemory: Milvus unavailable (%s), using in-memory", e)
+            logger.warning("LongTermMemory: Milvus unavailable (%s), using in-memory", e)
             self._vector_db = None
             self._connected = False
             return False

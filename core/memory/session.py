@@ -172,12 +172,12 @@ class SessionMemory:
                     [("updated_at", 1)],
                     expireAfterSeconds=30 * 86400,
                 )
-            except Exception:
-                pass  # TTL index not supported by all MongoDB-compatible backends
+            except Exception as e:
+                logger.warning("SessionMemory: TTL index creation failed (%s), continuing", e)
             logger.info("SessionMemory: MongoDB connected")
             return True
         except Exception as e:
-            logger.info("SessionMemory: MongoDB unavailable (%s), using in-memory", e)
+            logger.warning("SessionMemory: MongoDB unavailable (%s), using in-memory", e)
             self._db = None
             return False
 

@@ -198,6 +198,10 @@ class Agent:
                         logger.info("Session JSONL 已导入 MongoDB 并删除")
                     else:
                         logger.warning("Session MongoDB 写入失败，保留 JSONL")
+        if not mongo_ok:
+            logger.warning("MongoDB 不可用，会话记忆仅使用内存+JSONL 持久化")
+        if not milvus_ok:
+            logger.warning("Milvus 不可用，长期记忆检索降级为纯本地匹配")
         return mongo_ok, milvus_ok
 
     async def _start_token_and_prompt(self, mongo_ok: bool) -> None:
