@@ -101,31 +101,59 @@ async def _db_health_loop(self):
 
 ### 2.1 问题根因
 
-`long_term.py:search()` ~L344-L354：
+`long_term.py:search()` 方法跨越 L310-L396，包含三个区域，均以 `entry.text` 为 key，导致同文异构条目被覆盖：
+
+**区域 A — Milvus 结果索引 (L343-L354)：**
 
 ```python
 milvus_texts: dict[str, float] = {}
 for r in raw:
     text = r.get("text", "")
-    milvus_texts[text] = float(r.get("distance", ...))  # 同 text 覆盖
+    milvus_texts[text] = float(r.get("distance", ...))  # 同 text 覆盖: 后值覆盖前值
 
 for e in self._entries:
     if e.text in milvus_texts:          # 所有同文条目拿同一个 distance
         candidates.append(e)
-        distances[e.text] = milvus_texts[e.text]
+        distances[e.text] = milvus_texts[e.text]  # distances keyed by text
+```
+
+**区域 B — 回退路径 (L358-L367)：**
+
+```python
+fb_scores: dict[str, float] = {}
+if not candidates:
+    ...
+    fb_scores = {e.text: s for s, e in fallback_results}  # keyed by text
+    for fb_score, entry in fallback_results:
+        candidates.append(entry)
+        distances[entry.text] = None  # None 哨兵: 告诉 rerank 用 fb_score
+```
+
+**区域 C — 重排序循环 (L372-L389)：**
+
+```python
+for entry in candidates:
+    dist = distances.get(entry.text, 0.0)       # 按 text 查找 distance
+    if dist is not None:
+        sim = 1.0 / (1.0 + dist)                 # Milvus 距离
+    else:
+        sim = fb_scores.get(entry.text, 0.3)     # 回退分数 (None 哨兵触发)
+    ...
 ```
 
 `MemoryEntry._milvus_pk` 在 insert 时写入，但 search 时 `output_fields` 未请求 `id`，也未用 PK 匹配。
 
-### 2.2 修复方案：PK 匹配 + text 回退
+### 2.2 修复方案：统一用 `id(entry)` 做 key
 
-#### Step 1 — output_fields 加入 "id"
+核心思路：将 `distances` 和 `fb_scores` 的 key 从 `entry.text`（字符串，会冲突）改为 `id(entry)`（Python 对象 id，进程内唯一）。Milvus 匹配侧用 PK 做精确关联，回退侧直接用 `id(entry)`。
+
+#### Step 1 — output_fields 加入 "id" (L341)
 
 ```python
 output_fields=["id", "text", "memory_type", "poignancy", "timestamp"]
 ```
 
-#### Step 2 — 建双索引 (PK 主, text 兜底)
+#### Step 2 — 建双索引 (替代 L343-L347)
 
 ```python
 pk_to_distance: dict[int, float] = {}
@@ -140,32 +168,44 @@ for r in raw:
         text_fallback[text] = distance
 ```
 
-#### Step 3 — 匹配 self._entries: PK 优先, text 回退
+#### Step 3 — 匹配 self._entries, distances keyed by id(entry) (替代 L349-L354)
 
 ```python
 for e in self._entries:
     if e._milvus_pk is not None and e._milvus_pk in pk_to_distance:
         candidates.append(e)
-        distances[e._milvus_pk] = pk_to_distance[e._milvus_pk]
+        distances[id(e)] = pk_to_distance[e._milvus_pk]
     elif e._milvus_pk is None and e.text in text_fallback:
         candidates.append(e)
         distances[id(e)] = text_fallback[e.text]
         logger.debug("LongTermMemory: entry matched via text fallback (no PK)")
 ```
 
-#### Step 4 — distance 赋值同步改为 PK 查找
+#### Step 4 — 回退路径: fb_scores 同步改为 id(entry) key (替代 L364, L367)
 
-原来 L357-358：
 ```python
-for i, e in enumerate(candidates):
-    e.distance = distances.get(e.text, 1.0)
+fb_scores = {id(e): s for s, e in fallback_results}       # 原: {e.text: s}
+for fb_score, entry in fallback_results:
+    candidates.append(entry)
+    distances[id(entry)] = None                             # 原: distances[entry.text] = None
 ```
 
-改为：
+#### Step 5 — 重排序循环: lookup 改为 id(entry) (替代 L377, L381)
+
 ```python
-for i, e in enumerate(candidates):
-    key = e._milvus_pk if e._milvus_pk is not None else id(e)
-    e.distance = distances.get(key, 1.0)
+for entry in candidates:
+    dist = distances.get(id(entry), 0.0)                   # 原: distances.get(entry.text, 0.0)
+    if dist is not None:
+        sim = 1.0 / (1.0 + dist)
+    else:
+        sim = fb_scores.get(id(entry), 0.3)                # 原: fb_scores.get(entry.text, 0.3)
+    ...
+```
+
+#### Step 6 — distances 类型声明更新 (L324)
+
+```python
+distances: dict[int, float] = {}  # 原: dict[str, float] — id(entry) → L2 distance
 ```
 
 ### 2.3 兼容性
@@ -173,10 +213,11 @@ for i, e in enumerate(candidates):
 - `_milvus_pk` 为 `None` 的历史条目走 text fallback，行为等价于修复前
 - `_milvus_pk` 非 `None` 的新条目走 PK 精确匹配，同一 text 不同向量的条目各自获得正确 distance
 - text fallback 路径打 `logger.debug`，方便排查历史数据迁移进度
+- `fb_scores` 和 `distances` key 类型同步变更，None 哨兵机制保持不变
 
 ### 2.4 影响范围
 
-仅 `long_term.py:search()` 方法，~L327-L358。不改 `MemoryEntry` 数据结构，不改 `insert()` 路径。
+仅 `long_term.py:search()` 方法，L310-L396。不改 `MemoryEntry` 数据结构，不改 `insert()` 路径。
 
 ---
 
