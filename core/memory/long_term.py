@@ -334,7 +334,7 @@ class LongTermMemory:
             return []
 
         candidates: list[MemoryEntry] = []
-        distances: dict[str, float] = {}  # text → L2 distance (for rerank)
+        distances: dict[int, float] = {}  # id(entry) → L2 distance (for rerank)
 
         # Try Milvus — fetch top_k * 4 for rerank candidate pool
         if self._vector_db and self._connected:
@@ -351,33 +351,42 @@ class LongTermMemory:
                         self.COLLECTION,
                         vector=vec,
                         top_k=min(top_k * 4, 20),
-                        output_fields=["text", "memory_type", "poignancy", "timestamp"],
+                        output_fields=["id", "text", "memory_type", "poignancy", "timestamp"],
                     )
-                    # Build text->distance lookup from Milvus results
-                    milvus_texts: dict[str, float] = {}
+                    # Build PK→distance + text→distance (fallback) from Milvus results
+                    pk_to_distance: dict[int, float] = {}
+                    text_fb: dict[str, float] = {}
                     for r in raw:
+                        pk = r.get("id")
                         text = r.get("text", "")
-                        milvus_texts[text] = float(r.get("distance", r.get("score", 1.0)))
+                        d = float(r.get("distance", r.get("score", 1.0)))
+                        if pk is not None:
+                            pk_to_distance[pk] = d
+                        else:
+                            text_fb[text] = d
 
-                    # Match Milvus results against in-memory entries by text
-                    # so returned entries have proper ids, embeddings, and metadata
+                    # Match Milvus results against in-memory entries: PK first, text fallback
                     for e in self._entries:
-                        if e.text in milvus_texts:
+                        if e._milvus_pk is not None and e._milvus_pk in pk_to_distance:
                             candidates.append(e)
-                            distances[e.text] = milvus_texts[e.text]
+                            distances[id(e)] = pk_to_distance[e._milvus_pk]
+                        elif e._milvus_pk is None and e.text in text_fb:
+                            candidates.append(e)
+                            distances[id(e)] = text_fb[e.text]
+                            logger.debug("LongTermMemory: entry matched via text fallback (no PK)")
                 except Exception as e:
                     logger.warning("Milvus search failed: %s", e)
 
         # Fall back to in-memory if no candidates from Milvus
-        fb_scores: dict[str, float] = {}
+        fb_scores: dict[int, float] = {}
         if not candidates:
             fallback_results = self._search_fallback(
                 query_text, min(top_k * 2, len(self._entries))
             )
-            fb_scores = {e.text: s for s, e in fallback_results}
+            fb_scores = {id(e): s for s, e in fallback_results}
             for fb_score, entry in fallback_results:
                 candidates.append(entry)
-                distances[entry.text] = None  # flag for rerank to use fb_score
+                distances[id(entry)] = None  # flag for rerank to use fb_score
 
         if not candidates:
             return []
@@ -387,11 +396,11 @@ class LongTermMemory:
         scored: list[tuple[float, MemoryEntry]] = []
         for entry in candidates:
             # Similarity: 1/(1+L2_distance) for Milvus, or fallback overlap score
-            dist = distances.get(entry.text, 0.0)
+            dist = distances.get(id(entry), 0.0)
             if dist is not None:
                 sim = 1.0 / (1.0 + dist)
             else:
-                sim = fb_scores.get(entry.text, 0.3)
+                sim = fb_scores.get(id(entry), 0.3)
 
             poi = min(entry.poignancy, 10) / 10.0  # normalize to [0,1]
 
