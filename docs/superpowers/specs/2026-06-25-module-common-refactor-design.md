@@ -14,7 +14,7 @@
 - 6 个 registry 的 `.create()` 中有相同的 api_key/base_url 解析逻辑
 - 5 个 backend 的 `test()` 方法逐字复制粘贴
 - 6 个 `test_config.py` 结构完全一致
-- 8 个 `__main__.py` 重复 `load_dotenv()` + `asyncio.run()` 样板
+- 9 个 `__main__.py` 重复 `load_dotenv()` + `asyncio.run()` 样板
 - `config/loader.py` 和 `config/validator.py` 中 `_safe_get_type_hints()` / `_is_dataclass_instance()` 逐字重复
 
 方案：在 `Module/_common/` 下提供轻量工具函数，各模块调用替换内联代码。不引入类继承，不拆大文件，不改 backend 实现逻辑。
@@ -46,7 +46,7 @@ Module/_common/
 
 ### 1. `_common/env.py` — dotenv 统一入口
 
-收口 `Module/config/loader.py:EnvManager.ensure_dotenv()` 的逻辑。当前 8 个 `__main__.py` 各自调用 `from dotenv import load_dotenv; load_dotenv()`，而 `config/loader.py` 已有集中实现但无人使用。
+收口 `Module/config/loader.py:EnvManager.ensure_dotenv()` 的逻辑。当前 9 个 `__main__.py` 中有 6 个各自调用 `from dotenv import load_dotenv; load_dotenv()`，而 `config/loader.py` 已有集中实现但无人使用。
 
 ```python
 """dotenv 统一入口。所有 __main__.py 应通过此函数加载环境变量。"""
@@ -290,7 +290,7 @@ def make_config_test_classes(
 
 ### 5. `_common/main_runner.py` — 统一 __main__ 入口
 
-替代 9 个 `__main__.py` 的样板代码。其中 6 个使用 `load_dotenv()` + `asyncio.run()`（llm、stt、embedding、config、prompt、input），3 个仅使用 `asyncio.run()` 无 load_dotenv（bench、tts、output）。
+替代 9 个 `__main__.py` 的样板代码：6 个使用 `load_dotenv()` + `asyncio.run()`（llm、stt、embedding、config、prompt、input），3 个仅使用 `asyncio.run()` 无 load_dotenv（bench、tts、output）。
 
 ```python
 """统一 __main__ 入口：ensure_dotenv + asyncio.run。"""
@@ -369,10 +369,10 @@ from Module.config.loader import _safe_get_type_hints, _is_dataclass_instance
 | Registry (`registry.py`) | — | 6 个（llm/stt/tts/embedding/vectordb/documentdb） |
 | Backend (`test()`) | — | 5 个（llm/stt×2/tts×2） |
 | Config test (`test_config.py`) | — | 6 个（llm/stt/tts/embedding/vectordb/documentdb） |
-| Smoke test (`__main__.py`) | — | 11 个（llm/stt/tts/embedding/output/config/prompt/input/bench/vectordb/documentdb） |
+| Smoke test (`__main__.py`) | — | 9 个（llm/stt/tts/embedding/output/config/prompt/input/bench） |
 | `config/` 去重 | — | 2 个（loader.py + validator.py） |
 
-`__main__.py` 改造覆盖 11 个模块：7 个使用 `load_dotenv` + `asyncio.run`（llm/stt/embedding/config/prompt/input/documentdb），4 个仅使用 `asyncio.run`（tts/output/bench/vectordb）。`logger/__main__.py` 不改造——它是同步代码，不匹配 `run_module_main(async_fn)` 模式。
+`__main__.py` 改造覆盖 9 个模块：6 个使用 `load_dotenv` + `asyncio.run`（llm/stt/embedding/config/prompt/input），3 个仅使用 `asyncio.run`（tts/output/bench）。`logger/__main__.py` 不改造——它是同步代码，不匹配 `run_module_main(async_fn)` 模式。
 
 不改内部结构的模块：config（infra）/ logger（utility）/ prompt（utility）/ schema（data）/ bench（tool）/ tool（plugin）/ input（server）/ graphdb（stub）——仅其 `__main__.py` 和 `test_config.py` 受机械性影响。
 
@@ -382,6 +382,6 @@ from Module.config.loader import _safe_get_type_hints, _is_dataclass_instance
 
 - 所有现有测试必须在改动后继续通过
 - `_common/` 每个新文件配对应的 `Module/_common/tests/test_*.py`
-- `test_helpers.py` 的 `make_test_method` 用 mock 验证两种路径（health_url / health_fn）的 {ok, latency_ms} 格式
+- `test_helpers.py` 的 `make_test_method` 用 mock `health_fn` 验证 {ok, latency_ms} 格式（成功和异常两条路径）
 - `config_test_helpers.py` 的 `make_config_test_classes` 用一个假 dataclass 验证返回的 test class 能正常执行
 - `registry_helpers.py` 的纯函数用参数化测试验证优先级顺序
