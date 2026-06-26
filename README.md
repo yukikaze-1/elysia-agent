@@ -2,7 +2,7 @@
 
 桌面 AI 伴侣，支持语音对话、内心独白、工具调用和后台任务。
 
-> 最近 (2026-06-24): 伴侣化改造 Step 1+2 完成——对话风格重写 + 内心世界 (inner_voice)，LLM 输出 `<inner_voice>` 标签，前端淡色思考气泡，debug 页面 Raw Response 查看器
+> 最近 (2026-06-26): Module/_common/ 轻量共享层重构——消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config 重复代码，971 测试零回归。2026-06-25: 数据库连接告警 + 120s 健康检查自动重连，Milvus PK 匹配修复同文异构条目覆盖
 
 ---
 
@@ -32,7 +32,7 @@ python app.py
 ## 架构
 
 ```
-L0  Module/        无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output
+L0  Module/        无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/
 L1  core/          认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
 L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolManager (Plugin 架构)
 L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
@@ -72,7 +72,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | 流式对话 + 中断恢复 | done |
 | **inner_voice 内心独白** (think 气泡 + 持久化 + debug 查看器) | done |
 | 情绪检测 + 表情推送 | done |
-| MongoDB/Milvus 持久化 (自动降级) | done |
+| MongoDB/Milvus 持久化 (自动降级 + 健康检查自动重连) | done |
 | 记忆自动沉淀 (LLM 提取事实) | done |
 | HuggingFace embedding 离线加载 | done |
 | WebSocket 服务器 + HTML 客户端 | done |
@@ -106,9 +106,10 @@ Agent/
 ├── todo.md                 # 开发计划 + 已知 Bug
 │
 ├── Module/                 # L0 基础设施层
+│   ├── _common/            #   共享工具 (registry_helpers, test_helpers, main_runner, ...)
 │   ├── llm/                # DeepSeek / OpenAI / Ollama / MiMo
-│   ├── stt/                # SenseVoice
-│   ├── tts/                # GPT-SoVits / OpenAICompat
+│   ├── stt/                # SenseVoice / OpenAI-compatible
+│   ├── tts/                # GPT-SoVits / OpenAI-compatible
 │   ├── embedding/          # HuggingFace / OpenAI
 │   ├── output/             # Console + WebSocket 多通道
 │   ├── config/             # YAML + env 配置系统
@@ -146,7 +147,6 @@ Agent/
 │   ├── response_recorder.py #  LLM Response 记录器 (环形缓冲)
 │   ├── timing.py           #   性能计时
 │   ├── tag_parser.py       #   标签解析
-│   ├── agent.py            #   Agent 组装
 │   ├── tools/              #   工具插件 (12 个)
 │   ├── memory/             #   记忆子系统 (session + long_term)
 │   └── tests/              #   测试 (~367 tests)
@@ -189,14 +189,14 @@ python -m pytest Module/task_system/tests/unit/ -v
 # TaskSystem 集成测试 (~36 tests)
 python -m pytest Module/task_system/tests/integration/ -v
 
-# Core 测试 (~367 tests)
+# Core 测试 (~361 tests)
 python -m pytest core/tests/ -v
 
-# Module 测试 (~598 tests)
+# Module 测试 (~610 tests, 含 _common/ 22 tests)
 python -m pytest Module/ -v --ignore=Module/task_system
 
-# 全部测试 (~1,366 tests)
+# 全部测试 (~1,370 tests)
 python -m pytest Module/ core/ -v
 ```
 
-**测试统计**: ~1,366 tests（305 TaskSystem unit + 36 TaskSystem integration + 367 core + 598 Module + 82 core/tools）
+**测试统计**: ~1,370 tests（305 TaskSystem unit + 36 TaskSystem integration + 361 core + 610 Module + 82 core/tools）
