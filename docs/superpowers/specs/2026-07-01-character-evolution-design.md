@@ -207,7 +207,7 @@ f"你是 {self._character.name}，一个桌面AI伴侣。",
 f"性格: 温柔、偶尔毒舌。说话口语化，短句为主。",
 ```
 
-同时移除 `_render_fallback` 签名中不再需要的 `user_message`（当前未使用）。
+`user_message` 参数保留——仍用于 `_get_recalled()` 记忆召回（line 229）。
 
 ### 3.3 personality_block() 保留
 
