@@ -356,12 +356,18 @@ class CharacterReflector:
     # ---- private ----
 
     def _should_trigger(self) -> bool:
-        """判断是否应触发反思：≥50 对 OR 距上次 > 24h。"""
+        """判断是否应触发反思：≥50 对 OR 距上次 > 24h。
+
+        规范规定首次无历史时"视为已超 24h"，但纯时间触发会导致第 1 轮
+        对话就立即反思——此时上下文不足以产生有意义的 self_perception。
+        因此首次改用 10 对 buffer 阈值，确保有足够对话上下文再反思。
+        此偏差在 v1 中可接受。
+        """
         if len(self._buffer) >= self.BUFFER_THRESHOLD:
             return True
         history = self._session.get_param("self_perception_history", [])
         if not history:
-            return len(self._buffer) >= 10  # 首次：10 对即可触发
+            return len(self._buffer) >= 10  # 首次：10 对即可触发（有上下文基础）
         last_ts = history[-1].get("timestamp", 0)
         return (time.time() - last_ts) > self.TIME_THRESHOLD_SEC
 
@@ -389,8 +395,6 @@ class CharacterReflector:
             recent_conversations=self._context,
         )
 
-        self._buffer.clear()
-
         try:
             result = await self._llm.think(
                 [
@@ -403,6 +407,9 @@ class CharacterReflector:
         except Exception:
             logger.warning("CharacterReflector: LLM 调用失败", exc_info=True)
             return
+
+        # LLM 调用成功后才清空 buffer — 若失败则保留计数，下次攒够再触
+        self._buffer.clear()
 
         if not text:
             logger.debug("CharacterReflector: 反思结果为空，跳过")
