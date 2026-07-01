@@ -71,6 +71,7 @@ class CognitiveLoop:
         tool_executor=None,  # ToolExecutor Protocol
         emotion: EmotionEngine | None = None,
         consolidator: MemoryConsolidator | None = None,
+        reflector=None,  # CharacterReflector | None
         tts: TTSBackend | None = None,
         ctx: ToolContext | None = None,
         token_tracker=None,  # TokenTracker | None
@@ -86,6 +87,7 @@ class CognitiveLoop:
         self._req_counter: int = 0
         self._emotion = emotion
         self._consolidator = consolidator
+        self._reflector = reflector
         self._tts = tts  # 保留供 agent.py stop() 读取
         self._ctx = ctx
         self._token_tracker = token_tracker
@@ -734,7 +736,7 @@ class CognitiveLoop:
     # ---- Post-response ----
 
     async def _after_response(self, user_message: str, assistant_response: str) -> None:
-        """Post-response hooks: consolidate memory, save session."""
+        """Post-response hooks: consolidate memory, character reflection, save session."""
         if self._consolidator:
             try:
                 t0 = time.perf_counter()
@@ -746,6 +748,13 @@ class CognitiveLoop:
                 raise
             except Exception:
                 logger.debug("记忆沉淀失败", exc_info=True)
+        if self._reflector:
+            try:
+                await self._reflector.buffer(user_message, assistant_response)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("性格反思缓冲失败", exc_info=True)
         # Save session asynchronously (fire-and-forget)
         try:
             await self._session.save()

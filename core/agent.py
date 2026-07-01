@@ -31,6 +31,7 @@ from .idle_monitor import IdleMonitor
 from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
+from .character_reflector import CharacterReflector
 from Module.embedding import EmbeddingFactory
 from .task_scheduler import TaskScheduler
 
@@ -98,6 +99,13 @@ class Agent:
             character_name=self._character.name,
         )
 
+        self._character_reflector = CharacterReflector(
+            llm=self._llm,
+            session=self._session,
+            character_name=self._character.name,
+            user_name=self._user_name,
+        )
+
         # ---- Token 统计 ----
         self._token_tracker = None  # 在 start() 中创建（需要 session_id）
 
@@ -111,6 +119,7 @@ class Agent:
             tool_executor=self._tool_manager,
             emotion=self._emotion,
             consolidator=self._consolidator,
+            reflector=self._character_reflector,
             tts=self._tts,
             token_tracker=self._token_tracker,
         )
@@ -380,6 +389,9 @@ class Agent:
         # 1. Flush memory consolidation buffer
         await self._flush_consolidator()
 
+        # 1.5. Flush character reflection buffer
+        await self._flush_reflector()
+
         # 2. 先停事件循环 — 防止它在 shutdown 期间继续 post 新任务
         await self._stop_event_task()
 
@@ -431,6 +443,16 @@ class Agent:
                 logger.warning("Consolidator flush timed out during shutdown")
             except Exception:
                 logger.debug("Consolidator flush failed", exc_info=True)
+
+    async def _flush_reflector(self) -> None:
+        """CharacterReflector buffer 落盘，防止未持久化的性格反思丢失。"""
+        if self._character_reflector:
+            try:
+                await asyncio.wait_for(self._character_reflector.flush(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("CharacterReflector flush timed out during shutdown")
+            except Exception:
+                logger.debug("CharacterReflector flush failed", exc_info=True)
 
     async def _stop_event_task(self) -> None:
         """停止 _process_events 事件循环——防止它在 shutdown 期间继续 post 新任务。"""
