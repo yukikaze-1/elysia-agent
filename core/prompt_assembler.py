@@ -90,15 +90,17 @@ class PromptAssembler:
 
         if self._prompt is not None:
             try:
+                history = self._session.get_param("self_perception_history", [])
+                self_perception = history[-1]["content"] if history else ""
                 return self._prompt.render_macro(
                     "Brain.j2", "BrainSystemPrompt",
-                    l3_personality_block=self._character.personality_block(),
                     sensory=sensory,
                     memory=memory,
                     state=state,
                     name=self._character.name,
                     user_name=user_name,
                     user_preferences="",
+                    self_perception=self_perception,
                 )
             except Exception:
                 logger.warning("Brain.j2 渲染失败，使用 fallback", exc_info=True)
@@ -216,8 +218,9 @@ class PromptAssembler:
         lines = [
             f"{self._character.name}，一个桌面AI伴侣。",
             "",
-            f"## 性格",
-            self._character.personality_block(),
+            "## 性格",
+            f"你是 {self._character.name}，一个桌面AI伴侣。",
+            "性格: 温柔、偶尔毒舌。说话口语化，短句为主。",
             "",
             "## 规则",
             "1. 回答简洁，2-4句话为主，像真实对话而非写文章。",
