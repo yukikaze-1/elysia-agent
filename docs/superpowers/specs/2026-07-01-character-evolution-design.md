@@ -192,11 +192,26 @@ return self._prompt.render_macro(
 
 ### 3.2 _render_fallback 适配
 
-fallback 路径同步更新：不依赖 `personality_block()`（性格叙事在 Brain.j2 里，fallback 用简版即可）。
+`_render_fallback()` 当前调用 `self._character.personality_block()`（`prompt_assembler.py:220`）。
+
+改为内联简版人格文本——不依赖 `personality_block()`。fallback 是 Brain.j2 渲染失败时的最后保底，应该自给自足：
+
+```python
+# 改前
+f"## 性格",
+self._character.personality_block(),
+
+# 改后
+f"## 性格",
+f"你是 {self._character.name}，一个桌面AI伴侣。",
+f"性格: 温柔、偶尔毒舌。说话口语化，短句为主。",
+```
+
+同时移除 `_render_fallback` 签名中不再需要的 `user_message`（当前未使用）。
 
 ### 3.3 personality_block() 保留
 
-`CharacterConfig.personality_block()` 方法保留不删——测试和 fallback 路径还在用。
+`CharacterConfig.personality_block()` 方法保留不删——测试仍引用。
 
 ---
 
@@ -216,7 +231,7 @@ fallback 路径同步更新：不依赖 `personality_block()`（性格叙事在 
 | `MicroReflector.j2` / `MacroReflector.j2` | 保留不动，以后接入记忆系统时用 |
 | `EmotionEngine` | mood 检测和衰减逻辑不变 |
 | `CharacterConfig` + `character/elysia.yaml` | 保留不动；traits 仍从 YAML 加载，Brain.j2 不再引用 personality_block 但其他路径可能还在用 |
-| `personality_block()` | 保留方法，测试和 fallback 路径仍需 |
+| `personality_block()` | 保留方法，测试仍引用 |
 
 ---
 
