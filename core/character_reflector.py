@@ -140,7 +140,9 @@ class CharacterReflector:
 
         # LLM 调用成功后才清空 buffer — 若失败则保留计数，下次攒够再触
         self._buffer.clear()
-        self._context.clear()  # 防止下一轮反思重复处理同一批对话
+        # _context 不清空 — 滚动窗口 [-(CONTEXT_ROUNDS*2):] 已有上界，
+        # 下次反思触发时（50 轮后）旧条目已自然推出。清空会丢失 LLM 调用期间
+        # buffer() 新到达的消息。
 
         if not text:
             logger.debug("CharacterReflector: 反思结果为空，跳过")
