@@ -44,6 +44,11 @@ class CharacterReflector:
         self._buffer: list[tuple[str, str]] = []  # (user_msg, assistant_msg)
         self._reflect_lock = asyncio.Lock()
         self._context: list[dict] = []  # 滚动窗口：保留最近 N 轮对话用于反思
+        try:
+            self._pm = PromptManager(self._prompt_dir)
+        except FileNotFoundError:
+            logger.warning("CharacterReflector: 模板目录不存在，反思功能不可用")
+            self._pm = None
 
     async def buffer(self, user_msg: str, assistant_msg: str) -> None:
         """缓冲一轮对话。达到阈值时触发反思。"""
@@ -99,11 +104,10 @@ class CharacterReflector:
 
     async def _reflect(self) -> None:
         """执行 LLM 反思并存储结果。"""
-        try:
-            pm = PromptManager(self._prompt_dir)
-        except FileNotFoundError:
-            logger.warning("CharacterReflector: 模板目录不存在")
+        if self._pm is None:
             return
+
+        pm = self._pm
 
         history = self._session.get_param("self_perception_history", [])
         last_perception = history[-1]["content"] if history else ""
@@ -136,6 +140,7 @@ class CharacterReflector:
 
         # LLM 调用成功后才清空 buffer — 若失败则保留计数，下次攒够再触
         self._buffer.clear()
+        self._context.clear()  # 防止下一轮反思重复处理同一批对话
 
         if not text:
             logger.debug("CharacterReflector: 反思结果为空，跳过")

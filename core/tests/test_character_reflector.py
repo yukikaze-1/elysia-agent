@@ -2,7 +2,7 @@
 import asyncio
 import time
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from core.character_reflector import CharacterReflector
 
@@ -51,11 +51,19 @@ class TestCharacterReflector:
     @pytest.mark.asyncio
     async def test_buffer_at_threshold_triggers_reflect(self, reflector):
         """缓冲区达到 50 对时触发反思."""
-        for i in range(50):
+        # 预置一条最近的历史，禁用首次 10 对的特殊阈值
+        reflector._session._params["self_perception_history"] = [
+            {"timestamp": time.time(), "content": "最近没什么特别的。"}
+        ]
+        # 49 对不应触发 — 不到 50 对且不到 24h
+        for i in range(49):
             await reflector.buffer(f"msg{i}", f"reply{i}")
-        # 等待异步 LLM 调用完成
         await asyncio.sleep(0.1)
-        assert "self_perception_history" in reflector._session._params
+        assert len(reflector._session._params["self_perception_history"]) == 1  # 还是预置的那一条
+        # 第 50 对应触发反思
+        await reflector.buffer("msg50", "reply50")
+        await asyncio.sleep(0.1)
+        assert len(reflector._session._params["self_perception_history"]) >= 2  # 预置 + 新反思
 
     # ---- 24h 时间触发 ----
 
