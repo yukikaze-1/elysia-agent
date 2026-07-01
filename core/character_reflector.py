@@ -190,8 +190,11 @@ class CharacterReflector:
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
-        # LLM 调用成功后才清空 buffer
+        # LLM 调用成功后才清空 buffer — 若失败则保留计数，下次攒够再触
         self._buffer.clear()
+        # _context 不清空 — 滚动窗口 [-(CONTEXT_ROUNDS*2):] 已有上界，
+        # 下次反思触发时（50 轮后）旧条目已自然推出。清空会丢失 LLM 调用期间
+        # buffer() 新到达的消息。
 
         if not text:
             self._last_duration_ms = elapsed_ms
