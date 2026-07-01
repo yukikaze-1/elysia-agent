@@ -73,6 +73,7 @@ def last_prompt_user(self) -> str:
 `core/debug_info.py` 的 `DebugInfo` dataclass 新增：
 
 ```python
+reflector_exists: bool = False                        # True 仅当 agent._character_reflector 不为 None
 reflector_buffer_size: int = 0
 reflector_last_reflection_at: float | None = None
 reflector_locked: bool = False
@@ -88,6 +89,7 @@ reflector_last_text_len: int = 0
 
 ```python
 if agent._character_reflector:
+    info.reflector_exists = True
     ref = agent._character_reflector
     info.reflector_buffer_size = ref.buffer_size
     info.reflector_last_reflection_at = ref.last_reflection_at
@@ -141,22 +143,22 @@ info.self_perception_history = history[-5:]  # 最近 5 条
 在 poll 回调中更新：
 
 ```javascript
-// Character Reflector
-const ref = info.reflector_buffer_size !== undefined ? info : null;
+// Character Reflector（仅当 reflector_exists 为 true 时展示真实数据）
+const ref = info.reflector_exists ? info : null;
 
 // 状态行
-$('ref-buffer').textContent = ref ? `${ref.reflector_buffer_size}/50` : 'N/A';
-$('ref-last').textContent = ref && ref.reflector_last_reflection_at
+document.getElementById('ref-buffer').textContent = ref ? `${ref.reflector_buffer_size}/50` : 'N/A';
+document.getElementById('ref-last').textContent = ref && ref.reflector_last_reflection_at
   ? new Date(ref.reflector_last_reflection_at * 1000).toLocaleString()
   : '从未';
 const locked = ref && ref.reflector_locked;
-$('ref-status').textContent = locked ? '⏳ 反思中...' : 'idle';
-$('ref-status').className = 'value ' + (locked ? 'warn' : 'ok');
+document.getElementById('ref-status').textContent = locked ? '⏳ 反思中...' : 'idle';
+document.getElementById('ref-status').className = 'value ' + (locked ? 'warn' : 'ok');
 
 // Self-Perception 历史
 const hist = (ref && ref.self_perception_history) || [];
-$('ref-hist-count').textContent = hist.length;
-const histDiv = $('ref-history');
+document.getElementById('ref-hist-count').textContent = hist.length;
+const histDiv = document.getElementById('ref-history');
 histDiv.innerHTML = hist.length === 0
   ? '<div class="list-item" style="color:var(--muted)">暂无</div>'
   : hist.map((h, i) => {
@@ -172,19 +174,19 @@ histDiv.innerHTML = hist.length === 0
     }).join('');
 
 // 最近反思 Prompt
-$('ref-prompt-system').textContent = ref ? trunc(ref.reflector_last_prompt_system || '(无)', 500) : '';
-$('ref-prompt-user').textContent = ref ? trunc(ref.reflector_last_prompt_user || '(无)', 500) : '';
-if (ref && ref.reflector_last_success !== undefined && ref.reflector_last_text_len !== undefined) {
+document.getElementById('ref-prompt-system').textContent = ref ? trunc(ref.reflector_last_prompt_system || '(无)', 500) : '';
+document.getElementById('ref-prompt-user').textContent = ref ? trunc(ref.reflector_last_prompt_user || '(无)', 500) : '';
+if (ref && ref.reflector_last_text_len !== undefined) {
   const ok = ref.reflector_last_success;
-  $('ref-call-result').innerHTML = ok
+  document.getElementById('ref-call-result').innerHTML = ok
     ? `<span class="ok">✅ 成功</span> | ${ref.reflector_last_duration_ms.toFixed(0)}ms | ${ref.reflector_last_text_len} chars`
     : `<span class="fail">❌ 失败</span> | ${ref.reflector_last_duration_ms.toFixed(0)}ms`;
 } else {
-  $('ref-call-result').textContent = '-';
+  document.getElementById('ref-call-result').textContent = '-';
 }
 ```
 
-旧字段兼容：`info.reflector_buffer_size === undefined` 时所有字段显示 N/A 或 `-`。
+兼容旧 `/debug/api`：`info.reflector_exists === false` 时所有字段显示 N/A 或 `-`。
 
 ---
 
@@ -193,7 +195,6 @@ if (ref && ref.reflector_last_success !== undefined && ref.reflector_last_text_l
 - 已有卡片布局不动
 - `/debug/api` 的已有字段不变
 - CharacterReflector 的核心逻辑不动（只加只读属性）
-- `$()` = `document.getElementById()`（debug 页面已有此 helper）
 - `esc()` / `trunc()` 复用 debug 页面已有函数
 
 ---
