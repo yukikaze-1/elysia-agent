@@ -553,6 +553,69 @@ function render(info) {
         `<span class="type-tag">${esc(c.type||'?')}</span>${esc(trunc(c.content,100))}`
       )},
     ],
+    // Row 5: Character Reflector
+    [
+      (() => {
+        const ref = info.reflector_exists ? info : null;
+        const items = [];
+
+        // 状态行
+        items.push(
+          `<div class="row"><span class="label">Buffer</span><span class="value">${ref ? ref.reflector_buffer_size + '/50' : 'N/A'}</span></div>`,
+          `<div class="row"><span class="label">上次反思</span><span class="value">${ref && ref.reflector_last_reflection_at ? new Date(ref.reflector_last_reflection_at * 1000).toLocaleTimeString() : '从未'}</span></div>`,
+        );
+        const locked = ref && ref.reflector_locked;
+        items.push(
+          `<div class="row"><span class="label">状态</span><span class="value ${locked ? 'warn' : 'ok'}">${locked ? '反思中...' : 'idle'}</span></div>`,
+        );
+
+        // Self-Perception 历史
+        const hist = (ref && ref.self_perception_history) || [];
+        if (hist.length === 0) {
+          items.push('<div class="empty" style="margin-top:4px">Self-Perception: 暂无</div>');
+        } else {
+          let histHtml = '<details style="margin-top:4px"><summary>Self-Perception 历史 (' + hist.length + ')</summary>';
+          histHtml += '<div style="max-height:200px;overflow-y:auto">';
+          hist.reverse().forEach((h, i) => {
+            const ts = new Date(h.timestamp * 1000).toLocaleString();
+            const isLatest = i === 0;
+            const bg = isLatest ? 'background:rgba(233,69,96,0.08);border-left:2px solid var(--accent);padding-left:6px' : '';
+            histHtml += '<div class="list-item" style="' + bg + '">';
+            histHtml += '<span style="color:var(--muted);font-size:11px">' + esc(ts) + '</span><br>';
+            histHtml += '<details><summary style="cursor:pointer">' + esc(trunc(h.content, 60)) + '</summary>';
+            histHtml += '<div style="white-space:pre-wrap;margin-top:3px">' + esc(h.content) + '</div>';
+            histHtml += '</details></div>';
+          });
+          histHtml += '</div></details>';
+          items.push(histHtml);
+        }
+
+        // 最近反思 Prompt
+        if (ref && (ref.reflector_last_prompt_system || ref.reflector_last_prompt_user)) {
+          let promptHtml = '<details style="margin-top:4px"><summary>最近反思 Prompt</summary>';
+          if (ref.reflector_last_prompt_system) {
+            promptHtml += '<div style="font-size:11px;color:var(--muted);margin-top:4px">System:</div>';
+            promptHtml += '<div class="list-item" style="white-space:pre-wrap;max-height:120px;overflow-y:auto;font-size:11px">' + esc(trunc(ref.reflector_last_prompt_system, 400)) + '</div>';
+          }
+          if (ref.reflector_last_prompt_user) {
+            promptHtml += '<div style="font-size:11px;color:var(--muted);margin-top:4px">User:</div>';
+            promptHtml += '<div class="list-item" style="white-space:pre-wrap;max-height:120px;overflow-y:auto;font-size:11px">' + esc(trunc(ref.reflector_last_prompt_user, 400)) + '</div>';
+          }
+          // 调用结果
+          if (ref.reflector_last_text_len !== undefined) {
+            const ok = ref.reflector_last_success;
+            promptHtml += '<div class="row" style="margin-top:4px"><span class="label">调用</span>';
+            promptHtml += '<span class="value ' + (ok ? 'ok' : 'fail') + '">';
+            promptHtml += (ok ? '成功' : '失败') + ' | ' + ref.reflector_last_duration_ms.toFixed(0) + 'ms | ' + ref.reflector_last_text_len + ' chars';
+            promptHtml += '</span></div>';
+          }
+          promptHtml += '</details>';
+          items.push(promptHtml);
+        }
+
+        return { title:'Character Reflector', wide:true, items: items };
+      })()
+    ],
   ];
 
   let html = '';
