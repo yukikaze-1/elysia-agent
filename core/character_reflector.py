@@ -50,6 +50,14 @@ class CharacterReflector:
             logger.warning("CharacterReflector: 模板目录不存在，反思功能不可用")
             self._pm = None
 
+        # ---- debug 状态 ----
+        self._last_reflection_at: float | None = None
+        self._last_success: bool = False
+        self._last_duration_ms: float = 0.0
+        self._last_text_len: int = 0
+        self._last_prompt_system: str = ""
+        self._last_prompt_user: str = ""
+
     async def buffer(self, user_msg: str, assistant_msg: str) -> None:
         """缓冲一轮对话。达到阈值时触发反思。"""
         if not assistant_msg.strip() or not user_msg.strip():
@@ -83,6 +91,40 @@ class CharacterReflector:
 
         async with self._reflect_lock:
             await self._reflect()
+
+    # ---- debug 属性 ----
+
+    @property
+    def buffer_size(self) -> int:
+        return len(self._buffer)
+
+    @property
+    def locked(self) -> bool:
+        return self._reflect_lock.locked()
+
+    @property
+    def last_reflection_at(self) -> float | None:
+        return self._last_reflection_at
+
+    @property
+    def last_success(self) -> bool:
+        return self._last_success
+
+    @property
+    def last_duration_ms(self) -> float:
+        return self._last_duration_ms
+
+    @property
+    def last_text_len(self) -> int:
+        return self._last_text_len
+
+    @property
+    def last_prompt_system(self) -> str:
+        return self._last_prompt_system
+
+    @property
+    def last_prompt_user(self) -> str:
+        return self._last_prompt_user
 
     # ---- private ----
 
@@ -125,6 +167,11 @@ class CharacterReflector:
             recent_conversations=self._context,
         )
 
+        # 记录 prompt（截断到 1000 字符）
+        self._last_prompt_system = system[:1000]
+        self._last_prompt_user = user_prompt[:1000]
+
+        t0 = time.perf_counter()
         try:
             result = await self._llm.think(
                 [
@@ -135,16 +182,22 @@ class CharacterReflector:
             )
             text = result.text.strip()
         except Exception:
+            self._last_duration_ms = (time.perf_counter() - t0) * 1000
+            self._last_success = False
+            self._last_reflection_at = time.time()
             logger.warning("CharacterReflector: LLM 调用失败", exc_info=True)
             return
 
-        # LLM 调用成功后才清空 buffer — 若失败则保留计数，下次攒够再触
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+
+        # LLM 调用成功后才清空 buffer
         self._buffer.clear()
-        # _context 不清空 — 滚动窗口 [-(CONTEXT_ROUNDS*2):] 已有上界，
-        # 下次反思触发时（50 轮后）旧条目已自然推出。清空会丢失 LLM 调用期间
-        # buffer() 新到达的消息。
 
         if not text:
+            self._last_duration_ms = elapsed_ms
+            self._last_success = True
+            self._last_text_len = 0
+            self._last_reflection_at = time.time()
             logger.debug("CharacterReflector: 反思结果为空，跳过")
             return
 
@@ -155,4 +208,12 @@ class CharacterReflector:
         if len(current_history) > self.MAX_HISTORY:
             current_history = current_history[-self.MAX_HISTORY:]
         self._session.set_param("self_perception_history", current_history)
-        logger.info("CharacterReflector: 性格反思完成 (%d chars)", len(text))
+
+        # 记录 debug 元数据
+        self._last_success = True
+        self._last_duration_ms = elapsed_ms
+        self._last_text_len = len(text)
+        self._last_reflection_at = time.time()
+
+        logger.info("CharacterReflector: 性格反思完成 (%d chars, %.0f ms)",
+                    len(text), elapsed_ms)

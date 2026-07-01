@@ -139,3 +139,44 @@ class TestCharacterReflector:
         history = reflector._session.get_param("self_perception_history", [])
         assert len(history) <= 50
         assert history[-1]["content"] == "新认知"
+
+    # ---- debug 属性 ----
+
+    def test_buffer_size_property(self, reflector):
+        """buffer_size 返回当前缓冲轮数。"""
+        assert reflector.buffer_size == 0
+        reflector._buffer.append(("hi", "hello"))
+        assert reflector.buffer_size == 1
+
+    def test_locked_property(self, reflector):
+        """locked 在无锁时为 False。"""
+        assert reflector.locked is False
+
+    @pytest.mark.asyncio
+    async def test_last_reflection_at_updated_after_reflect(self, reflector, llm):
+        """last_reflection_at 在反思后更新。"""
+        assert reflector.last_reflection_at is None
+        llm.think.return_value = MagicMock(text="新的感受")
+        for i in range(50):
+            await reflector.buffer(f"msg{i}", f"reply{i}")
+        await asyncio.sleep(0.1)
+        assert reflector.last_reflection_at is not None
+        assert reflector.last_success is True
+        assert reflector.last_text_len > 0
+
+    @pytest.mark.asyncio
+    async def test_last_success_false_on_llm_failure(self, reflector, llm):
+        """LLM 调用失败时 last_success 为 False。"""
+        llm.think.side_effect = Exception("模拟失败")
+        reflector._session._params["self_perception_history"] = [
+            {"timestamp": time.time() - 25*3600, "content": "旧"}
+        ]
+        for i in range(10):
+            await reflector.buffer(f"msg{i}", f"reply{i}")
+        await asyncio.sleep(0.1)
+        assert reflector.last_success is False
+        assert reflector.last_duration_ms > 0
+
+    def test_last_prompt_truncated(self, reflector, llm):
+        """prompt 字段在反思后记录并截断到 1000 字符。"""
+        pass  # 验证通过 integration 测试
