@@ -34,9 +34,10 @@
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + MongoDB + Milvus + SenseVoice + GPT-SoVits）。等架构稳定后实施。
 - **Brain.j2 模板改进（低优先级）**:
-  - Jinja2 `lstrip_blocks`/`trim_blocks` 在 memory 块产生不可预测空行
-  - L0/L2/l3 命名不一致，无 L1 层
-  - `user_name` 作为 `user_id` 传入 ToolContext，名称和标识符耦合
+  - ✅ ~~Jinja2 `lstrip_blocks`/`trim_blocks`~~ — Brain.j2 重写已解决
+  - ✅ ~~L0/L2/l3 命名不一致~~ — Brain.j2 重写已解决
+  - ✅ ~~`user_name` 作为 `user_id`~~ — 保留现状，Token 统计用
+  - ✅ ~~性格太薄~~ — 叙事式人格描述 + CharacterReflector + mood 调制 (2026-07-02)
 
 ### 后台任务系统 — 后续迭代
 
