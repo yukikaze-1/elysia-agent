@@ -134,7 +134,6 @@ class TestIntegrationWithRealTemplates:
         pm = PromptManager(str(PROMPT_DIR))
         result = pm.render_macro(
             "Brain.j2", "BrainSystemPrompt",
-            l3_personality_block="[persona]",
             sensory={
                 "current_time": "2024-01-01 12:00:00",
                 "time_of_day": "下午",
@@ -147,11 +146,14 @@ class TestIntegrationWithRealTemplates:
             name="Elysia",
             user_name="妖梦",
             user_preferences="",
+            self_perception="",
         )
-        assert "[persona]" in result
+        assert "Elysia" in result
         assert "2024-01-01 12:00:00" in result
         assert "neutral" in result
         assert "妖梦" in result
+        # 新签名：叙事式性格，不再有 [persona] 占位符
+        assert "温柔" in result
 
     def test_render_amygdala_prompts(self):
         """Amygdala.j2 的 system + user prompt 能正常渲染。"""
