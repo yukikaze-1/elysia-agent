@@ -37,6 +37,18 @@ class DebugInfo:
     # Consolidation
     consolidation_history: list[dict] = field(default_factory=list)
 
+    # Character Reflector
+    reflector_exists: bool = False
+    reflector_buffer_size: int = 0
+    reflector_last_reflection_at: float | None = None
+    reflector_locked: bool = False
+    self_perception_history: list[dict] = field(default_factory=list)
+    reflector_last_prompt_system: str = ""
+    reflector_last_prompt_user: str = ""
+    reflector_last_success: bool = False
+    reflector_last_duration_ms: float = 0.0
+    reflector_last_text_len: int = 0
+
     # Character
     character_name: str = ""
     character_traits: list[str] = field(default_factory=list)
@@ -125,6 +137,22 @@ async def collect(agent) -> DebugInfo:
     # ---- Character ----
     info.character_name = agent._character.name
     info.character_traits = list(agent._character.traits)
+
+    # ---- Character Reflector ----
+    ref = getattr(agent, "_character_reflector", None)
+    if ref is not None:
+        info.reflector_exists = True
+        info.reflector_buffer_size = ref.buffer_size
+        info.reflector_last_reflection_at = ref.last_reflection_at
+        info.reflector_locked = ref.locked
+        info.reflector_last_prompt_system = ref.last_prompt_system[:1000]
+        info.reflector_last_prompt_user = ref.last_prompt_user[:1000]
+        info.reflector_last_success = ref.last_success
+        info.reflector_last_duration_ms = ref.last_duration_ms
+        info.reflector_last_text_len = ref.last_text_len
+
+    history = agent._session.get_param("self_perception_history", [])
+    info.self_perception_history = list(history[-5:])
 
     # ---- Connections ----
     info.tts_ok = agent._tts is not None
