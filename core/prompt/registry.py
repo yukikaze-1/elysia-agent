@@ -119,7 +119,7 @@ class BrainPromptRegistry:
         return "".join(parts)
 
     def reload(self) -> None:
-        """重新扫描 sections/ 和 profiles/，原子替换。"""
+        """重新扫描 sections/ 和 profiles/，在单线程 asyncio 环境下安全替换。"""
         try:
             new_sections = self._parser.scan_all(str(self._section_dir))
             new_profiles = self._load_profiles()
