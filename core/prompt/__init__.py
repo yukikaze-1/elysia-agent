@@ -8,9 +8,11 @@ from .section import (
     SectionRenderError,
     ProfileValidationError,
 )
+from .parser import SectionParser
 
 __all__ = [
     "PromptSection",
+    "SectionParser",
     "SectionParseError",
     "SectionNotFoundError",
     "MissingContextError",
