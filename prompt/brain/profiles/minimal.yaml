@@ -1,0 +1,6 @@
+name: minimal
+description: 极简模式，仅感官 + 行为指令 + 输出格式。用于调试/低 token 场景
+enabled:
+  - sensory
+  - behavior
+  - output_format

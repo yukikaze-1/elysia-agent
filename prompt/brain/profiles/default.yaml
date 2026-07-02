@@ -1,0 +1,11 @@
+name: default
+description: 完整系统 prompt，用于正常对话
+enabled:
+  - identity
+  - self_perception
+  - sensory
+  - memory
+  - current_state
+  - behavior
+  - voice
+  - output_format

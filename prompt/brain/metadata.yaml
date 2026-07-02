@@ -1,0 +1,26 @@
+version: "1.0.0"
+updated: "2026-07-03"
+changelog:
+  - date: "2026-07-03"
+    summary: "从 Brain.j2 单体拆分为 8 个 section"
+    sections: ["*"]
+
+order:
+  - identity
+  - self_perception
+  - sensory
+  - memory
+  - current_state
+  - behavior
+  - voice
+  - output_format
+
+dependencies:
+  identity: []
+  self_perception: []
+  sensory: []
+  memory: []
+  current_state: []
+  behavior: [identity]
+  voice: [identity]
+  output_format: []
