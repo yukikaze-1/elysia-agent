@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -122,11 +123,14 @@ class BrainPromptRegistry:
             new_sections = self._parser.scan_all(str(self._section_dir))
             new_profiles = self._load_profiles()
             new_order, new_ab = self._load_metadata()
-            # 原子替换
+            # 原子替换前先校验
+            self._validate_profiles_with(new_sections, new_profiles)
             self._sections = new_sections
             self._profiles = new_profiles
             self._order = new_order
             self._ab_experiments = new_ab
+        except ProfileValidationError:
+            logger.warning("reload 失败：profile 校验不通过，保持旧 sections", exc_info=True)
         except Exception:
             logger.warning("reload 失败，保持旧 sections 不变", exc_info=True)
 
@@ -150,7 +154,7 @@ class BrainPromptRegistry:
 
         for exp_name, cfg in self._ab_experiments.items():
             ratio = float(cfg.get("ratio", 0))
-            bucket = hash(session_id + exp_name) % 100
+            bucket = int(hashlib.md5((session_id + exp_name).encode()).hexdigest(), 16) % 100
             if bucket < ratio * 100:
                 return cfg.get("variant_profile", "default")
 
@@ -188,8 +192,14 @@ class BrainPromptRegistry:
 
     def _validate_profiles(self) -> None:
         """校验所有 profile 引用的 section 都存在。"""
-        all_section_names = set(self._sections.keys())
-        for prof in self._profiles.values():
+        self._validate_profiles_with(self._sections, self._profiles)
+
+    def _validate_profiles_with(
+        self, sections: dict[str, dict[str, PromptSection]], profiles: dict[str, ProfileConfig]
+    ) -> None:
+        """使用给定的 sections 和 profiles 进行校验，供 reload() 复用。"""
+        all_section_names = set(sections.keys())
+        for prof in profiles.values():
             unknown = prof.enabled_set - all_section_names
             if unknown:
                 raise ProfileValidationError(
