@@ -9,10 +9,12 @@ from .section import (
     ProfileValidationError,
 )
 from .parser import SectionParser
+from .profile import ProfileConfig
 
 __all__ = [
     "PromptSection",
     "SectionParser",
+    "ProfileConfig",
     "SectionParseError",
     "SectionNotFoundError",
     "MissingContextError",
