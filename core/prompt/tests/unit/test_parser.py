@@ -69,7 +69,8 @@ class TestParse:
             section = parser.parse(str(filepath))
             assert section.name == "minimal"
             assert section.version == "0.1.0"
-            assert section.template == "content here"
+            # 不再 rstrip("\n")，保留模板体尾随换行用于节间间距控制
+            assert section.template == "content here\n"
 
     def test_parse_params_with_spaces(self):
         """@params 值逗号分隔，两侧空格被 strip。"""
@@ -226,8 +227,8 @@ class TestScanAll:
             assert "identity" in result
             assert "" in result["identity"]          # default variant
             assert "soft" in result["identity"]      # variant
-            assert result["identity"][""].template == "base body"
-            assert result["identity"]["soft"].template == "soft body"
+            assert result["identity"][""].template == "base body\n"
+            assert result["identity"]["soft"].template == "soft body\n"
 
     def test_scan_all_skips_non_j2_files(self):
         """忽略非 .j2 文件。"""

@@ -8,6 +8,7 @@ changelog:
 order:
   - identity
   - self_perception
+  - relationship
   - sensory
   - memory
   - current_state
@@ -18,6 +19,7 @@ order:
 dependencies:
   identity: []
   self_perception: []
+  relationship: [identity]
   sensory: []
   memory: []
   current_state: []

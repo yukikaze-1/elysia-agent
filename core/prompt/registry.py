@@ -113,9 +113,10 @@ class BrainPromptRegistry:
             except Exception as exc:
                 raise SectionRenderError(section=section.name, cause=exc) from exc
 
-            parts.append(rendered)
+            if rendered:
+                parts.append(rendered)
 
-        return "\n\n".join(parts)
+        return "".join(parts)
 
     def reload(self) -> None:
         """重新扫描 sections/ 和 profiles/，原子替换。"""

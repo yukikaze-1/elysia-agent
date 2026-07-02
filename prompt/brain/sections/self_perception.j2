@@ -4,9 +4,12 @@
 @description 角色进化感知（CharacterReflector 产出）
 @params self_perception
 #}
-{%- if self_perception %}
+{% if self_perception %}
 <self_perception>
 你最近注意到自己的一些变化：
 {{ self_perception }}
 </self_perception>
-{%- endif %}
+{% else %}
+
+{% endif %}
+{# end #}

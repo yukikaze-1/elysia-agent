@@ -49,8 +49,8 @@ class SectionParser:
 
         # 去除头部注释块后的模板体
         template = self._HEADER_RE.sub("", raw, count=1)
-        # 去掉头部块和模板体之间的空行，以及文件末尾的换行
-        template = template.lstrip("\n").rstrip("\n")
+        # 去掉头部块和模板体之间的空行（保留模板体自身的尾随换行用于节间间距控制）
+        template = template.lstrip("\n")
 
         # 解析 @params：逗号分隔，空字符串 → 空 tuple
         params_str = tags["params"].strip()

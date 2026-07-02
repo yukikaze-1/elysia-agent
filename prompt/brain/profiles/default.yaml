@@ -3,6 +3,7 @@ description: 完整系统 prompt，用于正常对话
 enabled:
   - identity
   - self_perception
+  - relationship
   - sensory
   - memory
   - current_state

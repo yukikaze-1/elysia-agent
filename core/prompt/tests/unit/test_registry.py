@@ -190,7 +190,7 @@ class TestRender:
             }))
             registry = BrainPromptRegistry(tmpdir)
             result = registry.render(profile="default", context={})
-            assert result == "AAA\n\nBBB"
+            assert result == "AAABBB"
 
 
 class TestGetProfileForSession:
