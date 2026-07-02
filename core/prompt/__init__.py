@@ -10,11 +10,13 @@ from .section import (
 )
 from .parser import SectionParser
 from .profile import ProfileConfig
+from .registry import BrainPromptRegistry
 
 __all__ = [
     "PromptSection",
     "SectionParser",
     "ProfileConfig",
+    "BrainPromptRegistry",
     "SectionParseError",
     "SectionNotFoundError",
     "MissingContextError",

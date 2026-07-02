@@ -86,12 +86,12 @@ class SectionParser:
 
         for filepath in sorted(base.glob("*.j2")):
             section = self.parse(str(filepath))
-            stem = filepath.stem  # "identity" or "identity@soft"
+            stem = filepath.stem  # "identity", "identity@soft", "output"
             if "@" in stem:
-                section_name, variant = stem.split("@", 1)
+                _, variant = stem.split("@", 1)
             else:
-                section_name = stem
                 variant = ""
+            section_name = section.name
 
             if section_name not in result:
                 result[section_name] = {}
