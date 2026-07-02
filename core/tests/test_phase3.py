@@ -669,9 +669,10 @@ class TestPromptAssemblerUnit:
         session = SessionMemory()
         lt = LongTermMemory()
 
-        # Patch _PROMPT_DIR to an invalid path to trigger fallback
+        # Patch both prompt dirs to invalid paths to trigger hardcoded fallback
         import core.prompt_assembler as pa
-        with patch.object(pa, '_PROMPT_DIR', '/nonexistent/path'):
+        with patch.object(pa, '_PROMPT_DIR', '/nonexistent/path'), \
+             patch.object(pa, '_BRAIN_DIR', '/nonexistent/path'):
             assembler = PromptAssembler(char, session, lt)
             prompt = await assembler.build_system_prompt("你好")
             assert "Elysia" in prompt

@@ -15,12 +15,14 @@ from .character_config import CharacterConfig
 from .memory.session import SessionMemory
 from .memory.long_term import LongTermMemory, MemoryEntry
 from .emotion_engine import stt_emotion_emoji, stt_event_emoji
+from .prompt.registry import BrainPromptRegistry
 
 logger = logging.getLogger(__name__)
 
 
 # Prompt/ template directory, relative to project root.
 _PROMPT_DIR = str(Path(__file__).resolve().parent.parent / "prompt")
+_BRAIN_DIR = str(Path(__file__).resolve().parent.parent / "prompt" / "brain")
 
 
 class PromptAssembler:
@@ -46,6 +48,11 @@ class PromptAssembler:
         except FileNotFoundError:
             logger.warning("模板目录不存在: %s，将使用 fallback", _PROMPT_DIR)
             self._prompt = None
+        try:
+            self._brain = BrainPromptRegistry(_BRAIN_DIR)
+        except Exception:
+            logger.warning("BrainPromptRegistry 加载失败，将 fallback 到 Brain.j2", exc_info=True)
+            self._brain = None
 
     def set_tool_manager(self, tm) -> None:
         """注入 ToolManager，用于自动生成工具列表 prompt。"""
@@ -88,10 +95,36 @@ class PromptAssembler:
 
         state = {"mood": mood}
 
+        history = self._session.get_param("self_perception_history", [])
+        self_perception = history[-1]["content"] if history else ""
+
+        # 工具列表
+        tool_list = ""
+        if self._tool_manager:
+            tool_list = self._tool_manager.to_prompt_text()
+
+        context = {
+            "name": self._character.name,
+            "user_name": user_name,
+            "user_preferences": "",
+            "self_perception": self_perception,
+            "sensory_ctx": sensory,
+            "memory_ctx": memory,
+            "mood": mood,
+            "tool_list": tool_list,
+            "session_id": self._session.session_id,
+        }
+
+        # 优先走新 Registry
+        if self._brain is not None:
+            try:
+                return self._brain.render(profile="default", context=context)
+            except Exception:
+                logger.warning("BrainPromptRegistry 渲染失败，fallback 到 Brain.j2", exc_info=True)
+
+        # Fallback 1: 旧 Brain.j2
         if self._prompt is not None:
             try:
-                history = self._session.get_param("self_perception_history", [])
-                self_perception = history[-1]["content"] if history else ""
                 return self._prompt.render_macro(
                     "Brain.j2", "BrainSystemPrompt",
                     sensory=sensory,
@@ -104,6 +137,8 @@ class PromptAssembler:
                 )
             except Exception:
                 logger.warning("Brain.j2 渲染失败，使用 fallback", exc_info=True)
+
+        # Fallback 2: 硬编码 fallback
         return await self._render_fallback(user_name, user_message, now, mood)
     
     
