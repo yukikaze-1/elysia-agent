@@ -1,0 +1,20 @@
+{#
+@section sensory
+@version 1.0.0
+@description 感官输入：时间、季节、STT 情绪等
+@params sensory_ctx
+#}
+<sensory_input>
+<facts>
+当前时间: {{ sensory_ctx.current_time }}
+时段: {{ sensory_ctx.time_of_day }}
+星期: {{ sensory_ctx.day_of_week }}
+季节: {{ sensory_ctx.season }}
+</facts>
+<perception>
+{{ sensory_ctx.perception }}
+{%- if sensory_ctx.stt_emotion and sensory_ctx.stt_emotion != "NEUTRAL" %}
+[语调: {{ sensory_ctx.stt_emotion }} {{ sensory_ctx.stt_emotion_emoji }}{%- if sensory_ctx.stt_events %} | 事件: {{ sensory_ctx.stt_events }}{% endif %}]
+{%- endif %}
+</perception>
+</sensory_input>{%- if 0 %}{% endif -%}
