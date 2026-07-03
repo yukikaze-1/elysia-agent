@@ -26,7 +26,9 @@ pm = PromptManager("prompt/", auto_reload=True)
 result = pm.render("simple.j2", name="World")
 
 # 渲染命名 macro
-system = pm.render_macro("Brain.j2", "BrainSystemPrompt", sensory=sensory_ctx, ...)
+system = pm.render_macro("Amygdala.j2", "AmygdalaSystemPrompt", character_name="Elysia")
+```
+> **注意**: 系统 prompt (Brain) 已迁移到 `core/prompt/BrainPromptRegistry`。`render_macro("Brain.j2", ...)` 仅作为 fallback 保留。推荐使用 `BrainPromptRegistry.render(profile, context)` 进行模块化渲染。
 ```
 
 ## API

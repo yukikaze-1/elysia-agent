@@ -102,12 +102,15 @@
                                ▼                                        │
   ┌──────────────────────────────────────────────────────────────────┐  │
   │  PromptAssembler.build_messages(user_message)                     │  │
-  │    ├── CharacterConfig.personality_block()   # 角色性格           │  │
+  │    ├── BrainPromptRegistry.render(profile, context)  # 模块化渲染           │  │
+  │    │     ├── SectionParser → 9 个独立 section 文件                 │  │
+  │    │     ├── ProfileConfig → 启用/禁用 + 变体选择                   │  │
+  │    │     └── metadata.yaml → 顺序 + 依赖                           │  │
   │    ├── SessionMemory.recent_messages(8)      # 最近对话           │  │
   │    ├── LongTermMemory.search(query, top_k=5) # 语义召回           │  │
   │    ├── SessionMemory.get_param("mood")       # 当前心情           │  │
-  │    ├── stt_emotion / stt_events              # 声学情绪（感官标签已中文化）  │  │
-  │    └── prompt/Brain.j2 ──► system prompt                          │  │
+  │    ├── stt_emotion / stt_events              # 声学情绪           │  │
+  │    └── prompt/brain/sections/*.j2 ──► system prompt               │  │
   └────────────────────────────┬─────────────────────────────────────┘  │
                                │                                        │
                                ▼                                        │
@@ -449,25 +452,37 @@ SPLIT_PATTERN = re.compile(r"([。！？.!?\n])")
 70 个单元测试覆盖边界
 ```
 
-### 4.7 提示词组装 (PromptAssembler)
+### 4.7 提示词组装 (PromptAssembler + BrainPromptRegistry)
 
 ```
 build_messages(user_message, stt_emotion, stt_events)
   │
   ├── build_system_prompt()
-  │     ├── CharacterConfig.personality_block()     # 性格描述
-  │     ├── sensory (时间/季节/情绪/事件)            # 感知上下文
-  │     ├── LongTermMemory.search(query, top_k=5)   # 语义召回
-  │     ├── SessionMemory.get_param("mood")          # 当前心情
-  │     └── prompt/Brain.j2 (Jinja2)                # 双轨思维协议
+  │     ├── 构建 context dict (name, user_name, sensory_ctx, memory_ctx, mood, ...)
+  │     ├── BrainPromptRegistry.render(profile="default", context)
+  │     │     ├── 加载 profile (default/minimal/experimental)
+  │     │     ├── SectionParser → 从 9 个 .j2 文件提取模板 + @section 元数据
+  │     │     ├── 按 metadata.yaml order 遍历
+  │     │     ├── 注入 section 声明的 @params，缺失则抛出 MissingContextError
+  │     │     └── Jinja2 渲染 → 拼接 → 返回 system prompt
+  │     ├── Fallback 1: prompt/Brain.j2 (Jinja2 macro — 旧路径, 兼容)
+  │     └── Fallback 2: _render_fallback() 硬编码模板
   │
   ├── SessionMemory.recent_messages(8)  # 最近对话
   └── {"role": "user", "content": user_message}
-
-Fallback: Brain.j2 渲染失败 → _render_fallback() 硬编码模板
 ```
 
-`prompt/Brain.j2` 当前使用的系统模板。结构：身份 → 关系 → 感官数据 → 记忆 → 请求分类 → 内心想法 → 说话方式 → 输出格式。输出使用 `<inner_voice>...</inner_voice>` XML 标签实现内心独白，cognitive_loop 通过 PRE→THINK→REPLY 三状态机流式分流。详见 `docs/superpowers/specs/2026-06-24-inner-voice-design.md`。其余模板 (Amygdala/ActiveSpeak/MicroReflector/MacroReflector) 待接入。
+**模块化架构** (`core/prompt/` + `prompt/brain/`): 2026-07-03 重构，将 `Brain.j2` 单体拆分为 9 个独立 section 文件，每个 section 可独立版本化、通过 Profile 组合、支持 A/B 分流和热更新。
+
+- `core/prompt/section.py` — `PromptSection` frozen dataclass + 5 个异常类型
+- `core/prompt/parser.py` — `SectionParser` — 解析 `@section` 头标记
+- `core/prompt/profile.py` — `ProfileConfig` — YAML profile 加载
+- `core/prompt/registry.py` — `BrainPromptRegistry` — 渲染/reload/A/B/版本查询
+- `prompt/brain/sections/` — 9 个独立 `.j2` 文件 (identity, self_perception, relationship, sensory, memory, current_state, behavior, voice, output_format)
+- `prompt/brain/profiles/` — Profile 定义 (default, minimal)
+- `prompt/brain/metadata.yaml` — 版本历史、section 顺序、依赖关系
+
+Section 渲染顺序：identity → self_perception → relationship → sensory → memory → current_state → behavior → voice → output_format。输出使用 `<inner_voice>...</inner_voice>` XML 标签实现内心独白，cognitive_loop 通过 PRE→THINK→REPLY 三状态机流式分流。详见 `docs/superpowers/specs/2026-07-03-brain-prompt-module-design.md`。其余模板 (Amygdala/ActiveSpeak/MicroReflector/MacroReflector/CharacterReflector) 待后续 Phase 迁入模块化架构。
 
 ### 4.8 空闲监控 (IdleMonitor)
 
@@ -909,8 +924,11 @@ Agent/
 ├── character/
 │   └── elysia.yaml          # Elysia 角色定义
 │
-├── prompt/                  # 多层认知模板
-│   ├── Brain.j2             #   主脑 — 身份/关系/感官/记忆/请求分类/怎么想/怎么说/输出
+├── prompt/                  # 多层认知模板（Brain 已模块化）
+│   ├── brain/              #   主脑 (模块化) — 9 sections + profiles + metadata
+│   │   ├── sections/         #     独立 section 文件 (identity/self_perception/relationship/sensory/memory/current_state/behavior/voice/output_format)
+│   │   ├── profiles/         #     Profile 定义 (default/minimal)
+│   │   └── metadata.yaml      #     版本/顺序/依赖
 │   ├── Amygdala.j2          #   潜意识 — 情绪感知（待接入）
 │   ├── ActiveSpeak.j2       #   主动说话决策（待接入）
 │   ├── MicroReflector.j2    #   即时反思 — 记忆提取（待接入）

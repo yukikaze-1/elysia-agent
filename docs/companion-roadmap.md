@@ -31,12 +31,13 @@ Elysia 目前是一个**反应式系统**——你说一句，她回一段。真
 **状态**: 已完成 (2026-06-24)
 
 **做了什么**:
-- Brain.j2 全面中文重写——身份/关系/对话风格分离
+- Brain.j2 全面中文重写——身份/关系/对话风格分离 (2026-06-24)
+- Brain Prompt 模块化重构——拆分为 9 个独立 section，支持 profile/A/B/热更新 (2026-07-03)
 - 回复从"写文章"变成 1-3 句自然对话
 - 加了"嗯"、"哦"、"好嘛"作为合法回复
 - 加了克制约束——"不是客服，不需要每句话都有用"
 
-**关键文件**: `prompt/Brain.j2`, `docs/companion-prompt-guide.md`
+**关键文件**: `prompt/brain/sections/`, `core/prompt/`, `docs/companion-prompt-guide.md`
 
 ---
 

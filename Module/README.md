@@ -150,8 +150,9 @@ logger = factory.get("MyModule")
 from Module.prompt import PromptManager
 
 pm = PromptManager("prompt/")
-system = pm.render_macro("Brain.j2", "BrainSystemPrompt", character_name="Elysia")
+system = pm.render_macro("Amygdala.j2", "AmygdalaSystemPrompt", character_name="Elysia")
 ```
+> 系统 prompt 推荐使用 `core.prompt.BrainPromptRegistry` 进行模块化渲染。
 
 ### Tool — 工具执行框架
 

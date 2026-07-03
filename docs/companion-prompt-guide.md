@@ -1,7 +1,12 @@
 # Elysia Companion Prompt 编写指南
 
 **创建日期**: 2026-06-24
-**目的**: 记录 prompt 编写中的隐性约束、设计原则和验证方法，方便迭代和后续维护
+**最后更新**: 2026-07-03 — Brain Prompt 模块化重构
+**目的**: 记录 prompt 编写中的隐性约束、设计原则和验证方法，方便迭代和后续维护。
+
+> **2026-07-03 模块化重构**: Brain.j2 已拆分为 `prompt/brain/sections/` 下的 9 个独立 section 文件。
+> 编辑 prompt 时直接修改对应 section 文件即可，无需 touch 整个单体模板。
+> 详见 [`docs/superpowers/specs/2026-07-03-brain-prompt-module-design.md`](superpowers/specs/2026-07-03-brain-prompt-module-design.md)。
 
 ---
 
@@ -14,7 +19,7 @@
 | 人格描述、性格、情绪 | **中文** | "傲娇"、"嘴硬心软"、"欲言又止"——这些词英文翻不出来，模型直接用中文理解更准确 |
 | 对话风格、语气要求 | **中文** | 中文的语气词（嗯、哦、嘛、吧、呢…）自带情绪，英文 prompt 无法精确控制 |
 | 内心世界描述 | **中文** | Elysia 的"内心独白"应该在她自己的语言（中文）中进行，否则会有一个"翻译层" |
-| 格式/结构标记 | **XML 风格（尖括号）** | `<inner_voice>`、`<public_reply>` 等——和现有 Brain.j2 的 `<facts>`、`<perception>` 标签风格一致 |
+| 格式/结构标记 | **XML 风格（尖括号）** | `<inner_voice>`、`<public_reply>` 等——和 `sensory.j2` 的 `<facts>`、`<perception>` 标签风格一致 |
 | 输出格式约束 | **自然语言优先** | 能用"说 1-3 句话"就不用 `max_tokens`，因为后者会截断，前者会引导思维 |
 | 元注释（模板开发用） | **中文** | Jinja2 `{# #}` 注释和 `{% %}` 模板逻辑，开发者阅读用，LLM 不可见 |
 
@@ -57,7 +62,7 @@ prompt 中文 → 思考过程用中文 → 输出中文。同一种语言流，
 
 **关键**: 矛盾 = 真实。完美 = 机器人。
 
-**Brain.j2 落地**：用对比示例而非条件枚举。给出"温柔时的回复 vs 想吐槽时的回复"的 few-shot 对比例子，让 LLM 自己根据上下文选择，而不是用 `if mood == "playful"` 硬编码。
+**identity.j2 落地**：用对比示例而非条件枚举。给出"温柔时的回复 vs 想吐槽时的回复"的 few-shot 对比例子，让 LLM 自己根据上下文选择，而不是用 `if mood == "playful"` 硬编码。
 
 ### 2.3 少即是多
 
@@ -96,7 +101,7 @@ prompt 中必须明确描述**关系**，而不是只描述**性格**：
 **落地要点**：
 - "关系"和"性格"分开写，不要混在一起
 - 关系描述要回答：多熟？什么阶段？谁更主动？边界在哪？
-- Brain.j2 中应该有一个独立的 `<relationship>` 段，和 `<identity>` 平级
+- `relationship.j2` 应独立于 `identity.j2`，在 `metadata.yaml` order 中排列
 
 ---
 
@@ -112,7 +117,7 @@ prompt 中必须明确描述**关系**，而不是只描述**性格**：
 - "嗯"、"哦"、"好嘛" 这些都是合法回复，不会显得不礼貌
 ```
 
-**Brain.j2 落地**：给出明确的示例对比——"太长"的回复 vs "刚好"的回复。LLM 对示例比对指令敏感得多。
+**voice.j2 落地**：给出明确的示例对比——"太长"的回复 vs "刚好"的回复。LLM 对示例比对指令敏感得多。
 
 ### 3.2 沉默与克制
 
@@ -138,7 +143,7 @@ prompt 中必须明确描述**关系**，而不是只描述**性格**：
 
 inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出来的话**。两者不一定一致。
 
-当前 Brain.j2 已完整实现 inner_voice 标签输出（`<inner_voice>...</inner_voice>`），包含 few-shot 示例和强制输出指令。cognitive_loop 通过 PRE→THINK→REPLY 三状态机流式检测标签并分流：THINK 内容不进 TTS/前端 delta，闭合后一次性广播。详见 `docs/superpowers/specs/2026-06-24-inner-voice-design.md`。
+当前 `output_format.j2` 已完整实现 inner_voice 标签输出（`<inner_voice>...</inner_voice>`），包含 few-shot 示例和强制输出指令。cognitive_loop 通过 PRE→THINK→REPLY 三状态机流式检测标签并分流：THINK 内容不进 TTS/前端 delta，闭合后一次性广播。详见 `docs/superpowers/specs/2026-06-24-inner-voice-design.md`。
 
 ### 4.2 设计原则
 
@@ -175,13 +180,13 @@ inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出�
 - 如果记忆和当前话题矛盾（妖梦今天说"不喜欢香菜"，三个月前说"还行"）→ inner_voice 困惑一下，public_reply 以当下为准
 ```
 
-**Brain.j2 落地**：在 `<memory_bank>` 段之后加一个简短的记忆处理指引，明确：检索到的记忆是给 inner_voice 提供"背景感知"的，不是必须说出来的。只有**自然相关**时才在 public_reply 中提。
+**memory.j2 落地**：在 `<memory_bank>` 段之后加一个简短的记忆处理指引，明确：检索到的记忆是给 inner_voice 提供"背景感知"的，不是必须说出来的。只有**自然相关**时才在 public_reply 中提。
 
 ---
 
 ## 五、记忆人格化原则
 
-**这是 companion 的核心差异化能力。** 当前 Brain.j2 的记忆段是 `<memory_bank>` 里罗列条目，AI 被训练成"引用记忆"而不是"记得事情"。需要从机械检索变成人格化的"记得"。
+**这是 companion 的核心差异化能力。** 当前 `memory.j2` 的记忆段是 `<memory_bank>` 里罗列条目，AI 被训练成"引用记忆"而不是"记得事情"。需要从机械检索变成人格化的"记得"。
 
 ### 5.1 记忆不是引用，是记得
 
@@ -210,7 +215,7 @@ inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出�
 如果三个都是"是"，才在对话中自然带出来。
 ```
 
-**Brain.j2 落地**：在记忆段之后，用 1-2 个 few-shot 示例展示"提 vs 不提"的判断。示例比指令更有效。
+**memory.j2 落地**：在记忆段之后，用 1-2 个 few-shot 示例展示"提 vs 不提"的判断。示例比指令更有效。
 
 ### 5.3 记忆冲突
 
@@ -233,7 +238,7 @@ inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出�
 | 情感事件（"那天很开心"） | 中等衰减 | 开心的事可以多提，伤心的事谨慎 |
 | 反复确认的信息 | 每次提及刷新时效性 | "你之前说过"权重上升 |
 
-**Brain.j2 落地**：当前记忆系统输出 `poignancy` 和 `timestamp`。prompt 中利用这两个字段——高 poignancy 的提，低 poignancy + 很久以前的，不相关就略过。
+**memory.j2 落地**：当前记忆系统输出 `poignancy` 和 `timestamp`。prompt 中利用这两个字段——高 poignancy 的提，低 poignancy + 很久以前的，不相关就略过。
 
 ### 5.5 记忆与情绪的联动
 
@@ -244,7 +249,7 @@ inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出�
 - 检索到的记忆和你当前 mood 冲突 → inner_voice 感到矛盾，public_reply 可能稍微犹豫
 ```
 
-**Brain.j2 落地**：记忆段渲染后，追加一个简短的情绪提示——"以上记忆中，特别值得注意的是：[有一条关于xxx的开心记忆]"——让记忆不只是数据，而是情绪的上下文。
+**memory.j2 落地**：记忆段渲染后，追加一个简短的情绪提示——"以上记忆中，特别值得注意的是：[有一条关于xxx的开心记忆]"——让记忆不只是数据，而是情绪的上下文。
 
 ### 5.6 记忆应该进 public_reply 还是 inner_voice？
 

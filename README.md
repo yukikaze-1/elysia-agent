@@ -2,7 +2,7 @@
 
 桌面 AI 伴侣，支持语音对话、内心独白、工具调用和后台任务。
 
-> 最近 (2026-06-26): Module/_common/ 轻量共享层重构——消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config 重复代码，971 测试零回归。2026-06-25: 数据库连接告警 + 120s 健康检查自动重连，Milvus PK 匹配修复同文异构条目覆盖
+> 最近 (2026-07-03): Brain Prompt 模块化重构——Brain.j2 拆分为 9 个独立 section，支持 profile、A/B 分流、热更新。2026-06-26: Module/_common/ 轻量共享层重构——消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config 重复代码，971 测试零回归。
 
 ---
 
@@ -34,6 +34,7 @@ python app.py
 ```
 L0  Module/        无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/
 L1  core/          认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
+L1  core/prompt/   Brain Prompt 引擎 — SectionParser → BrainPromptRegistry (profile/A/B/热更新)
 L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolManager (Plugin 架构)
 L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
 ```
@@ -41,8 +42,8 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 数据流：
 
 ```
-用户输入 → EventBus → FSM(THINKING) → PromptAssembler(角色+记忆+内心世界)
-  ├── STT 情绪标签 → EmotionEngine + Brain <perception>
+用户输入 → EventBus → FSM(THINKING) → PromptAssembler(角色+记忆+感官)
+  ├── STT 情绪标签 → EmotionEngine + BrainPromptRegistry <perception>
   → CognitiveLoop.stream_think()
     ├── <inner_voice> 标签检测 (PRE→THINK→REPLY 状态机)
     │     ├── inner_voice → 前端淡色思考气泡
@@ -56,7 +57,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 
 | 步骤 | 状态 | 内容 |
 |------|------|------|
-| 🥇 对话风格 | ✅ | Brain.j2 中文重写——自然对话/克制/关系模型 |
+| 🥇 对话风格 | ✅ | Brain Prompt 模块化——9 个独立 section，自然对话/克制/关系模型 |
 | 🥈 内心世界 | ✅ | `<inner_voice>` 标签输出 + 前端气泡 + 持久化 + 日志 |
 | 🥉 记忆人格化 | 待做 | 记忆融入对话，不是"引用"是"记得" |
 | 🏅 主动性 | 待做 | 注意到离开/回来，深夜关心 |
@@ -126,7 +127,8 @@ Agent/
 │   ├── agent.py            #   组件组装 + 生命周期
 │   ├── cognitive_loop.py   #   ReAct 调度器 + inner_voice 状态机
 │   ├── llm_adapter.py      #   LLM 适配器 (含重试)
-│   ├── prompt_assembler.py #   提示词组装 + 记忆检索
+│   ├── prompt/             #   Brain Prompt 引擎 (SectionParser → Registry, 9 sections, profile/A/B/热更新)
+│   ├── prompt_assembler.py #   提示词组装 + 记忆检索（调用 BrainPromptRegistry）
 │   ├── agent_fsm.py        #   状态机 (IDLE→THINKING→EXECUTING→SPEAKING→IDLE_BACKGROUND_TASK)
 │   ├── event_bus.py        #   优先级事件总线
 │   ├── schema.py           #   共享类型
@@ -152,11 +154,15 @@ Agent/
 │   └── tests/              #   测试 (~367 tests)
 │
 ├── prompt/                 # Jinja2 模板
-│   ├── Brain.j2            #   L1 主脑 — 性格/关系/内心世界/工具
+│   ├── brain/              #   L1 主脑 (模块化 — 9 sections)
+│   │   ├── sections/       #     独立 section 文件 (identity/self_perception/relationship/sensory/memory/current_state/behavior/voice/output_format)
+│   │   ├── profiles/       #     Profile 定义 (default/minimal)
+│   │   └── metadata.yaml   #     版本/顺序/依赖
 │   ├── Amygdala.j2         #   L0 潜意识 — 情绪感知
 │   ├── ActiveSpeak.j2      #   L1 主动说话
 │   ├── MicroReflector.j2   #   L2 即时反思
 │   ├── MacroReflector.j2   #   L2 日终反思
+│   ├── CharacterReflector.j2 # L2 角色进化
 │   └── Utils.j2            #   工具宏
 │
 ├── static/                 # 浏览器客户端

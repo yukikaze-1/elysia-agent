@@ -30,14 +30,15 @@
   - 时钟补上 TTS span（`_transition_idle` 里的 TTS 等待）
   - 性能回归测试（bench 模块加断言，CI 可跑）
 - **角色切换**: 加载不同角色配置（名字、性格、发音人、prompt 模板），需独立 spec。涉及 CharacterConfig 重新加载、TTS voice lookup 逻辑修复（`voice` 字段当前是死代码）、CognitiveLoop 角色引用更新。`gpt_sovits_voices.yaml` 目前只有 `Elysia` 一个发音人
-- **多角色 prompt 模板**: `PromptAssembler._prompt` 当前指向 `prompt/`，多角色时改为 `character/<name>/`
+- **多角色 prompt 模板**: `PromptAssembler` 通过 `BrainPromptRegistry` 渲染，多角色时改为 `character/<name>/prompt/brain/`
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + MongoDB + Milvus + SenseVoice + GPT-SoVits）。等架构稳定后实施。
-- **Brain.j2 模板改进（低优先级）**:
+- **Brain Prompt 模块化**:
   - ✅ ~~Jinja2 `lstrip_blocks`/`trim_blocks`~~ — Brain.j2 重写已解决
   - ✅ ~~L0/L2/l3 命名不一致~~ — Brain.j2 重写已解决
   - ✅ ~~`user_name` 作为 `user_id`~~ — 保留现状，Token 统计用
   - ✅ ~~性格太薄~~ — 叙事式人格描述 + CharacterReflector + mood 调制 (2026-07-02)
+  - ✅ ~~Brain.j2 单体~~ — 模块化重构，9 个独立 section + BrainPromptRegistry (2026-07-03)
 
 ### 后台任务系统 — 后续迭代
 

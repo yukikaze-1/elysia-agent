@@ -2,6 +2,20 @@
 
 ## 已完成
 
+### 2026-07-03: Brain Prompt 模块化重构
+
+Brain.j2 单体模板 (~244行) 拆分为模块化 section 管理引擎。
+
+- `core/prompt/` — Brain Prompt 引擎 (`PromptSection`, `SectionParser`, `ProfileConfig`, `BrainPromptRegistry`)
+- `prompt/brain/sections/` — 9 个独立 section 文件 (identity/self_perception/relationship/sensory/memory/current_state/behavior/voice/output_format)
+- `prompt/brain/profiles/` — Profile 定义 (default/minimal)，支持 A/B 分流
+- `prompt/brain/metadata.yaml` — 版本历史、section 顺序、依赖关系
+- `PromptAssembler` 适配为三层 fallback：Registry → Brain.j2 (兼容) → 硬编码
+- 黄金对比测试：新旧 system prompt 逐字节一致
+- 379 测试通过，零回归
+
+详见 `docs/superpowers/specs/2026-07-03-brain-prompt-module-design.md`
+
 ### Phase 1: L1 认知核心
 
 | 任务 | 说明 |
