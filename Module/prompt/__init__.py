@@ -12,9 +12,11 @@ from .section import (
 from .parser import SectionParser
 from .profile import ProfileConfig
 from .registry import BrainPromptRegistry
+from .message_builder import MessageBuilder
 
 __all__ = [
     "PromptManager",
+    "MessageBuilder",
     "PromptSection",
     "SectionParser",
     "ProfileConfig",

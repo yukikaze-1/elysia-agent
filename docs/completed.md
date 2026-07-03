@@ -6,7 +6,7 @@
 
 Brain.j2 单体模板 (~244行) 拆分为模块化 section 管理引擎。
 
-- `core/prompt/` — Brain Prompt 引擎 (`PromptSection`, `SectionParser`, `ProfileConfig`, `BrainPromptRegistry`)
+- `Module/prompt/` — Brain Prompt 引擎 (`PromptSection`, `SectionParser`, `ProfileConfig`, `BrainPromptRegistry`)
 - `prompt/brain/sections/` — 9 个独立 section 文件 (identity/self_perception/relationship/sensory/memory/current_state/behavior/voice/output_format)
 - `prompt/brain/profiles/` — Profile 定义 (default/minimal)
 - `prompt/brain/metadata.yaml` — 版本历史、section 顺序、依赖关系
