@@ -1,6 +1,6 @@
 # Brain Prompt Module
 
-Brain system prompt 模块化引擎。将 Jinja2 单体模板拆分为独立 section，支持 profile 组合、A/B 分流和热更新。
+Brain system prompt 模块化引擎。将 Jinja2 单体模板拆分为独立 section，支持 profile 组合和热更新。
 
 ## 文件结构
 
@@ -10,7 +10,7 @@ Module/brain_prompt/
 ├── section.py               # PromptSection frozen dataclass + 5 个异常类型
 ├── parser.py                # SectionParser — 解析 .j2 @section 头标记
 ├── profile.py               # ProfileConfig — YAML profile 加载
-├── registry.py              # BrainPromptRegistry — 渲染/reload/A/B/版本查询
+├── registry.py              # BrainPromptRegistry — 渲染/reload/版本查询
 ├── README.md
 └── tests/
     ├── unit/
@@ -139,7 +139,7 @@ BrainPromptRegistry.render(profile, context)
 
 按 profile 渲染 system prompt。
 
-- **profile** (`str`): profile 名称（`"default"`、`"minimal"`）或 `"__session__"` 触发 A/B 分流
+- **profile** (`str`): profile 名称（`"default"`、`"minimal"`）
 - **context** (`dict`): 所有 section 可能用到的参数字典
 - **Raises**: `MissingContextError`（context 缺少必需参数）、`SectionRenderError`（渲染失败）
 
@@ -150,10 +150,6 @@ BrainPromptRegistry.render(profile, context)
 ### get_versions() → dict[str, str]
 
 返回 `{section_name: version}` 映射。
-
-### get_profile_for_session(session_id) → str
-
-基于 `hashlib.md5(session_id + exp_name)` 确定性分流。无 A/B 实验时返回 `"default"`。
 
 ## 数据模型
 
@@ -200,20 +196,6 @@ class SectionParser:
 | `MissingContextError` | `KeyError` | context 缺少 section 声明的 `@params` |
 | `SectionRenderError` | `RuntimeError` | 单个 section Jinja2 渲染失败 |
 | `ProfileValidationError` | `ValueError` | Profile 引用了不存在的 section |
-
-## A/B 测试
-
-在 `metadata.yaml` 中声明实验：
-
-```yaml
-ab_experiments:
-  identity_soft:
-    variant_profile: experimental_soft
-    base_profile: default
-    ratio: 0.1           # 10% 流量
-```
-
-渲染时传 `profile="__session__"` 并在 context 中提供 `session_id`，Registry 自动按 session hash 分流。Phase 1 只做分流，不做结果收集/分析。
 
 ## 设计原则
 

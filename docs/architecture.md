@@ -472,12 +472,12 @@ build_messages(user_message, stt_emotion, stt_events)
   └── {"role": "user", "content": user_message}
 ```
 
-**模块化架构** (`core/prompt/` + `prompt/brain/`): 2026-07-03 重构，将 `Brain.j2` 单体拆分为 9 个独立 section 文件，每个 section 可独立版本化、通过 Profile 组合、支持 A/B 分流和热更新。
+**模块化架构** (`core/prompt/` + `prompt/brain/`): 2026-07-03 重构，将 `Brain.j2` 单体拆分为 9 个独立 section 文件，每个 section 可独立版本化、通过 Profile 组合、支持热更新。
 
 - `core/prompt/section.py` — `PromptSection` frozen dataclass + 5 个异常类型
 - `core/prompt/parser.py` — `SectionParser` — 解析 `@section` 头标记
 - `core/prompt/profile.py` — `ProfileConfig` — YAML profile 加载
-- `core/prompt/registry.py` — `BrainPromptRegistry` — 渲染/reload/A/B/版本查询
+- `core/prompt/registry.py` — `BrainPromptRegistry` — 渲染/reload/版本查询
 - `prompt/brain/sections/` — 9 个独立 `.j2` 文件 (identity, self_perception, relationship, sensory, memory, current_state, behavior, voice, output_format)
 - `prompt/brain/profiles/` — Profile 定义 (default, minimal)
 - `prompt/brain/metadata.yaml` — 版本历史、section 顺序、依赖关系

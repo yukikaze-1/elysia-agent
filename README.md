@@ -34,7 +34,7 @@ python app.py
 ```
 L0  Module/        无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/
 L1  core/          认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
-L1  Module/brain_prompt/   Brain Prompt 引擎 — SectionParser → BrainPromptRegistry (profile/A/B/热更新)
+L1  Module/brain_prompt/   Brain Prompt 引擎 — SectionParser → BrainPromptRegistry (profile/热更新)
 L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolManager (Plugin 架构)
 L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
 ```
@@ -116,7 +116,7 @@ Agent/
 │   ├── config/             # YAML + env 配置系统
 │   ├── logger/             # 日志工厂
 │   ├── prompt/             # Jinja2 模板渲染
-│   ├── brain_prompt/       # Brain Prompt 引擎（SectionParser → Registry, 9 sections, profile/A/B/热更新）
+│   ├── brain_prompt/       # Brain Prompt 引擎（SectionParser → Registry, 9 sections, profile/热更新）
 │   ├── schema/             # 共享数据模型
 │   ├── tool/               # 工具框架 (172 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB

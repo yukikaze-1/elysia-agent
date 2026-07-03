@@ -193,29 +193,6 @@ class TestRender:
             assert result == "AAABBB"
 
 
-class TestGetProfileForSession:
-    def test_deterministic_same_session(self):
-        """相同 session_id 返回相同 profile。"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            _make_sections_dir(Path(tmpdir))
-            _make_profiles_dir(Path(tmpdir))
-            _make_metadata(Path(tmpdir))
-            registry = BrainPromptRegistry(tmpdir)
-            p1 = registry.get_profile_for_session("session-123")
-            p2 = registry.get_profile_for_session("session-123")
-            assert p1 == p2
-
-    def test_no_experiments_returns_default(self):
-        """无 AB 实验时返回 'default'。"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            _make_sections_dir(Path(tmpdir))
-            _make_profiles_dir(Path(tmpdir))
-            _make_metadata(Path(tmpdir))
-            registry = BrainPromptRegistry(tmpdir)
-            result = registry.get_profile_for_session("any-session")
-            assert result == "default"
-
-
 class TestReload:
     def test_reload_picks_up_new_section(self):
         """reload() 后能发现新增的 section 文件。"""
