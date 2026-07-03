@@ -15,7 +15,7 @@ from .character_config import CharacterConfig
 from .memory.session import SessionMemory
 from .memory.long_term import LongTermMemory, MemoryEntry
 from .emotion_engine import stt_emotion_emoji, stt_event_emoji
-from .prompt.registry import BrainPromptRegistry
+from Module.brain_prompt import BrainPromptRegistry
 
 logger = logging.getLogger(__name__)
 

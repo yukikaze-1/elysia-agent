@@ -33,7 +33,7 @@ def _make_full_context():
 
 def test_default_profile_renders_all_sections():
     """default profile 渲染所有 9 个 section。"""
-    from core.prompt.registry import BrainPromptRegistry
+    from Module.brain_prompt import BrainPromptRegistry
 
     registry = BrainPromptRegistry(_BRAIN_DIR)
     result = registry.render(profile="default", context=_make_full_context())
@@ -73,7 +73,7 @@ def test_default_profile_renders_all_sections():
 
 def test_minimal_profile_only_three_sections():
     """minimal profile 仅 3 个 section：sensory + behavior + output_format。"""
-    from core.prompt.registry import BrainPromptRegistry
+    from Module.brain_prompt import BrainPromptRegistry
 
     registry = BrainPromptRegistry(_BRAIN_DIR)
     result = registry.render(profile="minimal", context=_make_full_context())
@@ -94,7 +94,7 @@ def test_all_sections_ordered_correctly():
     """Section 按 metadata.yaml order 排列：identity → self_perception → relationship →
     sensory → memory → current_state → behavior → voice → output_format。"""
     from datetime import datetime
-    from core.prompt.registry import BrainPromptRegistry
+    from Module.brain_prompt import BrainPromptRegistry
 
     registry = BrainPromptRegistry(_BRAIN_DIR)
     ctx = _make_full_context()
@@ -138,7 +138,7 @@ def test_all_sections_ordered_correctly():
 def test_render_with_memory_entries_includes_memory_bank():
     """有记忆时 memory_bank 出现，且内容正确。"""
     from datetime import datetime
-    from core.prompt.registry import BrainPromptRegistry
+    from Module.brain_prompt import BrainPromptRegistry
 
     registry = BrainPromptRegistry(_BRAIN_DIR)
     ctx = _make_full_context()

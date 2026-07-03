@@ -79,7 +79,7 @@ Module/<service>/
 | `Module.config` | Config infrastructure | `ConfigLoader` (YAML + env + validation) | — |
 | `Module.logger` | Logging factory | `LoggerFactory` (plain + JSON, rotating files) | — |
 | `Module.prompt` | Jinja2 template rendering | `PromptManager` | — |
-| `core.prompt` | Brain Prompt 模块化引擎 | `BrainPromptRegistry`, `SectionParser`, `ProfileConfig` | — |
+| `Module.brain_prompt` | Brain Prompt 模块化引擎 | `BrainPromptRegistry`, `SectionParser`, `ProfileConfig` | — |
 | `Module.schema` | Shared data models | `UserMessage`, `ChatMessage`, `Event`, `EnvironmentMessage`, media types | — |
 | `Module.database.vectordb` | Vector DB (ANN search) | `milvus` | — |
 | `Module.database.documentdb` | Document DB | `mongodb` | — |

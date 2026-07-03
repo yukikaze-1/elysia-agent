@@ -35,7 +35,7 @@ def _build_context():
 def test_golden_diff_default_profile():
     """default profile → 输出与旧 BrainSystemPrompt 逐字符一致。"""
     from Module.prompt import PromptManager
-    from core.prompt.registry import BrainPromptRegistry
+    from Module.brain_prompt import BrainPromptRegistry
 
     ctx = _build_context()
 
@@ -81,7 +81,7 @@ def test_golden_diff_with_memory_entries():
     """有记忆条目时输出一致。"""
     from datetime import datetime
     from Module.prompt import PromptManager
-    from core.prompt.registry import BrainPromptRegistry
+    from Module.brain_prompt import BrainPromptRegistry
 
     now_ts = datetime(2024, 1, 1, 12, 0, 0).timestamp()
     ctx = _build_context()

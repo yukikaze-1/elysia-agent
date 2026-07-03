@@ -1,7 +1,7 @@
 """PromptSection 数据模型单元测试。"""
 
 import pytest
-from core.prompt.section import (
+from Module.brain_prompt import (
     PromptSection,
     SectionParseError,
     SectionNotFoundError,
