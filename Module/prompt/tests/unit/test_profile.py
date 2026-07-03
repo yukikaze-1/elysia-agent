@@ -4,8 +4,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from Module.brain_prompt import ProfileConfig
-from Module.brain_prompt import ProfileValidationError
+from Module.prompt import ProfileConfig
+from Module.prompt import ProfileValidationError
 
 
 class TestFromYaml:

@@ -4,8 +4,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from Module.brain_prompt import SectionParser
-from Module.brain_prompt import PromptSection, SectionParseError
+from Module.prompt import SectionParser
+from Module.prompt import PromptSection, SectionParseError
 
 
 class TestParse:

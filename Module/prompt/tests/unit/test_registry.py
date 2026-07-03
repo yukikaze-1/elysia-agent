@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from Module.brain_prompt import BrainPromptRegistry
-from Module.brain_prompt import MissingContextError, ProfileValidationError
+from Module.prompt import BrainPromptRegistry
+from Module.prompt import MissingContextError, ProfileValidationError
 
 
 def _make_sections_dir(base: Path) -> Path:
