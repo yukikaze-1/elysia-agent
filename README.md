@@ -34,7 +34,7 @@ python app.py
 ```
 L0  Module/        无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/
 L1  core/          认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
-L1  Module/brain_prompt/   Brain Prompt 引擎 — SectionParser → BrainPromptRegistry (profile/热更新)
+L1  Module/prompt/           Brain Prompt 引擎 — SystemPromptManager + 11 PromptSections
 L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolManager (Plugin 架构)
 L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
 ```
@@ -43,7 +43,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 
 ```
 用户输入 → EventBus → FSM(THINKING) → PromptAssembler(角色+记忆+感官)
-  ├── STT 情绪标签 → EmotionEngine + BrainPromptRegistry <perception>
+  ├── STT 情绪标签 → EmotionEngine + SystemPromptManager <perception>
   → CognitiveLoop.stream_think()
     ├── <inner_voice> 标签检测 (PRE→THINK→REPLY 状态机)
     │     ├── inner_voice → 前端淡色思考气泡
@@ -116,7 +116,7 @@ Agent/
 │   ├── config/             # YAML + env 配置系统
 │   ├── logger/             # 日志工厂
 │   ├── prompt/             # Jinja2 模板渲染
-│   ├── brain_prompt/       # Brain Prompt 引擎（SectionParser → Registry, 9 sections, profile/热更新）
+│   ├── prompt/             # Jinja2 模板 + Brain Prompt 引擎
 │   ├── schema/             # 共享数据模型
 │   ├── tool/               # 工具框架 (172 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB
@@ -128,7 +128,7 @@ Agent/
 │   ├── agent.py            #   组件组装 + 生命周期
 │   ├── cognitive_loop.py   #   ReAct 调度器 + inner_voice 状态机
 │   ├── llm_adapter.py      #   LLM 适配器 (含重试)
-│   ├── prompt_assembler.py #   提示词组装 + 记忆检索（调用 BrainPromptRegistry）
+│   ├── prompt_assembler.py #   提示词组装 + 记忆检索（调用 SystemPromptManager）
 │   ├── agent_fsm.py        #   状态机 (IDLE→THINKING→EXECUTING→SPEAKING→IDLE_BACKGROUND_TASK)
 │   ├── event_bus.py        #   优先级事件总线
 │   ├── schema.py           #   共享类型
@@ -154,10 +154,6 @@ Agent/
 │   └── tests/              #   测试 (~367 tests)
 │
 ├── prompt/                 # Jinja2 模板
-│   ├── brain/              #   L1 主脑 (模块化 — 9 sections)
-│   │   ├── sections/       #     独立 section 文件 (identity/self_perception/relationship/sensory/memory/current_state/behavior/voice/output_format)
-│   │   ├── profiles/       #     Profile 定义 (default/minimal)
-│   │   └── metadata.yaml   #     版本/顺序/依赖
 │   ├── Amygdala.j2         #   L0 潜意识 — 情绪感知
 │   ├── ActiveSpeak.j2      #   L1 主动说话
 │   ├── MicroReflector.j2   #   L2 即时反思

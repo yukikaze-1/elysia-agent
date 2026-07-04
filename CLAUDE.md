@@ -78,7 +78,7 @@ Module/<service>/
 | `Module.output` | Multi-channel output | `ConsoleChannel`, `WebSocketChannel` | — |
 | `Module.config` | Config infrastructure | `ConfigLoader` (YAML + env + validation) | — |
 | `Module.logger` | Logging factory | `LoggerFactory` (plain + JSON, rotating files) | — |
-| `Module.prompt` | Jinja2 模板 + Brain Prompt 引擎 | `PromptManager`, `BrainPromptRegistry`, `SectionParser`, `ProfileConfig`, `MessageBuilder` | — |
+| `Module.prompt` | Jinja2 + Prompt Section 引擎 | `PromptManager`, `PromptSection`, `StaticSection`, `Jinja2Section`, `SystemPromptManager`, `MessageBuilder` | — |
 | `Module.schema` | Shared data models | `UserMessage`, `ChatMessage`, `Event`, `EnvironmentMessage`, media types | — |
 | `Module.database.vectordb` | Vector DB (ANN search) | `milvus` | — |
 | `Module.database.documentdb` | Document DB | `mongodb` | — |

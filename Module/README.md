@@ -152,7 +152,7 @@ from Module.prompt import PromptManager
 pm = PromptManager("prompt/")
 system = pm.render_macro("Amygdala.j2", "AmygdalaSystemPrompt", character_name="Elysia")
 ```
-> 系统 prompt 推荐使用 `core.prompt.BrainPromptRegistry` 进行模块化渲染。
+> 系统 prompt 通过 `Module.prompt.sections/` 下的 11 个 PromptSection 渲染。
 
 ### Tool — 工具执行框架
 
