@@ -567,12 +567,19 @@ def create_app(
         if record is None:
             raise web.HTTPNotFound(text=f"记录 #{index} 不存在")
 
-        # 读取模板源码
+        # 读取模板源码（从 Module/prompt/templates/）
         template_source = None
-        template_path = "prompt/Brain.j2"
+        templates_dir = "Module/prompt/templates"
         try:
-            with open(template_path) as f:
-                template_source = {"path": template_path, "content": f.read()}
+            import os
+            sources = {}
+            for fname in sorted(os.listdir(templates_dir)):
+                if fname.endswith(".j2") and not fname.startswith("_"):
+                    fpath = os.path.join(templates_dir, fname)
+                    with open(fpath) as f:
+                        sources[fname] = f.read()
+            if sources:
+                template_source = {"path": templates_dir, "sections": sources}
         except Exception:
             pass
 

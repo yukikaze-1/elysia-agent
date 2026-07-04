@@ -127,34 +127,6 @@ _PROMPT_DIR = str(Path(__file__).resolve().parent.parent.parent / "prompt")
 class TestIntegrationWithRealTemplates:
     """使用项目真实模板进行烟雾测试。"""
 
-    def test_render_brain_system_prompt(self):
-        """Brain.j2 → BrainSystemPrompt 能正常渲染。"""
-        PROMPT_DIR = _PROMPT_DIR
-
-        pm = PromptManager(str(PROMPT_DIR))
-        result = pm.render_macro(
-            "Brain.j2", "BrainSystemPrompt",
-            sensory={
-                "current_time": "2024-01-01 12:00:00",
-                "time_of_day": "下午",
-                "day_of_week": "周一",
-                "season": "冬",
-                "perception": "user looks happy",
-            },
-            memory={"micro": [], "macro": []},
-            state={"mood": "neutral"},
-            name="Elysia",
-            user_name="妖梦",
-            user_preferences="",
-            self_perception="",
-        )
-        assert "Elysia" in result
-        assert "2024-01-01 12:00:00" in result
-        assert "neutral" in result
-        assert "妖梦" in result
-        # 新签名：叙事式性格，不再有 [persona] 占位符
-        assert "温柔" in result
-
     def test_render_amygdala_prompts(self):
         """Amygdala.j2 的 system + user prompt 能正常渲染。"""
         PROMPT_DIR = _PROMPT_DIR

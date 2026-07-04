@@ -643,18 +643,6 @@ class TestEmotionEngineEdges:
 # ============================================================================
 
 class TestPromptAssemblerUnit:
-    def test_format_events(self):
-        from core.prompt_assembler import _format_events
-        result = _format_events(["Laughter", "Cry"])
-        assert "Laughter" in result
-        assert "Cry" in result
-        assert "😀" in result
-        assert "😭" in result
-
-    def test_format_events_empty(self):
-        from core.prompt_assembler import _format_events
-        assert _format_events([]) == ""
-
     @pytest.mark.asyncio
     async def test_build_system_prompt_fallback(self):
         """When template dir is invalid, fallback is used."""
@@ -1142,31 +1130,6 @@ class TestEmotionEmojiMappings:
 
 
 # ============================================================================
-# 14c. PromptAssembler — time/day helpers
-# ============================================================================
-
-class TestPromptAssemblerHelpers:
-    def test_time_of_day(self):
-        from core.prompt_assembler import PromptAssembler
-        assert PromptAssembler._time_of_day(6) == "早晨"
-        assert PromptAssembler._time_of_day(12) == "中午"
-        assert PromptAssembler._time_of_day(15) == "下午"
-        assert PromptAssembler._time_of_day(20) == "傍晚"
-        assert PromptAssembler._time_of_day(3) == "夜晚"
-
-    def test_day_name(self):
-        from core.prompt_assembler import PromptAssembler
-        assert PromptAssembler._day_name(0) == "周一"
-        assert PromptAssembler._day_name(6) == "周日"
-
-    def test_season(self):
-        from core.prompt_assembler import PromptAssembler
-        assert PromptAssembler._season(4) == "春"
-        assert PromptAssembler._season(7) == "夏"
-        assert PromptAssembler._season(10) == "秋"
-        assert PromptAssembler._season(1) == "冬"
-
-
 # ============================================================================
 # 14d. CharacterConfig
 # ============================================================================

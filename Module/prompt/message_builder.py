@@ -10,52 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 class MessageBuilder:
-    """纯 prompt 组装 — 接收 context + history → 输出 messages[]。
+    """纯 prompt 组装 — 接收 system prompt + history → 输出 messages[]。
 
     无状态，不依赖 core/ 的任何组件。
     """
-
-    def __init__(
-        self,
-        registry=None,  # BrainPromptRegistry | None
-        fallback_prompt=None,  # PromptManager | None
-    ):
-        self._registry = registry
-        self._fallback = fallback_prompt
-
-    def build_system_prompt(
-        self, profile: str = "default", context: dict[str, Any] | None = None
-    ) -> str:
-        """渲染 system prompt。三层 fallback: Registry → Brain.j2 → hardcoded。"""
-        if context is None:
-            context = {}
-
-        # Tier 1: BrainPromptRegistry
-        if self._registry is not None:
-            try:
-                return self._registry.render(profile=profile, context=context)
-            except Exception:
-                logger.warning("Registry 渲染失败，fallback", exc_info=True)
-
-        # Tier 2: Brain.j2 render_macro
-        if self._fallback is not None:
-            try:
-                sensory = context.get("sensory_ctx", {})
-                memory = context.get("memory_ctx", {})
-                state = {"mood": context.get("mood", "neutral")}
-                return self._fallback.render_macro(
-                    "Brain.j2", "BrainSystemPrompt",
-                    sensory=sensory, memory=memory, state=state,
-                    name=context.get("name", ""),
-                    user_name=context.get("user_name", ""),
-                    user_preferences=context.get("user_preferences", ""),
-                    self_perception=context.get("self_perception", ""),
-                )
-            except Exception:
-                logger.warning("Brain.j2 渲染失败，fallback", exc_info=True)
-
-        # Tier 3: hardcoded
-        return _hardcoded_fallback(context)
 
     def build_messages(
         self,
@@ -147,30 +105,6 @@ class MessageBuilder:
             messages.append({"role": "user", "content": user_content})
 
         return messages
-
-
-def _hardcoded_fallback(context: dict) -> str:
-    """硬编码 fallback prompt。"""
-    name = context.get("name", "Agent")
-    user_name = context.get("user_name", "user")
-    mood = context.get("mood", "neutral")
-    return (
-        f"{name}，一个桌面AI伴侣。\n\n"
-        "## 性格\n"
-        f"你是 {name}，一个桌面AI伴侣。\n"
-        "性格: 温柔、偶尔毒舌。说话口语化，短句为主。\n\n"
-        "## 规则\n"
-        "1. 回答简洁，2-4句话为主，像真实对话而非写文章。\n"
-        "2. 用口语化表达，可以加语气词。\n\n"
-        f"用户叫 {user_name}。\n"
-        f"当前心情: {mood}。\n\n"
-        "# 输出格式\n"
-        "当需要展示代码、列表、表格等结构化内容时，先输出对话文本，\n"
-        "然后把结构化内容放在最后，用以下标记包裹：\n"
-        "<|markdown|>markdown内容</|markdown|>\n"
-        "<|code|语言>代码</|code|>\n"
-        "如果只是纯对话，不要使用任何标记。"
-    )
 
 
 def _content_to_openai(content: list[dict]) -> list[dict]:
