@@ -644,8 +644,8 @@ class TestEmotionEngineEdges:
 
 class TestPromptAssemblerUnit:
     @pytest.mark.asyncio
-    async def test_build_system_prompt_fallback(self):
-        """When template dir is invalid, fallback is used."""
+    async def test_build_system_prompt(self):
+        """Section provider 路径正常渲染 system prompt。"""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.prompt_assembler import PromptAssembler
@@ -657,14 +657,10 @@ class TestPromptAssemblerUnit:
         session = SessionMemory()
         lt = LongTermMemory()
 
-        # Patch both prompt dirs to invalid paths to trigger hardcoded fallback
-        import core.prompt_assembler as pa
-        with patch.object(pa, '_PROMPT_DIR', '/nonexistent/path'), \
-             patch.object(pa, '_BRAIN_DIR', '/nonexistent/path'):
-            assembler = PromptAssembler(char, session, lt)
-            prompt = await assembler.build_system_prompt("你好")
-            assert "Elysia" in prompt
-            assert "桌面AI伴侣" in prompt  # fallback text
+        assembler = PromptAssembler(char, session, lt)
+        prompt = await assembler.build_system_prompt("你好", "妖梦")
+        assert "Elysia" in prompt
+        assert "<inner_voice>" in prompt
 
 
 # ============================================================================

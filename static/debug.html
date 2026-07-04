@@ -705,8 +705,13 @@ async function loadPrompt(index) {
   let rightHtml = '<div style="overflow-y:auto;max-height:65vh;">';
   const tmpl = data.template_source;
   if (tmpl) {
-    rightHtml += '<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">模板: ' + esc(tmpl.path) + '</div>';
-    rightHtml += '<pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.3);padding:8px;border-radius:4px;max-height:60vh;overflow-y:auto;">' + esc(tmpl.content) + '</pre>';
+    rightHtml += '<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">模板: ' + esc(tmpl.path) + ' (' + Object.keys(tmpl.sections || {}).length + ' sections)</div>';
+    if (tmpl.sections) {
+      for (const [name, content] of Object.entries(tmpl.sections)) {
+        rightHtml += '<div style="font-size:10px;color:var(--muted);margin:6px 0 2px 0;">▸ ' + esc(name) + '</div>';
+        rightHtml += '<pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.3);padding:8px;border-radius:4px;max-height:30vh;overflow-y:auto;">' + esc(content) + '</pre>';
+      }
+    }
   } else {
     rightHtml += '<div class="empty">模板文件不可用</div>';
   }
