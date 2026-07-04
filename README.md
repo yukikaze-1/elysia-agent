@@ -2,7 +2,7 @@
 
 桌面 AI 伴侣，支持语音对话、内心独白、工具调用和后台任务。
 
-> 最近 (2026-07-03): Brain Prompt 模块化重构——Brain.j2 拆分为 9 个独立 section，支持 profile、A/B 分流、热更新。2026-06-26: Module/_common/ 轻量共享层重构——消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config 重复代码，971 测试零回归。
+> 最近 (2026-07-03): Brain Prompt 提供者架构——11 个 PromptSection 独立模块，自管数据、自管模板。2026-06-26: Module/_common/ 轻量共享层重构——消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config 重复代码，971 测试零回归。
 
 ---
 

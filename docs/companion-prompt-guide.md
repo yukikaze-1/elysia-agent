@@ -4,7 +4,7 @@
 **最后更新**: 2026-07-03 — Brain Prompt 模块化重构
 **目的**: 记录 prompt 编写中的隐性约束、设计原则和验证方法，方便迭代和后续维护。
 
-> **2026-07-03 模块化重构**: Brain.j2 已拆分为 `prompt/brain/sections/` 下的 9 个独立 section 文件。
+> **2026-07-03 模块化重构**: `Module/prompt/sections/` 下 11 个独立 PromptSection 模块。
 > 编辑 prompt 时直接修改对应 section 文件即可，无需 touch 整个单体模板。
 > 详见 [`docs/superpowers/specs/2026-07-03-brain-prompt-module-design.md`](superpowers/specs/2026-07-03-brain-prompt-module-design.md)。
 

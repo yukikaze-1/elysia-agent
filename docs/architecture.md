@@ -110,7 +110,7 @@
   │    ├── LongTermMemory.search(query, top_k=5) # 语义召回           │  │
   │    ├── SessionMemory.get_param("mood")       # 当前心情           │  │
   │    ├── stt_emotion / stt_events              # 声学情绪           │  │
-  │    └── prompt/brain/sections/*.j2 ──► system prompt               │  │
+  │    └── Module/prompt/templates/ ──► system prompt               │  │
   └────────────────────────────┬─────────────────────────────────────┘  │
                                │                                        │
                                ▼                                        │
@@ -465,20 +465,20 @@ build_messages(user_message, stt_emotion, stt_events)
   │     │     ├── 按 metadata.yaml order 遍历
   │     │     ├── 注入 section 声明的 @params，缺失则抛出 MissingContextError
   │     │     └── Jinja2 渲染 → 拼接 → 返回 system prompt
-  │     ├── Fallback 1: prompt/Brain.j2 (Jinja2 macro — 旧路径, 兼容)
+  │     ├── Fallback 1: SystemPromptManager + 11 PromptSections
   │     └── Fallback 2: _render_fallback() 硬编码模板
   │
   ├── SessionMemory.recent_messages(8)  # 最近对话
   └── {"role": "user", "content": user_message}
 ```
 
-**模块化架构** (`Module/prompt/` + `prompt/brain/`): 2026-07-03 重构，将 `Brain.j2` 单体拆分为 9 个独立 section 文件，每个 section 可独立版本化、通过 Profile 组合、支持热更新。
+**模块化架构** (`Module/prompt/` (protocol + sections + templates)): 2026-07-03 重构，将 `Brain.j2` 单体拆分为 9 个独立 section 文件，每个 section 可独立版本化、通过 Profile 组合、支持热更新。
 
 - `Module/prompt/section.py` — `PromptSection` frozen dataclass + 5 个异常类型
 - `Module/prompt/parser.py` — `SectionParser` — 解析 `@section` 头标记
 - `Module/prompt/profile.py` — `ProfileConfig` — YAML profile 加载
 - `Module/prompt/registry.py` — `BrainPromptRegistry` — 渲染/reload/版本查询
-- `prompt/brain/sections/` — 9 个独立 `.j2` 文件 (identity, self_perception, relationship, sensory, memory, current_state, behavior, voice, output_format)
+- `Module/prompt/templates/` — 9 个独立 `.j2` 文件 (identity, self_perception, relationship, sensory, memory, current_state, behavior, voice, output_format)
 - `prompt/brain/profiles/` — Profile 定义 (default, minimal)
 - `prompt/brain/metadata.yaml` — 版本历史、section 顺序、依赖关系
 
@@ -1002,7 +1002,7 @@ INTERRUPT:
 | FakeLLMBackend 替代 MockLLM | 最小化 test double，减少维护成本 |
 | ConfigLoader 替代手动 yaml.safe_load | 类型安全 + env 覆盖 + 校验 |
 | RotatingFileHandler (10MB × 3) | 防止日志撑满磁盘 |
-| Brain.j2 fallback | 模板损坏不影响基本功能 |
+| section 提供者架构 | 模板损坏不影响基本功能 |
 
 ---
 
