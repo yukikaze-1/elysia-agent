@@ -101,7 +101,7 @@ prompt 中必须明确描述**关系**，而不是只描述**性格**：
 **落地要点**：
 - "关系"和"性格"分开写，不要混在一起
 - 关系描述要回答：多熟？什么阶段？谁更主动？边界在哪？
-- `relationship.j2` 应独立于 `identity.j2`，在 `metadata.yaml` order 中排列
+- `relationship.j2` 应独立于 `identity.j2`，在 `SystemPromptManager._RENDER_ORDER` 中排列
 
 ---
 

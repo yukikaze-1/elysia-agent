@@ -36,7 +36,8 @@
 - **C3 情绪传染规则动态化**: 当前模板 `c3_emotion.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 或 SessionMemory 动态加载
 - **C6 说话风格规则动态化**: 当前模板 `c6_speaking_style.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 动态加载，让不同角色有不同的说话风格规则
 - **Prompt injection 防护**: `c5_sensory.j2` 中 `perception` 字段包含用户原始输入，未做 XML 转义，存在提前闭合标签的注入风险。需在 `SensorySection._build_perception()` 中转义 `<` `>` 等字符
-- **人称代词参数化**: `c1_personality.j2`、`c2_relationship.j2`、`c3_emotion.j2` 中硬编码 `她` 指代用户，应引入 `user_pronoun: str` 参数支持不同性别的用户
+- **人称代词参数化**: ✅ 已完成 (2026-07-06) — `CharacterConfig.user_pronoun` + c1/c2/c3 模板 `{{ user_pronoun }}`
+- **F3 工具声明 Section**: Phase 2 — 新建 `ToolDeclarationSection`，根据当前加载的 ToolPlugin 列表动态生成工具使用规则，替换旧的 `_reference_behavior.j2` 硬编码规则。涉及 `set_tool_manager()` stub、`ToolManager.to_prompt_text()`（当前零调用者）集成
 - **Brain Prompt 模块化**:
   - ✅ ~~Jinja2 `lstrip_blocks`/`trim_blocks`~~ — Brain.j2 重写已解决
   - ✅ ~~L0/L2/l3 命名不一致~~ — Brain.j2 重写已解决

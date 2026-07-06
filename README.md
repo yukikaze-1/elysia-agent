@@ -153,13 +153,8 @@ Agent/
 │   ├── memory/             #   记忆子系统 (session + long_term)
 │   └── tests/              #   测试 (~367 tests)
 │
-├── prompt/                 # Jinja2 模板
-│   ├── Amygdala.j2         #   L0 潜意识 — 情绪感知
-│   ├── ActiveSpeak.j2      #   L1 主动说话
-│   ├── MicroReflector.j2   #   L2 即时反思
-│   ├── MacroReflector.j2   #   L2 日终反思
-│   ├── CharacterReflector.j2 # L2 角色进化
-│   └── Utils.j2            #   工具宏
+├── prompt/                 # 反射模板
+│   └── CharacterReflector.j2 #   角色进化反射
 │
 ├── static/                 # 浏览器客户端
 │   ├── index.html          #   入口

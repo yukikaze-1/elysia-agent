@@ -914,12 +914,8 @@ Agent/
 ├── character/
 │   └── elysia.yaml          # Elysia 角色定义
 │
-├── prompt/                  # 多层认知模板
-│   ├── Amygdala.j2          #   潜意识 — 情绪感知（待接入）
-│   ├── ActiveSpeak.j2       #   主动说话决策（待接入）
-│   ├── MicroReflector.j2    #   即时反思 — 记忆提取（待接入）
-│   ├── MacroReflector.j2    #   日终反思（待接入）
-│   └── Utils.j2             #   工具宏 (FormatHistory, datetime filter)
+├── prompt/                  # 反射模板
+│   └── CharacterReflector.j2  #   角色进化反射
 │
 ├── static/                  # Web 前端
 │   ├── index.html           # 聊天页面

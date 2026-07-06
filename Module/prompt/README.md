@@ -1,66 +1,145 @@
 # Prompt Module
 
-Jinja2 模板管理与渲染模块。提供 `PromptManager` 类，加载模板文件并支持命名 macro 渲染。
+System prompt 引擎 + 通用 Jinja2 模板渲染。提供两套 API：
+
+- **SystemPromptManager** — Section Provider 架构：11 个独立 `PromptSection`，自管数据源/模板/生命周期，中央编排器按序组装 system prompt
+- **PromptManager** — 通用 Jinja2 渲染器：用于非 system prompt 模板（Amygdala、ActiveSpeak 等）
 
 ## 文件结构
 
 ```
 Module/prompt/
-├── __init__.py          # 导出 PromptManager
-├── manager.py           # PromptManager 实现
-├── test_prompt.py       # 单元测试
-└── README.md
+├── __init__.py                # 导出 PromptManager, PromptSection, StaticSection,
+│                              #   Jinja2Section, MessageBuilder
+├── protocol.py                # PromptSection ABC + StaticSection + Jinja2Section
+├── system_prompt_manager.py   # SystemPromptManager 编排器
+├── message_builder.py         # MessageBuilder — system_prompt + history → messages[]
+├── manager.py                 # PromptManager — 通用 Jinja2 渲染器
+├── README.md
+├── sections/                  # 11 个独立 PromptSection 模块
+│   ├── conflict_rules.py      #   F1 框架优先
+│   ├── output_format.py       #   F2 输出格式 (inner_voice 双轨协议)
+│   ├── sensory.py             #   C5 感官输入 (时间/STT情绪)
+│   ├── emotion.py             #   C3 当前心情 + 情绪传染
+│   ├── memory.py              #   C4 记忆检索
+│   ├── personality.py         #   C1 人格
+│   ├── relationship.py        #   C2 关系
+│   ├── speaking_style.py      #   C6 说话风格
+│   ├── proactive.py           #   C7 主动性 (骨架)
+│   ├── own_life.py            #   C8 自己的生活
+│   └── self_perception.py     #   C9 自我认知
+├── templates/                 # 11 个独立 .j2 模板 + 1 个参考
+│   ├── f2_output_format.j2
+│   ├── c1_personality.j2
+│   ├── c2_relationship.j2
+│   ├── c3_emotion.j2
+│   ├── c4_memory.j2
+│   ├── c5_sensory.j2
+│   ├── c6_speaking_style.j2
+│   ├── c7_proactive.j2
+│   ├── c8_own_life.j2
+│   ├── c9_self_perception.j2
+│   └── _reference_behavior.j2  # 参考：旧行为规则（F3 工具声明待实现）
+└── tests/
+    ├── unit/
+    │   ├── test_protocol.py
+    │   └── test_system_prompt_manager.py
+    └── integration/
+        ├── test_full_render.py
+        └── test_message_builder.py
 ```
 
-模板文件保留在项目根目录 `prompt/*.j2` 中。
+## Section Provider 架构
 
-## 快速开始
+### 核心概念
+
+每个 `PromptSection` 是 system prompt 中的一个独立区块。它：
+- **自管数据源** — 持有 SessionMemory、LongTermMemory 等引用
+- **自管模板** — `Jinja2Section` 持有独立 `.j2` 模板，有自己的 `jinja2.Environment`
+- **自管生命周期** — `render()` / `reload()` / `validate()`
+
+### 类层次
+
+```
+PromptSection (ABC)
+├── StaticSection          # 纯文本 — ConflictRules (F1)
+└── Jinja2Section          # .j2 模板 — 其余 10 个 section
+```
+
+### 数据流
+
+```
+PromptAssembler.build_system_prompt(user_message, user_name, stt_emotion, stt_events)
+  → SystemPromptManager.set_context(**kwargs)     # 扇出到所有 section
+  → SystemPromptManager.render()                  # 按 _RENDER_ORDER 依次渲染
+  → 用 \n\n 拼接所有非空区块
+```
+
+### 渲染顺序
+
+```
+F1 ConflictRules → F2 OutputFormat → C5 Sensory → C3 Emotion → C4 Memory
+→ C1 Personality → C2 Relationship → C6 SpeakingStyle → C7 Proactive
+→ C8 OwnLife → C9 SelfPerception
+```
+
+## SystemPromptManager API
+
+```python
+from Module.prompt.sections import *
+from Module.prompt.system_prompt_manager import SystemPromptManager
+
+sections = [
+    ConflictRulesSection(),
+    OutputFormatSection("Module/prompt/templates/f2_output_format.j2"),
+    PersonalitySection("Module/prompt/templates/c1_personality.j2", "Elysia"),
+    # ...
+]
+mgr = SystemPromptManager(sections)
+
+# 注入 per-request 上下文
+mgr.set_context(user_message="...", user_name="妖梦", ...)
+
+# 渲染完整 system prompt
+prompt = await mgr.render()
+
+# 版本管理
+versions = mgr.get_versions()    # {"ConflictRules": "1.0.0", ...}
+mgr.reload_all()                 # 热重载所有模板
+failed = mgr.validate_all()      # 校验失败的 section 名列表
+```
+
+## PromptManager API
+
+用于非 system prompt 的模板渲染（Amygdala、ActiveSpeak、CharacterReflector 等）。
 
 ```python
 from Module.prompt import PromptManager
 
-# 构造
-pm = PromptManager("prompt/", auto_reload=True)
-
-# 渲染完整模板
-result = pm.render("simple.j2", name="World")
-
-# 渲染命名 macro
-system = pm.render_macro("Amygdala.j2", "AmygdalaSystemPrompt", character_name="Elysia")
+pm = PromptManager("prompt/")
+result = pm.render("Amygdala.j2", character_name="Elysia")
+system = pm.render_macro("ActiveSpeak.j2", "ActiveSpeakPrompt", **vars)
 ```
-
-```
-
-## API
-
-### PromptManager(template_dir, *, auto_reload=False, logger=None)
-
-- **template_dir** (`str`): 模板文件所在目录路径
-- **auto_reload** (`bool`): 是否每次从磁盘重新加载（开发用，默认关闭）
-- **logger** (`logging.Logger | None`): 可选 logger，不传则使用无 handler 的静默 logger
-
-### render(template_name, **kwargs) -> str
-
-加载并渲染整个模板文件，所有 `**kwargs` 作为模板变量传入。
-
-### render_macro(template_name, macro_name, **kwargs) -> str
-
-加载模板文件，仅渲染其中指定的命名 `{% macro %}`，所有 `**kwargs` 作为 macro 参数传入。
 
 ## 自定义 Filter
 
 ### `| datetime`
 
-将 Unix 时间戳格式化为日期字符串，默认格式 `%Y-%m-%d %H:%M:%S`。
+Unix 时间戳 → 日期字符串 `%Y-%m-%d %H:%M`。
+
+`PromptManager` 和 `Jinja2Section` 均注册了此 filter。
 
 ```jinja2
-{{ msg.timestamp | datetime }}
-{{ 1715845200.0 | datetime }}
-{# → "2024-05-16 11:40:00" #}
+{{ mem.timestamp | datetime }}
+{# → "2025-06-19 00:00" #}
 ```
 
 ## 测试
 
 ```bash
+# 全部 prompt 测试
+python -m pytest Module/prompt/tests/ -v
+
+# 旧 PromptManager 测试
 python -m pytest Module/prompt/test_prompt.py -v
 ```
