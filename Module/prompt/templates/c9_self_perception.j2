@@ -1,15 +1,14 @@
 {#
-@section self_perception
+@section SelfPerception
 @version 1.0.0
 @description 角色进化感知（CharacterReflector 产出）
-@params self_perception
+@params self_perception: str | None  # CharacterReflector 产出或 None
+@updated 2026-07-06
 #}
 {% if self_perception %}
 <self_perception>
 你最近注意到自己的一些变化：
 {{ self_perception }}
 </self_perception>
-{% else %}
-
 {% endif %}
 {# end #}

@@ -1,0 +1,12 @@
+{#
+@section OwnLife
+@version 0.1.0
+@updated 2026-07-06
+@description 自己的生活：独处时在想/做什么（透传 session.get_param("own_life")）
+@params text: str | None      # own_life 参数值，无数据时为空串
+#}
+{% if text %}
+<own_life>
+{{ text }}
+</own_life>
+{% endif %}

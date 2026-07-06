@@ -23,6 +23,7 @@ class ProactiveConfig:
 class CharacterConfig:
     name: str = "Agent"
     voice: str = "default"
+    user_pronoun: str = "她"
     personality: dict[str, object] = field(default_factory=dict)
     emotion: EmotionConfig = field(default_factory=EmotionConfig)
     wake_words: list[str] = field(default_factory=list)
@@ -47,6 +48,7 @@ class CharacterConfig:
         return cls(
             name=raw.get("name", "Agent"),
             voice=raw.get("voice", "default"),
+            user_pronoun=raw.get("user_pronoun", "她"),
             personality=raw.get("personality", {}),
             emotion=EmotionConfig(
                 thresholds=emotion_raw.get("thresholds", {}),

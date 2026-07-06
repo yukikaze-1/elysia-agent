@@ -33,6 +33,10 @@
 - **多角色 prompt 模板**: `PromptAssembler` 通过 `BrainPromptRegistry` 渲染，多角色时改为 `character/<name>/prompt/brain/`
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + MongoDB + Milvus + SenseVoice + GPT-SoVits）。等架构稳定后实施。
+- **C3 情绪传染规则动态化**: 当前模板 `c3_emotion.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 或 SessionMemory 动态加载
+- **C6 说话风格规则动态化**: 当前模板 `c6_speaking_style.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 动态加载，让不同角色有不同的说话风格规则
+- **Prompt injection 防护**: `c5_sensory.j2` 中 `perception` 字段包含用户原始输入，未做 XML 转义，存在提前闭合标签的注入风险。需在 `SensorySection._build_perception()` 中转义 `<` `>` 等字符
+- **人称代词参数化**: `c1_personality.j2`、`c2_relationship.j2`、`c3_emotion.j2` 中硬编码 `她` 指代用户，应引入 `user_pronoun: str` 参数支持不同性别的用户
 - **Brain Prompt 模块化**:
   - ✅ ~~Jinja2 `lstrip_blocks`/`trim_blocks`~~ — Brain.j2 重写已解决
   - ✅ ~~L0/L2/l3 命名不一致~~ — Brain.j2 重写已解决

@@ -1,8 +1,13 @@
 {#
-@section memory
+@section Memory
 @version 1.0.0
 @description 召回的记忆条目
-@params memory_ctx
+@params memory_ctx: {
+    micro: list[MemoryEntry]  # 微记忆列表 (top_k=5)
+    macro: list               # 宏记忆列表 (预留，当前为空)
+}
+# MemoryEntry: { type: str, timestamp: float (unix), poignancy: float, content: str }
+@updated 2026-07-06
 #}
 {%- if memory_ctx.micro or memory_ctx.macro -%}
 <memory_bank>
@@ -17,7 +22,13 @@
     （无微记忆）
 {%- endif %}
 </micro memory>
-
+{% if memory_ctx.macro %}
+<macro memory>
+    {%- for mem in memory_ctx.macro %}
+    - [{{ mem.type }}] {{ mem.timestamp | datetime }} (重要度: {{ mem.poignancy }}) {{ mem.content }}
+    {% endfor %}
+</macro memory>
+{% endif %}
 
 注意：以上记忆是给你内心提供背景的。只在自然相关时才在对话中提起，不要当成"数据"来引用。
 </memory_bank>

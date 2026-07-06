@@ -1,8 +1,18 @@
 {#
-@section sensory
+@section Sensory
 @version 1.0.0
 @description 感官输入：时间、季节、STT 情绪等
-@params sensory_ctx
+@params sensory_ctx: {
+    current_time: str          # 当前时间 "2026-07-06 14:30:00"
+    time_of_day: str           # 时段: 早晨/中午/下午/傍晚/夜晚
+    day_of_week: str           # 星期: 周一~周日
+    season: str                # 季节: 春/夏/秋/冬
+    perception: str            # 感知文本 (用户名+消息+STT情绪)
+    stt_emotion: str           # STT 情绪标签 (e.g. "HAPPY", "SAD", "" if NEUTRAL)
+    stt_emotion_emoji: str     # 情绪对应 emoji 或 ""
+    stt_events: str            # 格式化后的事件列表或 ""
+}
+@updated 2026-07-06
 #}
 <sensory_input>
 <facts>
@@ -17,4 +27,4 @@
 [语调: {{ sensory_ctx.stt_emotion }} {{ sensory_ctx.stt_emotion_emoji }}{%- if sensory_ctx.stt_events %} | 事件: {{ sensory_ctx.stt_events }}{% endif %}]
 {%- endif %}
 </perception>
-</sensory_input>{%- if 0 %}{% endif -%}
+</sensory_input>

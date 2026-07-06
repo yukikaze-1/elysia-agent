@@ -68,6 +68,7 @@ class PromptAssembler:
         self._manager.set_context(
             user_message=user_message,
             user_name=user_name,
+            user_pronoun=self._character.user_pronoun,
             stt_emotion=stt_emotion,
             stt_events=stt_events or [],
         )

@@ -11,12 +11,15 @@ class RelationshipSection(Jinja2Section):
         super().__init__(template_path)
         self._character_name = character_name
         self._user_name = ""
+        self._user_pronoun = "她"
 
     def set_context(self, **kwargs) -> None:
         self._user_name = kwargs.get("user_name", "")
+        self._user_pronoun = kwargs.get("user_pronoun", "她")
 
     async def render(self) -> str:
         return self._render_template(
             name=self._character_name,
             user_name=self._user_name,
+            user_pronoun=self._user_pronoun,
         )

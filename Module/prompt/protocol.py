@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
 
 from jinja2 import Environment, TemplateSyntaxError
 
 logger = logging.getLogger(__name__)
+
+
+def _datetime_filter(ts: float) -> str:
+    """Unix 时间戳 → 可读日期字符串。"""
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
 
 
 class PromptSection(ABC):
@@ -60,6 +66,7 @@ class Jinja2Section(PromptSection):
     def __init__(self, template_path: str):
         self._template_path = template_path
         self._env = Environment(trim_blocks=True, lstrip_blocks=True)
+        self._env.filters["datetime"] = _datetime_filter
         self._cached_template = None
 
     def _load_template(self) -> str:
