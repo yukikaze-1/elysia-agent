@@ -84,6 +84,11 @@ class TestJinja2Section:
             s = Jinja2Section(str(tpl))
             assert s.validate() is False
 
+    def test_validate_file_not_found(self):
+        """模板文件不存在时 validate 返回 False（不抛异常）。"""
+        s = Jinja2Section("/nonexistent/template.j2")
+        assert s.validate() is False
+
     def test_reload_rereads_template(self):
         """reload 后渲染内容更新。"""
         with tempfile.TemporaryDirectory() as tmpdir:

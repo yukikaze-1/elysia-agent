@@ -78,25 +78,57 @@ def test_full_render_all_sections():
     assert "草莓蛋糕" in result        # C4 memory
     assert "新番" in result           # C8 own_life
     assert "吐槽" in result           # C9 self_perception
-    pos_f1 = result.find("框架优先")
-    pos_f2 = result.find("<inner_voice>")
-    assert pos_f1 < pos_f2
+    assert "# 主动性" in result        # C7 proactive
+    # 验证完整 11-section 排序
+    names_in_order = [
+        "conflict_rules", "inner_voice", "sensory_input", "emotion",
+        "memory_bank", "personality", "relationship", "speaking_style",
+        "主动性", "own_life", "self_perception",
+    ]
+    last_pos = -1
+    for tag in names_in_order:
+        pos = result.find(tag)
+        assert pos > last_pos, f"section order broken: {tag} not after previous (pos={pos}, last={last_pos})"
+        last_pos = pos
 
 
 def test_versions_all_sections():
-    """所有 section 都有 version。"""
-    sections = [ConflictRulesSection()]
-    mgr = SystemPromptManager(sections)
-    versions = mgr.get_versions()
-    assert versions["ConflictRules"] == "1.0.0"
-
-
-def test_validate_all_passes():
-    """所有模板 section 的 validate 都通过。"""
+    """全部 11 个 section 都有 version。"""
     sections = [
         ConflictRulesSection(),
         OutputFormatSection(f"{_TEMPLATES}/f2_output_format.j2"),
+        SensorySection(f"{_TEMPLATES}/c5_sensory.j2"),
+        EmotionSection(f"{_TEMPLATES}/c3_emotion.j2"),
+        MemorySection(f"{_TEMPLATES}/c4_memory.j2"),
         PersonalitySection(f"{_TEMPLATES}/c1_personality.j2", "Elysia"),
+        RelationshipSection(f"{_TEMPLATES}/c2_relationship.j2", "Elysia"),
+        SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2"),
+        ProactiveSection(f"{_TEMPLATES}/c7_proactive.j2"),
+        OwnLifeSection(f"{_TEMPLATES}/c8_own_life.j2"),
+        SelfPerceptionSection(f"{_TEMPLATES}/c9_self_perception.j2"),
+    ]
+    mgr = SystemPromptManager(sections)
+    versions = mgr.get_versions()
+    assert len(versions) == 11
+    for name, ver in versions.items():
+        assert ver, f"{name} version is empty"
+        assert ver != "0.0.0", f"{name} version is default 0.0.0"
+
+
+def test_validate_all_passes():
+    """全部 11 个 section 的 validate 都通过。"""
+    sections = [
+        ConflictRulesSection(),
+        OutputFormatSection(f"{_TEMPLATES}/f2_output_format.j2"),
+        SensorySection(f"{_TEMPLATES}/c5_sensory.j2"),
+        EmotionSection(f"{_TEMPLATES}/c3_emotion.j2"),
+        MemorySection(f"{_TEMPLATES}/c4_memory.j2"),
+        PersonalitySection(f"{_TEMPLATES}/c1_personality.j2", "Elysia"),
+        RelationshipSection(f"{_TEMPLATES}/c2_relationship.j2", "Elysia"),
+        SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2"),
+        ProactiveSection(f"{_TEMPLATES}/c7_proactive.j2"),
+        OwnLifeSection(f"{_TEMPLATES}/c8_own_life.j2"),
+        SelfPerceptionSection(f"{_TEMPLATES}/c9_self_perception.j2"),
     ]
     mgr = SystemPromptManager(sections)
     assert mgr.validate_all() == []

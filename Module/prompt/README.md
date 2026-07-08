@@ -125,13 +125,13 @@ system = pm.render_macro("ActiveSpeak.j2", "ActiveSpeakPrompt", **vars)
 
 ### `| datetime`
 
-Unix 时间戳 → 日期字符串 `%Y-%m-%d %H:%M`。
+Unix 时间戳 → 日期字符串 `%Y-%m-%d %H:%M:%S`。
 
 `PromptManager` 和 `Jinja2Section` 均注册了此 filter。
 
 ```jinja2
 {{ mem.timestamp | datetime }}
-{# → "2025-06-19 00:00" #}
+{# → "2025-06-19 00:00:00" #}
 ```
 
 ## 测试

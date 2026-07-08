@@ -74,12 +74,12 @@ class MessageBuilder:
                     if text_content or tool_summary:
                         msg_content = (text_content or "") + (tool_summary or "")
                         messages.append({"role": role, "content": iv_prefix + msg_content})
-            elif isinstance(content_raw, str):
-                msg_content = content_raw + (tool_summary or "")
-                messages.append({"role": role, "content": iv_prefix + msg_content})
             elif "parts" in msg:
                 text_from_parts = "".join(p["content"] for p in msg["parts"])
                 msg_content = text_from_parts + (tool_summary or "")
+                messages.append({"role": role, "content": iv_prefix + msg_content})
+            elif isinstance(content_raw, str):
+                msg_content = content_raw + (tool_summary or "")
                 messages.append({"role": role, "content": iv_prefix + msg_content})
             elif tool_summary:
                 messages.append({"role": role, "content": iv_prefix + tool_summary})

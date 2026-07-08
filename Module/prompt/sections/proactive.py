@@ -15,5 +15,4 @@ class ProactiveSection(Jinja2Section):
         self._user_name = kwargs.get("user_name", "")
 
     async def render(self) -> str:
-        # v1 骨架：模板仅有标题占位，无实际规则，返回空
-        return ""
+        return self._render_template(user_name=self._user_name)

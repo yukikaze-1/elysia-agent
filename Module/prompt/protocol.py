@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def _datetime_filter(ts: float) -> str:
     """Unix 时间戳 → 可读日期字符串。"""
-    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class PromptSection(ABC):
@@ -99,11 +99,12 @@ class Jinja2Section(PromptSection):
         """检查模板可解析。"""
         try:
             source = self._load_template()
+        except FileNotFoundError:
+            logger.warning("模板文件不存在: %s", self._template_path, exc_info=True)
+            return False
+        try:
             self._env.parse(source)
             return True
         except TemplateSyntaxError:
             logger.warning("模板语法错误: %s", self._template_path, exc_info=True)
-            return False
-        except Exception:
-            logger.warning("模板加载失败: %s", self._template_path, exc_info=True)
             return False
