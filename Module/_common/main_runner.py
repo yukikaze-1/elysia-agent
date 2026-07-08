@@ -1,12 +1,12 @@
 """统一 __main__ 入口：ensure_dotenv + asyncio.run。"""
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Coroutine, Callable
 
 from Module._common.env import ensure_dotenv
 
 
 def run_module_main(
-    async_fn: Callable[[], Awaitable[None]],
+    async_fn: Callable[[], Coroutine[None, None, None]],
     *,
     load_env: bool = True,
 ) -> None:

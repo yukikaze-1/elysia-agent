@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from .protocol import PromptSection
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ _RENDER_ORDER = [
 class SystemPromptManager:
     """持有 section 列表，按序 async render，拼接最终 system prompt。"""
 
-    def __init__(self, sections: list[PromptSection]):
+    def __init__(self, sections: Sequence[PromptSection]):
         order_map = {name: i for i, name in enumerate(_RENDER_ORDER)}
         self._sections = sorted(sections, key=lambda s: order_map.get(s.name, 999))
 

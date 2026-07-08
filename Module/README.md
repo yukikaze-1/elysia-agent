@@ -13,7 +13,7 @@ Module/
 ├── output/               # 多通道输出
 ├── config/               # 配置基础设施
 ├── logger/               # 日志工厂
-├── prompt/               # Jinja2 模板引擎
+├── prompt/               # System Prompt 引擎 + Section Provider 架构
 ├── tool/                 # 工具执行框架
 ├── schema/               # 共享数据模型
 ├── database/             # 数据库后端
@@ -142,17 +142,22 @@ factory = LoggerFactory(level="DEBUG", json_format=True)
 logger = factory.get("MyModule")
 ```
 
-### Prompt — Jinja2 模板引擎
+### Prompt — System Prompt 引擎 + 通用渲染器
 
-管理 prompt 模板目录，支持整文件渲染和命名 macro 渲染，内置 `datetime` filter。
+提供两套 API：
+
+- **SystemPromptManager** — Section Provider 架构：11 个独立 `PromptSection` 自管数据源/模板/生命周期，中央编排器按 `_RENDER_ORDER` 组装 system prompt
+- **PromptManager** — 通用 Jinja2 渲染器，用于非 system prompt 的模板（如 `CharacterReflector.j2`）
 
 ```python
 from Module.prompt import PromptManager
 
+# 通用渲染（反射模板等）
 pm = PromptManager("prompt/")
-system = pm.render_macro("Amygdala.j2", "AmygdalaSystemPrompt", character_name="Elysia")
+system = pm.render_macro("CharacterReflector.j2", "CharacterReflectorSystemPrompt",
+                         character_name="Elysia", user_name="妖梦")
 ```
-> 系统 prompt 通过 `Module.prompt.sections/` 下的 11 个 PromptSection 渲染。
+> System prompt 通过 `Module.prompt.system_prompt_manager.SystemPromptManager` + `sections/` 下的 11 个 PromptSection 渲染。
 
 ### Tool — 工具执行框架
 

@@ -22,9 +22,9 @@
 季节: {{ sensory_ctx.season }}
 </facts>
 <perception>
-{{ sensory_ctx.perception }}
-{%- if sensory_ctx.stt_emotion and sensory_ctx.stt_emotion != "NEUTRAL" %}
-[语调: {{ sensory_ctx.stt_emotion }} {{ sensory_ctx.stt_emotion_emoji }}{%- if sensory_ctx.stt_events %} | 事件: {{ sensory_ctx.stt_events }}{% endif %}]
-{%- endif %}
+{{ sensory_ctx.perception -}}
+{% if sensory_ctx.stt_emotion and sensory_ctx.stt_emotion != "NEUTRAL" %}
+[语调: {{ sensory_ctx.stt_emotion }} {{ sensory_ctx.stt_emotion_emoji }}{% if sensory_ctx.stt_events %} | 事件: {{ sensory_ctx.stt_events }}{% endif %}]
+{% endif %}
 </perception>
 </sensory_input>

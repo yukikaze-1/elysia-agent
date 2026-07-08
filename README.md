@@ -32,9 +32,8 @@ python app.py
 ## 架构
 
 ```
-L0  Module/        无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/
+L0  Module/        无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/, prompt/
 L1  core/          认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
-L1  Module/prompt/           Brain Prompt 引擎 — SystemPromptManager + 11 PromptSections
 L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolManager (Plugin 架构)
 L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
 ```
@@ -57,7 +56,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 
 | 步骤 | 状态 | 内容 |
 |------|------|------|
-| 🥇 对话风格 | ✅ | Brain Prompt 模块化——9 个独立 section，自然对话/克制/关系模型 |
+| 🥇 对话风格 | ✅ | Brain Prompt 模块化——11 个独立 section，自然对话/克制/关系模型 |
 | 🥈 内心世界 | ✅ | `<inner_voice>` 标签输出 + 前端气泡 + 持久化 + 日志 |
 | 🥉 记忆人格化 | 待做 | 记忆融入对话，不是"引用"是"记得" |
 | 🏅 主动性 | 待做 | 注意到离开/回来，深夜关心 |
@@ -115,8 +114,7 @@ Agent/
 │   ├── output/             # Console + WebSocket 多通道
 │   ├── config/             # YAML + env 配置系统
 │   ├── logger/             # 日志工厂
-│   ├── prompt/             # Jinja2 模板渲染
-│   ├── prompt/             # Jinja2 模板 + Brain Prompt 引擎
+│   ├── prompt/             # Brain Prompt 引擎 — SystemPromptManager + 11 PromptSections
 │   ├── schema/             # 共享数据模型
 │   ├── tool/               # 工具框架 (172 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB
@@ -153,7 +151,7 @@ Agent/
 │   ├── memory/             #   记忆子系统 (session + long_term)
 │   └── tests/              #   测试 (~367 tests)
 │
-├── prompt/                 # 反射模板
+├── prompt/                 # 反射模板 (Amygdala/ActiveSpeak/MicroReflector/MacroReflector 参考, CharacterReflector 活跃)
 │   └── CharacterReflector.j2 #   角色进化反射
 │
 ├── static/                 # 浏览器客户端

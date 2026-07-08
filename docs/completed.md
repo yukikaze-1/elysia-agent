@@ -6,15 +6,14 @@
 
 Brain.j2 单体模板 (~244行) 拆分为模块化 section 管理引擎。
 
-- `Module/prompt/` — Brain Prompt 引擎 (`PromptSection`, `SystemPromptManager`, 11 section 实现)
-- `Module/prompt/templates/` — 9 个独立 section 文件 (identity/self_perception/relationship/sensory/memory/current_state/behavior/voice/output_format)
-- 
-- 
-- `PromptAssembler` 适配为三层 fallback：Registry → Brain.j2 (兼容) → 硬编码
+- `Module/prompt/` — Brain Prompt 引擎 (`PromptSection`, `StaticSection`, `Jinja2Section`, `SystemPromptManager`, `MessageBuilder`, 11 section 实现)
+- `Module/prompt/templates/` — 11 个独立 section 模板 (f2_output_format + c1~c9)
+- `Module/prompt/sections/` — 11 个 PromptSection 实现 (ConflictRules/OutputFormat/Sensory/Emotion/Memory/Personality/Relationship/SpeakingStyle/Proactive/OwnLife/SelfPerception)
+- `PromptAssembler` 简化为胶水层：创建 11 个 section → `SystemPromptManager.set_context()` + `render()` → `MessageBuilder.build_messages()`
 - 黄金对比测试：新旧 system prompt 逐字节一致
 - 379 测试通过，零回归
 
-详见 `docs/superpowers/specs/2026-07-03-brain-prompt-module-design.md`
+详见 `docs/superpowers/specs/2026-07-04-prompt-section-provider-design.md`
 
 ### Phase 1: L1 认知核心
 

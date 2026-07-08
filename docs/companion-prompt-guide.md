@@ -1,12 +1,12 @@
 # Elysia Companion Prompt 编写指南
 
 **创建日期**: 2026-06-24
-**最后更新**: 2026-07-03 — Brain Prompt 模块化重构
+**最后更新**: 2026-07-07 — Section Provider 架构完善
 **目的**: 记录 prompt 编写中的隐性约束、设计原则和验证方法，方便迭代和后续维护。
 
-> **2026-07-03 模块化重构**: `Module/prompt/sections/` 下 11 个独立 PromptSection 模块。
+> **Section Provider 架构**: `Module/prompt/sections/` 下 11 个独立 PromptSection 模块。
 > 编辑 prompt 时直接修改对应 section 文件即可，无需 touch 整个单体模板。
-> 详见 [`docs/superpowers/specs/2026-07-03-brain-prompt-module-design.md`](superpowers/specs/2026-07-03-brain-prompt-module-design.md)。
+> 详见 [`docs/superpowers/specs/2026-07-04-prompt-section-provider-design.md`](superpowers/specs/2026-07-04-prompt-section-provider-design.md)。
 
 ---
 
@@ -19,7 +19,7 @@
 | 人格描述、性格、情绪 | **中文** | "傲娇"、"嘴硬心软"、"欲言又止"——这些词英文翻不出来，模型直接用中文理解更准确 |
 | 对话风格、语气要求 | **中文** | 中文的语气词（嗯、哦、嘛、吧、呢…）自带情绪，英文 prompt 无法精确控制 |
 | 内心世界描述 | **中文** | Elysia 的"内心独白"应该在她自己的语言（中文）中进行，否则会有一个"翻译层" |
-| 格式/结构标记 | **XML 风格（尖括号）** | `<inner_voice>`、`<public_reply>` 等——和 `sensory.j2` 的 `<facts>`、`<perception>` 标签风格一致 |
+| 格式/结构标记 | **XML 风格（尖括号）** | `<inner_voice>`、`<public_reply>` 等——和 `c5_sensory.j2` 的 `<facts>`、`<perception>` 标签风格一致 |
 | 输出格式约束 | **自然语言优先** | 能用"说 1-3 句话"就不用 `max_tokens`，因为后者会截断，前者会引导思维 |
 | 元注释（模板开发用） | **中文** | Jinja2 `{# #}` 注释和 `{% %}` 模板逻辑，开发者阅读用，LLM 不可见 |
 
@@ -101,7 +101,7 @@ prompt 中必须明确描述**关系**，而不是只描述**性格**：
 **落地要点**：
 - "关系"和"性格"分开写，不要混在一起
 - 关系描述要回答：多熟？什么阶段？谁更主动？边界在哪？
-- `relationship.j2` 应独立于 `identity.j2`，在 `SystemPromptManager._RENDER_ORDER` 中排列
+- `c2_relationship.j2` 应独立于 `c1_personality.j2`，在 `SystemPromptManager._RENDER_ORDER` 中排列
 
 ---
 
@@ -117,7 +117,7 @@ prompt 中必须明确描述**关系**，而不是只描述**性格**：
 - "嗯"、"哦"、"好嘛" 这些都是合法回复，不会显得不礼貌
 ```
 
-**voice.j2 落地**：给出明确的示例对比——"太长"的回复 vs "刚好"的回复。LLM 对示例比对指令敏感得多。
+**c6_speaking_style.j2 落地**：给出明确的示例对比——"太长"的回复 vs "刚好"的回复。LLM 对示例比对指令敏感得多。
 
 ### 3.2 沉默与克制
 
@@ -143,7 +143,7 @@ prompt 中必须明确描述**关系**，而不是只描述**性格**：
 
 inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出来的话**。两者不一定一致。
 
-当前 `output_format.j2` 已完整实现 inner_voice 标签输出（`<inner_voice>...</inner_voice>`），包含 few-shot 示例和强制输出指令。cognitive_loop 通过 PRE→THINK→REPLY 三状态机流式检测标签并分流：THINK 内容不进 TTS/前端 delta，闭合后一次性广播。详见 `docs/superpowers/specs/2026-06-24-inner-voice-design.md`。
+当前 `f2_output_format.j2` 已完整实现 inner_voice 标签输出（`<inner_voice>...</inner_voice>`），包含 few-shot 示例和强制输出指令。cognitive_loop 通过 PRE→THINK→REPLY 三状态机流式检测标签并分流：THINK 内容不进 TTS/前端 delta，闭合后一次性广播。详见 `docs/superpowers/specs/2026-06-24-inner-voice-design.md`。
 
 ### 4.2 设计原则
 
@@ -186,7 +186,7 @@ inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出�
 
 ## 五、记忆人格化原则
 
-**这是 companion 的核心差异化能力。** 当前 `memory.j2` 的记忆段是 `<memory_bank>` 里罗列条目，AI 被训练成"引用记忆"而不是"记得事情"。需要从机械检索变成人格化的"记得"。
+**这是 companion 的核心差异化能力。** 当前 `c4_memory.j2` 的记忆段是 `<memory_bank>` 里罗列条目，AI 被训练成"引用记忆"而不是"记得事情"。需要从机械检索变成人格化的"记得"。
 
 ### 5.1 记忆不是引用，是记得
 

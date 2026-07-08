@@ -228,7 +228,7 @@ _BACKENDS = {
 | `Module.output` | `ConsoleChannel`, `WebSocketChannel` | — | 多通道广播 + capability 路由 |
 | `Module.config` | `ConfigLoader` | YAML + env | 分层配置 + 类型校验 |
 | `Module.logger` | `LoggerFactory` | — | caller-aware 日志工厂 |
-| `Module.prompt` | `PromptManager` | Jinja2 | 模板管理 + macro 渲染 |
+| `Module.prompt` | `PromptManager`, `SystemPromptManager`, `PromptSection` | Jinja2 | Section Provider 架构 + 通用模板渲染 |
 
 ### 3.3 Config 系统
 
@@ -871,7 +871,7 @@ Agent/
 │   ├── output/              # Output: Console + WebSocket 多通道
 │   ├── config/              # Config: YAML + env 加载器 + 验证
 │   ├── logger/              # Logger: caller-aware 工厂
-│   ├── prompt/              # Prompt: Jinja2 模板管理
+│   ├── prompt/              # Prompt: System Prompt 引擎 + Section Provider
 │   ├── schema/              # Schema: 共享数据模型
 │   ├── database/            # Database: Milvus / MongoDB / GraphDB
 │   ├── tool/                # Tool: ToolPlugin框架 + SafetyPipeline + ToolManager
@@ -914,7 +914,7 @@ Agent/
 ├── character/
 │   └── elysia.yaml          # Elysia 角色定义
 │
-├── prompt/                  # 反射模板
+├── prompt/                  # 反射模板 (CharacterReflector 活跃，其余为参考)
 │   └── CharacterReflector.j2  #   角色进化反射
 │
 ├── static/                  # Web 前端
