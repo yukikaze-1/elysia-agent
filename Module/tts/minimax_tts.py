@@ -83,12 +83,20 @@ class MiniMaxTTSBackend(TTSBackend):
         text = self._preprocess(text)
         voice_id = self._resolve_voice(character)
         payload = self._build_payload(text, voice_id, emotion, stream=False)
-        resp = await self._client.post("/v1/t2a_v2", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        self._check_base_resp(data)
-        audio_hex = data.get("data", {}).get("audio", "")
-        return bytes.fromhex(audio_hex)
+        try:
+            resp = await self._client.post("/v1/t2a_v2", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            self._check_base_resp(data)
+            audio_hex = data.get("data", {}).get("audio", "")
+            return bytes.fromhex(audio_hex)
+        except httpx.RequestError as e:
+            self._logger.debug(
+                "MiniMax 连接失败 (base_url=%s): %s", self._base_url, e
+            )
+            raise RuntimeError(
+                f"无法连接 MiniMax 服务 ({self._base_url}): {e}"
+            ) from e
 
     async def synthesize_stream(
         self, text: str, *, character: str, emotion: str | None = None
