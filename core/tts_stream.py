@@ -120,6 +120,9 @@ class TTSStreamManager:
         self._seq += 1
         sid = self._total
         seq = self._seq
+        # 提前创建门控 event，保证 seq 不存在时也能 wait
+        if seq not in self._release_events:
+            self._release_events[seq] = asyncio.Event()
         logger.info("TTS 句 %d (总#%d) 开始 (%d 字符)", seq, sid, len(sentence))
         logger.debug("TTS 句内容: %s", _clean[:60])
 
@@ -185,9 +188,7 @@ class TTSStreamManager:
             first_chunk = True
             t_tts = time.perf_counter()
             # 等待上一句音频发送完成（门控：保证播放顺序）
-            event = self._release_events.get(seq)
-            if event:
-                await event.wait()
+            await self._release_events[seq].wait()
             # 为下一句创建释放事件
             next_event = asyncio.Event()
             self._release_events[seq + 1] = next_event
