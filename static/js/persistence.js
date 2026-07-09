@@ -113,8 +113,8 @@ export function saveChat() {
       }
     } else if (row.classList.contains('assistant')) {
       const textSpan = row.querySelector('.msg-text');
-      if (textSpan && textSpan.innerText.trim()) {
-        msgs.push({ role: 'assistant', content: textSpan.innerText });
+      if (textSpan && textSpan.textContent.trim()) {
+        msgs.push({ role: 'assistant', content: textSpan.textContent });
       }
     }
   }
@@ -242,7 +242,7 @@ export function restoreChat() {
     } else {
       state.lastRole = 'assistant';
       const { row, textSpan } = createAssistantRow();
-      textSpan.innerText = typeof m.content === 'string' ? formatHistoryText(m.content) : '';
+      textSpan.textContent = typeof m.content === 'string' ? formatHistoryText(m.content) : '';
       chat.appendChild(row);
       state.messages.push({ role: 'assistant', content: m.content });
     }
@@ -346,7 +346,7 @@ export function restoreFromServer(messages) {
         } else {
           // 每个 text part 创建独立气泡（保持分句显示）
           const { row, textSpan } = createAssistantRow();
-          textSpan.innerText = formatHistoryText(p.content);
+          textSpan.textContent = formatHistoryText(p.content);
           chat.appendChild(row);
           state.messages.push({ role: 'assistant', content: p.content });
         }
