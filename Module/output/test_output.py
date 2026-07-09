@@ -210,8 +210,8 @@ class _TestChannel(OutputChannel):
     async def on_audio_chunk(self, chunk: bytes, *, stream_id: int = 0) -> None:
         self.events.append(("audio_chunk", (chunk, stream_id)))
 
-    async def on_audio_end(self, stream_id: int = 0) -> None:
-        self.events.append(("audio_end", (stream_id,)))
+    async def on_audio_end(self, stream_id: int = 0, *, format: str = "wav") -> None:
+        self.events.append(("audio_end", (stream_id, format)))
 
     async def on_state(self, state: str) -> None:
         self.events.append(("state", (state,)))
@@ -683,7 +683,7 @@ class TestWebSocketChannelCoverage:
         ch = WebSocketChannel(ws)
         await ch.on_audio_end(stream_id=0)
         ws.send_json.assert_called_with({
-            "type": "audio_end", "stream_id": 0,
+            "type": "audio_end", "stream_id": 0, "format": "wav",
         })
 
     @pytest.mark.asyncio

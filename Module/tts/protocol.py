@@ -20,6 +20,11 @@ class TTSBackend(ABC):
         """
         ...
 
+    @property
+    def stream_format(self) -> str:
+        """流式输出的音频格式（MIME 子类型），默认 'wav'。MiniMax 覆盖为 'mp3'。"""
+        return "wav"
+
     @abstractmethod
     def synthesize_stream(
         self, text: str, *, character: str, emotion: str | None = None

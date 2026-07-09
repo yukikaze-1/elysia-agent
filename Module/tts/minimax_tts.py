@@ -135,6 +135,10 @@ class MiniMaxTTSBackend(TTSBackend):
     def provider_name(self) -> str:
         return "minimax"
 
+    @property
+    def stream_format(self) -> str:
+        return "mp3"  # MiniMax 流式仅输出 mp3
+
     def get_preprocess(self):
         return self._preprocess
 

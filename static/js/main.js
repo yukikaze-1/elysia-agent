@@ -86,7 +86,7 @@ function handleMessage(msg) {
       if (msg.state === 'idle') { attachTokenLabel(); }  // 回复完全结束后，把 token 标签移到最后一句话
       break;
     case 'audio': bufferAudioChunk(msg.stream_id || 0, msg.seq || 0, msg.data); break;
-    case 'audio_end': finalizeStream(msg.stream_id || 0); break;
+    case 'audio_end': finalizeStream(msg.stream_id || 0, msg.format); break;
     case 'typing':
       if (msg.typing) { showTyping(); }
       else { hideTyping(); }

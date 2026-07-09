@@ -196,7 +196,8 @@ class TTSStreamManager:
                     )
                     await self._output.send("")
                 await self._output.audio_chunk(chunk, stream_id=sid)
-            await self._output.audio_end(sid)
+            fmt = self._tts.stream_format if self._tts else "wav"
+            await self._output.audio_end(sid, format=fmt)
             t_tts_elapsed = (time.perf_counter() - t_tts) * 1000
             logger.info(
                 "TTS 句 %d (总#%d) 播放完成 (%d ms)",

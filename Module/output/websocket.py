@@ -84,10 +84,11 @@ class WebSocketChannel(OutputChannel):
             "is_final": False,
         })
 
-    async def on_audio_end(self, stream_id: int = 0) -> None:
+    async def on_audio_end(self, stream_id: int = 0, *, format: str = "wav") -> None:
         await self._send_json({
             "type": "audio_end",
             "stream_id": stream_id,
+            "format": format,
         })
 
     async def on_state(self, state: str) -> None:

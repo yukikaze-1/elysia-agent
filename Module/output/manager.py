@@ -182,11 +182,12 @@ class OutputManager:
         self,
         stream_id: int = 0,
         *,
+        format: str = "wav",
         channels: list[OutputChannel] | None = None,
         capability: ChannelCapability | None = None,
     ) -> None:
         await self._broadcast(
-            "on_audio_end", stream_id,
+            "on_audio_end", stream_id, format=format,
             channels=channels, capability=capability or ChannelCapability.AUDIO,
         )
 

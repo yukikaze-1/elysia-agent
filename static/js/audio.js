@@ -34,14 +34,15 @@ export function bufferAudioChunk(streamId, seq, b64) {
   state.audioChunks[streamId].push(decodeBase64(b64));
 }
 
-export function finalizeStream(streamId) {
+export function finalizeStream(streamId, format = 'wav') {
   if (!state.ttsEnabled) return;
   const chunks = state.audioChunks[streamId];
   if (!chunks || chunks.length === 0) return;
   delete state.audioChunks[streamId];
 
   const buf = concatChunks(chunks);
-  const url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  const mime = format === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+  const url = URL.createObjectURL(new Blob([buf], { type: mime }));
   state.audioQueue.push({ url, streamId });
 
   // 设置超时清理：如果这个 stream 的 bubble 映射在 TTL 内未被消费，清除它
