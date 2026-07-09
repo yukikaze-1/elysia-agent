@@ -64,13 +64,15 @@ class PromptAssembler:
         pass  # Phase 2: F3 工具声明
 
     async def build_system_prompt(self, user_message: str = "", user_name: str = "",
-                                   stt_emotion: str = "", stt_events=None) -> str:
+                                   stt_emotion: str = "", stt_events=None,
+                                   tts_provider: str = "") -> str:
         self._manager.set_context(
             user_message=user_message,
             user_name=user_name,
             user_pronoun=self._character.user_pronoun,
             stt_emotion=stt_emotion,
             stt_events=stt_events or [],
+            tts_provider=tts_provider,
         )
         return await self._manager.render()
 
@@ -79,11 +81,13 @@ class PromptAssembler:
                               stt_emotion: str = "",
                               stt_events=None,
                               content=None,
-                              supports_multimodal: bool = False) -> list[dict]:
+                              supports_multimodal: bool = False,
+                              tts_provider: str = "") -> list[dict]:
         text = content_text_from_raw(content) if content else user_message
         system = await self.build_system_prompt(
             user_message=text, user_name=user_name,
             stt_emotion=stt_emotion, stt_events=stt_events,
+            tts_provider=tts_provider,
         )
         history = self._session.recent_messages(8)
         user_content = content if content else user_message
