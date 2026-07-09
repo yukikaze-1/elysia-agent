@@ -58,7 +58,8 @@ OpenAI 后端当前在 `synthesize()`/`synthesize_stream()` 中 inline 调用 `s
 
 ```
 CognitiveLoop._think_loop()
-  → build_messages(tts_provider=self._tts.provider_name)
+  tts_provider = self._tts.provider_name if self._tts else ""
+  → build_messages(tts_provider=tts_provider)
     → PromptAssembler.build_system_prompt(tts_provider=...)
       → SystemPromptManager.set_context(tts_provider=...)
         → OutputFormatSection.set_context(tts_provider=...)
@@ -89,6 +90,8 @@ CognitiveLoop._think_loop()
 ### 2.4 TTS 关闭时的行为
 
 TTS 未连接时 `CognitiveLoop._tts` 为 `None`，`tts_provider` 传空字符串 → 模板不命中任何条件 → 不输出标记指令。
+
+实现注意：`tts_provider = self._tts.provider_name if self._tts else ""`
 
 ## 3. 不修改的部分
 
