@@ -59,7 +59,7 @@ class MiniMaxTTSBackend(TTSBackend):
             headers={"Authorization": f"Bearer {self._api_key}"},
         )
 
-        async def _health_check(self) -> bool:
+        async def _health_check() -> bool:
             resp = await self._client.post(
                 "/v1/get_voice",
                 json={"voice_type": "system"},

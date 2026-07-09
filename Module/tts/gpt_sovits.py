@@ -48,7 +48,7 @@ class GPTSoVitsBackend(TTSBackend):
         self._voices = yaml.safe_load(path.read_text(encoding="utf-8"))
         self._preprocess = strip_all_markup
 
-        async def _health_check(self) -> bool:
+        async def _health_check() -> bool:
             async with httpx.AsyncClient(
                 base_url=self._base_url, timeout=httpx.Timeout(5.0)
             ) as client:

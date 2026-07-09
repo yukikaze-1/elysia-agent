@@ -15,7 +15,7 @@ def make_test_method(
     async def test(self) -> dict:
         t0 = time.perf_counter()
         try:
-            ok = await health_fn(self)
+            ok = await health_fn()
             latency_ms = int((time.perf_counter() - t0) * 1000)
             return {"ok": ok, "latency_ms": latency_ms}
         except Exception as e:

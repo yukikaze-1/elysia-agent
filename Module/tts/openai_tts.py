@@ -39,7 +39,7 @@ class OpenAICompatTTSBackend(TTSBackend):
             timeout=httpx.Timeout(60.0, connect=5.0),
         )
 
-        async def _health_check(self) -> bool:
+        async def _health_check() -> bool:
             async with httpx.AsyncClient(
                 base_url=self._base_url, timeout=httpx.Timeout(5.0)
             ) as client:
