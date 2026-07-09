@@ -8,35 +8,17 @@
 
 ## 快速开始
 
-### 1. 环境准备
+### 1. 一键安装
 
 ```bash
-conda create -n Elysia python=3.13 -y
-conda activate Elysia
-pip install -r requirements.txt
+bash scripts/setup.sh
 ```
 
-### 2. 配置
-
-```bash
-cp .env.example .env
-# 编辑 .env，至少填入 DEEPSEEK_API_KEY
-
-# 环境预检
-python app.py --check
-# 或 make check
-```
+脚本会自动: 检测/创建 conda 环境 → pip install → 配置 .env → 环境预检。
 
 `config.yaml` 中可调整 model、TTS provider、数据库等。大部分有默认值，开箱可用。
 
-### 3. 可选：嵌入模型缓存
-
-```bash
-export MODEL_CACHE_DIR="/path/to/model_cache"   # 方式1：环境变量
-# 或在项目根创建 .model_cache/ 软链接          # 方式2：项目本地
-```
-
-### 4. 启动
+### 2. 启动
 
 ```bash
 # WebSocket 服务器模式（浏览器访问 http://localhost:8765）
@@ -50,7 +32,7 @@ python app.py --server --tts --stt
 python app.py
 ```
 
-### 5. 可选：数据库（长期记忆持久化）
+### 3. 可选：数据库（长期记忆持久化）
 
 ```bash
 # Milvus 向量数据库 — 长期记忆语义检索
