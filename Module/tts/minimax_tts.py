@@ -31,7 +31,7 @@ class MiniMaxTTSBackend(TTSBackend):
         *,
         api_key: str,
         base_url: str = "https://api.minimaxi.com",
-        voice_id: str = "",
+        voice_id: str = "elysia_test_001",
         voice_map: dict[str, str] | None = None,
         speed: float = 1.0,
         vol: float = 1.0,
@@ -124,18 +124,23 @@ class MiniMaxTTSBackend(TTSBackend):
         self, text: str, voice_id: str, emotion: str | None, stream: bool
     ) -> dict:
         """构建 MiniMax /v1/t2a_v2 请求体。"""
+        if not voice_id:
+            raise ValueError(
+                "MiniMax TTS 需要 voice_id。请通过 voice_map 或 voice_id 参数指定音色。"
+            )
         payload: dict = {
             "model": self._model,
             "text": text,
             "stream": stream,
             "voice_setting": {
                 "voice_id": voice_id,
-                "speed": self._speed,
-                "vol": self._vol,
-                "pitch": self._pitch,
+                "speed": int(self._speed),
+                "vol": int(self._vol),
+                "pitch": int(self._pitch),
             },
             "audio_setting": {
                 "sample_rate": self._sample_rate,
+                "bitrate": 128000,
                 "format": "mp3" if stream else self._audio_format,
                 "channel": 1,
             },

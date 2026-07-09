@@ -398,10 +398,10 @@ class TestStripForMiniMax:
 
 class TestMiniMaxConstruction:
     def test_defaults(self):
-        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
         assert backend._model == "speech-2.8-hd"
         assert backend._base_url == "https://api.minimaxi.com"
-        assert backend._voice_id == ""
+        assert backend._voice_id == "test-voice"
         assert backend._voice_map == {}
         assert backend._speed == 1.0
         assert backend._vol == 1.0
@@ -417,12 +417,12 @@ class TestMiniMaxConstruction:
         assert backend._resolve_voice("Unknown") == "default-voice"
 
     def test_voice_map_default_voice_id(self):
-        backend = MiniMaxTTSBackend(api_key="sk-test")
-        assert backend._resolve_voice("Anyone") == ""
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        assert backend._resolve_voice("Anyone") == "test-voice"
 
     @pytest.mark.asyncio
     async def test_close(self):
-        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
         await backend.close()
         assert backend._client.is_closed
 
@@ -431,7 +431,7 @@ class TestMiniMaxSynthesize:
     @pytest.mark.asyncio
     async def test_hex_decode_and_return_bytes(self):
         """验证非流式：POST → JSON → hex decode → bytes"""
-        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
 
         # mock _client.post 返回 hex 编码的音频
         wav_bytes = b"RIFF....WAVE...."  # 伪 WAV
@@ -481,9 +481,9 @@ class TestMiniMaxSynthesize:
             api_key="sk-test",
             model="speech-2.8-turbo",
             voice_id="male-qn-qingse",
-            speed=1.2,
-            vol=0.8,
-            pitch=0.5,
+            speed=1,
+            vol=1,
+            pitch=0,
             audio_format="wav",
         )
         backend._client.post = fake_post  # type: ignore[assignment]
@@ -493,10 +493,12 @@ class TestMiniMaxSynthesize:
         assert captured_payload["text"] == "你好"
         assert captured_payload["stream"] is False
         assert captured_payload["voice_setting"]["voice_id"] == "male-qn-qingse"
-        assert captured_payload["voice_setting"]["speed"] == 1.2
+        assert captured_payload["voice_setting"]["speed"] == 1
+        assert captured_payload["voice_setting"]["vol"] == 1
+        assert captured_payload["voice_setting"]["pitch"] == 0
         assert captured_payload["voice_setting"]["emotion"] == "happy"
         assert captured_payload["audio_setting"]["format"] == "wav"
-        assert captured_payload["voice_setting"]["pitch"] == 0.5
+        assert captured_payload["audio_setting"]["bitrate"] == 128000
 
     @pytest.mark.asyncio
     async def test_voice_map_used_for_character(self):
@@ -548,7 +550,7 @@ class TestMiniMaxSynthesize:
             captured_payload.update(json)
             return MockResp()
 
-        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
         backend._client.post = fake_post  # type: ignore[assignment]
         await backend.synthesize("hi", character="test", emotion=None)
         assert "emotion" not in captured_payload["voice_setting"]
@@ -575,7 +577,7 @@ class TestMiniMaxSynthesizeStream:
         async def fake_post(url, *, json, **kw):
             return MockResp()
 
-        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
         backend._client.post = fake_post  # type: ignore[assignment]
 
         chunks = []
@@ -603,7 +605,7 @@ class TestMiniMaxSynthesizeStream:
         async def fake_post(url, *, json, **kw):
             return MockResp()
 
-        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
         backend._client.post = fake_post  # type: ignore[assignment]
 
         chunks = []
@@ -631,7 +633,7 @@ class TestMiniMaxErrors:
                     "base_resp": {"status_code": 1004, "status_msg": "rate limit"},
                 }
 
-        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
 
         async def fake_post(url, *, json, **kw):
             return MockResp()
@@ -656,7 +658,7 @@ class TestMiniMaxErrors:
             def json(self):
                 return {"base_resp": {"status_code": 1001, "status_msg": "unauthorized"}}
 
-        backend = MiniMaxTTSBackend(api_key="sk-bad")
+        backend = MiniMaxTTSBackend(api_key="sk-bad", voice_id="test-voice")
 
         async def fake_post(url, *, json, **kw):
             return MockResp()
@@ -680,7 +682,7 @@ class TestMiniMaxErrors:
                     "base_resp": {"status_code": 0, "status_msg": "success"},
                 }
 
-        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
 
         async def fake_post(url, *, json, **kw):
             return MockResp()
@@ -711,7 +713,7 @@ class TestMiniMaxCancel:
         async def fake_post(url, *, json, **kw):
             return MockResp()
 
-        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
         backend._client.post = fake_post  # type: ignore[assignment]
 
         count = 0
