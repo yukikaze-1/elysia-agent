@@ -14,6 +14,7 @@ function formatHistoryText(text) {
     const action = m[0];
     const rest = t.slice(action.length).trim();
     t = rest ? action + '\n' + rest : action;
+    console.log('formatHistoryText: split action', { action, rest, result: JSON.stringify(t) });
   }
   return t;
 }
