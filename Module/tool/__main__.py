@@ -146,16 +146,16 @@ async def main() -> None:
     # ---- 错误分类 ----
     print("\n--- 错误分类 ---")
     result = await tm.execute("failing", ctx=tool_ctx)
-    print(f"  failing: FAIL, error_type={result.error_type.value}")
+    print(f"  failing: FAIL, error_type={result.error_type.value if result.error_type else 'None'}")
     assert result.error_type == ErrorType.TOOL_ERROR
 
     result = await tm.execute("slow_tool", ctx=tool_ctx)
-    print(f"  slow_tool: FAIL, error_type={result.error_type.value}")
+    print(f"  slow_tool: FAIL, error_type={result.error_type.value if result.error_type else 'None'}")
     assert result.error_type == ErrorType.TIMEOUT
     assert result.error_type.is_retryable
 
     result = await tm.execute("nonexistent", ctx=tool_ctx)
-    print(f"  nonexistent: FAIL, error_type={result.error_type.value}")
+    print(f"  nonexistent: FAIL, error_type={result.error_type.value if result.error_type else 'None'}")
     assert result.error_type == ErrorType.UNKNOWN_TOOL
     assert not result.error_type.is_retryable
 

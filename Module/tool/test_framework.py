@@ -384,7 +384,7 @@ class TestToolManagerEmpty:
         )
         assert result.success is False
         assert result.error_type == ErrorType.UNKNOWN_TOOL
-        assert "未激活" in result.error
+        assert result.error and "未激活" in result.error
 
     @pytest.mark.asyncio
     async def test_unknown_tool_stream(self):
@@ -501,7 +501,7 @@ class TestToolManagerExecute:
         result = await tm.execute("greet", ctx=ToolContext())  # 没传 target
         assert result.success is False
         assert result.error_type == ErrorType.INVALID_ARGUMENT
-        assert "target" in result.error.lower()
+        assert result.error and "target" in result.error.lower()
         await tm.shutdown()
 
     @pytest.mark.asyncio
@@ -511,7 +511,7 @@ class TestToolManagerExecute:
         result = await tm.execute("failing", ctx=ToolContext())
         assert result.success is False
         assert result.error_type == ErrorType.TOOL_ERROR
-        assert "boom" in result.error
+        assert result.error and "boom" in result.error
         await tm.shutdown()
 
     @pytest.mark.asyncio
@@ -705,7 +705,7 @@ class TestPydanticErrorFormatting:
     def test_format_simple_error(self):
         from pydantic import ValidationError
         try:
-            GreetParams()
+            GreetParams()  # type: ignore[call-arg]  # 缺少必填字段 → 运行时 ValidationError
         except ValidationError as e:
             formatted = _format_validation_error(e)
             assert "target" in formatted.lower()

@@ -73,7 +73,7 @@ class SenseVoiceBackend(STTBackend):
         self.last_emotion: str = "NEUTRAL"
         self.last_events: list[str] = []
 
-        async def _health_check(self) -> bool:
+        async def _health_check() -> bool:
             resp = await self._client.get("/health")
             return resp.status_code < 400
 

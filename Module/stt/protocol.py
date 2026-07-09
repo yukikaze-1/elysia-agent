@@ -30,6 +30,7 @@ class STTBackend(ABC):
 
         后端不支持流式时可 yield 完整结果作为单个 chunk。"""
         ...
+        yield ""  # type: ignore[misc]  # pragma: no cover — 让抽象方法成为生成器
 
     @abstractmethod
     async def test(self) -> dict:

@@ -21,9 +21,9 @@ class TestLLMFromConfig:
         monkeypatch.delenv("LLM_API_KEY", raising=False)
         cfg = LLMConfig(base_url="https://test.api/v1", api_key="sk-xxx")
         backend = LLMFactory.from_config("deepseek/deepseek-v4-pro", cfg)
-        assert backend._model == "deepseek-v4-pro"
-        assert backend._supports_prefix is True
-        assert str(backend._client.base_url).rstrip("/") == "https://test.api/v1"
+        assert backend._model == "deepseek-v4-pro"  # type: ignore[attr-defined]
+        assert backend._supports_prefix is True  # type: ignore[attr-defined]
+        assert str(backend._client.base_url).rstrip("/") == "https://test.api/v1"  # type: ignore[attr-defined]
 
     def test_overrides_take_priority(self, monkeypatch):
         monkeypatch.delenv("LLM_API_KEY", raising=False)
@@ -31,5 +31,5 @@ class TestLLMFromConfig:
         backend = LLMFactory.from_config(
             "openai/gpt-5", cfg, base_url="https://overridden.api/v1"
         )
-        assert backend._model == "gpt-5"
-        assert str(backend._client.base_url).rstrip("/") == "https://overridden.api/v1"
+        assert backend._model == "gpt-5"  # type: ignore[attr-defined]
+        assert str(backend._client.base_url).rstrip("/") == "https://overridden.api/v1"  # type: ignore[attr-defined]

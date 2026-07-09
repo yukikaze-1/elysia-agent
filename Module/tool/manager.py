@@ -288,6 +288,10 @@ class ToolManager:
                 return False
 
             new_instance = cls()
+            if self._plugin_context is None:
+                raise RuntimeError(
+                    f"无法加载工具 '{name}': PluginContext 尚未初始化，请先调用 load_all()"
+                )
             await new_instance.setup(self._plugin_context)
             self._plugins[name] = new_instance
             self._plugin_classes[name] = cls

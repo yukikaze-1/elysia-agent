@@ -7,7 +7,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -358,7 +358,7 @@ class SafetyPipeline:
         ctx: Any,
         raw_params: dict,
         semaphore: asyncio.Semaphore | None,
-    ) -> Any:  # AsyncIterator
+    ) -> AsyncIterator[Any]:
         """执行流式管道。"""
         from Module.tool.protocol import ToolResult, ErrorType  # noqa: F811
 

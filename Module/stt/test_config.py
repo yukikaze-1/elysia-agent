@@ -20,13 +20,13 @@ class TestSTTFromConfig:
     def test_from_config_passes_params(self):
         cfg = STTConfig(base_url="http://test:20042")
         backend = STTFactory.from_config("sensevoice/sense-voice", cfg)
-        assert backend._model == "sense-voice"
-        assert str(backend._client.base_url).rstrip("/") == "http://test:20042"
+        assert backend._model == "sense-voice"  # type: ignore[attr-defined]
+        assert str(backend._client.base_url).rstrip("/") == "http://test:20042"  # type: ignore[attr-defined]
 
     def test_overrides_take_priority(self):
         cfg = STTConfig(base_url="http://default:20042")
         backend = STTFactory.from_config(
             "sensevoice/custom", cfg, base_url="http://overridden:20042"
         )
-        assert backend._model == "custom"
-        assert str(backend._client.base_url).rstrip("/") == "http://overridden:20042"
+        assert backend._model == "custom"  # type: ignore[attr-defined]
+        assert str(backend._client.base_url).rstrip("/") == "http://overridden:20042"  # type: ignore[attr-defined]

@@ -269,8 +269,10 @@ class TestClose:
         backend = LLMFactory.create("deepseek/deepseek-v4-pro", api_key="sk-test")
         mock_close = AsyncMock()
         mock_beta_close = AsyncMock()
-        with patch.object(backend._client, "close", mock_close), \
-             patch.object(backend._beta_client, "close", mock_beta_close):
+        with (  # type: ignore[attr-defined]
+            patch.object(backend._client, "close", mock_close),
+            patch.object(backend._beta_client, "close", mock_beta_close),  # type: ignore[attr-defined]
+        ):
             await backend.close()
         mock_close.assert_called_once()
         mock_beta_close.assert_called_once()
@@ -374,7 +376,7 @@ class TestAPIErrors:
     @pytest.mark.asyncio
     async def test_chat_content_none_returns_empty(self, backend):
         """API 返回 content=None 时 chat() 返回空字符串。"""
-        mock_create = AsyncMock(return_value=_make_nonstream_response(None))
+        mock_create = AsyncMock(return_value=_make_nonstream_response(""))
         with patch.object(backend._client.chat.completions, "create", mock_create):
             result = await backend.chat([{"role": "user", "content": "hi"}])
         assert result == ""

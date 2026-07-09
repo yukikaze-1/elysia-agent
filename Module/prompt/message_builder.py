@@ -110,13 +110,13 @@ class MessageBuilder:
 def _content_to_openai(content: list[dict]) -> list[dict]:
     """将 ChatMessageV2 content 转为 OpenAI 格式。"""
     from Module.schema.message_format import content_to_openai
-    return content_to_openai(content)
+    return content_to_openai(content)  # type: ignore[return-value]
 
 
 def _content_text(content: list[dict]) -> str:
     """从 ChatMessageV2 content 提取纯文本。"""
     from Module.schema.message_format import content_text
-    return content_text(content)
+    return content_text(content)  # type: ignore[arg-type]
 
 
 def _format_tool_summary(tool_calls: list[dict]) -> str:

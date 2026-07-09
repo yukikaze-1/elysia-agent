@@ -89,6 +89,6 @@ def documentdb_backend():
     with patch("motor.motor_asyncio.AsyncIOMotorClient", MagicMock()):
         from Module.database.documentdb.registry import DocumentDBFactory
         b = DocumentDBFactory.create("mongodb/elysia")
-        b._client = MagicMock()
-        b._db = {}
+        b._client = MagicMock()  # type: ignore[attr-defined]
+        b._db = {}  # type: ignore[attr-defined]
         return b

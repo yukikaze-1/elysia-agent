@@ -48,7 +48,7 @@ class OpenAICompatSTTBackend(STTBackend):
         self.last_emotion: str = "NEUTRAL"
         self.last_events: list[str] = []
 
-        async def _health_check(self) -> bool:
+        async def _health_check() -> bool:
             import asyncio
             silence_wav = (
                 b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00"

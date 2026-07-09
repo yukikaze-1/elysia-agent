@@ -47,7 +47,7 @@ class OpenAICompatBackend(LLMBackend):
         self.last_usage: dict | None = None  # 最近一次 API 调用的 token 消耗
         self._create_clients()
 
-        async def _health_check(self) -> bool:
+        async def _health_check() -> bool:
             await asyncio.wait_for(
                 self._client.chat.completions.create(
                     model=self._model,
@@ -196,7 +196,7 @@ class OpenAICompatBackend(LLMBackend):
                 **kwargs,
             )
             if not response.choices:
-                logger.error("LLM 返回空 choices — 模型=%s", self._model)
+                self._logger.error("LLM 返回空 choices — 模型=%s", self._model)
                 return
             content = response.choices[0].message.content
             # 捕获 usage 统计

@@ -20,7 +20,7 @@ def main():
     # 2. LoggerFactory — 显式创建
     print("=== LoggerFactory ===")
     factory = LoggerFactory()
-    custom = factory.create(__name__, plain=True)
+    custom = factory.get(__name__)
     print(f"  显式创建 logger: {custom.name}")
     custom.info("自定义 logger INFO")
     print("  自定义 logger 输出完成")
