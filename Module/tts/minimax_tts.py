@@ -1,11 +1,10 @@
-"""MiniMax TTS 后端 — HTTP + SSE 流式合成。
+"""MiniMax TTS 后端 — HTTP 非流式合成 + 分块流式。
 
 共享 httpx.AsyncClient（Bearer Token 认证），hex 编码音频解码。
-SSE 流式通过 asyncio.Queue + create_task 桥接。
+synthesize_stream() 内部使用非流式 wav（MiniMax 流式仅 mp3，前端期望 wav），
+获取完整音频后分块 yield。
 """
 
-import asyncio
-import json
 import logging
 from typing import AsyncIterator
 
@@ -101,65 +100,16 @@ class MiniMaxTTSBackend(TTSBackend):
     async def synthesize_stream(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> AsyncIterator[bytes]:
-        text = self._preprocess(text)
-        voice_id = self._resolve_voice(character)
-        payload = self._build_payload(text, voice_id, emotion, stream=True)
+        """流式合成 — 内部使用非流式 wav（MiniMax 流式仅支持 mp3，前端期望 wav）。
 
-        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
-
-        async def _pull() -> None:
-            try:
-                async with self._client.stream(
-                    "POST", "/v1/t2a_v2", json=payload
-                ) as resp:
-                    if resp.status_code >= 400:
-                        body = await resp.aread()
-                        self._logger.warning(
-                            "MiniMax 返回 %d: %s (text=%r)",
-                            resp.status_code,
-                            body.decode("utf-8", errors="replace")[:500],
-                            text,
-                        )
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if line.startswith("data: "):
-                            raw = line[6:]
-                            try:
-                                event = json.loads(raw)
-                            except json.JSONDecodeError:
-                                continue
-                            self._check_base_resp(event)
-                            audio_hex = event.get("data", {}).get("audio", "")
-                            if audio_hex:
-                                await queue.put(bytes.fromhex(audio_hex))
-            except httpx.RequestError as e:
-                self._logger.debug(
-                    "MiniMax 连接失败 (base_url=%s): %s", self._base_url, e
-                )
-                raise RuntimeError(
-                    f"无法连接 MiniMax 服务 ({self._base_url}): {e}"
-                ) from e
-            finally:
-                await queue.put(None)
-
-        task = asyncio.create_task(_pull())
-        try:
-            while True:
-                item = await queue.get()
-                if item is None:
-                    return
-                yield item
-        finally:
-            if not task.done():
-                task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                logging.getLogger("Module.tts.minimax").debug(
-                    "TTS _pull task failed: %s", e
-                )
+        获取完整 wav 后分块 yield，保持 AsyncGenerator 接口兼容。
+        """
+        # 复用 synthesize() 的非流式 wav 逻辑
+        audio = await self.synthesize(text, character=character, emotion=emotion)
+        # 按 4096 字节分块 yield，与其他 backend 行为一致
+        chunk_size = 4096
+        for offset in range(0, len(audio), chunk_size):
+            yield audio[offset:offset + chunk_size]
 
     async def close(self) -> None:
         await self._client.aclose()

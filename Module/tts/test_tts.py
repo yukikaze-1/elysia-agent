@@ -556,77 +556,63 @@ class TestMiniMaxSynthesize:
 
 class TestMiniMaxSynthesizeStream:
     @pytest.mark.asyncio
-    async def test_yields_decoded_chunks_from_sse(self):
-        """流式：SSE 逐行解析 → hex decode → yield bytes"""
-        wav_chunk1 = b"\x00\x01\x02\x03"
-        wav_chunk2 = b"\x04\x05\x06\x07"
-        sse_lines = [
-            f'data: {{"data":{{"audio":"{wav_chunk1.hex()}"}},"base_resp":{{"status_code":0}}}}\n',
-            f'data: {{"data":{{"audio":"{wav_chunk2.hex()}"}},"base_resp":{{"status_code":0}}}}\n',
-        ]
+    async def test_yields_chunks_from_synthesize(self):
+        """synthesize_stream 内部调用 synthesize()，分块 yield 完整 wav"""
+        wav_data = b"\x00" * 100  # 小于 4096，单 chunk
 
-        class MockStreamResp:
+        class MockResp:
             status_code = 200
 
             def raise_for_status(self):
                 pass
 
-            async def aiter_lines(self):
-                for line in sse_lines:
-                    yield line
+            def json(self):
+                return {
+                    "data": {"audio": wav_data.hex()},
+                    "base_resp": {"status_code": 0, "status_msg": "success"},
+                }
 
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
 
         backend = MiniMaxTTSBackend(api_key="sk-test")
-        backend._client.stream = lambda *a, **kw: MockStreamResp()  # type: ignore[assignment]
+        backend._client.post = fake_post  # type: ignore[assignment]
 
         chunks = []
         async for chunk in backend.synthesize_stream("test", character="x"):
             chunks.append(chunk)
-        assert chunks == [wav_chunk1, wav_chunk2]
+        assert chunks == [wav_data]
 
     @pytest.mark.asyncio
-    async def test_stream_format_is_mp3(self):
-        """流式模式 audio_setting.format 强制为 mp3"""
-        captured_payload = {}
+    async def test_large_audio_multi_chunk(self):
+        """大于 4096 字节的音频分多个 chunk yield"""
+        wav_data = b"\x01" * 5000  # 5000 bytes → 2 chunks (4096 + 904)
 
-        class MockStreamResp:
+        class MockResp:
             status_code = 200
 
             def raise_for_status(self):
                 pass
 
-            async def aiter_lines(self):
-                yield 'data: {"data":{"audio":"00ff"},"base_resp":{"status_code":0}}\n'
+            def json(self):
+                return {
+                    "data": {"audio": wav_data.hex()},
+                    "base_resp": {"status_code": 0, "status_msg": "success"},
+                }
 
-            async def __aenter__(self):
-                return self
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
 
-            async def __aexit__(self, *args):
-                pass
+        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend._client.post = fake_post  # type: ignore[assignment]
 
-        def fake_stream(method, url, *, json, **kw):
-            captured_payload.update(json)
-
-            class Ctx:
-                async def __aenter__(self):
-                    return MockStreamResp()
-
-                async def __aexit__(self, *args):
-                    pass
-
-            return Ctx()
-
-        backend = MiniMaxTTSBackend(api_key="sk-test", audio_format="wav")
-        backend._client.stream = fake_stream  # type: ignore[assignment]
-        async for _ in backend.synthesize_stream("test", character="x"):
-            pass
-        assert captured_payload["stream"] is True
-        assert captured_payload["audio_setting"]["format"] == "mp3"
+        chunks = []
+        async for chunk in backend.synthesize_stream("test", character="x"):
+            chunks.append(chunk)
+        assert len(chunks) == 2
+        assert chunks[0] == wav_data[:4096]
+        assert chunks[1] == wav_data[4096:]
+        assert b"".join(chunks) == wav_data
 
 
 class TestMiniMaxErrors:
@@ -706,31 +692,31 @@ class TestMiniMaxErrors:
 
 class TestMiniMaxCancel:
     @pytest.mark.asyncio
-    async def test_stream_early_break_cancels_task(self):
-        """consumer 提前停止迭代时 background task 被取消。"""
-        import asyncio
+    async def test_stream_early_break_stops_iteration(self):
+        """consumer 提前停止迭代 — 正常终止，无残留 task"""
+        wav_data = b"\x00" * 10000  # 多个 chunk
 
-        class MockStreamResp:
+        class MockResp:
             status_code = 200
 
             def raise_for_status(self):
                 pass
 
-            async def aiter_lines(self):
-                # 第一个 chunk 后永远等待（模拟被取消）
-                yield 'data: {"data":{"audio":"00ff"},"base_resp":{"status_code":0}}\n'
-                await asyncio.sleep(10)
+            def json(self):
+                return {
+                    "data": {"audio": wav_data.hex()},
+                    "base_resp": {"status_code": 0, "status_msg": "success"},
+                }
 
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
 
         backend = MiniMaxTTSBackend(api_key="sk-test")
-        backend._client.stream = lambda *a, **kw: MockStreamResp()  # type: ignore[assignment]
+        backend._client.post = fake_post  # type: ignore[assignment]
 
+        count = 0
         async for _ in backend.synthesize_stream("test", character="x"):
+            count += 1
             break  # 只取首个 chunk 即退出
-        # 不抛异常即为通过
+        assert count == 1
 
