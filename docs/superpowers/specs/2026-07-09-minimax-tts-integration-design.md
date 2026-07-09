@@ -118,9 +118,16 @@ base_url = resolve_base_url("MINIMAX_TTS_URL", cfg, kwargs.pop("base_url", None)
 
 | 原设计 | 变更 | 原因 |
 |--------|------|------|
-| SSE 流式解析 | `synthesize_stream()` 内部用非流式 wav + 分块 yield | MiniMax 流式仅 mp3，前端 `audio.js` 硬编码 `audio/wav` |
+| SSE 流式解析 | `synthesize_stream()` 内部用非流式 wav + 分块 yield（最终版本） | MiniMax 流式仅 mp3；SSE 每个 event 是独立可播 mp3（非增量片段），拼接导致重复；一度尝试 SSE 后回退 |
 | `speed/vol/pitch` 传 float | `int()` 强转 | MiniMax JSON 校验拒绝 `1.0`（number），要求 `1`（int64） |
 | `audio_setting` 无 `bitrate` | 新增 `bitrate: 128000` | MiniMax API 要求此字段 |
 | `voice_id` 默认空 | 默认 `"elysia_test_001"`，空值抛 `ValueError` | MiniMax 拒绝空 voice_id（`empty field`） |
 | `_BACKENDS["minimax"].env_key` 共用 | `MINIMAX_API_KEY`（api_key）+ `MINIMAX_TTS_URL`（base_url）独立 | 避免 API key 值被 `resolve_base_url` 当成 URL |
 | `resolve_base_url` 复用顶层值 | minimax 分支保存 `explicit_base_url` 独立传入 | 顶层用 `cfg["env_key"]=MINIMAX_API_KEY` 解析会污染 base_url |
+| 无语音映射配置 | 新增 `minimax_voices.yaml` + `_load_voice_map()` | 支持多音色；`character` → `voice_id` 映射 |
+| 无前端 format 元数据 | 音频管线透传 `format`（wav/mp3） | `audio.js` 根据 format 创建正确 MIME 的 Blob |
+| 无情绪参数对接 | `EmotionEngine` mood → `TTSStreamManager.set_emotion()` | MiniMax 支持 `voice_setting.emotion` |
+| Prompt 无 TTS 感知 | `f2_output_format.j2` 按 `tts_provider` 输出标记指令 | MiniMax：`(laughs)` `<#x#>`；GPT-SoVits：纯文本 |
+| `TTSStreamManager` 硬编码 `strip_all_markup` | 从 backend 获取 `get_preprocess()` | 解除 MiniMax 标签被误删 |
+| 前端显示 TTS 标签 | `<#x#>` 停顿标签过滤；`(中文舞台指示)` 过滤 | 停顿和舞台指示不显示；英文语气标签保留显示 |
+| `/api/providers` 缺 MiniMax | 注册表新增 `"minimax"` | 前端设置下拉可选 |
