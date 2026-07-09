@@ -8,9 +8,6 @@ import time
 import wave
 
 import httpx
-from dotenv import load_dotenv
-
-load_dotenv()
 
 from Module.llm import LLMFactory
 from Module.stt import STTFactory
@@ -27,12 +24,12 @@ class LatencyBench:
         self,
         *,
         audio_file: str = DEFAULT_AUDIO,
-        tts_url: str = "http://192.168.1.18:9880",
+        tts_url: str = "",
         stt_url: str = "",
     ):
         self.audio_file = audio_file
-        self.tts_url = tts_url
-        self.stt_url = stt_url or os.getenv("SENSEVOICE_API_URL", "http://localhost:20042")
+        self.tts_url = tts_url or os.getenv("TTS_API_URL", "http://localhost:9880")
+        self.stt_url = stt_url or os.getenv("STT_API_URL", "http://localhost:20042")
 
     # ---- helpers ----
 
@@ -68,7 +65,10 @@ class LatencyBench:
         await self.bench_llm("deepseek/deepseek-v4-pro", "V4 Pro")
         await self.bench_llm("deepseek/deepseek-v4-flash", "V4 Flash")
         await self.bench_tts()
+        await self.bench_tts_minimax()
+        await self.bench_tts_custom()
         await self.bench_stt()
+        await self.bench_stt_custom()
         await self.bench_e2e()
         print()
         print("全部测试完成!")
@@ -104,7 +104,8 @@ class LatencyBench:
             await agent.start()
             setup_ms = (time.perf_counter() - t_setup) * 1000
             print(f"  启动耗时: {int(setup_ms)} ms")
-            print(f"  记忆条目: {agent._long_term.count}")
+            mem_count = agent._long_term.count if hasattr(agent, "_long_term") and agent._long_term else "N/A"
+            print(f"  记忆条目: {mem_count}")
             print()
 
             messages = [
@@ -117,14 +118,15 @@ class LatencyBench:
                 t0 = time.perf_counter()
                 await agent.process_message(msg)
                 # 等离开 IDLE（处理已开始），再等回到 IDLE（处理完成）
-                for _ in range(500):
-                    if agent._fsm.state != "idle":
-                        break
-                    await asyncio.sleep(0.01)
-                for _ in range(5000):
-                    if agent._fsm.state == "idle":
-                        break
-                    await asyncio.sleep(0.01)
+                if hasattr(agent, "_fsm") and agent._fsm:
+                    for _ in range(500):
+                        if agent._fsm.state != "idle":
+                            break
+                        await asyncio.sleep(0.01)
+                    for _ in range(5000):
+                        if agent._fsm.state == "idle":
+                            break
+                        await asyncio.sleep(0.01)
                 total_ms = (time.perf_counter() - t0) * 1000
                 print(f"  {label}: {self._fmt(total_ms / 1000)}  "
                       f"({int(total_ms)} ms)  — \"{msg[:30]}...\"")
@@ -216,7 +218,7 @@ class LatencyBench:
         except Exception as e:
             msg = str(e).lower()
             if "timed out" in msg or "connect" in msg:
-                print(f"  [跳过] 无法连接 DeepSeek API，请检查网络或 DEEPSEEK_API_BASE")
+                print(f"  [跳过] 无法连接 DeepSeek API，请检查网络或 LLM base_url 配置")
             elif "unauthorized" in msg or "api key" in msg:
                 print(f"  [跳过] API Key 无效，请检查 .env 中的 DEEPSEEK_API_KEY")
             else:
@@ -226,28 +228,50 @@ class LatencyBench:
 
     # ---- TTS ----
 
-    async def bench_tts(self) -> None:
+    async def _bench_tts_provider(
+        self, provider_model: str, label: str, *,
+        env_key: str = "",
+        base_url: str = "",
+        character: str | None = "Elysia",
+        probe: bool = True,
+    ) -> None:
+        """通用 TTS 延迟测试。
+
+        Args:
+            probe: 是否在测试前 HTTP 探活。云端 API 应设为 False。
+        """
         print()
         print("=" * 50)
-        print("TTS (GPT-SoVits)")
+        print(f"TTS ({label})")
         print("=" * 50)
 
+        if env_key and not os.getenv(env_key):
+            print(f"  [跳过] 未设置 {env_key}")
+            return
+
+        # 云端 API 不需要本地 base_url，传空让 registry 用默认值
+        url = base_url or (self.tts_url if probe else "")
+
         try:
-            tts = TTSFactory.create("gpt-sovits/default", base_url=self.tts_url)
+            tts = TTSFactory.create(provider_model, base_url=url or None)
         except Exception as e:
             print(f"  [跳过] 创建 TTS 后端失败: {e}")
             return
 
-        if not await self._probe_http(self.tts_url, "GPT-SoVits"):
-            await tts.close()
-            return
+        if probe:
+            if not await self._probe_http(url, label):
+                await tts.close()
+                return
 
         text = "你好，今天天气真不错呢。"
 
         try:
             # Non-streaming
+            synth_kwargs: dict = {}
+            if character:
+                synth_kwargs["character"] = character
             t0 = time.perf_counter()
-            wav = await tts.synthesize(text, character="Elysia")
+            wav = await tts.synthesize(text, **synth_kwargs)
             elapsed = time.perf_counter() - t0
             audio_dur = len(wav) / self.TTS_BYTES_PER_SECOND
             print(f"  synthesize()        total={self._fmt(elapsed):>10}  "
@@ -257,7 +281,7 @@ class LatencyBench:
             t0 = time.perf_counter()
             ttfc = None
             chunks: list[bytes] = []
-            async for chunk in tts.synthesize_stream(text, character="Elysia"):
+            async for chunk in tts.synthesize_stream(text, **synth_kwargs):
                 if ttfc is None:
                     ttfc = time.perf_counter() - t0
                 chunks.append(chunk)
@@ -271,29 +295,71 @@ class LatencyBench:
         except Exception as e:
             msg = str(e).lower()
             if "timed out" in msg or "connect" in msg:
-                print(f"  [跳过] 无法连接 GPT-SoVits ({self.tts_url})，请确认 TTS 服务已启动")
+                print(f"  [跳过] 无法连接 {label} ({url})，请确认 TTS 服务已启动")
             else:
                 print(f"  [错误] {e}")
         finally:
             await tts.close()
 
+    async def bench_tts(self) -> None:
+        """TTS: GPT-SoVits。"""
+        await self._bench_tts_provider(
+            "gpt-sovits/default", "GPT-SoVits",
+            base_url=self.tts_url, character="Elysia",
+        )
+
+    async def bench_tts_minimax(self) -> None:
+        """TTS: MiniMax（云端 API，无需本地探活）。"""
+        await self._bench_tts_provider(
+            "minimax/speech-2.8-hd", "MiniMax",
+            env_key="MINIMAX_API_KEY",
+            character="Elysia",  # MiniMax 需要 character 映射 voice_id
+            probe=False,
+        )
+
+    async def bench_tts_custom(self) -> None:
+        """TTS: OpenAI 兼容 (custom)。"""
+        base_url = os.getenv("CUSTOM_TTS_BASE_URL", "")
+        await self._bench_tts_provider(
+            "custom/default", "Custom (OpenAI 兼容)",
+            env_key="CUSTOM_TTS_API_KEY", base_url=base_url, character=None,
+            probe=bool(base_url),
+        )
+
     # ---- STT ----
 
-    async def bench_stt(self) -> None:
+    async def _bench_stt_provider(
+        self, provider_model: str, label: str, *,
+        env_key: str = "",
+        base_url: str = "",
+        probe: bool = True,
+    ) -> None:
+        """通用 STT 延迟测试。
+
+        Args:
+            probe: 是否在测试前 HTTP 探活。云端 API 应设为 False。
+        """
         print()
         print("=" * 50)
-        print("STT (SenseVoice)")
+        print(f"STT ({label})")
         print("=" * 50)
 
+        if env_key and not os.getenv(env_key):
+            print(f"  [跳过] 未设置 {env_key}")
+            return
+
+        url = base_url or (self.stt_url if probe else "")
+
         try:
-            backend = STTFactory.create("sensevoice/sense-voice", base_url=self.stt_url)
+            backend = STTFactory.create(provider_model, base_url=url or None)
         except Exception as e:
             print(f"  [跳过] 创建 STT 后端失败: {e}")
             return
 
-        if not await self._probe_http(self.stt_url, "SenseVoice"):
-            await backend.close()
-            return
+        if probe:
+            if not await self._probe_http(url, label):
+                await backend.close()
+                return
 
         if not os.path.exists(self.audio_file):
             print(f"  [跳过] 测试音频不存在: {self.audio_file}")
@@ -331,8 +397,24 @@ class LatencyBench:
         except Exception as e:
             msg = str(e).lower()
             if "timed out" in msg or "connect" in msg:
-                print(f"  [跳过] 无法连接 SenseVoice ({self.stt_url})，请确认 STT 服务已启动")
+                print(f"  [跳过] 无法连接 {label} ({url})，请确认 STT 服务已启动")
             else:
                 print(f"  [错误] {e}")
         finally:
             await backend.close()
+
+    async def bench_stt(self) -> None:
+        """STT: SenseVoice。"""
+        await self._bench_stt_provider(
+            "sensevoice/sense-voice", "SenseVoice",
+            base_url=self.stt_url,
+        )
+
+    async def bench_stt_custom(self) -> None:
+        """STT: OpenAI 兼容 (custom)。"""
+        base_url = os.getenv("CUSTOM_STT_BASE_URL", "")
+        await self._bench_stt_provider(
+            "custom/default", "Custom (OpenAI 兼容)",
+            env_key="CUSTOM_STT_API_KEY", base_url=base_url,
+            probe=bool(base_url),
+        )

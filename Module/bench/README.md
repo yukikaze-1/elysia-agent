@@ -5,11 +5,11 @@
 ## 使用
 
 ```python
-from Module.bench.__main__ import LatencyBench
+from Module.bench import LatencyBench
 
 bench = LatencyBench(
-    tts_url="http://192.168.1.18:9880",
-    stt_url="http://localhost:20042",
+    tts_url="http://localhost:9880",     # 或设置环境变量 TTS_API_URL
+    stt_url="http://localhost:20042",    # 或设置环境变量 STT_API_URL
     audio_file="ref/Elysia/Elysia.wav",
 )
 await bench.run_all()
@@ -23,8 +23,8 @@ python -m Module.bench
 
 运行前会自动检测各服务可用性：
 - **LLM** — 检查 `DEEPSEEK_API_KEY` 是否配置，首条 API 调用是否成功
-- **TTS** — 检查 GPT-SoVits 服务是否可连接
-- **STT** — 检查 SenseVoice 服务是否可连接 + 测试音频文件是否存在
+- **TTS** — 依次测试 GPT-SoVits、MiniMax、Custom (OpenAI 兼容)，无对应 env var 时跳过
+- **STT** — 依次测试 SenseVoice、Custom (OpenAI 兼容)，无对应 env var 时跳过
 
 不可用的服务会打印 `[跳过]` 并给出修复建议（如 "请确认 TTS 服务已启动"）。
 

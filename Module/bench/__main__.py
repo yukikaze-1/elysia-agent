@@ -10,4 +10,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    run_module_main(main, load_env=False)
+    run_module_main(main)
