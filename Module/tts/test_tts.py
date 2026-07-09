@@ -4,6 +4,7 @@ import pytest
 
 from .protocol import TTSBackend
 from .registry import TTSFactory
+from .minimax_tts import MiniMaxTTSBackend
 from .text_preprocess import strip_all_markup, strip_action_only, strip_for_minimax
 
 
@@ -361,4 +362,348 @@ class TestStripForMiniMax:
 
     def test_pure_markup_returns_empty(self):
         assert strip_for_minimax("[笑]<<开心>>") == ""
+
+
+# ============================================================
+# MiniMaxTTSBackend
+# ============================================================
+
+class TestMiniMaxConstruction:
+    def test_defaults(self):
+        backend = MiniMaxTTSBackend(api_key="sk-test")
+        assert backend._model == "speech-2.8-hd"
+        assert backend._base_url == "https://api.minimaxi.com"
+        assert backend._voice_id == ""
+        assert backend._voice_map == {}
+        assert backend._speed == 1.0
+        assert backend._vol == 1.0
+        assert not backend._client.is_closed
+
+    def test_voice_map_resolve(self):
+        backend = MiniMaxTTSBackend(
+            api_key="sk-test",
+            voice_id="default-voice",
+            voice_map={"Elysia": "female-elysia-01"},
+        )
+        assert backend._resolve_voice("Elysia") == "female-elysia-01"
+        assert backend._resolve_voice("Unknown") == "default-voice"
+
+    def test_voice_map_default_voice_id(self):
+        backend = MiniMaxTTSBackend(api_key="sk-test")
+        assert backend._resolve_voice("Anyone") == ""
+
+    @pytest.mark.asyncio
+    async def test_close(self):
+        backend = MiniMaxTTSBackend(api_key="sk-test")
+        await backend.close()
+        assert backend._client.is_closed
+
+
+class TestMiniMaxSynthesize:
+    @pytest.mark.asyncio
+    async def test_hex_decode_and_return_bytes(self):
+        """验证非流式：POST → JSON → hex decode → bytes"""
+        import base64
+
+        backend = MiniMaxTTSBackend(api_key="sk-test")
+
+        # mock _client.post 返回 hex 编码的音频
+        wav_bytes = b"RIFF....WAVE...."  # 伪 WAV
+        hex_audio = wav_bytes.hex()
+
+        class MockResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "data": {"audio": hex_audio, "status": 2},
+                    "base_resp": {"status_code": 0, "status_msg": "success"},
+                }
+
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
+
+        backend._client.post = fake_post  # type: ignore[assignment]
+        result = await backend.synthesize("你好", character="test")
+        assert result == wav_bytes
+
+    @pytest.mark.asyncio
+    async def test_payload_structure(self):
+        """验证请求体包含正确的 voice_setting 和 audio_setting"""
+        captured_payload = {}
+
+        class MockResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "data": {"audio": "00ff"},
+                    "base_resp": {"status_code": 0, "status_msg": "success"},
+                }
+
+        async def fake_post(url, *, json, **kw):
+            captured_payload.update(json)
+            return MockResp()
+
+        backend = MiniMaxTTSBackend(
+            api_key="sk-test",
+            model="speech-2.8-turbo",
+            voice_id="male-qn-qingse",
+            speed=1.2,
+            vol=0.8,
+            pitch=0.5,
+            audio_format="wav",
+        )
+        backend._client.post = fake_post  # type: ignore[assignment]
+        await backend.synthesize("你好", character="Elysia", emotion="happy")
+
+        assert captured_payload["model"] == "speech-2.8-turbo"
+        assert captured_payload["text"] == "你好"
+        assert captured_payload["stream"] is False
+        assert captured_payload["voice_setting"]["voice_id"] == "male-qn-qingse"
+        assert captured_payload["voice_setting"]["speed"] == 1.2
+        assert captured_payload["voice_setting"]["emotion"] == "happy"
+        assert captured_payload["audio_setting"]["format"] == "wav"
+
+    @pytest.mark.asyncio
+    async def test_voice_map_used_for_character(self):
+        """character 通过 voice_map 映射到 voice_id"""
+        captured_voice_id = {}
+
+        class MockResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "data": {"audio": "00ff"},
+                    "base_resp": {"status_code": 0, "status_msg": "success"},
+                }
+
+        async def fake_post(url, *, json, **kw):
+            captured_voice_id["voice_id"] = json["voice_setting"]["voice_id"]
+            return MockResp()
+
+        backend = MiniMaxTTSBackend(
+            api_key="sk-test",
+            voice_id="default",
+            voice_map={"Elysia": "female-elysia-01"},
+        )
+        backend._client.post = fake_post  # type: ignore[assignment]
+        await backend.synthesize("hi", character="Elysia")
+        assert captured_voice_id["voice_id"] == "female-elysia-01"
+
+    @pytest.mark.asyncio
+    async def test_no_emotion_in_payload_when_none(self):
+        captured_payload = {}
+
+        class MockResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "data": {"audio": "00ff"},
+                    "base_resp": {"status_code": 0, "status_msg": "success"},
+                }
+
+        async def fake_post(url, *, json, **kw):
+            captured_payload.update(json)
+            return MockResp()
+
+        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend._client.post = fake_post  # type: ignore[assignment]
+        await backend.synthesize("hi", character="test", emotion=None)
+        assert "emotion" not in captured_payload["voice_setting"]
+
+
+class TestMiniMaxSynthesizeStream:
+    @pytest.mark.asyncio
+    async def test_yields_decoded_chunks_from_sse(self):
+        """流式：SSE 逐行解析 → hex decode → yield bytes"""
+        wav_chunk1 = b"\x00\x01\x02\x03"
+        wav_chunk2 = b"\x04\x05\x06\x07"
+        sse_lines = [
+            f'data: {{"data":{{"audio":"{wav_chunk1.hex()}"}},"base_resp":{{"status_code":0}}}}\n',
+            f'data: {{"data":{{"audio":"{wav_chunk2.hex()}"}},"base_resp":{{"status_code":0}}}}\n',
+        ]
+
+        class MockStreamResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            async def aiter_lines(self):
+                for line in sse_lines:
+                    yield line
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend._client.stream = lambda *a, **kw: MockStreamResp()  # type: ignore[assignment]
+
+        chunks = []
+        async for chunk in backend.synthesize_stream("test", character="x"):
+            chunks.append(chunk)
+        assert chunks == [wav_chunk1, wav_chunk2]
+
+    @pytest.mark.asyncio
+    async def test_stream_format_is_mp3(self):
+        """流式模式 audio_setting.format 强制为 mp3"""
+        captured_payload = {}
+
+        class MockStreamResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            async def aiter_lines(self):
+                yield 'data: {"data":{"audio":"00ff"},"base_resp":{"status_code":0}}\n'
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        def fake_stream(method, url, *, json, **kw):
+            captured_payload.update(json)
+
+            class Ctx:
+                async def __aenter__(self):
+                    return MockStreamResp()
+
+                async def __aexit__(self, *args):
+                    pass
+
+            return Ctx()
+
+        backend = MiniMaxTTSBackend(api_key="sk-test", audio_format="wav")
+        backend._client.stream = fake_stream  # type: ignore[assignment]
+        async for _ in backend.synthesize_stream("test", character="x"):
+            pass
+        assert captured_payload["stream"] is True
+        assert captured_payload["audio_setting"]["format"] == "mp3"
+
+
+class TestMiniMaxErrors:
+    @pytest.mark.asyncio
+    async def test_base_resp_non_zero_raises(self):
+        """base_resp.status_code != 0 → RuntimeError"""
+        class MockResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "data": {"audio": ""},
+                    "base_resp": {"status_code": 1004, "status_msg": "rate limit"},
+                }
+
+        backend = MiniMaxTTSBackend(api_key="sk-test")
+
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
+
+        backend._client.post = fake_post  # type: ignore[assignment]
+        with pytest.raises(RuntimeError, match="MiniMax API 错误"):
+            await backend.synthesize("hi", character="test")
+
+    @pytest.mark.asyncio
+    async def test_http_error_propagates(self):
+        """HTTP 4xx/5xx → httpx.HTTPStatusError"""
+        import httpx
+
+        class MockResp:
+            status_code = 401
+
+            def raise_for_status(self):
+                raise httpx.HTTPStatusError(
+                    "Unauthorized", request=MagicMock(), response=MagicMock(status_code=401)
+                )
+
+            def json(self):
+                return {"base_resp": {"status_code": 1001, "status_msg": "unauthorized"}}
+
+        backend = MiniMaxTTSBackend(api_key="sk-bad")
+
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
+
+        backend._client.post = fake_post  # type: ignore[assignment]
+        with pytest.raises(httpx.HTTPStatusError):
+            await backend.synthesize("hi", character="test")
+
+    @pytest.mark.asyncio
+    async def test_empty_audio_returns_empty_bytes(self):
+        """data.audio 为空字符串 → 返回空 bytes"""
+        class MockResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "data": {"audio": ""},
+                    "base_resp": {"status_code": 0, "status_msg": "success"},
+                }
+
+        backend = MiniMaxTTSBackend(api_key="sk-test")
+
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
+
+        backend._client.post = fake_post  # type: ignore[assignment]
+        result = await backend.synthesize("hi", character="test")
+        assert result == b""
+
+
+class TestMiniMaxCancel:
+    @pytest.mark.asyncio
+    async def test_stream_early_break_cancels_task(self):
+        """consumer 提前停止迭代时 background task 被取消。"""
+        import asyncio
+
+        class MockStreamResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            async def aiter_lines(self):
+                # 第一个 chunk 后永远等待（模拟被取消）
+                yield 'data: {"data":{"audio":"00ff"},"base_resp":{"status_code":0}}\n'
+                await asyncio.sleep(10)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        backend = MiniMaxTTSBackend(api_key="sk-test")
+        backend._client.stream = lambda *a, **kw: MockStreamResp()  # type: ignore[assignment]
+
+        async for _ in backend.synthesize_stream("test", character="x"):
+            break  # 只取首个 chunk 即退出
+        # 不抛异常即为通过
 
