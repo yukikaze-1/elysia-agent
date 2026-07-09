@@ -44,6 +44,13 @@ def is_emoji_only(text: str) -> bool:
 
 # MiniMax 等 TTS 引擎的内部控制标签，应该送到 TTS 但不显示在前端
 _PAUSE_TAG_RE = re.compile(r"<#\d+\.?\d*#>")
+# MiniMax 语气标签：送到 TTS 合成语气，但不显示在聊天界面
+_TONE_TAG_RE = re.compile(
+    r"\((?:laughs|sighs|crying|gasps|breath|humming|sniffs|sneezes|"
+    r"coughs|groans|pant|chuckle|clears?\s?throat|applause|inhale|exhale|"
+    r"snorts|burps|lip.?smacking|hissing|emm|whistles|sneezes)\)",
+    re.IGNORECASE,
+)
 
 
 # ---- TTSStreamManager -----------------------------------------------------
@@ -170,8 +177,9 @@ class TTSStreamManager:
         try:
             first_chunk = True
             t_tts = time.perf_counter()
-            # 去掉 TTS 内部控制标签（停顿），保留语气标签（对人也有意义）
-            display_text = _PAUSE_TAG_RE.sub("", sentence).strip()
+            # 去掉 TTS 内部标签（停顿 + 语气），不影响 TTS 合成
+            display_text = _PAUSE_TAG_RE.sub("", sentence)
+            display_text = _TONE_TAG_RE.sub("", display_text).strip()
             async for chunk in self._tts.synthesize_stream(
                 sentence, character=self._char_name, emotion=self._emotion,
             ):
