@@ -8,15 +8,18 @@ const CN_ACTION_RE = /[(（][^)）]*[一-鿿][^)）]*[)）]/;
 
 /** 处理历史消息文本：去停顿标签，句首舞台指示单独一行 */
 function formatHistoryText(text) {
-  let t = text.replace(PAUSE_TAG_RE, '');
-  const m = t.match(CN_ACTION_RE);
-  if (m && t.startsWith(m[0])) {
+  return text.replace(PAUSE_TAG_RE, '');
+}
+
+/** 如果文本以中文舞台指示开头，返回 {action, rest}，否则 null */
+function splitAction(text) {
+  const m = text.match(CN_ACTION_RE);
+  if (m && text.startsWith(m[0])) {
     const action = m[0];
-    const rest = t.slice(action.length).trim();
-    t = rest ? action + '\n' + rest : action;
-    console.log('formatHistoryText: split action', { action, rest, result: JSON.stringify(t) });
+    const rest = text.slice(action.length).trim();
+    return { action, rest: rest || '' };
   }
-  return t;
+  return null;
 }
 
 /* ---- 代码块 / Markdown 渲染辅助 ---- */
@@ -243,7 +246,16 @@ export function restoreChat() {
     } else {
       state.lastRole = 'assistant';
       const { row, textSpan } = createAssistantRow();
-      textSpan.textContent = typeof m.content === 'string' ? formatHistoryText(m.content) : '';
+      const formatted = typeof m.content === 'string' ? formatHistoryText(m.content) : '';
+      const split = splitAction(formatted);
+      if (split && split.rest) {
+        const { row: actionRow, textSpan: actionSpan } = createAssistantRow();
+        actionSpan.textContent = split.action;
+        chat.appendChild(actionRow);
+        textSpan.textContent = split.rest;
+      } else {
+        textSpan.textContent = formatted;
+      }
       chat.appendChild(row);
       state.messages.push({ role: 'assistant', content: m.content });
     }
@@ -346,10 +358,23 @@ export function restoreFromServer(messages) {
           state.messages.push({ role: 'assistant', content: p.content });
         } else {
           // 每个 text part 创建独立气泡（保持分句显示）
-          const { row, textSpan } = createAssistantRow();
-          textSpan.textContent = formatHistoryText(p.content);
-          chat.appendChild(row);
-          state.messages.push({ role: 'assistant', content: p.content });
+          const formatted = formatHistoryText(p.content);
+          const split = splitAction(formatted);
+          if (split && split.rest) {
+            // 舞台指示单独一行，对话另起一行
+            const { row: actionRow, textSpan: actionSpan } = createAssistantRow();
+            actionSpan.textContent = split.action;
+            chat.appendChild(actionRow);
+            const { row, textSpan } = createAssistantRow();
+            textSpan.textContent = split.rest;
+            chat.appendChild(row);
+            state.messages.push({ role: 'assistant', content: p.content });
+          } else {
+            const { row, textSpan } = createAssistantRow();
+            textSpan.textContent = formatted;
+            chat.appendChild(row);
+            state.messages.push({ role: 'assistant', content: p.content });
+          }
         }
       }
       // 如果该消息附带了 token_usage，渲染 token 标签
