@@ -4,7 +4,7 @@ import pytest
 
 from .protocol import TTSBackend
 from .registry import TTSFactory
-from .text_preprocess import strip_all_markup, strip_action_only
+from .text_preprocess import strip_all_markup, strip_action_only, strip_for_minimax
 
 
 # ============================================================
@@ -313,4 +313,52 @@ class TestGPTSoVitsCancel:
         async for _ in backend.synthesize_stream("hi", character="Elysia"):
             break  # 只取第一个 chunk 就退出
         # 每次请求独立 client，无共享 client 需关闭
+
+
+# ============================================================
+# strip_for_minimax
+# ============================================================
+
+class TestStripForMiniMax:
+    def test_removes_brackets_and_double_angle(self):
+        text = "你好，[微笑] 今天<<开心>>呢"
+        result = strip_for_minimax(text)
+        assert result == "你好， 今天呢"
+
+    def test_keeps_parens_tone_tags(self):
+        text = "今天是不是很开心呀(laughs)，当然了！"
+        result = strip_for_minimax(text)
+        assert result == "今天是不是很开心呀(laughs)，当然了！"
+
+    def test_keeps_angle_pause_control(self):
+        text = "你好<#0.5#>世界"
+        result = strip_for_minimax(text)
+        assert result == "你好<#0.5#>世界"
+
+    def test_keeps_fullwidth_parens(self):
+        text = "嗯（语气轻柔地）好的"
+        result = strip_for_minimax(text)
+        assert result == "嗯（语气轻柔地）好的"
+
+    def test_keeps_pinyin_annotation(self):
+        text = "处理(chu3li3)完成"
+        result = strip_for_minimax(text)
+        assert result == "处理(chu3li3)完成"
+
+    def test_removes_emoji(self):
+        text = "hello 😀 world 🎉"
+        result = strip_for_minimax(text)
+        assert "😀" not in result
+        assert "🎉" not in result
+        assert "hello" in result
+        assert "world" in result
+
+    def test_no_markup_passthrough(self):
+        assert strip_for_minimax("今天天气真好") == "今天天气真好"
+
+    def test_empty_string(self):
+        assert strip_for_minimax("") == ""
+
+    def test_pure_markup_returns_empty(self):
+        assert strip_for_minimax("[笑]<<开心>>") == ""
 

@@ -29,3 +29,17 @@ def strip_action_only(text: str) -> str:
     text = _EMOJI_RE.sub("", text)              # emoji
     # 保留 <语气词> <<心情>>
     return text.strip()
+
+
+def strip_for_minimax(text: str) -> str:
+    """为 MiniMax TTS 预处理文本。
+
+    保留 MiniMax 原生支持的标记：()（语气词、发音标注）、<>（停顿控制 <#x#>）。
+    删除 MiniMax 不支持的标记：[]（动作描写）、<<>>（心情描写）、emoji。
+
+    注意：不引入 strip_all_markup 中的 <.*?> 正则（会误删 <#x#> 停顿标签）。
+    """
+    text = re.sub(r"\[.*?\]", "", text)         # [动作描写]
+    text = re.sub(r"\<\<.*?\>\>", "", text)     # <<心情描写>>
+    text = _EMOJI_RE.sub("", text)              # emoji
+    return text.strip()
