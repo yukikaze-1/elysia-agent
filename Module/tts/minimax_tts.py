@@ -137,7 +137,7 @@ class MiniMaxTTSBackend(TTSBackend):
 
     @property
     def stream_format(self) -> str:
-        return "mp3"  # MiniMax 流式仅输出 mp3
+        return "wav"
 
     def get_preprocess(self):
         return self._preprocess
