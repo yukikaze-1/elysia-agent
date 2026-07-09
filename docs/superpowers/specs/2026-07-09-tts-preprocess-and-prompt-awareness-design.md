@@ -127,4 +127,18 @@ TTS 未连接时 `CognitiveLoop._tts` 为 `None`，`tts_provider` 传空字符�
 1. `python -m pytest Module/tts/ -v` 全部通过
 2. `python -m pytest Module/prompt/ -v` 全部通过
 3. `python -m pytest core/ -v -k "tts or prompt"` 相关测试通过
+
+## 7. 实施补充：显示层标签过滤
+
+实施时新增前端显示过滤逻辑（spec 原设计仅覆盖 TTS 层）：
+
+| 标签类型 | 示例 | TTS 行为 | 显示行为 |
+|---------|------|---------|---------|
+| 停顿控制 | `<#0.5#>` `<#1#>` | 送 TTS（MiniMax 原生） | 隐藏 |
+| 英文语气 | `(laughs)` `(sighs)` | 送 TTS（MiniMax 原生） | 显示 |
+| 中文舞台指示 | `(清了清嗓子)` `(愣了两秒)` | 不送 TTS | 单独一行/气泡 |
+
+- `core/tts_stream.py`: `_PAUSE_TAG_RE`（隐藏）、`_CN_ACTION_RE`（TTS 剥离 + 显示分行）
+- `static/js/persistence.js`: 历史消息渲染时同样过滤 + 分行
+- 英文语气标签（MiniMax 原生支持 22 种）保留在 TTS 和显示中
 4. 启动 Agent，MiniMax 模式下 LLM 输出应包含 `(laughs)` 等标记，且不被 TTSStreamManager 删除

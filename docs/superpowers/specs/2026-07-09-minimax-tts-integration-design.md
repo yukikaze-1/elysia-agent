@@ -129,5 +129,6 @@ base_url = resolve_base_url("MINIMAX_TTS_URL", cfg, kwargs.pop("base_url", None)
 | 无情绪参数对接 | `EmotionEngine` mood → `TTSStreamManager.set_emotion()` | MiniMax 支持 `voice_setting.emotion` |
 | Prompt 无 TTS 感知 | `f2_output_format.j2` 按 `tts_provider` 输出标记指令 | MiniMax：`(laughs)` `<#x#>`；GPT-SoVits：纯文本 |
 | `TTSStreamManager` 硬编码 `strip_all_markup` | 从 backend 获取 `get_preprocess()` | 解除 MiniMax 标签被误删 |
-| 前端显示 TTS 标签 | `<#x#>` 停顿标签过滤；`(中文舞台指示)` 过滤 | 停顿和舞台指示不显示；英文语气标签保留显示 |
+| 前端显示 TTS 标签 | `<#x#>` 停顿标签过滤；`(中文舞台指示)` 单独一行 | 停顿隐藏；舞台指示和对话分两行展示 |
 | `/api/providers` 缺 MiniMax | 注册表新增 `"minimax"` | 前端设置下拉可选 |
+| 历史消息含 TTS 标签 | `persistence.js` 渲染时过滤 `<#x#>` + 中文舞台指示独立气泡 | 重启后历史不污染 |
