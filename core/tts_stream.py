@@ -42,15 +42,17 @@ def is_emoji_only(text: str) -> bool:
     return not _EMOJI_RE.sub("", text).strip()
 
 
-# MiniMax 等 TTS 引擎的内部控制标签，应该送到 TTS 但不显示在前端
+# MiniMax 等 TTS 引擎的内部控制标签，送到 TTS 但不显示在前端
 _PAUSE_TAG_RE = re.compile(r"<#\d+\.?\d*#>")
-# MiniMax 语气标签：送到 TTS 合成语气，但不显示在聊天界面
+# MiniMax 英文语气标签：送到 TTS 合成语气
 _TONE_TAG_RE = re.compile(
     r"\((?:laughs|sighs|crying|gasps|breath|humming|sniffs|sneezes|"
     r"coughs|groans|pant|chuckle|clears?\s?throat|applause|inhale|exhale|"
     r"snorts|burps|lip.?smacking|hissing|emm|whistles|sneezes)\)",
     re.IGNORECASE,
 )
+# 中文括号舞台指示（如 (清了清嗓子)、（眨了眨眼））：显示但 TTS 不合成
+_CN_ACTION_RE = re.compile(r"[\(\（][^\)\）]*[一-鿿][^\)\）]*[\)\）]")
 
 
 # ---- TTSStreamManager -----------------------------------------------------
@@ -177,11 +179,13 @@ class TTSStreamManager:
         try:
             first_chunk = True
             t_tts = time.perf_counter()
-            # 去掉 TTS 内部标签（停顿 + 语气），不影响 TTS 合成
-            display_text = _PAUSE_TAG_RE.sub("", sentence)
-            display_text = _TONE_TAG_RE.sub("", display_text).strip()
+            # 显示文本：只去掉停顿标签，保留舞台指示和语气标签
+            display_text = _PAUSE_TAG_RE.sub("", sentence).strip()
+            # TTS 文本：去掉停顿标签和中文舞台指示（英文语气标签保留，MiniMax 原生支持）
+            tts_text = _PAUSE_TAG_RE.sub("", sentence)
+            tts_text = _CN_ACTION_RE.sub("", tts_text).strip()
             async for chunk in self._tts.synthesize_stream(
-                sentence, character=self._char_name, emotion=self._emotion,
+                tts_text, character=self._char_name, emotion=self._emotion,
             ):
                 if first_chunk:
                     first_chunk = False
