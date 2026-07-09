@@ -15,7 +15,7 @@
 ## 功能改进
 
 - **poignancy 时间衰减**: rerank 含时效衰减但 poignancy 本身不变，长期不访问的记忆应逐渐降级
-- **MiniMax SSE 真流式**: 当前 `synthesize_stream()` 是假流式（等完整 wav 再分块）。MiniMax SSE 流式仅输出 mp3，前端 `audio.js` 硬编码 `audio/wav`。方案：前端支持 `audio/mpeg` MIME 或后端实时转码
+- **MiniMax SSE 真流式**: 已尝试并回退 (2026-07-10)。MiniMax SSE 每个 event 是独立可播 mp3（非增量片段），拼接导致重复，只取最后 event 又等于同步下载。待 MiniMax API 支持增量 SSE 或换方案（WebSocket）
 - **MiniMax 异步长文本合成**: `t2a_async_v2`，适合 >3000 chars。需创建任务 → 轮询状态 → 下载文件
 - **MiniMax emotion 参数**: ✅ 已实现 (2026-07-09): `EmotionEngine` mood → `TTSStreamManager.set_emotion()` → `synthesize_stream(emotion=...)`
 - **记忆去重**: insert 时检查相似内容，避免重复条目（延后）
