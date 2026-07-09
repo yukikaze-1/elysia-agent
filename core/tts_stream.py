@@ -179,8 +179,14 @@ class TTSStreamManager:
         try:
             first_chunk = True
             t_tts = time.perf_counter()
-            # 显示文本：只去掉停顿标签，保留舞台指示和语气标签
+            # 显示文本：去掉停顿标签
             display_text = _PAUSE_TAG_RE.sub("", sentence).strip()
+            # 提取句首中文舞台指示，单独一行显示
+            action_text = ""
+            m = _CN_ACTION_RE.match(display_text)
+            if m:
+                action_text = m.group()
+                display_text = display_text[m.end():].strip()
             # TTS 文本：去掉停顿标签和中文舞台指示（英文语气标签保留，MiniMax 原生支持）
             tts_text = _PAUSE_TAG_RE.sub("", sentence)
             tts_text = _CN_ACTION_RE.sub("", tts_text).strip()
@@ -196,6 +202,14 @@ class TTSStreamManager:
                     for e in self._pending_emojis.pop(sid - 1, []):
                         await self._output._broadcast(
                             "on_text_delta", e,
+                            capability=ChannelCapability.TEXT_DELTA,
+                            stream_id=sid,
+                        )
+                        await self._output.send("")
+                    # 句首舞台指示单独一行
+                    if action_text:
+                        await self._output._broadcast(
+                            "on_text_delta", action_text,
                             capability=ChannelCapability.TEXT_DELTA,
                             stream_id=sid,
                         )
