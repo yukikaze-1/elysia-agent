@@ -1,6 +1,6 @@
 # MiniMax TTS 云端接入设计
 
-> 日期：2026-07-09 | 状态：待审批
+> 日期：2026-07-09 | 状态：已实现
 
 ## 1. 背景
 
@@ -104,10 +104,23 @@ base_url = resolve_base_url("MINIMAX_TTS_URL", cfg, kwargs.pop("base_url", None)
 
 - 单元测试（mock HTTP）：构造、非流式、流式、错误处理、取消
 - 不依赖真实 MiniMax API
-- `python -m pytest Module/tts/test_tts.py -v -k "MiniMax"`
+- `python -m pytest Module/tts/test_tts.py -v -k "MiniMax"` — 26 tests
 
 ## 6. 验证
 
-1. 单元测试全绿
+1. 单元测试全绿（61/61）
 2. 冒烟测试：设置 `MINIMAX_API_KEY` 环境变量后，`TTSFactory.create("minimax/speech-2.8-hd").test()` 返回 `{"ok": true}`
-3. 在调用方用 `synthesize("你好，今天天气真好(sighs)")` 验证语气标签生效
+3. 在调用方用 `synthesize("你好(sighs)")` 验证语气标签生效
+
+## 7. 实施变更记录
+
+以下设计在实现时根据 MiniMax API 实际行为调整：
+
+| 原设计 | 变更 | 原因 |
+|--------|------|------|
+| SSE 流式解析 | `synthesize_stream()` 内部用非流式 wav + 分块 yield | MiniMax 流式仅 mp3，前端 `audio.js` 硬编码 `audio/wav` |
+| `speed/vol/pitch` 传 float | `int()` 强转 | MiniMax JSON 校验拒绝 `1.0`（number），要求 `1`（int64） |
+| `audio_setting` 无 `bitrate` | 新增 `bitrate: 128000` | MiniMax API 要求此字段 |
+| `voice_id` 默认空 | 默认 `"elysia_test_001"`，空值抛 `ValueError` | MiniMax 拒绝空 voice_id（`empty field`） |
+| `_BACKENDS["minimax"].env_key` 共用 | `MINIMAX_API_KEY`（api_key）+ `MINIMAX_TTS_URL`（base_url）独立 | 避免 API key 值被 `resolve_base_url` 当成 URL |
+| `resolve_base_url` 复用顶层值 | minimax 分支保存 `explicit_base_url` 独立传入 | 顶层用 `cfg["env_key"]=MINIMAX_API_KEY` 解析会污染 base_url |
