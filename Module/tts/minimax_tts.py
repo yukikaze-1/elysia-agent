@@ -48,9 +48,9 @@ class MiniMaxTTSBackend(TTSBackend):
         voices_config: str = "",
         voice_id: str = "elysia_test_001",
         voice_map: dict[str, str] | None = None,
-        speed: float = 1,         # MiniMax API 仅接受整数值
-        vol: float = 1,
-        pitch: float = 0,
+        speed: int = 1,           # MiniMax API 仅接受整数值
+        vol: int = 1,
+        pitch: int = 0,
         sample_rate: int = 32000,
         audio_format: str = "wav",
         logger: logging.Logger | None = None,
@@ -105,7 +105,7 @@ class MiniMaxTTSBackend(TTSBackend):
             resp.raise_for_status()
             data = resp.json()
             self._check_base_resp(data)
-            audio_hex = data.get("data", {}).get("audio", "")
+            audio_hex = (data.get("data") or {}).get("audio", "")
             return bytes.fromhex(audio_hex)
         except httpx.RequestError as e:
             self._logger.debug(
@@ -118,11 +118,10 @@ class MiniMaxTTSBackend(TTSBackend):
     async def synthesize_stream(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> AsyncIterator[bytes]:
-        """流式合成 — 内部使用非流式 wav（MiniMax 流式仅支持 mp3，前端期望 wav）。
+        """流式合成 — 委托给 synthesize()，下载完整 wav 后分块 yield。
 
-        注意：并非真正的流式——等待完整音频下载完毕后才开始分块 yield。
-        首个 chunk 的延迟与 synthesize() 相同（取决于完整音频下载时间）。
-        保持 AsyncGenerator 接口纯粹是为了兼容 TTSStreamManager。
+        MiniMax 流式 API 仅输出 mp3，前端期望 wav，故先下载完整音频再分块。
+        注意：并非真正的流式——首个 chunk 延迟与 synthesize() 相同。
         """
         # 复用 synthesize() 的非流式 wav 逻辑
         audio = await self.synthesize(text, character=character, emotion=emotion)
@@ -165,10 +164,9 @@ class MiniMaxTTSBackend(TTSBackend):
             "stream": stream,
             "voice_setting": {
                 "voice_id": voice_id,
-                # MiniMax JSON 校验拒绝浮点数（1.0），只接受整数（1）
-                "speed": int(self._speed),
-                "vol": int(self._vol),
-                "pitch": int(self._pitch),
+                "speed": self._speed,
+                "vol": self._vol,
+                "pitch": self._pitch,
             },
             "audio_setting": {
                 "sample_rate": self._sample_rate,
@@ -184,7 +182,9 @@ class MiniMaxTTSBackend(TTSBackend):
     @staticmethod
     def _check_base_resp(data: dict) -> None:
         """检查 base_resp.status_code，非 0 抛 RuntimeError。"""
-        base_resp = data.get("base_resp", {})
+        base_resp = data.get("base_resp")
+        if base_resp is None:
+            raise RuntimeError("MiniMax API 响应缺少 base_resp 字段")
         if base_resp.get("status_code", 0) != 0:
             raise RuntimeError(
                 f"MiniMax API 错误: status_code={base_resp.get('status_code')}, "

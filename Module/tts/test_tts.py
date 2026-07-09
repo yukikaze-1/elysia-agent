@@ -836,3 +836,79 @@ class TestTTSBackendProviderName:
         backend = OpenAICompatTTSBackend(base_url="http://fake:8000")
         assert backend.get_preprocess() is strip_all_markup
 
+
+# ============================================================
+# OpenAICompatTTSBackend 合成测试
+# ============================================================
+
+class TestOpenAISynthesize:
+	@pytest.mark.asyncio
+	async def test_synthesize_collects_stream_chunks(self):
+		"""非流式：调 synthesize_stream 收集所有 chunk"""
+		from .openai_tts import OpenAICompatTTSBackend
+		fake_chunks = [b"chunk1", b"chunk2", b"chunk3"]
+
+		class MockStreamBody:
+			async def iter_bytes(self, chunk_size=4096):
+				for c in fake_chunks:
+					yield c
+			async def __aenter__(self): return self
+			async def __aexit__(self, *args): pass
+
+		class MockSpeech:
+			def __init__(self): self.with_streaming_response = self
+			def create(self, **kwargs): return MockStreamBody()
+
+		backend = OpenAICompatTTSBackend(base_url="http://fake:8000")
+		backend._client.audio.speech = MockSpeech()  # type: ignore[attr-defined]
+
+		result = await backend.synthesize("hello", character="nova")
+		assert result == b"chunk1chunk2chunk3"
+
+	@pytest.mark.asyncio
+	async def test_synthesize_stream_yields_chunks(self):
+		"""流式：逐 chunk yield"""
+		from .openai_tts import OpenAICompatTTSBackend
+		fake_chunks = [b"a", b"b", b"c"]
+
+		class MockStreamBody:
+			async def iter_bytes(self, chunk_size=4096):
+				for c in fake_chunks:
+					yield c
+			async def __aenter__(self): return self
+			async def __aexit__(self, *args): pass
+
+		class MockSpeech:
+			def __init__(self): self.with_streaming_response = self
+			def create(self, **kwargs): return MockStreamBody()
+
+		backend = OpenAICompatTTSBackend(base_url="http://fake:8000")
+		backend._client.audio.speech = MockSpeech()  # type: ignore[attr-defined]
+
+		chunks = []
+		async for c in backend.synthesize_stream("hi", character="nova"):
+			chunks.append(c)
+		assert chunks == [b"a", b"b", b"c"]
+
+	@pytest.mark.asyncio
+	async def test_preprocess_applied(self):
+		"""文本预处理在合成前调用"""
+		from .openai_tts import OpenAICompatTTSBackend
+		captured = []
+
+		class MockStreamBody:
+			async def iter_bytes(self, chunk_size=4096): yield b"ok"
+			async def __aenter__(self): return self
+			async def __aexit__(self, *args): pass
+
+		class MockSpeech:
+			def __init__(self): self.with_streaming_response = self
+			def create(self, *, model, voice, input, response_format, **kw):
+				captured.append(input)
+				return MockStreamBody()
+
+		backend = OpenAICompatTTSBackend(base_url="http://fake:8000")
+		backend._client.audio.speech = MockSpeech()  # type: ignore[attr-defined]
+
+		await backend.synthesize("(action)hello", character="nova")
+		assert captured[0] == "hello"  # strip_all_markup 会去掉 (action)

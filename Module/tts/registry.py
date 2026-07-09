@@ -1,6 +1,5 @@
 """TTS 后端注册表 + 工厂。按 provider/model 标识创建后端实例。"""
 
-import dataclasses
 from typing import TYPE_CHECKING
 
 from pathlib import Path
