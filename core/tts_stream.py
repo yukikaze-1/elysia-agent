@@ -42,6 +42,10 @@ def is_emoji_only(text: str) -> bool:
     return not _EMOJI_RE.sub("", text).strip()
 
 
+# MiniMax 等 TTS 引擎的内部控制标签，应该送到 TTS 但不显示在前端
+_PAUSE_TAG_RE = re.compile(r"<#\d+\.?\d*#>")
+
+
 # ---- TTSStreamManager -----------------------------------------------------
 
 class TTSStreamManager:
@@ -160,6 +164,8 @@ class TTSStreamManager:
         try:
             first_chunk = True
             t_tts = time.perf_counter()
+            # 去掉 TTS 内部控制标签（停顿），保留语气标签（对人也有意义）
+            display_text = _PAUSE_TAG_RE.sub("", sentence).strip()
             async for chunk in self._tts.synthesize_stream(
                 sentence, character=self._char_name,
             ):
@@ -176,9 +182,9 @@ class TTSStreamManager:
                             stream_id=sid,
                         )
                         await self._output.send("")
-                    # 发本句文字
+                    # 发本句文字（去掉 TTS 内部控制标签）
                     await self._output._broadcast(
-                        "on_text_delta", sentence,
+                        "on_text_delta", display_text,
                         capability=ChannelCapability.TEXT_DELTA,
                         stream_id=sid,
                     )
@@ -207,7 +213,7 @@ class TTSStreamManager:
             if first_chunk:
                 try:
                     await self._output._broadcast(
-                        "on_text_delta", sentence,
+                        "on_text_delta", display_text,
                         capability=ChannelCapability.TEXT_DELTA,
                         stream_id=sid,
                     )
