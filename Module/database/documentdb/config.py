@@ -3,12 +3,15 @@
 from dataclasses import dataclass
 
 from Module.config import ConfigField
+from Module.config.providers import load_provider_defaults
+
+_db = load_provider_defaults("database")
 
 
 @dataclass
 class DocumentDBConfig:
     base_url: str = ConfigField(
-        default="mongodb://localhost:27017",
+        default=_db.get("mongodb", {}).get("base_url", "mongodb://localhost:27017"),
         env="MONGODB_URI",
         help="MongoDB 连接串",
     )

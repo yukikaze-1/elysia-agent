@@ -4,32 +4,15 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
+from Module.config.providers import load_provider_defaults
 from .sensevoice import SenseVoiceBackend
 
 if TYPE_CHECKING:
     from .config import STTConfig
     from .protocol import STTBackend
 
-# 注意：TTS/STT 使用 {MODULE}_API_URL 环境变量命名格式，
-# LLM 使用 {MODULE}_API_BASE 格式。后续应统一。
-_BACKENDS: dict[str, dict] = {
-    "sensevoice": {
-        "base_url": "http://localhost:20042",
-        "env_key": "",
-    },
-    "openai": {
-        "base_url": "https://api.openai.com/v1",
-        "env_key": "OPENAI_API_KEY",
-    },
-    "deepgram": {
-        "base_url": "https://api.deepgram.com/v1",
-        "env_key": "DEEPGRAM_API_KEY",
-    },
-    "custom": {
-        "base_url": "",
-        "env_key": "CUSTOM_STT_API_KEY",
-    },
-}
+# provider 默认值统一由 Module/config/providers.yaml 管理
+_BACKENDS: dict[str, dict] = load_provider_defaults("stt")
 
 
 class STTFactory:

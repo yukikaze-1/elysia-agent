@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
+from Module.config.providers import load_provider_defaults
 from .gpt_sovits import GPTSoVitsBackend
 
 
@@ -23,22 +24,8 @@ if TYPE_CHECKING:
     from .config import TTSConfig
     from .protocol import TTSBackend
 
-# 注意：TTS/STT 使用 {MODULE}_API_URL 环境变量命名格式，
-# LLM 使用 {MODULE}_API_BASE 格式。后续应统一。
-_BACKENDS: dict[str, dict] = {
-    "gpt-sovits": {
-        "base_url": "http://localhost:9880",
-        "env_key": "GPT_SOVITS_URL",
-    },
-    "custom": {
-        "base_url": "",
-        "env_key": "CUSTOM_TTS_API_KEY",
-    },
-    "minimax": {
-        "base_url": "https://api.minimaxi.com",
-        "env_key": "MINIMAX_API_KEY",
-    },
-}
+# provider 默认值统一由 Module/config/providers.yaml 管理
+_BACKENDS: dict[str, dict] = load_provider_defaults("tts")
 
 
 class TTSFactory:

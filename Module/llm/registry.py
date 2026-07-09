@@ -4,54 +4,15 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
+from Module.config.providers import load_provider_defaults
 from .openai_compat import OpenAICompatBackend
 
 if TYPE_CHECKING:
     from .config import LLMConfig
     from .protocol import LLMBackend
 
-# 注意：TTS/STT 使用 {MODULE}_API_URL 环境变量命名格式，
-# LLM 使用 {MODULE}_API_BASE 格式。后续应统一。
-_BACKENDS: dict[str, dict] = {
-    "deepseek": {
-        "base_url": "https://api.deepseek.com",
-        "beta_url": "https://api.deepseek.com/beta",
-        "env_key": "DEEPSEEK_API_KEY",
-        "supports_prefix": True,
-        "supports_multimodal": False,
-    },
-    "openai": {
-        "base_url": "https://api.openai.com/v1",
-        "env_key": "OPENAI_API_KEY",
-        "supports_prefix": False,
-        "supports_multimodal": False,
-    },
-    "ollama": {
-        "base_url": "http://localhost:11434/v1",
-        "env_key": "",
-        "supports_prefix": False,
-        "supports_multimodal": False,
-    },
-    "gemini": {
-        # placeholder — not yet implemented
-        "base_url": "",
-        "env_key": "GEMINI_API_KEY",
-        "supports_prefix": False,
-        "supports_multimodal": False,
-    },
-    "mimo": {
-        "base_url": "https://api.xiaomimimo.com/v1",
-        "env_key": "MIMO_API_KEY",
-        "supports_prefix": False,
-        "supports_multimodal": True,
-    },
-    "custom": {
-        "base_url": "",
-        "env_key": "CUSTOM_LLM_API_KEY",
-        "supports_prefix": False,
-        "supports_multimodal": False,
-    },
-}
+# provider 默认值统一由 Module/config/providers.yaml 管理
+_BACKENDS: dict[str, dict] = load_provider_defaults("llm")
 
 
 class LLMFactory:

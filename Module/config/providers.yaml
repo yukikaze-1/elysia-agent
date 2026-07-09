@@ -1,0 +1,75 @@
+# 所有后端 provider 的默认配置
+# 优先级: env var > YAML (config.yaml) > 此文件默认值
+# 用户可通过 .env 或 config.yaml 覆盖，无需修改代码
+
+llm:
+  deepseek:
+    base_url: "https://api.deepseek.com"
+    beta_url: "https://api.deepseek.com/beta"
+    env_key: "DEEPSEEK_API_KEY"
+    supports_prefix: true
+    supports_multimodal: false
+  openai:
+    base_url: "https://api.openai.com/v1"
+    env_key: "OPENAI_API_KEY"
+    supports_prefix: false
+    supports_multimodal: false
+  ollama:
+    base_url: "http://localhost:11434/v1"
+    env_key: ""
+    supports_prefix: false
+    supports_multimodal: false
+  gemini:
+    base_url: ""
+    env_key: "GEMINI_API_KEY"
+    supports_prefix: false
+    supports_multimodal: false
+  mimo:
+    base_url: "https://api.xiaomimimo.com/v1"
+    env_key: "MIMO_API_KEY"
+    supports_prefix: false
+    supports_multimodal: true
+  custom:
+    base_url: ""
+    env_key: "CUSTOM_LLM_API_KEY"
+    supports_prefix: false
+    supports_multimodal: false
+
+tts:
+  gpt-sovits:
+    base_url: "http://localhost:9880"
+    env_key: "GPT_SOVITS_URL"
+  custom:
+    base_url: ""
+    env_key: "CUSTOM_TTS_API_KEY"
+  minimax:
+    base_url: "https://api.minimaxi.com"
+    env_key: "MINIMAX_API_KEY"
+
+stt:
+  sensevoice:
+    base_url: "http://localhost:20042"
+    env_key: ""
+  openai:
+    base_url: "https://api.openai.com/v1"
+    env_key: "OPENAI_API_KEY"
+  deepgram:
+    base_url: "https://api.deepgram.com/v1"
+    env_key: "DEEPGRAM_API_KEY"
+  custom:
+    base_url: ""
+    env_key: "CUSTOM_STT_API_KEY"
+
+embedding:
+  huggingface:
+    base_url: ""
+    env_key: ""
+  openai:
+    base_url: "https://api.openai.com/v1"
+    env_key: "OPENAI_API_KEY"
+
+database:
+  milvus:
+    base_url: "http://localhost:19530"
+  mongodb:
+    base_url: "mongodb://localhost:27017"

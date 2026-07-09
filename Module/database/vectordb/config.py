@@ -3,12 +3,15 @@
 from dataclasses import dataclass
 
 from Module.config import ConfigField
+from Module.config.providers import load_provider_defaults
+
+_db = load_provider_defaults("database")
 
 
 @dataclass
 class VectorDBConfig:
     base_url: str = ConfigField(
-        default="http://localhost:19530",
+        default=_db.get("milvus", {}).get("base_url", "http://localhost:19530"),
         env="MILVUS_URI",
         help="Milvus 服务端点",
     )

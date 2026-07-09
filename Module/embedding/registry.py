@@ -4,6 +4,7 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
+from Module.config.providers import load_provider_defaults
 from .huggingface import HuggingFaceBackend
 from .openai_compat import OpenAICompatEmbeddingBackend
 
@@ -11,16 +12,8 @@ if TYPE_CHECKING:
     from .config import EmbeddingConfig
     from .protocol import EmbeddingBackend
 
-_BACKENDS: dict[str, dict] = {
-    "huggingface": {
-        "base_url": "",
-        "env_key": "",
-    },
-    "openai": {
-        "base_url": "https://api.openai.com/v1",
-        "env_key": "OPENAI_API_KEY",
-    },
-}
+# provider 默认值统一由 Module/config/providers.yaml 管理
+_BACKENDS: dict[str, dict] = load_provider_defaults("embedding")
 
 
 class EmbeddingFactory:
