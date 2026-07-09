@@ -436,7 +436,10 @@ class TestMiniMaxSynthesize:
                     "base_resp": {"status_code": 0, "status_msg": "success"},
                 }
 
-        backend._client.post = lambda *a, **kw: MockResp()  # type: ignore[assignment]
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
+
+        backend._client.post = fake_post  # type: ignore[assignment]
         result = await backend.synthesize("你好", character="test")
         assert result == wav_bytes
 
@@ -595,7 +598,7 @@ class TestMiniMaxSynthesizeStream:
             async def __aexit__(self, *args):
                 pass
 
-        async def fake_stream(method, url, *, json, **kw):
+        def fake_stream(method, url, *, json, **kw):
             captured_payload.update(json)
 
             class Ctx:
@@ -635,7 +638,11 @@ class TestMiniMaxErrors:
                 }
 
         backend = MiniMaxTTSBackend(api_key="sk-test")
-        backend._client.post = lambda *a, **kw: MockResp()  # type: ignore[assignment]
+
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
+
+        backend._client.post = fake_post  # type: ignore[assignment]
         with pytest.raises(RuntimeError, match="MiniMax API 错误"):
             await backend.synthesize("hi", character="test")
 
@@ -656,7 +663,11 @@ class TestMiniMaxErrors:
                 return {"base_resp": {"status_code": 1001, "status_msg": "unauthorized"}}
 
         backend = MiniMaxTTSBackend(api_key="sk-bad")
-        backend._client.post = lambda *a, **kw: MockResp()  # type: ignore[assignment]
+
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
+
+        backend._client.post = fake_post  # type: ignore[assignment]
         with pytest.raises(httpx.HTTPStatusError):
             await backend.synthesize("hi", character="test")
 
@@ -676,7 +687,11 @@ class TestMiniMaxErrors:
                 }
 
         backend = MiniMaxTTSBackend(api_key="sk-test")
-        backend._client.post = lambda *a, **kw: MockResp()  # type: ignore[assignment]
+
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
+
+        backend._client.post = fake_post  # type: ignore[assignment]
         result = await backend.synthesize("hi", character="test")
         assert result == b""
 
