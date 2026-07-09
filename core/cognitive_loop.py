@@ -48,6 +48,17 @@ from .text_utils import content_text_from_content, MessageObj
 
 logger = logging.getLogger(__name__)
 
+# session mood → TTS emotion 映射（MiniMax 支持的 emotion 值）
+_MOOD_TO_TTS_EMOTION: dict[str, str] = {
+    "happy": "happy",
+    "sad": "sad",
+    "angry": "angry",
+    "fearful": "fearful",
+    "surprised": "surprised",
+    "curious": "happy",      # MiniMax 无 curious，映射到最接近的 happy
+    "neutral": "neutral",
+}
+
 
 def _default_user_profile():
     """返回默认 UserProfile（v1: 空实例，后续由 CognitiveLoop 填充偏好/语言等）。"""
@@ -258,6 +269,9 @@ class CognitiveLoop:
                 self._emotion.analyze_user_stt(stt_emotion, stt_events)
             else:
                 self._emotion.analyze_user(user_message)
+            # 将当前 mood 映射为 TTS emotion（MiniMax 等后端支持情绪控制）
+            mood = self._session.get_param("mood", "neutral")
+            self._tts_mgr.set_emotion(_MOOD_TO_TTS_EMOTION.get(mood))
 
         # 渐进式唤醒——后台任务完成后的通知
         if is_task_result and task_result_context:

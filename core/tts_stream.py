@@ -70,6 +70,7 @@ class TTSStreamManager:
             fn = tts.get_preprocess()
             if fn is not None:
                 self._preprocess = fn
+        self._emotion: str | None = None
         self._tasks: list[asyncio.Task] = []
         self._total: int = 0       # 全局计数器，跨轮次持续递增
         self._seq: int = 0          # 本轮计数器，reset_for_turn() 时归零
@@ -77,8 +78,9 @@ class TTSStreamManager:
 
     # ---- 公开 API ----
 
-    def reset_for_turn(self) -> None:
+    def reset_for_turn(self, emotion: str | None = None) -> None:
         """每轮 process() 开始时调用。"""
+        self._emotion = emotion
         self._seq = 0
         self._pending_emojis.clear()
 
@@ -141,6 +143,10 @@ class TTSStreamManager:
                 t.cancel()
         self._tasks.clear()
 
+    def set_emotion(self, emotion: str | None) -> None:
+        """设置本轮 TTS 情绪（由 EmotionEngine 更新后调用）。"""
+        self._emotion = emotion
+
     def set_backend(self, tts: TTSBackend | None) -> None:
         """热切换 TTS 后端。"""
         self._tts = tts
@@ -167,7 +173,7 @@ class TTSStreamManager:
             # 去掉 TTS 内部控制标签（停顿），保留语气标签（对人也有意义）
             display_text = _PAUSE_TAG_RE.sub("", sentence).strip()
             async for chunk in self._tts.synthesize_stream(
-                sentence, character=self._char_name,
+                sentence, character=self._char_name, emotion=self._emotion,
             ):
                 if first_chunk:
                     first_chunk = False
