@@ -146,6 +146,34 @@ class TestTTSFactory:
         call_kwargs = mock_cls.call_args.kwargs
         assert call_kwargs["base_url"] == "http://127.0.0.1:9880"
 
+    def test_minimax_provider(self):
+        with patch("Module.tts.minimax_tts.MiniMaxTTSBackend") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            backend = TTSFactory.create(
+                "minimax/speech-2.8-hd",
+                api_key="sk-test",
+            )
+        assert backend is not None
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["api_key"] == "sk-test"
+        assert call_kwargs["model"] == "speech-2.8-hd"
+        assert "https://api.minimaxi.com" in call_kwargs["base_url"]
+
+    def test_minimax_missing_api_key_raises(self):
+        with patch("os.getenv", return_value=None):
+            with pytest.raises(ValueError, match="MiniMax TTS 需要 api_key"):
+                TTSFactory.create("minimax/speech-2.8-hd")
+
+    def test_minimax_custom_base_url(self):
+        with patch("Module.tts.minimax_tts.MiniMaxTTSBackend") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            TTSFactory.create(
+                "minimax/speech-2.8-hd",
+                api_key="sk-test",
+                base_url="https://api-bj.minimaxi.com",
+            )
+        assert mock_cls.call_args.kwargs["base_url"] == "https://api-bj.minimaxi.com"
+
 
 # ============================================================
 # GPTSoVitsBackend

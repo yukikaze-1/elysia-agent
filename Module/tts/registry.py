@@ -35,6 +35,10 @@ _BACKENDS: dict[str, dict] = {
         "base_url": "",
         "env_key": "CUSTOM_TTS_API_KEY",
     },
+    "minimax": {
+        "base_url": "https://api.minimaxi.com",
+        "env_key": "MINIMAX_API_KEY",
+    },
 }
 
 
@@ -78,6 +82,17 @@ class TTSFactory:
             if "logger" not in kwargs:
                 kwargs["logger"] = inject_logger(__name__)
             return OpenAICompatTTSBackend(model=backend_name, api_key=api_key, base_url=base_url, **kwargs)
+
+        # minimax: MiniMax TTS 云端服务
+        if provider == "minimax":
+            from .minimax_tts import MiniMaxTTSBackend
+            api_key = resolve_api_key("MINIMAX_API_KEY", cfg, kwargs.pop("api_key", None))
+            base_url = resolve_base_url("MINIMAX_TTS_URL", cfg, base_url)
+            if not api_key:
+                raise ValueError("MiniMax TTS 需要 api_key，请设置 MINIMAX_API_KEY 环境变量或显式传入")
+            if "logger" not in kwargs:
+                kwargs["logger"] = inject_logger(__name__)
+            return MiniMaxTTSBackend(model=backend_name, api_key=api_key, base_url=base_url, **kwargs)
 
         # gpt-sovits: GPT-SoVits 专有协议
         if "logger" not in kwargs:
