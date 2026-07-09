@@ -189,9 +189,6 @@ class TTSStreamManager:
             t_tts = time.perf_counter()
             # 等待上一句音频发送完成（门控：保证播放顺序）
             await self._release_events[seq].wait()
-            # 为下一句创建释放事件
-            next_event = asyncio.Event()
-            self._release_events[seq + 1] = next_event
 
             # 显示文本：去掉停顿标签
             display_text = _PAUSE_TAG_RE.sub("", sentence).strip()
@@ -239,7 +236,8 @@ class TTSStreamManager:
             fmt = self._tts.stream_format if self._tts else "wav"
             await self._output.audio_end(sid, format=fmt)
             # 释放下一句的音频发送
-            next_event.set()
+            if seq + 1 in self._release_events:
+                self._release_events[seq + 1].set()
             t_tts_elapsed = (time.perf_counter() - t_tts) * 1000
             logger.info(
                 "TTS 句 %d (总#%d) 播放完成 (%d ms)",
