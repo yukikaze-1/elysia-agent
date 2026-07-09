@@ -32,6 +32,7 @@ class OpenAICompatTTSBackend(TTSBackend):
         self._model = model
         self._base_url = base_url
         self._logger = logger or logging.getLogger(__name__)
+        self._preprocess = strip_all_markup
         self._client = AsyncOpenAI(
             api_key=api_key or "tts",
             base_url=base_url,
@@ -54,7 +55,7 @@ class OpenAICompatTTSBackend(TTSBackend):
     async def synthesize(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> bytes:
-        text = strip_all_markup(text)
+        text = self._preprocess(text)
         chunks: list[bytes] = []
         async for chunk in self.synthesize_stream(text, character=character, emotion=emotion):
             chunks.append(chunk)
@@ -64,7 +65,7 @@ class OpenAICompatTTSBackend(TTSBackend):
         self, text: str, *, character: str, emotion: str | None = None
     ) -> AsyncIterator[bytes]:
         """流式合成 — OpenAI TTS 非真正流式，一次返回完整音频。"""
-        text = strip_all_markup(text)
+        text = self._preprocess(text)
         async with self._client.audio.speech.with_streaming_response.create(
             model=self._model,
             voice=character,
@@ -73,6 +74,13 @@ class OpenAICompatTTSBackend(TTSBackend):
         ) as response:
             async for chunk in response.iter_bytes(4096):
                 yield chunk
+
+    @property
+    def provider_name(self) -> str:
+        return "custom"
+
+    def get_preprocess(self):
+        return self._preprocess
 
     async def close(self) -> None:
         await self._client.close()

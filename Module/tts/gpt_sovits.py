@@ -163,5 +163,12 @@ class GPTSoVitsBackend(TTSBackend):
                     "TTS _pull task failed: %s", e
                 )
 
+    @property
+    def provider_name(self) -> str:
+        return "gpt-sovits"
+
+    def get_preprocess(self):
+        return self._preprocess
+
     async def close(self) -> None:
         pass  # 无共享 client，无需清理

@@ -178,6 +178,28 @@ class TestTTSBackendProtocol:
 
             BadBackend()  # type: ignore[abstract]
 
+    def test_provider_name_is_abstract(self):
+        """provider_name 是抽象属性，未实现时不能实例化。"""
+        with pytest.raises(TypeError):
+
+            class NoProviderName(TTSBackend):
+                async def synthesize(self, text, *, character, emotion=None) -> bytes:
+                    return b""
+
+                async def synthesize_stream(self, text, *, character, emotion=None):
+                    yield b""
+
+                async def test(self) -> dict:
+                    return {"ok": True, "latency_ms": 0}
+
+                async def close(self) -> None:
+                    pass
+
+                def get_preprocess(self):
+                    return None
+
+            NoProviderName()  # type: ignore[abstract]
+
 
 # ============================================================
 # TTSFactory
@@ -778,4 +800,39 @@ class TestMiniMaxCancel:
             count += 1
             break  # 只取首个 chunk 即退出
         assert count == 1
+
+
+# ============================================================
+# TTSBackend provider_name + get_preprocess
+# ============================================================
+
+class TestTTSBackendProviderName:
+    def test_gpt_sovits_provider_name(self, backend):
+        assert backend.provider_name == "gpt-sovits"
+
+    def test_gpt_sovits_get_preprocess(self, backend):
+        from .text_preprocess import strip_all_markup
+        assert backend.get_preprocess() is strip_all_markup
+
+    def test_minimax_provider_name(self):
+        from .minimax_tts import MiniMaxTTSBackend
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        assert backend.provider_name == "minimax"
+
+    def test_minimax_get_preprocess(self):
+        from .minimax_tts import MiniMaxTTSBackend
+        from .text_preprocess import strip_for_minimax
+        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        assert backend.get_preprocess() is strip_for_minimax
+
+    def test_openai_provider_name(self):
+        from .openai_tts import OpenAICompatTTSBackend
+        backend = OpenAICompatTTSBackend(base_url="http://fake:8000")
+        assert backend.provider_name == "custom"
+
+    def test_openai_get_preprocess(self):
+        from .openai_tts import OpenAICompatTTSBackend
+        from .text_preprocess import strip_all_markup
+        backend = OpenAICompatTTSBackend(base_url="http://fake:8000")
+        assert backend.get_preprocess() is strip_all_markup
 

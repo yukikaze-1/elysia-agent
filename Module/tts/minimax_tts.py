@@ -111,6 +111,13 @@ class MiniMaxTTSBackend(TTSBackend):
         for offset in range(0, len(audio), chunk_size):
             yield audio[offset:offset + chunk_size]
 
+    @property
+    def provider_name(self) -> str:
+        return "minimax"
+
+    def get_preprocess(self):
+        return self._preprocess
+
     async def close(self) -> None:
         await self._client.aclose()
 
