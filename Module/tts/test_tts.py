@@ -403,8 +403,6 @@ class TestMiniMaxSynthesize:
     @pytest.mark.asyncio
     async def test_hex_decode_and_return_bytes(self):
         """验证非流式：POST → JSON → hex decode → bytes"""
-        import base64
-
         backend = MiniMaxTTSBackend(api_key="sk-test")
 
         # mock _client.post 返回 hex 编码的音频
@@ -470,6 +468,7 @@ class TestMiniMaxSynthesize:
         assert captured_payload["voice_setting"]["speed"] == 1.2
         assert captured_payload["voice_setting"]["emotion"] == "happy"
         assert captured_payload["audio_setting"]["format"] == "wav"
+        assert captured_payload["voice_setting"]["pitch"] == 0.5
 
     @pytest.mark.asyncio
     async def test_voice_map_used_for_character(self):
