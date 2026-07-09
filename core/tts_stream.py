@@ -84,6 +84,7 @@ class TTSStreamManager:
         self._total: int = 0       # 全局计数器，跨轮次持续递增
         self._seq: int = 0          # 本轮计数器，reset_for_turn() 时归零
         self._pending_emojis: dict[int, list[str]] = {}
+        self._release_events: dict[int, asyncio.Event] = {}  # seq → event 门控
 
     # ---- 公开 API ----
 
@@ -92,6 +93,10 @@ class TTSStreamManager:
         self._emotion = emotion
         self._seq = 0
         self._pending_emojis.clear()
+        self._release_events.clear()
+        # 第一个句子无需等待
+        self._release_events[1] = asyncio.Event()
+        self._release_events[1].set()
 
     def stream_sentence(self, sentence: str) -> None:
         """启动一句的 TTS 后台任务。
@@ -179,6 +184,14 @@ class TTSStreamManager:
         try:
             first_chunk = True
             t_tts = time.perf_counter()
+            # 等待上一句音频发送完成（门控：保证播放顺序）
+            event = self._release_events.get(seq)
+            if event:
+                await event.wait()
+            # 为下一句创建释放事件
+            next_event = asyncio.Event()
+            self._release_events[seq + 1] = next_event
+
             # 显示文本：去掉停顿标签
             display_text = _PAUSE_TAG_RE.sub("", sentence).strip()
             # 提取句首中文舞台指示，单独一行显示
@@ -224,6 +237,8 @@ class TTSStreamManager:
                 await self._output.audio_chunk(chunk, stream_id=sid)
             fmt = self._tts.stream_format if self._tts else "wav"
             await self._output.audio_end(sid, format=fmt)
+            # 释放下一句的音频发送
+            next_event.set()
             t_tts_elapsed = (time.perf_counter() - t_tts) * 1000
             logger.info(
                 "TTS 句 %d (总#%d) 播放完成 (%d ms)",
