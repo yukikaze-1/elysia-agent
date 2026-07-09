@@ -210,8 +210,7 @@ async def _check_llm_connectivity(config: Any) -> None:
     model_id = config.llm.model
     provider = _parse_provider(model_id)
     defaults = load_provider_defaults("llm").get(provider, {})
-    base_url_env_key = defaults.get("env_key", "")
-    base_url = os.getenv(base_url_env_key, defaults.get("base_url", ""))
+    base_url = defaults.get("base_url", "")
     api_key = os.getenv(_LLM_PROVIDER_ENV.get(provider, ""), "")
 
     if not base_url:
@@ -237,10 +236,7 @@ async def _check_tts_connectivity(config: Any) -> None:
 
     provider = _parse_provider(config.tts.model)
     defaults = load_provider_defaults("tts").get(provider, {})
-    base_url = os.getenv(
-        defaults.get("env_key", ""),
-        defaults.get("base_url", ""),
-    )
+    base_url = defaults.get("base_url", "")
 
     if not base_url:
         _warn(f"无法确定 TTS base_url (provider={provider})，跳过连通性检查")
@@ -280,10 +276,7 @@ async def _check_stt_connectivity(config: Any) -> None:
         return
 
     defaults = load_provider_defaults("stt").get(provider, {})
-    base_url = os.getenv(
-        defaults.get("env_key", ""),
-        defaults.get("base_url", "http://localhost:20042"),
-    )
+    base_url = defaults.get("base_url", "http://localhost:20042")
 
     if not base_url:
         _warn(f"无法确定 STT base_url (provider={provider})，跳过连通性检查")
