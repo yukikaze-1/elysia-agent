@@ -42,7 +42,7 @@ python -m pytest core/test_timing.py -v
 # Integration smoke tests (require live services)
 python -m Module.llm          # Needs DEEPSEEK_API_KEY in .env
 python -m Module.stt          # Needs SenseVoice at localhost:20042
-python -m Module.tts          # Needs GPT-SoVits at localhost:9880
+python -m Module.tts          # Needs GPT-SoVits at localhost:9880 or MINIMAX_API_KEY in .env
 python -m Module.embedding    # Needs OPENAI_API_KEY in .env
 python -m Module.output       # Self-contained smoke test
 python -m Module.bench        # Unified latency benchmark (LLM + TTS + STT)
@@ -73,7 +73,7 @@ Module/<service>/
 |--------|---------|---------------------|-----------------|
 | `Module.llm` | LLM chat/streaming | `deepseek`, `openai`, `ollama` | `gemini` |
 | `Module.stt` | Speech-to-text | `sensevoice` | `openai`, `deepgram` |
-| `Module.tts` | Text-to-speech | `gpt-sovits` | — |
+| `Module.tts` | Text-to-speech | `gpt-sovits`, `minimax`, `custom` (OpenAI 兼容) | — |
 | `Module.embedding` | Text vectorization | `huggingface`, `openai` | — |
 | `Module.output` | Multi-channel output | `ConsoleChannel`, `WebSocketChannel` | — |
 | `Module.config` | Config infrastructure | `ConfigLoader` (YAML + env + validation) | — |
@@ -113,7 +113,7 @@ cfg = ConfigLoader(MyConfig, yaml_path="config.yaml", yaml_key="Server").load()
 - **Logger injection**: `Factory.create()` auto-detects the caller's module via `inspect` and injects a logger. Callers can override by passing `logger=...` to `create()`.
 - **env var precedence**: API keys and base URLs are resolved from `os.getenv()` in registry factories, not from YAML. `secret=True` in config fields enforces env-only.
 - **DeepSeek prefix continuation**: Messages with `{"role": "assistant", "content": "...", "prefix": True}` trigger beta endpoint routing and `extra_body={"prefix": True}`. Non-DeepSeek providers raise `ValueError` on prefix.
-- **Naming convention**: Backend classes end in `Backend` (not `Provider` or `Client`): `OpenAICompatBackend`, `SenseVoiceBackend`, `GPTSoVitsBackend`, etc.
+- **Naming convention**: Backend classes end in `Backend` (not `Provider` or `Client`): `OpenAICompatBackend`, `SenseVoiceBackend`, `GPTSoVitsBackend`, `MiniMaxTTSBackend`, etc.
 
 ## Frontend static files (`static/`)
 

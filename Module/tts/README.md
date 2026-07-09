@@ -1,22 +1,25 @@
 # TTS Module
 
-文本转语音模块。提供统一的 `TTSBackend` 接口，通过不同的后端实现对接不同的 TTS 服务端（GPT-SoVITS、IndexTTS2 等）。
+文本转语音模块。提供统一的 `TTSBackend` 接口，通过不同的后端实现对接 GPT-SoVits（本地）、MiniMax（云端）、OpenAI 兼容（云端）等 TTS 服务。
 
 ## 文件结构
 
 ```
 tts/
-├── __init__.py               # 导出 TTSBackend, GPTSoVitsBackend, 预处理函数
+├── __init__.py               # 导出 TTSBackend, TTSFactory, TTSConfig
 ├── protocol.py               # TTSBackend ABC
 ├── registry.py               # 后端注册表 + TTSFactory.create() / from_config()
-├── gpt_sovits.py             # GPTSoVitsBackend — HTTP 调用 GPT-SoVITS 服务端
-├── gpt_sovits_voices.yaml    # GPT-SoVITS 角色音色配置
-├── text_preprocess.py        # 文本预处理（去除 LLM 输出的动作/表情标记）
-├── config.py                 # TTSConfig — dataclass 配置
-├── __main__.py               # 冒烟测试（需连接 GPT-SoVITS 服务端）
+├── gpt_sovits.py             # GPTSoVitsBackend — 本地 HTTP API
+├── gpt_sovits_voices.yaml    # GPT-SoVits 角色音色配置（ref_audio + prompt_text）
+├── openai_tts.py             # OpenAICompatTTSBackend — OpenAI 兼容协议
+├── minimax_tts.py            # MiniMaxTTSBackend — MiniMax 云端 HTTP API
+├── minimax_voices.yaml       # MiniMax 音色映射（character → voice_id）
+├── text_preprocess.py        # 文本预处理函数
+├── config.py                 # TTSConfig dataclass
+├── __main__.py               # 冒烟测试
 ├── test_tts.py               # 单元测试
 ├── test_config.py            # Config 测试
-└── tmp/                      # 测试生成的音频（手动检查用）
+└── tmp/                      # 测试生成的音频
 ```
 
 ## 快速开始
@@ -24,88 +27,115 @@ tts/
 ```python
 from Module.tts import TTSFactory
 
+# MiniMax 云端（需设置 MINIMAX_API_KEY 环境变量）
+tts = TTSFactory.create("minimax/speech-2.8-hd")
+
+# GPT-SoVits 本地
 tts = TTSFactory.create("gpt-sovits/default", base_url="http://192.168.1.18:9880")
 
-# 非流式 — 返回完整 WAV bytes
+# 非流式 — 返回完整音频 bytes
 wav = await tts.synthesize("你好呀。", character="Elysia")
 
-# 流式 — 边生成边产出 WAV chunks
+# 流式 — 分块 yield 音频
 async for chunk in tts.synthesize_stream("你好呀。", character="Elysia"):
-    websocket.send_bytes(chunk)
+    send_audio_chunk(chunk)
 
 await tts.close()
 ```
+
+## 支持的后端
+
+| Provider | 后端类 | 协议 | 部署 | 环境变量 |
+|----------|--------|------|------|----------|
+| `gpt-sovits` | `GPTSoVitsBackend` | 专有 HTTP API | 本地 | `GPT_SOVITS_URL` |
+| `minimax` | `MiniMaxTTSBackend` | MiniMax HTTP API | 云端 | `MINIMAX_API_KEY` |
+| `custom` | `OpenAICompatTTSBackend` | OpenAI `/v1/audio/speech` | 云端 | `CUSTOM_TTS_API_KEY` |
 
 ## 接口
 
 ```python
 class TTSBackend(ABC):
-    async def synthesize(
-        self, text: str, *, character: str, emotion: str | None = None
-    ) -> bytes: ...
+    @property
+    def provider_name(self) -> str: ...       # 'gpt-sovits' / 'minimax' / 'custom'
+    @property
+    def stream_format(self) -> str: ...       # 'wav' / 'mp3'
+    def get_preprocess(self): ...             # 返回预处理函数
 
-    async def synthesize_stream(
-        self, text: str, *, character: str, emotion: str | None = None
-    ) -> AsyncGenerator[bytes, None]: ...
+    async def synthesize(self, text, *, character, emotion=None) -> bytes: ...
+    def synthesize_stream(self, text, *, character, emotion=None) -> AsyncGenerator[bytes, None]: ...
+    async def test(self) -> dict: ...
+    async def close(self) -> None: ...
 ```
 
-- `character` — 角色名，必传，对应 voices.yaml 中的 key
-- `emotion` — 情绪名，可选。GPT-SoVITS 不支持情绪控制，传了会被忽略；后续的后端（如 IndexTTS2）可以利用
-
-## 音频格式
-
-`media_type="wav"`，服务端返回：
-- 首 chunk: WAV header (44 bytes, 32000Hz / mono / int16)
-- 后续 chunk: raw PCM int16
-
-播放时长计算：`len(bytes) / 64000`（64000 = 32000Hz × 1 声道 × 2 字节/采样）
+- `character` — 角色名/音色名。MiniMax 通过 `minimax_voices.yaml` 映射到 `voice_id`
+- `emotion` — 情绪标签，可选。GPT-SoVits 忽略；MiniMax 传至 `voice_setting.emotion`
 
 ## 音色配置
 
-`gpt_sovits_voices.yaml`：
-
+**GPT-SoVits** (`gpt_sovits_voices.yaml`)：
 ```yaml
 Elysia:
-  ref_audio: "/path/to/reference.wav"   # 参考音频路径（服务端文件系统路径）
-  prompt_text: "参考音频对应的文本"        # 影响音色克隆效果
+  ref_audio: "/path/to/reference.wav"
+  prompt_text: "参考音频对应的文本"
 ```
 
-新增角色在 YAML 中添加即可，调用时传 `character="新角色名"`。
+**MiniMax** (`minimax_voices.yaml`)：
+```yaml
+Elysia:
+  voice_id: "elysia_test_001"
+```
 
 ## 文本预处理
 
-LLM 输出的文本可能包含动作/表情标记。不同 TTS 引擎对标记的支持不同，预处理策略由各后端内部实现：
+LLM 输出的文本可能包含动作/表情标记。不同 TTS 引擎对标记的支持不同，预处理策略由各后端内部实现，`TTSStreamManager` 通过 `get_preprocess()` 获取。
 
-| 函数 | 适用后端 | 行为 |
-|---|---|---|
-| `strip_all_markup` | GPTSoVits | 移除 `[]` `<>` `<<>>` `()` `（）` |
-| `strip_action_only` | IndexTTS2 | 移除 `[]` `()` `（）`，保留 `<表情>` `<<心情>>` |
+| 函数 | 后端 | 删除 | 保留 |
+|------|------|------|------|
+| `strip_all_markup` | GPT-SoVits, OpenAI | `[]` `<>` `<<>>` `()` `（）` emoji | — |
+| `strip_for_minimax` | MiniMax | `[]` `<<>>` emoji | `()`（语气词）`<>`（停顿控制） |
 
-## 支持的后端
+### 显示层过滤
 
-| Provider | 后端类 | 默认 URL | API Key |
-|----------|--------|---------|---------|
-| `gpt-sovits` | `GPTSoVitsBackend` | `http://localhost:9880` | 不需要 |
+`core/tts_stream.py` 对发送到前端的文本做额外过滤：
+
+| 标签 | 示例 | TTS | 显示 |
+|------|------|-----|------|
+| 停顿控制 | `<#0.5#>` `<#1#>` | 送 TTS | 隐藏 |
+| 英文语气 | `(laughs)` `(sighs)` 等 22 种 | 送 TTS | 显示 |
+| 中文舞台指示 | `(清了清嗓子)` `(愣了两秒)` | 剥离 | 单独一行 |
+
+## Prompt TTS 感知
+
+`f2_output_format.j2` 根据当前 TTS provider 输出不同的标记指令：
+- MiniMax: 教 LLM 使用 `(laughs)` `<#x#>` 等原生标记
+- GPT-SoVits / OpenAI: 教 LLM 输出纯文本
+
+`CognitiveLoop` 将 `self._tts.provider_name` 传入 `PromptAssembler`。
+
+## 配置
+
+`config.yaml`：
+```yaml
+tts:
+  enabled: true
+  model: minimax/speech-2.8-hd     # 或 gpt-sovits/default
+```
+
+环境变量（`.env`）：
+```bash
+MINIMAX_API_KEY=sk-your-key-here
+GPT_SOVITS_URL=http://localhost:9880
+CUSTOM_TTS_API_KEY=sk-your-key-here
+MINIMAX_TTS_URL=https://api.minimaxi.com     # 可选
+```
 
 ## 添加新后端
 
-1. 在 tts/ 下新建 `your_backend.py`
-2. 继承 `TTSBackend`，实现 `synthesize` 和 `synthesize_stream`
-3. 在 `__init__.py` 中导出
-
-```python
-from .protocol import TTSBackend
-
-class YourBackend(TTSBackend):
-    def __init__(self, ...):
-        self._preprocess = strip_action_only  # 选合适的预处理策略
-
-    async def synthesize(self, text, *, character, emotion=None) -> bytes:
-        ...
-
-    async def synthesize_stream(self, text, *, character, emotion=None):
-        ...
-```
+1. 新建 `Module/tts/your_backend.py`，继承 `TTSBackend`
+2. 实现所有抽象方法 + `provider_name` + `get_preprocess()`
+3. 在 `registry.py` `_BACKENDS` 注册，`TTSFactory.create()` 添加分支
+4. 在 `text_preprocess.py` 中添加对应预处理函数（如需要）
+5. 在 `Module/input/server.py` 的 `/api/providers` 端点注册（前端设置页可见）
 
 ## 测试
 
@@ -113,39 +143,9 @@ class YourBackend(TTSBackend):
 # 单元测试
 python -m pytest Module/tts/test_tts.py -v
 
-# 冒烟测试（需确保 GPT-SoVITS 服务端已启动）
+# 冒烟测试（需对应服务端运行）
 python -m Module.tts
 
-# 统一延迟基准测试（含 LLM/TTS/STT 流式和非流式）
-python -m Module.bench
+# 全量
+python -m pytest Module/tts/ Module/prompt/ Module/output/ -v
 ```
-
-`__main__.py` 会依次验证流式合成、非流式合成、提前中断等场景，生成的音频写入 `tmp/` 目录以便手动检查音质。
-
-## Logger
-
-每个 backend `__init__` 接受可选的 `logger` 参数：
-
-```python
-tts = TTSFactory.create("gpt-sovits/default", logger=my_logger)
-```
-
-不传则默认使用无 handler 的静默 logger，调用方可通过 `Module/logger/LoggerFactory` 注入。
-
-## Config
-
-`TTSConfig` dataclass 支持通过 YAML + 环境变量加载配置：
-
-```python
-from Module.config import ConfigLoader
-from Module.tts import TTSFactory
-from Module.tts.config import TTSConfig
-
-cfg = ConfigLoader(TTSConfig, yaml_path="config.yaml", yaml_key="TTS").load()
-tts = TTSFactory.from_config("gpt-sovits/default", cfg)
-```
-
-| 字段 | 默认值 | 环境变量 | 说明 |
-|------|--------|----------|------|
-| `base_url` | `http://localhost:9880` | `GPT_SOVITS_URL` | TTS 服务端点 |
-| `voices_config` | `""` | — | 音色配置 YAML 路径，为空则使用内置文件 |
