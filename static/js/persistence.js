@@ -2,6 +2,9 @@ import { state } from './state.js';
 import { CHAT_SAVE_DEBOUNCE_MS, CHAT_MAX_STORED, SETTINGS_STORAGE_KEYS } from './config.js';
 import { esc, createAssistantRow, addToolCard, updateToolCard, finalizeDelta, attachTokenLabel } from './chat.js';
 
+// 过滤 TTS 内部控制标签（不显示在前端）
+const PAUSE_TAG_RE = /<#\d+\.?\d*#>/g;
+
 /* ---- 代码块 / Markdown 渲染辅助 ---- */
 
 export function createCodeBlock(content, language) {
@@ -226,7 +229,7 @@ export function restoreChat() {
     } else {
       state.lastRole = 'assistant';
       const { row, textSpan } = createAssistantRow();
-      textSpan.textContent = typeof m.content === 'string' ? m.content : '';
+      textSpan.textContent = typeof m.content === 'string' ? m.content.replace(PAUSE_TAG_RE, '') : '';
       chat.appendChild(row);
       state.messages.push({ role: 'assistant', content: m.content });
     }
@@ -303,7 +306,7 @@ export function restoreFromServer(messages) {
           if (!p.content) continue;
           const row = document.createElement('div');
           row.className = 'msg-row user';
-          row.innerHTML = `<div class="msg-bubble">${esc(p.content)}</div><div class="msg-avatar">😎</div>`;
+          row.innerHTML = `<div class="msg-bubble">${esc(p.content.replace(PAUSE_TAG_RE, ''))}</div><div class="msg-avatar">😎</div>`;
           chat.appendChild(row);
           state.messages.push({ role: 'user', content: p.content });
         }
@@ -330,7 +333,7 @@ export function restoreFromServer(messages) {
         } else {
           // 每个 text part 创建独立气泡（保持分句显示）
           const { row, textSpan } = createAssistantRow();
-          textSpan.textContent = p.content;
+          textSpan.textContent = p.content.replace(PAUSE_TAG_RE, '');
           chat.appendChild(row);
           state.messages.push({ role: 'assistant', content: p.content });
         }
