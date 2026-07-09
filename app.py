@@ -123,6 +123,10 @@ def main():
     parser.add_argument("--config", "-c", type=str, default="config.yaml",
                         help="总配置文件路径")
     parser.add_argument("--verbose", "-v", action="store_true", help="详细日志")
+    parser.add_argument("--check", action="store_true",
+                        help="环境预检（通过后退出，不启动应用）")
+    parser.add_argument("--full", action="store_true",
+                        help="预检包含连通性测试（需配合 --check）")
     args = parser.parse_args()
 
     setup_logging(args.verbose)
@@ -133,6 +137,11 @@ def main():
     config.tts.enabled = args.tts
     config.stt.enabled = args.stt
     config.agent.character = args.character
+
+    if args.check:
+        from Module.config.preflight import run as preflight
+        ok = preflight(config, full=args.full)
+        sys.exit(0 if ok else 1)
 
     if args.server:
         agent = Agent(config=config, config_path=args.config)

@@ -8,24 +8,72 @@
 
 ## 快速开始
 
-```bash
-conda activate Elysia
-export DEEPSEEK_API_KEY="sk-..."
+### 1. 环境准备
 
-# 嵌入模型缓存（二选一）
+```bash
+conda create -n Elysia python=3.13 -y
+conda activate Elysia
+pip install -r requirements.txt
+```
+
+### 2. 配置
+
+```bash
+cp .env.example .env
+# 编辑 .env，至少填入 DEEPSEEK_API_KEY
+
+# 环境预检
+python app.py --check
+# 或 make check
+```
+
+`config.yaml` 中可调整 model、TTS provider、数据库等。大部分有默认值，开箱可用。
+
+### 3. 可选：嵌入模型缓存
+
+```bash
 export MODEL_CACHE_DIR="/path/to/model_cache"   # 方式1：环境变量
 # 或在项目根创建 .model_cache/ 软链接          # 方式2：项目本地
+```
 
+### 4. 启动
+
+```bash
 # WebSocket 服务器模式（浏览器访问 http://localhost:8765）
 python app.py --server
 
-# 启用 TTS + STT
+# 启用 TTS + STT（需相应服务已部署或 API key 已配置）
 python app.py --server --tts --stt
 
 # Debug 面板（http://localhost:8765/debug）
 # 交互模式 (stdin)
 python app.py
 ```
+
+### 5. 可选：数据库（长期记忆持久化）
+
+```bash
+# Milvus 向量数据库 — 长期记忆语义检索
+docker run -d --name milvus -p 19530:19530 -p 9091:9091 milvusdb/milvus:latest
+# 或配置 .env 中 MILVUS_URI 指向已有实例
+
+# MongoDB — token 追踪持久化（默认降级到文件存储）
+# .env 中配置 MONGODB_URI=mongodb://localhost:27017
+```
+
+### 服务依赖一览
+
+| 功能 | 必需？ | 服务/API | 环境变量 |
+|------|--------|----------|----------|
+| 对话 | **是** | DeepSeek API | `DEEPSEEK_API_KEY` |
+| 语音合成 | 否 | MiniMax / GPT-SoVits / OpenAI TTS | `MINIMAX_API_KEY` / `GPT_SOVITS_URL` / `CUSTOM_TTS_API_KEY` |
+| 语音识别 | 否 | SenseVoice（本地） / OpenAI STT | `STT_API_URL` / `OPENAI_API_KEY` |
+| 长期记忆 | 否 | Milvus 向量数据库 | `MILVUS_URI` |
+| 网页搜索 | 否 | Tavily API | `TAVILY_API_KEY` |
+| 图片识别 | 否 | MiMo API | `MIMO_API_KEY` |
+| 嵌入模型 | 否 | HuggingFace（本地）/ OpenAI | `OPENAI_API_KEY` |
+
+不配置的可选服务会自动降级或跳过，不影响文字对话功能。
 
 ---
 

@@ -19,3 +19,9 @@ test-all:
 
 test-quick:
 	$(PYTEST) Module/ core/tests/ core/tools/ -q --tb=line
+
+check:
+	conda run -n $(CONDA_ENV) python app.py --check
+
+check-full:
+	conda run -n $(CONDA_ENV) python app.py --check --full
