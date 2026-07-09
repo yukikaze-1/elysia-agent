@@ -39,6 +39,27 @@ async def main():
         break  # just first chunk
 
     await tts.close()
+
+    # --- MiniMax TTS (云端) ---
+    import os
+    if os.getenv("MINIMAX_API_KEY"):
+        print("\n=== MiniMax TTS ===")
+        try:
+            mm = TTSFactory.create("minimax/speech-2.8-turbo")
+            result = await mm.test()
+            print(f"  test: {result}")
+            if result.get("ok"):
+                audio = await mm.synthesize(
+                    "你好，今天天气真好(sighs)，当然了！",
+                    character="default",
+                )
+                print(f"  synthesize: {len(audio)} bytes")
+            await mm.close()
+        except Exception as e:
+            print(f"  ERROR: {e}")
+    else:
+        print("\n=== MiniMax TTS === 跳过（MINIMAX_API_KEY 未设置）")
+
     print("\nDone.")
 
 
