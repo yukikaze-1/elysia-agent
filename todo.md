@@ -8,7 +8,7 @@
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
 | 中 | **无去重机制** | 延后 — 现有测试确认重复文本+不同元数据是设计意图。需独立设计去重方案 |
-| 中 | **TTS 预处理硬编码 `strip_all_markup()`，MiniMax 标签被静默删除** | `core/tts_stream.py:23,91`: `TTSStreamManager` 在流式管线中硬编码调用了 `strip_all_markup()`，MiniMax 的 `(laughs)` 语气词和 `<#x#>` 停顿控制标签在 TTS 之前即被 strip，无法发挥 MiniMax 原生标记能力。需将 strip 函数选择权交给 TTS backend（`backend.get_strip_function()`），取代全局硬编码 |
+| 中 | ✅ **TTS 预处理硬编码 `strip_all_markup()`，MiniMax 标签被静默删除** | 已解决 (2026-07-09): `TTSBackend` 新增 `provider_name` + `get_preprocess()`，`TTSStreamManager` 从 backend 获取预处理函数；`f2_output_format.j2` 按 TTS provider 输出不同标记指令。spec: `docs/superpowers/specs/2026-07-09-tts-preprocess-and-prompt-awareness-design.md` |
 | 中 | **`emotion_engine.py` `_push_expression()` 缺失 6 种 mood 映射** | `emotion_engine.py:197-206`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
 | 中 | **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** | `plugin.py:37`: `_remind()` 被调用生成 coroutine 对象后传入 `dispatch_background`。调度器 checkpoint 恢复时 payload 中的 coroutine 不可 JSON 序列化（不持久化），且 `from_dict` 重建后 `hasattr(coro, "__await__")` 为 False。边缘场景，当前提醒工具很少跨重启执行。 |
 
