@@ -189,112 +189,75 @@ def _check_writable_dirs() -> None:
 
 
 # ---- 连通性探活 (--full) ----
-
-async def _probe_http(
-    url: str, *, headers: dict[str, str] | None = None, timeout: float = 10.0
-) -> bool:
-    """HTTP GET 探活，返回 True 表示可达。"""
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            resp = await client.get(url, headers=headers)
-            return resp.status_code < 500
-    except Exception:
-        return False
+# 使用各 backend 的 test() 方法，实际验证 API key 有效性 + 服务功能。
+# LLM: 发送 "hi" + max_tokens=1 的真实请求（~1 token）。
+# TTS: MiniMax → POST /v1/get_voice；GPT-SoVits → GET /health；OpenAI → GET /v1/models。
+# STT: SenseVoice → GET /health；OpenAI → GET /v1/models。
+# 每种 backend 的 test() 实现可能不同，但都是该 backend 的官方连通性验证方式。
 
 
 async def _check_llm_connectivity(config: Any) -> None:
-    """LLM 服务连通性探活。"""
-    from Module.config.providers import load_provider_defaults
+    """LLM 服务连通性探活 — 发送真实对话请求验证 API key。"""
+    provider = _parse_provider(config.llm.model)
 
-    model_id = config.llm.model
-    provider = _parse_provider(model_id)
-    defaults = load_provider_defaults("llm").get(provider, {})
-    base_url = defaults.get("base_url", "")
-    api_key = os.getenv(_LLM_PROVIDER_ENV.get(provider, ""), "")
-
-    if not base_url:
-        _warn(f"无法确定 LLM base_url (provider={provider})，跳过连通性检查")
+    if provider == "ollama":
+        _pass("LLM ollama 为本地服务，跳过连通性检查")
         return
 
-    url = base_url.rstrip("/")
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    ok = await _probe_http(url, headers=headers, timeout=10.0)
-    if ok:
-        _pass(f"LLM 连通 ok ({url})")
-    else:
-        _warn(f"LLM 不可达 ({url})")
+    try:
+        from Module.llm import LLMFactory
+        backend = LLMFactory.create(config.llm.model)
+        result = await backend.test()
+        await backend.close()
+        if result.get("ok"):
+            _pass(f"LLM 连通 ok ({config.llm.model}) — {result.get('latency_ms', 0)}ms")
+        else:
+            _warn(f"LLM test() 失败 ({config.llm.model}): {result.get('error', 'unknown')}")
+    except Exception as e:
+        _warn(f"LLM 连通异常 ({config.llm.model}): {e}")
 
 
 async def _check_tts_connectivity(config: Any) -> None:
-    """TTS 服务连通性探活（轻量，不合成音频）。"""
+    """TTS 服务连通性探活 — 通过 backend.test() 验证服务可用。"""
     if not config.tts.enabled:
         _pass("TTS 未启用，跳过连通性检查")
         return
 
-    from Module.config.providers import load_provider_defaults
-
-    provider = _parse_provider(config.tts.model)
-    defaults = load_provider_defaults("tts").get(provider, {})
-    base_url = defaults.get("base_url", "")
-
-    if not base_url:
-        _warn(f"无法确定 TTS base_url (provider={provider})，跳过连通性检查")
-        return
-
-    # 各 provider 的轻量探活端点
-    if provider == "gpt-sovits":
-        url = f"{base_url.rstrip('/')}/health"
-        ok = await _probe_http(url, timeout=5.0)
-    elif provider == "minimax":
-        # MiniMax 用 POST /v1/get_voice，但简单 GET base_url 即可验证可达性
-        ok = await _probe_http(base_url, timeout=5.0)
-    else:
-        # OpenAI 兼容: GET /v1/models
-        url = f"{base_url.rstrip('/')}/v1/models"
-        api_key = os.getenv(_TTS_PROVIDER_ENV.get(provider, ""), "")
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        ok = await _probe_http(url, headers=headers, timeout=5.0)
-
-    if ok:
-        _pass(f"TTS 连通 ok ({base_url})")
-    else:
-        _warn(f"TTS 不可达 ({base_url})")
+    try:
+        from Module.tts import TTSFactory
+        backend = TTSFactory.create(config.tts.model)
+        result = await backend.test()
+        await backend.close()
+        if result.get("ok"):
+            _pass(f"TTS 连通 ok ({config.tts.model}) — {result.get('latency_ms', 0)}ms")
+        else:
+            _warn(f"TTS test() 失败 ({config.tts.model}): {result.get('error', 'unknown')}")
+    except Exception as e:
+        _warn(f"TTS 连通异常 ({config.tts.model}): {e}")
 
 
 async def _check_stt_connectivity(config: Any) -> None:
-    """STT 服务连通性探活（轻量，不转录音频）。"""
+    """STT 服务连通性探活 — 通过 backend.test() 验证服务可用。"""
     if not config.stt.enabled:
         _pass("STT 未启用，跳过连通性检查")
         return
-
-    from Module.config.providers import load_provider_defaults
 
     provider = _parse_provider(config.stt.model)
     if provider in _STT_STUB_PROVIDERS:
         _pass(f"STT '{provider}' 暂未实现，跳过连通性检查")
         return
 
-    defaults = load_provider_defaults("stt").get(provider, {})
-    base_url = defaults.get("base_url", "http://localhost:20042")
-
-    if not base_url:
-        _warn(f"无法确定 STT base_url (provider={provider})，跳过连通性检查")
-        return
-
-    if provider == "sensevoice":
-        url = f"{base_url.rstrip('/')}/health"
-        ok = await _probe_http(url, timeout=5.0)
-    else:
-        url = f"{base_url.rstrip('/')}/v1/models"
-        api_key = os.getenv(_STT_PROVIDER_ENV.get(provider, ""), "")
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        ok = await _probe_http(url, headers=headers, timeout=5.0)
-
-    if ok:
-        _pass(f"STT 连通 ok ({base_url})")
-    else:
-        _warn(f"STT 不可达 ({base_url})")
+    try:
+        from Module.stt import STTFactory
+        backend = STTFactory.create(config.stt.model)
+        result = await backend.test()
+        await backend.close()
+        if result.get("ok"):
+            _pass(f"STT 连通 ok ({config.stt.model}) — {result.get('latency_ms', 0)}ms")
+        else:
+            _warn(f"STT test() 失败 ({config.stt.model}): {result.get('error', 'unknown')}")
+    except Exception as e:
+        _warn(f"STT 连通异常 ({config.stt.model}): {e}")
 
 
 # ---- 入口 ----
