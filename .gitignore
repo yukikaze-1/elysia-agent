@@ -17,6 +17,7 @@ data/cache/
 data/token_usage_pending.jsonl
 .superpowers/
 log.txt
+prompt_log.txt
 docs/superpowers/data/session_*.json
 docs/superpowers/*
 data/*.json

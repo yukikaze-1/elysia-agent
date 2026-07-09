@@ -24,7 +24,8 @@ server:
 
 tts:
   enabled: true
-  model: gpt-sovits/default
+  # model: gpt-sovits/default
+  model: minimax/speech-2.8-hd
 
 stt:
   enabled: true
