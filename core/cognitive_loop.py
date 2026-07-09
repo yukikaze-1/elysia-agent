@@ -266,11 +266,13 @@ class CognitiveLoop:
         assert self._clock is not None
         with self._clock.span("prompt") as t:
             supports_mm = LLMFactory.supports_multimodal(self._llm.model)
+            tts_provider = self._tts.provider_name if self._tts else ""
             messages = await self._prompt.build_messages(
                 user_message=user_message, user_name=user_name,
                 stt_emotion=stt_emotion, stt_events=stt_events,
                 content=content,
                 supports_multimodal=supports_mm,
+                tts_provider=tts_provider,
             )
         user_content = content if content else [{"type": "text", "content": user_message}]
         # 系统唤醒消息不写入 session（Step 4: 唤醒模板不需要存放在 session 中）
