@@ -4,6 +4,19 @@ import { esc, createAssistantRow, addToolCard, updateToolCard, finalizeDelta, at
 
 // 过滤 TTS 内部控制标签（不显示在前端）
 const PAUSE_TAG_RE = /<#\d+\.?\d*#>/g;
+const CN_ACTION_RE = /[(（][^)）]*[一-鿿][^)）]*[)）]/;
+
+/** 处理历史消息文本：去停顿标签，句首舞台指示单独一行 */
+function formatHistoryText(text) {
+  let t = text.replace(PAUSE_TAG_RE, '');
+  const m = t.match(CN_ACTION_RE);
+  if (m && t.startsWith(m[0])) {
+    const action = m[0];
+    const rest = t.slice(action.length).trim();
+    t = rest ? action + '\n' + rest : action;
+  }
+  return t;
+}
 
 /* ---- 代码块 / Markdown 渲染辅助 ---- */
 
@@ -100,8 +113,8 @@ export function saveChat() {
       }
     } else if (row.classList.contains('assistant')) {
       const textSpan = row.querySelector('.msg-text');
-      if (textSpan && textSpan.textContent.trim()) {
-        msgs.push({ role: 'assistant', content: textSpan.textContent });
+      if (textSpan && textSpan.innerText.trim()) {
+        msgs.push({ role: 'assistant', content: textSpan.innerText });
       }
     }
   }
@@ -229,7 +242,7 @@ export function restoreChat() {
     } else {
       state.lastRole = 'assistant';
       const { row, textSpan } = createAssistantRow();
-      textSpan.textContent = typeof m.content === 'string' ? m.content.replace(PAUSE_TAG_RE, '') : '';
+      textSpan.innerText = typeof m.content === 'string' ? formatHistoryText(m.content) : '';
       chat.appendChild(row);
       state.messages.push({ role: 'assistant', content: m.content });
     }
@@ -333,7 +346,7 @@ export function restoreFromServer(messages) {
         } else {
           // 每个 text part 创建独立气泡（保持分句显示）
           const { row, textSpan } = createAssistantRow();
-          textSpan.textContent = p.content.replace(PAUSE_TAG_RE, '');
+          textSpan.innerText = formatHistoryText(p.content);
           chat.appendChild(row);
           state.messages.push({ role: 'assistant', content: p.content });
         }
