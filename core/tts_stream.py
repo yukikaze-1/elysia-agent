@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING
 
 from Module.output import ChannelCapability, OutputManager
 from Module.tts import TTSBackend
-from Module.tts.text_preprocess import strip_all_markup
 
 if TYPE_CHECKING:
     pass
@@ -62,6 +61,11 @@ class TTSStreamManager:
         self._tts = tts
         self._output = output
         self._char_name = character_name
+        self._preprocess = lambda text: text  # 默认：不预处理
+        if tts is not None:
+            fn = tts.get_preprocess()
+            if fn is not None:
+                self._preprocess = fn
         self._tasks: list[asyncio.Task] = []
         self._total: int = 0       # 全局计数器，跨轮次持续递增
         self._seq: int = 0          # 本轮计数器，reset_for_turn() 时归零
@@ -87,8 +91,8 @@ class TTSStreamManager:
             self._pending_emojis.setdefault(self._total, []).append(sentence)
             return
 
-        # 跳过空句 — 用 strip_all_markup 预处理后为空会导致 GPT-SoVits 返回 400
-        _clean = strip_all_markup(sentence)
+        # 跳过空句 — 预处理后为空会导致 TTS API 返回 400
+        _clean = self._preprocess(sentence)
         if not _clean:
             return
 
@@ -136,6 +140,11 @@ class TTSStreamManager:
     def set_backend(self, tts: TTSBackend | None) -> None:
         """热切换 TTS 后端。"""
         self._tts = tts
+        if tts is not None:
+            fn = tts.get_preprocess()
+            self._preprocess = fn if fn is not None else lambda text: text
+        else:
+            self._preprocess = lambda text: text
 
     @property
     def active(self) -> bool:
