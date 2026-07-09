@@ -380,6 +380,7 @@ def create_app(
         tts_registry = {
             "gpt-sovits": {"models": ["default"]},
             "custom": {"models": []},
+            "minimax": {"models": ["speech-2.8-hd"]},
         }
 
         custom_data = load_custom()
