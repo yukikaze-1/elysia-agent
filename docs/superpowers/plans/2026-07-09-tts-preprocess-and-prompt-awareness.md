@@ -320,7 +320,8 @@ class OutputFormatSection(Jinja2Section):
         self._tts_provider = kwargs.get("tts_provider", "")
 
     async def render(self) -> str:
-        return self._render_template(tts_provider=self._tts_provider)
+        tts_provider = getattr(self, '_tts_provider', '')
+        return self._render_template(tts_provider=tts_provider)
 ```
 
 - [ ] **Step 2: 修改 `f2_output_format.j2`**
