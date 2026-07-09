@@ -33,9 +33,9 @@ class MiniMaxTTSBackend(TTSBackend):
         base_url: str = "https://api.minimaxi.com",
         voice_id: str = "elysia_test_001",
         voice_map: dict[str, str] | None = None,
-        speed: float = 1.0,
-        vol: float = 1.0,
-        pitch: float = 0.0,
+        speed: float = 1,         # MiniMax API 仅接受整数值
+        vol: float = 1,
+        pitch: float = 0,
         sample_rate: int = 32000,
         audio_format: str = "wav",
         logger: logging.Logger | None = None,
@@ -102,7 +102,9 @@ class MiniMaxTTSBackend(TTSBackend):
     ) -> AsyncIterator[bytes]:
         """流式合成 — 内部使用非流式 wav（MiniMax 流式仅支持 mp3，前端期望 wav）。
 
-        获取完整 wav 后分块 yield，保持 AsyncGenerator 接口兼容。
+        注意：并非真正的流式——等待完整音频下载完毕后才开始分块 yield。
+        首个 chunk 的延迟与 synthesize() 相同（取决于完整音频下载时间）。
+        保持 AsyncGenerator 接口纯粹是为了兼容 TTSStreamManager。
         """
         # 复用 synthesize() 的非流式 wav 逻辑
         audio = await self.synthesize(text, character=character, emotion=emotion)
@@ -141,6 +143,7 @@ class MiniMaxTTSBackend(TTSBackend):
             "stream": stream,
             "voice_setting": {
                 "voice_id": voice_id,
+                # MiniMax JSON 校验拒绝浮点数（1.0），只接受整数（1）
                 "speed": int(self._speed),
                 "vol": int(self._vol),
                 "pitch": int(self._pitch),
