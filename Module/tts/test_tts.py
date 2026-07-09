@@ -67,6 +67,10 @@ class TestTTSBackendProtocol:
         with pytest.raises(TypeError):
 
             class BadBackend1(TTSBackend):
+                @property
+                def provider_name(self) -> str:
+                    return "test"
+
                 async def synthesize_stream(
                     self, text: str, *, character: str, emotion: str | None = None
                 ):
@@ -78,6 +82,10 @@ class TestTTSBackendProtocol:
         with pytest.raises(TypeError):
 
             class BadBackend2(TTSBackend):
+                @property
+                def provider_name(self) -> str:
+                    return "test"
+
                 async def synthesize(
                     self, text: str, *, character: str, emotion: str | None = None
                 ) -> bytes:
@@ -87,6 +95,10 @@ class TestTTSBackendProtocol:
 
     def test_full_implementation_ok(self):
         class GoodBackend(TTSBackend):
+            @property
+            def provider_name(self) -> str:
+                return "test"
+
             async def synthesize(
                 self, text: str, *, character: str, emotion: str | None = None
             ) -> bytes:
@@ -105,11 +117,56 @@ class TestTTSBackendProtocol:
 
         backend = GoodBackend()
         assert isinstance(backend, TTSBackend)
+        assert backend.provider_name == "test"
+        assert backend.get_preprocess() is None
+
+    def test_missing_provider_name_raises(self):
+        with pytest.raises(TypeError):
+
+            class BadBackend(TTSBackend):
+                async def synthesize(self, text, *, character, emotion=None) -> bytes:
+                    return b""
+
+                async def synthesize_stream(self, text, *, character, emotion=None):
+                    yield b""
+
+                async def test(self) -> dict:
+                    return {"ok": True, "latency_ms": 0}
+
+                async def close(self) -> None:
+                    pass
+
+            BadBackend()  # type: ignore[abstract]
+
+    def test_get_preprocess_default_returns_none(self):
+        class Backend(TTSBackend):
+            @property
+            def provider_name(self) -> str:
+                return "test"
+
+            async def synthesize(self, text, *, character, emotion=None) -> bytes:
+                return b""
+
+            async def synthesize_stream(self, text, *, character, emotion=None):
+                yield b""
+
+            async def test(self) -> dict:
+                return {"ok": True, "latency_ms": 0}
+
+            async def close(self) -> None:
+                pass
+
+        backend = Backend()
+        assert backend.get_preprocess() is None
 
     def test_missing_close_raises(self):
         with pytest.raises(TypeError):
 
             class BadBackend(TTSBackend):
+                @property
+                def provider_name(self) -> str:
+                    return "test"
+
                 async def synthesize(self, text, *, character, emotion=None) -> bytes:
                     return b""
 

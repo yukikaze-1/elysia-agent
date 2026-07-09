@@ -32,6 +32,16 @@ class TTSBackend(ABC):
         """测试连通性。返回 {"ok": bool, "latency_ms": int, "error": str}"""
         ...
 
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        """返回 provider 标识：'gpt-sovits' / 'minimax' / 'custom'。"""
+        ...
+
+    def get_preprocess(self):
+        """返回本后端使用的预处理函数，默认 None（不预处理）。"""
+        return None
+
     @abstractmethod
     async def close(self) -> None:
         """关闭 HTTP client。"""
