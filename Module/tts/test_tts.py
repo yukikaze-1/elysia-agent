@@ -481,7 +481,7 @@ class TestMiniMaxConstruction:
         assert backend._model == "speech-2.8-hd"
         assert backend._base_url == "https://api.minimaxi.com"
         assert backend._voice_id == "test-voice"
-        assert backend._voice_map == {}
+        assert "Elysia" in backend._voice_map  # 从 minimax_voices.yaml 加载
         assert backend._speed == 1.0
         assert backend._vol == 1.0
         assert not backend._client.is_closed
@@ -566,7 +566,7 @@ class TestMiniMaxSynthesize:
             audio_format="wav",
         )
         backend._client.post = fake_post  # type: ignore[assignment]
-        await backend.synthesize("你好", character="Elysia", emotion="happy")
+        await backend.synthesize("你好", character="TestChar", emotion="happy")
 
         assert captured_payload["model"] == "speech-2.8-turbo"
         assert captured_payload["text"] == "你好"

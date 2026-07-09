@@ -6,15 +6,29 @@ synthesize_stream() 内部使用非流式 wav（MiniMax 流式仅 mp3，前端�
 """
 
 import logging
+from pathlib import Path
 from typing import AsyncIterator
 
 import httpx
+import yaml
 
 from .protocol import TTSBackend
 from .text_preprocess import strip_for_minimax
 from Module._common.test_helpers import make_test_method
 
 _TTS_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
+
+
+def _load_voice_map(voices_config: str = "") -> dict[str, str]:
+    """加载 MiniMax 音色 YAML，返回 {character_name: voice_id}。"""
+    if voices_config:
+        path = Path(voices_config)
+    else:
+        path = Path(__file__).parent / "minimax_voices.yaml"
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return {k: v["voice_id"] for k, v in raw.items()}
 
 
 class MiniMaxTTSBackend(TTSBackend):
@@ -31,6 +45,7 @@ class MiniMaxTTSBackend(TTSBackend):
         *,
         api_key: str,
         base_url: str = "https://api.minimaxi.com",
+        voices_config: str = "",
         voice_id: str = "elysia_test_001",
         voice_map: dict[str, str] | None = None,
         speed: float = 1,         # MiniMax API 仅接受整数值
@@ -44,7 +59,10 @@ class MiniMaxTTSBackend(TTSBackend):
         self._api_key = api_key
         self._base_url = base_url
         self._voice_id = voice_id
-        self._voice_map = voice_map or {}
+        # 加载 voice_map：YAML 文件 → 显式 dict 覆盖
+        self._voice_map = _load_voice_map(voices_config)
+        if voice_map:
+            self._voice_map.update(voice_map)
         self._speed = speed
         self._vol = vol
         self._pitch = pitch
