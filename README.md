@@ -132,13 +132,13 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | 流式对话 + 中断恢复 | done |
 | **inner_voice 内心独白** (think 气泡 + 持久化 + debug 查看器) | done |
 | 情绪检测 + 表情推送 | done |
-| MongoDB/Milvus 持久化 (健康检查自动重连) | done |
+| MongoDB/Milvus 持久化 + 健康检查自动重连 | done |
 | 记忆自动沉淀 (LLM 提取事实) | done |
-| HuggingFace embedding 离线加载 | done |
+| HuggingFace embedding 离线加载 (BAAI/bge-large-zh-v1.5) | done |
 | WebSocket 服务器 + HTML 客户端 | done |
 | 麦克风采集 + WebRTC VAD | done |
-| STT 语音识别 (SenseVoice) + 情绪标签 | done |
-| TTS 流式合成 (GPT-SoVits) + 句队列 | done |
+| STT 语音识别 (SenseVoice / OpenAI-compatible) + 情绪标签 | done |
+| TTS 流式合成 (MiniMax / GPT-SoVits / OpenAI-compatible) + 句队列 | done |
 | 文字/语音绑定 + 逐句独立气泡 | done |
 | **TaskSystem v1** — DAG 编排 + Planner/Executor/Evaluator (334 tests) | done |
 | **Token 追踪** — TokenTracker + PromptRecorder + 前端标签 | done |
@@ -147,12 +147,15 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | **多模态** — 图片上传/预览/lightbox + describe_image 视觉工具 | done |
 | Live2D 虚拟角色渲染 (Cubism SDK) | done |
 | 前端 JS 模块化 — 12 个 ES 模块 | done |
-| 配置系统 (YAML + env + 类型校验) | done |
+| 配置系统 (YAML + env + 类型校验 + providers.yaml) | done |
 | /debug 面板 (FSM/记忆/工具/Token/DAG/LLM Prompt/Raw Response) | done |
 | 优雅退出 + /health /ready 端点 | done |
 | LLM 重试 (指数退避) + 请求超时 | done |
-| 对话日志分离 (log/conversation.log) | done |
+| 日志系统 — stderr + log/app.log + log/conversation.log + 库日志分离 | done |
 | 会话恢复 (localStorage + 服务端持久化) | done |
+| **一键部署** — setup.sh + start.sh + download_model.py | done |
+| **环境预检** — app.py --check / --check --full (14 项) | done |
+| **Docker 数据库** — docker-compose.yml (MongoDB 7 + Milvus v2.4) | done |
 
 ---
 
