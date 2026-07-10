@@ -210,8 +210,8 @@ class Agent:
         if mongo_ok:
             await self._archive.connect(self._session.db)
             await self._session.load()
-            if self._reflector:
-                self._reflector.restore_state()
+            if self._character_reflector:
+                self._character_reflector.restore_state()
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
             if os.path.exists(self._session.pending_file):
                 if await self._session.load_from_jsonl(merge=True):
