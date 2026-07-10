@@ -385,7 +385,7 @@ class TestBatchFeed:
         buf.feed("嗯。好。就这样吧。")
         # All below min_chunk=5 → everything stays in buffer
         result = buf.flush()
-        assert "就这样吧。" in result
+        assert result is not None and "就这样吧。" in result
 
     def test_partial_delimiter_across_feeds(self):
         buf = SentenceBuffer(min_chunk_length=3)

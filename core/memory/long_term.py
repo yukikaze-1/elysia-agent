@@ -382,7 +382,7 @@ class LongTermMemory:
             return []
 
         candidates: list[MemoryEntry] = []
-        distances: dict[int, float] = {}  # id(entry) → L2 distance (for rerank)
+        distances: dict[int, float | None] = {}  # id(entry) → L2 distance or None (fallback flag)
 
         # Try Milvus — fetch top_k * 4 for rerank candidate pool
         if self._vector_db and self._connected:

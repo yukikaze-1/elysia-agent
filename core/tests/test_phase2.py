@@ -315,7 +315,7 @@ class TestMemoryConsolidator:
                 return R()
 
         mem = LongTermMemory()
-        c = MemoryConsolidator(FakeLLM(), mem, buffer_threshold=10)
+        c = MemoryConsolidator(FakeLLM(), mem, buffer_threshold=10)  # type: ignore[arg-type]
         await c.consolidate("user msg 1", "assistant reply 1")
         await c.consolidate("user msg 2", "assistant reply 2")
         await c.consolidate("user msg 3", "assistant reply 3")

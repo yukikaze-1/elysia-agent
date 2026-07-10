@@ -234,7 +234,7 @@ class TestCognitiveLoopMethods:
         result = await _test_cancel()
         assert isinstance(result, ToolResult)
         assert result.success is False
-        assert "用户取消" in result.error
+        assert result.error is not None and "用户取消" in result.error
 
     @pytest.mark.asyncio
     async def test_tool_exception_returns_fail(self, loop):
@@ -256,7 +256,7 @@ class TestCognitiveLoopMethods:
 
         result = await _test_fail()
         assert result.success is False
-        assert "tool crash" in result.error
+        assert result.error is not None and "tool crash" in result.error
 
 
 # ============================================================================
@@ -1204,10 +1204,10 @@ class TestLLMAdapterErrors:
                     import httpx
                     req = object()
                     resp = type('R', (), {'status_code': 429})()
-                    raise httpx.HTTPStatusError("rate limit", request=req, response=resp)
+                    raise httpx.HTTPStatusError("rate limit", request=req, response=resp)  # type: ignore[arg-type]
                 yield {"content": "成功", "tool_calls": None}
 
-        adapter = LLMAdapter(_test_backend=RetryBackend())
+        adapter = LLMAdapter(_test_backend=RetryBackend())  # type: ignore[arg-type]
         chunks = []
         async for chunk in adapter.stream_think([{"role": "user", "content": "hi"}]):
             chunks.append(chunk)
@@ -1229,10 +1229,10 @@ class TestLLMAdapterErrors:
                     import httpx
                     req = object()
                     resp = type('R', (), {'status_code': 503})()
-                    raise httpx.HTTPStatusError("unavailable", request=req, response=resp)
+                    raise httpx.HTTPStatusError("unavailable", request=req, response=resp)  # type: ignore[arg-type]
                 yield {"content": "恢复", "tool_calls": None}
 
-        adapter = LLMAdapter(_test_backend=RetryBackend())
+        adapter = LLMAdapter(_test_backend=RetryBackend())  # type: ignore[arg-type]
         chunks = []
         async for chunk in adapter.stream_think([{"role": "user", "content": "hi"}]):
             chunks.append(chunk)
@@ -1250,9 +1250,9 @@ class TestLLMAdapterErrors:
                 import httpx
                 req = object()
                 resp = type('R', (), {'status_code': 400})()
-                raise httpx.HTTPStatusError("bad request", request=req, response=resp)
+                raise httpx.HTTPStatusError("bad request", request=req, response=resp)  # type: ignore[arg-type]
 
-        adapter = LLMAdapter(_test_backend=FailBackend())
+        adapter = LLMAdapter(_test_backend=FailBackend())  # type: ignore[arg-type]
         with pytest.raises(Exception):
             async for _ in adapter.stream_think([{"role": "user", "content": "hi"}]):
                 pass
@@ -1271,9 +1271,9 @@ class TestLLMAdapterErrors:
                 import httpx
                 req = object()
                 resp = type('R', (), {'status_code': 503})()
-                raise httpx.HTTPStatusError("mid-stream failure", request=req, response=resp)
+                raise httpx.HTTPStatusError("mid-stream failure", request=req, response=resp)  # type: ignore[arg-type]
 
-        adapter = LLMAdapter(_test_backend=StartThenFailBackend())
+        adapter = LLMAdapter(_test_backend=StartThenFailBackend())  # type: ignore[arg-type]
         chunks = []
         with pytest.raises(Exception):
             async for chunk in adapter.stream_think([{"role": "user", "content": "hi"}]):
@@ -1433,8 +1433,8 @@ class TestDebugDbApi:
         await agent.start()
 
         app = create_app(agent, serve_static=False)
-        async with aiohttp.test_utils.TestServer(app) as srv:
-            async with aiohttp.test_utils.TestClient(srv) as client:
+        async with aiohttp.test_utils.TestServer(app) as srv:  # type: ignore[attr-defined]
+            async with aiohttp.test_utils.TestClient(srv) as client:  # type: ignore[attr-defined]
                 resp = await client.get("/debug/api/db-status")
                 assert resp.status == 200
                 data = await resp.json()
@@ -1456,8 +1456,8 @@ class TestDebugDbApi:
         await agent.start()
 
         app = create_app(agent, serve_static=False)
-        async with aiohttp.test_utils.TestServer(app) as srv:
-            async with aiohttp.test_utils.TestClient(srv) as client:
+        async with aiohttp.test_utils.TestServer(app) as srv:  # type: ignore[attr-defined]
+            async with aiohttp.test_utils.TestClient(srv) as client:  # type: ignore[attr-defined]
                 resp = await client.get("/debug/api/ltm")
                 data = await resp.json()
                 assert data["total"] == 0
@@ -1498,8 +1498,8 @@ class TestDebugDbApi:
         assert agent._long_term.count == 2
 
         app = create_app(agent, serve_static=False)
-        async with aiohttp.test_utils.TestServer(app) as srv:
-            async with aiohttp.test_utils.TestClient(srv) as client:
+        async with aiohttp.test_utils.TestServer(app) as srv:  # type: ignore[attr-defined]
+            async with aiohttp.test_utils.TestClient(srv) as client:  # type: ignore[attr-defined]
                 resp = await client.delete("/debug/api/ltm")
                 data = await resp.json()
                 assert data["ok"] is True
@@ -1520,8 +1520,8 @@ class TestDebugDbApi:
         await agent.start()
 
         app = create_app(agent, serve_static=False)
-        async with aiohttp.test_utils.TestServer(app) as srv:
-            async with aiohttp.test_utils.TestClient(srv) as client:
+        async with aiohttp.test_utils.TestServer(app) as srv:  # type: ignore[attr-defined]
+            async with aiohttp.test_utils.TestClient(srv) as client:  # type: ignore[attr-defined]
                 resp = await client.get("/debug/api/sessions")
                 assert resp.status == 200
                 data = await resp.json()
@@ -1549,8 +1549,8 @@ class TestDebugDbApi:
             await agent._session.save()
 
         app = create_app(agent, serve_static=False)
-        async with aiohttp.test_utils.TestServer(app) as srv:
-            async with aiohttp.test_utils.TestClient(srv) as client:
+        async with aiohttp.test_utils.TestServer(app) as srv:  # type: ignore[attr-defined]
+            async with aiohttp.test_utils.TestClient(srv) as client:  # type: ignore[attr-defined]
                 resp = await client.get(
                     "/debug/api/sessions/" + agent._session._session_id)
                 assert resp.status == 200
@@ -1654,7 +1654,7 @@ class TestHandleSubmitTask:
         bus = EventBus()
         output = OutputManager()
         session = SessionMemory()
-        session.messages = []  # _handle_submit_task 需要此属性
+        session._messages.clear()  # _handle_submit_task 需要空列表
         prompt = MagicMock()
         prompt._character = MagicMock(name="Test")
         llm = MagicMock()
@@ -1773,7 +1773,6 @@ if __name__ == "__main__":
         test_classes = [
             TestMergeStreamToolCalls, TestNormalizeToolCalls,
             TestFSMEdges, TestEventBusEdges,
-            TestSentenceBufferEdges,
             TestEmotionEngineEdges, TestMessageObj,
         ]
         passed = 0

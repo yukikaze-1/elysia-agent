@@ -269,7 +269,7 @@ class TestStreamingIntegration:
             chunk = await it.__anext__()
             first_chunk_time = time.monotonic() - start
         finally:
-            await it.aclose()
+            await it.aclose()  # type: ignore[attr-defined]
 
         assert first_chunk_time is not None
         assert first_chunk_time < 10.0, f"TTFT {first_chunk_time:.1f}s exceeds 10s limit"
@@ -545,4 +545,4 @@ class TestProactiveTriggers:
         monitor._last_interaction = 0
         await monitor._check_proactive()
         events = list(bus.drain())
-        assert any(e.type.value == "system_tick" for e in events)
+        assert any(e.type == "system_tick" for e in events)

@@ -329,14 +329,16 @@ class Agent:
         from Module.task_system.schema import ConstraintConfig
 
         _ts_infra = AgentInfra(
-            llm=self._llm.get_raw_client(),
+            llm=self._llm.get_raw_client(),  # type: ignore[arg-type]
             milvus=None,
             http=None,
             tool_registry=self._tool_manager,
             constraints=ConstraintConfig(),
         )
 
-        class _EventBusHITLNotifier:
+        from Module.task_system.protocol import HITLNotifier
+
+        class _EventBusHITLNotifier(HITLNotifier):
             def __init__(self, bus):
                 self._bus = bus
             async def request_approval(self, event_data):
@@ -696,8 +698,8 @@ class Agent:
 
                     async def transcribe_wrapper(audio: bytes) -> str:
                         text = await stt_backend.transcribe(audio)
-                        stt_emotion_state["emotion"] = stt_backend.last_emotion
-                        stt_emotion_state["events"] = list(stt_backend.last_events)
+                        stt_emotion_state["emotion"] = getattr(stt_backend, "last_emotion", "NEUTRAL")
+                        stt_emotion_state["events"] = list(getattr(stt_backend, "last_events", []))
                         return text
 
                     stt_transcribe = transcribe_wrapper

@@ -74,7 +74,7 @@ class WaiterPlugin(ToolPlugin):
     safety = SafetyProfile()
 
     async def execute(self, *, ctx, emit=None, params=None):
-        await self._barrier.wait()
+        await self._barrier.wait()  # type: ignore[attr-defined]
         return ToolResult.ok(name="waiter", content="woke", duration_ms=0.0)
 
 
@@ -103,7 +103,7 @@ async def _make_sleep_manager(barrier: asyncio.Event) -> ToolManager:
     """包含 WaiterPlugin 的 ToolManager — barrier 控制执行。"""
     tm = ToolManager()
     plugin = WaiterPlugin()
-    plugin._barrier = barrier
+    plugin._barrier = barrier  # type: ignore[attr-defined]
     await plugin.setup(PluginContext(session_id="test"))
     tm._plugins["waiter"] = plugin
     return tm
@@ -538,7 +538,7 @@ async def test_checkpoint_save_and_restore():
         t = Task(id="bg-1", type=TaskType.BACKGROUND, status=TaskStatus.PENDING,
                  payload={"msg": "persist"}, run_in_background=True)
         sched1._tasks[t.id] = t
-        sched1._completed_count = 5
+        sched1._completed_count = 5  # type: ignore[attr-defined]
         sched1._save_checkpoint()
         await sched1.stop()
 
@@ -598,7 +598,7 @@ async def test_checkpoint_ignores_non_background():
         await sched.start()
         t = Task.new_tool_call("p1", "echo", {"msg": "x"})
         sched._tasks[t.id] = t
-        sched._completed_count = 5
+        sched._completed_count = 5  # type: ignore[attr-defined]
         sched._save_checkpoint()
         await sched.stop()
 

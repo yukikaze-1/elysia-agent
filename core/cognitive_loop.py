@@ -348,7 +348,7 @@ class CognitiveLoop:
                 TAG_OPEN = "<inner_voice>"
                 TAG_CLOSE = "</inner_voice>"
                 iv_state = "PRE"      # PRE / THINK / REPLY
-                iv_tail = ""          # 跨 chunk 检测缓冲
+                iv_tail: str = ""          # 跨 chunk 检测缓冲
                 iv_think_buf = ""     # 已确认的 inner_voice 内容
 
                 # 句子处理 helper — PRE/THINK/REPLY 三状态共用
@@ -378,7 +378,7 @@ class CognitiveLoop:
                     extra_body={"thinking": {"type": "disabled"}})
                 try:
                     async for chunk in stream:
-                        content = chunk.get("content")
+                        content: str = chunk.get("content", "")
                         tc_deltas = chunk.get("tool_calls")
 
                         if content:

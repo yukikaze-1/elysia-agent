@@ -82,6 +82,7 @@ class SessionMemory:
 
     async def _archive_append(self, entry: dict) -> None:
         """fire-and-forget: 将消息追加到永久归档。异常只记日志，不影响主流程。"""
+        assert self._archive is not None, "archive not initialized"
         try:
             await self._archive.append(entry)
         except Exception:
