@@ -48,7 +48,7 @@ bash scripts/start.sh
 
 自动完成：conda 激活 → 数据库检查 → 快速预检 → 启动服务（WebSocket 服务器）。
 
-打开浏览器访问 **`http://localhost:8765`**，在聊天界面与 AI 对话。日志输出到 `log.txt`。停止：`Ctrl+C`。
+打开浏览器访问 **`http://localhost:8765`**，在聊天界面与 AI 对话。日志输出到 `log/app.log`。停止：`Ctrl+C`。
 
 ### 高级用法（可选）
 

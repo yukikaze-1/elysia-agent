@@ -91,13 +91,25 @@ def setup(verbose: bool = False) -> None:
     req_filter = _RequestIdFilter()
     stderr_handler.addFilter(req_filter)
 
+    # ---- Application log → file (persistent) ----
+    app_file_handler = logging.handlers.RotatingFileHandler(
+        LOG_DIR / "app.log", encoding="utf-8", maxBytes=10 * 1024 * 1024, backupCount=3
+    )
+    app_file_handler.setLevel(app_level)
+    app_file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s.%(msecs)03d [%(levelname).1s] %(name)s: [%(request_id)s] %(message)s",
+        datefmt="%H:%M:%S",
+    ))
+    app_file_handler.addFilter(req_filter)
+
     for name in ("core", "Module", "asyncio"):
         logger = logging.getLogger(name)
         logger.setLevel(app_level)
         logger.handlers.clear()
         logger.addHandler(stderr_handler)
-        # Keep propagate=True so child loggers' messages flow up through this
-        # handler. Child loggers (core.cognitive_loop etc.) have no own handlers.
+        logger.addHandler(app_file_handler)
+        # Keep propagate=True so child loggers' messages flow up through these
+        # handlers. Child loggers (core.cognitive_loop etc.) have no own handlers.
 
     # Torch warnings → file
     _file_logger("torch", "torch.log", logging.WARNING)
