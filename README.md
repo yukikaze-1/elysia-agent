@@ -150,8 +150,14 @@ proactive:
 
 ```yaml
 Elysia:
-  voice_id: "elysia_test_001"       # MiniMax 控制台的音色 ID
+  voice_id: "elysia_test_001"
 ```
+
+`voice_id` 需要在 [MiniMax 开放平台](https://platform.minimaxi.com) 获取：
+- **系统音色**（免费）— 官网「声音管理」中复制 voice_id，或调用 `POST /v1/get_voice` 接口查询
+- **克隆音色** — 上传 10 秒~5 分钟音频样本，调用 `/v1/voice_clone` 接口（需企业/个人认证）
+- **AI 生成** — 通过文本描述生成新音色，调用 `/v1/voice_design` 接口
+- 完整 API 文档见 `Module/tts/minimax_tts_api.md`
 
 #### `Module/tts/gpt_sovits_voices.yaml` — GPT-SoVits 音色
 
