@@ -78,13 +78,88 @@ python app.py --config custom.yaml --character custom/char.yaml  # 自定义配�
 
 ### 配置文件
 
-| 文件 | 用途 | 可修改 |
-|------|------|--------|
-| `.env` | API key、服务 URL | DeepSeek/MiniMax/Tavily 等 key |
-| `config.yaml` | 主配置 | LLM 模型、服务器端口、TTS/STT provider、图片上传限制 |
-| `character/elysia.yaml` | 角色设定 | 性格、说话风格、情绪阈值、唤醒词 |
-| `Module/tts/minimax_voices.yaml` | MiniMax 音色映射 | 角色名 → voice_id |
-| `Module/tts/gpt_sovits_voices.yaml` | GPT-SoVits 音色配置 | 角色名 → 参考音频 + 提示文本 |
+#### `.env` — API key 和服务 URL
+
+```bash
+# 必填
+DEEPSEEK_API_KEY=sk-your-key-here
+
+# 语音合成（可选，当前默认 MiniMax）
+MINIMAX_API_KEY=sk-your-key-here
+
+# 其他可选
+TAVILY_API_KEY=tvly-dev-...      # 网页搜索
+OPENAI_API_KEY=sk-...            # 备选 LLM / STT / Embedding
+MIMO_API_KEY=sk-...              # 图片识别
+```
+
+完整模板见 `.env.example`。
+
+#### `config.yaml` — 主配置
+
+```yaml
+agent:
+  character: character/elysia.yaml  # 角色文件路径
+  user_name: 妖梦                    # 用户称呼
+
+llm:
+  model: deepseek/deepseek-v4-flash  # 可换 openai/gpt-4o、ollama/llama3 等
+
+server:
+  host: 0.0.0.0
+  port: 8765
+  image_max_mb: 10                  # 图片上传上限 (MB)
+
+tts:
+  enabled: true
+  model: minimax/speech-2.8-hd      # 可换 gpt-sovits/default、custom/...
+
+stt:
+  enabled: true
+  model: sensevoice/sense-voice      # 可换 custom/...
+
+wake_word:
+  enabled: false                     # 语音唤醒（需额外模型）
+
+live2d:
+  static_image: "/static/Elysia.png"
+
+vision:
+  model: mimo/mimo-v2.5              # describe_image 工具用的视觉模型
+```
+
+#### `character/elysia.yaml` — 角色人设
+
+```yaml
+name: Elysia
+voice: elysia_v2
+personality:
+  traits: [温柔, 好奇, 偶尔毒舌]
+  speaking_style: "口语化，短句为主，偶尔加语气词，喜欢用「呢」「呀」「哦」"
+emotion:
+  thresholds:
+    excitement: 0.6
+    sadness: 0.3
+wake_words: [Elysia, 爱莉, 爱莉希雅, 妖精小姐]
+proactive:
+  enabled: false
+  interval: 300                     # 主动搭话间隔（秒）
+```
+
+#### `Module/tts/minimax_voices.yaml` — MiniMax 音色
+
+```yaml
+Elysia:
+  voice_id: "elysia_test_001"       # MiniMax 控制台的音色 ID
+```
+
+#### `Module/tts/gpt_sovits_voices.yaml` — GPT-SoVits 音色
+
+```yaml
+Elysia:
+  ref_audio: "/path/to/reference.wav"
+  prompt_text: "参考音频对应的文本"
+```
 
 > `Module/config/providers.yaml` 和 `docker-compose.yml` 是内部默认值，通常不需要改。
 
