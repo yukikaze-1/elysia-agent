@@ -50,16 +50,29 @@ docker compose down -v   # 删除所有数据！
 ### 3. 启动
 
 ```bash
-# WebSocket 服务器模式（浏览器访问 http://localhost:8765）
+# 确认数据库在运行
+docker compose ps
+
+# 首次启动：完整预检
+python app.py --check --full
+
+# 启动服务
 python app.py --server
-
-# 启用 TTS + STT（需相应服务已部署或 API key 已配置）
-python app.py --server --tts --stt
-
-# Debug 面板（http://localhost:8765/debug）
-# 交互模式 (stdin)
-python app.py
 ```
+
+浏览器访问 `http://localhost:8765`。
+
+### 日常使用
+
+数据库容器设置了 `restart: unless-stopped`，服务器重启后会自动启动。日常只需：
+
+```bash
+conda activate Elysia
+docker compose up -d       # 确保数据库在运行（已运行则跳过）
+python app.py --server      # 启动
+```
+
+停止：`Ctrl+C`，数据库保持运行（`docker compose stop` 如需停止）。
 
 ### 服务依赖一览
 
