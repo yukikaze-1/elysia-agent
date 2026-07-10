@@ -13,7 +13,7 @@ Brain.j2 单体模板 (~244行) 拆分为模块化 section 管理引擎。
 - 黄金对比测试：新旧 system prompt 逐字节一致
 - 379 测试通过，零回归
 
-详见 `docs/superpowers/specs/2026-07-04-prompt-section-provider-design.md`
+详见 已归档
 
 ### Phase 1: L1 认知核心
 
@@ -442,7 +442,7 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 文件变更 | 修改 | `protocol.py`、`safety.py`、`__init__.py`×3、`agent.py`、`cognitive_loop.py`、`task_scheduler.py`、`debug_info.py`、`server.py`、4 个迁移插件 |
 | 文件变更 | 删除 | `registry.py`、`decorator.py`、`schema.py` |
 | 测试 | 310/311 passed | 1 pre-existing failure (TTS config) |
-| 文档 | spec + plan + README | `docs/superpowers/specs/2026-06-02-tool-system-refactor-design.md` + `docs/superpowers/plans/2026-06-02-tool-system-refactor.md` + `Module/tool/README.md` |
+| 文档 | spec + plan + README | 已归档 + `Module/tool/README.md` |
 
 ---
 
@@ -529,7 +529,7 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 
 **总计: 29 commits, 511 新增测试, 5 个源码 bug 修复, 959 passed + 2 known failures = 961 total**
 
-**文档:** `docs/superpowers/specs/2026-06-02-test-audit-design.md` + 5 phase plans in `docs/superpowers/plans/`
+**文档:** 已归档
 
 ---
 
@@ -569,8 +569,8 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 修复 | TTS 重启重建 | TTS 创建从 `__init__` 移到 `start()` |
 | 修复 | TTSFactory model 验证 | 大小写不敏感 voice 名验证 + custom 后端分发 |
 
-**Spec:** `docs/superpowers/specs/2026-06-04-model-switching-design.md`
-**计划:** `docs/superpowers/plans/2026-06-04-model-switching.md`
+**Spec:** 已归档
+**计划:** 已归档
 
 ---
 
@@ -616,8 +616,8 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | iframe/image 切换 | `toggleLive2D()` — ON 时创建 iframe，OFF 时移除并显示 `<img>` / 🌸 emoji |
 | 竞态修复 | capabilities 到达后更新已存在的 `#live2d-static-img` src |
 
-**Spec:** `docs/superpowers/specs/2026-06-04-live2d-toggle-design.md`
-**计划:** `docs/superpowers/plans/2026-06-04-live2d-toggle.md`
+**Spec:** 已归档
+**计划:** 已归档
 
 ---
 
@@ -630,7 +630,7 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 补缺失文件 | `Module/config/__main__.py`、`Module/input/__main__.py`、`Module/prompt/__main__.py`、`Module/logger/__main__.py`、`Module/input/README.md` |
 | 文档整理 | `test_tool_parallel.md` 移至 `docs/`，清理 `settings.local.json` 过期引用 |
 
-**Spec:** `docs/superpowers/specs/2026-06-05-cleanup-design.md`
+**Spec:** 已归档
 
 ### 多模态图片支持 Phase 1 — 用户→AI (2026-06-05)
 
@@ -642,7 +642,7 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | base64 转换 | 本地图片自动转 data URI 发送 MIMO API |
 | content_to_openai | 内部格式转 OpenAI API format |
 
-**Spec:** `docs/superpowers/specs/2026-06-05-multimodal-phase1-design.md`
+**Spec:** 已归档
 
 ### 多模态 Phase 2 — 前端图片交互 (2026-06-05)
 
@@ -654,7 +654,7 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 持久化 | session 恢复 + localStorage 支持图片 |
 | 上传目录 | `data/uploads/images/`，独立 `/uploads/` 路由 |
 
-**Spec:** `docs/superpowers/specs/2026-06-05-multimodal-phase2-frontend-design.md`
+**Spec:** 已归档
 
 ### Bug 修复集合 (2026-06-05)
 
@@ -679,8 +679,8 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | Bug: chat() 返回 str | `response.get("content")` → `response.strip()`，chat() 返回 str 非 dict |
 | Bug: timeout | `SafetyProfile.request_timeout` 30s → 120s |
 
-**Spec:** `docs/superpowers/specs/2026-06-05-vision-tool-design.md`
-**计划:** `docs/superpowers/plans/2026-06-05-vision-tool.md`
+**Spec:** 已归档
+**计划:** 已归档
 
 ---
 
@@ -726,8 +726,8 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | `tool_executing` args | 移除 `str(v)[:80]` 截断，传完整参数值 |
 | 前端可展开卡片 | 收起态：工具名 + ✓/✗ + 耗时；展开态：参数 JSON + 返回结果 + 错误详情；失败默认展开红色边框 |
 
-**Spec:** `docs/superpowers/specs/2026-06-05-tool-visibility-design.md`
-**计划:** `docs/superpowers/plans/2026-06-05-tool-visibility.md`
+**Spec:** 已归档
+**计划:** 已归档
 
 ---
 
@@ -736,7 +736,7 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 日期 | 内容 |
 |------|------|
 | 06-23 | **前端接入 API 文档** — `docs/frontend-api.md`，完整 WebSocket 协议（16 种 Server→Client + 5 种 Client→Server）+ REST API + .NET/WPF 接入指南。含分句策略、流式 TTS 同步、工具执行生命周期、结构化内容块。经 3 轮 review 修正 |
-| 06-23 | **TaskSystem debug DAG 图可视化** — 引入 vis-network CDN，替换 ASCII DAG 渲染为交互式有向图。仅改 `static/debug.html`，后端不动。spec: `docs/superpowers/specs/2026-06-23-task-dag-graph-visualization-design.md`，plan: `docs/superpowers/plans/2026-06-23-task-dag-graph-visualization.md` |
+| 06-23 | **TaskSystem debug DAG 图可视化** — 引入 vis-network CDN，替换 ASCII DAG 渲染为交互式有向图。仅改 `static/debug.html`，后端不动。文档已归档 |
 | 06-23 | **read_dirs 相对路径 session_id 修复** — `_resolve_sandbox_path()` 没对 `read_dirs` 做 `{session_id}` 替换，导致相对路径读文件找不到（缺 `default/` 子目录） |
 | 06-23 | **STT/TTS test() 改用 GET /health** — 3 个 backend 的 `test()` 从 `GET /` 改为 `GET /health`，避免服务无根路由返回 404 误判不可用 |
 | 06-23 | **启动横幅去重** — 去掉 `print()`，统一用 `logger.info()`；合并两个横幅为一个 |
@@ -751,17 +751,17 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 日期 | 内容 |
 |------|------|
 | 06-24 | **伴侣化改造 Step 1: 对话风格** — Brain.j2 全面中文重写：身份/关系/内心世界/说话方式分离。回复从长文变 1-3 句自然对话。"嗯"/"哦"/"好嘛"作为合法回复；克制约束——不是客服不需要每句话都有用。详见 `docs/companion-roadmap.md`、`docs/companion-prompt-guide.md` |
-| 06-24 | **伴侣化改造 Step 2: 内心世界 (inner_voice)** — LLM 输出 `<inner_voice>...</inner_voice>` 标签，cognitive_loop 流式状态机（PRE→THINK→REPLY）分流，前端淡色斜体 think 气泡。持久化到 session（刷新恢复），debug 页面新增 📤 LLM Raw Response 查看器。ResponseRecorder 环形缓冲区。prompt 加入 few-shot 示例确保标签输出稳定。LLM 对话历史注入 inner_voice 格式延续。spec: `docs/superpowers/specs/2026-06-24-inner-voice-design.md` |
+| 06-24 | **伴侣化改造 Step 2: 内心世界 (inner_voice)** — LLM 输出 `<inner_voice>...</inner_voice>` 标签，cognitive_loop 流式状态机（PRE→THINK→REPLY）分流，前端淡色斜体 think 气泡。持久化到 session（刷新恢复），debug 页面新增 📤 LLM Raw Response 查看器。ResponseRecorder 环形缓冲区。prompt 加入 few-shot 示例确保标签输出稳定。LLM 对话历史注入 inner_voice 格式延续。spec: 已归档 |
 | 06-24 | **WS 重连恢复修复** — FSM 同状态幂等 (idle→idle no-op)、CancelledError 泄漏防御、HITL 审批重发（新客户端重连后恢复审批弹窗）、shutdown 期间工具不重试 |
-| 06-24 | **Git 历史清理** — 全量 rebase: 724→164 提交（77% 缩减），按功能/主题合并。spec: `docs/superpowers/specs/2026-06-23-git-history-cleanup-design.md` |
+| 06-24 | **Git 历史清理** — 全量 rebase: 724→164 提交（77% 缩减），按功能/主题合并。spec: 已归档 |
 | 06-24 | **文档全面更新** — README、companion-roadmap、companion-prompt-guide、completed、todo 同步到最新状态 |
-| 06-24 | **Step 2 收尾: inner_voice toggle** — 设置面板"内心独白"开关（localStorage 持久化，默认开启）。spec: `docs/superpowers/specs/2026-06-24-inner-voice-toggle.md` |
-| 06-24 | **感官/记忆模块标签汉化** — Brain.j2 `<facts>` 标签 + prompt_assembler `_time_of_day()`/`_season()` 返回值全部中文化。spec: `docs/superpowers/specs/2026-06-24-brain-sensory-zh.md` |
+| 06-24 | **Step 2 收尾: inner_voice toggle** — 设置面板"内心独白"开关（localStorage 持久化，默认开启）。spec: 已归档 |
+| 06-24 | **感官/记忆模块标签汉化** — Brain.j2 `<facts>` 标签 + prompt_assembler `_time_of_day()`/`_season()` 返回值全部中文化。spec: 已归档 |
 | 06-23 | **Brain.j2 prompt 修复** — 工具列表补全（7→12）、Identity/Interaction 块新增（定义"你是谁/用户是谁"）、Dual-Track Protocol 措辞软化（不再要求提取不存在的情绪数据）、记忆时间戳 Unix→datetime filter 渲染 |
-| 06-24 | **llm_adapter started 标记修复** — 流已开始产出 token 后遇到 429/503 不再重试，避免用户收到重复内容。spec: `docs/superpowers/specs/2026-06-24-llm-adapter-started-fix.md` |
-| 06-24 | **硬编码 "妖梦" 清理** — agent.py/server.py/prompt_assembler.py 5 处硬编码全部改为从 `agent._user_name` 来源。`app_config.py` 保留为唯一权威源。personality_block 空字段守卫 + macro 记忆层标 TODO。spec: `docs/superpowers/specs/2026-06-24-hardcoded-username-cleanup.md` |
+| 06-24 | **llm_adapter started 标记修复** — 流已开始产出 token 后遇到 429/503 不再重试，避免用户收到重复内容。spec: 已归档 |
+| 06-24 | **硬编码 "妖梦" 清理** — agent.py/server.py/prompt_assembler.py 5 处硬编码全部改为从 `agent._user_name` 来源。`app_config.py` 保留为唯一权威源。personality_block 空字段守卫 + macro 记忆层标 TODO。spec: 已归档 |
 | 06-24 | **Brain.j2 渲染优化** — `Mood:`→`心情:`、工具规则+怎么回复间加空行+可见标题、latency 字段移除 |
-| 06-25 | **code-review 中低危项修复** — 9 项（Python 6 + 前端 3）：_audio_seq cap、token limit、VAD log、broadcast log level、ensure_future→create_task、localhost harden、live2dStaticImage reset、ws.send return false、legacy comment。报告删除，遗留问题迁入 todo。spec: `docs/superpowers/specs/2026-06-25-code-review-fixes.md` |
-| 06-25 | **数据库连接告警 + Milvus PK 匹配** — 连接失败 `logger.info`→`logger.warning`（3 处）+ 启动告警 + 120s health_check 自动重连（MongoDB/Milvus）。Milvus search() 用 `id(entry)` + PK 精确匹配替代 text key，解决同文异构条目覆盖。12 个单元测试。spec: `docs/superpowers/specs/2026-06-25-db-warning-and-milvus-pk-match-design.md` |
-| 06-26 | **Module/_common/ 轻量共享层重构** — 新建 `Module/_common/`（6 文件 + 5 测试文件），提供 `env.py`（dotenv 统一入口）、`registry_helpers.py`（api_key/base_url/logger 解析）、`test_helpers.py`（make_test_method 工厂）、`config_test_helpers.py`（make_config_test_classes 工厂）、`main_runner.py`（run_module_main 统一入口）。消除 6 个 registry + 5 个 backend test() + 9 个 __main__.py + 6 个 test_config.py + config/ 内部的重复代码。22 个 _common/ 单元测试。971 全量测试零回归。spec: `docs/superpowers/specs/2026-06-25-module-common-refactor-design.md` |
-| 07-02 | **性格演化系统** — Brain.j2 叙事式性格重写（~15 行人格叙事替代 traits 列表）、`<self_perception>` 注入段（LLM 自我认知反映在 prompt 中）、mood→trait 表达调制（5 种心情）、CharacterReflector 组件（周期性 LLM 自我反思，50 对 OR 24h 触发）、PromptAssembler 适配（移除 l3_personality_block + fallback 内联）。8 个单元测试。spec: `docs/superpowers/specs/2026-07-01-character-evolution-design.md` |
+| 06-25 | **code-review 中低危项修复** — 9 项（Python 6 + 前端 3）：_audio_seq cap、token limit、VAD log、broadcast log level、ensure_future→create_task、localhost harden、live2dStaticImage reset、ws.send return false、legacy comment。报告删除，遗留问题迁入 todo。spec: 已归档 |
+| 06-25 | **数据库连接告警 + Milvus PK 匹配** — 连接失败 `logger.info`→`logger.warning`（3 处）+ 启动告警 + 120s health_check 自动重连（MongoDB/Milvus）。Milvus search() 用 `id(entry)` + PK 精确匹配替代 text key，解决同文异构条目覆盖。12 个单元测试。spec: 已归档 |
+| 06-26 | **Module/_common/ 轻量共享层重构** — 新建 `Module/_common/`（6 文件 + 5 测试文件），提供 `env.py`（dotenv 统一入口）、`registry_helpers.py`（api_key/base_url/logger 解析）、`test_helpers.py`（make_test_method 工厂）、`config_test_helpers.py`（make_config_test_classes 工厂）、`main_runner.py`（run_module_main 统一入口）。消除 6 个 registry + 5 个 backend test() + 9 个 __main__.py + 6 个 test_config.py + config/ 内部的重复代码。22 个 _common/ 单元测试。971 全量测试零回归。spec: 已归档 |
+| 07-02 | **性格演化系统** — Brain.j2 叙事式性格重写（~15 行人格叙事替代 traits 列表）、`<self_perception>` 注入段（LLM 自我认知反映在 prompt 中）、mood→trait 表达调制（5 种心情）、CharacterReflector 组件（周期性 LLM 自我反思，50 对 OR 24h 触发）、PromptAssembler 适配（移除 l3_personality_block + fallback 内联）。8 个单元测试。spec: 已归档 |

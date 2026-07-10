@@ -8,7 +8,7 @@
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
 | 中 | **无去重机制** | 延后 — 现有测试确认重复文本+不同元数据是设计意图。需独立设计去重方案 |
-| 中 | ✅ **TTS 预处理硬编码 `strip_all_markup()`，MiniMax 标签被静默删除** | 已解决 (2026-07-09): `TTSBackend` 新增 `provider_name` + `get_preprocess()`，`TTSStreamManager` 从 backend 获取预处理函数；`f2_output_format.j2` 按 TTS provider 输出不同标记指令。spec: `docs/superpowers/specs/2026-07-09-tts-preprocess-and-prompt-awareness-design.md` |
+| 中 | ✅ **TTS 预处理硬编码 `strip_all_markup()`，MiniMax 标签被静默删除** | 已解决 (2026-07-09): `TTSBackend` 新增 `provider_name` + `get_preprocess()`，`TTSStreamManager` 从 backend 获取预处理函数；`f2_output_format.j2` 按 TTS provider 输出不同标记指令 |
 | 中 | **`emotion_engine.py` `_push_expression()` 缺失 6 种 mood 映射** | `emotion_engine.py:197-206`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
 | 中 | **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** | `plugin.py:37`: `_remind()` 被调用生成 coroutine 对象后传入 `dispatch_background`。调度器 checkpoint 恢复时 payload 中的 coroutine 不可 JSON 序列化（不持久化），且 `from_dict` 重建后 `hasattr(coro, "__await__")` 为 False。边缘场景，当前提醒工具很少跨重启执行。 |
 
@@ -36,7 +36,7 @@
 - **角色切换**: 加载不同角色配置（名字、性格、发音人、prompt 模板），需独立 spec。涉及 CharacterConfig 重新加载、TTS voice lookup 逻辑修复（`voice` 字段当前是死代码）、CognitiveLoop 角色引用更新。`gpt_sovits_voices.yaml` 目前只有 `Elysia` 一个发音人
 - **多角色 prompt 模板**: `PromptAssembler` 通过 `SystemPromptManager` + 11 `PromptSection` 渲染，多角色时加载不同 `CharacterConfig` 即可切换 section 数据源
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
-- **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + MongoDB + Milvus + SenseVoice + GPT-SoVits）。等架构稳定后实施。
+- **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + SenseVoice + GPT-SoVits）。数据库已完成 docker-compose.yml（MongoDB + Milvus）。
 - **C3 情绪传染规则动态化**: 当前模板 `c3_emotion.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 或 SessionMemory 动态加载
 - **C6 说话风格规则动态化**: 当前模板 `c6_speaking_style.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 动态加载，让不同角色有不同的说话风格规则
 - **Prompt injection 防护**: `c5_sensory.j2` 中 `perception` 字段包含用户原始输入，未做 XML 转义，存在提前闭合标签的注入风险。需在 `SensorySection._build_perception()` 中转义 `<` `>` 等字符
@@ -80,7 +80,7 @@
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| **高** | `.env` API key 需要轮换 | 已添加 `.env.example`；实际轮换需在 DeepSeek/Milvus 后台手动操作 |
+| **高** | `.env` API key 需要轮换 | 已有 `.env.example` + `setup.sh` 生成 `.env` + `app.py --check` 验证；实际轮换需在各 API 后台手动操作 |
 | 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
 | 低 | 会话管理 | 无法新建/切换/列出对话。SessionMemory 的 MongoDB 持久化已为此做好准备，需前后端联动 |
 
@@ -123,6 +123,6 @@
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
 
 
-| ✅ | **Module/_common/ 轻量共享层** | 已重构——新建 `Module/_common/`（env、registry_helpers、test_helpers、config_test_helpers、main_runner），消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config + config/ 内部的重复代码。spec: `docs/superpowers/specs/2026-06-25-module-common-refactor-design.md` |
+| ✅ | **Module/_common/ 轻量共享层** | 已重构——新建 `Module/_common/`（env、registry_helpers、test_helpers、config_test_helpers、main_runner），消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config + config/ 内部的重复代码 |
 
 > 已完成的工作归档在 [docs/completed.md](docs/completed.md)。
