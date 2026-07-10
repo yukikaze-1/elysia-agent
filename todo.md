@@ -8,7 +8,6 @@
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
 | 中 | **无去重机制** | 延后 — 现有测试确认重复文本+不同元数据是设计意图。需独立设计去重方案 |
-| 中 | ✅ **TTS 预处理硬编码 `strip_all_markup()`，MiniMax 标签被静默删除** | 已解决 (2026-07-09): `TTSBackend` 新增 `provider_name` + `get_preprocess()`，`TTSStreamManager` 从 backend 获取预处理函数；`f2_output_format.j2` 按 TTS provider 输出不同标记指令 |
 | 中 | **`emotion_engine.py` `_push_expression()` 缺失 6 种 mood 映射** | `emotion_engine.py:197-206`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
 | 中 | **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** | `plugin.py:37`: `_remind()` 被调用生成 coroutine 对象后传入 `dispatch_background`。调度器 checkpoint 恢复时 payload 中的 coroutine 不可 JSON 序列化（不持久化），且 `from_dict` 重建后 `hasattr(coro, "__await__")` 为 False。边缘场景，当前提醒工具很少跨重启执行。 |
 
@@ -17,7 +16,6 @@
 - **poignancy 时间衰减**: rerank 含时效衰减但 poignancy 本身不变，长期不访问的记忆应逐渐降级
 - **MiniMax SSE 真流式**: 已尝试并回退 (2026-07-10)。MiniMax SSE 每个 event 是独立可播 mp3（非增量片段），拼接导致重复，只取最后 event 又等于同步下载。待 MiniMax API 支持增量 SSE 或换方案（WebSocket）
 - **MiniMax 异步长文本合成**: `t2a_async_v2`，适合 >3000 chars。需创建任务 → 轮询状态 → 下载文件
-- **MiniMax emotion 参数**: ✅ 已实现 (2026-07-09): `EmotionEngine` mood → `TTSStreamManager.set_emotion()` → `synthesize_stream(emotion=...)`
 - **记忆去重**: insert 时检查相似内容，避免重复条目（延后）
 - **按 ID 更新/删除记忆**: search() 返回记忆 ID，LLM 可引用修改；新增 update/delete API
 - **记忆导出/备份**: 支持 JSON 导出和恢复
@@ -40,15 +38,7 @@
 - **C3 情绪传染规则动态化**: 当前模板 `c3_emotion.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 或 SessionMemory 动态加载
 - **C6 说话风格规则动态化**: 当前模板 `c6_speaking_style.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 动态加载，让不同角色有不同的说话风格规则
 - **Prompt injection 防护**: `c5_sensory.j2` 中 `perception` 字段包含用户原始输入，未做 XML 转义，存在提前闭合标签的注入风险。需在 `SensorySection._build_perception()` 中转义 `<` `>` 等字符
-- **人称代词参数化**: ✅ 已完成 (2026-07-06) — `CharacterConfig.user_pronoun` + c1/c2/c3 模板 `{{ user_pronoun }}`
 - **F3 工具声明 Section**: Phase 2 — 新建 `ToolDeclarationSection`，根据当前加载的 ToolPlugin 列表动态生成工具使用规则，替换旧的 `_reference_behavior.j2` 硬编码规则。涉及 `set_tool_manager()` stub、`ToolManager.to_prompt_text()`（当前零调用者）集成
-- **Brain Prompt 模块化**:
-  - ✅ ~~Jinja2 `lstrip_blocks`/`trim_blocks`~~ — Brain.j2 重写已解决
-  - ✅ ~~L0/L2/l3 命名不一致~~ — Brain.j2 重写已解决
-  - ✅ ~~`user_name` 作为 `user_id`~~ — 保留现状，Token 统计用
-  - ✅ ~~性格太薄~~ — 叙事式人格描述 + CharacterReflector + mood 调制 (2026-07-02)
-  - ✅ ~~Brain.j2 单体~~ — Section Provider 重构，11 个独立 PromptSection + SystemPromptManager (2026-07-04)
-
 ### 后台任务系统 — 后续迭代
 
 后台任务分级 + DAG 依赖解析（`core/task.py` 中预留了 `run_in_background` / `depends_on` 字段，当前未使用）。
@@ -121,8 +111,5 @@
 - `Module/input/server.py` (4)
 - `Module/output/console.py` (1)
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
-
-
-| ✅ | **Module/_common/ 轻量共享层** | 已重构——新建 `Module/_common/`（env、registry_helpers、test_helpers、config_test_helpers、main_runner），消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config + config/ 内部的重复代码 |
 
 > 已完成的工作归档在 [docs/completed.md](docs/completed.md)。

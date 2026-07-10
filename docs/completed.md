@@ -765,3 +765,55 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | 06-25 | **数据库连接告警 + Milvus PK 匹配** — 连接失败 `logger.info`→`logger.warning`（3 处）+ 启动告警 + 120s health_check 自动重连（MongoDB/Milvus）。Milvus search() 用 `id(entry)` + PK 精确匹配替代 text key，解决同文异构条目覆盖。12 个单元测试。spec: 已归档 |
 | 06-26 | **Module/_common/ 轻量共享层重构** — 新建 `Module/_common/`（6 文件 + 5 测试文件），提供 `env.py`（dotenv 统一入口）、`registry_helpers.py`（api_key/base_url/logger 解析）、`test_helpers.py`（make_test_method 工厂）、`config_test_helpers.py`（make_config_test_classes 工厂）、`main_runner.py`（run_module_main 统一入口）。消除 6 个 registry + 5 个 backend test() + 9 个 __main__.py + 6 个 test_config.py + config/ 内部的重复代码。22 个 _common/ 单元测试。971 全量测试零回归。spec: 已归档 |
 | 07-02 | **性格演化系统** — Brain.j2 叙事式性格重写（~15 行人格叙事替代 traits 列表）、`<self_perception>` 注入段（LLM 自我认知反映在 prompt 中）、mood→trait 表达调制（5 种心情）、CharacterReflector 组件（周期性 LLM 自我反思，50 对 OR 24h 触发）、PromptAssembler 适配（移除 l3_personality_block + fallback 内联）。8 个单元测试。spec: 已归档 |
+
+### 2026-07-10: 部署工具链
+
+一键安装 + 预检 + docker-compose 数据库。
+
+- `scripts/setup.sh` — 7步自动安装（conda → pip → .env → 嵌入模型 → 目录 → 预检）
+- `scripts/start.sh` — 一键启动（conda → docker → 预检 → 服务）
+- `scripts/download_model.py` — 嵌入模型下载（默认 hf-mirror.com 镜像）
+- `Module/config/preflight.py` — 环境预检（14 项检查，`app.py --check`）
+- `docker-compose.yml` — MongoDB 7 + Milvus v2.4 standalone
+- `app.py` 默认改为 WebSocket 服务器模式，移除 `--once`/`--server`
+- `requirements.txt` 更新：补 pydantic/networkx/psutil 等，移 ddgs
+- README 完整重写：小白友好 + 配置文件参考 + 高级用法
+
+### 2026-07-10: providers.yaml 重构
+
+所有 provider 默认值从 registry.py 硬编码迁移到 `Module/config/providers.yaml`。
+
+- 新建 `Module/config/providers.py` — 统一加载器
+- `llm/stt/tts/embedding` 4 个 registry + `vectordb/documentdb` 2 个 config 改为从 YAML 加载
+- `.env.example` 完善：87 行，按 LLM/TTS/STT/Embedding/数据库/工具 分类
+
+### 2026-07-10: IDE 类型错误修复
+
+修复 15 个文件的类型检查器报错。
+
+- `_health_check` 闭包移除冗余 `self` 参数（3 个 backend）
+- `stt/protocol.py` `transcribe_stream` 加 `yield ""` 成为生成器
+- `logger/__main__.py`：`factory.create()` → `factory.get()`
+- `llm/openai_compat.py`：裸 `logger` → `self._logger`
+- 多处 `# type: ignore[attr-defined]` / null 守卫
+
+### 2026-07-09: MiniMax TTS + 预处理解耦
+
+- `MiniMaxTTSBackend` — HTTP 非流式 + 分块流式（hex→bytes）
+- `TTSBackend.get_preprocess()` — 每个 backend 声明自己的预处理函数
+- `TTSStreamManager` 从 backend 获取预处理，不再硬编码 `strip_all_markup()`
+- `f2_output_format.j2` 按 TTS provider 输出不同标记指令
+- MiniMax emotion 参数：`EmotionEngine` mood → `TTSStreamManager.set_emotion()`
+- TTS 句子乱序修复：`asyncio.Event` 顺序释放门
+
+### 2026-07-06: 人称代词参数化
+
+`CharacterConfig.user_pronoun` + c1/c2/c3 模板 `{{ user_pronoun }}`。
+
+### 2026-07-04: Brain Prompt Section Provider
+
+Brain.j2 单体拆分 → 11 个独立 PromptSection + SystemPromptManager。
+
+### 2026-06-26: Module/_common/ 轻量共享层
+
+消除 registry/test/__main__/test_config 重复代码。
