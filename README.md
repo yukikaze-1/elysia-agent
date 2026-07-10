@@ -8,19 +8,25 @@
 
 ## 快速开始
 
+### 前置条件
+
+- [Anaconda/Miniconda](https://docs.conda.io/en/latest/miniconda.html) 或 Python >= 3.11
+- [Docker](https://docs.docker.com/engine/install/) + Docker Compose 插件
+- [DeepSeek API key](https://platform.deepseek.com/api_keys)（免费注册）
+
 ### 1. 一键安装
 
 ```bash
 bash scripts/setup.sh
 ```
 
-脚本会自动: 检测/创建 conda 环境 → pip install → 配置 .env → 下载嵌入模型 (1.3GB, hf-mirror.com) → 环境预检。
+脚本会自动: 检测/创建 conda 环境 → pip install → 生成 .env → 下载嵌入模型 (1.3GB, hf-mirror.com) → 环境预检。
+
+完成後，编辑 `.env` 填入 `DEEPSEEK_API_KEY`。
 
 `config.yaml` 中可调整 model、TTS provider 等。大部分有默认值，开箱可用。
 
 ### 2. 数据库（必需）
-
-前置条件：安装 [Docker](https://docs.docker.com/engine/install/) + Docker Compose 插件。
 
 ```bash
 # 启动 MongoDB + Milvus
