@@ -1,5 +1,9 @@
 # Elysia Agent
 
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Linux](https://img.shields.io/badge/platform-Linux-orange.svg)](#)
+
 桌面 AI 伴侣，支持语音对话、内心独白、工具调用和后台任务。
 
 > **运行环境：Linux**（Windows/Mac 用户请使用 WSL2 或虚拟机）
@@ -70,6 +74,35 @@ python app.py --check --full     # 含连通性探活
 python app.py --host 0.0.0.0 --port 8080  # 自定义端口
 python app.py --verbose          # 详细日志（调试用）
 python app.py --config custom.yaml --character custom/char.yaml  # 自定义配置
+```
+
+### 故障排查
+
+**端口被占用**
+```bash
+# 查看谁占用了 8765 端口
+lsof -i :8765
+# 换端口启动
+python app.py --port 8766
+```
+
+**Docker 起不来**
+```bash
+docker compose ps          # 确认服务状态
+docker compose logs milvus # 查看日志
+docker compose restart     # 重启
+```
+
+**预检报错**
+```bash
+python app.py --check --full  # 完整预检，准确定位问题
+python scripts/download_model.py  # 缺少嵌入模型
+```
+
+**conda 环境不存在**
+```bash
+# 重新运行安装脚本
+bash scripts/setup.sh
 ```
 
 ### 服务依赖一览
