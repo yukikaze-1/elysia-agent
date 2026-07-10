@@ -41,7 +41,7 @@
 - **C3 情绪传染规则动态化**: 当前模板 `c3_emotion.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 或 SessionMemory 动态加载
 - **C6 说话风格规则动态化**: 当前模板 `c6_speaking_style.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 动态加载，让不同角色有不同的说话风格规则
 - **Prompt injection 防护**: `c5_sensory.j2` 中 `perception` 字段包含用户原始输入，未做 XML 转义，存在提前闭合标签的注入风险。需在 `SensorySection._build_perception()` 中转义 `<` `>` 等字符
-- **F3 工具声明 Section**: Phase 2 — 新建 `ToolDeclarationSection`，根据当前加载的 ToolPlugin 列表动态生成工具使用规则，替换旧的 `_reference_behavior.j2` 硬编码规则。涉及 `set_tool_manager()` stub、`ToolManager.to_prompt_text()`（当前零调用者）集成
+
 ### 后台任务系统 — 后续迭代
 
 后台任务分级 + DAG 依赖解析（`core/task.py` 中预留了 `run_in_background` / `depends_on` 字段，当前未使用）。

@@ -60,9 +60,6 @@ class PromptAssembler:
         self._manager = SystemPromptManager(sections)
         self._builder = MessageBuilder()
 
-    def set_tool_manager(self, tm) -> None:
-        pass  # Phase 2: F3 工具声明
-
     async def build_system_prompt(self, user_message: str = "", user_name: str = "",
                                    stt_emotion: str = "", stt_events=None,
                                    tts_provider: str = "") -> str:
