@@ -84,8 +84,17 @@ class CharacterReflector:
             await self._reflect()
 
     async def flush(self) -> None:
-        """强制反思剩余缓冲（shutdown 时调用）。"""
+        """强制反思剩余缓冲（shutdown 时调用）。
+
+        少量对话不强制反思——产出质量低且会清空 buffer，
+        导致重启后丢失累积进度。留到下次启动继续攒。
+        """
         if not self._buffer:
+            return
+
+        if len(self._buffer) < 10:
+            self._save_state()  # 确保持久化，重启后恢复
+            logger.debug("CharacterReflector flush: 仅 %d 对，留待下次", len(self._buffer))
             return
 
         if self._reflect_lock.locked():

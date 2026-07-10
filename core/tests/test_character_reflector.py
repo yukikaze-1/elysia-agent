@@ -99,12 +99,24 @@ class TestCharacterReflector:
     # ---- flush ----
 
     @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_flush_with_buffered_turns(self, reflector, llm):
-        """flush() 强制反思已缓冲的轮次."""
-        for i in range(5):
+        """flush() 在 buffer >= 10 对时强制反思并清空."""
+        # 预设 history 使阈值回到 50（避免首次 10 对自动触发）
+        reflector._session.set_param("self_perception_history",
+            [{"timestamp": time.time(), "content": "old"}])
+        for i in range(12):
             await reflector.buffer(f"msg{i}", f"reply{i}")
         await reflector.flush()
         assert len(reflector._buffer) == 0
+
+    @pytest.mark.asyncio
+    async def test_flush_preserves_small_buffer(self, reflector, llm):
+        """flush() 在 buffer < 10 对时保留缓冲，仅持久化."""
+        for i in range(5):
+            await reflector.buffer(f"msg{i}", f"reply{i}")
+        await reflector.flush()
+        assert len(reflector._buffer) == 5  # 保留，不被清空
 
     @pytest.mark.asyncio
     async def test_flush_empty_buffer_noop(self, reflector, llm):
