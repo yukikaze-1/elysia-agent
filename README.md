@@ -76,6 +76,18 @@ python app.py --config custom.yaml --character custom/char.yaml  # 自定义配�
 不配置的可选服务会自动降级或跳过，不影响文字对话功能。
 数据库和嵌入模型是必需的——`app.py --check` 会验证。
 
+### 配置文件
+
+| 文件 | 用途 | 可修改 |
+|------|------|--------|
+| `.env` | API key、服务 URL | DeepSeek/MiniMax/Tavily 等 key |
+| `config.yaml` | 主配置 | LLM 模型、服务器端口、TTS/STT provider、图片上传限制 |
+| `character/elysia.yaml` | 角色设定 | 性格、说话风格、情绪阈值、唤醒词 |
+| `Module/tts/minimax_voices.yaml` | MiniMax 音色映射 | 角色名 → voice_id |
+| `Module/tts/gpt_sovits_voices.yaml` | GPT-SoVits 音色配置 | 角色名 → 参考音频 + 提示文本 |
+
+> `Module/config/providers.yaml` 和 `docker-compose.yml` 是内部默认值，通常不需要改。
+
 ---
 
 ## 架构
