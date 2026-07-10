@@ -50,6 +50,17 @@ bash scripts/start.sh
 
 打开浏览器访问 **`http://localhost:8765`**，在聊天界面与 AI 对话。日志输出到 `log/app.log`。停止：`Ctrl+C`。
 
+### 文件位置
+
+| 文件/目录 | 用途 |
+|-----------|------|
+| `log/app.log` | 应用运行日志（10MB×3 轮转） |
+| `log/conversation.log` | 所有对话记录 |
+| `log/mongo.log`、`milvus.log`、`http.log` 等 | 底层库日志（通常不需要看） |
+| `.model_cache/` | 嵌入模型存放位置（`BAAI/bge-large-zh-v1.5/`，约 1.3GB） |
+
+> `scripts/download_model.py` 将模型下载到 `.model_cache/`。运行时按 `MODEL_CACHE_DIR` → `.model_cache/` → `~/.cache/huggingface/hub/` 顺序查找。
+
 ### 高级用法（可选）
 
 ```bash
