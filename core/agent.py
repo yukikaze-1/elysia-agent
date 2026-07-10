@@ -102,6 +102,7 @@ class Agent:
             llm=self._llm,
             memory=self._long_term,
             character_name=self._character.name,
+            user_name=self._user_name,
         )
 
         self._character_reflector = CharacterReflector(

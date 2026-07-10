@@ -22,12 +22,12 @@ EXTRACTION_PROMPT = """从以下对话中提取值得长期记住的关键信息
 - 提取事实(Fact)、偏好(Preference)、事件(Event)、计划(Plan)
 - 过滤噪音: 问候、闲聊、日常寒暄不需要记住
 - **事件合并**: 将有因果/反应/结果关系的多轮对话合并为一个综合记忆，不拆碎片
-- 每条记忆写为第一人称中文叙事: "我注意到...", "我发现...", "用户告诉我...", "我和用户..."
+- 每条记忆写为第一人称中文叙事: "我注意到...", "我发现...", "{user_name}告诉我...", "我和{user_name}..."
 
 **重要性评分 (poignancy)**:
 - 1-3: 琐碎信息，不太重要
 - 4-7: 中等重要，值得记住
-- 8-10: 核心记忆，与用户关系或{character_name}自身密切相关
+- 8-10: 核心记忆，与{user_name}的关系或{character_name}自身密切相关
 
 返回 JSON 数组，每个元素: {{"type": "Fact|Preference|Event|Plan", "content": "...", "poignancy": 1-10}}。
 
@@ -45,10 +45,11 @@ class MemoryConsolidator:
     BUFFER_THRESHOLD = 6  # 攒够 N 条消息再调 LLM 提取
 
     def __init__(self, llm: LLMAdapter, memory: LongTermMemory, character_name: str = "Elysia",
-                 buffer_threshold: int | None = None):
+                 user_name: str = "用户", buffer_threshold: int | None = None):
         self._llm = llm
         self._memory = memory
         self._character_name = character_name
+        self._user_name = user_name
         self._history: list[dict] = []  # recent consolidation results
         self._buffer: list[tuple[str, str]] = []  # (user_msg, assistant_msg) 缓冲
         self._threshold = buffer_threshold if buffer_threshold is not None else self.BUFFER_THRESHOLD
@@ -95,7 +96,7 @@ class MemoryConsolidator:
         # 合并缓冲中的多轮对话为一段文本
         turns: list[str] = []
         for u, a in self._buffer:
-            turns.append(f"用户: {u[:300]}")
+            turns.append(f"{self._user_name}: {u[:300]}")
             turns.append(f"{self._character_name}: {a[:500]}")
         conversation_text = "\n".join(turns)
         self._buffer.clear()
@@ -103,6 +104,7 @@ class MemoryConsolidator:
         prompt = EXTRACTION_PROMPT.format(
             conversation=conversation_text[:2000],
             character_name=self._character_name,
+            user_name=self._user_name,
         )
 
         try:
