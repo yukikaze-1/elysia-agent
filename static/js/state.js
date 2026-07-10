@@ -43,8 +43,8 @@ class AppState {
     // 唤醒词 (默认关闭)
     this.wakeEnabled = localStorage.getItem(SETTINGS_STORAGE_KEYS.WAKE) === 'on';
 
-    // Live2D（默认开启）
-    this.live2dEnabled = localStorage.getItem(SETTINGS_STORAGE_KEYS.LIVE2D) !== 'off';
+    // Live2D（默认关闭，等待完整集成）
+    this.live2dEnabled = localStorage.getItem(SETTINGS_STORAGE_KEYS.LIVE2D) === 'on';
     this.live2dStaticImage = '';  // 由 WS capabilities 消息更新
 
     // 内心独白（默认开启）
