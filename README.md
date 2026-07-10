@@ -14,48 +14,27 @@
 - [Docker](https://docs.docker.com/engine/install/) + Docker Compose 插件
 - [DeepSeek API key](https://platform.deepseek.com/api_keys)（免费注册）
 
-### 1. 一键安装
+### 首次安装（只需一次）
 
 ```bash
+# 1. 安装环境 + 下载模型
 bash scripts/setup.sh
-```
 
-脚本会自动: 检测/创建 conda 环境 → pip install → 生成 .env → 下载嵌入模型 (1.3GB, hf-mirror.com) → 环境预检。
+# 2. 编辑 .env，填入 DEEPSEEK_API_KEY
 
-完成後，编辑 `.env` 填入 `DEEPSEEK_API_KEY`。
-
-`config.yaml` 中可调整 model、TTS provider 等。大部分有默认值，开箱可用。
-
-### 2. 数据库（必需）
-
-```bash
-# 启动 MongoDB + Milvus
+# 3. 启动数据库（Docker 容器，重启后自动保持运行）
 docker compose up -d
-
-# 查看运行状态
-docker compose ps
-
-# 停止
-docker compose down
 ```
 
-端口与 `.env` 默认值一致（MongoDB 27017，Milvus 19530），无需额外配置。
-
-**数据持久化：** 数据存储在 Docker volume 中，重启不丢失。如需彻底清除：
-
-```bash
-docker compose down -v   # 删除所有数据！
-```
-
-### 3. 启动
+### 启动
 
 ```bash
 bash scripts/start.sh
 ```
 
-自动完成：conda 激活 → 数据库检查 → 快速预检 → 启动服务。
+自动完成：conda 激活 → 数据库检查 → 快速预检 → 启动服务（WebSocket 服务器）。
 
-浏览器访问 `http://localhost:8765`。日志输出到 `log.txt`。停止：`Ctrl+C`。
+打开浏览器访问 **`http://localhost:8765`**，在聊天界面与 AI 对话。日志输出到 `log.txt`。停止：`Ctrl+C`。
 
 ### 高级用法
 
@@ -63,7 +42,6 @@ bash scripts/start.sh
 python app.py --cli              # 交互终端模式（stdin 打字）
 python app.py --check            # 环境预检
 python app.py --check --full     # 含连通性探活
-python app.py --tts --stt        # 启用语音合成+识别
 python app.py --host 0.0.0.0 --port 8080  # 自定义端口
 python app.py --verbose          # 详细日志（调试用）
 python app.py --config custom.yaml --character custom/char.yaml  # 自定义配置
