@@ -246,6 +246,10 @@ class TestRun:
         char_dir = tmp_path / "character"
         char_dir.mkdir()
         (char_dir / "elysia.yaml").write_text("name: Elysia")
+        # 创建虚拟嵌入模型缓存
+        model_cache = tmp_path / ".model_cache/models--BAAI--bge-large-zh-v1.5/snapshots"
+        model_cache.mkdir(parents=True)
+        (model_cache / "config.json").write_text("{}")
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         m = _fresh_module()

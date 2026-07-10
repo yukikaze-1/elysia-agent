@@ -14,7 +14,7 @@
 bash scripts/setup.sh
 ```
 
-脚本会自动: 检测/创建 conda 环境 → pip install → 配置 .env → 环境预检。
+脚本会自动: 检测/创建 conda 环境 → pip install → 配置 .env → 下载嵌入模型 (1.3GB, hf-mirror.com) → 环境预检。
 
 `config.yaml` 中可调整 model、TTS provider 等。大部分有默认值，开箱可用。
 
@@ -65,10 +65,10 @@ python app.py
 | 语音识别 | 否 | SenseVoice（本地） / OpenAI STT | `STT_API_URL` / `OPENAI_API_KEY` |
 | 网页搜索 | 否 | Tavily API | `TAVILY_API_KEY` |
 | 图片识别 | 否 | MiMo API | `MIMO_API_KEY` |
-| 嵌入模型 | 否 | HuggingFace（本地）/ OpenAI | `OPENAI_API_KEY` |
+| 嵌入模型 | **是** | BAAI/bge-large-zh-v1.5 (HuggingFace，默认 hf-mirror.com 镜像) | `MODEL_CACHE_DIR` |
 
 不配置的可选服务会自动降级或跳过，不影响文字对话功能。
-数据库是必需的——`app.py --check --full` 会验证连通性。
+数据库和嵌入模型是必需的——`app.py --check` 会验证。
 
 ---
 

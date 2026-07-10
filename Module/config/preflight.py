@@ -175,6 +175,19 @@ def _check_stt_env(config: Any) -> None:
         _warn(f"{key} 未设置 — STT ('{provider}') 将不可用")
 
 
+def _check_embedding_model() -> None:
+    """检查嵌入模型是否已缓存。"""
+    cache_dirs = [
+        Path(".model_cache/models--BAAI--bge-large-zh-v1.5/snapshots"),
+        Path.home() / ".cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5/snapshots",
+    ]
+    for d in cache_dirs:
+        if d.exists() and any(d.iterdir()):
+            _pass("嵌入模型已缓存 (BAAI/bge-large-zh-v1.5)")
+            return
+    _fail("嵌入模型未缓存 — 运行 scripts/download_model.py 下载（约 1.3GB）")
+
+
 def _check_writable_dirs() -> None:
     """检查 log/、data/ 目录是否可写。"""
     for d in ("log", "data"):
@@ -312,6 +325,7 @@ def run(config: Any, full: bool = False) -> bool:
     _check_llm_env(config)
     _check_pip_deps()
     _check_character_file(config)
+    _check_embedding_model()
 
     # Phase 2: WARN
     _check_tts_env(config)

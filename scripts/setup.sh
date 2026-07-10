@@ -99,8 +99,12 @@ fi
 if [[ -n "$CACHE_DIR" ]]; then
     echo -e "  ${GREEN}✓${NC} 嵌入模型已缓存 ($CACHE_DIR)"
 else
-    echo -e "  ${YELLOW}→${NC} 嵌入模型未缓存（仅 huggingface provider 需要；使用 OpenAI embedding 可跳过）"
-    echo -e "  下载命令: ${BOLD}$PYTHON scripts/download_model.py${NC}  (约 1.3GB，需网络)"
+    echo -e "  ${YELLOW}→${NC} 嵌入模型未缓存，正在下载（约 1.3GB，默认使用 hf-mirror.com 镜像）..."
+    $PYTHON scripts/download_model.py
+    if [[ $? -ne 0 ]]; then
+        echo -e "  ${RED}✗${NC} 嵌入模型下载失败"
+        exit 1
+    fi
 fi
 
 # ── Step 5: 创建目录 ───────────────────────────────────────────────────────
@@ -128,8 +132,7 @@ echo "  $PYTHON app.py --server --tts --stt  # 含语音"
 echo "  $PYTHON app.py                       # 交互模式"
 echo ""
 echo "可选:"
-echo "  嵌入模型:  $PYTHON scripts/download_model.py"
-echo "  Milvus:    docker run -d --name milvus -p 19530:19530 milvusdb/milvus:latest"
+echo "  Milvus:    docker compose up -d"
 echo "  MongoDB:   配置 .env 中 MONGODB_URI"
 echo "  全量预检:  $PYTHON app.py --check --full"
 
