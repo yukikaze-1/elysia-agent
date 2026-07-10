@@ -1,0 +1,32 @@
+# Elysia Agent — 数据库服务 (MongoDB + Milvus)
+#
+# 启动: docker compose up -d
+# 停止: docker compose down
+# 清除数据: docker compose down -v
+#
+# 端口与 .env 默认值一致，无需额外配置。
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: elysia-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    container_name: elysia-milvus
+    command: ["milvus", "run", "standalone"]
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
+  milvus_data:

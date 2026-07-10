@@ -34,13 +34,27 @@ python app.py
 
 ### 3. 可选：数据库（长期记忆持久化）
 
-```bash
-# Milvus 向量数据库 — 长期记忆语义检索
-docker run -d --name milvus -p 19530:19530 -p 9091:9091 milvusdb/milvus:latest
-# 或配置 .env 中 MILVUS_URI 指向已有实例
+前置条件：安装 [Docker](https://docs.docker.com/engine/install/) + Docker Compose 插件。
 
-# MongoDB — token 追踪持久化（默认降级到文件存储）
-# .env 中配置 MONGODB_URI=mongodb://localhost:27017
+数据库不需要单独安装——Docker 镜像已包含 MongoDB 和 Milvus。
+
+```bash
+# 启动 MongoDB + Milvus
+docker compose up -d
+
+# 查看运行状态
+docker compose ps
+
+# 停止
+docker compose down
+```
+
+端口与 `.env` 默认值一致（MongoDB 27017，Milvus 19530），无需额外配置。
+
+**数据持久化：** 数据存储在 Docker volume 中，重启不丢失。如需彻底清除：
+
+```bash
+docker compose down -v   # 删除所有数据！
 ```
 
 ### 服务依赖一览
