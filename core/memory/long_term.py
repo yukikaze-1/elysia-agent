@@ -74,6 +74,10 @@ class LongTermMemory:
             if not await self._vector_db.collection_exists(self.COLLECTION):
                 await self._vector_db.create_collection(self.COLLECTION, dimension=dim)
                 logger.info("LongTermMemory: created Milvus collection '%s' (dim=%d)", self.COLLECTION, dim)
+            else:
+                loaded = await self._load_from_milvus()
+                if loaded:
+                    logger.info("LongTermMemory: loaded %d entries from Milvus", loaded)
             self._connected = True
             logger.info("LongTermMemory: Milvus connected")
             return True
@@ -82,6 +86,49 @@ class LongTermMemory:
             self._vector_db = None
             self._connected = False
             return False
+
+    async def _load_from_milvus(self) -> int:
+        """从 Milvus 恢复已有条目到内存。返回加载数量。"""
+        if not self._vector_db:
+            return 0
+        try:
+            results = await self._vector_db.query(
+                self.COLLECTION,
+                filter_expr="id >= 0",
+                output_fields=["id", "entry_id", "text", "memory_type", "poignancy", "timestamp"],
+                limit=self._max_entries,
+            )
+        except Exception as e:
+            logger.warning("LongTermMemory: 从 Milvus 加载失败: %s", e)
+            return 0
+
+        from core.message_id import new_message_id
+
+        loaded = 0
+        for row in results:
+            pk = row.get("id")
+            # 优先使用存储的 entry_id，兼容无 entry_id 字段的旧数据
+            entry_id = row.get("entry_id", "")
+            if not entry_id or not isinstance(entry_id, str):
+                entry_id = new_message_id()
+            entry = MemoryEntry(
+                id=str(entry_id),
+                text=row.get("text", ""),
+                embedding=[],  # 不加载向量 — 太大，搜索走 Milvus
+                memory_type=row.get("memory_type", "note"),
+                poignancy=int(row.get("poignancy", 5)),
+                timestamp=float(row.get("timestamp", 0.0)),
+                _milvus_pk=pk,
+            )
+            self._entries.append(entry)
+            loaded += 1
+
+        # 按时间排序后驱逐超出上限的旧条目
+        if loaded:
+            self._entries.sort(key=lambda e: e.timestamp)
+            self._evict_old_entries()
+
+        return loaded
 
     async def health_check(self) -> bool:
         """尝试重连 Milvus。已连接则直接返回 True。"""
@@ -198,6 +245,7 @@ class LongTermMemory:
                     self.COLLECTION,
                     vectors=[embedding],
                     metadata=[{
+                        "entry_id": entry.id,
                         "text": text,
                         "memory_type": entry.memory_type,
                         "poignancy": entry.poignancy,

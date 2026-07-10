@@ -116,6 +116,8 @@ async def collect(agent) -> DebugInfo:
     info.lt_recent = [
         {
             "text": _truncate(e.text, 100),
+            "memory_type": e.memory_type,
+            "poignancy": e.poignancy,
             "metadata": e.metadata,
         }
         for e in agent._long_term._entries[-5:]
