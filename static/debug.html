@@ -93,8 +93,9 @@ h1 { font-size: 18px; margin-bottom: 4px; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 /* 数据库面板 */
-.db-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.db-panel { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 .db-panel-full { grid-template-columns: 1fr; }
+@media (max-width: 1200px) { .db-panel { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 900px) { .db-panel { grid-template-columns: 1fr; } }
 .db-btn {
   background: var(--surface); border: 1px solid var(--border);
@@ -513,7 +514,7 @@ function render(info) {
         return roleTag + thinkHtml + textHtml + imgHtml;
       })},
       { title:'Long-term Memory', wide:false, items: (info.lt_recent||[]).map(e =>
-        `<span class="type-tag">${esc(e.metadata?.type||'?')}</span>${expandable(e.text, 90)}`
+        `<span class="type-tag">${esc(e.memory_type||'?')}</span>${expandable(e.text, 90)}`
       )},
     ],
     // Row 3: Tools | Tool History | Consolidation
@@ -914,13 +915,14 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 async function loadDbPanel() {
   document.getElementById('db-updated').textContent = '加载中...';
   try {
-    const [status, ltm, sessions] = await Promise.all([
+    const [status, ltm, sessions, archive] = await Promise.all([
       fetch('/debug/api/db-status').then(r => r.json()),
       fetch('/debug/api/ltm?limit=200').then(r => r.json()),
       fetch('/debug/api/sessions').then(r => r.json()),
+      fetch('/debug/api/archive?limit=100').then(r => r.json()),
     ]);
     document.getElementById('db-updated').textContent = '最后刷新: ' + new Date().toLocaleTimeString();
-    renderDbPanels(status, ltm, sessions);
+    renderDbPanels(status, ltm, sessions, archive);
   } catch (e) {
     document.getElementById('db-updated').textContent = '加载失败: ' + e.message;
   }
@@ -928,22 +930,29 @@ async function loadDbPanel() {
 
 let _ltmData = { entries: [], total: 0 };
 let _sessionData = [];
+let _archiveData = { messages: [], has_more: false, total: 0 };
 
-function renderDbPanels(status, ltm, sessions) {
+function renderDbPanels(status, ltm, sessions, archive) {
   _ltmData = ltm;
   _sessionData = sessions.sessions || [];
+  _archiveData = archive || { messages: [], has_more: false, total: 0 };
 
   const ltmPanel = renderLtmPanel(status);
   const sessionPanel = renderSessionPanel(status);
-  document.getElementById('db-panels').innerHTML = ltmPanel + sessionPanel;
+  const archivePanel = renderArchivePanel(status);
+  document.getElementById('db-panels').innerHTML = ltmPanel + sessionPanel + archivePanel;
 
   // 绑定搜索事件
   document.getElementById('ltm-search')?.addEventListener('input', () => {
-    renderDbPanels(status, filterLtm(), sessions);
+    renderDbPanels(status, filterLtm(), sessions, _archiveData);
   });
   document.getElementById('ltm-type-filter')?.addEventListener('change', () => {
-    renderDbPanels(status, filterLtm(), sessions);
+    renderDbPanels(status, filterLtm(), sessions, _archiveData);
   });
+  // 绑定归档面板事件
+  document.getElementById('archive-search')?.addEventListener('input', filterArchive);
+  document.getElementById('archive-role-filter')?.addEventListener('change', filterArchive);
+  document.getElementById('archive-load-more-btn')?.addEventListener('click', loadMoreArchive);
 }
 
 function filterLtm() {
@@ -1035,6 +1044,98 @@ function renderSessionPanel(status) {
     </div>
     <div id="session-detail" style="margin-top:8px;"></div>
   </div>`;
+}
+
+function renderArchivePanel(status) {
+  const s = status.archive || {};
+  const data = _archiveData;
+  const rows = (data.messages || []).map(m => {
+    const role = m.role || '?';
+    const ts = m.timestamp ? (m.timestamp.slice(0, 16).replace('T', ' ')) : '';
+    const parts = m.parts || [];
+    let text = parts.map(p => p.content || '').join('');
+    if (role === 'tool') {
+      text = `<span class="tool-name">[${esc(m.name || 'tool')}]</span> ${esc(text.slice(0, 60))}`;
+    } else {
+      text = esc(text);
+    }
+    return `<div class="db-item">
+      <span class="text">
+        <span class="role-tag ${role}">${esc(role)}</span>
+        <span style="font-size:10px;color:var(--muted)">${esc(ts)}</span>
+        ${expandable(text, 80)}
+      </span>
+    </div>`;
+  }).join('');
+
+  return `<div class="card">
+    <h2>Message Archive (MongoDB)</h2>
+    <div class="db-stat">
+      条目: <b>${data.total}</b> &nbsp; MongoDB: ${ok(s.mongodb_ok)} &nbsp; session: <b>${esc(status.session?.current_id || 'default')}</b>
+    </div>
+    <div class="db-search">
+      <input id="archive-search" placeholder="搜索消息内容...">
+      <select id="archive-role-filter">
+        <option value="">全部</option>
+        <option value="user">user</option>
+        <option value="assistant">assistant</option>
+        <option value="tool">tool</option>
+      </select>
+    </div>
+    <div style="max-height:400px;overflow-y:auto;margin-bottom:8px;" id="archive-list">
+      ${rows || '<div class="empty">暂无消息</div>'}
+    </div>
+    <div style="display:flex;justify-content:space-between;">
+      <button class="db-btn" id="archive-load-more-btn" ${data.has_more ? '' : 'disabled'}>加载更多</button>
+      <button class="db-btn danger" onclick="confirmClearArchive()">清空全部</button>
+    </div>
+  </div>`;
+}
+
+function filterArchive() {
+  const search = (document.getElementById('archive-search')?.value || '').trim().toLowerCase();
+  const role = document.getElementById('archive-role-filter')?.value || '';
+  const items = document.querySelectorAll('#archive-list .db-item');
+  items.forEach(item => {
+    const text = item.textContent.toLowerCase();
+    const hasRole = !role || (role === 'tool' ? text.includes('tool') : item.querySelector('.role-tag.' + role));
+    item.style.display = (!search || text.includes(search)) && hasRole ? '' : 'none';
+  });
+}
+
+async function loadMoreArchive() {
+  const btn = document.getElementById('archive-load-more-btn');
+  btn.disabled = true;
+  btn.textContent = '加载中...';
+  const messages = _archiveData.messages || [];
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+  const lastId = lastMsg ? lastMsg._id : null;
+  try {
+    let url = '/debug/api/archive?limit=100';
+    if (lastId) url += '&before=' + encodeURIComponent(lastId);
+    const r = await fetch(url);
+    const data = await r.json();
+    _archiveData.messages = messages.concat(data.messages || []);
+    _archiveData.has_more = data.has_more;
+    _archiveData.total = data.total;
+    loadDbPanel();
+  } catch (e) {
+    btn.textContent = '加载失败，重试';
+    btn.disabled = false;
+  }
+}
+
+function confirmClearArchive() {
+  document.getElementById('confirm-title').textContent = '清空全部消息归档';
+  document.getElementById('confirm-msg').textContent = '将删除 MongoDB message_archive 中的所有消息。此操作不可撤销。';
+  document.getElementById('confirm-yes-btn').onclick = async () => {
+    closeConfirmModal();
+    try {
+      await fetch('/debug/api/archive', { method: 'DELETE' });
+      loadDbPanel();
+    } catch (e) { alert('清空失败: ' + e.message); }
+  };
+  document.getElementById('confirm-modal').classList.add('show');
 }
 
 // ---- CRUD 操作 ----
