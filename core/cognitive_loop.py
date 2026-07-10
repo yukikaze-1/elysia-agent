@@ -378,15 +378,15 @@ class CognitiveLoop:
                     extra_body={"thinking": {"type": "disabled"}})
                 try:
                     async for chunk in stream:
-                        content: str = chunk.get("content", "")  # type: ignore[no-redecl]
+                        delta: str = chunk.get("content", "")
                         tc_deltas = chunk.get("tool_calls")
 
-                        if content:
-                            acc_text += content
+                        if delta:
+                            acc_text += delta
 
                             # --- inner_voice 标签检测 ---
                             if iv_state == "PRE":
-                                combined = iv_tail + content
+                                combined = iv_tail + delta
                                 idx = combined.find(TAG_OPEN)
                                 if idx >= 0:
                                     before = combined[:idx].lstrip()
@@ -398,7 +398,7 @@ class CognitiveLoop:
                                         await _handle_sentence(clean)
                                     iv_state = "THINK"
                                     iv_tail = ""
-                                    content = combined[idx + len(TAG_OPEN):]
+                                    delta = combined[idx + len(TAG_OPEN):]
                                 else:
                                     safe_len = max(0, len(combined) - len(TAG_OPEN) + 1)
                                     if safe_len > 0:
@@ -411,7 +411,7 @@ class CognitiveLoop:
                                     continue
 
                             if iv_state == "THINK":
-                                combined = iv_tail + content
+                                combined = iv_tail + delta
                                 idx = combined.find(TAG_CLOSE)
                                 if idx >= 0:
                                     iv_think_buf += combined[:idx]
@@ -424,7 +424,7 @@ class CognitiveLoop:
                                                 params={"content": iv_think_buf.strip()})
                                         except Exception:
                                             logger.debug("inner_voice broadcast failed", exc_info=True)
-                                    content = after
+                                    delta = after
                                 else:
                                     keep_len = min(len(TAG_CLOSE) - 1, len(combined))
                                     if len(combined) > keep_len:
@@ -435,7 +435,7 @@ class CognitiveLoop:
                             if iv_state == "REPLY":
                                 pass  # 正常流，继续下面的处理
 
-                            if not content:
+                            if not delta:
                                 continue
 
                             if not ttft_done:
@@ -446,7 +446,7 @@ class CognitiveLoop:
                                 logger.debug("TTFT: %d ms", ttft_ms)
 
                             # 过滤结构化块标记 — 代码和 markdown 不走 TTS
-                            clean = block_filter.feed(content)
+                            clean = block_filter.feed(delta)
 
                             # TTS 关闭时流式逐字发送；TTS 开启时不发（由 TTSStreamManager 发送完整句）
                             if not self._tts_mgr.active and clean:
