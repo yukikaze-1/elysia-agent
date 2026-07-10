@@ -13,17 +13,17 @@
 ### 1. 下载项目
 
 ```bash
-git clone <repo-url>   # 或直接下载 ZIP 解压
+git clone <仓库地址>   # 点击页面上绿色「Code」按钮复制
 cd Agent
 ```
 
 ### 2. 装好三样东西
 
 - **[Miniconda](https://docs.anaconda.com/miniconda/install/)** — Python 环境管理。装好后在终端输入 `conda --version` 确认
-- **[Docker Desktop](https://docs.docker.com/desktop/)** — 自带 Docker Compose。装好后输入 `docker --version` 确认
+- **[Docker Engine](https://docs.docker.com/engine/install/ubuntu/)** — 安装后自带 Docker Compose 插件。装好后输入 `docker --version` 确认
 - **[DeepSeek API key](https://platform.deepseek.com/api_keys)** — 免费注册，在左侧「API Keys」页面点"创建 API key"，复制备用
 
-> Python >= 3.11 可替代 conda；Docker Engine + Compose 插件可替代 Docker Desktop
+> 系统自带 Python >= 3.11 可替代 conda
 
 ### 3. 首次安装（只需一次）
 
@@ -31,7 +31,7 @@ cd Agent
 # 安装环境 + 下载模型（约 1.3GB，需网络）
 bash scripts/setup.sh
 
-# 编辑 .env，填入 API key（nano .env 或 vim .env）
+# 编辑 .env，填入 API key（nano .env，或用桌面文本编辑器打开）
 #   必填: DEEPSEEK_API_KEY
 #   语音: MINIMAX_API_KEY（TTS，免费注册 https://platform.minimaxi.com）
 # 更多可选配置见 .env.example 中的注释
@@ -75,99 +75,6 @@ python app.py --config custom.yaml --character custom/char.yaml  # 自定义配�
 
 不配置的可选服务会自动降级或跳过，不影响文字对话功能。
 数据库和嵌入模型是必需的——`app.py --check` 会验证。
-
-### 配置文件
-
-#### `.env` — API key 和服务 URL
-
-```bash
-# 必填
-DEEPSEEK_API_KEY=sk-your-key-here
-
-# 语音合成（可选，当前默认 MiniMax）
-MINIMAX_API_KEY=sk-your-key-here
-
-# 其他可选
-TAVILY_API_KEY=tvly-dev-...      # 网页搜索
-OPENAI_API_KEY=sk-...            # 备选 LLM / STT / Embedding
-MIMO_API_KEY=sk-...              # 图片识别
-```
-
-完整模板见 `.env.example`。
-
-#### `config.yaml` — 主配置
-
-```yaml
-agent:
-  character: character/elysia.yaml  # 角色文件路径
-  user_name: 妖梦                    # 用户称呼
-
-llm:
-  model: deepseek/deepseek-v4-flash  # 可换 openai/gpt-4o、ollama/llama3 等
-
-server:
-  host: 0.0.0.0
-  port: 8765
-  image_max_mb: 10                  # 图片上传上限 (MB)
-
-tts:
-  enabled: true
-  model: minimax/speech-2.8-hd      # 可换 gpt-sovits/default、custom/...
-
-stt:
-  enabled: true
-  model: sensevoice/sense-voice      # 可换 custom/...
-
-wake_word:
-  enabled: false                     # 语音唤醒（需额外模型）
-
-live2d:
-  static_image: "/static/Elysia.png"
-
-vision:
-  model: mimo/mimo-v2.5              # describe_image 工具用的视觉模型
-```
-
-#### `character/elysia.yaml` — 角色人设
-
-```yaml
-name: Elysia
-voice: elysia_v2
-personality:
-  traits: [温柔, 好奇, 偶尔毒舌]
-  speaking_style: "口语化，短句为主，偶尔加语气词，喜欢用「呢」「呀」「哦」"
-emotion:
-  thresholds:
-    excitement: 0.6
-    sadness: 0.3
-wake_words: [Elysia, 爱莉, 爱莉希雅, 妖精小姐]
-proactive:
-  enabled: false
-  interval: 300                     # 主动搭话间隔（秒）
-```
-
-#### `Module/tts/minimax_voices.yaml` — MiniMax 音色
-
-```yaml
-Elysia:
-  voice_id: "elysia_test_001"
-```
-
-`voice_id` 需要在 [MiniMax 开放平台](https://platform.minimaxi.com) 获取：
-- **系统音色**（免费）— 官网「声音管理」中复制 voice_id，或调用 `POST /v1/get_voice` 接口查询
-- **克隆音色** — 上传 10 秒~5 分钟音频样本，调用 `/v1/voice_clone` 接口（需企业/个人认证）
-- **AI 生成** — 通过文本描述生成新音色，调用 `/v1/voice_design` 接口
-- 完整 API 文档见 `Module/tts/minimax_tts_api.md`
-
-#### `Module/tts/gpt_sovits_voices.yaml` — GPT-SoVits 音色
-
-```yaml
-Elysia:
-  ref_audio: "/path/to/reference.wav"
-  prompt_text: "参考音频对应的文本"
-```
-
-> `Module/config/providers.yaml` 和 `docker-compose.yml` 是内部默认值，通常不需要改。
 
 ---
 
@@ -341,3 +248,98 @@ python -m pytest Module/ core/ -v
 ```
 
 **测试统计**: ~1,370 tests（305 TaskSystem unit + 36 TaskSystem integration + 361 core + 610 Module + 82 core/tools）
+
+---
+
+## 配置文件参考
+
+#### `.env` — API key 和服务 URL
+
+```bash
+# 必填
+DEEPSEEK_API_KEY=sk-your-key-here
+
+# 语音合成（可选，当前默认 MiniMax）
+MINIMAX_API_KEY=sk-your-key-here
+
+# 其他可选
+TAVILY_API_KEY=tvly-dev-...      # 网页搜索
+OPENAI_API_KEY=sk-...            # 备选 LLM / STT / Embedding
+MIMO_API_KEY=sk-...              # 图片识别
+```
+
+完整模板见 `.env.example`。
+
+#### `config.yaml` — 主配置
+
+```yaml
+agent:
+  character: character/elysia.yaml  # 角色文件路径
+  user_name: 妖梦                    # 用户称呼
+
+llm:
+  model: deepseek/deepseek-v4-flash  # 可换 openai/gpt-4o、ollama/llama3 等
+
+server:
+  host: 0.0.0.0
+  port: 8765
+  image_max_mb: 10                  # 图片上传上限 (MB)
+
+tts:
+  enabled: true
+  model: minimax/speech-2.8-hd      # 可换 gpt-sovits/default、custom/...
+
+stt:
+  enabled: true
+  model: sensevoice/sense-voice      # 可换 custom/...
+
+wake_word:
+  enabled: false                     # 语音唤醒（需额外模型）
+
+live2d:
+  static_image: "/static/Elysia.png"
+
+vision:
+  model: mimo/mimo-v2.5              # describe_image 工具用的视觉模型
+```
+
+#### `character/elysia.yaml` — 角色人设
+
+```yaml
+name: Elysia
+voice: elysia_v2
+personality:
+  traits: [温柔, 好奇, 偶尔毒舌]
+  speaking_style: "口语化，短句为主，偶尔加语气词，喜欢用「呢」「呀」「哦」"
+emotion:
+  thresholds:
+    excitement: 0.6
+    sadness: 0.3
+wake_words: [Elysia, 爱莉, 爱莉希雅, 妖精小姐]
+proactive:
+  enabled: false
+  interval: 300                     # 主动搭话间隔（秒）
+```
+
+#### `Module/tts/minimax_voices.yaml` — MiniMax 音色
+
+```yaml
+Elysia:
+  voice_id: "elysia_test_001"
+```
+
+`voice_id` 需要在 [MiniMax 开放平台](https://platform.minimaxi.com) 获取：
+- **系统音色**（免费）— 官网「声音管理」中复制 voice_id，或调用 `POST /v1/get_voice` 接口查询
+- **克隆音色** — 上传 10 秒~5 分钟音频样本，调用 `/v1/voice_clone` 接口（需企业/个人认证）
+- **AI 生成** — 通过文本描述生成新音色，调用 `/v1/voice_design` 接口
+- 完整 API 文档见 `Module/tts/minimax_tts_api.md`
+
+#### `Module/tts/gpt_sovits_voices.yaml` — GPT-SoVits 音色
+
+```yaml
+Elysia:
+  ref_audio: "/path/to/reference.wav"
+  prompt_text: "参考音频对应的文本"
+```
+
+> `Module/config/providers.yaml` 和 `docker-compose.yml` 是内部默认值，通常不需要改。
