@@ -43,7 +43,7 @@ tts:
     base_url: ""
     env_key: "CUSTOM_TTS_API_KEY"
   minimax:
-    base_url: "https://api.minimaxi.com"
+    base_url: ""
     env_key: "MINIMAX_API_KEY"
 
 stt:

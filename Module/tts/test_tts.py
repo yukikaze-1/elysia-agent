@@ -1,4 +1,5 @@
 import asyncio
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -7,6 +8,12 @@ from .protocol import TTSBackend
 from .registry import TTSFactory
 from .minimax_tts import MiniMaxTTSBackend
 from .text_preprocess import strip_all_markup, strip_action_only, strip_for_minimax
+
+
+@pytest.fixture(autouse=True)
+def _set_minimax_url(monkeypatch):
+    """设置 MiniMax TTS URL 环境变量（所有 MiniMax 测试共用）。"""
+    monkeypatch.setenv("MINIMAX_TTS_URL", "https://api.minimaxi.com")
 
 
 # ============================================================
@@ -240,7 +247,11 @@ class TestTTSFactory:
         assert "https://api.minimaxi.com" in call_kwargs["base_url"]
 
     def test_minimax_missing_api_key_raises(self):
-        with patch("os.getenv", return_value=None):
+        def fake_getenv(key, default=None):
+            if key == "MINIMAX_API_KEY":
+                return None
+            return os.environ.get(key, default)
+        with patch("os.getenv", side_effect=fake_getenv):
             with pytest.raises(ValueError, match="MiniMax TTS 需要 api_key"):
                 TTSFactory.create("minimax/speech-2.8-hd")
 
@@ -478,7 +489,7 @@ class TestStripForMiniMax:
 
 class TestMiniMaxConstruction:
     def test_defaults(self):
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
         assert backend._model == "speech-2.8-hd"
         assert backend._base_url == "https://api.minimaxi.com"
         assert backend._voice_id == "test-voice"
@@ -490,6 +501,7 @@ class TestMiniMaxConstruction:
     def test_voice_map_resolve(self):
         backend = MiniMaxTTSBackend(
             api_key="sk-test",
+            base_url="https://api.minimaxi.com",
             voice_id="default-voice",
             voice_map={"Elysia": "female-elysia-01"},
         )
@@ -497,12 +509,12 @@ class TestMiniMaxConstruction:
         assert backend._resolve_voice("Unknown") == "default-voice"
 
     def test_voice_map_default_voice_id(self):
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
         assert backend._resolve_voice("Anyone") == "test-voice"
 
     @pytest.mark.asyncio
     async def test_close(self):
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
         await backend.close()
         assert backend._client.is_closed
 
@@ -511,7 +523,7 @@ class TestMiniMaxSynthesize:
     @pytest.mark.asyncio
     async def test_hex_decode_and_return_bytes(self):
         """验证非流式：POST → JSON → hex decode → bytes"""
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
 
         # mock _client.post 返回 hex 编码的音频
         wav_bytes = b"RIFF....WAVE...."  # 伪 WAV
@@ -559,6 +571,7 @@ class TestMiniMaxSynthesize:
 
         backend = MiniMaxTTSBackend(
             api_key="sk-test",
+            base_url="https://api.minimaxi.com",
             model="speech-2.8-turbo",
             voice_id="male-qn-qingse",
             speed=1,
@@ -603,6 +616,7 @@ class TestMiniMaxSynthesize:
 
         backend = MiniMaxTTSBackend(
             api_key="sk-test",
+            base_url="https://api.minimaxi.com",
             voice_id="default",
             voice_map={"Elysia": "female-elysia-01"},
         )
@@ -630,7 +644,7 @@ class TestMiniMaxSynthesize:
             captured_payload.update(json)
             return MockResp()
 
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
         backend._client.post = fake_post  # type: ignore[assignment]
         await backend.synthesize("hi", character="test", emotion=None)
         assert "emotion" not in captured_payload["voice_setting"]
@@ -657,7 +671,7 @@ class TestMiniMaxSynthesizeStream:
         async def fake_post(url, *, json, **kw):
             return MockResp()
 
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
         backend._client.post = fake_post  # type: ignore[assignment]
 
         chunks = []
@@ -685,7 +699,7 @@ class TestMiniMaxSynthesizeStream:
         async def fake_post(url, *, json, **kw):
             return MockResp()
 
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
         backend._client.post = fake_post  # type: ignore[assignment]
 
         chunks = []
@@ -713,7 +727,7 @@ class TestMiniMaxErrors:
                     "base_resp": {"status_code": 1004, "status_msg": "rate limit"},
                 }
 
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
 
         async def fake_post(url, *, json, **kw):
             return MockResp()
@@ -738,7 +752,7 @@ class TestMiniMaxErrors:
             def json(self):
                 return {"base_resp": {"status_code": 1001, "status_msg": "unauthorized"}}
 
-        backend = MiniMaxTTSBackend(api_key="sk-bad", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-bad", base_url="https://api.minimaxi.com", voice_id="test-voice")
 
         async def fake_post(url, *, json, **kw):
             return MockResp()
@@ -762,7 +776,7 @@ class TestMiniMaxErrors:
                     "base_resp": {"status_code": 0, "status_msg": "success"},
                 }
 
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
 
         async def fake_post(url, *, json, **kw):
             return MockResp()
@@ -793,7 +807,7 @@ class TestMiniMaxCancel:
         async def fake_post(url, *, json, **kw):
             return MockResp()
 
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
         backend._client.post = fake_post  # type: ignore[assignment]
 
         count = 0
@@ -817,13 +831,13 @@ class TestTTSBackendProviderName:
 
     def test_minimax_provider_name(self):
         from .minimax_tts import MiniMaxTTSBackend
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
         assert backend.provider_name == "minimax"
 
     def test_minimax_get_preprocess(self):
         from .minimax_tts import MiniMaxTTSBackend
         from .text_preprocess import strip_for_minimax
-        backend = MiniMaxTTSBackend(api_key="sk-test", voice_id="test-voice")
+        backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
         assert backend.get_preprocess() is strip_for_minimax
 
     def test_openai_provider_name(self):

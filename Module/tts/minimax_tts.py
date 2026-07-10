@@ -44,7 +44,7 @@ class MiniMaxTTSBackend(TTSBackend):
         model: str = "speech-2.8-hd",
         *,
         api_key: str,
-        base_url: str = "https://api.minimaxi.com",
+        base_url: str,
         voices_config: str = "",
         voice_id: str = "elysia_test_001",
         voice_map: dict[str, str] | None = None,

@@ -77,6 +77,11 @@ class TTSFactory:
             # 不使用顶层 base_url（被 MINIMAX_API_KEY env 污染），
             # 用 MINIMAX_TTS_URL 独立解析 + 用户显式传入的 base_url
             base_url = resolve_base_url("MINIMAX_TTS_URL", cfg, explicit_base_url)
+            if not base_url:
+                raise ValueError(
+                    "MiniMax TTS base_url 未设置。请在 .env 中设置 MINIMAX_TTS_URL，"
+                    "如 MINIMAX_TTS_URL=https://api.minimaxi.com"
+                )
             if not api_key:
                 raise ValueError("MiniMax TTS 需要 api_key，请设置 MINIMAX_API_KEY 环境变量或显式传入")
             if "logger" not in kwargs:
