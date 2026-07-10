@@ -252,10 +252,15 @@ class TTSStreamManager:
                 )
                 await self._output.send("")
         except asyncio.CancelledError:
+            # 释放下一句的门控（避免后续句子永久卡住）
+            if seq + 1 in self._release_events:
+                self._release_events[seq + 1].set()
             pass  # INTERRUPT 打断
         except Exception:
-            # TTS 不可用时静默降级到纯文本——不打印堆栈以免误导
-            logger.debug("TTS stream failed — fallback 发送文字", exc_info=False)
+            # 释放下一句的门控（避免后续句子永久卡住）
+            if seq + 1 in self._release_events:
+                self._release_events[seq + 1].set()
+            logger.warning("TTS stream failed — fallback 发送文字", exc_info=True)
             # TTS 失败兜底: 至少把文字发出去
             if first_chunk:
                 try:
