@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 _BACKENDS: dict[str, dict] = {
     "mongodb": {
-        "base_url": "mongodb://localhost:27017",
+        "base_url": "",
         "env_key": "MONGODB_URI",
     },
 }
@@ -33,6 +33,12 @@ class DocumentDBFactory:
         cfg = _BACKENDS[provider]
         base_url = resolve_base_url(cfg["env_key"], cfg, kwargs.pop("base_url", None))
 
+        if not base_url:
+            raise ValueError(
+                "MongoDB 连接串未设置。请在 .env 中设置 MONGODB_URI，"
+                "如 MONGODB_URI=mongodb://localhost:27017"
+            )
+
         if "logger" not in kwargs:
             kwargs["logger"] = inject_logger(__name__)
 
@@ -43,4 +49,7 @@ class DocumentDBFactory:
         """从 DocumentDBConfig dataclass 创建后端，overrides 优先级最高。"""
         kwargs = dataclasses.asdict(config)
         kwargs.update(overrides)
+        # 空 base_url 不传入，让 create() 从 env var 解析
+        if not kwargs.get("base_url"):
+            kwargs.pop("base_url", None)
         return cls.create(provider_id, **kwargs)

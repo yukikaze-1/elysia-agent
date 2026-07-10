@@ -30,7 +30,7 @@ class MilvusBackend(VectorDBBackend):
     def __init__(
         self,
         *,
-        uri: str = "http://localhost:19530",
+        uri: str,
         token: str = "",
         name: str = "default",
         logger: logging.Logger | None = None,

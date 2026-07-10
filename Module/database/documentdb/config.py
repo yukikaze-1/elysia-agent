@@ -1,17 +1,14 @@
-"""DocumentDB 模块配置 — 可通过 YAML 文件或环境变量覆盖默认值。"""
+"""DocumentDB 模块配置 — 必须通过环境变量或 YAML 设置。"""
 
 from dataclasses import dataclass
 
 from Module.config import ConfigField
-from Module.config.providers import load_provider_defaults
-
-_db = load_provider_defaults("database")
 
 
 @dataclass
 class DocumentDBConfig:
     base_url: str = ConfigField(
-        default=_db.get("mongodb", {}).get("base_url", "mongodb://localhost:27017"),
+        default="",
         env="MONGODB_URI",
-        help="MongoDB 连接串",
+        help="MongoDB 连接串（必需，如 mongodb://localhost:27017）",
     )

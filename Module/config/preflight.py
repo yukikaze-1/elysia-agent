@@ -138,6 +138,24 @@ def _check_character_file(config: Any) -> None:
         _fail(f"角色配置文件不存在: {config.agent.character}")
 
 
+def _check_mongo_env() -> None:
+    """检查 MONGODB_URI 是否设置。"""
+    val = os.getenv("MONGODB_URI", "")
+    if val:
+        _pass(f"数据库 env ok (MONGODB_URI 已设置)")
+    else:
+        _fail("MONGODB_URI 未设置 — 请在 .env 中设置，如 MONGODB_URI=mongodb://localhost:27017")
+
+
+def _check_milvus_env() -> None:
+    """检查 MILVUS_URI 是否设置。"""
+    val = os.getenv("MILVUS_URI", "")
+    if val:
+        _pass(f"数据库 env ok (MILVUS_URI 已设置)")
+    else:
+        _fail("MILVUS_URI 未设置 — 请在 .env 中设置，如 MILVUS_URI=http://localhost:19530")
+
+
 def _check_tts_env(config: Any) -> None:
     """根据 TTS provider 检查对应 env var (WARN 级别)。"""
     if not config.tts.enabled:
@@ -279,7 +297,7 @@ async def _check_stt_connectivity(config: Any) -> None:
 
 async def _check_milvus_connectivity() -> None:
     """Milvus 向量数据库连通性探活。"""
-    uri = os.getenv("MILVUS_URI", "http://localhost:19530")
+    uri = os.getenv("MILVUS_URI", "")
     try:
         import httpx
         async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
@@ -294,7 +312,7 @@ async def _check_milvus_connectivity() -> None:
 
 async def _check_mongodb_connectivity() -> None:
     """MongoDB 文档数据库连通性探活。"""
-    uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+    uri = os.getenv("MONGODB_URI", "")
     try:
         import motor.motor_asyncio
     except ImportError:
@@ -330,6 +348,8 @@ def run(config: Any, full: bool = False) -> bool:
     _check_pip_deps()
     _check_character_file(config)
     _check_embedding_model()
+    _check_mongo_env()
+    _check_milvus_env()
 
     # Phase 2: WARN
     _check_tts_env(config)

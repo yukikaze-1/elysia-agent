@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 _BACKENDS: dict[str, dict] = {
     "milvus": {
-        "base_url": "http://localhost:19530",
+        "base_url": "",
         "env_key": "MILVUS_URI",
     },
     "pinecone": {
@@ -46,6 +46,12 @@ class VectorDBFactory:
         base_url = resolve_base_url(cfg["env_key"], cfg, kwargs.pop("base_url", None))
         token = kwargs.pop("token", "") or os.getenv("MILVUS_TOKEN", "")
 
+        if not base_url:
+            raise ValueError(
+                "Milvus 连接串未设置。请在 .env 中设置 MILVUS_URI，"
+                "如 MILVUS_URI=http://localhost:19530"
+            )
+
         if "logger" not in kwargs:
             kwargs["logger"] = inject_logger(__name__)
 
@@ -56,4 +62,7 @@ class VectorDBFactory:
         """从 VectorDBConfig dataclass 创建后端，overrides 优先级最高。"""
         kwargs = dataclasses.asdict(config)
         kwargs.update(overrides)
+        # 空 base_url 不传入，让 create() 从 env var 解析
+        if not kwargs.get("base_url"):
+            kwargs.pop("base_url", None)
         return cls.create(provider_id, **kwargs)

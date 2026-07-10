@@ -70,6 +70,6 @@ embedding:
 
 database:
   milvus:
-    base_url: "http://localhost:19530"
+    base_url: ""
   mongodb:
-    base_url: "mongodb://localhost:27017"
+    base_url: ""

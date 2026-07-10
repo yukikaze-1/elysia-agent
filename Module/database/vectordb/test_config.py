@@ -31,6 +31,7 @@ class TestVectorDBFromConfig:
     @patch("Module.database.vectordb.milvus.MilvusClient", autospec=True)
     def test_overrides_take_priority(self, mock_client, monkeypatch):
         monkeypatch.delenv("MILVUS_TOKEN", raising=False)
+        monkeypatch.setenv("MILVUS_URI", "http://localhost:19530")
         cfg = VectorDBConfig(token="config-token")
         backend = VectorDBFactory.from_config(
             "milvus/db", cfg, token="override-token"

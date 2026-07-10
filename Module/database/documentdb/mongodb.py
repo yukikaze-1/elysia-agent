@@ -16,7 +16,7 @@ class MongoDBBackend(DocumentDBBackend):
     def __init__(
         self,
         *,
-        uri: str = "mongodb://localhost:27017",
+        uri: str,
         database: str = "elysia",
         logger: logging.Logger | None = None,
         server_selection_timeout_ms: int = 3000,
