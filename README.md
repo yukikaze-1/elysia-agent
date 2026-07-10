@@ -62,8 +62,8 @@ bash scripts/start.sh
 | `log/conversation.log` | 所有对话记录 |
 | `.model_cache/` | 嵌入模型（`BAAI/bge-large-zh-v1.5/`，约 1.3GB） |
 | `data/ref/Elysia.wav` | GPT-SoVits 音色克隆参考音频（1.6MB） |
-| `data/live2d-assets/` | Live2D 角色模型源素材（~150MB，从官网下载） |
-| `static/live2d-demo/` | Live2D 前端运行时（Cubism SDK v5-r.5，约 500KB） |
+| `static/live2d-demo/` | Live2D 前端（Cubism SDK + 加载页面） |
+| `data/live2d-assets/` | Live2D 角色模型（.moc3 + 纹理，服务端映射到 `/live2d/`） |
 
 > `scripts/download_model.py` 将模型下载到 `.model_cache/`。运行时按 `MODEL_CACHE_DIR` → `.model_cache/` → `~/.cache/huggingface/hub/` 顺序查找。
 
@@ -303,6 +303,43 @@ python -m pytest Module/ core/ -v
 ```
 
 **测试统计**: ~1,370 tests（305 TaskSystem unit + 36 TaskSystem integration + 361 core + 610 Module + 82 core/tools）
+
+---
+
+## Live2D 角色显示（可选）
+
+项目默认以静态图片代替。启用动态 Live2D 角色需要两步：
+
+**1. 获取 Cubism SDK for Web**
+
+从 [Live2D 官网](https://www.live2d.com/download/cubism-sdk/) 下载 `CubismSdkForWeb-5-r.5.zip`，解压后放入 `static/live2d-demo/`：
+
+```
+static/live2d-demo/
+├── Core/
+│   └── live2dcubismcore.js  # 核心渲染引擎
+├── Framework/
+│   └── dist/                  # 编译好的 TypeScript 框架
+├── Samples/                   # 官方示例模型（可选）
+└── index.html                 # 你的 Live2D 加载页面
+```
+
+> 当前 `static/live2d-demo/` 已包含 SDK 的 `Core/` + `Framework/`，但缺 `index.html` 加载页面
+
+**2. 获取角色模型**
+
+从 [Live2D 商城](https://www.live2d.com/en/products/) 下载角色模型包，放入 `data/live2d-assets/`：
+
+```
+data/live2d-assets/
+└── <角色名>/
+    ├── <角色名>.moc3            # 模型数据
+    ├── <角色名>.model3.json     # 模型配置（入口文件）
+    ├── <角色名>.physics3.json   # 物理模拟
+    └── <角色名>.8192/           # 纹理贴图
+```
+
+服务端将 `data/live2d-assets/` 映射到 `/live2d/`，前端通过 iframe 加载 `/static/live2d-demo/index.html`。
 
 ---
 

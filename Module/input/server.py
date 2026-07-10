@@ -18,7 +18,7 @@ from .audio_buffer import AudioBuffer
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).parent.parent.parent / "static"
-_LIVE2D_DIR = Path(__file__).parent.parent.parent / "live2d"
+_LIVE2D_DIR = Path(__file__).parent.parent.parent / "data" / "live2d-assets"
 
 
 def create_app(
