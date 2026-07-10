@@ -5,10 +5,10 @@ __pycache__/
 tmp/
 log/
 .model_cache/
-live2d/
 node_modules/
-ref/
 static/live2d-demo/
+data/ref/
+data/live2d-assets/
 .playwright-mcp/
 .claude/
 CLAUDE.md

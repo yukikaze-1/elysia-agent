@@ -14,7 +14,7 @@ from Module.stt import STTFactory
 from Module.tts import TTSFactory
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_AUDIO = os.path.join(PROJECT_ROOT, "ref", "Elysia", "Elysia.wav")
+DEFAULT_AUDIO = os.path.join(PROJECT_ROOT, "data", "ref", "Elysia.wav")
 
 
 class LatencyBench:
