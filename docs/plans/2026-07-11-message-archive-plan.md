@@ -87,7 +87,7 @@ class TestMessageArchiveQuery:
     async def test_query_returns_messages_and_has_more(self):
         db = AsyncMock()
         msgs = [{"_id": str(i), "role": "user", "text": f"msg{i}"} for i in range(51)]
-        db.find = AsyncMock(return_value=msgs[:50])
+        db.find = AsyncMock(return_value=msgs[:51])  # limit + 1 → 51
         archive = MessageArchive()
         await archive.connect(db)
         messages, has_more = await archive.query(limit=50)
