@@ -1,6 +1,13 @@
 # 数据库存储表格
 
-项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），外加若干内存/文件存储结构。没有使用 SQL 数据库。
+项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），4 个集合，外加若干内存/文件存储结构。没有使用 SQL 数据库。
+
+| 集合 | 位置 | 用途 | 保留策略 |
+|------|------|------|----------|
+| `long_term_memory` | Milvus | 记忆摘要（向量搜索）| 90天/1万条(内存)，Milvus 不自动删除 |
+| `sessions` | MongoDB | LLM 上下文窗口 | max_messages 截断, 30天 TTL |
+| `message_archive` | MongoDB | 对话消息永久归档 | 永久, 只增不删 |
+| `token_usage` | MongoDB | LLM token 统计 | 永久, 只增不删 |
 
 ---
 
@@ -63,6 +70,41 @@
 
 **操作**: 原子 upsert（`update_one(upsert=True)`）
 **降级**: MongoDB 不可用时纯内存运行（deque，maxlen 默认 200，config.yaml session_max_messages 可配）
+
+### 集合: `message_archive`（数据库: `default`）
+
+所有对话消息的永久归档。与 `sessions` 职责分离：session 管 LLM 上下文窗口（截断保留），archive 管持久化（只增不删）。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `_id` | ObjectId | MongoDB 自动生成 |
+| `role` | String | `user` / `assistant` / `tool` |
+| `content` | Array\<Object\> | TextPart 数组 `[{"type": "text", "content": "..."}]` |
+| `parts` | Array\<Object\> | 客户端友好格式（写入时不含，API 查询时补） |
+| `timestamp` | String（ISO 格式） | 消息时间 |
+| `inner_voice` | String? | assistant 的内心独白 |
+| `token_usage` | Object? | assistant 的 token 统计 |
+| `tool_call_id` / `name` / `success` / `error` | — | tool 角色专用字段 |
+
+**索引**: `_id`（MongoDB 内置默认降序扫描），无 TTL，不截断。
+
+**操作**: `insert_one`（fire-and-forget），`find`（分页游标），`delete_many({})`（debug 清空）。
+
+### 集合: `token_usage`（数据库: `default`）
+
+每次 LLM 调用的 token 统计日志，只增不删。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `session_id` | String | 会话标识 |
+| `model` | String | LLM 模型名 |
+| `prompt_tokens` | Int | 输入 token 数 |
+| `completion_tokens` | Int | 输出 token 数 |
+| `total_tokens` | Int | 总 token 数 |
+| `round_num` | Int | 轮次编号 |
+| `timestamp` | Float | Unix 时间戳 |
+
+**操作**: `insert_one`（每次 LLM 调用后），`find`（按 session 聚合统计）。无 TTL，无上限。
 
 ---
 

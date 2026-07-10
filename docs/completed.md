@@ -806,6 +806,44 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 - MiniMax emotion 参数：`EmotionEngine` mood → `TTSStreamManager.set_emotion()`
 - TTS 句子乱序修复：`asyncio.Event` 顺序释放门
 
+### 2026-07-11: 消息永久归档 (MessageArchive)
+
+所有对话消息永久保留到 MongoDB `message_archive` 集合，与 session 职责分离。
+
+- `core/memory/message_archive.py` — MessageArchive 类（只增不删、分页查询、fire-and-forget 写入）
+- `SessionMemory.add_message()` 中自动写入 archive
+- `GET /api/messages` — 前端滚动到顶懒加载历史（游标分页）
+- `GET /debug/api/archive` — debug 浏览/搜索/清空
+- `static/js/chat.js` — 滚动监听 + prependMessages + 位置修正
+- `static/debug.html` — 数据库 Tab 新增 Message Archive 面板（三栏布局）
+- 16 个测试（13 单元 + 3 集成）
+
+### 2026-07-11: LTM 从 Milvus 恢复 + 显示修复
+
+- `LongTermMemory._load_from_milvus()` — 启动时从 Milvus query 已有条目恢复到 `_entries`，按时间排序并驱逐超限
+- `insert()` 存储 `entry_id` 到 Milvus metadata，确保加载时恢复原始 ID
+- Debug 概览页 `lt_recent` 补 `memory_type` 和 `poignancy` 字段，类型标签从 `?` 修正
+- Session 20 条上限未改（上下文窗口），归档解决的是历史保留
+
+### 2026-07-11: Consolidation user_name 参数化
+
+`EXTRACTION_PROMPT` 中"用户"→`{user_name}`，对话前缀同步使用。
+
+### 2026-07-11: CharacterReflector buffer 持久化
+
+- `buffer()` 每次追加后自动 `_save_state()` 到 session.params（随 MongoDB 持久化）
+- `restore_state()` 在 `session.load()` 后调用，重启恢复累积进度
+- `flush()` 增加最低阈值（10 对），少量对话不强制反思，避免清空 buffer
+
+### 2026-07-11: IDE 类型错误修复 (第二批)
+
+生产代码：`_EventBusHITLNotifier` 继承协议、`get_raw_client()` cast、`stt_backend.last_emotion`→`getattr`、`distances` 类型放宽、`_archive` assert、流式变量 `content`→`delta` 消 shadowing。
+测试代码：9 个文件的类型注解修复 (`# type: ignore`、`assert is not None`、`e.type.value`→`e.type`)。
+
+### 2026-07-11: 死代码清理
+
+删除 F3 工具声明相关死代码：`_reference_behavior.j2`、`ToolManager.to_prompt_text()`、`PromptAssembler.set_tool_manager()`。
+
 ### 2026-07-06: 人称代词参数化
 
 `CharacterConfig.user_pronoun` + c1/c2/c3 模板 `{{ user_pronoun }}`。
