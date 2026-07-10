@@ -23,6 +23,7 @@ from .log_setup import set_request_id, get_request_id
 from .character_config import CharacterConfig
 from .memory.session import SessionMemory
 from .memory.long_term import LongTermMemory
+from .memory.message_archive import MessageArchive
 from .prompt_assembler import PromptAssembler
 from Module.tool import ToolManager, ToolContext, PluginContext
 from core.tools import ALL_PLUGINS
@@ -62,7 +63,11 @@ class Agent:
         self._character = CharacterConfig.from_yaml(config.agent.character)
 
         # ---- L2: Memory ----
-        self._session = SessionMemory(max_messages=config.memory.session_max_messages)
+        self._archive = MessageArchive()
+        self._session = SessionMemory(
+            max_messages=config.memory.session_max_messages,
+            archive=self._archive,
+        )
         self._long_term = LongTermMemory(
             max_entries=config.memory.ltm_max_entries,
             max_age_days=config.memory.ltm_max_age_days,
@@ -202,6 +207,7 @@ class Agent:
             self._long_term.connect(),
         )
         if mongo_ok:
+            await self._archive.connect(self._session.db)
             await self._session.load()
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
             if os.path.exists(self._session.pending_file):

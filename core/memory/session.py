@@ -5,12 +5,16 @@ process restarts via save_session() / load_session().
 Otherwise falls back to in-memory deque (existing behavior).
 """
 
+import asyncio
 import json
 import logging
 import os
 from collections import deque
 from datetime import datetime
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.memory.message_archive import MessageArchive
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +22,14 @@ logger = logging.getLogger(__name__)
 class SessionMemory:
     """Bounded conversation window with optional MongoDB persistence."""
 
-    def __init__(self, max_messages: int = 20, session_id: str = "default"):
+    def __init__(self, max_messages: int = 20, session_id: str = "default",
+                 archive: "MessageArchive | None" = None):
         self._messages: deque[dict[str, Any]] = deque(maxlen=max_messages)
         self._params: dict[str, Any] = {}
         self._max_messages = max_messages
         self._session_id = session_id
         self._db: Any = None  # DocumentDBBackend or None
+        self._archive = archive
         self._pending_file = os.path.join("data", f"session_{session_id}.json")
 
     # ---- public properties (替代直接访问私有属性) ----
@@ -52,21 +58,34 @@ class SessionMemory:
         旧格式: add_message(role, content, **meta)       — content 为 str
         新格式: add_message({role, content, message_id, ...}) — content 为 list[dict] (ChatMessageV2.to_dict())
         """
+        entry: dict[str, Any]
         if len(args) == 1 and isinstance(args[0], dict):
             msg = args[0]
             # 向后兼容：content 为 str 时包装为 TextPart 数组
             if isinstance(msg.get("content"), str):
                 msg["content"] = [{"type": "text", "content": msg["content"]}]
             self._messages.append(msg)
+            entry = msg
         else:
             role, content = args[0], args[1] if len(args) > 1 else ""
-            entry: dict[str, Any] = {
+            entry = {
                 "role": role,
                 "content": [{"type": "text", "content": content}],
             }
             if meta:
                 entry["meta"] = meta
             self._messages.append(entry)
+
+        # 写入永久归档（fire-and-forget，不阻塞主流程）
+        if self._archive:
+            asyncio.create_task(self._archive_append(entry))
+
+    async def _archive_append(self, entry: dict) -> None:
+        """fire-and-forget: 将消息追加到永久归档。异常只记日志，不影响主流程。"""
+        try:
+            await self._archive.append(entry)
+        except Exception:
+            logger.debug("archive append failed", exc_info=True)
 
     def recent_messages(self, n: int | None = None) -> list[dict[str, Any]]:
         msgs = list(self._messages)
