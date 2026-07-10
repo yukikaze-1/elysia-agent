@@ -163,20 +163,26 @@ Agent/
 ├── app.py                  # 入口
 ├── config.yaml             # 总配置
 ├── requirements.txt        # Python 依赖
-├── docker-compose.yml       # 数据库服务
-├── scripts/                 # 安装工具
-│   ├── setup.sh             #   一键安装
-│   └── download_model.py    #   嵌入模型下载
+├── docker-compose.yml      # 数据库服务
+├── Makefile                # 测试/检查命令
+├── pytest.ini              # pytest 配置（integration 标记）
+├── .env.example            # 环境变量模板
+├── scripts/                # 安装/启动工具
+│   ├── setup.sh            #   一键安装
+│   ├── start.sh            #   一键启动
+│   └── download_model.py   #   嵌入模型下载
 ├── todo.md                 # 开发计划 + 已知 Bug
+├── log/                    # 日志输出 (gitignore)
+├── data/                   # 数据存储 (gitignore)
 │
 ├── Module/                 # L0 基础设施层
 │   ├── _common/            #   共享工具 (registry_helpers, test_helpers, main_runner, ...)
 │   ├── llm/                # DeepSeek / OpenAI / Ollama / MiMo
 │   ├── stt/                # SenseVoice / OpenAI-compatible
-│   ├── tts/                # GPT-SoVits / OpenAI-compatible
+│   ├── tts/                # GPT-SoVits / MiniMax / OpenAI-compatible
 │   ├── embedding/          # HuggingFace / OpenAI
 │   ├── output/             # Console + WebSocket 多通道
-│   ├── config/             # YAML + env 配置系统
+│   ├── config/             # YAML + env 配置 + providers.yaml + preflight
 │   ├── logger/             # 日志工厂
 │   ├── prompt/             # Brain Prompt 引擎 — SystemPromptManager + 11 PromptSections
 │   ├── schema/             # 共享数据模型
