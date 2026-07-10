@@ -91,6 +91,7 @@ class TestCheckLLMEnv:
 
     def test_deepseek_key_present_passes(self, monkeypatch, capsys):
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        monkeypatch.setenv("DEEPSEEK_URL", "https://api.deepseek.com")
         monkeypatch.setenv("MONGODB_URI", "mongodb://localhost:27017")
         monkeypatch.setenv("MILVUS_URI", "http://localhost:19530")
         m = _fresh_module()
@@ -231,6 +232,7 @@ class TestRun:
         """无 .env 时 run() 应返回 False。"""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        monkeypatch.setenv("DEEPSEEK_URL", "https://api.deepseek.com")
         monkeypatch.setenv("MONGODB_URI", "mongodb://localhost:27017")
         monkeypatch.setenv("MILVUS_URI", "http://localhost:19530")
         m = _fresh_module()
@@ -256,6 +258,7 @@ class TestRun:
         (model_cache / "config.json").write_text("{}")
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        monkeypatch.setenv("DEEPSEEK_URL", "https://api.deepseek.com")
         monkeypatch.setenv("MONGODB_URI", "mongodb://localhost:27017")
         monkeypatch.setenv("MILVUS_URI", "http://localhost:19530")
         m = _fresh_module()

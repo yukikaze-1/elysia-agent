@@ -97,7 +97,9 @@ def _check_dotenv() -> None:
 
 
 def _check_llm_env(config: Any) -> None:
-    """根据 LLM provider 检查对应 env var。"""
+    """根据 LLM provider 检查对应 env var（API key + URL）。"""
+    from Module.config.providers import load_provider_defaults
+
     model_id = config.llm.model
     provider = _parse_provider(model_id)
     if provider == "ollama":
@@ -112,6 +114,16 @@ def _check_llm_env(config: Any) -> None:
         _pass(f"LLM env ok ({key} 已设置)")
     else:
         _fail(f"{key} 未设置 — LLM provider '{provider}' 需要此环境变量")
+
+    # 检查 URL
+    defaults = load_provider_defaults("llm").get(provider, {})
+    url_key = defaults.get("url_key", "")
+    if url_key:
+        url_val = os.getenv(url_key, "")
+        if url_val:
+            _pass(f"LLM URL ok ({url_key} 已设置)")
+        else:
+            _fail(f"{url_key} 未设置 — LLM provider '{provider}' 需要此环境变量")
 
 
 def _check_pip_deps() -> None:
