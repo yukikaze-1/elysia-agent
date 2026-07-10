@@ -50,9 +50,6 @@ class CharacterReflector:
             logger.warning("CharacterReflector: 模板目录不存在，反思功能不可用")
             self._pm = None
 
-        # ---- 从 session 恢复 buffer/context（持久化，重启不丢失）----
-        self._restore_state()
-
         # ---- debug 状态 ----
         self._last_reflection_at: float | None = None
         self._last_success: bool = False
@@ -139,12 +136,16 @@ class CharacterReflector:
         self._session.set_param("reflector_buffer", list(self._buffer))
         self._session.set_param("reflector_context", list(self._context))
 
-    def _restore_state(self) -> None:
-        """从 session.params 恢复 buffer 和 context。"""
+    def restore_state(self) -> None:
+        """从 session.params 恢复 buffer 和 context。
+
+        必须在 session.load() 之后调用，否则 params 为空。
+        """
         buf = self._session.get_param("reflector_buffer", [])
         ctx = self._session.get_param("reflector_context", [])
         if buf:
             self._buffer = [(u, a) for u, a in buf]
+            logger.debug("CharacterReflector: 恢复 buffer (%d 对)", len(self._buffer))
         if ctx:
             self._context = list(ctx)
 
