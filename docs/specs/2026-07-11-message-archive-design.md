@@ -52,8 +52,9 @@ class MessageArchive:
     COLLECTION = "message_archive"
     _db: DocumentDBBackend | None
 
-    async def connect(db) -> bool
-        # 确保索引: session_id, _id (降序)
+    async def connect(db: DocumentDBBackend) -> bool
+        # db: 由外部传入的 MongoDB backend（复用 session 的连接）
+        # 确保索引: _id (降序)
 
     async def append(msg: dict) -> None
         # insert_one，fire-and-forget
@@ -76,8 +77,10 @@ class MessageArchive:
 
 ```
 collection: message_archive
-  - {session_id: 1, _id: -1}  ← 分页查询
+  - {_id: -1}  ← 分页查询（按插入时间降序）
 ```
+
+> session_id 字段预留但不建索引——当前只有 `"default"` 一个 session，无需过滤。
 
 **消息格式:** 与现有 `SessionMemory._messages` 完全一致，三种 role 的 dict 结构直接写入，不做转换。
 
@@ -113,11 +116,12 @@ self._session = SessionMemory(
     archive=self._archive,
 )
 
-# _start_persistence()
-await self._archive.connect(self._session._db)  # 复用同一个 MongoDB 连接
+# _start_persistence() — session 先连接，archive 复用同一个 MongoDB backend
+await self._session.connect_db()
+await self._archive.connect(self._session.db)
 ```
 
-注意：archive 复用 session 已建立的 `DocumentDBBackend`，不单独创建连接。
+`SessionMemory.db` 是已有的 public property（`session.py:36`），返回 `DocumentDBBackend | None`。archive 不直接访问 `_db` 私有属性。
 
 ### 4. API 端点（`Module/input/server.py` 修改）
 
@@ -196,7 +200,7 @@ await self._archive.connect(self._session._db)  # 复用同一个 MongoDB 连接
 | 集合 | 用途 | 保留策略 | 索引 |
 |------|------|----------|------|
 | `sessions` | LLM 上下文窗口 | 20 条, 30天 TTL | `session_id` |
-| `message_archive` | **所有消息永久归档** | **永久, 只增不删** | `session_id` + `_id` |
+| `message_archive` | **所有消息永久归档** | **永久, 只增不删** | `_id` |
 | `token_usage` | LLM token 统计 | 永久, 只增不删 | 无 |
 | `long_term_memory` (Milvus) | 记忆摘要 | 90天/1万条(内存), Milvus 不删除 | Milvus auto index |
 
