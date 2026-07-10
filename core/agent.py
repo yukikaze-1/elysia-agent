@@ -682,7 +682,7 @@ class Agent:
             wake_word_enabled = self._config.wake_word.enabled
 
             stt_transcribe = None
-            stt_emotion_state: dict | None = None
+            stt_emotion_state: dict[str, str | list[str]] = {"emotion": "NEUTRAL", "events": []}
             if stt_enabled:
                 try:
                     from Module.stt import STTFactory
@@ -693,8 +693,6 @@ class Agent:
                     result = await _asyncio.wait_for(stt_backend.test(), timeout=1.0)
                     if not result.get("ok"):
                         raise RuntimeError(result.get("error", "服务不可用"))
-
-                    stt_emotion_state = {"emotion": "NEUTRAL", "events": []}
 
                     async def transcribe_wrapper(audio: bytes) -> str:
                         text = await stt_backend.transcribe(audio)

@@ -378,7 +378,7 @@ class CognitiveLoop:
                     extra_body={"thinking": {"type": "disabled"}})
                 try:
                     async for chunk in stream:
-                        content: str = chunk.get("content", "")
+                        content: str = chunk.get("content", "")  # type: ignore[no-redecl]
                         tc_deltas = chunk.get("tool_calls")
 
                         if content:
