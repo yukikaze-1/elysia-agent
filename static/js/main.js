@@ -7,6 +7,7 @@ import {
   resetInput, scrollDown, hideNewMsgIndicator,
   addImageToPreview, clearPreview, renderUserMsg, openLightbox, closeLightbox,
   attachTokenLabel, updateSessionTokenDisplay,
+  setupScrollLoader, resetScrollLoader,
 } from './chat.js';
 import { bufferAudioChunk, finalizeStream } from './audio.js';
 import { toggleMic, stopMic, flashWakeIndicator } from './mic.js';
@@ -32,6 +33,7 @@ function handleMessage(msg) {
   switch (msg.type) {
     case 'session':
       restoreFromServer(msg.messages);
+      resetScrollLoader();
       if (msg.token_stats) {
         state.sessionTokens = msg.token_stats;
         updateSessionTokenDisplay();
@@ -200,6 +202,8 @@ function init() {
   restoreChat();
 
   connect(handleMessage);
+
+  setupScrollLoader();
 
   setupInput();
 

@@ -509,5 +509,141 @@ export function updateSessionTokenDisplay() {
   bar.style.display = '';
 }
 
+// ---- 滚动加载历史 ----
+let isLoadingMore = false;
+let hasMoreMessages = true;
+let earliestMessageId = null;
+
+export function setupScrollLoader() {
+  const wrap = document.getElementById('chat-wrap');
+  if (!wrap) return;
+
+  wrap.addEventListener('scroll', () => {
+    if (wrap.scrollTop <= 80 && !isLoadingMore && hasMoreMessages) {
+      loadMoreMessages();
+    }
+  });
+}
+
+export function resetScrollLoader() {
+  isLoadingMore = false;
+  hasMoreMessages = true;
+  earliestMessageId = null;
+}
+
+async function loadMoreMessages() {
+  isLoadingMore = true;
+  const wrap = document.getElementById('chat-wrap');
+  const indicator = showLoadingIndicator(wrap);
+
+  try {
+    let url = '/api/messages?limit=50';
+    if (earliestMessageId) {
+      url += '&before=' + encodeURIComponent(earliestMessageId);
+    }
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+
+    hasMoreMessages = data.has_more;
+    const messages = data.messages || [];
+
+    if (messages.length > 0) {
+      // 记录当前高度，渲染后修正位置
+      const oldHeight = wrap.scrollHeight;
+
+      // messages 是降序（最新在前），翻转后从旧到新插入 DOM 顶部
+      prependMessages(messages.slice().reverse());
+
+      // 修正滚动位置
+      const newHeight = wrap.scrollHeight;
+      wrap.scrollTop = newHeight - oldHeight;
+
+      // 更新最早消息 ID（原列表末尾 = 最早的）
+      const earliest = messages[messages.length - 1];
+      if (earliest && earliest._id) {
+        earliestMessageId = earliest._id;
+      }
+    }
+  } catch (e) {
+    const el = document.createElement('div');
+    el.style.cssText = 'text-align:center;padding:8px;color:#f44336;font-size:12px;cursor:pointer;';
+    el.textContent = '加载失败，点击重试';
+    el.onclick = () => { el.remove(); loadMoreMessages(); };
+    wrap.insertBefore(el, wrap.firstChild);
+  } finally {
+    isLoadingMore = false;
+    removeElement(indicator);
+  }
+}
+
+function showLoadingIndicator(wrap) {
+  const el = document.createElement('div');
+  el.id = 'load-more-indicator';
+  el.style.cssText = 'text-align:center;padding:8px;color:#888;font-size:12px;';
+  el.textContent = '加载历史消息...';
+  wrap.insertBefore(el, wrap.firstChild);
+  return el;
+}
+
+function prependMessages(messages) {
+  const chat = document.getElementById('chat');
+  for (const m of messages) {
+    const div = renderArchiveMessage(m);
+    if (div) {
+      chat.insertBefore(div, chat.firstChild);
+    }
+  }
+}
+
+function renderArchiveMessage(m) {
+  const role = m.role;
+  if (role === 'tool') {
+    const div = document.createElement('div');
+    div.className = 'msg-row tool';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble tool';
+    const parts = m.parts || [];
+    bubble.innerHTML = `<span class="tool-name">${esc(m.name || 'tool')}</span>
+      ${esc(parts.map(p => p.content).join('').slice(0, 80))}`;
+    div.appendChild(bubble);
+    return div;
+  }
+
+  const div = document.createElement('div');
+  div.className = 'msg-row ' + role;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble ' + role;
+
+  // inner_voice
+  if (m.inner_voice) {
+    const iv = document.createElement('div');
+    iv.className = 'inner-voice';
+    iv.textContent = m.inner_voice;
+    bubble.appendChild(iv);
+  }
+
+  // parts（API 已统一转换）
+  const parts = m.parts || [];
+  for (const p of parts) {
+    const span = document.createElement('span');
+    span.textContent = p.content || '';
+    bubble.appendChild(span);
+  }
+
+  // 图片
+  if (m.content && Array.isArray(m.content)) {
+    const imgHtml = renderImages(m.content);
+    if (imgHtml) {
+      const imgWrap = document.createElement('div');
+      imgWrap.innerHTML = imgHtml;
+      bubble.appendChild(imgWrap);
+    }
+  }
+
+  div.appendChild(bubble);
+  return div;
+}
+
 // 从 persistence.js 导入 (底部导入解决循环依赖)
 import { debounceSave, saveChat } from './persistence.js';
