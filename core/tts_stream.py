@@ -127,7 +127,7 @@ class TTSStreamManager:
         logger.debug("TTS 句内容: %s", _clean[:60])
 
         task = asyncio.create_task(
-            self._stream_one(sid, seq, sentence),
+            self._download_and_forward(sid, seq, sentence),
             name=f"tts-{sid}",
         )
         self._tasks.append(task)
@@ -180,69 +180,76 @@ class TTSStreamManager:
 
     # ---- 内部 ----
 
-    async def _stream_one(self, sid: int, seq: int, sentence: str) -> None:
-        """流式合成一句 TTS，绑定发送文字+音频。"""
+    async def _download_and_forward(self, sid: int, seq: int, sentence: str) -> None:
+        """下载 TTS 音频后按序转发到前端。
+
+        Phase 1（并行）: 发送文本到云端，下载完整音频。
+        Phase 2（串行）: 按 seq 顺序分块转发音频到前端。
+        """
         if not self._tts:
             return
-        try:
-            first_chunk = True
-            t_tts = time.perf_counter()
-            # 等待上一句音频发送完成（门控：保证播放顺序）
-            await self._release_events[seq].wait()
 
-            # 显示文本：去掉停顿标签
-            display_text = _PAUSE_TAG_RE.sub("", sentence).strip()
-            # 提取句首中文舞台指示，单独一行显示
-            action_text = ""
-            m = _CN_ACTION_RE.match(display_text)
-            if m:
-                action_text = m.group()
-                display_text = display_text[m.end():].strip()
-            # TTS 文本：去掉停顿标签和中文舞台指示（英文语气标签保留，MiniMax 原生支持）
-            tts_text = _PAUSE_TAG_RE.sub("", sentence)
-            tts_text = _CN_ACTION_RE.sub("", tts_text).strip()
-            async for chunk in self._tts.synthesize_stream(
+        # 显示文本：去掉停顿标签
+        display_text = _PAUSE_TAG_RE.sub("", sentence).strip()
+        # 提取句首中文舞台指示，单独一行显示
+        action_text = ""
+        m = _CN_ACTION_RE.match(display_text)
+        if m:
+            action_text = m.group()
+            display_text = display_text[m.end():].strip()
+        # TTS 文本：去掉停顿标签和中文舞台指示（英文语气标签保留，MiniMax 原生支持）
+        tts_text = _PAUSE_TAG_RE.sub("", sentence)
+        tts_text = _CN_ACTION_RE.sub("", tts_text).strip()
+
+        try:
+            # Phase 1: 下载音频（并行，与其他句同时进行）
+            t_download = time.perf_counter()
+            audio = await self._tts.synthesize(
                 tts_text, character=self._char_name, emotion=self._emotion,
-            ):
-                if first_chunk:
-                    first_chunk = False
-                    logger.info(
-                        "TTS 句 %d (总#%d) 首块音频到达，发送文字+音频", seq, sid,
-                    )
-                    # 先发排在本句之前的 emoji
-                    for e in self._pending_emojis.pop(sid - 1, []):
-                        await self._output._broadcast(
-                            "on_text_delta", e,
-                            capability=ChannelCapability.TEXT_DELTA,
-                            stream_id=sid,
-                        )
-                        await self._output.send("")
-                    # 句首舞台指示单独一行
-                    if action_text:
-                        await self._output._broadcast(
-                            "on_text_delta", action_text,
-                            capability=ChannelCapability.TEXT_DELTA,
-                            stream_id=sid,
-                        )
-                        await self._output.send("")
-                    # 发本句文字（去掉 TTS 内部控制标签）
-                    await self._output._broadcast(
-                        "on_text_delta", display_text,
-                        capability=ChannelCapability.TEXT_DELTA,
-                        stream_id=sid,
-                    )
-                    await self._output.send("")
-                await self._output.audio_chunk(chunk, stream_id=sid)
+            )
+            t_download_elapsed = (time.perf_counter() - t_download) * 1000
+            logger.debug(
+                "TTS 句 %d (总#%d) 下载完成 (%d ms, %d bytes)",
+                seq, sid, int(t_download_elapsed), len(audio),
+            )
+
+            # Phase 2: 按序转发（串行，门控保证播放顺序）
+            await self._release_events[seq].wait()
+            logger.info(
+                "TTS 句 %d (总#%d) 开始播放 (%d 字符, %d bytes)",
+                seq, sid, len(sentence), len(audio),
+            )
+            # 先发排在本句之前的 emoji
+            for e in self._pending_emojis.pop(sid - 1, []):
+                await self._output._broadcast(
+                    "on_text_delta", e,
+                    capability=ChannelCapability.TEXT_DELTA,
+                    stream_id=sid,
+                )
+                await self._output.send("")
+            # 句首舞台指示单独一行
+            if action_text:
+                await self._output._broadcast(
+                    "on_text_delta", action_text,
+                    capability=ChannelCapability.TEXT_DELTA,
+                    stream_id=sid,
+                )
+                await self._output.send("")
+            # 发本句文字
+            await self._output._broadcast(
+                "on_text_delta", display_text,
+                capability=ChannelCapability.TEXT_DELTA,
+                stream_id=sid,
+            )
+            await self._output.send("")
+            # 分块转发音频
+            chunk_size = 4096
+            for offset in range(0, len(audio), chunk_size):
+                await self._output.audio_chunk(
+                    audio[offset:offset + chunk_size], stream_id=sid,
+                )
             fmt = self._tts.stream_format if self._tts else "wav"
             await self._output.audio_end(sid, format=fmt)
-            # 释放下一句的音频发送
-            if seq + 1 in self._release_events:
-                self._release_events[seq + 1].set()
-            t_tts_elapsed = (time.perf_counter() - t_tts) * 1000
-            logger.info(
-                "TTS 句 %d (总#%d) 播放完成 (%d ms)",
-                seq, sid, int(t_tts_elapsed),
-            )
             # 发排在本句之后的 emoji
             for e in self._pending_emojis.pop(sid, []):
                 await self._output._broadcast(
@@ -252,26 +259,25 @@ class TTSStreamManager:
                 )
                 await self._output.send("")
         except asyncio.CancelledError:
-            # 释放下一句的门控（避免后续句子永久卡住）
-            if seq + 1 in self._release_events:
-                self._release_events[seq + 1].set()
-            pass  # INTERRUPT 打断
+            raise  # propagate to task
         except Exception:
-            # 释放下一句的门控（避免后续句子永久卡住）
+            logger.warning(
+                "TTS 句 %d (总#%d) 下载/播放失败", seq, sid, exc_info=True,
+            )
+            # TTS 失败兜底: 至少把文字发出去
+            try:
+                await self._output._broadcast(
+                    "on_text_delta", display_text,
+                    capability=ChannelCapability.TEXT_DELTA,
+                    stream_id=sid,
+                )
+                await self._output.send("")
+            except Exception:
+                pass
+        finally:
+            # 无论成功/失败/取消，都释放下一句的门控（避免后续句子永久卡住）
             if seq + 1 in self._release_events:
                 self._release_events[seq + 1].set()
-            logger.warning("TTS stream failed — fallback 发送文字", exc_info=True)
-            # TTS 失败兜底: 至少把文字发出去
-            if first_chunk:
-                try:
-                    await self._output._broadcast(
-                        "on_text_delta", display_text,
-                        capability=ChannelCapability.TEXT_DELTA,
-                        stream_id=sid,
-                    )
-                    await self._output.send("")
-                except Exception:
-                    pass
 
     async def synthesize_legacy(self, sentence: str) -> None:
         """Legacy 非流式 TTS — 保留向后兼容（供测试用）。
