@@ -167,6 +167,7 @@ def create_app(
         agent = request.app["agent"]
         ltm = agent._long_term
         session = agent._session
+        archive = getattr(agent, "_archive", None)
         return web.json_response({
             "ltm": {
                 "count": ltm.count,
@@ -177,6 +178,10 @@ def create_app(
                 "count": 1,  # 当前只有单个 session
                 "current_id": getattr(session, "_session_id", "default"),
                 "mongodb_ok": session._db is not None,
+            },
+            "archive": {
+                "count": await archive.count() if archive else 0,
+                "mongodb_ok": archive is not None and archive._db is not None,
             },
         })
     app.router.add_get("/debug/api/db-status", db_status_handler)
@@ -247,6 +252,46 @@ def create_app(
         count = await agent._long_term.clear_all()
         return web.json_response({"ok": True, "deleted": count})
     app.router.add_delete("/debug/api/ltm", ltm_clear_handler)
+
+    # ---- Debug: 消息归档管理 ----
+
+    async def archive_list_handler(request: web.Request) -> web.Response:
+        """分页浏览归档消息（debug 专用）。"""
+        agent = request.app["agent"]
+        archive = getattr(agent, "_archive", None)
+        if archive is None:
+            return web.json_response({"messages": [], "has_more": False, "total": 0})
+
+        before = request.query.get("before", "").strip() or None
+        try:
+            limit = int(request.query.get("limit", "100"))
+            limit = max(1, min(limit, 500))
+        except ValueError:
+            limit = 100
+
+        try:
+            messages, has_more = await archive.query(before=before, limit=limit)
+            total = await archive.count()
+            client_msgs = _archive_to_client(messages)
+            return web.json_response({
+                "messages": client_msgs,
+                "has_more": has_more,
+                "total": total,
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def archive_clear_handler(request: web.Request) -> web.Response:
+        """清空全部归档（debug 专用）。"""
+        agent = request.app["agent"]
+        archive = getattr(agent, "_archive", None)
+        if archive is None:
+            return web.json_response({"ok": False, "error": "archive not initialized"})
+        deleted = await archive.clear_all()
+        return web.json_response({"ok": True, "deleted": deleted})
+
+    app.router.add_get("/debug/api/archive", archive_list_handler)
+    app.router.add_delete("/debug/api/archive", archive_clear_handler)
 
     async def sessions_list_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
@@ -542,6 +587,66 @@ def create_app(
         return web.json_response({"ok": True})
 
     app.router.add_post("/api/chat", chat_api_handler)
+
+    # ---- 消息归档 API ----
+
+    def _archive_to_client(msgs: list[dict]) -> list[dict]:
+        """将 archive 原始 dict 转为前端兼容格式（补 parts 字段）。"""
+        result = []
+        for m in msgs:
+            entry = dict(m)
+            if "_id" in entry:
+                entry["_id"] = str(entry["_id"])
+            # 如果已有 parts，直接透传
+            if "parts" in entry:
+                result.append(entry)
+                continue
+            # 否则从 content (TextPart 数组) 提取 parts
+            content = entry.get("content", [])
+            if isinstance(content, list):
+                entry["parts"] = [
+                    {"content": p["content"]}
+                    for p in content
+                    if isinstance(p, dict) and p.get("type") == "text"
+                ]
+            elif isinstance(content, str):
+                entry["parts"] = [{"content": content}]
+            else:
+                entry["parts"] = [{"content": ""}]
+            result.append(entry)
+        return result
+
+    async def messages_handler(request: web.Request) -> web.Response:
+        """分页获取归档消息。供前端聊天页滚动加载历史。"""
+        agent = request.app["agent"]
+        archive = getattr(agent, "_archive", None)
+        if archive is None:
+            return web.json_response({"messages": [], "has_more": False, "total": 0})
+
+        before = request.query.get("before", "").strip() or None
+        try:
+            limit = int(request.query.get("limit", "50"))
+            limit = max(1, min(limit, 200))
+        except ValueError:
+            limit = 50
+
+        try:
+            messages, has_more = await archive.query(before=before, limit=limit)
+            total = await archive.count()
+            client_msgs = _archive_to_client(messages)
+            return web.json_response({
+                "messages": client_msgs,
+                "has_more": has_more,
+                "total": total,
+            })
+        except Exception as e:
+            logger.warning("Failed to query message archive: %s", e)
+            return web.json_response(
+                {"messages": [], "has_more": False, "total": 0, "error": str(e)},
+                status=500,
+            )
+
+    app.router.add_get("/api/messages", messages_handler)
 
     # ---- 用户上传文件目录 ----
     _UPLOADS_DIR = Path(__file__).parent.parent.parent / "data" / "uploads"
