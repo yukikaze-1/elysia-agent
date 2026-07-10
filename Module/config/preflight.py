@@ -42,7 +42,7 @@ _TTS_PROVIDER_ENV: dict[str, str] = {
 }
 
 _STT_PROVIDER_ENV: dict[str, str] = {
-    "sensevoice": "STT_API_URL",
+    "sensevoice": "SENSEVOICE_URL",
     "custom": "CUSTOM_STT_API_KEY",
     "openai": "OPENAI_API_KEY",
     "deepgram": "DEEPGRAM_API_KEY",

@@ -35,7 +35,7 @@ class STTFactory:
             raise NotImplementedError(f"{provider} backend is not yet implemented")
 
         cfg = _BACKENDS[provider]
-        base_url = resolve_base_url("", cfg, kwargs.pop("base_url", None))
+        base_url = resolve_base_url(cfg.get("url_key", ""), cfg, kwargs.pop("base_url", None))
 
         env_key = cfg["env_key"]
         api_key = resolve_api_key(env_key, cfg, kwargs.pop("api_key", None))

@@ -10,6 +10,13 @@ from .protocol import LLMBackend
 from .registry import LLMFactory
 
 
+@pytest.fixture(autouse=True)
+def _set_llm_urls(monkeypatch):
+    """设置 LLM URL 环境变量（所有 LLM 测试共用）。"""
+    monkeypatch.setenv("DEEPSEEK_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("DEEPSEEK_BETA_URL", "https://api.deepseek.com/beta")
+
+
 # ============================================================
 # Protocol — ABC constraints
 # ============================================================

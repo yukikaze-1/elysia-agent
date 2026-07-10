@@ -46,7 +46,7 @@ class TTSFactory:
 
         cfg = _BACKENDS[provider]
         explicit_base_url = kwargs.get("base_url")  # minimax 分支需要原始值
-        base_url = resolve_base_url(cfg["env_key"], cfg, kwargs.pop("base_url", None))
+        base_url = resolve_base_url(cfg.get("url_key", ""), cfg, kwargs.pop("base_url", None))
 
         if provider == "custom" and not base_url:
             raise ValueError("custom TTS provider requires base_url")
@@ -74,9 +74,7 @@ class TTSFactory:
         if provider == "minimax":
             from .minimax_tts import MiniMaxTTSBackend
             api_key = resolve_api_key("MINIMAX_API_KEY", cfg, kwargs.pop("api_key", None))
-            # 不使用顶层 base_url（被 MINIMAX_API_KEY env 污染），
-            # 用 MINIMAX_TTS_URL 独立解析 + 用户显式传入的 base_url
-            base_url = resolve_base_url("MINIMAX_TTS_URL", cfg, explicit_base_url)
+            base_url = resolve_base_url(cfg.get("url_key", ""), cfg, explicit_base_url)
             if not base_url:
                 raise ValueError(
                     "MiniMax TTS base_url 未设置。请在 .env 中设置 MINIMAX_TTS_URL，"

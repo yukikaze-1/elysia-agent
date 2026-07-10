@@ -35,8 +35,8 @@ class LLMFactory:
             raise NotImplementedError("Gemini backend is not yet implemented")
 
         cfg = _BACKENDS[provider]
-        base_url = resolve_base_url("", cfg, kwargs.pop("base_url", None))
-        beta_url = kwargs.pop("beta_url", cfg.get("beta_url", ""))
+        base_url = resolve_base_url(cfg.get("url_key", ""), cfg, kwargs.pop("base_url", None))
+        beta_url = resolve_base_url(cfg.get("beta_url_key", ""), cfg, kwargs.pop("beta_url", None))
 
         env_key = cfg["env_key"]
         api_key = resolve_api_key(env_key, cfg, kwargs.pop("api_key", None))
