@@ -50,6 +50,9 @@ class CharacterReflector:
             logger.warning("CharacterReflector: 模板目录不存在，反思功能不可用")
             self._pm = None
 
+        # ---- 从 session 恢复 buffer/context（持久化，重启不丢失）----
+        self._restore_state()
+
         # ---- debug 状态 ----
         self._last_reflection_at: float | None = None
         self._last_success: bool = False
@@ -69,6 +72,9 @@ class CharacterReflector:
         self._context.append({"role": self._character_name, "content": assistant_msg, "inner_voice": ""})
         if len(self._context) > self.CONTEXT_ROUNDS * 2:
             self._context = self._context[-(self.CONTEXT_ROUNDS * 2):]
+
+        # 持久化 buffer/context 到 session，重启不丢失
+        self._save_state()
 
         if not self._should_trigger():
             return
@@ -127,6 +133,20 @@ class CharacterReflector:
         return self._last_prompt_user
 
     # ---- private ----
+
+    def _save_state(self) -> None:
+        """持久化 buffer 和 context 到 session.params。"""
+        self._session.set_param("reflector_buffer", list(self._buffer))
+        self._session.set_param("reflector_context", list(self._context))
+
+    def _restore_state(self) -> None:
+        """从 session.params 恢复 buffer 和 context。"""
+        buf = self._session.get_param("reflector_buffer", [])
+        ctx = self._session.get_param("reflector_context", [])
+        if buf:
+            self._buffer = [(u, a) for u, a in buf]
+        if ctx:
+            self._context = list(ctx)
 
     def _should_trigger(self) -> bool:
         """判断是否应触发反思：≥50 对 OR 距上次 > 24h。
@@ -195,6 +215,8 @@ class CharacterReflector:
         # _context 不清空 — 滚动窗口 [-(CONTEXT_ROUNDS*2):] 已有上界，
         # 下次反思触发时（50 轮后）旧条目已自然推出。清空会丢失 LLM 调用期间
         # buffer() 新到达的消息。
+        # 同步清理持久化状态
+        self._save_state()
 
         if not text:
             self._last_duration_ms = elapsed_ms
