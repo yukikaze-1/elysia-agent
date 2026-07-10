@@ -28,14 +28,19 @@ def find_project_root() -> Path:
 
 
 def model_exists(model_name: str, cache_dir: Path) -> bool:
-    """检查模型是否已在 HuggingFace Hub 缓存中。
+    """检查模型是否已在缓存中。兼容两种布局。
 
-    SentenceTransformer 使用 HuggingFace Hub 缓存结构:
-    {cache_dir}/models--ORG--MODEL/snapshots/{hash}/config.json
+    HF Hub 格式: models--ORG--MODEL/snapshots/{hash}/config.json
+    直接格式: ORG/MODEL/config.json
     """
+    # HF Hub 格式
     hub_name = "models--" + model_name.replace("/", "--")
     snapshots_dir = cache_dir / hub_name / "snapshots"
     if snapshots_dir.exists() and any(snapshots_dir.iterdir()):
+        return True
+    # 直接格式
+    direct_path = cache_dir / model_name
+    if direct_path.exists() and (direct_path / "config.json").exists():
         return True
     return False
 

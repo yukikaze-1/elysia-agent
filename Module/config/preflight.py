@@ -176,12 +176,16 @@ def _check_stt_env(config: Any) -> None:
 
 
 def _check_embedding_model() -> None:
-    """检查嵌入模型是否已缓存。"""
-    cache_dirs = [
+    """检查嵌入模型是否已缓存。兼容三种目录布局。"""
+    # HF hub 快照格式: models--BAAI--bge-large-zh-v1.5/snapshots/{hash}/config.json
+    # 直接格式: BAAI/bge-large-zh-v1.5/config.json
+    candidates = [
         Path(".model_cache/models--BAAI--bge-large-zh-v1.5/snapshots"),
+        Path(".model_cache/BAAI/bge-large-zh-v1.5"),
         Path.home() / ".cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5/snapshots",
+        Path.home() / ".cache/huggingface/hub/BAAI/bge-large-zh-v1.5",
     ]
-    for d in cache_dirs:
+    for d in candidates:
         if d.exists() and any(d.iterdir()):
             _pass("嵌入模型已缓存 (BAAI/bge-large-zh-v1.5)")
             return

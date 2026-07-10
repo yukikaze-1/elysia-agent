@@ -90,9 +90,9 @@ fi
 echo ""
 echo -e "${BOLD}Step 4: 嵌入模型${NC}"
 CACHE_DIR=""
-if [[ -d ".model_cache/models--BAAI--bge-large-zh-v1.5" ]]; then
+if [[ -d ".model_cache/models--BAAI--bge-large-zh-v1.5" || -d ".model_cache/BAAI/bge-large-zh-v1.5" ]]; then
     CACHE_DIR=".model_cache"
-elif [[ -d "$HOME/.cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5" ]]; then
+elif [[ -d "$HOME/.cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5" || -d "$HOME/.cache/huggingface/hub/BAAI/bge-large-zh-v1.5" ]]; then
     CACHE_DIR="$HOME/.cache/huggingface"
 fi
 
