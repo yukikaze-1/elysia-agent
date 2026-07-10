@@ -7,9 +7,9 @@
   L2 (core/memory/): Session, LongTerm, ToolRegistry
 
 用法:
-  python app.py              # 交互模式 (stdin)
-  python app.py --once 你好   # 单次对话
-  python app.py --verbose     # 详细日志
+  python app.py              # WebSocket 服务器模式（默认）
+  python app.py --cli        # 交互终端模式
+  python app.py --check      # 环境预检
 """
 
 import argparse
@@ -49,23 +49,8 @@ from core.log_setup import setup as setup_logging
 from core.agent import Agent
 
 
-async def run_once(message: str, config) -> None:
-    """Single-shot: process one message and exit."""
-    agent = Agent(config=config)
-    await agent.start()
-    print(f"\n你: {message}")
-    print(f"{agent._character.name}: ", end="", flush=True)
-    await agent.process_message(message)
-    # Wait for processing to start, then finish
-    while agent._fsm.state == "idle":
-        await asyncio.sleep(0.1)
-    while agent._fsm.state != "idle":
-        await asyncio.sleep(0.1)
-    await agent.stop()
-
-
 async def run_interactive(config) -> None:
-    """Interactive REPL mode."""
+    """交互终端模式 (--cli)。"""
     agent = Agent(config=config)
     await agent.start()
 
@@ -108,8 +93,8 @@ def main():
         sys.exit(1)
 
     parser = argparse.ArgumentParser(description="Elysia Agent")
-    parser.add_argument("--once", type=str, metavar="MSG", help="单次对话模式")
-    parser.add_argument("--server", "-s", action="store_true", help="WebSocket 服务器模式")
+    parser.add_argument("--cli", action="store_true",
+                        help="交互终端模式（默认启动 WebSocket 服务器）")
     parser.add_argument("--host", type=str, default=config.server.host,
                         help="Server bind address")
     parser.add_argument("--port", type=int, default=config.server.port,
@@ -143,13 +128,11 @@ def main():
         ok = preflight(config, full=args.full)
         sys.exit(0 if ok else 1)
 
-    if args.server:
+    if args.cli:
+        asyncio.run(run_interactive(config))
+    else:
         agent = Agent(config=config, config_path=args.config)
         asyncio.run(agent.run_server())
-    elif args.once:
-        asyncio.run(run_once(args.once, config))
-    else:
-        asyncio.run(run_interactive(config))
 
 
 if __name__ == "__main__":

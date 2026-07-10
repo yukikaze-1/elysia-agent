@@ -55,7 +55,9 @@ bash scripts/start.sh
 
 自动完成：conda 激活 → 数据库检查 → 快速预检 → 启动服务。
 
-浏览器访问 `http://localhost:8765`。停止：`Ctrl+C`。
+浏览器访问 `http://localhost:8765`。日志输出到 `log.txt`。停止：`Ctrl+C`。
+
+> 默认启动 WebSocket 服务器模式。终端交互用 `python app.py --cli`。
 
 ### 服务依赖一览
 

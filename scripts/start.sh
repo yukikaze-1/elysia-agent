@@ -38,4 +38,4 @@ $PYTHON app.py --check || true
 
 echo "→ 启动服务 (http://localhost:8765)..."
 echo ""
-$PYTHON app.py --server 2>&1 | tee log.txt
+$PYTHON app.py 2>&1 | tee log.txt
