@@ -50,29 +50,12 @@ docker compose down -v   # 删除所有数据！
 ### 3. 启动
 
 ```bash
-# 确认数据库在运行
-docker compose ps
-
-# 首次启动：完整预检
-python app.py --check --full
-
-# 启动服务
-python app.py --server
+bash scripts/start.sh
 ```
 
-浏览器访问 `http://localhost:8765`。
+自动完成：conda 激活 → 数据库检查 → 快速预检 → 启动服务。
 
-### 日常使用
-
-数据库容器设置了 `restart: unless-stopped`，服务器重启后会自动启动。日常只需：
-
-```bash
-conda activate Elysia
-docker compose up -d       # 确保数据库在运行（已运行则跳过）
-python app.py --server      # 启动
-```
-
-停止：`Ctrl+C`，数据库保持运行（`docker compose stop` 如需停止）。
+浏览器访问 `http://localhost:8765`。停止：`Ctrl+C`。
 
 ### 服务依赖一览
 
