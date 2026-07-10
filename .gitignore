@@ -10,6 +10,7 @@ node_modules/
 ref/
 static/live2d-demo/
 .playwright-mcp/
+.claude/
 CLAUDE.md
 data/sandbox/
 data/uploads/
