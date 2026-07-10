@@ -23,10 +23,34 @@ echo "=== Elysia Agent ==="
 # ── 1. 确保数据库在运行 ────────────────────────────────────────────────────
 
 echo "→ 数据库..."
-if command -v docker &> /dev/null; then
-    docker compose up -d 2>/dev/null || echo "  跳过（Docker 未运行？）"
+
+_port_open() {
+    timeout 1 bash -c "echo >/dev/tcp/localhost/$1" 2>/dev/null
+}
+
+MILVUS_OK=false
+MONGODB_OK=false
+
+if _port_open 19530; then
+    echo "  ✓ Milvus 已运行 (localhost:19530)"
+    MILVUS_OK=true
+fi
+if _port_open 27017; then
+    echo "  ✓ MongoDB 已运行 (localhost:27017)"
+    MONGODB_OK=true
+fi
+
+if $MILVUS_OK && $MONGODB_OK; then
+    echo "  数据库均已运行，跳过"
+elif command -v docker &> /dev/null; then
+    if ! $MILVUS_OK; then
+        docker compose up -d milvus 2>/dev/null && echo "  ✓ Milvus 已启动" || echo "  ⚠ Milvus 启动失败"
+    fi
+    if ! $MONGODB_OK; then
+        docker compose up -d mongodb 2>/dev/null && echo "  ✓ MongoDB 已启动" || echo "  ⚠ MongoDB 启动失败"
+    fi
 else
-    echo "  跳过（Docker 未安装）"
+    echo "  ⚠ Docker 未安装且数据库未运行"
 fi
 
 # ── 2. 快速预检 ─────────────────────────────────────────────────────────────
