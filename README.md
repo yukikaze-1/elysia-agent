@@ -8,25 +8,35 @@
 
 ## 快速开始
 
-### 前置条件
-
-- [Anaconda/Miniconda](https://docs.conda.io/en/latest/miniconda.html) 或 Python >= 3.11
-- [Docker](https://docs.docker.com/engine/install/) + Docker Compose 插件
-- [DeepSeek API key](https://platform.deepseek.com/api_keys)（免费注册）
-
-### 首次安装（只需一次）
+### 1. 下载项目
 
 ```bash
-# 1. 安装环境 + 下载模型
+git clone <repo-url>   # 或直接下载 ZIP 解压
+cd Agent
+```
+
+### 2. 装好三样东西
+
+- **[Miniconda](https://docs.anaconda.com/miniconda/install/)** — Python 环境管理。装好后在终端输入 `conda --version` 确认
+- **[Docker Desktop](https://docs.docker.com/desktop/)** — 自带 Docker Compose。装好后输入 `docker --version` 确认
+- **[DeepSeek API key](https://platform.deepseek.com/api_keys)** — 免费注册，在左侧「API Keys」页面点"创建 API key"，复制备用
+
+> Python >= 3.11 可替代 conda；Docker Engine + Compose 插件可替代 Docker Desktop
+
+### 3. 首次安装（只需一次）
+
+```bash
+# 安装环境 + 下载模型（约 1.3GB，需网络）
 bash scripts/setup.sh
 
-# 2. 编辑 .env，填入 DEEPSEEK_API_KEY
+# 打开 .env，把 DEEPSEEK_API_KEY= 后面替换成你的 key
+# Windows: 用记事本。Linux/Mac: nano .env 或 vim .env
 
-# 3. 启动数据库（Docker 容器，重启后自动保持运行）
+# 启动数据库（Docker 容器，重启后自动保持运行）
 docker compose up -d
 ```
 
-### 启动
+### 启动（每次使用）
 
 ```bash
 bash scripts/start.sh
@@ -36,7 +46,7 @@ bash scripts/start.sh
 
 打开浏览器访问 **`http://localhost:8765`**，在聊天界面与 AI 对话。日志输出到 `log.txt`。停止：`Ctrl+C`。
 
-### 高级用法
+### 高级用法（可选）
 
 ```bash
 python app.py --cli              # 交互终端模式（stdin 打字）
