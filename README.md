@@ -16,27 +16,11 @@ bash scripts/setup.sh
 
 脚本会自动: 检测/创建 conda 环境 → pip install → 配置 .env → 环境预检。
 
-`config.yaml` 中可调整 model、TTS provider、数据库等。大部分有默认值，开箱可用。
+`config.yaml` 中可调整 model、TTS provider 等。大部分有默认值，开箱可用。
 
-### 2. 启动
-
-```bash
-# WebSocket 服务器模式（浏览器访问 http://localhost:8765）
-python app.py --server
-
-# 启用 TTS + STT（需相应服务已部署或 API key 已配置）
-python app.py --server --tts --stt
-
-# Debug 面板（http://localhost:8765/debug）
-# 交互模式 (stdin)
-python app.py
-```
-
-### 3. 可选：数据库（长期记忆持久化）
+### 2. 数据库（必需）
 
 前置条件：安装 [Docker](https://docs.docker.com/engine/install/) + Docker Compose 插件。
-
-数据库不需要单独安装——Docker 镜像已包含 MongoDB 和 Milvus。
 
 ```bash
 # 启动 MongoDB + Milvus
@@ -57,19 +41,34 @@ docker compose down
 docker compose down -v   # 删除所有数据！
 ```
 
+### 3. 启动
+
+```bash
+# WebSocket 服务器模式（浏览器访问 http://localhost:8765）
+python app.py --server
+
+# 启用 TTS + STT（需相应服务已部署或 API key 已配置）
+python app.py --server --tts --stt
+
+# Debug 面板（http://localhost:8765/debug）
+# 交互模式 (stdin)
+python app.py
+```
+
 ### 服务依赖一览
 
 | 功能 | 必需？ | 服务/API | 环境变量 |
 |------|--------|----------|----------|
 | 对话 | **是** | DeepSeek API | `DEEPSEEK_API_KEY` |
+| 数据库 | **是** | MongoDB + Milvus (Docker) | `MONGODB_URI` / `MILVUS_URI` |
 | 语音合成 | 否 | MiniMax / GPT-SoVits / OpenAI TTS | `MINIMAX_API_KEY` / `GPT_SOVITS_URL` / `CUSTOM_TTS_API_KEY` |
 | 语音识别 | 否 | SenseVoice（本地） / OpenAI STT | `STT_API_URL` / `OPENAI_API_KEY` |
-| 长期记忆 | 否 | Milvus 向量数据库 | `MILVUS_URI` |
 | 网页搜索 | 否 | Tavily API | `TAVILY_API_KEY` |
 | 图片识别 | 否 | MiMo API | `MIMO_API_KEY` |
 | 嵌入模型 | 否 | HuggingFace（本地）/ OpenAI | `OPENAI_API_KEY` |
 
 不配置的可选服务会自动降级或跳过，不影响文字对话功能。
+数据库是必需的——`app.py --check --full` 会验证连通性。
 
 ---
 
@@ -116,7 +115,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | 流式对话 + 中断恢复 | done |
 | **inner_voice 内心独白** (think 气泡 + 持久化 + debug 查看器) | done |
 | 情绪检测 + 表情推送 | done |
-| MongoDB/Milvus 持久化 (自动降级 + 健康检查自动重连) | done |
+| MongoDB/Milvus 持久化 (健康检查自动重连) | done |
 | 记忆自动沉淀 (LLM 提取事实) | done |
 | HuggingFace embedding 离线加载 | done |
 | WebSocket 服务器 + HTML 客户端 | done |
@@ -147,6 +146,10 @@ Agent/
 ├── app.py                  # 入口
 ├── config.yaml             # 总配置
 ├── requirements.txt        # Python 依赖
+├── docker-compose.yml       # 数据库服务
+├── scripts/                 # 安装工具
+│   ├── setup.sh             #   一键安装
+│   └── download_model.py    #   嵌入模型下载
 ├── todo.md                 # 开发计划 + 已知 Bug
 │
 ├── Module/                 # L0 基础设施层
