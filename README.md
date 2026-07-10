@@ -57,7 +57,17 @@ bash scripts/start.sh
 
 浏览器访问 `http://localhost:8765`。日志输出到 `log.txt`。停止：`Ctrl+C`。
 
-> 默认启动 WebSocket 服务器模式。终端交互用 `python app.py --cli`。
+### 高级用法
+
+```bash
+python app.py --cli              # 交互终端模式（stdin 打字）
+python app.py --check            # 环境预检
+python app.py --check --full     # 含连通性探活
+python app.py --tts --stt        # 启用语音合成+识别
+python app.py --host 0.0.0.0 --port 8080  # 自定义端口
+python app.py --verbose          # 详细日志（调试用）
+python app.py --config custom.yaml --character custom/char.yaml  # 自定义配置
+```
 
 ### 服务依赖一览
 
