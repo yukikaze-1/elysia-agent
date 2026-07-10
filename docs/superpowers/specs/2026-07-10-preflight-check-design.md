@@ -89,6 +89,13 @@ load_dotenv() → parse args → ConfigLoader.load() → AppConfig
 | 10 | TTS 服务连通 | WARN | `TTSFactory.create(model)` → `backend.test()`，超时 5s。MiniMax→POST /v1/get_voice，GPT-SoVits→GET /health，验证 API key 有效性 + 服务功能 |
 | 11 | STT 服务连通 | WARN | `STTFactory.create(model)` → `backend.test()`，超时 5s。SenseVoice→GET /health |
 
+**`--check --full` 追加（数据库 — FAIL 级别）**
+
+| # | 检查 | 级别 | 方法 |
+|---|------|------|------|
+| 12 | Milvus 连通 | FAIL | HTTP GET `{MILVUS_URI}/health`，超时 5s |
+| 13 | MongoDB 连通 | FAIL | `motor.motor_asyncio.AsyncIOMotorClient(uri)` → `server_info()`，3s 超时。motor 未安装同样 FAIL |
+
 ### 预检逻辑位置
 
 新增 `Module/config/preflight.py`，暴露 `run(config: AppConfig, full: bool = False) -> bool`。纯逻辑，不污染 `app.py`。

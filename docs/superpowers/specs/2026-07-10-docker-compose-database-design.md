@@ -89,5 +89,5 @@ docker compose down -v   # 会删除所有数据！
 ## 成功标准
 
 1. `docker compose up -d` → MongoDB + Milvus 启动 → `docker compose ps` 显示两者 running
-2. `docker compose ps` 显示两者 running，端口与 `.env` 默认值一致，无需额外配置
+2. `python app.py --check --full` 中 Milvus + MongoDB 连通性检查通过
 3. `docker compose down` 停止 → `docker compose up -d` 再次启动 → 数据仍在

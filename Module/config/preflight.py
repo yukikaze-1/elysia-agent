@@ -260,6 +260,40 @@ async def _check_stt_connectivity(config: Any) -> None:
         _warn(f"STT 连通异常 ({config.stt.model}): {e}")
 
 
+async def _check_milvus_connectivity() -> None:
+    """Milvus 向量数据库连通性探活。"""
+    uri = os.getenv("MILVUS_URI", "http://localhost:19530")
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+            resp = await client.get(f"{uri.rstrip('/')}/health")
+            if resp.status_code < 500:
+                _pass(f"Milvus 连通 ok ({uri})")
+            else:
+                _fail(f"Milvus 不可达 ({uri}) — HTTP {resp.status_code}")
+    except Exception as e:
+        _fail(f"Milvus 不可达 ({uri}): {e}")
+
+
+async def _check_mongodb_connectivity() -> None:
+    """MongoDB 文档数据库连通性探活。"""
+    uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+    try:
+        import motor.motor_asyncio
+    except ImportError:
+        _fail("motor 未安装（pip install motor），跳过 MongoDB 连通性检查")
+        return
+    try:
+        client = motor.motor_asyncio.AsyncIOMotorClient(
+            uri, serverSelectionTimeoutMS=3000,
+        )
+        await client.server_info()
+        client.close()
+        _pass(f"MongoDB 连通 ok ({uri})")
+    except Exception as e:
+        _fail(f"MongoDB 不可达 ({uri}): {e}")
+
+
 # ---- 入口 ----
 
 def run(config: Any, full: bool = False) -> bool:
@@ -290,6 +324,8 @@ def run(config: Any, full: bool = False) -> bool:
         asyncio.run(_check_llm_connectivity(config))
         asyncio.run(_check_tts_connectivity(config))
         asyncio.run(_check_stt_connectivity(config))
+        asyncio.run(_check_milvus_connectivity())
+        asyncio.run(_check_mongodb_connectivity())
 
     # 摘要
     print()
