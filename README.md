@@ -2,6 +2,8 @@
 
 桌面 AI 伴侣，支持语音对话、内心独白、工具调用和后台任务。
 
+> **运行环境：Linux**（Windows/Mac 用户请使用 WSL2 或虚拟机）
+
 > 最近 (2026-07-03): Brain Prompt 提供者架构——11 个 PromptSection 独立模块，自管数据、自管模板。2026-06-26: Module/_common/ 轻量共享层重构——消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config 重复代码，971 测试零回归。
 
 ---
@@ -29,8 +31,10 @@ cd Agent
 # 安装环境 + 下载模型（约 1.3GB，需网络）
 bash scripts/setup.sh
 
-# 打开 .env，把 DEEPSEEK_API_KEY= 后面替换成你的 key
-# Windows: 用记事本。Linux/Mac: nano .env 或 vim .env
+# 编辑 .env，填入 API key（nano .env 或 vim .env）
+#   必填: DEEPSEEK_API_KEY
+#   语音: MINIMAX_API_KEY（TTS，免费注册 https://platform.minimaxi.com）
+# 更多可选配置见 .env.example 中的注释
 
 # 启动数据库（Docker 容器，重启后自动保持运行）
 docker compose up -d
