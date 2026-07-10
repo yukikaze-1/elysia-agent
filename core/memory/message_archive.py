@@ -33,13 +33,9 @@ class MessageArchive:
     async def connect(self, db: "DocumentDBBackend") -> bool:
         """接入已有的 MongoDB backend。创建索引。返回是否成功。"""
         self._db = db
-        try:
-            await self._db.ensure_index(self.COLLECTION, [("_id", -1)])
-            logger.info("MessageArchive: connected, collection='%s'", self.COLLECTION)
-            return True
-        except Exception as e:
-            logger.warning("MessageArchive: 索引创建失败 (%s)", e)
-            return False
+        # _id 字段 MongoDB 默认已有升序索引，倒序查询直接反向扫描，无需额外建索引
+        logger.info("MessageArchive: connected, collection='%s'", self.COLLECTION)
+        return True
 
     # ---- 写入 ----
 

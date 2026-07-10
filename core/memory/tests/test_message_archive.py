@@ -8,21 +8,13 @@ from core.memory.message_archive import MessageArchive
 
 class TestMessageArchiveConnect:
     @pytest.mark.asyncio
-    async def test_connect_creates_index(self):
+    async def test_connect_stores_db(self):
+        """connect 应保存 db 引用并返回 True。_id 字段使用 MongoDB 内置索引。"""
         db = AsyncMock()
-        db.ensure_index = AsyncMock(return_value="_id_-1")
         archive = MessageArchive()
         result = await archive.connect(db)
         assert result is True
-        db.ensure_index.assert_called_once_with("message_archive", [("_id", -1)])
-
-    @pytest.mark.asyncio
-    async def test_connect_returns_false_on_error(self):
-        db = AsyncMock()
-        db.ensure_index = AsyncMock(side_effect=Exception("no connection"))
-        archive = MessageArchive()
-        result = await archive.connect(db)
-        assert result is False
+        assert archive._db is db
 
 
 class TestMessageArchiveAppend:
