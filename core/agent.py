@@ -723,6 +723,10 @@ class Agent:
                 f"{'='*50}",
             ])
             logger.info(server_info)
+            print(f"\n{'='*50}")
+            print(f"  服务已启动 → http://{host}:{port}")
+            print(f"  按 Ctrl+C 停止")
+            print(f"{'='*50}\n", flush=True)
 
             try:
                 while self._state == RunState.RUNNING:
