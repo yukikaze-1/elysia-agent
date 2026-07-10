@@ -62,4 +62,10 @@ $PYTHON app.py --check 2>/dev/null || true
 
 echo "→ 启动服务 (http://localhost:8765)..."
 echo ""
+echo "=================================================="
+echo "  服务启动中，请稍候..."
+echo "  就绪后访问: http://localhost:8765"
+echo "  按 Ctrl+C 停止"
+echo "=================================================="
+echo ""
 $PYTHON app.py
