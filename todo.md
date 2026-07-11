@@ -39,10 +39,19 @@
 - **多角色 prompt 模板**: `PromptAssembler` 通过 `SystemPromptManager` + 11 `PromptSection` 渲染，多角色时加载不同 `CharacterConfig` 即可切换 section 数据源
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + SenseVoice + GPT-SoVits）。数据库已完成 docker-compose.yml（MongoDB + Milvus）。
-- **C3 情绪传染规则动态化**: 当前模板 `c3_emotion.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 或 SessionMemory 动态加载
-- **C6 说话风格规则动态化**: 当前模板 `c6_speaking_style.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 动态加载，让不同角色有不同的说话风格规则
+- **C3 情绪传染规则动态化** → 后续 PersonalityEngine Phase 2
+- **C6 说话风格动态化** → 后续 PersonalityEngine Phase 2
+- **C7 主动性动态化** → 后续 PersonalityEngine Phase 2
 - **F2 代码块格式重新启用**: `f2_output_format.j2` 中 `<|code|>` 和 `<|markdown|>` 格式已注释。等需要代码/Markdown 渲染功能时取消注释即可启用
 - **C5 输入来源标注**: prompt 中当前无法区分用户是用文字还是语音输入。需在 sensory_ctx 中增加 `input_source` 字段（text/voice），模板中显示 "输入方式: 文字 / 语音"
+- **PersonalityEngine Phase 2**:
+  - AwarenessTrigger: L2/L3 语义偏差检测（向量相似度替代轮次冷却）
+  - L3→L2 梯度压缩自动化（LLM 总结+去噪+合并）
+  - ExpressionAdapter 完善版：阻尼机制移入 C6 SpeakingStyle
+  - L4→L3 情绪汇聚统计（需 EmotionEngine 改接口）
+  - L2 永久存储（独立 MongoDB 集合 / 文件，替代 session TTL 风险）
+  - C3/C6/C7 与 PersonalityEngine 动态联动
+  - 用户话题检测触发 C9（目前只看状态存在+冷却）
 
 ### 后台任务系统 — 后续迭代
 
