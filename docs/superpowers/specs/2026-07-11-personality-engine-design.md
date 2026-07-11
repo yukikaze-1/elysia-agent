@@ -56,10 +56,13 @@ CharacterReflector 降级为 PersonalityEngine 的子组件，作为触发源的
 
 **层间约束关系：**
 
-1. L1 约束 L2 — L2 不能与 L1 矛盾。如 L1 说"底色温柔"，L2 不能说"变得冷酷无情"。
-2. L2 约束 L3 — L3 是在 L2 基线内的短期波动。偏离超过阈值由阻尼机制处理。
-3. L3 向上回流 — L3 持续的主题可压缩沉淀为 L2（向上回流/梯度压缩）。
-4. L4 向上汇聚 — L4 的频次统计可触发 L3 状态更新。
+1. **L1 约束 L2** — L2 不能与 L1 矛盾。如 L1 说"底色温柔"，L2 不能说"变得冷酷无情"。
+   - 执行方式：`_compression()` 的 LLM prompt 中注入 L1 Core 作为约束上下文：
+     `"以下是角色的核心底色，压缩后的 L2 不得与此矛盾：\n{L1 Core}"`
+   - Phase 1 用 prompt 约束；Phase 2 可选升级为向量相似度自动检测（L1 与 L2 语义相似度 < 阈值时报警并拒绝）。
+2. **L2 约束 L3** — L3 是在 L2 基线内的短期波动。偏离超过阈值由阻尼机制处理。
+3. **L3 向上回流** — L3 持续的主题可压缩沉淀为 L2（向上回流/梯度压缩）。
+4. **L4 向上汇聚** — L4 的频次统计可触发 L3 状态更新。
 
 ---
 
@@ -126,6 +129,14 @@ C9 不每轮渲染。触发条件（满足任一即可）：
 | L3 State | `session.params["state_l3"]` | 随 session 持久化 |
 | L3 历史 | `session.params["state_history"]` | 每次演化追加条目 |
 | L4 Mood | `session.params["mood"]` | 已有，EmotionEngine 维护 |
+
+**L1 base_personality_file 路径解析策略：**
+
+1. 优先相对于 character YAML 所在目录解析
+   - 例：`config.agent.character=character/custom/elysia.yaml` + `base_personality_file: elysia_personality.txt` → `character/custom/elysia_personality.txt`
+2. 若未找到，回退到项目根目录相对于该路径解析
+3. 若 `base_personality_file` 未指定，自动推导为 `character/{name}_personality.txt`（name 取自 `character.name`）
+4. 文件不存在时：**WARN**（非 FAIL）。C1 只用 `{{ name }}` 不含 core 文本——角色有身份但没有底色描述，仍可运行。
 
 > **L2 持久化风险**：L2 是月级演化，但 session TTL=30 天。后续需将 L2 历史迁移到独立 MongoDB 集合或独立文件，防止 TTL 过期丢失。
 
