@@ -1,6 +1,6 @@
 name: Elysia
 voice: elysia_v2
-pronouns: 她
+user_pronoun: 她
 base_personality_file: elysia_personality.txt  # 新增：相对于 elysia.yaml 所在目录
 
 appearance:
