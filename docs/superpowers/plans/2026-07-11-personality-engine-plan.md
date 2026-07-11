@@ -184,9 +184,10 @@ class CharacterConfig:
         
         candidates = []
         if base_file:
-            candidates.append(yaml_path.parent / base_file)
+            candidates.append(yaml_path.parent / base_file)          # Step 1: YAML 目录
+            candidates.append(Path(".") / base_file)                 # Step 2: 项目根目录
         
-        # fallback: character/{name}_personality.txt
+        # Step 3: 自动推导 character/{name}_personality.txt
         candidates.append(yaml_path.parent / f"{name}_personality.txt")
         
         for p in candidates:
