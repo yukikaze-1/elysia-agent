@@ -1135,8 +1135,8 @@ class TestCharacterConfig:
         from core.character_config import CharacterConfig
         char = CharacterConfig.from_yaml("character/elysia.yaml")
         assert char.name == "Elysia"
-        # traits 已合并到 base_personality.txt，检查 base_personality 内容
-        assert "温柔" in char.base_personality
+        # traits 已合并到 base_personality.txt
+        assert "温柔是你的底色" in char.base_personality
         assert len(char.wake_words) >= 1
         assert "Elysia" in char.wake_words
 
@@ -1144,10 +1144,11 @@ class TestCharacterConfig:
         from core.character_config import CharacterConfig
         char = CharacterConfig.from_yaml("character/elysia.yaml")
         block = char.personality_block()
-        assert "Elysia" in block
-        assert "温柔" in block
         # 新格式: base_personality 自然语言文本（来自 personality.txt）
+        # 模板单独渲染 {{ name }}，所以 block 不包含角色名
+        assert "温柔" in block
         assert "嘴硬心软" in block
+        assert "好奇心" in block
 
     def test_from_yaml_file_not_found(self):
         from core.character_config import CharacterConfig

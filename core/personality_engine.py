@@ -43,9 +43,8 @@ class PersonalityEngine:
     # ---- 状态恢复 ----
 
     def restore_state(self) -> None:
-        """从 session.params 恢复 L2/L3 状态。必须在 session.load() 之后调用。"""
-        # L2/L3 已由 session.load() 加载到 params，无需额外操作
-        pass
+        """从 session.params 恢复 L2/L3 状态 + 冷却计时。必须在 session.load() 之后调用。"""
+        self._last_awareness_time = self._session.get_param("last_awareness_time", 0.0)
 
     # ---- 数据提供（给 section 渲染用）----
 
@@ -78,6 +77,7 @@ class PersonalityEngine:
             return {"awareness_text": ""}
 
         self._last_awareness_time = time.time()
+        self._session.set_param("last_awareness_time", self._last_awareness_time)
         return {"awareness_text": l3}
 
     # ---- 触发事件 ----
