@@ -51,7 +51,14 @@ class DebugInfo:
 
     # Character
     character_name: str = ""
-    character_traits: list[str] = field(default_factory=list)
+    base_personality_summary: str = ""
+
+    # PersonalityEngine (4-layer model)
+    personality_engine_exists: bool = False
+    self_l2: str = ""              # L2 Self — 长期性格演化
+    state_l3: str = ""             # L3 State — 短期状态
+    state_history: list[dict] = field(default_factory=list)  # L3 历史
+    last_awareness_time: float = 0.0  # C9 上次触发时间戳
 
     # Connections
     tts_ok: bool = False
@@ -138,7 +145,19 @@ async def collect(agent) -> DebugInfo:
 
     # ---- Character ----
     info.character_name = agent._character.name
-    info.character_traits = list(agent._character.traits)
+    bp = agent._character.base_personality
+    info.base_personality_summary = bp[:120] + "..." if len(bp) > 120 else bp
+
+    # ---- PersonalityEngine ----
+    pe = getattr(agent, "_personality_engine", None)
+    if pe is not None:
+        info.personality_engine_exists = True
+        c1 = pe.render_c1()
+        info.self_l2 = c1["self_personality"][:200] if c1["self_personality"] else "（未演化）"
+        l3 = agent._session.get_param("state_l3", "")
+        info.state_l3 = l3[:200] if l3 else "（无短期状态）"
+        info.state_history = list(agent._session.get_param("state_history", []))[-5:]
+        info.last_awareness_time = agent._session.get_param("last_awareness_time", 0.0)
 
     # ---- Character Reflector ----
     ref = getattr(agent, "_character_reflector", None)

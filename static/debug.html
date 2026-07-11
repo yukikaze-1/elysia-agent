@@ -403,7 +403,8 @@ function render(info) {
         ['Milvus', ok(info.milvus_ok)],
         ['Embedding', ok(info.embedding_ok)],
         ['Session Params', esc(trunc(JSON.stringify(info.session_params || {}), 80))],
-        ['Character', info.character_name + ' (' + (info.character_traits||[]).join(', ') + ')'],
+        ['Character', info.character_name],
+        ['L1 Core', info.base_personality_summary ? esc(trunc(info.base_personality_summary, 100)) : 'N/A'],
       ]},
     ],
     // Row 2: Latency | Memory stats | Scheduler
@@ -617,11 +618,58 @@ function render(info) {
         return { title:'Character Reflector', wide:true, items: items };
       })()
     ],
+    // Row 6: PersonalityEngine
+    [
+      (() => {
+        if (!info.personality_engine_exists) return null;
+        const items = [];
+
+        // L2 Self
+        items.push('<div class="row"><span class="label">L2 Self</span></div>');
+        items.push('<div class="list-item" style="white-space:pre-wrap;max-height:80px;overflow-y:auto;font-size:11px">' + esc(info.self_l2 || '（未演化）') + '</div>');
+
+        // L3 State
+        items.push('<div class="row" style="margin-top:4px"><span class="label">L3 State</span></div>');
+        items.push('<div class="list-item" style="white-space:pre-wrap;max-height:80px;overflow-y:auto;font-size:11px">' + esc(info.state_l3 || '（无）') + '</div>');
+
+        // Awareness cooldown
+        const now = Date.now() / 1000;
+        const last = info.last_awareness_time || 0;
+        const cooldownRemain = last ? Math.max(0, 3600 - (now - last)) : 0;
+        const cooldownOk = cooldownRemain <= 0;
+        items.push(
+          '<div class="row" style="margin-top:4px"><span class="label">C9 冷却</span><span class="value ' + (cooldownOk ? 'ok' : 'warn') + '">' +
+          (cooldownOk ? '就绪' : Math.ceil(cooldownRemain / 60) + 'min 剩余') + '</span></div>'
+        );
+
+        // State 历史
+        const hist = info.state_history || [];
+        if (hist.length === 0) {
+          items.push('<div class="empty" style="margin-top:4px">State 历史: 暂无</div>');
+        } else {
+          let histHtml = '<details style="margin-top:4px"><summary>State 历史 (' + hist.length + ')</summary>';
+          histHtml += '<div style="max-height:150px;overflow-y:auto">';
+          [...hist].reverse().forEach((h, i) => {
+            const ts = new Date(h.timestamp * 1000).toLocaleString();
+            const bg = i === 0 ? 'background:rgba(233,69,96,0.08);border-left:2px solid var(--accent);padding-left:6px' : '';
+            histHtml += '<div class="list-item" style="' + bg + '">';
+            histHtml += '<span style="color:var(--muted);font-size:11px">' + esc(ts) + '</span><br>';
+            histHtml += '<span style="font-size:11px">' + esc(trunc(h.content, 100)) + '</span>';
+            histHtml += '</div>';
+          });
+          histHtml += '</div></details>';
+          items.push(histHtml);
+        }
+
+        return { title:'PersonalityEngine', wide:true, items: items };
+      })()
+    ],
   ];
 
   let html = '';
   for (const row of cards) {
     for (const card of row) {
+      if (!card) continue;
       let cls = card.wide ? 'card card-wide' : 'card';
       html += `<div class="${cls}"><h2>${card.title}</h2>`;
       if (card.rows) {
