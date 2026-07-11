@@ -157,7 +157,7 @@ class TestSelfPerceptionSectionBoundary:
     def test_empty_history_returns_empty(self):
         """self_perception_history=[] → 返回 ""。"""
         s = _make_session(self_perception_history=[])
-        sec = SelfPerceptionSection(f"{_TEMPLATES}/c9_self_perception.j2", session=s)
+        sec = SelfPerceptionSection(f"{_TEMPLATES}/c9_self_perception.j2")
         result = asyncio.run(sec.render())
         assert result == ""
 

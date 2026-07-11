@@ -40,10 +40,20 @@ class PromptAssembler:
         character: CharacterConfig,
         session: SessionMemory,
         long_term: LongTermMemory,
+        personality_engine=None,  # PersonalityEngine | None
     ):
         self._character = character
         self._session = session
         self._long_term = long_term
+        self._personality_engine = personality_engine
+
+        self._personality_section = PersonalitySection(
+            f"{_SECTION}/c1_personality.j2",
+            core_personality=character.base_personality,
+        )
+        self._self_perception_section = SelfPerceptionSection(
+            f"{_SECTION}/c9_self_perception.j2",
+        )
 
         sections = [
             ConflictRulesSection(f"{_SECTION}/f1_conflict_rules.j2"),
@@ -52,15 +62,29 @@ class PromptAssembler:
             SensorySection(f"{_SECTION}/c5_sensory.j2"),
             EmotionSection(f"{_SECTION}/c3_emotion.j2", session),
             MemorySection(f"{_SECTION}/c4_memory.j2", long_term, session),
-            PersonalitySection(f"{_SECTION}/c1_personality.j2", character.name),
+            self._personality_section,
             RelationshipSection(f"{_SECTION}/c2_relationship.j2", character.name),
             SpeakingStyleSection(f"{_SECTION}/c6_speaking_style.j2"),
             ProactiveSection(f"{_SECTION}/c7_proactive.j2"),
             OwnLifeSection(f"{_SECTION}/c8_own_life.j2", session),
-            SelfPerceptionSection(f"{_SECTION}/c9_self_perception.j2", session),
+            self._self_perception_section,
         ]
         self._manager = SystemPromptManager(sections)
         self._builder = MessageBuilder()
+
+    def _refresh_personality_data(self) -> None:
+        """从 PersonalityEngine 拉取最新数据，更新 C1/C9 section。"""
+        if self._personality_engine is None:
+            return
+        c1_data = self._personality_engine.render_c1()
+        self._personality_section.update_personality(
+            core=c1_data["core_personality"],
+            self_p=c1_data["self_personality"],
+        )
+        c9_data = self._personality_engine.render_c9()
+        self._self_perception_section.update_awareness(
+            text=c9_data["awareness_text"],
+        )
 
     async def build_system_prompt(self, user_message: str = "", user_name: str = "",
                                    stt_emotion: str = "", stt_events=None,
@@ -73,6 +97,7 @@ class PromptAssembler:
             stt_events=stt_events or [],
             tts_provider=tts_provider,
         )
+        self._refresh_personality_data()
         return await self._manager.render()
 
     async def build_messages(self, user_message: str = "",

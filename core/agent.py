@@ -33,6 +33,7 @@ from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
 from .character_reflector import CharacterReflector
+from .personality_engine import PersonalityEngine
 from Module.embedding import EmbeddingFactory
 from .task_scheduler import TaskScheduler
 
@@ -87,7 +88,20 @@ class Agent:
         self._bus = EventBus()
         self._fsm = AgentFSM()
         self._llm = LLMAdapter(model=config.llm.model)
-        self._prompt = PromptAssembler(self._character, self._session, self._long_term)
+
+        # ---- 性格引擎 ----
+        self._personality_engine = PersonalityEngine(
+            llm=self._llm,
+            session=self._session,
+            character_name=self._character.name,
+            user_name=self._user_name,
+            base_personality=self._character.base_personality,
+        )
+
+        self._prompt = PromptAssembler(
+            self._character, self._session, self._long_term,
+            personality_engine=self._personality_engine,
+        )
 
         self._tts = None  # 在 _start_tts() 中创建
         self._stt_ok = False  # STT 连通性标志 — 在 run_server() 中设置
@@ -111,6 +125,7 @@ class Agent:
             character_name=self._character.name,
             user_name=self._user_name,
         )
+        self._character_reflector.set_personality_engine(self._personality_engine)
 
         # ---- Token 统计 ----
         self._token_tracker = None  # 在 start() 中创建（需要 session_id）
@@ -212,6 +227,8 @@ class Agent:
             await self._session.load()
             if self._character_reflector:
                 self._character_reflector.restore_state()
+            if self._personality_engine:
+                self._personality_engine.restore_state()
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
             if os.path.exists(self._session.pending_file):
                 if await self._session.load_from_jsonl(merge=True):

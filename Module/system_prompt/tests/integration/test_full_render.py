@@ -49,6 +49,9 @@ def test_full_render_all_sections():
         ],
     )
 
+    c9_section = SelfPerceptionSection(f"{_TEMPLATES}/c9_self_perception.j2")
+    c9_section.update_awareness(text="感觉自己变得更爱吐槽了")
+
     sections = [
         ConflictRulesSection(f"{_TEMPLATES}/f1_conflict_rules.j2"),
         OutputFormatSection(f"{_TEMPLATES}/f2_output_format.j2"),
@@ -62,7 +65,7 @@ def test_full_render_all_sections():
         SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2"),
         ProactiveSection(f"{_TEMPLATES}/c7_proactive.j2"),
         OwnLifeSection(f"{_TEMPLATES}/c8_own_life.j2", session=session),
-        SelfPerceptionSection(f"{_TEMPLATES}/c9_self_perception.j2", session=session),
+        c9_section,
     ]
     mgr = SystemPromptManager(sections)
     mgr.set_context(
