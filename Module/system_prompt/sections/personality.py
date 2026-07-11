@@ -7,16 +7,16 @@ class PersonalitySection(Jinja2Section):
     version = "2.0.0"
     description = "人格：L1 Core + L2 Self（动态性格引擎）"
 
-    def __init__(self, template_path: str, core_personality: str = ""):
+    def __init__(self, template_path: str, character_name: str = "",
+                 core_personality: str = ""):
         super().__init__(template_path)
         self._core = core_personality
         self._self = ""
-        self._name = ""
+        self._name = character_name
         self._user_name = ""
         self._user_pronoun = "她"
 
     def set_context(self, **kwargs) -> None:
-        self._name = kwargs.get("name", "")
         self._user_name = kwargs.get("user_name", "")
         self._user_pronoun = kwargs.get("user_pronoun", "她")
 

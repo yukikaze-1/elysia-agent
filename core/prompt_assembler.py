@@ -49,6 +49,7 @@ class PromptAssembler:
 
         self._personality_section = PersonalitySection(
             f"{_SECTION}/c1_personality.j2",
+            character_name=character.name,
             core_personality=character.base_personality,
         )
         self._self_perception_section = SelfPerceptionSection(
