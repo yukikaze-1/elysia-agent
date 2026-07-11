@@ -28,13 +28,16 @@ class MongoDBBackend(DocumentDBBackend):
     # ---- Write ----
 
     async def insert_one(self, collection: str, document: dict) -> str:
-        result = await self._db[collection].insert_one(document)
+        # motor 的 insert_one 会修改 document（注入 _id），
+        # 用 copy 保护调用方不受副作用影响。
+        result = await self._db[collection].insert_one(dict(document))
         return str(result.inserted_id)
 
     async def insert_many(self, collection: str, documents: list[dict]) -> list[str]:
         if not documents:
             return []
-        result = await self._db[collection].insert_many(documents)
+        # motor 会修改每个 document（注入 _id），用 copy 保护调用方
+        result = await self._db[collection].insert_many([dict(d) for d in documents])
         return [str(id) for id in result.inserted_ids]
 
     # ---- Read ----

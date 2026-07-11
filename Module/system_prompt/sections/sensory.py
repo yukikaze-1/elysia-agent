@@ -1,12 +1,13 @@
 """C5: 感官输入。"""
+import html
 from datetime import datetime
 from Module.system_prompt.protocol import Jinja2Section
 
 
 class SensorySection(Jinja2Section):
     name = "Sensory"
-    version = "1.0.0"
-    description = "此刻感知：环境/用户行为/语音情绪"
+    version = "1.1.0"
+    description = "此刻感知：环境事实 + 用户消息 + 语音情绪"
 
     def __init__(self, template_path: str):
         super().__init__(template_path)
@@ -28,18 +29,26 @@ class SensorySection(Jinja2Section):
             "time_of_day": self._time_of_day(now.hour),
             "day_of_week": self._day_name(now.weekday()),
             "season": self._season(now.month),
-            "perception": self._build_perception(),
-            "stt_emotion": self._stt_emotion,
-            "stt_emotion_emoji": self._emotion_emoji(),
-            "stt_events": self._format_events(),
+            "message": self._build_message(),
+            "voice": self._build_voice(),
         }
         return self._render_template(sensory_ctx=sensory_ctx)
 
-    def _build_perception(self) -> str:
-        parts = [f"{self._user_name}说：{self._user_message}"]
+    def _build_message(self) -> str:
+        """构建 <message> 内容。转义用户输入防止 XML 注入。"""
+        escaped = html.escape(self._user_message, quote=False)
+        return f"{self._user_name}说：{escaped}"
+
+    def _build_voice(self) -> str:
+        """构建 <voice> 内容。无 STT 数据时返回空串。"""
+        parts = []
         if self._stt_emotion and self._stt_emotion != "NEUTRAL":
-            parts.append(f"[语调: {self._stt_emotion}]")
-        return "\n".join(parts)
+            emoji = self._emotion_emoji()
+            parts.append(f"语调: {self._stt_emotion} {emoji}".rstrip())
+        events = self._format_events()
+        if events:
+            parts.append(f"事件: {events}")
+        return " | ".join(parts) if parts else ""
 
     def _emotion_emoji(self) -> str:
         try:

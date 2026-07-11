@@ -292,6 +292,9 @@ class SessionMemory:
                 doc = results[0]
                 self._session_id = sid
                 msgs = doc.get("messages", [])
+                # 剥离 MongoDB 注入的 _id（motor insert_one 副作用残留）
+                for m in msgs:
+                    m.pop("_id", None)
                 self._messages = deque(msgs[-self._max_messages:], maxlen=self._max_messages)
                 self._params = dict(doc.get("params", {}))
                 logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(msgs))

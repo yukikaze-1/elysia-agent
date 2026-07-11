@@ -10,6 +10,7 @@
 | 中 | **无去重机制** | 延后 — 现有测试确认重复文本+不同元数据是设计意图。需独立设计去重方案 |
 | 中 | **`emotion_engine.py` `_push_expression()` 缺失 6 种 mood 映射** | `emotion_engine.py:197-206`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
 | 中 | **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** | `plugin.py:37`: `_remind()` 被调用生成 coroutine 对象后传入 `dispatch_background`。调度器 checkpoint 恢复时 payload 中的 coroutine 不可 JSON 序列化（不持久化），且 `from_dict` 重建后 `hasattr(coro, "__await__")` 为 False。边缘场景，当前提醒工具很少跨重启执行。 |
+| 高 | **TTS 密集短句导致 wait_all 永久阻塞** | TS 连续 5+ 短句在 400ms 内密集入队时，MiniMax 后端部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING 状态。需在 TTS stream 层加超时机制，或在 `wait_all` 加整体超时后 cancel 剩余任务。 |
 
 ## 功能改进
 
@@ -41,7 +42,7 @@
 - **C3 情绪传染规则动态化**: 当前模板 `c3_emotion.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 或 SessionMemory 动态加载
 - **C6 说话风格规则动态化**: 当前模板 `c6_speaking_style.j2` 的规则为 v1 硬编码版本，后续需支持从 CharacterConfig 动态加载，让不同角色有不同的说话风格规则
 - **F2 代码块格式重新启用**: `f2_output_format.j2` 中 `<|code|>` 和 `<|markdown|>` 格式已注释。等需要代码/Markdown 渲染功能时取消注释即可启用
-- **Prompt injection 防护**: `c5_sensory.j2` 中 `perception` 字段包含用户原始输入，未做 XML 转义，存在提前闭合标签的注入风险。需在 `SensorySection._build_perception()` 中转义 `<` `>` 等字符
+- **C5 输入来源标注**: prompt 中当前无法区分用户是用文字还是语音输入。需在 sensory_ctx 中增加 `input_source` 字段（text/voice），模板中显示 "输入方式: 文字 / 语音"
 
 ### 后台任务系统 — 后续迭代
 

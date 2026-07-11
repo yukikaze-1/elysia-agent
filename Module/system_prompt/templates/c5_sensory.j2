@@ -1,18 +1,17 @@
 {#
 @section Sensory
-@version 1.0.0
-@description 感官输入：时间、季节、STT 情绪等
+@version 1.1.0
+@updated 2026-07-11
+@description 感官输入：环境事实 + 用户消息 + 语音情绪
 @params sensory_ctx: {
-    current_time: str          # 当前时间 "2026-07-06 14:30:00"
+    current_time: str          # 当前时间 "2026-07-11 14:30:00"
     time_of_day: str           # 时段: 早晨/中午/下午/傍晚/夜晚
     day_of_week: str           # 星期: 周一~周日
     season: str                # 季节: 春/夏/秋/冬
-    perception: str            # 感知文本 (用户名+消息+STT情绪)
-    stt_emotion: str           # STT 情绪标签 (e.g. "HAPPY", "SAD", "" if NEUTRAL)
-    stt_emotion_emoji: str     # 情绪对应 emoji 或 ""
-    stt_events: str            # 格式化后的事件列表或 ""
+    message: str               # 用户消息（已转义） e.g. "妖梦说：今天好热"
+    voice: str                 # 语音特征（可能为空） e.g. "语调: HAPPY 😊 | 事件: Laughter 😂"
 }
-@updated 2026-07-06
+@note 用户输入已通过 html.escape 转义，防止 XML 注入
 #}
 <sensory_input>
 <facts>
@@ -21,10 +20,10 @@
 星期: {{ sensory_ctx.day_of_week }}
 季节: {{ sensory_ctx.season }}
 </facts>
-<perception>
-{{ sensory_ctx.perception -}}
-{% if sensory_ctx.stt_emotion and sensory_ctx.stt_emotion != "NEUTRAL" %}
-[语调: {{ sensory_ctx.stt_emotion }} {{ sensory_ctx.stt_emotion_emoji }}{% if sensory_ctx.stt_events %} | 事件: {{ sensory_ctx.stt_events }}{% endif %}]
-{% endif %}
-</perception>
+<message>
+{{ sensory_ctx.message }}
+</message>
+<voice>
+{{ sensory_ctx.voice if sensory_ctx.voice else "（无语音数据）" }}
+</voice>
 </sensory_input>
