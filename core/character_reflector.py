@@ -172,14 +172,19 @@ class CharacterReflector:
         规范规定首次无历史时"视为已超 24h"，但纯时间触发会导致第 1 轮
         对话就立即反思——此时上下文不足以产生有意义的 self_perception。
         因此首次改用 10 对 buffer 阈值，确保有足够对话上下文再反思。
-        此偏差在 v1 中可接受。
         """
         if len(self._buffer) >= self.BUFFER_THRESHOLD:
             return True
-        history = self._session.get_param("self_perception_history", [])
-        if not history:
-            return len(self._buffer) >= 10  # 首次：10 对即可触发（有上下文基础）
-        last_ts = history[-1].get("timestamp", 0)
+
+        # 获取上次触发时间：优先用 PersonalityEngine 记录，降级用旧 history
+        last_ts = self._last_reflection_at
+        if last_ts is None:
+            # 兼容旧路径：从 self_perception_history 读时间戳
+            history = self._session.get_param("self_perception_history", [])
+            if not history:
+                return len(self._buffer) >= 10
+            last_ts = history[-1].get("timestamp", 0)
+
         return (time.time() - last_ts) > self.TIME_THRESHOLD_SEC
 
     async def _reflect(self) -> None:

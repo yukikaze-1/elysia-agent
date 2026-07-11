@@ -15,8 +15,8 @@ from collections.abc import Callable
 logger = logging.getLogger(__name__)
 
 # AwarenessTrigger 配置
-AWARENESS_COOLDOWN_ROUNDS = 20  # 同一主题 N 轮内不重复触发
-AWARENESS_MAX_HISTORY = 10      # state_history 保留条数
+AWARENESS_COOLDOWN_SECONDS = 3600  # 同一主题冷却 1 小时，避免频繁输出"我变了"
+AWARENESS_MAX_HISTORY = 10         # state_history 保留条数
 
 
 class PersonalityEngine:
@@ -37,8 +37,8 @@ class PersonalityEngine:
         self._user_name = user_name
         self._l1_core = base_personality
 
-        # 冷却计时: 记录上次 C9 触发的轮次，防止频繁输出"我变了"
-        self._last_awareness_round: int = -1
+        # 冷却计时: 记录上次 C9 触发的时间戳
+        self._last_awareness_time: float = 0.0
 
     # ---- 状态恢复 ----
 
@@ -77,7 +77,7 @@ class PersonalityEngine:
         if not self._awareness_allowed():
             return {"awareness_text": ""}
 
-        self._last_awareness_round = self._current_round_estimate()
+        self._last_awareness_time = time.time()
         return {"awareness_text": l3}
 
     # ---- 触发事件 ----
@@ -110,18 +110,12 @@ class PersonalityEngine:
     def _awareness_allowed(self) -> bool:
         """判断当前是否允许 C9 渲染（冷却检查）。
 
-        Phase 1 简单版本：距离上次触发超过 AWARENESS_COOLDOWN_ROUNDS 轮。
+        Phase 1 简单版本：距离上次触发超过 AWARENESS_COOLDOWN_SECONDS 秒。
         后续 Phase 2 加入 L2/L3 语义偏差检测。
         """
-        current = self._current_round_estimate()
-        if self._last_awareness_round < 0:
+        if self._last_awareness_time == 0.0:
             return True
-        return (current - self._last_awareness_round) >= AWARENESS_COOLDOWN_ROUNDS
-
-    def _current_round_estimate(self) -> int:
-        """估算当前轮次（基于 state_history 条目数）。"""
-        hist = self._session.get_param("state_history", [])
-        return len(hist)
+        return (time.time() - self._last_awareness_time) >= AWARENESS_COOLDOWN_SECONDS
 
     # ---- 内部状态管理 ----
 
