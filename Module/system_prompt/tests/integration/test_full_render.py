@@ -17,7 +17,7 @@ from Module.system_prompt.sections.own_life import OwnLifeSection
 from Module.system_prompt.sections.self_perception import SelfPerceptionSection
 from Module.system_prompt.system_prompt_manager import SystemPromptManager
 from core.memory.session import SessionMemory
-from core.personality_engine import PersonalityEngine
+from core.personality import PersonalityEngine
 
 _TEMPLATES = "Module/system_prompt/templates"
 

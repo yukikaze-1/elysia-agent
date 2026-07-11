@@ -2,7 +2,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 import pytest
-from core.personality_engine import PersonalityEngine
+from core.personality import PersonalityEngine
 from core.memory.session import SessionMemory
 
 

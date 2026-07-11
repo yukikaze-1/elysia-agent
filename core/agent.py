@@ -32,8 +32,7 @@ from .idle_monitor import IdleMonitor
 from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
-from .character_reflector import CharacterReflector
-from .personality_engine import PersonalityEngine
+from .personality import CharacterReflector, PersonalityEngine
 from Module.embedding import EmbeddingFactory
 from .task_scheduler import TaskScheduler
 

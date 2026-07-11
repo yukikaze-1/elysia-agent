@@ -4,7 +4,7 @@ import time
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from core.character_reflector import CharacterReflector
+from core.personality import CharacterReflector
 
 
 class TestCharacterReflector:
@@ -196,7 +196,7 @@ class TestCharacterReflector:
 
 def test_reflector_submits_to_personality_engine():
     """Reflector 完成后提交事件到 PersonalityEngine。"""
-    from core.personality_engine import PersonalityEngine
+    from core.personality import PersonalityEngine
     from core.memory.session import SessionMemory
     from unittest.mock import AsyncMock, MagicMock
 

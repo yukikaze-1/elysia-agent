@@ -12,8 +12,8 @@ import logging
 import time
 
 from Module.system_prompt import PromptManager
-from .llm_adapter import LLMAdapter
-from .memory.session import SessionMemory
+from ..llm_adapter import LLMAdapter
+from ..memory.session import SessionMemory
 
 logger = logging.getLogger(__name__)
 
