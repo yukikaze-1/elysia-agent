@@ -1,7 +1,8 @@
-"""CharacterReflector — 周期性 LLM 自我反思，输出 self_perception。
+"""CharacterReflector — 周期性 LLM 自我反思，作为 PersonalityEngine 的子组件。
 
 缓冲对话轮次，攒够 50 对 OR 距上次反思 > 24h 时触发反思。
-输出自然语言 self_perception，存入 session.params["self_perception_history"]。
+当连接 PersonalityEngine 时，反思结果通过 consume_trigger 提交；
+未连接时降级写入 session.params["self_perception_history"]。
 
 遵循 MemoryConsolidator 的 buffer + asyncio.Lock + flush 模式。
 """
@@ -49,6 +50,9 @@ class CharacterReflector:
         except FileNotFoundError:
             logger.warning("CharacterReflector: 模板目录不存在，反思功能不可用")
             self._pm = None
+
+        # ---- PersonalityEngine 连接 ----
+        self._personality_engine = None  # PersonalityEngine | None
 
         # ---- debug 状态 ----
         self._last_reflection_at: float | None = None
@@ -158,6 +162,10 @@ class CharacterReflector:
         if ctx:
             self._context = list(ctx)
 
+    def set_personality_engine(self, engine) -> None:
+        """连接到 PersonalityEngine。设置后 _reflect() 产出提交给 engine 而非 self_perception_history。"""
+        self._personality_engine = engine
+
     def _should_trigger(self) -> bool:
         """判断是否应触发反思：≥50 对 OR 距上次 > 24h。
 
@@ -220,12 +228,8 @@ class CharacterReflector:
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
-        # LLM 调用成功后才清空 buffer — 若失败则保留计数，下次攒够再触
+        # LLM 调用成功后才清空 buffer
         self._buffer.clear()
-        # _context 不清空 — 滚动窗口 [-(CONTEXT_ROUNDS*2):] 已有上界，
-        # 下次反思触发时（50 轮后）旧条目已自然推出。清空会丢失 LLM 调用期间
-        # buffer() 新到达的消息。
-        # 同步清理持久化状态
         self._save_state()
 
         if not text:
@@ -236,7 +240,20 @@ class CharacterReflector:
             logger.debug("CharacterReflector: 反思结果为空，跳过")
             return
 
-        # 追加到历史
+        # 提交给 PersonalityEngine 或降级写入旧 self_perception_history
+        if self._personality_engine is not None:
+            asyncio.create_task(
+                self._personality_engine.consume_trigger("reflector", {"content": text})
+            )
+            self._last_success = True
+            self._last_duration_ms = elapsed_ms
+            self._last_text_len = len(text)
+            self._last_reflection_at = time.time()
+            logger.info("CharacterReflector: 性格反思已提交 → PersonalityEngine (%d chars, %.0f ms)",
+                        len(text), elapsed_ms)
+            return
+
+        # 降级路径：写 self_perception_history（兼容旧行为）
         entry = {"timestamp": time.time(), "content": text}
         current_history = self._session.get_param("self_perception_history", [])
         current_history.append(entry)
@@ -244,7 +261,6 @@ class CharacterReflector:
             current_history = current_history[-self.MAX_HISTORY:]
         self._session.set_param("self_perception_history", current_history)
 
-        # 记录 debug 元数据
         self._last_success = True
         self._last_duration_ms = elapsed_ms
         self._last_text_len = len(text)

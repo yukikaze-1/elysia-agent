@@ -192,3 +192,34 @@ class TestCharacterReflector:
     def test_last_prompt_truncated(self, reflector, llm):
         """prompt 字段在反思后记录并截断到 1000 字符。"""
         pass  # 验证通过 integration 测试
+
+
+def test_reflector_submits_to_personality_engine():
+    """Reflector 完成后提交事件到 PersonalityEngine。"""
+    from core.personality_engine import PersonalityEngine
+    from core.memory.session import SessionMemory
+    from unittest.mock import AsyncMock, MagicMock
+
+    s = SessionMemory()
+    llm = MagicMock()
+    llm.think = AsyncMock(return_value=MagicMock(text="我注意到自己变得敷衍了"))
+
+    engine = PersonalityEngine(
+        llm=llm, session=s,
+        character_name="Elysia", user_name="妖梦",
+        base_personality="温柔底色"
+    )
+
+    reflector = CharacterReflector(
+        llm=llm, session=s,
+        character_name="Elysia", user_name="妖梦"
+    )
+    reflector.set_personality_engine(engine)
+
+    # 快速填充 buffer 达到触发阈值
+    for _ in range(10):
+        reflector._buffer.append(("你好", "你好呀"))
+
+    asyncio.run(reflector.flush())
+    assert s.get_param("state_l3")
+    assert "敷衍" in s.get_param("state_l3")
