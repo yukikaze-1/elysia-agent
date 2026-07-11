@@ -148,29 +148,34 @@ class TestOwnLifeSectionBoundary:
 # ── SelfPerceptionSection ──
 
 class TestSelfPerceptionSectionBoundary:
-    def test_no_session_returns_empty(self):
-        """session=None → 返回 ""。"""
+    def test_no_awareness_returns_empty(self):
+        """awareness_text 未设置 → 返回 ""。"""
         sec = SelfPerceptionSection(f"{_TEMPLATES}/c9_self_perception.j2")
         result = asyncio.run(sec.render())
         assert result == ""
 
-    def test_empty_history_returns_empty(self):
-        """self_perception_history=[] → 返回 ""。"""
-        s = _make_session(self_perception_history=[])
+    def test_with_awareness_renders(self):
+        """awareness_text 有值 → 渲染内容。"""
         sec = SelfPerceptionSection(f"{_TEMPLATES}/c9_self_perception.j2")
+        sec.update_awareness("感觉自己变了")
         result = asyncio.run(sec.render())
-        assert result == ""
+        assert "感觉自己变了" in result
+        assert "self_perception" in result
 
 
 # ── Personality / Relationship / Proactive ──
 
 class TestSectionSetContextDefaults:
     def test_personality_no_user_name(self):
-        """set_context 不传 user_name → 默认 ""。"""
-        sec = PersonalitySection(f"{_TEMPLATES}/c1_personality.j2", "TestBot")
+        """set_context 不传 user_name → 默认 ""，core 文本渲染。"""
+        sec = PersonalitySection(
+            f"{_TEMPLATES}/c1_personality.j2",
+            core_personality="你是 TestBot。测试人格。",
+        )
         sec.set_context(user_pronoun="她")
         result = asyncio.run(sec.render())
         assert "TestBot" in result
+        assert "测试人格" in result
 
     def test_relationship_no_user_name(self):
         """set_context 不传 user_name → 默认 ""，模板用空串渲染。"""

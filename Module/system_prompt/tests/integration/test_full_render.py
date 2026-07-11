@@ -17,6 +17,7 @@ from Module.system_prompt.sections.own_life import OwnLifeSection
 from Module.system_prompt.sections.self_perception import SelfPerceptionSection
 from Module.system_prompt.system_prompt_manager import SystemPromptManager
 from core.memory.session import SessionMemory
+from core.personality_engine import PersonalityEngine
 
 _TEMPLATES = "Module/system_prompt/templates"
 
@@ -39,18 +40,34 @@ def _mock_long_term():
     return lt
 
 
+def _mock_personality_engine():
+    """返回 mock PersonalityEngine 用于测试。"""
+    s = SessionMemory()
+    engine = PersonalityEngine(
+        llm=MagicMock(),
+        session=s,
+        character_name="Elysia",
+        user_name="妖梦",
+        base_personality="你是 Elysia。温柔底色。",
+    )
+    return engine
+
+
 def test_full_render_all_sections():
     """12 个 section 全部注入数据，确认渲染正常。"""
     session = _mock_session(
         mood="warm",
         own_life="最近在追一部新番",
-        self_perception_history=[
-            {"content": "感觉自己变得更爱吐槽了"}
-        ],
     )
+    pe = _mock_personality_engine()
 
-    c9_section = SelfPerceptionSection(f"{_TEMPLATES}/c9_self_perception.j2")
-    c9_section.update_awareness(text="感觉自己变得更爱吐槽了")
+    personality_section = PersonalitySection(
+        f"{_TEMPLATES}/c1_personality.j2",
+        core_personality=pe.render_c1()["core_personality"],
+    )
+    self_perception_section = SelfPerceptionSection(
+        f"{_TEMPLATES}/c9_self_perception.j2",
+    )
 
     sections = [
         ConflictRulesSection(f"{_TEMPLATES}/f1_conflict_rules.j2"),
@@ -60,12 +77,12 @@ def test_full_render_all_sections():
         EmotionSection(f"{_TEMPLATES}/c3_emotion.j2", session=session),
         MemorySection(f"{_TEMPLATES}/c4_memory.j2",
                       long_term=_mock_long_term(), session=session),
-        PersonalitySection(f"{_TEMPLATES}/c1_personality.j2", "Elysia"),
+        personality_section,
         RelationshipSection(f"{_TEMPLATES}/c2_relationship.j2", "Elysia"),
         SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2"),
         ProactiveSection(f"{_TEMPLATES}/c7_proactive.j2"),
         OwnLifeSection(f"{_TEMPLATES}/c8_own_life.j2", session=session),
-        c9_section,
+        self_perception_section,
     ]
     mgr = SystemPromptManager(sections)
     mgr.set_context(
@@ -76,6 +93,12 @@ def test_full_render_all_sections():
         stt_events=[],
         tts_provider="minimax",
     )
+    # 注入 personality data
+    personality_section.update_personality(
+        core=pe.render_c1()["core_personality"],
+        self_p=pe.render_c1()["self_personality"],
+    )
+    self_perception_section.update_awareness("感觉自己变了")
     result = asyncio.run(mgr.render())
     assert "硬约束" in result          # F1
     assert "<inner_voice>" in result  # F2
@@ -84,7 +107,7 @@ def test_full_render_all_sections():
     assert "warm" in result           # C3 emotion
     assert "草莓蛋糕" in result        # C4 memory
     assert "新番" in result           # C8 own_life
-    assert "吐槽" in result           # C9 self_perception
+    assert "self_perception" in result  # C9 self_perception
     assert "# 主动性" in result        # C7 proactive
     # 验证完整 12-section 排序
     names_in_order = [
