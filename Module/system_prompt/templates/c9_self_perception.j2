@@ -1,14 +1,14 @@
 {#
 @section SelfPerception
-@version 1.0.0
-@description 角色进化感知（CharacterReflector 产出）
-@params self_perception: str | None  # CharacterReflector 产出或 None
-@updated 2026-07-06
+@version 2.0.0
+@description 角色自我觉察（AwarenessTrigger 条件激活）
+@params awareness_text: str  # AwarenessTrigger 判定通过时非空
+@updated 2026-07-11
 #}
-{% if self_perception %}
+{% if awareness_text %}
 <self_perception>
 你最近注意到自己的一些变化：
-{{ self_perception }}
+{{ awareness_text }}
 </self_perception>
 {% endif %}
 {# end #}

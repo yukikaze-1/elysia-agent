@@ -4,22 +4,30 @@ from Module.system_prompt.protocol import Jinja2Section
 
 class PersonalitySection(Jinja2Section):
     name = "Personality"
-    version = "1.0.0"
-    description = "人格：行为模式定义"
+    version = "2.0.0"
+    description = "人格：L1 Core + L2 Self（动态性格引擎）"
 
-    def __init__(self, template_path: str, character_name: str = ""):
+    def __init__(self, template_path: str, core_personality: str = ""):
         super().__init__(template_path)
-        self._character_name = character_name
+        self._core = core_personality
+        self._self = ""
+        self._name = ""
         self._user_name = ""
         self._user_pronoun = "她"
 
     def set_context(self, **kwargs) -> None:
+        self._name = kwargs.get("name", "")
         self._user_name = kwargs.get("user_name", "")
         self._user_pronoun = kwargs.get("user_pronoun", "她")
 
     async def render(self) -> str:
         return self._render_template(
-            name=self._character_name,
-            user_name=self._user_name,
-            user_pronoun=self._user_pronoun,
+            name=self._name,
+            core_personality=self._core,
+            self_personality=self._self,
         )
+
+    def update_personality(self, core: str, self_p: str) -> None:
+        """由 PromptAssembler 调用，传入 PersonalityEngine 的实时数据。"""
+        self._core = core
+        self._self = self_p

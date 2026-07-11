@@ -4,20 +4,18 @@ from Module.system_prompt.protocol import Jinja2Section
 
 class SelfPerceptionSection(Jinja2Section):
     name = "SelfPerception"
-    version = "1.0.0"
-    description = "自我感知：注意到的自身变化"
+    version = "2.0.0"
+    description = "自我感知：AwarenessTrigger 条件激活"
 
-    def __init__(self, template_path: str, session=None):
+    def __init__(self, template_path: str):
         super().__init__(template_path)
-        self._session = session
+        self._awareness_text = ""
+
+    def update_awareness(self, text: str) -> None:
+        """由 PromptAssembler 调用，传入 PersonalityEngine 的 awareness 数据。"""
+        self._awareness_text = text
 
     async def render(self) -> str:
-        if self._session is None:
+        if not self._awareness_text:
             return ""
-        history = self._session.get_param("self_perception_history", [])
-        if not history:
-            return ""
-        content = history[-1].get("content", "")
-        if not content:
-            return ""
-        return self._render_template(self_perception=content)
+        return self._render_template(awareness_text=self._awareness_text)
