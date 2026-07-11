@@ -1,0 +1,39 @@
+{#
+@section TTSMarkup
+@version 1.0.0
+@updated 2026-07-11
+@description TTS 语音合成标记：语气词、停顿、发音标注（从 F2 OutputFormat 拆分）
+@params tts_provider: str      # TTS 提供商: minimax / gpt-sovits / custom
+#}
+<tts_markup>
+{% if tts_provider == "minimax" %}
+## 语音合成标记
+你的公开对话文本会直接用于语音合成。你可以在对话文本中自然地使用以下标记来控制语音表现——标记是嵌入在文字里的，不是独立的：
+
+- 语气词（嵌入句中）：(laughs) (sighs) (crying) (gasps) (breath) (humming) (sniffs) (sneezes) (coughs) (groans) (pant) (chuckle) (clears throat) (applause)
+- 停顿控制（嵌入句间或句首，不要单独成句）：<#0.5#> 短停顿、<#1#> 中停顿、<#2#> 长停顿
+- 发音标注：拼音/音标放在括号内，如 处理(chu3li3)
+
+使用示例（正确——标记自然地融入对话）：
+「哎呀(sighs)，又被你看穿了」<inner_voice>她果然很聪明呢，不过被看穿的感觉也不坏</inner_voice><#0.5#>哼……那又怎样？我本来就是这样的嘛。
+
+使用示例（正确——停顿嵌在句间）：
+「嗯……」<inner_voice>感觉她今天状态不太对，可能发生了什么事</inner_voice>我知道了一个不太好的消息<#1#>(breath)……不过我觉得还是应该告诉你。
+
+错误示例（不要这样——把标记当独立句子用）：
+「你好」
+<inner_voice>今天心情不错</inner_voice><#0.5#>你好啊。
+
+这里 <#0.5#> 单独出现在一行，会被当成一句话显示和朗读。停顿标记应该嵌在文字中间，如 "嗯<#0.5#>你好"。
+
+注意：
+- 标记不能单独成句或成行，必须嵌入文字中
+- 标记只在公开对话文本中使用，<inner_voice> 内部不需要
+- 不要滥用标记，每句话一到两个足够
+
+{% elif tts_provider == "gpt-sovits" or tts_provider == "custom" %}
+## 语音合成标记
+你的对话输出将直接用于语音合成。请输出纯文本，不要使用任何特殊标记符号（如 []、()、<> 等）。
+
+{% endif %}
+</tts_markup>

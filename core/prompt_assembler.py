@@ -12,6 +12,7 @@ from Module.system_prompt.message_builder import MessageBuilder
 from Module.system_prompt.system_prompt_manager import SystemPromptManager
 from Module.system_prompt.sections.conflict_rules import ConflictRulesSection
 from Module.system_prompt.sections.output_format import OutputFormatSection
+from Module.system_prompt.sections.tts_markup import TTSMarkupSection
 from Module.system_prompt.sections.sensory import SensorySection
 from Module.system_prompt.sections.emotion import EmotionSection
 from Module.system_prompt.sections.memory import MemorySection
@@ -45,8 +46,9 @@ class PromptAssembler:
         self._long_term = long_term
 
         sections = [
-            ConflictRulesSection(),
+            ConflictRulesSection(f"{_SECTION}/f1_conflict_rules.j2"),
             OutputFormatSection(f"{_SECTION}/f2_output_format.j2"),
+            TTSMarkupSection(f"{_SECTION}/f3_tts_markup.j2"),
             SensorySection(f"{_SECTION}/c5_sensory.j2"),
             EmotionSection(f"{_SECTION}/c3_emotion.j2", session),
             MemorySection(f"{_SECTION}/c4_memory.j2", long_term, session),

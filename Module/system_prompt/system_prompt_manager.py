@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 _RENDER_ORDER = [
     "ConflictRules",     # F1
     "OutputFormat",      # F2
+    "TTSMarkup",         # F3
     "Sensory",           # C5
     "Emotion",           # C3
     "Memory",            # C4

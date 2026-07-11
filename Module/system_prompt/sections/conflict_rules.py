@@ -1,10 +1,8 @@
 """F1: 冲突规则。"""
-from Module.system_prompt.protocol import StaticSection
-
-_F1_TEXT = "<conflict_rules>\n角色定义你是谁、怎么说话。框架约束是硬规则。冲突时框架优先。\n</conflict_rules>"
+from Module.system_prompt.protocol import Jinja2Section
 
 
-class ConflictRulesSection(StaticSection):
-    def __init__(self):
-        super().__init__("ConflictRules", "1.0.0",
-                         "冲突规则：框架优先于角色", _F1_TEXT)
+class ConflictRulesSection(Jinja2Section):
+    name = "ConflictRules"
+    version = "1.1.0"
+    description = "冲突规则：框架硬约束优先于角色软约束"

@@ -15,6 +15,7 @@ from Module.system_prompt.sections.proactive import ProactiveSection
 from Module.system_prompt.sections.conflict_rules import ConflictRulesSection
 from Module.system_prompt.sections.speaking_style import SpeakingStyleSection
 from Module.system_prompt.sections.output_format import OutputFormatSection
+from Module.system_prompt.sections.tts_markup import TTSMarkupSection
 from core.memory.session import SessionMemory
 
 _TEMPLATES = "Module/system_prompt/templates"
@@ -190,11 +191,14 @@ class TestSectionSetContextDefaults:
 
 class TestConflictRules:
     def test_content(self):
-        """F1 内容不变。"""
-        sec = ConflictRulesSection()
+        """F1 渲染冲突规则——框架硬约束优先于角色软约束。"""
+        sec = ConflictRulesSection(f"{_TEMPLATES}/f1_conflict_rules.j2")
         result = asyncio.run(sec.render())
-        assert "框架优先" in result
+        assert "硬约束" in result
+        assert "软约束" in result
         assert "<conflict_rules>" in result
+        assert "框架规则" in result
+        assert "角色定义" in result
 
 
 class TestSpeakingStyleSection:
@@ -225,3 +229,28 @@ class TestOutputFormatSection:
         """validate 对正常模板返回 True。"""
         sec = OutputFormatSection(f"{_TEMPLATES}/f2_output_format.j2")
         assert sec.validate() is True
+
+
+class TestTTSMarkupSection:
+    def test_renders_minimax(self):
+        """tts_provider=minimax → 渲染 MiniMax TTS 标记。"""
+        sec = TTSMarkupSection(f"{_TEMPLATES}/f3_tts_markup.j2")
+        sec.set_context(tts_provider="minimax")
+        result = asyncio.run(sec.render())
+        assert "<tts_markup>" in result
+        assert "语音合成标记" in result
+        assert "(laughs)" in result
+
+    def test_renders_gpt_sovits(self):
+        """tts_provider=gpt-sovits → 渲染纯文本指令。"""
+        sec = TTSMarkupSection(f"{_TEMPLATES}/f3_tts_markup.j2")
+        sec.set_context(tts_provider="gpt-sovits")
+        result = asyncio.run(sec.render())
+        assert "<tts_markup>" in result
+        assert "纯文本" in result
+
+    def test_empty_provider_renders_empty(self):
+        """tts_provider 为空或不匹配 → 只输出包裹标签。"""
+        sec = TTSMarkupSection(f"{_TEMPLATES}/f3_tts_markup.j2")
+        result = asyncio.run(sec.render())
+        assert "<tts_markup>" in result

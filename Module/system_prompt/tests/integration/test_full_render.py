@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from Module.system_prompt.sections.conflict_rules import ConflictRulesSection
 from Module.system_prompt.sections.output_format import OutputFormatSection
+from Module.system_prompt.sections.tts_markup import TTSMarkupSection
 from Module.system_prompt.sections.sensory import SensorySection
 from Module.system_prompt.sections.emotion import EmotionSection
 from Module.system_prompt.sections.memory import MemorySection
@@ -39,7 +40,7 @@ def _mock_long_term():
 
 
 def test_full_render_all_sections():
-    """11 个 section 全部注入数据，确认渲染正常。"""
+    """12 个 section 全部注入数据，确认渲染正常。"""
     session = _mock_session(
         mood="warm",
         own_life="最近在追一部新番",
@@ -49,8 +50,9 @@ def test_full_render_all_sections():
     )
 
     sections = [
-        ConflictRulesSection(),
+        ConflictRulesSection(f"{_TEMPLATES}/f1_conflict_rules.j2"),
         OutputFormatSection(f"{_TEMPLATES}/f2_output_format.j2"),
+        TTSMarkupSection(f"{_TEMPLATES}/f3_tts_markup.j2"),
         SensorySection(f"{_TEMPLATES}/c5_sensory.j2"),
         EmotionSection(f"{_TEMPLATES}/c3_emotion.j2", session=session),
         MemorySection(f"{_TEMPLATES}/c4_memory.j2",
@@ -69,21 +71,24 @@ def test_full_render_all_sections():
         user_pronoun="她",
         stt_emotion="",
         stt_events=[],
+        tts_provider="minimax",
     )
     result = asyncio.run(mgr.render())
-    assert "框架优先" in result       # F1
+    assert "硬约束" in result          # F1
     assert "<inner_voice>" in result  # F2
+    assert "<tts_markup>" in result   # F3
     assert "Elysia" in result         # C1
     assert "warm" in result           # C3 emotion
     assert "草莓蛋糕" in result        # C4 memory
     assert "新番" in result           # C8 own_life
     assert "吐槽" in result           # C9 self_perception
     assert "# 主动性" in result        # C7 proactive
-    # 验证完整 11-section 排序
+    # 验证完整 12-section 排序
     names_in_order = [
-        "conflict_rules", "inner_voice", "sensory_input", "emotion",
-        "memory_bank", "personality", "relationship", "speaking_style",
-        "主动性", "own_life", "self_perception",
+        "conflict_rules", "inner_voice", "output_format", "tts_markup",
+        "sensory_input", "emotion", "memory_bank", "personality",
+        "relationship", "speaking_style", "主动性", "own_life",
+        "self_perception",
     ]
     last_pos = -1
     for tag in names_in_order:
@@ -93,10 +98,11 @@ def test_full_render_all_sections():
 
 
 def test_versions_all_sections():
-    """全部 11 个 section 都有 version。"""
+    """全部 12 个 section 都有 version。"""
     sections = [
-        ConflictRulesSection(),
+        ConflictRulesSection(f"{_TEMPLATES}/f1_conflict_rules.j2"),
         OutputFormatSection(f"{_TEMPLATES}/f2_output_format.j2"),
+        TTSMarkupSection(f"{_TEMPLATES}/f3_tts_markup.j2"),
         SensorySection(f"{_TEMPLATES}/c5_sensory.j2"),
         EmotionSection(f"{_TEMPLATES}/c3_emotion.j2"),
         MemorySection(f"{_TEMPLATES}/c4_memory.j2"),
@@ -109,17 +115,18 @@ def test_versions_all_sections():
     ]
     mgr = SystemPromptManager(sections)
     versions = mgr.get_versions()
-    assert len(versions) == 11
+    assert len(versions) == 12
     for name, ver in versions.items():
         assert ver, f"{name} version is empty"
         assert ver != "0.0.0", f"{name} version is default 0.0.0"
 
 
 def test_validate_all_passes():
-    """全部 11 个 section 的 validate 都通过。"""
+    """全部 12 个 section 的 validate 都通过。"""
     sections = [
-        ConflictRulesSection(),
+        ConflictRulesSection(f"{_TEMPLATES}/f1_conflict_rules.j2"),
         OutputFormatSection(f"{_TEMPLATES}/f2_output_format.j2"),
+        TTSMarkupSection(f"{_TEMPLATES}/f3_tts_markup.j2"),
         SensorySection(f"{_TEMPLATES}/c5_sensory.j2"),
         EmotionSection(f"{_TEMPLATES}/c3_emotion.j2"),
         MemorySection(f"{_TEMPLATES}/c4_memory.j2"),
