@@ -1,5 +1,5 @@
 """F2: 输出格式。"""
-from Module.prompt.protocol import Jinja2Section
+from Module.system_prompt.protocol import Jinja2Section
 
 
 class OutputFormatSection(Jinja2Section):

@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from Module.prompt.protocol import PromptSection, StaticSection, Jinja2Section
+from Module.system_prompt.protocol import PromptSection, StaticSection, Jinja2Section
 
 
 class TestPromptSectionABC:

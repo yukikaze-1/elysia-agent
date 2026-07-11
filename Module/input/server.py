@@ -673,9 +673,9 @@ def create_app(
         if record is None:
             raise web.HTTPNotFound(text=f"记录 #{index} 不存在")
 
-        # 读取模板源码（从 Module/prompt/templates/）
+        # 读取模板源码（从 Module/system_prompt/templates/）
         template_source = None
-        templates_dir = "Module/prompt/templates"
+        templates_dir = "Module/system_prompt/templates"
         try:
             import os
             sources = {}

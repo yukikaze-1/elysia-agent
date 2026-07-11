@@ -4,7 +4,7 @@
 **最后更新**: 2026-07-07 — Section Provider 架构完善
 **目的**: 记录 prompt 编写中的隐性约束、设计原则和验证方法，方便迭代和后续维护。
 
-> **Section Provider 架构**: `Module/prompt/sections/` 下 11 个独立 PromptSection 模块。
+> **Section Provider 架构**: `Module/system_prompt/sections/` 下 11 个独立 PromptSection 模块。
 > 编辑 prompt 时直接修改对应 section 文件即可，无需 touch 整个单体模板。
 > 详见 [`docs/superpowers/specs/2026-07-04-prompt-section-provider-design.md`](superpowers/specs/2026-07-04-prompt-section-provider-design.md)。
 

@@ -1,11 +1,11 @@
-"""Module/prompt/manager.py 单元测试。"""
+"""Module/system_prompt/manager.py 单元测试。"""
 
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from Module.prompt import PromptManager
+from Module.system_prompt import PromptManager
 
 
 class TestConstructor:

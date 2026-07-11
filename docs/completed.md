@@ -6,9 +6,9 @@
 
 Brain.j2 单体模板 (~244行) 拆分为模块化 section 管理引擎。
 
-- `Module/prompt/` — Brain Prompt 引擎 (`PromptSection`, `StaticSection`, `Jinja2Section`, `SystemPromptManager`, `MessageBuilder`, 11 section 实现)
-- `Module/prompt/templates/` — 11 个独立 section 模板 (f2_output_format + c1~c9)
-- `Module/prompt/sections/` — 11 个 PromptSection 实现 (ConflictRules/OutputFormat/Sensory/Emotion/Memory/Personality/Relationship/SpeakingStyle/Proactive/OwnLife/SelfPerception)
+- `Module/system_prompt/` — Brain Prompt 引擎 (`PromptSection`, `StaticSection`, `Jinja2Section`, `SystemPromptManager`, `MessageBuilder`, 11 section 实现)
+- `Module/system_prompt/templates/` — 11 个独立 section 模板 (f2_output_format + c1~c9)
+- `Module/system_prompt/sections/` — 11 个 PromptSection 实现 (ConflictRules/OutputFormat/Sensory/Emotion/Memory/Personality/Relationship/SpeakingStyle/Proactive/OwnLife/SelfPerception)
 - `PromptAssembler` 简化为胶水层：创建 11 个 section → `SystemPromptManager.set_context()` + `render()` → `MessageBuilder.build_messages()`
 - 黄金对比测试：新旧 system prompt 逐字节一致
 - 379 测试通过，零回归
@@ -627,7 +627,7 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 |------|------|
 | 磁盘清理 | 删除 ~280MB 垃圾文件（`__pycache__`、`.pyc`、node_modules、临时文件） |
 | UUID 统一 | 8 文件改用 `new_message_id()`，消除 `uuid4().hex[:12]` 散落 |
-| 补缺失文件 | `Module/config/__main__.py`、`Module/input/__main__.py`、`Module/prompt/__main__.py`、`Module/logger/__main__.py`、`Module/input/README.md` |
+| 补缺失文件 | `Module/config/__main__.py`、`Module/input/__main__.py`、`Module/system_prompt/__main__.py`、`Module/logger/__main__.py`、`Module/input/README.md` |
 | 文档整理 | `test_tool_parallel.md` 移至 `docs/`，清理 `settings.local.json` 过期引用 |
 
 **Spec:** 已归档

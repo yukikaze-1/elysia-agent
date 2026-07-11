@@ -1,6 +1,6 @@
 """MessageBuilder 集成测试。"""
 import pytest
-from Module.prompt.message_builder import MessageBuilder
+from Module.system_prompt.message_builder import MessageBuilder
 
 
 class TestBuildMessages:

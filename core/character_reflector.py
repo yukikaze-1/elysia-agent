@@ -10,7 +10,7 @@ import asyncio
 import logging
 import time
 
-from Module.prompt import PromptManager
+from Module.system_prompt import PromptManager
 from .llm_adapter import LLMAdapter
 from .memory.session import SessionMemory
 

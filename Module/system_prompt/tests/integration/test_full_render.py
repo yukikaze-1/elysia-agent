@@ -3,21 +3,21 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from Module.prompt.sections.conflict_rules import ConflictRulesSection
-from Module.prompt.sections.output_format import OutputFormatSection
-from Module.prompt.sections.sensory import SensorySection
-from Module.prompt.sections.emotion import EmotionSection
-from Module.prompt.sections.memory import MemorySection
-from Module.prompt.sections.personality import PersonalitySection
-from Module.prompt.sections.relationship import RelationshipSection
-from Module.prompt.sections.speaking_style import SpeakingStyleSection
-from Module.prompt.sections.proactive import ProactiveSection
-from Module.prompt.sections.own_life import OwnLifeSection
-from Module.prompt.sections.self_perception import SelfPerceptionSection
-from Module.prompt.system_prompt_manager import SystemPromptManager
+from Module.system_prompt.sections.conflict_rules import ConflictRulesSection
+from Module.system_prompt.sections.output_format import OutputFormatSection
+from Module.system_prompt.sections.sensory import SensorySection
+from Module.system_prompt.sections.emotion import EmotionSection
+from Module.system_prompt.sections.memory import MemorySection
+from Module.system_prompt.sections.personality import PersonalitySection
+from Module.system_prompt.sections.relationship import RelationshipSection
+from Module.system_prompt.sections.speaking_style import SpeakingStyleSection
+from Module.system_prompt.sections.proactive import ProactiveSection
+from Module.system_prompt.sections.own_life import OwnLifeSection
+from Module.system_prompt.sections.self_perception import SelfPerceptionSection
+from Module.system_prompt.system_prompt_manager import SystemPromptManager
 from core.memory.session import SessionMemory
 
-_TEMPLATES = "Module/prompt/templates"
+_TEMPLATES = "Module/system_prompt/templates"
 
 
 def _mock_session(**params):

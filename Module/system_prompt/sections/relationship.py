@@ -1,5 +1,5 @@
 """C2: 关系。"""
-from Module.prompt.protocol import Jinja2Section
+from Module.system_prompt.protocol import Jinja2Section
 
 
 class RelationshipSection(Jinja2Section):

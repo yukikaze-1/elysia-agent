@@ -1,5 +1,5 @@
 """F1: 冲突规则。"""
-from Module.prompt.protocol import StaticSection
+from Module.system_prompt.protocol import StaticSection
 
 _F1_TEXT = "<conflict_rules>\n角色定义你是谁、怎么说话。框架约束是硬规则。冲突时框架优先。\n</conflict_rules>"
 

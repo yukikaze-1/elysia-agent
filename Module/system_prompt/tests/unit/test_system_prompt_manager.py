@@ -1,8 +1,8 @@
 """SystemPromptManager 单元测试。"""
 import asyncio
 import pytest
-from Module.prompt.protocol import PromptSection, StaticSection
-from Module.prompt.system_prompt_manager import SystemPromptManager, _RENDER_ORDER
+from Module.system_prompt.protocol import PromptSection, StaticSection
+from Module.system_prompt.system_prompt_manager import SystemPromptManager, _RENDER_ORDER
 
 
 def _make_section(name, text):

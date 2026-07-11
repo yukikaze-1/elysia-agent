@@ -1,6 +1,6 @@
 """C4: 记忆。"""
 import time
-from Module.prompt.protocol import Jinja2Section
+from Module.system_prompt.protocol import Jinja2Section
 
 
 class MemorySection(Jinja2Section):

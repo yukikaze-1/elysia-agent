@@ -1,5 +1,5 @@
 """C8: 她自己的事。"""
-from Module.prompt.protocol import Jinja2Section
+from Module.system_prompt.protocol import Jinja2Section
 
 
 class OwnLifeSection(Jinja2Section):

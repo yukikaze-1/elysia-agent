@@ -1,6 +1,6 @@
 """C5: 感官输入。"""
 from datetime import datetime
-from Module.prompt.protocol import Jinja2Section
+from Module.system_prompt.protocol import Jinja2Section
 
 
 class SensorySection(Jinja2Section):

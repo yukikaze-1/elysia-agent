@@ -150,14 +150,14 @@ logger = factory.get("MyModule")
 - **PromptManager** — 通用 Jinja2 渲染器，用于非 system prompt 的模板（如 `CharacterReflector.j2`）
 
 ```python
-from Module.prompt import PromptManager
+from Module.system_prompt import PromptManager
 
 # 通用渲染（反射模板等）
 pm = PromptManager("prompt/")
 system = pm.render_macro("CharacterReflector.j2", "CharacterReflectorSystemPrompt",
                          character_name="Elysia", user_name="妖梦")
 ```
-> System prompt 通过 `Module.prompt.system_prompt_manager.SystemPromptManager` + `sections/` 下的 11 个 PromptSection 渲染。
+> System prompt 通过 `Module.system_prompt.system_prompt_manager.SystemPromptManager` + `sections/` 下的 11 个 PromptSection 渲染。
 
 ### Tool — 工具执行框架
 
@@ -227,7 +227,7 @@ python -m pytest Module/stt/test_stt.py -v
 python -m pytest Module/embedding/test_embedding.py -v
 python -m pytest Module/output/test_output.py -v
 python -m pytest Module/config/test_config.py -v
-python -m pytest Module/prompt/test_prompt.py -v
+python -m pytest Module/system_prompt/test_prompt.py -v
 python -m pytest Module/logger/test_logger.py -v
 python -m pytest Module/tool/test_framework.py -v
 python -m pytest Module/database/vectordb/test_vectordb.py -v

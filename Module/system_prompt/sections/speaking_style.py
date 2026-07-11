@@ -1,5 +1,5 @@
 """C6: 说话方式。"""
-from Module.prompt.protocol import Jinja2Section
+from Module.system_prompt.protocol import Jinja2Section
 
 
 class SpeakingStyleSection(Jinja2Section):

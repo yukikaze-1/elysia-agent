@@ -147,5 +147,5 @@ python -m pytest Module/tts/test_tts.py -v
 python -m Module.tts
 
 # 全量
-python -m pytest Module/tts/ Module/prompt/ Module/output/ -v
+python -m pytest Module/tts/ Module/system_prompt/ Module/output/ -v
 ```

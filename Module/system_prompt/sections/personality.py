@@ -1,5 +1,5 @@
 """C1: 人格。"""
-from Module.prompt.protocol import Jinja2Section
+from Module.system_prompt.protocol import Jinja2Section
 
 
 class PersonalitySection(Jinja2Section):

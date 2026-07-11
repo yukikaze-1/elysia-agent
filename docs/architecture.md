@@ -228,7 +228,7 @@ _BACKENDS = {
 | `Module.output` | `ConsoleChannel`, `WebSocketChannel` | — | 多通道广播 + capability 路由 |
 | `Module.config` | `ConfigLoader` | YAML + env | 分层配置 + 类型校验 |
 | `Module.logger` | `LoggerFactory` | — | caller-aware 日志工厂 |
-| `Module.prompt` | `PromptManager`, `SystemPromptManager`, `PromptSection` | Jinja2 | Section Provider 架构 + 通用模板渲染 |
+| `Module.system_prompt` | `PromptManager`, `SystemPromptManager`, `PromptSection` | Jinja2 | Section Provider 架构 + 通用模板渲染 |
 
 ### 3.3 Config 系统
 
@@ -472,7 +472,7 @@ build_messages(user_message, stt_emotion, stt_events)
   └── {"role": "user", "content": user_message}
 ```
 
-**Section 提供者架构** (`Module/prompt/` protocol + sections + templates): 2026-07-04 重构，将 `Brain.j2` 单体拆分为 11 个独立的 `PromptSection` 模块（ConflictRules, OutputFormat, Sensory, Emotion, Memory, Personality, Relationship, SpeakingStyle, Proactive, OwnLife, SelfPerception）。每个 section 自管数据源、自管 `.j2` 模板、可独立 reload/validate。`SystemPromptManager` 按固定顺序 async render 并拼接。详见 `docs/superpowers/specs/2026-07-04-prompt-section-provider-design.md`。
+**Section 提供者架构** (`Module/system_prompt/` protocol + sections + templates): 2026-07-04 重构，将 `Brain.j2` 单体拆分为 11 个独立的 `PromptSection` 模块（ConflictRules, OutputFormat, Sensory, Emotion, Memory, Personality, Relationship, SpeakingStyle, Proactive, OwnLife, SelfPerception）。每个 section 自管数据源、自管 `.j2` 模板、可独立 reload/validate。`SystemPromptManager` 按固定顺序 async render 并拼接。详见 `docs/superpowers/specs/2026-07-04-prompt-section-provider-design.md`。
 
 ### 4.8 空闲监控 (IdleMonitor)
 

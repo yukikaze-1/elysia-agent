@@ -1,5 +1,5 @@
 """C9: 自我感知。"""
-from Module.prompt.protocol import Jinja2Section
+from Module.system_prompt.protocol import Jinja2Section
 
 
 class SelfPerceptionSection(Jinja2Section):

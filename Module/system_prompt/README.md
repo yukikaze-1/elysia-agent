@@ -8,7 +8,7 @@ System prompt 引擎 + 通用 Jinja2 模板渲染。提供两套 API：
 ## 文件结构
 
 ```
-Module/prompt/
+Module/system_prompt/
 ├── __init__.py                # 导出 PromptManager, PromptSection, StaticSection,
 │                              #   Jinja2Section, MessageBuilder
 ├── protocol.py                # PromptSection ABC + StaticSection + Jinja2Section
@@ -86,13 +86,13 @@ F1 ConflictRules → F2 OutputFormat → C5 Sensory → C3 Emotion → C4 Memory
 ## SystemPromptManager API
 
 ```python
-from Module.prompt.sections import *
-from Module.prompt.system_prompt_manager import SystemPromptManager
+from Module.system_prompt.sections import *
+from Module.system_prompt.system_prompt_manager import SystemPromptManager
 
 sections = [
     ConflictRulesSection(),
-    OutputFormatSection("Module/prompt/templates/f2_output_format.j2"),
-    PersonalitySection("Module/prompt/templates/c1_personality.j2", "Elysia"),
+    OutputFormatSection("Module/system_prompt/templates/f2_output_format.j2"),
+    PersonalitySection("Module/system_prompt/templates/c1_personality.j2", "Elysia"),
     # ...
 ]
 mgr = SystemPromptManager(sections)
@@ -114,7 +114,7 @@ failed = mgr.validate_all()      # 校验失败的 section 名列表
 用于非 system prompt 的模板渲染（Amygdala、ActiveSpeak、CharacterReflector 等）。
 
 ```python
-from Module.prompt import PromptManager
+from Module.system_prompt import PromptManager
 
 pm = PromptManager("prompt/")
 result = pm.render("Amygdala.j2", character_name="Elysia")
@@ -138,8 +138,8 @@ Unix 时间戳 → 日期字符串 `%Y-%m-%d %H:%M:%S`。
 
 ```bash
 # 全部 prompt 测试
-python -m pytest Module/prompt/tests/ -v
+python -m pytest Module/system_prompt/tests/ -v
 
 # 旧 PromptManager 测试
-python -m pytest Module/prompt/test_prompt.py -v
+python -m pytest Module/system_prompt/test_prompt.py -v
 ```

@@ -1,4 +1,4 @@
-"""集成测试：渲染 Section 模板。运行: python -m Module.prompt"""
+"""集成测试：渲染 Section 模板。运行: python -m Module.system_prompt"""
 
 import os
 
@@ -20,7 +20,7 @@ _SECTION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templat
 
 
 async def main():
-    print("Module.prompt — Section 模板渲染测试")
+    print("Module.system_prompt — Section 模板渲染测试")
     print(f"  模板目录: {_SECTION_DIR}")
     print()
 
