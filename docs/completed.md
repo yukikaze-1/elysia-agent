@@ -2,6 +2,19 @@
 
 ## 已完成
 
+### 2026-07-11: System Prompt Section 升级 (F1/F2/F3/C5)
+
+对 Module/system_prompt/ 进行模块化升级：统一格式约定、拆分职责、修复安全问题。
+
+- **F1 ConflictRules**: `StaticSection` → `Jinja2Section`，新增 `f1_conflict_rules.j2` 模板。内容从 1 句话扩展为 4 条优先级规则（硬约束/软约束分类、inner_voice 真实性、感官事实不可覆盖、角色定义互补）
+- **F2 OutputFormat**: 加 `<output_format>` XML 包裹；解释 `「」` 示例约定；代码块格式 `<!-- -->` 注释掉（待后续启用）；TTS 标记内容拆出到 F3
+- **F3 TTSMarkup** (新建): `f3_tts_markup.j2` + `TTSMarkupSection`，独立管理 TTS 合成标记（MiniMax/gpt-sovits）
+- **C5 Sensory**: `<perception>` 拆为 `<message>` + `<voice>` 子标签；`html.escape()` 防 XML prompt injection；`<voice>` 始终渲染（无数据时占位文本）
+- **C6 SpeakingStyle**: `<perception>` 引用同步更新为 `<voice>` / `<message>`
+- **MongoDB ObjectId 修复**: `insert_one/insert_many` 加 `dict()` copy 防止 motor 注入 `_id` 污染调用方；`session.load()` 剥离已有损坏数据
+- **templates/README.md** 新建：格式约定、命名规则、渲染顺序、添加新模板步骤
+- 55 tests pass
+
 ### 2026-07-03: Brain Prompt 模块化重构
 
 Brain.j2 单体模板 (~244行) 拆分为模块化 section 管理引擎。

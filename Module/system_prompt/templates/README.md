@@ -88,7 +88,7 @@ XML 标签内部的文本使用 Markdown 或纯文本，按内容需要选择：
 | `c2_relationship.j2` | `RelationshipSection` | 关系 |
 | `c3_emotion.j2` | `EmotionSection` | 情感 |
 | `c4_memory.j2` | `MemorySection` | 记忆 |
-| `c5_sensory.j2` | `SensorySection` | 感官 |
+| `c5_sensory.j2` | `SensorySection` | 感官输入（环境事实 + 用户消息 + 语音情绪） |
 | `c6_speaking_style.j2` | `SpeakingStyleSection` | 说话风格 |
 | `c7_proactive.j2` | `ProactiveSection` | 主动性 |
 | `c8_own_life.j2` | `OwnLifeSection` | 自己的生活 |
