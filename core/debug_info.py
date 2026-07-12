@@ -7,6 +7,7 @@ Usage:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field, asdict
 
 
@@ -16,11 +17,18 @@ class DebugInfo:
     fsm_state: str = "idle"
     fsm_previous: str | None = None
     processing: bool = False
+    uptime_seconds: float = 0.0           # 服务运行时长
+
+    # IdleMonitor
+    proactive_enabled: bool = False
+    proactive_interval: float = 0.0
+    last_interaction_ago: float = 0.0     # 距上次用户交互的秒数
 
     # Session
     session_messages: int = 0
     session_recent: list[dict] = field(default_factory=list)
     session_params: dict = field(default_factory=dict)
+    archive_msg_count: int = 0            # MessageArchive 总数
 
     # Long-term memory
     lt_count: int = 0
@@ -103,10 +111,30 @@ async def collect(agent) -> DebugInfo:
     info.fsm_previous = str(agent._fsm.previous) if agent._fsm.previous else None
     ct = agent._cognitive._current_task
     info.processing = ct is not None and not ct.done()
+    # uptime
+    started = getattr(agent, '_started_at', None)
+    if started is not None:
+        info.uptime_seconds = time.monotonic() - started
+
+    # ---- IdleMonitor ----
+    im = getattr(agent, '_idle_monitor', None)
+    if im is not None:
+        info.proactive_enabled = getattr(im._character, 'proactive', None) is not None and im._character.proactive.enabled
+        info.proactive_interval = getattr(im._character.proactive, 'interval', 0.0) if hasattr(im, '_character') else 0.0
+        last_touch = getattr(im, '_last_interaction', 0.0)
+        if last_touch:
+            info.last_interaction_ago = time.monotonic() - last_touch
 
     # ---- Session ----
     msgs = agent._session.messages_for_client()
     info.session_messages = len(msgs)
+    # archive count
+    archive = getattr(agent._session, '_archive', None)
+    if archive:
+        try:
+            info.archive_msg_count = await archive.count()
+        except Exception:
+            pass
     info.session_recent = [
         {
             "role": m.get("role", "?"),

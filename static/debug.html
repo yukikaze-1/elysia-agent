@@ -397,10 +397,12 @@ function render(info) {
         ['FSM State', `<span class="${info.fsm_state==='idle'?'ok':'warn'}">${esc(info.fsm_state)}</span>`],
         ['Previous', esc(info.fsm_previous||'—')],
         ['Processing', info.processing ? '<span class="warn">yes</span>' : '<span class="ok">no</span>'],
+        ['Uptime', (() => { const s = info.uptime_seconds || 0; return s >= 3600 ? (s/3600).toFixed(1)+'h' : s >= 60 ? Math.floor(s/60)+'min' : Math.floor(s)+'s'; })()],
         ['LLM Model', esc(info.llm_model) + (/mock/i.test(info.llm_model || '') ? ' <span class="warn">MOCK</span>' : '')],
         ['TTS', ok(info.tts_ok)],
         ['STT', ok(info.stt_ok)],
-        ['WebSocket Clients', info.ws_clients],
+        ['WS Clients', info.ws_clients],
+        ['Proactive', info.proactive_enabled ? '<span class="ok">ON</span>' : '<span class="warn">OFF</span>'],
       ]},
       { title:'Memory', wide:false, rows:[
         ['Session Messages', info.session_messages],
@@ -409,6 +411,7 @@ function render(info) {
         ['Milvus', ok(info.milvus_ok)],
         ['Embedding', ok(info.embedding_ok)],
         ['Session Params', esc(trunc(JSON.stringify(info.session_params || {}), 80))],
+        ['Archive Msgs', (info.archive_msg_count || 0).toLocaleString()],
         ['Character', info.character_name],
         ['L1 Core', info.base_personality_summary ? esc(trunc(info.base_personality_summary, 100)) : 'N/A'],
       ]},
@@ -446,11 +449,11 @@ function render(info) {
       ]},
       { title:'Token 消耗', wide:false, rows: (() => {
         const ts = info.token_stats || {};
-        if (!ts.session_total && !info.pending_token_count && !info.pending_session_exists) return [['—', '暂无数据']];
+        if (!ts.session_total && !info.pending_token_count && !info.pending_session_exists) return [['总计', '暂无数据']];
         const models = ts.per_model || {};
         const rows = [];
         if (ts.session_total) {
-          rows.push(['Session 总计', `<b>${ts.session_total.toLocaleString()}</b> tokens`]);
+          rows.push(['总计', `<b>${ts.session_total.toLocaleString()}</b> tokens`]);
         }
         if (Object.keys(models).length) {
           rows.push(['按模型', Object.entries(models)
@@ -458,12 +461,12 @@ function render(info) {
             .join('<br>')]);
         }
         if (info.pending_token_count > 0) {
-          rows.push(['⚠ Pending', `${info.pending_token_count} 条 token 待导入 MongoDB`]);
+          rows.push(['⚠ Pending', `${info.pending_token_count} 条待导入`]);
         }
         if (info.pending_session_exists) {
-          rows.push(['⚠ Session 快照', '本地有未导入的 session']);
+          rows.push(['⚠ Session', '未导入快照']);
         }
-        return rows.length ? rows : [['—', '暂无数据']];
+        return rows;
       })()},
       { title:'📝 LLM Prompt', wide:false, items: (() => {
         const ps = info.prompt_summary || {};
