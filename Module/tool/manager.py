@@ -73,11 +73,13 @@ class ToolManager:
                         instance.safety.max_concurrency,
                     )
 
-                logger.info("工具 '%s' 已加载", instance.name)
+                logger.debug("工具 '%s' 已加载", instance.name)
             except Exception as e:
                 logger.warning(
                     "工具 '%s' setup() 失败，跳过: %s", instance.name, e,
                 )
+        names = list(self._plugins.keys())
+        logger.info("工具: 已加载 %d 个 (%s)", len(names), ", ".join(names))
 
     async def shutdown(self) -> None:
         """优雅关闭：取消所有 in-flight 任务，调用所有 teardown()。"""

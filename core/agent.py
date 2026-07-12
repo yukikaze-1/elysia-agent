@@ -396,7 +396,7 @@ class Agent:
             f"  LLM: {self._llm.model}",
             f"  记忆: {db_str}  ({self._long_term.count} entries)",
             f"  人格: {self._character.base_personality[:60]}{'...' if len(self._character.base_personality) > 60 else ''}",
-            f"  工具: {', '.join(self._tool_manager.tool_names) or '无'}",
+            f"  工具: {len(self._tool_manager.tool_names)} 个已加载",
             f"{'='*50}",
         ]
         banner = "\n".join(lines)
