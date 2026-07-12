@@ -7,7 +7,7 @@ character/
 ├── README.md
 └── elysia/                   ← 角色子目录
     ├── config.yaml           ← 角色 YAML 配置
-    └── personality.txt       ← L1 Core 性格文本（自然语言）
+    └── personality.md       ← L1 Core 性格文本（自然语言）
 ```
 
 ## 目录结构规范
@@ -15,7 +15,7 @@ character/
 ```
 character/<角色名>/
 ├── config.yaml               # 必需：角色 YAML 配置（格式见下方）
-└── personality.txt           # 必需：L1 Core 文本（base_personality_file 指向此文件）
+└── personality.md           # 必需：L1 Core 文本（base_personality_file 指向此文件）
 ```
 
 `<角色名>` 使用小写英文，与 `config.yaml` 中的 `name` 字段对应（name 可包含大写）。
@@ -37,7 +37,7 @@ character/<角色名>/
 | `proactive.triggers` | list | — | 触发条件列表 |
 | `wake_words` | list | — | 语音唤醒词列表 |
 
-### personality.txt
+### personality.md
 
 - 自然语言撰写的 L1 Core 性格描述（Core 层，不可变）
 - 由 PersonalityEngine 在启动时加载，注入 C1 system prompt
@@ -48,7 +48,7 @@ character/<角色名>/
 ```
 character/elysia/config.yaml
   → CharacterConfig.from_yaml()
-    → _load_base_personality() 读取 personality.txt
+    → _load_base_personality() 读取 personality.md
       → config.base_personality = "温柔是你的底色..."
         → PersonalityEngine.__init__(base_personality=...)
           → engine.render_c1() → C1 section → system prompt
@@ -58,6 +58,6 @@ character/elysia/config.yaml
 
 1. 创建 `character/<name>/` 目录
 2. 编写 `config.yaml`（至少包含 `name` 和 `base_personality_file`）
-3. 编写 `personality.txt`（L1 Core 性格文本）
+3. 编写 `personality.md`（L1 Core 性格文本）
 4. 在 `config.yaml` 中将 `agent.character` 指向新角色的 config.yaml
 5. 在对应 TTS 的 voices.yaml 中添加音色映射（如需语音输出）
