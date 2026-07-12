@@ -345,7 +345,7 @@ class LongTermMemory:
         for i, e in enumerate(self._entries):
             if e.id == entry_id:
                 e.text = new_text
-                e.timestamp = time.time()
+                e.timestamp = _time.time()
                 # Milvus: 删除旧向量 + 重新嵌入 + 插入新向量
                 if self._vector_db and e._milvus_pk is not None:
                     try:
