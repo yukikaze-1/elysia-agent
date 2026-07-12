@@ -731,9 +731,13 @@ async function loadPrompt(index) {
   document.getElementById('prompt-title').textContent =
     `📝 Prompt #${data.index}  第 ${data.round_num + 1} 轮  ${data.model}  ${time}`;
 
-  // ── 左侧：消息列表 ──
+  // ── 左侧：消息列表（可折叠卡片）──
   let leftHtml = '<div style="overflow-y:auto;max-height:65vh;">';
   const msgs = data.messages || [];
+  const msgCount = msgs.length;
+  leftHtml += '<div style="font-size:12px;color:var(--muted);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border);">';
+  leftHtml += '消息列表 &nbsp;<span style="background:var(--accent);color:#fff;border-radius:10px;padding:0 6px;font-size:10px;">' + msgCount + '</span>';
+  leftHtml += '</div>';
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
     const role = m.role || '?';
@@ -746,19 +750,22 @@ async function loadPrompt(index) {
       }).join('');
     }
     const len = content.length;
+    const sizeStr = len >= 1024 ? (len / 1024).toFixed(1) + 'KB' : len + 'B';
     const roleClass = role === 'system' ? 'role-tag fail' : (role === 'user' ? 'role-tag user' : 'role-tag assistant');
-    const isSystem = role === 'system';
+    const roleLabel = {system:'System Prompt', user:'User', assistant:'Assistant', tool:'Tool'}[role] || role;
     const msgId = 'msg-' + data.index + '-' + i;
-    leftHtml += '<div style="margin-bottom:6px;border:1px solid var(--border);border-radius:4px;overflow:hidden;">';
-    leftHtml += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:rgba(255,255,255,0.03);">';
-    leftHtml += '<span onclick="toggleMsg(\'' + msgId + '\')" style="cursor:pointer;flex:1;"><span class="' + roleClass + '">' + esc(role) + '</span> (' + len.toLocaleString() + ' 字) <span style="color:var(--muted);font-size:11px;">收起 ▲</span></span>';
-    // system 消息显示复制按钮
-    if (isSystem) {
-      const copyId = 'copy-sys-' + data.index;
-      leftHtml += '<button onclick="copySection(\'' + copyId + '\')" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:3px;padding:2px 6px;font-size:10px;" title="复制完整 System Prompt">📋</button>';
-    }
+    // system 默认展开，其余折叠
+    const isSystem = role === 'system';
+    const display = isSystem ? 'block' : 'none';
+    const arrow = isSystem ? '▼' : '▸';
+    leftHtml += '<div style="border:1px solid var(--border);border-radius:4px;margin-bottom:6px;overflow:hidden;">';
+    // header
+    leftHtml += '<div onclick="toggleMsg(\'' + msgId + '\', this)" style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:rgba(255,255,255,0.03);cursor:pointer;user-select:none;">';
+    leftHtml += '<span style="font-size:12px;"><span class="msg-arrow" style="display:inline-block;width:14px;text-align:center;color:var(--muted);">' + arrow + '</span> <span class="' + roleClass + '">' + esc(roleLabel) + '</span> <span style="color:var(--muted);font-size:10px;">' + sizeStr + '</span></span>';
+    leftHtml += '<button onclick="event.stopPropagation();copyMsgContent(\'' + msgId + '\')" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:3px;padding:2px 6px;font-size:10px;" title="复制此消息">📋</button>';
     leftHtml += '</div>';
-    leftHtml += '<div id="' + msgId + '" style="padding:8px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto;">' + esc(content) + '</div>';
+    // body
+    leftHtml += '<div id="' + msgId + '" style="display:' + display + ';padding:8px;font-size:12px;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.15);max-height:300px;overflow-y:auto;">' + esc(content) + '</div>';
     leftHtml += '</div>';
   }
   leftHtml += '</div>';
@@ -811,9 +818,15 @@ async function loadPrompt(index) {
   document.getElementById('prompt-tools').innerHTML = toolsHtml;
 }
 
-function toggleMsg(id) {
+function toggleMsg(id, headerEl) {
   const el = document.getElementById(id);
-  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  if (!el) return;
+  const isHidden = el.style.display === 'none';
+  el.style.display = isHidden ? 'block' : 'none';
+  if (headerEl) {
+    const arrow = headerEl.querySelector('.msg-arrow');
+    if (arrow) arrow.textContent = isHidden ? '▼' : '▸';
+  }
 }
 
 function toggleSection(secId, headerEl) {
@@ -829,10 +842,19 @@ function toggleSection(secId, headerEl) {
 function copySection(secId) {
   const el = document.getElementById(secId);
   if (!el) return;
-  const text = el.textContent;
-  copyToClipboard(text);
-  // 短暂反馈
+  copyToClipboard(el.textContent);
   flashCopyFeedback(secId);
+}
+
+function copyMsgContent(msgId) {
+  const el = document.getElementById(msgId);
+  if (!el) return;
+  copyToClipboard(el.textContent);
+  const card = el.closest('[style*="border:1px"]');
+  if (card) {
+    const btn = card.querySelector('button');
+    if (btn) { const orig = btn.textContent; btn.textContent = '✓'; setTimeout(() => { btn.textContent = orig; }, 800); }
+  }
 }
 
 function copyAllSections() {
