@@ -21,7 +21,7 @@ base_personality_file: personality.md           # L1 Core 文本（相对于本�
 appearance:
   height: "162cm"
   hair: "粉色长发"
-  eyes: "蓝色"
+  eyes: "粉红色"
 
 # ---- 情绪引擎 ----
 # 由 EmotionEngine（L4 Mood）消费

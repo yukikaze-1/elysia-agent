@@ -1528,13 +1528,19 @@ function confirmClearArchive() {
 
 // ---- CRUD 操作 ----
 
-async function deleteLtmEntry(id) {
-  try {
-    const r = await fetch('/debug/api/ltm/' + encodeURIComponent(id), { method: 'DELETE' });
-    const d = await r.json();
-    if (d.ok) refreshLtmKeepingFilters();
-    else alert('删除失败');
-  } catch (e) { alert('删除失败: ' + e.message); }
+function deleteLtmEntry(id) {
+  document.getElementById('confirm-title').textContent = '删除记忆';
+  document.getElementById('confirm-msg').textContent = '确认删除这条记忆吗？此操作不可撤销。';
+  document.getElementById('confirm-yes-btn').onclick = async () => {
+    closeConfirmModal();
+    try {
+      const r = await fetch('/debug/api/ltm/' + encodeURIComponent(id), { method: 'DELETE' });
+      const d = await r.json();
+      if (d.ok) refreshLtmKeepingFilters();
+      else alert('删除失败');
+    } catch (e) { alert('删除失败: ' + e.message); }
+  };
+  document.getElementById('confirm-modal').classList.add('show');
 }
 
 function confirmClearLtm() {
