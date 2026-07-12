@@ -14,7 +14,7 @@
               ┌────────────────────┼────────────────────┐
               │                    │                    │
     ┌─────────▼─────────┐  ┌──────▼──────┐  ┌─────────▼─────────┐
-    │   config.yaml      │  │  Agent  │  │  character/*.yaml │
+    │   config.yaml      │  │  Agent  │  │  character/*/ │
     │   (AppConfig)       │  │  (组装)     │  │  (CharacterConfig) │
     └───────────────────┘  └──────┬──────┘  └───────────────────┘
                                   │
@@ -39,13 +39,14 @@
     │                                                          │
     │  ┌────────────┐ ┌───────────┐ ┌───────────┐ ┌─────────┐ │
     │  │CharacterCfg│ │IdleMonitor│ │EmotionEng │ │Sentence │ │
-    │  │(role+traits│ │(主动搭话)  │ │(STT+关键词 │ │Buffer   │ │
-    │  │ +wake_words)│ └───────────┘ │ +衰减)    │ │(分句)   │ │
+    │  │(name+pron.│ │(主动搭话)  │ │(STT+关键词 │ │Buffer   │ │
+    │  │ +L1 Core) │ └───────────┘ │ +衰减)    │ │(分句)   │ │
     │  └────────────┘               └───────────┘ └─────────┘ │
-    │  ┌──────────────┐ ┌──────────────┐ ┌───────────────┐    │
-    │  │PromptAssembler│ │  LLMAdapter  │ │  DebugInfo    │    │
-    │  │(Jinja2+记忆) │ │(protocol适配)│ │(状态聚合)     │    │
-    │  └──────────────┘ └──────────────┘ └───────────────┘    │
+    │  ┌──────────────┐ ┌──────────┐ ┌────────────┐ ┌───────┐ │
+    │  │PromptAssembler│ │LLMAdapter│ │Person.Eng. │ │Debug  │ │
+    │  │(12-section+  │ │(protocol │ │(L1-L4模型) │ │Info   │ │
+    │  │ Person.Engine)│ │适配)     │ └────────────┘ │(聚合) │ │
+    │  └──────────────┘ └──────────┘                 └───────┘ │
     └──────────────────────┬──────────────────────────────────┘
                            │
     ┌──────────────────────┼──── L0 ──────────────────────────┐
@@ -103,14 +104,13 @@
   ┌──────────────────────────────────────────────────────────────────┐  │
   │  PromptAssembler.build_messages(user_message)                     │  │
   │    ├── SystemPromptManager.render()              # section 提供者           │  │
-  │    │     ├── 11 个 PromptSection async render                          │  │
+  │    │     ├── 12 个 PromptSection async render                          │  │
   │    │     ├── set_context() → per-request 参数透传                      │  │
   │    │     └── _RENDER_ORDER → 固定顺序拼接                              │  │
   │    ├── SessionMemory.recent_messages(8)      # 最近对话           │  │
   │    ├── stt_emotion / stt_events              # 声学情绪           │  │
-  │    ├── stt_emotion / stt_events              # 声学情绪           │  │
   └────────────────────────────┬─────────────────────────────────────┘  │
-  │    └── prompt assembler → MessageBuilder.build_messages()               │  │
+                               │                                        │
                                ▼                                        │
   ┌──────────────────────────────────────────────────────────────────┐  │
   │  CognitiveLoop._think_loop()                                       │  │
@@ -132,6 +132,7 @@
   │      └── tool_calls ──► asyncio.gather ──► inject ──► loop───────┘
   │  EmotionEngine.analyze_assistant() ──► expression 推送            │  │
   │  MemoryConsolidator.consolidate() ──► LongTermMemory (fire-forget)│  │
+  │  CharacterReflector.buffer() ──► PersonalityEngine (fire-forget)  │  │
   │  SessionMemory.save() ──► MongoDB                                 │  │
   │  FSM → IDLE                                                       │  │
   └──────────────────────────────────────────────────────────────────┘  │
@@ -456,11 +457,11 @@ SPLIT_PATTERN = re.compile(r"([。！？.!?\n])")
 build_messages(user_message, stt_emotion, stt_events)
   │
   ├── build_system_prompt()
-  │     ├── PromptAssembler 创建 11 个 PromptSection 实例（注入数据源）
+  │     ├── PromptAssembler 创建 12 个 PromptSection 实例（注入数据源）
   │     ├── SystemPromptManager.set_context(user_message, user_name, ...)
   │     ├── SystemPromptManager.render()
   │     │     ├── 按 _RENDER_ORDER 序列 async render 每个 section
-  │     │     │     F1 ConflictRules → F2 OutputFormat
+  │     │     │     F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup
   │     │     │     → C5 Sensory → C3 Emotion → C4 Memory
   │     │     │     → C1 Personality → C2 Relationship → C6 SpeakingStyle
   │     │     │     → C7 Proactive → C8 OwnLife → C9 SelfPerception
@@ -728,8 +729,6 @@ proactive:
     - type: time_of_day
       times: ["08:00", "12:00", "22:00"]
     - type: time_of_day
-      times: ["08:00", "12:00", "22:00"]
-```
 
 ---
 
@@ -1005,8 +1004,8 @@ INTERRUPT:
   3. ✅ 流式中断 — CancelledError 防御 + FSM 幂等
 
 待解决:
-  4. 主动对话 — Elysia 只能在用户说话后回复（伴侣化改造 Step 4）
-  5. 记忆人格化 — 记忆融入对话，不是机械引用（伴侣化改造 Step 3）
+  4. 主动对话 — C7 Proactive section 已有规则 + 冷却机制。IdleMonitor 驱动待完善
+  5. 记忆人格化 — C4 Memory section 已有可靠性规则（当前说法优先、不推测当事实），PersonalityEngine Phase 2 深化
   6. 多 Session — 当前 session_id 硬编码为 "default"，无多会话管理
   7. 角色切换 — CharacterConfig 重载 + TTS voice 热切换
 ```
