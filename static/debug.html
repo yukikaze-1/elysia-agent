@@ -1232,17 +1232,25 @@ function renderLtmPanel(status) {
   const s = status.ltm || {};
   const data = _ltmData;
   const ltmId = 'ltm-' + Math.random().toString(36).slice(2,8);
-  const rows = (data.entries || []).map(e =>
-    `<div class="db-item">
+  function ltmTypeStyle(t) {
+    const colors = { fact: '#4caf50', plan: '#2196f3', preference: '#ff9800', note: '#9c27b0' };
+    return colors[t] || '#888';
+  }
+  function ltmTypeLabel(t) {
+    return (t || '?').charAt(0).toUpperCase() + (t || '?').slice(1);
+  }
+  const rows = (data.entries || []).map(e => {
+    const t = e.memory_type || '?';
+    return `<div class="db-item">
       <input type="checkbox" class="ltm-check" value="${esc(e.id)}" style="flex-shrink:0;">
+      <span class="type-tag" style="background:${ltmTypeStyle(t)}22;color:${ltmTypeStyle(t)};flex-shrink:0;">${esc(ltmTypeLabel(t))}</span>
       <span class="text">${expandable(e.text, 80)}</span>
       <span class="meta">
-        <span class="type-tag">${esc(e.memory_type||'?')}</span>
         <span style="font-size:10px;color:var(--muted)">P${e.poignancy||0}</span>
         <span class="delete-btn" title="删除" onclick="deleteLtmEntry('${esc(e.id)}')">✕</span>
       </span>
-    </div>`
-  ).join('');
+    </div>`;
+  }).join('');
 
   return `<div class="card">
     <h2 style="cursor:pointer;user-select:none;" onclick="toggleDbCard(this)">▼ Long-Term Memory (Milvus)</h2>
