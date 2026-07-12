@@ -1224,7 +1224,7 @@ function filterLtm() {
   const type = document.getElementById('ltm-type-filter')?.value || '';
   let entries = _ltmData.entries || [];
   if (search) entries = entries.filter(e => e.text.toLowerCase().includes(search));
-  if (type) entries = entries.filter(e => e.memory_type === type);
+  if (type) entries = entries.filter(e => (e.memory_type || '').toLowerCase() === type);
   return { entries, total: entries.length };
 }
 
@@ -1263,8 +1263,11 @@ function renderLtmPanel(status) {
       <input id="ltm-search" placeholder="搜索记忆内容...">
       <select id="ltm-type-filter">
         <option value="">全部</option>
-        <option value="fact">fact</option><option value="plan">plan</option>
-        <option value="preference">preference</option><option value="note">note</option>
+        <option value="fact">Fact</option>
+        <option value="plan">Plan</option>
+        <option value="preference">Preference</option>
+        <option value="event">Event</option>
+        <option value="note">Note</option>
       </select>
     </div>
     <div style="max-height:400px;overflow-y:auto;margin-bottom:8px;">
