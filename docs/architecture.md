@@ -472,7 +472,7 @@ build_messages(user_message, stt_emotion, stt_events)
   └── {"role": "user", "content": user_message}
 ```
 
-**Section 提供者架构** (`Module/system_prompt/` protocol + sections + templates): 2026-07-04 重构，将 `Brain.j2` 单体拆分为 11 个独立的 `PromptSection` 模块（ConflictRules, OutputFormat, Sensory, Emotion, Memory, Personality, Relationship, SpeakingStyle, Proactive, OwnLife, SelfPerception）。每个 section 自管数据源、自管 `.j2` 模板、可独立 reload/validate。`SystemPromptManager` 按固定顺序 async render 并拼接。详见 `docs/superpowers/specs/2026-07-04-prompt-section-provider-design.md`。
+**Section 提供者架构** (`Module/system_prompt/` protocol + sections + templates): 2026-07-04 重构，将 `Brain.j2` 单体拆分为 12 个独立的 `PromptSection` 模块（ConflictRules, OutputFormat, TTSMarkup, Sensory, Emotion, Memory, Personality, Relationship, SpeakingStyle, Proactive, OwnLife, SelfPerception）。每个 section 自管数据源、自管 `.j2` 模板、可独立 reload/validate。`SystemPromptManager` 按固定顺序 async render 并拼接。详见 `docs/superpowers/specs/2026-07-04-prompt-section-provider-design.md`。
 
 ### 4.8 空闲监控 (IdleMonitor)
 
@@ -681,7 +681,7 @@ aiohttp Application:
 
 ```yaml
 agent:
-  character: character/elysia.yaml   # 角色文件
+  character: character/elysia/config.yaml  # 角色文件
   user_name: 妖梦                    # 用户名
 
 llm:
@@ -703,24 +703,30 @@ stt:
 
 优先级: `CLI flag > config.yaml > AppConfig 默认值`
 
-### 7.2 角色配置 (character/elysia.yaml)
+### 7.2 角色配置 (character/elysia/config.yaml)
+
+每个角色一个子目录：`character/<name>/config.yaml` + `character/<name>/personality.md`。
 
 ```yaml
 name: Elysia
-voice: elysia_v2
-personality:
-  traits: [温柔, 好奇, 偶尔毒舌]
-  speaking_style: "口语化，短句为主..."
+user_pronoun: 她
+base_personality_file: personality.md   # L1 Core 文本
+voice: elysia_v2                        # [占位] TTS voice ID
+
 emotion:
   thresholds: {excitement: 0.6, sadness: 0.3}
-  idle_expressions: [neutral, blink, slight_smile]
+  idle_expressions: [neutral, blink]
+
 wake_words: [Elysia, 爱莉, 爱莉希雅, 妖精小姐]
+
 proactive:
-  enabled: false                     # 主动搭话开关
-  interval: 300                      # 检查间隔 (秒)
+  enabled: false
+  interval: 300
   triggers:
     - type: silence_timeout
-      duration: 30                   # 30秒不说话 → 搭话
+      duration: 30
+    - type: time_of_day
+      times: ["08:00", "12:00", "22:00"]
     - type: time_of_day
       times: ["08:00", "12:00", "22:00"]
 ```
@@ -889,7 +895,7 @@ Agent/
 │   ├── tool_call_parser.py  #   流式 tool call 合并/归一化
 │   ├── text_utils.py        #   文本提取 + MessageObj
 │   ├── llm_adapter.py       #   LLM 适配器
-│   ├── prompt_assembler.py  #   提示词组装 + 记忆检索
+│   ├── prompt_assembler.py  #   提示词组装 + 性格引擎数据注入
 │   ├── emotion_engine.py    #   情绪引擎
 │   ├── sentence_buffer.py   #   分句缓冲
 │   ├── consolidator.py      #   记忆沉淀 (缓冲6条+rerank)
