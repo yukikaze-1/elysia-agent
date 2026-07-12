@@ -1,13 +1,13 @@
 {#
 @section Memory
-@version 1.0.0
-@description 召回的记忆条目
+@version 2.0.0
+@description 召回的记忆条目 + 可靠性规则
 @params memory_ctx: {
     micro: list[MemoryEntry]  # 微记忆列表 (top_k=5)
     macro: list               # 宏记忆列表 (预留，当前为空)
 }
 # MemoryEntry: { type: str, timestamp: float (unix), poignancy: float, content: str }
-@updated 2026-07-06
+@updated 2026-07-12
 #}
 {%- if memory_ctx.micro or memory_ctx.macro -%}
 <memory_bank>
@@ -30,6 +30,11 @@
 </macro memory>
 {% endif %}
 
-注意：以上记忆是给你内心提供背景的。只在自然相关时才在对话中提起，不要当成"数据"来引用。
+记忆使用规则：
+- 以上记忆是给你提供背景的。只在自然相关时才在对话中提起，不要当成"数据"来引用。
+- 当前用户说法优先于旧记忆。如果用户现在说的和记忆不一致，以现在的为准。
+- 不要把推测写成事实。不确定的记忆就说"好像记得"。
+- 不用记忆制造愧疚或施加压力。不用记忆来证明"你其实爱我"。
+- 不主动反复提及敏感的旧事，除非与当前话题直接相关。
 </memory_bank>
 {%- endif -%}

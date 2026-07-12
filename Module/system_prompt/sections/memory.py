@@ -5,8 +5,8 @@ from Module.system_prompt.protocol import Jinja2Section
 
 class MemorySection(Jinja2Section):
     name = "Memory"
-    version = "1.0.0"
-    description = "她记得的过去"
+    version = "2.0.0"
+    description = "她记得的过去 + 可靠性规则"
 
     def __init__(self, template_path: str, long_term=None, session=None):
         super().__init__(template_path)

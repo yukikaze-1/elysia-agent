@@ -4,8 +4,8 @@ from Module.system_prompt.protocol import Jinja2Section
 
 class ProactiveSection(Jinja2Section):
     name = "Proactive"
-    version = "1.0.0"
-    description = "主动性：何时主动说话、何时退一步"
+    version = "2.0.0"
+    description = "主动性：何时主动说话、冷却机制"
 
     def __init__(self, template_path: str):
         super().__init__(template_path)
