@@ -269,30 +269,61 @@ def create_app(
     # ---- Debug: 消息归档管理 ----
 
     async def archive_list_handler(request: web.Request) -> web.Response:
-        """分页浏览归档消息（debug 专用）。"""
+        """分页浏览归档消息（debug 专用，offset 分页）。"""
         agent = request.app["agent"]
         archive = getattr(agent, "_archive", None)
         if archive is None:
-            return web.json_response({"messages": [], "has_more": False, "total": 0})
+            return web.json_response({"messages": [], "total": 0})
 
-        before = request.query.get("before", "").strip() or None
         try:
             limit = int(request.query.get("limit", "100"))
             limit = max(1, min(limit, 500))
+            skip = int(request.query.get("skip", "0"))
+            skip = max(0, skip)
         except ValueError:
-            limit = 100
+            limit = 100; skip = 0
 
         try:
-            messages, has_more = await archive.query(before=before, limit=limit)
-            total = await archive.count()
+            messages, total = await archive.query_offset(skip=skip, limit=limit)
             client_msgs = _archive_to_client(messages)
             return web.json_response({
                 "messages": client_msgs,
-                "has_more": has_more,
                 "total": total,
+                "limit": limit,
+                "skip": skip,
             })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
+
+    app.router.add_get("/debug/api/archive", archive_list_handler)
+
+    async def archive_delete_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        archive = getattr(agent, "_archive", None)
+        if archive is None:
+            return web.json_response({"error": "archive not available"}, status=503)
+        msg_id = request.match_info.get("msg_id", "")
+        if not msg_id:
+            return web.json_response({"error": "缺少 msg_id"}, status=400)
+        ok = await archive.delete_one(msg_id)
+        return web.json_response({"ok": ok})
+    app.router.add_delete("/debug/api/archive/{msg_id}", archive_delete_handler)
+
+    async def archive_update_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        archive = getattr(agent, "_archive", None)
+        if archive is None:
+            return web.json_response({"error": "archive not available"}, status=503)
+        msg_id = request.match_info.get("msg_id", "")
+        if not msg_id:
+            return web.json_response({"error": "缺少 msg_id"}, status=400)
+        body = await request.json()
+        new_text = (body.get("text") or "").strip()
+        if not new_text:
+            return web.json_response({"error": "text 不能为空"}, status=400)
+        ok = await archive.update_text(msg_id, new_text)
+        return web.json_response({"ok": ok})
+    app.router.add_put("/debug/api/archive/{msg_id}", archive_update_handler)
 
     async def archive_clear_handler(request: web.Request) -> web.Response:
         """清空全部归档（debug 专用）。"""
@@ -303,7 +334,6 @@ def create_app(
         deleted = await archive.clear_all()
         return web.json_response({"ok": True, "deleted": deleted})
 
-    app.router.add_get("/debug/api/archive", archive_list_handler)
     app.router.add_delete("/debug/api/archive", archive_clear_handler)
 
     async def sessions_list_handler(request: web.Request) -> web.Response:

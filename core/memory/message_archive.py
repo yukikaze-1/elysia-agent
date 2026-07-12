@@ -81,7 +81,55 @@ class MessageArchive:
 
         return docs, has_more
 
+    # ---- Offset 分页（支持跳页）----
+
+    async def query_offset(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[dict], int]:
+        """Offset 分页查询，按 _id 降序。返回 (messages, total)。"""
+        if self._db is None:
+            return [], 0
+        total = await self._db.count(self.COLLECTION, {})
+        docs = await self._db.find(
+            self.COLLECTION, {},
+            sort=[("_id", -1)],
+            skip=skip,
+            limit=limit,
+        )
+        return docs, total
+
     # ---- 管理 ----
+
+    async def delete_one(self, msg_id: str) -> bool:
+        """删除单条消息。返回 True 表示成功。"""
+        if self._db is None:
+            return False
+        from bson import ObjectId
+        try:
+            deleted = await self._db.delete_many(self.COLLECTION, {"_id": ObjectId(msg_id)})
+            return deleted > 0
+        except Exception:
+            logger.debug("archive delete_one failed", exc_info=True)
+            return False
+
+    async def update_text(self, msg_id: str, new_text: str) -> bool:
+        """更新消息文本（保持其他字段不变）。返回 True 表示成功。"""
+        if self._db is None:
+            return False
+        from bson import ObjectId
+        try:
+            modified = await self._db.update_one(
+                self.COLLECTION,
+                {"_id": ObjectId(msg_id)},
+                {"$set": {"content": [{"type": "text", "content": new_text}]}},
+            )
+            return modified > 0
+        except Exception:
+            logger.debug("archive update_text failed", exc_info=True)
+            return False
 
     async def count(self) -> int:
         """返回归档消息总数。"""

@@ -1196,9 +1196,9 @@ async function loadDbPanel() {
   try {
     const [status, ltm, sessions, archive] = await Promise.all([
       fetch('/debug/api/db-status').then(r => r.json()),
-      fetch('/debug/api/ltm?limit=200').then(r => r.json()),
+      fetch(`/debug/api/ltm?limit=${_ltmPage.size}&offset=${(_ltmPage.page-1)*_ltmPage.size}`).then(r => r.json()),
       fetch('/debug/api/sessions').then(r => r.json()),
-      fetch('/debug/api/archive?limit=100').then(r => r.json()),
+      fetch(`/debug/api/archive?limit=${_archivePage.size}&skip=${(_archivePage.page-1)*_archivePage.size}`).then(r => r.json()),
     ]);
     document.getElementById('db-updated').textContent = '最后刷新: ' + new Date().toLocaleTimeString();
     renderDbPanels(status, ltm, sessions, archive);
@@ -1209,7 +1209,10 @@ async function loadDbPanel() {
 
 let _ltmData = { entries: [], total: 0 };
 let _sessionData = [];
-let _archiveData = { messages: [], has_more: false, total: 0 };
+let _archiveData = { messages: [], total: 0 };
+// 分页状态
+let _ltmPage = { size: 50, page: 1 };
+let _archivePage = { size: 50, page: 1 };
 
 function renderDbPanels(status, ltm, sessions, archive) {
   _ltmData = ltm;
@@ -1227,20 +1230,16 @@ function renderDbPanels(status, ltm, sessions, archive) {
   // 绑定归档面板事件
   document.getElementById('archive-search')?.addEventListener('input', filterArchive);
   document.getElementById('archive-role-filter')?.addEventListener('change', filterArchive);
-  document.getElementById('archive-load-more-btn')?.addEventListener('click', loadMoreArchive);
 }
 
 async function refreshLtmKeepingFilters() {
-  // 保存当前筛选状态
   const searchVal = document.getElementById('ltm-search')?.value || '';
   const typeVal = document.getElementById('ltm-type-filter')?.value || '';
   await loadDbPanel();
-  // 恢复筛选
   const si = document.getElementById('ltm-search');
   const ti = document.getElementById('ltm-type-filter');
   if (si) si.value = searchVal;
   if (ti) ti.value = typeVal;
-  // 重新执行筛选
   filterLtm();
 }
 
@@ -1314,9 +1313,9 @@ function renderLtmPanel(status) {
     <div id="ltm-list" style="max-height:400px;overflow-y:auto;margin-bottom:8px;">
       ${rows || '<div class="empty">暂无条目</div>'}
     </div>
-    <div style="display:flex;justify-content:space-between;">
+    ${renderPagination('ltm', _ltmPage, data.total, () => { refreshLtmKeepingFilters(); })}
+    <div style="display:flex;justify-content:space-between;margin-top:6px;">
       <span style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:8px;">
-        ${data.total > 50 ? '显示前200条' : ''}
         <a href="#" onclick="event.preventDefault();document.querySelectorAll('.ltm-check').forEach(c=>c.checked=true);" style="color:var(--accent);font-size:11px;">全选</a>
         <a href="#" onclick="event.preventDefault();document.querySelectorAll('.ltm-check').forEach(c=>c.checked=false);" style="color:var(--accent);font-size:11px;">取消</a>
       </span>
@@ -1433,24 +1432,57 @@ function renderSessionPanel(status) {
   </div>`;
 }
 
+function renderPagination(id, pageState, total, onChange) {
+  const pages = Math.ceil(total / pageState.size) || 1;
+  let h = '<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);margin-top:8px;">';
+  h += '<select onchange="' + id + '_setSize(this.value)" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px 4px;border-radius:3px;font-size:11px;">';
+  [50,100,200].forEach(s => h += '<option value="' + s + '"' + (pageState.size===s?' selected':'') + '>' + s + '</option>');
+  h += '</select> 条/页 &nbsp;';
+  h += '<button onclick="' + id + '_go(' + (pageState.page-1) + ')" ' + (pageState.page<=1?'disabled':'') + ' style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:3px;padding:2px 6px;font-size:11px;">◀</button>';
+  h += ' <span>' + pageState.page + '/' + pages + '</span> ';
+  h += '<button onclick="' + id + '_go(' + (pageState.page+1) + ')" ' + (pageState.page>=pages?'disabled':'') + ' style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:3px;padding:2px 6px;font-size:11px;">▶</button>';
+  h += ' <input id="' + id + '-jump" type="number" min="1" max="' + pages + '" value="' + pageState.page + '" style="width:40px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px 4px;border-radius:3px;font-size:11px;text-align:center;">';
+  h += '<button onclick="' + id + '_jump()" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:3px;padding:2px 6px;font-size:11px;">跳转</button>';
+  h += ' <span style="color:var(--muted);">共 ' + total.toLocaleString() + ' 条</span>';
+  h += '</div>';
+  // 注册全局回调
+  window[id + '_setSize'] = (sz) => { pageState.size = +sz; pageState.page = 1; onChange(); };
+  window[id + '_go'] = (p) => { if (p >= 1 && p <= pages) { pageState.page = p; onChange(); } };
+  window[id + '_jump'] = () => { const v = +document.getElementById(id+'-jump').value; if (v >= 1 && v <= pages) { pageState.page = v; onChange(); } };
+  return h;
+}
+
 function renderArchivePanel(status) {
   const s = status.archive || {};
   const data = _archiveData;
-  const rows = (data.messages || []).map(m => {
+  const rows = (data.messages || []).map((m, idx) => {
     const role = m.role || '?';
     const ts = m.timestamp ? (m.timestamp.slice(0, 16).replace('T', ' ')) : '';
     const parts = m.parts || [];
     let text = parts.map(p => p.content || '').join('');
+    const rawText = text;
     if (role === 'tool') {
       text = `<span class="tool-name">[${esc(m.name || 'tool')}]</span> ${esc(text.slice(0, 60))}`;
-    } else {
-      text = esc(text);
     }
-    return `<div class="db-item">
-      <span class="text">
+    const mid = esc(m._id || '');
+    const textId = 'arc-text-' + idx;
+    const editId = 'arc-edit-' + idx;
+    return `<div class="db-item" id="arc-row-${idx}">
+      <span class="text" id="${textId}">
         <span class="role-tag ${role}">${esc(role)}</span>
         <span style="font-size:10px;color:var(--muted)">${esc(ts)}</span>
         ${expandable(text, 80)}
+      </span>
+      <span id="${editId}" style="display:none;flex:1;">
+        <input type="text" id="${editId}-input" value="${esc(rawText).replace(/&quot;/g,'&#34;').replace(/"/g, '&quot;')}" style="width:100%;background:var(--bg);border:1px solid var(--accent);color:var(--text);padding:2px 6px;border-radius:3px;font-size:12px;">
+        <span style="display:flex;gap:4px;margin-top:3px;">
+          <button onclick="saveArcEdit('${mid}', '${editId}', '${textId}')" style="cursor:pointer;background:var(--accent);color:#fff;border:none;border-radius:3px;padding:1px 8px;font-size:10px;">保存</button>
+          <button onclick="cancelLtmEdit('${editId}', '${textId}')" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:3px;padding:1px 8px;font-size:10px;">取消</button>
+        </span>
+      </span>
+      <span class="meta">
+        <span class="delete-btn" title="编辑" onclick="startLtmEdit('${editId}', '${textId}')" style="cursor:pointer;color:var(--accent);margin-right:6px;">✎</span>
+        <span class="delete-btn" title="删除" onclick="deleteArcEntry('${mid}')">✕</span>
       </span>
     </div>`;
   }).join('');
@@ -1459,7 +1491,7 @@ function renderArchivePanel(status) {
     <h2 style="cursor:pointer;user-select:none;" onclick="toggleDbCard(this)">▼ Message Archive (MongoDB)</h2>
     <div class="db-card-body">
     <div class="db-stat">
-      条目: <b>${data.total}</b> &nbsp; MongoDB: ${ok(s.mongodb_ok)} &nbsp; session: <b>${esc(status.session?.current_id || 'default')}</b>
+      条目: <b>${data.total}</b> &nbsp; MongoDB: ${ok(s.mongodb_ok)}
     </div>
     <div class="db-search">
       <input id="archive-search" placeholder="搜索消息内容...">
@@ -1473,12 +1505,64 @@ function renderArchivePanel(status) {
     <div style="max-height:400px;overflow-y:auto;margin-bottom:8px;" id="archive-list">
       ${rows || '<div class="empty">暂无消息</div>'}
     </div>
-    <div style="display:flex;justify-content:space-between;">
-      <button class="db-btn" id="archive-load-more-btn" ${data.has_more ? '' : 'disabled'}>加载更多</button>
+    ${renderPagination('archive', _archivePage, data.total, () => refreshArchive())}
+    <div style="display:flex;justify-content:flex-end;margin-top:6px;">
       <button class="db-btn danger" onclick="confirmClearArchive()">清空全部</button>
     </div>
     </div>
   </div>`;
+}
+
+async function refreshArchive() {
+  try {
+    const data = await fetch(`/debug/api/archive?limit=${_archivePage.size}&skip=${(_archivePage.page-1)*_archivePage.size}`).then(r => r.json());
+    _archiveData = data;
+    // 仅重建 archive panel
+    const panels = document.getElementById('db-panels');
+    const cards = panels.querySelectorAll('.card');
+    if (cards.length >= 3) {
+      const status = { archive: { mongodb_ok: true } };
+      cards[2].outerHTML = renderArchivePanel(status);
+      // 重新绑定事件
+      document.getElementById('archive-search')?.addEventListener('input', filterArchive);
+      document.getElementById('archive-role-filter')?.addEventListener('change', filterArchive);
+    }
+  } catch (e) { /* ignore */ }
+}
+
+async function saveArcEdit(msgId, editId, textId) {
+  const input = document.getElementById(editId + '-input');
+  const newText = (input.value || '').trim();
+  if (!newText) { alert('内容不能为空'); return; }
+  try {
+    const r = await fetch('/debug/api/archive/' + encodeURIComponent(msgId), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: newText }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      document.getElementById(textId).textContent = newText;
+      cancelLtmEdit(editId, textId);
+    } else {
+      alert('保存失败: ' + (d.error || 'unknown'));
+    }
+  } catch (e) { alert('保存失败: ' + e.message); }
+}
+
+function deleteArcEntry(msgId) {
+  document.getElementById('confirm-title').textContent = '删除归档消息';
+  document.getElementById('confirm-msg').textContent = '确认删除这条归档消息吗？此操作不可撤销。';
+  document.getElementById('confirm-yes-btn').onclick = async () => {
+    closeConfirmModal();
+    try {
+      const r = await fetch('/debug/api/archive/' + encodeURIComponent(msgId), { method: 'DELETE' });
+      const d = await r.json();
+      if (d.ok) refreshArchive();
+      else alert('删除失败');
+    } catch (e) { alert('删除失败: ' + e.message); }
+  };
+  document.getElementById('confirm-modal').classList.add('show');
 }
 
 function filterArchive() {
@@ -1490,28 +1574,6 @@ function filterArchive() {
     const hasRole = !role || (role === 'tool' ? text.includes('tool') : item.querySelector('.role-tag.' + role));
     item.style.display = (!search || text.includes(search)) && hasRole ? '' : 'none';
   });
-}
-
-async function loadMoreArchive() {
-  const btn = document.getElementById('archive-load-more-btn');
-  btn.disabled = true;
-  btn.textContent = '加载中...';
-  const messages = _archiveData.messages || [];
-  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
-  const lastId = lastMsg ? lastMsg._id : null;
-  try {
-    let url = '/debug/api/archive?limit=100';
-    if (lastId) url += '&before=' + encodeURIComponent(lastId);
-    const r = await fetch(url);
-    const data = await r.json();
-    _archiveData.messages = messages.concat(data.messages || []);
-    _archiveData.has_more = data.has_more;
-    _archiveData.total = data.total;
-    loadDbPanel();
-  } catch (e) {
-    btn.textContent = '加载失败，重试';
-    btn.disabled = false;
-  }
 }
 
 function confirmClearArchive() {
