@@ -1,5 +1,15 @@
-# MiniMax 音色映射配置
-# character_name → MiniMax voice_id
-# 在 config.yaml 的 tts.voices_config 中指定路径；留空则使用此文件
+# MiniMax TTS 音色映射
+# =====================
+# 按角色名 (character_name) 映射到 MiniMax 平台的 voice_id。
+# 调用链: TTSSteam → MiniMaxTTSBackend._resolve_voice(character)
+#          → 查此表 → 未命中时 fallback 到默认 voice_id
+#
+# character.yml 中的 voice 字段为 OpenAI TTS 预留，MiniMax 不使用。
+# 在此文件中修改 voice_id 即可更换音色，无需改 character.yml。
+#
+# 格式:
+#   <角色名>:
+#     voice_id: "<MiniMax 平台音色 ID>"
+
 Elysia:
   voice_id: "elysia_test_001"

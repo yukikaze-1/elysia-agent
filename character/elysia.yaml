@@ -1,33 +1,53 @@
-name: Elysia
-voice: elysia_v2
-user_pronoun: 她
-base_personality_file: elysia_personality.txt  # 新增：相对于 elysia.yaml 所在目录
+# ============================================================
+# Elysia 角色配置
+# ============================================================
+# 被 PersonalityEngine、EmotionEngine、IdleMonitor、TTS、STT 消费
+# 性格描述已拆分至 elysia_personality.txt（L1 Core）
 
+# ---- 基本标识 ----
+name: Elysia                          # 角色名（全局引用）
+user_pronoun: 她                      # 用户人称代词（注入 system prompt）
+
+# ---- 语音（待启用） ----
+# 当前 TTS 音色由 Module/tts/minimax_voices.yaml 管理（按角色名映射 voice_id）
+# 此字段为 OpenAI TTS 后端预留，MiniMax / GPT-SoVits 不使用
+voice: elysia_v2                      # [占位] TTS voice ID
+
+# ---- 性格 ----
+base_personality_file: elysia_personality.txt  # L1 Core 文本（相对于本文件目录）
+
+# ---- 外观（待启用） ----
+# 预留给 Live2D / 前端渲染，代码暂未消费
 appearance:
   height: "162cm"
   hair: "粉色长发"
   eyes: "蓝色"
 
+# ---- 情绪引擎 ----
+# 由 EmotionEngine（L4 Mood）消费
 emotion:
-  thresholds:
-    excitement: 0.6
-    sadness: 0.3
-  idle_expressions:
+  thresholds:                          # 情绪触发阈值
+    excitement: 0.6                    #   兴奋（关键词匹配灵敏度）
+    sadness: 0.3                       #   悲伤
+  idle_expressions:                    # 闲置时随机推送的 Live2D 表情
     - neutral
     - blink
 
+# ---- 主动行为（IdleMonitor 驱动） ----
 proactive:
-  enabled: false
-  interval: 300
-  triggers:
-    - type: silence_timeout
-      duration: 30
-    - type: time_of_day
-      times:
+  enabled: false                       # 是否启用主动搭话（关闭：仅在用户说话后回复）
+  interval: 300                        # 空闲检查间隔（秒）
+  triggers:                            # 触发条件列表
+    - type: silence_timeout            #   沉默超时触发
+      duration: 30                     #   沉默 N 秒后主动说话
+    - type: time_of_day                #   定时触发
+      times:                           #   在这些时间点主动说话
         - "08:00"
         - "12:00"
         - "22:00"
 
+# ---- 唤醒词 ----
+# 由 IdleMonitor 消费，用于语音唤醒检测
 wake_words:
   - Elysia
   - 爱莉
