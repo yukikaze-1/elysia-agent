@@ -346,23 +346,32 @@ class LongTermMemory:
             if e.id == entry_id:
                 e.text = new_text
                 e.timestamp = time.time()
-                # Milvus: 删除旧向量 + 插入新向量
+                # Milvus: 删除旧向量 + 重新嵌入 + 插入新向量
                 if self._vector_db and e._milvus_pk is not None:
                     try:
                         await self._vector_db.delete(self.COLLECTION, [e._milvus_pk])
                     except Exception:
                         logger.debug("Milvus delete failed for update %s", entry_id, exc_info=True)
-                    # 重新嵌入 + 插入
-                    emb = await self._embed(new_text)
-                    if emb is not None:
-                        pk = await self._vector_db.insert(
-                            self.COLLECTION, [emb],
-                            texts=[new_text],
-                            metadatas=[{"entry_id": entry_id, "memory_type": e.memory_type,
-                                        "poignancy": e.poignancy, "timestamp": e.timestamp}],
-                        )
-                        if pk:
-                            e._milvus_pk = int(pk[0]) if isinstance(pk, list) else int(pk)
+                    await self._ensure_embedding(wait=True)
+                    if self._embedding:
+                        try:
+                            emb = await self._embedding.embed_query(new_text)
+                            if emb:
+                                pk_list = await self._vector_db.insert(
+                                    self.COLLECTION,
+                                    vectors=[emb],
+                                    metadata=[{
+                                        "entry_id": entry_id,
+                                        "text": new_text,
+                                        "memory_type": e.memory_type,
+                                        "poignancy": e.poignancy,
+                                        "timestamp": e.timestamp,
+                                    }],
+                                )
+                                if pk_list:
+                                    e._milvus_pk = int(pk_list[0])
+                        except Exception:
+                            logger.debug("Embedding/insert failed for update %s", entry_id, exc_info=True)
                 return True
         return False
 
