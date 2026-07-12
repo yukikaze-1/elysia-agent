@@ -346,12 +346,8 @@ class LongTermMemory:
             if e.id == entry_id:
                 e.text = new_text
                 e.timestamp = _time.time()
-                # Milvus: 删除旧向量 + 重新嵌入 + 插入新向量
                 if self._vector_db and e._milvus_pk is not None:
-                    try:
-                        await self._vector_db.delete(self.COLLECTION, [e._milvus_pk])
-                    except Exception:
-                        logger.debug("Milvus delete failed for update %s", entry_id, exc_info=True)
+                    old_pk = e._milvus_pk
                     await self._ensure_embedding(wait=True)
                     if self._embedding:
                         try:
@@ -370,8 +366,17 @@ class LongTermMemory:
                                 )
                                 if pk_list:
                                     e._milvus_pk = int(pk_list[0])
+                                    # 新向量插入成功后才删除旧向量
+                                    try:
+                                        await self._vector_db.delete(self.COLLECTION, [old_pk])
+                                    except Exception:
+                                        logger.debug("Milvus delete old pk failed for update %s", entry_id, exc_info=True)
+                                else:
+                                    # 插入返回空 → 标记脏，保留旧向量
+                                    self._dirty_ids.add(entry_id)
                         except Exception:
                             logger.debug("Embedding/insert failed for update %s", entry_id, exc_info=True)
+                            self._dirty_ids.add(entry_id)
                 return True
         return False
 
