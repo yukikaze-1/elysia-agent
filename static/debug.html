@@ -1255,15 +1255,26 @@ function renderLtmPanel(status) {
     const s = (t || '?').toLowerCase();
     return s.charAt(0).toUpperCase() + s.slice(1);
   }
-  const rows = (data.entries || []).map(e => {
+  const rows = (data.entries || []).map((e, idx) => {
     const t = e.memory_type || '?';
-    return `<div class="db-item">
-      <input type="checkbox" class="ltm-check" value="${esc(e.id)}" style="flex-shrink:0;">
+    const eid = esc(e.id);
+    const textId = 'ltm-text-' + idx;
+    const editId = 'ltm-edit-' + idx;
+    return `<div class="db-item" id="ltm-row-${idx}">
+      <input type="checkbox" class="ltm-check" value="${eid}" style="flex-shrink:0;">
       <span class="type-tag" style="background:${ltmTypeStyle(t)}22;color:${ltmTypeStyle(t)};flex-shrink:0;">${esc(ltmTypeLabel(t))}</span>
-      <span class="text">${expandable(e.text, 80)}</span>
+      <span class="text" id="${textId}">${expandable(e.text, 80)}</span>
+      <span id="${editId}" style="display:none;flex:1;">
+        <input type="text" id="${editId}-input" value="${esc(e.text).replace(/"/g, '&quot;')}" style="width:100%;background:var(--bg);border:1px solid var(--accent);color:var(--text);padding:2px 6px;border-radius:3px;font-size:12px;">
+        <span style="display:flex;gap:4px;margin-top:3px;">
+          <button onclick="saveLtmEdit('${eid}', '${editId}', '${textId}')" style="cursor:pointer;background:var(--accent);color:#fff;border:none;border-radius:3px;padding:1px 8px;font-size:10px;">保存</button>
+          <button onclick="cancelLtmEdit('${editId}', '${textId}')" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:3px;padding:1px 8px;font-size:10px;">取消</button>
+        </span>
+      </span>
       <span class="meta">
         <span style="font-size:10px;color:var(--muted)">P${e.poignancy||0}</span>
-        <span class="delete-btn" title="删除" onclick="deleteLtmEntry('${esc(e.id)}')">✕</span>
+        <span class="delete-btn" title="编辑" onclick="startLtmEdit('${editId}', '${textId}')" style="cursor:pointer;color:var(--accent);margin-right:6px;">✎</span>
+        <span class="delete-btn" title="删除" onclick="deleteLtmEntry('${eid}')">✕</span>
       </span>
     </div>`;
   }).join('');
@@ -1310,6 +1321,37 @@ function toggleDbCard(headerEl) {
   const hidden = body.style.display === 'none';
   body.style.display = hidden ? '' : 'none';
   headerEl.textContent = (hidden ? '▼ ' : '▸ ') + headerEl.textContent.replace(/^[▼▸] /, '');
+}
+
+function startLtmEdit(editId, textId) {
+  document.getElementById(textId).style.display = 'none';
+  document.getElementById(editId).style.display = '';
+  document.getElementById(editId + '-input').focus();
+}
+
+function cancelLtmEdit(editId, textId) {
+  document.getElementById(textId).style.display = '';
+  document.getElementById(editId).style.display = 'none';
+}
+
+async function saveLtmEdit(entryId, editId, textId) {
+  const input = document.getElementById(editId + '-input');
+  const newText = (input.value || '').trim();
+  if (!newText) { alert('内容不能为空'); return; }
+  try {
+    const r = await fetch('/debug/api/ltm/' + encodeURIComponent(entryId), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: newText }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      document.getElementById(textId).textContent = newText;
+      cancelLtmEdit(editId, textId);
+    } else {
+      alert('保存失败: ' + (d.error || 'unknown'));
+    }
+  } catch (e) { alert('保存失败: ' + e.message); }
 }
 
 async function deleteSelectedLtm() {

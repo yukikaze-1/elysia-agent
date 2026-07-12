@@ -340,6 +340,32 @@ class LongTermMemory:
 
     # ---- Delete ----
 
+    async def update_text(self, entry_id: str, new_text: str) -> bool:
+        """更新记忆文本（内存 + Milvus 重建）。返回 True 表示成功。"""
+        for i, e in enumerate(self._entries):
+            if e.id == entry_id:
+                e.text = new_text
+                e.timestamp = time.time()
+                # Milvus: 删除旧向量 + 插入新向量
+                if self._vector_db and e._milvus_pk is not None:
+                    try:
+                        await self._vector_db.delete(self.COLLECTION, [e._milvus_pk])
+                    except Exception:
+                        logger.debug("Milvus delete failed for update %s", entry_id, exc_info=True)
+                    # 重新嵌入 + 插入
+                    emb = await self._embed(new_text)
+                    if emb is not None:
+                        pk = await self._vector_db.insert(
+                            self.COLLECTION, [emb],
+                            texts=[new_text],
+                            metadatas=[{"entry_id": entry_id, "memory_type": e.memory_type,
+                                        "poignancy": e.poignancy, "timestamp": e.timestamp}],
+                        )
+                        if pk:
+                            e._milvus_pk = int(pk[0]) if isinstance(pk, list) else int(pk)
+                return True
+        return False
+
     async def delete(self, entry_id: str) -> bool:
         """删除单条记忆（内存 + Milvus）。返回 True 表示成功删除。"""
         for i, e in enumerate(self._entries):

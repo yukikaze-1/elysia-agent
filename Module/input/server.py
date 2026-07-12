@@ -247,6 +247,19 @@ def create_app(
         return web.json_response({"ok": ok})
     app.router.add_delete("/debug/api/ltm/{entry_id}", ltm_delete_single_handler)
 
+    async def ltm_update_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        entry_id = request.match_info.get("entry_id", "")
+        if not entry_id:
+            return web.json_response({"error": "缺少 entry_id"}, status=400)
+        body = await request.json()
+        new_text = (body.get("text") or "").strip()
+        if not new_text:
+            return web.json_response({"error": "text 不能为空"}, status=400)
+        ok = await agent._long_term.update_text(entry_id, new_text)
+        return web.json_response({"ok": ok})
+    app.router.add_put("/debug/api/ltm/{entry_id}", ltm_update_handler)
+
     async def ltm_clear_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
         count = await agent._long_term.clear_all()
