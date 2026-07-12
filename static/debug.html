@@ -291,6 +291,8 @@ h1 { font-size: 18px; margin-bottom: 4px; }
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="prompt-content"></div>
     <div id="prompt-tools" style="margin-top:12px;"></div>
+    <pre id="prompt-tools-json" style="display:none;"></pre>
+    <pre id="prompt-tools-text" style="display:none;"></pre>
   </div>
 </div>
 
@@ -807,15 +809,65 @@ async function loadPrompt(index) {
 
   document.getElementById('prompt-content').innerHTML = leftHtml + rightHtml;
 
-  let toolsHtml = '';
+  // ── 底部：Tools 列表 ──
   const tools = data.tools;
   if (tools && tools.length > 0) {
-    const toolNames = tools.map(t => (t.function || {}).name || '?').join(', ');
-    toolsHtml += '<div style="font-size:12px;color:var(--muted);">Tools (' + tools.length + '): ' + esc(toolNames) + '</div>';
-    toolsHtml += '<pre id="prompt-tools-json" style="display:none;font-size:11px;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.3);padding:8px;border-radius:4px;max-height:200px;overflow-y:auto;">' + esc(JSON.stringify(tools, null, 2)) + '</pre>';
-    toolsHtml += '<button onclick="var el=document.getElementById(\'prompt-tools-json\');el.style.display=\'block\';this.style.display=\'none\'" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:4px;padding:2px 8px;font-size:11px;margin-top:4px;">展开 tools JSON</button>';
+    const toolsJSON = JSON.stringify(tools, null, 2);
+    let toolsText = '';
+    tools.forEach(t => {
+      const fn = t.function || {};
+      const name = fn.name || '?';
+      const desc = fn.description || '';
+      const params = fn.parameters || {};
+      const props = params.properties || {};
+      const required = params.required || [];
+      const paramStrs = Object.entries(props).map(([k, v]) => {
+        const req = required.includes(k) ? '*' : '';
+        return k + ': ' + (v.type || 'string') + req;
+      });
+      toolsText += '[' + name + '] ' + desc + '\n';
+      if (paramStrs.length) toolsText += '  参数: ' + paramStrs.join(', ') + '\n';
+    });
+    // 存入 hidden 元素供复制按钮引用
+    const listEl = document.getElementById('prompt-tools-text');
+    const jsonEl = document.getElementById('prompt-tools-json');
+    if (listEl) listEl.textContent = toolsText;
+    if (jsonEl) jsonEl.textContent = toolsJSON;
+
+    let toolsHtml = '<div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px;">';
+    toolsHtml += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+    toolsHtml += '<span style="font-size:13px;color:var(--accent);font-weight:600;">Tools <span style="background:var(--accent);color:#fff;border-radius:10px;padding:0 6px;font-size:10px;">' + tools.length + '</span></span>';
+    toolsHtml += '<span>';
+    toolsHtml += '<button onclick="copyToolsText()" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:3px;padding:3px 10px;font-size:11px;margin-right:6px;">📋 复制列表</button>';
+    toolsHtml += '<button onclick="copyToolsJSON()" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:3px;padding:3px 10px;font-size:11px;">📋 复制 JSON</button>';
+    toolsHtml += '</span></div>';
+    toolsHtml += '<div style="border:1px solid var(--border);border-radius:4px;overflow:hidden;">';
+    tools.forEach((t, idx) => {
+      const fn = t.function || {};
+      const name = fn.name || '?';
+      const desc = fn.description || '';
+      const params = fn.parameters || {};
+      const props = params.properties || {};
+      const required = params.required || [];
+      const bg = idx % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.1)';
+      toolsHtml += '<div style="padding:6px 10px;border-bottom:1px solid rgba(255,255,255,0.04);background:' + bg + ';">';
+      toolsHtml += '<div style="font-size:12px;font-weight:600;color:var(--warn);">' + esc(name) + '</div>';
+      toolsHtml += '<div style="font-size:11px;color:var(--text);margin:2px 0;">' + esc(desc) + '</div>';
+      if (Object.keys(props).length > 0) {
+        const paramStrs = Object.entries(props).map(([k, v]) => {
+          const req = required.includes(k) ? '<span style="color:var(--accent);" title="必需">*</span>' : '';
+          const enumInfo = v.enum ? ' = ' + v.enum.join('|') : '';
+          return '<span class="param-tag">' + esc(k) + req + '<i>' + (v.type || 'string') + enumInfo + '</i></span>';
+        });
+        toolsHtml += '<div style="margin-top:3px;">' + paramStrs.join(' ') + '</div>';
+      }
+      toolsHtml += '</div>';
+    });
+    toolsHtml += '</div></div>';
+    document.getElementById('prompt-tools').innerHTML = toolsHtml;
+  } else {
+    document.getElementById('prompt-tools').innerHTML = '';
   }
-  document.getElementById('prompt-tools').innerHTML = toolsHtml;
 }
 
 function toggleMsg(id, headerEl) {
@@ -855,6 +907,16 @@ function copyMsgContent(msgId) {
     const btn = card.querySelector('button');
     if (btn) { const orig = btn.textContent; btn.textContent = '✓'; setTimeout(() => { btn.textContent = orig; }, 800); }
   }
+}
+
+function copyToolsJSON() {
+  const el = document.getElementById('prompt-tools-json');
+  if (el) copyToClipboard(el.textContent);
+}
+
+function copyToolsText() {
+  const el = document.getElementById('prompt-tools-text');
+  if (el) copyToClipboard(el.textContent);
 }
 
 function copyAllSections() {
