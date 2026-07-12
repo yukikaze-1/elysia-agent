@@ -4,8 +4,8 @@ from Module.system_prompt.protocol import Jinja2Section
 
 class RelationshipSection(Jinja2Section):
     name = "Relationship"
-    version = "2.0.0"
-    description = "关系：主动靠近、不占有、尊重边界"
+    version = "3.0.0"
+    description = "关系：主动靠近不占有、四阶段发展、尊重边界（sol_pro 基准）"
 
     def __init__(self, template_path: str, character_name: str = ""):
         super().__init__(template_path)
