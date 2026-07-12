@@ -2,6 +2,15 @@
 
 ## 已完成
 
+### 2026-07-12: PersonalityEngine + Elysia 性格升级 + Review 反馈
+
+- **PersonalityEngine** (`core/personality/`): 四层性格模型。L1 Core（文件，不可变）→ L2 Self（session，缓慢演化）→ L3 State（Reflector 驱动）→ L4 Mood（已有 EmotionEngine）。CharacterReflector 变更为子组件。C1/C9 模板数据驱动。Character YAML 瘦身 + 路径解析。
+- **Elysia 性格融合** (`personality.md` + 模板): 从 GPT 生成的 5 份参考中提取，以 sol_pro 为基准融合。新增心理结构、六种情绪表现、五模式切换、日常爱好、道德边界、场景示例。
+- **System Prompt Section 全量升级**: F1 安全边界 + inner_voice 约束、F2 任务优先、F3 TTS 限制、C2 四阶段关系、C3 8 种情绪响应、C4 记忆可靠性、C6 重写、C7 冷却机制
+- **MongoDB ObjectId 修复**: motor insert_one 副作用 → dict copy
+- **Character 目录重组**: `character/elysia/{config.yaml, personality.md, reference/}`
+- 80 tests pass
+
 ### 2026-07-11: System Prompt Section 升级 (F1/F2/F3/C5)
 
 对 Module/system_prompt/ 进行模块化升级：统一格式约定、拆分职责、修复安全问题。

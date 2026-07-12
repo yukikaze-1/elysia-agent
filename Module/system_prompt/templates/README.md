@@ -81,18 +81,18 @@ XML 标签内部的文本使用 Markdown 或纯文本，按内容需要选择：
 
 | 文件 | Section 类 | 角色 |
 |------|-----------|------|
-| `f1_conflict_rules.j2` | `ConflictRulesSection` | 规则优先级 |
-| `f2_output_format.j2` | `OutputFormatSection` | 输出格式（inner_voice 双轨协议） |
-| `f3_tts_markup.j2` | `TTSMarkupSection` | TTS 合成标记 |
-| `c1_personality.j2` | `PersonalitySection` | 人格 |
-| `c2_relationship.j2` | `RelationshipSection` | 关系 |
-| `c3_emotion.j2` | `EmotionSection` | 情感 |
-| `c4_memory.j2` | `MemorySection` | 记忆 |
+| `f1_conflict_rules.j2` | `ConflictRulesSection` | 规则优先级 + 安全边界 |
+| `f2_output_format.j2` | `OutputFormatSection` | 输出格式（inner_voice 协议 + 任务优先） |
+| `f3_tts_markup.j2` | `TTSMarkupSection` | TTS 合成标记 + 使用限制 |
+| `c1_personality.j2` | `PersonalitySection` | 人格（L1 + L2，数据驱动） |
+| `c2_relationship.j2` | `RelationshipSection` | 关系（四阶段发展 + 边界处理） |
+| `c3_emotion.j2` | `EmotionSection` | 情感（8 种情绪响应规则） |
+| `c4_memory.j2` | `MemorySection` | 记忆（长期记忆召回 + 可靠性规则） |
 | `c5_sensory.j2` | `SensorySection` | 感官输入（环境事实 + 用户消息 + 语音情绪） |
-| `c6_speaking_style.j2` | `SpeakingStyleSection` | 说话风格 |
-| `c7_proactive.j2` | `ProactiveSection` | 主动性 |
+| `c6_speaking_style.j2` | `SpeakingStyleSection` | 说话风格（五模式切换 + 称呼/调情/夸奖） |
+| `c7_proactive.j2` | `ProactiveSection` | 主动性（何时主动 + 冷却机制） |
 | `c8_own_life.j2` | `OwnLifeSection` | 自己的生活 |
-| `c9_self_perception.j2` | `SelfPerceptionSection` | 自我感知 |
+| `c9_self_perception.j2` | `SelfPerceptionSection` | 自我感知（AwarenessTrigger 条件激活） |
 
 ### 文件头部
 
@@ -118,18 +118,18 @@ XML 标签内部的文本使用 Markdown 或纯文本，按内容需要选择：
 模板按 `SystemPromptManager._RENDER_ORDER` 排序后拼接，顺序是有意设计的：
 
 ```
-F1 ConflictRules    → 先建立规则优先级框架
-F2 OutputFormat     → 定义输出格式（inner_voice 双轨协议）
-F3 TTSMarkup        → TTS 合成标记（依赖 inner_voice 概念）
+F1 ConflictRules    → 先建立规则优先级 + 安全边界
+F2 OutputFormat     → 定义输出格式 + 任务优先规则
+F3 TTSMarkup        → TTS 合成标记 + 使用限制
 C5 Sensory          → 感官输入（当前环境上下文）
-C3 Emotion          → 情绪（依赖感官输入的情绪信号）
-C4 Memory           → 记忆（相关长期记忆召回）
-C1 Personality      → 人格（定义"我是谁"）
-C2 Relationship     → 关系（定义"我和ta的关系"）
-C6 SpeakingStyle    → 说话风格（定义"我怎么说话"，依赖人格和关系）
-C7 Proactive        → 主动性（依赖以上所有角色定义）
+C3 Emotion          → 情绪（8 种情绪响应规则）
+C4 Memory           → 记忆（长期记忆召回 + 可靠性规则）
+C1 Personality      → 人格（L1 Core + L2 Self，数据驱动）
+C2 Relationship     → 关系（四阶段发展 + 边界处理）
+C6 SpeakingStyle    → 说话风格（五模式切换 + 夸奖/调情/称呼规则）
+C7 Proactive        → 主动性（何时主动 + 冷却机制）
 C8 OwnLife          → 自己的生活（可能为空）
-C9 SelfPerception   → 自我感知变化（可能为空）
+C9 SelfPerception   → 自我感知（AwarenessTrigger 条件激活）
 ```
 
 ## 添加新模板
