@@ -358,7 +358,7 @@ class CognitiveLoop:
                     if not sentence:
                         return None
                     all_sentences.append(sentence)
-                    logger.info("分句 (%d 字符)", len(sentence))
+                    logger.debug("分句 (%d 字符)", len(sentence))
                     if not speaking_started:
                         await self._output.typing(False)
                         self._fsm.transition(AgentState.SPEAKING)
@@ -496,7 +496,7 @@ class CognitiveLoop:
                         logger.info("flush emoji: %s", remaining)
                     else:
                         all_sentences.append(remaining)
-                        logger.info("flush 尾句 (%d 字符)", len(remaining))
+                        logger.debug("flush 尾句 (%d 字符)", len(remaining))
                         logger.debug("尾句内容: %s", remaining[:60])
                     if not speaking_started:
                         await self._output.typing(False)

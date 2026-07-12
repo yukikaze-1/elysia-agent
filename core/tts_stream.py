@@ -83,6 +83,8 @@ class TTSStreamManager:
         self._tasks: list[asyncio.Task] = []
         self._total: int = 0       # 全局计数器，跨轮次持续递增
         self._seq: int = 0          # 本轮计数器，reset_for_turn() 时归零
+        self._turn_chars: int = 0   # 本轮累计字符数
+        self._turn_bytes: int = 0   # 本轮累计音频字节数
         self._pending_emojis: dict[int, list[str]] = {}
         self._release_events: dict[int, asyncio.Event] = {}  # seq → event 门控
 
@@ -92,6 +94,8 @@ class TTSStreamManager:
         """每轮 process() 开始时调用。"""
         self._emotion = emotion
         self._seq = 0
+        self._turn_chars = 0
+        self._turn_bytes = 0
         self._pending_emojis.clear()
         self._release_events.clear()
         # 第一个句子无需等待
@@ -123,7 +127,7 @@ class TTSStreamManager:
         # 提前创建门控 event，保证 seq 不存在时也能 wait
         if seq not in self._release_events:
             self._release_events[seq] = asyncio.Event()
-        logger.info("TTS 句 %d (总#%d) 开始 (%d 字符)", seq, sid, len(sentence))
+        logger.debug("TTS 句 %d (总#%d) 开始 (%d 字符)", seq, sid, len(sentence))
         logger.debug("TTS 句内容: %s", _clean[:60])
 
         task = asyncio.create_task(
@@ -152,6 +156,13 @@ class TTSStreamManager:
             logger.debug("等待 %d 个 TTS 任务完成", len(pending))
             await asyncio.gather(*pending, return_exceptions=True)
             self._tasks.clear()
+        # 汇总一行 INFO：本轮 TTS 合成/播放统计
+        if self._seq > 0:
+            kb = self._turn_bytes / 1000
+            logger.info(
+                "TTS: %d 句 %d 字符 → %.0fKB 已播放",
+                self._seq, self._turn_chars, kb,
+            )
 
     def cancel_all(self) -> None:
         """取消所有进行中的 TTS 任务。"""
@@ -215,7 +226,9 @@ class TTSStreamManager:
 
             # Phase 2: 按序转发（串行，门控保证播放顺序）
             await self._release_events[seq].wait()
-            logger.info(
+            self._turn_chars += len(sentence)
+            self._turn_bytes += len(audio)
+            logger.debug(
                 "TTS 句 %d (总#%d) 开始播放 (%d 字符, %d bytes)",
                 seq, sid, len(sentence), len(audio),
             )

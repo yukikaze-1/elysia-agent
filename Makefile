@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick
+.PHONY: test test-module test-core test-tools test-all test-quick start
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -22,6 +22,9 @@ test-quick:
 
 check:
 	conda run -n $(CONDA_ENV) python app.py --check
+
+start:
+	bash scripts/start.sh
 
 check-full:
 	conda run -n $(CONDA_ENV) python app.py --check --full

@@ -3,14 +3,14 @@
 # 用法: bash scripts/start.sh
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 # ── 检测 Python 环境 ───────────────────────────────────────────────────────
 
 PYTHON=""
 if command -v conda &> /dev/null && conda env list 2>/dev/null | grep -q "^Elysia "; then
-    PYTHON="conda run -n Elysia python"
+    PYTHON="conda run -n Elysia --no-capture-output python"
 elif command -v python3 &> /dev/null; then
     PYTHON="python3"
 else
@@ -68,4 +68,7 @@ echo "  就绪后访问: http://localhost:8765"
 echo "  按 Ctrl+C 停止"
 echo "=================================================="
 echo ""
+
+# 清除 ALL_PROXY（httpx 不支持 socks:// scheme，会炸）
+export ALL_PROXY="" all_proxy=""
 $PYTHON app.py
