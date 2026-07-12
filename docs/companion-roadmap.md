@@ -1,5 +1,9 @@
 # Elysia 伴侣化改造路线图
 
+> **⚠️ 本文档描述的是旧版 "嘴硬心软 tsundere" 人格的改造方案（2026-06/07），已于 2026-07-12 被替换。**
+> 当前人格及架构详见 `character/elysia/personality.md`、`core/personality/README.md`、`docs/architecture.md`。
+> 本文档保留作为设计演进的历史参考。
+
 **创建日期**: 2026-06-24
 **目标**: 让 Elysia 从"功能齐全的聊天机器人"变成"有灵魂的 AI 伴侣"
 

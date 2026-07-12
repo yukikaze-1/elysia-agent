@@ -1,5 +1,9 @@
 # Elysia Companion Prompt 编写指南
 
+> **⚠️ 本文档描述的是旧版 "嘴硬心软 tsundere" 人格（2026-06/07），已于 2026-07-12 被替换。**
+> 当前版本使用"真我之律者"爱莉希雅人格，详见 `character/elysia/personality.md` 和 `core/personality/README.md`。
+> 本文档保留作为 prompt 工程的历史参考。
+
 **创建日期**: 2026-06-24
 **最后更新**: 2026-07-07 — Section Provider 架构完善
 **目的**: 记录 prompt 编写中的隐性约束、设计原则和验证方法，方便迭代和后续维护。

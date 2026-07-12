@@ -36,7 +36,7 @@
   - 时钟补上 TTS span（`_transition_idle` 里的 TTS 等待）
   - 性能回归测试（bench 模块加断言，CI 可跑）
 - **角色切换**: 加载不同角色配置（名字、性格、发音人、prompt 模板），需独立 spec。涉及 CharacterConfig 重新加载、TTS voice lookup 逻辑修复（`voice` 字段当前是死代码）、CognitiveLoop 角色引用更新。`gpt_sovits_voices.yaml` 目前只有 `Elysia` 一个发音人
-- **多角色 prompt 模板**: `PromptAssembler` 通过 `SystemPromptManager` + 11 `PromptSection` 渲染，多角色时加载不同 `CharacterConfig` 即可切换 section 数据源
+- **多角色 prompt 模板**: `PromptAssembler` 通过 `SystemPromptManager` + 12 `PromptSection` 渲染，多角色时加载不同 `CharacterConfig` 即可切换 section 数据源
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + SenseVoice + GPT-SoVits）。数据库已完成 docker-compose.yml（MongoDB + Milvus）。
 - **C3 情绪传染规则动态化** → 后续 PersonalityEngine Phase 2
