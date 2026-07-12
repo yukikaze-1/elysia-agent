@@ -1221,13 +1221,9 @@ function renderDbPanels(status, ltm, sessions, archive) {
   const archivePanel = renderArchivePanel(status);
   document.getElementById('db-panels').innerHTML = ltmPanel + sessionPanel + archivePanel;
 
-  // 绑定搜索事件
-  document.getElementById('ltm-search')?.addEventListener('input', () => {
-    renderDbPanels(status, filterLtm(), sessions, _archiveData);
-  });
-  document.getElementById('ltm-type-filter')?.addEventListener('change', () => {
-    renderDbPanels(status, filterLtm(), sessions, _archiveData);
-  });
+  // 绑定搜索事件 — 纯 CSS 过滤，不重渲染
+  document.getElementById('ltm-search')?.addEventListener('input', filterLtm);
+  document.getElementById('ltm-type-filter')?.addEventListener('change', filterLtm);
   // 绑定归档面板事件
   document.getElementById('archive-search')?.addEventListener('input', filterArchive);
   document.getElementById('archive-role-filter')?.addEventListener('change', filterArchive);
@@ -1237,10 +1233,14 @@ function renderDbPanels(status, ltm, sessions, archive) {
 function filterLtm() {
   const search = (document.getElementById('ltm-search')?.value || '').trim().toLowerCase();
   const type = document.getElementById('ltm-type-filter')?.value || '';
-  let entries = _ltmData.entries || [];
-  if (search) entries = entries.filter(e => e.text.toLowerCase().includes(search));
-  if (type) entries = entries.filter(e => (e.memory_type || '').toLowerCase() === type);
-  return { entries, total: entries.length };
+  const items = document.querySelectorAll('#ltm-list .db-item');
+  items.forEach(item => {
+    const text = item.querySelector('.text')?.textContent?.toLowerCase() || '';
+    const tag = item.querySelector('.type-tag')?.textContent?.toLowerCase() || '';
+    const matchSearch = !search || text.includes(search) || tag.includes(search);
+    const matchType = !type || tag === type;
+    item.style.display = matchSearch && matchType ? '' : 'none';
+  });
 }
 
 function renderLtmPanel(status) {
@@ -1285,7 +1285,7 @@ function renderLtmPanel(status) {
         <option value="note">Note</option>
       </select>
     </div>
-    <div style="max-height:400px;overflow-y:auto;margin-bottom:8px;">
+    <div id="ltm-list" style="max-height:400px;overflow-y:auto;margin-bottom:8px;">
       ${rows || '<div class="empty">暂无条目</div>'}
     </div>
     <div style="display:flex;justify-content:space-between;">
