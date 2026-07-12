@@ -526,28 +526,54 @@ function render(info) {
     ],
     // Row 4: Tools | Tool History | Consolidation
     [
-      { title:'Tools', wide:true, items: [
-        // 工具执行状态 — 始终显示
-        (info.currently_executing||[]).length > 0
-          ? `<div style="background:#e94560;color:#fff;padding:4px 8px;border-radius:4px;margin-bottom:6px;font-size:13px">
-               Executing: ${info.currently_executing.map(e=>esc(e)).join(', ')}
-             </div>`
-          : `<div style="color:var(--muted);padding:4px 8px;margin-bottom:6px;font-size:13px">
-               Idle
-             </div>`,
-        // 工具定义列表
-        ...(info.tools||[]).map(t =>
-        `<div class="tool-card">
-          <span class="tool-name">${esc(t.name)}</span>
-          <span class="tool-desc">${esc(t.description)}</span>
-          <div class="tool-params">${(t.parameters||[]).map(p =>
-            `<span class="param-tag" title="${esc(p.description||'')}">${esc(p.name)}<i>${esc(p.type)}</i>${p.required?'*':''}</span>`
-          ).join(' ')}</div>
-          <div class="tool-tags">${(t.requires||[]).map(r =>
-            `<span class="req-tag">${esc(r)}</span>`
-          ).join('')}</div>
-        </div>`
-      )].filter(Boolean)},
+      { title:'Tools', wide:true, items: (() => {
+        const tools = info.tools || [];
+        const showN = 4;  // 默认显示前 N 个
+        const hasMore = tools.length > showN;
+        const items = [];
+        // 状态行
+        items.push(
+          (info.currently_executing||[]).length > 0
+            ? `<div style="background:#e94560;color:#fff;padding:4px 8px;border-radius:4px;margin-bottom:6px;font-size:13px">
+                 Executing: ${info.currently_executing.map(e=>esc(e)).join(', ')}
+               </div>`
+            : `<div style="color:var(--muted);padding:4px 8px;margin-bottom:6px;font-size:13px;display:flex;justify-content:space-between;">
+                 <span>Idle</span><span style="font-size:11px;">${tools.length} tools</span>
+               </div>`
+        );
+        // 默认可见的工具
+        const visible = hasMore ? tools.slice(0, showN) : tools;
+        visible.forEach(t => {
+          items.push(
+            `<div class="tool-card">
+              <span class="tool-name">${esc(t.name)}</span>
+              <span class="tool-desc">${esc(t.description)}</span>
+              <div class="tool-params">${(t.parameters||[]).slice(0, 4).map(p =>
+                `<span class="param-tag" title="${esc(p.description||'')}">${esc(p.name)}<i>${esc(p.type)}</i>${p.required?'*':''}</span>`
+              ).join(' ')}${(t.parameters||[]).length > 4 ? `<span style="color:var(--muted);font-size:10px;"> +${t.parameters.length - 4} more</span>` : ''}</div>
+            </div>`
+          );
+        });
+        if (hasMore) {
+          // 折叠的放在 hidden div
+          const toolListId = 'tools-fold-' + Math.random().toString(36).slice(2, 8);
+          let foldHtml = '';
+          tools.slice(showN).forEach(t => {
+            foldHtml += `<div class="tool-card">
+              <span class="tool-name">${esc(t.name)}</span>
+              <span class="tool-desc">${esc(t.description)}</span>
+              <div class="tool-params">${(t.parameters||[]).slice(0, 4).map(p =>
+                `<span class="param-tag" title="${esc(p.description||'')}">${esc(p.name)}<i>${esc(p.type)}</i>${p.required?'*':''}</span>`
+              ).join(' ')}${(t.parameters||[]).length > 4 ? `<span style="color:var(--muted);font-size:10px;"> +${t.parameters.length - 4} more</span>` : ''}</div>
+            </div>`;
+          });
+          items.push(
+            `<div id="${toolListId}" style="display:none;">${foldHtml}</div>`,
+            `<div onclick="var el=document.getElementById('${toolListId}');var show=el.style.display==='none';el.style.display=show?'block':'none';this.innerHTML=show?'▲ 收起':'▼ 展开全部 (${tools.length - showN} more)'" style="text-align:center;padding:4px 0;color:var(--accent);cursor:pointer;font-size:11px;">▼ 展开全部 (${tools.length - showN} more)</div>`
+          );
+        }
+        return items;
+      })()},
     ],
     // Row 5: Tool History | Consolidation
     [
