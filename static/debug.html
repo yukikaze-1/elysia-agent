@@ -1468,6 +1468,7 @@ function renderArchivePanel(status) {
     const textId = 'arc-text-' + idx;
     const editId = 'arc-edit-' + idx;
     return `<div class="db-item" id="arc-row-${idx}">
+      <input type="checkbox" class="arc-check" value="${mid}" style="flex-shrink:0;">
       <span class="text" id="${textId}">
         <span class="role-tag ${role}">${esc(role)}</span>
         <span style="font-size:10px;color:var(--muted)">${esc(ts)}</span>
@@ -1506,8 +1507,15 @@ function renderArchivePanel(status) {
       ${rows || '<div class="empty">暂无消息</div>'}
     </div>
     ${renderPagination('archive', _archivePage, data.total, () => refreshArchive())}
-    <div style="display:flex;justify-content:flex-end;margin-top:6px;">
-      <button class="db-btn danger" onclick="confirmClearArchive()">清空全部</button>
+    <div style="display:flex;justify-content:space-between;margin-top:6px;">
+      <span style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:8px;">
+        <a href="#" onclick="event.preventDefault();document.querySelectorAll('.arc-check').forEach(c=>c.checked=true);" style="color:var(--accent);font-size:11px;">全选</a>
+        <a href="#" onclick="event.preventDefault();document.querySelectorAll('.arc-check').forEach(c=>c.checked=false);" style="color:var(--accent);font-size:11px;">取消</a>
+      </span>
+      <span>
+        <button class="db-btn danger" onclick="deleteSelectedArc()">删除选中</button>
+        <button class="db-btn danger" onclick="confirmClearArchive()">清空全部</button>
+      </span>
     </div>
     </div>
   </div>`;
@@ -1548,6 +1556,26 @@ async function saveArcEdit(msgId, editId, textId) {
       alert('保存失败: ' + (d.error || 'unknown'));
     }
   } catch (e) { alert('保存失败: ' + e.message); }
+}
+
+async function deleteSelectedArc() {
+  const checked = document.querySelectorAll('.arc-check:checked');
+  if (checked.length === 0) { alert('请先选择要删除的条目'); return; }
+  document.getElementById('confirm-title').textContent = '批量删除归档';
+  document.getElementById('confirm-msg').textContent = `确认删除 ${checked.length} 条归档消息吗？此操作不可撤销。`;
+  document.getElementById('confirm-yes-btn').onclick = async () => {
+    closeConfirmModal();
+    let deleted = 0;
+    for (const cb of checked) {
+      try {
+        const r = await fetch('/debug/api/archive/' + encodeURIComponent(cb.value), { method: 'DELETE' });
+        const d = await r.json();
+        if (d.ok) deleted++;
+      } catch (e) { /* continue */ }
+    }
+    refreshArchive();
+  };
+  document.getElementById('confirm-modal').classList.add('show');
 }
 
 function deleteArcEntry(msgId) {
