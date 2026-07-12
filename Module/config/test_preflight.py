@@ -14,7 +14,7 @@ def mock_config():
     cfg.llm.model = "deepseek/deepseek-chat"
     cfg.tts.enabled = False
     cfg.stt.enabled = False
-    cfg.agent.character = "character/elysia.yaml"
+    cfg.agent.character = "character/elysia/config.yaml"
     return cfg
 
 
@@ -143,7 +143,7 @@ class TestCheckCharacterFile:
         m = _fresh_module()
         _reset_counts(m)
         cfg = MagicMock()
-        cfg.agent.character = "character/elysia.yaml"
+        cfg.agent.character = "character/elysia/config.yaml"
         m._check_character_file(cfg)
         captured = capsys.readouterr()
         assert "PASS" in captured.out
@@ -240,7 +240,7 @@ class TestRun:
         cfg.llm.model = "deepseek/deepseek-chat"
         cfg.tts.enabled = False
         cfg.stt.enabled = False
-        cfg.agent.character = "character/elysia.yaml"
+        cfg.agent.character = "character/elysia/config.yaml"
         ok = m.run(cfg, full=False)
         assert ok is False
 
@@ -249,9 +249,9 @@ class TestRun:
         dotenv = tmp_path / ".env"
         dotenv.write_text("DEEPSEEK_API_KEY=sk-test")
         # 在 tmp_path 中创建虚拟 character 文件
-        char_dir = tmp_path / "character"
-        char_dir.mkdir()
-        (char_dir / "elysia.yaml").write_text("name: Elysia")
+        char_dir = tmp_path / "character" / "elysia"
+        char_dir.mkdir(parents=True)
+        (char_dir / "config.yaml").write_text("name: Elysia")
         # 创建虚拟嵌入模型缓存
         model_cache = tmp_path / ".model_cache/models--BAAI--bge-large-zh-v1.5/snapshots"
         model_cache.mkdir(parents=True)
@@ -266,6 +266,6 @@ class TestRun:
         cfg.llm.model = "deepseek/deepseek-chat"
         cfg.tts.enabled = False
         cfg.stt.enabled = False
-        cfg.agent.character = "character/elysia.yaml"
+        cfg.agent.character = "character/elysia/config.yaml"
         ok = m.run(cfg, full=False)
         assert ok is True

@@ -14,7 +14,7 @@ user_pronoun: 她                      # 用户人称代词（注入 system prom
 voice: elysia_v2                      # [占位] TTS voice ID
 
 # ---- 性格 ----
-base_personality_file: elysia_personality.txt  # L1 Core 文本（相对于本文件目录）
+base_personality_file: personality.txt          # L1 Core 文本（相对于本文件目录）
 
 # ---- 外观（待启用） ----
 # 预留给 Live2D / 前端渲染，代码暂未消费

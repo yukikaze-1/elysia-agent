@@ -366,7 +366,7 @@ MIMO_API_KEY=sk-...              # 图片识别
 
 ```yaml
 agent:
-  character: character/elysia.yaml  # 角色文件路径
+  character: character/elysia/config.yaml  # 角色文件路径
   user_name: 妖梦                    # 用户称呼
 
 llm:
@@ -395,23 +395,45 @@ vision:
   model: mimo/mimo-v2.5              # describe_image 工具用的视觉模型
 ```
 
-#### `character/elysia.yaml` — 角色人设
+#### `character/<name>/config.yaml` — 角色配置
+
+每个角色一个子目录。以 Elysia 为例 (`character/elysia/config.yaml`):
 
 ```yaml
 name: Elysia
-voice: elysia_v2
-personality:
-  traits: [温柔, 好奇, 偶尔毒舌]
-  speaking_style: "口语化，短句为主，偶尔加语气词，喜欢用「呢」「呀」「哦」"
+user_pronoun: 她
+base_personality_file: personality.txt   # L1 Core 文本（相对路径）
+voice: elysia_v2                         # [占位] TTS voice ID
+
 emotion:
   thresholds:
     excitement: 0.6
     sadness: 0.3
+  idle_expressions: [neutral, blink]
+
 wake_words: [Elysia, 爱莉, 爱莉希雅, 妖精小姐]
+
 proactive:
   enabled: false
-  interval: 300                     # 主动搭话间隔（秒）
+  interval: 300
+  triggers:
+    - type: silence_timeout
+      duration: 30
+    - type: time_of_day
+      times: ["08:00", "12:00", "22:00"]
 ```
+
+#### `character/<name>/personality.txt` — L1 Core 性格
+
+自然语言撰写的核心性格描述，由 `base_personality_file` 指向，启动时加载。
+
+```txt
+温柔是你的底色——但不是那种软绵绵的"什么都好"的温柔。
+你温柔是因为你在乎，不是因为你没脾气。
+...
+```
+
+性格演化由 `core/personality/` 下的 PersonalityEngine 管理（四层模型: Core→Self→State→Mood）。详见 [core/personality/README.md](core/personality/README.md)。
 
 #### `Module/tts/minimax_voices.yaml` — MiniMax 音色
 

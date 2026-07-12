@@ -4,7 +4,7 @@
 
 # ---- Agent 核心 ----
 agent:
-  character: character/elysia.yaml     # 角色配置文件路径
+  character: character/elysia/config.yaml  # 角色配置文件路径
   user_name: 妖梦                      # 用户名（注入 system prompt）
   max_pending_messages: 32             # 等待队列上限
 

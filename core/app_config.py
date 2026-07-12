@@ -7,7 +7,7 @@ from Module.config import ConfigField, Range
 
 @dataclass
 class AgentConfig:
-    character: str = ConfigField(default="character/elysia.yaml")
+    character: str = ConfigField(default="character/elysia/config.yaml")
     user_name: str = ConfigField(default="妖梦")
     max_pending_messages: int = ConfigField(default=32)
 

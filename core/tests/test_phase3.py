@@ -653,7 +653,7 @@ class TestPromptAssemblerUnit:
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory
 
-        char = CharacterConfig.from_yaml("character/elysia.yaml")
+        char = CharacterConfig.from_yaml("character/elysia/config.yaml")
         session = SessionMemory()
         lt = LongTermMemory()
 
@@ -1133,7 +1133,7 @@ class TestEmotionEmojiMappings:
 class TestCharacterConfig:
     def test_from_yaml_loads_correctly(self):
         from core.character_config import CharacterConfig
-        char = CharacterConfig.from_yaml("character/elysia.yaml")
+        char = CharacterConfig.from_yaml("character/elysia/config.yaml")
         assert char.name == "Elysia"
         # traits 已合并到 base_personality.txt
         assert "温柔是你的底色" in char.base_personality
@@ -1142,7 +1142,7 @@ class TestCharacterConfig:
 
     def test_personality_block_format(self):
         from core.character_config import CharacterConfig
-        char = CharacterConfig.from_yaml("character/elysia.yaml")
+        char = CharacterConfig.from_yaml("character/elysia/config.yaml")
         block = char.personality_block()
         # 新格式: base_personality 自然语言文本（来自 personality.txt）
         # 模板单独渲染 {{ name }}，所以 block 不包含角色名
@@ -1167,7 +1167,7 @@ class TestAppConfig:
         assert cfg.server.port == 8765
         assert cfg.tts.enabled is False
         assert cfg.stt.enabled is False
-        assert cfg.agent.character == "character/elysia.yaml"
+        assert cfg.agent.character == "character/elysia/config.yaml"
         assert cfg.agent.user_name == "妖梦"
         assert cfg.llm.model == "deepseek/deepseek-chat"
         assert cfg.memory.session_max_messages == 20
