@@ -731,6 +731,7 @@ async function loadPrompt(index) {
   document.getElementById('prompt-title').textContent =
     `📝 Prompt #${data.index}  第 ${data.round_num + 1} 轮  ${data.model}  ${time}`;
 
+  // ── 左侧：消息列表 ──
   let leftHtml = '<div style="overflow-y:auto;max-height:65vh;">';
   const msgs = data.messages || [];
   for (let i = 0; i < msgs.length; i++) {
@@ -748,25 +749,48 @@ async function loadPrompt(index) {
     const roleClass = role === 'system' ? 'role-tag fail' : (role === 'user' ? 'role-tag user' : 'role-tag assistant');
     const isSystem = role === 'system';
     const msgId = 'msg-' + data.index + '-' + i;
-    const preview = content.length > 200 ? content.slice(0, 200) + '…' : content;
     leftHtml += '<div style="margin-bottom:6px;border:1px solid var(--border);border-radius:4px;overflow:hidden;">';
-    leftHtml += '<div onclick="toggleMsg(\'' + msgId + '\')" style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:rgba(255,255,255,0.03);cursor:pointer;">';
-    leftHtml += '<span><span class="' + roleClass + '">' + esc(role) + '</span> (' + len.toLocaleString() + ' 字)</span>';
-    leftHtml += '<span style="color:var(--muted);font-size:11px;">' + (isSystem ? '收起 ▲' : '收起 ▲') + '</span>';
+    leftHtml += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:rgba(255,255,255,0.03);">';
+    leftHtml += '<span onclick="toggleMsg(\'' + msgId + '\')" style="cursor:pointer;flex:1;"><span class="' + roleClass + '">' + esc(role) + '</span> (' + len.toLocaleString() + ' 字) <span style="color:var(--muted);font-size:11px;">收起 ▲</span></span>';
+    // system 消息显示复制按钮
+    if (isSystem) {
+      const copyId = 'copy-sys-' + data.index;
+      leftHtml += '<button onclick="copySection(\'' + copyId + '\')" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:3px;padding:2px 6px;font-size:10px;" title="复制完整 System Prompt">📋</button>';
+    }
     leftHtml += '</div>';
     leftHtml += '<div id="' + msgId + '" style="padding:8px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto;">' + esc(content) + '</div>';
     leftHtml += '</div>';
   }
   leftHtml += '</div>';
 
+  // ── 右侧：可折叠 Section 面板 ──
   let rightHtml = '<div style="overflow-y:auto;max-height:65vh;">';
   const tmpl = data.template_source;
   if (tmpl) {
-    rightHtml += '<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">模板: ' + esc(tmpl.path) + ' (' + Object.keys(tmpl.sections || {}).length + ' sections)</div>';
-    if (tmpl.sections) {
-      for (const [name, content] of Object.entries(tmpl.sections)) {
-        rightHtml += '<div style="font-size:10px;color:var(--muted);margin:6px 0 2px 0;">▸ ' + esc(name) + '</div>';
-        rightHtml += '<pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.3);padding:8px;border-radius:4px;max-height:30vh;overflow-y:auto;">' + esc(content) + '</pre>';
+    const sections = tmpl.sections || {};
+    const secNames = Object.keys(sections);
+    rightHtml += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border);">';
+    rightHtml += '<span style="font-size:12px;color:var(--muted);">模板: <b style="color:var(--text);">' + esc(tmpl.path) + '</b> &nbsp;<span style="background:var(--accent);color:#fff;border-radius:10px;padding:0 6px;font-size:10px;">' + secNames.length + ' sections</span></span>';
+    rightHtml += '<button onclick="copyAllSections()" style="cursor:pointer;background:var(--accent);color:#fff;border:none;border-radius:3px;padding:3px 10px;font-size:11px;" title="复制所有 section 内容">复制全部</button>';
+    rightHtml += '</div>';
+    if (secNames.length) {
+      let first = true;
+      for (const [name, content] of Object.entries(sections)) {
+        const secId = 'sec-' + data.index + '-' + name.replace(/[^a-zA-Z0-9]/g, '_');
+        const size = (content || '').length;
+        const sizeStr = size >= 1024 ? (size / 1024).toFixed(1) + 'KB' : size + 'B';
+        const display = first ? 'block' : 'none';
+        const arrow = first ? '▼' : '▸';
+        rightHtml += '<div style="border:1px solid var(--border);border-radius:4px;margin-bottom:6px;overflow:hidden;">';
+        // header — clickable toggle
+        rightHtml += '<div onclick="toggleSection(\'' + secId + '\', this)" style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:rgba(255,255,255,0.03);cursor:pointer;user-select:none;">';
+        rightHtml += '<span style="font-size:12px;"><span class="sec-arrow" style="display:inline-block;width:14px;text-align:center;color:var(--muted);">' + arrow + '</span> <span style="color:var(--accent);">' + esc(name) + '</span> <span style="color:var(--muted);font-size:10px;">' + sizeStr + '</span></span>';
+        rightHtml += '<button onclick="event.stopPropagation();copySection(\'' + secId + '\')" style="cursor:pointer;background:var(--border);color:var(--text);border:none;border-radius:3px;padding:2px 6px;font-size:10px;" title="复制此 section">📋</button>';
+        rightHtml += '</div>';
+        // body — collapsible
+        rightHtml += '<div id="' + secId + '" style="display:' + display + ';padding:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.2);max-height:30vh;overflow-y:auto;">' + esc(content) + '</div>';
+        rightHtml += '</div>';
+        first = false;
       }
     }
   } else {
@@ -790,6 +814,70 @@ async function loadPrompt(index) {
 function toggleMsg(id) {
   const el = document.getElementById(id);
   if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleSection(secId, headerEl) {
+  const body = document.getElementById(secId);
+  if (!body) return;
+  const isHidden = body.style.display === 'none';
+  body.style.display = isHidden ? 'block' : 'none';
+  // 更新箭头
+  const arrow = headerEl.querySelector('.sec-arrow');
+  if (arrow) arrow.textContent = isHidden ? '▼' : '▸';
+}
+
+function copySection(secId) {
+  const el = document.getElementById(secId);
+  if (!el) return;
+  const text = el.textContent;
+  copyToClipboard(text);
+  // 短暂反馈
+  flashCopyFeedback(secId);
+}
+
+function copyAllSections() {
+  const sections = document.querySelectorAll('[id^="sec-"]');
+  let all = '';
+  sections.forEach(el => { all += el.textContent + '\n\n'; });
+  copyToClipboard(all.trim());
+  const btn = document.querySelector('#prompt-content button');
+  // 找"复制全部"按钮
+  const buttons = document.querySelectorAll('#prompt-content button');
+  for (const b of buttons) {
+    if (b.textContent.includes('复制全部')) {
+      const orig = b.textContent;
+      b.textContent = '已复制!';
+      setTimeout(() => { b.textContent = orig; }, 1500);
+      break;
+    }
+  }
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch(e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+}
+
+function flashCopyFeedback(secId) {
+  // 找到对应 section 的复制按钮
+  const body = document.getElementById(secId);
+  if (!body) return;
+  const card = body.closest('div');
+  if (!card) return;
+  const btn = card.previousElementSibling?.querySelector('button');
+  if (btn) {
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = orig; }, 1000);
+  }
 }
 
 function navigatePrompt(delta) {
