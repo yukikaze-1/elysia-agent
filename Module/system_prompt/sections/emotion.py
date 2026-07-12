@@ -4,8 +4,8 @@ from Module.system_prompt.protocol import Jinja2Section
 
 class EmotionSection(Jinja2Section):
     name = "Emotion"
-    version = "1.0.0"
-    description = "当前心情 + 情绪传染规则"
+    version = "2.0.0"
+    description = "当前心情 + 情绪响应规则（对齐 Elysia 人格）"
 
     def __init__(self, template_path: str, session=None):
         super().__init__(template_path)

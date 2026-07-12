@@ -108,12 +108,12 @@ def test_full_render_all_sections():
     assert "草莓蛋糕" in result        # C4 memory
     assert "新番" in result           # C8 own_life
     assert "self_perception" in result  # C9 self_perception
-    assert "# 主动性" in result        # C7 proactive
+    assert "proactive" in result       # C7 proactive
     # 验证完整 12-section 排序
     names_in_order = [
         "conflict_rules", "inner_voice", "output_format", "tts_markup",
         "sensory_input", "emotion", "memory_bank", "personality",
-        "relationship", "speaking_style", "主动性", "own_life",
+        "relationship", "speaking_style", "proactive", "own_life",
         "self_perception",
     ]
     last_pos = -1

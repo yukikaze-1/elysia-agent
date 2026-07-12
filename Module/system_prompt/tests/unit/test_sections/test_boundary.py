@@ -184,12 +184,13 @@ class TestSectionSetContextDefaults:
         result = asyncio.run(sec.render())
         assert "关于 " in result  # user_name 为空但结构完整
 
-    def test_proactive_renders_title(self):
-        """ProactiveSection 渲染模板标题。"""
+    def test_proactive_renders_content(self):
+        """ProactiveSection 渲染主动性规则。"""
         sec = ProactiveSection(f"{_TEMPLATES}/c7_proactive.j2")
         sec.set_context(user_name="test")
         result = asyncio.run(sec.render())
-        assert "# 主动性" in result
+        assert "proactive" in result
+        assert "主动" in result
 
 
 # ── ConflictRules ──
@@ -215,11 +216,12 @@ class TestSpeakingStyleSection:
         assert "speaking_style" in result
 
     def test_with_user_name(self):
-        """user_name 传入后出现在模板中。"""
+        """set_context 传入 user_name，模板正常渲染（v2 不引用 user_name）。"""
         sec = SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2")
         sec.set_context(user_name="测试用户")
         result = asyncio.run(sec.render())
-        assert "测试用户" in result
+        assert "speaking_style" in result
+        assert "♪" in result
 
 
 class TestOutputFormatSection:

@@ -4,8 +4,8 @@ from Module.system_prompt.protocol import Jinja2Section
 
 class SpeakingStyleSection(Jinja2Section):
     name = "SpeakingStyle"
-    version = "1.0.0"
-    description = "说话方式：长度/节奏/语气"
+    version = "2.0.0"
+    description = "回复风格：声线、语气、节奏、场景自适应"
 
     def __init__(self, template_path: str):
         super().__init__(template_path)
