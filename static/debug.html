@@ -211,6 +211,7 @@ h1 { font-size: 18px; margin-bottom: 4px; }
   <div style="display:flex;gap:8px;">
     <button id="pause-btn" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">暂停</button>
     <button id="copy-btn" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">复制 JSON</button>
+    <button id="copy-btn-light" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">精简 JSON</button>
   </div>
 </div>
 
@@ -1138,11 +1139,25 @@ document.getElementById('copy-btn').onclick = async () => {
   if (!lastInfo) return;
   try {
     await navigator.clipboard.writeText(JSON.stringify(lastInfo, null, 2));
-    const btn = document.getElementById('copy-btn');
-    btn.textContent = '已复制';
-    setTimeout(() => { btn.textContent = '复制 JSON'; }, 2000);
+    feedbackBtn('copy-btn', '复制 JSON');
   } catch {}
 };
+document.getElementById('copy-btn-light').onclick = async () => {
+  if (!lastInfo) return;
+  // 精简版：保留最近 3 条 session_recent，排除 session_params
+  const light = JSON.parse(JSON.stringify(lastInfo));
+  light.session_recent = (light.session_recent || []).slice(-3);
+  light.session_params = '（已省略，使用完整 JSON 查看）';
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(light, null, 2));
+    feedbackBtn('copy-btn-light', '精简 JSON');
+  } catch {}
+};
+function feedbackBtn(id, orig) {
+  const btn = document.getElementById(id);
+  btn.textContent = '已复制';
+  setTimeout(() => { btn.textContent = orig; }, 2000);
+}
 
 // ---- Tab 切换 ----
 function switchTab(name) {
