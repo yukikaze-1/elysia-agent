@@ -150,6 +150,7 @@ async def collect(agent) -> DebugInfo:
     info.lt_count = agent._long_term.count
     info.lt_recent = [
         {
+            "id": e.id,
             "text": _truncate(e.text, 100),
             "memory_type": e.memory_type,
             "poignancy": e.poignancy,
