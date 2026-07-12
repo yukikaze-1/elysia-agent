@@ -1233,11 +1233,12 @@ function renderLtmPanel(status) {
   const data = _ltmData;
   const ltmId = 'ltm-' + Math.random().toString(36).slice(2,8);
   function ltmTypeStyle(t) {
-    const colors = { fact: '#4caf50', plan: '#2196f3', preference: '#ff9800', note: '#9c27b0' };
-    return colors[t] || '#888';
+    const colors = { fact: '#4caf50', plan: '#2196f3', preference: '#ff9800', note: '#9c27b0', event: '#00bcd4' };
+    return colors[(t || '').toLowerCase()] || '#888';
   }
   function ltmTypeLabel(t) {
-    return (t || '?').charAt(0).toUpperCase() + (t || '?').slice(1);
+    const s = (t || '?').toLowerCase();
+    return s.charAt(0).toUpperCase() + s.slice(1);
   }
   const rows = (data.entries || []).map(e => {
     const t = e.memory_type || '?';
