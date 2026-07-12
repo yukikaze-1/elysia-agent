@@ -378,7 +378,11 @@ function render(info) {
       JSON.stringify(lastInfo.currently_executing) === JSON.stringify(info.currently_executing) &&
       JSON.stringify(lastInfo.timing_stats) === JSON.stringify(info.timing_stats) &&
       JSON.stringify(lastInfo.prompt_summary) === JSON.stringify(info.prompt_summary) &&
-      JSON.stringify(lastInfo.response_summary) === JSON.stringify(info.response_summary)
+      JSON.stringify(lastInfo.response_summary) === JSON.stringify(info.response_summary) &&
+      JSON.stringify(lastInfo.self_l2) === JSON.stringify(info.self_l2) &&
+      JSON.stringify(lastInfo.state_l3) === JSON.stringify(info.state_l3) &&
+      lastInfo.last_awareness_time === info.last_awareness_time &&
+      JSON.stringify(lastInfo.state_history) === JSON.stringify(info.state_history)
     );
     if (same) return;
   }
@@ -407,7 +411,7 @@ function render(info) {
         ['L1 Core', info.base_personality_summary ? esc(trunc(info.base_personality_summary, 100)) : 'N/A'],
       ]},
     ],
-    // Row 2: Latency | Memory stats | Scheduler
+    // Row 2: Latency | Process Memory | Scheduler
     [
       { title:'Latency', wide:false, rows: (() => {
         const s = info.timing_stats;
@@ -420,7 +424,7 @@ function render(info) {
           ['最近', `${s.last_ms}ms`],
         ];
       })()},
-      { title:'Memory', wide:false, rows: (() => {
+      { title:'Process Memory', wide:false, rows: (() => {
         const m = info.memory;
         if (!m || m.error) return [['—', m?.error || 'N/A']];
         return [
@@ -498,7 +502,7 @@ function render(info) {
           : []);
       })()},
     ],
-    // Row 3: Session | Long-term
+    // Row 3: Session | Long-term Memory
     [
       { title:'Recent Session', wide:false, items: (info.session_recent||[]).map(m => {
         const parts = m.parts || [];
@@ -518,7 +522,7 @@ function render(info) {
         `<span class="type-tag">${esc(e.memory_type||'?')}</span>${expandable(e.text, 90)}`
       )},
     ],
-    // Row 3: Tools | Tool History | Consolidation
+    // Row 4: Tools | Tool History | Consolidation
     [
       { title:'Tools', wide:true, items: [
         // 工具执行状态 — 始终显示
@@ -543,7 +547,7 @@ function render(info) {
         </div>`
       )].filter(Boolean)},
     ],
-    // Row 4: Tool History | Consolidation
+    // Row 5: Tool History | Consolidation
     [
       { title:'Tool History', wide:false, items: (info.tool_history||[]).map(t =>
         (t.error
@@ -555,7 +559,7 @@ function render(info) {
         `<span class="type-tag">${esc(c.type||'?')}</span>${esc(trunc(c.content,100))}`
       )},
     ],
-    // Row 5: Character Reflector
+    // Row 6: Character Reflector
     [
       (() => {
         const ref = info.reflector_exists ? info : null;
@@ -571,12 +575,16 @@ function render(info) {
           `<div class="row"><span class="label">状态</span><span class="value ${locked ? 'warn' : 'ok'}">${locked ? '反思中...' : 'idle'}</span></div>`,
         );
 
-        // Self-Perception 历史
-        const hist = (ref && ref.self_perception_history) || [];
+        // 引擎连接时显示 state_history；否则显示旧 self_perception_history
+        const engineConnected = info.personality_engine_exists;
+        const hist = engineConnected
+          ? (info.state_history || [])
+          : ((ref && ref.self_perception_history) || []);
+        const histLabel = engineConnected ? 'State 历史' : 'Self-Perception 历史';
         if (hist.length === 0) {
-          items.push('<div class="empty" style="margin-top:4px">Self-Perception: 暂无</div>');
+          items.push('<div class="empty" style="margin-top:4px">' + histLabel + ': 暂无' + (engineConnected ? '（见下方 PersonalityEngine 面板）' : '') + '</div>');
         } else {
-          let histHtml = '<details style="margin-top:4px"><summary>Self-Perception 历史 (' + hist.length + ')</summary>';
+          let histHtml = '<details style="margin-top:4px"><summary>' + histLabel + ' (' + hist.length + ')</summary>';
           histHtml += '<div style="max-height:200px;overflow-y:auto">';
           hist.reverse().forEach((h, i) => {
             const ts = new Date(h.timestamp * 1000).toLocaleString();
@@ -618,7 +626,7 @@ function render(info) {
         return { title:'Character Reflector', wide:true, items: items };
       })()
     ],
-    // Row 6: PersonalityEngine
+    // Row 7: PersonalityEngine
     [
       (() => {
         if (!info.personality_engine_exists) return null;
@@ -940,6 +948,13 @@ function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById('tab-tasks').style.display = 'none';
+  // 离开 tasks tab 时断开 SSE
+  if (name !== 'tasks' && taskES) {
+    taskES.close();
+    taskES = null;
+    if (taskReconnectTimer) { clearTimeout(taskReconnectTimer); taskReconnectTimer = null; }
+    destroyAllDAGs();
+  }
   if (name === 'overview') {
     document.querySelector('[data-tab="overview"]').classList.add('active');
     document.getElementById('tab-overview').classList.add('active');
