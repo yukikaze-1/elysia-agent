@@ -1230,6 +1230,20 @@ function renderDbPanels(status, ltm, sessions, archive) {
   document.getElementById('archive-load-more-btn')?.addEventListener('click', loadMoreArchive);
 }
 
+async function refreshLtmKeepingFilters() {
+  // 保存当前筛选状态
+  const searchVal = document.getElementById('ltm-search')?.value || '';
+  const typeVal = document.getElementById('ltm-type-filter')?.value || '';
+  await loadDbPanel();
+  // 恢复筛选
+  const si = document.getElementById('ltm-search');
+  const ti = document.getElementById('ltm-type-filter');
+  if (si) si.value = searchVal;
+  if (ti) ti.value = typeVal;
+  // 重新执行筛选
+  filterLtm();
+}
+
 function filterLtm() {
   const search = (document.getElementById('ltm-search')?.value || '').trim().toLowerCase();
   const type = document.getElementById('ltm-type-filter')?.value || '';
@@ -1369,7 +1383,7 @@ async function deleteSelectedLtm() {
         if (d.ok) deleted++;
       } catch (e) { /* continue */ }
     }
-    loadDbPanel();
+    refreshLtmKeepingFilters();
   };
   document.getElementById('confirm-modal').classList.add('show');
 }
@@ -1518,7 +1532,7 @@ async function deleteLtmEntry(id) {
   try {
     const r = await fetch('/debug/api/ltm/' + encodeURIComponent(id), { method: 'DELETE' });
     const d = await r.json();
-    if (d.ok) loadDbPanel();
+    if (d.ok) refreshLtmKeepingFilters();
     else alert('删除失败');
   } catch (e) { alert('删除失败: ' + e.message); }
 }
