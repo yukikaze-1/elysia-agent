@@ -1231,8 +1231,10 @@ function filterLtm() {
 function renderLtmPanel(status) {
   const s = status.ltm || {};
   const data = _ltmData;
+  const ltmId = 'ltm-' + Math.random().toString(36).slice(2,8);
   const rows = (data.entries || []).map(e =>
     `<div class="db-item">
+      <input type="checkbox" class="ltm-check" value="${esc(e.id)}" style="flex-shrink:0;">
       <span class="text">${expandable(e.text, 80)}</span>
       <span class="meta">
         <span class="type-tag">${esc(e.memory_type||'?')}</span>
@@ -1243,7 +1245,8 @@ function renderLtmPanel(status) {
   ).join('');
 
   return `<div class="card">
-    <h2>Long-Term Memory (Milvus)</h2>
+    <h2 style="cursor:pointer;user-select:none;" onclick="toggleDbCard(this)">▼ Long-Term Memory (Milvus)</h2>
+    <div class="db-card-body">
     <div class="db-stat">
       条目: <b>${data.total}</b> &nbsp; Milvus: ${ok(s.milvus_ok)} &nbsp; dirty: <b>${s.dirty_count||0}</b>
     </div>
@@ -1259,13 +1262,47 @@ function renderLtmPanel(status) {
       ${rows || '<div class="empty">暂无条目</div>'}
     </div>
     <div style="display:flex;justify-content:space-between;">
-      <span style="font-size:11px;color:var(--muted)">${data.total > 50 ? '显示前200条' : ''}</span>
+      <span style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:8px;">
+        ${data.total > 50 ? '显示前200条' : ''}
+        <a href="#" onclick="event.preventDefault();document.querySelectorAll('.ltm-check').forEach(c=>c.checked=true);" style="color:var(--accent);font-size:11px;">全选</a>
+        <a href="#" onclick="event.preventDefault();document.querySelectorAll('.ltm-check').forEach(c=>c.checked=false);" style="color:var(--accent);font-size:11px;">取消</a>
+      </span>
       <span>
+        <button class="db-btn danger" onclick="deleteSelectedLtm()">删除选中</button>
         <button class="db-btn" onclick="showAddModal()">新增</button>
         <button class="db-btn danger" onclick="confirmClearLtm()">清空全部</button>
       </span>
     </div>
+    </div>
   </div>`;
+}
+
+function toggleDbCard(headerEl) {
+  const body = headerEl.nextElementSibling;
+  if (!body) return;
+  const hidden = body.style.display === 'none';
+  body.style.display = hidden ? '' : 'none';
+  headerEl.textContent = (hidden ? '▼ ' : '▸ ') + headerEl.textContent.replace(/^[▼▸] /, '');
+}
+
+async function deleteSelectedLtm() {
+  const checked = document.querySelectorAll('.ltm-check:checked');
+  if (checked.length === 0) { alert('请先选择要删除的条目'); return; }
+  document.getElementById('confirm-title').textContent = '批量删除记忆';
+  document.getElementById('confirm-msg').textContent = `确认删除 ${checked.length} 条记忆吗？此操作不可撤销。`;
+  document.getElementById('confirm-yes-btn').onclick = async () => {
+    closeConfirmModal();
+    let deleted = 0;
+    for (const cb of checked) {
+      try {
+        const r = await fetch('/debug/api/ltm/' + encodeURIComponent(cb.value), { method: 'DELETE' });
+        const d = await r.json();
+        if (d.ok) deleted++;
+      } catch (e) { /* continue */ }
+    }
+    loadDbPanel();
+  };
+  document.getElementById('confirm-modal').classList.add('show');
 }
 
 function renderSessionPanel(status) {
@@ -1288,7 +1325,8 @@ function renderSessionPanel(status) {
   ).join('');
 
   return `<div class="card">
-    <h2>Session 管理 (MongoDB)</h2>
+    <h2 style="cursor:pointer;user-select:none;" onclick="toggleDbCard(this)">▼ Session 管理 (MongoDB)</h2>
+    <div class="db-card-body">
     <div class="db-stat">
       会话数: <b>${sessions.length}</b> &nbsp; MongoDB: ${ok(s.mongodb_ok)} &nbsp; 当前: <b>${esc(s.current_id||'—')}</b>
     </div>
@@ -1307,6 +1345,7 @@ function renderSessionPanel(status) {
       </span>
     </div>
     <div id="session-detail" style="margin-top:8px;"></div>
+    </div>
   </div>`;
 }
 
@@ -1333,7 +1372,8 @@ function renderArchivePanel(status) {
   }).join('');
 
   return `<div class="card">
-    <h2>Message Archive (MongoDB)</h2>
+    <h2 style="cursor:pointer;user-select:none;" onclick="toggleDbCard(this)">▼ Message Archive (MongoDB)</h2>
+    <div class="db-card-body">
     <div class="db-stat">
       条目: <b>${data.total}</b> &nbsp; MongoDB: ${ok(s.mongodb_ok)} &nbsp; session: <b>${esc(status.session?.current_id || 'default')}</b>
     </div>
@@ -1352,6 +1392,7 @@ function renderArchivePanel(status) {
     <div style="display:flex;justify-content:space-between;">
       <button class="db-btn" id="archive-load-more-btn" ${data.has_more ? '' : 'disabled'}>加载更多</button>
       <button class="db-btn danger" onclick="confirmClearArchive()">清空全部</button>
+    </div>
     </div>
   </div>`;
 }
