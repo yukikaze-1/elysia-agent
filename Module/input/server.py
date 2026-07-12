@@ -269,7 +269,7 @@ def create_app(
     # ---- Debug: 消息归档管理 ----
 
     async def archive_list_handler(request: web.Request) -> web.Response:
-        """分页浏览归档消息（debug 专用，offset 分页）。"""
+        """分页浏览归档消息（debug 专用，offset 分页 + 搜索）。"""
         agent = request.app["agent"]
         archive = getattr(agent, "_archive", None)
         if archive is None:
@@ -282,9 +282,11 @@ def create_app(
             skip = max(0, skip)
         except ValueError:
             limit = 100; skip = 0
+        search = request.query.get("search", "").strip()
+        role = request.query.get("role", "").strip()
 
         try:
-            messages, total = await archive.query_offset(skip=skip, limit=limit)
+            messages, total = await archive.query_offset(skip=skip, limit=limit, search=search, role=role)
             client_msgs = _archive_to_client(messages)
             return web.json_response({
                 "messages": client_msgs,

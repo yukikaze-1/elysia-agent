@@ -88,13 +88,21 @@ class MessageArchive:
         *,
         skip: int = 0,
         limit: int = 50,
+        search: str = "",
+        role: str = "",
     ) -> tuple[list[dict], int]:
-        """Offset 分页查询，按 _id 降序。返回 (messages, total)。"""
+        """Offset 分页查询，按 _id 降序。支持搜索过滤。返回 (messages, total)。"""
         if self._db is None:
             return [], 0
-        total = await self._db.count(self.COLLECTION, {})
+        filter_expr: dict = {}
+        if role:
+            filter_expr["role"] = role
+        # 搜索：使用 MongoDB $regex（不区分大小写）
+        if search:
+            filter_expr["content"] = {"$elemMatch": {"content": {"$regex": search, "$options": "i"}}}
+        total = await self._db.count(self.COLLECTION, filter_expr)
         docs = await self._db.find(
-            self.COLLECTION, {},
+            self.COLLECTION, filter_expr,
             sort=[("_id", -1)],
             skip=skip,
             limit=limit,

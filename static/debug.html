@@ -1196,7 +1196,7 @@ async function loadDbPanel() {
   try {
     const [status, ltm, sessions, archive] = await Promise.all([
       fetch('/debug/api/db-status').then(r => r.json()),
-      fetch(`/debug/api/ltm?limit=${_ltmPage.size}&offset=${(_ltmPage.page-1)*_ltmPage.size}`).then(r => r.json()),
+      (() => { const s = document.getElementById('ltm-search')?.value || ''; const t = document.getElementById('ltm-type-filter')?.value || ''; let u = `/debug/api/ltm?limit=${_ltmPage.size}&offset=${(_ltmPage.page-1)*_ltmPage.size}`; if(s) u += '&search=' + encodeURIComponent(s); if(t) u += '&type=' + encodeURIComponent(t); return fetch(u).then(r => r.json()); })(),
       fetch('/debug/api/sessions').then(r => r.json()),
       fetch(`/debug/api/archive?limit=${_archivePage.size}&skip=${(_archivePage.page-1)*_archivePage.size}`).then(r => r.json()),
     ]);
@@ -1233,27 +1233,19 @@ function renderDbPanels(status, ltm, sessions, archive) {
 }
 
 async function refreshLtmKeepingFilters() {
-  const searchVal = document.getElementById('ltm-search')?.value || '';
-  const typeVal = document.getElementById('ltm-type-filter')?.value || '';
+  _ltmPage.page = 1;
+  // 搜索值已在 DOM 中，loadDbPanel 会读取它们
   await loadDbPanel();
-  const si = document.getElementById('ltm-search');
-  const ti = document.getElementById('ltm-type-filter');
-  if (si) si.value = searchVal;
-  if (ti) ti.value = typeVal;
-  filterLtm();
 }
 
+// 服务端搜索：重置分页到第 1 页，触发 loadDbPanel
+let _ltmSearchTimer = null;
 function filterLtm() {
-  const search = (document.getElementById('ltm-search')?.value || '').trim().toLowerCase();
-  const type = document.getElementById('ltm-type-filter')?.value || '';
-  const items = document.querySelectorAll('#ltm-list .db-item');
-  items.forEach(item => {
-    const text = item.querySelector('.text')?.textContent?.toLowerCase() || '';
-    const tag = item.querySelector('.type-tag')?.textContent?.toLowerCase() || '';
-    const matchSearch = !search || text.includes(search) || tag.includes(search);
-    const matchType = !type || tag === type;
-    item.style.display = matchSearch && matchType ? '' : 'none';
-  });
+  clearTimeout(_ltmSearchTimer);
+  _ltmSearchTimer = setTimeout(() => {
+    _ltmPage.page = 1;
+    loadDbPanel();
+  }, 300);
 }
 
 function renderLtmPanel(status) {
@@ -1523,7 +1515,12 @@ function renderArchivePanel(status) {
 
 async function refreshArchive() {
   try {
-    const data = await fetch(`/debug/api/archive?limit=${_archivePage.size}&skip=${(_archivePage.page-1)*_archivePage.size}`).then(r => r.json());
+    const search = document.getElementById('archive-search')?.value || '';
+    const role = document.getElementById('archive-role-filter')?.value || '';
+    let url = `/debug/api/archive?limit=${_archivePage.size}&skip=${(_archivePage.page-1)*_archivePage.size}`;
+    if (search) url += '&search=' + encodeURIComponent(search);
+    if (role) url += '&role=' + encodeURIComponent(role);
+    const data = await fetch(url).then(r => r.json());
     _archiveData = data;
     // 仅重建 archive panel
     const panels = document.getElementById('db-panels');
@@ -1593,15 +1590,13 @@ function deleteArcEntry(msgId) {
   document.getElementById('confirm-modal').classList.add('show');
 }
 
+let _arcSearchTimer = null;
 function filterArchive() {
-  const search = (document.getElementById('archive-search')?.value || '').trim().toLowerCase();
-  const role = document.getElementById('archive-role-filter')?.value || '';
-  const items = document.querySelectorAll('#archive-list .db-item');
-  items.forEach(item => {
-    const text = item.textContent.toLowerCase();
-    const hasRole = !role || (role === 'tool' ? text.includes('tool') : item.querySelector('.role-tag.' + role));
-    item.style.display = (!search || text.includes(search)) && hasRole ? '' : 'none';
-  });
+  clearTimeout(_arcSearchTimer);
+  _arcSearchTimer = setTimeout(() => {
+    _archivePage.page = 1;
+    refreshArchive();
+  }, 300);
 }
 
 function confirmClearArchive() {
