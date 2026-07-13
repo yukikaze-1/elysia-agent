@@ -63,6 +63,8 @@ class LongTermMemory:
         self._max_entries = max_entries
         self._max_age_days = max_age_days
         self._embed_timeout = embed_timeout
+        self._absorbed_ids: set[str] = set()  # 被 merge 吸收但尚未 delete 的条目 ID
+        self._write_lock = asyncio.Lock()     # 保护所有修改操作的并发锁
 
     async def connect(self) -> bool:
         """Connect to Milvus (fast). Embedding is deferred to first use. Returns True if Milvus available."""
@@ -217,53 +219,53 @@ class LongTermMemory:
         """
         await self._ensure_embedding(wait=True)
 
-        embedding: list[float] = []
-        if self._embedding:
-            try:
-                embedding = await self._embedding.embed_query(text)
-            except Exception:
-                logger.debug("Embedding failed for insert, storing text-only", exc_info=True)
+        async with self._write_lock:
+            embedding: list[float] = []
+            if self._embedding:
+                try:
+                    embedding = await self._embedding.embed_query(text)
+                except Exception:
+                    logger.debug("Embedding failed for insert, storing text-only", exc_info=True)
 
-        from core.message_id import new_message_id
-        # Work on a copy to avoid mutating caller's dict
-        meta = dict(metadata)
-        # Accept 'type' as alias for 'memory_type'
-        memory_type = meta.pop("memory_type", meta.pop("type", "note"))
-        entry = MemoryEntry(
-            id=new_message_id(),
-            text=text,
-            embedding=embedding,
-            memory_type=memory_type,
-            poignancy=meta.pop("poignancy", 5),
-            timestamp=meta.pop("timestamp", _time.time()),
-            metadata=meta,
-        )
+            from core.message_id import new_message_id
+            # Work on a copy to avoid mutating caller's dict
+            meta = dict(metadata)
+            # Accept 'type' as alias for 'memory_type'
+            memory_type = meta.pop("memory_type", meta.pop("type", "note"))
+            entry = MemoryEntry(
+                id=new_message_id(),
+                text=text,
+                embedding=embedding,
+                memory_type=memory_type,
+                poignancy=meta.pop("poignancy", 5),
+                timestamp=meta.pop("timestamp", _time.time()),
+                metadata=meta,
+            )
 
-        if self._vector_db and embedding:
-            try:
-                pk_list = await self._vector_db.insert(
-                    self.COLLECTION,
-                    vectors=[embedding],
-                    metadata=[{
-                        "entry_id": entry.id,
-                        "text": text,
-                        "memory_type": entry.memory_type,
-                        "poignancy": entry.poignancy,
-                        "timestamp": entry.timestamp,
-                        **meta,
-                    }],
-                )
-                if pk_list:
-                    entry._milvus_pk = pk_list[0]
-            except Exception as e:
-                logger.warning("Milvus insert failed: %s, falling back to in-memory", e)
+            if self._vector_db and embedding:
+                try:
+                    pk_list = await self._vector_db.insert(
+                        self.COLLECTION,
+                        vectors=[embedding],
+                        metadata=[{
+                            "entry_id": entry.id,
+                            "text": text,
+                            "memory_type": entry.memory_type,
+                            "poignancy": entry.poignancy,
+                            "timestamp": entry.timestamp,
+                            **meta,
+                        }],
+                    )
+                    if pk_list:
+                        entry._milvus_pk = pk_list[0]
+                except Exception as e:
+                    logger.warning("Milvus insert failed: %s, falling back to in-memory", e)
+                    self._dirty_ids.add(entry.id)
+            elif not self._vector_db:
                 self._dirty_ids.add(entry.id)
-        elif not self._vector_db:
-            self._dirty_ids.add(entry.id)
 
-        self._entries.append(entry)
-        # TODO: 开发阶段暂不禁用驱逐，避免丢失测试记忆
-        # self._evict_old_entries()
+            self._entries.append(entry)
+            # self._evict_old_entries()  # TODO: 开发阶段暂不禁用驱逐，避免丢失测试记忆
 
     def _evict_old_entries(self) -> int:
         """驱逐过期和超过上限的条目。返回驱逐数量。
@@ -310,6 +312,14 @@ class LongTermMemory:
                 return e
         return None
 
+    def get_all(self) -> list[MemoryEntry]:
+        """返回全部活跃条目的副本（排除已吸收条目）。"""
+        return [e for e in self._entries if e.id not in self._absorbed_ids]
+
+    def mark_absorbed(self, entry_id: str) -> None:
+        """标记条目已被 merge 吸收（不删除，只标记）。"""
+        self._absorbed_ids.add(entry_id)
+
     async def _sync_dirty_entries(self) -> int:
         """尝试将脏条目同步到 Milvus。返回成功同步数。"""
         if not self._vector_db or not self._dirty_ids:
@@ -341,71 +351,84 @@ class LongTermMemory:
 
     # ---- Delete ----
 
-    async def update_text(self, entry_id: str, new_text: str) -> bool:
+    async def update_text(
+        self, entry_id: str, new_text: str,
+        poignancy: int | None = None,
+        memory_type: str | None = None,
+    ) -> bool:
         """更新记忆文本（内存 + Milvus 重建）。返回 True 表示成功。"""
-        for i, e in enumerate(self._entries):
-            if e.id == entry_id:
-                e.text = new_text
-                e.timestamp = _time.time()
-                if self._vector_db and e._milvus_pk is not None:
-                    old_pk = e._milvus_pk
-                    await self._ensure_embedding(wait=True)
-                    if self._embedding:
-                        try:
-                            emb = await self._embedding.embed_query(new_text)
-                            if emb:
-                                pk_list = await self._vector_db.insert(
-                                    self.COLLECTION,
-                                    vectors=[emb],
-                                    metadata=[{
-                                        "entry_id": entry_id,
-                                        "text": new_text,
-                                        "memory_type": e.memory_type,
-                                        "poignancy": e.poignancy,
-                                        "timestamp": e.timestamp,
-                                    }],
-                                )
-                                if pk_list:
-                                    e._milvus_pk = int(pk_list[0])
-                                    # 新向量插入成功后才删除旧向量
-                                    try:
-                                        await self._vector_db.delete(self.COLLECTION, [old_pk])
-                                    except Exception:
-                                        logger.debug("Milvus delete old pk failed for update %s", entry_id, exc_info=True)
-                                else:
-                                    # 插入返回空 → 标记脏，保留旧向量
-                                    self._dirty_ids.add(entry_id)
-                        except Exception:
-                            logger.debug("Embedding/insert failed for update %s", entry_id, exc_info=True)
-                            self._dirty_ids.add(entry_id)
-                return True
-        return False
+        async with self._write_lock:
+            for i, e in enumerate(self._entries):
+                if e.id == entry_id:
+                    e.text = new_text
+                    if poignancy is not None:
+                        e.poignancy = poignancy
+                    if memory_type is not None:
+                        e.memory_type = memory_type
+                    e.timestamp = _time.time()
+                    if self._vector_db and e._milvus_pk is not None:
+                        old_pk = e._milvus_pk
+                        await self._ensure_embedding(wait=True)
+                        if self._embedding:
+                            try:
+                                emb = await self._embedding.embed_query(new_text)
+                                if emb:
+                                    pk_list = await self._vector_db.insert(
+                                        self.COLLECTION,
+                                        vectors=[emb],
+                                        metadata=[{
+                                            "entry_id": e.id,
+                                            "text": new_text,
+                                            "memory_type": e.memory_type,
+                                            "poignancy": e.poignancy,
+                                            "timestamp": e.timestamp,
+                                        }],
+                                    )
+                                    if pk_list:
+                                        e._milvus_pk = int(pk_list[0])
+                                        # 新向量插入成功后才删除旧向量
+                                        try:
+                                            await self._vector_db.delete(self.COLLECTION, [old_pk])
+                                        except Exception:
+                                            logger.debug("Milvus delete old pk failed for update %s", entry_id, exc_info=True)
+                                    else:
+                                        # 插入返回空 → 标记脏，保留旧向量
+                                        self._dirty_ids.add(entry_id)
+                            except Exception:
+                                logger.debug("Embedding/insert failed for update %s", entry_id, exc_info=True)
+                                self._dirty_ids.add(entry_id)
+                    return True
+            return False
 
     async def delete(self, entry_id: str) -> bool:
         """删除单条记忆（内存 + Milvus）。返回 True 表示成功删除。"""
-        for i, e in enumerate(self._entries):
-            if e.id == entry_id:
-                self._entries.pop(i)
-                self._dirty_ids.discard(entry_id)
-                if self._vector_db and e._milvus_pk is not None:
-                    try:
-                        await self._vector_db.delete(
-                            self.COLLECTION, [e._milvus_pk])
-                    except Exception:
-                        logger.debug("Milvus delete failed for %s", entry_id, exc_info=True)
-                return True
-        return False
+        async with self._write_lock:
+            for i, e in enumerate(self._entries):
+                if e.id == entry_id:
+                    self._entries.pop(i)
+                    self._absorbed_ids.discard(entry_id)
+                    self._dirty_ids.discard(entry_id)
+                    if self._vector_db and e._milvus_pk is not None:
+                        try:
+                            await self._vector_db.delete(
+                                self.COLLECTION, [e._milvus_pk])
+                        except Exception:
+                            logger.debug("Milvus delete failed for %s", entry_id, exc_info=True)
+                    return True
+            return False
 
     async def clear_all(self) -> int:
         """清空所有记忆（内存 + Milvus 重建 collection）。返回删除数量。"""
-        count = len(self._entries)
-        self._entries.clear()
-        self._dirty_ids.clear()
-        if self._vector_db:
-            await self._vector_db.drop_collection(self.COLLECTION)
-            await self._vector_db.create_collection(
-                self.COLLECTION, dimension=self.DIMENSION)
-        return count
+        async with self._write_lock:
+            count = len(self._entries)
+            self._entries.clear()
+            self._absorbed_ids.clear()
+            self._dirty_ids.clear()
+            if self._vector_db:
+                await self._vector_db.drop_collection(self.COLLECTION)
+                await self._vector_db.create_collection(
+                    self.COLLECTION, dimension=self.DIMENSION)
+            return count
 
     # ---- Read ----
 
@@ -466,12 +489,17 @@ class LongTermMemory:
                 except Exception as e:
                     logger.warning("Milvus search failed: %s", e)
 
+        # Exclude absorbed entries from search results
+        candidates = [e for e in candidates if e.id not in self._absorbed_ids]
+
         # Fall back to in-memory if no candidates from Milvus
         fb_scores: dict[int, float] = {}
         if not candidates:
             fallback_results = self._search_fallback(
                 query_text, min(top_k * 2, len(self._entries))
             )
+            # Exclude absorbed entries from fallback results
+            fallback_results = [(s, e) for s, e in fallback_results if e.id not in self._absorbed_ids]
             fb_scores = {id(e): s for s, e in fallback_results}
             for fb_score, entry in fallback_results:
                 candidates.append(entry)
