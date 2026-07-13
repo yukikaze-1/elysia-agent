@@ -47,7 +47,7 @@ def _get_compare_prompt() -> str:
     global _COMPARE_PROMPT
     if _COMPARE_PROMPT is not None:
         return _COMPARE_PROMPT
-    path = Path("prompt/consolidation_compare.txt")
+    path = Path("prompt/consolidation_compare.j2")
     if path.exists():
         _COMPARE_PROMPT = path.read_text(encoding="utf-8")
     else:
