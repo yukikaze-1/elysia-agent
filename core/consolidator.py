@@ -17,27 +17,24 @@ from .llm_adapter import LLMAdapter
 
 logger = logging.getLogger(__name__)
 
-EXTRACTION_PROMPT = """从以下对话中提取值得长期记住的关键信息。
+# Extraction prompt — 文件路径，运行时加载
+EXTRACTION_PROMPT_PATH = Path("prompt/ExtractMemory.j2")
+_EXTRACTION_PROMPT: str | None = None
 
-**提取规则**:
-- 提取事实(Fact)、偏好(Preference)、事件(Event)、计划(Plan)
-- 过滤噪音: 问候、闲聊、日常寒暄不需要记住
-- **事件合并**: 将有因果/反应/结果关系的多轮对话合并为一个综合记忆，不拆碎片
-- 每条记忆写为第一人称中文叙事: "我注意到...", "我发现...", "{user_name}告诉我...", "我和{user_name}..."
 
-**重要性评分 (poignancy)**:
-- 1-3: 琐碎信息，不太重要
-- 4-7: 中等重要，值得记住
-- 8-10: 核心记忆，与{user_name}的关系或{character_name}自身密切相关
-
-返回 JSON 数组，每个元素: {{"type": "Fact|Preference|Event|Plan", "content": "...", "poignancy": 1-10}}。
-
-如果没有值得记住的信息，返回空数组 []。
-
-对话:
-{conversation}
-
-JSON:"""
+def _get_extraction_prompt() -> str:
+    global _EXTRACTION_PROMPT
+    if _EXTRACTION_PROMPT is not None:
+        return _EXTRACTION_PROMPT
+    if EXTRACTION_PROMPT_PATH.exists():
+        _EXTRACTION_PROMPT = EXTRACTION_PROMPT_PATH.read_text(encoding="utf-8")
+    else:
+        _EXTRACTION_PROMPT = (
+            "从以下对话中提取值得长期记住的关键信息。\n\n"
+            "对话:\n{conversation}\n\n"
+            "返回 JSON 数组。没有则返回 []。"
+        )
+    return _EXTRACTION_PROMPT
 
 # Consolidation 比对 prompt — 文件路径，运行时加载
 _COMPARE_PROMPT: str | None = None
@@ -121,7 +118,7 @@ class MemoryConsolidator:
         conversation_text = "\n".join(turns)
         self._buffer.clear()
 
-        prompt = EXTRACTION_PROMPT.format(
+        prompt = _get_extraction_prompt().format(
             conversation=conversation_text[:2000],
             character_name=self._character_name,
             user_name=self._user_name,
