@@ -96,11 +96,11 @@ class SessionMemory:
         if self._archive is None or self._archive._db is None:
             return 0
         try:
-            # 查找所有缺少 session_id 的文档（limit=0 禁用默认限制）
+            # 查找所有缺少 session_id 的文档（limit=None 获取全部匹配文档）
             docs = await self._archive._db.find(
                 self._archive.COLLECTION,
                 {"session_id": {"$exists": False}},
-                limit=0,
+                limit=None,
             )
             if not docs:
                 return 0
