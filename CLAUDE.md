@@ -9,7 +9,7 @@ Elysia/Agent is a Python 3.13 AI companion application. The codebase has two mai
 - **`Module/`** — backend-agnostic library for AI companion infrastructure: LLM, STT, TTS, embedding, vector/document databases, output channels, config, logging, system prompt engine, tool framework.
 - **`core/`** — the Elysia Agent application: `Agent`, `CognitiveLoop`, `PersonalityEngine`, `EmotionEngine`, `CharacterReflector`, `MemoryConsolidator`, `MemoryReflector`, `SessionMemory`, `LongTermMemory`, `IdleMonitor`, task scheduler, debug info, character config.
 
-No build system (`pyproject.toml`, etc.) — plain Python. Frontend is vanilla HTML/CSS/JS (no framework, no build step).
+Plain Python（无 `pyproject.toml` 等构建系统）。前端 vanilla HTML/CSS/JS（无框架、无构建步骤）。`Makefile` 提供常用任务入口。
 
 ## Running tests
 

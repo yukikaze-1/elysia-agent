@@ -2,7 +2,7 @@
 
 ## 背景
 
-当前项目 63 个测试文件、1558 个测试，全量跑 ~22 分钟。`pytest.ini` 只有一个 `integration` marker。没有分层/分组策略，改了代码不知道该跑哪些测试、全量跑太久、测试散落在逐步增长的历史文件中。
+当前项目 63 个测试文件、约 1500 个测试，全量跑 ~22 分钟。`pytest.ini` 只有一个 `integration` marker。没有分层/分组策略，改了代码不知道该跑哪些测试、全量跑太久、测试散落在逐步增长的历史文件中。
 
 ## 目标
 
@@ -41,6 +41,9 @@ pytest -m "not slow" -q --tb=short
 
 # 推之前
 pytest -q
+
+# CI
+pytest -m "not slow" -q --tb=short
 
 # 改了 core/memory/ → 只跑相关
 pytest core/memory/tests/ -q
@@ -87,5 +90,5 @@ pytest core/memory/tests/ -q
 1. **`pytest.ini`** — 注册 4 个 markers
 2. **所有测试文件** — 每个测试函数加 `@pytest.mark.xxx` 装饰器
 3. **`CLAUDE.md`** — 测试命令改为分层体系
-4. **`Makefile`** — 新增 `test-quick`、`test-normal`、`test-full` targets
+4. **`Makefile`** — 扩展 `test-quick`、`test-normal`、`test-full` targets
 5. **`todo.md`** — 过时测试、归属不合理、需修复的断言记录
