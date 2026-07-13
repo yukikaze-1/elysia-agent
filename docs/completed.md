@@ -2,6 +2,56 @@
 
 ## 已完成
 
+### 2026-07-13/14: LTM 自动更新与去重 + 日志精简 + 数据一致性 + 文档大修
+
+**LTM 记忆系统全面升级：**
+- **MemoryReflector** (`core/memory/memory_reflector.py`): 定期深度去重。双条件触发（50 轮 + 30 条新记忆），KMeans 聚类分组，LLM 批量审查（merge/update/delete），上限控制（5+5+3）。对标 CharacterReflector 生命周期（restore_state/flush）。
+- **ConsolidationCompare** (`core/consolidator.py`): 提取时轻量比对。新记忆 vs 已有记忆 top 10 → LLM 判断 insert/update/merge/skip → 预校验 → 执行。失败回退全 insert。
+- **LTM 数据模型扩展**: `_absorbed_ids` + `_write_lock` + `get_all()` + `mark_absorbed()` + `update_text()` 扩展（支持 poignancy/memory_type）+ `search()` 过滤已吸收条目
+- **驱逐暂停**: 开发阶段 `_evict_old_entries()` 已注释
+- **Prompt 文件** (GPT 5.6 sol_pro 生成):
+  - `prompt/ExtractMemory.j2` — 反幻觉提取（13 节，含正反示例 + 自检清单）
+  - `prompt/ConsolidationCompare.j2` — 比对去重（186 行）
+  - `prompt/MemoryReflector.j2` — 定期去重（239 行）
+  - `prompt/ref/` — GPT 原始版本归档（4 个 snake_case.md）
+  - `prompt/README.md` — 命名规范 + 渲染方式文档
+- **Prompt 基础设施**: `.j2` 统一 PascalCase 命名；`str.replace()` 替代 `.format()`（避免 JSON 大括号冲突）；文件加载替代内联字符串；`prompt-requirements.md` 需求文档
+
+**日志精简：**
+- TTS 分句/播放日志从单句 INFO 降为 DEBUG，`wait_all()` 后一行汇总（"TTS: N 句 X 字符 → YKB 已播放"）
+- 第三方库日志级别 DEBUG→WARNING（pymongo/motor/httpx/openai/urllib3/sentence_transformers）
+- 启动日志：工具列表从逐条 INFO → 一行汇总；横幅工具数精简
+
+**数据一致性：**
+- **Archive 成为权威数据源**: Session 视图从 `message_archive` 读取，非 `sessions` 快照。`session_id` 注入 + 迁移 + 降级路径
+- **MongoDB 三层缓存清理**: localStorage（前端）→ session._messages（内存）→ sessions 集合（MongoDB）连环问题排查。移除了前端 localStorage 消息缓存
+- **数据库清理**: MongoDB sessions/archive/token_usage + Milvus LTM 全部清空，从零开始
+
+**启动与工具链：**
+- `./start.sh` 根目录符号链接 + `Makefile start` 目标
+- `conda run --no-capture-output` 修复 stdout 缓冲
+- `ALL_PROXY=socks://` 修复（httpx 不兼容）
+- `readlink -f` 修复符号链接路径解析
+
+**Debug 仪表板增强：**
+- Session Params 可展开 key-value（L1 Core 下方），大数据 key 只显示计数
+- 搜索输入值 + 折叠状态在 DOM 重建时保留
+- Archive 刷新时同样保留搜索值
+
+**Bug 修复：**
+- `removeElement`→`indicator.remove()`（chat.js 滚动加载）
+- TTS read timeout 120s→30s
+- mood/mood_intensity 初始化 + `restore_state()` 确保 session params 默认值
+- MemoryReflector 计数器 `items = []` 初始化防 NameError
+- KMeans 索引越界（100% embedding 阈值）
+
+**文档全面更新：**
+- `CLAUDE.md`: prompt 目录 + persistence.js + server routing + MemoryReflector 架构
+- `architecture.md`: 21 处过时内容修复（backend 列表、测试数量、文件结构、路由、配置、Debug 标签页）
+- `static/debug.md`: Session 数据源 + LTM 生命周期 + 前端缓存移除
+- `docs/experience.md`: 8 条踩坑经验（数据清理、prompt 命名、conda/stdout、proxy、symlink、motor ObjectId、DOM 重建）
+- `todo.md`: 标记已完成项 + 新增 LTM 完成清单
+
 ### 2026-07-12: PersonalityEngine + Elysia 性格升级 + Review 反馈
 
 - **PersonalityEngine** (`core/personality/`): 四层性格模型。L1 Core（文件，不可变）→ L2 Self（session，缓慢演化）→ L3 State（Reflector 驱动）→ L4 Mood（已有 EmotionEngine）。CharacterReflector 变更为子组件。C1/C9 模板数据驱动。Character YAML 瘦身 + 路径解析。
