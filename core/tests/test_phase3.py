@@ -1351,6 +1351,8 @@ class TestIdleMonitor:
 
         monitor = IdleMonitor(char, fsm, bus)
         original = monitor._last_interaction
+        # 确保时间推进（避免 event loop 时钟精度问题导致两次调用返回相同值）
+        time.sleep(0.001)
         monitor.touch()
         assert monitor._last_interaction >= original
 
