@@ -2,6 +2,12 @@
 
 ## 已完成
 
+### 2026-07-14: 安全修复 — code-review-report 遗留严重问题清零
+
+- **Milvus `_metric_type` 跨集合污染** (`milvus.py:39`): `self._metric_type` 单值 → `self._metric_types: dict[str, str]` per-collection 字典。`create_collection` 按名存储，`search` 按名读取，fallback L2。
+- **MongoDB NoSQL 注入** (`mongodb.py:31`): collection 名加正则白名单 `^[a-zA-Z0-9_-]+$`，覆盖所有 7 个方法 + database 名。
+- **Embedding 工厂缓存忽略 kwargs** (`registry.py:30-35`): cache key 从 `model_id` 扩展为 `model_id + json.dumps(kwargs)`。
+
 ### 2026-07-13/14: LTM 自动更新与去重 + 日志精简 + 数据一致性 + 文档大修
 
 **LTM 记忆系统全面升级：**
