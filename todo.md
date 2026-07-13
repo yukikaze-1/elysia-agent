@@ -49,23 +49,6 @@
   - C3/C6/C7 与 PersonalityEngine 动态联动
   - 用户话题检测触发 C9（目前只看状态存在+冷却）
 
-### LTM 自动更新与去重 — 已完成
-
-| 项目 | 状态 |
-|------|------|
-| MemoryReflector — 定期深度去重（轮次/新记忆数触发，KMeans 聚类 + LLM 审查） | ✅ 已实现 |
-| ConsolidationCompare — 提取时轻量比对（新记忆 vs 已有记忆 top 10） | ✅ 已实现 |
-| ExtractMemory.j2 — 反幻觉提取 prompt | ✅ 已部署（GPT 5.6 sol_pro） |
-| ConsolidationCompare.j2 — 比对去重 prompt | ✅ 已部署 |
-| MemoryReflector.j2 — 定期去重 prompt | ✅ 已部署 |
-| LTM 数据模型扩展 — `_absorbed_ids`, `get_all()`, `mark_absorbed()`, `update_text` 扩展 | ✅ 已实现 |
-| LTM 驱逐暂停 — 开发阶段暂不禁用 | ✅ 已注释 |
-| 前端消息缓存移除 — localStorage 不再缓存聊天消息 | ✅ 已实现 |
-| TTS read timeout 120s→30s | ✅ 已完成 |
-
-### prompt-requirements.md 已不再需要
-
-Prompt 已由 GPT 生成并部署，根目录 `prompt-requirements.md` 可移除（参考版本已归档到 `prompt/ref/`）。
 
 ## 代码清理
 
