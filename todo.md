@@ -79,12 +79,6 @@
 
 ## 来自 code-review-report-2026-06-22 的遗留问题
 
-### 严重（需独立 spec）
-
-| 问题 | 文件 |
-|------|------|
-| Embedding 工厂缓存忽略 kwargs | `embedding/registry.py:30-35` |
-
 ### 需独立 spec
 
 | 类别 | 数量 | 说明 |
