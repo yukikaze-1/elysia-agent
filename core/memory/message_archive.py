@@ -34,6 +34,15 @@ class MessageArchive:
         """接入已有的 MongoDB backend。创建索引。返回是否成功。"""
         self._db = db
         # _id 字段 MongoDB 默认已有升序索引，倒序查询直接反向扫描，无需额外建索引
+        # session_id 复合索引 — 用于按 session 查询消息
+        try:
+            await self._db.ensure_index(
+                self.COLLECTION, [("session_id", 1), ("_id", -1)]
+            )
+        except Exception:
+            logger.warning(
+                "MessageArchive: session_id index creation failed, continuing"
+            )
         logger.info("MessageArchive: connected, collection='%s'", self.COLLECTION)
         return True
 
@@ -152,3 +161,28 @@ class MessageArchive:
         deleted = await self._db.delete_many(self.COLLECTION, {})
         logger.info("MessageArchive: 清空 %d 条消息", deleted)
         return deleted
+
+    # ---- 按 session 查询 ----
+
+    async def query_by_session(
+        self, session_id: str, *, skip: int = 0, limit: int = 200
+    ) -> tuple[list[dict], int]:
+        """按 session_id 查询消息，_id 降序（最新在前）。
+        返回 (messages, total)。"""
+        if self._db is None:
+            return [], 0
+        filter_expr = {"session_id": session_id}
+        total = await self._db.count(self.COLLECTION, filter_expr)
+        docs = await self._db.find(
+            self.COLLECTION, filter_expr,
+            sort=[("_id", -1)],
+            skip=skip,
+            limit=limit,
+        )
+        return docs, total
+
+    async def count_by_session(self, session_id: str) -> int:
+        """按 session_id 统计消息数。"""
+        if self._db is None:
+            return 0
+        return await self._db.count(self.COLLECTION, {"session_id": session_id})
