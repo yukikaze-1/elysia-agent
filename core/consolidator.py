@@ -10,6 +10,7 @@ Uses the same LLM backend as the cognitive loop (or mock).
 import asyncio
 import json
 import logging
+from pathlib import Path
 
 from .memory.long_term import LongTermMemory
 from .llm_adapter import LLMAdapter
@@ -37,6 +38,25 @@ EXTRACTION_PROMPT = """从以下对话中提取值得长期记住的关键信息
 {conversation}
 
 JSON:"""
+
+# Consolidation 比对 prompt — 文件路径，运行时加载
+_COMPARE_PROMPT: str | None = None
+
+
+def _get_compare_prompt() -> str:
+    global _COMPARE_PROMPT
+    if _COMPARE_PROMPT is not None:
+        return _COMPARE_PROMPT
+    path = Path("prompt/consolidation_compare.txt")
+    if path.exists():
+        _COMPARE_PROMPT = path.read_text(encoding="utf-8")
+    else:
+        _COMPARE_PROMPT = (
+            "Compare these new memory items:\n{new_items}\n\n"
+            "With existing related memories:\n{existing_items}\n\n"
+            "For each new item, output: insert/update/merge/skip as JSON array."
+        )
+    return _COMPARE_PROMPT
 
 
 class MemoryConsolidator:
@@ -115,18 +135,9 @@ class MemoryConsolidator:
             logger.debug("Consolidation extraction failed", exc_info=True)
             return []
 
-        for item in items:
-            content = item.get("content", "").strip()
-            item_type = item.get("type", "note")
-            poignancy = int(item.get("poignancy", 5))
-            if content:
-                await self._memory.insert(
-                    content,
-                    memory_type=item_type,
-                    poignancy=poignancy,
-                    source="consolidation",
-                )
-                logger.debug("Consolidated: [%s|P%d] %s", item_type, poignancy, content[:60])
+        if items:
+            inserted = await self._compare_and_resolve(items)
+            logger.debug("Consolidation compared: %d items → %d inserted", len(items), inserted)
 
         for item in items:
             self._history.append({
@@ -165,3 +176,107 @@ class MemoryConsolidator:
                 except json.JSONDecodeError:
                     pass
         return []
+
+    async def _compare_and_resolve(self, new_items: list[dict]) -> int:
+        """将新提取的记忆与已有记忆比对，执行 insert/update/merge/skip。
+        返回实际新增的记忆数。失败时回退：全部 insert。"""
+        if not new_items or not self._memory.get_all():
+            # 无已有记忆，全部直接 insert
+            for item in new_items:
+                content = item.get("content", "").strip()
+                if content:
+                    await self._memory.insert(
+                        content,
+                        memory_type=item.get("type", "note"),
+                        poignancy=int(item.get("poignancy", 5)),
+                        source="consolidation",
+                    )
+            return len(new_items)
+
+        try:
+            # 1. 搜索相关已有记忆
+            related = await self._memory.search(
+                query_text=" ".join(item.get("content", "") for item in new_items),
+                top_k=10,
+            )
+            related_dicts = [
+                {"id": e.id, "type": e.memory_type, "content": e.text,
+                 "poignancy": e.poignancy, "timestamp": e.timestamp}
+                for e in related
+            ]
+
+            # 2. LLM 比对
+            prompt_template = _get_compare_prompt()
+            compare_prompt = prompt_template.format(
+                new_items=json.dumps(new_items, ensure_ascii=False, indent=2),
+                existing_items=json.dumps(related_dicts, ensure_ascii=False, indent=2),
+            )
+            result = await self._llm.think(
+                [{"role": "user", "content": compare_prompt}],
+                extra_body={"thinking": {"type": "disabled"}},
+            )
+            actions = self._parse_result(result.text)
+
+            # 3. 预校验
+            if not self._validate_actions(actions, new_items):
+                raise ValueError("Action validation failed")
+
+            # 4. 执行 — merge → update → insert
+            inserted = 0
+            for action in actions:
+                act = action.get("action", "insert")
+                if act == "merge":
+                    target_id = action.get("target_id", "")
+                    merged = action.get("merged_content", "")
+                    if target_id and merged:
+                        await self._memory.update_text(
+                            target_id, merged,
+                            poignancy=action.get("poignancy"),
+                            memory_type=action.get("type"),
+                        )
+                elif act == "update":
+                    target_id = action.get("target_id", "")
+                    new_content = action.get("new_content", "")
+                    if target_id and new_content:
+                        await self._memory.update_text(target_id, new_content)
+                elif act == "insert":
+                    content = action.get("content", "").strip()
+                    if content:
+                        await self._memory.insert(
+                            content,
+                            memory_type=action.get("type", "note"),
+                            poignancy=int(action.get("poignancy", 5)),
+                            source="consolidation",
+                        )
+                        inserted += 1
+                # skip — 无操作
+
+            return inserted
+
+        except Exception:
+            logger.debug("Consolidation compare failed, falling back to insert all",
+                         exc_info=True)
+            # 回退：全部 insert
+            for item in new_items:
+                content = item.get("content", "").strip()
+                if content:
+                    await self._memory.insert(
+                        content,
+                        memory_type=item.get("type", "note"),
+                        poignancy=int(item.get("poignancy", 5)),
+                        source="consolidation",
+                    )
+            return len(new_items)
+
+    @staticmethod
+    def _validate_actions(actions: list[dict], new_items: list[dict]) -> bool:
+        """预校验 LLM 输出的 actions 批次。返回 True 表示通过。"""
+        if not isinstance(actions, list):
+            return False
+        for action in actions:
+            act = action.get("action", "")
+            if act not in ("insert", "update", "merge", "skip"):
+                return False
+            if act in ("update", "merge") and not action.get("target_id"):
+                return False
+        return True
