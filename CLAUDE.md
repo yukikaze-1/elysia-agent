@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Elysia/Agent is a Python 3.13 AI companion application. The codebase has two main layers:
 
 - **`Module/`** — backend-agnostic library for AI companion infrastructure: LLM, STT, TTS, embedding, vector/document databases, output channels, config, logging, system prompt engine, tool framework.
-- **`core/`** — the Elysia Agent application: `Agent`, `CognitiveLoop`, `PersonalityEngine`, `EmotionEngine`, `CharacterReflector`, `MemoryConsolidator`, `SessionMemory`, `LongTermMemory`, `IdleMonitor`, task scheduler, debug info, character config.
+- **`core/`** — the Elysia Agent application: `Agent`, `CognitiveLoop`, `PersonalityEngine`, `EmotionEngine`, `CharacterReflector`, `MemoryConsolidator`, `MemoryReflector`, `SessionMemory`, `LongTermMemory`, `IdleMonitor`, task scheduler, debug info, character config.
 
 No build system (`pyproject.toml`, etc.) — plain Python. Frontend is vanilla HTML/CSS/JS (no framework, no build step).
 
@@ -66,11 +66,12 @@ core/
 │   ├── reflector.py      #   CharacterReflector: buffers 50 pairs → LLM reflection → submit to engine
 │   └── tests/
 ├── emotion_engine.py     # EmotionEngine: keyword + STT-driven mood tracking (L4 Mood)
-├── consolidator.py       # MemoryConsolidator: buffers 6 msgs → LLM extracts Fact/Preference/Event/Plan → Milvus
+├── consolidator.py       # MemoryConsolidator: buffers 6 msgs → LLM extracts Fact/Preference/Event/Plan → Milvus; now also compares against existing memories
 ├── memory/
 │   ├── session.py         # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive
-│   ├── long_term.py       # LongTermMemory: Milvus-backed vector search + reranking
-│   └── message_archive.py # MessageArchive: append-only MongoDB collection, paginated queries
+│   ├── long_term.py       # LongTermMemory: Milvus-backed vector search + reranking; _absorbed_ids for merge tracking
+│   ├── message_archive.py # MessageArchive: append-only MongoDB collection, paginated queries
+│   └── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM batch review)
 ├── character_config.py   # CharacterConfig: loads YAML + L1 Core personality text
 ├── prompt_assembler.py   # PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder
 ├── debug_info.py         # DebugInfo: aggregates agent state for /debug dashboard
