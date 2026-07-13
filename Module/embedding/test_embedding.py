@@ -318,8 +318,8 @@ class TestEmbeddingFactorySingleton:
         ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
             b1 = EmbeddingFactory.create("huggingface/bge-m3")
             b2 = EmbeddingFactory.create("huggingface/bge-large-zh-v1.5")
-        assert EmbeddingFactory._instances["huggingface/bge-m3"] is b1
-        assert EmbeddingFactory._instances["huggingface/bge-large-zh-v1.5"] is b2
+        assert EmbeddingFactory._instances["huggingface/bge-m3|{}"] is b1
+        assert EmbeddingFactory._instances["huggingface/bge-large-zh-v1.5|{}"] is b2
 
 
 # ============================================================

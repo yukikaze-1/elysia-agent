@@ -1,6 +1,7 @@
 """Embedding 后端注册表 + 工厂。按 provider/model 标识创建后端实例。"""
 
 import dataclasses
+import json
 from typing import TYPE_CHECKING
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
@@ -23,8 +24,10 @@ class EmbeddingFactory:
 
     @classmethod
     def create(cls, model_id: str, **kwargs) -> "EmbeddingBackend":
-        if model_id in cls._instances:
-            return cls._instances[model_id]
+        # 缓存 key 包含 kwargs，避免不同参数返回同一实例
+        cache_key = model_id + "|" + json.dumps(kwargs, sort_keys=True, default=str)
+        if cache_key in cls._instances:
+            return cls._instances[cache_key]
         if "/" not in model_id:
             raise ValueError(
                 f"Invalid model_id '{model_id}': expected 'provider/model-name' format"
@@ -53,7 +56,7 @@ class EmbeddingFactory:
         else:
             raise NotImplementedError(f"{provider} backend is not yet implemented")
 
-        cls._instances[model_id] = instance
+        cls._instances[cache_key] = instance
         return instance
 
     @classmethod
