@@ -13,6 +13,7 @@ from .websocket import WebSocketChannel
 # OutputChannel ABC
 # ============================================================
 
+@pytest.mark.unit
 class TestOutputChannel:
     def test_default_noops(self):
         class DefaultOnly(OutputChannel):
@@ -62,6 +63,7 @@ class TestOutputChannel:
 # ConsoleChannel
 # ============================================================
 
+@pytest.mark.unit
 class TestConsoleChannel:
     def test_capabilities(self):
         ch = ConsoleChannel()
@@ -90,6 +92,7 @@ class TestConsoleChannel:
 # WebSocketChannel
 # ============================================================
 
+@pytest.mark.service
 class TestWebSocketChannel:
     def test_capabilities(self):
         ws = MagicMock()
@@ -220,6 +223,7 @@ class _TestChannel(OutputChannel):
         pass
 
 
+@pytest.mark.service
 class TestOutputManager:
     def test_add_remove_channel(self):
         mgr = OutputManager()
@@ -367,6 +371,7 @@ class _FailingChannel(OutputChannel):
         pass
 
 
+@pytest.mark.service
 class TestOutputManagerErrorIsolation:
     @pytest.mark.asyncio
     async def test_failing_channel_does_not_block_others(self):
@@ -412,6 +417,7 @@ class TestOutputManagerErrorIsolation:
         await mgr.send(msg)  # should not raise
 
 
+@pytest.mark.service
 class TestWebSocketChannelErrorHandling:
     @pytest.mark.asyncio
     async def test_send_json_catches_connection_error(self, caplog):
@@ -433,6 +439,7 @@ class TestWebSocketChannelErrorHandling:
 # AUDIO capability + command + stream lifecycle
 # ============================================================
 
+@pytest.mark.service
 class TestAudioCapability:
     def test_console_no_audio(self):
         ch = ConsoleChannel()
@@ -466,6 +473,7 @@ class TestAudioCapability:
         assert ch.events[0][0] == "audio_end"
 
 
+@pytest.mark.service
 class TestCommandMethod:
     @pytest.mark.asyncio
     async def test_command_routes_to_capable_channels(self):
@@ -479,6 +487,7 @@ class TestCommandMethod:
         assert ch.events[0][1] == ("reload", {"plugin": "x"})
 
 
+@pytest.mark.service
 class TestStreamLifecycle:
     @pytest.mark.asyncio
     async def test_stream_with_typing_brackets(self):
@@ -547,6 +556,7 @@ class _FullFailingChannel(OutputChannel):
             raise RuntimeError("close fail")
 
 
+@pytest.mark.service
 class TestMoreErrorIsolation:
     @pytest.mark.asyncio
     async def test_on_text_delta_failure_isolated(self):
@@ -597,6 +607,7 @@ class TestMoreErrorIsolation:
 # WebSocketChannel — method coverage
 # ============================================================
 
+@pytest.mark.service
 class TestWebSocketChannelCoverage:
     @pytest.fixture
     def ws(self):
@@ -705,6 +716,7 @@ class TestWebSocketChannelCoverage:
 # ConsoleChannel — non-streaming paths
 # ============================================================
 
+@pytest.mark.unit
 class TestConsoleChannelNonStreaming:
     def test_on_message_str_path(self, capsys):
         """on_message with str when _delta_printed=False — short return。"""

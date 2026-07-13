@@ -30,6 +30,7 @@ def _make_agent():
 
 # ── tests ──────────────────────────────────────────────────────────────────
 
+@pytest.mark.unit
 class TestCreateApp:
     def test_registers_routes(self):
         from Module.input.server import create_app
@@ -90,6 +91,7 @@ class TestCreateApp:
         assert agent._state == RunState.RESTARTING
 
 
+@pytest.mark.service
 class TestCreateAppIntegration:
     """Integration tests using a real aiohttp test client."""
 
@@ -146,6 +148,7 @@ class TestCreateAppIntegration:
         assert agent._state == RunState.RESTARTING
 
 
+@pytest.mark.service
 class TestWebSocketHandler:
     @pytest.mark.asyncio
     async def test_text_message_triggers_process_message(self, aiohttp_client):
@@ -241,6 +244,7 @@ class TestWebSocketHandler:
 
 # ── _do_interrupt skip_if tests ──────────────────────────────────────────────
 
+@pytest.mark.unit
 class TestDoInterruptSkipIf:
     """VAD interrupt should skip during THINKING/EXECUTING, but allow
     during SPEAKING and when no skip_if is set (explicit button)."""
@@ -304,6 +308,7 @@ class TestDoInterruptSkipIf:
 # _handle_json edges
 # ============================================================
 
+@pytest.mark.unit
 class TestHandleJsonEdges:
     @pytest.mark.asyncio
     async def test_empty_text_not_processed(self):
@@ -354,6 +359,7 @@ class TestHandleJsonEdges:
 # Health / ready endpoints
 # ============================================================
 
+@pytest.mark.service
 class TestEndpoints:
     @pytest.fixture
     def app(self):
@@ -409,6 +415,7 @@ class TestEndpoints:
 # Tool plugin endpoints
 # ============================================================
 
+@pytest.mark.service
 class TestToolEndpoints:
     @pytest.fixture
     def app(self):
@@ -474,6 +481,7 @@ class TestToolEndpoints:
 # Fix assertion-less tests
 # ============================================================
 
+@pytest.mark.service
 class TestAssertionFixes:
     @pytest.mark.asyncio
     async def test_invalid_json_returns_error_message(self, aiohttp_client):

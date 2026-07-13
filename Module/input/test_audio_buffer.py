@@ -22,6 +22,7 @@ def _sil(samples: int) -> bytes:
     return struct.pack(f"<{samples}h", *([5] * samples))
 
 
+@pytest.mark.unit
 class TestPcmToWav:
     def test_header_structure(self):
         """WAV header should have RIFF, WAVE, fmt, data chunks with correct sizes."""
@@ -79,18 +80,21 @@ class TestAudioBuffer:
             return struct.pack(f"<{count}h", *([20000] * count))
         return _make
 
+    @pytest.mark.unit
     def test_vad_silence(self, make_silence):
         """Near-silence PCM should be classified as non-speech by VAD."""
         buf = AudioBuffer()
         chunk = make_silence(_FRAME_BYTES // 2)  # one 20ms frame at 16kHz
         assert buf._is_speech(chunk) is False
 
+    @pytest.mark.unit
     def test_vad_loud(self, make_loud):
         """Loud PCM should be classified as speech by VAD."""
         buf = AudioBuffer()
         chunk = make_loud(_FRAME_BYTES // 2)  # one 20ms frame at 16kHz
         assert buf._is_speech(chunk) is True
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_feed_loud_then_silence_triggers_stt(self, make_loud, make_silence):
         stt_results: list[str] = []
@@ -121,6 +125,7 @@ class TestAudioBuffer:
         assert stt_results[0].startswith("5249")  # "RI" in hex
         assert trans_calls == ["测试语音识别"]
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_short_segment_ignored(self, make_loud):
         stt_calls: list[bytes] = []
@@ -141,6 +146,7 @@ class TestAudioBuffer:
 
         assert len(stt_calls) == 0  # too short, should be ignored
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_reset_clears_buffer(self, make_loud, make_silence):
         stt_calls: list[bytes] = []
@@ -155,6 +161,7 @@ class TestAudioBuffer:
         await buf.flush()
         assert len(stt_calls) == 0
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_no_stt_callable(self, make_loud, make_silence):
         """When stt_transcribe is None, feed should not crash."""
@@ -166,6 +173,7 @@ class TestAudioBuffer:
         await buf.flush()
         # No crash is success
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_on_interrupt_called(self, make_loud):
         interrupt_calls: list[bool] = []
@@ -180,6 +188,7 @@ class TestAudioBuffer:
 
         assert len(interrupt_calls) == 1  # 3rd loud chunk triggers interrupt
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_interrupt_only_once_per_segment(self, make_loud):
         interrupt_calls: list[bool] = []
@@ -193,6 +202,7 @@ class TestAudioBuffer:
 
         assert len(interrupt_calls) == 1  # fires once, not on every chunk beyond 3
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_deafen_ignores_audio(self, make_loud):
         """deafen() makes feed() a no-op for the specified duration."""
@@ -208,6 +218,7 @@ class TestAudioBuffer:
         await buf.flush()
         assert len(stt_calls) == 0  # all audio ignored during deafen
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_deafen_clears_state(self, make_loud):
         """deafen() resets speaking state."""
@@ -220,6 +231,7 @@ class TestAudioBuffer:
         assert buf._speaking is False
         assert buf._chunks == []
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_flush_processes_remaining(self, make_loud):
         """flush() processes buffered audio even without silence gap."""
@@ -242,6 +254,7 @@ class TestAudioBuffer:
 # VAD frame processing edges (using module-level _loud/_sil)
 # ============================================================
 
+@pytest.mark.unit
 class TestVADFrameEdges:
     def test_multi_frame_chunk_all_speech(self):
         buf = AudioBuffer()
@@ -273,6 +286,7 @@ class TestVADFrameEdges:
 # Interrupt cooldown
 # ============================================================
 
+@pytest.mark.service
 class TestInterruptCooldown:
     @pytest.mark.asyncio
     async def test_cooldown_prevents_immediate_second_interrupt(self):
@@ -319,6 +333,7 @@ class TestInterruptCooldown:
 # STT timeout / exception
 # ============================================================
 
+@pytest.mark.service
 class TestSTTErrors:
     @pytest.mark.asyncio
     async def test_stt_timeout_does_not_crash(self):
@@ -359,6 +374,7 @@ class TestSTTErrors:
 # on_transcription=None
 # ============================================================
 
+@pytest.mark.service
 class TestOnTranscriptionNone:
     @pytest.mark.asyncio
     async def test_no_callback_does_not_crash(self):
@@ -380,6 +396,7 @@ class TestOnTranscriptionNone:
 # reset() preserves _deafen_until
 # ============================================================
 
+@pytest.mark.unit
 class TestResetDeafen:
     def test_reset_preserves_deafen_until(self):
         buf = AudioBuffer()
@@ -394,6 +411,7 @@ class TestResetDeafen:
 # Wake word gate tests
 # ============================================================
 
+@pytest.mark.service
 class TestWakeWordGate:
     @pytest.mark.asyncio
     async def test_wake_words_none_still_works(self):

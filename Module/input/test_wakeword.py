@@ -18,6 +18,7 @@ def _loud_bytes(count: int) -> bytes:
     return struct.pack(f"<{count}h", *([20000] * count))
 
 
+@pytest.mark.unit
 class TestWakeWordDetectorNoModels:
     def test_disabled_without_openwakeword(self):
         detector = WakeWordDetector(
@@ -31,6 +32,7 @@ class TestWakeWordDetectorNoModels:
         # No crash is success
 
 
+@pytest.mark.unit
 class TestWakeWordDetectorBuffer:
     def test_feed_noop_when_disabled_leaves_buffer_empty(self):
         """When no models loaded, feed() skips buffering entirely."""
@@ -60,6 +62,7 @@ class TestWakeWordDetectorBuffer:
         assert len(detector._buffer) == 0
 
 
+@pytest.mark.unit
 class TestWakeWordDetectorCallback:
     def test_no_callback_when_disabled(self):
         calls = []
