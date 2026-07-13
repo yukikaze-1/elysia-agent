@@ -7,7 +7,7 @@ from Module._common.test_helpers import make_test_method
 class TestMakeTestMethod:
     @pytest.mark.asyncio
     async def test_ok_returns_latency(self):
-        async def ok_check(self):
+        async def ok_check():
             return True
 
         test_fn = make_test_method(ok_check)
@@ -19,7 +19,7 @@ class TestMakeTestMethod:
 
     @pytest.mark.asyncio
     async def test_unhealthy_returns_false(self):
-        async def fail_check(self):
+        async def fail_check():
             return False
 
         test_fn = make_test_method(fail_check)
@@ -29,7 +29,7 @@ class TestMakeTestMethod:
 
     @pytest.mark.asyncio
     async def test_exception_returns_error(self):
-        async def boom(self):
+        async def boom():
             raise RuntimeError("connection refused")
 
         test_fn = make_test_method(boom)

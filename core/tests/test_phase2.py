@@ -474,7 +474,8 @@ class TestPromptAssembler:
         pa = PromptAssembler(char, session, lt)
         messages = await pa.build_messages("你好", "妖梦")
         system = messages[0]["content"]
-        assert "No specific memories triggered" in system
+        # 空记忆时不应包含 memory_bank 标签
+        assert "<memory_bank>" not in system
 
 
 # ============================================================================
