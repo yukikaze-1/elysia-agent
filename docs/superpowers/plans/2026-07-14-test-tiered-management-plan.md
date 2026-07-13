@@ -46,7 +46,7 @@ markers =
 
 Run: `cat Makefile` 检查现有 test targets。
 
-追加以下 targets：
+追加以下 targets（**注意：Makefile 缩进必须用 TAB，不能用空格**）：
 
 ```makefile
 # 测试分层命令
@@ -143,12 +143,13 @@ git commit -m "feat: test 分层管理基础设施 — 4 markers + Makefile targ
 
 ### Task 1: Batch 1 — Module/_common/ + Module/config/ + Module/logger/
 
-**Files 范围（7 文件）:**
+**Files 范围（8 文件）:**
 - `Module/_common/tests/test_registry_helpers.py` (11 tests)
 - `Module/_common/tests/test_test_helpers.py` (3 tests)
 - `Module/_common/tests/test_main_runner.py` (2 tests)
 - `Module/_common/tests/test_config_test_helpers.py` (4 tests — parametrized)
 - `Module/config/test_config.py` (64 tests)
+- `Module/config/test_preflight.py` (19 tests)
 - `Module/logger/test_logger.py` (33 tests)
 
 **预计 marker 分布:** 全部 `unit`
@@ -188,7 +189,7 @@ class TestRegistryHelpers:
 ```bash
 conda run -n Elysia python -m pytest Module/_common/tests/ Module/config/test_config.py Module/logger/test_logger.py -v -q
 ```
-Expected: 全绿（~117 tests passed）
+Expected: 全绿（~136 tests passed）
 
 - [ ] **Step 3: 验证 marker 查询有效**
 
@@ -323,8 +324,8 @@ conda run -n Elysia python -m pytest Module/database/ Module/embedding/ -v -q
 ### Task 7: Batch 7 — Module/task_system/
 
 **Files 范围（16 文件）:**
-- `Module/task_system/tests/unit/` (10 files)
-- `Module/task_system/tests/integration/` (6 files)
+- `Module/task_system/tests/unit/` (11 files)
+- `Module/task_system/tests/integration/` (5 files)
 
 **预计 marker 分布:** unit（unit/）+ integration（integration/）
 
