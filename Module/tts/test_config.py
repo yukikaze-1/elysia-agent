@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 from Module._common.config_test_helpers import make_config_test_classes
 from Module.tts.config import TTSConfig
 from Module.tts.registry import TTSFactory
+
+pytestmark = pytest.mark.unit
 
 # 替换原来的 TestTTSConfigDefaults（工厂生成，取 [0]）
 TestTTSConfigDefaults = make_config_test_classes(

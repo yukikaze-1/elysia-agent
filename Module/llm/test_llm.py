@@ -9,6 +9,8 @@ from .openai_compat import OpenAICompatBackend
 from .protocol import LLMBackend
 from .registry import LLMFactory
 
+pytestmark = pytest.mark.service
+
 
 @pytest.fixture(autouse=True)
 def _set_llm_urls(monkeypatch):

@@ -8,6 +8,8 @@ from .protocol import STTBackend
 from .registry import STTFactory
 from .sensevoice import SenseVoiceBackend
 
+pytestmark = pytest.mark.service
+
 
 # ============================================================
 # Protocol — ABC constraints

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 from Module._common.config_test_helpers import make_config_test_classes
 from Module.llm.config import LLMConfig
 from Module.llm.registry import LLMFactory
+
+pytestmark = pytest.mark.unit
 
 # 替换原来的 TestLLMConfigDefaults（工厂生成，取 [0]）
 TestLLMConfigDefaults = make_config_test_classes(

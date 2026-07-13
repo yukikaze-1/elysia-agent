@@ -9,6 +9,8 @@ from .registry import TTSFactory
 from .minimax_tts import MiniMaxTTSBackend
 from .text_preprocess import strip_all_markup, strip_action_only, strip_for_minimax
 
+pytestmark = pytest.mark.service
+
 
 @pytest.fixture(autouse=True)
 def _set_minimax_url(monkeypatch):

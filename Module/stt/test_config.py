@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 from Module._common.config_test_helpers import make_config_test_classes
 from Module.stt.config import STTConfig
 from Module.stt.registry import STTFactory
+
+pytestmark = pytest.mark.unit
 
 # 替换原来的 TestSTTConfigDefaults（工厂生成，取 [0]）
 TestSTTConfigDefaults = make_config_test_classes(
