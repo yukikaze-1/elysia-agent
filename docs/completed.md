@@ -2,6 +2,11 @@
 
 ## 已完成
 
+### 2026-07-14: 提醒工具 coroutine 序列化 bug（已修复，归档）
+
+- **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** — `_remind()` 生成 coroutine → `scheduler.dispatch_background()` → checkpoint JSON 序列化时 coroutine 不可序列化，跨重启丢失。
+- **已在 `39fa778` 修复**: 改用 `asyncio.ensure_future(_remind())` 绕过 scheduler 持久化，注释说明取舍。
+
 ### 2026-07-14: 安全修复 — code-review-report 遗留严重问题清零
 
 - **Milvus `_metric_type` 跨集合污染** (`milvus.py:39`): `self._metric_type` 单值 → `self._metric_types: dict[str, str]` per-collection 字典。`create_collection` 按名存储，`search` 按名读取，fallback L2。
