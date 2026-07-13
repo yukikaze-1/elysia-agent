@@ -13,7 +13,7 @@ import { bufferAudioChunk, finalizeStream } from './audio.js';
 import { toggleMic, stopMic, flashWakeIndicator } from './mic.js';
 import { setupSettings, updateCapabilityIndicators, setModelTag } from './settings.js';
 import { setupTools } from './tools.js';
-import { restoreChat, restoreFromServer, createCodeBlock, createMarkdownBubble } from './persistence.js';
+import { restoreFromServer, createCodeBlock, createMarkdownBubble } from './persistence.js';
 import { SEND_COOLDOWN_MS } from './config.js';
 
 /* ---- STT emoji mappings (与服务端同步) ---- */
@@ -199,8 +199,6 @@ async function uploadImage(file) {
 
 /* ---- 初始化 ---- */
 function init() {
-  restoreChat();
-
   connect(handleMessage);
 
   setupScrollLoader();
