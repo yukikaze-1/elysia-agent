@@ -1219,12 +1219,33 @@ function renderDbPanels(status, ltm, sessions, archive) {
   _sessionData = sessions.sessions || [];
   _archiveData = archive || { messages: [], has_more: false, total: 0 };
 
+  // 保存当前 UI 状态——DOM 重建后会丢失
+  const ltmSearchVal = document.getElementById('ltm-search')?.value || '';
+  const ltmTypeVal = document.getElementById('ltm-type-filter')?.value || '';
+  const archiveSearchVal = document.getElementById('archive-search')?.value || '';
+  const archiveRoleVal = document.getElementById('archive-role-filter')?.value || '';
+  // 保存面板折叠状态
+  const collapsed = {};
+  document.querySelectorAll('#db-panels .db-card-body').forEach((el, i) => {
+    collapsed[i] = el.style.display === 'none';
+  });
+
   const ltmPanel = renderLtmPanel(status);
   const sessionPanel = renderSessionPanel(status);
   const archivePanel = renderArchivePanel(status);
   document.getElementById('db-panels').innerHTML = ltmPanel + sessionPanel + archivePanel;
 
-  // 绑定搜索事件 — 纯 CSS 过滤，不重渲染
+  // 恢复搜索/过滤值
+  const ltmS = document.getElementById('ltm-search'); if (ltmS) ltmS.value = ltmSearchVal;
+  const ltmF = document.getElementById('ltm-type-filter'); if (ltmF) ltmF.value = ltmTypeVal;
+  const archS = document.getElementById('archive-search'); if (archS) archS.value = archiveSearchVal;
+  const archF = document.getElementById('archive-role-filter'); if (archF) archF.value = archiveRoleVal;
+  // 恢复折叠状态
+  document.querySelectorAll('#db-panels .db-card-body').forEach((el, i) => {
+    if (collapsed[i]) { el.style.display = 'none'; }
+  });
+
+  // 绑定搜索事件
   document.getElementById('ltm-search')?.addEventListener('input', filterLtm);
   document.getElementById('ltm-type-filter')?.addEventListener('change', filterLtm);
   // 绑定归档面板事件
@@ -1526,8 +1547,19 @@ async function refreshArchive() {
     const panels = document.getElementById('db-panels');
     const cards = panels.querySelectorAll('.card');
     if (cards.length >= 3) {
+      // 保存 archive 面板折叠状态
+      const body = cards[2].querySelector('.db-card-body');
+      const wasCollapsed = body && body.style.display === 'none';
       const status = { archive: { mongodb_ok: true } };
       cards[2].outerHTML = renderArchivePanel(status);
+      // 恢复折叠状态
+      if (wasCollapsed) {
+        const newBody = panels.querySelectorAll('.card')[2]?.querySelector('.db-card-body');
+        if (newBody) newBody.style.display = 'none';
+      }
+      // 恢复搜索/过滤值
+      const archS = document.getElementById('archive-search'); if (archS) archS.value = search;
+      const archF = document.getElementById('archive-role-filter'); if (archF) archF.value = role;
       // 重新绑定事件
       document.getElementById('archive-search')?.addEventListener('input', filterArchive);
       document.getElementById('archive-role-filter')?.addEventListener('change', filterArchive);

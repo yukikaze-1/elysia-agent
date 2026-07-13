@@ -67,14 +67,14 @@ def setup(verbose: bool = False) -> None:
 
     # ---- Library loggers → files (DEBUG level) ----
 
-    _file_logger("pymongo", "mongo.log", logging.DEBUG)
-    _file_logger("pymilvus", "milvus.log", logging.DEBUG)
-    _file_logger("milvus_client", "milvus.log", logging.DEBUG)
-    _file_logger("httpx", "http.log", logging.DEBUG)
-    _file_logger("httpcore", "http.log", logging.DEBUG)
-    _file_logger("openai", "http.log", logging.DEBUG)
-    _file_logger("urllib3", "http.log", logging.DEBUG)
-    _file_logger("sentence_transformers", "embedding.log", logging.DEBUG)
+    _file_logger("pymongo", "mongo.log", logging.WARNING)
+    _file_logger("pymilvus", "milvus.log", logging.WARNING)
+    _file_logger("milvus_client", "milvus.log", logging.WARNING)
+    _file_logger("httpx", "http.log", logging.WARNING)
+    _file_logger("httpcore", "http.log", logging.WARNING)
+    _file_logger("openai", "http.log", logging.WARNING)
+    _file_logger("urllib3", "http.log", logging.WARNING)
+    _file_logger("sentence_transformers", "embedding.log", logging.WARNING)
     _file_logger("transformers", "embedding.log", logging.WARNING)
     _file_logger("huggingface_hub", "embedding.log", logging.WARNING)
     _file_logger("core.memory.long_term", "embedding.log", logging.DEBUG)
@@ -115,7 +115,7 @@ def setup(verbose: bool = False) -> None:
     _file_logger("torch", "torch.log", logging.WARNING)
 
     # Motor (MongoDB async driver) → mongo log
-    _file_logger("motor", "mongo.log", logging.DEBUG)
+    _file_logger("motor", "mongo.log", logging.WARNING)
 
     # ---- Conversation content → log/conversation.log ----
     global _conv_logger

@@ -21,3 +21,4 @@ log.txt
 prompt_log.txt
 docs/superpowers/
 data/*.json
+.vscode/
