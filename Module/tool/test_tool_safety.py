@@ -1,6 +1,8 @@
 """安全函数单元测试 — _resolve_sandbox_path, _validate_path, _coerce_value, validate_args。"""
 import pytest
 from pathlib import Path
+
+pytestmark = pytest.mark.unit
 from Module.tool.safety import (
     _resolve_sandbox_path, _validate_path, _coerce_value, validate_args, SafetyProfile,
 )

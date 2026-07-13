@@ -21,6 +21,7 @@ from Module.tool.manager import ToolManager
 # ErrorType
 # ============================================================================
 
+@pytest.mark.unit
 class TestErrorType:
     def test_all_values_present(self):
         expected = {
@@ -48,6 +49,7 @@ class TestErrorType:
 # Capability
 # ============================================================================
 
+@pytest.mark.unit
 class TestCapability:
     def test_values(self):
         assert Capability.NETWORK.value == "network"
@@ -67,6 +69,7 @@ class TestCapability:
 # ToolContext
 # ============================================================================
 
+@pytest.mark.unit
 class TestToolContext:
     def test_defaults(self):
         tc = ToolContext()
@@ -93,6 +96,7 @@ class TestToolContext:
 # PluginContext
 # ============================================================================
 
+@pytest.mark.unit
 class TestPluginContext:
     def test_defaults(self):
         pc = PluginContext()
@@ -119,6 +123,7 @@ class TestPluginContext:
 # ToolPlugin
 # ============================================================================
 
+@pytest.mark.unit
 class TestToolPlugin:
     def test_base_class_defaults(self):
         """未配置的子类应有合理的默认值。"""
@@ -198,6 +203,7 @@ class TestToolPlugin:
 # SafetyProfile
 # ============================================================================
 
+@pytest.mark.unit
 class TestSafetyProfile:
     def test_defaults(self):
         sp = SafetyProfile()
@@ -261,6 +267,7 @@ class TestSafetyProfile:
 # Token / URL 辅助函数
 # ============================================================================
 
+@pytest.mark.unit
 class TestTokenEstimation:
     def test_english(self):
         text = "Hello world this is a test sentence"
@@ -281,6 +288,7 @@ class TestTokenEstimation:
         assert _estimate_tokens("") == 0
 
 
+@pytest.mark.unit
 class TestTokenTruncation:
     def test_no_truncation_needed(self):
         text = "short"
@@ -302,6 +310,7 @@ class TestTokenTruncation:
         assert "...[省略约" in result
 
 
+@pytest.mark.unit
 class TestURLValidation:
     def test_invalid_scheme(self):
         err = _validate_url("ftp://example.com", SafetyProfile())
@@ -330,6 +339,7 @@ class TestURLValidation:
 # SafetyPipeline
 # ============================================================================
 
+@pytest.mark.unit
 class TestSafetyPipeline:
     def test_initial_stats(self):
         sp = SafetyPipeline()
@@ -350,6 +360,7 @@ class TestSafetyPipeline:
 # ToolManager — 基础操作
 # ============================================================================
 
+@pytest.mark.service
 class TestToolManagerEmpty:
     """空 ToolManager 测试。"""
 
@@ -405,6 +416,7 @@ class TestToolManagerEmpty:
         assert "ToolManager" in repr(tm)
 
 
+@pytest.mark.service
 class TestToolManagerLoad:
     """ToolManager load_all / shutdown 测试。"""
 
@@ -471,6 +483,7 @@ class FailingPlugin(ToolPlugin):
         raise ValueError("boom")
 
 
+@pytest.mark.service
 class TestToolManagerExecute:
     """ToolManager execute() 测试。"""
 
@@ -544,6 +557,7 @@ class SchemaPlugin(ToolPlugin):
     safety = SafetyProfile()
 
 
+@pytest.mark.service
 class TestToolManagerDefinitions:
     """ToolManager definitions() 测试。"""
 
@@ -593,6 +607,7 @@ class TestToolManagerDefinitions:
 # ToolManager — 能力状态
 # ============================================================================
 
+@pytest.mark.service
 class TestToolManagerCapabilityStatus:
     """capability_status 测试。"""
 
@@ -617,6 +632,7 @@ class TestToolManagerCapabilityStatus:
 # ToolManager — HITL 审批
 # ============================================================================
 
+@pytest.mark.service
 class TestToolManagerHITL:
     """HITL 审批测试。"""
 
@@ -677,6 +693,7 @@ class StreamPlugin(ToolPlugin):
         yield ToolResult.ok(name=self.name, content="all done", duration_ms=0)
 
 
+@pytest.mark.service
 class TestToolManagerStream:
     """ToolManager execute_stream() 测试。"""
 
@@ -701,6 +718,7 @@ class TestToolManagerStream:
 # Pydantic 格式化
 # ============================================================================
 
+@pytest.mark.unit
 class TestPydanticErrorFormatting:
     def test_format_simple_error(self):
         from pydantic import ValidationError
@@ -717,6 +735,7 @@ class TestPydanticErrorFormatting:
 # ToolParameter — 参数定义与 JSON Schema 导出
 # ============================================================================
 
+@pytest.mark.unit
 class TestToolParameter:
     """ToolParameter 数据类与 to_json_schema_property() 测试。"""
 
@@ -798,6 +817,7 @@ class TestToolParameter:
 # MediaItem — 媒体数据
 # ============================================================================
 
+@pytest.mark.unit
 class TestMediaItem:
     """MediaItem 数据类测试。"""
 
@@ -825,6 +845,7 @@ class TestMediaItem:
 # ToolEmitter — 进度上报与取消检测
 # ============================================================================
 
+@pytest.mark.service
 class TestToolEmitter:
     """ToolEmitter 进度上报与 is_cancelled() 测试。"""
 
@@ -897,6 +918,7 @@ class TestToolEmitter:
 # ToolResult.llm_content — LLM 上下文生成
 # ============================================================================
 
+@pytest.mark.unit
 class TestToolResultExtended:
     """ToolResult.llm_content 属性测试。"""
 
@@ -968,6 +990,7 @@ class TestToolResultExtended:
 # ToolManager — definitions (anthropic/gemini/invalid)
 # ============================================================
 
+@pytest.mark.service
 class TestToolManagerDefinitionsExtended:
     @pytest.mark.asyncio
     async def test_definitions_anthropic_format(self):
@@ -993,6 +1016,7 @@ class TestToolManagerDefinitionsExtended:
 # ToolManager — cancel_all / executing_now / history
 # ============================================================
 
+@pytest.mark.service
 class TestToolManagerControl:
     @pytest.mark.asyncio
     async def test_cancel_all_clears_executing(self):
@@ -1035,6 +1059,7 @@ class SimplePlugin(ToolPlugin):
     safety = SafetyProfile()
 
 
+@pytest.mark.service
 class TestReloadPlugin:
     @pytest.mark.asyncio
     async def test_reload_nonexistent_returns_false(self):
@@ -1057,6 +1082,7 @@ class TestReloadPlugin:
 # ToolManager — set_hitl_broadcast
 # ============================================================
 
+@pytest.mark.service
 class TestSetHITLBroadcast:
     @pytest.mark.asyncio
     async def test_set_hitl_broadcast_registers_callback(self):
@@ -1089,6 +1115,7 @@ class SlowEchoPlugin(ToolPlugin):
         return ToolResult.ok("slow_echo", "done", 50)
 
 
+@pytest.mark.service
 class TestConcurrentExecution:
     @pytest.mark.asyncio
     async def test_concurrent_execute_tracks_correctly(self):
