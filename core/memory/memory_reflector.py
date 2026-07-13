@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # MemoryReflector prompt — 文件路径，运行时加载
-REFLECTOR_PROMPT_PATH = Path("prompt/memoryReflector.j2")
+REFLECTOR_PROMPT_PATH = Path("prompt/MemoryReflector.j2")
 _REFLECTOR_PROMPT: str | None = None
 
 
@@ -199,9 +199,10 @@ class MemoryReflector:
              "poignancy": e.poignancy, "timestamp": e.timestamp}
             for e in group
         ]
-        prompt = _get_reflector_prompt().format(
-            memories=json.dumps(entries_json, ensure_ascii=False, indent=2),
-            last_summary=json.dumps(self._last_summary, ensure_ascii=False),
+        prompt = _get_reflector_prompt().replace(
+            "{memories}", json.dumps(entries_json, ensure_ascii=False, indent=2),
+        ).replace(
+            "{last_summary}", json.dumps(self._last_summary, ensure_ascii=False),
         )
         result = await self._llm.think(
             [{"role": "user", "content": prompt}],

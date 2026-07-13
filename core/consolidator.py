@@ -47,7 +47,7 @@ def _get_compare_prompt() -> str:
     global _COMPARE_PROMPT
     if _COMPARE_PROMPT is not None:
         return _COMPARE_PROMPT
-    path = Path("prompt/consolidationCompare.j2")
+    path = Path("prompt/ConsolidationCompare.j2")
     if path.exists():
         _COMPARE_PROMPT = path.read_text(encoding="utf-8")
     else:
@@ -207,9 +207,10 @@ class MemoryConsolidator:
 
             # 2. LLM 比对
             prompt_template = _get_compare_prompt()
-            compare_prompt = prompt_template.format(
-                new_items=json.dumps(new_items, ensure_ascii=False, indent=2),
-                existing_items=json.dumps(related_dicts, ensure_ascii=False, indent=2),
+            compare_prompt = prompt_template.replace(
+                "{new_items}", json.dumps(new_items, ensure_ascii=False, indent=2),
+            ).replace(
+                "{existing_items}", json.dumps(related_dicts, ensure_ascii=False, indent=2),
             )
             result = await self._llm.think(
                 [{"role": "user", "content": compare_prompt}],
