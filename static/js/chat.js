@@ -573,7 +573,7 @@ async function loadMoreMessages() {
     wrap.insertBefore(el, wrap.firstChild);
   } finally {
     isLoadingMore = false;
-    removeElement(indicator);
+    indicator.remove();
   }
 }
 
