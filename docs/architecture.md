@@ -115,7 +115,7 @@
   ┌──────────────────────────────────────────────────────────────────┐  │
   │  CognitiveLoop._think_loop()                                       │  │
   │                                                                   │  │
-  │  for round in 0..MAX_TOOL_ROUNDS(3):                              │
+  │  for round in 0..MAX_TOOL_ROUNDS(5):                              │
   │    LLM.stream_think(messages, tools=tool_defs)                    │
   │      │                                                            │
   │      ├── content delta ──► SentenceBuffer.feed(token)             │
@@ -143,7 +143,7 @@
     │    └── .then() → flushTextQueue()  (文字/音频同步)                │
     ├── expression → avatar ring CSS animation                         │
     ├── state → status indicator (pulse)                               │
-    └── localStorage persistence (debounce 500ms)                      │
+    └── 消息由 WebSocket session 推送 (无 localStorage 缓存)                      │
 ```
 
 ### 2.1 文字/语音同步（绑定发送）
@@ -219,9 +219,9 @@ _BACKENDS = {
 
 | 模块 | Backend | 协议 | 说明 |
 |------|---------|------|------|
-| `Module.llm` | `deepseek`, `openai`, `ollama` | OpenAI-compatible | `stream_think()` 结构化流式 (content + tool_calls 并行检测) |
-| `Module.stt` | `sensevoice` | HTTP API | `localhost:20042`，返回文本 + 情绪标签 + 音频事件 |
-| `Module.tts` | `gpt-sovits` | HTTP streaming | `synthesize_stream()` 异步生成器，逐 chunk WAV |
+| `Module.llm` | `deepseek`, `openai`, `ollama`, `mimo`, `custom` | OpenAI-compatible | `stream_think()` 结构化流式 (content + tool_calls 并行检测) |
+| `Module.stt` | `sensevoice`, `custom` | HTTP API | SenseVoice: localhost:20042，返回文本 + 情绪标签 + 音频事件；Custom: OpenAI-compatible |
+| `Module.tts` | `gpt-sovits`, `minimax`, `custom` | HTTP API | `synthesize_stream()` 异步生成器，逐 chunk WAV；MiniMax: speech-2.8-hd，hex 编码音频 |
 | `Module.embedding` | `huggingface`, `openai` | 本地模型 / API | HF 离线加载 + GPU 兼容 (sm_<70 → CPU fallback) |
 | `Module.database.vectordb` | `milvus` | gRPC | ANN 语义搜索 |
 | `Module.database.documentdb` | `mongodb` | motor async | `serverSelectionTimeoutMS=3000` |
@@ -243,6 +243,9 @@ class AppConfig:
     server: ServerConfig = ConfigField(default_factory=ServerConfig)
     tts: TTSConfig = ConfigField(default_factory=TTSConfig)
     stt: STTConfig = ConfigField(default_factory=STTConfig)
+    wake_word: WakeWordConfig = ConfigField(default_factory=WakeWordConfig)
+    live2d: Live2DConfig = ConfigField(default_factory=Live2DConfig)
+    vision: VisionConfig = ConfigField(default_factory=VisionConfig)
 
 # 使用
 config = ConfigLoader(AppConfig, yaml_path="config.yaml").load()
@@ -342,7 +345,7 @@ ReAct 调度器的完整实现 (~400 行)：
 
 ```python
 class CognitiveLoop:
-    MAX_TOOL_ROUNDS = 3  # 防止无限工具调用
+    MAX_TOOL_ROUNDS = 5  # 防止无限工具调用
 
     async def process(self, user_message, user_name, stt_emotion, stt_events):
         async with self._process_lock:          # 串行化并发调用
@@ -448,7 +451,7 @@ SPLIT_PATTERN = re.compile(r"([。！？.!?\n])")
   flush() → 返回剩余未完成文本
 
 配置项: split_pattern, min_sentence_len, hold_short, merge_consecutive
-70 个单元测试覆盖边界
+65 个单元测试覆盖边界
 ```
 
 ### 4.7 提示词组装 (PromptAssembler + SystemPromptManager)
@@ -502,7 +505,7 @@ proactive.enabled: false → 整个机制关闭
 | 层 | 存储 | 生命周期 | 容量 | 用途 |
 |------|------|------|------|------|
 | Working | 内存 (单次推理) | 单次 LLM 调用 | 动态 | PromptAssembler 组装 |
-| Session | MongoDB / deque | 跨进程重启 | config.yaml 可配 (默认 200) | 对话上下文 + 运行时参数 |
+| Session | MongoDB / deque | 跨进程重启 | config.yaml 可配 (默认 50) | 对话上下文 + 运行时参数 |
 | Long-term | Milvus + 内存 | 跨会话 | 无上限 | 事实/偏好/计划 语义搜索 |
 
 ### 5.2 SessionMemory
@@ -643,13 +646,28 @@ Browser Microphone
 ### 6.3 WebSocket 服务器 (Module/input/server.py)
 
 ```
-aiohttp Application:
-  GET  /            → static/index.html
-  GET  /debug       → static/debug.html
-  GET  /debug/api   → debug_info.collect() JSON
-  GET  /ws          → WebSocket handler
-  POST /shutdown    → agent._running = False
-  GET  /shutdown    → 同上
+aiohttp Application (30+ 路由):
+  GET  /                       → static/index.html
+  GET  /debug                  → static/debug.html
+  GET  /ws                     → WebSocket handler
+  GET  /health, /ready         → 健康检查
+  POST /shutdown, /restart     → 关闭/重启
+  POST /api/chat               → JSON chat API (curl 测试)
+  GET  /api/messages           → 消息归档分页查询
+  POST /api/images             → 图片上传
+  GET  /api/providers          → 模型 provider 列表
+  POST /api/providers          → 添加自定义 provider
+  POST /api/providers/test     → 连通性测试
+  GET  /tools                  → 工具插件列表
+  POST /tools/reload           → 热重载工具插件
+  GET  /debug/api              → DebugInfo 完整 JSON
+  GET  /debug/api/prompts/{n}  → Prompt 详情
+  GET  /debug/api/responses/{n}→ Response 详情
+  GET  /debug/api/db-status    → 数据库连接状态
+  GET/POST/PUT/DELETE /debug/api/ltm[/{id}] → LTM CRUD
+  GET/DELETE /debug/api/sessions[/{id}]     → Session 管理
+  GET/PUT/DELETE /debug/api/archive[/{id}]  → Archive CRUD
+  GET  /debug/api/tasks/stream → TaskSystem SSE 事件流
 
 每个 WS 连接:
   └── 创建 WebSocketChannel → OutputManager
@@ -671,7 +689,7 @@ aiohttp Application:
 - AudioContext 16kHz → Int16 PCM → WS binary
 - `appendDelta()` 合并到同一 bubble，`finalizeDelta()` 存档
 - `audioQueue` + `playNext()` 串行播放
-- localStorage 持久化 (debounce 500ms)
+- 消息不再使用 localStorage 缓存，每次页面加载通过 WebSocket 从服务端拉取
 - 响应式 (窄屏 <600px 折叠侧栏)
 
 ---
@@ -689,7 +707,7 @@ llm:
   model: deepseek/deepseek-v4-flash  # LLM 模型标识
 
 memory:
-  session_max_messages: 200          # 会话窗口大小
+  session_max_messages: 50           # 会话窗口大小
 
 server:
   host: 0.0.0.0
@@ -739,10 +757,9 @@ proactive:
 **标签页：**
 | 标签 | 数据来源 | 功能 |
 |------|---------|------|
-| System | `/debug/api` 轮询 | FSM 状态、Session/LTM、工具执行、Token 消耗、延迟统计、内存占用、Scheduler |
-| 数据库 | `/debug/api/ltm` + `/debug/api/sessions` | 长期记忆 CRUD、Session 管理 |
-| 任务 | `/debug/api/tasks/stream` SSE | TaskSystem DAG 可视化 (vis-network) |
-| Config | Provider REST API | LLM/STT/TTS 端点管理、连通性测试 |
+| 概览 | `/debug/api` 轮询 | 12+ 卡片面板：System、Memory（含 Session Params 可展开）、Latency、Process Memory、Scheduler、Token、Prompt 查看器、Raw Response、LTM、Tools、Tool History、Consolidation、Character Reflector、PersonalityEngine |
+| 数据库 | `/debug/api/db-status` + `/debug/api/ltm` + `/debug/api/sessions` + `/debug/api/archive` | LTM CRUD + 分页 + 搜索；Session 管理（从 archive 权威源读取，限 20 条）；Archive CRUD |
+| 任务 | `/debug/api/tasks/stream` SSE | TaskSystem 实时监控 + DAG 可视化 (vis-network) |
 
 ---
 
@@ -754,7 +771,7 @@ class Agent:
         # L0: OutputManager + ConsoleChannel
         # Character: CharacterConfig.from_yaml(config.agent.character)
         # L2: SessionMemory + LongTermMemory + ToolManager
-        #     + register 3 tools
+        #     + register 12 tools (ALL_PLUGINS)
         # L1: EventBus + AgentFSM + LLMAdapter + PromptAssembler
         #     + EmotionEngine + MemoryConsolidator
         #     + CognitiveLoop + IdleMonitor
@@ -818,7 +835,7 @@ Child loggers (core.cognitive_loop 等)
 ## 11. 测试架构
 
 ```
-~1,366 tests total (305 TaskSystem unit + 36 TaskSystem integration + ~367 core + ~598 Module + ~82 tools)
+~1,325 tests total (305 TaskSystem unit + 36 TaskSystem integration + ~320 core + ~580 Module + ~84 tools)
 
 core/tests/
 ├── test_phase1.py             # L1 认知核心 (32 tests)
@@ -869,66 +886,87 @@ Agent/
 │
 ├── Module/                  # L0 基础设施层
 │   ├── _common/              #   共享工具 (registry_helpers, test_helpers, main_runner, ...)
-│   ├── llm/                 # LLM: DeepSeek / OpenAI / Ollama
-│   ├── stt/                 # STT: SenseVoice / OpenAI-compatible
-│   ├── tts/                 # TTS: GPT-SoVits / OpenAI-compatible
+│   ├── llm/                 # LLM: DeepSeek / OpenAI / Ollama / Mimo / Custom
+│   ├── stt/                 # STT: SenseVoice / Custom (OpenAI-compatible)
+│   ├── tts/                 # TTS: GPT-SoVits / MiniMax / Custom (OpenAI-compatible)
 │   ├── embedding/           # Embedding: HuggingFace / OpenAI
 │   ├── output/              # Output: Console + WebSocket 多通道
-│   ├── config/              # Config: YAML + env 加载器 + 验证
+│   ├── config/              # Config: YAML + env 加载器 + preflight
 │   ├── logger/              # Logger: caller-aware 工厂
-│   ├── prompt/              # Prompt: System Prompt 引擎 + Section Provider
+│   ├── system_prompt/       # System Prompt 引擎 + Section Provider + 12 templates
 │   ├── schema/              # Schema: 共享数据模型
-│   ├── database/            # Database: Milvus / MongoDB / GraphDB
+│   ├── database/            # Database: Milvus / MongoDB / GraphDB (stub)
 │   ├── tool/                # Tool: ToolPlugin框架 + SafetyPipeline + ToolManager
 │   ├── input/               # Input: AudioBuffer (VAD) + WebSocket server
 │   ├── task_system/         # TaskSystem: 异步任务编排 (Planner/Orchestrator/Executor)
 │   └── bench/               # Bench: 延迟基准
 │
-├── core/                    # L1 认知控制
-│   ├── schema.py            #   共享类型 (AgentState, EventType, EventPriority)
+├── core/                    # L1 认知控制 + L2 记忆
+│   ├── agent.py             #   组件组装 + 生命周期 + TaskSystem 集成
+│   ├── cognitive_loop.py    #   ReAct 调度器
 │   ├── event_bus.py         #   优先级事件总线
 │   ├── agent_fsm.py         #   五状态机
-│   ├── cognitive_loop.py    #   ReAct 调度器 + submit_task 拦截
 │   ├── block_filter.py      #   流式块过滤 + 结构化块解析
 │   ├── tts_stream.py        #   TTS 流式播放管理 (TTSStreamManager)
 │   ├── tool_call_parser.py  #   流式 tool call 合并/归一化
 │   ├── text_utils.py        #   文本提取 + MessageObj
+│   ├── timing.py            #   TimingClock 延迟统计
 │   ├── llm_adapter.py       #   LLM 适配器
 │   ├── prompt_assembler.py  #   提示词组装 + 性格引擎数据注入
-│   ├── emotion_engine.py    #   情绪引擎
+│   ├── emotion_engine.py    #   情绪引擎 (mood + expression)
 │   ├── sentence_buffer.py   #   分句缓冲
-│   ├── consolidator.py      #   记忆沉淀 (缓冲6条+rerank)
 │   ├── idle_monitor.py      #   空闲监控
-│   ├── character_config.py  #   角色配置
-│   ├── app_config.py        #   App 配置
-│   ├── log_setup.py         #   日志系统
-│   ├── token_tracker.py     #   Token 消耗统计 + 持久化
-│   ├── prompt_recorder.py   #   LLM Prompt 记录器 (环形缓冲)
-│   ├── response_recorder.py #   LLM Response 记录器 (环形缓冲)
-│   ├── task.py              #   调度任务数据模型
 │   ├── task_scheduler.py    #   Worker Pool 调度器
 │   ├── message_id.py        #   消息 ID 生成
 │   ├── debug_info.py        #   /debug 数据聚合
-│   ├── agent.py             #   组件组装 + 生命周期 + TaskSystem 集成
-│   ├── tools/               #   Agent 工具集 (12 个插件)
+│   ├── character_config.py  #   角色配置
+│   ├── app_config.py        #   App 配置
+│   ├── custom_providers.py  #   自定义 provider 管理
+│   ├── log_setup.py         #   日志系统
+│   ├── token_tracker.py     #   Token 消耗统计
+│   ├── prompt_recorder.py   #   Prompt 记录器
+│   ├── response_recorder.py #   Response 记录器
+│   ├── personality/         #   性格引擎子系统
+│   │   ├── engine.py        #     4-layer model (L1-L4)
+│   │   └── reflector.py     #     CharacterReflector
 │   ├── memory/              #   记忆子系统
-│   │   ├── session.py       #     会话上下文 (MongoDB + deque)
-│   │   └── long_term.py     #     长期记忆 (Milvus + Embedding)
+│   │   ├── session.py       #     SessionMemory (MongoDB + deque)
+│   │   ├── long_term.py     #     LongTermMemory (Milvus + Embedding)
+│   │   ├── message_archive.py #   MessageArchive (永久归档)
+│   │   └── memory_reflector.py #  MemoryReflector (定期去重 + KMeans)
+│   ├── tools/               #   Agent 工具集 (12 个插件)
 │   └── tests/               #   测试
 │
 ├── character/
-│   └── elysia.yaml          # Elysia 角色定义
+│   ├── elysia/              # Elysia 角色
+│   │   ├── config.yaml       #   角色配置
+│   │   ├── personality.md    #   L1 Core 人格文本
+│   │   └── reference/        #   GPT 生成参考
+│   └── cyrene/              # Cyrene 角色 (备用)
+│       ├── config.yaml
+│       └── personality.md
 │
-├── prompt/                  # 反射模板 (CharacterReflector 活跃，其余为参考)
-│   └── CharacterReflector.j2  #   角色进化反射
+├── prompt/                  # Jinja2 模板 (.j2, PascalCase)
+│   ├── ExtractMemory.j2          # 对话提取记忆
+│   ├── ConsolidationCompare.j2   # 新记忆 vs 已有记忆比对
+│   ├── MemoryReflector.j2        # 定期深度去重
+│   ├── CharacterReflector.j2     # 性格反思
+│   ├── ActiveSpeak.j2            # 主动搭话
+│   ├── Amygdala.j2               # 情感分析
+│   ├── MacroReflector.j2         # 日记合成 (参考)
+│   ├── MicroReflector.j2         # 逐对话提取 (参考)
+│   ├── Utils.j2                  # 工具宏
+│   └── ref/                      # GPT 生成原始版本 (snake_case.md)
 │
 ├── static/                  # Web 前端
 │   ├── index.html           # 聊天页面
-│   ├── debug.html           # Debug 仪表板
+│   ├── debug.html           # Debug 仪表板 (~2100 行)
 │   ├── css/chat.css         # 聊天样式
-│   └── js/                  # ES modules (chat/audio/mic/ws/state/persistence/settings/main)
+│   └── js/                  # ES modules (chat/audio/mic/ws/state/settings/persistence/tools/esc/main)
 │
-└── log/                     # 日志文件 (gitignore)
+├── docs/                    # 文档
+├── log/                     # 日志文件 (gitignore)
+└── scripts/                 # 启动/预检/工具脚本
 ```
 
 ---
