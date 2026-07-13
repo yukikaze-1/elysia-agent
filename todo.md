@@ -83,7 +83,6 @@
 
 | 问题 | 文件 |
 |------|------|
-| NoSQL 注入 — MongoDB collection 名无校验 | `database/documentdb/mongodb.py:31` |
 | Embedding 工厂缓存忽略 kwargs | `embedding/registry.py:30-35` |
 
 ### 需独立 spec
