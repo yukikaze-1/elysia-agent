@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick start
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full start
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -17,8 +17,15 @@ test-tools:
 test-all:
 	$(PYTEST) Module/ core/tests/ core/tools/ -v --tb=short
 
+# 测试分层命令
 test-quick:
-	$(PYTEST) Module/ core/tests/ core/tools/ -q --tb=line
+	conda run -n Elysia python -m pytest -m "unit or service" -q -x --tb=short
+
+test-normal:
+	conda run -n Elysia python -m pytest -m "not slow" -q --tb=short
+
+test-full:
+	conda run -n Elysia python -m pytest -q
 
 check:
 	conda run -n $(CONDA_ENV) python app.py --check

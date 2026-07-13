@@ -13,6 +13,24 @@ Plain Python（无 `pyproject.toml` 等构建系统）。前端 vanilla HTML/CSS
 
 ## Running tests
 
+### 分层运行
+
+```bash
+# 日常开发 — 秒级（unit + service）
+make test-quick
+# 或: pytest -m "unit or service" -q -x --tb=short
+
+# 提交前 — 排除 slow（~5min）
+make test-normal
+# 或: pytest -m "not slow" -q --tb=short
+
+# 全量 — 推之前（~22min）
+make test-full
+# 或: pytest -q
+```
+
+### 按模块运行
+
 ```bash
 # Personality engine tests
 python -m pytest core/personality/tests/ -v
@@ -20,13 +38,13 @@ python -m pytest core/personality/tests/ -v
 # System prompt tests
 python -m pytest Module/system_prompt/tests/ -v
 
-# Core tests (excludes personality sub-package)
+# Core tests
 python -m pytest core/tests/ -v
 
 # TaskSystem tests
 python -m pytest Module/task_system/tests/ -v
 
-# Other module tests
+# 其他模块
 python -m pytest Module/llm/test_llm.py -v
 python -m pytest Module/tts/test_tts.py -v
 python -m pytest Module/stt/test_stt.py -v
@@ -40,6 +58,15 @@ python -m pytest Module/database/documentdb/test_documentdb.py -v
 python -m pytest Module/tool/test_framework.py -v
 python -m pytest Module/tool/test_tool_safety.py -v
 ```
+
+### pytest markers
+
+| marker | 标准 | 日常使用 |
+|--------|------|----------|
+| `unit` | 纯函数/类，无 I/O，无 Agent | `-m "unit or service"` |
+| `service` | 单模块 + mock，不启动 Agent | `-m "unit or service"` |
+| `integration` | 需真实 DB 或外部 API | `-m "not slow"` |
+| `slow` | 完整管线或 >1s | 全量时才跑 |
 
 ## Architecture
 
