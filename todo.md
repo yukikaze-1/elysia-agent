@@ -83,7 +83,6 @@
 
 | 问题 | 文件 |
 |------|------|
-| Milvus `_metric_type` 跨集合污染 | `database/vectordb/milvus.py:39` |
 | NoSQL 注入 — MongoDB collection 名无校验 | `database/documentdb/mongodb.py:31` |
 | Embedding 工厂缓存忽略 kwargs | `embedding/registry.py:30-35` |
 
