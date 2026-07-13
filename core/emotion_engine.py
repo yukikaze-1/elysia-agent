@@ -113,6 +113,19 @@ class EmotionEngine:
         self._output = output
         self._thresholds = character.emotion.thresholds
         self._idle_expressions = character.emotion.idle_expressions
+        # 初始化情绪默认值（可能在 session.load() 后被 DB 值覆盖）
+        self._ensure_mood_defaults()
+
+    def _ensure_mood_defaults(self) -> None:
+        """确保 mood/mood_intensity 在 session params 中有默认值。"""
+        self._session.set_param("mood",
+            self._session.get_param("mood", "neutral"))
+        self._session.set_param("mood_intensity",
+            self._session.get_param("mood_intensity", 0.5))
+
+    def restore_state(self) -> None:
+        """session.load() 之后恢复/初始化情绪状态。"""
+        self._ensure_mood_defaults()
 
     def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None) -> str:
         """基于 STT 声学情绪标签更新 AI mood（语音输入主路径）。

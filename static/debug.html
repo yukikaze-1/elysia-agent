@@ -326,6 +326,16 @@ let lastInfo = null;
 function esc(s) { const d=document.createElement('div'); d.textContent=s??''; return d.innerHTML; }
 function ok(v) { return v ? '<span class="ok">&#10003;</span>' : '<span class="fail">&#10007;</span>'; }
 function trunc(s, n) { return s && s.length > n ? s.slice(0,n)+'…' : s||''; }
+function spToggle(bodyId, toggleId) {
+  var body = document.getElementById(bodyId);
+  var tgl = document.getElementById(toggleId);
+  if (!body || !tgl) return;
+  var show = body.style.display === 'none';
+  body.style.display = show ? 'block' : 'none';
+  // 只改箭头字符
+  var arr = tgl.querySelector('.sp-arrow');
+  if (arr) arr.textContent = show ? '▼' : '▶';
+}
 
 function renderImages(content) {
   if (!content || !Array.isArray(content)) return '';
@@ -364,6 +374,45 @@ function expandable(text, maxLen) {
     data-full="${esc(text).replace(/"/g, '&quot;')}"
     data-short="${esc(text.slice(0, maxLen)).replace(/"/g, '&quot;')}…"
   >${esc(text.slice(0, maxLen))}…</span>`;
+}
+
+function renderSessionParams(params) {
+  if (!params || Object.keys(params).length === 0) return '<span style="color:var(--muted);">（空）</span>';
+  // 大块数据 key — 只显示摘要，不展开内容
+  var _BULK_KEYS = { reflector_buffer: 1, reflector_context: 1 };
+  var keys = Object.keys(params).sort();
+  var html = '<div style="max-height:300px;overflow-y:auto;">';
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    var raw = params[k];
+    var isBulk = _BULK_KEYS[k];
+    var summary;
+    if (isBulk) {
+      if (Array.isArray(raw)) { summary = raw.length + ' 条'; }
+      else if (typeof raw === 'object' && raw !== null) { summary = Object.keys(raw).length + ' keys'; }
+      else { summary = trunc(String(raw||''), 40); }
+    }
+    if (isBulk) {
+      html += '<div style="margin-bottom:1px;font-size:10px;color:var(--muted);">' +
+        '• ' + esc(k) + ' <span style="color:var(--accent);">(' + summary + ')</span>' +
+        '</div>';
+    } else {
+      var val = (typeof raw === 'string') ? raw : JSON.stringify(raw);
+      var short = trunc(val, 60);
+      var bodyId = 'spb-' + i;
+      var toggleId = 'spt-' + i;
+      html += '<div style="margin-bottom:1px;">' +
+        '<span id="' + toggleId + '" onclick="spToggle(\'' + bodyId + '\',\'' + toggleId + '\')" style="cursor:pointer;user-select:none;color:var(--accent);font-size:10px;">' +
+          '<span class="sp-arrow">▶</span> ' + esc(k) + ': ' + esc(short) +
+        '</span>' +
+        '<div id="' + bodyId + '" style="display:none;">' +
+          '<div style="margin-left:8px;border-left:2px solid var(--accent);padding:2px 8px;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto;">' + esc(val) + '</div>' +
+        '</div>' +
+      '</div>';
+    }
+  }
+  html += '</div>';
+  return html;
 }
 
 function render(info) {
@@ -411,10 +460,10 @@ function render(info) {
         ['MongoDB', ok(info.mongodb_ok)],
         ['Milvus', ok(info.milvus_ok)],
         ['Embedding', ok(info.embedding_ok)],
-        ['Session Params', esc(trunc(JSON.stringify(info.session_params || {}), 80))],
         ['Archive Msgs', (info.archive_msg_count || 0).toLocaleString()],
         ['Character', info.character_name],
         ['L1 Core', info.base_personality_summary ? esc(trunc(info.base_personality_summary, 100)) : 'N/A'],
+        ['Session Params', renderSessionParams(info.session_params)],
       ]},
     ],
     // Row 2: Latency | Process Memory | Scheduler

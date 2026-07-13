@@ -230,6 +230,8 @@ class Agent:
                 self._character_reflector.restore_state()
             if self._personality_engine:
                 self._personality_engine.restore_state()
+            if self._emotion:
+                self._emotion.restore_state()
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
             if os.path.exists(self._session.pending_file):
                 if await self._session.load_from_jsonl(merge=True):
