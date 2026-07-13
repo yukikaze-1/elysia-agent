@@ -341,6 +341,7 @@ def create_app(
     async def sessions_list_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
         session = agent._session
+        archive = getattr(agent, "_archive", None)
         if session._db is None:
             # MongoDB 不可用，返回内存中的当前 session
             return web.json_response({
@@ -369,7 +370,10 @@ def create_app(
                 "sessions": [
                     {
                         "session_id": d.get("session_id", "?"),
-                        "message_count": len(d.get("messages", [])),
+                        "message_count": (
+                            await archive.count_by_session(d.get("session_id", ""))
+                            if archive else len(d.get("messages", []))
+                        ),
                         "updated_at": d.get("updated_at", ""),
                         "token_total": token_totals.get(d.get("session_id", ""), 0),
                     }
@@ -387,8 +391,43 @@ def create_app(
         if not sid:
             return web.json_response({"error": "缺少 session_id"}, status=400)
         session = agent._session
+        archive = getattr(agent, "_archive", None)
+
+        # 辅助函数：从 sessions 集合取 params（目标 session，非当前 session）
+        async def _get_params(sid: str) -> dict:
+            if session._db is not None:
+                try:
+                    docs = await session._db.find(
+                        "sessions", {"session_id": sid}, limit=1)
+                    if docs:
+                        return docs[0].get("params", {})
+                except Exception:
+                    pass
+            return {}
+
+        if archive and archive._db is not None:
+            # 从 archive（权威源）读取消息
+            try:
+                msgs, total = await archive.query_by_session(sid)
+                formatted = _sessions_to_client(msgs)
+                params = await _get_params(sid)
+                return web.json_response({
+                    "session_id": sid,
+                    "messages": formatted,
+                    "params": params,
+                    "total": total,
+                })
+            except Exception as e:
+                logger.warning("archive query_by_session failed: %s", e)
+                # archive 查询异常 → 显式降级到 sessions 快照（不依赖隐式 fallthrough）
+
+        # Archive 不可用 — 降级读 sessions 快照（或内存）
         if session._db is None:
-            return web.json_response({"error": "MongoDB 不可用"}, status=503)
+            return web.json_response({
+                "session_id": sid,
+                "messages": session.messages_for_client(),
+                "params": session._params,
+            })
         try:
             docs = await session._db.find(
                 "sessions", {"session_id": sid}, limit=1)
@@ -396,33 +435,11 @@ def create_app(
                 return web.json_response({"error": "会话不存在"}, status=404)
             doc = docs[0]
             raw_msgs = doc.get("messages", [])
-            # 格式化消息，确保前端渲染时有 parts 字段
-            formatted = []
-            for m in raw_msgs:
-                entry = {"role": m.get("role", "?"),
-                         "timestamp": m.get("timestamp", ""),
-                         "content_type": m.get("content_type", {})}
-                content = m.get("content", "")
-                if isinstance(content, list):
-                    # 多模态格式 — 提取 text parts + 保留完整 content
-                    entry["parts"] = [
-                        {"content": p.get("content", "")}
-                        for p in content
-                        if isinstance(p, dict) and p.get("type") == "text"
-                    ]
-                    entry["content"] = content
-                elif isinstance(content, str):
-                    entry["parts"] = [{"content": content}]
-                elif "parts" in m:
-                    entry["parts"] = m["parts"]
-                else:
-                    entry["parts"] = [{"content": str(content)}]
-                formatted.append(entry)
+            formatted = _sessions_to_client(raw_msgs)
             return web.json_response({
                 "session_id": doc.get("session_id", sid),
                 "messages": formatted,
                 "params": doc.get("params", {}),
-                "updated_at": doc.get("updated_at", ""),
             })
         except Exception as e:
             return web.json_response(
@@ -658,6 +675,30 @@ def create_app(
                 entry["parts"] = [{"content": content}]
             else:
                 entry["parts"] = [{"content": ""}]
+            result.append(entry)
+        return result
+
+    def _sessions_to_client(msgs: list[dict]) -> list[dict]:
+        """将 archive 原始 dict 转为 session 详情前端兼容格式。"""
+        result = []
+        for m in msgs:
+            entry: dict = {"role": m.get("role", "?"),
+                           "timestamp": m.get("timestamp", ""),
+                           "content_type": m.get("content_type", {})}
+            content = m.get("content", "")
+            if isinstance(content, list):
+                entry["parts"] = [
+                    {"content": p.get("content", "")}
+                    for p in content
+                    if isinstance(p, dict) and p.get("type") == "text"
+                ]
+                entry["content"] = content
+            elif isinstance(content, str):
+                entry["parts"] = [{"content": content}]
+            elif "parts" in m:
+                entry["parts"] = m["parts"]
+            else:
+                entry["parts"] = [{"content": str(content)}]
             result.append(entry)
         return result
 
