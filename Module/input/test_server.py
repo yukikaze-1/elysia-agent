@@ -486,11 +486,18 @@ class TestAssertionFixes:
         client = await aiohttp_client(app)
 
         async with client.session.ws_connect(client.make_url('/ws')) as ws:
-            # 先接收连接时推送的 session 消息
-            session_msg = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
-            assert session_msg["type"] == "session"
+            # 排空连接时推送的 startup 消息（session + capabilities）
+            for _ in range(5):
+                msg = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
+                if msg["type"] == "session":
+                    break
             await ws.send_str("not valid json")
-            msg = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
+            # capabilities 可能在 error 之前到达，循环等待直到收到 error
+            msg = None
+            for _ in range(10):
+                msg = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
+                if msg["type"] == "error":
+                    break
             assert msg["type"] == "error"
             assert "Invalid JSON" in msg["message"]
 

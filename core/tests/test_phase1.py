@@ -418,7 +418,7 @@ class TestMultiTurnConversation:
 
     @pytest.mark.asyncio
     async def test_character_personality_injected(self):
-        """Verify character config appears in the LLM request."""
+        """Verify character config (base_personality) appears in the LLM request."""
         from dotenv import load_dotenv
         load_dotenv()
         from core.prompt_assembler import PromptAssembler
@@ -428,7 +428,7 @@ class TestMultiTurnConversation:
 
         char = CharacterConfig(
             name="TestBot",
-            personality={"traits": ["勇敢", "幽默"], "speaking_style": "说文言文"},
+            base_personality="性格: 勇敢、幽默\n说话风格: 说文言文",
         )
         session = SessionMemory()
         lt = LongTermMemory()
