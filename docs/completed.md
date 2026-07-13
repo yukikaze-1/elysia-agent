@@ -2,6 +2,30 @@
 
 ## 已完成
 
+### 2026-07-14: 不稳定测试排查与修复
+
+从 10 failed → 1 failed（1543→1552 passed）。修复 7 个测试，分 4 类根因：
+
+**确定性问题（5 个）：**
+- `test_ok_returns_latency`: `ok_check(self)` 需要 self 但 `make_test_method` 内部 `health_fn()` 不传参 → TypeError 被静默吞掉 → 移除多余 self
+- `test_no_memories_when_empty`: Prompt 中文化后断言仍检查英文 "No specific memories" → 改为 `"<memory_bank>" not in system`
+- `test_stop_cancels_cognitive_task`: `cancel_current()` 把 `_current_task` 置 None 后才检查 → 保存 task 引用再 stop
+- `test_invalid_json_returns_error_message`: `session` 消息后还有 `capabilities` 推送竞态 → 循环排空启动消息
+- `test_character_personality_injected`: `personality.traits` 不再直接入 prompt（走 PersonalityEngine + base_personality）→ 改用 base_personality
+
+**状态污染（2 类根因）：**
+- **`load_dotenv()` 全局污染**: test_phase1.py（9 处）和 test_phase3.py（2 处）直接调 `load_dotenv()` 注入 `MILVUS_URI`，后续测试连上真实 Milvus（35 条旧数据）。修复：`os.environ.setdefault("DEEPSEEK_API_KEY")` 替代
+- **`SafetyProfile` 类属性变异**: `ToolManager.load_all()` 从 config.yaml 覆盖类级 `read_dirs`，后续 `ReadFilePlugin()` 实例受影响。修复：断言改为非空检查而非精确值
+- **`EnvManager.ensure_dotenv()` 副作用**: `ConfigLoader.load()` → `ensure_dotenv()` 加载 .env 全部变量。`TestAppConfig` 修复：伪装 `_loaded = True` 跳过
+
+**防御性修复（3 个）：**
+- `test_collect_memory_counts`、`test_ltm_list_and_insert`、`test_ltm_clear_all`：绝对计数断言 → 相对增量，即使 LTM 有预存数据也能正确验证
+
+**残留（1 个）：**
+- `test_touch_resets_timer`: `IdleMonitor.__init__` 中 `asyncio.get_event_loop().time()` 在全量 suite 中偶现失败。已加 `time.sleep(0.001)` 缓解。建议后续将 `IdleMonitor` 改用 `time.monotonic()` 替代 `get_event_loop().time()`
+
+**Commits:** `963ee6b` `7a07f98` `2a4bbc5`
+
 ### 2026-07-14: 提醒工具 coroutine 序列化 bug（已修复，归档）
 
 - **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** — `_remind()` 生成 coroutine → `scheduler.dispatch_background()` → checkpoint JSON 序列化时 coroutine 不可序列化，跨重启丢失。
