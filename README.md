@@ -54,6 +54,8 @@ bash scripts/start.sh
 
 打开浏览器访问 **`http://localhost:8765`**，在聊天界面与 AI 对话。日志输出到 `log/app.log`。停止：`Ctrl+C`。
 
+Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板，详见 [`static/debug.md`](static/debug.md)。
+
 ### 关键文件
 
 | 文件/目录 | 用途 |
@@ -64,6 +66,7 @@ bash scripts/start.sh
 | `data/ref/Elysia.wav` | GPT-SoVits 音色克隆参考音频（1.6MB） |
 | `static/live2d-demo/` | Live2D 前端（Cubism SDK + 加载页面） |
 | `data/live2d-assets/` | Live2D 角色模型（.moc3 + 纹理，服务端映射到 `/live2d/`） |
+| `static/debug.md` | Debug 面板完整文档（标签页、API、技术实现） |
 
 > `scripts/download_model.py` 将模型下载到 `.model_cache/`。运行时按 `MODEL_CACHE_DIR` → `.model_cache/` → `~/.cache/huggingface/hub/` 顺序查找。
 
@@ -71,8 +74,10 @@ bash scripts/start.sh
 
 ```bash
 python app.py --cli              # 交互终端模式（stdin 打字）
-python app.py --check            # 环境预检
-python app.py --check --full     # 含连通性探活
+bash scripts/check.sh           # 环境预检（推荐，自动检测 conda/python3）
+bash scripts/check.sh --full    # 含连通性探活
+python app.py --check            # 同上（需手动激活 conda 环境）
+python app.py --check --full     # 同上
 python app.py --host 0.0.0.0 --port 8080  # 自定义端口
 python app.py --verbose          # 详细日志（调试用）
 python app.py --config custom.yaml --character custom/char.yaml  # 自定义配置
@@ -183,7 +188,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Live2D 虚拟角色渲染 (Cubism SDK) | done |
 | 前端 JS 模块化 — 12 个 ES 模块 | done |
 | 配置系统 (YAML + env + 类型校验 + providers.yaml) | done |
-| /debug 面板 (FSM/记忆/工具/Token/DAG/LLM Prompt/Raw Response) | done |
+| [/debug 面板](static/debug.md) (16+ 面板: FSM/记忆/工具/Token/DAG/LLM Prompt/Raw Response/数据库管理) | done |
 | 优雅退出 + /health /ready 端点 | done |
 | LLM 重试 (指数退避) + 请求超时 | done |
 | 日志系统 — stderr + log/app.log + log/conversation.log + 库日志分离 | done |
@@ -264,7 +269,8 @@ Agent/
 │
 ├── static/                 # 浏览器客户端
 │   ├── index.html          #   入口
-│   ├── debug.html          #   Debug 面板
+│   ├── debug.html          #   Debug 面板（监控仪表板）
+│   ├── debug.md            #   Debug 面板文档
 │   ├── css/chat.css        #   样式 (含 .inner-voice-bubble)
 │   └── js/                 #   ES 模块 (config/state/ws/chat/audio/mic/settings/persistence/main)
 │
