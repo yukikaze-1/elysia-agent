@@ -102,7 +102,8 @@ docker compose restart     # 重启
 
 **预检报错**
 ```bash
-python app.py --check --full  # 完整预检，准确定位问题
+bash scripts/check.sh --full    # 完整预检，准确定位问题
+python app.py --check --full  # 同上（需手动激活 conda 环境）
 python scripts/download_model.py  # 缺少嵌入模型
 ```
 
