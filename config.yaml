@@ -15,7 +15,7 @@ llm:
 
 # ---- 记忆 ----
 memory:
-  session_max_messages: 200            # SessionMemory deque 上限（LLM 上下文窗口）
+  session_max_messages: 50             # SessionMemory deque 上限（LLM 上下文窗口）
 
 # ---- HTTP 服务器 ----
 server:

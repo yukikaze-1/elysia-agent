@@ -408,7 +408,7 @@ def create_app(
         if archive and archive._db is not None:
             # 从 archive（权威源）读取消息
             try:
-                msgs, total = await archive.query_by_session(sid)
+                msgs, total = await archive.query_by_session(sid, limit=20)
                 formatted = _sessions_to_client(msgs)
                 params = await _get_params(sid)
                 return web.json_response({
