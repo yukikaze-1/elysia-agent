@@ -14,6 +14,7 @@ from .registry import EmbeddingFactory
 # Protocol — ABC constraints
 # ============================================================
 
+@pytest.mark.service
 class TestEmbeddingBackendProtocol:
     def test_cannot_instantiate_abstract(self):
         with pytest.raises(TypeError):
@@ -80,6 +81,7 @@ class TestEmbeddingBackendProtocol:
 # EmbeddingFactory
 # ============================================================
 
+@pytest.mark.service
 class TestEmbeddingFactory:
     def test_invalid_format_raises(self):
         with pytest.raises(ValueError, match="Invalid model_id"):
@@ -124,6 +126,7 @@ def hf_backend(huggingface_backend):
     return huggingface_backend
 
 
+@pytest.mark.service
 class TestHuggingFaceBackend:
     @pytest.mark.asyncio
     async def test_embed_documents(self, hf_backend):
@@ -181,6 +184,7 @@ def openai_backend(openai_embedding_backend):
     return openai_embedding_backend
 
 
+@pytest.mark.service
 class TestOpenAICompatEmbedding:
     @pytest.mark.asyncio
     async def test_embed_documents(self, openai_backend):
@@ -236,6 +240,7 @@ class TestOpenAICompatEmbedding:
 # EmbeddingFactory — shutdown
 # ============================================================
 
+@pytest.mark.service
 class TestEmbeddingFactoryShutdown:
     @pytest.mark.asyncio
     async def test_shutdown_closes_all_instances(self):
@@ -295,6 +300,7 @@ class TestEmbeddingFactoryShutdown:
 # EmbeddingFactory — singleton cache
 # ============================================================
 
+@pytest.mark.service
 class TestEmbeddingFactorySingleton:
     def test_same_model_returns_same_instance(self):
         with patch(
@@ -326,6 +332,7 @@ class TestEmbeddingFactorySingleton:
 # HuggingFaceBackend — from_config
 # ============================================================
 
+@pytest.mark.service
 class TestHuggingFaceFromConfig:
     def test_from_config_creates_backend(self):
         from .config import EmbeddingConfig
@@ -342,6 +349,7 @@ class TestHuggingFaceFromConfig:
 # API errors / empty input
 # ============================================================
 
+@pytest.mark.service
 class TestEmbeddingErrors:
     @pytest.mark.asyncio
     async def test_openai_api_error_propagates(self, openai_backend):

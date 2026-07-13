@@ -4,20 +4,25 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from Module._common.config_test_helpers import make_config_test_classes
 from Module.database.vectordb.config import VectorDBConfig
 from Module.database.vectordb.registry import VectorDBFactory
 
 # 替换原来的 TestVectorDBConfigDefaults（工厂生成，取 [0]）
-TestVectorDBConfigDefaults = make_config_test_classes(
-    VectorDBConfig,
-    defaults={"base_url": "http://localhost:19530"},
-    overrides={"base_url": "http://test:19530"},
-    env_key="MILVUS_URI",
-    yaml_key="VectorDB",
-)[0]
+TestVectorDBConfigDefaults = pytest.mark.unit(
+    make_config_test_classes(
+        VectorDBConfig,
+        defaults={"base_url": "http://localhost:19530"},
+        overrides={"base_url": "http://test:19530"},
+        env_key="MILVUS_URI",
+        yaml_key="VectorDB",
+    )[0]
+)
 
 # 保留原始 TestVectorDBFromConfig（含 Factory 集成测试）
+@pytest.mark.unit
 class TestVectorDBFromConfig:
     @patch("Module.database.vectordb.milvus.MilvusClient", autospec=True)
     def test_from_config_passes_params(self, mock_client, monkeypatch):

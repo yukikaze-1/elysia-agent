@@ -10,6 +10,7 @@ from .registry import DocumentDBFactory
 # Protocol — ABC constraints
 # ============================================================
 
+@pytest.mark.service
 class TestDocumentDBBackendProtocol:
     def test_cannot_instantiate_abstract(self):
         with pytest.raises(TypeError):
@@ -47,6 +48,7 @@ class TestDocumentDBBackendProtocol:
 # DocumentDBFactory
 # ============================================================
 
+@pytest.mark.service
 class TestDocumentDBFactory:
     def test_invalid_format_raises(self):
         with pytest.raises(ValueError, match="Invalid provider_id"):
@@ -91,6 +93,7 @@ def backend(documentdb_backend):
     return documentdb_backend
 
 
+@pytest.mark.service
 class TestMongoDBInsert:
     @pytest.mark.asyncio
     async def test_insert_one(self, backend):
@@ -115,6 +118,7 @@ class TestMongoDBInsert:
         assert result == []
 
 
+@pytest.mark.service
 class TestMongoDBFind:
     @pytest.mark.asyncio
     async def test_find(self, backend):
@@ -151,6 +155,7 @@ class TestMongoDBFind:
         mock_cursor.to_list.assert_called_once_with(length=5)
 
 
+@pytest.mark.service
 class TestMongoDBUpdate:
     @pytest.mark.asyncio
     async def test_update_one(self, backend):
@@ -162,6 +167,7 @@ class TestMongoDBUpdate:
         assert result == 1
 
 
+@pytest.mark.service
 class TestMongoDBDelete:
     @pytest.mark.asyncio
     async def test_delete_many(self, backend):
@@ -173,6 +179,7 @@ class TestMongoDBDelete:
         assert result == 5
 
 
+@pytest.mark.service
 class TestMongoDBCount:
     @pytest.mark.asyncio
     async def test_count(self, backend):
@@ -182,6 +189,7 @@ class TestMongoDBCount:
         assert result == 42
 
 
+@pytest.mark.service
 class TestMongoDBIndex:
     @pytest.mark.asyncio
     async def test_ensure_index(self, backend):
@@ -191,6 +199,7 @@ class TestMongoDBIndex:
         assert result == "idx_1"
 
 
+@pytest.mark.service
 class TestMongoDBClose:
     @pytest.mark.asyncio
     async def test_close(self, backend):
@@ -202,6 +211,7 @@ class TestMongoDBClose:
 # Protocol — remaining abstract enforcement (6 methods)
 # ============================================================
 
+@pytest.mark.service
 class TestProtocolRemaining:
     def test_missing_insert_many(self):
         with pytest.raises(TypeError):
@@ -280,6 +290,7 @@ class TestProtocolRemaining:
 # MongoDB — zero results / upsert / edge cases
 # ============================================================
 
+@pytest.mark.service
 class TestMongoDBEdges:
     @pytest.mark.asyncio
     async def test_find_empty_results(self, backend):

@@ -4,20 +4,25 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from Module._common.config_test_helpers import make_config_test_classes
 from Module.database.documentdb.config import DocumentDBConfig
 from Module.database.documentdb.registry import DocumentDBFactory
 
 # 替换原来的 TestDocumentDBConfigDefaults（工厂生成，取 [0]）
-TestDocumentDBConfigDefaults = make_config_test_classes(
-    DocumentDBConfig,
-    defaults={"base_url": "mongodb://localhost:27017"},
-    overrides={"base_url": "mongodb://test:27017"},
-    env_key="MONGODB_URI",
-    yaml_key="DocumentDB",
-)[0]
+TestDocumentDBConfigDefaults = pytest.mark.unit(
+    make_config_test_classes(
+        DocumentDBConfig,
+        defaults={"base_url": "mongodb://localhost:27017"},
+        overrides={"base_url": "mongodb://test:27017"},
+        env_key="MONGODB_URI",
+        yaml_key="DocumentDB",
+    )[0]
+)
 
 # 保留原始 TestDocumentDBFromConfig（含 Factory 集成测试）
+@pytest.mark.unit
 class TestDocumentDBFromConfig:
     @patch("Module.database.documentdb.mongodb.AsyncIOMotorClient")
     def test_from_config_passes_params(self, mock_client):

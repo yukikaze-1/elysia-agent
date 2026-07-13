@@ -13,6 +13,7 @@ from .registry import VectorDBFactory
 # Protocol — ABC constraints
 # ============================================================
 
+@pytest.mark.service
 class TestVectorDBBackendProtocol:
     def test_cannot_instantiate_abstract(self):
         with pytest.raises(TypeError):
@@ -62,6 +63,7 @@ class TestVectorDBBackendProtocol:
 # VectorDBFactory
 # ============================================================
 
+@pytest.mark.service
 class TestVectorDBFactory:
     def test_invalid_format_raises(self):
         with pytest.raises(ValueError, match="Invalid provider_id"):
@@ -101,6 +103,7 @@ def backend(vectordb_backend):
     return vectordb_backend
 
 
+@pytest.mark.service
 class TestMilvusCollection:
     @pytest.mark.asyncio
     async def test_create_collection(self, backend):
@@ -142,6 +145,7 @@ class TestMilvusCollection:
         assert await backend.collection_exists("test") is True
 
 
+@pytest.mark.service
 class TestMilvusInsert:
     @pytest.mark.asyncio
     async def test_insert(self, backend):
@@ -160,6 +164,7 @@ class TestMilvusInsert:
         assert data[0]["text"] == "a"
 
 
+@pytest.mark.service
 class TestMilvusSearch:
     @pytest.mark.asyncio
     async def test_search(self, backend):
@@ -180,6 +185,7 @@ class TestMilvusSearch:
         assert call_kwargs["filter"] == 'type == "micro"'
 
 
+@pytest.mark.service
 class TestMilvusQuery:
     @pytest.mark.asyncio
     async def test_query(self, backend):
@@ -198,6 +204,7 @@ class TestMilvusQuery:
         assert call_kwargs["limit"] == 100
 
 
+@pytest.mark.service
 class TestMilvusClose:
     @pytest.mark.asyncio
     async def test_close(self, backend):
@@ -208,6 +215,7 @@ class TestMilvusClose:
 # Protocol — remaining abstract enforcement (5 methods)
 # ============================================================
 
+@pytest.mark.service
 class TestProtocolRemaining:
     def test_missing_drop_collection(self):
         with pytest.raises(TypeError):
@@ -269,6 +277,7 @@ class TestProtocolRemaining:
 # index_preset / metric_type
 # ============================================================
 
+@pytest.mark.service
 class TestIndexPreset:
     @pytest.mark.asyncio
     async def test_default_metric_type_is_l2(self, backend):
@@ -305,6 +314,7 @@ class TestIndexPreset:
 # Connection failure
 # ============================================================
 
+@pytest.mark.service
 class TestMilvusConnectionFailure:
     @pytest.mark.asyncio
     async def test_search_connection_error_propagates(self, backend):

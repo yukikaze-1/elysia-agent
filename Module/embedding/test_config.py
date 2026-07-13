@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import pytest
+
 from Module._common.config_test_helpers import make_config_test_classes
 from Module.embedding.config import EmbeddingConfig
 from Module.embedding.registry import EmbeddingFactory
 
 # 替换原来的 TestEmbeddingConfigDefaults（工厂生成，取 [0]）
-TestEmbeddingConfigDefaults = make_config_test_classes(
-    EmbeddingConfig,
-    defaults={"base_url": "https://api.openai.com/v1"},
-    overrides={"base_url": "http://test:8080/v1"},
-    env_key="OPENAI_API_BASE",
-    yaml_key="Embedding",
-)[0]
+TestEmbeddingConfigDefaults = pytest.mark.unit(
+    make_config_test_classes(
+        EmbeddingConfig,
+        defaults={"base_url": "https://api.openai.com/v1"},
+        overrides={"base_url": "http://test:8080/v1"},
+        env_key="OPENAI_API_BASE",
+        yaml_key="Embedding",
+    )[0]
+)
 
 # 保留原始 TestEmbeddingFromConfig（含 Factory 集成测试）
+@pytest.mark.unit
 class TestEmbeddingFromConfig:
     def test_from_config_openai(self):
         cfg = EmbeddingConfig(api_key="sk-xxx", base_url="https://custom.api/v1")
