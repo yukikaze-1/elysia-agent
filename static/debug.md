@@ -45,6 +45,11 @@ http://localhost:8765/debug
 
 **Long-Term Memory (Milvus)**
 
+> 记忆生命周期：MemoryConsolidator 提取 → ConsolidationCompare 比对去重 → MemoryReflector 定期深度审查
+
+| 功能 | 说明 |
+|------|------|
+
 | 功能 | 说明 |
 |------|------|
 | 搜索 | 全文搜索（服务端，MongoDB regex） |
@@ -125,7 +130,7 @@ TaskSystem 实时监控：
 
 ## 技术实现
 
-- 单文件 `static/debug.html`（~2000 行），无构建步骤
+- 单文件 `static/debug.html`（~2100 行），无构建步骤
 - ES5 兼容 JavaScript，无框架依赖
 - 轮询 + 指数退避（2s → 30s）
 - DOM diff 跳过无变化轮次（概览页）
@@ -133,4 +138,5 @@ TaskSystem 实时监控：
 - Tab 切换时 SSE 自动断开
 - 数据库面板：搜索输入值 + 折叠状态在 DOM 重建时保留
 - Session 视图数据源：`message_archive`（权威源），非 `sessions` 快照
-- Session Params：每个 key 独立展开/折叠；大数据 key（reflector_buffer/context）只显示计数，不展开内容
+- Session Params：每个 key 独立展开/折叠；大数据 key（reflector_buffer/context）只显示计数
+- 前端消息缓存已移除：每次页面加载通过 WebSocket 从服务端拉取

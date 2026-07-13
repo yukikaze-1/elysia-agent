@@ -151,6 +151,23 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **inner_voice protocol**: Every reply has one `<inner_voice>` block (1-2 sentences: current feeling + response intent, no reasoning chains).
 - **FSM**: `AgentFSM` manages state transitions: IDLE → THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE.
 
+## Prompt files (`prompt/`)
+
+Jinja2 模板（`.j2`），PascalCase 命名。运行时通过 `str.replace()` 注入变量。
+
+```
+prompt/
+├── ExtractMemory.j2          # 对话提取记忆 (consolidator.py 加载)
+├── ConsolidationCompare.j2   # 新记忆 vs 已有记忆比对 (consolidator.py 加载)
+├── MemoryReflector.j2        # 定期深度去重 (memory_reflector.py 加载)
+├── CharacterReflector.j2     # 性格反思 system prompt
+├── ActiveSpeak.j2 / Amygdala.j2 / Utils.j2  # 其他模板
+├── MacroReflector.j2 / MicroReflector.j2     # 旧项目参考（不活跃）
+└── ref/                      # GPT 生成的原始版本（snake_case.md）
+```
+
+Prompt 需求文档：根目录 `prompt-requirements.md` / `extraction-prompt-requirements.md`
+
 ## Frontend (`static/`)
 
 Vanilla HTML/CSS/JS, ES modules (`<script type="module">`), no build step.
@@ -167,10 +184,12 @@ static/
     ├── chat.js        # Chat display: bubbles, delta streaming, typing, tool cards, mood, lightbox
     ├── audio.js       # TTS buffer/playback
     ├── mic.js         # Microphone: getUserMedia, ScriptProcessor, PCM→Int16
-    ├── settings.js    # Settings panel: TTS toggle, volume, clear, shutdown
-    ├── persistence.js # localStorage save/restore (incremental, with images)
+    ├── settings.js    # Settings panel: TTS toggle, volume, clear, restart, shutdown
+    ├── persistence.js # Server-session restore + code blocks/Markdown rendering (no localStorage cache)
     └── main.js        # Entry point: WS routing, input, keyboard, image upload
 ```
+
+消息不再使用 localStorage 缓存，每次页面加载通过 WebSocket 从服务端拉取 session 数据。
 
 ### Debug page panels
 
@@ -178,7 +197,7 @@ FSM state, session/Long-Term memory, message archive, token stats, PersonalityEn
 
 ### Server routing (`Module/input/server.py`)
 
-`/` → `static/index.html`, `/debug` → `static/debug.html`, `/debug/api` → JSON debug info, `/ws` → WebSocket, `/api/images` → image upload, `/health` `/ready` `/shutdown`
+`/` → `static/index.html`, `/debug` → `static/debug.html`, `/ws` → WebSocket, `/health` `/ready` `/shutdown` `/restart` `/api/chat` `/api/messages` `/api/images` `/api/providers` `/tools` `/tools/reload`。Debug API: `/debug/api` `/debug/api/prompts/{n}` `/debug/api/responses/{n}` `/debug/api/db-status` `/debug/api/ltm` `/debug/api/sessions` `/debug/api/archive` `/debug/api/tasks/stream`
 
 ## PersonalityEngine
 
