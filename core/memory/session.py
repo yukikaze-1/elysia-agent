@@ -84,9 +84,43 @@ class SessionMemory:
         """fire-and-forget: 将消息追加到永久归档。异常只记日志，不影响主流程。"""
         assert self._archive is not None, "archive not initialized"
         try:
+            entry["session_id"] = self._session_id
             await self._archive.append(entry)
         except Exception:
             logger.debug("archive append failed", exc_info=True)
+
+    async def migrate_archive_session_id(self) -> int:
+        """一次性迁移：给 message_archive 中缺少 session_id 的旧文档补上。
+        必须在 session.load() 之后调用（session_id 已从 MongoDB 恢复）。
+        返回迁移的文档数。"""
+        if self._archive is None or self._archive._db is None:
+            return 0
+        try:
+            # 查找所有缺少 session_id 的文档（limit=0 禁用默认限制）
+            docs = await self._archive._db.find(
+                self._archive.COLLECTION,
+                {"session_id": {"$exists": False}},
+                limit=0,
+            )
+            if not docs:
+                return 0
+            modified = 0
+            for doc in docs:
+                result = await self._archive._db.update_one(
+                    self._archive.COLLECTION,
+                    {"_id": doc["_id"]},
+                    {"$set": {"session_id": self._session_id}},
+                )
+                modified += result
+            if modified > 0:
+                logger.info(
+                    "SessionMemory: 迁移 %d 条 archive 文档 → session_id=%s",
+                    modified, self._session_id,
+                )
+            return modified
+        except Exception:
+            logger.debug("archive session_id migration failed", exc_info=True)
+            return 0
 
     def recent_messages(self, n: int | None = None) -> list[dict[str, Any]]:
         msgs = list(self._messages)
