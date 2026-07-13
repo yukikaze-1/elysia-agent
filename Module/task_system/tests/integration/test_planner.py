@@ -43,6 +43,8 @@ from Module.task_system.schema import (
     Tool,
 )
 
+pytestmark = pytest.mark.integration
+
 
 def make_tools() -> list[Tool]:
     """构造测试用的工具列表。"""
@@ -68,7 +70,6 @@ def make_infra():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_simple_task():
     """测试：简单单步任务。"""
     print("=" * 60)
@@ -100,7 +101,6 @@ async def test_simple_task():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_multi_step_task():
     """测试：多步骤任务。"""
     print("=" * 60)
@@ -215,7 +215,6 @@ def _make_node_states_with_success() -> dict[str, NodeState]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_replan_tool_timeout():
     """集成测试：工具超时 → replan 返回 DAGPatch 或 Plan。"""
     api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -297,7 +296,6 @@ async def test_replan_tool_timeout():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_replan_business_goal_failed():
     """集成测试：工具返回了内容但业务目标未达成 → replan 修复。"""
     api_key = os.environ.get("DEEPSEEK_API_KEY")

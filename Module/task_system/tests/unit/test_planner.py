@@ -32,6 +32,7 @@ from Module.task_system.schema import (
     SessionId,
 )
 
+pytestmark = pytest.mark.unit
 
 # ── _format_tools 测试 ──────────────────────────────────────────────────────
 

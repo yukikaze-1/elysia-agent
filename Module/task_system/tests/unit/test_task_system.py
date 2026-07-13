@@ -40,6 +40,7 @@ from Module.task_system.schema import (
 )
 from Module.task_system.mailbox import TaskMailbox
 
+pytestmark = pytest.mark.unit
 
 # ── 工厂函数 ────────────────────────────────────────────────────────────────
 

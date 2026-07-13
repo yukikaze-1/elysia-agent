@@ -40,6 +40,8 @@ from Module.task_system.tests.helpers import (
     get_tools_from_manager,
 )
 
+pytestmark = pytest.mark.slow
+
 # ── 格式化 ────────────────────────────────────────────────────────────────────
 
 _SEP = "═" * 70
@@ -476,7 +478,6 @@ async def _run_task(
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_e2e_simple_query():
     """端到端：简单单步任务——"现在几点了"。
 
@@ -516,7 +517,6 @@ async def test_e2e_simple_query():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_e2e_multi_step_success():
     """端到端：多步骤任务——成功的多节点 DAG 执行。
 
@@ -558,7 +558,6 @@ async def test_e2e_multi_step_success():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_e2e_search_and_report():
     """端到端：搜索 + 写报告——多节点含不同工具类型。
 
@@ -597,7 +596,6 @@ async def test_e2e_search_and_report():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_e2e_replan_recovery():
     """端到端：replan 恢复路径——节点失败 → Replan → DAG 修复 → 继续执行。
 
@@ -759,7 +757,6 @@ async def test_e2e_replan_recovery():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_e2e_llm_direct_execution():
     """端到端：execution_mode——Planner 标注 llm_direct + Executor 跳过工具匹配。
 
@@ -799,7 +796,6 @@ async def test_e2e_llm_direct_execution():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_e2e_cancel():
     """端到端：运行时取消——cancel() → CANCELLED 事件。
 
@@ -915,7 +911,6 @@ async def test_e2e_cancel():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_e2e_pause_resume():
     """端到端：暂停→恢复→完成——pause() + resume() 完整生命周期。
 

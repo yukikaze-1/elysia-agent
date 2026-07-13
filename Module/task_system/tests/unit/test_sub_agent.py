@@ -50,6 +50,7 @@ from Module.task_system.schema import (
     now_iso,
 )
 
+pytestmark = pytest.mark.unit
 
 # ── 工厂函数 ────────────────────────────────────────────────────────────────
 

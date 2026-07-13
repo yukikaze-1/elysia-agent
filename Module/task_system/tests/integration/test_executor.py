@@ -26,6 +26,8 @@ from Module.tool.manager import ToolManager
 from Module.tool.protocol import PluginContext
 from core.tools.time.plugin import TimePlugin
 
+pytestmark = pytest.mark.integration
+
 
 async def _build_integration_executor():
     """构建集成测试 Executor——真实 LLM + 加载 TimePlugin 的 ToolManager。
@@ -63,7 +65,6 @@ async def _build_integration_executor():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_execute_time_tool():
     """集成测试：真实 LLM 匹配 "获取当前时间" → TimePlugin 执行 → 返回结果。
 
@@ -103,7 +104,6 @@ async def test_integration_execute_time_tool():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_no_matching_tool():
     """集成测试：没有匹配工具时 LLM 行为验证。
 
@@ -142,7 +142,6 @@ async def test_integration_no_matching_tool():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_execute_llm_direct_mode():
     """execution_mode=LLM_DIRECT → 跳过 tool matching，直接调 LLM 生成文本。
 
@@ -193,7 +192,6 @@ async def test_integration_execute_llm_direct_mode():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_execute_llm_direct_sentinel():
     """tool_call 模式下 LLM 判断无需工具 → __llm_direct__ 哨兵路径。
 

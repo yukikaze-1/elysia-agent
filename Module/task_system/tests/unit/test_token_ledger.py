@@ -12,6 +12,8 @@ from Module.task_system.schema import (
 )
 from Module.task_system.token_ledger import TokenLedger
 
+pytestmark = pytest.mark.unit
+
 
 def _make_task_state(task_id: str = "test-001") -> TaskState:
     return TaskState(

@@ -36,6 +36,7 @@ from Module.task_system.schema import (
     Plan
 )
 
+pytestmark = pytest.mark.unit
 
 # ── 测试固件 ────────────────────────────────────────────────────────────────
 

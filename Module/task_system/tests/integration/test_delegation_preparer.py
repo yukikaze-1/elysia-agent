@@ -16,6 +16,8 @@ from Module.task_system.schema import (
     UserProfile,
 )
 
+pytestmark = pytest.mark.integration
+
 
 def _make_integration_tools() -> list[Tool]:
     """构造集成测试用的工具列表——贴合真实工具描述风格。"""
@@ -59,7 +61,6 @@ def _make_integration_tools() -> list[Tool]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_simple_task_ok():
     """真实 LLM：简单清晰的任务 → 应返回 ok + 筛选工具 + 摘要上下文。"""
     dp = DelegationPreparer()
@@ -112,7 +113,6 @@ async def test_integration_simple_task_ok():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_multi_step_with_mutation():
     """真实 LLM：多步骤任务包含敏感操作 → 筛选相关工具 + 估算 mutation 约束。"""
     dp = DelegationPreparer()
@@ -159,7 +159,6 @@ async def test_integration_multi_step_with_mutation():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_too_vague():
     """真实 LLM：极其模糊的意图 → 应返回 too_vague + suggestion。"""
     dp = DelegationPreparer()
@@ -189,7 +188,6 @@ async def test_integration_too_vague():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_no_matching_tools():
     """真实 LLM：意图清晰但工具库完全无法支持 → 应返回 no_matching_tools。"""
     dp = DelegationPreparer()
@@ -223,7 +221,6 @@ async def test_integration_no_matching_tools():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_context_summarization():
     """真实 LLM：验证从对话历史中提取上下文摘要的能力。"""
     dp = DelegationPreparer()
@@ -263,7 +260,6 @@ async def test_integration_context_summarization():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_user_profile_influence():
     """真实 LLM：验证用户画像信息被纳入考量。"""
     dp = DelegationPreparer()
@@ -300,7 +296,6 @@ async def test_integration_user_profile_influence():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_tool_object_integrity():
     """真实 LLM：验证返回的 Tool 对象保留完整的 description 和 capabilities。"""
     dp = DelegationPreparer()
@@ -337,7 +332,6 @@ async def test_integration_tool_object_integrity():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_empty_session_messages():
     """真实 LLM：无对话历史时也能正常工作。"""
     dp = DelegationPreparer()
@@ -368,7 +362,6 @@ async def test_integration_empty_session_messages():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_global_constraints_respected():
     """真实 LLM：全局约束收紧时 LLM 估算不超出天花板。
 
@@ -420,7 +413,6 @@ async def test_integration_global_constraints_respected():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_global_constraints_default_ok():
     """真实 LLM：使用默认全局约束时正常估算。
 
@@ -463,7 +455,6 @@ async def test_integration_global_constraints_default_ok():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_integration_global_constraints_with_resolve():
     """真实 LLM：验证两段式约束安全机制。
 

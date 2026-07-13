@@ -37,6 +37,7 @@ from Module.tool.protocol import PluginContext
 from core.tools.time.plugin import TimePlugin
 from Module.task_system.tests.helpers import build_test_task_system, get_tools_from_manager
 
+pytestmark = pytest.mark.slow
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 测试
@@ -44,7 +45,6 @@ from Module.task_system.tests.helpers import build_test_task_system, get_tools_f
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_stop_after_task_completion():
     """提交一个简单任务 → 等它完成 → stop() 清理。
 
@@ -105,7 +105,6 @@ async def test_stop_after_task_completion():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_stop_rejects_submit_after_shutdown():
     """stop() 后 submit() 被拒绝。"""
     if not os.getenv("DEEPSEEK_API_KEY"):
@@ -126,7 +125,6 @@ async def test_stop_rejects_submit_after_shutdown():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_pause_sets_flag_and_cleanly_stops():
     """提交任务 → pause() → 验证 pause_requested 被设置 + stop 清理。
 
@@ -171,7 +169,6 @@ async def test_pause_sets_flag_and_cleanly_stops():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_concurrent_slot_limit():
     """max_sub_agents=1 → submit 两个任务 → 第二个等槽位。
 
@@ -264,7 +261,6 @@ async def test_concurrent_slot_limit():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_goal_failed_triggers_replan():
     """Evaluator 返回 goal_failed → Orchestrator 返回 NEEDS_REPLAN → Replanner.replan()。
 
@@ -355,7 +351,6 @@ async def test_goal_failed_triggers_replan():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_cancel_during_execution():
     """提交任务 → cancel() → 收到 CANCELLED 事件 → 注册表清理。
 
@@ -421,7 +416,6 @@ async def test_cancel_during_execution():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_pause_and_resume():
     """提交任务 → pause → resume → 任务正常完成。
 
@@ -523,7 +517,6 @@ async def test_pause_and_resume():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_cancel_on_paused_task():
     """暂停后取消——PAUSED → CANCELLED 直接转换。
 
@@ -618,7 +611,6 @@ async def test_cancel_on_paused_task():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_resume_idempotent_on_running():
     """RUNNING 任务上调 resume → 幂等返回 TaskMailbox。
 
@@ -678,7 +670,6 @@ async def test_resume_idempotent_on_running():
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_concurrent_tasks_no_interference():
     """max_sub_agents=2 时两个任务并发执行，互不干扰。
 

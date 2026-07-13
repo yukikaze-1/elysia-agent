@@ -39,6 +39,8 @@ from Module.task_system.schema import (
     UserProfile,
 )
 
+pytestmark = pytest.mark.unit
+
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 

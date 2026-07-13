@@ -7,6 +7,8 @@ import pytest
 from Module.task_system.mailbox import TaskMailbox
 from Module.task_system.schema import TaskEvent, TaskEventType, TaskId
 
+pytestmark = pytest.mark.unit
+
 
 def test_get_nowait_empty():
     """空队列 get_nowait 返回 None。"""

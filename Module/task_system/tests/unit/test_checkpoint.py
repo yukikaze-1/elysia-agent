@@ -22,6 +22,7 @@ from Module.task_system.schema import (
     TaskStatus,
 )
 
+pytestmark = pytest.mark.unit
 
 # ── 测试固件 ────────────────────────────────────────────────────────────────
 
