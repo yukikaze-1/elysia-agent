@@ -104,11 +104,12 @@ class SessionMemory:
             )
             if not docs:
                 return 0
+            from bson import ObjectId
             modified = 0
             for doc in docs:
                 result = await self._archive._db.update_one(
                     self._archive.COLLECTION,
-                    {"_id": doc["_id"]},
+                    {"_id": ObjectId(doc["_id"])},
                     {"$set": {"session_id": self._session_id}},
                 )
                 modified += result
