@@ -7,24 +7,19 @@
 | 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec |
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
-| 中 | **无去重机制** | 延后 — 现有测试确认重复文本+不同元数据是设计意图。需独立设计去重方案 |
 | 中 | **`emotion_engine.py` `_push_expression()` 缺失 6 种 mood 映射** | `emotion_engine.py:197-206`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
 | 中 | **`reminder/plugin.py` coroutine 被提前 await 后传入 payload** | `plugin.py:37`: `_remind()` 被调用生成 coroutine 对象后传入 `dispatch_background`。调度器 checkpoint 恢复时 payload 中的 coroutine 不可 JSON 序列化（不持久化），且 `from_dict` 重建后 `hasattr(coro, "__await__")` 为 False。边缘场景，当前提醒工具很少跨重启执行。 |
-| 高 | **TTS 密集短句导致 wait_all 永久阻塞** | TS 连续 5+ 短句在 400ms 内密集入队时，MiniMax 后端部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING 状态。需在 TTS stream 层加超时机制，或在 `wait_all` 加整体超时后 cancel 剩余任务。 |
+| 中 | **TTS 密集短句导致 wait_all 阻塞** | TTS 连续 5+ 短句密集入队时 MiniMax 部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING。已缩短 read timeout 120s→30s 缓解，根因（wait_all 无超时）待重现后修复。 |
 
 ## 功能改进
 
 - **README 截图**: 添加聊天界面 / debug 面板 / 启动流程截图，让新用户第一眼就知道项目长什么样
-- **Live2D 集成**: Cubism SDK v5 需 TypeScript + npm + bundler 构建，当前仅 SDK 文件到位、默认关闭。需写完整的加载页面 (`static/live2d-demo/index.html`) + 模型渲染管线
-
+- **Live2D 集成**: Cubism SDK v5 需 TypeScript + npm + bundler 构建，当前仅 SDK 文件到位、默认关闭
 - **poignancy 时间衰减**: rerank 含时效衰减但 poignancy 本身不变，长期不访问的记忆应逐渐降级
 - **MiniMax SSE 真流式**: 已尝试并回退 (2026-07-10)。MiniMax SSE 每个 event 是独立可播 mp3（非增量片段），拼接导致重复，只取最后 event 又等于同步下载。待 MiniMax API 支持增量 SSE 或换方案（WebSocket）
 - **MiniMax 异步长文本合成**: `t2a_async_v2`，适合 >3000 chars。需创建任务 → 轮询状态 → 下载文件
-- **记忆去重**: insert 时检查相似内容，避免重复条目（延后）
-- **按 ID 更新/删除记忆**: search() 返回记忆 ID，LLM 可引用修改；新增 update/delete API
 - **记忆导出/备份**: 支持 JSON 导出和恢复
 - **记忆统计**: 按类型/年龄/poignancy 分布统计，接入 DebugInfo 仪表板
-- **冲突检测**: 检测矛盾记忆 (如 "最喜欢蓝色" vs "最喜欢绿色")，提示 LLM 确认
 - **Claude 原生持久记忆**: `.claude/projects/-home-yomu-Agent/memory/` 目录为空，从未启用
 - **MacroMemory + MacroReflector**: 每日合成日记条目。需新增 Milvus 集合 + MacroReflector 后台任务
 - **EmotionEngine 升级**: 生理状态模型、时间衰减曲线、混合情绪、Amygdala LLM 补充
@@ -38,7 +33,7 @@
 - **角色切换**: 加载不同角色配置（名字、性格、发音人、prompt 模板），需独立 spec。涉及 CharacterConfig 重新加载、TTS voice lookup 逻辑修复（`voice` 字段当前是死代码）、CognitiveLoop 角色引用更新。`gpt_sovits_voices.yaml` 目前只有 `Elysia` 一个发音人
 - **多角色 prompt 模板**: `PromptAssembler` 通过 `SystemPromptManager` + 12 `PromptSection` 渲染，多角色时加载不同 `CharacterConfig` 即可切换 section 数据源
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
-- **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + SenseVoice + GPT-SoVits）。数据库已完成 docker-compose.yml（MongoDB + Milvus）。
+- **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + SenseVoice + GPT-SoVits）。数据库已完成 docker-compose.yml（MongoDB + Milvus）
 - **C3 情绪传染规则动态化** → 后续 PersonalityEngine Phase 2
 - **C6 说话风格动态化** → 后续 PersonalityEngine Phase 2
 - **C7 主动性动态化** → 后续 PersonalityEngine Phase 2
@@ -54,13 +49,23 @@
   - C3/C6/C7 与 PersonalityEngine 动态联动
   - 用户话题检测触发 C9（目前只看状态存在+冷却）
 
-### 后台任务系统 — 后续迭代
+### LTM 自动更新与去重 — 已完成
 
-后台任务分级 + DAG 依赖解析（`core/task.py` 中预留了 `run_in_background` / `depends_on` 字段，当前未使用）。
+| 项目 | 状态 |
+|------|------|
+| MemoryReflector — 定期深度去重（轮次/新记忆数触发，KMeans 聚类 + LLM 审查） | ✅ 已实现 |
+| ConsolidationCompare — 提取时轻量比对（新记忆 vs 已有记忆 top 10） | ✅ 已实现 |
+| ExtractMemory.j2 — 反幻觉提取 prompt | ✅ 已部署（GPT 5.6 sol_pro） |
+| ConsolidationCompare.j2 — 比对去重 prompt | ✅ 已部署 |
+| MemoryReflector.j2 — 定期去重 prompt | ✅ 已部署 |
+| LTM 数据模型扩展 — `_absorbed_ids`, `get_all()`, `mark_absorbed()`, `update_text` 扩展 | ✅ 已实现 |
+| LTM 驱逐暂停 — 开发阶段暂不禁用 | ✅ 已注释 |
+| 前端消息缓存移除 — localStorage 不再缓存聊天消息 | ✅ 已实现 |
+| TTS read timeout 120s→30s | ✅ 已完成 |
 
-- `depends_on: list[str]` — TaskScheduler 需在出队前检查依赖是否完成
-- `run_in_background: bool` — Worker Loop 需对 BACKGROUND 类型任务走独立执行路径
-- `progress: float` — Worker 执行期间更新进度，前端可轮询
+### prompt-requirements.md 已不再需要
+
+Prompt 已由 GPT 生成并部署，根目录 `prompt-requirements.md` 可移除（参考版本已归档到 `prompt/ref/`）。
 
 ## 代码清理
 
