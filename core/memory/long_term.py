@@ -262,7 +262,8 @@ class LongTermMemory:
             self._dirty_ids.add(entry.id)
 
         self._entries.append(entry)
-        self._evict_old_entries()
+        # TODO: 开发阶段暂不禁用驱逐，避免丢失测试记忆
+        # self._evict_old_entries()
 
     def _evict_old_entries(self) -> int:
         """驱逐过期和超过上限的条目。返回驱逐数量。

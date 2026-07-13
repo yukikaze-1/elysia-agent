@@ -19,7 +19,7 @@ http://localhost:8765/debug
 | 面板 | 内容 |
 |------|------|
 | **System** | FSM 状态、Uptime、LLM 型号、TTS/STT、WS 连接数、Proactive 开关 |
-| **Memory** | Session 消息数、LTM 条目数、MongoDB/Milvus/Embedding 状态、Archive 计数、Character 名、L1 Core 摘要 |
+| **Memory** | Session 消息数、LTM 条目数、MongoDB/Milvus/Embedding 状态、Archive 计数、Character 名、L1 Core 摘要、Session Params（可展开 key-value） |
 | **Latency** | 请求延迟统计（avg / P50 / P95 / P99 / last） |
 | **Process Memory** | RSS / VMS / 占比 / 线程数 |
 | **Scheduler** | Worker Pool 状态（pending / running / total） |
@@ -60,9 +60,12 @@ http://localhost:8765/debug
 
 **Session 管理 (MongoDB)**
 
-- 会话列表（消息数 + token 统计）
+数据源：从 `message_archive`（权威源）读取，非 `sessions` 快照。显示最新 20 条消息。
+
+- 会话列表（消息数从 archive 统计 + token 统计）
 - 查看会话详情（消息历史 + 图片 + inner_voice）
 - 单条/批量/全部删除
+- MongoDB 不可用时降级读内存 session
 
 **Message Archive (MongoDB)**
 
@@ -111,8 +114,8 @@ TaskSystem 实时监控：
 | PUT | `/debug/api/ltm/{id}` | 编辑 LTM 文本 |
 | DELETE | `/debug/api/ltm/{id}` | 删除单条 LTM |
 | DELETE | `/debug/api/ltm` | 清空 LTM |
-| GET | `/debug/api/sessions` | Session 列表 |
-| GET | `/debug/api/sessions/{id}` | Session 详情 |
+| GET | `/debug/api/sessions` | Session 列表（count 从 archive 统计） |
+| GET | `/debug/api/sessions/{id}` | Session 详情（消息从 archive 读取，限 20 条；不可用时降级） |
 | DELETE | `/debug/api/sessions/{id}` | 删除 Session |
 | GET | `/debug/api/archive` | Archive 列表（offset 分页 + 搜索 + role 过滤） |
 | PUT | `/debug/api/archive/{id}` | 编辑 Archive 消息 |
@@ -122,9 +125,12 @@ TaskSystem 实时监控：
 
 ## 技术实现
 
-- 单文件 `static/debug.html`（~1700 行），无构建步骤
-- ES5 兼容 JavaScript（无模块、无 async/await 以外的新语法）
+- 单文件 `static/debug.html`（~2000 行），无构建步骤
+- ES5 兼容 JavaScript，无框架依赖
 - 轮询 + 指数退避（2s → 30s）
-- DOM diff 跳过无变化轮次
+- DOM diff 跳过无变化轮次（概览页）
 - 确认弹窗复用单个 modal 元素
 - Tab 切换时 SSE 自动断开
+- 数据库面板：搜索输入值 + 折叠状态在 DOM 重建时保留
+- Session 视图数据源：`message_archive`（权威源），非 `sessions` 快照
+- Session Params：每个 key 独立展开/折叠；大数据 key（reflector_buffer/context）只显示计数，不展开内容
