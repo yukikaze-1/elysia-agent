@@ -36,7 +36,7 @@ class MilvusBackend(VectorDBBackend):
         logger: logging.Logger | None = None,
     ):
         self._name = name
-        self._metric_type = "L2"  # 被 create_collection 覆盖
+        self._metric_types: dict[str, str] = {}  # collection_name → metric_type
         self._logger = logger or logging.getLogger(__name__)
         kwargs: dict = {"uri": uri}
         if token:
@@ -85,13 +85,13 @@ class MilvusBackend(VectorDBBackend):
             self._client.create_collection, name, schema=schema
         )
 
-        self._metric_type = metric_type or preset["metric_type"]
+        self._metric_types[name] = metric_type or preset["metric_type"]
 
         index_params = self._client.prepare_index_params()
         index_params.add_index(
             field_name="embedding",
             index_type=preset["index_type"],
-            metric_type=self._metric_type,
+            metric_type=self._metric_types[name],
             params=preset["params"],
         )
         await asyncio.to_thread(
@@ -134,12 +134,12 @@ class MilvusBackend(VectorDBBackend):
         filter_expr: str = "",
         output_fields: list[str] | None = None,
     ) -> list[dict]:
-        """ANN 搜索。使用 create_collection 时设定的 metric_type。"""
+        """ANN 搜索。使用 collection 创建时设定的 metric_type。"""
         kwargs: dict = {
             "collection_name": collection,
             "data": [vector],
             "limit": top_k,
-            "search_params": {"metric_type": self._metric_type},
+            "search_params": {"metric_type": self._metric_types.get(collection, "L2")},
         }
         if filter_expr:
             kwargs["filter"] = filter_expr
