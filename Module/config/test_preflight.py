@@ -7,6 +7,9 @@ from unittest.mock import MagicMock
 import pytest
 
 
+pytestmark = pytest.mark.unit
+
+
 @pytest.fixture
 def mock_config():
     """构造一个最小 AppConfig。"""

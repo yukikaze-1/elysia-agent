@@ -1,8 +1,12 @@
 """make_config_test_classes 单元测试。"""
 from dataclasses import dataclass, field
 
+import pytest
+
 from Module.config import ConfigField
 from Module._common.config_test_helpers import make_config_test_classes
+
+pytestmark = pytest.mark.unit
 
 
 @dataclass

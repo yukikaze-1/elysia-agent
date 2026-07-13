@@ -10,6 +10,8 @@ from Module._common.registry_helpers import (
     resolve_base_url,
 )
 
+pytestmark = pytest.mark.unit
+
 
 class TestResolveApiKey:
     def test_explicit_key_wins(self):

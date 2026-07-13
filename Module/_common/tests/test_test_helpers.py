@@ -3,6 +3,8 @@ import pytest
 
 from Module._common.test_helpers import make_test_method
 
+pytestmark = pytest.mark.unit
+
 
 class TestMakeTestMethod:
     @pytest.mark.asyncio

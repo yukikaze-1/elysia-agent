@@ -1,5 +1,9 @@
 """run_module_main 单元测试。"""
+import pytest
+
 from Module._common.main_runner import run_module_main
+
+pytestmark = pytest.mark.unit
 
 
 class TestRunModuleMain:

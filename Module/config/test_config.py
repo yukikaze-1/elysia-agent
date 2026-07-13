@@ -24,6 +24,8 @@ from Module.config import (
 )
 from Module.config.loader import EnvManager
 
+pytestmark = pytest.mark.unit
+
 
 # ── test dataclasses ───────────────────────────────────────────────────
 

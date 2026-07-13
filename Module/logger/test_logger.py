@@ -9,6 +9,8 @@ import pytest
 
 from Module.logger import LoggerFactory
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def lf():
