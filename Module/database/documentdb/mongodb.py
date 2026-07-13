@@ -1,10 +1,22 @@
 """MongoDB 文档数据库后端 — motor (async-native)。"""
 
 import logging
+import re
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from .protocol import DocumentDBBackend
+
+# Collection 名白名单 — 仅允许字母、数字、下划线、连字符
+_COLLECTION_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _validate_collection(name: str) -> None:
+    if not _COLLECTION_NAME_RE.match(name):
+        raise ValueError(
+            f"无效的 collection 名: {name!r}，"
+            f"仅允许字母、数字、下划线和连字符"
+        )
 
 
 class MongoDBBackend(DocumentDBBackend):
@@ -24,16 +36,19 @@ class MongoDBBackend(DocumentDBBackend):
         self._logger = logger or logging.getLogger(__name__)
         self._client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=server_selection_timeout_ms)
         self._db = self._client[database]
+        _validate_collection(database)
 
     # ---- Write ----
 
     async def insert_one(self, collection: str, document: dict) -> str:
+        _validate_collection(collection)
         # motor 的 insert_one 会修改 document（注入 _id），
         # 用 copy 保护调用方不受副作用影响。
         result = await self._db[collection].insert_one(dict(document))
         return str(result.inserted_id)
 
     async def insert_many(self, collection: str, documents: list[dict]) -> list[str]:
+        _validate_collection(collection)
         if not documents:
             return []
         # motor 会修改每个 document（注入 _id），用 copy 保护调用方
@@ -52,6 +67,7 @@ class MongoDBBackend(DocumentDBBackend):
         skip: int = 0,
     ) -> list[dict]:
         """查询文档。支持排序、分页。_id 转换为 str。"""
+        _validate_collection(collection)
         cursor = self._db[collection].find(filter_expr)
         if sort:
             cursor = cursor.sort(sort)
@@ -67,14 +83,17 @@ class MongoDBBackend(DocumentDBBackend):
     async def update_one(
         self, collection: str, filter_expr: dict, update: dict, upsert: bool = False,
     ) -> int:
+        _validate_collection(collection)
         result = await self._db[collection].update_one(filter_expr, update, upsert=upsert)
         return result.modified_count
 
     async def delete_many(self, collection: str, filter_expr: dict) -> int:
+        _validate_collection(collection)
         result = await self._db[collection].delete_many(filter_expr)
         return result.deleted_count
 
     async def count(self, collection: str, filter_expr: dict) -> int:
+        _validate_collection(collection)
         return await self._db[collection].count_documents(filter_expr)
 
     # ---- Index ----
@@ -83,6 +102,7 @@ class MongoDBBackend(DocumentDBBackend):
         self, collection: str, keys: list[tuple[str, int]], **kwargs
     ) -> str:
         """创建索引（如不存在）。返回索引名。"""
+        _validate_collection(collection)
         return await self._db[collection].create_index(keys, **kwargs)
 
     # ---- Management ----
