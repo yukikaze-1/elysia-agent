@@ -7,6 +7,8 @@ import pytest
 
 from Module.system_prompt import PromptManager
 
+pytestmark = pytest.mark.service
+
 
 class TestConstructor:
     def test_valid_template_dir(self):

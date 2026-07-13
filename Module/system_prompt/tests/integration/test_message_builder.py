@@ -2,6 +2,8 @@
 import pytest
 from Module.system_prompt.message_builder import MessageBuilder
 
+pytestmark = pytest.mark.integration
+
 
 class TestBuildMessages:
     def test_basic_assembly(self):

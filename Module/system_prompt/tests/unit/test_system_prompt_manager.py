@@ -4,6 +4,8 @@ import pytest
 from Module.system_prompt.protocol import PromptSection, StaticSection
 from Module.system_prompt.system_prompt_manager import SystemPromptManager, _RENDER_ORDER
 
+pytestmark = pytest.mark.unit
+
 
 def _make_section(name, text):
     return StaticSection(name, "1.0", f"desc {name}", text)

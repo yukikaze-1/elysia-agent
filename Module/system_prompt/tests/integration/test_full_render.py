@@ -19,6 +19,8 @@ from Module.system_prompt.system_prompt_manager import SystemPromptManager
 from core.memory.session import SessionMemory
 from core.personality import PersonalityEngine
 
+pytestmark = pytest.mark.integration
+
 _TEMPLATES = "Module/system_prompt/templates"
 
 

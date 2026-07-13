@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 from Module.system_prompt.protocol import PromptSection, StaticSection, Jinja2Section
 
+pytestmark = pytest.mark.unit
+
 
 class TestPromptSectionABC:
     def test_cannot_instantiate_directly(self):

@@ -18,6 +18,8 @@ from Module.system_prompt.sections.output_format import OutputFormatSection
 from Module.system_prompt.sections.tts_markup import TTSMarkupSection
 from core.memory.session import SessionMemory
 
+pytestmark = pytest.mark.unit
+
 _TEMPLATES = "Module/system_prompt/templates"
 
 
