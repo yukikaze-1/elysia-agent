@@ -1,0 +1,3 @@
+# MemoryReflector 去重 Prompt
+# 占位文件 — 实际内容待 GPT 生成
+# 需求规格见: prompt-requirements.md → Prompt B

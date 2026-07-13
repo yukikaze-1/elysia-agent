@@ -99,6 +99,7 @@ class CognitiveLoop:
         self._emotion = emotion
         self._consolidator = consolidator
         self._reflector = reflector
+        self._memory_reflector = None
         self._tts = tts  # 保留供 agent.py stop() 读取
         self._ctx = ctx
         self._token_tracker = token_tracker
@@ -166,6 +167,10 @@ class CognitiveLoop:
     def set_user_profile(self, profile) -> None:
         """设置用户画像引用。"""
         self._user_profile = profile
+
+    def set_memory_reflector(self, reflector) -> None:
+        """设置 MemoryReflector 引用（agent.py 在 __init__ 中注入）。"""
+        self._memory_reflector = reflector
 
     # ---- Main entry ----
 
@@ -753,6 +758,7 @@ class CognitiveLoop:
 
     async def _after_response(self, user_message: str, assistant_response: str) -> None:
         """Post-response hooks: consolidate memory, character reflection, save session."""
+        items = []  # 初始化，避免 NameError
         if self._consolidator:
             try:
                 t0 = time.perf_counter()
@@ -771,6 +777,16 @@ class CognitiveLoop:
                 raise
             except Exception:
                 logger.debug("性格反思缓冲失败", exc_info=True)
+        # 更新 MemoryReflector 计数器
+        if self._memory_reflector:
+            self._memory_reflector.increment_round()
+            if items:
+                self._memory_reflector.increment_new_memories(len(items))
+            # 检查是否需要触发去重（非阻塞，快速判断）
+            try:
+                await self._memory_reflector.check_and_reflect()
+            except Exception:
+                logger.debug("MemoryReflector check failed", exc_info=True)
         # Save session asynchronously (fire-and-forget)
         try:
             await self._session.save()

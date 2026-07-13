@@ -33,6 +33,7 @@ from .llm_adapter import LLMAdapter
 from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
 from .personality import CharacterReflector, PersonalityEngine
+from .memory.memory_reflector import MemoryReflector  # 新增
 from Module.embedding import EmbeddingFactory
 from .task_scheduler import TaskScheduler
 
@@ -126,6 +127,13 @@ class Agent:
         )
         self._character_reflector.set_personality_engine(self._personality_engine)
 
+        # ---- 记忆反射器 ----
+        self._memory_reflector = MemoryReflector(
+            llm=self._llm,
+            memory=self._long_term,
+            session=self._session,
+        )
+
         # ---- Token 统计 ----
         self._token_tracker = None  # 在 start() 中创建（需要 session_id）
 
@@ -143,6 +151,7 @@ class Agent:
             tts=self._tts,
             token_tracker=self._token_tracker,
         )
+        self._cognitive.set_memory_reflector(self._memory_reflector)
 
         self._idle = IdleMonitor(
             character=self._character,
@@ -232,6 +241,8 @@ class Agent:
                 self._personality_engine.restore_state()
             if self._emotion:
                 self._emotion.restore_state()
+            if self._memory_reflector:
+                self._memory_reflector.restore_state()
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
             if os.path.exists(self._session.pending_file):
                 if await self._session.load_from_jsonl(merge=True):
@@ -420,6 +431,10 @@ class Agent:
 
         # 1.5. Flush character reflection buffer
         await self._flush_reflector()
+
+        # 1.6. MemoryReflector 计数器落盘
+        if self._memory_reflector:
+            await self._memory_reflector.flush()
 
         # 2. 先停事件循环 — 防止它在 shutdown 期间继续 post 新任务
         await self._stop_event_task()
