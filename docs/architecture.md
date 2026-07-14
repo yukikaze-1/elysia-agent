@@ -349,7 +349,8 @@ class CognitiveLoop:
             if not can_transition(THINKING):     # 已在处理中 → skip
                 return
             fsm.transition(THINKING)
-            sentence_buf.reset()
+            self._sentence_buf = SentenceBuffer(...)  # 每轮新建
+            self._block_filter = BlockFilter()        # 每轮新建
             try:
                 await self._think_loop(user_message, ...)
             except CancelledError:
@@ -440,15 +441,17 @@ MOOD_KEYWORDS = {
 ### 4.6 分句缓冲 (SentenceBuffer)
 
 ```
-SPLIT_PATTERN = re.compile(r"([。！？.!?\n])")
+默认分隔符: 。！？!?\n～…〜.
 
 逐 token feed → 检测分隔符 → 提取完整句
-  连续分隔符合并: 剩余文本以分隔符开头 → hold 到下次
-  短句阈值: 剩余 < 2 字符 → hold (避免 "好嘞！" → "好嘞" + "！")
+  英文句号检测: 过滤数字(3.14)、缩写(Dr./Mr./U.S.)、URL
+  连续分隔符合并: ？, ！, ～ 等连续标点合并为一句 ("啊？！" 不拆)
+  短句阈值: min_chunk_length=5, 短于阈值的句子暂存, 后续有文字时释放
   flush() → 返回剩余未完成文本
 
-配置项: split_pattern, min_sentence_len, hold_short, merge_consecutive
-65 个单元测试覆盖边界
+配置项: delimiters, min_chunk_length, max_buffer_length (默认 2000),
+        abbreviations (可扩展英文缩写集)
+72 个单元测试覆盖边界
 ```
 
 ### 4.7 提示词组装 (PromptAssembler + SystemPromptManager)

@@ -2,6 +2,39 @@
 
 ## 已完成
 
+### 2026-07-14: 分句系统优化
+
+全面重写 `SentenceBuffer` 和 `BlockFilter`，修复 2 个正确性 bug + 1 个安全 bug + 工程改进。
+
+**SentenceBuffer (`core/sentence_buffer.py`)：**
+- 删除死代码 `_split_pat`（编译从未使用的 regex）
+- 修复 `_is_dot_boundary`：`3.14.` 末尾句号从误判为小数点改为正确切句（"前后都是数字"才认定为小数点）
+- 缩写检测重写：固定 3 字符窗口 + 大小写敏感 → 向后扫描完整单词 + 大小写不敏感（23 个缩写）
+- 新增 `max_buffer_length=2000`：无标点长文本超阈值时在空格处强制切分，防止 buffer 无限增长
+- `_extract` 拆分出 `_consume_sentence`：连续分隔符合并逻辑独立成方法
+- `_find_split` 改为单次 `enumerate` 遍历（替代逐分隔符 `str.find()`）
+- `_HARD_DELIMITERS` → `frozenset`，风格统一
+- 新增可选参数：`max_buffer_length`、`abbreviations`
+
+**BlockFilter (`core/block_filter.py`)：**
+- `_depth` → `_mode: Literal["markdown","code"] | None`：修复不同类型结束标签互相关闭的 bug（`</|code|>` 不再能关闭 `<|markdown|>`）
+- `flush()` 安全修复：未闭合块内容直接丢弃，不再泄漏到 TTS
+- 新增 `reset()`：配合 SentenceBuffer 生命周期
+- `flush()` 尾部半截标签处理：`rfind("<|")` 替代 `_BLOCK_START_RE.sub()`
+- `build_parts_with_blocks()` 修复：块按原文位置交错插入，不再全部追加到末尾
+- `_CODE_START_RE` 放宽为 `[A-Za-z0-9_+.-]*`
+
+**集成 (`core/cognitive_loop.py`)：**
+- `SentenceBuffer` 和 `BlockFilter` 改为每轮 `process()` 新建（赋给 `self._sentence_buf` / `self._block_filter`），替代 `__init__` 中一次性创建
+- `_handle_interrupt()` 新增 `self._block_filter.reset()` + None-guard
+
+**测试：**
+- `test_sentence_buffer.py`：新增 7 个 test（3.14. 末尾句号、缩写大小写、max_buffer 强制切分），72 test 总计
+- `test_block_filter.py`：新建 18 个 test（过滤、flush 安全、跨 chunk、标签匹配、reset、parts 排序）
+- `test_phase3.py`：3 个 test 适配新生命周期（`_sentence_buf` → `None` at init）
+
+**文档更新：** `docs/architecture.md` §4.3/§4.6, `core/README.md`, `docs/frontend-api.md`
+
 ### 2026-07-14: 不稳定测试排查与修复
 
 从 10 failed → 1 failed（1543→1552 passed）。修复 7 个测试，分 4 类根因：

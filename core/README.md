@@ -93,7 +93,7 @@ Agent.start()
 
 #### CognitiveLoop (`cognitive_loop.py`)
 
-ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引擎。流式 LLM 输出中解析 `<inner_voice>` 标签：PRE → THINK → REPLY 三阶段。THINK 内容发 `inner_voice` WS 事件（前端淡色气泡），REPLY 内容走分句→TTS 管线。工具调用检测后进入 EXECUTING 状态，最多 5 轮工具循环。支持 `submit_task` 拦截（后台任务委托）。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。
+ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引擎。流式 LLM 输出中解析 `<inner_voice>` 标签：PRE → THINK → REPLY 三阶段。THINK 内容发 `inner_voice` WS 事件（前端淡色气泡），REPLY 内容经 `BlockFilter` 过滤结构化块标记 → `SentenceBuffer` 分句 → TTS 管线。工具调用检测后进入 EXECUTING 状态，最多 5 轮工具循环。`SentenceBuffer` 和 `BlockFilter` 每轮 `process()` 新建，避免跨轮状态污染。支持 `submit_task` 拦截（后台任务委托）。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。
 
 关键方法：`process()`, `_think_loop()`, `cancel_current()`, `_after_response()`
 
@@ -134,9 +134,9 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `llm_adapter.py` | LLM 适配器：封装 `Module.llm` 后端，提供 `stream_think()` 流式接口，自动重试（429/500/502/503/504，指数退避 3 次）。`ThoughtResult` dataclass 统一 text + tool_calls |
 | `character_config.py` | 角色配置：从 YAML 加载角色名、wake words、emotion 阈值、proactive 参数、L1 Core personality 文本路径。`from_yaml()` 工厂方法 |
 | `app_config.py` | 应用配置：`ConfigLoader` 加载 `config.yaml` + env override。包含 `AgentConfig`、`LLMConfig`、`MemoryConfig`、`TTSConfig` 等 dataclass |
-| `sentence_buffer.py` | 分句缓冲：逐 token feed，检测完整句边界（。！？!?\n～…〜），完整句触发 TTS。智能处理英文缩写和数字小数点避免误分割 |
+| `sentence_buffer.py` | 分句缓冲：逐 token feed，检测完整句边界（。！？!?\n～…〜），完整句触发 TTS。智能处理英文缩写和数字小数点避免误分割。支持 `max_buffer_length` 强制切分保护、`abbreviations` 可扩展缩写集 |
 | `tts_stream.py` | TTS 流管理：句队列 + FIFO 顺序播放 + emoji 排队（emoji 依附于 TTS 句前后发送）。`TTSStreamManager` 管理后台 TTS task 生命周期，支持热切换后端 |
-| `block_filter.py` | 结构化块过滤：`BlockFilter` 实时过滤 LLM 输出中的 `<|markdown|>` 和 `<|code|>` 标记，防止代码/markdown 进入 TTS。`build_parts_with_blocks()` 流结束后解析完整块结构 |
+| `block_filter.py` | 结构化块过滤：`BlockFilter` 实时过滤 `<|markdown|>` 和 `<|code|>` 标记，防止代码/markdown 进入 TTS。`flush()` 未闭合块自动丢弃防泄漏，`reset()` 支持 interrupt 清理。`build_parts_with_blocks()` 保留原文交错顺序（块在句子之间而非末尾） |
 | `text_utils.py` | 文本工具：`content_text_from_content()` 从多模态 content 数组提取纯文本。`MessageObj` dataclass 用于非流式文本最终发送 |
 | `message_id.py` | 消息 ID 生成：`new_message_id()` 返回 `msg_` + 26 位 hex UUID4 |
 | `debug_info.py` | Debug 面板数据聚合：`DebugInfo` dataclass 涵盖 FSM、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator 等所有子系统状态。`collect()` 遍历 Agent 聚合数据 |
