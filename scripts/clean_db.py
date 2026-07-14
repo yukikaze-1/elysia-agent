@@ -10,7 +10,6 @@
 
 import argparse
 import asyncio
-import os
 import sys
 from pathlib import Path
 
@@ -132,20 +131,21 @@ class MilvusCleaner:
 
     通过 LongTermMemory.clear_all() 清空向量记忆
     （drop + recreate collection）。
-    """
 
-    def __init__(self):
-        self._ltm = LongTermMemory()
+    backend 在 clean() 中创建（而非 __init__），确保构造失败也被
+    asyncio.gather(return_exceptions=True) 捕获。
+    """
 
     async def clean(self) -> tuple[str, bool, int | str]:
         """执行清理，返回 (collection, ok, detail)。"""
+        ltm = LongTermMemory()
         try:
-            deleted = await self._ltm.clear_all()
+            deleted = await ltm.clear_all()
             return (LongTermMemory.COLLECTION, True, deleted)
         except Exception as e:
             return (LongTermMemory.COLLECTION, False, str(e))
         finally:
-            await self._ltm.close()
+            await ltm.close()
 
 
 class FileCleaner:

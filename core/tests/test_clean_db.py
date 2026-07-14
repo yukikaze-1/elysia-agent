@@ -70,7 +70,7 @@ class TestMongoCleaner:
 
     @pytest.mark.asyncio
     async def test_mongo_cleaner_factory_failure_is_caught(self):
-        """DocumentDBFactory.create 失败时异常被 gather(return_exceptions=True) 捕获。"""
+        """DocumentDBFactory.create failure propagates so gather can catch it"""
         from clean_db import MongoCleaner
 
         with patch(
