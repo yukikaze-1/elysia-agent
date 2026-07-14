@@ -1,141 +1,325 @@
-"""流式结构化块过滤器 — 阻止代码/markdown 块进入 TTS。
+"""流式结构化块过滤器。
 
-从 cognitive_loop.py 提取。_BlockFilter 在 LLM 流式响应中
-实时过滤 <|markdown|> 和 <|code|> 标记，确保 TTS 只朗读对话文本。
-build_parts_with_blocks 在流式结束后从完整文本中解析块结构，
-用于 session 存储和前端渲染。
+过滤以下结构化块，使代码和 Markdown 内容不会进入 TTS：
+
+    <|markdown|>...</|markdown|>
+    <|code|python>...</|code|>
+
+同时提供流结束后的结构化解析功能。
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import Literal
 
-# ---- 正则常量 ----
 
-_BLOCK_PATTERN: re.Pattern = re.compile(
-    r'<\|markdown\|>(.*?)</\|markdown\|>|'
-    r'<\|code\|(\w+)?>(.*?)</\|code\|>',
-    re.DOTALL,
+BlockType = Literal["markdown", "code"]
+
+
+_MARKDOWN_START = "<|markdown|>"
+_CODE_START_RE = re.compile(r"<\|code\|([A-Za-z0-9_+.-]*)>")
+_MARKDOWN_END = "</|markdown|>"
+_CODE_END = "</|code|>"
+
+# 所有可能的起始标记。
+_START_RE = re.compile(
+    r"<\|markdown\|>|<\|code\|([A-Za-z0-9_+.-]*)>"
 )
 
-_BLOCK_START_RE: re.Pattern = re.compile(r'<\|(markdown|code)(?:\|(\w*))?\|?>')
+# 只保留这么多尾部字符，防止标记跨 chunk。
+_MAX_MARKER_LENGTH = max(
+    len(_MARKDOWN_START),
+    len(_MARKDOWN_END),
+    len(_CODE_END),
+    len("<|code|python>"),
+)
 
-# 最长标记 "</|markdown|>" 为 13 字符，流式处理时保留末尾这么多以防截断
-_BLOCK_LOOKBEHIND = 13
 
+@dataclass(frozen=True)
+class ParsedBlock:
+    kind: BlockType
+    content: str
+    language: str = ""
 
-# ---- BlockFilter ----
 
 class BlockFilter:
-    """流式过滤结构化块标记，阻止代码/markdown 内容进入 TTS。
+    """流式过滤 Markdown/code 块。
 
-    用法:
-        bf = BlockFilter()
-        for chunk in llm_stream:
-            clean = bf.feed(chunk)   # 返回可安全送 TTS/分句的文本
-            ...
-        trailing = bf.flush()        # 清空缓冲区
+    块内内容始终不会返回给调用方。
+
+    对于未闭合的块，``flush()`` 会丢弃剩余块内容，
+    从而避免代码泄漏到 TTS。
     """
 
     def __init__(self) -> None:
         self._buf = ""
-        self._depth = 0
+        self._mode: BlockType | None = None
 
     def feed(self, chunk: str) -> str:
-        """喂入一个 chunk，返回可以去 TTS/分句的干净文本。"""
+        """输入流式文本，返回可以进入 TTS 的普通文本。"""
+        if not chunk:
+            return ""
+
         self._buf += chunk
-        out: list[str] = []
-        i = 0
+        output: list[str] = []
 
-        while i < len(self._buf):
-            if self._depth > 0:
-                # 在块内 — 找结束标记
-                end_md = self._buf.find("</|markdown|>", i)
-                end_code = self._buf.find("</|code|>", i)
-                candidates = []
-                if end_md >= 0:
-                    candidates.append(end_md)
-                if end_code >= 0:
-                    candidates.append(end_code)
-                if candidates:
-                    end_pos = min(candidates)
-                    end_len = (
-                        len("</|markdown|>")
-                        if self._buf.startswith("</|markdown|>", end_pos)
-                        else len("</|code|>")
-                    )
-                    i = end_pos + end_len
-                    self._depth -= 1
-                else:
-                    # 没有结束标记 — 保留末尾以防截断
-                    keep = min(len(self._buf) - i, _BLOCK_LOOKBEHIND)
-                    i = len(self._buf) - keep
-                    break
-            else:
-                # 不在块内 — 找开始标记
-                m = _BLOCK_START_RE.search(self._buf, i)
-                if m:
-                    out.append(self._buf[i:m.start()])
-                    i = m.end()
-                    self._depth += 1
-                else:
-                    # 没有开始标记 — 安全地输出大部分，保留末尾防截断
-                    safe = len(self._buf) - _BLOCK_LOOKBEHIND
-                    if safe > i:
-                        out.append(self._buf[i:safe])
-                        i = safe
-                    break
+        while self._buf:
+            if self._mode is not None:
+                end_marker = (
+                    _MARKDOWN_END
+                    if self._mode == "markdown"
+                    else _CODE_END
+                )
 
-        self._buf = self._buf[i:]
-        return "".join(out)
+                end_pos = self._buf.find(end_marker)
+
+                if end_pos < 0:
+                    # 块尚未结束。全部视为块内容，不输出。
+                    # 保留尾部只是为了兼容极端情况下后续结束标记跨 chunk。
+                    keep = min(len(self._buf), len(end_marker) - 1)
+                    self._buf = self._buf[-keep:] if keep else ""
+                    return "".join(output)
+
+                # 丢弃块内容和结束标记。
+                self._buf = self._buf[end_pos + len(end_marker):]
+                self._mode = None
+                continue
+
+            start_match = _START_RE.search(self._buf)
+
+            if start_match is not None:
+                output.append(self._buf[:start_match.start()])
+
+                marker = start_match.group(0)
+                self._buf = self._buf[start_match.end():]
+
+                if marker == _MARKDOWN_START:
+                    self._mode = "markdown"
+                else:
+                    self._mode = "code"
+
+                continue
+
+            # 没有完整起始标记时，安全输出大部分内容，
+            # 保留末尾防止起始标记被 chunk 截断。
+            keep = _MAX_MARKER_LENGTH - 1
+
+            if len(self._buf) <= keep:
+                break
+
+            output.append(self._buf[:-keep])
+            self._buf = self._buf[-keep:]
+            break
+
+        return "".join(output)
 
     def flush(self) -> str:
-        """清空缓冲区，返回剩余的未被标记包裹的文本。"""
+        """清空缓冲区。
+
+        - 普通文本会返回；
+        - 已进入但未闭合的块会整体丢弃；
+        - 尾部残留的半截起始标记不会泄漏到 TTS。
+        """
+
+        if self._mode is not None:
+            # 关键：未闭合代码块不能进入 TTS。
+            self._buf = ""
+            self._mode = None
+            return ""
+
         result = self._buf
         self._buf = ""
-        self._depth = 0
-        # 去掉可能残留的未闭合标记
-        cleaned = _BLOCK_START_RE.sub("", result)
-        return cleaned
+
+        # 处理尾部可能存在的半截标记。
+        partial_start = result.rfind("<|")
+
+        if partial_start >= 0:
+            suffix = result[partial_start:]
+
+            # 如果尾部看起来像一个被截断的结构化标签，
+            # 丢弃该标签，不影响此前的正常文本。
+            if (
+                len(suffix) < _MAX_MARKER_LENGTH
+                and ">" not in suffix
+            ):
+                result = result[:partial_start]
+
+        return result
+
+    def reset(self) -> None:
+        """重置过滤器。"""
+        self._buf = ""
+        self._mode = None
 
 
-# ---- 块解析 ----
+def _parse_blocks(acc_text: str) -> list[tuple[int, int, ParsedBlock]]:
+    """解析完整文本中的块，并返回块在原文中的位置。"""
+
+    result: list[tuple[int, int, ParsedBlock]] = []
+    position = 0
+
+    while position < len(acc_text):
+        match = _START_RE.search(acc_text, position)
+
+        if match is None:
+            break
+
+        marker = match.group(0)
+
+        if marker == _MARKDOWN_START:
+            kind: BlockType = "markdown"
+            language = ""
+            end_marker = _MARKDOWN_END
+        else:
+            kind = "code"
+            language = _CODE_START_RE.fullmatch(marker).group(1) or ""
+            end_marker = _CODE_END
+
+        content_start = match.end()
+        end_pos = acc_text.find(end_marker, content_start)
+
+        if end_pos < 0:
+            # 未闭合块不进入 parts，避免把残缺内容渲染到前端。
+            break
+
+        content = acc_text[content_start:end_pos]
+
+        result.append(
+            (
+                match.start(),
+                end_pos + len(end_marker),
+                ParsedBlock(
+                    kind=kind,
+                    content=content.strip(),
+                    language=language,
+                ),
+            )
+        )
+
+        position = end_pos + len(end_marker)
+
+    return result
+
+
+def _append_sentences_from_segment(
+    segment: str,
+    sentences: list[str],
+    sentence_index: int,
+    parts: list[dict],
+) -> int:
+    """将当前普通文本段中的句子按顺序放入 parts。"""
+
+    search_pos = 0
+
+    while sentence_index < len(sentences):
+        sentence = sentences[sentence_index]
+
+        if not sentence.strip():
+            sentence_index += 1
+            continue
+
+        # 优先按原始句子文本匹配。
+        found = segment.find(sentence, search_pos)
+
+        # SentenceBuffer 会 rstrip()，因此允许用 strip 后文本匹配。
+        if found < 0:
+            stripped = sentence.strip()
+            found = segment.find(stripped, search_pos)
+
+        if found < 0:
+            break
+
+        parts.append({"content": sentence})
+        search_pos = found + len(sentence)
+        sentence_index += 1
+
+    return sentence_index
+
 
 def build_parts_with_blocks(
-    acc_text: str, sentences: list[str],
+    acc_text: str,
+    sentences: list[str],
 ) -> tuple[list[dict], dict[str, list[int]]]:
-    """从 LLM 输出文本中解析结构化块标记，构建 parts 和 content_type。
+    """从完整 LLM 输出中构建前端 parts。
 
-    对话文本的句子作为 text parts，标记包裹的内容作为 markdown/code parts，
-    追加在句子之后。
-
-    Args:
-        acc_text: LLM 输出的完整文本（含块标记）
-        sentences: 已分句的纯对话文本列表
+    与旧实现不同，Markdown/code block 会保留在原始文本位置，
+    不再统一追加到所有句子之后。
 
     Returns:
-        (parts, content_type)
-        parts: [{"content": str, "language"?: str}, ...]
-        content_type: {"markdown": [idx, ...], "code": [idx, ...]}
+        (
+            [
+                {"content": "你好。"},
+                {"content": "| a | b |"},
+                {"content": "再见。"},
+                {"content": "print('ok')", "language": "python"},
+            ],
+            {
+                "markdown": [1],
+                "code": [3],
+            },
+        )
     """
-    parts: list[dict] = [{"content": s} for s in sentences]
-    content_type: dict[str, list[int]] = {"markdown": [], "code": []}
 
-    if "<|markdown|>" not in acc_text and "<|code|" not in acc_text:
-        return parts, content_type
+    parts: list[dict] = []
+    content_type: dict[str, list[int]] = {
+        "markdown": [],
+        "code": [],
+    }
 
-    for m in _BLOCK_PATTERN.finditer(acc_text):
-        md_content = m.group(1)
-        if md_content is not None:
-            content_type["markdown"].append(len(parts))
-            parts.append({"content": md_content.strip()})
-        else:
-            lang = m.group(2) or ""
-            code_content = m.group(3)
-            content_type["code"].append(len(parts))
-            p: dict = {"content": code_content.strip()}
-            if lang:
-                p["language"] = lang
-            parts.append(p)
+    blocks = _parse_blocks(acc_text)
+
+    if not blocks:
+        return (
+            [{"content": sentence} for sentence in sentences],
+            content_type,
+        )
+
+    sentence_index = 0
+    text_start = 0
+
+    for block_start, block_end, block in blocks:
+        # 先处理当前 block 前的普通文本。
+        text_segment = acc_text[text_start:block_start]
+
+        sentence_index = _append_sentences_from_segment(
+            text_segment,
+            sentences,
+            sentence_index,
+            parts,
+        )
+
+        # 再插入 block，保持原始交错顺序。
+        block_part: dict[str, str] = {
+            "content": block.content,
+        }
+
+        if block.kind == "code" and block.language:
+            block_part["language"] = block.language
+
+        content_type[block.kind].append(len(parts))
+        parts.append(block_part)
+
+        text_start = block_end
+
+    # 处理最后一个 block 后面的普通文本。
+    sentence_index = _append_sentences_from_segment(
+        acc_text[text_start:],
+        sentences,
+        sentence_index,
+        parts,
+    )
+
+    # 理论上 sentences 应该已经全部消费。
+    # 如果由于清洗、空格变化等原因没有匹配到，
+    # 仍然保留这些句子，避免数据丢失。
+    while sentence_index < len(sentences):
+        sentence = sentences[sentence_index]
+
+        if sentence.strip():
+            parts.append({"content": sentence})
+
+        sentence_index += 1
 
     return parts, content_type
