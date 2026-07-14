@@ -15,6 +15,8 @@ from Module.tool import ToolManager, ToolContext, PluginContext
 from Module.tool.protocol import ToolPlugin, ToolResult, ErrorType
 from Module.tool.safety import SafetyProfile
 
+pytestmark = pytest.mark.service
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Param models
@@ -745,6 +747,7 @@ async def test_cognitive_loop_no_callback_backward_compat():
     await output.close()
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_agent_scheduler_lifecycle():
     """Agent start → Scheduler 启动。Agent stop → Scheduler 停止。"""
@@ -764,6 +767,7 @@ async def test_agent_scheduler_lifecycle():
     assert agent._scheduler._running is False
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_agent_fifo_queue():
     """忙时发送消息 → 排队。空闲后 → 自动出队。"""
@@ -803,6 +807,7 @@ async def test_agent_fifo_queue():
     await agent.stop()
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_agent_interrupt_clears_queue():
     """INTERRUPT → 清空排队消息。"""
@@ -829,6 +834,7 @@ async def test_agent_interrupt_clears_queue():
     await agent.stop()
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_scheduler_state_in_debug_info():
     """DebugInfo.collect() 包含 Scheduler 状态。"""

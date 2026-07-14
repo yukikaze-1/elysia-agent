@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from core.token_tracker import TokenTracker, TokenUsage
 
+pytestmark = pytest.mark.unit
+
 
 class TestTokenUsage:
     """TokenUsage 数据类字段测试。"""

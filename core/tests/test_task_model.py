@@ -3,6 +3,8 @@
 import pytest
 from core.task import Task, TaskType, TaskStatus
 
+pytestmark = pytest.mark.unit
+
 
 def test_new_tool_call_has_valid_id():
     t = Task.new_tool_call("parent-1", "web_search", {"query": "hello"})

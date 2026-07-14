@@ -26,6 +26,7 @@ def _cleanup_embedding():
 # 1. SessionMemory persistence tests
 # ============================================================================
 
+@pytest.mark.unit
 class TestSessionPersistence:
     def test_snapshot_restore(self):
         from core.memory.session import SessionMemory
@@ -66,6 +67,7 @@ class TestSessionPersistence:
         assert len(s.recent_messages()) == 0
         assert s.get_param("key") is None
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_connect_fallback(self):
         """connect_db should return False when MongoDB is unavailable."""
@@ -75,6 +77,7 @@ class TestSessionPersistence:
         # MongoDB may or may not be available — either is fine
         assert result in (True, False)
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_save_load_no_db(self):
         """无 DB 时，save/load 应使用本地 JSON 文件（原子写入），返回 True。"""
@@ -100,7 +103,9 @@ class TestSessionPersistence:
 # 2. LongTermMemory tests
 # ============================================================================
 
+@pytest.mark.service
 class TestLongTermMemory:
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_insert_and_search_async(self):
         from core.memory.long_term import LongTermMemory
@@ -179,6 +184,7 @@ class TestLongTermMemory:
         assert mem._entries[0].id
         # _milvus_pk 仅在 Milvus 可用时设置，否则为 None
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_connect_fallback(self):
         """connect should work or gracefully fall back."""
@@ -232,6 +238,7 @@ class TestLongTermMemory:
 # 3. MemoryConsolidator tests
 # ============================================================================
 
+@pytest.mark.service
 class TestMemoryConsolidator:
     @pytest.mark.asyncio
     async def test_consolidate_extracts_facts(self):
@@ -330,6 +337,7 @@ class TestMemoryConsolidator:
 # 4. Memory integration tests
 # ============================================================================
 
+@pytest.mark.slow
 class TestMemoryIntegration:
     @pytest.mark.asyncio
     async def test_search_memory_tool(self):
@@ -439,6 +447,7 @@ class TestMemoryIntegration:
 # 5. PromptAssembler async tests
 # ============================================================================
 
+@pytest.mark.service
 class TestPromptAssembler:
     @pytest.mark.asyncio
     async def test_build_messages_includes_memories(self):
@@ -482,6 +491,7 @@ class TestPromptAssembler:
 # 6. SessionMemory edge cases
 # ============================================================================
 
+@pytest.mark.unit
 class TestSessionMemoryEdgeCases:
     def test_round_trip_snapshot_cycle(self):
         """Full cycle: create -> populate -> snapshot -> restore -> verify."""
@@ -635,6 +645,7 @@ class TestSessionMemoryEdgeCases:
 # 7. LongTermMemory edge cases
 # ============================================================================
 
+@pytest.mark.service
 class TestLongTermMemoryEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_search(self):
@@ -787,6 +798,7 @@ class TestLongTermMemoryEdgeCases:
 # 8. MemoryConsolidator edge cases
 # ============================================================================
 
+@pytest.mark.service
 class TestMemoryConsolidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_consolidate_stores_in_memory(self):
@@ -882,6 +894,7 @@ class TestMemoryConsolidatorEdgeCases:
 # 9. Memory integration stress tests
 # ============================================================================
 
+@pytest.mark.service
 class TestMemoryStress:
     @pytest.mark.asyncio
     async def test_rapid_inserts_and_searches(self):
@@ -897,6 +910,7 @@ class TestMemoryStress:
 
         assert mem.count == 20
 
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_session_snapshot_after_many_turns(self):
         """After many conversation turns, snapshot/restore should be exact."""
@@ -916,6 +930,7 @@ class TestMemoryStress:
         for o, r in zip(orig, restored):
             assert o["content"] == r["content"]
 
+    @pytest.mark.slow
     @pytest.mark.asyncio
     async def test_session_isolation_between_agents(self):
         """Two Agent instances should have independent session memory."""
@@ -1004,6 +1019,9 @@ if __name__ == "__main__":
 
 import time as _time_module
 
+pytestmark = pytest.mark.service
+
+
 @pytest.mark.asyncio
 async def test_long_term_memory_in_memory_fallback_search():
     """Milvus 不可用时回退到字符重叠搜索。"""
@@ -1032,6 +1050,7 @@ async def test_long_term_memory_empty_search():
     assert results == []
 
 
+@pytest.mark.unit
 def test_long_term_memory_evicts_old_entries():
     """验证过期条目被驱逐。"""
     from core.memory.long_term import LongTermMemory, MemoryEntry
@@ -1052,6 +1071,7 @@ def test_long_term_memory_evicts_old_entries():
     assert "过期数据" not in remaining_texts
 
 
+@pytest.mark.unit
 def test_long_term_memory_evicts_overflow():
     """验证超过上限的条目被驱逐（保留最新的）。"""
     from core.memory.long_term import LongTermMemory, MemoryEntry
@@ -1103,6 +1123,7 @@ async def test_long_term_memory_sync_handles_milvus_down():
     assert synced == 0
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_long_term_memory_eviction_cleans_dirty_ids():
     """Evicted entries should also be removed from _dirty_ids."""
@@ -1131,6 +1152,7 @@ async def test_long_term_memory_eviction_cleans_dirty_ids():
 # Consolidator — BUFFER_THRESHOLD=6
 # ============================================================
 
+@pytest.mark.service
 class TestConsolidatorThreshold:
     @pytest.mark.asyncio
     async def test_threshold_6_buffers_below_limit(self):

@@ -6,6 +6,8 @@ import pytest
 
 from core.timing import Timer, TimingClock
 
+pytestmark = pytest.mark.service
+
 
 # ============================================================================
 # Timer

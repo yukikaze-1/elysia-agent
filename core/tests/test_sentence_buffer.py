@@ -6,6 +6,8 @@ Default config: delimiters=。！？.!?\n～…〜, min_chunk=5
 import pytest
 from core.sentence_buffer import SentenceBuffer
 
+pytestmark = pytest.mark.unit
+
 
 # ============================================================================
 # Helpers

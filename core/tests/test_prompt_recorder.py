@@ -4,6 +4,8 @@ import pytest
 from datetime import datetime
 from core.prompt_recorder import PromptRecorder, PromptRecord
 
+pytestmark = pytest.mark.unit
+
 
 class TestPromptRecord:
     def test_record_derived_fields_simple_text(self):

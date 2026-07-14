@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # 1. EventBus + FSM tests
 # ============================================================================
 
+@pytest.mark.unit
 class TestEventBus:
     @pytest.mark.asyncio
     async def test_priority_ordering(self):
@@ -49,6 +50,7 @@ class TestEventBus:
         assert bus.pending_count == 0
 
 
+@pytest.mark.unit
 class TestAgentFSM:
     def test_valid_transitions(self):
         from core.agent_fsm import AgentFSM, AgentState
@@ -104,6 +106,7 @@ class TestAgentFSM:
 # 3. EmotionEngine tests
 # ============================================================================
 
+@pytest.mark.service
 class TestEmotionEngine:
     @pytest.fixture
     def engine(self):
@@ -211,6 +214,7 @@ class TestEmotionEngine:
 # 5. Streaming integration tests
 # ============================================================================
 
+@pytest.mark.service
 class TestStreamingIntegration:
     @pytest.mark.asyncio
     async def test_fake_llm_streaming(self):
@@ -225,6 +229,7 @@ class TestStreamingIntegration:
         text = "".join(chars)
         assert "今天过得怎么样" in text
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_real_stream_think_structured(self):
         """Real LLM structured streaming yields content dicts."""
@@ -250,6 +255,7 @@ class TestStreamingIntegration:
         # No tool calls expected for this simple query (LLM decides)
         await adapter.close()
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_streaming_delivers_tokens_immediately(self):
         """First chunk should arrive quickly, not after full response."""
@@ -280,6 +286,7 @@ class TestStreamingIntegration:
 # 6. Interrupt integration tests
 # ============================================================================
 
+@pytest.mark.slow
 class TestInterruptIntegration:
     @pytest.mark.asyncio
     async def test_interrupt_during_processing(self):
@@ -366,6 +373,7 @@ class TestInterruptIntegration:
 # 7. Multi-turn conversation tests
 # ============================================================================
 
+@pytest.mark.slow
 class TestMultiTurnConversation:
     @pytest.mark.asyncio
     async def test_session_context_preserved(self):
@@ -416,6 +424,7 @@ class TestMultiTurnConversation:
         assert agent._fsm.state == AgentState.IDLE
         await agent.stop()
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_character_personality_injected(self):
         """Verify character config (base_personality) appears in the LLM request."""
@@ -445,6 +454,7 @@ class TestMultiTurnConversation:
 # 8. Edge case tests
 # ============================================================================
 
+@pytest.mark.slow
 class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_message(self):
@@ -511,6 +521,7 @@ if __name__ == "__main__":
 # IdleMonitor — _check_proactive (basic smoke tests)
 # ============================================================
 
+@pytest.mark.service
 class TestProactiveTriggers:
     @pytest.mark.asyncio
     async def test_empty_triggers_does_nothing(self):

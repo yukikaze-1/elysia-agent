@@ -1,6 +1,9 @@
 """Tests for core/log_setup.py — request_id ContextVar propagation."""
 import asyncio
+import pytest
 from core.log_setup import set_request_id, get_request_id
+
+pytestmark = pytest.mark.unit
 
 
 def test_set_and_get_request_id():

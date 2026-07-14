@@ -27,6 +27,7 @@ from core.app_config import AppConfig
 # 1. CognitiveLoop — _merge_stream_tool_calls
 # ============================================================================
 
+@pytest.mark.unit
 class TestMergeStreamToolCalls:
     def test_single_delta_new_entry(self):
         accum: list[dict] = []
@@ -82,6 +83,7 @@ class TestMergeStreamToolCalls:
 # 2. CognitiveLoop — _normalize_tool_calls
 # ============================================================================
 
+@pytest.mark.unit
 class TestNormalizeToolCalls:
     def test_all_complete(self):
         raw = [
@@ -113,6 +115,7 @@ class TestNormalizeToolCalls:
 # 3. CognitiveLoop — _synthesize_sentence, _handle_interrupt
 # ============================================================================
 
+@pytest.mark.service
 class TestCognitiveLoopMethods:
     @pytest.fixture
     def loop(self):
@@ -263,6 +266,7 @@ class TestCognitiveLoopMethods:
 # 3b. CognitiveLoop — TTS + multi-tool
 # ============================================================================
 
+@pytest.mark.service
 class TestCognitiveLoopTTS:
     @pytest.fixture
     def loop(self):
@@ -373,6 +377,7 @@ class TestCognitiveLoopTTS:
 # 3c. CognitiveLoop — TTS sync (basic)
 # ============================================================================
 
+@pytest.mark.service
 class TestCognitiveLoopSync:
     @pytest.fixture
     def loop(self):
@@ -442,6 +447,7 @@ class TestCognitiveLoopSync:
 # 4. AgentFSM — missing edges
 # ============================================================================
 
+@pytest.mark.unit
 class TestFSMEdges:
     def test_can_transition_valid(self):
         fsm = AgentFSM()
@@ -499,6 +505,7 @@ class TestFSMEdges:
 # 5. EventBus — missing edges
 # ============================================================================
 
+@pytest.mark.unit
 class TestEventBusEdges:
     def test_pending_count(self):
         bus = EventBus()
@@ -529,6 +536,7 @@ class TestEventBusEdges:
 # 6. LLMAdapter — direct tests
 # ============================================================================
 
+@pytest.mark.service
 class TestLLMAdapter:
     def test_model_property(self):
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
@@ -581,6 +589,7 @@ class TestLLMAdapter:
 # 9. EmotionEngine — missing edges
 # ============================================================================
 
+@pytest.mark.service
 class TestEmotionEngineEdges:
     @pytest.fixture
     def engine(self):
@@ -642,6 +651,7 @@ class TestEmotionEngineEdges:
 # 10b. PromptAssembler
 # ============================================================================
 
+@pytest.mark.service
 class TestPromptAssemblerUnit:
     @pytest.mark.asyncio
     async def test_build_system_prompt(self):
@@ -667,6 +677,7 @@ class TestPromptAssemblerUnit:
 # 11. Agent — process_message
 # ============================================================================
 
+@pytest.mark.slow
 class TestAgentProcessMessage:
     @pytest.mark.asyncio
     async def test_empty_message_returns(self):
@@ -736,6 +747,7 @@ class TestAgentProcessMessage:
 # 12. OutputManager — audio_chunk, command convenience methods
 # ============================================================================
 
+@pytest.mark.service
 class TestOutputManagerConvenience:
     @pytest.fixture
     def mgr(self):
@@ -797,6 +809,7 @@ class TestOutputManagerConvenience:
 # 13. WebSocketChannel — new AUDIO/state methods
 # ============================================================================
 
+@pytest.mark.service
 class TestWebSocketChannelNew:
     @pytest.fixture
     def ws_mock(self):
@@ -842,6 +855,7 @@ class TestWebSocketChannelNew:
 # 14. AudioBuffer — STT error handling
 # ============================================================================
 
+@pytest.mark.service
 class TestAudioBufferErrors:
     @pytest.mark.asyncio
     async def test_stt_timeout(self):
@@ -937,6 +951,7 @@ class TestAudioBufferErrors:
 # 15. ConsoleChannel — dedup + inner_voice
 # ============================================================================
 
+@pytest.mark.service
 class TestConsoleChannelDedup:
     @pytest.mark.asyncio
     async def test_on_message_after_stream_skips_content(self):
@@ -983,6 +998,7 @@ class TestConsoleChannelDedup:
 # 16. MessageObj
 # ============================================================================
 
+@pytest.mark.unit
 class TestMessageObj:
     def test_to_dict(self):
         msg = MessageObj(role="assistant", content="hello world")
@@ -999,6 +1015,7 @@ class TestMessageObj:
 # 14. Agent — lifecycle
 # ============================================================================
 
+@pytest.mark.slow
 class TestAgentLifecycle:
     @pytest.mark.asyncio
     async def test_register_tools(self):
@@ -1107,6 +1124,7 @@ class TestAgentLifecycle:
 # 14b. EmotionEngine — emoji mappings
 # ============================================================================
 
+@pytest.mark.unit
 class TestEmotionEmojiMappings:
     def test_stt_emotion_emoji_all(self):
         from core.emotion_engine import stt_emotion_emoji
@@ -1131,6 +1149,7 @@ class TestEmotionEmojiMappings:
 # 14d. CharacterConfig
 # ============================================================================
 
+@pytest.mark.service
 class TestCharacterConfig:
     def test_from_yaml_loads_correctly(self):
         from core.character_config import CharacterConfig
@@ -1161,6 +1180,7 @@ class TestCharacterConfig:
 # 14c. AppConfig
 # ============================================================================
 
+@pytest.mark.service
 class TestAppConfig:
     def test_default_values(self):
         cfg = AppConfig()
@@ -1194,6 +1214,7 @@ class TestAppConfig:
 # 14d. LLMAdapter
 # ============================================================================
 
+@pytest.mark.service
 class TestLLMAdapterErrors:
     def test_no_api_key_uses_factory(self):
         """LLMAdapter 不再直接检查 API key；key 检查由 registry 层处理。"""
@@ -1300,6 +1321,7 @@ class TestLLMAdapterErrors:
 # 15. IdleMonitor
 # ============================================================================
 
+@pytest.mark.service
 class TestIdleMonitor:
     @pytest.mark.asyncio
     async def test_start_creates_loop_task(self):
@@ -1361,6 +1383,7 @@ class TestIdleMonitor:
 # 16. DebugInfo
 # ============================================================================
 
+@pytest.mark.slow
 class TestDebugInfo:
     @pytest.mark.asyncio
     async def test_collect_returns_debug_info(self):
@@ -1435,6 +1458,7 @@ class TestDebugInfo:
 # 17. 数据库调试 API
 # ============================================================================
 
+@pytest.mark.slow
 class TestDebugDbApi:
     @pytest.mark.asyncio
     async def test_db_status_endpoint(self):
@@ -1594,6 +1618,7 @@ class _EchoPlugin(ToolPlugin):
         return f"result={params.x}"
 
 
+@pytest.mark.service
 class TestToolManagerUnit:
     """验证 ToolManager 在 core 上下文中的集成。"""
 
@@ -1632,6 +1657,7 @@ class TestToolManagerUnit:
 # 19. submit_task definition 测试
 # ============================================================================
 
+@pytest.mark.unit
 class TestSubmitTaskDefinition:
     def test_schema_has_required_intent(self):
         """submit_task function schema 的 required 包含 intent。"""
@@ -1656,6 +1682,7 @@ class TestSubmitTaskDefinition:
 # 20. _handle_submit_task 测试
 # ============================================================================
 
+@pytest.mark.service
 class TestHandleSubmitTask:
     @pytest.fixture
     def loop_with_ts(self):
@@ -1754,6 +1781,7 @@ class TestHandleSubmitTask:
 # 21. 唤醒消息测试
 # ============================================================================
 
+@pytest.mark.service
 class TestWakeUpMessage:
     def test_wake_up_message_includes_intent_and_result(self):
         """唤醒模板拼接 intent 和 result。"""
@@ -1815,6 +1843,7 @@ if __name__ == "__main__":
     asyncio.run(run_all())
 
 
+@pytest.mark.unit
 def test_filesystem_safety_profile():
     """文件系统安全配置通过 SafetyProfile 白名单控制。
     注意: read_dirs 可能被 load_all() 从 config.yaml 覆盖，
