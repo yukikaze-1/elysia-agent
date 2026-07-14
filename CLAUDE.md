@@ -180,20 +180,25 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 
 ## Prompt files (`prompt/`)
 
-Jinja2 模板（`.j2`），PascalCase 命名。运行时通过 `str.replace()` 注入变量。
+Jinja2 模板（`.j2`），PascalCase 命名。通过 `PromptManager.render()` 或 `render_macro()` 渲染。详见 `prompt/README.md`。
 
 ```
 prompt/
 ├── ExtractMemory.j2          # 对话提取记忆 (consolidator.py 加载)
 ├── ConsolidationCompare.j2   # 新记忆 vs 已有记忆比对 (consolidator.py 加载)
 ├── MemoryReflector.j2        # 定期深度去重 (memory_reflector.py 加载)
-├── CharacterReflector.j2     # 性格反思 system prompt
-├── ActiveSpeak.j2 / Amygdala.j2 / Utils.j2  # 其他模板
-├── MacroReflector.j2 / MicroReflector.j2     # 旧项目参考（不活跃）
-└── ref/                      # GPT 生成的原始版本（snake_case.md）
+├── CharacterReflector.j2     # 性格反思 (reflector.py 加载，10 上下文变量)
+├── PersonalityCompression.j2 # L3→L2 长期自我压缩 (engine.py 加载)
+├── ActiveSpeak.j2            # 主动搭话 prompt（活跃）
+├── Amygdala.j2               # 情感分析 prompt（活跃）
+├── Utils.j2                  # 共享 Jinja2 工具宏
+├── MacroReflector.j2         # 旧项目参考（不活跃）
+├── MicroReflector.j2         # 旧项目参考（不活跃）
+├── README.md                 # prompt 命名规范 + 渲染方式
+└── ref/                      # GPT 生成的原始版本 + 需求文档（snake_case.md）
 ```
 
-Prompt 需求文档：根目录 `prompt-requirements.md` / `extraction-prompt-requirements.md`
+Prompt 需求文档：`prompt/ref/` 目录下的 `*-requirements.md` 和 `优化后的prompt-requirements.md`。
 
 ## Frontend (`static/`)
 
@@ -252,10 +257,19 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 | `token_usage` | MongoDB `default.token_usage` | LLM token statistics |
 | `long_term_memory` | Milvus `long_term_memory` | Vector memory with reranking |
 
-## Rules
+## Conventions
+
+项目有以下约束文档，所有代码和文档变更必须遵守：
+
+- **`docs/readme-conventions.md`** — README 编写规范。新增/修改模块时必须按模板写 README（面包屑 + 相关文档节），并在根 README 文档导航中注册。
+- **`docs/testing.md`** — 测试分层体系。新测试必须加 marker（unit/service/integration/slow），日常用 `make test-quick` / `make test-normal` / `make test-full`。
+- **`prompt/README.md`** — Prompt 模板命名规范（PascalCase `.j2`）+ 渲染方式（Jinja2，通过 `PromptManager`）。
+- **`Module/system_prompt/templates/README.md`** — System prompt 模板格式约定（XML wrapper + Markdown body，标签 snake_case）。
+
+基础规则：
 
 1. README 用中文写。
 2. 代码注释用中文。
 3. 使用 conda 环境: `conda activate Elysia`。
 4. 所有敏感信息必须通过环境变量传递。
-5. 模板文件遵循 `Module/system_prompt/templates/README.md` 的格式约定。
+5. 新增 core/tools 插件必须包含 `plugin.py` + `config.yaml` + `README.md` 三元组。
