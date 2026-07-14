@@ -45,7 +45,9 @@
       → engine.render_c9()  → C9 section → c9_self_perception.j2
 
 L3 更新:
-  CharacterReflector._reflect() → LLM 反思
+  CharacterReflector._reflect() → 收集 10 个上下文变量
+    → CharacterReflector.j2 渲染（含 L1/L2/L3/L4 全层上下文）
+    → LLM 反思（区分情境反应 vs 人格偏移）
     → engine.consume_trigger("reflector", {"content": "..."})
       → _set_state_l3() → session.params["state_l3"]
       → _maybe_compress() → 检查触发条件 → _compress()（条件满足时）

@@ -68,9 +68,10 @@ class CharacterReflector:
             return
 
         self._buffer.append((user_msg, assistant_msg))
-        # 滚动窗口保留最近 N 轮
-        self._context.append({"role": self._user_name, "content": user_msg, "inner_voice": ""})
-        self._context.append({"role": self._character_name, "content": assistant_msg, "inner_voice": ""})
+        # 滚动窗口保留最近 N 轮（带时间戳，用于计算对话跨度）
+        ts = time.time()
+        self._context.append({"role": self._user_name, "content": user_msg, "inner_voice": "", "timestamp": ts})
+        self._context.append({"role": self._character_name, "content": assistant_msg, "inner_voice": "", "timestamp": ts})
         if len(self._context) > self.CONTEXT_ROUNDS * 2:
             self._context = self._context[-(self.CONTEXT_ROUNDS * 2):]
 
@@ -194,32 +195,86 @@ class CharacterReflector:
 
         pm = self._pm
 
+        # ---- 收集上下文变量 ----
+
+        # L1 Core: 从 PersonalityEngine 获取不可变底色
+        l1_core = ""
+        if self._personality_engine is not None:
+            l1_core = self._personality_engine._l1_core
+
+        # L2 Self: 长期自我认知
+        l2_self = self._session.get_param("self_l2", "")
+
+        # L3 History: 近期状态变化轨迹
+        l3_raw = self._session.get_param("state_history", [])
+        if l3_raw:
+            l3_lines = []
+            for entry in l3_raw[-5:]:  # 取最近 5 条
+                ts = entry.get("timestamp", 0)
+                content = entry.get("content", "")
+                if ts:
+                    from datetime import datetime
+                    dt = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
+                    l3_lines.append(f"[{dt}] {content}")
+                else:
+                    l3_lines.append(f"- {content}")
+            l3_history = "\n".join(l3_lines)
+        else:
+            l3_history = ""
+
+        # L4 Mood: 当前情绪快照
+        mood = self._session.get_param("mood", "neutral")
+        mood_intensity = self._session.get_param("mood_intensity", 0.5)
+        mood_snapshot = f"当前情绪: {mood} (强度: {mood_intensity:.2f})"
+
+        # 上次反思结果
         history = self._session.get_param("self_perception_history", [])
         last_perception = history[-1]["content"] if history else ""
 
-        system = pm.render_macro(
-            "CharacterReflector.j2", "CharacterReflectorSystemPrompt",
-            character_name=self._character_name,
-            user_name=self._user_name,
-        )
-        user_prompt = pm.render_macro(
-            "CharacterReflector.j2", "CharacterReflectorUserPrompt",
-            character_name=self._character_name,
-            user_name=self._user_name,
-            last_self_perception=last_perception,
-            recent_conversations=self._context,
-        )
+        # 时间跨度
+        time_span = "未知"
+        buffer_size = len(self._buffer)
+        if self._context:
+            timestamps = [e.get("timestamp", 0) for e in self._context if e.get("timestamp")]
+            if len(timestamps) >= 2:
+                span_sec = timestamps[-1] - timestamps[0]
+                if span_sec < 3600:
+                    time_span = f"约 {int(span_sec / 60)} 分钟"
+                elif span_sec < 86400:
+                    time_span = f"约 {span_sec / 3600:.1f} 小时"
+                else:
+                    time_span = f"约 {span_sec / 86400:.1f} 天"
 
-        # 记录 prompt（截断到 1000 字符）
-        self._last_prompt_system = system[:1000]
-        self._last_prompt_user = user_prompt[:1000]
+        # ---- 渲染模板 ----
+        # 新模板为单段设计（无 macro），一次渲染全部变量
+        try:
+            system = pm.render(
+                "CharacterReflector.j2",
+                character_name=self._character_name,
+                user_name=self._user_name,
+                l1_core=l1_core,
+                l2_self=l2_self,
+                l3_history=l3_history,
+                last_self_perception=last_perception,
+                mood_snapshot=mood_snapshot,
+                time_span=time_span,
+                buffer_size=buffer_size,
+                recent_conversations=self._context,
+            )
+        except Exception:
+            logger.warning("CharacterReflector: 模板渲染失败", exc_info=True)
+            return
+
+        # 记录 prompt（截断到 2000 字符）
+        self._last_prompt_system = system[:2000]
+        self._last_prompt_user = ""
 
         t0 = time.perf_counter()
         try:
             result = await self._llm.think(
                 [
                     {"role": "system", "content": system},
-                    {"role": "user", "content": user_prompt},
+                    {"role": "user", "content": "请进行本次反思。"},
                 ],
                 extra_body={"thinking": {"type": "disabled"}},
             )
