@@ -1011,7 +1011,13 @@ Agent/
 │   ├── specs/              #   设计规格
 │   └── superpowers/        #   Superpowers 计划/规格
 ├── log/                     # 日志文件 (gitignore)
-└── scripts/                 # 启动/预检/工具脚本
+└── scripts/                 # 启动/预检/工具/清理脚本
+    ├── setup.sh            #   一键安装
+    ├── start.sh            #   一键启动
+    ├── check.sh            #   环境预检
+    ├── download_model.py   #   嵌入模型下载
+    ├── clean_db.py         #   数据库清理（MongoDB + Milvus + 本地文件）
+    └── README.md           #   脚本说明
 ```
 
 ---

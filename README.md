@@ -199,6 +199,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | [docs/database-storage.md](docs/database-storage.md) | 数据库存储设计 |
 | [docs/sync-lessons.md](docs/sync-lessons.md) | 同步经验笔记 |
 | [docs/experience.md](docs/experience.md) | 开发经验记录 |
+| [scripts/README.md](scripts/README.md) | 工具脚本（启动/预检/清理数据库） |
 | [docs/readme-conventions.md](docs/readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
 
 ---
@@ -261,10 +262,13 @@ Agent/
 ├── Makefile                # 测试/检查/启动命令
 ├── pytest.ini              # pytest 配置（4 层 markers）
 ├── .env.example            # 环境变量模板
-├── scripts/                # 安装/启动工具
+├── scripts/                # 安装/启动/清理工具
 │   ├── setup.sh            #   一键安装
 │   ├── start.sh            #   一键启动
-│   └── download_model.py   #   嵌入模型下载
+│   ├── check.sh            #   环境预检
+│   ├── download_model.py   #   嵌入模型下载
+│   ├── clean_db.py         #   数据库清理
+│   └── README.md           #   脚本说明
 ├── todo.md                 # 开发计划 + 已知 Bug
 ├── log/                    # 日志输出 (gitignore)
 ├── data/                   # 数据存储 (gitignore)
