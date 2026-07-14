@@ -12,9 +12,10 @@
 
 - 根 `README.md`：架构节精简 + 新增"文档导航"章节
 - `Module/README.md`：加面包屑 + 模块链接 + 相关文档
-- 16 个 `Module/<name>/README.md`：加面包屑 + 底部"相关文档"节
+- 15 个 `Module/<name>/README.md`：加面包屑 + 底部"相关文档"节
 - `core/personality/README.md`：加面包屑 + 底部"相关文档"节
 - 7 个 `core/tools/<name>/README.md`：面包屑 + 相关文档，过短的补内容
+- `core/tools/vision/`：新建 README.md（这是唯一缺少 README 的工具插件，违反 CLAUDE.md 的 plugin.py + config.yaml + README.md 约定）
 - `prompt/README.md`、`character/README.md`：面包屑 + 相关文档
 - **不在此范围**：`docs/architecture.md`（后续单独讨论，动之前需和用户确认）、`CLAUDE.md`（保持不变）、`static/live2d-demo/`（第三方代码）
 
@@ -27,7 +28,7 @@
 ```markdown
 ## 架构
 
-三层结构：L0 Module/（基础设施层）→ L1 core/（认知控制层）→ L2 core/memory/（记忆与工具层）
+三层结构：L0 Module/（基础设施层）→ L1 core/（认知控制层）→ L2 core/memory/ + Module/task_system/（记忆、工具、后台任务）
 
 每层职责分明。每个 Module 服务遵循 Protocol-Registry-Backend 模式，可独立替换。
 
@@ -39,7 +40,7 @@
 按受众分组，表格形式列出所有 README 链接：
 
 - 用户文档（快速开始、testing.md、companion-roadmap.md 等）
-- 开发者文档 — Module 层（16 个模块 README 全列出）
+- 开发者文档 — Module 层（15 个模块 README 全列出）
 - 开发者文档 — Core 层（personality、tools/、CLAUDE.md 等）
 - 其他文档（architecture.md、character/、prompt/ 等）
 
@@ -54,6 +55,7 @@
 按目录深度确定面包屑路径：
 - `Module/<name>/README.md` → `[项目文档](../../README.md) → [Module 文档](../README.md)`
 - `Module/database/<name>/README.md` → `[项目文档](../../../README.md) → [Module 文档](../../README.md) → [数据库文档](../README.md)`
+- `Module/system_prompt/templates/README.md` → `[项目文档](../../../README.md) → [Module 文档](../../README.md) → [System Prompt 文档](../README.md)`
 - `core/personality/README.md` → `[项目文档](../../README.md)`
 - `core/tools/<name>/README.md` → `[项目文档](../../../README.md)`
 - `prompt/README.md` → `[项目文档](../README.md)`
@@ -77,7 +79,7 @@
 
 ### 4. core/tools/ 下过短 README 补充
 
-当前 7 个工具 README，部分（如 reminder、self_state）只有一句话。按最低标准补充：
+当前 8 个工具插件目录，其中 7 个有 README（部分如 reminder、self_state 只有一句话），`vision/` 缺失 README 需要新建。按最低标准补充：
 
 ```markdown
 # <工具名>
@@ -108,10 +110,10 @@
 
 - **docs/architecture.md 不动**。最后单独讨论，动之前和用户确认
 - **CLAUDE.md 不动**。确保 AI 行为不受影响
-- 现有 README 内容不动，除非明显过时/错误
+- 子 README（Module/、core/、prompt/、character/ 下）现有内容不动，除非明显过时/错误。根 README 架构节替换（1a）是显式例外
 - 不改变任何模块的代码、API 或测试
 
-## 涉及文件清单（27 个）
+## 涉及文件清单（28 个）
 
 ### 改动：根
 1. `README.md`
@@ -142,14 +144,16 @@
 22. `core/tools/runtime_config/README.md`
 23. `core/tools/self_state/README.md`
 24. `core/tools/time/README.md`
-25. `core/tools/web/README.md`
+25. `core/tools/vision/README.md`（新建）
+26. `core/tools/web/README.md`
 
 ### 改动：其他
-26. `prompt/README.md`
-27. `character/README.md`
+27. `prompt/README.md`
+28. `character/README.md`
 
-### 需要补充内容的 tool README（太简略）
+### 需要补充内容的 tool README（太简略或缺失）
 - `core/tools/reminder/README.md`
 - `core/tools/runtime_config/README.md`
 - `core/tools/self_state/README.md`
 - `core/tools/time/README.md`
+- `core/tools/vision/README.md`（新建：当前目录存在 plugin.py + config.yaml 但无 README）
