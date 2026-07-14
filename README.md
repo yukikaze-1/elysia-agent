@@ -198,6 +198,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | [docs/database-storage.md](docs/database-storage.md) | 数据库存储设计 |
 | [docs/sync-lessons.md](docs/sync-lessons.md) | 同步经验笔记 |
 | [docs/experience.md](docs/experience.md) | 开发经验记录 |
+| [docs/readme-conventions.md](docs/readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
 
 ---
 
