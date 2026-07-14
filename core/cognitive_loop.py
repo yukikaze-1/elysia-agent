@@ -104,7 +104,8 @@ class CognitiveLoop:
         self._ctx = ctx
         self._token_tracker = token_tracker
         self._prompt_recorder = prompt_recorder
-        self._sentence_buf = SentenceBuffer()
+        self._sentence_buf: SentenceBuffer | None = None
+        self._block_filter: BlockFilter | None = None
         self._process_lock = asyncio.Lock()
         self._current_task: asyncio.Task | None = None
         self._tts_task: asyncio.Task | None = None  # 保留供 agent.py stop() 读取
@@ -223,7 +224,8 @@ class CognitiveLoop:
             self._bus.post(EventType.STATE_CHANGE, {"state": "thinking", "request_id": rid},
                           priority=EventPriority.STATE_CHANGE)
 
-            self._sentence_buf.reset()
+            self._sentence_buf = SentenceBuffer(min_chunk_length=5, max_buffer_length=2000)
+            self._block_filter = BlockFilter()
             self._current_task = asyncio.current_task()
             try:
                 await self._think_loop(user_message, user_name,
@@ -336,7 +338,8 @@ class CognitiveLoop:
                 raw_tool_calls: list[dict] = []
                 speaking_started = False
                 all_sentences: list[str] = []
-                block_filter = BlockFilter()
+                block_filter = self._block_filter
+                block_filter.reset()  # 防御性：_think_loop 可能因 tool round 被多次调用
                 ttft_done = False
                 t_think_start = time.perf_counter()
 
@@ -1030,6 +1033,7 @@ class CognitiveLoop:
         if self._fsm.state == AgentState.IDLE:
             return  # 重启后旧 task 的 CancelledError 可能触发重复清理
         self._sentence_buf.reset()
+        self._block_filter.reset()
         self._executing_tools.clear()
         self._tts_mgr.cancel_all()
         await self._output.typing(False)

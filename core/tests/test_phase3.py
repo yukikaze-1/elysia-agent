@@ -175,7 +175,11 @@ class TestCognitiveLoopMethods:
 
     @pytest.mark.asyncio
     async def test_handle_interrupt(self, loop):
+        from core.sentence_buffer import SentenceBuffer
+        from core.block_filter import BlockFilter
         loop._fsm.transition(AgentState.THINKING)
+        loop._sentence_buf = SentenceBuffer()
+        loop._block_filter = BlockFilter()
         loop._sentence_buf.feed("partial text")
 
         await loop._handle_interrupt()
@@ -361,6 +365,10 @@ class TestCognitiveLoopTTS:
     @pytest.mark.asyncio
     async def test_handle_interrupt_clears_state(self, loop):
         """_handle_interrupt resets sentence buffer, cancels TTS tasks, returns to IDLE."""
+        from core.sentence_buffer import SentenceBuffer
+        from core.block_filter import BlockFilter
+        loop._sentence_buf = SentenceBuffer()
+        loop._block_filter = BlockFilter()
         loop._sentence_buf.feed("partial")
         t = asyncio.create_task(asyncio.sleep(10))
         loop._tts_mgr._tasks.append(t)
@@ -418,12 +426,14 @@ class TestCognitiveLoopSync:
 
     @pytest.mark.asyncio
     async def test_process_resets_sentence_buffer(self, loop):
-        """每次 process() 调用重置分句缓冲。"""
-        loop._sentence_buf.feed("stale data")
-        assert loop._sentence_buf._buffer != ""
+        """每次 process() 调用创建全新的 SentenceBuffer（无跨轮污染）。"""
+        # _sentence_buf 在 __init__ 中初始化为 None，process() 入口才创建
+        assert loop._sentence_buf is None
 
         await loop.process("hello")
 
+        # process() 创建了新的 SentenceBuffer，初始 _buffer 为空
+        assert loop._sentence_buf is not None
         assert loop._sentence_buf._buffer == ""
 
     @pytest.mark.asyncio
