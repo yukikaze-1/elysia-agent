@@ -52,9 +52,11 @@ Expected: 28 files.
 
 对每个核心组件写 5-10 行描述：职责、关键方法、依赖关系。其余文件用简表。
 
-核心组件详细描述（12 个）：Agent, AgentFSM, EventBus, CognitiveLoop, PersonalityEngine, EmotionEngine, MemoryConsolidator, MemoryReflector, CharacterReflector, SessionMemory, LongTermMemory, MessageArchive, PromptAssembler, IdleMonitor, TaskScheduler。
+核心组件详细描述（9 个 — 均在 core/*.py 根目录）：Agent, AgentFSM, EventBus, CognitiveLoop, EmotionEngine, MemoryConsolidator, PromptAssembler, IdleMonitor, TaskScheduler。
 
-其余文件简表（13 个）：llm_adapter, character_config, app_config, sentence_buffer, tts_stream, block_filter, text_utils, message_id, debug_info, log_setup, timing, token_tracker, prompt_recorder, response_recorder, custom_providers, tool_call_parser, task, schema, \_\_init\_\_。
+其余文件简表（19 个 — 不含子目录组件，子目录组件在各自 README 中详述）：llm_adapter, character_config, app_config, sentence_buffer, tts_stream, block_filter, text_utils, message_id, debug_info, log_setup, timing, token_tracker, prompt_recorder, response_recorder, custom_providers, tool_call_parser, task, schema, \_\_init\_\_。
+
+子目录组件（在对应节引用，不计入 28 计数）：core/personality/（PersonalityEngine 详见其 README，CharacterReflector）、core/memory/（SessionMemory, LongTermMemory, MessageArchive, MemoryReflector）。
 
 - [ ] **Step 4: 写 §3 数据流**
 
@@ -67,19 +69,21 @@ Expected: 28 files.
 - [ ] **Step 6: 验证 — 确保覆盖所有 28 个 .py 文件**
 
 ```bash
-for f in $(find core/ -maxdepth 1 -name "*.py" -printf "%f\n"); do
+for f in $(find core/ -maxdepth 1 -name "*.py" -exec basename {} \;); do
     grep -q "$f" core/README.md || echo "MISSING: $f"
 done
 ```
-Expected: 无输出（所有文件都被引用）。
+Expected: 无输出（所有 28 个 .py 文件都被引用）。
 
 - [ ] **Step 7: 验证 — 文档内链不失效**
 
 ```bash
 # 检查 core/README.md 中引用的内部路径是否存在
-grep -oP '\[.*?\]\(\.\.?/[^)]+\)' core/README.md | grep -oP '(?<=\()[^)]+' | while read path; do
+# 链接相对于 core/ 目录，需要在该目录下解析
+(cd core && grep -oP '\[.*?\]\(\.\.?/[^)]+\)' README.md | \
+    grep -oP '(?<=\()[^)]+' | while read path; do
     test -f "$path" || echo "BROKEN: $path"
-done
+done)
 ```
 
 - [ ] **Step 8: Commit**
@@ -114,7 +118,7 @@ git commit -m "docs: core/README.md — 认知中枢架构 + 28 文件详解 + �
 | 4 | 285 | `(334 tests)` → `(341 tests)` |
 | 5 | 288 | 在 `memory/` 前补 `personality/` 子目录行 |
 | 6 | 312 | `tag_parser.py` → `tool_call_parser.py`，注释 `# 标签解析` → `# 流式 tool_call 解析` |
-| 7 | 289-315 | 补 5 个缺失文件：`__init__.py`, `custom_providers.py`, `task.py`, `tts_stream.py`, `tool_call_parser.py` |
+| 7 | 289-315 | 补 4 个缺失文件：`__init__.py`, `custom_providers.py`, `task.py`, `tts_stream.py`（`tool_call_parser.py` 已在 #6 由 tag_parser 改名，无需再补） |
 | 8 | 315 | `~367 tests` → `363 tests` |
 | 9 | 317-318 | `prompt/` 展开：10 个 .j2 + `ref/` + `README.md` |
 | 10 | 327-333 | `docs/` 补：testing.md, database-storage.md, sync-lessons.md, experience.md, readme-conventions.md, plans/, specs/ |
@@ -133,25 +137,19 @@ git commit -m "docs: core/README.md — 认知中枢架构 + 28 文件详解 + �
 | Core 总览 | [core/README.md](core/README.md) | 认知中枢架构 + 28 组件详解 |
 ```
 
-- [ ] **Step 3: 更新 "最近" 行日期**
-
-README 第 11 行更新为最新完成项：
-
-```markdown
-> 最近 (2026-07-14): 测试分层管理 — 4 层 markers 覆盖 63 文件 ~1500 测试。core/README.md 新建。
-```
-
-- [ ] **Step 4: 验证 — 结构树中所有引用路径存在**
+- [ ] **Step 3: 验证 — 手动逐项 diff**
 
 ```bash
-grep -oP '├── \S+|└── \S+' README.md | sed 's/[├└]── //' | while read entry; do
-    # 忽略注释（# 之后的内容）和虚拟目录标记
-    path=$(echo "$entry" | sed 's/#.*//' | xargs)
-    test -e "$path" || test -d "$path" || echo "BROKEN: $path"
-done
+# 列出 README.md 结构树中所有提到的文件名
+grep -oP '(├── |└── )\K\S+' README.md | sed 's/#.*//' | sort > /tmp/tree_names.txt
+# 列出仓库中实际存在的顶层目录/文件
+ls -1 > /tmp/actual_root.txt
+# 手动对比：确认树中每个条目在仓库中有对应路径
+diff /tmp/tree_names.txt /tmp/actual_root.txt || true
 ```
+注意：此命令只检查顶层条目。嵌套条目（如 `core/agent.py`）需要在编辑时人工逐行核对实际文件系统。
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add README.md
