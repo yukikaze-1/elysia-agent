@@ -1,5 +1,7 @@
 # Character 角色配置目录
 
+> 文档导航：[项目文档](../README.md)
+
 每个角色一个子目录，包含该角色的 YAML 配置和 L1 Core 性格文本。
 
 ```
@@ -61,3 +63,13 @@ character/elysia/config.yaml
 3. 编写 `personality.md`（L1 Core 性格文本）
 4. 在 `config.yaml` 中将 `agent.character` 指向新角色的 config.yaml
 5. 在对应 TTS 的 voices.yaml 中添加音色映射（如需语音输出）
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [项目 README](../README.md) | 快速开始 + 完整文档导航 |
+| [core/personality/README.md](../core/personality/README.md) | PersonalityEngine 四层模型 |
+| [docs/architecture.md](../docs/architecture.md) | 角色配置架构 |
