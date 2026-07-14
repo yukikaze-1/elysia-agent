@@ -1,0 +1,277 @@
+# core/ -- 认知中枢
+
+`core/` 是 Elysia/Agent 的认知中枢层（L1），位于无状态原子能力层（L0 `Module/`）之上，向下依赖 `Module/` 提供的 LLM/STT/TTS/Embedding/DB 等基础服务，向上为应用入口提供完整的 Agent 运行时。
+
+## 目录
+
+- [架构概览](#架构概览)
+- [核心组件](#核心组件)
+- [数据流](#数据流)
+- [扩展指南](#扩展指南)
+
+---
+
+## 架构概览
+
+### 三层定位
+
+```
+L0  Module/    无状态原子能力（LLM/STT/TTS/Embedding/DB/Config/...）
+     ↑ 依赖
+L1  core/      认知中枢 — Agent → FSM → CognitiveLoop → PromptAssembler
+     ↑ 使用
+L2  core/memory/      记忆子系统 — SessionMemory / LongTermMemory / MessageArchive
+L2  core/tools/       工具插件 — filesystem / web / memory / time / ...
+L2  core/personality/ 性格引擎 — PersonalityEngine / CharacterReflector
+```
+
+### 核心组件关系
+
+```
+EventBus ← 用户输入/系统事件
+    ↓
+AgentFSM (IDLE → THINKING → EXECUTING → SPEAKING → IDLE)
+    ↓
+CognitiveLoop (ReAct 调度 + inner_voice 状态机)
+    ├── PromptAssembler (12 PromptSection → SystemPromptManager)
+    ├── EmotionEngine (关键词 + STT → mood → expression)
+    ├── MemoryConsolidator (对话 → LLM 提取 → LTM)
+    ├── MemoryReflector (定期 LTM 去重)
+    ├── TaskScheduler (Worker Pool → 工具执行)
+    └── TTSStreamManager (分句 → 合成 → 播放)
+```
+
+### 启动顺序
+
+```
+Agent.__init__()
+  ├── CharacterConfig.load()
+  ├── AppConfig (ConfigLoader)
+  ├── SessionMemory / LongTermMemory
+  ├── PersonalityEngine / EmotionEngine
+  ├── PromptAssembler (12 sections)
+  ├── ToolManager (plugin loading)
+  ├── TaskScheduler
+  ├── IdleMonitor
+  └── OutputManager
+Agent.start()
+  ├── DB connect (MongoDB + Milvus, parallel)
+  ├── Embedding preload (background, 10s timeout)
+  ├── ToolManager.load_all()
+  ├── IdleMonitor.start()
+  ├── TaskScheduler.start()
+  ├── EventBus loop start
+  ├── TTS backend test (conditional)
+  └── TaskSystem + DelegationPreparer
+```
+
+---
+
+## 核心组件
+
+`core/` 根目录共 28 个 `.py` 文件。其中 9 个为核心组件（详细描述），19 个为支撑模块（简表），另有 5 个子目录（在各自 README 中详述）。
+
+### 核心组件详解（9 个）
+
+#### Agent (`agent.py`)
+
+组装入口，持有所有子系统的引用。`__init__` 创建 L0/L1/L2 全部组件；`start()` 按序连接数据库、启动后台任务、加载插件；`stop()` 按序 flush → cancel → close → save。暴露 `process_message()` 接收用户输入（支持纯文本和多模态 content 数组），`run_server()` 启动 WebSocket 服务，`run_repl()` 启动交互式命令行。管理 `RunState` 生命周期（STOPPED / RUNNING / STOPPING / RESTARTING），支持 `/restart` 热重载配置。
+
+关键方法：`start()`, `stop()`, `process_message()`, `run_server()`, `run_repl()`, `switch_llm()`, `switch_tts()`
+
+#### AgentFSM (`agent_fsm.py`)
+
+有限状态机，管理认知流水线的状态转换。状态：`IDLE → THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE`，另有 `IDLE_BACKGROUND_TASK` 表示空闲但有后台任务运行。`INTERRUPTED` 可从除 IDLE 外的任意状态进入，只能迁到 IDLE。同状态迁移幂等（idle → idle no-op）。`reset()` 强制回 IDLE，用于服务重启清理残留状态。
+
+关键方法：`transition()`, `interrupt()`, `can_transition()`, `reset()`
+
+#### EventBus (`event_bus.py`)
+
+优先级事件总线，底层为 `asyncio.PriorityQueue`。三种优先级：`INTERRUPT(0)` > `STATE_CHANGE(1)` > `NORMAL(2)`。事件类型：`USER_INPUT`、`SYSTEM_TICK`、`TASK_RESULT`、`INTERRUPT`、`STATE_CHANGE`。每个事件携带 `data: dict`，含 `request_id` 用于链路追踪。`post()` 非阻塞投递，`next()` 阻塞取事件，`drain()` 排空队列（INTERRUPT 时保留 STATE_CHANGE 给前端）。
+
+关键方法：`post()`, `next()`, `drain()`
+
+#### CognitiveLoop (`cognitive_loop.py`)
+
+ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引擎。流式 LLM 输出中解析 `<inner_voice>` 标签：PRE → THINK → REPLY 三阶段。THINK 内容发 `inner_voice` WS 事件（前端淡色气泡），REPLY 内容走分句→TTS 管线。工具调用检测后进入 EXECUTING 状态，最多 5 轮工具循环。支持 `submit_task` 拦截（后台任务委托）。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。
+
+关键方法：`process()`, `_think_loop()`, `cancel_current()`, `_after_response()`
+
+#### EmotionEngine (`emotion_engine.py`)
+
+关键词检测 + STT 声学情绪 → mood 映射。8 种 mood（happy/excited/sad/curious/warm/concerned/calming/neutral）+ reassuring/understanding，intensity 衰减机制。双路径：`analyze_user_stt()` 声学情绪路径（STT 情绪标签映射到 AI mood），`analyze_user()` 文本关键词路径（fallback）。`analyze_assistant()` 每轮回复后衰减 intensity 趋向 neutral。结果写入 session params（`mood`、`mood_intensity`），通过 OutputManager 推送 expression 变更到前端。
+
+关键方法：`analyze_user_stt()`, `analyze_user()`, `analyze_assistant()`, `restore_state()`
+
+#### MemoryConsolidator (`consolidator.py`)
+
+对话记忆提取：缓冲 6 条消息对 → LLM 提取 Fact/Preference/Event/Plan → `ConsolidationCompare.j2` 比对已有记忆 → 决策 insert/update/merge/skip → LongTermMemory（Milvus）。`consolidate()` 每轮对话后调用，`flush()` 在 shutdown 时强制落盘未持久化的缓冲。提取 prompt 由 `prompt/ExtractMemory.j2` 运行时加载。比对失败时回退全 insert。
+
+关键方法：`consolidate()`, `flush()`
+
+#### PromptAssembler (`prompt_assembler.py`)
+
+胶水层：创建 12 个 PromptSection 实例，注入 `SystemPromptManager`，委托 `MessageBuilder` 组装最终 `messages[]`。Section 顺序固定：F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup → C5 Sensory → C3 Emotion → C4 Memory → C1 Personality → C2 Relationship → C6 SpeakingStyle → C7 Proactive → C8 OwnLife → C9 SelfPerception。`_refresh_personality_data()` 从 PersonalityEngine 拉取 C1/C9 数据，支持多模态 content 数组和 TTS provider 注入。
+
+关键方法：`build_messages()`, `_refresh_personality_data()`
+
+#### IdleMonitor (`idle_monitor.py`)
+
+空闲监控 + 主动触发。每秒 tick，检查 `silence_timeout` 和 `time_of_day` 触发条件。`touch()` 重置交互计时器。触发时通过 EventBus 投递 `SYSTEM_TICK` 事件，Agent 注入自然开场白提示给 CognitiveLoop。唤醒词检测待集成（openWakeWord 模型已就位）。
+
+关键方法：`start()`, `stop()`, `touch()`, `_check_proactive()`
+
+#### TaskScheduler (`task_scheduler.py`)
+
+Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`dispatch_tool_calls()` 将 tool_call 列表封装为 `Task` 提交到优先队列。支持 retry（2 次，指数退避），timeout（60s），INTERRUPT 时级联 cancel（Future 双向绑定）。`_prune_loop()` 定期清理终态 task。checkpoint 持久化到 `data/scheduler_checkpoint.json`。
+
+关键方法：`start()`, `stop()`, `dispatch_tool_calls()`, `cancel_all()`
+
+### 支撑模块（19 个）
+
+| 文件 | 职责 |
+|------|------|
+| `llm_adapter.py` | LLM 适配器：封装 `Module.llm` 后端，提供 `stream_think()` 流式接口，自动重试（429/500/502/503/504，指数退避 3 次）。`ThoughtResult` dataclass 统一 text + tool_calls |
+| `character_config.py` | 角色配置：从 YAML 加载角色名、wake words、emotion 阈值、proactive 参数、L1 Core personality 文本路径。`from_yaml()` 工厂方法 |
+| `app_config.py` | 应用配置：`ConfigLoader` 加载 `config.yaml` + env override。包含 `AgentConfig`、`LLMConfig`、`MemoryConfig`、`TTSConfig` 等 dataclass |
+| `sentence_buffer.py` | 分句缓冲：逐 token feed，检测完整句边界（。！？!?\n～…〜），完整句触发 TTS。智能处理英文缩写和数字小数点避免误分割 |
+| `tts_stream.py` | TTS 流管理：句队列 + FIFO 顺序播放 + emoji 排队（emoji 依附于 TTS 句前后发送）。`TTSStreamManager` 管理后台 TTS task 生命周期，支持热切换后端 |
+| `block_filter.py` | 结构化块过滤：`BlockFilter` 实时过滤 LLM 输出中的 `<|markdown|>` 和 `<|code|>` 标记，防止代码/markdown 进入 TTS。`build_parts_with_blocks()` 流结束后解析完整块结构 |
+| `text_utils.py` | 文本工具：`content_text_from_content()` 从多模态 content 数组提取纯文本。`MessageObj` dataclass 用于非流式文本最终发送 |
+| `message_id.py` | 消息 ID 生成：`new_message_id()` 返回 `msg_` + 26 位 hex UUID4 |
+| `debug_info.py` | Debug 面板数据聚合：`DebugInfo` dataclass 涵盖 FSM、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator 等所有子系统状态。`collect()` 遍历 Agent 聚合数据 |
+| `log_setup.py` | 日志系统：stderr + `log/app.log` + `log/conversation.log` + 库日志分离。提供 `set_request_id()`/`get_request_id()` ContextVar 和 `log_conversation()` 对话日志 |
+| `timing.py` | 计时工具：`Timer` context manager 单次计时 + `TimingClock` 请求级聚合（span 嵌套）。供 CognitiveLoop 记录 prompt/ttft/tools 等阶段耗时 |
+| `token_tracker.py` | Token 消耗追踪：`record()` 记录每次 LLM 调用的 token usage，`get_session_stats()` 聚合统计。支持 MongoDB 持久化和 OutputManager 广播 |
+| `prompt_recorder.py` | LLM Prompt 记录器：环形缓冲区（容量 20），捕获每次 LLM 调用的完整 messages 数组和 tools 定义，供 debug 面板查看 |
+| `response_recorder.py` | LLM Response 记录器：环形缓冲区（容量 20），捕获每次 LLM 调用的原始回复文本和 inner_voice 内容，供 debug 面板查看 |
+| `custom_providers.py` | 自定义 provider 端点管理：读写 `custom_providers.yaml`，支持用户添加自定义 LLM/STT/TTS 端点 |
+| `tool_call_parser.py` | 流式 tool_call 解析：`merge_stream_tool_calls()` 合并流式 delta 片段，`normalize_tool_calls()` 规范化（补全 id/type/function 结构）。纯 stdlib，零依赖 |
+| `task.py` | Task 数据模型：`Task` dataclass + `TaskType`/`TaskStatus` 枚举 + `asyncio.Future` 双向绑定。支持 retry 和序列化。TaskScheduler Worker Pool 消费单元 |
+| `schema.py` | 共享类型定义：`AgentState`（6 种状态）、`EventPriority`（3 级）、`EventType`（5 种事件）、`VALID_TRANSITIONS` 状态转换表。被 `agent_fsm.py` 和 `event_bus.py` re-export |
+| `__init__.py` | 包标记，当前为空 |
+
+### 子目录
+
+| 子目录 | 说明 | 详细文档 |
+|--------|------|----------|
+| `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口，deque + MongoDB 30d TTL）、`LongTermMemory`（Milvus 向量搜索 + rerank）、`MessageArchive`（追加式归档）、`MemoryReflector`（定期 KMeans 聚类去重） | `memory/` |
+| `core/personality/` | 性格引擎：`PersonalityEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
+| `core/tools/` | 工具插件：filesystem、web、memory、time、reminder、vision 等。每个插件 `plugin.py` + `config.yaml` + `README.md` | `tools/` |
+| `core/tests/` | 测试套件：覆盖 Agent、CognitiveLoop、EmotionEngine、MemoryConsolidator 等核心组件的单元/集成测试 | -- |
+
+---
+
+## 数据流
+
+### 对话流
+
+```
+WebSocket text → EventBus.post(USER_MESSAGE) → Agent._process_events()
+  → FSM.transition(THINKING) → CognitiveLoop.process()
+    → EmotionEngine.analyze_user() → 更新 mood
+    → PromptAssembler.build_messages() → LLM.stream_think()
+      → inner_voice 分流 → 分句 (SentenceBuffer)
+        → TTSStreamManager.stream_sentence() → Output.broadcast()
+          → FSM.transition(IDLE)
+            → _after_response() → MemoryConsolidator + CharacterReflector + Session.save()
+```
+
+### 记忆流
+
+```
+对话 → MemoryConsolidator.buffer(user_msg, assistant_reply)
+  → buffer 满 6 条 → LLM 提取 (ExtractMemory.j2)
+    → ConsolidationCompare 比对已有记忆 (ConsolidationCompare.j2)
+      → insert/update/merge/skip → LongTermMemory (Milvus)
+        → MemoryReflector.increment_round() / increment_new_memories()
+          → check_and_reflect() → KMeans 聚类 → LLM 去重 → merge/delete
+```
+
+### 性格演化流
+
+```
+对话 → CharacterReflector.buffer(user, assistant)
+  → buffer 满 50 对 → LLM 反思 (CharacterReflector.j2)
+    → PersonalityEngine.consume_trigger("reflector", ...)
+      → L3 State 更新 → awareness_cooldown 写入 session
+        → C1/C9 模板数据刷新 → PromptAssembler._refresh_personality_data()
+          → PersonalityEngine.flush_compression() → L3→L2 压缩 (定期)
+```
+
+---
+
+## 扩展指南
+
+### 添加新工具
+
+在 `core/tools/` 下创建目录：
+
+```
+core/tools/<name>/
+├── __init__.py
+├── plugin.py      # ToolPlugin 子类，定义 execute() 和 definitions()
+├── config.yaml    # SafetyProfile 配置（权限级别、参数约束）
+└── README.md
+```
+
+在 `core/tools/__init__.py` 的 `ALL_PLUGINS` 列表中注册插件类。Agent 启动时 `ToolManager.load_all(ALL_PLUGINS, plugin_ctx)` 自动加载。如需为工具提供依赖服务，在 `Agent._start_tool_context()` 中向 `ToolContext.services` 注入。
+
+### 添加新 Prompt Section
+
+1. 在 `Module/system_prompt/templates/<section>.j2` 创建 Jinja2 模板
+2. 在 `Module/system_prompt/sections/<section>.py` 创建 `PromptSection` 子类，实现 `render()` 方法
+3. 在 `core/prompt_assembler.py` 的 `sections` 列表中按序插入新 section
+4. 如需动态数据，在 `_refresh_personality_data()` 中注入
+
+模板格式见 `Module/system_prompt/templates/README.md`。
+
+### 添加新记忆类型
+
+1. 在 `consolidator.py` 的 EXTRACTION_PROMPT（`prompt/ExtractMemory.j2`）中添加新类型的提取示例
+2. 在 `ConsolidationCompare.j2` 中补充新类型的比对规则
+3. 在 `memory/long_term.py` 的 `search()` 和 rerank 逻辑中按需调整权重
+4. 如有新的向量字段需求，更新 Milvus collection schema
+
+### 生命周期钩子
+
+Agent 生命周期中的关键扩展点：
+
+- **`Agent.__init__()`** — 创建组件，注入依赖。新组件在此处初始化并传入 CognitiveLoop
+- **`Agent.start()`** — 连接 DB、启动后台任务。`_start_*()` 系列按序执行，新子系统在此处 start
+- **`Agent._start_persistence()`** — 恢复持久化状态。`restore_state()` 在此处调用，新组件如需恢复 session 状态在此注入
+- **`Agent.stop()`** — flush → cancel → close → save。新组件在此处按序清理
+- **组件级钩子**：`restore_state()`（恢复 session 状态）、`flush()`（落盘缓冲）、`check_and_reflect()`（定期触发检查）
+
+### 文件索引
+
+| 文件 | 行数（约） | 类型 |
+|------|-----------|------|
+| `agent.py` | 1004 | 核心组件 |
+| `agent_fsm.py` | 57 | 核心组件 |
+| `event_bus.py` | 60 | 核心组件 |
+| `cognitive_loop.py` | 1042 | 核心组件 |
+| `emotion_engine.py` | 251 | 核心组件 |
+| `consolidator.py` | ~300 | 核心组件 |
+| `prompt_assembler.py` | ~130 | 核心组件 |
+| `idle_monitor.py` | ~130 | 核心组件 |
+| `task_scheduler.py` | ~250 | 核心组件 |
+| `llm_adapter.py` | ~180 | 支撑模块 |
+| `character_config.py` | ~80 | 支撑模块 |
+| `app_config.py` | ~70 | 支撑模块 |
+| `sentence_buffer.py` | ~120 | 支撑模块 |
+| `tts_stream.py` | ~250 | 支撑模块 |
+| `block_filter.py` | ~120 | 支撑模块 |
+| `text_utils.py` | ~40 | 支撑模块 |
+| `message_id.py` | 10 | 支撑模块 |
+| `debug_info.py` | ~130 | 支撑模块 |
+| `log_setup.py` | ~120 | 支撑模块 |
+| `timing.py` | ~100 | 支撑模块 |
+| `token_tracker.py` | ~150 | 支撑模块 |
+| `prompt_recorder.py` | ~60 | 支撑模块 |
+| `response_recorder.py` | ~40 | 支撑模块 |
+| `custom_providers.py` | ~80 | 支撑模块 |
+| `tool_call_parser.py` | ~70 | 支撑模块 |
+| `task.py` | ~80 | 支撑模块 |
+| `schema.py` | 52 | 支撑模块 |
+| `__init__.py` | 0 | 包标记 |
