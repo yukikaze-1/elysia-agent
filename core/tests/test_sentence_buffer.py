@@ -436,3 +436,65 @@ class TestConfigurableDelimiters:
         assert buf.flush() == "你好。"  # released on flush
 
 
+# ============================================================================
+# Group 12: Decimal terminal period (3.14. bug fix)
+# ============================================================================
+
+class TestDecimalTerminalPeriod:
+    def test_decimal_terminal_period_splits(self):
+        """3.14. — 最后一个句号应该作为句子边界切句。"""
+        buf = SentenceBuffer(min_chunk_length=3)
+        assert buf.feed("版本是 3.14.") == "版本是 3.14."
+
+    def test_decimal_without_terminal_period_held(self):
+        """3.14 — 中间的句号不切句，整句等待。"""
+        buf = SentenceBuffer(min_chunk_length=3)
+        assert buf.feed("版本是 3.14") is None
+        assert buf.flush() == "版本是 3.14"
+
+
+# ============================================================================
+# Group 13: Abbreviation case insensitivity
+# ============================================================================
+
+class TestAbbreviationCaseInsensitive:
+    def test_abbreviation_lowercase(self):
+        """dr. should not split."""
+        buf = SentenceBuffer(min_chunk_length=3)
+        assert buf.feed("dr. who is cool?") == "dr. who is cool?"
+
+    def test_abbreviation_uppercase(self):
+        """DR. should not split (case-insensitive match)."""
+        buf = SentenceBuffer(min_chunk_length=3)
+        assert buf.feed("DR. Who is cool?") == "DR. Who is cool?"
+
+
+# ============================================================================
+# Group 14: Max buffer length (forced split)
+# ============================================================================
+
+class TestMaxBufferLength:
+    def test_forced_split_on_whitespace(self):
+        """超长无标点文本在空格处强制切分。"""
+        buf = SentenceBuffer(min_chunk_length=3, max_buffer_length=20)
+        result = buf.feed("this is a very long sentence without any punctuation")
+        # 第 20 个字符附近应该触发强制切分
+        assert result is not None
+        assert len(result) <= 20
+
+    def test_forced_split_no_whitespace(self):
+        """超长无空格文本在 max_buffer_length 处硬切。"""
+        buf = SentenceBuffer(min_chunk_length=3, max_buffer_length=10)
+        result = buf.feed("abcdefghijklmnopqrstuvwxyz")
+        assert result is not None
+        assert len(result) <= 10
+
+    def test_normal_text_not_forced(self):
+        """正常有标点文本不触发强制切分。"""
+        buf = SentenceBuffer(min_chunk_length=3, max_buffer_length=2000)
+        results = []
+        for ch in "你好。今天天气真好。":
+            s = buf.feed(ch)
+            if s is not None:
+                results.append(s)
+        assert results == ["你好。", "今天天气真好。"]
