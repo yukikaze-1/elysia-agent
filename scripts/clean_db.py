@@ -140,6 +140,13 @@ class MilvusCleaner:
         """执行清理，返回 (collection, ok, detail)。"""
         ltm = LongTermMemory()
         try:
+            # 先验证 Milvus 连通性，防止 clear_all() 静默降级
+            try:
+                vector_db = VectorDBFactory.create("milvus/memory")
+                await vector_db.close()
+            except Exception as e:
+                return (LongTermMemory.COLLECTION, False, f"Milvus unreachable: {e}")
+
             deleted = await ltm.clear_all()
             return (LongTermMemory.COLLECTION, True, deleted)
         except Exception as e:
