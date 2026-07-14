@@ -15,6 +15,10 @@
 - 能指向 testing.md / readme-conventions.md 的就指过去，不复制内容
 - 代码行数声明（CognitiveLoop ~400→~1041 等）直接更新，但标注"约"以容忍未来漂移
 
+## 行号说明
+
+本规格中所有行号基于**当前** `docs/architecture.md`（commit `d37113c` 时）。由于前面的修改会导致后面行号偏移，**实现时必须以内容匹配为准**（搜索关键文本定位），不能机械按行号编辑。建议从上往下修：先加面包屑（+2 行偏移），再逐节向下。
+
 ## 修复清单（按章节）
 
 ### 全局：导航连接
@@ -88,7 +92,7 @@
 |----|------|
 | 625 | Server→Browser 消息表：加 `session`、`capabilities`、`wake`、`switch_model_result`、`error` |
 | 638 | Browser→Server 消息表：加 `wake_toggle`、`switch_model`、`tool_approval`；text content 标注可为 content array |
-| 648 | 路由表：30+ → 40+；补全缺失的 10+ 条路由 |
+| 648 | 路由表：声明"30+"→"41"（`server.py` 中 `router.add_*` 共 41 条注册）；补全缺失的 10+ 条路由 |
 
 ### 第 7 节：配置系统
 
@@ -148,13 +152,13 @@
 
 | 行 | 修复 |
 |----|------|
-| 995 | 标题"13 个"→ 重新核实计数。加注释"（非穷举，仅列出核心调用点）"。补充遗漏的 6 个调用点。 |
+| 995 | 标题"13 个"→ **"19 个"**（13 + 遗漏的 6 个：session.py archive_append、server.py state-monitor、task_system.py sub-agent submit/resume、personality/reflector.py fire-and-forget、task_scheduler.py Worker Pool + prune loop、tts/gpt_sovits.py stream puller）。表标题加注释"（非穷举，仅列出核心调用点）"。 |
 
 ### 第 14 节：关键设计决策
 
 | 行 | 修复 |
 |----|------|
-| 1020 | `INTERRUPT 的 poll-wait (500×10ms)` → `消息队列模式（busy 时暂存至 pending_messages）` |
+| 1020 | 整行替换：决策列 `INTERRUPT 的 poll-wait (500×10ms)` → `消息队列模式（busy 时暂存至 pending_messages）`；理由列 `比 magic sleep(0.1) 更可靠，有明确超时` → `避免忙等消耗 CPU，容量上限防止内存无限增长，新消息不会丢失` |
 
 ## 约束
 
