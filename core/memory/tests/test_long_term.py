@@ -196,3 +196,115 @@ class TestPKMatching:
         # 不应崩溃，应通过 text fallback 找到
         assert len(results) == 1
         assert results[0].id == "e1"
+
+
+@pytest.mark.service
+class TestLongTermMemoryClearAll:
+    """clear_all() 可独立调用（无需先 connect()），失败时优雅降级。"""
+
+    @pytest.mark.asyncio
+    async def test_clear_all_without_connect_creates_temp_backend(self):
+        """无 _vector_db 时，clear_all() 自行创建临时连接完成清理。"""
+        ltm = LongTermMemory(max_entries=10)
+        # 添加一些内存条目以确保 count > 0
+        ltm._entries = [MagicMock(), MagicMock(), MagicMock()]
+
+        mock_backend = AsyncMock()
+        mock_backend.collection_exists = AsyncMock(return_value=True)
+        mock_backend.drop_collection = AsyncMock()
+        mock_backend.create_collection = AsyncMock()
+        mock_backend.close = AsyncMock()
+
+        with patch(
+            "Module.database.vectordb.VectorDBFactory.create",
+            return_value=mock_backend,
+        ) as mock_create:
+            deleted = await ltm.clear_all()
+
+        assert deleted == 3
+        assert len(ltm._entries) == 0
+        mock_create.assert_called_once_with("milvus/memory")
+        mock_backend.collection_exists.assert_awaited_once_with(LongTermMemory.COLLECTION)
+        mock_backend.drop_collection.assert_awaited_once_with(LongTermMemory.COLLECTION)
+        mock_backend.create_collection.assert_awaited_once_with(
+            LongTermMemory.COLLECTION, dimension=LongTermMemory.DIMENSION)
+        mock_backend.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_clear_all_with_existing_backend_reuses_it(self):
+        """_vector_db 已设置时，clear_all() 复用它，不创建新连接。"""
+        ltm = LongTermMemory(max_entries=10)
+        ltm._entries = [MagicMock()]
+        mock_backend = AsyncMock()
+        mock_backend.drop_collection = AsyncMock()
+        mock_backend.create_collection = AsyncMock()
+        ltm._vector_db = mock_backend
+        ltm._connected = True
+
+        with patch(
+            "Module.database.vectordb.VectorDBFactory.create",
+        ) as mock_create:
+            deleted = await ltm.clear_all()
+
+        assert deleted == 1
+        mock_create.assert_not_called()
+        mock_backend.drop_collection.assert_awaited_once_with(LongTermMemory.COLLECTION)
+        mock_backend.create_collection.assert_awaited_once_with(
+            LongTermMemory.COLLECTION, dimension=LongTermMemory.DIMENSION)
+
+    @pytest.mark.asyncio
+    async def test_clear_all_without_connect_collection_not_exists(self):
+        """临时路径：collection 不存在时跳过 drop，直接 create。"""
+        ltm = LongTermMemory(max_entries=10)
+
+        mock_backend = AsyncMock()
+        mock_backend.collection_exists = AsyncMock(return_value=False)
+        mock_backend.drop_collection = AsyncMock()
+        mock_backend.create_collection = AsyncMock()
+        mock_backend.close = AsyncMock()
+
+        with patch(
+            "Module.database.vectordb.VectorDBFactory.create",
+            return_value=mock_backend,
+        ):
+            deleted = await ltm.clear_all()
+
+        assert deleted == 0
+        mock_backend.drop_collection.assert_not_called()
+        mock_backend.create_collection.assert_awaited_once_with(
+            LongTermMemory.COLLECTION, dimension=LongTermMemory.DIMENSION)
+        mock_backend.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_clear_all_propagates_collection_exception(self):
+        """临时路径：collection_exists 失败时异常传播，close() 在 finally 中调用。"""
+        ltm = LongTermMemory(max_entries=10)
+
+        mock_backend = AsyncMock()
+        mock_backend.collection_exists = AsyncMock(side_effect=RuntimeError("connection refused"))
+        mock_backend.close = AsyncMock()
+
+        with patch(
+            "Module.database.vectordb.VectorDBFactory.create",
+            return_value=mock_backend,
+        ):
+            with pytest.raises(RuntimeError, match="connection refused"):
+                await ltm.clear_all()
+
+        # 即使失败，close() 也在 finally 中被调用
+        mock_backend.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_clear_all_factory_create_fails_returns_count(self):
+        """Factory.create 失败时静默降级，返回已清空的内存条目数（向后兼容）。"""
+        ltm = LongTermMemory(max_entries=10)
+        ltm._entries = [MagicMock(), MagicMock()]  # 2 entries
+
+        with patch(
+            "Module.database.vectordb.VectorDBFactory.create",
+            side_effect=RuntimeError("Milvus unavailable"),
+        ):
+            deleted = await ltm.clear_all()
+
+        assert deleted == 2
+        assert len(ltm._entries) == 0

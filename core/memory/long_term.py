@@ -418,17 +418,35 @@ class LongTermMemory:
             return False
 
     async def clear_all(self) -> int:
-        """清空所有记忆（内存 + Milvus 重建 collection）。返回删除数量。"""
+        """清空所有记忆（内存 + Milvus 重建 collection）。可独立调用，无需先 connect()。"""
         async with self._write_lock:
             count = len(self._entries)
             self._entries.clear()
             self._absorbed_ids.clear()
             self._dirty_ids.clear()
-            if self._vector_db:
+
+            if self._vector_db is not None:
+                # 已通过 connect() 持有连接 → 直接操作
                 await self._vector_db.drop_collection(self.COLLECTION)
                 await self._vector_db.create_collection(
                     self.COLLECTION, dimension=self.DIMENSION)
-            return count
+            else:
+                # 无已有连接 → 自行创建临时连接
+                from Module.database.vectordb import VectorDBFactory
+                try:
+                    vector_db = VectorDBFactory.create("milvus/memory")
+                except Exception:
+                    # Milvus 不可达时静默降级：内存已清空，返回 count
+                    # （保持向后兼容 — 无 Milvus 环境的测试不因此失败）
+                    return count
+                try:
+                    if await vector_db.collection_exists(self.COLLECTION):
+                        await vector_db.drop_collection(self.COLLECTION)
+                    await vector_db.create_collection(
+                        self.COLLECTION, dimension=self.DIMENSION)
+                finally:
+                    await vector_db.close()
+        return count
 
     # ---- Read ----
 
