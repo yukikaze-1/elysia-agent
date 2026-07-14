@@ -841,8 +841,8 @@ class Agent:
 
     async def process_message(text):
         # idle_monitor.touch()
-        # if FSM != IDLE: post INTERRUPT + poll-wait (5s timeout)
-        # post USER_INPUT
+        # if FSM != IDLE: 暂存至 pending_messages（容量上限保护）
+        # post USER_INPUT (or dequeue from pending_messages after IDLE)
 
     async def run_server():
         # start() → create_app() → aiohttp server
@@ -1015,7 +1015,7 @@ INTERRUPT:
 ├── cancel _current_task → cancel _tts_tasks[] → drain queue → → IDLE
 ```
 
-**13 个 `asyncio.create_task` 调用点一览：**
+**19 个 `asyncio.create_task` 调用点一览（非穷举，仅列出核心调用点）：**
 
 | # | 位置 | 用途 | 管理模式 |
 |---|------|------|----------|
@@ -1032,6 +1032,12 @@ INTERRUPT:
 | 11 | agent.py | `_poll_mailboxes()` | TaskSystem mailbox 500ms 轮询，常驻，stop 时 cancel |
 | 12 | agent.py | cognitive process (TASK_RESULT) | `_current_task` |
 | 13 | agent.py | `_db_health_loop()` | 数据库健康检查 120s 间隔，常驻，stop 时 cancel |
+| 14 | memory/session.py | archive_append | fire-and-forget，无追踪 |
+| 15 | input/server.py | per-connection state monitor | 常驻，disconnect 时 cancel |
+| 16 | task_system/task_system.py | sub-agent task submit | TaskSystem 内部追踪 |
+| 17 | task_system/task_system.py | sub-agent task resume | TaskSystem 内部追踪 |
+| 18 | personality/reflector.py | CharacterReflector fire-and-forget | fire-and-forget，无追踪 |
+| 19 | task_scheduler.py | Worker Pool + prune loop | 常驻，stop 时 cancel |
 
 ---
 
@@ -1040,7 +1046,7 @@ INTERRUPT:
 | 决策 | 理由 |
 |------|------|
 | asyncio.Lock 串行化 process() | 防止并发消息导致 FSM 状态混乱 |
-| INTERRUPT 的 poll-wait (500×10ms) | 比 magic sleep(0.1) 更可靠，有明确超时 |
+| 消息队列模式（busy 时暂存至 pending_messages） | 避免忙等消耗 CPU，容量上限防止内存无限增长，新消息不会丢失 |
 | Event.seq = compare=True | 同优先级 FIFO 保序 |
 | TTS 句队列 (不 cancel 前句) | 前句音频已开始播放，cancel 会导致断音 |
 | 文字/音频双层缓冲 (server + browser) | 网络延迟下保证同步 |
@@ -1070,3 +1076,14 @@ INTERRUPT:
   6. 多 Session — 当前 session_id 硬编码为 "default"，无多会话管理
   7. 角色切换 — CharacterConfig 重载 + TTS voice 热切换
 ```
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [项目 README](../README.md) | 快速开始 + 完整文档导航 |
+| [docs/testing.md](testing.md) | 测试指南（分层体系 + 命令） |
+| [docs/readme-conventions.md](readme-conventions.md) | README 编写规范 |
+| [CLAUDE.md](../CLAUDE.md) | AI 助手指令 + 项目地图 |
