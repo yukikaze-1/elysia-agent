@@ -1032,8 +1032,10 @@ class CognitiveLoop:
         """Clean up after interruption — cancel TTS tasks, return to IDLE."""
         if self._fsm.state == AgentState.IDLE:
             return  # 重启后旧 task 的 CancelledError 可能触发重复清理
-        self._sentence_buf.reset()
-        self._block_filter.reset()
+        if self._sentence_buf is not None:
+            self._sentence_buf.reset()
+        if self._block_filter is not None:
+            self._block_filter.reset()
         self._executing_tools.clear()
         self._tts_mgr.cancel_all()
         await self._output.typing(False)
