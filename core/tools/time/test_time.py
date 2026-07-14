@@ -6,6 +6,7 @@ from Module.tool.protocol import ToolContext
 
 from core.tools.time.plugin import TimePlugin, TimeParams
 
+pytestmark = pytest.mark.unit
 
 # ============================================================================
 # 辅助函数 — 使用给定参数调用 TimePlugin.execute 并返回结果字符串

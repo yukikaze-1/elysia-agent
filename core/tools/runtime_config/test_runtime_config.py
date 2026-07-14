@@ -6,6 +6,8 @@ from unittest.mock import MagicMock
 from core.tools.runtime_config.plugin import RuntimeConfigPlugin, RuntimeConfigParams
 from Module.tool.protocol import ToolContext
 
+pytestmark = pytest.mark.unit
+
 
 def _make_plugin_list() -> list[dict]:
     """构建模拟 plugin_list——含文件系统/网络/数据库/普通工具各一个。"""

@@ -7,6 +7,8 @@ from Module.tool.safety import SafetyProfile
 
 from core.tools.filesystem.plugin import WriteFilePlugin, WriteFileParams
 
+pytestmark = pytest.mark.service
+
 
 class TestWriteFilePlugin:
     """WriteFilePlugin — 在 sandbox 目录下安全写入文件。"""

@@ -5,6 +5,8 @@ import pytest
 from core.tools.self_state.plugin import SelfStatePlugin
 from Module.tool.protocol import ToolContext
 
+pytestmark = pytest.mark.unit
+
 
 class TestSelfStatePlugin:
     """SelfStatePlugin 的测试用例。"""

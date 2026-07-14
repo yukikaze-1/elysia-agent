@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, patch
 from Module.tool.protocol import ToolContext
 from core.tools.reminder.plugin import SetReminderPlugin, ReminderParams
 
+pytestmark = pytest.mark.unit
+
 
 class TestSetReminderPlugin:
     """SetReminderPlugin execute() 测试。"""

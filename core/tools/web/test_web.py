@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from Module.tool.protocol import ToolContext
 
+pytestmark = pytest.mark.service
 
 # ============================================================================
 # _TextExtractor / _extract_text

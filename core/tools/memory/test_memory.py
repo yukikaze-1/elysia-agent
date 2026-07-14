@@ -11,6 +11,7 @@ from core.tools.memory.plugin import (
     SaveMemoryParams,
 )
 
+pytestmark = pytest.mark.service
 
 # ──────────────────────────────────────────────────────────────────
 # MemorySearchPlugin

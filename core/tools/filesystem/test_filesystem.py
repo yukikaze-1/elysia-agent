@@ -12,6 +12,7 @@ from core.tools.filesystem.plugin import (
     ListDirParams,
 )
 
+pytestmark = pytest.mark.service
 
 # ============================================================================
 # _format_size
