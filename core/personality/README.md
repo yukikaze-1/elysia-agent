@@ -15,7 +15,7 @@
 ├──────────────────────────────────────────────────────┤
 │ L2: Self（长期自我）                变化: 月级         │
 │   存储: session.params["self_l2"]                    │
-│   从 L3 持续状态压缩沉淀（Phase 2）                  │
+│   从 L3 持续状态压缩沉淀（已实现）    │
 │   → C1 模板的主体——"我是谁"                           │
 ├──────────────────────────────────────────────────────┤
 │ L3: State（短期状态）              变化: 数十轮/24h    │
@@ -48,9 +48,12 @@ L3 更新:
   CharacterReflector._reflect() → LLM 反思
     → engine.consume_trigger("reflector", {"content": "..."})
       → _set_state_l3() → session.params["state_l3"]
+      → _maybe_compress() → 检查触发条件 → _compress()（条件满足时）
 
-L2 更新 (Phase 2):
-  L3 持续主题 > 阈值 → _compression() → LLM 总结 → session.params["self_l2"]
+L2 更新（L3→L2 压缩）:
+  state_history 新增 >= 5 条 OR 距上次 > 7 天 → 触发
+    → _compress() → LLM 总结 → session.params["self_l2"]
+    → C1 模板开始渲染 <long_term_self> 块
 ```
 
 ## 模板渲染
@@ -97,10 +100,10 @@ C9 不每轮渲染。触发条件：
 
 Phase 2 加入 L2/L3 语义偏差检测和用户话题触发。
 
-### 向上回流（Phase 2）
+### 向上回流
 
-- L4 → L3：连续 N 轮某情绪占比 > 阈值 → LLM 总结为 L3 状态描述
-- L3 → L2：同一 L3 主题持续 > 阈值天数 → LLM 提炼 + 去噪 + 合并入 L2
+- L4 → L3：连续 N 轮某情绪占比 > 阈值 → LLM 总结为 L3 状态描述（Phase 2 待实现）
+- L3 → L2：state_history 新增 >= 5 条或距上次 > 7 天 → LLM 提炼 + 去噪 + 合并入 L2（已实现）
 
 ## 文件布局
 
@@ -118,6 +121,10 @@ core/personality/
 character/
 ├── elysia.yaml                    — 角色配置（含 base_personality_file）
 └── elysia_personality.txt         — L1 Core 文本
+
+prompt/
+├── CharacterReflector.j2           — 性格反思模板
+└── PersonalityCompression.j2       — L3→L2 压缩模板
 
 core/
 ├── agent.py                       — 创建并接线 PersonalityEngine
@@ -143,10 +150,11 @@ Module/system_prompt/
 ## 调试
 
 访问 `http://localhost:8765/debug` → **PersonalityEngine** 卡片，可查看：
-- L2 Self 当前状态
+- L2 Self 当前状态（L3→L2 压缩产出）
 - L3 State 当前状态
 - C9 冷却状态（就绪 / 剩余 X min）
 - State 历史（最近 5 条）
+- 压缩追踪：上次压缩时间 / 上次压缩时 history 条数
 
 后端 API: `GET /debug/api` → `info.personality_engine_exists` / `info.self_l2` / `info.state_l3` / `info.state_history`
 

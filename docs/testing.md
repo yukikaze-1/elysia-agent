@@ -125,7 +125,7 @@ pytest core/tests/test_phase3.py -v
 | | `test_message_archive.py` | 12 | service |
 | | `test_session_archive_integration.py` | 3 | service |
 | | `test_session.py` | 4 | service |
-| `core/personality/tests/` | `test_engine.py` | 7 | unit |
+| `core/personality/tests/` | `test_engine.py` | 14 | unit |
 | | `test_reflector.py` | 15 | service |
 | `core/tools/filesystem/` | `test_filesystem.py` | 16 | service |
 | | `test_write_file.py` | 11 | service |
