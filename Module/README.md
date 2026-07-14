@@ -1,5 +1,7 @@
 # Module
 
+> 文档导航：[项目文档](../README.md)
+
 AI 伴侣基础设施的 Python 3.13 共享库。为上层 Elysia/Agent 应用提供 LLM、STT、TTS、Embedding、数据库、输出通道和配置管理等模块，每个模块通过统一的 Protocol-Registry-Backend 模式隔离后端差异。
 
 ## 模块结构
@@ -13,7 +15,7 @@ Module/
 ├── output/               # 多通道输出
 ├── config/               # 配置基础设施
 ├── logger/               # 日志工厂
-├── prompt/               # System Prompt 引擎 + Section Provider 架构
+├── system_prompt/        # System Prompt 引擎 + Section Provider 架构
 ├── tool/                 # 工具执行框架
 ├── schema/               # 共享数据模型
 ├── database/             # 数据库后端
@@ -57,6 +59,8 @@ async for chunk in backend.chat_stream(messages):
 await backend.close()
 ```
 
+> 📖 完整 API 文档 → [Module/llm/README.md](llm/README.md)
+
 ### STT — 语音识别
 
 当前仅实现 SenseVoice（本地部署），OpenAI / DeepGram 为占位。
@@ -68,6 +72,8 @@ backend = STTFactory.create("sensevoice/sense-voice")
 text = await backend.transcribe(audio_bytes)
 await backend.close()
 ```
+
+> 📖 完整 API 文档 → [Module/stt/README.md](stt/README.md)
 
 ### TTS — 语音合成
 
@@ -83,6 +89,8 @@ async for chunk in tts.synthesize_stream("你好呀。", character="Elysia"):
 await tts.close()
 ```
 
+> 📖 完整 API 文档 → [Module/tts/README.md](tts/README.md)
+
 ### Embedding — 文本向量化
 
 支持本地 HuggingFace 模型和云端 OpenAI 兼容 API。
@@ -95,6 +103,8 @@ vec = await backend.embed_query("今天天气怎么样？")
 vecs = await backend.embed_documents(["文本1", "文本2"])
 await backend.close()
 ```
+
+> 📖 完整 API 文档 → [Module/embedding/README.md](embedding/README.md)
 
 ### Output — 多通道输出
 
@@ -111,6 +121,8 @@ await mgr.typing(True)
 await mgr.stream(llm.chat_stream(messages), finalize=lambda text: ChatMessage(...))
 await mgr.typing(False)
 ```
+
+> 📖 完整 API 文档 → [Module/output/README.md](output/README.md)
 
 ### Config — 配置基础设施
 
@@ -131,6 +143,8 @@ cfg = ConfigLoader(MyConfig, yaml_path="config.yaml").load()
 
 优先级：`环境变量 > YAML > dataclass 默认值`
 
+> 📖 完整 API 文档 → [Module/config/README.md](config/README.md)
+
 ### Logger — 日志工厂
 
 支持 plain / JSON 双格式，按模块差异化日志级别，自动日志轮转。
@@ -141,6 +155,8 @@ from Module.logger import LoggerFactory
 factory = LoggerFactory(level="DEBUG", json_format=True)
 logger = factory.get("MyModule")
 ```
+
+> 📖 完整 API 文档 → [Module/logger/README.md](logger/README.md)
 
 ### Prompt — System Prompt 引擎 + 通用渲染器
 
@@ -158,6 +174,8 @@ system = pm.render_macro("CharacterReflector.j2", "CharacterReflectorSystemPromp
                          character_name="Elysia", user_name="妖梦")
 ```
 > System prompt 通过 `Module.system_prompt.system_prompt_manager.SystemPromptManager` + `sections/` 下的 11 个 PromptSection 渲染。
+
+> 📖 完整 API 文档 → [Module/system_prompt/README.md](system_prompt/README.md)
 
 ### Tool — 工具执行框架
 
@@ -187,6 +205,8 @@ print(tm.definitions())  # OpenAI function calling schema
 await tm.shutdown()
 ```
 
+> 📖 完整 API 文档 → [Module/tool/README.md](tool/README.md)
+
 ### Schema — 共享数据模型
 
 定义全链路通用的数据结构：
@@ -213,6 +233,9 @@ await backend.create_collection("micro_memory", dimension=1024)
 await backend.insert("micro_memory", vectors, metadata)
 results = await backend.search("micro_memory", query_vector, top_k=10)
 ```
+
+> 📖 VectorDB 文档 → [Module/database/vectordb/README.md](database/vectordb/README.md)
+> 📖 DocumentDB 文档 → [Module/database/documentdb/README.md](database/documentdb/README.md)
 
 ## 测试
 
@@ -249,3 +272,13 @@ python -m Module.bench        # 统一延迟基准测试（LLM + TTS + STT）
 3. 如需公开导出，在 `__init__.py` 中添加
 
 后端类统一以 `Backend` 结尾，构造器接受 `model`、`api_key`、`base_url`、可选的 `logger`，自行创建并管理 async client 生命周期。
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [项目 README](../README.md) | 快速开始 + 完整文档导航 |
+| [docs/architecture.md](../docs/architecture.md) | 完整架构详解 + 数据流 |
+| [docs/testing.md](../docs/testing.md) | 测试指南 |
