@@ -1,3 +1,5 @@
+> 文档导航：[项目文档](../../README.md)
+
 # PersonalityEngine — 角色性格引擎
 
 四层性格模型 (Core→Self→State→Mood)，让 AI 角色能从对话经历中演化性格。
@@ -147,3 +149,13 @@ Module/system_prompt/
 - State 历史（最近 5 条）
 
 后端 API: `GET /debug/api` → `info.personality_engine_exists` / `info.self_l2` / `info.state_l3` / `info.state_history`
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [项目 README](../../README.md) | 快速开始 + 完整文档导航 |
+| [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 提示词组装 |
+| [character/README.md](../../character/README.md) | 角色配置说明 |

@@ -1,3 +1,5 @@
+> 文档导航：[项目文档](../../../README.md)
+
 # 文件系统工具插件
 
 提供 Agent 访问本地文件系统的能力。
@@ -15,3 +17,13 @@
 - `max_file_bytes` — 最大允许读取/写入的文件大小（默认 10MB）
 - `allow_symlinks` — 是否允许跟随符号链接
 - `max_dir_depth` — 最大目录遍历深度
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [项目 README](../../../README.md) | 快速开始 + 完整文档导航 |
+| [Module/tool/README.md](../../../Module/tool/README.md) | 工具执行框架 |
+| [core/tools/web/README.md](../web/README.md) | 网络工具（同样涉及安全约束） |
