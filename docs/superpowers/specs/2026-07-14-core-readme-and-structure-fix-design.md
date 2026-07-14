@@ -215,12 +215,12 @@ core/tools/<name>/
 | 2 | 260 | `Makefile` 注释 "测试/检查命令" | → "测试/检查/启动命令" |
 | 3 | 282 | `Module/tool/` 测试数 172 | → 129 |
 | 4 | 285 | `Module/task_system/` 测试数 334 | → 341 |
-| 5 | 295 | `core/tag_parser.py`（不存在） | → `core/tool_call_parser.py` |
-| 6 | 289-315 | core/ 缺 5 文件 | 补: `__init__.py`, `custom_providers.py`, `task.py`, `tts_stream.py`, `tool_call_parser.py`, `response_recorder.py` |
-| 7 | 315 | `core/tests/` 测试数 ~367 | → 363 |
-| 8 | 317-318 | `prompt/` 只有 1 个 .j2 | → 展开为 10 个 .j2 + ref/ + README.md |
-| 9 | 327-333 | `docs/` 缺文件 | 补: testing.md, database-storage.md, sync-lessons.md, experience.md, readme-conventions.md, plans/, specs/ |
-| 10 | 320-325 | `static/` 缺 debug.md | 补上 |
+| 5 | 288-314 | core/ 缺 `personality/` 子目录 | 补: `core/personality/` — engine.py, reflector.py, tests/ |
+| 6 | 312 | `core/tag_parser.py`（不存在） | → `core/tool_call_parser.py` |
+| 7 | 288-315 | core/ 缺 5 文件 | 补: `__init__.py`, `custom_providers.py`, `task.py`, `tts_stream.py`, `tool_call_parser.py` |
+| 8 | 315 | `core/tests/` 测试数 ~367 | → 363 |
+| 9 | 317-318 | `prompt/` 只有 1 个 .j2 | → 展开为 10 个 .j2 + ref/ + README.md |
+| 10 | 327-333 | `docs/` 缺文件 | 补: testing.md, database-storage.md, sync-lessons.md, experience.md, readme-conventions.md, plans/, specs/ |
 | 11 | — | `character/` 目录缺失 | 补上 |
 | 12 | — | `data/` 缺失 | 补上关键子目录 |
 | 13 | — | `Module/task_system/tests/` 缺失 | 补上 |
