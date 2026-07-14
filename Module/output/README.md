@@ -1,5 +1,7 @@
 # Output Module
 
+> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+
 统一的输出模块。管理多个 `OutputChannel`（控制台、WebSocket、未来 Discord 等），支持流式文本、表情、动作、指令等多维度输出。
 
 ## 文件结构
@@ -88,3 +90,13 @@ await mgr.send(ChatMessage(role="Elysia", content="你好"))
 python -m pytest Module/output/test_output.py -v
 python -m Module.output
 ```
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [Module/input/README.md](../input/README.md) | WebSocket 服务器（Output 通道载体） |
+| [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 输出系统 |

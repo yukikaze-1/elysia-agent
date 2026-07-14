@@ -1,5 +1,7 @@
 # LLM Module
 
+> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+
 统一的大模型调用模块。提供 `LLMBackend` 接口，通过 `LLMFactory` 按 `provider/model` 标识创建后端实例，调用方不需要关心 API key、base URL 等细节。
 
 ## 文件结构
@@ -180,3 +182,14 @@ python -m Module.llm
 # 统一延迟基准测试（含 LLM/TTS/STT 流式和非流式）
 python -m Module.bench
 ```
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [Module/config/README.md](../config/README.md) | Config 基础设施（LLM 配置依赖） |
+| [Module/output/README.md](../output/README.md) | 输出通道（LLM 流式输出目标） |
+| [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 数据流 |

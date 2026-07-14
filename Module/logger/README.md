@@ -1,5 +1,7 @@
 # Logger Module
 
+> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+
 基于 Python 标准库 logging 的配置化日志工厂。支持 plain / JSON 双格式、按模块差异化级别、root logger 兜底。
 
 ## 文件结构
@@ -115,3 +117,12 @@ lf = LoggerFactory(**dataclasses.asdict(cfg))
 ```bash
 python -m pytest Module/logger/test_logger.py -v
 ```
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [docs/architecture.md](../../docs/architecture.md) | 日志系统架构 |

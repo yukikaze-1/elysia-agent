@@ -1,5 +1,7 @@
 # TTS Module
 
+> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+
 文本转语音模块。提供统一的 `TTSBackend` 接口，通过不同的后端实现对接 GPT-SoVits（本地）、MiniMax（云端）、OpenAI 兼容（云端）等 TTS 服务。
 
 ## 文件结构
@@ -149,3 +151,13 @@ python -m Module.tts
 # 全量
 python -m pytest Module/tts/ Module/system_prompt/ Module/output/ -v
 ```
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [Module/output/README.md](../output/README.md) | 输出通道（TTS 输出目标） |
+| [docs/architecture.md](../../docs/architecture.md) | 完整架构 + TTS 绑定发送 |

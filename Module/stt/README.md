@@ -1,5 +1,7 @@
 # STT Module
 
+> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+
 统一的语音识别（Speech-to-Text）模块。提供 `STTBackend` 接口，通过 `STTFactory` 按 `provider/model` 标识创建后端实例，调用方不需要关心 API key、base URL 等细节。
 
 ## 文件结构
@@ -123,3 +125,13 @@ python -m Module.stt
 # 统一延迟基准测试（含 LLM/TTS/STT 流式和非流式）
 python -m Module.bench
 ```
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [Module/input/README.md](../input/README.md) | AudioBuffer + WebSocket（STT 输入源） |
+| [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 音频输入管道 |

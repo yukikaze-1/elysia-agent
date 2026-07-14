@@ -1,5 +1,7 @@
 # Module/config
 
+> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+
 配置基础设施模块。基于 dataclass，支持 YAML + 环境变量加载和校验。
 
 ## 快速开始
@@ -98,3 +100,12 @@ ConfigError
 ├── ConfigConstraintError      # 约束违反
 └── ConfigEnvFormatError       # 环境变量字符串无法转为目标类型
 ```
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [docs/architecture.md](../../docs/architecture.md) | 配置系统架构 |

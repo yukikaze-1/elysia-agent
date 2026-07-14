@@ -1,5 +1,7 @@
 # Embedding Module
 
+> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+
 统一的文本向量化模块。提供 `EmbeddingBackend` 接口，通过 `EmbeddingFactory` 按 `provider/model` 标识创建后端实例，支持本地 HuggingFace 模型和云端 OpenAI 兼容 API。
 
 ## 文件结构
@@ -162,3 +164,13 @@ python -m pytest Module/embedding/test_embedding.py -v
 # 真实 API 集成测试
 python -m Module.embedding
 ```
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [Module/database/vectordb/README.md](../database/vectordb/README.md) | Milvus 向量数据库（Embedding 消费者） |
+| [docs/architecture.md](../../docs/architecture.md) | 完整架构 + LongTermMemory |

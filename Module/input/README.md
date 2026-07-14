@@ -1,5 +1,7 @@
 # Input Module
 
+> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+
 输入层模块。负责接收浏览器客户端的音频和文本输入，管理 WebSocket 连接和音频缓冲区。
 
 ## 文件结构
@@ -48,3 +50,14 @@ web.run_app(app, port=8000)
 python -m pytest Module/input/ -v
 python -m Module.input
 ```
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [Module/stt/README.md](../stt/README.md) | STT（音频输入消费者） |
+| [Module/output/README.md](../output/README.md) | 输出通道（WebSocket 方向） |
+| [docs/architecture.md](../../docs/architecture.md) | 输入输出系统架构 |

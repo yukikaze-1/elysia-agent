@@ -1,5 +1,7 @@
 # Bench Module
 
+> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+
 统一延迟基准测试。覆盖 LLM、TTS、STT 三个模块的流式和非流式路径。
 
 ## 使用
@@ -54,3 +56,13 @@ LLM 默认测试 V4 Pro 和 V4 Flash 两个模型，各含默认/关闭思考两
 ## 备注
 
 此模块本质是工具而非 Module 子模块，后续将移动到 `tools/bench/`。
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [Module/llm/README.md](../llm/README.md) | LLM 模块（bench 测试目标之一） |
+| [Module/tts/README.md](../tts/README.md) | TTS 模块（bench 测试目标之一） |
