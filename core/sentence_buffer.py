@@ -84,9 +84,10 @@ def _is_dot_boundary(
         return False
 
     # U.S. / D.C. 等首字母缩写。
-    # 例如当前点前的文本是 "... U.S"
-    prefix = text[max(0, dot_pos - 4):dot_pos]
-    if re.search(r"(?:[A-Z]\.)?[A-Z]{1,2}$", prefix):
+    # 取 dot 前最多 3 字符，检查是否为 1-2 个大写字母
+    # （如 "U" 匹配 "U.S." 的第一个点，"U.S" 不匹配因为含 .）
+    prefix = text[max(0, dot_pos - 3):dot_pos]
+    if re.fullmatch(r"[A-Z]{1,2}", prefix):
         return False
 
     return True
