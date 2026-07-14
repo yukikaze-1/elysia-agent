@@ -30,15 +30,15 @@
 
 - [ ] **Step 1: 精简架构节（替换 L133-154）**
 
-将当前 22 行 ASCII 图 + 数据流替换为 8 行概要：
+将当前 22 行 ASCII 图 + 数据流替换为概要：
 
-```markdown
+````markdown
 ## 架构
 
 三层结构：
 
 ```
-L0  Module/              无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, system_prompt, tool
+L0  Module/              无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/, system_prompt, tool
 L1  core/                认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
 L2  core/memory/         记忆与工具 — SessionMemory, LongTermMemory, ToolManager (Plugin 架构)
 L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
@@ -46,8 +46,8 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 
 每层职责分明。每个 Module 服务遵循 Protocol-Registry-Backend 模式，可独立替换。
 
-完整架构图、数据流、设计决策、并发任务全景 → [docs/architecture.md](docs/architecture.md)
-```
+数据流：用户输入 → EventBus → FSM(THINKING) → CognitiveLoop(inner_voice/TTS/tool_calls) → IDLE（详见 [docs/architecture.md](docs/architecture.md) 完整管线）。
+````
 
 - [ ] **Step 2: 在架构节之后、功能表之前插入"文档导航"章节**
 
@@ -74,7 +74,6 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Logger | [Module/logger/README.md](Module/logger/README.md) | 日志工厂（plain + JSON） |
 | System Prompt | [Module/system_prompt/README.md](Module/system_prompt/README.md) | System Prompt 引擎 + Section Provider |
 | Tool | [Module/tool/README.md](Module/tool/README.md) | 工具执行框架（Plugin + SafetyPipeline） |
-| Schema | [Module/schema/](Module/schema/) | 共享数据模型 |
 | Database | [Module/database/README.md](Module/database/README.md) | 数据库总览（Milvus + MongoDB） |
 | VectorDB | [Module/database/vectordb/README.md](Module/database/vectordb/README.md) | 向量数据库（Milvus） |
 | DocumentDB | [Module/database/documentdb/README.md](Module/database/documentdb/README.md) | 文档数据库（MongoDB） |
@@ -108,17 +107,35 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | [docs/experience.md](docs/experience.md) | 开发经验记录 |
 ```
 
-- [ ] **Step 3: 视觉检查**
+- [ ] **Step 3: 修复项目结构树中过时的 `prompt/` 引用**
+
+README.md 项目结构树中有一行过时的目录引用（目录早已从 `Module/prompt/` 重命名为 `Module/system_prompt/`）：
+
+```bash
+# 查找并确认过时引用
+grep -n "prompt/.*Brain Prompt" README.md
+```
+
+将 README.md 中的：
+```
+├── prompt/                 # Brain Prompt 引擎 — SystemPromptManager + 11 PromptSections
+```
+替换为：
+```
+├── system_prompt/          # Brain Prompt 引擎 — SystemPromptManager + 11 PromptSections
+```
+
+- [ ] **Step 4: 视觉检查**
 
 ```bash
 head -200 README.md  # 检查架构节替换 + 文档导航章节插入位置正确
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add README.md
-git commit -m "docs: 根 README 架构精简 + 新增文档导航章节"
+git commit -m "docs: 根 README 架构精简 + 新增文档导航章节 + 修复过时 prompt/ 引用"
 ```
 
 ---
@@ -189,18 +206,31 @@ git commit -m "docs: 根 README 架构精简 + 新增文档导航章节"
   > 📖 完整 API 文档 → [Module/tool/README.md](tool/README.md)
   ```
 
-- Schema 节（`### Schema — 共享数据模型`）末尾加：
-  ```markdown
-  > 📖 完整文档 → [Module/schema/](schema/)
-  ```
-
 - Database 节末尾加：
   ```markdown
   > 📖 VectorDB 文档 → [Module/database/vectordb/README.md](database/vectordb/README.md)
   > 📖 DocumentDB 文档 → [Module/database/documentdb/README.md](database/documentdb/README.md)
   ```
 
-- [ ] **Step 3: 底部加"相关文档"节**
+- [ ] **Step 3: 修复 Module/README.md 结构树中过时的 `prompt/` 引用**
+
+Module/README.md 结构树中有一行过时的目录引用：
+
+```bash
+# 查找并确认过时引用
+grep -n "prompt/.*System Prompt" Module/README.md
+```
+
+将 Module/README.md 结构树中的：
+```
+├── prompt/               # System Prompt 引擎 + Section Provider 架构
+```
+替换为：
+```
+├── system_prompt/        # System Prompt 引擎 + Section Provider 架构
+```
+
+- [ ] **Step 4: 底部加"相关文档"节**
 
 在文件末尾添加：
 
@@ -216,7 +246,7 @@ git commit -m "docs: 根 README 架构精简 + 新增文档导航章节"
 | [docs/testing.md](../docs/testing.md) | 测试指南 |
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Module/README.md
