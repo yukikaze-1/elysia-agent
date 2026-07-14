@@ -432,6 +432,9 @@ class Agent:
         # 1.5. Flush character reflection buffer
         await self._flush_reflector()
 
+        # 1.55. Flush personality compression (L3→L2)
+        await self._flush_compression()
+
         # 1.6. MemoryReflector 计数器落盘
         if self._memory_reflector:
             await self._memory_reflector.flush()
@@ -497,6 +500,18 @@ class Agent:
                 logger.warning("CharacterReflector flush timed out during shutdown")
             except Exception:
                 logger.debug("CharacterReflector flush failed", exc_info=True)
+
+    async def _flush_compression(self) -> None:
+        """L3→L2 性格压缩 flush — 如有未处理的 state_history 条目，触发压缩。"""
+        if self._personality_engine:
+            try:
+                await asyncio.wait_for(
+                    self._personality_engine.flush_compression(), timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("PersonalityEngine compression flush timed out")
+            except Exception:
+                logger.debug("PersonalityEngine compression flush failed", exc_info=True)
 
     async def _stop_event_task(self) -> None:
         """停止 _process_events 事件循环——防止它在 shutdown 期间继续 post 新任务。"""

@@ -2,21 +2,30 @@
 
 四层性格模型:
   L1 Core    — 不可变底色（文件加载）
-  L2 Self    — 长期自我（session，缓慢演化）
+  L2 Self    — 长期自我（session，缓慢演化，L3→L2 压缩）
   L3 State   — 短期状态（session，Reflector + 事件驱动）
   L4 Mood    — 当前情绪（EmotionEngine，不动）
 
 CharacterReflector 作为触发源之一，产出的事件提交给 consume_trigger。
+L3→L2 压缩在其中触发：state_history 新增 >= 5 条 OR 距上次 > 7 天。
 """
+import asyncio
 import logging
 import time
 from collections.abc import Callable
+
+from Module.system_prompt import PromptManager
 
 logger = logging.getLogger(__name__)
 
 # AwarenessTrigger 配置
 AWARENESS_COOLDOWN_SECONDS = 3600  # 同一主题冷却 1 小时，避免频繁输出"我变了"
 AWARENESS_MAX_HISTORY = 10         # state_history 保留条数
+
+# L3→L2 压缩配置
+COMPRESSION_COUNT_THRESHOLD = 5    # state_history 新增 N 条触发压缩
+COMPRESSION_TIME_THRESHOLD = 604800  # 距上次压缩 > 7 天也触发
+COMPRESSION_MIN_ENTRIES = 3        # 首次压缩最少需要 state_history 条目数
 
 
 class PersonalityEngine:
@@ -30,6 +39,7 @@ class PersonalityEngine:
         character_name: str,
         user_name: str,
         base_personality: str,            # L1 Core 文本
+        prompt_dir: str = "prompt",       # PromptManager 模板目录
     ):
         self._llm = llm
         self._session = session
@@ -39,6 +49,14 @@ class PersonalityEngine:
 
         # 冷却计时: 记录上次 C9 触发的时间戳
         self._last_awareness_time: float = 0.0
+
+        # L3→L2 压缩
+        self._compression_lock = asyncio.Lock()
+        try:
+            self._pm = PromptManager(prompt_dir)
+        except FileNotFoundError:
+            logger.warning("PersonalityEngine: 模板目录不存在，压缩功能不可用")
+            self._pm = None
 
     # ---- 状态恢复 ----
 
@@ -105,6 +123,9 @@ class PersonalityEngine:
             # idle / feedback → 直接设为 L3 State
             self._set_state_l3(content)
 
+        # L3→L2 压缩检查 — 在状态更新后触发
+        await self._maybe_compress()
+
     # ---- awareness 判定 ----
 
     def _awareness_allowed(self) -> bool:
@@ -116,6 +137,147 @@ class PersonalityEngine:
         if self._last_awareness_time == 0.0:
             return True
         return (time.time() - self._last_awareness_time) >= AWARENESS_COOLDOWN_SECONDS
+
+    # ---- L3→L2 压缩 ----
+
+    async def _maybe_compress(self) -> None:
+        """检查压缩条件，满足时触发压缩。"""
+        if self._pm is None:
+            return
+        if not self._should_compress():
+            return
+        if self._compression_lock.locked():
+            logger.debug("PersonalityEngine: 压缩已在运行中，跳过")
+            return
+
+        async with self._compression_lock:
+            # 双重检查 — 上一个压缩可能刚好完成了
+            if not self._should_compress():
+                return
+            await self._compress()
+
+    def _should_compress(self) -> bool:
+        """检查是否应触发 L3→L2 压缩。
+
+        触发条件（任一满足）:
+        1. state_history 新增 >= COMPRESSION_COUNT_THRESHOLD 条
+        2. 距上次压缩 > COMPRESSION_TIME_THRESHOLD 秒
+
+        同时要求 state_history 至少有 COMPRESSION_MIN_ENTRIES 条。
+        """
+        history = self._session.get_param("state_history", [])
+        total = len(history)
+        if total < COMPRESSION_MIN_ENTRIES:
+            return False
+
+        last_count: int = self._session.get_param("compression_last_count", 0)
+        last_at: float = self._session.get_param("compression_last_at", 0.0)
+
+        # 计数触发：新增 >= 阈值
+        new_count = total - last_count
+        if new_count >= COMPRESSION_COUNT_THRESHOLD:
+            logger.debug("PersonalityEngine: 计数触发压缩 (%d 新条目)", new_count)
+            return True
+
+        # 时间触发：距上次 > 阈值（仅限已有压缩记录时）
+        if last_at > 0 and (time.time() - last_at) >= COMPRESSION_TIME_THRESHOLD:
+            logger.debug("PersonalityEngine: 时间触发压缩 (%.1f 天)",
+                         (time.time() - last_at) / 86400)
+            return True
+
+        return False
+
+    def _get_new_entries(self) -> list[dict]:
+        """取上次压缩后新增的 state_history 条目。"""
+        history = self._session.get_param("state_history", [])
+        last_count: int = self._session.get_param("compression_last_count", 0)
+        return history[last_count:]
+
+    async def _compress(self) -> None:
+        """执行 L3→L2 压缩：渲染模板 → 调 LLM → 更新 self_l2。"""
+        if self._pm is None:
+            return
+
+        current_self = self._session.get_param("self_l2", "")
+        l3_current = self._session.get_param("state_l3", "")
+        new_entries = self._get_new_entries()
+        history = self._session.get_param("state_history", [])
+
+        logger.info("PersonalityEngine: 开始 L3→L2 压缩 (%d 新条目, 当前 L2 %d chars)",
+                    len(new_entries), len(current_self))
+
+        try:
+            system = self._pm.render_macro(
+                "PersonalityCompression.j2", "PersonalityCompressionSystemPrompt",
+                character_name=self._character_name,
+                l1_core=self._l1_core,
+            )
+            user_prompt = self._pm.render_macro(
+                "PersonalityCompression.j2", "PersonalityCompressionUserPrompt",
+                character_name=self._character_name,
+                current_self=current_self,
+                l3_current=l3_current,
+                recent_changes=new_entries,
+            )
+        except Exception:
+            logger.warning("PersonalityEngine: 压缩模板渲染失败", exc_info=True)
+            return
+
+        t0 = time.perf_counter()
+        try:
+            result = await self._llm.think(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_prompt},
+                ],
+                extra_body={"thinking": {"type": "disabled"}},
+            )
+            text = result.text.strip()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("PersonalityEngine: 压缩 LLM 调用失败 — 下次重试", exc_info=True)
+            # 不更新追踪状态，下次 trigger 重试
+            return
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+
+        if not text:
+            logger.info("PersonalityEngine: 压缩 LLM 返回空 — 更新追踪但不覆盖 L2")
+            # 空结果：更新追踪避免无限重试，但不覆盖已有 L2
+            self._session.set_param("compression_last_at", time.time())
+            self._session.set_param("compression_last_count", len(history))
+            return
+
+        # 成功：写入 L2 + 更新追踪
+        self._session.set_param("self_l2", text)
+        self._session.set_param("compression_last_at", time.time())
+        self._session.set_param("compression_last_count", len(history))
+
+        logger.info("PersonalityEngine: L3→L2 压缩完成 (%d chars, %.0f ms)",
+                    len(text), elapsed_ms)
+
+    async def flush_compression(self) -> None:
+        """Shutdown 时强制压缩（如有未处理条目）。带超时保护。"""
+        if self._pm is None:
+            return
+        history = self._session.get_param("state_history", [])
+        last_count: int = self._session.get_param("compression_last_count", 0)
+        new_count = len(history) - last_count
+        if new_count < COMPRESSION_MIN_ENTRIES:
+            logger.debug("PersonalityEngine flush: 仅 %d 新条目，跳过压缩", new_count)
+            return
+        if self._compression_lock.locked():
+            logger.debug("PersonalityEngine flush: 压缩已在运行中")
+            return
+
+        async with self._compression_lock:
+            try:
+                await asyncio.wait_for(self._compress(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("PersonalityEngine: 压缩 flush 超时")
+            except Exception:
+                logger.debug("PersonalityEngine: 压缩 flush 失败", exc_info=True)
 
     # ---- 内部状态管理 ----
 
