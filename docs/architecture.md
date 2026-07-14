@@ -313,45 +313,32 @@ INTERRUPT 处理流程：
 ### 4.2 有限状态机 (AgentFSM)
 
 ```
-                         ┌──────────────────────────────┐
-                         │         INTERRUPTED           │
-                         │  cancel tasks, clear buffers  │
-                         │   → 50ms pause (UI register)  │
-                         └──────────────┬───────────────┘
-                                ▲       │
-                     any non-IDLE      │ cleanup
-                                │       ▼
   ┌──────┐   USER_INPUT   ┌──────────┐      tool_calls   ┌──────────┐
   │ IDLE │ ─────────────► │ THINKING │ ◄───────────────► │EXECUTING │
   │      │ ◄───────────── │          │                    │          │
-  └──▲───┘    INTERRUPT   └────┬─────┘                    └──────────┘
+  └──┬───┘    INTERRUPT   └────┬─────┘                    └──────────┘
      │                         │
-     │                    LLM done
+     │  TASK_RESULT       LLM done
      │                         │
-     │                    ┌────▼──────┐
-     └────────────────────│ SPEAKING  │
-              done        │           │
-                          └───────────┘
-     ▲       │
-     │       ▼
-  ┌──┴───────────────────────────┐
-  │    IDLE_BACKGROUND_TASK       │
-  │  TaskSystem mailbox polling   │
-  └───────────────────────────────┘
+  ┌──▼──────────────────┐  ┌───▼─────┐
+  │ IDLE_BACKGROUND_TASK│  │ SPEAKING │
+  │ (mailbox polling)   │  │          │
+  └─────────────────────┘  └─────────┘
 ```
 
 有效转移：
 ```
-IDLE        → THINKING
+IDLE        → THINKING | IDLE_BACKGROUND_TASK
+IDLE_BACKGROUND_TASK → THINKING | INTERRUPTED
 THINKING    → SPEAKING | EXECUTING | INTERRUPTED
 EXECUTING   → THINKING | INTERRUPTED
-SPEAKING    → IDLE | EXECUTING | THINKING | INTERRUPTED
+SPEAKING    → IDLE | EXECUTING | THINKING | INTERRUPTED | IDLE_BACKGROUND_TASK
 INTERRUPTED → IDLE
 ```
 
 ### 4.3 认知循环 (CognitiveLoop)
 
-ReAct 调度器的完整实现 (~400 行)：
+ReAct 调度器的完整实现 (~1,040 行)：
 
 ```python
 class CognitiveLoop:
@@ -403,7 +390,7 @@ class CognitiveLoop:
 - **TTS 绑定发送**: 文字和音频在服务端绑在一起发送，前端无需同步逻辑
 - **并行工具调用**: `asyncio.gather` + `return_exceptions=True`，单工具失败不影响其他
 - **VAD 状态保护**: THINKING/EXECUTING 时 VAD 不打断，STT 文本和显式按钮始终生效
-- **inner_voice 流式分流**: PRE→THINK→REPLY 三状态机检测 `<inner_voice>` 标签。THINK 内容不进 TTS/前端 delta，闭标签后一次性广播 `command: inner_voice` 到前端渲染淡色思考气泡。详见 `docs/superpowers/specs/2026-06-24-inner-voice-design.md`
+- **inner_voice 流式分流**: PRE→THINK→REPLY 三状态机检测 `<inner_voice>` 标签。THINK 内容不进 TTS/前端 delta，闭标签后一次性广播 `command: inner_voice` 到前端渲染淡色思考气泡。详见 `docs/superpowers/specs/archive/2026-06-24-inner-voice-design.md`
 
 ### 4.4 TTS 绑定发送 + 句队列
 
@@ -486,7 +473,7 @@ build_messages(user_message, stt_emotion, stt_events)
   └── {"role": "user", "content": user_message}
 ```
 
-**Section 提供者架构** (`Module/system_prompt/` protocol + sections + templates): 2026-07-04 重构，将 `Brain.j2` 单体拆分为 12 个独立的 `PromptSection` 模块（ConflictRules, OutputFormat, TTSMarkup, Sensory, Emotion, Memory, Personality, Relationship, SpeakingStyle, Proactive, OwnLife, SelfPerception）。每个 section 自管数据源、自管 `.j2` 模板、可独立 reload/validate。`SystemPromptManager` 按固定顺序 async render 并拼接。详见 `docs/superpowers/specs/2026-07-04-prompt-section-provider-design.md`。
+**Section 提供者架构** (`Module/system_prompt/` protocol + sections + templates): 2026-07-04 重构，将 `Brain.j2` 单体拆分为 12 个独立的 `PromptSection` 模块（ConflictRules, OutputFormat, TTSMarkup, Sensory, Emotion, Memory, Personality, Relationship, SpeakingStyle, Proactive, OwnLife, SelfPerception）。每个 section 自管数据源、自管 `.j2` 模板、可独立 reload/validate。`SystemPromptManager` 按固定顺序 async render 并拼接。详见 `docs/superpowers/specs/archive/2026-07-04-prompt-section-provider-design.md`。
 
 ### 4.8 空闲监控 (IdleMonitor)
 
@@ -502,9 +489,9 @@ proactive.enabled: false → 整个机制关闭
 
 ### 4.9 LLMAdapter
 
-薄适配层 (~90 行)：接收 `model` 标识符 (如 `"deepseek/deepseek-chat"`)，通过 `LLMFactory.create()` 创建 Module 层 backend，提供 `think()` 和 `stream_think()` 方法。
+薄适配层 (~170 行)：接收 `model` 标识符 (如 `"deepseek/deepseek-chat"`)，通过 `LLMFactory.create()` 创建 Module 层 backend，提供 `think()` 和 `stream_think()` 方法。
 
-测试用 `FakeLLMBackend` (core/_fake_llm.py) — 最小化 test double，直接 yield 预设字符串。
+测试用 `FakeLLMBackend` (core/tests/fake_llm.py) — 最小化 test double，直接 yield 预设字符串。
 
 ---
 
