@@ -41,6 +41,7 @@
 - **C5 输入来源标注**: prompt 中当前无法区分用户是用文字还是语音输入。需在 sensory_ctx 中增加 `input_source` 字段（text/voice），模板中显示 "输入方式: 文字 / 语音"
 - **EmotionEngine mood 转换逻辑**: 当前基础 mood 不会被单条用户消息软化。例如用户说温暖的话时，角色应能从 sad 自然转为"被安慰后的柔和"，而不是僵硬保持 sad。需改进 mood 衰减/转换算法
 - **PersonalityEngine Phase 2**:
+  - CharacterReflector.j2 模板 ~140 行偏长，LLM 注意力可能被稀释，后续观察产出质量决定是否精简
   - AwarenessTrigger: L2/L3 语义偏差检测（向量相似度替代轮次冷却）
   - L3→L2 梯度压缩自动化（LLM 总结+去噪+合并）
   - ExpressionAdapter 完善版：阻尼机制移入 C6 SpeakingStyle
