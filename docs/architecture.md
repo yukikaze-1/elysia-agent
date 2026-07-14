@@ -1,5 +1,7 @@
 # Elysia Agent 架构与设计
 
+> 文档导航：[项目文档](../README.md)
+
 ## 1. 架构总览
 
 ```
@@ -33,7 +35,7 @@
     │  Cognitive Core       │                                  │
     │  ┌──────────┐  ┌──────▼──────┐  ┌──────────────────┐    │
     │  │ EventBus │  │  AgentFSM   │  │  CognitiveLoop    │    │
-    │  │(Priority │  │  (5 states) │  │  (ReAct + stream  │    │
+    │  │(Priority │  │  (6 states) │  │  (ReAct + stream  │    │
     │  │ Queue)   │  │             │  │   + tools + sync) │    │
     │  └──────────┘  └─────────────┘  └──────────────────┘    │
     │                                                          │
@@ -328,6 +330,12 @@ INTERRUPT 处理流程：
      └────────────────────│ SPEAKING  │
               done        │           │
                           └───────────┘
+     ▲       │
+     │       ▼
+  ┌──┴───────────────────────────┐
+  │    IDLE_BACKGROUND_TASK       │
+  │  TaskSystem mailbox polling   │
+  └───────────────────────────────┘
 ```
 
 有效转移：
@@ -905,7 +913,7 @@ Agent/
 │   ├── agent.py             #   组件组装 + 生命周期 + TaskSystem 集成
 │   ├── cognitive_loop.py    #   ReAct 调度器
 │   ├── event_bus.py         #   优先级事件总线
-│   ├── agent_fsm.py         #   五状态机
+│   ├── agent_fsm.py         #   六状态机
 │   ├── block_filter.py      #   流式块过滤 + 结构化块解析
 │   ├── tts_stream.py        #   TTS 流式播放管理 (TTSStreamManager)
 │   ├── tool_call_parser.py  #   流式 tool call 合并/归一化
