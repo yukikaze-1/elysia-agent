@@ -78,7 +78,9 @@ git commit -m "docs: architecture.md 加面包屑 + FSM 5→6 states"
 搜索 `| \`Module.llm\` | \`deepseek\`, \`openai\`, \`ollama\`, \`mimo\`, \`custom\` |`，替换为：
 
 ```
-| `Module.llm` | `deepseek`, `openai`, `ollama`, `mimo`, `gemini`, `custom` | OpenAI-compatible | `stream_think()` 结构化流式 (content + tool_calls 并行检测)；gemini 已注册但抛出 NotImplementedError |
+| `Module.llm` | `deepseek`, `openai`, `ollama`, `mimo`, `gemini*`, `custom` | OpenAI-compatible | `stream_think()` 结构化流式 (content + tool_calls 并行检测) |
+
+> \* gemini 已注册但抛出 NotImplementedError
 ```
 
 - [ ] **Step 2: STT 后端表标注 openai/deepgram stub**
@@ -124,7 +126,35 @@ git commit -m "docs: architecture.md L0 后端表补全 gemini + deepgram stub"
 
 搜索 `core/_fake_llm.py`，替换为 `core/tests/fake_llm.py`。
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Section 4.2 FSM 图 + 转移表更新**
+
+Task 1 已在 Section 1 将状态数从 5 改为 6。Section 4.2（`### 4.2 有限状态机 (AgentFSM)`）的详细 FSM 图和转移表也需要同步更新：
+
+**FSM ASCII 图**：搜索 `### 4.2 有限状态机`，在 FSM 图中加入 `IDLE_BACKGROUND_TASK`：
+
+在 `IDLE` 节点旁边添加 `IDLE_BACKGROUND_TASK` 节点（从 IDLE 进入，可转移到 THINKING 或回到 IDLE）：
+
+```
+  ┌──────┐   USER_INPUT   ┌──────────┐      tool_calls   ┌──────────┐
+  │ IDLE │ ─────────────► │ THINKING │ ◄───────────────► │EXECUTING │
+  │      │ ◄───────────── │          │                    │          │
+  └──┬───┘    INTERRUPT   └────┬─────┘                    └──────────┘
+     │                         │
+     │  TASK_RESULT       LLM done
+     │                         │
+  ┌──▼──────────────────┐  ┌───▼─────┐
+  │ IDLE_BACKGROUND_TASK│  │ SPEAKING │
+  │ (mailbox polling)   │  │          │
+  └─────────────────────┘  └─────────┘
+```
+
+**转移表**：在 `SPEAKING → IDLE | EXECUTING | THINKING | INTERRUPTED` 后添加：
+
+```
+IDLE_BACKGROUND_TASK → IDLE | THINKING | INTERRUPTED
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add docs/architecture.md
@@ -223,6 +253,9 @@ aiohttp Application (41 条路由):
 | GET | `/health`, `/ready` | 健康检查 |
 | GET\|POST | `/shutdown` | 关闭服务 |
 | POST | `/restart` | 重启服务 |
+| GET | `/static/` | 静态文件（JS/CSS/HTML） |
+| GET | `/live2d/` | Live2D 角色模型资源 |
+| GET | `/uploads/` | 用户上传文件 |
 | POST | `/api/chat` | JSON chat API |
 | GET | `/api/messages` | 消息归档分页查询 |
 | POST | `/api/images` | 图片上传 |
