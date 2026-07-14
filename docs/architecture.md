@@ -878,10 +878,13 @@ Child loggers (core.cognitive_loop 等)
 
 ```
 Agent/
+├── Makefile                # 测试/构建命令
+├── requirements.txt        # Python 依赖
+├── docker-compose.yml      # 数据库容器
+├── pytest.ini              # pytest 配置（markers）
+├── data/                   # 应用数据（上传、缓存、Live2D）
 ├── app.py                  # 入口 (argparse + ConfigLoader + CLI overrides)
 ├── config.yaml              # 总配置
-├── docs/architecture.md     # 本文档
-├── docs/frontend-api.md     # 前端接入 API 文档
 ├── CLAUDE.md                # AI 助手指令
 ├── README.md                # 项目说明
 │
@@ -919,6 +922,9 @@ Agent/
 │   ├── idle_monitor.py      #   空闲监控
 │   ├── task_scheduler.py    #   Worker Pool 调度器
 │   ├── message_id.py        #   消息 ID 生成
+│   ├── consolidator.py     #   记忆沉淀
+│   ├── schema.py           #   共享类型
+│   ├── task.py             #   任务模型
 │   ├── debug_info.py        #   /debug 数据聚合
 │   ├── character_config.py  #   角色配置
 │   ├── app_config.py        #   App 配置
@@ -943,9 +949,8 @@ Agent/
 │   │   ├── config.yaml       #   角色配置
 │   │   ├── personality.md    #   L1 Core 人格文本
 │   │   └── reference/        #   GPT 生成参考
-│   └── cyrene/              # Cyrene 角色 (备用)
-│       ├── config.yaml
-│       └── personality.md
+│   └── cyrene/              # Cyrene 角色 (备用，仅含 GPT 参考材料)
+│       └── reference/
 │
 ├── prompt/                  # Jinja2 模板 (.j2, PascalCase)
 │   ├── ExtractMemory.j2          # 对话提取记忆
@@ -957,15 +962,32 @@ Agent/
 │   ├── MacroReflector.j2         # 日记合成 (参考)
 │   ├── MicroReflector.j2         # 逐对话提取 (参考)
 │   ├── Utils.j2                  # 工具宏
-│   └── ref/                      # GPT 生成原始版本 (snake_case.md)
+│   ├── PersonalityCompression.j2     # L3→L2 性格压缩
+│   └── ref/                      # GPT 生成原始版本
 │
 ├── static/                  # Web 前端
+│   ├── Elysia.png              # 角色头像
+│   ├── debug.md                # Debug 面板文档
+│   ├── live2d-demo/            # Live2D Cubism SDK + demo
 │   ├── index.html           # 聊天页面
 │   ├── debug.html           # Debug 仪表板 (~2100 行)
 │   ├── css/chat.css         # 聊天样式
 │   └── js/                  # ES modules (chat/audio/mic/ws/state/settings/persistence/tools/esc/main)
 │
-├── docs/                    # 文档
+├── docs/                   # 文档
+│   ├── architecture.md     #   架构详解（本文档）
+│   ├── frontend-api.md     #   前端 API
+│   ├── testing.md          #   测试指南
+│   ├── readme-conventions.md #  README 编写规范
+│   ├── companion-roadmap.md  #   伴侣化路线
+│   ├── companion-prompt-guide.md  # Prompt 指南
+│   ├── database-storage.md #   数据库存储设计
+│   ├── completed.md        #   已完成记录
+│   ├── experience.md       #   开发经验
+│   ├── sync-lessons.md     #   同步经验
+│   ├── plans/              #   实施计划
+│   ├── specs/              #   设计规格
+│   └── superpowers/        #   Superpowers 计划/规格
 ├── log/                     # 日志文件 (gitignore)
 └── scripts/                 # 启动/预检/工具脚本
 ```
