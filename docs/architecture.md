@@ -631,40 +631,63 @@ Browser Microphone
 | `command` | `{"command":"inner_voice","params":{"content":"..."}}` | AI 内心独白（淡色气泡） |
 | `command` | `{"command":"tool_approval","params":{...}}` | 工具审批请求 |
 | `command` | `{"command":"block","params":{...}}` | 结构化内容块 |
+| `session` | `{"type":"session","messages":[...],"token_stats":{...}}` | 连接时推送会话历史 |
+| `capabilities` | `{"type":"capabilities","stt":true,...}` | 服务能力声明 |
+| `wake` | `{"type":"wake"}` | 唤醒词检测通知 |
+| `switch_model_result` | `{"type":"switch_model_result","service":"...","ok":true}` | 模型切换结果 |
+| `error` | `{"type":"error","message":"..."}` | 错误通知 |
 
 **Browser → Server:**
 
 | type | payload | 说明 |
 |------|---------|------|
-| `text` | `{"type":"text","content":"你好"}` | 文本输入 |
+| `text` | `{"type":"text","content":"你好"}` | 文本输入（content 可为 string 或 content array） |
 | `interrupt` | `{"type":"interrupt"}` | 打断按钮 |
+| `wake_toggle` | `{"type":"wake_toggle","enabled":true}` | 唤醒词开关 |
+| `switch_model` | `{"type":"switch_model","service":"llm","model":"..."}` | 切换模型 |
+| `tool_approval` | `{"type":"tool_approval","request_id":"...","approved":true}` | 工具审批回复 |
 | binary | Int16 PCM bytes | 麦克风音频 |
 
 ### 6.3 WebSocket 服务器 (Module/input/server.py)
 
 ```
-aiohttp Application (30+ 路由):
-  GET  /                       → static/index.html
-  GET  /debug                  → static/debug.html
-  GET  /ws                     → WebSocket handler
-  GET  /health, /ready         → 健康检查
-  POST /shutdown, /restart     → 关闭/重启
-  POST /api/chat               → JSON chat API (curl 测试)
-  GET  /api/messages           → 消息归档分页查询
-  POST /api/images             → 图片上传
-  GET  /api/providers          → 模型 provider 列表
-  POST /api/providers          → 添加自定义 provider
-  POST /api/providers/test     → 连通性测试
-  GET  /tools                  → 工具插件列表
-  POST /tools/reload           → 热重载工具插件
-  GET  /debug/api              → DebugInfo 完整 JSON
-  GET  /debug/api/prompts/{n}  → Prompt 详情
-  GET  /debug/api/responses/{n}→ Response 详情
-  GET  /debug/api/db-status    → 数据库连接状态
-  GET/POST/PUT/DELETE /debug/api/ltm[/{id}] → LTM CRUD
-  GET/DELETE /debug/api/sessions[/{id}]     → Session 管理
-  GET/PUT/DELETE /debug/api/archive[/{id}]  → Archive CRUD
-  GET  /debug/api/tasks/stream → TaskSystem SSE 事件流
+aiohttp Application (41 条路由):
+
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| GET | `/` | static/index.html |
+| GET | `/debug` | static/debug.html |
+| GET | `/ws` | WebSocket handler |
+| GET | `/health`, `/ready` | 健康检查 |
+| GET\|POST | `/shutdown` | 关闭服务 |
+| POST | `/restart` | 重启服务 |
+| GET | `/static/` | 静态文件（JS/CSS/HTML） |
+| GET | `/live2d/` | Live2D 角色模型资源 |
+| GET | `/uploads/` | 用户上传文件 |
+| POST | `/api/chat` | JSON chat API |
+| GET | `/api/messages` | 消息归档分页查询 |
+| POST | `/api/images` | 图片上传 |
+| GET | `/api/providers` | 模型 provider 列表 |
+| POST | `/api/providers` | 添加自定义 provider |
+| DELETE | `/api/providers/{service}/{name}` | 删除自定义 provider |
+| POST | `/api/providers/test` | 连通性测试 |
+| GET | `/tools` | 工具插件列表 |
+| POST | `/tools/reload` | 热重载工具插件 |
+| GET | `/debug/api` | DebugInfo 完整 JSON |
+| GET | `/debug/api/prompts` | Prompt 记录列表 |
+| GET | `/debug/api/prompts/{n}` | Prompt 详情 |
+| GET | `/debug/api/responses` | Response 记录列表 |
+| GET | `/debug/api/responses/{n}` | Response 详情 |
+| GET | `/debug/api/db-status` | 数据库连接状态 |
+| GET\|POST | `/debug/api/ltm` | LTM 列表 / 新增记忆 |
+| PUT\|DELETE | `/debug/api/ltm/{entry_id}` | 更新 / 删除单条记忆 |
+| DELETE | `/debug/api/ltm` | 清空全部 LTM |
+| GET\|DELETE | `/debug/api/sessions` | Session 列表 / 清空全部 |
+| GET\|DELETE | `/debug/api/sessions/{session_id}` | Session 详情 / 删除 |
+| GET\|DELETE | `/debug/api/archive` | Archive 分页 / 清空全部 |
+| PUT\|DELETE | `/debug/api/archive/{msg_id}` | 更新 / 删除单条归档 |
+| GET | `/debug/api/tasks` | TaskSystem 快照 |
+| GET | `/debug/api/tasks/stream` | TaskSystem SSE 事件流 |
 
 每个 WS 连接:
   └── 创建 WebSocketChannel → OutputManager
@@ -717,7 +740,7 @@ stt:
   enabled: true                      # CLI --stt 可覆盖
 ```
 
-优先级: `CLI flag > config.yaml > AppConfig 默认值`
+优先级: `CLI flag > 环境变量 (.env) > config.yaml > AppConfig 默认值`
 
 ### 7.2 角色配置 (character/elysia/config.yaml)
 
@@ -733,7 +756,16 @@ emotion:
   thresholds: {excitement: 0.6, sadness: 0.3}
   idle_expressions: [neutral, blink]
 
-wake_words: [Elysia, 爱莉, 爱莉希雅, 妖精小姐]
+appearance:
+  height: "162cm"
+  hair: "粉色长发"
+  eyes: "粉红色"
+
+wake_words:
+  - Elysia
+  - 爱莉
+  - 爱莉希雅
+  - 妖精小姐
 
 proactive:
   enabled: false
@@ -743,7 +775,6 @@ proactive:
       duration: 30
     - type: time_of_day
       times: ["08:00", "12:00", "22:00"]
-    - type: time_of_day
 
 ---
 
