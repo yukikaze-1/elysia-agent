@@ -290,26 +290,27 @@ Agent/
 
 ## 测试
 
+1558 个测试按 4 层 markers 组织。详见 [docs/testing.md](docs/testing.md)。
+
 ```bash
 conda activate Elysia
 
-# TaskSystem 单元测试 (~305 tests)
-python -m pytest Module/task_system/tests/unit/ -v
+# 日常开发 — 秒级（~60s）
+make test-quick
 
-# TaskSystem 集成测试 (~36 tests)
-python -m pytest Module/task_system/tests/integration/ -v
+# 提交前 — 排除慢速（~5min）
+make test-normal
 
-# Core 测试 (~361 tests)
-python -m pytest core/tests/ -v
-
-# Module 测试 (~610 tests, 含 _common/ 22 tests)
-python -m pytest Module/ -v --ignore=Module/task_system
-
-# 全部测试 (~1,370 tests)
-python -m pytest Module/ core/ -v
+# 全量（~20min）
+make test-full
 ```
 
-**测试统计**: ~1,370 tests（305 TaskSystem unit + 36 TaskSystem integration + 361 core + 610 Module + 82 core/tools）
+| marker | 标准 | 用途 |
+|--------|------|------|
+| `unit` | 纯函数/类，无 I/O | 日常开发 |
+| `service` | 单模块 + mock | 日常开发 |
+| `integration` | 需真实 DB 或 API | 提交前 |
+| `slow` | Agent 启动/端到端 | 推之前 |
 
 ---
 
