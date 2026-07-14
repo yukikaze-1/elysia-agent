@@ -13,7 +13,7 @@
 - 根 `README.md`：架构节精简 + 新增"文档导航"章节
 - `Module/README.md`：加面包屑 + 模块链接 + 相关文档
 - 16 个 `Module/<name>/README.md`：加面包屑 + 底部"相关文档"节
-- 6 个 `core/` 子 README（含 `core/personality/`）：加面包屑 + 底部"相关文档"节
+- `core/personality/README.md`：加面包屑 + 底部"相关文档"节
 - 7 个 `core/tools/<name>/README.md`：面包屑 + 相关文档，过短的补内容
 - `prompt/README.md`、`character/README.md`：面包屑 + 相关文档
 - **不在此范围**：`docs/architecture.md`（后续单独讨论，动之前需和用户确认）、`CLAUDE.md`（保持不变）、`static/live2d-demo/`（第三方代码）
@@ -111,7 +111,7 @@
 - 现有 README 内容不动，除非明显过时/错误
 - 不改变任何模块的代码、API 或测试
 
-## 涉及文件清单（33 个）
+## 涉及文件清单（27 个）
 
 ### 改动：根
 1. `README.md`
