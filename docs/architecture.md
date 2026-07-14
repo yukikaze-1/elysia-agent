@@ -502,7 +502,7 @@ proactive.enabled: false → 整个机制关闭
 | 层 | 存储 | 生命周期 | 容量 | 用途 |
 |------|------|------|------|------|
 | Working | 内存 (单次推理) | 单次 LLM 调用 | 动态 | PromptAssembler 组装 |
-| Session | MongoDB / deque | 跨进程重启 | config.yaml 可配 (默认 50) | 对话上下文 + 运行时参数 |
+| Session | MongoDB / deque | 跨进程重启 | 代码默认 20，config.yaml 覆盖为 50 | 对话上下文 + 运行时参数 |
 | Long-term | Milvus + 内存 | 跨会话 | 无上限 | 事实/偏好/计划 语义搜索 |
 
 ### 5.2 SessionMemory
@@ -578,17 +578,17 @@ tool_manager.load_all(ALL_PLUGINS, plugin_ctx)
 | 工具 | 参数 | 功能 |
 |------|------|------|
 | `search_memory` | query, limit | 语义搜索长期记忆 |
-| `save_memory` | content, type, poignancy | 保存新记忆 |
-| `get_time` | — | 获取当前日期时间 |
-| `web_search` | query, engine | DuckDuckGo / Brave 搜索 |
+| `save_memory` | content, type | 将重要信息保存到长期记忆库（type: fact/plan/preference/note） |
+| `get_time` | timezone, format | 获取当前日期时间，支持时区和格式 |
+| `web_search` | query, limit | Tavily / Brave 搜索（默认 Tavily） |
 | `web_fetch` | url | 抓取网页内容 |
 | `read_file` | path, start_line, max_lines | 读取本地文件（沙箱内） |
-| `list_directory` | path | 列出目录内容 |
+| `list_directory` | path, depth | 列出目录内容（depth 默认 1，最大 3） |
 | `write_file` | path, content | 写入文件（需审批） |
-| `set_reminder` | text, delay_seconds | 设置定时提醒 |
+| `set_reminder` | message, delay_seconds | 设置定时提醒（1-86400 秒） |
 | `get_runtime_config` | query | 查询运行时配置和状态 |
 | `get_self_state` | — | 查询 Agent 自身状态 |
-| `describe_image` | image_indices | 视觉模型描述图片 |
+| `describe_image` | prompt, image_index, image_indices | 视觉模型描述图片（单图/批量互斥） |
 
 CognitiveLoop 使用 `asyncio.gather` 并行执行无依赖工具。
 
