@@ -1,4 +1,4 @@
-"""SessionMemory: connect_db 日志级别 + health_check 重连 测试。"""
+"""SessionMemory: COLLECTION 常量 + connect_db 日志级别 + health_check 重连 测试。"""
 import logging
 import pytest
 from unittest.mock import AsyncMock, patch
@@ -15,18 +15,24 @@ def test_collection_constant():
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_connect_db_uses_collection_constant():
-    """connect_db() 应使用 self.COLLECTION 而非 hardcode 字符串。"""
+    """connect_db() 使用 self.COLLECTION 创建索引（而非 hardcode 字符串）。"""
     sm = SessionMemory(session_id="test-coll")
     assert sm.COLLECTION == "sessions"
 
-    # 验证 COLLECTION 被传递给 ensure_index
     mock_db = AsyncMock()
     mock_db.ensure_index = AsyncMock()
-    sm._db = mock_db
 
-    # 直接调用 ensure_index 验证使用了 COLLECTION
-    await sm._db.ensure_index(sm.COLLECTION, [("session_id", 1)])
-    mock_db.ensure_index.assert_called_once_with("sessions", [("session_id", 1)])
+    with patch(
+        "Module.database.documentdb.DocumentDBFactory.create",
+        return_value=mock_db,
+    ):
+        result = await sm.connect_db()
+
+    assert result is True
+    assert sm._db is mock_db
+    # 验证所有 ensure_index 调用都使用 sm.COLLECTION（而非 hardcode 字符串）
+    for call_args in mock_db.ensure_index.call_args_list:
+        assert call_args[0][0] == sm.COLLECTION
 
 
 @pytest.mark.service
