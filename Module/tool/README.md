@@ -1,5 +1,7 @@
 # Module.tool — 可复用工具框架
 
+> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+
 为 AI Agent 提供**声明式、安全、可观测**的工具执行系统。零业务依赖，可独立用于任何 Python Agent 项目。
 
 ## 架构
@@ -193,3 +195,13 @@ core/tools/     ← Elysia 项目的具体工具插件
 - Python 3.13+
 - Pydantic v2（参数校验 + Schema 生成）
 - 无其他强制依赖（`httpx`、`psutil` 等由插件自行声明）
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [core/tools/](../../core/tools/) | Elysia 项目的具体工具插件 |
+| [docs/architecture.md](../../docs/architecture.md) | ToolManager 架构 + 工具列表 |

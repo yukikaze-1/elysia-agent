@@ -1,5 +1,7 @@
 # VectorDB Module
 
+> 文档导航：[项目文档](../../../README.md) → [Module 文档](../../README.md) → [数据库文档](../README.md)
+
 统一的向量数据库模块。提供 `VectorDBBackend` 接口，通过 `VectorDBFactory` 按 `provider/name` 标识创建后端实例。
 
 ## 文件结构
@@ -119,3 +121,13 @@ python -m pytest Module/database/vectordb/test_vectordb.py -v
 # 真实 API 集成测试（需要 Milvus 运行中）
 python -m Module.database.vectordb
 ```
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [数据库文档](../README.md) | 数据库模块总览 |
+| [Module 文档](../../README.md) | 所有 Module 服务总览 |
+| [Module/embedding/README.md](../../embedding/README.md) | Embedding 模块（向量生产者） |

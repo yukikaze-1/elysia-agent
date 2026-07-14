@@ -1,5 +1,7 @@
 # System Prompt 模板
 
+> 文档导航：[项目文档](../../../README.md) → [Module 文档](../../README.md) → [System Prompt 文档](../README.md)
+
 本目录包含 `SystemPromptManager` 使用的 Jinja2 模板文件。每个模板对应一个 section（prompt 子章节），由 11 个 section 类按固定顺序渲染，最终拼接为完整的 system prompt。
 
 ## 格式约定
@@ -139,3 +141,12 @@ C9 SelfPerception   → 自我感知（AwarenessTrigger 条件激活）
 3. 在 `system_prompt_manager.py` 的 `_RENDER_ORDER` 中添加 section name
 4. 在 `core/prompt_assembler.py` 中创建 section 实例并传入模板路径
 5. 在 `tests/` 中添加对应的单元测试
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [System Prompt 文档](../README.md) | System Prompt 引擎 + Section Provider |
+| [Module 文档](../../README.md) | 所有 Module 服务总览 |

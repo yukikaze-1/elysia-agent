@@ -1,5 +1,7 @@
 # Prompt Module
 
+> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+
 System prompt 引擎 + 通用 Jinja2 模板渲染。提供两套 API：
 
 - **SystemPromptManager** — Section Provider 架构：11 个独立 `PromptSection`，自管数据源/模板/生命周期，中央编排器按序组装 system prompt
@@ -143,3 +145,14 @@ python -m pytest Module/system_prompt/tests/ -v
 # 旧 PromptManager 测试
 python -m pytest Module/system_prompt/test_prompt.py -v
 ```
+
+---
+
+## 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [Module/system_prompt/templates/README.md](templates/README.md) | 模板格式约定 |
+| [prompt/README.md](../../prompt/README.md) | Prompt 模板目录说明 |
+| [docs/architecture.md](../../docs/architecture.md) | 提示词组装架构 |
