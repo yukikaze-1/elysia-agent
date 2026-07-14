@@ -806,30 +806,38 @@ class Agent:
         # TTS: 根据 config.tts.enabled 决定是否初始化
 
     async def start():
+        # AgentFSM.reset() + LLMAdapter.reconnect()
+        # Archive.connect()
+        # 状态恢复: CharacterReflector.restore_state → PersonalityEngine.restore_state → EmotionEngine.restore_state → MemoryReflector.restore_state
+        # JSONL snapshot 恢复
+        # ToolContext 构造 + 注入
+        # _db_health_loop 创建
         # MongoDB + Milvus 并行连接
         # SessionMemory.load() — 恢复历史会话
         # TokenTracker + PromptRecorder 初始化
         # ToolManager.load_all(ALL_PLUGINS) — 加载工具插件
         # TaskScheduler Worker Pool 启动
         # IdleMonitor.start()
-        # TTS/STT 条件启动
+        # TTS 条件启动（STT 在 run_server() 中初始化）
         # TaskSystem 启动 + Mailbox 轮询
         # 事件处理循环 (_process_events)
 
     async def stop():
-        # cancel cognitive + TTS tasks
-        # cancel embedding preload + mailbox polling
-        # idle_monitor.stop()
-        # scheduler.stop()
-        # tool_manager.shutdown()
-        # task_system.stop()
-        # event_task.cancel()
-        # session.save() (3s timeout)
-        # long_term.close()
-        # llm.close()
-        # tts.close()
-        # output.close()
-        # (每步 3s timeout，单步失败不阻塞后续)
+        # 1. Buffer flush: consolidator → CharacterReflector → L3→L2 compression → MemoryReflector
+        # 2. _stop_event_task() — cancel event processing
+        # 3. cancel cognitive + TTS tasks
+        # 4. _stop_mailbox() — cancel mailbox polling
+        # 5. _stop_task_system() — stop TaskSystem
+        # 6. idle_monitor.stop()
+        # 7. scheduler.stop()
+        # 8. tool_manager.shutdown()
+        # 9. _stop_embedding_if_running() — cancel embedding preload
+        # 10. _stop_persistence() — session.save() → EmbeddingFactory.shutdown() → long_term.close()
+        # 11. _stop_db_health() — cancel db_health_task
+        # 12. llm.close()
+        # 13. tts.close()
+        # 14. output.close()
+        # (每步 3s timeout，少数关键步骤 5s，单步失败不阻塞后续)
 
     async def process_message(text):
         # idle_monitor.touch()
