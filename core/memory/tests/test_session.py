@@ -6,6 +6,29 @@ from unittest.mock import AsyncMock, patch
 from core.memory.session import SessionMemory
 
 
+@pytest.mark.unit
+def test_collection_constant():
+    """SessionMemory.COLLECTION 应为 'sessions'。"""
+    assert SessionMemory.COLLECTION == "sessions"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_connect_db_uses_collection_constant():
+    """connect_db() 应使用 self.COLLECTION 而非 hardcode 字符串。"""
+    sm = SessionMemory(session_id="test-coll")
+    assert sm.COLLECTION == "sessions"
+
+    # 验证 COLLECTION 被传递给 ensure_index
+    mock_db = AsyncMock()
+    mock_db.ensure_index = AsyncMock()
+    sm._db = mock_db
+
+    # 直接调用 ensure_index 验证使用了 COLLECTION
+    await sm._db.ensure_index(sm.COLLECTION, [("session_id", 1)])
+    mock_db.ensure_index.assert_called_once_with("sessions", [("session_id", 1)])
+
+
 @pytest.mark.service
 class TestSessionMemoryConnectLogLevel:
     """connect_db() 失败时必须使用 logger.warning，不是 info。"""

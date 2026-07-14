@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 class SessionMemory:
     """Bounded conversation window with optional MongoDB persistence."""
 
+    COLLECTION = "sessions"
+
     def __init__(self, max_messages: int = 20, session_id: str = "default",
                  archive: "MessageArchive | None" = None):
         self._messages: deque[dict[str, Any]] = deque(maxlen=max_messages)
@@ -218,12 +220,12 @@ class SessionMemory:
         try:
             from Module.database.documentdb import DocumentDBFactory
             self._db = DocumentDBFactory.create("mongodb/default")
-            await self._db.ensure_index("sessions", [("session_id", 1)])
-            await self._db.ensure_index("sessions", [("updated_at", -1)])
+            await self._db.ensure_index(self.COLLECTION, [("session_id", 1)])
+            await self._db.ensure_index(self.COLLECTION, [("updated_at", -1)])
             # Try TTL index for auto-cleanup of stale sessions (30 days)
             try:
                 await self._db.ensure_index(
-                    "sessions",
+                    self.COLLECTION,
                     [("updated_at", 1)],
                     expireAfterSeconds=30 * 86400,
                 )
@@ -272,7 +274,7 @@ class SessionMemory:
             logger.info("Session save to MongoDB: session=%s, messages=%d",
                         self._session_id, len(doc["messages"]))
             await self._db.update_one(
-                "sessions",
+                self.COLLECTION,
                 {"session_id": self._session_id},
                 {"$set": doc},
                 upsert=True,
@@ -322,7 +324,7 @@ class SessionMemory:
             return await self._load_from_jsonl()
         sid = session_id or self._session_id
         try:
-            results = await self._db.find("sessions", {"session_id": sid}, limit=1)
+            results = await self._db.find(self.COLLECTION, {"session_id": sid}, limit=1)
             if results:
                 doc = results[0]
                 self._session_id = sid
