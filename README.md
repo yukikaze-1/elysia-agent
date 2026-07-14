@@ -177,6 +177,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 ### Core 层
 | 模块 | README | 说明 |
 |------|--------|------|
+| Core 总览 | [core/README.md](core/README.md) | 认知中枢架构 + 28 组件详解 |
 | PersonalityEngine | [core/personality/README.md](core/personality/README.md) | 四层性格模型（Core→Self→State→Mood） |
 | 工具: filesystem | [core/tools/filesystem/README.md](core/tools/filesystem/README.md) | read_file / list_directory / write_file |
 | 工具: memory | [core/tools/memory/README.md](core/tools/memory/README.md) | search_memory / save_memory |
@@ -257,8 +258,8 @@ Agent/
 ├── config.yaml             # 总配置
 ├── requirements.txt        # Python 依赖
 ├── docker-compose.yml      # 数据库服务
-├── Makefile                # 测试/检查命令
-├── pytest.ini              # pytest 配置（integration 标记）
+├── Makefile                # 测试/检查/启动命令
+├── pytest.ini              # pytest 配置（4 层 markers）
 ├── .env.example            # 环境变量模板
 ├── scripts/                # 安装/启动工具
 │   ├── setup.sh            #   一键安装
@@ -267,9 +268,18 @@ Agent/
 ├── todo.md                 # 开发计划 + 已知 Bug
 ├── log/                    # 日志输出 (gitignore)
 ├── data/                   # 数据存储 (gitignore)
+│   ├── cache/              #   缓存
+│   ├── live2d-assets/      #   Live2D 角色模型
+│   ├── ref/                #   参考音频
+│   └── uploads/            #   上传文件
+├── character/              # 角色配置
+│   ├── elysia/             #   Elysia 角色
+│   ├── cyrene/             #   Cyrene 角色
+│   └── README.md           #   角色配置说明
 │
 ├── Module/                 # L0 基础设施层
 │   ├── _common/            #   共享工具 (registry_helpers, test_helpers, main_runner, ...)
+│   │   └── tests/          #     测试
 │   ├── llm/                # DeepSeek / OpenAI / Ollama / MiMo
 │   ├── stt/                # SenseVoice / OpenAI-compatible
 │   ├── tts/                # GPT-SoVits / MiniMax / OpenAI-compatible
@@ -279,13 +289,15 @@ Agent/
 │   ├── logger/             # 日志工厂
 │   ├── system_prompt/      # Brain Prompt 引擎 — SystemPromptManager + 11 PromptSections
 │   ├── schema/             # 共享数据模型
-│   ├── tool/               # 工具框架 (172 tests)
+│   ├── tool/               # 工具框架 (129 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB
 │   ├── input/              # AudioBuffer + WebSocket server
-│   ├── task_system/        # TaskSystem v1 (334 tests)
+│   ├── task_system/        # TaskSystem v1 (341 tests)
+│   │   └── tests/          #     测试
 │   └── bench/              # 延迟基准
 │
 ├── core/                   # L1 认知控制
+│   ├── __init__.py         #   包初始化
 │   ├── agent.py            #   组件组装 + 生命周期
 │   ├── cognitive_loop.py   #   ReAct 调度器 + inner_voice 状态机
 │   ├── llm_adapter.py      #   LLM 适配器 (含重试)
@@ -299,23 +311,39 @@ Agent/
 │   ├── text_utils.py       #   文本提取 + MessageObj
 │   ├── message_id.py       #   消息 ID 生成
 │   ├── consolidator.py     #   记忆沉淀
+│   ├── custom_providers.py #   自定义提供者
 │   ├── idle_monitor.py     #   空闲监控
 │   ├── character_config.py #   角色配置
 │   ├── app_config.py       #   ConfigLoader 配置
 │   ├── log_setup.py        #   日志系统 + conversation.log
 │   ├── debug_info.py       #   /debug 面板数据聚合
+│   ├── task.py             #   任务模型
 │   ├── task_scheduler.py   #   Worker Pool (5 workers)
 │   ├── token_tracker.py    #   Token 消耗追踪
 │   ├── prompt_recorder.py  #   LLM Prompt 记录器 (环形缓冲)
 │   ├── response_recorder.py #  LLM Response 记录器 (环形缓冲)
 │   ├── timing.py           #   性能计时
-│   ├── tag_parser.py       #   标签解析
+│   ├── tts_stream.py       #   TTS 流式输出
+│   ├── tool_call_parser.py #   流式 tool_call 解析
+│   ├── personality/        #   四层性格模型 (Core→Self→State→Mood)
 │   ├── tools/              #   工具插件 (12 个)
+│   │   └── vision/         #     多模态视觉工具
 │   ├── memory/             #   记忆子系统 (session + long_term)
-│   └── tests/              #   测试 (~367 tests)
+│   └── tests/              #   测试 (363 tests)
 │
-├── prompt/                 # 反射模板 (Amygdala/ActiveSpeak/MicroReflector/MacroReflector 参考, CharacterReflector 活跃)
-│   └── CharacterReflector.j2 #   角色进化反射
+├── prompt/                 # Prompt 模板
+│   ├── ActiveSpeak.j2      #   主动说话判断
+│   ├── Amygdala.j2         #   情绪分析
+│   ├── CharacterReflector.j2 # 角色进化反射
+│   ├── ConsolidationCompare.j2 # 记忆比对
+│   ├── ExtractMemory.j2    #   对话提取记忆
+│   ├── MacroReflector.j2   #   宏观反思 (参考)
+│   ├── MemoryReflector.j2  #   记忆去重反思
+│   ├── MicroReflector.j2   #   微观反思 (参考)
+│   ├── PersonalityCompression.j2 # 性格压缩
+│   ├── Utils.j2            #   通用工具
+│   ├── ref/                #   GPT 生成参考
+│   └── README.md           #   模板说明
 │
 ├── static/                 # 浏览器客户端
 │   ├── index.html          #   入口
@@ -326,10 +354,17 @@ Agent/
 │
 ├── docs/                   # 文档
 │   ├── architecture.md     #   架构详解
+│   ├── testing.md          #   测试命令速查
+│   ├── database-storage.md #   数据库存储设计
 │   ├── frontend-api.md     #   前端 API 文档
+│   ├── sync-lessons.md     #   同步经验笔记
+│   ├── experience.md       #   开发经验记录
 │   ├── completed.md        #   已完成记录
+│   ├── readme-conventions.md # README 编写规范
 │   ├── companion-roadmap.md #  伴侣化改造路线图
 │   ├── companion-prompt-guide.md # Prompt 编写指南
+│   ├── plans/              #   实施计划
+│   ├── specs/              #   设计规范
 │   └── superpowers/        #   设计规范 + 实施计划 (已归档)
 │
 └── log/                    # 日志 (gitignore)
