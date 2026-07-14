@@ -13,8 +13,13 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from Module.system_prompt import PromptManager
+
+if TYPE_CHECKING:
+    from core.llm_adapter import LLMAdapter
+    from core.memory.session import SessionMemory
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +39,8 @@ class PersonalityEngine:
     def __init__(
         self,
         *,
-        llm,                              # LLMAdapter (用于 compression 调用)
-        session,                          # SessionMemory
+        llm: "LLMAdapter",                # LLMAdapter (用于 compression 调用)
+        session: "SessionMemory",         # SessionMemory
         character_name: str,
         user_name: str,
         base_personality: str,            # L1 Core 文本
