@@ -148,10 +148,12 @@ Task 1 已在 Section 1 将状态数从 5 改为 6。Section 4.2（`### 4.2 有�
   └─────────────────────┘  └─────────┘
 ```
 
-**转移表**：在 `SPEAKING → IDLE | EXECUTING | THINKING | INTERRUPTED` 后添加：
+**转移表**：
+- 搜索 `SPEAKING →` 所在行，将 `IDLE | EXECUTING | THINKING | INTERRUPTED` 改为 `IDLE | EXECUTING | THINKING | INTERRUPTED | IDLE_BACKGROUND_TASK`
+- 在该行后添加：
 
 ```
-IDLE_BACKGROUND_TASK → IDLE | THINKING | INTERRUPTED
+IDLE_BACKGROUND_TASK → THINKING | INTERRUPTED
 ```
 
 - [ ] **Step 6: Commit**
