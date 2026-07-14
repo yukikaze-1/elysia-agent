@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from core.personality import CharacterReflector
 
 
+@pytest.mark.service
 class TestCharacterReflector:
     """CharacterReflector 缓冲区、触发、flush 测试."""
 
@@ -98,7 +99,6 @@ class TestCharacterReflector:
 
     # ---- flush ----
 
-    @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_flush_with_buffered_turns(self, reflector, llm):
         """flush() 在 buffer >= 10 对时强制反思并清空."""
@@ -194,6 +194,7 @@ class TestCharacterReflector:
         pass  # 验证通过 integration 测试
 
 
+@pytest.mark.service
 def test_reflector_submits_to_personality_engine():
     """Reflector 完成后提交事件到 PersonalityEngine。"""
     from core.personality import PersonalityEngine

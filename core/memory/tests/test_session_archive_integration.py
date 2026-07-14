@@ -8,6 +8,7 @@ from core.memory.session import SessionMemory
 from core.memory.message_archive import MessageArchive
 
 
+@pytest.mark.service
 class TestSessionArchiveIntegration:
     @pytest.mark.asyncio
     async def test_add_message_writes_to_archive(self):

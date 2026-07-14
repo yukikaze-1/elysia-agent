@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from core.memory.long_term import LongTermMemory
 
 
+@pytest.mark.service
 class TestLongTermMemoryConnectLogLevel:
     """connect() 失败时必须使用 logger.warning。"""
 
@@ -26,6 +27,7 @@ class TestLongTermMemoryConnectLogLevel:
         assert "Milvus unavailable" in warnings[0].message
 
 
+@pytest.mark.service
 class TestLongTermMemoryHealthCheck:
     """health_check() 在连接丢失后应尝试重连。"""
 
@@ -66,6 +68,7 @@ class TestLongTermMemoryHealthCheck:
         assert ltm._connected is False
 
 
+@pytest.mark.service
 class TestPKMatching:
     """PK 匹配: 同文异构条目各自获得正确 distance。"""
 

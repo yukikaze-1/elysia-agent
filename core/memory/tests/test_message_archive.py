@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from core.memory.message_archive import MessageArchive
 
 
+@pytest.mark.service
 class TestMessageArchiveConnect:
     @pytest.mark.asyncio
     async def test_connect_stores_db(self):
@@ -17,6 +18,7 @@ class TestMessageArchiveConnect:
         assert archive._db is db
 
 
+@pytest.mark.service
 class TestMessageArchiveAppend:
     @pytest.mark.asyncio
     async def test_append_inserts_and_returns_id(self):
@@ -36,6 +38,7 @@ class TestMessageArchiveAppend:
             await archive.append({"role": "user"})
 
 
+@pytest.mark.service
 class TestMessageArchiveQuery:
     @pytest.mark.asyncio
     async def test_query_returns_messages_and_has_more(self):
@@ -79,6 +82,7 @@ class TestMessageArchiveQuery:
         assert has_more is False
 
 
+@pytest.mark.service
 class TestMessageArchiveCount:
     @pytest.mark.asyncio
     async def test_count_returns_zero_when_empty(self):
@@ -105,6 +109,7 @@ class TestMessageArchiveCount:
         assert c == 0
 
 
+@pytest.mark.service
 class TestMessageArchiveClearAll:
     @pytest.mark.asyncio
     async def test_clear_all_deletes_and_returns_count(self):

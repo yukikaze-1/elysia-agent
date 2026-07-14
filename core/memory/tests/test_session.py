@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 from core.memory.session import SessionMemory
 
 
+@pytest.mark.service
 class TestSessionMemoryConnectLogLevel:
     """connect_db() 失败时必须使用 logger.warning，不是 info。"""
 
@@ -27,6 +28,7 @@ class TestSessionMemoryConnectLogLevel:
         assert "MongoDB unavailable" in warnings[0].message
 
 
+@pytest.mark.service
 class TestSessionMemoryHealthCheck:
     """health_check() 在连接丢失后应尝试重连。"""
 

@@ -20,6 +20,7 @@ def _make_engine(session=None, llm=None):
     )
 
 
+@pytest.mark.unit
 class TestPersonalityEngineInit:
     def test_loads_l1_core(self):
         """初始化时存储 L1 Core。"""
@@ -32,6 +33,7 @@ class TestPersonalityEngineInit:
         assert engine.render_c1()["self_personality"] == ""
 
 
+@pytest.mark.unit
 class TestPersonalityEngineC9:
     def test_c9_empty_when_no_state(self):
         """无 L3 State 时 C9 返回空。"""
@@ -51,6 +53,7 @@ class TestPersonalityEngineC9:
         assert result["awareness_text"]
 
 
+@pytest.mark.unit
 class TestPersonalityEngineTrigger:
     def test_consume_trigger_updates_state_l3(self):
         """consume_trigger 更新 session 中的 state_l3 和 history。"""
@@ -72,6 +75,7 @@ class TestPersonalityEngineTrigger:
         engine._llm.think.assert_not_called()
 
 
+@pytest.mark.unit
 class TestPersonalityEngineRestore:
     def test_restore_state_rebuilds_from_session(self):
         """restore_state 从 session 恢复 L2/L3。"""
