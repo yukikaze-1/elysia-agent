@@ -132,26 +132,74 @@ bash scripts/setup.sh
 
 ## 架构
 
+三层结构：
+
 ```
-L0  Module/        无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/, prompt/
-L1  core/          认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
-L2  core/memory/   记忆与工具 — SessionMemory, LongTermMemory, ToolManager (Plugin 架构)
+L0  Module/              无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/, system_prompt, tool
+L1  core/                认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
+L2  core/memory/         记忆与工具 — SessionMemory, LongTermMemory, ToolManager (Plugin 架构)
 L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
 ```
 
-数据流：
+每层职责分明。每个 Module 服务遵循 Protocol-Registry-Backend 模式，可独立替换。
 
-```
-用户输入 → EventBus → FSM(THINKING) → PromptAssembler(角色+记忆+感官)
-  ├── STT 情绪标签 → EmotionEngine + SystemPromptManager <perception>
-  → CognitiveLoop.stream_think()
-    ├── <inner_voice> 标签检测 (PRE→THINK→REPLY 状态机)
-    │     ├── inner_voice → 前端淡色思考气泡
-    │     └── public_reply → SentenceBuffer → TTS → 语音播放
-    ├── text delta → Console/WS
-    └── tool_calls → EXECUTING → 回注
-  → EmotionEngine(心情) → Consolidator(记忆沉淀) → IDLE
-```
+数据流：用户输入 → EventBus → FSM(THINKING) → CognitiveLoop(inner_voice/TTS/tool_calls) → IDLE（详见 [docs/architecture.md](docs/architecture.md) 完整管线）。
+
+## 文档导航
+
+### 用户文档
+| 文档 | 内容 |
+|------|------|
+| [快速开始](#快速开始) | 安装、启动、配置、故障排查 |
+| [docs/testing.md](docs/testing.md) | 测试命令速查 + 分层体系 |
+| [docs/companion-roadmap.md](docs/companion-roadmap.md) | 伴侣化改造路线 |
+| [docs/companion-prompt-guide.md](docs/companion-prompt-guide.md) | Prompt 编写指南 |
+
+### Module 层
+| 模块 | README | 说明 |
+|------|--------|------|
+| LLM | [Module/llm/README.md](Module/llm/README.md) | 大模型调用（DeepSeek/OpenAI/Ollama） |
+| STT | [Module/stt/README.md](Module/stt/README.md) | 语音识别（SenseVoice） |
+| TTS | [Module/tts/README.md](Module/tts/README.md) | 语音合成（GPT-SoVits/MiniMax） |
+| Embedding | [Module/embedding/README.md](Module/embedding/README.md) | 文本向量化（HuggingFace/OpenAI） |
+| Output | [Module/output/README.md](Module/output/README.md) | 多通道输出（Console + WebSocket） |
+| Config | [Module/config/README.md](Module/config/README.md) | 配置基础设施（YAML + env + 校验） |
+| Logger | [Module/logger/README.md](Module/logger/README.md) | 日志工厂（plain + JSON） |
+| System Prompt | [Module/system_prompt/README.md](Module/system_prompt/README.md) | System Prompt 引擎 + Section Provider |
+| Tool | [Module/tool/README.md](Module/tool/README.md) | 工具执行框架（Plugin + SafetyPipeline） |
+| Database | [Module/database/README.md](Module/database/README.md) | 数据库总览（Milvus + MongoDB） |
+| VectorDB | [Module/database/vectordb/README.md](Module/database/vectordb/README.md) | 向量数据库（Milvus） |
+| DocumentDB | [Module/database/documentdb/README.md](Module/database/documentdb/README.md) | 文档数据库（MongoDB） |
+| Input | [Module/input/README.md](Module/input/README.md) | AudioBuffer + WebSocket 服务器 |
+| Bench | [Module/bench/README.md](Module/bench/README.md) | 延迟基准测试 |
+| Module 总览 | [Module/README.md](Module/README.md) | 架构模式 + 各模块 API 速览 |
+
+### Core 层
+| 模块 | README | 说明 |
+|------|--------|------|
+| PersonalityEngine | [core/personality/README.md](core/personality/README.md) | 四层性格模型（Core→Self→State→Mood） |
+| 工具: filesystem | [core/tools/filesystem/README.md](core/tools/filesystem/README.md) | read_file / list_directory / write_file |
+| 工具: memory | [core/tools/memory/README.md](core/tools/memory/README.md) | search_memory / save_memory |
+| 工具: reminder | [core/tools/reminder/README.md](core/tools/reminder/README.md) | set_reminder |
+| 工具: runtime_config | [core/tools/runtime_config/README.md](core/tools/runtime_config/README.md) | get_runtime_config |
+| 工具: self_state | [core/tools/self_state/README.md](core/tools/self_state/README.md) | get_self_state |
+| 工具: time | [core/tools/time/README.md](core/tools/time/README.md) | get_time |
+| 工具: vision | [core/tools/vision/README.md](core/tools/vision/README.md) | describe_image（多模态视觉） |
+| 工具: web | [core/tools/web/README.md](core/tools/web/README.md) | web_search / web_fetch |
+
+### 其他文档
+| 文档 | 内容 |
+|------|------|
+| [docs/architecture.md](docs/architecture.md) | 完整架构详解（1000+ 行） |
+| [docs/frontend-api.md](docs/frontend-api.md) | 前端 API 文档 |
+| [CLAUDE.md](CLAUDE.md) | AI 助手指令 + 项目地图 |
+| [character/README.md](character/README.md) | 角色配置说明 |
+| [prompt/README.md](prompt/README.md) | Prompt 模板说明 |
+| [docs/database-storage.md](docs/database-storage.md) | 数据库存储设计 |
+| [docs/sync-lessons.md](docs/sync-lessons.md) | 同步经验笔记 |
+| [docs/experience.md](docs/experience.md) | 开发经验记录 |
+
+---
 
 ## 伴侣化改造
 
@@ -228,7 +276,7 @@ Agent/
 │   ├── output/             # Console + WebSocket 多通道
 │   ├── config/             # YAML + env 配置 + providers.yaml + preflight
 │   ├── logger/             # 日志工厂
-│   ├── prompt/             # Brain Prompt 引擎 — SystemPromptManager + 11 PromptSections
+│   ├── system_prompt/      # Brain Prompt 引擎 — SystemPromptManager + 11 PromptSections
 │   ├── schema/             # 共享数据模型
 │   ├── tool/               # 工具框架 (172 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB
