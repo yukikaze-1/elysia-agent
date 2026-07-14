@@ -495,7 +495,26 @@ proactive.enabled: false → 整个机制关闭
 
 ---
 
-## 5. L2 记忆与工具层
+### 4.10 PersonalityEngine — 角色性格引擎
+
+四层性格模型，让角色从对话经历中演化性格：
+
+```
+L1 Core（核心底色）    文件加载，启动后不变                  → C1 模板锚点
+L2 Self（长期自我）    从 L3 压缩沉淀，月级演化              → C1 主体——"我是谁"
+L3 State（短期状态）   CharacterReflector + 事件触发，数十轮  → C9 条件素材——"我最近怎么了"
+L4 Mood（当前情绪）    EmotionEngine 每轮更新                → C3 内容
+```
+
+**CharacterReflector**：缓冲 50 对 user/assistant 消息 → LLM 反思 → 提交事件到 `PersonalityEngine.consume_trigger("reflector", ...)`，更新 L3 State。
+
+**AwarenessTrigger**（C9 激活判定）：L3 非空 + 距上次触发超过 1h → C9 渲染。冷却时间戳持久化到 session，重启不丢失。
+
+**阻尼机制**：L3 偏移 L1 特质时，L1 决定"怎么说"（表达方式），L3 影响"说什么"（内容倾向）。Phase 2 引入 L4→L3、L3→L2 向上回流压缩。
+
+完整四层模型、模板渲染、数据流、调试入口 → [core/personality/README.md](core/personality/README.md)
+
+---
 
 ### 5.1 记忆三层模型
 
