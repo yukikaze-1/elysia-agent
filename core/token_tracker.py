@@ -42,7 +42,13 @@ class TokenTracker:
     - MongoDB 持久化（不可用时降级到本地 JSONL 文件）
     """
 
+    COLLECTION = "token_usage"
     _pending_file = os.path.join("data", "token_usage_pending.jsonl")
+
+    @staticmethod
+    async def clear_all(db) -> int:
+        """清空所有 token_usage 记录。返回删除数量。"""
+        return await db.delete_many(TokenTracker.COLLECTION, {})
 
     def __init__(
         self,
@@ -107,7 +113,7 @@ class TokenTracker:
         if self._db is not None:
             try:
                 docs = await self._db.find(
-                    "token_usage",
+                    TokenTracker.COLLECTION,
                     {"session_id": self.session_id},
                     limit=10000,
                 )
@@ -153,7 +159,7 @@ class TokenTracker:
             with open(self._pending_file) as f:
                 records = [json.loads(line) for line in f if line.strip()]
             if records:
-                await self._db.insert_many("token_usage", records)
+                await self._db.insert_many(TokenTracker.COLLECTION, records)
                 logger.info("pending 文件导入完成: %d 条 token 记录已写入 MongoDB", len(records))
             os.remove(self._pending_file)
         except Exception:
@@ -164,7 +170,7 @@ class TokenTracker:
         doc = {**asdict(usage), "session_id": self.session_id}
         if self._db is not None:
             try:
-                await self._db.insert_one("token_usage", doc)
+                await self._db.insert_one(TokenTracker.COLLECTION, doc)
                 return
             except Exception:
                 logger.debug("MongoDB 不可用，token 记录写入 %s", self._pending_file)

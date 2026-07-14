@@ -349,3 +349,17 @@ class TestTokenTracker:
             assert stats["by_model"]["a"] == 120
         finally:
             os.unlink(tracker._pending_file)
+
+
+@pytest.mark.unit
+class TestTokenTrackerClearAll:
+    @pytest.mark.asyncio
+    async def test_clear_all_calls_delete_many_with_collection(self):
+        db = AsyncMock()
+        db.delete_many = AsyncMock(return_value=42)
+        deleted = await TokenTracker.clear_all(db)
+        assert deleted == 42
+        db.delete_many.assert_called_once_with("token_usage", {})
+
+    def test_collection_constant(self):
+        assert TokenTracker.COLLECTION == "token_usage"
