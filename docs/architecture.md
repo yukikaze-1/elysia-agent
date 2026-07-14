@@ -870,44 +870,9 @@ Child loggers (core.cognitive_loop 等)
 
 ## 11. 测试架构
 
-```
-~1,325 tests total (305 TaskSystem unit + 36 TaskSystem integration + ~320 core + ~580 Module + ~84 tools)
+~1,558 个测试按 4 层 markers 组织（unit / service / integration / slow）。
 
-core/tests/
-├── test_phase1.py             # L1 认知核心 (32 tests)
-├── test_phase2.py             # L2 记忆持久化 (72 tests)
-├── test_phase3.py             # 集成 + 组件测试 (114 tests)
-├── test_sentence_buffer.py    # SentenceBuffer 专项 (65 tests)
-└── fake_llm.py                # 测试用 LLM backend
-
-Module/task_system/tests/
-├── unit/                       # 单元测试 (305 tests, ~37s)
-└── integration/                # 集成测试 (36 tests, 含 7 e2e)
-
-Module/
-├── llm/test_llm.py
-├── stt/test_stt.py
-├── tts/test_tts.py
-├── embedding/test_embedding.py
-├── output/test_output.py
-├── config/test_config.py
-├── logger/test_logger.py
-├── prompt/test_prompt.py
-├── tool/test_framework.py      # ToolManager + ToolPlugin + SafetyPipeline (96 tests)
-├── tool/test_tool_safety.py    # 路径验证 + URL检查 + 参数校验 (33 tests)
-├── _common/tests/              # 共享工具函数单元测试
-├── database/vectordb/
-├── database/documentdb/
-├── input/test_audio_buffer.py
-└── input/test_server.py
-```
-
-运行：
-```bash
-python -m pytest core/tests/ Module/ -q --asyncio-mode=auto
-```
-
----
+完整分层体系、测试文件索引、按模块运行命令 → [docs/testing.md](testing.md)
 
 ## 12. 文件结构
 
