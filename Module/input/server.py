@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 
 from aiohttp import web, WSMsgType
+from pydantic import ValidationError
 
 from core.agent import RunState
 from Module.output import WebSocketChannel
@@ -952,6 +953,10 @@ async def _handle_ws(
                     await _handle_json(data, agent, audio_buf, ws)
                 except json.JSONDecodeError:
                     await ws.send_json({"type": "error", "message": "Invalid JSON"})
+                except ValidationError as e:
+                    # 畸形多模态 content（如未知 part 类型）：回错误帧，不断开连接
+                    logger.warning("WS 消息内容校验失败: %s", e)
+                    await ws.send_json({"type": "error", "message": f"Invalid message content: {e}"})
 
             elif msg.type == WSMsgType.BINARY:
                 if audio_buf:
