@@ -339,11 +339,11 @@ function spToggle(bodyId, toggleId) {
 
 function renderImages(content) {
   if (!content || !Array.isArray(content)) return '';
-  const images = content.filter(p => p && p.type === 'image' && p.source);
+  const images = content.filter(p => p && p.type === 'image' && p.src);
   if (!images.length) return '';
   return '<div class="msg-images">' + images.map(img =>
-    `<img class="msg-image" src="${esc(img.source)}" loading="lazy"
-          onclick="event.stopPropagation(); openDebugLightbox('${esc(img.source)}')"
+    `<img class="msg-image" src="${esc(img.src)}" loading="lazy"
+          onclick="event.stopPropagation(); openDebugLightbox('${esc(img.src)}')"
           title="点击放大">`
   ).join('') + '</div>';
 }
