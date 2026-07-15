@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 from core.schema.message import MessageRole, UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.part import TextPart
-from core.schema.types import MessageId, SessionId
+from core.schema.types import MessageId
 from Module.tool.protocol import ErrorType
 
 
@@ -52,6 +52,27 @@ class TestUserMessage:
         assert msg.content[0].content == "hello world"
         assert isinstance(msg.message_id, str)
         assert msg.message_id == "msg-003"
+
+    def test_content_part_union_dispatch(self):
+        """content 中混合 Part dict 按 type 正确分发 + 未知 type 拒绝。"""
+        from core.schema.part import ImagePart
+        from pydantic import ValidationError
+
+        msg = UserMessage.model_validate({
+            "content": [
+                {"type": "text", "content": "看这张图"},
+                {"type": "image", "src": "https://example.com/i.png"},
+            ],
+            "message_id": "msg-007",
+        })
+        assert isinstance(msg.content[0], TextPart)
+        assert isinstance(msg.content[1], ImagePart)
+
+        with pytest.raises(ValidationError):
+            UserMessage.model_validate({
+                "content": [{"type": "hologram"}],
+                "message_id": "msg-008",
+            })
 
 
 @pytest.mark.unit
