@@ -23,6 +23,7 @@ core/schema/                          ← 新建目录包
 同时：
 - 删除 `core/schema.py`（内容已移入 `core/schema/agent.py`）
 - `Module/schema/message_format.py` 保留为兼容性 re-export（从新位置导入再导出），后续逐步迁移调用方后删除
+- 创建 `core/schema/README.md`（遵循 [readme-conventions.md](../../docs/readme-conventions.md)）
 
 ## 基础类型 — `core/schema/types.py`
 
@@ -44,6 +45,14 @@ def now_iso() -> str:
 IsoTimestamp = Annotated[str, BeforeValidator(_normalize_iso_ts)]
 
 SessionId = NewType("SessionId", str)
+"""会话唯一标识符。
+
+注意：`Module/task_system/schema/types.py:87` 已存在同名的 `SessionId = NewType("SessionId", str)`。
+Phase 1 保留两份定义——两者是相同的 NewType，运行时完全兼容（都是 str），
+类型检查器识别为同一类型。Phase 2：将 TaskSystem 的 SessionId、
+IsoTimestamp 等共享基础类型统一迁移到 core/schema/types.py，全项目从此处导入。
+"""
+
 MessageId = NewType("MessageId", str)
 ToolCallId = NewType("ToolCallId", str)
 ```
@@ -196,9 +205,20 @@ Message = Union[UserMessage, AssistantMessage, ToolResultMessage]
 - Message: 验证 role frozen、timestamp 校验、Union 反序列化
 - Adapter: 验证 content_to_openai 纯文本/多模态两种路径
 
+## README
+
+创建 `core/schema/README.md`，遵循 [readme-conventions.md](../../docs/readme-conventions.md)：
+
+- 面包屑导航
+- 说明 `core/schema/` 是系统基础类型定义层，当前包含消息/Part/工具调用类型
+- 各子模块用途速查表
+- 相关文档节（链接到 data-structure-survey、架构文档、项目 README）
+- 在根 README 文档导航中注册
+
 ## 不在首期范围内的
 
 - `core/schema.py` 内容暂不改动（枚举 + Event），仅移动位置
 - Session params 的 dataclass 化 — 后续
 - `CoreEvent` 和 `Module/schema/event.py` 合并 — 后续
 - WS 消息格式、MongoDB 文档 schema — 后续
+- `Module/task_system/schema/types.py` 的 `SessionId`/`IsoTimestamp` 等共享基础类型统一迁移到 `core/schema/types.py` — 后续
