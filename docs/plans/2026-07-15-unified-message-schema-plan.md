@@ -1032,7 +1032,7 @@ cp core/schema.py core/schema/agent.py
 # core/schema/ — 系统基础类型定义层
 #
 # 子模块:
-#   agent    — AgentState, EventType, EventPriority, Event, VALID_TRANSITIONS
+#   agent    — AgentState, EventType, EventPriority, VALID_TRANSITIONS
 #   types    — IsoTimestamp, SessionId, MessageId, ToolCallId
 #   part     — TextPart, ImagePart, ..., Part
 #   tool     — ToolCall, ToolCallFunction
@@ -1073,26 +1073,12 @@ from core.schema.message import (  # noqa: F401
 )
 ```
 
-- [ ] **Step 3: 替换 core/schema.py 为兼容 re-export**
+- [ ] **Step 3: 删除 core/schema.py**
 
-```python
-"""
-DEPRECATED: 本模块已迁移至 core/schema/ 目录包。
+`core/schema/__init__.py` 已从 `core/schema/agent.py` re-export 所有类型。Python 包会 shadow 同名模块文件——`core/schema.py` 与 `core/schema/` 目录包共存时，`import core.schema` 永远加载包 `__init__.py`，模块文件成为死代码。直接删除。
 
-新代码请从 core/schema 导入:
-  from core.schema import AgentState, EventType, ...
-
-本文件保留为兼容性 re-export。
-"""
-import warnings
-
-warnings.warn(
-    "core.schema (module) is deprecated. Use core.schema (package) instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
-from core.schema.agent import *  # noqa: F401, E402
+```bash
+rm core/schema.py
 ```
 
 - [ ] **Step 4: 验证兼容性**
@@ -1114,8 +1100,8 @@ grep -rn "from core.schema import\|from core import schema\|import core.schema" 
 - [ ] **Step 6: 提交**
 
 ```bash
-git add core/schema/agent.py core/schema/__init__.py core/schema.py
-git commit -m "refactor: core/schema.py → core/schema/agent.py + 兼容 re-export"
+git add core/schema/agent.py core/schema/__init__.py
+git commit -m "refactor: core/schema.py → core/schema/agent.py，删除原文件"
 ```
 
 ---
