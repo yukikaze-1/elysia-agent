@@ -1087,7 +1087,7 @@ rm core/schema.py
 python -c "from core.schema import AgentState, EventPriority, EventType, VALID_TRANSITIONS; print('OK')"
 ```
 
-Expected: `OK`（可能附带 DeprecationWarning）
+Expected: `OK`
 
 - [ ] **Step 5: 更新所有对旧 `core.schema` 的 import**
 
@@ -1125,7 +1125,7 @@ git commit -m "refactor: core/schema.py → core/schema/agent.py，删除原文�
 
 | 文件 | 内容 |
 |------|------|
-| `agent.py` | AgentState / EventType / EventPriority / Event / VALID_TRANSITIONS |
+| `agent.py` | AgentState / EventType / EventPriority / VALID_TRANSITIONS |
 | `types.py` | IsoTimestamp / SessionId / MessageId / ToolCallId |
 | `part.py` | TextPart / ImagePart / FilePart / AudioPart / VideoPart + Part discriminated union |
 | `tool.py` | ToolCall / ToolCallFunction（OpenAI 兼容格式） |
@@ -1137,7 +1137,7 @@ git commit -m "refactor: core/schema.py → core/schema/agent.py，删除原文�
 - **Pydantic BaseModel**：所有类型使用 Pydantic，提供内置校验和序列化
 - **按 role 拆分消息**：替代旧 ChatMessageV2 单类模式
 - **Discriminated union**：Part 类型根据 `type` 字段自动区分
-- **兼容迁移**：旧 `core/schema.py` 和 `Module/schema/message_format.py` 保留为兼容 re-export
+- **兼容迁移**：`core/schema.py` 已删除（内容移入 `agent.py`），`Module/schema/message_format.py` 保留为兼容 re-export
 
 ---
 
