@@ -3,7 +3,7 @@ DEPRECATED: 本模块为旧版预留架构，当前未被 core/ 使用。
 保留本模块仅作为未来架构演进参考。
 
 core/ 中的等价或替代:
-- core/schema.py          — AgentState, EventType 等枚举
+- core/schema/agent.py    — AgentState, EventType 等枚举
 - core/memory/session.py   — SessionMemory
 - core/memory/long_term.py — MemoryEntry
 - Module/schema/message_format.py — TextPart, ImagePart, ChatMessageV2 等（当前主力）
