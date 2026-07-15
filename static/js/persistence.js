@@ -96,14 +96,14 @@ function buildUserBubble(content) {
   bubble.className = 'msg-bubble';
   if (Array.isArray(content)) {
     for (const part of content) {
-      if (part.type === 'image' && part.source) {
+      if (part.type === 'image' && part.src) {
         const img = document.createElement('img');
         img.className = 'msg-image';
-        img.src = part.source;
+        img.src = part.src;
         img.loading = 'lazy';
         img.onclick = () => {
           // 动态导入 lightbox（避免循环依赖）
-          import('./chat.js').then(m => m.openLightbox(part.source));
+          import('./chat.js').then(m => m.openLightbox(part.src));
         };
         bubble.appendChild(img);
       }

@@ -192,8 +192,8 @@ export function renderUserMsg(content) {
 
   if (Array.isArray(content)) {
     for (const part of content) {
-      if (part.type === 'image' && part.source) {
-        bubble.appendChild(createImageBubble(part.source));
+      if (part.type === 'image' && part.src) {
+        bubble.appendChild(createImageBubble(part.src));
       }
     }
     // 文本部分

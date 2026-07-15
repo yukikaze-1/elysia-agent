@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 from Module.tool.protocol import ToolPlugin, ToolResult
 from Module.tool.safety import SafetyProfile
 from Module.llm.registry import LLMFactory
-from Module.schema.message_format import _resolve_image_source
+from core.schema.adapters.message_adapter import _resolve_image_source
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ class DescribeImagePlugin(ToolPlugin):
                 error=f"图片序号 {params.image_index} 超出范围 (共 {len(images)} 张)",
             )
         image = images[params.image_index]
-        source = image.get("source", "")
+        source = image.get("src", "")
 
         data_uri = _resolve_image_source(source)
 
@@ -166,7 +166,7 @@ class DescribeImagePlugin(ToolPlugin):
         resolved: list[tuple[int, str]] = []
         for idx in indices:
             image = images[idx]
-            source = image.get("source", "")
+            source = image.get("src", "")
             data_uri = _resolve_image_source(source)
             resolved.append((idx, data_uri))
 

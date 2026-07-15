@@ -630,7 +630,7 @@ def create_app(
     async def chat_api_handler(request: web.Request) -> web.Response:
         """接收 JSON 消息并触发 agent 处理，返回 assistant 回复。
 
-        请求: {"content": [{"type": "text", "content": "..."}, {"type": "image", "source": "...", "mime": "..."}], "user_name": "妖梦"}
+        请求: {"content": [{"type": "text", "content": "..."}, {"type": "image", "src": "...", "mime": "..."}], "user_name": "妖梦"}
         响应: {"ok": true, "reply": "..."}  — 注：当前为异步处理，不等待回复
         """
         agent = request.app["agent"]
@@ -984,8 +984,8 @@ async def _handle_json(data: dict, agent, audio_buf=None, ws=None) -> None:
         text_content = data.get("content", "")
         if isinstance(text_content, list):
             # 多模态 content 数组
-            from Module.schema.message_format import content_text
-            await agent.process_message(text=content_text(text_content), user_name=agent._user_name, content=text_content)
+            from core.schema.adapters.message_adapter import content_text, parts_from_dicts
+            await agent.process_message(text=content_text(parts_from_dicts(text_content)), user_name=agent._user_name, content=text_content)
             logger.info("WS 收到多模态消息")
         elif isinstance(text_content, str) and text_content.strip():
             await agent.process_message(text=text_content.strip())

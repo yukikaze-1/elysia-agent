@@ -38,8 +38,8 @@ class TestBuildMessages:
         """content 为 list（image 类型）且 supports_multimodal=True 时正常传递。"""
         builder = MessageBuilder()
         content = [
-            {"type": "text", "text": "look at this"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,xxx"}},
+            {"type": "text", "content": "look at this"},
+            {"type": "image", "src": "data:image/png;base64,xxx"},
         ]
         messages = builder.build_messages("system", [], content, supports_multimodal=True)
         user_msg = [m for m in messages if m["role"] == "user"][0]
@@ -49,8 +49,8 @@ class TestBuildMessages:
         """content 为 list + 有 image 类型 + supports_multimodal=False → describe_image 提示。"""
         builder = MessageBuilder()
         content = [
-            {"type": "text", "text": "check this"},
-            {"type": "image", "image_url": {"url": "http://a.com/1.png"}},
+            {"type": "text", "content": "check this"},
+            {"type": "image", "src": "http://a.com/1.png"},
         ]
         messages = builder.build_messages("system", [], content, supports_multimodal=False)
         user_content = messages[-1]["content"]

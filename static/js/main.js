@@ -161,7 +161,7 @@ function sendText() {
   if (hasImages) {
     const content = [];
     for (const img of state.previewImages) {
-      content.push({ type: 'image', source: img.url, mime: img.mime });
+      content.push({ type: 'image', src: img.url, mime: img.mime });
     }
     if (text) content.push({ type: 'text', content: text });
     send({ type: 'text', content });
