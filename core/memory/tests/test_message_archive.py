@@ -1,4 +1,4 @@
-"""MessageArchive 单元测试 — mock MongoDB backend。"""
+"""MessageArchive 单元测试 — mock MessageRepository。"""
 
 import pytest
 from unittest.mock import AsyncMock
@@ -7,29 +7,32 @@ from core.memory.message_archive import MessageArchive
 
 
 @pytest.mark.service
-class TestMessageArchiveConnect:
+class TestMessageArchiveInit:
     @pytest.mark.asyncio
-    async def test_connect_stores_db(self):
-        """connect 应保存 db 引用并返回 True。_id 字段使用 MongoDB 内置索引。"""
-        db = AsyncMock()
+    async def test_init_stores_repo(self):
+        """__init__ 应保存 repo 引用。"""
+        repo = AsyncMock()
+        archive = MessageArchive(repo=repo)
+        assert archive._repo is repo
+
+    @pytest.mark.asyncio
+    async def test_init_defaults_repo_none(self):
+        """不带参数构造时 _repo 为 None。"""
         archive = MessageArchive()
-        result = await archive.connect(db)
-        assert result is True
-        assert archive._db is db
+        assert archive._repo is None
 
 
 @pytest.mark.service
 class TestMessageArchiveAppend:
     @pytest.mark.asyncio
-    async def test_append_inserts_and_returns_id(self):
-        db = AsyncMock()
-        db.insert_one = AsyncMock(return_value="abc123")
-        archive = MessageArchive()
-        await archive.connect(db)
-        msg = {"role": "user", "content": [{"type": "text", "content": "hello"}]}
-        _id = await archive.append(msg)
-        assert _id == "abc123"
-        db.insert_one.assert_called_once()
+    async def test_append_calls_repo(self):
+        repo = AsyncMock()
+        repo.append = AsyncMock()
+        archive = MessageArchive(repo=repo)
+        msg = {"role": "user", "content": [{"type": "text", "content": "hello"}], "session_id": "sid"}
+        result = await archive.append(msg)
+        repo.append.assert_called_once_with("sid", msg)
+        assert result == ""  # msg 没有 _id
 
     @pytest.mark.asyncio
     async def test_append_raises_when_not_connected(self):
@@ -42,37 +45,29 @@ class TestMessageArchiveAppend:
 class TestMessageArchiveQuery:
     @pytest.mark.asyncio
     async def test_query_returns_messages_and_has_more(self):
-        db = AsyncMock()
+        repo = AsyncMock()
         msgs = [{"_id": str(i), "role": "user", "text": f"msg{i}"} for i in range(51)]
-        db.find = AsyncMock(return_value=msgs[:51])  # limit + 1 → 51
-        archive = MessageArchive()
-        await archive.connect(db)
+        repo.query_offset = AsyncMock(return_value=(msgs, 100))
+        archive = MessageArchive(repo=repo)
         messages, has_more = await archive.query(limit=50)
         assert len(messages) == 50
         assert has_more is True
 
     @pytest.mark.asyncio
     async def test_query_no_more_pages(self):
-        db = AsyncMock()
-        db.find = AsyncMock(return_value=[{"_id": "1", "role": "user"}])
-        archive = MessageArchive()
-        await archive.connect(db)
+        repo = AsyncMock()
+        repo.query_offset = AsyncMock(return_value=([{"_id": "1", "role": "user"}], 1))
+        archive = MessageArchive(repo=repo)
         messages, has_more = await archive.query(limit=50)
         assert has_more is False
 
     @pytest.mark.asyncio
-    async def test_query_with_before_cursor(self):
-        db = AsyncMock()
-        db.find = AsyncMock(return_value=[])
-        archive = MessageArchive()
-        await archive.connect(db)
-        from bson import ObjectId
-        valid_oid = str(ObjectId())
-        await archive.query(before=valid_oid, limit=30)
-        # 验证 filter 包含 _id < valid_oid
-        call_args = db.find.call_args
-        assert "_id" in call_args[0][1]
-        assert call_args[1]["limit"] == 31  # limit + 1 用于判断 has_more
+    async def test_query_pagination_limit_plus_one(self):
+        repo = AsyncMock()
+        repo.query_offset = AsyncMock(return_value=([], 0))
+        archive = MessageArchive(repo=repo)
+        await archive.query(limit=30)
+        repo.query_offset.assert_called_once_with(skip=0, limit=31)
 
     @pytest.mark.asyncio
     async def test_query_returns_empty_when_not_connected(self):
@@ -86,19 +81,17 @@ class TestMessageArchiveQuery:
 class TestMessageArchiveCount:
     @pytest.mark.asyncio
     async def test_count_returns_zero_when_empty(self):
-        db = AsyncMock()
-        db.count = AsyncMock(return_value=0)
-        archive = MessageArchive()
-        await archive.connect(db)
+        repo = AsyncMock()
+        repo.count = AsyncMock(return_value=0)
+        archive = MessageArchive(repo=repo)
         c = await archive.count()
         assert c == 0
 
     @pytest.mark.asyncio
     async def test_count_returns_total(self):
-        db = AsyncMock()
-        db.count = AsyncMock(return_value=42)
-        archive = MessageArchive()
-        await archive.connect(db)
+        repo = AsyncMock()
+        repo.count = AsyncMock(return_value=42)
+        archive = MessageArchive(repo=repo)
         c = await archive.count()
         assert c == 42
 
@@ -113,13 +106,12 @@ class TestMessageArchiveCount:
 class TestMessageArchiveClearAll:
     @pytest.mark.asyncio
     async def test_clear_all_deletes_and_returns_count(self):
-        db = AsyncMock()
-        db.delete_many = AsyncMock(return_value=10)
-        archive = MessageArchive()
-        await archive.connect(db)
+        repo = AsyncMock()
+        repo.clear_all = AsyncMock(return_value=10)
+        archive = MessageArchive(repo=repo)
         deleted = await archive.clear_all()
         assert deleted == 10
-        db.delete_many.assert_called_once_with("message_archive", {})
+        repo.clear_all.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_clear_all_returns_zero_when_not_connected(self):

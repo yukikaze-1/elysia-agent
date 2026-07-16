@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from Module.database.documentdb.protocol import DocumentDBBackend
+    from core.storage.message_repo import MessageRepository
 
 logger = logging.getLogger(__name__)
 
@@ -17,43 +17,25 @@ class MessageArchive:
     - MessageArchive: 永久归档，只增不删，分页查询
 
     使用方式:
-        archive = MessageArchive()
-        await archive.connect(db_backend)       # 复用 session 的 MongoDB 连接
+        repo = MessageRepository()
+        await repo.connect()
+        archive = MessageArchive(repo=repo)
         await archive.append(msg)                # 每条消息 fire-and-forget
         messages, has_more = await archive.query(limit=50)  # 分页查询
     """
 
-    COLLECTION = "message_archive"
-
-    def __init__(self):
-        self._db: "DocumentDBBackend | None" = None
-
-    # ---- 连接 ----
-
-    async def connect(self, db: "DocumentDBBackend") -> bool:
-        """接入已有的 MongoDB backend。创建索引。返回是否成功。"""
-        self._db = db
-        # _id 字段 MongoDB 默认已有升序索引，倒序查询直接反向扫描，无需额外建索引
-        # session_id 复合索引 — 用于按 session 查询消息
-        try:
-            await self._db.ensure_index(
-                self.COLLECTION, [("session_id", 1), ("_id", -1)]
-            )
-        except Exception:
-            logger.warning(
-                "MessageArchive: session_id index creation failed, continuing"
-            )
-        logger.info("MessageArchive: connected, collection='%s'", self.COLLECTION)
-        return True
+    def __init__(self, repo: "MessageRepository | None" = None):
+        self._repo: "MessageRepository | None" = repo
 
     # ---- 写入 ----
 
     async def append(self, msg: dict) -> str:
         """追加一条消息。fire-and-forget — 调用方用 create_task 包装。返回 _id。"""
-        if self._db is None:
+        if self._repo is None:
             raise RuntimeError("MessageArchive not connected")
-        _id = await self._db.insert_one(self.COLLECTION, msg)
-        return _id
+        session_id = msg.get("session_id", "")
+        await self._repo.append(session_id, msg)
+        return msg.get("_id", "")
 
     # ---- 查询 ----
 
@@ -69,26 +51,16 @@ class MessageArchive:
         limit: 每页数量
         返回: (messages, has_more)
         """
-        if self._db is None:
+        if self._repo is None:
             return [], False
 
-        filter_expr: dict = {}
-        if before:
-            from bson import ObjectId
-            filter_expr["_id"] = {"$lt": ObjectId(before)}
+        messages, _ = await self._repo.query_offset(skip=0, limit=limit + 1)
 
-        docs = await self._db.find(
-            self.COLLECTION,
-            filter_expr,
-            sort=[("_id", -1)],
-            limit=limit + 1,  # 多取一条判断 has_more
-        )
-
-        has_more = len(docs) > limit
+        has_more = len(messages) > limit
         if has_more:
-            docs = docs[:limit]
+            messages = messages[:limit]
 
-        return docs, has_more
+        return messages, has_more
 
     # ---- Offset 分页（支持跳页）----
 
@@ -101,32 +73,18 @@ class MessageArchive:
         role: str = "",
     ) -> tuple[list[dict], int]:
         """Offset 分页查询，按 _id 降序。支持搜索过滤。返回 (messages, total)。"""
-        if self._db is None:
+        if self._repo is None:
             return [], 0
-        filter_expr: dict = {}
-        if role:
-            filter_expr["role"] = role
-        # 搜索：使用 MongoDB $regex（不区分大小写）
-        if search:
-            filter_expr["content"] = {"$elemMatch": {"content": {"$regex": search, "$options": "i"}}}
-        total = await self._db.count(self.COLLECTION, filter_expr)
-        docs = await self._db.find(
-            self.COLLECTION, filter_expr,
-            sort=[("_id", -1)],
-            skip=skip,
-            limit=limit,
-        )
-        return docs, total
+        return await self._repo.query_offset(skip=skip, limit=limit, search=search, role=role)
 
     # ---- 管理 ----
 
     async def delete_one(self, msg_id: str) -> bool:
         """删除单条消息。返回 True 表示成功。"""
-        if self._db is None:
+        if self._repo is None:
             return False
-        from bson import ObjectId
         try:
-            deleted = await self._db.delete_many(self.COLLECTION, {"_id": ObjectId(msg_id)})
+            deleted = await self._repo.delete_one(msg_id)
             return deleted > 0
         except Exception:
             logger.debug("archive delete_one failed", exc_info=True)
@@ -134,15 +92,10 @@ class MessageArchive:
 
     async def update_text(self, msg_id: str, new_text: str) -> bool:
         """更新消息文本（保持其他字段不变）。返回 True 表示成功。"""
-        if self._db is None:
+        if self._repo is None:
             return False
-        from bson import ObjectId
         try:
-            modified = await self._db.update_one(
-                self.COLLECTION,
-                {"_id": ObjectId(msg_id)},
-                {"$set": {"content": [{"type": "text", "content": new_text}]}},
-            )
+            modified = await self._repo.update_text(msg_id, new_text)
             return modified > 0
         except Exception:
             logger.debug("archive update_text failed", exc_info=True)
@@ -150,15 +103,15 @@ class MessageArchive:
 
     async def count(self) -> int:
         """返回归档消息总数。"""
-        if self._db is None:
+        if self._repo is None:
             return 0
-        return await self._db.count(self.COLLECTION, {})
+        return await self._repo.count()
 
     async def clear_all(self) -> int:
         """清空全部归档。返回删除数量。"""
-        if self._db is None:
+        if self._repo is None:
             return 0
-        deleted = await self._db.delete_many(self.COLLECTION, {})
+        deleted = await self._repo.clear_all()
         logger.info("MessageArchive: 清空 %d 条消息", deleted)
         return deleted
 
@@ -169,20 +122,12 @@ class MessageArchive:
     ) -> tuple[list[dict], int]:
         """按 session_id 查询消息，_id 降序（最新在前）。
         返回 (messages, total)。"""
-        if self._db is None:
+        if self._repo is None:
             return [], 0
-        filter_expr = {"session_id": session_id}
-        total = await self._db.count(self.COLLECTION, filter_expr)
-        docs = await self._db.find(
-            self.COLLECTION, filter_expr,
-            sort=[("_id", -1)],
-            skip=skip,
-            limit=limit,
-        )
-        return docs, total
+        return await self._repo.query_by_session(session_id, limit=limit)
 
     async def count_by_session(self, session_id: str) -> int:
         """按 session_id 统计消息数。"""
-        if self._db is None:
+        if self._repo is None:
             return 0
-        return await self._db.count(self.COLLECTION, {"session_id": session_id})
+        return await self._repo.count_by_session(session_id)

@@ -23,6 +23,7 @@ load_dotenv(_SCRIPT_DIR / ".env")
 from core.memory.session import SessionMemory
 from core.memory.message_archive import MessageArchive
 from core.memory.long_term import LongTermMemory
+from core.storage.message_repo import MessageRepository, COLLECTION as MSG_ARCHIVE_COLLECTION
 from core.token_tracker import TokenTracker
 from Module.database.documentdb import DocumentDBFactory
 from Module.database.vectordb import VectorDBFactory
@@ -109,12 +110,11 @@ class MongoCleaner:
 
         # message_archive — 使用 MessageArchive.clear_all()
         try:
-            archive = MessageArchive()
-            await archive.connect(db)
+            archive = MessageArchive(repo=MessageRepository(db=db))
             deleted = await archive.clear_all()
-            results.append((MessageArchive.COLLECTION, True, deleted))
+            results.append((MSG_ARCHIVE_COLLECTION, True, deleted))
         except Exception as e:
-            results.append((MessageArchive.COLLECTION, False, str(e)))
+            results.append((MSG_ARCHIVE_COLLECTION, False, str(e)))
 
         # token_usage — 使用 TokenTracker.clear_all()
         try:
