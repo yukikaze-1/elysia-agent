@@ -167,22 +167,20 @@ def create_app(
     async def db_status_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
         ltm = agent._long_term
-        session = agent._session
-        archive = getattr(agent, "_archive", None)
         return web.json_response({
             "ltm": {
                 "count": ltm.count,
-                "milvus_ok": ltm._repo is not None and ltm._repo._db is not None,
+                "milvus_ok": await agent._memory_repo.health_check(),
                 "dirty_count": len(ltm._dirty_ids),
             },
             "session": {
                 "count": 1,  # 当前只有单个 session
-                "current_id": getattr(session, "_session_id", "default"),
-                "mongodb_ok": session._db is not None,
+                "current_id": str(agent._session.session_id),
+                "mongodb_ok": await agent._session_repo.health_check(),
             },
             "archive": {
-                "count": await archive.count() if archive else 0,
-                "mongodb_ok": archive is not None and archive._db is not None,
+                "count": await agent._archive.count() if agent._archive else 0,
+                "mongodb_ok": await agent._message_repo.health_check(),
             },
         })
     app.router.add_get("/debug/api/db-status", db_status_handler)
@@ -341,41 +339,38 @@ def create_app(
 
     async def sessions_list_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
-        session = agent._session
-        archive = getattr(agent, "_archive", None)
-        if session._db is None:
+        summaries = await agent._session_repo.list_all()
+        if not summaries:
             # MongoDB 不可用，返回内存中的当前 session
             return web.json_response({
                 "sessions": [{
-                    "session_id": session._session_id,
-                    "message_count": len(session._messages),
+                    "session_id": str(agent._session.session_id),
+                    "message_count": len(agent._session.messages),
                     "updated_at": "",
                     "token_total": 0,
                 }],
             })
         try:
-            docs = await session._db.find(
-                "sessions", {}, sort=[("updated_at", -1)], limit=500)
-            # 查询 token_usage 集合，按 session_id 聚合
+            # 聚合 token 用量（按 session_id）
             from collections import defaultdict
             token_totals: dict[str, int] = defaultdict(int)
-            try:
-                token_docs = await session._db.find(
-                    "token_usage", {}, limit=2000)
-                for td in token_docs:
-                    sid = td.get("session_id", "")
-                    token_totals[sid] += td.get("total_tokens", 0)
-            except Exception:
-                pass  # token_usage 集合可能不存在，静默降级
+            for s in summaries[:50]:  # 限制最多查询 50 条，避免过多 DB 往返
+                sid = str(s.session_id)
+                try:
+                    entries = await agent._token_repo.query_by_session(sid, limit=200)
+                    for entry in entries:
+                        token_totals[sid] += entry.total_tokens
+                except Exception:
+                    pass
             return web.json_response({
                 "sessions": [
                     {
-                        "session_id": d.get("session_id", "?"),
-                        "message_count": len(d.get("messages", [])),
-                        "updated_at": d.get("updated_at", ""),
-                        "token_total": token_totals.get(d.get("session_id", ""), 0),
+                        "session_id": str(s.session_id),
+                        "message_count": s.message_count,
+                        "updated_at": s.updated_at,
+                        "token_total": token_totals.get(str(s.session_id), 0),
                     }
-                    for d in docs
+                    for s in summaries
                 ],
             })
         except Exception as e:
@@ -388,61 +383,51 @@ def create_app(
         sid = request.match_info.get("session_id", "")
         if not sid:
             return web.json_response({"error": "缺少 session_id"}, status=400)
-        session = agent._session
-        archive = getattr(agent, "_archive", None)
 
-        # 辅助函数：从 sessions 集合取 params（目标 session，非当前 session）
+        # 辅助函数：从 session repo 取 params（目标 session，非当前 session）
         async def _get_params(sid: str) -> dict:
-            if session._db is not None:
-                try:
-                    docs = await session._db.find(
-                        "sessions", {"session_id": sid}, limit=1)
-                    if docs:
-                        return docs[0].get("params", {})
-                except Exception:
-                    pass
+            result = await agent._session_repo.load(sid)
+            if result is not None:
+                _, params = result
+                return params
             return {}
 
-        archive_db = getattr(archive, '_db', None) if archive else None
-        if archive_db is not None:
+        if await agent._message_repo.health_check():
             # 从 archive（权威源）读取消息
             try:
-                msgs, total = await archive.query_by_session(sid, limit=20)
-                formatted = _sessions_to_client(msgs)
-                params = await _get_params(sid)
-                return web.json_response({
-                    "session_id": sid,
-                    "messages": formatted,
-                    "params": params,
-                    "total": total,
-                })
+                archive = getattr(agent, "_archive", None)
+                if archive is not None:
+                    msgs, total = await archive.query_by_session(sid, limit=20)
+                    formatted = _sessions_to_client(msgs)
+                    params = await _get_params(sid)
+                    return web.json_response({
+                        "session_id": sid,
+                        "messages": formatted,
+                        "params": params,
+                        "total": total,
+                    })
             except Exception as e:
                 logger.warning("archive query_by_session failed: %s", e)
-                # archive 查询异常 → 显式降级到 sessions 快照（不依赖隐式 fallthrough）
+                # archive 查询异常 → 显式降级到 sessions 快照
 
         # Archive 不可用 — 降级读 sessions 快照（或内存）
-        if session._db is None:
-            return web.json_response({
-                "session_id": sid,
-                "messages": session.messages_for_client(),
-                "params": session._params,
-            })
-        try:
-            docs = await session._db.find(
-                "sessions", {"session_id": sid}, limit=1)
-            if not docs:
-                return web.json_response({"error": "会话不存在"}, status=404)
-            doc = docs[0]
-            raw_msgs = doc.get("messages", [])
-            formatted = _sessions_to_client(raw_msgs)
-            return web.json_response({
-                "session_id": doc.get("session_id", sid),
-                "messages": formatted,
-                "params": doc.get("params", {}),
-            })
-        except Exception as e:
-            return web.json_response(
-                {"error": f"查询失败: {e}"}, status=500)
+        result = await agent._session_repo.load(sid)
+        if result is None:
+            # MongoDB 不可用，返回当前内存 session（仅当 sid 匹配时）
+            if sid == str(agent._session.session_id):
+                return web.json_response({
+                    "session_id": sid,
+                    "messages": agent._session.messages_for_client(),
+                    "params": agent._session._params,
+                })
+            return web.json_response({"error": "会话不存在"}, status=404)
+        raw_msgs, params = result
+        formatted = _sessions_to_client(raw_msgs)
+        return web.json_response({
+            "session_id": sid,
+            "messages": formatted,
+            "params": params,
+        })
     app.router.add_get("/debug/api/sessions/{session_id}", session_detail_handler)
 
     async def session_delete_handler(request: web.Request) -> web.Response:
@@ -450,15 +435,13 @@ def create_app(
         sid = request.match_info.get("session_id", "")
         if not sid:
             return web.json_response({"error": "缺少 session_id"}, status=400)
-        session = agent._session
-        if session._db is None:
+        if not await agent._session_repo.health_check():
             return web.json_response(
                 {"error": "MongoDB 不可用"}, status=503)
         try:
-            deleted = await session._db.delete_many(
-                "sessions", {"session_id": sid})
-            if sid == session._session_id:
-                session._messages.clear()
+            deleted = await agent._session_repo.delete(sid)
+            if sid == str(agent._session.session_id):
+                agent._session.clear()
             return web.json_response({"ok": True, "deleted": deleted})
         except Exception as e:
             return web.json_response(
@@ -786,13 +769,12 @@ def create_app(
 
     async def sessions_clear_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
-        session = agent._session
-        if session._db is None:
+        if not await agent._session_repo.health_check():
             return web.json_response(
                 {"error": "MongoDB 不可用"}, status=503)
         try:
-            deleted = await session._db.delete_many("sessions", {})
-            session._messages.clear()
+            deleted = await agent._session_repo.clear_all()
+            agent._session.clear()
             return web.json_response({"ok": True, "deleted": deleted})
         except Exception as e:
             return web.json_response(

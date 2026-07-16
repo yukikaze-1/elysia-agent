@@ -25,6 +25,8 @@ from core.memory.message_archive import MessageArchive
 from core.memory.long_term import LongTermMemory
 from core.storage.message_repo import MessageRepository, COLLECTION as MSG_ARCHIVE_COLLECTION
 from core.storage.token_repo import TokenRepository, COLLECTION as TOKEN_USAGE_COLLECTION
+from core.storage.session_repo import COLLECTION as SESSION_COLLECTION
+from core.storage.memory_repo import COLLECTION as MEM_COLLECTION
 from core.token_tracker import TokenTracker
 from Module.database.documentdb import DocumentDBFactory
 from Module.database.vectordb import VectorDBFactory
@@ -104,10 +106,10 @@ class MongoCleaner:
 
         # sessions — 直接 delete_many
         try:
-            deleted = await db.delete_many(SessionMemory.COLLECTION, {})
-            results.append((SessionMemory.COLLECTION, True, deleted))
+            deleted = await db.delete_many(SESSION_COLLECTION, {})
+            results.append((SESSION_COLLECTION, True, deleted))
         except Exception as e:
-            results.append((SessionMemory.COLLECTION, False, str(e)))
+            results.append((SESSION_COLLECTION, False, str(e)))
 
         # message_archive — 使用 MessageArchive.clear_all()
         try:
@@ -147,12 +149,12 @@ class MilvusCleaner:
                 vector_db = VectorDBFactory.create("milvus/memory")
                 await vector_db.close()
             except Exception as e:
-                return (LongTermMemory.COLLECTION, False, f"Milvus unreachable: {e}")
+                return (MEM_COLLECTION, False, f"Milvus unreachable: {e}")
 
             deleted = await ltm.clear_all()
-            return (LongTermMemory.COLLECTION, True, deleted)
+            return (MEM_COLLECTION, True, deleted)
         except Exception as e:
-            return (LongTermMemory.COLLECTION, False, str(e))
+            return (MEM_COLLECTION, False, str(e))
         finally:
             await ltm.close()
 
@@ -232,7 +234,7 @@ async def dry_run_check(targets: set[str]) -> bool:
             db = DocumentDBFactory.create("mongodb/default")
             try:
                 # 执行轻量操作验证连接可用（motor 的 create 是 lazy 的）
-                await db.count(SessionMemory.COLLECTION, {})
+                await db.count(SESSION_COLLECTION, {})
                 print("✅ MongoDB: 连接正常")
             finally:
                 await db.close()
@@ -244,7 +246,7 @@ async def dry_run_check(targets: set[str]) -> bool:
         try:
             vector_db = VectorDBFactory.create("milvus/memory")
             try:
-                await vector_db.collection_exists(LongTermMemory.COLLECTION)
+                await vector_db.collection_exists(MEM_COLLECTION)
                 print("✅ Milvus: 连接正常")
             finally:
                 await vector_db.close()

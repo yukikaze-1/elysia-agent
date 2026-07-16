@@ -85,13 +85,12 @@ class TestMongoCleaner:
 class TestMilvusCleaner:
     @pytest.mark.asyncio
     async def test_milvus_cleaner_calls_clear_all(self):
-        from clean_db import MilvusCleaner
+        from clean_db import MilvusCleaner, MEM_COLLECTION
         from core.memory.long_term import LongTermMemory
 
         with patch(
             "clean_db.LongTermMemory", spec=LongTermMemory
         ) as MockLTM:
-            MockLTM.COLLECTION = "long_term_memory"
             mock_ltm = MockLTM.return_value
             mock_ltm.clear_all = AsyncMock(return_value=42)
             mock_ltm.close = AsyncMock()
@@ -102,19 +101,18 @@ class TestMilvusCleaner:
         MockLTM.assert_called_once()
         mock_ltm.clear_all.assert_awaited_once()
         mock_ltm.close.assert_awaited_once()
-        # 验证返回的 collection 名来自 LongTermMemory.COLLECTION 常量
-        assert result == ("long_term_memory", True, 42)
-        assert result[0] == LongTermMemory.COLLECTION
+        # 验证返回的 collection 名来自 MEM_COLLECTION 常量
+        assert result == (MEM_COLLECTION, True, 42)
+        assert result[0] == MEM_COLLECTION
 
     @pytest.mark.asyncio
     async def test_milvus_cleaner_handles_failure(self):
-        from clean_db import MilvusCleaner
+        from clean_db import MilvusCleaner, MEM_COLLECTION
         from core.memory.long_term import LongTermMemory
 
         with patch(
             "clean_db.LongTermMemory", spec=LongTermMemory
         ) as MockLTM:
-            MockLTM.COLLECTION = "long_term_memory"
             mock_ltm = MockLTM.return_value
             mock_ltm.clear_all = AsyncMock(side_effect=RuntimeError("connection refused"))
             mock_ltm.close = AsyncMock()
@@ -123,7 +121,7 @@ class TestMilvusCleaner:
             result = await cleaner.clean()
 
         mock_ltm.close.assert_awaited_once()
-        assert result == ("long_term_memory", False, "connection refused")
+        assert result == (MEM_COLLECTION, False, "connection refused")
 
 
 class TestFileCleaner:

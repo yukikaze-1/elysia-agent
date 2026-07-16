@@ -1595,7 +1595,7 @@ class TestDebugDbApi:
             "id": "msg-test", "role": "user", "parts": [{"content": "hello"}],
             "content_type": {}, "timestamp": "2026-06-04T00:00:00",
         })
-        if agent._session._db:
+        if await agent._session_repo.health_check():
             await agent._session.save()
 
         app = create_app(agent, serve_static=False)

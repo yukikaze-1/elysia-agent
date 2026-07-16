@@ -1102,13 +1102,11 @@ class TestMemoryStress:
         await a2.stop()
 
         # 清理测试遗留的 session 文档
-        db = a1._session._db
-        if db is not None:
-            try:
-                await db.delete_many("sessions", {"session_id": sid1})
-                await db.delete_many("sessions", {"session_id": sid2})
-            except Exception:
-                pass
+        try:
+            await a1._session_repo.delete(sid1)
+            await a1._session_repo.delete(sid2)
+        except Exception:
+            pass
 
 
 # ============================================================================

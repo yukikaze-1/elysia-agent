@@ -159,9 +159,9 @@ async def collect(agent) -> DebugInfo:
         for e in agent._long_term._entries[-5:]
     ]
     repo = agent._long_term._repo
-    info.milvus_ok = repo is not None and repo._db is not None
+    info.milvus_ok = await agent._memory_repo.health_check()
     info.embedding_ok = agent._long_term._embedding is not None
-    info.mongodb_ok = agent._session._db is not None
+    info.mongodb_ok = await agent._session_repo.health_check()
 
     # ---- Tools ----
     tm = getattr(agent, "_tool_manager", None)

@@ -36,6 +36,10 @@ from .personality import CharacterReflector, PersonalityEngine
 from .memory.memory_reflector import MemoryReflector  # 新增
 from Module.embedding import EmbeddingFactory
 from .task_scheduler import TaskScheduler
+from core.storage.session_repo import SessionRepository
+from core.storage.message_repo import MessageRepository
+from core.storage.token_repo import TokenRepository
+from core.storage.memory_repo import MemoryRepository
 from core.storage.character_state_repo import CharacterStateRepository
 
 logger = logging.getLogger(__name__)
@@ -64,15 +68,24 @@ class Agent:
         # ---- Character ----
         self._character = CharacterConfig.from_yaml(config.agent.character)
 
+        # ---- Storage Repositories ----
+        self._session_repo = SessionRepository()
+        self._message_repo = MessageRepository()
+        self._token_repo = TokenRepository()
+        self._memory_repo = MemoryRepository()
+        self._character_state_repo = CharacterStateRepository()
+
         # ---- L2: Memory ----
-        self._archive = MessageArchive()
+        self._archive = MessageArchive(repo=self._message_repo)
         self._session = SessionMemory(
             max_messages=config.memory.session_max_messages,
+            repo=self._session_repo,
         )
         self._long_term = LongTermMemory(
             max_entries=config.memory.ltm_max_entries,
             max_age_days=config.memory.ltm_max_age_days,
             embed_timeout=config.memory.ltm_embed_timeout,
+            repo=self._memory_repo,
         )
 
         # ---- L2: Tools ----
@@ -167,9 +180,6 @@ class Agent:
             checkpoint_path="data/scheduler_checkpoint.json",
         )
 
-        # ---- 角色状态持久化 ----
-        self._character_state_repo = CharacterStateRepository()
-
         self._state = RunState.STOPPED
         self._event_task: asyncio.Task | None = None
         self._req_counter: int = 0
@@ -233,6 +243,8 @@ class Agent:
             self._session.connect_db(),
             self._long_term.connect(),
         )
+        # 消息归档独立连接（与 session 共享 MongoDB，但使用独立 repo）
+        await self._message_repo.connect()
         if mongo_ok:
             await self._session.load()
             if self._character_reflector:
@@ -275,17 +287,23 @@ class Agent:
                 milvus_ok = await self._long_term.health_check()
                 self._mongo_available = mongo_ok
                 self._milvus_available = milvus_ok
+                # 检查其他 repo 连接状态（不阻塞，仅日志）
+                if not await self._message_repo.health_check():
+                    logger.debug("MessageRepository 离线")
+                if not await self._token_repo.health_check():
+                    logger.debug("TokenRepository 离线")
+                if not await self._character_state_repo.health_check():
+                    logger.debug("CharacterStateRepository 离线")
             except Exception:
                 logger.debug("Database health check failed", exc_info=True)
 
     async def _start_token_and_prompt(self, mongo_ok: bool) -> None:
         """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""
         from core.token_tracker import TokenTracker
-        from core.storage.token_repo import TokenRepository
         self._token_tracker = TokenTracker(
             session_id=self._session.session_id,
             output_manager=self._output,
-            repo=TokenRepository(db=self._session.db) if mongo_ok else None,
+            repo=self._token_repo if mongo_ok else None,
         )
         self._cognitive.set_token_tracker(self._token_tracker)
         if mongo_ok:
@@ -624,6 +642,24 @@ class Agent:
             await asyncio.wait_for(self._character_state_repo.close(), timeout=3.0)
         except asyncio.TimeoutError:
             logger.warning("Character state repo close timed out")
+
+        logger.debug("Closing session repo...")
+        try:
+            await asyncio.wait_for(self._session_repo.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Session repo close timed out")
+
+        logger.debug("Closing message repo...")
+        try:
+            await asyncio.wait_for(self._message_repo.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Message repo close timed out")
+
+        logger.debug("Closing token repo...")
+        try:
+            await asyncio.wait_for(self._token_repo.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Token repo close timed out")
 
         logger.debug("Shutting down embedding factory...")
         try:
