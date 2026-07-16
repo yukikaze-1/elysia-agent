@@ -83,7 +83,7 @@
 | `parts` | Array\<Object\> | 客户端友好格式（写入时不含，API 查询时补） |
 | `timestamp` | String（ISO 格式） | 消息时间 |
 | `inner_voice` | String? | assistant 的内心独白 |
-| `token_usage` | Object? | assistant 的 token 统计 |
+| `token_usage` | TokenUsageSummary? | assistant 的 token 统计（rounds: TokenUsageRecord[], turn_total: int） |
 | `tool_call_id` / `name` / `success` / `error` | — | tool 角色专用字段 |
 
 **索引**: `_id`（MongoDB 内置默认降序扫描），无 TTL，不截断。
@@ -114,7 +114,7 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `_messages` | deque[dict] | 当前会话消息缓冲 (maxlen config.yaml 可配, 默认 200) |
+| `_messages` | deque[Message] | 当前会话消息缓冲 (maxlen config.yaml 可配, 默认 200). 存 Pydantic Message 对象 |
 | `_params` | dict | 运行时参数 |
 | `_session_id` | str | 会话 ID |
 

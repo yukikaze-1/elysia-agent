@@ -531,7 +531,7 @@ L4 Mood（当前情绪）    EmotionEngine 每轮更新                → C3 �
 
 ```python
 class SessionMemory:
-    _messages: deque[dict]        # 最多 max_messages 条 (config.yaml session_max_messages)
+    _messages: deque[Message]     # 最多 max_messages 条 (config.yaml session_max_messages). Pydantic Message 对象
     _params: dict                 # mood, mood_intensity 等
     _db: DocumentDBBackend | None # MongoDB 或降级
 
@@ -961,7 +961,7 @@ Agent/
 │   ├── memory/              #   记忆子系统
 │   │   ├── session.py       #     SessionMemory (MongoDB + deque)
 │   │   ├── long_term.py     #     LongTermMemory (Milvus + Embedding)
-│   │   ├── message_archive.py #   MessageArchive (永久归档)
+
 │   │   └── memory_reflector.py #  MemoryReflector (定期去重 + KMeans)
 │   ├── tools/               #   Agent 工具集 (12 个插件)
 │   └── tests/               #   测试
