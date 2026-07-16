@@ -79,6 +79,7 @@ class Agent:
         self._session = SessionMemory(
             max_messages=config.memory.session_max_messages,
             repo=self._session_repo,
+            msg_repo=self._message_repo,
         )
         self._long_term = LongTermMemory(
             max_entries=config.memory.ltm_max_entries,

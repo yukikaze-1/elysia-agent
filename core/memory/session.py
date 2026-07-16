@@ -5,6 +5,7 @@ process restarts via save_session() / load_session().
 Otherwise falls back to in-memory deque (existing behavior).
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -32,12 +33,15 @@ class SessionMemory:
 
     def __init__(self, max_messages: int = 20,
                  session_id: SessionId = SessionId("default"),
-                 repo: SessionRepository | None = None):
+                 repo: SessionRepository | None = None,
+                 msg_repo: "MessageRepository | None" = None):
+        from core.storage.message_repo import MessageRepository
         self._messages: deque[Message] = deque(maxlen=max_messages)
         self._params: dict[str, Any] = {}
         self._max_messages = max_messages
         self._session_id: SessionId = session_id
         self._repo: SessionRepository | None = repo
+        self._msg_repo: MessageRepository | None = msg_repo
         self._pending_file = os.path.join("data", f"session_{session_id}.json")
 
     # ---- public properties ----
@@ -57,8 +61,10 @@ class SessionMemory:
     # ---- messages ----
 
     def add_message(self, msg: Message) -> None:
-        """存储一条 Pydantic Message 对象。"""
+        """存储一条 Pydantic Message 对象，同时 fire-and-forget 归档到永久存储。"""
         self._messages.append(msg)
+        if self._msg_repo is not None:
+            asyncio.ensure_future(self._msg_repo.append(self._session_id, msg))
 
     def recent_messages(self, n: int | None = None) -> list[Message]:
         """返回最近 n 条消息（Pydantic 对象）。n 为 None 时返回全部。"""
