@@ -10,7 +10,7 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any
+from typing import Any, TypedDict
 
 from .message_id import new_message_id
 
@@ -34,6 +34,12 @@ _TERMINAL_STATES = frozenset({
 })
 
 
+class ToolCallPayload(TypedDict):
+    """TOOL_CALL 类型任务的 payload。"""
+    tool_name: str
+    arguments: dict[str, Any]
+
+
 @dataclass
 class Task:
     """调度中心的任务单元。
@@ -48,7 +54,7 @@ class Task:
     parent_id: str | None = None
     depends_on: list[str] = field(default_factory=list)   # 预留: DAG 依赖
     children_ids: list[str] = field(default_factory=list)
-    payload: dict[str, Any] = field(default_factory=dict)
+    payload: ToolCallPayload | dict[str, Any] = field(default_factory=dict)  # dict = BACKGROUND/other
     result: Any = None
     error: str | None = None
     retry_count: int = 0
@@ -112,12 +118,13 @@ class Task:
         arguments: dict[str, Any],
         priority: int = 5,
     ) -> "Task":
+        payload: ToolCallPayload = {"tool_name": tool_name, "arguments": arguments}
         return cls(
             id=new_message_id(),
             type=TaskType.TOOL_CALL,
             parent_id=parent_id,
             priority=priority,
-            payload={"tool_name": tool_name, "arguments": arguments},
+            payload=payload,
         )
 
     @classmethod
