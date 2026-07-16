@@ -20,7 +20,7 @@ L0  Module/    无状态原子能力（LLM/STT/TTS/Embedding/DB/Config/...）
      ↑ 依赖
 L1  core/      认知中枢 — Agent → FSM → CognitiveLoop → PromptAssembler
      ↑ 使用
-L2  core/memory/      记忆子系统 — SessionMemory / LongTermMemory / MessageArchive
+L2  core/memory/      记忆子系统 — SessionMemory / LongTermMemory
 L2  core/tools/       工具插件 — filesystem / web / memory / time / ...
 L2  core/personality/ 性格引擎 — PersonalityEngine / CharacterReflector
 ```
@@ -155,7 +155,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 
 | 子目录 | 说明 | 详细文档 |
 |--------|------|----------|
-| `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口，deque + MongoDB 30d TTL）、`LongTermMemory`（Milvus 向量搜索 + rerank）、`MessageArchive`（追加式归档）、`MemoryReflector`（定期 KMeans 聚类去重） | `memory/` |
+| `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口，deque + MongoDB 30d TTL）、`LongTermMemory`（Milvus 向量搜索 + rerank）、`MemoryReflector`（定期 KMeans 聚类去重）。消息归档直调 `core/storage/message_repo.py` | `memory/` |
 | `core/personality/` | 性格引擎：`PersonalityEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
 | `core/tools/` | 工具插件：filesystem、web、memory、time、reminder、vision 等。每个插件 `plugin.py` + `config.yaml` + `README.md` | `tools/` |
 | `core/tests/` | 测试套件：覆盖 Agent、CognitiveLoop、EmotionEngine、MemoryConsolidator 等核心组件的单元/集成测试 | -- |

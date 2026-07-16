@@ -22,7 +22,7 @@ def _doc_to_message(doc: dict) -> Message:
     """将 MongoDB 文档转为 Message，_id 保留在 metadata._mongo_id 中。
 
     前端分页/删除需要 _id（MongoDB ObjectId）。Pydantic Message 模型不含 _id 字段，
-    因此暂存在 metadata 中，由 MessageArchive 在序列化时提升为顶层字段。
+    因此暂存在 metadata 中，由调用方（server.py）在序列化时提升为顶层字段。
     """
     msg = _message_adapter.validate_python(doc)
     if "_id" in doc:

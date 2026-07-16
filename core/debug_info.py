@@ -28,7 +28,7 @@ class DebugInfo:
     session_messages: int = 0
     session_recent: list[dict] = field(default_factory=list)
     session_params: dict = field(default_factory=dict)
-    archive_msg_count: int = 0            # MessageArchive 总数
+    archive_msg_count: int = 0            # 归档消息总数
 
     # Long-term memory
     lt_count: int = 0
@@ -128,13 +128,11 @@ async def collect(agent) -> DebugInfo:
     # ---- Session ----
     msgs = agent._session.messages_for_client()
     info.session_messages = len(msgs)
-    # archive count
-    archive = getattr(agent._session, '_archive', None)
-    if archive:
-        try:
-            info.archive_msg_count = await archive.count()
-        except Exception:
-            pass
+    # archive count — 直调 message_repo
+    try:
+        info.archive_msg_count = await agent._message_repo.count()
+    except Exception:
+        pass
     info.session_recent = [
         {
             "role": m.get("role", "?"),

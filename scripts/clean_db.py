@@ -21,7 +21,6 @@ sys.path.insert(0, str(_SCRIPT_DIR))  # 使 core/ Module/ 可 import
 load_dotenv(_SCRIPT_DIR / ".env")
 
 from core.memory.session import SessionMemory
-from core.memory.message_archive import MessageArchive
 from core.memory.long_term import LongTermMemory
 from core.storage.message_repo import MessageRepository, COLLECTION as MSG_ARCHIVE_COLLECTION
 from core.storage.token_repo import TokenRepository, COLLECTION as TOKEN_USAGE_COLLECTION
@@ -111,10 +110,10 @@ class MongoCleaner:
         except Exception as e:
             results.append((SESSION_COLLECTION, False, str(e)))
 
-        # message_archive — 使用 MessageArchive.clear_all()
+        # message_archive — 使用 MessageRepository.clear_all()
         try:
-            archive = MessageArchive(repo=MessageRepository(db=db))
-            deleted = await archive.clear_all()
+            repo = MessageRepository(db=db)
+            deleted = await repo.clear_all()
             results.append((MSG_ARCHIVE_COLLECTION, True, deleted))
         except Exception as e:
             results.append((MSG_ARCHIVE_COLLECTION, False, str(e)))

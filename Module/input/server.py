@@ -181,7 +181,7 @@ def create_app(
                 "mongodb_ok": await agent._session_repo.health_check(),
             },
             "archive": {
-                "count": await agent._archive.count() if agent._archive else 0,
+                "count": await agent._message_repo.count(),
                 "mongodb_ok": await agent._message_repo.health_check(),
             },
         })
@@ -272,9 +272,7 @@ def create_app(
     async def archive_list_handler(request: web.Request) -> web.Response:
         """分页浏览归档消息（debug 专用，offset 分页 + 搜索）。"""
         agent = request.app["agent"]
-        archive = getattr(agent, "_archive", None)
-        if archive is None:
-            return web.json_response({"messages": [], "total": 0})
+        repo = agent._message_repo
 
         try:
             limit = int(request.query.get("limit", "100"))
@@ -288,7 +286,7 @@ def create_app(
         role = MessageRole(role_str) if role_str else None
 
         try:
-            messages, total = await archive.query_offset(skip=skip, limit=limit, search=search, role=role)
+            messages, total = await repo.query_offset(skip=skip, limit=limit, search=search, role=role)
             client_msgs = _archive_to_client(messages)
             return web.json_response({
                 "messages": client_msgs,
@@ -303,21 +301,17 @@ def create_app(
 
     async def archive_delete_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
-        archive = getattr(agent, "_archive", None)
-        if archive is None:
-            return web.json_response({"error": "archive not available"}, status=503)
+        repo = agent._message_repo
         msg_id = request.match_info.get("msg_id", "")
         if not msg_id:
             return web.json_response({"error": "缺少 msg_id"}, status=400)
-        ok = await archive.delete_one(msg_id)
+        ok = await repo.delete_one(msg_id)
         return web.json_response({"ok": ok})
     app.router.add_delete("/debug/api/archive/{msg_id}", archive_delete_handler)
 
     async def archive_update_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
-        archive = getattr(agent, "_archive", None)
-        if archive is None:
-            return web.json_response({"error": "archive not available"}, status=503)
+        repo = agent._message_repo
         msg_id = request.match_info.get("msg_id", "")
         if not msg_id:
             return web.json_response({"error": "缺少 msg_id"}, status=400)
@@ -325,17 +319,14 @@ def create_app(
         new_text = (body.get("text") or "").strip()
         if not new_text:
             return web.json_response({"error": "text 不能为空"}, status=400)
-        ok = await archive.update_text(msg_id, new_text)
+        ok = await repo.update_text(msg_id, new_text)
         return web.json_response({"ok": ok})
     app.router.add_put("/debug/api/archive/{msg_id}", archive_update_handler)
 
     async def archive_clear_handler(request: web.Request) -> web.Response:
         """清空全部归档（debug 专用）。"""
         agent = request.app["agent"]
-        archive = getattr(agent, "_archive", None)
-        if archive is None:
-            return web.json_response({"ok": False, "error": "archive not initialized"})
-        deleted = await archive.clear_all()
+        deleted = await agent._message_repo.clear_all()
         return web.json_response({"ok": True, "deleted": deleted})
 
     app.router.add_delete("/debug/api/archive", archive_clear_handler)
@@ -396,24 +387,21 @@ def create_app(
             return {}
 
         if await agent._message_repo.health_check():
-            # 从 archive（权威源）读取消息
+            # 从 message archive（权威源）读取消息
             try:
-                archive = getattr(agent, "_archive", None)
-                if archive is not None:
-                    msgs, total = await archive.query_by_session(sid, limit=20)
-                    formatted = _sessions_to_client(msgs)
-                    params = await _get_params(sid)
-                    return web.json_response({
-                        "session_id": sid,
-                        "messages": formatted,
-                        "params": params,
-                        "total": total,
-                    })
+                msgs, total = await agent._message_repo.query_by_session(sid, limit=20)
+                formatted = _sessions_to_client(msgs)
+                params = await _get_params(sid)
+                return web.json_response({
+                    "session_id": sid,
+                    "messages": formatted,
+                    "params": params,
+                    "total": total,
+                })
             except Exception as e:
-                logger.warning("archive query_by_session failed: %s", e)
-                # archive 查询异常 → 显式降级到 sessions 快照
+                logger.warning("message_repo query_by_session failed: %s", e)
 
-        # Archive 不可用 — 降级读 sessions 快照（或内存）
+        # MessageRepo 不可用 — 降级读 sessions 快照（或内存）
         result = await agent._session_repo.load(sid)
         if result is None:
             # MongoDB 不可用，返回当前内存 session（仅当 sid 匹配时）
@@ -693,9 +681,7 @@ def create_app(
     async def messages_handler(request: web.Request) -> web.Response:
         """分页获取归档消息。供前端聊天页滚动加载历史。"""
         agent = request.app["agent"]
-        archive = getattr(agent, "_archive", None)
-        if archive is None:
-            return web.json_response({"messages": [], "has_more": False, "total": 0})
+        repo = agent._message_repo
 
         before = request.query.get("before", "").strip() or None
         try:
@@ -705,8 +691,8 @@ def create_app(
             limit = 50
 
         try:
-            messages, has_more = await archive.query(before=before, limit=limit)
-            total = await archive.count()
+            messages, has_more = await repo.query(before=before, limit=limit)
+            total = await repo.count()
             client_msgs = _archive_to_client(messages)
             return web.json_response({
                 "messages": client_msgs,

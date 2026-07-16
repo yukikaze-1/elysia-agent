@@ -23,7 +23,6 @@ from .log_setup import set_request_id, get_request_id
 from .character_config import CharacterConfig
 from .memory.session import SessionMemory
 from .memory.long_term import LongTermMemory
-from .memory.message_archive import MessageArchive
 from .prompt_assembler import PromptAssembler
 from Module.tool import ToolManager, ToolContext, PluginContext
 from core.tools import ALL_PLUGINS
@@ -77,7 +76,6 @@ class Agent:
         self._character_state_repo = CharacterStateRepository()
 
         # ---- L2: Memory ----
-        self._archive = MessageArchive(repo=self._message_repo)
         self._session = SessionMemory(
             max_messages=config.memory.session_max_messages,
             repo=self._session_repo,
