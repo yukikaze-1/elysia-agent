@@ -190,7 +190,7 @@ class FileCleaner:
                     f.unlink()
                     results.append((name, True, "deleted"))
                 else:
-                    results.append((name, False, "not found (skipped)"))
+                    results.append((name, True, "already clean"))
             except Exception as e:
                 results.append((name, False, str(e)))
 

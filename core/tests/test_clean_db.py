@@ -171,10 +171,10 @@ class TestFileCleaner:
         cleaner = FileCleaner(data_dir=str(data_dir))
         results = cleaner.clean()
 
-        # 不存在的文件记录为 skipped
+        # 文件不存在 = 已是干净状态 = ok=True
         for name, ok, detail in results:
-            if not ok:
-                assert "not found" in str(detail) or "skipped" in str(detail).lower()
+            assert ok is True
+            assert "already clean" in str(detail)
 
 
 class TestCliArgs:
