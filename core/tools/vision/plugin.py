@@ -66,7 +66,7 @@ class DescribeImagePlugin(ToolPlugin):
         if session is None:
             return ToolResult.fail(name=self.name, error="session 不可用")
 
-        recent = session.recent_messages(20)
+        recent = session.messages_for_client(20)
         user_msg = None
         for m in reversed(recent):
             if m.get("role") == "user":

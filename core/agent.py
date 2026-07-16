@@ -67,7 +67,6 @@ class Agent:
         self._archive = MessageArchive()
         self._session = SessionMemory(
             max_messages=config.memory.session_max_messages,
-            archive=self._archive,
         )
         self._long_term = LongTermMemory(
             max_entries=config.memory.ltm_max_entries,
@@ -231,10 +230,7 @@ class Agent:
             self._long_term.connect(),
         )
         if mongo_ok:
-            await self._archive.connect(self._session.db)
             await self._session.load()
-            # 迁移旧 archive 文档（缺少 session_id 的补上）
-            await self._session.migrate_archive_session_id()
             if self._character_reflector:
                 self._character_reflector.restore_state()
             if self._personality_engine:

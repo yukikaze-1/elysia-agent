@@ -45,6 +45,11 @@ from .block_filter import BlockFilter, build_parts_with_blocks
 from .tts_stream import is_emoji_only, TTSStreamManager
 from .tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from .text_utils import content_text_from_content, MessageObj
+from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
+from core.schema.tool import ToolCall, ToolCallFunction, ToolCallId
+from core.schema.part import TextPart
+from core.schema.adapters.message_adapter import parts_from_dicts
+from core.schema._utils import now_iso as _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -298,12 +303,11 @@ class CognitiveLoop:
         user_content = content if content else [{"type": "text", "content": user_message}]
         # 系统唤醒消息不写入 session（Step 4: 唤醒模板不需要存放在 session 中）
         if not is_task_result:
-            self._session.add_message({
-                "id": new_message_id(),
-                "role": "user",
-                "content": user_content,
-                "timestamp": datetime.datetime.now().astimezone().isoformat(),
-            })
+            self._session.add_message(UserMessage(
+                content=parts_from_dicts(user_content),
+                message_id=new_message_id(),
+                timestamp=_now_iso(),
+            ))
         tool_defs = self._tool_executor.definitions() if self._tool_executor else None
         # 多模态 LLM 可直接看图，排除 describe_image 避免 LLM 只调用一次
         # （只处理 image_index=0 而忽略其余图片）
@@ -570,28 +574,25 @@ class CognitiveLoop:
                                 "duration_ms": result.duration_ms,
                                 "truncated": result.truncated,
                             })
-                            self._session.add_message({
-                                "id": new_message_id(),
-                                "role": "tool",
-                                "tool_call_id": tc_id,
-                                "name": "submit_task",
-                                "content": result.content or "",
-                                "success": result.success,
-                                "error": result.error,
-                                "error_type": None,
-                                "duration_ms": result.duration_ms,
-                                "truncated": result.truncated,
-                                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                            })
+                            self._session.add_message(ToolResultMessage(
+                                content=[TextPart(content=result.content or "")],
+                                tool_call_id=ToolCallId(tc_id),
+                                tool_name="submit_task",
+                                success=result.success,
+                                error=result.error,
+                                error_type=None,
+                                duration_ms=result.duration_ms,
+                                truncated=result.truncated,
+                            ))
                             # 注册后台任务（result.success 时有 async_task_id）
                             if result.success and result.async_task_id and self._on_background_task and self._task_system:
                                 mailbox = self._task_system.get_task_mailbox(result.async_task_id)
                                 if mailbox:
-                                    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                                    dispatched_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
                                     self._on_background_task(
                                         result.async_task_id, mailbox, intent=(
                                             json.loads(tc["function"]["arguments"]).get("intent", "")
-                                        ), dispatched_at=now_iso,
+                                        ), dispatched_at=dispatched_now,
                                     )
 
                         # submit_task 已处理完毕，只 dispatch 其他工具
@@ -600,11 +601,20 @@ class CognitiveLoop:
                         dispatch_tcs = normalized
 
                     # 工具调用消息写入 Session（刷新后前端可恢复工具卡片）
-                    self._session.add_message({
-                        "id": new_message_id(),
-                        **assistant_entry,
-                        "timestamp": datetime.datetime.now().astimezone().isoformat(),
-                    })
+                    tool_calls = None
+                    if normalized:
+                        tool_calls = [ToolCall(
+                            id=ToolCallId(tc.get("id", "unknown")),
+                            function=ToolCallFunction(
+                                name=tc["function"]["name"],
+                                arguments=tc["function"]["arguments"],
+                            )
+                        ) for tc in normalized]
+                    self._session.add_message(AssistantMessage(
+                        content=[TextPart(content=acc_text)] if acc_text else [],
+                        message_id=new_message_id(),
+                        tool_calls=tool_calls,
+                    ))
 
                     # Emit tool_executing actions for UI (before dispatch)
                     for tc in dispatch_tcs:
@@ -650,19 +660,16 @@ class CognitiveLoop:
                             "truncated": tool_result.truncated,
                         })
                         # 工具结果写入 Session（刷新后前端可恢复工具卡片内容）
-                        self._session.add_message({
-                            "id": new_message_id(),
-                            "role": "tool",
-                            "tool_call_id": tc.get("id", "unknown"),
-                            "name": tc["function"]["name"],
-                            "content": tool_result.content or "",
-                            "success": tool_result.success,
-                            "error": tool_result.error,
-                            "error_type": error_type_str,
-                            "duration_ms": tool_result.duration_ms,
-                            "truncated": tool_result.truncated,
-                            "timestamp": datetime.datetime.now().astimezone().isoformat(),
-                        })
+                        self._session.add_message(ToolResultMessage(
+                            content=[TextPart(content=tool_result.content or "")],
+                            tool_call_id=ToolCallId(tc.get("id", "unknown")),
+                            tool_name=tc["function"]["name"],
+                            success=tool_result.success,
+                            error=tool_result.error,
+                            error_type=tool_result.error_type,
+                            duration_ms=tool_result.duration_ms,
+                            truncated=tool_result.truncated,
+                        ))
 
                     # Clean up executing tools tracking
                     for tc in dispatch_tcs:
@@ -701,22 +708,21 @@ class CognitiveLoop:
                 if public_text.strip():
                     parts, content_type = build_parts_with_blocks(public_text, all_sentences)
                     # 构建 assistant 消息的 content 数组（text parts + 保留 content_type 信息）
-                    assistant_content: list[dict] = []
-                    for p in parts:
-                        if isinstance(p, dict) and "content" in p:
-                            assistant_content.append({"type": "text", "content": p["content"]})
-                    self._session.add_message({
-                        "id": new_message_id(),
-                        "role": "assistant",
-                        "content": assistant_content,
-                        "content_type": content_type,
-                        "timestamp": datetime.datetime.now().astimezone().isoformat(),
-                        "inner_voice": iv_think_buf.strip() or None,
-                        "token_usage": {
+                    assistant_parts = [
+                        TextPart(content=p["content"])
+                        for p in parts
+                        if isinstance(p, dict) and "content" in p
+                    ]
+                    self._session.add_message(AssistantMessage(
+                        content=assistant_parts,
+                        message_id=new_message_id(),
+                        inner_voice=iv_think_buf.strip() or None,
+                        block_index=content_type,
+                        token_usage={
                             "rounds": [asdict(r) for r in self._token_tracker.current_turn_usages],
                             "turn_total": sum(r.total_tokens for r in self._token_tracker.current_turn_usages),
                         } if self._token_tracker and self._token_tracker.current_turn_usages else None,
-                    })
+                    ))
                     # 记录原始 LLM 回复（供 debug 页面查看）
                     if self._response_recorder is not None:
                         self._response_recorder.record(
@@ -963,7 +969,7 @@ class CognitiveLoop:
         prep_result = await self._delegation_preparer.prepare(
             intent=intent,
             hints=hints,
-            session_messages=self._session.recent_messages(),
+            session_messages=self._session.messages_for_client(),
             user_profile=self._user_profile or _default_user_profile(),
             tools=tool_list,
             global_constraints=(self._task_system._infra.constraints
