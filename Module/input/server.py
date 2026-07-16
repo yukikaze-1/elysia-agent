@@ -172,7 +172,7 @@ def create_app(
         return web.json_response({
             "ltm": {
                 "count": ltm.count,
-                "milvus_ok": ltm._connected,
+                "milvus_ok": ltm._repo is not None and ltm._repo._db is not None,
                 "dirty_count": len(ltm._dirty_ids),
             },
             "session": {
