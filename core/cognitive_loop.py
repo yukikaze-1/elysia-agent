@@ -971,7 +971,7 @@ class CognitiveLoop:
         prep_result = await self._delegation_preparer.prepare(
             intent=intent,
             hints=hints,
-            session_messages=self._session.messages_for_client(),
+            session_messages=self._session.recent_messages(),
             user_profile=self._user_profile or _default_user_profile(),
             tools=tool_list,
             global_constraints=(self._task_system._infra.constraints

@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field, model_validator
 from Module.tool.protocol import ToolPlugin, ToolResult
 from Module.tool.safety import SafetyProfile
 from Module.llm.registry import LLMFactory
+from core.schema.message import UserMessage
+from core.schema.part import ImagePart
 from core.schema.adapters.message_adapter import _resolve_image_source
 
 logger = logging.getLogger(__name__)
@@ -66,20 +68,16 @@ class DescribeImagePlugin(ToolPlugin):
         if session is None:
             return ToolResult.fail(name=self.name, error="session 不可用")
 
-        recent = session.messages_for_client(20)
+        recent = session.recent_messages(20)
         user_msg = None
         for m in reversed(recent):
-            if m.get("role") == "user":
+            if isinstance(m, UserMessage):
                 user_msg = m
                 break
         if user_msg is None:
             return ToolResult.fail(name=self.name, error="未找到用户消息")
 
-        content = user_msg.get("content", [])
-        if not isinstance(content, list):
-            return ToolResult.fail(name=self.name, error="消息不含附件")
-
-        images = [p for p in content if isinstance(p, dict) and p.get("type") == "image"]
+        images = [p for p in user_msg.content if isinstance(p, ImagePart)]
 
         if params.image_indices is not None:
             return await self._describe_batch(ctx, images, params)

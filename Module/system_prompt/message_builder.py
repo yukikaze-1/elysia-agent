@@ -1,10 +1,14 @@
-"""MessageBuilder — 纯 prompt 组装，不依赖 core/。"""
+"""MessageBuilder — 纯 prompt 组装。"""
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+
+from core.schema.message import Message
+from core.schema.part import ImagePart, TextPart
+from core.schema.tool import ToolCall
+from core.schema.adapters.message_adapter import content_to_openai, content_text, parts_from_dicts
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +22,7 @@ class MessageBuilder:
     def build_messages(
         self,
         system_prompt: str,
-        history: list[dict],
+        history: list[Message],
         user_content: str | list[dict] | None = None,
         *,
         supports_multimodal: bool = False,
@@ -27,7 +31,7 @@ class MessageBuilder:
 
         Args:
             system_prompt: 已渲染的 system prompt 字符串
-            history: SessionMemory.recent_messages(8) 返回的历史消息列表
+            history: SessionMemory.recent_messages(8) 返回的 Message 列表
             user_content: 当前用户消息（str 或多模态 content list）
             supports_multimodal: LLM 是否支持多模态图片
 
@@ -39,96 +43,71 @@ class MessageBuilder:
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
         for msg in history:
-            role = msg.get("role", "")
-            if role == "tool":
+            if msg.role == "tool":
                 continue
 
-            inner_voice = msg.get("inner_voice")
+            inner_voice = getattr(msg, "inner_voice", None)
             iv_prefix = f"<inner_voice>{inner_voice}</inner_voice>\n" if inner_voice else ""
 
-            tool_calls = msg.get("tool_calls")
+            tool_calls = getattr(msg, "tool_calls", None)
             tool_summary = _format_tool_summary(tool_calls) if tool_calls else ""
 
-            content_raw = msg.get("content", "")
-            if isinstance(content_raw, list):
-                if supports_multimodal:
-                    msg_content = _content_to_openai(content_raw)
-                    if tool_summary:
-                        if isinstance(msg_content, list):
-                            msg_content.append({"type": "text", "text": tool_summary})
-                        else:
-                            msg_content = msg_content + tool_summary
-                    if iv_prefix:
-                        if isinstance(msg_content, list):
-                            msg_content.insert(0, {"type": "text", "text": iv_prefix.rstrip()})
-                        else:
-                            msg_content = iv_prefix + msg_content
-                    messages.append({"role": role, "content": msg_content})
-                else:
-                    text_only = [p for p in content_raw if p.get("type") == "text"]
-                    text_content = "".join(p.get("content", "") for p in text_only)
-                    image_count = sum(1 for p in content_raw if p.get("type") == "image")
-                    if image_count > 0 and role == "user":
-                        hint = _format_image_history_hint(image_count)
-                        text_content = hint + text_content if text_content else hint
-                    if text_content or tool_summary:
-                        msg_content = (text_content or "") + (tool_summary or "")
-                        messages.append({"role": role, "content": iv_prefix + msg_content})
-            elif "parts" in msg:
-                text_from_parts = "".join(p["content"] for p in msg["parts"])
-                msg_content = text_from_parts + (tool_summary or "")
-                messages.append({"role": role, "content": iv_prefix + msg_content})
-            elif isinstance(content_raw, str):
-                msg_content = content_raw + (tool_summary or "")
-                messages.append({"role": role, "content": iv_prefix + msg_content})
-            elif tool_summary:
-                messages.append({"role": role, "content": iv_prefix + tool_summary})
+            parts = msg.content  # list[Part]
+            if supports_multimodal:
+                msg_content = content_to_openai(parts)
+                if tool_summary:
+                    if isinstance(msg_content, list):
+                        msg_content.append({"type": "text", "text": tool_summary})
+                    else:
+                        msg_content = msg_content + tool_summary
+                if iv_prefix:
+                    if isinstance(msg_content, list):
+                        msg_content.insert(0, {"type": "text", "text": iv_prefix.rstrip()})
+                    else:
+                        msg_content = iv_prefix + msg_content
+                messages.append({"role": msg.role, "content": msg_content})
             else:
-                messages.append({"role": role, "content": iv_prefix + str(content_raw)})
+                text_only = [p for p in parts if isinstance(p, TextPart)]
+                text_content = "".join(p.content for p in text_only)
+                image_count = sum(1 for p in parts if isinstance(p, ImagePart))
+                if image_count > 0 and msg.role == "user":
+                    hint = _format_image_history_hint(image_count)
+                    text_content = hint + text_content if text_content else hint
+                if text_content or tool_summary:
+                    msg_content = (text_content or "") + (tool_summary or "")
+                    messages.append({"role": msg.role, "content": iv_prefix + msg_content})
 
         # 当前用户消息
         if isinstance(user_content, list):
-            has_images = any(p.get("type") == "image" for p in user_content)
+            user_parts = parts_from_dicts(user_content)
+            has_images = any(isinstance(p, ImagePart) for p in user_parts)
             if has_images and not supports_multimodal:
-                text = _content_text(user_content)
-                image_count = sum(1 for p in user_content if p.get("type") == "image")
+                text_content = content_text(user_parts)
+                image_count = sum(1 for p in user_parts if isinstance(p, ImagePart))
                 if image_count == 1:
                     hint = "[用户发送了一张图片。使用 describe_image 工具查看。]"
                 else:
                     indices = list(range(image_count))
                     hint = f"[用户发送了{image_count}张图片。使用 describe_image(image_indices={indices}) 一次性查看所有图片。]"
-                user_text = f"{hint}\n{text}" if text else hint
+                user_text = f"{hint}\n{text_content}" if text_content else hint
                 messages.append({"role": "user", "content": user_text})
             else:
-                messages.append({"role": "user", "content": _content_to_openai(user_content)})
+                messages.append({"role": "user", "content": content_to_openai(user_parts)})
         elif user_content:
             messages.append({"role": "user", "content": user_content})
 
         return messages
 
 
-def _content_to_openai(content: list[dict]) -> str | list[dict]:
-    """将消息 content（list[dict]）转为 OpenAI 格式。边界处 dict→Part。"""
-    from core.schema.adapters.message_adapter import content_to_openai, parts_from_dicts
-    return content_to_openai(parts_from_dicts(content))
-
-
-def _content_text(content: list[dict]) -> str:
-    """从消息 content（list[dict]）提取纯文本。边界处 dict→Part。"""
-    from core.schema.adapters.message_adapter import content_text, parts_from_dicts
-    return content_text(parts_from_dicts(content))
-
-
-def _format_tool_summary(tool_calls: list[dict]) -> str:
+def _format_tool_summary(tool_calls: list[ToolCall]) -> str:
     """将工具调用列表格式化为 LLM 上下文摘要。"""
     if not tool_calls:
         return ""
     names: list[str] = []
     for tc in tool_calls:
-        func = tc.get("function", {})
-        name = func.get("name", "unknown")
+        name = tc.function.name
         try:
-            args = json.loads(func.get("arguments", "{}"))
+            args = json.loads(tc.function.arguments)
         except (json.JSONDecodeError, TypeError):
             args = {}
         arg_strs = [f"{k}={v}" for k, v in args.items()]

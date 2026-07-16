@@ -17,6 +17,9 @@ import re
 
 from openai import AsyncOpenAI
 
+from core.schema.message import Message
+from core.schema.part import TextPart
+
 from Module.task_system.utils import format_tools, strip_markdown_fence
 
 from Module.task_system.schema import (
@@ -127,7 +130,7 @@ class DelegationPreparer:
         self,
         intent: str,
         hints: str | None,
-        session_messages: list[dict],
+        session_messages: list[Message],
         user_profile: UserProfile,
         tools: list[Tool],
         global_constraints: ConstraintConfig,
@@ -180,7 +183,7 @@ class DelegationPreparer:
         self,
         intent: str,
         hints: str | None,
-        session_messages: list[dict],
+        session_messages: list[Message],
         user_profile: UserProfile,
         tools: list[Tool],
     ) -> str:
@@ -381,33 +384,22 @@ class DelegationPreparer:
 
 
     @staticmethod
-    def _format_session_messages(messages: list[dict]) -> str:
-        """将会话消息列表格式化为 LLM prompt 可读的文本。
-
-        TODO: 当前 session_messages 为裸 list[dict]（{"role":...,"content":...} 格式），
-        后续统一为 ChatMessageV2 后重构此方法。
-        当前容错：dict 无 role/content 键时不崩溃，转 "(未知)" 占位。
-        """
+    def _format_session_messages(messages: list[Message]) -> str:
+        """将会话消息列表格式化为 LLM prompt 可读的文本。"""
         if not messages:
             return "（无对话历史）"
 
         lines: list[str] = []
         for i, m in enumerate(messages):
-            if not isinstance(m, dict):
-                lines.append(f"[unknown]: {str(m)[:500]}")
-                continue
-            role = m.get("role", "unknown")
-            content = m.get("content", "")
-            # content 可能是 str 或 list[dict]（多模态 parts）
-            if isinstance(content, list):
-                text_parts = [
-                    p.get("content", "")
-                    for p in content
-                    if isinstance(p, dict) and p.get("type") == "text"
-                ]
-                content = " ".join(text_parts) if text_parts else "(非文本内容)"
-            elif not isinstance(content, str):
-                content = str(content)
+            role = m.role
+            content_parts = m.content
+            # content 是 list[Part]
+            text_parts = [
+                p.content
+                for p in content_parts
+                if isinstance(p, TextPart)
+            ]
+            content = " ".join(text_parts) if text_parts else "(非文本内容)"
             # 截断过长的单条消息（保留上下文但防止 prompt 爆炸）
             if len(content) > 2000:
                 content = content[:2000] + "...[截断]"

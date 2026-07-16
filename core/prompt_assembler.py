@@ -114,7 +114,7 @@ class PromptAssembler:
             stt_emotion=stt_emotion, stt_events=stt_events,
             tts_provider=tts_provider,
         )
-        history = self._session.messages_for_client(8)
+        history = self._session.recent_messages(8)
         user_content = content if content else user_message
         return self._builder.build_messages(
             system, history, user_content,

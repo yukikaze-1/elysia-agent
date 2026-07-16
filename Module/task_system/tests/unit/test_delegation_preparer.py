@@ -9,6 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from core.schema.message import Message, UserMessage, AssistantMessage, MessageId
+from core.schema.part import TextPart, ImagePart
+
 # 加载项目根目录的 .env（CI/本地开发环境）
 _env_path = Path(__file__).resolve().parents[4] / ".env"
 if _env_path.exists():
@@ -56,11 +59,11 @@ def sample_tools() -> list[Tool]:
 
 
 @pytest.fixture
-def sample_session_messages() -> list[dict]:
+def sample_session_messages() -> list[Message]:
     return [
-        {"role": "user", "content": "帮我查一下最近的天气"},
-        {"role": "assistant", "content": "好的，我来帮你查"},
-        {"role": "user", "content": "如果有雨的话提醒我"},
+        UserMessage(content=[TextPart(content="帮我查一下最近的天气")], message_id=MessageId("u1")),
+        AssistantMessage(content=[TextPart(content="好的，我来帮你查")], message_id=MessageId("a1")),
+        UserMessage(content=[TextPart(content="如果有雨的话提醒我")], message_id=MessageId("u2")),
     ]
 
 
@@ -451,14 +454,13 @@ class TestFormatSessionMessages:
         assert "查一下最近的天气" in result
 
     def test_message_with_multimodal_content(self):
-        """content 为 list[dict]（多模态 parts）时提取文本。"""
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "content": "看看这张图"},
-                {"type": "image", "source": "https://example.com/img.png"},
-            ],
-        }]
+        """content 含 ImagePart 时提取文本、跳过非文本。"""
+        messages = [
+            UserMessage(content=[
+                TextPart(content="看看这张图"),
+                ImagePart(src="https://example.com/img.png"),
+            ], message_id=MessageId("um")),
+        ]
         result = DelegationPreparer._format_session_messages(messages)
         assert "看看这张图" in result
         assert "img.png" not in result  # 非文本内容不应出现
@@ -466,22 +468,10 @@ class TestFormatSessionMessages:
     def test_message_truncation(self):
         """超长消息截断。"""
         long_text = "x" * 3000
-        messages = [{"role": "user", "content": long_text}]
+        messages = [UserMessage(content=[TextPart(content=long_text)], message_id=MessageId("ul"))]
         result = DelegationPreparer._format_session_messages(messages)
         assert "...[截断]" in result
         assert len(result) < 2500  # 截断后不应超过原文
-
-    def test_non_dict_message(self):
-        """非 dict 元素容错。"""
-        messages = [{"role": "user", "content": "hi"}, "bare string"]
-        result = DelegationPreparer._format_session_messages(messages)
-        assert "[unknown]" in result
-        assert "bare string" in result
-
-    def test_message_missing_role(self):
-        messages = [{"content": "缺少 role"}]
-        result = DelegationPreparer._format_session_messages(messages)
-        assert "[unknown]" in result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

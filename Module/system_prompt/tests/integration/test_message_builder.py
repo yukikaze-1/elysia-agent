@@ -1,8 +1,33 @@
 """MessageBuilder 集成测试。"""
 import pytest
 from Module.system_prompt.message_builder import MessageBuilder
+from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage, MessageId
+from core.schema.part import TextPart, ImagePart
+from core.schema.tool import ToolCall, ToolCallFunction
 
 pytestmark = pytest.mark.integration
+
+
+def _make_user_msg(content: str = "Hi", msg_id: str = "u1") -> UserMessage:
+    return UserMessage(content=[TextPart(content=content)], message_id=MessageId(msg_id))
+
+
+def _make_assistant_msg(
+    content: str = "Hello",
+    msg_id: str = "a1",
+    inner_voice: str | None = None,
+    tool_calls: list[ToolCall] | None = None,
+) -> AssistantMessage:
+    return AssistantMessage(
+        content=[TextPart(content=content)],
+        message_id=MessageId(msg_id),
+        inner_voice=inner_voice,
+        tool_calls=tool_calls,
+    )
+
+
+def _make_user_msg_multimodal(parts: list) -> UserMessage:
+    return UserMessage(content=parts, message_id=MessageId("um"))
 
 
 class TestBuildMessages:
@@ -11,24 +36,34 @@ class TestBuildMessages:
         builder = MessageBuilder()
         system = "You are a helpful assistant."
         history = [
-            {"role": "user", "content": "Hi"},
-            {"role": "assistant", "content": "Hello!", "inner_voice": "someone said hi"},
+            _make_user_msg("Hi"),
+            _make_assistant_msg("Hello!", inner_voice="someone said hi"),
         ]
         messages = builder.build_messages(system, history, "How are you?")
         assert messages[0] == {"role": "system", "content": system}
         assert len(messages) >= 3
-        assistant_has_iv = any("<inner_voice>" in m.get("content", "") for m in messages if m["role"] == "assistant")
+        assistant_has_iv = any(
+            "<inner_voice>" in m.get("content", "") for m in messages if m["role"] == "assistant"
+        )
         assert assistant_has_iv
 
     def test_tool_message_skipped(self):
         """工具结果消息被跳过。"""
         builder = MessageBuilder()
         history = [
-            {"role": "assistant", "content": "let me check", "tool_calls": [
-                {"function": {"name": "web_search", "arguments": '{"query":"test"}'}}
-            ]},
-            {"role": "tool", "content": "search results here"},
-            {"role": "assistant", "content": "found it"},
+            _make_assistant_msg(
+                "let me check",
+                tool_calls=[ToolCall(
+                    id="c1",
+                    function=ToolCallFunction(name="web_search", arguments='{"query":"test"}'),
+                )],
+            ),
+            ToolResultMessage(
+                content=[TextPart(content="search results here")],
+                tool_call_id="c1", tool_name="web_search",
+                message_id=MessageId(""),
+            ),
+            _make_assistant_msg("found it"),
         ]
         messages = builder.build_messages("system", history, "thanks")
         roles = [m["role"] for m in messages]
@@ -60,9 +95,18 @@ class TestBuildMessages:
         """tool_calls → _format_tool_summary 注入到 assistant 消息。"""
         builder = MessageBuilder()
         history = [
-            {"role": "assistant", "content": "let me search",
-             "tool_calls": [{"function": {"name": "search", "arguments": '{"q":"test"}'}}]},
-            {"role": "tool", "content": "result: found"},
+            _make_assistant_msg(
+                "let me search",
+                tool_calls=[ToolCall(
+                    id="c1",
+                    function=ToolCallFunction(name="search", arguments='{"q":"test"}'),
+                )],
+            ),
+            ToolResultMessage(
+                content=[TextPart(content="result: found")],
+                tool_call_id="c1", tool_name="search",
+                message_id=MessageId(""),
+            ),
         ]
         messages = builder.build_messages("system", history, "ok")
         assistant_msgs = [m for m in messages if m["role"] == "assistant"]
@@ -73,39 +117,28 @@ class TestBuildMessages:
         """inner_voice 注入：字符串 content + iv → 包含 <inner_voice>。"""
         builder = MessageBuilder()
         history = [
-            {"role": "assistant", "content": "Hello", "inner_voice": "thinking about greeting"},
+            _make_assistant_msg("Hello", inner_voice="thinking about greeting"),
         ]
         messages = builder.build_messages("system", history, "bye")
         assistant = [m for m in messages if m["role"] == "assistant"][0]
         assert "<inner_voice>thinking about greeting</inner_voice>" in assistant["content"]
 
-    def test_gemini_parts_format(self):
-        """"parts" 字段（Gemini 格式）→ content 从 parts 提取，不丢失数据。"""
-        builder = MessageBuilder()
-        history = [
-            {"role": "user", "parts": [{"content": "hello from gemini"}]},
-        ]
-        messages = builder.build_messages("system", history, "hi")
-        user_msg = [m for m in messages if m["role"] == "user" and "gemini" in str(m)][0]
-        assert "hello from gemini" in user_msg.get("content", "")
-
-    def test_content_raw_other_type(self):
-        """content_raw 为 int → else fallback → str 化。"""
-        builder = MessageBuilder()
-        history = [
-            {"role": "user", "content": 12345},
-        ]
-        messages = builder.build_messages("system", history, "ok")
-        user_msg = [m for m in messages if m["role"] == "user" and "12345" in str(m.get("content", ""))]
-        assert len(user_msg) > 0
-
     def test_format_tool_summary_json_parse_fails(self):
         """_format_tool_summary JSON 解析失败时不崩，返回 name 基本字符串。"""
         builder = MessageBuilder()
         history = [
-            {"role": "assistant", "content": "",
-             "tool_calls": [{"function": {"name": "test", "arguments": "not-json"}}]},
-            {"role": "tool", "content": "ok"},
+            _make_assistant_msg(
+                "",
+                tool_calls=[ToolCall(
+                    id="c1",
+                    function=ToolCallFunction(name="test", arguments="not-json"),
+                )],
+            ),
+            ToolResultMessage(
+                content=[TextPart(content="ok")],
+                tool_call_id="c1", tool_name="test",
+                message_id=MessageId(""),
+            ),
         ]
         messages = builder.build_messages("system", history, "done")
         assistant = [m for m in messages if m["role"] == "assistant"]
@@ -124,18 +157,18 @@ class TestBuildMessages:
     def test_no_user_content(self):
         """user_content 为 "" → 不添加 user message。"""
         builder = MessageBuilder()
-        messages = builder.build_messages("system", [{"role": "user", "content": "hi"}], "")
+        messages = builder.build_messages("system", [_make_user_msg("hi")], "")
         assert len(messages) == 2
 
     def test_history_image_count_multiple(self):
         """历史消息中有多张图片 + 不支持多模态 → 数量提示。"""
         builder = MessageBuilder()
         history = [
-            {"role": "user", "content": [
-                {"type": "image", "image_url": {"url": "http://a.com/1.png"}},
-                {"type": "image", "image_url": {"url": "http://a.com/2.png"}},
-            ]},
-            {"role": "assistant", "content": "nice pics"},
+            _make_user_msg_multimodal([
+                ImagePart(src="http://a.com/1.png"),
+                ImagePart(src="http://a.com/2.png"),
+            ]),
+            _make_assistant_msg("nice pics"),
         ]
         messages = builder.build_messages("system", history, "thanks", supports_multimodal=False)
         user_msgs = [m for m in messages if m["role"] == "user"]
