@@ -178,6 +178,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | 模块 | README | 说明 |
 |------|--------|------|
 | Core 总览 | [core/README.md](core/README.md) | 认知中枢架构 + 28 组件详解 |
+| Storage | [core/storage/README.md](core/storage/README.md) | 统一存储层（Repository 模式） |
 | Schema | [core/schema/README.md](core/schema/README.md) | 基础类型层（AgentState/事件/多模态消息 Part） |
 | PersonalityEngine | [core/personality/README.md](core/personality/README.md) | 四层性格模型（Core→Self→State→Mood） |
 | 工具: filesystem | [core/tools/filesystem/README.md](core/tools/filesystem/README.md) | read_file / list_directory / write_file |
