@@ -6,6 +6,8 @@ import tempfile
 from unittest.mock import AsyncMock, MagicMock
 import pytest
 from core.token_tracker import TokenTracker, TokenUsage
+from core.schema.token import TokenUsageEntry
+from core.schema.types import SessionId
 
 pytestmark = pytest.mark.unit
 
@@ -44,7 +46,7 @@ class TestTokenTracker:
         return TokenTracker(
             session_id="test-session",
             output_manager=output_mock,
-            document_db=None,
+            repo=None,
         )
 
     # ── record ──────────────────────────────────────────────
@@ -161,35 +163,33 @@ class TestTokenTracker:
         finally:
             os.unlink(tracker._pending_file)
 
-    # ── persist (MongoDB) ───────────────────────────────────
+    # ── persist (MongoDB via repo) ──────────────────────────
 
     @pytest.mark.asyncio
     async def test_persist_to_mongodb_when_available(self, output_mock):
-        """有 MongoDB 时，直接写入 MongoDB。"""
-        db_mock = MagicMock()
-        db_mock.insert_one = AsyncMock(return_value=MagicMock(inserted_id="abc"))
+        """有 MongoDB 时，通过 TokenRepository 写入。"""
+        repo_mock = MagicMock()
+        repo_mock.record = AsyncMock()
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, document_db=db_mock,
+            session_id="s1", output_manager=output_mock, repo=repo_mock,
         )
 
         await tracker.record(
             usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             model="test/model", round_num=0,
         )
-        db_mock.insert_one.assert_awaited_once()
-        call_args = db_mock.insert_one.call_args[0]
-        assert call_args[0] == "token_usage"
-        doc = call_args[1]
-        assert doc["session_id"] == "s1"
-        assert doc["total_tokens"] == 15
+        repo_mock.record.assert_awaited_once()
+        entry = repo_mock.record.call_args[0][0]
+        assert entry.session_id == "s1"
+        assert entry.total_tokens == 15
 
     @pytest.mark.asyncio
     async def test_persist_falls_back_to_jsonl_when_mongodb_fails(self, output_mock):
         """MongoDB 写入失败时，降级到 JSONL 文件。"""
-        db_mock = MagicMock()
-        db_mock.insert_one = AsyncMock(side_effect=RuntimeError("connection lost"))
+        repo_mock = MagicMock()
+        repo_mock.record = AsyncMock(side_effect=RuntimeError("connection lost"))
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, document_db=db_mock,
+            session_id="s1", output_manager=output_mock, repo=repo_mock,
         )
 
         with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".jsonl") as f:
@@ -200,7 +200,7 @@ class TestTokenTracker:
                 usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
                 model="fallback/model", round_num=0,
             )
-            db_mock.insert_one.assert_awaited_once()
+            repo_mock.record.assert_awaited_once()
             with open(tracker._pending_file) as f:
                 lines = f.readlines()
             assert len(lines) == 1
@@ -215,28 +215,28 @@ class TestTokenTracker:
     @pytest.mark.asyncio
     async def test_flush_pending_imports_and_deletes_file(self, output_mock):
         """flush_pending 读取 JSONL 内容写入 MongoDB 并删除文件。"""
-        db_mock = MagicMock()
-        db_mock.insert_many = AsyncMock()
+        repo_mock = MagicMock()
+        repo_mock.flush = AsyncMock()
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, document_db=db_mock,
+            session_id="s1", output_manager=output_mock, repo=repo_mock,
         )
 
+        # 写 TokenUsageEntry 兼容格式的 JSONL
+        entry = TokenUsageEntry(
+            session_id=SessionId("s1"), model="m",
+            prompt_tokens=1, completion_tokens=1, total_tokens=2,
+            round_num=0,
+        )
         with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".jsonl") as f:
-            json_line = json.dumps({
-                "session_id": "s1", "model": "m",
-                "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2,
-                "round_num": 0, "timestamp": 1.0,
-            })
-            f.write(json_line + "\n")
+            f.write(json.dumps(entry.model_dump(mode="json"), ensure_ascii=False) + "\n")
             tracker._pending_file = f.name
 
         try:
             await tracker.flush_pending()
-            db_mock.insert_many.assert_awaited_once()
-            call_args = db_mock.insert_many.call_args[0]
-            assert call_args[0] == "token_usage"
-            assert len(call_args[1]) == 1
-            assert call_args[1][0]["session_id"] == "s1"
+            repo_mock.flush.assert_awaited_once()
+            entries = repo_mock.flush.call_args[0][0]
+            assert len(entries) == 1
+            assert entries[0].session_id == "s1"
             assert not os.path.exists(tracker._pending_file)
         finally:
             if os.path.exists(tracker._pending_file):
@@ -245,20 +245,20 @@ class TestTokenTracker:
     @pytest.mark.asyncio
     async def test_flush_pending_no_file_is_noop(self, output_mock):
         """pending 文件不存在时不执行任何操作。"""
-        db_mock = MagicMock()
-        db_mock.insert_many = AsyncMock()
+        repo_mock = MagicMock()
+        repo_mock.flush = AsyncMock()
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, document_db=db_mock,
+            session_id="s1", output_manager=output_mock, repo=repo_mock,
         )
         tracker._pending_file = "/tmp/nonexistent_token_test_file.jsonl"
         await tracker.flush_pending()
-        db_mock.insert_many.assert_not_awaited()
+        repo_mock.flush.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_flush_pending_no_db_is_noop(self, output_mock):
         """没有 MongoDB 时 flush 不执行任何操作。"""
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, document_db=None,
+            session_id="s1", output_manager=output_mock, repo=None,
         )
         with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".jsonl") as f:
             f.write(json.dumps({"a": 1}) + "\n")
@@ -287,14 +287,20 @@ class TestTokenTracker:
 
     @pytest.mark.asyncio
     async def test_get_session_stats_from_mongodb(self, output_mock):
-        """有 MongoDB 时，从 MongoDB 聚合查询 + pending 文件补充。"""
-        db_mock = MagicMock()
-        db_mock.find = AsyncMock(return_value=[
-            {"model": "deepseek/deepseek-chat", "prompt_tokens": 40, "completion_tokens": 10, "total_tokens": 50},
-            {"model": "openai/gpt-4o", "prompt_tokens": 30, "completion_tokens": 20, "total_tokens": 50},
+        """有 MongoDB 时，从 TokenRepository 聚合查询 + pending 文件补充。"""
+        repo_mock = MagicMock()
+        repo_mock.query_by_session = AsyncMock(return_value=[
+            TokenUsageEntry(
+                session_id=SessionId("s1"), model="deepseek/deepseek-chat",
+                prompt_tokens=40, completion_tokens=10, total_tokens=50, round_num=0,
+            ),
+            TokenUsageEntry(
+                session_id=SessionId("s1"), model="openai/gpt-4o",
+                prompt_tokens=30, completion_tokens=20, total_tokens=50, round_num=0,
+            ),
         ])
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, document_db=db_mock,
+            session_id="s1", output_manager=output_mock, repo=repo_mock,
         )
         tracker._pending_file = "/tmp/test_stats_s1_nonexistent.jsonl"  # 隔离 pending 文件
 
@@ -308,10 +314,10 @@ class TestTokenTracker:
     @pytest.mark.asyncio
     async def test_get_session_stats_mongodb_failure_falls_back_to_memory(self, output_mock):
         """MongoDB 查询失败时回退到内存数据。"""
-        db_mock = MagicMock()
-        db_mock.find = AsyncMock(side_effect=RuntimeError("db down"))
+        repo_mock = MagicMock()
+        repo_mock.query_by_session = AsyncMock(side_effect=RuntimeError("db down"))
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, document_db=db_mock,
+            session_id="s1", output_manager=output_mock, repo=repo_mock,
         )
 
         # 先在内存累计一些数据
@@ -327,20 +333,24 @@ class TestTokenTracker:
     @pytest.mark.asyncio
     async def test_get_session_stats_includes_pending_file(self, output_mock):
         """MongoDB + pending 文件数据合并。"""
-        db_mock = MagicMock()
-        db_mock.find = AsyncMock(return_value=[
-            {"model": "a", "total_tokens": 100, "prompt_tokens": 80, "completion_tokens": 20},
+        repo_mock = MagicMock()
+        repo_mock.query_by_session = AsyncMock(return_value=[
+            TokenUsageEntry(
+                session_id=SessionId("s1"), model="a",
+                prompt_tokens=80, completion_tokens=20, total_tokens=100, round_num=0,
+            ),
         ])
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, document_db=db_mock,
+            session_id="s1", output_manager=output_mock, repo=repo_mock,
         )
 
+        # 写 TokenUsageEntry 兼容格式的 pending 数据
+        pending_entry = TokenUsageEntry(
+            session_id=SessionId("s1"), model="a",
+            prompt_tokens=10, completion_tokens=10, total_tokens=20, round_num=0,
+        )
         with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".jsonl") as f:
-            f.write(json.dumps({
-                "session_id": "s1", "model": "a",
-                "prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20,
-                "round_num": 0, "timestamp": 1.0,
-            }) + "\n")
+            f.write(json.dumps(pending_entry.model_dump(mode="json"), ensure_ascii=False) + "\n")
             tracker._pending_file = f.name
 
         try:
@@ -354,12 +364,9 @@ class TestTokenTracker:
 @pytest.mark.unit
 class TestTokenTrackerClearAll:
     @pytest.mark.asyncio
-    async def test_clear_all_calls_delete_many_with_collection(self):
-        db = AsyncMock()
-        db.delete_many = AsyncMock(return_value=42)
-        deleted = await TokenTracker.clear_all(db)
+    async def test_clear_all_calls_repo_clear_all(self):
+        repo_mock = MagicMock()
+        repo_mock.clear_all = AsyncMock(return_value=42)
+        deleted = await TokenTracker.clear_all(repo_mock)
         assert deleted == 42
-        db.delete_many.assert_called_once_with("token_usage", {})
-
-    def test_collection_constant(self):
-        assert TokenTracker.COLLECTION == "token_usage"
+        repo_mock.clear_all.assert_awaited_once()

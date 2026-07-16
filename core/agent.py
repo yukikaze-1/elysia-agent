@@ -268,10 +268,11 @@ class Agent:
     async def _start_token_and_prompt(self, mongo_ok: bool) -> None:
         """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""
         from core.token_tracker import TokenTracker
+        from core.storage.token_repo import TokenRepository
         self._token_tracker = TokenTracker(
             session_id=self._session.session_id,
             output_manager=self._output,
-            document_db=self._session.db if mongo_ok else None,
+            repo=TokenRepository(db=self._session.db) if mongo_ok else None,
         )
         self._cognitive.set_token_tracker(self._token_tracker)
         if mongo_ok:

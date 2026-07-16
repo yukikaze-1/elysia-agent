@@ -1,7 +1,7 @@
 """TokenTracker — 统一管理 LLM token 消耗统计、广播和持久化。
 
 Usage:
-    tracker = TokenTracker(session_id="abc", output_manager=output, document_db=db)
+    tracker = TokenTracker(session_id="abc", output_manager=output, repo=token_repo)
     await tracker.record(usage, model="deepseek/deepseek-chat", round_num=0)
     stats = await tracker.get_session_stats()
     await tracker.flush_pending()
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from Module.output import OutputManager
+    from core.storage.token_repo import TokenRepository
 
 
 @dataclass
@@ -42,23 +43,22 @@ class TokenTracker:
     - MongoDB 持久化（不可用时降级到本地 JSONL 文件）
     """
 
-    COLLECTION = "token_usage"
     _pending_file = os.path.join("data", "token_usage_pending.jsonl")
 
     @staticmethod
-    async def clear_all(db) -> int:
+    async def clear_all(repo: "TokenRepository") -> int:
         """清空所有 token_usage 记录。返回删除数量。"""
-        return await db.delete_many(TokenTracker.COLLECTION, {})
+        return await repo.clear_all()
 
     def __init__(
         self,
         session_id: str,
         output_manager: "OutputManager",
-        document_db=None,
+        repo: "TokenRepository | None" = None,
     ):
         self.session_id = session_id
         self._output = output_manager
-        self._db = document_db
+        self._repo = repo
 
         # Session 内存累计
         self.session_total: int = 0
@@ -110,20 +110,16 @@ class TokenTracker:
         优先从 MongoDB 查询，补充 pending 文件中当前 session 的数据。
         如果 MongoDB 不可用，返回内存数据。
         """
-        if self._db is not None:
+        if self._repo is not None:
             try:
-                docs = await self._db.find(
-                    TokenTracker.COLLECTION,
-                    {"session_id": self.session_id},
-                    limit=10000,
+                entries = await self._repo.query_by_session(
+                    self.session_id, limit=10000,
                 )
                 per_model: dict[str, int] = {}
                 session_total = 0
-                for doc in docs:
-                    model = doc["model"]
-                    total = doc["total_tokens"]
-                    per_model[model] = per_model.get(model, 0) + total
-                    session_total += total
+                for entry in entries:
+                    per_model[entry.model] = per_model.get(entry.model, 0) + entry.total_tokens
+                    session_total += entry.total_tokens
 
                 # 补充 pending 文件中当前 session 的数据
                 if os.path.exists(self._pending_file):
@@ -151,15 +147,17 @@ class TokenTracker:
 
     async def flush_pending(self) -> None:
         """将本地 pending 文件中的数据批量导入 MongoDB，成功后删除文件。"""
-        if self._db is None:
+        if self._repo is None:
             return
         if not os.path.exists(self._pending_file):
             return
         try:
+            from core.schema.token import TokenUsageEntry
             with open(self._pending_file) as f:
                 records = [json.loads(line) for line in f if line.strip()]
             if records:
-                await self._db.insert_many(TokenTracker.COLLECTION, records)
+                entries = [TokenUsageEntry.model_validate(r) for r in records]
+                await self._repo.flush(entries)
                 logger.info("pending 文件导入完成: %d 条 token 记录已写入 MongoDB", len(records))
             os.remove(self._pending_file)
         except Exception:
@@ -167,15 +165,25 @@ class TokenTracker:
 
     async def _persist(self, usage: TokenUsage) -> None:
         """持久化单条记录：MongoDB 优先，失败则写本地 JSONL。"""
-        doc = {**asdict(usage), "session_id": self.session_id}
-        if self._db is not None:
+        from core.schema.token import TokenUsageEntry
+        from core.schema.types import SessionId
+
+        entry = TokenUsageEntry(
+            session_id=SessionId(self.session_id),
+            model=usage.model,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            round_num=usage.round_num,
+        )
+        if self._repo is not None:
             try:
-                await self._db.insert_one(TokenTracker.COLLECTION, doc)
+                await self._repo.record(entry)
                 return
             except Exception:
                 logger.debug("MongoDB 不可用，token 记录写入 %s", self._pending_file)
         # 追加到本地 JSONL
         os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
-        doc.pop("_id", None)  # PyMongo insert_one 会原地注入 ObjectId，JSON 不可序列化
+        doc = entry.model_dump(mode="json")
         with open(self._pending_file, "a") as f:
             f.write(json.dumps(doc, ensure_ascii=False) + "\n")

@@ -24,6 +24,7 @@ from core.memory.session import SessionMemory
 from core.memory.message_archive import MessageArchive
 from core.memory.long_term import LongTermMemory
 from core.storage.message_repo import MessageRepository, COLLECTION as MSG_ARCHIVE_COLLECTION
+from core.storage.token_repo import TokenRepository, COLLECTION as TOKEN_USAGE_COLLECTION
 from core.token_tracker import TokenTracker
 from Module.database.documentdb import DocumentDBFactory
 from Module.database.vectordb import VectorDBFactory
@@ -118,10 +119,11 @@ class MongoCleaner:
 
         # token_usage — 使用 TokenTracker.clear_all()
         try:
-            deleted = await TokenTracker.clear_all(db)
-            results.append((TokenTracker.COLLECTION, True, deleted))
+            token_repo = TokenRepository(db=db)
+            deleted = await TokenTracker.clear_all(token_repo)
+            results.append((TOKEN_USAGE_COLLECTION, True, deleted))
         except Exception as e:
-            results.append((TokenTracker.COLLECTION, False, str(e)))
+            results.append((TOKEN_USAGE_COLLECTION, False, str(e)))
 
         return results
 
