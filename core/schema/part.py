@@ -9,9 +9,10 @@
 """
 
 from enum import StrEnum
+from pathlib import Path
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 
 # ── 枚举 ──────────────────────────────────────────────
@@ -59,6 +60,21 @@ class VideoMime(StrEnum):
     OGG = "video/ogg"
 
 
+# ── src 字段校验 ────────────────────────────────────────
+
+def _validate_src(v: str) -> str:
+    """校验 Part src 字段：不能为空，必须是合法 URL / data URI / 绝对路径 / 存在的本地文件。"""
+    if not v:
+        raise ValueError("src 不能为空")
+    if v.startswith(("http://", "https://", "data:", "/")):
+        return v
+    if Path(v).exists():
+        return v
+    raise ValueError(f"无效的 src: {v!r}")
+
+Src = Annotated[str, AfterValidator(_validate_src)]
+
+
 # ── Part 子类 ──────────────────────────────────────────
 
 class TextPart(BaseModel):
@@ -70,7 +86,7 @@ class TextPart(BaseModel):
 class ImagePart(BaseModel):
     """图片 — URL / data URI / 本地路径。"""
     type: Literal[PartType.IMAGE] = PartType.IMAGE
-    src: str = ""                           # URL / data URI / 本地路径
+    src: Src = ""                              # URL / data URI / 本地路径
     mime: ImageMime = ImageMime.PNG
     detail: ImageDetail = ImageDetail.AUTO  # OpenAI 视觉模型分辨率控制
     width: int | None = None
@@ -80,7 +96,7 @@ class ImagePart(BaseModel):
 class FilePart(BaseModel):
     """文件附件（Phase 2 预留）。"""
     type: Literal[PartType.FILE] = PartType.FILE
-    src: str = ""
+    src: Src = ""
     mime: FileMime = FileMime.OCTET_STREAM
     filename: str = ""
     size_bytes: int = 0
@@ -89,7 +105,7 @@ class FilePart(BaseModel):
 class AudioPart(BaseModel):
     """音频（Phase 2 预留）。"""
     type: Literal[PartType.AUDIO] = PartType.AUDIO
-    src: str = ""
+    src: Src = ""
     mime: AudioMime = AudioMime.WAV
     duration_ms: int = 0
 
@@ -97,7 +113,7 @@ class AudioPart(BaseModel):
 class VideoPart(BaseModel):
     """视频（Phase 2 预留）。"""
     type: Literal[PartType.VIDEO] = PartType.VIDEO
-    src: str = ""
+    src: Src = ""
     mime: VideoMime = VideoMime.MP4
     duration_ms: int = 0
 
