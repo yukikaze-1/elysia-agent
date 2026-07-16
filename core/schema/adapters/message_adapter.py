@@ -13,7 +13,7 @@ from pathlib import Path as _Path
 
 from pydantic import TypeAdapter
 
-from ..part import Part, TextPart, ImagePart, FilePart, AudioPart, VideoPart
+from ..part import Part, TextPart, ImagePart, FilePart, AudioPart, VideoPart, ImageMime
 
 
 # ── dict → Part 边界转换 ──────────────────────────────
@@ -67,10 +67,10 @@ def _to_data_uri(path: _Path) -> str:
     data = path.read_bytes()
     ext = path.suffix.lower()
     mime_map = {
-        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".gif": "image/gif", ".webp": "image/webp",
+        ".png": ImageMime.PNG, ".jpg": ImageMime.JPEG, ".jpeg": ImageMime.JPEG,
+        ".gif": ImageMime.GIF, ".webp": ImageMime.WEBP,
     }
-    mime = mime_map.get(ext, "image/png")
+    mime = mime_map.get(ext, ImageMime.PNG)
     b64 = _base64.b64encode(data).decode("ascii")
     return f"data:{mime};base64,{b64}"
 

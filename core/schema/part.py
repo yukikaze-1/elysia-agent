@@ -38,6 +38,27 @@ class ImageDetail(StrEnum):
     HIGH = "high"
 
 
+class FileMime(StrEnum):
+    OCTET_STREAM = "application/octet-stream"
+    PDF = "application/pdf"
+    PLAIN = "text/plain"
+    JSON = "application/json"
+
+
+class AudioMime(StrEnum):
+    WAV = "audio/wav"
+    MP3 = "audio/mp3"
+    MPEG = "audio/mpeg"
+    OGG = "audio/ogg"
+    WEBM = "audio/webm"
+
+
+class VideoMime(StrEnum):
+    MP4 = "video/mp4"
+    WEBM = "video/webm"
+    OGG = "video/ogg"
+
+
 # ── Part 子类 ──────────────────────────────────────────
 
 class TextPart(BaseModel):
@@ -60,7 +81,7 @@ class FilePart(BaseModel):
     """文件附件（Phase 2 预留）。"""
     type: Literal[PartType.FILE] = PartType.FILE
     src: str = ""
-    mime: str = "application/octet-stream"
+    mime: FileMime = FileMime.OCTET_STREAM
     filename: str = ""
     size_bytes: int = 0
 
@@ -69,7 +90,7 @@ class AudioPart(BaseModel):
     """音频（Phase 2 预留）。"""
     type: Literal[PartType.AUDIO] = PartType.AUDIO
     src: str = ""
-    mime: str = "audio/wav"
+    mime: AudioMime = AudioMime.WAV
     duration_ms: int = 0
 
 
@@ -77,7 +98,7 @@ class VideoPart(BaseModel):
     """视频（Phase 2 预留）。"""
     type: Literal[PartType.VIDEO] = PartType.VIDEO
     src: str = ""
-    mime: str = "video/mp4"
+    mime: VideoMime = VideoMime.MP4
     duration_ms: int = 0
 
 

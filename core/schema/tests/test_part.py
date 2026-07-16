@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 from core.schema.part import (
-    PartType, ImageMime, ImageDetail,
+    PartType, ImageMime, ImageDetail, FileMime, AudioMime, VideoMime,
     TextPart, ImagePart, FilePart, AudioPart, VideoPart,
 )
 
@@ -51,7 +51,7 @@ class TestPartConstruction:
     def test_file_part_defaults(self):
         p = FilePart()
         assert p.type == PartType.FILE
-        assert p.mime == "application/octet-stream"
+        assert p.mime == FileMime.OCTET_STREAM
 
     def test_audio_part_defaults(self):
         p = AudioPart()
