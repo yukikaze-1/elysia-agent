@@ -26,8 +26,8 @@ core/storage/
 └── README.md                       — 遵循 readme-conventions.md
 
 core/schema/                         新增：
-├── token.py                        — TokenUsageEntry dataclass
-└── character.py                    — CharacterState dataclass
+├── token.py                        — TokenUsageEntry（Pydantic BaseModel）
+└── character.py                    — CharacterState（Pydantic BaseModel）
 ```
 
 ## base.py — Repository ABC
@@ -59,7 +59,8 @@ class SessionSummary:
     session_id: SessionId
     message_count: int
     updated_at: IsoTimestamp
-    token_total: int
+    # token_total 不在 SessionSummary 中——token 数据在单独的 token_usage
+    # 集合，由上层（server.py debug handler）自行跨集合聚合
 ```
 
 ### MessageRepository（MongoDB message_archive）
@@ -70,6 +71,8 @@ class MessageRepository(Repository):
     async def query_by_session(self, session_id: SessionId, *,
                                limit: int = 20, before: ObjectId | None = None
                                ) -> tuple[list[Message], int]: ...
+        # ObjectId 是 MongoDB 特有类型，泄漏到接口层。当前 MongoDB
+        # 是唯一文档数据库后端，可接受；若未来支持其他后端需改为通用游标。
     async def count_by_session(self, session_id: SessionId) -> int: ...
     async def count(self) -> int: ...
     async def delete_by_session(self, session_id: SessionId) -> int: ...
@@ -84,7 +87,9 @@ class TokenRepository(Repository):
                      model: str, prompt_tokens: int,
                      completion_tokens: int,
                      round_num: int) -> None: ...
-    async def flush(self, records: list[dict]) -> None: ...
+    async def flush(self, records: list[TokenUsageEntry]) -> None: ...
+        # 接受 TokenUsageEntry 而非 list[dict]——与 record() 风格一致。
+        # 调用方（TokenTracker）持有 list[dict]，改为构造 TokenUsageEntry 再传。
     async def query_by_session(self, session_id: SessionId, *,
                                limit: int = 100) -> list[TokenUsageEntry]: ...
 ```
@@ -120,9 +125,10 @@ class MemoryRepository(Repository):
 
 ### TokenUsageEntry（`core/schema/token.py`）
 
+遵循 core/schema Pydantic 统一风格：
+
 ```python
-@dataclass
-class TokenUsageEntry:
+class TokenUsageEntry(BaseModel):
     session_id: SessionId
     model: str
     prompt_tokens: int
@@ -134,22 +140,24 @@ class TokenUsageEntry:
 
 ### CharacterState（`core/schema/character.py`）
 
+遵循 core/schema Pydantic 统一风格。当前仍是 session.params dict → Pydantic 的过渡类型，
+后续 CharacterStateRepository 接管后可直接 `model_validate()` 从 MongoDB 恢复。
+
 ```python
-@dataclass
-class CharacterState:
+class CharacterState(BaseModel):
     session_id: SessionId
     self_l2: str = ""
     state_l3: str = ""
-    state_history: list[dict] = field(default_factory=list)
-    reflector_buffer: list[dict] = field(default_factory=list)
-    reflector_context: list[dict] = field(default_factory=list)
-    self_perception_history: list[dict] = field(default_factory=list)
+    state_history: list[dict] = Field(default_factory=list)
+    reflector_buffer: list[dict] = Field(default_factory=list)
+    reflector_context: list[dict] = Field(default_factory=list)
+    self_perception_history: list[dict] = Field(default_factory=list)
     mood: str = "neutral"
     mood_intensity: float = 0.5
     last_awareness_time: IsoTimestamp | None = None
     compression_last_at: IsoTimestamp | None = None
     compression_last_count: int = 0
-    updated_at: IsoTimestamp = field(default_factory=now_iso)
+    updated_at: IsoTimestamp = Field(default_factory=now_iso)
 ```
 
 ## 调用方迁移
