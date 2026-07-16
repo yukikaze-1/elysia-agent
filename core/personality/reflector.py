@@ -10,10 +10,15 @@
 import asyncio
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from Module.system_prompt import PromptManager
 from ..llm_adapter import LLMAdapter
 from ..memory.session import SessionMemory
+
+if TYPE_CHECKING:
+    from core.schema.reflector import ReflectorState
+    from core.storage.character_state_repo import CharacterStateRepository
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +167,32 @@ class CharacterReflector:
             logger.debug("CharacterReflector: 恢复 buffer (%d 对)", len(self._buffer))
         if ctx:
             self._context = list(ctx)
+
+    # ---- 持久化 hooks ----
+
+    async def save_reflector_state(self, repo: "CharacterStateRepository") -> None:
+        """保存 reflector 状态。shutdown 时调用。"""
+        from core.schema.reflector import ReflectorState
+        from core.schema.types import SessionId
+        state = ReflectorState(
+            session_id=SessionId(self._session.session_id),
+            reflector_buffer=list(self._buffer),
+            reflector_context=list(self._context),
+            self_perception_history=self._session.get_param("self_perception_history", []),
+            mr_round_count=self._session.get_param("mr_round_count", 0),
+            mr_new_memory_count=self._session.get_param("mr_new_memory_count", 0),
+            mr_last_summary=self._session.get_param("mr_last_summary", {}),
+        )
+        await repo.save_reflector(state)
+
+    def restore_reflector_state(self, state: "ReflectorState") -> None:
+        """从持久化恢复 reflector 状态。start() 时调用。"""
+        self._buffer = [(u, a) for u, a in state.reflector_buffer]
+        self._context = list(state.reflector_context)
+        self._session.set_param("self_perception_history", state.self_perception_history)
+        self._session.set_param("mr_round_count", state.mr_round_count)
+        self._session.set_param("mr_new_memory_count", state.mr_new_memory_count)
+        self._session.set_param("mr_last_summary", state.mr_last_summary)
 
     def set_personality_engine(self, engine) -> None:
         """连接到 PersonalityEngine。设置后 _reflect() 产出提交给 engine 而非 self_perception_history。"""

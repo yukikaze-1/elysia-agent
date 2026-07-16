@@ -36,6 +36,7 @@ from .personality import CharacterReflector, PersonalityEngine
 from .memory.memory_reflector import MemoryReflector  # 新增
 from Module.embedding import EmbeddingFactory
 from .task_scheduler import TaskScheduler
+from core.storage.character_state_repo import CharacterStateRepository
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,9 @@ class Agent:
             checkpoint_path="data/scheduler_checkpoint.json",
         )
 
+        # ---- 角色状态持久化 ----
+        self._character_state_repo = CharacterStateRepository()
+
         self._state = RunState.STOPPED
         self._event_task: asyncio.Task | None = None
         self._req_counter: int = 0
@@ -239,6 +243,15 @@ class Agent:
                 self._emotion.restore_state()
             if self._memory_reflector:
                 self._memory_reflector.restore_state()
+            # 角色状态持久化恢复
+            char_state_ok = await self._character_state_repo.connect()
+            if char_state_ok:
+                if state := await self._character_state_repo.load_character(self._session.session_id):
+                    self._personality_engine.restore_character_state(state)
+                if es := await self._character_state_repo.load_emotion(self._session.session_id):
+                    self._emotion.restore_emotion_state(es)
+                if rs := await self._character_state_repo.load_reflector(self._session.session_id):
+                    self._character_reflector.restore_reflector_state(rs)
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
             if os.path.exists(self._session.pending_file):
                 if await self._session.load_from_jsonl(merge=True):
@@ -432,6 +445,12 @@ class Agent:
         # 1.55. Flush personality compression (L3→L2)
         await self._flush_compression()
 
+        # 1.56. 角色状态持久化保存
+        if self._character_state_repo:
+            await self._personality_engine.save_character_state(self._character_state_repo)
+            await self._emotion.save_emotion_state(self._character_state_repo)
+            await self._character_reflector.save_reflector_state(self._character_state_repo)
+
         # 1.6. MemoryReflector 计数器落盘
         if self._memory_reflector:
             await self._memory_reflector.flush()
@@ -599,6 +618,12 @@ class Agent:
             await asyncio.wait_for(self._long_term.close(), timeout=3.0)
         except asyncio.TimeoutError:
             logger.warning("Long-term memory close timed out")
+
+        logger.debug("Closing character state repo...")
+        try:
+            await asyncio.wait_for(self._character_state_repo.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Character state repo close timed out")
 
         logger.debug("Shutting down embedding factory...")
         try:

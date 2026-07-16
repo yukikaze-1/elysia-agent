@@ -20,6 +20,8 @@ from Module.system_prompt import PromptManager
 if TYPE_CHECKING:
     from core.llm_adapter import LLMAdapter
     from core.memory.session import SessionMemory
+    from core.schema.character import CharacterState
+    from core.storage.character_state_repo import CharacterStateRepository
 
 logger = logging.getLogger(__name__)
 
@@ -305,3 +307,33 @@ class PersonalityEngine:
         if len(history) > AWARENESS_MAX_HISTORY:
             history = history[-AWARENESS_MAX_HISTORY:]
         self._session.set_param(key, history)
+
+    # ---- 持久化 hooks ----
+
+    async def save_character_state(self, repo: "CharacterStateRepository") -> None:
+        """保存当前性格状态。shutdown 时调用。"""
+        from core.schema.character import CharacterState
+        from core.schema.types import SessionId
+        state = CharacterState(
+            session_id=SessionId(self._session.session_id),
+            self_l2=self._session.get_param("self_l2", ""),
+            state_l3=self._session.get_param("state_l3", ""),
+            state_history=self._session.get_param("state_history", []),
+            last_awareness_time=self._session.get_param("last_awareness_time", None),
+            compression_last_at=self._session.get_param("compression_last_at", None),
+            compression_last_count=self._session.get_param("compression_last_count", 0),
+        )
+        await repo.save_character(state)
+
+    def restore_character_state(self, state: "CharacterState") -> None:
+        """从持久化恢复性格状态。start() 时在 restore_state 之后调用。"""
+        self._session.set_param("self_l2", state.self_l2)
+        self._session.set_param("state_l3", state.state_l3)
+        self._session.set_param("state_history", state.state_history)
+        if state.last_awareness_time:
+            self._session.set_param("last_awareness_time", state.last_awareness_time)
+            self._last_awareness_time = state.last_awareness_time
+        if state.compression_last_at:
+            self._session.set_param("compression_last_at", state.compression_last_at)
+        if state.compression_last_count:
+            self._session.set_param("compression_last_count", state.compression_last_count)

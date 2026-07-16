@@ -9,11 +9,16 @@ Future: Amygdala LLM for text semantic analysis
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from Module.output import OutputManager
 
 from .memory.session import SessionMemory
 from .character_config import CharacterConfig
+
+if TYPE_CHECKING:
+    from core.schema.emotion import EmotionState
+    from core.storage.character_state_repo import CharacterStateRepository
 
 logger = logging.getLogger(__name__)
 
@@ -248,3 +253,21 @@ class EmotionEngine:
             loop.create_task(_safe_wrapper())
         except RuntimeError:
             pass  # no event loop running — test environment, ignore
+
+    # ---- 持久化 hooks ----
+
+    async def save_emotion_state(self, repo: "CharacterStateRepository") -> None:
+        """保存当前情绪状态。shutdown 时调用。"""
+        from core.schema.emotion import EmotionState
+        from core.schema.types import SessionId
+        state = EmotionState(
+            session_id=SessionId(self._session.session_id),
+            mood=self._session.get_param("mood", "neutral"),
+            mood_intensity=self._session.get_param("mood_intensity", 0.5),
+        )
+        await repo.save_emotion(state)
+
+    def restore_emotion_state(self, state: "EmotionState") -> None:
+        """从持久化恢复情绪状态。start() 时调用。"""
+        self._session.set_param("mood", state.mood)
+        self._session.set_param("mood_intensity", state.mood_intensity)
