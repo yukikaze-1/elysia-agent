@@ -3,8 +3,6 @@
 import logging
 from typing import TYPE_CHECKING
 
-from pydantic import TypeAdapter
-
 from core.schema.message import Message, MessageRole
 from core.schema.types import MessageId, SessionId
 
@@ -12,23 +10,6 @@ if TYPE_CHECKING:
     from core.storage.message_repo import MessageRepository
 
 logger = logging.getLogger(__name__)
-
-# TypeAdapter for Message union — cached at module level
-_message_adapter: TypeAdapter[Message] = TypeAdapter(Message)
-
-
-def _message_to_dict(msg: Message) -> dict:
-    """将 Message 对象转为前端兼容 dict，同时将 metadata._mongo_id 提升为顶层 _id。
-
-    MongoDB 的 _id (ObjectId) 在 Pydantic Message 模型中没有对应字段，
-    MessageRepository 将其暂存在 metadata._mongo_id 中。
-    此函数在序列化时将其提升为顶层 _id，供前端分页/删除使用。
-    """
-    d = msg.model_dump(mode="json")
-    mongo_id = d.get("metadata", {}).pop("_mongo_id", None)
-    if mongo_id:
-        d["_id"] = mongo_id
-    return d
 
 
 class MessageArchive:
@@ -51,15 +32,11 @@ class MessageArchive:
 
     # ---- 写入 ----
 
-    async def append(self, msg: dict) -> str:
-        """追加一条消息。fire-and-forget — 调用方用 create_task 包装。返回 _id。"""
+    async def append(self, session_id: SessionId, msg: Message) -> None:
+        """追加一条消息到永久归档。fire-and-forget — 调用方用 create_task 包装。"""
         if self._repo is None:
             raise RuntimeError("MessageArchive not connected")
-        session_id = SessionId(msg.get("session_id", ""))
-        # 从 dict 转换为 Message 后传给 repo
-        msg_obj = _message_adapter.validate_python(msg)
-        await self._repo.append(session_id, msg_obj)
-        return msg.get("_id", "")
+        await self._repo.append(session_id, msg)
 
     # ---- 查询 ----
 
@@ -68,7 +45,7 @@ class MessageArchive:
         *,
         before: str | None = None,
         limit: int = 50,
-    ) -> tuple[list[dict], bool]:
+    ) -> tuple[list[Message], bool]:
         """分页查询消息，按 _id 降序（最新的在前）。
 
         before: 上一页最后一条的 _id（ObjectId 字符串），用于游标分页
@@ -78,8 +55,7 @@ class MessageArchive:
         if self._repo is None:
             return [], False
 
-        messages, has_more = await self._repo.query(before=before, limit=limit)
-        return [_message_to_dict(msg) for msg in messages], has_more
+        return await self._repo.query(before=before, limit=limit)
 
     # ---- Offset 分页（支持跳页）----
 
@@ -90,12 +66,11 @@ class MessageArchive:
         limit: int = 50,
         search: str = "",
         role: MessageRole | None = None,
-    ) -> tuple[list[dict], int]:
+    ) -> tuple[list[Message], int]:
         """Offset 分页查询，按 _id 降序。支持搜索过滤。返回 (messages, total)。"""
         if self._repo is None:
             return [], 0
-        messages, total = await self._repo.query_offset(skip=skip, limit=limit, search=search, role=role)
-        return [_message_to_dict(msg) for msg in messages], total
+        return await self._repo.query_offset(skip=skip, limit=limit, search=search, role=role)
 
     # ---- 管理 ----
 
@@ -139,13 +114,12 @@ class MessageArchive:
 
     async def query_by_session(
         self, session_id: SessionId, *, skip: int = 0, limit: int = 200
-    ) -> tuple[list[dict], int]:
+    ) -> tuple[list[Message], int]:
         """按 session_id 查询消息，_id 降序（最新在前）。
         返回 (messages, total)。"""
         if self._repo is None:
             return [], 0
-        messages, total = await self._repo.query_by_session(session_id, limit=limit, skip=skip)
-        return [_message_to_dict(msg) for msg in messages], total
+        return await self._repo.query_by_session(session_id, limit=limit, skip=skip)
 
     async def count_by_session(self, session_id: SessionId) -> int:
         """按 session_id 统计消息数。"""

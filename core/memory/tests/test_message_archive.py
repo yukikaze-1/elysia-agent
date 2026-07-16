@@ -38,17 +38,12 @@ class TestMessageArchiveInit:
 class TestMessageArchiveAppend:
     @pytest.mark.asyncio
     async def test_append_calls_repo(self):
-        """append 将 dict 转为 Message 后调用 repo.append。"""
+        """append 将 Message 传给 repo.append。"""
         repo = AsyncMock()
         repo.append = AsyncMock()
         archive = MessageArchive(repo=repo)
-        msg = {
-            "role": "user",
-            "content": [{"type": "text", "content": "hello"}],
-            "session_id": "sid",
-            "message_id": "msg-1",
-        }
-        result = await archive.append(msg)
+        msg = _make_user_msg()
+        await archive.append(SessionId("sid"), msg)
         # 验证 repo.append 被调用，且参数是 Message 对象
         repo.append.assert_called_once()
         call_args = repo.append.call_args
@@ -56,13 +51,12 @@ class TestMessageArchiveAppend:
         assert call_args[0][0] == "sid"  # SessionId is str at runtime
         # msg 参数应为 Message (UserMessage)
         assert isinstance(call_args[0][1], UserMessage)
-        assert result == ""  # msg 没有 _id
 
     @pytest.mark.asyncio
     async def test_append_raises_when_not_connected(self):
         archive = MessageArchive()
         with pytest.raises(RuntimeError, match="not connected"):
-            await archive.append({"role": "user"})
+            await archive.append(SessionId("sid"), _make_user_msg())
 
 
 @pytest.mark.service
@@ -80,8 +74,9 @@ class TestMessageArchiveQuery:
         messages, has_more = await archive.query(limit=50)
         assert len(messages) == 50
         assert has_more is True
-        # 验证 _mongo_id 被提升为顶层 _id
-        assert messages[0].get("_id") == f"{0:024x}"
+        # 验证返回的是 Message 对象（_mongo_id 在 metadata 中）
+        assert isinstance(messages[0], UserMessage)
+        assert messages[0].metadata.get("_mongo_id") == f"{0:024x}"
         repo.query.assert_called_once_with(before=None, limit=50)
 
     @pytest.mark.asyncio
@@ -93,7 +88,8 @@ class TestMessageArchiveQuery:
         archive = MessageArchive(repo=repo)
         messages, has_more = await archive.query(limit=50)
         assert has_more is False
-        assert messages[0].get("_id") == "1"
+        assert isinstance(messages[0], UserMessage)
+        assert messages[0].metadata.get("_mongo_id") == "1"
         repo.query.assert_called_once_with(before=None, limit=50)
 
     @pytest.mark.asyncio

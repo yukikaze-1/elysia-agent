@@ -13,7 +13,7 @@ from aiohttp import web, WSMsgType
 from pydantic import ValidationError
 
 from core.agent import RunState
-from core.schema.message import MessageRole
+from core.schema.message import Message, MessageRole
 from core.schema.types import SessionId
 from Module.output import WebSocketChannel
 from .audio_buffer import AudioBuffer
@@ -637,18 +637,16 @@ def create_app(
 
     # ---- 消息归档 API ----
 
-    def _archive_to_client(msgs: list[dict]) -> list[dict]:
-        """将 archive 原始 dict 转为前端兼容格式（补 parts 字段）。"""
+    def _archive_to_client(msgs: list[Message]) -> list[dict]:
+        """将 Message 列表转为前端兼容格式（补 parts + _id 字段）。"""
         result = []
-        for m in msgs:
-            entry = dict(m)
-            if "_id" in entry:
-                entry["_id"] = str(entry["_id"])
-            # 如果已有 parts，直接透传
-            if "parts" in entry:
-                result.append(entry)
-                continue
-            # 否则从 content (TextPart 数组) 提取 parts
+        for msg in msgs:
+            entry = msg.model_dump(mode="json")
+            # 提升 metadata._mongo_id 为顶层 _id
+            mongo_id = entry.get("metadata", {}).pop("_mongo_id", None)
+            if mongo_id:
+                entry["_id"] = mongo_id
+            # 从 content (TextPart 数组) 提取 parts 给前端
             content = entry.get("content", [])
             if isinstance(content, list):
                 entry["parts"] = [
@@ -663,28 +661,33 @@ def create_app(
             result.append(entry)
         return result
 
-    def _sessions_to_client(msgs: list[dict]) -> list[dict]:
-        """将 archive 原始 dict 转为 session 详情前端兼容格式。"""
+    def _sessions_to_client(msgs: list[Message] | list[dict]) -> list[dict]:
+        """将消息列表转为 session 详情前端兼容格式。接受 Message 或原始 dict。"""
         result = []
         for m in msgs:
-            entry: dict = {"role": m.get("role", "?"),
-                           "timestamp": m.get("timestamp", ""),
-                           "content_type": m.get("content_type", {})}
-            content = m.get("content", "")
-            if isinstance(content, list):
-                entry["parts"] = [
-                    {"content": p.get("content", "")}
-                    for p in content
-                    if isinstance(p, dict) and p.get("type") == "text"
-                ]
-                entry["content"] = content
-            elif isinstance(content, str):
-                entry["parts"] = [{"content": content}]
-            elif "parts" in m:
-                entry["parts"] = m["parts"]
+            if isinstance(m, Message):
+                entry = m.model_dump(mode="json")
             else:
-                entry["parts"] = [{"content": str(content)}]
-            result.append(entry)
+                entry = dict(m)
+            item: dict = {"role": entry.get("role", "?"),
+                          "timestamp": entry.get("timestamp", ""),
+                          "content_type": entry.get("content_type", {})}
+            content = entry.get("content", "")
+            if isinstance(content, list):
+                item["parts"] = [
+                    {"content": p.get("content", "") if isinstance(p, dict) else getattr(p, "content", "")}
+                    for p in content
+                    if (isinstance(p, dict) and p.get("type") == "text")
+                       or (not isinstance(p, dict) and getattr(p, "type", None) == "text")
+                ]
+                item["content"] = content
+            elif isinstance(content, str):
+                item["parts"] = [{"content": content}]
+            elif "parts" in entry:
+                item["parts"] = entry["parts"]
+            else:
+                item["parts"] = [{"content": str(content)}]
+            result.append(item)
         return result
 
     async def messages_handler(request: web.Request) -> web.Response:
