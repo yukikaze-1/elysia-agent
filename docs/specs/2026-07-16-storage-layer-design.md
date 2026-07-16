@@ -27,7 +27,9 @@ core/storage/
 
 core/schema/                         新增：
 ├── token.py                        — TokenUsageEntry（Pydantic BaseModel）
-└── character.py                    — CharacterState（Pydantic BaseModel）
+├── character.py                    — CharacterState（Pydantic BaseModel，PersonalityEngine 字段）
+├── emotion.py                      — EmotionState（Pydantic BaseModel，EmotionEngine 字段）
+└── reflector.py                    — ReflectorState（Pydantic BaseModel，CharacterReflector + MemoryReflector 字段）
 ```
 
 ## base.py — Repository ABC
@@ -94,14 +96,19 @@ class TokenRepository(Repository):
                                limit: int = 100) -> list[TokenUsageEntry]: ...
 ```
 
-### CharacterStateRepository（MongoDB character_state，新建集合）
+### CharacterStateRepository（MongoDB session_state，新建集合）
+
+单一集合 `session_state` 存储 CharacterState / EmotionState / ReflectorState 三种文档。
+doc_type 字段区分（"character" / "emotion" / "reflector"）。
 
 ```python
 class CharacterStateRepository(Repository):
-    async def save(self, session_id: SessionId,
-                   state: CharacterState) -> None: ...
-    async def load(self, session_id: SessionId
-                   ) -> CharacterState | None: ...
+    async def save_character(self, state: CharacterState) -> None: ...
+    async def load_character(self, session_id: SessionId) -> CharacterState | None: ...
+    async def save_emotion(self, state: EmotionState) -> None: ...
+    async def load_emotion(self, session_id: SessionId) -> EmotionState | None: ...
+    async def save_reflector(self, state: ReflectorState) -> None: ...
+    async def load_reflector(self, session_id: SessionId) -> ReflectorState | None: ...
 ```
 
 ### MemoryRepository（Milvus long_term_memory）
@@ -140,8 +147,7 @@ class TokenUsageEntry(BaseModel):
 
 ### CharacterState（`core/schema/character.py`）
 
-遵循 core/schema Pydantic 统一风格。当前仍是 session.params dict → Pydantic 的过渡类型，
-后续 CharacterStateRepository 接管后可直接 `model_validate()` 从 MongoDB 恢复。
+PersonalityEngine 专用——L2/L3 性格状态 + 压缩追踪。不含情绪和 reflector 域字段。
 
 ```python
 class CharacterState(BaseModel):
@@ -149,16 +155,41 @@ class CharacterState(BaseModel):
     self_l2: str = ""
     state_l3: str = ""
     state_history: list[dict] = Field(default_factory=list)
-    reflector_buffer: list[dict] = Field(default_factory=list)
-    reflector_context: list[dict] = Field(default_factory=list)
-    self_perception_history: list[dict] = Field(default_factory=list)
-    mood: str = "neutral"
-    mood_intensity: float = 0.5
     last_awareness_time: IsoTimestamp | None = None
     compression_last_at: IsoTimestamp | None = None
     compression_last_count: int = 0
     updated_at: IsoTimestamp = Field(default_factory=now_iso)
 ```
+
+### EmotionState（`core/schema/emotion.py`）
+
+EmotionEngine 专用——当前情绪快照。
+
+```python
+class EmotionState(BaseModel):
+    session_id: SessionId
+    mood: str = "neutral"
+    mood_intensity: float = 0.5
+    updated_at: IsoTimestamp = Field(default_factory=now_iso)
+```
+
+### ReflectorState（`core/schema/reflector.py`）
+
+CharacterReflector + MemoryReflector 专用——buffer/context/计数状态。
+
+```python
+class ReflectorState(BaseModel):
+    session_id: SessionId
+    reflector_buffer: list[tuple] = Field(default_factory=list)
+    reflector_context: list[dict] = Field(default_factory=list)
+    self_perception_history: list[dict] = Field(default_factory=list)
+    mr_round_count: int = 0
+    mr_new_memory_count: int = 0
+    mr_last_summary: dict[str, object] = Field(default_factory=dict)
+    updated_at: IsoTimestamp = Field(default_factory=now_iso)
+```
+
+> `own_life` 仍作为 sesssion param 保留——它本质是 system prompt section 的注入文本，不属于状态引擎的领域。
 
 ## 调用方迁移
 
@@ -186,9 +217,23 @@ class CharacterState(BaseModel):
 - MongoDB 可用性判断改为 `session_repo.health_check()`
 - LTM 信息改为 `memory_repo.count()`、`memory_repo.query()`
 
-### PersonalityEngine / EmotionEngine / CharacterReflector / MemoryReflector
+### PersonalityEngine
 
-- 状态读写从 `session.set_param/get_param` 迁移到 `CharacterStateRepository`
+- `restore_state()` — 改为从 `CharacterStateRepository.load_character()` 恢复
+- 持久化 — shutdown 时通过 hook `save_character_state()` 写入 `CharacterStateRepository.save_character()`
+- 内存读写仍通过 `session.set_param/get_param`（`render_c1`/`render_c9` 每轮读取性能要求）
+
+### EmotionEngine
+
+- `restore_state()` — 改为从 `CharacterStateRepository.load_emotion()` 恢复
+- 持久化 — shutdown 时写入 `CharacterStateRepository.save_emotion()`
+- 内存读写仍通过 `session.set_param/get_param`
+
+### CharacterReflector / MemoryReflector
+
+- `restore_state()` — 改为从 `CharacterStateRepository.load_reflector()` 恢复
+- 持久化 — shutdown 时写入 `CharacterStateRepository.save_reflector()`
+- 内存读写仍通过 `session.set_param/get_param`
 
 ## 文档更新
 

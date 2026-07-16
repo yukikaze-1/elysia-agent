@@ -13,8 +13,7 @@
 - 遵循 `docs/readme-conventions.md`：新模块必须创建 README（面包屑 + 相关文档 + 根 README 注册）
 - 所有新测试标记 `@pytest.mark.unit`（纯 mock）或 `@pytest.mark.service`（mock 数据库）
 - 使用 conda 环境：`conda activate Elysia`
-- spec 不在首期范围的：session params dataclass 化、Neo4j 集成
-- CharacterStateRepository 仅用于持久化（save/load），不移除 session.set_param/get_param（那是 params dataclass 化的活儿）
+- spec 不在首期范围的：Neo4j 集成
 
 ---
 
@@ -23,10 +22,12 @@
 **Files:**
 - Create: `core/schema/token.py`
 - Create: `core/schema/character.py`
+- Create: `core/schema/emotion.py`
+- Create: `core/schema/reflector.py`
 - Modify: `core/schema/__init__.py`（新增 re-export）
 
 **Interfaces:**
-- Produces: `TokenUsageEntry`, `CharacterState`（Pydantic BaseModel）
+- Produces: `TokenUsageEntry`, `CharacterState`, `EmotionState`, `ReflectorState`（Pydantic BaseModel）
 
 - [ ] **Step 1: 创建 TokenUsageEntry**
 
@@ -50,15 +51,11 @@ class TokenUsageEntry(BaseModel):
     timestamp: IsoTimestamp = Field(default_factory=now_iso)
 ```
 
-- [ ] **Step 2: 创建 CharacterState**
+- [ ] **Step 2: 创建 CharacterState（PersonalityEngine 专用）**
 
 ```python
 # core/schema/character.py
-"""角色状态类型 — Pydantic BaseModel。
-
-CharacterStateRepository 用于序列化/反序列化持久化，
-Engine 层仍通过 session.set_param/get_param 做内存读写。
-"""
+"""CharacterState — PersonalityEngine 专用，L2/L3 性格状态 + 压缩追踪。"""
 
 from pydantic import BaseModel, Field
 
@@ -66,44 +63,84 @@ from .types import SessionId, IsoTimestamp, now_iso
 
 
 class CharacterState(BaseModel):
-    """角色性格状态快照 — 持久化到 MongoDB character_state 集合。"""
+    """角色性格状态快照。不含情绪和 reflector 域字段。"""
     session_id: SessionId
     self_l2: str = ""
     state_l3: str = ""
     state_history: list[dict] = Field(default_factory=list)
-    reflector_buffer: list[tuple] = Field(default_factory=list)
-    reflector_context: list[dict] = Field(default_factory=list)
-    self_perception_history: list[dict] = Field(default_factory=list)
-    mood: str = "neutral"
-    mood_intensity: float = 0.5
     last_awareness_time: IsoTimestamp | None = None
     compression_last_at: IsoTimestamp | None = None
     compression_last_count: int = 0
     updated_at: IsoTimestamp = Field(default_factory=now_iso)
 ```
 
-- [ ] **Step 3: __init__.py 新增 re-export**
+- [ ] **Step 3: 创建 EmotionState（EmotionEngine 专用）**
+
+```python
+# core/schema/emotion.py
+"""EmotionState — EmotionEngine 专用，当前情绪快照。"""
+
+from pydantic import BaseModel, Field
+
+from .types import SessionId, IsoTimestamp, now_iso
+
+
+class EmotionState(BaseModel):
+    """当前情绪状态快照。"""
+    session_id: SessionId
+    mood: str = "neutral"
+    mood_intensity: float = 0.5
+    updated_at: IsoTimestamp = Field(default_factory=now_iso)
+```
+
+- [ ] **Step 4: 创建 ReflectorState（CharacterReflector + MemoryReflector 专用）**
+
+```python
+# core/schema/reflector.py
+"""ReflectorState — CharacterReflector + MemoryReflector 专用。"""
+
+from pydantic import BaseModel, Field
+
+from .types import SessionId, IsoTimestamp, now_iso
+
+
+class ReflectorState(BaseModel):
+    """Reflector buffer/context/计数状态。"""
+    session_id: SessionId
+    reflector_buffer: list[tuple] = Field(default_factory=list)
+    reflector_context: list[dict] = Field(default_factory=list)
+    self_perception_history: list[dict] = Field(default_factory=list)
+    mr_round_count: int = 0
+    mr_new_memory_count: int = 0
+    mr_last_summary: dict[str, object] = Field(default_factory=dict)
+    updated_at: IsoTimestamp = Field(default_factory=now_iso)
+```
+
+- [ ] **Step 5: __init__.py 新增 re-export**
 
 在 `core/schema/__init__.py` 末尾追加：
 
 ```python
 from core.schema.token import TokenUsageEntry  # noqa: F401
 from core.schema.character import CharacterState  # noqa: F401
+from core.schema.emotion import EmotionState  # noqa: F401
+from core.schema.reflector import ReflectorState  # noqa: F401
 ```
 
-- [ ] **Step 4: 验证 import**
+- [ ] **Step 6: 验证 import**
 
 ```bash
-python -c "from core.schema import TokenUsageEntry, CharacterState; print('OK')"
+python -c "from core.schema import TokenUsageEntry, CharacterState, EmotionState, ReflectorState; print('OK')"
 ```
 
 Expected: `OK`
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 7: 提交**
 
 ```bash
-git add core/schema/token.py core/schema/character.py core/schema/__init__.py
-git commit -m "feat: core/schema/token.py + character.py — TokenUsageEntry + CharacterState Pydantic"
+git add core/schema/token.py core/schema/character.py core/schema/emotion.py \
+        core/schema/reflector.py core/schema/__init__.py
+git commit -m "feat: core/schema state types — CharacterState + EmotionState + ReflectorState Pydantic"
 ```
 
 ---
@@ -912,9 +949,9 @@ git commit -m "refactor: MemoryRepository + LongTermMemory 迁移 _vector_db→_
 - Modify: `core/agent.py`（start() 传入 repo, stop() 调用 repo.save）
 
 **Interfaces:**
-- Consumes: `Repository` ABC, `CharacterState` from Task 1
+- Consumes: `Repository` ABC, `CharacterState`/`EmotionState`/`ReflectorState` from Task 1
 - Produces: `CharacterStateRepository`
-- **重要：仅替换持久化路径，不替换 set_param/get_param 内存操作**
+- **集合名 `session_state`，doc_type 字段区分三种文档类型**
 
 - [ ] **Step 1: 创建 CharacterStateRepository**
 
@@ -932,11 +969,14 @@ if TYPE_CHECKING:
     from core.schema.character import CharacterState
 
 logger = logging.getLogger(__name__)
-COLLECTION = "character_state"
+COLLECTION = "session_state"
 
 
 class CharacterStateRepository(Repository):
-    """角色状态持久化存储。"""
+    """角色状态持久化存储（CharacterState / EmotionState / ReflectorState）。
+
+    单一集合 session_state，doc_type 字段区分三种文档类型。
+    """
 
     def __init__(self, db: DocumentDBBackend | None = None):
         self._db: DocumentDBBackend | None = db
@@ -960,68 +1000,79 @@ class CharacterStateRepository(Repository):
     async def health_check(self) -> bool:
         return self._db is not None
 
-    async def save(self, state: "CharacterState") -> None:
-        """保存或更新角色状态。"""
+    # ---- generic save/load helpers ----
+
+    async def _save(self, session_id: str, doc_type: str, state: BaseModel) -> None:
         if self._db is None:
             return
         doc = state.model_dump(mode="json")
+        doc["doc_type"] = doc_type
         await self._db.update_one(
             COLLECTION,
-            {"session_id": doc["session_id"]},
+            {"session_id": session_id, "doc_type": doc_type},
             {"$set": doc},
             upsert=True,
         )
 
-    async def load(self, session_id: str) -> "CharacterState | None":
-        """加载角色状态。"""
+    async def _load(self, session_id: str, doc_type: str, model_cls: type[BaseModel]):
         if self._db is None:
             return None
-        from core.schema.character import CharacterState
         results = await self._db.find(
-            COLLECTION, {"session_id": session_id}, limit=1,
+            COLLECTION,
+            {"session_id": session_id, "doc_type": doc_type},
+            limit=1,
         )
         if not results:
             return None
-        return CharacterState.model_validate(results[0])
+        return model_cls.model_validate(results[0])
+
+    # ---- public interface ----
+
+    async def save_character(self, state: CharacterState) -> None:
+        await self._save(state.session_id, "character", state)
+
+    async def load_character(self, session_id: str) -> CharacterState | None:
+        return await self._load(session_id, "character", CharacterState)
+
+    async def save_emotion(self, state: EmotionState) -> None:
+        await self._save(state.session_id, "emotion", state)
+
+    async def load_emotion(self, session_id: str) -> EmotionState | None:
+        return await self._load(session_id, "emotion", EmotionState)
+
+    async def save_reflector(self, state: ReflectorState) -> None:
+        await self._save(state.session_id, "reflector", state)
+
+    async def load_reflector(self, session_id: str) -> ReflectorState | None:
+        return await self._load(session_id, "reflector", ReflectorState)
 ```
 
-- [ ] **Step 2: 在 PersonalityEngine 中加持久化 hooks**
+- [ ] **Step 2: 在三个 Engine 中加持久化 hooks**
 
-读 [engine.py](core/personality/engine.py)。新增两个方法，不改现有逻辑：
+**PersonalityEngine**（`core/personality/engine.py`）：
 
 ```python
-# engine.py — 新增方法（追加到 class 末尾）
+# 追加到 class 末尾
 
 async def save_character_state(self, repo: "CharacterStateRepository") -> None:
-    """保存当前性格状态到持久化存储。shutdown 时调用。"""
+    """保存当前性格状态。shutdown 时调用。"""
     from core.schema.character import CharacterState
     state = CharacterState(
-        session_id=self._session.session_id,
+        session_id=SessionId(self._session.session_id),
         self_l2=self._session.get_param("self_l2", ""),
         state_l3=self._session.get_param("state_l3", ""),
         state_history=self._session.get_param("state_history", []),
-        reflector_buffer=self._session.get_param("reflector_buffer", []),
-        reflector_context=self._session.get_param("reflector_context", []),
-        self_perception_history=self._session.get_param(
-            "self_perception_history", []),
-        mood=self._session.get_param("mood", "neutral"),
-        mood_intensity=self._session.get_param("mood_intensity", 0.5),
         last_awareness_time=self._session.get_param("last_awareness_time", None),
         compression_last_at=self._session.get_param("compression_last_at", None),
         compression_last_count=self._session.get_param("compression_last_count", 0),
     )
-    await repo.save(state)
+    await repo.save_character(state)
 
-def restore_character_state(self, state: "CharacterState") -> None:
-    """从持久化存储恢复性格状态。start() 时在 restore_state 之后调用。"""
+def restore_character_state(self, state: CharacterState) -> None:
+    """从持久化恢复性格状态。start() 时在 restore_state 之后调用。"""
     self._session.set_param("self_l2", state.self_l2)
     self._session.set_param("state_l3", state.state_l3)
     self._session.set_param("state_history", state.state_history)
-    self._session.set_param("reflector_buffer", state.reflector_buffer)
-    self._session.set_param("reflector_context", state.reflector_context)
-    self._session.set_param("self_perception_history", state.self_perception_history)
-    self._session.set_param("mood", state.mood)
-    self._session.set_param("mood_intensity", state.mood_intensity)
     if state.last_awareness_time:
         self._session.set_param("last_awareness_time", state.last_awareness_time)
         self._last_awareness_time = state.last_awareness_time
@@ -1031,23 +1082,32 @@ def restore_character_state(self, state: "CharacterState") -> None:
         self._session.set_param("compression_last_count", state.compression_last_count)
 ```
 
+**EmotionEngine**（`core/emotion_engine.py`）：新增 `save_emotion_state()` / `restore_emotion_state()` 两个 hook，结构同 CharacterState（读 session params → 构造 EmotionState → repo.save_emotion / repo.load_emotion → set_params）。
+
+**CharacterReflector**（`core/personality/reflector.py`）：新增 `save_reflector_state()` / `restore_reflector_state()` — 覆盖自身 buffer/context + MemoryReflector 的计数（读 `mr_*` params）。
+
+
 - [ ] **Step 3: 在 agent.py 中接线**
 
-在 `start()` 的持久化恢复段（现有 `restore_state()` 调用之后）加：
+`start()` 持久化恢复段（`restore_state()` 调用之后）：
 
 ```python
-# 从 CharacterStateRepository 恢复（替代之前的 session params 恢复）
 if self._character_state_repo:
-    if state := await self._character_state_repo.load(self._session.session_id):
+    if state := await self._character_state_repo.load_character(self._session.session_id):
         self._personality_engine.restore_character_state(state)
+    if es := await self._character_state_repo.load_emotion(self._session.session_id):
+        self._emotion.restore_emotion_state(es)
+    if rs := await self._character_state_repo.load_reflector(self._session.session_id):
+        self._character_reflector.restore_reflector_state(rs)
 ```
 
-在 `stop()` 的 buffer flush 段（`_flush_compression()` 之后）加：
+`stop()` buffer flush 段（`_flush_compression()` 之后）：
 
 ```python
-# 保存性格状态到独立持久化
 if self._character_state_repo:
     await self._personality_engine.save_character_state(self._character_state_repo)
+    await self._emotion.save_emotion_state(self._character_state_repo)
+    await self._character_reflector.save_reflector_state(self._character_state_repo)
 ```
 
 在 `__init__` 中新增 `self._character_state_repo` 参数。
@@ -1061,23 +1121,41 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from core.storage.character_state_repo import CharacterStateRepository
 from core.schema.character import CharacterState
+from core.schema.emotion import EmotionState
+from core.schema.reflector import ReflectorState
 from core.schema.types import SessionId
 
 
 @pytest.mark.unit
 class TestCharacterStateRepository:
-    def test_save_calls_update_one(self):
+    def test_save_character_calls_update_one(self):
         import asyncio
         repo = CharacterStateRepository(db=MagicMock())
         repo._db.update_one = AsyncMock()
         state = CharacterState(session_id=SessionId("sid"))
-        asyncio.run(repo.save(state))
+        asyncio.run(repo.save_character(state))
         repo._db.update_one.assert_called_once()
 
-    def test_load_returns_none_when_db_none(self):
+    def test_save_emotion_calls_update_one(self):
+        import asyncio
+        repo = CharacterStateRepository(db=MagicMock())
+        repo._db.update_one = AsyncMock()
+        state = EmotionState(session_id=SessionId("sid"))
+        asyncio.run(repo.save_emotion(state))
+        repo._db.update_one.assert_called_once()
+
+    def test_save_reflector_calls_update_one(self):
+        import asyncio
+        repo = CharacterStateRepository(db=MagicMock())
+        repo._db.update_one = AsyncMock()
+        state = ReflectorState(session_id=SessionId("sid"))
+        asyncio.run(repo.save_reflector(state))
+        repo._db.update_one.assert_called_once()
+
+    def test_load_character_returns_none_when_db_none(self):
         import asyncio
         repo = CharacterStateRepository(db=None)
-        result = asyncio.run(repo.load("sid"))
+        result = asyncio.run(repo.load_character("sid"))
         assert result is None
 ```
 
@@ -1092,8 +1170,9 @@ python -m pytest core/personality/tests/ -v --tb=short
 
 ```bash
 git add core/storage/character_state_repo.py core/storage/tests/test_character_state_repo.py \
-        core/personality/engine.py core/agent.py
-git commit -m "feat: CharacterStateRepository + PersonalityEngine 持久化 hook"
+        core/personality/engine.py core/emotion_engine.py core/personality/reflector.py \
+        core/agent.py
+git commit -m "feat: CharacterStateRepository + 3 engine 持久化 hook（Character/Emotion/Reflector）"
 ```
 
 ---
@@ -1230,7 +1309,7 @@ git commit -m "refactor: server.py + agent.py + debug_info 迁移到 Repository"
 | `message_repo.py` | MessageRepository — MongoDB message_archive 集合 |
 | `token_repo.py` | TokenRepository — MongoDB token_usage 集合 |
 | `memory_repo.py` | MemoryRepository — Milvus long_term_memory 集合 |
-| `character_state_repo.py` | CharacterStateRepository — MongoDB character_state 集合 |
+| `character_state_repo.py` | CharacterStateRepository — MongoDB session_state 集合（CharacterState/EmotionState/ReflectorState） |
 
 ## 设计原则
 
