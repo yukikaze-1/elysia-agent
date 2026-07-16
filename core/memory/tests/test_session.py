@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.memory.session import SessionMemory
-from core.schema.types import SessionId
+from core.schema.types import MessageId, SessionId
 
 
 @pytest.mark.unit
@@ -124,14 +124,13 @@ class TestSessionMemorySaveLoad:
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
         msg = UserMessage(
-            message_id="m1",
+            message_id=MessageId("m1"),
             content=[TextPart(content="hello")],
         )
-        raw_msg = msg.model_dump(mode="json")
 
         mock_repo = MagicMock()
         mock_repo._db = object()  # 模拟已连接
-        mock_repo.load = AsyncMock(return_value=([raw_msg], {"mood": "happy"}))
+        mock_repo.load = AsyncMock(return_value=([msg], {"mood": "happy"}))
         sm = SessionMemory(session_id=SessionId("test-load"), repo=mock_repo)
         result = await sm.load("test-load")
         assert result is True

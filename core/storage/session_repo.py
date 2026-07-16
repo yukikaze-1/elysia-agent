@@ -2,16 +2,22 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Sequence
 
+from pydantic import TypeAdapter
+
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
+from core.schema._utils import now_iso
+from core.schema.message import Message
 from core.schema.types import IsoTimestamp, SessionId
 
 from .base import Repository
 
 logger = logging.getLogger(__name__)
 COLLECTION = "sessions"
+
+# TypeAdapter for Message union — cached at module level
+_message_adapter: TypeAdapter[Message] = TypeAdapter(Message)
 
 
 @dataclass
@@ -67,28 +73,24 @@ class SessionRepository(Repository):
         except Exception:
             return False
 
-    async def save(self, session_id: str, messages: Sequence[Any],
+    async def save(self, session_id: SessionId, messages: Sequence[Message],
                    params: dict[str, Any]) -> None:
         """保存或更新 session。"""
         if self._db is None:
             return
-        # 序列化 messages（支持 Pydantic Message 对象和原始 dict）
-        serialized = [
-            m.model_dump(mode="json") if hasattr(m, "model_dump") else m
-            for m in messages
-        ]
+        serialized = [m.model_dump(mode="json") for m in messages]
         doc = {
             "session_id": session_id,
             "messages": serialized,
             "params": params,
-            "updated_at": datetime.now().astimezone().isoformat(),
+            "updated_at": now_iso(),
         }
         await self._db.update_one(
             COLLECTION, {"session_id": session_id}, {"$set": doc}, upsert=True,
         )
 
-    async def load(self, session_id: str
-                   ) -> tuple[list[dict], dict[str, Any]] | None:
+    async def load(self, session_id: SessionId
+                   ) -> tuple[list[Message], dict[str, Any]] | None:
         """加载 session。返回 (messages, params) 或 None。"""
         if self._db is None:
             return None
@@ -96,11 +98,13 @@ class SessionRepository(Repository):
         if not results:
             return None
         doc = results[0]
-        for m in doc.get("messages", []):
+        msgs_raw = doc.get("messages", [])
+        for m in msgs_raw:
             m.pop("_id", None)
-        return doc.get("messages", []), dict(doc.get("params", {}))
+        messages = [_message_adapter.validate_python(m) for m in msgs_raw]
+        return messages, dict(doc.get("params", {}))
 
-    async def delete(self, session_id: str) -> int:
+    async def delete(self, session_id: SessionId) -> int:
         if self._db is None:
             return 0
         return await self._db.delete_many(COLLECTION, {"session_id": session_id})

@@ -238,13 +238,11 @@ class SessionMemory:
         try:
             result = await self._repo.load(sid)
             if result is not None:
-                msgs_raw, params = result
+                messages, params = result
                 self._session_id = sid
-                # 从 dict 转换回 Message 对象
-                converted = [_message_adapter.validate_python(m) for m in msgs_raw]
-                self._messages = deque(converted[-self._max_messages:], maxlen=self._max_messages)
+                self._messages = deque(messages[-self._max_messages:], maxlen=self._max_messages)
                 self._params = dict(params)
-                logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(converted))
+                logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(messages))
                 return True
             return await self._load_from_jsonl()
         except Exception:
