@@ -114,6 +114,9 @@ class SessionMemory:
                         entry["tool_calls"] = [tc.model_dump(mode="json") for tc in msg.tool_calls]
                     if msg.token_usage:
                         entry["token_usage"] = msg.token_usage
+                    # block_index → content_type（debug 页面 / 前端旧字段名）
+                    if msg.block_index:
+                        entry["content_type"] = msg.block_index
                 result.append(entry)
         return result
 
