@@ -28,6 +28,7 @@ class MessageRepository(Repository):
         try:
             self._db = DocumentDBFactory.create("mongodb/default")
             await self._db.ensure_index(COLLECTION, [("session_id", 1)])
+            await self._db.ensure_index(COLLECTION, [("session_id", 1), ("_id", -1)])
             logger.info("MessageRepository: MongoDB connected")
             return True
         except Exception as e:
@@ -53,7 +54,8 @@ class MessageRepository(Repository):
         await self._db.insert_one(COLLECTION, msg)
 
     async def query_by_session(self, session_id: str, *,
-                               limit: int = 20, before: ObjectId | None = None
+                               limit: int = 20, before: ObjectId | None = None,
+                               skip: int = 0
                                ) -> tuple[list[dict], int]:
         """按 session 分页查询消息。返回 (消息列表, 总条数)。"""
         if self._db is None:
@@ -62,9 +64,25 @@ class MessageRepository(Repository):
         if before:
             filter_expr["_id"] = {"$lt": before}
         sort = [("_id", -1)]
-        messages = await self._db.find(COLLECTION, filter_expr, sort=sort, limit=limit)
+        messages = await self._db.find(COLLECTION, filter_expr, sort=sort, skip=skip, limit=limit)
         total = await self._db.count(COLLECTION, {"session_id": session_id})
         return messages, total
+
+    async def query(self, *, before: ObjectId | str | None = None,
+                    limit: int = 20) -> tuple[list[dict], bool]:
+        """基于游标的分页查询（/api/messages 使用）。返回 (消息列表, has_more)。"""
+        if self._db is None:
+            return [], False
+        filter_expr: dict = {}
+        if before:
+            oid = ObjectId(before) if isinstance(before, str) else before
+            filter_expr["_id"] = {"$lt": oid}
+        sort = [("_id", -1)]
+        messages = await self._db.find(COLLECTION, filter_expr, sort=sort, limit=limit + 1)
+        has_more = len(messages) > limit
+        if has_more:
+            messages = messages[:limit]
+        return messages, has_more
 
     async def count_by_session(self, session_id: str) -> int:
         if self._db is None:
@@ -104,15 +122,13 @@ class MessageRepository(Repository):
     async def delete_one(self, msg_id: str) -> int:
         if self._db is None:
             return 0
-        from bson import ObjectId as ObjId
-        return await self._db.delete_many(COLLECTION, {"_id": ObjId(msg_id)})
+        return await self._db.delete_many(COLLECTION, {"_id": ObjectId(msg_id)})
 
     async def update_text(self, msg_id: str, new_text: str) -> int:
         if self._db is None:
             return 0
-        from bson import ObjectId as ObjId
         return await self._db.update_one(
             COLLECTION,
-            {"_id": ObjId(msg_id)},
+            {"_id": ObjectId(msg_id)},
             {"$set": {"content": [{"type": "text", "content": new_text}]}},
         )

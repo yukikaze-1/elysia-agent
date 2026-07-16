@@ -46,28 +46,30 @@ class TestMessageArchiveQuery:
     @pytest.mark.asyncio
     async def test_query_returns_messages_and_has_more(self):
         repo = AsyncMock()
-        msgs = [{"_id": str(i), "role": "user", "text": f"msg{i}"} for i in range(51)]
-        repo.query_offset = AsyncMock(return_value=(msgs, 100))
+        msgs = [{"_id": f"{i:024x}", "role": "user", "text": f"msg{i}"} for i in range(51)]
+        repo.query = AsyncMock(return_value=(msgs[:50], True))
         archive = MessageArchive(repo=repo)
         messages, has_more = await archive.query(limit=50)
         assert len(messages) == 50
         assert has_more is True
+        repo.query.assert_called_once_with(before=None, limit=50)
 
     @pytest.mark.asyncio
     async def test_query_no_more_pages(self):
         repo = AsyncMock()
-        repo.query_offset = AsyncMock(return_value=([{"_id": "1", "role": "user"}], 1))
+        repo.query = AsyncMock(return_value=([{"_id": "1", "role": "user"}], False))
         archive = MessageArchive(repo=repo)
         messages, has_more = await archive.query(limit=50)
         assert has_more is False
+        repo.query.assert_called_once_with(before=None, limit=50)
 
     @pytest.mark.asyncio
-    async def test_query_pagination_limit_plus_one(self):
+    async def test_query_pagination_cursor(self):
         repo = AsyncMock()
-        repo.query_offset = AsyncMock(return_value=([], 0))
+        repo.query = AsyncMock(return_value=([], False))
         archive = MessageArchive(repo=repo)
-        await archive.query(limit=30)
-        repo.query_offset.assert_called_once_with(skip=0, limit=31)
+        await archive.query(before="abc123", limit=30)
+        repo.query.assert_called_once_with(before="abc123", limit=30)
 
     @pytest.mark.asyncio
     async def test_query_returns_empty_when_not_connected(self):

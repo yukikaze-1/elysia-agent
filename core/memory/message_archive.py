@@ -54,13 +54,7 @@ class MessageArchive:
         if self._repo is None:
             return [], False
 
-        messages, _ = await self._repo.query_offset(skip=0, limit=limit + 1)
-
-        has_more = len(messages) > limit
-        if has_more:
-            messages = messages[:limit]
-
-        return messages, has_more
+        return await self._repo.query(before=before, limit=limit)
 
     # ---- Offset 分页（支持跳页）----
 
@@ -124,7 +118,7 @@ class MessageArchive:
         返回 (messages, total)。"""
         if self._repo is None:
             return [], 0
-        return await self._repo.query_by_session(session_id, limit=limit)
+        return await self._repo.query_by_session(session_id, limit=limit, skip=skip)
 
     async def count_by_session(self, session_id: str) -> int:
         """按 session_id 统计消息数。"""
