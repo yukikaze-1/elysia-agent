@@ -2,7 +2,7 @@
 """消息格式适配器 — OpenAI / Legacy 格式转换。
 
 纯函数，零状态。依赖 core/schema 类型。
-从旧 Module/schema/message_format.py 迁移而来。
+消息格式转换函数，依赖 core/schema 类型。
 
 边界约定：外部数据（session 存储、WS 请求）是 list[dict]，
 用 parts_from_dicts() 在边界处转为 list[Part]，内部逻辑只处理 Part。
