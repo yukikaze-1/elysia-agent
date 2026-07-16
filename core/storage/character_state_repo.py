@@ -28,6 +28,7 @@ class CharacterStateRepository(Repository):
         try:
             self._db = DocumentDBFactory.create("mongodb/default")
             await self._db.ensure_index(COLLECTION, [("session_id", 1)])
+            await self._db.ensure_index(COLLECTION, [("session_id", 1), ("doc_type", 1)])
             logger.info("CharacterStateRepository: MongoDB connected")
             return True
         except Exception as e:

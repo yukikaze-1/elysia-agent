@@ -335,5 +335,5 @@ class PersonalityEngine:
             self._last_awareness_time = state.last_awareness_time
         if state.compression_last_at:
             self._session.set_param("compression_last_at", state.compression_last_at)
-        if state.compression_last_count:
+        if state.compression_last_count is not None:
             self._session.set_param("compression_last_count", state.compression_last_count)
