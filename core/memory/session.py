@@ -36,7 +36,7 @@ class SessionMemory:
         self._messages: deque[Message] = deque(maxlen=max_messages)
         self._params: dict[str, Any] = {}
         self._max_messages = max_messages
-        self._session_id = session_id
+        self._session_id: SessionId = session_id
         self._db: Any = None  # DocumentDBBackend or None
         self._pending_file = os.path.join("data", f"session_{session_id}.json")
 
