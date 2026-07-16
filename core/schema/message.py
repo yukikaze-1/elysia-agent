@@ -62,6 +62,7 @@ class ToolResultMessage(BaseModel):
     truncated: bool = False
     message_id: MessageId = Field(default=MessageId(""))
     timestamp: IsoTimestamp = Field(default_factory=now_iso)
+    metadata: dict = Field(default_factory=dict)
 
 
 Message = Union[UserMessage, AssistantMessage, ToolResultMessage]
