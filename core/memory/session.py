@@ -101,7 +101,7 @@ class SessionMemory:
                     p.content for p in msg.content
                     if isinstance(p, TextPart)
                 )
-                entry: ClientToolMessage = {
+                tool_entry: ClientToolMessage = {
                     "role": "tool",
                     "tool_call_id": msg.tool_call_id,
                     "name": msg.tool_name,
@@ -112,7 +112,7 @@ class SessionMemory:
                     "duration_ms": msg.duration_ms,
                     "truncated": msg.truncated,
                 }
-                result.append(entry)
+                result.append(tool_entry)
             else:
                 # UserMessage / AssistantMessage
                 text_parts = [
@@ -120,32 +120,23 @@ class SessionMemory:
                     for p in msg.content
                     if isinstance(p, TextPart)
                 ]
+                chat_entry: ClientUserMessage | ClientAssistantMessage = {
+                    "role": str(msg.role),
+                    "parts": text_parts if text_parts else [{"content": ""}],
+                    "content": [p.model_dump(mode="json") for p in msg.content],
+                    "message_id": msg.message_id,
+                    "timestamp": msg.timestamp,
+                }
                 if isinstance(msg, AssistantMessage):
-                    entry: ClientAssistantMessage = {
-                        "role": str(msg.role),
-                        "parts": text_parts if text_parts else [{"content": ""}],
-                        "content": [p.model_dump(mode="json") for p in msg.content],
-                        "message_id": msg.message_id,
-                        "timestamp": msg.timestamp,
-                    }
                     if msg.inner_voice:
-                        entry["inner_voice"] = msg.inner_voice
+                        chat_entry["inner_voice"] = msg.inner_voice  # type: ignore[typeddict-item]
                     if msg.tool_calls:
-                        entry["tool_calls"] = [tc.model_dump(mode="json") for tc in msg.tool_calls]
+                        chat_entry["tool_calls"] = [tc.model_dump(mode="json") for tc in msg.tool_calls]  # type: ignore[typeddict-item]
                     if msg.token_usage:
-                        entry["token_usage"] = msg.token_usage.model_dump(mode="json")
-                    # block_index → content_type（debug 页面 / 前端旧字段名）
+                        chat_entry["token_usage"] = msg.token_usage.model_dump(mode="json")  # type: ignore[typeddict-item]
                     if msg.block_index:
-                        entry["content_type"] = msg.block_index  # type: ignore[typeddict-item]
-                else:
-                    entry: ClientUserMessage = {
-                        "role": str(msg.role),
-                        "parts": text_parts if text_parts else [{"content": ""}],
-                        "content": [p.model_dump(mode="json") for p in msg.content],
-                        "message_id": msg.message_id,
-                        "timestamp": msg.timestamp,
-                    }
-                result.append(entry)
+                        chat_entry["content_type"] = msg.block_index  # type: ignore[typeddict-item]
+                result.append(chat_entry)
         return result
 
     # ---- runtime params ----
