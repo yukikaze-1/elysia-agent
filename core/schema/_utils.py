@@ -14,3 +14,16 @@ def _normalize_iso_ts(ts: str) -> str:
 def now_iso() -> str:
     """返回当前 UTC 时间 ISO 8601 字符串。"""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _validate_src(v: str) -> str:
+    """校验 Part src 字段：不能为空，必须是合法 URL / data URI / 绝对路径 / 存在的本地文件。"""
+    from pathlib import Path
+
+    if not v:
+        raise ValueError("src 不能为空")
+    if v.startswith(("http://", "https://", "data:", "/")):
+        return v
+    if Path(v).exists():
+        return v
+    raise ValueError(f"无效的 src: {v!r}")

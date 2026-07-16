@@ -9,10 +9,11 @@
 """
 
 from enum import StrEnum
-from pathlib import Path
 from typing import Annotated, Literal, Union
 
 from pydantic import AfterValidator, BaseModel, Field
+
+from ._utils import _validate_src
 
 
 # ── 枚举 ──────────────────────────────────────────────
@@ -61,16 +62,6 @@ class VideoMime(StrEnum):
 
 
 # ── src 字段校验 ────────────────────────────────────────
-
-def _validate_src(v: str) -> str:
-    """校验 Part src 字段：不能为空，必须是合法 URL / data URI / 绝对路径 / 存在的本地文件。"""
-    if not v:
-        raise ValueError("src 不能为空")
-    if v.startswith(("http://", "https://", "data:", "/")):
-        return v
-    if Path(v).exists():
-        return v
-    raise ValueError(f"无效的 src: {v!r}")
 
 Src = Annotated[str, AfterValidator(_validate_src)]
 
