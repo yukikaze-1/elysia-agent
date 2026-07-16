@@ -371,10 +371,7 @@ def create_app(
                 "sessions": [
                     {
                         "session_id": d.get("session_id", "?"),
-                        "message_count": (
-                            await archive.count_by_session(d.get("session_id", ""))
-                            if archive else len(d.get("messages", []))
-                        ),
+                        "message_count": len(d.get("messages", [])),
                         "updated_at": d.get("updated_at", ""),
                         "token_total": token_totals.get(d.get("session_id", ""), 0),
                     }
@@ -406,7 +403,8 @@ def create_app(
                     pass
             return {}
 
-        if archive and archive._db is not None:
+        archive_db = getattr(archive, '_db', None) if archive else None
+        if archive_db is not None:
             # 从 archive（权威源）读取消息
             try:
                 msgs, total = await archive.query_by_session(sid, limit=20)
