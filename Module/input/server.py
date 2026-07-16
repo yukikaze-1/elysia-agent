@@ -13,6 +13,8 @@ from aiohttp import web, WSMsgType
 from pydantic import ValidationError
 
 from core.agent import RunState
+from core.schema.message import MessageRole
+from core.schema.types import SessionId
 from Module.output import WebSocketChannel
 from .audio_buffer import AudioBuffer
 
@@ -282,7 +284,8 @@ def create_app(
         except ValueError:
             limit = 100; skip = 0
         search = request.query.get("search", "").strip()
-        role = request.query.get("role", "").strip()
+        role_str = request.query.get("role", "").strip()
+        role = MessageRole(role_str) if role_str else None
 
         try:
             messages, total = await archive.query_offset(skip=skip, limit=limit, search=search, role=role)
@@ -385,7 +388,7 @@ def create_app(
             return web.json_response({"error": "缺少 session_id"}, status=400)
 
         # 辅助函数：从 session repo 取 params（目标 session，非当前 session）
-        async def _get_params(sid: str) -> dict:
+        async def _get_params(sid: SessionId) -> dict:
             result = await agent._session_repo.load(sid)
             if result is not None:
                 _, params = result

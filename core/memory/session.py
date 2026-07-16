@@ -9,7 +9,6 @@ import json
 import logging
 import os
 from collections import deque
-from datetime import datetime
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -20,6 +19,7 @@ from core.schema.message import (
     ToolResultMessage,
     UserMessage,
 )
+from core.schema._utils import now_iso
 from core.schema.part import TextPart
 from core.schema.types import SessionId
 from core.storage.session_repo import SessionRepository
@@ -161,7 +161,7 @@ class SessionMemory:
                 "session_id": self._session_id,
                 "messages": [msg.model_dump(mode="json") for msg in self._messages],
                 "params": dict(self._params),
-                "updated_at": datetime.now().astimezone().isoformat(),
+                "updated_at": now_iso(),
             }
             os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
             tmp = self._pending_file + ".tmp"
@@ -209,7 +209,7 @@ class SessionMemory:
             logger.warning("从 %s 恢复 session 失败", self._pending_file, exc_info=True)
             return False
 
-    async def load(self, session_id: str | None = None) -> bool:
+    async def load(self, session_id: SessionId | None = None) -> bool:
         """Load session from MongoDB。MongoDB 不可用时尝试本地 JSONL 恢复。"""
         if self._repo is None:
             return await self._load_from_jsonl()

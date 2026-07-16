@@ -4,12 +4,14 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from core.schema.types import IsoTimestamp
+
 
 @dataclass
 class PromptRecord:
     """一次 LLM 调用的完整 prompt 记录。"""
     index: int
-    timestamp: str
+    timestamp: IsoTimestamp
     round_num: int
     model: str
     messages: list[dict]

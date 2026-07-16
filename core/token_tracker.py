@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from Module.output import OutputManager
+    from core.schema.types import SessionId
     from core.storage.token_repo import TokenRepository
 
 
@@ -52,7 +53,7 @@ class TokenTracker:
 
     def __init__(
         self,
-        session_id: str,
+        session_id: SessionId,
         output_manager: "OutputManager",
         repo: "TokenRepository | None" = None,
     ):

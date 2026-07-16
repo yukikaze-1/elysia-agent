@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from core.schema.message import MessageRole
+
 
 def content_text_from_content(content: list[dict] | str | None) -> str:
     """从原始 content 提取纯文本（给日志和 prompt 渲染用）。
@@ -22,7 +24,7 @@ def content_text_from_content(content: list[dict] | str | None) -> str:
 class MessageObj:
     """轻量 assistant 消息对象 — 非流式文本最终发送。"""
 
-    role: str = "assistant"
+    role: MessageRole = MessageRole.ASSISTANT
     content: str = ""
 
     def to_dict(self) -> dict:

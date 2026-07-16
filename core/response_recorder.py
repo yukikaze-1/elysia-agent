@@ -5,12 +5,14 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from core.schema.types import IsoTimestamp
+
 
 @dataclass
 class ResponseRecord:
     """一次 LLM 调用的原始回复记录。"""
     index: int
-    timestamp: str
+    timestamp: IsoTimestamp
     round_num: int
     raw_text: str         # 完整原始文本（含 <inner_voice> 标签）
     inner_voice: str | None  # 剥离的 inner_voice 内容

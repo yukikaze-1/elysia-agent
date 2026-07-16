@@ -34,6 +34,7 @@ from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
 from .personality import CharacterReflector, PersonalityEngine
 from .memory.memory_reflector import MemoryReflector  # 新增
+from core.schema.types import IsoTimestamp
 from Module.embedding import EmbeddingFactory
 from .task_scheduler import TaskScheduler
 from core.storage.session_repo import SessionRepository
@@ -899,7 +900,7 @@ class Agent:
 
     # ---- Background task lifecycle ----
 
-    def _register_background_task(self, task_id: str, mailbox, intent: str, dispatched_at: str) -> None:
+    def _register_background_task(self, task_id: str, mailbox, intent: str, dispatched_at: IsoTimestamp) -> None:
         """CognitiveLoop 提交后台任务后调用——注册到轮询列表。"""
         self._background_tasks[task_id] = {
             "intent": intent,

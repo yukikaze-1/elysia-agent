@@ -7,8 +7,8 @@ from pydantic import TypeAdapter
 
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
 from .base import Repository
-from core.schema.types import SessionId
-from core.schema.message import Message
+from core.schema.types import MessageId, SessionId
+from core.schema.message import Message, MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -122,27 +122,28 @@ class MessageRepository(Repository):
         return await self._db.delete_many(COLLECTION, {})
 
     async def query_offset(self, *, skip: int = 0, limit: int = 50,
-                           search: str = "", role: str = "") -> tuple[list[Message], int]:
+                           search: str = "", role: MessageRole | None = None
+                           ) -> tuple[list[Message], int]:
         """offset 分页 + 搜索 + role 过滤。"""
         if self._db is None:
             return [], 0
         filter_expr: dict = {}
         if search:
             filter_expr["content"] = {"$elemMatch": {"content": {"$regex": search, "$options": "i"}}}
-        if role:
-            filter_expr["role"] = role
+        if role is not None:
+            filter_expr["role"] = role.value
         sort = [("_id", -1)]
         docs = await self._db.find(COLLECTION, filter_expr, sort=sort, skip=skip, limit=limit)
         total = await self._db.count(COLLECTION, filter_expr)
         messages = [_doc_to_message(doc) for doc in docs]
         return messages, total
 
-    async def delete_one(self, msg_id: str) -> int:
+    async def delete_one(self, msg_id: MessageId) -> int:
         if self._db is None:
             return 0
         return await self._db.delete_many(COLLECTION, {"_id": ObjectId(msg_id)})
 
-    async def update_text(self, msg_id: str, new_text: str) -> int:
+    async def update_text(self, msg_id: MessageId, new_text: str) -> int:
         if self._db is None:
             return 0
         return await self._db.update_one(

@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
-from core.schema.message import Message
-from core.schema.types import SessionId
+from core.schema.message import Message, MessageRole
+from core.schema.types import MessageId, SessionId
 
 if TYPE_CHECKING:
     from core.storage.message_repo import MessageRepository
@@ -89,7 +89,7 @@ class MessageArchive:
         skip: int = 0,
         limit: int = 50,
         search: str = "",
-        role: str = "",
+        role: MessageRole | None = None,
     ) -> tuple[list[dict], int]:
         """Offset 分页查询，按 _id 降序。支持搜索过滤。返回 (messages, total)。"""
         if self._repo is None:
@@ -99,7 +99,7 @@ class MessageArchive:
 
     # ---- 管理 ----
 
-    async def delete_one(self, msg_id: str) -> bool:
+    async def delete_one(self, msg_id: MessageId) -> bool:
         """删除单条消息。返回 True 表示成功。"""
         if self._repo is None:
             return False
@@ -110,7 +110,7 @@ class MessageArchive:
             logger.debug("archive delete_one failed", exc_info=True)
             return False
 
-    async def update_text(self, msg_id: str, new_text: str) -> bool:
+    async def update_text(self, msg_id: MessageId, new_text: str) -> bool:
         """更新消息文本（保持其他字段不变）。返回 True 表示成功。"""
         if self._repo is None:
             return False
@@ -138,17 +138,17 @@ class MessageArchive:
     # ---- 按 session 查询 ----
 
     async def query_by_session(
-        self, session_id: str, *, skip: int = 0, limit: int = 200
+        self, session_id: SessionId, *, skip: int = 0, limit: int = 200
     ) -> tuple[list[dict], int]:
         """按 session_id 查询消息，_id 降序（最新在前）。
         返回 (messages, total)。"""
         if self._repo is None:
             return [], 0
-        messages, total = await self._repo.query_by_session(SessionId(session_id), limit=limit, skip=skip)
+        messages, total = await self._repo.query_by_session(session_id, limit=limit, skip=skip)
         return [_message_to_dict(msg) for msg in messages], total
 
-    async def count_by_session(self, session_id: str) -> int:
+    async def count_by_session(self, session_id: SessionId) -> int:
         """按 session_id 统计消息数。"""
         if self._repo is None:
             return 0
-        return await self._repo.count_by_session(SessionId(session_id))
+        return await self._repo.count_by_session(session_id)
