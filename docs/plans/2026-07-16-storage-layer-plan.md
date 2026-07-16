@@ -214,8 +214,9 @@ git commit -m "feat: core/storage/base.py — Repository ABC"
 - Modify: `core/memory/message_archive.py`（_db → _repo）
 
 **Interfaces:**
-- Consumes: `Repository` ABC, `DocumentDBBackend` protocol, `core.schema.message.Message`
+- Consumes: `Repository` ABC, `DocumentDBBackend` protocol
 - Produces: `MessageRepository`
+- **偏离 spec：** MessageRepository 使用 `list[dict]` 而非 `list[Message]`——这是实用主义选择。当前消息以 dict 形式存入/读取 MongoDB，没有在 Repository 边界做 dict↔Message 转换。完整消息类型化将在 SessionMemory 层处理（后续 spec）
 
 - [ ] **Step 1: 创建 MessageRepository**
 
@@ -486,12 +487,14 @@ class TokenRepository(Repository):
         await self._db.insert_many(COLLECTION, docs)
 
     async def query_by_session(self, session_id: str, *,
-                               limit: int = 100) -> list[dict]:
+                               limit: int = 100) -> list["TokenUsageEntry"]:
         if self._db is None:
             return []
-        return await self._db.find(
+        from core.schema.token import TokenUsageEntry
+        docs = await self._db.find(
             COLLECTION, {"session_id": session_id}, limit=limit
         )
+        return [TokenUsageEntry.model_validate(d) for d in docs]
 
     async def clear_all(self) -> int:
         if self._db is None:
@@ -766,8 +769,9 @@ git commit -m "refactor: SessionRepository + SessionMemory 迁移 _db→_repo"
 - Modify: `core/memory/long_term.py`（_vector_db → _repo）
 
 **Interfaces:**
-- Consumes: `Repository` ABC, `VectorDBBackend` protocol, `MemoryEntry`
+- Consumes: `Repository` ABC, `VectorDBBackend` protocol
 - Produces: `MemoryRepository`
+- **偏离 spec：** `insert(vectors, metadata) -> list[int]` 是批量签名（spec 为单条 `insert(entry) -> int`），匹配 LongTermMemory._sync_dirty_entries 的批处理需求。单条插入用 `insert([vec], [meta])` 即可
 
 - [ ] **Step 1: 创建 MemoryRepository**
 
@@ -858,14 +862,13 @@ class MemoryRepository(Repository):
         return await self._db.delete(COLLECTION, ids)
 
     async def count(self) -> int:
-        """返回条目数。"""
+        """返回 Milvus 中条目数（上限 10000）。"""
         if self._db is None:
             return 0
         results = await self._db.query(
-            COLLECTION, filter_expr="id >= 0", output_fields=["id"], limit=1,
+            COLLECTION, filter_expr="id >= 0", output_fields=["id"], limit=10000,
         )
-        # 返回总行数近似——LongTermMemory 自己维护 count
-        return -1  # 由 LongTermMemory.count property 负责
+        return len(results)
 
     async def clear_all(self) -> None:
         if self._db is None:
@@ -962,11 +965,15 @@ git commit -m "refactor: MemoryRepository + LongTermMemory 迁移 _vector_db→_
 import logging
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel
+
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
 from .base import Repository
 
 if TYPE_CHECKING:
     from core.schema.character import CharacterState
+    from core.schema.emotion import EmotionState
+    from core.schema.reflector import ReflectorState
 
 logger = logging.getLogger(__name__)
 COLLECTION = "session_state"
