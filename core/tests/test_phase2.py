@@ -28,39 +28,67 @@ def _cleanup_embedding():
 
 @pytest.mark.unit
 class TestSessionPersistence:
-    def test_snapshot_restore(self):
+    @pytest.mark.asyncio
+    async def test_snapshot_restore(self):
+        """save/load 可跨 session 实例保留消息和参数。"""
+        import os as _os
         from core.memory.session import SessionMemory
-        s1 = SessionMemory(max_messages=10, session_id="test1")
-        s1.add_message("user", "hello")
-        s1.add_message("assistant", "hi there")
+        from core.schema.message import UserMessage, AssistantMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
+        s1 = SessionMemory(max_messages=10, session_id="test-snapshot-1")
+        s1.add_message(UserMessage(content=[TextPart(content="hello")], message_id=MessageId("snap-1")))
+        s1.add_message(AssistantMessage(content=[TextPart(content="hi there")], message_id=MessageId("snap-2")))
         s1.set_param("mood", "happy")
         s1.set_param("mood_intensity", 0.7)
 
-        snap = s1.snapshot()
-        assert len(snap["messages"]) == 2
-        assert snap["params"]["mood"] == "happy"
+        assert await s1.save() is True
 
-        s2 = SessionMemory(max_messages=10, session_id="test2")
-        s2.restore(snap)
+        s2 = SessionMemory(max_messages=10, session_id="test-snapshot-1")
+        ok = await s2.load()
+        assert ok is True
         assert len(s2.recent_messages()) == 2
         assert s2.get_param("mood") == "happy"
         assert s2.get_param("mood_intensity") == 0.7
 
-    def test_max_messages_enforced_on_restore(self):
-        from core.memory.session import SessionMemory
-        s1 = SessionMemory(max_messages=3, session_id="test")
-        for i in range(5):
-            s1.add_message("user", f"msg{i}")
+        try:
+            _os.remove(s1._pending_file)
+        except Exception:
+            pass
 
-        snap = s1.snapshot()
-        s2 = SessionMemory(max_messages=3)
-        s2.restore(snap)
+    @pytest.mark.asyncio
+    async def test_max_messages_enforced_on_restore(self):
+        """save/load 后 max_messages 上限仍生效。"""
+        import os as _os
+        from core.memory.session import SessionMemory
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
+        s1 = SessionMemory(max_messages=3, session_id="test-max-restore")
+        for i in range(5):
+            s1.add_message(UserMessage(content=[TextPart(content=f"msg{i}")], message_id=MessageId(f"max-r-{i}")))
+
+        assert await s1.save() is True
+
+        s2 = SessionMemory(max_messages=3, session_id="test-max-restore")
+        await s2.load()
         assert len(s2.recent_messages()) == 3
+
+        try:
+            _os.remove(s1._pending_file)
+        except Exception:
+            pass
 
     def test_clear(self):
         from core.memory.session import SessionMemory
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
         s = SessionMemory(max_messages=10)
-        s.add_message("user", "test")
+        s.add_message(UserMessage(content=[TextPart(content="test")], message_id=MessageId("clr-1")))
         s.set_param("key", "value")
         assert len(s.recent_messages()) == 1
         s.clear()
@@ -83,15 +111,19 @@ class TestSessionPersistence:
         """无 DB 时，save/load 应使用本地 JSON 文件（原子写入），返回 True。"""
         import os as _os
         from core.memory.session import SessionMemory
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
         s = SessionMemory(session_id="test-save-load")
-        s.add_message("user", "hello")
+        s.add_message(UserMessage(content=[TextPart(content="hello")], message_id=MessageId("svld-1")))
         # No connect_db called, so _db is None — local file fallback
         assert await s.save() is True
         s2 = SessionMemory(session_id="test-save-load")
         ok = await s2.load()
         assert ok is True
         assert len(s2._messages) == 1
-        assert s2._messages[0]["role"] == "user"
+        assert s2._messages[0].role == "user"
         # cleanup
         try:
             _os.remove(s._pending_file)
@@ -493,37 +525,53 @@ class TestPromptAssembler:
 
 @pytest.mark.unit
 class TestSessionMemoryEdgeCases:
-    def test_round_trip_snapshot_cycle(self):
-        """Full cycle: create -> populate -> snapshot -> restore -> verify."""
+    @pytest.mark.asyncio
+    async def test_round_trip_snapshot_cycle(self):
+        """Full cycle: create -> populate -> save -> load -> verify."""
+        import os as _os
         from core.memory.session import SessionMemory
-        s1 = SessionMemory(max_messages=20, session_id="roundtrip")
-        s1.add_message("user", "msg1")
-        s1.add_message("assistant", "reply1")
-        s1.add_message("user", "msg2")
+        from core.schema.message import UserMessage, AssistantMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
+        s1 = SessionMemory(max_messages=20, session_id="roundtrip-test")
+        s1.add_message(UserMessage(content=[TextPart(content="msg1")], message_id=MessageId("rt-1")))
+        s1.add_message(AssistantMessage(content=[TextPart(content="reply1")], message_id=MessageId("rt-2")))
+        s1.add_message(UserMessage(content=[TextPart(content="msg2")], message_id=MessageId("rt-3")))
         s1.set_param("mood", "excited")
         s1.set_param("mood_intensity", 0.8)
         s1.set_param("custom_key", {"nested": [1, 2, 3]})
 
-        snap = s1.snapshot()
-        s2 = SessionMemory(max_messages=20)
-        s2.restore(snap)
+        await s1.save()
 
-        assert s2.recent_messages() == s1.recent_messages()
+        s2 = SessionMemory(max_messages=20, session_id="roundtrip-test")
+        await s2.load()
+
+        assert len(s2.recent_messages()) == len(s1.recent_messages())
         assert s2.get_param("mood") == "excited"
         assert s2.get_param("mood_intensity") == 0.8
         assert s2.get_param("custom_key") == {"nested": [1, 2, 3]}
 
+        try:
+            _os.remove(s1._pending_file)
+        except Exception:
+            pass
+
     def test_multiple_sessions_independent(self):
         """Different session_ids should not interfere with each other."""
         from core.memory.session import SessionMemory
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
         s1 = SessionMemory(session_id="alice")
         s2 = SessionMemory(session_id="bob")
 
-        s1.add_message("user", "alice msg")
-        s2.add_message("user", "bob msg")
+        s1.add_message(UserMessage(content=[TextPart(content="alice msg")], message_id=MessageId("indep-1")))
+        s2.add_message(UserMessage(content=[TextPart(content="bob msg")], message_id=MessageId("indep-2")))
 
-        s1_msgs = [m["content"][0]["content"] for m in s1.recent_messages()]
-        s2_msgs = [m["content"][0]["content"] for m in s2.recent_messages()]
+        s1_msgs = [m.content[0].content for m in s1.recent_messages()]
+        s2_msgs = [m.content[0].content for m in s2.recent_messages()]
 
         assert "alice msg" in s1_msgs
         assert "bob msg" in s2_msgs
@@ -532,76 +580,121 @@ class TestSessionMemoryEdgeCases:
     def test_bounded_window_overflow(self):
         """Messages beyond max_messages should be dropped (FIFO)."""
         from core.memory.session import SessionMemory
+        from core.schema.message import UserMessage, AssistantMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
         s = SessionMemory(max_messages=3)
-        s.add_message("user", "first")
-        s.add_message("assistant", "second")
-        s.add_message("user", "third")
-        s.add_message("assistant", "fourth")
-        s.add_message("user", "fifth")
+        s.add_message(UserMessage(content=[TextPart(content="first")], message_id=MessageId("bnd-1")))
+        s.add_message(AssistantMessage(content=[TextPart(content="second")], message_id=MessageId("bnd-2")))
+        s.add_message(UserMessage(content=[TextPart(content="third")], message_id=MessageId("bnd-3")))
+        s.add_message(AssistantMessage(content=[TextPart(content="fourth")], message_id=MessageId("bnd-4")))
+        s.add_message(UserMessage(content=[TextPart(content="fifth")], message_id=MessageId("bnd-5")))
 
         msgs = s.recent_messages()
         assert len(msgs) == 3
-        contents = [m["content"][0]["content"] for m in msgs]
+        contents = [m.content[0].content for m in msgs]
         assert "first" not in contents
         assert "second" not in contents
         assert "third" in contents
         assert "fifth" in contents
 
-    def test_params_persistence_across_restore(self):
-        """Params should survive snapshot/restore exactly."""
+    @pytest.mark.asyncio
+    async def test_params_persistence_across_restore(self):
+        """Params should survive save/load exactly."""
+        import os as _os
         from core.memory.session import SessionMemory
-        s1 = SessionMemory()
+
+        s1 = SessionMemory(session_id="params-restore-test")
         s1.set_param("int_val", 42)
         s1.set_param("float_val", 3.14)
         s1.set_param("str_val", "hello")
         s1.set_param("none_val", None)
         s1.set_param("list_val", [1, "two", 3.0])
 
-        snap = s1.snapshot()
+        await s1.save()  # save initial state
+
         s1.set_param("int_val", 999)  # modify original
-        s1.restore(snap)  # restore back
+
+        await s1.load()  # load back the saved state
 
         assert s1.get_param("int_val") == 42
         assert s1.get_param("float_val") == 3.14
         assert s1.get_param("none_val") is None
         assert s1.get_param("list_val") == [1, "two", 3.0]
 
+        try:
+            _os.remove(s1._pending_file)
+        except Exception:
+            pass
+
     def test_recent_messages_with_n(self):
         """recent_messages(n) should return only the last n."""
         from core.memory.session import SessionMemory
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
         s = SessionMemory(max_messages=20)
         for i in range(10):
-            s.add_message("user", f"msg{i}")
+            s.add_message(UserMessage(content=[TextPart(content=f"msg{i}")], message_id=MessageId(f"recn-{i}")))
 
         assert len(s.recent_messages(3)) == 3
-        assert s.recent_messages(3)[-1]["content"][0]["content"] == "msg9"
+        assert s.recent_messages(3)[-1].content[0].content == "msg9"
 
     def test_meta_data_on_messages(self):
         """Messages with extra metadata should preserve it."""
         from core.memory.session import SessionMemory
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
         s = SessionMemory()
-        s.add_message("user", "hello", timestamp=12345, source="web")
+        s.add_message(UserMessage(
+            content=[TextPart(content="hello")],
+            message_id=MessageId("meta-1"),
+            metadata={"timestamp": 12345, "source": "web"},
+        ))
 
         msgs = s.recent_messages()
-        assert msgs[0]["meta"] == {"timestamp": 12345, "source": "web"}
+        assert msgs[0].metadata == {"timestamp": 12345, "source": "web"}
 
-    def test_save_caps_messages_to_max(self):
-        """snapshot() should only expose max_messages worth of messages."""
+    @pytest.mark.asyncio
+    async def test_save_caps_messages_to_max(self):
+        """save/load should only persist max_messages worth of messages."""
+        import os as _os
         from core.memory.session import SessionMemory
-        s = SessionMemory(max_messages=3)
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
+        s = SessionMemory(max_messages=3, session_id="caps-test")
         for i in range(10):
-            s.add_message("user", f"msg{i}")
-        snap = s.snapshot()
-        assert len(snap["messages"]) == 3
-        # content 现在是 list[dict] 格式
-        assert snap["messages"][0]["content"][0]["content"] == "msg7"
-        assert snap["messages"][2]["content"][0]["content"] == "msg9"
+            s.add_message(UserMessage(content=[TextPart(content=f"msg{i}")], message_id=MessageId(f"cap-{i}")))
+
+        await s.save()
+
+        s2 = SessionMemory(max_messages=3, session_id="caps-test")
+        await s2.load()
+        msgs = s2.recent_messages()
+        assert len(msgs) == 3
+        assert msgs[0].content[0].content == "msg7"
+        assert msgs[2].content[0].content == "msg9"
+
+        try:
+            _os.remove(s._pending_file)
+        except Exception:
+            pass
 
     def test_clear_preserves_session_id(self):
         """Clear should empty messages but not change session_id."""
         from core.memory.session import SessionMemory
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
         s = SessionMemory(session_id="persist")
-        s.add_message("user", "data")
+        s.add_message(UserMessage(content=[TextPart(content="data")], message_id=MessageId("clrp-1")))
         s.set_param("key", "val")
         s.clear()
 
@@ -609,24 +702,44 @@ class TestSessionMemoryEdgeCases:
         assert s.get_param("key") is None
 
     def test_messages_for_client_with_sentences(self):
-        """messages_for_client should convert old meta.sentences to parts array."""
+        """messages_for_client should convert TextPart list to parts array."""
         from core.memory.session import SessionMemory
+        from core.schema.message import AssistantMessage, UserMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
         s = SessionMemory()
-        s.add_message("assistant", "Hello world", sentences=["Hello", "world"])
-        s.add_message("user", "Hi")
+        s.add_message(AssistantMessage(
+            content=[TextPart(content="Hello"), TextPart(content="world")],
+            message_id=MessageId("client-s-1"),
+        ))
+        s.add_message(UserMessage(
+            content=[TextPart(content="Hi")],
+            message_id=MessageId("client-s-2"),
+        ))
         result = s.messages_for_client()
         assert result[0]["parts"] == [{"content": "Hello"}, {"content": "world"}]
         assert result[0]["role"] == "assistant"
         assert result[1]["role"] == "user"
 
     def test_messages_for_client_new_format(self):
-        """messages_for_client should pass through new-format messages unchanged."""
+        """messages_for_client should serialize Pydantic Message to client dict."""
         from core.memory.session import SessionMemory
+        from core.schema.message import AssistantMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
         s = SessionMemory()
-        msg = {"id": "msg_abc", "role": "assistant", "parts": [{"content": "Hello"}], "content_type": {}, "timestamp": "2026-01-01T00:00:00+08:00"}
+        msg = AssistantMessage(
+            content=[TextPart(content="Hello")],
+            message_id=MessageId("msg_abc"),
+            inner_voice="feeling good",
+        )
         s.add_message(msg)
         result = s.messages_for_client()
-        assert result[0] == msg
+        assert result[0]["message_id"] == "msg_abc"
+        assert result[0]["role"] == "assistant"
+        assert result[0]["inner_voice"] == "feeling good"
 
     def test_messages_for_client_empty(self):
         from core.memory.session import SessionMemory
@@ -635,9 +748,13 @@ class TestSessionMemoryEdgeCases:
 
     def test_messages_for_client_with_n(self):
         from core.memory.session import SessionMemory
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
         s = SessionMemory()
         for i in range(5):
-            s.add_message("user", f"msg{i}")
+            s.add_message(UserMessage(content=[TextPart(content=f"msg{i}")], message_id=MessageId(f"mfc-{i}")))
         assert len(s.messages_for_client(2)) == 2
 
 
@@ -913,22 +1030,35 @@ class TestMemoryStress:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_session_snapshot_after_many_turns(self):
-        """After many conversation turns, snapshot/restore should be exact."""
+        """After many conversation turns, save/load should be exact."""
+        import os as _os
         from core.memory.session import SessionMemory
-        s = SessionMemory(max_messages=100)
+        from core.schema.message import UserMessage, AssistantMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
+        s = SessionMemory(max_messages=100, session_id="stress-snap")
 
         for i in range(30):
-            s.add_message("user", f"message {i}" if i % 2 == 0 else f"reply {i}")
+            if i % 2 == 0:
+                s.add_message(UserMessage(content=[TextPart(content=f"message {i}")], message_id=MessageId(f"stress-{i}")))
+            else:
+                s.add_message(AssistantMessage(content=[TextPart(content=f"reply {i}")], message_id=MessageId(f"stress-{i}")))
 
-        snap = s.snapshot()
-        s2 = SessionMemory(max_messages=100)
-        s2.restore(snap)
+        await s.save()
+        s2 = SessionMemory(max_messages=100, session_id="stress-snap")
+        await s2.load()
 
         orig = s.recent_messages()
         restored = s2.recent_messages()
         assert len(orig) == len(restored)
         for o, r in zip(orig, restored):
-            assert o["content"] == r["content"]
+            assert o.content == r.content
+
+        try:
+            _os.remove(s._pending_file)
+        except Exception:
+            pass
 
     @pytest.mark.slow
     @pytest.mark.asyncio
