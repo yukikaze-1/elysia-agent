@@ -22,6 +22,7 @@ from core.schema.message import (
 )
 from core.schema.part import TextPart
 from core.schema.types import SessionId
+from core.storage.session_repo import SessionRepository
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +30,14 @@ logger = logging.getLogger(__name__)
 class SessionMemory:
     """Bounded conversation window with optional MongoDB persistence."""
 
-    COLLECTION = "sessions"
-
     def __init__(self, max_messages: int = 20,
-                 session_id: SessionId = SessionId("default")):
+                 session_id: SessionId = SessionId("default"),
+                 repo: SessionRepository | None = None):
         self._messages: deque[Message] = deque(maxlen=max_messages)
         self._params: dict[str, Any] = {}
         self._max_messages = max_messages
         self._session_id: SessionId = session_id
-        self._db: Any = None  # DocumentDBBackend or None
+        self._repo: SessionRepository | None = repo
         self._pending_file = os.path.join("data", f"session_{session_id}.json")
 
     # ---- public properties ----
@@ -45,10 +45,6 @@ class SessionMemory:
     @property
     def session_id(self) -> SessionId:
         return self._session_id
-
-    @property
-    def db(self) -> Any:
-        return self._db
 
     @property
     def messages(self) -> deque[Message]:
@@ -133,38 +129,15 @@ class SessionMemory:
 
     async def connect_db(self) -> bool:
         """Try to connect to MongoDB. Returns True if successful."""
-        try:
-            from Module.database.documentdb import DocumentDBFactory
-            self._db = DocumentDBFactory.create("mongodb/default")
-            await self._db.ensure_index(self.COLLECTION, [("session_id", 1)])
-            await self._db.ensure_index(self.COLLECTION, [("updated_at", -1)])
-            # Try TTL index for auto-cleanup of stale sessions (30 days)
-            try:
-                await self._db.ensure_index(
-                    self.COLLECTION,
-                    [("updated_at", 1)],
-                    expireAfterSeconds=30 * 86400,
-                )
-            except Exception as e:
-                logger.warning("SessionMemory: TTL index creation failed (%s), continuing", e)
-            logger.info("SessionMemory: MongoDB connected")
-            return True
-        except Exception as e:
-            logger.warning("SessionMemory: MongoDB unavailable (%s), using in-memory", e)
-            self._db = None
-            return False
+        if self._repo is None:
+            self._repo = SessionRepository()
+        return await self._repo.connect()
 
     async def health_check(self) -> bool:
         """尝试重连 MongoDB。已连接则直接返回 True。"""
-        if self._db is not None:
-            return True
-        try:
-            from Module.database.documentdb import DocumentDBFactory
-            self._db = DocumentDBFactory.create("mongodb/default")
-            logger.info("SessionMemory: MongoDB 已恢复连接")
-            return True
-        except Exception:
+        if self._repo is None:
             return False
+        return await self._repo.health_check()
 
     async def save(self) -> bool:
         """Persist current session。MongoDB 不可用时降级到本地 JSONL 文件。"""
@@ -174,31 +147,32 @@ class SessionMemory:
             "params": dict(self._params),
             "updated_at": datetime.now().astimezone().isoformat(),
         }
-        if self._db is None:
+        # 尝试通过 Repository 保存到 MongoDB
+        if self._repo is not None and self._repo._db is not None:
             try:
-                os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
-                tmp = self._pending_file + ".tmp"
-                with open(tmp, "w", encoding="utf-8") as f:
-                    f.write(json.dumps(doc, ensure_ascii=False) + "\n")
-                os.replace(tmp, self._pending_file)  # 原子替换，崩溃不丢数据
-                logger.debug("MongoDB 不可用，session 保存到 %s", self._pending_file)
+                logger.info("Session save to MongoDB: session=%s, messages=%d",
+                            self._session_id, len(doc["messages"]))
+                await self._repo.save(
+                    self._session_id,
+                    [msg.model_dump(mode="json") for msg in self._messages],
+                    dict(self._params),
+                )
+                logger.info("Session save to MongoDB OK: %d messages", len(doc["messages"]))
                 return True
             except Exception:
-                logger.warning("session JSON 写入失败", exc_info=True)
+                logger.warning("session MongoDB 写入失败", exc_info=True)
                 return False
+        # JSONL fallback — MongoDB 不可用
         try:
-            logger.info("Session save to MongoDB: session=%s, messages=%d",
-                        self._session_id, len(doc["messages"]))
-            await self._db.update_one(
-                self.COLLECTION,
-                {"session_id": self._session_id},
-                {"$set": doc},
-                upsert=True,
-            )
-            logger.info("Session save to MongoDB OK: %d messages", len(doc["messages"]))
+            os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
+            tmp = self._pending_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(json.dumps(doc, ensure_ascii=False) + "\n")
+            os.replace(tmp, self._pending_file)  # 原子替换，崩溃不丢数据
+            logger.debug("MongoDB 不可用，session 保存到 %s", self._pending_file)
             return True
         except Exception:
-            logger.warning("session MongoDB 写入失败", exc_info=True)
+            logger.warning("session JSON 写入失败", exc_info=True)
             return False
 
     async def load_from_jsonl(self, merge: bool = False) -> bool:
@@ -238,23 +212,19 @@ class SessionMemory:
 
     async def load(self, session_id: str | None = None) -> bool:
         """Load session from MongoDB。MongoDB 不可用时尝试本地 JSONL 恢复。"""
-        if self._db is None:
+        if self._repo is None or self._repo._db is None:
             return await self._load_from_jsonl()
         sid = session_id or self._session_id
         try:
-            results = await self._db.find(self.COLLECTION, {"session_id": sid}, limit=1)
-            if results:
-                doc = results[0]
+            result = await self._repo.load(sid)
+            if result is not None:
+                msgs_raw, params = result
                 self._session_id = sid
-                msgs_raw = doc.get("messages", [])
-                # 剥离 MongoDB 注入的 _id（motor insert_one 副作用残留）
-                for m in msgs_raw:
-                    m.pop("_id", None)
                 # 从 dict 转换回 Message 对象
                 ta = TypeAdapter(Message)
                 converted = [ta.validate_python(m) for m in msgs_raw]
                 self._messages = deque(converted[-self._max_messages:], maxlen=self._max_messages)
-                self._params = dict(doc.get("params", {}))
+                self._params = dict(params)
                 logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(converted))
                 return True
             return False

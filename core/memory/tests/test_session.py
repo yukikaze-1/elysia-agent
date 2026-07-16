@@ -1,38 +1,49 @@
-"""SessionMemory: COLLECTION 常量 + connect_db 日志级别 + health_check 重连 测试。"""
+"""SessionMemory 测试 — connect_db / health_check / save / load。"""
 import logging
+import json
+import os
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.memory.session import SessionMemory
+from core.schema.types import SessionId
 
 
 @pytest.mark.unit
-def test_collection_constant():
-    """SessionMemory.COLLECTION 应为 'sessions'。"""
-    assert SessionMemory.COLLECTION == "sessions"
+def test_collection_constant_in_repo():
+    """COLLECTION 常量已迁移到 SessionRepository。"""
+    from core.storage.session_repo import COLLECTION as REPO_COLLECTION
+    assert REPO_COLLECTION == "sessions"
 
 
 @pytest.mark.service
-@pytest.mark.asyncio
-async def test_connect_db_uses_collection_constant():
-    """connect_db() 使用 self.COLLECTION 创建索引（而非 hardcode 字符串）。"""
-    sm = SessionMemory(session_id="test-coll")
-    assert sm.COLLECTION == "sessions"
+class TestSessionMemoryConnect:
+    """connect_db() 创建 SessionRepository 并委托连接。"""
 
-    mock_db = AsyncMock()
-    mock_db.ensure_index = AsyncMock()
+    @pytest.mark.asyncio
+    async def test_connect_db_creates_repo_and_connects(self):
+        sm = SessionMemory(session_id=SessionId("test-connect"))
+        mock_repo = MagicMock()
+        mock_repo.connect = AsyncMock(return_value=True)
+        with patch(
+            "core.memory.session.SessionRepository",
+            return_value=mock_repo,
+        ):
+            result = await sm.connect_db()
+        assert result is True
+        assert sm._repo is mock_repo
+        mock_repo.connect.assert_called_once()
 
-    with patch(
-        "Module.database.documentdb.DocumentDBFactory.create",
-        return_value=mock_db,
-    ):
+    @pytest.mark.asyncio
+    async def test_connect_db_with_explicit_repo(self):
+        """传入 repo 参数时直接使用，不创建新的。"""
+        mock_repo = MagicMock()
+        mock_repo.connect = AsyncMock(return_value=True)
+        sm = SessionMemory(session_id=SessionId("test-explicit"), repo=mock_repo)
         result = await sm.connect_db()
-
-    assert result is True
-    assert sm._db is mock_db
-    # 验证所有 ensure_index 调用都使用 sm.COLLECTION（而非 hardcode 字符串）
-    for call_args in mock_db.ensure_index.call_args_list:
-        assert call_args[0][0] == sm.COLLECTION
+        assert result is True
+        assert sm._repo is mock_repo
+        mock_repo.connect.assert_called_once()
 
 
 @pytest.mark.service
@@ -41,16 +52,16 @@ class TestSessionMemoryConnectLogLevel:
 
     @pytest.mark.asyncio
     async def test_connect_failure_uses_warning(self, caplog):
-        sm = SessionMemory(session_id="test-log")
+        sm = SessionMemory(session_id=SessionId("test-log"))
         with patch(
-            "Module.database.documentdb.DocumentDBFactory.create",
+            "core.storage.session_repo.DocumentDBFactory.create",
             side_effect=RuntimeError("connection refused"),
         ):
             with caplog.at_level(logging.WARNING):
                 result = await sm.connect_db()
 
         assert result is False
-        assert sm._db is None  # 降级为 None
+        assert sm._repo is not None
         # 必须有 WARNING 级别的日志
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) >= 1
@@ -59,39 +70,93 @@ class TestSessionMemoryConnectLogLevel:
 
 @pytest.mark.service
 class TestSessionMemoryHealthCheck:
-    """health_check() 在连接丢失后应尝试重连。"""
+    """health_check() 委托给 SessionRepository。"""
 
     @pytest.mark.asyncio
-    async def test_returns_true_when_already_connected(self):
-        sm = SessionMemory(session_id="test-hc")
-        # 模拟已连接状态：_db 非 None
-        sm._db = object()  # 非 None 表示已连接
+    async def test_returns_true_when_repo_connected(self):
+        mock_repo = MagicMock()
+        mock_repo.health_check = AsyncMock(return_value=True)
+        sm = SessionMemory(session_id=SessionId("test-hc"), repo=mock_repo)
         result = await sm.health_check()
         assert result is True
+        mock_repo.health_check.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_reconnects_when_disconnected(self):
-        sm = SessionMemory(session_id="test-hc")
-        sm._db = None  # 模拟断开
-        mock_db = object()
-        with patch(
-            "Module.database.documentdb.DocumentDBFactory.create",
-            return_value=mock_db,
-        ):
-            result = await sm.health_check()
-
-        assert result is True
-        assert sm._db is mock_db
-
-    @pytest.mark.asyncio
-    async def test_returns_false_when_reconnect_fails(self):
-        sm = SessionMemory(session_id="test-hc")
-        sm._db = None
-        with patch(
-            "Module.database.documentdb.DocumentDBFactory.create",
-            side_effect=RuntimeError("still down"),
-        ):
-            result = await sm.health_check()
-
+    async def test_returns_false_when_repo_disconnected(self):
+        mock_repo = MagicMock()
+        mock_repo.health_check = AsyncMock(return_value=False)
+        sm = SessionMemory(session_id=SessionId("test-hc"), repo=mock_repo)
+        result = await sm.health_check()
         assert result is False
-        assert sm._db is None
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_no_repo(self):
+        sm = SessionMemory(session_id=SessionId("test-hc"))
+        result = await sm.health_check()
+        assert result is False
+
+
+@pytest.mark.service
+class TestSessionMemorySaveLoad:
+    """save() / load() 委托给 SessionRepository，保留 JSONL 降级。"""
+
+    @pytest.mark.asyncio
+    async def test_save_delegates_to_repo(self):
+        mock_repo = MagicMock()
+        mock_repo._db = object()  # 模拟已连接
+        mock_repo.save = AsyncMock()
+        sm = SessionMemory(session_id=SessionId("test-save"), repo=mock_repo)
+        result = await sm.save()
+        assert result is True
+        mock_repo.save.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_save_falls_back_to_jsonl_when_no_repo(self, tmp_path):
+        pending = os.path.join(str(tmp_path), "session_sid.json")
+        sm = SessionMemory(session_id=SessionId("sid"))
+        sm._pending_file = pending
+        result = await sm.save()
+        assert result is True
+        assert os.path.exists(pending)
+
+    @pytest.mark.asyncio
+    async def test_load_delegates_to_repo(self):
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        msg = UserMessage(
+            message_id="m1",
+            content=[TextPart(content="hello")],
+        )
+        raw_msg = msg.model_dump(mode="json")
+
+        mock_repo = MagicMock()
+        mock_repo._db = object()  # 模拟已连接
+        mock_repo.load = AsyncMock(return_value=([raw_msg], {"mood": "happy"}))
+        sm = SessionMemory(session_id=SessionId("test-load"), repo=mock_repo)
+        result = await sm.load("test-load")
+        assert result is True
+        assert len(sm._messages) == 1
+        assert sm._messages[0].message_id == "m1"
+        assert sm.get_param("mood") == "happy"
+
+    @pytest.mark.asyncio
+    async def test_load_returns_false_when_not_found(self):
+        mock_repo = MagicMock()
+        mock_repo._db = object()
+        mock_repo.load = AsyncMock(return_value=None)
+        sm = SessionMemory(session_id=SessionId("test-miss"), repo=mock_repo)
+        result = await sm.load("test-miss")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_load_falls_back_to_jsonl_when_no_repo(self, tmp_path):
+        pending = os.path.join(str(tmp_path), "session_sid.json")
+        # Write a minimal JSON doc
+        with open(pending, "w") as f:
+            json.dump({"messages": [], "params": {}}, f)
+        sm = SessionMemory(session_id=SessionId("sid"))
+        sm._pending_file = pending
+        result = await sm.load()
+        assert result is True
+        # Clean up
+        os.remove(pending)
