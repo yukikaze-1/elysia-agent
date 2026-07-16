@@ -4,6 +4,18 @@ import pytest
 from unittest.mock import AsyncMock
 
 from core.memory.message_archive import MessageArchive
+from core.schema.message import UserMessage, MessageId
+from core.schema.part import TextPart
+from core.schema.types import SessionId
+
+
+def _make_user_msg(content: str = "hello", msg_id: str = "msg-1", session_id: str = "sid") -> UserMessage:
+    """创建最小 UserMessage 测试辅助函数。"""
+    return UserMessage(
+        content=[TextPart(content=content)],
+        message_id=MessageId(msg_id),
+        session_id=SessionId(session_id),
+    )
 
 
 @pytest.mark.service
@@ -26,12 +38,24 @@ class TestMessageArchiveInit:
 class TestMessageArchiveAppend:
     @pytest.mark.asyncio
     async def test_append_calls_repo(self):
+        """append 将 dict 转为 Message 后调用 repo.append。"""
         repo = AsyncMock()
         repo.append = AsyncMock()
         archive = MessageArchive(repo=repo)
-        msg = {"role": "user", "content": [{"type": "text", "content": "hello"}], "session_id": "sid"}
+        msg = {
+            "role": "user",
+            "content": [{"type": "text", "content": "hello"}],
+            "session_id": "sid",
+            "message_id": "msg-1",
+        }
         result = await archive.append(msg)
-        repo.append.assert_called_once_with("sid", msg)
+        # 验证 repo.append 被调用，且参数是 Message 对象
+        repo.append.assert_called_once()
+        call_args = repo.append.call_args
+        # session_id 参数
+        assert call_args[0][0] == "sid"  # SessionId is str at runtime
+        # msg 参数应为 Message (UserMessage)
+        assert isinstance(call_args[0][1], UserMessage)
         assert result == ""  # msg 没有 _id
 
     @pytest.mark.asyncio
@@ -46,21 +70,30 @@ class TestMessageArchiveQuery:
     @pytest.mark.asyncio
     async def test_query_returns_messages_and_has_more(self):
         repo = AsyncMock()
-        msgs = [{"_id": f"{i:024x}", "role": "user", "text": f"msg{i}"} for i in range(51)]
+        msgs = []
+        for i in range(51):
+            msg = _make_user_msg(content=f"msg{i}", msg_id=f"{i:024x}")
+            msg.metadata["_mongo_id"] = f"{i:024x}"
+            msgs.append(msg)
         repo.query = AsyncMock(return_value=(msgs[:50], True))
         archive = MessageArchive(repo=repo)
         messages, has_more = await archive.query(limit=50)
         assert len(messages) == 50
         assert has_more is True
+        # 验证 _mongo_id 被提升为顶层 _id
+        assert messages[0].get("_id") == f"{0:024x}"
         repo.query.assert_called_once_with(before=None, limit=50)
 
     @pytest.mark.asyncio
     async def test_query_no_more_pages(self):
         repo = AsyncMock()
-        repo.query = AsyncMock(return_value=([{"_id": "1", "role": "user"}], False))
+        msg = _make_user_msg(msg_id="1")
+        msg.metadata["_mongo_id"] = "1"
+        repo.query = AsyncMock(return_value=([msg], False))
         archive = MessageArchive(repo=repo)
         messages, has_more = await archive.query(limit=50)
         assert has_more is False
+        assert messages[0].get("_id") == "1"
         repo.query.assert_called_once_with(before=None, limit=50)
 
     @pytest.mark.asyncio
