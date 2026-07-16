@@ -3,7 +3,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Sequence
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.schema.types import IsoTimestamp, SessionId
@@ -55,19 +55,31 @@ class SessionRepository(Repository):
             return True
         try:
             self._db = DocumentDBFactory.create("mongodb/default")
+            await self._db.ensure_index(COLLECTION, [("session_id", 1)])
+            await self._db.ensure_index(COLLECTION, [("updated_at", -1)])
+            try:
+                await self._db.ensure_index(
+                    COLLECTION, [("updated_at", 1)], expireAfterSeconds=30 * 86400)
+            except Exception as e:
+                logger.warning("TTL index creation failed (%s)", e)
             logger.info("SessionRepository: MongoDB 已恢复连接")
             return True
         except Exception:
             return False
 
-    async def save(self, session_id: str, messages: list[dict],
+    async def save(self, session_id: str, messages: Sequence[Any],
                    params: dict[str, Any]) -> None:
         """保存或更新 session。"""
         if self._db is None:
             return
+        # 序列化 messages（支持 Pydantic Message 对象和原始 dict）
+        serialized = [
+            m.model_dump(mode="json") if hasattr(m, "model_dump") else m
+            for m in messages
+        ]
         doc = {
             "session_id": session_id,
-            "messages": messages,
+            "messages": serialized,
             "params": params,
             "updated_at": datetime.now().astimezone().isoformat(),
         }

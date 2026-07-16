@@ -141,29 +141,28 @@ class SessionMemory:
 
     async def save(self) -> bool:
         """Persist current session。MongoDB 不可用时降级到本地 JSONL 文件。"""
-        doc = {
-            "session_id": self._session_id,
-            "messages": [msg.model_dump(mode="json") for msg in self._messages],
-            "params": dict(self._params),
-            "updated_at": datetime.now().astimezone().isoformat(),
-        }
         # 尝试通过 Repository 保存到 MongoDB
-        if self._repo is not None and self._repo._db is not None:
+        if self._repo is not None:
             try:
                 logger.info("Session save to MongoDB: session=%s, messages=%d",
-                            self._session_id, len(doc["messages"]))
+                            self._session_id, len(self._messages))
                 await self._repo.save(
                     self._session_id,
-                    [msg.model_dump(mode="json") for msg in self._messages],
+                    list(self._messages),
                     dict(self._params),
                 )
-                logger.info("Session save to MongoDB OK: %d messages", len(doc["messages"]))
+                logger.info("Session save to MongoDB OK: %d messages", len(self._messages))
                 return True
             except Exception:
                 logger.warning("session MongoDB 写入失败", exc_info=True)
-                return False
         # JSONL fallback — MongoDB 不可用
         try:
+            doc = {
+                "session_id": self._session_id,
+                "messages": [msg.model_dump(mode="json") for msg in self._messages],
+                "params": dict(self._params),
+                "updated_at": datetime.now().astimezone().isoformat(),
+            }
             os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
             tmp = self._pending_file + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
@@ -212,7 +211,7 @@ class SessionMemory:
 
     async def load(self, session_id: str | None = None) -> bool:
         """Load session from MongoDB。MongoDB 不可用时尝试本地 JSONL 恢复。"""
-        if self._repo is None or self._repo._db is None:
+        if self._repo is None:
             return await self._load_from_jsonl()
         sid = session_id or self._session_id
         try:
@@ -227,7 +226,7 @@ class SessionMemory:
                 self._params = dict(params)
                 logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(converted))
                 return True
-            return False
+            return await self._load_from_jsonl()
         except Exception:
             logger.warning("SessionMemory load from MongoDB failed, trying JSONL", exc_info=True)
             return await self._load_from_jsonl()
