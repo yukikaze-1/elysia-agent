@@ -77,14 +77,14 @@ class PromptAssembler:
         """从 PersonalityEngine 拉取最新数据，更新 C1/C9 section。"""
         if self._personality_engine is None:
             return
-        c1_data = self._personality_engine.render_c1()
+        c1 = self._personality_engine.render_c1()
         self._personality_section.update_personality(
-            core=c1_data["core_personality"],
-            self_p=c1_data["self_personality"],
+            core=c1.core_personality,
+            self_p=c1.self_personality,
         )
-        c9_data = self._personality_engine.render_c9()
+        c9 = self._personality_engine.render_c9()
         self._self_perception_section.update_awareness(
-            text=c9_data["awareness_text"],
+            text=c9.awareness_text,
         )
 
     async def build_system_prompt(self, user_message: str = "", user_name: str = "",

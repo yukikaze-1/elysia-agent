@@ -13,6 +13,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from Module.system_prompt import PromptManager
@@ -33,6 +34,19 @@ AWARENESS_MAX_HISTORY = 10         # state_history 保留条数
 COMPRESSION_COUNT_THRESHOLD = 5    # state_history 新增 N 条触发压缩
 COMPRESSION_TIME_THRESHOLD = 604800  # 距上次压缩 > 7 天也触发
 COMPRESSION_MIN_ENTRIES = 3        # 首次压缩最少需要 state_history 条目数
+
+
+@dataclass
+class C1Data:
+    """C1 Personality section 渲染数据。"""
+    core_personality: str
+    self_personality: str
+
+
+@dataclass
+class C9Data:
+    """C9 SelfPerception section 渲染数据。"""
+    awareness_text: str
 
 
 class PersonalityEngine:
@@ -73,37 +87,27 @@ class PersonalityEngine:
 
     # ---- 数据提供（给 section 渲染用）----
 
-    def render_c1(self) -> dict[str, str]:
-        """产出 C1 Personality section 的数据。
-
-        Returns:
-            {"core_personality": str, "self_personality": str}
-            self_personality 为空串时表示无演化
-        """
+    def render_c1(self) -> C1Data:
+        """产出 C1 Personality section 的数据。"""
         l2 = self._session.get_param("self_l2", "")
-        return {
-            "core_personality": self._l1_core,
-            "self_personality": l2 if l2 else "",
-        }
+        return C1Data(
+            core_personality=self._l1_core,
+            self_personality=l2 if l2 else "",
+        )
 
-    def render_c9(self) -> dict[str, str]:
-        """产出 C9 SelfPerception section 的数据。
-
-        Returns:
-            {"awareness_text": str}
-            awareness_text 为空串时 C9 跳过渲染
-        """
+    def render_c9(self) -> C9Data:
+        """产出 C9 SelfPerception section 的数据。awareness_text 为空串时 C9 跳过渲染。"""
         l3 = self._session.get_param("state_l3", "")
         if not l3:
-            return {"awareness_text": ""}
+            return C9Data(awareness_text="")
 
         # AwarenessTrigger: 偏差检测 + 冷却
         if not self._awareness_allowed():
-            return {"awareness_text": ""}
+            return C9Data(awareness_text="")
 
         self._last_awareness_time = time.time()
         self._session.set_param("last_awareness_time", self._last_awareness_time)
-        return {"awareness_text": l3}
+        return C9Data(awareness_text=l3)
 
     # ---- 触发事件 ----
 

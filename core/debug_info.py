@@ -181,7 +181,7 @@ async def collect(agent) -> DebugInfo:
     if pe is not None:
         info.personality_engine_exists = True
         c1 = pe.render_c1()
-        info.self_l2 = c1["self_personality"][:200] if c1["self_personality"] else "（未演化）"
+        info.self_l2 = c1.self_personality[:200] if c1.self_personality else "（未演化）"
         l3 = agent._session.get_param("state_l3", "")
         info.state_l3 = l3[:200] if l3 else "（无短期状态）"
         info.state_history = list(agent._session.get_param("state_history", []))[-5:]

@@ -27,12 +27,12 @@ class TestPersonalityEngineInit:
     def test_loads_l1_core(self):
         """初始化时存储 L1 Core。"""
         engine = _make_engine()
-        assert engine.render_c1()["core_personality"] == "你是 Elysia。温柔底色。"
+        assert engine.render_c1().core_personality == "你是 Elysia。温柔底色。"
 
     def test_l2_self_is_empty_initially(self):
         """初始 L2 Self 为空。"""
         engine = _make_engine()
-        assert engine.render_c1()["self_personality"] == ""
+        assert engine.render_c1().self_personality == ""
 
 
 @pytest.mark.unit
@@ -40,7 +40,7 @@ class TestPersonalityEngineC9:
     def test_c9_empty_when_no_state(self):
         """无 L3 State 时 C9 返回空。"""
         engine = _make_engine()
-        assert engine.render_c9()["awareness_text"] == ""
+        assert engine.render_c9().awareness_text == ""
 
     def test_c9_returns_state_when_triggered(self):
         """L3 State 存在且触发条件满足时 C9 返回内容。"""
@@ -52,7 +52,7 @@ class TestPersonalityEngineC9:
         # 手动触发一个事件以确保 awareness 激活
         asyncio.run(engine.consume_trigger("test", {"content": "测试触发"}))
         result = engine.render_c9()
-        assert result["awareness_text"]
+        assert result.awareness_text
 
 
 @pytest.mark.unit
@@ -86,8 +86,8 @@ class TestPersonalityEngineRestore:
         s.set_param("state_l3", "最近有点累")
         engine = _make_engine(session=s)
         engine.restore_state()
-        assert engine.render_c1()["self_personality"] == "我变得更信任妖梦了"
-        assert engine.render_c9()["awareness_text"]
+        assert engine.render_c1().self_personality == "我变得更信任妖梦了"
+        assert engine.render_c9().awareness_text
 
 
 @pytest.mark.unit
