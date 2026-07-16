@@ -2,7 +2,7 @@
 import pytest
 from datetime import datetime, timezone
 from pydantic import BaseModel, ValidationError
-from core.schema.types import IsoTimestamp, now_iso, SessionId, MessageId, ToolCallId
+from core.schema import IsoTimestamp, now_iso, SessionId, MessageId, ToolCallId
 
 
 @pytest.mark.unit

@@ -34,7 +34,8 @@ from core.schema.adapters.message_adapter import (       # noqa: F401
     has_image, has_file, has_video, has_audio,
     _resolve_image_source, _to_data_uri,
 )
-from core.schema.types import IsoTimestamp, now_iso  # noqa: F401
+from core.schema.types import IsoTimestamp  # noqa: F401
+from core.schema._utils import now_iso  # noqa: F401
 
 # 兼容旧 ChatMessageV2 → 映射为 Message Union（注意：无 to_dict/from_dict 方法）
 ChatMessageV2 = Message  # noqa: F401

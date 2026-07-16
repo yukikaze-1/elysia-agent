@@ -2,6 +2,7 @@
 #
 # 子模块:
 #   agent    — AgentState, EventType, EventPriority, VALID_TRANSITIONS
+#   _utils   — now_iso（时间戳工厂）
 #   types    — IsoTimestamp, SessionId, MessageId, ToolCallId
 #   part     — TextPart, ImagePart, ..., Part
 #   tool     — ToolCall, ToolCallFunction
@@ -14,9 +15,9 @@ from core.schema.agent import (  # noqa: F401
     EventType,
     VALID_TRANSITIONS,
 )
+from core.schema._utils import now_iso  # noqa: F401
 from core.schema.types import (  # noqa: F401
     IsoTimestamp,
-    now_iso,
     SessionId,
     MessageId,
     ToolCallId,

@@ -14,7 +14,8 @@ from Module.tool.protocol import ErrorType
 
 from .part import Part
 from .tool import ToolCall, ToolCallId
-from .types import IsoTimestamp, now_iso, MessageId, SessionId
+from ._utils import now_iso
+from .types import IsoTimestamp, MessageId, SessionId
 
 
 class MessageRole(StrEnum):

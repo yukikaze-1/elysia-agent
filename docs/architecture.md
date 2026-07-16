@@ -920,7 +920,7 @@ Agent/
 │   ├── config/              # Config: YAML + env 加载器 + preflight
 │   ├── logger/              # Logger: caller-aware 工厂
 │   ├── system_prompt/       # System Prompt 引擎 + Section Provider + 12 templates
-│   ├── schema/              # Schema: 共享数据模型
+│   ├── schema/              # Schema (deprecated): 旧共享数据模型，现由 core/schema/ 替代
 │   ├── database/            # Database: Milvus / MongoDB / GraphDB (stub)
 │   ├── tool/                # Tool: ToolPlugin框架 + SafetyPipeline + ToolManager
 │   ├── input/               # Input: AudioBuffer (VAD) + WebSocket server
@@ -945,7 +945,7 @@ Agent/
 │   ├── task_scheduler.py    #   Worker Pool 调度器
 │   ├── message_id.py        #   消息 ID 生成
 │   ├── consolidator.py     #   记忆沉淀
-│   ├── schema.py           #   共享类型
+│   ├── schema/              #   共享类型包 (agent + types + part + tool + message + adapters)
 │   ├── task.py             #   任务模型
 │   ├── debug_info.py        #   /debug 数据聚合
 │   ├── character_config.py  #   角色配置
