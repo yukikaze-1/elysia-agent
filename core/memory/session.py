@@ -18,14 +18,25 @@ from core.schema.message import (
     AssistantMessage,
     Message,
     ToolResultMessage,
-    UserMessage,
 )
 from core.schema._utils import now_iso
 from core.schema.part import TextPart
 from core.schema.types import SessionId
+from core.storage.message_repo import MessageRepository
 from core.storage.session_repo import SessionRepository
 
 logger = logging.getLogger(__name__)
+
+# TypeAdapter for Message union — cached at module level
+_message_adapter: TypeAdapter[Message] = TypeAdapter(Message)
+
+
+def _archive_done(task: asyncio.Task) -> None:
+    """fire-and-forget 归档回调：静默吞掉异常（归档为 best-effort）。"""
+    try:
+        task.result()
+    except Exception:
+        logger.debug("消息归档失败（fire-and-forget）", exc_info=True)
 
 
 class SessionMemory:
@@ -34,8 +45,7 @@ class SessionMemory:
     def __init__(self, max_messages: int = 20,
                  session_id: SessionId = SessionId("default"),
                  repo: SessionRepository | None = None,
-                 msg_repo: "MessageRepository | None" = None):
-        from core.storage.message_repo import MessageRepository
+                 msg_repo: MessageRepository | None = None):
         self._messages: deque[Message] = deque(maxlen=max_messages)
         self._params: dict[str, Any] = {}
         self._max_messages = max_messages
@@ -64,7 +74,10 @@ class SessionMemory:
         """存储一条 Pydantic Message 对象，同时 fire-and-forget 归档到永久存储。"""
         self._messages.append(msg)
         if self._msg_repo is not None:
-            asyncio.ensure_future(self._msg_repo.append(self._session_id, msg))
+            task = asyncio.ensure_future(
+                self._msg_repo.append(self._session_id, msg)
+            )
+            task.add_done_callback(_archive_done)
 
     def recent_messages(self, n: int | None = None) -> list[Message]:
         """返回最近 n 条消息（Pydantic 对象）。n 为 None 时返回全部。"""
@@ -116,7 +129,7 @@ class SessionMemory:
                     if msg.tool_calls:
                         entry["tool_calls"] = [tc.model_dump(mode="json") for tc in msg.tool_calls]
                     if msg.token_usage:
-                        entry["token_usage"] = msg.token_usage
+                        entry["token_usage"] = msg.token_usage.model_dump(mode="json")
                     # block_index → content_type（debug 页面 / 前端旧字段名）
                     if msg.block_index:
                         entry["content_type"] = msg.block_index
@@ -196,8 +209,7 @@ class SessionMemory:
             with open(self._pending_file) as f:
                 doc = json.loads(f.readline())
             msgs_raw = doc.get("messages", [])
-            ta = TypeAdapter(Message)
-            converted = [ta.validate_python(m) for m in msgs_raw]
+            converted = [_message_adapter.validate_python(m) for m in msgs_raw]
             if merge and self._messages:
                 # 合并：现有消息（from MongoDB）+ JSONL 消息，按 message_id 去重
                 existing_ids = {m.message_id for m in self._messages if m.message_id}
@@ -226,8 +238,7 @@ class SessionMemory:
                 msgs_raw, params = result
                 self._session_id = sid
                 # 从 dict 转换回 Message 对象
-                ta = TypeAdapter(Message)
-                converted = [ta.validate_python(m) for m in msgs_raw]
+                converted = [_message_adapter.validate_python(m) for m in msgs_raw]
                 self._messages = deque(converted[-self._max_messages:], maxlen=self._max_messages)
                 self._params = dict(params)
                 logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(converted))

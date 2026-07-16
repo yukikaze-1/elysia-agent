@@ -1591,10 +1591,13 @@ class TestDebugDbApi:
         await agent.start()
 
         # 先存一条消息让它有东西
-        agent._session.add_message({
-            "id": "msg-test", "role": "user", "parts": [{"content": "hello"}],
-            "content_type": {}, "timestamp": "2026-06-04T00:00:00",
-        })
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+        agent._session.add_message(UserMessage(
+            content=[TextPart(content="hello")],
+            message_id=MessageId("msg-test"),
+        ))
         if await agent._session_repo.health_check():
             await agent._session.save()
 

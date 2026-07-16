@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from core.schema.part import TextPart
+
 
 BlockType = Literal["markdown", "code"]
 
@@ -207,7 +209,7 @@ def _append_sentences_from_segment(
     segment: str,
     sentences: list[str],
     sentence_index: int,
-    parts: list[dict],
+    parts: list[TextPart],
 ) -> int:
     """将当前普通文本段中的句子按顺序放入 parts。"""
 
@@ -231,7 +233,7 @@ def _append_sentences_from_segment(
         if found < 0:
             break
 
-        parts.append({"content": sentence})
+        parts.append(TextPart(content=sentence))
         search_pos = found + len(sentence)
         sentence_index += 1
 
@@ -241,28 +243,14 @@ def _append_sentences_from_segment(
 def build_parts_with_blocks(
     acc_text: str,
     sentences: list[str],
-) -> tuple[list[dict], dict[str, list[int]]]:
-    """从完整 LLM 输出中构建前端 parts。
+) -> tuple[list[TextPart], dict[str, list[int]]]:
+    """从完整 LLM 输出中构建 TextPart 数组 + content_type 索引。
 
     与旧实现不同，Markdown/code block 会保留在原始文本位置，
     不再统一追加到所有句子之后。
-
-    Returns:
-        (
-            [
-                {"content": "你好。"},
-                {"content": "| a | b |"},
-                {"content": "再见。"},
-                {"content": "print('ok')", "language": "python"},
-            ],
-            {
-                "markdown": [1],
-                "code": [3],
-            },
-        )
     """
 
-    parts: list[dict] = []
+    parts: list[TextPart] = []
     content_type: dict[str, list[int]] = {
         "markdown": [],
         "code": [],
@@ -272,7 +260,7 @@ def build_parts_with_blocks(
 
     if not blocks:
         return (
-            [{"content": sentence} for sentence in sentences],
+            [TextPart(content=sentence) for sentence in sentences],
             content_type,
         )
 
@@ -291,15 +279,8 @@ def build_parts_with_blocks(
         )
 
         # 再插入 block，保持原始交错顺序。
-        block_part: dict[str, str] = {
-            "content": block.content,
-        }
-
-        if block.kind == "code" and block.language:
-            block_part["language"] = block.language
-
         content_type[block.kind].append(len(parts))
-        parts.append(block_part)
+        parts.append(TextPart(content=block.content))
 
         text_start = block_end
 
@@ -318,7 +299,7 @@ def build_parts_with_blocks(
         sentence = sentences[sentence_index]
 
         if sentence.strip():
-            parts.append({"content": sentence})
+            parts.append(TextPart(content=sentence))
 
         sentence_index += 1
 

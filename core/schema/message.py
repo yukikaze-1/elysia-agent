@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from Module.tool.protocol import ErrorType
 
 from .part import Part
+from .token import TokenUsageSummary
 from .tool import ToolCall, ToolCallId
 from ._utils import now_iso
 from .types import IsoTimestamp, MessageId, SessionId
@@ -45,7 +46,7 @@ class AssistantMessage(BaseModel):
     tool_calls: list[ToolCall] | None = None
     block_index: dict[str, list[int]] | None = None  # {"markdown": [3,7], "code": [1]}
     inner_voice: str | None = None
-    token_usage: dict | None = None
+    token_usage: TokenUsageSummary | None = None
     metadata: dict = Field(default_factory=dict)
 
 

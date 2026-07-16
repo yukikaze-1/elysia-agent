@@ -46,6 +46,7 @@ from .tts_stream import is_emoji_only, TTSStreamManager
 from .tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from .text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
+from core.schema.token import TokenUsageRecord, TokenUsageSummary
 from core.schema.tool import ToolCall, ToolCallFunction, ToolCallId
 from core.schema.part import TextPart
 from core.schema.adapters.message_adapter import parts_from_dicts
@@ -706,22 +707,23 @@ class CognitiveLoop:
                         msg = MessageObj(content=public_text)
                         await self._output.send(msg)
                 if public_text.strip():
-                    parts, content_type = build_parts_with_blocks(public_text, all_sentences)
-                    # 构建 assistant 消息的 content 数组（text parts + 保留 content_type 信息）
-                    assistant_parts = [
-                        TextPart(content=p["content"])
-                        for p in parts
-                        if isinstance(p, dict) and "content" in p
-                    ]
+                    assistant_parts, content_type = build_parts_with_blocks(public_text, all_sentences)
                     self._session.add_message(AssistantMessage(
                         content=assistant_parts,
                         message_id=new_message_id(),
                         inner_voice=iv_think_buf.strip() or None,
                         block_index=content_type,
-                        token_usage={
-                            "rounds": [asdict(r) for r in self._token_tracker.current_turn_usages],
-                            "turn_total": sum(r.total_tokens for r in self._token_tracker.current_turn_usages),
-                        } if self._token_tracker and self._token_tracker.current_turn_usages else None,
+                        token_usage=TokenUsageSummary(
+                            rounds=[TokenUsageRecord(
+                                model=r.model,
+                                prompt_tokens=r.prompt_tokens,
+                                completion_tokens=r.completion_tokens,
+                                total_tokens=r.total_tokens,
+                                round_num=r.round_num,
+                                timestamp=r.timestamp,
+                            ) for r in self._token_tracker.current_turn_usages],
+                            turn_total=sum(r.total_tokens for r in self._token_tracker.current_turn_usages),
+                        ) if self._token_tracker and self._token_tracker.current_turn_usages else None,
                     ))
                     # 记录原始 LLM 回复（供 debug 页面查看）
                     if self._response_recorder is not None:

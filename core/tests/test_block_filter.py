@@ -2,6 +2,7 @@
 
 import pytest
 from core.block_filter import BlockFilter, build_parts_with_blocks
+from core.schema.part import TextPart
 
 pytestmark = pytest.mark.unit
 
@@ -164,9 +165,9 @@ class TestPartsOrdering:
             ["你好。", "再见。"],
         )
         assert parts == [
-            {"content": "你好。"},
-            {"content": "表格"},
-            {"content": "再见。"},
+            TextPart(content="你好。"),
+            TextPart(content="表格"),
+            TextPart(content="再见。"),
         ]
         assert content_type == {"markdown": [1], "code": []}
 
@@ -184,11 +185,11 @@ class TestPartsOrdering:
             ["你好。", "再见。"],
         )
         assert parts == [
-            {"content": "print(1)", "language": "python"},
-            {"content": "你好。"},
-            {"content": "note"},
-            {"content": "再见。"},
-            {"content": "end"},
+            TextPart(content="print(1)"),
+            TextPart(content="你好。"),
+            TextPart(content="note"),
+            TextPart(content="再见。"),
+            TextPart(content="end"),
         ]
         assert content_type == {"markdown": [2], "code": [0, 4]}
 
@@ -200,8 +201,8 @@ class TestPartsOrdering:
         )
         # 没有块标记时直接返回句子列表
         assert parts == [
-            {"content": "你好。"},
-            {"content": "再见。"},
+            TextPart(content="你好。"),
+            TextPart(content="再见。"),
         ]
 
     def test_parts_no_blocks(self):
@@ -211,7 +212,7 @@ class TestPartsOrdering:
             ["你好。", "今天天气真好。"],
         )
         assert parts == [
-            {"content": "你好。"},
-            {"content": "今天天气真好。"},
+            TextPart(content="你好。"),
+            TextPart(content="今天天气真好。"),
         ]
         assert content_type == {"markdown": [], "code": []}

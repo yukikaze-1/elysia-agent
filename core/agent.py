@@ -11,8 +11,10 @@ Usage:
 import asyncio
 import time
 import os
+from dataclasses import asdict, dataclass
 from enum import Enum, auto
 import logging
+from typing import Any
 
 from Module.output import OutputManager, ConsoleChannel
 
@@ -43,6 +45,23 @@ from core.storage.memory_repo import MemoryRepository
 from core.storage.character_state_repo import CharacterStateRepository
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _PendingMessage:
+    """FIFO 队列中暂存的消息（FSM 忙碌时入队）。"""
+    text: str
+    user_name: str
+    request_id: str
+    content: list[dict] | None = None
+
+
+@dataclass
+class _BackgroundTaskEntry:
+    """后台任务注册信息。"""
+    intent: str
+    dispatched_at: str
+    mailbox: Any  # asyncio.Queue
 
 
 class RunState(Enum):
@@ -184,12 +203,12 @@ class Agent:
         self._event_task: asyncio.Task | None = None
         self._req_counter: int = 0
         # FIFO 消息排队 — FSM != IDLE 时暂存消息
-        self._pending_messages: list[dict] = []
+        self._pending_messages: list[_PendingMessage] = []
 
         # ---- TaskSystem ----
         self._task_system = None   # TaskSystem | None
         self._delegation_preparer = None  # DelegationPreparer | None
-        self._background_tasks: dict[str, dict] = {}  # task_id -> {intent, dispatched_at, mailbox}
+        self._background_tasks: dict[str, _BackgroundTaskEntry] = {}
         self._mailbox_task: asyncio.Task | None = None
         self._db_health_task: asyncio.Task | None = None
 
@@ -757,10 +776,10 @@ class Agent:
                 return
             logger.info("Agent busy — 消息排队 (state=%s, queue=%d)",
                        self._fsm.state, len(self._pending_messages) + 1)
-            self._pending_messages.append({
-                "text": text, "user_name": user_name, "request_id": rid,
-                "content": content,
-            })
+            self._pending_messages.append(_PendingMessage(
+                text=text, user_name=user_name, request_id=rid,
+                content=content,
+            ))
             return
 
         self._bus.post(EventType.USER_INPUT, {"text": text, "user_name": user_name,
@@ -901,18 +920,18 @@ class Agent:
 
     def _register_background_task(self, task_id: str, mailbox, intent: str, dispatched_at: IsoTimestamp) -> None:
         """CognitiveLoop 提交后台任务后调用——注册到轮询列表。"""
-        self._background_tasks[task_id] = {
-            "intent": intent,
-            "dispatched_at": dispatched_at,
-            "mailbox": mailbox,
-        }
+        self._background_tasks[task_id] = _BackgroundTaskEntry(
+            intent=intent,
+            dispatched_at=dispatched_at,
+            mailbox=mailbox,
+        )
 
     async def _poll_mailboxes(self):
         """轮询所有活跃后台任务的 mailbox。每 500ms 一次。"""
         while self._state == RunState.RUNNING:
             await asyncio.sleep(0.5)
             for task_id, info in list(self._background_tasks.items()):
-                mailbox = info.get("mailbox")
+                mailbox = info.mailbox
                 if mailbox is None:
                     continue
                 try:
@@ -922,8 +941,8 @@ class Agent:
                             self._bus.post(EventType.TASK_RESULT, {
                                 "task_id": task_id,
                                 "result": data.get("result", ""),
-                                "original_intent": info["intent"],
-                                "dispatched_at": info["dispatched_at"],
+                                "original_intent": info.intent,
+                                "dispatched_at": info.dispatched_at,
                             })
                             self._background_tasks.pop(task_id, None)
                             break  # task 已终态，跳出 while 处理下一个 task
@@ -931,8 +950,8 @@ class Agent:
                             self._bus.post(EventType.TASK_RESULT, {
                                 "task_id": task_id,
                                 "result": f"任务执行失败: {data.get('error', '未知错误')}",
-                                "original_intent": info["intent"],
-                                "dispatched_at": info["dispatched_at"],
+                                "original_intent": info.intent,
+                                "dispatched_at": info.dispatched_at,
                             })
                             self._background_tasks.pop(task_id, None)
                             break  # task 已终态，跳出 while 处理下一个 task
@@ -1055,7 +1074,7 @@ class Agent:
             if self._pending_messages:
                 pending = self._pending_messages.pop(0)
                 logger.info("排队消息出队 (%d 条剩余)", len(self._pending_messages))
-                self._bus.post(EventType.USER_INPUT, pending)
+                self._bus.post(EventType.USER_INPUT, asdict(pending))
         await self._output.notify_state(state)
 
     # Tool registration is done via ToolManager.load_all() in start()
