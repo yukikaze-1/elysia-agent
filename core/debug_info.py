@@ -158,7 +158,8 @@ async def collect(agent) -> DebugInfo:
         }
         for e in agent._long_term._entries[-5:]
     ]
-    info.milvus_ok = agent._long_term._connected
+    repo = agent._long_term._repo
+    info.milvus_ok = repo is not None and repo._db is not None
     info.embedding_ok = agent._long_term._embedding is not None
     info.mongodb_ok = agent._session._db is not None
 

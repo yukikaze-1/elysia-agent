@@ -1228,7 +1228,7 @@ async def test_long_term_memory_tracks_dirty_entries():
     from core.memory.long_term import LongTermMemory
 
     ltm = LongTermMemory()
-    ltm._vector_db = None  # 模拟 Milvus 不可用
+    ltm._repo = None  # 模拟 Milvus 不可用
     assert len(ltm._dirty_ids) == 0
 
     await ltm.insert("离线数据", memory_type="fact")
@@ -1246,7 +1246,7 @@ async def test_long_term_memory_sync_handles_milvus_down():
     from core.memory.long_term import LongTermMemory
 
     ltm = LongTermMemory()
-    ltm._vector_db = None  # Milvus 不可用
+    ltm._repo = None  # Milvus 不可用
 
     await ltm.insert("离线数据")
     synced = await ltm._sync_dirty_entries()

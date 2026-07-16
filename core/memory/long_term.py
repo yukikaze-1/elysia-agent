@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from Module.database.vectordb import VectorDBBackend
     from Module.embedding import EmbeddingBackend
+    from core.storage.memory_repo import MemoryRepository
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +48,16 @@ class LongTermMemory:
     with a 10s timeout to avoid blocking startup.
     """
 
-    COLLECTION = "long_term_memory"
     DIMENSION = 1024  # Default for bge-large-zh-v1.5
 
     def __init__(self, max_entries: int = 10000, max_age_days: int = 90,
-                 embed_timeout: float = 10.0):
+                 embed_timeout: float = 10.0,
+                 repo: "MemoryRepository | None" = None):
         self._entries: list[MemoryEntry] = []
-        self._vector_db: "VectorDBBackend | None" = None
+        self._repo: "MemoryRepository | None" = repo
         self._embedding: "EmbeddingBackend | None" = None
         self._embedding_tried = False  # Only try once lazily
         self._embed_task: asyncio.Task | None = None  # Tracked for cleanup
-        self._connected = False
         self._dirty_ids: set[str] = set()  # 未同步到 Milvus 的条目 ID
         self._max_entries = max_entries
         self._max_age_days = max_age_days
@@ -68,34 +67,24 @@ class LongTermMemory:
 
     async def connect(self) -> bool:
         """Connect to Milvus (fast). Embedding is deferred to first use. Returns True if Milvus available."""
-        # Try Milvus (fast — local connection, no model download)
-        try:
-            from Module.database.vectordb import VectorDBFactory
-            self._vector_db = VectorDBFactory.create("milvus/memory")
-            dim = self.DIMENSION
-            if not await self._vector_db.collection_exists(self.COLLECTION):
-                await self._vector_db.create_collection(self.COLLECTION, dimension=dim)
-                logger.info("LongTermMemory: created Milvus collection '%s' (dim=%d)", self.COLLECTION, dim)
-            else:
-                loaded = await self._load_from_milvus()
-                if loaded:
-                    logger.info("LongTermMemory: loaded %d entries from Milvus", loaded)
-            self._connected = True
-            logger.info("LongTermMemory: Milvus connected")
+        if self._repo is None:
+            from core.storage.memory_repo import MemoryRepository
+            self._repo = MemoryRepository()
+        result = await self._repo.connect()
+        if result:
+            loaded = await self._load_from_milvus()
+            if loaded:
+                logger.info("LongTermMemory: loaded %d entries from Milvus", loaded)
             return True
-        except Exception as e:
-            logger.warning("LongTermMemory: Milvus unavailable (%s), using in-memory", e)
-            self._vector_db = None
-            self._connected = False
+        else:
             return False
 
     async def _load_from_milvus(self) -> int:
         """从 Milvus 恢复已有条目到内存。返回加载数量。"""
-        if not self._vector_db:
+        if self._repo is None:
             return 0
         try:
-            results = await self._vector_db.query(
-                self.COLLECTION,
+            results = await self._repo.query(
                 filter_expr="id >= 0",
                 output_fields=["id", "entry_id", "text", "memory_type", "poignancy", "timestamp"],
                 limit=self._max_entries,
@@ -134,16 +123,9 @@ class LongTermMemory:
 
     async def health_check(self) -> bool:
         """尝试重连 Milvus。已连接则直接返回 True。"""
-        if self._connected:
-            return True
-        try:
-            from Module.database.vectordb import VectorDBFactory
-            self._vector_db = VectorDBFactory.create("milvus/memory")
-            self._connected = True
-            logger.info("LongTermMemory: Milvus 已恢复连接")
-            return True
-        except Exception:
-            return False
+        if self._repo is not None:
+            return await self._repo.health_check()
+        return False
 
     async def _ensure_embedding(self, wait: bool = False) -> None:
         """Load embedding backend lazily. Only tries once.
@@ -242,10 +224,9 @@ class LongTermMemory:
                 metadata=meta,
             )
 
-            if self._vector_db and embedding:
+            if self._repo is not None and embedding:
                 try:
-                    pk_list = await self._vector_db.insert(
-                        self.COLLECTION,
+                    pk_list = await self._repo.insert(
                         vectors=[embedding],
                         metadata=[{
                             "entry_id": entry.id,
@@ -261,7 +242,7 @@ class LongTermMemory:
                 except Exception as e:
                     logger.warning("Milvus insert failed: %s, falling back to in-memory", e)
                     self._dirty_ids.add(entry.id)
-            elif not self._vector_db:
+            elif self._repo is None:
                 self._dirty_ids.add(entry.id)
 
             self._entries.append(entry)
@@ -322,7 +303,7 @@ class LongTermMemory:
 
     async def _sync_dirty_entries(self) -> int:
         """尝试将脏条目同步到 Milvus。返回成功同步数。"""
-        if not self._vector_db or not self._dirty_ids:
+        if self._repo is None or not self._dirty_ids:
             return 0
         synced = 0
         for eid in list(self._dirty_ids):
@@ -330,10 +311,10 @@ class LongTermMemory:
             if entry is None or not entry.embedding:
                 continue
             try:
-                await self._vector_db.insert(
-                    self.COLLECTION,
+                pk_list = await self._repo.insert(
                     vectors=[entry.embedding],
                     metadata=[{
+                        "entry_id": entry.id,
                         "text": entry.text,
                         "memory_type": entry.memory_type,
                         "poignancy": entry.poignancy,
@@ -341,6 +322,8 @@ class LongTermMemory:
                         **entry.metadata,
                     }],
                 )
+                if pk_list:
+                    entry._milvus_pk = pk_list[0]
                 self._dirty_ids.discard(eid)
                 synced += 1
             except Exception:
@@ -366,15 +349,14 @@ class LongTermMemory:
                     if memory_type is not None:
                         e.memory_type = memory_type
                     e.timestamp = _time.time()
-                    if self._vector_db and e._milvus_pk is not None:
+                    if self._repo is not None and e._milvus_pk is not None:
                         old_pk = e._milvus_pk
                         await self._ensure_embedding(wait=True)
                         if self._embedding:
                             try:
                                 emb = await self._embedding.embed_query(new_text)
                                 if emb:
-                                    pk_list = await self._vector_db.insert(
-                                        self.COLLECTION,
+                                    pk_list = await self._repo.insert(
                                         vectors=[emb],
                                         metadata=[{
                                             "entry_id": e.id,
@@ -388,7 +370,7 @@ class LongTermMemory:
                                         e._milvus_pk = int(pk_list[0])
                                         # 新向量插入成功后才删除旧向量
                                         try:
-                                            await self._vector_db.delete(self.COLLECTION, [old_pk])
+                                            await self._repo.delete([old_pk])
                                         except Exception:
                                             logger.debug("Milvus delete old pk failed for update %s", entry_id, exc_info=True)
                                     else:
@@ -408,10 +390,9 @@ class LongTermMemory:
                     self._entries.pop(i)
                     self._absorbed_ids.discard(entry_id)
                     self._dirty_ids.discard(entry_id)
-                    if self._vector_db and e._milvus_pk is not None:
+                    if self._repo is not None and e._milvus_pk is not None:
                         try:
-                            await self._vector_db.delete(
-                                self.COLLECTION, [e._milvus_pk])
+                            await self._repo.delete([e._milvus_pk])
                         except Exception:
                             logger.debug("Milvus delete failed for %s", entry_id, exc_info=True)
                     return True
@@ -425,28 +406,26 @@ class LongTermMemory:
             self._absorbed_ids.clear()
             self._dirty_ids.clear()
 
-            if self._vector_db is not None:
-                # 已通过 connect() 持有连接 → 直接操作
-                await self._vector_db.drop_collection(self.COLLECTION)
-                await self._vector_db.create_collection(
-                    self.COLLECTION, dimension=self.DIMENSION)
+            if self._repo is not None:
+                # 已有 repo → 直接操作
+                await self._repo.clear_all()
             else:
-                # 无已有连接 → 自行创建临时连接
-                from Module.database.vectordb import VectorDBFactory
+                # 无已有 repo → 自行创建临时 repo
+                from core.storage.memory_repo import MemoryRepository
                 try:
-                    vector_db = VectorDBFactory.create("milvus/memory")
+                    temp_repo = MemoryRepository()
                 except Exception:
-                    # Milvus 不可达时静默降级：内存已清空，返回 count
-                    # （保持向后兼容 — 无 Milvus 环境的测试不因此失败）
+                    # MemoryRepository 创建失败（极端情况）→ 静默降级
                     return count
                 try:
-                    if await vector_db.collection_exists(self.COLLECTION):
-                        await vector_db.drop_collection(self.COLLECTION)
-                    await vector_db.create_collection(
-                        self.COLLECTION, dimension=self.DIMENSION)
+                    await temp_repo.connect()
+                    await temp_repo.clear_all()
+                except Exception:
+                    # Milvus 不可达时静默降级：内存已清空，返回 count
+                    pass
                 finally:
-                    await vector_db.close()
-        return count
+                    await temp_repo.close()
+            return count
 
     # ---- Read ----
 
@@ -460,14 +439,14 @@ class LongTermMemory:
         """向量搜索 + rerank（相似度 + 重要性 + 新鲜度）。"""
         await self._ensure_embedding()
 
-        if not self._entries and not self._vector_db:
+        if not self._entries and self._repo is None:
             return []
 
         candidates: list[MemoryEntry] = []
         distances: dict[int, float | None] = {}  # id(entry) → L2 distance or None (fallback flag)
 
         # Try Milvus — fetch top_k * 4 for rerank candidate pool
-        if self._vector_db and self._connected:
+        if self._repo is not None and self._repo._db is not None:
             vec = query_embedding
             if vec is None and query_text and self._embedding:
                 try:
@@ -477,8 +456,7 @@ class LongTermMemory:
 
             if vec:
                 try:
-                    raw = await self._vector_db.search(
-                        self.COLLECTION,
+                    raw = await self._repo.search(
                         vector=vec,
                         top_k=min(top_k * 4, 20),
                         output_fields=["id", "text", "memory_type", "poignancy", "timestamp"],
@@ -582,8 +560,8 @@ class LongTermMemory:
         # killed when the process exits.
         if self._embed_task and not self._embed_task.done():
             self._embed_task.cancel()
-        if self._vector_db:
-            await self._vector_db.close()
+        if self._repo:
+            await self._repo.close()
         # 仅解引用，模型释放由 EmbeddingFactory.shutdown() 统一负责
         if self._embedding:
             self._embedding = None
