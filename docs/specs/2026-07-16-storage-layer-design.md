@@ -1,0 +1,196 @@
+# core/storage — 统一存储层设计
+
+> 日期: 2026-07-16 | 状态: design | 作者: yukikaze-1
+
+## 目标
+
+建立 `core/storage/` Repository 存储中间层，消除业务逻辑对数据库的直接操作。
+
+当前问题：
+- SessionMemory 混杂消息窗口管理 + MongoDB 连接管理 + CRUD 操作
+- server.py 绕过 SessionMemory 直接掏 `session._db` 做 session 管理查询
+- PersonalityEngine 的状态通过 session params 间接持久化，没有独立存储
+- `Module/database` 暴露裸 collection 操作，上层直接写 `find("sessions", {"session_id": ...})`
+
+## 目录结构
+
+```
+core/storage/
+├── __init__.py                     — re-export 所有 Repository
+├── base.py                         — Repository ABC（connect / health_check / close）
+├── session_repo.py                 — SessionRepository（MongoDB sessions）
+├── message_repo.py                 — MessageRepository（MongoDB message_archive）
+├── token_repo.py                   — TokenRepository（MongoDB token_usage）
+├── character_state_repo.py         — CharacterStateRepository（MongoDB character_state，新建集合）
+├── memory_repo.py                  — MemoryRepository（Milvus long_term_memory）
+└── README.md                       — 遵循 readme-conventions.md
+
+core/schema/                         新增：
+├── token.py                        — TokenUsageEntry dataclass
+└── character.py                    — CharacterState dataclass
+```
+
+## base.py — Repository ABC
+
+```python
+class Repository(ABC):
+    async def connect(self) -> bool: ...
+    async def close(self) -> None: ...
+    async def health_check(self) -> bool: ...
+```
+
+## 各 Repository 接口
+
+### SessionRepository（MongoDB sessions）
+
+```python
+class SessionRepository(Repository):
+    async def save(self, session_id: SessionId,
+                   messages: list[Message],
+                   params: dict[str, Any]) -> None: ...
+    async def load(self, session_id: SessionId
+                   ) -> tuple[list[Message], dict[str, Any]] | None: ...
+    async def delete(self, session_id: SessionId) -> int: ...
+    async def list_all(self) -> list[SessionSummary]: ...
+    async def clear_all(self) -> int: ...
+
+@dataclass
+class SessionSummary:
+    session_id: SessionId
+    message_count: int
+    updated_at: IsoTimestamp
+    token_total: int
+```
+
+### MessageRepository（MongoDB message_archive）
+
+```python
+class MessageRepository(Repository):
+    async def append(self, session_id: SessionId, msg: Message) -> None: ...
+    async def query_by_session(self, session_id: SessionId, *,
+                               limit: int = 20, before: ObjectId | None = None
+                               ) -> tuple[list[Message], int]: ...
+    async def count_by_session(self, session_id: SessionId) -> int: ...
+    async def count(self) -> int: ...
+    async def delete_by_session(self, session_id: SessionId) -> int: ...
+    async def clear_all(self) -> int: ...
+```
+
+### TokenRepository（MongoDB token_usage）
+
+```python
+class TokenRepository(Repository):
+    async def record(self, session_id: SessionId, *,
+                     model: str, prompt_tokens: int,
+                     completion_tokens: int,
+                     round_num: int) -> None: ...
+    async def flush(self, records: list[dict]) -> None: ...
+    async def query_by_session(self, session_id: SessionId, *,
+                               limit: int = 100) -> list[TokenUsageEntry]: ...
+```
+
+### CharacterStateRepository（MongoDB character_state，新建集合）
+
+```python
+class CharacterStateRepository(Repository):
+    async def save(self, session_id: SessionId,
+                   state: CharacterState) -> None: ...
+    async def load(self, session_id: SessionId
+                   ) -> CharacterState | None: ...
+```
+
+### MemoryRepository（Milvus long_term_memory）
+
+```python
+class MemoryRepository(Repository):
+    async def insert(self, entry: MemoryEntry) -> int: ...
+    async def search(self, vector: list[float], *,
+                     top_k: int = 10,
+                     filter_expr: str | None = None,
+                     output_fields: list[str] | None = None
+                     ) -> list[MemoryEntry]: ...
+    async def delete(self, ids: list[int]) -> int: ...
+    async def count(self) -> int: ...
+    async def query(self, *, filter_expr: str | None = None,
+                    output_fields: list[str] | None = None,
+                    limit: int = 100) -> list[MemoryEntry]: ...
+```
+
+## 数据类型
+
+### TokenUsageEntry（`core/schema/token.py`）
+
+```python
+@dataclass
+class TokenUsageEntry:
+    session_id: SessionId
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    round_num: int
+    timestamp: IsoTimestamp
+```
+
+### CharacterState（`core/schema/character.py`）
+
+```python
+@dataclass
+class CharacterState:
+    session_id: SessionId
+    self_l2: str = ""
+    state_l3: str = ""
+    state_history: list[dict] = field(default_factory=list)
+    reflector_buffer: list[dict] = field(default_factory=list)
+    reflector_context: list[dict] = field(default_factory=list)
+    self_perception_history: list[dict] = field(default_factory=list)
+    mood: str = "neutral"
+    mood_intensity: float = 0.5
+    last_awareness_time: IsoTimestamp | None = None
+    compression_last_at: IsoTimestamp | None = None
+    compression_last_count: int = 0
+    updated_at: IsoTimestamp = field(default_factory=now_iso)
+```
+
+## 调用方迁移
+
+### SessionMemory
+
+- 移除 `_db`、`connect_db`、`health_check`、`save`、`load`
+- 改为持有 `SessionRepository` 引用，通过它存取
+- `set_param` / `get_param` 保持不动（params 层下次改）
+
+### agent.py
+
+- 不再创建 `MessageArchive`、`TokenTracker`（改为接收 Repository 实例）
+- 创建各 Repository 实例，注入给 SessionMemory、CognitiveLoop 等组件
+- `_start_persistence` 中改为 `await repo.connect()` 而非 `session.connect_db()`
+
+### server.py
+
+- 所有 session CRUD handler（sessions_list、session_detail、session_delete、sessions_clear）改为通过 SessionRepository
+- 所有 archive handler 改为通过 MessageRepository
+- 所有 token 查询改为通过 TokenRepository
+- 移除所有 `session._db` 和 `agent._archive._db` 直接访问
+
+### debug_info.py
+
+- MongoDB 可用性判断改为 `session_repo.health_check()`
+- LTM 信息改为 `memory_repo.count()`、`memory_repo.query()`
+
+### PersonalityEngine / EmotionEngine / CharacterReflector / MemoryReflector
+
+- 状态读写从 `session.set_param/get_param` 迁移到 `CharacterStateRepository`
+
+## 文档更新
+
+- `core/storage/README.md` — 新建，遵循 readme-conventions.md
+- `README.md` — 文档导航新增 storage 条目
+- `docs/architecture.md` — 更新数据流图，加入 storage 层
+- `core/schema/README.md` — 新增 token.py / character.py 说明
+
+## 不在首期范围内的
+
+- Neo4j 集成（预留 GraphRepository stub）
+- `Module/database/graphdb/` 的实现
+- session params 的 dataclass 化（单独 spec）
