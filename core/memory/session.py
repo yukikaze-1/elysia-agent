@@ -21,6 +21,7 @@ from core.schema.message import (
     UserMessage,
 )
 from core.schema.part import TextPart
+from core.schema.types import SessionId
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +31,19 @@ class SessionMemory:
 
     COLLECTION = "sessions"
 
-    def __init__(self, max_messages: int = 20, session_id: str = "default"):
+    def __init__(self, max_messages: int = 20,
+                 session_id: SessionId = SessionId("default")):
         self._messages: deque[Message] = deque(maxlen=max_messages)
         self._params: dict[str, Any] = {}
         self._max_messages = max_messages
         self._session_id = session_id
         self._db: Any = None  # DocumentDBBackend or None
-        self._archive = None  # MessageArchive 现在由 CognitiveLoop 直接管理
         self._pending_file = os.path.join("data", f"session_{session_id}.json")
 
     # ---- public properties ----
 
     @property
-    def session_id(self) -> str:
+    def session_id(self) -> SessionId:
         return self._session_id
 
     @property
@@ -260,42 +261,6 @@ class SessionMemory:
         except Exception:
             logger.warning("SessionMemory load from MongoDB failed, trying JSONL", exc_info=True)
             return await self._load_from_jsonl()
-
-    async def migrate_archive_session_id(self) -> int:
-        """一次性迁移：给 message_archive 中缺少 session_id 的旧文档补上。
-        必须在 session.load() 之后调用（session_id 已从 MongoDB 恢复）。
-        MessageArchive 现在由 CognitiveLoop 直接管理，此方法保留作为空操作。
-
-        返回迁移的文档数。"""
-        if self._archive is None:
-            return 0
-        try:
-            # 查找所有缺少 session_id 的文档（limit=None 获取全部匹配文档）
-            docs = await self._archive._db.find(
-                self._archive.COLLECTION,
-                {"session_id": {"$exists": False}},
-                limit=None,
-            )
-            if not docs:
-                return 0
-            from bson import ObjectId
-            modified = 0
-            for doc in docs:
-                result = await self._archive._db.update_one(
-                    self._archive.COLLECTION,
-                    {"_id": ObjectId(doc["_id"])},
-                    {"$set": {"session_id": self._session_id}},
-                )
-                modified += result
-            if modified > 0:
-                logger.info(
-                    "SessionMemory: 迁移 %d 条 archive 文档 → session_id=%s",
-                    modified, self._session_id,
-                )
-            return modified
-        except Exception:
-            logger.debug("archive session_id migration failed", exc_info=True)
-            return 0
 
     def clear(self) -> None:
         self._messages.clear()
