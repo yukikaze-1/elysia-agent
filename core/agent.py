@@ -463,15 +463,15 @@ class Agent:
         # 1.55. Flush personality compression (L3→L2)
         await self._flush_compression()
 
+        # 1.6. MemoryReflector 计数器落盘（必须在 save_reflector_state 之前，确保 mr_* params 最新）
+        if self._memory_reflector:
+            await self._memory_reflector.flush()
+
         # 1.56. 角色状态持久化保存
         if self._character_state_repo:
             await self._personality_engine.save_character_state(self._character_state_repo)
             await self._emotion.save_emotion_state(self._character_state_repo)
             await self._character_reflector.save_reflector_state(self._character_state_repo)
-
-        # 1.6. MemoryReflector 计数器落盘
-        if self._memory_reflector:
-            await self._memory_reflector.flush()
 
         # 2. 先停事件循环 — 防止它在 shutdown 期间继续 post 新任务
         await self._stop_event_task()

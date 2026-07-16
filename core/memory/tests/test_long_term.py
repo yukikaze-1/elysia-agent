@@ -94,7 +94,7 @@ class TestPKMatching:
         mock_repo.search = AsyncMock(return_value=[
             {"id": 101, "text": "我喜欢吃披萨", "distance": 0.3},
         ])
-        mock_repo._db = MagicMock()  # 模拟已连接状态
+        mock_repo.health_check = AsyncMock(return_value=True)
         ltm._repo = mock_repo
 
         results = await ltm.search(query_embedding=[0.1] * 896, top_k=5)
@@ -127,7 +127,7 @@ class TestPKMatching:
             {"id": 101, "text": "同文", "distance": 0.3},
             {"id": 102, "text": "同文", "distance": 0.7},
         ])
-        mock_repo._db = MagicMock()
+        mock_repo.health_check = AsyncMock(return_value=True)
         ltm._repo = mock_repo
 
         results = await ltm.search(query_embedding=[0.1] * 896, top_k=5)
@@ -159,7 +159,7 @@ class TestPKMatching:
         mock_repo.search = AsyncMock(return_value=[
             {"text": "历史记忆", "distance": 0.5},
         ])
-        mock_repo._db = MagicMock()
+        mock_repo.health_check = AsyncMock(return_value=True)
         ltm._repo = mock_repo
 
         results = await ltm.search(query_embedding=[0.1] * 896, top_k=5)
@@ -184,7 +184,7 @@ class TestPKMatching:
         mock_repo.search = AsyncMock(return_value=[
             {"text": "无ID字段测试", "distance": 0.2},
         ])
-        mock_repo._db = MagicMock()
+        mock_repo.health_check = AsyncMock(return_value=True)
         ltm._repo = mock_repo
 
         results = await ltm.search(query_embedding=[0.1] * 896, top_k=5)
@@ -230,7 +230,7 @@ class TestLongTermMemoryClearAll:
         ltm._entries = [MagicMock()]
         mock_repo = MagicMock()
         mock_repo.clear_all = AsyncMock()
-        mock_repo._db = MagicMock()  # 模拟已连接
+        mock_repo.health_check = AsyncMock(return_value=True)  # 模拟已连接
         ltm._repo = mock_repo
 
         deleted = await ltm.clear_all()

@@ -446,7 +446,7 @@ class LongTermMemory:
         distances: dict[int, float | None] = {}  # id(entry) → L2 distance or None (fallback flag)
 
         # Try Milvus — fetch top_k * 4 for rerank candidate pool
-        if self._repo is not None and self._repo._db is not None:
+        if self._repo is not None and await self._repo.health_check():
             vec = query_embedding
             if vec is None and query_text and self._embedding:
                 try:
