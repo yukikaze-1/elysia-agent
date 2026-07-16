@@ -38,11 +38,15 @@ from core.schema.part import (  # noqa: F401
 )
 from core.schema.tool import ToolCall, ToolCallFunction  # noqa: F401
 from core.schema.message import (  # noqa: F401
+    ClientAssistantMessage,
+    ClientMessageDict,
+    ClientToolMessage,
+    ClientUserMessage,
+    Message,
     MessageRole,
-    UserMessage,
     AssistantMessage,
     ToolResultMessage,
-    Message,
+    UserMessage,
 )
 from core.schema.token import TokenUsageEntry, TokenUsageRecord, TokenUsageSummary  # noqa: F401
 from core.schema.character import CharacterState  # noqa: F401

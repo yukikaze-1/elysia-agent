@@ -16,6 +16,10 @@ from pydantic import TypeAdapter
 
 from core.schema.message import (
     AssistantMessage,
+    ClientAssistantMessage,
+    ClientMessageDict,
+    ClientToolMessage,
+    ClientUserMessage,
     Message,
     ToolResultMessage,
 )
@@ -86,10 +90,10 @@ class SessionMemory:
             msgs = msgs[-n:]
         return msgs
 
-    def messages_for_client(self, n: int | None = None) -> list[dict[str, Any]]:
+    def messages_for_client(self, n: int | None = None) -> list[ClientMessageDict]:
         """返回客户端友好的消息格式，从 Pydantic Message 转换为前端 dict。"""
         msgs = self.recent_messages(n)
-        result: list[dict[str, Any]] = []
+        result: list[ClientMessageDict] = []
         for msg in msgs:
             if isinstance(msg, ToolResultMessage):
                 # 工具结果 — 平铺字段给前端渲染工具卡片
@@ -97,7 +101,7 @@ class SessionMemory:
                     p.content for p in msg.content
                     if isinstance(p, TextPart)
                 )
-                entry: dict[str, Any] = {
+                entry: ClientToolMessage = {
                     "role": "tool",
                     "tool_call_id": msg.tool_call_id,
                     "name": msg.tool_name,
@@ -116,14 +120,14 @@ class SessionMemory:
                     for p in msg.content
                     if isinstance(p, TextPart)
                 ]
-                entry: dict[str, Any] = {
-                    "role": str(msg.role),
-                    "parts": text_parts if text_parts else [{"content": ""}],
-                    "content": [p.model_dump(mode="json") for p in msg.content],
-                    "message_id": msg.message_id,
-                    "timestamp": msg.timestamp,
-                }
                 if isinstance(msg, AssistantMessage):
+                    entry: ClientAssistantMessage = {
+                        "role": str(msg.role),
+                        "parts": text_parts if text_parts else [{"content": ""}],
+                        "content": [p.model_dump(mode="json") for p in msg.content],
+                        "message_id": msg.message_id,
+                        "timestamp": msg.timestamp,
+                    }
                     if msg.inner_voice:
                         entry["inner_voice"] = msg.inner_voice
                     if msg.tool_calls:
@@ -132,7 +136,15 @@ class SessionMemory:
                         entry["token_usage"] = msg.token_usage.model_dump(mode="json")
                     # block_index → content_type（debug 页面 / 前端旧字段名）
                     if msg.block_index:
-                        entry["content_type"] = msg.block_index
+                        entry["content_type"] = msg.block_index  # type: ignore[typeddict-item]
+                else:
+                    entry: ClientUserMessage = {
+                        "role": str(msg.role),
+                        "parts": text_parts if text_parts else [{"content": ""}],
+                        "content": [p.model_dump(mode="json") for p in msg.content],
+                        "message_id": msg.message_id,
+                        "timestamp": msg.timestamp,
+                    }
                 result.append(entry)
         return result
 

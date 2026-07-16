@@ -6,7 +6,7 @@ role 字段 frozen，构造时自动填值。
 """
 
 from enum import StrEnum
-from typing import Union
+from typing import Literal, NotRequired, TypedDict, Union
 
 from pydantic import BaseModel, Field
 
@@ -68,3 +68,47 @@ class ToolResultMessage(BaseModel):
 
 Message = Union[UserMessage, AssistantMessage, ToolResultMessage]
 """消息联合类型。"""
+
+
+# ---- 客户端展示格式（TypedDict）----
+# messages_for_client() 使用，描述 Message 序列化后的 JSON 兼容 dict shape。
+# 仅用于类型提示，不做运行时校验。
+
+
+class _ClientMessageBase(TypedDict):
+    """用户/Assistant 消息的客户端格式（公共字段）。"""
+    role: str
+    parts: list[dict[str, str]]
+    content: list[dict]
+    message_id: str
+    timestamp: str
+
+
+class ClientUserMessage(_ClientMessageBase):
+    """用户消息客户端格式。（type checker 用——运行时与 ClientAssistantMessage 相同 shape）"""
+    pass
+
+
+class ClientAssistantMessage(_ClientMessageBase, total=False):
+    """Assistant 消息客户端格式。inner_voice/tool_calls/token_usage/content_type 可选。"""
+    inner_voice: str
+    tool_calls: list[dict]
+    token_usage: dict
+    content_type: dict
+
+
+class ClientToolMessage(TypedDict):
+    """工具执行结果客户端格式。"""
+    role: Literal["tool"]
+    tool_call_id: str
+    name: str
+    content: str
+    success: bool
+    error: str | None
+    error_type: str | None
+    duration_ms: float
+    truncated: bool
+
+
+ClientMessageDict = ClientUserMessage | ClientAssistantMessage | ClientToolMessage
+"""客户端消息联合类型。"""
