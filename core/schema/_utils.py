@@ -1,10 +1,16 @@
-"""core/schema 工具函数 — 类型定义之外的小型辅助函数。"""
+"""core/schema 工具函数 — 类型定义之外的小型辅助函数。
+
+IsoTimestamp: 兼容 ISO 8601 字符串和旧 float Unix 时间戳。
+"""
 
 from datetime import datetime, timezone
 
 
-def _normalize_iso_ts(ts: str) -> str:
-    """归一化 ISO 8601 时间戳：补时区、校验格式。"""
+def _normalize_iso_ts(ts: str | float) -> str:
+    """归一化 ISO 8601 时间戳：补时区、校验格式。同时兼容旧 float Unix 时间戳。"""
+    if isinstance(ts, (int, float)):
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        return dt.isoformat()
     dt = datetime.fromisoformat(ts)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
