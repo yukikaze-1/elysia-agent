@@ -17,6 +17,8 @@ from typing import Any
 from Module.tool import ToolContext, ToolResult
 from Module.tool.protocol import ErrorType
 
+from core.schema.tool import ToolCall
+
 from .task import Task, TaskType, TaskStatus
 
 logger = logging.getLogger(__name__)
@@ -106,8 +108,8 @@ class TaskScheduler:
         return task.id
 
     async def dispatch_tool_calls(
-        self, parent_id: str, calls: list[dict],
-    ) -> list[tuple[dict, Any]]:
+        self, parent_id: str, calls: list[ToolCall],
+    ) -> list[tuple[ToolCall, Any]]:
         """CognitiveLoop 调用：将 tool_calls 创建为子任务，并行执行，返回结果。
 
         Args:
@@ -115,20 +117,17 @@ class TaskScheduler:
             calls: normalized tool calls from CognitiveLoop
 
         Returns:
-            list of (tc_dict, ToolResult | Exception)
+            list of (ToolCall, ToolResult | Exception)
         """
         sub_tasks: list[Task] = []
         for tc in calls:
-            func = tc.get("function", {})
-            arguments = func.get("arguments", {})
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except json.JSONDecodeError:
-                    arguments = {}
+            try:
+                arguments = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                arguments = {}
             t = Task.new_tool_call(
                 parent_id=parent_id or "",
-                tool_name=func.get("name", "unknown"),
+                tool_name=tc.function.name,
                 arguments=arguments,
             )
             sub_tasks.append(t)
@@ -158,7 +157,7 @@ class TaskScheduler:
             raise
 
         # 组装返回: [(tc, result), ...]
-        out: list[tuple[dict, Any]] = []
+        out: list[tuple[ToolCall, Any]] = []
         for idx, (tc, st) in enumerate(zip(calls, sub_tasks)):
             raw = results[idx]
             if isinstance(raw, BaseException):

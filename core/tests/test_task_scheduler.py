@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 
 from core.task import Task, TaskType, TaskStatus
 from core.task_scheduler import TaskScheduler
+from core.schema.tool import ToolCall, ToolCallFunction
+from core.schema.types import ToolCallId
 from Module.tool import ToolManager, ToolContext, PluginContext
 from Module.tool.protocol import ToolPlugin, ToolResult, ErrorType
 from Module.tool.safety import SafetyProfile
@@ -111,6 +113,13 @@ async def _make_sleep_manager(barrier: asyncio.Event) -> ToolManager:
     return tm
 
 
+def _tc(id_="c1", name="echo", args="{}"):
+    return ToolCall(
+        id=ToolCallId(id_),
+        function=ToolCallFunction(name=name, arguments=args),
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════
 # 一、Submit / Dispatch
 # ═══════════════════════════════════════════════════════════════════
@@ -142,9 +151,9 @@ async def test_dispatch_tool_calls_parallel():
     await sched.start()
 
     calls = [
-        {"id": "c1", "type": "function", "function": {"name": "echo", "arguments": '{"msg":"a"}'}},
-        {"id": "c2", "type": "function", "function": {"name": "echo", "arguments": '{"msg":"b"}'}},
-        {"id": "c3", "type": "function", "function": {"name": "echo", "arguments": '{"msg":"c"}'}},
+        _tc("c1", "echo", '{"msg":"a"}'),
+        _tc("c2", "echo", '{"msg":"b"}'),
+        _tc("c3", "echo", '{"msg":"c"}'),
     ]
     results = await sched.dispatch_tool_calls("parent-1", calls)
 
@@ -230,9 +239,9 @@ async def test_dispatch_tool_calls_mixed_results():
     await sched.start()
 
     calls = [
-        {"id": "c1", "type": "function", "function": {"name": "echo", "arguments": '{"msg":"ok"}'}},
-        {"id": "c2", "type": "function", "function": {"name": "failing", "arguments": '{"msg":"x"}'}},
-        {"id": "c3", "type": "function", "function": {"name": "crashing", "arguments": "{}"}},
+        _tc("c1", "echo", '{"msg":"ok"}'),
+        _tc("c2", "failing", '{"msg":"x"}'),
+        _tc("c3", "crashing", "{}"),
     ]
     results = await sched.dispatch_tool_calls("parent-1", calls)
     assert len(results) == 3
@@ -256,7 +265,7 @@ async def test_dispatch_tool_calls_unknown_tool():
     await sched.start()
 
     calls = [
-        {"id": "c1", "type": "function", "function": {"name": "nonexistent", "arguments": "{}"}},
+        _tc("c1", "nonexistent", "{}"),
     ]
     results = await sched.dispatch_tool_calls("p1", calls)
     assert len(results) == 1
@@ -365,8 +374,8 @@ async def test_dispatch_tool_calls_cancelled():
     await sched.start()
 
     calls = [
-        {"id": "c1", "type": "function", "function": {"name": "waiter", "arguments": "{}"}},
-        {"id": "c2", "type": "function", "function": {"name": "waiter", "arguments": "{}"}},
+        _tc("c1", "waiter", "{}"),
+        _tc("c2", "waiter", "{}"),
     ]
 
     # 创建 dispatch task 然后取消
