@@ -43,7 +43,6 @@ from core.storage.session_repo import SessionRepository
 from core.storage.message_repo import MessageRepository
 from core.storage.token_repo import TokenRepository
 from core.storage.memory_repo import MemoryRepository
-from core.storage.character_state_repo import CharacterStateRepository
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +92,6 @@ class Agent:
         self._message_repo = MessageRepository()
         self._token_repo = TokenRepository()
         self._memory_repo = MemoryRepository()
-        self._character_state_repo = CharacterStateRepository()
 
         # ---- L2: Memory ----
         self._session = SessionMemory(
@@ -257,15 +255,10 @@ class Agent:
         await self._message_repo.connect()
         if mongo_ok:
             await self._session.load()
-            # 角色状态持久化恢复（CharacterState 合并了旧 emotion/reflector 文档）
-            char_state_ok = await self._character_state_repo.connect()
-            if char_state_ok:
-                if state := await self._character_state_repo.load_character(self._session.session_id):
-                    self._character_engine.state = state
-                    self._character_engine._last_awareness_time = state.last_awareness_time or 0.0
-                    self._character_engine._reflector._restore_from_state()
-                else:
-                    self._character_engine.state.session_id = SessionId(self._session.session_id)
+            # CharacterState 已由 session.load() 原地恢复到 engine.state
+            if self._character_engine.state.last_awareness_time:
+                self._character_engine._last_awareness_time = self._character_engine.state.last_awareness_time
+            self._character_engine._reflector._restore_from_state()
             else:
                 self._character_engine.state.session_id = SessionId(self._session.session_id)
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
@@ -296,8 +289,6 @@ class Agent:
                     logger.debug("MessageRepository 离线")
                 if not await self._token_repo.health_check():
                     logger.debug("TokenRepository 离线")
-                if not await self._character_state_repo.health_check():
-                    logger.debug("CharacterStateRepository 离线")
             except Exception:
                 logger.debug("Database health check failed", exc_info=True)
 
@@ -468,8 +459,7 @@ class Agent:
         await self._flush_compression()
 
         # 1.56. 角色状态持久化保存
-        if self._character_state_repo and self._character_engine:
-            await self._character_engine.save(self._character_state_repo)
+        # CharacterState persisted via session.save() — engine.save() removed
 
         # 2. 先停事件循环 — 防止它在 shutdown 期间继续 post 新任务
         await self._stop_event_task()
@@ -637,7 +627,6 @@ class Agent:
 
         logger.debug("Closing character state repo...")
         try:
-            await asyncio.wait_for(self._character_state_repo.close(), timeout=3.0)
         except asyncio.TimeoutError:
             logger.warning("Character state repo close timed out")
 
