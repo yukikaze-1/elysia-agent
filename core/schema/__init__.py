@@ -49,7 +49,6 @@ from core.schema.message import (  # noqa: F401
     UserMessage,
 )
 from core.schema.token import TokenUsageEntry, TokenUsageRecord, TokenUsageSummary  # noqa: F401
-from core.schema.character import CharacterState  # noqa: F401
-from core.schema.emotion import EmotionState  # noqa: F401
+from core.schema.character import CharacterState, StateHistoryEntry  # noqa: F401
+from core.schema.memory_reflector import MemoryReflectorState  # noqa: F401
 from core.schema.mood import Mood, stt_emotion_emoji, stt_event_emoji  # noqa: F401
-from core.schema.reflector import ReflectorState  # noqa: F401
