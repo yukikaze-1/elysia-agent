@@ -623,11 +623,6 @@ class Agent:
         except asyncio.TimeoutError:
             logger.warning("Long-term memory close timed out")
 
-        logger.debug("Closing character state repo...")
-        try:
-        except asyncio.TimeoutError:
-            logger.warning("Character state repo close timed out")
-
         logger.debug("Closing session repo...")
         try:
             await asyncio.wait_for(self._session_repo.close(), timeout=3.0)
