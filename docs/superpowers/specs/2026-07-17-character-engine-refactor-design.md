@@ -45,17 +45,30 @@ class Mood(StrEnum):
     UNDERSTANDING = "understanding"
 
 
-# 从 emotion_engine.py 迁移的模块级工具函数
+# 从 emotion_engine.py 迁移的模块级工具函数（emotion_engine.py 删除后迁移至此）
 def stt_emotion_emoji(emotion: str) -> str: ...
 def stt_event_emoji(event: str) -> str: ...
 
-# 从 emotion_engine.py 迁移的常量
-_MOOD_TO_TTS_EMOTION: dict[Mood, str] = { ... }
+# 从 cognitive_loop.py 迁移的 TTS 情绪映射常量
+# 当前只覆盖 7/10 个 mood 值（excited/warm/concerned 等缺失 → 默认 neutral）
+_MOOD_TO_TTS_EMOTION: dict[Mood, str] = {
+    Mood.HAPPY: "happy",
+    Mood.SAD: "sad",
+    Mood.CURIOUS: "happy",      # MiniMax 无 curious，映射到最接近的 happy
+    Mood.EXCITED: "happy",      # MiniMax 无，fallback happy
+    Mood.WARM: "neutral",       # MiniMax 不支持
+    Mood.CONCERNED: "neutral",
+    Mood.CALMING: "neutral",
+    Mood.REASSURING: "neutral",
+    Mood.UNDERSTANDING: "neutral",
+    Mood.NEUTRAL: "neutral",
+}
 ```
 
 **调用方更新**：
 - `Module/system_prompt/sections/sensory.py:55-64` — `from core.emotion_engine import stt_emotion_emoji` → `from core.schema.mood import stt_emotion_emoji`
-- `core/cognitive_loop.py:58-66` — `_MOOD_TO_TTS_EMOTION` 迁移到 `core/schema/mood.py`
+- `core/cognitive_loop.py:58-66` — `_MOOD_TO_TTS_EMOTION` 迁移到 `core/schema/mood.py`，key 从 `str` 改为 `Mood` 枚举值
+- `core/cognitive_loop.py:287` — `_MOOD_TO_TTS_EMOTION.get(mood)` 中 mood 现在是 `Mood` 枚举值，直接匹配
 - 删除文件 `core/emotion_engine.py`
 
 #### StateHistoryEntry TypedDict (`core/schema/character.py`)
@@ -167,9 +180,22 @@ class CharacterEngine:
 **构造变更**：
 ```python
 class CharacterReflector:
-    def __init__(self, *, engine: CharacterEngine, l1_core: str, ...):
+    def __init__(
+        self,
+        *,
+        engine: CharacterEngine,
+        l1_core: str,
+        llm: LLMAdapter,
+        character_name: str,
+        user_name: str,
+        prompt_dir: str = "prompt",
+    ):
         self._engine = engine
         self._l1_core = l1_core  # 显式传入，不跨对象访问 engine._l1_core
+        self._llm = llm
+        self._character_name = character_name
+        self._user_name = user_name
+        self._pm = PromptManager(prompt_dir)
 ```
 
 删除 `set_personality_engine()` 延迟注入。构造必须在 `CharacterEngine.__init__` 完成自身字段初始化后调用——此时 engine 已可用，不存在循环依赖。
@@ -204,17 +230,27 @@ class SessionMemory:
 - `set_param(key: str, value: Any)`
 - `get_param(key: str, default: Any = None) -> Any`
 
-**save() 改为**：
+**save() 改为**（含 JSONL fallback）：
 ```python
+# MongoDB 路径
 await self._repo.save(
     self._session_id,
     messages=list(self._messages),
     character_state=self.character_state,
     reflector_state=self._memory_reflector.save_state() if self._memory_reflector else None,
 )
+
+# JSONL fallback 路径
+doc = {
+    "session_id": self._session_id,
+    "messages": [...],
+    "character_state": self.character_state.model_dump(mode="json"),
+    "reflector_state": self._memory_reflector.save_state().model_dump(mode="json") if self._memory_reflector else {},
+    "updated_at": now_iso(),
+}
 ```
 
-**load() 改为**：从 `SessionRepository.load()` 获取 `(messages, character_state, reflector_state)`，恢复 `self.character_state` 和 `self._memory_reflector`。
+**load() 改为**：从 `SessionRepository.load()` 获取 `(messages, character_state, reflector_state)`。JSONL `_load_from_jsonl()` 同理改为读取 `character_state` 和 `reflector_state` 字段。
 
 ### 六、MemoryReflector (`core/memory/memory_reflector.py`)
 
@@ -271,9 +307,20 @@ self._memory_reflector.restore_state(reflector_state)
 
 ### 七、CharacterStateRepository (`core/storage/character_state_repo.py`)
 
-简化为只操作 `CharacterState`（删除 `save_emotion` / `load_emotion` / `save_reflector` / `load_reflector`）。集合 `session_state` 只存 `doc_type = "character"`。
+**数据流设计（解决双重持久化）**：
 
-MemoryReflector 状态随 session doc 一起持久化（`SessionRepository.save/load` 独立字段），不再经过 `character_state_repo`。
+`CharacterState` 同时出现在两处——容易产生歧义。明确职责：
+
+| 存储 | 用途 | 生命周期 |
+|------|------|----------|
+| `SessionRepository`（sessions 集合的 session doc） | **主存储**——随 session.save() 一起持久化，随 session.load() 恢复 | 30d TTL（跟随 session） |
+| `CharacterStateRepository`（session_state 集合） | **删除**——不再使用。原 `save_character` / `load_character` 删除 | N/A |
+
+Agent 启动流程改为：`SessionRepository.load()` 恢复 session → 从返回的 `character_state` 恢复 CharacterEngine.state。不再走 `CharacterStateRepository.load_character()`。
+
+`character_state_repo.py` 删除全部方法（或保留文件为空壳，标注 deprecated）。`session_state` 集合不再使用。
+
+MemoryReflector 状态随 session doc 的 `reflector_state` 字段一起持久化，不需要独立 repo。
 
 ### 八、Agent (`core/agent.py`)
 
@@ -286,12 +333,15 @@ self._character_reflector.set_personality_engine(self._personality_engine)
 
 # 新
 self._character_engine = CharacterEngine(...)  # 内部已包含 CharacterReflector + EmotionEngine
+self._session.set_memory_reflector(self._memory_reflector)  # MemoryReflector 接线
 ```
 
 - 删除所有 `self._emotion` 引用
 - 删除所有 `self._character_reflector` 直接引用（由 CharacterEngine 持有）
-- 状态恢复：`character_state = await self._character_state_repo.load_character(...)` → `self._character_engine.state = character_state`
-- 关机保存：`await self._character_state_repo.save_character(self._character_engine.state)`
+- 状态恢复：`SessionRepository.load()` 返回 `character_state` → `self._character_engine.state = character_state`
+- 关机保存：`SessionRepository.save()` 已包含 `character_state`，不再调 `CharacterStateRepository`
+- `_start_persistence()` 中删除 `_character_state_repo.load_character()` / `load_emotion()` / `load_reflector()` 调用
+- `_stop_persistence()` 中删除 `_character_state_repo.save_character()` / `save_reflector()` 调用
 
 ### 九、CognitiveLoop (`core/cognitive_loop.py`)
 
