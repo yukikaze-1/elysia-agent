@@ -378,12 +378,12 @@ def create_app(
         if not sid:
             return web.json_response({"error": "缺少 session_id"}, status=400)
 
-        # 辅助函数：从 session repo 取 params（目标 session，非当前 session）
-        async def _get_params(sid: SessionId) -> dict:
+        # 辅助函数：从 session repo 取 character_state（目标 session，非当前 session）
+        async def _get_character_state(sid: SessionId) -> dict:
             result = await agent._session_repo.load(sid)
             if result is not None:
-                _, params = result
-                return params
+                _, character_state, _ = result  # (messages, CharacterState, MemoryReflectorState)
+                return character_state.model_dump(mode="json")
             return {}
 
         if await agent._message_repo.health_check():
@@ -391,11 +391,11 @@ def create_app(
             try:
                 msgs, total = await agent._message_repo.query_by_session(sid, limit=20)
                 formatted = _sessions_to_client(msgs)
-                params = await _get_params(sid)
+                character_state = await _get_character_state(sid)
                 return web.json_response({
                     "session_id": sid,
                     "messages": formatted,
-                    "params": params,
+                    "params": character_state,
                     "total": total,
                 })
             except Exception as e:
@@ -409,15 +409,15 @@ def create_app(
                 return web.json_response({
                     "session_id": sid,
                     "messages": agent._session.messages_for_client(),
-                    "params": agent._session._params,
+                    "params": agent._session.character_state.model_dump(mode="json"),
                 })
             return web.json_response({"error": "会话不存在"}, status=404)
-        raw_msgs, params = result
+        raw_msgs, character_state, _ = result
         formatted = _sessions_to_client(raw_msgs)
         return web.json_response({
             "session_id": sid,
             "messages": formatted,
-            "params": params,
+            "params": character_state.model_dump(mode="json"),
         })
     app.router.add_get("/debug/api/sessions/{session_id}", session_detail_handler)
 
