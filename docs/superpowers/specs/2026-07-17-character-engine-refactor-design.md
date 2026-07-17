@@ -27,7 +27,7 @@
 
 ### 一、新增类型
 
-#### Mood StrEnum (`core/schema/mood.py`)
+#### Mood StrEnum + 工具函数 (`core/schema/mood.py`)
 
 ```python
 from enum import StrEnum
@@ -43,7 +43,20 @@ class Mood(StrEnum):
     CALMING = "calming"
     REASSURING = "reassuring"
     UNDERSTANDING = "understanding"
+
+
+# 从 emotion_engine.py 迁移的模块级工具函数
+def stt_emotion_emoji(emotion: str) -> str: ...
+def stt_event_emoji(event: str) -> str: ...
+
+# 从 emotion_engine.py 迁移的常量
+_MOOD_TO_TTS_EMOTION: dict[Mood, str] = { ... }
 ```
+
+**调用方更新**：
+- `Module/system_prompt/sections/sensory.py:55-64` — `from core.emotion_engine import stt_emotion_emoji` → `from core.schema.mood import stt_emotion_emoji`
+- `core/cognitive_loop.py:58-66` — `_MOOD_TO_TTS_EMOTION` 迁移到 `core/schema/mood.py`
+- 删除文件 `core/emotion_engine.py`
 
 #### StateHistoryEntry TypedDict (`core/schema/character.py`)
 
@@ -79,8 +92,6 @@ class CharacterState(BaseModel):
     reflector_buffer: list[tuple] = Field(default_factory=list)
     reflector_context: list[dict] = Field(default_factory=list)
     self_perception_history: list[dict] = Field(default_factory=list)
-    # C8 OwnLife（当前无人写入，预留字段）
-    own_life: str = ""
     updated_at: IsoTimestamp = Field(default_factory=now_iso)
 ```
 
@@ -97,12 +108,28 @@ class CharacterState(BaseModel):
 
 ### 三、CharacterEngine (`core/personality/engine.py`)
 
-`PersonalityEngine` 重命名为 `CharacterEngine`，合并 `EmotionEngine` 的全部功能：
+`PersonalityEngine` 重命名为 `CharacterEngine`，合并 `EmotionEngine` 的全部功能。
+
+**构造参数**（合并 PersonalityEngine + EmotionEngine + CharacterReflector）：
 
 ```python
 class CharacterEngine:
-    def __init__(self, *, llm, state: CharacterState, ...):
-        self.state = state  # CharacterState 实例，替代 _params dict
+    def __init__(
+        self,
+        *,
+        llm: LLMAdapter,                # LLM (compression + reflector 调用)
+        state: CharacterState,          # CharacterState 实例，替代 _params dict
+        character_name: str,
+        user_name: str,
+        base_personality: str,          # L1 Core 文本
+        character_config: CharacterConfig,  # 原 EmotionEngine 依赖：emotion.thresholds + idle_expressions
+        output: OutputManager,              # 原 EmotionEngine 依赖：表情推送
+        prompt_dir: str = "prompt",
+    ):
+        # 原 EmotionEngine
+        self._character = character_config
+        self._output = output
+        # ...
 
     # ---- 原 PersonalityEngine ----
     def render_c1(self) -> C1Data: ...
@@ -114,26 +141,32 @@ class CharacterEngine:
     def analyze_user(self, text: str): ...
     def analyze_user_stt(self, stt_emotion, stt_events): ...
     def analyze_assistant(self, text: str): ...
+    def _push_expression(self, name, intensity): ...  # self._output.expression(...)
+    def _push_idle(self): ...
     def _decay_intensity(self): ...
 
-    # ---- CharacterReflector（内部持有）----
-    def _init_reflector(self): ...
+    # ---- CharacterReflector ----
+    # 构造函数中创建 self._reflector = CharacterReflector(engine=self)
+    # 构造顺序：先初始化自身字段 → 再创建 CharacterReflector 传入 self
+    #   此时 engine 已可用（state/llm/character_name/user_name/base_personality 均已设好），
+    #   不存在循环依赖问题（CharacterReflector 只存 engine 引用，不创建 engine）
 ```
 
 **关键变更**：引擎不再通过 `session.get_param("mood")` 访问状态，改为 `self.state.mood`。不再调用 `session.set_param("self_l2", ...)`，改为 `self.state.self_l2 = ...`。
 
 `EmotionEngine` 的 `save_emotion_state()` / `restore_emotion_state()` 删除——合并入 `CharacterState` 的统一持久化。
 
-`CharacterReflector` 不再通过 `session.get_param("reflector_buffer")` 访问，改为 `self._engine.state.reflector_buffer`。
-
 ### 四、CharacterReflector (`core/personality/reflector.py`)
 
-- 删除 `set_personality_engine()` — 构造函数直接接收 `engine: CharacterEngine`
-- 删除所有 `session.get_param/set_param` 调用 — 改为访问 `self._engine.state.xxx`
+**构造变更**：`CharacterReflector.__init__` 新增 `engine: CharacterEngine` 参数（删除 `set_personality_engine()` 延迟注入）。构造必须在 `CharacterEngine.__init__` 完成自身字段初始化后调用——此时 engine 已可用，不存在循环依赖（CharacterReflector 只存 engine 引用，不反向创建 engine）。
+
+**状态访问**：删除所有 `session.get_param/set_param` 调用：
 - 读 `mood` → `self._engine.state.mood`
 - 读 `self_l2` → `self._engine.state.self_l2`
 - 读/写 `reflector_buffer` → `self._engine.state.reflector_buffer`
-- `save_reflector_state()` / `restore_reflector_state()` → 合并入 CharacterEngine 的持久化
+- 读/写 `self_perception_history` → `self._engine.state.self_perception_history`
+
+**持久化**：`save_reflector_state()` / `restore_reflector_state()` 合并入 CharacterEngine 的统一持久化（CharacterState 已包含所有 reflector 字段）。
 
 ### 五、SessionMemory (`core/memory/session.py`)
 
@@ -141,9 +174,11 @@ class CharacterEngine:
 class SessionMemory:
     def __init__(self, ..., character_state: CharacterState):
         self.character_state: CharacterState = character_state
+        self.own_life: str = ""                    # OwnLife Section 直接读取
+        self._memory_reflector = None              # MemoryReflector | None（由 Agent 设置）
         # 删除: _params, set_param(), get_param()
 
-    # save() / load() 直接序列化 character_state
+    def set_memory_reflector(self, mr) -> None: ...  # Agent 接线用
 ```
 
 **删除**：
@@ -151,19 +186,76 @@ class SessionMemory:
 - `set_param(key: str, value: Any)`
 - `get_param(key: str, default: Any = None) -> Any`
 
-**save() 改为**：将 `self.character_state.model_dump(mode="json")` 存入 session 文档。
+**save() 改为**：
+```python
+await self._repo.save(
+    self._session_id,
+    messages=list(self._messages),
+    character_state=self.character_state,
+    reflector_state=self._memory_reflector.save_state() if self._memory_reflector else None,
+)
+```
 
-**load() 改为**：从 MongoDB 文档恢复 `CharacterState`，写回 `self.character_state`。
+**load() 改为**：从 `SessionRepository.load()` 获取 `(messages, character_state, reflector_state)`，恢复 `self.character_state` 和 `self._memory_reflector`。
 
 ### 六、MemoryReflector (`core/memory/memory_reflector.py`)
 
-删除所有 `session.get_param/set_param` 调用。`_round_count`, `_new_memory_count`, `_last_summary` 已经是实例变量——`restore_state()` 和 `flush()` 改为直接序列化到 session 文档的独立字段（不经过 `_params`）。
+删除所有 `session.get_param/set_param` 调用。计数器已经是实例变量（`_round_count`, `_new_memory_count`, `_last_summary`）。
+
+**持久化 API**：`MemoryReflector` 自身负责 save/restore，通过专用的 Pydantic 模型与 SessionRepository 交互。
+
+```python
+# core/schema/memory_reflector.py（新增）
+class MemoryReflectorState(BaseModel):
+    """MemoryReflector 计数器状态。随 session 一起持久化。"""
+    mr_round_count: int = 0
+    mr_new_memory_count: int = 0
+    mr_last_summary: dict[str, object] = Field(default_factory=dict)
+
+# core/memory/memory_reflector.py
+class MemoryReflector:
+    def save_state(self) -> MemoryReflectorState: ...
+    def restore_state(self, state: MemoryReflectorState) -> None: ...
+```
+
+**SessionMemory.save() 改为**：
+```python
+await self._repo.save(
+    session_id,
+    messages=list(self._messages),
+    character_state=self.character_state,
+    reflector_state=self._memory_reflector.save_state() if self._memory_reflector else None,
+)
+```
+
+**SessionRepository.save() 改为**：
+```python
+async def save(self, session_id: SessionId, messages: Sequence[Message],
+               character_state: CharacterState,
+               reflector_state: MemoryReflectorState | None = None) -> None:
+    doc = {
+        "session_id": session_id,
+        "messages": serialized,
+        "character_state": character_state.model_dump(mode="json"),
+        "reflector_state": reflector_state.model_dump(mode="json") if reflector_state else {},
+        "updated_at": now_iso(),
+    }
+```
+
+**SessionRepository.load() 改为**：从 doc 中恢复 `character_state` 和 `reflector_state` 两个 Pydantic 对象。
+
+**Agent 恢复流程**：
+```python
+messages, character_state, reflector_state = await session_repo.load(sid)
+self._character_engine.state = character_state
+self._memory_reflector.restore_state(reflector_state)
+```
 
 ### 七、CharacterStateRepository (`core/storage/character_state_repo.py`)
 
 简化为只操作 `CharacterState`（删除 `save_emotion` / `load_emotion` / `save_reflector` / `load_reflector`）。集合 `session_state` 只存 `doc_type = "character"`。
 
-Reflector 计数器持久化合并入 `SessionRepository`（随 session doc 一起存）。
+MemoryReflector 状态随 session doc 一起持久化（`SessionRepository.save/load` 独立字段），不再经过 `character_state_repo`。
 
 ### 八、Agent (`core/agent.py`)
 
@@ -194,7 +286,7 @@ self._character_engine = CharacterEngine(...)  # 内部已包含 CharacterReflec
 | 文件 | 旧 | 新 |
 |------|-----|-----|
 | `Module/system_prompt/sections/emotion.py` | `session.get_param("mood")` | `session.character_state.mood` |
-| `Module/system_prompt/sections/own_life.py` | `session.get_param("own_life", "")` | `session.character_state.own_life` — `own_life` 加入 CharacterState（当前无人 set，C8 永远空，预留字段） |
+| `Module/system_prompt/sections/own_life.py` | `session.get_param("own_life", "")` | `session.own_life` — `SessionMemory` 新增 `own_life: str = ""` 实例变量。当前无人写入、C8 永远空，不纳入 CharacterState |
 | `core/debug_info.py` | `getattr(agent, "_personality_engine")` + `session.get_param(...)` | `agent._character_engine.state.xxx` |
 | `core/prompt_assembler.py` | `self._personality_engine.render_c1()` | `self._character_engine.render_c1()` |
 
@@ -238,4 +330,5 @@ self._character_engine = CharacterEngine(...)  # 内部已包含 CharacterReflec
 
 ### 十五、新增文件清单
 
-- `core/schema/mood.py` — `Mood` StrEnum
+- `core/schema/mood.py` — `Mood` StrEnum + `stt_emotion_emoji()` / `stt_event_emoji()` / `_MOOD_TO_TTS_EMOTION`（从 emotion_engine.py 迁移）
+- `core/schema/memory_reflector.py` — `MemoryReflectorState` Pydantic 模型
