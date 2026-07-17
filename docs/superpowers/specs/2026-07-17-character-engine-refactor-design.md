@@ -45,12 +45,13 @@ class Mood(StrEnum):
     UNDERSTANDING = "understanding"
 
 
-# 从 emotion_engine.py 迁移的模块级工具函数（emotion_engine.py 删除后迁移至此）
+# 从 emotion_engine.py 迁移的模块级工具函数
 def stt_emotion_emoji(emotion: str) -> str: ...
 def stt_event_emoji(event: str) -> str: ...
 
-# 从 cognitive_loop.py 迁移的 TTS 情绪映射常量
-# 当前只覆盖 7/10 个 mood 值（excited/warm/concerned 等缺失 → 默认 neutral）
+# 从 core/cognitive_loop.py:58 迁移的 TTS 情绪映射常量
+# 清理 "angry"/"fearful" 死条目（STT emotion → AI mood 映射后永远不会是这两个值：
+#   STT ANGRY→calming, STT FEARFUL→reassuring，不再有 raw "angry"/"fearful" mood）
 _MOOD_TO_TTS_EMOTION: dict[Mood, str] = {
     Mood.HAPPY: "happy",
     Mood.SAD: "sad",
@@ -102,7 +103,7 @@ class CharacterState(BaseModel):
     mood: Mood = Mood.NEUTRAL
     mood_intensity: float = 0.5
     # CharacterReflector 运行时状态
-    reflector_buffer: list[tuple] = Field(default_factory=list)
+    reflector_buffer: list[tuple[str, str]] = Field(default_factory=list)
     reflector_context: list[dict] = Field(default_factory=list)
     self_perception_history: list[dict] = Field(default_factory=list)
     updated_at: IsoTimestamp = Field(default_factory=now_iso)
