@@ -271,8 +271,7 @@ class CharacterEngine:
         self._l1_core = base_personality
         self._character = character_config
         self._output = output
-        self._expression_stack: list[str] = []
-        # MOOD_KEYWORDS / _STT_EMOTION_TO_MOOD 是模块级常量，直接引用
+        self._idle_expressions = character_config.emotion.idle_expressions
         self._last_awareness_time: float = state.last_awareness_time or 0.0
         self._compression_lock = asyncio.Lock()
         try:
@@ -292,9 +291,9 @@ class CharacterEngine:
 从 `core/emotion_engine.py` 复制以下方法到 CharacterEngine，`self._session.get_param("mood")` → `self.state.mood`：
 
 - `analyze_user(text)`, `analyze_user_stt(stt_emotion, stt_events)`, `analyze_assistant(text)`
-- `_push_expression(name, intensity)`, `_push_idle()`, `_decay_intensity()`, `_schedule(coro)`
-- 模块级常量 `MOOD_KEYWORDS`, `_STT_EMOTION_TO_MOOD` 复制到 engine.py 顶部
-- 模块级常量 `MOOD_KEYWORDS`, `_STT_EMOTION_TO_MOOD` 原样复制到 engine.py 顶部（无 builder 函数）
+- `_push_expression(name, intensity)`, `_push_idle()`, `push_idle_expression()`, `_decay_intensity()`, `_schedule(coro)`
+- `self._idle_expressions = character_config.emotion.idle_expressions` 加到构造函数
+- 模块级常量 `MOOD_KEYWORDS`, `_STT_EMOTION_TO_MOOD` 原样复制到 engine.py 顶部
 
 - [ ] **Step 3: 更新 PersonalityEngine 方法 — `_params` → `self.state`**
 
@@ -478,7 +477,7 @@ self._session.set_memory_reflector(self._memory_reflector)
 self._character_state_repo = CharacterStateRepository()
 ```
 
-`_stop_persistence()` 中删除 `_character_state_repo.save_character/save_reflector` + `self._emotion.save_emotion_state()`。
+`_stop_persistence()` 中删除 `_character_state_repo.save_character/save_reflector` + `self._emotion.save_emotion_state()` + `self._memory_reflector.flush()`（计数器已通过 session.save() 中的 mr.save_state() 持久化，flush() 无意义）。
 
 - [ ] **Step 6: 更新 `_db_health_loop()`**
 
