@@ -16,6 +16,8 @@ from Module.tool.safety import SafetyProfile
 from core.cognitive_loop import CognitiveLoop
 from core.text_utils import MessageObj
 from core.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
+from core.schema.tool import ToolCall, ToolCallFunction
+from core.schema.types import ToolCallId
 from core.agent_fsm import AgentFSM, AgentState
 from core.event_bus import EventBus, EventType, EventPriority
 from core.llm_adapter import LLMAdapter
@@ -92,6 +94,11 @@ class TestNormalizeToolCalls:
         ]
         result = normalize_tool_calls(raw)
         assert len(result) == 2
+        # 以下两行从 dict 改为 ToolCall 属性
+        assert result[0].id == ToolCallId("a")
+        assert result[0].function.name == "f1"
+        assert result[1].id == ToolCallId("b")
+        assert result[1].function.name == "f2"
 
     def test_all_incomplete_missing_id(self):
         raw = [{"id": "", "function": {"name": "f1", "arguments": "{}"}}]
@@ -108,7 +115,8 @@ class TestNormalizeToolCalls:
         ]
         result = normalize_tool_calls(raw)
         assert len(result) == 1
-        assert result[0]["id"] == "a"
+        assert result[0].id == ToolCallId("a")
+        assert result[0].function.name == "ok"
 
 
 # ============================================================================
