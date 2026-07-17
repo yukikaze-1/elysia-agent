@@ -81,7 +81,7 @@ class CharacterState(BaseModel):
     # L2 Self + 压缩追踪
     self_l2: str = ""
     state_l3: str = ""
-    state_history: list[dict] = Field(default_factory=list)  # StateHistoryEntry
+    state_history: list[StateHistoryEntry] = Field(default_factory=list)
     last_awareness_time: IsoTimestamp | None = None
     compression_last_at: IsoTimestamp | None = None
     compression_last_count: int = 0
@@ -121,14 +121,19 @@ class CharacterEngine:
         state: CharacterState,          # CharacterState 实例，替代 _params dict
         character_name: str,
         user_name: str,
-        base_personality: str,          # L1 Core 文本
+        base_personality: str,          # L1 Core 文本（注入 C1 + 传给 CharacterReflector）
         character_config: CharacterConfig,  # 原 EmotionEngine 依赖：emotion.thresholds + idle_expressions
         output: OutputManager,              # 原 EmotionEngine 依赖：表情推送
         prompt_dir: str = "prompt",
     ):
+        self._l1_core = base_personality
         # 原 EmotionEngine
         self._character = character_config
         self._output = output
+        # CharacterReflector — 构造在自身字段初始化之后
+        self._reflector = CharacterReflector(
+            engine=self, l1_core=base_personality, ...
+        )
         # ...
 
     # ---- 原 PersonalityEngine ----
@@ -146,10 +151,11 @@ class CharacterEngine:
     def _decay_intensity(self): ...
 
     # ---- CharacterReflector ----
-    # 构造函数中创建 self._reflector = CharacterReflector(engine=self)
-    # 构造顺序：先初始化自身字段 → 再创建 CharacterReflector 传入 self
-    #   此时 engine 已可用（state/llm/character_name/user_name/base_personality 均已设好），
-    #   不存在循环依赖问题（CharacterReflector 只存 engine 引用，不创建 engine）
+    # 构造函数中创建 self._reflector = CharacterReflector(engine=self, l1_core=base_personality)
+    def buffer_message(self, user_msg: str, assistant_msg: str) -> None:
+        """公开接口 — CognitiveLoop 调用。委托给内部 CharacterReflector。"""
+        if self._reflector:
+            self._reflector.buffer(user_msg, assistant_msg)
 ```
 
 **关键变更**：引擎不再通过 `session.get_param("mood")` 访问状态，改为 `self.state.mood`。不再调用 `session.set_param("self_l2", ...)`，改为 `self.state.self_l2 = ...`。
@@ -158,7 +164,15 @@ class CharacterEngine:
 
 ### 四、CharacterReflector (`core/personality/reflector.py`)
 
-**构造变更**：`CharacterReflector.__init__` 新增 `engine: CharacterEngine` 参数（删除 `set_personality_engine()` 延迟注入）。构造必须在 `CharacterEngine.__init__` 完成自身字段初始化后调用——此时 engine 已可用，不存在循环依赖（CharacterReflector 只存 engine 引用，不反向创建 engine）。
+**构造变更**：
+```python
+class CharacterReflector:
+    def __init__(self, *, engine: CharacterEngine, l1_core: str, ...):
+        self._engine = engine
+        self._l1_core = l1_core  # 显式传入，不跨对象访问 engine._l1_core
+```
+
+删除 `set_personality_engine()` 延迟注入。构造必须在 `CharacterEngine.__init__` 完成自身字段初始化后调用——此时 engine 已可用，不存在循环依赖。
 
 **状态访问**：删除所有 `session.get_param/set_param` 调用：
 - 读 `mood` → `self._engine.state.mood`
@@ -166,7 +180,11 @@ class CharacterEngine:
 - 读/写 `reflector_buffer` → `self._engine.state.reflector_buffer`
 - 读/写 `self_perception_history` → `self._engine.state.self_perception_history`
 
-**持久化**：`save_reflector_state()` / `restore_reflector_state()` 合并入 CharacterEngine 的统一持久化（CharacterState 已包含所有 reflector 字段）。
+**删除降级路径**：`_reflect()` 中 `if self._personality_engine is not None` 的分支和 lines 347-353 的降级写入 `self_perception_history` 删除——重构后 CharacterReflector 永远连着 CharacterEngine，降级路径是死代码。
+
+**崩溃恢复窗口**：当前 `buffer()` 每次调用都 `_save_state()` 写 `_params`（同步到 session dict）。重构后只写内存 `engine.state.reflector_buffer`，持久化延迟到 `session.save()`（每轮结束）。如果 buffer 后、save 前崩溃，积累的 buffer 条目丢失。接受此 trade-off——CharacterReflector 需要 50 对才触发，丢失少量条目不影响行为。
+
+**持久化**：`save_reflector_state()` / `restore_reflector_state()` 合并入 CharacterEngine 的统一持久化。
 
 ### 五、SessionMemory (`core/memory/session.py`)
 
@@ -277,8 +295,22 @@ self._character_engine = CharacterEngine(...)  # 内部已包含 CharacterReflec
 
 ### 九、CognitiveLoop (`core/cognitive_loop.py`)
 
+**构造函数变更**：
+```python
+# 旧
+CognitiveLoop(..., emotion: EmotionEngine | None = None,
+              reflector: CharacterReflector | None = None, ...)
+
+# 新
+CognitiveLoop(..., character_engine: CharacterEngine | None = None, ...)
+```
+
+删除 `emotion` 和 `reflector` 参数（CharacterReflector 内化到 CharacterEngine）。
+
+**调用变更**：
 - `self._emotion.analyze_user(...)` → `self._character_engine.analyze_user(...)`
 - `self._emotion.analyze_assistant(...)` → `self._character_engine.analyze_assistant(...)`
+- `self._reflector.buffer(user, assistant)` → `self._character_engine.buffer_message(user, assistant)`（CharacterEngine 暴露公开方法，内部委托给 CharacterReflector）
 - `self._session.get_param("mood", "neutral")` → `self._session.character_state.mood`
 
 ### 十、其他消费者
@@ -288,6 +320,8 @@ self._character_engine = CharacterEngine(...)  # 内部已包含 CharacterReflec
 | `Module/system_prompt/sections/emotion.py` | `session.get_param("mood")` | `session.character_state.mood` |
 | `Module/system_prompt/sections/own_life.py` | `session.get_param("own_life", "")` | `session.own_life` — `SessionMemory` 新增 `own_life: str = ""` 实例变量。当前无人写入、C8 永远空，不纳入 CharacterState |
 | `core/debug_info.py` | `getattr(agent, "_personality_engine")` + `session.get_param(...)` | `agent._character_engine.state.xxx` |
+| `core/debug_info.py:30,145` | `session_params: dict` ← `dict(agent._session._params)` | `session_params ← agent._session.character_state.model_dump(mode="json")` |
+| `static/debug.html:466` | `info.session_params` 渲染字典 | 渲染 CharacterState JSON（前端展示字段名从 mood/self_l2 等变为 CharacterState 字段名） |
 | `core/prompt_assembler.py` | `self._personality_engine.render_c1()` | `self._character_engine.render_c1()` |
 
 ### 十一、前端影响
