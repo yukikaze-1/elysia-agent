@@ -1777,7 +1777,10 @@ class TestHandleSubmitTask:
     @pytest.mark.asyncio
     async def test_intent_empty_returns_fail(self, loop_with_ts):
         """空 intent → ToolResult.fail。"""
-        tc = {"function": {"name": "submit_task", "arguments": '{"intent": ""}'}}
+        tc = ToolCall(
+            id=ToolCallId("call_1"),
+            function=ToolCallFunction(name="submit_task", arguments='{"intent": ""}'),
+        )
         result = await loop_with_ts._handle_submit_task(tc)
         assert result.success is False
         assert "不能为空" in result.error
@@ -1785,7 +1788,10 @@ class TestHandleSubmitTask:
     @pytest.mark.asyncio
     async def test_success_returns_async_task_id(self, loop_with_ts):
         """成功后返回 async_task_id 非空。"""
-        tc = {"function": {"name": "submit_task", "arguments": '{"intent": "查天气"}'}}
+        tc = ToolCall(
+            id=ToolCallId("call_1"),
+            function=ToolCallFunction(name="submit_task", arguments='{"intent": "查天气"}'),
+        )
         result = await loop_with_ts._handle_submit_task(tc)
         assert result.success is True
         assert result.async_task_id == "task-001"
@@ -1800,7 +1806,10 @@ class TestHandleSubmitTask:
             status=DelegationStatus.NO_MATCHING_TOOLS,
             missing_tools=["email"],
         ))
-        tc = {"function": {"name": "submit_task", "arguments": '{"intent": "查天气"}'}}
+        tc = ToolCall(
+            id=ToolCallId("call_1"),
+            function=ToolCallFunction(name="submit_task", arguments='{"intent": "查天气"}'),
+        )
         result = await loop_with_ts._handle_submit_task(tc)
         assert result.success is False
         assert "email" in result.error
@@ -1809,7 +1818,10 @@ class TestHandleSubmitTask:
     async def test_task_system_none_returns_fail(self, loop_with_ts):
         """TaskSystem 未注入 → fail。"""
         loop_with_ts.set_task_system(None)
-        tc = {"function": {"name": "submit_task", "arguments": '{"intent": "查天气"}'}}
+        tc = ToolCall(
+            id=ToolCallId("call_1"),
+            function=ToolCallFunction(name="submit_task", arguments='{"intent": "查天气"}'),
+        )
         result = await loop_with_ts._handle_submit_task(tc)
         assert result.success is False
         assert "未初始化" in result.error
