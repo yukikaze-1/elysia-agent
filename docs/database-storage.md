@@ -44,7 +44,9 @@
 | `_id` | ObjectId | MongoDB 自动生成 |
 | `session_id` | String | 会话唯一标识 |
 | `messages` | Array\<Object\> | 消息数组 |
-| `params` | Object | 运行时参数 |
+| `character_state` | Object | CharacterState 序列化（mood + personality L2/L3 + reflector buffer/context + awareness 冷却 + state_history） |
+| `reflector_state` | Object | MemoryReflectorState 序列化（round_count / new_memory_count） |
+| `params` | Object | 运行时参数（legacy） |
 | `updated_at` | String（ISO 格式） | 最后更新时间 |
 
 **messages 子文档结构**（新格式）:
@@ -115,7 +117,8 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `_messages` | deque[Message] | 当前会话消息缓冲 (maxlen config.yaml 可配, 默认 200). 存 Pydantic Message 对象 |
-| `_params` | dict | 运行时参数 |
+| `_character_state` | CharacterState \| None | 性格+情绪+reflector 状态（Pydantic 模型，替代原 _params） |
+| `_reflector_state` | MemoryReflectorState \| None | MR 计数器（Pydantic 模型） |
 | `_session_id` | str | 会话 ID |
 
 ### MemoryEntry（内存 dataclass，`core/memory/long_term.py`）

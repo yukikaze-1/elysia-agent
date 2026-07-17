@@ -22,7 +22,7 @@ L1  core/      认知中枢 — Agent → FSM → CognitiveLoop → PromptAssemb
      ↑ 使用
 L2  core/memory/      记忆子系统 — SessionMemory / LongTermMemory
 L2  core/tools/       工具插件 — filesystem / web / memory / time / ...
-L2  core/personality/ 性格引擎 — PersonalityEngine / CharacterReflector
+L2  core/personality/ 性格引擎 — CharacterEngine / CharacterReflector
 ```
 
 ### 核心组件关系
@@ -34,7 +34,7 @@ AgentFSM (IDLE → THINKING → EXECUTING → SPEAKING → IDLE)
     ↓
 CognitiveLoop (ReAct 调度 + inner_voice 状态机)
     ├── PromptAssembler (12 PromptSection → SystemPromptManager)
-    ├── EmotionEngine (关键词 + STT → mood → expression)
+    ├── CharacterEngine (合并 EmotionEngine，关键词 + STT → mood → expression)
     ├── MemoryConsolidator (对话 → LLM 提取 → LTM)
     ├── MemoryReflector (定期 LTM 去重)
     ├── TaskScheduler (Worker Pool → 工具执行)
@@ -48,7 +48,7 @@ Agent.__init__()
   ├── CharacterConfig.load()
   ├── AppConfig (ConfigLoader)
   ├── SessionMemory / LongTermMemory
-  ├── PersonalityEngine / EmotionEngine
+  ├── CharacterEngine
   ├── PromptAssembler (12 sections)
   ├── ToolManager (plugin loading)
   ├── TaskScheduler
@@ -97,9 +97,9 @@ ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引�
 
 关键方法：`process()`, `_think_loop()`, `cancel_current()`, `_after_response()`
 
-#### EmotionEngine (`emotion_engine.py`)
+#### CharacterEngine (`personality/engine.py`)
 
-关键词检测 + STT 声学情绪 → mood 映射。8 种 mood（happy/excited/sad/curious/warm/concerned/calming/neutral）+ reassuring/understanding，intensity 衰减机制。双路径：`analyze_user_stt()` 声学情绪路径（STT 情绪标签映射到 AI mood），`analyze_user()` 文本关键词路径（fallback）。`analyze_assistant()` 每轮回复后衰减 intensity 趋向 neutral。结果写入 session params（`mood`、`mood_intensity`），通过 OutputManager 推送 expression 变更到前端。
+合并原 PersonalityEngine + EmotionEngine，关键词检测 + STT 声学情绪 → mood 映射。8 种 mood（happy/excited/sad/curious/warm/concerned/calming/neutral）+ reassuring/understanding，intensity 衰减机制。双路径：`analyze_user_stt()` 声学情绪路径（STT 情绪标签映射到 AI mood），`analyze_user()` 文本关键词路径（fallback）。`analyze_assistant()` 每轮回复后衰减 intensity 趋向 neutral。结果写入 `CharacterState.mood`，通过 OutputManager 推送 expression 变更到前端。详见 [personality/README.md](personality/README.md)。
 
 关键方法：`analyze_user_stt()`, `analyze_user()`, `analyze_assistant()`, `restore_state()`
 
@@ -111,7 +111,7 @@ ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引�
 
 #### PromptAssembler (`prompt_assembler.py`)
 
-胶水层：创建 12 个 PromptSection 实例，注入 `SystemPromptManager`，委托 `MessageBuilder` 组装最终 `messages[]`。Section 顺序固定：F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup → C5 Sensory → C3 Emotion → C4 Memory → C1 Personality → C2 Relationship → C6 SpeakingStyle → C7 Proactive → C8 OwnLife → C9 SelfPerception。`_refresh_personality_data()` 从 PersonalityEngine 拉取 C1/C9 数据，支持多模态 content 数组和 TTS provider 注入。
+胶水层：创建 12 个 PromptSection 实例，注入 `SystemPromptManager`，委托 `MessageBuilder` 组装最终 `messages[]`。Section 顺序固定：F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup → C5 Sensory → C3 Emotion → C4 Memory → C1 Personality → C2 Relationship → C6 SpeakingStyle → C7 Proactive → C8 OwnLife → C9 SelfPerception。`_refresh_personality_data()` 从 CharacterEngine 拉取 C1/C9 数据，支持多模态 content 数组和 TTS provider 注入。
 
 关键方法：`build_messages()`, `_refresh_personality_data()`
 
@@ -156,9 +156,9 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | 子目录 | 说明 | 详细文档 |
 |--------|------|----------|
 | `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口，deque + MongoDB 30d TTL）、`LongTermMemory`（Milvus 向量搜索 + rerank）、`MemoryReflector`（定期 KMeans 聚类去重）。消息归档直调 `core/storage/message_repo.py` | `memory/` |
-| `core/personality/` | 性格引擎：`PersonalityEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
+| `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
 | `core/tools/` | 工具插件：filesystem、web、memory、time、reminder、vision 等。每个插件 `plugin.py` + `config.yaml` + `README.md` | `tools/` |
-| `core/tests/` | 测试套件：覆盖 Agent、CognitiveLoop、EmotionEngine、MemoryConsolidator 等核心组件的单元/集成测试 | -- |
+| `core/tests/` | 测试套件：覆盖 Agent、CognitiveLoop、CharacterEngine、MemoryConsolidator 等核心组件的单元/集成测试 | -- |
 
 ---
 
@@ -169,7 +169,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 ```
 WebSocket text → EventBus.post(USER_MESSAGE) → Agent._process_events()
   → FSM.transition(THINKING) → CognitiveLoop.process()
-    → EmotionEngine.analyze_user() → 更新 mood
+    → CharacterEngine.analyze_user() → 更新 mood
     → PromptAssembler.build_messages() → LLM.stream_think()
       → inner_voice 分流 → 分句 (SentenceBuffer)
         → TTSStreamManager.stream_sentence() → Output.broadcast()
@@ -193,10 +193,10 @@ WebSocket text → EventBus.post(USER_MESSAGE) → Agent._process_events()
 ```
 对话 → CharacterReflector.buffer(user, assistant)
   → buffer 满 50 对 → LLM 反思 (CharacterReflector.j2)
-    → PersonalityEngine.consume_trigger("reflector", ...)
-      → L3 State 更新 → awareness_cooldown 写入 session
+    → CharacterEngine.consume_trigger("reflector", ...)
+      → L3 State 更新 → awareness_cooldown 写入 CharacterState
         → C1/C9 模板数据刷新 → PromptAssembler._refresh_personality_data()
-          → PersonalityEngine.flush_compression() → L3→L2 压缩 (定期)
+          → CharacterEngine.flush_compression() → L3→L2 压缩 (定期)
 ```
 
 ---
@@ -241,7 +241,7 @@ Agent 生命周期中的关键扩展点：
 - **`Agent.start()`** — 连接 DB、启动后台任务。`_start_*()` 系列按序执行，新子系统在此处 start
 - **`Agent._start_persistence()`** — 恢复持久化状态。`restore_state()` 在此处调用，新组件如需恢复 session 状态在此注入
 - **`Agent.stop()`** — flush → cancel → close → save。新组件在此处按序清理
-- **组件级钩子**：`restore_state()`（恢复 session 状态）、`flush()`（落盘缓冲）、`check_and_reflect()`（定期触发检查）
+- **组件级钩子**：`restore_state()`（恢复 CharacterState + MemoryReflectorState）、`flush()`（落盘缓冲）、`check_and_reflect()`（定期触发检查）
 
 ### 文件索引
 
@@ -251,7 +251,7 @@ Agent 生命周期中的关键扩展点：
 | `agent_fsm.py` | 57 | 核心组件 |
 | `event_bus.py` | 60 | 核心组件 |
 | `cognitive_loop.py` | 1042 | 核心组件 |
-| `emotion_engine.py` | 251 | 核心组件 |
+| `personality/engine.py` | ~320 | 核心组件 |
 | `consolidator.py` | ~300 | 核心组件 |
 | `prompt_assembler.py` | ~130 | 核心组件 |
 | `idle_monitor.py` | ~130 | 核心组件 |

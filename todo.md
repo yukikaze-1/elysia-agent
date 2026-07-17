@@ -7,7 +7,7 @@
 | 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec |
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
-| 中 | **`emotion_engine.py` `_push_expression()` 缺失 6 种 mood 映射** | `emotion_engine.py:197-206`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
+| 中 | **`CharacterEngine._push_expression()` 缺失 6 种 mood 映射** | `personality/engine.py`（原 `emotion_engine.py`）: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
 | 低 | **`IdleMonitor` 使用 `asyncio.get_event_loop().time()` 而非 `time.monotonic()`** | `idle_monitor.py:30`: `get_event_loop()` 在 Python 3.12+ 已 deprecated，同步测试中无运行中 loop 时行为不确定。建议改用 `time.monotonic()`。当前 `test_touch_resets_timer` 已加 `time.sleep(0.001)` 缓解。 |
 | 中 | **TTS 密集短句导致 wait_all 阻塞** | TTS 连续 5+ 短句密集入队时 MiniMax 部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING。已缩短 read timeout 120s→30s 缓解，根因（wait_all 无超时）待重现后修复。 |
 
@@ -22,7 +22,7 @@
 - **记忆统计**: 按类型/年龄/poignancy 分布统计，接入 DebugInfo 仪表板
 - **Claude 原生持久记忆**: `.claude/projects/-home-yomu-Agent/memory/` 目录为空，从未启用
 - **MacroMemory + MacroReflector**: 每日合成日记条目。需新增 Milvus 集合 + MacroReflector 后台任务
-- **EmotionEngine 升级**: 生理状态模型、时间衰减曲线、混合情绪、Amygdala LLM 补充
+- **CharacterEngine mood 升级**（原 EmotionEngine 升级）: 生理状态模型、时间衰减曲线、混合情绪、Amygdala LLM 补充
 - **STT 情绪→mood 映射升级**: 生理状态调制 + 性格调制 + 时间衰减
 - 唤醒词检测（openWakeWord）— 已完成实现，待办：
   - 测试唤醒词开关：启动服务端，打开前端设置面板，点击开关确认 ON/OFF 切换正常
@@ -34,20 +34,20 @@
 - **多角色 prompt 模板**: `PromptAssembler` 通过 `SystemPromptManager` + 12 `PromptSection` 渲染，多角色时加载不同 `CharacterConfig` 即可切换 section 数据源
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + SenseVoice + GPT-SoVits）。数据库已完成 docker-compose.yml（MongoDB + Milvus）
-- **C3 情绪传染规则动态化** → 后续 PersonalityEngine Phase 2
-- **C6 说话风格动态化** → 后续 PersonalityEngine Phase 2
-- **C7 主动性动态化** → 后续 PersonalityEngine Phase 2
+- **C3 情绪传染规则动态化** → 后续 CharacterEngine Phase 2
+- **C6 说话风格动态化** → 后续 CharacterEngine Phase 2
+- **C7 主动性动态化** → 后续 CharacterEngine Phase 2
 - **F2 代码块格式重新启用**: `f2_output_format.j2` 中 `<|code|>` 和 `<|markdown|>` 格式已注释。等需要代码/Markdown 渲染功能时取消注释即可启用
 - **C5 输入来源标注**: prompt 中当前无法区分用户是用文字还是语音输入。需在 sensory_ctx 中增加 `input_source` 字段（text/voice），模板中显示 "输入方式: 文字 / 语音"
-- **EmotionEngine mood 转换逻辑**: 当前基础 mood 不会被单条用户消息软化。例如用户说温暖的话时，角色应能从 sad 自然转为"被安慰后的柔和"，而不是僵硬保持 sad。需改进 mood 衰减/转换算法
-- **PersonalityEngine Phase 2**:
+- **CharacterEngine mood 转换逻辑**（原 EmotionEngine mood 转换逻辑）: 当前基础 mood 不会被单条用户消息软化。例如用户说温暖的话时，角色应能从 sad 自然转为"被安慰后的柔和"，而不是僵硬保持 sad。需改进 mood 衰减/转换算法
+- **CharacterEngine Phase 2**（原 PersonalityEngine Phase 2）:
   - CharacterReflector.j2 模板 ~140 行偏长，LLM 注意力可能被稀释，后续观察产出质量决定是否精简
   - AwarenessTrigger: L2/L3 语义偏差检测（向量相似度替代轮次冷却）
   - L3→L2 梯度压缩自动化（LLM 总结+去噪+合并）
   - ExpressionAdapter 完善版：阻尼机制移入 C6 SpeakingStyle
-  - L4→L3 情绪汇聚统计（需 EmotionEngine 改接口）
+  - L4→L3 情绪汇聚统计（需 CharacterEngine 改接口）
   - L2 永久存储（独立 MongoDB 集合 / 文件，替代 session TTL 风险）
-  - C3/C6/C7 与 PersonalityEngine 动态联动
+  - C3/C6/C7 与 CharacterEngine 动态联动
   - 用户话题检测触发 C9（目前只看状态存在+冷却）
 
 

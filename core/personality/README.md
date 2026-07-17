@@ -160,7 +160,7 @@ Module/system_prompt/
 - State 历史（最近 5 条）
 - 压缩追踪：上次压缩时间 / 上次压缩时 history 条数
 
-后端 API: `GET /debug/api` → `info.personality_engine_exists` / `info.self_l2` / `info.state_l3` / `info.state_history`
+后端 API: `GET /debug/api` → `info.character_engine_exists` / `info.self_l2` / `info.state_l3` / `info.state_history`
 
 ---
 

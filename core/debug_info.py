@@ -61,8 +61,8 @@ class DebugInfo:
     character_name: str = ""
     base_personality_summary: str = ""
 
-    # PersonalityEngine (4-layer model)
-    personality_engine_exists: bool = False
+    # CharacterEngine (4-layer model, merged PersonalityEngine + EmotionEngine)
+    character_engine_exists: bool = False
     self_l2: str = ""              # L2 Self — 长期性格演化
     state_l3: str = ""             # L3 State — 短期状态
     state_history: list[dict] = field(default_factory=list)  # L3 历史
@@ -176,10 +176,10 @@ async def collect(agent) -> DebugInfo:
     bp = agent._character.base_personality
     info.base_personality_summary = bp[:120] + "..." if len(bp) > 120 else bp
 
-    # ---- PersonalityEngine ----
+    # ---- CharacterEngine ----
     pe = getattr(agent, "_character_engine", None)
     if pe is not None:
-        info.personality_engine_exists = True
+        info.character_engine_exists = True
         c1 = pe.render_c1()
         info.self_l2 = c1.self_personality[:200] if c1.self_personality else "（未演化）"
         l3 = pe.state.state_l3

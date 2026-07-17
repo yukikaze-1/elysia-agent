@@ -180,7 +180,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Core 总览 | [core/README.md](core/README.md) | 认知中枢架构 + 28 组件详解 |
 | Storage | [core/storage/README.md](core/storage/README.md) | 统一存储层（Repository 模式） |
 | Schema | [core/schema/README.md](core/schema/README.md) | 基础类型层（AgentState/事件/多模态消息 Part） |
-| PersonalityEngine | [core/personality/README.md](core/personality/README.md) | 四层性格模型（Core→Self→State→Mood） |
+| CharacterEngine | [core/personality/README.md](core/personality/README.md) | 四层性格+情绪模型（Core→Self→State→Mood） |
 | 工具: filesystem | [core/tools/filesystem/README.md](core/tools/filesystem/README.md) | read_file / list_directory / write_file |
 | 工具: memory | [core/tools/memory/README.md](core/tools/memory/README.md) | search_memory / save_memory |
 | 工具: reminder | [core/tools/reminder/README.md](core/tools/reminder/README.md) | set_reminder |
@@ -311,7 +311,6 @@ Agent/
 │   ├── agent_fsm.py        #   状态机 (IDLE→THINKING→EXECUTING→SPEAKING→IDLE_BACKGROUND_TASK)
 │   ├── event_bus.py        #   优先级事件总线
 │   ├── schema.py           #   共享类型
-│   ├── emotion_engine.py   #   情绪引擎
 │   ├── sentence_buffer.py  #   分句缓冲
 │   ├── block_filter.py     #   结构化块过滤 (code/markdown)
 │   ├── text_utils.py       #   文本提取 + MessageObj
@@ -531,7 +530,7 @@ proactive:
 ...
 ```
 
-性格演化由 `core/personality/` 下的 PersonalityEngine 管理（四层模型: Core→Self→State→Mood）。详见 [core/personality/README.md](core/personality/README.md)。
+性格演化由 `core/personality/` 下的 CharacterEngine 管理（四层模型: Core→Self→State→Mood）。详见 [core/personality/README.md](core/personality/README.md)。
 
 #### `Module/tts/minimax_voices.yaml` — MiniMax 音色
 

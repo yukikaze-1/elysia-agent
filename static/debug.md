@@ -32,7 +32,7 @@ http://localhost:8765/debug
 | **Tool History** | 最近 5 次工具调用 |
 | **Consolidation** | 最近 5 条记忆沉淀 |
 | **Character Reflector** | Buffer 进度、上次反思时间、Self-Perception / State 历史、最近 Prompt |
-| **PersonalityEngine** | L2 Self、L3 State、C9 冷却状态、State 历史 |
+| **CharacterEngine** | L2 Self、L3 State、C9 冷却状态、State 历史 |
 
 右上角按钮：
 - **暂停/恢复** — 停止/恢复轮询

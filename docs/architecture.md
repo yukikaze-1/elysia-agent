@@ -40,12 +40,12 @@
     │  └──────────┘  └─────────────┘  └──────────────────┘    │
     │                                                          │
     │  ┌────────────┐ ┌───────────┐ ┌───────────┐ ┌─────────┐ │
-    │  │CharacterCfg│ │IdleMonitor│ │EmotionEng │ │Sentence │ │
-    │  │(name+pron.│ │(主动搭话)  │ │(STT+关键词 │ │Buffer   │ │
-    │  │ +L1 Core) │ └───────────┘ │ +衰减)    │ │(分句)   │ │
+    │  │CharacterCfg│ │IdleMonitor│ │Character  │ │Sentence │ │
+    │  │(name+pron.│ │(主动搭话)  │ │(合并情绪) │ │Buffer   │ │
+    │  │ +L1 Core) │ └───────────┘ │          │ │(分句)   │ │
     │  └────────────┘               └───────────┘ └─────────┘ │
     │  ┌──────────────┐ ┌──────────┐ ┌────────────┐ ┌───────┐ │
-    │  │PromptAssembler│ │LLMAdapter│ │Person.Eng. │ │Debug  │ │
+    │  │PromptAssembler│ │LLMAdapter│ │Char.Engine│ │Debug  │ │
     │  │(12-section+  │ │(protocol │ │(L1-L4模型) │ │Info   │ │
     │  │ Person.Engine)│ │适配)     │ └────────────┘ │(聚合) │ │
     │  └──────────────┘ └──────────┘                 └───────┘ │
@@ -132,9 +132,9 @@
   │      │                              └── audio chunk (stream)       │
   │      │                                                       │    │
   │      └── tool_calls ──► asyncio.gather ──► inject ──► loop───────┘
-  │  EmotionEngine.analyze_assistant() ──► expression 推送            │  │
+  │  CharacterEngine.analyze_assistant() ──► expression 推送           │  │
   │  MemoryConsolidator.consolidate() ──► LongTermMemory (fire-forget)│  │
-  │  CharacterReflector.buffer() ──► PersonalityEngine (fire-forget)  │  │
+  │  CharacterReflector.buffer() ──► CharacterEngine (fire-forget)    │  │
   │  SessionMemory.save() ──► MongoDB                                 │  │
   │  FSM → IDLE                                                       │  │
   └──────────────────────────────────────────────────────────────────┘  │
@@ -409,7 +409,9 @@ LLM token stream
   workers=1 FIFO 保证句间顺序，前端 nextBubbleQueue 等音频播完再弹出
 ```
 
-### 4.5 情绪引擎 (EmotionEngine)
+### 4.5 情绪引擎 (已合并至 CharacterEngine)
+
+原 `EmotionEngine` 已合并至 `CharacterEngine`（`core/personality/engine.py`），作为 L4 Mood 层。
 
 **主路径** (语音): STT 声学情绪标签 (SenseVoice 自带)
 ```
@@ -417,7 +419,7 @@ STT 返回: emotion="HAPPY", events=["Laughter"]
   → _STT_EMOTION_TO_MOOD 映射:
       HAPPY → "warm", SAD → "concerned", ANGRY → "calming"
       FEARFUL → "reassuring", SURPRISED → "curious"
-  → 更新 session.params["mood"] + push expression
+  → 更新 CharacterState.mood + push expression
 
 音频事件 → expression 推送:
   Laughter → "laugh", Cry → "cry", Applause → "surprised"
@@ -431,12 +433,14 @@ MOOD_KEYWORDS = {
     "sad":      ["难过", "伤心", "哭", "失败", ...],
     "curious":  ["为什么", "怎么", "好奇", ...],
 }
-→ 计分 → 最高分 mood → update session.params + push expression
+→ 计分 → 最高分 mood → update CharacterState.mood + push expression
 ```
 
 **衰减**: `analyze_assistant()` 每次回复后 intensity -= 0.15，低于 0.2 重置为 neutral
 
 **Expression 映射**: `{mood: (expression, intensity)}` → OutputManager.expression()
+
+详见 [4.10 CharacterEngine](#410-characterengine--角色性格情绪引擎)。
 
 ### 4.6 分句缓冲 (SentenceBuffer)
 
@@ -498,20 +502,22 @@ proactive.enabled: false → 整个机制关闭
 
 ---
 
-### 4.10 PersonalityEngine — 角色性格引擎
+### 4.10 CharacterEngine — 角色性格 + 情绪引擎
 
-四层性格模型，让角色从对话经历中演化性格：
+合并原 PersonalityEngine + EmotionEngine，四层性格模型，让角色从对话经历中演化性格：
 
 ```
 L1 Core（核心底色）    文件加载，启动后不变                  → C1 模板锚点
 L2 Self（长期自我）    从 L3 压缩沉淀，月级演化              → C1 主体——"我是谁"
 L3 State（短期状态）   CharacterReflector + 事件触发，数十轮  → C9 条件素材——"我最近怎么了"
-L4 Mood（当前情绪）    EmotionEngine 每轮更新                → C3 内容
+L4 Mood（当前情绪）    CharacterEngine keyword + STT 每轮更新 → C3 内容
 ```
 
-**CharacterReflector**：缓冲 50 对 user/assistant 消息 → LLM 反思 → 提交事件到 `PersonalityEngine.consume_trigger("reflector", ...)`，更新 L3 State。
+**CharacterState**（Pydantic 模型）：集中管理 mood、personality (L2 Self + L3 State)、reflector buffer/context、awareness 冷却、state_history 等所有性格+情绪状态。替代原 `session._params` 散落存储。
 
-**AwarenessTrigger**（C9 激活判定）：L3 非空 + 距上次触发超过 1h → C9 渲染。冷却时间戳持久化到 session，重启不丢失。
+**CharacterReflector**（子组件）：缓冲 50 对 user/assistant 消息 → LLM 反思 → 提交事件到 `CharacterEngine.consume_trigger("reflector", ...)`，更新 L3 State。
+
+**AwarenessTrigger**（C9 激活判定）：L3 非空 + 距上次触发超过 1h → C9 渲染。冷却时间戳持久化到 CharacterState，重启不丢失。
 
 **阻尼机制**：L3 偏移 L1 特质时，L1 决定"怎么说"（表达方式），L3 影响"说什么"（内容倾向）。Phase 2 引入 L4→L3、L3→L2 向上回流压缩。
 
@@ -524,7 +530,7 @@ L4 Mood（当前情绪）    EmotionEngine 每轮更新                → C3 �
 | 层 | 存储 | 生命周期 | 容量 | 用途 |
 |------|------|------|------|------|
 | Working | 内存 (单次推理) | 单次 LLM 调用 | 动态 | PromptAssembler 组装 |
-| Session | MongoDB / deque | 跨进程重启 | 代码默认 20，config.yaml 覆盖为 50 | 对话上下文 + 运行时参数 |
+| Session | MongoDB / deque | 跨进程重启 | 代码默认 20，config.yaml 覆盖为 50 | 对话上下文 + CharacterState/reflector_state |
 | Long-term | Milvus + 内存 | 跨会话 | 无上限 | 事实/偏好/计划 语义搜索 |
 
 ### 5.2 SessionMemory
@@ -532,7 +538,8 @@ L4 Mood（当前情绪）    EmotionEngine 每轮更新                → C3 �
 ```python
 class SessionMemory:
     _messages: deque[Message]     # 最多 max_messages 条 (config.yaml session_max_messages). Pydantic Message 对象
-    _params: dict                 # mood, mood_intensity 等
+    _character_state: CharacterState | None  # 性格+情绪+reflector 状态（替代原 _params）
+    _reflector_state: MemoryReflectorState | None  # MR 计数器
     _db: DocumentDBBackend | None # MongoDB 或降级
 
     # MongoDB 自动检测 — 不可用时静默降级为 in-memory
@@ -807,7 +814,7 @@ proactive:
 **标签页：**
 | 标签 | 数据来源 | 功能 |
 |------|---------|------|
-| 概览 | `/debug/api` 轮询 | 12+ 卡片面板：System、Memory（含 Session Params 可展开）、Latency、Process Memory、Scheduler、Token、Prompt 查看器、Raw Response、LTM、Tools、Tool History、Consolidation、Character Reflector、PersonalityEngine |
+| 概览 | `/debug/api` 轮询 | 12+ 卡片面板：System、Memory（含 Session Params 可展开）、Latency、Process Memory、Scheduler、Token、Prompt 查看器、Raw Response、LTM、Tools、Tool History、Consolidation、Character Reflector、CharacterEngine |
 | 数据库 | `/debug/api/db-status` + `/debug/api/ltm` + `/debug/api/sessions` + `/debug/api/archive` | LTM CRUD + 分页 + 搜索；Session 管理（从 archive 权威源读取，限 20 条）；Archive CRUD |
 | 任务 | `/debug/api/tasks/stream` SSE | TaskSystem 实时监控 + DAG 可视化 (vis-network) |
 
@@ -823,14 +830,14 @@ class Agent:
         # L2: SessionMemory + LongTermMemory + ToolManager
         #     + register 12 tools (ALL_PLUGINS)
         # L1: EventBus + AgentFSM + LLMAdapter + PromptAssembler
-        #     + EmotionEngine + MemoryConsolidator
+        #     + CharacterEngine + MemoryConsolidator
         #     + CognitiveLoop + IdleMonitor
         # TTS: 根据 config.tts.enabled 决定是否初始化
 
     async def start():
         # AgentFSM.reset() + LLMAdapter.reconnect()
         # Archive.connect()
-        # 状态恢复: CharacterReflector.restore_state → PersonalityEngine.restore_state → EmotionEngine.restore_state → MemoryReflector.restore_state
+        # 状态恢复: CharacterReflector.restore_state → CharacterEngine.restore_state → MemoryReflector.restore_state
         # JSONL snapshot 恢复
         # ToolContext 构造 + 注入
         # _db_health_loop 创建
@@ -939,7 +946,6 @@ Agent/
 │   ├── timing.py            #   TimingClock 延迟统计
 │   ├── llm_adapter.py       #   LLM 适配器
 │   ├── prompt_assembler.py  #   提示词组装 + 性格引擎数据注入
-│   ├── emotion_engine.py    #   情绪引擎 (mood + expression)
 │   ├── sentence_buffer.py   #   分句缓冲
 │   ├── idle_monitor.py      #   空闲监控
 │   ├── task_scheduler.py    #   Worker Pool 调度器
@@ -955,8 +961,8 @@ Agent/
 │   ├── token_tracker.py     #   Token 消耗统计
 │   ├── prompt_recorder.py   #   Prompt 记录器
 │   ├── response_recorder.py #   Response 记录器
-│   ├── personality/         #   性格引擎子系统
-│   │   ├── engine.py        #     4-layer model (L1-L4)
+│   ├── personality/         #   CharacterEngine 子系统
+│   │   ├── engine.py        #     CharacterEngine (合并 PersonalityEngine + EmotionEngine)
 │   │   └── reflector.py     #     CharacterReflector
 │   ├── memory/              #   记忆子系统
 │   │   ├── session.py       #     SessionMemory (MongoDB + deque)
@@ -1055,7 +1061,7 @@ INTERRUPT:
 | 6 | tts_stream.py | TTS 流式合成 | `TTSStreamManager._tasks[]`，gather/cancel |
 | 7 | idle_monitor.py | idle 监控 tick | 常驻，stop 时 cancel |
 | 8 | long_term.py | embedding 加载 | insert 时 await (wait=True), search 时 fire-and-forget |
-| 9 | emotion_engine.py | expression 输出 | 纯 fire-and-forget，无追踪 |
+| 9 | personality/engine.py | expression 输出 | 纯 fire-and-forget，无追踪 |
 | 10 | tool/manager.py | SafetyPipeline 执行 | Pipeline 内部追踪 |
 | 11 | agent.py | `_poll_mailboxes()` | TaskSystem mailbox 500ms 轮询，常驻，stop 时 cancel |
 | 12 | agent.py | cognitive process (TASK_RESULT) | `_current_task` |
@@ -1100,7 +1106,7 @@ INTERRUPT:
 
 待解决:
   4. 主动对话 — C7 Proactive section 已有规则 + 冷却机制。IdleMonitor 驱动待完善
-  5. 记忆人格化 — C4 Memory section 已有可靠性规则（当前说法优先、不推测当事实），PersonalityEngine Phase 2 深化
+  5. 记忆人格化 — C4 Memory section 已有可靠性规则（当前说法优先、不推测当事实），CharacterEngine Phase 2 深化
   6. 多 Session — 当前 session_id 硬编码为 "default"，无多会话管理
   7. 角色切换 — CharacterConfig 重载 + TTS voice 热切换
 ```

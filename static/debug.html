@@ -657,13 +657,13 @@ function render(info) {
         );
 
         // 引擎连接时显示 state_history；否则显示旧 self_perception_history
-        const engineConnected = info.personality_engine_exists;
+        const engineConnected = info.character_engine_exists;
         const hist = engineConnected
           ? (info.state_history || [])
           : ((ref && ref.self_perception_history) || []);
         const histLabel = engineConnected ? 'State 历史' : 'Self-Perception 历史';
         if (hist.length === 0) {
-          items.push('<div class="empty" style="margin-top:4px">' + histLabel + ': 暂无' + (engineConnected ? '（见下方 PersonalityEngine 面板）' : '') + '</div>');
+          items.push('<div class="empty" style="margin-top:4px">' + histLabel + ': 暂无' + (engineConnected ? '（见下方 CharacterEngine 面板）' : '') + '</div>');
         } else {
           let histHtml = '<details style="margin-top:4px"><summary>' + histLabel + ' (' + hist.length + ')</summary>';
           histHtml += '<div style="max-height:200px;overflow-y:auto">';
@@ -707,10 +707,10 @@ function render(info) {
         return { title:'Character Reflector', wide:true, items: items };
       })()
     ],
-    // Row 7: PersonalityEngine
+    // Row 7: CharacterEngine
     [
       (() => {
-        if (!info.personality_engine_exists) return null;
+        if (!info.character_engine_exists) return null;
         const items = [];
 
         // L2 Self
@@ -750,7 +750,7 @@ function render(info) {
           items.push(histHtml);
         }
 
-        return { title:'PersonalityEngine', wide:true, items: items };
+        return { title:'CharacterEngine', wide:true, items: items };
       })()
     ],
   ];
