@@ -15,7 +15,8 @@
 - `Mood` 必须覆盖 emotion_engine.py 中 `MOOD_KEYWORDS` 的 10 个 mood 值
 - `CharacterState` 是唯一状态表示——删除所有 `set_param`/`get_param` 调用
 - `session.load()` 必须原地更新 `CharacterState` 字段（不替换引用）
-- `CharacterStateRepository` 删除全部方法
+- `last_awareness_time` / `compression_last_at` 类型为 `float | None`（epoch float，非 IsoTimestamp）
+- `CharacterStateRepository` 删除整个文件
 
 ---
 
@@ -47,22 +48,28 @@ class Mood(StrEnum):
     UNDERSTANDING = "understanding"
 
 
+# ---- 从 emotion_engine.py 原样复制 ----
+
 _STT_EMOTION_EMOJI: dict[str, str] = {
-    "HAPPY": "\U0001f600", "SAD": "\U0001f622", "ANGRY": "\U0001f620",
-    "FEARFUL": "\U0001f628", "SURPRISED": "\U0001f62e", "NEUTRAL": "",
+    "HAPPY": "\U0001f60a", "SAD": "\U0001f614", "ANGRY": "\U0001f621",
+    "NEUTRAL": "", "FEARFUL": "\U0001f630", "DISGUSTED": "\U0001f922",
+    "SURPRISED": "\U0001f62e",
 }
 
 def stt_emotion_emoji(tag: str) -> str:
-    return _STT_EMOTION_EMOJI.get(tag.upper(), "")
+    return _STT_EMOTION_EMOJI.get(tag, "")
 
 
 _STT_EVENT_EMOJI: dict[str, str] = {
-    "LAUGHTER": "\U0001f602", "CRYING": "\U0001f622",
-    "SIGH": "\U0001f4a8", "CLAPPING": "\U0001f44f",
+    "Speech": "", "BGM": "\U0001f3bc", "Applause": "\U0001f44f",
+    "Laughter": "\U0001f600", "Cry": "\U0001f62d",
+    "Cough": "\U0001f637", "Sneeze": "\U0001f927",
+    "Breath": "", "Sing": "", "Speech_Noise": "", "GBG": "",
+    "Event_UNK": "",
 }
 
 def stt_event_emoji(event: str) -> str:
-    return _STT_EVENT_EMOJI.get(event.upper(), "")
+    return _STT_EVENT_EMOJI.get(event, "")
 
 
 _MOOD_TO_TTS_EMOTION: dict[Mood, str] = {
@@ -143,8 +150,8 @@ class CharacterState(BaseModel):
     self_l2: str = ""
     state_l3: str = ""
     state_history: list[StateHistoryEntry] = Field(default_factory=list)
-    last_awareness_time: IsoTimestamp | None = None
-    compression_last_at: IsoTimestamp | None = None
+    last_awareness_time: float | None = None       # epoch float，非 IsoTimestamp
+    compression_last_at: float | None = None         # epoch float，非 IsoTimestamp
     compression_last_count: int = 0
     mood: Mood = Mood.NEUTRAL
     mood_intensity: float = 0.5
@@ -265,8 +272,7 @@ class CharacterEngine:
         self._character = character_config
         self._output = output
         self._expression_stack: list[str] = []
-        self._mood_keywords = _build_mood_keywords()
-        self._stt_emotion_to_mood = _build_stt_mapping()
+        # MOOD_KEYWORDS / _STT_EMOTION_TO_MOOD 是模块级常量，直接引用
         self._last_awareness_time: float = state.last_awareness_time or 0.0
         self._compression_lock = asyncio.Lock()
         try:
@@ -288,7 +294,7 @@ class CharacterEngine:
 - `analyze_user(text)`, `analyze_user_stt(stt_emotion, stt_events)`, `analyze_assistant(text)`
 - `_push_expression(name, intensity)`, `_push_idle()`, `_decay_intensity()`, `_schedule(coro)`
 - 模块级常量 `MOOD_KEYWORDS`, `_STT_EMOTION_TO_MOOD` 复制到 engine.py 顶部
-- 模块级函数 `_build_mood_keywords()`, `_build_stt_mapping()` 复制到 engine.py 顶部
+- 模块级常量 `MOOD_KEYWORDS`, `_STT_EMOTION_TO_MOOD` 原样复制到 engine.py 顶部（无 builder 函数）
 
 - [ ] **Step 3: 更新 PersonalityEngine 方法 — `_params` → `self.state`**
 
@@ -300,6 +306,11 @@ class CharacterEngine:
 def buffer_message(self, user_msg: str, assistant_msg: str) -> None:
     if self._reflector:
         self._reflector.buffer(user_msg, assistant_msg)
+
+async def flush_reflector(self) -> None:
+    """Agent shutdown 时调用 — 触发未完成的反思。"""
+    if self._reflector:
+        await self._reflector.flush()
 ```
 
 - [ ] **Step 5: 提交**
@@ -325,9 +336,8 @@ class CharacterReflector:
         self._llm = llm
         self._character_name = character_name
         self._user_name = user_name
-        self._buffer: list[tuple[str, str]] = []
+        # buffer/context 直接读写 engine.state，不保留本地副本
         self._reflect_lock = asyncio.Lock()
-        self._context: list[dict] = []
         try:
             self._pm = PromptManager(prompt_dir)
         except FileNotFoundError:
@@ -340,6 +350,7 @@ class CharacterReflector:
 
 - `reflector_buffer`, `reflector_context`, `self_l2`, `state_history`, `mood`, `mood_intensity`, `self_perception_history` → 全部通过 `self._engine.state.xxx` 访问
 - `mr_round_count`, `mr_new_memory_count`, `mr_last_summary` → 删除（MemoryReflector 自己管）
+- 删除本地 `self._buffer` 和 `self._context` 实例变量——全部用 `self._engine.state.reflector_buffer` / `self._engine.state.reflector_context`
 
 - [ ] **Step 3: 删除降级路径**
 
@@ -435,7 +446,7 @@ git add -A && git commit -m "refactor: MemoryReflector 独立 save_state/restore
 
 - [ ] **Step 1: 更新 imports**
 
-删除 `EmotionEngine`, `CharacterReflector`, `PersonalityEngine`, `CharacterStateRepository`。新增 `CharacterEngine`。
+删除 `EmotionEngine`, `CharacterReflector`, `PersonalityEngine`, `CharacterStateRepository`（已删文件）。新增 `CharacterEngine`。
 
 - [ ] **Step 2: 创建 CharacterEngine**
 
@@ -460,9 +471,14 @@ self._session.set_memory_reflector(self._memory_reflector)
 
 删除 `_character_state_repo.load_character/load_emotion/load_reflector` + `self._character_reflector.restore_state()` + `self._personality_engine.restore_state()` + `self._emotion.restore_state()`。
 
-- [ ] **Step 5: 更新 `_stop_persistence()`**
+- [ ] **Step 5: 删除 `_character_state_repo` 创建行 + 更新 `_stop_persistence()`**
 
-删除 `_character_state_repo.save_character/save_reflector` + `self._emotion.save_emotion_state()`。
+```python
+# 删除:
+self._character_state_repo = CharacterStateRepository()
+```
+
+`_stop_persistence()` 中删除 `_character_state_repo.save_character/save_reflector` + `self._emotion.save_emotion_state()`。
 
 - [ ] **Step 6: 更新 `_db_health_loop()`**
 
@@ -472,7 +488,7 @@ self._session.set_memory_reflector(self._memory_reflector)
 
 `self._emotion` → `self._character_engine`（emotion 方法调用）
 `self._personality_engine` → `self._character_engine`
-`self._character_reflector.flush()` → `self._character_engine._reflector.flush()`
+`self._character_reflector.flush()` → `self._character_engine.flush_reflector()`
 
 - [ ] **Step 8: 提交**
 
@@ -530,22 +546,20 @@ git add -A && git commit -m "refactor: 消费者更新 — CharacterEngine 引�
 
 ### Task 10: 清理旧文件
 
-**Files:** Delete: `core/emotion_engine.py` / Modify: `core/storage/character_state_repo.py`
+**Files:** Delete: `core/emotion_engine.py`, `core/storage/character_state_repo.py`
 
-- [ ] **Step 1: 删除 emotion_engine.py**
+- [ ] **Step 1: 删除文件**
 
 ```bash
-rm core/emotion_engine.py
+rm core/emotion_engine.py core/storage/character_state_repo.py
 ```
 
-- [ ] **Step 2: character_state_repo.py 标记 deprecated**
+`character_state_repo.py` 的所有方法已被 Task 8 删除引用，直接删文件即可。
 
-删除 `save_emotion/load_emotion/save_reflector/load_reflector`。保留 `save_character/load_character` 空壳 + deprecated 注释。
-
-- [ ] **Step 3: 提交**
+- [ ] **Step 2: 提交**
 
 ```bash
-git add -A && git commit -m "refactor: 删除 emotion_engine.py；character_state_repo deprecated"
+git add -A && git commit -m "refactor: 删除 emotion_engine.py + character_state_repo.py"
 ```
 
 ---
