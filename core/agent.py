@@ -259,8 +259,6 @@ class Agent:
             if self._character_engine.state.last_awareness_time:
                 self._character_engine._last_awareness_time = self._character_engine.state.last_awareness_time
             self._character_engine._reflector._restore_from_state()
-            else:
-                self._character_engine.state.session_id = SessionId(self._session.session_id)
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
             if os.path.exists(self._session.pending_file):
                 if await self._session.load_from_jsonl(merge=True):
