@@ -2,12 +2,14 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Sequence
 
 from pydantic import TypeAdapter
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.schema._utils import now_iso
+from core.schema.character import CharacterState
+from core.schema.memory_reflector import MemoryReflectorState
 from core.schema.message import Message
 from core.schema.types import IsoTimestamp, SessionId
 
@@ -74,7 +76,8 @@ class SessionRepository(Repository):
             return False
 
     async def save(self, session_id: SessionId, messages: Sequence[Message],
-                   params: dict[str, Any]) -> None:
+                   character_state: CharacterState,
+                   reflector_state: MemoryReflectorState | None = None) -> None:
         """保存或更新 session。"""
         if self._db is None:
             return
@@ -82,7 +85,8 @@ class SessionRepository(Repository):
         doc = {
             "session_id": session_id,
             "messages": serialized,
-            "params": params,
+            "character_state": character_state.model_dump(mode="json"),
+            "reflector_state": reflector_state.model_dump(mode="json") if reflector_state else {},
             "updated_at": now_iso(),
         }
         await self._db.update_one(
@@ -90,8 +94,8 @@ class SessionRepository(Repository):
         )
 
     async def load(self, session_id: SessionId
-                   ) -> tuple[list[Message], dict[str, Any]] | None:
-        """加载 session。返回 (messages, params) 或 None。"""
+                   ) -> tuple[list[Message], CharacterState, MemoryReflectorState] | None:
+        """加载 session。返回 (messages, character_state, reflector_state) 或 None。"""
         if self._db is None:
             return None
         results = await self._db.find(COLLECTION, {"session_id": session_id}, limit=1)
@@ -102,7 +106,9 @@ class SessionRepository(Repository):
         for m in msgs_raw:
             m.pop("_id", None)
         messages = [_message_adapter.validate_python(m) for m in msgs_raw]
-        return messages, dict(doc.get("params", {}))
+        cs = CharacterState.model_validate(doc.get("character_state", {}))
+        rs = MemoryReflectorState.model_validate(doc.get("reflector_state", {}))
+        return messages, cs, rs
 
     async def delete(self, session_id: SessionId) -> int:
         if self._db is None:
