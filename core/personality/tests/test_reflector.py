@@ -5,6 +5,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from core.personality import CharacterReflector
+from core.schema.character import CharacterState
+from core.schema.types import SessionId
 
 
 @pytest.mark.service
@@ -18,18 +20,23 @@ class TestCharacterReflector:
         return llm
 
     @pytest.fixture
-    def session(self):
-        s = MagicMock()
-        s._params = {}
-        s.set_param = lambda k, v: s._params.__setitem__(k, v)
-        s.get_param = lambda k, d=None: s._params.get(k, d)
-        return s
+    def state(self):
+        return CharacterState(session_id=SessionId("test-sid"))
 
     @pytest.fixture
-    def reflector(self, llm, session):
+    def engine_mock(self, state):
+        from unittest.mock import MagicMock
+        engine = MagicMock()
+        engine.state = state
+        engine.consume_trigger = AsyncMock()
+        return engine
+
+    @pytest.fixture
+    def reflector(self, llm, engine_mock):
         return CharacterReflector(
+            engine=engine_mock,
+            l1_core="你是 Elysia。温柔底色。",
             llm=llm,
-            session=session,
             character_name="Elysia",
             user_name="妖梦",
             prompt_dir="prompt",
@@ -38,49 +45,49 @@ class TestCharacterReflector:
     # ---- buffer 阈值 ----
 
     @pytest.mark.asyncio
-    async def test_buffer_below_threshold_no_trigger(self, reflector):
+    async def test_buffer_below_threshold_no_trigger(self, reflector, engine_mock):
         """缓冲区未达 50 对时不触发反思."""
         # 预置一条最近的历史，避免触发首次 10 对的特殊阈值
-        reflector._session._params["self_perception_history"] = [
+        engine_mock.state.self_perception_history = [
             {"timestamp": time.time(), "content": "最近没什么特别的。"}
         ]
         for _ in range(49):
             await reflector.buffer("你好", "你好呀")
         # 没有触发新反思 — 历史仍只有预置的那一条
-        assert len(reflector._session._params["self_perception_history"]) == 1
+        assert len(engine_mock.state.self_perception_history) == 1
 
     @pytest.mark.asyncio
-    async def test_buffer_at_threshold_triggers_reflect(self, reflector):
+    async def test_buffer_at_threshold_triggers_reflect(self, reflector, engine_mock):
         """缓冲区达到 50 对时触发反思."""
         # 预置一条最近的历史，禁用首次 10 对的特殊阈值
-        reflector._session._params["self_perception_history"] = [
+        engine_mock.state.self_perception_history = [
             {"timestamp": time.time(), "content": "最近没什么特别的。"}
         ]
         # 49 对不应触发 — 不到 50 对且不到 24h
         for i in range(49):
             await reflector.buffer(f"msg{i}", f"reply{i}")
         await asyncio.sleep(0.1)
-        assert len(reflector._session._params["self_perception_history"]) == 1  # 还是预置的那一条
+        assert len(engine_mock.state.self_perception_history) == 1  # 还是预置的那一条
         # 第 50 对应触发反思
         await reflector.buffer("msg50", "reply50")
         await asyncio.sleep(0.1)
-        assert len(reflector._session._params["self_perception_history"]) >= 2  # 预置 + 新反思
+        # 验证 consume_trigger 被调用
+        engine_mock.consume_trigger.assert_called_once()
 
     # ---- 24h 时间触发 ----
 
     @pytest.mark.asyncio
-    async def test_24h_trigger_even_with_fewer_rounds(self, reflector, llm):
+    async def test_24h_trigger_even_with_fewer_rounds(self, reflector, engine_mock):
         """距上次反思超过 24h 时，即使不足 50 对也触发."""
         old_ts = time.time() - 25 * 3600  # 25 小时前
-        reflector._session._params["self_perception_history"] = [
+        engine_mock.state.self_perception_history = [
             {"timestamp": old_ts, "content": "旧认知"}
         ]
         # 只加 10 对，但因为超 24h 应该触发
         for i in range(10):
             await reflector.buffer(f"msg{i}", f"reply{i}")
         await asyncio.sleep(0.1)
-        history = reflector._session.get_param("self_perception_history", [])
-        assert len(history) >= 2  # 旧认知 + 新反思
+        engine_mock.consume_trigger.assert_called_once()
 
     # ---- lock 防并发 ----
 
@@ -100,57 +107,30 @@ class TestCharacterReflector:
     # ---- flush ----
 
     @pytest.mark.asyncio
-    async def test_flush_with_buffered_turns(self, reflector, llm):
+    async def test_flush_with_buffered_turns(self, reflector, engine_mock):
         """flush() 在 buffer >= 10 对时强制反思并清空."""
         # 预设 history 使阈值回到 50（避免首次 10 对自动触发）
-        reflector._session.set_param("self_perception_history",
-            [{"timestamp": time.time(), "content": "old"}])
+        engine_mock.state.self_perception_history = [
+            {"timestamp": time.time(), "content": "old"}
+        ]
         for i in range(12):
             await reflector.buffer(f"msg{i}", f"reply{i}")
         await reflector.flush()
         assert len(reflector._buffer) == 0
 
     @pytest.mark.asyncio
-    async def test_flush_preserves_small_buffer(self, reflector, llm):
-        """flush() 在 buffer < 10 对时保留缓冲，仅持久化."""
+    async def test_flush_preserves_small_buffer(self, reflector, engine_mock):
+        """flush() 在 buffer < 10 对时保留缓冲."""
         for i in range(5):
             await reflector.buffer(f"msg{i}", f"reply{i}")
         await reflector.flush()
         assert len(reflector._buffer) == 5  # 保留，不被清空
 
     @pytest.mark.asyncio
-    async def test_flush_empty_buffer_noop(self, reflector, llm):
+    async def test_flush_empty_buffer_noop(self, reflector, engine_mock):
         """flush() 在空缓冲区时不做任何事."""
         await reflector.flush()
-        llm.think.assert_not_called()
-
-    # ---- 空结果不追加 ----
-
-    @pytest.mark.asyncio
-    async def test_empty_reflection_not_appended(self, reflector, llm):
-        """空反思结果不追加到历史."""
-        llm.think.return_value = MagicMock(text="")
-        for i in range(50):
-            await reflector.buffer(f"msg{i}", f"reply{i}")
-        await asyncio.sleep(0.1)
-        history = reflector._session.get_param("self_perception_history", [])
-        # 不应该有新的空条目
-        assert all(h["content"].strip() for h in history)
-
-    # ---- 历史上限 ----
-
-    @pytest.mark.asyncio
-    async def test_history_capped_at_50(self, reflector, llm):
-        """self_perception_history 上限 50 条，超出截掉最旧的."""
-        old_entries = [{"timestamp": float(i), "content": f"entry{i}"} for i in range(50)]
-        reflector._session._params["self_perception_history"] = old_entries
-        llm.think.return_value = MagicMock(text="新认知")
-        for i in range(50):
-            await reflector.buffer(f"msg{i}", f"reply{i}")
-        await asyncio.sleep(0.1)
-        history = reflector._session.get_param("self_perception_history", [])
-        assert len(history) <= 50
-        assert history[-1]["content"] == "新认知"
+        reflector._llm.think.assert_not_called()
 
     # ---- debug 属性 ----
 
@@ -165,10 +145,10 @@ class TestCharacterReflector:
         assert reflector.locked is False
 
     @pytest.mark.asyncio
-    async def test_last_reflection_at_updated_after_reflect(self, reflector, llm):
+    async def test_last_reflection_at_updated_after_reflect(self, reflector, engine_mock):
         """last_reflection_at 在反思后更新。"""
         assert reflector.last_reflection_at is None
-        llm.think.return_value = MagicMock(text="新的感受")
+        reflector._llm.think.return_value = MagicMock(text="新的感受")
         for i in range(50):
             await reflector.buffer(f"msg{i}", f"reply{i}")
         await asyncio.sleep(0.1)
@@ -177,10 +157,10 @@ class TestCharacterReflector:
         assert reflector.last_text_len > 0
 
     @pytest.mark.asyncio
-    async def test_last_success_false_on_llm_failure(self, reflector, llm):
+    async def test_last_success_false_on_llm_failure(self, reflector, engine_mock):
         """LLM 调用失败时 last_success 为 False。"""
-        llm.think.side_effect = Exception("模拟失败")
-        reflector._session._params["self_perception_history"] = [
+        reflector._llm.think.side_effect = Exception("模拟失败")
+        engine_mock.state.self_perception_history = [
             {"timestamp": time.time() - 25*3600, "content": "旧"}
         ]
         for i in range(10):
@@ -189,38 +169,38 @@ class TestCharacterReflector:
         assert reflector.last_success is False
         assert reflector.last_duration_ms > 0
 
-    def test_last_prompt_truncated(self, reflector, llm):
-        """prompt 字段在反思后记录并截断到 1000 字符。"""
-        pass  # 验证通过 integration 测试
-
 
 @pytest.mark.service
-def test_reflector_submits_to_personality_engine():
-    """Reflector 完成后提交事件到 PersonalityEngine。"""
-    from core.personality import PersonalityEngine
-    from core.memory.session import SessionMemory
+def test_reflector_submits_to_character_engine():
+    """Reflector 完成后提交事件到 CharacterEngine。"""
+    from core.personality import CharacterEngine
+    from core.schema.character import CharacterState
+    from core.schema.types import SessionId
     from unittest.mock import AsyncMock, MagicMock
 
-    s = SessionMemory()
+    s = CharacterState(session_id=SessionId("test-sid"))
     llm = MagicMock()
     llm.think = AsyncMock(return_value=MagicMock(text="我注意到自己变得敷衍了"))
 
-    engine = PersonalityEngine(
-        llm=llm, session=s,
-        character_name="Elysia", user_name="妖梦",
-        base_personality="温柔底色"
-    )
+    # Mock output and character config
+    output = MagicMock()
+    output.expression = MagicMock(return_value=MagicMock())
+    from core.character_config import CharacterConfig
+    char = CharacterConfig(name="Elysia")
 
-    reflector = CharacterReflector(
-        llm=llm, session=s,
-        character_name="Elysia", user_name="妖梦"
+    engine = CharacterEngine(
+        llm=llm, state=s,
+        character_name="Elysia", user_name="妖梦",
+        base_personality="温柔底色",
+        character_config=char,
+        output=output,
     )
-    reflector.set_personality_engine(engine)
 
     # 快速填充 buffer 达到触发阈值
+    reflector_ref = engine._reflector
     for _ in range(10):
-        reflector._buffer.append(("你好", "你好呀"))
+        reflector_ref._buffer.append(("你好", "你好呀"))
 
-    asyncio.run(reflector.flush())
-    assert s.get_param("state_l3")
-    assert "敷衍" in s.get_param("state_l3")
+    asyncio.run(reflector_ref.flush())
+    assert s.state_l3
+    assert "敷衍" in s.state_l3

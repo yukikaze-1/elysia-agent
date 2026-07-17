@@ -125,9 +125,11 @@ class TestCognitiveLoopMethods:
         from Module.tool import ToolManager, PluginContext, ToolContext
         from core.memory.session import SessionMemory
         from core.character_config import CharacterConfig
-        from core.emotion_engine import EmotionEngine
         from core.consolidator import MemoryConsolidator
         from core.memory.long_term import LongTermMemory
+        from core.personality import CharacterEngine
+        from core.schema.character import CharacterState
+        from core.schema.types import SessionId
 
         llm = MagicMock(spec=LLMAdapter)
         fsm = AgentFSM()
@@ -138,14 +140,20 @@ class TestCognitiveLoopMethods:
         lt = LongTermMemory()
         prompt = PromptAssembler(char, session, lt)
         tools = ToolManager()
-        emotion = EmotionEngine(char, session, output)
+        state = CharacterState(session_id=SessionId("test-sid"))
+        output.expression = MagicMock(return_value=MagicMock())
+        char_engine = CharacterEngine(
+            llm=llm, state=state,
+            character_name="TestBot", user_name="妖梦",
+            base_personality="", character_config=char, output=output,
+        )
         consolidator = MemoryConsolidator(llm, lt, "TestBot")
         tts = AsyncMock()
 
         loop = CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
             prompt=prompt, session=session, tool_executor=tools,
-            emotion=emotion, consolidator=consolidator, tts=tts,
+            character_engine=char_engine, consolidator=consolidator, tts=tts,
         )
         return loop
 
@@ -596,7 +604,7 @@ class TestLLMAdapter:
 
 
 # ============================================================================
-# 9. EmotionEngine — missing edges
+# 9. EmotionEngine — missing edges → CharacterEngine
 # ============================================================================
 
 @pytest.mark.service
@@ -604,19 +612,29 @@ class TestEmotionEngineEdges:
     @pytest.fixture
     def engine(self):
         from core.character_config import CharacterConfig
-        from core.memory.session import SessionMemory
+        from core.schema.character import CharacterState
+        from core.schema.types import SessionId
         from Module.output import OutputManager
-        from core.emotion_engine import EmotionEngine
+        from core.personality import CharacterEngine
+        from core.llm_adapter import LLMAdapter
 
         char = CharacterConfig(name="Test")
-        session = SessionMemory()
+        state = CharacterState(session_id=SessionId("test-sid"))
         output = OutputManager()
-        return EmotionEngine(char, session, output)
+        output.expression = MagicMock(return_value=MagicMock())
+        llm = MagicMock(spec=LLMAdapter)
+        llm.think = AsyncMock()
+        return CharacterEngine(
+            llm=llm, state=state,
+            character_name="Test", user_name="妖梦",
+            base_personality="", character_config=char, output=output,
+        )
 
     def test_multiple_moods_tie_breaker(self, engine):
+        from core.schema.mood import Mood
         # "！" matches excited; "哈哈" matches happy. Happy has more matches.
         mood = engine._detect_mood("哈哈！")
-        assert mood == "happy"
+        assert mood == Mood.HAPPY
 
     def test_push_idle_empty_list(self, engine):
         engine._idle_expressions = []
@@ -624,24 +642,23 @@ class TestEmotionEngineEdges:
         # Should not raise
 
     def test_intensity_capped_at_one(self, engine):
-        engine._session.set_param("mood_intensity", 0.96)
+        engine.state.mood_intensity = 0.96
         engine.analyze_user("开心")
-        intensity = engine._session.get_param("mood_intensity", 0)
-        assert intensity <= 1.0
+        assert engine.state.mood_intensity <= 1.0
 
     def test_intensity_floor_and_neutral(self, engine):
-        engine._session.set_param("mood", "happy")
-        engine._session.set_param("mood_intensity", 0.12)
+        from core.schema.mood import Mood
+        engine.state.mood = Mood.HAPPY
+        engine.state.mood_intensity = 0.12
         engine.analyze_assistant("好的")
-        intensity = engine._session.get_param("mood_intensity", 0)
-        assert intensity >= 0.1
-        assert engine._session.get_param("mood") == "neutral"
+        assert engine.state.mood_intensity >= 0.1
+        assert engine.state.mood == Mood.NEUTRAL
 
     def test_schedule_no_loop_does_not_raise(self, engine):
         """_schedule should be a no-op when no event loop is running."""
         # In sync test context, no running loop → should not raise
-        from core.emotion_engine import EmotionEngine
-        EmotionEngine._schedule(MagicMock())  # coroutine mock, no loop
+        from core.personality.engine import CharacterEngine
+        CharacterEngine._schedule(MagicMock())  # coroutine mock, no loop
 
     def test_push_idle_uses_list(self, engine):
         """push_idle_expression picks from idle_expressions."""

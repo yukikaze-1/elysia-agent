@@ -34,7 +34,6 @@ from .prompt_assembler import PromptAssembler
 from .memory.session import SessionMemory
 from .sentence_buffer import SentenceBuffer
 from .llm_adapter import LLMAdapter
-from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
 
@@ -76,9 +75,8 @@ class CognitiveLoop:
         prompt: PromptAssembler,
         session: SessionMemory,
         tool_executor=None,  # ToolExecutor Protocol
-        emotion: EmotionEngine | None = None,
+        character_engine=None,  # CharacterEngine | None
         consolidator: MemoryConsolidator | None = None,
-        reflector=None,  # CharacterReflector | None
         tts: TTSBackend | None = None,
         ctx: ToolContext | None = None,
         token_tracker=None,  # TokenTracker | None
@@ -92,9 +90,8 @@ class CognitiveLoop:
         self._session = session
         self._tool_executor = tool_executor
         self._req_counter: int = 0
-        self._emotion = emotion
+        self._character_engine = character_engine
         self._consolidator = consolidator
-        self._reflector = reflector
         self._memory_reflector = None
         self._tts = tts  # 保留供 agent.py stop() 读取
         self._ctx = ctx
@@ -267,17 +264,13 @@ class CognitiveLoop:
                           is_task_result: bool = False,
                           task_result_context: dict | None = None,
                           ) -> None:
-        if self._emotion:
+        if self._character_engine:
             if stt_emotion and stt_emotion != "NEUTRAL":
-                self._emotion.analyze_user_stt(stt_emotion, stt_events)
+                self._character_engine.analyze_user_stt(stt_emotion, stt_events)
             else:
-                self._emotion.analyze_user(user_message)
+                self._character_engine.analyze_user(user_message)
             # 将当前 mood 映射为 TTS emotion（MiniMax 等后端支持情绪控制）
-            mood_str = self._session.get_param("mood", "neutral")
-            try:
-                mood = Mood(mood_str)
-            except ValueError:
-                mood = Mood.NEUTRAL
+            mood = self._character_engine.state.mood
             self._tts_mgr.set_emotion(_MOOD_TO_TTS_EMOTION.get(mood))
 
         # 渐进式唤醒——后台任务完成后的通知
@@ -693,8 +686,8 @@ class CognitiveLoop:
                         public_text = (public_text[:iv_start] + public_text[iv_close + len("</inner_voice>"):]).strip()
 
                 if public_text.strip():
-                    if self._emotion:
-                        self._emotion.analyze_assistant(public_text)
+                    if self._character_engine:
+                        self._character_engine.analyze_assistant(public_text)
                     if not speaking_started:
                         # 无标点的极短回复，直接发完整消息
                         await self._output.typing(False)
@@ -775,11 +768,9 @@ class CognitiveLoop:
                 raise
             except Exception:
                 logger.debug("记忆沉淀失败", exc_info=True)
-        if self._reflector:
+        if self._character_engine:
             try:
-                await self._reflector.buffer(user_message, assistant_response)
-            except asyncio.CancelledError:
-                raise
+                self._character_engine.buffer_message(user_message, assistant_response)
             except Exception:
                 logger.debug("性格反思缓冲失败", exc_info=True)
         # 更新 MemoryReflector 计数器

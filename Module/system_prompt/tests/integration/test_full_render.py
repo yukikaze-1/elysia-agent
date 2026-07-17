@@ -17,7 +17,9 @@ from Module.system_prompt.sections.own_life import OwnLifeSection
 from Module.system_prompt.sections.self_perception import SelfPerceptionSection
 from Module.system_prompt.system_prompt_manager import SystemPromptManager
 from core.memory.session import SessionMemory
-from core.personality import PersonalityEngine
+from core.personality import CharacterEngine
+from core.schema.character import CharacterState
+from core.schema.types import SessionId
 
 pytestmark = pytest.mark.integration
 
@@ -42,15 +44,20 @@ def _mock_long_term():
     return lt
 
 
-def _mock_personality_engine():
-    """返回 mock PersonalityEngine 用于测试。"""
-    s = SessionMemory()
-    engine = PersonalityEngine(
+def _mock_character_engine():
+    """返回 mock CharacterEngine 用于测试。"""
+    from core.character_config import CharacterConfig
+    state = CharacterState(session_id=SessionId("test-sid"))
+    output = MagicMock()
+    output.expression = MagicMock(return_value=MagicMock())
+    engine = CharacterEngine(
         llm=MagicMock(),
-        session=s,
+        state=state,
         character_name="Elysia",
         user_name="妖梦",
         base_personality="你是 Elysia。温柔底色。",
+        character_config=CharacterConfig(name="Elysia"),
+        output=output,
     )
     return engine
 
@@ -61,11 +68,12 @@ def test_full_render_all_sections():
         mood="warm",
         own_life="最近在追一部新番",
     )
-    pe = _mock_personality_engine()
+    pe = _mock_character_engine()
+    c1_data = pe.render_c1()
 
     personality_section = PersonalitySection(
         f"{_TEMPLATES}/c1_personality.j2",
-        core_personality=pe.render_c1()["core_personality"],
+        core_personality=c1_data.core_personality,
     )
     self_perception_section = SelfPerceptionSection(
         f"{_TEMPLATES}/c9_self_perception.j2",

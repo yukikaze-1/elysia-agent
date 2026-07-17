@@ -1,24 +1,21 @@
 """CharacterStateRepository — MongoDB session_state 集合。"""
 
 import logging
-from typing import TYPE_CHECKING
-
-from pydantic import BaseModel
 
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
 from .base import Repository
 from core.schema.character import CharacterState
-from core.schema.emotion import EmotionState
-from core.schema.reflector import ReflectorState
 
 logger = logging.getLogger(__name__)
 COLLECTION = "session_state"
 
 
 class CharacterStateRepository(Repository):
-    """角色状态持久化存储（CharacterState / EmotionState / ReflectorState）。
+    """角色状态持久化存储。
 
-    单一集合 session_state，doc_type 字段区分三种文档类型。
+    单一集合 session_state，存储 CharacterState（合并了旧 emotion/reflector 文档）。
+    旧 doc_type="emotion" 和 doc_type="reflector" 文档不再使用，
+    启动时自动迁移到 CharacterState 并清理旧文档。
     """
 
     def __init__(self, db: DocumentDBBackend | None = None):
@@ -28,7 +25,6 @@ class CharacterStateRepository(Repository):
         try:
             self._db = DocumentDBFactory.create("mongodb/default")
             await self._db.ensure_index(COLLECTION, [("session_id", 1)])
-            await self._db.ensure_index(COLLECTION, [("session_id", 1), ("doc_type", 1)])
             logger.info("CharacterStateRepository: MongoDB connected")
             return True
         except Exception as e:
@@ -44,48 +40,29 @@ class CharacterStateRepository(Repository):
     async def health_check(self) -> bool:
         return self._db is not None
 
-    # ---- generic save/load helpers ----
+    # ---- public interface ----
 
-    async def _save(self, session_id: str, doc_type: str, state: BaseModel) -> None:
+    async def save_character(self, state: CharacterState) -> None:
+        """保存 CharacterState。"""
         if self._db is None:
             return
         doc = state.model_dump(mode="json")
-        doc["doc_type"] = doc_type
         await self._db.update_one(
             COLLECTION,
-            {"session_id": session_id, "doc_type": doc_type},
+            {"session_id": state.session_id},
             {"$set": doc},
             upsert=True,
         )
 
-    async def _load(self, session_id: str, doc_type: str, model_cls: type[BaseModel]):
+    async def load_character(self, session_id: str) -> CharacterState | None:
+        """加载 CharacterState。"""
         if self._db is None:
             return None
         results = await self._db.find(
             COLLECTION,
-            {"session_id": session_id, "doc_type": doc_type},
+            {"session_id": session_id},
             limit=1,
         )
         if not results:
             return None
-        return model_cls.model_validate(results[0])
-
-    # ---- public interface ----
-
-    async def save_character(self, state: CharacterState) -> None:
-        await self._save(state.session_id, "character", state)
-
-    async def load_character(self, session_id: str) -> CharacterState | None:
-        return await self._load(session_id, "character", CharacterState)
-
-    async def save_emotion(self, state: EmotionState) -> None:
-        await self._save(state.session_id, "emotion", state)
-
-    async def load_emotion(self, session_id: str) -> EmotionState | None:
-        return await self._load(session_id, "emotion", EmotionState)
-
-    async def save_reflector(self, state: ReflectorState) -> None:
-        await self._save(state.session_id, "reflector", state)
-
-    async def load_reflector(self, session_id: str) -> ReflectorState | None:
-        return await self._load(session_id, "reflector", ReflectorState)
+        return CharacterState.model_validate(results[0])

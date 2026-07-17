@@ -1,8 +1,8 @@
 > 文档导航：[项目文档](../../README.md)
 
-# PersonalityEngine — 角色性格引擎
+# CharacterEngine — 角色性格 + 情绪引擎
 
-四层性格模型 (Core→Self→State→Mood)，让 AI 角色能从对话经历中演化性格。
+合并原 PersonalityEngine + EmotionEngine，四层性格模型 (Core→Self→State→Mood)，让 AI 角色能从对话经历中演化性格。
 
 ## 架构
 
@@ -14,18 +14,18 @@
 │   → C1 模板的锚点                                    │
 ├──────────────────────────────────────────────────────┤
 │ L2: Self（长期自我）                变化: 月级         │
-│   存储: session.params["self_l2"]                    │
+│   存储: CharacterState.self_l2                       │
 │   从 L3 持续状态压缩沉淀（已实现）    │
 │   → C1 模板的主体——"我是谁"                           │
 ├──────────────────────────────────────────────────────┤
 │ L3: State（短期状态）              变化: 数十轮/24h    │
-│   存储: session.params["state_l3"]                   │
+│   存储: CharacterState.state_l3                      │
 │   来源: CharacterReflector + 事件触发                 │
 │   → C9 模板的条件素材——"我最近怎么了"                  │
 ├──────────────────────────────────────────────────────┤
 │ L4: Mood（当前情绪）                变化: 每轮         │
-│   存储: session.params["mood"]                       │
-│   来源: EmotionEngine（独立模块，不动）               │
+│   存储: CharacterState.mood (Mood 枚举)              │
+│   来源: CharacterEngine（keyword + STT，已内聚）      │
 │   → C3 模板的内容                                    │
 └──────────────────────────────────────────────────────┘
 ```
@@ -36,7 +36,7 @@
 启动:
   elysia.yaml → CharacterConfig.from_yaml()
     → 读取 elysia_personality.txt
-    → PersonalityEngine.__init__(base_personality=L1)
+    → CharacterEngine.__init__(base_personality=L1, state=CharacterState(...))
 
 每轮对话:
   PromptAssembler.build_system_prompt()
@@ -49,12 +49,12 @@ L3 更新:
     → CharacterReflector.j2 渲染（含 L1/L2/L3/L4 全层上下文）
     → LLM 反思（区分情境反应 vs 人格偏移）
     → engine.consume_trigger("reflector", {"content": "..."})
-      → _set_state_l3() → session.params["state_l3"]
+      → _set_state_l3() → CharacterState.state_l3
       → _maybe_compress() → 检查触发条件 → _compress()（条件满足时）
 
 L2 更新（L3→L2 压缩）:
   state_history 新增 >= 5 条 OR 距上次 > 7 天 → 触发
-    → _compress() → LLM 总结 → session.params["self_l2"]
+    → _compress() → LLM 总结 → CharacterState.self_l2
     → C1 模板开始渲染 <long_term_self> 块
 ```
 
@@ -111,8 +111,8 @@ Phase 2 加入 L2/L3 语义偏差检测和用户话题触发。
 
 ```
 core/personality/
-├── __init__.py        — 重导出 PersonalityEngine, CharacterReflector
-├── engine.py          — PersonalityEngine 类
+├── __init__.py        — 重导出 CharacterEngine, CharacterReflector
+├── engine.py          — CharacterEngine 类（合并 PersonalityEngine + EmotionEngine）
 ├── reflector.py       — CharacterReflector 类（子组件）
 ├── tests/
 │   ├── test_engine.py
@@ -129,13 +129,15 @@ prompt/
 └── PersonalityCompression.j2       — L3→L2 压缩模板
 
 core/
-├── agent.py                       — 创建并接线 PersonalityEngine
+├── agent.py                       — 创建并接线 CharacterEngine
 ├── prompt_assembler.py            — 数据注入 section
-├── emotion_engine.py              — L4 Mood（独立模块）
+├── schema/character.py            — CharacterState 定义（Pydantic 模型，合并 mood + reflector 字段）
+└── schema/mood.py                 — Mood 枚举 + TTS 映射 + STT 工具函数
 
 Module/system_prompt/
 ├── sections/personality.py        — C1 section 类
 ├── sections/self_perception.py    — C9 section 类
+├── sections/emotion.py            — C3 section 类（通过 set_context(mood=...) 传入）
 ├── templates/c1_personality.j2    — C1 模板
 └── templates/c9_self_perception.j2 — C9 模板
 ```
@@ -151,7 +153,7 @@ Module/system_prompt/
 
 ## 调试
 
-访问 `http://localhost:8765/debug` → **PersonalityEngine** 卡片，可查看：
+访问 `http://localhost:8765/debug` → **CharacterEngine** 卡片，可查看：
 - L2 Self 当前状态（L3→L2 压缩产出）
 - L3 State 当前状态
 - C9 冷却状态（就绪 / 剩余 X min）

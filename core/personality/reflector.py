@@ -1,8 +1,7 @@
-"""CharacterReflector — 周期性 LLM 自我反思，作为 PersonalityEngine 的子组件。
+"""CharacterReflector — 周期性 LLM 自我反思，作为 CharacterEngine 的子组件。
 
 缓冲对话轮次，攒够 50 对 OR 距上次反思 > 24h 时触发反思。
-当连接 PersonalityEngine 时，反思结果通过 consume_trigger 提交；
-未连接时降级写入 session.params["self_perception_history"]。
+反思结果通过 engine.consume_trigger 提交给 CharacterEngine。
 
 遵循 MemoryConsolidator 的 buffer + asyncio.Lock + flush 模式。
 """
@@ -14,11 +13,9 @@ from typing import TYPE_CHECKING
 
 from Module.system_prompt import PromptManager
 from ..llm_adapter import LLMAdapter
-from ..memory.session import SessionMemory
 
 if TYPE_CHECKING:
-    from core.schema.reflector import ReflectorState
-    from core.storage.character_state_repo import CharacterStateRepository
+    from core.personality.engine import CharacterEngine
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +23,7 @@ logger = logging.getLogger(__name__)
 class CharacterReflector:
     """周期性格自我反思。
 
-    缓冲对话 → 触发 LLM 反思 → 输出 self_perception → 存入 session。
+    缓冲对话 → 触发 LLM 反思 → 输出 self_perception → 存入 engine.state。
     """
 
     BUFFER_THRESHOLD = 50       # 攒够 50 对对话触发
@@ -36,14 +33,17 @@ class CharacterReflector:
 
     def __init__(
         self,
+        *,
+        engine: "CharacterEngine",
+        l1_core: str,
         llm: LLMAdapter,
-        session: SessionMemory,
         character_name: str = "Elysia",
         user_name: str = "妖梦",
         prompt_dir: str = "prompt",
     ):
+        self._engine = engine
+        self._l1_core = l1_core
         self._llm = llm
-        self._session = session
         self._character_name = character_name
         self._user_name = user_name
         self._prompt_dir = prompt_dir
@@ -56,8 +56,8 @@ class CharacterReflector:
             logger.warning("CharacterReflector: 模板目录不存在，反思功能不可用")
             self._pm = None
 
-        # ---- PersonalityEngine 连接 ----
-        self._personality_engine = None  # PersonalityEngine | None
+        # 从 engine.state 恢复 buffer/context（如果有持久化数据）
+        self._restore_from_state()
 
         # ---- debug 状态 ----
         self._last_reflection_at: float | None = None
@@ -66,6 +66,19 @@ class CharacterReflector:
         self._last_text_len: int = 0
         self._last_prompt_system: str = ""
         self._last_prompt_user: str = ""
+
+    # ---- 状态恢复 ----
+
+    def _restore_from_state(self) -> None:
+        """从 engine.state 恢复 buffer 和 context。"""
+        state = self._engine.state
+        if state.reflector_buffer:
+            self._buffer = [(u, a) for u, a in state.reflector_buffer]
+            logger.debug("CharacterReflector: 恢复 buffer (%d 对)", len(self._buffer))
+        if state.reflector_context:
+            self._context = list(state.reflector_context)
+
+    # ---- buffer / flush ----
 
     async def buffer(self, user_msg: str, assistant_msg: str) -> None:
         """缓冲一轮对话。达到阈值时触发反思。"""
@@ -79,9 +92,6 @@ class CharacterReflector:
         self._context.append({"role": self._character_name, "content": assistant_msg, "inner_voice": "", "timestamp": ts})
         if len(self._context) > self.CONTEXT_ROUNDS * 2:
             self._context = self._context[-(self.CONTEXT_ROUNDS * 2):]
-
-        # 持久化 buffer/context 到 session，重启不丢失
-        self._save_state()
 
         if not self._should_trigger():
             return
@@ -103,7 +113,6 @@ class CharacterReflector:
             return
 
         if len(self._buffer) < 10:
-            self._save_state()  # 确保持久化，重启后恢复
             logger.debug("CharacterReflector flush: 仅 %d 对，留待下次", len(self._buffer))
             return
 
@@ -150,54 +159,6 @@ class CharacterReflector:
 
     # ---- private ----
 
-    def _save_state(self) -> None:
-        """持久化 buffer 和 context 到 session.params。"""
-        self._session.set_param("reflector_buffer", list(self._buffer))
-        self._session.set_param("reflector_context", list(self._context))
-
-    def restore_state(self) -> None:
-        """从 session.params 恢复 buffer 和 context。
-
-        必须在 session.load() 之后调用，否则 params 为空。
-        """
-        buf = self._session.get_param("reflector_buffer", [])
-        ctx = self._session.get_param("reflector_context", [])
-        if buf:
-            self._buffer = [(u, a) for u, a in buf]
-            logger.debug("CharacterReflector: 恢复 buffer (%d 对)", len(self._buffer))
-        if ctx:
-            self._context = list(ctx)
-
-    # ---- 持久化 hooks ----
-
-    async def save_reflector_state(self, repo: "CharacterStateRepository") -> None:
-        """保存 reflector 状态。shutdown 时调用。"""
-        from core.schema.reflector import ReflectorState
-        from core.schema.types import SessionId
-        state = ReflectorState(
-            session_id=SessionId(self._session.session_id),
-            reflector_buffer=list(self._buffer),
-            reflector_context=list(self._context),
-            self_perception_history=self._session.get_param("self_perception_history", []),
-            mr_round_count=self._session.get_param("mr_round_count", 0),
-            mr_new_memory_count=self._session.get_param("mr_new_memory_count", 0),
-            mr_last_summary=self._session.get_param("mr_last_summary", {}),
-        )
-        await repo.save_reflector(state)
-
-    def restore_reflector_state(self, state: "ReflectorState") -> None:
-        """从持久化恢复 reflector 状态。start() 时调用。"""
-        self._buffer = [(u, a) for u, a in state.reflector_buffer]
-        self._context = list(state.reflector_context)
-        self._session.set_param("self_perception_history", state.self_perception_history)
-        self._session.set_param("mr_round_count", state.mr_round_count)
-        self._session.set_param("mr_new_memory_count", state.mr_new_memory_count)
-        self._session.set_param("mr_last_summary", state.mr_last_summary)
-
-    def set_personality_engine(self, engine) -> None:
-        """连接到 PersonalityEngine。设置后 _reflect() 产出提交给 engine 而非 self_perception_history。"""
-        self._personality_engine = engine
-
     def _should_trigger(self) -> bool:
         """判断是否应触发反思：≥50 对 OR 距上次 > 24h。
 
@@ -208,11 +169,11 @@ class CharacterReflector:
         if len(self._buffer) >= self.BUFFER_THRESHOLD:
             return True
 
-        # 获取上次触发时间：优先用 PersonalityEngine 记录，降级用旧 history
+        # 获取上次触发时间
         last_ts = self._last_reflection_at
         if last_ts is None:
             # 兼容旧路径：从 self_perception_history 读时间戳
-            history = self._session.get_param("self_perception_history", [])
+            history = self._engine.state.self_perception_history
             if not history:
                 return len(self._buffer) >= 10
             last_ts = history[-1].get("timestamp", 0)
@@ -225,19 +186,18 @@ class CharacterReflector:
             return
 
         pm = self._pm
+        state = self._engine.state
 
         # ---- 收集上下文变量 ----
 
-        # L1 Core: 从 PersonalityEngine 获取不可变底色
-        l1_core = ""
-        if self._personality_engine is not None:
-            l1_core = self._personality_engine._l1_core
+        # L1 Core: 不可变底色
+        l1_core = self._l1_core
 
         # L2 Self: 长期自我认知
-        l2_self = self._session.get_param("self_l2", "")
+        l2_self = state.self_l2
 
         # L3 History: 近期状态变化轨迹
-        l3_raw = self._session.get_param("state_history", [])
+        l3_raw = state.state_history
         if l3_raw:
             l3_lines = []
             for entry in l3_raw[-5:]:  # 取最近 5 条
@@ -254,12 +214,12 @@ class CharacterReflector:
             l3_history = ""
 
         # L4 Mood: 当前情绪快照
-        mood = self._session.get_param("mood", "neutral")
-        mood_intensity = self._session.get_param("mood_intensity", 0.5)
+        mood = state.mood.value
+        mood_intensity = state.mood_intensity
         mood_snapshot = f"当前情绪: {mood} (强度: {mood_intensity:.2f})"
 
         # 上次反思结果
-        history = self._session.get_param("self_perception_history", [])
+        history = state.self_perception_history
         last_perception = history[-1]["content"] if history else ""
 
         # 时间跨度
@@ -277,7 +237,6 @@ class CharacterReflector:
                     time_span = f"约 {span_sec / 86400:.1f} 天"
 
         # ---- 渲染模板 ----
-        # 新模板为单段设计（无 macro），一次渲染全部变量
         try:
             system = pm.render(
                 "CharacterReflector.j2",
@@ -321,7 +280,7 @@ class CharacterReflector:
 
         # LLM 调用成功后才清空 buffer
         self._buffer.clear()
-        self._save_state()
+        self._context.clear()
 
         if not text:
             self._last_duration_ms = elapsed_ms
@@ -331,31 +290,13 @@ class CharacterReflector:
             logger.debug("CharacterReflector: 反思结果为空，跳过")
             return
 
-        # 提交给 PersonalityEngine 或降级写入旧 self_perception_history
-        if self._personality_engine is not None:
-            asyncio.create_task(
-                self._personality_engine.consume_trigger("reflector", {"content": text})
-            )
-            self._last_success = True
-            self._last_duration_ms = elapsed_ms
-            self._last_text_len = len(text)
-            self._last_reflection_at = time.time()
-            logger.info("CharacterReflector: 性格反思已提交 → PersonalityEngine (%d chars, %.0f ms)",
-                        len(text), elapsed_ms)
-            return
-
-        # 降级路径：写 self_perception_history（兼容旧行为）
-        entry = {"timestamp": time.time(), "content": text}
-        current_history = self._session.get_param("self_perception_history", [])
-        current_history.append(entry)
-        if len(current_history) > self.MAX_HISTORY:
-            current_history = current_history[-self.MAX_HISTORY:]
-        self._session.set_param("self_perception_history", current_history)
-
+        # 提交给 CharacterEngine
+        asyncio.create_task(
+            self._engine.consume_trigger("reflector", {"content": text})
+        )
         self._last_success = True
         self._last_duration_ms = elapsed_ms
         self._last_text_len = len(text)
         self._last_reflection_at = time.time()
-
-        logger.info("CharacterReflector: 性格反思完成 (%d chars, %.0f ms)",
+        logger.info("CharacterReflector: 性格反思已提交 → CharacterEngine (%d chars, %.0f ms)",
                     len(text), elapsed_ms)

@@ -172,7 +172,7 @@ class TTSStreamManager:
         self._tasks.clear()
 
     def set_emotion(self, emotion: str | None) -> None:
-        """设置本轮 TTS 情绪（由 EmotionEngine 更新后调用）。"""
+        """设置本轮 TTS 情绪（由 CharacterEngine 更新后调用）。"""
         self._emotion = emotion
 
     def set_backend(self, tts: TTSBackend | None) -> None:

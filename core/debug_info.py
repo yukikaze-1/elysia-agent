@@ -177,15 +177,15 @@ async def collect(agent) -> DebugInfo:
     info.base_personality_summary = bp[:120] + "..." if len(bp) > 120 else bp
 
     # ---- PersonalityEngine ----
-    pe = getattr(agent, "_personality_engine", None)
+    pe = getattr(agent, "_character_engine", None)
     if pe is not None:
         info.personality_engine_exists = True
         c1 = pe.render_c1()
         info.self_l2 = c1.self_personality[:200] if c1.self_personality else "（未演化）"
-        l3 = agent._session.get_param("state_l3", "")
+        l3 = pe.state.state_l3
         info.state_l3 = l3[:200] if l3 else "（无短期状态）"
-        info.state_history = list(agent._session.get_param("state_history", []))[-5:]
-        info.last_awareness_time = agent._session.get_param("last_awareness_time", 0.0)
+        info.state_history = list(pe.state.state_history)[-5:]
+        info.last_awareness_time = pe.state.last_awareness_time or 0.0
 
     # ---- Character Reflector ----
     ref = getattr(agent, "_character_reflector", None)
@@ -200,7 +200,7 @@ async def collect(agent) -> DebugInfo:
         info.reflector_last_duration_ms = ref.last_duration_ms
         info.reflector_last_text_len = ref.last_text_len
 
-    history = agent._session.get_param("self_perception_history", [])
+    history = pe.state.self_perception_history if pe else []
     info.self_perception_history = list(history[-5:])
 
     # ---- Connections ----

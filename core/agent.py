@@ -31,11 +31,12 @@ from core.tools import ALL_PLUGINS
 from .cognitive_loop import CognitiveLoop
 from .idle_monitor import IdleMonitor
 from .llm_adapter import LLMAdapter
-from .emotion_engine import EmotionEngine
 from .consolidator import MemoryConsolidator
-from .personality import CharacterReflector, PersonalityEngine
+from .personality import CharacterEngine
+from core.personality.reflector import CharacterReflector
 from .memory.memory_reflector import MemoryReflector  # 新增
-from core.schema.types import IsoTimestamp
+from core.schema.types import IsoTimestamp, SessionId
+from core.schema.character import CharacterState
 from Module.embedding import EmbeddingFactory
 from .task_scheduler import TaskScheduler
 from core.storage.session_repo import SessionRepository
@@ -121,28 +122,27 @@ class Agent:
         self._fsm = AgentFSM()
         self._llm = LLMAdapter(model=config.llm.model)
 
-        # ---- 性格引擎 ----
-        self._personality_engine = PersonalityEngine(
+        # ---- 性格 + 情绪引擎（合并）----
+        self._character_engine = CharacterEngine(
             llm=self._llm,
-            session=self._session,
+            state=CharacterState(session_id=SessionId("")),  # placeholder，start() 中更新
             character_name=self._character.name,
             user_name=self._user_name,
             base_personality=self._character.base_personality,
+            character_config=self._character,
+            output=self._output,
         )
+
+        # 保存 reflector 引用供 debug_info 使用
+        self._character_reflector = self._character_engine._reflector
 
         self._prompt = PromptAssembler(
             self._character, self._session, self._long_term,
-            personality_engine=self._personality_engine,
+            personality_engine=self._character_engine,
         )
 
         self._tts = None  # 在 _start_tts() 中创建
         self._stt_ok = False  # STT 连通性标志 — 在 run_server() 中设置
-
-        self._emotion = EmotionEngine(
-            character=self._character,
-            session=self._session,
-            output=self._output,
-        )
 
         self._consolidator = MemoryConsolidator(
             llm=self._llm,
@@ -150,14 +150,6 @@ class Agent:
             character_name=self._character.name,
             user_name=self._user_name,
         )
-
-        self._character_reflector = CharacterReflector(
-            llm=self._llm,
-            session=self._session,
-            character_name=self._character.name,
-            user_name=self._user_name,
-        )
-        self._character_reflector.set_personality_engine(self._personality_engine)
 
         # ---- 记忆反射器 ----
         self._memory_reflector = MemoryReflector(
@@ -177,9 +169,8 @@ class Agent:
             prompt=self._prompt,
             session=self._session,
             tool_executor=self._tool_manager,
-            emotion=self._emotion,
+            character_engine=self._character_engine,
             consolidator=self._consolidator,
-            reflector=self._character_reflector,
             tts=self._tts,
             token_tracker=self._token_tracker,
         )
@@ -266,23 +257,19 @@ class Agent:
         await self._message_repo.connect()
         if mongo_ok:
             await self._session.load()
-            if self._character_reflector:
-                self._character_reflector.restore_state()
-            if self._personality_engine:
-                self._personality_engine.restore_state()
-            if self._emotion:
-                self._emotion.restore_state()
             if self._memory_reflector:
                 self._memory_reflector.restore_state()
-            # 角色状态持久化恢复
+            # 角色状态持久化恢复（CharacterState 合并了旧 emotion/reflector 文档）
             char_state_ok = await self._character_state_repo.connect()
             if char_state_ok:
                 if state := await self._character_state_repo.load_character(self._session.session_id):
-                    self._personality_engine.restore_character_state(state)
-                if es := await self._character_state_repo.load_emotion(self._session.session_id):
-                    self._emotion.restore_emotion_state(es)
-                if rs := await self._character_state_repo.load_reflector(self._session.session_id):
-                    self._character_reflector.restore_reflector_state(rs)
+                    self._character_engine.state = state
+                    self._character_engine._last_awareness_time = state.last_awareness_time or 0.0
+                    self._character_engine._reflector._restore_from_state()
+                else:
+                    self._character_engine.state.session_id = SessionId(self._session.session_id)
+            else:
+                self._character_engine.state.session_id = SessionId(self._session.session_id)
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
             if os.path.exists(self._session.pending_file):
                 if await self._session.load_from_jsonl(merge=True):
@@ -487,10 +474,8 @@ class Agent:
             await self._memory_reflector.flush()
 
         # 1.56. 角色状态持久化保存
-        if self._character_state_repo:
-            await self._personality_engine.save_character_state(self._character_state_repo)
-            await self._emotion.save_emotion_state(self._character_state_repo)
-            await self._character_reflector.save_reflector_state(self._character_state_repo)
+        if self._character_state_repo and self._character_engine:
+            await self._character_engine.save(self._character_state_repo)
 
         # 2. 先停事件循环 — 防止它在 shutdown 期间继续 post 新任务
         await self._stop_event_task()
@@ -546,9 +531,9 @@ class Agent:
 
     async def _flush_reflector(self) -> None:
         """CharacterReflector buffer 落盘，防止未持久化的性格反思丢失。"""
-        if self._character_reflector:
+        if self._character_engine:
             try:
-                await asyncio.wait_for(self._character_reflector.flush(), timeout=5.0)
+                await asyncio.wait_for(self._character_engine.flush_reflector(), timeout=5.0)
             except asyncio.TimeoutError:
                 logger.warning("CharacterReflector flush timed out during shutdown")
             except Exception:
@@ -556,15 +541,15 @@ class Agent:
 
     async def _flush_compression(self) -> None:
         """L3→L2 性格压缩 flush — 如有未处理的 state_history 条目，触发压缩。"""
-        if self._personality_engine:
+        if self._character_engine:
             try:
                 await asyncio.wait_for(
-                    self._personality_engine.flush_compression(), timeout=5.0
+                    self._character_engine.flush_compression(), timeout=5.0
                 )
             except asyncio.TimeoutError:
-                logger.warning("PersonalityEngine compression flush timed out")
+                logger.warning("CharacterEngine compression flush timed out")
             except Exception:
-                logger.debug("PersonalityEngine compression flush failed", exc_info=True)
+                logger.debug("CharacterEngine compression flush failed", exc_info=True)
 
     async def _stop_event_task(self) -> None:
         """停止 _process_events 事件循环——防止它在 shutdown 期间继续 post 新任务。"""

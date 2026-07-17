@@ -103,7 +103,7 @@ class TestAgentFSM:
 
 
 # ============================================================================
-# 3. EmotionEngine tests
+# 3. EmotionEngine tests → CharacterEngine (merged)
 # ============================================================================
 
 @pytest.mark.service
@@ -111,101 +111,127 @@ class TestEmotionEngine:
     @pytest.fixture
     def engine(self):
         from core.character_config import CharacterConfig
-        from core.memory.session import SessionMemory
+        from core.schema.character import CharacterState
+        from core.schema.types import SessionId
         from Module.output import OutputManager
-        from core.emotion_engine import EmotionEngine
+        from core.personality import CharacterEngine
+        from core.llm_adapter import LLMAdapter
+        from unittest.mock import MagicMock, AsyncMock
 
         char = CharacterConfig(name="Test")
-        session = SessionMemory()
+        state = CharacterState(session_id=SessionId("test-sid"))
         output = OutputManager()
-        return EmotionEngine(char, session, output)
+        output.expression = MagicMock(return_value=MagicMock())
+        llm = MagicMock(spec=LLMAdapter)
+        llm.think = AsyncMock()
+        return CharacterEngine(
+            llm=llm, state=state,
+            character_name="Test",
+            user_name="妖梦",
+            base_personality="",
+            character_config=char,
+            output=output,
+        )
 
     def test_detect_happy(self, engine):
-        assert engine._detect_mood("哈哈太开心了") == "happy"
-        assert engine._detect_mood("今天真开心") == "happy"
+        from core.schema.mood import Mood
+        assert engine._detect_mood("哈哈太开心了") == Mood.HAPPY
+        assert engine._detect_mood("今天真开心") == Mood.HAPPY
         # "太好了" matches both happy("太好了") and excited("!").
         # Happy has higher keyword count, so it wins.
-        assert engine._detect_mood("太好了") == "happy"
-        assert engine._detect_mood("难过死了") == "sad"
-        assert engine._detect_mood("为什么啊") == "curious"
+        assert engine._detect_mood("太好了") == Mood.HAPPY
+        assert engine._detect_mood("难过死了") == Mood.SAD
+        assert engine._detect_mood("为什么啊") == Mood.CURIOUS
 
     def test_detect_excited(self, engine):
+        from core.schema.mood import Mood
         # "！！！" only matches excited keywords
-        assert engine._detect_mood("天哪真的假的！！！") == "excited"
-        assert engine._detect_mood("竟然！！！牛逼") == "excited"
+        assert engine._detect_mood("天哪真的假的！！！") == Mood.EXCITED
+        assert engine._detect_mood("竟然！！！牛逼") == Mood.EXCITED
 
     def test_detect_neutral(self, engine):
-        assert engine._detect_mood("今天天气不错") == "neutral"
-        assert engine._detect_mood("你好") == "neutral"
+        from core.schema.mood import Mood
+        assert engine._detect_mood("今天天气不错") == Mood.NEUTRAL
+        assert engine._detect_mood("你好") == Mood.NEUTRAL
 
-    def test_analyze_user_updates_session(self, engine):
+    def test_analyze_user_updates_state(self, engine):
+        from core.schema.mood import Mood
         engine.analyze_user("哈哈太开心了")
-        assert engine._session.get_param("mood") == "happy"
-        assert engine._session.get_param("mood_intensity", 0) > 0.4
+        assert engine.state.mood == Mood.HAPPY
+        assert engine.state.mood_intensity > 0.4
 
     def test_mood_decay(self, engine):
+        from core.schema.mood import Mood
         engine.analyze_user("哈哈今天真开心")
-        initial_intensity = engine._session.get_param("mood_intensity", 0)
+        initial_intensity = engine.state.mood_intensity
 
         engine.analyze_assistant("我也很开心")
-        decayed = engine._session.get_param("mood_intensity", 0)
+        decayed = engine.state.mood_intensity
         assert decayed < initial_intensity
 
     def test_neutral_after_decay(self, engine):
-        engine._session.set_param("mood_intensity", 0.15)
+        from core.schema.mood import Mood
+        engine.state.mood_intensity = 0.15
         engine.analyze_assistant("好的")
         # Intensity dropped below 0.2, should reset to neutral
-        assert engine._session.get_param("mood") == "neutral"
+        assert engine.state.mood == Mood.NEUTRAL
 
     def test_same_mood_increases_intensity(self, engine):
+        from core.schema.mood import Mood
         engine.analyze_user("哈哈开心")
-        i1 = engine._session.get_param("mood_intensity", 0)
+        i1 = engine.state.mood_intensity
 
         engine.analyze_user("开心呢")
-        i2 = engine._session.get_param("mood_intensity", 0)
+        i2 = engine.state.mood_intensity
         assert i2 >= i1
 
     def test_mood_switch(self, engine):
+        from core.schema.mood import Mood
         engine.analyze_user("哈哈开心")
-        assert engine._session.get_param("mood") == "happy"
+        assert engine.state.mood == Mood.HAPPY
 
         engine.analyze_user("好难过啊")
-        assert engine._session.get_param("mood") == "sad"
+        assert engine.state.mood == Mood.SAD
 
     # ---- STT emotion analysis ----
 
     def test_analyze_user_stt_sets_mood(self, engine):
         """STT HAPPY → AI mood warm"""
+        from core.schema.mood import Mood
         result = engine.analyze_user_stt("HAPPY")
-        assert result == "warm"
-        assert engine._session.get_param("mood") == "warm"
+        assert result == Mood.WARM
+        assert engine.state.mood == Mood.WARM
 
     def test_analyze_user_stt_sad(self, engine):
         """STT SAD → AI mood concerned (not sad)"""
+        from core.schema.mood import Mood
         result = engine.analyze_user_stt("SAD")
-        assert result == "concerned"
-        assert engine._session.get_param("mood") == "concerned"
+        assert result == Mood.CONCERNED
+        assert engine.state.mood == Mood.CONCERNED
 
     def test_analyze_user_stt_neutral_no_change(self, engine):
         """STT NEUTRAL — return current mood, no push"""
-        current = engine._session.get_param("mood", "neutral")
+        from core.schema.mood import Mood
+        current = engine.state.mood
         result = engine.analyze_user_stt("NEUTRAL")
         assert result == current
-        # NEUTRAL and EMO_UNKNOWN both return empty string → no update
+        # EMO_UNKNOWN returns None → no update, returns current mood
         assert engine.analyze_user_stt("EMO_UNKNOWN") == current
 
     def test_analyze_user_stt_with_laughter_event(self, engine):
         """Laughter event pushes laugh expression"""
         engine.analyze_user_stt("HAPPY", events=["Laughter"])
-        # mood should be set, expression should be scheduled
-        assert engine._session.get_param("mood") == "warm"
+        # mood should be set
+        from core.schema.mood import Mood
+        assert engine.state.mood == Mood.WARM
 
     def test_analyze_user_stt_same_mood_increases_intensity(self, engine):
         """Same STT mood → increase intensity"""
+        from core.schema.mood import Mood
         engine.analyze_user_stt("HAPPY")
-        i1 = engine._session.get_param("mood_intensity", 0)
+        i1 = engine.state.mood_intensity
         engine.analyze_user_stt("HAPPY")
-        i2 = engine._session.get_param("mood_intensity", 0)
+        i2 = engine.state.mood_intensity
         assert i2 >= i1
 
 
