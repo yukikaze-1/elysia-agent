@@ -10,7 +10,7 @@
 
 > **Section Provider 架构**: `Module/system_prompt/sections/` 下 11 个独立 PromptSection 模块。
 > 编辑 prompt 时直接修改对应 section 文件即可，无需 touch 整个单体模板。
-> 详见 [`docs/superpowers/specs/2026-07-04-prompt-section-provider-design.md`](superpowers/specs/2026-07-04-prompt-section-provider-design.md)。
+> 详见 `docs/superpowers/specs/archive/2026-07-04-prompt-section-provider-design.md`。
 
 ---
 
@@ -66,7 +66,7 @@ prompt 中文 → 思考过程用中文 → 输出中文。同一种语言流，
 
 **关键**: 矛盾 = 真实。完美 = 机器人。
 
-**identity.j2 落地**：用对比示例而非条件枚举。给出"温柔时的回复 vs 想吐槽时的回复"的 few-shot 对比例子，让 LLM 自己根据上下文选择，而不是用 `if mood == "playful"` 硬编码。
+**identity.j2 落地**（注：identity.j2 已于 2026-07-04 拆分为 c1_personality.j2 + c2_relationship.j2 + c6_speaking_style.j2）：用对比示例而非条件枚举。给出"温柔时的回复 vs 想吐槽时的回复"的 few-shot 对比例子，让 LLM 自己根据上下文选择，而不是用 `if mood == "playful"` 硬编码。
 
 ### 2.3 少即是多
 

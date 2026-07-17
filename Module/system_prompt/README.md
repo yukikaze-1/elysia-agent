@@ -4,7 +4,7 @@
 
 System prompt 引擎 + 通用 Jinja2 模板渲染。提供两套 API：
 
-- **SystemPromptManager** — Section Provider 架构：11 个独立 `PromptSection`，自管数据源/模板/生命周期，中央编排器按序组装 system prompt
+- **SystemPromptManager** — Section Provider 架构：12 个独立 `PromptSection`，自管数据源/模板/生命周期，中央编排器按序组装 system prompt
 - **PromptManager** — 通用 Jinja2 渲染器：用于非 system prompt 模板（Amygdala、ActiveSpeak 等）
 
 ## 文件结构
@@ -18,9 +18,10 @@ Module/system_prompt/
 ├── message_builder.py         # MessageBuilder — system_prompt + history → messages[]
 ├── manager.py                 # PromptManager — 通用 Jinja2 渲染器
 ├── README.md
-├── sections/                  # 11 个独立 PromptSection 模块
+├── sections/                  # 12 个独立 PromptSection 模块
 │   ├── conflict_rules.py      #   F1 框架优先
 │   ├── output_format.py       #   F2 输出格式 (inner_voice 双轨协议)
+│   ├── tts_markup.py          #   F3 TTS 合成标记
 │   ├── sensory.py             #   C5 感官输入 (时间/STT情绪)
 │   ├── emotion.py             #   C3 当前心情 + 情绪传染
 │   ├── memory.py              #   C4 记忆检索
@@ -30,8 +31,10 @@ Module/system_prompt/
 │   ├── proactive.py           #   C7 主动性 (骨架)
 │   ├── own_life.py            #   C8 自己的生活
 │   └── self_perception.py     #   C9 自我认知
-├── templates/                 # 11 个独立 .j2 模板 + 1 个参考
+├── templates/                 # 12 个独立 .j2 模板
+│   ├── f1_conflict_rules.j2
 │   ├── f2_output_format.j2
+│   ├── f3_tts_markup.j2
 │   ├── c1_personality.j2
 │   ├── c2_relationship.j2
 │   ├── c3_emotion.j2
@@ -41,7 +44,6 @@ Module/system_prompt/
 │   ├── c7_proactive.j2
 │   ├── c8_own_life.j2
 │   ├── c9_self_perception.j2
-│   └── _reference_behavior.j2  # 参考：旧行为规则（F3 工具声明待实现）
 └── tests/
     ├── unit/
     │   ├── test_protocol.py
@@ -80,7 +82,7 @@ PromptAssembler.build_system_prompt(user_message, user_name, stt_emotion, stt_ev
 ### 渲染顺序
 
 ```
-F1 ConflictRules → F2 OutputFormat → C5 Sensory → C3 Emotion → C4 Memory
+F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup → C5 Sensory → C3 Emotion → C4 Memory
 → C1 Personality → C2 Relationship → C6 SpeakingStyle → C7 Proactive
 → C8 OwnLife → C9 SelfPerception
 ```

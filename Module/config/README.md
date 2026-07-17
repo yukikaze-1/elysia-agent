@@ -4,6 +4,25 @@
 
 配置基础设施模块。基于 dataclass，支持 YAML + 环境变量加载和校验。
 
+## 文件结构
+
+```
+Module/config/
+├── __init__.py          # 导出 ConfigLoader, ConfigField, 约束类
+├── loader.py            # ConfigLoader — YAML + env 分层加载
+├── field.py             # ConfigField — dataclass 字段描述符
+├── validator.py         # 类型校验 + 约束验证
+├── errors.py            # ConfigValidationError 错误类型
+├── providers.py         # 自定义 provider 端点管理（CRUD + 连通性测试）
+├── preflight.py         # 环境预检（app.py --check）
+├── _utils.py            # 内部工具
+├── providers.yaml       # 内置 provider 注册表（LLM/STT/TTS 默认端点）
+├── __main__.py          # 集成烟雾测试
+└── tests/
+```
+
+`providers.py` 管理 `custom_providers.yaml` 的运行时读写，支持添加/删除/测试自定义 LLM/STT/TTS 端点。`preflight.py` 实现 `app.py --check` 和 `app.py --check --full` 的 14 项环境预检。
+
 ## 快速开始
 
 ```python

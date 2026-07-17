@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-Elysia/Agent is a Python 3.13 AI companion application. The codebase has two main layers:
+Elysia/Agent is a Python 3.11+ AI companion application. The codebase has two main layers:
 
 - **`Module/`** — backend-agnostic library for AI companion infrastructure: LLM, STT, TTS, embedding, vector/document databases, output channels, config, logging, system prompt engine, tool framework.
 - **`core/`** — the Elysia Agent application: `Agent`, `CognitiveLoop`, `PersonalityEngine`, `EmotionEngine`, `CharacterReflector`, `MemoryConsolidator`, `MemoryReflector`, `SessionMemory`, `LongTermMemory`, `IdleMonitor`, task scheduler, debug info, character config.
@@ -97,7 +97,6 @@ core/
 ├── memory/
 │   ├── session.py         # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive
 │   ├── long_term.py       # LongTermMemory: Milvus-backed vector search + reranking; _absorbed_ids for merge tracking
-│   ├── message_archive.py # MessageArchive: append-only MongoDB collection, paginated queries
 │   └── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM batch review)
 ├── character_config.py   # CharacterConfig: loads YAML + L1 Core personality text
 ├── prompt_assembler.py   # PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder
@@ -218,6 +217,8 @@ static/
     ├── mic.js         # Microphone: getUserMedia, ScriptProcessor, PCM→Int16
     ├── settings.js    # Settings panel: TTS toggle, volume, clear, restart, shutdown
     ├── persistence.js # Server-session restore + code blocks/Markdown rendering (no localStorage cache)
+    ├── tools.js       # Tool approval UI + tool card rendering
+    ├── esc.js         # Escape key + global keyboard shortcuts
     └── main.js        # Entry point: WS routing, input, keyboard, image upload
 ```
 

@@ -15,13 +15,14 @@ tts/
 ├── gpt_sovits_voices.yaml    # GPT-SoVits 角色音色配置（ref_audio + prompt_text）
 ├── openai_tts.py             # OpenAICompatTTSBackend — OpenAI 兼容协议
 ├── minimax_tts.py            # MiniMaxTTSBackend — MiniMax 云端 HTTP API
+├── minimax_tts_api.md        # MiniMax 官方 API 参考文档
 ├── minimax_voices.yaml       # MiniMax 音色映射（character → voice_id）
 ├── text_preprocess.py        # 文本预处理函数
 ├── config.py                 # TTSConfig dataclass
 ├── __main__.py               # 冒烟测试
 ├── test_tts.py               # 单元测试
 ├── test_config.py            # Config 测试
-└── tmp/                      # 测试生成的音频
+└── tests/
 ```
 
 ## 快速开始

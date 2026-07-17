@@ -77,7 +77,7 @@ class CharacterConfig:
         """加载 L1 Core personality 文本。路径解析策略：
         1. 相对于 character YAML 所在目录
         2. 回退项目根目录
-        3. 未指定时推导 character/{name}_personality.txt
+        3. 未指定时推导 character/{name}_personality.md
         4. 文件不存在 → WARN，返回空串
         """
         logger = logging.getLogger(__name__)
@@ -87,8 +87,8 @@ class CharacterConfig:
             candidates.append(yaml_path.parent / base_file)          # Step 1: YAML 目录
             candidates.append(Path(".") / base_file)                 # Step 2: 项目根目录
 
-        # Step 3: 自动推导 character/{name}_personality.txt
-        candidates.append(yaml_path.parent / f"{name}_personality.txt")
+        # Step 3: 自动推导 character/{name}_personality.md
+        candidates.append(yaml_path.parent / f"{name}_personality.md")
 
         for p in candidates:
             if p.exists():

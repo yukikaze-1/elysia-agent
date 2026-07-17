@@ -8,7 +8,7 @@
 database/
 ├── vectordb/       # 向量数据库 — Milvus（已实现）、Pinecone/Qdrant（预留）
 ├── graphdb/        # 图数据库 — Neo4j（预留）
-├── documentdb/     # 文档数据库 — MongoDB（预留）
+├── documentdb/     # 文档数据库 — MongoDB（已实现）
 └── README.md
 ```
 

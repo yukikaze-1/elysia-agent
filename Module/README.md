@@ -22,6 +22,10 @@ Module/
 │   ├── vectordb/         # 向量数据库（Milvus）
 │   ├── documentdb/       # 文档数据库（MongoDB）
 │   └── graphdb/          # 图数据库（预留）
+├── input/                # 音频输入 + WebSocket 服务器
+├── task_system/          # 异步任务编排（Planner/Orchestrator/Executor）
+└── bench/                # 延迟基准测试
+│   └── graphdb/          # 图数据库（预留）
 └── bench/                # 统一延迟基准测试
 ```
 
@@ -162,7 +166,7 @@ logger = factory.get("MyModule")
 
 提供两套 API：
 
-- **SystemPromptManager** — Section Provider 架构：11 个独立 `PromptSection` 自管数据源/模板/生命周期，中央编排器按 `_RENDER_ORDER` 组装 system prompt
+- **SystemPromptManager** — Section Provider 架构：12 个独立 `PromptSection` 自管数据源/模板/生命周期，中央编排器按 `_RENDER_ORDER` 组装 system prompt
 - **PromptManager** — 通用 Jinja2 渲染器，用于非 system prompt 的模板（如 `CharacterReflector.j2`）
 
 ```python
@@ -173,7 +177,7 @@ pm = PromptManager("prompt/")
 system = pm.render_macro("CharacterReflector.j2", "CharacterReflectorSystemPrompt",
                          character_name="Elysia", user_name="妖梦")
 ```
-> System prompt 通过 `Module.system_prompt.system_prompt_manager.SystemPromptManager` + `sections/` 下的 11 个 PromptSection 渲染。
+> System prompt 通过 `Module.system_prompt.system_prompt_manager.SystemPromptManager` + `sections/` 下的 12 个 PromptSection 渲染。
 
 > 📖 完整 API 文档 → [Module/system_prompt/README.md](system_prompt/README.md)
 
@@ -237,6 +241,35 @@ results = await backend.search("micro_memory", query_vector, top_k=10)
 > 📖 VectorDB 文档 → [Module/database/vectordb/README.md](database/vectordb/README.md)
 > 📖 DocumentDB 文档 → [Module/database/documentdb/README.md](database/documentdb/README.md)
 
+### Input — 音频输入 + WebSocket 服务器
+
+`AudioBuffer` 管理麦克风 PCM 缓冲 + WebRTC VAD 语音活动检测。`server.py` 提供 41 路由的 aiohttp 应用（WebSocket、REST API、静态文件、debug API）。
+
+```python
+from Module.input import AudioBuffer
+
+buf = AudioBuffer()
+buf.feed(pcm_bytes)          # 喂入 PCM 音频
+if buf.is_speech_complete():  # VAD 检测到完整语音段
+    wav = buf.to_wav()
+```
+
+> 📖 完整 API 文档 → [Module/input/README.md](input/README.md)
+
+### TaskSystem — 异步任务编排
+
+Planner/Orchestrator/Executor 三层架构，支持子 Agent 委托、DAG 依赖图、checkpoint 持久化、mailbox 轮询。
+
+```python
+from Module.task_system import TaskSystem
+
+ts = TaskSystem(llm_adapter=llm, tools=tool_manager)
+task_id = await ts.submit("帮我查一下今天的天气")
+result = await ts.mailbox.wait(task_id, timeout=60)
+```
+
+> 📖 完整文档 → [Module/task_system/docs/](task_system/docs/)
+
 ## 测试
 
 ```bash
@@ -255,6 +288,8 @@ python -m pytest Module/logger/test_logger.py -v
 python -m pytest Module/tool/test_framework.py -v
 python -m pytest Module/database/vectordb/test_vectordb.py -v
 python -m pytest Module/database/documentdb/test_documentdb.py -v
+python -m pytest Module/input/ -v
+python -m pytest Module/task_system/tests/ -v
 
 # 集成冒烟测试（需要对应服务运行）
 python -m Module.llm          # 需要 DEEPSEEK_API_KEY

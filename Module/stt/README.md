@@ -13,6 +13,7 @@ stt/
 ├── protocol.py          # STTBackend ABC
 ├── registry.py          # 后端注册表 + STTFactory.create() / from_config()
 ├── sensevoice.py        # SenseVoiceBackend — 本地 SenseVoice API
+├── openai_stt.py        # OpenAICompatibleSTTBackend — OpenAI-compatible STT
 ├── config.py            # STTConfig — dataclass 配置
 ├── test_stt.py          # 单元测试
 ├── test_config.py       # Config 测试
@@ -53,7 +54,7 @@ class STTBackend(ABC):
 | Provider | 模型示例 | API Key 来源 |
 |----------|---------|-------------|
 | `sensevoice` | `sensevoice/sense-voice` | 不需要 |
-| `openai` | 占位，未实现 | `OPENAI_API_KEY` |
+| `openai` | OpenAI-compatible（Whisper API 格式），用于 custom provider | `OPENAI_API_KEY` |
 | `deepgram` | 占位，未实现 | `DEEPGRAM_API_KEY` |
 
 可通过 `base_url` 参数覆盖默认 URL：

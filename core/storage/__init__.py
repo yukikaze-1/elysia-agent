@@ -6,7 +6,6 @@
 #   message_repo         — MessageRepository（MongoDB message_archive 集合）
 #   token_repo           — TokenRepository（MongoDB token_usage 集合）
 #   memory_repo          — MemoryRepository（Milvus long_term_memory 集合）
-#   character_state_repo — CharacterStateRepository（MongoDB session_state 集合）
 
 from core.storage.base import Repository  # noqa: F401
 from core.storage.session_repo import SessionRepository, SessionSummary  # noqa: F401

@@ -857,15 +857,13 @@ class Agent:
         # 3. cancel cognitive + TTS tasks
         # 4. _stop_mailbox() — cancel mailbox polling
         # 5. _stop_task_system() — stop TaskSystem
-        # 6. idle_monitor.stop()
-        # 7. scheduler.stop()
-        # 8. tool_manager.shutdown()
+        # 6. scheduler.stop()
+        # 7. tool_manager.shutdown()
+        # 8. idle_monitor.stop()
         # 9. _stop_embedding_if_running() — cancel embedding preload
         # 10. _stop_persistence() — session.save() → EmbeddingFactory.shutdown() → long_term.close()
         # 11. _stop_db_health() — cancel db_health_task
-        # 12. llm.close()
-        # 13. tts.close()
-        # 14. output.close()
+        # 12. llm.close() + tts.close() + output.close()
         # (每步 3s timeout，少数关键步骤 5s，单步失败不阻塞后续)
 
     async def process_message(text):

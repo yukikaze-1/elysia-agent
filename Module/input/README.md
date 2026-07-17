@@ -14,6 +14,8 @@ input/
 ├── server.py            # create_app — WebSocket 服务器 + HTTP 路由
 ├── wakeword.py          # WakeWordDetector — 唤醒词检测
 ├── test_audio_buffer.py # 单元测试
+├── test_server.py       # WebSocket 服务器测试
+├── test_wakeword.py     # 唤醒词测试
 └── README.md
 ```
 

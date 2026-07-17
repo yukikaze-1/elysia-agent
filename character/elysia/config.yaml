@@ -2,7 +2,7 @@
 # Elysia 角色配置
 # ============================================================
 # 被 PersonalityEngine、EmotionEngine、IdleMonitor、TTS、STT 消费
-# 性格描述已拆分至 elysia_personality.txt（L1 Core）
+# 性格描述加载自 personality.md（L1 Core）
 
 # ---- 基本标识 ----
 name: Elysia                          # 角色名（全局引用）

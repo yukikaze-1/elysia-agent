@@ -10,6 +10,7 @@
 logger/
 ├── __init__.py           # 导出 LoggerFactory
 ├── factory.py            # LoggerFactory 类
+├── __main__.py           # 集成测试 (python -m Module.logger)
 ├── test_logger.py        # 单元测试
 └── README.md
 ```

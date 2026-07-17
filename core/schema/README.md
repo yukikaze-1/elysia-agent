@@ -15,9 +15,9 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 ├── tool.py      # ToolCall, ToolCallFunction — OpenAI 兼容 tool_calls 结构
 ├── message.py   # UserMessage / AssistantMessage / ToolResultMessage → Message（按 role 拆分）
 ├── token.py     # TokenUsageEntry — Token 用量记录
-├── character.py # CharacterState — PersonalityEngine 性格状态
-├── emotion.py   # EmotionState — EmotionEngine 情绪快照
-├── reflector.py # ReflectorState — CharacterReflector + MemoryReflector 状态
+├── character.py # CharacterState — CharacterEngine 性格状态
+├── mood.py     # Mood — CharacterEngine mood 枚举
+├── memory_reflector.py # MemoryReflectorState — MemoryReflector 状态
 └── adapters/
     └── message_adapter.py  # parts_from_dicts, content_to_openai, content_text 等纯函数适配器
 ```
@@ -42,8 +42,8 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 | `message.py` | UserMessage / AssistantMessage / ToolResultMessage / ClientUserMessage / ClientAssistantMessage / ClientToolMessage / ClientMessageDict — Message（按 role 拆分）+ 客户端 TypedDict |
 | `token.py` | TokenUsageEntry / TokenUsageRecord / TokenUsageSummary — Token 用量记录 |
 | `character.py` | CharacterState — PersonalityEngine 性格状态 |
-| `emotion.py` | EmotionState — EmotionEngine 情绪快照 |
-| `reflector.py` | ReflectorState — CharacterReflector + MemoryReflector 状态 |
+| `mood.py` | Mood — CharacterEngine mood 枚举 |
+| `memory_reflector.py` | MemoryReflectorState — MemoryReflector 状态 |
 | `_utils.py` | now_iso — 时间戳工厂 |
 
 测试位于 `core/schema/tests/`（types/part/tool/message/adapters 各一个测试文件）。

@@ -69,7 +69,7 @@ Agent.start()
 
 ## 核心组件
 
-`core/` 根目录共 28 个 `.py` 文件。其中 9 个为核心组件（详细描述），19 个为支撑模块（简表），另有 5 个子目录（在各自 README 中详述）。
+`core/` 根目录共 26 个 `.py` 文件。其中 9 个为核心组件（详细描述），17 个为支撑模块（简表），另有 5 个子目录（在各自 README 中详述）。
 
 ### 核心组件详解（9 个）
 
@@ -127,7 +127,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 
 关键方法：`start()`, `stop()`, `dispatch_tool_calls()`, `cancel_all()`
 
-### 支撑模块（19 个）
+### 支撑模块（17 个）
 
 | 文件 | 职责 |
 |------|------|
@@ -148,14 +148,14 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `custom_providers.py` | 自定义 provider 端点管理：读写 `custom_providers.yaml`，支持用户添加自定义 LLM/STT/TTS 端点 |
 | `tool_call_parser.py` | 流式 tool_call 解析：`merge_stream_tool_calls()` 合并流式 delta 片段，`normalize_tool_calls()` 规范化（补全 id/type/function 结构）。纯 stdlib，零依赖 |
 | `task.py` | Task 数据模型：`Task` dataclass + `TaskType`/`TaskStatus` 枚举 + `asyncio.Future` 双向绑定。支持 retry 和序列化。TaskScheduler Worker Pool 消费单元 |
-| `schema.py` | 共享类型定义：`AgentState`（6 种状态）、`EventPriority`（3 级）、`EventType`（5 种事件）、`VALID_TRANSITIONS` 状态转换表。被 `agent_fsm.py` 和 `event_bus.py` re-export |
+| `schema/` | 共享类型包：`AgentState`、事件、多模态 Part、消息、token、character/mood/memory_reflector 状态等，含 `adapters/` 适配层。11 个 `.py` 文件 |
 | `__init__.py` | 包标记，当前为空 |
 
 ### 子目录
 
 | 子目录 | 说明 | 详细文档 |
 |--------|------|----------|
-| `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口，deque + MongoDB 30d TTL）、`LongTermMemory`（Milvus 向量搜索 + rerank）、`MemoryReflector`（定期 KMeans 聚类去重）。消息归档直调 `core/storage/message_repo.py` | `memory/` |
+| `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口，deque + MongoDB 30d TTL）、`LongTermMemory`（Milvus 向量搜索 + rerank）、`MemoryReflector`（定期 KMeans 聚类去重）。消息归档直调 `core/storage/message_repo.py`。详见 [CLAUDE.md](../CLAUDE.md) | `memory/` |
 | `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
 | `core/tools/` | 工具插件：filesystem、web、memory、time、reminder、vision 等。每个插件 `plugin.py` + `config.yaml` + `README.md` | `tools/` |
 | `core/tests/` | 测试套件：覆盖 Agent、CognitiveLoop、CharacterEngine、MemoryConsolidator 等核心组件的单元/集成测试 | -- |
@@ -255,23 +255,23 @@ Agent 生命周期中的关键扩展点：
 | `consolidator.py` | ~300 | 核心组件 |
 | `prompt_assembler.py` | ~130 | 核心组件 |
 | `idle_monitor.py` | ~130 | 核心组件 |
-| `task_scheduler.py` | ~250 | 核心组件 |
-| `llm_adapter.py` | ~180 | 支撑模块 |
+| `task_scheduler.py` | ~430 | 核心组件 |
+| `llm_adapter.py` | ~170 | 支撑模块 |
 | `character_config.py` | ~80 | 支撑模块 |
 | `app_config.py` | ~70 | 支撑模块 |
-| `sentence_buffer.py` | ~120 | 支撑模块 |
-| `tts_stream.py` | ~250 | 支撑模块 |
-| `block_filter.py` | ~120 | 支撑模块 |
+| `sentence_buffer.py` | ~270 | 支撑模块 |
+| `tts_stream.py` | ~310 | 支撑模块 |
+| `block_filter.py` | ~310 | 支撑模块 |
 | `text_utils.py` | ~40 | 支撑模块 |
-| `message_id.py` | 10 | 支撑模块 |
-| `debug_info.py` | ~130 | 支撑模块 |
-| `log_setup.py` | ~120 | 支撑模块 |
+| `message_id.py` | 11 | 支撑模块 |
+| `debug_info.py` | ~300 | 支撑模块 |
+| `log_setup.py` | ~150 | 支撑模块 |
 | `timing.py` | ~100 | 支撑模块 |
-| `token_tracker.py` | ~150 | 支撑模块 |
-| `prompt_recorder.py` | ~60 | 支撑模块 |
-| `response_recorder.py` | ~40 | 支撑模块 |
+| `token_tracker.py` | ~190 | 支撑模块 |
+| `prompt_recorder.py` | ~110 | 支撑模块 |
+| `response_recorder.py` | ~80 | 支撑模块 |
 | `custom_providers.py` | ~80 | 支撑模块 |
-| `tool_call_parser.py` | ~70 | 支撑模块 |
+| `tool_call_parser.py` | ~50 | 支撑模块 |
 | `task.py` | ~80 | 支撑模块 |
-| `schema.py` | 52 | 支撑模块 |
+| `schema/` | 目录（11 .py） | 支撑模块 |
 | `__init__.py` | 0 | 包标记 |

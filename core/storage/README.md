@@ -14,7 +14,6 @@
 | `message_repo.py` | MessageRepository — MongoDB message_archive 集合 |
 | `token_repo.py` | TokenRepository — MongoDB token_usage 集合 |
 | `memory_repo.py` | MemoryRepository — Milvus long_term_memory 集合 |
-| `character_state_repo.py` | CharacterStateRepository — MongoDB session_state 集合 |
 
 ## 设计原则
 

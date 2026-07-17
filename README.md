@@ -8,7 +8,7 @@
 
 > **运行环境：Linux**（Windows/Mac 用户请使用 WSL2 或虚拟机）
 
-> 最近 (2026-07-03): Brain Prompt 提供者架构——11 个 PromptSection 独立模块，自管数据、自管模板。2026-06-26: Module/_common/ 轻量共享层重构——消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config 重复代码，971 测试零回归。
+> 最近 (2026-07-03): Brain Prompt 提供者架构——12 个 PromptSection 独立模块，自管数据、自管模板。2026-06-26: Module/_common/ 轻量共享层重构——消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config 重复代码，971 测试零回归。
 
 ---
 
@@ -64,7 +64,7 @@ Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板
 | `log/conversation.log` | 所有对话记录 |
 | `.model_cache/` | 嵌入模型（`BAAI/bge-large-zh-v1.5/`，约 1.3GB） |
 | `data/ref/Elysia.wav` | GPT-SoVits 音色克隆参考音频（1.6MB） |
-| `static/live2d-demo/` | Live2D 前端（Cubism SDK + 加载页面） |
+| `static/live2d-demo/` | Live2D 前端（Cubism SDK，index.html 待创建） |
 | `data/live2d-assets/` | Live2D 角色模型（.moc3 + 纹理，服务端映射到 `/live2d/`） |
 | `static/debug.md` | Debug 面板完整文档（标签页、API、技术实现） |
 
@@ -152,8 +152,8 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 |------|------|
 | [快速开始](#快速开始) | 安装、启动、配置、故障排查 |
 | [docs/testing.md](docs/testing.md) | 测试命令速查 + 分层体系 |
-| [docs/companion-roadmap.md](docs/companion-roadmap.md) | 伴侣化改造路线 |
-| [docs/companion-prompt-guide.md](docs/companion-prompt-guide.md) | Prompt 编写指南 |
+| [docs/companion-roadmap.md](docs/companion-roadmap.md) | 伴侣化改造路线（⚠️ 已废弃，保留作历史参考） |
+| [docs/companion-prompt-guide.md](docs/companion-prompt-guide.md) | Prompt 编写指南（⚠️ 已废弃，保留作历史参考） |
 
 ### Module 层
 | 模块 | README | 说明 |
@@ -203,6 +203,8 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | [docs/experience.md](docs/experience.md) | 开发经验记录 |
 | [scripts/README.md](scripts/README.md) | 工具脚本（启动/预检/清理数据库） |
 | [docs/readme-conventions.md](docs/readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
+| [docs/data-structure-survey.md](docs/data-structure-survey.md) | 全项目数据结构普查（2026-07-15） |
+| [docs/doc-review-2026-07-18.md](docs/doc-review-2026-07-18.md) | 文档审查报告（2026-07-18） |
 
 ---
 
@@ -234,7 +236,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | STT 语音识别 (SenseVoice / OpenAI-compatible) + 情绪标签 | done |
 | TTS 流式合成 (MiniMax / GPT-SoVits / OpenAI-compatible) + 句队列 | done |
 | 文字/语音绑定 + 逐句独立气泡 | done |
-| **TaskSystem v1** — DAG 编排 + Planner/Executor/Evaluator (334 tests) | done |
+| **TaskSystem v1** — DAG 编排 + Planner/Executor/Evaluator (339 tests) | done |
 | **Token 追踪** — TokenTracker + PromptRecorder + 前端标签 | done |
 | 工具系统 Plugin 架构 — 12 插件 + SafetyPipeline + HITL 审批 | done |
 | **模型切换** — DeepSeek/OpenAI/Ollama/MiMo + 运行时热切换 | done |
@@ -293,12 +295,12 @@ Agent/
 │   ├── output/             # Console + WebSocket 多通道
 │   ├── config/             # YAML + env 配置 + providers.yaml + preflight
 │   ├── logger/             # 日志工厂
-│   ├── system_prompt/      # Brain Prompt 引擎 — SystemPromptManager + 11 PromptSections
+│   ├── system_prompt/      # Brain Prompt 引擎 — SystemPromptManager + 12 PromptSections
 │   ├── schema/             # 共享数据模型
 │   ├── tool/               # 工具框架 (129 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB
 │   ├── input/              # AudioBuffer + WebSocket server
-│   ├── task_system/        # TaskSystem v1 (341 tests)
+│   ├── task_system/        # TaskSystem v1 (339 tests)
 │   │   └── tests/          #     测试
 │   └── bench/              # 延迟基准
 │
@@ -379,7 +381,7 @@ Agent/
 
 ## 测试
 
-1558 个测试按 4 层 markers 组织。详见 [docs/testing.md](docs/testing.md)。
+1384 个测试按 4 层 markers 组织。详见 [docs/testing.md](docs/testing.md)。
 
 ```bash
 conda activate Elysia
@@ -436,7 +438,7 @@ data/live2d-assets/
     └── <角色名>.8192/           # 纹理贴图
 ```
 
-服务端将 `data/live2d-assets/` 映射到 `/live2d/`，前端通过 iframe 加载 `/static/live2d-demo/index.html`。
+服务端将 `data/live2d-assets/` 映射到 `/live2d/`，前端通过 iframe 加载 `/static/live2d-demo/index.html`（需自行创建加载页面）。
 
 ---
 
@@ -499,7 +501,7 @@ vision:
 ```yaml
 name: Elysia
 user_pronoun: 她
-base_personality_file: personality.txt   # L1 Core 文本（相对路径）
+base_personality_file: personality.md    # L1 Core 文本（相对路径）
 voice: elysia_v2                         # [占位] TTS voice ID
 
 emotion:
@@ -520,7 +522,7 @@ proactive:
       times: ["08:00", "12:00", "22:00"]
 ```
 
-#### `character/<name>/personality.txt` — L1 Core 性格
+#### `character/<name>/personality.md` — L1 Core 性格
 
 自然语言撰写的核心性格描述，由 `base_personality_file` 指向，启动时加载。
 
