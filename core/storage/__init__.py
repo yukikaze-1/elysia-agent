@@ -13,4 +13,3 @@ from core.storage.session_repo import SessionRepository, SessionSummary  # noqa:
 from core.storage.message_repo import MessageRepository  # noqa: F401
 from core.storage.token_repo import TokenRepository  # noqa: F401
 from core.storage.memory_repo import MemoryRepository  # noqa: F401
-from core.storage.character_state_repo import CharacterStateRepository  # noqa: F401
