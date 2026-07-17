@@ -48,22 +48,12 @@ from .text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageRecord, TokenUsageSummary
 from core.schema.tool import ToolCall, ToolCallFunction, ToolCallId
+from core.schema.mood import _MOOD_TO_TTS_EMOTION, Mood
 from core.schema.part import TextPart
 from core.schema.adapters.message_adapter import parts_from_dicts
 from core.schema._utils import now_iso as _now_iso
 
 logger = logging.getLogger(__name__)
-
-# session mood → TTS emotion 映射（MiniMax 支持的 emotion 值）
-_MOOD_TO_TTS_EMOTION: dict[str, str] = {
-    "happy": "happy",
-    "sad": "sad",
-    "angry": "angry",
-    "fearful": "fearful",
-    "surprised": "surprised",
-    "curious": "happy",      # MiniMax 无 curious，映射到最接近的 happy
-    "neutral": "neutral",
-}
 
 
 def _default_user_profile():
@@ -283,7 +273,11 @@ class CognitiveLoop:
             else:
                 self._emotion.analyze_user(user_message)
             # 将当前 mood 映射为 TTS emotion（MiniMax 等后端支持情绪控制）
-            mood = self._session.get_param("mood", "neutral")
+            mood_str = self._session.get_param("mood", "neutral")
+            try:
+                mood = Mood(mood_str)
+            except ValueError:
+                mood = Mood.NEUTRAL
             self._tts_mgr.set_emotion(_MOOD_TO_TTS_EMOTION.get(mood))
 
         # 渐进式唤醒——后台任务完成后的通知

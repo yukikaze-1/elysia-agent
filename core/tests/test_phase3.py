@@ -1137,7 +1137,7 @@ class TestAgentLifecycle:
 @pytest.mark.unit
 class TestEmotionEmojiMappings:
     def test_stt_emotion_emoji_all(self):
-        from core.emotion_engine import stt_emotion_emoji
+        from core.schema.mood import stt_emotion_emoji
         assert stt_emotion_emoji("HAPPY") == "😊"
         assert stt_emotion_emoji("SAD") == "😔"
         assert stt_emotion_emoji("ANGRY") == "😡"
@@ -1146,7 +1146,7 @@ class TestEmotionEmojiMappings:
         assert stt_emotion_emoji("UNKNOWN") == ""
 
     def test_stt_event_emoji_all(self):
-        from core.emotion_engine import stt_event_emoji
+        from core.schema.mood import stt_event_emoji
         assert stt_event_emoji("Laughter") == "😀"
         assert stt_event_emoji("Cry") == "😭"
         assert stt_event_emoji("Applause") == "👏"

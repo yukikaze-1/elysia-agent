@@ -52,7 +52,7 @@ class SensorySection(Jinja2Section):
 
     def _emotion_emoji(self) -> str:
         try:
-            from core.emotion_engine import stt_emotion_emoji
+            from core.schema.mood import stt_emotion_emoji
             return stt_emotion_emoji(self._stt_emotion) if self._stt_emotion else ""
         except ImportError:
             return ""
@@ -61,7 +61,7 @@ class SensorySection(Jinja2Section):
         if not self._stt_events:
             return ""
         try:
-            from core.emotion_engine import stt_event_emoji
+            from core.schema.mood import stt_event_emoji
             parts = []
             for evt in self._stt_events:
                 emoji = stt_event_emoji(evt)
