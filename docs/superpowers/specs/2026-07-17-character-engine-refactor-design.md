@@ -251,7 +251,16 @@ doc = {
 }
 ```
 
-**load() 改为**：从 `SessionRepository.load()` 获取 `(messages, character_state, reflector_state)`。JSONL `_load_from_jsonl()` 同理改为读取 `character_state` 和 `reflector_state` 字段。
+**load() 改为**：从 `SessionRepository.load()` 获取 `(messages, character_state, reflector_state)`。**关键**：load() 必须原地更新 `self.character_state` 字段（通过 `model_validate` + `setattr`），不替换引用。因为 `CharacterEngine.state` 和 `CharacterReflector._engine.state` 都持有同一个 `CharacterState` 实例的引用——替换实例会导致它们指向过时对象。
+
+```python
+# session.py load() — 原地更新，保持引用一致
+loaded = CharacterState.model_validate(doc["character_state"])
+for field in loaded.model_fields:
+    setattr(self.character_state, field, getattr(loaded, field))
+```
+
+JSONL `_load_from_jsonl()` 同理。
 
 ### 六、MemoryReflector (`core/memory/memory_reflector.py`)
 
@@ -343,6 +352,7 @@ self._session.set_memory_reflector(self._memory_reflector)  # MemoryReflector �
 - 关机保存：`SessionRepository.save()` 已包含 `character_state`，不再调 `CharacterStateRepository`
 - `_start_persistence()` 中删除 `_character_state_repo.load_character()` / `load_emotion()` / `load_reflector()` 调用
 - `_stop_persistence()` 中删除 `_character_state_repo.save_character()` / `save_reflector()` 调用
+- `_db_health_loop()` 中删除 `_character_state_repo.health_check()` 调用
 
 ### 九、CognitiveLoop (`core/cognitive_loop.py`)
 
