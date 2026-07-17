@@ -134,6 +134,9 @@ class Agent:
         # 保存 reflector 引用供 debug_info 使用
         self._character_reflector = self._character_engine._reflector
 
+        # 注册 pre-save 钩子：session.save() 前同步 reflector buffer → CharacterState
+        self._session._pre_save_hook = self._character_engine.sync_reflector_to_state
+
         self._prompt = PromptAssembler(
             self._character, self._session, self._long_term,
             personality_engine=self._character_engine,

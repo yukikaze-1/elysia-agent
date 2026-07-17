@@ -26,8 +26,7 @@ from core.schema.mood import Mood
 
 if TYPE_CHECKING:
     from core.llm_adapter import LLMAdapter
-    from core.schema.character import CharacterState
-    from core.storage.character_state_repo import CharacterStateRepository
+    from core.schema.character import CharacterState, StateHistoryEntry
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +271,7 @@ class CharacterEngine:
 
         return False
 
-    def _get_new_entries(self) -> list[dict]:
+    def _get_new_entries(self) -> "list[StateHistoryEntry]":
         """取上次压缩后新增的 state_history 条目。"""
         history = self.state.state_history
         last_count: int = self.state.compression_last_count
@@ -385,13 +384,13 @@ class CharacterEngine:
 
     # ---- 持久化 ----
 
-    async def save(self, repo: "CharacterStateRepository") -> None:
-        """保存当前性格 + 情绪 + reflector 状态。shutdown 时调用。"""
-        # 同步 reflector 状态到 state
+    def sync_reflector_to_state(self) -> None:
+        """同步 reflector 内部 buffer 到 CharacterState，供 session.save() 前调用。"""
         if self._reflector:
-            self.state.reflector_buffer = list(self._reflector._buffer)
+            self.state.reflector_buffer = [
+                (u, a) for u, a in self._reflector._buffer
+            ]
             self.state.reflector_context = list(self._reflector._context)
-        await repo.save_character(self.state)
 
     # ---- Reflector 代理 ----
 

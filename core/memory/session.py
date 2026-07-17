@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from collections import deque
+from collections.abc import Callable
 
 from pydantic import TypeAdapter
 
@@ -61,6 +62,7 @@ class SessionMemory:
         self.character_state = character_state or CharacterState(session_id=session_id)
         self.own_life: str = ""
         self._memory_reflector = None
+        self._pre_save_hook: Callable[[], None] | None = None
 
     # ---- public properties ----
 
@@ -164,6 +166,9 @@ class SessionMemory:
 
     async def save(self) -> bool:
         """Persist current session。MongoDB 不可用时降级到本地 JSONL 文件。"""
+        # 同步子系统的内存状态到 character_state（reflector buffer 等）
+        if self._pre_save_hook:
+            self._pre_save_hook()
         # 尝试通过 Repository 保存到 MongoDB
         if self._repo is not None:
             try:
