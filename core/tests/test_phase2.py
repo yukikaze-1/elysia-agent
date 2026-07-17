@@ -600,26 +600,22 @@ class TestSessionMemoryEdgeCases:
         assert "fifth" in contents
 
     @pytest.mark.asyncio
-    async def test_params_persistence_across_restore(self):
-        """Params should survive save/load exactly."""
+    async def test_character_state_persistence_across_restore(self):
+        """CharacterState should survive save/load exactly."""
         import os as _os
         from core.memory.session import SessionMemory
+        from core.schema.character import CharacterState
+        from core.schema.types import SessionId
 
-        s1 = SessionMemory(session_id="params-restore-test")
-        s1.set_param("int_val", 42)
-        s1.set_param("float_val", 3.14)
-        s1.set_param("str_val", "hello")
-        s1.set_param("none_val", None)
-        s1.set_param("list_val", [1, "two", 3.0])
+        cs = CharacterState(session_id=SessionId("cs-restore-test"), mood="happy", mood_intensity=0.8)
+        s1 = SessionMemory(session_id=SessionId("cs-restore-test"), character_state=cs)
 
         await s1.save()  # save initial state
+        s1.character_state.mood = "sad"  # modify
+        await s1.load()  # load back
 
-        s1.set_param("int_val", 999)  # modify original
-
-        await s1.load()  # load back the saved state
-
-        assert s1.get_param("int_val") == 42
-        assert s1.get_param("float_val") == 3.14
+        assert s1.character_state.mood == "happy"
+        assert s1.character_state.mood_intensity == 0.8
         assert s1.get_param("none_val") is None
         assert s1.get_param("list_val") == [1, "two", 3.0]
 
@@ -693,13 +689,13 @@ class TestSessionMemoryEdgeCases:
         from core.schema.part import TextPart
         from core.schema.types import MessageId
 
-        s = SessionMemory(session_id="persist")
+        s = SessionMemory(session_id=SessionId("persist"))
         s.add_message(UserMessage(content=[TextPart(content="data")], message_id=MessageId("clrp-1")))
-        s.set_param("key", "val")
+        s.character_state.mood = "happy"
         s.clear()
 
         assert len(s.recent_messages()) == 0
-        assert s.get_param("key") is None
+        assert s.character_state.mood == "happy"  # clear only empties messages
 
     def test_messages_for_client_with_sentences(self):
         """messages_for_client should convert TextPart list to parts array."""
