@@ -689,7 +689,7 @@ class TestSessionMemoryEdgeCases:
         from core.schema.part import TextPart
         from core.schema.types import MessageId
 
-        s = SessionMemory(session_id=SessionId("persist"))
+        s = SessionMemory(session_id="persist")
         s.add_message(UserMessage(content=[TextPart(content="data")], message_id=MessageId("clrp-1")))
         s.character_state.mood = "happy"
         s.clear()

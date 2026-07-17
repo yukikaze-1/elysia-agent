@@ -142,7 +142,7 @@ async def collect(agent) -> DebugInfo:
         }
         for m in msgs[-5:]
     ]
-    info.session_params = dict(agent._session._params)
+    info.session_params = agent._session.character_state.model_dump(mode="json")
 
     # ---- Long-term memory ----
     info.lt_count = agent._long_term.count
