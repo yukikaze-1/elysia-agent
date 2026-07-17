@@ -123,20 +123,23 @@ class TestSessionMemorySaveLoad:
     async def test_load_delegates_to_repo(self):
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
+        from core.schema.character import CharacterState
+        from core.schema.memory_reflector import MemoryReflectorState
         msg = UserMessage(
             message_id=MessageId("m1"),
             content=[TextPart(content="hello")],
         )
 
+        cs = CharacterState(session_id=SessionId("test-load"), mood="happy")
         mock_repo = MagicMock()
         mock_repo._db = object()  # 模拟已连接
-        mock_repo.load = AsyncMock(return_value=([msg], {"mood": "happy"}))
+        mock_repo.load = AsyncMock(return_value=([msg], cs, MemoryReflectorState()))
         sm = SessionMemory(session_id=SessionId("test-load"), repo=mock_repo)
         result = await sm.load("test-load")
         assert result is True
         assert len(sm._messages) == 1
         assert sm._messages[0].message_id == "m1"
-        assert sm.get_param("mood") == "happy"
+        assert sm.character_state.mood == "happy"
 
     @pytest.mark.asyncio
     async def test_load_returns_false_when_not_found(self):

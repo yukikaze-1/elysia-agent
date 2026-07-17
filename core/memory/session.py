@@ -10,10 +10,11 @@ import json
 import logging
 import os
 from collections import deque
-from typing import Any
 
 from pydantic import TypeAdapter
 
+from core.schema.character import CharacterState
+from core.schema.memory_reflector import MemoryReflectorState
 from core.schema.message import (
     AssistantMessage,
     ClientAssistantMessage,
@@ -49,14 +50,17 @@ class SessionMemory:
     def __init__(self, max_messages: int = 20,
                  session_id: SessionId = SessionId("default"),
                  repo: SessionRepository | None = None,
-                 msg_repo: MessageRepository | None = None):
+                 msg_repo: MessageRepository | None = None,
+                 character_state: CharacterState | None = None):
         self._messages: deque[Message] = deque(maxlen=max_messages)
-        self._params: dict[str, Any] = {}
         self._max_messages = max_messages
         self._session_id: SessionId = session_id
         self._repo: SessionRepository | None = repo
         self._msg_repo: MessageRepository | None = msg_repo
         self._pending_file = os.path.join("data", f"session_{session_id}.json")
+        self.character_state = character_state or CharacterState(session_id=session_id)
+        self.own_life: str = ""
+        self._memory_reflector = None
 
     # ---- public properties ----
 
@@ -139,13 +143,10 @@ class SessionMemory:
                 result.append(chat_entry)
         return result
 
-    # ---- runtime params ----
+    # ---- memory reflector ----
 
-    def set_param(self, key: str, value: Any) -> None:
-        self._params[key] = value
-
-    def get_param(self, key: str, default: Any = None) -> Any:
-        return self._params.get(key, default)
+    def set_memory_reflector(self, mr) -> None:
+        self._memory_reflector = mr
 
     # ---- MongoDB persistence ----
 
@@ -171,7 +172,11 @@ class SessionMemory:
                 await self._repo.save(
                     self._session_id,
                     list(self._messages),
-                    dict(self._params),
+                    character_state=self.character_state,
+                    reflector_state=(self._memory_reflector.save_state()
+                                     if self._memory_reflector
+                                        and hasattr(self._memory_reflector, "save_state")
+                                     else None),
                 )
                 logger.info("Session save to MongoDB OK: %d messages", len(self._messages))
                 return True
@@ -182,7 +187,11 @@ class SessionMemory:
             doc = {
                 "session_id": self._session_id,
                 "messages": [msg.model_dump(mode="json") for msg in self._messages],
-                "params": dict(self._params),
+                "character_state": self.character_state.model_dump(mode="json"),
+                "reflector_state": (self._memory_reflector.save_state().model_dump(mode="json")
+                                    if self._memory_reflector
+                                       and hasattr(self._memory_reflector, "save_state")
+                                    else {}),
                 "updated_at": now_iso(),
             }
             os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
@@ -224,7 +233,24 @@ class SessionMemory:
             else:
                 self._messages = deque(converted[-self._max_messages:], maxlen=self._max_messages)
                 logger.info("从 %s 恢复 session（%d 条消息）", self._pending_file, len(converted))
-            self._params = dict(doc.get("params", {}))
+            # 恢复 character_state（向后兼容也读 params 中的 mood/mood_intensity）
+            cs_data = doc.get("character_state", {})
+            if cs_data:
+                cs = CharacterState.model_validate(cs_data)
+                for field in type(cs).model_fields:
+                    setattr(self.character_state, field, getattr(cs, field))
+            else:
+                # 向后兼容：旧 JSONL 文件用 params 存 mood
+                legacy_params = doc.get("params", {})
+                if "mood" in legacy_params:
+                    self.character_state.mood = legacy_params["mood"]
+                if "mood_intensity" in legacy_params:
+                    self.character_state.mood_intensity = legacy_params["mood_intensity"]
+            # 恢复 reflector_state
+            rs_data = doc.get("reflector_state", {})
+            if rs_data and self._memory_reflector and hasattr(self._memory_reflector, "load_state"):
+                rs = MemoryReflectorState.model_validate(rs_data)
+                self._memory_reflector.load_state(rs)
             return True
         except Exception:
             logger.warning("从 %s 恢复 session 失败", self._pending_file, exc_info=True)
@@ -238,10 +264,16 @@ class SessionMemory:
         try:
             result = await self._repo.load(sid)
             if result is not None:
-                messages, params = result
+                messages, cs, rs = result
                 self._session_id = sid
                 self._messages = deque(messages[-self._max_messages:], maxlen=self._max_messages)
-                self._params = dict(params)
+                # 原地更新 character_state
+                for field in type(cs).model_fields:
+                    setattr(self.character_state, field, getattr(cs, field))
+                # 恢复 reflector_state
+                if rs is not None and self._memory_reflector is not None:
+                    if hasattr(self._memory_reflector, "load_state"):
+                        self._memory_reflector.load_state(rs)
                 logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(messages))
                 return True
             return await self._load_from_jsonl()
@@ -251,4 +283,3 @@ class SessionMemory:
 
     def clear(self) -> None:
         self._messages.clear()
-        self._params.clear()

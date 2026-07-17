@@ -29,8 +29,14 @@ _TEMPLATES = "Module/system_prompt/templates"
 def _mock_session(**params):
     """创建带有指定 params 的 SessionMemory。"""
     s = SessionMemory()
+    # 映射旧 params 到新属性
     for k, v in params.items():
-        s.set_param(k, v)
+        if k == "mood":
+            s.character_state.mood = v
+        elif k == "own_life":
+            s.own_life = v
+        elif k == "mood_intensity":
+            s.character_state.mood_intensity = float(v)
     return s
 
 

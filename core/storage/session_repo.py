@@ -106,8 +106,10 @@ class SessionRepository(Repository):
         for m in msgs_raw:
             m.pop("_id", None)
         messages = [_message_adapter.validate_python(m) for m in msgs_raw]
-        cs = CharacterState.model_validate(doc.get("character_state", {}))
-        rs = MemoryReflectorState.model_validate(doc.get("reflector_state", {}))
+        cs_data = doc.get("character_state", {})
+        cs = CharacterState.model_validate(cs_data) if cs_data else CharacterState(session_id=session_id)
+        rs_data = doc.get("reflector_state", {})
+        rs = MemoryReflectorState.model_validate(rs_data) if rs_data else MemoryReflectorState()
         return messages, cs, rs
 
     async def delete(self, session_id: SessionId) -> int:

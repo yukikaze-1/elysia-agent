@@ -14,7 +14,7 @@ class OwnLifeSection(Jinja2Section):
     async def render(self) -> str:
         text = ""
         if self._session is not None:
-            text = self._session.get_param("own_life", "")
+            text = self._session.own_life
         if not text:
             return ""
         return self._render_template(text=text)
