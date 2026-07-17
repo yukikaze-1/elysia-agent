@@ -257,8 +257,6 @@ class Agent:
         await self._message_repo.connect()
         if mongo_ok:
             await self._session.load()
-            if self._memory_reflector:
-                self._memory_reflector.restore_state()
             # 角色状态持久化恢复（CharacterState 合并了旧 emotion/reflector 文档）
             char_state_ok = await self._character_state_repo.connect()
             if char_state_ok:
@@ -468,10 +466,6 @@ class Agent:
 
         # 1.55. Flush personality compression (L3→L2)
         await self._flush_compression()
-
-        # 1.6. MemoryReflector 计数器落盘（必须在 save_reflector_state 之前，确保 mr_* params 最新）
-        if self._memory_reflector:
-            await self._memory_reflector.flush()
 
         # 1.56. 角色状态持久化保存
         if self._character_state_repo and self._character_engine:

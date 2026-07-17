@@ -1,6 +1,11 @@
 """MemoryReflector — 定期深度审查 LTM，合并相似、修正过时、删除无意义记忆。
 
 多条件触发（轮次 / 新增记忆数），embedding 聚类分组 + LLM 批量审查。
+
+生命周期:
+- save_state() → SessionMemory.save() 调用，返回 MemoryReflectorState
+- restore_state(state) → SessionMemory.load() 调用，从 MemoryReflectorState 恢复计数器
+- 计数器通过 session.save() 自动持久化，不再需要 flush()
 """
 
 import asyncio
@@ -10,6 +15,8 @@ import re
 import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from core.schema.memory_reflector import MemoryReflectorState
 
 if TYPE_CHECKING:
     from core.memory.long_term import LongTermMemory
@@ -41,10 +48,10 @@ def _get_reflector_prompt() -> str:
 class MemoryReflector:
     """定期深度去重记忆。
 
-    对标 CharacterReflector 的生命周期模式:
-    - restore_state(): session.load() 之后从 params 恢复计数器
+    生命周期:
+    - save_state(): SessionMemory.save() 调用，返回 MemoryReflectorState 供持久化
+    - restore_state(state): SessionMemory.load() 调用，从 MemoryReflectorState 恢复计数器
     - check_and_reflect(): 在 _after_response() 中调用，检查触发条件
-    - flush(): shutdown 时持久化计数器到 session params
     """
 
     # 触发阈值
@@ -138,7 +145,6 @@ class MemoryReflector:
         }
         self._last_summary = summary
         self._reset_counters()
-        self._save_state()
 
         if total_merges or total_updates or total_deletes:
             logger.info(
@@ -292,17 +298,16 @@ class MemoryReflector:
         self._round_count = 0
         self._new_memory_count = 0
 
-    def restore_state(self) -> None:
-        """从 session.params 恢复计数器和上次执行摘要。"""
-        self._round_count = self._session.get_param("mr_round_count", 0)
-        self._new_memory_count = self._session.get_param("mr_new_memory_count", 0)
-        self._last_summary = self._session.get_param("mr_last_summary", {})
+    def save_state(self) -> MemoryReflectorState:
+        """返回当前计数器状态，供 SessionMemory.save() 持久化。"""
+        return MemoryReflectorState(
+            mr_round_count=self._round_count,
+            mr_new_memory_count=self._new_memory_count,
+            mr_last_summary=self._last_summary,
+        )
 
-    async def flush(self) -> None:
-        """持久化计数器和摘要到 session.params。"""
-        self._save_state()
-
-    def _save_state(self) -> None:
-        self._session.set_param("mr_round_count", self._round_count)
-        self._session.set_param("mr_new_memory_count", self._new_memory_count)
-        self._session.set_param("mr_last_summary", self._last_summary)
+    def restore_state(self, state: MemoryReflectorState) -> None:
+        """从 MemoryReflectorState 恢复计数器和上次执行摘要。"""
+        self._round_count = state.mr_round_count
+        self._new_memory_count = state.mr_new_memory_count
+        self._last_summary = state.mr_last_summary

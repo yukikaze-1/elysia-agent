@@ -248,9 +248,9 @@ class SessionMemory:
                     self.character_state.mood_intensity = legacy_params["mood_intensity"]
             # 恢复 reflector_state
             rs_data = doc.get("reflector_state", {})
-            if rs_data and self._memory_reflector and hasattr(self._memory_reflector, "load_state"):
+            if rs_data and self._memory_reflector and hasattr(self._memory_reflector, "restore_state"):
                 rs = MemoryReflectorState.model_validate(rs_data)
-                self._memory_reflector.load_state(rs)
+                self._memory_reflector.restore_state(rs)
             return True
         except Exception:
             logger.warning("从 %s 恢复 session 失败", self._pending_file, exc_info=True)
@@ -272,8 +272,8 @@ class SessionMemory:
                     setattr(self.character_state, field, getattr(cs, field))
                 # 恢复 reflector_state
                 if rs is not None and self._memory_reflector is not None:
-                    if hasattr(self._memory_reflector, "load_state"):
-                        self._memory_reflector.load_state(rs)
+                    if hasattr(self._memory_reflector, "restore_state"):
+                        self._memory_reflector.restore_state(rs)
                 logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(messages))
                 return True
             return await self._load_from_jsonl()
