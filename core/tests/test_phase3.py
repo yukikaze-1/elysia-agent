@@ -595,7 +595,7 @@ class TestLLMAdapter:
             tools=tools,
         )
         assert len(result.tool_calls) > 0
-        assert result.tool_calls[0]["function"]["name"] == "search_memory"
+        assert result.tool_calls[0].function.name == "search_memory"
 
     @pytest.mark.asyncio
     async def test_stream_think(self):

@@ -12,6 +12,9 @@ from typing import AsyncIterator
 
 from Module.llm import LLMBackend, LLMFactory
 
+from core.tool_call_parser import normalize_tool_calls
+from core.schema.tool import ToolCall
+
 logger = logging.getLogger(__name__)
 
 # 重试配置
@@ -23,7 +26,7 @@ _RETRY_BACKOFF_BASE = 1.0
 @dataclass
 class ThoughtResult:
     text: str = ""
-    tool_calls: list[dict] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
     @property
     def has_tool_calls(self) -> bool:
@@ -57,7 +60,7 @@ class LLMAdapter:
         try:
             parsed = json.loads(response)
             if "tool_calls" in parsed:
-                return ThoughtResult(tool_calls=parsed["tool_calls"])
+                return ThoughtResult(tool_calls=normalize_tool_calls(parsed["tool_calls"]))
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -73,7 +76,7 @@ class LLMAdapter:
     ) -> AsyncIterator[dict]:
         """Stream structured chunks with tool_call detection + retry on 429/5xx.
 
-        Yields dicts: {"content": str | None, "tool_calls": list | None}
+        Yields dicts: {"content": str | None, "tool_calls": list[dict] | None}
         流最后一个 chunk 可能包含可选的 "usage" 键:
           {"content": None, "tool_calls": None, "usage": {prompt_tokens, completion_tokens, total_tokens}}
         Retries on transient server errors (429, 500-504) with exponential backoff.
