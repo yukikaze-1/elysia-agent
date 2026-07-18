@@ -52,3 +52,12 @@ from core.schema.token import TokenUsageEntry, TokenUsageRecord, TokenUsageSumma
 from core.schema.character import CharacterState, StateHistoryEntry  # noqa: F401
 from core.schema.memory_reflector import MemoryReflectorState  # noqa: F401
 from core.schema.mood import Mood, stt_emotion_emoji, stt_event_emoji  # noqa: F401
+from core.schema.memory import (  # noqa: F401
+    MemoryType,
+    ExtractedMemory,
+    SkipAction,
+    InsertAction,
+    UpdateAction,
+    MergeAction,
+    CompareAction,
+)

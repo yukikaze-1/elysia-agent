@@ -13,6 +13,7 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 ├── _utils.py    # now_iso, _normalize_iso_ts — 时间戳工厂/校验
 ├── part.py      # TextPart / ImagePart / FilePart / AudioPart / VideoPart → Part（discriminated union）
 ├── tool.py      # ToolCall, ToolCallFunction — OpenAI 兼容 tool_calls 结构
+├── memory.py   # MemoryType, ExtractedMemory, CompareAction — Consolidator LLM 输出类型
 ├── message.py   # UserMessage / AssistantMessage / ToolResultMessage → Message（按 role 拆分）
 ├── token.py     # TokenUsageEntry — Token 用量记录
 ├── character.py # CharacterState — CharacterEngine 性格状态
@@ -39,6 +40,7 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 | `types.py` | IsoTimestamp, now_iso, SessionId, MessageId, ToolCallId — 时间戳/标识符别名 |
 | `part.py` | TextPart / ImagePart / FilePart / AudioPart / VideoPart — Part（discriminated union） |
 | `tool.py` | ToolCall, ToolCallFunction — OpenAI 兼容 tool_calls 结构 |
+| `memory.py` | MemoryType, ExtractedMemory, SkipAction, InsertAction, UpdateAction, MergeAction, CompareAction — MemoryConsolidator LLM 输出类型 |
 | `message.py` | UserMessage / AssistantMessage / ToolResultMessage / ClientUserMessage / ClientAssistantMessage / ClientToolMessage / ClientMessageDict — Message（按 role 拆分）+ 客户端 TypedDict |
 | `token.py` | TokenUsageEntry / TokenUsageRecord / TokenUsageSummary — Token 用量记录 |
 | `character.py` | CharacterState — PersonalityEngine 性格状态 |
