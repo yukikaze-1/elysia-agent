@@ -10,7 +10,18 @@ Uses the same LLM backend as the cognitive loop (or mock).
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
+
+from pydantic import TypeAdapter, ValidationError
+
+from core.schema.memory import (
+    ExtractedMemory,
+    CompareAction,
+    MergeAction,
+    UpdateAction,
+    InsertAction,
+)
 
 from .memory.long_term import LongTermMemory
 from .llm_adapter import LLMAdapter
@@ -54,6 +65,64 @@ def _get_compare_prompt() -> str:
             "For each new item, output: insert/update/merge/skip as JSON array."
         )
     return _COMPARE_PROMPT
+
+
+# TypeAdapter 提为模块级单例（Pydantic 官方建议），避免每次解析重复创建
+_compare_actions_adapter = TypeAdapter(list[CompareAction])
+
+
+def _extract_json_array(text: str) -> list[dict]:
+    """纯文本→list[dict]。去掉 markdown fence → json.loads → regex fallback。"""
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        text = "\n".join(lines[1:]) if len(lines) > 1 else text
+        if text.endswith("```"):
+            text = text[:-3]
+    try:
+        items = json.loads(text)
+        if isinstance(items, list):
+            return items
+    except json.JSONDecodeError:
+        match = re.search(r"\[.*\]", text, re.DOTALL)
+        if match:
+            try:
+                items = json.loads(match.group())
+                if isinstance(items, list):
+                    return items
+            except json.JSONDecodeError:
+                pass
+    return []
+
+
+def _parse_extraction(text: str) -> list[ExtractedMemory]:
+    """解析 LLM 提取输出 (ExtractMemory.j2) → list[ExtractedMemory]。
+
+    逐条 .model_validate()——一个坏元素只跳过该项，不影响同批次其他合规项。
+    .model_validate() 确保非 dict 元素统一抛 ValidationError（而非 TypeError）。
+    """
+    items = _extract_json_array(text)
+    result: list[ExtractedMemory] = []
+    for item in items:
+        try:
+            result.append(ExtractedMemory.model_validate(item))
+        except ValidationError as e:
+            logger.warning("跳过不合规的提取记忆: %s，原始数据: %s", e, item)
+    return result
+
+
+def _parse_compare_actions(text: str) -> list[CompareAction]:
+    """解析 LLM 比对输出 (ConsolidationCompare.j2) → list[CompareAction]。
+
+    整批 all-or-nothing 校验。校验失败 raise ValueError——调用方
+    _compare_and_resolve() 的 except Exception 捕获后走 insert-all 回退，
+    确保一个坏元素不导致静默丢记忆。
+    """
+    items = _extract_json_array(text)
+    try:
+        return _compare_actions_adapter.validate_python(items)
+    except ValidationError as e:
+        raise ValueError(f"比对 actions 校验失败: {e}") from e
 
 
 class MemoryConsolidator:
