@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 from Module.embedding import EmbeddingFactory
+from core.consolidator import _parse_extraction
+from core.schema.memory import MemoryType
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -281,8 +283,8 @@ class TestMemoryConsolidator:
         from core.llm_adapter import LLMAdapter
 
         adapter = LLMAdapter(_test_backend=FakeLLMBackend(response=json.dumps([
-            {"type": "preference", "content": "喜欢蓝色"},
-            {"type": "plan", "content": "明天去爬山"},
+            {"type": "Preference", "content": "喜欢蓝色", "poignancy": 5},
+            {"type": "Plan", "content": "明天去爬山", "poignancy": 5},
         ])))
         mem = LongTermMemory()
         consolidator = MemoryConsolidator(adapter, mem, "TestBot", buffer_threshold=1)
@@ -294,9 +296,9 @@ class TestMemoryConsolidator:
 
         assert isinstance(items, list)
         # With the fake response, 2 items should be extracted
-        types = {item.get("type") for item in items}
-        assert "preference" in types
-        assert "plan" in types
+        types = {item.type.value for item in items}
+        assert "Preference" in types
+        assert "Plan" in types
 
         await adapter.close()
 
@@ -321,25 +323,25 @@ class TestMemoryConsolidator:
     def test_parse_json(self):
         from core.consolidator import MemoryConsolidator
         # Direct JSON
-        items = MemoryConsolidator._parse_result(
-            '[{"type": "preference", "content": "likes blue"}]'
+        items = _parse_extraction(
+            '[{"type": "Preference", "content": "likes blue", "poignancy": 5}]'
         )
         assert len(items) == 1
-        assert items[0]["type"] == "preference"
+        assert items[0].type == MemoryType.PREFERENCE
 
     def test_parse_markdown_wrapped(self):
         from core.consolidator import MemoryConsolidator
-        items = MemoryConsolidator._parse_result(
-            '```json\n[{"type": "fact", "content": "hello"}]\n```'
+        items = _parse_extraction(
+            '```json\n[{"type": "Fact", "content": "hello", "poignancy": 5}]\n```'
         )
         assert len(items) == 1
-        assert items[0]["content"] == "hello"
+        assert items[0].content == "hello"
 
     def test_parse_empty(self):
         from core.consolidator import MemoryConsolidator
-        assert MemoryConsolidator._parse_result("") == []
-        assert MemoryConsolidator._parse_result("not json") == []
-        assert MemoryConsolidator._parse_result("[]") == []
+        assert _parse_extraction("") == []
+        assert _parse_extraction("not json") == []
+        assert _parse_extraction("[]") == []
 
     @pytest.mark.asyncio
     async def test_flush_consolidates_below_threshold(self):
@@ -959,37 +961,37 @@ class TestMemoryConsolidatorEdgeCases:
     def test_parse_json_embedded_in_text(self):
         """JSON array embedded in surrounding text should be extracted."""
         from core.consolidator import MemoryConsolidator
-        text = 'prefix text [{"type": "fact", "content": "found"}] suffix text'
-        items = MemoryConsolidator._parse_result(text)
+        text = 'prefix text [{"type": "Fact", "content": "found"}] suffix text'
+        items = _parse_extraction(text)
         assert len(items) == 1
-        assert items[0]["content"] == "found"
+        assert items[0].content == "found"
 
     def test_parse_multiple_arrays_returns_first(self):
         """When multiple arrays exist, greedy regex captures from first [ to last ].
         This may fail JSON parse, which is acceptable — caller should provide clean JSON."""
         from core.consolidator import MemoryConsolidator
         text = '[{"type": "fact", "content": "a"}] other [{"type": "plan", "content": "b"}]'
-        items = MemoryConsolidator._parse_result(text)
+        items = _parse_extraction(text)
         # Greedy regex may fail to parse — both outcomes are acceptable
         assert isinstance(items, list)
 
     def test_parse_trailing_comma(self):
         """Trailing comma in JSON array should be handled."""
         from core.consolidator import MemoryConsolidator
-        items = MemoryConsolidator._parse_result(
-            '[{"type": "fact", "content": "test"}]'
+        items = _parse_extraction(
+            '[{"type": "Fact", "content": "test"}]'
         )
         assert len(items) == 1
 
     def test_parse_whitespace_only(self):
         from core.consolidator import MemoryConsolidator
-        assert MemoryConsolidator._parse_result("   \n  ") == []
-        assert MemoryConsolidator._parse_result("```json\n```") == []
+        assert _parse_extraction("   \n  ") == []
+        assert _parse_extraction("```json\n```") == []
 
     def test_parse_single_object_not_array(self):
         """A single JSON object (not array) should return empty."""
         from core.consolidator import MemoryConsolidator
-        items = MemoryConsolidator._parse_result(
+        items = _parse_extraction(
             '{"type": "fact", "content": "not an array"}'
         )
         assert items == []
@@ -997,10 +999,12 @@ class TestMemoryConsolidatorEdgeCases:
     def test_parse_array_with_invalid_items(self):
         """Items missing required fields should still parse."""
         from core.consolidator import MemoryConsolidator
-        items = MemoryConsolidator._parse_result(
-            '[{"type": "fact", "content": "ok"}, {"invalid": "item"}, {"type": "plan"}]'
+        items = _parse_extraction(
+            '[{"type": "Fact", "content": "ok"}, {"invalid": "item"}, {"type": "Plan"}]'
         )
-        assert len(items) == 3
+        assert len(items) == 1
+        assert items[0].type == MemoryType.FACT
+        assert items[0].content == "ok"
 
 
 # ============================================================================

@@ -141,7 +141,7 @@ class MemoryConsolidator:
         self._threshold = buffer_threshold if buffer_threshold is not None else self.BUFFER_THRESHOLD
         self._consolidate_lock = asyncio.Lock()
 
-    async def consolidate(self, user_message: str, assistant_response: str) -> list[dict]:
+    async def consolidate(self, user_message: str, assistant_response: str) -> list[ExtractedMemory]:
         """缓冲对话，攒够阈值后调 LLM 提取。返回本次提取的条目（可能为空）。
 
         如果已有 consolidation 正在运行则跳过本轮（防止并发 LLM 调用）。
@@ -161,7 +161,7 @@ class MemoryConsolidator:
         async with self._consolidate_lock:
             return await self._do_consolidate()
 
-    async def flush(self) -> list[dict]:
+    async def flush(self) -> list[ExtractedMemory]:
         """Force consolidation of buffered turns regardless of threshold.
 
         Called on shutdown to avoid losing unconsolidated messages.
@@ -177,7 +177,7 @@ class MemoryConsolidator:
         async with self._consolidate_lock:
             return await self._do_consolidate()
 
-    async def _do_consolidate(self) -> list[dict]:
+    async def _do_consolidate(self) -> list[ExtractedMemory]:
         """执行实际的 LLM 提取和存储（需持有 consolidate_lock）。"""
         # 合并缓冲中的多轮对话为一段文本
         turns: list[str] = []
@@ -196,7 +196,7 @@ class MemoryConsolidator:
         try:
             result = await self._llm.think([{"role": "user", "content": prompt}],
                 extra_body={"thinking": {"type": "disabled"}})
-            items = self._parse_result(result.text)
+            items = _parse_extraction(result.text)
         except Exception:
             logger.debug("Consolidation extraction failed", exc_info=True)
             return []
@@ -206,63 +206,30 @@ class MemoryConsolidator:
             logger.debug("Consolidation compared: %d items → %d inserted", len(items), inserted)
 
         for item in items:
-            self._history.append({
-                "type": item.get("type", "?"),
-                "content": item.get("content", ""),
-                "poignancy": item.get("poignancy", 5),
-            })
+            self._history.append(item.model_dump())
         if len(self._history) > 20:
             self._history = self._history[-20:]
 
         return items
 
-    @staticmethod
-    def _parse_result(text: str) -> list[dict]:
-        """Parse LLM output as JSON array. Robust to markdown wrapping."""
-        text = text.strip()
-        # Strip markdown code fences
-        if text.startswith("```"):
-            lines = text.split("\n")
-            text = "\n".join(lines[1:]) if len(lines) > 1 else text
-            if text.endswith("```"):
-                text = text[:-3]
-        try:
-            items = json.loads(text)
-            if isinstance(items, list):
-                return items
-        except json.JSONDecodeError:
-            # Try to find JSON array inside text
-            import re
-            match = re.search(r"\[.*\]", text, re.DOTALL)
-            if match:
-                try:
-                    items = json.loads(match.group())
-                    if isinstance(items, list):
-                        return items
-                except json.JSONDecodeError:
-                    pass
-        return []
-
-    async def _compare_and_resolve(self, new_items: list[dict]) -> int:
+    async def _compare_and_resolve(self, new_items: list[ExtractedMemory]) -> int:
         """将新提取的记忆与已有记忆比对，执行 insert/update/merge/skip。
         返回实际新增的记忆数。失败时回退：全部 insert。"""
         if not new_items or not self._memory.get_all():
             # 无已有记忆，全部直接 insert
             for item in new_items:
-                content = item.get("content", "").strip()
-                if content:
-                    await self._memory.insert(
-                        content,
-                        memory_type=item.get("type", "note"),
-                        poignancy=int(item.get("poignancy", 5)),
-                        source="consolidation",
-                    )
+                await self._memory.insert(
+                    item.content,
+                    memory_type=item.type.value,
+                    poignancy=item.poignancy,
+                    source="consolidation",
+                )
             return len(new_items)
 
         try:
             # 1. 搜索相关已有记忆
             related = await self._memory.search(
-                query_text=" ".join(item.get("content", "") for item in new_items),
+                query_text=" ".join(item.content for item in new_items),
                 top_k=10,
             )
             related_dicts = [
@@ -274,7 +241,10 @@ class MemoryConsolidator:
             # 2. LLM 比对
             prompt_template = _get_compare_prompt()
             compare_prompt = prompt_template.replace(
-                "{new_items}", json.dumps(new_items, ensure_ascii=False, indent=2),
+                "{new_items}", json.dumps(
+                    [item.model_dump() for item in new_items],
+                    ensure_ascii=False, indent=2,
+                ),
             ).replace(
                 "{existing_items}", json.dumps(related_dicts, ensure_ascii=False, indent=2),
             )
@@ -282,41 +252,29 @@ class MemoryConsolidator:
                 [{"role": "user", "content": compare_prompt}],
                 extra_body={"thinking": {"type": "disabled"}},
             )
-            actions = self._parse_result(result.text)
+            actions = _parse_compare_actions(result.text)
 
-            # 3. 预校验
-            if not self._validate_actions(actions, new_items):
-                raise ValueError("Action validation failed")
 
             # 4. 执行 — merge → update → insert
             inserted = 0
             for action in actions:
-                act = action.get("action", "insert")
-                if act == "merge":
-                    target_id = action.get("target_id", "")
-                    merged = action.get("merged_content", "")
-                    if target_id and merged:
-                        await self._memory.update_text(
-                            target_id, merged,
-                            poignancy=action.get("poignancy"),
-                            memory_type=action.get("type"),
-                        )
-                elif act == "update":
-                    target_id = action.get("target_id", "")
-                    new_content = action.get("new_content", "")
-                    if target_id and new_content:
-                        await self._memory.update_text(target_id, new_content)
-                elif act == "insert":
-                    content = action.get("content", "").strip()
-                    if content:
-                        await self._memory.insert(
-                            content,
-                            memory_type=action.get("type", "note"),
-                            poignancy=int(action.get("poignancy", 5)),
-                            source="consolidation",
-                        )
-                        inserted += 1
-                # skip — 无操作
+                if isinstance(action, MergeAction):
+                    await self._memory.update_text(
+                        action.target_id, action.merged_content,
+                        poignancy=action.poignancy,
+                        memory_type=action.type.value if action.type else None,
+                    )
+                elif isinstance(action, UpdateAction):
+                    await self._memory.update_text(action.target_id, action.new_content)
+                elif isinstance(action, InsertAction):
+                    await self._memory.insert(
+                        action.content,
+                        memory_type=action.type.value,
+                        poignancy=action.poignancy,
+                        source="consolidation",
+                    )
+                    inserted += 1
+                # SkipAction — 无操作
 
             return inserted
 
@@ -325,25 +283,10 @@ class MemoryConsolidator:
                          exc_info=True)
             # 回退：全部 insert
             for item in new_items:
-                content = item.get("content", "").strip()
-                if content:
-                    await self._memory.insert(
-                        content,
-                        memory_type=item.get("type", "note"),
-                        poignancy=int(item.get("poignancy", 5)),
-                        source="consolidation",
-                    )
+                await self._memory.insert(
+                    item.content,
+                    memory_type=item.type.value,
+                    poignancy=item.poignancy,
+                    source="consolidation",
+                )
             return len(new_items)
-
-    @staticmethod
-    def _validate_actions(actions: list[dict], new_items: list[dict]) -> bool:
-        """预校验 LLM 输出的 actions 批次。返回 True 表示通过。"""
-        if not isinstance(actions, list):
-            return False
-        for action in actions:
-            act = action.get("action", "")
-            if act not in ("insert", "update", "merge", "skip"):
-                return False
-            if act in ("update", "merge") and not action.get("target_id"):
-                return False
-        return True
