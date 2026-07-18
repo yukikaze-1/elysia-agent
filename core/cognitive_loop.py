@@ -12,7 +12,6 @@ Sub-modules extracted for focus:
 
 import asyncio
 import datetime
-import json
 import logging
 import time
 from dataclasses import asdict
@@ -46,7 +45,7 @@ from .tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from .text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageRecord, TokenUsageSummary
-from core.schema.tool import ToolCall, ToolCallFunction, ToolCallId
+from core.schema.tool import ToolCall, ToolCallId
 from core.schema.mood import _MOOD_TO_TTS_EMOTION, Mood
 from core.schema.part import TextPart
 from core.schema.adapters.message_adapter import parts_from_dicts
@@ -525,8 +524,8 @@ class CognitiveLoop:
 
                     # 分离 submit_task 和其他工具——submit_task 走专用路径
                     if self._delegation_preparer is not None:
-                        submit_tcs = [tc for tc in normalized if tc["function"]["name"] == "submit_task"]
-                        other_tcs  = [tc for tc in normalized if tc["function"]["name"] != "submit_task"]
+                        submit_tcs = [tc for tc in normalized if tc.function.name == "submit_task"]
+                        other_tcs  = [tc for tc in normalized if tc.function.name != "submit_task"]
                     else:
                         submit_tcs = []
                         other_tcs  = normalized
@@ -535,7 +534,7 @@ class CognitiveLoop:
                     # 使用完整的 normalized（含 submit_task）
                     assistant_entry: dict = {"role": "assistant", "content": acc_text or None}
                     if normalized:
-                        assistant_entry["tool_calls"] = normalized
+                        assistant_entry["tool_calls"] = [tc.model_dump(mode="json") for tc in normalized]
                     messages.append(assistant_entry)
 
                     # submit_task 工具调用——拦截处理
@@ -546,7 +545,7 @@ class CognitiveLoop:
                             result = await self._handle_submit_task(tc)
                             # 注入 tool result 到 messages（必须在 assistant 之后）
                             # 使用唯一 ID——避免多个 submit_task 共享 "unknown" 导致协议冲突
-                            tc_id = tc.get("id") or f"submit_{i}_{id(result)}"
+                            tc_id = tc.id
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": tc_id,
@@ -564,7 +563,7 @@ class CognitiveLoop:
                             })
                             self._session.add_message(ToolResultMessage(
                                 content=[TextPart(content=result.content or "")],
-                                tool_call_id=ToolCallId(tc_id),
+                                tool_call_id=tc.id,
                                 tool_name="submit_task",
                                 success=result.success,
                                 error=result.error,
@@ -579,7 +578,7 @@ class CognitiveLoop:
                                     dispatched_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
                                     self._on_background_task(
                                         result.async_task_id, mailbox, intent=(
-                                            json.loads(tc["function"]["arguments"]).get("intent", "")
+                                            tc.function.parsed.get("intent", "")
                                         ), dispatched_at=dispatched_now,
                                     )
 
@@ -589,29 +588,17 @@ class CognitiveLoop:
                         dispatch_tcs = normalized
 
                     # 工具调用消息写入 Session（刷新后前端可恢复工具卡片）
-                    tool_calls = None
-                    if normalized:
-                        tool_calls = [ToolCall(
-                            id=ToolCallId(tc.get("id", "unknown")),
-                            function=ToolCallFunction(
-                                name=tc["function"]["name"],
-                                arguments=tc["function"]["arguments"],
-                            )
-                        ) for tc in normalized]
                     self._session.add_message(AssistantMessage(
                         content=[TextPart(content=acc_text)] if acc_text else [],
                         message_id=new_message_id(),
-                        tool_calls=tool_calls,
+                        tool_calls=normalized if normalized else None,
                     ))
 
                     # Emit tool_executing actions for UI (before dispatch)
                     for tc in dispatch_tcs:
-                        func_name = tc["function"]["name"]
-                        call_id = tc.get("id", "unknown")
-                        try:
-                            args = json.loads(tc["function"]["arguments"])
-                        except (json.JSONDecodeError, KeyError):
-                            args = {}
+                        func_name = tc.function.name
+                        call_id = tc.id
+                        args = tc.function.parsed
                         self._executing_tools.append(func_name)
                         await self._output.action("tool_executing", params={
                             "tool": func_name,
@@ -632,14 +619,14 @@ class CognitiveLoop:
                         tc, tool_result = item
                         messages.append({
                             "role": "tool",
-                            "tool_call_id": tc.get("id", "unknown"),
+                            "tool_call_id": tc.id,
                             "content": tool_result.llm_content,
                         })
                         # Emit tool_done for each completed tool
                         error_type_str = tool_result.error_type.value if tool_result.error_type else None
                         await self._output.action("tool_done", params={
-                            "tool": tc["function"]["name"],
-                            "call_id": tc.get("id", "unknown"),
+                            "tool": tc.function.name,
+                            "call_id": tc.id,
                             "success": tool_result.success,
                             "content": tool_result.content or "",
                             "error": tool_result.error,
@@ -650,8 +637,8 @@ class CognitiveLoop:
                         # 工具结果写入 Session（刷新后前端可恢复工具卡片内容）
                         self._session.add_message(ToolResultMessage(
                             content=[TextPart(content=tool_result.content or "")],
-                            tool_call_id=ToolCallId(tc.get("id", "unknown")),
-                            tool_name=tc["function"]["name"],
+                            tool_call_id=tc.id,
+                            tool_name=tc.function.name,
                             success=tool_result.success,
                             error=tool_result.error,
                             error_type=tool_result.error_type,
@@ -661,7 +648,7 @@ class CognitiveLoop:
 
                     # Clean up executing tools tracking
                     for tc in dispatch_tcs:
-                        func_name = tc["function"]["name"]
+                        func_name = tc.function.name
                         try:
                             self._executing_tools.remove(func_name)
                         except ValueError:
@@ -823,20 +810,17 @@ class CognitiveLoop:
     # ---- Tool execution ----
 
     async def _execute_tools_directly(
-        self, normalized: list[dict],
+        self, normalized: list[ToolCall],
     ) -> list:
         """直接执行工具调用 — 向后兼容，不经过 Scheduler Worker Pool。
 
         每个工具在独立的 asyncio.Task 中并行执行，
         CancelledError 由 asyncio.gather 的 return_exceptions 捕获。
         """
-        async def _execute_one(tc: dict):
-            func_name = tc["function"]["name"]
+        async def _execute_one(tc: ToolCall):
+            func_name = tc.function.name
             t_tool = time.perf_counter()
-            try:
-                args = json.loads(tc["function"]["arguments"])
-            except (json.JSONDecodeError, KeyError):
-                args = {}
+            args = tc.function.parsed
             logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
             try:
                 assert self._tool_executor is not None
@@ -915,7 +899,7 @@ class CognitiveLoop:
             },
         }
 
-    async def _handle_submit_task(self, tc: dict) -> ToolResult:
+    async def _handle_submit_task(self, tc: ToolCall) -> ToolResult:
         """处理 submit_task function call。
 
         校验 intent → DelegationPreparer.prepare() → TaskSystem.submit()。
@@ -923,7 +907,7 @@ class CognitiveLoop:
         """
         from Module.task_system.schema import SubmitError
 
-        args = json.loads(tc["function"]["arguments"])
+        args = tc.function.parsed
         intent = (args.get("intent") or "").strip()
 
         # 1. 校验

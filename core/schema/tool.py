@@ -1,7 +1,8 @@
 # core/schema/tool.py
 """工具调用类型 — OpenAI 兼容 tool_calls 结构。"""
 
-from typing import Literal
+import json
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +13,14 @@ class ToolCallFunction(BaseModel):
     """工具调用的 function 块。"""
     name: str = ""
     arguments: str = ""  # JSON 字符串
+
+    @property
+    def parsed(self) -> dict[str, Any]:
+        """将 arguments JSON 字符串解析为 dict。解析失败返回 {}。"""
+        try:
+            return json.loads(self.arguments)
+        except json.JSONDecodeError:
+            return {}
 
 
 class ToolCall(BaseModel):

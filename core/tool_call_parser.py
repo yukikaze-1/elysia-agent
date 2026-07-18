@@ -1,8 +1,19 @@
 """流式工具调用解析 — 合并增量 + 归一化。
 
 CognitiveLoop 流式接收 tool_call deltas 时，用本模块的函数
-增量合并和归一化。从 cognitive_loop.py 提取，纯 stdlib，零依赖。
+增量合并和归一化。从 cognitive_loop.py 提取。
+normalize_tool_calls 依赖 pydantic（core 全域依赖）。
 """
+
+import json
+import logging
+
+from pydantic import ValidationError
+
+from core.schema.tool import ToolCall, ToolCallFunction
+from core.schema.types import ToolCallId
+
+logger = logging.getLogger(__name__)
 
 
 def merge_stream_tool_calls(accumulated: list[dict], deltas: list[dict]) -> None:
@@ -34,17 +45,31 @@ def merge_stream_tool_calls(accumulated: list[dict], deltas: list[dict]) -> None
                 accumulated[idx]["function"]["arguments"] += func["arguments"]
 
 
-def normalize_tool_calls(raw: list[dict]) -> list[dict]:
-    """过滤不完整的工具调用——只有 id 和 name 都有的才算有效。
+def normalize_tool_calls(raw: list[dict]) -> list[ToolCall]:
+    """过滤不完整的工具调用，转为 ToolCall 模型。
 
     Args:
         raw: merge_stream_tool_calls 产出的原始工具调用列表
 
     Returns:
-        仅包含 id 和 function.name 都非空的工具调用
+        仅包含 id 和 function.name 都非空的 ToolCall
     """
-    result = []
+    result: list[ToolCall] = []
     for tc in raw:
-        if tc.get("id") and tc["function"].get("name"):
-            result.append(tc)
+        func = tc.get("function", {})          # 防御 think() 路径的异常 dict 形状
+        if not (tc.get("id") and func.get("name")):
+            continue
+        arguments = func.get("arguments", "")
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments) if isinstance(arguments, dict) else ""
+        try:
+            result.append(ToolCall(
+                id=ToolCallId(tc["id"]),
+                function=ToolCallFunction(
+                    name=func["name"],
+                    arguments=arguments,
+                ),
+            ))
+        except ValidationError as e:
+            logger.warning("跳过不合规的 tool call: %s，原始数据: %s", e, tc)
     return result

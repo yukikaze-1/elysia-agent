@@ -16,6 +16,8 @@ from Module.tool.safety import SafetyProfile
 from core.cognitive_loop import CognitiveLoop
 from core.text_utils import MessageObj
 from core.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
+from core.schema.tool import ToolCall, ToolCallFunction
+from core.schema.types import ToolCallId
 from core.agent_fsm import AgentFSM, AgentState
 from core.event_bus import EventBus, EventType, EventPriority
 from core.llm_adapter import LLMAdapter
@@ -92,6 +94,11 @@ class TestNormalizeToolCalls:
         ]
         result = normalize_tool_calls(raw)
         assert len(result) == 2
+        # 以下两行从 dict 改为 ToolCall 属性
+        assert result[0].id == ToolCallId("a")
+        assert result[0].function.name == "f1"
+        assert result[1].id == ToolCallId("b")
+        assert result[1].function.name == "f2"
 
     def test_all_incomplete_missing_id(self):
         raw = [{"id": "", "function": {"name": "f1", "arguments": "{}"}}]
@@ -108,7 +115,8 @@ class TestNormalizeToolCalls:
         ]
         result = normalize_tool_calls(raw)
         assert len(result) == 1
-        assert result[0]["id"] == "a"
+        assert result[0].id == ToolCallId("a")
+        assert result[0].function.name == "ok"
 
 
 # ============================================================================
@@ -587,7 +595,7 @@ class TestLLMAdapter:
             tools=tools,
         )
         assert len(result.tool_calls) > 0
-        assert result.tool_calls[0]["function"]["name"] == "search_memory"
+        assert result.tool_calls[0].function.name == "search_memory"
 
     @pytest.mark.asyncio
     async def test_stream_think(self):
@@ -1769,7 +1777,10 @@ class TestHandleSubmitTask:
     @pytest.mark.asyncio
     async def test_intent_empty_returns_fail(self, loop_with_ts):
         """空 intent → ToolResult.fail。"""
-        tc = {"function": {"name": "submit_task", "arguments": '{"intent": ""}'}}
+        tc = ToolCall(
+            id=ToolCallId("call_1"),
+            function=ToolCallFunction(name="submit_task", arguments='{"intent": ""}'),
+        )
         result = await loop_with_ts._handle_submit_task(tc)
         assert result.success is False
         assert "不能为空" in result.error
@@ -1777,7 +1788,10 @@ class TestHandleSubmitTask:
     @pytest.mark.asyncio
     async def test_success_returns_async_task_id(self, loop_with_ts):
         """成功后返回 async_task_id 非空。"""
-        tc = {"function": {"name": "submit_task", "arguments": '{"intent": "查天气"}'}}
+        tc = ToolCall(
+            id=ToolCallId("call_1"),
+            function=ToolCallFunction(name="submit_task", arguments='{"intent": "查天气"}'),
+        )
         result = await loop_with_ts._handle_submit_task(tc)
         assert result.success is True
         assert result.async_task_id == "task-001"
@@ -1792,7 +1806,10 @@ class TestHandleSubmitTask:
             status=DelegationStatus.NO_MATCHING_TOOLS,
             missing_tools=["email"],
         ))
-        tc = {"function": {"name": "submit_task", "arguments": '{"intent": "查天气"}'}}
+        tc = ToolCall(
+            id=ToolCallId("call_1"),
+            function=ToolCallFunction(name="submit_task", arguments='{"intent": "查天气"}'),
+        )
         result = await loop_with_ts._handle_submit_task(tc)
         assert result.success is False
         assert "email" in result.error
@@ -1801,7 +1818,10 @@ class TestHandleSubmitTask:
     async def test_task_system_none_returns_fail(self, loop_with_ts):
         """TaskSystem 未注入 → fail。"""
         loop_with_ts.set_task_system(None)
-        tc = {"function": {"name": "submit_task", "arguments": '{"intent": "查天气"}'}}
+        tc = ToolCall(
+            id=ToolCallId("call_1"),
+            function=ToolCallFunction(name="submit_task", arguments='{"intent": "查天气"}'),
+        )
         result = await loop_with_ts._handle_submit_task(tc)
         assert result.success is False
         assert "未初始化" in result.error
