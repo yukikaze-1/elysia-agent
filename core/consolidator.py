@@ -111,18 +111,26 @@ def _parse_extraction(text: str) -> list[ExtractedMemory]:
     return result
 
 
-def _parse_compare_actions(text: str) -> list[CompareAction]:
+def _parse_compare_actions(text: str, expected_count: int | None = None) -> list[CompareAction]:
     """解析 LLM 比对输出 (ConsolidationCompare.j2) → list[CompareAction]。
 
     整批 all-or-nothing 校验。校验失败 raise ValueError——调用方
     _compare_and_resolve() 的 except Exception 捕获后走 insert-all 回退，
     确保一个坏元素不导致静默丢记忆。
+
+    expected_count: prompt 约定输出数组元素数必须与 new_items 一致。传入时
+    数量不符同样 raise ValueError（如 LLM 返回空数组 → 回退，避免静默丢记忆）。
     """
     items = _extract_json_array(text)
     try:
-        return _compare_actions_adapter.validate_python(items)
+        actions = _compare_actions_adapter.validate_python(items)
     except ValidationError as e:
         raise ValueError(f"比对 actions 校验失败: {e}") from e
+    if expected_count is not None and len(actions) != expected_count:
+        raise ValueError(
+            f"比对 actions 数量不符: 期望 {expected_count}，实际 {len(actions)}"
+        )
+    return actions
 
 
 class MemoryConsolidator:
@@ -252,10 +260,9 @@ class MemoryConsolidator:
                 [{"role": "user", "content": compare_prompt}],
                 extra_body={"thinking": {"type": "disabled"}},
             )
-            actions = _parse_compare_actions(result.text)
+            actions = _parse_compare_actions(result.text, expected_count=len(new_items))
 
-
-            # 4. 执行 — merge → update → insert
+            # 3. 执行 — merge → update → insert
             inserted = 0
             for action in actions:
                 if isinstance(action, MergeAction):

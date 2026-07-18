@@ -321,7 +321,6 @@ class TestMemoryConsolidator:
         await adapter.close()
 
     def test_parse_json(self):
-        from core.consolidator import MemoryConsolidator
         # Direct JSON
         items = _parse_extraction(
             '[{"type": "Preference", "content": "likes blue", "poignancy": 5}]'
@@ -330,7 +329,6 @@ class TestMemoryConsolidator:
         assert items[0].type == MemoryType.PREFERENCE
 
     def test_parse_markdown_wrapped(self):
-        from core.consolidator import MemoryConsolidator
         items = _parse_extraction(
             '```json\n[{"type": "Fact", "content": "hello", "poignancy": 5}]\n```'
         )
@@ -338,7 +336,6 @@ class TestMemoryConsolidator:
         assert items[0].content == "hello"
 
     def test_parse_empty(self):
-        from core.consolidator import MemoryConsolidator
         assert _parse_extraction("") == []
         assert _parse_extraction("not json") == []
         assert _parse_extraction("[]") == []
@@ -960,7 +957,6 @@ class TestMemoryConsolidatorEdgeCases:
 
     def test_parse_json_embedded_in_text(self):
         """JSON array embedded in surrounding text should be extracted."""
-        from core.consolidator import MemoryConsolidator
         text = 'prefix text [{"type": "Fact", "content": "found"}] suffix text'
         items = _parse_extraction(text)
         assert len(items) == 1
@@ -969,7 +965,6 @@ class TestMemoryConsolidatorEdgeCases:
     def test_parse_multiple_arrays_returns_first(self):
         """When multiple arrays exist, greedy regex captures from first [ to last ].
         This may fail JSON parse, which is acceptable — caller should provide clean JSON."""
-        from core.consolidator import MemoryConsolidator
         text = '[{"type": "fact", "content": "a"}] other [{"type": "plan", "content": "b"}]'
         items = _parse_extraction(text)
         # Greedy regex may fail to parse — both outcomes are acceptable
@@ -977,20 +972,17 @@ class TestMemoryConsolidatorEdgeCases:
 
     def test_parse_trailing_comma(self):
         """Trailing comma in JSON array should be handled."""
-        from core.consolidator import MemoryConsolidator
         items = _parse_extraction(
             '[{"type": "Fact", "content": "test"}]'
         )
         assert len(items) == 1
 
     def test_parse_whitespace_only(self):
-        from core.consolidator import MemoryConsolidator
         assert _parse_extraction("   \n  ") == []
         assert _parse_extraction("```json\n```") == []
 
     def test_parse_single_object_not_array(self):
         """A single JSON object (not array) should return empty."""
-        from core.consolidator import MemoryConsolidator
         items = _parse_extraction(
             '{"type": "fact", "content": "not an array"}'
         )
@@ -998,13 +990,163 @@ class TestMemoryConsolidatorEdgeCases:
 
     def test_parse_array_with_invalid_items(self):
         """Items missing required fields should still parse."""
-        from core.consolidator import MemoryConsolidator
         items = _parse_extraction(
             '[{"type": "Fact", "content": "ok"}, {"invalid": "item"}, {"type": "Plan"}]'
         )
         assert len(items) == 1
         assert items[0].type == MemoryType.FACT
         assert items[0].content == "ok"
+
+
+# ============================================================================
+# 8b. Compare pipeline: _parse_compare_actions + _compare_and_resolve
+# ============================================================================
+
+@pytest.mark.unit
+class TestParseCompareActions:
+    """_parse_compare_actions 单元测试 — all-or-nothing 校验契约。"""
+
+    def test_valid_batch_returns_typed_objects(self):
+        import json
+        from core.consolidator import _parse_compare_actions
+        from core.schema.memory import SkipAction, InsertAction, UpdateAction, MergeAction
+
+        text = json.dumps([
+            {"action": "skip"},
+            {"action": "insert", "content": "新事实", "type": "Fact", "poignancy": 6},
+            {"action": "update", "target_id": "id-1", "new_content": "更新后"},
+            {"action": "merge", "target_id": "id-2", "merged_content": "合并后",
+             "type": "Preference", "poignancy": 7},
+        ], ensure_ascii=False)
+        actions = _parse_compare_actions(text)
+        assert len(actions) == 4
+        assert isinstance(actions[0], SkipAction)
+        assert isinstance(actions[1], InsertAction)
+        assert isinstance(actions[2], UpdateAction)
+        assert isinstance(actions[3], MergeAction)
+
+    def test_invalid_batch_raises_value_error(self):
+        """一个坏元素（未知 action）→ 整批 raise ValueError。"""
+        from core.consolidator import _parse_compare_actions
+        with pytest.raises(ValueError):
+            _parse_compare_actions('[{"action": "skip"}, {"action": "destroy"}]')
+
+    def test_empty_array_returns_empty(self):
+        from core.consolidator import _parse_compare_actions
+        assert _parse_compare_actions("[]") == []
+
+    def test_count_mismatch_raises_value_error(self):
+        """expected_count 不符（含 LLM 输出被剥成空数组）→ raise ValueError。"""
+        from core.consolidator import _parse_compare_actions
+        with pytest.raises(ValueError):
+            _parse_compare_actions("[]", expected_count=2)
+        with pytest.raises(ValueError):
+            _parse_compare_actions('[{"action": "skip"}]', expected_count=2)
+
+    def test_count_match_passes(self):
+        from core.consolidator import _parse_compare_actions
+        actions = _parse_compare_actions('[{"action": "skip"}]', expected_count=1)
+        assert len(actions) == 1
+
+
+@pytest.mark.service
+class TestCompareAndResolve:
+    """_compare_and_resolve 管线 — 动作执行 + insert-all 回退。"""
+
+    @staticmethod
+    def _make_llm(response_text: str):
+        """仅实现 think() 的 fake LLM，返回固定比对输出。"""
+        class FakeLLM:
+            async def think(self, messages, extra_body=None):
+                class R:
+                    text = response_text
+                return R()
+        return FakeLLM()
+
+    @staticmethod
+    def _make_memory():
+        """LongTermMemory 替身 — get_all 非空以进入比对路径，方法均为 AsyncMock。"""
+        from unittest.mock import AsyncMock, MagicMock
+        from core.memory.long_term import MemoryEntry
+
+        existing = MemoryEntry(id="mem-1", text="旧记忆", memory_type="Fact",
+                               poignancy=5, timestamp=1.0)
+        mem = MagicMock()
+        mem.get_all = MagicMock(return_value=[existing])
+        mem.search = AsyncMock(return_value=[existing])
+        mem.insert = AsyncMock()
+        mem.update_text = AsyncMock()
+        return mem
+
+    @pytest.mark.asyncio
+    async def test_valid_action_batch_executes(self):
+        """merge/update → update_text；insert → insert 且计数；skip → 无操作。"""
+        import json
+        from core.consolidator import MemoryConsolidator
+        from core.schema.memory import ExtractedMemory
+
+        actions = [
+            {"action": "merge", "target_id": "mem-1", "merged_content": "合并内容",
+             "type": "Fact", "poignancy": 8},
+            {"action": "update", "target_id": "mem-1", "new_content": "更新内容"},
+            {"action": "insert", "content": "新内容", "type": "Plan", "poignancy": 6},
+            {"action": "skip"},
+        ]
+        mem = self._make_memory()
+        c = MemoryConsolidator(self._make_llm(json.dumps(actions, ensure_ascii=False)), mem)  # type: ignore[arg-type]
+
+        new_items = [ExtractedMemory(type="Fact", content=f"新提取{i}") for i in range(4)]
+        inserted = await c._compare_and_resolve(new_items)
+
+        assert inserted == 1
+        assert mem.update_text.await_count == 2
+        mem.update_text.assert_any_await("mem-1", "合并内容", poignancy=8, memory_type="Fact")
+        mem.update_text.assert_any_await("mem-1", "更新内容")
+        mem.insert.assert_awaited_once_with(
+            "新内容", memory_type="Plan", poignancy=6, source="consolidation")
+
+    @pytest.mark.asyncio
+    async def test_bad_element_falls_back_to_insert_all(self):
+        """比对输出含未知 action → _parse_compare_actions raise → 回退全部 insert。"""
+        from core.consolidator import MemoryConsolidator
+        from core.schema.memory import ExtractedMemory
+
+        mem = self._make_memory()
+        c = MemoryConsolidator(
+            self._make_llm('[{"action": "skip"}, {"action": "unknown_action"}]'), mem)  # type: ignore[arg-type]
+
+        new_items = [
+            ExtractedMemory(type="Fact", content="事实A", poignancy=4),
+            ExtractedMemory(type="Plan", content="计划B", poignancy=6),
+        ]
+        inserted = await c._compare_and_resolve(new_items)
+
+        assert inserted == 2
+        assert mem.insert.await_count == 2
+        mem.insert.assert_any_await("事实A", memory_type="Fact", poignancy=4,
+                                    source="consolidation")
+        mem.insert.assert_any_await("计划B", memory_type="Plan", poignancy=6,
+                                    source="consolidation")
+        mem.update_text.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empty_compare_output_falls_back_to_insert_all(self):
+        """LLM 比对返回 [] 但有 2 条 new_items → 数量不符 → 回退全部 insert（不静默丢失）。"""
+        from core.consolidator import MemoryConsolidator
+        from core.schema.memory import ExtractedMemory
+
+        mem = self._make_memory()
+        c = MemoryConsolidator(self._make_llm("[]"), mem)  # type: ignore[arg-type]
+
+        new_items = [
+            ExtractedMemory(type="Fact", content="事实A"),
+            ExtractedMemory(type="Event", content="事件B"),
+        ]
+        inserted = await c._compare_and_resolve(new_items)
+
+        assert inserted == 2
+        assert mem.insert.await_count == 2
+        mem.update_text.assert_not_awaited()
 
 
 # ============================================================================
