@@ -12,7 +12,6 @@ Sub-modules extracted for focus:
 
 import asyncio
 import datetime
-import json
 import logging
 import time
 from dataclasses import asdict
@@ -579,7 +578,7 @@ class CognitiveLoop:
                                     dispatched_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
                                     self._on_background_task(
                                         result.async_task_id, mailbox, intent=(
-                                            json.loads(tc.function.arguments).get("intent", "")
+                                            tc.function.parsed.get("intent", "")
                                         ), dispatched_at=dispatched_now,
                                     )
 
@@ -599,10 +598,7 @@ class CognitiveLoop:
                     for tc in dispatch_tcs:
                         func_name = tc.function.name
                         call_id = tc.id
-                        try:
-                            args = json.loads(tc.function.arguments)
-                        except json.JSONDecodeError:
-                            args = {}
+                        args = tc.function.parsed
                         self._executing_tools.append(func_name)
                         await self._output.action("tool_executing", params={
                             "tool": func_name,
@@ -824,10 +820,7 @@ class CognitiveLoop:
         async def _execute_one(tc: ToolCall):
             func_name = tc.function.name
             t_tool = time.perf_counter()
-            try:
-                args = json.loads(tc.function.arguments)
-            except json.JSONDecodeError:
-                args = {}
+            args = tc.function.parsed
             logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
             try:
                 assert self._tool_executor is not None
@@ -914,7 +907,7 @@ class CognitiveLoop:
         """
         from Module.task_system.schema import SubmitError
 
-        args = json.loads(tc.function.arguments)
+        args = tc.function.parsed
         intent = (args.get("intent") or "").strip()
 
         # 1. 校验

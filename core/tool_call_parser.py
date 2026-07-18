@@ -6,9 +6,14 @@ normalize_tool_calls 依赖 pydantic（core 全域依赖）。
 """
 
 import json
+import logging
+
+from pydantic import ValidationError
 
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
+
+logger = logging.getLogger(__name__)
 
 
 def merge_stream_tool_calls(accumulated: list[dict], deltas: list[dict]) -> None:
@@ -52,10 +57,12 @@ def normalize_tool_calls(raw: list[dict]) -> list[ToolCall]:
     result: list[ToolCall] = []
     for tc in raw:
         func = tc.get("function", {})          # 防御 think() 路径的异常 dict 形状
-        if tc.get("id") and func.get("name"):
-            arguments = func.get("arguments", "")
-            if not isinstance(arguments, str):
-                arguments = json.dumps(arguments) if isinstance(arguments, dict) else ""
+        if not (tc.get("id") and func.get("name")):
+            continue
+        arguments = func.get("arguments", "")
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments) if isinstance(arguments, dict) else ""
+        try:
             result.append(ToolCall(
                 id=ToolCallId(tc["id"]),
                 function=ToolCallFunction(
@@ -63,4 +70,6 @@ def normalize_tool_calls(raw: list[dict]) -> list[ToolCall]:
                     arguments=arguments,
                 ),
             ))
+        except ValidationError as e:
+            logger.warning("跳过不合规的 tool call: %s，原始数据: %s", e, tc)
     return result

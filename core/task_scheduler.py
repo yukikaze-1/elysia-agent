@@ -121,14 +121,10 @@ class TaskScheduler:
         """
         sub_tasks: list[Task] = []
         for tc in calls:
-            try:
-                arguments = json.loads(tc.function.arguments)
-            except json.JSONDecodeError:
-                arguments = {}
             t = Task.new_tool_call(
                 parent_id=parent_id or "",
                 tool_name=tc.function.name,
-                arguments=arguments,
+                arguments=tc.function.parsed,
             )
             sub_tasks.append(t)
 
