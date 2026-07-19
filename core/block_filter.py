@@ -176,7 +176,8 @@ def _parse_blocks(acc_text: str) -> list[tuple[int, int, ParsedBlock]]:
             end_marker = _MARKDOWN_END
         else:
             kind = "code"
-            language = _CODE_START_RE.fullmatch(marker).group(1) or ""
+            m = _CODE_START_RE.fullmatch(marker)
+            language = (m.group(1) or "") if m else ""
             end_marker = _CODE_END
 
         content_start = match.end()
