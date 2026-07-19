@@ -91,10 +91,14 @@ core/
 │   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + 所有 _start_*/_stop_*/_flush_*
 │   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
 │   └── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
-├── cognitive/             # CognitiveLoop (package): TTSStreamManager merged in + CognitiveTools mixin
-│   ├── loop.py            #   CognitiveLoop(CognitiveTTS, CognitiveTools): __init__ + process + _think_loop + FSM
-│   ├── tts.py             #   TTSStreamManager + emoji utils + CognitiveTTS mixin
-│   └── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task + _submit_task_definition
+├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing
+│   ├── loop.py            #   CognitiveLoop(CognitiveTools): __init__ + process + _think_loop + FSM
+│   ├── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task
+│   └── timing.py          #   Timer + TimingClock latency tracking
+├── adapter/               # Adapter layer: wraps Module/ backends for core/ consumption
+│   ├── llm_adapter.py     #   LLMAdapter: tool-calling + retry + streaming + hot-switch
+│   ├── tts_adapter.py     #   TTSStreamManager: sentence queuing + emoji sync + gated playback
+│   └── tool_call_parser.py #  merge/normalize streaming tool_call deltas
 ├── text/                  # Text stream processing (package): BlockFilter + SentenceBuffer + text utils
 │   ├── block_filter.py    #   BlockFilter: streaming block tag filter + post-hoc block parsing
 │   ├── sentence_buffer.py #   SentenceBuffer: split on sentence delimiters for TTS streaming

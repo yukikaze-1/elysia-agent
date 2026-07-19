@@ -4,7 +4,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from core.personality import CharacterEngine
-from core.llm_adapter import ThoughtResult
+from core.adapter.llm_adapter import ThoughtResult
 from core.schema.character import CharacterState
 from core.schema.types import SessionId
 

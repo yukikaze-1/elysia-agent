@@ -12,7 +12,7 @@ import time
 from typing import TYPE_CHECKING
 
 from Module.system_prompt import PromptManager
-from ..llm_adapter import LLMAdapter
+from ..adapter.llm_adapter import LLMAdapter
 
 if TYPE_CHECKING:
     from core.personality.engine import CharacterEngine

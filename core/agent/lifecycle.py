@@ -22,7 +22,7 @@ from Module.tool import ToolManager, ToolContext, PluginContext
 from core.tools import ALL_PLUGINS
 from ..cognitive import CognitiveLoop
 from ..idle_monitor import IdleMonitor
-from ..llm_adapter import LLMAdapter
+from ..adapter.llm_adapter import LLMAdapter
 from ..memory.consolidator import MemoryConsolidator
 from ..personality import CharacterEngine
 from core.personality.reflector import CharacterReflector

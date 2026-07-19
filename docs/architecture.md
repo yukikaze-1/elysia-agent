@@ -122,7 +122,7 @@
   │      │                                                            │
   │      ├── content delta ──► SentenceBuffer.feed(token)             │
   │      │    │    └── sentence complete                               │
-  │      │    │          ├── [TTS on]  _start_tts_stream(sentence)    │
+  │      │    │          ├── [TTS on]  stream_sentence(sentence)    │
   │      │    │          │     └── bind-send delta + audio            │
   │      │    │          └── [TTS off] direct delta + send("")        │
   │      │    │                                                       │
@@ -154,7 +154,7 @@
 
 **Server 端** (CognitiveLoop):
 ```
-SentenceBuffer 分句 → _start_tts_stream(sentence) [background task]
+SentenceBuffer 分句 → stream_sentence(sentence) [background task]
   → TTS 首 chunk 到达
     → 绑定发送: delta(完整句) + send("") + audio_chunks + audio_end
     → workers=1 FIFO 保证句间顺序
@@ -361,7 +361,7 @@ class CognitiveLoop:
     async def _think_loop(self, ...):
         # 1. 情绪分析 (STT 优先，关键词 fallback)
         # 2. 组装消息: prompt.build_messages()
-        # 3. TTS 关闭: delta 直通 / TTS 开启: _start_tts_stream 绑定发送
+        # 3. TTS 关闭: delta 直通 / TTS 开启: stream_sentence 绑定发送
 
         for round in range(MAX_TOOL_ROUNDS + 1):
             async for chunk in llm.stream_think(messages, tools=tool_defs):
@@ -400,7 +400,7 @@ class CognitiveLoop:
 ```
 LLM token stream
   → SentenceBuffer.feed(token)
-    → sentence complete → CognitiveLoop._start_tts_stream(sentence)
+    → sentence complete → CognitiveLoop.stream_sentence(sentence)
       → TTS.synthesize_stream(sentence) [background task]
         → 首 chunk 到达 → 绑定发送: delta(完整句) + send("") + audio_chunks
           → WebSocket → browser appendDelta + audioQueue → playNext()
@@ -940,9 +940,13 @@ Agent/
 │   │   ├── lifecycle.py      #     AgentLifecycle: start/stop 编排
 │   │   ├── server.py         #     AgentServer: run_server/repl + provider 切换
 │   │   └── _types.py         #     RunState + 辅助类
-│   ├── cognitive/            #   CognitiveLoop 包 (loop + tts + tools + timing)
-│   │   ├── loop.py           #     CognitiveLoop(CognitiveTTS, CognitiveTools)
-│   │   ├── tts.py            #     TTSStreamManager + emoji + CognitiveTTS mixin
+│   ├── adapter/
+│   ├── llm_adapter.py
+│   ├── tts_adapter.py
+│   └── tool_call_parser.py
+├── cognitive/            #   CognitiveLoop 包 (loop + tts + tools + timing)
+│   │   ├── loop.py           #     CognitiveLoop(CognitiveTools)
+│   │   └── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   │   ├── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   │   └── timing.py         #     Timer + TimingClock 延迟统计
 │   ├── event_bus.py         #   优先级事件总线
@@ -951,8 +955,6 @@ Agent/
 │   │   ├── block_filter.py  #     流式块过滤 + 结构化块解析
 │   │   ├── sentence_buffer.py #   分句缓冲
 │   │   └── text_utils.py    #     文本提取 + MessageObj
-│   ├── tool_call_parser.py  #   流式 tool call 合并/归一化
-│   ├── llm_adapter.py       #   LLM 适配器
 │   ├── prompt_assembler.py  #   提示词组装 + 性格引擎数据注入
 │   ├── idle_monitor.py      #   空闲监控
 │   ├── task_scheduler.py    #   Worker Pool 调度器
@@ -1065,7 +1067,6 @@ INTERRUPT:
 | 3 | agent/agent.py | cognitive process (USER_INPUT) | `_current_task`，INTERRUPT cancel |
 | 4 | agent/agent.py | cognitive process (SYSTEM_TICK) | 同上 |
 | 5 | cognitive/loop.py | `_after_response` | fire-and-forget，无追踪 |
-| 6 | cognitive/tts.py | TTS 流式合成 | `TTSStreamManager._tasks[]`，gather/cancel |
 | 7 | idle_monitor.py | idle 监控 tick | 常驻，stop 时 cancel |
 | 8 | long_term.py | embedding 加载 | insert 时 await (wait=True), search 时 fire-and-forget |
 | 9 | personality/engine.py | expression 输出 | 纯 fire-and-forget，无追踪 |

@@ -12,7 +12,7 @@ import pytest
 from core.memory.consolidator import MemoryConsolidator, _parse_extraction, _parse_compare_actions
 from core.schema.memory import MemoryType
 from core.memory.long_term import LongTermMemory
-from core.llm_adapter import LLMAdapter
+from core.adapter.llm_adapter import LLMAdapter
 
 
 # ============================================================================

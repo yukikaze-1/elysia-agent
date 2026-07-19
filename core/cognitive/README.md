@@ -4,7 +4,7 @@
 
 ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引擎。流式接收 LLM 输出，实时解析 `<inner_voice>` 标签，检测工具调用，管理 TTS 流式播放。
 
-使用双 mixin 模式：`CognitiveLoop(CognitiveTTS, CognitiveTools)`。
+使用 mixin 模式：`CognitiveLoop(CognitiveTools)`。
 
 ## 架构
 
@@ -28,7 +28,7 @@ ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引�
 ```
 LLM stream
   ├─ content delta ──► SentenceBuffer.feed(token)
-  │                     → 完整句 → _start_tts_stream(sentence)
+  │                     → 完整句 → stream_sentence(sentence)
   │                       → TTSStreamManager.stream_sentence()
   │                         → Phase 1: 并行下载音频
   │                         → Phase 2: 串行转发到前端（按 seq 门控）
@@ -70,8 +70,7 @@ THINKING → LLM 返回 tool_calls → EXECUTING → 工具结果注入 → THIN
 ```
 core/cognitive/
 ├── __init__.py    — 重导出 CognitiveLoop
-├── loop.py        — CognitiveLoop(CognitiveTTS, CognitiveTools): process + _think_loop
-├── tts.py         — TTSStreamManager + emoji utils + CognitiveTTS mixin
+├── loop.py        — CognitiveLoop(CognitiveTools): process + _think_loop
 ├── tools.py       — CognitiveTools mixin: _execute_tools_directly + _handle_submit_task
 ├── timing.py      — Timer + TimingClock 延迟统计
 └── tests/
@@ -79,11 +78,12 @@ core/cognitive/
 
 关联文件:
 core/
-├── block_filter.py     → core/text/     — 结构化块过滤
-├── sentence_buffer.py  → core/text/     — 分句缓冲
-├── text_utils.py       → core/text/     — 文本提取 + MessageObj
-├── tool_call_parser.py                  — 流式 tool_call 合并/归一化
-└── llm_adapter.py                       — LLM 流式适配器
+├── adapter/llm_adapter.py  — LLM 流式适配器
+├── adapter/tool_call_parser.py — 流式 tool_call 合并/归一化
+├── adapter/tts_adapter.py  — TTSStreamManager（句队列 + emoji 同步）
+├── text/block_filter.py     — 结构化块过滤
+├── text/sentence_buffer.py  — 分句缓冲
+└── text/text_utils.py       — 文本提取 + MessageObj
 
 Module/
 ├── tts/          — TTS 后端（GPT-SoVits / MiniMax）

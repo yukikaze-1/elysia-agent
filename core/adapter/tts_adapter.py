@@ -1,6 +1,6 @@
-"""TTS 流式播放管理器 — 句级流式合成 + emoji 排队同步。
+"""TTS 适配器 — 句级流式合成 + emoji 排队同步。
 
-从 cognitive_loop.py 提取。管理 TTS 后台任务生命周期、emoji 与 TTS
+封装 Module/tts TTSBackend，提供流式播放管理、emoji 与 TTS
 句子的绑定排队、热切换 TTS 后端。
 
 设计原则:
@@ -16,7 +16,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from Module.output import ChannelCapability, OutputManager
 from Module.tts import TTSBackend
@@ -304,39 +304,5 @@ class TTSStreamManager:
                 sentence, character=self._char_name,
             )
             await self._output.audio_chunk(audio)
-        except Exception:
-            logger.debug("TTS synthesis failed", exc_info=True)
-
-
-# ---- CognitiveTTS mixin ---------------------------------------------------
-
-class CognitiveTTS:
-    """TTS mixin — deprecated wrappers，供 test_phase3.py 兼容。
-
-    所有属性由 CognitiveLoop.__init__ 初始化，本 mixin 不含 __init__。
-    """
-    # 类型声明 — 属性由 CognitiveLoop.__init__ 注入
-    _tts_mgr: Any = None
-    _tts_task: Any = None
-    _tts: Any = None
-    _prompt: Any = None
-    _output: Any = None
-
-    def _start_tts_stream(self, sentence: str) -> None:
-        """[Deprecated] 代理到 TTSStreamManager.stream_sentence()。"""
-        self._tts_mgr.stream_sentence(sentence)
-        if self._tts_mgr._tasks:
-            self._tts_task = self._tts_mgr._tasks[-1]
-
-    async def _synthesize_sentence(self, sentence: str) -> None:
-        """[Deprecated] Legacy non-streaming TTS — 直接使用 self._tts。"""
-        if not self._tts:
-            return
-        try:
-            char_name = self._prompt._character.name
-            audio = await self._tts.synthesize(sentence, character=char_name)
-            await self._output.audio_chunk(audio)
-        except asyncio.CancelledError:
-            raise
         except Exception:
             logger.debug("TTS synthesis failed", exc_info=True)

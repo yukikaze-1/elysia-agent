@@ -10,7 +10,7 @@ LLM 流式 delta 直接推到前端，`send(msg)` 发送完整消息。问题：
 
 ### 阶段 1：SentenceBuffer 分句（`f031850`）
 
-引入 `SentenceBuffer`，按 `。！？\n～…` 等分隔符切句。每句触发 `_start_tts_stream`。前端仍是整段气泡。
+引入 `SentenceBuffer`，按 `。！？\n～…` 等分隔符切句。每句触发 `stream_sentence`。前端仍是整段气泡。
 
 **踩坑**：emoji 被送进 TTS → GPT-SoVits 返回 400（`1e6c146`）。修复：`_is_emoji_only()` 跳过纯 emoji 句；`text_preprocess.py` 加 `_EMOJI_RE` 全局过滤。
 
@@ -57,7 +57,7 @@ LLM 比 TTS 快，回复在 TTS 首块音频到达前就完成了。文字走 fa
 核心洞察：**让 TTS task 自己负责发送文字+音频**，不依赖外部 sync 信号。
 
 ```
-LLM → SentenceBuffer 分句 → _start_tts_stream(sentence)
+LLM → SentenceBuffer 分句 → stream_sentence(sentence)
   → TTS 后台 task 等首块音频
   → 绑定发送: delta(完整句) + send("") + audio_chunks + audio_end
   → 前端收到直接渲染+播放

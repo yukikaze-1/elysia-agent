@@ -15,13 +15,13 @@ from Module.tool.safety import SafetyProfile
 
 from core.cognitive import CognitiveLoop
 from core.text.text_utils import MessageObj
-from core.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
+from core.adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
 from core.agent_fsm import AgentFSM, AgentState
 from core.event_bus import EventBus, EventType, EventPriority
 from core.schema.event import StateChangeData
-from core.llm_adapter import LLMAdapter
+from core.adapter.llm_adapter import LLMAdapter
 from core.tests.fake_llm import FakeLLMBackend
 from core.app_config import AppConfig
 
@@ -121,7 +121,7 @@ class TestNormalizeToolCalls:
 
 
 # ============================================================================
-# 3. CognitiveLoop — _synthesize_sentence, _handle_interrupt
+# 3. CognitiveLoop — TTSStreamManager, _handle_interrupt
 # ============================================================================
 
 @pytest.mark.service
@@ -167,27 +167,29 @@ class TestCognitiveLoopMethods:
         return loop
 
     @pytest.mark.asyncio
-    async def test_synthesize_sentence_tts_none(self, loop):
-        loop._tts = None
-        await loop._synthesize_sentence("hello")
+    async def test_synthesize_legacy_tts_none(self, loop):
+        loop._tts_mgr.set_backend(None)
+        await loop._tts_mgr.synthesize_legacy("hello")
         # Should return immediately without error
 
     @pytest.mark.asyncio
-    async def test_synthesize_sentence_tts_success(self, loop):
+    async def test_synthesize_legacy_tts_success(self, loop):
         loop._tts = AsyncMock()
         loop._tts.synthesize.return_value = b"fakewav"
+        loop._tts_mgr.set_backend(loop._tts)
 
         with patch.object(loop._output, "audio_chunk", new_callable=AsyncMock) as mock_ac:
-            await loop._synthesize_sentence("hello")
+            await loop._tts_mgr.synthesize_legacy("hello")
             loop._tts.synthesize.assert_awaited_once()
             mock_ac.assert_awaited_once_with(b"fakewav")
 
     @pytest.mark.asyncio
-    async def test_synthesize_sentence_tts_failure(self, loop):
+    async def test_synthesize_legacy_tts_failure(self, loop):
         loop._tts = AsyncMock()
         loop._tts.synthesize.side_effect = RuntimeError("TTS down")
+        loop._tts_mgr.set_backend(loop._tts)
 
-        await loop._synthesize_sentence("hello")
+        await loop._tts_mgr.synthesize_legacy("hello")
         # Should not raise
 
     @pytest.mark.asyncio
@@ -297,7 +299,7 @@ class TestCognitiveLoopTTS:
         from core.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
         from Module.tool import ToolManager, PluginContext, ToolContext
-        from core.llm_adapter import LLMAdapter
+        from core.adapter.llm_adapter import LLMAdapter
 
         fsm = AgentFSM()
         llm = LLMAdapter(_test_backend=FakeLLMBackend(response="你好"))
@@ -331,13 +333,13 @@ class TestCognitiveLoopTTS:
         )
 
     @pytest.mark.asyncio
-    async def test_start_tts_stream_creates_task(self, loop):
-        """_start_tts_stream creates a background TTS task."""
+    async def test_stream_sentence_creates_task(self, loop):
+        """stream_sentence creates a background TTS task."""
         initial_count = len(loop._tts_mgr._tasks)
-        loop._start_tts_stream("你好世界")
+        loop._tts_mgr.stream_sentence("你好世界")
         assert len(loop._tts_mgr._tasks) == initial_count + 1
         # Should clean up done tasks
-        loop._start_tts_stream("第二句")
+        loop._tts_mgr.stream_sentence("第二句")
         # At most initial+2 tasks (some may have completed)
         assert len(loop._tts_mgr._tasks) <= initial_count + 2
         assert loop._tts_mgr._total >= 2
@@ -412,7 +414,7 @@ class TestCognitiveLoopSync:
         from core.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
         from Module.tool import ToolManager, PluginContext, ToolContext
-        from core.llm_adapter import LLMAdapter
+        from core.adapter.llm_adapter import LLMAdapter
 
         fsm = AgentFSM()
         llm = LLMAdapter(_test_backend=FakeLLMBackend(response="你好呀！"))
@@ -625,7 +627,7 @@ class TestEmotionEngineEdges:
         from core.schema.types import SessionId
         from Module.output import OutputManager
         from core.personality import CharacterEngine
-        from core.llm_adapter import LLMAdapter
+        from core.adapter.llm_adapter import LLMAdapter
 
         char = CharacterConfig(name="Test")
         state = CharacterState(session_id=SessionId("test-sid"))
@@ -1254,7 +1256,7 @@ class TestAppConfig:
 class TestLLMAdapterErrors:
     def test_no_api_key_uses_factory(self):
         """LLMAdapter 不再直接检查 API key；key 检查由 registry 层处理。"""
-        from core.llm_adapter import LLMAdapter
+        from core.adapter.llm_adapter import LLMAdapter
         from core.tests.fake_llm import FakeLLMBackend
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
         assert adapter.model == "deepseek/deepseek-chat"
@@ -1262,7 +1264,7 @@ class TestLLMAdapterErrors:
     @pytest.mark.asyncio
     async def test_retry_on_429_then_succeed(self):
         """429 错误应触发重试并最终成功。"""
-        from core.llm_adapter import LLMAdapter
+        from core.adapter.llm_adapter import LLMAdapter
 
         call_count = [0]
 
@@ -1288,7 +1290,7 @@ class TestLLMAdapterErrors:
     @pytest.mark.asyncio
     async def test_retry_on_503_then_succeed(self):
         """503 错误应触发重试并最终成功。"""
-        from core.llm_adapter import LLMAdapter
+        from core.adapter.llm_adapter import LLMAdapter
 
         call_count = [0]
 
@@ -1313,7 +1315,7 @@ class TestLLMAdapterErrors:
     @pytest.mark.asyncio
     async def test_non_retryable_error_propagates(self):
         """非可重试错误（如 400）应直接抛出不重试。"""
-        from core.llm_adapter import LLMAdapter
+        from core.adapter.llm_adapter import LLMAdapter
 
         class FailBackend:
             async def stream_think(self, messages, **kwargs):
@@ -1330,7 +1332,7 @@ class TestLLMAdapterErrors:
     @pytest.mark.asyncio
     async def test_no_retry_after_stream_started(self):
         """流开始产出后遇到可重试错误 → 不重试，直接抛异常。"""
-        from core.llm_adapter import LLMAdapter
+        from core.adapter.llm_adapter import LLMAdapter
 
         call_count = [0]
 

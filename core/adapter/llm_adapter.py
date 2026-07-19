@@ -12,7 +12,7 @@ from typing import AsyncIterator
 
 from Module.llm import LLMBackend, LLMFactory
 
-from core.tool_call_parser import normalize_tool_calls
+from core.adapter.tool_call_parser import normalize_tool_calls
 from core.schema.tool import ToolCall
 
 logger = logging.getLogger(__name__)

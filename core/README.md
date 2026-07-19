@@ -91,9 +91,9 @@ Agent.start()
 
 关键方法：`post()`, `next()`, `drain()`
 
-#### CognitiveLoop (`cognitive/` package, 4 files)
+#### CognitiveLoop (`cognitive/` package, 3 files)
 
-ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的核心执行引擎。使用双 mixin 模式：`CognitiveLoop(CognitiveTTS, CognitiveTools)`。流式 LLM 输出中解析 `<inner_voice>` 标签：PRE → THINK → REPLY 三阶段。工具调用检测后最多 5 轮工具循环。`_handle_submit_task` 拦截后台任务委托。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。`tts.py` 合并原 `tts_stream.py`（`TTSStreamManager` + emoji 检测）与 `CognitiveTTS` deprecated wrappers。`tools.py` 包含 `_execute_tools_directly`、`_submit_task_definition`、`_default_user_profile`。`timing.py` 包含 `Timer` context manager + `TimingClock` 请求级聚合（span 嵌套）。
+ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的核心执行引擎。使用 mixin 模式：`CognitiveLoop(CognitiveTools)`。流式 LLM 输出中解析 `<inner_voice>` 标签：PRE → THINK → REPLY 三阶段。工具调用检测后最多 5 轮工具循环。`_handle_submit_task` 拦截后台任务委托。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。`tools.py` 包含 `_execute_tools_directly`、`_submit_task_definition`、`_default_user_profile`。`timing.py` 包含 `Timer` context manager + `TimingClock` 请求级聚合（span 嵌套）。
 
 关键方法：`process()`, `_think_loop()`, `cancel_current()`, `_after_response()`
 
@@ -131,17 +131,15 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 
 | 文件 | 职责 |
 |------|------|
-| `llm_adapter.py` | LLM 适配器：封装 `Module.llm` 后端，提供 `stream_think()` 流式接口，自动重试（429/500/502/503/504，指数退避 3 次）。`ThoughtResult` dataclass 统一 text + tool_calls |
+| `adapter/` | 适配器层：`LLMAdapter` 封装 `Module.llm` 后端，提供 `stream_think()` 流式接口，自动重试（429/500/502/503/504，指数退避 3 次）。`TTSStreamManager` 管理 TTS 句队列 + emoji 同步 + 门控播放。`tool_call_parser` 流式 tool_call 合并/归一化。详见 [`adapter/`](adapter/) |
 | `character_config.py` | 角色配置：从 YAML 加载角色名、wake words、emotion 阈值、proactive 参数、L1 Core personality 文本路径。`from_yaml()` 工厂方法 |
 | `app_config.py` | 应用配置：`ConfigLoader` 加载 `config.yaml` + env override。包含 `AgentConfig`、`LLMConfig`、`MemoryConfig`、`TTSConfig` 等 dataclass |
 | `text/` | 文本流处理包：`BlockFilter` 实时过滤 `<|markdown|>` 和 `<|code|>` 标记，防止代码/markdown 进入 TTS。`SentenceBuffer` 逐 token feed 检测完整句边界（。！？!?\n～…〜），完整句触发 TTS。`content_text_from_content()` 从多模态 content 数组提取纯文本。`MessageObj` dataclass 用于非流式文本最终发送。详见 [`text/`](text/) |
-| `cognitive/tts.py` | TTS 流管理（原 `tts_stream.py` 合并入 `cognitive/` 包）：句队列 + FIFO 顺序播放 + emoji 排队（emoji 依附于 TTS 句前后发送）。`TTSStreamManager` 管理后台 TTS task 生命周期，支持热切换后端。`CognitiveTTS` mixin 提供 deprecated TTS wrappers |
 | `message_id.py` | 消息 ID 生成：`new_message_id()` 返回 `msg_` + 26 位 hex UUID4 |
 | `debug/` | Debug 面板数据聚合包：`DebugInfo` dataclass 涵盖 FSM（含 mood）、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator（含 buffer）、MemoryReflector、Character Reflector、CharacterEngine 等所有子系统状态。`collect()` 遍历 Agent 聚合数据，前端 16 面板。`PromptRecorder`/`ResponseRecorder` 环形缓冲区（容量 20），捕获 LLM 调用完整 messages/tools/回复/inner_voice，供 debug 面板查看。详见 [`debug/`](debug/) |
 | `log_setup.py` | 日志系统：stderr + `log/app.log` + `log/conversation.log` + 库日志分离。提供 `set_request_id()`/`get_request_id()` ContextVar 和 `log_conversation()` 对话日志 |
 | `token_tracker.py` | Token 消耗追踪：`record()` 记录每次 LLM 调用的 token usage，`get_session_stats()` 聚合统计。支持 MongoDB 持久化和 OutputManager 广播 |
 | `custom_providers.py` | 自定义 provider 端点管理：读写 `custom_providers.yaml`，支持用户添加自定义 LLM/STT/TTS 端点 |
-| `tool_call_parser.py` | 流式 tool_call 解析：`merge_stream_tool_calls()` 合并流式 delta 片段，`normalize_tool_calls()` 规范化（补全 id/type/function 结构）。`normalize_tool_calls()` 转为 `list[ToolCall]` Pydantic 模型（依赖 pydantic，core 全域依赖） |
 | `task.py` | Task 数据模型：`Task` dataclass + `TaskType`/`TaskStatus` 枚举 + `asyncio.Future` 双向绑定。支持 retry 和序列化。TaskScheduler Worker Pool 消费单元 |
 | `schema/` | 共享类型包：`AgentState`、`EventData` 判别联合（5 种事件类型）、多模态 Part、`ToolCall`、`ExtractedMemory`/`CompareAction` 判别联合、`MemoryReflectorState`/`ReflectorActions`、消息、token、character/mood 状态等，含 `adapters/` 适配层。13 个 `.py` 文件 + `adapters/` 适配层 |
 | `__init__.py` | 包标记，当前为空 |
@@ -152,6 +150,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 |--------|------|----------|
 | `core/agent/` | 组装入口：`Agent(AgentLifecycle, AgentServer)`，管理所有子系统引用和 RunState 生命周期 | [agent/README.md](agent/README.md) |
 | `core/cognitive/` | 认知循环：ReAct 调度器 + inner_voice 状态机 + TTS 流管理 + 工具执行 + 计时 | [cognitive/README.md](cognitive/README.md) |
+| `core/adapter/` | 适配器层：LLMAdapter + TTSStreamManager + tool_call_parser，封装 Module/ 后端供 core/ 层使用 | [adapter/README.md](adapter/README.md) |
 | `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口）、`LongTermMemory`（向量检索）、`MemoryConsolidator`（提取+比对+写入）、`MemoryReflector`（定期去重） | [memory/README.md](memory/README.md) |
 | `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
 | `core/text/` | 文本流处理管线：`BlockFilter`（结构化块过滤）+ `SentenceBuffer`（分句缓冲）+ `text_utils`（文本提取） | [text/README.md](text/README.md) |
@@ -255,7 +254,6 @@ Agent 生命周期中的关键扩展点：
 | `prompt_assembler.py` | ~130 | 核心组件 |
 | `idle_monitor.py` | ~130 | 核心组件 |
 | `task_scheduler.py` | ~430 | 核心组件 |
-| `llm_adapter.py` | ~170 | 支撑模块 |
 | `character_config.py` | ~80 | 支撑模块 |
 | `app_config.py` | ~70 | 支撑模块 |
 | `text/` | 3 文件 (~610) | 支撑模块 |
@@ -264,7 +262,6 @@ Agent 生命周期中的关键扩展点：
 | `log_setup.py` | ~150 | 支撑模块 |
 | `token_tracker.py` | ~190 | 支撑模块 |
 | `custom_providers.py` | ~80 | 支撑模块 |
-| `tool_call_parser.py` | ~50 | 支撑模块 |
 | `task.py` | ~80 | 支撑模块 |
 | `schema/` | 目录（13 .py + adapters/） | 支撑模块 |
 | `__init__.py` | 0 | 包标记 |

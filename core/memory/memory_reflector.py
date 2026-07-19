@@ -23,7 +23,7 @@ from core.schema.memory_reflector import MemoryReflectorState, ReflectorActions
 if TYPE_CHECKING:
     from core.memory.long_term import LongTermMemory
     from core.memory.session import SessionMemory
-    from core.llm_adapter import LLMAdapter
+    from core.adapter.llm_adapter import LLMAdapter
 
 logger = logging.getLogger(__name__)
 

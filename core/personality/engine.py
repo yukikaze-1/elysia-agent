@@ -25,7 +25,7 @@ from Module.output import OutputManager
 from core.schema.mood import Mood
 
 if TYPE_CHECKING:
-    from core.llm_adapter import LLMAdapter
+    from core.adapter.llm_adapter import LLMAdapter
     from core.schema.character import CharacterState, StateHistoryEntry
 
 logger = logging.getLogger(__name__)

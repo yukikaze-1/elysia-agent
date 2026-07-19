@@ -3,11 +3,11 @@
 Orchestrates THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE.
 Uses structured streaming for sub-100ms TTFT and simultaneous tool-call detection.
 
-Sub-modules extracted for focus:
-  text/block_filter.py   — streaming block tag filter + post-hoc block parsing
-  cognitive/tts.py  — TTS stream manager + emoji queuing
-  tool_call_parser.py — merge/normalize streaming tool_call deltas
-  text/text_utils.py — content text extraction + MessageObj
+Sub-modules:
+  text/block_filter.py         — streaming block tag filter + post-hoc block parsing
+  adapter/tts_adapter.py       — TTS stream manager + emoji queuing
+  adapter/tool_call_parser.py  — merge/normalize streaming tool_call deltas
+  text/text_utils.py           — content text extraction + MessageObj
 """
 
 import asyncio
@@ -32,7 +32,7 @@ from Module.tool.protocol import ToolResult
 from ..prompt_assembler import PromptAssembler
 from ..memory.session import SessionMemory
 from ..text.sentence_buffer import SentenceBuffer
-from ..llm_adapter import LLMAdapter
+from ..adapter.llm_adapter import LLMAdapter
 from ..memory.consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
 
@@ -40,8 +40,8 @@ if TYPE_CHECKING:
     from Module.task_system.delegation_preparer import DelegationPreparer
 
 from ..text.block_filter import BlockFilter, build_parts_with_blocks
-from .tts import CognitiveTTS, TTSStreamManager, is_emoji_only
-from ..tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
+from ..adapter.tts_adapter import TTSStreamManager, is_emoji_only
+from ..adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from ..text.text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageRecord, TokenUsageSummary
@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 from .tools import CognitiveTools
 
-class CognitiveLoop(CognitiveTTS, CognitiveTools):
+class CognitiveLoop(CognitiveTools):
     """ReAct cognitive loop with streaming delivery and tool-call detection."""
 
     MAX_TOOL_ROUNDS = 5

@@ -116,7 +116,7 @@ class TestEmotionEngine:
         from core.schema.types import SessionId
         from Module.output import OutputManager
         from core.personality import CharacterEngine
-        from core.llm_adapter import LLMAdapter
+        from core.adapter.llm_adapter import LLMAdapter
         from unittest.mock import MagicMock, AsyncMock
 
         char = CharacterConfig(name="Test")
@@ -262,7 +262,7 @@ class TestStreamingIntegration:
         """Real LLM structured streaming yields content dicts."""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.llm_adapter import LLMAdapter
+        from core.adapter.llm_adapter import LLMAdapter
 
         adapter = LLMAdapter()
         chunks = []
@@ -289,7 +289,7 @@ class TestStreamingIntegration:
         from dotenv import load_dotenv
         load_dotenv()
         import time
-        from core.llm_adapter import LLMAdapter
+        from core.adapter.llm_adapter import LLMAdapter
 
         adapter = LLMAdapter()
         start = time.monotonic()
