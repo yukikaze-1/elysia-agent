@@ -25,6 +25,10 @@ class VectorDBBackend(ABC):
     @abstractmethod
     async def collection_exists(self, name: str) -> bool: ...
 
+    async def load_collection(self, name: str) -> None:
+        """加载 collection 到内存（默认 no-op，Milvus 等外部 DB 需覆盖）。"""
+        pass
+
     # ---- Write ----
 
     @abstractmethod

@@ -102,6 +102,9 @@ class MilvusBackend(VectorDBBackend):
     async def drop_collection(self, name: str) -> None:
         await asyncio.to_thread(self._client.drop_collection, name)
 
+    async def load_collection(self, name: str) -> None:
+        await asyncio.to_thread(self._client.load_collection, name)
+
     async def collection_exists(self, name: str) -> bool:
         return await asyncio.to_thread(self._client.has_collection, name)
 
@@ -140,6 +143,7 @@ class MilvusBackend(VectorDBBackend):
             "data": [vector],
             "limit": top_k,
             "search_params": {"metric_type": self._metric_types.get(collection, "L2")},
+            "consistency_level": "Strong",
         }
         if filter_expr:
             kwargs["filter"] = filter_expr

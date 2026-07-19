@@ -25,6 +25,8 @@ class MemoryRepository(Repository):
             self._db = VectorDBFactory.create("milvus/memory")
             if not await self._db.collection_exists(COLLECTION):
                 await self._db.create_collection(COLLECTION, DIMENSION)
+            else:
+                await self._db.load_collection(COLLECTION)
             logger.info("MemoryRepository: Milvus connected")
             return True
         except Exception as e:
