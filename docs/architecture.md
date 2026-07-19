@@ -133,7 +133,7 @@
   │      │                                                       │    │
   │      └── tool_calls ──► asyncio.gather ──► inject ──► loop───────┘
   │  CharacterEngine.analyze_assistant() ──► expression 推送           │  │
-  │  MemoryConsolidator.consolidate() ──► LongTermMemory (fire-forget)│  │
+  │  MemoryConsolidator.consolidate() ──► 提取 → 比对 → LongTermMemory（fire-forget，Pydantic typed）│  │
   │  CharacterReflector.buffer() ──► CharacterEngine (fire-forget)    │  │
   │  SessionMemory.save() ──► MongoDB                                 │  │
   │  FSM → IDLE                                                       │  │
@@ -298,9 +298,11 @@ class EventPriority(IntEnum):
 class Event:
     priority: int = field(compare=True)
     type: str = field(compare=False)
-    data: Any = field(compare=False, default=None)
+    data: EventData | None = field(compare=False, default=None)
     seq: int = field(compare=True, default=0)  # FIFO within same priority
 ```
+
+`EventData` 是 5 种模型的判别联合（`InterruptData` / `StateChangeData` / `UserInputData` / `SystemTickData` / `TaskResultData`），通过 `discriminator="event_type"` 区分。`post()` 自动从 `data.event_type` 推导 `type` 字段。
 
 INTERRUPT 处理流程：
 ```
@@ -573,7 +575,7 @@ class LongTermMemory:
 
 ```
 缓冲 6 条消息 → EXTRACTION_PROMPT (事件合并 + poignancy)
-  → LLM 提取: [{"type":"Fact","content":"...","poignancy":7}]
+  → LLM 提取 → ExtractedMemory Pydantic 模型 (MemoryType: Fact/Preference/Event/Plan/Note, content, poignancy) → ConsolidationCompare → CompareAction 判别联合 (insert/update/merge/skip)
   → LongTermMemory.insert(poignancy=7, memory_type="Fact")
 
 _history: 最近 20 条 (供 /debug 面板)
@@ -607,7 +609,7 @@ tool_manager.load_all(ALL_PLUGINS, plugin_ctx)
 | 工具 | 参数 | 功能 |
 |------|------|------|
 | `search_memory` | query, limit | 语义搜索长期记忆 |
-| `save_memory` | content, type | 将重要信息保存到长期记忆库（type: fact/plan/preference/note） |
+| `save_memory` | content, type | 将重要信息保存到长期记忆库（type: fact/preference/event/plan/note，输入大小写不敏感，归一化为 TitleCase） |
 | `get_time` | timezone, format | 获取当前日期时间，支持时区和格式 |
 | `web_search` | query, limit | Tavily / Brave 搜索（默认 Tavily） |
 | `web_fetch` | url | 抓取网页内容 |

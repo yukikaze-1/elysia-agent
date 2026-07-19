@@ -575,7 +575,7 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | Bug 修复 | `list_directory` 符号链接循环 | inode visited set 防无限递归 |
 | Bug 修复 | `read_file` OOM | `f.readlines()` → 逐行读取 + early stop |
 | Bug 修复 | `search_memory` limit 上限 | 上限 20，加 try/except |
-| Bug 修复 | `save_memory` type 校验 | 枚举约束 (fact/plan/preference/note) + 运行时参数过滤 |
+| Bug 修复 | `save_memory` type 校验 | MemoryType 枚举 (Fact/Preference/Event/Plan/Note) + `.title()` 标准化 |
 | Bug 修复 | `get_time` 时区 | 增加 `timezone` + `format` 参数，默认 ISO 8601 |
 | Bug 修复 | TaskScheduler 重试 | `ErrorType.is_retryable` 检查，cancel 循环检测 |
 | 文件变更 | 新增 | `capability.py`、`manager.py`、`test_framework.py`、4 个插件文件、README.md |

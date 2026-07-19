@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Elysia/Agent is a Python 3.11+ AI companion application. The codebase has two main layers:
 
 - **`Module/`** — backend-agnostic library for AI companion infrastructure: LLM, STT, TTS, embedding, vector/document databases, output channels, config, logging, system prompt engine, tool framework.
-- **`core/`** — the Elysia Agent application: `Agent`, `CognitiveLoop`, `PersonalityEngine`, `EmotionEngine`, `CharacterReflector`, `MemoryConsolidator`, `MemoryReflector`, `SessionMemory`, `LongTermMemory`, `IdleMonitor`, task scheduler, debug info, character config.
+- **`core/`** — the Elysia Agent application: `Agent`, `CognitiveLoop`, `CharacterEngine`, `CharacterReflector`, `MemoryConsolidator`, `MemoryReflector`, `SessionMemory`, `LongTermMemory`, `IdleMonitor`, task scheduler, debug info, character config.
 
 Plain Python（无 `pyproject.toml` 等构建系统）。前端 vanilla HTML/CSS/JS（无框架、无构建步骤）。`Makefile` 提供常用任务入口。
 
@@ -88,12 +88,12 @@ Module/<service>/
 core/
 ├── agent.py              # Agent: orchestrates all subsystems, FSM lifecycle
 ├── cognitive_loop.py     # CognitiveLoop: THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE
-├── personality/          # PersonalityEngine: 4-layer personality model
+├── personality/          # CharacterEngine: 4-layer personality model
 │   ├── engine.py         #   L1 Core (file, immutable) → L2 Self (session, slow evolution) → L3 State (session, Reflector-driven) → L4 Mood (EmotionEngine)
 │   ├── reflector.py      #   CharacterReflector: buffers 50 pairs → LLM reflection → submit to engine
 │   └── tests/
 ├── emotion_engine.py     # EmotionEngine: keyword + STT-driven mood tracking (L4 Mood)
-├── consolidator.py       # MemoryConsolidator: buffers 6 msgs → LLM extracts Fact/Preference/Event/Plan → Milvus; now also compares against existing memories
+├── consolidator.py       # MemoryConsolidator: buffers 6 msgs → LLM extracts Fact/Preference/Event/Plan/Note → ExtractedMemory Pydantic → compare against existing memories (CompareAction discriminated union) → insert/update/merge/skip
 ├── memory/
 │   ├── session.py         # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive
 │   ├── long_term.py       # LongTermMemory: Milvus-backed vector search + reranking; _absorbed_ids for merge tracking
@@ -151,6 +151,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.logger` | Logging factory | `LoggerFactory` (plain + JSON, rotating) |
 | `Module.system_prompt` | System prompt engine | 12-section orchestration + templates |
 | `Module.schema` | Shared data models | `UserMessage`, `ChatMessage`, `Event`, media types |
+| `core.schema` | Shared Pydantic types: EventData (discriminated union, 5 event types), ToolCall, ExtractedMemory/CompareAction (discriminated union), ReflectorActions, MemoryType, message types, mood, etc. | |
 | `Module.database.vectordb` | Vector DB (ANN search) | `milvus` |
 | `Module.database.documentdb` | Document DB | `mongodb` |
 | `Module.database.graphdb` | Graph DB | stub only |
@@ -226,13 +227,13 @@ static/
 
 ### Debug page panels
 
-FSM state, session/Long-Term memory, message archive, token stats, PersonalityEngine (L2 Self, L3 State, awareness cooldown, state history), Character Reflector (buffer, last reflection, prompt), latency stats, task scheduler, tools, consolidation history, MongoDB/Milvus status.
+FSM state, session/Long-Term memory, message archive, token stats, CharacterEngine (L2 Self, L3 State, awareness cooldown, state history), Character Reflector (buffer, last reflection, prompt), latency stats, task scheduler, tools, consolidation history, MongoDB/Milvus status.
 
 ### Server routing (`Module/input/server.py`)
 
 `/` → `static/index.html`, `/debug` → `static/debug.html`, `/ws` → WebSocket, `/health` `/ready` `/shutdown` `/restart` `/api/chat` `/api/messages` `/api/images` `/api/providers` `/tools` `/tools/reload`。Debug API: `/debug/api` `/debug/api/prompts/{n}` `/debug/api/responses/{n}` `/debug/api/db-status` `/debug/api/ltm` `/debug/api/sessions` `/debug/api/archive` `/debug/api/tasks/stream`
 
-## PersonalityEngine
+## CharacterEngine
 
 4-layer model managing character personality state. See `core/personality/README.md` for full docs.
 
@@ -241,7 +242,7 @@ FSM state, session/Long-Term memory, message archive, token stats, PersonalityEn
 - L3 State: session-persisted short-term state, driven by CharacterReflector + events
 - L4 Mood: emotion per-turn, driven by EmotionEngine (existing, unchanged)
 
-CharacterReflector is a subcomponent — after LLM reflection, it submits events to `PersonalityEngine.consume_trigger("reflector", ...)` instead of writing `self_perception_history` directly.
+CharacterReflector is a subcomponent — after LLM reflection, it submits events to `CharacterEngine.consume_trigger("reflector", ...)` instead of writing `self_perception_history` directly.
 
 C1 renders L1 + L2. C9 conditionally renders L3 via `AwarenessTrigger` (cooldown: 1 hour, persisted to session).
 
@@ -256,7 +257,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 | `sessions` | MongoDB `default.sessions` | LLM context window, 30d TTL |
 | `message_archive` | MongoDB `default.message_archive` | Permanent append-only message log |
 | `token_usage` | MongoDB `default.token_usage` | LLM token statistics |
-| `long_term_memory` | Milvus `long_term_memory` | Vector memory with reranking |
+| `long_term_memory` | Milvus `long_term_memory` | ExtractedMemory (Pydantic) → CompareAction (insert/update/merge/skip) → vector with reranking |
 
 ## Conventions
 

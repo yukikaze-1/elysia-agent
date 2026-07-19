@@ -9,6 +9,9 @@
 - `search_memory` — 语义搜索长期记忆
 - `save_memory` — 保存信息到长期记忆（需用户确认）
 
+`save_memory` 接受 `type` 参数指定记忆类型，有效值：Fact（事实）、Preference（偏好）、
+Event（事件）、Plan（计划）、Note（笔记）。输入大小写不敏感，统一转为 TitleCase 后存储。
+
 ## 配置 (config.yaml)
 
 - `database_allowed` — 是否允许数据库访问

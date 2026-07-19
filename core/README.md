@@ -87,7 +87,7 @@ Agent.start()
 
 #### EventBus (`event_bus.py`)
 
-优先级事件总线，底层为 `asyncio.PriorityQueue`。三种优先级：`INTERRUPT(0)` > `STATE_CHANGE(1)` > `NORMAL(2)`。事件类型：`USER_INPUT`、`SYSTEM_TICK`、`TASK_RESULT`、`INTERRUPT`、`STATE_CHANGE`。每个事件携带 `data: dict`，含 `request_id` 用于链路追踪。`post()` 非阻塞投递，`next()` 阻塞取事件，`drain()` 排空队列（INTERRUPT 时保留 STATE_CHANGE 给前端）。
+优先级事件总线，底层为 `asyncio.PriorityQueue`。三种优先级：`INTERRUPT(0)` > `STATE_CHANGE(1)` > `NORMAL(2)`。事件类型：`USER_INPUT`、`SYSTEM_TICK`、`TASK_RESULT`、`INTERRUPT`、`STATE_CHANGE`。每个事件携带 `data: EventData`（discriminated union: `InterruptData | StateChangeData | UserInputData | SystemTickData | TaskResultData`），type 从 `data.event_type` 自动推导。含 `request_id` 用于链路追踪。`post()` 非阻塞投递，`next()` 阻塞取事件，`drain()` 排空队列（INTERRUPT 时保留 STATE_CHANGE 给前端）。
 
 关键方法：`post()`, `next()`, `drain()`
 
@@ -99,13 +99,13 @@ ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引�
 
 #### CharacterEngine (`personality/engine.py`)
 
-合并原 PersonalityEngine + EmotionEngine，关键词检测 + STT 声学情绪 → mood 映射。8 种 mood（happy/excited/sad/curious/warm/concerned/calming/neutral）+ reassuring/understanding，intensity 衰减机制。双路径：`analyze_user_stt()` 声学情绪路径（STT 情绪标签映射到 AI mood），`analyze_user()` 文本关键词路径（fallback）。`analyze_assistant()` 每轮回复后衰减 intensity 趋向 neutral。结果写入 `CharacterState.mood`，通过 OutputManager 推送 expression 变更到前端。详见 [personality/README.md](personality/README.md)。
+统一个性管理与情绪驱动，关键词检测 + STT 声学情绪 → mood 映射。8 种 mood（happy/excited/sad/curious/warm/concerned/calming/neutral）+ reassuring/understanding，intensity 衰减机制。双路径：`analyze_user_stt()` 声学情绪路径（STT 情绪标签映射到 AI mood），`analyze_user()` 文本关键词路径（fallback）。`analyze_assistant()` 每轮回复后衰减 intensity 趋向 neutral。结果写入 `CharacterState.mood`，通过 OutputManager 推送 expression 变更到前端。详见 [personality/README.md](personality/README.md)。
 
 关键方法：`analyze_user_stt()`, `analyze_user()`, `analyze_assistant()`, `restore_state()`
 
 #### MemoryConsolidator (`consolidator.py`)
 
-对话记忆提取：缓冲 6 条消息对 → LLM 提取 Fact/Preference/Event/Plan → `ConsolidationCompare.j2` 比对已有记忆 → 决策 insert/update/merge/skip → LongTermMemory（Milvus）。`consolidate()` 每轮对话后调用，`flush()` 在 shutdown 时强制落盘未持久化的缓冲。提取 prompt 由 `prompt/ExtractMemory.j2` 运行时加载。比对失败时回退全 insert。
+对话记忆提取：缓冲 6 条消息对 → LLM 提取 Fact/Preference/Event/Plan/Note → `ExtractedMemory` Pydantic 模型 → `ConsolidationCompare.j2` → `CompareAction` 判别联合（insert/update/merge/skip）→ LongTermMemory（Milvus）。`consolidate()` 每轮对话后调用，`flush()` 在 shutdown 时强制落盘未持久化的缓冲。提取 prompt 由 `prompt/ExtractMemory.j2` 运行时加载。比对失败时回退全 insert。
 
 关键方法：`consolidate()`, `flush()`
 
@@ -146,9 +146,9 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `prompt_recorder.py` | LLM Prompt 记录器：环形缓冲区（容量 20），捕获每次 LLM 调用的完整 messages 数组和 tools 定义，供 debug 面板查看 |
 | `response_recorder.py` | LLM Response 记录器：环形缓冲区（容量 20），捕获每次 LLM 调用的原始回复文本和 inner_voice 内容，供 debug 面板查看 |
 | `custom_providers.py` | 自定义 provider 端点管理：读写 `custom_providers.yaml`，支持用户添加自定义 LLM/STT/TTS 端点 |
-| `tool_call_parser.py` | 流式 tool_call 解析：`merge_stream_tool_calls()` 合并流式 delta 片段，`normalize_tool_calls()` 规范化（补全 id/type/function 结构）。纯 stdlib，零依赖 |
+| `tool_call_parser.py` | 流式 tool_call 解析：`merge_stream_tool_calls()` 合并流式 delta 片段，`normalize_tool_calls()` 规范化（补全 id/type/function 结构）。`normalize_tool_calls()` 转为 `list[ToolCall]` Pydantic 模型（依赖 pydantic，core 全域依赖） |
 | `task.py` | Task 数据模型：`Task` dataclass + `TaskType`/`TaskStatus` 枚举 + `asyncio.Future` 双向绑定。支持 retry 和序列化。TaskScheduler Worker Pool 消费单元 |
-| `schema/` | 共享类型包：`AgentState`、事件、多模态 Part、消息、token、character/mood/memory_reflector 状态等，含 `adapters/` 适配层。11 个 `.py` 文件 |
+| `schema/` | 共享类型包：`AgentState`、`EventData` 判别联合（5 种事件类型）、多模态 Part、`ToolCall`、`ExtractedMemory`/`CompareAction` 判别联合、`MemoryReflectorState`/`ReflectorActions`、消息、token、character/mood 状态等，含 `adapters/` 适配层。13 个 `.py` 文件 + `adapters/` 适配层 |
 | `__init__.py` | 包标记，当前为空 |
 
 ### 子目录
@@ -273,5 +273,5 @@ Agent 生命周期中的关键扩展点：
 | `custom_providers.py` | ~80 | 支撑模块 |
 | `tool_call_parser.py` | ~50 | 支撑模块 |
 | `task.py` | ~80 | 支撑模块 |
-| `schema/` | 目录（11 .py） | 支撑模块 |
+| `schema/` | 目录（13 .py + adapters/） | 支撑模块 |
 | `__init__.py` | 0 | 包标记 |
