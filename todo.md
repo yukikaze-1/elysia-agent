@@ -7,8 +7,7 @@
 | 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec |
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
-| 中 | **`CharacterEngine._push_expression()` 缺失 6 种 mood 映射** | `personality/engine.py`（原 `emotion_engine.py`）: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
-| 低 | **`IdleMonitor` 使用 `asyncio.get_event_loop().time()` 而非 `time.monotonic()`** | `idle_monitor.py:30`: `get_event_loop()` 在 Python 3.12+ 已 deprecated，同步测试中无运行中 loop 时行为不确定。建议改用 `time.monotonic()`。当前 `test_touch_resets_timer` 已加 `time.sleep(0.001)` 缓解。 |
+| 中 | **`CharacterEngine._push_expression()` 缺失 6 种 mood 映射** | `personality/engine.py`: `_push_expression` 仅映射 happy/excited/sad/curious 4 种 mood，STT 路径检测到的 warm/concerned/calming/reassuring/understanding 全部 fallback 到 `("neutral", 0.5)`，声学情绪检测结果在 expression 层面无法体现。 |
 | 中 | **TTS 密集短句导致 wait_all 阻塞** | TTS 连续 5+ 短句密集入队时 MiniMax 部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING。已缩短 read timeout 120s→30s 缓解，根因（wait_all 无超时）待重现后修复。 |
 
 ## 功能改进

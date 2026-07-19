@@ -935,12 +935,18 @@ Agent/
 │   └── bench/               # Bench: 延迟基准
 │
 ├── core/                    # L1 认知控制 + L2 记忆
-│   ├── agent.py             #   组件组装 + 生命周期 + TaskSystem 集成
-│   ├── cognitive_loop.py    #   ReAct 调度器
+│   ├── agent/                #   Agent 组装包 (agent + lifecycle + server + _types)
+│   │   ├── agent.py          #     Agent.__init__ + 事件处理 + process_message
+│   │   ├── lifecycle.py      #     AgentLifecycle: start/stop 编排
+│   │   ├── server.py         #     AgentServer: run_server/repl + provider 切换
+│   │   └── _types.py         #     RunState + 辅助类
+│   ├── cognitive/            #   CognitiveLoop 包 (loop + tts + tools)
+│   │   ├── loop.py           #     CognitiveLoop(CognitiveTTS, CognitiveTools)
+│   │   ├── tts.py            #     TTSStreamManager + emoji + CognitiveTTS mixin
+│   │   └── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   ├── event_bus.py         #   优先级事件总线
 │   ├── agent_fsm.py         #   六状态机
 │   ├── block_filter.py      #   流式块过滤 + 结构化块解析
-│   ├── tts_stream.py        #   TTS 流式播放管理 (TTSStreamManager)
 │   ├── tool_call_parser.py  #   流式 tool call 合并/归一化
 │   ├── text_utils.py        #   文本提取 + MessageObj
 │   ├── timing.py            #   TimingClock 延迟统计
@@ -1053,19 +1059,19 @@ INTERRUPT:
 
 | # | 位置 | 用途 | 管理模式 |
 |---|------|------|----------|
-| 1 | agent.py | embedding 预加载 | fire-and-forget + tracked |
-| 2 | agent.py | `_process_events` 主循环 | 常驻，stop 时 cancel |
-| 3 | agent.py | cognitive process (USER_INPUT) | `_current_task`，INTERRUPT cancel |
-| 4 | agent.py | cognitive process (SYSTEM_TICK) | 同上 |
-| 5 | cognitive_loop.py | `_after_response` | fire-and-forget，无追踪 |
-| 6 | tts_stream.py | TTS 流式合成 | `TTSStreamManager._tasks[]`，gather/cancel |
+| 1 | agent/lifecycle.py | embedding 预加载 | fire-and-forget + tracked |
+| 2 | agent/agent.py | `_process_events` 主循环 | 常驻，stop 时 cancel |
+| 3 | agent/agent.py | cognitive process (USER_INPUT) | `_current_task`，INTERRUPT cancel |
+| 4 | agent/agent.py | cognitive process (SYSTEM_TICK) | 同上 |
+| 5 | cognitive/loop.py | `_after_response` | fire-and-forget，无追踪 |
+| 6 | cognitive/tts.py | TTS 流式合成 | `TTSStreamManager._tasks[]`，gather/cancel |
 | 7 | idle_monitor.py | idle 监控 tick | 常驻，stop 时 cancel |
 | 8 | long_term.py | embedding 加载 | insert 时 await (wait=True), search 时 fire-and-forget |
 | 9 | personality/engine.py | expression 输出 | 纯 fire-and-forget，无追踪 |
 | 10 | tool/manager.py | SafetyPipeline 执行 | Pipeline 内部追踪 |
-| 11 | agent.py | `_poll_mailboxes()` | TaskSystem mailbox 500ms 轮询，常驻，stop 时 cancel |
-| 12 | agent.py | cognitive process (TASK_RESULT) | `_current_task` |
-| 13 | agent.py | `_db_health_loop()` | 数据库健康检查 120s 间隔，常驻，stop 时 cancel |
+| 11 | agent/agent.py | `_poll_mailboxes()` | TaskSystem mailbox 500ms 轮询，常驻，stop 时 cancel |
+| 12 | agent/agent.py | cognitive process (TASK_RESULT) | `_current_task` |
+| 13 | agent/lifecycle.py | `_db_health_loop()` | 数据库健康检查 120s 间隔，常驻，stop 时 cancel |
 | 14 | memory/session.py | archive_append | fire-and-forget，无追踪 |
 | 15 | input/server.py | per-connection state monitor | 常驻，disconnect 时 cancel |
 | 16 | task_system/task_system.py | sub-agent task submit | TaskSystem 内部追踪 |

@@ -69,13 +69,13 @@ Agent.start()
 
 ## 核心组件
 
-`core/` 根目录共 26 个 `.py` 文件。其中 9 个为核心组件（详细描述），17 个为支撑模块（简表），另有 5 个子目录（在各自 README 中详述）。
+`core/` 根目录 + 子包共约 30 个 `.py` 文件。其中 9 个为核心组件（详细描述），12 个为支撑模块（简表），另有 4 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
 
 ### 核心组件详解（9 个）
 
-#### Agent (`agent.py`)
+#### Agent (`agent/` package, 4 files)
 
-组装入口，持有所有子系统的引用。`__init__` 创建 L0/L1/L2 全部组件；`start()` 按序连接数据库、启动后台任务、加载插件；`stop()` 按序 flush → cancel → close → save。暴露 `process_message()` 接收用户输入（支持纯文本和多模态 content 数组），`run_server()` 启动 WebSocket 服务，`run_repl()` 启动交互式命令行。管理 `RunState` 生命周期（STOPPED / RUNNING / STOPPING / RESTARTING），支持 `/restart` 热重载配置。
+组装入口，持有所有子系统的引用。使用双 mixin 模式：`Agent(AgentLifecycle, AgentServer)`。`__init__` 创建 L0/L1/L2 全部组件；`AgentLifecycle.start()` 按序连接数据库、启动后台任务、加载插件；`AgentLifecycle.stop()` 按序 flush → cancel → close → save。暴露 `process_message()` 接收用户输入（支持纯文本和多模态 content 数组），`AgentServer.run_server()` 启动 WebSocket 服务，`AgentServer.run_repl()` 启动交互式命令行。管理 `RunState` 生命周期（STOPPED / RUNNING / STOPPING / RESTARTING），支持 `/restart` 热重载配置。共享类型（`RunState`, `_PendingMessage`, `_BackgroundTaskEntry`）在 `_types.py` 中。
 
 关键方法：`start()`, `stop()`, `process_message()`, `run_server()`, `run_repl()`, `switch_llm()`, `switch_tts()`
 
@@ -91,9 +91,9 @@ Agent.start()
 
 关键方法：`post()`, `next()`, `drain()`
 
-#### CognitiveLoop (`cognitive_loop.py`)
+#### CognitiveLoop (`cognitive/` package, 3 files)
 
-ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引擎。流式 LLM 输出中解析 `<inner_voice>` 标签：PRE → THINK → REPLY 三阶段。THINK 内容发 `inner_voice` WS 事件（前端淡色气泡），REPLY 内容经 `BlockFilter` 过滤结构化块标记 → `SentenceBuffer` 分句 → TTS 管线。工具调用检测后进入 EXECUTING 状态，最多 5 轮工具循环。`SentenceBuffer` 和 `BlockFilter` 每轮 `process()` 新建，避免跨轮状态污染。支持 `submit_task` 拦截（后台任务委托）。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。
+ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的核心执行引擎。使用双 mixin 模式：`CognitiveLoop(CognitiveTTS, CognitiveTools)`。流式 LLM 输出中解析 `<inner_voice>` 标签：PRE → THINK → REPLY 三阶段。工具调用检测后最多 5 轮工具循环。`_handle_submit_task` 拦截后台任务委托。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。`tts.py` 合并原 `tts_stream.py`（`TTSStreamManager` + emoji 检测）与 `CognitiveTTS` deprecated wrappers。`tools.py` 包含 `_execute_tools_directly`、`_submit_task_definition`、`_default_user_profile`。
 
 关键方法：`process()`, `_think_loop()`, `cancel_current()`, `_after_response()`
 
@@ -127,7 +127,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 
 关键方法：`start()`, `stop()`, `dispatch_tool_calls()`, `cancel_all()`
 
-### 支撑模块（17 个）
+### 支撑模块（12 个）
 
 | 文件 | 职责 |
 |------|------|
@@ -135,11 +135,11 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `character_config.py` | 角色配置：从 YAML 加载角色名、wake words、emotion 阈值、proactive 参数、L1 Core personality 文本路径。`from_yaml()` 工厂方法 |
 | `app_config.py` | 应用配置：`ConfigLoader` 加载 `config.yaml` + env override。包含 `AgentConfig`、`LLMConfig`、`MemoryConfig`、`TTSConfig` 等 dataclass |
 | `sentence_buffer.py` | 分句缓冲：逐 token feed，检测完整句边界（。！？!?\n～…〜），完整句触发 TTS。智能处理英文缩写和数字小数点避免误分割。支持 `max_buffer_length` 强制切分保护、`abbreviations` 可扩展缩写集 |
-| `tts_stream.py` | TTS 流管理：句队列 + FIFO 顺序播放 + emoji 排队（emoji 依附于 TTS 句前后发送）。`TTSStreamManager` 管理后台 TTS task 生命周期，支持热切换后端 |
+| `cognitive/tts.py` | TTS 流管理（原 `tts_stream.py` 合并入 `cognitive/` 包）：句队列 + FIFO 顺序播放 + emoji 排队（emoji 依附于 TTS 句前后发送）。`TTSStreamManager` 管理后台 TTS task 生命周期，支持热切换后端。`CognitiveTTS` mixin 提供 deprecated TTS wrappers |
 | `block_filter.py` | 结构化块过滤：`BlockFilter` 实时过滤 `<|markdown|>` 和 `<|code|>` 标记，防止代码/markdown 进入 TTS。`flush()` 未闭合块自动丢弃防泄漏，`reset()` 支持 interrupt 清理。`build_parts_with_blocks()` 保留原文交错顺序（块在句子之间而非末尾） |
 | `text_utils.py` | 文本工具：`content_text_from_content()` 从多模态 content 数组提取纯文本。`MessageObj` dataclass 用于非流式文本最终发送 |
 | `message_id.py` | 消息 ID 生成：`new_message_id()` 返回 `msg_` + 26 位 hex UUID4 |
-| `debug_info.py` | Debug 面板数据聚合：`DebugInfo` dataclass 涵盖 FSM、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator 等所有子系统状态。`collect()` 遍历 Agent 聚合数据 |
+| `debug_info.py` | Debug 面板数据聚合：`DebugInfo` dataclass 涵盖 FSM（含 mood）、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator（含 buffer）、MemoryReflector、Character Reflector、CharacterEngine 等所有子系统状态。`collect()` 遍历 Agent 聚合数据，前端 16 面板 |
 | `log_setup.py` | 日志系统：stderr + `log/app.log` + `log/conversation.log` + 库日志分离。提供 `set_request_id()`/`get_request_id()` ContextVar 和 `log_conversation()` 对话日志 |
 | `timing.py` | 计时工具：`Timer` context manager 单次计时 + `TimingClock` 请求级聚合（span 嵌套）。供 CognitiveLoop 记录 prompt/ttft/tools 等阶段耗时 |
 | `token_tracker.py` | Token 消耗追踪：`record()` 记录每次 LLM 调用的 token usage，`get_session_stats()` 聚合统计。支持 MongoDB 持久化和 OutputManager 广播 |

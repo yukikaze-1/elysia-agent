@@ -86,25 +86,31 @@ Module/<service>/
 
 ```
 core/
-├── agent.py              # Agent: orchestrates all subsystems, FSM lifecycle
-├── cognitive_loop.py     # CognitiveLoop: THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE
-├── personality/          # CharacterEngine: 4-layer personality model
-│   ├── engine.py         #   L1 Core (file, immutable) → L2 Self (session, slow evolution) → L3 State (session, Reflector-driven) → L4 Mood (EmotionEngine)
-│   ├── reflector.py      #   CharacterReflector: buffers 50 pairs → LLM reflection → submit to engine
+├── agent/                 # Agent (package): AgentLifecycle mixin + AgentServer mixin + _types
+│   ├── agent.py           #   Agent.__init__ + event handling + process_message + background tasks
+│   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + 所有 _start_*/_stop_*/_flush_*
+│   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
+│   └── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
+├── cognitive/             # CognitiveLoop (package): TTSStreamManager merged in + CognitiveTools mixin
+│   ├── loop.py            #   CognitiveLoop(CognitiveTTS, CognitiveTools): __init__ + process + _think_loop + FSM
+│   ├── tts.py             #   TTSStreamManager + emoji utils + CognitiveTTS mixin
+│   └── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task + _submit_task_definition
+├── personality/           # CharacterEngine: 4-layer personality model (L1→L2→L3→L4)
+│   ├── engine.py          #   CharacterEngine: L1 Core (file, immutable) → L2 Self (session, slow evolution) → L3 State (session, Reflector-driven) → L4 Mood
+│   ├── reflector.py       #   CharacterReflector: buffers 50 pairs → LLM reflection → submit to engine
 │   └── tests/
-├── emotion_engine.py     # EmotionEngine: keyword + STT-driven mood tracking (L4 Mood)
-├── consolidator.py       # MemoryConsolidator: buffers 6 msgs → LLM extracts Fact/Preference/Event/Plan/Note → ExtractedMemory Pydantic → compare against existing memories (CompareAction discriminated union) → insert/update/merge/skip
+├── consolidator.py        # MemoryConsolidator: buffers 6 msgs → LLM extracts + compares → insert/update/merge/skip
 ├── memory/
-│   ├── session.py         # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive
-│   ├── long_term.py       # LongTermMemory: Milvus-backed vector search + reranking; _absorbed_ids for merge tracking
-│   └── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM batch review)
-├── character_config.py   # CharacterConfig: loads YAML + L1 Core personality text
-├── prompt_assembler.py   # PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder
-├── debug_info.py         # DebugInfo: aggregates agent state for /debug dashboard
-├── idle_monitor.py       # IdleMonitor: wake-word detection + proactive triggers
-├── task_scheduler.py     # TaskScheduler: worker pool + task dispatch
-├── tools/                # Tool plugins (filesystem, web, memory, time, reminder, etc.)
-└── app_config.py         # AgentConfig: YAML-loaded app configuration
+│   ├── session.py          # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive
+│   ├── long_term.py        # LongTermMemory: Milvus-backed vector search + reranking; _absorbed_ids for merge tracking
+│   └── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM review)
+├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
+├── prompt_assembler.py    # PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder
+├── debug_info.py          # DebugInfo: aggregates agent state (16 panels) for /debug dashboard
+├── idle_monitor.py        # IdleMonitor: wake-word detection + proactive triggers
+├── task_scheduler.py      # TaskScheduler: worker pool for ReAct tool calls (5 workers)
+├── tools/                 # Tool plugins (filesystem, web, memory, time, reminder, etc.)
+└── app_config.py          # AgentConfig: YAML-loaded app configuration
 ```
 
 ### Character config (`character/`)
@@ -227,7 +233,7 @@ static/
 
 ### Debug page panels
 
-FSM state, session/Long-Term memory, message archive, token stats, CharacterEngine (L2 Self, L3 State, awareness cooldown, state history), Character Reflector (buffer, last reflection, prompt), latency stats, task scheduler, tools, consolidation history, MongoDB/Milvus status.
+16 panels across overview tab: System (FSM, mood, idle), Memory (session + LTM + DB health), Latency, Process Memory, Scheduler, Token, LLM Prompt/Response, Session/LTM recent, Tools + Tool History, Consolidation (buffer + history), Memory Reflector, Character Reflector, CharacterEngine. Database tab: LTM CRUD + session management + message archive. Tasks tab: SSE real-time TaskSystem DAG visualization.
 
 ### Server routing (`Module/input/server.py`)
 
