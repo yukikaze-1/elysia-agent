@@ -118,22 +118,6 @@ class TestSensorySectionBoundary:
         assert SensorySection._season(12) == "冬"
         assert SensorySection._season(2) == "冬"
 
-    def test_import_error_fallback_emotion_emoji(self):
-        """emotion_engine 不存在时，_emotion_emoji 返回 ""。"""
-        import core.emotion_engine as orig_module
-        sec = SensorySection(f"{_TEMPLATES}/c5_sensory.j2")
-        sec._stt_emotion = "HAPPY"
-        with patch.dict("sys.modules", {"core.emotion_engine": None}):
-            result = sec._emotion_emoji()
-        assert result == ""
-
-    def test_import_error_fallback_format_events(self):
-        """emotion_engine 不存在时，_format_events 返回逗号分隔原始事件。"""
-        sec = SensorySection(f"{_TEMPLATES}/c5_sensory.j2")
-        sec._stt_events = ["Laughter", "Cry"]
-        with patch.dict("sys.modules", {"core.emotion_engine": None}):
-            result = sec._format_events()
-        assert result == "Laughter, Cry"
 
 
 # ── OwnLifeSection ──

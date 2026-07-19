@@ -19,6 +19,8 @@ class EmotionSection(Jinja2Section):
         self._user_pronoun = kwargs.get("user_pronoun", "她")
         if "mood" in kwargs:
             self._mood = kwargs["mood"]
+        elif self._session is not None:
+            self._mood = self._session.character_state.mood
 
     async def render(self) -> str:
         return self._render_template(

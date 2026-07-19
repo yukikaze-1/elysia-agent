@@ -111,8 +111,8 @@ def test_full_render_all_sections():
     )
     # 注入 personality data
     personality_section.update_personality(
-        core=pe.render_c1()["core_personality"],
-        self_p=pe.render_c1()["self_personality"],
+        core=pe.render_c1().core_personality,
+        self_p=pe.render_c1().self_personality,
     )
     self_perception_section.update_awareness("感觉自己变了")
     result = asyncio.run(mgr.render())
