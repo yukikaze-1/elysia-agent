@@ -69,7 +69,7 @@ Agent.start()
 
 ## 核心组件
 
-`core/` 根目录 + 子包共约 30 个 `.py` 文件。其中 9 个为核心组件（详细描述），12 个为支撑模块（简表），另有 4 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
+`core/` 根目录 + 子包共约 30 个 `.py` 文件。其中 9 个为核心组件（详细描述），12 个为支撑模块（简表），另有 6 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
 
 ### 核心组件详解（9 个）
 
@@ -150,8 +150,12 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 
 | 子目录 | 说明 | 详细文档 |
 |--------|------|----------|
-| `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口，deque + MongoDB 30d TTL）、`LongTermMemory`（Milvus 向量搜索 + rerank）、`MemoryConsolidator`（对话提取+比对+写入）、`MemoryReflector`（定期 KMeans 聚类去重）。消息归档直调 `core/storage/message_repo.py`。详见 [CLAUDE.md](../CLAUDE.md) | `memory/` |
+| `core/agent/` | 组装入口：`Agent(AgentLifecycle, AgentServer)`，管理所有子系统引用和 RunState 生命周期 | [agent/README.md](agent/README.md) |
+| `core/cognitive/` | 认知循环：ReAct 调度器 + inner_voice 状态机 + TTS 流管理 + 工具执行 + 计时 | [cognitive/README.md](cognitive/README.md) |
+| `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口）、`LongTermMemory`（向量检索）、`MemoryConsolidator`（提取+比对+写入）、`MemoryReflector`（定期去重） | [memory/README.md](memory/README.md) |
 | `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
+| `core/text/` | 文本流处理管线：`BlockFilter`（结构化块过滤）+ `SentenceBuffer`（分句缓冲）+ `text_utils`（文本提取） | [text/README.md](text/README.md) |
+| `core/debug/` | Debug 仪表板数据层：`DebugInfo`（16 panel 聚合）+ `PromptRecorder`/`ResponseRecorder`（LLM 交互录制） | [debug/README.md](debug/README.md) |
 | `core/tools/` | 工具插件：filesystem、web、memory、time、reminder、vision 等。每个插件 `plugin.py` + `config.yaml` + `README.md` | `tools/` |
 | `core/tests/` | 测试套件：覆盖 Agent、CognitiveLoop、CharacterEngine、MemoryConsolidator 等核心组件的单元/集成测试 | -- |
 
