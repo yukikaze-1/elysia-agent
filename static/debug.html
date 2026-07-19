@@ -454,6 +454,8 @@ function render(info) {
         ['STT', ok(info.stt_ok)],
         ['WS Clients', info.ws_clients],
         ['Proactive', info.proactive_enabled ? '<span class="ok">ON</span>' : '<span class="warn">OFF</span>'],
+        ['Idle 时长', (() => { const s = info.last_interaction_ago || 0; return s >= 60 ? Math.floor(s/60)+'min' : Math.floor(s)+'s'; })()],
+        ['Mood', (() => { const m = info.mood || ''; return m ? esc(m) : '<span class="muted">—</span>'; })()],
       ]},
       { title:'Memory', wide:false, rows:[
         ['Session Messages', info.session_messages],
@@ -637,11 +639,56 @@ function render(info) {
           : `<span class="tool-name">${esc(t.name)}</span> <span class="tool-args">${esc(JSON.stringify(t.args))}</span><br><span class="tool-result">→ ${esc(trunc(t.result||'',120))}</span>`
         )
       )},
-      { title:'Consolidation', wide:false, items: (info.consolidation_history||[]).map(c =>
-        `<span class="type-tag">${esc(c.type||'?')}</span>${esc(trunc(c.content,100))}`
-      )},
+      { title:'Consolidation', wide:false, items: (() => {
+        const items = [];
+        const buf = info.consolidator_buffer_size ?? 0;
+        const thr = info.consolidator_threshold ?? 0;
+        if (thr > 0) {
+          items.push(`<div class="row"><span class="label">Buffer</span><span class="value">${buf}/${thr} ${buf>=thr?'<span class="warn">触发中</span>':'<span class="ok">等待</span>'}</span></div>`);
+        }
+        (info.consolidation_history||[]).forEach(c => {
+          items.push(`<span class="type-tag">${esc(c.type||'?')}</span>${esc(trunc(c.content,100))}`);
+        });
+        return items;
+      })()},
     ],
-    // Row 6: Character Reflector
+    // Row 6: MemoryReflector
+    [
+      (() => {
+        if (!info.mreflector_exists) return null;
+        const items = [];
+
+        // 触发状态
+        const roundPct = info.mreflector_round_threshold > 0
+          ? Math.round(info.mreflector_round_count / info.mreflector_round_threshold * 100) : 0;
+        const memPct = info.mreflector_memory_threshold > 0
+          ? Math.round(info.mreflector_new_memory_count / info.mreflector_memory_threshold * 100) : 0;
+        const willTrigger = info.mreflector_round_count >= info.mreflector_round_threshold
+          || info.mreflector_new_memory_count >= info.mreflector_memory_threshold;
+
+        items.push(
+          `<div class="row"><span class="label">轮次计数</span><span class="value">${info.mreflector_round_count} / ${info.mreflector_round_threshold} (${roundPct}%)</span></div>`,
+          `<div class="row"><span class="label">新记忆数</span><span class="value">${info.mreflector_new_memory_count} / ${info.mreflector_memory_threshold} (${memPct}%)</span></div>`,
+        );
+
+        const locked = info.mreflector_locked;
+        items.push(
+          `<div class="row"><span class="label">状态</span><span class="value ${willTrigger?'warn':'ok'}">${locked ? '<span class="warn">执行中...</span>' : (willTrigger ? '下次触发' : 'idle')}</span></div>`,
+        );
+
+        // 上次摘要
+        const summary = info.mreflector_last_summary;
+        if (summary && Object.keys(summary).length > 0) {
+          items.push('<div class="row" style="margin-top:4px"><span class="label">上次摘要</span></div>');
+          items.push('<div class="list-item" style="white-space:pre-wrap;max-height:80px;overflow-y:auto;font-size:11px">' + esc(trunc(JSON.stringify(summary), 200)) + '</div>');
+        } else {
+          items.push('<div class="empty" style="margin-top:4px">上次摘要: 暂无（尚未运行）</div>');
+        }
+
+        return { title:'Memory Reflector', wide:true, items: items };
+      })()
+    ].filter(Boolean),
+    // Row 7: Character Reflector
     [
       (() => {
         const ref = info.reflector_exists ? info : null;

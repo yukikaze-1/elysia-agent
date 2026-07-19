@@ -89,6 +89,22 @@ class DebugInfo:
     timing_history: list[dict] = field(default_factory=list)
     timing_stats: dict = field(default_factory=dict)
 
+    # MemoryReflector
+    mreflector_exists: bool = False
+    mreflector_round_count: int = 0
+    mreflector_round_threshold: int = 0
+    mreflector_new_memory_count: int = 0
+    mreflector_memory_threshold: int = 0
+    mreflector_locked: bool = False
+    mreflector_last_summary: dict = field(default_factory=dict)
+
+    # Consolidator buffer
+    consolidator_buffer_size: int = 0
+    consolidator_threshold: int = 0
+
+    # Mood (L4 Emotion)
+    mood: str = ""
+
     # Memory
     memory: dict = field(default_factory=dict)
 
@@ -240,6 +256,29 @@ async def collect(agent) -> DebugInfo:
                 if t.type.value == "tool_call" and t.status.value in ("pending", "dispatched"):
                     info.task_tree = sched.get_tree(t.id)
                     break
+    except Exception:
+        pass
+
+    # ---- MemoryReflector ----
+    mr = getattr(agent, "_memory_reflector", None)
+    if mr is not None:
+        info.mreflector_exists = True
+        info.mreflector_round_count = mr._round_count
+        info.mreflector_round_threshold = mr.ROUND_THRESHOLD
+        info.mreflector_new_memory_count = mr._new_memory_count
+        info.mreflector_memory_threshold = mr.NEW_MEMORY_THRESHOLD
+        info.mreflector_locked = mr._lock.locked()
+        info.mreflector_last_summary = dict(mr._last_summary) if mr._last_summary else {}
+
+    # ---- Consolidator buffer ----
+    cons = getattr(agent, "_consolidator", None)
+    if cons is not None:
+        info.consolidator_buffer_size = len(cons._buffer)
+        info.consolidator_threshold = cons._threshold
+
+    # ---- Mood (L4 Emotion) ----
+    try:
+        info.mood = agent._session.character_state.mood
     except Exception:
         pass
 
