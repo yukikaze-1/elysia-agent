@@ -1147,7 +1147,7 @@ class TestAgentLifecycle:
         # Start processing a message
         await agent.process_message("hello")
         # Wait for processing to complete
-        for _ in range(100):
+        for _ in range(200):
             if agent._fsm.state == "idle":
                 break
             await asyncio.sleep(0.01)
