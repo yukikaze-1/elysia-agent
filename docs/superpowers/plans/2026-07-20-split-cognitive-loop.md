@@ -176,12 +176,12 @@ class CognitiveTools:
 
     # ================================================================
     # _submit_task_definition
-    # [复制 _cognitive_loop_backup.py lines 870–904]
+    # [复制 _cognitive_loop_backup.py lines 869–905]
     # ================================================================
 
     # ================================================================
     # _handle_submit_task
-    # [复制 _cognitive_loop_backup.py lines 907–984]
+    # [复制 _cognitive_loop_backup.py lines 907–982]
     # 内部调用 _default_user_profile()（同文件，无循环导入）
     # ================================================================
 ```
