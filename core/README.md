@@ -91,9 +91,9 @@ Agent.start()
 
 关键方法：`post()`, `next()`, `drain()`
 
-#### CognitiveLoop (`cognitive/` package, 3 files)
+#### CognitiveLoop (`cognitive/` package, 4 files)
 
-ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的核心执行引擎。使用双 mixin 模式：`CognitiveLoop(CognitiveTTS, CognitiveTools)`。流式 LLM 输出中解析 `<inner_voice>` 标签：PRE → THINK → REPLY 三阶段。工具调用检测后最多 5 轮工具循环。`_handle_submit_task` 拦截后台任务委托。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。`tts.py` 合并原 `tts_stream.py`（`TTSStreamManager` + emoji 检测）与 `CognitiveTTS` deprecated wrappers。`tools.py` 包含 `_execute_tools_directly`、`_submit_task_definition`、`_default_user_profile`。
+ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的核心执行引擎。使用双 mixin 模式：`CognitiveLoop(CognitiveTTS, CognitiveTools)`。流式 LLM 输出中解析 `<inner_voice>` 标签：PRE → THINK → REPLY 三阶段。工具调用检测后最多 5 轮工具循环。`_handle_submit_task` 拦截后台任务委托。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。`tts.py` 合并原 `tts_stream.py`（`TTSStreamManager` + emoji 检测）与 `CognitiveTTS` deprecated wrappers。`tools.py` 包含 `_execute_tools_directly`、`_submit_task_definition`、`_default_user_profile`。`timing.py` 包含 `Timer` context manager + `TimingClock` 请求级聚合（span 嵌套）。
 
 关键方法：`process()`, `_think_loop()`, `cancel_current()`, `_after_response()`
 
@@ -139,7 +139,6 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `message_id.py` | 消息 ID 生成：`new_message_id()` 返回 `msg_` + 26 位 hex UUID4 |
 | `debug/` | Debug 面板数据聚合包：`DebugInfo` dataclass 涵盖 FSM（含 mood）、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator（含 buffer）、MemoryReflector、Character Reflector、CharacterEngine 等所有子系统状态。`collect()` 遍历 Agent 聚合数据，前端 16 面板。`PromptRecorder`/`ResponseRecorder` 环形缓冲区（容量 20），捕获 LLM 调用完整 messages/tools/回复/inner_voice，供 debug 面板查看。详见 [`debug/`](debug/) |
 | `log_setup.py` | 日志系统：stderr + `log/app.log` + `log/conversation.log` + 库日志分离。提供 `set_request_id()`/`get_request_id()` ContextVar 和 `log_conversation()` 对话日志 |
-| `timing.py` | 计时工具：`Timer` context manager 单次计时 + `TimingClock` 请求级聚合（span 嵌套）。供 CognitiveLoop 记录 prompt/ttft/tools 等阶段耗时 |
 | `token_tracker.py` | Token 消耗追踪：`record()` 记录每次 LLM 调用的 token usage，`get_session_stats()` 聚合统计。支持 MongoDB 持久化和 OutputManager 广播 |
 | `custom_providers.py` | 自定义 provider 端点管理：读写 `custom_providers.yaml`，支持用户添加自定义 LLM/STT/TTS 端点 |
 | `tool_call_parser.py` | 流式 tool_call 解析：`merge_stream_tool_calls()` 合并流式 delta 片段，`normalize_tool_calls()` 规范化（补全 id/type/function 结构）。`normalize_tool_calls()` 转为 `list[ToolCall]` Pydantic 模型（依赖 pydantic，core 全域依赖） |
@@ -259,7 +258,6 @@ Agent 生命周期中的关键扩展点：
 | `message_id.py` | 11 | 支撑模块 |
 | `debug/` | 3 文件 (~520) | 支撑模块 |
 | `log_setup.py` | ~150 | 支撑模块 |
-| `timing.py` | ~100 | 支撑模块 |
 | `token_tracker.py` | ~190 | 支撑模块 |
 | `custom_providers.py` | ~80 | 支撑模块 |
 | `tool_call_parser.py` | ~50 | 支撑模块 |

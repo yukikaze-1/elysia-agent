@@ -19,7 +19,7 @@ from typing import Callable, TYPE_CHECKING
 
 from ..message_id import new_message_id
 
-from ..timing import TimingClock
+from .timing import TimingClock
 
 from Module.output import OutputManager, ChannelCapability
 from Module.tts import TTSBackend

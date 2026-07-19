@@ -940,10 +940,11 @@ Agent/
 │   │   ├── lifecycle.py      #     AgentLifecycle: start/stop 编排
 │   │   ├── server.py         #     AgentServer: run_server/repl + provider 切换
 │   │   └── _types.py         #     RunState + 辅助类
-│   ├── cognitive/            #   CognitiveLoop 包 (loop + tts + tools)
+│   ├── cognitive/            #   CognitiveLoop 包 (loop + tts + tools + timing)
 │   │   ├── loop.py           #     CognitiveLoop(CognitiveTTS, CognitiveTools)
 │   │   ├── tts.py            #     TTSStreamManager + emoji + CognitiveTTS mixin
-│   │   └── tools.py          #     CognitiveTools: 工具执行 + submit_task
+│   │   ├── tools.py          #     CognitiveTools: 工具执行 + submit_task
+│   │   └── timing.py         #     Timer + TimingClock 延迟统计
 │   ├── event_bus.py         #   优先级事件总线
 │   ├── agent_fsm.py         #   六状态机
 │   ├── text/                #   文本流处理包
@@ -951,7 +952,6 @@ Agent/
 │   │   ├── sentence_buffer.py #   分句缓冲
 │   │   └── text_utils.py    #     文本提取 + MessageObj
 │   ├── tool_call_parser.py  #   流式 tool call 合并/归一化
-│   ├── timing.py            #   TimingClock 延迟统计
 │   ├── llm_adapter.py       #   LLM 适配器
 │   ├── prompt_assembler.py  #   提示词组装 + 性格引擎数据注入
 │   ├── idle_monitor.py      #   空闲监控
