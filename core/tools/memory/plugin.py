@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin, ToolContext
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
+from core.schema.memory import MemoryType
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class SaveMemoryParams(BaseModel):
     content: str = Field(..., description="要保存的记忆内容")
     type: str = Field(
         default="fact",
-        description="记忆类型: fact(事实), plan(计划), preference(偏好), note(笔记)",
+        description="记忆类型: fact(事实), preference(偏好), event(事件), plan(计划), note(笔记)",
     )
 
 
@@ -70,13 +71,14 @@ class MemorySavePlugin(ToolPlugin):
         requires_human_approval=True,
     )
 
-    _VALID_TYPES = {"fact", "plan", "preference", "note"}
-
     async def execute(
         self, *, ctx: ToolContext, emit=None, params: SaveMemoryParams,
     ) -> str:
-        if params.type not in self._VALID_TYPES:
-            return f"无效的记忆类型 '{params.type}'，允许: {', '.join(sorted(self._VALID_TYPES))}"
+        try:
+            mem_type = MemoryType(params.type.strip().title())
+        except ValueError:
+            allowed = ", ".join(t.value for t in MemoryType)
+            return f"无效的记忆类型 '{params.type}'，允许: {allowed}"
 
         memory = ctx.get("memory")
         if memory is None:
@@ -84,9 +86,9 @@ class MemorySavePlugin(ToolPlugin):
 
         content = params.content
         try:
-            await memory.insert(content, type=params.type)
+            await memory.insert(content, type=mem_type.value)
         except Exception as e:
             logger.warning("save_memory 失败: %s", e)
             return f"保存记忆时出错: {e}"
 
-        return f"已保存 {params.type} 类型记忆: {content[:200]}"
+        return f"已保存 {mem_type.value} 类型记忆: {content[:200]}"

@@ -24,7 +24,7 @@ class MemoryEntry:
     id: str = ""                    # 唯一标识（insert 时自动生成）
     text: str = ""
     embedding: list[float] = field(default_factory=list, repr=False)
-    memory_type: str = "note"      # Fact / Preference / Event / Plan / Note
+    memory_type: str = "Note"      # Fact / Preference / Event / Plan / Note
     poignancy: int = 5             # 重要性 1-10
     timestamp: float = 0.0         # Unix 时间戳
     metadata: dict = field(default_factory=dict)
@@ -106,7 +106,7 @@ class LongTermMemory:
                 id=str(entry_id),
                 text=row.get("text", ""),
                 embedding=[],  # 不加载向量 — 太大，搜索走 Milvus
-                memory_type=row.get("memory_type", "note"),
+                memory_type=row.get("memory_type", "Note"),
                 poignancy=int(row.get("poignancy", 5)),
                 timestamp=float(row.get("timestamp", 0.0)),
                 _milvus_pk=pk,
@@ -213,7 +213,7 @@ class LongTermMemory:
             # Work on a copy to avoid mutating caller's dict
             meta = dict(metadata)
             # Accept 'type' as alias for 'memory_type'
-            memory_type = meta.pop("memory_type", meta.pop("type", "note"))
+            memory_type = meta.pop("memory_type", meta.pop("type", "Note"))
             entry = MemoryEntry(
                 id=new_message_id(),
                 text=text,
@@ -524,6 +524,7 @@ class LongTermMemory:
             scored.append((score, entry))
 
         # Filter by memory_type if requested
+        # 注意：精确匹配，调用方需传 TitleCase（如 "Fact"）
         if memory_type:
             scored = [(s, e) for s, e in scored if e.memory_type == memory_type]
 

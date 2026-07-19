@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from core.agent import RunState
 from core.schema.message import Message, MessageRole
 from core.schema.types import SessionId
+from core.schema.memory import MemoryType
 from Module.output import WebSocketChannel
 from .audio_buffer import AudioBuffer
 
@@ -230,10 +231,17 @@ def create_app(
             text = body.get("text", "").strip()
             if not text:
                 return web.json_response({"error": "text 不能为空"}, status=400)
-            mem_type = body.get("memory_type", "note")
+            raw_type = str(body.get("memory_type", "Note"))
             poignancy = int(body.get("poignancy", 5))
         except (json.JSONDecodeError, ValueError):
             return web.json_response({"error": "无效的请求体"}, status=400)
+
+        try:
+            mem_type = MemoryType(raw_type.strip().title()).value
+        except ValueError:
+            allowed = ", ".join(t.value for t in MemoryType)
+            return web.json_response(
+                {"error": f"无效的 memory_type '{raw_type}'，允许: {allowed}"}, status=400)
 
         await agent._long_term.insert(text, memory_type=mem_type, poignancy=poignancy)
         return web.json_response({"ok": True})

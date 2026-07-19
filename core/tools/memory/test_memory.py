@@ -110,12 +110,14 @@ class TestMemorySavePlugin:
 
     @pytest.mark.asyncio
     async def test_invalid_memory_type(self, plugin: MemorySavePlugin):
-        """不在 {fact, plan, preference, note} 中的类型 → 返回 无效的记忆类型。"""
+        """不在 MemoryType 词表中的类型 → 返回 无效的记忆类型 + TitleCase 词表。"""
         mock_memory = AsyncMock()
         params = SaveMemoryParams(content="something", type="invalid_type")
         result = await plugin.execute(ctx=self.make_ctx(mock_memory), params=params)
         assert "无效的记忆类型" in result
         assert "invalid_type" in result
+        assert "Fact" in result      # 错误消息含 TitleCase 词表
+        assert "Event" in result
         mock_memory.insert.assert_not_called()
 
     # ── 不可用 ──
@@ -139,8 +141,8 @@ class TestMemorySavePlugin:
 
         params = SaveMemoryParams(content="用户叫张三", type="fact")
         result = await plugin.execute(ctx=self.make_ctx(mock_memory), params=params)
-        assert result == "已保存 fact 类型记忆: 用户叫张三"
-        mock_memory.insert.assert_called_once_with("用户叫张三", type="fact")
+        assert result == "已保存 Fact 类型记忆: 用户叫张三"
+        mock_memory.insert.assert_called_once_with("用户叫张三", type="Fact")
 
     # ── 异常 ──
 
@@ -157,16 +159,17 @@ class TestMemorySavePlugin:
     # ── 所有有效类型 ──
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("mem_type", ["fact", "plan", "preference", "note"])
+    @pytest.mark.parametrize("mem_type", ["fact", "preference", "event", "plan", "note",
+                                           "Fact", "EVENT"])
     async def test_all_valid_types_accepted(
         self, plugin: MemorySavePlugin, mem_type: str,
     ):
-        """fact, plan, preference, note 四种类型都会被接受。"""
+        """五种类型（含 event）大小写不敏感接受，存储归一化为 TitleCase。"""
         mock_memory = AsyncMock()
         mock_memory.insert.return_value = None
 
         params = SaveMemoryParams(content="内容", type=mem_type)
         result = await plugin.execute(ctx=self.make_ctx(mock_memory), params=params)
         assert "已保存" in result
-        assert mem_type in result
-        mock_memory.insert.assert_called_once()
+        assert mem_type.title() in result   # 消息中是 TitleCase
+        mock_memory.insert.assert_called_once_with("内容", type=mem_type.title())
