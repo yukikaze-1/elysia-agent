@@ -123,6 +123,7 @@ pytest core/tests/test_phase3.py -v
 | `core/debug/tests/` | `test_prompt_recorder.py` | 7 | unit |
 | `core/cognitive/tests/` | `test_timing.py` | 16 | service |
 | `core/memory/tests/` | `test_long_term.py` | 8 | service |
+| | `test_consolidator.py` | 21 | service+unit |
 | | `test_message_archive.py` | 12 | service |
 | | `test_session_archive_integration.py` | 3 | service |
 | | `test_session.py` | 4 | service |
