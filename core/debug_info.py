@@ -135,7 +135,7 @@ async def collect(agent: "Agent") -> DebugInfo:
     info.uptime_seconds = time.monotonic() - agent._started_at
 
     # ---- IdleMonitor ----
-    im = agent._idle_monitor
+    im = agent._idle
     info.proactive_enabled = im._character.proactive.enabled
     info.proactive_interval = im._character.proactive.interval
     if im._last_interaction:
@@ -199,7 +199,7 @@ async def collect(agent: "Agent") -> DebugInfo:
     info.self_l2 = c1.self_personality[:200] if c1.self_personality else "（未演化）"
     l3 = pe.state.state_l3
     info.state_l3 = l3[:200] if l3 else "（无短期状态）"
-    info.state_history = list(pe.state.state_history)[-5:]
+    info.state_history = [dict(e) for e in pe.state.state_history[-5:]]
     info.last_awareness_time = pe.state.last_awareness_time or 0.0
 
     # ---- Character Reflector ----
@@ -248,11 +248,11 @@ async def collect(agent: "Agent") -> DebugInfo:
         info.scheduler_pending = sched.pending_count
         info.scheduler_running = sched.running_count
         info.scheduler_total = sched.total_count
-            # 找第一个活跃的工具子任务展示 task tree
-            for t in sched.all_tasks():
-                if t.type.value == "tool_call" and t.status.value in ("pending", "dispatched"):
-                    info.task_tree = sched.get_tree(t.id)
-                    break
+        # 找第一个活跃的工具子任务展示 task tree
+        for t in sched.all_tasks():
+            if t.type.value == "tool_call" and t.status.value in ("pending", "dispatched"):
+                info.task_tree = sched.get_tree(t.id)
+                break
     except Exception:
         pass
 
