@@ -661,7 +661,7 @@ async def test_cognitive_loop_callback_wired():
     from core.event_bus import EventBus
     from Module.output import OutputManager
     from core.memory.session import SessionMemory
-    from core.cognitive_loop import CognitiveLoop
+    from core.cognitive import CognitiveLoop
     from core.llm_adapter import LLMAdapter
 
     llm = MagicMock(spec=LLMAdapter)
@@ -716,7 +716,7 @@ async def test_cognitive_loop_no_callback_backward_compat():
     from core.event_bus import EventBus
     from Module.output import OutputManager
     from core.memory.session import SessionMemory
-    from core.cognitive_loop import CognitiveLoop
+    from core.cognitive import CognitiveLoop
     from core.llm_adapter import LLMAdapter
 
     llm = MagicMock(spec=LLMAdapter)

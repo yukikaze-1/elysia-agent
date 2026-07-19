@@ -38,7 +38,7 @@ from ..memory.long_term import LongTermMemory
 from ..prompt_assembler import PromptAssembler
 from Module.tool import ToolManager, ToolContext, PluginContext
 from core.tools import ALL_PLUGINS
-from ..cognitive_loop import CognitiveLoop
+from ..cognitive import CognitiveLoop
 from ..idle_monitor import IdleMonitor
 from ..llm_adapter import LLMAdapter
 from ..consolidator import MemoryConsolidator

@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin
 from Module.tool.safety import SafetyProfile
 
-from core.cognitive_loop import CognitiveLoop
+from core.cognitive import CognitiveLoop
 from core.text_utils import MessageObj
 from core.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from core.schema.tool import ToolCall, ToolCallFunction
@@ -1701,7 +1701,7 @@ class TestToolManagerUnit:
 class TestSubmitTaskDefinition:
     def test_schema_has_required_intent(self):
         """submit_task function schema 的 required 包含 intent。"""
-        from core.cognitive_loop import CognitiveLoop
+        from core.cognitive import CognitiveLoop
         defn = CognitiveLoop._submit_task_definition()
         func = defn["function"]
         assert func["name"] == "submit_task"
@@ -1710,7 +1710,7 @@ class TestSubmitTaskDefinition:
 
     def test_schema_is_valid_openai_format(self):
         """返回的是标准 OpenAI function-calling 格式。"""
-        from core.cognitive_loop import CognitiveLoop
+        from core.cognitive import CognitiveLoop
         defn = CognitiveLoop._submit_task_definition()
         assert defn["type"] == "function"
         assert "function" in defn
@@ -1727,7 +1727,7 @@ class TestHandleSubmitTask:
     @pytest.fixture
     def loop_with_ts(self):
         """创建带 mock TaskSystem + DelegationPreparer 的 CognitiveLoop。"""
-        from core.cognitive_loop import CognitiveLoop
+        from core.cognitive import CognitiveLoop
         from core.agent_fsm import AgentFSM
         from core.event_bus import EventBus
         from Module.output import OutputManager
@@ -1837,7 +1837,7 @@ class TestHandleSubmitTask:
 class TestWakeUpMessage:
     def test_wake_up_message_includes_intent_and_result(self):
         """唤醒模板拼接 intent 和 result。"""
-        from core.cognitive_loop import CognitiveLoop
+        from core.cognitive import CognitiveLoop
         from core.agent_fsm import AgentFSM
         from Module.output import OutputManager
         from core.event_bus import EventBus
