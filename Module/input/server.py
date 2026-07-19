@@ -10,7 +10,10 @@ import logging
 from pathlib import Path
 
 from aiohttp import web, WSMsgType
+from aiohttp.multipart import BodyPartReader
 from pydantic import ValidationError
+
+from typing import cast
 
 from core.agent import RunState
 from core.schema.message import Message, MessageRole
@@ -393,7 +396,7 @@ def create_app(
             try:
                 msgs, total = await agent._message_repo.query_by_session(sid, limit=20)
                 formatted = _sessions_to_client(msgs)
-                character_state = await _get_character_state(sid)
+                character_state = await _get_character_state(SessionId(sid))
                 return web.json_response({
                     "session_id": sid,
                     "messages": formatted,
@@ -574,7 +577,7 @@ def create_app(
             if field is None:
                 return web.json_response({"error": "未找到图片字段"}, status=400)
 
-            data = await field.read()
+            data = await cast(BodyPartReader, field).read()
             if len(data) > max_bytes:
                 return web.json_response({"error": f"图片过大，上限 {max_bytes // 1024 // 1024}MB"}, status=413)
 
@@ -984,18 +987,19 @@ async def _handle_json(data: dict, agent, audio_buf=None, ws=None) -> None:
         else:
             result = {"ok": False, "error": f"未知 service: {service}"}
         from Module.output import WebSocketChannel
-        for ch in agent._output._channels:
-            if isinstance(ch, WebSocketChannel) and ch._ws is ws:
-                try:
-                    await ws.send_json({
-                        "type": "switch_model_result",
-                        "service": service,
-                        "model": model,
-                        **result,
-                    })
-                except Exception:
-                    pass
-                break
+        if ws is not None:
+            for ch in agent._output._channels:
+                if isinstance(ch, WebSocketChannel) and ch._ws is ws:
+                    try:
+                        await ws.send_json({
+                            "type": "switch_model_result",
+                            "service": service,
+                            "model": model,
+                            **result,
+                        })
+                    except Exception:
+                        pass
+                    break
         logger.info("WS 切换模型: service=%s model=%s ok=%s", service, model, result.get("ok"))
     elif msg_type == "tool_approval":
         request_id = data.get("request_id", "")
