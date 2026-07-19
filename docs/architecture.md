@@ -967,7 +967,6 @@ Agent/
 │   │   └── response_recorder.py # Response 记录器
 │   ├── character_config.py  #   角色配置
 │   ├── app_config.py        #   App 配置
-│   ├── custom_providers.py  #   自定义 provider 管理
 │   ├── log_setup.py         #   日志系统
 │   ├── token_tracker.py     #   Token 消耗统计
 │   ├── personality/         #   CharacterEngine 子系统

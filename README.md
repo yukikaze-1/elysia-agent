@@ -323,7 +323,6 @@ Agent/
 │   ├── text_utils.py       #   文本提取 + MessageObj
 │   ├── message_id.py       #   消息 ID 生成
 │   ├── consolidator.py     #   记忆沉淀
-│   ├── custom_providers.py #   自定义提供者
 │   ├── idle_monitor.py     #   空闲监控
 │   ├── character_config.py #   角色配置
 │   ├── app_config.py       #   ConfigLoader 配置
