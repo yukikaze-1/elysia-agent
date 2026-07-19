@@ -725,14 +725,14 @@ class CognitiveLoop:
                         if idx < len(assistant_parts):
                             await self._output.command("block", params={
                                 "block_type": "markdown",
-                                "content": assistant_parts[idx]["content"],
+                                "content": assistant_parts[idx].content,
                             })
                     for idx in content_type.get("code", []):
                         if idx < len(assistant_parts):
                             await self._output.command("block", params={
                                 "block_type": "code",
-                                "content": assistant_parts[idx]["content"],
-                                "language": assistant_parts[idx].get("language", ""),
+                                "content": assistant_parts[idx].content,
+                                "language": getattr(assistant_parts[idx], "language", ""),
                             })
 
                 await self._transition_idle()
