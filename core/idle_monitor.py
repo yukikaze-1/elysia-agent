@@ -6,6 +6,7 @@ Proactive mode triggers a lightweight "should I speak?" check on a timer.
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 
 from .event_bus import EventBus, EventPriority, EventType
@@ -28,7 +29,7 @@ class IdleMonitor:
         self._character = character
         self._fsm = fsm
         self._bus = event_bus
-        self._last_interaction: float = asyncio.get_event_loop().time()
+        self._last_interaction: float = time.monotonic()
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -48,7 +49,7 @@ class IdleMonitor:
 
     def touch(self) -> None:
         """Mark user interaction — resets silence timer."""
-        self._last_interaction = asyncio.get_event_loop().time()
+        self._last_interaction = time.monotonic()
 
     async def _loop(self) -> None:
         proactive_interval = self._character.proactive.interval
@@ -62,7 +63,7 @@ class IdleMonitor:
 
                 # Check proactive triggers
                 if self._character.proactive.enabled:
-                    elapsed = asyncio.get_event_loop().time() - self._last_interaction
+                    elapsed = time.monotonic() - self._last_interaction
                     if elapsed >= proactive_interval:
                         await self._check_proactive()
             except asyncio.CancelledError:
@@ -80,14 +81,14 @@ class IdleMonitor:
             ttype = trigger.get("type", "")
             if ttype == "silence_timeout":
                 duration = trigger.get("duration", 600)
-                elapsed = asyncio.get_event_loop().time() - self._last_interaction
+                elapsed = time.monotonic() - self._last_interaction
                 if elapsed >= duration:
                     self._bus.post(
                         SystemTickData(reason="silence_timeout", elapsed=elapsed),
                         priority=EventPriority.NORMAL,
                     )
                     logger.info("Proactive trigger: silence_timeout (elapsed=%ds)", int(elapsed))
-                    self._last_interaction = asyncio.get_event_loop().time()
+                    self._last_interaction = time.monotonic()
                     return
 
             elif ttype == "time_of_day":

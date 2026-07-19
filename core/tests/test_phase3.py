@@ -1396,7 +1396,8 @@ class TestIdleMonitor:
         assert monitor._running is False
         assert monitor._task is None
 
-    def test_touch_resets_timer(self):
+    @pytest.mark.asyncio
+    async def test_touch_resets_timer(self):
         from core.idle_monitor import IdleMonitor
         import time
         char = MagicMock()
