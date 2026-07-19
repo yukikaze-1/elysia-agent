@@ -61,3 +61,11 @@ from core.schema.memory import (  # noqa: F401
     MergeAction,
     CompareAction,
 )
+from core.schema.event import (  # noqa: F401
+    EventData,
+    InterruptData,
+    StateChangeData,
+    UserInputData,
+    SystemTickData,
+    TaskResultData,
+)
