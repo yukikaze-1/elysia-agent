@@ -147,10 +147,10 @@ class AgentLifecycle:
         if mongo_ok:
             await self._token_tracker.flush_pending()
 
-        from core.prompt_recorder import PromptRecorder
+        from core.debug.prompt_recorder import PromptRecorder
         self._prompt_recorder = PromptRecorder(max_records=20)
         self._cognitive.set_prompt_recorder(self._prompt_recorder)
-        from core.response_recorder import ResponseRecorder
+        from core.debug.response_recorder import ResponseRecorder
         self._response_recorder = ResponseRecorder(max_records=20)
         self._cognitive.set_response_recorder(self._response_recorder)
 

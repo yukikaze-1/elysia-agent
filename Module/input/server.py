@@ -77,7 +77,7 @@ def create_app(
             app.router.add_get("/debug", debug_handler)
 
         async def debug_api_handler(request: web.Request) -> web.Response:
-            from core.debug_info import collect, asdict
+            from core.debug.info import collect, asdict
             info = await collect(request.app["agent"])
             return web.json_response(asdict(info))
         app.router.add_get("/debug/api", debug_api_handler)

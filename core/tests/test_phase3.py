@@ -14,7 +14,7 @@ from Module.tool.protocol import ToolPlugin
 from Module.tool.safety import SafetyProfile
 
 from core.cognitive import CognitiveLoop
-from core.text_utils import MessageObj
+from core.text.text_utils import MessageObj
 from core.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
@@ -192,8 +192,8 @@ class TestCognitiveLoopMethods:
 
     @pytest.mark.asyncio
     async def test_handle_interrupt(self, loop):
-        from core.sentence_buffer import SentenceBuffer
-        from core.block_filter import BlockFilter
+        from core.text.sentence_buffer import SentenceBuffer
+        from core.text.block_filter import BlockFilter
         loop._fsm.transition(AgentState.THINKING)
         loop._sentence_buf = SentenceBuffer()
         loop._block_filter = BlockFilter()
@@ -382,8 +382,8 @@ class TestCognitiveLoopTTS:
     @pytest.mark.asyncio
     async def test_handle_interrupt_clears_state(self, loop):
         """_handle_interrupt resets sentence buffer, cancels TTS tasks, returns to IDLE."""
-        from core.sentence_buffer import SentenceBuffer
-        from core.block_filter import BlockFilter
+        from core.text.sentence_buffer import SentenceBuffer
+        from core.text.block_filter import BlockFilter
         loop._sentence_buf = SentenceBuffer()
         loop._block_filter = BlockFilter()
         loop._sentence_buf.feed("partial")
@@ -1426,7 +1426,7 @@ class TestDebugInfo:
     async def test_collect_returns_debug_info(self):
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.debug_info import collect, DebugInfo
+        from core.debug.info import collect, DebugInfo
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1442,7 +1442,7 @@ class TestDebugInfo:
     async def test_collect_fsm_state(self):
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.debug_info import collect
+        from core.debug.info import collect
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1457,7 +1457,7 @@ class TestDebugInfo:
     async def test_collect_tool_list(self):
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.debug_info import collect
+        from core.debug.info import collect
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1479,7 +1479,7 @@ class TestDebugInfo:
     async def test_collect_memory_counts(self):
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.debug_info import collect
+        from core.debug.info import collect
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())

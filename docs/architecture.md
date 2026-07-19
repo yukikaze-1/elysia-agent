@@ -946,27 +946,29 @@ Agent/
 │   │   └── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   ├── event_bus.py         #   优先级事件总线
 │   ├── agent_fsm.py         #   六状态机
-│   ├── block_filter.py      #   流式块过滤 + 结构化块解析
+│   ├── text/                #   文本流处理包
+│   │   ├── block_filter.py  #     流式块过滤 + 结构化块解析
+│   │   ├── sentence_buffer.py #   分句缓冲
+│   │   └── text_utils.py    #     文本提取 + MessageObj
 │   ├── tool_call_parser.py  #   流式 tool call 合并/归一化
-│   ├── text_utils.py        #   文本提取 + MessageObj
 │   ├── timing.py            #   TimingClock 延迟统计
 │   ├── llm_adapter.py       #   LLM 适配器
 │   ├── prompt_assembler.py  #   提示词组装 + 性格引擎数据注入
-│   ├── sentence_buffer.py   #   分句缓冲
 │   ├── idle_monitor.py      #   空闲监控
 │   ├── task_scheduler.py    #   Worker Pool 调度器
 │   ├── message_id.py        #   消息 ID 生成
 │   ├── consolidator.py     #   记忆沉淀
 │   ├── schema/              #   共享类型包 (agent + types + part + tool + message + adapters)
 │   ├── task.py             #   任务模型
-│   ├── debug_info.py        #   /debug 数据聚合
+│   ├── debug/               #   Debug 仪表板包
+│   │   ├── info.py          #     /debug 数据聚合
+│   │   ├── prompt_recorder.py #   Prompt 记录器
+│   │   └── response_recorder.py # Response 记录器
 │   ├── character_config.py  #   角色配置
 │   ├── app_config.py        #   App 配置
 │   ├── custom_providers.py  #   自定义 provider 管理
 │   ├── log_setup.py         #   日志系统
 │   ├── token_tracker.py     #   Token 消耗统计
-│   ├── prompt_recorder.py   #   Prompt 记录器
-│   ├── response_recorder.py #   Response 记录器
 │   ├── personality/         #   CharacterEngine 子系统
 │   │   ├── engine.py        #     CharacterEngine (合并 PersonalityEngine + EmotionEngine)
 │   │   └── reflector.py     #     CharacterReflector

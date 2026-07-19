@@ -19,8 +19,8 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..token_tracker import TokenTracker
-    from ..prompt_recorder import PromptRecorder
-    from ..response_recorder import ResponseRecorder
+    from ..debug.prompt_recorder import PromptRecorder
+    from ..debug.response_recorder import ResponseRecorder
 
 from Module.output import OutputManager, ConsoleChannel
 

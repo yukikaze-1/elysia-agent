@@ -2,7 +2,7 @@
 """PromptRecorder 单元测试"""
 import pytest
 from datetime import datetime
-from core.prompt_recorder import PromptRecorder, PromptRecord
+from core.debug.prompt_recorder import PromptRecorder, PromptRecord
 
 pytestmark = pytest.mark.unit
 
@@ -22,7 +22,7 @@ class TestPromptRecord:
             tools=None,
         )
         # 派生字段由 record() 方法计算，这里验证直接构造后的计算逻辑
-        from core.prompt_recorder import _compute_derived_fields
+        from core.debug.prompt_recorder import _compute_derived_fields
         _compute_derived_fields(record)
         assert record.message_count == 2
         assert record.system_prompt_len == 28  # len("You are a helpful assistant.")
@@ -44,7 +44,7 @@ class TestPromptRecord:
             ],
             tools=None,
         )
-        from core.prompt_recorder import _compute_derived_fields
+        from core.debug.prompt_recorder import _compute_derived_fields
         _compute_derived_fields(record)
         assert record.message_count == 2
         assert record.system_prompt_len == 13  # len("System prompt")

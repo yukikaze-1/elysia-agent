@@ -95,6 +95,14 @@ core/
 │   ├── loop.py            #   CognitiveLoop(CognitiveTTS, CognitiveTools): __init__ + process + _think_loop + FSM
 │   ├── tts.py             #   TTSStreamManager + emoji utils + CognitiveTTS mixin
 │   └── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task + _submit_task_definition
+├── text/                  # Text stream processing (package): BlockFilter + SentenceBuffer + text utils
+│   ├── block_filter.py    #   BlockFilter: streaming block tag filter + post-hoc block parsing
+│   ├── sentence_buffer.py #   SentenceBuffer: split on sentence delimiters for TTS streaming
+│   └── text_utils.py      #   content_text_from_content + MessageObj
+├── debug/                 # Debug dashboard (package): DebugInfo aggregation + prompt/response recorders
+│   ├── info.py            #   DebugInfo: aggregates agent state (16 panels) for /debug dashboard
+│   ├── prompt_recorder.py #   PromptRecorder: ring buffer (20) for LLM prompts
+│   └── response_recorder.py # ResponseRecorder: ring buffer (20) for LLM responses
 ├── personality/           # CharacterEngine: 4-layer personality model (L1→L2→L3→L4)
 │   ├── engine.py          #   CharacterEngine: L1 Core (file, immutable) → L2 Self (session, slow evolution) → L3 State (session, Reflector-driven) → L4 Mood
 │   ├── reflector.py       #   CharacterReflector: buffers 50 pairs → LLM reflection → submit to engine
@@ -106,7 +114,6 @@ core/
 │   └── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM review)
 ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
 ├── prompt_assembler.py    # PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder
-├── debug_info.py          # DebugInfo: aggregates agent state (16 panels) for /debug dashboard
 ├── idle_monitor.py        # IdleMonitor: wake-word detection + proactive triggers
 ├── task_scheduler.py      # TaskScheduler: worker pool for ReAct tool calls (5 workers)
 ├── tools/                 # Tool plugins (filesystem, web, memory, time, reminder, etc.)

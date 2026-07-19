@@ -4,10 +4,10 @@ Orchestrates THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE.
 Uses structured streaming for sub-100ms TTFT and simultaneous tool-call detection.
 
 Sub-modules extracted for focus:
-  block_filter.py   — streaming block tag filter + post-hoc block parsing
-  tts_stream.py     — TTS stream manager + emoji queuing
+  text/block_filter.py   — streaming block tag filter + post-hoc block parsing
+  cognitive/tts.py  — TTS stream manager + emoji queuing
   tool_call_parser.py — merge/normalize streaming tool_call deltas
-  text_utils.py     — content text extraction + MessageObj
+  text/text_utils.py — content text extraction + MessageObj
 """
 
 import asyncio
@@ -31,7 +31,7 @@ from Module.tool import ToolContext
 from Module.tool.protocol import ToolResult
 from ..prompt_assembler import PromptAssembler
 from ..memory.session import SessionMemory
-from ..sentence_buffer import SentenceBuffer
+from ..text.sentence_buffer import SentenceBuffer
 from ..llm_adapter import LLMAdapter
 from ..consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
@@ -39,10 +39,10 @@ from Module.llm.registry import LLMFactory
 if TYPE_CHECKING:
     from Module.task_system.delegation_preparer import DelegationPreparer
 
-from ..block_filter import BlockFilter, build_parts_with_blocks
+from ..text.block_filter import BlockFilter, build_parts_with_blocks
 from .tts import CognitiveTTS, TTSStreamManager, is_emoji_only
 from ..tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
-from ..text_utils import content_text_from_content, MessageObj
+from ..text.text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageRecord, TokenUsageSummary
 from core.schema.tool import ToolCall, ToolCallId

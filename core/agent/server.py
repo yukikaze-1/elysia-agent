@@ -5,6 +5,7 @@ import asyncio
 import logging
 
 from ._types import RunState
+from ..log_setup import set_request_id
 
 logger = logging.getLogger(__name__)
 

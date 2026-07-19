@@ -852,7 +852,7 @@ async def test_scheduler_state_in_debug_info():
     from core.agent import Agent
     from core.app_config import AppConfig
     from core.tests.fake_llm import FakeLLMBackend
-    from core.debug_info import collect
+    from core.debug.info import collect
 
     agent = Agent(config=AppConfig())
     agent._llm._backend = FakeLLMBackend(response="ok")

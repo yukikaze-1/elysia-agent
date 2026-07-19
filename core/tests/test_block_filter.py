@@ -1,7 +1,7 @@
 """BlockFilter tests — filtering, flush safety, parts ordering."""
 
 import pytest
-from core.block_filter import BlockFilter, build_parts_with_blocks
+from core.text.block_filter import BlockFilter, build_parts_with_blocks
 from core.schema.part import TextPart
 
 pytestmark = pytest.mark.unit

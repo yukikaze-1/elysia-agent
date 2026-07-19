@@ -127,24 +127,20 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 
 关键方法：`start()`, `stop()`, `dispatch_tool_calls()`, `cancel_all()`
 
-### 支撑模块（12 个）
+### 支撑模块（15 个）
 
 | 文件 | 职责 |
 |------|------|
 | `llm_adapter.py` | LLM 适配器：封装 `Module.llm` 后端，提供 `stream_think()` 流式接口，自动重试（429/500/502/503/504，指数退避 3 次）。`ThoughtResult` dataclass 统一 text + tool_calls |
 | `character_config.py` | 角色配置：从 YAML 加载角色名、wake words、emotion 阈值、proactive 参数、L1 Core personality 文本路径。`from_yaml()` 工厂方法 |
 | `app_config.py` | 应用配置：`ConfigLoader` 加载 `config.yaml` + env override。包含 `AgentConfig`、`LLMConfig`、`MemoryConfig`、`TTSConfig` 等 dataclass |
-| `sentence_buffer.py` | 分句缓冲：逐 token feed，检测完整句边界（。！？!?\n～…〜），完整句触发 TTS。智能处理英文缩写和数字小数点避免误分割。支持 `max_buffer_length` 强制切分保护、`abbreviations` 可扩展缩写集 |
+| `text/` | 文本流处理包：`BlockFilter` 实时过滤 `<|markdown|>` 和 `<|code|>` 标记，防止代码/markdown 进入 TTS。`SentenceBuffer` 逐 token feed 检测完整句边界（。！？!?\n～…〜），完整句触发 TTS。`content_text_from_content()` 从多模态 content 数组提取纯文本。`MessageObj` dataclass 用于非流式文本最终发送。详见 [`text/`](text/) |
 | `cognitive/tts.py` | TTS 流管理（原 `tts_stream.py` 合并入 `cognitive/` 包）：句队列 + FIFO 顺序播放 + emoji 排队（emoji 依附于 TTS 句前后发送）。`TTSStreamManager` 管理后台 TTS task 生命周期，支持热切换后端。`CognitiveTTS` mixin 提供 deprecated TTS wrappers |
-| `block_filter.py` | 结构化块过滤：`BlockFilter` 实时过滤 `<|markdown|>` 和 `<|code|>` 标记，防止代码/markdown 进入 TTS。`flush()` 未闭合块自动丢弃防泄漏，`reset()` 支持 interrupt 清理。`build_parts_with_blocks()` 保留原文交错顺序（块在句子之间而非末尾） |
-| `text_utils.py` | 文本工具：`content_text_from_content()` 从多模态 content 数组提取纯文本。`MessageObj` dataclass 用于非流式文本最终发送 |
 | `message_id.py` | 消息 ID 生成：`new_message_id()` 返回 `msg_` + 26 位 hex UUID4 |
-| `debug_info.py` | Debug 面板数据聚合：`DebugInfo` dataclass 涵盖 FSM（含 mood）、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator（含 buffer）、MemoryReflector、Character Reflector、CharacterEngine 等所有子系统状态。`collect()` 遍历 Agent 聚合数据，前端 16 面板 |
+| `debug/` | Debug 面板数据聚合包：`DebugInfo` dataclass 涵盖 FSM（含 mood）、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator（含 buffer）、MemoryReflector、Character Reflector、CharacterEngine 等所有子系统状态。`collect()` 遍历 Agent 聚合数据，前端 16 面板。`PromptRecorder`/`ResponseRecorder` 环形缓冲区（容量 20），捕获 LLM 调用完整 messages/tools/回复/inner_voice，供 debug 面板查看。详见 [`debug/`](debug/) |
 | `log_setup.py` | 日志系统：stderr + `log/app.log` + `log/conversation.log` + 库日志分离。提供 `set_request_id()`/`get_request_id()` ContextVar 和 `log_conversation()` 对话日志 |
 | `timing.py` | 计时工具：`Timer` context manager 单次计时 + `TimingClock` 请求级聚合（span 嵌套）。供 CognitiveLoop 记录 prompt/ttft/tools 等阶段耗时 |
 | `token_tracker.py` | Token 消耗追踪：`record()` 记录每次 LLM 调用的 token usage，`get_session_stats()` 聚合统计。支持 MongoDB 持久化和 OutputManager 广播 |
-| `prompt_recorder.py` | LLM Prompt 记录器：环形缓冲区（容量 20），捕获每次 LLM 调用的完整 messages 数组和 tools 定义，供 debug 面板查看 |
-| `response_recorder.py` | LLM Response 记录器：环形缓冲区（容量 20），捕获每次 LLM 调用的原始回复文本和 inner_voice 内容，供 debug 面板查看 |
 | `custom_providers.py` | 自定义 provider 端点管理：读写 `custom_providers.yaml`，支持用户添加自定义 LLM/STT/TTS 端点 |
 | `tool_call_parser.py` | 流式 tool_call 解析：`merge_stream_tool_calls()` 合并流式 delta 片段，`normalize_tool_calls()` 规范化（补全 id/type/function 结构）。`normalize_tool_calls()` 转为 `list[ToolCall]` Pydantic 模型（依赖 pydantic，core 全域依赖） |
 | `task.py` | Task 数据模型：`Task` dataclass + `TaskType`/`TaskStatus` 枚举 + `asyncio.Future` 双向绑定。支持 retry 和序列化。TaskScheduler Worker Pool 消费单元 |
@@ -259,17 +255,12 @@ Agent 生命周期中的关键扩展点：
 | `llm_adapter.py` | ~170 | 支撑模块 |
 | `character_config.py` | ~80 | 支撑模块 |
 | `app_config.py` | ~70 | 支撑模块 |
-| `sentence_buffer.py` | ~270 | 支撑模块 |
-| `tts_stream.py` | ~310 | 支撑模块 |
-| `block_filter.py` | ~310 | 支撑模块 |
-| `text_utils.py` | ~40 | 支撑模块 |
+| `text/` | 3 文件 (~610) | 支撑模块 |
 | `message_id.py` | 11 | 支撑模块 |
-| `debug_info.py` | ~300 | 支撑模块 |
+| `debug/` | 3 文件 (~520) | 支撑模块 |
 | `log_setup.py` | ~150 | 支撑模块 |
 | `timing.py` | ~100 | 支撑模块 |
 | `token_tracker.py` | ~190 | 支撑模块 |
-| `prompt_recorder.py` | ~110 | 支撑模块 |
-| `response_recorder.py` | ~80 | 支撑模块 |
 | `custom_providers.py` | ~80 | 支撑模块 |
 | `tool_call_parser.py` | ~50 | 支撑模块 |
 | `task.py` | ~80 | 支撑模块 |
