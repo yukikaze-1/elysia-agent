@@ -31,7 +31,7 @@ class DebugInfo:
     # Session
     session_messages: int = 0
     session_recent: list[dict] = field(default_factory=list)
-    session_params: dict = field(default_factory=dict)
+    character_state_raw: dict = field(default_factory=dict)
     archive_msg_count: int = 0            # 归档消息总数
 
     # Long-term memory
@@ -158,7 +158,7 @@ async def collect(agent: "Agent") -> DebugInfo:
         }
         for m in msgs[-5:]
     ]
-    info.session_params = agent._session.character_state.model_dump(mode="json")
+    info.character_state_raw = agent._session.character_state.model_dump(mode="json")
 
     # ---- Long-term memory ----
     info.lt_count = agent._long_term.count

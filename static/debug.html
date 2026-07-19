@@ -466,7 +466,7 @@ function render(info) {
         ['Archive Msgs', (info.archive_msg_count || 0).toLocaleString()],
         ['Character', info.character_name],
         ['L1 Core', info.base_personality_summary ? esc(trunc(info.base_personality_summary, 100)) : 'N/A'],
-        ['Session Params', renderSessionParams(info.session_params)],
+        ['Character State', renderSessionParams(info.character_state_raw)],
       ]},
     ],
     // Row 2: Latency | Process Memory | Scheduler
@@ -1241,10 +1241,10 @@ document.getElementById('copy-btn').onclick = async () => {
 };
 document.getElementById('copy-btn-light').onclick = async () => {
   if (!lastInfo) return;
-  // 精简版：保留最近 3 条 session_recent，排除 session_params
+  // 精简版：保留最近 3 条 session_recent，排除 character_state_raw
   const light = JSON.parse(JSON.stringify(lastInfo));
   light.session_recent = (light.session_recent || []).slice(-3);
-  light.session_params = '（已省略，使用完整 JSON 查看）';
+  light.character_state_raw = '（已省略，使用完整 JSON 查看）';
   try {
     await navigator.clipboard.writeText(JSON.stringify(light, null, 2));
     feedbackBtn('copy-btn-light', '精简 JSON');
