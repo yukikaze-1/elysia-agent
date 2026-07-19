@@ -1,0 +1,403 @@
+"""Agent — wires all L0/L1/L2 components into a runnable Agent.
+
+Usage:
+    agent = Agent(config=config)
+    await agent.start()
+    await agent.process_message("你好")       # single turn
+    await agent.run_repl()                   # interactive REPL
+    await agent.stop()
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+import os
+from dataclasses import asdict
+import logging
+from typing import Any
+
+from Module.output import OutputManager, ConsoleChannel
+
+from ._types import RunState, _PendingMessage, _BackgroundTaskEntry
+from .lifecycle import AgentLifecycle
+from .server import AgentServer
+
+from ..app_config import AppConfig
+from ..event_bus import EventBus, EventPriority, EventType
+from ..agent_fsm import AgentFSM, AgentState
+from ..log_setup import set_request_id, get_request_id
+from ..character_config import CharacterConfig
+from ..memory.session import SessionMemory
+from ..memory.long_term import LongTermMemory
+from ..prompt_assembler import PromptAssembler
+from Module.tool import ToolManager, ToolContext, PluginContext
+from core.tools import ALL_PLUGINS
+from ..cognitive_loop import CognitiveLoop
+from ..idle_monitor import IdleMonitor
+from ..llm_adapter import LLMAdapter
+from ..consolidator import MemoryConsolidator
+from ..personality import CharacterEngine
+from core.personality.reflector import CharacterReflector
+from ..memory.memory_reflector import MemoryReflector
+from core.schema.types import IsoTimestamp, SessionId
+from core.schema.character import CharacterState
+from core.schema.event import (
+    InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
+)
+from Module.embedding import EmbeddingFactory
+from ..task_scheduler import TaskScheduler
+from core.storage.session_repo import SessionRepository
+from core.storage.message_repo import MessageRepository
+from core.storage.token_repo import TokenRepository
+from core.storage.memory_repo import MemoryRepository
+
+logger = logging.getLogger(__name__)
+
+
+class Agent(AgentLifecycle, AgentServer):
+    """Complete Agent wired from L0/L1/L2 components."""
+
+    def __init__(self, *, config: AppConfig, config_path: str | None = None):
+        self._config = config
+        self._config_path = config_path
+        self._user_name = config.agent.user_name
+
+        # ---- L0: Infrastructure (from Module/) ----
+        self._output = OutputManager()
+        self._output.add_channel(ConsoleChannel())
+
+        # ---- Character ----
+        self._character = CharacterConfig.from_yaml(config.agent.character)
+
+        # ---- Storage Repositories ----
+        self._session_repo = SessionRepository()
+        self._message_repo = MessageRepository()
+        self._token_repo = TokenRepository()
+        self._memory_repo = MemoryRepository()
+
+        # ---- L2: Memory ----
+        self._session = SessionMemory(
+            max_messages=config.memory.session_max_messages,
+            repo=self._session_repo,
+            msg_repo=self._message_repo,
+        )
+        self._long_term = LongTermMemory(
+            max_entries=config.memory.ltm_max_entries,
+            max_age_days=config.memory.ltm_max_age_days,
+            embed_timeout=config.memory.ltm_embed_timeout,
+            repo=self._memory_repo,
+        )
+
+        # ---- L2: Tools ----
+        self._tool_manager = ToolManager()
+
+        # 构造 PluginContext（session_id 在 start() 中注入）
+        self._plugin_ctx = PluginContext(
+            session_id="",  # 在 start() 中更新
+            config=self._config,
+        )
+
+        # ---- L1: Cognitive ----
+        self._bus = EventBus()
+        self._fsm = AgentFSM()
+        self._llm = LLMAdapter(model=config.llm.model)
+
+        # ---- 性格 + 情绪引擎（合并）----
+        self._character_engine = CharacterEngine(
+            llm=self._llm,
+            state=CharacterState(session_id=SessionId("")),  # placeholder，start() 中更新
+            character_name=self._character.name,
+            user_name=self._user_name,
+            base_personality=self._character.base_personality,
+            character_config=self._character,
+            output=self._output,
+        )
+
+        # 保存 reflector 引用供 debug_info 使用
+        self._character_reflector = self._character_engine._reflector
+
+        # 注册 pre-save 钩子：session.save() 前同步 reflector buffer → CharacterState
+        self._session._pre_save_hook = self._character_engine.sync_reflector_to_state
+
+        self._prompt = PromptAssembler(
+            self._character, self._session, self._long_term,
+            personality_engine=self._character_engine,
+        )
+
+        self._tts = None  # 在 _start_tts() 中创建
+        self._stt_ok = False  # STT 连通性标志 — 在 run_server() 中设置
+
+        self._consolidator = MemoryConsolidator(
+            llm=self._llm,
+            memory=self._long_term,
+            character_name=self._character.name,
+            user_name=self._user_name,
+        )
+
+        # ---- 记忆反射器 ----
+        self._memory_reflector = MemoryReflector(
+            llm=self._llm,
+            memory=self._long_term,
+            session=self._session,
+        )
+
+        # ---- Token 统计 ----
+        self._token_tracker = None  # 在 start() 中创建（需要 session_id）
+        self._prompt_recorder = None   # 在 start() 中创建
+        self._response_recorder = None # 在 start() 中创建
+
+        self._cognitive = CognitiveLoop(
+            llm=self._llm,
+            fsm=self._fsm,
+            event_bus=self._bus,
+            output=self._output,
+            prompt=self._prompt,
+            session=self._session,
+            tool_executor=self._tool_manager,
+            character_engine=self._character_engine,
+            consolidator=self._consolidator,
+            tts=self._tts,
+            token_tracker=self._token_tracker,
+        )
+        self._cognitive.set_memory_reflector(self._memory_reflector)
+
+        self._idle = IdleMonitor(
+            character=self._character,
+            fsm=self._fsm,
+            event_bus=self._bus,
+        )
+
+        # Worker Pool — 执行 AI 规划的工具子任务 + 后台任务
+        self._scheduler = TaskScheduler(
+            tool_executor=self._tool_manager,
+            tool_ctx=None,  # 在 start() 中赋值 tool_ctx 后更新
+            num_workers=5,
+            checkpoint_path="data/scheduler_checkpoint.json",
+        )
+
+        self._state = RunState.STOPPED
+        self._event_task: asyncio.Task | None = None
+        self._req_counter: int = 0
+        # FIFO 消息排队 — FSM != IDLE 时暂存消息
+        self._pending_messages: list[_PendingMessage] = []
+
+        # ---- TaskSystem ----
+        self._task_system = None   # TaskSystem | None
+        self._delegation_preparer = None  # DelegationPreparer | None
+        self._background_tasks: dict[str, _BackgroundTaskEntry] = {}
+        self._mailbox_task: asyncio.Task | None = None
+        self._db_health_task: asyncio.Task | None = None
+
+    # ---- process_message ----
+
+    async def process_message(self, text: str = "", user_name: str = "",
+                               content: list[dict] | None = None) -> None:
+        """Process a single user message through the pipeline.
+
+        text: 纯文本消息（兼容旧调用）
+        content: 多模态内容数组（ChatMessageV2 content）— 新接口
+
+        If the agent is busy, the message is queued and processed when IDLE.
+        Explicit interrupt (stop button, VAD) still works via EventBus INTERRUPT.
+        """
+        user_name = user_name or self._user_name
+        if not text.strip() and not content:
+            return
+
+        rid = self.next_request_id()
+
+        self._idle.touch()
+
+        if self._fsm.state not in (AgentState.IDLE, AgentState.IDLE_BACKGROUND_TASK):
+            # Queue message instead of interrupting
+            max_queue = self._config.agent.max_pending_messages
+            if len(self._pending_messages) >= max_queue:
+                logger.warning("消息队列已满 (%d) — 丢弃消息", max_queue)
+                return
+            logger.info("Agent busy — 消息排队 (state=%s, queue=%d)",
+                       self._fsm.state, len(self._pending_messages) + 1)
+            self._pending_messages.append(_PendingMessage(
+                text=text, user_name=user_name, request_id=rid,
+                content=content,
+            ))
+            return
+
+        self._bus.post(UserInputData(text=text, user_name=user_name,
+                                     request_id=rid, content=content))
+
+    # ---- Background task lifecycle ----
+
+    def _register_background_task(self, task_id: str, mailbox, intent: str, dispatched_at: IsoTimestamp) -> None:
+        """CognitiveLoop 提交后台任务后调用——注册到轮询列表。"""
+        self._background_tasks[task_id] = _BackgroundTaskEntry(
+            intent=intent,
+            dispatched_at=dispatched_at,
+            mailbox=mailbox,
+        )
+
+    async def _poll_mailboxes(self):
+        """轮询所有活跃后台任务的 mailbox。每 500ms 一次。"""
+        while self._state == RunState.RUNNING:
+            await asyncio.sleep(0.5)
+            for task_id, info in list(self._background_tasks.items()):
+                mailbox = info.mailbox
+                if mailbox is None:
+                    continue
+                try:
+                    while (event := mailbox.get_nowait()) is not None:
+                        data = event.data or {}
+                        if event.type.value == "completed":
+                            self._bus.post(TaskResultData(
+                                task_id=task_id,
+                                result=data.get("result", ""),
+                                original_intent=info.intent,
+                                dispatched_at=info.dispatched_at,
+                            ))
+                            self._background_tasks.pop(task_id, None)
+                            break  # task 已终态，跳出 while 处理下一个 task
+                        elif event.type.value == "failed":
+                            self._bus.post(TaskResultData(
+                                task_id=task_id,
+                                result=f"任务执行失败: {data.get('error', '未知错误')}",
+                                original_intent=info.intent,
+                                dispatched_at=info.dispatched_at,
+                                is_error=True,
+                            ))
+                            self._background_tasks.pop(task_id, None)
+                            logger.warning(
+                                "后台任务失败: %s — %s",
+                                info.intent, data.get('error', '未知错误'),
+                            )
+                            break
+                except Exception:
+                    # get_nowait() 抛异常 = 队列空
+                    pass
+
+    # ---- Event dispatching ----
+
+    async def _process_events(self) -> None:
+        """Main event loop: consume events from EventBus and dispatch.
+
+        Cognitive processing runs in a separate task so the event loop stays
+        responsive to INTERRUPT events during LLM streaming.
+        """
+        while self._state == RunState.RUNNING:
+            try:
+                event = await self._bus.next()
+            except RuntimeError:
+                break
+
+            data = event.data
+            if data is None:
+                continue
+
+            # 从事件数据提取 request_id 并设置 ContextVar（修复跨 task 传播）
+            rid = getattr(data, "request_id", "")
+            if rid:
+                set_request_id(rid)
+
+            if isinstance(data, InterruptData):
+                self._handle_interrupt(data)
+            elif isinstance(data, UserInputData):
+                self._handle_user_input(data)
+            elif isinstance(data, SystemTickData):
+                self._handle_system_tick(data)
+            elif isinstance(data, TaskResultData):
+                self._handle_task_result(data)
+            elif isinstance(data, StateChangeData):
+                await self._handle_state_change(data)
+
+    def _handle_interrupt(self, data: InterruptData) -> None:
+        """处理 INTERRUPT 事件：cancel cognitive task，清空队列。
+
+        保留 STATE_CHANGE 事件（前端 UI 需要），丢弃其余排队事件。
+        """
+        set_request_id("-")
+        logger.info("EventBus: INTERRUPT (%s)", data.source)
+        self._cognitive.cancel_current()
+        for drained in self._bus.drain():
+            if isinstance(drained.data, StateChangeData):
+                self._bus.post(drained.data, priority=drained.priority,
+                               type=EventType.STATE_CHANGE)
+        self._pending_messages.clear()
+
+    def _handle_user_input(self, data: UserInputData) -> None:
+        """处理 USER_INPUT 事件：创建 cognitive task 异步运行。"""
+        text = data.text
+        user_name = data.user_name
+        stt_emotion = data.emotion
+        stt_events = data.events
+        content = data.content
+        rid = data.request_id
+        logger.info("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
+                   "websocket" if stt_emotion else "text", stt_emotion or "无")
+        _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
+            parent_id=rid, calls=calls,
+        )
+        task = asyncio.create_task(
+            self._cognitive.process(text, user_name=user_name,
+                                    stt_emotion=stt_emotion,
+                                    stt_events=stt_events,
+                                    _on_tool_calls=_on_tool_calls,
+                                    content=content),
+            name=f"cognitive-{text[:20] if text else 'multimodal'}"
+        )
+        self._cognitive._current_task = task
+
+    def _handle_system_tick(self, data: SystemTickData) -> None:
+        """处理 SYSTEM_TICK 事件——silence_timeout 时主动开启话题。"""
+        # TODO: time_of_day 事件未处理——producer 在 idle_monitor._check_proactive 中，
+        #       此处只消费 silence_timeout。time_of_day 事件静默丢弃，等待后续实现。
+        if data.reason == "silence_timeout":
+            elapsed = data.elapsed or 0
+            rid = self.next_request_id()
+            set_request_id(rid)
+            _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
+                parent_id=rid, calls=calls,
+            )
+            task = asyncio.create_task(
+                self._cognitive.process(
+                    f"（系统提示：用户已经{int(elapsed)}秒没有说话了，请自然地开启一个话题）",
+                    _on_tool_calls=_on_tool_calls,
+                ),
+                name="cognitive-proactive"
+            )
+            self._cognitive._current_task = task
+
+    def _handle_task_result(self, data: TaskResultData) -> None:
+        """处理 TASK_RESULT 事件——后台任务完成，唤醒 CognitiveLoop。"""
+        rid = self.next_request_id()
+        set_request_id(rid)
+        task = asyncio.create_task(
+            self._cognitive.process(
+                user_message="",
+                is_task_result=True,
+                task_result_context=data.model_dump(),
+            ),
+            name=f"task-result-{data.task_id}",
+        )
+        self._cognitive._current_task = task
+
+    async def _handle_state_change(self, data: StateChangeData) -> None:
+        """处理 STATE_CHANGE 事件——FSM 状态变更。
+
+        IDLE/IDLE_BACKGROUND_TASK 时检查排队消息（FIFO 出队），
+        通知所有输出通道状态变更（前端据此切换动画）。
+        """
+        state = data.state
+        logger.info("FSM → %s", state)
+        if state in ("idle", "idle_background_task"):
+            set_request_id("-")
+            if self._pending_messages:
+                pending = self._pending_messages.pop(0)
+                logger.info("排队消息出队 (%d 条剩余)", len(self._pending_messages))
+                self._bus.post(UserInputData(
+                    text=pending.text,
+                    user_name=pending.user_name,
+                    request_id=pending.request_id,
+                    content=pending.content,
+                ))
+        await self._output.notify_state(state)
+
+    # Tool registration is done via ToolManager.load_all() in start()
