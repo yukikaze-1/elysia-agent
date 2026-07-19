@@ -824,7 +824,8 @@ async def test_agent_interrupt_clears_queue():
     from core.agent import Agent
     from core.app_config import AppConfig
     from core.tests.fake_llm import FakeLLMBackend
-    from core.event_bus import EventType, EventPriority
+    from core.event_bus import EventPriority
+    from core.schema.event import InterruptData
 
     agent = Agent(config=AppConfig())
     agent._llm._backend = FakeLLMBackend(response="hello")
@@ -835,7 +836,7 @@ async def test_agent_interrupt_clears_queue():
         {"text": "排队2", "user_name": "test", "request_id": "002"},
     ]
 
-    agent._bus.post(EventType.INTERRUPT, {"source": "test"},
+    agent._bus.post(InterruptData(source="test"),
                     priority=EventPriority.INTERRUPT)
     await asyncio.sleep(0.2)
 

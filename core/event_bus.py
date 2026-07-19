@@ -9,14 +9,15 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
-from .schema import EventPriority, EventType  # noqa: F401 — re-export
+from .schema import EventPriority, EventType  # noqa: F401
+from .schema.event import EventData  # noqa: F401
 
 
 @dataclass(order=True)
 class Event:
     priority: int = field(compare=True)
     type: str = field(compare=False)
-    data: Any = field(compare=False, default=None)
+    data: EventData | None = field(compare=False, default=None)
     seq: int = field(compare=True, default=0)
 
 
@@ -30,10 +31,14 @@ class EventBus:
         self._queue: asyncio.PriorityQueue[Event] = asyncio.PriorityQueue()
         self._seq = 0
 
-    def post(self, type: str, data: Any = None, priority: int = EventPriority.NORMAL) -> None:
-        """Post an event to the bus. Non-blocking, safe to call from any task."""
+    def post(
+        self, data: EventData, priority: int = EventPriority.NORMAL,
+        *, type: str | None = None,
+    ) -> None:
+        """Post a typed event. type 默认从 data.event_type 推导；显式传 type 覆盖。"""
         self._seq += 1
-        event = Event(priority=priority, type=type, data=data, seq=self._seq)
+        event_type = type if type is not None else data.event_type  # noqa: SIM108
+        event = Event(priority=priority, type=event_type, data=data, seq=self._seq)
         self._queue.put_nowait(event)
 
     async def next(self) -> Event:

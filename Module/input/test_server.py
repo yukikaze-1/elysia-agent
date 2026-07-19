@@ -276,7 +276,8 @@ class TestDoInterruptSkipIf:
     @pytest.mark.asyncio
     async def test_vad_allows_during_speaking(self):
         from Module.input.server import _do_interrupt
-        from core.event_bus import EventType
+        from core.event_bus import EventPriority
+        from core.schema.event import InterruptData
 
         agent = MagicMock()
         agent._fsm.state = "speaking"
@@ -285,13 +286,15 @@ class TestDoInterruptSkipIf:
         await _do_interrupt(agent, skip_if={"thinking", "executing"})
 
         agent._bus.post.assert_called_once()
-        args, _ = agent._bus.post.call_args
-        assert args[0] == EventType.INTERRUPT
+        args, kwargs = agent._bus.post.call_args
+        assert isinstance(args[0], InterruptData)
+        assert kwargs["priority"] == EventPriority.INTERRUPT
 
     @pytest.mark.asyncio
     async def test_explicit_interrupt_always_allowed(self):
         from Module.input.server import _do_interrupt
-        from core.event_bus import EventType
+        from core.event_bus import EventPriority
+        from core.schema.event import InterruptData
 
         agent = MagicMock()
         agent._fsm.state = "executing"
@@ -300,8 +303,9 @@ class TestDoInterruptSkipIf:
         await _do_interrupt(agent)  # no skip_if
 
         agent._bus.post.assert_called_once()
-        args, _ = agent._bus.post.call_args
-        assert args[0] == EventType.INTERRUPT
+        args, kwargs = agent._bus.post.call_args
+        assert isinstance(args[0], InterruptData)
+        assert kwargs["priority"] == EventPriority.INTERRUPT
 
 
 # ============================================================

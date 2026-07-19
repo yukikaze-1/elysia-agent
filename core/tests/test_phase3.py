@@ -20,6 +20,7 @@ from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
 from core.agent_fsm import AgentFSM, AgentState
 from core.event_bus import EventBus, EventType, EventPriority
+from core.schema.event import StateChangeData
 from core.llm_adapter import LLMAdapter
 from core.tests.fake_llm import FakeLLMBackend
 from core.app_config import AppConfig
@@ -536,16 +537,16 @@ class TestEventBusEdges:
     def test_pending_count(self):
         bus = EventBus()
         assert bus.pending_count == 0
-        bus.post("a")
-        bus.post("b")
+        bus.post(StateChangeData(state="a", request_id="r1"))
+        bus.post(StateChangeData(state="b", request_id="r2"))
         assert bus.pending_count == 2
 
     @pytest.mark.asyncio
     async def test_fifo_within_same_priority(self):
         bus = EventBus()
-        bus.post("first", priority=EventPriority.NORMAL)
-        bus.post("second", priority=EventPriority.NORMAL)
-        bus.post("third", priority=EventPriority.NORMAL)
+        bus.post(StateChangeData(state="a", request_id="r1"), type="first", priority=EventPriority.NORMAL)
+        bus.post(StateChangeData(state="b", request_id="r2"), type="second", priority=EventPriority.NORMAL)
+        bus.post(StateChangeData(state="c", request_id="r3"), type="third", priority=EventPriority.NORMAL)
         e1 = await bus.next()
         e2 = await bus.next()
         e3 = await bus.next()

@@ -16,6 +16,7 @@ from core.agent import RunState
 from core.schema.message import Message, MessageRole
 from core.schema.types import SessionId
 from core.schema.memory import MemoryType
+from core.schema.event import InterruptData, UserInputData
 from Module.output import WebSocketChannel
 from .audio_buffer import AudioBuffer
 
@@ -231,17 +232,10 @@ def create_app(
             text = body.get("text", "").strip()
             if not text:
                 return web.json_response({"error": "text 不能为空"}, status=400)
-            raw_type = str(body.get("memory_type", "Note"))
+            mem_type = body.get("memory_type", "note")
             poignancy = int(body.get("poignancy", 5))
         except (json.JSONDecodeError, ValueError):
             return web.json_response({"error": "无效的请求体"}, status=400)
-
-        try:
-            mem_type = MemoryType(raw_type.strip().title()).value
-        except ValueError:
-            allowed = ", ".join(t.value for t in MemoryType)
-            return web.json_response(
-                {"error": f"无效的 memory_type '{raw_type}'，允许: {allowed}"}, status=400)
 
         await agent._long_term.insert(text, memory_type=mem_type, poignancy=poignancy)
         return web.json_response({"ok": True})
@@ -1022,8 +1016,8 @@ async def _do_interrupt(agent, skip_if: set | None = None) -> None:
     """Post INTERRUPT event. skip_if 可阻止特定状态下的 VAD 误触发。"""
     if skip_if and agent._fsm.state in skip_if:
         return
-    from core.event_bus import EventType, EventPriority
-    agent._bus.post(EventType.INTERRUPT, {"source": "websocket"}, priority=EventPriority.INTERRUPT)
+    from core.event_bus import EventPriority
+    agent._bus.post(InterruptData(source="websocket"), priority=EventPriority.INTERRUPT)
 
 
 async def _do_transcription(agent, ws, text: str, audio_buf=None,
@@ -1050,12 +1044,11 @@ async def _do_transcription(agent, ws, text: str, audio_buf=None,
         audio_buf.deafen(2.0)
     rid = agent.next_request_id()
     logger.info("STT 识别: %s%s", text[:100], f" [{emotion}]" if emotion and emotion != "NEUTRAL" else "")
-    from core.event_bus import EventType
-    agent._bus.post(EventType.USER_INPUT, {
-        "text": text, "user_name": agent._user_name,
-        "emotion": emotion, "events": events,
-        "request_id": rid,
-    })
+    agent._bus.post(UserInputData(
+        text=text, user_name=agent._user_name,
+        emotion=emotion, events=events,
+        request_id=rid,
+    ))
 
 
 async def _send_wake(ws) -> None:

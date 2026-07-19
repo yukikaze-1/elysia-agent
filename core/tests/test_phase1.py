@@ -14,6 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from core.schema.event import InterruptData, StateChangeData, UserInputData
 
 # ============================================================================
 # 1. EventBus + FSM tests
@@ -26,9 +27,9 @@ class TestEventBus:
         from core.event_bus import EventBus, EventPriority
         bus = EventBus()
 
-        bus.post("normal", "data1", priority=EventPriority.NORMAL)
-        bus.post("interrupt", "data2", priority=EventPriority.INTERRUPT)
-        bus.post("state_change", "data3", priority=EventPriority.STATE_CHANGE)
+        bus.post(UserInputData(text="data1", user_name="test", request_id="?"), type="normal", priority=EventPriority.NORMAL)
+        bus.post(InterruptData(), priority=EventPriority.INTERRUPT)
+        bus.post(StateChangeData(state="test", request_id="?"), priority=EventPriority.STATE_CHANGE)
 
         e1 = await bus.next()
         e2 = await bus.next()
@@ -41,9 +42,9 @@ class TestEventBus:
     def test_drain(self):
         from core.event_bus import EventBus, EventPriority
         bus = EventBus()
-        bus.post("a", priority=EventPriority.NORMAL)
-        bus.post("b", priority=EventPriority.NORMAL)
-        bus.post("c", priority=EventPriority.NORMAL)
+        bus.post(UserInputData(text="", user_name="", request_id=""), type="a", priority=EventPriority.NORMAL)
+        bus.post(UserInputData(text="", user_name="", request_id=""), type="b", priority=EventPriority.NORMAL)
+        bus.post(UserInputData(text="", user_name="", request_id=""), type="c", priority=EventPriority.NORMAL)
 
         drained = bus.drain()
         assert len(drained) == 3
@@ -331,7 +332,7 @@ class TestInterruptIntegration:
         await asyncio.sleep(0.3)  # Let cognitive task start
 
         # Post interrupt
-        agent._bus.post("interrupt", {"source": "test"}, priority=0)
+        agent._bus.post(InterruptData(source="test"), priority=0)
         await asyncio.sleep(2.0)
 
         assert agent._fsm.state == AgentState.IDLE, \
@@ -353,7 +354,7 @@ class TestInterruptIntegration:
         # Interrupt first request
         await agent.process_message("写一首很长的诗，越长越好")
         await asyncio.sleep(0.5)  # Wait for LLM stream to start
-        agent._bus.post("interrupt", {"source": "test"}, priority=0)
+        agent._bus.post(InterruptData(source="test"), priority=0)
         await asyncio.sleep(0.5)  # Give time for cancellation to propagate
 
         # The agent should eventually return to IDLE
@@ -387,7 +388,7 @@ class TestInterruptIntegration:
         for i in range(3):
             await agent.process_message(f"写一首诗")
             await asyncio.sleep(0.2)
-            agent._bus.post("interrupt", {"source": "test"}, priority=0)
+            agent._bus.post(InterruptData(source="test"), priority=0)
             await asyncio.sleep(1.0)
             assert agent._fsm.state == AgentState.IDLE, \
                 f"Iteration {i}: expected IDLE, got {agent._fsm.state}"
