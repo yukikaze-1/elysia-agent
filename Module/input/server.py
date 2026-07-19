@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from core.agent import RunState
 from core.schema.message import Message, MessageRole
 from core.schema.types import SessionId
+from core.schema.event import InterruptData, UserInputData
 from Module.output import WebSocketChannel
 from .audio_buffer import AudioBuffer
 
@@ -1014,8 +1015,8 @@ async def _do_interrupt(agent, skip_if: set | None = None) -> None:
     """Post INTERRUPT event. skip_if 可阻止特定状态下的 VAD 误触发。"""
     if skip_if and agent._fsm.state in skip_if:
         return
-    from core.event_bus import EventType, EventPriority
-    agent._bus.post(EventType.INTERRUPT, {"source": "websocket"}, priority=EventPriority.INTERRUPT)
+    from core.event_bus import EventPriority
+    agent._bus.post(InterruptData(source="websocket"), priority=EventPriority.INTERRUPT)
 
 
 async def _do_transcription(agent, ws, text: str, audio_buf=None,
@@ -1042,12 +1043,11 @@ async def _do_transcription(agent, ws, text: str, audio_buf=None,
         audio_buf.deafen(2.0)
     rid = agent.next_request_id()
     logger.info("STT 识别: %s%s", text[:100], f" [{emotion}]" if emotion and emotion != "NEUTRAL" else "")
-    from core.event_bus import EventType
-    agent._bus.post(EventType.USER_INPUT, {
-        "text": text, "user_name": agent._user_name,
-        "emotion": emotion, "events": events,
-        "request_id": rid,
-    })
+    agent._bus.post(UserInputData(
+        text=text, user_name=agent._user_name,
+        emotion=emotion, events=events,
+        request_id=rid,
+    ))
 
 
 async def _send_wake(ws) -> None:

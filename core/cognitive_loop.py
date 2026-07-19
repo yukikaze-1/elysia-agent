@@ -50,6 +50,7 @@ from core.schema.mood import _MOOD_TO_TTS_EMOTION, Mood
 from core.schema.part import TextPart
 from core.schema.adapters.message_adapter import parts_from_dicts
 from core.schema._utils import now_iso as _now_iso
+from core.schema.event import StateChangeData
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,7 @@ class CognitiveLoop:
             log_conversation("user", user_name, log_text)
 
             self._fsm.transition(AgentState.THINKING)
-            self._bus.post(EventType.STATE_CHANGE, {"state": "thinking", "request_id": rid},
+            self._bus.post(StateChangeData(state="thinking", request_id=rid),
                           priority=EventPriority.STATE_CHANGE)
 
             self._sentence_buf = SentenceBuffer(min_chunk_length=5, max_buffer_length=2000)
@@ -361,8 +362,7 @@ class CognitiveLoop:
                     if not speaking_started:
                         await self._output.typing(False)
                         self._fsm.transition(AgentState.SPEAKING)
-                        self._bus.post(EventType.STATE_CHANGE,
-                                       {"state": "speaking", "request_id": get_request_id()},
+                        self._bus.post(StateChangeData(state="speaking", request_id=get_request_id()),
                                        priority=EventPriority.STATE_CHANGE)
                         speaking_started = True
                     if self._tts_mgr.active:
@@ -500,7 +500,7 @@ class CognitiveLoop:
                     if not speaking_started:
                         await self._output.typing(False)
                         self._fsm.transition(AgentState.SPEAKING)
-                        self._bus.post(EventType.STATE_CHANGE, {"state": "speaking", "request_id": get_request_id()},
+                        self._bus.post(StateChangeData(state="speaking", request_id=get_request_id()),
                                        priority=EventPriority.STATE_CHANGE)
                         speaking_started = True
                     if self._tts_mgr.active:
@@ -517,7 +517,7 @@ class CognitiveLoop:
 
                     await self._output.typing(False)
                     self._fsm.transition(AgentState.EXECUTING)
-                    self._bus.post(EventType.STATE_CHANGE, {"state": "executing", "request_id": get_request_id()},
+                    self._bus.post(StateChangeData(state="executing", request_id=get_request_id()),
                                    priority=EventPriority.STATE_CHANGE)
 
                     normalized = normalize_tool_calls(raw_tool_calls)
@@ -655,7 +655,7 @@ class CognitiveLoop:
                             pass
 
                     self._fsm.transition(AgentState.THINKING)
-                    self._bus.post(EventType.STATE_CHANGE, {"state": "thinking", "request_id": get_request_id()},
+                    self._bus.post(StateChangeData(state="thinking", request_id=get_request_id()),
                                    priority=EventPriority.STATE_CHANGE)
                     await self._output.typing(True)
                     continue
@@ -993,7 +993,7 @@ class CognitiveLoop:
                     if self._fsm.can_transition(AgentState.SPEAKING):
                         self._fsm.transition(AgentState.SPEAKING)
                     self._fsm.transition(AgentState.IDLE_BACKGROUND_TASK)
-                self._bus.post(EventType.STATE_CHANGE, {"state": "idle_background_task", "request_id": get_request_id()},
+                self._bus.post(StateChangeData(state="idle_background_task", request_id=get_request_id()),
                                priority=EventPriority.STATE_CHANGE)
                 return
 
@@ -1003,7 +1003,7 @@ class CognitiveLoop:
             # 仅 tool_calls 无文本时 FSM 仍在 THINKING，需经过 SPEAKING 才能到 IDLE
             self._fsm.transition(AgentState.SPEAKING)
         self._fsm.transition(AgentState.IDLE)
-        self._bus.post(EventType.STATE_CHANGE, {"state": "idle", "request_id": get_request_id()}, priority=EventPriority.STATE_CHANGE)
+        self._bus.post(StateChangeData(state="idle", request_id=get_request_id()), priority=EventPriority.STATE_CHANGE)
 
     async def _handle_interrupt(self) -> None:
         """Clean up after interruption — cancel TTS tasks, return to IDLE."""
@@ -1017,8 +1017,8 @@ class CognitiveLoop:
         self._tts_mgr.cancel_all()
         await self._output.typing(False)
         self._fsm.transition(AgentState.INTERRUPTED)
-        self._bus.post(EventType.STATE_CHANGE, {"state": "interrupted", "request_id": get_request_id()}, priority=EventPriority.STATE_CHANGE)
+        self._bus.post(StateChangeData(state="interrupted", request_id=get_request_id()), priority=EventPriority.STATE_CHANGE)
         await asyncio.sleep(0.05)
         self._fsm.transition(AgentState.IDLE)
-        self._bus.post(EventType.STATE_CHANGE, {"state": "idle", "request_id": get_request_id()}, priority=EventPriority.STATE_CHANGE)
+        self._bus.post(StateChangeData(state="idle", request_id=get_request_id()), priority=EventPriority.STATE_CHANGE)
         logger.debug("Interrupt complete — agent is IDLE")

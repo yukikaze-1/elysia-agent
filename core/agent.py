@@ -37,6 +37,9 @@ from core.personality.reflector import CharacterReflector
 from .memory.memory_reflector import MemoryReflector  # 新增
 from core.schema.types import IsoTimestamp, SessionId
 from core.schema.character import CharacterState
+from core.schema.event import (
+    InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
+)
 from Module.embedding import EmbeddingFactory
 from .task_scheduler import TaskScheduler
 from core.storage.session_repo import SessionRepository
@@ -746,9 +749,8 @@ class Agent:
             ))
             return
 
-        self._bus.post(EventType.USER_INPUT, {"text": text, "user_name": user_name,
-                                               "request_id": rid,
-                                               "content": content})
+        self._bus.post(UserInputData(text=text, user_name=user_name,
+                                     request_id=rid, content=content))
 
     # ---- REPL ----
 
@@ -902,21 +904,21 @@ class Agent:
                     while (event := mailbox.get_nowait()) is not None:
                         data = event.data or {}
                         if event.type.value == "completed":
-                            self._bus.post(EventType.TASK_RESULT, {
-                                "task_id": task_id,
-                                "result": data.get("result", ""),
-                                "original_intent": info.intent,
-                                "dispatched_at": info.dispatched_at,
-                            })
+                            self._bus.post(TaskResultData(
+                                task_id=task_id,
+                                result=data.get("result", ""),
+                                original_intent=info.intent,
+                                dispatched_at=info.dispatched_at,
+                            ))
                             self._background_tasks.pop(task_id, None)
                             break  # task 已终态，跳出 while 处理下一个 task
                         elif event.type.value == "failed":
-                            self._bus.post(EventType.TASK_RESULT, {
-                                "task_id": task_id,
-                                "result": f"任务执行失败: {data.get('error', '未知错误')}",
-                                "original_intent": info.intent,
-                                "dispatched_at": info.dispatched_at,
-                            })
+                            self._bus.post(TaskResultData(
+                                task_id=task_id,
+                                result=f"任务执行失败: {data.get('error', '未知错误')}",
+                                original_intent=info.intent,
+                                dispatched_at=info.dispatched_at,
+                            ))
                             self._background_tasks.pop(task_id, None)
                             break  # task 已终态，跳出 while 处理下一个 task
                         elif event.type.value == "cancelled":
@@ -1038,7 +1040,12 @@ class Agent:
             if self._pending_messages:
                 pending = self._pending_messages.pop(0)
                 logger.info("排队消息出队 (%d 条剩余)", len(self._pending_messages))
-                self._bus.post(EventType.USER_INPUT, asdict(pending))
+                self._bus.post(UserInputData(
+                    text=pending.text,
+                    user_name=pending.user_name,
+                    request_id=pending.request_id,
+                    content=pending.content,
+                ))
         await self._output.notify_state(state)
 
     # Tool registration is done via ToolManager.load_all() in start()

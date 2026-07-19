@@ -11,6 +11,7 @@ from datetime import datetime
 from .event_bus import EventBus, EventPriority, EventType
 from .agent_fsm import AgentFSM, AgentState
 from .character_config import CharacterConfig
+from core.schema.event import SystemTickData
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +83,7 @@ class IdleMonitor:
                 elapsed = asyncio.get_event_loop().time() - self._last_interaction
                 if elapsed >= duration:
                     self._bus.post(
-                        EventType.SYSTEM_TICK,
-                        {"reason": "silence_timeout", "elapsed": elapsed},
+                        SystemTickData(reason="silence_timeout", elapsed=elapsed),
                         priority=EventPriority.NORMAL,
                     )
                     logger.info("Proactive trigger: silence_timeout (elapsed=%ds)", int(elapsed))
@@ -95,8 +95,7 @@ class IdleMonitor:
                 times = trigger.get("times", [])
                 if now in times:
                     self._bus.post(
-                        EventType.SYSTEM_TICK,
-                        {"reason": "time_of_day", "time": now},
+                        SystemTickData(reason="time_of_day", time=now),
                         priority=EventPriority.NORMAL,
                     )
                     logger.info("Proactive trigger: time_of_day (%s)", now)
