@@ -15,7 +15,12 @@ import time
 import os
 from dataclasses import asdict
 import logging
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..token_tracker import TokenTracker
+    from ..prompt_recorder import PromptRecorder
+    from ..response_recorder import ResponseRecorder
 
 from Module.output import OutputManager, ConsoleChannel
 
@@ -143,9 +148,9 @@ class Agent(AgentLifecycle, AgentServer):
         )
 
         # ---- Token 统计 ----
-        self._token_tracker = None  # 在 start() 中创建（需要 session_id）
-        self._prompt_recorder = None   # 在 start() 中创建
-        self._response_recorder = None # 在 start() 中创建
+        self._token_tracker: "TokenTracker | None" = None  # 在 start() 中创建（需要 session_id）
+        self._prompt_recorder: "PromptRecorder | None" = None   # 在 start() 中创建
+        self._response_recorder: "ResponseRecorder | None" = None # 在 start() 中创建
 
         self._cognitive = CognitiveLoop(
             llm=self._llm,
