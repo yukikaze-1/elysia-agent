@@ -7,9 +7,12 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field, asdict
 from typing import TYPE_CHECKING
+
+import psutil
 
 if TYPE_CHECKING:
     from core.agent import Agent
@@ -277,20 +280,15 @@ async def collect(agent: "Agent") -> DebugInfo:
     except Exception:
         pass
 
-    # ---- Memory ----
-    try:
-        import os as _os
-        import psutil
-        proc = psutil.Process(_os.getpid())
-        mem = proc.memory_info()
-        info.memory = {
-            "rss_mb": round(mem.rss / 1024 / 1024, 1),
-            "vms_mb": round(mem.vms / 1024 / 1024, 1),
-            "pct": round(proc.memory_percent(), 1),
-            "num_threads": proc.num_threads(),
-        }
-    except Exception:
-        info.memory = {"error": "psutil not available"}
+    # ---- Process Memory ----
+    proc = psutil.Process(os.getpid())
+    mem = proc.memory_info()
+    info.memory = {
+        "rss_mb": round(mem.rss / 1024 / 1024, 1),
+        "vms_mb": round(mem.vms / 1024 / 1024, 1),
+        "pct": round(proc.memory_percent(), 1),
+        "num_threads": proc.num_threads(),
+    }
 
     # ---- Token 统计 ----
     tracker = agent._token_tracker
@@ -310,12 +308,11 @@ async def collect(agent: "Agent") -> DebugInfo:
             ],
         }
         # Pending 文件状态
-        import os as _os2
         token_pending = "data/token_usage_pending.jsonl"
-        if _os2.path.exists(token_pending):
+        if os.path.exists(token_pending):
             with open(token_pending) as f:
                 info.pending_token_count = sum(1 for _ in f)
-        info.pending_session_exists = _os2.path.exists("data/session_pending.jsonl")
+        info.pending_session_exists = os.path.exists("data/session_pending.jsonl")
 
     # ---- Prompt 记录 ----
     recorder = agent._prompt_recorder
