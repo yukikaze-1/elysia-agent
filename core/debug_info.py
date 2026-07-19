@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field, asdict
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.agent import Agent
 
 
 @dataclass
@@ -118,7 +122,7 @@ def _truncate(text: str, n: int = 80) -> str:
     return text if len(text) <= n else text[:n] + "…"
 
 
-async def collect(agent) -> DebugInfo:
+async def collect(agent: "Agent") -> DebugInfo:
     """Gather all debug data from a Agent instance."""
     info = DebugInfo()
 
@@ -128,18 +132,14 @@ async def collect(agent) -> DebugInfo:
     ct = agent._cognitive._current_task
     info.processing = ct is not None and not ct.done()
     # uptime
-    started = getattr(agent, '_started_at', None)
-    if started is not None:
-        info.uptime_seconds = time.monotonic() - started
+    info.uptime_seconds = time.monotonic() - agent._started_at
 
     # ---- IdleMonitor ----
-    im = getattr(agent, '_idle_monitor', None)
-    if im is not None:
-        info.proactive_enabled = getattr(im._character, 'proactive', None) is not None and im._character.proactive.enabled
-        info.proactive_interval = getattr(im._character.proactive, 'interval', 0.0) if hasattr(im, '_character') else 0.0
-        last_touch = getattr(im, '_last_interaction', 0.0)
-        if last_touch:
-            info.last_interaction_ago = time.monotonic() - last_touch
+    im = agent._idle_monitor
+    info.proactive_enabled = im._character.proactive.enabled
+    info.proactive_interval = im._character.proactive.interval
+    if im._last_interaction:
+        info.last_interaction_ago = time.monotonic() - im._last_interaction
 
     # ---- Session ----
     msgs = agent._session.messages_for_client()
@@ -178,14 +178,13 @@ async def collect(agent) -> DebugInfo:
     info.mongodb_ok = await agent._session_repo.health_check()
 
     # ---- Tools ----
-    tm = getattr(agent, "_tool_manager", None)
-    if tm is not None:
-        info.currently_executing = list(tm.executing_now)
-        info.tools = tm.plugin_list
-        info.tool_history = list(tm.history)[-5:]
+    tm = agent._tool_manager
+    info.currently_executing = list(tm.executing_now)
+    info.tools = tm.plugin_list
+    info.tool_history = list(tm.history)[-5:]
 
     # ---- Consolidation ----
-    info.consolidation_history = list(getattr(agent._consolidator, "_history", []))[-5:]
+    info.consolidation_history = list(agent._consolidator._history)[-5:]
 
     # ---- Character ----
     info.character_name = agent._character.name
@@ -193,45 +192,44 @@ async def collect(agent) -> DebugInfo:
     info.base_personality_summary = bp[:120] + "..." if len(bp) > 120 else bp
 
     # ---- CharacterEngine ----
-    pe = getattr(agent, "_character_engine", None)
-    if pe is not None:
-        info.character_engine_exists = True
-        c1 = pe.render_c1()
-        info.self_l2 = c1.self_personality[:200] if c1.self_personality else "（未演化）"
-        l3 = pe.state.state_l3
-        info.state_l3 = l3[:200] if l3 else "（无短期状态）"
-        info.state_history = list(pe.state.state_history)[-5:]
-        info.last_awareness_time = pe.state.last_awareness_time or 0.0
+    # ---- CharacterEngine ----
+    pe = agent._character_engine
+    info.character_engine_exists = True
+    c1 = pe.render_c1()
+    info.self_l2 = c1.self_personality[:200] if c1.self_personality else "（未演化）"
+    l3 = pe.state.state_l3
+    info.state_l3 = l3[:200] if l3 else "（无短期状态）"
+    info.state_history = list(pe.state.state_history)[-5:]
+    info.last_awareness_time = pe.state.last_awareness_time or 0.0
 
     # ---- Character Reflector ----
-    ref = getattr(agent, "_character_reflector", None)
-    if ref is not None:
-        info.reflector_exists = True
-        info.reflector_buffer_size = ref.buffer_size
-        info.reflector_last_reflection_at = ref.last_reflection_at
-        info.reflector_locked = ref.locked
-        info.reflector_last_prompt_system = ref.last_prompt_system[:1000]
-        info.reflector_last_prompt_user = ref.last_prompt_user[:1000]
-        info.reflector_last_success = ref.last_success
-        info.reflector_last_duration_ms = ref.last_duration_ms
-        info.reflector_last_text_len = ref.last_text_len
+    ref = agent._character_reflector
+    info.reflector_exists = True
+    info.reflector_buffer_size = ref.buffer_size
+    info.reflector_last_reflection_at = ref.last_reflection_at
+    info.reflector_locked = ref.locked
+    info.reflector_last_prompt_system = ref.last_prompt_system[:1000]
+    info.reflector_last_prompt_user = ref.last_prompt_user[:1000]
+    info.reflector_last_success = ref.last_success
+    info.reflector_last_duration_ms = ref.last_duration_ms
+    info.reflector_last_text_len = ref.last_text_len
 
-    history = pe.state.self_perception_history if pe else []
+    history = pe.state.self_perception_history
     info.self_perception_history = list(history[-5:])
 
     # ---- Connections ----
     info.tts_ok = agent._tts is not None
-    info.stt_ok = getattr(agent, '_stt_ok', False)
+    info.stt_ok = agent._stt_ok
     info.ws_clients = sum(
         1 for ch in agent._output._channels
         if type(ch).__name__ == "WebSocketChannel"
     )
 
     # ---- LLM ----
-    info.llm_model = getattr(getattr(agent, "_llm", None), "model", "") or "?"
+    info.llm_model = agent._llm.model or "?"
 
     # ---- Latency ----
-    info.timing_history = list(getattr(agent._cognitive, "_timing_history", []))
+    info.timing_history = list(agent._cognitive._timing_history)
     if info.timing_history:
         totals = sorted(h["total_ms"] for h in info.timing_history)
         n = len(totals)
@@ -246,11 +244,10 @@ async def collect(agent) -> DebugInfo:
 
     # ---- Scheduler ----
     try:
-        sched = getattr(agent, "_scheduler", None)
-        if sched is not None:
-            info.scheduler_pending = sched.pending_count
-            info.scheduler_running = sched.running_count
-            info.scheduler_total = sched.total_count
+        sched = agent._scheduler
+        info.scheduler_pending = sched.pending_count
+        info.scheduler_running = sched.running_count
+        info.scheduler_total = sched.total_count
             # 找第一个活跃的工具子任务展示 task tree
             for t in sched.all_tasks():
                 if t.type.value == "tool_call" and t.status.value in ("pending", "dispatched"):
@@ -260,21 +257,19 @@ async def collect(agent) -> DebugInfo:
         pass
 
     # ---- MemoryReflector ----
-    mr = getattr(agent, "_memory_reflector", None)
-    if mr is not None:
-        info.mreflector_exists = True
-        info.mreflector_round_count = mr._round_count
-        info.mreflector_round_threshold = mr.ROUND_THRESHOLD
-        info.mreflector_new_memory_count = mr._new_memory_count
-        info.mreflector_memory_threshold = mr.NEW_MEMORY_THRESHOLD
-        info.mreflector_locked = mr._lock.locked()
-        info.mreflector_last_summary = dict(mr._last_summary) if mr._last_summary else {}
+    mr = agent._memory_reflector
+    info.mreflector_exists = True
+    info.mreflector_round_count = mr._round_count
+    info.mreflector_round_threshold = mr.ROUND_THRESHOLD
+    info.mreflector_new_memory_count = mr._new_memory_count
+    info.mreflector_memory_threshold = mr.NEW_MEMORY_THRESHOLD
+    info.mreflector_locked = mr._lock.locked()
+    info.mreflector_last_summary = dict(mr._last_summary) if mr._last_summary else {}
 
     # ---- Consolidator buffer ----
-    cons = getattr(agent, "_consolidator", None)
-    if cons is not None:
-        info.consolidator_buffer_size = len(cons._buffer)
-        info.consolidator_threshold = cons._threshold
+    cons = agent._consolidator
+    info.consolidator_buffer_size = len(cons._buffer)
+    info.consolidator_threshold = cons._threshold
 
     # ---- Mood (L4 Emotion) ----
     try:
@@ -298,7 +293,7 @@ async def collect(agent) -> DebugInfo:
         info.memory = {"error": "psutil not available"}
 
     # ---- Token 统计 ----
-    tracker = getattr(agent, "_token_tracker", None)
+    tracker = agent._token_tracker
     if tracker is not None:
         info.token_stats = {
             "session_total": tracker.session_total,
@@ -323,12 +318,12 @@ async def collect(agent) -> DebugInfo:
         info.pending_session_exists = _os2.path.exists("data/session_pending.jsonl")
 
     # ---- Prompt 记录 ----
-    recorder = getattr(agent, '_prompt_recorder', None)
+    recorder = agent._prompt_recorder
     if recorder is not None:
         info.prompt_summary = recorder.list_summaries()
 
     # ---- Response 记录 ----
-    resp_recorder = getattr(agent, '_response_recorder', None)
+    resp_recorder = agent._response_recorder
     if resp_recorder is not None:
         info.response_summary = resp_recorder.list_summaries()
 

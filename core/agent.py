@@ -164,6 +164,8 @@ class Agent:
 
         # ---- Token 统计 ----
         self._token_tracker = None  # 在 start() 中创建（需要 session_id）
+        self._prompt_recorder = None   # 在 start() 中创建
+        self._response_recorder = None # 在 start() 中创建
 
         self._cognitive = CognitiveLoop(
             llm=self._llm,
