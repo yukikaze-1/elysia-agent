@@ -16,7 +16,9 @@ import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from core.schema.memory_reflector import MemoryReflectorState
+from pydantic import ValidationError
+
+from core.schema.memory_reflector import MemoryReflectorState, ReflectorActions
 
 if TYPE_CHECKING:
     from core.memory.long_term import LongTermMemory
@@ -124,11 +126,6 @@ class MemoryReflector:
         for group in groups:
             try:
                 actions = await self._review_group(group)
-                # 预校验
-                if not self._validate_actions(actions):
-                    logger.warning("MemoryReflector: action validation failed for group, skipping")
-                    continue
-                # 执行
                 m, u, d = await self._execute_actions(actions)
                 total_merges += m
                 total_updates += u
@@ -198,8 +195,8 @@ class MemoryReflector:
                 result.append(type_entries[i:i + self.CLUSTER_SIZE])
         return result
 
-    async def _review_group(self, group) -> dict:
-        """LLM 审查一组记忆，返回 actions dict。"""
+    async def _review_group(self, group) -> ReflectorActions:
+        """LLM 审查一组记忆，返回 ReflectorActions。"""
         entries_json = [
             {"id": e.id, "type": e.memory_type, "content": e.text,
              "poignancy": e.poignancy, "timestamp": e.timestamp}
@@ -217,8 +214,13 @@ class MemoryReflector:
         return self._parse_actions(result.text)
 
     @staticmethod
-    def _parse_actions(text: str) -> dict:
-        """解析 LLM 输出为 actions dict。"""
+    def _parse_actions(text: str) -> ReflectorActions:
+        """解析 LLM 输出为 ReflectorActions。
+
+        不可解析的文本或 schema 校验失败 → raise ValueError，
+        由 _do_reflect 的 per-group except 捕获后跳过该组（下轮重试）。
+        {} 或部分键是合法输入（字段默认空列表）。
+        """
         text = text.strip()
         if text.startswith("```"):
             lines = text.split("\n")
@@ -226,69 +228,56 @@ class MemoryReflector:
             if text.endswith("```"):
                 text = text[:-3]
         try:
-            return json.loads(text)
+            data = json.loads(text)
         except json.JSONDecodeError:
             match = re.search(r"\{.*\}", text, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group())
-                except json.JSONDecodeError:
-                    pass
-        return {"merges": [], "updates": [], "deletes": []}
+            if match is None:
+                raise ValueError("MemoryReflector: LLM 输出无法解析为 JSON")
+            try:
+                data = json.loads(match.group())
+            except json.JSONDecodeError:
+                raise ValueError("MemoryReflector: LLM 输出无法解析为 JSON")
+        try:
+            return ReflectorActions.model_validate(data)
+        except ValidationError as e:
+            logger.warning("MemoryReflector: actions 校验失败: %s", e)
+            raise ValueError(f"actions 校验失败: {e}") from e
 
-    @staticmethod
-    def _validate_actions(actions: dict) -> bool:
-        """预校验 actions 批次。"""
-        if not isinstance(actions, dict):
-            return False
-        for key in ("merges", "updates", "deletes"):
-            if key not in actions or not isinstance(actions[key], list):
-                return False
-        # 检查操作上限
-        if len(actions["merges"]) > 5 or len(actions["updates"]) > 5 or len(actions["deletes"]) > 3:
-            logger.warning("MemoryReflector: actions exceed per-group limits, rejecting")
-            return False
-        return True
-
-    async def _execute_actions(self, actions: dict) -> tuple[int, int, int]:
+    async def _execute_actions(self, actions: ReflectorActions) -> tuple[int, int, int]:
         """执行 actions（merge → update → delete）。返回 (merges, updates, deletes) 计数。"""
         merges = updates = deletes = 0
 
-        for m in actions.get("merges", []):
-            ids = m.get("ids", [])
-            merged = m.get("merged_content", "")
-            if len(ids) >= 2 and merged:
-                try:
-                    # 更新第一条的内容，标记其余为 absorbed
-                    await self._memory.update_text(
-                        ids[0], merged,
-                        poignancy=m.get("poignancy"),
-                        memory_type=m.get("type"),
-                    )
-                    for absorbed_id in ids[1:]:
-                        self._memory.mark_absorbed(absorbed_id)
-                    merges += 1
-                except Exception:
-                    logger.debug("MemoryReflector merge failed for %s", ids[0], exc_info=True)
+        for m in actions.merges:
+            try:
+                ok = await self._memory.update_text(
+                    m.ids[0], m.merged_content,
+                    poignancy=m.poignancy,
+                    memory_type=m.type.value if m.type else None,
+                )
+                if not ok:
+                    # 目标 id 不存在（LLM 幻觉）——合并内容未写入，
+                    # 绝不能 mark_absorbed 隐藏真实条目
+                    logger.warning("MemoryReflector merge 目标不存在: %s", m.ids[0])
+                    continue
+                for absorbed_id in m.ids[1:]:
+                    self._memory.mark_absorbed(absorbed_id)
+                merges += 1
+            except Exception:
+                logger.debug("MemoryReflector merge failed for %s", m.ids[0], exc_info=True)
 
-        for u in actions.get("updates", []):
-            uid = u.get("id", "")
-            new_content = u.get("new_content", "")
-            if uid and new_content:
-                try:
-                    await self._memory.update_text(uid, new_content)
+        for u in actions.updates:
+            try:
+                if await self._memory.update_text(u.id, u.new_content):
                     updates += 1
-                except Exception:
-                    logger.debug("MemoryReflector update failed for %s", uid, exc_info=True)
+            except Exception:
+                logger.debug("MemoryReflector update failed for %s", u.id, exc_info=True)
 
-        for d in actions.get("deletes", []):
-            did = d.get("id", "")
-            if did:
-                try:
-                    await self._memory.delete(did)
+        for d in actions.deletes:
+            try:
+                if await self._memory.delete(d.id):
                     deletes += 1
-                except Exception:
-                    logger.debug("MemoryReflector delete failed for %s", did, exc_info=True)
+            except Exception:
+                logger.debug("MemoryReflector delete failed for %s", d.id, exc_info=True)
 
         return merges, updates, deletes
 
