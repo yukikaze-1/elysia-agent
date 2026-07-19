@@ -957,7 +957,6 @@ Agent/
 │   ├── idle_monitor.py      #   空闲监控
 │   ├── task_scheduler.py    #   Worker Pool 调度器
 │   ├── message_id.py        #   消息 ID 生成
-│   ├── consolidator.py     #   记忆沉淀
 │   ├── schema/              #   共享类型包 (agent + types + part + tool + message + adapters)
 │   ├── task.py             #   任务模型
 │   ├── debug/               #   Debug 仪表板包
@@ -975,7 +974,7 @@ Agent/
 │   ├── memory/              #   记忆子系统
 │   │   ├── session.py       #     SessionMemory (MongoDB + deque)
 │   │   ├── long_term.py     #     LongTermMemory (Milvus + Embedding)
-
+│   │   ├── consolidator.py  #     MemoryConsolidator (提取 + 比对 + 写入)
 │   │   └── memory_reflector.py #  MemoryReflector (定期去重 + KMeans)
 │   ├── tools/               #   Agent 工具集 (12 个插件)
 │   └── tests/               #   测试

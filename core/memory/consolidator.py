@@ -23,8 +23,8 @@ from core.schema.memory import (
     InsertAction,
 )
 
-from .memory.long_term import LongTermMemory
-from .llm_adapter import LLMAdapter
+from .long_term import LongTermMemory
+from ..llm_adapter import LLMAdapter
 
 logger = logging.getLogger(__name__)
 

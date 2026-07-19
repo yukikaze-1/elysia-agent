@@ -33,7 +33,7 @@ from ..prompt_assembler import PromptAssembler
 from ..memory.session import SessionMemory
 from ..text.sentence_buffer import SentenceBuffer
 from ..llm_adapter import LLMAdapter
-from ..consolidator import MemoryConsolidator
+from ..memory.consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
 
 if TYPE_CHECKING:

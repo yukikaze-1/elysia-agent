@@ -107,11 +107,11 @@ core/
 │   ├── engine.py          #   CharacterEngine: L1 Core (file, immutable) → L2 Self (session, slow evolution) → L3 State (session, Reflector-driven) → L4 Mood
 │   ├── reflector.py       #   CharacterReflector: buffers 50 pairs → LLM reflection → submit to engine
 │   └── tests/
-├── consolidator.py        # MemoryConsolidator: buffers 6 msgs → LLM extracts + compares → insert/update/merge/skip
 ├── memory/
 │   ├── session.py          # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive
 │   ├── long_term.py        # LongTermMemory: Milvus-backed vector search + reranking; _absorbed_ids for merge tracking
-│   └── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM review)
+│   ├── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM review)
+│   └── consolidator.py     # MemoryConsolidator: buffers 6 msgs → LLM extracts + compares → insert/update/merge/skip
 ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
 ├── prompt_assembler.py    # PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder
 ├── idle_monitor.py        # IdleMonitor: wake-word detection + proactive triggers

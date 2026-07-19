@@ -23,7 +23,7 @@ from core.tools import ALL_PLUGINS
 from ..cognitive import CognitiveLoop
 from ..idle_monitor import IdleMonitor
 from ..llm_adapter import LLMAdapter
-from ..consolidator import MemoryConsolidator
+from ..memory.consolidator import MemoryConsolidator
 from ..personality import CharacterEngine
 from core.personality.reflector import CharacterReflector
 from ..memory.memory_reflector import MemoryReflector  # 新增

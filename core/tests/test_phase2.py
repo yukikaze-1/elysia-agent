@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from Module.embedding import EmbeddingFactory
-from core.consolidator import _parse_extraction
+from core.memory.consolidator import _parse_extraction
 from core.schema.memory import MemoryType
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -236,7 +236,7 @@ class TestMemoryConsolidator:
         import json
         from core.tests.fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
-        from core.consolidator import MemoryConsolidator
+        from core.memory.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
 
         adapter = LLMAdapter(_test_backend=FakeLLMBackend(response=json.dumps([
@@ -263,7 +263,7 @@ class TestMemoryConsolidator:
     async def test_consolidate_empty_conversation(self):
         from core.tests.fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
-        from core.consolidator import MemoryConsolidator
+        from core.memory.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
 
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
@@ -300,7 +300,7 @@ class TestMemoryConsolidator:
     @pytest.mark.asyncio
     async def test_flush_consolidates_below_threshold(self):
         """flush() should consolidate buffered turns even below threshold."""
-        from core.consolidator import MemoryConsolidator
+        from core.memory.consolidator import MemoryConsolidator
         from core.memory.long_term import LongTermMemory
 
         class FakeLLM:
@@ -817,7 +817,7 @@ class TestMemoryConsolidatorEdgeCases:
         """Consolidation should actually store extracted facts."""
         from core.tests.fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
-        from core.consolidator import MemoryConsolidator
+        from core.memory.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
 
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
@@ -840,7 +840,7 @@ class TestMemoryConsolidatorEdgeCases:
         """Should handle messages at the character limit gracefully."""
         from core.tests.fake_llm import FakeLLMBackend
         from core.memory.long_term import LongTermMemory
-        from core.consolidator import MemoryConsolidator
+        from core.memory.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
 
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
@@ -908,7 +908,7 @@ class TestParseCompareActions:
 
     def test_valid_batch_returns_typed_objects(self):
         import json
-        from core.consolidator import _parse_compare_actions
+        from core.memory.consolidator import _parse_compare_actions
         from core.schema.memory import SkipAction, InsertAction, UpdateAction, MergeAction
 
         text = json.dumps([
@@ -927,24 +927,24 @@ class TestParseCompareActions:
 
     def test_invalid_batch_raises_value_error(self):
         """一个坏元素（未知 action）→ 整批 raise ValueError。"""
-        from core.consolidator import _parse_compare_actions
+        from core.memory.consolidator import _parse_compare_actions
         with pytest.raises(ValueError):
             _parse_compare_actions('[{"action": "skip"}, {"action": "destroy"}]')
 
     def test_empty_array_returns_empty(self):
-        from core.consolidator import _parse_compare_actions
+        from core.memory.consolidator import _parse_compare_actions
         assert _parse_compare_actions("[]") == []
 
     def test_count_mismatch_raises_value_error(self):
         """expected_count 不符（含 LLM 输出被剥成空数组）→ raise ValueError。"""
-        from core.consolidator import _parse_compare_actions
+        from core.memory.consolidator import _parse_compare_actions
         with pytest.raises(ValueError):
             _parse_compare_actions("[]", expected_count=2)
         with pytest.raises(ValueError):
             _parse_compare_actions('[{"action": "skip"}]', expected_count=2)
 
     def test_count_match_passes(self):
-        from core.consolidator import _parse_compare_actions
+        from core.memory.consolidator import _parse_compare_actions
         actions = _parse_compare_actions('[{"action": "skip"}]', expected_count=1)
         assert len(actions) == 1
 
@@ -982,7 +982,7 @@ class TestCompareAndResolve:
     async def test_valid_action_batch_executes(self):
         """merge/update → update_text；insert → insert 且计数；skip → 无操作。"""
         import json
-        from core.consolidator import MemoryConsolidator
+        from core.memory.consolidator import MemoryConsolidator
         from core.schema.memory import ExtractedMemory
 
         actions = [
@@ -1008,7 +1008,7 @@ class TestCompareAndResolve:
     @pytest.mark.asyncio
     async def test_bad_element_falls_back_to_insert_all(self):
         """比对输出含未知 action → _parse_compare_actions raise → 回退全部 insert。"""
-        from core.consolidator import MemoryConsolidator
+        from core.memory.consolidator import MemoryConsolidator
         from core.schema.memory import ExtractedMemory
 
         mem = self._make_memory()
@@ -1032,7 +1032,7 @@ class TestCompareAndResolve:
     @pytest.mark.asyncio
     async def test_empty_compare_output_falls_back_to_insert_all(self):
         """LLM 比对返回 [] 但有 2 条 new_items → 数量不符 → 回退全部 insert（不静默丢失）。"""
-        from core.consolidator import MemoryConsolidator
+        from core.memory.consolidator import MemoryConsolidator
         from core.schema.memory import ExtractedMemory
 
         mem = self._make_memory()
@@ -1327,7 +1327,7 @@ class TestConsolidatorThreshold:
     @pytest.mark.asyncio
     async def test_threshold_6_buffers_below_limit(self):
         """buffer_threshold=6 — 5条消息不触发_do_consolidate。"""
-        from core.consolidator import MemoryConsolidator
+        from core.memory.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
         from core.tests.fake_llm import FakeLLMBackend
         from unittest.mock import AsyncMock, MagicMock
@@ -1345,7 +1345,7 @@ class TestConsolidatorThreshold:
     @pytest.mark.asyncio
     async def test_threshold_6_flushes_on_sixth(self):
         """buffer_threshold=6 — 第6条触发_do_consolidate，buffer清空。"""
-        from core.consolidator import MemoryConsolidator
+        from core.memory.consolidator import MemoryConsolidator
         from core.llm_adapter import LLMAdapter
         from core.tests.fake_llm import FakeLLMBackend
         from unittest.mock import AsyncMock, MagicMock

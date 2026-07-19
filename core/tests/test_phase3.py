@@ -134,7 +134,7 @@ class TestCognitiveLoopMethods:
         from Module.tool import ToolManager, PluginContext, ToolContext
         from core.memory.session import SessionMemory
         from core.character_config import CharacterConfig
-        from core.consolidator import MemoryConsolidator
+        from core.memory.consolidator import MemoryConsolidator
         from core.memory.long_term import LongTermMemory
         from core.personality import CharacterEngine
         from core.schema.character import CharacterState

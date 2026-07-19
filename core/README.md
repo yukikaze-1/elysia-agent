@@ -103,7 +103,7 @@ ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的�
 
 关键方法：`analyze_user_stt()`, `analyze_user()`, `analyze_assistant()`, `restore_state()`
 
-#### MemoryConsolidator (`consolidator.py`)
+#### MemoryConsolidator (`memory/consolidator.py`)
 
 对话记忆提取：缓冲 6 条消息对 → LLM 提取 Fact/Preference/Event/Plan/Note → `ExtractedMemory` Pydantic 模型 → `ConsolidationCompare.j2` → `CompareAction` 判别联合（insert/update/merge/skip）→ LongTermMemory（Milvus）。`consolidate()` 每轮对话后调用，`flush()` 在 shutdown 时强制落盘未持久化的缓冲。提取 prompt 由 `prompt/ExtractMemory.j2` 运行时加载。比对失败时回退全 insert。
 
@@ -150,7 +150,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 
 | 子目录 | 说明 | 详细文档 |
 |--------|------|----------|
-| `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口，deque + MongoDB 30d TTL）、`LongTermMemory`（Milvus 向量搜索 + rerank）、`MemoryReflector`（定期 KMeans 聚类去重）。消息归档直调 `core/storage/message_repo.py`。详见 [CLAUDE.md](../CLAUDE.md) | `memory/` |
+| `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口，deque + MongoDB 30d TTL）、`LongTermMemory`（Milvus 向量搜索 + rerank）、`MemoryConsolidator`（对话提取+比对+写入）、`MemoryReflector`（定期 KMeans 聚类去重）。消息归档直调 `core/storage/message_repo.py`。详见 [CLAUDE.md](../CLAUDE.md) | `memory/` |
 | `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
 | `core/tools/` | 工具插件：filesystem、web、memory、time、reminder、vision 等。每个插件 `plugin.py` + `config.yaml` + `README.md` | `tools/` |
 | `core/tests/` | 测试套件：覆盖 Agent、CognitiveLoop、CharacterEngine、MemoryConsolidator 等核心组件的单元/集成测试 | -- |
@@ -247,7 +247,7 @@ Agent 生命周期中的关键扩展点：
 | `event_bus.py` | 60 | 核心组件 |
 | `cognitive_loop.py` | 1042 | 核心组件 |
 | `personality/engine.py` | ~320 | 核心组件 |
-| `consolidator.py` | ~300 | 核心组件 |
+| `memory/consolidator.py` | ~300 | 核心组件 |
 | `prompt_assembler.py` | ~130 | 核心组件 |
 | `idle_monitor.py` | ~130 | 核心组件 |
 | `task_scheduler.py` | ~430 | 核心组件 |
