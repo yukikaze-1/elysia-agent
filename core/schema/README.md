@@ -18,7 +18,7 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 ├── token.py     # TokenUsageEntry — Token 用量记录
 ├── character.py # CharacterState — CharacterEngine 性格状态
 ├── mood.py     # Mood — CharacterEngine mood 枚举
-├── memory_reflector.py # MemoryReflectorState — MemoryReflector 状态
+├── memory_reflector.py # MemoryReflectorState + ReflectorActions — 状态 + LLM 输出类型
 └── adapters/
     └── message_adapter.py  # parts_from_dicts, content_to_openai, content_text 等纯函数适配器
 ```
@@ -45,7 +45,7 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 | `token.py` | TokenUsageEntry / TokenUsageRecord / TokenUsageSummary — Token 用量记录 |
 | `character.py` | CharacterState — PersonalityEngine 性格状态 |
 | `mood.py` | Mood — CharacterEngine mood 枚举 |
-| `memory_reflector.py` | MemoryReflectorState — MemoryReflector 状态 |
+| `memory_reflector.py` | MemoryReflectorState + MergeItem/UpdateItem/DeleteItem/ReflectorActions — 状态 + MemoryReflector LLM 输出类型 |
 | `_utils.py` | now_iso — 时间戳工厂 |
 
 测试位于 `core/schema/tests/`（types/part/tool/message/adapters 各一个测试文件）。
