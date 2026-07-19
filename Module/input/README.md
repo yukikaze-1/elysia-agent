@@ -13,9 +13,9 @@ input/
 ├── audio_buffer.py      # AudioBuffer — VAD 分帧 + 音频缓冲 + PCM/WAV 转换
 ├── server.py            # create_app — WebSocket 服务器 + HTTP 路由
 ├── wakeword.py          # WakeWordDetector — 唤醒词检测
-├── test_audio_buffer.py # 单元测试
-├── test_server.py       # WebSocket 服务器测试
-├── test_wakeword.py     # 唤醒词测试
+├── tests/               # 单元测试
+
+
 └── README.md
 ```
 

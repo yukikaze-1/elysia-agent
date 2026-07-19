@@ -5,9 +5,9 @@ import pytest
 
 from typing import cast
 
-from .openai_compat import OpenAICompatBackend
-from .protocol import LLMBackend
-from .registry import LLMFactory
+from ..openai_compat import OpenAICompatBackend
+from ..protocol import LLMBackend
+from ..registry import LLMFactory
 
 pytestmark = pytest.mark.service
 
@@ -70,7 +70,7 @@ class TestLLMBackendProtocol:
 
 class TestExtractPrefix:
     def test_strips_prefix_from_messages(self):
-        from .openai_compat import _extract_prefix
+        from ..openai_compat import _extract_prefix
 
         messages = [
             {"role": "system", "content": "hello"},
@@ -83,7 +83,7 @@ class TestExtractPrefix:
         assert cleaned[0] == {"role": "system", "content": "hello"}
 
     def test_no_prefix(self):
-        from .openai_compat import _extract_prefix
+        from ..openai_compat import _extract_prefix
 
         messages = [{"role": "user", "content": "hi"}]
         cleaned, has_prefix = _extract_prefix(messages)
@@ -91,7 +91,7 @@ class TestExtractPrefix:
         assert cleaned == messages
 
     def test_empty_messages(self):
-        from .openai_compat import _extract_prefix
+        from ..openai_compat import _extract_prefix
 
         cleaned, has_prefix = _extract_prefix([])
         assert has_prefix is False

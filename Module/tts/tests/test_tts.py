@@ -4,10 +4,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from .protocol import TTSBackend
-from .registry import TTSFactory
-from .minimax_tts import MiniMaxTTSBackend
-from .text_preprocess import strip_all_markup, strip_action_only, strip_for_minimax
+from ..protocol import TTSBackend
+from ..registry import TTSFactory
+from ..minimax_tts import MiniMaxTTSBackend
+from ..text_preprocess import strip_all_markup, strip_action_only, strip_for_minimax
 
 pytestmark = pytest.mark.service
 
@@ -828,28 +828,28 @@ class TestTTSBackendProviderName:
         assert backend.provider_name == "gpt-sovits"
 
     def test_gpt_sovits_get_preprocess(self, backend):
-        from .text_preprocess import strip_all_markup
+        from ..text_preprocess import strip_all_markup
         assert backend.get_preprocess() is strip_all_markup
 
     def test_minimax_provider_name(self):
-        from .minimax_tts import MiniMaxTTSBackend
+        from ..minimax_tts import MiniMaxTTSBackend
         backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
         assert backend.provider_name == "minimax"
 
     def test_minimax_get_preprocess(self):
-        from .minimax_tts import MiniMaxTTSBackend
-        from .text_preprocess import strip_for_minimax
+        from ..minimax_tts import MiniMaxTTSBackend
+        from ..text_preprocess import strip_for_minimax
         backend = MiniMaxTTSBackend(api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice")
         assert backend.get_preprocess() is strip_for_minimax
 
     def test_openai_provider_name(self):
-        from .openai_tts import OpenAICompatTTSBackend
+        from ..openai_tts import OpenAICompatTTSBackend
         backend = OpenAICompatTTSBackend(base_url="http://fake:8000")
         assert backend.provider_name == "custom"
 
     def test_openai_get_preprocess(self):
-        from .openai_tts import OpenAICompatTTSBackend
-        from .text_preprocess import strip_all_markup
+        from ..openai_tts import OpenAICompatTTSBackend
+        from ..text_preprocess import strip_all_markup
         backend = OpenAICompatTTSBackend(base_url="http://fake:8000")
         assert backend.get_preprocess() is strip_all_markup
 
@@ -862,7 +862,7 @@ class TestOpenAISynthesize:
 	@pytest.mark.asyncio
 	async def test_synthesize_collects_stream_chunks(self):
 		"""非流式：调 synthesize_stream 收集所有 chunk"""
-		from .openai_tts import OpenAICompatTTSBackend
+		from ..openai_tts import OpenAICompatTTSBackend
 		fake_chunks = [b"chunk1", b"chunk2", b"chunk3"]
 
 		class MockStreamBody:
@@ -885,7 +885,7 @@ class TestOpenAISynthesize:
 	@pytest.mark.asyncio
 	async def test_synthesize_stream_yields_chunks(self):
 		"""流式：逐 chunk yield"""
-		from .openai_tts import OpenAICompatTTSBackend
+		from ..openai_tts import OpenAICompatTTSBackend
 		fake_chunks = [b"a", b"b", b"c"]
 
 		class MockStreamBody:
@@ -910,7 +910,7 @@ class TestOpenAISynthesize:
 	@pytest.mark.asyncio
 	async def test_preprocess_applied(self):
 		"""文本预处理在合成前调用"""
-		from .openai_tts import OpenAICompatTTSBackend
+		from ..openai_tts import OpenAICompatTTSBackend
 		captured = []
 
 		class MockStreamBody:

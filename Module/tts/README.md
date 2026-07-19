@@ -20,8 +20,8 @@ tts/
 ├── text_preprocess.py        # 文本预处理函数
 ├── config.py                 # TTSConfig dataclass
 ├── __main__.py               # 冒烟测试
-├── test_tts.py               # 单元测试
-├── test_config.py            # Config 测试
+├── tests/                    # 单元测试
+
 └── tests/
 ```
 
@@ -144,7 +144,7 @@ MINIMAX_TTS_URL=https://api.minimaxi.com     # 可选
 
 ```bash
 # 单元测试
-python -m pytest Module/tts/test_tts.py -v
+python -m pytest Module/tts/tests/ -v
 
 # 冒烟测试（需对应服务端运行）
 python -m Module.tts

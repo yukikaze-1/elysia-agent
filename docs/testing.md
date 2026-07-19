@@ -48,8 +48,8 @@ pytest Module/task_system/tests/unit/ -v   # TaskSystem 单元
 pytest Module/task_system/tests/integration/ -v  # TaskSystem 集成
 
 # 按文件运行
-pytest Module/llm/test_llm.py -v
-pytest Module/config/test_config.py -v
+pytest Module/llm/tests/ -v
+pytest Module/config/tests/ -v
 pytest core/tests/test_phase3.py -v
 ```
 
@@ -63,32 +63,32 @@ pytest core/tests/test_phase3.py -v
 | | `test_test_helpers.py` | 3 | unit |
 | | `test_main_runner.py` | 2 | unit |
 | | `test_config_test_helpers.py` | 4 | unit |
-| `Module/config/` | `test_config.py` | 64 | unit |
+| `Module/config/tests/` | `test_config.py` | 64 | unit |
 | | `test_preflight.py` | 19 | unit |
-| `Module/logger/` | `test_logger.py` | 33 | unit |
-| `Module/database/documentdb/` | `test_documentdb.py` | 29 | service |
+| `Module/logger/tests/` | `test_logger.py` | 33 | unit |
+| `Module/database/documentdb/tests/` | `test_documentdb.py` | 29 | service |
 | | `test_config.py` | 2 | unit |
-| `Module/database/vectordb/` | `test_vectordb.py` | 33 | service |
+| `Module/database/vectordb/tests/` | `test_vectordb.py` | 33 | service |
 | | `test_config.py` | 2 | unit |
-| `Module/embedding/` | `test_embedding.py` | 31 | service |
+| `Module/embedding/tests/` | `test_embedding.py` | 31 | service |
 | | `test_config.py` | 2 | unit |
-| `Module/llm/` | `test_llm.py` | 38 | service |
+| `Module/llm/tests/` | `test_llm.py` | 38 | service |
 | | `test_config.py` | 2 | unit |
-| `Module/stt/` | `test_stt.py` | 37 | service |
+| `Module/stt/tests/` | `test_stt.py` | 37 | service |
 | | `test_config.py` | 2 | unit |
-| `Module/tts/` | `test_tts.py` | 70 | service |
+| `Module/tts/tests/` | `test_tts.py` | 70 | service |
 | | `test_config.py` | 2 | unit |
-| `Module/input/` | `test_server.py` | 30 | unit+service |
+| `Module/input/tests/` | `test_server.py` | 30 | unit+service |
 | | `test_audio_buffer.py` | 29 | unit+service |
 | | `test_wakeword.py` | 8 | unit |
-| `Module/output/` | `test_output.py` | 54 | unit+service |
-| `Module/system_prompt/` | `test_prompt.py` | 19 | service |
-| | `tests/unit/test_protocol.py` | 9 | unit |
-| | `tests/unit/test_sections/test_boundary.py` | 25 | unit |
-| | `tests/unit/test_system_prompt_manager.py` | 6 | unit |
-| | `tests/integration/test_full_render.py` | 3 | integration |
-| | `tests/integration/test_message_builder.py` | 12 | integration |
-| `Module/tool/` | `test_framework.py` | 96 | unit+service |
+| `Module/output/tests/` | `test_output.py` | 54 | unit+service |
+| `Module/system_prompt/tests/` | `test_prompt.py` | 19 | service |
+| | `unit/test_protocol.py` | 9 | unit |
+| | `unit/test_sections/test_boundary.py` | 25 | unit |
+| | `unit/test_system_prompt_manager.py` | 6 | unit |
+| | `integration/test_full_render.py` | 3 | integration |
+| | `integration/test_message_builder.py` | 12 | integration |
+| `Module/tool/tests/` | `test_framework.py` | 96 | unit+service |
 | | `test_tool_safety.py` | 33 | unit |
 | `Module/task_system/tests/unit/` | `test_checkpoint.py` | 9 | unit |
 | | `test_delegation_preparer.py` | 53 | unit |

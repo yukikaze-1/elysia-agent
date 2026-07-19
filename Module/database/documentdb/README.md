@@ -14,8 +14,8 @@ documentdb/
 ├── registry.py          # 后端注册表 + DocumentDBFactory.create() / from_config()
 ├── mongodb.py           # MongoDBBackend — motor (async-native)
 ├── config.py            # DocumentDBConfig — dataclass 配置
-├── test_documentdb.py   # 单元测试
-├── test_config.py       # Config 测试
+├── tests/               # 单元测试
+
 └── README.md
 ```
 
@@ -107,7 +107,7 @@ backend = DocumentDBFactory.from_config("mongodb/elysia", cfg)
 
 ```bash
 # 单元测试（mock，不需要 MongoDB）
-python -m pytest Module/database/documentdb/test_documentdb.py -v
+python -m pytest Module/database/documentdb/tests/ -v
 
 # 真实 API 集成测试（需要 MongoDB 运行中）
 python -m Module.database.documentdb

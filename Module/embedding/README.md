@@ -15,8 +15,8 @@ embedding/
 ├── huggingface.py         # HuggingFaceBackend — 本地 sentence-transformers
 ├── openai_compat.py       # OpenAICompatEmbeddingBackend — OpenAI/Cohere 兼容协议
 ├── config.py              # EmbeddingConfig — dataclass 配置
-├── test_embedding.py      # 单元测试
-├── test_config.py         # Config 测试
+├── tests/                 # 单元测试
+
 └── README.md
 ```
 
@@ -159,7 +159,7 @@ class YourBackend(EmbeddingBackend):
 
 ```bash
 # 单元测试（mock，不需要 API key）
-python -m pytest Module/embedding/test_embedding.py -v
+python -m pytest Module/embedding/tests/ -v
 
 # 真实 API 集成测试
 python -m Module.embedding

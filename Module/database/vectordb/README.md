@@ -14,8 +14,8 @@ vectordb/
 ├── registry.py          # 后端注册表 + VectorDBFactory.create() / from_config()
 ├── milvus.py            # MilvusBackend
 ├── config.py            # VectorDBConfig — dataclass 配置
-├── test_vectordb.py      # 单元测试
-├── test_config.py       # Config 测试
+├── tests/                 # 单元测试
+
 └── README.md
 ```
 
@@ -116,7 +116,7 @@ backend = VectorDBFactory.from_config("milvus/micro_memory", cfg)
 
 ```bash
 # 单元测试（mock，不需要 Milvus）
-python -m pytest Module/database/vectordb/test_vectordb.py -v
+python -m pytest Module/database/vectordb/tests/ -v
 
 # 真实 API 集成测试（需要 Milvus 运行中）
 python -m Module.database.vectordb

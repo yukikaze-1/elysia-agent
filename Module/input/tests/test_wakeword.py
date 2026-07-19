@@ -7,7 +7,7 @@ import struct
 
 import pytest
 
-from .wakeword import WakeWordDetector, _WW_FRAME_BYTES
+from ..wakeword import WakeWordDetector, _WW_FRAME_BYTES
 
 
 def _silence_bytes(count: int) -> bytes:

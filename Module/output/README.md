@@ -14,7 +14,7 @@ output/
 ├── manager.py           # OutputManager — 多 channel 广播 + 流式协调
 ├── console.py           # ConsoleChannel — 终端输出
 ├── websocket.py         # WebSocketChannel — JSON 消息
-├── test_output.py       # 单元测试
+├── tests/               # 单元测试
 └── README.md
 ```
 
@@ -87,7 +87,7 @@ await mgr.send(ChatMessage(role="Elysia", content="你好"))
 ## 测试
 
 ```bash
-python -m pytest Module/output/test_output.py -v
+python -m pytest Module/output/tests/ -v
 python -m Module.output
 ```
 

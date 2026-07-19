@@ -45,18 +45,17 @@ python -m pytest core/tests/ -v
 python -m pytest Module/task_system/tests/ -v
 
 # 其他模块
-python -m pytest Module/llm/test_llm.py -v
-python -m pytest Module/tts/test_tts.py -v
-python -m pytest Module/stt/test_stt.py -v
-python -m pytest Module/embedding/test_embedding.py -v
-python -m pytest Module/output/test_output.py -v
-python -m pytest Module/config/test_config.py -v
-python -m pytest Module/system_prompt/test_prompt.py -v
-python -m pytest Module/logger/test_logger.py -v
-python -m pytest Module/database/vectordb/test_vectordb.py -v
-python -m pytest Module/database/documentdb/test_documentdb.py -v
-python -m pytest Module/tool/test_framework.py -v
-python -m pytest Module/tool/test_tool_safety.py -v
+python -m pytest Module/llm/tests/ -v
+python -m pytest Module/tts/tests/ -v
+python -m pytest Module/stt/tests/ -v
+python -m pytest Module/embedding/tests/ -v
+python -m pytest Module/output/tests/ -v
+python -m pytest Module/config/tests/ -v
+python -m pytest Module/system_prompt/tests/ -v
+python -m pytest Module/logger/tests/ -v
+python -m pytest Module/database/vectordb/tests/ -v
+python -m pytest Module/database/documentdb/tests/ -v
+python -m pytest Module/tool/tests/ -v
 ```
 
 ### pytest markers

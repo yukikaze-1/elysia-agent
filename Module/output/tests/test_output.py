@@ -3,10 +3,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from .protocol import ChannelCapability, OutputChannel
-from .manager import OutputManager
-from .console import ConsoleChannel
-from .websocket import WebSocketChannel
+from ..protocol import ChannelCapability, OutputChannel
+from ..manager import OutputManager
+from ..console import ConsoleChannel
+from ..websocket import WebSocketChannel
 
 
 # ============================================================

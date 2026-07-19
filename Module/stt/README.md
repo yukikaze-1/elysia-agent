@@ -15,8 +15,8 @@ stt/
 ├── sensevoice.py        # SenseVoiceBackend — 本地 SenseVoice API
 ├── openai_stt.py        # OpenAICompatibleSTTBackend — OpenAI-compatible STT
 ├── config.py            # STTConfig — dataclass 配置
-├── test_stt.py          # 单元测试
-├── test_config.py       # Config 测试
+├── tests/              # 单元测试
+
 └── README.md
 ```
 
@@ -118,7 +118,7 @@ class YourBackend(STTBackend):
 
 ```bash
 # 单元测试（mock，不需要 API）
-python -m pytest Module/stt/test_stt.py -v
+python -m pytest Module/stt/tests/ -v
 
 # 真实 API 集成测试（需要 SenseVoice 服务运行）
 python -m Module.stt

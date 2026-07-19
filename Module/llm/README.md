@@ -14,8 +14,8 @@ llm/
 ├── registry.py          # 后端注册表 + LLMFactory.create() / from_config()
 ├── openai_compat.py     # OpenAICompatBackend — OpenAI 兼容协议 (DeepSeek/OpenAI/Ollama)
 ├── config.py            # LLMConfig — dataclass 配置
-├── test_llm.py          # 单元测试
-├── test_config.py       # Config 测试
+├── tests/              # 单元测试
+
 └── README.md
 ```
 
@@ -174,7 +174,7 @@ class YourBackend(LLMBackend):
 
 ```bash
 # 单元测试（mock，不需要 API key）
-python -m pytest Module/llm/test_llm.py -v
+python -m pytest Module/llm/tests/ -v
 
 # 真实 API 集成测试（需要 .env 中的 DEEPSEEK_API_KEY）
 python -m Module.llm
