@@ -6,6 +6,9 @@ import os
 
 import pytest
 
+from core.schema.message import AssistantMessage, MessageId, UserMessage
+from core.schema.part import TextPart
+
 from Module.task_system.delegation_preparer import DelegationPreparer
 from Module.task_system.schema import (
     ConstraintConfig,
@@ -71,9 +74,9 @@ async def test_integration_simple_task_ok():
         intent="查询北京今天和明天的天气",
         hints="用户在北京",
         session_messages=[
-            {"role": "user", "content": "今天天气怎么样？"},
-            {"role": "assistant", "content": "请问你想查哪个城市的天气？"},
-            {"role": "user", "content": "北京的"},
+            UserMessage(content=[TextPart(content="今天天气怎么样？")], message_id=MessageId("it1-u1")),
+            AssistantMessage(content=[TextPart(content="请问你想查哪个城市的天气？")], message_id=MessageId("it1-a1")),
+            UserMessage(content=[TextPart(content="北京的")], message_id=MessageId("it1-u2")),
         ],
         user_profile=UserProfile(preferences="简洁回答"),
         tools=_make_integration_tools(),
@@ -123,7 +126,7 @@ async def test_integration_multi_step_with_mutation():
         intent="查询北京最近三天天气，如果有下雨的日子就发邮件给 boss@example.com 提醒带伞",
         hints="老板邮箱是 boss@example.com",
         session_messages=[
-            {"role": "user", "content": "明天可能需要提醒老板带伞"},
+            UserMessage(content=[TextPart(content="明天可能需要提醒老板带伞")], message_id=MessageId("it2-u1")),
         ],
         user_profile=UserProfile(),
         tools=_make_integration_tools(),
@@ -231,11 +234,11 @@ async def test_integration_context_summarization():
         intent="查天气",
         hints=None,
         session_messages=[
-            {"role": "user", "content": "我下周要去上海出差"},
-            {"role": "assistant", "content": "好的，需要我帮你准备什么吗？"},
-            {"role": "user", "content": "帮我查一下上海的天气，我还要订酒店"},
-            {"role": "assistant", "content": "上海最近天气多变，建议带伞。你已经定了酒店吗？"},
-            {"role": "user", "content": "还没订，先查天气吧，下雨的话就不去了"},
+            UserMessage(content=[TextPart(content="我下周要去上海出差")], message_id=MessageId("it5-u1")),
+            AssistantMessage(content=[TextPart(content="好的，需要我帮你准备什么吗？")], message_id=MessageId("it5-a1")),
+            UserMessage(content=[TextPart(content="帮我查一下上海的天气，我还要订酒店")], message_id=MessageId("it5-u2")),
+            AssistantMessage(content=[TextPart(content="上海最近天气多变，建议带伞。你已经定了酒店吗？")], message_id=MessageId("it5-a2")),
+            UserMessage(content=[TextPart(content="还没订，先查天气吧，下雨的话就不去了")], message_id=MessageId("it5-u3")),
         ],
         user_profile=UserProfile(preferences="喜欢详细报告", city="北京"),
         tools=_make_integration_tools(),
