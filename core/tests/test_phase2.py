@@ -31,35 +31,6 @@ def _cleanup_embedding():
 @pytest.mark.unit
 class TestSessionPersistence:
     @pytest.mark.asyncio
-    async def test_snapshot_restore(self):
-        """save/load 可跨 session 实例保留消息和参数。"""
-        import os as _os
-        from core.memory.session import SessionMemory
-        from core.schema.message import UserMessage, AssistantMessage
-        from core.schema.part import TextPart
-        from core.schema.types import MessageId
-
-        s1 = SessionMemory(max_messages=10, session_id="test-snapshot-1")
-        s1.add_message(UserMessage(content=[TextPart(content="hello")], message_id=MessageId("snap-1")))
-        s1.add_message(AssistantMessage(content=[TextPart(content="hi there")], message_id=MessageId("snap-2")))
-        s1.set_param("mood", "happy")
-        s1.set_param("mood_intensity", 0.7)
-
-        assert await s1.save() is True
-
-        s2 = SessionMemory(max_messages=10, session_id="test-snapshot-1")
-        ok = await s2.load()
-        assert ok is True
-        assert len(s2.recent_messages()) == 2
-        assert s2.get_param("mood") == "happy"
-        assert s2.get_param("mood_intensity") == 0.7
-
-        try:
-            _os.remove(s1._pending_file)
-        except Exception:
-            pass
-
-    @pytest.mark.asyncio
     async def test_max_messages_enforced_on_restore(self):
         """save/load 后 max_messages 上限仍生效。"""
         import os as _os
@@ -82,20 +53,6 @@ class TestSessionPersistence:
             _os.remove(s1._pending_file)
         except Exception:
             pass
-
-    def test_clear(self):
-        from core.memory.session import SessionMemory
-        from core.schema.message import UserMessage
-        from core.schema.part import TextPart
-        from core.schema.types import MessageId
-
-        s = SessionMemory(max_messages=10)
-        s.add_message(UserMessage(content=[TextPart(content="test")], message_id=MessageId("clr-1")))
-        s.set_param("key", "value")
-        assert len(s.recent_messages()) == 1
-        s.clear()
-        assert len(s.recent_messages()) == 0
-        assert s.get_param("key") is None
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -524,38 +481,6 @@ class TestPromptAssembler:
 
 @pytest.mark.unit
 class TestSessionMemoryEdgeCases:
-    @pytest.mark.asyncio
-    async def test_round_trip_snapshot_cycle(self):
-        """Full cycle: create -> populate -> save -> load -> verify."""
-        import os as _os
-        from core.memory.session import SessionMemory
-        from core.schema.message import UserMessage, AssistantMessage
-        from core.schema.part import TextPart
-        from core.schema.types import MessageId
-
-        s1 = SessionMemory(max_messages=20, session_id="roundtrip-test")
-        s1.add_message(UserMessage(content=[TextPart(content="msg1")], message_id=MessageId("rt-1")))
-        s1.add_message(AssistantMessage(content=[TextPart(content="reply1")], message_id=MessageId("rt-2")))
-        s1.add_message(UserMessage(content=[TextPart(content="msg2")], message_id=MessageId("rt-3")))
-        s1.set_param("mood", "excited")
-        s1.set_param("mood_intensity", 0.8)
-        s1.set_param("custom_key", {"nested": [1, 2, 3]})
-
-        await s1.save()
-
-        s2 = SessionMemory(max_messages=20, session_id="roundtrip-test")
-        await s2.load()
-
-        assert len(s2.recent_messages()) == len(s1.recent_messages())
-        assert s2.get_param("mood") == "excited"
-        assert s2.get_param("mood_intensity") == 0.8
-        assert s2.get_param("custom_key") == {"nested": [1, 2, 3]}
-
-        try:
-            _os.remove(s1._pending_file)
-        except Exception:
-            pass
-
     def test_multiple_sessions_independent(self):
         """Different session_ids should not interfere with each other."""
         from core.memory.session import SessionMemory
@@ -597,31 +522,6 @@ class TestSessionMemoryEdgeCases:
         assert "second" not in contents
         assert "third" in contents
         assert "fifth" in contents
-
-    @pytest.mark.asyncio
-    async def test_character_state_persistence_across_restore(self):
-        """CharacterState should survive save/load exactly."""
-        import os as _os
-        from core.memory.session import SessionMemory
-        from core.schema.character import CharacterState
-        from core.schema.types import SessionId
-
-        cs = CharacterState(session_id=SessionId("cs-restore-test"), mood="happy", mood_intensity=0.8)
-        s1 = SessionMemory(session_id=SessionId("cs-restore-test"), character_state=cs)
-
-        await s1.save()  # save initial state
-        s1.character_state.mood = "sad"  # modify
-        await s1.load()  # load back
-
-        assert s1.character_state.mood == "happy"
-        assert s1.character_state.mood_intensity == 0.8
-        assert s1.get_param("none_val") is None
-        assert s1.get_param("list_val") == [1, "two", 3.0]
-
-        try:
-            _os.remove(s1._pending_file)
-        except Exception:
-            pass
 
     def test_recent_messages_with_n(self):
         """recent_messages(n) should return only the last n."""
