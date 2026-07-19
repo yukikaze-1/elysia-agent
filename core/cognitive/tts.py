@@ -16,7 +16,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from Module.output import ChannelCapability, OutputManager
 from Module.tts import TTSBackend
@@ -315,6 +315,12 @@ class CognitiveTTS:
 
     所有属性由 CognitiveLoop.__init__ 初始化，本 mixin 不含 __init__。
     """
+    # 类型声明 — 属性由 CognitiveLoop.__init__ 注入
+    _tts_mgr: Any = None
+    _tts_task: Any = None
+    _tts: Any = None
+    _prompt: Any = None
+    _output: Any = None
 
     def _start_tts_stream(self, sentence: str) -> None:
         """[Deprecated] 代理到 TTSStreamManager.stream_sentence()。"""

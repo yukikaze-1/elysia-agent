@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from Module.tool.protocol import ToolResult, ErrorType
 from ..schema.tool import ToolCall
@@ -28,6 +28,13 @@ class CognitiveTools:
 
     所有属性由 CognitiveLoop.__init__ 初始化，本 mixin 不含 __init__。
     """
+    # 类型声明 — 属性由 CognitiveLoop.__init__ 注入
+    _tool_executor: Any = None  # type: ignore[assignment]
+    _ctx: Any = None
+    _delegation_preparer: Any = None
+    _session: Any = None
+    _user_profile: Any = None
+    _task_system: Any = None
 
     # ---- Tool execution ----
 
