@@ -114,13 +114,14 @@ pytest core/tests/test_phase3.py -v
 | `core/tests/` | `test_phase1.py` | 32 | unit+service+slow+integration |
 | | `test_phase2.py` | 72 | unit+service+slow+integration |
 | | `test_phase3.py` | 110 | unit+service+slow |
-| | `test_sentence_buffer.py` | 65 | unit |
 | | `test_task_model.py` | 15 | unit |
 | | `test_task_scheduler.py` | 26 | service+slow |
 | | `test_timing.py` | 16 | service |
 | | `test_log_setup.py` | 3 | unit |
-| | `test_prompt_recorder.py` | 7 | unit |
 | | `test_token_tracker.py` | 17 | unit |
+| `core/text/tests/` | `test_block_filter.py` | 18 | unit |
+| | `test_sentence_buffer.py` | 65 | unit |
+| `core/debug/tests/` | `test_prompt_recorder.py` | 7 | unit |
 | `core/memory/tests/` | `test_long_term.py` | 8 | service |
 | | `test_message_archive.py` | 12 | service |
 | | `test_session_archive_integration.py` | 3 | service |
