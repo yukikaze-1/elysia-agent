@@ -942,43 +942,48 @@ class Agent:
             except RuntimeError:
                 break
 
+            data = event.data
+            if data is None:
+                continue
+
             # 从事件数据提取 request_id 并设置 ContextVar（修复跨 task 传播）
-            rid = (event.data or {}).get("request_id", "")
+            rid = getattr(data, "request_id", "")
             if rid:
                 set_request_id(rid)
 
-            if event.type == EventType.INTERRUPT:
-                self._handle_interrupt(event.data or {})
-            elif event.type == EventType.USER_INPUT:
-                self._handle_user_input(event.data or {})
-            elif event.type == EventType.SYSTEM_TICK:
-                self._handle_system_tick(event.data or {})
-            elif event.type == EventType.TASK_RESULT:
-                self._handle_task_result(event.data or {})
-            elif event.type == EventType.STATE_CHANGE:
-                await self._handle_state_change(event.data or {})
+            if isinstance(data, InterruptData):
+                self._handle_interrupt(data)
+            elif isinstance(data, UserInputData):
+                self._handle_user_input(data)
+            elif isinstance(data, SystemTickData):
+                self._handle_system_tick(data)
+            elif isinstance(data, TaskResultData):
+                self._handle_task_result(data)
+            elif isinstance(data, StateChangeData):
+                await self._handle_state_change(data)
 
-    def _handle_interrupt(self, data: dict) -> None:
+    def _handle_interrupt(self, data: InterruptData) -> None:
         """处理 INTERRUPT 事件：cancel cognitive task，清空队列。
 
         保留 STATE_CHANGE 事件（前端 UI 需要），丢弃其余排队事件。
         """
         set_request_id("-")
-        logger.info("EventBus: INTERRUPT (%s)", data.get("source", "?") if data else "?")
+        logger.info("EventBus: INTERRUPT (%s)", data.source)
         self._cognitive.cancel_current()
         for drained in self._bus.drain():
-            if drained.type == EventType.STATE_CHANGE:
-                self._bus.post(drained.type, drained.data, priority=drained.priority)
+            if isinstance(drained.data, StateChangeData):
+                self._bus.post(drained.data, priority=drained.priority,
+                               type=EventType.STATE_CHANGE)
         self._pending_messages.clear()
 
-    def _handle_user_input(self, data: dict) -> None:
+    def _handle_user_input(self, data: UserInputData) -> None:
         """处理 USER_INPUT 事件：创建 cognitive task 异步运行。"""
-        text = data.get("text", "")
-        user_name = data.get("user_name", self._user_name)
-        stt_emotion = data.get("emotion", "")
-        stt_events = data.get("events", [])
-        content = data.get("content")
-        rid = data.get("request_id", "")
+        text = data.text
+        user_name = data.user_name
+        stt_emotion = data.emotion
+        stt_events = data.events
+        content = data.content
+        rid = data.request_id
         logger.info("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
                    "websocket" if stt_emotion else "text", stt_emotion or "无")
         _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
@@ -994,11 +999,12 @@ class Agent:
         )
         self._cognitive._current_task = task
 
-    def _handle_system_tick(self, data: dict) -> None:
+    def _handle_system_tick(self, data: SystemTickData) -> None:
         """处理 SYSTEM_TICK 事件——silence_timeout 时主动开启话题。"""
-        reason = data.get("reason", "")
-        if reason == "silence_timeout":
-            elapsed = data.get("elapsed", 0)
+        # TODO: time_of_day 事件未处理——producer 在 idle_monitor._check_proactive 中，
+        #       此处只消费 silence_timeout。time_of_day 事件静默丢弃，等待后续实现。
+        if data.reason == "silence_timeout":
+            elapsed = data.elapsed or 0
             rid = self.next_request_id()
             set_request_id(rid)
             _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
@@ -1013,7 +1019,7 @@ class Agent:
             )
             self._cognitive._current_task = task
 
-    def _handle_task_result(self, data: dict) -> None:
+    def _handle_task_result(self, data: TaskResultData) -> None:
         """处理 TASK_RESULT 事件——后台任务完成，唤醒 CognitiveLoop。"""
         rid = self.next_request_id()
         set_request_id(rid)
@@ -1021,19 +1027,19 @@ class Agent:
             self._cognitive.process(
                 user_message="",
                 is_task_result=True,
-                task_result_context=data,
+                task_result_context=data.model_dump(),
             ),
-            name=f"task-result-{data.get('task_id', 'unknown')}",
+            name=f"task-result-{data.task_id}",
         )
         self._cognitive._current_task = task
 
-    async def _handle_state_change(self, data: dict) -> None:
+    async def _handle_state_change(self, data: StateChangeData) -> None:
         """处理 STATE_CHANGE 事件——FSM 状态变更。
 
         IDLE/IDLE_BACKGROUND_TASK 时检查排队消息（FIFO 出队），
         通知所有输出通道状态变更（前端据此切换动画）。
         """
-        state = data.get("state", "") if data else ""
+        state = data.state
         logger.info("FSM → %s", state)
         if state in ("idle", "idle_background_task"):
             set_request_id("-")
