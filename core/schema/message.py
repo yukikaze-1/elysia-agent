@@ -6,7 +6,7 @@ role 字段 frozen，构造时自动填值。
 """
 
 from enum import StrEnum
-from typing import Literal, NotRequired, TypedDict, Union
+from typing import Literal, NotRequired, Sequence, TypedDict, Union
 
 from pydantic import BaseModel, Field
 
@@ -30,7 +30,7 @@ class MessageRole(StrEnum):
 class UserMessage(BaseModel):
     """用户消息。"""
     role: MessageRole = Field(default=MessageRole.USER, frozen=True)
-    content: list[Part]
+    content: Sequence[Part]
     message_id: MessageId
     timestamp: IsoTimestamp = Field(default_factory=now_iso)
     session_id: SessionId = SessionId("")
@@ -40,7 +40,7 @@ class UserMessage(BaseModel):
 class AssistantMessage(BaseModel):
     """Assistant 回复消息。"""
     role: MessageRole = Field(default=MessageRole.ASSISTANT, frozen=True)
-    content: list[Part]
+    content: Sequence[Part]
     message_id: MessageId
     timestamp: IsoTimestamp = Field(default_factory=now_iso)
     tool_calls: list[ToolCall] | None = None
@@ -53,7 +53,7 @@ class AssistantMessage(BaseModel):
 class ToolResultMessage(BaseModel):
     """工具执行结果消息。"""
     role: MessageRole = Field(default=MessageRole.TOOL, frozen=True)
-    content: list[Part]
+    content: Sequence[Part]
     tool_call_id: ToolCallId
     tool_name: str
     success: bool = True

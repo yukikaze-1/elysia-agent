@@ -264,6 +264,11 @@ class CognitiveLoop:
                           is_task_result: bool = False,
                           task_result_context: dict | None = None,
                           ) -> None:
+        # process() 在调用 _think_loop 前已初始化这两个 buffer
+        assert self._sentence_buf is not None
+        sentence_buf = self._sentence_buf
+        assert self._block_filter is not None
+
         if self._character_engine:
             if stt_emotion and stt_emotion != "NEUTRAL":
                 self._character_engine.analyze_user_stt(stt_emotion, stt_events)
@@ -330,7 +335,7 @@ class CognitiveLoop:
                 raw_tool_calls: list[dict] = []
                 speaking_started = False
                 all_sentences: list[str] = []
-                block_filter = self._block_filter
+                block_filter: BlockFilter = self._block_filter
                 block_filter.reset()  # 防御性：_think_loop 可能因 tool round 被多次调用
                 ttft_done = False
                 t_think_start = time.perf_counter()
@@ -354,7 +359,7 @@ class CognitiveLoop:
                 # 句子处理 helper — PRE/THINK/REPLY 三状态共用
                 async def _handle_sentence(clean_text: str) -> str | None:
                     nonlocal speaking_started
-                    sentence = self._sentence_buf.feed(clean_text) if clean_text else None
+                    sentence = sentence_buf.feed(clean_text) if clean_text else None
                     if not sentence:
                         return None
                     all_sentences.append(sentence)
@@ -489,7 +494,7 @@ class CognitiveLoop:
                 trailing = block_filter.flush()
                 if trailing:
                     await _handle_sentence(trailing)
-                remaining = self._sentence_buf.flush()
+                remaining = sentence_buf.flush()
                 if remaining:
                     if is_emoji_only(remaining):
                         logger.info("flush emoji: %s", remaining)
@@ -717,17 +722,17 @@ class CognitiveLoop:
 
                     # 推送结构化块到前端（不走 TTS，单独渲染）
                     for idx in content_type.get("markdown", []):
-                        if idx < len(parts):
+                        if idx < len(assistant_parts):
                             await self._output.command("block", params={
                                 "block_type": "markdown",
-                                "content": parts[idx]["content"],
+                                "content": assistant_parts[idx]["content"],
                             })
                     for idx in content_type.get("code", []):
-                        if idx < len(parts):
+                        if idx < len(assistant_parts):
                             await self._output.command("block", params={
                                 "block_type": "code",
-                                "content": parts[idx]["content"],
-                                "language": parts[idx].get("language", ""),
+                                "content": assistant_parts[idx]["content"],
+                                "language": assistant_parts[idx].get("language", ""),
                             })
 
                 await self._transition_idle()
