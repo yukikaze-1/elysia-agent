@@ -6,7 +6,7 @@
 
 ```
 core/agent/
-├── __init__.py          # from core.agent.agent import Agent, RunState
+├── __init__.py          # from .agent import Agent; from ._types import RunState
 ├── _types.py            # RunState, _PendingMessage, _BackgroundTaskEntry  — 共享类型，零依赖
 ├── agent.py             # Agent 核心: __init__ + 事件处理 + process_message + 后台任务
 ├── lifecycle.py         # AgentLifecycle mixin: start()/stop() 及所有 _start_*/_stop_*/_flush_*
