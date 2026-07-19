@@ -134,9 +134,8 @@ git commit -m "refactor: 备份旧文件，创建 cognitive/tts.py（TTSStreamMa
 |------|--------|
 | `_default_user_profile()` | 58–62 |
 | `# ---- Tool execution ----` + `_execute_tools_directly` + 内嵌 `_execute_one` | 815–850 |
-| `_build_wake_up_message` | — *(保留在 loop.py, 被 _think_loop 调用)* |
-| `_submit_task_definition` | 870–904 |
-| `_handle_submit_task` | 907–984 |
+| `_submit_task_definition`（含 `@staticmethod` + 闭合 `}`） | 869–905 |
+| `_handle_submit_task`（不含 `# ---- State transitions ----` 节头） | 907–982 |
 
 ```python
 """Cognitive 工具执行 — _execute_tools_directly + _handle_submit_task。"""
@@ -161,7 +160,7 @@ logger = logging.getLogger(__name__)
 def _default_user_profile():
     """Return a default UserProfile for task submission."""
     from Module.task_system.schema import UserProfile
-    return UserProfile(display_name="User")
+    return UserProfile()
 
 
 class CognitiveTools:
@@ -239,7 +238,7 @@ git commit -m "refactor: 创建 cognitive/tools.py — CognitiveTools mixin（�
 | `process()` | 171–258 |
 | `_think_loop()` | 260–747 |
 | `_after_response()` | 749–785 |
-| `_build_wake_up_message` | 852–868 |
+| `_build_wake_up_message`（含 `@staticmethod`） | 851–868 |
 | `_transition_idle` | 986–1011 |
 | `_handle_interrupt` | 1013–1029 |
 
@@ -265,7 +264,7 @@ class CognitiveLoop(CognitiveTTS, CognitiveTools):
     # [保留 __init__ 和所有保留方法...]
 ```
 
-> **关键**: 删除原来的 `_default_user_profile` (lines 58–62)、TTS deprecated wrappers (lines 786–814)、`_execute_tools_directly` (lines 815–850)、`_submit_task_definition` (lines 870–904)、`_handle_submit_task` (lines 907–984)——这些已提取到 tools.py 和 tts.py。
+> **关键**: 删除原来的 `_default_user_profile` (lines 58–62)、TTS deprecated wrappers (lines 786–814)、`_execute_tools_directly` (lines 815–850)、`_submit_task_definition` (lines 869–905)、`_handle_submit_task` (lines 907–982)——这些已提取到 tools.py 和 tts.py。
 
 - [ ] **Step 2: 创建 `core/cognitive/__init__.py`**
 
