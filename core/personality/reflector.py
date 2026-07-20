@@ -214,7 +214,7 @@ class CharacterReflector:
             l3_history = ""
 
         # L4 Mood: 当前情绪快照
-        mood = state.mood.value
+        mood = state.mood
         mood_intensity = state.mood_intensity
         mood_snapshot = f"当前情绪: {mood} (强度: {mood_intensity:.2f})"
 
