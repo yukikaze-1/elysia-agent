@@ -1,21 +1,4 @@
-"""Mood 枚举 + TTS 情绪映射 + STT 工具函数。"""
-from enum import StrEnum
-
-
-class Mood(StrEnum):
-    NEUTRAL = "neutral"
-    HAPPY = "happy"
-    SAD = "sad"
-    CURIOUS = "curious"
-    EXCITED = "excited"
-    WARM = "warm"
-    CONCERNED = "concerned"
-    CALMING = "calming"
-    REASSURING = "reassuring"
-    UNDERSTANDING = "understanding"
-
-
-# ---- 从 emotion_engine.py 原样复制 ----
+"""STT 情绪 emoji 工具函数。"""
 
 _STT_EMOTION_EMOJI: dict[str, str] = {
     "HAPPY": "\U0001f60a", "SAD": "\U0001f614", "ANGRY": "\U0001f621",
@@ -37,12 +20,3 @@ _STT_EVENT_EMOJI: dict[str, str] = {
 
 def stt_event_emoji(event: str) -> str:
     return _STT_EVENT_EMOJI.get(event, "")
-
-
-_MOOD_TO_TTS_EMOTION: dict[Mood, str] = {
-    Mood.HAPPY: "happy", Mood.SAD: "sad",
-    Mood.CURIOUS: "happy", Mood.EXCITED: "happy",
-    Mood.WARM: "neutral", Mood.CONCERNED: "neutral",
-    Mood.CALMING: "neutral", Mood.REASSURING: "neutral",
-    Mood.UNDERSTANDING: "neutral", Mood.NEUTRAL: "neutral",
-}

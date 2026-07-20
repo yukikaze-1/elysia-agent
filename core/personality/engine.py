@@ -22,8 +22,6 @@ from typing import TYPE_CHECKING
 
 from Module.system_prompt import PromptManager
 from Module.output import OutputManager
-from core.schema.mood import Mood
-
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
     from core.schema.character import CharacterState, StateHistoryEntry
@@ -410,7 +408,7 @@ class CharacterEngine:
     def analyze_user(self, text: str) -> None:
         """Analyze user message and update mood + push expressions (keyword fallback)."""
         detected = self._detect_mood(text)
-        if detected == Mood.NEUTRAL:
+        if detected == "neutral":
             return
 
         current = self.state.mood
@@ -420,17 +418,16 @@ class CharacterEngine:
             self.state.mood = detected
             self.state.mood_intensity = min(1.0, intensity + 0.1)
             self._push_expression(detected, intensity)
-            logger.info("心情 (关键词): %s → %s", current.value, detected.value)
+            logger.info("心情 (关键词): %s → %s", current, detected)
         else:
             self.state.mood_intensity = min(1.0, intensity + 0.05)
 
     def analyze_assistant(self, _text: str) -> None:
-        """After assistant responds, decay mood toward neutral."""
+        """每轮回复后衰减 mood intensity。mood 文本由 LLM 下轮 <mood> 更新。"""
         intensity = self.state.mood_intensity
         new_intensity = max(0.1, intensity - 0.15)
         self.state.mood_intensity = new_intensity
         if new_intensity < 0.2:
-            self.state.mood = Mood.NEUTRAL
             self._push_idle()
 
     async def push_idle_expression(self) -> None:
@@ -439,7 +436,7 @@ class CharacterEngine:
 
     # ---- 情绪 internal ----
 
-    def _detect_mood(self, text: str) -> Mood:
+    def _detect_mood(self, text: str) -> str:
         """Simple keyword-based mood detection. Returns the strongest match."""
         scores: dict[str, int] = {}
         for mood_key, (user_kw, _) in MOOD_KEYWORDS.items():
@@ -449,13 +446,13 @@ class CharacterEngine:
             if score > 0:
                 scores[mood_key] = score
         if not scores:
-            return Mood.NEUTRAL
+            return "neutral"
         best_key = max(scores, key=lambda k: scores[k])
-        return Mood(best_key)
+        return best_key
 
-    def _push_expression(self, mood: Mood, intensity: float) -> None:
-        """Push expression to output channels. Uses mood.value directly as expression name."""
-        self._schedule(self._output.expression(mood.value, intensity=intensity))
+    def _push_expression(self, mood_text: str, intensity: float) -> None:
+        """Push expression to output channels. mood_text is plain string. 保留关键词回退兼容。"""
+        self._schedule(self._output.expression(mood_text, intensity=intensity))
 
     def _push_idle(self) -> None:
         """Push one of the idle expressions."""

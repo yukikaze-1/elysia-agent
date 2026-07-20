@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 
 from .types import SessionId, IsoTimestamp
 from ._utils import now_iso
-from .mood import Mood
 
 
 class StateHistoryEntry(TypedDict):
@@ -23,7 +22,7 @@ class CharacterState(BaseModel):
     last_awareness_time: float | None = None       # epoch float，非 IsoTimestamp
     compression_last_at: float | None = None         # epoch float，非 IsoTimestamp
     compression_last_count: int = 0
-    mood: Mood = Mood.NEUTRAL
+    mood: str = "平静"
     mood_intensity: float = 0.5
     reflector_buffer: list[tuple[str, str]] = Field(default_factory=list)
     reflector_context: list[dict] = Field(default_factory=list)
