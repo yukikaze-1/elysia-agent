@@ -995,3 +995,19 @@ Brain.j2 单体拆分 → 11 个独立 PromptSection + SystemPromptManager。
 ### 2026-06-26: Module/_common/ 轻量共享层
 
 消除 registry/test/__main__/test_config 重复代码。
+
+### 2026-07-21: todo 清理 — 情绪管线 + 存储优化
+
+**STT→mood 硬编码删除：** `_STT_EMOTION_TO_MOOD` 映射表删除（7 条规则）。STT 情绪通过 C5 Sensory 直传 LLM，不再替 LLM 做 mood 决策。关键词路径 `analyze_user()` 始终执行（不跟 STT 互斥）。`analyze_user_stt()` 简化为仅处理音频事件→表情。
+
+**`_push_expression()` 映射补全：** 删除 4 条硬编码映射表，改用 `mood.value` 直接透传。全部 10 种 Mood 的 expression 名与枚举值一致。同时修正 EXCITED→"surprised" 前端名字不匹配。
+
+**MongoDB database 名可配置：** SessionRepository / MessageRepository / TokenRepository 加 `database_name` 参数（默认 `"default"`），`connect()` / `health_check()` 不再硬编码。
+
+**Token 聚合 O(n)→O(1)：** `DocumentDBBackend` 协议加 `aggregate()`，MongoDB 实现。TokenRepository 加 `total_tokens_by_session()` / `total_tokens_by_model()`（MongoDB `$group`）。debug_routes N+1 查询 + token_tracker O(n) 累加全部替换为单次聚合查询。
+
+**`_audio_seq` 绑定流生命周期：** `__init__` 显式初始化 + `on_audio_end` 清理对应 stream_id 条目。移除 32→16 cap 止血带，dict 大小绑定并发 TTS 流数（通常 ≤3）。
+
+**移除无效 todo：** Optional 嵌套 dataclass（零触发）、content_type 迁入 content（投入产出比低）。
+
+**关联 commit：** `e81d418` `b453735` `b7c9231` `dd50f78` `3b9e3ed` `4b96477` `b49f20b` `51873c2` `b81ba33` `a10a4a4` `0542f12` `fd851e0`

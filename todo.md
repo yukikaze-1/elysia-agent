@@ -7,7 +7,7 @@
 | 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec |
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
-| ✅ | ~~`CharacterEngine._push_expression()` 缺失 6 种 mood 映射~~ | 已修复：`_push_expression` 直接用 `mood.value` 透传，删除硬编码映射表。同时修正了 EXCITED→"surprised" 前端名字不匹配。 |
+
 | 低 | **`test_integration_global_constraints_respected` 偶发失败** | `Module/task_system/tests/integration/test_delegation_preparer.py`: 全量跑偶发 FAIL，单独跑 PASS，疑似 TaskSystem 集成测试时序/资源竞争 |
 | 中 | **TTS 密集短句导致 wait_all 阻塞** | TTS 连续 5+ 短句密集入队时 MiniMax 部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING。已缩短 read timeout 120s→30s 缓解，根因（wait_all 无超时）待重现后修复。 |
 
@@ -23,7 +23,6 @@
 - **Claude 原生持久记忆**: `.claude/projects/-home-yomu-Agent/memory/` 目录为空，从未启用
 - **MacroMemory + MacroReflector**: 每日合成日记条目。需新增 Milvus 集合 + MacroReflector 后台任务
 - **CharacterEngine mood 升级**（原 EmotionEngine 升级）: 生理状态模型、时间衰减曲线、混合情绪、Amygdala LLM 补充
-- **STT 情绪→mood 映射升级**: 生理状态调制 + 性格调制 + 时间衰减
 - 唤醒词检测（openWakeWord）— 已完成实现，待办：
   - 测试唤醒词开关：启动服务端，打开前端设置面板，点击开关确认 ON/OFF 切换正常
   - 训练自定义唤醒词模型 (.onnx)：录制每个唤醒词 100-500 样本 → 用 openWakeWord Colab 训练 → 将 .onnx 文件导入 `model_paths`
@@ -76,7 +75,7 @@
 | **高** | `.env` API key 需要轮换 | 已有 `.env.example` + `setup.sh` 生成 `.env` + `app.py --check` 验证；实际轮换需在各 API 后台手动操作 |
 | 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
 | 低 | 会话管理 | 无法新建/切换/列出对话。SessionMemory 的 MongoDB 持久化已为此做好准备，需前后端联动 |
-| ✅ | ~~MongoDB database 名硬编码~~ | 3 个 repo 已加 `database_name` 参数（默认 `"default"`），无调用方破坏。 |
+
 
 ## 来自 code-review-report-2026-06-22 的遗留问题
 
@@ -92,12 +91,9 @@
 
 | 问题 | 文件 |
 |------|------|
-| ✅ ~~Token 用量 O(n) 聚合~~ | 协议层加 `aggregate()`，TokenRepository 加 `total_tokens_by_session()` / `total_tokens_by_model()`，改用 MongoDB `$group` |
 | llm_adapter close fire-and-forget | `core/adapter/llm_adapter.py:140-143` |
 | openai_tts test() 假阴性 | `tts/openai_tts.py:73` |
 | TTS 取消+HTTP 流清理交互可能泄漏 | `tts/gpt_sovits.py:134-150` |
-
-| ✅ ~~`_audio_seq` 长期方案~~ | `__init__` 显式初始化 + `on_audio_end` 清理，dict 大小绑定到并发流数而非 WS 生命周期 |
 | 缺失测试覆盖 | DescribeImagePlugin (0)、CognitiveLoop 边界、OutputManager 错误隔离 |
 
 ## 测试补充
