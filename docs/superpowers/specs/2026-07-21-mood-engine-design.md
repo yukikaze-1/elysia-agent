@@ -39,7 +39,7 @@
 | `core/personality/engine.py` | `_push_expression` 直接用 mood 文本；`analyze_user()` 保留关键词检测作为 fallback（仅 LLM 未产出 `<mood>` 时调用）；`analyze_assistant()` 只衰减 intensity 不设 mood 文本（LLM 下轮自己描述心情变化） |
 | `core/personality/reflector.py` | L217: `state.mood.value` → `state.mood`（mood 已是 str，无需 `.value`） |
 | `core/schema/__init__.py` | 删除 `from core.schema.mood import Mood`（Mood 枚举已移除） |
-| `core/cognitive/loop.py` | `_think_loop` 的流式处理中插入 mood 标签解析状态机；fallback 到关键词检测 |
+| `core/cognitive/loop.py` | 删除 `from core.schema.mood import _MOOD_TO_TTS_EMOTION, Mood`（L49）；删除 `self._tts_mgr.set_emotion(_MOOD_TO_TTS_EMOTION.get(mood))`（L274-275，改由 `_apply_mood()` 内联调用）；`_think_loop` 流式处理中插入 mood 标签解析状态机；流结束后若未检测到 `<mood>` 则 fallback 到 `analyze_user()` |
 | `core/adapter/tts_adapter.py` | `set_emotion` 改为接收自由文本，内部做关键词→TTS 情绪映射 |
 | `Module/system_prompt/templates/f2_output_format.j2` | 在 `<inner_voice>` 指令前加 `<mood>` 输出指令 |
 | `Module/system_prompt/templates/c3_emotion.j2` | `{{ mood }}` 直接渲染 LLM 自由文本，加 `可用心情` 移除 |
