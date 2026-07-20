@@ -698,8 +698,10 @@ def register_api_routes(app: web.Application) -> None:
 
 1. 在文件顶部添加 import：
 ```python
-from .api_routes import register_api_routes
+from .api_routes import register_api_routes, _archive_to_client
 ```
+
+（`_archive_to_client` 是过渡期 import——`archive_list_handler` 在 Task 3 移走前仍需要它。Task 3 完成后可从 server.py 移除该 import，因为 debug_routes.py 自己 import。）
 
 2. 在 `create_app()` 中，`app.router.add_get("/ws", ws_handler)` 之后添加：
 ```python
@@ -726,7 +728,7 @@ register_api_routes(app)
    from core.schema.memory import MemoryType
 
    from .ws_handler import handle_ws
-   from .api_routes import register_api_routes
+   from .api_routes import register_api_routes, _archive_to_client
    ```
 
 - [ ] **Step 3: 运行测试验证**
@@ -841,7 +843,7 @@ register_debug_routes(app)
 
    **保留** `return app`（L828）
 
-4. 清理不再需要的 imports。server.py 最终 import block 为：
+4. 清理不再需要的 imports。Task 2 的 `_archive_to_client` 过渡 import 现在可移除（debug_routes.py 自己 import）。server.py 最终 import block 为：
 
 ```python
 """WebSocket server — bridges browser clients to the agent pipeline.
