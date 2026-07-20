@@ -93,7 +93,7 @@
 
 | 问题 | 文件 |
 |------|------|
-| Token 用量 O(n) 聚合（已降 limit 100k→2k，长期用 MongoDB `$group`） | `input/server.py:271` |
+| ✅ ~~Token 用量 O(n) 聚合~~ | 协议层加 `aggregate()`，TokenRepository 加 `total_tokens_by_session()` / `total_tokens_by_model()`，改用 MongoDB `$group` |
 | llm_adapter close fire-and-forget | `core/adapter/llm_adapter.py:140-143` |
 | openai_tts test() 假阴性 | `tts/openai_tts.py:73` |
 | TTS 取消+HTTP 流清理交互可能泄漏 | `tts/gpt_sovits.py:134-150` |
