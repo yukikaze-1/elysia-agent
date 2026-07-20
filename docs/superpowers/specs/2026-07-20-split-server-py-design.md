@@ -42,7 +42,7 @@ Module/input/
 #### `debug_routes.py` — Debug API (~400 行)
 
 - `register_debug_routes(app)` — 注册所有 `/debug/api/*` 路由
-- Handler（15 个）：
+- Handler（18 个）：
   - DB 管理：`db_status`, `ltm_list`, `ltm_insert`, `ltm_delete_single`, `ltm_update`, `ltm_clear`
   - 消息归档：`archive_list`, `archive_delete`, `archive_update`, `archive_clear`
   - Session 管理：`sessions_list`, `session_detail`, `session_delete`, `sessions_clear`
@@ -51,9 +51,8 @@ Module/input/
 #### `api_routes.py` — 业务 API (~300 行)
 
 - `register_api_routes(app)` — 注册所有业务 API 路由
-- Handler（8 个）：
+- Handler（7 个）：
   - Provider 管理：`providers_list`, `providers_save`, `providers_delete`, `providers_test`
-  - 模型切换：`switch_model_handler`
   - 图片上传：`image_upload_handler`
   - Chat REST：`chat_api_handler`
   - 消息归档：`messages_handler`
@@ -82,7 +81,7 @@ Module/input/
 |------|-----------|-------------|--------|
 | `server.py` | `RunState` | — | `aiohttp` |
 | `debug_routes.py` | `Message`, `MessageRole`, `SessionId`, `MemoryType` | — | `aiohttp`, `pydantic` |
-| `api_routes.py` | — | `WebSocketChannel` | `aiohttp` |
+| `api_routes.py` | — | — | `aiohttp` |
 | `ws_handler.py` | `RunState`, `InterruptData`, `UserInputData` | `WebSocketChannel`, `AudioBuffer` | `aiohttp` |
 
 ### 路由注册结构
