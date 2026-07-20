@@ -55,7 +55,7 @@
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| 高 | `Module/schema/` 479行预留设计 | 已添加 deprecation 注释，保留参考 |
+| ✅ | `Module/schema/` 479行预留设计 | 已删除（无代码引用，core/schema 为唯一类型系统） |
 | 中 | `database/graphdb/` 不完整 | 只有 protocol.py，保留参考 |
 | 中 | `OutputManager.stream()` 未使用 | `manager.py:63-88`，保留参考 |
 | 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行，保留参考 |

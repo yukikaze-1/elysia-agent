@@ -31,7 +31,7 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 - **统一入口**：`from core.schema import AgentState, UserMessage, ...` —— `__init__.py` re-export 所有子模块类型；adapters 函数按需从 `core.schema.adapters.message_adapter` 显式 import。
 - **Discriminated union**：`Part` 按 `type` 字段自动区分子类（Pydantic `Field(discriminator="type")`），`TypeAdapter` 完成 dict ↔ Part 校验转换。
 - **frozen role**：各消息类的 `role` 字段 frozen，构造时自动填值，防止误改。
-- **与 Module/schema 的分工**：`Module/schema` 是 Module 层共享数据模型；`core/schema` 只包含当前架构实际使用的 core 层类型。`Module/schema/message_format.py` 现为本模块的兼容 re-export 层。
+- **统一类型系统**：`core/schema` 是项目唯一的共享类型定义，已替代废弃的 `Module/schema/`。
 
 ## 模块速查
 
