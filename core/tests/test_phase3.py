@@ -642,10 +642,9 @@ class TestEmotionEngineEdges:
         )
 
     def test_multiple_moods_tie_breaker(self, engine):
-        from core.schema.mood import Mood
         # "！" matches excited; "哈哈" matches happy. Happy has more matches.
         mood = engine._detect_mood("哈哈！")
-        assert mood == Mood.HAPPY
+        assert mood == "happy"
 
     def test_push_idle_empty_list(self, engine):
         engine._idle_expressions = []
@@ -658,12 +657,12 @@ class TestEmotionEngineEdges:
         assert engine.state.mood_intensity <= 1.0
 
     def test_intensity_floor_and_neutral(self, engine):
-        from core.schema.mood import Mood
-        engine.state.mood = Mood.HAPPY
+        engine.state.mood = "happy"
         engine.state.mood_intensity = 0.12
         engine.analyze_assistant("好的")
         assert engine.state.mood_intensity >= 0.1
-        assert engine.state.mood == Mood.NEUTRAL
+        # mood text no longer reset by analyze_assistant
+        assert engine.state.mood == "happy"
 
     def test_schedule_no_loop_does_not_raise(self, engine):
         """_schedule should be a no-op when no event loop is running."""
