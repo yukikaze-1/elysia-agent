@@ -258,7 +258,11 @@ from core.schema.mood import _MOOD_TO_TTS_EMOTION, Mood
             mood = self._character_engine.state.mood
             self._tts_mgr.set_emotion(_MOOD_TO_TTS_EMOTION.get(mood))
 # After:
+        if self._character_engine:
+            if stt_emotion and stt_emotion != "NEUTRAL":
+                self._character_engine.analyze_user_stt(stt_emotion, stt_events)
         # analyze_user() 改为仅 fallback：LLM 未输出 <mood> 时在流结束后调用
+        # set_emotion() 改由 _apply_mood() 内联调用
 ```
 
 Now `analyze_user()` is not called here — it will be called as fallback after streaming if no `<mood>` detected.
@@ -322,14 +326,22 @@ In the stream processing loop, before `# --- inner_voice 标签检测 ---` (line
                                         delta = combined[idx + len(MOOD_OPEN):]
                                         mood_tail = ""
                                 else:
-                                    # 第一个非空白不是 '<' → 无 mood 标签
-                                    stripped = combined.lstrip()
-                                    if stripped and not stripped.startswith("<"):
-                                        mood_state = "DONE"
-                                        delta = combined  # 保留完整内容继续处理
+                                    # 跨 chunk 安全转发: 输出 MOOD_OPEN 不可能开始的部分,
+                                    # 只缓冲尾部用于跨 chunk 匹配
+                                    safe_len = max(0, len(combined) - len(MOOD_OPEN) + 1)
+                                    if safe_len > 0:
+                                        # 已确认安全的部分 — 第一个非空白不是 '<' → 无 mood
+                                        safe_text = combined[:safe_len]
+                                        stripped = safe_text.lstrip()
+                                        if stripped and not stripped.startswith("<"):
+                                            mood_state = "DONE"
+                                            delta = combined
+                                        else:
+                                            delta = safe_text
                                     else:
                                         mood_tail = combined
                                         continue
+                                    mood_tail = combined[safe_len:]
 
                             if mood_state == "MOOD":
                                 combined = mood_tail + delta
@@ -417,10 +429,11 @@ def _mood_text_to_tts_emotion(mood_text: str) -> str:
     """自由文本 mood → TTS 情绪参数 (happy/sad/neutral)。"""
     sad_words = {"难过", "悲伤", "伤心", "低落", "沮丧", "消沉", "失落"}
     happy_words = {"开心", "高兴", "兴奋", "快乐", "喜悦", "期待", "惊喜"}
-    if any(w in mood_text for w in sad_words):
-        return "sad"
+    # happy 优先 — "虽然难过但还是很开心" → happy
     if any(w in mood_text for w in happy_words):
         return "happy"
+    if any(w in mood_text for w in sad_words):
+        return "sad"
     return "neutral"
 
 
@@ -714,7 +727,7 @@ class TestMoodToTtsEmotion:
         assert _mood_text_to_tts_emotion("被夸奖后暖暖的") == "neutral"
 
     def test_happy_wins_over_sad(self):
-        """同时包含 happy 和 sad 关键词时 happy 优先（先检查 sad，后检查 happy 覆盖）。"""
+        """同时包含 happy 和 sad 关键词时 happy 优先。"""
         from core.adapter.tts_adapter import _mood_text_to_tts_emotion
         assert _mood_text_to_tts_emotion("虽然难过但还是很开心") == "happy"
 
