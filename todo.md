@@ -98,7 +98,7 @@
 | openai_tts test() 假阴性 | `tts/openai_tts.py:73` |
 | TTS 取消+HTTP 流清理交互可能泄漏 | `tts/gpt_sovits.py:134-150` |
 | Optional 嵌套 dataclass | `config/loader.py:176-180` |
-| `_audio_seq` 长期方案绑定 ws 生命周期（已加 32→16 cap 缓解） | `output/websocket.py` |
+| ✅ ~~`_audio_seq` 长期方案~~ | `__init__` 显式初始化 + `on_audio_end` 清理，dict 大小绑定到并发流数而非 WS 生命周期 |
 | 缺失测试覆盖 | DescribeImagePlugin (0)、CognitiveLoop 边界、OutputManager 错误隔离 |
 
 ## 测试补充
