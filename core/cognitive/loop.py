@@ -752,6 +752,7 @@ class CognitiveLoop(CognitiveTools):
                 # Fallback: LLM 未输出 <mood> → 关键词检测
                 if self._character_engine and not mood_applied:
                     self._character_engine.analyze_user(user_message)
+                    self._tts_mgr.set_emotion(self._character_engine.state.mood)
 
                 # 从 acc_text 中剥离 <mood> 和 <inner_voice> 标签
                 public_text = acc_text
