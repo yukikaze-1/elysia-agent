@@ -84,18 +84,6 @@ MOOD_KEYWORDS: dict[str, tuple[list[str], list[str]]] = {
     ),
 }
 
-# STT 情绪 → AI mood 映射（非 1:1 — AI 不直接复制用户情绪）
-_STT_EMOTION_TO_MOOD: dict[str, Mood | None] = {
-    "HAPPY":     Mood.WARM,
-    "SAD":       Mood.CONCERNED,
-    "ANGRY":     Mood.CALMING,
-    "FEARFUL":   Mood.REASSURING,
-    "DISGUSTED": Mood.UNDERSTANDING,
-    "SURPRISED": Mood.CURIOUS,
-    "NEUTRAL":   None,  # 不触发变化
-}
-
-
 @dataclass
 class C1Data:
     """C1 Personality section 渲染数据。"""
@@ -408,27 +396,8 @@ class CharacterEngine:
     # 情绪引擎方法（从 EmotionEngine 迁移）
     # ================================================================
 
-    def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None) -> Mood:
-        """基于 STT 声学情绪标签更新 AI mood（语音输入主路径）。
-
-        Returns: 更新后的 Mood。
-        """
-        mood = _STT_EMOTION_TO_MOOD.get(emotion_tag)
-        if mood is None:
-            return self.state.mood
-
-        current = self.state.mood
-        intensity = self.state.mood_intensity
-
-        if mood != current:
-            self.state.mood = mood
-            self.state.mood_intensity = min(1.0, intensity + 0.1)
-            self._push_expression(mood, intensity)
-            logger.info("心情 (STT %s): %s → %s", emotion_tag, current.value, mood.value)
-        else:
-            self.state.mood_intensity = min(1.0, intensity + 0.05)
-
-        # 音频事件 → expression 推送
+    def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None) -> None:
+        """处理 STT 音频事件，推送对应表情。mood 决策交给 LLM（通过 C5 Sensory）。"""
         if events:
             for evt in events:
                 if evt == "Laughter":
@@ -437,8 +406,6 @@ class CharacterEngine:
                     self._schedule(self._output.expression("cry", intensity=0.8))
                 elif evt == "Applause":
                     self._schedule(self._output.expression("surprised", intensity=0.5))
-
-        return mood
 
     def analyze_user(self, text: str) -> None:
         """Analyze user message and update mood + push expressions (keyword fallback)."""

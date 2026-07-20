@@ -268,8 +268,7 @@ class CognitiveLoop(CognitiveTools):
         if self._character_engine:
             if stt_emotion and stt_emotion != "NEUTRAL":
                 self._character_engine.analyze_user_stt(stt_emotion, stt_events)
-            else:
-                self._character_engine.analyze_user(user_message)
+            self._character_engine.analyze_user(user_message)
             # 将当前 mood 映射为 TTS emotion（MiniMax 等后端支持情绪控制）
             mood = self._character_engine.state.mood
             self._tts_mgr.set_emotion(_MOOD_TO_TTS_EMOTION.get(mood))

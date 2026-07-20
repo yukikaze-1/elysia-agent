@@ -194,46 +194,36 @@ class TestEmotionEngine:
         engine.analyze_user("好难过啊")
         assert engine.state.mood == Mood.SAD
 
-    # ---- STT emotion analysis ----
+    # ---- STT audio event handling ----
+    # analyze_user_stt no longer changes mood — mood decision is left to LLM (C5 Sensory).
 
-    def test_analyze_user_stt_sets_mood(self, engine):
-        """STT HAPPY → AI mood warm"""
+    def test_analyze_user_stt_does_not_change_mood(self, engine):
+        """STT 不再修改 mood，mood 决策交给 LLM。"""
         from core.schema.mood import Mood
-        result = engine.analyze_user_stt("HAPPY")
-        assert result == Mood.WARM
-        assert engine.state.mood == Mood.WARM
+        original = engine.state.mood
+        engine.analyze_user_stt("HAPPY")
+        assert engine.state.mood == original
 
-    def test_analyze_user_stt_sad(self, engine):
-        """STT SAD → AI mood concerned (not sad)"""
-        from core.schema.mood import Mood
-        result = engine.analyze_user_stt("SAD")
-        assert result == Mood.CONCERNED
-        assert engine.state.mood == Mood.CONCERNED
-
-    def test_analyze_user_stt_neutral_no_change(self, engine):
-        """STT NEUTRAL — return current mood, no push"""
-        from core.schema.mood import Mood
-        current = engine.state.mood
-        result = engine.analyze_user_stt("NEUTRAL")
-        assert result == current
-        # EMO_UNKNOWN returns None → no update, returns current mood
-        assert engine.analyze_user_stt("EMO_UNKNOWN") == current
-
-    def test_analyze_user_stt_with_laughter_event(self, engine):
-        """Laughter event pushes laugh expression"""
+    def test_analyze_user_stt_laughter_event(self, engine):
+        """Laughter 事件推送 laugh 表情"""
         engine.analyze_user_stt("HAPPY", events=["Laughter"])
-        # mood should be set
-        from core.schema.mood import Mood
-        assert engine.state.mood == Mood.WARM
+        engine._output.expression.assert_called_with("laugh", intensity=0.7)
 
-    def test_analyze_user_stt_same_mood_increases_intensity(self, engine):
-        """Same STT mood → increase intensity"""
-        from core.schema.mood import Mood
-        engine.analyze_user_stt("HAPPY")
-        i1 = engine.state.mood_intensity
-        engine.analyze_user_stt("HAPPY")
-        i2 = engine.state.mood_intensity
-        assert i2 >= i1
+    def test_analyze_user_stt_cry_event(self, engine):
+        """Cry 事件推送 cry 表情"""
+        engine.analyze_user_stt("SAD", events=["Cry"])
+        engine._output.expression.assert_called_with("cry", intensity=0.8)
+
+    def test_analyze_user_stt_applause_event(self, engine):
+        """Applause 事件推送 surprised 表情"""
+        engine.analyze_user_stt("SURPRISED", events=["Applause"])
+        engine._output.expression.assert_called_with("surprised", intensity=0.5)
+
+    def test_analyze_user_stt_no_events(self, engine):
+        """无事件时 analyze_user_stt 是 no-op"""
+        original = engine.state.mood
+        engine.analyze_user_stt("ANGRY")
+        assert engine.state.mood == original
 
 
 # ============================================================================
