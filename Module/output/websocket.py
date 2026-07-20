@@ -22,6 +22,7 @@ class WebSocketChannel(OutputChannel):
     def __init__(self, ws, *, logger: logging.Logger | None = None):
         self._ws = ws
         self._logger = logger or get_caller_logger()
+        self._audio_seq: dict[int, int] = {}
 
     @property
     def capabilities(self) -> set[ChannelCapability]:
@@ -71,9 +72,6 @@ class WebSocketChannel(OutputChannel):
 
     async def on_audio_chunk(self, chunk: bytes, *, stream_id: int = 0) -> None:
         import base64
-        self._audio_seq = getattr(self, "_audio_seq", {})
-        if len(self._audio_seq) > 32:
-            self._audio_seq = dict(list(self._audio_seq.items())[-16:])
         seq = self._audio_seq.get(stream_id, 0)
         self._audio_seq[stream_id] = seq + 1
         await self._send_json({
@@ -85,6 +83,7 @@ class WebSocketChannel(OutputChannel):
         })
 
     async def on_audio_end(self, stream_id: int = 0, *, format: str = "wav") -> None:
+        self._audio_seq.pop(stream_id, None)
         await self._send_json({
             "type": "audio_end",
             "stream_id": stream_id,
