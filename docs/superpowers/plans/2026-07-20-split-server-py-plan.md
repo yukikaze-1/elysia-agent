@@ -463,6 +463,31 @@ from core.schema.message import Message
 logger = logging.getLogger(__name__)
 
 
+# ---- 共享 helper（debug_routes.py 也需要） ----
+
+def _archive_to_client(msgs: list[Message]) -> list[dict]:
+    """将 Message 列表转为前端兼容格式（补 parts + _id 字段）。"""
+    result = []
+    for msg in msgs:
+        entry = msg.model_dump(mode="json")
+        mongo_id = entry.get("metadata", {}).pop("_mongo_id", None)
+        if mongo_id:
+            entry["_id"] = mongo_id
+        content = entry.get("content", [])
+        if isinstance(content, list):
+            entry["parts"] = [
+                {"content": p["content"]}
+                for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
+            ]
+        elif isinstance(content, str):
+            entry["parts"] = [{"content": content}]
+        else:
+            entry["parts"] = [{"content": ""}]
+        result.append(entry)
+    return result
+
+
 def register_api_routes(app: web.Application) -> None:
     """注册所有业务 API 路由到 aiohttp Application。"""
 
@@ -639,27 +664,6 @@ def register_api_routes(app: web.Application) -> None:
 
     # ---- 消息归档 API ----
 
-    def _archive_to_client(msgs: list[Message]) -> list[dict]:
-        result = []
-        for msg in msgs:
-            entry = msg.model_dump(mode="json")
-            mongo_id = entry.get("metadata", {}).pop("_mongo_id", None)
-            if mongo_id:
-                entry["_id"] = mongo_id
-            content = entry.get("content", [])
-            if isinstance(content, list):
-                entry["parts"] = [
-                    {"content": p["content"]}
-                    for p in content
-                    if isinstance(p, dict) and p.get("type") == "text"
-                ]
-            elif isinstance(content, str):
-                entry["parts"] = [{"content": content}]
-            else:
-                entry["parts"] = [{"content": ""}]
-            result.append(entry)
-        return result
-
     async def messages_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
         repo = agent._message_repo
@@ -702,16 +706,11 @@ from .api_routes import register_api_routes
 register_api_routes(app)
 ```
 
-3. 删除原 L447-L714（从 `# ---- 模型切换 API ----` 到 `app.router.add_get("/api/messages", messages_handler)`）
+3. 删除原 L447-L655（从 `# ---- 模型切换 API ----` 到 `_archive_to_client` 函数结束）。**注意**：L657-L684（`_sessions_to_client`）保留在 server.py 中——它将在 Task 3 中移至 debug_routes.py。
 
 4. 清理不再需要的 imports：
-   - `from aiohttp.multipart import BodyPartReader` —→ 移至 api_routes.py
-   - `from typing import cast` —→ 移至 api_routes.py
-   - `from core.schema.message import Message` — `_archive_to_client` 移至 api_routes.py，但 debug_routes.py 的 `_sessions_to_client` 和 `archive_list_handler` 也用 `Message`。如果 `Message` 仍在 server.py 保留（因为 debug 代码还在），则不可删除！
-   
-   **Import 变动总结**：
    - 删除：`from aiohttp.multipart import BodyPartReader`, `from typing import cast`（仅 image_upload 使用，已移走）
-   - 保留：`from core.schema.message import Message, MessageRole`（debug 区域仍需）
+   - 保留：`from core.schema.message import Message, MessageRole`（debug 区域 + `_sessions_to_client` 仍需）
 
    修改后 import block 为：
    ```python
@@ -762,22 +761,16 @@ to Module/input/api_routes.py with register_api_routes(app)."
 
 - [ ] **Step 1: 创建 `Module/input/debug_routes.py`**
 
-包含以下 handler：
-- DB 管理（6）：`db_status`, `ltm_list`, `ltm_insert`, `ltm_delete_single`, `ltm_update`, `ltm_clear`
-- 消息归档（4）：`archive_list`, `archive_delete`, `archive_update`, `archive_clear`
-- Session 管理（4）：`sessions_list`, `session_detail`, `session_delete`, `sessions_clear`
-- LLM 录制（4）：`prompts_list`, `prompt_detail`, `responses_list`, `response_detail`
-- Debug API 聚合：`debug_api_handler`
-- TaskSystem SSE：TaskDebugAPI 注册逻辑
-- 辅助：`_sessions_to_client`
-- `on_startup` / `on_shutdown`
+**提取方式：从 `server.py` 原样复制以下行范围，包装到 `register_debug_routes(app)` 函数体内。**
 
-文件内容 — 从 `server.py` 的 L88-L100（debug_api_handler + TaskDebugAPI）和 L172-L446（数据库管理 + 消息归档）和 L716-L828（sessions_clear, prompts, responses, on_startup/on_shutdown）提取，包装为 `register_debug_routes(app)`：
+文件头部（新建）：
 
 ```python
 """Debug API 路由 — 数据库状态, LTM CRUD, Session 管理, 消息归档, LLM 录制。"""
 
+import json
 import logging
+import os
 from pathlib import Path
 
 from aiohttp import web
@@ -785,416 +778,48 @@ from aiohttp import web
 from core.schema.message import Message, MessageRole
 from core.schema.types import SessionId
 from core.schema.memory import MemoryType
+from .api_routes import _archive_to_client
 
 logger = logging.getLogger(__name__)
 
 
 def register_debug_routes(app: web.Application) -> None:
     """注册所有 /debug/api/* 路由到 aiohttp Application。"""
-
-    # ---- Debug API 聚合 ----
-
-    async def debug_api_handler(request: web.Request) -> web.Response:
-        from core.debug.info import collect, asdict
-        info = await collect(request.app["agent"])
-        return web.json_response(asdict(info))
-
-    app.router.add_get("/debug/api", debug_api_handler)
-
-    # ---- TaskSystem Debug API (SSE) ----
-    from Module.task_system.debug_api import TaskDebugAPI
-
-    ts = app.get('task_system')
-    if ts is not None:
-        task_debug_api = TaskDebugAPI(ts)
-        app['task_debug_api'] = task_debug_api
-        app.router.add_get("/debug/api/tasks", task_debug_api.snapshot_handler)
-        app.router.add_get("/debug/api/tasks/stream", task_debug_api.sse_handler)
-    else:
-        app['task_debug_api'] = None
-
-    # ---- 数据库管理 ----
-
-    async def db_status_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        ltm = agent._long_term
-        return web.json_response({
-            "ltm": {
-                "count": ltm.count,
-                "milvus_ok": await agent._memory_repo.health_check(),
-                "dirty_count": len(ltm._dirty_ids),
-            },
-            "session": {
-                "count": 1,
-                "current_id": str(agent._session.session_id),
-                "mongodb_ok": await agent._session_repo.health_check(),
-            },
-            "archive": {
-                "count": await agent._message_repo.count(),
-                "mongodb_ok": await agent._message_repo.health_check(),
-            },
-        })
-
-    app.router.add_get("/debug/api/db-status", db_status_handler)
-
-    async def ltm_list_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        search = request.query.get("search", "").strip()
-        mem_type = request.query.get("type", "").strip()
-        try:
-            limit = int(request.query.get("limit", "50"))
-            offset = int(request.query.get("offset", "0"))
-        except ValueError:
-            return web.json_response({"error": "无效的分页参数"}, status=400)
-
-        if agent._long_term is None:
-            return web.json_response({"error": "长期记忆未初始化"}, status=503)
-        entries = agent._long_term._entries
-        if search:
-            entries = [e for e in entries if search in e.text]
-        if mem_type:
-            entries = [e for e in entries if e.memory_type == mem_type]
-
-        total = len(entries)
-        page = entries[offset:offset + limit]
-        return web.json_response({
-            "total": total,
-            "entries": [
-                {
-                    "id": e.id,
-                    "text": e.text,
-                    "memory_type": e.memory_type,
-                    "poignancy": e.poignancy,
-                    "timestamp": e.timestamp,
-                    "metadata": e.metadata,
-                }
-                for e in page
-            ],
-        })
-
-    app.router.add_get("/debug/api/ltm", ltm_list_handler)
-
-    async def ltm_insert_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "无效的 JSON 请求体"}, status=400)
-        text = body.get("text", "").strip()
-        memory_type = body.get("memory_type", "note")
-        if not text:
-            return web.json_response({"error": "缺少 text 字段"}, status=400)
-        eid = agent._long_term.insert(text=text, memory_type=memory_type)
-        return web.json_response({"ok": True, "id": eid})
-
-    app.router.add_post("/debug/api/ltm", ltm_insert_handler)
-
-    async def ltm_delete_single_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        eid = request.match_info.get("id", "")
-        if not eid:
-            return web.json_response({"error": "缺少 id"}, status=400)
-        ok = agent._long_term.delete(eid)
-        if ok:
-            return web.json_response({"ok": True})
-        else:
-            return web.json_response({"error": "未找到"}, status=404)
-
-    app.router.add_delete("/debug/api/ltm/{id}", ltm_delete_single_handler)
-
-    async def ltm_update_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        eid = request.match_info.get("id", "")
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "无效的 JSON 请求体"}, status=400)
-        text = body.get("text", "").strip()
-        if not text:
-            return web.json_response({"error": "缺少 text"}, status=400)
-        ok = agent._long_term.update(eid, text=text,
-                                     memory_type=body.get("memory_type"),
-                                     poignancy=body.get("poignancy"))
-        if ok:
-            return web.json_response({"ok": True})
-        else:
-            return web.json_response({"error": "未找到"}, status=404)
-
-    app.router.add_put("/debug/api/ltm/{id}", ltm_update_handler)
-
-    async def ltm_clear_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        count = agent._long_term.clear()
-        return web.json_response({"ok": True, "deleted": count})
-
-    app.router.add_delete("/debug/api/ltm", ltm_clear_handler)
-
-    # ---- 消息归档管理 ----
-
-    async def archive_list_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        try:
-            limit = int(request.query.get("limit", "50"))
-            offset = int(request.query.get("offset", "0"))
-        except ValueError:
-            return web.json_response({"error": "无效的分页参数"}, status=400)
-        mem_type = request.query.get("type", "").strip() or None
-        session_id = request.query.get("session_id", "").strip() or None
-        try:
-            total, messages = await agent._message_repo.list_all(
-                limit=limit, offset=offset, memory_type=mem_type, session_id=session_id)
-            return web.json_response({
-                "total": total,
-                "messages": [
-                    {
-                        "role": m.role.value if hasattr(m.role, "value") else m.role,
-                        "content": m.content,
-                        "timestamp": m.timestamp,
-                        "session_id": m.session_id,
-                        "content_type": m.content_type,
-                        "metadata": m.metadata,
-                    }
-                    for m in messages
-                ],
-            })
-        except Exception as e:
-            logger.warning("Failed to list message archive: %s", e)
-            return web.json_response({"error": str(e)}, status=500)
-
-    app.router.add_get("/debug/api/archive", archive_list_handler)
-
-    async def archive_delete_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        session_id = request.query.get("session_id", "").strip() or None
-        try:
-            deleted = await agent._message_repo.delete_by_session(session_id)
-            return web.json_response({"ok": True, "deleted": deleted})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    app.router.add_delete("/debug/api/archive", archive_delete_handler)
-
-    async def archive_update_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        try:
-            body = await request.json()
-            msg_id = body.get("_id", "")
-            content = body.get("content", "")
-        except Exception:
-            return web.json_response({"error": "无效的 JSON 请求体"}, status=400)
-        try:
-            ok = await agent._message_repo.update_content(msg_id, content)
-            return web.json_response({"ok": ok})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    app.router.add_put("/debug/api/archive", archive_update_handler)
-
-    async def archive_clear_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        try:
-            deleted = await agent._message_repo.clear_all()
-            return web.json_response({"ok": True, "deleted": deleted})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    app.router.add_delete("/debug/api/archive/all", archive_clear_handler)
-
-    # ---- Session 管理 ----
-
-    def _sessions_to_client(msgs: list[Message] | list[dict]) -> list[dict]:
-        result = []
-        for m in msgs:
-            if isinstance(m, Message):
-                entry = m.model_dump(mode="json")
-            else:
-                entry = dict(m)
-            item: dict = {"role": entry.get("role", "?"),
-                          "timestamp": entry.get("timestamp", ""),
-                          "content_type": entry.get("content_type", {})}
-            content = entry.get("content", "")
-            if isinstance(content, list):
-                item["parts"] = [
-                    {"content": p.get("content", "") if isinstance(p, dict) else getattr(p, "content", "")}
-                    for p in content
-                    if (isinstance(p, dict) and p.get("type") == "text")
-                       or (not isinstance(p, dict) and getattr(p, "type", None) == "text")
-                ]
-                item["content"] = content
-            elif isinstance(content, str):
-                item["parts"] = [{"content": content}]
-            elif "parts" in entry:
-                item["parts"] = entry["parts"]
-            else:
-                item["parts"] = [{"content": str(content)}]
-            result.append(item)
-        return result
-
-    async def sessions_list_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        if not await agent._message_repo.health_check():
-            return web.json_response({"error": "MongoDB 不可用"}, status=503)
-        try:
-            sessions = await agent._message_repo.list_sessions()
-            return web.json_response(sessions)
-        except Exception as e:
-            return web.json_response({"error": f"查询失败: {e}"}, status=500)
-
-    app.router.add_get("/debug/api/sessions", sessions_list_handler)
-
-    async def session_detail_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        sid = request.match_info.get("session_id", "")
-        if not sid:
-            return web.json_response({"error": "缺少 session_id"}, status=400)
-
-        if await agent._message_repo.health_check():
-            try:
-                msgs, total = await agent._message_repo.query_by_session(sid, limit=20)
-                formatted = _sessions_to_client(msgs)
-                character_state = await _get_character_state(SessionId(sid))
-                return web.json_response({
-                    "session_id": sid,
-                    "messages": formatted,
-                    "params": character_state,
-                    "total": total,
-                })
-            except Exception as e:
-                logger.warning("message_repo query_by_session failed: %s", e)
-
-        return web.json_response({"session_id": sid, "messages": [], "params": {}, "total": 0})
-
-    app.router.add_get("/debug/api/sessions/{session_id}", session_detail_handler)
-
-    async def session_delete_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        sid = request.match_info.get("session_id", "")
-        if not sid:
-            return web.json_response({"error": "缺少 session_id"}, status=400)
-        try:
-            deleted = await agent._message_repo.delete_by_session(sid)
-            if sid == str(agent._session.session_id):
-                agent._session.clear()
-            return web.json_response({"ok": True, "deleted": deleted})
-        except Exception as e:
-            return web.json_response({"error": f"删除失败: {e}"}, status=500)
-
-    app.router.add_delete("/debug/api/sessions/{session_id}", session_delete_handler)
-
-    async def _get_character_state(sid: SessionId) -> dict:
-        # session_detail_handler 的内部辅助——通过 agent 获取 character params
-        return {}
-
-    # 注意：原代码的 _get_character_state 是空实现（通过 agent 取 params，但逻辑被 deferred）
-    # 保留原样——维持语义不变
-
-    async def sessions_clear_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        if not await agent._session_repo.health_check():
-            return web.json_response({"error": "MongoDB 不可用"}, status=503)
-        try:
-            deleted = await agent._session_repo.clear_all()
-            agent._session.clear()
-            return web.json_response({"ok": True, "deleted": deleted})
-        except Exception as e:
-            return web.json_response({"error": f"清空失败: {e}"}, status=500)
-
-    app.router.add_delete("/debug/api/sessions", sessions_clear_handler)
-
-    # ---- LLM Prompt/Response 录制 ----
-
-    async def prompts_list_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        recorder = getattr(agent, "_prompt_recorder", None)
-        if recorder is None:
-            return web.json_response({"records": [], "total": 0, "max": 0})
-        return web.json_response(recorder.list_summaries())
-
-    app.router.add_get("/debug/api/prompts", prompts_list_handler)
-
-    async def prompt_detail_handler(request: web.Request) -> web.Response:
-        index = int(request.match_info["index"])
-        agent = request.app["agent"]
-        recorder = getattr(agent, "_prompt_recorder", None)
-        if recorder is None:
-            raise web.HTTPNotFound(text="PromptRecorder 未初始化")
-        record = recorder.get_full(index)
-        if record is None:
-            raise web.HTTPNotFound(text=f"记录 #{index} 不存在")
-
-        template_source = None
-        templates_dir = "Module/system_prompt/templates"
-        try:
-            import os
-            sources = {}
-            for fname in sorted(os.listdir(templates_dir)):
-                if fname.endswith(".j2") and not fname.startswith("_"):
-                    fpath = os.path.join(templates_dir, fname)
-                    with open(fpath) as f:
-                        sources[fname] = f.read()
-            if sources:
-                template_source = {"path": templates_dir, "sections": sources}
-        except Exception:
-            pass
-
-        return web.json_response({
-            "index": record.index,
-            "timestamp": record.timestamp,
-            "round_num": record.round_num,
-            "model": record.model,
-            "messages": record.messages,
-            "tools": record.tools,
-            "template_source": template_source,
-        })
-
-    app.router.add_get(r"/debug/api/prompts/{index:\d+}", prompt_detail_handler)
-
-    async def responses_list_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        recorder = getattr(agent, "_response_recorder", None)
-        if recorder is None:
-            return web.json_response({"records": [], "total": 0, "max": 0})
-        return web.json_response(recorder.list_summaries())
-
-    app.router.add_get("/debug/api/responses", responses_list_handler)
-
-    async def response_detail_handler(request: web.Request) -> web.Response:
-        index = int(request.match_info["index"])
-        agent = request.app["agent"]
-        recorder = getattr(agent, "_response_recorder", None)
-        if recorder is None:
-            raise web.HTTPNotFound(text="ResponseRecorder 未初始化")
-        record = recorder.get_full(index)
-        if record is None:
-            raise web.HTTPNotFound(text=f"记录 #{index} 不存在")
-        return web.json_response({
-            "index": record.index,
-            "timestamp": record.timestamp,
-            "round_num": record.round_num,
-            "raw_text": record.raw_text,
-            "inner_voice": record.inner_voice,
-            "text_len": record.text_len,
-            "inner_voice_len": record.inner_voice_len,
-        })
-
-    app.router.add_get("/debug/api/responses", responses_list_handler)
-    app.router.add_get(r"/debug/api/responses/{index:\d+}", response_detail_handler)
-
-    # ---- TaskDebugAPI 生命周期 ----
-
-    async def on_startup(app):
-        task_api = app.get('task_debug_api')
-        if task_api:
-            await task_api.start()
-
-    async def on_shutdown(app):
-        task_api = app.get('task_debug_api')
-        if task_api:
-            await task_api.stop()
-
-    app.on_startup.append(on_startup)
-    app.on_shutdown.append(on_shutdown)
 ```
+
+然后按顺序从 `server.py` 复制以下代码段到 `register_debug_routes()` 函数体内：
+
+| 复制 server.py 行范围 | 内容 | 修改 |
+|----------------------|------|------|
+| L88-L100 | `debug_api_handler` + TaskDebugAPI 注册 | `from core.debug.info import collect, asdict` 移到文件顶部 |
+| L172-L193 | `db_status_handler` + 路由注册 | 不变 |
+| L195-L229 | `ltm_list_handler` + 路由注册 | 不变 |
+| L231-L245 | `ltm_insert_handler` + 路由注册 | 不变（含 `await`、`entry_id`） |
+| L247-L254 | `ltm_delete_single_handler` + 路由注册 | 不变 |
+| L256-L267 | `ltm_update_handler` + 路由注册 | 不变 |
+| L269-L273 | `ltm_clear_handler` + 路由注册 | 不变 |
+| L277-L305 | `archive_list_handler` + 路由注册 | **把 `_archive_to_client(messages)` 的调用保留——函数在 api_routes.py 中已导入** |
+| L307-L315 | `archive_delete_handler` + 路由注册 | 不变 |
+| L317-L329 | `archive_update_handler` + 路由注册 | 不变 |
+| L331-L337 | `archive_clear_handler` + 路由注册 | 不变 |
+| L339-L378 | `sessions_list_handler` + 路由注册 | 不变（含 `token_totals` 聚合逻辑） |
+| L380-L427 | `session_detail_handler` + 路由注册 | 不变（`_get_character_state` 保持为内部嵌套函数） |
+| L429-L444 | `session_delete_handler` + 路由注册 | 不变 |
+| L657-L684 | `_sessions_to_client` 函数 | 原样复制到 `register_debug_routes()` 内（在 session handlers 之前） |
+| L716-L719 | `_UPLOADS_DIR` + 静态路由注册 | **整个移到 `server.py` 的 `create_app()` 中，不放在这里** |
+| L721-L728 | `prompts_list_handler` + `app.router.add_get` | 不变 |
+| L730-L765 | `prompt_detail_handler` + `app.router.add_get` | 不变 |
+| L767-L779 | `sessions_clear_handler` + `app.router.add_delete` | 不变（L780-781 移到各 handler 旁） |
+| L783-L789 | `responses_list_handler` + `app.router.add_get` | 不变 |
+| L791-L812 | `response_detail_handler` + 两个 `app.router.add_get` | 不变 |
+| L814-L826 | `on_startup` / `on_shutdown` + `app.on_startup.append` / `app.on_shutdown.append` | 不变 |
+
+**关键注意事项：**
+- **所有 handler 原样复制，不改参数名、不省 `await`、不改方法名。** 唯一的改动是文件头 import 整理。
+- `_archive_to_client` 已经在 Task 2 中提取到 `api_routes.py`，`archive_list_handler` 仍通过 `from .api_routes import _archive_to_client` 使用它。
+- `_sessions_to_client`（L633-L655）复制到 `register_debug_routes()` 内部，放在 session handlers 之前。
+- `_get_character_state`（L387-L392）保持嵌套在 `session_detail_handler` 内部不变。
+- `_UPLOADS_DIR` + `/uploads/` 静态路由（L716-L719）**不放到 debug_routes.py**——它属于 `server.py` 的 `create_app()`。
 
 - [ ] **Step 2: 修改 `Module/input/server.py`**
 
@@ -1211,11 +836,12 @@ register_debug_routes(app)
 3. 删除以下代码段：
    - L88-L100（debug_api_handler + TaskDebugAPI 注册）
    - L172-L446（数据库管理 + 消息归档管理）
-   - L716-L828（sessions_clear, prompts, responses, on_startup/on_shutdown, `return app` 之前的所有 handler）
+   - L657-L684（`_sessions_to_client` — 已移到 debug_routes.py）
+   - L716-L828（sessions_clear, prompts, responses, on_startup/on_shutdown）
 
    **保留** `return app`（L828）
 
-4. 清理不再需要的 imports——debug_routes.py 已负责所有 core.schema imports。server.py 的 import block 简化为：
+4. 清理不再需要的 imports。server.py 最终 import block 为：
 
 ```python
 """WebSocket server — bridges browser clients to the agent pipeline.
@@ -1283,7 +909,7 @@ def create_app(
                 return web.FileResponse(debug_path)
             app.router.add_get("/debug", debug_handler)
 
-    # Health check endpoint
+    # Health check endpoint — 保留原始实现不变
     async def health_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
         try:
@@ -1293,22 +919,33 @@ def create_app(
         return web.json_response({
             "status": "ok",
             "fsm": fsm_state,
-            "app": agent._config.get("app.name", "unknown"),
+            "llm": getattr(agent._llm, 'model', 'unknown'),
+            "memory": {
+                "session_count": len(getattr(agent._session, '_messages', [])),
+                "long_term_count": getattr(agent._long_term, 'count', 0),
+            },
+            "tools": getattr(agent._tool_manager, 'tool_names', ["<loading>"]),
         })
     app.router.add_get("/health", health_handler)
+    app.router.add_get("/ready", health_handler)
 
-    # Shutdown endpoint
+    # Shutdown endpoint — 保留原始实现不变
     async def shutdown_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        asyncio.ensure_future(agent.stop())
-        return web.json_response({"ok": True, "message": "Shutting down..."})
+        import logging
+        _log = logging.getLogger(__name__)
+        _log.info("Shutdown requested via HTTP")
+        request.app["agent"]._state = RunState.STOPPING
+        return web.json_response({"status": "shutting_down"})
     app.router.add_post("/shutdown", shutdown_handler)
+    app.router.add_get("/shutdown", shutdown_handler)
 
-    # Restart endpoint
+    # Restart endpoint — 保留原始实现不变
     async def restart_handler(request: web.Request) -> web.Response:
-        agent = request.app["agent"]
-        asyncio.ensure_future(agent.restart())
-        return web.json_response({"ok": True, "message": "Restarting..."})
+        import logging
+        _log = logging.getLogger(__name__)
+        _log.info("Restart requested via HTTP")
+        request.app["agent"]._state = RunState.RESTARTING
+        return web.json_response({"status": "restarting"})
     app.router.add_post("/restart", restart_handler)
 
     # Tools endpoint
@@ -1348,11 +985,8 @@ def create_app(
     return app
 ```
 
-注意：shutdown_handler 和 restart_handler 使用了 `asyncio`——但 server.py 的 `import asyncio` 已被删除。需要保留 `import asyncio`。
-
-更正后的 server.py import block：
+server.py 最终 import block：
 ```python
-import asyncio
 import json
 import logging
 from pathlib import Path
@@ -1365,6 +999,8 @@ from .ws_handler import handle_ws
 from .api_routes import register_api_routes
 from .debug_routes import register_debug_routes
 ```
+
+注意：`asyncio` 不再被 server.py 直接使用（已随 `_handle_ws` 移至 ws_handler.py），不需要 import。
 
 - [ ] **Step 3: 运行测试验证**
 
