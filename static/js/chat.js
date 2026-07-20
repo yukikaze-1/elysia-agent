@@ -328,8 +328,8 @@ export function hideTyping() {
 export function setMood(mood, intensity) {
   const tag = document.getElementById('mood-tag');
   if (tag) {
-    tag.textContent = mood ? `${moodEmoji(mood)} ${mood} ${Math.round(intensity * 100)}%` : '';
-    tag.style.color = moodColor(mood);
+    tag.textContent = mood ? `${mood} (${Math.round(intensity * 100)}%)` : '';
+    tag.style.color = 'var(--muted)';
   }
 }
 
@@ -340,11 +340,6 @@ export function setState(stateName) {
   if (dot) dot.className = stateName;
 }
 
-const MOOD_EMOJI = { happy: '😊', sad: '😢', excited: '🤩', curious: '🤔', neutral: '😐' };
-const MOOD_COLOR = { happy: 'var(--happy)', sad: 'var(--sad)', excited: 'var(--excited)', neutral: 'var(--muted)' };
-
-function moodEmoji(m) { return MOOD_EMOJI[m] || ''; }
-function moodColor(m) { return MOOD_COLOR[m] || 'var(--muted)'; }
 
 /* ---- 滚动 ---- */
 export function scrollDown() {
