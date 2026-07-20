@@ -55,6 +55,18 @@ _TONE_TAG_RE = re.compile(
 _CN_ACTION_RE = re.compile(r"[\(\（][^\)\）]*[一-鿿][^\)\）]*[\)\）]")
 
 
+def _mood_text_to_tts_emotion(mood_text: str) -> str:
+    """自由文本 mood → TTS 情绪参数 (happy/sad/neutral)。"""
+    sad_words = {"难过", "悲伤", "伤心", "低落", "沮丧", "消沉", "失落"}
+    happy_words = {"开心", "高兴", "兴奋", "快乐", "喜悦", "期待", "惊喜"}
+    # happy 优先 — "虽然难过但还是很开心" → happy
+    if any(w in mood_text for w in happy_words):
+        return "happy"
+    if any(w in mood_text for w in sad_words):
+        return "sad"
+    return "neutral"
+
+
 # ---- TTSStreamManager -----------------------------------------------------
 
 class TTSStreamManager:
@@ -172,8 +184,8 @@ class TTSStreamManager:
         self._tasks.clear()
 
     def set_emotion(self, emotion: str | None) -> None:
-        """设置本轮 TTS 情绪（由 CharacterEngine 更新后调用）。"""
-        self._emotion = emotion
+        """设置本轮 TTS 情绪。自由文本会自动映射为 TTS 参数 (happy/sad/neutral)。"""
+        self._emotion = _mood_text_to_tts_emotion(emotion) if emotion else None
 
     def set_backend(self, tts: TTSBackend | None) -> None:
         """热切换 TTS 后端。"""
