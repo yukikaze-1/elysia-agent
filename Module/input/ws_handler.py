@@ -7,7 +7,6 @@ import logging
 from aiohttp import web, WSMsgType
 from pydantic import ValidationError
 
-from core.agent import RunState
 from core.schema.event import InterruptData, UserInputData
 from Module.output import WebSocketChannel
 from .audio_buffer import AudioBuffer

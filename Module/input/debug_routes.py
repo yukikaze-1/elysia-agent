@@ -3,14 +3,11 @@
 import json
 import logging
 import os
-from pathlib import Path
-
 from aiohttp import web
 
 from core.debug.info import collect, asdict
 from core.schema.message import Message, MessageRole
 from core.schema.types import SessionId
-from core.schema.memory import MemoryType
 from .api_routes import _archive_to_client
 
 logger = logging.getLogger(__name__)
