@@ -415,32 +415,28 @@ LLM token stream
 
 原 `EmotionEngine` 已合并至 `CharacterEngine`（`core/personality/engine.py`），作为 L4 Mood 层。
 
-**主路径** (语音): STT 声学情绪标签 (SenseVoice 自带)
+**主路径** (语音): STT 声学情绪标签通过 C5 Sensory 直接传给 LLM
 ```
 STT 返回: emotion="HAPPY", events=["Laughter"]
-  → _STT_EMOTION_TO_MOOD 映射:
-      HAPPY → "warm", SAD → "concerned", ANGRY → "calming"
-      FEARFUL → "reassuring", SURPRISED → "curious"
-  → 更新 CharacterState.mood + push expression
-
-音频事件 → expression 推送:
-  Laughter → "laugh", Cry → "cry", Applause → "surprised"
+  → C5 Sensory: "语调: HAPPY 😊 | 事件: Laughter 😂" → LLM 自主判断如何回应
+  → 音频事件 → expression 推送: Laughter→"laugh", Cry→"cry", Applause→"surprised"
 ```
+不再通过硬编码表预设 AI mood，mood 决策交给 LLM 结合角色性格动态判断。
 
-**Fallback** (文本): 关键词匹配
+**文本路径**: 关键词匹配
 ```
 MOOD_KEYWORDS = {
     "happy":    ["哈哈", "开心", "太好了", "喜欢", ...],
     "excited":  ["!", "！", "天哪", "wow", ...],
-    "sad":      ["难过", "伤心", "哭", "失败", ...],
-    "curious":  ["为什么", "怎么", "好奇", ...],
+    ...
 }
 → 计分 → 最高分 mood → update CharacterState.mood + push expression
 ```
+文本关键词路径始终执行（不再与 STT 路径互斥）。
 
 **衰减**: `analyze_assistant()` 每次回复后 intensity -= 0.15，低于 0.2 重置为 neutral
 
-**Expression 映射**: `{mood: (expression, intensity)}` → OutputManager.expression()
+**Expression 映射**: `mood.value` 直接作为 expression 名透传 → OutputManager.expression()
 
 详见 [4.10 CharacterEngine](#410-characterengine--角色性格情绪引擎)。
 
@@ -512,7 +508,7 @@ proactive.enabled: false → 整个机制关闭
 L1 Core（核心底色）    文件加载，启动后不变                  → C1 模板锚点
 L2 Self（长期自我）    从 L3 压缩沉淀，月级演化              → C1 主体——"我是谁"
 L3 State（短期状态）   CharacterReflector + 事件触发，数十轮  → C9 条件素材——"我最近怎么了"
-L4 Mood（当前情绪）    CharacterEngine keyword + STT 每轮更新 → C3 内容
+L4 Mood（当前情绪）    CharacterEngine keyword 检测每轮更新，STT 情绪直传 LLM（C5） → C3 内容
 ```
 
 **CharacterState**（Pydantic 模型）：集中管理 mood、personality (L2 Self + L3 State)、reflector buffer/context、awareness 冷却、state_history 等所有性格+情绪状态。替代原 `session._params` 散落存储。

@@ -25,7 +25,7 @@
 ├──────────────────────────────────────────────────────┤
 │ L4: Mood（当前情绪）                变化: 每轮         │
 │   存储: CharacterState.mood (Mood 枚举)              │
-│   来源: CharacterEngine（keyword + STT，已内聚）      │
+│   来源: CharacterEngine（keyword 检测，STT 情绪直传 LLM） │
 │   → C3 模板的内容                                    │
 └──────────────────────────────────────────────────────┘
 ```
@@ -132,7 +132,7 @@ core/
 ├── agent.py                       — 创建并接线 CharacterEngine
 ├── prompt_assembler.py            — 数据注入 section
 ├── schema/character.py            — CharacterState 定义（Pydantic 模型，合并 mood + reflector 字段）
-└── schema/mood.py                 — Mood 枚举 + TTS 映射 + STT 工具函数
+└── schema/mood.py                 — Mood 枚举 + TTS 映射 + STT emoji 工具函数
 
 Module/system_prompt/
 ├── sections/personality.py        — C1 section 类

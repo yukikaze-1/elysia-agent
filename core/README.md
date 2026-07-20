@@ -34,7 +34,7 @@ AgentFSM (IDLE → THINKING → EXECUTING → SPEAKING → IDLE)
     ↓
 CognitiveLoop (ReAct 调度 + inner_voice 状态机)
     ├── PromptAssembler (12 PromptSection → SystemPromptManager)
-    ├── CharacterEngine (合并 EmotionEngine，关键词 + STT → mood → expression)
+    ├── CharacterEngine (合并 EmotionEngine，关键词 → mood → expression)
     ├── MemoryConsolidator (对话 → LLM 提取 → LTM)
     ├── MemoryReflector (定期 LTM 去重)
     ├── TaskScheduler (Worker Pool → 工具执行)
@@ -99,9 +99,9 @@ ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的�
 
 #### CharacterEngine (`personality/engine.py`)
 
-统一个性管理与情绪驱动，关键词检测 + STT 声学情绪 → mood 映射。8 种 mood（happy/excited/sad/curious/warm/concerned/calming/neutral）+ reassuring/understanding，intensity 衰减机制。双路径：`analyze_user_stt()` 声学情绪路径（STT 情绪标签映射到 AI mood），`analyze_user()` 文本关键词路径（fallback）。`analyze_assistant()` 每轮回复后衰减 intensity 趋向 neutral。结果写入 `CharacterState.mood`，通过 OutputManager 推送 expression 变更到前端。详见 [personality/README.md](personality/README.md)。
+统一个性管理与情绪驱动。STT 声学情绪通过 C5 Sensory 直传 LLM（不再硬编码映射 AI mood），文本关键词检测更新 mood。10 种 mood（happy/excited/sad/curious/warm/concerned/calming/reassuring/understanding/neutral），intensity 衰减机制。`analyze_user_stt()` 仅处理音频事件→表情，`analyze_user()` 关键词检测始终执行，`analyze_assistant()` 每轮回复后衰减 intensity 趋向 neutral。结果写入 `CharacterState.mood`，`mood.value` 直接作为 expression 名透传到前端。详见 [personality/README.md](personality/README.md)。
 
-关键方法：`analyze_user_stt()`, `analyze_user()`, `analyze_assistant()`, `restore_state()`
+关键方法：`analyze_user_stt()`, `analyze_user()`, `analyze_assistant()`
 
 #### MemoryConsolidator (`memory/consolidator.py`)
 
