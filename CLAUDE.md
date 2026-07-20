@@ -172,6 +172,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.database.documentdb` | Document DB | `mongodb` |
 | `Module.database.graphdb` | Graph DB | stub only |
 | `Module.bench` | Latency benchmarking | Covers LLM/TTS/STT |
+| `Module.input` | Input layer: WebSocket + HTTP server | `server.py` (glue), `ws_handler.py`, `api_routes.py`, `debug_routes.py` |
 | `Module._common` | Shared utility layer | env, registry helpers, test helpers |
 
 ## Config system
@@ -245,7 +246,7 @@ static/
 
 16 panels across overview tab: System (FSM, mood, idle), Memory (session + LTM + DB health), Latency, Process Memory, Scheduler, Token, LLM Prompt/Response, Session/LTM recent, Tools + Tool History, Consolidation (buffer + history), Memory Reflector, Character Reflector, CharacterEngine. Database tab: LTM CRUD + session management + message archive. Tasks tab: SSE real-time TaskSystem DAG visualization.
 
-### Server routing (`Module/input/server.py`)
+### Server routing (`Module/input/` — `server.py` + `ws_handler.py` + `api_routes.py` + `debug_routes.py`)
 
 `/` → `static/index.html`, `/debug` → `static/debug.html`, `/ws` → WebSocket, `/health` `/ready` `/shutdown` `/restart` `/api/chat` `/api/messages` `/api/images` `/api/providers` `/tools` `/tools/reload`。Debug API: `/debug/api` `/debug/api/prompts/{n}` `/debug/api/responses/{n}` `/debug/api/db-status` `/debug/api/ltm` `/debug/api/sessions` `/debug/api/archive` `/debug/api/tasks/stream`
 
