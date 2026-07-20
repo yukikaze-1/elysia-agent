@@ -77,7 +77,7 @@
 | **高** | `.env` API key 需要轮换 | 已有 `.env.example` + `setup.sh` 生成 `.env` + `app.py --check` 验证；实际轮换需在各 API 后台手动操作 |
 | 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
 | 低 | 会话管理 | 无法新建/切换/列出对话。SessionMemory 的 MongoDB 持久化已为此做好准备，需前后端联动 |
-| 低 | **MongoDB database 名硬编码** | 4 个 repo (`message_repo`, `session_repo`, `character_state_repo`, `token_repo`) 的 `connect()` 中硬编码 `DocumentDBFactory.create("mongodb/default")`，database 名 `"default"` 不可配置。应改为构造参数或 `config.yaml` 读取，默认值保持 `"default"` 向后兼容 |
+| ✅ | ~~MongoDB database 名硬编码~~ | 3 个 repo 已加 `database_name` 参数（默认 `"default"`），无调用方破坏。 |
 
 ## 来自 code-review-report-2026-06-22 的遗留问题
 
