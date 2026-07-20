@@ -6,7 +6,7 @@ AudioBuffer sends 256ms chunks — WakeWordDetector buffers and slices internall
 
 import logging
 import time
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 
@@ -40,14 +40,14 @@ class WakeWordDetector:
         self._model_paths = model_paths or {}
         self._on_wake = on_wake
         self._buffer: bytearray = bytearray()
-        self._models: list[tuple[str, object]] = []  # [(word, model), ...]
+        self._models: list[tuple[str, Any]] = []  # [(word, model), ...]
         self._last_wake: float = 0.0
 
         self._load_models()
 
     def _load_models(self) -> None:
         try:
-            import openwakeword
+            import openwakeword  # type: ignore[import-untyped]  # optional dependency
         except ImportError:
             logger.warning(
                 "openwakeword not installed. Install with: pip install openwakeword numpy. "
@@ -57,7 +57,7 @@ class WakeWordDetector:
 
         # Resolve built-in model directory
         import os as _os
-        _pkg_dir = _os.path.dirname(openwakeword.__file__)
+        _pkg_dir = _os.path.dirname(openwakeword.__file__ or "")
         _builtin_dir = _os.path.join(_pkg_dir, "resources", "models")
 
         for word in self._wake_words:

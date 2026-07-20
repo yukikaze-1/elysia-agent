@@ -18,7 +18,7 @@ async def test_audio_buffer():
     async def mock_stt(audio_bytes: bytes) -> str:
         return "mock 识别结果"
 
-    def on_transcription(text: str):
+    async def on_transcription(text: str) -> None:
         transcriptions.append(text)
 
     buf = AudioBuffer(
