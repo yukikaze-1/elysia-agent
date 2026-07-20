@@ -50,8 +50,8 @@
 
 | 文件 | 用途 | 加载方 |
 |------|------|--------|
-| `ExtractMemory.j2` | 从对话提取记忆 | `core/consolidator.py` |
-| `ConsolidationCompare.j2` | 新记忆 vs 已有记忆比对 | `core/consolidator.py` |
+| `ExtractMemory.j2` | 从对话提取记忆 | `core/memory/consolidator.py` |
+| `ConsolidationCompare.j2` | 新记忆 vs 已有记忆比对 | `core/memory/consolidator.py` |
 | `MemoryReflector.j2` | 定期深度去重 | `core/memory/memory_reflector.py` |
 
 ### Prompt 渲染方式

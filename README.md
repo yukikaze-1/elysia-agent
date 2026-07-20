@@ -301,7 +301,6 @@ Agent/
 │   ├── config/             # YAML + env 配置 + providers.yaml + preflight
 │   ├── logger/             # 日志工厂
 │   ├── system_prompt/      # Brain Prompt 引擎 — SystemPromptManager + 12 PromptSections
-│   ├── schema/             # 共享数据模型
 │   ├── tool/               # 工具框架 (129 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB
 │   ├── input/              # AudioBuffer + WebSocket server
@@ -309,38 +308,29 @@ Agent/
 │   │   └── tests/          #     测试
 │   └── bench/              # 延迟基准
 │
-├── core/                   # L1 认知控制
-│   ├── __init__.py         #   包初始化
-│   ├── agent.py            #   组件组装 + 生命周期
-│   ├── cognitive_loop.py   #   ReAct 调度器 + inner_voice 状态机
-│   ├── llm_adapter.py      #   LLM 适配器 (含重试)
-│   ├── prompt_assembler.py #   提示词组装 + 记忆检索（调用 SystemPromptManager）
-│   ├── agent_fsm.py        #   状态机 (IDLE→THINKING→EXECUTING→SPEAKING→IDLE_BACKGROUND_TASK)
-│   ├── event_bus.py        #   优先级事件总线
-│   ├── schema.py           #   共享类型
-│   ├── sentence_buffer.py  #   分句缓冲
-│   ├── block_filter.py     #   结构化块过滤 (code/markdown)
-│   ├── text_utils.py       #   文本提取 + MessageObj
-│   ├── message_id.py       #   消息 ID 生成
-│   ├── consolidator.py     #   记忆沉淀
-│   ├── idle_monitor.py     #   空闲监控
-│   ├── character_config.py #   角色配置
-│   ├── app_config.py       #   ConfigLoader 配置
-│   ├── log_setup.py        #   日志系统 + conversation.log
-│   ├── debug_info.py       #   /debug 面板数据聚合
-│   ├── task.py             #   任务模型
-│   ├── task_scheduler.py   #   Worker Pool (5 workers)
-│   ├── token_tracker.py    #   Token 消耗追踪
-│   ├── prompt_recorder.py  #   LLM Prompt 记录器 (环形缓冲)
-│   ├── response_recorder.py #  LLM Response 记录器 (环形缓冲)
-│   ├── timing.py           #   性能计时
-│   ├── tts_stream.py       #   TTS 流式输出
-│   ├── tool_call_parser.py #   流式 tool_call 解析
-│   ├── personality/        #   四层性格模型 (Core→Self→State→Mood)
-│   ├── tools/              #   工具插件 (12 个)
-│   │   └── vision/         #     多模态视觉工具
-│   ├── memory/             #   记忆子系统 (session + long_term)
-│   └── tests/              #   测试 (363 tests)
+├── core/                   # Elysia Agent 应用程序
+│   ├── agent/               # Agent (package): 主 agent + 生命周期 + server
+│   ├── cognitive/           # CognitiveLoop: ReAct 调度器 + inner_voice 状态机
+│   ├── adapter/             # 适配层: LLM + TTS + tool_call_parser
+│   ├── text/                # 文本流处理 (BlockFilter + SentenceBuffer)
+│   ├── debug/               # Debug 面板数据层
+│   ├── memory/              # 记忆子系统 (Session + LTM + Consolidator + Reflector)
+│   ├── personality/         # CharacterEngine: 四层性格模型
+│   ├── schema/              # 共享 Pydantic 类型 (Event, Message, Part 等)
+│   ├── tools/               # 工具插件 (filesystem, web, memory 等)
+│   ├── tests/               # 测试套件
+│   ├── agent_fsm.py         # 状态机: IDLE → THINKING → EXECUTING → SPEAKING
+│   ├── app_config.py        # AgentConfig: YAML 加载的应用配置
+│   ├── character_config.py  # CharacterConfig: 加载 YAML + L1 性格
+│   ├── event_bus.py         # 优先级事件总线 (asyncio.PriorityQueue)
+│   ├── idle_monitor.py      # IdleMonitor: 唤醒词 + 主动触发
+│   ├── log_setup.py         # 日志设置 (stderr + 文件 + conversation)
+│   ├── message_id.py        # 消息 ID 生成
+│   ├── prompt_assembler.py  # PromptAssembler: 12 sections → SystemPromptManager
+│   ├── task.py              # 任务数据模型
+│   ├── task_scheduler.py    # TaskScheduler: Worker Pool (N=5)
+│   ├── token_tracker.py     # Token 消耗追踪
+│   └── __init__.py          # 包标记 (空)
 │
 ├── prompt/                 # Prompt 模板
 │   ├── ActiveSpeak.j2      #   主动说话判断

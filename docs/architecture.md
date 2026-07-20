@@ -184,7 +184,7 @@ Module/<service>/
 ├── config.py        # Dataclass 配置 (ConfigField)
 ├── __init__.py      # 重导出 ABC + Factory + Config
 ├── __main__.py      # 集成烟雾测试
-└── test_*.py        # 单元测试 (mock)
+└── tests/           # 单元测试 (mock)
 
 Module/_common/      # 共享工具层（不属于任何服务模块）
 ├── env.py           #   dotenv 统一入口
@@ -679,7 +679,7 @@ Browser Microphone
 | `tool_approval` | `{"type":"tool_approval","request_id":"...","approved":true}` | 工具审批回复 |
 | binary | Int16 PCM bytes | 麦克风音频 |
 
-### 6.3 WebSocket 服务器 (Module/input/server.py)
+### 6.3 WebSocket 服务器 (Module/input/)
 
 ```
 aiohttp Application (41 条路由):
@@ -927,7 +927,6 @@ Agent/
 │   ├── config/              # Config: YAML + env 加载器 + preflight
 │   ├── logger/              # Logger: caller-aware 工厂
 │   ├── system_prompt/       # System Prompt 引擎 + Section Provider + 12 templates
-│   ├── schema/              # Schema (deprecated): 旧共享数据模型，现由 core/schema/ 替代
 │   ├── database/            # Database: Milvus / MongoDB / GraphDB (stub)
 │   ├── tool/                # Tool: ToolPlugin框架 + SafetyPipeline + ToolManager
 │   ├── input/               # Input: AudioBuffer (VAD) + WebSocket server
@@ -941,12 +940,11 @@ Agent/
 │   │   ├── server.py         #     AgentServer: run_server/repl + provider 切换
 │   │   └── _types.py         #     RunState + 辅助类
 │   ├── adapter/
-│   ├── llm_adapter.py
-│   ├── tts_adapter.py
-│   └── tool_call_parser.py
+│   │   ├── llm_adapter.py
+│   │   ├── tts_adapter.py
+│   │   └── tool_call_parser.py
 ├── cognitive/            #   CognitiveLoop 包 (loop + tts + tools + timing)
 │   │   ├── loop.py           #     CognitiveLoop(CognitiveTools)
-│   │   └── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   │   ├── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   │   └── timing.py         #     Timer + TimingClock 延迟统计
 │   ├── event_bus.py         #   优先级事件总线

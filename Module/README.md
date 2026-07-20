@@ -17,7 +17,6 @@ Module/
 ├── logger/               # 日志工厂
 ├── system_prompt/        # System Prompt 引擎 + Section Provider 架构
 ├── tool/                 # 工具执行框架
-├── schema/               # 共享数据模型
 ├── database/             # 数据库后端
 │   ├── vectordb/         # 向量数据库（Milvus）
 │   ├── documentdb/       # 文档数据库（MongoDB）
@@ -25,8 +24,6 @@ Module/
 ├── input/                # 音频输入 + WebSocket 服务器
 ├── task_system/          # 异步任务编排（Planner/Orchestrator/Executor）
 └── bench/                # 延迟基准测试
-│   └── graphdb/          # 图数据库（预留）
-└── bench/                # 统一延迟基准测试
 ```
 
 ## 架构：Protocol - Registry - Backend
@@ -213,15 +210,7 @@ await tm.shutdown()
 
 ### Schema — 共享数据模型
 
-定义全链路通用的数据结构：
-
-| 类型 | 用途 |
-|------|------|
-| `UserMessage` | 各输入端（WebSocket / CLI / Telegram）用户消息的统一抽象 |
-| `EnvironmentMessage` | 传感器 / 系统事件输入 |
-| `ChatMessage` | 系统内通用消息，所有层之间流通 |
-| `Event` | 事件总线消息 |
-| `AudioData / ImageData / VideoData / FileData` | 媒体数据模型 |
+Schema 类型已迁移到 `core/schema/`，详见 [core/schema/README.md](../core/schema/README.md)。
 
 ### Database — 数据库后端
 

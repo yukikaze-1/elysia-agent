@@ -99,7 +99,7 @@ LLM 输出的文本可能包含动作/表情标记。不同 TTS 引擎对标记�
 
 ### 显示层过滤
 
-`core/tts_stream.py` 对发送到前端的文本做额外过滤：
+`core/adapter/tts_adapter.py` 对发送到前端的文本做额外过滤：
 
 | 标签 | 示例 | TTS | 显示 |
 |------|------|-----|------|
@@ -138,7 +138,7 @@ MINIMAX_TTS_URL=https://api.minimaxi.com     # 可选
 2. 实现所有抽象方法 + `provider_name` + `get_preprocess()`
 3. 在 `registry.py` `_BACKENDS` 注册，`TTSFactory.create()` 添加分支
 4. 在 `text_preprocess.py` 中添加对应预处理函数（如需要）
-5. 在 `Module/input/server.py` 的 `/api/providers` 端点注册（前端设置页可见）
+5. 在 `Module/input/api_routes.py` 的 `/api/providers` 端点注册（前端设置页可见）
 
 ## 测试
 

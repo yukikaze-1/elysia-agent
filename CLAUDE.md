@@ -166,7 +166,6 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.config` | Config infrastructure | `ConfigLoader` (YAML + env + validation) |
 | `Module.logger` | Logging factory | `LoggerFactory` (plain + JSON, rotating) |
 | `Module.system_prompt` | System prompt engine | 12-section orchestration + templates |
-| `Module.schema` | Shared data models | `UserMessage`, `ChatMessage`, `Event`, media types |
 | `core.schema` | Shared Pydantic types: EventData (discriminated union, 5 event types), ToolCall, ExtractedMemory/CompareAction (discriminated union), ReflectorActions, MemoryType, message types, mood, etc. | |
 | `Module.database.vectordb` | Vector DB (ANN search) | `milvus` |
 | `Module.database.documentdb` | Document DB | `mongodb` |

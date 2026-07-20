@@ -145,7 +145,7 @@ Unix 时间戳 → 日期字符串 `%Y-%m-%d %H:%M:%S`。
 python -m pytest Module/system_prompt/tests/ -v
 
 # 旧 PromptManager 测试
-python -m pytest Module/system_prompt/test_prompt.py -v
+python -m pytest Module/system_prompt/tests/ -v
 ```
 
 ---

@@ -69,7 +69,7 @@ Agent.start()
 
 ## 核心组件
 
-`core/` 根目录 + 子包共约 30 个 `.py` 文件。其中 9 个为核心组件（详细描述），12 个为支撑模块（简表），另有 6 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
+`core/` 根目录 + 子包共约 26 个 `.py` 文件。其中 9 个为核心组件（详细描述），12 个为支撑模块（简表），另有 6 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
 
 ### 核心组件详解（9 个）
 
@@ -244,10 +244,10 @@ Agent 生命周期中的关键扩展点：
 
 | 文件 | 行数（约） | 类型 |
 |------|-----------|------|
-| `agent.py` | 1004 | 核心组件 |
+| `agent/agent.py` | 1004 | 核心组件 |
 | `agent_fsm.py` | 57 | 核心组件 |
 | `event_bus.py` | 60 | 核心组件 |
-| `cognitive_loop.py` | 1042 | 核心组件 |
+| `cognitive/loop.py` | 1042 | 核心组件 |
 | `personality/engine.py` | ~320 | 核心组件 |
 | `memory/consolidator.py` | ~300 | 核心组件 |
 | `prompt_assembler.py` | ~130 | 核心组件 |

@@ -94,7 +94,7 @@
 | 问题 | 文件 |
 |------|------|
 | Token 用量 O(n) 聚合（已降 limit 100k→2k，长期用 MongoDB `$group`） | `input/server.py:271` |
-| llm_adapter close fire-and-forget | `llm_adapter.py:140-143` |
+| llm_adapter close fire-and-forget | `core/adapter/llm_adapter.py:140-143` |
 | openai_tts test() 假阴性 | `tts/openai_tts.py:73` |
 | TTS 取消+HTTP 流清理交互可能泄漏 | `tts/gpt_sovits.py:134-150` |
 | Optional 嵌套 dataclass | `config/loader.py:176-180` |
