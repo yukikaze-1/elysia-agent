@@ -46,7 +46,7 @@ from ..text.text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageRecord, TokenUsageSummary
 from core.schema.tool import ToolCall, ToolCallId
-from core.schema.mood import _MOOD_TO_TTS_EMOTION, Mood
+
 from core.schema.part import TextPart
 from core.schema.adapters.message_adapter import parts_from_dicts
 from core.schema._utils import now_iso as _now_iso
@@ -56,6 +56,29 @@ logger = logging.getLogger(__name__)
 
 
 from .tools import CognitiveTools
+
+
+def _apply_mood(raw: str, engine, tts_mgr) -> None:
+    """解析 <mood> 标签内容，更新 CharacterState + push expression + TTS emotion."""
+    if "|" in raw:
+        mood_text, intensity_str = raw.rsplit("|", 1)
+        try:
+            intensity = float(intensity_str.strip())
+            intensity = min(1.0, max(0.1, intensity))
+        except ValueError:
+            intensity = 0.5
+    else:
+        mood_text = raw.strip()
+        intensity = 0.5
+
+    if not mood_text:
+        return
+
+    engine.state.mood = mood_text
+    engine.state.mood_intensity = intensity
+    engine._push_expression(mood_text, intensity)
+    tts_mgr.set_emotion(mood_text)
+
 
 class CognitiveLoop(CognitiveTools):
     """ReAct cognitive loop with streaming delivery and tool-call detection."""
@@ -268,10 +291,8 @@ class CognitiveLoop(CognitiveTools):
         if self._character_engine:
             if stt_emotion and stt_emotion != "NEUTRAL":
                 self._character_engine.analyze_user_stt(stt_emotion, stt_events)
-            self._character_engine.analyze_user(user_message)
-            # 将当前 mood 映射为 TTS emotion（MiniMax 等后端支持情绪控制）
-            mood = self._character_engine.state.mood
-            self._tts_mgr.set_emotion(_MOOD_TO_TTS_EMOTION.get(mood))
+        # analyze_user() 改为仅 fallback：LLM 未输出 <mood> 时在流结束后调用
+        # set_emotion() 改由 _apply_mood() 内联调用
 
         # 渐进式唤醒——后台任务完成后的通知
         if is_task_result and task_result_context:
@@ -344,6 +365,14 @@ class CognitiveLoop(CognitiveTools):
                         model=self._llm.model,
                     )
 
+                # mood 标签检测状态机 — 在 inner_voice 之前
+                MOOD_OPEN = "<mood>"
+                MOOD_CLOSE = "</mood>"
+                mood_state = "MOOD_PRE"  # MOOD_PRE / MOOD / DONE
+                mood_buf = ""
+                mood_tail = ""
+                mood_applied = False
+
                 # inner_voice 标签检测状态机
                 TAG_OPEN = "<inner_voice>"
                 TAG_CLOSE = "</inner_voice>"
@@ -382,6 +411,62 @@ class CognitiveLoop(CognitiveTools):
 
                         if delta:
                             acc_text += delta
+
+                            # --- mood 标签检测 (before inner_voice) ---
+                            if mood_state == "MOOD_PRE":
+                                combined = mood_tail + delta
+                                idx = combined.find(MOOD_OPEN)
+                                if idx >= 0:
+                                    before = combined[:idx].strip()
+                                    if before:
+                                        # 有非空白内容在 <mood> 之前 → 无 mood 标签
+                                        mood_state = "DONE"
+                                        delta = combined  # 保留原始内容
+                                    else:
+                                        mood_state = "MOOD"
+                                        delta = combined[idx + len(MOOD_OPEN):]
+                                        mood_tail = ""
+                                else:
+                                    # 跨 chunk 安全转发: 输出 MOOD_OPEN 不可能开始的部分,
+                                    # 只缓冲尾部用于跨 chunk 匹配
+                                    safe_len = max(0, len(combined) - len(MOOD_OPEN) + 1)
+                                    if safe_len > 0:
+                                        # 已确认安全的部分 — 第一个非空白不是 '<' → 无 mood
+                                        safe_text = combined[:safe_len]
+                                        stripped = safe_text.lstrip()
+                                        if stripped and not stripped.startswith("<"):
+                                            mood_state = "DONE"
+                                            delta = combined
+                                        else:
+                                            delta = safe_text
+                                    else:
+                                        mood_tail = combined
+                                        continue
+                                    mood_tail = combined[safe_len:]
+
+                            if mood_state == "MOOD":
+                                combined = mood_tail + delta
+                                idx = combined.find(MOOD_CLOSE)
+                                if idx >= 0:
+                                    mood_buf += combined[:idx]
+                                    delta = combined[idx + len(MOOD_CLOSE):].lstrip()
+                                    mood_state = "DONE"
+                                    mood_tail = ""
+                                    if mood_buf.strip():
+                                        _apply_mood(mood_buf.strip(), self._character_engine, self._tts_mgr)
+                                        mood_applied = True
+                                else:
+                                    keep_len = min(len(MOOD_CLOSE) - 1, len(combined))
+                                    if len(combined) > keep_len:
+                                        mood_buf += combined[:-keep_len]
+                                    mood_tail = combined[-keep_len:]
+                                    continue
+
+                            if mood_state == "DONE":
+                                pass  # fall through to inner_voice processing
+
+                            if not delta:
+                                continue
 
                             # --- inner_voice 标签检测 ---
                             if iv_state == "PRE":
@@ -664,8 +749,19 @@ class CognitiveLoop(CognitiveTools):
                 # 发送还未排出的 emoji（最后一句 TTS 之后的）
                 await self._tts_mgr.flush_emojis()
 
-                # 从 acc_text 中剥离 <inner_voice> 标签——数据库/前端/情绪分析用清洗后的文本
+                # Fallback: LLM 未输出 <mood> → 关键词检测
+                if self._character_engine and not mood_applied:
+                    self._character_engine.analyze_user(user_message)
+
+                # 从 acc_text 中剥离 <mood> 和 <inner_voice> 标签
                 public_text = acc_text
+                # Strip <mood>...</mood>
+                mood_start = public_text.find("<mood>")
+                if mood_start >= 0:
+                    mood_close = public_text.find("</mood>", mood_start)
+                    if mood_close >= 0:
+                        public_text = (public_text[:mood_start] + public_text[mood_close + len("</mood>"):]).strip()
+                # Strip <inner_voice>...</inner_voice>
                 iv_start = public_text.find("<inner_voice>")
                 if iv_start >= 0:
                     iv_close = public_text.find("</inner_voice>", iv_start)
