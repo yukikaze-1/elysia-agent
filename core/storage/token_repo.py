@@ -17,12 +17,13 @@ COLLECTION = "token_usage"
 class TokenRepository(Repository):
     """Token 用量存储。"""
 
-    def __init__(self, db: DocumentDBBackend | None = None):
+    def __init__(self, db: DocumentDBBackend | None = None, *, database_name: str = "default"):
         self._db: DocumentDBBackend | None = db
+        self._database_name = database_name
 
     async def connect(self) -> bool:
         try:
-            self._db = DocumentDBFactory.create("mongodb/default")
+            self._db = DocumentDBFactory.create(f"mongodb/{self._database_name}")
             logger.info("TokenRepository: MongoDB connected")
             return True
         except Exception as e:

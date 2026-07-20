@@ -33,14 +33,15 @@ def _doc_to_message(doc: dict) -> Message:
 class MessageRepository(Repository):
     """消息归档存储。"""
 
-    def __init__(self, db: DocumentDBBackend | None = None):
+    def __init__(self, db: DocumentDBBackend | None = None, *, database_name: str = "default"):
         self._db: DocumentDBBackend | None = db
+        self._database_name = database_name
 
     # ---- lifecycle ----
 
     async def connect(self) -> bool:
         try:
-            self._db = DocumentDBFactory.create("mongodb/default")
+            self._db = DocumentDBFactory.create(f"mongodb/{self._database_name}")
             await self._db.ensure_index(COLLECTION, [("session_id", 1)])
             await self._db.ensure_index(COLLECTION, [("session_id", 1), ("_id", -1)])
             logger.info("MessageRepository: MongoDB connected")

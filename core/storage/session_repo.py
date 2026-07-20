@@ -33,12 +33,13 @@ class SessionSummary:
 class SessionRepository(Repository):
     """会话存储 — MongoDB sessions 集合。"""
 
-    def __init__(self, db: DocumentDBBackend | None = None):
+    def __init__(self, db: DocumentDBBackend | None = None, *, database_name: str = "default"):
         self._db: DocumentDBBackend | None = db
+        self._database_name = database_name
 
     async def connect(self) -> bool:
         try:
-            self._db = DocumentDBFactory.create("mongodb/default")
+            self._db = DocumentDBFactory.create(f"mongodb/{self._database_name}")
             await self._db.ensure_index(COLLECTION, [("session_id", 1)])
             await self._db.ensure_index(COLLECTION, [("updated_at", -1)])
             try:
@@ -62,7 +63,7 @@ class SessionRepository(Repository):
         if self._db is not None:
             return True
         try:
-            self._db = DocumentDBFactory.create("mongodb/default")
+            self._db = DocumentDBFactory.create(f"mongodb/{self._database_name}")
             await self._db.ensure_index(COLLECTION, [("session_id", 1)])
             await self._db.ensure_index(COLLECTION, [("updated_at", -1)])
             try:
