@@ -454,15 +454,8 @@ class CharacterEngine:
         return Mood(best_key)
 
     def _push_expression(self, mood: Mood, intensity: float) -> None:
-        """Push expression to output channels."""
-        expr_map = {
-            Mood.HAPPY: ("happy", intensity),
-            Mood.EXCITED: ("surprised", intensity),
-            Mood.SAD: ("sad", intensity),
-            Mood.CURIOUS: ("curious", intensity),
-        }
-        expr, val = expr_map.get(mood, ("neutral", 0.5))
-        self._schedule(self._output.expression(expr, intensity=val))
+        """Push expression to output channels. Uses mood.value directly as expression name."""
+        self._schedule(self._output.expression(mood.value, intensity=intensity))
 
     def _push_idle(self) -> None:
         """Push one of the idle expressions."""
