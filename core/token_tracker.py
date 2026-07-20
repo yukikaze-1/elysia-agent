@@ -113,14 +113,8 @@ class TokenTracker:
         """
         if self._repo is not None:
             try:
-                entries = await self._repo.query_by_session(
-                    self.session_id, limit=10000,
-                )
-                per_model: dict[str, int] = {}
-                session_total = 0
-                for entry in entries:
-                    per_model[entry.model] = per_model.get(entry.model, 0) + entry.total_tokens
-                    session_total += entry.total_tokens
+                per_model = await self._repo.total_tokens_by_model(self.session_id)
+                session_total = sum(per_model.values())
 
                 # 补充 pending 文件中当前 session 的数据
                 if os.path.exists(self._pending_file):

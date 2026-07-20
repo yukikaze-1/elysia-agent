@@ -105,6 +105,18 @@ class MongoDBBackend(DocumentDBBackend):
         _validate_collection(collection)
         return await self._db[collection].create_index(keys, **kwargs)
 
+    # ---- Aggregate ----
+
+    async def aggregate(self, collection: str, pipeline: list[dict]) -> list[dict]:
+        """执行 MongoDB 聚合管道。_id 转换为 str。"""
+        _validate_collection(collection)
+        cursor = self._db[collection].aggregate(pipeline)
+        docs = await cursor.to_list(length=None)
+        for doc in docs:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+        return docs
+
     # ---- Management ----
 
     async def close(self) -> None:

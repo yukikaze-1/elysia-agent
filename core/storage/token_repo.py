@@ -62,6 +62,25 @@ class TokenRepository(Repository):
         )
         return [TokenUsageEntry.model_validate(d) for d in docs]
 
+    async def total_tokens_by_session(self) -> dict[str, int]:
+        """聚合每个 session 的 token 总量（MongoDB $group，单次查询）。"""
+        if self._db is None:
+            return {}
+        results = await self._db.aggregate(COLLECTION, [
+            {"$group": {"_id": "$session_id", "total": {"$sum": "$total_tokens"}}},
+        ])
+        return {r["_id"]: r["total"] for r in results}
+
+    async def total_tokens_by_model(self, session_id: str) -> dict[str, int]:
+        """聚合指定 session 按 model 分组的 token 量（MongoDB $group，单次查询）。"""
+        if self._db is None:
+            return {}
+        results = await self._db.aggregate(COLLECTION, [
+            {"$match": {"session_id": session_id}},
+            {"$group": {"_id": "$model", "total": {"$sum": "$total_tokens"}}},
+        ])
+        return {r["_id"]: r["total"] for r in results}
+
     async def clear_all(self) -> int:
         if self._db is None:
             return 0

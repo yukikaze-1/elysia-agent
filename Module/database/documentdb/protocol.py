@@ -57,4 +57,9 @@ class DocumentDBBackend(ABC):
         ...
 
     @abstractmethod
+    async def aggregate(self, collection: str, pipeline: list[dict]) -> list[dict]:
+        """执行 MongoDB 聚合管道。返回结果文档列表。"""
+        ...
+
+    @abstractmethod
     async def close(self) -> None: ...

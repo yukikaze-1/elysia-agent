@@ -39,6 +39,7 @@ class TestDocumentDBBackendProtocol:
             async def delete_many(self, c, f): return 0
             async def count(self, c, f): return 0
             async def ensure_index(self, c, k, **kw): return ""
+            async def aggregate(self, c, p): return []
             async def close(self): pass
 
         assert isinstance(Good(), DocumentDBBackend)

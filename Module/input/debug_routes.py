@@ -245,17 +245,8 @@ def register_debug_routes(app: web.Application) -> None:
                 }],
             })
         try:
-            # 聚合 token 用量（按 session_id）
-            from collections import defaultdict
-            token_totals: dict[str, int] = defaultdict(int)
-            for s in summaries[:50]:  # 限制最多查询 50 条，避免过多 DB 往返
-                sid = str(s.session_id)
-                try:
-                    entries = await agent._token_repo.query_by_session(sid, limit=200)
-                    for entry in entries:
-                        token_totals[sid] += entry.total_tokens
-                except Exception:
-                    pass
+            # 聚合 token 用量（MongoDB $group，单次查询）
+            token_totals = await agent._token_repo.total_tokens_by_session()
             return web.json_response({
                 "sessions": [
                     {

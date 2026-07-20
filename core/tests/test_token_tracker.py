@@ -289,16 +289,10 @@ class TestTokenTracker:
     async def test_get_session_stats_from_mongodb(self, output_mock):
         """有 MongoDB 时，从 TokenRepository 聚合查询 + pending 文件补充。"""
         repo_mock = MagicMock()
-        repo_mock.query_by_session = AsyncMock(return_value=[
-            TokenUsageEntry(
-                session_id=SessionId("s1"), model="deepseek/deepseek-chat",
-                prompt_tokens=40, completion_tokens=10, total_tokens=50, round_num=0,
-            ),
-            TokenUsageEntry(
-                session_id=SessionId("s1"), model="openai/gpt-4o",
-                prompt_tokens=30, completion_tokens=20, total_tokens=50, round_num=0,
-            ),
-        ])
+        repo_mock.total_tokens_by_model = AsyncMock(return_value={
+            "deepseek/deepseek-chat": 50,
+            "openai/gpt-4o": 50,
+        })
         tracker = TokenTracker(
             session_id="s1", output_manager=output_mock, repo=repo_mock,
         )
@@ -315,7 +309,7 @@ class TestTokenTracker:
     async def test_get_session_stats_mongodb_failure_falls_back_to_memory(self, output_mock):
         """MongoDB 查询失败时回退到内存数据。"""
         repo_mock = MagicMock()
-        repo_mock.query_by_session = AsyncMock(side_effect=RuntimeError("db down"))
+        repo_mock.total_tokens_by_model = AsyncMock(side_effect=RuntimeError("db down"))
         tracker = TokenTracker(
             session_id="s1", output_manager=output_mock, repo=repo_mock,
         )
@@ -334,12 +328,7 @@ class TestTokenTracker:
     async def test_get_session_stats_includes_pending_file(self, output_mock):
         """MongoDB + pending 文件数据合并。"""
         repo_mock = MagicMock()
-        repo_mock.query_by_session = AsyncMock(return_value=[
-            TokenUsageEntry(
-                session_id=SessionId("s1"), model="a",
-                prompt_tokens=80, completion_tokens=20, total_tokens=100, round_num=0,
-            ),
-        ])
+        repo_mock.total_tokens_by_model = AsyncMock(return_value={"a": 100})
         tracker = TokenTracker(
             session_id="s1", output_manager=output_mock, repo=repo_mock,
         )
