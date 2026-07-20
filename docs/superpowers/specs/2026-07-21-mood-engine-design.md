@@ -36,14 +36,16 @@
 |------|------|
 | `core/schema/mood.py` | 保留 `_STT_EMOTION_EMOJI`、`stt_emotion_emoji()`、`stt_event_emoji()` |
 | `core/schema/character.py` | `mood: Mood` → `mood: str`，默认值 `"平静"` |
-| `core/personality/engine.py` | 简化 `analyze_user()` 为 no-op（mood 改由 LLM 产出）；`analyze_assistant()` 衰减改为 LLM 驱动的 `<mood>`；`_push_expression` 直接用 mood 文本 |
+| `core/personality/engine.py` | `_push_expression` 直接用 mood 文本；`analyze_user()` 保留关键词检测作为 fallback（仅 LLM 未产出 `<mood>` 时调用）；`analyze_assistant()` 只衰减 intensity 不设 mood 文本（LLM 下轮自己描述心情变化） |
+| `core/personality/reflector.py` | L217: `state.mood.value` → `state.mood`（mood 已是 str，无需 `.value`） |
+| `core/schema/__init__.py` | 删除 `from core.schema.mood import Mood`（Mood 枚举已移除） |
 | `core/cognitive/loop.py` | `_think_loop` 的流式处理中插入 mood 标签解析状态机；fallback 到关键词检测 |
 | `core/adapter/tts_adapter.py` | `set_emotion` 改为接收自由文本，内部做关键词→TTS 情绪映射 |
 | `Module/system_prompt/templates/f2_output_format.j2` | 在 `<inner_voice>` 指令前加 `<mood>` 输出指令 |
 | `Module/system_prompt/templates/c3_emotion.j2` | `{{ mood }}` 直接渲染 LLM 自由文本，加 `可用心情` 移除 |
 | `static/js/chat.js` | `setMood()` 直接显示 mood 文本，删除 emoji/color 查找 |
 | `core/debug/info.py` | mood 字段类型从 Mood 改为 str |
-| `core/prompt_assembler.py` | mood 读取从 `.value` 改为直接字符串 |
+| `core/prompt_assembler.py` | L96: `state.mood.value` → `state.mood` |
 
 ### 2.3 新增
 
@@ -137,7 +139,31 @@ def _mood_text_to_tts_emotion(mood_text: str) -> str:
 | `<mood>` 标签格式错误（无 `\|`、强度非数字） | 强度默认 0.5 |
 | LLM 不可用 | `analyze_user()` 保留关键词检测作为冷启动路径 |
 
-`MOOD_KEYWORDS` 字典保留在 `engine.py` 中作为 fallback，不删除。
+`MOOD_KEYWORDS` 字典和 `_detect_mood()` 保留在 `engine.py` 中作为 fallback，不删除。
+
+### 4.1 `analyze_user()` — 仅 fallback
+
+`analyze_user()` 不再在 `_think_loop` 中无条件调用。仅当 LLM 流式响应未包含 `<mood>` 标签时，在流结束后作为 fallback 调用一次：
+
+```python
+# _think_loop 流结束后
+if not mood_applied:  # LLM 未输出 <mood>
+    self._character_engine.analyze_user(user_message)
+```
+
+### 4.2 `analyze_assistant()` — 只衰减 intensity
+
+```python
+def analyze_assistant(self, _text: str) -> None:
+    """每轮回复后衰减 mood intensity。mood 文本由 LLM 下轮 <mood> 更新。"""
+    intensity = self.state.mood_intensity
+    new_intensity = max(0.1, intensity - 0.15)
+    self.state.mood_intensity = new_intensity
+    if new_intensity < 0.2:
+        self._push_idle()
+```
+
+不再重置 `mood` 文本（没有 `Mood.NEUTRAL` 了）。LLM 在下轮回复时通过 `<mood>` 标签自行描述当前心情（如"聊完后心情平复了许多"）。
 
 ## 5. 前端
 
@@ -174,10 +200,21 @@ export function setMood(mood, intensity) {
 
 ## 7. 测试
 
+### 7.1 现有测试迁移
+
+| 文件 | Mood 引用数 | 处理 |
+|------|-----------|------|
+| `core/tests/test_phase1.py` | ~15 处 `Mood.HAPPY`/`Mood.SAD` 等 | 重写：关键词检测测试保留（fallback），Mood 枚举断言改为 str 断言 |
+| `core/tests/test_phase3.py` | L645-666 `Mood.HAPPY`/`Mood.NEUTRAL` | 改为 str 断言 + 新增 `<mood>` 标签解析测试 |
+| `core/personality/tests/` | 直接/间接 Mood 引用 | 检查并更新所有 `.value` 调用 |
+
+### 7.2 新增测试
+
 | 层 | 测试点 |
 |----|--------|
 | 单元 | `_apply_mood()` 正常解析 / 缺强度 / 强度非数字 / 空文本 |
 | 单元 | `_mood_text_to_tts_emotion()` 各关键词覆盖 |
+| 单元 | `analyze_assistant()` 只衰减 intensity，不重置 mood 文本 |
 | 集成 | 流式解析：mood 标签跨 chunk 拼接 |
 | 集成 | 流式解析：无 mood 标签 → fallback 关键词 |
 | 集成 | 端到端：完整 LLM 响应含 `<mood>` + `<inner_voice>` + 公开文本 |
