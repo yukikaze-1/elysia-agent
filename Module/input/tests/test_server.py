@@ -226,7 +226,8 @@ class TestWebSocketHandler:
 
     @pytest.mark.asyncio
     async def test_do_transcription_with_emotion(self, aiohttp_client):
-        from Module.input.server import create_app, _do_transcription
+        from Module.input.server import create_app
+        from Module.input.ws_handler import do_transcription as _do_transcription
 
         agent = _make_agent()
         await agent.start()
@@ -251,7 +252,7 @@ class TestDoInterruptSkipIf:
 
     @pytest.mark.asyncio
     async def test_vad_skips_during_thinking(self):
-        from Module.input.server import _do_interrupt
+        from Module.input.ws_handler import do_interrupt as _do_interrupt
 
         agent = MagicMock()
         agent._fsm.state = "thinking"
@@ -263,7 +264,7 @@ class TestDoInterruptSkipIf:
 
     @pytest.mark.asyncio
     async def test_vad_skips_during_executing(self):
-        from Module.input.server import _do_interrupt
+        from Module.input.ws_handler import do_interrupt as _do_interrupt
 
         agent = MagicMock()
         agent._fsm.state = "executing"
@@ -275,7 +276,7 @@ class TestDoInterruptSkipIf:
 
     @pytest.mark.asyncio
     async def test_vad_allows_during_speaking(self):
-        from Module.input.server import _do_interrupt
+        from Module.input.ws_handler import do_interrupt as _do_interrupt
         from core.event_bus import EventPriority
         from core.schema.event import InterruptData
 
@@ -292,7 +293,7 @@ class TestDoInterruptSkipIf:
 
     @pytest.mark.asyncio
     async def test_explicit_interrupt_always_allowed(self):
-        from Module.input.server import _do_interrupt
+        from Module.input.ws_handler import do_interrupt as _do_interrupt
         from core.event_bus import EventPriority
         from core.schema.event import InterruptData
 
@@ -316,7 +317,7 @@ class TestDoInterruptSkipIf:
 class TestHandleJsonEdges:
     @pytest.mark.asyncio
     async def test_empty_text_not_processed(self):
-        from Module.input.server import _handle_json
+        from Module.input.ws_handler import handle_json_message as _handle_json
 
         agent = MagicMock()
         agent.process_message = AsyncMock()
@@ -325,7 +326,7 @@ class TestHandleJsonEdges:
 
     @pytest.mark.asyncio
     async def test_whitespace_text_not_processed(self):
-        from Module.input.server import _handle_json
+        from Module.input.ws_handler import handle_json_message as _handle_json
 
         agent = MagicMock()
         agent.process_message = AsyncMock()
@@ -334,7 +335,7 @@ class TestHandleJsonEdges:
 
     @pytest.mark.asyncio
     async def test_unknown_type_noop(self):
-        from Module.input.server import _handle_json
+        from Module.input.ws_handler import handle_json_message as _handle_json
 
         agent = MagicMock()
         await _handle_json({"type": "unknown_cmd"}, agent)
@@ -342,7 +343,7 @@ class TestHandleJsonEdges:
 
     @pytest.mark.asyncio
     async def test_interrupt_type(self):
-        from Module.input.server import _handle_json
+        from Module.input.ws_handler import handle_json_message as _handle_json
 
         agent = MagicMock()
         agent._fsm.state = "speaking"
@@ -352,7 +353,7 @@ class TestHandleJsonEdges:
 
     @pytest.mark.asyncio
     async def test_no_type_field(self):
-        from Module.input.server import _handle_json
+        from Module.input.ws_handler import handle_json_message as _handle_json
 
         agent = MagicMock()
         await _handle_json({}, agent)  # no "type" field
