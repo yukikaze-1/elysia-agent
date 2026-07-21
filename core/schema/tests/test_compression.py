@@ -33,6 +33,7 @@ class TestVersionEntry:
         assert entry["trigger"] == "compression"
 
 
+@pytest.mark.unit
 def test_c6_refresh_trigger_exists():
     """C6_REFRESH 枚举值存在。"""
     from core.schema.compression import CompressionTrigger
@@ -40,6 +41,7 @@ def test_c6_refresh_trigger_exists():
     assert CompressionTrigger.C6_REFRESH == "c6_refresh"
 
 
+@pytest.mark.unit
 def test_version_entry_content_type():
     """VersionEntry 包含 content_type 字段。"""
     from core.schema.compression import VersionEntry
