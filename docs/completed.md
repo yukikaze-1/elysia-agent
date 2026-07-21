@@ -1011,3 +1011,19 @@ Brain.j2 单体拆分 → 11 个独立 PromptSection + SystemPromptManager。
 **移除无效 todo：** Optional 嵌套 dataclass（零触发）、content_type 迁入 content（投入产出比低）。
 
 **关联 commit：** `e81d418` `b453735` `b7c9231` `dd50f78` `3b9e3ed` `4b96477` `b49f20b` `51873c2` `b81ba33` `a10a4a4` `0542f12` `fd851e0`
+
+### 2026-07-21b: L2 Self 版本化 — LLM 编辑模式
+
+**L3→L2 压缩升级：** LLM 从"全量重写"改为"编辑一份持续迭代的文档"。每次压缩返回结构化输出 `<new_self>` + `<changes>`（新增/强化/移除/修正）。新增 `character_l2_versions` MongoDB 集合，append-only 永久保留所有版本。Debug 面板可浏览全版本历史并回滚。
+
+- `CompressionTrigger` StrEnum（compression/flush/manual）+ `VersionEntry` TypedDict
+- `CharacterVersionRepository` — append（自动递增版本号）/ list（分页）/ get / count
+- `PersonalityCompression.j2` 重写 — LLM 角色从"感受和写下"改为"编辑文档"
+- `_compress(trigger=...)` 解析 `<new_self>` + `<changes>` → 写版本历史
+- `_extract_tag()` 辅助函数
+- `flush_compression()` 使用 FLUSH trigger
+- Debug 面板：`GET /debug/api/l2-versions` + `POST /debug/api/l2-rollback`
+- 前端：版本历史弹窗 + 回滚按钮
+- 触发机制暂保留批触发（5 条 or 7 天），todo 标注后续改为连续增量
+
+**关联 commit：** `b3caf14` `4af3c01` `4253bb8` `51ea0c8` `c8baa15`

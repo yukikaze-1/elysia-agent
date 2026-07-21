@@ -204,7 +204,7 @@ prompt/
 ├── ConsolidationCompare.j2   # 新记忆 vs 已有记忆比对 (consolidator.py 加载)
 ├── MemoryReflector.j2        # 定期深度去重 (memory_reflector.py 加载)
 ├── CharacterReflector.j2     # 性格反思 (reflector.py 加载，10 上下文变量)
-├── PersonalityCompression.j2 # L3→L2 长期自我压缩 (engine.py 加载)
+├── PersonalityCompression.j2 # L3→L2 自我压缩 — LLM 编辑模式 (engine.py 加载)
 ├── ActiveSpeak.j2            # 主动搭话 prompt（活跃）
 ├── Amygdala.j2               # 情感分析 prompt（活跃）
 ├── Utils.j2                  # 共享 Jinja2 工具宏

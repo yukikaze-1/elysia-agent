@@ -779,7 +779,14 @@ function render(info) {
           (cooldownOk ? '就绪' : Math.ceil(cooldownRemain / 60) + 'min 剩余') + '</span></div>'
         );
 
-        // State 历史
+        // L2 版本历史
+        const vc = info.l2_version_count || 0;
+        items.push(
+          '<div class="row" style="margin-top:4px"><span class="label">L2 版本历史</span>' +
+          '<span class="value">' + vc + ' 版</span>' +
+          (vc > 0 ? ' <a href="#" onclick="event.preventDefault();loadL2Versions()" style="font-size:11px">查看</a>' : '') +
+          '</div>'
+        );
         const hist = info.state_history || [];
         if (hist.length === 0) {
           items.push('<div class="empty" style="margin-top:4px">State 历史: 暂无</div>');
@@ -1195,6 +1202,81 @@ function showError(msg) {
   const b = document.getElementById('error-banner');
   b.textContent = msg;
   b.style.display = 'block';
+}
+
+// ---- L2 Version History ----
+
+let l2VersionList = [];
+
+async function loadL2Versions(before) {
+  try {
+    let url = '/debug/api/l2-versions?limit=20';
+    if (before) url += '&before=' + before;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (data.error) { alert(data.error); return; }
+    l2VersionList = data.versions || [];
+    renderL2Versions(data);
+  } catch (e) { alert('加载失败: ' + e.message); }
+}
+
+function renderL2Versions(data) {
+  const old = document.getElementById('l2-versions-modal');
+  if (old) old.remove();
+
+  const div = document.createElement('div');
+  div.id = 'l2-versions-modal';
+  div.style.cssText = 'position:fixed;top:10%;left:50%;transform:translateX(-50%);z-index:1000;' +
+    'background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;' +
+    'max-height:70vh;width:500px;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,0.3)';
+
+  let html = '<h3 style="margin-top:0">L2 版本历史 (' + (data.total || 0) + ' 版)</h3>';
+  html += '<button onclick="document.getElementById(\'l2-versions-modal\').remove()" ' +
+    'style="position:absolute;top:8px;right:12px;background:none;border:none;font-size:20px;cursor:pointer">&times;</button>';
+
+  for (const v of (data.versions || [])) {
+    const ts = new Date(v.timestamp).toLocaleString();
+    html += '<div style="margin:8px 0;padding:8px;border:1px solid var(--border);border-radius:4px">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+    html += '<strong>v' + v.version + '</strong> ';
+    html += '<span style="color:var(--muted);font-size:11px">' + esc(ts) + ' [' + esc(v.trigger) + ']</span>';
+    html += '</div>';
+    html += '<div style="font-size:12px;margin:4px 0;white-space:pre-wrap">' + esc(trunc(v.text, 150)) + '</div>';
+    if (v.change_summary && v.change_summary.length) {
+      html += '<div style="font-size:11px;color:var(--muted)">';
+      for (const c of v.change_summary) {
+        html += esc(c) + '<br>';
+      }
+      html += '</div>';
+    }
+    html += '<button onclick="rollbackL2(' + v.version + ')" ' +
+      'style="margin-top:4px;font-size:11px;padding:2px 8px">回滚到此版本</button>';
+    html += '</div>';
+  }
+
+  if (data.has_more && data.versions && data.versions.length) {
+    const last = data.versions[data.versions.length - 1];
+    html += '<button onclick="loadL2Versions(' + last.version + ')" ' +
+      'style="margin-top:8px">加载更早版本</button>';
+  }
+
+  div.innerHTML = html;
+  document.body.appendChild(div);
+}
+
+async function rollbackL2(version) {
+  if (!confirm('确认回滚到版本 ' + version + '？')) return;
+  try {
+    const resp = await fetch('/debug/api/l2-rollback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: version }),
+    });
+    const data = await resp.json();
+    if (data.error) { alert(data.error); return; }
+    alert('已回滚到 v' + version + '（新版本 v' + data.new_version + '）');
+    loadL2Versions();
+  } catch (e) { alert('回滚失败: ' + e.message); }
 }
 
 async function poll() {
