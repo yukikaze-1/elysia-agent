@@ -26,6 +26,7 @@ from core.storage.message_repo import MessageRepository, COLLECTION as MSG_ARCHI
 from core.storage.token_repo import TokenRepository, COLLECTION as TOKEN_USAGE_COLLECTION
 from core.storage.session_repo import COLLECTION as SESSION_COLLECTION
 from core.storage.memory_repo import COLLECTION as MEM_COLLECTION
+from core.storage.character_version_repo import COLLECTION as CHARS_VERSION_COLLECTION
 from core.token_tracker import TokenTracker
 from Module.database.documentdb import DocumentDBFactory
 from Module.database.vectordb import VectorDBFactory
@@ -84,8 +85,9 @@ def build_targets(args: argparse.Namespace) -> set[str]:
 class MongoCleaner:
     """MongoDB 清理器。
 
-    清空 default 数据库的三个 collection：
-    sessions, message_archive, token_usage。
+    清空 default 数据库的所有 collection：
+    sessions, message_archive, token_usage, character_versions,
+    character_l2_versions（旧，迁移后可清理）。
     使用 delete_many({}) 清空文档，保留 indexes。
 
     backend 在 clean() 中创建（而非 __init__），确保构造失败也被
@@ -125,6 +127,20 @@ class MongoCleaner:
             results.append((TOKEN_USAGE_COLLECTION, True, deleted))
         except Exception as e:
             results.append((TOKEN_USAGE_COLLECTION, False, str(e)))
+
+        # character_versions — 新集合（delete_many）
+        try:
+            deleted = await db.delete_many(CHARS_VERSION_COLLECTION, {})
+            results.append((CHARS_VERSION_COLLECTION, True, deleted))
+        except Exception as e:
+            results.append((CHARS_VERSION_COLLECTION, False, str(e)))
+
+        # character_l2_versions — 旧集合（delete_many 清空，后可手动 drop）
+        try:
+            deleted = await db.delete_many("character_l2_versions", {})
+            results.append(("character_l2_versions", True, deleted))
+        except Exception as e:
+            results.append(("character_l2_versions", False, str(e)))
 
         return results
 
@@ -205,7 +221,7 @@ class FileCleaner:
 async def confirm(targets: set[str]) -> bool:
     """打印清理目标并请求用户确认。返回 True 表示继续。"""
     labels = {
-        "mongo": "  MongoDB: sessions, message_archive, token_usage (delete_many)",
+        "mongo": "  MongoDB: sessions, message_archive, token_usage, character_versions, character_l2_versions (delete_many)",
         "milvus": "  Milvus: long_term_memory (drop + recreate)",
         "files": "  data/: session_default.json, token_usage_pending.jsonl, scheduler_checkpoint.json, cache/vision/*.json",
     }
