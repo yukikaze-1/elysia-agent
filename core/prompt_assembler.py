@@ -90,10 +90,13 @@ class PromptAssembler:
     async def build_system_prompt(self, user_message: str = "", user_name: str = "",
                                    stt_emotion: str = "", stt_events=None,
                                    tts_provider: str = "") -> str:
-        # 从 CharacterEngine 获取当前 mood
+        # 从 CharacterEngine 获取当前 mood 和 C6 数据
         mood = "neutral"
+        speaking_style_c6 = ""
         if self._personality_engine is not None:
             mood = self._personality_engine.state.mood
+            c6 = self._personality_engine.render_c6()
+            speaking_style_c6 = c6.speaking_style_c6
         self._manager.set_context(
             user_message=user_message,
             user_name=user_name,
@@ -102,6 +105,7 @@ class PromptAssembler:
             stt_events=stt_events or [],
             tts_provider=tts_provider,
             mood=mood,
+            speaking_style_c6=speaking_style_c6,
         )
         self._refresh_personality_data()
         return await self._manager.render()

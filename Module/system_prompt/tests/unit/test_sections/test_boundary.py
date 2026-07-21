@@ -216,6 +216,25 @@ class TestSpeakingStyleSection:
         assert "♪" in result
 
 
+@pytest.mark.service
+class TestSpeakingStyleSectionDynamic:
+    def test_fallback_to_default_template(self):
+        """speaking_style_c6 为空时渲染 L1 默认模板。"""
+        sec = SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2")
+        sec.set_context(user_name="妖梦", speaking_style_c6="")
+        result = asyncio.run(sec.render())
+        assert "五模式切换" in result          # L1 默认内容
+        assert "轻松模式" in result
+
+    def test_render_dynamic_text(self):
+        """speaking_style_c6 非空时渲染动态文本。"""
+        sec = SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2")
+        sec.set_context(user_name="妖梦", speaking_style_c6="自定义说话风格文本")
+        result = asyncio.run(sec.render())
+        assert "自定义说话风格文本" in result
+        assert "五模式切换" not in result     # 不使用 L1 默认
+
+
 class TestOutputFormatSection:
     def test_renders_protocol(self):
         """F2 inner_voice 协议正常渲染。"""
