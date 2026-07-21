@@ -22,7 +22,7 @@
 - **记忆统计**: 按类型/年龄/poignancy 分布统计，接入 DebugInfo 仪表板
 - **Claude 原生持久记忆**: `.claude/projects/-home-yomu-Agent/memory/` 目录为空，从未启用
 - **MacroMemory + MacroReflector**: 每日合成日记条目。需新增 Milvus 集合 + MacroReflector 后台任务
-- **CharacterEngine mood 升级**（原 EmotionEngine 升级）: 生理状态模型、时间衰减曲线、混合情绪、Amygdala LLM 补充
+- **CharacterEngine mood 升级**（原 EmotionEngine 升级）: ✅ LLM `<mood>` 标签驱动完成。生理状态模型、时间衰减曲线、混合情绪、Amygdala LLM 补充待后续 Phase。
 - 唤醒词检测（openWakeWord）— 已完成实现，待办：
   - 测试唤醒词开关：启动服务端，打开前端设置面板，点击开关确认 ON/OFF 切换正常
   - 训练自定义唤醒词模型 (.onnx)：录制每个唤醒词 100-500 样本 → 用 openWakeWord Colab 训练 → 将 .onnx 文件导入 `model_paths`
@@ -38,12 +38,12 @@
 - **C7 主动性动态化** → 后续 CharacterEngine Phase 2
 - **F2 代码块格式重新启用**: `f2_output_format.j2` 中 `<|code|>` 和 `<|markdown|>` 格式已注释。等需要代码/Markdown 渲染功能时取消注释即可启用
 - **C5 输入来源标注**: prompt 中当前无法区分用户是用文字还是语音输入。需在 sensory_ctx 中增加 `input_source` 字段（text/voice），模板中显示 "输入方式: 文字 / 语音"
-- **CharacterEngine mood 转换逻辑**（原 EmotionEngine mood 转换逻辑）: 当前基础 mood 不会被单条用户消息软化。例如用户说温暖的话时，角色应能从 sad 自然转为"被安慰后的柔和"，而不是僵硬保持 sad。需改进 mood 衰减/转换算法
+- ✅ ~~CharacterEngine mood 转换逻辑~~ — LLM 自由文本 mood 已解决：LLM 每轮通过 `<mood>` 自行描述心情变化，不再有僵硬的二值切换。
 - **CharacterEngine Phase 2**（原 PersonalityEngine Phase 2）:
   - CharacterReflector.j2 模板 ~140 行偏长，LLM 注意力可能被稀释，后续观察产出质量决定是否精简
   - AwarenessTrigger: L2/L3 语义偏差检测（向量相似度替代轮次冷却）
   - L3→L2 梯度压缩自动化（LLM 总结+去噪+合并）
-  - ExpressionAdapter 完善版：阻尼机制移入 C6 SpeakingStyle
+  - ✅ ~~ExpressionAdapter~~ — Mood 现在是 LLM 自由文本，expression 直接透传 mood 文本，不再需要阻尼映射
   - L4→L3 情绪汇聚统计（需 CharacterEngine 改接口）
   - L2 永久存储（独立 MongoDB 集合 / 文件，替代 session TTL 风险）
   - C3/C6/C7 与 CharacterEngine 动态联动
