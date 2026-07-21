@@ -6,6 +6,8 @@ import os
 from aiohttp import web
 
 from core.debug.info import collect, asdict
+from core.schema._utils import now_iso
+from core.schema.compression import CompressionTrigger
 from core.schema.message import Message, MessageRole
 from core.schema.types import SessionId
 from .api_routes import _archive_to_client
@@ -420,6 +422,67 @@ def register_debug_routes(app: web.Application) -> None:
             "inner_voice_len": record.inner_voice_len,
         })
     app.router.add_get(r"/debug/api/responses/{index:\d+}", response_detail_handler)
+
+    # ---- L2 版本历史 API ----
+
+    async def l2_versions_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        engine = getattr(agent, "_character_engine", None)
+        if not engine or not getattr(engine, "_version_repo", None):
+            return web.json_response({"error": "版本历史不可用"}, status=503)
+
+        limit = int(request.query.get("limit", "20"))
+        before = request.query.get("before")
+        before_version = int(before) if before else None
+
+        sid = agent._session.session_id
+        versions = await engine._version_repo.list_versions(
+            sid, limit=limit, before_version=before_version,
+        )
+        total = await engine._version_repo.count_versions(sid)
+
+        return web.json_response({
+            "versions": versions,
+            "total": total,
+            "has_more": len(versions) == limit and versions[-1]["version"] > 1,
+        })
+
+    app.router.add_get("/debug/api/l2-versions", l2_versions_handler)
+
+    async def l2_rollback_handler(request: web.Request) -> web.Response:
+        agent = request.app["agent"]
+        engine = getattr(agent, "_character_engine", None)
+        if not engine or not getattr(engine, "_version_repo", None):
+            return web.json_response({"error": "版本历史不可用"}, status=503)
+
+        try:
+            body = await request.json()
+            target_version = int(body["version"])
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "缺少 version 或格式错误"}, status=400)
+
+        sid = agent._session.session_id
+        entry = await engine._version_repo.get_version(sid, target_version)
+        if entry is None:
+            return web.json_response({"error": f"版本 {target_version} 不存在"}, status=404)
+
+        # 回滚：设置 self_l2 → 追加一条 MANUAL 版本
+        engine.state.self_l2 = entry["text"]
+        new_version = await engine._version_repo.append_version(
+            session_id=sid,
+            text=entry["text"],
+            timestamp=now_iso(),
+            trigger=CompressionTrigger.MANUAL,
+            change_summary=[f"回滚到版本 {target_version}"],
+        )
+
+        return web.json_response({
+            "status": "ok",
+            "new_version": new_version,
+            "text": entry["text"],
+        })
+
+    app.router.add_post("/debug/api/l2-rollback", l2_rollback_handler)
 
     # TaskDebugAPI 生命周期管理
     async def on_startup(app):

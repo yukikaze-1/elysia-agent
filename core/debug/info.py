@@ -74,6 +74,7 @@ class DebugInfo:
     state_l3: str = ""             # L3 State — 短期状态
     state_history: list[dict] = field(default_factory=list)  # L3 历史
     last_awareness_time: float = 0.0  # C9 上次触发时间戳
+    l2_version_count: int = 0       # L2 版本历史总数
 
     # Connections
     tts_ok: bool = False
@@ -204,6 +205,17 @@ async def collect(agent: "Agent") -> DebugInfo:
     info.state_l3 = l3[:200] if l3 else "（无短期状态）"
     info.state_history = [dict(e) for e in pe.state.state_history[-5:]]
     info.last_awareness_time = pe.state.last_awareness_time or 0.0
+
+    # ---- L2 Version History ----
+    try:
+        info.l2_version_count = 0
+        engine = getattr(agent, "_character_engine", None)
+        if engine and getattr(engine, "_version_repo", None):
+            info.l2_version_count = await engine._version_repo.count_versions(
+                agent._session.session_id
+            )
+    except Exception:
+        info.l2_version_count = 0
 
     # ---- Character Reflector ----
     ref = agent._character_reflector
