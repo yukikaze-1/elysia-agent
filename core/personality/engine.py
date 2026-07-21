@@ -22,9 +22,12 @@ from typing import TYPE_CHECKING
 
 from Module.system_prompt import PromptManager
 from Module.output import OutputManager
+from core.schema.compression import CompressionTrigger
+from core.schema._utils import now_iso
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
     from core.schema.character import CharacterState, StateHistoryEntry
+    from core.storage.character_version_repo import CharacterVersionRepository
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +98,14 @@ class C9Data:
     awareness_text: str
 
 
+def _extract_tag(text: str, tag: str) -> str:
+    """从 XML 标签中提取内容。"""
+    import re
+    pattern = rf"<{tag}>\s*(.*?)\s*</{tag}>"
+    m = re.search(pattern, text, re.DOTALL)
+    return m.group(1).strip() if m else ""
+
+
 class CharacterEngine:
     """角色的性格 + 情绪状态管理器。
 
@@ -113,6 +124,7 @@ class CharacterEngine:
         character_config,          # CharacterConfig
         output: OutputManager,
         prompt_dir: str = "prompt",
+        version_repo: "CharacterVersionRepository | None" = None,
     ):
         self._llm = llm
         self.state = state
@@ -133,6 +145,8 @@ class CharacterEngine:
         except FileNotFoundError:
             logger.warning("CharacterEngine: 模板目录不存在，压缩功能不可用")
             self._pm = None
+
+        self._version_repo: "CharacterVersionRepository | None" = version_repo
 
         # 子组件: CharacterReflector
         from .reflector import CharacterReflector
@@ -263,8 +277,8 @@ class CharacterEngine:
         last_count: int = self.state.compression_last_count
         return history[last_count:]
 
-    async def _compress(self) -> None:
-        """执行 L3→L2 压缩：渲染模板 → 调 LLM → 更新 self_l2。"""
+    async def _compress(self, trigger: CompressionTrigger = CompressionTrigger.COMPRESSION) -> None:
+        """执行 L3→L2 压缩：渲染模板 → 调 LLM → 解析 <new_self> + <changes> → 写版本历史。"""
         if self._pm is None:
             return
 
@@ -309,19 +323,36 @@ class CharacterEngine:
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
-        if not text:
-            logger.info("CharacterEngine: 压缩 LLM 返回空 — 更新追踪但不覆盖 L2")
+        new_self = _extract_tag(text, "new_self")
+        if not new_self:
+            logger.warning("CharacterEngine: 压缩 LLM 返回无 <new_self>")
+            # 仍更新追踪，避免重复在同一批条目上重试
             self.state.compression_last_at = time.time()
             self.state.compression_last_count = len(history)
             return
 
-        # 成功：写入 L2 + 更新追踪
-        self.state.self_l2 = text
+        changes_raw = _extract_tag(text, "changes")
+        changes = [c.strip("- ") for c in changes_raw.strip().split("\n") if c.strip()]
+
+        # 更新 L2
+        self.state.self_l2 = new_self
         self.state.compression_last_at = time.time()
         self.state.compression_last_count = len(history)
 
-        logger.info("CharacterEngine: L3→L2 压缩完成 (%d chars, %.0f ms)",
-                    len(text), elapsed_ms)
+        logger.info("CharacterEngine: L3→L2 压缩完成 (%d chars, %.0f ms, %d 条改动)",
+                    len(new_self), elapsed_ms, len(changes))
+
+        # 写版本历史
+        if self._version_repo is not None:
+            await self._version_repo.append_version(
+                session_id=self.state.session_id,
+                text=new_self,
+                timestamp=now_iso(),
+                trigger=trigger,
+                change_summary=changes,
+            )
+        else:
+            logger.warning("CharacterEngine: version_repo 未配置，版本历史未保存")
 
     async def flush_compression(self) -> None:
         """Shutdown 时强制压缩（如有未处理条目）。带超时保护。"""
@@ -339,7 +370,8 @@ class CharacterEngine:
 
         async with self._compression_lock:
             try:
-                await asyncio.wait_for(self._compress(), timeout=5.0)
+                await asyncio.wait_for(
+                    self._compress(trigger=CompressionTrigger.FLUSH), timeout=5.0)
             except asyncio.TimeoutError:
                 logger.warning("CharacterEngine: 压缩 flush 超时")
             except Exception:

@@ -120,7 +120,9 @@ class TestCharacterEngineCompression:
         engine = _make_engine(state=s)
         self._fill_state_history(s, 5)
         s.state_l3 = "最近变得温柔了"
-        engine._llm.think.return_value = ThoughtResult(text="我似乎更在意妖梦的感受了")
+        engine._llm.think.return_value = ThoughtResult(
+            text="<new_self>我似乎更在意妖梦的感受了</new_self>\n<changes>\n- 更在意妖梦了\n</changes>"
+        )
 
         # Mock PromptManager
         mock_pm = MagicMock()

@@ -133,3 +133,31 @@ class TestAnalyzeAssistantDecay:
         assert state.mood_intensity >= 0.1
         # mood text is NOT reset — LLM handles it next turn via <mood>
         assert state.mood == "被夸奖后很开心"
+
+
+@pytest.mark.unit
+class TestExtractTag:
+    def test_normal_extraction(self):
+        from core.personality.engine import _extract_tag
+        result = _extract_tag("<new_self>我是测试</new_self>", "new_self")
+        assert result == "我是测试"
+
+    def test_multiline(self):
+        from core.personality.engine import _extract_tag
+        result = _extract_tag("<new_self>\n第一行\n第二行\n</new_self>", "new_self")
+        assert result == "第一行\n第二行"
+
+    def test_tag_not_found(self):
+        from core.personality.engine import _extract_tag
+        result = _extract_tag("没有标签", "new_self")
+        assert result == ""
+
+    def test_empty_tag(self):
+        from core.personality.engine import _extract_tag
+        result = _extract_tag("<new_self></new_self>", "new_self")
+        assert result == ""
+
+    def test_whitespace_trimmed(self):
+        from core.personality.engine import _extract_tag
+        result = _extract_tag("<new_self>  \n  内容  \n  </new_self>", "new_self")
+        assert result == "内容"
