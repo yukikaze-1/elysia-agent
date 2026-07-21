@@ -2,7 +2,7 @@
 @section Sensory
 @version 1.1.0
 @updated 2026-07-11
-@description 感官输入：环境事实 + 用户消息 + 语音情绪
+@description 感官输入：环境事实 + 语音情绪（用户消息由消息列表传递）
 @params sensory_ctx: {
     current_time: str          # 当前时间 "2026-07-11 14:30:00"
     time_of_day: str           # 时段: 早晨/中午/下午/傍晚/夜晚
@@ -20,9 +20,6 @@
 星期: {{ sensory_ctx.day_of_week }}
 季节: {{ sensory_ctx.season }}
 </facts>
-<message>
-{{ sensory_ctx.message }}
-</message>
 <voice>
 {{ sensory_ctx.voice if sensory_ctx.voice else "（无语音数据）" }}
 </voice>

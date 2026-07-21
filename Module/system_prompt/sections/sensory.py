@@ -1,24 +1,19 @@
 """C5: 感官输入。"""
-import html
 from datetime import datetime
 from Module.system_prompt.protocol import Jinja2Section
 
 
 class SensorySection(Jinja2Section):
     name = "Sensory"
-    version = "1.1.0"
-    description = "此刻感知：环境事实 + 用户消息 + 语音情绪"
+    version = "1.2.0"
+    description = "此刻感知：环境事实 + 语音情绪（用户消息由消息列表传递）"
 
     def __init__(self, template_path: str):
         super().__init__(template_path)
-        self._user_message = ""
-        self._user_name = ""
         self._stt_emotion = ""
         self._stt_events: list[str] = []
 
     def set_context(self, **kwargs) -> None:
-        self._user_message = kwargs.get("user_message", "")
-        self._user_name = kwargs.get("user_name", "")
         self._stt_emotion = kwargs.get("stt_emotion", "")
         self._stt_events = kwargs.get("stt_events", [])
 
@@ -29,15 +24,9 @@ class SensorySection(Jinja2Section):
             "time_of_day": self._time_of_day(now.hour),
             "day_of_week": self._day_name(now.weekday()),
             "season": self._season(now.month),
-            "message": self._build_message(),
             "voice": self._build_voice(),
         }
         return self._render_template(sensory_ctx=sensory_ctx)
-
-    def _build_message(self) -> str:
-        """构建 <message> 内容。转义用户输入防止 XML 注入。"""
-        escaped = html.escape(self._user_message, quote=False)
-        return f"{self._user_name}说：{escaped}"
 
     def _build_voice(self) -> str:
         """构建 <voice> 内容。无 STT 数据时返回空串。"""
