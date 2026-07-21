@@ -496,16 +496,24 @@ def _extract_tag(text: str, tag: str) -> str:
 
 - [ ] **Step 2: Add version_repo parameter to __init__**
 
-After `self._pm = None` line (line 135), add:
-
-```python
-            self._version_repo: CharacterVersionRepository | None = version_repo
-```
-
-And add `version_repo` to `__init__` parameters (after `prompt_dir: str = "prompt"`):
+Add `version_repo` to `__init__` parameters (after `prompt_dir: str = "prompt"`):
 
 ```python
         version_repo: CharacterVersionRepository | None = None,
+```
+
+Add the instance attribute AFTER the try/except block (after line 135, at 8-space indent — outside the except block, before "子组件: CharacterReflector" comment):
+
+```python
+        try:
+            self._pm = PromptManager(prompt_dir)
+        except FileNotFoundError:
+            logger.warning("CharacterEngine: 模板目录不存在，压缩功能不可用")
+            self._pm = None
+
+        self._version_repo: CharacterVersionRepository | None = version_repo
+
+        # 子组件: CharacterReflector
 ```
 
 - [ ] **Step 3: Add import for CompressionTrigger + now_iso**
