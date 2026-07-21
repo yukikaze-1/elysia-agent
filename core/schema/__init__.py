@@ -57,6 +57,7 @@ from core.schema.memory_reflector import (  # noqa: F401
     DeleteItem,
     ReflectorActions,
 )
+from core.schema.compression import CompressionTrigger, VersionEntry  # noqa: F401
 from core.schema.mood import stt_emotion_emoji, stt_event_emoji  # noqa: F401
 from core.schema.memory import (  # noqa: F401
     MemoryType,
