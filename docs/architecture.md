@@ -519,6 +519,8 @@ L4 Mood（当前情绪）    LLM `<mood>` 标签每轮更新（自由文本）�
 
 **阻尼机制**：L3 偏移 L1 特质时，L1 决定"怎么说"（表达方式），L3 影响"说什么"（内容倾向）。Phase 2 引入 L4→L3、L3→L2 向上回流压缩。
 
+**版本历史**：L2/C6 演化产物持久化到 `character_versions` MongoDB 集合（原 `character_l2_versions`），通过 `content_type` 字段区分 `"l2"` / `"c6"`，per type 独立计数。支持在线浏览 + 回滚；L2 回滚自动联动刷新 C6。
+
 完整四层模型、模板渲染、数据流、调试入口 → [core/personality/README.md](core/personality/README.md)
 
 ---

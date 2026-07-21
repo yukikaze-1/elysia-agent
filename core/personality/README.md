@@ -56,8 +56,15 @@ L2 更新（L3→L2 压缩，编辑模式）:
   state_history 新增 >= 5 条 OR 距上次 > 7 天 → 触发
     → _compress() → LLM 编辑当前 L2 文档 → 返回 <new_self> + <changes>
       → CharacterState.self_l2 = new_self
-      → append_version() 写入 character_l2_versions（永久保留）
+      → append_version() 写入 character_versions（永久保留）
     → C1 模板开始渲染 <long_term_self> 块
+
+C6 更新（L2 演化后联动）:
+  _compress() 成功后 → _refresh_c6()
+    → LLM 编辑当前 C6 文本（<new_speaking_style>）
+    → CharacterState.speaking_style_c6
+    → append_version(content_type="c6")
+    → C6 模板条件渲染
 ```
 
 ## 模板渲染
@@ -128,7 +135,8 @@ character/
 
 prompt/
 ├── CharacterReflector.j2           — 性格反思模板
-└── PersonalityCompression.j2       — L3→L2 压缩模板（LLM 编辑模式 + 结构化输出）
+├── PersonalityCompression.j2       — L3→L2 压缩模板（LLM 编辑模式 + 结构化输出）
+└── SpeakingStyleEdit.j2           — C6 编辑 prompt 模板
 
 core/
 ├── agent.py                       — 创建并接线 CharacterEngine
@@ -136,7 +144,7 @@ core/
 ├── schema/character.py            — CharacterState 定义（Pydantic 模型，合并 mood + reflector 字段）
 ├── schema/mood.py                 — STT emoji 工具函数（Mood 已迁为 str）
 ├── schema/compression.py          — CompressionTrigger + VersionEntry 类型
-└── storage/character_version_repo.py — CharacterVersionRepository（character_l2_versions 集合，append-only）
+└── storage/character_version_repo.py — CharacterVersionRepository（character_versions 集合，支持 l2/c6 等 content_type，append-only）
 
 Module/system_prompt/
 ├── sections/personality.py        — C1 section 类
