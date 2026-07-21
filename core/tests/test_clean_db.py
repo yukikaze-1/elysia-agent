@@ -27,18 +27,24 @@ class TestMongoCleaner:
 
         mock_create.assert_called_once_with("mongodb/default")
 
-        # 验证三个 collection 都被 delete_many({})
-        assert mock_db.delete_many.call_count == 3
+        # 验证五个 collection 都被 delete_many({})
+        assert mock_db.delete_many.call_count == 5
         mock_db.delete_many.assert_has_calls([
             call("sessions", {}),
             call("message_archive", {}),
             call("token_usage", {}),
+            call("character_versions", {}),
+            call("character_l2_versions", {}),
         ], any_order=True)
 
         mock_db.close.assert_awaited_once()
 
-        # result 是一个包含 3 个结果的列表
-        assert result == [("sessions", True, 10), ("message_archive", True, 10), ("token_usage", True, 10)]
+        # result 是一个包含 5 个结果的列表
+        assert result == [
+            ("sessions", True, 10), ("message_archive", True, 10),
+            ("token_usage", True, 10), ("character_versions", True, 10),
+            ("character_l2_versions", True, 10),
+        ]
 
     @pytest.mark.asyncio
     async def test_mongo_cleaner_handles_failure(self):
@@ -47,7 +53,7 @@ class TestMongoCleaner:
         mock_db = AsyncMock()
         mock_db.close = AsyncMock()
 
-        delete_results = [10, RuntimeError("timeout"), 5]
+        delete_results = [10, RuntimeError("timeout"), 5, RuntimeError("c6 fail"), 0]
 
         async def delete_many_side_effect(collection, filter_expr):
             r = delete_results.pop(0)
@@ -65,6 +71,8 @@ class TestMongoCleaner:
             ("sessions", True, 10),
             ("message_archive", False, "timeout"),
             ("token_usage", True, 5),
+            ("character_versions", False, "c6 fail"),
+            ("character_l2_versions", True, 0),
         ]
         mock_db.close.assert_awaited_once()
 

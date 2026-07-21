@@ -455,7 +455,7 @@ function render(info) {
         ['WS Clients', info.ws_clients],
         ['Proactive', info.proactive_enabled ? '<span class="ok">ON</span>' : '<span class="warn">OFF</span>'],
         ['Idle 时长', (() => { const s = info.last_interaction_ago || 0; return s >= 60 ? Math.floor(s/60)+'min' : Math.floor(s)+'s'; })()],
-        ['Mood', (() => { const m = info.mood || ''; return m ? esc(m) : '<span class="muted">—</span>'; })()],
+
       ]},
       { title:'Memory', wide:false, rows:[
         ['Session Messages', info.session_messages],
@@ -768,6 +768,10 @@ function render(info) {
         // L3 State
         items.push('<div class="row" style="margin-top:4px"><span class="label">L3 State</span></div>');
         items.push('<div class="list-item" style="white-space:pre-wrap;max-height:80px;overflow-y:auto;font-size:11px">' + esc(info.state_l3 || '（无）') + '</div>');
+
+        // L4 Mood
+        items.push('<div class="row" style="margin-top:4px"><span class="label">L4 Mood</span></div>');
+        items.push('<div class="list-item" style="font-size:12px">' + esc(info.mood || '（无）') + '</div>');
 
         // Awareness cooldown
         const now = Date.now() / 1000;

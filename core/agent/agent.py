@@ -111,9 +111,10 @@ class Agent(AgentLifecycle, AgentServer):
         self._llm = LLMAdapter(model=config.llm.model)
 
         # ---- 性格 + 情绪引擎（合并）----
+        # 与 session.character_state 共用同一对象 — engine 写入 mood 等，session 持久化 + debug 读取
         self._character_engine = CharacterEngine(
             llm=self._llm,
-            state=CharacterState(session_id=SessionId("")),  # placeholder，start() 中更新
+            state=self._session.character_state,
             character_name=self._character.name,
             user_name=self._user_name,
             base_personality=self._character.base_personality,
