@@ -269,7 +269,6 @@ class CharacterEngine:
             return
 
         current_self = self.state.self_l2
-        l3_current = self.state.state_l3
         new_entries = self._get_new_entries()
         history = self.state.state_history
 
@@ -278,15 +277,14 @@ class CharacterEngine:
 
         try:
             system = self._pm.render_macro(
-                "PersonalityCompression.j2", "PersonalityCompressionSystemPrompt",
+                "PersonalityCompression.j2", "CompressionSystemPrompt",
                 character_name=self._character_name,
                 l1_core=self._l1_core,
             )
             user_prompt = self._pm.render_macro(
-                "PersonalityCompression.j2", "PersonalityCompressionUserPrompt",
+                "PersonalityCompression.j2", "CompressionUserPrompt",
                 character_name=self._character_name,
                 current_self=current_self,
-                l3_current=l3_current,
                 recent_changes=new_entries,
             )
         except Exception:
