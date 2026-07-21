@@ -31,3 +31,16 @@ class TestVersionEntry:
         assert entry["session_id"] == "default"
         assert entry["version"] == 1
         assert entry["trigger"] == "compression"
+
+
+def test_c6_refresh_trigger_exists():
+    """C6_REFRESH 枚举值存在。"""
+    from core.schema.compression import CompressionTrigger
+    assert hasattr(CompressionTrigger, "C6_REFRESH")
+    assert CompressionTrigger.C6_REFRESH == "c6_refresh"
+
+
+def test_version_entry_content_type():
+    """VersionEntry 包含 content_type 字段。"""
+    from core.schema.compression import VersionEntry
+    assert "content_type" in VersionEntry.__annotations__

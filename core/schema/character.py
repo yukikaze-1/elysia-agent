@@ -24,6 +24,7 @@ class CharacterState(BaseModel):
     compression_last_count: int = 0
     mood: str = "平静"
     mood_intensity: float = 0.5
+    speaking_style_c6: str = ""  # C6 动态文本。空串 = 使用 L1 默认模板
     reflector_buffer: list[tuple[str, str]] = Field(default_factory=list)
     reflector_context: list[dict] = Field(default_factory=list)
     self_perception_history: list[dict] = Field(default_factory=list)
