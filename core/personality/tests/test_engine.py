@@ -9,6 +9,31 @@ from core.schema.character import CharacterState
 from core.schema.types import SessionId
 
 
+@pytest.fixture
+def engine_with_mocks():
+    """创建带完整 mock 的 CharacterEngine，供 service 层测试使用。"""
+    s = CharacterState(session_id=SessionId("test-sid"))
+    m = MagicMock()
+    m.think = AsyncMock(return_value=ThoughtResult(text=""))
+    o = MagicMock()
+    o.expression = MagicMock(return_value=MagicMock())
+    from core.character_config import CharacterConfig
+    char = CharacterConfig(name="Elysia")
+    engine = CharacterEngine(
+        llm=m,
+        state=s,
+        character_name="Elysia",
+        user_name="妖梦",
+        base_personality="你是 Elysia。温柔底色。",
+        character_config=char,
+        output=o,
+    )
+    # 确保 _pm 可用（tests 在项目根目录运行，prompt/ 目录存在）
+    from Module.system_prompt import PromptManager
+    engine._pm = PromptManager("prompt")
+    return engine
+
+
 def _make_engine(state=None, llm=None, output=None):
     """创建测试用 CharacterEngine。"""
     s = state or CharacterState(session_id=SessionId("test-sid"))
@@ -129,6 +154,7 @@ class TestCharacterEngineCompression:
         mock_pm.render_macro.return_value = "rendered prompt"
         engine._pm = mock_pm
 
+        engine._refresh_c6 = AsyncMock()  # 隔离 _refresh_c6 测试
         asyncio.run(engine._compress())
 
         assert s.self_l2 == "我似乎更在意妖梦的感受了"
@@ -146,6 +172,7 @@ class TestCharacterEngineCompression:
         mock_pm.render_macro.return_value = "rendered prompt"
         engine._pm = mock_pm
 
+        engine._refresh_c6 = AsyncMock()  # 隔离 _refresh_c6 测试
         asyncio.run(engine._compress())
 
         assert s.self_l2 == "已有自我认知"  # 不变
@@ -161,6 +188,7 @@ class TestCharacterEngineCompression:
         mock_pm.render_macro.return_value = "rendered prompt"
         engine._pm = mock_pm
 
+        engine._refresh_c6 = AsyncMock()  # 隔离 _refresh_c6 测试
         asyncio.run(engine._compress())
 
         assert s.compression_last_count == 0  # 不变
@@ -186,6 +214,7 @@ class TestCharacterEngineCompression:
 
         # 释放后再次 trigger 应成功
         engine._compression_lock.release()
+        engine._refresh_c6 = AsyncMock()  # 隔离 _refresh_c6 测试
         asyncio.run(engine._maybe_compress())
         assert s.compression_last_count == 5
 
@@ -193,3 +222,84 @@ class TestCharacterEngineCompression:
     async def _acquire_lock(lock) -> bool:
         await lock.acquire()
         return True
+
+
+@pytest.mark.service
+class TestC6Refresh:
+    """_refresh_c6() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_refresh_c6_generates(self, engine_with_mocks):
+        """_refresh_c6() 调用 LLM 并更新 state.speaking_style_c6。"""
+        engine = engine_with_mocks
+        # 模拟 LLM 返回
+        engine._llm.think = AsyncMock(return_value=MagicMock(
+            text="<new_speaking_style>编辑后的风格</new_speaking_style>\n<changes>调整了语气</changes>"
+        ))
+        # 确保 pm 可用
+        assert engine._pm is not None
+        # 先设一个当前值
+        engine.state.speaking_style_c6 = "原始风格"
+        engine.state.self_l2 = "测试 L2"
+
+        await engine._refresh_c6()
+
+        assert engine.state.speaking_style_c6 == "编辑后的风格"
+
+    @pytest.mark.asyncio
+    async def test_refresh_c6_first_time(self, engine_with_mocks):
+        """speaking_style_c6 为空时首次生成。"""
+        engine = engine_with_mocks
+        engine._llm.think = AsyncMock(return_value=MagicMock(
+            text="<new_speaking_style>首次生成的风格</new_speaking_style>\n<changes>无变化</changes>"
+        ))
+        engine.state.speaking_style_c6 = ""
+        engine.state.self_l2 = ""
+
+        await engine._refresh_c6()
+
+        assert engine.state.speaking_style_c6 == "首次生成的风格"
+
+    @pytest.mark.asyncio
+    async def test_refresh_c6_llm_empty_no_block(self, engine_with_mocks):
+        """LLM 返回空时保留旧值，不抛异常。"""
+        engine = engine_with_mocks
+        engine._llm.think = AsyncMock(return_value=MagicMock(text=""))
+        old = engine.state.speaking_style_c6 = "旧值"
+
+        await engine._refresh_c6()
+
+        assert engine.state.speaking_style_c6 == "旧值"  # 不变
+
+    @pytest.mark.asyncio
+    async def test_refresh_c6_parse_failure_no_block(self, engine_with_mocks):
+        """<new_speaking_style> 解析失败时保留旧值。"""
+        engine = engine_with_mocks
+        engine._llm.think = AsyncMock(return_value=MagicMock(
+            text="<other_tag>内容</other_tag>"  # 无 <new_speaking_style>
+        ))
+        old = engine.state.speaking_style_c6 = "旧值"
+
+        await engine._refresh_c6()
+
+        assert engine.state.speaking_style_c6 == "旧值"
+
+    @pytest.mark.asyncio
+    async def test_render_c6_returns_data(self, engine_with_mocks):
+        """render_c6() 返回正确的 C6Data。"""
+        engine = engine_with_mocks
+        engine.state.speaking_style_c6 = "动态风格"
+
+        data = engine.render_c6()
+
+        assert data.speaking_style_c6 == "动态风格"
+
+    @pytest.mark.asyncio
+    async def test_render_c6_empty_default(self, engine_with_mocks):
+        """speaking_style_c6 为空时返回空串。"""
+        engine = engine_with_mocks
+        engine.state.speaking_style_c6 = ""
+
+        data = engine.render_c6()
+
+        assert data.speaking_style_c6 == ""

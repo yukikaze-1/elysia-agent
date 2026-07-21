@@ -98,6 +98,12 @@ class C9Data:
     awareness_text: str
 
 
+@dataclass
+class C6Data:
+    """C6 SpeakingStyle section 渲染数据。"""
+    speaking_style_c6: str  # "" 表示使用默认模板
+
+
 def _extract_tag(text: str, tag: str) -> str:
     """从 XML 标签中提取内容。"""
     import re
@@ -182,6 +188,10 @@ class CharacterEngine:
         self._last_awareness_time = time.time()
         self.state.last_awareness_time = self._last_awareness_time
         return C9Data(awareness_text=l3)
+
+    def render_c6(self) -> C6Data:
+        """产出 C6 SpeakingStyle section 的数据。"""
+        return C6Data(speaking_style_c6=self.state.speaking_style_c6)
 
     # ---- 触发事件 ----
 
@@ -353,6 +363,84 @@ class CharacterEngine:
             )
         else:
             logger.warning("CharacterEngine: version_repo 未配置，版本历史未保存")
+
+        # 触发 C6 刷新
+        await self._refresh_c6()
+
+    async def _refresh_c6(self) -> None:
+        """L2 更新后刷新 C6 说话风格。LLM 编辑模式 + 版本历史。失败不阻塞。"""
+        if self._pm is None:
+            return
+
+        # 1. 获取当前 C6 文本
+        current = self.state.speaking_style_c6
+        if not current:
+            # 首次：渲染 L1 默认模板获取基准文本
+            try:
+                from Module.system_prompt.sections.speaking_style import SpeakingStyleSection
+                sec = SpeakingStyleSection("Module/system_prompt/templates/c6_speaking_style.j2")
+                sec.set_context(user_name="")
+                current = await sec.render()
+            except Exception:
+                logger.warning("CharacterEngine: C6 默认模板渲染失败，跳过刷新")
+                return
+
+        if not current.strip():
+            return
+
+        # 2. 渲染 prompt
+        try:
+            prompt = self._pm.render(
+                "SpeakingStyleEdit.j2",
+                character_name=self._character_name,
+                self_l2=self.state.self_l2,
+                current_speaking_style=current,
+            )
+        except Exception:
+            logger.warning("CharacterEngine: C6 prompt 渲染失败", exc_info=True)
+            return
+
+        # 3. LLM 调用（与 _compress() 相同模式）
+        t0 = time.perf_counter()
+        try:
+            result = await self._llm.think(
+                [{"role": "user", "content": prompt}],
+                extra_body={"thinking": {"type": "disabled"}},
+            )
+            text = result.text.strip()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("CharacterEngine: C6 refresh LLM 调用失败", exc_info=True)
+            return
+
+        # 4. 解析 XML 标签
+        new_style = _extract_tag(text, "new_speaking_style")
+        if not new_style:
+            logger.warning("CharacterEngine: C6 refresh <new_speaking_style> 解析失败")
+            return
+
+        changes_raw = _extract_tag(text, "changes")
+        changes = [l.strip("- ").strip() for l in (changes_raw or "").splitlines() if l.strip()]
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+
+        # 5. 更新 state
+        self.state.speaking_style_c6 = new_style
+
+        logger.info("CharacterEngine: C6 刷新完成 (%d chars, %.0f ms, %d 条改动)",
+                    len(new_style), elapsed_ms, len(changes))
+
+        # 6. 写版本历史
+        if self._version_repo is not None:
+            await self._version_repo.append_version(
+                session_id=self.state.session_id,
+                text=new_style,
+                timestamp=now_iso(),
+                trigger=CompressionTrigger.C6_REFRESH,
+                change_summary=changes,
+                content_type="c6",
+            )
 
     async def flush_compression(self) -> None:
         """Shutdown 时强制压缩（如有未处理条目）。带超时保护。"""
