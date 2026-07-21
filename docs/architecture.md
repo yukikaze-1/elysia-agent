@@ -432,11 +432,11 @@ MOOD_KEYWORDS = {
 }
 → 计分 → 最高分 mood → update CharacterState.mood + push expression
 ```
-文本关键词路径始终执行（不再与 STT 路径互斥）。
+文本关键词路径作为 fallback（LLM 未输出 `<mood>` 时降级使用）。
 
-**衰减**: `analyze_assistant()` 每次回复后 intensity -= 0.15，低于 0.2 重置为 neutral
+**衰减**: `analyze_assistant()` 每次回复后 intensity -= 0.15，低于 0.2 推送闲置表情。mood 文本不再重置——LLM 下轮通过 `<mood>` 自行描述心情变化。
 
-**Expression 映射**: `mood.value` 直接作为 expression 名透传 → OutputManager.expression()
+**Expression 映射**: `mood` 文本（str）直接作为 expression 名透传 → OutputManager.expression()
 
 详见 [4.10 CharacterEngine](#410-characterengine--角色性格情绪引擎)。
 
@@ -508,7 +508,7 @@ proactive.enabled: false → 整个机制关闭
 L1 Core（核心底色）    文件加载，启动后不变                  → C1 模板锚点
 L2 Self（长期自我）    从 L3 压缩沉淀，月级演化              → C1 主体——"我是谁"
 L3 State（短期状态）   CharacterReflector + 事件触发，数十轮  → C9 条件素材——"我最近怎么了"
-L4 Mood（当前情绪）    CharacterEngine keyword 检测每轮更新，STT 情绪直传 LLM（C5） → C3 内容
+L4 Mood（当前情绪）    LLM `<mood>` 标签每轮更新（自由文本），keyword fallback → C3 内容
 ```
 
 **CharacterState**（Pydantic 模型）：集中管理 mood、personality (L2 Self + L3 State)、reflector buffer/context、awareness 冷却、state_history 等所有性格+情绪状态。替代原 `session._params` 散落存储。

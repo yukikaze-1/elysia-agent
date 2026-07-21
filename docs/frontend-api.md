@@ -78,7 +78,7 @@ Client ──→ Server (5 种):
       "parts": [{ "content": "你好！有什么可以帮你的？" }],
       "content": [{ "type": "text", "content": "你好！有什么可以帮你的？" }],
       "content_type": {},
-      "mood": "happy",
+      "mood": "被妖梦的好消息感染，心里暖暖的",
       "tool_calls": []
     },
     {
@@ -116,7 +116,7 @@ Client ──→ Server (5 种):
 | `parts` | array | 纯文本简化视图 `[{ "content": "..." }]`——可直接拼接渲染 |
 | `content` | array | 多模态内容数组，每项 `{ "type": "text\|image", "content\|source": "...", "mime": "..." }` |
 | `content_type` | object | 多模态标记，如 `{"has_image": true, "image_count": 1}` |
-| `mood` | string | 仅 assistant，情绪标签 |
+| `mood` | string | 仅 assistant，LLM 生成的自由文本心情描述 |
 
 **assistant 特有字段：**
 
@@ -206,7 +206,7 @@ Client ──→ Server (5 种):
   "type": "message",
   "role": "assistant",
   "content": "完整回复内容...",
-  "mood": "curious"
+  "mood": "有点好奇，想了解更多"
 }
 ```
 
@@ -219,15 +219,17 @@ Client ──→ Server (5 种):
 
 LLM 开始/结束生成时推送。前端可显示/隐藏 "..." 动画。
 
-### 7. `expression` — 角色表情
+### 7. `expression` — 角色表情 / 心情
 
 ```json
 {
   "type": "expression",
-  "expression": "smile",
-  "intensity": 0.8
+  "expression": "被夸奖后有点不好意思，但暗自开心",
+  "intensity": 0.7
 }
 ```
+
+心情为 LLM 生成的自由文本中文描述；音频事件表情仍为简单名称（`laugh`/`cry`/`surprised`）。
 
 用于驱动 Live2D 或静态图的表情切换。纯 .NET 客户端可忽略此消息。
 

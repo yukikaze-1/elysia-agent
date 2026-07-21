@@ -256,7 +256,7 @@ static/
 - L1 Core: file-loaded, immutable base personality (`character/<name>/personality.md`)
 - L2 Self: session-persisted long-term self-image, evolves slowly via compression (Phase 2)
 - L3 State: session-persisted short-term state, driven by CharacterReflector + events
-- L4 Mood: emotion per-turn, driven by EmotionEngine (existing, unchanged)
+- L4 Mood: emotion per-turn, driven by LLM `<mood>` tag in main response stream (free-text Chinese), keyword detection as fallback
 
 CharacterReflector is a subcomponent — after LLM reflection, it submits events to `CharacterEngine.consume_trigger("reflector", ...)` instead of writing `self_perception_history` directly.
 

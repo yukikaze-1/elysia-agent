@@ -99,7 +99,7 @@ ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的�
 
 #### CharacterEngine (`personality/engine.py`)
 
-统一个性管理与情绪驱动。STT 声学情绪通过 C5 Sensory 直传 LLM（不再硬编码映射 AI mood），文本关键词检测更新 mood。10 种 mood（happy/excited/sad/curious/warm/concerned/calming/reassuring/understanding/neutral），intensity 衰减机制。`analyze_user_stt()` 仅处理音频事件→表情，`analyze_user()` 关键词检测始终执行，`analyze_assistant()` 每轮回复后衰减 intensity 趋向 neutral。结果写入 `CharacterState.mood`，`mood.value` 直接作为 expression 名透传到前端。详见 [personality/README.md](personality/README.md)。
+统一个性管理与情绪驱动。Mood 由 LLM 在主回复中通过 `<mood>` 标签自由生成（中文描述 + 强度），流式解析器提取后更新 `CharacterState.mood: str`。关键词检测 `_detect_mood()` 保留为 fallback（LLM 未输出 `<mood>` 时降级）。`analyze_user_stt()` 仅处理音频事件→表情，`analyze_assistant()` 只衰减 intensity 不重置 mood 文本。详见 [personality/README.md](personality/README.md)。
 
 关键方法：`analyze_user_stt()`, `analyze_user()`, `analyze_assistant()`
 
