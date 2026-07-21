@@ -72,12 +72,18 @@ def _apply_mood(raw: str, engine, tts_mgr) -> None:
         intensity = 0.5
 
     if not mood_text:
+        logger.info("心情: <mood> 标签为空，跳过")
         return
 
+    prev = engine.state.mood
     engine.state.mood = mood_text
     engine.state.mood_intensity = intensity
     engine._push_expression(mood_text, intensity)
     tts_mgr.set_emotion(mood_text)
+    if prev != mood_text:
+        logger.info("心情: %s → %s (%.0f%%)", prev, mood_text, intensity * 100)
+    else:
+        logger.info("心情: %s (%.0f%%)", mood_text, intensity * 100)
 
 
 class CognitiveLoop(CognitiveTools):
@@ -751,6 +757,7 @@ class CognitiveLoop(CognitiveTools):
 
                 # Fallback: LLM 未输出 <mood> → 关键词检测
                 if self._character_engine and not mood_applied:
+                    logger.info("心情: <mood> 未检测到，使用关键词 fallback")
                     self._character_engine.analyze_user(user_message)
                     self._tts_mgr.set_emotion(self._character_engine.state.mood)
 
