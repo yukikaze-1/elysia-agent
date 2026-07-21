@@ -194,7 +194,7 @@ def __init__(self, ..., version_repo: CharacterVersionRepository | None = None):
 ### 5.2 `_compress()` 重写
 
 ```python
-async def _compress(self) -> None:
+async def _compress(self, trigger: CompressionTrigger = CompressionTrigger.COMPRESSION) -> None:
     if self._pm is None:
         return
 
@@ -242,7 +242,7 @@ async def _compress(self) -> None:
             session_id=self.state.session_id,
             text=new_self,
             timestamp=now_iso(),
-            trigger=CompressionTrigger.COMPRESSION,
+            trigger=trigger,
             change_summary=changes,
         )
     else:
@@ -260,11 +260,17 @@ def _extract_tag(text: str, tag: str) -> str:
     return m.group(1).strip() if m else ""
 ```
 
-### 5.4 `flush_compression()` — trigger 改为 FLUSH
+### 5.4 `flush_compression()` — 传入 FLUSH trigger
 
 ```python
-# 在 append_version 调用处:
-trigger=CompressionTrigger.FLUSH
+async def flush_compression(self) -> None:
+    # ... 现有检查逻辑不变 ...
+    async with self._compression_lock:
+        try:
+            await asyncio.wait_for(
+                self._compress(trigger=CompressionTrigger.FLUSH), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("CharacterEngine: 压缩 flush 超时")
 ```
 
 ### 5.5 C1 渲染 — `render_c1()` 不变
