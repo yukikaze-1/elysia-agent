@@ -45,6 +45,7 @@ from ..memory.consolidator import MemoryConsolidator
 from ..personality import CharacterEngine
 from core.personality.reflector import CharacterReflector
 from ..memory.memory_reflector import MemoryReflector
+from core.storage.character_version_repo import CharacterVersionRepository
 from core.schema.types import IsoTimestamp, SessionId
 from core.schema.character import CharacterState
 from core.schema.event import (
@@ -80,6 +81,7 @@ class Agent(AgentLifecycle, AgentServer):
         self._message_repo = MessageRepository()
         self._token_repo = TokenRepository()
         self._memory_repo = MemoryRepository()
+        self._version_repo = CharacterVersionRepository()
 
         # ---- L2: Memory ----
         self._session = SessionMemory(
@@ -117,6 +119,7 @@ class Agent(AgentLifecycle, AgentServer):
             base_personality=self._character.base_personality,
             character_config=self._character,
             output=self._output,
+            version_repo=self._version_repo,
         )
 
         # 保存 reflector 引用供 debug_info 使用
@@ -193,6 +196,7 @@ class Agent(AgentLifecycle, AgentServer):
         self._background_tasks: dict[str, _BackgroundTaskEntry] = {}
         self._mailbox_task: asyncio.Task | None = None
         self._db_health_task: asyncio.Task | None = None
+        self._embed_task: asyncio.Task | None = None
 
     # ---- process_message ----
 

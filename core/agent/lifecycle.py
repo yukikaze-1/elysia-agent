@@ -5,8 +5,9 @@ import asyncio
 import os
 import time
 import logging
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
-from ._types import RunState
+from ._types import RunState, _PendingMessage, _BackgroundTaskEntry
 
 from Module.output import OutputManager, ConsoleChannel
 
@@ -39,6 +40,15 @@ from core.storage.message_repo import MessageRepository
 from core.storage.token_repo import TokenRepository
 from core.storage.memory_repo import MemoryRepository
 
+if TYPE_CHECKING:
+    from core.storage.character_version_repo import CharacterVersionRepository
+    from core.token_tracker import TokenTracker
+    from core.debug.prompt_recorder import PromptRecorder
+    from core.debug.response_recorder import ResponseRecorder
+    from Module.task_system.task_system import TaskSystem
+    from Module.task_system.delegation_preparer import DelegationPreparer
+    from Module.tts.protocol import TTSBackend
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,6 +57,51 @@ class AgentLifecycle:
 
     所有属性由 Agent.__init__ 初始化，本 mixin 不含 __init__。
     """
+
+    if TYPE_CHECKING:
+        # 由 Agent.__init__ 初始化的属性，供 Pylance/Pyright 静态检查
+        _state: RunState
+        _started_at: float
+        _fsm: AgentFSM
+        _llm: LLMAdapter
+        _session: SessionMemory
+        _long_term: LongTermMemory
+        _message_repo: MessageRepository
+        _version_repo: CharacterVersionRepository
+        _character_engine: CharacterEngine
+        _token_repo: TokenRepository
+        _output: OutputManager
+        _cognitive: CognitiveLoop
+        _user_name: str
+        _scheduler: TaskScheduler
+        _config: AppConfig
+        _tool_manager: ToolManager
+        _plugin_ctx: PluginContext
+        _bus: EventBus
+        _idle: IdleMonitor
+        _consolidator: MemoryConsolidator
+        _session_repo: SessionRepository
+        _tool_ctx: ToolContext
+        _task_system: TaskSystem | None
+        _delegation_preparer: DelegationPreparer | None
+        _token_tracker: TokenTracker
+        _prompt_recorder: PromptRecorder
+        _response_recorder: ResponseRecorder
+        _tts: TTSBackend | None
+        _event_task: asyncio.Task[Any] | None
+        _mailbox_task: asyncio.Task[Any] | None
+        _db_health_task: asyncio.Task[Any] | None
+        _embed_task: asyncio.Task[Any] | None
+        _pending_messages: list[_PendingMessage]
+        _background_tasks: dict[str, _BackgroundTaskEntry]
+        _mongo_ok: bool
+        _milvus_ok: bool
+        _mongo_available: bool
+        _milvus_available: bool
+        # 由 Agent 定义的跨 mixin 方法
+        _process_events: Callable[[], Coroutine[Any, Any, None]]
+        _register_background_task: Callable[[str, Any, str, IsoTimestamp], None]
+        _poll_mailboxes: Callable[[], Coroutine[Any, Any, None]]
 
     async def start(self) -> None:
         """Start the agent: connect persistence, idle monitor, event loop."""
@@ -98,6 +153,9 @@ class AgentLifecycle:
         )
         # 消息归档独立连接（与 session 共享 MongoDB，但使用独立 repo）
         await self._message_repo.connect()
+        # L2 版本历史
+        if not await self._version_repo.connect():
+            logger.warning("CharacterVersionRepository 离线")
         if mongo_ok:
             await self._session.load()
             # CharacterState 已由 session.load() 原地恢复到 engine.state
@@ -375,10 +433,10 @@ class AgentLifecycle:
 
     async def _stop_embedding_if_running(self) -> None:
         """取消并等待 embedding 预加载任务完成。"""
-        if getattr(self, "_embed_task", None) and not self._embed_task.done():
+        if self._embed_task and not self._embed_task.done():
             self._embed_task.cancel()
         # 等待 task 完成——cancel 后仍需 await 消耗 CancelledError
-        if getattr(self, "_embed_task", None):
+        if self._embed_task:
             try:
                 await asyncio.wait_for(self._embed_task, timeout=3.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
@@ -464,6 +522,12 @@ class AgentLifecycle:
             await asyncio.wait_for(self._token_repo.close(), timeout=3.0)
         except asyncio.TimeoutError:
             logger.warning("Token repo close timed out")
+
+        logger.debug("Closing version repo...")
+        try:
+            await asyncio.wait_for(self._version_repo.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Version repo close timed out")
 
         logger.debug("Shutting down embedding factory...")
         try:

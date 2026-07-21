@@ -42,6 +42,7 @@ class TaskResultData(BaseModel):
     result: str
     original_intent: str
     dispatched_at: str
+    is_error: bool = False
 
 
 EventData = Annotated[
