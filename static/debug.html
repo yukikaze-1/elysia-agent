@@ -779,13 +779,20 @@ function render(info) {
           (cooldownOk ? '就绪' : Math.ceil(cooldownRemain / 60) + 'min 剩余') + '</span></div>'
         );
 
-        // L2 版本历史
+        // L2/C6 版本历史
         const vc = info.l2_version_count || 0;
+        const vc6 = info.c6_version_count || 0;
         items.push(
           '<div class="row" style="margin-top:4px"><span class="label">L2 版本历史</span>' +
-          '<span class="value">' + vc + ' 版</span>' +
+          '<span class="value">' + vc + ' 版' +
           (vc > 0 ? ' <a href="#" onclick="event.preventDefault();loadL2Versions()" style="font-size:11px">查看</a>' : '') +
-          '</div>'
+          '</span></div>'
+        );
+        items.push(
+          '<div class="row"><span class="label">C6 版本历史</span>' +
+          '<span class="value">' + vc6 + ' 版' +
+          (vc6 > 0 ? ' <a href="#" onclick="event.preventDefault();loadCharacterVersions(\'c6\')" style="font-size:11px">查看</a>' : '') +
+          '</span></div>'
         );
         const hist = info.state_history || [];
         if (hist.length === 0) {
@@ -1204,34 +1211,38 @@ function showError(msg) {
   b.style.display = 'block';
 }
 
-// ---- L2 Version History ----
+// ---- Character Version History ----
 
-let l2VersionList = [];
+let versionList = [];
+let currentVersionType = 'l2';
 
-async function loadL2Versions(before) {
+async function loadCharacterVersions(type, before) {
+  currentVersionType = type;
+  let url = '/debug/api/character-versions?type=' + type + '&limit=20';
+  if (before) url += '&before=' + before;
   try {
-    let url = '/debug/api/l2-versions?limit=20';
-    if (before) url += '&before=' + before;
     const resp = await fetch(url);
     const data = await resp.json();
     if (data.error) { alert(data.error); return; }
-    l2VersionList = data.versions || [];
-    renderL2Versions(data);
+    versionList = data.versions || [];
+    renderCharacterVersions(data, type);
   } catch (e) { alert('加载失败: ' + e.message); }
 }
 
-function renderL2Versions(data) {
-  const old = document.getElementById('l2-versions-modal');
+function renderCharacterVersions(data, type) {
+  const modalId = 'character-versions-modal';
+  const old = document.getElementById(modalId);
   if (old) old.remove();
 
+  const label = type === 'l2' ? 'L2 Self' : 'C6 说话风格';
   const div = document.createElement('div');
-  div.id = 'l2-versions-modal';
+  div.id = modalId;
   div.style.cssText = 'position:fixed;top:10%;left:50%;transform:translateX(-50%);z-index:1000;' +
     'background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;' +
     'max-height:70vh;width:500px;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,0.3)';
 
-  let html = '<h3 style="margin-top:0">L2 版本历史 (' + (data.total || 0) + ' 版)</h3>';
-  html += '<button onclick="document.getElementById(\'l2-versions-modal\').remove()" ' +
+  let html = '<h3 style="margin-top:0">' + label + ' 版本历史 (' + (data.total || 0) + ' 版)</h3>';
+  html += '<button onclick="document.getElementById(\'' + modalId + '\').remove()" ' +
     'style="position:absolute;top:8px;right:12px;background:none;border:none;font-size:20px;cursor:pointer">&times;</button>';
 
   for (const v of (data.versions || [])) {
@@ -1249,14 +1260,14 @@ function renderL2Versions(data) {
       }
       html += '</div>';
     }
-    html += '<button onclick="rollbackL2(' + v.version + ')" ' +
+    html += '<button onclick="rollbackCharacterVersion(\'' + type + '\', ' + v.version + ')" ' +
       'style="margin-top:4px;font-size:11px;padding:2px 8px">回滚到此版本</button>';
     html += '</div>';
   }
 
   if (data.has_more && data.versions && data.versions.length) {
     const last = data.versions[data.versions.length - 1];
-    html += '<button onclick="loadL2Versions(' + last.version + ')" ' +
+    html += '<button onclick="loadCharacterVersions(\'' + type + '\', ' + last.version + ')" ' +
       'style="margin-top:8px">加载更早版本</button>';
   }
 
@@ -1264,20 +1275,25 @@ function renderL2Versions(data) {
   document.body.appendChild(div);
 }
 
-async function rollbackL2(version) {
-  if (!confirm('确认回滚到版本 ' + version + '？')) return;
+async function rollbackCharacterVersion(type, version) {
+  if (!confirm('确认回滚 ' + type + ' 到版本 ' + version + '？')) return;
   try {
-    const resp = await fetch('/debug/api/l2-rollback', {
+    const resp = await fetch('/debug/api/character-rollback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: version }),
+      body: JSON.stringify({ type: type, version: version }),
     });
     const data = await resp.json();
     if (data.error) { alert(data.error); return; }
-    alert('已回滚到 v' + version + '（新版本 v' + data.new_version + '）');
-    loadL2Versions();
+    alert('回滚完成，新版本: ' + data.new_version);
+    loadCharacterVersions(type);
   } catch (e) { alert('回滚失败: ' + e.message); }
 }
+
+// 兼容旧的 L2 调用
+async function loadL2Versions(before) { loadCharacterVersions('l2', before); }
+function renderL2Versions(data) { renderCharacterVersions(data, 'l2'); }
+async function rollbackL2(version) { rollbackCharacterVersion('l2', version); }
 
 async function poll() {
   if (paused) return;

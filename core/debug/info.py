@@ -75,6 +75,7 @@ class DebugInfo:
     state_history: list[dict] = field(default_factory=list)  # L3 历史
     last_awareness_time: float = 0.0  # C9 上次触发时间戳
     l2_version_count: int = 0       # L2 版本历史总数
+    c6_version_count: int = 0       # C6 版本历史总数
 
     # Connections
     tts_ok: bool = False
@@ -206,16 +207,25 @@ async def collect(agent: "Agent") -> DebugInfo:
     info.state_history = [dict(e) for e in pe.state.state_history[-5:]]
     info.last_awareness_time = pe.state.last_awareness_time or 0.0
 
-    # ---- L2 Version History ----
+    # ---- L2/C6 Version History ----
     try:
         info.l2_version_count = 0
         engine = getattr(agent, "_character_engine", None)
         if engine and getattr(engine, "_version_repo", None):
+            sid = agent._session.session_id
             info.l2_version_count = await engine._version_repo.count_versions(
-                agent._session.session_id
-            )
+                sid, content_type="l2")
     except Exception:
         info.l2_version_count = 0
+
+    try:
+        info.c6_version_count = 0
+        engine = getattr(agent, "_character_engine", None)
+        if engine and getattr(engine, "_version_repo", None):
+            info.c6_version_count = await engine._version_repo.count_versions(
+                agent._session.session_id, content_type="c6")
+    except Exception:
+        info.c6_version_count = 0
 
     # ---- Character Reflector ----
     ref = agent._character_reflector
