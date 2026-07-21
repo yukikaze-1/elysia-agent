@@ -2,6 +2,16 @@
 
 ## 已完成
 
+### 2026-07-22: C6 说话风格动态联动 + CharacterState 共享修复
+
+**C6 动态联动**：L3→L2 压缩完成后自动触发 C6 说话风格刷新。LLM 编辑模式，版本历史与 L2 共享 `character_versions` 集合（按 `content_type` 区分）。C6 模板支持条件渲染：非空时渲染动态文本，为空时回退 L1 默认。
+
+**CharacterVersionRepository 通用化**：集合 `character_l2_versions` → `character_versions`，所有方法加 `content_type` 参数（默认 `"l2"`），版本号 per content_type 独立计数。
+
+**CharacterState 共享修复**：`engine.state` 与 `session.character_state` 共用同一对象。engine 为 mood/性格状态的权威来源，session 负责持久化 + 对外读取。修复了 debug 面板 mood 与聊天页面不一致的 bug。
+
+**其他**：mood 从 debug System 面板移入 CharacterEngine 面板；`clean_db.py` 新增 `character_versions` 和 `character_l2_versions` 清理。
+
 ### 2026-07-14: 分句系统优化
 
 全面重写 `SentenceBuffer` 和 `BlockFilter`，修复 2 个正确性 bug + 1 个安全 bug + 工程改进。

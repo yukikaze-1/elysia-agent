@@ -36,13 +36,20 @@
 启动:
   elysia.yaml → CharacterConfig.from_yaml()
     → 读取 elysia_personality.txt
-    → CharacterEngine.__init__(base_personality=L1, state=CharacterState(...))
+    → CharacterEngine.__init__(base_personality=L1, state=session.character_state)
+    → engine.state 与 session.character_state 共用同一对象（engine 是权威来源，session 负责持久化）
 
 每轮对话:
   PromptAssembler.build_system_prompt()
     → _refresh_personality_data()
       → engine.render_c1()  → C1 section → c1_personality.j2
       → engine.render_c9()  → C9 section → c9_self_perception.j2
+      → engine.render_c6()  → C6 section → c6_speaking_style.j2
+
+L4 Mood 更新（每轮）:
+  LLM 输出 <mood> → _apply_mood() → engine.state.mood
+  → session.save() 持久化到 MongoDB
+  → C3 模板: 当前心情: {{ mood }}
 
 L3 更新:
   CharacterReflector._reflect() → 收集 10 个上下文变量
@@ -168,9 +175,10 @@ Module/system_prompt/
 访问 `http://localhost:8765/debug` → **CharacterEngine** 卡片，可查看：
 - L2 Self 当前状态（L3→L2 压缩产出）
 - L3 State 当前状态
+- L4 Mood 当前心情（LLM 输出的自由文本）
 - C9 冷却状态（就绪 / 剩余 X min）
 - State 历史（最近 5 条）
-- L2 版本历史（版本数 + 在线浏览 + 回滚）
+- L2 / C6 版本历史（版本数 + 在线浏览 + 回滚）
 
 后端 API: `GET /debug/api` → `info.character_engine_exists` / `info.self_l2` / `info.state_l3` / `info.state_history`
 
