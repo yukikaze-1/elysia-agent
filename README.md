@@ -52,7 +52,7 @@ bash scripts/start.sh
 
 自动完成：conda 激活 → 数据库检查 → 快速预检 → 启动服务（WebSocket 服务器）。
 
-打开浏览器访问 **`http://localhost:8765`**，在聊天界面与 AI 对话。日志输出到 `log/app.log`。停止：`Ctrl+C`。
+打开浏览器访问 **`http://localhost:8765`**，在聊天界面与 AI 对话。日志输出到 `log/` 目录（主日志 `app.log`，全量 `app-debug.log`。详见 `log/README.md`）。停止：`Ctrl+C`。
 
 Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板，详见 [`static/debug.md`](static/debug.md)。
 
@@ -60,8 +60,12 @@ Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板
 
 | 文件/目录 | 用途 |
 |-----------|------|
-| `log/app.log` | 应用运行日志（10MB×3 轮转） |
+| `log/app.log` | 应用主日志 — INFO+ 关键事件 |
+| `log/app-debug.log` | 全量调试日志 — DEBUG+ |
 | `log/conversation.log` | 所有对话记录 |
+| `log/mongo.log` | MongoDB 操作日志 |
+| `log/milvus.log` | Milvus 操作日志 |
+| `log/README.md` | 日志文件详细说明 |
 | `.model_cache/` | 嵌入模型（`BAAI/bge-large-zh-v1.5/`，约 1.3GB） |
 | `data/ref/Elysia.wav` | GPT-SoVits 音色克隆参考音频（1.6MB） |
 | `static/live2d-demo/` | Live2D 前端（Cubism SDK，index.html 待创建） |

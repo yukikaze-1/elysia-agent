@@ -883,15 +883,23 @@ class Agent:
 
 ```
 core/log_setup.py:
-  库日志 (pymongo/pymilvus/httpx/openai/torch)
-    → log/*.log (RotatingFileHandler, 10MB × 3)
-  核心日志 (core/Module/asyncio)
-    → stderr (INFO, --verbose → DEBUG)
-  stdout → 仅对话输出 (不污染)
 
-Child loggers (core.cognitive_loop 等)
-  → propagate=True → 继承父 logger 的 stderr handler
+  库日志 (pymongo/pymilvus/httpx/openai/torch)
+    → 分流到 log/mongo.log, log/milvus.log, log/http.log, log/torch.log
+       (RotatingFileHandler, WARNING+, propagate=False — 不污染主日志)
+
+  核心日志 (core/Module/asyncio, logger.setLevel(DEBUG))
+    → stderr          (INFO / --verbose → DEBUG)
+    → app.log         (INFO+, 10MB×3)     — 干净操作日志
+    → app-debug.log   (DEBUG+, 20MB×5)    — 全量调试日志
+
+  DB 日志 (core.storage.*, core.memory.session, core.memory.long_term)
+    → 额外分流到 mongo.log / milvus.log  (DEBUG+, propagate=True — 主日志保留副本)
+
+  stdout → 仅对话输出 (不污染)
 ```
+
+详见 `log/README.md`。
 
 ---
 
