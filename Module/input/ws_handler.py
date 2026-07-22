@@ -49,7 +49,7 @@ async def handle_ws(
             "live2d_static_image": agent._config.live2d.static_image,
         })
     except Exception:
-        pass
+        logger.debug("Failed to send capabilities on connect", exc_info=True)
 
     # 重新广播挂起的 HITL 审批请求（前端重连后恢复审批弹窗）
     try:
@@ -182,7 +182,7 @@ async def handle_json_message(data: dict, agent, audio_buf=None, ws=None) -> Non
                             **result,
                         })
                     except Exception:
-                        pass
+                        logger.debug("Failed to send switch_model_result", exc_info=True)
                     break
         logger.info("WS 切换模型: service=%s model=%s ok=%s", service, model, result.get("ok"))
     elif msg_type == "tool_approval":
@@ -224,7 +224,7 @@ async def do_transcription(agent, ws, text: str, audio_buf=None,
             msg["events"] = events
         await ws.send_json(msg)
     except Exception:
-        pass
+        logger.debug("Failed to send transcription echo", exc_info=True)
 
     if audio_buf:
         audio_buf.deafen(2.0)
@@ -242,4 +242,4 @@ async def send_wake(ws) -> None:
     try:
         await ws.send_json({"type": "wake"})
     except Exception:
-        pass
+        logger.debug("Failed to send wake notification", exc_info=True)
