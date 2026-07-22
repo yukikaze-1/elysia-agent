@@ -1,6 +1,6 @@
 """SentenceBuffer comprehensive tests — split/punctuation/min_chunk/consecutive delimiters.
 
-Default config: delimiters=。！？.!?\n～…〜, min_chunk=5
+Default config: delimiters=。！？.!?\n, min_chunk=5
 """
 
 import pytest
@@ -74,31 +74,35 @@ class TestBasicDelimiters:
 
 
 # ============================================================================
-# Group 2: Missing delimiters (～ … 〜)
+# Group 2: Non-delimiters (～ … 〜 are NOT sentence boundaries)
 # ============================================================================
 
 class TestMissingDelimiters:
     def test_wave_dash(self):
         buf = SentenceBuffer(min_chunk_length=3)
-        assert _feed_all(buf, "好的～") == "好的～"
+        assert _feed_all(buf, "好的～") is None  # ～ is not a delimiter → held
+        assert buf.flush() == "好的～"
 
     def test_wave_dash_mid_sentence(self):
         buf = SentenceBuffer(min_chunk_length=3)
         results = _collect_all(buf, "嗯～好吧。那就这样～")
-        assert results == ["嗯～", "好吧。", "那就这样～"]
+        assert results == ["嗯～好吧。"]
+        assert buf.flush() == "那就这样～"
 
     def test_ellipsis(self):
         buf = SentenceBuffer(min_chunk_length=3)
-        assert _feed_all(buf, "我想想…") == "我想想…"
+        assert _feed_all(buf, "我想想…") is None  # … is not a delimiter → held
+        assert buf.flush() == "我想想…"
 
     def test_ellipsis_double(self):
         buf = SentenceBuffer(min_chunk_length=3)
-        assert buf.feed("这个嘛……算了。") == "这个嘛……"
-        assert buf._extract() == "算了。"
+        result = _feed_all(buf, "这个嘛……算了。")
+        assert result == "这个嘛……算了。"  # … not a delimiter → full sentence at 。
 
     def test_wave_dash_japanese(self):
         buf = SentenceBuffer(min_chunk_length=3)
-        assert _feed_all(buf, "そうですね〜") == "そうですね〜"
+        assert _feed_all(buf, "そうですね〜") is None  # 〜 is not a delimiter → held
+        assert buf.flush() == "そうですね〜"
 
     def test_chinese_dash_not_split(self):
         buf = SentenceBuffer(min_chunk_length=3)
@@ -140,7 +144,8 @@ class TestConsecutiveDelimiters:
         buf = SentenceBuffer(min_chunk_length=1)
         assert buf.feed("你好。嗯？！是啊……") == "你好。"
         assert buf._extract() == "嗯？！"
-        assert buf._extract() == "是啊……"
+        assert buf._extract() is None  # … not a delimiter → "是啊……" stays in buffer
+        assert buf.flush() == "是啊……"
 
     def test_consecutive_with_space(self):
         buf = SentenceBuffer(min_chunk_length=3)

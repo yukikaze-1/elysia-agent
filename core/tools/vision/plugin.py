@@ -87,14 +87,14 @@ class DescribeImagePlugin(ToolPlugin):
     # ------------------------------------------------------------------
     # 单图模式 — 保留原有逻辑不变
     # ------------------------------------------------------------------
-    async def _describe_single(self, ctx, images: list[dict], params: DescribeImageParams) -> ToolResult:
+    async def _describe_single(self, ctx, images: list[ImagePart], params: DescribeImageParams) -> ToolResult:
         if params.image_index >= len(images):
             return ToolResult.fail(
                 name=self.name,
                 error=f"图片序号 {params.image_index} 超出范围 (共 {len(images)} 张)",
             )
         image = images[params.image_index]
-        source = image.get("src", "")
+        source = image.src
 
         data_uri = _resolve_image_source(source)
 
@@ -149,7 +149,7 @@ class DescribeImagePlugin(ToolPlugin):
     # ------------------------------------------------------------------
     # 批量模式 — 一次 MIMO 调用处理多张图片
     # ------------------------------------------------------------------
-    async def _describe_batch(self, ctx, images: list[dict], params: DescribeImageParams) -> ToolResult:
+    async def _describe_batch(self, ctx, images: list[ImagePart], params: DescribeImageParams) -> ToolResult:
         indices = params.image_indices
 
         # 校验索引范围
@@ -164,7 +164,7 @@ class DescribeImagePlugin(ToolPlugin):
         resolved: list[tuple[int, str]] = []
         for idx in indices:
             image = images[idx]
-            source = image.get("src", "")
+            source = image.src
             data_uri = _resolve_image_source(source)
             resolved.append((idx, data_uri))
 

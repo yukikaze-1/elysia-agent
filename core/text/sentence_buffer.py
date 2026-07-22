@@ -9,7 +9,7 @@ import re
 from collections.abc import Iterable
 
 
-_HARD_DELIMITERS = frozenset("。！？!?\n～…〜")
+_HARD_DELIMITERS = frozenset("。！？!?\n")
 _DEFAULT_DELIMITERS = _HARD_DELIMITERS | {"."}
 
 # 常见英文缩写。可根据业务继续扩展。
