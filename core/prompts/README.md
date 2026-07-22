@@ -48,6 +48,10 @@ GPT 生成的原始版本归档，snake_case 命名：
 所有活跃模板使用 `str.replace()` 而非 `.format()` 或 Jinja2 渲染：
 
 ```python
+from pathlib import Path
+
+_PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"  # memory/ → core/ → prompts/
+path = _PROMPTS_DIR / "ExtractMemory.j2"
 prompt = path.read_text(encoding="utf-8")
 rendered = prompt.replace("{variable_name}", value)
 ```

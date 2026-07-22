@@ -97,7 +97,8 @@ core/
 ├── adapter/               # Adapter layer: wraps Module/ backends for core/ consumption
 │   ├── llm_adapter.py     #   LLMAdapter: tool-calling + retry + streaming + hot-switch
 │   ├── tts_adapter.py     #   TTSStreamManager: sentence queuing + emoji sync + gated playback
-│   └── tool_call_parser.py #  merge/normalize streaming tool_call deltas
+│   ├── tool_call_parser.py #  merge/normalize streaming tool_call deltas
+│   ├── message_builder.py #   MessageBuilder: system prompt + history → LLM API messages[]
 ├── text/                  # Text stream processing (package): BlockFilter + SentenceBuffer + text utils
 │   ├── block_filter.py    #   BlockFilter: streaming block tag filter + post-hoc block parsing
 │   ├── sentence_buffer.py #   SentenceBuffer: split on sentence delimiters for TTS streaming
@@ -194,12 +195,12 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **inner_voice protocol**: Every reply has one `<inner_voice>` block (1-2 sentences: current feeling + response intent, no reasoning chains).
 - **FSM**: `AgentFSM` manages state transitions: IDLE → THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE.
 
-## Prompt files (`prompt/`)
+## Prompt files (`core/prompts/`)
 
-Jinja2 模板（`.j2`），PascalCase 命名。通过 `PromptManager.render()` 或 `render_macro()` 渲染。详见 `prompt/README.md`。
+Jinja2 模板（`.j2`），PascalCase 命名。通过 `PromptManager.render()` 或 `render_macro()` 渲染。通过 `Path(__file__)` 相对路径加载，不受 cwd 影响。详见 `core/prompts/README.md`。
 
 ```
-prompt/
+core/prompts/
 ├── ExtractMemory.j2          # 对话提取记忆 (consolidator.py 加载)
 ├── ConsolidationCompare.j2   # 新记忆 vs 已有记忆比对 (consolidator.py 加载)
 ├── MemoryReflector.j2        # 定期深度去重 (memory_reflector.py 加载)
@@ -207,6 +208,8 @@ prompt/
 ├── PersonalityCompression.j2 # L3→L2 自我压缩 — LLM 编辑模式 (engine.py 加载)
 ├── ActiveSpeak.j2            # 主动搭话 prompt（活跃）
 ├── Amygdala.j2               # 情感分析 prompt（活跃）
+├── AwarenessJudge.j2         # C9 觉察判定 prompt（活跃）
+├── SpeakingStyleEdit.j2      # C6 说话风格编辑 prompt（活跃）
 ├── Utils.j2                  # 共享 Jinja2 工具宏
 ├── MacroReflector.j2         # 旧项目参考（不活跃）
 ├── MicroReflector.j2         # 旧项目参考（不活跃）
@@ -214,7 +217,7 @@ prompt/
 └── ref/                      # GPT 生成的原始版本 + 需求文档（snake_case.md）
 ```
 
-Prompt 需求文档：`prompt/ref/` 目录下的 `*-requirements.md` 和 `优化后的prompt-requirements.md`。
+Prompt 需求文档：`core/prompts/ref/` 目录下的 `*-requirements.md` 和 `优化后的prompt-requirements.md`。
 
 ## Frontend (`static/`)
 
