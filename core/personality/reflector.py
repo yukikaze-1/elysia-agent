@@ -185,6 +185,9 @@ class CharacterReflector:
         if self._pm is None:
             return
 
+        logger.info("CharacterReflector: 开始反思 (buffer=%d pairs, context=%d rounds)",
+                    len(self._buffer), len(self._context))
+
         pm = self._pm
         state = self._engine.state
 

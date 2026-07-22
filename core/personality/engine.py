@@ -206,6 +206,8 @@ class CharacterEngine:
         if not content:
             return
 
+        logger.debug("CharacterEngine: consume_trigger source=%s, content=%d chars", source, len(content))
+
         if source == "reflector":
             # Reflector 产出 → 直接设为 L3 State
             self._set_state_l3(content)
@@ -362,7 +364,7 @@ class CharacterEngine:
                 change_summary=changes,
             )
         else:
-            logger.warning("CharacterEngine: version_repo 未配置，版本历史未保存")
+            logger.info("CharacterEngine: version_repo 未配置，版本历史未保存")
 
         # 触发 C6 刷新
         await self._refresh_c6()
@@ -536,7 +538,7 @@ class CharacterEngine:
             self.state.mood = detected
             self.state.mood_intensity = min(1.0, intensity + 0.1)
             self._push_expression(detected, intensity)
-            logger.info("心情 (关键词): %s → %s", current, detected)
+            logger.debug("心情 (关键词): %s → %s", current, detected)
         else:
             self.state.mood_intensity = min(1.0, intensity + 0.05)
 

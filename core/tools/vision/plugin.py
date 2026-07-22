@@ -112,7 +112,7 @@ class DescribeImagePlugin(ToolPlugin):
             cache_key = hashlib.sha256(image_data + vision_model_id.encode()).hexdigest()
             cached = _load_cache(cache_key)
             if cached:
-                logger.info("describe_image 缓存命中: %s", cache_key[:12])
+                logger.debug("describe_image 缓存命中: %s", cache_key[:12])
                 return ToolResult.ok(name=self.name, content=cached, duration_ms=0.0)
         else:
             cache_key = None

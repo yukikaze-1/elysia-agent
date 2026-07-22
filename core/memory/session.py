@@ -172,7 +172,7 @@ class SessionMemory:
         # 尝试通过 Repository 保存到 MongoDB
         if self._repo is not None:
             try:
-                logger.info("Session save to MongoDB: session=%s, messages=%d",
+                logger.debug("Session save to MongoDB: session=%s, messages=%d",
                             self._session_id, len(self._messages))
                 await self._repo.save(
                     self._session_id,
@@ -183,7 +183,7 @@ class SessionMemory:
                                         and hasattr(self._memory_reflector, "save_state")
                                      else None),
                 )
-                logger.info("Session save to MongoDB OK: %d messages", len(self._messages))
+                logger.debug("Session save to MongoDB OK: %d messages", len(self._messages))
                 return True
             except Exception:
                 logger.warning("session MongoDB 写入失败", exc_info=True)
@@ -287,4 +287,5 @@ class SessionMemory:
             return await self._load_from_jsonl()
 
     def clear(self) -> None:
+        logger.info("SessionMemory: cleared all messages (%d)", len(self._messages))
         self._messages.clear()

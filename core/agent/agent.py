@@ -225,7 +225,7 @@ class Agent(AgentLifecycle, AgentServer):
             if len(self._pending_messages) >= max_queue:
                 logger.warning("消息队列已满 (%d) — 丢弃消息", max_queue)
                 return
-            logger.info("Agent busy — 消息排队 (state=%s, queue=%d)",
+            logger.debug("Agent busy — 消息排队 (state=%s, queue=%d)",
                        self._fsm.state, len(self._pending_messages) + 1)
             self._pending_messages.append(_PendingMessage(
                 text=text, user_name=user_name, request_id=rid,
@@ -340,7 +340,7 @@ class Agent(AgentLifecycle, AgentServer):
         stt_events = data.events
         content = data.content
         rid = data.request_id
-        logger.info("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
+        logger.debug("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
                    "websocket" if stt_emotion else "text", stt_emotion or "无")
         _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
             parent_id=rid, calls=calls,
@@ -401,7 +401,7 @@ class Agent(AgentLifecycle, AgentServer):
             set_request_id("-")
             if self._pending_messages:
                 pending = self._pending_messages.pop(0)
-                logger.info("排队消息出队 (%d 条剩余)", len(self._pending_messages))
+                logger.debug("排队消息出队 (%d 条剩余)", len(self._pending_messages))
                 self._bus.post(UserInputData(
                     text=pending.text,
                     user_name=pending.user_name,

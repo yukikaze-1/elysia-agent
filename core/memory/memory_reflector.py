@@ -115,6 +115,8 @@ class MemoryReflector:
             self._reset_counters()
             return {"ran_at": _time.time(), "merges": 0, "updates": 0, "deletes": 0}
 
+        logger.info("MemoryReflector: 开始审查 (%d entries)", len(all_entries))
+
         # 1. 聚类分组
         groups = self._cluster_entries(all_entries)
 

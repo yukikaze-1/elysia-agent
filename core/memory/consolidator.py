@@ -195,6 +195,8 @@ class MemoryConsolidator:
         conversation_text = "\n".join(turns)
         self._buffer.clear()
 
+        logger.debug("Consolidation: 开始提取 (%d turns)", len(turns))
+
         prompt = _get_extraction_prompt().format(
             conversation=conversation_text[:2000],
             character_name=self._character_name,

@@ -72,7 +72,7 @@ def _apply_mood(raw: str, engine, tts_mgr) -> None:
         intensity = 0.5
 
     if not mood_text:
-        logger.info("心情: <mood> 标签为空，跳过")
+        logger.debug("心情: <mood> 标签为空，跳过")
         return
 
     prev = engine.state.mood
@@ -583,7 +583,7 @@ class CognitiveLoop(CognitiveTools):
                 remaining = sentence_buf.flush()
                 if remaining:
                     if is_emoji_only(remaining):
-                        logger.info("flush emoji: %s", remaining)
+                        logger.debug("flush emoji: %s", remaining)
                     else:
                         all_sentences.append(remaining)
                         logger.debug("flush 尾句 (%d 字符)", len(remaining))
@@ -757,7 +757,7 @@ class CognitiveLoop(CognitiveTools):
 
                 # Fallback: LLM 未输出 <mood> → 关键词检测
                 if self._character_engine and not mood_applied:
-                    logger.info("心情: <mood> 未检测到，使用关键词 fallback")
+                    logger.debug("心情: <mood> 未检测到，使用关键词 fallback")
                     self._character_engine.analyze_user(user_message)
                     self._tts_mgr.set_emotion(self._character_engine.state.mood)
 

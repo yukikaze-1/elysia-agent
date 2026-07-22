@@ -178,9 +178,11 @@ class TTSStreamManager:
 
     def cancel_all(self) -> None:
         """取消所有进行中的 TTS 任务。"""
-        for t in self._tasks:
-            if not t.done():
-                t.cancel()
+        pending = [t for t in self._tasks if not t.done()]
+        if pending:
+            logger.debug("TTS: cancelled %d tasks", len(pending))
+        for t in pending:
+            t.cancel()
         self._tasks.clear()
 
     def set_emotion(self, emotion: str | None) -> None:

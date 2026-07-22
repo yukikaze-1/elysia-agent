@@ -146,7 +146,7 @@ async def handle_json_message(data: dict, agent, audio_buf=None, ws=None) -> Non
         enabled = data.get("enabled", False)
         if audio_buf:
             audio_buf.set_wake_enabled(enabled)
-            logger.info("唤醒词开关: %s", "开启" if enabled else "关闭")
+            logger.debug("唤醒词开关: %s", "开启" if enabled else "关闭")
     elif msg_type == "text":
         text_content = data.get("content", "")
         if isinstance(text_content, list):
@@ -229,7 +229,7 @@ async def do_transcription(agent, ws, text: str, audio_buf=None,
     if audio_buf:
         audio_buf.deafen(2.0)
     rid = agent.next_request_id()
-    logger.info("STT 识别: %s%s", text[:100], f" [{emotion}]" if emotion and emotion != "NEUTRAL" else "")
+    logger.debug("STT 识别: %s%s", text[:100], f" [{emotion}]" if emotion and emotion != "NEUTRAL" else "")
     agent._bus.post(UserInputData(
         text=text, user_name=agent._user_name,
         emotion=emotion, events=events,

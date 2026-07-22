@@ -105,6 +105,7 @@ class AgentLifecycle:
 
     async def start(self) -> None:
         """Start the agent: connect persistence, idle monitor, event loop."""
+        logger.info("Agent starting...")
         self._state = RunState.RUNNING
         self._started_at = time.monotonic()  # 启动时刻打点，用于 get_runtime_config 显示运行时长
 
@@ -240,6 +241,7 @@ class AgentLifecycle:
         # 修复：load_all 后更新工具名列表（之前在此处快照时 _plugins 为空）
         self._tool_ctx.services["_tool_names"] = list(self._tool_manager.tool_names)
         self._tool_ctx.services["_tool_count"] = len(self._tool_manager._plugins)
+        logger.info("工具: %d 个已加载", len(self._tool_manager._plugins))
         self._tool_manager.set_hitl_broadcast(self._output)
         self._scheduler.set_tool_context(self._tool_ctx)
 
@@ -304,6 +306,7 @@ class AgentLifecycle:
         _hitl = _EventBusHITLNotifier(self._bus)
         self._task_system = TaskSystem(infra=_ts_infra, hitl_notifier=_hitl)
         await self._task_system.start()
+        logger.info("TaskSystem started")
         # 注入 TaskSystem 到 ToolContext，供 get_runtime_config 查询活跃任务
         self._tool_ctx.services["_task_system"] = self._task_system
         self._delegation_preparer = DelegationPreparer()

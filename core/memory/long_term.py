@@ -187,7 +187,7 @@ class LongTermMemory:
             dim = self._embedding.dimension
             logger.info("LongTermMemory: HuggingFace embedding connected (dim=%d)", dim)
         except Exception as e:
-            logger.info("LongTermMemory: HuggingFace embedding unavailable: %s", e)
+            logger.debug("LongTermMemory: HuggingFace embedding unavailable: %s", e)
             self._embedding = None
 
     # ---- Write ----
@@ -402,6 +402,7 @@ class LongTermMemory:
         """清空所有记忆（内存 + Milvus 重建 collection）。可独立调用，无需先 connect()。"""
         async with self._write_lock:
             count = len(self._entries)
+            logger.info("LongTermMemory: clearing all %d entries", count)
             self._entries.clear()
             self._absorbed_ids.clear()
             self._dirty_ids.clear()
