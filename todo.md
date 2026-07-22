@@ -34,18 +34,12 @@
 - **多角色 prompt 模板**: `PromptAssembler` 通过 `SystemPromptManager` + 12 `PromptSection` 渲染，多角色时加载不同 `CharacterConfig` 即可切换 section 数据源
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + SenseVoice + GPT-SoVits）。数据库已完成 docker-compose.yml（MongoDB + Milvus）
-- **C3 情绪传染规则动态化** → 后续 CharacterEngine Phase 2
-- ✅ ~~C6 说话风格动态化~~ — L2→C6 LLM 编辑模式 + 版本历史，`_refresh_c6()` 在 `_compress()` 后自动触发
-- **C7 主动性动态化** → 后续 CharacterEngine Phase 2
 - **F2 代码块格式重新启用**: `f2_output_format.j2` 中 `<|code|>` 和 `<|markdown|>` 格式已注释。等需要代码/Markdown 渲染功能时取消注释即可启用
 - **CharacterEngine Phase 2**（原 PersonalityEngine Phase 2）:
   - CharacterReflector.j2 模板 ~140 行偏长，LLM 注意力可能被稀释，后续观察产出质量决定是否精简
-  - ✅ ~~AwarenessTrigger: L2/L3 语义偏差检测~~ — LLM-judge 驱动（`_judge_awareness` + `AwarenessJudge.j2`）
-  - ✅ ~~L3→L2 梯度压缩自动化~~ — LLM 编辑模式 + 版本历史（character_l2_versions 集合）。触发机制待后续改为连续增量。
-  - ✅ ~~ExpressionAdapter~~ — Mood 现在是 LLM 自由文本，expression 直接透传 mood 文本，不再需要阻尼映射
+  - C3 情绪传染规则动态化
+  - C7 主动性动态化
   - L4→L3 情绪汇聚统计（需 CharacterEngine 改接口）
-  - ✅ ~~L2 永久存储~~ — character_l2_versions 集合，append-only，不随 session TTL 过期
-  - ✅ ~~C3/C6/C7 与 CharacterEngine 动态联动（C6 部分）~~ — L2→C6 编辑模式 + 版本历史。C7 待后续。
   - 用户话题检测触发 C9（目前只看状态存在+冷却）
 
 

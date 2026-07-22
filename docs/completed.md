@@ -12,6 +12,17 @@
 
 **其他**：mood 从 debug System 面板移入 CharacterEngine 面板；`clean_db.py` 新增 `character_versions` 和 `character_l2_versions` 清理；C5 Sensory 新增输入方式标注（文字/语音），根据 stt_emotion 推导 input_source。AwarenessJudge: C9 LLM 语义判定（异步 Judge 比较 L2 vs L3，缓存 + 冷却 + 展示次数门控）
 
+**CharacterEngine Phase 2 收尾（2026-07-22）**：
+
+| 条目 | 实现 |
+|------|------|
+| C6 说话风格动态化 | L2→C6 LLM 编辑模式（`_refresh_c6()` + `SpeakingStyleEdit.j2`），`_compress()` 后自动触发，版本历史 content_type="c6" |
+| AwarenessTrigger | L2/L3 语义偏差检测 — LLM-judge 驱动（`_judge_awareness` + `AwarenessJudge.j2`），异步 fire-and-forget，缓存 + 冷却 + 展示次数三重门控 |
+| L3→L2 梯度压缩自动化 | LLM 编辑模式 + 版本历史（`character_versions` 集合），`state_history` 计数/时间双触发 |
+| ExpressionAdapter | Mood 升级为 LLM 自由文本（`<mood>` 标签），expression 直接透传 mood 文本，移除阻尼映射 |
+| L2 永久存储 | `character_versions` 集合 append-only，不随 session TTL 过期 |
+| C3/C6/C7 动态联动（C6 部分） | L2→C6 编辑模式 + 版本历史。C7 待后续 |
+
 ### 2026-07-14: 分句系统优化
 
 全面重写 `SentenceBuffer` 和 `BlockFilter`，修复 2 个正确性 bug + 1 个安全 bug + 工程改进。
