@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class MessageBuilder:
     """纯 prompt 组装 — 接收 system prompt + history → 输出 messages[]。
 
-    无状态，不依赖 core/ 的任何组件。
+    无状态，依赖 core.schema 类型（Message, Part, ToolCall, adapters）。
     """
 
     def build_messages(

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from Module.system_prompt.message_builder import MessageBuilder
+from core.adapter.message_builder import MessageBuilder
 from Module.system_prompt.system_prompt_manager import SystemPromptManager
 from Module.system_prompt.sections.conflict_rules import ConflictRulesSection
 from Module.system_prompt.sections.output_format import OutputFormatSection
