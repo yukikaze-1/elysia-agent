@@ -143,14 +143,7 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 7: Delete old source + test files**
-
-```bash
-rm Module/system_prompt/message_builder.py
-rm Module/system_prompt/tests/integration/test_message_builder.py
-```
-
-- [ ] **Step 8: Run tests to verify**
+- [ ] **Step 7: Run tests to verify**
 
 ```bash
 # 新位置的测试
@@ -168,7 +161,7 @@ python -W all -c "from Module.system_prompt import MessageBuilder; print('OK')"
 
 Expected: all pass. DeprecationWarning emitted on last command.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 8: Commit（git rm 兼做删除 + stage）**
 
 ```bash
 git add core/adapter/message_builder.py \
@@ -596,20 +589,14 @@ python -m pytest core/ -v --tb=short
 
 Expected: all pass.
 
-- [ ] **Step 3: Clean up old `prompt/` directory**
-
-```bash
-rm -rf prompt/
-```
-
-The old `prompt/` directory at project root is now empty (all files moved).
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Clean up old `prompt/` directory + commit**
 
 ```bash
 git rm -r prompt/
 git commit -m "chore: remove old prompt/ directory (moved to core/prompts/)"
 ```
+
+The old `prompt/` directory at project root is now empty (all files moved). `git rm -r` handles both deletion and staging.
 
 ---
 
