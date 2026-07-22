@@ -192,7 +192,7 @@ git commit -m "refactor: move MessageBuilder to core/adapter/
 ### Task 2: `prompt/` 搬入 `core/prompts/`
 
 **Files:**
-- Move: `prompt/*.j2` → `core/prompts/*.j2`（11 个 .j2）
+- Move: `prompt/*.j2` → `core/prompts/*.j2`（12 个 .j2）
 - Move: `prompt/ref/*` → `core/prompts/ref/*`
 - Move: `prompt/README.md` → `core/prompts/README.md`
 - Modify: `core/memory/consolidator.py:32,58`
@@ -361,9 +361,10 @@ Update any path loading examples from `Path("prompt/...")` to `Path(__file__).pa
 - [ ] **Step 9: Run tests to verify**
 
 ```bash
-# 验证路径不受 cwd 影响
-cd /tmp && python -c "from core.memory.consolidator import _get_extraction_prompt; print('OK')"
-cd /tmp && python -c "from core.memory.memory_reflector import _get_reflector_prompt; print('OK')"
+# 验证路径不受 cwd 影响（项目无 editable install，需 PYTHONPATH）
+PROJ=/home/yomu/Agent
+cd /tmp && PYTHONPATH=$PROJ python -c "from core.memory.consolidator import _get_extraction_prompt; print('OK')"
+cd /tmp && PYTHONPATH=$PROJ python -c "from core.memory.memory_reflector import _get_reflector_prompt; print('OK')"
 
 # 全量 memory tests
 python -m pytest core/memory/tests/ -v
