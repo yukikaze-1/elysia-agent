@@ -4,7 +4,7 @@
 **审查范围**: 整个项目（排除 `/data`、`docs/superpowers`、`docs/plan`、`docs/spec`）  
 **审查方法**: 9 个并行审查 agent 覆盖全代码库（~1.4M 行），按严重度排序  
 
-**已修复**: #2 (consolidator.py format→replace) + #14 (ws_handler except:pass→debug) — 2026-07-22
+**已修复**: #2 (consolidator.py format→replace) + #14 (ws_handler except:pass→debug) + #15-#18 — 2026-07-22
 
 ---
 
@@ -177,7 +177,7 @@ logger.info("WS 收到文本: %s", text_content.strip()[:100])
 
 ---
 
-### 15. `module/openai_compat.py:178-189` — 流式路径静默丢弃 Token 使用统计
+### 15. ✅ `module/openai_compat.py:178-189` — 流式路径静默丢弃 Token 使用统计
 
 [Module/llm/openai_compat.py](Module/llm/openai_compat.py#L178)
 
@@ -187,7 +187,7 @@ logger.info("WS 收到文本: %s", text_content.strip()[:100])
 
 ---
 
-### 16. `module/registry_helpers.py:36` — Beta URL 使用了错误的配置键
+### 16. ✅ `module/registry_helpers.py:36` — Beta URL 使用了错误的配置键
 
 [Module/_common/registry_helpers.py](Module/_common/registry_helpers.py#L36)
 
@@ -197,7 +197,7 @@ logger.info("WS 收到文本: %s", text_content.strip()[:100])
 
 ---
 
-### 17. `embedding/registry.py:23-59` — Factory 在 close() 后返回已关闭实例
+### 17. ✅ `embedding/registry.py:23-59` — Factory 在 close() 后返回已关闭实例
 
 [Module/embedding/registry.py](Module/embedding/registry.py#L23)
 
@@ -207,7 +207,7 @@ logger.info("WS 收到文本: %s", text_content.strip()[:100])
 
 ---
 
-### 18. `system_prompt/sections/memory.py:20-28` — 长期记忆搜索静默吞连接失败
+### 18. ✅ `system_prompt/sections/memory.py:20-28` — 长期记忆搜索静默吞连接失败
 
 [Module/system_prompt/sections/memory.py](Module/system_prompt/sections/memory.py#L20)
 
