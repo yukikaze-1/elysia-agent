@@ -23,7 +23,7 @@
 - **记忆统计**: 按类型/年龄/poignancy 分布统计，接入 DebugInfo 仪表板
 - **Claude 原生持久记忆**: `.claude/projects/-home-yomu-Agent/memory/` 目录为空，从未启用
 - **MacroMemory + MacroReflector**: 每日合成日记条目。需新增 Milvus 集合 + MacroReflector 后台任务
-- **CharacterEngine mood 升级**（原 EmotionEngine 升级）: ✅ LLM `<mood>` 标签驱动完成。生理状态模型、时间衰减曲线、混合情绪、Amygdala LLM 补充待后续 Phase。
+- **CharacterEngine mood 升级**（原 EmotionEngine 升级）: LLM `<mood>` 标签驱动已实现。生理状态模型、时间衰减曲线、混合情绪、Amygdala LLM 补充等后续 Phase 待做。
 - 唤醒词检测（openWakeWord）— 已完成实现，待办：
   - 测试唤醒词开关：启动服务端，打开前端设置面板，点击开关确认 ON/OFF 切换正常
   - 训练自定义唤醒词模型 (.onnx)：录制每个唤醒词 100-500 样本 → 用 openWakeWord Colab 训练 → 将 .onnx 文件导入 `model_paths`
@@ -35,11 +35,9 @@
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + SenseVoice + GPT-SoVits）。数据库已完成 docker-compose.yml（MongoDB + Milvus）
 - **C3 情绪传染规则动态化** → 后续 CharacterEngine Phase 2
-- **C6 说话风格动态化** → 后续 CharacterEngine Phase 2
+- ✅ ~~C6 说话风格动态化~~ — L2→C6 LLM 编辑模式 + 版本历史，`_refresh_c6()` 在 `_compress()` 后自动触发
 - **C7 主动性动态化** → 后续 CharacterEngine Phase 2
 - **F2 代码块格式重新启用**: `f2_output_format.j2` 中 `<|code|>` 和 `<|markdown|>` 格式已注释。等需要代码/Markdown 渲染功能时取消注释即可启用
-- ✅ ~~C5 输入来源标注~~ — SensorySection.render() 根据 stt_emotion 推导 input_source（语音/文字），c5_sensory.j2 模板 `<facts>` 中显示
-- ✅ ~~CharacterEngine mood 转换逻辑~~ — LLM 自由文本 mood 已解决：LLM 每轮通过 `<mood>` 自行描述心情变化，不再有僵硬的二值切换。
 - **CharacterEngine Phase 2**（原 PersonalityEngine Phase 2）:
   - CharacterReflector.j2 模板 ~140 行偏长，LLM 注意力可能被稀释，后续观察产出质量决定是否精简
   - ✅ ~~AwarenessTrigger: L2/L3 语义偏差检测~~ — LLM-judge 驱动（`_judge_awareness` + `AwarenessJudge.j2`）
@@ -55,7 +53,6 @@
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| ✅ | `Module/schema/` 479行预留设计 | 已删除（无代码引用，core/schema 为唯一类型系统） |
 | 中 | `database/graphdb/` 不完整 | 只有 protocol.py，保留参考 |
 | 中 | `OutputManager.stream()` 未使用 | `manager.py:63-88`，保留参考 |
 | 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行，保留参考 |
