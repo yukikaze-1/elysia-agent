@@ -1,6 +1,9 @@
 """C4: 记忆。"""
+import logging
 import time
 from Module.system_prompt.protocol import Jinja2Section
+
+logger = logging.getLogger(__name__)
 
 
 class MemorySection(Jinja2Section):
@@ -23,6 +26,7 @@ class MemorySection(Jinja2Section):
         try:
             results = await self._long_term.search(query_text=self._user_message, top_k=5)
         except Exception:
+            logger.warning("C4 Memory: LTM 搜索失败，跳过记忆注入", exc_info=True)
             return ""
         if not results:
             return ""

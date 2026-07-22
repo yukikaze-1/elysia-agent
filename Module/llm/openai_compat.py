@@ -176,10 +176,12 @@ class OpenAICompatBackend(LLMBackend):
         extra_body_final = extra_body if extra_body else None
 
         if stream:
+            stream_opts = {"include_usage": True}
             response = await client.chat.completions.create(
                 model=self._model,
                 messages=cleaned,  # type: ignore[arg-type]
                 stream=True,
+                stream_options=stream_opts,
                 extra_body=extra_body_final,
                 **kwargs,
             )
@@ -187,6 +189,13 @@ class OpenAICompatBackend(LLMBackend):
                 delta = chunk.choices[0].delta
                 if delta and delta.content:
                     yield delta.content
+                # 流式最后一个 chunk 携带 usage 统计（需 stream_options.include_usage）
+                if getattr(chunk, "usage", None):
+                    self.last_usage = {
+                        "prompt_tokens": chunk.usage.prompt_tokens or 0,
+                        "completion_tokens": chunk.usage.completion_tokens or 0,
+                        "total_tokens": chunk.usage.total_tokens or 0,
+                    }
         else:
             response = await client.chat.completions.create(
                 model=self._model,

@@ -22,18 +22,20 @@ def resolve_base_url(
     env_key: str,
     provider_cfg: dict,
     explicit_url: str | None = None,
+    config_key: str = "base_url",
 ) -> str:
     """解析 base URL：explicit > env var > provider 默认值。
 
     注意：explicit_url 用 is not None 检查（而非 truthiness），
     以区分"未传入"和"显式传入空字符串"。
+    config_key 指定 provider_cfg 中的回退键名（默认 "base_url"，beta url 用 "beta_url"）。
     """
     if explicit_url is not None:
         return explicit_url
     env_val = os.getenv(env_key)
     if env_val is not None:
         return env_val
-    return provider_cfg.get("base_url", "")
+    return provider_cfg.get(config_key, "")
 
 
 def inject_logger(

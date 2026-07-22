@@ -27,7 +27,11 @@ class EmbeddingFactory:
         # 缓存 key 包含 kwargs，避免不同参数返回同一实例
         cache_key = model_id + "|" + json.dumps(kwargs, sort_keys=True, default=str)
         if cache_key in cls._instances:
-            return cls._instances[cache_key]
+            cached = cls._instances[cache_key]
+            if not getattr(cached, "_closed", False):
+                return cached
+            # 实例已被外部 close()，从缓存中移除并重新创建
+            del cls._instances[cache_key]
         if "/" not in model_id:
             raise ValueError(
                 f"Invalid model_id '{model_id}': expected 'provider/model-name' format"

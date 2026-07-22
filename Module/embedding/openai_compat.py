@@ -54,3 +54,4 @@ class OpenAICompatEmbeddingBackend(EmbeddingBackend):
 
     async def close(self) -> None:
         await self._client.close()
+        self._closed = True

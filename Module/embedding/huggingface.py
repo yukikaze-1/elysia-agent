@@ -132,3 +132,4 @@ class HuggingFaceBackend(EmbeddingBackend):
                 self._embeddings = None
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+        self._closed = True
