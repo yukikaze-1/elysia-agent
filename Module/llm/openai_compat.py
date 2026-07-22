@@ -229,12 +229,12 @@ class OpenAICompatBackend(LLMBackend):
         try:
             await self._client.close()
         except Exception:
-            pass
+            self._logger.warning("reconnect: 关闭旧 HTTP client 失败", exc_info=True)
         if self._beta_client:
             try:
                 await self._beta_client.close()
             except Exception:
-                pass
+                self._logger.warning("reconnect: 关闭旧 beta HTTP client 失败", exc_info=True)
         self._create_clients()
 
     def _create_clients(self) -> None:

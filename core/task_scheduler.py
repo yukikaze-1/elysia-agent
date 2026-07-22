@@ -391,6 +391,10 @@ class TaskScheduler:
             os.replace(tmp, self._checkpoint_path)
         except Exception:
             logger.warning("Checkpoint 保存失败", exc_info=True)
+            try:
+                Path(tmp).unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def _restore_checkpoint(self) -> None:
         if not self._checkpoint_path:
