@@ -122,6 +122,36 @@ def setup(verbose: bool = False) -> None:
         # Keep propagate=True so child loggers' messages flow up through these
         # handlers. Child loggers (core.cognitive_loop etc.) have no own handlers.
 
+    # ---- Database operation log → mongo.log (app-level, not library) ----
+    _mongo_handler = logging.handlers.RotatingFileHandler(
+        LOG_DIR / "mongo.log", encoding="utf-8", maxBytes=10 * 1024 * 1024, backupCount=3
+    )
+    _mongo_handler.setLevel(logging.DEBUG)
+    _mongo_handler.setFormatter(logging.Formatter(
+        "%(asctime)s.%(msecs)03d [%(levelname).1s] %(name)s: [%(request_id)s] %(message)s",
+        datefmt="%H:%M:%S",
+    ))
+    _mongo_handler.addFilter(req_filter)
+    for name in ("core.storage.session_repo", "core.storage.message_repo",
+                 "core.storage.token_repo", "core.storage.character_version_repo",
+                 "core.memory.session", "core.token_tracker"):
+        db_logger = logging.getLogger(name)
+        db_logger.addHandler(_mongo_handler)
+
+    # ---- Vector DB operation log → milvus.log (app-level) ----
+    _milvus_handler = logging.handlers.RotatingFileHandler(
+        LOG_DIR / "milvus.log", encoding="utf-8", maxBytes=10 * 1024 * 1024, backupCount=3
+    )
+    _milvus_handler.setLevel(logging.DEBUG)
+    _milvus_handler.setFormatter(logging.Formatter(
+        "%(asctime)s.%(msecs)03d [%(levelname).1s] %(name)s: [%(request_id)s] %(message)s",
+        datefmt="%H:%M:%S",
+    ))
+    _milvus_handler.addFilter(req_filter)
+    for name in ("core.memory.long_term", "core.storage.memory_repo"):
+        milvus_logger = logging.getLogger(name)
+        milvus_logger.addHandler(_milvus_handler)
+
     # Torch warnings → file
     _file_logger("torch", "torch.log", logging.WARNING)
 
