@@ -4,7 +4,7 @@
 **审查范围**: 整个项目（排除 `/data`、`docs/superpowers`、`docs/plan`、`docs/spec`）  
 **审查方法**: 9 个并行审查 agent 覆盖全代码库（~1.4M 行），按严重度排序  
 
-**已修复**: #2 + #14-#21 — 2026-07-22
+**已修复**: #2 + #14-#22 + #24 — 2026-07-22 | **跳过**: #23（并发度低，非实质问题）
 
 ---
 
@@ -263,7 +263,7 @@ setTimeout(() => { btn.classList.remove('sent'); btn.disabled = false; }, SEND_C
 
 ## 五、资源泄漏
 
-### 22. `task_scheduler.py:387-390` — Checkpoint 临时文件跨文件系统泄漏
+### 22. ✅ `task_scheduler.py:387-390` — Checkpoint 临时文件跨文件系统泄漏
 
 [core/task_scheduler.py](core/task_scheduler.py#L387)
 
@@ -273,7 +273,7 @@ setTimeout(() => { btn.classList.remove('sent'); btn.disabled = false; }, SEND_C
 
 ---
 
-### 23. `session.py:87-90` — Fire-and-forget MongoDB 写入无限并发
+### 23. ⏭️ `session.py:87-90` — Fire-and-forget MongoDB 写入无限并发
 
 [core/memory/session.py](core/memory/session.py#L87)
 
@@ -288,7 +288,7 @@ task.add_done_callback(_archive_done)
 
 ---
 
-### 24. `llm/openai_compat.py:222-228` — LLM 重连时 HTTP 客户端关闭失败静默吞
+### 24. ✅ `llm/openai_compat.py:222-228` — LLM 重连时 HTTP 客户端关闭失败静默吞
 
 [Module/llm/openai_compat.py](Module/llm/openai_compat.py#L222)
 
