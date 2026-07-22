@@ -300,3 +300,242 @@ class TestC6Refresh:
         data = engine.render_c6()
 
         assert data.speaking_style_c6 == ""
+
+
+@pytest.mark.unit
+class TestAwarenessJudge:
+    """AwarenessJudge — LLM 语义判定测试。"""
+
+    @staticmethod
+    def _make_state(**kwargs):
+        """创建测试用 CharacterState。"""
+        s = CharacterState(session_id=SessionId("test-sid"))
+        for k, v in kwargs.items():
+            setattr(s, k, v)
+        return s
+
+    # ---- _judge_awareness ----
+
+    def test_judge_approves_meaningful_deviation(self):
+        """LLM 返回 <approved> 时更新缓存。"""
+        s = self._make_state(
+            self_l2="我比较直接，不太会撒娇。",
+            state_l3="最近我发现自己更愿意示弱了。",
+        )
+        engine = _make_engine(state=s)
+        engine._pm = MagicMock()
+        engine._pm.render.return_value = "rendered prompt"
+        engine._llm.think = AsyncMock(return_value=ThoughtResult(
+            text="<approved>我变得更愿意在妖梦面前示弱了。</approved>"
+        ))
+
+        asyncio.run(engine._judge_awareness(s.state_l3))
+
+        assert s.approved_awareness_text == "我变得更愿意在妖梦面前示弱了。"
+        assert s.approved_awareness_at is not None
+        assert s.awareness_show_count == 0
+
+    def test_judge_skip_preserves_cache(self):
+        """LLM 返回 <skip> 时保留旧缓存。"""
+        s = self._make_state(
+            self_l2="我比较直接。",
+            state_l3="没什么变化。",
+            approved_awareness_text="旧的觉察文本",
+            approved_awareness_at=time.time(),
+        )
+        engine = _make_engine(state=s)
+        engine._pm = MagicMock()
+        engine._pm.render.return_value = "rendered prompt"
+        engine._llm.think = AsyncMock(return_value=ThoughtResult(
+            text="<skip>没有新的变化</skip>"
+        ))
+
+        asyncio.run(engine._judge_awareness(s.state_l3))
+
+        assert s.approved_awareness_text == "旧的觉察文本"
+
+    def test_judge_no_l2_self_fallback(self):
+        """L2 为空时降级：L3 原文直接缓存，不调 LLM。"""
+        s = self._make_state(
+            self_l2="",
+            state_l3="最近感觉自己变得更温柔了。",
+        )
+        engine = _make_engine(state=s)
+        engine._pm = MagicMock()
+
+        asyncio.run(engine._judge_awareness(s.state_l3))
+
+        assert s.approved_awareness_text == "最近感觉自己变得更温柔了。"
+        assert s.approved_awareness_at is not None
+        engine._llm.think.assert_not_called()
+
+    def test_judge_llm_failure_preserves_cache(self):
+        """LLM 调用异常时保留旧缓存。"""
+        s = self._make_state(
+            self_l2="我比较直接。",
+            state_l3="新的反思",
+            approved_awareness_text="旧文本",
+            approved_awareness_at=time.time(),
+        )
+        engine = _make_engine(state=s)
+        engine._pm = MagicMock()
+        engine._pm.render.return_value = "rendered prompt"
+        engine._llm.think = AsyncMock(side_effect=RuntimeError("API down"))
+
+        asyncio.run(engine._judge_awareness(s.state_l3))
+
+        assert s.approved_awareness_text == "旧文本"
+
+    def test_judge_template_render_failure_no_crash(self):
+        """模板渲染失败时不抛异常。"""
+        s = self._make_state(
+            self_l2="我比较直接。",
+            state_l3="新的反思",
+        )
+        engine = _make_engine(state=s)
+        engine._pm = MagicMock()
+        engine._pm.render.side_effect = RuntimeError("模板错误")
+
+        # 不应抛异常
+        asyncio.run(engine._judge_awareness(s.state_l3))
+
+    def test_judge_no_pm_returns_early(self):
+        """_pm 为 None 时提前返回。"""
+        s = self._make_state(
+            self_l2="我比较直接。",
+            state_l3="新的反思",
+        )
+        engine = _make_engine(state=s)
+        engine._pm = None
+        engine._llm.think = AsyncMock()
+
+        asyncio.run(engine._judge_awareness(s.state_l3))
+
+        engine._llm.think.assert_not_called()
+
+    def test_judge_overwrites_old_cache_on_approve(self):
+        """新 <approved> 替换旧缓存。"""
+        s = self._make_state(
+            self_l2="测试。",
+            state_l3="新反思。",
+            approved_awareness_text="旧觉察",
+            approved_awareness_at=time.time() - 1000,
+            awareness_show_count=2,
+        )
+        engine = _make_engine(state=s)
+        engine._pm = MagicMock()
+        engine._pm.render.return_value = "rendered prompt"
+        engine._llm.think = AsyncMock(return_value=ThoughtResult(
+            text="<approved>新觉察文本</approved>"
+        ))
+
+        asyncio.run(engine._judge_awareness(s.state_l3))
+
+        assert s.approved_awareness_text == "新觉察文本"
+        assert s.awareness_show_count == 0
+
+    # ---- _maybe_judge_awareness ----
+
+    def test_maybe_judge_empty_l3_skips(self):
+        """L3 snapshot 为空时跳过。"""
+        s = self._make_state(state_l3="")
+        engine = _make_engine(state=s)
+        # _schedule 不应该被调用
+        engine._schedule = MagicMock()
+
+        engine._maybe_judge_awareness()
+
+        engine._schedule.assert_not_called()
+
+    # ---- _awareness_allowed ----
+
+    def test_allowed_empty_cache(self):
+        """缓存为空时不允许。"""
+        s = self._make_state(approved_awareness_text="")
+        engine = _make_engine(state=s)
+        assert not engine._awareness_allowed()
+
+    def test_allowed_show_count_exceeded(self):
+        """展示次数达到上限时不允许。"""
+        s = self._make_state(
+            approved_awareness_text="有内容",
+            awareness_show_count=3,
+        )
+        engine = _make_engine(state=s)
+        assert not engine._awareness_allowed()
+
+    def test_allowed_cooldown_not_met(self):
+        """冷却未到时不允许。"""
+        s = self._make_state(
+            approved_awareness_text="有内容",
+            awareness_show_count=0,
+        )
+        engine = _make_engine(state=s)
+        engine._last_awareness_time = time.time()  # 刚刚展示过
+        assert not engine._awareness_allowed()
+
+    def test_allowed_first_call_no_cooldown(self):
+        """首次调用不受冷却限制。"""
+        s = self._make_state(
+            approved_awareness_text="有内容",
+            awareness_show_count=0,
+        )
+        engine = _make_engine(state=s)
+        # _last_awareness_time == 0.0（默认），首次调用
+        engine._last_awareness_time = 0.0
+        assert engine._awareness_allowed()
+
+    def test_allowed_cooldown_passed(self):
+        """冷却过后允许。"""
+        s = self._make_state(
+            approved_awareness_text="有内容",
+            awareness_show_count=0,
+        )
+        engine = _make_engine(state=s)
+        engine._last_awareness_time = time.time() - 301  # 5 分钟前
+        assert engine._awareness_allowed()
+
+    # ---- render_c9 ----
+
+    def test_render_c9_returns_approved_text(self):
+        """缓存有效时返回批准文本。"""
+        s = self._make_state(
+            approved_awareness_text="我变得更温柔了",
+            awareness_show_count=0,
+        )
+        engine = _make_engine(state=s)
+        engine._last_awareness_time = time.time() - 301
+
+        result = engine.render_c9()
+
+        assert result.awareness_text == "我变得更温柔了"
+        assert s.awareness_show_count == 1
+        assert s.last_awareness_time is not None
+
+    def test_render_c9_empty_when_no_cache(self):
+        """无缓存时返回空。"""
+        s = self._make_state(approved_awareness_text="")
+        engine = _make_engine(state=s)
+        result = engine.render_c9()
+        assert result.awareness_text == ""
+
+    def test_render_c9_show_count_stops(self):
+        """展示满 3 次后返回空。"""
+        s = self._make_state(
+            approved_awareness_text="有内容",
+            awareness_show_count=3,
+        )
+        engine = _make_engine(state=s)
+        result = engine.render_c9()
+        assert result.awareness_text == ""
+
+    def test_render_c9_cooldown_blocks(self):
+        """冷却期内返回空。"""
+        s = self._make_state(
+            approved_awareness_text="有内容",
+            awareness_show_count=0,
+        )
+        engine = _make_engine(state=s)
+        engine._last_awareness_time = time.time()  # 刚刚展示
+        result = engine.render_c9()
+        assert result.awareness_text == ""
