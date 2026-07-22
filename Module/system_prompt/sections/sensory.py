@@ -6,7 +6,7 @@ from Module.system_prompt.protocol import Jinja2Section
 class SensorySection(Jinja2Section):
     name = "Sensory"
     version = "1.2.0"
-    description = "此刻感知：环境事实 + 语音情绪（用户消息由消息列表传递）"
+    description = "此刻感知：环境事实 + 输入来源 + 语音情绪（用户消息由消息列表传递）"
 
     def __init__(self, template_path: str):
         super().__init__(template_path)
@@ -19,11 +19,14 @@ class SensorySection(Jinja2Section):
 
     async def render(self) -> str:
         now = datetime.now()
+        # 推导输入来源：STT emotion 非空 → 语音，空 → 文字
+        input_source = "语音" if self._stt_emotion else "文字"
         sensory_ctx = {
             "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
             "time_of_day": self._time_of_day(now.hour),
             "day_of_week": self._day_name(now.weekday()),
             "season": self._season(now.month),
+            "input_source": input_source,
             "voice": self._build_voice(),
         }
         return self._render_template(sensory_ctx=sensory_ctx)

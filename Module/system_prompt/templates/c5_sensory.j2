@@ -1,17 +1,16 @@
 {#
 @section Sensory
-@version 1.1.0
-@updated 2026-07-11
-@description 感官输入：环境事实 + 语音情绪（用户消息由消息列表传递）
+@version 1.2.0
+@updated 2026-07-22
+@description 感官输入：环境事实 + 输入来源 + 语音情绪（用户消息由消息列表传递）
 @params sensory_ctx: {
-    current_time: str          # 当前时间 "2026-07-11 14:30:00"
+    current_time: str          # 当前时间 "2026-07-22 14:30:00"
     time_of_day: str           # 时段: 早晨/中午/下午/傍晚/夜晚
     day_of_week: str           # 星期: 周一~周日
     season: str                # 季节: 春/夏/秋/冬
-    message: str               # 用户消息（已转义） e.g. "妖梦说：今天好热"
+    input_source: str          # 输入方式: "文字" / "语音"
     voice: str                 # 语音特征（可能为空） e.g. "语调: HAPPY 😊 | 事件: Laughter 😂"
 }
-@note 用户输入已通过 html.escape 转义，防止 XML 注入
 #}
 <sensory_input>
 <facts>
@@ -19,6 +18,7 @@
 时段: {{ sensory_ctx.time_of_day }}
 星期: {{ sensory_ctx.day_of_week }}
 季节: {{ sensory_ctx.season }}
+输入方式: {{ sensory_ctx.input_source }}
 </facts>
 <voice>
 {{ sensory_ctx.voice if sensory_ctx.voice else "（无语音数据）" }}
