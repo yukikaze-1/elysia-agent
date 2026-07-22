@@ -1,10 +1,8 @@
-"""Logging setup — routes noisy library logs to files, keeps terminal clean.
+"""Logging setup — double-file output, clean terminal.
 
-Noisy libraries (pymongo, pymilvus, httpx, openai, etc.) write to log/*.log.
-Core application logs go to stderr at INFO (or DEBUG with --verbose).
-Terminal stdout is reserved for conversation output only.
-
-Warning suppression happens in demo.py before imports.
+Noisy libraries write to log/*.log (mongo.log, milvus.log, http.log, etc.).
+Core app: stderr (INFO, or DEBUG with --verbose) + app.log (INFO+) + app-debug.log (DEBUG).
+Stdout reserved for conversation output only.
 """
 
 import contextvars
@@ -79,8 +77,9 @@ def setup(verbose: bool = False) -> None:
     _file_logger("huggingface_hub", "embedding.log", logging.WARNING)
     _file_logger("core.memory.long_term", "embedding.log", logging.DEBUG)
 
-    # ---- Application loggers → stderr (INFO by default, DEBUG if --verbose) ----
+    # ---- Application loggers → stderr + app.log (INFO) + app-debug.log (DEBUG) ----
 
+    # Logger 级别设为 DEBUG，让所有消息都能产生。各 handler 独立控制输出阈值。
     app_level = logging.DEBUG if verbose else logging.INFO
     stderr_handler = logging.StreamHandler(sys.stderr)
     stderr_handler.setLevel(app_level)
@@ -91,23 +90,35 @@ def setup(verbose: bool = False) -> None:
     req_filter = _RequestIdFilter()
     stderr_handler.addFilter(req_filter)
 
-    # ---- Application log → file (persistent) ----
+    # ---- Application log → file (persistent, INFO+) ----
     app_file_handler = logging.handlers.RotatingFileHandler(
         LOG_DIR / "app.log", encoding="utf-8", maxBytes=10 * 1024 * 1024, backupCount=3
     )
-    app_file_handler.setLevel(app_level)
+    app_file_handler.setLevel(logging.INFO)
     app_file_handler.setFormatter(logging.Formatter(
         "%(asctime)s.%(msecs)03d [%(levelname).1s] %(name)s: [%(request_id)s] %(message)s",
         datefmt="%H:%M:%S",
     ))
     app_file_handler.addFilter(req_filter)
 
+    # ---- Debug log → file (always DEBUG, dev-only) ----
+    debug_file_handler = logging.handlers.RotatingFileHandler(
+        LOG_DIR / "app-debug.log", encoding="utf-8", maxBytes=20 * 1024 * 1024, backupCount=5
+    )
+    debug_file_handler.setLevel(logging.DEBUG)
+    debug_file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s.%(msecs)03d [%(levelname).1s] %(name)s: [%(request_id)s] %(message)s",
+        datefmt="%H:%M:%S",
+    ))
+    debug_file_handler.addFilter(req_filter)
+
     for name in ("core", "Module", "asyncio"):
         logger = logging.getLogger(name)
-        logger.setLevel(app_level)
+        logger.setLevel(logging.DEBUG)  # allow all messages; handlers filter by level
         logger.handlers.clear()
         logger.addHandler(stderr_handler)
         logger.addHandler(app_file_handler)
+        logger.addHandler(debug_file_handler)
         # Keep propagate=True so child loggers' messages flow up through these
         # handlers. Child loggers (core.cognitive_loop etc.) have no own handlers.
 
