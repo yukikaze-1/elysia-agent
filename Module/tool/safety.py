@@ -164,7 +164,7 @@ def _resolve_sandbox_path(
 
     if is_write:
         write_dir = Path(
-            profile.write_dir.replace("{session_id}", session_id)
+            profile.write_dir.replace("{session_id}", safe_sid)
         ).resolve()
         if not str(resolved).startswith(str(write_dir)):
             return resolved, f"写入路径必须在 '{write_dir}' 下"
