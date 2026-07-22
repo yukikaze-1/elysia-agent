@@ -75,15 +75,12 @@ class TestCharacterEngineC9:
         assert engine.render_c9().awareness_text == ""
 
     def test_c9_returns_state_when_triggered(self):
-        """L3 State 存在且触发条件满足时 C9 返回内容。"""
+        """approved_awareness_text 存在且触发条件满足时 C9 返回内容。"""
         s = CharacterState(session_id=SessionId("test-sid"))
-        s.state_l3 = "最近比较敷衍"
-        s.state_history = [{"timestamp": 0, "content": ""}]
+        s.approved_awareness_text = "最近比较敷衍"
         engine = _make_engine(state=s)
-        # 手动触发一个事件以确保 awareness 激活
-        asyncio.run(engine.consume_trigger("test", {"content": "测试触发"}))
         result = engine.render_c9()
-        assert result.awareness_text
+        assert result.awareness_text == "最近比较敷衍"
 
 
 @pytest.mark.unit
