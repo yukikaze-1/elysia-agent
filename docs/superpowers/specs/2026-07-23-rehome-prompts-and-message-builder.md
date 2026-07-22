@@ -37,8 +37,8 @@
 | `Module/system_prompt/__init__.py` | 删除 `MessageBuilder` 的 export。改为从新位置 re-export（`from core.adapter.message_builder import MessageBuilder`），加 `DeprecationWarning`，标注"将在后续版本移除"。保留 2 个版本作为过渡。 |
 | `core/prompt_assembler.py:11` | `from Module.system_prompt.message_builder` → `from core.adapter.message_builder` |
 | `core/adapter/message_builder.py` | 文件内容不变，仅移动位置。docstring 中"不依赖 core/ 的任何组件"改为"依赖 core.schema 类型" |
-| `core/adapter/tests/test_message_builder.py` | 测试代码不变，仅更新 import 路径和 pytest marker（加 `unit`） |
-| `core/adapter/__init__.py` | 无需修改（当前无 `__init__.py`，不做 aggregation export） |
+| `core/adapter/tests/test_message_builder.py` | 测试代码不变，仅更新 import 路径。pytest marker 保持 `integration` |
+| `core/adapter/__init__.py` | 新增 `from .message_builder import MessageBuilder`，加入 `__all__` |
 
 ### 2. `prompt/` 搬迁到 `core/prompts/`
 
@@ -54,10 +54,10 @@
 | `core/memory/consolidator.py:32` | `Path("prompt/ExtractMemory.j2")` | `_prompts_dir() / "ExtractMemory.j2"` |
 | `core/memory/consolidator.py:58` | `Path("prompt/ConsolidationCompare.j2")` | `_prompts_dir() / "ConsolidationCompare.j2"` |
 | `core/memory/memory_reflector.py:31` | `Path("prompt/MemoryReflector.j2")` | `_prompts_dir() / "MemoryReflector.j2"` |
-| `core/personality/engine.py:136` | `prompt_dir: str = "prompt"` | `prompt_dir: str | None = None`，`None` 时自动解析为 `Path(__file__).parent / "prompts"` |
+| `core/personality/engine.py:136` | `prompt_dir: str = "prompt"` | `prompt_dir: str | None = None`，`None` 时自动解析为 `Path(__file__).resolve().parent.parent / "prompts"`（`personality/` → `core/` → `prompts/`） |
 | `core/personality/reflector.py:42` | `prompt_dir: str = "prompt"` | 同上 |
-| `core/personality/tests/test_engine.py:33` | `PromptManager("prompt")` | `PromptManager(str(_PROMPTS_DIR))`（用绝对路径） |
-| `core/personality/tests/test_reflector.py:42` | `prompt_dir="prompt"` | `prompt_dir=str(_PROMPTS_DIR)`（用绝对路径） |
+| `core/personality/tests/test_engine.py:33` | `PromptManager("prompt")` | `PromptManager(str(_PROMPTS_DIR))` — `_PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"`（`tests/` → `personality/` → `core/` → `prompts/`） |
+| `core/personality/tests/test_reflector.py:42` | `prompt_dir="prompt"` | 同上 |
 
 **`_prompts_dir()` 工具函数**：在 `core/memory/` 下加一个 module-level helper（或在 `core/_utils.py` 添加）：
 
