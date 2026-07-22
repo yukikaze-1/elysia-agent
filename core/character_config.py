@@ -45,7 +45,11 @@ class CharacterConfig:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Character config not found: {path}")
-        raw = yaml.safe_load(path.read_text("utf-8")) or {}
+        try:
+            raw_text = path.read_text("utf-8")
+        except PermissionError:
+            raise PermissionError(f"Character config 无读取权限: {path}") from None
+        raw = yaml.safe_load(raw_text) or {}
         proactive_raw = raw.get("proactive", {})
         emotion_raw = raw.get("emotion", {})
 

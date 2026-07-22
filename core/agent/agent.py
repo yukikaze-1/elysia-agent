@@ -255,7 +255,11 @@ class Agent(AgentLifecycle, AgentServer):
                 if mailbox is None:
                     continue
                 try:
-                    while (event := mailbox.get_nowait()) is not None:
+                    while True:
+                        try:
+                            event = mailbox.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break  # 队列已空，继续下一个 task
                         data = event.data or {}
                         if event.type.value == "completed":
                             self._bus.post(TaskResultData(

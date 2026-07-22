@@ -11,8 +11,13 @@ def is_dataclass_instance(obj: Any) -> bool:
 
 def safe_get_type_hints(target_type: type) -> dict[str, type]:
     """Return resolved type hints for *target_type*, or empty dict on failure."""
+    import logging
     import typing
+
+    logger = logging.getLogger(__name__)
     try:
         return typing.get_type_hints(target_type)
     except Exception:
+        logger.warning("safe_get_type_hints 失败，类型检查跳过 — type=%s", target_type.__name__,
+                       exc_info=True)
         return {}
