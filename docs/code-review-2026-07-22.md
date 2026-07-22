@@ -4,7 +4,7 @@
 **审查范围**: 整个项目（排除 `/data`、`docs/superpowers`、`docs/plan`、`docs/spec`）  
 **审查方法**: 9 个并行审查 agent 覆盖全代码库（~1.4M 行），按严重度排序  
 
-**已修复**: #2 (consolidator.py format→replace) + #14 (ws_handler except:pass→debug) + #15-#18 — 2026-07-22
+**已修复**: #2 + #14-#21 — 2026-07-22
 
 ---
 
@@ -226,7 +226,7 @@ except Exception:
 
 ## 四、前端 Bug
 
-### 19. `chat.js:631` — `renderImages is not defined` ReferenceError
+### 19. ✅ `chat.js:631` — `renderImages is not defined` ReferenceError
 
 [static/js/chat.js](static/js/chat.js#L631)
 
@@ -236,7 +236,7 @@ except Exception:
 
 ---
 
-### 20. `main.js:176-179` — 发送冷却与 WebSocket 断开竞态
+### 20. ✅ `main.js:176-179` — 发送冷却与 WebSocket 断开竞态
 
 [static/js/main.js](static/js/main.js#L176)
 
@@ -251,7 +251,7 @@ setTimeout(() => { btn.classList.remove('sent'); btn.disabled = false; }, SEND_C
 
 ---
 
-### 21. `mic.js:47` — `audioCtx.close()` 异步但未等待
+### 21. ✅ `mic.js:47` — `audioCtx.close()` 异步但未等待
 
 [static/js/mic.js](static/js/mic.js#L47)
 
