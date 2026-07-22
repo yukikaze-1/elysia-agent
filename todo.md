@@ -38,7 +38,7 @@
 - **C6 说话风格动态化** → 后续 CharacterEngine Phase 2
 - **C7 主动性动态化** → 后续 CharacterEngine Phase 2
 - **F2 代码块格式重新启用**: `f2_output_format.j2` 中 `<|code|>` 和 `<|markdown|>` 格式已注释。等需要代码/Markdown 渲染功能时取消注释即可启用
-- **C5 输入来源标注**: prompt 中当前无法区分用户是用文字还是语音输入。需在 sensory_ctx 中增加 `input_source` 字段（text/voice），模板中显示 "输入方式: 文字 / 语音"
+- ✅ ~~C5 输入来源标注~~ — SensorySection.render() 根据 stt_emotion 推导 input_source（语音/文字），c5_sensory.j2 模板 `<facts>` 中显示
 - ✅ ~~CharacterEngine mood 转换逻辑~~ — LLM 自由文本 mood 已解决：LLM 每轮通过 `<mood>` 自行描述心情变化，不再有僵硬的二值切换。
 - **CharacterEngine Phase 2**（原 PersonalityEngine Phase 2）:
   - CharacterReflector.j2 模板 ~140 行偏长，LLM 注意力可能被稀释，后续观察产出质量决定是否精简
