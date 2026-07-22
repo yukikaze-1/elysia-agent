@@ -18,6 +18,7 @@ import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from Module.system_prompt import PromptManager
@@ -133,7 +134,7 @@ class CharacterEngine:
         base_personality: str,
         character_config,          # CharacterConfig
         output: OutputManager,
-        prompt_dir: str = "prompt",
+        prompt_dir: str | None = None,
         version_repo: "CharacterVersionRepository | None" = None,
     ):
         self._llm = llm
@@ -150,6 +151,8 @@ class CharacterEngine:
 
         # L3→L2 压缩
         self._compression_lock = asyncio.Lock()
+        if prompt_dir is None:
+            prompt_dir = str(Path(__file__).resolve().parent.parent / "prompts")
         try:
             self._pm = PromptManager(prompt_dir)
         except FileNotFoundError:

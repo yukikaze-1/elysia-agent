@@ -29,7 +29,7 @@ from ..adapter.llm_adapter import LLMAdapter
 logger = logging.getLogger(__name__)
 
 # Extraction prompt — 文件路径，运行时加载
-EXTRACTION_PROMPT_PATH = Path("prompt/ExtractMemory.j2")
+_EXTRACTION_PATH = Path(__file__).resolve().parent.parent / "prompts" / "ExtractMemory.j2"
 _EXTRACTION_PROMPT: str | None = None
 
 
@@ -37,8 +37,8 @@ def _get_extraction_prompt() -> str:
     global _EXTRACTION_PROMPT
     if _EXTRACTION_PROMPT is not None:
         return _EXTRACTION_PROMPT
-    if EXTRACTION_PROMPT_PATH.exists():
-        _EXTRACTION_PROMPT = EXTRACTION_PROMPT_PATH.read_text(encoding="utf-8")
+    if _EXTRACTION_PATH.exists():
+        _EXTRACTION_PROMPT = _EXTRACTION_PATH.read_text(encoding="utf-8")
     else:
         _EXTRACTION_PROMPT = (
             "从以下对话中提取值得长期记住的关键信息。\n\n"
@@ -55,7 +55,7 @@ def _get_compare_prompt() -> str:
     global _COMPARE_PROMPT
     if _COMPARE_PROMPT is not None:
         return _COMPARE_PROMPT
-    path = Path("prompt/ConsolidationCompare.j2")
+    path = Path(__file__).resolve().parent.parent / "prompts" / "ConsolidationCompare.j2"
     if path.exists():
         _COMPARE_PROMPT = path.read_text(encoding="utf-8")
     else:

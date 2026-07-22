@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # MemoryReflector prompt — 文件路径，运行时加载
-REFLECTOR_PROMPT_PATH = Path("prompt/MemoryReflector.j2")
+REFLECTOR_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "MemoryReflector.j2"
 _REFLECTOR_PROMPT: str | None = None
 
 

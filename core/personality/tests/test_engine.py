@@ -28,9 +28,11 @@ def engine_with_mocks():
         character_config=char,
         output=o,
     )
-    # 确保 _pm 可用（tests 在项目根目录运行，prompt/ 目录存在）
+    # 确保 _pm 可用（tests/ → personality/ → core/ → prompts/）
+    from pathlib import Path
     from Module.system_prompt import PromptManager
-    engine._pm = PromptManager("prompt")
+    _PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
+    engine._pm = PromptManager(str(_PROMPTS_DIR))
     return engine
 
 

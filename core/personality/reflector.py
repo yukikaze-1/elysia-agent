@@ -9,6 +9,7 @@
 import asyncio
 import logging
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from Module.system_prompt import PromptManager
@@ -39,7 +40,7 @@ class CharacterReflector:
         llm: LLMAdapter,
         character_name: str = "Elysia",
         user_name: str = "妖梦",
-        prompt_dir: str = "prompt",
+        prompt_dir: str | None = None,
     ):
         self._engine = engine
         self._l1_core = l1_core
@@ -50,8 +51,11 @@ class CharacterReflector:
         self._buffer: list[tuple[str, str]] = []  # (user_msg, assistant_msg)
         self._reflect_lock = asyncio.Lock()
         self._context: list[dict] = []  # 滚动窗口：保留最近 N 轮对话用于反思
+        _dir = self._prompt_dir
+        if _dir is None:
+            _dir = str(Path(__file__).resolve().parent.parent / "prompts")
         try:
-            self._pm = PromptManager(self._prompt_dir)
+            self._pm = PromptManager(_dir)
         except FileNotFoundError:
             logger.warning("CharacterReflector: 模板目录不存在，反思功能不可用")
             self._pm = None

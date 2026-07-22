@@ -1,6 +1,7 @@
 """CharacterReflector 单元测试."""
 import asyncio
 import time
+from pathlib import Path
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -39,7 +40,7 @@ class TestCharacterReflector:
             llm=llm,
             character_name="Elysia",
             user_name="妖梦",
-            prompt_dir="prompt",
+            prompt_dir=str(Path(__file__).resolve().parent.parent.parent / "prompts"),
         )
 
     # ---- buffer 阈值 ----
