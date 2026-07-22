@@ -10,7 +10,9 @@
 
 **CharacterState 共享修复**：`engine.state` 与 `session.character_state` 共用同一对象。engine 为 mood/性格状态的权威来源，session 负责持久化 + 对外读取。修复了 debug 面板 mood 与聊天页面不一致的 bug。
 
-**其他**：mood 从 debug System 面板移入 CharacterEngine 面板；`clean_db.py` 新增 `character_versions` 和 `character_l2_versions` 清理；C5 Sensory 新增输入方式标注（文字/语音）；AwarenessJudge: C9 LLM 语义判定。code-review #2 修复（`str.format()` → `.replace()`）+ #14 修复（ws_handler 静默异常 → debug 日志）。
+**其他**：mood 从 debug System 面板移入 CharacterEngine 面板；`clean_db.py` 新增 `character_versions` 和 `character_l2_versions` 清理；C5 Sensory 新增输入方式标注（文字/语音）；AwarenessJudge: C9 LLM 语义判定。
+
+**code-review 修复（19/30）**：严重 Bug #1-#4 #8 (5)，静默数据丢失 #14-#18 (5)，前端 Bug #19-#21 (3)，资源泄漏 #22 #24 (2)，设计问题 #27-#30 (4)。跳过 #5(影响小) #6(TODO) #7(需设计) #23(并发度低)。剩余安全 #9-#13 + 设计 #25-#26 待后续。
 
 **CharacterEngine Phase 2 收尾（2026-07-22）**：
 

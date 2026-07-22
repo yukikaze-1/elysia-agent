@@ -68,6 +68,20 @@
 | 低 | 会话管理 | 无法新建/切换/列出对话。SessionMemory 的 MongoDB 持久化已为此做好准备，需前后端联动 |
 
 
+## 来自 code-review-2026-07-22 的遗留问题
+
+已修复 19/30，详见 [code-review 报告](docs/code-review-2026-07-22.md)。
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| HIGH | **#9 管理端点无认证** | `/shutdown`, `/restart`, `/debug/api/*` 绑定 0.0.0.0 无认证 |
+| HIGH | **#10 SSE CORS 通配符** | `/debug/api/tasks/stream` 允许任意来源 |
+| MEDIUM | **#11 /static/ 目录列表** | `show_index=True` 暴露文件列表 |
+| MEDIUM | **#12 用户消息明文日志** | `ws_handler.py` INFO 级别记录用户文本前 100 字符 |
+| MEDIUM | **#13 API Key 明文泄露** | `/api/providers` GET 返回完整 api_key |
+| LOW | **#25 私有 _infra 访问** | `cognitive/tools.py` 直接访问 `TaskSystem._infra` |
+| LOW | **#26 取消的 Task 永不等待** | `idle_monitor.stop()` cancel 后不 await |
+
 ## 来自 code-review-report-2026-06-22 的遗留问题
 
 ### 需独立 spec
