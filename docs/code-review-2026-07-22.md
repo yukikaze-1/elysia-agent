@@ -2,7 +2,9 @@
 
 **审查日期**: 2026-07-22  
 **审查范围**: 整个项目（排除 `/data`、`docs/superpowers`、`docs/plan`、`docs/spec`）  
-**审查方法**: 9 个并行审查 agent 覆盖全代码库（~1.4M 行），按严重度排序
+**审查方法**: 9 个并行审查 agent 覆盖全代码库（~1.4M 行），按严重度排序  
+
+**已修复**: #2 (consolidator.py format→replace) + #14 (ws_handler except:pass→debug) — 2026-07-22
 
 ---
 
@@ -18,7 +20,7 @@
 
 ---
 
-### 2. `consolidator.py:200` — 用户消息含 `{...}` 导致 `KeyError`，记忆提取静默失败
+### 2. ✅ `consolidator.py:200` — 用户消息含 `{...}` 导致 `KeyError`，记忆提取静默失败
 
 [core/memory/consolidator.py](core/memory/consolidator.py#L200)
 
@@ -163,7 +165,7 @@ logger.info("WS 收到文本: %s", text_content.strip()[:100])
 
 ## 三、严重错误处理问题（静默数据丢失）
 
-### 14. `ws_handler.py` — 多处 `except Exception: pass` 静默吞错误
+### 14. ✅ `ws_handler.py` — 多处 `except Exception: pass` 静默吞错误
 
 [Module/input/ws_handler.py](Module/input/ws_handler.py)
 
