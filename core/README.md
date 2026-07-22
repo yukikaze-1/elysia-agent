@@ -105,7 +105,7 @@ ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的�
 
 #### MemoryConsolidator (`memory/consolidator.py`)
 
-对话记忆提取：缓冲 6 条消息对 → LLM 提取 Fact/Preference/Event/Plan/Note → `ExtractedMemory` Pydantic 模型 → `ConsolidationCompare.j2` → `CompareAction` 判别联合（insert/update/merge/skip）→ LongTermMemory（Milvus）。`consolidate()` 每轮对话后调用，`flush()` 在 shutdown 时强制落盘未持久化的缓冲。提取 prompt 由 `prompt/ExtractMemory.j2` 运行时加载。比对失败时回退全 insert。
+对话记忆提取：缓冲 6 条消息对 → LLM 提取 Fact/Preference/Event/Plan/Note → `ExtractedMemory` Pydantic 模型 → `ConsolidationCompare.j2` → `CompareAction` 判别联合（insert/update/merge/skip）→ LongTermMemory（Milvus）。`consolidate()` 每轮对话后调用，`flush()` 在 shutdown 时强制落盘未持久化的缓冲。提取 prompt 由 `core/prompts/ExtractMemory.j2` 运行时加载（`Path(__file__)` 相对路径）。比对失败时回退全 insert。
 
 关键方法：`consolidate()`, `flush()`
 
@@ -225,7 +225,7 @@ core/tools/<name>/
 
 ### 添加新记忆类型
 
-1. 在 `consolidator.py` 的 EXTRACTION_PROMPT（`prompt/ExtractMemory.j2`）中添加新类型的提取示例
+1. 在 `consolidator.py` 的 EXTRACTION_PROMPT（`core/prompts/ExtractMemory.j2`）中添加新类型的提取示例
 2. 在 `ConsolidationCompare.j2` 中补充新类型的比对规则
 3. 在 `memory/long_term.py` 的 `search()` 和 rerank 逻辑中按需调整权重
 4. 如有新的向量字段需求，更新 Milvus collection schema

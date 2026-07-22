@@ -206,7 +206,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | [docs/frontend-api.md](docs/frontend-api.md) | 前端 API 文档 |
 | [CLAUDE.md](CLAUDE.md) | AI 助手指令 + 项目地图 |
 | [character/README.md](character/README.md) | 角色配置说明 |
-| [prompt/README.md](prompt/README.md) | Prompt 模板说明 |
+| [core/prompts/README.md](core/prompts/README.md) | Prompt 模板说明 |
 | [docs/database-storage.md](docs/database-storage.md) | 数据库存储设计 |
 | [docs/sync-lessons.md](docs/sync-lessons.md) | 同步经验笔记 |
 | [docs/experience.md](docs/experience.md) | 开发经验记录 |
@@ -334,21 +334,22 @@ Agent/
 │   ├── task.py              # 任务数据模型
 │   ├── task_scheduler.py    # TaskScheduler: Worker Pool (N=5)
 │   ├── token_tracker.py     # Token 消耗追踪
+│   ├── prompts/              # Prompt 模板 (Jinja2 .j2)
+│   │   ├── ExtractMemory.j2  #   对话提取记忆
+│   │   ├── ConsolidationCompare.j2 # 记忆比对
+│   │   ├── MemoryReflector.j2 #  记忆去重反思
+│   │   ├── CharacterReflector.j2 # 角色进化反射
+│   │   ├── PersonalityCompression.j2 # 性格压缩
+│   │   ├── AwarenessJudge.j2  #  C9 觉察判定
+│   │   ├── ActiveSpeak.j2    #   主动说话判断
+│   │   ├── Amygdala.j2       #   情绪分析
+│   │   ├── SpeakingStyleEdit.j2 # C6 风格编辑
+│   │   ├── Utils.j2          #   通用工具宏
+│   │   ├── MacroReflector.j2 #   宏观反思 (参考)
+│   │   ├── MicroReflector.j2 #   微观反思 (参考)
+│   │   ├── ref/              #   GPT 生成参考
+│   │   └── README.md         #   模板说明
 │   └── __init__.py          # 包标记 (空)
-│
-├── prompt/                 # Prompt 模板
-│   ├── ActiveSpeak.j2      #   主动说话判断
-│   ├── Amygdala.j2         #   情绪分析
-│   ├── CharacterReflector.j2 # 角色进化反射
-│   ├── ConsolidationCompare.j2 # 记忆比对
-│   ├── ExtractMemory.j2    #   对话提取记忆
-│   ├── MacroReflector.j2   #   宏观反思 (参考)
-│   ├── MemoryReflector.j2  #   记忆去重反思
-│   ├── MicroReflector.j2   #   微观反思 (参考)
-│   ├── PersonalityCompression.j2 # 性格压缩
-│   ├── Utils.j2            #   通用工具
-│   ├── ref/                #   GPT 生成参考
-│   └── README.md           #   模板说明
 │
 ├── static/                 # 浏览器客户端
 │   ├── index.html          #   入口

@@ -981,6 +981,20 @@ Agent/
 │   │   ├── long_term.py     #     LongTermMemory (Milvus + Embedding)
 │   │   ├── consolidator.py  #     MemoryConsolidator (提取 + 比对 + 写入)
 │   │   └── memory_reflector.py #  MemoryReflector (定期去重 + KMeans)
+│   ├── prompts/              # Jinja2 模板 (.j2, PascalCase)
+│   │   ├── ExtractMemory.j2          # 对话提取记忆
+│   │   ├── ConsolidationCompare.j2   # 新记忆 vs 已有记忆比对
+│   │   ├── MemoryReflector.j2        # 定期深度去重
+│   │   ├── CharacterReflector.j2     # 性格反思
+│   │   ├── ActiveSpeak.j2            # 主动搭话
+│   │   ├── Amygdala.j2               # 情感分析
+│   │   ├── AwarenessJudge.j2         # C9 觉察判定
+│   │   ├── SpeakingStyleEdit.j2      # C6 风格编辑
+│   │   ├── MacroReflector.j2         # 日记合成 (参考)
+│   │   ├── MicroReflector.j2         # 逐对话提取 (参考)
+│   │   ├── Utils.j2                  # 工具宏
+│   │   ├── PersonalityCompression.j2     # L3→L2 性格压缩
+│   │   └── ref/                      # GPT 生成原始版本
 │   ├── tools/               #   Agent 工具集 (12 个插件)
 │   └── tests/               #   测试
 │
@@ -992,19 +1006,6 @@ Agent/
 │   └── cyrene/              # Cyrene 角色 (备用，仅含 GPT 参考材料)
 │       └── reference/
 │
-├── prompt/                  # Jinja2 模板 (.j2, PascalCase)
-│   ├── ExtractMemory.j2          # 对话提取记忆
-│   ├── ConsolidationCompare.j2   # 新记忆 vs 已有记忆比对
-│   ├── MemoryReflector.j2        # 定期深度去重
-│   ├── CharacterReflector.j2     # 性格反思
-│   ├── ActiveSpeak.j2            # 主动搭话
-│   ├── Amygdala.j2               # 情感分析
-│   ├── MacroReflector.j2         # 日记合成 (参考)
-│   ├── MicroReflector.j2         # 逐对话提取 (参考)
-│   ├── Utils.j2                  # 工具宏
-│   ├── PersonalityCompression.j2     # L3→L2 性格压缩
-│   └── ref/                      # GPT 生成原始版本
-│
 ├── static/                  # Web 前端
 │   ├── Elysia.png              # 角色头像
 │   ├── debug.md                # Debug 面板文档
@@ -1012,8 +1013,8 @@ Agent/
 │   ├── index.html           # 聊天页面
 │   ├── debug.html           # Debug 仪表板 (~2100 行)
 │   ├── css/chat.css         # 聊天样式
-│   └── js/                  # ES modules (chat/audio/mic/ws/state/settings/persistence/tools/esc/main)
-│
+│   └── js/                  # ES modules
+
 ├── docs/                   # 文档
 │   ├── architecture.md     #   架构详解（本文档）
 │   ├── frontend-api.md     #   前端 API

@@ -94,7 +94,7 @@ LLM 调用参数：
 
 ## 当前初版模板
 
-见 `prompt/AwarenessJudge.j2`（实现时创建）。
+见 `core/prompts/AwarenessJudge.j2`（实现时创建）。
 
 ## 预期优化方向
 

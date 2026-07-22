@@ -170,7 +170,7 @@ logger = factory.get("MyModule")
 from Module.system_prompt import PromptManager
 
 # 通用渲染（反射模板等）
-pm = PromptManager("prompt/")
+pm = PromptManager(str(Path(__file__).resolve().parent.parent / "prompts"))
 system = pm.render_macro("CharacterReflector.j2", "CharacterReflectorSystemPrompt",
                          character_name="Elysia", user_name="妖梦")
 ```

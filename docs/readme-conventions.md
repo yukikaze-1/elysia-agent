@@ -126,7 +126,7 @@
 | `Module/<name>/<sub>/README.md` | `[项目文档](../../../README.md) → [Module 文档](../../README.md) → [<父级>文档](../README.md)` |
 | `core/personality/README.md` | `[项目文档](../../README.md)` |
 | `core/tools/<name>/README.md` | `[项目文档](../../../README.md)` |
-| `prompt/README.md` | `[项目文档](../README.md)` |
+| `core/prompts/README.md` | `[项目文档](../../README.md)` |
 | `character/README.md` | `[项目文档](../README.md)` |
 | `docs/<name>.md` | `[项目文档](../README.md)` |
 

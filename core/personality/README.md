@@ -144,12 +144,11 @@ character/
 ├── elysia.yaml                    — 角色配置（含 base_personality_file）
 └── elysia_personality.txt         — L1 Core 文本
 
-prompt/
-├── CharacterReflector.j2           — 性格反思模板
-├── PersonalityCompression.j2       — L3→L2 压缩模板（LLM 编辑模式 + 结构化输出）
-└── SpeakingStyleEdit.j2           — C6 编辑 prompt 模板
-
 core/
+├── prompts/
+│   ├── CharacterReflector.j2           — 性格反思模板
+│   ├── PersonalityCompression.j2       — L3→L2 压缩模板（LLM 编辑模式 + 结构化输出）
+│   └── SpeakingStyleEdit.j2           — C6 编辑模板
 ├── agent.py                       — 创建并接线 CharacterEngine
 ├── prompt_assembler.py            — 数据注入 section
 ├── schema/character.py            — CharacterState 定义（Pydantic 模型，合并 mood + reflector 字段）

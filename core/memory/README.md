@@ -58,8 +58,8 @@
 ### MemoryConsolidator
 
 - 缓冲阈值：`BUFFER_THRESHOLD = 6` 条消息对
-- 提取 prompt：`prompt/ExtractMemory.j2`
-- 比对 prompt：`prompt/ConsolidationCompare.j2`
+- 提取 prompt：`core/prompts/ExtractMemory.j2`（`Path(__file__)` 相对路径）
+- 比对 prompt：`core/prompts/ConsolidationCompare.j2`
 - `flushing` 标志防止并发 flush
 
 ### MemoryReflector
@@ -89,7 +89,7 @@ core/
 ├── llm_adapter.py     — LLM 适配器（consolidator + reflector 共用）
 └── schema/memory.py   — ExtractedMemory / CompareAction 判别联合
 
-prompt/
+core/prompts/
 ├── ExtractMemory.j2         — 记忆提取模板
 ├── ConsolidationCompare.j2  — 记忆比对模板
 └── MemoryReflector.j2       — 记忆去重反思模板

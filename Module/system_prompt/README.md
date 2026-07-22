@@ -11,11 +11,10 @@ System prompt 引擎 + 通用 Jinja2 模板渲染。提供两套 API：
 
 ```
 Module/system_prompt/
-├── __init__.py                # 导出 PromptManager, PromptSection, StaticSection,
-│                              #   Jinja2Section, MessageBuilder
+├── __init__.py                # 导出 PromptManager, PromptSection, StaticSection, Jinja2Section
+│                              #   (MessageBuilder 已迁至 core/adapter/，此处保留 DeprecationWarning re-export)
 ├── protocol.py                # PromptSection ABC + StaticSection + Jinja2Section
 ├── system_prompt_manager.py   # SystemPromptManager 编排器
-├── message_builder.py         # MessageBuilder — system_prompt + history → messages[]
 ├── manager.py                 # PromptManager — 通用 Jinja2 渲染器
 ├── README.md
 ├── sections/                  # 12 个独立 PromptSection 模块
@@ -49,8 +48,7 @@ Module/system_prompt/
     │   ├── test_protocol.py
     │   └── test_system_prompt_manager.py
     └── integration/
-        ├── test_full_render.py
-        └── test_message_builder.py
+        └── test_full_render.py
 ```
 
 ## Section Provider 架构
@@ -120,7 +118,7 @@ failed = mgr.validate_all()      # 校验失败的 section 名列表
 ```python
 from Module.system_prompt import PromptManager
 
-pm = PromptManager("prompt/")
+pm = PromptManager(str(Path(__file__).parent / "prompts"))
 result = pm.render("Amygdala.j2", character_name="Elysia")
 system = pm.render_macro("ActiveSpeak.j2", "ActiveSpeakPrompt", **vars)
 ```
@@ -156,5 +154,5 @@ python -m pytest Module/system_prompt/tests/ -v
 |------|------|
 | [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
 | [Module/system_prompt/templates/README.md](templates/README.md) | 模板格式约定 |
-| [prompt/README.md](../../prompt/README.md) | Prompt 模板目录说明 |
+| [core/prompts/README.md](../../core/prompts/README.md) | Prompt 模板目录说明 |
 | [docs/architecture.md](../../docs/architecture.md) | 提示词组装架构 |
