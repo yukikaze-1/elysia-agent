@@ -4,7 +4,7 @@
 **审查范围**: 整个项目（排除 `/data`、`docs/superpowers`、`docs/plan`、`docs/spec`）  
 **审查方法**: 9 个并行审查 agent 覆盖全代码库（~1.4M 行），按严重度排序  
 
-**已修复**: #2 + #14-#22 + #24 — 2026-07-22 | **跳过**: #23（并发度低，非实质问题）
+**已修复**: #2 + #14-#22 + #24 + #27-#29 — 2026-07-22 | **跳过**: #23（并发度低，非实质问题）: #23（并发度低，非实质问题）
 
 ---
 
@@ -328,7 +328,7 @@ async def stop(self) -> None:
 
 ---
 
-### 27. `agent.py:258-284` — 死代码循环条件 + 过宽异常处理
+### 27. ✅ `agent.py:258-284` — 死代码循环条件 + 过宽异常处理
 
 [core/agent/agent.py](core/agent/agent.py#L258)
 
@@ -336,7 +336,7 @@ async def stop(self) -> None:
 
 ---
 
-### 28. `character_config.py:48` — `PermissionError` 未被处理
+### 28. ✅ `character_config.py:48` — `PermissionError` 未被处理
 
 [core/character_config.py](core/character_config.py#L48)
 
@@ -350,7 +350,7 @@ raw = yaml.safe_load(path.read_text("utf-8")) or {}
 
 ---
 
-### 29. `config/_utils.py:12-18` — `safe_get_type_hints` 静默吞所有异常
+### 29. ✅ `config/_utils.py:12-18` — `safe_get_type_hints` 静默吞所有异常
 
 [Module/config/_utils.py](Module/config/_utils.py#L12)
 
