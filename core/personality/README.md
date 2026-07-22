@@ -111,12 +111,16 @@ Phase 1 通过 C1 文本末尾提示 LLM 遵守 L1 约束；Phase 2 移入 C6 Sp
 
 ### AwarenessTrigger（C9 激活判定）
 
-C9 不每轮渲染。触发条件：
-1. `state_l3` 非空
-2. 距上次触发超过 `AWARENESS_COOLDOWN_SECONDS`（默认 3600s = 1h）
-3. 冷却时间戳持久化到 `session.params["last_awareness_time"]`，重启不丢失
+Phase 2: LLM-judge 语义判定。Reflector 产出 L3 后，异步 judge 比较 L2 vs L3：
 
-Phase 2 加入 L2/L3 语义偏差检测和用户话题触发。
+1. **降级模式**：L2 为空时，L3 原文直接缓存（不调 LLM）
+2. **Judge 判定**：L2 非空时，渲染 `AwarenessJudge.j2` → LLM 判断是否批准
+   - `<approved>`：编辑后文本写入缓存，替换旧值
+   - `<skip>`：保留旧缓存不变
+3. **`render_c9()` 三重门控**：
+   - 缓存非空
+   - 展示次数 < 3
+   - 距上次展示 >= 5 分钟
 
 ### 向上回流
 

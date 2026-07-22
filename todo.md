@@ -42,7 +42,7 @@
 - ✅ ~~CharacterEngine mood 转换逻辑~~ — LLM 自由文本 mood 已解决：LLM 每轮通过 `<mood>` 自行描述心情变化，不再有僵硬的二值切换。
 - **CharacterEngine Phase 2**（原 PersonalityEngine Phase 2）:
   - CharacterReflector.j2 模板 ~140 行偏长，LLM 注意力可能被稀释，后续观察产出质量决定是否精简
-  - AwarenessTrigger: L2/L3 语义偏差检测（向量相似度替代轮次冷却）
+  - ✅ ~~AwarenessTrigger: L2/L3 语义偏差检测~~ — LLM-judge 驱动（`_judge_awareness` + `AwarenessJudge.j2`）
   - ✅ ~~L3→L2 梯度压缩自动化~~ — LLM 编辑模式 + 版本历史（character_l2_versions 集合）。触发机制待后续改为连续增量。
   - ✅ ~~ExpressionAdapter~~ — Mood 现在是 LLM 自由文本，expression 直接透传 mood 文本，不再需要阻尼映射
   - L4→L3 情绪汇聚统计（需 CharacterEngine 改接口）
