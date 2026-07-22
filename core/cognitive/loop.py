@@ -122,6 +122,7 @@ class CognitiveLoop(CognitiveTools):
         self._ctx = ctx
         self._token_tracker = token_tracker
         self._prompt_recorder = prompt_recorder
+        self._response_recorder = None  # 由 set_response_recorder() 注入
         self._sentence_buf: SentenceBuffer | None = None
         self._block_filter: BlockFilter | None = None
         self._process_lock = asyncio.Lock()

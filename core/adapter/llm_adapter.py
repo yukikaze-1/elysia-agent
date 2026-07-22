@@ -89,8 +89,8 @@ class LLMAdapter:
         last_exc: Exception | None = None
         for attempt in range(_MAX_RETRIES + 1):
             try:
+                started = False
                 if hasattr(self._backend, "stream_think"):
-                    started = False
                     async for chunk in self._backend.stream_think(messages, **kwargs):
                         started = True
                         yield chunk

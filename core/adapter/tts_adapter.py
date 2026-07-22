@@ -303,8 +303,12 @@ class TTSStreamManager:
                 pass
         finally:
             # 无论成功/失败/取消，都释放下一句的门控（避免后续句子永久卡住）
-            if seq + 1 in self._release_events:
-                self._release_events[seq + 1].set()
+            # 若下一句尚未创建 event，则先创建再 set，防止死锁：
+            #   句 N 完成时句 N+1 的 stream_sentence() 尚未被调用 → event 未创建 → set 跳过
+            #   → 之后句 N+1 创建 event 永远等不到 set
+            if seq + 1 not in self._release_events:
+                self._release_events[seq + 1] = asyncio.Event()
+            self._release_events[seq + 1].set()
 
     async def synthesize_legacy(self, sentence: str) -> None:
         """Legacy 非流式 TTS — 保留向后兼容（供测试用）。

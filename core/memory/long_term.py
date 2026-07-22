@@ -149,10 +149,14 @@ class LongTermMemory:
 
         async def _load():
             try:
-                await asyncio.wait_for(
+                embedding = await asyncio.wait_for(
                     loop.run_in_executor(None, self._try_load_embedding_sync),
                     timeout=self._embed_timeout,
                 )
+                # 只在 coroutine 未被取消时才赋值（避免 executor 线程
+                # 在 timeout 后继续运行并竞态写入 self._embedding）
+                if embedding is not None:
+                    self._embedding = embedding
             except asyncio.TimeoutError:
                 logger.info("LongTermMemory: embedding load timed out after %.0fs, text-only mode", self._embed_timeout)
             except Exception as e:
@@ -166,29 +170,34 @@ class LongTermMemory:
             except (asyncio.TimeoutError, Exception):
                 pass
 
-    def _try_load_embedding_sync(self) -> None:
-        """Try OpenAI embedding first (fast), then HuggingFace (local). Runs in thread."""
+    def _try_load_embedding_sync(self):
+        """Try to load embedding backend. Returns instance or None. Runs in thread.
+
+        不直接写 self._embedding——由调用方 coroutine 赋值，
+        确保 timeout 后线程即使继续运行也不会产生竞态写入。
+        """
         from Module.embedding import EmbeddingFactory
 
         # 1. Try OpenAI-compatible embedding (fast API call, no model download)
         openai_key = os.getenv("OPENAI_API_KEY", "")
         if openai_key:
             try:
-                self._embedding = EmbeddingFactory.create("openai/text-embedding-3-small")
-                dim = self._embedding.dimension
+                emb = EmbeddingFactory.create("openai/text-embedding-3-small")
+                dim = emb.dimension
                 logger.info("LongTermMemory: OpenAI embedding connected (dim=%d)", dim)
-                return
+                return emb
             except Exception as e:
                 logger.debug("OpenAI embedding unavailable: %s", e)
 
         # 2. Try HuggingFace local model (slower, loads model to memory)
         try:
-            self._embedding = EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")
-            dim = self._embedding.dimension
+            emb = EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")
+            dim = emb.dimension
             logger.info("LongTermMemory: HuggingFace embedding connected (dim=%d)", dim)
+            return emb
         except Exception as e:
             logger.debug("LongTermMemory: HuggingFace embedding unavailable: %s", e)
-            self._embedding = None
+            return None
 
     # ---- Write ----
 
