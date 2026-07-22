@@ -9,6 +9,18 @@ import {
   INPUT_INITIAL_HEIGHT,
 } from './config.js';
 
+/** 渲染图片 content parts → HTML（替代 debug.html 中同名全局函数，ES module 作用域隔离） */
+function _renderImages(content) {
+  if (!content || !Array.isArray(content)) return '';
+  const images = content.filter(p => p && p.type === 'image' && p.src);
+  if (!images.length) return '';
+  return '<div class="msg-images">' + images.map(img =>
+    `<img class="msg-image" src="${esc(img.src)}" loading="lazy"
+          onclick="event.stopPropagation(); openLightbox('${esc(img.src)}')"
+          title="点击放大">`
+  ).join('') + '</div>';
+}
+
 /* ---- 统一工厂: 创建助理消息行 ---- */
 export function createAssistantRow() {
   const row = document.createElement('div');
@@ -628,7 +640,7 @@ function renderArchiveMessage(m) {
 
   // 图片
   if (m.content && Array.isArray(m.content)) {
-    const imgHtml = renderImages(m.content);
+    const imgHtml = _renderImages(m.content);
     if (imgHtml) {
       const imgWrap = document.createElement('div');
       imgWrap.innerHTML = imgHtml;

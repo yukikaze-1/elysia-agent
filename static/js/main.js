@@ -176,7 +176,19 @@ function sendText() {
   const btn = document.getElementById('send-btn');
   btn.classList.add('sent');
   btn.disabled = true;
-  setTimeout(() => { btn.classList.remove('sent'); btn.disabled = false; }, SEND_COOLDOWN_MS);
+  let cooldownTimer = null;
+  cooldownTimer = setTimeout(() => {
+    // 冷却期间 WS 若断开，ws.js onclose 会设 btn.disabled=true；
+    // 此处不覆盖该状态，避免用户消息在断连期间被静默丢弃。
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      btn.classList.remove('sent');
+      btn.disabled = false;
+    }
+    if (state._sendCooldownTimer === cooldownTimer) {
+      state._sendCooldownTimer = null;
+    }
+  }, SEND_COOLDOWN_MS);
+  state._sendCooldownTimer = cooldownTimer;
 }
 
 /* ---- 图片上传 ---- */

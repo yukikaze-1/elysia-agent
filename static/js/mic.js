@@ -42,9 +42,16 @@ export async function toggleMic() {
   }
 }
 
-export function stopMic() {
+export async function stopMic() {
   if (state.scriptNode) { state.scriptNode.disconnect(); state.scriptNode = null; }
-  if (state.audioCtx) { state.audioCtx.close(); state.audioCtx = null; }
+  if (state.audioCtx) {
+    try {
+      await state.audioCtx.close();
+    } catch (_) {
+      // close() 可能因 AudioContext 已关闭而抛异常，忽略
+    }
+    state.audioCtx = null;
+  }
   if (state.micStream) { state.micStream.getTracks().forEach((t) => t.stop()); state.micStream = null; }
   document.getElementById('mic-btn').classList.remove('active');
 }
