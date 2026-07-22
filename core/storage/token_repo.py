@@ -84,4 +84,6 @@ class TokenRepository(Repository):
     async def clear_all(self) -> int:
         if self._db is None:
             return 0
-        return await self._db.delete_many(COLLECTION, {})
+        result = await self._db.delete_many(COLLECTION, {})
+        logger.warning("TokenRepository clear_all: deleted=%d records", result)
+        return result

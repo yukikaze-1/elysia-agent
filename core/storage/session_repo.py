@@ -116,7 +116,9 @@ class SessionRepository(Repository):
     async def delete(self, session_id: SessionId) -> int:
         if self._db is None:
             return 0
-        return await self._db.delete_many(COLLECTION, {"session_id": session_id})
+        result = await self._db.delete_many(COLLECTION, {"session_id": session_id})
+        logger.info("SessionRepository delete: session_id=%s, deleted=%d", session_id, result)
+        return result
 
     async def list_all(self) -> list[SessionSummary]:
         if self._db is None:
@@ -134,4 +136,6 @@ class SessionRepository(Repository):
     async def clear_all(self) -> int:
         if self._db is None:
             return 0
-        return await self._db.delete_many(COLLECTION, {})
+        result = await self._db.delete_many(COLLECTION, {})
+        logger.warning("SessionRepository clear_all: deleted=%d sessions", result)
+        return result

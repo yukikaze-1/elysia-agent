@@ -88,6 +88,8 @@ class CharacterVersionRepository(Repository):
             "trigger": trigger.value,
             "change_summary": change_summary,
         }
+        logger.info("CharacterVersionRepository append_version: session_id=%s, content_type=%s, version=%d, trigger=%s, text_len=%d",
+                    session_id, content_type, next_version, trigger.value, len(text))
         await self._db.insert_one(COLLECTION, doc)
         return next_version
 

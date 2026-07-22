@@ -1,4 +1,7 @@
-"""Debug API 路由 — 数据库状态, LTM CRUD, Session 管理, 消息归档, LLM 录制。"""
+"""Debug API 路由 — 数据库状态, LTM CRUD, Session 管理, 消息归档, LLM 录制。
+
+所有增删改操作均记录日志：info（资源级修改）/ warning（批量删除、回滚）。
+"""
 
 import json
 import logging
@@ -138,6 +141,7 @@ def register_debug_routes(app: web.Application) -> None:
             return web.json_response({"error": "无效的请求体"}, status=400)
 
         await agent._long_term.insert(text, memory_type=mem_type, poignancy=poignancy)
+        logger.info("DEBUG API: ltm_insert type=%s, text_len=%d, poignancy=%d", mem_type, len(text), poignancy)
         return web.json_response({"ok": True})
     app.router.add_post("/debug/api/ltm", ltm_insert_handler)
 
@@ -147,6 +151,7 @@ def register_debug_routes(app: web.Application) -> None:
         if not entry_id:
             return web.json_response({"error": "缺少 entry_id"}, status=400)
         ok = await agent._long_term.delete(entry_id)
+        logger.warning("DEBUG API: ltm_delete entry_id=%s, ok=%s", entry_id, ok)
         return web.json_response({"ok": ok})
     app.router.add_delete("/debug/api/ltm/{entry_id}", ltm_delete_single_handler)
 
@@ -160,12 +165,14 @@ def register_debug_routes(app: web.Application) -> None:
         if not new_text:
             return web.json_response({"error": "text 不能为空"}, status=400)
         ok = await agent._long_term.update_text(entry_id, new_text)
+        logger.info("DEBUG API: ltm_update entry_id=%s, text_len=%d, ok=%s", entry_id, len(new_text), ok)
         return web.json_response({"ok": ok})
     app.router.add_put("/debug/api/ltm/{entry_id}", ltm_update_handler)
 
     async def ltm_clear_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
         count = await agent._long_term.clear_all()
+        logger.warning("DEBUG API: ltm_clear deleted=%d", count)
         return web.json_response({"ok": True, "deleted": count})
     app.router.add_delete("/debug/api/ltm", ltm_clear_handler)
 
@@ -208,6 +215,7 @@ def register_debug_routes(app: web.Application) -> None:
         if not msg_id:
             return web.json_response({"error": "缺少 msg_id"}, status=400)
         ok = await repo.delete_one(msg_id)
+        logger.info("DEBUG API: archive_delete msg_id=%s, ok=%s", msg_id, ok)
         return web.json_response({"ok": ok})
     app.router.add_delete("/debug/api/archive/{msg_id}", archive_delete_handler)
 
@@ -222,6 +230,7 @@ def register_debug_routes(app: web.Application) -> None:
         if not new_text:
             return web.json_response({"error": "text 不能为空"}, status=400)
         ok = await repo.update_text(msg_id, new_text)
+        logger.info("DEBUG API: archive_update msg_id=%s, text_len=%d, ok=%s", msg_id, len(new_text), ok)
         return web.json_response({"ok": ok})
     app.router.add_put("/debug/api/archive/{msg_id}", archive_update_handler)
 
@@ -229,6 +238,7 @@ def register_debug_routes(app: web.Application) -> None:
         """清空全部归档（debug 专用）。"""
         agent = request.app["agent"]
         deleted = await agent._message_repo.clear_all()
+        logger.warning("DEBUG API: archive_clear deleted=%d", deleted)
         return web.json_response({"ok": True, "deleted": deleted})
 
     app.router.add_delete("/debug/api/archive", archive_clear_handler)
@@ -324,6 +334,8 @@ def register_debug_routes(app: web.Application) -> None:
                 {"error": "MongoDB 不可用"}, status=503)
         try:
             deleted = await agent._session_repo.delete(sid)
+            logger.warning("DEBUG API: session_delete sid=%s, current=%s, deleted=%d",
+                          sid, str(agent._session.session_id), deleted)
             if sid == str(agent._session.session_id):
                 agent._session.clear()
             return web.json_response({"ok": True, "deleted": deleted})
@@ -339,6 +351,7 @@ def register_debug_routes(app: web.Application) -> None:
                 {"error": "MongoDB 不可用"}, status=503)
         try:
             deleted = await agent._session_repo.clear_all()
+            logger.warning("DEBUG API: sessions_clear deleted=%d", deleted)
             agent._session.clear()
             return web.json_response({"ok": True, "deleted": deleted})
         except Exception as e:
@@ -499,6 +512,8 @@ def register_debug_routes(app: web.Application) -> None:
             agent, "l2", target_version)
         if error:
             return web.json_response({"error": error}, status=status)
+        logger.warning("DEBUG API: l2_rollback version=%d, new_version=%s",
+                      target_version, result.get("new_version"))
         return web.json_response(result)
 
     app.router.add_post("/debug/api/l2-rollback", l2_rollback_handler)
@@ -534,6 +549,8 @@ def register_debug_routes(app: web.Application) -> None:
             agent, content_type, target_version)
         if error:
             return web.json_response({"error": error}, status=status)
+        logger.warning("DEBUG API: character_rollback type=%s, version=%d, new_version=%s",
+                      content_type, target_version, result.get("new_version"))
         return web.json_response(result)
 
     app.router.add_post("/debug/api/character-rollback", character_rollback_handler)

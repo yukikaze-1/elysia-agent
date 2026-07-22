@@ -115,12 +115,16 @@ class MessageRepository(Repository):
     async def delete_by_session(self, session_id: SessionId) -> int:
         if self._db is None:
             return 0
-        return await self._db.delete_many(COLLECTION, {"session_id": session_id})
+        result = await self._db.delete_many(COLLECTION, {"session_id": session_id})
+        logger.info("MessageRepository delete_by_session: session_id=%s, deleted=%d", session_id, result)
+        return result
 
     async def clear_all(self) -> int:
         if self._db is None:
             return 0
-        return await self._db.delete_many(COLLECTION, {})
+        result = await self._db.delete_many(COLLECTION, {})
+        logger.warning("MessageRepository clear_all: deleted=%d messages", result)
+        return result
 
     async def query_offset(self, *, skip: int = 0, limit: int = 50,
                            search: str = "", role: MessageRole | None = None
@@ -142,13 +146,17 @@ class MessageRepository(Repository):
     async def delete_one(self, msg_id: MessageId) -> int:
         if self._db is None:
             return 0
-        return await self._db.delete_many(COLLECTION, {"_id": ObjectId(msg_id)})
+        result = await self._db.delete_many(COLLECTION, {"_id": ObjectId(msg_id)})
+        logger.info("MessageRepository delete_one: msg_id=%s, deleted=%d", msg_id, result)
+        return result
 
     async def update_text(self, msg_id: MessageId, new_text: str) -> int:
         if self._db is None:
             return 0
-        return await self._db.update_one(
+        result = await self._db.update_one(
             COLLECTION,
             {"_id": ObjectId(msg_id)},
             {"$set": {"content": [{"type": "text", "content": new_text}]}},
         )
+        logger.info("MessageRepository update_text: msg_id=%s, text_len=%d, modified=%d", msg_id, len(new_text), result)
+        return result

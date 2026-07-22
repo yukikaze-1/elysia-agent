@@ -239,6 +239,7 @@ class LongTermMemory:
                     )
                     if pk_list:
                         entry._milvus_pk = pk_list[0]
+                        logger.debug("LongTermMemory insert: entry_id=%s, pk=%s", entry.id, pk_list[0])
                 except Exception as e:
                     logger.warning("Milvus insert failed: %s, falling back to in-memory", e)
                     self._dirty_ids.add(entry.id)
@@ -368,6 +369,8 @@ class LongTermMemory:
                                     )
                                     if pk_list:
                                         e._milvus_pk = int(pk_list[0])
+                                        logger.info("LongTermMemory update_text: entry_id=%s, old_pk=%s, new_pk=%s",
+                                                    entry_id, old_pk, pk_list[0])
                                         # 新向量插入成功后才删除旧向量
                                         try:
                                             await self._repo.delete([old_pk])
@@ -391,6 +394,7 @@ class LongTermMemory:
                     self._absorbed_ids.discard(entry_id)
                     self._dirty_ids.discard(entry_id)
                     if self._repo is not None and e._milvus_pk is not None:
+                        logger.info("LongTermMemory delete: entry_id=%s, milvus_pk=%s", entry_id, e._milvus_pk)
                         try:
                             await self._repo.delete([e._milvus_pk])
                         except Exception:

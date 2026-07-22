@@ -82,7 +82,9 @@ class MemoryRepository(Repository):
     async def delete(self, ids: list[int]) -> int:
         if self._db is None:
             return 0
-        return await self._db.delete(COLLECTION, ids)
+        result = await self._db.delete(COLLECTION, ids)
+        logger.info("MemoryRepository delete: ids=%s, count=%d", ids[:5], result)
+        return result
 
     async def count(self) -> int:
         """返回 Milvus 中条目数（上限 10000）。"""
@@ -96,5 +98,6 @@ class MemoryRepository(Repository):
     async def clear_all(self) -> None:
         if self._db is None:
             return
+        logger.warning("MemoryRepository clear_all: dropping + recreating collection %s", COLLECTION)
         await self._db.drop_collection(COLLECTION)
         await self._db.create_collection(COLLECTION, DIMENSION)
