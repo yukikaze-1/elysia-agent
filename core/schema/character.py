@@ -20,6 +20,9 @@ class CharacterState(BaseModel):
     state_l3: str = ""
     state_history: list[StateHistoryEntry] = Field(default_factory=list)
     last_awareness_time: float | None = None       # epoch float，非 IsoTimestamp
+    approved_awareness_text: str = ""               # AwarenessJudge 批准的觉察文本
+    approved_awareness_at: float | None = None       # 批准时间戳（epoch）
+    awareness_show_count: int = 0                    # 已展示次数
     compression_last_at: float | None = None         # epoch float，非 IsoTimestamp
     compression_last_count: int = 0
     mood: str = "平静"
