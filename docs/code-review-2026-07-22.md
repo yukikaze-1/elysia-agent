@@ -4,13 +4,13 @@
 **审查范围**: 整个项目（排除 `/data`、`docs/superpowers`、`docs/plan`、`docs/spec`）  
 **审查方法**: 9 个并行审查 agent 覆盖全代码库（~1.4M 行），按严重度排序  
 
-**已修复**: #2 + #14-#22 + #24 + #27-#29 — 2026-07-22 | **跳过**: #23（并发度低，非实质问题）: #23（并发度低，非实质问题）
+**已修复**: #1-#4 + #8 + #14-#22 + #24 + #27-#29 — 2026-07-23 | **跳过**: #5(影响小), #6(TODO), #7(需设计), #23(并发度低): #23（并发度低，非实质问题）: #23（并发度低，非实质问题）
 
 ---
 
 ## 一、严重 Bug（会导致崩溃或数据丢失）
 
-### 1. `llm_adapter.py:91` — stream_think 重试路径 `NameError` 崩溃
+### 1. ✅ `llm_adapter.py:91` — stream_think 重试路径 `NameError` 崩溃
 
 [core/adapter/llm_adapter.py](core/adapter/llm_adapter.py#L91)
 
@@ -30,7 +30,7 @@
 
 ---
 
-### 3. `cognitive/loop.py:807-808` — `_response_recorder` 未初始化导致 `AttributeError`
+### 3. ✅ `cognitive/loop.py:807-808` — `_response_recorder` 未初始化导致 `AttributeError`
 
 [core/cognitive/loop.py](core/cognitive/loop.py#L807)
 
@@ -40,7 +40,7 @@
 
 ---
 
-### 4. `long_term.py:150-167` — 嵌入加载超时后线程泄漏 + 数据竞争
+### 4. ✅ `long_term.py:150-167` — 嵌入加载超时后线程泄漏 + 数据竞争
 
 [core/memory/long_term.py](core/memory/long_term.py#L150)
 
@@ -50,7 +50,7 @@
 
 ---
 
-### 5. `agent.py:348-390` — 认知任务引用被覆盖导致竞态条件
+### 5. ⏭️ `agent.py:348-390` — 认知任务引用被覆盖导致竞态条件
 
 [core/agent/agent.py](core/agent/agent.py#L348)
 
@@ -60,7 +60,7 @@
 
 ---
 
-### 6. `long_term.py:250` — 驱逐功能被注释，内存无界增长
+### 6. ⏭️ `long_term.py:250` — 驱逐功能被注释，内存无界增长
 
 [core/memory/long_term.py](core/memory/long_term.py#L250)
 
@@ -74,7 +74,7 @@
 
 ---
 
-### 7. `tools/reminder/plugin.py:33-37` — 提醒通知永不送达
+### 7. ⏭️ `tools/reminder/plugin.py:33-37` — 提醒通知永不送达
 
 [core/tools/reminder/plugin.py](core/tools/reminder/plugin.py#L33)
 
@@ -84,7 +84,7 @@
 
 ---
 
-### 8. `tts_adapter.py:304-307` — 句子排序门锁死锁
+### 8. ✅ `tts_adapter.py:304-307` — 句子排序门锁死锁
 
 [core/adapter/tts_adapter.py](core/adapter/tts_adapter.py#L304)
 
