@@ -157,6 +157,10 @@ class StreamProcessor:
             return events
 
         # --- TTFT ---
+        # 匹配现有代码行为: TTFT 在 inner_voice 标签闭合后的第一个可见 token 触发。
+        # inner_voice 前的文本（如 "hello<inner_voice>...</inner_voice>" 中的 "hello"）
+        # 不触发 TTFT——因为 _process_inner_voice 在 PRE 阶段直接产生 TEXT_DELTA 事件，
+        # 而 TTFT 检查在 feed() 的后半段，此时 delta 已全部被 inner_voice 处理消费。
         if not self._ttft_sent:
             self._ttft_sent = True
             events.append(StreamEvent(type=StreamEventType.TTFT))
@@ -479,12 +483,12 @@ class TestTTFT:
         events = proc.feed("<mood>happy</mood>visible")
         # TTFT 应在 mood 标签剥离后才触发
         ttft_events = [e for e in events if e.type == StreamEventType.TTFT]
-        if ttft_events:
-            # TTFT 在 visible text 到达后才触发
-            visible_events = [e for e in events if e.type == StreamEventType.TEXT_DELTA]
-            ttft_idx = events.index(ttft_events[0])
-            first_visible_idx = events.index(visible_events[0]) if visible_events else 0
-            assert ttft_idx >= first_visible_idx
+        assert len(ttft_events) == 1, "TTFT should fire once for visible text"
+        # TTFT 在 visible text 到达后才触发
+        visible_events = [e for e in events if e.type == StreamEventType.TEXT_DELTA]
+        ttft_idx = events.index(ttft_events[0])
+        first_visible_idx = events.index(visible_events[0]) if visible_events else 0
+        assert ttft_idx >= first_visible_idx
 
 
 class TestSafeLenForwarding:
@@ -617,6 +621,12 @@ cross-chunk buffering, block filtering, TTFT, and edge cases."
         return speaking_started, all_sentences
 ```
 
+在 `__init__` 中新增属性初始化（放在现有属性之后，约 line ~126）：
+
+```python
+self._ttft_start: float = 0.0
+```
+
 - [ ] **Step 2: 添加 `StreamProcessor` import**
 
 在 `loop.py` 顶部 import 区域（`from ..text.sentence_buffer import SentenceBuffer` 行之后，约 line 34）添加：
@@ -627,7 +637,7 @@ from .stream_processor import StreamProcessor, StreamEvent, StreamEventType
 
 - [ ] **Step 3: 替换 `_think_loop` 中的内联状态机**
 
-将 `_think_loop` 方法中 lines 356-603（从 `for round_num in range(...)` 内的状态机初始化到 flush tail 结束）替换为 StreamProcessor 调用。
+将 `_think_loop` 方法中 lines 356-603（`for round_num` 循环内的流式解析 + flush tail）替换为 StreamProcessor 调用。**L604 之后的 tool_calls 执行 + round 循环收尾逻辑不变。**
 
 **关键变更：**
 
@@ -709,22 +719,17 @@ from .stream_processor import StreamProcessor, StreamEvent, StreamEventType
                     )
 ```
 
-注意：`sentence_buf` 原来在 `process()` 方法开头创建（line ~246: `self._sentence_buf = SentenceBuffer(...)`），用于等待打断时的 TTS 任务完成。这个仍保留，但不再在 `_think_loop` 中引用。检查 `_handle_interrupt` 和 `_transition_idle` 中对 `self._sentence_buf` 的引用——仍需保留用于 reset/flush，但这些逻辑现由 StreamProcessor 处理，需更新。
-
-在 `_handle_interrupt` (line ~936) 中：
-```python
-if self._sentence_buf is not None:
-    self._sentence_buf.reset()
-```
-保留不变——`self._sentence_buf` 引用来自 `process()` 中创建的 SentenceBuffer。但 StreamProcessor 使用自己的内部 SentenceBuffer。需确认这不会导致问题。
-
 **重要：** 将 `_handle_sentence` 嵌套函数的副作用（`sentence_buf.feed`, `_output.typing(False)`, `FSM.transition(SPEAKING)`, `_tts_mgr.stream_sentence` / `_output._broadcast`）全部迁移到 `_dispatch_stream_event`。
 
-- [ ] **Step 4: 处理 `_handle_interrupt` 中的 `_sentence_buf` 引用**
+- [ ] **Step 4: 删除 `process()` 中 `self._sentence_buf` / `self._block_filter` 的创建**
 
-在 `_handle_interrupt` (line 940-941) 中，`self._sentence_buf.reset()` 现在应该改为重置 StreamProcessor 的 sentence buffer。但由于 StreamProcessor 是在 `_think_loop` 循环内创建的（每个 tool round 一个），interrupt 路径不需要改——中断时 `_think_loop` 已退出，StreamProcessor 实例随循环结束而销毁。`self._sentence_buf` 引用保留用于 TTS 等待逻辑（`_transition_idle`），但不再用于流式解析。
+在 `process()` 方法中（line ~246-247），删除：
+```python
+self._sentence_buf = SentenceBuffer(min_chunk_length=5, max_buffer_length=2000)
+self._block_filter = BlockFilter()
+```
 
-实际上，目前的 `process()` 方法中 line 246: `self._sentence_buf = SentenceBuffer(...)` 和 `self._block_filter = BlockFilter()` 创建的两个 buffer 在 `_think_loop` 中被赋值给局部变量（`block_filter = self._block_filter`），现在已经不再需要了。简化：删除 `process()` 中的这两行创建代码。
+理由：`__init__`（L126-127）已初始化为 `None`，`_handle_interrupt`（L940-943）已有 `is not None` 守卫——删除后保持 `None`，`_handle_interrupt` 自动跳过 reset，不会崩。`_transition_idle` 不引用 `_sentence_buf`（它用 `self._tts_mgr.wait_all()`）。
 
 - [ ] **Step 5: 运行现有 cognitive 测试验证无回归**
 
@@ -843,7 +848,7 @@ LLM stream
 
 - [ ] **Step 6: 运行全量测试（排除 slow）**
 
-Run: `cd /home/yomu/Agent && conda run -n Elysia python -m pytest -m "not slow" -q --tb=short`
+Run: `make test-normal`
 Expected: 全部 PASS（或与 main 分支一致的已知失败数）
 
 - [ ] **Step 7: Commit**
