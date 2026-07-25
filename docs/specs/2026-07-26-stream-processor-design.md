@@ -121,7 +121,19 @@ tail = combined[-keep_len:]         # 保留尾部
 
 如果 MOOD_PRE 状态中第一个非空白字符不是 `<`，设置 `mood_state = DONE`，后续所有 delta 跳过 mood 检测。同样，如果 `<mood>` 前有非空白文本（如 `hello <mood>happy</mood>`），mood 检测在 `hello ` 的第一个非空白 `h` 处被判定为 DONE——不输出假阳性的 mood 标签。
 
-**4. 标签完全缺失**
+**4. 未闭合 inner_voice — flush 时广播残留**
+
+如果 `<inner_voice>` 已打开但直到流结束仍未闭合（`iv_state == "THINK"`）：
+- `flush()` 将 `iv_think_buf + iv_tail` 作为 `INNER_VOICE` 事件输出
+- 这匹配现有代码 loop.py:568-578 的行为：未闭合 inner_voice 内容归入 think 并广播，而非丢弃
+
+**5. 未闭合 mood — flush 时丢弃残留**
+
+如果 `<mood>` 已打开但直到流结束仍未闭合（`mood_state == "MOOD"`）：
+- `flush()` 丢弃 `mood_buf + mood_tail`，不产生 MOOD 事件
+- 匹配现有代码：没有 `</mood>` 时 mood_buf 未被消费，流后 fallback 走关键词检测
+
+**6. 标签完全缺失**
 
 如果整个流中从未出现 `<mood>` 或 `<inner_voice>`：
 - `iv_state == "PRE"` → `flush()` 把 `iv_tail` 残留全部作为 TEXT_DELTA 输出
@@ -135,7 +147,7 @@ tail = combined[-keep_len:]         # 保留尾部
 ```python
 async def _dispatch_stream_event(self, event: StreamEvent, *,
     speaking_started: bool, all_sentences: list[str],
-    tts_mgr: TTSStreamManager, block_filter: BlockFilter,
+    tts_mgr: TTSStreamManager,
 ) -> tuple[bool, list[str]]:
     """分发 StreamEvent → 副作用。返回更新后的 (speaking_started, all_sentences)。"""
     if event.type == StreamEventType.MOOD:
@@ -208,7 +220,7 @@ StreamProcessor 是纯状态机，所有测试都是 `input → assert output`�
 | 用例 | 输入 | 预期事件 |
 |------|------|----------|
 | 空字符串 | `feed("")` | `[]` |
-| 纯文本无标签 | `feed("hello world。")` | `TEXT_DELTA("hello")` + `SENTENCE("hello world。")` |
+| 纯文本无标签 | `feed("hello world。")` | `TEXT_DELTA("hello world。")` + `SENTENCE("hello world。")` |
 | 完整 mood 标签 | `feed("<mood>happy</mood>hi")` | `MOOD("happy")` + `TEXT_DELTA("hi")` |
 | 完整 inner_voice 标签 | `feed("<inner_voice>think</inner_voice>reply")` | `INNER_VOICE("think")` + `TEXT_DELTA("reply")` |
 | mood 跨 chunk 分割 | `feed("<mo")` → `feed("od>happy</mood>hi")` | `MOOD("happy")` + `TEXT_DELTA("hi")` |
@@ -218,7 +230,7 @@ StreamProcessor 是纯状态机，所有测试都是 `input → assert output`�
 | 两个标签同一 chunk | `feed("<mood>happy</mood><inner_voice>hmm</inner_voice>hi")` | `MOOD` + `INNER_VOICE` + `TEXT_DELTA("hi")` |
 | mood 前有非空白文本 | `feed("hello <mood>happy</mood>")` | `TEXT_DELTA("hello ")` — mood 检测被 DONE 跳过 |
 | 未闭合 mood | `feed("<mood>happy")` → `flush()` | `MOOD` 事件在闭合时才触发 → mood 从未闭合 → flush 丢弃残留，不输出 |
-| 未闭合 inner_voice | `feed("<inner_voice>think")` → `flush()` | `INNER_VOICE` 事件在闭合时才触发 → flush 丢弃残留 |
+| 未闭合 inner_voice | `feed("<inner_voice>think")` → `flush()` | `flush()` 产生 `INNER_VOICE("think")` — 匹配现有代码：残留归入 think 并广播 |
 | `<mood>` 前有空白 | `feed("  <mood>happy</mood>hi")` | `MOOD("happy")` + `TEXT_DELTA("hi")` — 前导空白不影响标签检测 |
 | flush 尾句 | `feed("no period")` → `flush()` | `feed` 只有 TEXT_DELTA → `flush` 吐出 `SENTENCE("no period")` |
 | 代码块过滤 | `feed("hi <|code|python>print(1)</|code|> bye。")` | `TEXT_DELTA("hi ")` + `SENTENCE("hi  bye。")` — 代码块内容被吞掉 |
@@ -245,4 +257,4 @@ StreamProcessor 是纯状态机，所有测试都是 `input → assert output`�
 | `loop.py` 行数 | 952 | ~750 |
 | `_think_loop` 行数 | 560 | ~310 |
 | StreamProcessor 行数 | — | ~350（含跨 chunk 缓冲逻辑） |
-| StreamProcessor 测试 | 需要启动完整 Agent | 纯函数 input → assert output，16+ 用例 |
+| StreamProcessor 测试 | 需要启动完整 Agent | 纯函数 input → assert output，17 用例 |
