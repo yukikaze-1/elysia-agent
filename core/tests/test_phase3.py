@@ -445,15 +445,18 @@ class TestCognitiveLoopSync:
 
     @pytest.mark.asyncio
     async def test_process_resets_sentence_buffer(self, loop):
-        """每次 process() 调用创建全新的 SentenceBuffer（无跨轮污染）。"""
-        # _sentence_buf 在 __init__ 中初始化为 None，process() 入口才创建
+        """每次 process() 调用创建全新的 StreamProcessor（无跨轮污染）。
+
+        _sentence_buf 现在始终为 None — StreamProcessor 内部持有 SentenceBuffer，
+        每次 _think_loop 创建新的 StreamProcessor 实例保证隔离。
+        """
+        # _sentence_buf 在 __init__ 中初始化为 None，保持 None
         assert loop._sentence_buf is None
 
         await loop.process("hello")
 
-        # process() 创建了新的 SentenceBuffer，初始 _buffer 为空
-        assert loop._sentence_buf is not None
-        assert loop._sentence_buf._buffer == ""
+        # 集成 StreamProcessor 后不再由 CognitiveLoop 管理 SentenceBuffer
+        assert loop._sentence_buf is None
 
     @pytest.mark.asyncio
     async def test_process_lock_serializes(self, loop):

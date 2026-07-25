@@ -32,6 +32,7 @@ from Module.tool.protocol import ToolResult
 from ..prompt_assembler import PromptAssembler
 from ..memory.session import SessionMemory
 from ..text.sentence_buffer import SentenceBuffer
+from .stream_processor import StreamProcessor, StreamEvent, StreamEventType
 from ..adapter.llm_adapter import LLMAdapter
 from ..memory.consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
     from Module.task_system.delegation_preparer import DelegationPreparer
 
 from ..text.block_filter import BlockFilter, build_parts_with_blocks
-from ..adapter.tts_adapter import TTSStreamManager, is_emoji_only
+from ..adapter.tts_adapter import TTSStreamManager
 from ..adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from ..text.text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
@@ -125,6 +126,8 @@ class CognitiveLoop(CognitiveTools):
         self._response_recorder = None  # 由 set_response_recorder() 注入
         self._sentence_buf: SentenceBuffer | None = None
         self._block_filter: BlockFilter | None = None
+        self._ttft_start: float = 0.0
+        self._mood_applied: bool = False
         self._process_lock = asyncio.Lock()
         self._current_task: asyncio.Task | None = None
         self._tts_task: asyncio.Task | None = None  # 保留供 agent.py stop() 读取
@@ -243,8 +246,6 @@ class CognitiveLoop(CognitiveTools):
             self._bus.post(StateChangeData(state="thinking", request_id=rid),
                           priority=EventPriority.STATE_CHANGE)
 
-            self._sentence_buf = SentenceBuffer(min_chunk_length=5, max_buffer_length=2000)
-            self._block_filter = BlockFilter()
             self._current_task = asyncio.current_task()
             try:
                 await self._think_loop(user_message, user_name,
@@ -290,11 +291,6 @@ class CognitiveLoop(CognitiveTools):
                           is_task_result: bool = False,
                           task_result_context: dict | None = None,
                           ) -> None:
-        # process() 在调用 _think_loop 前已初始化这两个 buffer
-        assert self._sentence_buf is not None
-        sentence_buf = self._sentence_buf
-        assert self._block_filter is not None
-
         if self._character_engine:
             if stt_emotion and stt_emotion != "NEUTRAL":
                 self._character_engine.analyze_user_stt(stt_emotion, stt_events)
@@ -358,10 +354,9 @@ class CognitiveLoop(CognitiveTools):
                 raw_tool_calls: list[dict] = []
                 speaking_started = False
                 all_sentences: list[str] = []
-                block_filter: BlockFilter = self._block_filter
-                block_filter.reset()  # 防御性：_think_loop 可能因 tool round 被多次调用
-                ttft_done = False
+                iv_think_buf_holder: list[str] = [""]
                 t_think_start = time.perf_counter()
+                self._ttft_start = t_think_start  # 供 _dispatch_stream_event TTFT 使用
 
                 # 工具循环的后续轮次也捕获 prompt
                 if round_num > 0 and self._prompt_recorder is not None:
@@ -372,42 +367,9 @@ class CognitiveLoop(CognitiveTools):
                         model=self._llm.model,
                     )
 
-                # mood 标签检测状态机 — 在 inner_voice 之前
-                MOOD_OPEN = "<mood>"
-                MOOD_CLOSE = "</mood>"
-                mood_state = "MOOD_PRE"  # MOOD_PRE / MOOD / DONE
-                mood_buf = ""
-                mood_tail = ""
-                mood_applied = False
-
-                # inner_voice 标签检测状态机
-                TAG_OPEN = "<inner_voice>"
-                TAG_CLOSE = "</inner_voice>"
-                iv_state = "PRE"      # PRE / THINK / REPLY
-                iv_tail: str = ""          # 跨 chunk 检测缓冲
-                iv_think_buf = ""     # 已确认的 inner_voice 内容
-
-                # 句子处理 helper — PRE/THINK/REPLY 三状态共用
-                async def _handle_sentence(clean_text: str) -> str | None:
-                    nonlocal speaking_started
-                    sentence = sentence_buf.feed(clean_text) if clean_text else None
-                    if not sentence:
-                        return None
-                    all_sentences.append(sentence)
-                    logger.debug("分句 (%d 字符)", len(sentence))
-                    if not speaking_started:
-                        await self._output.typing(False)
-                        self._fsm.transition(AgentState.SPEAKING)
-                        self._bus.post(StateChangeData(state="speaking", request_id=get_request_id()),
-                                       priority=EventPriority.STATE_CHANGE)
-                        speaking_started = True
-                    if self._tts_mgr.active:
-                        self._tts_mgr.stream_sentence(sentence)
-                    else:
-                        await self._output._broadcast("on_text_delta", sentence,
-                            capability=ChannelCapability.TEXT_DELTA)
-                        await self._output.send("")
-                    return sentence
+                # StreamProcessor: 流式标签检测 + 文本管道
+                self._mood_applied = False
+                proc = StreamProcessor()
 
                 stream = self._llm.stream_think(messages, tools=tool_defs,
                     extra_body={"thinking": {"type": "disabled"}})
@@ -418,133 +380,15 @@ class CognitiveLoop(CognitiveTools):
 
                         if delta:
                             acc_text += delta
-
-                            # --- mood 标签检测 (before inner_voice) ---
-                            if mood_state == "MOOD_PRE":
-                                combined = mood_tail + delta
-                                idx = combined.find(MOOD_OPEN)
-                                if idx >= 0:
-                                    before = combined[:idx].strip()
-                                    if before:
-                                        # 有非空白内容在 <mood> 之前 → 无 mood 标签
-                                        mood_state = "DONE"
-                                        delta = combined  # 保留原始内容
-                                    else:
-                                        mood_state = "MOOD"
-                                        delta = combined[idx + len(MOOD_OPEN):]
-                                        mood_tail = ""
-                                else:
-                                    # 跨 chunk 安全转发: 输出 MOOD_OPEN 不可能开始的部分,
-                                    # 只缓冲尾部用于跨 chunk 匹配
-                                    safe_len = max(0, len(combined) - len(MOOD_OPEN) + 1)
-                                    if safe_len > 0:
-                                        # 已确认安全的部分 — 第一个非空白不是 '<' → 无 mood
-                                        safe_text = combined[:safe_len]
-                                        stripped = safe_text.lstrip()
-                                        if stripped and not stripped.startswith("<"):
-                                            mood_state = "DONE"
-                                            delta = combined
-                                        else:
-                                            delta = safe_text
-                                    else:
-                                        mood_tail = combined
-                                        continue
-                                    mood_tail = combined[safe_len:]
-
-                            if mood_state == "MOOD":
-                                combined = mood_tail + delta
-                                idx = combined.find(MOOD_CLOSE)
-                                if idx >= 0:
-                                    mood_buf += combined[:idx]
-                                    delta = combined[idx + len(MOOD_CLOSE):].lstrip()
-                                    mood_state = "DONE"
-                                    mood_tail = ""
-                                    if mood_buf.strip():
-                                        _apply_mood(mood_buf.strip(), self._character_engine, self._tts_mgr)
-                                        mood_applied = True
-                                else:
-                                    keep_len = min(len(MOOD_CLOSE) - 1, len(combined))
-                                    if len(combined) > keep_len:
-                                        mood_buf += combined[:-keep_len]
-                                    mood_tail = combined[-keep_len:]
-                                    continue
-
-                            if mood_state == "DONE":
-                                pass  # fall through to inner_voice processing
-
-                            if not delta:
-                                continue
-
-                            # --- inner_voice 标签检测 ---
-                            if iv_state == "PRE":
-                                combined = iv_tail + delta
-                                idx = combined.find(TAG_OPEN)
-                                if idx >= 0:
-                                    before = combined[:idx].lstrip()
-                                    if before:
-                                        clean = block_filter.feed(before)
-                                        if not self._tts_mgr.active and clean:
-                                            await self._output._broadcast("on_text_delta", clean,
-                                                capability=ChannelCapability.TEXT_DELTA)
-                                        await _handle_sentence(clean)
-                                    iv_state = "THINK"
-                                    iv_tail = ""
-                                    delta = combined[idx + len(TAG_OPEN):]
-                                else:
-                                    safe_len = max(0, len(combined) - len(TAG_OPEN) + 1)
-                                    if safe_len > 0:
-                                        clean = block_filter.feed(combined[:safe_len])
-                                        if not self._tts_mgr.active and clean:
-                                            await self._output._broadcast("on_text_delta", clean,
-                                                capability=ChannelCapability.TEXT_DELTA)
-                                        await _handle_sentence(clean)
-                                    iv_tail = combined[safe_len:]
-                                    continue
-
-                            if iv_state == "THINK":
-                                combined = iv_tail + delta
-                                idx = combined.find(TAG_CLOSE)
-                                if idx >= 0:
-                                    iv_think_buf += combined[:idx]
-                                    after = combined[idx + len(TAG_CLOSE):].lstrip()
-                                    iv_state = "REPLY"
-                                    iv_tail = ""
-                                    if iv_think_buf.strip():
-                                        try:
-                                            await self._output.command("inner_voice",
-                                                params={"content": iv_think_buf.strip()})
-                                        except Exception:
-                                            logger.debug("inner_voice broadcast failed", exc_info=True)
-                                    delta = after
-                                else:
-                                    keep_len = min(len(TAG_CLOSE) - 1, len(combined))
-                                    if len(combined) > keep_len:
-                                        iv_think_buf += combined[:-keep_len]
-                                    iv_tail = combined[-keep_len:]
-                                    continue
-
-                            if iv_state == "REPLY":
-                                pass  # 正常流，继续下面的处理
-
-                            if not delta:
-                                continue
-
-                            if not ttft_done:
-                                ttft_done = True
-                                ttft_ms = int((time.perf_counter() - t_think_start) * 1000)
-                                assert self._clock is not None
-                                self._clock._spans["ttft"] = ttft_ms
-                                logger.debug("TTFT: %d ms", ttft_ms)
-
-                            # 过滤结构化块标记 — 代码和 markdown 不走 TTS
-                            clean = block_filter.feed(delta)
-
-                            # TTS 关闭时流式逐字发送；TTS 开启时不发（由 TTSStreamManager 发送完整句）
-                            if not self._tts_mgr.active and clean:
-                                await self._output._broadcast("on_text_delta", clean,
-                                    capability=ChannelCapability.TEXT_DELTA)
-
-                            await _handle_sentence(clean)
+                            for event in proc.feed(delta):
+                                speaking_started, all_sentences = (
+                                    await self._dispatch_stream_event(
+                                        event,
+                                        speaking_started=speaking_started,
+                                        all_sentences=all_sentences,
+                                        iv_think_buf_holder=iv_think_buf_holder,
+                                    )
+                                )
 
                         if tc_deltas:
                             merge_stream_tool_calls(raw_tool_calls, tc_deltas)
@@ -560,47 +404,18 @@ class CognitiveLoop(CognitiveTools):
                 except asyncio.CancelledError:
                     raise
 
-                # Flush state machine tail (流结束时的残留缓冲区)
-                if iv_state == "PRE" and iv_tail:
-                    # 整个流都没找到 <inner_voice>，全部当 public_reply
-                    clean = block_filter.feed(iv_tail)
-                    await _handle_sentence(clean)
-                elif iv_state == "THINK":
-                    # 有 <inner_voice> 但没有 </inner_voice>，剩余归入 think
-                    if iv_tail:
-                        iv_think_buf += iv_tail
-                    # 广播 inner_voice（如果有的话）
-                    if iv_think_buf.strip():
-                        try:
-                            await self._output.command("inner_voice",
-                                params={"content": iv_think_buf.strip()})
-                        except Exception:
-                            logger.debug("inner_voice broadcast failed", exc_info=True)
+                # Flush StreamProcessor
+                for event in proc.flush():
+                    speaking_started, all_sentences = (
+                        await self._dispatch_stream_event(
+                            event,
+                            speaking_started=speaking_started,
+                            all_sentences=all_sentences,
+                            iv_think_buf_holder=iv_think_buf_holder,
+                        )
+                    )
 
-                # Flush remaining text in sentence buffer + block filter
-                trailing = block_filter.flush()
-                if trailing:
-                    await _handle_sentence(trailing)
-                remaining = sentence_buf.flush()
-                if remaining:
-                    if is_emoji_only(remaining):
-                        logger.debug("flush emoji: %s", remaining)
-                    else:
-                        all_sentences.append(remaining)
-                        logger.debug("flush 尾句 (%d 字符)", len(remaining))
-                        logger.debug("尾句内容: %s", remaining[:60])
-                    if not speaking_started:
-                        await self._output.typing(False)
-                        self._fsm.transition(AgentState.SPEAKING)
-                        self._bus.post(StateChangeData(state="speaking", request_id=get_request_id()),
-                                       priority=EventPriority.STATE_CHANGE)
-                        speaking_started = True
-                    if self._tts_mgr.active:
-                        self._tts_mgr.stream_sentence(remaining)
-                    else:
-                        await self._output._broadcast("on_text_delta", remaining,
-                            capability=ChannelCapability.TEXT_DELTA)
-                        await self._output.send("")
+                iv_think_buf = iv_think_buf_holder[0]
 
                 # If tool calls were detected, execute them and loop
                 if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
@@ -757,7 +572,7 @@ class CognitiveLoop(CognitiveTools):
                 await self._tts_mgr.flush_emojis()
 
                 # Fallback: LLM 未输出 <mood> → 关键词检测
-                if self._character_engine and not mood_applied:
+                if self._character_engine and not self._mood_applied:
                     logger.debug("心情: <mood> 未检测到，使用关键词 fallback")
                     self._character_engine.analyze_user(user_message)
                     self._tts_mgr.set_emotion(self._character_engine.state.mood)
@@ -882,6 +697,73 @@ class CognitiveLoop(CognitiveTools):
             raise
         except Exception:
             logger.debug("会话保存失败", exc_info=True)
+
+
+    # ---- StreamProcessor event dispatch ----
+
+    async def _dispatch_stream_event(
+        self, event: StreamEvent, *,
+        speaking_started: bool, all_sentences: list[str],
+        iv_think_buf_holder: list[str],
+    ) -> tuple[bool, list[str]]:
+        """分发 StreamEvent → 副作用。
+
+        这是 StreamProcessor（纯状态机）和 CognitiveLoop（副作用世界）之间的桥。
+        返回更新后的 (speaking_started, all_sentences)。
+        """
+        if event.type == StreamEventType.MOOD:
+            if self._character_engine:
+                _apply_mood(event.text, self._character_engine, self._tts_mgr)
+            self._mood_applied = True
+
+        elif event.type == StreamEventType.INNER_VOICE:
+            if event.text:
+                iv_think_buf_holder[0] = event.text
+                try:
+                    await self._output.command(
+                        "inner_voice",
+                        params={"content": event.text},
+                    )
+                except Exception:
+                    logger.debug("inner_voice broadcast failed", exc_info=True)
+
+        elif event.type == StreamEventType.TTFT:
+            ttft_ms = int((time.perf_counter() - self._ttft_start) * 1000)
+            if self._clock is not None:
+                self._clock._spans["ttft"] = ttft_ms
+            logger.debug("TTFT: %d ms", ttft_ms)
+
+        elif event.type == StreamEventType.SENTENCE:
+            sentence = event.text
+            if not sentence:
+                return speaking_started, all_sentences
+            all_sentences.append(sentence)
+            logger.debug("分句 (%d 字符)", len(sentence))
+            if not speaking_started:
+                await self._output.typing(False)
+                self._fsm.transition(AgentState.SPEAKING)
+                self._bus.post(
+                    StateChangeData(state="speaking", request_id=get_request_id()),
+                    priority=EventPriority.STATE_CHANGE,
+                )
+                speaking_started = True
+            if self._tts_mgr.active:
+                self._tts_mgr.stream_sentence(sentence)
+            else:
+                await self._output._broadcast(
+                    "on_text_delta", sentence,
+                    capability=ChannelCapability.TEXT_DELTA,
+                )
+                await self._output.send("")
+
+        elif event.type == StreamEventType.TEXT_DELTA:
+            if not self._tts_mgr.active and event.text:
+                await self._output._broadcast(
+                    "on_text_delta", event.text,
+                    capability=ChannelCapability.TEXT_DELTA,
+                )
+
+        return speaking_started, all_sentences
 
 
     @staticmethod
