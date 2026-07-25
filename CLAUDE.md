@@ -91,7 +91,8 @@ core/
 │   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
 │   └── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
 ├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing
-│   ├── loop.py            #   CognitiveLoop(CognitiveTools): __init__ + process + _think_loop + FSM
+│   ├── loop.py            #   CognitiveLoop(CognitiveTools): __init__ + process + _think_loop + FSM + _dispatch_stream_event
+│   ├── stream_processor.py #   StreamProcessor: 流式标签检测 + 文本管道
 │   ├── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task
 │   └── timing.py          #   Timer + TimingClock latency tracking
 ├── adapter/               # Adapter layer: wraps Module/ backends for core/ consumption
