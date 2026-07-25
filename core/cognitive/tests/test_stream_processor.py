@@ -18,23 +18,24 @@ class TestBasicText:
     def test_plain_text_with_period(self):
         proc = StreamProcessor()
         events = proc.feed("hello world。")
-        assert len(events) >= 2
-        types = [e.type for e in events]
+        # "hello world。" 短于 BlockFilter 14-char keep 阈值，
+        # feed 只产生 TTFT；TEXT_DELTA / SENTENCE 由 flush 产出
+        assert StreamEventType.TTFT in [e.type for e in events]
+        flush_events = proc.flush()
+        types = [e.type for e in flush_events]
         assert StreamEventType.TEXT_DELTA in types
         assert StreamEventType.SENTENCE in types
-        # SENTENCE 应是完整句
-        sentence_events = [e for e in events if e.type == StreamEventType.SENTENCE]
+        sentence_events = [e for e in flush_events if e.type == StreamEventType.SENTENCE]
         assert any("hello world。" in e.text for e in sentence_events)
 
     def test_plain_text_no_delimiter_flush(self):
         proc = StreamProcessor()
         events = proc.feed("no period")
-        # feed 返回 TEXT_DELTA，SentenceBuffer 缓存文本不产出 SENTENCE
-        text_deltas = [e for e in events if e.type == StreamEventType.TEXT_DELTA]
-        assert len(text_deltas) >= 1
+        # feed 返回 TTFT；SentenceBuffer 缓存文本，BlockFilter 缓冲短文本
         assert not any(e.type == StreamEventType.SENTENCE for e in events)
-        # flush 吐出尾句
+        # flush 吐出尾句（BlockFilter flush + SentenceBuffer flush）
         flush_events = proc.flush()
+        assert any(e.type == StreamEventType.TEXT_DELTA for e in flush_events)
         assert any(e.type == StreamEventType.SENTENCE for e in flush_events)
         assert any("no period" in e.text for e in flush_events)
 
@@ -154,8 +155,32 @@ class TestCodeBlockFiltering:
         all_text = "".join(e.text for e in text_deltas)
         assert "print(1)" not in all_text
         # 前导和后续文本保留
-        sentence_events = [e for e in events if e.type == StreamEventType.SENTENCE]
+        flush_events = proc.flush()
+        all_events = events + flush_events
+        sentence_events = [e for e in all_events if e.type == StreamEventType.SENTENCE]
         assert any("bye" in e.text for e in sentence_events)
+
+    def test_code_block_cross_chunk(self):
+        """代码块起始标签跨 chunk 时 block 内容仍被正确过滤。"""
+        proc = StreamProcessor()
+        e1 = proc.feed("hi <|cod")
+        # 第一个 chunk 没有 block 泄漏
+        text1 = "".join(e.text for e in e1 if e.type == StreamEventType.TEXT_DELTA)
+        assert "print" not in text1
+        e2 = proc.feed("e|python>print(1)</|code|> bye。")
+        # 第二个 chunk 拼接完成起始标签，进入/退出 code 模式
+        text2 = "".join(e.text for e in e2 if e.type == StreamEventType.TEXT_DELTA)
+        assert "print(1)" not in text2
+        # 前后文本保留（flush 中输出）
+        flush_events = proc.flush()
+        all_text = "".join(
+            e.text for e in e1 + e2 + flush_events
+            if e.type == StreamEventType.TEXT_DELTA
+        )
+        assert "hi " in all_text
+        assert " bye。" in all_text or "bye" in all_text
+        # 代码内容没有泄漏到任何事件
+        assert "print(1)" not in all_text
 
 
 class TestTTFT:
@@ -190,10 +215,11 @@ class TestSafeLenForwarding:
         proc = StreamProcessor()
         e1 = proc.feed("a" * 100 + "<m")
         # 前 100 个 'a' 全部作为 TEXT_DELTA 安全转发
+        # (BlockFilter 保留 14 chars 用于跨 chunk 标签检测，不在此轮输出)
         text_deltas = [e for e in e1 if e.type == StreamEventType.TEXT_DELTA]
         assert len(text_deltas) >= 1
         all_text = "".join(e.text for e in text_deltas)
-        assert "a" * 90 in all_text  # 大部分已转发
+        assert "a" * 80 in all_text  # 大部分已转发 (97-14=83 由 BlockFilter 输出)
         assert "<" not in all_text    # < 未泄漏
         e2 = proc.feed("ood>happy</mood>")
         # "a"*100 在 <mood> 之前 → mood 检测应被中止（匹配原始行为：
@@ -210,5 +236,8 @@ class TestReset:
         proc.reset()
         # 重置后应像新实例一样
         events = proc.feed("fresh start。")
-        assert any(e.type == StreamEventType.SENTENCE for e in events)
+        assert StreamEventType.TTFT in [e.type for e in events]
         assert not any(e.type == StreamEventType.MOOD for e in events)
+        # 短文本在 BlockFilter 缓冲中，flush 产出 SENTENCE
+        flush_events = proc.flush()
+        assert any(e.type == StreamEventType.SENTENCE for e in flush_events)

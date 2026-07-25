@@ -69,6 +69,11 @@ class StreamProcessor:
         if not delta:
             return events
 
+        # --- TTFT (before BlockFilter, matches CognitiveLoop L532-537) ---
+        if not self._ttft_sent:
+            self._ttft_sent = True
+            events.append(StreamEvent(type=StreamEventType.TTFT))
+
         # --- BlockFilter + SentenceBuffer ---
         clean = self._block_filter.feed(delta)
         if clean:
@@ -76,23 +81,6 @@ class StreamProcessor:
             sentence = self._sentence_buf.feed(clean)
             if sentence:
                 events.append(StreamEvent(type=StreamEventType.SENTENCE, text=sentence))
-        # BlockFilter 的流式缓冲可能留存文本（短于 keep threshold），
-        # 立即 flush 以确保本轮 delta 已完整输出。
-        pending = self._block_filter.flush()
-        if pending:
-            events.append(StreamEvent(type=StreamEventType.TEXT_DELTA, text=pending))
-            sentence = self._sentence_buf.feed(pending)
-            if sentence:
-                events.append(StreamEvent(type=StreamEventType.SENTENCE, text=sentence))
-
-        # --- TTFT ---
-        # 匹配现有代码行为: TTFT 在 inner_voice 标签闭合后的第一个可见 token 触发。
-        # inner_voice 前的文本（如 "hello<inner_voice>...</inner_voice>" 中的 "hello"）
-        # 不触发 TTFT——因为 _process_inner_voice 在 PRE 阶段直接产生 TEXT_DELTA 事件，
-        # 而 TTFT 检查在 feed() 的后半段，此时 delta 已全部被 inner_voice 处理消费。
-        if not self._ttft_sent:
-            self._ttft_sent = True
-            events.append(StreamEvent(type=StreamEventType.TTFT))
 
         return events
 
@@ -246,10 +234,6 @@ class StreamProcessor:
                 before = combined[:idx].lstrip()
                 if before:
                     clean = self._block_filter.feed(before)
-                    # BlockFilter 可能在流式缓冲中留存文本，flush 确保完整输出
-                    trailing = self._block_filter.flush()
-                    if trailing:
-                        clean = clean + trailing if clean else trailing
                     if clean:
                         events.append(StreamEvent(type=StreamEventType.TEXT_DELTA, text=clean))
                         sentence = self._sentence_buf.feed(clean)
