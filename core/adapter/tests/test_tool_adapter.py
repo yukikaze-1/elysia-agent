@@ -173,12 +173,13 @@ class TestToolExecutorMethods:
     @pytest.mark.service
     @pytest.mark.asyncio
     async def test_execute_now_returns_list(self):
-        """execute_now() 返回工具名列表。"""
+        """execute_now() 返回注册工具名列表。"""
         from core.adapter.tool_adapter import ToolAdapter
         adapter = ToolAdapter(plugins=[_MockPlugin])
         await adapter.start()
         names = adapter.execute_now()
         assert isinstance(names, list)
+        assert "mock_tool" in names
         await adapter.shutdown()
 
 

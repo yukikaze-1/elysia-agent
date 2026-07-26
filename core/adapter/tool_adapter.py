@@ -136,4 +136,4 @@ class ToolAdapter:
 
     def execute_now(self) -> list[str]:
         """返回可立即执行的工具名列表。"""
-        return self._manager.executing_now
+        return list(self._manager.tool_names)
