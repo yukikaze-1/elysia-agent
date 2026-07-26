@@ -1,14 +1,30 @@
 <script setup lang="ts">
+import CharacterPanel from '@/components/character/CharacterPanel.vue'
+import MessageList from '@/components/chat/MessageList.vue'
+import PreviewBar from '@/components/input/PreviewBar.vue'
+import InputBar from '@/components/input/InputBar.vue'
+import Lightbox from '@/components/shared/Lightbox.vue'
+import SettingsPanel from '@/components/panels/SettingsPanel.vue'
+import ToolsPanel from '@/components/panels/ToolsPanel.vue'
+import ApprovalDialog from '@/components/ui/ApprovalDialog.vue'
 </script>
 
 <template>
+  <SettingsPanel />
+  <ToolsPanel />
+  <ApprovalDialog />
   <aside id="char-panel">
+    <CharacterPanel />
   </aside>
   <main id="main">
     <div id="chat-wrap">
+      <MessageList />
     </div>
+    <PreviewBar />
     <div id="input-bar">
+      <InputBar />
     </div>
+    <Lightbox />
   </main>
 </template>
 
