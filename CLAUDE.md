@@ -221,30 +221,78 @@ core/prompts/
 
 Prompt 需求文档：`core/prompts/ref/` 目录下的 `*-requirements.md` 和 `优化后的prompt-requirements.md`。
 
-## Frontend (`static/`)
+## Frontend (`frontend/`)
 
-Vanilla HTML/CSS/JS, ES modules (`<script type="module">`), no build step.
+Vue 3 + Vite + Pinia + TypeScript。开发时通过 Vite 代理（:5173 → :8765），生产构建产物 `frontend/dist/` 复制到 `static/` 由 aiohttp serve。
 
 ```
-static/
-├── index.html       # Chat shell (~55 lines)
-├── debug.html        # Debug dashboard (12+ panels, polls /debug/api every 2s)
-├── css/chat.css      # All styles
-└── js/
-    ├── config.js      # Constants (timeouts, buffer sizes, storage keys)
-    ├── state.js       # AppState singleton
-    ├── ws.js          # WebSocket: connect, reconnect (exponential backoff + jitter)
-    ├── chat.js        # Chat display: bubbles, delta streaming, typing, tool cards, mood, lightbox
-    ├── audio.js       # TTS buffer/playback
-    ├── mic.js         # Microphone: getUserMedia, ScriptProcessor, PCM→Int16
-    ├── settings.js    # Settings panel: TTS toggle, volume, clear, restart, shutdown
-    ├── persistence.js # Server-session restore + code blocks/Markdown rendering (no localStorage cache)
-    ├── tools.js       # Tool approval UI + tool card rendering
-    ├── esc.js         # Escape key + global keyboard shortcuts
-    └── main.js        # Entry point: WS routing, input, keyboard, image upload
+frontend/
+├── index.html              # Chat 页面 HTML 入口
+├── debug.html              # Debug 页面 HTML 入口（Vite 多页构建）
+├── vite.config.ts          # Vite 配置（代理 :8765 + 多入口构建）
+├── package.json
+├── tsconfig.json
+└── src/
+    ├── main.ts             # Chat 应用入口（Pinia + marked + highlight.js）
+    ├── App.vue             # 根组件（三栏布局 + 全局快捷键）
+    ├── styles/variables.css # 全局 CSS 变量（从旧版 chat.css 提取）
+    ├── types/protocol.ts   # 20+ WebSocket 消息类型定义
+    ├── utils/escape.ts     # HTML 转义工具
+    ├── stores/
+    │   ├── connectionStore.ts  # WebSocket 连接生命周期
+    │   ├── chatStore.ts        # 消息列表 + delta 流式追加 + TTS 排队
+    │   ├── audioStore.ts       # TTS 缓冲/播放 + 麦克风
+    │   ├── settingsStore.ts    # 设置项 + localStorage 同步
+    │   └── toolsStore.ts       # 工具插件列表
+    ├── composables/
+    │   ├── useWebSocket.ts  # WS 消息路由（替代旧版巨型 switch）
+    │   ├── useAudio.ts      # TTS 播放控制
+    │   └── useMic.ts        # 麦克风采集封装
+    ├── components/
+    │   ├── layout/AppLayout.vue           # 三栏布局
+    │   ├── character/                     # 左侧角色面板
+    │   │   ├── CharacterPanel.vue
+    │   │   ├── AvatarDisplay.vue         # Live2D / 静态图
+    │   │   └── CharStatus.vue            # 状态点 + 心情 + 模型名
+    │   ├── chat/                          # 消息渲染
+    │   │   ├── MessageList.vue           # 消息列表（TransitionGroup 动画）
+    │   │   ├── ChatMessage.vue           # 单条消息
+    │   │   ├── ChatBubble.vue            # 气泡内容（文本/markdown/code）
+    │   │   ├── ToolCard.vue              # 工具调用卡片
+    │   │   ├── InnerVoice.vue            # 内心独白气泡
+    │   │   ├── TokenLabel.vue            # Token 统计
+    │   │   ├── TimeDivider.vue           # 时间分隔符
+    │   │   └── TypingIndicator.vue       # 打字指示器
+    │   ├── input/
+    │   │   ├── InputBar.vue              # 输入框 + 附件 + 麦克风 + 发送
+    │   │   └── PreviewBar.vue            # 图片预览条
+    │   ├── panels/
+    │   │   ├── SettingsPanel.vue         # 设置面板
+    │   │   └── ToolsPanel.vue            # 工具管理面板
+    │   ├── ui/
+    │   │   ├── ToggleSwitch.vue          # 开关组件
+    │   │   ├── ApprovalDialog.vue        # HITL 审批弹窗
+    │   │   └── ModelSelector.vue         # 模型选择下拉框
+    │   └── shared/
+    │       ├── Lightbox.vue              # 图片灯箱
+    │       └── CodeBlock.vue             # 代码块（highlight.js + 复制）
+    └── debug/                            # 独立 Debug 应用（Vite 多入口）
+        ├── main.ts
+        ├── App.vue                       # 16 面板仪表盘（poll /debug/api 每 2s）
+        └── components/
 ```
 
-消息不再使用 localStorage 缓存，每次页面加载通过 WebSocket 从服务端拉取 session 数据。
+**开发：**
+```bash
+cd frontend && npm install && npm run dev
+# → Vite dev server :5173（自动代理 WS + API 到 :8765）
+```
+
+**构建：**
+```bash
+cd frontend && npm run build
+# → frontend/dist/ 产物复制到 static/ 部署
+```
 
 ### Debug page panels
 

@@ -68,6 +68,7 @@ Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板
 | `log/README.md` | 日志文件详细说明 |
 | `.model_cache/` | 嵌入模型（`BAAI/bge-large-zh-v1.5/`，约 1.3GB） |
 | `data/ref/Elysia.wav` | GPT-SoVits 音色克隆参考音频（1.6MB） |
+| `frontend/` | Vue 3 前端源码（Vite + Pinia + TypeScript） |
 | `static/live2d-demo/` | Live2D 前端（Cubism SDK，index.html 待创建） |
 | `data/live2d-assets/` | Live2D 角色模型（.moc3 + 纹理，服务端映射到 `/live2d/`） |
 | `static/debug.md` | Debug 面板完整文档（标签页、API、技术实现） |
@@ -251,7 +252,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | **模型切换** — DeepSeek/OpenAI/Ollama/MiMo + 运行时热切换 | done |
 | **多模态** — 图片上传/预览/lightbox + describe_image 视觉工具 | done |
 | Live2D 虚拟角色渲染 (Cubism SDK) | done |
-| 前端 JS 模块化 — 12 个 ES 模块 | done |
+| 前端 Vue 3 重构 (Vite + Pinia + TypeScript) | done |
 | 配置系统 (YAML + env + 类型校验 + providers.yaml) | done |
 | [/debug 面板](static/debug.md) (16+ 面板: FSM/记忆/工具/Token/DAG/LLM Prompt/Raw Response/数据库管理) | done |
 | 优雅退出 + /health /ready 端点 | done |
@@ -351,14 +352,14 @@ Agent/
 │   │   └── README.md         #   模板说明
 │   └── __init__.py          # 包标记 (空)
 │
-├── static/                 # 浏览器客户端
-│   ├── index.html          #   入口
-│   ├── debug.html          #   Debug 面板（监控仪表板）
-│   ├── debug.md            #   Debug 面板文档
-│   ├── css/chat.css        #   样式 (含 .inner-voice-bubble)
-│   └── js/                 #   ES 模块 (config/state/ws/chat/audio/mic/settings/persistence/main)
+├── frontend/                 # Vue 3 前端源码（Vite + Pinia + TypeScript）
+│   ├── index.html              # 聊天页面入口
+│   ├── debug.html              # Debug 面板入口
+│   ├── src/components/         # 21 个 Vue 组件
+│   ├── src/stores/             # 5 个 Pinia store
+│   └── src/composables/        # 3 个 composables
 │
-├── docs/                   # 文档
+├── static/                 # 静态资源（仅图片/文档）
 │   ├── architecture.md     #   架构详解
 │   ├── testing.md          #   测试命令速查
 │   ├── database-storage.md #   数据库存储设计
