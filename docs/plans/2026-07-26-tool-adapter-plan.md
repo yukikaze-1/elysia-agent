@@ -11,14 +11,14 @@
 ## Global Constraints
 
 - ToolAdapter 实现 `ToolExecutor` Protocol（`Module/tool/protocol.py`），不修改 Protocol 接口
-- 不修改 `core/tools/*/plugin.py`（8 个插件目录）的 import
-- 不修改 `core/schema/message.py` 的 `ErrorType` import
+- 测试文件 import 不迁移（继续 `from Module.tool import ...`），但属性访问路径需更新（`agent._tool_manager` → `agent._tool_adapter`）
+- `core/tools/*/plugin.py`（8 个插件目录）的 import 不修改
 - `core/adapter/__init__.py` 重导出 `ToolAdapter`, `ToolResult`, `ErrorType`, `ToolContext`
 - 测试使用 `@pytest.mark.service` marker
 - `start()` 幂等：重复调用 no-op
 - `definitions()` 在 `start()` 前返回空列表
 - `tool_context` 属性返回同一个 mutable 对象（services 动态更新可见）
-- 所有现有测试必须通过（`make test-quick` + `test_phase3.py -k "tool"` + `test_task_scheduler.py`）
+- 所有现有测试必须通过（`make test-quick` + `test_phase2.py` + `test_phase3.py` + `test_task_scheduler.py`）
 
 ---
 
@@ -411,6 +411,8 @@ git commit -m "feat: add ToolAdapter — encapsulate tool subsystem lifecycle"
 - Modify: `core/cognitive/loop.py`
 - Modify: `core/cognitive/tools.py`
 - Modify: `core/task_scheduler.py`
+- Modify: `core/tests/test_phase2.py`
+- Modify: `core/tests/test_phase3.py`
 
 **Interfaces:**
 - Consumes: `ToolAdapter(plugins, *, session_id, user_name, config, services, hitl_broadcast)` from Task 1
@@ -479,13 +481,19 @@ Changes to `/home/yomu/Agent/core/agent/lifecycle.py`:
 
 删除该行（load_all 现在在 ToolAdapter.start() 内部调用）。
 
-**TYPE_CHECKING 类型声明 (lines 78-79):**
+**TYPE_CHECKING 类型声明 (lines 78-79, 84):**
 ```diff
 - _tool_manager: ToolManager
 - _plugin_ctx: PluginContext
 ```
 
-删除这两行。
+删除这两行。另删除 line 84：
+
+```diff
+- _tool_ctx: ToolContext
+```
+
+迁移后 `_tool_ctx` 不再是直接实例变量——统一通过 `self._tool_adapter.tool_context` 访问。
 
 **`_start_tool_context()` (lines 216-246) — 完整替换：**
 ```python
@@ -518,6 +526,19 @@ async def _stop_tool_adapter(self) -> None:
 - await self._stop_tool_manager()
 + await self._stop_tool_adapter()
 ```
+
+**`_start_task_system()` — 两处引用更新 (lines 292, 311):**
+```diff
+- tool_registry=self._tool_manager,
++ tool_registry=self._tool_adapter,
+```
+
+```diff
+- self._tool_ctx.services["_task_system"] = self._task_system
++ self._tool_adapter.tool_context.services["_task_system"] = self._task_system
+```
+
+> **注意**: `ToolManager` 有 `submit_approval()` 方法（`Module/tool/manager.py:232`）但未在 `ToolExecutor` Protocol 中定义。`Module/task_system/lifecycle.py:173` 通过 `hasattr(tool_registry, "submit_approval")` 守卫。迁移后 `ToolAdapter` 不暴露此方法，HITL 审批（通过 TaskSystem 通道）将静默跳过。v1 的 `HITLNotifier` 本身已声明"审批由 ToolManager SafetyPipeline 直接处理，不经过此通道"，因此无功能影响。
 
 - [ ] **Step 3: Migrate loop.py**
 
@@ -607,7 +628,47 @@ Changes to `/home/yomu/Agent/core/task_scheduler.py`:
 +     self._tool_ctx = adapter.tool_context
 ```
 
-- [ ] **Step 6: Run test regression**
+- [ ] **Step 6: Fix test files — `test_phase2.py` + `test_phase3.py`**
+
+Changes to `/home/yomu/Agent/core/tests/test_phase2.py`:
+
+**Line 247 — `agent._tool_manager.execute(..., ctx=agent._tool_ctx, ...)`:**
+```diff
+- result = await agent._tool_manager.execute("search_memory", ctx=agent._tool_ctx, query="爬山")
++ result = await agent._tool_adapter.execute("search_memory", ctx=agent._tool_adapter.tool_context, query="爬山")
+```
+
+**Lines 265-291 — `agent._tool_manager._pipeline._run_hitl` (3 处):**
+
+原代码访问 `agent._tool_manager._pipeline._run_hitl` 来 mock HITL 审批。迁移后路径变为 `agent._tool_adapter._manager._pipeline._run_hitl`。
+```diff
+- agent._tool_manager._pipeline._run_hitl = _auto_approve
++ agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
+```
+三处替换（lines 268, 291, 321）。
+
+Changes to `/home/yomu/Agent/core/tests/test_phase3.py`:
+
+**Lines 1072-1073 — `agent._tool_manager.load_all(...)` + `agent._tool_manager.tool_names`:**
+```diff
+- await agent._tool_manager.load_all(ALL_PLUGINS, PluginContext(session_id="test"))
+- names = agent._tool_manager.tool_names
++ await agent._tool_adapter.start()
++ names = list(agent._tool_adapter._manager.tool_names)
+```
+
+**Lines 1090-1097 — 同上模式 + `agent._tool_manager.execute(...)`:**
+```diff
+- await agent._tool_manager.load_all(ALL_PLUGINS, PluginContext(session_id="test"))
++ await agent._tool_adapter.start()
+  # ... seed memory entry ...
+  ctx = ToolContext(services={"memory": agent._long_term})
+- result = await agent._tool_manager.execute("search_memory", ctx=ctx, query="测试")
++ result = await agent._tool_adapter.execute("search_memory", ctx=ctx, query="测试")
+```
+(WARNING: 此处 ctx 是本地构造的 `ToolContext`，不经过 `agent._tool_adapter.tool_context`——测试独立场景，保持原样)
+
+- [ ] **Step 7: Run test regression**
 
 ```bash
 # ToolAdapter 测试
@@ -619,19 +680,20 @@ pytest core/cognitive/tests/ -v
 # TaskScheduler 测试
 pytest core/tests/test_task_scheduler.py -v
 
-# 全量 phase3 测试（工具管线完整性）
-pytest core/tests/test_phase3.py -v -k "tool"
+# 受影响的集成测试
+pytest core/tests/test_phase2.py -v
+pytest core/tests/test_phase3.py -v
 
 # 快速回归
 make test-quick
 ```
 
-Expected: All pass. Test files that reference `_tool_manager` or `_plugin_ctx` directly may need minor fixes.
+Expected: All pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add core/agent/agent.py core/agent/lifecycle.py core/cognitive/loop.py core/cognitive/tools.py core/task_scheduler.py
+git add core/agent/agent.py core/agent/lifecycle.py core/cognitive/loop.py core/cognitive/tools.py core/task_scheduler.py core/tests/test_phase2.py core/tests/test_phase3.py
 git commit -m "refactor: migrate consumers from Module.tool to ToolAdapter"
 ```
 
@@ -728,5 +790,5 @@ git commit -m "docs: update exports, README, CLAUDE.md for ToolAdapter"
 | Task | Files | Description |
 |------|-------|-------------|
 | 1 | 2 new | ToolAdapter class + 10 service tests |
-| 2 | 5 modify | Migrate agent/lifecycle/cognitive/tools/scheduler |
+| 2 | 7 modify | Migrate agent/lifecycle/cognitive/tools/scheduler + test_phase2 + test_phase3 |
 | 3 | 3 modify | Update __init__.py, README, CLAUDE.md |
