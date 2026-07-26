@@ -630,22 +630,43 @@ Changes to `/home/yomu/Agent/core/task_scheduler.py`:
 
 - [ ] **Step 6: Fix test files — `test_phase2.py` + `test_phase3.py`**
 
-Changes to `/home/yomu/Agent/core/tests/test_phase2.py`:
+Changes to `/home/yomu/Agent/core/tests/test_phase2.py` (6 处引用):
 
-**Line 247 — `agent._tool_manager.execute(..., ctx=agent._tool_ctx, ...)`:**
+**Line 247 — `test_search_memory_tool` 中 execute 调用:**
 ```diff
 - result = await agent._tool_manager.execute("search_memory", ctx=agent._tool_ctx, query="爬山")
 + result = await agent._tool_adapter.execute("search_memory", ctx=agent._tool_adapter.tool_context, query="爬山")
 ```
 
-**Lines 265-291 — `agent._tool_manager._pipeline._run_hitl` (3 处):**
+**Line 265 — 保存原始 `_run_hitl`:**
+```diff
+- original_run_hitl = agent._tool_manager._pipeline._run_hitl
++ original_run_hitl = agent._tool_adapter._manager._pipeline._run_hitl
+```
 
-原代码访问 `agent._tool_manager._pipeline._run_hitl` 来 mock HITL 审批。迁移后路径变为 `agent._tool_adapter._manager._pipeline._run_hitl`。
+**Line 268 — 设置 `_run_hitl` mock:**
 ```diff
 - agent._tool_manager._pipeline._run_hitl = _auto_approve
 + agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
 ```
-三处替换（lines 268, 291, 321）。
+
+**Line 270 — `test_save_memory_tool` 中 execute 调用:**
+```diff
+- await agent._tool_manager.execute("save_memory", ctx=agent._tool_ctx, content="测试保存的记忆", type="fact")
++ await agent._tool_adapter.execute("save_memory", ctx=agent._tool_adapter.tool_context, content="测试保存的记忆", type="fact")
+```
+
+**Line 291 — `test_end_to_end_with_memory` 中 HITL mock:**
+```diff
+- agent._tool_manager._pipeline._run_hitl = _auto_approve
++ agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
+```
+
+**Line 321 — `test_session_state_persists_in_memory` 中 HITL mock:**
+```diff
+- agent._tool_manager._pipeline._run_hitl = _auto_approve
++ agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
+```
 
 Changes to `/home/yomu/Agent/core/tests/test_phase3.py`:
 
