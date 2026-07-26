@@ -1,10 +1,10 @@
 // ---- Supporting Types ----
 
 export interface SessionMessageItem {
-  role: 'user' | 'assistant' | 'tool'
+  role: string
   parts?: { content: string }[]
   content?: string | ContentPart[]
-  content_type?: Record<string, unknown>
+  content_type?: Record<string, number[]>
   mood?: string
   tool_calls?: ToolCallData[]
   inner_voice?: string
@@ -21,12 +21,12 @@ export interface SessionMessageItem {
 }
 
 export interface TokenRound {
-  model: string
+  model?: string
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
   round_num: number
-  timestamp: number
+  timestamp?: number
 }
 
 export interface TokenStats {
@@ -56,17 +56,19 @@ export interface ToolCallResult {
 }
 
 export interface TokenUsage {
-  turn: {
-    rounds: TokenRound[]
-    turn_total: number
-  }
-  session: TokenStats
+  rounds: TokenRound[]
+  turn_total: number
 }
 
 export interface PluginInfo {
   name: string
   description: string
-  safety?: Record<string, unknown>
+  safety?: {
+    requires_human_approval?: boolean
+    max_concurrency?: number
+    network_allowed?: boolean
+    filesystem_allowed?: boolean
+  }
   capabilities?: string[]
 }
 
@@ -119,7 +121,7 @@ export interface TokenUsageMessage {
 export interface ExpressionMessage {
   type: 'expression'
   expression: string
-  intensity: number
+  intensity?: number
 }
 
 export interface StateMessage {
@@ -154,13 +156,13 @@ export interface TranscriptionMessage {
 
 export interface ActionMessage {
   type: 'action'
-  action: string
+  action: 'tool_executing' | 'tool_done' | string
   params: Record<string, unknown>
 }
 
 export interface CommandMessage {
   type: 'command'
-  command: string
+  command: 'tool_approval' | 'block' | 'inner_voice'
   params?: Record<string, unknown>
 }
 
