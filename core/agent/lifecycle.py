@@ -340,7 +340,7 @@ class AgentLifecycle:
         # 6. 停止 Scheduler Worker Pool
         await self._stop_scheduler()
 
-        # 7. 关闭 ToolManager
+        # 7. 关闭 ToolAdapter
         await self._stop_tool_adapter()
 
         # 8. 停止 IdleMonitor

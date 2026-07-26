@@ -414,4 +414,4 @@ class Agent(AgentLifecycle, AgentServer):
                 ))
         await self._output.notify_state(state)
 
-    # Tool registration is done via ToolManager.load_all() in start()
+    # Tool registration is done via ToolAdapter.start() in start()

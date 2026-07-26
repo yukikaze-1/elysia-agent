@@ -53,8 +53,8 @@ async def handle_ws(
 
     # 重新广播挂起的 HITL 审批请求（前端重连后恢复审批弹窗）
     try:
-        if hasattr(agent, '_tool_manager') and agent._tool_manager is not None:
-            pending = agent._tool_manager.get_pending_approvals()
+        if hasattr(agent, '_tool_adapter') and agent._tool_adapter is not None:
+            pending = agent._tool_adapter._manager.get_pending_approvals()
             for request_id, tool_name, params in pending:
                 await ws.send_json({
                     "command": "tool_approval",
@@ -189,7 +189,7 @@ async def handle_json_message(data: dict, agent, audio_buf=None, ws=None) -> Non
         request_id = data.get("request_id", "")
         approved = data.get("approved", False)
         if request_id:
-            ok = agent._tool_manager.submit_approval(request_id, approved)
+            ok = agent._tool_adapter._manager.submit_approval(request_id, approved)
             if ok:
                 logger.info("WS 审批结果: request=%s approved=%s", request_id, approved)
             else:

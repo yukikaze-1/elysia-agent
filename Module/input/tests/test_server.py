@@ -375,7 +375,7 @@ class TestEndpoints:
         agent._llm.model = "test-model"
         agent._session._messages = [1, 2, 3]
         agent._long_term.count = 42
-        agent._tool_manager.tool_names = ["t1", "t2"]
+        agent._tool_adapter._manager.tool_names = ["t1", "t2"]
         agent._output = MagicMock()
         agent._bus = MagicMock()
         return create_app(agent, serve_static=False)
@@ -430,11 +430,11 @@ class TestToolEndpoints:
         agent._fsm.state = "idle"
         agent._output = MagicMock()
         agent._bus = MagicMock()
-        agent._tool_manager.plugin_list = [
+        agent._tool_adapter._manager.plugin_list = [
             {"name": "web_search", "description": "搜索网页", "capabilities": ["network"], "safety": {}, "active": True},
             {"name": "read_file", "description": "读取文件", "capabilities": ["filesystem_read"], "safety": {}, "active": True},
         ]
-        agent._tool_manager.reload_plugin = AsyncMock(return_value=True)
+        agent._tool_adapter._manager.reload_plugin = AsyncMock(return_value=True)
         return create_app(agent, serve_static=False)
 
     @pytest.mark.asyncio
@@ -474,7 +474,7 @@ class TestToolEndpoints:
 
     @pytest.mark.asyncio
     async def test_reload_plugin_failure(self, app, aiohttp_client):
-        app["agent"]._tool_manager.reload_plugin = AsyncMock(return_value=False)
+        app["agent"]._tool_adapter._manager.reload_plugin = AsyncMock(return_value=False)
         client = await aiohttp_client(app)
         resp = await client.post("/tools/reload", json={"name": "unknown"})
         assert resp.status == 200

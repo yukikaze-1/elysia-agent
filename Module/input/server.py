@@ -87,7 +87,7 @@ def create_app(
                 "session_count": len(getattr(agent._session, '_messages', [])),
                 "long_term_count": getattr(agent._long_term, 'count', 0),
             },
-            "tools": getattr(agent._tool_manager, 'tool_names', ["<loading>"]),
+            "tools": getattr(agent._tool_adapter._manager, 'tool_names', ["<loading>"]),
         })
     app.router.add_get("/health", health_handler)
     app.router.add_get("/ready", health_handler)
@@ -115,7 +115,7 @@ def create_app(
     async def tools_handler(request: web.Request) -> web.Response:
         agent = request.app["agent"]
         return web.json_response({
-            "plugins": agent._tool_manager.plugin_list,
+            "plugins": agent._tool_adapter._manager.plugin_list,
         })
     app.router.add_get("/tools", tools_handler)
 
@@ -133,7 +133,7 @@ def create_app(
             return web.json_response(
                 {"ok": False, "error": "缺少插件名称"}, status=400,
             )
-        ok = await agent._tool_manager.reload_plugin(name)
+        ok = await agent._tool_adapter._manager.reload_plugin(name)
         if ok:
             return web.json_response({"ok": True, "name": name})
         else:

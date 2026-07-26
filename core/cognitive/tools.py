@@ -77,7 +77,7 @@ class CognitiveTools:
         """submit_task 工具的 function definition。
 
         不注册为 ToolPlugin——只在 tool_defs 中合并，LLM 可调用，
-        但 ToolManager 永远不执行它（CognitiveLoop 拦截处理）。
+        但 ToolAdapter 永远不执行它（CognitiveLoop 拦截处理）。
         """
         return {
             "type": "function",
@@ -136,7 +136,7 @@ class CognitiveTools:
             return ToolResult.fail(name="submit_task",
                 error="DelegationPreparer 未初始化，请告知用户后台任务系统暂不可用。")
 
-        # 将 ToolManager.definitions() 的 dict 格式转换为 DelegationPreparer 期望的 Tool 列表
+        # 将 ToolExecutor.definitions() 的 dict 格式转换为 DelegationPreparer 期望的 Tool 列表
         from Module.task_system.schema import Tool
         tool_defs = self._tool_executor.definitions() if self._tool_executor else []
         tool_list = [
