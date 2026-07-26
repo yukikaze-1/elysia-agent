@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "redeploy": "rm -rf ../static/index.html ../static/debug.html ../static/assets && npm run build"
   },
   "dependencies": {
     "highlight.js": "^11.11.1",

@@ -43,8 +43,8 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
-    emptyOutDir: true,
+    outDir: resolve(__dirname, '../static'),
+    emptyOutDir: false,  // 不清空——保留 Elysia.png、live2d-demo/ 等非代码资源
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),

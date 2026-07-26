@@ -223,7 +223,7 @@ Prompt 需求文档：`core/prompts/ref/` 目录下的 `*-requirements.md` 和 `
 
 ## Frontend (`frontend/`)
 
-Vue 3 + Vite + Pinia + TypeScript。开发时通过 Vite 代理（:5173 → :8765），生产构建产物 `frontend/dist/` 复制到 `static/` 由 aiohttp serve。
+Vue 3 + Vite + Pinia + TypeScript。开发时通过 Vite 代理（:5173 → :8765），生产构建直接输出到 `static/` 由 aiohttp serve。
 
 ```
 frontend/
@@ -291,7 +291,7 @@ cd frontend && npm install && npm run dev
 **构建：**
 ```bash
 cd frontend && npm run build
-# → frontend/dist/ 产物复制到 static/ 部署
+# → 构建产物直接输出到 static/（index.html + debug.html + assets/）
 ```
 
 ### Debug page panels
