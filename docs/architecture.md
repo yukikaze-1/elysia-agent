@@ -735,19 +735,24 @@ aiohttp Application (41 条路由):
   └── disconnect: cleanup channel + audio_buf + monitor
 ```
 
-### 6.4 浏览器客户端 (static/index.html)
+### 6.4 浏览器客户端 (frontend/)
+
+Vue 3 + Vite + Pinia + TypeScript。开发时通过 Vite 代理（:5173 → :8765），生产构建产物 `frontend/dist/` 复制到 `static/` 由 aiohttp serve。
 
 三栏布局：
-- **左栏** (220px): 角色面板 — 表情 ring (CSS border-color)、状态灯 (pulse 动画)、心情标签
-- **中栏**: 对话区 — 消息气泡、时间戳分隔线 (5min)、typing dots 动画
-- **右栏**: 设置面板 — TTS 开关/音量/清空对话/连接状态/关闭服务
+- **左栏**: 角色面板 — 状态灯 (CSS transition)、心情标签、LLM 模型名
+- **中栏**: 对话区 — 消息气泡（TransitionGroup 动画）、时间戳分隔线 (5min)、typing dots 动画
+- **浮层**: 设置面板 + 工具管理面板 + HITL 审批弹窗
 
 关键实现：
+- 21 个 Vue 3 组件，全部使用 `<script setup lang="ts">` + `<style scoped>`
+- 5 个 Pinia store（connectionStore, chatStore, audioStore, settingsStore, toolsStore）
+- WebSocket 消息路由通过 `useWebSocket` composable 分发到 store action（替代旧版 switch）
 - AudioContext 16kHz → Int16 PCM → WS binary
-- `appendDelta()` 合并到同一 bubble，`finalizeDelta()` 存档
-- `audioQueue` + `playNext()` 串行播放
-- 消息不再使用 localStorage 缓存，每次页面加载通过 WebSocket 从服务端拉取
-- 响应式 (窄屏 <600px 折叠侧栏)
+- 流式 delta 追加（Vue 响应式 + `chatStore.appendDelta()`）
+- TTS 气泡排队（`nextBubbleQueue` + `visibleMessages` computed）
+- highlight.js 代码高亮 + marked Markdown 渲染
+- 多入口构建（chat 页面 + debug 仪表盘）
 
 ---
 
@@ -1015,14 +1020,24 @@ Agent/
 │   └── cyrene/              # Cyrene 角色 (备用，仅含 GPT 参考材料)
 │       └── reference/
 │
-├── static/                  # Web 前端
+├── frontend/                  # Vue 3 前端源码 (Vite + Pinia + TypeScript)
+│   ├── index.html              # 聊天页面入口
+│   ├── debug.html              # Debug 仪表板入口
+│   ├── vite.config.ts          # 代理 :8765 + 多入口构建
+│   ├── src/
+│   │   ├── main.ts             # App 入口
+│   │   ├── App.vue             # 根组件
+│   │   ├── styles/variables.css
+│   │   ├── types/protocol.ts   # 20+ WS 消息类型定义
+│   │   ├── stores/             # 5 个 Pinia store
+│   │   ├── composables/        # 3 个 composables
+│   │   ├── components/         # 21 个 Vue 组件
+│   │   └── debug/              # 独立 Debug 应用
+│
+├── static/                     # 静态资源（仅图片/文档）
 │   ├── Elysia.png              # 角色头像
 │   ├── debug.md                # Debug 面板文档
-│   ├── live2d-demo/            # Live2D Cubism SDK + demo
-│   ├── index.html           # 聊天页面
-│   ├── debug.html           # Debug 仪表板 (~2100 行)
-│   ├── css/chat.css         # 聊天样式
-│   └── js/                  # ES modules
+│   └── live2d-demo/            # Live2D Cubism SDK + demo
 
 ├── docs/                   # 文档
 │   ├── architecture.md     #   架构详解（本文档）
