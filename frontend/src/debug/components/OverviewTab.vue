@@ -6,7 +6,7 @@ import ImageLightbox from './modals/ImageLightbox.vue'
 import PromptViewer from './modals/PromptViewer.vue'
 import ResponseViewer from './modals/ResponseViewer.vue'
 import VersionHistory from './modals/VersionHistory.vue'
-import type { ConsolidationInfo, MemoryReflectorInfo, CharacterReflectorInfo, CharacterEngineInfo, SessionRecentItem, ContentPart } from '@/debug/types'
+import type { ConsolidationInfo, MemoryReflectorInfo, CharacterReflectorInfo, CharacterEngineInfo } from '@/debug/types'
 
 const store = useDebugStore()
 const d = computed(() => store.data)
@@ -33,11 +33,6 @@ function awarenessCooldown(lastTime?: number): string {
   if (!lastTime) return 'N/A'
   const minutes = Math.round((Date.now() / 1000 - lastTime) / 60)
   return minutes < 60 ? `${Math.max(0, minutes)}min` : 'N/A'
-}
-
-// Extract images from ContentPart[]
-function extractImages(parts: ContentPart[]): ContentPart[] {
-  return parts.filter(p => p.type === 'image' && p.src)
 }
 
 // Grouped props for panels 13-16
