@@ -1,120 +1,17 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Elysia</title>
-<link rel="stylesheet" href="/static/css/chat.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-</head>
-<body>
-
-<!-- Left Panel -->
-<div id="char-panel">
-  <div id="avatar-wrap">
-    <img id="live2d-static-img" src="/live2d/Elysia.png" style="width:100%;height:100%;object-fit:contain;" />
-    <iframe id="live2d-frame" src="/static/live2d-demo/index.html" sandbox="allow-scripts allow-same-origin" style="display:none;"></iframe>
-  </div>
-  <div id="char-info">
-    <div id="state-dot"></div>
-    <div id="char-name">Elysia</div>
-  </div>
-  <div id="llm-model-tag"></div>
-  <div id="session-token-bar" title="Session token 消耗"></div>
-  <div id="char-state">idle</div>
-  <div id="mood-tag"></div>
-</div>
-
-<!-- Center -->
-<div id="main">
-  <div id="chat-wrap"><div id="chat"></div></div>
-  <div id="preview-bar" style="display:none"></div>
-  <div id="input-bar">
-    <button id="attach-btn" title="添加图片">📷</button>
-    <input type="file" id="file-input" hidden accept="image/png,image/jpeg,image/gif,image/webp">
-    <button id="mic-btn" title="麦克风">🎤</button>
-    <textarea id="text-input" rows="1" placeholder="连接中..." autofocus></textarea>
-    <button id="send-btn" disabled>➤</button>
-  </div>
-</div>
-
-<!-- Settings -->
-<button id="settings-btn" title="设置">⚙</button>
-<button id="tools-btn" title="工具">🔧</button>
-<div id="settings-panel">
-  <div class="row"><span>TTS 语音</span><div class="toggle on" id="tts-toggle"></div></div>
-  <div class="row"><span>唤醒词</span><div class="toggle" id="wake-toggle"></div></div>
-  <div class="row"><span>Live2D</span><div class="toggle on" id="live2d-toggle"></div></div>
-  <div class="row"><span>内心独白</span><div class="toggle on" id="inner-voice-toggle"></div></div>
-  <label>音量</label>
-  <div class="row"><input type="range" id="vol-slider" min="0" max="100" value="80"></div>
-
-  <div class="section-title">── 模型配置 ──</div>
-
-  <label>LLM</label>
-  <select id="llm-model-select">
-    <option value="">加载中…</option>
-  </select>
-
-  <label>STT</label>
-  <select id="stt-model-select">
-    <option value="">加载中…</option>
-  </select>
-
-  <label>TTS</label>
-  <select id="tts-model-select">
-    <option value="">加载中…</option>
-  </select>
-
-  <div class="section-title">── 自定义端点 ──</div>
-  <button id="add-custom-btn">+ 添加自定义端点</button>
-  <div id="custom-providers-list"></div>
-
-  <div id="custom-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center;">
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;width:360px;max-height:80vh;overflow-y:auto;">
-      <h3 style="margin-bottom:12px;">添加自定义端点</h3>
-      <label>服务类型</label>
-      <select id="custom-service" style="width:100%;margin-bottom:8px;padding:4px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;">
-        <option value="llm">LLM</option>
-        <option value="stt">STT</option>
-        <option value="tts">TTS</option>
-      </select>
-      <label>名称</label>
-      <input id="custom-name" placeholder="如 siliconflow" style="width:100%;margin-bottom:8px;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;">
-      <label>Base URL</label>
-      <input id="custom-url" placeholder="https://api.siliconflow.cn/v1" style="width:100%;margin-bottom:8px;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;">
-      <label>API Key 环境变量名</label>
-      <input id="custom-key-env" placeholder="SILICONFLOW_API_KEY" style="width:100%;margin-bottom:8px;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;">
-      <label>模型列表（逗号分隔）</label>
-      <input id="custom-models" placeholder="Qwen/Qwen3-235B, deepseek-ai/DeepSeek-V3" style="width:100%;margin-bottom:12px;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;">
-      <div style="display:flex;gap:8px;justify-content:flex-end;">
-        <button id="custom-cancel-btn" style="padding:6px 16px;background:transparent;border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer;">取消</button>
-        <button id="custom-test-btn" style="padding:6px 16px;background:transparent;border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer;">测试连接</button>
-        <button id="custom-save-btn" style="padding:6px 16px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;">保存</button>
-      </div>
-      <div id="custom-test-result" style="margin-top:8px;font-size:12px;"></div>
-    </div>
-  </div>
-
-  <button id="clear-btn">清空对话</button>
-  <button id="restart-btn">重启服务</button>
-  <button id="shutdown-btn">关闭服务</button>
-  <div id="conn-status" class="disconnected">连接中...</div>
-</div>
-
-<!-- Tools Panel -->
-<div id="tools-panel">
-  <div class="tools-title">工具插件管理</div>
-  <div id="tools-list"></div>
-</div>
-
-<!-- Lightbox -->
-<div id="lightbox" class="lightbox-hidden">
-  <img id="lightbox-img" src="">
-</div>
-
-<script type="module" src="/static/js/main.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Elysia</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/default.min.css" />
+    <script type="module" crossorigin src="/assets/main-DUsZPv_2.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/variables-Br1uc1xi.js">
+    <link rel="stylesheet" crossorigin href="/assets/variables-DG9l4wRI.css">
+    <link rel="stylesheet" crossorigin href="/assets/main-DvrV2xAY.css">
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
 </html>
