@@ -10,7 +10,8 @@ import logging
 from typing import Any, TYPE_CHECKING
 
 from Module.tool import ToolManager, PluginContext, ToolContext
-from Module.tool.protocol import ToolResult, ErrorType  # noqa: F401 — 由 __init__.py 重导出
+from Module.tool.protocol import ToolResult
+from core.schema.error_type import ErrorType  # noqa: F401 — 由 __init__.py 重导出
 
 if TYPE_CHECKING:
     from ..app_config import AppConfig

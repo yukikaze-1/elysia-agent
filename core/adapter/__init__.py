@@ -12,7 +12,8 @@ from .message_builder import MessageBuilder
 from .tool_adapter import ToolAdapter
 
 # Re-export ToolResult, ErrorType, ToolContext for consumer convenience
-from Module.tool.protocol import ToolResult, ErrorType
+from Module.tool.protocol import ToolResult
+from core.schema.error_type import ErrorType
 from Module.tool import ToolContext
 
 __all__ = [

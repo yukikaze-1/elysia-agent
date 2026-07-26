@@ -10,7 +10,7 @@ from typing import Literal, NotRequired, Sequence, TypedDict, Union
 
 from pydantic import BaseModel, Field
 
-from Module.tool.protocol import ErrorType
+from .error_type import ErrorType
 
 from .part import Part
 from .token import TokenUsageSummary
@@ -58,7 +58,7 @@ class ToolResultMessage(BaseModel):
     tool_name: str
     success: bool = True
     error: str | None = None
-    error_type: ErrorType | None = None  # 复用 Module/tool/protocol.py 的 ErrorType
+    error_type: ErrorType | None = None  # core.schema.error_type.ErrorType
     duration_ms: float = 0
     truncated: bool = False
     message_id: MessageId = Field(default=MessageId(""))
