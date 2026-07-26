@@ -1063,14 +1063,12 @@ class TestAgentLifecycle:
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
-        from core.tools import ALL_PLUGINS
-        from Module.tool import PluginContext
 
         agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         # Load tools directly (normally done in start())
-        await agent._tool_manager.load_all(ALL_PLUGINS, PluginContext(session_id="test"))
-        names = agent._tool_manager.tool_names
+        await agent._tool_adapter.start()
+        names = list(agent._tool_adapter._manager.tool_names)
         assert "search_memory" in names
         assert "get_time" in names
         assert "save_memory" in names
@@ -1080,21 +1078,20 @@ class TestAgentLifecycle:
         """search_memory tool queries long-term memory."""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from Module.tool import ToolContext, PluginContext
+        from Module.tool import ToolContext
         from core.agent import Agent
-        from core.tools import ALL_PLUGINS
 
         agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         # Load tools directly (normally done in start())
-        await agent._tool_manager.load_all(ALL_PLUGINS, PluginContext(session_id="test"))
+        await agent._tool_adapter.start()
         # Seed a memory entry
         from core.memory.long_term import MemoryEntry
         agent._long_term._entries.append(
             MemoryEntry(text="测试记忆", metadata={"type": "fact"}))
 
         ctx = ToolContext(services={"memory": agent._long_term})
-        result = await agent._tool_manager.execute("search_memory", ctx=ctx, query="测试")
+        result = await agent._tool_adapter.execute("search_memory", ctx=ctx, query="测试")
         assert result.success
         assert "测试记忆" in result.content
 

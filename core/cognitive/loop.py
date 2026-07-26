@@ -27,7 +27,6 @@ from Module.tts import TTSBackend
 from ..agent_fsm import AgentFSM, AgentState
 from ..event_bus import EventBus, EventPriority, EventType
 from ..log_setup import set_request_id, get_request_id, log_conversation
-from Module.tool import ToolContext
 from Module.tool.protocol import ToolResult
 from ..prompt_assembler import PromptAssembler
 from ..memory.session import SessionMemory
@@ -104,7 +103,6 @@ class CognitiveLoop(CognitiveTools):
         character_engine=None,  # CharacterEngine | None
         consolidator: MemoryConsolidator | None = None,
         tts: TTSBackend | None = None,
-        ctx: ToolContext | None = None,
         token_tracker=None,  # TokenTracker | None
         prompt_recorder=None,  # PromptRecorder | None
     ):
@@ -120,7 +118,6 @@ class CognitiveLoop(CognitiveTools):
         self._consolidator = consolidator
         self._memory_reflector = None
         self._tts = tts  # 保留供 agent.py stop() 读取
-        self._ctx = ctx
         self._token_tracker = token_tracker
         self._prompt_recorder = prompt_recorder
         self._response_recorder = None  # 由 set_response_recorder() 注入
@@ -154,9 +151,9 @@ class CognitiveLoop(CognitiveTools):
         self._current_task = None
         return False
 
-    def set_tool_context(self, ctx) -> None:
-        """设置当前 turn 的工具上下文。"""
-        self._ctx = ctx
+    def set_tool_adapter(self, adapter) -> None:
+        """设置工具适配器 — 提供 ToolExecutor 实现 + ToolContext。"""
+        self._tool_adapter = adapter
 
     def set_tts(self, tts: TTSBackend | None) -> None:
         """设置/热切换 TTS 后端。"""
@@ -222,8 +219,8 @@ class CognitiveLoop(CognitiveTools):
                 set_request_id(rid)
 
             # 生成 trace_id（跨 Agent、跨工具串联）
-            if self._ctx is not None:
-                self._ctx.trace_id = new_message_id()
+            if self._tool_adapter is not None:
+                self._tool_adapter.tool_context.trace_id = new_message_id()
 
             self._tts_mgr.reset_for_turn()
             clock = TimingClock()

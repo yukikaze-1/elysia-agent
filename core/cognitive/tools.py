@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Any, TYPE_CHECKING
 
-from Module.tool.protocol import ToolResult, ErrorType
+from core.adapter import ToolResult, ErrorType
 from ..schema.tool import ToolCall
 from ..message_id import new_message_id
 
@@ -30,7 +30,7 @@ class CognitiveTools:
     """
     # 类型声明 — 属性由 CognitiveLoop.__init__ 注入
     _tool_executor: Any = None  # type: ignore[assignment]
-    _ctx: Any = None
+    _tool_adapter: Any = None   # type: ignore[assignment]
     _delegation_preparer: Any = None
     _session: Any = None
     _user_profile: Any = None
@@ -53,7 +53,7 @@ class CognitiveTools:
             logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
             try:
                 assert self._tool_executor is not None
-                tr = await self._tool_executor.execute(func_name, ctx=self._ctx, **args)
+                tr = await self._tool_executor.execute(func_name, ctx=self._tool_adapter.tool_context, **args)
             except asyncio.CancelledError:
                 logger.info("工具取消: %s", func_name)
                 tr = ToolResult.fail(name=func_name, error="用户取消")

@@ -36,7 +36,7 @@ from ..character_config import CharacterConfig
 from ..memory.session import SessionMemory
 from ..memory.long_term import LongTermMemory
 from ..prompt_assembler import PromptAssembler
-from Module.tool import ToolManager, ToolContext, PluginContext
+from core.adapter import ToolAdapter
 from core.tools import ALL_PLUGINS
 from ..cognitive import CognitiveLoop
 from ..idle_monitor import IdleMonitor
@@ -97,12 +97,12 @@ class Agent(AgentLifecycle, AgentServer):
         )
 
         # ---- L2: Tools ----
-        self._tool_manager = ToolManager()
-
-        # 构造 PluginContext（session_id 在 start() 中注入）
-        self._plugin_ctx = PluginContext(
-            session_id="",  # 在 start() 中更新
+        self._tool_adapter = ToolAdapter(
+            ALL_PLUGINS,
+            session_id="",
+            user_name=self._user_name,
             config=self._config,
+            hitl_broadcast=self._output,
         )
 
         # ---- L1: Cognitive ----
@@ -163,7 +163,7 @@ class Agent(AgentLifecycle, AgentServer):
             output=self._output,
             prompt=self._prompt,
             session=self._session,
-            tool_executor=self._tool_manager,
+            tool_executor=self._tool_adapter,
             character_engine=self._character_engine,
             consolidator=self._consolidator,
             tts=self._tts,
@@ -179,8 +179,8 @@ class Agent(AgentLifecycle, AgentServer):
 
         # Worker Pool — 执行 AI 规划的工具子任务 + 后台任务
         self._scheduler = TaskScheduler(
-            tool_executor=self._tool_manager,
-            tool_ctx=None,  # 在 start() 中赋值 tool_ctx 后更新
+            tool_executor=self._tool_adapter,
+            tool_ctx=None,  # 在 start() 中通过 set_tool_adapter() 更新
             num_workers=5,
             checkpoint_path="data/scheduler_checkpoint.json",
         )

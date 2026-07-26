@@ -19,8 +19,6 @@ from ..character_config import CharacterConfig
 from ..memory.session import SessionMemory
 from ..memory.long_term import LongTermMemory
 from ..prompt_assembler import PromptAssembler
-from Module.tool import ToolManager, ToolContext, PluginContext
-from core.tools import ALL_PLUGINS
 from ..cognitive import CognitiveLoop
 from ..idle_monitor import IdleMonitor
 from ..adapter.llm_adapter import LLMAdapter
@@ -75,13 +73,10 @@ class AgentLifecycle:
         _user_name: str
         _scheduler: TaskScheduler
         _config: AppConfig
-        _tool_manager: ToolManager
-        _plugin_ctx: PluginContext
         _bus: EventBus
         _idle: IdleMonitor
         _consolidator: MemoryConsolidator
         _session_repo: SessionRepository
-        _tool_ctx: ToolContext
         _task_system: TaskSystem | None
         _delegation_preparer: DelegationPreparer | None
         _token_tracker: TokenTracker
@@ -214,36 +209,19 @@ class AgentLifecycle:
         self._cognitive.set_response_recorder(self._response_recorder)
 
     async def _start_tool_context(self) -> None:
-        """注入 ToolContext，加载工具插件，设置 HITL broadcast。"""
-        self._tool_ctx = ToolContext(
-            session_id=self._session.session_id,
-            user_id=self._user_name,
-            services={
-                "memory": self._long_term,
-                "scheduler": self._scheduler,
-                "config": self._config,
-                "session": self._session,
-                "_tool_manager": self._tool_manager,          # ToolManager 实例
-                "_started_at": self._started_at,               # 启动时刻
-                "_token_tracker": self._token_tracker,         # TokenTracker 实例
-                "_tool_names": list(self._tool_manager.tool_names),
-                "_fsm_state": str(self._fsm.state),
-                "_session_msg_count": len(self._session.messages),
-                "_tool_count": len(self._tool_manager._plugins),
-            },
-        )
-        self._cognitive.set_tool_context(self._tool_ctx)
-
-        self._plugin_ctx.session_id = self._session.session_id
-        self._plugin_ctx.memory = self._long_term
-        self._plugin_ctx.scheduler = self._scheduler
-        await self._tool_manager.load_all(ALL_PLUGINS, self._plugin_ctx)
-        # 修复：load_all 后更新工具名列表（之前在此处快照时 _plugins 为空）
-        self._tool_ctx.services["_tool_names"] = list(self._tool_manager.tool_names)
-        self._tool_ctx.services["_tool_count"] = len(self._tool_manager._plugins)
-        logger.info("工具: %d 个已加载", len(self._tool_manager._plugins))
-        self._tool_manager.set_hitl_broadcast(self._output)
-        self._scheduler.set_tool_context(self._tool_ctx)
+        """启动 ToolAdapter，注入运行时服务。"""
+        await self._tool_adapter.start(extra_services={
+            "memory": self._long_term,
+            "scheduler": self._scheduler,
+            "config": self._config,
+            "session": self._session,
+            "_started_at": self._started_at,
+            "_token_tracker": self._token_tracker,
+            "_fsm_state": str(self._fsm.state),
+            "_session_msg_count": len(self._session.messages),
+        })
+        self._cognitive.set_tool_adapter(self._tool_adapter)
+        self._scheduler.set_tool_adapter(self._tool_adapter)
 
     async def _start_worker_pool(self) -> None:
         """启动 Worker Pool + embedding 预加载后台任务。"""
@@ -289,7 +267,7 @@ class AgentLifecycle:
             llm=self._llm.get_raw_client(),  # type: ignore[arg-type]
             milvus=None,
             http=None,
-            tool_registry=self._tool_manager,
+            tool_registry=self._tool_adapter,
             constraints=ConstraintConfig(),
         )
 
@@ -308,7 +286,7 @@ class AgentLifecycle:
         await self._task_system.start()
         logger.info("TaskSystem started")
         # 注入 TaskSystem 到 ToolContext，供 get_runtime_config 查询活跃任务
-        self._tool_ctx.services["_task_system"] = self._task_system
+        self._tool_adapter.tool_context.services["_task_system"] = self._task_system
         self._delegation_preparer = DelegationPreparer()
 
         # 注入到 CognitiveLoop
@@ -363,7 +341,7 @@ class AgentLifecycle:
         await self._stop_scheduler()
 
         # 7. 关闭 ToolManager
-        await self._stop_tool_manager()
+        await self._stop_tool_adapter()
 
         # 8. 停止 IdleMonitor
         await self._stop_idle()
@@ -479,10 +457,10 @@ class AgentLifecycle:
         logger.debug("Stopping scheduler Worker Pool...")
         await self._scheduler.stop()
 
-    async def _stop_tool_manager(self) -> None:
-        """关闭 ToolManager（清理所有工具插件）。"""
-        logger.debug("Stopping ToolManager...")
-        await self._tool_manager.shutdown()
+    async def _stop_tool_adapter(self) -> None:
+        """关闭 ToolAdapter（清理所有工具插件）。"""
+        logger.debug("Stopping ToolAdapter...")
+        await self._tool_adapter.shutdown()
 
     async def _stop_idle(self) -> None:
         """停止 IdleMonitor。"""

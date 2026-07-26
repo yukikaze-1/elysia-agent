@@ -183,7 +183,7 @@ async def collect(agent: "Agent") -> DebugInfo:
     info.mongodb_ok = await agent._session_repo.health_check()
 
     # ---- Tools ----
-    tm = agent._tool_manager
+    tm = agent._tool_adapter._manager
     info.currently_executing = list(tm.executing_now)
     info.tools = tm.plugin_list
     info.tool_history = list(tm.history)[-5:]

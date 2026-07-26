@@ -244,7 +244,7 @@ class TestMemoryIntegration:
         await agent._long_term.insert("上周和妖梦约定周六去爬香山", memory_type="plan", poignancy=7)
 
         # Use the tool directly
-        result = await agent._tool_manager.execute("search_memory", ctx=agent._tool_ctx, query="爬山")
+        result = await agent._tool_adapter.execute("search_memory", ctx=agent._tool_adapter.tool_context, query="爬山")
         assert result.success
         assert "爬山" in result.content or "香山" in result.content
         assert "未找到相关记忆" not in result.content
@@ -262,12 +262,12 @@ class TestMemoryIntegration:
         agent = Agent(config=AppConfig())
         await agent.start()
         # Mock HITL to auto-approve in test environment
-        original_run_hitl = agent._tool_manager._pipeline._run_hitl
+        original_run_hitl = agent._tool_adapter._manager._pipeline._run_hitl
         async def _auto_approve(plugin, name, params):
             return True, "confirmed"
-        agent._tool_manager._pipeline._run_hitl = _auto_approve
+        agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
 
-        await agent._tool_manager.execute("save_memory", ctx=agent._tool_ctx, content="测试保存的记忆", type="fact")
+        await agent._tool_adapter.execute("save_memory", ctx=agent._tool_adapter.tool_context, content="测试保存的记忆", type="fact")
         results = await agent._long_term.search(query_text="测试保存")
         assert len(results) > 0
         assert any("测试保存" in r.text for r in results)
@@ -288,7 +288,7 @@ class TestMemoryIntegration:
         # Mock HITL to auto-approve in test environment
         async def _auto_approve(plugin, name, params):
             return True, "confirmed"
-        agent._tool_manager._pipeline._run_hitl = _auto_approve
+        agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
 
         # First turn: tell agent something memorable
         await agent.process_message("记住，我下周要去东京出差")
@@ -318,7 +318,7 @@ class TestMemoryIntegration:
         # Mock HITL to auto-approve in test environment
         async def _auto_approve(plugin, name, params):
             return True, "confirmed"
-        agent._tool_manager._pipeline._run_hitl = _auto_approve
+        agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
 
         # Multiple turns
         await agent.process_message("我叫妖梦")

@@ -14,8 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from Module.tool import ToolContext, ToolResult
-from Module.tool.protocol import ErrorType
+from core.adapter import ToolContext, ToolResult, ErrorType
 
 from core.schema.tool import ToolCall
 
@@ -51,9 +50,9 @@ class TaskScheduler:
         self._running = False
         self._seq: int = 0
 
-    def set_tool_context(self, ctx) -> None:
-        """更新工具上下文（用于 Agent.start() 中延迟注入）。"""
-        self._tool_ctx = ctx
+    def set_tool_adapter(self, adapter) -> None:
+        """设置工具适配器（用于 Agent.start() 中延迟注入 ToolContext）。"""
+        self._tool_ctx = adapter.tool_context
 
     # ---- 生命周期 ----
 

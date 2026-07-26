@@ -8,6 +8,11 @@ Message: MessageBuilder（系统 prompt + 历史 → LLM API messages[]）
 from .llm_adapter import LLMAdapter, ThoughtResult
 from .tts_adapter import TTSStreamManager, is_emoji_only
 from .message_builder import MessageBuilder
+from .tool_adapter import ToolAdapter
+
+# Re-export ToolResult, ErrorType, ToolContext for consumer convenience
+from Module.tool.protocol import ToolResult, ErrorType
+from Module.tool import ToolContext
 
 __all__ = [
     "LLMAdapter",
@@ -15,4 +20,8 @@ __all__ = [
     "TTSStreamManager",
     "is_emoji_only",
     "MessageBuilder",
+    "ToolAdapter",
+    "ToolResult",
+    "ErrorType",
+    "ToolContext",
 ]
