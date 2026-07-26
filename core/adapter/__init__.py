@@ -2,6 +2,7 @@
 
 LLM: LLMAdapter + tool_call 解析（重试、热切换、streaming）
 TTS: TTSStreamManager（句队列、emoji 同步、门控播放）
+Tool: ToolAdapter（工具子系统生命周期）+ ToolResult / ErrorType / ToolContext 重导出
 Message: MessageBuilder（系统 prompt + 历史 → LLM API messages[]）
 """
 

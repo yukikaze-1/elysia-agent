@@ -131,7 +131,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 
 | 文件 | 职责 |
 |------|------|
-| `adapter/` | 适配器层：`LLMAdapter` 封装 `Module.llm` 后端，提供 `stream_think()` 流式接口，自动重试（429/500/502/503/504，指数退避 3 次）。`TTSStreamManager` 管理 TTS 句队列 + emoji 同步 + 门控播放。`tool_call_parser` 流式 tool_call 合并/归一化。详见 [`adapter/`](adapter/) |
+| `adapter/` | 适配器层：`LLMAdapter` 封装 `Module.llm` 后端，提供 `stream_think()` 流式接口，自动重试（429/500/502/503/504，指数退避 3 次）。`TTSStreamManager` 管理 TTS 句队列 + emoji 同步 + 门控播放。`ToolAdapter` 封装工具子系统生命周期（创建+加载+关闭）。`tool_call_parser` 流式 tool_call 合并/归一化。详见 [`adapter/`](adapter/) |
 | `character_config.py` | 角色配置：从 YAML 加载角色名、wake words、emotion 阈值、proactive 参数、L1 Core personality 文本路径。`from_yaml()` 工厂方法 |
 | `app_config.py` | 应用配置：`ConfigLoader` 加载 `config.yaml` + env override。包含 `AgentConfig`、`LLMConfig`、`MemoryConfig`、`TTSConfig` 等 dataclass |
 | `text/` | 文本流处理包：`BlockFilter` 实时过滤 `<|markdown|>` 和 `<|code|>` 标记，防止代码/markdown 进入 TTS。`SentenceBuffer` 逐 token feed 检测完整句边界（。！？!?\n～…〜），完整句触发 TTS。`content_text_from_content()` 从多模态 content 数组提取纯文本。`MessageObj` dataclass 用于非流式文本最终发送。详见 [`text/`](text/) |
@@ -149,7 +149,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 |--------|------|----------|
 | `core/agent/` | 组装入口：`Agent(AgentLifecycle, AgentServer)`，管理所有子系统引用和 RunState 生命周期 | [agent/README.md](agent/README.md) |
 | `core/cognitive/` | 认知循环：ReAct 调度器 + StreamProcessor 流式解析 + TTS 流管理 + 工具执行 + 计时 | [cognitive/README.md](cognitive/README.md) |
-| `core/adapter/` | 适配器层：LLMAdapter + TTSStreamManager + tool_call_parser，封装 Module/ 后端供 core/ 层使用 | [adapter/README.md](adapter/README.md) |
+| `core/adapter/` | 适配器层：LLMAdapter + TTSStreamManager + ToolAdapter + tool_call_parser，封装 Module/ 后端供 core/ 层使用 | [adapter/README.md](adapter/README.md) |
 | `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口）、`LongTermMemory`（向量检索）、`MemoryConsolidator`（提取+比对+写入）、`MemoryReflector`（定期去重） | [memory/README.md](memory/README.md) |
 | `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
 | `core/text/` | 文本流处理管线：`BlockFilter`（结构化块过滤）+ `SentenceBuffer`（分句缓冲）+ `text_utils`（文本提取） | [text/README.md](text/README.md) |

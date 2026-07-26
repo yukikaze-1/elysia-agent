@@ -99,6 +99,7 @@ core/
 │   ├── llm_adapter.py     #   LLMAdapter: tool-calling + retry + streaming + hot-switch
 │   ├── tts_adapter.py     #   TTSStreamManager: sentence queuing + emoji sync + gated playback
 │   ├── tool_call_parser.py #  merge/normalize streaming tool_call deltas
+│   ├── tool_adapter.py   #   ToolAdapter: tool subsystem lifecycle + ToolExecutor delegation
 │   ├── message_builder.py #   MessageBuilder: system prompt + history → LLM API messages[]
 ├── text/                  # Text stream processing (package): BlockFilter + SentenceBuffer + text utils
 │   ├── block_filter.py    #   BlockFilter: streaming block tag filter + post-hoc block parsing
