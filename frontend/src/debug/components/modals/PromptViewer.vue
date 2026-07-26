@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted, nextTick } from 'vue'
 
 const props = defineProps<{ index: number; visible: boolean }>()
 const emit = defineEmits<{ close: []; nav: [delta: number] }>()
+const overlayRef = ref<HTMLElement | null>(null)
 
 interface ToolItem { function?: { name?: string; description?: string }; name?: string; description?: string }
 interface PromptDetail { index: number; timestamp: string; round_num: number; model: string; messages: { role: string; content: unknown; [key: string]: unknown }[]; tools: ToolItem[]; template_source?: { path: string; sections: Record<string, string> } }
@@ -25,7 +26,9 @@ async function fetchPrompt() {
   finally { loading.value = false }
 }
 
-watch(() => [props.index, props.visible], () => { if (props.visible) fetchPrompt() })
+watch(() => [props.index, props.visible], () => { if (props.visible) { fetchPrompt(); nextTick(() => overlayRef.value?.focus()) } })
+
+onMounted(() => { if (props.visible) nextTick(() => overlayRef.value?.focus()) })
 
 function toggleMsg(i: number) {
   const s = new Set(expandedMsgs.value)
@@ -52,7 +55,7 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="modal-overlay" @click.self="emit('close')" @keydown="onKeydown" tabindex="0">
+    <div v-if="visible" ref="overlayRef" class="modal-overlay" @click.self="emit('close')" @keydown="onKeydown" tabindex="0">
       <div class="modal-box prompt-box">
         <div class="modal-header">
           <h3>Prompt #{{ index }}</h3>

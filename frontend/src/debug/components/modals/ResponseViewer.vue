@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted, nextTick } from 'vue'
 
 const props = defineProps<{ index: number; visible: boolean }>()
 const emit = defineEmits<{ close: []; nav: [delta: number] }>()
+const overlayRef = ref<HTMLElement | null>(null)
 
 interface ResponseDetail { index: number; timestamp: string; round_num: number; raw_text: string; inner_voice: string; text_len: number; inner_voice_len: number }
 const detail = ref<ResponseDetail | null>(null)
@@ -20,7 +21,9 @@ async function fetchResponse() {
   finally { loading.value = false }
 }
 
-watch(() => [props.index, props.visible], () => { if (props.visible) fetchResponse() })
+watch(() => [props.index, props.visible], () => { if (props.visible) { fetchResponse(); nextTick(() => overlayRef.value?.focus()) } })
+
+onMounted(() => { if (props.visible) nextTick(() => overlayRef.value?.focus()) })
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'ArrowLeft') emit('nav', -1)
@@ -31,7 +34,7 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="modal-overlay" @click.self="emit('close')" @keydown="onKeydown" tabindex="0">
+    <div v-if="visible" ref="overlayRef" class="modal-overlay" @click.self="emit('close')" @keydown="onKeydown" tabindex="0">
       <div class="modal-box wide">
         <div class="modal-header">
           <h3>Response #{{ index }}</h3>
