@@ -183,7 +183,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 |------|--------|------|
 | Core 总览 | [core/README.md](core/README.md) | 认知中枢架构 + 组件详解 |
 | Agent | [core/agent/README.md](core/agent/README.md) | 组装入口 + 生命周期管理 |
-| CognitiveLoop | [core/cognitive/README.md](core/cognitive/README.md) | ReAct 调度器 + inner_voice 状态机 |
+| CognitiveLoop | [core/cognitive/README.md](core/cognitive/README.md) | ReAct 调度器 + StreamProcessor 流式解析 |
 | Memory | [core/memory/README.md](core/memory/README.md) | 记忆子系统（Session + LTM + 沉淀 + 去重） |
 | Debug | [core/debug/README.md](core/debug/README.md) | 调试仪表板数据层（16 panel + 录制） |
 | Text | [core/text/README.md](core/text/README.md) | 文本流处理管线（BlockFilter + SentenceBuffer） |

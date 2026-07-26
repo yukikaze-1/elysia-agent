@@ -340,7 +340,7 @@ INTERRUPTED → IDLE
 
 ### 4.3 认知循环 (CognitiveLoop)
 
-ReAct 调度器的完整实现 (~1,040 行)：
+ReAct 调度器的完整实现 (~840 行)，使用 StreamProcessor 处理流式文本解析：
 
 ```python
 class CognitiveLoop:
@@ -351,12 +351,20 @@ class CognitiveLoop:
             if not can_transition(THINKING):     # 已在处理中 → skip
                 return
             fsm.transition(THINKING)
-            self._sentence_buf = SentenceBuffer(...)  # 每轮新建
-            self._block_filter = BlockFilter()        # 每轮新建
             try:
                 await self._think_loop(user_message, ...)
             except CancelledError:
                 await self._handle_interrupt()    # 清理 → INTERRUPTED → IDLE
+
+    async def _think_loop(self, user_message, ...):
+        proc = StreamProcessor()  # 纯状态机: mood → inner_voice → BlockFilter → SentenceBuffer
+        for round_num in range(MAX_TOOL_ROUNDS + 1):
+            async for chunk in stream:
+                for event in proc.feed(chunk["content"]):
+                    await self._dispatch_stream_event(event, ...)  # 事件→副作用
+                # tool_call 合并与 token usage 留在 _think_loop
+            for event in proc.flush():
+                await self._dispatch_stream_event(event, ...)
 
     async def _think_loop(self, ...):
         # 1. 情绪分析 (STT 优先，关键词 fallback)
@@ -949,8 +957,9 @@ Agent/
 │   │   ├── llm_adapter.py
 │   │   ├── tts_adapter.py
 │   │   └── tool_call_parser.py
-├── cognitive/            #   CognitiveLoop 包 (loop + tts + tools + timing)
-│   │   ├── loop.py           #     CognitiveLoop(CognitiveTools)
+├── cognitive/            #   CognitiveLoop 包 (loop + stream_processor + tools + timing)
+│   │   ├── loop.py           #     CognitiveLoop(CognitiveTools): process + _think_loop + _dispatch_stream_event
+│   │   ├── stream_processor.py  #  StreamProcessor: mood/inner_voice 标签检测 + BlockFilter + SentenceBuffer
 │   │   ├── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   │   └── timing.py         #     Timer + TimingClock 延迟统计
 │   ├── event_bus.py         #   优先级事件总线

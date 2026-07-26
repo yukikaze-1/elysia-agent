@@ -91,15 +91,15 @@ Agent.start()
 
 关键方法：`post()`, `next()`, `drain()`
 
-#### CognitiveLoop (`cognitive/` package, 3 files)
+#### CognitiveLoop (`cognitive/` package, 4 files)
 
-ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的核心执行引擎。使用 mixin 模式：`CognitiveLoop(CognitiveTools)`。流式 LLM 输出中解析 `<inner_voice>` 标签：PRE → THINK → REPLY 三阶段。工具调用检测后最多 5 轮工具循环。`_handle_submit_task` 拦截后台任务委托。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。`tools.py` 包含 `_execute_tools_directly`、`_submit_task_definition`、`_default_user_profile`。`timing.py` 包含 `Timer` context manager + `TimingClock` 请求级聚合（span 嵌套）。
+ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的核心执行引擎。使用 mixin 模式：`CognitiveLoop(CognitiveTools)`。流式标签检测（mood + inner_voice）由 `StreamProcessor` (`stream_processor.py`) 独立处理——纯状态机，零 I/O，将标签解析结果以 `StreamEvent` 事件流输出。`_dispatch_stream_event()` 负责事件→副作用翻译（mood 更新、inner_voice 广播、TTS 分发、FSM 切换）。工具调用检测后最多 5 轮工具循环。`_handle_submit_task` 拦截后台任务委托。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。`tools.py` 包含 `_execute_tools_directly`、`_submit_task_definition`、`_default_user_profile`。`timing.py` 包含 `Timer` context manager + `TimingClock` 请求级聚合（span 嵌套）。
 
-关键方法：`process()`, `_think_loop()`, `cancel_current()`, `_after_response()`
+关键方法：`process()`, `_think_loop()`, `_dispatch_stream_event()`, `cancel_current()`, `_after_response()`
 
 #### CharacterEngine (`personality/engine.py`)
 
-统一个性管理与情绪驱动。Mood 由 LLM 在主回复中通过 `<mood>` 标签自由生成（中文描述 + 强度），流式解析器提取后更新 `CharacterState.mood: str`。关键词检测 `_detect_mood()` 保留为 fallback（LLM 未输出 `<mood>` 时降级）。`analyze_user_stt()` 仅处理音频事件→表情，`analyze_assistant()` 只衰减 intensity 不重置 mood 文本。详见 [personality/README.md](personality/README.md)。
+统一个性管理与情绪驱动。Mood 由 LLM 在主回复中通过 `<mood>` 标签自由生成（中文描述 + 强度），`StreamProcessor` 流式提取后通过 `_dispatch_stream_event()` 更新 `CharacterState.mood: str`。关键词检测 `_detect_mood()` 保留为 fallback（LLM 未输出 `<mood>` 时降级）。`analyze_user_stt()` 仅处理音频事件→表情，`analyze_assistant()` 只衰减 intensity 不重置 mood 文本。详见 [personality/README.md](personality/README.md)。
 
 关键方法：`analyze_user_stt()`, `analyze_user()`, `analyze_assistant()`
 
@@ -148,7 +148,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | 子目录 | 说明 | 详细文档 |
 |--------|------|----------|
 | `core/agent/` | 组装入口：`Agent(AgentLifecycle, AgentServer)`，管理所有子系统引用和 RunState 生命周期 | [agent/README.md](agent/README.md) |
-| `core/cognitive/` | 认知循环：ReAct 调度器 + inner_voice 状态机 + TTS 流管理 + 工具执行 + 计时 | [cognitive/README.md](cognitive/README.md) |
+| `core/cognitive/` | 认知循环：ReAct 调度器 + StreamProcessor 流式解析 + TTS 流管理 + 工具执行 + 计时 | [cognitive/README.md](cognitive/README.md) |
 | `core/adapter/` | 适配器层：LLMAdapter + TTSStreamManager + tool_call_parser，封装 Module/ 后端供 core/ 层使用 | [adapter/README.md](adapter/README.md) |
 | `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口）、`LongTermMemory`（向量检索）、`MemoryConsolidator`（提取+比对+写入）、`MemoryReflector`（定期去重） | [memory/README.md](memory/README.md) |
 | `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
