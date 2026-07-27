@@ -52,7 +52,7 @@ from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )
 from Module.embedding import EmbeddingFactory
-from ..task_scheduler import TaskScheduler
+from ..task import TaskScheduler
 from core.storage.session_repo import SessionRepository
 from core.storage.message_repo import MessageRepository
 from core.storage.token_repo import TokenRepository

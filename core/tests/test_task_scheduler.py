@@ -10,7 +10,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from core.task import Task, TaskType, TaskStatus
-from core.task_scheduler import TaskScheduler
+from core.task import TaskScheduler
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
 from Module.tool import ToolManager, ToolContext, PluginContext

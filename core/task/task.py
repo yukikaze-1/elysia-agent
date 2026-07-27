@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, TypedDict
 
-from .message_id import new_message_id
+from ..message_id import new_message_id
 
 
 class TaskType(Enum):
