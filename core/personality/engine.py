@@ -25,6 +25,7 @@ from Module.output import OutputManager
 from core.schema.compression import CompressionTrigger
 from core.schema._utils import now_iso
 from .emotion import EmotionDetector
+from .awareness import AwarenessJudge
 from ._utils import _extract_tag, _schedule
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
@@ -36,10 +37,6 @@ logger = logging.getLogger(__name__)
 # AwarenessTrigger 配置
 AWARENESS_COOLDOWN_SECONDS = 3600  # 同一主题冷却 1 小时，避免频繁输出"我变了"
 AWARENESS_MAX_HISTORY = 10         # state_history 保留条数
-
-# AwarenessJudge 配置
-AWARENESS_JUDGMENT_COOLDOWN = 300  # 最小展示冷却 5 分钟
-AWARENESS_MAX_SHOWS = 3            # 单条文本最大展示次数
 
 # L3→L2 压缩配置
 COMPRESSION_COUNT_THRESHOLD = 5    # state_history 新增 N 条触发压缩
@@ -95,8 +92,6 @@ class CharacterEngine:
         self._l1_core = base_personality
         self._character = character_config
         self._output = output
-        # 冷却计时: 记录上次 C9 触发的时间戳
-        self._last_awareness_time: float = state.last_awareness_time or 0.0
 
         # L3→L2 压缩
         self._compression_lock = asyncio.Lock()
@@ -128,6 +123,15 @@ class CharacterEngine:
             idle_expressions=character_config.emotion.idle_expressions,
         )
 
+        # 子组件: AwarenessJudge
+        self._awareness = AwarenessJudge(
+            llm=llm,
+            state=state,
+            character_name=character_name,
+            user_name=user_name,
+            pm=self._pm,
+        )
+
     # ---- 数据提供（给 section 渲染用）----
 
     def render_c1(self) -> C1Data:
@@ -144,11 +148,11 @@ class CharacterEngine:
         Phase 2: 从 judge 缓存读取，不再直接使用 raw L3。
         加冷却 + 展示次数门控。
         """
-        if not self._awareness_allowed():
+        if not self._awareness.is_allowed():
             return C9Data(awareness_text="")
 
-        self._last_awareness_time = time.time()
-        self.state.last_awareness_time = self._last_awareness_time
+        self._awareness._last_awareness_time = time.time()
+        self.state.last_awareness_time = self._awareness._last_awareness_time
         self.state.awareness_show_count += 1
         return C9Data(awareness_text=self.state.approved_awareness_text)
 
@@ -175,7 +179,7 @@ class CharacterEngine:
             # Reflector 产出 → 直接设为 L3 State
             self._set_state_l3(content)
             # 触发异步 awareness 判定
-            self._maybe_judge_awareness()
+            self._awareness.maybe_judge()
 
         elif source == "event":
             # 重大事件 → 追加到 L3 State
@@ -188,104 +192,26 @@ class CharacterEngine:
         # L3→L2 压缩检查 — 在状态更新后触发
         await self._maybe_compress()
 
-    # ---- awareness 判定 ----
+    # ---- awareness 属性与方法（代理到 AwarenessJudge）----
+
+    @property
+    def _last_awareness_time(self) -> float:
+        return self._awareness._last_awareness_time
+
+    @_last_awareness_time.setter
+    def _last_awareness_time(self, value: float) -> None:
+        self._awareness._last_awareness_time = value
 
     def _awareness_allowed(self) -> bool:
-        """判断当前是否允许 C9 渲染（缓存 + 展示次数 + 冷却三重门控）。
-
-        Phase 2: LLM-judge 缓存驱动。
-        必须同时满足：
-        1. 有 judge 批准的觉察文本
-        2. 展示次数未达上限
-        3. 距上次 C9 渲染超过冷却时间（首次不受冷却限制）
-        """
-        if not self.state.approved_awareness_text:
-            return False
-
-        if self.state.awareness_show_count >= AWARENESS_MAX_SHOWS:
-            return False
-
-        if self._last_awareness_time > 0:
-            if (time.time() - self._last_awareness_time) < AWARENESS_JUDGMENT_COOLDOWN:
-                return False
-
-        return True
+        return self._awareness.is_allowed()
 
     def _maybe_judge_awareness(self) -> None:
-        """触发异步 awareness 判定（fire-and-forget）。
-
-        捕获当前 L3 snapshot 以避免后续 L3 更新的竞态。
-        L3 为空时跳过。
-        """
-        l3_snapshot = self.state.state_l3
-        if not l3_snapshot:
-            return
-        _schedule(self._judge_awareness(l3_snapshot))
+        self._awareness.maybe_judge()
 
     async def _judge_awareness(self, l3_text: str) -> None:
-        """执行 LLM 判定：比较 L2 vs L3，更新 awareness 缓存。
-
-        L2 为空 → 降级模式：L3 原文直接缓存，不调 LLM。
-        L2 非空 → render prompt → call LLM → parse <approved>/<skip>。
-        失败时保留旧缓存并记录 warning。
-        """
         if self._pm is None:
             return
-
-        l2_self = self.state.self_l2
-        if not l2_self:
-            # 降级模式：无 L2 时直接缓存 L3 原文
-            self.state.approved_awareness_text = l3_text
-            self.state.approved_awareness_at = time.time()
-            self.state.awareness_show_count = 0
-            logger.debug("AwarenessJudge: L2 为空，降级使用 L3 原文 (%d chars)", len(l3_text))
-            return
-
-        last_approved = self.state.approved_awareness_text
-
-        # 1. 渲染 prompt
-        try:
-            prompt = self._pm.render(
-                "AwarenessJudge.j2",
-                character_name=self._character_name,
-                l2_self=l2_self,
-                l3_reflection=l3_text,
-                last_approved=last_approved,
-            )
-        except Exception:
-            logger.warning("AwarenessJudge: 模板渲染失败", exc_info=True)
-            return
-
-        # 2. LLM 调用
-        t0 = time.perf_counter()
-        try:
-            result = await self._llm.think(
-                [{"role": "user", "content": prompt}],
-                extra_body={"thinking": {"type": "disabled"}},
-            )
-            text = result.text.strip()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            logger.warning("AwarenessJudge: LLM 调用失败 (%.0f ms)", elapsed_ms, exc_info=True)
-            return
-
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-
-        # 3. 解析结果
-        approved = _extract_tag(text, "approved")
-        if approved:
-            self.state.approved_awareness_text = approved
-            self.state.approved_awareness_at = time.time()
-            self.state.awareness_show_count = 0
-            logger.info("AwarenessJudge: 批准觉察文本 (%d chars, %.0f ms)", len(approved), elapsed_ms)
-            return
-
-        skip_reason = _extract_tag(text, "skip")
-        logger.debug("AwarenessJudge: 跳过 — %s (%.0f ms)",
-                     skip_reason or "无原因", elapsed_ms)
-        # 保留旧缓存不变
+        await self._awareness._judge(l3_text)
 
     # ---- L3→L2 压缩 ----
 
