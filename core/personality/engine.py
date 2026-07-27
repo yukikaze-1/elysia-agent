@@ -24,10 +24,10 @@ from Module.output import OutputManager
 from .compression import CompressionManager
 from .emotion import EmotionDetector
 from .awareness import AwarenessJudge
+from core.schema.compression import CompressionTrigger
 from ._utils import _schedule, _extract_tag  # _extract_tag 保持向后兼容
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
-    from core.schema.compression import CompressionTrigger
     from core.schema.character import CharacterState
     from core.storage.character_version_repo import CharacterVersionRepository
 
@@ -225,7 +225,7 @@ class CharacterEngine:
     async def _maybe_compress(self) -> None:
         await self._compression.check_and_compress(_refresh_cb=self._refresh_c6)
 
-    async def _compress(self, trigger: "CompressionTrigger" = "compression") -> None:
+    async def _compress(self, trigger: CompressionTrigger = CompressionTrigger.COMPRESSION) -> None:
         await self._compression._compress(trigger, _refresh_cb=self._refresh_c6)
 
     async def _refresh_c6(self) -> None:
