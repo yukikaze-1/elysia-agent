@@ -23,6 +23,7 @@ class DebugInfo:
     # System
     fsm_state: str = "idle"
     fsm_previous: str | None = None
+    turn_phase: str | None = None          # CognitiveLoop 内部处理阶段
     processing: bool = False
     uptime_seconds: float = 0.0           # 服务运行时长
 
@@ -134,6 +135,8 @@ async def collect(agent: "Agent") -> DebugInfo:
     # ---- System ----
     info.fsm_state = str(agent._fsm.state)
     info.fsm_previous = str(agent._fsm.previous) if agent._fsm.previous else None
+    phase = agent._cognitive._phase
+    info.turn_phase = phase.value if phase else None
     ct = agent._cognitive._current_task
     info.processing = ct is not None and not ct.done()
     # uptime

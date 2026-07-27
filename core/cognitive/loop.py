@@ -15,6 +15,7 @@ import datetime
 import logging
 import time
 from dataclasses import asdict
+from enum import Enum
 from typing import Any, Callable, TYPE_CHECKING
 
 from ..utils import new_message_id
@@ -56,6 +57,14 @@ logger = logging.getLogger(__name__)
 
 
 from .tools import CognitiveTools
+
+
+class TurnPhase(str, Enum):
+    """CognitiveLoop 单轮处理阶段 — 内部追踪，不暴露给 FSM 外部消费者。"""
+    BUILD_PROMPT = "build_prompt"
+    STREAMING = "streaming"
+    EXECUTING_TOOLS = "executing_tools"
+    FINALIZING = "finalizing"
 
 
 def _apply_mood(raw: str, engine, tts_mgr) -> None:
@@ -140,6 +149,7 @@ class CognitiveLoop(CognitiveTools):
         self._delegation_preparer: Any = None  # 由 configure() 注入
         self._on_background_task: Callable | None = None  # Agent 注入的回调
         self._user_profile: Any = None         # 由 configure() 注入
+        self._phase: TurnPhase | None = None   # 当前轮次处理阶段（供 debug 面板）
 
     # ---- Public API ----
 
@@ -618,6 +628,7 @@ class CognitiveLoop(CognitiveTools):
             user_message = self._build_wake_up_message(task_result_context)
 
         # 1. 构建 prompt
+        self._phase = TurnPhase.BUILD_PROMPT
         messages, tool_defs = await self._build_turn_prompt(
             user_message, user_name, content, stt_emotion, stt_events, is_task_result)
 
@@ -633,14 +644,17 @@ class CognitiveLoop(CognitiveTools):
         # 2. ReAct 循环
         try:
             for round_num in range(self.MAX_TOOL_ROUNDS + 1):
+                self._phase = TurnPhase.STREAMING
                 acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think = \
                     await self._stream_llm_response(messages, tool_defs, round_num)
 
                 if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
+                    self._phase = TurnPhase.EXECUTING_TOOLS
                     await self._execute_tool_round(
                         messages, acc_text, raw_tool_calls, _on_tool_calls)
                     continue
 
+                self._phase = TurnPhase.FINALIZING
                 await self._finalize_turn(
                     acc_text, all_sentences, iv_think, speaking_started, user_message, round_num)
                 return
