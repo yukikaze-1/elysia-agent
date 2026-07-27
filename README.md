@@ -339,15 +339,13 @@ Agent/
 │   ├── tools/               # 工具插件 (filesystem, web, memory 等)
 │   ├── tests/               # 测试套件
 │   ├── agent_fsm.py         # 状态机: IDLE → THINKING → EXECUTING → SPEAKING
-│   ├── app_config.py        # AgentConfig: YAML 加载的应用配置
-│   ├── character_config.py  # CharacterConfig: 加载 YAML + L1 性格
-│   ├── event_bus.py         # 优先级事件总线 (asyncio.PriorityQueue)
-│   ├── idle_monitor.py      # IdleMonitor: 唤醒词 + 主动触发
-│   ├── log_setup.py         # 日志设置 (stderr + 文件 + conversation)
-│   ├── message_id.py        # 消息 ID 生成
-│   ├── prompt_assembler.py  # PromptAssembler: 12 sections → SystemPromptManager
-│   ├── task.py              # 任务数据模型
-│   ├── task_scheduler.py    # TaskScheduler: Worker Pool (N=5)
+│   ├── config/               # 配置子包 (AppConfig + CharacterConfig)
+│   ├── event_bus.py           # 优先级事件总线 (asyncio.PriorityQueue)
+│   ├── idle_monitor.py        # IdleMonitor: 唤醒词 + 主动触发
+│   ├── log_setup.py           # 日志设置 (stderr + 文件 + conversation)
+│   ├── message_id.py          # 消息 ID 生成
+│   ├── prompt_assembler.py    # PromptAssembler: 12 sections → SystemPromptManager
+│   ├── task/                  # 任务子系统 (Task 数据模型 + TaskScheduler Worker Pool)
 │   ├── token_tracker.py     # Token 消耗追踪
 │   ├── prompts/              # Prompt 模板 (Jinja2 .j2)
 │   │   ├── ExtractMemory.j2  #   对话提取记忆

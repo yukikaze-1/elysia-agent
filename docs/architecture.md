@@ -238,7 +238,7 @@ _BACKENDS = {
 ### 3.3 Config 系统
 
 ```python
-# core/app_config.py
+# core/config/app_config.py
 @dataclass
 class AppConfig:
     agent: AgentConfig = ConfigField(default_factory=AgentConfig)
@@ -975,16 +975,20 @@ Agent/
 │   │   └── text_utils.py    #     文本提取 + MessageObj
 │   ├── prompt_assembler.py  #   提示词组装 + 性格引擎数据注入
 │   ├── idle_monitor.py      #   空闲监控
-│   ├── task_scheduler.py    #   Worker Pool 调度器
-│   ├── message_id.py        #   消息 ID 生成
-│   ├── schema/              #   共享类型包 (agent + types + part + tool + message + adapters)
-│   ├── task.py             #   任务模型
-│   ├── debug/               #   Debug 仪表板包
-│   │   ├── info.py          #     /debug 数据聚合
+│   ├── task/                 #   任务子系统包
+│   │   ├── __init__.py       #     重导出 Task + TaskScheduler
+│   │   ├── task.py           #     任务数据模型
+│   │   └── scheduler.py      #     Worker Pool 调度器
+│   ├── message_id.py         #   消息 ID 生成
+│   ├── schema/               #   共享类型包 (agent + types + part + tool + message + adapters)
+│   ├── debug/                #   Debug 仪表板包
+│   │   ├── info.py           #     /debug 数据聚合
 │   │   ├── prompt_recorder.py #   Prompt 记录器
 │   │   └── response_recorder.py # Response 记录器
-│   ├── character_config.py  #   角色配置
-│   ├── app_config.py        #   App 配置
+│   ├── config/               #   配置子包
+│   │   ├── __init__.py       #     重导出 AppConfig + CharacterConfig
+│   │   ├── app_config.py     #     App 配置
+│   │   └── character_config.py #   角色配置
 │   ├── log_setup.py         #   日志系统
 │   ├── token_tracker.py     #   Token 消耗统计
 │   ├── personality/         #   CharacterEngine 子系统
@@ -1107,7 +1111,7 @@ INTERRUPT:
 | 16 | task_system/task_system.py | sub-agent task submit | TaskSystem 内部追踪 |
 | 17 | task_system/task_system.py | sub-agent task resume | TaskSystem 内部追踪 |
 | 18 | personality/reflector.py | CharacterReflector fire-and-forget | fire-and-forget，无追踪 |
-| 19 | task_scheduler.py | Worker Pool + prune loop | 常驻，stop 时 cancel |
+| 19 | task/scheduler.py | Worker Pool + prune loop | 常驻，stop 时 cancel |
 
 ---
 

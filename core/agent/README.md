@@ -76,8 +76,7 @@ core/agent/
 core/
 ├── agent_fsm.py           — AgentFSM 状态机（agent + cognitive 共享）
 ├── event_bus.py           — EventBus 事件总线（agent + cognitive + idle 共享）
-├── app_config.py          — AgentConfig（Agent 构造参数）
-└── character_config.py    — CharacterConfig（Agent 加载角色配置）
+├── config/               — 配置子包（AppConfig + CharacterConfig）
 ```
 
 ## 调试
