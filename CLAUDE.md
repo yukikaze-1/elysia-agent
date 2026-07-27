@@ -243,7 +243,8 @@ frontend/
     │   ├── chatStore.ts        # 消息列表 + delta 流式追加 + TTS 排队
     │   ├── audioStore.ts       # TTS 缓冲/播放 + 麦克风
     │   ├── settingsStore.ts    # 设置项 + localStorage 同步
-    │   └── toolsStore.ts       # 工具插件列表
+    │   ├── toolsStore.ts       # 工具插件列表
+    │   └── debugStore.ts       # Debug 仪表盘：轮询生命周期 + Tab 切换 + 分页状态
     ├── composables/
     │   ├── useWebSocket.ts  # WS 消息路由（替代旧版巨型 switch）
     │   ├── useAudio.ts      # TTS 播放控制
@@ -277,9 +278,26 @@ frontend/
     │       ├── Lightbox.vue              # 图片灯箱
     │       └── CodeBlock.vue             # 代码块（highlight.js + 复制）
     └── debug/                            # 独立 Debug 应用（Vite 多入口）
-        ├── main.ts
-        ├── App.vue                       # 16 面板仪表盘（poll /debug/api 每 2s）
+        ├── main.ts                       # 入口 + Pinia
+        ├── App.vue                       # Tab shell（概览 | 数据库 | 任务）+ pause/copy
+        ├── types.ts                      # DebugData 等 TS 接口定义
         └── components/
+            ├── OverviewTab.vue           # 16 面板 2 列 grid（poll /debug/api）
+            ├── DatabaseTab.vue           # 容器，切换时加载
+            ├── LtmPanel.vue              # LTM CRUD（搜索/筛选/翻页/新增/编辑/删除/批量/清空）
+            ├── SessionPanel.vue          # 会话管理（列表/详情/删除/清空）
+            ├── ArchivePanel.vue          # 消息归档（搜索/筛选/翻页/编辑/删除/清空）
+            ├── TasksTab.vue              # SSE EventSource + 自动重连 + 活跃/完成区
+            ├── TaskCard.vue              # 任务卡片：状态徽章 + 进度条 + vis-network DAG
+            ├── shared/
+            │   ├── PaginationBar.vue     # 分页导航（offset 语义，跳转，perPage 选择）
+            │   ├── ConfirmModal.vue      # 危险操作确认弹窗
+            │   └── ExpandableText.vue    # 文本截断 + 点击展开
+            └── modals/
+                ├── PromptViewer.vue      # LLM Prompt 详情：可折叠消息 + 模板 + 工具列表
+                ├── ResponseViewer.vue    # LLM Response 详情：inner_voice + raw text
+                ├── VersionHistory.vue    # L2/C6 版本历史 + 回滚
+                └── ImageLightbox.vue     # 图片全屏灯箱
 ```
 
 **开发：**
@@ -296,7 +314,15 @@ cd frontend && npm run build
 
 ### Debug page panels
 
-16 panels across overview tab: System (FSM, mood, idle), Memory (session + LTM + DB health), Latency, Process Memory, Scheduler, Token, LLM Prompt/Response, Session/LTM recent, Tools + Tool History, Consolidation (buffer + history), Memory Reflector, Character Reflector, CharacterEngine. Database tab: LTM CRUD + session management + message archive. Tasks tab: SSE real-time TaskSystem DAG visualization.
+**Overview tab**: 16 panels (2-column grid) — System, Memory, Latency, Process Memory, Scheduler, Token, LLM Prompt (→ PromptViewer), LLM Response (→ ResponseViewer), Recent Session (→ ImageLightbox), LTM Recent, Tools, Tool History, Consolidation, Memory Reflector, Character Reflector, CharacterEngine (→ VersionHistory).
+
+**Database tab**: LtmPanel (Milvus CRUD: search/filter/paginate/create/edit/delete/batch/clear), SessionPanel (MongoDB sessions: list/detail/delete/clear), ArchivePanel (message archive: search/role-filter/paginate/edit/delete/clear). All destructive ops gated by ConfirmModal.
+
+**Tasks tab**: SSE stream from `/debug/api/tasks/stream`, vis-network DAG (hierarchical TB, status-colored nodes), auto-reconnect with exponential backoff, active/completed task sections.
+
+**Shared UI**: PaginationBar (offset semantics, perPage 50/100/200, page jump), ConfirmModal (Teleport, confirm/cancel emits), ExpandableText (truncate/expand toggle).
+
+**Stores**: `debugStore.ts` — Pinia (Composition API): poll lifecycle, activeTab switching, pause/resume, LTM/Archive pagination state.
 
 ### Server routing (`Module/input/` — `server.py` + `ws_handler.py` + `api_routes.py` + `debug_routes.py`)
 
