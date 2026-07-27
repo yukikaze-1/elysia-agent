@@ -117,7 +117,14 @@ git commit -m "refactor: move app_config + character_config into core/config/"
 - Consumes: `core.config` from Task 1 (scheduler.py does not reference config, but must work alongside it)
 - Produces: `core.task` package re-exporting `Task`, `TaskType`, `TaskStatus`, `ToolCallPayload`, `TaskScheduler`
 
-- [ ] **Step 1: Create `core/task/__init__.py`**
+- [ ] **Step 1: Move files first（必须先移，`core/task.py` 文件阻塞目录创建）**
+
+```bash
+git mv core/task.py core/task/task.py
+git mv core/task_scheduler.py core/task/scheduler.py
+```
+
+- [ ] **Step 2: Create `core/task/__init__.py`**
 
 ```python
 """core/task/ — 任务数据模型和调度器。"""
@@ -128,13 +135,6 @@ __all__ = [
     "Task", "TaskType", "TaskStatus", "ToolCallPayload",
     "TaskScheduler",
 ]
-```
-
-- [ ] **Step 2: Move files**
-
-```bash
-git mv core/task.py core/task/task.py
-git mv core/task_scheduler.py core/task/scheduler.py
 ```
 
 - [ ] **Step 3: Fix internal import in `task.py`**
@@ -177,7 +177,7 @@ Expected: All pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add core/task/ core/agent/agent.py core/agent/lifecycle.py core/tests/test_task_scheduler.py core/tests/test_task_model.py
+git add core/task/ core/task.py core/task_scheduler.py core/agent/agent.py core/agent/lifecycle.py core/tests/test_task_scheduler.py
 git commit -m "refactor: move task + task_scheduler into core/task/"
 ```
 
@@ -191,13 +191,37 @@ git commit -m "refactor: move task + task_scheduler into core/task/"
 
 - [ ] **Step 1: Update `core/README.md`**
 
-- 支撑模块表中，将 `app_config.py`、`character_config.py` 行改为 `config/` 子包引用
-- 将 `task.py`、`task_scheduler.py` 行改为 `task/` 子包引用
-- 子包表新增 `core/config/` 和 `core/task/` 两行
+`grep -n "app_config\|character_config\|task.py\|task_scheduler" core/README.md` 定位所有引用，替换旧路径：
+
+| 行 | 旧 | 新 |
+|----|-----|-----|
+| 124 | `task_scheduler.py` | `task/` 子包 |
+| 125 | `character_config.py` | `config/` 子包 |
+| 135 | `app_config.py` | `config/` 子包 |
+| 136 | `character_config.py` | `config/` 子包 |
+| 138 | `task.py` | `task/` 子包 |
+| 142 | `task_scheduler.py` | `task/` 子包 |
+| 147 | 无 `config/`、`task/` 条目 | 新增 `core/config/` 和 `core/task/` 子包行 |
+| 245 | `agent/agent.py` task_scheduler 相关 | 更新路径 |
+| 255 | `app_config.py` 行 | `config/app_config.py` |
+| 256 | `character_config.py` 行 | `config/character_config.py` |
+| 258 | `task.py` 行 | `task/task.py` |
+| 263 | `task_scheduler.py` 行 | `task/scheduler.py` |
 
 - [ ] **Step 2: Update `CLAUDE.md`**
 
-- 架构树中，将根文件的 `app_config.py`、`character_config.py`、`task.py`、`task_scheduler.py` 替换为 `config/`、`task/` 子包条目
+`grep -n "app_config\|character_config\|task\.py\|task_scheduler" CLAUDE.md` 定位所有引用，替换旧路径：
+
+| 行 | 旧 | 新 |
+|----|-----|-----|
+| 121 | 架构树 `app_config.py` | `config/app_config.py` |
+| 124 | 架构树 `character_config.py` | `config/character_config.py` |
+| 126 | 架构树 `task.py` | `task/task.py` |
+| 142 | 模块索引表 `task.py`（Task/TaskScheduler） | 拆为 `task/` 子包条目 |
+| 255 | 文件大小表 `app_config.py` | `config/app_config.py` |
+| 256 | 文件大小表 `character_config.py` | `config/character_config.py` |
+| 257 | 文件大小表 `task.py` | `task/task.py` |
+| 263 | 文件大小表 `task_scheduler.py` | `task/scheduler.py` |
 
 - [ ] **Step 3: Commit**
 
