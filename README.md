@@ -95,7 +95,7 @@ python app.py --config custom.yaml --character custom/char.yaml  # 自定义配�
 
 ### 前端开发（可选）
 
-日常使用**不需要**——预构建的前端已包含在 `static/` 目录中。仅当修改 `frontend/` 源码时需要。
+首次使用前需要构建前端（`bash scripts/setup.sh` 会自动完成）。修改 `frontend/` 源码后需要重新构建。
 
 ```bash
 cd frontend
