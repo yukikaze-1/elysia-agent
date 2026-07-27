@@ -7,6 +7,9 @@ log/
 .model_cache/
 node_modules/
 static/live2d-demo/
+static/index.html
+static/debug.html
+static/assets/
 data/ref/
 data/live2d-assets/
 .playwright-mcp/

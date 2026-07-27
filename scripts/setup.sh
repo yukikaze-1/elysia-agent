@@ -72,7 +72,41 @@ echo -e "${BOLD}Step 2: pip install -r requirements.txt${NC}"
 $PYTHON -m pip install -r requirements.txt
 echo -e "${GREEN}✓${NC} pip 依赖安装完成"
 
-# ── Step 3: 配置 .env ──────────────────────────────────────────────────────
+# ── Step 3: 前端构建 ────────────────────────────────────────────────────────
+
+echo ""
+echo -e "${BOLD}Step 3: 前端构建 (Vue 3 + Vite)${NC}"
+
+if ! command -v node &> /dev/null; then
+    echo -e "  ${RED}✗${NC} 未找到 Node.js — 请先安装 Node.js >= 18 (https://nodejs.org)"
+    exit 1
+fi
+
+if ! command -v npm &> /dev/null; then
+    echo -e "  ${RED}✗${NC} 未找到 npm — 请检查 Node.js 安装"
+    exit 1
+fi
+
+NODE_VER=$(node --version | sed 's/v//' | cut -d. -f1)
+if [[ "$NODE_VER" -lt 18 ]]; then
+    echo -e "  ${RED}✗${NC} Node.js >= 18  (当前 $(node --version))"
+    exit 1
+fi
+echo -e "  ${GREEN}✓${NC} Node.js $(node --version)"
+
+if [[ -d "frontend/node_modules" ]]; then
+    echo -e "  ${GREEN}✓${NC} node_modules 已安装，跳过 npm install"
+else
+    echo -n "  正在 npm install..."
+    cd frontend && npm install --silent 2>&1 && cd ..
+    echo -e "  ${GREEN}✓${NC} npm install 完成"
+fi
+
+echo -n "  正在 npm run build..."
+cd frontend && npm run build --silent 2>&1 && cd ..
+echo -e "  ${GREEN}✓${NC} 前端构建完成 → static/"
+
+# ── Step 4: 配置 .env ──────────────────────────────────────────────────────
 
 echo ""
 echo -e "${BOLD}Step 3: 配置 .env${NC}"
@@ -85,7 +119,7 @@ else
     echo "  其他可选配置见 .env.example 中的注释。"
 fi
 
-# ── Step 4: 嵌入模型 ───────────────────────────────────────────────────────
+# ── Step 5: 嵌入模型 ───────────────────────────────────────────────────────
 
 echo ""
 echo -e "${BOLD}Step 4: 嵌入模型${NC}"
@@ -107,21 +141,21 @@ else
     fi
 fi
 
-# ── Step 5: 创建目录 ───────────────────────────────────────────────────────
+# ── Step 6: 创建目录 ───────────────────────────────────────────────────────
 
 echo ""
 echo -e "${BOLD}Step 5: 创建目录${NC}"
 mkdir -p log/ data/
 echo -e "${GREEN}✓${NC} log/ data/ 已就绪"
 
-# ── Step 6: 环境预检 ───────────────────────────────────────────────────────
+# ── Step 7: 环境预检 ───────────────────────────────────────────────────────
 
 echo ""
 echo -e "${BOLD}Step 6: 环境预检${NC}"
 CHECK_EXIT=0
 $PYTHON app.py --check || CHECK_EXIT=$?
 
-# ── Step 7: 下一步 ─────────────────────────────────────────────────────────
+# ── Step 8: 下一步 ─────────────────────────────────────────────────────────
 
 echo ""
 echo -e "${BOLD}=== 安装完成 ===${NC}"

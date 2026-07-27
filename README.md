@@ -25,6 +25,7 @@ cd Agent
 
 - **[Miniconda](https://docs.anaconda.com/miniconda/install/)** — Python 环境管理。装好后在终端输入 `conda --version` 确认
 - **[Docker Engine](https://docs.docker.com/engine/install/ubuntu/)** — 安装后自带 Docker Compose 插件。装好后输入 `docker --version` 确认
+- **[Node.js](https://nodejs.org/en/download)** — 前端构建需要（>= 18）。装好后输入 `node --version` 和 `npm --version` 确认
 - **[DeepSeek API key](https://platform.deepseek.com/api_keys)** — 免费注册，在左侧「API Keys」页面点"创建 API key"，复制备用
 
 > 系统自带 Python >= 3.11 可替代 conda
@@ -39,6 +40,9 @@ bash scripts/setup.sh
 #   必填: DEEPSEEK_API_KEY
 #   语音: MINIMAX_API_KEY（TTS，免费注册 https://platform.minimaxi.com）
 # 更多可选配置见 .env.example 中的注释
+
+# 构建前端页面（Vue 3 + Vite）
+cd frontend && npm install && npm run build && cd ..
 
 # 启动数据库（Docker 容器，重启后自动保持运行）
 docker compose up -d
