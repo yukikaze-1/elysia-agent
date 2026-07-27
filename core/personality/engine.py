@@ -15,7 +15,6 @@ L3→L2 压缩在其中触发：state_history 新增 >= 5 条 OR 距上次 > 7 �
 import asyncio
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
