@@ -89,6 +89,19 @@ python app.py --verbose          # 详细日志（调试用）
 python app.py --config custom.yaml --character custom/char.yaml  # 自定义配置
 ```
 
+### 前端开发（可选）
+
+日常使用**不需要**——预构建的前端已包含在 `static/` 目录中。仅当修改 `frontend/` 源码时需要。
+
+```bash
+cd frontend
+npm install                     # 首次：安装依赖（Vue 3 + Vite + Pinia + vis-network）
+npm run dev                     # 开发模式：热更新服务器 :5173（自动代理到 :8765）
+npm run build                   # 生产构建：输出到 ../static/
+```
+
+构建后刷新浏览器即可看到变更。前端技术栈：Vue 3 + Vite + Pinia + TypeScript + vis-network。
+
 ### 故障排查
 
 **端口被占用**
