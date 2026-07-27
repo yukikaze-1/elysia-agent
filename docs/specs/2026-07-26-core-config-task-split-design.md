@@ -50,7 +50,9 @@ from .scheduler import TaskScheduler
 
 ### import 变更汇总
 
-#### `core/config/` 迁移
+所有 import 统一改为通过 `__init__.py` 重导出路径：
+
+#### `core/config/` 迁移 — 相对 import（core/ 内部，6 处）
 
 | 旧 import | 新 import | 文件 |
 |----------|----------|------|
@@ -58,31 +60,73 @@ from .scheduler import TaskScheduler
 | `from ..character_config import CharacterConfig` | `from ..config import CharacterConfig` | `agent/agent.py:35` |
 | `from ..app_config import AppConfig` | `from ..config import AppConfig` | `agent/lifecycle.py:14` |
 | `from ..character_config import CharacterConfig` | `from ..config import CharacterConfig` | `agent/lifecycle.py:18` |
-| `from core.app_config import AppConfig` | `from core.config import AppConfig` | `agent/server.py:171` （函数内 lazy import） |
 | `from .character_config import CharacterConfig` | `from .config import CharacterConfig` | `idle_monitor.py:14` |
 | `from .character_config import CharacterConfig` | `from .config import CharacterConfig` | `prompt_assembler.py:25` |
 | `from ..app_config import AppConfig` | `from ..config import AppConfig` | `adapter/tool_adapter.py:17` （TYPE_CHECKING） |
-| `from core.app_config import AppConfig` | `from core.config import AppConfig` | `core/tests/` 各类测试文件（~15 处 lazy import） |
-| `from core.character_config import CharacterConfig` | `from core.config import CharacterConfig` | `core/tests/` 各类测试文件（~10 处 lazy import） |
 
-#### `core/task/` 迁移
+#### `core/config/` 迁移 — 绝对 import（`core.config` 路径，35 处）
+
+`from core.app_config import AppConfig` → `from core.config import AppConfig`（20 处）：
+
+| 文件 | 行 |
+|------|-----|
+| `app.py` | 88 |
+| `Module/bench/bench.py` | 89 |
+| `Module/input/tests/test_server.py` | 22 |
+| `core/agent/server.py` | 171 |
+| `core/tests/test_phase2.py` | 239, 261, 285, 315, 880 |
+| `core/tests/test_phase1.py` | 307, 331, 365, 393, 425, 473 |
+| `core/tests/test_task_scheduler.py` | 765, 785, 825, 853 |
+| `core/tests/test_phase3.py` | 26 |
+
+`from core.character_config import CharacterConfig` → `from core.config import CharacterConfig`（15 处）：
+
+| 文件 | 行 |
+|------|-----|
+| `Module/system_prompt/tests/integration/test_full_render.py` | 55 |
+| `core/tests/test_mood_engine.py` | 109 |
+| `core/tests/test_phase2.py` | 344, 364 |
+| `core/tests/test_phase1.py` | 114, 442 |
+| `core/tests/test_phase3.py` | 136, 628, 702, 1192, 1201, 1211 |
+| `core/personality/tests/test_reflector.py` | 189 |
+| `core/personality/tests/test_engine.py` | 20, 46 |
+
+#### `core/task/` 迁移（4 处）
 
 | 旧 import | 新 import | 文件 |
 |----------|----------|------|
 | `from ..task_scheduler import TaskScheduler` | `from ..task import TaskScheduler` | `agent/agent.py:55` |
 | `from ..task_scheduler import TaskScheduler` | `from ..task import TaskScheduler` | `agent/lifecycle.py:35` |
-| `from .task import Task, TaskType, TaskStatus` | 不变（内部相对 import） | `scheduler.py:21` （原 `task_scheduler.py`） |
-| `from core.task import Task, TaskType, TaskStatus` | `from core.task import Task, TaskType, TaskStatus` | `core/tests/test_task_model.py:4` |
-| `from core.task import Task, TaskType, TaskStatus` | 不变 | `core/tests/test_task_model.py` |
 | `from core.task_scheduler import TaskScheduler` | `from core.task import TaskScheduler` | `core/tests/test_task_scheduler.py:13` |
 
-`task.py` 内部依赖 `from .message_id import new_message_id` —— 移入 `core/task/` 后变为 `from ..message_id import new_message_id`（message_id.py 仍在根）。
+以下 import 通过 `__init__.py` 重导出自动兼容，**无需修改**：
+
+| import | 文件 |
+|--------|------|
+| `from core.task import Task, TaskType, TaskStatus` | `core/tests/test_task_model.py:4,119`, `core/tests/test_task_scheduler.py:12` |
+
+#### 内部相对 import 调整
+
+| 文件 | 旧 import | 新 import |
+|------|----------|----------|
+| `core/task/scheduler.py`（原 `core/task_scheduler.py`） | `from .task import Task, TaskType, TaskStatus` | 不变（同一包内） |
+| `core/task/task.py`（原 `core/task.py`） | `from .message_id import new_message_id` | `from ..message_id import new_message_id` |
+
+### 变更总计
+
+| 类别 | 数量 |
+|------|------|
+| 文件新建 | 2 个 `__init__.py` |
+| 文件移动 | 4 个 |
+| 相对 import 翻向 | 8 处 |
+| 绝对 import 翻向 | 37 处 |
+| 总计受影响文件 | ~20 |
 
 ### 不变
 
 - 所有类和函数的行为完全不变
-- `Module/` 层文件不受影响（不引用 core/config 或 core/task）
-- 除上述路径外的其他文件不受影响
+- `Module/tool/`、`Module/llm/`、`Module/tts/`、`Module/output/` 等后端模块不受影响
+- `core/tools/`、`core/schema/`、`core/storage/`、`core/memory/`、`core/cognitive/`、`core/adapter/` 等子包不受影响
 
 ## 验证
 
