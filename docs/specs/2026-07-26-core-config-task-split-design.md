@@ -52,7 +52,7 @@ from .scheduler import TaskScheduler
 
 所有 import 统一改为通过 `__init__.py` 重导出路径：
 
-#### `core/config/` 迁移 — 相对 import（core/ 内部，6 处）
+#### `core/config/` 迁移 — 相对 import（core/ 内部，7 处）
 
 | 旧 import | 新 import | 文件 |
 |----------|----------|------|
@@ -91,7 +91,7 @@ from .scheduler import TaskScheduler
 | `core/personality/tests/test_reflector.py` | 189 |
 | `core/personality/tests/test_engine.py` | 20, 46 |
 
-#### `core/task/` 迁移（4 处）
+#### `core/task/` 迁移（3 处，含内部调整共 4 处）
 
 | 旧 import | 新 import | 文件 |
 |----------|----------|------|
@@ -119,7 +119,7 @@ from .scheduler import TaskScheduler
 | 文件新建 | 2 个 `__init__.py` |
 | 文件移动 | 4 个 |
 | 相对 import 翻向 | 8 处 |
-| 绝对 import 翻向 | 37 处 |
+| 绝对 import 翻向 | 36 处 |
 | 总计受影响文件 | ~20 |
 
 ### 不变
