@@ -16,7 +16,9 @@
 - CharacterEngine 构造签名 `__init__()` 参数不变
 - `analyze_user_stt` 保留未使用的 `emotion_tag` 参数（避免 loop.py 改动）
 - `_last_awareness_time` 作为 engine property（getter/setter 代理到 AwarenessJudge）
-- `_awareness_allowed()`, `_maybe_judge_awareness()`, `_judge_awareness()`, `_should_compress()` 在 engine 上保留为委托方法（测试直接调用它们）
+- `_awareness_allowed()`, `_maybe_judge_awareness()`, `_judge_awareness()`, `_should_compress()`, `_maybe_compress()`, `_compress()` 在 engine 上保留为委托方法（测试直接调用它们）
+- `_refresh_c6` 保留为 engine 上的 async 方法（测试直接调用 + mock）
+- `_compression_lock` 保留为 engine property（测试 lock 操作）
 
 ---
 
@@ -597,10 +599,27 @@ git commit -m "refactor: extract AwarenessJudge from engine.py"
 
 接管 engine.py 的压缩 + C6 刷新全部逻辑。`_should_compress` 和 `_get_new_entries` 作为私有方法跟此类走。
 
-`CharacterEngine` 上保留 1 个委托方法供测试访问：
-- `_should_compress()` → `self._compression._should_compress()`
+`CharacterEngine` 上保留 6 个委托方法/属性供测试访问（test_engine.py 直接调用 + mock）：
 
-`consume_trigger` 中 `self._maybe_compress()` 改为 `self._compression.check_and_compress()`。
+```python
+def _should_compress(self) -> bool:
+    return self._compression._should_compress()
+
+async def _maybe_compress(self) -> None:
+    await self._compression.check_and_compress()
+
+async def _compress(self, trigger=CompressionTrigger.COMPRESSION) -> None:
+    await self._compression._compress(trigger)
+
+async def _refresh_c6(self) -> None:
+    await self._compression._refresh_c6()
+
+@property
+def _compression_lock(self):
+    return self._compression._compression_lock
+```
+
+`consume_trigger` 中保持调用 `await self._maybe_compress()`（通过委托方法），保证内部路径与测试路径一致。
 `flush_compression` 委托给 `self._compression.flush()`。
 
 - [ ] **Step 1: 创建 `compression.py`**
@@ -917,18 +936,31 @@ self._compression = CompressionManager(
 
 注意：删除原有的 `self._compression_lock = asyncio.Lock()` 行（L153），这个 lock 现在由 CompressionManager 管理。
 
-`consume_trigger` 中 `await self._maybe_compress()` 改为 `await self._compression.check_and_compress()`。
+`consume_trigger` 中保持不变 `await self._maybe_compress()` — 现在通过委托方法调用。
 
-方法委托：
-```python
-async def flush_compression(self) -> None:
-    await self._compression.flush()
-```
-
-添加 1 个委托方法（测试访问）：
+方法委托 + 属性（测试访问）：
 ```python
 def _should_compress(self) -> bool:
     return self._compression._should_compress()
+
+async def _maybe_compress(self) -> None:
+    await self._compression.check_and_compress()
+
+async def _compress(self, trigger=CompressionTrigger.COMPRESSION) -> None:
+    await self._compression._compress(trigger)
+
+async def _refresh_c6(self) -> None:
+    await self._compression._refresh_c6()
+
+@property
+def _compression_lock(self):
+    return self._compression._compression_lock
+```
+
+添加 public 委托（外部调用方）：
+```python
+async def flush_compression(self) -> None:
+    await self._compression.flush()
 ```
 
 从 engine.py 删除：
