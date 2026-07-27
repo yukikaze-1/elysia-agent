@@ -250,25 +250,15 @@ class CognitiveLoop(CognitiveTools):
             finally:
                 self._clock = None  # type: ignore[assignment]
 
-    # ---- Core loop ----
+    # ---- Core loop: prompt construction ----
 
-    async def _think_loop(self, user_message: str, user_name: str,
-                          stt_emotion: str = "", stt_events: list[str] | None = None,
-                          _on_tool_calls=None,
-                          content: list[dict] | None = None,
-                          is_task_result: bool = False,
-                          task_result_context: dict | None = None,
-                          ) -> None:
-        if self._character_engine:
-            if stt_emotion and stt_emotion != "NEUTRAL":
-                self._character_engine.analyze_user_stt(stt_emotion, stt_events)
-        # analyze_user() 改为仅 fallback：LLM 未输出 <mood> 时在流结束后调用
-        # set_emotion() 改由 _apply_mood() 内联调用
-
-        # 渐进式唤醒——后台任务完成后的通知
-        if is_task_result and task_result_context:
-            user_message = self._build_wake_up_message(task_result_context)
-
+    async def _build_turn_prompt(
+        self, user_message: str, user_name: str,
+        content: list[dict] | None,
+        stt_emotion: str, stt_events: list[str] | None,
+        is_task_result: bool,
+    ) -> tuple[list[dict], list[dict]]:
+        """构建本轮 LLM 调用的 messages + tool definitions。"""
         assert self._clock is not None
         with self._clock.span("prompt") as t:
             supports_mm = LLMFactory.supports_multimodal(self._llm.model)
@@ -290,335 +280,369 @@ class CognitiveLoop(CognitiveTools):
             ))
         tool_defs = self._tool_executor.definitions() if self._tool_executor else None
         # 多模态 LLM 可直接看图，排除 describe_image 避免 LLM 只调用一次
-        # （只处理 image_index=0 而忽略其余图片）
         if tool_defs and supports_mm:
             tool_defs = [t for t in tool_defs if t.get("function", {}).get("name") != "describe_image"]
-        # 合并 submit_task function definition（让 LLM 可以调用）
         if tool_defs is None:
             tool_defs = []
         # 附加 submit_task（如果 TaskSystem 和 DelegationPreparer 都已注入）
         if self._task_system is not None and self._delegation_preparer is not None:
             tool_defs = list(tool_defs) + [self._submit_task_definition()]
-        logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs or []))
+        logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs))
+        return messages, tool_defs
 
-        # 捕获第一轮的完整 prompt（后续轮次在工具循环内捕获）
-        if self._prompt_recorder is not None:
+    # ---- Core loop: LLM streaming ----
+
+    async def _stream_llm_response(
+        self, messages: list[dict], tool_defs: list[dict], round_num: int,
+    ) -> tuple[str, list[dict], bool, list[str], str]:
+        """流式调用 LLM，分发 StreamProcessor 事件。
+
+        Returns: (acc_text, raw_tool_calls, speaking_started, all_sentences, inner_voice)
+        """
+        acc_text = ""
+        raw_tool_calls: list[dict] = []
+        speaking_started = False
+        all_sentences: list[str] = []
+        iv_think_buf_holder: list[str] = [""]
+        t_think_start = time.perf_counter()
+        self._ttft_start = t_think_start
+
+        # 工具循环的后续轮次也捕获 prompt
+        if round_num > 0 and self._prompt_recorder is not None:
             self._prompt_recorder.record(
-                messages=list(messages),  # 浅拷贝，防止后续工具循环修改
+                messages=list(messages),
                 tools=tool_defs,
-                round_num=0,
+                round_num=round_num,
                 model=self._llm.model,
             )
 
-        # 新一轮对话开始，清空 turn 缓存
+        self._mood_applied = False
+        proc = StreamProcessor()
+
+        stream = self._llm.stream_think(messages, tools=tool_defs,
+            extra_body={"thinking": {"type": "disabled"}})
+        try:
+            async for chunk in stream:
+                delta: str = chunk.get("content", "")
+                tc_deltas = chunk.get("tool_calls")
+
+                if delta:
+                    acc_text += delta
+                    for event in proc.feed(delta):
+                        speaking_started, all_sentences = (
+                            await self._dispatch_stream_event(
+                                event,
+                                speaking_started=speaking_started,
+                                all_sentences=all_sentences,
+                                iv_think_buf_holder=iv_think_buf_holder,
+                            )
+                        )
+
+                if tc_deltas:
+                    merge_stream_tool_calls(raw_tool_calls, tc_deltas)
+
+                if "usage" in chunk:
+                    if self._token_tracker is not None:
+                        await self._token_tracker.record(
+                            usage=chunk["usage"],
+                            model=self._llm.model,
+                            round_num=round_num,
+                        )
+        except asyncio.CancelledError:
+            raise
+
+        # Flush StreamProcessor
+        for event in proc.flush():
+            speaking_started, all_sentences = (
+                await self._dispatch_stream_event(
+                    event,
+                    speaking_started=speaking_started,
+                    all_sentences=all_sentences,
+                    iv_think_buf_holder=iv_think_buf_holder,
+                )
+            )
+
+        return acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think_buf_holder[0]
+
+    # ---- Core loop: tool execution ----
+
+    async def _execute_tool_round(
+        self, messages: list[dict], acc_text: str,
+        raw_tool_calls: list[dict], _on_tool_calls,
+    ) -> None:
+        """执行工具调用轮次：submit_task 拦截 → dispatch → 结果注入。
+
+        副作用：修改 messages（in-place）、写 session、推 output 事件。
+        """
+        # 切断气泡 — TTS tasks 独立运行，不 cancel
+        await self._output.send("")
+
+        await self._output.typing(False)
+        self._fsm.transition(AgentState.EXECUTING)
+        self._bus.post(StateChangeData(state="executing", request_id=get_request_id()),
+                       priority=EventPriority.STATE_CHANGE)
+
+        normalized = normalize_tool_calls(raw_tool_calls)
+
+        # 分离 submit_task 和其他工具——submit_task 走专用路径
+        if self._delegation_preparer is not None:
+            submit_tcs = [tc for tc in normalized if tc.function.name == "submit_task"]
+            other_tcs  = [tc for tc in normalized if tc.function.name != "submit_task"]
+        else:
+            submit_tcs = []
+            other_tcs  = normalized
+
+        # 构建 assistant_entry（先于 tool results，OpenAI 协议要求）
+        assistant_entry: dict = {"role": "assistant", "content": acc_text or None}
+        if normalized:
+            assistant_entry["tool_calls"] = [tc.model_dump(mode="json") for tc in normalized]
+        messages.append(assistant_entry)
+
+        # submit_task 工具调用——拦截处理
+        if submit_tcs:
+            for i, tc in enumerate(submit_tcs):
+                result = await self._handle_submit_task(tc)
+                tc_id = tc.id
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": result.llm_content,
+                })
+                await self._output.action("tool_done", params={
+                    "tool": "submit_task",
+                    "call_id": tc_id,
+                    "success": result.success,
+                    "content": result.content or "",
+                    "error": result.error,
+                    "error_type": None,
+                    "duration_ms": result.duration_ms,
+                    "truncated": result.truncated,
+                })
+                self._session.add_message(ToolResultMessage(
+                    content=[TextPart(content=result.content or "")],
+                    tool_call_id=tc.id,
+                    tool_name="submit_task",
+                    success=result.success,
+                    error=result.error,
+                    error_type=None,
+                    duration_ms=result.duration_ms,
+                    truncated=result.truncated,
+                ))
+                # 注册后台任务
+                if result.success and result.async_task_id and self._on_background_task and self._task_system:
+                    mailbox = self._task_system.get_task_mailbox(result.async_task_id)
+                    if mailbox:
+                        dispatched_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                        self._on_background_task(
+                            result.async_task_id, mailbox, intent=(
+                                tc.function.parsed.get("intent", "")
+                            ), dispatched_at=dispatched_now,
+                        )
+
+            dispatch_tcs = other_tcs
+        else:
+            dispatch_tcs = normalized
+
+        # 工具调用消息写入 Session
+        self._session.add_message(AssistantMessage(
+            content=[TextPart(content=acc_text)] if acc_text else [],
+            message_id=new_message_id(),
+            tool_calls=normalized if normalized else None,
+        ))
+
+        # Emit tool_executing actions for UI (before dispatch)
+        for tc in dispatch_tcs:
+            func_name = tc.function.name
+            call_id = tc.id
+            args = tc.function.parsed
+            self._executing_tools.append(func_name)
+            await self._output.action("tool_executing", params={
+                "tool": func_name,
+                "call_id": call_id,
+                "args": {k: str(v) for k, v in args.items()},
+            })
+
+        assert self._clock is not None
+        with self._clock.span("tools"):
+            if _on_tool_calls is not None:
+                results = await _on_tool_calls(dispatch_tcs)
+            else:
+                results = await self._execute_tools_directly(dispatch_tcs)
+
+        for item in results:
+            if isinstance(item, BaseException):
+                continue
+            tc, tool_result = item
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": tool_result.llm_content,
+            })
+            error_type_str = tool_result.error_type.value if tool_result.error_type else None
+            await self._output.action("tool_done", params={
+                "tool": tc.function.name,
+                "call_id": tc.id,
+                "success": tool_result.success,
+                "content": tool_result.content or "",
+                "error": tool_result.error,
+                "error_type": error_type_str,
+                "duration_ms": tool_result.duration_ms,
+                "truncated": tool_result.truncated,
+            })
+            self._session.add_message(ToolResultMessage(
+                content=[TextPart(content=tool_result.content or "")],
+                tool_call_id=tc.id,
+                tool_name=tc.function.name,
+                success=tool_result.success,
+                error=tool_result.error,
+                error_type=tool_result.error_type,
+                duration_ms=tool_result.duration_ms,
+                truncated=tool_result.truncated,
+            ))
+
+        # Clean up executing tools tracking
+        for tc in dispatch_tcs:
+            func_name = tc.function.name
+            try:
+                self._executing_tools.remove(func_name)
+            except ValueError:
+                pass
+
+        self._fsm.transition(AgentState.THINKING)
+        self._bus.post(StateChangeData(state="thinking", request_id=get_request_id()),
+                       priority=EventPriority.STATE_CHANGE)
+        await self._output.typing(True)
+
+    # ---- Core loop: finalize ----
+
+    async def _finalize_turn(
+        self, acc_text: str, all_sentences: list[str],
+        iv_think_buf: str, speaking_started: bool,
+        user_message: str, round_num: int,
+    ) -> None:
+        """收尾：标签剥离 → 归档 session → 推送结构化块 → 触发 after_response。"""
+        await self._tts_mgr.flush_emojis()
+
+        # Fallback: LLM 未输出 <mood> → 关键词检测
+        if self._character_engine and not self._mood_applied:
+            logger.debug("心情: <mood> 未检测到，使用关键词 fallback")
+            self._character_engine.analyze_user(user_message)
+            self._tts_mgr.set_emotion(self._character_engine.state.mood)
+
+        # 从 acc_text 中剥离 <mood> 和 <inner_voice> 标签
+        public_text = acc_text
+        mood_start = public_text.find("<mood>")
+        if mood_start >= 0:
+            mood_close = public_text.find("</mood>", mood_start)
+            if mood_close >= 0:
+                public_text = (public_text[:mood_start] + public_text[mood_close + len("</mood>"):]).strip()
+        iv_start = public_text.find("<inner_voice>")
+        if iv_start >= 0:
+            iv_close = public_text.find("</inner_voice>", iv_start)
+            if iv_close >= 0:
+                public_text = (public_text[:iv_start] + public_text[iv_close + len("</inner_voice>"):]).strip()
+
+        if public_text.strip():
+            if self._character_engine:
+                self._character_engine.analyze_assistant(public_text)
+            if not speaking_started:
+                await self._output.typing(False)
+                msg = MessageObj(content=public_text)
+                await self._output.send(msg)
+        if public_text.strip():
+            assistant_parts, content_type = build_parts_with_blocks(public_text, all_sentences)
+            self._session.add_message(AssistantMessage(
+                content=assistant_parts,
+                message_id=new_message_id(),
+                inner_voice=iv_think_buf.strip() or None,
+                block_index=content_type,
+                token_usage=TokenUsageSummary(
+                    rounds=[TokenUsageRecord(
+                        model=r.model,
+                        prompt_tokens=r.prompt_tokens,
+                        completion_tokens=r.completion_tokens,
+                        total_tokens=r.total_tokens,
+                        round_num=r.round_num,
+                        timestamp=r.timestamp,
+                    ) for r in self._token_tracker.current_turn_usages],
+                    turn_total=sum(r.total_tokens for r in self._token_tracker.current_turn_usages),
+                ) if self._token_tracker and self._token_tracker.current_turn_usages else None,
+            ))
+            if self._response_recorder is not None:
+                self._response_recorder.record(
+                    raw_text=acc_text,
+                    inner_voice=iv_think_buf.strip() or None,
+                    round_num=round_num,
+                )
+
+            log_conversation("assistant", self._prompt._character.name, public_text)
+            if iv_think_buf.strip():
+                logger.info("💭 %s", iv_think_buf.strip())
+                log_conversation("inner_voice", self._prompt._character.name,
+                                 iv_think_buf.strip())
+            asyncio.create_task(self._after_response(user_message, public_text),
+                               name="after-response")
+
+            # 推送结构化块到前端
+            for idx in content_type.get("markdown", []):
+                if idx < len(assistant_parts):
+                    await self._output.command("block", params={
+                        "block_type": "markdown",
+                        "content": assistant_parts[idx].content,
+                    })
+            for idx in content_type.get("code", []):
+                if idx < len(assistant_parts):
+                    await self._output.command("block", params={
+                        "block_type": "code",
+                        "content": assistant_parts[idx].content,
+                        "language": getattr(assistant_parts[idx], "language", ""),
+                    })
+
+        await self._transition_idle()
+
+    # ---- Core loop: main orchestrator ----
+
+    async def _think_loop(self, user_message: str, user_name: str,
+                          stt_emotion: str = "", stt_events: list[str] | None = None,
+                          _on_tool_calls=None,
+                          content: list[dict] | None = None,
+                          is_task_result: bool = False,
+                          task_result_context: dict | None = None,
+                          ) -> None:
+        """ReAct 主循环：build → [stream → (execute | finalize)] * MAX_ROUNDS。"""
+        # 前置：STT 情绪分析 + 渐进式唤醒
+        if self._character_engine:
+            if stt_emotion and stt_emotion != "NEUTRAL":
+                self._character_engine.analyze_user_stt(stt_emotion, stt_events)
+        if is_task_result and task_result_context:
+            user_message = self._build_wake_up_message(task_result_context)
+
+        # 1. 构建 prompt
+        messages, tool_defs = await self._build_turn_prompt(
+            user_message, user_name, content, stt_emotion, stt_events, is_task_result)
+
+        # 记录 prompt + token turn start
+        if self._prompt_recorder is not None:
+            self._prompt_recorder.record(
+                messages=list(messages), tools=tool_defs, round_num=0, model=self._llm.model)
         if self._token_tracker is not None:
             self._token_tracker.start_turn()
 
         await self._output.typing(True)
 
+        # 2. ReAct 循环
         try:
             for round_num in range(self.MAX_TOOL_ROUNDS + 1):
-                acc_text = ""
-                raw_tool_calls: list[dict] = []
-                speaking_started = False
-                all_sentences: list[str] = []
-                iv_think_buf_holder: list[str] = [""]
-                t_think_start = time.perf_counter()
-                self._ttft_start = t_think_start  # 供 _dispatch_stream_event TTFT 使用
+                acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think = \
+                    await self._stream_llm_response(messages, tool_defs, round_num)
 
-                # 工具循环的后续轮次也捕获 prompt
-                if round_num > 0 and self._prompt_recorder is not None:
-                    self._prompt_recorder.record(
-                        messages=list(messages),
-                        tools=tool_defs,
-                        round_num=round_num,
-                        model=self._llm.model,
-                    )
-
-                # StreamProcessor: 流式标签检测 + 文本管道
-                self._mood_applied = False
-                proc = StreamProcessor()
-
-                stream = self._llm.stream_think(messages, tools=tool_defs,
-                    extra_body={"thinking": {"type": "disabled"}})
-                try:
-                    async for chunk in stream:
-                        delta: str = chunk.get("content", "")
-                        tc_deltas = chunk.get("tool_calls")
-
-                        if delta:
-                            acc_text += delta
-                            for event in proc.feed(delta):
-                                speaking_started, all_sentences = (
-                                    await self._dispatch_stream_event(
-                                        event,
-                                        speaking_started=speaking_started,
-                                        all_sentences=all_sentences,
-                                        iv_think_buf_holder=iv_think_buf_holder,
-                                    )
-                                )
-
-                        if tc_deltas:
-                            merge_stream_tool_calls(raw_tool_calls, tc_deltas)
-
-                        # Token 消耗: stream 最后可能带 usage
-                        if "usage" in chunk:
-                            if self._token_tracker is not None:
-                                await self._token_tracker.record(
-                                    usage=chunk["usage"],
-                                    model=self._llm.model,
-                                    round_num=round_num,
-                                )
-                except asyncio.CancelledError:
-                    raise
-
-                # Flush StreamProcessor
-                for event in proc.flush():
-                    speaking_started, all_sentences = (
-                        await self._dispatch_stream_event(
-                            event,
-                            speaking_started=speaking_started,
-                            all_sentences=all_sentences,
-                            iv_think_buf_holder=iv_think_buf_holder,
-                        )
-                    )
-
-                iv_think_buf = iv_think_buf_holder[0]
-
-                # If tool calls were detected, execute them and loop
                 if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
-                    # 切断气泡 — TTS tasks 独立运行，不 cancel
-                    await self._output.send("")
-
-                    await self._output.typing(False)
-                    self._fsm.transition(AgentState.EXECUTING)
-                    self._bus.post(StateChangeData(state="executing", request_id=get_request_id()),
-                                   priority=EventPriority.STATE_CHANGE)
-
-                    normalized = normalize_tool_calls(raw_tool_calls)
-
-                    # 分离 submit_task 和其他工具——submit_task 走专用路径
-                    if self._delegation_preparer is not None:
-                        submit_tcs = [tc for tc in normalized if tc.function.name == "submit_task"]
-                        other_tcs  = [tc for tc in normalized if tc.function.name != "submit_task"]
-                    else:
-                        submit_tcs = []
-                        other_tcs  = normalized
-
-                    # 构建 assistant_entry（先于 tool results，OpenAI 协议要求）
-                    # 使用完整的 normalized（含 submit_task）
-                    assistant_entry: dict = {"role": "assistant", "content": acc_text or None}
-                    if normalized:
-                        assistant_entry["tool_calls"] = [tc.model_dump(mode="json") for tc in normalized]
-                    messages.append(assistant_entry)
-
-                    # submit_task 工具调用——拦截处理
-                    # submit_task 的 tool result 在 assistant_entry 之后追加，
-                    # 确保 OpenAI 协议: assistant(tool_calls) → tool(result)
-                    if submit_tcs:
-                        for i, tc in enumerate(submit_tcs):
-                            result = await self._handle_submit_task(tc)
-                            # 注入 tool result 到 messages（必须在 assistant 之后）
-                            # 使用唯一 ID——避免多个 submit_task 共享 "unknown" 导致协议冲突
-                            tc_id = tc.id
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tc_id,
-                                "content": result.llm_content,
-                            })
-                            await self._output.action("tool_done", params={
-                                "tool": "submit_task",
-                                "call_id": tc_id,
-                                "success": result.success,
-                                "content": result.content or "",
-                                "error": result.error,
-                                "error_type": None,
-                                "duration_ms": result.duration_ms,
-                                "truncated": result.truncated,
-                            })
-                            self._session.add_message(ToolResultMessage(
-                                content=[TextPart(content=result.content or "")],
-                                tool_call_id=tc.id,
-                                tool_name="submit_task",
-                                success=result.success,
-                                error=result.error,
-                                error_type=None,
-                                duration_ms=result.duration_ms,
-                                truncated=result.truncated,
-                            ))
-                            # 注册后台任务（result.success 时有 async_task_id）
-                            if result.success and result.async_task_id and self._on_background_task and self._task_system:
-                                mailbox = self._task_system.get_task_mailbox(result.async_task_id)
-                                if mailbox:
-                                    dispatched_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                                    self._on_background_task(
-                                        result.async_task_id, mailbox, intent=(
-                                            tc.function.parsed.get("intent", "")
-                                        ), dispatched_at=dispatched_now,
-                                    )
-
-                        # submit_task 已处理完毕，只 dispatch 其他工具
-                        dispatch_tcs = other_tcs
-                    else:
-                        dispatch_tcs = normalized
-
-                    # 工具调用消息写入 Session（刷新后前端可恢复工具卡片）
-                    self._session.add_message(AssistantMessage(
-                        content=[TextPart(content=acc_text)] if acc_text else [],
-                        message_id=new_message_id(),
-                        tool_calls=normalized if normalized else None,
-                    ))
-
-                    # Emit tool_executing actions for UI (before dispatch)
-                    for tc in dispatch_tcs:
-                        func_name = tc.function.name
-                        call_id = tc.id
-                        args = tc.function.parsed
-                        self._executing_tools.append(func_name)
-                        await self._output.action("tool_executing", params={
-                            "tool": func_name,
-                            "call_id": call_id,
-                            "args": {k: str(v) for k, v in args.items()},
-                        })
-                    
-                    assert self._clock is not None
-                    with self._clock.span("tools"):
-                        if _on_tool_calls is not None:
-                            results = await _on_tool_calls(dispatch_tcs)
-                        else:
-                            results = await self._execute_tools_directly(dispatch_tcs)
-
-                    for item in results:
-                        if isinstance(item, BaseException):
-                            continue  # 工具被 cancel，跳过 — LLM 从缺失结果推断
-                        tc, tool_result = item
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": tool_result.llm_content,
-                        })
-                        # Emit tool_done for each completed tool
-                        error_type_str = tool_result.error_type.value if tool_result.error_type else None
-                        await self._output.action("tool_done", params={
-                            "tool": tc.function.name,
-                            "call_id": tc.id,
-                            "success": tool_result.success,
-                            "content": tool_result.content or "",
-                            "error": tool_result.error,
-                            "error_type": error_type_str,
-                            "duration_ms": tool_result.duration_ms,
-                            "truncated": tool_result.truncated,
-                        })
-                        # 工具结果写入 Session（刷新后前端可恢复工具卡片内容）
-                        self._session.add_message(ToolResultMessage(
-                            content=[TextPart(content=tool_result.content or "")],
-                            tool_call_id=tc.id,
-                            tool_name=tc.function.name,
-                            success=tool_result.success,
-                            error=tool_result.error,
-                            error_type=tool_result.error_type,
-                            duration_ms=tool_result.duration_ms,
-                            truncated=tool_result.truncated,
-                        ))
-
-                    # Clean up executing tools tracking
-                    for tc in dispatch_tcs:
-                        func_name = tc.function.name
-                        try:
-                            self._executing_tools.remove(func_name)
-                        except ValueError:
-                            pass
-
-                    self._fsm.transition(AgentState.THINKING)
-                    self._bus.post(StateChangeData(state="thinking", request_id=get_request_id()),
-                                   priority=EventPriority.STATE_CHANGE)
-                    await self._output.typing(True)
+                    await self._execute_tool_round(
+                        messages, acc_text, raw_tool_calls, _on_tool_calls)
                     continue
 
-                # Final answer — TTS tasks streaming in background, don't block
-                # 发送还未排出的 emoji（最后一句 TTS 之后的）
-                await self._tts_mgr.flush_emojis()
-
-                # Fallback: LLM 未输出 <mood> → 关键词检测
-                if self._character_engine and not self._mood_applied:
-                    logger.debug("心情: <mood> 未检测到，使用关键词 fallback")
-                    self._character_engine.analyze_user(user_message)
-                    self._tts_mgr.set_emotion(self._character_engine.state.mood)
-
-                # 从 acc_text 中剥离 <mood> 和 <inner_voice> 标签
-                public_text = acc_text
-                # Strip <mood>...</mood>
-                mood_start = public_text.find("<mood>")
-                if mood_start >= 0:
-                    mood_close = public_text.find("</mood>", mood_start)
-                    if mood_close >= 0:
-                        public_text = (public_text[:mood_start] + public_text[mood_close + len("</mood>"):]).strip()
-                # Strip <inner_voice>...</inner_voice>
-                iv_start = public_text.find("<inner_voice>")
-                if iv_start >= 0:
-                    iv_close = public_text.find("</inner_voice>", iv_start)
-                    if iv_close >= 0:
-                        public_text = (public_text[:iv_start] + public_text[iv_close + len("</inner_voice>"):]).strip()
-
-                if public_text.strip():
-                    if self._character_engine:
-                        self._character_engine.analyze_assistant(public_text)
-                    if not speaking_started:
-                        # 无标点的极短回复，直接发完整消息
-                        await self._output.typing(False)
-                        msg = MessageObj(content=public_text)
-                        await self._output.send(msg)
-                if public_text.strip():
-                    assistant_parts, content_type = build_parts_with_blocks(public_text, all_sentences)
-                    self._session.add_message(AssistantMessage(
-                        content=assistant_parts,
-                        message_id=new_message_id(),
-                        inner_voice=iv_think_buf.strip() or None,
-                        block_index=content_type,
-                        token_usage=TokenUsageSummary(
-                            rounds=[TokenUsageRecord(
-                                model=r.model,
-                                prompt_tokens=r.prompt_tokens,
-                                completion_tokens=r.completion_tokens,
-                                total_tokens=r.total_tokens,
-                                round_num=r.round_num,
-                                timestamp=r.timestamp,
-                            ) for r in self._token_tracker.current_turn_usages],
-                            turn_total=sum(r.total_tokens for r in self._token_tracker.current_turn_usages),
-                        ) if self._token_tracker and self._token_tracker.current_turn_usages else None,
-                    ))
-                    # 记录原始 LLM 回复（供 debug 页面查看）
-                    if self._response_recorder is not None:
-                        self._response_recorder.record(
-                            raw_text=acc_text,
-                            inner_voice=iv_think_buf.strip() or None,
-                            round_num=round_num,
-                        )
-
-                    log_conversation("assistant", self._prompt._character.name, public_text)
-                    if iv_think_buf.strip():
-                        logger.info("💭 %s", iv_think_buf.strip())
-                        log_conversation("inner_voice", self._prompt._character.name,
-                                         iv_think_buf.strip())
-                    asyncio.create_task(self._after_response(user_message, public_text),
-                                       name="after-response")
-
-                    # 推送结构化块到前端（不走 TTS，单独渲染）
-                    for idx in content_type.get("markdown", []):
-                        if idx < len(assistant_parts):
-                            await self._output.command("block", params={
-                                "block_type": "markdown",
-                                "content": assistant_parts[idx].content,
-                            })
-                    for idx in content_type.get("code", []):
-                        if idx < len(assistant_parts):
-                            await self._output.command("block", params={
-                                "block_type": "code",
-                                "content": assistant_parts[idx].content,
-                                "language": getattr(assistant_parts[idx], "language", ""),
-                            })
-
-                await self._transition_idle()
+                await self._finalize_turn(
+                    acc_text, all_sentences, iv_think, speaking_started, user_message, round_num)
                 return
 
         except (Exception, asyncio.CancelledError):
