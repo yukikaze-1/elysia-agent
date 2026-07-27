@@ -118,12 +118,15 @@ core/
 │   ├── long_term.py        # LongTermMemory: Milvus-backed vector search + reranking; _absorbed_ids for merge tracking
 │   ├── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM review)
 │   └── consolidator.py     # MemoryConsolidator: buffers 6 msgs → LLM extracts + compares → insert/update/merge/skip
-├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
+├── config/                 # Config sub-package: character_config + app_config
+│   ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
+│   └── app_config.py          # AgentConfig: YAML-loaded app configuration
 ├── prompt_assembler.py    # PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder
 ├── idle_monitor.py        # IdleMonitor: wake-word detection + proactive triggers
-├── task_scheduler.py      # TaskScheduler: worker pool for ReAct tool calls (5 workers)
-├── tools/                 # Tool plugins (filesystem, web, memory, time, reminder, etc.)
-└── app_config.py          # AgentConfig: YAML-loaded app configuration
+├── task/                   # Task sub-package: task model + scheduler
+│   ├── task.py             # Task dataclass + TaskType/TaskStatus enums + Future binding
+│   └── scheduler.py        # TaskScheduler: worker pool for ReAct tool calls (5 workers)
+└── tools/                 # Tool plugins (filesystem, web, memory, time, reminder, etc.)
 ```
 
 ### Character config (`character/`)
