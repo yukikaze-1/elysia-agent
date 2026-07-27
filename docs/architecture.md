@@ -340,13 +340,13 @@ INTERRUPTED → IDLE
 
 ### 4.3 认知循环 (CognitiveLoop)
 
-ReAct 调度器的完整实现 (~840 行)，使用 StreamProcessor 处理流式文本解析：
+ReAct 调度器，采用 mixin 模式 `CognitiveLoop(CognitiveTools)`。`_think_loop()` 从 378 行提取为 4 个独立方法 + ~30 行主循环，每步设置 `self._phase`（TurnPhase）供 debug 面板观测内部进度：
 
 ```python
 class CognitiveLoop:
     MAX_TOOL_ROUNDS = 5  # 防止无限工具调用
 
-    async def process(self, user_message, user_name, stt_emotion, stt_events):
+    async def process(self, user_message, ...):
         async with self._process_lock:          # 串行化并发调用
             if not can_transition(THINKING):     # 已在处理中 → skip
                 return
@@ -357,43 +357,25 @@ class CognitiveLoop:
                 await self._handle_interrupt()    # 清理 → INTERRUPTED → IDLE
 
     async def _think_loop(self, user_message, ...):
-        proc = StreamProcessor()  # 纯状态机: mood → inner_voice → BlockFilter → SentenceBuffer
+        # 前置: STT 情绪分析 + 唤醒消息
+        self._phase = TurnPhase.BUILD_PROMPT
+        messages, tool_defs = await self._build_turn_prompt(...)
+
         for round_num in range(MAX_TOOL_ROUNDS + 1):
-            async for chunk in stream:
-                for event in proc.feed(chunk["content"]):
-                    await self._dispatch_stream_event(event, ...)  # 事件→副作用
-                # tool_call 合并与 token usage 留在 _think_loop
-            for event in proc.flush():
-                await self._dispatch_stream_event(event, ...)
+            self._phase = TurnPhase.STREAMING
+            acc_text, tool_calls, ... = await self._stream_llm_response(...)
 
-    async def _think_loop(self, ...):
-        # 1. 情绪分析 (STT 优先，关键词 fallback)
-        # 2. 组装消息: prompt.build_messages()
-        # 3. TTS 关闭: delta 直通 / TTS 开启: stream_sentence 绑定发送
+            if tool_calls and round_num < MAX:
+                self._phase = TurnPhase.EXECUTING_TOOLS
+                await self._execute_tool_round(...)  # submit_task 拦截 + 调度
+                continue
 
-        for round in range(MAX_TOOL_ROUNDS + 1):
-            async for chunk in llm.stream_think(messages, tools=tool_defs):
-                if content:
-                    sentence = sentence_buf.feed(content)
-                    if sentence:
-                        if tts and not emoji_only:
-                            start_tts_stream(sentence)  # 绑定发送 text+audio
-                        else:
-                            output delta + send("")     # 直接发送
-
-                if tool_calls:
-                    merge into accumulated list
-
-            # 工具调用: asyncio.gather 并行执行，单失败不影响其他
-            if raw_tool_calls and round < MAX_TOOL_ROUNDS:
-                cancel TTS tasks → fsm → EXECUTING
-                results = await asyncio.gather(*tools, return_exceptions=True)
-                inject results → continue loop
-
-            # 最终回复: emotion → session.save → _after_response (fire-forget)
-            fsm → IDLE
+            self._phase = TurnPhase.FINALIZING
+            await self._finalize_turn(...)  # 标签剥离 + 归档 + 结构化块推送
             return
 ```
+
+**TurnPhase 内部追踪：** 4 个阶段标记（`BUILD_PROMPT` / `STREAMING` / `EXECUTING_TOOLS` / `FINALIZING`）不同于 `AgentFSM`（外部状态机），TurnPhase 是纯追踪标记，不设状态转换验证，通过 `/debug/api` 的 `turn_phase` 字段暴露。
 
 关键设计决策：
 - **asyncio.Lock**: 确保 `process()` 不可重入，防止并发消息导致状态混乱
@@ -401,7 +383,7 @@ class CognitiveLoop:
 - **TTS 绑定发送**: 文字和音频在服务端绑在一起发送，前端无需同步逻辑
 - **并行工具调用**: `asyncio.gather` + `return_exceptions=True`，单工具失败不影响其他
 - **VAD 状态保护**: THINKING/EXECUTING 时 VAD 不打断，STT 文本和显式按钮始终生效
-- **inner_voice 流式分流**: PRE→THINK→REPLY 三状态机检测 `<inner_voice>` 标签。THINK 内容不进 TTS/前端 delta，闭标签后一次性广播 `command: inner_voice` 到前端渲染淡色思考气泡。详见 `docs/superpowers/specs/archive/2026-06-24-inner-voice-design.md`
+- **inner_voice 流式分流**: StreamProcessor 纯状态机检测 `<inner_voice>` 标签，通过 `_dispatch_stream_event()` 事件→副作用翻译。详见 `docs/superpowers/specs/archive/2026-06-24-inner-voice-design.md`
 
 ### 4.4 TTS 绑定发送 + 句队列
 

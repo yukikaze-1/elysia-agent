@@ -23,6 +23,19 @@ ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引�
       └─ SessionMemory 持久化
 ```
 
+### TurnPhase — 内部处理阶段追踪
+
+`_think_loop()` 在每个步骤设置 `self._phase`，使 debug 面板可以观测 THINKING 状态下的精确位置：
+
+| Phase | 对应方法 | 说明 |
+|-------|---------|------|
+| `BUILD_PROMPT` | `_build_turn_prompt()` | 构建 messages + tool_defs |
+| `STREAMING` | `_stream_llm_response()` | LLM 流式调用 + StreamProcessor 解析 |
+| `EXECUTING_TOOLS` | `_execute_tool_round()` | submit_task 拦截 + 工具调度 |
+| `FINALIZING` | `_finalize_turn()` | 标签剥离 + 归档 + 结构化块推送 |
+
+`TurnPhase` 是内部追踪标记，不同于 `AgentFSM`（外部状态机）。不设状态转换验证，不改 FSM 接口。
+
 ## 数据流
 
 ```
@@ -84,7 +97,7 @@ THINKING → LLM 返回 tool_calls → EXECUTING → 工具结果注入 → THIN
 ```
 core/cognitive/
 ├── __init__.py    — 重导出 CognitiveLoop
-├── loop.py               — CognitiveLoop(CognitiveTools): process + ReAct 主循环（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
+├── loop.py               — CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
 ├── stream_processor.py   — StreamProcessor: 流式标签检测 + 文本管道（mood/inner_voice/BlockFilter/SentenceBuffer）
 ├── tools.py              — CognitiveTools mixin: _execute_tools_directly + _handle_submit_task
 ├── timing.py      — Timer + TimingClock 延迟统计

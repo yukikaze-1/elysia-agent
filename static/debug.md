@@ -18,7 +18,7 @@ http://localhost:8765/debug
 
 | 面板 | 内容 |
 |------|------|
-| **System** | FSM 状态、Uptime、LLM 型号、TTS/STT、WS 连接数、Proactive 开关 |
+| **System** | FSM 状态、TurnPhase（内部处理阶段）、Uptime、LLM 型号、TTS/STT、WS 连接数、Proactive 开关 |
 | **Memory** | Session 消息数、LTM 条目数、MongoDB/Milvus/Embedding 状态、Archive 计数、Character 名、L1 Core 摘要、Session Params（可展开 key-value） |
 | **Latency** | 请求延迟统计（avg / P50 / P95 / P99 / last） |
 | **Process Memory** | RSS / VMS / 占比 / 线程数 |

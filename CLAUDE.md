@@ -90,8 +90,8 @@ core/
 │   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + 所有 _start_*/_stop_*/_flush_*
 │   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
 │   └── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
-├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing
-│   ├── loop.py            #   CognitiveLoop(CognitiveTools): __init__ + process + _think_loop + FSM + _dispatch_stream_event
+├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing + TurnPhase
+│   ├── loop.py            #   CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
 │   ├── stream_processor.py #   StreamProcessor: 流式标签检测 + 文本管道
 │   ├── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task
 │   └── timing.py          #   Timer + TimingClock latency tracking
