@@ -28,6 +28,7 @@ class TestErrorType:
             "invalid_argument", "timeout", "permission_denied",
             "rate_limited", "network_error", "unavailable",
             "cancelled", "tool_error", "unknown_tool",
+            "gate_rejected",
         }
         assert {e.value for e in ErrorType} == expected
 
