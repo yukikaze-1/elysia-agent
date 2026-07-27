@@ -2,9 +2,7 @@
 import json
 
 import pytest
-from core.adapter.tool_adapter import ToolResult
 from core.cognitive.tools import CognitiveTools
-from core.schema.error_type import ErrorType
 from core.schema.tool import ToolCall, ToolCallFunction
 
 
