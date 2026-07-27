@@ -99,7 +99,7 @@ Expected: OK
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A
+git add core/config/ core/agent/agent.py core/agent/lifecycle.py core/agent/server.py core/idle_monitor.py core/prompt_assembler.py core/adapter/tool_adapter.py app.py Module/bench/bench.py Module/input/tests/test_server.py Module/system_prompt/tests/integration/test_full_render.py core/tests/ core/personality/tests/
 git commit -m "refactor: move app_config + character_config into core/config/"
 ```
 
@@ -177,7 +177,7 @@ Expected: All pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add -A
+git add core/task/ core/agent/agent.py core/agent/lifecycle.py core/tests/test_task_scheduler.py core/tests/test_task_model.py
 git commit -m "refactor: move task + task_scheduler into core/task/"
 ```
 
