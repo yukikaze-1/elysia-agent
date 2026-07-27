@@ -204,7 +204,12 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Text | [core/text/README.md](core/text/README.md) | 文本流处理管线（BlockFilter + SentenceBuffer） |
 | Storage | [core/storage/README.md](core/storage/README.md) | 统一存储层（Repository 模式） |
 | Schema | [core/schema/README.md](core/schema/README.md) | 基础类型层（AgentState/事件/多模态消息 Part） |
+| Config | [core/config/README.md](core/config/README.md) | 应用配置 + 角色配置 dataclass |
+| Adapter | [core/adapter/README.md](core/adapter/README.md) | 适配器层（LLM + TTS + Tool + Message） |
+| Task | [core/task/README.md](core/task/README.md) | 任务数据模型 + Worker Pool 调度器 |
+| Utils | [core/utils/README.md](core/utils/README.md) | 通用工具（message_id + log_setup） |
 | CharacterEngine | [core/personality/README.md](core/personality/README.md) | 四层性格+情绪模型（Core→Self→State→Mood） |
+| 工具总览 | [core/tools/README.md](core/tools/README.md) | 工具插件列表 + 开发指南 |
 | 工具: filesystem | [core/tools/filesystem/README.md](core/tools/filesystem/README.md) | read_file / list_directory / write_file |
 | 工具: memory | [core/tools/memory/README.md](core/tools/memory/README.md) | search_memory / save_memory |
 | 工具: reminder | [core/tools/reminder/README.md](core/tools/reminder/README.md) | set_reminder |
