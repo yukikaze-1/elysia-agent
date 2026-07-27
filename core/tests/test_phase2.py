@@ -983,28 +983,33 @@ async def test_long_term_memory_empty_search():
 
 
 @pytest.mark.unit
-def test_long_term_memory_evicts_old_entries():
-    """验证过期条目被驱逐。"""
+@pytest.mark.asyncio
+async def test_long_term_memory_overflow_eviction():
+    """验证超过上限的条目被驱逐（保留最新的）。"""
     from core.memory.long_term import LongTermMemory, MemoryEntry
 
     ltm = LongTermMemory()
     now = _time_module.time()
-    ltm._max_age_days = 90
+    ltm._max_entries = 5
 
+    # 构造 8 条数据，只有 5 条能保留
     ltm._entries = [
-        MemoryEntry(text="过期数据", metadata={}, timestamp=now - 100 * 86400),
-        MemoryEntry(text="新数据", metadata={}, timestamp=now),
+        MemoryEntry(text=f"entry-{i}", metadata={}, timestamp=now - 100 + i)
+        for i in range(8)
     ]
 
-    removed = ltm._evict_old_entries()
-    assert removed >= 1
-    remaining_texts = [e.text for e in ltm._entries]
-    assert "新数据" in remaining_texts
-    assert "过期数据" not in remaining_texts
+    removed = await ltm._evict_overflow()
+    assert removed == 3  # 8 - 5 = 3
+    assert len(ltm._entries) == 5
+    # 保留的应该是最新的 5 条 (i=3,4,5,6,7)
+    for e in ltm._entries:
+        idx = int(e.text.split("-")[1])
+        assert idx >= 3
 
 
 @pytest.mark.unit
-def test_long_term_memory_evicts_overflow():
+@pytest.mark.asyncio
+async def test_long_term_memory_evicts_overflow():
     """验证超过上限的条目被驱逐（保留最新的）。"""
     from core.memory.long_term import LongTermMemory, MemoryEntry
 
@@ -1017,7 +1022,7 @@ def test_long_term_memory_evicts_overflow():
         for i in range(10)
     ]
 
-    removed = ltm._evict_old_entries()
+    removed = await ltm._evict_overflow()
     assert removed >= 5
     assert len(ltm._entries) <= 5
     for e in ltm._entries:
@@ -1062,19 +1067,26 @@ async def test_long_term_memory_eviction_cleans_dirty_ids():
     from core.memory.long_term import LongTermMemory, MemoryEntry
     import time as _time
     mem = LongTermMemory()
-    entry = MemoryEntry(
-        id="test_dirty_evict",
-        text="old entry",
-        embedding=[0.1] * 10,
-        memory_type="fact",
-        poignancy=5,
-        timestamp=_time.time() - 100 * 86400,  # 100 days old — should evict
-    )
-    mem._entries.append(entry)
-    mem._dirty_ids.add("test_dirty_evict")
+    mem._max_entries = 3
 
-    removed = mem._evict_old_entries()
-    assert removed >= 1
-    assert "test_dirty_evict" not in mem._dirty_ids, (
-        "Evicted entry should be removed from _dirty_ids"
-    )
+    now = _time.time()
+    # 构造 5 条数据，max_entries=3 → 驱逐 2 条
+    for i in range(5):
+        entry = MemoryEntry(
+            id=f"test_evict_{i}",
+            text=f"entry {i}",
+            embedding=[0.1] * 10,
+            memory_type="fact",
+            poignancy=5,
+            timestamp=now - 100 + i,  # older entries have smaller i
+        )
+        mem._entries.append(entry)
+        mem._dirty_ids.add(f"test_evict_{i}")
+
+    removed = await mem._evict_overflow()
+    assert removed == 2
+    # 最旧的 2 条被驱逐：test_evict_0, test_evict_1
+    assert "test_evict_0" not in mem._dirty_ids
+    assert "test_evict_1" not in mem._dirty_ids
+    # 保留的 3 条仍在 dirty_ids
+    assert "test_evict_2" in mem._dirty_ids
