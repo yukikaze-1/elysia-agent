@@ -68,7 +68,8 @@ Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板
 | `log/README.md` | 日志文件详细说明 |
 | `.model_cache/` | 嵌入模型（`BAAI/bge-large-zh-v1.5/`，约 1.3GB） |
 | `data/ref/Elysia.wav` | GPT-SoVits 音色克隆参考音频（1.6MB） |
-| `frontend/` | Vue 3 前端源码（Vite + Pinia + TypeScript） |
+| `frontend/` | Vue 3 前端源码（Vite + Pinia + TypeScript，含 Debug 应用） |
+| `static/` | Vite 构建产物 + 非代码资源（由 aiohttp serve） |
 | `static/live2d-demo/` | Live2D 前端（Cubism SDK，index.html 待创建） |
 | `data/live2d-assets/` | Live2D 角色模型（.moc3 + 纹理，服务端映射到 `/live2d/`） |
 | `static/debug.md` | Debug 面板完整文档（标签页、API、技术实现） |
@@ -355,24 +356,36 @@ Agent/
 ├── frontend/                 # Vue 3 前端源码（Vite + Pinia + TypeScript）
 │   ├── index.html              # 聊天页面入口
 │   ├── debug.html              # Debug 面板入口
-│   ├── src/components/         # 21 个 Vue 组件
-│   ├── src/stores/             # 5 个 Pinia store
-│   └── src/composables/        # 3 个 composables
+│   ├── src/main.ts             # 聊天应用入口（Pinia + marked + highlight.js）
+│   ├── src/App.vue             # 根组件（三栏布局 + 全局快捷键）
+│   ├── src/components/         # 21 个聊天 Vue 组件
+│   ├── src/stores/             # 6 个 Pinia store
+│   ├── src/composables/        # 3 个 composables
+│   ├── src/types/protocol.ts   # WebSocket 消息类型定义
+│   ├── src/styles/variables.css # 全局 CSS 变量
+│   └── src/debug/              # 独立 Debug 应用（Vite 多入口）
+│       ├── main.ts             #   Pinia 注入入口
+│       ├── App.vue             #   Tab shell（概览 | 数据库 | 任务）
+│       ├── types.ts            #   DebugData TS 接口（40 字段）
+│       └── components/         #   14 个 Debug 组件
+│           ├── OverviewTab.vue   #   16 面板 2 列 grid
+│           ├── DatabaseTab.vue   #   DB CRUD 容器
+│           ├── LtmPanel.vue      #   LTM 增删改查 + 翻页
+│           ├── SessionPanel.vue  #   会话管理
+│           ├── ArchivePanel.vue  #   消息归档
+│           ├── TasksTab.vue      #   SSE 任务流 + vis-network DAG
+│           ├── TaskCard.vue      #   任务卡片
+│           ├── shared/           #   可复用 UI
+│           └── modals/           #   Prompt/Response/VersionHistory/ImageLightbox
 │
-├── static/                 # 静态资源（仅图片/文档）
-│   ├── architecture.md     #   架构详解
-│   ├── testing.md          #   测试命令速查
-│   ├── database-storage.md #   数据库存储设计
-│   ├── frontend-api.md     #   前端 API 文档
-│   ├── sync-lessons.md     #   同步经验笔记
-│   ├── experience.md       #   开发经验记录
-│   ├── completed.md        #   已完成记录
-│   ├── readme-conventions.md # README 编写规范
-│   ├── companion-roadmap.md #  伴侣化改造路线图
-│   ├── companion-prompt-guide.md # Prompt 编写指南
-│   ├── plans/              #   实施计划
-│   ├── specs/              #   设计规范
-│   └── superpowers/        #   设计规范 + 实施计划 (已归档)
+├── static/                 # 静态资源 + Vite 构建产物（由 aiohttp serve）
+│   ├── index.html          #   聊天页面 HTML（Vite 构建产物）
+│   ├── debug.html          #   Debug 页面 HTML（Vite 构建产物）
+│   ├── debug.md            #   Debug 面板设计文档
+│   ├── Elysia.png          #   角色头像（非代码资源）
+│   ├── live2d-demo/        #   Live2D Cubism SDK（非代码资源）
+│   └── assets/             #   Vite 构建产物（JS/CSS bundle，带 content hash）
+├── docs/                   # 文档
 │
 └── log/                    # 日志 (gitignore)
 ```
