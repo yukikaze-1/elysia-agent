@@ -86,7 +86,7 @@ class LatencyBench:
             return
 
         try:
-            from core.app_config import AppConfig
+            from core.config import AppConfig
             from Module.config.loader import ConfigLoader
             config = ConfigLoader(AppConfig, yaml_path="config.yaml").load()
             # 纯文本模式，不依赖 TTS/STT

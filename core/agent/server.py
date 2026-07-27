@@ -168,7 +168,7 @@ class AgentServer:
             if was_restarting:
                 if self._config_path is not None:
                     from Module.config.loader import ConfigLoader
-                    from core.app_config import AppConfig
+                    from core.config import AppConfig
                     self._config = ConfigLoader(AppConfig, yaml_path=self._config_path).load()
                     print("配置已重新加载，正在重启服务...")
                 else:

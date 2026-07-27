@@ -762,7 +762,7 @@ async def test_agent_scheduler_lifecycle():
     """Agent start → Scheduler 启动。Agent stop → Scheduler 停止。"""
     _ensure_api_key()
     from core.agent import Agent
-    from core.app_config import AppConfig
+    from core.config import AppConfig
     from core.tests.fake_llm import FakeLLMBackend
 
     agent = Agent(config=AppConfig())
@@ -782,7 +782,7 @@ async def test_agent_fifo_queue():
     """忙时发送消息 → 排队。空闲后 → 自动出队。"""
     _ensure_api_key()
     from core.agent import Agent
-    from core.app_config import AppConfig
+    from core.config import AppConfig
     from core.tests.fake_llm import FakeLLMBackend
 
     agent = Agent(config=AppConfig())
@@ -822,7 +822,7 @@ async def test_agent_interrupt_clears_queue():
     """INTERRUPT → 清空排队消息。"""
     _ensure_api_key()
     from core.agent import Agent
-    from core.app_config import AppConfig
+    from core.config import AppConfig
     from core.tests.fake_llm import FakeLLMBackend
     from core.event_bus import EventPriority
     from core.schema.event import InterruptData
@@ -850,7 +850,7 @@ async def test_scheduler_state_in_debug_info():
     """DebugInfo.collect() 包含 Scheduler 状态。"""
     _ensure_api_key()
     from core.agent import Agent
-    from core.app_config import AppConfig
+    from core.config import AppConfig
     from core.tests.fake_llm import FakeLLMBackend
     from core.debug.info import collect
 

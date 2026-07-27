@@ -17,7 +17,7 @@ def engine_with_mocks():
     m.think = AsyncMock(return_value=ThoughtResult(text=""))
     o = MagicMock()
     o.expression = MagicMock(return_value=MagicMock())
-    from core.character_config import CharacterConfig
+    from core.config import CharacterConfig
     char = CharacterConfig(name="Elysia")
     engine = CharacterEngine(
         llm=m,
@@ -43,7 +43,7 @@ def _make_engine(state=None, llm=None, output=None):
     m.think = AsyncMock(return_value=ThoughtResult(text=""))
     o = output or MagicMock()
     o.expression = MagicMock(return_value=MagicMock())
-    from core.character_config import CharacterConfig
+    from core.config import CharacterConfig
     char = CharacterConfig(name="Elysia")
     return CharacterEngine(
         llm=m,

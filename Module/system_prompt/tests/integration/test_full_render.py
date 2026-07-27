@@ -52,7 +52,7 @@ def _mock_long_term():
 
 def _mock_character_engine():
     """返回 mock CharacterEngine 用于测试。"""
-    from core.character_config import CharacterConfig
+    from core.config import CharacterConfig
     state = CharacterState(session_id=SessionId("test-sid"))
     output = MagicMock()
     output.expression = MagicMock(return_value=MagicMock())

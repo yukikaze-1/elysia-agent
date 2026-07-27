@@ -186,7 +186,7 @@ def test_reflector_submits_to_character_engine():
     # Mock output and character config
     output = MagicMock()
     output.expression = MagicMock(return_value=MagicMock())
-    from core.character_config import CharacterConfig
+    from core.config import CharacterConfig
     char = CharacterConfig(name="Elysia")
 
     engine = CharacterEngine(

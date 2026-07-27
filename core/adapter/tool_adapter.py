@@ -14,7 +14,7 @@ from Module.tool.protocol import ToolResult
 from core.schema.error_type import ErrorType  # noqa: F401 — 由 __init__.py 重导出
 
 if TYPE_CHECKING:
-    from ..app_config import AppConfig
+    from ..config import AppConfig
     from Module.output import OutputManager
 
 logger = logging.getLogger(__name__)

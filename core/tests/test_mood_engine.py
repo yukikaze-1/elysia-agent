@@ -106,7 +106,7 @@ class TestMoodToTtsEmotion:
 class TestAnalyzeAssistantDecay:
     def test_decay_only_no_mood_reset(self):
         """analyze_assistant 只衰减 intensity，不重置 mood 文本。"""
-        from core.character_config import CharacterConfig
+        from core.config import CharacterConfig
         from core.schema.character import CharacterState
         from core.schema.types import SessionId
         from Module.output import OutputManager

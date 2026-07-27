@@ -23,7 +23,7 @@ from core.event_bus import EventBus, EventType, EventPriority
 from core.schema.event import StateChangeData
 from core.adapter.llm_adapter import LLMAdapter
 from core.tests.fake_llm import FakeLLMBackend
-from core.app_config import AppConfig
+from core.config import AppConfig
 
 
 # ============================================================================
@@ -133,7 +133,7 @@ class TestCognitiveLoopMethods:
         from core.prompt_assembler import PromptAssembler
         from Module.tool import ToolManager, PluginContext, ToolContext
         from core.memory.session import SessionMemory
-        from core.character_config import CharacterConfig
+        from core.config import CharacterConfig
         from core.memory.consolidator import MemoryConsolidator
         from core.memory.long_term import LongTermMemory
         from core.personality import CharacterEngine
@@ -625,7 +625,7 @@ class TestLLMAdapter:
 class TestEmotionEngineEdges:
     @pytest.fixture
     def engine(self):
-        from core.character_config import CharacterConfig
+        from core.config import CharacterConfig
         from core.schema.character import CharacterState
         from core.schema.types import SessionId
         from Module.output import OutputManager
@@ -699,7 +699,7 @@ class TestPromptAssemblerUnit:
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.prompt_assembler import PromptAssembler
-        from core.character_config import CharacterConfig
+        from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory
 
@@ -1189,7 +1189,7 @@ class TestEmotionEmojiMappings:
 @pytest.mark.service
 class TestCharacterConfig:
     def test_from_yaml_loads_correctly(self):
-        from core.character_config import CharacterConfig
+        from core.config import CharacterConfig
         char = CharacterConfig.from_yaml("character/elysia/config.yaml")
         assert char.name == "Elysia"
         # traits 已合并到 base_personality.txt
@@ -1198,7 +1198,7 @@ class TestCharacterConfig:
         assert "Elysia" in char.wake_words
 
     def test_personality_block_format(self):
-        from core.character_config import CharacterConfig
+        from core.config import CharacterConfig
         char = CharacterConfig.from_yaml("character/elysia/config.yaml")
         block = char.personality_block()
         # 新格式: base_personality 自然语言文本（来自 personality.txt）
@@ -1208,7 +1208,7 @@ class TestCharacterConfig:
         assert "道德边界" in block
 
     def test_from_yaml_file_not_found(self):
-        from core.character_config import CharacterConfig
+        from core.config import CharacterConfig
         with pytest.raises(FileNotFoundError):
             CharacterConfig.from_yaml("nonexistent.yaml")
 

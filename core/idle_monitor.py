@@ -11,7 +11,7 @@ from datetime import datetime
 
 from .event_bus import EventBus, EventPriority, EventType
 from .agent_fsm import AgentFSM, AgentState
-from .character_config import CharacterConfig
+from .config import CharacterConfig
 from core.schema.event import SystemTickData
 
 logger = logging.getLogger(__name__)

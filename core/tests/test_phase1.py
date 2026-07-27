@@ -111,7 +111,7 @@ class TestAgentFSM:
 class TestEmotionEngine:
     @pytest.fixture
     def engine(self):
-        from core.character_config import CharacterConfig
+        from core.config import CharacterConfig
         from core.schema.character import CharacterState
         from core.schema.types import SessionId
         from Module.output import OutputManager
@@ -304,7 +304,7 @@ class TestInterruptIntegration:
         from core.agent import Agent
         from core.agent_fsm import AgentState
 
-        from core.app_config import AppConfig
+        from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
 
@@ -328,7 +328,7 @@ class TestInterruptIntegration:
         from core.agent import Agent
         from core.agent_fsm import AgentState
 
-        from core.app_config import AppConfig
+        from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
 
@@ -362,7 +362,7 @@ class TestInterruptIntegration:
         from core.agent import Agent
         from core.agent_fsm import AgentState
 
-        from core.app_config import AppConfig
+        from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
 
@@ -390,7 +390,7 @@ class TestMultiTurnConversation:
         load_dotenv()
         from core.agent import Agent
 
-        from core.app_config import AppConfig
+        from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
 
@@ -422,7 +422,7 @@ class TestMultiTurnConversation:
         from core.agent import Agent
         from core.agent_fsm import AgentState
 
-        from core.app_config import AppConfig
+        from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
 
@@ -439,7 +439,7 @@ class TestMultiTurnConversation:
         from dotenv import load_dotenv
         load_dotenv()
         from core.prompt_assembler import PromptAssembler
-        from core.character_config import CharacterConfig
+        from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory
 
@@ -470,7 +470,7 @@ class TestEdgeCases:
         load_dotenv()
         from core.agent import Agent
 
-        from core.app_config import AppConfig
+        from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
 

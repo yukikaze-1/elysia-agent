@@ -85,7 +85,7 @@ def main():
 
     # Load AppConfig once via ConfigLoader
     from Module.config.loader import ConfigLoader
-    from core.app_config import AppConfig
+    from core.config import AppConfig
     try:
         config = ConfigLoader(AppConfig, yaml_path=pre_args.config).load()
     except Exception as e:

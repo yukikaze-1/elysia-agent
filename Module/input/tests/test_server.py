@@ -19,7 +19,7 @@ def _make_agent():
     """Create a minimal mock agent for server tests."""
     import os as _os
     _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-    from core.app_config import AppConfig
+    from core.config import AppConfig
     from core.agent import Agent
 
     agent = Agent(config=AppConfig())

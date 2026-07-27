@@ -11,11 +11,11 @@ from ._types import RunState, _PendingMessage, _BackgroundTaskEntry
 
 from Module.output import OutputManager, ConsoleChannel
 
-from ..app_config import AppConfig
+from ..config import AppConfig
 from ..event_bus import EventBus, EventPriority, EventType
 from ..agent_fsm import AgentFSM, AgentState
 from ..log_setup import set_request_id, get_request_id
-from ..character_config import CharacterConfig
+from ..config import CharacterConfig
 from ..memory.session import SessionMemory
 from ..memory.long_term import LongTermMemory
 from ..prompt_assembler import PromptAssembler

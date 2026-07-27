@@ -236,7 +236,7 @@ class TestMemoryIntegration:
         load_dotenv()
         from core.agent import Agent
 
-        from core.app_config import AppConfig
+        from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
 
@@ -258,7 +258,7 @@ class TestMemoryIntegration:
         load_dotenv()
         from core.agent import Agent
 
-        from core.app_config import AppConfig
+        from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
         # Mock HITL to auto-approve in test environment
@@ -282,7 +282,7 @@ class TestMemoryIntegration:
         from core.agent import Agent
         from core.agent_fsm import AgentState
 
-        from core.app_config import AppConfig
+        from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
         # Mock HITL to auto-approve in test environment
@@ -312,7 +312,7 @@ class TestMemoryIntegration:
         load_dotenv()
         from core.agent import Agent
 
-        from core.app_config import AppConfig
+        from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
         # Mock HITL to auto-approve in test environment
@@ -341,7 +341,7 @@ class TestMemoryIntegration:
 class TestPromptAssembler:
     @pytest.mark.asyncio
     async def test_build_messages_includes_memories(self):
-        from core.character_config import CharacterConfig
+        from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory
         from core.prompt_assembler import PromptAssembler
@@ -361,7 +361,7 @@ class TestPromptAssembler:
 
     @pytest.mark.asyncio
     async def test_no_memories_when_empty(self):
-        from core.character_config import CharacterConfig
+        from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory
         from core.prompt_assembler import PromptAssembler
@@ -877,7 +877,7 @@ class TestMemoryStress:
         sid1 = f"test-isolation-{uuid.uuid4()}"
         sid2 = f"test-isolation-{uuid.uuid4()}"
 
-        from core.app_config import AppConfig
+        from core.config import AppConfig
         a1 = Agent(config=AppConfig())
         a1._llm._backend = FakeLLMBackend(response="好的我记住了")
         a1._session._session_id = sid1
