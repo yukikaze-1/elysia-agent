@@ -26,6 +26,15 @@ body {
   display: flex;
 }
 
+/* 拖拽高亮 */
+#chat-wrap.drag-over {
+  border: 2px dashed var(--accent);
+  background: rgba(233,69,96,0.05);
+}
+
+/* inner_voice 隐藏（toggle 关闭时） */
+body.inner-voice-hidden .inner-voice-bubble { display: none; }
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

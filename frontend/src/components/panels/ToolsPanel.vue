@@ -124,12 +124,8 @@ function safetyLabel(plugin: PluginInfo): string {
 </template>
 
 <style scoped>
-.tools-panel-wrapper {
-  position: relative;
-}
-
 .tools-toggle-btn {
-  position: absolute;
+  position: fixed;
   top: 48px;
   right: 16px;
   width: 36px;
@@ -158,7 +154,7 @@ function safetyLabel(plugin: PluginInfo): string {
 }
 
 .tools-panel {
-  position: absolute;
+  position: fixed;
   top: 52px;
   right: 60px;
   width: 340px;

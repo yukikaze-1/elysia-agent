@@ -36,6 +36,10 @@ import ApprovalDialog from '@/components/ui/ApprovalDialog.vue'
   flex-shrink: 0;
   background: var(--surface);
   border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 16px;
 }
 
 #main {
@@ -47,8 +51,7 @@ import ApprovalDialog from '@/components/ui/ApprovalDialog.vue'
 
 #chat-wrap {
   flex: 1;
-  overflow-y: auto;
-  padding: 16px 20px;
+  min-height: 0;
 }
 
 #input-bar {
@@ -58,5 +61,14 @@ import ApprovalDialog from '@/components/ui/ApprovalDialog.vue'
   display: flex;
   gap: 8px;
   align-items: flex-end;
+}
+
+/* 响应式：窄屏折叠角色面板 */
+@media (max-width: 600px) {
+  #char-panel {
+    width: 60px;
+    padding: 16px 8px;
+    min-width: 0;
+  }
 }
 </style>

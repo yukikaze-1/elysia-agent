@@ -26,17 +26,29 @@ const moodDisplay = computed(() =>
 #char-info { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .state-dot {
   display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-  background: var(--idle); transition: background 0.3s;
+  background: var(--idle); transition: background 0.3s; vertical-align: middle;
 }
-.state-dot.thinking { background: var(--thinking); }
+.state-dot.thinking { background: var(--thinking); animation: pulse-dot 1s infinite; }
 .state-dot.speaking { background: var(--speaking); }
-.state-dot.executing { background: var(--executing); }
+.state-dot.executing { background: var(--executing); animation: pulse-dot .5s infinite; }
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
 #char-name { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
 #char-state { font-size: 12px; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
-#mood-tag { font-size: 13px; color: var(--muted); text-align: center; min-height: 20px; }
+#mood-tag { font-size: 13px; color: var(--muted); text-align: center; min-height: 20px; transition: color .3s; }
 #llm-model-tag {
-  font-size: 10px; color: var(--accent); text-align: center; margin-bottom: 4px;
-  border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px;
-  max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 10px; color: var(--accent); text-align: center;
+  margin-bottom: 4px; min-height: 14px; letter-spacing: 0.5px;
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 6px; max-width: 200px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+#session-token-bar {
+  font-size: 11px; color: var(--muted); text-align: center;
+  padding: 2px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* 响应式：窄屏隐藏角色信息 */
+@media (max-width: 600px) {
+  #char-name, #char-state, #mood-tag, #char-info { display: none; }
 }
 </style>

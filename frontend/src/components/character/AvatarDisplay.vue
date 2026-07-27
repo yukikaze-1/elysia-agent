@@ -22,4 +22,8 @@ const settings = useSettingsStore()
 #avatar-wrap::before { content: '🌸'; font-size: 60px; position: absolute; }
 #live2d-frame { width: 100%; height: 100%; border: none; position: relative; z-index: 1; }
 #live2d-static-img { width: 100%; height: 100%; object-fit: contain; position: relative; z-index: 1; }
+
+@media (max-width: 600px) {
+  #avatar-wrap { flex: 0 0 72px; }
+}
 </style>
