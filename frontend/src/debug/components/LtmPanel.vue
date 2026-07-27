@@ -5,7 +5,7 @@ import PaginationBar from './shared/PaginationBar.vue'
 import ConfirmModal from './shared/ConfirmModal.vue'
 import ExpandableText from './shared/ExpandableText.vue'
 
-interface LtmEntry { id: string; text: string; memory_type: string; poignancy: number; timestamp: string; metadata?: Record<string, unknown> }
+interface LtmEntry { id: string; text: string; memory_type: string; poignancy: number; timestamp: string | number; metadata?: Record<string, unknown> }
 
 const store = useDebugStore()
 
@@ -31,6 +31,12 @@ const createType = ref('note')
 const createPoignancy = ref(5)
 
 const perPage = ref(50)
+
+function fmtTs(ts: string | number): string {
+  if (!ts) return ''
+  if (typeof ts === 'number') return new Date(ts * 1000).toISOString().slice(0, 16).replace('T', ' ')
+  return ts.slice(0, 16)
+}
 
 async function load() {
   loading.value = true; error.value = ''
@@ -144,7 +150,7 @@ async function onConfirm() {
           <ExpandableText :text="e.text" :maxLength="100" />
         </span>
         <input v-else v-model="editText" class="field flex-1" @keydown.enter="saveEdit(e.id)" />
-        <span class="row-meta">{{ e.poignancy }} · {{ e.timestamp?.slice(0, 16) || '' }}</span>
+        <span class="row-meta">{{ e.poignancy }} · {{ fmtTs(e.timestamp) }}</span>
         <button v-if="editingId !== e.id" class="btn-sm" @click="startEdit(e)">✎</button>
         <button v-else class="btn-sm" @click="saveEdit(e.id)">✓</button>
         <button v-if="editingId !== e.id" class="btn-sm" @click="confirmThen(() => deleteEntry(e.id), '删除这条记忆？')">✕</button>
