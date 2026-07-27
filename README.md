@@ -28,7 +28,7 @@ cd Agent
 - **[Node.js](https://nodejs.org/en/download)** — 前端构建需要（>= 18）。装好后输入 `node --version` 和 `npm --version` 确认
 - **[DeepSeek API key](https://platform.deepseek.com/api_keys)** — 免费注册，在左侧「API Keys」页面点"创建 API key"，复制备用
 
-> 系统自带 Python >= 3.11 可替代 conda
+> 系统自带 Python >= 3.11 可替代 conda（建议配合 `python3 -m venv .venv` 使用，避免依赖污染系统环境）
 
 ### 3. 首次安装（只需一次）
 
