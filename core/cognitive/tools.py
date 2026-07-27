@@ -70,6 +70,71 @@ class CognitiveTools:
             return_exceptions=True,
         )
 
+    def _gate_tool_calls(
+        self,
+        tool_calls: list[ToolCall],
+        messages: list[dict],
+        blocked_tools: set[str] | None = None,
+    ) -> bool:
+        """校验 LLM 产出的 tool_calls。全部通过返回 True。
+        任一被拒 → 注入 GATE_REJECTED tool messages 到 messages，返回 False。
+
+        submit_task 被跳过——它是合成工具，有自己的 _handle_submit_task 校验。
+        """
+        # 1. 拆分：submit_task 单独放行
+        gate_tcs = [tc for tc in tool_calls if tc.function.name != "submit_task"]
+
+        # 2. 构建已知工具名集合
+        known_names: set[str] = set()
+        if self._tool_executor is not None:
+            for d in self._tool_executor.definitions():
+                name = d.get("function", {}).get("name", "")
+                if name:
+                    known_names.add(name)
+
+        # 3. 逐项校验
+        rejected = False
+        rejected_ids: set[str] = set()
+        for tc in gate_tcs:
+            name = tc.function.name
+            reason: str | None = None
+            if name not in known_names:
+                reason = f"未知工具: {name}"
+            elif blocked_tools and name in blocked_tools:
+                reason = f"工具已禁用: {name}"
+
+            if reason:
+                rejected = True
+                rejected_ids.add(tc.id)
+                tr = ToolResult.fail(
+                    name=name, error=reason,
+                    error_type=ErrorType.GATE_REJECTED,
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": tr.llm_content,
+                })
+
+        # 4. 整轮连坐：合法工具也注入失败消息
+        if rejected:
+            for tc in gate_tcs:
+                if tc.id in rejected_ids:
+                    continue
+                tr = ToolResult.fail(
+                    name=tc.function.name,
+                    error="本轮其他工具校验失败，整轮取消",
+                    error_type=ErrorType.GATE_REJECTED,
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": tr.llm_content,
+                })
+            return False
+
+        return True
+
     # ---- submit_task 拦截框架 ----
 
     @staticmethod
