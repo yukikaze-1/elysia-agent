@@ -895,7 +895,7 @@ class Agent:
 ## 10. 日志系统
 
 ```
-core/log_setup.py:
+core/utils/log_setup.py:
 
   库日志 (pymongo/pymilvus/httpx/openai/torch)
     → 分流到 log/mongo.log, log/milvus.log, log/http.log, log/torch.log
@@ -979,7 +979,7 @@ Agent/
 │   │   ├── __init__.py       #     重导出 Task + TaskScheduler
 │   │   ├── task.py           #     任务数据模型
 │   │   └── scheduler.py      #     Worker Pool 调度器
-│   ├── message_id.py         #   消息 ID 生成
+│   ├── utils/                #   通用工具包
 │   ├── schema/               #   共享类型包 (agent + types + part + tool + message + adapters)
 │   ├── debug/                #   Debug 仪表板包
 │   │   ├── info.py           #     /debug 数据聚合
@@ -989,7 +989,6 @@ Agent/
 │   │   ├── __init__.py       #     重导出 AppConfig + CharacterConfig
 │   │   ├── app_config.py     #     App 配置
 │   │   └── character_config.py #   角色配置
-│   ├── log_setup.py         #   日志系统
 │   ├── token_tracker.py     #   Token 消耗统计
 │   ├── personality/         #   CharacterEngine 子系统
 │   │   ├── engine.py        #     CharacterEngine (合并 PersonalityEngine + EmotionEngine)

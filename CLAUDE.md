@@ -123,6 +123,7 @@ core/
 │   └── app_config.py          # AgentConfig: YAML-loaded app configuration
 ├── prompt_assembler.py    # PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder
 ├── idle_monitor.py        # IdleMonitor: wake-word detection + proactive triggers
+├── utils/                  # Utility functions: message_id + log_setup
 ├── task/                   # Task sub-package: task model + scheduler
 │   ├── task.py             # Task dataclass + TaskType/TaskStatus enums + Future binding
 │   └── scheduler.py        # TaskScheduler: worker pool for ReAct tool calls (5 workers)

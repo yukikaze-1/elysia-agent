@@ -45,7 +45,7 @@ load_dotenv()
 # Ensure project root is on path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core.log_setup import setup as setup_logging
+from core.utils import setup as setup_logging
 from core.agent import Agent
 
 

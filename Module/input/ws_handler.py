@@ -24,7 +24,7 @@ async def handle_ws(
     ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024)
     await ws.prepare(request)
 
-    from core.message_id import new_message_id
+    from core.utils import new_message_id
     client_id = new_message_id()
     channel = WebSocketChannel(ws)
     agent._output.add_channel(channel)

@@ -31,7 +31,7 @@ from .server import AgentServer
 from ..config import AppConfig
 from ..event_bus import EventBus, EventPriority, EventType
 from ..agent_fsm import AgentFSM, AgentState
-from ..log_setup import set_request_id, get_request_id
+from ..utils import set_request_id, get_request_id
 from ..config import CharacterConfig
 from ..memory.session import SessionMemory
 from ..memory.long_term import LongTermMemory

@@ -342,8 +342,7 @@ Agent/
 │   ├── config/               # 配置子包 (AppConfig + CharacterConfig)
 │   ├── event_bus.py           # 优先级事件总线 (asyncio.PriorityQueue)
 │   ├── idle_monitor.py        # IdleMonitor: 唤醒词 + 主动触发
-│   ├── log_setup.py           # 日志设置 (stderr + 文件 + conversation)
-│   ├── message_id.py          # 消息 ID 生成
+│   ├── utils/                  # 通用工具 (message_id + log_setup)
 │   ├── prompt_assembler.py    # PromptAssembler: 12 sections → SystemPromptManager
 │   ├── task/                  # 任务子系统 (Task 数据模型 + TaskScheduler Worker Pool)
 │   ├── token_tracker.py     # Token 消耗追踪

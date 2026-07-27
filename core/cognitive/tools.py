@@ -9,7 +9,7 @@ from typing import Any, TYPE_CHECKING
 
 from core.adapter import ToolResult, ErrorType
 from ..schema.tool import ToolCall
-from ..message_id import new_message_id
+from ..utils import new_message_id
 
 if TYPE_CHECKING:
     from Module.task_system.schema import SubmitError

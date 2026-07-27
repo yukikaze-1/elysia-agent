@@ -37,7 +37,7 @@ async def main():
     # 2. Insert one
     print()
     print("=== 插入单条 ===")
-    from core.message_id import new_message_id
+    from core.utils import new_message_id
     msg_id = new_message_id()
     t0 = time.perf_counter()
     doc_id = await backend.insert_one(TEST_COLLECTION, {

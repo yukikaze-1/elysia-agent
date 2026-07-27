@@ -17,7 +17,7 @@ import time
 from dataclasses import asdict
 from typing import Callable, TYPE_CHECKING
 
-from ..message_id import new_message_id
+from ..utils import new_message_id
 
 from .timing import TimingClock
 
@@ -26,7 +26,7 @@ from Module.tts import TTSBackend
 
 from ..agent_fsm import AgentFSM, AgentState
 from ..event_bus import EventBus, EventPriority, EventType
-from ..log_setup import set_request_id, get_request_id, log_conversation
+from ..utils import set_request_id, get_request_id, log_conversation
 from Module.tool.protocol import ToolResult
 from ..prompt_assembler import PromptAssembler
 from ..memory.session import SessionMemory

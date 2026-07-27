@@ -486,7 +486,7 @@ class SafetyPipeline:
         self, plugin: Any, name: str, params: dict,
     ) -> tuple[bool, str]:
         """HITL 审批流程。返回 (approved, status)。"""
-        from core.message_id import new_message_id
+        from core.utils import new_message_id
         request_id = new_message_id()
         event = asyncio.Event()
         self._hitl_requests[request_id] = (event, name, params)

@@ -93,7 +93,7 @@ class LongTermMemory:
             logger.warning("LongTermMemory: 从 Milvus 加载失败: %s", e)
             return 0
 
-        from core.message_id import new_message_id
+        from core.utils import new_message_id
 
         loaded = 0
         for row in results:
@@ -218,7 +218,7 @@ class LongTermMemory:
                 except Exception:
                     logger.debug("Embedding failed for insert, storing text-only", exc_info=True)
 
-            from core.message_id import new_message_id
+            from core.utils import new_message_id
             # Work on a copy to avoid mutating caller's dict
             meta = dict(metadata)
             # Accept 'type' as alias for 'memory_type'
