@@ -25,6 +25,7 @@ from Module.system_prompt import PromptManager
 from Module.output import OutputManager
 from core.schema.compression import CompressionTrigger
 from core.schema._utils import now_iso
+from ._utils import _extract_tag, _schedule
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
     from core.schema.character import CharacterState, StateHistoryEntry
@@ -107,14 +108,6 @@ class C9Data:
 class C6Data:
     """C6 SpeakingStyle section 渲染数据。"""
     speaking_style_c6: str  # "" 表示使用默认模板
-
-
-def _extract_tag(text: str, tag: str) -> str:
-    """从 XML 标签中提取内容。"""
-    import re
-    pattern = rf"<{tag}>\s*(.*?)\s*</{tag}>"
-    m = re.search(pattern, text, re.DOTALL)
-    return m.group(1).strip() if m else ""
 
 
 class CharacterEngine:
@@ -264,7 +257,7 @@ class CharacterEngine:
         l3_snapshot = self.state.state_l3
         if not l3_snapshot:
             return
-        self._schedule(self._judge_awareness(l3_snapshot))
+        _schedule(self._judge_awareness(l3_snapshot))
 
     async def _judge_awareness(self, l3_text: str) -> None:
         """执行 LLM 判定：比较 L2 vs L3，更新 awareness 缓存。
@@ -616,11 +609,11 @@ class CharacterEngine:
         if events:
             for evt in events:
                 if evt == "Laughter":
-                    self._schedule(self._output.expression("laugh", intensity=0.7))
+                    _schedule(self._output.expression("laugh", intensity=0.7))
                 elif evt == "Cry":
-                    self._schedule(self._output.expression("cry", intensity=0.8))
+                    _schedule(self._output.expression("cry", intensity=0.8))
                 elif evt == "Applause":
-                    self._schedule(self._output.expression("surprised", intensity=0.5))
+                    _schedule(self._output.expression("surprised", intensity=0.5))
 
     def analyze_user(self, text: str) -> None:
         """Analyze user message and update mood + push expressions (keyword fallback)."""
@@ -669,32 +662,11 @@ class CharacterEngine:
 
     def _push_expression(self, mood_text: str, intensity: float) -> None:
         """Push expression to output channels. mood_text is plain string. 保留关键词回退兼容。"""
-        self._schedule(self._output.expression(mood_text, intensity=intensity))
+        _schedule(self._output.expression(mood_text, intensity=intensity))
 
     def _push_idle(self) -> None:
         """Push one of the idle expressions."""
         if self._idle_expressions:
             expr = random.choice(self._idle_expressions)
-            self._schedule(self._output.expression(expr, intensity=0.3))
+            _schedule(self._output.expression(expr, intensity=0.3))
 
-    @staticmethod
-    def _schedule(coro) -> None:
-        """Schedule a coroutine on the event loop, if one is running.
-
-        Wrapped so exceptions in the fire-and-forget task are logged.
-        """
-        try:
-            loop = asyncio.get_running_loop()
-
-            async def _safe_wrapper():
-                try:
-                    await coro
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    _logger = logging.getLogger(__name__)
-                    _logger.warning("CharacterEngine scheduled task 异常", exc_info=True)
-
-            loop.create_task(_safe_wrapper())
-        except RuntimeError:
-            pass  # no event loop running — test environment, ignore
