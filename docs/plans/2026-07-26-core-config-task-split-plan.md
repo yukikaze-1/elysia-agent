@@ -177,7 +177,7 @@ Expected: All pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add core/task/ core/task.py core/task_scheduler.py core/agent/agent.py core/agent/lifecycle.py core/tests/test_task_scheduler.py
+git add core/task/ core/agent/agent.py core/agent/lifecycle.py core/tests/test_task_scheduler.py
 git commit -m "refactor: move task + task_scheduler into core/task/"
 ```
 
@@ -191,37 +191,29 @@ git commit -m "refactor: move task + task_scheduler into core/task/"
 
 - [ ] **Step 1: Update `core/README.md`**
 
-`grep -n "app_config\|character_config\|task.py\|task_scheduler" core/README.md` 定位所有引用，替换旧路径：
+`grep -n "app_config\|character_config\|task\.py\|task_scheduler" core/README.md` 定位 8 行：
 
-| 行 | 旧 | 新 |
-|----|-----|-----|
-| 124 | `task_scheduler.py` | `task/` 子包 |
-| 125 | `character_config.py` | `config/` 子包 |
-| 135 | `app_config.py` | `config/` 子包 |
-| 136 | `character_config.py` | `config/` 子包 |
-| 138 | `task.py` | `task/` 子包 |
-| 142 | `task_scheduler.py` | `task/` 子包 |
-| 147 | 无 `config/`、`task/` 条目 | 新增 `core/config/` 和 `core/task/` 子包行 |
-| 245 | `agent/agent.py` task_scheduler 相关 | 更新路径 |
-| 255 | `app_config.py` 行 | `config/app_config.py` |
-| 256 | `character_config.py` 行 | `config/character_config.py` |
-| 258 | `task.py` 行 | `task/task.py` |
-| 263 | `task_scheduler.py` 行 | `task/scheduler.py` |
+| 行 | 实际内容 | 修改 |
+|----|---------|------|
+| 124 | 章节标题 `TaskScheduler (task_scheduler.py)` | → `TaskScheduler (task/scheduler.py)` |
+| 135 | 支撑模块表 `character_config.py` | → `config/` 子包引用 |
+| 136 | 支撑模块表 `app_config.py` | → `config/` 子包引用 |
+| 142 | 支撑模块表 `task.py` | → `task/` 子包引用 |
+| 147 | 子包表区域 | 新增 `core/config/` 和 `core/task/` 两行 |
+| 255 | 文件大小表 `task_scheduler.py` | → `task/scheduler.py` |
+| 256 | 文件大小表 `character_config.py` | → `config/character_config.py` |
+| 257 | 文件大小表 `app_config.py` | → `config/app_config.py` |
+| 263 | 文件大小表 `task.py` | → `task/task.py` |
 
 - [ ] **Step 2: Update `CLAUDE.md`**
 
-`grep -n "app_config\|character_config\|task\.py\|task_scheduler" CLAUDE.md` 定位所有引用，替换旧路径：
+`grep -n "app_config\|character_config\|task\.py\|task_scheduler" CLAUDE.md` 定位 3 行：
 
-| 行 | 旧 | 新 |
-|----|-----|-----|
-| 121 | 架构树 `app_config.py` | `config/app_config.py` |
-| 124 | 架构树 `character_config.py` | `config/character_config.py` |
-| 126 | 架构树 `task.py` | `task/task.py` |
-| 142 | 模块索引表 `task.py`（Task/TaskScheduler） | 拆为 `task/` 子包条目 |
-| 255 | 文件大小表 `app_config.py` | `config/app_config.py` |
-| 256 | 文件大小表 `character_config.py` | `config/character_config.py` |
-| 257 | 文件大小表 `task.py` | `task/task.py` |
-| 263 | 文件大小表 `task_scheduler.py` | `task/scheduler.py` |
+| 行 | 实际内容 | 修改 |
+|----|---------|------|
+| 121 | 架构树 `character_config.py` | → `config/` 子包条目 |
+| 124 | 架构树 `task_scheduler.py` | → `task/` 子包条目 |
+| 126 | 架构树 `app_config.py` | → `config/` 子包条目 |
 
 - [ ] **Step 3: Commit**
 
