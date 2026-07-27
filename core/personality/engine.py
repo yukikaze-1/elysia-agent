@@ -27,6 +27,7 @@ from .awareness import AwarenessJudge
 from ._utils import _schedule, _extract_tag  # _extract_tag 保持向后兼容
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
+    from core.schema.compression import CompressionTrigger
     from core.schema.character import CharacterState
     from core.storage.character_version_repo import CharacterVersionRepository
 
