@@ -305,9 +305,17 @@ class LongTermMemory:
         """返回全部活跃条目的副本（排除已吸收条目）。"""
         return [e for e in self._entries if e.id not in self._absorbed_ids]
 
-    def mark_absorbed(self, entry_id: str) -> None:
-        """标记条目已被 merge 吸收（不删除，只标记）。"""
+    async def mark_absorbed(self, entry_id: str) -> None:
+        """标记条目已被 merge 吸收，同步清理 Milvus。"""
         self._absorbed_ids.add(entry_id)
+        async with self._write_lock:
+            entry = self._get_by_id(entry_id)
+            if entry is not None and entry._milvus_pk is not None and self._repo is not None:
+                try:
+                    await self._repo.delete([entry._milvus_pk])
+                except Exception:
+                    logger.debug("Milvus delete failed for absorbed entry %s",
+                               entry_id, exc_info=True)
 
     async def _sync_dirty_entries(self) -> int:
         """尝试将脏条目同步到 Milvus。返回成功同步数。"""

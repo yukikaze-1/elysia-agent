@@ -101,7 +101,7 @@ class TestExecuteActions:
         m = MagicMock()
         m.update_text = AsyncMock(return_value=True)
         m.delete = AsyncMock(return_value=True)
-        m.mark_absorbed = MagicMock()
+        m.mark_absorbed = AsyncMock()
         return m
 
     @pytest.mark.asyncio
@@ -202,7 +202,7 @@ class TestDoReflect:
         mem = MagicMock()
         mem.update_text = AsyncMock(return_value=True)
         mem.delete = AsyncMock(return_value=True)
-        mem.mark_absorbed = MagicMock()
+        mem.mark_absorbed = AsyncMock()
         group_a = [_entry("a1", "内容A")]
         group_b = [_entry("b1", "内容B")]
         mem.get_all.return_value = group_a + group_b

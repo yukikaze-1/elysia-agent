@@ -262,7 +262,7 @@ class MemoryReflector:
                     logger.warning("MemoryReflector merge 目标不存在: %s", m.ids[0])
                     continue
                 for absorbed_id in m.ids[1:]:
-                    self._memory.mark_absorbed(absorbed_id)
+                    await self._memory.mark_absorbed(absorbed_id)
                 merges += 1
             except Exception:
                 logger.debug("MemoryReflector merge failed for %s", m.ids[0], exc_info=True)
