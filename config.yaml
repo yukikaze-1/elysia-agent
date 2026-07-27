@@ -15,6 +15,7 @@ llm:
 
 # ---- 记忆 ----
 memory:
+  # ltm_enable_eviction: true            # 是否启用数量驱逐（开发阶段可设为 false 避免丢失测试记忆）
   session_max_messages: 50             # SessionMemory deque 上限（LLM 上下文窗口）
 
 # ---- HTTP 服务器 ----

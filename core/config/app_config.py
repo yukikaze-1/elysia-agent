@@ -24,6 +24,7 @@ class MemoryConfig:
     session_max_messages: int = ConfigField(default=20)
     ltm_max_entries: int = ConfigField(default=10000)
     ltm_max_age_days: int = ConfigField(default=90)
+    ltm_enable_eviction: bool = ConfigField(default=True)
     ltm_embed_timeout: float = ConfigField(default=10.0)
 
 

@@ -52,6 +52,7 @@ class LongTermMemory:
 
     def __init__(self, max_entries: int = 10000, max_age_days: int = 90,
                  embed_timeout: float = 10.0,
+                 enable_eviction: bool = True,
                  repo: "MemoryRepository | None" = None):
         self._entries: list[MemoryEntry] = []
         self._repo: "MemoryRepository | None" = repo
@@ -63,6 +64,7 @@ class LongTermMemory:
         self._max_age_days = max_age_days
         self._embed_timeout = embed_timeout
         self._absorbed_ids: set[str] = set()  # 被 merge 吸收但尚未 delete 的条目 ID
+        self._enable_eviction = enable_eviction
         self._write_lock = asyncio.Lock()     # 保护所有修改操作的并发锁
 
     async def connect(self) -> bool:
@@ -114,10 +116,9 @@ class LongTermMemory:
             self._entries.append(entry)
             loaded += 1
 
-        # 按时间排序后驱逐超出上限的旧条目
+        # 启动时驱逐超出上限的条目
         if loaded:
-            self._entries.sort(key=lambda e: e.timestamp)
-            self._evict_old_entries()
+            await self._evict_overflow()
 
         return loaded
 
@@ -256,43 +257,40 @@ class LongTermMemory:
                 self._dirty_ids.add(entry.id)
 
             self._entries.append(entry)
-            # self._evict_old_entries()  # TODO: 开发阶段暂不禁用驱逐，避免丢失测试记忆
+            if self._enable_eviction:
+                await self._evict_overflow()
 
-    def _evict_old_entries(self) -> int:
-        """驱逐过期和超过上限的条目。返回驱逐数量。
+    async def _evict_overflow(self) -> int:
+        """数量上限驱逐：超过 max_entries 时保留最新的 N 条。返回驱逐数量。
 
-        在每次 insert() 后调用，保持内存列表健康。
+        在每次 insert() 后调用，保持内存列表 + Milvus 健康。
         """
-        now = _time.time()
-        cutoff = now - (self._max_age_days * 86400)
         removed = 0
-        evicted_ids: set[str] = set()
+        if len(self._entries) <= self._max_entries:
+            return removed
 
-        # 移除过期条目
-        new_entries = []
-        for e in self._entries:
-            if e.timestamp >= cutoff:
-                new_entries.append(e)
-            else:
-                evicted_ids.add(e.id)
-                removed += 1
-        self._entries = new_entries
+        # 按时间戳倒序，保留最新的 max_entries 条
+        self._entries.sort(key=lambda e: e.timestamp, reverse=True)
+        overflow = len(self._entries) - self._max_entries
+        evicted = self._entries[-overflow:]
+        evicted_ids = {e.id for e in evicted}
+        evicted_pks = [e._milvus_pk for e in evicted if e._milvus_pk is not None]
+        self._entries = self._entries[:self._max_entries]
+        removed = overflow
 
-        # 移除超过上限的条目（保留最新的）
-        if len(self._entries) > self._max_entries:
-            self._entries.sort(key=lambda e: e.timestamp, reverse=True)
-            overflow = len(self._entries) - self._max_entries
-            for e in self._entries[-overflow:]:
-                evicted_ids.add(e.id)
-            self._entries = self._entries[:self._max_entries]
-            removed += overflow
+        # 同步清理 Milvus
+        if self._repo is not None and evicted_pks:
+            try:
+                await self._repo.delete(evicted_pks)
+            except Exception:
+                logger.debug("Milvus delete failed for evicted entries", exc_info=True)
 
         # 同步清理 dirty_ids
         if evicted_ids:
             self._dirty_ids -= evicted_ids
 
         if removed:
-            logger.info("Long-term memory: 驱逐 %d 条过期/超限条目 (剩余 %d)",
+            logger.info("Long-term memory: 驱逐 %d 条超限条目 (剩余 %d)",
                        removed, len(self._entries))
         return removed
 

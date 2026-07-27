@@ -125,6 +125,7 @@ class Agent(AgentLifecycle, AgentServer):
             max_entries=config.memory.ltm_max_entries,
             max_age_days=config.memory.ltm_max_age_days,
             embed_timeout=config.memory.ltm_embed_timeout,
+            enable_eviction=config.memory.ltm_enable_eviction,
             repo=self._memory_repo,
         )
 
