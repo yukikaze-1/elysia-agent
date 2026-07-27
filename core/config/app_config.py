@@ -31,6 +31,7 @@ class MemoryConfig:
 class ServerConfig:
     host: str = ConfigField(default="0.0.0.0")
     port: int = ConfigField(default=8765, constraints=[Range(1, 65535)])
+    auth_token: str = ConfigField(default="", env="SERVER_AUTH_TOKEN")
     image_max_mb: int = ConfigField(default=10)
     image_allowed_types: list[str] = ConfigField(default_factory=lambda: ["image/png", "image/jpeg", "image/gif", "image/webp"])
 

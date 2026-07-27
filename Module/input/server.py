@@ -29,6 +29,7 @@ def create_app(
     stt_emotion_state: dict | None = None,
     wake_word_enabled: bool = False,
     task_system=None,  # TaskSystem | None
+    auth_token: str = "",
 ) -> web.Application:
     """Create an aiohttp Application with WebSocket handler and optional static files.
 
@@ -39,6 +40,8 @@ def create_app(
         stt_emotion_state: mutable dict with 'emotion' and 'events' keys,
             updated by the STT wrapper after each transcription.
         task_system: TaskSystem instance for debug routes (optional)
+        auth_token: if non-empty, /shutdown, /restart, /tools/reload require
+            Authorization: Bearer <auth_token> header.
     """
     app = web.Application()
 
@@ -47,13 +50,21 @@ def create_app(
     if task_system is not None:
         app["task_system"] = task_system
 
+    def _check_auth(request: web.Request) -> bool:
+        """Return True if the request is authorized for sensitive endpoints."""
+        if not auth_token:
+            return True
+        auth_header = request.headers.get("Authorization", "")
+        expected = f"Bearer {auth_token}"
+        return auth_header == expected
+
     async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         return await handle_ws(request, agent, stt_transcribe, stt_emotion_state, wake_word_enabled)
 
     app.router.add_get("/ws", ws_handler)
 
     if serve_static and _STATIC_DIR.is_dir():
-        app.router.add_static("/static/", _STATIC_DIR, show_index=True)
+        app.router.add_static("/static/", _STATIC_DIR, show_index=False)
 
     if _LIVE2D_DIR.is_dir():
         app.router.add_static("/live2d/", _LIVE2D_DIR, show_index=False)
@@ -94,6 +105,8 @@ def create_app(
 
     # Shutdown endpoint — triggers graceful agent stop
     async def shutdown_handler(request: web.Request) -> web.Response:
+        if not _check_auth(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
         import logging
         _log = logging.getLogger(__name__)
         _log.info("Shutdown requested via HTTP")
@@ -104,6 +117,8 @@ def create_app(
 
     # Restart endpoint — triggers graceful restart with config reload
     async def restart_handler(request: web.Request) -> web.Response:
+        if not _check_auth(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
         import logging
         _log = logging.getLogger(__name__)
         _log.info("Restart requested via HTTP")
@@ -113,6 +128,8 @@ def create_app(
 
     # Tools endpoint — list loaded plugins
     async def tools_handler(request: web.Request) -> web.Response:
+        if not _check_auth(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
         agent = request.app["agent"]
         return web.json_response({
             "plugins": agent._tool_adapter._manager.plugin_list,
@@ -121,6 +138,8 @@ def create_app(
 
     # Tool reload endpoint — hot-reload a single plugin
     async def tool_reload_handler(request: web.Request) -> web.Response:
+        if not _check_auth(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
         agent = request.app["agent"]
         try:
             body = await request.json()

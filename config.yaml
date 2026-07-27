@@ -21,6 +21,9 @@ memory:
 server:
   host: 0.0.0.0
   port: 8765
+  # auth_token: 通过环境变量 SERVER_AUTH_TOKEN 设置。
+  #   设置后，/shutdown /restart /tools /tools/reload 需要
+  #   Authorization: Bearer <token> 请求头。
   image_max_mb: 10                     # 图片上传上限 (MB)
   image_allowed_types:
     - image/png
