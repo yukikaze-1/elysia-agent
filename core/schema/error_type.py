@@ -15,6 +15,7 @@ class ErrorType(str, Enum):
     CANCELLED = "cancelled"                  # 被打断 → 不重试
     TOOL_ERROR = "tool_error"                # 工具内部异常 → 不重试
     UNKNOWN_TOOL = "unknown_tool"            # 工具未注册 → 不重试
+    GATE_REJECTED = "gate_rejected"          # 调度前被 gate 拦截 → 不可重试
 
     @property
     def is_retryable(self) -> bool:
