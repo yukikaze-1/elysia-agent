@@ -15,7 +15,7 @@ import datetime
 import logging
 import time
 from dataclasses import asdict
-from typing import Callable, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 from ..utils import new_message_id
 
@@ -116,11 +116,12 @@ class CognitiveLoop(CognitiveTools):
         self._req_counter: int = 0
         self._character_engine = character_engine
         self._consolidator = consolidator
-        self._memory_reflector = None
+        self._tool_adapter: Any = None     # 由 configure() 注入
+        self._memory_reflector: Any = None  # 由 configure() 注入
         self._tts = tts  # 保留供 agent.py stop() 读取
         self._token_tracker = token_tracker
         self._prompt_recorder = prompt_recorder
-        self._response_recorder = None  # 由 configure() 注入
+        self._response_recorder: Any = None  # 由 configure() 注入
         self._sentence_buf: SentenceBuffer | None = None
         self._block_filter: BlockFilter | None = None
         self._ttft_start: float = 0.0
@@ -135,10 +136,10 @@ class CognitiveLoop(CognitiveTools):
         )
         self._executing_tools: list[str] = []  # 当前正在执行中的工具名 (供 debug 面板)
         self._timing_history: list[dict] = []  # 最近 100 轮请求的计时数据 (供 debug 面板)
-        self._task_system = None            # TaskSystem | None（agent.py 在 start() 中注入）
-        self._delegation_preparer = None    # DelegationPreparer | None（agent.py 在 start() 中注入）
+        self._task_system: Any = None          # 由 configure() 注入
+        self._delegation_preparer: Any = None  # 由 configure() 注入
         self._on_background_task: Callable | None = None  # Agent 注入的回调
-        self._user_profile = None           # UserProfile | None
+        self._user_profile: Any = None         # 由 configure() 注入
 
     # ---- Public API ----
 
