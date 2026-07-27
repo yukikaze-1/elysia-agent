@@ -148,15 +148,15 @@ character/
 F1 ConflictRules    → Priority rules + safety borders
 F2 OutputFormat     → inner_voice protocol + task priority
 F3 TTSMarkup        → TTS synthesis markers + usage limits
-C5 Sensory          → Current environment context
+C2 Relationship     → Relationship view (4-stage + boundaries)
+C7 Proactive        → When to speak first + cooldown mechanism
+C6 SpeakingStyle    → Speaking style (5-mode switching + praise/flirt/address)
+C1 Personality      → L1 Core + L2 Self (data-driven)
+C9 SelfPerception   → Self-awareness (AwarenessTrigger conditional)
+C8 OwnLife          → Own activities (pass-through, may be empty)
 C3 Emotion          → Mood + 8 emotional response rules
 C4 Memory           → Long-term memory recall + reliability rules
-C1 Personality      → L1 Core + L2 Self (data-driven)
-C2 Relationship     → Relationship view (4-stage + boundaries)
-C6 SpeakingStyle    → Speaking style (5-mode switching + praise/flirt/address)
-C7 Proactive        → When to speak first + cooldown mechanism
-C8 OwnLife          → Own activities (pass-through, may be empty)
-C9 SelfPerception   → Self-awareness (AwarenessTrigger conditional)
+C5 Sensory          → Current environment context
 ```
 
 Templates at `Module/system_prompt/templates/` — format convention: XML wrapper + Markdown body. See `Module/system_prompt/templates/README.md` for full format docs.

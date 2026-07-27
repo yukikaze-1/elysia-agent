@@ -456,10 +456,10 @@ build_messages(user_message, stt_emotion, stt_events)
   │     ├── SystemPromptManager.set_context(user_message, user_name, ...)
   │     ├── SystemPromptManager.render()
   │     │     ├── 按 _RENDER_ORDER 序列 async render 每个 section
-  │     │     │     F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup
-  │     │     │     → C5 Sensory → C3 Emotion → C4 Memory
-  │     │     │     → C1 Personality → C2 Relationship → C6 SpeakingStyle
-  │     │     │     → C7 Proactive → C8 OwnLife → C9 SelfPerception
+	  │     │     │     F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup
+	  │     │     │     → C2 Relationship → C7 Proactive → C6 SpeakingStyle
+	  │     │     │     → C1 Personality → C9 SelfPerception → C8 OwnLife
+	  │     │     │     → C3 Emotion → C4 Memory → C5 Sensory
   │     │     ├── 每个 section 自管数据源 + Jinja2 渲染
   │     │     └── "\n\n" 拼接 → 返回 system prompt
   │     └── MessageBuilder.build_messages(system, history, user_content)

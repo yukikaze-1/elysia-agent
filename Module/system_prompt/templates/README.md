@@ -123,15 +123,15 @@ XML 标签内部的文本使用 Markdown 或纯文本，按内容需要选择：
 F1 ConflictRules    → 先建立规则优先级 + 安全边界
 F2 OutputFormat     → 定义输出格式 + 任务优先规则
 F3 TTSMarkup        → TTS 合成标记 + 使用限制
-C5 Sensory          → 感官输入（当前环境上下文）
+C2 Relationship     → 关系（四阶段发展 + 边界处理）
+C7 Proactive        → 主动性（何时主动 + 冷却机制）
+C6 SpeakingStyle    → 说话风格（五模式切换 + 夸奖/调情/称呼规则）
+C1 Personality      → 人格（L1 Core + L2 Self，数据驱动）
+C9 SelfPerception   → 自我感知（AwarenessTrigger 条件激活）
+C8 OwnLife          → 自己的生活（可能为空）
 C3 Emotion          → 情绪（8 种情绪响应规则）
 C4 Memory           → 记忆（长期记忆召回 + 可靠性规则）
-C1 Personality      → 人格（L1 Core + L2 Self，数据驱动）
-C2 Relationship     → 关系（四阶段发展 + 边界处理）
-C6 SpeakingStyle    → 说话风格（五模式切换 + 夸奖/调情/称呼规则）
-C7 Proactive        → 主动性（何时主动 + 冷却机制）
-C8 OwnLife          → 自己的生活（可能为空）
-C9 SelfPerception   → 自我感知（AwarenessTrigger 条件激活）
+C5 Sensory          → 感官输入（当前环境上下文）
 ```
 
 ## 添加新模板
