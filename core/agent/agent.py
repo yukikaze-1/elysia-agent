@@ -6,6 +6,38 @@ Usage:
     await agent.process_message("你好")       # single turn
     await agent.run_repl()                   # interactive REPL
     await agent.stop()
+
+Component dependency graph (top-down):
+    AppConfig ──┬── CharacterConfig ──┐
+                ├── LLMAdapter ──────┼── CharacterEngine ──┐
+                ├── MemoryConfig ────┤                     │
+                └── ServerConfig     │                     │
+                                     │                     │
+    Repos ───────┬── SessionMemory   │                     │
+                 ├── LongTermMemory  │                     │
+                 └── VersionRepo ────┘                     │
+                                                           │
+    EventBus ──────────────────┐                           │
+    AgentFSM ──────────────────┤                           │
+    ToolAdapter ───────────────┤                           │
+    PromptAssembler ───────────┤                           │
+    MemoryConsolidator ────────┤                           │
+    MemoryReflector ───────────┤                           │
+                               ├── CognitiveLoop ──────────┤
+    TokenTracker ──────────────┤                           │
+    PromptRecorder ────────────┤                           │
+    ResponseRecorder ──────────┤                           │
+    TTSBackend ────────────────┤                           │
+    TaskSystem ────────────────┤                           │
+    DelegationPreparer ────────┤                           │
+                               │                           │
+                               └── IdleMonitor ────────────┘
+                               │
+                               └── TaskScheduler
+
+    Two-phase init: __init__ creates 22 components; start() creates 8 more
+    (token_tracker, tts, task_system, etc.) once session_id is available.
+    Cross-wiring via CognitiveLoop.configure() in start().
 """
 
 from __future__ import annotations
@@ -169,7 +201,7 @@ class Agent(AgentLifecycle, AgentServer):
             tts=self._tts,
             token_tracker=self._token_tracker,
         )
-        self._cognitive.set_memory_reflector(self._memory_reflector)
+        self._cognitive.configure(memory_reflector=self._memory_reflector)
 
         self._idle = IdleMonitor(
             character=self._character,
@@ -180,7 +212,7 @@ class Agent(AgentLifecycle, AgentServer):
         # Worker Pool — 执行 AI 规划的工具子任务 + 后台任务
         self._scheduler = TaskScheduler(
             tool_executor=self._tool_adapter,
-            tool_ctx=None,  # 在 start() 中通过 set_tool_adapter() 更新
+            tool_ctx=None,  # 在 start() 中通过 configure() 更新
             num_workers=5,
             checkpoint_path="data/scheduler_checkpoint.json",
         )

@@ -56,6 +56,25 @@ class AgentLifecycle:
     所有属性由 Agent.__init__ 初始化，本 mixin 不含 __init__。
     """
 
+    # shutdown 步骤按依赖顺序排列（stop() 中正序执行）
+    _SHUTDOWN_STEPS: list[tuple[str, str]] = [
+        ("flush_consolidator",   "_flush_consolidator"),
+        ("flush_reflector",      "_flush_reflector"),
+        ("flush_compression",    "_flush_compression"),
+        ("stop_event_task",      "_stop_event_task"),
+        ("stop_cognitive_tts",   "_stop_cognitive_and_tts"),
+        ("stop_db_health",       "_stop_db_health"),
+        ("stop_mailbox",         "_stop_mailbox"),
+        ("stop_task_system",     "_stop_task_system"),
+        ("stop_scheduler",       "_stop_scheduler"),
+        ("stop_tool_adapter",    "_stop_tool_adapter"),
+        ("stop_idle",            "_stop_idle"),
+        ("stop_embedding",       "_stop_embedding_if_running"),
+        ("stop_persistence",     "_stop_persistence"),
+        ("stop_llm_tts",         "_stop_llm_and_tts"),
+        ("stop_output",          "_stop_output"),
+    ]
+
     if TYPE_CHECKING:
         # 由 Agent.__init__ 初始化的属性，供 Pylance/Pyright 静态检查
         _state: RunState
@@ -197,16 +216,19 @@ class AgentLifecycle:
             output_manager=self._output,
             repo=self._token_repo if mongo_ok else None,
         )
-        self._cognitive.set_token_tracker(self._token_tracker)
         if mongo_ok:
             await self._token_tracker.flush_pending()
 
         from core.debug.prompt_recorder import PromptRecorder
         self._prompt_recorder = PromptRecorder(max_records=20)
-        self._cognitive.set_prompt_recorder(self._prompt_recorder)
         from core.debug.response_recorder import ResponseRecorder
         self._response_recorder = ResponseRecorder(max_records=20)
-        self._cognitive.set_response_recorder(self._response_recorder)
+
+        self._cognitive.configure(
+            token_tracker=self._token_tracker,
+            prompt_recorder=self._prompt_recorder,
+            response_recorder=self._response_recorder,
+        )
 
     async def _start_tool_context(self) -> None:
         """启动 ToolAdapter，注入运行时服务。"""
@@ -220,7 +242,7 @@ class AgentLifecycle:
             "_fsm_state": str(self._fsm.state),
             "_session_msg_count": len(self._session.messages),
         })
-        self._cognitive.set_tool_adapter(self._tool_adapter)
+        self._cognitive.configure(tool_adapter=self._tool_adapter)
         self._scheduler.set_tool_adapter(self._tool_adapter)
 
     async def _start_worker_pool(self) -> None:
@@ -247,7 +269,7 @@ class AgentLifecycle:
                 import asyncio as _asyncio
                 result = await _asyncio.wait_for(self._tts.test(), timeout=1.0)
                 if result.get("ok"):
-                    self._cognitive.set_tts(self._tts)
+                    self._cognitive.configure(tts=self._tts)
                     logger.info("TTS backend connected")
                 else:
                     self._tts = None
@@ -290,73 +312,33 @@ class AgentLifecycle:
         self._delegation_preparer = DelegationPreparer()
 
         # 注入到 CognitiveLoop
-        self._cognitive.set_task_system(self._task_system)
-        self._cognitive.set_delegation_preparer(self._delegation_preparer)
         from Module.task_system.schema import UserProfile
-        self._cognitive.set_user_profile(
-            UserProfile(display_name=self._user_name)
+        self._cognitive.configure(
+            task_system=self._task_system,
+            delegation_preparer=self._delegation_preparer,
+            user_profile=UserProfile(display_name=self._user_name),
+            on_background_task=self._register_background_task,
         )
-        self._cognitive.set_on_background_task(self._register_background_task)
 
     def _start_mailbox_polling(self) -> None:
         """启动后台任务 mailbox 轮询（独立 asyncio.Task）。"""
         self._mailbox_task = asyncio.create_task(self._poll_mailboxes())
 
     async def stop(self) -> None:
-        """Stop the agent, save session, clean up resources."""
+        """Stop the agent — 按 _SHUTDOWN_STEPS 顺序执行清理。"""
         logger.info("Agent stopping...")
         self._state = RunState.STOPPED
-
-        # 清空排队 — shutdown 期间不处理新消息
         self._pending_messages.clear()
 
-        # 1. Flush memory consolidation buffer
-        await self._flush_consolidator()
-
-        # 1.5. Flush character reflection buffer
-        await self._flush_reflector()
-
-        # 1.55. Flush personality compression (L3→L2)
-        await self._flush_compression()
-
-        # 1.56. 角色状态持久化保存
-        # CharacterState persisted via session.save() — engine.save() removed
-
-        # 2. 先停事件循环 — 防止它在 shutdown 期间继续 post 新任务
-        await self._stop_event_task()
-
-        # 3. Cancel cognitive + TTS tasks（belt-and-suspenders）
-        self._stop_cognitive_and_tts()
-
-        # 3.5. 停止数据库健康检查
-        await self._stop_db_health()
-
-        # 4. 停止 mailbox 轮询
-        await self._stop_mailbox()
-
-        # 5. 停止 TaskSystem
-        await self._stop_task_system()
-
-        # 6. 停止 Scheduler Worker Pool
-        await self._stop_scheduler()
-
-        # 7. 关闭 ToolAdapter
-        await self._stop_tool_adapter()
-
-        # 8. 停止 IdleMonitor
-        await self._stop_idle()
-
-        # 9. 等待 embedding 任务完成（cancel + await）
-        await self._stop_embedding_if_running()
-
-        # 10. 持久化关闭（save → close → shutdown embedding）
-        await self._stop_persistence()
-
-        # 11. 关闭 LLM / TTS 客户端
-        await self._stop_llm_and_tts()
-
-        # 12. 关闭输出通道
-        await self._stop_output()
+        for name, method_name in self._SHUTDOWN_STEPS:
+            logger.debug("Shutdown step: %s", name)
+            method = getattr(self, method_name)
+            try:
+                result = method()
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception:
+                logger.debug("Shutdown step %s failed", name, exc_info=True)
 
         logger.info("Agent stopped")
 

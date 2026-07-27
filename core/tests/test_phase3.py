@@ -1772,9 +1772,7 @@ class TestHandleSubmitTask:
             context=delegation_context,
         ))
 
-        loop.set_task_system(ts)
-        loop.set_delegation_preparer(dp)
-        loop.set_user_profile(None)
+        loop.configure(task_system=ts, delegation_preparer=dp, user_profile=None)
         return loop
 
     @pytest.mark.asyncio
@@ -1820,7 +1818,7 @@ class TestHandleSubmitTask:
     @pytest.mark.asyncio
     async def test_task_system_none_returns_fail(self, loop_with_ts):
         """TaskSystem 未注入 → fail。"""
-        loop_with_ts.set_task_system(None)
+        loop_with_ts.configure(task_system=None)
         tc = ToolCall(
             id=ToolCallId("call_1"),
             function=ToolCallFunction(name="submit_task", arguments='{"intent": "查天气"}'),

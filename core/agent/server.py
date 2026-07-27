@@ -71,7 +71,7 @@ class AgentServer:
                 except Exception:
                     pass
             self._tts = TTSFactory.create(model_id)
-            self._cognitive.set_tts(self._tts)  # 同步 CognitiveLoop 中的引用
+            self._cognitive.configure(tts=self._tts)  # 同步 CognitiveLoop 中的引用
             logger.info("TTS switched to: %s", model_id)
             return {"ok": True}
         except Exception as e:

@@ -120,7 +120,7 @@ class CognitiveLoop(CognitiveTools):
         self._tts = tts  # 保留供 agent.py stop() 读取
         self._token_tracker = token_tracker
         self._prompt_recorder = prompt_recorder
-        self._response_recorder = None  # 由 set_response_recorder() 注入
+        self._response_recorder = None  # 由 configure() 注入
         self._sentence_buf: SentenceBuffer | None = None
         self._block_filter: BlockFilter | None = None
         self._ttft_start: float = 0.0
@@ -151,46 +151,16 @@ class CognitiveLoop(CognitiveTools):
         self._current_task = None
         return False
 
-    def set_tool_adapter(self, adapter) -> None:
-        """设置工具适配器 — 提供 ToolExecutor 实现 + ToolContext。"""
-        self._tool_adapter = adapter
+    def configure(self, **kwargs) -> None:
+        """一次性注入所有延迟依赖（替代 10 个 setter 方法）。
 
-    def set_tts(self, tts: TTSBackend | None) -> None:
-        """设置/热切换 TTS 后端。"""
-        self._tts = tts
-        self._tts_mgr.set_backend(tts)
-
-    def set_token_tracker(self, tracker) -> None:
-        """设置 token 追踪器（agent.py 在 start() 中延迟注入）。"""
-        self._token_tracker = tracker
-
-    def set_prompt_recorder(self, recorder) -> None:
-        """设置 prompt 记录器（agent.py 在 start() 中延迟注入）。"""
-        self._prompt_recorder = recorder
-
-    def set_response_recorder(self, recorder) -> None:
-        """设置 response 记录器（agent.py 在 start() 中延迟注入）。"""
-        self._response_recorder = recorder
-
-    def set_task_system(self, ts) -> None:
-        """设置 TaskSystem 引用（agent.py 在 start() 中注入）。"""
-        self._task_system = ts
-
-    def set_delegation_preparer(self, dp) -> None:
-        """设置 DelegationPreparer 引用（agent.py 在 start() 中注入）。"""
-        self._delegation_preparer = dp
-
-    def set_on_background_task(self, callback: Callable | None) -> None:
-        """设置后台任务注册回调（agent.py 注入）。"""
-        self._on_background_task = callback
-
-    def set_user_profile(self, profile) -> None:
-        """设置用户画像引用。"""
-        self._user_profile = profile
-
-    def set_memory_reflector(self, reflector) -> None:
-        """设置 MemoryReflector 引用（agent.py 在 __init__ 中注入）。"""
-        self._memory_reflector = reflector
+        由 agent.py 在 __init__ / start() 中调用。有副作用的属性（如 tts）
+        在此方法内联处理。
+        """
+        for name, value in kwargs.items():
+            setattr(self, f"_{name}", value)
+            if name == "tts":
+                self._tts_mgr.set_backend(value)
 
     # ---- Main entry ----
 
