@@ -34,11 +34,14 @@ class EmotionDetector:
 
     def analyze_user(self, text: str) -> None
     def analyze_assistant(self, text: str) -> None
-    def analyze_user_stt(self, events: list[str]) -> None
+    def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None) -> None
     async def push_idle_expression(self) -> None
 ```
 
 `MOOD_KEYWORDS` 常量、`_detect_mood()`、`_push_expression()`、`_push_idle()` 均作为此类的私有实现。
+
+`analyze_user_stt` 签名保留 `emotion_tag` 参数（当前实现未使用）——去掉它会
+迫使 `loop.py:626` 修改调用方式，破坏"外部零改动"约束。
 
 ### awareness.py — `AwarenessJudge`
 
@@ -88,6 +91,10 @@ class CompressionManager:
 - 公开 API 方法委托给子组件
 
 `last_awareness_time` 属性 engine 仍保留（供 `lifecycle.py` 恢复用），同步到 `AwarenessJudge`。
+
+`_last_awareness_time` 实现为 engine 上的 property，getter/setter 代理到
+`self._awareness._last_awareness_time`。这是为了保持向后兼容 — 现有代码
+（含 `lifecycle.py:177-178` 和 `test_engine.py` 中 6 处直接赋值）无需修改。
 
 ### 外部调用方：零改动
 
