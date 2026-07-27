@@ -14,7 +14,6 @@ L3→L2 压缩在其中触发：state_history 新增 >= 5 条 OR 距上次 > 7 �
 
 import asyncio
 import logging
-import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,6 +24,7 @@ from Module.system_prompt import PromptManager
 from Module.output import OutputManager
 from core.schema.compression import CompressionTrigger
 from core.schema._utils import now_iso
+from .emotion import EmotionDetector
 from ._utils import _extract_tag, _schedule
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
@@ -45,51 +45,6 @@ AWARENESS_MAX_SHOWS = 3            # 单条文本最大展示次数
 COMPRESSION_COUNT_THRESHOLD = 5    # state_history 新增 N 条触发压缩
 COMPRESSION_TIME_THRESHOLD = 604800  # 距上次压缩 > 7 天也触发
 COMPRESSION_MIN_ENTRIES = 3        # 首次压缩最少需要 state_history 条目数
-
-# ---- 情绪关键词（从 emotion_engine.py 迁移）----
-
-MOOD_KEYWORDS: dict[str, tuple[list[str], list[str]]] = {
-    "happy": (
-        ["哈哈", "开心", "太好了", "喜欢", "棒", "nice", "嘿嘿", "耶", "赞", "爱你"],
-        ["你喜欢", "我也开心", "太好了", "哈哈", "嘿嘿", "开心"],
-    ),
-    "excited": (
-        ["!", "！", "天哪", "wow", "太棒", "厉害", "牛逼", "惊", "竟然"],
-        ["!", "！", "兴奋", "激动", "期待"],
-    ),
-    "sad": (
-        ["难过", "伤心", "哭", "失败", "失去", "遗憾", "倒霉", "唉", "烦", "累"],
-        ["别难过", "抱抱", "辛苦了", "会好起来的"],
-    ),
-    "curious": (
-        ["为什么", "怎么", "什么原因", "讲讲", "说说", "好奇", "告诉我"],
-        ["好问题", "有趣", "想知道"],
-    ),
-    "neutral": (
-        [],
-        [],
-    ),
-    "warm": (
-        ["谢谢", "感谢", "感恩", "感激", "温暖", "贴心", "真好", "感动"],
-        ["不客气", "我的荣幸", "应该的"],
-    ),
-    "concerned": (
-        ["担心", "焦虑", "不安", "紧张", "害怕", "怎么办", "压力"],
-        ["别担心", "会好的", "我理解你的担心"],
-    ),
-    "calming": (
-        ["气死", "生气", "愤怒", "怒火", "离谱", "太过分", "受不了", "岂有此理"],
-        ["冷静", "消消气", "别急", "慢慢说"],
-    ),
-    "reassuring": (
-        ["怕", "恐惧", "恐怖", "吓人", "不敢", "担心害怕"],
-        ["别怕", "有我在", "我会保护你"],
-    ),
-    "understanding": (
-        ["恶心", "想吐", "厌恶", "讨厌", "反感", "受不了这个"],
-        ["我懂", "确实不舒服", "需要适应"],
-    ),
-}
 
 @dataclass
 class C1Data:
@@ -117,6 +72,9 @@ class CharacterEngine:
     EmotionEngine（keyword/STT 情绪检测 + expression 推送）。
     """
 
+    # 向后兼容：_schedule 从 _utils 导入，保留为类属性以便测试访问
+    _schedule = _schedule
+
     def __init__(
         self,
         *,
@@ -137,8 +95,6 @@ class CharacterEngine:
         self._l1_core = base_personality
         self._character = character_config
         self._output = output
-        self._idle_expressions = character_config.emotion.idle_expressions
-
         # 冷却计时: 记录上次 C9 触发的时间戳
         self._last_awareness_time: float = state.last_awareness_time or 0.0
 
@@ -163,6 +119,13 @@ class CharacterEngine:
             character_name=character_name,
             user_name=user_name,
             prompt_dir=prompt_dir,
+        )
+
+        # 子组件: EmotionDetector
+        self._emotion = EmotionDetector(
+            state=state,
+            output=output,
+            idle_expressions=character_config.emotion.idle_expressions,
         )
 
     # ---- 数据提供（给 section 渲染用）----
@@ -601,72 +564,37 @@ class CharacterEngine:
             await self._reflector.flush()
 
     # ================================================================
-    # 情绪引擎方法（从 EmotionEngine 迁移）
+    # 情绪引擎方法（委托给 EmotionDetector）
     # ================================================================
 
     def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None) -> None:
-        """处理 STT 音频事件，推送对应表情。mood 决策交给 LLM（通过 C5 Sensory）。"""
-        if events:
-            for evt in events:
-                if evt == "Laughter":
-                    _schedule(self._output.expression("laugh", intensity=0.7))
-                elif evt == "Cry":
-                    _schedule(self._output.expression("cry", intensity=0.8))
-                elif evt == "Applause":
-                    _schedule(self._output.expression("surprised", intensity=0.5))
+        self._emotion.analyze_user_stt(emotion_tag, events)
 
     def analyze_user(self, text: str) -> None:
-        """Analyze user message and update mood + push expressions (keyword fallback)."""
-        detected = self._detect_mood(text)
-        if detected == "neutral":
-            return
+        self._emotion.analyze_user(text)
 
-        current = self.state.mood
-        intensity = self.state.mood_intensity
-
-        if detected != current:
-            self.state.mood = detected
-            self.state.mood_intensity = min(1.0, intensity + 0.1)
-            self._push_expression(detected, intensity)
-            logger.debug("心情 (关键词): %s → %s", current, detected)
-        else:
-            self.state.mood_intensity = min(1.0, intensity + 0.05)
-
-    def analyze_assistant(self, _text: str) -> None:
-        """每轮回复后衰减 mood intensity。mood 文本由 LLM 下轮 <mood> 更新。"""
-        intensity = self.state.mood_intensity
-        new_intensity = max(0.1, intensity - 0.15)
-        self.state.mood_intensity = new_intensity
-        if new_intensity < 0.2:
-            self._push_idle()
+    def analyze_assistant(self, text: str) -> None:
+        self._emotion.analyze_assistant(text)
 
     async def push_idle_expression(self) -> None:
-        """Push a random idle expression (called periodically or on IDLE entry)."""
-        self._push_idle()
+        await self._emotion.push_idle_expression()
 
-    # ---- 情绪 internal ----
+    # ---- 内部委托方法（向后兼容：测试直接访问这些私有 API）----
 
     def _detect_mood(self, text: str) -> str:
-        """Simple keyword-based mood detection. Returns the strongest match."""
-        scores: dict[str, int] = {}
-        for mood_key, (user_kw, _) in MOOD_KEYWORDS.items():
-            if mood_key == "neutral":
-                continue
-            score = sum(1 for kw in user_kw if kw in text)
-            if score > 0:
-                scores[mood_key] = score
-        if not scores:
-            return "neutral"
-        best_key = max(scores, key=lambda k: scores[k])
-        return best_key
-
-    def _push_expression(self, mood_text: str, intensity: float) -> None:
-        """Push expression to output channels. mood_text is plain string. 保留关键词回退兼容。"""
-        _schedule(self._output.expression(mood_text, intensity=intensity))
+        return self._emotion._detect_mood(text)
 
     def _push_idle(self) -> None:
-        """Push one of the idle expressions."""
-        if self._idle_expressions:
-            expr = random.choice(self._idle_expressions)
-            _schedule(self._output.expression(expr, intensity=0.3))
+        self._emotion._push_idle()
+
+    def _push_expression(self, mood_text: str, intensity: float) -> None:
+        self._emotion._push_expression(mood_text, intensity)
+
+    @property
+    def _idle_expressions(self):
+        return self._emotion._idle_expressions
+
+    @_idle_expressions.setter
+    def _idle_expressions(self, value):
+        self._emotion._idle_expressions = value
 
