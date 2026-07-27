@@ -52,6 +52,9 @@ import ApprovalDialog from '@/components/ui/ApprovalDialog.vue'
 #chat-wrap {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 #input-bar {
