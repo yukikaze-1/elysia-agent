@@ -126,7 +126,8 @@ from .scheduler import TaskScheduler
 
 - 所有类和函数的行为完全不变
 - `Module/tool/`、`Module/llm/`、`Module/tts/`、`Module/output/` 等后端模块不受影响
-- `core/tools/`、`core/schema/`、`core/storage/`、`core/memory/`、`core/cognitive/`、`core/adapter/` 等子包不受影响
+- `core/tools/`、`core/schema/`、`core/storage/`、`core/memory/`、`core/cognitive/` 等子包不受影响
+- `core/adapter/` 除 `tool_adapter.py:17` 一行 TYPE_CHECKING import 外不受影响
 
 ## 验证
 
