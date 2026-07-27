@@ -408,6 +408,10 @@ class CognitiveLoop(CognitiveTools):
             assistant_entry["tool_calls"] = [tc.model_dump(mode="json") for tc in normalized]
         messages.append(assistant_entry)
 
+        # Gate: 校验 tool_calls 合法性，拦截未知工具名
+        if not self._gate_tool_calls(normalized, messages):
+            return  # gate 已注入 failure messages，跳过 dispatch
+
         # submit_task 工具调用——拦截处理
         if submit_tcs:
             for i, tc in enumerate(submit_tcs):
