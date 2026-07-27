@@ -125,12 +125,14 @@ def test_full_render_all_sections():
     assert "新番" in result           # C8 own_life
     assert "self_perception" in result  # C9 self_perception
     assert "proactive" in result       # C7 proactive
-    # 验证完整 12-section 排序
+    # 验证完整 12-section 排序（静态前缀 → 动态后缀）
     names_in_order = [
+        # 静态前缀
         "conflict_rules", "inner_voice", "output_format", "tts_markup",
-        "sensory_input", "emotion", "memory_bank", "personality",
-        "relationship", "speaking_style", "proactive", "own_life",
-        "self_perception",
+        "relationship", "proactive", "speaking_style", "personality",
+        "self_perception", "own_life",
+        # 动态后缀
+        "emotion", "memory_bank", "sensory_input",
     ]
     last_pos = -1
     for tag in names_in_order:
