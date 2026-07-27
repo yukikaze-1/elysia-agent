@@ -10,17 +10,17 @@ ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引�
 
 ```
 用户消息 → process()
-  → _think_loop()（PRE → THINK → REPLY 三阶段）
-    ├─ PRE:   收集 inner_voice + 同时检测 tool_calls
-    ├─ THINK: 等待 inner_voice 闭合，提取 Mood
-    └─ REPLY: 流式输出 → SentenceBuffer → BlockFilter → TTS
-  → _execute_tools_directly()  （如果有 tool_calls）
-  → _submit_task()            （如果 LLM 调用了 submit_task）
-  → _after_response()
-    ├─ MemoryConsolidator.consolidate()
-    ├─ CharacterReflector tick
-    ├─ MemoryReflector check
-    └─ SessionMemory 持久化
+  → _think_loop()（ReAct 主循环：build → [stream → decide] * 6 rounds）
+    ├─ _build_turn_prompt()     — 构建 messages + tool_defs
+    ├─ _stream_llm_response()   — LLM 流式消费 + StreamProcessor 事件分发
+    ├─ [判定] tool_calls?
+    │   ├─ YES → _execute_tool_round()  — submit_task 拦截 + 工具调度 → 回到 stream
+    │   └─ NO  → _finalize_turn()       — 标签剥离 + 归档 + 结构化块推送
+    └─ _after_response()
+      ├─ MemoryConsolidator.consolidate()
+      ├─ CharacterReflector tick
+      ├─ MemoryReflector check
+      └─ SessionMemory 持久化
 ```
 
 ## 数据流
@@ -84,7 +84,7 @@ THINKING → LLM 返回 tool_calls → EXECUTING → 工具结果注入 → THIN
 ```
 core/cognitive/
 ├── __init__.py    — 重导出 CognitiveLoop
-├── loop.py               — CognitiveLoop(CognitiveTools): process + _think_loop + _dispatch_stream_event
+├── loop.py               — CognitiveLoop(CognitiveTools): process + ReAct 主循环（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
 ├── stream_processor.py   — StreamProcessor: 流式标签检测 + 文本管道（mood/inner_voice/BlockFilter/SentenceBuffer）
 ├── tools.py              — CognitiveTools mixin: _execute_tools_directly + _handle_submit_task
 ├── timing.py      — Timer + TimingClock 延迟统计
