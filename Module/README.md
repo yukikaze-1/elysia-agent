@@ -21,7 +21,6 @@ Module/
 │   ├── vectordb/         # 向量数据库（Milvus）
 │   ├── documentdb/       # 文档数据库（MongoDB）
 │   └── graphdb/          # 图数据库（预留）
-├── input/                # 音频输入 + WebSocket 服务器
 ├── task_system/          # 异步任务编排（Planner/Orchestrator/Executor）
 └── bench/                # 延迟基准测试
 ```
@@ -243,7 +242,7 @@ if buf.is_speech_complete():  # VAD 检测到完整语音段
     wav = buf.to_wav()
 ```
 
-> 📖 完整 API 文档 → [core/input/README.md](input/README.md)
+> 📖 完整 API 文档 → [core/input/README.md](../core/input/README.md)
 
 ### TaskSystem — 异步任务编排
 

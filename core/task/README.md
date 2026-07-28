@@ -19,8 +19,8 @@ core/task/
 
 `Task` dataclass + `TaskType`/`TaskStatus` 枚举：
 
-- `TaskType`: REACT / BACKGROUND
-- `TaskStatus`: PENDING / RUNNING / DONE / FAILED / CANCELLED
+- `TaskType`: TOOL_CALL / BACKGROUND
+- `TaskStatus`: PENDING / DISPATCHED / COMPLETED / FAILED / CANCELLED
 - `asyncio.Future` 双向绑定 — 支持 cancel 传播
 - 支持 retry（2 次，指数退避）和超时（60s）
 - 可序列化 checkpoint（`data/scheduler_checkpoint.json`）

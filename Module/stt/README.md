@@ -54,7 +54,8 @@ class STTBackend(ABC):
 | Provider | 模型示例 | API Key 来源 |
 |----------|---------|-------------|
 | `sensevoice` | `sensevoice/sense-voice` | 不需要 |
-| `openai` | OpenAI-compatible（Whisper API 格式），用于 custom provider | `OPENAI_API_KEY` |
+| `openai` | 占位，未实现（raises `NotImplementedError`） | `OPENAI_API_KEY` |
+| `custom` | OpenAI-compatible Whisper API 格式，用户自定义端点 | 按端点配置 |
 | `deepgram` | 占位，未实现 | `DEEPGRAM_API_KEY` |
 
 可通过 `base_url` 参数覆盖默认 URL：

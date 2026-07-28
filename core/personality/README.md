@@ -9,7 +9,7 @@
 ```
 ┌──────────────────────────────────────────────────────┐
 │ L1: Core（核心底色）                  变化: 从不       │
-│   文件: character/{name}_personality.txt             │
+│   文件: character/{name}/personality.md              │
 │   启动加载，不可修改                                  │
 │   → C1 模板的锚点                                    │
 ├──────────────────────────────────────────────────────┤
@@ -134,6 +134,10 @@ core/personality/
 ├── __init__.py        — 重导出 CharacterEngine, CharacterReflector
 ├── engine.py          — CharacterEngine 类（合并 PersonalityEngine + EmotionEngine）
 ├── reflector.py       — CharacterReflector 类（子组件）
+├── awareness.py       — AwarenessTrigger: C9 觉察判定 + cooldown 管理
+├── compression.py     — CompressionManager: L3→L2 压缩 + C6 联动编辑
+├── emotion.py         — 情绪分析：LLM mood tag 解析 + keyword 回退
+├── _utils.py          — 内部工具函数
 ├── tests/
 │   ├── test_engine.py
 │   └── test_reflector.py
@@ -141,16 +145,17 @@ core/personality/
 
 关联文件:
 character/
-├── elysia.yaml                    — 角色配置（含 base_personality_file）
-└── elysia_personality.txt         — L1 Core 文本
+├── elysia/config.yaml              — 角色配置（含 base_personality_file）
+└── elysia/personality.md           — L1 Core 文本
 
 core/
 ├── prompts/
 │   ├── CharacterReflector.j2           — 性格反思模板
 │   ├── PersonalityCompression.j2       — L3→L2 压缩模板（LLM 编辑模式 + 结构化输出）
+│   ├── AwarenessJudge.j2              — C9 觉察判定模板
 │   └── SpeakingStyleEdit.j2           — C6 编辑模板
-├── agent.py                       — 创建并接线 CharacterEngine
-├── prompt_assembler.py            — 数据注入 section
+├── agent/agent.py                  — 创建并接线 CharacterEngine
+├── adapter/prompt_assembler.py     — 数据注入 section
 ├── schema/character.py            — CharacterState 定义（Pydantic 模型，合并 mood + reflector 字段）
 ├── schema/mood.py                 — STT emoji 工具函数（Mood 已迁为 str）
 ├── schema/compression.py          — CompressionTrigger + VersionEntry 类型

@@ -901,7 +901,7 @@ core/utils/log_setup.py:
 
 ## 11. 测试架构
 
-~1,558 个测试按 4 层 markers 组织（unit / service / integration / slow）。
+~1,800 个测试按 4 层 markers 组织（unit / service / integration / slow）。
 
 完整分层体系、测试文件索引、按模块运行命令 → [docs/testing.md](testing.md)
 
@@ -931,7 +931,6 @@ Agent/
 │   ├── system_prompt/       # System Prompt 引擎 + Section Provider + 12 templates
 │   ├── database/            # Database: Milvus / MongoDB / GraphDB (stub)
 │   ├── tool/                # Tool: ToolPlugin框架 + SafetyPipeline + ToolManager
-│   ├── input/               # Input: AudioBuffer (VAD) + WebSocket server
 │   ├── task_system/         # TaskSystem: 异步任务编排 (Planner/Orchestrator/Executor)
 │   └── bench/               # Bench: 延迟基准
 │
@@ -948,20 +947,23 @@ Agent/
 │   ├── adapter/
 │   │   ├── llm_adapter.py
 │   │   ├── tts_adapter.py
-│   │   └── tool_call_parser.py
+│   │   ├── tool_adapter.py
+│   │   ├── tool_call_parser.py
+│   │   ├── message_builder.py
+│   │   └── prompt_assembler.py
 ├── cognitive/            #   CognitiveLoop 包 (loop + stream_processor + tools + timing)
 │   │   ├── loop.py           #     CognitiveLoop(CognitiveTools): process + _think_loop + _dispatch_stream_event
 │   │   ├── stream_processor.py  #  StreamProcessor: mood/inner_voice 标签检测 + BlockFilter + SentenceBuffer
 │   │   ├── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   │   └── timing.py         #     Timer + TimingClock 延迟统计
-│   ├── event_bus.py         #   优先级事件总线
-│   ├── agent_fsm.py         #   六状态机
+│   ├── monitoring/            #   监控子包
+│   │   ├── event_bus.py       #     优先级事件总线
+│   │   ├── idle_monitor.py    #     空闲监控 + 主动触发
+│   │   └── token_tracker.py   #     Token 消耗统计
 │   ├── text/                #   文本流处理包
 │   │   ├── block_filter.py  #     流式块过滤 + 结构化块解析
 │   │   ├── sentence_buffer.py #   分句缓冲
 │   │   └── text_utils.py    #     文本提取 + MessageObj
-│   ├── prompt_assembler.py  #   提示词组装 + 性格引擎数据注入
-│   ├── idle_monitor.py      #   空闲监控
 │   ├── task/                 #   任务子系统包
 │   │   ├── __init__.py       #     重导出 Task + TaskScheduler
 │   │   ├── task.py           #     任务数据模型
@@ -972,14 +974,25 @@ Agent/
 │   │   ├── info.py           #     /debug 数据聚合
 │   │   ├── prompt_recorder.py #   Prompt 记录器
 │   │   └── response_recorder.py # Response 记录器
+│   ├── input/                #   Input: WebSocket + HTTP 服务器
+│   │   ├── server.py         #     aiohttp 应用入口
+│   │   ├── ws_handler.py     #     WebSocket 消息路由
+│   │   ├── api_routes.py     #     REST API 路由
+│   │   ├── debug_routes.py   #     Debug API 路由
+│   │   ├── audio_buffer.py   #     音频缓冲 + VAD
+│   │   ├── wakeword.py       #     唤醒词检测
+│   │   └── custom_providers.py #   自定义 provider 路由
 │   ├── config/               #   配置子包
 │   │   ├── __init__.py       #     重导出 AppConfig + CharacterConfig
 │   │   ├── app_config.py     #     App 配置
 │   │   └── character_config.py #   角色配置
-│   ├── token_tracker.py     #   Token 消耗统计
 │   ├── personality/         #   CharacterEngine 子系统
 │   │   ├── engine.py        #     CharacterEngine (合并 PersonalityEngine + EmotionEngine)
-│   │   └── reflector.py     #     CharacterReflector
+│   │   ├── reflector.py     #     CharacterReflector
+│   │   ├── awareness.py     #     AwarenessTrigger (C9 觉察判定)
+│   │   ├── compression.py   #     CompressionManager (L3→L2 + C6 联动)
+│   │   ├── emotion.py       #     情绪分析 (LLM mood tag + keyword fallback)
+│   │   └── _utils.py        #     内部工具
 │   ├── memory/              #   记忆子系统
 │   │   ├── session.py       #     SessionMemory (MongoDB + deque)
 │   │   ├── long_term.py     #     LongTermMemory (Milvus + Embedding)
@@ -1020,14 +1033,13 @@ Agent/
 │   │   ├── App.vue             # 根组件
 │   │   ├── styles/variables.css
 │   │   ├── types/protocol.ts   # 20+ WS 消息类型定义
-│   │   ├── stores/             # 5 个 Pinia store
-│   │   ├── composables/        # 3 个 composables
+│   │   ├── stores/             # 6 个 Pinia store
+│   │   ├── composables/        # 4 个 composables
 │   │   ├── components/         # 21 个 Vue 组件
 │   │   └── debug/              # 独立 Debug 应用
 │
 ├── static/                     # 静态资源（仅图片/文档）
 │   ├── Elysia.png              # 角色头像
-│   ├── debug.md                # Debug 面板文档
 │   └── live2d-demo/            # Live2D Cubism SDK + demo
 
 ├── docs/                   # 文档

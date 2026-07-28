@@ -2,14 +2,14 @@
 
 ## 分层体系
 
-1384 个测试按 4 层 markers 组织:
+约 1800 个测试按 4 层 markers 组织:
 
 | 层 | marker | 标准 | 测试数 | 耗时 |
 |---|--------|------|--------|------|
-| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | ~835 | ~40s |
-| 服务 | `service` | 单模块 + mock，不启动 Agent | ~518 | 秒级 |
-| 集成 | `integration` | 需真实数据库或外部 API | ~34 | 不定 |
-| 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | ~33 | ~15min |
+| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | ~1030 | ~40s |
+| 服务 | `service` | 单模块 + mock，不启动 Agent | ~710 | 秒级 |
+| 集成 | `integration` | 需真实数据库或外部 API | ~37 | 不定 |
+| 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | ~51 | ~15min |
 
 ## 日常命令
 
@@ -87,7 +87,7 @@ pytest core/tests/test_phase3.py -v
 | | `unit/test_sections/test_boundary.py` | 25 | unit |
 | | `unit/test_system_prompt_manager.py` | 6 | unit |
 | | `integration/test_full_render.py` | 3 | integration |
-| | `integration/test_message_builder.py` | 12 | integration |
+| `core/adapter/tests/` | `test_message_builder.py` | 12 | integration |
 | `Module/tool/tests/` | `test_framework.py` | 96 | unit+service |
 | | `test_tool_safety.py` | 33 | unit |
 | `Module/task_system/tests/unit/` | `test_checkpoint.py` | 9 | unit |

@@ -6,7 +6,7 @@
 
 ## 插件
 
-- `web_search` — DuckDuckGo / Brave 搜索
+- `web_search` — Tavily / Brave 搜索
 - `web_fetch` — 抓取网页纯文本内容
 
 ## 配置 (config.yaml)

@@ -69,7 +69,7 @@ Agent.start()
 
 ## 核心组件
 
-`core/` 根目录 + 子包共约 26 个 `.py` 文件。其中 9 个为核心组件（详细描述），12 个为支撑模块（简表），另有 6 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
+`core/` 根目录 + 子包共约 40 个 `.py` 文件。其中 9 个为核心组件（详细描述），12 个为支撑模块（简表），另有 6 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
 
 ### 核心组件详解（9 个）
 
@@ -79,15 +79,15 @@ Agent.start()
 
 关键方法：`start()`, `stop()`, `process_message()`, `run_server()`, `run_repl()`, `switch_llm()`, `switch_tts()`
 
-#### AgentFSM (`agent_fsm.py`)
+#### AgentFSM (`agent/agent_fsm.py`)
 
 有限状态机，管理认知流水线的状态转换。状态：`IDLE → THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE`，另有 `IDLE_BACKGROUND_TASK` 表示空闲但有后台任务运行。`INTERRUPTED` 可从除 IDLE 外的任意状态进入，只能迁到 IDLE。同状态迁移幂等（idle → idle no-op）。`reset()` 强制回 IDLE，用于服务重启清理残留状态。
 
 关键方法：`transition()`, `interrupt()`, `can_transition()`, `reset()`
 
-#### EventBus (`event_bus.py`)
+#### EventBus (`monitoring/event_bus.py`)
 
-优先级事件总线，底层为 `asyncio.PriorityQueue`。三种优先级：`INTERRUPT(0)` > `STATE_CHANGE(1)` > `NORMAL(2)`。事件类型：`USER_INPUT`、`SYSTEM_TICK`、`TASK_RESULT`、`INTERRUPT`、`STATE_CHANGE`。每个事件携带 `data: EventData`（discriminated union: `InterruptData | StateChangeData | UserInputData | SystemTickData | TaskResultData`），type 从 `data.event_type` 自动推导。含 `request_id` 用于链路追踪。`post()` 非阻塞投递，`next()` 阻塞取事件，`drain()` 排空队列（INTERRUPT 时保留 STATE_CHANGE 给前端）。
+优先级事件总线，底层为 `asyncio.PriorityQueue`。三种优先级：`INTERRUPT(0)` > `STATE_CHANGE(1)` > `NORMAL(2)`。事件类型：`USER_INPUT`、`SYSTEM_TICK`、`TASK_RESULT`、`INTERRUPT`、`STATE_CHANGE`。每个事件携带 `data: EventData`（discriminated union: `InterruptData | StateChangeData | UserInputData | SystemTickData | TaskResultData`），type 从 `data.event_type` 自动推导。`request_id` 由事件数据模型携带，用于链路追踪。`post()` 非阻塞投递，`next()` 阻塞取事件，`drain()` 排空队列（INTERRUPT 时保留 STATE_CHANGE 给前端）。
 
 关键方法：`post()`, `next()`, `drain()`
 
@@ -109,15 +109,15 @@ ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的�
 
 关键方法：`consolidate()`, `flush()`
 
-#### PromptAssembler (`prompt_assembler.py`)
+#### PromptAssembler (`adapter/prompt_assembler.py`)
 
-胶水层：创建 12 个 PromptSection 实例，注入 `SystemPromptManager`，委托 `MessageBuilder` 组装最终 `messages[]`。Section 顺序固定：F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup → C5 Sensory → C3 Emotion → C4 Memory → C1 Personality → C2 Relationship → C6 SpeakingStyle → C7 Proactive → C8 OwnLife → C9 SelfPerception。`_refresh_personality_data()` 从 CharacterEngine 拉取 C1/C9 数据，支持多模态 content 数组和 TTS provider 注入。
+胶水层：创建 12 个 PromptSection 实例，注入 `SystemPromptManager`，委托 `MessageBuilder` 组装最终 `messages[]`。Section 顺序固定：F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup → C2 Relationship → C7 Proactive → C6 SpeakingStyle → C1 Personality → C9 SelfPerception → C8 OwnLife → C3 Emotion → C4 Memory → C5 Sensory。`_refresh_personality_data()` 从 CharacterEngine 拉取 C1/C9 数据，支持多模态 content 数组和 TTS provider 注入。
 
 关键方法：`build_messages()`, `_refresh_personality_data()`
 
-#### IdleMonitor (`idle_monitor.py`)
+#### IdleMonitor (`monitoring/idle_monitor.py`)
 
-空闲监控 + 主动触发。每秒 tick，检查 `silence_timeout` 和 `time_of_day` 触发条件。`touch()` 重置交互计时器。触发时通过 EventBus 投递 `SYSTEM_TICK` 事件，Agent 注入自然开场白提示给 CognitiveLoop。唤醒词检测待集成（openWakeWord 模型已就位）。
+空闲监控 + 主动触发（位于 monitoring/ 子包）。每秒 tick，检查 `silence_timeout` 和 `time_of_day` 触发条件。`touch()` 重置交互计时器。触发时通过 EventBus 投递 `SYSTEM_TICK` 事件，Agent 注入自然开场白提示给 CognitiveLoop。唤醒词检测待集成（openWakeWord 模型已就位）。
 
 关键方法：`start()`, `stop()`, `touch()`, `_check_proactive()`
 
@@ -131,12 +131,13 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 
 | 文件 | 职责 |
 |------|------|
+| `monitoring/` | 监控子包：`EventBus` 优先级事件总线、`IdleMonitor` 空闲检测+主动触发、`TokenTracker` token 统计+广播 |
 | `adapter/` | 适配器层：`LLMAdapter` 封装 `Module.llm` 后端，提供 `stream_think()` 流式接口，自动重试（429/500/502/503/504，指数退避 3 次）。`TTSStreamManager` 管理 TTS 句队列 + emoji 同步 + 门控播放。`ToolAdapter` 封装工具子系统生命周期（创建+加载+关闭）。`tool_call_parser` 流式 tool_call 合并/归一化。详见 [`adapter/`](adapter/) |
 | `config/` | 配置子包：`character_config.py`（角色配置：从 YAML 加载角色名、wake words、emotion 阈值、proactive 参数、L1 Core personality 文本路径。`from_yaml()` 工厂方法）+ `app_config.py`（应用配置：`ConfigLoader` 加载 `config.yaml` + env override。包含 `AgentConfig`、`LLMConfig`、`MemoryConfig`、`TTSConfig` 等 dataclass） |
 | `text/` | 文本流处理包：`BlockFilter` 实时过滤 `<|markdown|>` 和 `<|code|>` 标记，防止代码/markdown 进入 TTS。`SentenceBuffer` 逐 token feed 检测完整句边界（。！？!?\n～…〜），完整句触发 TTS。`content_text_from_content()` 从多模态 content 数组提取纯文本。`MessageObj` dataclass 用于非流式文本最终发送。详见 [`text/`](text/) |
 | `utils/` | 通用工具：`new_message_id()` 消息 ID 生成 + `set_request_id()`/`get_request_id()` ContextVar + `log_conversation()` 对话日志。详见 [`utils/`](utils/) |
 | `debug/` | Debug 面板数据聚合包：`DebugInfo` dataclass 涵盖 FSM（含 mood）、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator（含 buffer）、MemoryReflector、Character Reflector、CharacterEngine 等所有子系统状态。`collect()` 遍历 Agent 聚合数据，前端 16 面板。`PromptRecorder`/`ResponseRecorder` 环形缓冲区（容量 20），捕获 LLM 调用完整 messages/tools/回复/inner_voice，供 debug 面板查看。详见 [`debug/`](debug/) |
-| `token_tracker.py` | Token 消耗追踪：`record()` 记录每次 LLM 调用的 token usage，`get_session_stats()` 聚合统计。支持 MongoDB 持久化和 OutputManager 广播 |
+| `monitoring/token_tracker.py` | Token 消耗追踪：`record()` 记录每次 LLM 调用的 token usage，`get_session_stats()` 聚合统计。支持 MongoDB 持久化和 OutputManager 广播 |
 | `task/` | 任务子包：`task.py`（Task 数据模型：`Task` dataclass + `TaskType`/`TaskStatus` 枚举 + `asyncio.Future` 双向绑定。支持 retry 和序列化）+ `scheduler.py`（TaskScheduler Worker Pool，N=5，dispatch_tool_calls/cancel_all/prune_loop） |
 | `schema/` | 共享类型包：`AgentState`、`EventData` 判别联合（5 种事件类型）、多模态 Part、`ToolCall`、`ExtractedMemory`/`CompareAction` 判别联合、`MemoryReflectorState`/`ReflectorActions`、消息、token、character/mood 状态等，含 `adapters/` 适配层。13 个 `.py` 文件 + `adapters/` 适配层 |
 | `__init__.py` | 包标记，当前为空 |
@@ -219,7 +220,7 @@ core/tools/<name>/
 
 1. 在 `Module/system_prompt/templates/<section>.j2` 创建 Jinja2 模板
 2. 在 `Module/system_prompt/sections/<section>.py` 创建 `PromptSection` 子类，实现 `render()` 方法
-3. 在 `core/prompt_assembler.py` 的 `sections` 列表中按序插入新 section
+3. 在 `core/adapter/prompt_assembler.py` 的 `sections` 列表中按序插入新 section
 4. 如需动态数据，在 `_refresh_personality_data()` 中注入
 
 模板格式见 `Module/system_prompt/templates/README.md`。
@@ -246,13 +247,13 @@ Agent 生命周期中的关键扩展点：
 | 文件 | 行数（约） | 类型 |
 |------|-----------|------|
 | `agent/agent.py` | 1004 | 核心组件 |
-| `agent_fsm.py` | 57 | 核心组件 |
-| `event_bus.py` | 60 | 核心组件 |
+| `agent/agent_fsm.py` | 57 | 核心组件 |
+| `monitoring/event_bus.py` | 60 | 核心组件 |
 | `cognitive/loop.py` | 1042 | 核心组件 |
 | `personality/engine.py` | ~320 | 核心组件 |
 | `memory/consolidator.py` | ~300 | 核心组件 |
-| `prompt_assembler.py` | ~130 | 核心组件 |
-| `idle_monitor.py` | ~130 | 核心组件 |
+| `adapter/prompt_assembler.py` | ~130 | 核心组件 |
+| `monitoring/idle_monitor.py` | ~130 | 核心组件 |
 | `task/scheduler.py` | ~430 | 核心组件 |
 | `config/character_config.py` | ~80 | 支撑模块 |
 | `config/app_config.py` | ~70 | 支撑模块 |
@@ -260,7 +261,7 @@ Agent 生命周期中的关键扩展点：
 | `utils/message_id.py` | 11 | 支撑模块 |
 | `debug/` | 3 文件 (~520) | 支撑模块 |
 | `utils/log_setup.py` | ~150 | 支撑模块 |
-| `token_tracker.py` | ~190 | 支撑模块 |
+| `monitoring/token_tracker.py` | ~190 | 支撑模块 |
 | `task/task.py` | ~80 | 支撑模块 |
 | `schema/` | 目录（13 .py + adapters/） | 支撑模块 |
 | `__init__.py` | 0 | 包标记 |

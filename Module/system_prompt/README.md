@@ -79,10 +79,15 @@ PromptAssembler.build_system_prompt(user_message, user_name, stt_emotion, stt_ev
 
 ### 渲染顺序
 
+为最大化 DeepSeek prefix cache 命中率，按 `_RENDER_ORDER` 分组：
+
+**静态前缀**（低变化频率）→ **动态后缀**（每轮更新）：
+
 ```
-F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup → C5 Sensory → C3 Emotion → C4 Memory
-→ C1 Personality → C2 Relationship → C6 SpeakingStyle → C7 Proactive
-→ C8 OwnLife → C9 SelfPerception
+F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup →
+C2 Relationship → C7 Proactive → C6 SpeakingStyle →
+C1 Personality → C9 SelfPerception → C8 OwnLife →
+C3 Emotion → C4 Memory → C5 Sensory
 ```
 
 ## SystemPromptManager API
@@ -93,8 +98,9 @@ from Module.system_prompt.system_prompt_manager import SystemPromptManager
 
 sections = [
     ConflictRulesSection(),
-    OutputFormatSection("Module/system_prompt/templates/f2_output_format.j2"),
-    PersonalitySection("Module/system_prompt/templates/c1_personality.j2", "Elysia"),
+    OutputFormatSection(),
+    PersonalitySection("Elysia"),
+    # 每个 Jinja2Section 子类通过 name 属性自动推导模板路径
     # ...
 ]
 mgr = SystemPromptManager(sections)
@@ -113,14 +119,14 @@ failed = mgr.validate_all()      # 校验失败的 section 名列表
 
 ## PromptManager API
 
-用于非 system prompt 的模板渲染（Amygdala、ActiveSpeak、CharacterReflector 等）。
+用于非 system prompt 的模板渲染（CharacterReflector、AwarenessJudge、SpeakingStyleEdit 等）。
 
 ```python
 from Module.system_prompt import PromptManager
 
 pm = PromptManager(str(Path(__file__).parent / "prompts"))
-result = pm.render("Amygdala.j2", character_name="Elysia")
-system = pm.render_macro("ActiveSpeak.j2", "ActiveSpeakPrompt", **vars)
+result = pm.render("CharacterReflector.j2", character_name="Elysia")
+system = pm.render_macro("SpeakingStyleEdit.j2", "SpeakingStyleEditPrompt", **vars)
 ```
 
 ## 自定义 Filter

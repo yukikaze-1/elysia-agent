@@ -37,7 +37,7 @@
 
 **连接**: `MONGODB_URI`（默认 `mongodb://localhost:27017`）
 
-### 集合: `sessions`（数据库: `elysia`）
+### 集合: `sessions`（数据库: `default`，可配置）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -71,7 +71,7 @@
 | `updated_at`（TTL） | — | 30 天过期（`expireAfterSeconds=2592000`） |
 
 **操作**: 原子 upsert（`update_one(upsert=True)`）
-**降级**: MongoDB 不可用时纯内存运行（deque，maxlen 默认 200，config.yaml session_max_messages 可配）
+**降级**: MongoDB 不可用时纯内存运行（deque，maxlen 默认 20，config.yaml session_max_messages 可配）
 
 ### 集合: `message_archive`（数据库: `default`）
 
@@ -116,7 +116,7 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `_messages` | deque[Message] | 当前会话消息缓冲 (maxlen config.yaml 可配, 默认 200). 存 Pydantic Message 对象 |
+| `_messages` | deque[Message] | 当前会话消息缓冲 (maxlen config.yaml 可配, 默认 20). 存 Pydantic Message 对象 |
 | `_character_state` | CharacterState \| None | 性格+情绪+reflector 状态（Pydantic 模型，替代原 _params） |
 | `_reflector_state` | MemoryReflectorState \| None | MR 计数器（Pydantic 模型） |
 | `_session_id` | str | 会话 ID |

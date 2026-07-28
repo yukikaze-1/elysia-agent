@@ -18,7 +18,7 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 ├── message.py   # UserMessage / AssistantMessage / ToolResultMessage → Message（按 role 拆分）
 ├── token.py     # TokenUsageEntry — Token 用量记录
 ├── character.py # CharacterState — CharacterEngine 性格状态
-├── mood.py     # Mood — CharacterEngine mood 枚举
+├── mood.py     # STT emoji 工具函数（stt_emotion_emoji, stt_event_emoji）
 ├── memory_reflector.py # MemoryReflectorState + ReflectorActions — 状态 + LLM 输出类型
 └── adapters/
     └── message_adapter.py  # parts_from_dicts, content_to_openai, content_text 等纯函数适配器
@@ -46,7 +46,7 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 | `message.py` | UserMessage / AssistantMessage / ToolResultMessage / ClientUserMessage / ClientAssistantMessage / ClientToolMessage / ClientMessageDict — Message（按 role 拆分）+ 客户端 TypedDict |
 | `token.py` | TokenUsageEntry / TokenUsageRecord / TokenUsageSummary — Token 用量记录 |
 | `character.py` | CharacterState — PersonalityEngine 性格状态 |
-| `mood.py` | Mood — CharacterEngine mood 枚举 |
+| `mood.py` | STT emoji 工具函数（stt_emotion_emoji, stt_event_emoji）|
 | `memory_reflector.py` | MemoryReflectorState + MergeItem/UpdateItem/DeleteItem/ReflectorActions — 状态 + MemoryReflector LLM 输出类型 |
 | `_utils.py` | now_iso — 时间戳工厂 |
 

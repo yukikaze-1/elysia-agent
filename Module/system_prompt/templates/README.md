@@ -2,7 +2,7 @@
 
 > 文档导航：[项目文档](../../../README.md) → [Module 文档](../../README.md) → [System Prompt 文档](../README.md)
 
-本目录包含 `SystemPromptManager` 使用的 Jinja2 模板文件。每个模板对应一个 section（prompt 子章节），由 11 个 section 类按固定顺序渲染，最终拼接为完整的 system prompt。
+本目录包含 `SystemPromptManager` 使用的 Jinja2 模板文件。每个模板对应一个 section（prompt 子章节），由 12 个 section 类按固定顺序渲染，最终拼接为完整的 system prompt。
 
 ## 格式约定
 
@@ -20,7 +20,7 @@
 - 标签必须闭合
 - 标签内是模板渲染的实际内容，不含注释
 
-目前使用的标签：`<conflict_rules>` `<output_format>` `<sensory_input>` `<emotion>` `<memory_bank>` `<personality>` `<relationship>` `<speaking_style>` `<proactive>` `<own_life>` `<self_perception>`
+目前使用的标签：`<conflict_rules>` `<output_format>` `<tts_markup>` `<sensory_input>` `<emotion>` `<memory_bank>` `<personality>` `<relationship>` `<speaking_style>` `<proactive>` `<own_life>` `<self_perception>`
 
 ### 内层：Markdown / 纯文本
 
@@ -139,7 +139,7 @@ C5 Sensory          → 感官输入（当前环境上下文）
 1. 在 `templates/` 新建 `.j2` 文件，按命名规则命名
 2. 在 `sections/` 新建 section 类，继承 `Jinja2Section`，设置 `name`/`version`/`description`
 3. 在 `system_prompt_manager.py` 的 `_RENDER_ORDER` 中添加 section name
-4. 在 `core/prompt_assembler.py` 中创建 section 实例并传入模板路径
+4. 在 `core/adapter/prompt_assembler.py` 中创建 section 实例并传入模板路径
 5. 在 `tests/` 中添加对应的单元测试
 
 ---

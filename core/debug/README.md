@@ -46,8 +46,10 @@ LLM 调用:
   → ResponseRecorder.record() — 捕获原始回复 + inner_voice
 
 Prompt/Response 查看:
-  → GET /debug/api/prompts/{n}    → 最近 N 条 prompt
-  → GET /debug/api/responses/{n}  → 最近 N 条 response
+  → GET /debug/api/prompts           → 列出全部 prompt
+  → GET /debug/api/prompts/{index}   → 按 0-based index 查看单条 prompt
+  → GET /debug/api/responses         → 列出全部 response
+  → GET /debug/api/responses/{index} → 按 0-based index 查看单条 response
 
 TaskSystem 实时推送:
   → GET /debug/api/tasks/stream → SSE → 前端 DAG 可视化
@@ -55,9 +57,9 @@ TaskSystem 实时推送:
 
 ## 关键机制
 
-### DebugInfo.collect()
+### 数据聚合
 
-`collect(agent)` 遍历 Agent 的 15+ 个属性，聚合为 `DebugInfo` dataclass：
+`collect(agent)` 是模块级函数，遍历 Agent 的 15+ 个属性，聚合为 `DebugInfo` dataclass：
 - FSM 状态 → `info.fsm_state` / `info.fsm_previous`
 - Cognitive → `info.current_task` / `info.latency_history`
 - Memory → `info.session_message_count` / `info.ltm_entry_count`
@@ -78,8 +80,10 @@ TaskSystem 实时推送:
 | 端点 | 说明 |
 |------|------|
 | `GET /debug/api` | 全量 DebugInfo JSON |
-| `GET /debug/api/prompts/{n}` | 最近 N 条 LLM prompt（默认 5） |
-| `GET /debug/api/responses/{n}` | 最近 N 条 LLM response（默认 5） |
+| `GET /debug/api/prompts` | 列出全部 LLM prompt |
+| `GET /debug/api/prompts/{index}` | 按 0-based index 查看单条 prompt |
+| `GET /debug/api/responses` | 列出全部 LLM response |
+| `GET /debug/api/responses/{index}` | 按 0-based index 查看单条 response |
 | `GET /debug/api/db-status` | MongoDB + Milvus 连接状态 |
 | `GET /debug/api/ltm` | LTM 条目查询（支持 filter + limit） |
 | `GET /debug/api/sessions` | Session 列表 |
@@ -98,12 +102,10 @@ core/debug/
     └── test_prompt_recorder.py
 
 前端:
-static/
-├── debug.html         — Debug 仪表板（12+ 面板，2s 轮询）
-└── js/                — 面板渲染 + SSE
+frontend/src/debug/     — Vue 3 Debug 应用（Vite 多入口构建 → static/debug.html）
 
 服务端:
-core/input/server.py — /debug/api 路由注册
+core/input/debug_routes.py — /debug/api 路由注册
 ```
 
 ## 调试

@@ -54,7 +54,7 @@
 
 ### SessionMemory
 
-- 后端：`deque`（maxlen 可配，默认 200）+ MongoDB 持久化（30 天 TTL）
+- 后端：`deque`（maxlen 可配，默认 20）+ MongoDB 持久化（30 天 TTL）
 - `recent_messages()` 取最近 N 条给 CognitiveLoop 拼接上下文
 - `append()` 追加消息时 fire-and-forget 写入 MongoDB archive
 - `save()` / `restore()` 服务端会话恢复
@@ -75,7 +75,7 @@
 
 ### MemoryReflector
 
-- 触发条件：距上次 >= 1h **且** 新增记忆 >= 10 条
+- 触发条件：距上次 round 数 >= 50 **或** 新增记忆 >= 30 条（OR 逻辑）
 - 聚类算法：KMeans（k=min(5, total_memories/2)）
 - LLM 审查后决定合并 / 去噪 / 删除
 - `_reflect_lock` 防并发
@@ -84,11 +84,12 @@
 
 ```
 core/memory/
-├── __init__.py         — 空（各模块独立导入）
-├── session.py          — SessionMemory: deque + MongoDB 持久化
-├── long_term.py        — LongTermMemory: Milvus 向量搜索 + rerank
-├── consolidator.py     — MemoryConsolidator: LLM 提取 + 比对 + 写入
-├── memory_reflector.py — MemoryReflector: KMeans 聚类定期去重
+├── __init__.py            — 空（各模块独立导入）
+├── session.py             — SessionMemory: deque + MongoDB 持久化
+├── long_term.py           — LongTermMemory: Milvus 向量搜索 + rerank
+├── embedding_provider.py  — EmbeddingProvider: 嵌入后端懒加载 + 超时 + OpenAI/HuggingFace fallback
+├── consolidator.py        — MemoryConsolidator: LLM 提取 + 比对 + 写入
+├── memory_reflector.py    — MemoryReflector: KMeans 聚类定期去重
 └── tests/
     ├── test_session.py
     ├── test_long_term.py
@@ -97,7 +98,7 @@ core/memory/
 
 关联文件:
 core/
-├── llm_adapter.py     — LLM 适配器（consolidator + reflector 共用）
+├── adapter/llm_adapter.py  — LLM 适配器（consolidator + reflector 共用）
 └── schema/memory.py   — ExtractedMemory / CompareAction 判别联合
 
 core/prompts/

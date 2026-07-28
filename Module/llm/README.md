@@ -47,10 +47,33 @@ await backend.close()
 class LLMBackend(ABC):
     async def chat(self, messages: list[dict], **kwargs) -> str: ...
     async def chat_stream(self, messages: list[dict], **kwargs) -> AsyncGenerator[str, None]: ...
+    async def stream_think(self, messages: list[dict], **kwargs) -> AsyncGenerator[dict, None]: ...
+    async def test(self) -> bool: ...
+    async def close(self) -> None: ...
 ```
 
 - `messages` — OpenAI 格式 `[{"role": "user", "content": "..."}]`
 - `kwargs` — 透传 temperature / max_tokens / extra_body 等参数，直接传给 API。`extra_body` 会与模块内部的 prefix 参数合并
+
+### stream_think()
+
+流式方法，返回结构化 dict（而非纯文本 token），每个 dict 包含以下字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `content` | `str` | 本次产生的文本 token（可能为空字符串） |
+| `tool_calls` | `list[dict] \| None` | 本次产出的工具调用增量（无工具调用时为 None） |
+| `usage` | `dict \| None` | 流结束时返回的 token 用量统计（仅最后一个 chunk 有值） |
+
+```python
+async for chunk in backend.stream_think(messages):
+    if chunk["content"]:
+        print(chunk["content"], end="")
+    if chunk["tool_calls"]:
+        process_tools(chunk["tool_calls"])
+    if chunk["usage"]:
+        log_usage(chunk["usage"])
+```
 
 ## 支持的后端
 
@@ -59,6 +82,8 @@ class LLMBackend(ABC):
 | `deepseek` | `deepseek/deepseek-v4-pro`, `deepseek/deepseek-v4-flash` | `DEEPSEEK_API_KEY` 环境变量 |
 | `openai` | `openai/gpt-5` | `OPENAI_API_KEY` 环境变量 |
 | `ollama` | `ollama/qwen3:latest` | 不需要 |
+| `mimo` | 多模态，与 OpenAI 协议兼容 | `MIMO_API_KEY` 环境变量 |
+| `custom` | 用户自定义 OpenAI-compatible 端点 | 按端点配置 |
 | `gemini` | 占位，未实现 | `GEMINI_API_KEY` |
 
 可通过 `base_url` 参数覆盖默认 URL：

@@ -9,7 +9,7 @@ Elysia/Agent is a Python 3.11+ AI companion application. The codebase has two ma
 - **`Module/`** — backend-agnostic library for AI companion infrastructure: LLM, STT, TTS, embedding, vector/document databases, output channels, config, logging, system prompt engine, tool framework.
 - **`core/`** — the Elysia Agent application: `Agent`, `CognitiveLoop`, `CharacterEngine`, `CharacterReflector`, `MemoryConsolidator`, `MemoryReflector`, `SessionMemory`, `LongTermMemory`, `IdleMonitor`, task scheduler, debug info, character config.
 
-Plain Python（无 `pyproject.toml` 等构建系统）。前端 vanilla HTML/CSS/JS（无框架、无构建步骤）。`Makefile` 提供常用任务入口。
+Plain Python（无 `pyproject.toml` 等构建系统）。前端 Vue 3 + Vite + TypeScript（无框架 → Vite 构建步骤）。`Makefile` 提供常用任务入口。
 
 ## Running tests
 
@@ -85,10 +85,11 @@ Module/<service>/
 
 ```
 core/
-├── agent/                 # Agent (package): AgentLifecycle mixin + AgentServer mixin + _types + 4 lifecycle mixins
+├── agent/                 # Agent (package): AgentLifecycle mixin + AgentServer mixin + _types + FSM + 4 lifecycle mixins
 │   ├── agent.py           #   Agent.__init__ + event handling + process_message + background tasks
 │   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + _STARTUP_STEPS + _SHUTDOWN_STEPS + 3 flush
 │   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
+│   ├── agent_fsm.py       #   AgentFSM: 状态机 IDLE→THINKING→(EXECUTING→THINKING)*→SPEAKING→IDLE
 │   ├── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
 │   ├── _lifecycle_persistence.py  #   持久化层启停 (MongoDB/Milvus/session/repos)
 │   ├── _lifecycle_services.py     #   LLM/TTS/Output/TokenTracker 启停
@@ -103,8 +104,13 @@ core/
 │   ├── llm_adapter.py     #   LLMAdapter: tool-calling + retry + streaming + hot-switch
 │   ├── tts_adapter.py     #   TTSStreamManager: sentence queuing + emoji sync + gated playback
 │   ├── tool_call_parser.py #  merge/normalize streaming tool_call deltas
-│   ├── tool_adapter.py   #   ToolAdapter: tool subsystem lifecycle + ToolExecutor delegation
+│   ├── tool_adapter.py    #   ToolAdapter: tool subsystem lifecycle + ToolExecutor delegation
 │   ├── message_builder.py #   MessageBuilder: system prompt + history → LLM API messages[]
+│   └── prompt_assembler.py #  PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder
+├── monitoring/             # Monitoring (package): event bus + idle monitor + token tracking
+│   ├── event_bus.py       #   EventBus: pub/sub for agent internal events
+│   ├── idle_monitor.py    #   IdleMonitor: wake-word detection + proactive triggers
+│   └── token_tracker.py   #   TokenTracker: usage counting + cost estimation
 ├── text/                  # Text stream processing (package): BlockFilter + SentenceBuffer + text utils
 │   ├── block_filter.py    #   BlockFilter: streaming block tag filter + post-hoc block parsing
 │   ├── sentence_buffer.py #   SentenceBuffer: split on sentence delimiters for TTS streaming
@@ -116,6 +122,10 @@ core/
 ├── personality/           # CharacterEngine: 4-layer personality model (L1→L2→L3→L4)
 │   ├── engine.py          #   CharacterEngine: L1 Core (file, immutable) → L2 Self (session, slow evolution) → L3 State (session, Reflector-driven) → L4 Mood
 │   ├── reflector.py       #   CharacterReflector: buffers 50 pairs → LLM reflection → submit to engine
+│   ├── awareness.py       #   AwarenessTrigger: C9 觉察判定 + cooldown 管理
+│   ├── compression.py     #   CompressionManager: L3→L2 自我压缩 + C6 联动编辑
+│   ├── emotion.py         #   EmotionEngine: LLM mood tag 解析 + keyword 回退
+│   ├── _utils.py          #   内部工具函数
 │   └── tests/
 ├── memory/
 │   ├── session.py          # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive
@@ -123,11 +133,15 @@ core/
 │   ├── embedding_provider.py # EmbeddingProvider: 嵌入后端懒加载 + 超时 + OpenAI/HuggingFace fallback
 │   ├── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM review)
 │   └── consolidator.py     # MemoryConsolidator: buffers 6 msgs → LLM extracts + compares → insert/update/merge/skip
+├── storage/                # Storage layer: MongoDB/Milvus repositories
+│   ├── session_repo.py     #   SessionRepository: session CRUD + MongoDB TTL
+│   ├── message_repo.py     #   MessageRepository: message archive append-only log
+│   ├── token_repo.py       #   TokenRepository: token usage statistics
+│   ├── memory_repo.py      #   MemoryRepository: LTM Milvus operations
+│   └── character_version_repo.py # CharacterVersionRepository: L2/C6 version history
 ├── config/                 # Config sub-package: character_config + app_config
 │   ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
 │   └── app_config.py          # AgentConfig: YAML-loaded app configuration
-├── prompt_assembler.py    # PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder
-├── idle_monitor.py        # IdleMonitor: wake-word detection + proactive triggers
 ├── utils/                  # Utility functions: message_id + log_setup
 ├── task/                   # Task sub-package: task model + scheduler
 │   ├── task.py             # Task dataclass + TaskType/TaskStatus enums + Future binding
@@ -170,8 +184,8 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 
 | Module | Purpose | Backends |
 |--------|---------|----------|
-| `Module.llm` | LLM chat/streaming | `deepseek`, `openai`, `ollama` |
-| `Module.stt` | Speech-to-text | `sensevoice` |
+| `Module.llm` | LLM chat/streaming | `deepseek`, `openai`, `ollama`, `mimo`, `custom` |
+| `Module.stt` | Speech-to-text | `sensevoice`, `custom` |
 | `Module.tts` | Text-to-speech | `gpt-sovits`, `minimax`, `custom` |
 | `Module.embedding` | Text vectorization | `huggingface`, `openai` |
 | `Module.output` | Multi-channel output | `ConsoleChannel`, `WebSocketChannel` |
@@ -208,7 +222,7 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 
 ## Prompt files (`core/prompts/`)
 
-Jinja2 模板（`.j2`），PascalCase 命名。通过 `PromptManager.render()` 或 `render_macro()` 渲染。通过 `Path(__file__)` 相对路径加载，不受 cwd 影响。详见 `core/prompts/README.md`。
+模板（`.j2`），PascalCase 命名。多数活跃模板使用 `str.replace()` 注入变量（因 JSON 示例中 `{}` 与 `.format()` 冲突）；`AwarenessJudge.j2` 和 `SpeakingStyleEdit.j2` 使用 Jinja2 宏，通过 `PromptManager.render_macro()` 渲染。通过 `Path(__file__)` 相对路径加载，不受 cwd 影响。详见 `core/prompts/README.md`。
 
 ```
 core/prompts/
@@ -217,10 +231,10 @@ core/prompts/
 ├── MemoryReflector.j2        # 定期深度去重 (memory_reflector.py 加载)
 ├── CharacterReflector.j2     # 性格反思 (reflector.py 加载，10 上下文变量)
 ├── PersonalityCompression.j2 # L3→L2 自我压缩 — LLM 编辑模式 (engine.py 加载)
-├── ActiveSpeak.j2            # 主动搭话 prompt（活跃）
-├── Amygdala.j2               # 情感分析 prompt（活跃）
-├── AwarenessJudge.j2         # C9 觉察判定 prompt（活跃）
-├── SpeakingStyleEdit.j2      # C6 说话风格编辑 prompt（活跃）
+├── ActiveSpeak.j2            # 主动搭话 prompt（参考模板，不活跃）
+├── Amygdala.j2               # 情感分析 prompt（参考模板，不活跃）
+├── AwarenessJudge.j2         # C9 觉察判定 prompt（活跃，Jinja2 宏渲染）
+├── SpeakingStyleEdit.j2      # C6 说话风格编辑 prompt（活跃，Jinja2 宏渲染）
 ├── Utils.j2                  # 共享 Jinja2 工具宏
 ├── MacroReflector.j2         # 旧项目参考（不活跃）
 ├── MicroReflector.j2         # 旧项目参考（不活跃）
@@ -372,7 +386,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 
 - **`docs/readme-conventions.md`** — README 编写规范。新增/修改模块时必须按模板写 README（面包屑 + 相关文档节），并在根 README 文档导航中注册。
 - **`docs/testing.md`** — 测试分层体系。新测试必须加 marker（unit/service/integration/slow），日常用 `make test-quick` / `make test-normal` / `make test-full`。
-- **`prompt/README.md`** — Prompt 模板命名规范（PascalCase `.j2`）+ 渲染方式（Jinja2，通过 `PromptManager`）。
+- **`core/prompts/README.md`** — Prompt 模板命名规范（PascalCase `.j2`）+ 渲染方式（`str.replace()` / Jinja2 `render_macro()`，通过 `PromptManager`）。
 - **`Module/system_prompt/templates/README.md`** — System prompt 模板格式约定（XML wrapper + Markdown body，标签 snake_case）。
 
 ## 基础规则：

@@ -55,8 +55,8 @@ TaskSystem
 ├── ArtifactStore          #   节点产物存储（内存版）
 ├── TaskMailbox            #   单播事件队列（deque + Event）
 ├── TokenLedger            #   write-through + per-call 审计日志
-├── TaskDebugAPI           #   SSE 实时推送（内部 500ms 轮询 + diff）
-└── debug.html             #   WebUI「任务」tab（EventSource 消费）
+└── TaskDebugAPI           #   SSE 实时推送（内部 500ms 轮询 + diff）
+    # WebUI「任务」tab 已迁移至 frontend/src/debug/components/TasksTab.vue (Vue 3 + vis-network DAG)
 ```
 
 ---
@@ -103,7 +103,7 @@ TaskSystem
 |------|------|------|
 | `TaskDebugAPI` | 内部 500ms 轮询 → diff → SSE 推送（snapshot/task_new/task_update/node_update/task_done/heartbeat） | ✅ |
 | Server 路由 | `/debug/api/tasks` (JSON) + `/debug/api/tasks/stream` (SSE) | ✅ |
-| debug.html | 「任务」tab：EventSource 消费 SSE，ASCII DAG 渲染，状态 emoji + 进度条 | ✅ |
+| TasksTab.vue | 「任务」tab：Vue 3 + vis-network DAG（已迁至 frontend/src/debug/） | ✅ |
 | 激活条件 | `app['task_system'] = task_system` 注册后路由生效 | ✅ |
 
 ### 测试

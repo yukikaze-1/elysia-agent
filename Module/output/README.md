@@ -64,6 +64,19 @@ await mgr.send(ChatMessage(role="Elysia", content="你好"))
 
 所有方法默认 no-op，channel 按需 override。
 
+| 方法 | 说明 |
+|------|------|
+| `on_text_delta(delta)` | 流式文本 token |
+| `on_text_message(msg)` | 完整文本消息 |
+| `on_typing(typing)` | 输入状态指示 |
+| `on_expression(expr, intensity)` | 表情/情绪变更 |
+| `on_action(action)` | 动作变更 |
+| `on_command(cmd)` | 前端指令 |
+| `on_audio_chunk(chunk, stream_id)` | 音频流片段 |
+| `on_audio_end(stream_id, format)` | 音频流结束 |
+| `on_state(state)` | 状态变更通知 |
+| `on_token_usage(data)` | Token 用量统计 |
+
 ### OutputManager
 
 - `add_channel(ch)` / `remove_channel(ch)` — 管理通道
@@ -71,6 +84,11 @@ await mgr.send(ChatMessage(role="Elysia", content="你好"))
 - `send(msg, *, channels, capability)` — 非流式完整消息
 - `typing(typing, *, ...)` — 便捷方法，自动路由到 TYPING channel
 - `expression(expr, intensity, *, ...)` / `action(action, *, ...)` / `command(cmd, *, ...)` — 便捷方法
+- `audio_chunk(chunk, stream_id, *, ...)` — 音频流片段广播
+- `audio_end(stream_id, format, *, ...)` — 音频流结束通知
+- `notify_state(state, *, ...)` — 状态变更广播
+- `token_usage(data, *, ...)` — Token 用量通知
+- `close()` — 关闭所有通道
 
 所有方法支持两种过滤方式：
 - `channels=[...]` — 精确指定目标

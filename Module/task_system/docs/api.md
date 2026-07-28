@@ -114,7 +114,7 @@ class TaskSystem:
         """✅ 已实现——幂等软取消。设置 exec_state.cancel_requested 标志，Orchestrator 安全点停止。
         所有路径返回 True（幂等）。二次确认由 CognitiveLoop 在上层处理。"""
 
-    async def submit_approval(
+    def submit_approval(
         self, task_id: TaskId, agent_id: AgentId, approved: bool,
         feedback: str | None = None,
     ) -> bool:
@@ -187,8 +187,8 @@ class DelegationPreparer:
         self,
         intent: str,                       # LLM 输出的完整任务意图（透传，不修改）
         hints: str | None,                  # LLM 观察到的元信息
-        session_messages: list[dict],       # 全部对话消息（不截断，LLM 自己判断相关性）
-                                            # TODO: 裸 dict，后续统一为 ChatMessageV2
+        session_messages: list[Message],     # 全部对话消息（不截断，LLM 自己判断相关性）
+                                            # Message 类型来自 core.schema.message
         user_profile: UserProfile,         # 用户画像（CognitiveLoop 管理，v1 占位符）
         tools: list[Tool],                  # 全量工具注册表（CognitiveLoop 管理）
         global_constraints: ConstraintConfig,  # 全局约束（天花板）

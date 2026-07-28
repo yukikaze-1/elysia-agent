@@ -68,19 +68,23 @@ RUNNING → /restart → STOPPING → RESTARTING → start() → RUNNING
 
 ```
 core/agent/
-├── __init__.py    — 重导出 Agent, RunState
-├── agent.py       — Agent.__init__ + process_message + 后台任务
-├── lifecycle.py   — AgentLifecycle: start/stop 编排
-├── server.py      — AgentServer: run_server/repl + switch_*/banner
-└── _types.py      — RunState, _PendingMessage, _BackgroundTaskEntry
+├── __init__.py                  — 重导出 Agent, RunState
+├── agent.py                     — Agent.__init__ + process_message + 后台任务
+├── lifecycle.py                 — AgentLifecycle: start/stop 编排
+├── server.py                    — AgentServer: run_server/repl + switch_*/banner
+├── agent_fsm.py                 — AgentFSM 状态机（agent + cognitive 共享）
+├── _types.py                    — RunState, _PendingMessage, _BackgroundTaskEntry
+├── _lifecycle_persistence.py    — 持久化层启停 (MongoDB/Milvus/session/repos)
+├── _lifecycle_services.py       — LLM/TTS/Output/TokenTracker 启停
+├── _lifecycle_task_system.py    — TaskSystem/DelegationPreparer/mailbox 启停
+└── _lifecycle_tools.py          — ToolAdapter/Scheduler/IdleMonitor/event loop 启停
 ```
 
 关联文件:
 ```
 core/
-├── agent_fsm.py           — AgentFSM 状态机（agent + cognitive 共享）
-├── event_bus.py           — EventBus 事件总线（agent + cognitive + idle 共享）
-├── config/               — 配置子包（AppConfig + CharacterConfig）
+├── monitoring/event_bus.py  — EventBus 事件总线（agent + cognitive + idle 共享）
+├── config/                  — 配置子包（AppConfig + CharacterConfig）
 ```
 
 ## 调试

@@ -7,7 +7,7 @@
 ## 目录
 
 - [1. 核心类型 (core/)](#1-核心类型-core)
-- [2. 消息和媒体格式 (Module/schema/)](#2-消息和媒体格式-moduleschema)
+- [2. 消息和媒体格式 (core/schema/)](#2-消息和媒体格式-coreschema)
 - [3. 工具系统 (Module/tool/)](#3-工具系统-moduletool)
 - [4. TaskSystem 类型 (Module/task_system/schema/)](#4-tasksystem-类型-moduletask_systemschema)
 - [5. 后端协议 ABC (Module/*/protocol.py)](#5-后端协议-abc-moduleprotocolpy)
@@ -26,46 +26,46 @@
 
 | 文件 | 名称 | 成员 | 用途 |
 |------|------|------|------|
-| `core/schema.py:14` | `AgentState` (StrEnum) | IDLE, THINKING, EXECUTING, SPEAKING, INTERRUPTED, IDLE_BACKGROUND_TASK | Agent 认知流水线状态 |
-| `core/schema.py:38` | `EventPriority` (IntEnum) | INTERRUPT=0, STATE_CHANGE=1, NORMAL=2 | 事件总线优先级 |
-| `core/schema.py:45` | `EventType` (StrEnum) | INTERRUPT, STATE_CHANGE, USER_INPUT, SYSTEM_TICK, TASK_RESULT | 事件类型 |
-| `core/task.py:18` | `TaskType` (Enum) | TOOL_CALL, BACKGROUND | 任务分类 |
-| `core/task.py:23` | `TaskStatus` (Enum) | PENDING, DISPATCHED, COMPLETED, FAILED, CANCELLED | 任务生命周期 |
+| `core/schema/__init__.py` | `AgentState` (StrEnum) | IDLE, THINKING, EXECUTING, SPEAKING, INTERRUPTED, IDLE_BACKGROUND_TASK | Agent 认知流水线状态 |
+| `core/schema/__init__.py` | `EventPriority` (IntEnum) | INTERRUPT=0, STATE_CHANGE=1, NORMAL=2 | 事件总线优先级 |
+| `core/schema/__init__.py` | `EventType` (StrEnum) | INTERRUPT, STATE_CHANGE, USER_INPUT, SYSTEM_TICK, TASK_RESULT | 事件类型 |
+| `core/task/task.py:18` | `TaskType` (Enum) | TOOL_CALL, BACKGROUND | 任务分类 |
+| `core/task/task.py:23` | `TaskStatus` (Enum) | PENDING, DISPATCHED, COMPLETED, FAILED, CANCELLED | 任务生命周期 |
 
 ### Dataclass
 
 | 文件 | 名称 | 关键字段 | 用途 |
 |------|------|----------|------|
-| `core/event_bus.py:15` | `Event` | priority, type, data, seq | 优先级队列事件 |
-| `core/llm_adapter.py:23` | `ThoughtResult` | text: str, tool_calls: list[dict] | LLM 返回结构 |
+| `core/monitoring/event_bus.py:15` | `Event` | priority, type, data, seq | 优先级队列事件 |
+| `core/adapter/llm_adapter.py:23` | `ThoughtResult` | text: str, tool_calls: list[dict] | LLM 返回结构 |
 | `core/memory/long_term.py:22` | `MemoryEntry` | id, text, embedding, memory_type, poignancy, timestamp, metadata | 长期记忆条目 |
-| `core/token_tracker.py:25` | `TokenUsage` | model, prompt_tokens, completion_tokens, total_tokens, round_num, timestamp | Token 消耗记录 |
-| `core/task.py:37` | `Task` | id, type, status, priority, parent_id, depends_on, children_ids, payload, result, error... | 统一任务单元 |
-| `core/text_utils.py:21` | `MessageObj` | role, content | 轻量 assistant 消息 |
-| `core/prompt_recorder.py:8` | `PromptRecord` | index, timestamp, round_num, model, messages, tools | 调试用 prompt 快照 |
-| `core/response_recorder.py:9` | `ResponseRecord` | index, timestamp, round_num, raw_text, inner_voice | 调试用 response 快照 |
-| `core/block_filter.py:40` | `ParsedBlock` | kind, content, language | 解析后的代码/Markdown 块 |
-| `core/timing.py:24` | `Timer` | _label, _t0, _elapsed_ms | 计时上下文管理器 |
-| `core/timing.py:50` | `TimingClock` | _spans, _counts, _t_total | 请求级计时聚合 |
-| `core/debug_info.py:14` | `DebugInfo` | 60+ 字段（fsm_state, session_*, lt_*, reflector_*, personality_*...） | /debug 面板聚合数据 |
+| `core/monitoring/token_tracker.py:25` | `TokenUsage` | model, prompt_tokens, completion_tokens, total_tokens, round_num, timestamp | Token 消耗记录 |
+| `core/task/task.py:37` | `Task` | id, type, status, priority, parent_id, depends_on, children_ids, payload, result, error... | 统一任务单元 |
+| `core/text/text_utils.py:21` | `MessageObj` | role, content | 轻量 assistant 消息 |
+| `core/debug/prompt_recorder.py:8` | `PromptRecord` | index, timestamp, round_num, model, messages, tools | 调试用 prompt 快照 |
+| `core/debug/response_recorder.py:9` | `ResponseRecord` | index, timestamp, round_num, raw_text, inner_voice | 调试用 response 快照 |
+| `core/text/block_filter.py:40` | `ParsedBlock` | kind, content, language | 解析后的代码/Markdown 块 |
+| `core/cognitive/timing.py:24` | `Timer` | _label, _t0, _elapsed_ms | 计时上下文管理器 |
+| `core/cognitive/timing.py:50` | `TimingClock` | _spans, _counts, _t_total | 请求级计时聚合 |
+| `core/debug/info.py:14` | `DebugInfo` | 60+ 字段（fsm_state, session_*, lt_*, reflector_*, personality_*...） | /debug 面板聚合数据 |
 
 ### 配置 Dataclass
 
 | 文件 | 名称 | 关键字段 | 用途 |
 |------|------|----------|------|
-| `core/app_config.py:8` | `AgentConfig` | character, user_name, max_pending_messages | Agent 级配置 |
-| `core/app_config.py:15` | `LLMConfig` | model, base_url, api_key | LLM 后端 |
-| `core/app_config.py:22` | `MemoryConfig` | session_max_messages, ltm_max_entries, ltm_max_age_days, ltm_embed_timeout | 记忆子系统 |
-| `core/app_config.py:30` | `ServerConfig` | host, port, image_max_mb, image_allowed_types | 服务器 |
-| `core/app_config.py:38` | `TTSConfig` | enabled, model, base_url, api_key, voices_config | TTS |
-| `core/app_config.py:47` | `STTConfig` | enabled, model, base_url, api_key | STT |
-| `core/app_config.py:56` | `WakeWordConfig` | enabled | 唤醒词 |
-| `core/app_config.py:61` | `Live2DConfig` | static_image | Live2D |
-| `core/app_config.py:67` | `VisionConfig` | model | 图片理解模型 |
-| `core/app_config.py:73` | `AppConfig` | agent, llm, memory, server, tts, stt, wake_word, live2d, vision | **顶层配置** |
-| `core/character_config.py:10` | `EmotionConfig` | thresholds, idle_expressions | 情绪阈值配置 |
-| `core/character_config.py:16` | `ProactiveConfig` | enabled, interval, triggers | 主动搭话配置 |
-| `core/character_config.py:23` | `CharacterConfig` | name, voice, user_pronoun, base_personality_file, base_personality, emotion, wake_words, proactive | **角色配置** |
+| `core/config/app_config.py:8` | `AgentConfig` | character, user_name, max_pending_messages | Agent 级配置 |
+| `core/config/app_config.py:15` | `LLMConfig` | model, base_url, api_key | LLM 后端 |
+| `core/config/app_config.py:22` | `MemoryConfig` | session_max_messages, ltm_max_entries, ltm_max_age_days, ltm_embed_timeout | 记忆子系统 |
+| `core/config/app_config.py:30` | `ServerConfig` | host, port, image_max_mb, image_allowed_types | 服务器 |
+| `core/config/app_config.py:38` | `TTSConfig` | enabled, model, base_url, api_key, voices_config | TTS |
+| `core/config/app_config.py:47` | `STTConfig` | enabled, model, base_url, api_key | STT |
+| `core/config/app_config.py:56` | `WakeWordConfig` | enabled | 唤醒词 |
+| `core/config/app_config.py:61` | `Live2DConfig` | static_image | Live2D |
+| `core/config/app_config.py:67` | `VisionConfig` | model | 图片理解模型 |
+| `core/config/app_config.py:73` | `AppConfig` | agent, llm, memory, server, tts, stt, wake_word, live2d, vision | **顶层配置** |
+| `core/config/character_config.py:10` | `EmotionConfig` | thresholds, idle_expressions | 情绪阈值配置 |
+| `core/config/character_config.py:16` | `ProactiveConfig` | enabled, interval, triggers | 主动搭话配置 |
+| `core/config/character_config.py:23` | `CharacterConfig` | name, voice, user_pronoun, base_personality_file, base_personality, emotion, wake_words, proactive | **角色配置** |
 
 ### Pydantic BaseModel（工具参数）
 
@@ -81,34 +81,24 @@
 
 ---
 
-## 2. 消息和媒体格式 (Module/schema/)
+## 2. 消息和媒体格式 (core/schema/)
 
-> ⚠️ `Module/schema/__init__.py` 自述 DEPRECATED，但这些类型仍被实际使用。
+> 原 `Module/schema/` 已废弃并整合到 `core/schema/`（message.py, part.py, event.py, types.py 等）。
 
 | 文件 | 名称 | 类型 | 用途 |
 |------|------|------|------|
-| `message_format.py` | `TextPart` | dataclass | 文本消息片段 |
-| `message_format.py` | `ImagePart` | dataclass | 图片消息片段 |
-| `message_format.py` | `FilePart` | dataclass | 文件消息片段 |
-| `message_format.py` | `AudioPart` | dataclass | 音频消息片段 |
-| `message_format.py` | `VideoPart` | dataclass | 视频消息片段 |
-| `message_format.py` | `ChatMessageV2` | dataclass | 多模态聊天消息（role + content: list[Part]） |
-| `media.py` | `AudioData` | dataclass | 音频数据 |
-| `media.py` | `VideoData` | dataclass | 视频数据 |
-| `media.py` | `ImageData` | dataclass | 图片数据 |
-| `media.py` | `FileData` | dataclass | 文件数据 |
-| `event.py` | `Event` | dataclass | **另一个 Event 定义（与 core/schema.py 重复）** |
-| `event.py` | `EventType` | Enum | **另一个 EventType（USER_INPUT/SYSTEM_TICK/REFLECTION_DONE...）** |
-| `event.py` | `EventSource` | Enum | L0/L1/SYSTEM/REFLECTOR... |
-| `event.py` | `EventContentType` | Enum | USERMESSAGE/TEXT/STRUCTURED_DATA/TIME |
-| `io_models.py` | `L0InputSourceType` | Enum | WEBSOCKET/INVALID |
-| `io_models.py` | `WebClientMessage` | Pydantic | Web 客户端消息 |
-| `io_models.py` | `TelegramMessage` | Pydantic | Telegram 消息（预留） |
-| `io_models.py` | `ExternalInputEvent` | Pydantic | 外部输入事件（extra="allow"） |
-| `io_models.py` | `L0InternalQueueItem` | Pydantic | 内部队列项 |
-| `constants.py` | DEFAULT_ERROR_PUBLIC_REPLY | str | 错误时的公开回复 |
-| `constants.py` | DEFAULT_ERROR_INNER_THOUGHT | str | 错误时的内心想法 |
-| `constants.py` | DEFAULT_ERROR_MOOD | str | 错误时的情绪 |
+| `core/schema/part.py` | `TextPart` | Pydantic | 文本消息片段 |
+| `core/schema/part.py` | `ImagePart` | Pydantic | 图片消息片段 |
+| `core/schema/part.py` | `FilePart` | Pydantic | 文件消息片段 |
+| `core/schema/part.py` | `AudioPart` | Pydantic | 音频消息片段 |
+| `core/schema/part.py` | `VideoPart` | Pydantic | 视频消息片段 |
+| `core/schema/message.py` | `UserMessage` / `AssistantMessage` | Pydantic | 聊天消息（role + content: list[Part]） |
+| `core/schema/part.py` | `AudioData` / `VideoData` / `ImageData` / `FileData` | — | 原媒体数据类，已合并到 Part 类型中 |
+| `core/schema/event.py` | `EventData` (Unioned) | Pydantic | 统一事件数据（Interrupt/StateChange/UserInput/SystemTick/TaskResult） |
+| `core/schema/event.py` | `EventType` | StrEnum | INTERRUPT/STATE_CHANGE/USER_INPUT/SYSTEM_TICK/TASK_RESULT |
+| `core/schema/message.py` | `ClientUserMessage` / `ClientAssistantMessage` / `ClientToolMessage` | TypedDict | 客户端消息类型 |
+| `core/schema/types.py` | `L0InputSourceType` 等 | — | 原 io_models.py 类型，已整合或移除 |
+| `core/schema/error_type.py` | `ErrorType` | StrEnum | 统一错误类型枚举（替代原 constants.py 中 DEFAULT_ERROR_* 常量） |
 
 ---
 
@@ -180,7 +170,7 @@
 | `DAGNodeInfo` | DAG 节点展示信息 |
 | `TaskDAG` | DAG 可视化数据 |
 | `AgentInfo` / `AgentList` | Agent 运行时信息 |
-| `TokenComponent` / `TokenUsage` / `TokenStats` | Token 统计（**与 core/token_tracker.py 的 TokenUsage 同名不同义**） |
+| `TokenComponent` / `TokenUsage` / `TokenStats` | Token 统计（**与 core/monitoring/token_tracker.py 的 TokenUsage 同名不同义**） |
 
 ### 编排内部模型 (`internal.py`)
 
@@ -229,8 +219,8 @@
 
 | Key | 类型 | 读写位置 | 用途 |
 |-----|------|----------|------|
-| `mood` | str | emotion_engine.py, cognitive_loop.py, reflector.py | 当前情绪 (neutral/happy/sad/curious/excited/warm/concerned...) |
-| `mood_intensity` | float | emotion_engine.py, reflector.py | 情绪强度 0.0-1.0 |
+| `mood` | str | personality/engine.py, cognitive/loop.py, personality/reflector.py | 当前情绪 (neutral/happy/sad/curious/excited/warm/concerned...) |
+| `mood_intensity` | float | personality/engine.py, personality/reflector.py | 情绪强度 0.0-1.0 |
 | `self_l2` | str | personality/engine.py, debug_info.py | **L2 Self — 长期自我认知** |
 | `state_l3` | str | personality/engine.py, debug_info.py | **L3 State — 短期状态** |
 | `state_history` | list[dict] | personality/engine.py, debug_info.py | L3 变化轨迹 [{timestamp, content}, ...] |
@@ -290,7 +280,7 @@
 
 ### MongoDB
 
-**数据库名：** `elysia`（硬编码在 `MongoDBBackend.__init__`）
+**数据库名：** `default`（可通过配置修改，见 `Module/database/documentdb/mongodb.py`）
 
 #### `sessions` 集合
 
@@ -463,10 +453,9 @@ wake_words: [Elysia, 爱莉, 爱莉希雅, 妖精小姐]
 | `core/personality/engine.py` | `COMPRESSION_COUNT_THRESHOLD` | 5 | L3→L2 计数触发 |
 | `core/personality/engine.py` | `COMPRESSION_TIME_THRESHOLD` | 604800 | L3→L2 时间触发（7d） |
 | `core/personality/engine.py` | `COMPRESSION_MIN_ENTRIES` | 3 | 首次压缩最少条目 |
-| `core/emotion_engine.py` | `MOOD_KEYWORDS` | dict | 10 种 mood 的关键词 |
-| `core/emotion_engine.py` | `_STT_EMOTION_TO_MOOD` | dict | STT 情感标签→AI mood |
-| `Module/schema/constants.py` | `DEFAULT_ERROR_PUBLIC_REPLY` | str | 错误公开回复 |
-| `Module/schema/constants.py` | `DEFAULT_ERROR_INNER_THOUGHT` | str | 错误内心想法 |
+| `core/personality/engine.py` | `MOOD_KEYWORDS` | dict | 10 种 mood 的关键词 |
+| — | `_STT_EMOTION_TO_MOOD` | — | 已移除：STT 情感现在直接传给 LLM 由 C5 Sensory 处理 |
+| `core/schema/error_type.py` | `ErrorType` | StrEnum | 统一错误类型枚举（替代原 `Module/schema/constants.py` 中 DEFAULT_ERROR_* 常量） |
 | `Module/database/vectordb/milvus.py` | `INDEX_PRESETS` | dict | 4 种向量索引预设 |
 
 ---
@@ -477,9 +466,9 @@ wake_words: [Elysia, 爱莉, 爱莉希雅, 妖精小姐]
 |--------|------|------|------|
 | **🔴 高** | Session params | 15 个裸 key，散落 6+ 文件，无类型 | 建立 `SessionParams` dataclass，集中定义所有 key、类型、默认值、注释 |
 | **🔴 高** | WebSocket 消息 | 19 种消息类型，全是 ad-hoc dict | 定义 `WSMessage` 联合类型或 Pydantic 模型，前后端共享约束 |
-| **🔴 高** | 两套 Event 定义 | `core/schema.py` 和 `Module/schema/event.py` 各有一套，互相独立 | 合并为一套，删除废弃的那套 |
+| **🔴 高** | 两套 Event 定义 | 原 `core/schema.py` 和 `Module/schema/event.py` 各有一套 | 已合并到 `core/schema/event.py`（统一 EventData 联合类型） |
 | **🟡 中** | MongoDB 文档 | sessions/messages/token_usage 隐式结构 | 至少给文档 dict 提供 TypedDict 或 dataclass，标注字段 |
-| **🟡 中** | 消息 Part 类型 | `Module/schema/message_format.py` 标记废弃但仍被用 | 移到非废弃位置，去掉 DEPRECATED 标记 |
+| **🟡 中** | 消息 Part 类型 | 原 `Module/schema/message_format.py` 标记废弃 | 已迁移到 `core/schema/part.py`（Pydantic BaseModel） |
 | **🟡 中** | PersonalityEngine params | self_l2/state_l3/compression_last_* 等都是裸 session param | 纳入 `SessionParams`，或独立 `PersonalityState` dataclass |
 | **🟢 低** | TaskSystem schema | 40+ 类型，组织良好，在独立目录 | 保持不动 |
 | **🟢 低** | 后端 ABC | 各在 protocol.py，模式统一 | 保持不动 |
