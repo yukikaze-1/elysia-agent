@@ -1,19 +1,19 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { watch, ref } from 'vue'
+import { useLightbox } from '@/composables/useLightbox'
 
+const { lightboxImage, close } = useLightbox()
 const lb = ref<HTMLElement | null>(null)
-const li = ref<HTMLElement | null>(null)
+const li = ref<HTMLImageElement | null>(null)
 
-function open(url: string) {
-  if (li.value) li.value.setAttribute('src', url)
-  if (lb.value) lb.value.classList.remove('lightbox-hidden')
-}
-
-function close() {
-  if (lb.value) lb.value.classList.add('lightbox-hidden')
-}
-
-defineExpose({ open, close })
+watch(lightboxImage, (url) => {
+  if (url) {
+    if (li.value) li.value.src = url
+    lb.value?.classList.remove('lightbox-hidden')
+  } else {
+    lb.value?.classList.add('lightbox-hidden')
+  }
+})
 </script>
 
 <template>

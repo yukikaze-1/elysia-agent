@@ -257,7 +257,8 @@ frontend/
     ├── composables/
     │   ├── useWebSocket.ts  # WS 消息路由（替代旧版巨型 switch）
     │   ├── useAudio.ts      # TTS 播放控制
-    │   └── useMic.ts        # 麦克风采集封装
+    │   ├── useMic.ts        # 麦克风采集封装
+    │   └── useLightbox.ts   # 全局图片灯箱（任意组件 open(url) 即可全屏查看）
     ├── components/
     │   ├── layout/AppLayout.vue           # 三栏布局
     │   ├── character/                     # 左侧角色面板

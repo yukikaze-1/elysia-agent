@@ -84,13 +84,15 @@ THINKING → LLM 返回 tool_calls → EXECUTING → 工具结果注入 → THIN
 
 纯状态机组件，封装 mood/inner_voice 标签检测 + BlockFilter + SentenceBuffer 管道。每轮对话创建新实例。
 
-- `feed(delta: str) → list[StreamEvent]` — 输入流式文本片段
-- `flush() → list[StreamEvent]` — 流结束吐出尾句、丢弃未闭合块、广播未闭合 inner_voice
+- `feed(delta: str) → list[StreamEvent]` — 输入流式文本片段，内部剥离 TTS 停顿标签 `<#0.5#>` 后送入 SentenceBuffer
+- `flush() → list[StreamEvent]` — 流结束吐出尾句、丢弃未闭合块、广播未闭合 inner_voice；尾部纯 emoji 合并到前一 SENTENCE 避免独占气泡
 - `reset()` — 重置所有状态
 
 事件类型: `MOOD` / `INNER_VOICE` / `SENTENCE` / `TEXT_DELTA` / `TTFT`
 
 `CognitiveLoop._dispatch_stream_event()` 负责将事件翻译为副作用（mood 更新、inner_voice 广播、TTS 分发、FSM 切换）。
+
+**TTS 停顿标签预处理** — LLM 生成的 `<#0.5#>` 包含 `.`，流式到达时尾部残缺标签 `<#0.` 会被 SentenceBuffer 误判为句子边界。StreamProcessor 在文本进 SentenceBuffer 前用 `_strip_pause_tags()` 剥离完整标签和尾部残缺标签，确保分句不受干扰。停顿标签也不显示在 UI 中。
 
 ## 文件布局
 

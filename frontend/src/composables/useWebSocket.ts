@@ -5,6 +5,16 @@ import { useAudioStore } from '@/stores/audioStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { ActionMessage, CommandMessage, SwitchModelResultMessage } from '@/types/protocol'
 
+// 转录情绪/事件 emoji 映射（与服务端同步）
+const EMOTION_EMOJI: Record<string, string> = {
+  HAPPY: '😊', SAD: '😔', ANGRY: '😡', NEUTRAL: '',
+  FEARFUL: '😰', DISGUSTED: '🤢', SURPRISED: '😮',
+}
+const EVENT_EMOJI: Record<string, string> = {
+  BGM: '🎼', Applause: '👏', Laughter: '😀', Cry: '😭',
+  Cough: '😷', Sneeze: '🤧',
+}
+
 export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: string; request_id: string } | null>) {
   const connection = useConnectionStore()
   const chat = useChatStore()
@@ -26,7 +36,19 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
                             settings.llmModelName = m.llm_model || ''
                             settings.live2dStaticImage = m.live2d_static_image || ''; break
       case 'typing':        chat.typing = m.typing; break
-      case 'transcription': chat.addUserMessage('🎤 ' + m.text); break
+      case 'transcription': {
+        let display = m.text
+        const emotionEmoji = EMOTION_EMOJI[m.emotion] || ''
+        if (emotionEmoji) display += ' ' + emotionEmoji
+        if (m.events && m.events.length > 0) {
+          for (const evt of m.events) {
+            const evtEmoji = EVENT_EMOJI[evt] || ''
+            if (evtEmoji) display += ' ' + evtEmoji
+          }
+        }
+        chat.addUserMessage('🎤 ' + display)
+        break
+      }
       case 'expression':    chat.setMood(m.expression, m.intensity); break
       case 'state':         chat.setState(m.state)
                             if (m.state === 'executing') chat.finalizeDelta(); break

@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { ChatMessage } from '@/stores/chatStore'
 import { useChatStore } from '@/stores/chatStore'
+import { useLightbox } from '@/composables/useLightbox'
 import ChatBubble from './ChatBubble.vue'
 import ToolCard from './ToolCard.vue'
 import InnerVoice from './InnerVoice.vue'
@@ -8,6 +10,10 @@ import TokenLabel from './TokenLabel.vue'
 
 const props = defineProps<{ message: ChatMessage }>()
 const chatStore = useChatStore()
+const { open: openLightbox } = useLightbox()
+
+const copyState = ref<'idle' | 'copied'>('idle')
+let copyTimer: ReturnType<typeof setTimeout> | null = null
 
 function isPlaying(): boolean {
   return props.message.id === chatStore.playingMessageId
@@ -20,6 +26,23 @@ function contentText(): string {
     p.content && (!p.type || p.type === 'text')
   )
   return textParts.map((p: any) => p.content).join('')
+}
+
+/** 从 ContentPart[] 中提取图片 */
+function imageParts(): any[] {
+  if (typeof props.message.content === 'string') return []
+  return (props.message.content as any[]).filter((p: any) =>
+    p.type === 'image' && p.src
+  )
+}
+
+async function copyText() {
+  try {
+    await navigator.clipboard.writeText(contentText().trim())
+    copyState.value = 'copied'
+    if (copyTimer) clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => { copyState.value = 'idle' }, 2000)
+  } catch { /* clipboard denied */ }
 }
 </script>
 
@@ -70,10 +93,29 @@ function contentText(): string {
           :contentType="message.contentType"
           :language="message.language"
         />
+        <!-- 图片渲染 -->
+        <div v-if="imageParts().length" class="msg-images">
+          <img
+            v-for="(img, i) in imageParts()"
+            :key="i"
+            class="msg-image"
+            :src="img.src"
+            loading="lazy"
+            @click.stop="openLightbox(img.src)"
+            title="点击放大"
+          />
+        </div>
         <TokenLabel
           v-if="message.tokenUsage"
           :tokenUsage="message.tokenUsage"
         />
+        <!-- 复制按钮 — 仅 assistant 气泡，hover 时显示 -->
+        <span
+          v-if="message.role === 'assistant'"
+          class="copy-btn"
+          :class="{ copied: copyState === 'copied' }"
+          @click.stop="copyText"
+        >{{ copyState === 'copied' ? '已复制' : '复制' }}</span>
       </div>
       <div
         v-if="message.role === 'user'"
@@ -150,6 +192,54 @@ function contentText(): string {
   font-size: 12px;
   color: var(--accent);
   font-style: italic;
+}
+
+/* ---- Copy button ---- */
+.copy-btn {
+  display: none;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: #aaa;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: all 0.15s;
+}
+.copy-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+.copy-btn.copied {
+  color: #4ade80;
+  border-color: #4ade80;
+}
+.msg-bubble:hover .copy-btn {
+  display: block;
+}
+
+/* ---- Images ---- */
+.msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.msg-image {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 8px;
+  cursor: pointer;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  transition: transform 0.15s;
+}
+.msg-image:hover {
+  transform: scale(1.03);
 }
 
 @keyframes fadeIn {

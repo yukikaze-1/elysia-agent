@@ -2,6 +2,35 @@
 
 ## 已完成
 
+### 2026-07-29: 前端功能回归 + 分句/消息同步修复
+
+**前端 11 项功能回归**（Vue 3 重构后相对于旧 vanilla JS 的缺失）：
+- 复制按钮：assistant 气泡 hover 显示"复制"按钮，点击复制全文
+- ↓ 新消息浮动指示器：用户上滚后新消息到来时底部出现，点击回到底部
+- 内心独白开关：toggle 联动 body class `inner-voice-hidden` 控制 CSS 显隐
+- TTS 开关：`finalizeStream()` 入队前检查 `ttsEnabled`
+- 转录 emoji：恢复情绪/事件 emoji 映射（HAPPY→😊, BGM→🎼 等）
+- Session Token 统计条：`#session-token-bar` 显示累计 token（按模型分组）
+- 历史图片渲染：`restoreFromServer()` 支持 `content[]` 中的 image parts
+- 舞台指示拆分：中文括号动作描述（`(轻声地)`）独立气泡
+- 图片灯箱：`useLightbox` composable，任意组件调用 `open(url)` 全屏查看
+- 拖拽上传：`MessageList` `onDrop` 补上文件上传逻辑
+- Stream bubble TTL：30 秒 TTL 清理 orphan 映射
+
+**分句系统修复**（`core/cognitive/stream_processor.py`）：
+- `_strip_pause_tags()`：在 `SentenceBuffer` 前剥离 `<#0.5#>` 标签（含跨 delta 尾部残缺标签），防止标签内 `.` 被误判为句子边界导致标签截断
+- `flush()` 尾部 emoji 合并：纯 emoji 残留文本合并到前一 SENTENCE，避免 `♪` 等独占气泡
+
+**Archive-Session 同步**（`core/agent/agent.py` + `core/input/debug_routes.py`）：
+- `_purge_message_from_session(msg_id)`：从当前 session deque 移除匹配消息
+- `archive_delete_handler` / `archive_clear_handler`：删除/清空 Archive 后同步清理 session 并 `save()` 持久化
+
+**Reflector ISO 时间戳兼容**（`core/personality/reflector.py`）：
+- `_reflect()` 中 `datetime.fromtimestamp()` 兼容 ISO 8601 字符串和旧 Unix float
+
+**TTS 情绪映射**（`core/adapter/tts_adapter.py`）：
+- `_mood_text_to_tts_emotion()`：LLM 中文心情自由文本 → MiniMax TTS emotion 参数 (happy/sad/neutral)
+
 ### 2026-07-28: AgentLifecycle 拆分 + EmbeddingProvider + Action Gate + LTM 驱逐修复
 
 **AgentLifecycle 拆分为 mixin（522 → ~120 行）：** `lifecycle.py` 从手写 10 步 startup 序列改为数据驱动 `_STARTUP_STEPS` 循环（镜像已有的 `_SHUTDOWN_STEPS`）。4 个 mixin 文件：`_lifecycle_persistence.py`（持久化层启停）、`_lifecycle_services.py`（LLM/TTS/Output/Token 启停）、`_lifecycle_tools.py`（ToolAdapter/Scheduler/IdleMonitor 启停）、`_lifecycle_task_system.py`（TaskSystem/mailbox 启停）。模式与 CharacterEngine 拆分一致。

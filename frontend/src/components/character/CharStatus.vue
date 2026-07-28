@@ -9,6 +9,22 @@ const settings = useSettingsStore()
 const moodDisplay = computed(() =>
   chat.mood ? `${chat.mood} (${Math.round(chat.moodIntensity * 100)}%)` : ''
 )
+
+const sessionTokenDisplay = computed(() => {
+  const st = chat.sessionTokens
+  if (!st || !st.total) return ''
+  const models = Object.entries(st.byModel || {})
+  const parts = models.map(([m, t]) => {
+    const short = m.split('/').pop() || m
+    return short + ': ' + fmtTokens(t as number)
+  })
+  return '\u{1FA99} 总计 ' + fmtTokens(st.total) + (parts.length ? ' (' + parts.join(', ') + ')' : '')
+})
+
+function fmtTokens(n: number): string {
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
+  return String(n)
+}
 </script>
 
 <template>
@@ -17,7 +33,7 @@ const moodDisplay = computed(() =>
     <div id="char-name">Elysia</div>
   </div>
   <div id="llm-model-tag" v-if="settings.llmModelName">{{ settings.llmModelName }}</div>
-  <div id="session-token-bar" />
+  <div id="session-token-bar" v-if="sessionTokenDisplay">{{ sessionTokenDisplay }}</div>
   <div id="char-state">{{ chat.fsmState }}</div>
   <div id="mood-tag" v-if="moodDisplay">{{ moodDisplay }}</div>
 </template>

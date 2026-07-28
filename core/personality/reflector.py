@@ -233,6 +233,9 @@ class CharacterReflector:
                 content = entry.get("content", "")
                 if ts:
                     from datetime import datetime
+                    # 兼容两种格式: ISO 8601 字符串 (新) 或 Unix float (旧)
+                    if isinstance(ts, str):
+                        ts = datetime.fromisoformat(ts).timestamp()
                     dt = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
                     l3_lines.append(f"[{dt}] {content}")
                 else:

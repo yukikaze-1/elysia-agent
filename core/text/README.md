@@ -8,13 +8,15 @@ LLM 流式输出 → TTS 输入之间的文本处理管线：过滤结构化块 
 
 ```
 LLM 流式 token
+  → StreamProcessor._strip_pause_tags()
+    → 剥离 <#0.5#> TTS 停顿标签（防止标签内 . 干扰 SentenceBuffer 分句）
   → BlockFilter.feed(token)
     → 剥离 <|markdown|> / <|code|> 块（不进 TTS）
     → 纯文本 token 流出
   → SentenceBuffer.feed(token)
     → 检测完整句边界（。！？!?\n～…〜）
     → 完整句 → TTSStreamManager.stream_sentence()
-  → flush(): 输出尾部残留
+  → flush(): 输出尾部残留，纯 emoji 合并到前一 SENTENCE
 
 后处理（回复完成后）:
   → BlockFilter.flush()     → 未闭合块丢弃

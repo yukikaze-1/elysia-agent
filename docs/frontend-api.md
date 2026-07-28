@@ -78,8 +78,10 @@ Client ──→ Server (5 种):
       "parts": [{ "content": "你好！有什么可以帮你的？" }],
       "content": [{ "type": "text", "content": "你好！有什么可以帮你的？" }],
       "content_type": {},
+      "inner_voice": "她今天看起来心情不错，想用更温柔的语气回应",
       "mood": "被妖梦的好消息感染，心里暖暖的",
-      "tool_calls": []
+      "tool_calls": [],
+      "token_usage": { "rounds": [{ "round_num": 0, "prompt_tokens": 1234, "completion_tokens": 567, "total_tokens": 1801 }], "turn_total": 1801 }
     },
     {
       "role": "tool",
@@ -122,7 +124,9 @@ Client ──→ Server (5 种):
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
+| `inner_voice` | string | AI 内心独白文本（独立于 `parts` 渲染，位于公开回复上方） |
 | `tool_calls` | array | LLM 请求的工具调用列表，每项 `{ "id": "...", "function": { "name": "...", "arguments": "..." } }` |
+| `token_usage` | object | 最后一句附带 token 统计 `{ "rounds": [...], "turn_total": N }` |
 
 **tool 消息特有字段：**
 
@@ -402,12 +406,26 @@ LLM 回复中的代码块或 Markdown 块单独推送。`block_type` 取值：`"
 {
   "type": "transcription",
   "text": "帮我查一下天气",
-  "emotion": "NEUTRAL",
+  "emotion": "HAPPY",
   "events": ["laugh"]
 }
 ```
 
 用户语音转文字后推送给前端显示。`emotion` 和 `events` 可选。
+
+**情绪 Emoji 映射**（前端附加到显示文本末尾）：
+
+| `emotion` 值 | Emoji |
+|-------------|-------|
+| `HAPPY` | 😊 |
+| `SAD` | 😔 |
+| `ANGRY` | 😡 |
+| `FEARFUL` | 😰 |
+| `DISGUSTED` | 🤢 |
+| `SURPRISED` | 😮 |
+| `NEUTRAL` | (无) |
+
+事件 Emoji: `BGM`→🎼, `Applause`→👏, `Laughter`→😀, `Cry`→😭, `Cough`→😷, `Sneeze`→🤧
 
 ### 12. `wake` — 唤醒词检测
 

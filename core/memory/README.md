@@ -39,6 +39,17 @@
     → _absorbed_ids 追踪合并记录
 ```
 
+### 双重存储与同步
+
+消息同时存在于两处：
+
+| 存储 | 集合 | 用途 |
+|------|------|------|
+| SessionMemory | MongoDB `sessions` | LLM prompt 上下文窗口（权威消息源） |
+| MessageRepository | MongoDB `message_archive` | 永久归档（fire-and-forget） |
+
+`add_message()` 同时写入两处。debug 页面删除 Archive 消息时调用 `Agent._purge_message_from_session()` 同步清理 session，确保 LLM prompt 不再包含已删消息。
+
 ## 关键机制
 
 ### SessionMemory

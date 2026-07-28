@@ -30,10 +30,23 @@ export const useAudioStore = defineStore('audio', () => {
   }
 
   function finalizeStream(streamId: number, format: string = 'wav') {
+    // 尊重 TTS 开关设置
+    const settingsStore = useSettingsStore()
+    if (!settingsStore.ttsEnabled) return
+
     const chunks = audioChunks.value[streamId]
     if (!chunks) return
 
     delete audioChunks.value[streamId]
+
+    // 设置 stream bubble 映射的 TTL 清理
+    if (streamId != null) {
+      setTimeout(() => {
+        if (streamBubbles.value[streamId]) {
+          delete streamBubbles.value[streamId]
+        }
+      }, 30000)
+    }
 
     const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
     const combined = new Uint8Array(totalLength)

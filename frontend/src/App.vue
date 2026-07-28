@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, provide } from 'vue'
+import { onMounted, onUnmounted, ref, provide, watch } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useConnectionStore } from '@/stores/connectionStore'
+import { useSettingsStore } from '@/stores/settingsStore'
 import { useWebSocket } from '@/composables/useWebSocket'
 
 const approvalRequest = ref<{ tool: string; toolParams?: string; request_id: string } | null>(null)
 provide('approvalRequest', approvalRequest)
 
 useWebSocket(approvalRequest)
+
+// 内心独白开关 → body class 联动
+const settingsStore = useSettingsStore()
+watch(() => settingsStore.innerVoiceEnabled, (enabled) => {
+  document.body.classList.toggle('inner-voice-hidden', !enabled)
+}, { immediate: true })
 
 // 全局键盘快捷键——Escape 中断 AI 生成
 function onKeydown(e: KeyboardEvent) {

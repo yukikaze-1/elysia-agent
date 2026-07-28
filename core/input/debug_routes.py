@@ -284,13 +284,13 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_get("/debug/api/archive", archive_list_handler)
 
     async def archive_delete_handler(request: web.Request) -> web.Response:
-        """Delete a single archived message by ID.
+        """Delete a single archived message by ID，同时从当前 session 中移除。
 
         Args:
             request: aiohttp Request, URL path: /{msg_id}。
 
         Returns:
-            web.Response: {"ok": True/False}。
+            web.Response: {"ok": True/False, "session_purged": count}。
         """
         agent = request.app["agent"]
         repo = agent._message_repo
@@ -298,8 +298,13 @@ def register_debug_routes(app: web.Application) -> None:
         if not msg_id:
             return web.json_response({"error": "缺少 msg_id"}, status=400)
         ok = await repo.delete_one(msg_id)
-        logger.info("DEBUG API: archive_delete msg_id=%s, ok=%s", msg_id, ok)
-        return web.json_response({"ok": ok})
+        # 同步清理当前 session —— archive 和 session 是独立存储，
+        # 只删 archive 不改 session 会导致 LLM prompt 仍包含已删消息
+        session_purged = agent._purge_message_from_session(msg_id)
+        if session_purged:
+            await agent._session.save()
+        logger.info("DEBUG API: archive_delete msg_id=%s, ok=%s, session_purged=%d", msg_id, ok, session_purged)
+        return web.json_response({"ok": ok, "session_purged": session_purged})
     app.router.add_delete("/debug/api/archive/{msg_id}", archive_delete_handler)
 
     async def archive_update_handler(request: web.Request) -> web.Response:
@@ -326,7 +331,7 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_put("/debug/api/archive/{msg_id}", archive_update_handler)
 
     async def archive_clear_handler(request: web.Request) -> web.Response:
-        """清空全部归档（debug 专用）。
+        """清空全部归档并同步清空当前 session（debug 专用）。
 
         Args:
             request: aiohttp Request。
@@ -336,7 +341,13 @@ def register_debug_routes(app: web.Application) -> None:
         """
         agent = request.app["agent"]
         deleted = await agent._message_repo.clear_all()
-        logger.warning("DEBUG API: archive_clear deleted=%d", deleted)
+        # 同步清空当前 session：archive 删光后 session 也要保持一致
+        session = agent._session
+        n_session = len(session.messages)
+        if n_session:
+            session.clear()
+            await session.save()
+        logger.warning("DEBUG API: archive_clear deleted=%d, session_cleared=%d", deleted, n_session)
         return web.json_response({"ok": True, "deleted": deleted})
 
     app.router.add_delete("/debug/api/archive", archive_clear_handler)

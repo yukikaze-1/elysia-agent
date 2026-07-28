@@ -294,6 +294,27 @@ class Agent(AgentLifecycle, AgentServer):
             mailbox=mailbox,
         )
 
+    def _purge_message_from_session(self, msg_id: str) -> int:
+        """从当前 session 中移除匹配 message_id 的消息。
+
+        Archive 和 session 是独立存储，只删 archive 不改 session 会导致
+        LLM prompt 仍然包含已删消息。此方法在 archive 删除时同步清理 session。
+
+        Args:
+            msg_id: 要移除的消息 ID。
+
+        Returns:
+            实际移除的消息数量（0 或 1）。
+        """
+        before = len(self._session.messages)
+        kept = [m for m in self._session.messages if m.message_id != msg_id]
+        purged = before - len(kept)
+        if purged:
+            self._session.messages.clear()
+            for m in kept:
+                self._session.messages.append(m)
+        return purged
+
     async def _poll_mailboxes(self):
         """轮询所有活跃后台任务的 mailbox。每 500ms 一次。"""
         while self._state == RunState.RUNNING:

@@ -37,6 +37,7 @@ export const useChatStore = defineStore('chat', () => {
   const nextBubbleQueue = ref<string[]>([])
   const playingMessageId = ref<string | null>(null)
   const previewImages = ref<{ url: string; mime: string }[]>([])
+  const sessionTokens = ref<{ total: number; byModel: Record<string, number> }>({ total: 0, byModel: {} })
   function appendDelta(text: string, streamId?: number) {
     const audioStore = useAudioStore()
     if (messages.value.length === 0 || lastRole.value !== 'assistant') {
@@ -132,6 +133,9 @@ export const useChatStore = defineStore('chat', () => {
 
   function addInnerVoice(content: string) {
     if (!content) return
+    // 尊重内心独白开关设置
+    const settingsStore = useSettingsStore()
+    if (!settingsStore.innerVoiceEnabled) return
     messages.value.push({
       id: generateId(),
       role: 'system' as const,
@@ -188,6 +192,10 @@ export const useChatStore = defineStore('chat', () => {
           turn_total: msg.turn.turn_total,
         } as unknown as TokenUsage
       }
+    }
+    // 更新 session 累计 token 统计
+    if (msg.session) {
+      sessionTokens.value = msg.session as { total: number; byModel: Record<string, number> }
     }
   }
 
@@ -247,8 +255,9 @@ export const useChatStore = defineStore('chat', () => {
         continue
       }
 
-      // 内心独白在公开回复之前单独渲染
-      if (m.inner_voice) {
+      // 内心独白在公开回复之前单独渲染（尊重开关设置）
+      const settingsStore = useSettingsStore()
+      if (m.inner_voice && settingsStore.innerVoiceEnabled) {
         messages.value.push({
           id: generateId(),
           role: 'system',
@@ -260,16 +269,52 @@ export const useChatStore = defineStore('chat', () => {
 
       // 每个 part 独立一个气泡（一句一个，保持分句显示）
       const parts: any[] = m.parts || []
+      const contentParts: any[] = (Array.isArray(m.content) ? m.content : [])
+      // 收集 content 中的 image parts（如果有）
+      const imageParts = contentParts.filter((p: any) => p && p.type === 'image' && p.src)
+
       for (let i = 0; i < parts.length; i++) {
         const p = parts[i]
         if (!p.content) continue
+        const text = p.content
+        // 舞台指示拆分：检测中文括号包裹的开头文本
+        const split = splitAction(text)
+        if (split) {
+          messages.value.push({
+            id: generateId(),
+            role: m.role as ChatMessage['role'],
+            content: split.action,
+            timestamp: Date.parse(m.created_at) || Date.now(),
+          } as ChatMessage)
+          if (split.rest) {
+            messages.value.push({
+              id: generateId(),
+              role: m.role as ChatMessage['role'],
+              content: split.rest,
+              timestamp: Date.parse(m.created_at) || Date.now(),
+              tokenUsage: (i === parts.length - 1 && imageParts.length === 0) ? m.token_usage : undefined,
+            } as ChatMessage)
+          }
+        } else {
+          messages.value.push({
+            id: generateId(),
+            role: m.role as ChatMessage['role'],
+            content: text,
+            timestamp: Date.parse(m.created_at) || Date.now(),
+            // 只在最后一句且没有图片时附加 token 统计
+            tokenUsage: (i === parts.length - 1 && imageParts.length === 0) ? m.token_usage : undefined,
+          } as ChatMessage)
+        }
+      }
+
+      // 渲染图片 content parts（如果有）
+      for (const img of imageParts) {
         messages.value.push({
           id: generateId(),
           role: m.role as ChatMessage['role'],
-          content: p.content,
+          content: [{ type: 'image', src: img.src, mime: img.mime }] as any,
           timestamp: Date.parse(m.created_at) || Date.now(),
-          // 只在最后一句附加 token 统计
-          tokenUsage: (i === parts.length - 1) ? m.token_usage : undefined,
+          tokenUsage: m.token_usage,
         } as ChatMessage)
       }
     }
@@ -298,10 +343,33 @@ export const useChatStore = defineStore('chat', () => {
     messages, lastRole, lastMsgTime, userScrolledUp, hasMoreMessages,
     earliestMessageId, typing, mood, moodIntensity, fsmState,
     nextBubbleQueue, playingMessageId, visibleMessages, latestAssistantMessage,
-    previewImages,
+    previewImages, sessionTokens,
     appendDelta, addUserMessage, addStatusMessage, addToolCard, updateToolCard,
     handleCompleteMessage, addInnerVoice, addBlockBubble, setMood, setState,
     updateTokenUsage, attachTokenLabel, finalizeDelta, clearPlayingHighlight,
     revealNextQueued, restoreFromServer, loadMoreMessages,
   }
 })
+
+// ---- 工具函数 ----
+
+/** 中文舞台指示检测正则：匹配括号包裹的中文动作描述 */
+const CN_ACTION_RE = /[(（][^)）]*[一-鿿][^)）]*[)）]/
+
+/**
+ * 如果文本以中文舞台指示开头，返回 {action, rest}，否则 null。
+ * 例如 "(轻声地)你好" → {action: "(轻声地)", rest: "你好"}
+ */
+function splitAction(text: string): { action: string; rest: string } | null {
+  const m = text.match(CN_ACTION_RE)
+  if (m && text.startsWith(m[0])) {
+    const action = m[0]
+    const rest = text.slice(action.length).trim()
+    return { action, rest: rest || '' }
+  }
+  return null
+}
+
+// Lazy imports to avoid circular dependencies — placed here to signal that
+// these are only ever called inside function bodies (never at module scope).
+import { useSettingsStore } from './settingsStore'
