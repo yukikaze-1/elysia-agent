@@ -256,15 +256,31 @@ export const useChatStore = defineStore('chat', () => {
         continue
       }
 
-      const msg: ChatMessage = {
-        id: generateId(),
-        role: m.role as ChatMessage['role'],
-        content: (m.parts?.length ? m.parts : m.content) || '',
-        timestamp: Date.parse(m.created_at) || Date.now(),
-        innerVoice: m.inner_voice,
-        tokenUsage: m.token_usage,
+      // 内心独白在公开回复之前单独渲染
+      if (m.inner_voice) {
+        messages.value.push({
+          id: generateId(),
+          role: 'system',
+          content: '',
+          innerVoice: m.inner_voice,
+          timestamp: Date.parse(m.created_at) || Date.now(),
+        } as ChatMessage)
       }
-      messages.value.push(msg)
+
+      // 每个 part 独立一个气泡（一句一个，保持分句显示）
+      const parts: any[] = m.parts || []
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i]
+        if (!p.content) continue
+        messages.value.push({
+          id: generateId(),
+          role: m.role as ChatMessage['role'],
+          content: p.content,
+          timestamp: Date.parse(m.created_at) || Date.now(),
+          // 只在最后一句附加 token 统计
+          tokenUsage: (i === parts.length - 1) ? m.token_usage : undefined,
+        } as ChatMessage)
+      }
     }
 
     finalizeDelta()

@@ -15,19 +15,11 @@ function isPlaying(): boolean {
 
 function contentText(): string {
   if (typeof props.message.content === 'string') return props.message.content
-  // 兼容两种格式: {type:"text", content:"..."} 和 {content:"..."}
+  // ContentPart[] — extract text
   const textParts = props.message.content.filter((p: any) =>
     p.content && (!p.type || p.type === 'text')
   )
   return textParts.map((p: any) => p.content).join('')
-}
-
-/** 每个句子单独渲染，实现一句一行的分句效果 */
-function textSentences(): string[] {
-  if (typeof props.message.content === 'string') return [props.message.content]
-  return props.message.content
-    .filter((p: any) => p.content && (!p.type || p.type === 'text'))
-    .map((p: any) => p.content)
 }
 </script>
 
@@ -49,8 +41,8 @@ function textSentences(): string[] {
     </div>
   </template>
 
-  <!-- System role (status messages, etc.) -->
-  <template v-else-if="message.role === 'system'">
+  <!-- System role (status messages, etc.) — skip if only innerVoice -->
+  <template v-else-if="message.role === 'system' && contentText()">
     <div class="msg-row system">
       <div class="msg-status">{{ contentText() }}</div>
     </div>
@@ -73,15 +65,11 @@ function textSentences(): string[] {
         class="msg-bubble"
         :class="{ playing: isPlaying(), pulse: isPlaying() }"
       >
-        <!-- 每个分句独立渲染为一行 -->
-        <template v-for="(s, si) in textSentences()" :key="si">
-          <span v-if="si > 0"><br /></span>
-          <ChatBubble
-            :content="s"
-            :contentType="message.contentType"
-            :language="message.language"
-          />
-        </template>
+        <ChatBubble
+          :content="contentText()"
+          :contentType="message.contentType"
+          :language="message.language"
+        />
         <TokenLabel
           v-if="message.tokenUsage"
           :tokenUsage="message.tokenUsage"
