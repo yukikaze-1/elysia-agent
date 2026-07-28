@@ -254,7 +254,7 @@ export const useChatStore = defineStore('chat', () => {
       const msg: ChatMessage = {
         id: generateId(),
         role: m.role as ChatMessage['role'],
-        content: m.content || m.parts?.map((p: any) => p.content).join('') || '',
+        content: (m.parts?.length ? m.parts : m.content) || '',
         timestamp: Date.parse(m.created_at) || Date.now(),
         innerVoice: m.inner_voice,
         tokenUsage: m.token_usage,

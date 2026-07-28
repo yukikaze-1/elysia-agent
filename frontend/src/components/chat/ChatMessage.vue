@@ -15,11 +15,11 @@ function isPlaying(): boolean {
 
 function contentText(): string {
   if (typeof props.message.content === 'string') return props.message.content
-  // ContentPart[] — extract text parts
-  const textParts = props.message.content.filter((p): p is { type: 'text'; content: string } =>
-    'type' in p && p.type === 'text'
+  // 兼容两种格式: {type:"text", content:"..."} 和 {content:"..."}
+  const textParts = props.message.content.filter((p: any) =>
+    p.content && (!p.type || p.type === 'text')
   )
-  return textParts.map(p => p.content).join(' ')
+  return textParts.map((p: any) => p.content).join('\n')
 }
 </script>
 
