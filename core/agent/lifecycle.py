@@ -12,11 +12,6 @@ from ._lifecycle_tools import _LifecycleTools
 from ._lifecycle_task_system import _LifecycleTaskSystem
 from ._types import RunState, _PendingMessage, _BackgroundTaskEntry
 
-from ..memory.consolidator import MemoryConsolidator
-from ..personality import CharacterEngine
-from core.schema.types import IsoTimestamp
-from ..task import TaskScheduler
-
 if TYPE_CHECKING:
     from core.storage.character_version_repo import CharacterVersionRepository
     from core.storage.session_repo import SessionRepository
@@ -27,6 +22,9 @@ if TYPE_CHECKING:
     from core.debug.response_recorder import ResponseRecorder
     from ..memory.session import SessionMemory
     from ..memory.long_term import LongTermMemory
+    from ..memory.consolidator import MemoryConsolidator
+    from ..personality import CharacterEngine
+    from ..task import TaskScheduler
     from ..event_bus import EventBus
     from ..agent_fsm import AgentFSM
     from ..cognitive import CognitiveLoop
@@ -37,6 +35,7 @@ if TYPE_CHECKING:
     from Module.output import OutputManager
     from ..adapter.llm_adapter import LLMAdapter
     from ..config import AppConfig
+    from core.schema.types import IsoTimestamp
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +63,19 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         ("stop_persistence",     "_stop_persistence"),
         ("stop_llm_tts",         "_stop_llm_and_tts"),
         ("stop_output",          "_stop_output"),
+    ]
+
+    # startup 步骤按依赖顺序排列（start() 中正序执行）
+    # _start_persistence 在 start() 中单独处理——需要捕获返回值
+    _STARTUP_STEPS: list[tuple[str, str]] = [
+        ("token_and_prompt", "_start_token_and_prompt"),
+        ("tool_context",     "_start_tool_context"),
+        ("worker_pool",      "_start_worker_pool"),
+        ("idle_and_events",  "_start_idle_and_events"),
+        ("tts",              "_start_tts"),
+        ("task_system",      "_start_task_system"),
+        ("mailbox_polling",  "_start_mailbox_polling"),
+        ("db_health",        "_start_db_health"),
     ]
 
     if TYPE_CHECKING:
@@ -112,40 +124,24 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         """Start the agent: connect persistence, idle monitor, event loop."""
         logger.info("Agent starting...")
         self._state = RunState.RUNNING
-        self._started_at = time.monotonic()  # 启动时刻打点，用于 get_runtime_config 显示运行时长
-
-        # Reset FSM — may be stuck from a previous run that was interrupted
+        self._started_at = time.monotonic()
         self._fsm.reset()
-
-        # Recreate LLM HTTP client (may have been closed by previous stop())
         await self._llm.reconnect()
 
-        # 1. 持久化连接 + session 加载
-        mongo_ok, milvus_ok = await self._start_persistence()
+        # persistence 特殊处理——先于循环，返回值由 _start_persistence() 写入 self
+        await self._start_persistence()
 
-        # 2. Token + Prompt 统计
-        await self._start_token_and_prompt()
-
-        # 3. 工具上下文 + 插件加载
-        await self._start_tool_context()
-
-        # 4. Worker Pool + embedding 预加载
-        await self._start_worker_pool()
-
-        # 5. IdleMonitor + 主事件循环
-        await self._start_idle_and_events()
-
-        # 6. TTS（条件启动）
-        await self._start_tts()
-
-        # 7. TaskSystem + DelegationPreparer
-        await self._start_task_system()
-
-        # 8. Mailbox 轮询
-        self._start_mailbox_polling()
-
-        # 9. 数据库健康检查循环（120s 间隔自动重连）
-        self._start_db_health()
+        # 其余步骤走 _STARTUP_STEPS 数据驱动循环
+        for name, method_name in self._STARTUP_STEPS:
+            logger.debug("Startup step: %s", name)
+            method = getattr(self, method_name)
+            try:
+                result = method()
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception:
+                logger.error("Startup step %s failed", name, exc_info=True)
+                raise
 
     async def stop(self) -> None:
         """Stop the agent — 按 _SHUTDOWN_STEPS 顺序执行清理。"""
