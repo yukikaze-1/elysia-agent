@@ -7,19 +7,15 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from ._lifecycle_persistence import _LifecyclePersistence
+from ._lifecycle_services import _LifecycleServices
 from ._types import RunState, _PendingMessage, _BackgroundTaskEntry
 
-from Module.output import OutputManager, ConsoleChannel
-
-from ..config import AppConfig
 from ..event_bus import EventBus, EventPriority, EventType
 from ..agent_fsm import AgentFSM, AgentState
 from ..utils import set_request_id, get_request_id
-from ..config import CharacterConfig
 from ..prompt_assembler import PromptAssembler
 from ..cognitive import CognitiveLoop
 from ..idle_monitor import IdleMonitor
-from ..adapter.llm_adapter import LLMAdapter
 from ..memory.consolidator import MemoryConsolidator
 from ..personality import CharacterEngine
 from core.personality.reflector import CharacterReflector
@@ -44,11 +40,14 @@ if TYPE_CHECKING:
     from Module.task_system.task_system import TaskSystem
     from Module.task_system.delegation_preparer import DelegationPreparer
     from Module.tts.protocol import TTSBackend
+    from Module.output import OutputManager
+    from ..adapter.llm_adapter import LLMAdapter
+    from ..config import AppConfig
 
 logger = logging.getLogger(__name__)
 
 
-class AgentLifecycle(_LifecyclePersistence):
+class AgentLifecycle(_LifecyclePersistence, _LifecycleServices):
     """Agent 生命周期 mixin — start/stop 编排。
 
     所有属性由 Agent.__init__ 初始化，本 mixin 不含 __init__。
@@ -131,7 +130,7 @@ class AgentLifecycle(_LifecyclePersistence):
         mongo_ok, milvus_ok = await self._start_persistence()
 
         # 2. Token + Prompt 统计
-        await self._start_token_and_prompt(mongo_ok)
+        await self._start_token_and_prompt()
 
         # 3. 工具上下文 + 插件加载
         await self._start_tool_context()
@@ -153,28 +152,6 @@ class AgentLifecycle(_LifecyclePersistence):
 
         # 9. 数据库健康检查循环（120s 间隔自动重连）
         self._start_db_health()
-
-    async def _start_token_and_prompt(self, mongo_ok: bool) -> None:
-        """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""
-        from core.token_tracker import TokenTracker
-        self._token_tracker = TokenTracker(
-            session_id=self._session.session_id,
-            output_manager=self._output,
-            repo=self._token_repo if mongo_ok else None,
-        )
-        if mongo_ok:
-            await self._token_tracker.flush_pending()
-
-        from core.debug.prompt_recorder import PromptRecorder
-        self._prompt_recorder = PromptRecorder(max_records=20)
-        from core.debug.response_recorder import ResponseRecorder
-        self._response_recorder = ResponseRecorder(max_records=20)
-
-        self._cognitive.configure(
-            token_tracker=self._token_tracker,
-            prompt_recorder=self._prompt_recorder,
-            response_recorder=self._response_recorder,
-        )
 
     async def _start_tool_context(self) -> None:
         """启动 ToolAdapter，注入运行时服务。"""
@@ -201,28 +178,6 @@ class AgentLifecycle(_LifecyclePersistence):
         """启动 IdleMonitor + 主事件循环（独立 asyncio.Task）。"""
         await self._idle.start()
         self._event_task = asyncio.create_task(self._process_events())
-
-    async def _start_tts(self) -> None:
-        """创建 TTS 后端（条件执行——由 config.tts.enabled 控制）。
-
-        创建后测试连通性，不可用时自动降级为纯文本模式。
-        """
-        if self._config.tts.enabled:
-            from Module.tts import TTSFactory
-            try:
-                self._tts = TTSFactory.create(self._config.tts.model)
-                # 快速连通性测试——1s 超时，避免卡启动
-                import asyncio as _asyncio
-                result = await _asyncio.wait_for(self._tts.test(), timeout=1.0)
-                if result.get("ok"):
-                    self._cognitive.configure(tts=self._tts)
-                    logger.info("TTS backend connected")
-                else:
-                    self._tts = None
-                    logger.info("TTS not available — text-only mode (%s)", result.get("error", "unknown"))
-            except Exception:
-                self._tts = None
-                logger.info("TTS not available — text-only mode")
 
     async def _start_task_system(self) -> None:
         """创建 TaskSystem + DelegationPreparer + HITLNotifier，注入 CognitiveLoop。"""
@@ -384,25 +339,3 @@ class AgentLifecycle(_LifecyclePersistence):
         logger.debug("Stopping idle monitor...")
         await self._idle.stop()
 
-    async def _stop_llm_and_tts(self) -> None:
-        """关闭 LLM 和 TTS 客户端连接。"""
-        logger.debug("Closing LLM client...")
-        try:
-            await asyncio.wait_for(self._llm.close(), timeout=3.0)
-        except asyncio.TimeoutError:
-            logger.warning("LLM close timed out")
-
-        if self._tts:
-            logger.debug("Closing TTS backend...")
-            try:
-                await asyncio.wait_for(self._tts.close(), timeout=3.0)
-            except asyncio.TimeoutError:
-                logger.warning("TTS close timed out")
-
-    async def _stop_output(self) -> None:
-        """关闭所有输出通道。"""
-        logger.debug("Closing output channels...")
-        try:
-            await asyncio.wait_for(self._output.close(), timeout=3.0)
-        except asyncio.TimeoutError:
-            logger.warning("Output close timed out")
