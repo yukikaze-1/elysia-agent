@@ -117,8 +117,8 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function handleCompleteMessage(msg: { content?: string; mood?: string }) {
-    if (!msg.content) return
+  function handleCompleteMessage(msg: { content?: string; mood?: string }): boolean {
+    if (!msg.content) return false
     typing.value = false
     lastRole.value = 'assistant'
     messages.value.push({
@@ -135,6 +135,7 @@ export const useChatStore = defineStore('chat', () => {
         timestamp: Date.now(),
       })
     }
+    return true
   }
 
   function addInnerVoice(content: string) {
