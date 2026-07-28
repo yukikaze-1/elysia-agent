@@ -15,7 +15,7 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
     const m = msg as any
     switch (m.type) {
       case 'delta':         chat.appendDelta(m.content, m.stream_id); break
-      case 'message':       if (chat.handleCompleteMessage(m)) chat.finalizeDelta(); break
+      case 'message':       chat.handleCompleteMessage(m); break
       case 'audio':         audio.bufferChunk(m.stream_id, m.seq, m.data); break
       case 'audio_end':     audio.finalizeStream(m.stream_id, m.format); break
       case 'action':        handleAction(m); break

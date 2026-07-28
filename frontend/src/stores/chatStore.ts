@@ -117,16 +117,9 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function handleCompleteMessage(msg: { content?: string; mood?: string }): boolean {
-    if (!msg.content) return false
+  function handleCompleteMessage(msg: { content?: string; mood?: string }) {
     typing.value = false
-    lastRole.value = 'assistant'
-    messages.value.push({
-      id: generateId(),
-      role: 'assistant',
-      content: msg.content,
-      timestamp: Date.now(),
-    })
+    finalizeDelta()
     if (msg.mood) {
       messages.value.push({
         id: generateId(),
@@ -135,7 +128,6 @@ export const useChatStore = defineStore('chat', () => {
         timestamp: Date.now(),
       })
     }
-    return true
   }
 
   function addInnerVoice(content: string) {
