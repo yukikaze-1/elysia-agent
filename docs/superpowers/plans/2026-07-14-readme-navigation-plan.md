@@ -77,7 +77,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Database | [Module/database/README.md](Module/database/README.md) | 数据库总览（Milvus + MongoDB） |
 | VectorDB | [Module/database/vectordb/README.md](Module/database/vectordb/README.md) | 向量数据库（Milvus） |
 | DocumentDB | [Module/database/documentdb/README.md](Module/database/documentdb/README.md) | 文档数据库（MongoDB） |
-| Input | [Module/input/README.md](Module/input/README.md) | AudioBuffer + WebSocket 服务器 |
+| Input | [core/input/README.md](core/input/README.md) | AudioBuffer + WebSocket 服务器 |
 | Bench | [Module/bench/README.md](Module/bench/README.md) | 延迟基准测试 |
 | Module 总览 | [Module/README.md](Module/README.md) | 架构模式 + 各模块 API 速览 |
 
@@ -258,7 +258,7 @@ git commit -m "docs: Module README 加面包屑 + 模块链接 + 相关文档"
 ### Task 3: Module 子 README（浅层）— 面包屑 + 相关文档
 
 **Files:**
-- Modify: `Module/llm/README.md`, `Module/stt/README.md`, `Module/tts/README.md`, `Module/embedding/README.md`, `Module/output/README.md`, `Module/config/README.md`, `Module/logger/README.md`, `Module/input/README.md`, `Module/bench/README.md`（9 个文件）
+- Modify: `Module/llm/README.md`, `Module/stt/README.md`, `Module/tts/README.md`, `Module/embedding/README.md`, `Module/output/README.md`, `Module/config/README.md`, `Module/logger/README.md`, `core/input/README.md`, `Module/bench/README.md`（9 个文件）
 
 **Interfaces:**
 - Consumes: Task 2 Module/README.md 枢纽已就位（面包屑追溯目标）
@@ -278,7 +278,7 @@ git commit -m "docs: Module README 加面包屑 + 模块链接 + 相关文档"
 - `Module/output/README.md`
 - `Module/config/README.md`
 - `Module/logger/README.md`
-- `Module/input/README.md`
+- `core/input/README.md`
 - `Module/bench/README.md`
 
 - [ ] **Step 2: 给每个文件底部加"相关文档"节**
@@ -308,7 +308,7 @@ git commit -m "docs: Module README 加面包屑 + 模块链接 + 相关文档"
 | 文档 | 内容 |
 |------|------|
 | [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
-| [Module/input/README.md](../input/README.md) | AudioBuffer + WebSocket（STT 输入源） |
+| [core/input/README.md](../input/README.md) | AudioBuffer + WebSocket（STT 输入源） |
 | [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 音频输入管道 |
 ```
 
@@ -350,7 +350,7 @@ git commit -m "docs: Module README 加面包屑 + 模块链接 + 相关文档"
 | 文档 | 内容 |
 |------|------|
 | [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
-| [Module/input/README.md](../input/README.md) | WebSocket 服务器（Output 通道载体） |
+| [core/input/README.md](../input/README.md) | WebSocket 服务器（Output 通道载体） |
 | [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 输出系统 |
 ```
 
@@ -380,7 +380,7 @@ git commit -m "docs: Module README 加面包屑 + 模块链接 + 相关文档"
 | [docs/architecture.md](../../docs/architecture.md) | 日志系统架构 |
 ```
 
-**`Module/input/README.md`** — 在文件末尾添加：
+**`core/input/README.md`** — 在文件末尾添加：
 
 ```markdown
 ---
@@ -412,7 +412,7 @@ git commit -m "docs: Module README 加面包屑 + 模块链接 + 相关文档"
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Module/llm/README.md Module/stt/README.md Module/tts/README.md Module/embedding/README.md Module/output/README.md Module/config/README.md Module/logger/README.md Module/input/README.md Module/bench/README.md
+git add Module/llm/README.md Module/stt/README.md Module/tts/README.md Module/embedding/README.md Module/output/README.md Module/config/README.md Module/logger/README.md core/input/README.md Module/bench/README.md
 git commit -m "docs: Module 子 README（浅层）加面包屑 + 相关文档"
 ```
 

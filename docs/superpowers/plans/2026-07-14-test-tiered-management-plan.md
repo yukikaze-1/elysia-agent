@@ -262,12 +262,12 @@ conda run -n Elysia python -m pytest Module/database/ Module/embedding/ -v -q
 
 ---
 
-### Task 4: Batch 4 — Module/input/ + Module/output/
+### Task 4: Batch 4 — core/input/ + Module/output/
 
 **Files 范围（4 文件）:**
-- `Module/input/test_server.py` (30 tests)
-- `Module/input/test_audio_buffer.py` (29 tests)
-- `Module/input/test_wakeword.py` (8 tests)
+- `core/input/test_server.py` (30 tests)
+- `core/input/test_audio_buffer.py` (29 tests)
+- `core/input/test_wakeword.py` (8 tests)
 - `Module/output/test_output.py` (54 tests)
 
 **预计 marker 分布:** unit + service

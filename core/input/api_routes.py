@@ -58,7 +58,7 @@ def register_api_routes(app: web.Application) -> None:
         Returns:
             web.Response: {"llm": ..., "stt": ..., "tts": ..., "custom": ...}。
         """
-        from Module.input.custom_providers import load as load_custom
+        from core.input.custom_providers import load as load_custom
 
         llm_registry = {
             "deepseek": {"models": ["deepseek-v4-flash", "deepseek-v4-pro"]},
@@ -102,7 +102,7 @@ def register_api_routes(app: web.Application) -> None:
         Returns:
             web.Response: {"ok": True, "data": ...} 或错误信息。
         """
-        from Module.input.custom_providers import add_provider
+        from core.input.custom_providers import add_provider
         try:
             body = await request.json()
             service = body.get("service", "")
@@ -128,7 +128,7 @@ def register_api_routes(app: web.Application) -> None:
         Returns:
             web.Response: {"ok": True, "data": ...} 或错误信息。
         """
-        from Module.input.custom_providers import remove_provider
+        from core.input.custom_providers import remove_provider
         service = request.match_info.get("service", "")
         name = request.match_info.get("name", "")
         if service not in ("llm", "stt", "tts"):

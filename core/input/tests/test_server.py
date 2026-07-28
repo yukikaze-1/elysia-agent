@@ -1,6 +1,6 @@
-"""Tests for Module/input/server.py — WebSocket server.
+"""Tests for core/input/server.py — WebSocket server.
 
-Run: python -m pytest Module/input/test_server.py -v --asyncio-mode=auto
+Run: python -m pytest core/input/tests/test_server.py -v --asyncio-mode=auto
 """
 
 import asyncio
@@ -33,7 +33,7 @@ def _make_agent():
 @pytest.mark.unit
 class TestCreateApp:
     def test_registers_routes(self):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = MagicMock()
         agent._output = MagicMock()
@@ -55,7 +55,7 @@ class TestCreateApp:
         assert any('/ws' in s or 'ws_handler' in s for s in route_strs), f"No /ws route in {route_strs}"
 
     def test_shutdown_endpoint(self):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = MagicMock()
         agent._output = MagicMock()
@@ -74,7 +74,7 @@ class TestCreateApp:
         assert agent._state == RunState.STOPPING
 
     def test_restart_endpoint(self):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = MagicMock()
         agent._output = MagicMock()
@@ -97,7 +97,7 @@ class TestCreateAppIntegration:
 
     @pytest.mark.asyncio
     async def test_shutdown_endpoint(self, aiohttp_client):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = MagicMock()
         agent._output = MagicMock()
@@ -115,7 +115,7 @@ class TestCreateAppIntegration:
 
     @pytest.mark.asyncio
     async def test_shutdown_get(self, aiohttp_client):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = MagicMock()
         agent._output = MagicMock()
@@ -131,7 +131,7 @@ class TestCreateAppIntegration:
 
     @pytest.mark.asyncio
     async def test_restart_endpoint(self, aiohttp_client):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = MagicMock()
         agent._output = MagicMock()
@@ -152,7 +152,7 @@ class TestCreateAppIntegration:
 class TestWebSocketHandler:
     @pytest.mark.asyncio
     async def test_text_message_triggers_process_message(self, aiohttp_client):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = _make_agent()
         await agent.start()
@@ -171,7 +171,7 @@ class TestWebSocketHandler:
 
     @pytest.mark.asyncio
     async def test_interrupt_message(self, aiohttp_client):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = _make_agent()
         await agent.start()
@@ -187,7 +187,7 @@ class TestWebSocketHandler:
 
     @pytest.mark.asyncio
     async def test_ws_creates_output_channel(self, aiohttp_client):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = _make_agent()
         await agent.start()
@@ -209,7 +209,7 @@ class TestWebSocketHandler:
 
     @pytest.mark.asyncio
     async def test_invalid_json_returns_error(self, aiohttp_client):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = _make_agent()
         await agent.start()
@@ -226,8 +226,8 @@ class TestWebSocketHandler:
 
     @pytest.mark.asyncio
     async def test_do_transcription_with_emotion(self, aiohttp_client):
-        from Module.input.server import create_app
-        from Module.input.ws_handler import do_transcription as _do_transcription
+        from core.input.server import create_app
+        from core.input.ws_handler import do_transcription as _do_transcription
 
         agent = _make_agent()
         await agent.start()
@@ -252,7 +252,7 @@ class TestDoInterruptSkipIf:
 
     @pytest.mark.asyncio
     async def test_vad_skips_during_thinking(self):
-        from Module.input.ws_handler import do_interrupt as _do_interrupt
+        from core.input.ws_handler import do_interrupt as _do_interrupt
 
         agent = MagicMock()
         agent._fsm.state = "thinking"
@@ -264,7 +264,7 @@ class TestDoInterruptSkipIf:
 
     @pytest.mark.asyncio
     async def test_vad_skips_during_executing(self):
-        from Module.input.ws_handler import do_interrupt as _do_interrupt
+        from core.input.ws_handler import do_interrupt as _do_interrupt
 
         agent = MagicMock()
         agent._fsm.state = "executing"
@@ -276,7 +276,7 @@ class TestDoInterruptSkipIf:
 
     @pytest.mark.asyncio
     async def test_vad_allows_during_speaking(self):
-        from Module.input.ws_handler import do_interrupt as _do_interrupt
+        from core.input.ws_handler import do_interrupt as _do_interrupt
         from core.monitoring.event_bus import EventPriority
         from core.schema.event import InterruptData
 
@@ -293,7 +293,7 @@ class TestDoInterruptSkipIf:
 
     @pytest.mark.asyncio
     async def test_explicit_interrupt_always_allowed(self):
-        from Module.input.ws_handler import do_interrupt as _do_interrupt
+        from core.input.ws_handler import do_interrupt as _do_interrupt
         from core.monitoring.event_bus import EventPriority
         from core.schema.event import InterruptData
 
@@ -317,7 +317,7 @@ class TestDoInterruptSkipIf:
 class TestHandleJsonEdges:
     @pytest.mark.asyncio
     async def test_empty_text_not_processed(self):
-        from Module.input.ws_handler import handle_json_message as _handle_json
+        from core.input.ws_handler import handle_json_message as _handle_json
 
         agent = MagicMock()
         agent.process_message = AsyncMock()
@@ -326,7 +326,7 @@ class TestHandleJsonEdges:
 
     @pytest.mark.asyncio
     async def test_whitespace_text_not_processed(self):
-        from Module.input.ws_handler import handle_json_message as _handle_json
+        from core.input.ws_handler import handle_json_message as _handle_json
 
         agent = MagicMock()
         agent.process_message = AsyncMock()
@@ -335,7 +335,7 @@ class TestHandleJsonEdges:
 
     @pytest.mark.asyncio
     async def test_unknown_type_noop(self):
-        from Module.input.ws_handler import handle_json_message as _handle_json
+        from core.input.ws_handler import handle_json_message as _handle_json
 
         agent = MagicMock()
         await _handle_json({"type": "unknown_cmd"}, agent)
@@ -343,7 +343,7 @@ class TestHandleJsonEdges:
 
     @pytest.mark.asyncio
     async def test_interrupt_type(self):
-        from Module.input.ws_handler import handle_json_message as _handle_json
+        from core.input.ws_handler import handle_json_message as _handle_json
 
         agent = MagicMock()
         agent._fsm.state = "speaking"
@@ -353,7 +353,7 @@ class TestHandleJsonEdges:
 
     @pytest.mark.asyncio
     async def test_no_type_field(self):
-        from Module.input.ws_handler import handle_json_message as _handle_json
+        from core.input.ws_handler import handle_json_message as _handle_json
 
         agent = MagicMock()
         await _handle_json({}, agent)  # no "type" field
@@ -368,7 +368,7 @@ class TestHandleJsonEdges:
 class TestEndpoints:
     @pytest.fixture
     def app(self):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = MagicMock()
         agent._fsm.state = "idle"
@@ -424,7 +424,7 @@ class TestEndpoints:
 class TestToolEndpoints:
     @pytest.fixture
     def app(self):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = MagicMock()
         agent._fsm.state = "idle"
@@ -490,7 +490,7 @@ class TestToolEndpoints:
 class TestAssertionFixes:
     @pytest.mark.asyncio
     async def test_invalid_json_returns_error_message(self, aiohttp_client):
-        from Module.input.server import create_app
+        from core.input.server import create_app
 
         agent = _make_agent()
         await agent.start()

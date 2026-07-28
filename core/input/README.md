@@ -9,7 +9,7 @@
 ```
 input/
 ├── __init__.py          # 导出
-├── __main__.py          # 集成测试 (python -m Module.input)
+├── __main__.py          # 集成测试 (python -m core.input)
 ├── audio_buffer.py      # AudioBuffer — VAD 分帧 + 音频缓冲 + PCM/WAV 转换
 ├── server.py            # 胶水组装 + 基础路由
 ├── ws_handler.py        # WebSocket 处理
@@ -24,7 +24,7 @@ input/
 
 ```python
 from aiohttp import web
-from Module.input import create_app, AudioBuffer
+from core.input import create_app, AudioBuffer
 
 async def my_stt(audio_bytes: bytes) -> str:
     return "识别结果"
@@ -50,8 +50,8 @@ web.run_app(app, port=8000)
 ## 测试
 
 ```bash
-python -m pytest Module/input/ -v
-python -m Module.input
+python -m pytest core/input/ -v
+python -m core.input
 ```
 
 ---

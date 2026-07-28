@@ -1,4 +1,4 @@
-# Module/input/server.py 拆分设计
+# core/input/server.py 拆分设计
 
 > 将 1063 行的 `server.py` 按职责拆为 4 个文件，每个文件导出一个 `register_xxx(app)` 函数，由 `create_app()` 依次调用。
 
@@ -11,7 +11,7 @@
 ## 拆分方案
 
 ```
-Module/input/
+core/input/
 ├── server.py          (~150 行)  胶水组装 + 基础路由
 ├── debug_routes.py    (~400 行)  /debug/api/*  全部 handler
 ├── api_routes.py      (~300 行)  业务 API + 模型切换 + 图片上传 + Chat
@@ -122,12 +122,12 @@ def create_app(agent, stt_transcribe=None, serve_static=True,
 
 ### 测试影响
 
-`Module/input/tests/test_server.py` 中 import 变更：
+`core/input/tests/test_server.py` 中 import 变更：
 
-- `from Module.input.server import _do_interrupt` → `from Module.input.ws_handler import do_interrupt`
-- `from Module.input.server import _do_transcription` → `from Module.input.ws_handler import do_transcription`
-- `from Module.input.server import _handle_json` → `from Module.input.ws_handler import handle_json_message`
-- `from Module.input.server import create_app` → 不变
+- `from core.input.server import _do_interrupt` → `from core.input.ws_handler import do_interrupt`
+- `from core.input.server import _do_transcription` → `from core.input.ws_handler import do_transcription`
+- `from core.input.server import _handle_json` → `from core.input.ws_handler import handle_json_message`
+- `from core.input.server import create_app` → 不变
 
 `core/tests/test_phase3.py` 同理（`create_app` import 不变）。
 
@@ -135,5 +135,5 @@ def create_app(agent, stt_transcribe=None, serve_static=True,
 
 - 不修改任何业务逻辑——纯文件搬迁
 - 不修改 handler 签名（除了 WS handler 去前导下划线）
-- `Module/input/__init__.py` 重导出 `create_app` 不变
-- `core/agent/server.py` 的 `from Module.input.server import create_app` 不变
+- `core/input/__init__.py` 重导出 `create_app` 不变
+- `core/agent/server.py` 的 `from core.input.server import create_app` 不变

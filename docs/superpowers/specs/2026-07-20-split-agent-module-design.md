@@ -65,7 +65,7 @@ from ._types import RunState
 ## 循环导入防护
 
 1. **`_types.py` 零依赖** — `RunState` 等共享类型抽到独立文件，被 agent/lifecycle/server import 但不反向依赖
-2. **`server.py` 禁止顶层导入 `Module.input.server`** — `run_server()` 内部的 `from Module.input.server import create_app` 保持延迟导入。任何人不应在 server.py 顶部加此 import
+2. **`server.py` 禁止顶层导入 `core.input.server`** — `run_server()` 内部的 `from core.input.server import create_app` 保持延迟导入。任何人不应在 server.py 顶部加此 import
 3. **`lifecycle.py` 和 `server.py` 不 import agent.py** — 只 import `_types.py`
 
 ## 外部耦合
@@ -74,7 +74,7 @@ from ._types import RunState
 
 | 调用方 | 当前 import | 拆分后 |
 |--------|-----------|--------|
-| `Module/input/server.py:15` | `from core.agent import RunState` | 不变（`__init__.py` 透出） |
+| `core/input/server.py:15` | `from core.agent import RunState` | 不变（`__init__.py` 透出） |
 | `core/debug_info.py` | `from core.agent import Agent` (TYPE_CHECKING) | 不变 |
 | `core/tests/test_phase3.py` | `from core.agent import Agent` | 不变 |
 | `core/tests/test_task_scheduler.py` | `from core.agent import Agent` | 不变 |
@@ -89,4 +89,4 @@ from ._types import RunState
 2. **Mixin 只放方法**: `AgentLifecycle` 和 `AgentServer` 不设 `__init__`，所有属性在 `Agent.__init__` 中
 3. **不改变逻辑**: 纯粹的文件拆分，不重构内部实现
 4. **保持私有属性访问**: `self._xxx` 在 mixin 间直接访问
-5. **server.py 顶层不 import Module.input.server**: 禁止闭合循环导入链
+5. **server.py 顶层不 import core.input.server**: 禁止闭合循环导入链

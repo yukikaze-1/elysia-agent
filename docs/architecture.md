@@ -668,7 +668,7 @@ Browser Microphone
 | `tool_approval` | `{"type":"tool_approval","request_id":"...","approved":true}` | 工具审批回复 |
 | binary | Int16 PCM bytes | 麦克风音频 |
 
-### 6.3 WebSocket 服务器 (Module/input/)
+### 6.3 WebSocket 服务器 (core/input/)
 
 ```
 aiohttp Application (41 条路由):

@@ -73,7 +73,7 @@ pytest core/memory/tests/ -q
 | 1 | `Module/_common/` + `Module/config/` + `Module/logger/` | 6 | unit |
 | 2 | `Module/database/` + `Module/embedding/` | 6 | unit + service |
 | 3 | `Module/llm/` + `Module/stt/` + `Module/tts/` | 6 | service |
-| 4 | `Module/input/` + `Module/output/` | 4 | unit + service |
+| 4 | `core/input/` + `Module/output/` | 4 | unit + service |
 | 5 | `Module/system_prompt/` | 6 | unit + integration |
 | 6 | `Module/tool/` | 2 | unit + service |
 | 7 | `Module/task_system/` | 16 | unit + integration |

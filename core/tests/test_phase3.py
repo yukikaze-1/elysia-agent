@@ -899,7 +899,7 @@ class TestWebSocketChannelNew:
 class TestAudioBufferErrors:
     @pytest.mark.asyncio
     async def test_stt_timeout(self):
-        from Module.input.audio_buffer import AudioBuffer
+        from core.input.audio_buffer import AudioBuffer
 
         async def slow_stt(wav):
             await asyncio.sleep(99)  # Will timeout
@@ -927,7 +927,7 @@ class TestAudioBufferErrors:
 
     @pytest.mark.asyncio
     async def test_stt_exception(self):
-        from Module.input.audio_buffer import AudioBuffer
+        from core.input.audio_buffer import AudioBuffer
 
         async def fail_stt(wav):
             raise RuntimeError("STT crashed")
@@ -950,7 +950,7 @@ class TestAudioBufferErrors:
 
     @pytest.mark.asyncio
     async def test_stt_empty_result(self):
-        from Module.input.audio_buffer import AudioBuffer
+        from core.input.audio_buffer import AudioBuffer
 
         async def empty_stt(wav):
             return ""
@@ -972,14 +972,14 @@ class TestAudioBufferErrors:
 
     @pytest.mark.asyncio
     async def test_flush_empty_buffer(self):
-        from Module.input.audio_buffer import AudioBuffer
+        from core.input.audio_buffer import AudioBuffer
         buf = AudioBuffer()
         await buf.flush()  # Should not raise
 
     @pytest.mark.asyncio
     async def test_vad_silence_detected(self):
         """Near-silence PCM should be classified as non-speech by WebRTC VAD."""
-        from Module.input.audio_buffer import AudioBuffer, _FRAME_BYTES
+        from core.input.audio_buffer import AudioBuffer, _FRAME_BYTES
         buf = AudioBuffer(aggressiveness=3)
         # Generate near-silence frame (very low amplitude)
         import struct
@@ -1502,7 +1502,7 @@ class TestDebugDbApi:
     async def test_db_status_endpoint(self):
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from Module.input.server import create_app
+        from core.input.server import create_app
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1525,7 +1525,7 @@ class TestDebugDbApi:
     async def test_ltm_list_and_insert(self):
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from Module.input.server import create_app
+        from core.input.server import create_app
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1563,7 +1563,7 @@ class TestDebugDbApi:
     async def test_ltm_clear_all(self):
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from Module.input.server import create_app
+        from core.input.server import create_app
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1590,7 +1590,7 @@ class TestDebugDbApi:
     async def test_session_list_endpoint(self):
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from Module.input.server import create_app
+        from core.input.server import create_app
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1611,7 +1611,7 @@ class TestDebugDbApi:
     async def test_session_detail_endpoint(self):
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from Module.input.server import create_app
+        from core.input.server import create_app
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())

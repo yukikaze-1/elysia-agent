@@ -1,4 +1,4 @@
-"""集成测试：启动最小测试服务器验证 AudioBuffer 和 WS 路由。运行: python -m Module.input"""
+"""集成测试：启动最小测试服务器验证 AudioBuffer 和 WS 路由。运行: python -m core.input"""
 
 import os
 import sys

@@ -193,7 +193,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Database | [Module/database/README.md](Module/database/README.md) | 数据库总览（Milvus + MongoDB） |
 | VectorDB | [Module/database/vectordb/README.md](Module/database/vectordb/README.md) | 向量数据库（Milvus） |
 | DocumentDB | [Module/database/documentdb/README.md](Module/database/documentdb/README.md) | 文档数据库（MongoDB） |
-| Input | [Module/input/README.md](Module/input/README.md) | AudioBuffer + WebSocket 服务器 |
+| Input | [core/input/README.md](core/input/README.md) | AudioBuffer + WebSocket 服务器 |
 | Bench | [Module/bench/README.md](Module/bench/README.md) | 延迟基准测试 |
 | Module 总览 | [Module/README.md](Module/README.md) | 架构模式 + 各模块 API 速览 |
 

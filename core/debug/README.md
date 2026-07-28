@@ -103,7 +103,7 @@ static/
 └── js/                — 面板渲染 + SSE
 
 服务端:
-Module/input/server.py — /debug/api 路由注册
+core/input/server.py — /debug/api 路由注册
 ```
 
 ## 调试

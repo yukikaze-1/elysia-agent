@@ -21,7 +21,7 @@ Module/config/
 └── tests/
 ```
 
-`Module/input/custom_providers.py` 管理 `custom_providers.yaml` 的运行时读写，支持添加/删除/测试自定义 LLM/STT/TTS 端点。`preflight.py` 实现 `app.py --check` 和 `app.py --check --full` 的 14 项环境预检。
+`core/input/custom_providers.py` 管理 `custom_providers.yaml` 的运行时读写，支持添加/删除/测试自定义 LLM/STT/TTS 端点。`preflight.py` 实现 `app.py --check` 和 `app.py --check --full` 的 14 项环境预检。
 
 ## 快速开始
 

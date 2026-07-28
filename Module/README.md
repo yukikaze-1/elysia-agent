@@ -235,7 +235,7 @@ results = await backend.search("micro_memory", query_vector, top_k=10)
 `AudioBuffer` 管理麦克风 PCM 缓冲 + WebRTC VAD 语音活动检测。`server.py`（胶水组装）+ `ws_handler.py` + `api_routes.py` + `debug_routes.py` 提供 41 路由的 aiohttp 应用（WebSocket、REST API、静态文件、debug API）。
 
 ```python
-from Module.input import AudioBuffer
+from core.input import AudioBuffer
 
 buf = AudioBuffer()
 buf.feed(pcm_bytes)          # 喂入 PCM 音频
@@ -243,7 +243,7 @@ if buf.is_speech_complete():  # VAD 检测到完整语音段
     wav = buf.to_wav()
 ```
 
-> 📖 完整 API 文档 → [Module/input/README.md](input/README.md)
+> 📖 完整 API 文档 → [core/input/README.md](input/README.md)
 
 ### TaskSystem — 异步任务编排
 
@@ -277,7 +277,7 @@ python -m pytest Module/logger/tests/ -v
 python -m pytest Module/tool/tests/ -v
 python -m pytest Module/database/vectordb/tests/ -v
 python -m pytest Module/database/documentdb/tests/ -v
-python -m pytest Module/input/ -v
+python -m pytest core/input/ -v
 python -m pytest Module/task_system/tests/ -v
 
 # 集成冒烟测试（需要对应服务运行）

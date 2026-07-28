@@ -14,8 +14,8 @@
 2. **Mixin 只放方法**: `AgentLifecycle` 和 `AgentServer` 不设 `__init__`，所有属性在 `Agent.__init__` 中
 3. **不改变逻辑**: 纯粹的文件拆分，不重构内部实现
 4. **`_types.py` 零包内依赖**: 不被其他模块 import 反向依赖
-5. **`server.py` 顶层不 import `Module.input.server`**: 禁止闭合循环导入链
-6. **所有外部引用路径不变**: `core/debug_info.py`, `Module/input/server.py`, 所有测试文件无需修改
+5. **`server.py` 顶层不 import `core.input.server`**: 禁止闭合循环导入链
+6. **所有外部引用路径不变**: `core/debug_info.py`, `core/input/server.py`, 所有测试文件无需修改
 
 ---
 
@@ -295,7 +295,7 @@ class AgentServer:
     # run_server
     # ================================================================
     # [复制原始 agent.py lines 763–863 的 run_server 方法体]
-    # 注意：内部 from Module.input.server import create_app 保持延迟导入
+    # 注意：内部 from core.input.server import create_app 保持延迟导入
     # 注意：内嵌函数 transcribe_wrapper 随方法一起复制
     # ...
 

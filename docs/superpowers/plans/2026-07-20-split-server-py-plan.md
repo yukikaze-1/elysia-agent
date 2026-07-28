@@ -1,8 +1,8 @@
-# Module/input/server.py 拆分实施计划
+# core/input/server.py 拆分实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 将 1063 行的 `Module/input/server.py` 拆为 4 个文件（server.py + debug_routes.py + api_routes.py + ws_handler.py），纯提取，不改逻辑。
+**Goal:** 将 1063 行的 `core/input/server.py` 拆为 4 个文件（server.py + debug_routes.py + api_routes.py + ws_handler.py），纯提取，不改逻辑。
 
 **Architecture:** 每个新文件导出一个 `register_xxx(app)` 函数，`create_app()` 依次调用。WS helper 去前导下划线为公开函数。handler 保持 `request.app["agent"]` 取依赖模式。
 
@@ -12,17 +12,17 @@
 
 - 不改任何业务逻辑——纯文件搬迁
 - 不改 handler 签名（WS helper 仅去前导下划线）
-- `Module/input/__init__.py` 重导出 `create_app` 不变
-- `core/agent/server.py` 的 `from Module.input.server import create_app` 不变
-- 每个 task 完成后 `Module/input/tests/test_server.py` 30 tests 必须全绿
+- `core/input/__init__.py` 重导出 `create_app` 不变
+- `core/agent/server.py` 的 `from core.input.server import create_app` 不变
+- 每个 task 完成后 `core/input/tests/test_server.py` 30 tests 必须全绿
 
 ---
 
 ### Task 1: 创建 `ws_handler.py` — 提取 WebSocket handler + 3 个辅助函数
 
 **Files:**
-- Create: `Module/input/ws_handler.py`
-- Modify: `Module/input/server.py`（删除 L831-1064, 替换为 import + wrapper）
+- Create: `core/input/ws_handler.py`
+- Modify: `core/input/server.py`（删除 L831-1064, 替换为 import + wrapper）
 
 **Interfaces:**
 - Consumes: （无依赖——第一个 task）
@@ -33,7 +33,7 @@
   - `do_transcription(agent, ws, text, audio_buf, stt_emotion_state) -> None`
   - `send_wake(ws) -> None`
 
-- [ ] **Step 1: 创建 `Module/input/ws_handler.py`**
+- [ ] **Step 1: 创建 `core/input/ws_handler.py`**
 
 新建文件，内容为 `server.py` 的 L831-L1064 完整复制，做以下修改：
 
@@ -299,7 +299,7 @@ async def send_wake(ws) -> None:
         pass
 ```
 
-- [ ] **Step 2: 修改 `Module/input/server.py`**
+- [ ] **Step 2: 修改 `core/input/server.py`**
 
 1. 删除 L831-L1064（`_handle_ws` 到 `_send_wake`）
 2. 在文件顶部添加 import：
@@ -408,7 +408,7 @@ from .audio_buffer import AudioBuffer         # 仅 _handle_ws 使用
 - [ ] **Step 3: 运行测试验证**
 
 ```bash
-conda run -n Elysia python -m pytest Module/input/tests/test_server.py -v --tb=short
+conda run -n Elysia python -m pytest core/input/tests/test_server.py -v --tb=short
 ```
 
 Expected: 30 passed
@@ -416,11 +416,11 @@ Expected: 30 passed
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Module/input/ws_handler.py Module/input/server.py
+git add core/input/ws_handler.py core/input/server.py
 git commit -m "refactor: extract ws_handler.py from server.py
 
 Move handle_ws, handle_json_message, do_interrupt, do_transcription, send_wake
-to Module/input/ws_handler.py. Rename: drop leading underscore for public API."
+to core/input/ws_handler.py. Rename: drop leading underscore for public API."
 ```
 
 ---
@@ -428,14 +428,14 @@ to Module/input/ws_handler.py. Rename: drop leading underscore for public API."
 ### Task 2: 创建 `api_routes.py` — 提取业务 API handler
 
 **Files:**
-- Create: `Module/input/api_routes.py`
-- Modify: `Module/input/server.py`（删除 ~L447-L714 handler，替换为 `register_api_routes(app)` 调用）
+- Create: `core/input/api_routes.py`
+- Modify: `core/input/server.py`（删除 ~L447-L714 handler，替换为 `register_api_routes(app)` 调用）
 
 **Interfaces:**
 - Consumes: `app` (aiohttp Application with `app["agent"]` set)
 - Produces: `register_api_routes(app) -> None`
 
-- [ ] **Step 1: 创建 `Module/input/api_routes.py`**
+- [ ] **Step 1: 创建 `core/input/api_routes.py`**
 
 包含以下 handler（从 `server.py` 提取，加 `register_api_routes` 包装函数）：
 
@@ -495,7 +495,7 @@ def register_api_routes(app: web.Application) -> None:
 
     async def providers_list_handler(request: web.Request) -> web.Response:
         """返回可用 provider 列表（注册表 + custom_providers.yaml）。"""
-        from Module.input.custom_providers import load as load_custom
+        from core.input.custom_providers import load as load_custom
 
         llm_registry = {
             "deepseek": {"models": ["deepseek-v4-flash", "deepseek-v4-pro"]},
@@ -531,7 +531,7 @@ def register_api_routes(app: web.Application) -> None:
         })
 
     async def providers_save_handler(request: web.Request) -> web.Response:
-        from Module.input.custom_providers import add_provider
+        from core.input.custom_providers import add_provider
         try:
             body = await request.json()
             service = body.get("service", "")
@@ -549,7 +549,7 @@ def register_api_routes(app: web.Application) -> None:
             return web.json_response({"ok": False, "error": str(e)}, status=500)
 
     async def providers_delete_handler(request: web.Request) -> web.Response:
-        from Module.input.custom_providers import remove_provider
+        from core.input.custom_providers import remove_provider
         service = request.match_info.get("service", "")
         name = request.match_info.get("name", "")
         if service not in ("llm", "stt", "tts"):
@@ -694,7 +694,7 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_get("/api/messages", messages_handler)
 ```
 
-- [ ] **Step 2: 修改 `Module/input/server.py`**
+- [ ] **Step 2: 修改 `core/input/server.py`**
 
 1. 在文件顶部添加 import：
 ```python
@@ -734,7 +734,7 @@ register_api_routes(app)
 - [ ] **Step 3: 运行测试验证**
 
 ```bash
-conda run -n Elysia python -m pytest Module/input/tests/test_server.py -v --tb=short
+conda run -n Elysia python -m pytest core/input/tests/test_server.py -v --tb=short
 ```
 
 Expected: 30 passed
@@ -742,11 +742,11 @@ Expected: 30 passed
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Module/input/api_routes.py Module/input/server.py
+git add core/input/api_routes.py core/input/server.py
 git commit -m "refactor: extract api_routes.py from server.py
 
 Move providers, image upload, chat API, message archive handlers
-to Module/input/api_routes.py with register_api_routes(app)."
+to core/input/api_routes.py with register_api_routes(app)."
 ```
 
 ---
@@ -754,14 +754,14 @@ to Module/input/api_routes.py with register_api_routes(app)."
 ### Task 3: 创建 `debug_routes.py` — 提取 Debug API handler
 
 **Files:**
-- Create: `Module/input/debug_routes.py`
-- Modify: `Module/input/server.py`（删除 L172-L446 + L716-L828 handler，替换为 `register_debug_routes(app)` 调用）
+- Create: `core/input/debug_routes.py`
+- Modify: `core/input/server.py`（删除 L172-L446 + L716-L828 handler，替换为 `register_debug_routes(app)` 调用）
 
 **Interfaces:**
 - Consumes: `app` (aiohttp Application with `app["agent"]` and optionally `app["task_system"]`)
 - Produces: `register_debug_routes(app) -> None`
 
-- [ ] **Step 1: 创建 `Module/input/debug_routes.py`**
+- [ ] **Step 1: 创建 `core/input/debug_routes.py`**
 
 **提取方式：从 `server.py` 原样复制以下行范围，包装到 `register_debug_routes(app)` 函数体内。**
 
@@ -823,7 +823,7 @@ def register_debug_routes(app: web.Application) -> None:
 - `_get_character_state`（L387-L392）保持嵌套在 `session_detail_handler` 内部不变。
 - `_UPLOADS_DIR` + `/uploads/` 静态路由（L716-L719）**不放到 debug_routes.py**——它属于 `server.py` 的 `create_app()`。
 
-- [ ] **Step 2: 修改 `Module/input/server.py`**
+- [ ] **Step 2: 修改 `core/input/server.py`**
 
 1. 在文件顶部添加 import：
 ```python
@@ -1007,7 +1007,7 @@ from .debug_routes import register_debug_routes
 - [ ] **Step 3: 运行测试验证**
 
 ```bash
-conda run -n Elysia python -m pytest Module/input/tests/test_server.py -v --tb=short
+conda run -n Elysia python -m pytest core/input/tests/test_server.py -v --tb=short
 ```
 
 Expected: 30 passed
@@ -1015,11 +1015,11 @@ Expected: 30 passed
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Module/input/debug_routes.py Module/input/server.py
+git add core/input/debug_routes.py core/input/server.py
 git commit -m "refactor: extract debug_routes.py from server.py
 
 Move all /debug/api/* handlers (18 total) plus on_startup/on_shutdown
-to Module/input/debug_routes.py with register_debug_routes(app)."
+to core/input/debug_routes.py with register_debug_routes(app)."
 ```
 
 ---
@@ -1027,24 +1027,24 @@ to Module/input/debug_routes.py with register_debug_routes(app)."
 ### Task 4: 更新测试 import 路径
 
 **Files:**
-- Modify: `Module/input/tests/test_server.py`
+- Modify: `core/input/tests/test_server.py`
 - Modify: `core/tests/test_phase3.py`（4 处 create_app import）
 
 **Interfaces:**
 - Consumes: ws_handler.py, api_routes.py, debug_routes.py 的新函数名
 - Produces: 不变——测试断言不变
 
-- [ ] **Step 1: 更新 `Module/input/tests/test_server.py`**
+- [ ] **Step 1: 更新 `core/input/tests/test_server.py`**
 
 测试中直接从 server 模块 import 内部函数的地方需要改为从新模块 import：
 
 | 旧 import | 新 import |
 |-----------|-----------|
-| `from Module.input.server import _do_interrupt` | `from Module.input.ws_handler import do_interrupt` |
-| `from Module.input.server import _do_transcription` | `from Module.input.ws_handler import do_transcription` |
-| `from Module.input.server import _handle_json` | `from Module.input.ws_handler import handle_json_message` |
-| `from Module.input.server import create_app` | 不变 |
-| `from Module.input.server import create_app, _do_transcription` | `from Module.input.server import create_app` + `from Module.input.ws_handler import do_transcription` |
+| `from core.input.server import _do_interrupt` | `from core.input.ws_handler import do_interrupt` |
+| `from core.input.server import _do_transcription` | `from core.input.ws_handler import do_transcription` |
+| `from core.input.server import _handle_json` | `from core.input.ws_handler import handle_json_message` |
+| `from core.input.server import create_app` | 不变 |
+| `from core.input.server import create_app, _do_transcription` | `from core.input.server import create_app` + `from core.input.ws_handler import do_transcription` |
 
 同时更新测试函数中的调用名：
 - `_do_interrupt(agent)` → `do_interrupt(agent)`
@@ -1056,15 +1056,15 @@ to Module/input/debug_routes.py with register_debug_routes(app)."
 只 import `create_app`，不需要改。
 
 ```bash
-grep -n "from Module.input.server" core/tests/test_phase3.py
+grep -n "from core.input.server" core/tests/test_phase3.py
 ```
 
-Expected: 仅 `from Module.input.server import create_app`（4 处），无需修改。
+Expected: 仅 `from core.input.server import create_app`（4 处），无需修改。
 
 - [ ] **Step 3: 运行全量 Module/input 测试**
 
 ```bash
-conda run -n Elysia python -m pytest Module/input/tests/ -v --tb=short
+conda run -n Elysia python -m pytest core/input/tests/ -v --tb=short
 ```
 
 Expected: 所有测试通过
@@ -1078,7 +1078,7 @@ conda run -n Elysia python -m pytest core/tests/test_phase3.py -v --tb=short -k 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Module/input/tests/test_server.py
+git add core/input/tests/test_server.py
 git commit -m "test: update import paths after server.py split
 
 _do_interrupt → ws_handler.do_interrupt
@@ -1092,12 +1092,12 @@ _handle_json → ws_handler.handle_json_message"
 
 **Files:**
 - Modify: `CLAUDE.md`
-- Modify: `Module/input/README.md`
+- Modify: `core/input/README.md`
 - Modify: `Module/README.md`
 - Modify: `docs/testing.md`
 - Modify: `docs/architecture.md`
 
-- [ ] **Step 1: 更新 `Module/input/README.md`**
+- [ ] **Step 1: 更新 `core/input/README.md`**
 
 文件树从：
 ```
@@ -1113,22 +1113,22 @@ _handle_json → ws_handler.handle_json_message"
 
 测试命令更新（如有）：
 ```bash
-python -m pytest Module/input/tests/ -v
+python -m pytest core/input/tests/ -v
 ```
 
 - [ ] **Step 2: 更新 `CLAUDE.md` 和 `docs/testing.md`**
 
-确认 `Module/input/tests/` 路径正确（Task 4 应该已更新）。
+确认 `core/input/tests/` 路径正确（Task 4 应该已更新）。
 
 在 CLAUDE.md 的 Module index 中添加：
 ```
-| `Module.input` | Input server (WebSocket + REST) | `server.py`, `ws_handler.py`, `api_routes.py`, `debug_routes.py` |
+| `core.input` | Input server (WebSocket + REST) | `server.py`, `ws_handler.py`, `api_routes.py`, `debug_routes.py` |
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Module/input/README.md CLAUDE.md Module/README.md docs/testing.md docs/architecture.md
+git add core/input/README.md CLAUDE.md Module/README.md docs/testing.md docs/architecture.md
 git commit -m "docs: update references after server.py split"
 ```
 
@@ -1155,7 +1155,7 @@ Expected: 全绿
 - [ ] **Step 3: 确认文件行数**
 
 ```bash
-wc -l Module/input/server.py Module/input/ws_handler.py Module/input/api_routes.py Module/input/debug_routes.py
+wc -l core/input/server.py core/input/ws_handler.py core/input/api_routes.py core/input/debug_routes.py
 ```
 
 Expected: server.py ~150 行, ws_handler.py ~230 行, api_routes.py ~300 行, debug_routes.py ~400 行

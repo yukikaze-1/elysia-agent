@@ -133,7 +133,7 @@
 13. `Module/database/README.md`
 14. `Module/database/vectordb/README.md`
 15. `Module/database/documentdb/README.md`
-16. `Module/input/README.md`
+16. `core/input/README.md`
 17. `Module/bench/README.md`
 
 ### 改动：Core 层

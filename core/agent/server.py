@@ -153,7 +153,7 @@ class AgentServer:
 
         支持通过 /restart 端点在停止后重新加载配置并重启服务。
         """
-        from Module.input.server import create_app
+        from core.input.server import create_app
         from aiohttp import web
 
         await self.start()

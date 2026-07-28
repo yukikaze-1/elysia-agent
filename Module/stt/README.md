@@ -134,5 +134,5 @@ python -m Module.bench
 | 文档 | 内容 |
 |------|------|
 | [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
-| [Module/input/README.md](../input/README.md) | AudioBuffer + WebSocket（STT 输入源） |
+| [core/input/README.md](../input/README.md) | AudioBuffer + WebSocket（STT 输入源） |
 | [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 音频输入管道 |

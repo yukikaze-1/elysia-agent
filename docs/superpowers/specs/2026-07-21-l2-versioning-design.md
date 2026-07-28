@@ -37,7 +37,7 @@ CharacterReflector 产出 L3 条目
 | `prompt/PersonalityCompression.j2` | 重写：编辑模式 + 结构化输出（`<new_self>` + `<changes>`） |
 | `core/personality/engine.py` | `_compress()` 解析 XML 标签 → 写版本历史；新增 `_extract_tag()` 辅助函数；`flush_compression()` trigger 改为 `FLUSH`；`CharacterEngine.__init__` 接受 `version_repo` 参数 |
 | `core/debug/info.py` | 新增 `l2_versions` 数据聚合 |
-| `Module/input/debug_routes.py` | 新增 `GET /debug/api/l2-versions` 端点 |
+| `core/input/debug_routes.py` | 新增 `GET /debug/api/l2-versions` 端点 |
 | `core/storage/__init__.py` | 导出 `CharacterVersionRepository` |
 
 ### 2.3 不改

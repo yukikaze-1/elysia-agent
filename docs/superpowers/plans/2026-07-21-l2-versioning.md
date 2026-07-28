@@ -725,7 +725,7 @@ git commit -m "feat: wire CharacterVersionRepository into Agent lifecycle"
 
 **Files:**
 - Modify: `core/debug/info.py:277-281` (mood section area)
-- Modify: `Module/input/debug_routes.py` (add 2 new endpoints)
+- Modify: `core/input/debug_routes.py` (add 2 new endpoints)
 
 - [ ] **Step 1: Add version count to debug info**
 
@@ -827,7 +827,7 @@ In `debug_routes.py`, add a new handler in `register_debug_routes()`:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add core/debug/info.py Module/input/debug_routes.py
+git add core/debug/info.py core/input/debug_routes.py
 git commit -m "feat: add L2 version history API and rollback endpoint"
 ```
 

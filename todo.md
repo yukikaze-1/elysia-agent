@@ -62,10 +62,10 @@
 | ~~中~~ ✅ | **`core/cognitive/loop.py`（844 行）** | 评估结论：剩余方法多为编排胶水，提取收益不大。已补全参数文档+类型注解 |
 | ~~中~~ ✅ | **`core/memory/long_term.py`（588 行）** | 已提取 EmbeddingProvider。Milvus 适配器+驱逐+吸收 ID 追踪评估后不拆（耦合紧密） |
 | ~~低~~ ❌ | **`Module/tool/safety.py`（618 行）** | 评估结论：7 阶段是线性管道而非独立策略，阶段间有不变量（semaphore acquire/release 配对），拆分反而增加复杂度。不拆 |
-| 低 | **`core/` 根目录散落文件归位** | `agent_fsm.py` → `core/agent/`，`prompt_assembler.py` → `core/adapter/`，`event_bus.py` + `idle_monitor.py` + `token_tracker.py` → 新建 `core/monitoring/` |
-| 低 | **`core/schema/__init__.py` 导出 70+ 符号** | 扁平重导出，没按子领域分组。应按 message/tool/memory/character 等分组暴露 |
-| 低 | **`Module/task_system/__init__.py` 导出 70+ 符号** | 同上。模块本身结构合理（core/planner/sub_agent/schema 已分组），只需整理 __init__ 导出 |
-| 低 | **`Module/input/` 反向依赖 `core/`** | 9 个文件从 core/ 导入。根本原因：Module/input/ 本质是 app 层代码放错了层。推荐方案：整个移到 core/input/，改动大但语义正确 |
+| ~~低~~ ✅ | **`core/` 根目录散落文件归位** | 已归位：agent_fsm→core/agent/，prompt_assembler→core/adapter/，event_bus/idle_monitor/token_tracker→core/monitoring/ |
+| ~~低~~ ✅ | **`core/schema/__init__.py` 导出 70+ 符号** | 已按 9 个子领域分组导出（基础类型→消息→Part→工具→事件→记忆→角色→Token→情绪） |
+| ~~低~~ ✅ | **`Module/task_system/__init__.py` 导出 70+ 符号** | 已按 7 个子领域分组导出（公共API→基础类型→跨层协议→对外输出→内部编排→校验→运行时状态） |
+| ~~低~~ ✅ | **`core/input/` 反向依赖 `core/`** | 已移入 core/input/，消除层违反。原 Module/input/ → core/input/ |
 
 ## 多模态 Phase 2
 
@@ -119,8 +119,8 @@
 
 ## 测试补充
 
-- `Module/input/audio_buffer.py` (3)
-- `Module/input/server.py` (4)
+- `core/input/audio_buffer.py` (3)
+- `core/input/server.py` (4)
 - `Module/output/console.py` (1)
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
 
