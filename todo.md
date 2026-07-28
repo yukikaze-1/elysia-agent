@@ -58,13 +58,14 @@
 
 | 优先级 | 目标 | 说明 |
 |--------|------|------|
-| 中 | **`core/agent/lifecycle.py`（522 行）** | 2 个公开方法 + 24 个私有 `_start_*`/`_stop_*`/`_flush_*`。每个子系统自己管生命周期（Strategy 模式），而不是一个类知道所有子系统的启停细节 |
-| 中 | **`core/cognitive/loop.py`（844 行）** | 14 个私有方法，编排过多。继续提取 turn 构建、工具编排、流式派发到独立策略对象 |
-| 中 | **`core/memory/long_term.py`（588 行）** | Milvus 适配器 + 嵌入调用 + 驱逐策略 + 吸收 ID 追踪全在一个类。可拆为 MilvusClient、EmbeddingCaller、MemoryManager |
+| ~~中~~ ✅ | **`core/agent/lifecycle.py`（522 行）** | 已拆分为 facade + 4 mixin（Persistence, Services, Tools, TaskSystem）+ 数据驱动 _STARTUP_STEPS |
+| ~~中~~ ✅ | **`core/cognitive/loop.py`（844 行）** | 评估结论：剩余方法多为编排胶水，提取收益不大。已补全参数文档+类型注解 |
+| ~~中~~ ✅ | **`core/memory/long_term.py`（588 行）** | 已提取 EmbeddingProvider。Milvus 适配器+驱逐+吸收 ID 追踪评估后不拆（耦合紧密） |
+| ~~低~~ ❌ | **`Module/tool/safety.py`（618 行）** | 评估结论：7 阶段是线性管道而非独立策略，阶段间有不变量（semaphore acquire/release 配对），拆分反而增加复杂度。不拆 |
 | 低 | **`core/` 根目录散落文件归位** | `agent_fsm.py` → `core/agent/`，`prompt_assembler.py` → `core/adapter/`，`event_bus.py` + `idle_monitor.py` + `token_tracker.py` → 新建 `core/monitoring/` |
-| 低 | **`Module/tool/safety.py`（618 行）+ `protocol.py`（513 行）** | 安全检查 7 阶段改为插件化 `SafetyCheck` 策略；协议类型拆分到独立文件 |
-| 低 | **`core/schema/__init__.py` + `Module/task_system/__init__.py`** | 两个 `__init__.py` 各导出 70+ 符号，扁平重导出。按子领域分组导出 |
-| 低 | **`Module/input/` 反向依赖 `core/`** | 9 个文件从 core/ 导入（如 `api_routes.py` 导 `core.agent.RunState`）。backend-agnostic 层不应依赖 app 层 |
+| 低 | **`core/schema/__init__.py` 导出 70+ 符号** | 扁平重导出，没按子领域分组。应按 message/tool/memory/character 等分组暴露 |
+| 低 | **`Module/task_system/__init__.py` 导出 70+ 符号** | 同上。模块本身结构合理（core/planner/sub_agent/schema 已分组），只需整理 __init__ 导出 |
+| 低 | **`Module/input/` 反向依赖 `core/`** | 9 个文件从 core/ 导入。根本原因：Module/input/ 本质是 app 层代码放错了层。推荐方案：整个移到 core/input/，改动大但语义正确 |
 
 ## 多模态 Phase 2
 

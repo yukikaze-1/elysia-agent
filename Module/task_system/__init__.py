@@ -1,171 +1,198 @@
 """TaskSystem — 异步 Plan-Execute-Evaluate-Replan 任务编排模块。
 
 独立于 CognitiveLoop，通过 TaskMailbox + HITLNotifier 协议与外界通信。
+
+导出分组：
+  - 公共 API:     TaskSystem, DelegationPreparer, SubAgent, Orchestrator, AgentInfra, HITLNotifier
+  - 基础类型:     TaskId, NodeId, TaskStatus, TaskErrorCode, etc.
+  - 跨层协议:     DelegationContext, HITLData, ConstraintConfig, SubmitError, etc.
+  - 查询/输出:    TaskSummary, TaskDAG, TokenStats, AgentInfo, etc.
+  - 内部编排:     Plan, DAGNode, DAGPatch, NodeResult, TaskState, TaskCheckpoint, etc.
+  - 校验/产物:    ValidationIssue, OutputContract, Artifact, etc.
 """
 
+# ── 公共 API ──
 from Module.task_system.core.orchestrator import Orchestrator
 from Module.task_system.core.sub_agent import SubAgent
 from Module.task_system.delegation_preparer import DelegationPreparer
 from Module.task_system.infra import AgentInfra
 from Module.task_system.protocol import HITLNotifier
 from Module.task_system.task_system import TaskSystem
+
+# ── 基础类型（ID、状态、错误码） ──
 from Module.task_system.schema import (
-    # 基础
-    TaskId,
     AgentId,
     ApprovalId,
-    SessionId,
-    NodeId,
     ArtifactId,
-    TaskStatus,
-    SubmitRejectionCode,
-    TaskErrorCode,
-    ResumeErrorCode,
-    NodeStatus,
-    ExecutionStatus,
-    NodeErrorCode,
     BusinessStatus,
     EvaluatorAction,
+    ExecutionStatus,
+    NodeErrorCode,
+    NodeId,
+    NodeStatus,
     RBACLevel,
-    # 第一层：跨层协议
+    ResumeErrorCode,
+    SessionId,
+    SubmitRejectionCode,
+    TaskErrorCode,
+    TaskId,
+    TaskStatus,
+)
+
+# ── 跨层协议（CognitiveLoop ↔ TaskSystem） ──
+from Module.task_system.schema import (
     ConstraintConfig,
-    TaskConstraints,
     DelegationContext,
     DelegationResult,
     DelegationStatus,
-    ReturnMode,
-    SubmitError,
-    ResumeError,
     HITLData,
+    ReturnMode,
+    ResumeError,
+    SubmitError,
+    TaskConstraints,
     # CognitiveLoop 侧类型（TaskSystem 引用，不拥有）
-    UserProfile,
     Tool,
-    # 第二层：核心输出
-    TaskEvent,
-    TaskEventType,
-    TaskSummary,
-    TaskProgress,
-    DAGNodeInfo,
-    TaskDAG,
-    AgentType,
-    AgentStatus,
+    UserProfile,
+)
+
+# ── 查询 / 对外输出 ──
+from Module.task_system.schema import (
     AgentInfo,
     AgentList,
+    AgentStatus,
+    AgentType,
+    DAGNodeInfo,
+    TaskDAG,
+    TaskEvent,
+    TaskEventType,
+    TaskProgress,
+    TaskSummary,
+    TokenComponent,
     TokenComponentType,
     TokenPeriod,
-    TokenComponent,
-    TokenUsage,
     TokenStats,
-    # 第三层：内部编排
+    TokenUsage,
+)
+
+# ── 内部编排（规划 / 执行 / 状态） ──
+from Module.task_system.schema import (
     DAG,
-    Plan,
     DAGNode,
     DAGPatch,
     DAGPatchType,
     DBTNode,
     DBTNodeType,
+    ExperienceRecord,
     NodeResult,
     NodeResultEvaluation,
+    Plan,
     TaskResult,
-    ExperienceRecord,
-    # Plan 校验
-    ValidationIssueType,
-    ValidationIssue,
-    ValidationResult,
+)
+
+# ── Plan 校验 ──
+from Module.task_system.schema import (
     ValidationAction,
-    # 节点产物
-    OutputContract,
+    ValidationIssue,
+    ValidationIssueType,
+    ValidationResult,
+)
+
+# ── 节点产物 ──
+from Module.task_system.schema import (
     Artifact,
-    # Orchestrator / Sub-Agent 运行时
+    OutputContract,
+)
+
+# ── Orchestrator / Sub-Agent 运行时状态 ──
+from Module.task_system.schema import (
     ExecutionPhase,
-    OrchestratorRunStatus,
-    OrchestratorResult,
-    TaskState,
     ExecutionState,
     NodeState,
+    OrchestratorResult,
+    OrchestratorRunStatus,
     TaskCheckpoint,
+    TaskState,
 )
 
 __all__ = [
-    # 协议
-    "HITLNotifier",
+    # 公共 API
     "AgentInfra",
     "DelegationPreparer",
-    "TaskSystem",
-    "SubAgent",
+    "HITLNotifier",
     "Orchestrator",
-    # 基础
-    "TaskId",
+    "SubAgent",
+    "TaskSystem",
+    # 基础类型
     "AgentId",
     "ApprovalId",
-    "SessionId",
-    "NodeId",
     "ArtifactId",
-    "TaskStatus",
-    "SubmitRejectionCode",
-    "TaskErrorCode",
-    "ResumeErrorCode",
-    "NodeStatus",
-    "ExecutionStatus",
-    "NodeErrorCode",
     "BusinessStatus",
     "EvaluatorAction",
+    "ExecutionStatus",
+    "NodeErrorCode",
+    "NodeId",
+    "NodeStatus",
     "RBACLevel",
-    # 第一层：跨层协议
+    "ResumeErrorCode",
+    "SessionId",
+    "SubmitRejectionCode",
+    "TaskErrorCode",
+    "TaskId",
+    "TaskStatus",
+    # 跨层协议
     "ConstraintConfig",
-    "TaskConstraints",
     "DelegationContext",
     "DelegationResult",
     "DelegationStatus",
+    "HITLData",
+    "ResumeError",
     "ReturnMode",
     "SubmitError",
-    "ResumeError",
-    "HITLData",
-    # CognitiveLoop 侧类型（占位）
-    "UserProfile",
+    "TaskConstraints",
     "Tool",
-    # 第二层：核心输出
-    "TaskEvent",
-    "TaskEventType",
-    "TaskSummary",
-    "TaskProgress",
-    "DAGNodeInfo",
-    "TaskDAG",
-    "AgentType",
-    "AgentStatus",
+    "UserProfile",
+    # 对外输出
     "AgentInfo",
     "AgentList",
+    "AgentStatus",
+    "AgentType",
+    "DAGNodeInfo",
+    "TaskDAG",
+    "TaskEvent",
+    "TaskEventType",
+    "TaskProgress",
+    "TaskSummary",
+    "TokenComponent",
     "TokenComponentType",
     "TokenPeriod",
-    "TokenComponent",
-    "TokenUsage",
     "TokenStats",
-    # 第三层：内部编排
+    "TokenUsage",
+    # 内部编排
     "DAG",
-    "Plan",
     "DAGNode",
     "DAGPatch",
     "DAGPatchType",
     "DBTNode",
     "DBTNodeType",
+    "ExperienceRecord",
     "NodeResult",
     "NodeResultEvaluation",
+    "Plan",
     "TaskResult",
-    "ExperienceRecord",
     # Plan 校验
-    "ValidationIssueType",
-    "ValidationIssue",
-    "ValidationResult",
     "ValidationAction",
+    "ValidationIssue",
+    "ValidationIssueType",
+    "ValidationResult",
     # 节点产物
-    "OutputContract",
     "Artifact",
-    # Orchestrator / Sub-Agent 运行时
+    "OutputContract",
+    # 运行时状态
     "ExecutionPhase",
-    "OrchestratorRunStatus",
-    "OrchestratorResult",
-    "TaskState",
     "ExecutionState",
     "NodeState",
+    "OrchestratorResult",
+    "OrchestratorRunStatus",
     "TaskCheckpoint",
+    "TaskState",
 ]

@@ -5,10 +5,10 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..event_bus import EventBus, EventPriority, EventType
-from ..agent_fsm import AgentFSM, AgentState
+from ..monitoring.event_bus import EventBus, EventPriority, EventType
+from .agent_fsm import AgentFSM, AgentState
 from ..cognitive import CognitiveLoop
-from ..idle_monitor import IdleMonitor
+from ..monitoring.idle_monitor import IdleMonitor
 from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from ..memory.long_term import LongTermMemory
     from ..config import AppConfig
     from ..memory.session import SessionMemory
-    from core.token_tracker import TokenTracker
+    from core.monitoring.token_tracker import TokenTracker
     from Module.tts.protocol import TTSBackend
     from ..adapter.tool_adapter import ToolAdapter
 

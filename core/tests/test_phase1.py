@@ -24,7 +24,7 @@ from core.schema.event import InterruptData, StateChangeData, UserInputData
 class TestEventBus:
     @pytest.mark.asyncio
     async def test_priority_ordering(self):
-        from core.event_bus import EventBus, EventPriority
+        from core.monitoring.event_bus import EventBus, EventPriority
         bus = EventBus()
 
         bus.post(UserInputData(text="data1", user_name="test", request_id="?"), type="normal", priority=EventPriority.NORMAL)
@@ -40,7 +40,7 @@ class TestEventBus:
         assert e3.type == "normal"
 
     def test_drain(self):
-        from core.event_bus import EventBus, EventPriority
+        from core.monitoring.event_bus import EventBus, EventPriority
         bus = EventBus()
         bus.post(UserInputData(text="", user_name="", request_id=""), type="a", priority=EventPriority.NORMAL)
         bus.post(UserInputData(text="", user_name="", request_id=""), type="b", priority=EventPriority.NORMAL)
@@ -54,7 +54,7 @@ class TestEventBus:
 @pytest.mark.unit
 class TestAgentFSM:
     def test_valid_transitions(self):
-        from core.agent_fsm import AgentFSM, AgentState
+        from core.agent.agent_fsm import AgentFSM, AgentState
         fsm = AgentFSM()
 
         assert fsm.state == AgentState.IDLE
@@ -66,14 +66,14 @@ class TestAgentFSM:
         assert fsm.state == AgentState.IDLE
 
     def test_invalid_transition_raises(self):
-        from core.agent_fsm import AgentFSM, AgentState
+        from core.agent.agent_fsm import AgentFSM, AgentState
         fsm = AgentFSM()
 
         with pytest.raises(ValueError):
             fsm.transition(AgentState.SPEAKING)  # IDLE -> SPEAKING invalid
 
     def test_interrupt_from_thinking(self):
-        from core.agent_fsm import AgentFSM, AgentState
+        from core.agent.agent_fsm import AgentFSM, AgentState
         fsm = AgentFSM()
         fsm.transition(AgentState.THINKING)
 
@@ -84,7 +84,7 @@ class TestAgentFSM:
         assert fsm.state == AgentState.IDLE
 
     def test_interrupt_from_idle_noop(self):
-        from core.agent_fsm import AgentFSM, AgentState
+        from core.agent.agent_fsm import AgentFSM, AgentState
         fsm = AgentFSM()
 
         assert fsm.interrupt() is False
@@ -92,7 +92,7 @@ class TestAgentFSM:
 
     def test_complex_transition_chain(self):
         """Full lifecycle: IDLE -> THINKING -> EXECUTING -> THINKING -> SPEAKING -> IDLE"""
-        from core.agent_fsm import AgentFSM, AgentState
+        from core.agent.agent_fsm import AgentFSM, AgentState
         fsm = AgentFSM()
 
         fsm.transition(AgentState.THINKING)
@@ -302,7 +302,7 @@ class TestInterruptIntegration:
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
-        from core.agent_fsm import AgentState
+        from core.agent.agent_fsm import AgentState
 
         from core.config import AppConfig
         agent = Agent(config=AppConfig())
@@ -326,7 +326,7 @@ class TestInterruptIntegration:
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
-        from core.agent_fsm import AgentState
+        from core.agent.agent_fsm import AgentState
 
         from core.config import AppConfig
         agent = Agent(config=AppConfig())
@@ -360,7 +360,7 @@ class TestInterruptIntegration:
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
-        from core.agent_fsm import AgentState
+        from core.agent.agent_fsm import AgentState
 
         from core.config import AppConfig
         agent = Agent(config=AppConfig())
@@ -420,7 +420,7 @@ class TestMultiTurnConversation:
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
-        from core.agent_fsm import AgentState
+        from core.agent.agent_fsm import AgentState
 
         from core.config import AppConfig
         agent = Agent(config=AppConfig())
@@ -438,7 +438,7 @@ class TestMultiTurnConversation:
         """Verify character config (base_personality) appears in the LLM request."""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.prompt_assembler import PromptAssembler
+        from core.adapter.prompt_assembler import PromptAssembler
         from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory
@@ -533,9 +533,9 @@ if __name__ == "__main__":
 class TestProactiveTriggers:
     @pytest.mark.asyncio
     async def test_empty_triggers_does_nothing(self):
-        from core.idle_monitor import IdleMonitor
-        from core.event_bus import EventBus
-        from core.agent_fsm import AgentFSM
+        from core.monitoring.idle_monitor import IdleMonitor
+        from core.monitoring.event_bus import EventBus
+        from core.agent.agent_fsm import AgentFSM
         from unittest.mock import MagicMock
 
         cfg = MagicMock()
@@ -549,9 +549,9 @@ class TestProactiveTriggers:
 
     @pytest.mark.asyncio
     async def test_silence_timeout_posts_event(self):
-        from core.idle_monitor import IdleMonitor
-        from core.event_bus import EventBus
-        from core.agent_fsm import AgentFSM
+        from core.monitoring.idle_monitor import IdleMonitor
+        from core.monitoring.event_bus import EventBus
+        from core.agent.agent_fsm import AgentFSM
         from unittest.mock import MagicMock
 
         cfg = MagicMock()

@@ -25,11 +25,11 @@ from .timing import TimingClock
 from Module.output import OutputManager, ChannelCapability
 from Module.tts import TTSBackend
 
-from ..agent_fsm import AgentFSM, AgentState
-from ..event_bus import EventBus, EventPriority, EventType
+from ..agent.agent_fsm import AgentFSM, AgentState
+from ..monitoring.event_bus import EventBus, EventPriority, EventType
 from ..utils import set_request_id, get_request_id, log_conversation
 from Module.tool.protocol import ToolResult
-from ..prompt_assembler import PromptAssembler
+from ..adapter.prompt_assembler import PromptAssembler
 from ..memory.session import SessionMemory
 from ..text.sentence_buffer import SentenceBuffer
 from .stream_processor import StreamProcessor, StreamEvent, StreamEventType
@@ -39,7 +39,7 @@ from Module.llm.registry import LLMFactory
 
 if TYPE_CHECKING:
     from Module.task_system.delegation_preparer import DelegationPreparer
-    from ..token_tracker import TokenTracker
+    from ..monitoring.token_tracker import TokenTracker
     from ..debug.prompt_recorder import PromptRecorder
     from ..debug.response_recorder import ResponseRecorder
     from ..personality.engine import CharacterEngine

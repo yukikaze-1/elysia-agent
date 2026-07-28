@@ -27,7 +27,7 @@ from core.storage.token_repo import TokenRepository, COLLECTION as TOKEN_USAGE_C
 from core.storage.session_repo import COLLECTION as SESSION_COLLECTION
 from core.storage.memory_repo import COLLECTION as MEM_COLLECTION
 from core.storage.character_version_repo import COLLECTION as CHARS_VERSION_COLLECTION
-from core.token_tracker import TokenTracker
+from core.monitoring.token_tracker import TokenTracker
 from Module.database.documentdb import DocumentDBFactory
 from Module.database.vectordb import VectorDBFactory
 

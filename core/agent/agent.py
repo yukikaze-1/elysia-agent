@@ -50,7 +50,7 @@ import logging
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..token_tracker import TokenTracker
+    from ..monitoring.token_tracker import TokenTracker
     from ..debug.prompt_recorder import PromptRecorder
     from ..debug.response_recorder import ResponseRecorder
 
@@ -61,17 +61,17 @@ from .lifecycle import AgentLifecycle
 from .server import AgentServer
 
 from ..config import AppConfig
-from ..event_bus import EventBus, EventPriority, EventType
-from ..agent_fsm import AgentFSM, AgentState
+from ..monitoring.event_bus import EventBus, EventPriority, EventType
+from .agent_fsm import AgentFSM, AgentState
 from ..utils import set_request_id, get_request_id
 from ..config import CharacterConfig
 from ..memory.session import SessionMemory
 from ..memory.long_term import LongTermMemory
-from ..prompt_assembler import PromptAssembler
+from ..adapter.prompt_assembler import PromptAssembler
 from core.adapter import ToolAdapter
 from core.tools import ALL_PLUGINS
 from ..cognitive import CognitiveLoop
-from ..idle_monitor import IdleMonitor
+from ..monitoring.idle_monitor import IdleMonitor
 from ..adapter.llm_adapter import LLMAdapter
 from ..memory.consolidator import MemoryConsolidator
 from ..personality import CharacterEngine

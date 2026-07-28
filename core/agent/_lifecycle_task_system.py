@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 if TYPE_CHECKING:
-    from ..event_bus import EventBus
+    from ..monitoring.event_bus import EventBus
     from ..cognitive import CognitiveLoop
     from ..adapter.tool_adapter import ToolAdapter
     from Module.task_system.task_system import TaskSystem

@@ -10,8 +10,8 @@ import time
 from datetime import datetime
 
 from .event_bus import EventBus, EventPriority, EventType
-from .agent_fsm import AgentFSM, AgentState
-from .config import CharacterConfig
+from ..agent.agent_fsm import AgentFSM, AgentState
+from ..config.character_config import CharacterConfig
 from core.schema.event import SystemTickData
 
 logger = logging.getLogger(__name__)

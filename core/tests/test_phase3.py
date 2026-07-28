@@ -18,8 +18,8 @@ from core.text.text_utils import MessageObj
 from core.adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
-from core.agent_fsm import AgentFSM, AgentState
-from core.event_bus import EventBus, EventType, EventPriority
+from core.agent.agent_fsm import AgentFSM, AgentState
+from core.monitoring.event_bus import EventBus, EventType, EventPriority
 from core.schema.event import StateChangeData
 from core.adapter.llm_adapter import LLMAdapter
 from core.tests.fake_llm import FakeLLMBackend
@@ -130,7 +130,7 @@ class TestCognitiveLoopMethods:
     def loop(self):
         """Create a minimal CognitiveLoop with mocks for all dependencies."""
         from Module.output import OutputManager, ChannelCapability
-        from core.prompt_assembler import PromptAssembler
+        from core.adapter.prompt_assembler import PromptAssembler
         from Module.tool import ToolManager, PluginContext, ToolContext
         from core.memory.session import SessionMemory
         from core.config import CharacterConfig
@@ -293,10 +293,10 @@ class TestCognitiveLoopMethods:
 class TestCognitiveLoopTTS:
     @pytest.fixture
     def loop(self):
-        from core.event_bus import EventBus
-        from core.agent_fsm import AgentFSM
+        from core.monitoring.event_bus import EventBus
+        from core.agent.agent_fsm import AgentFSM
         from Module.output import OutputManager
-        from core.prompt_assembler import PromptAssembler
+        from core.adapter.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
         from Module.tool import ToolManager, PluginContext, ToolContext
         from core.adapter.llm_adapter import LLMAdapter
@@ -408,10 +408,10 @@ class TestCognitiveLoopTTS:
 class TestCognitiveLoopSync:
     @pytest.fixture
     def loop(self):
-        from core.event_bus import EventBus
-        from core.agent_fsm import AgentFSM
+        from core.monitoring.event_bus import EventBus
+        from core.agent.agent_fsm import AgentFSM
         from Module.output import OutputManager
-        from core.prompt_assembler import PromptAssembler
+        from core.adapter.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
         from Module.tool import ToolManager, PluginContext, ToolContext
         from core.adapter.llm_adapter import LLMAdapter
@@ -698,7 +698,7 @@ class TestPromptAssemblerUnit:
         """Section provider 路径正常渲染 system prompt。"""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.prompt_assembler import PromptAssembler
+        from core.adapter.prompt_assembler import PromptAssembler
         from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory
@@ -1362,7 +1362,7 @@ class TestLLMAdapterErrors:
 class TestIdleMonitor:
     @pytest.mark.asyncio
     async def test_start_creates_loop_task(self):
-        from core.idle_monitor import IdleMonitor
+        from core.monitoring.idle_monitor import IdleMonitor
         char = MagicMock()
         char.wake_words = []
         char.proactive.enabled = False
@@ -1380,7 +1380,7 @@ class TestIdleMonitor:
 
     @pytest.mark.asyncio
     async def test_stop_cancels_task(self):
-        from core.idle_monitor import IdleMonitor
+        from core.monitoring.idle_monitor import IdleMonitor
         char = MagicMock()
         char.wake_words = []
         char.proactive.enabled = False
@@ -1399,7 +1399,7 @@ class TestIdleMonitor:
 
     @pytest.mark.asyncio
     async def test_touch_resets_timer(self):
-        from core.idle_monitor import IdleMonitor
+        from core.monitoring.idle_monitor import IdleMonitor
         import time
         char = MagicMock()
         char.wake_words = []
@@ -1729,8 +1729,8 @@ class TestHandleSubmitTask:
     def loop_with_ts(self):
         """创建带 mock TaskSystem + DelegationPreparer 的 CognitiveLoop。"""
         from core.cognitive import CognitiveLoop
-        from core.agent_fsm import AgentFSM
-        from core.event_bus import EventBus
+        from core.agent.agent_fsm import AgentFSM
+        from core.monitoring.event_bus import EventBus
         from Module.output import OutputManager
         from core.memory.session import SessionMemory
 
@@ -1837,9 +1837,9 @@ class TestWakeUpMessage:
     def test_wake_up_message_includes_intent_and_result(self):
         """唤醒模板拼接 intent 和 result。"""
         from core.cognitive import CognitiveLoop
-        from core.agent_fsm import AgentFSM
+        from core.agent.agent_fsm import AgentFSM
         from Module.output import OutputManager
-        from core.event_bus import EventBus
+        from core.monitoring.event_bus import EventBus
         from core.memory.session import SessionMemory
         loop = CognitiveLoop(
             llm=MagicMock(), fsm=AgentFSM(), event_bus=EventBus(),

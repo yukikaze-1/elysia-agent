@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from core.storage.session_repo import SessionRepository
     from core.storage.message_repo import MessageRepository
     from core.storage.token_repo import TokenRepository
-    from core.token_tracker import TokenTracker
+    from core.monitoring.token_tracker import TokenTracker
     from core.debug.prompt_recorder import PromptRecorder
     from core.debug.response_recorder import ResponseRecorder
     from ..memory.session import SessionMemory
@@ -25,10 +25,10 @@ if TYPE_CHECKING:
     from ..memory.consolidator import MemoryConsolidator
     from ..personality import CharacterEngine
     from ..task import TaskScheduler
-    from ..event_bus import EventBus
-    from ..agent_fsm import AgentFSM
+    from ..monitoring.event_bus import EventBus
+    from .agent_fsm import AgentFSM
     from ..cognitive import CognitiveLoop
-    from ..idle_monitor import IdleMonitor
+    from ..monitoring.idle_monitor import IdleMonitor
     from Module.task_system.task_system import TaskSystem
     from Module.task_system.delegation_preparer import DelegationPreparer
     from Module.tts.protocol import TTSBackend

@@ -5,7 +5,7 @@ import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock
 import pytest
-from core.token_tracker import TokenTracker, TokenUsage
+from core.monitoring.token_tracker import TokenTracker, TokenUsage
 from core.schema.token import TokenUsageEntry
 from core.schema.types import SessionId
 

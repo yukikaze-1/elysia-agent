@@ -148,7 +148,7 @@ def setup(verbose: bool = False) -> None:
     _mongo_handler.addFilter(req_filter)
     for name in ("core.storage.session_repo", "core.storage.message_repo",
                  "core.storage.token_repo", "core.storage.character_version_repo",
-                 "core.memory.session", "core.token_tracker"):
+                 "core.memory.session", "core.monitoring.token_tracker"):
         db_logger = logging.getLogger(name)
         db_logger.addHandler(_mongo_handler)
 

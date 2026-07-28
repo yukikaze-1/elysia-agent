@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from ..cognitive import CognitiveLoop
     from ..memory.session import SessionMemory
     from Module.tts.protocol import TTSBackend
-    from core.token_tracker import TokenTracker
+    from core.monitoring.token_tracker import TokenTracker
     from core.debug.prompt_recorder import PromptRecorder
     from core.debug.response_recorder import ResponseRecorder
     from core.storage.token_repo import TokenRepository
@@ -39,7 +39,7 @@ class _LifecycleServices:
 
     async def _start_token_and_prompt(self) -> None:
         """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""
-        from core.token_tracker import TokenTracker
+        from core.monitoring.token_tracker import TokenTracker
         self._token_tracker = TokenTracker(
             session_id=self._session.session_id,
             output_manager=self._output,

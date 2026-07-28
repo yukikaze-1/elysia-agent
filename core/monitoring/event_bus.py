@@ -9,8 +9,8 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
-from .schema import EventPriority, EventType  # noqa: F401
-from .schema.event import EventData  # noqa: F401
+from ..schema import EventPriority, EventType  # noqa: F401
+from ..schema.event import EventData  # noqa: F401
 
 
 @dataclass(order=True)

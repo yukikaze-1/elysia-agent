@@ -277,7 +277,7 @@ class TestDoInterruptSkipIf:
     @pytest.mark.asyncio
     async def test_vad_allows_during_speaking(self):
         from Module.input.ws_handler import do_interrupt as _do_interrupt
-        from core.event_bus import EventPriority
+        from core.monitoring.event_bus import EventPriority
         from core.schema.event import InterruptData
 
         agent = MagicMock()
@@ -294,7 +294,7 @@ class TestDoInterruptSkipIf:
     @pytest.mark.asyncio
     async def test_explicit_interrupt_always_allowed(self):
         from Module.input.ws_handler import do_interrupt as _do_interrupt
-        from core.event_bus import EventPriority
+        from core.monitoring.event_bus import EventPriority
         from core.schema.event import InterruptData
 
         agent = MagicMock()

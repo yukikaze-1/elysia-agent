@@ -280,7 +280,7 @@ class TestMemoryIntegration:
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
-        from core.agent_fsm import AgentState
+        from core.agent.agent_fsm import AgentState
 
         from core.config import AppConfig
         agent = Agent(config=AppConfig())
@@ -344,7 +344,7 @@ class TestPromptAssembler:
         from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory
-        from core.prompt_assembler import PromptAssembler
+        from core.adapter.prompt_assembler import PromptAssembler
 
         char = CharacterConfig(name="TestBot")
         session = SessionMemory()
@@ -364,7 +364,7 @@ class TestPromptAssembler:
         from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory
-        from core.prompt_assembler import PromptAssembler
+        from core.adapter.prompt_assembler import PromptAssembler
 
         char = CharacterConfig(name="TestBot")
         session = SessionMemory()

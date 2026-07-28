@@ -234,7 +234,7 @@ async def do_interrupt(agent: "Agent", skip_if: set | None = None) -> None:
     """
     if skip_if and agent._fsm.state in skip_if:
         return
-    from core.event_bus import EventPriority
+    from core.monitoring.event_bus import EventPriority
     agent._bus.post(InterruptData(source="websocket"), priority=EventPriority.INTERRUPT)
 
 
