@@ -19,7 +19,15 @@ function contentText(): string {
   const textParts = props.message.content.filter((p: any) =>
     p.content && (!p.type || p.type === 'text')
   )
-  return textParts.map((p: any) => p.content).join('\n')
+  return textParts.map((p: any) => p.content).join('')
+}
+
+/** 每个句子单独渲染，实现一句一行的分句效果 */
+function textSentences(): string[] {
+  if (typeof props.message.content === 'string') return [props.message.content]
+  return props.message.content
+    .filter((p: any) => p.content && (!p.type || p.type === 'text'))
+    .map((p: any) => p.content)
 }
 </script>
 
@@ -65,11 +73,15 @@ function contentText(): string {
         class="msg-bubble"
         :class="{ playing: isPlaying(), pulse: isPlaying() }"
       >
-        <ChatBubble
-          :content="contentText()"
-          :contentType="message.contentType"
-          :language="message.language"
-        />
+        <!-- 每个分句独立渲染为一行 -->
+        <template v-for="(s, si) in textSentences()" :key="si">
+          <span v-if="si > 0"><br /></span>
+          <ChatBubble
+            :content="s"
+            :contentType="message.contentType"
+            :language="message.language"
+          />
+        </template>
         <TokenLabel
           v-if="message.tokenUsage"
           :tokenUsage="message.tokenUsage"
