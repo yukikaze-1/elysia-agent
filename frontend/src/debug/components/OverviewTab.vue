@@ -291,8 +291,8 @@ function shortModel(name: string) { return name.split('/').pop() || name }
 
   <!-- Modals -->
   <ImageLightbox :src="lightboxSrc" :visible="!!lightboxSrc" @close="lightboxSrc = ''" />
-  <PromptViewer v-if="promptIndex >= 0" :index="promptIndex" :visible="true" @close="promptIndex = -1" @nav="(delta: number) => promptIndex = Math.max(0, Math.min((d?.prompt_summary?.total ?? 1) - 1, promptIndex + delta))" />
-  <ResponseViewer v-if="responseIndex >= 0" :index="responseIndex" :visible="true" @close="responseIndex = -1" @nav="(delta: number) => responseIndex = Math.max(0, Math.min((d?.response_summary?.total ?? 1) - 1, responseIndex + delta))" />
+  <PromptViewer v-if="promptIndex >= 0" :index="promptIndex" :visible="true" @close="promptIndex = -1" @nav="(delta: number) => promptIndex = Math.max(1, Math.min((d?.prompt_summary?.total ?? 1), promptIndex + delta))" />
+  <ResponseViewer v-if="responseIndex >= 0" :index="responseIndex" :visible="true" @close="responseIndex = -1" @nav="(delta: number) => responseIndex = Math.max(1, Math.min((d?.response_summary?.total ?? 1), responseIndex + delta))" />
   <VersionHistory :content-type="versionType" :visible="showVersions" @close="showVersions = false" />
 </template>
 

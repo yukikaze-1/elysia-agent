@@ -26,7 +26,7 @@ async function fetchPrompt() {
   finally { loading.value = false }
 }
 
-watch(() => [props.index, props.visible], () => { if (props.visible) { fetchPrompt(); nextTick(() => overlayRef.value?.focus()) } })
+watch(() => [props.index, props.visible], () => { if (props.visible) { fetchPrompt(); nextTick(() => overlayRef.value?.focus()) } }, { immediate: true })
 
 onMounted(() => { if (props.visible) nextTick(() => overlayRef.value?.focus()) })
 

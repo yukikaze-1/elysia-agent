@@ -32,6 +32,9 @@ export default defineConfig({
       '/restart': {
         target: 'http://localhost:8765',
       },
+      '/debug': {
+        target: 'http://localhost:8765',
+      },
       '/tools': {
         target: 'http://localhost:8765',
       },
