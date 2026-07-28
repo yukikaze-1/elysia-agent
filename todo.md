@@ -52,6 +52,20 @@
 | 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行，保留参考 |
 | 中 | `Module/bench/` 位置不当 | bench.py 自注释"将移至 tools/bench/"，依赖 core/，后续考虑迁移 |
 
+## 模块化改进
+
+近期已完成 Agent 拆分、CognitiveLoop 提取、CharacterEngine 拆分、server 拆分，整体趋势向好。以下为下次重构候选（按优先级排序）：
+
+| 优先级 | 目标 | 说明 |
+|--------|------|------|
+| 中 | **`core/agent/lifecycle.py`（522 行）** | 2 个公开方法 + 24 个私有 `_start_*`/`_stop_*`/`_flush_*`。每个子系统自己管生命周期（Strategy 模式），而不是一个类知道所有子系统的启停细节 |
+| 中 | **`core/cognitive/loop.py`（844 行）** | 14 个私有方法，编排过多。继续提取 turn 构建、工具编排、流式派发到独立策略对象 |
+| 中 | **`core/memory/long_term.py`（588 行）** | Milvus 适配器 + 嵌入调用 + 驱逐策略 + 吸收 ID 追踪全在一个类。可拆为 MilvusClient、EmbeddingCaller、MemoryManager |
+| 低 | **`core/` 根目录散落文件归位** | `agent_fsm.py` → `core/agent/`，`prompt_assembler.py` → `core/adapter/`，`event_bus.py` + `idle_monitor.py` + `token_tracker.py` → 新建 `core/monitoring/` |
+| 低 | **`Module/tool/safety.py`（618 行）+ `protocol.py`（513 行）** | 安全检查 7 阶段改为插件化 `SafetyCheck` 策略；协议类型拆分到独立文件 |
+| 低 | **`core/schema/__init__.py` + `Module/task_system/__init__.py`** | 两个 `__init__.py` 各导出 70+ 符号，扁平重导出。按子领域分组导出 |
+| 低 | **`Module/input/` 反向依赖 `core/`** | 9 个文件从 core/ 导入（如 `api_routes.py` 导 `core.agent.RunState`）。backend-agnostic 层不应依赖 app 层 |
+
 ## 多模态 Phase 2
 
 | 优先级 | 项目 | 说明 |
