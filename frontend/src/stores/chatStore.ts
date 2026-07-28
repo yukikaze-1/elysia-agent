@@ -37,13 +37,9 @@ export const useChatStore = defineStore('chat', () => {
   const nextBubbleQueue = ref<string[]>([])
   const playingMessageId = ref<string | null>(null)
   const previewImages = ref<{ url: string; mime: string }[]>([])
-  const lastStreamId = ref<number | null>(null)
-
   function appendDelta(text: string, streamId?: number) {
     const audioStore = useAudioStore()
-    // 新 stream_id = 新句子 → 创建新气泡
-    const isNewStream = streamId != null && lastStreamId.value !== streamId
-    if (messages.value.length === 0 || lastRole.value !== 'assistant' || isNewStream) {
+    if (messages.value.length === 0 || lastRole.value !== 'assistant') {
       const msg: ChatMessage = {
         id: generateId(),
         role: 'assistant',
@@ -51,14 +47,12 @@ export const useChatStore = defineStore('chat', () => {
         timestamp: Date.now(),
         pending: true,
       }
-      // 如果 TTS 正在播放，标记为排队
       if (audioStore.audioPlaying) {
         msg.queued = true
         nextBubbleQueue.value.push(msg.id)
       }
       messages.value.push(msg)
       if (streamId != null) {
-        lastStreamId.value = streamId
         audioStore.streamBubbles[streamId] = msg.id
       }
     } else {
@@ -211,7 +205,6 @@ export const useChatStore = defineStore('chat', () => {
 
   function finalizeDelta() {
     lastRole.value = ''
-    lastStreamId.value = null
   }
 
   function clearPlayingHighlight() {
