@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from Module.task_system.delegation_preparer import DelegationPreparer
     from ..adapter.llm_adapter import LLMAdapter
     from core.schema.types import IsoTimestamp
+    from Module.task_system.schema.protocol import HITLData
+    from Module.task_system.schema.types import ApprovalId
 
 logger = logging.getLogger(__name__)
 

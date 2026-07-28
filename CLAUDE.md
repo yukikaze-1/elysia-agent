@@ -374,7 +374,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 - **`prompt/README.md`** — Prompt 模板命名规范（PascalCase `.j2`）+ 渲染方式（Jinja2，通过 `PromptManager`）。
 - **`Module/system_prompt/templates/README.md`** — System prompt 模板格式约定（XML wrapper + Markdown body，标签 snake_case）。
 
-基础规则：
+## 基础规则：
 
 1. README 用中文写。
 2. 代码注释用中文。

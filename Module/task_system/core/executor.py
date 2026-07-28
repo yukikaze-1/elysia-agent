@@ -332,9 +332,10 @@ class Executor:
             raise _ToolMatchError("LLM 未返回工具调用且无文本内容")
 
         tc = msg.tool_calls[0]
-        tool_name = tc.function.name
+        tc_any: Any = tc  # type: ignore[assignment]
+        tool_name = tc_any.function.name
         try:
-            params = json.loads(tc.function.arguments)
+            params = json.loads(tc_any.function.arguments)
         except json.JSONDecodeError as e:
             raise _ToolMatchError(f"LLM 返回的参数 JSON 解析失败: {e}") from e
 
@@ -429,8 +430,8 @@ class Executor:
             工具执行结果
         """
         ctx = ToolContext(
-            session_id=session_id,
-            trace_id=f"{task_id}/{node_id}",
+            session_id=session_id,  # type: ignore[call-arg]
+            trace_id=f"{task_id}/{node_id}",  # type: ignore[call-arg]
         )
         # infra.tool_registry 类型为 object（避免循环导入），运行时是 ToolManager
         result = await self._infra.tool_registry.execute(  # type: ignore[attr-defined]
