@@ -205,8 +205,13 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function revealNextQueued() {
-    if (!nextBubbleQueue.value.length) return
+    if (!nextBubbleQueue.value.length) {
+      playingMessageId.value = null
+      return
+    }
     const id = nextBubbleQueue.value.shift()!
+    const msg = messages.value.find(m => m.id === id)
+    if (msg) msg.queued = false
     playingMessageId.value = id
   }
 
