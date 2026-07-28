@@ -29,7 +29,7 @@ function isUserScrolledUp(): boolean {
 function scrollToBottom() {
   const el = chatWrapRef.value
   if (!el) return
-  el.scrollTop = el.scrollHeight
+  requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
 }
 
 function onScroll() {
@@ -42,9 +42,13 @@ function onScroll() {
   }
 }
 
-// Auto-scroll on new messages
+// Auto-scroll on new messages or content change (streaming delta)
 watch(
-  () => chatStore.messages.length,
+  () => {
+    const msgs = chatStore.messages
+    const last = msgs[msgs.length - 1]
+    return { count: msgs.length, lastContent: last?.content }
+  },
   () => {
     if (!chatStore.userScrolledUp) {
       nextTick(() => scrollToBottom())
