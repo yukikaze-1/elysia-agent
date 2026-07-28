@@ -9,7 +9,7 @@ from ._utils import now_iso
 
 
 class StateHistoryEntry(TypedDict):
-    timestamp: float
+    timestamp: IsoTimestamp
     content: str
 
 

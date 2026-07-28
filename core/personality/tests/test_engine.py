@@ -1,6 +1,7 @@
 """CharacterEngine 单元测试。"""
 import asyncio
 import time
+from core.schema._utils import now_iso
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from core.personality import CharacterEngine
@@ -114,7 +115,7 @@ class TestCharacterEngineCompression:
     def _fill_state_history(state, count: int, base_text: str = "状态变化"):
         """填充 state_history 到指定条数。"""
         for i in range(count):
-            state.state_history.append({"timestamp": time.time(), "content": f"{base_text} #{i+1}"})
+            state.state_history.append({"timestamp": now_iso(), "content": f"{base_text} #{i+1}"})
 
     def test_should_compress_false_when_too_few_entries(self):
         """state_history 不足 3 条时不触发压缩。"""
