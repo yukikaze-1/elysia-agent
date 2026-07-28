@@ -7,13 +7,13 @@ lazily on first insert/search, with a short timeout to avoid blocking.
 import asyncio
 import logging
 import math
-import os
 import time as _time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from .embedding_provider import EmbeddingProvider
+
 if TYPE_CHECKING:
-    from Module.embedding import EmbeddingBackend
     from core.storage.memory_repo import MemoryRepository
 
 logger = logging.getLogger(__name__)
@@ -48,21 +48,16 @@ class LongTermMemory:
     with a 10s timeout to avoid blocking startup.
     """
 
-    DIMENSION = 1024  # Default for bge-large-zh-v1.5
-
     def __init__(self, max_entries: int = 10000, max_age_days: int = 90,
                  embed_timeout: float = 10.0,
                  enable_eviction: bool = True,
                  repo: "MemoryRepository | None" = None):
         self._entries: list[MemoryEntry] = []
         self._repo: "MemoryRepository | None" = repo
-        self._embedding: "EmbeddingBackend | None" = None
-        self._embedding_tried = False  # Only try once lazily
-        self._embed_task: asyncio.Task | None = None  # Tracked for cleanup
+        self._embedding_provider = EmbeddingProvider(embed_timeout)
         self._dirty_ids: set[str] = set()  # 未同步到 Milvus 的条目 ID
         self._max_entries = max_entries
         self._max_age_days = max_age_days
-        self._embed_timeout = embed_timeout
         self._absorbed_ids: set[str] = set()  # 被 merge 吸收但尚未 delete 的条目 ID
         self._enable_eviction = enable_eviction
         self._write_lock = asyncio.Lock()     # 保护所有修改操作的并发锁
@@ -128,78 +123,6 @@ class LongTermMemory:
             return await self._repo.health_check()
         return False
 
-    async def _ensure_embedding(self, wait: bool = False) -> None:
-        """Load embedding backend lazily. Only tries once.
-
-        Runs in a thread pool so the blocking model load doesn't stall the event loop.
-        When wait=True, awaits the loading task so the caller gets embeddings.
-        Otherwise fire-and-forget (search can fall back to text).
-        """
-        if self._embedding is not None:
-            return
-        if self._embedding_tried:
-            if wait and self._embed_task and not self._embed_task.done():
-                try:
-                    await asyncio.wait_for(self._embed_task, timeout=self._embed_timeout)
-                except (asyncio.TimeoutError, Exception):
-                    pass
-            return
-        self._embedding_tried = True
-
-        loop = asyncio.get_event_loop()
-
-        async def _load():
-            try:
-                embedding = await asyncio.wait_for(
-                    loop.run_in_executor(None, self._try_load_embedding_sync),
-                    timeout=self._embed_timeout,
-                )
-                # 只在 coroutine 未被取消时才赋值（避免 executor 线程
-                # 在 timeout 后继续运行并竞态写入 self._embedding）
-                if embedding is not None:
-                    self._embedding = embedding
-            except asyncio.TimeoutError:
-                logger.info("LongTermMemory: embedding load timed out after %.0fs, text-only mode", self._embed_timeout)
-            except Exception as e:
-                logger.info("LongTermMemory: embedding unavailable (%s), text-only mode", e)
-
-        self._embed_task = asyncio.create_task(_load(), name="embedding-load")
-
-        if wait:
-            try:
-                await asyncio.wait_for(asyncio.shield(self._embed_task), timeout=self._embed_timeout)
-            except (asyncio.TimeoutError, Exception):
-                pass
-
-    def _try_load_embedding_sync(self):
-        """Try to load embedding backend. Returns instance or None. Runs in thread.
-
-        不直接写 self._embedding——由调用方 coroutine 赋值，
-        确保 timeout 后线程即使继续运行也不会产生竞态写入。
-        """
-        from Module.embedding import EmbeddingFactory
-
-        # 1. Try OpenAI-compatible embedding (fast API call, no model download)
-        openai_key = os.getenv("OPENAI_API_KEY", "")
-        if openai_key:
-            try:
-                emb = EmbeddingFactory.create("openai/text-embedding-3-small")
-                dim = emb.dimension
-                logger.info("LongTermMemory: OpenAI embedding connected (dim=%d)", dim)
-                return emb
-            except Exception as e:
-                logger.debug("OpenAI embedding unavailable: %s", e)
-
-        # 2. Try HuggingFace local model (slower, loads model to memory)
-        try:
-            emb = EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")
-            dim = emb.dimension
-            logger.info("LongTermMemory: HuggingFace embedding connected (dim=%d)", dim)
-            return emb
-        except Exception as e:
-            logger.debug("LongTermMemory: HuggingFace embedding unavailable: %s", e)
-            return None
-
     # ---- Write ----
 
     async def insert(self, text: str, **metadata) -> None:
@@ -209,16 +132,9 @@ class LongTermMemory:
         poignancy, timestamp, source, etc.
         These become structured fields on MemoryEntry and are stored in Milvus.
         """
-        await self._ensure_embedding(wait=True)
+        embedding = await self._embedding_provider.embed(text)
 
         async with self._write_lock:
-            embedding: list[float] = []
-            if self._embedding:
-                try:
-                    embedding = await self._embedding.embed_query(text)
-                except Exception:
-                    logger.debug("Embedding failed for insert, storing text-only", exc_info=True)
-
             from core.utils import new_message_id
             # Work on a copy to avoid mutating caller's dict
             meta = dict(metadata)
@@ -367,33 +283,31 @@ class LongTermMemory:
                     e.timestamp = _time.time()
                     if self._repo is not None and e._milvus_pk is not None:
                         old_pk = e._milvus_pk
-                        await self._ensure_embedding(wait=True)
-                        if self._embedding:
+                        emb = await self._embedding_provider.embed(new_text)
+                        if emb:
                             try:
-                                emb = await self._embedding.embed_query(new_text)
-                                if emb:
-                                    pk_list = await self._repo.insert(
-                                        vectors=[emb],
-                                        metadata=[{
-                                            "entry_id": e.id,
-                                            "text": new_text,
-                                            "memory_type": e.memory_type,
-                                            "poignancy": e.poignancy,
-                                            "timestamp": e.timestamp,
-                                        }],
-                                    )
-                                    if pk_list:
-                                        e._milvus_pk = int(pk_list[0])
-                                        logger.info("LongTermMemory update_text: entry_id=%s, old_pk=%s, new_pk=%s",
-                                                    entry_id, old_pk, pk_list[0])
-                                        # 新向量插入成功后才删除旧向量
-                                        try:
-                                            await self._repo.delete([old_pk])
-                                        except Exception:
-                                            logger.debug("Milvus delete old pk failed for update %s", entry_id, exc_info=True)
-                                    else:
-                                        # 插入返回空 → 标记脏，保留旧向量
-                                        self._dirty_ids.add(entry_id)
+                                pk_list = await self._repo.insert(
+                                    vectors=[emb],
+                                    metadata=[{
+                                        "entry_id": e.id,
+                                        "text": new_text,
+                                        "memory_type": e.memory_type,
+                                        "poignancy": e.poignancy,
+                                        "timestamp": e.timestamp,
+                                    }],
+                                )
+                                if pk_list:
+                                    e._milvus_pk = int(pk_list[0])
+                                    logger.info("LongTermMemory update_text: entry_id=%s, old_pk=%s, new_pk=%s",
+                                                entry_id, old_pk, pk_list[0])
+                                    # 新向量插入成功后才删除旧向量
+                                    try:
+                                        await self._repo.delete([old_pk])
+                                    except Exception:
+                                        logger.debug("Milvus delete old pk failed for update %s", entry_id, exc_info=True)
+                                else:
+                                    # 插入返回空 → 标记脏，保留旧向量
+                                    self._dirty_ids.add(entry_id)
                             except Exception:
                                 logger.debug("Embedding/insert failed for update %s", entry_id, exc_info=True)
                                 self._dirty_ids.add(entry_id)
@@ -457,7 +371,7 @@ class LongTermMemory:
         memory_type: str | None = None,
     ) -> list[MemoryEntry]:
         """向量搜索 + rerank（相似度 + 重要性 + 新鲜度）。"""
-        await self._ensure_embedding()
+        backend = await self._embedding_provider.ensure(wait=False)
 
         if not self._entries and self._repo is None:
             return []
@@ -468,9 +382,9 @@ class LongTermMemory:
         # Try Milvus — fetch top_k * 4 for rerank candidate pool
         if self._repo is not None and await self._repo.health_check():
             vec = query_embedding
-            if vec is None and query_text and self._embedding:
+            if vec is None and query_text and backend is not None:
                 try:
-                    vec = await self._embedding.embed_query(query_text)
+                    vec = await backend.embed_query(query_text)
                 except Exception:
                     logger.debug("Embedding failed for search", exc_info=True)
 
@@ -575,14 +489,6 @@ class LongTermMemory:
         return len(self._entries)
 
     async def close(self) -> None:
-        # Cancel background embedding load if still running.
-        # Note: the thread in run_in_executor can't be interrupted,
-        # but the asyncio task is cleaned up. The thread will be
-        # killed when the process exits.
-        if self._embed_task and not self._embed_task.done():
-            self._embed_task.cancel()
+        self._embedding_provider.cancel()
         if self._repo:
             await self._repo.close()
-        # 仅解引用，模型释放由 EmbeddingFactory.shutdown() 统一负责
-        if self._embedding:
-            self._embedding = None

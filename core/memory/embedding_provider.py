@@ -75,7 +75,7 @@ class EmbeddingProvider:
     def _try_load_sync(self):
         """Try to load embedding backend. Returns instance or None. Runs in thread.
 
-        不直接写 self._embedding——由调用方 coroutine 赋值，
+        不直接写 self._backend——由调用方 coroutine 赋值，
         确保 timeout 后线程即使继续运行也不会产生竞态写入。
         """
         from Module.embedding import EmbeddingFactory

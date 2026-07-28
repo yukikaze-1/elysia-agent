@@ -62,7 +62,7 @@ class _LifecycleTools:
         """启动 Worker Pool + embedding 预加载后台任务。"""
         await self._scheduler.start()
         self._embed_task = asyncio.create_task(
-            self._long_term._ensure_embedding(), name="embedding-preload")
+            self._long_term._embedding_provider.ensure(), name="embedding-preload")
 
     async def _start_idle_and_events(self) -> None:
         """启动 IdleMonitor + 主事件循环（独立 asyncio.Task）。"""

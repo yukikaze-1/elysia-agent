@@ -200,12 +200,12 @@ class TestLongTermMemory:
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
 
-        await mem._ensure_embedding(wait=True)
+        backend = await mem._embedding_provider.ensure(wait=True)
         await mem.insert("test cold start", memory_type="fact")
 
         entry = mem._entries[0] if mem._entries else None
         assert entry is not None
-        if mem._embedding is not None:
+        if backend is not None:
             assert len(entry.embedding) > 0, "Entry should have embedding after await"
 
     @pytest.mark.asyncio
