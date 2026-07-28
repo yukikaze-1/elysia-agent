@@ -1,0 +1,97 @@
+"""Agent 生命周期 — 工具/调度/空闲监控 启停。"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import TYPE_CHECKING
+
+from ..event_bus import EventBus, EventPriority, EventType
+from ..agent_fsm import AgentFSM, AgentState
+from ..cognitive import CognitiveLoop
+from ..idle_monitor import IdleMonitor
+from core.schema.event import (
+    InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
+)
+
+if TYPE_CHECKING:
+    from ..task import TaskScheduler
+    from ..memory.long_term import LongTermMemory
+    from ..config import AppConfig
+    from ..memory.session import SessionMemory
+    from core.token_tracker import TokenTracker
+    from Module.tts.protocol import TTSBackend
+    from ..adapter.tool_adapter import ToolAdapter
+
+logger = logging.getLogger(__name__)
+
+
+class _LifecycleTools:
+    """工具/调度/空闲监控 生命周期 mixin。"""
+
+    async def _start_tool_context(self) -> None:
+        """启动 ToolAdapter，注入运行时服务。"""
+        await self._tool_adapter.start(extra_services={
+            "memory": self._long_term,
+            "scheduler": self._scheduler,
+            "config": self._config,
+            "session": self._session,
+            "_started_at": self._started_at,
+            "_token_tracker": self._token_tracker,
+            "_fsm_state": str(self._fsm.state),
+            "_session_msg_count": len(self._session.messages),
+        })
+        self._cognitive.configure(tool_adapter=self._tool_adapter)
+        self._scheduler.set_tool_adapter(self._tool_adapter)
+
+    async def _start_worker_pool(self) -> None:
+        """启动 Worker Pool + embedding 预加载后台任务。"""
+        await self._scheduler.start()
+        self._embed_task = asyncio.create_task(
+            self._long_term._ensure_embedding(), name="embedding-preload")
+
+    async def _start_idle_and_events(self) -> None:
+        """启动 IdleMonitor + 主事件循环（独立 asyncio.Task）。"""
+        await self._idle.start()
+        self._event_task = asyncio.create_task(self._process_events())
+
+    async def _stop_event_task(self) -> None:
+        """停止 _process_events 事件循环——防止它在 shutdown 期间继续 post 新任务。"""
+        if self._event_task:
+            logger.debug("Cancelling event task...")
+            self._event_task.cancel()
+            try:
+                await asyncio.wait_for(self._event_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            self._event_task = None
+
+    def _stop_cognitive_and_tts(self) -> None:
+        """Cancel 当前 cognitive task + TTS 任务（belt-and-suspenders）。"""
+        self._cognitive.cancel_current()
+        self._cognitive._tts_mgr.cancel_all()
+
+    async def _stop_embedding_if_running(self) -> None:
+        """取消并等待 embedding 预加载任务完成。"""
+        if self._embed_task and not self._embed_task.done():
+            self._embed_task.cancel()
+        # 等待 task 完成——cancel 后仍需 await 消耗 CancelledError
+        if self._embed_task:
+            try:
+                await asyncio.wait_for(self._embed_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+    async def _stop_scheduler(self) -> None:
+        """停止 Scheduler Worker Pool。"""
+        logger.debug("Stopping scheduler Worker Pool...")
+        await self._scheduler.stop()
+
+    async def _stop_tool_adapter(self) -> None:
+        """关闭 ToolAdapter（清理所有工具插件）。"""
+        logger.debug("Stopping ToolAdapter...")
+        await self._tool_adapter.shutdown()
+
+    async def _stop_idle(self) -> None:
+        """停止 IdleMonitor。"""
+        logger.debug("Stopping idle monitor...")
+        await self._idle.stop()

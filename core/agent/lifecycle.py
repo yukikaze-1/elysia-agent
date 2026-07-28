@@ -8,23 +8,12 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from ._lifecycle_persistence import _LifecyclePersistence
 from ._lifecycle_services import _LifecycleServices
+from ._lifecycle_tools import _LifecycleTools
 from ._types import RunState, _PendingMessage, _BackgroundTaskEntry
 
-from ..event_bus import EventBus, EventPriority, EventType
-from ..agent_fsm import AgentFSM, AgentState
-from ..utils import set_request_id, get_request_id
-from ..prompt_assembler import PromptAssembler
-from ..cognitive import CognitiveLoop
-from ..idle_monitor import IdleMonitor
 from ..memory.consolidator import MemoryConsolidator
 from ..personality import CharacterEngine
-from core.personality.reflector import CharacterReflector
-from ..memory.memory_reflector import MemoryReflector  # 新增
-from core.schema.types import IsoTimestamp, SessionId
-from core.schema.character import CharacterState
-from core.schema.event import (
-    InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
-)
+from core.schema.types import IsoTimestamp
 from ..task import TaskScheduler
 
 if TYPE_CHECKING:
@@ -37,6 +26,10 @@ if TYPE_CHECKING:
     from core.debug.response_recorder import ResponseRecorder
     from ..memory.session import SessionMemory
     from ..memory.long_term import LongTermMemory
+    from ..event_bus import EventBus
+    from ..agent_fsm import AgentFSM
+    from ..cognitive import CognitiveLoop
+    from ..idle_monitor import IdleMonitor
     from Module.task_system.task_system import TaskSystem
     from Module.task_system.delegation_preparer import DelegationPreparer
     from Module.tts.protocol import TTSBackend
@@ -47,7 +40,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AgentLifecycle(_LifecyclePersistence, _LifecycleServices):
+class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools):
     """Agent 生命周期 mixin — start/stop 编排。
 
     所有属性由 Agent.__init__ 初始化，本 mixin 不含 __init__。
@@ -153,31 +146,8 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices):
         # 9. 数据库健康检查循环（120s 间隔自动重连）
         self._start_db_health()
 
-    async def _start_tool_context(self) -> None:
-        """启动 ToolAdapter，注入运行时服务。"""
-        await self._tool_adapter.start(extra_services={
-            "memory": self._long_term,
-            "scheduler": self._scheduler,
-            "config": self._config,
-            "session": self._session,
-            "_started_at": self._started_at,
-            "_token_tracker": self._token_tracker,
-            "_fsm_state": str(self._fsm.state),
-            "_session_msg_count": len(self._session.messages),
-        })
-        self._cognitive.configure(tool_adapter=self._tool_adapter)
-        self._scheduler.set_tool_adapter(self._tool_adapter)
 
-    async def _start_worker_pool(self) -> None:
-        """启动 Worker Pool + embedding 预加载后台任务。"""
-        await self._scheduler.start()
-        self._embed_task = asyncio.create_task(
-            self._long_term._ensure_embedding(), name="embedding-preload")
 
-    async def _start_idle_and_events(self) -> None:
-        """启动 IdleMonitor + 主事件循环（独立 asyncio.Task）。"""
-        await self._idle.start()
-        self._event_task = asyncio.create_task(self._process_events())
 
     async def _start_task_system(self) -> None:
         """创建 TaskSystem + DelegationPreparer + HITLNotifier，注入 CognitiveLoop。"""
@@ -279,32 +249,8 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices):
             except Exception:
                 logger.debug("CharacterEngine compression flush failed", exc_info=True)
 
-    async def _stop_event_task(self) -> None:
-        """停止 _process_events 事件循环——防止它在 shutdown 期间继续 post 新任务。"""
-        if self._event_task:
-            logger.debug("Cancelling event task...")
-            self._event_task.cancel()
-            try:
-                await asyncio.wait_for(self._event_task, timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
-            self._event_task = None
 
-    def _stop_cognitive_and_tts(self) -> None:
-        """Cancel 当前 cognitive task + TTS 任务（belt-and-suspenders）。"""
-        self._cognitive.cancel_current()
-        self._cognitive._tts_mgr.cancel_all()
 
-    async def _stop_embedding_if_running(self) -> None:
-        """取消并等待 embedding 预加载任务完成。"""
-        if self._embed_task and not self._embed_task.done():
-            self._embed_task.cancel()
-        # 等待 task 完成——cancel 后仍需 await 消耗 CancelledError
-        if self._embed_task:
-            try:
-                await asyncio.wait_for(self._embed_task, timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
 
     async def _stop_mailbox(self) -> None:
         """停止后台任务 mailbox 轮询——cancel 后必须 await 消耗 CancelledError。"""
@@ -324,18 +270,6 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices):
             except asyncio.TimeoutError:
                 logger.warning("TaskSystem stop timed out")
 
-    async def _stop_scheduler(self) -> None:
-        """停止 Scheduler Worker Pool。"""
-        logger.debug("Stopping scheduler Worker Pool...")
-        await self._scheduler.stop()
 
-    async def _stop_tool_adapter(self) -> None:
-        """关闭 ToolAdapter（清理所有工具插件）。"""
-        logger.debug("Stopping ToolAdapter...")
-        await self._tool_adapter.shutdown()
 
-    async def _stop_idle(self) -> None:
-        """停止 IdleMonitor。"""
-        logger.debug("Stopping idle monitor...")
-        await self._idle.stop()
 
