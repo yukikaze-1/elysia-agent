@@ -56,11 +56,19 @@ class BlockFilter:
     """
 
     def __init__(self) -> None:
+        """初始化块过滤器。"""
         self._buf = ""
         self._mode: BlockType | None = None
 
     def feed(self, chunk: str) -> str:
-        """输入流式文本，返回可以进入 TTS 的普通文本。"""
+        """输入流式文本，返回可以进入 TTS 的普通文本。
+
+        Args:
+            chunk: 流式输入的文本片段。
+
+        Returns:
+            过滤后可以安全送入 TTS 的纯文本。
+        """
         if not chunk:
             return ""
 
@@ -123,6 +131,9 @@ class BlockFilter:
         - 普通文本会返回；
         - 已进入但未闭合的块会整体丢弃；
         - 尾部残留的半截起始标记不会泄漏到 TTS。
+
+        Returns:
+            缓冲区中残留的安全文本；未闭合块内容返回空字符串。
         """
 
         if self._mode is not None:
@@ -151,13 +162,21 @@ class BlockFilter:
         return result
 
     def reset(self) -> None:
-        """重置过滤器。"""
+        """重置过滤器状态，清空缓冲区与当前模式。"""
         self._buf = ""
         self._mode = None
 
 
 def _parse_blocks(acc_text: str) -> list[tuple[int, int, ParsedBlock]]:
-    """解析完整文本中的块，并返回块在原文中的位置。"""
+    """解析完整文本中的块，并返回块在原文中的位置。
+
+    Args:
+        acc_text: 完整的 LLM 累积输出文本。
+
+    Returns:
+        (起始位置, 结束位置, ParsedBlock) 元组的列表，
+        按在原文中的出现顺序排列。未闭合的块不会被包含。
+    """
 
     result: list[tuple[int, int, ParsedBlock]] = []
     position = 0
@@ -212,7 +231,17 @@ def _append_sentences_from_segment(
     sentence_index: int,
     parts: list[TextPart],
 ) -> int:
-    """将当前普通文本段中的句子按顺序放入 parts。"""
+    """将当前普通文本段中的句子按顺序放入 parts。
+
+    Args:
+        segment: 当前普通文本段（不含块标记）。
+        sentences: 所有已分句的句子列表。
+        sentence_index: 当前已消费到的句子索引。
+        parts: 累积的 TextPart 列表（原地修改）。
+
+    Returns:
+        更新后的 sentence_index，即下一个待消费句子的索引。
+    """
 
     search_pos = 0
 
@@ -249,6 +278,16 @@ def build_parts_with_blocks(
 
     与旧实现不同，Markdown/code block 会保留在原始文本位置，
     不再统一追加到所有句子之后。
+
+    Args:
+        acc_text: 完整的 LLM 累积输出文本。
+        sentences: 所有已分句的句子列表。
+
+    Returns:
+        (parts, content_type) 元组：
+        - parts: TextPart 列表，普通文本与块按原文顺序交错排列。
+        - content_type: {"markdown": [...], "code": [...]}，
+          值为对应类型块在 parts 中的索引列表。
     """
 
     parts: list[TextPart] = []

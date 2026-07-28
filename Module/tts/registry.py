@@ -12,7 +12,14 @@ from .gpt_sovits import GPTSoVitsBackend
 
 
 def _load_voices(voices_config: str = "") -> dict:
-    """加载音色配置，返回 voice_name → config 的 dict。"""
+    """加载音色配置，返回 voice_name → config 的 dict。
+
+    Args:
+        voices_config: 音色配置文件路径，为空则使用默认 gpt_sovits_voices.yaml。
+
+    Returns:
+        voice_name → config 的映射字典。
+    """
     if voices_config:
         path = Path(voices_config)
     else:
@@ -33,6 +40,18 @@ class TTSFactory:
 
     @staticmethod
     def create(model_id: str, **kwargs) -> "TTSBackend":
+        """根据 model_id 创建 TTS 后端实例。
+
+        Args:
+            model_id: 格式为 "provider/model-name" 的模型标识。
+            **kwargs: 透传给后端构造函数的额外参数（如 voice_id、speed、voice_map 等）。
+
+        Returns:
+            对应 provider 的 TTSBackend 实例。
+
+        Raises:
+            ValueError: 当 model_id 格式无效、provider 未知或缺少必要参数时。
+        """
         if "/" not in model_id:
             raise ValueError(
                 f"Invalid model_id '{model_id}': expected 'provider/model-name' format"

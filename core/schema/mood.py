@@ -7,6 +7,14 @@ _STT_EMOTION_EMOJI: dict[str, str] = {
 }
 
 def stt_emotion_emoji(tag: str) -> str:
+    """根据 STT 情绪标签返回对应的 emoji。
+
+    Args:
+        tag: STT 情绪标签（如 HAPPY、SAD、ANGRY 等）。
+
+    Returns:
+        对应的 emoji 字符串，未匹配到则返回空字符串。
+    """
     return _STT_EMOTION_EMOJI.get(tag, "")
 
 
@@ -19,4 +27,12 @@ _STT_EVENT_EMOJI: dict[str, str] = {
 }
 
 def stt_event_emoji(event: str) -> str:
+    """根据 STT 音频事件标签返回对应的 emoji。
+
+    Args:
+        event: STT 音频事件标签（如 Speech、BGM、Laughter 等）。
+
+    Returns:
+        对应的 emoji 字符串，未匹配到则返回空字符串。
+    """
     return _STT_EVENT_EMOJI.get(event, "")

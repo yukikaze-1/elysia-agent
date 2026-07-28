@@ -41,6 +41,16 @@ async def plan_and_validate(
     校验 ABORT → 设 FAILED，push 事件，返回 None。
     校验 FIX_PLAN → 带错误反馈重试规划（v1 最多 2 次）。
 
+    Args:
+        planner: Planner 实例，用于生成初始计划。
+        plan_validator: PlanValidator 实例，用于校验计划并构建 PlanGraph。
+        context: DelegationContext，包含任务意图、提示、可用工具等。
+        task_state: TaskState，用于状态追踪和计划存储。
+        mailbox: TaskMailbox，用于推送生命周期事件。
+        constraints: ConstraintConfig，规划/校验的全局约束。
+        push_mailbox_fn: 异步回调，向邮箱推送事件。
+        abort_error_code_fn: 可调用对象，从校验问题列表生成错误码字符串。
+
     Returns:
         PlanGraph: 校验通过，调用方继续执行
         None:     校验失败且已处理，调用方应 return

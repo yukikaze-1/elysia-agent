@@ -39,6 +39,11 @@ class TaskDebugAPI:
     """
 
     def __init__(self, task_system: TaskSystem) -> None:
+        """Initialize the debug API.
+
+        Args:
+            task_system: TaskSystem instance to collect debug data from.
+        """
         self._ts = task_system
         self._subscribers: dict[str, asyncio.Queue[dict]] = {}
         self._last_snapshot: list[dict] | None = None
@@ -49,12 +54,14 @@ class TaskDebugAPI:
     # ── 生命周期 ───────────────────────────────────────────────────────
 
     async def start(self) -> None:
+        """Start the background polling loop if not already running."""
         if self._poll_task is not None:
             return
         self._poll_task = asyncio.create_task(self._poll_loop())
         logger.info("TaskDebugAPI: 轮询已启动 (interval=%ss)", _POLL_INTERVAL)
 
     async def stop(self) -> None:
+        """Stop the polling loop and notify all subscribers to disconnect."""
         if self._poll_task is not None:
             self._poll_task.cancel()
             self._poll_task = None
@@ -72,6 +79,9 @@ class TaskDebugAPI:
         裁剪策略：
         - node_states 只保留 {node_id, status, attempt, summary, error}
         - 不序列化 evaluation（Planner replan 内部用，前端不需要）
+
+        Returns:
+            list[dict]: 裁剪后的任务快照列表，可直接序列化为 JSON。
         """
         raw = self._ts._get_debug_snapshot()
         tasks = []
@@ -124,7 +134,15 @@ class TaskDebugAPI:
     # ── Diff ───────────────────────────────────────────────────────────
 
     def _diff(self, old: list[dict] | None, new: list[dict]) -> list[dict]:
-        """比较两次快照，产出 SSE 事件列表。"""
+        """比较两次快照，产出 SSE 事件列表。
+
+        Args:
+            old: 上一次快照，首次轮询时为 None。
+            new: 当前快照。
+
+        Returns:
+            list[dict]: SSE 事件列表，每项包含 event 和 data。
+        """
         if old is None:
             return []  # 首次轮询，等待 subscribe 触发全量 snapshot
 
@@ -186,7 +204,7 @@ class TaskDebugAPI:
     # ── 轮询循环 ───────────────────────────────────────────────────────
 
     async def _poll_loop(self) -> None:
-        """500ms 间隔：收集快照 → diff → broadcast。"""
+        """后台轮询循环：500ms 间隔收集快照，diff 后 broadcast 给订阅者。"""
         while True:
             try:
                 snapshot = self._collect_snapshot()
@@ -212,9 +230,10 @@ class TaskDebugAPI:
     # ── 订阅管理 ───────────────────────────────────────────────────────
 
     async def subscribe(self) -> tuple[str, asyncio.Queue[dict]]:
-        """新 SSE 客户端订阅。返回 (subscriber_id, queue)。
+        """新 SSE 客户端订阅。首条消息自动发送全量快照。
 
-        首条消息自动发送全量快照。
+        Returns:
+            tuple: (subscriber_id, queue)，队列用于接收 SSE 事件。
         """
         import uuid
         sid = uuid.uuid4().hex[:8]
@@ -233,11 +252,20 @@ class TaskDebugAPI:
         return sid, q
 
     async def unsubscribe(self, sid: str) -> None:
+        """Remove a subscriber.
+
+        Args:
+            sid: Subscriber ID returned by subscribe().
+        """
         self._subscribers.pop(sid, None)
         logger.info("TaskDebugAPI: subscriber %s 已断开 (total=%d)", sid, len(self._subscribers))
 
     async def _broadcast(self, event: dict) -> None:
-        """推送给所有 subscriber。满队列的跳过（前端太慢）。"""
+        """推送给所有 subscriber。满队列的跳过（前端太慢）。
+
+        Args:
+            event: SSE 事件 dict，包含 event 和 data。
+        """
         for sid, q in list(self._subscribers.items()):
             try:
                 q.put_nowait(event)
@@ -250,12 +278,26 @@ class TaskDebugAPI:
     # ── aiohttp handlers ──────────────────────────────────────────────
 
     async def snapshot_handler(self, request: web.Request) -> web.Response:
-        """GET /debug/api/tasks —— 当前全量快照 JSON。"""
+        """GET /debug/api/tasks —— 当前全量快照 JSON。
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: 当前所有任务状态的 JSON 快照。
+        """
         snapshot = self._collect_snapshot()
         return web.json_response(snapshot)
 
     async def sse_handler(self, request: web.Request) -> web.StreamResponse:
-        """GET /debug/api/tasks/stream —— SSE 事件流。"""
+        """GET /debug/api/tasks/stream —— SSE 事件流。
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.StreamResponse: SSE 流连接，持续推送任务状态变更。
+        """
         resp = web.StreamResponse(
             status=200,
             reason="OK",

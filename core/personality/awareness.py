@@ -33,6 +33,15 @@ class AwarenessJudge:
         user_name: str,
         pm: "PromptManager | None",
     ):
+        """初始化觉察判定器。
+
+        Args:
+            llm: LLM 适配器。
+            state: 角色状态对象。
+            character_name: 角色名。
+            user_name: 用户名。
+            pm: PromptManager 实例，用于模板渲染。
+        """
         self._llm = llm
         self._state = state
         self._character_name = character_name
@@ -51,6 +60,9 @@ class AwarenessJudge:
         1. 有 judge 批准的觉察文本
         2. 展示次数未达上限
         3. 距上次 C9 渲染超过冷却时间（首次不受冷却限制）
+
+        Returns:
+            True 表示允许展示 C9 觉察文本。
         """
         if not self._state.approved_awareness_text:
             return False
@@ -83,6 +95,9 @@ class AwarenessJudge:
         L2 为空 → 降级模式：L3 原文直接缓存，不调 LLM。
         L2 非空 → render prompt → call LLM → parse <approved>/<skip>。
         失败时保留旧缓存并记录 warning。
+
+        Args:
+            l3_text: 当前 L3 状态文本（来自 reflector 产出）。
         """
         if self._pm is None:
             return

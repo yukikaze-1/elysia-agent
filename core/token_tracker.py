@@ -57,6 +57,13 @@ class TokenTracker:
         output_manager: "OutputManager",
         repo: "TokenRepository | None" = None,
     ):
+        """初始化 TokenTracker。
+
+        Args:
+            session_id: 当前会话 ID。
+            output_manager: 输出管理器，用于 WebSocket 广播。
+            repo: Token 持久化仓库，为 None 时仅使用本地 JSONL 文件。
+        """
         self.session_id = session_id
         self._output = output_manager
         self._repo = repo
@@ -70,7 +77,7 @@ class TokenTracker:
         """新一轮用户对话开始前清空 turn 缓存。"""
         self.current_turn_usages.clear()
 
-    async def record(self, usage: dict, model: str, round_num: int) -> None:
+    async def record(self, usage: dict[str, int], model: str, round_num: int) -> None:
         """记录一次 API 调用的 token 消耗。
 
         每轮 LLM 调用完成后由 CognitiveLoop 调用一次。

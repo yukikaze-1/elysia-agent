@@ -24,7 +24,14 @@ _PARTS_ADAPTER: TypeAdapter[list[Part]] = TypeAdapter(list[Part])
 def parts_from_dicts(dicts: list[dict]) -> list[Part]:
     """边界转换：外部 list[dict]（session 存储 / WS 请求）→ list[Part]。
 
-    无法识别的 type 会抛 ValidationError——调用方负责保证数据格式。
+    Args:
+        dicts: 外部的 Part dict 列表，每个 dict 需包含 type 等字段。
+
+    Returns:
+        校验并转换后的 Part 对象列表。
+
+    Raises:
+        ValidationError: 无法识别的 type 或字段格式错误。
     """
     return _PARTS_ADAPTER.validate_python(dicts)
 
@@ -32,27 +39,62 @@ def parts_from_dicts(dicts: list[dict]) -> list[Part]:
 # ── 辅助函数 ──────────────────────────────────────────
 
 def content_text(parts: list[Part]) -> str:
-    """提取所有文本片段拼接。"""
+    """提取所有文本片段拼接。
+
+    Args:
+        parts: Part 对象列表。
+
+    Returns:
+        拼接后的纯文本字符串。
+    """
     return "".join(p.content for p in parts if isinstance(p, TextPart))
 
 
 def has_image(parts: list[Part]) -> bool:
-    """是否包含图片。"""
+    """是否包含图片。
+
+    Args:
+        parts: Part 对象列表。
+
+    Returns:
+        True 如果列表中包含 ImagePart。
+    """
     return any(isinstance(p, ImagePart) for p in parts)
 
 
 def has_file(parts: list[Part]) -> bool:
-    """是否包含文件。"""
+    """是否包含文件。
+
+    Args:
+        parts: Part 对象列表。
+
+    Returns:
+        True 如果列表中包含 FilePart。
+    """
     return any(isinstance(p, FilePart) for p in parts)
 
 
 def has_video(parts: list[Part]) -> bool:
-    """是否包含视频。"""
+    """是否包含视频。
+
+    Args:
+        parts: Part 对象列表。
+
+    Returns:
+        True 如果列表中包含 VideoPart。
+    """
     return any(isinstance(p, VideoPart) for p in parts)
 
 
 def has_audio(parts: list[Part]) -> bool:
-    """是否包含音频。"""
+    """是否包含音频。
+
+    Args:
+        parts: Part 对象列表。
+
+    Returns:
+        True 如果列表中包含 AudioPart。
+    """
     return any(isinstance(p, AudioPart) for p in parts)
 
 
@@ -63,7 +105,14 @@ _STATIC_DIR = _Path(__file__).resolve().parent.parent.parent.parent / "static"
 
 
 def _to_data_uri(path: _Path) -> str:
-    """读取本地文件，返回 data URI。"""
+    """读取本地文件，编码为 data URI。
+
+    Args:
+        path: 本地图片文件路径。
+
+    Returns:
+        base64 编码后的 data URI 字符串。
+    """
     data = path.read_bytes()
     ext = path.suffix.lower()
     mime_map = {
@@ -76,7 +125,14 @@ def _to_data_uri(path: _Path) -> str:
 
 
 def _resolve_image_source(src: str) -> str:
-    """将本地 src 转为 base64 data URI，远程 URL 原样返回。"""
+    """将本地 src 转为 base64 data URI，远程 URL 原样返回。
+
+    Args:
+        src: 图片源路径或 URL。
+
+    Returns:
+        如果是本地文件则返回 base64 data URI，否则原样返回。
+    """
     if src.startswith("data:"):
         return src
     if src.startswith("http://") or src.startswith("https://"):
@@ -104,8 +160,12 @@ def _resolve_image_source(src: str) -> str:
 def content_to_openai(parts: list[Part]) -> str | list[dict]:
     """将 Part 列表转换为 OpenAI API 格式。
 
-    纯文本单条 → 返回 str（兼容纯文本 API）
-    含图片/多 part → 返回 list[dict]（OpenAI multimodal 格式）
+    Args:
+        parts: Part 对象列表。
+
+    Returns:
+        纯文本单条时返回 str（兼容纯文本 API），含图片或多 part 时返回
+        list[dict]（OpenAI multimodal 格式），图片块排在文本块之前。
     """
     if len(parts) == 1 and isinstance(parts[0], TextPart):
         return parts[0].content

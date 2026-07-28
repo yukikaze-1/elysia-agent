@@ -15,7 +15,14 @@ logger = logging.getLogger(__name__)
 # ---- 共享 helper（debug_routes.py 也需要） ----
 
 def _archive_to_client(msgs: list[Message]) -> list[dict]:
-    """将 Message 列表转为前端兼容格式（补 parts + _id 字段）。"""
+    """将 Message 列表转为前端兼容格式（补 parts + _id 字段）。
+
+    Args:
+        msgs: Message 对象列表。
+
+    Returns:
+        list[dict]: 前端兼容的消息字典列表，每项包含 _id、parts 等字段。
+    """
     result = []
     for msg in msgs:
         entry = msg.model_dump(mode="json")
@@ -43,7 +50,14 @@ def register_api_routes(app: web.Application) -> None:
     # ---- Provider 管理 ----
 
     async def providers_list_handler(request: web.Request) -> web.Response:
-        """返回可用 provider 列表（注册表 + custom_providers.yaml）。"""
+        """返回可用 provider 列表（注册表 + custom_providers.yaml）。
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: {"llm": ..., "stt": ..., "tts": ..., "custom": ...}。
+        """
         from Module.input.custom_providers import load as load_custom
 
         llm_registry = {
@@ -80,6 +94,14 @@ def register_api_routes(app: web.Application) -> None:
         })
 
     async def providers_save_handler(request: web.Request) -> web.Response:
+        """保存一个新的自定义 provider。
+
+        Args:
+            request: aiohttp Request，JSON body 包含 service 和 entry。
+
+        Returns:
+            web.Response: {"ok": True, "data": ...} 或错误信息。
+        """
         from Module.input.custom_providers import add_provider
         try:
             body = await request.json()
@@ -98,6 +120,14 @@ def register_api_routes(app: web.Application) -> None:
             return web.json_response({"ok": False, "error": str(e)}, status=500)
 
     async def providers_delete_handler(request: web.Request) -> web.Response:
+        """删除一个自定义 provider。
+
+        Args:
+            request: aiohttp Request，URL 路径参数包含 service 和 name。
+
+        Returns:
+            web.Response: {"ok": True, "data": ...} 或错误信息。
+        """
         from Module.input.custom_providers import remove_provider
         service = request.match_info.get("service", "")
         name = request.match_info.get("name", "")
@@ -110,6 +140,14 @@ def register_api_routes(app: web.Application) -> None:
             return web.json_response({"ok": False, "error": str(e)}, status=500)
 
     async def providers_test_handler(request: web.Request) -> web.Response:
+        """测试自定义 provider 连通性。
+
+        Args:
+            request: aiohttp Request，JSON body 包含 service、base_url、api_key、model。
+
+        Returns:
+            web.Response: 后端 test() 返回的结果或错误信息。
+        """
         try:
             body = await request.json()
             service = body.get("service", "")
@@ -151,6 +189,14 @@ def register_api_routes(app: web.Application) -> None:
     _IMAGES_DIR = Path(__file__).parent.parent.parent / "data" / "uploads" / "images"
 
     async def image_upload_handler(request: web.Request) -> web.Response:
+        """处理图片上传请求。
+
+        Args:
+            request: aiohttp Request，multipart form data 含图片字段。
+
+        Returns:
+            web.Response: {"url": ..., "mime": ..., "size": ...} 或错误信息。
+        """
         import uuid as _uuid
         import os as _os
 
@@ -194,6 +240,14 @@ def register_api_routes(app: web.Application) -> None:
     # ---- Chat API（curl 测试用） ----
 
     async def chat_api_handler(request: web.Request) -> web.Response:
+        """REST Chat API（curl 测试用）。
+
+        Args:
+            request: aiohttp Request，JSON body 包含 content/text 和可选的 user_name。
+
+        Returns:
+            web.Response: {"ok": True} 或 400 错误。
+        """
         agent = request.app["agent"]
         try:
             body = await request.json()
@@ -214,6 +268,14 @@ def register_api_routes(app: web.Application) -> None:
     # ---- 消息归档 API ----
 
     async def messages_handler(request: web.Request) -> web.Response:
+        """分页查询消息归档。
+
+        Args:
+            request: aiohttp Request，query 参数包含 before、limit。
+
+        Returns:
+            web.Response: {"messages": [...], "has_more": ..., "total": ...}。
+        """
         agent = request.app["agent"]
         repo = agent._message_repo
 

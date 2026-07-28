@@ -12,13 +12,16 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from core.adapter import ToolContext, ToolResult, ErrorType
 
 from core.schema.tool import ToolCall
 
 from .task import Task, TaskType, TaskStatus
+
+if TYPE_CHECKING:
+    from core.adapter.tool_adapter import ToolAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +37,20 @@ class TaskScheduler:
 
     def __init__(
         self,
-        tool_executor=None,  # ToolExecutor
+        tool_executor: "ToolAdapter | None" = None,
         tool_ctx: ToolContext | None = None,
         num_workers: int = 5,
         checkpoint_path: str | None = None,
     ):
-        self._tool_executor = tool_executor  # ToolExecutor Protocol
+        """初始化调度器。
+
+        Args:
+            tool_executor: 工具适配器，实现 ToolExecutor Protocol
+            tool_ctx: 工具执行上下文
+            num_workers: worker 数量
+            checkpoint_path: checkpoint 文件路径
+        """
+        self._tool_executor = tool_executor
         self._tool_ctx = tool_ctx
         self._num_workers = num_workers
         self._checkpoint_path = checkpoint_path
@@ -50,13 +61,18 @@ class TaskScheduler:
         self._running = False
         self._seq: int = 0
 
-    def set_tool_adapter(self, adapter) -> None:
-        """设置工具适配器（用于 Agent.start() 中延迟注入 ToolContext）。"""
+    def set_tool_adapter(self, adapter: "ToolAdapter") -> None:
+        """设置工具适配器，用于 Agent.start() 中延迟注入 ToolContext。
+
+        Args:
+            adapter: 工具适配器实例
+        """
         self._tool_ctx = adapter.tool_context
 
     # ---- 生命周期 ----
 
     async def start(self) -> None:
+        """启动调度器：恢复 checkpoint，创建 worker 协程和清理协程。"""
         self._running = True
         # Ensure checkpoint directory exists
         if self._checkpoint_path:
@@ -70,6 +86,7 @@ class TaskScheduler:
         logger.info("Scheduler Worker Pool 启动 (%d workers)", self._num_workers)
 
     async def stop(self) -> None:
+        """停止调度器：保存 checkpoint，取消所有 worker，清空队列和注册表。"""
         self._running = False
         self._save_checkpoint()
         # Cancel prune task first
@@ -99,7 +116,14 @@ class TaskScheduler:
     # ---- 提交 ----
 
     async def submit(self, task: Task) -> str:
-        """提交任务到 Worker Pool。"""
+        """提交任务到 Worker Pool。
+
+        Args:
+            task: 要提交的任务
+
+        Returns:
+            str: 任务 ID
+        """
         self._tasks[task.id] = task
         self._seq += 1
         self._queue.put_nowait((task.priority, self._seq, task))
@@ -167,7 +191,14 @@ class TaskScheduler:
         return out
 
     async def dispatch_background(self, coro) -> str:
-        """提交一个后台协程，返回 task_id。"""
+        """提交一个后台协程，返回 task_id。
+
+        Args:
+            coro: 要作为后台任务执行的协程
+
+        Returns:
+            str: 后台任务的 ID
+        """
         t = Task.new_background(payload={"coro": coro})
         self._tasks[t.id] = t
         self._seq += 1
@@ -176,7 +207,15 @@ class TaskScheduler:
         return t.id
 
     def cancel(self, task_id: str, _visited: set | None = None) -> bool:
-        """取消任务 — 级联取消子任务 + 取消 Worker 执行 + 取消 Future。"""
+        """取消任务 — 级联取消子任务 + 取消 Worker 执行 + 取消 Future。
+
+        Args:
+            task_id: 要取消的任务 ID
+            _visited: 内部使用，用于循环检测的已访问集合
+
+        Returns:
+            bool: 是否成功取消
+        """
         if _visited is None:
             _visited = set()
         if task_id in _visited:
@@ -206,10 +245,25 @@ class TaskScheduler:
     # ---- 查询 ----
 
     def get_task(self, task_id: str) -> Task | None:
+        """按 ID 获取任务。
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            Task | None: 找到的任务，不存在则返回 None
+        """
         return self._tasks.get(task_id)
 
     def get_tree(self, task_id: str) -> dict[str, Any]:
-        """递归构建任务树，给 /debug 面板。"""
+        """递归构建任务树，给 /debug 面板。
+
+        Args:
+            task_id: 根任务 ID
+
+        Returns:
+            dict[str, Any]: 递归嵌套的任务树字典，不存在则返回空字典
+        """
         task = self._tasks.get(task_id)
         if task is None:
             return {}
@@ -228,19 +282,31 @@ class TaskScheduler:
         return tree
 
     def all_tasks(self) -> list[Task]:
+        """返回所有已知任务的列表。
+
+        Returns:
+            list[Task]: 当前注册表中的全部任务
+        """
         return list(self._tasks.values())
 
     @property
     def pending_count(self) -> int:
+        """返回待处理任务数量。"""
         return sum(1 for t in self._tasks.values() if t.status == TaskStatus.PENDING)
 
     @property
     def running_count(self) -> int:
+        """返回正在执行的任务数量。"""
         return sum(1 for t in self._tasks.values() if t.status == TaskStatus.DISPATCHED)
 
     # ---- Worker Loop ----
 
     async def _worker_loop(self, name: str) -> None:
+        """Worker 主循环：从队列取任务，执行，处理结果。
+
+        Args:
+            name: worker 名称，用于日志标识
+        """
         logger.debug("Worker %s 启动", name)
         while self._running:
             try:
@@ -321,7 +387,14 @@ class TaskScheduler:
         task._worker_task = None
 
     async def _execute_tool(self, task: Task) -> ToolResult:
-        """执行工具子任务，含重试逻辑和超时保护。"""
+        """执行工具子任务，含重试逻辑和超时保护。
+
+        Args:
+            task: 要执行的工具调用任务
+
+        Returns:
+            ToolResult: 工具执行结果（成功或失败）
+        """
         tool_name = task.payload.get("tool_name", "")
         arguments = task.payload.get("arguments", {})
 
@@ -375,6 +448,7 @@ class TaskScheduler:
     # ---- Checkpoint ----
 
     def _save_checkpoint(self) -> None:
+        """保存 checkpoint：将待处理的后台任务持久化到文件。"""
         if not self._checkpoint_path:
             return
         try:
@@ -396,6 +470,7 @@ class TaskScheduler:
                 pass
 
     def _restore_checkpoint(self) -> None:
+        """恢复 checkpoint：从文件加载待处理任务并重新入队。"""
         if not self._checkpoint_path:
             return
         path = Path(self._checkpoint_path)
@@ -424,6 +499,7 @@ class TaskScheduler:
 
     @property
     def total_count(self) -> int:
+        """返回注册表中的任务总数。"""
         return len(self._tasks)
 
     def __repr__(self) -> str:

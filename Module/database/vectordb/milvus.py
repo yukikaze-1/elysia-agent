@@ -35,6 +35,14 @@ class MilvusBackend(VectorDBBackend):
         name: str = "default",
         logger: logging.Logger | None = None,
     ):
+        """初始化 Milvus 后端。
+
+        Args:
+            uri: Milvus 服务地址（如 http://localhost:19530）。
+            token: Milvus 认证 token，默认空串表示无认证。
+            name: 后端实例名称，默认 "default"。
+            logger: 日志记录器，未提供时自动创建。
+        """
         self._name = name
         self._metric_types: dict[str, str] = {}  # collection_name → metric_type
         self._logger = logger or logging.getLogger(__name__)

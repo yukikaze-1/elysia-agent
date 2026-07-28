@@ -32,6 +32,7 @@ class MemoryEntry:
 
     @property
     def dimension(self) -> int:
+        """向量维度。"""
         return len(self.embedding)
 
 
@@ -52,6 +53,15 @@ class LongTermMemory:
                  embed_timeout: float = 10.0,
                  enable_eviction: bool = True,
                  repo: "MemoryRepository | None" = None):
+        """初始化长期记忆。
+
+        Args:
+            max_entries: 最大条目数，超限时触发驱逐。
+            max_age_days: 最大保留天数（当前未使用，保留供后续实现）。
+            embed_timeout: 嵌入后端加载超时（秒）。
+            enable_eviction: 是否启用数量上限驱逐。
+            repo: MemoryRepository 实例，用于 Milvus 操作。如果为 None，在 connect() 时自动创建。
+        """
         self._entries: list[MemoryEntry] = []
         self._repo: "MemoryRepository | None" = repo
         self._embedding_provider = EmbeddingProvider(embed_timeout)
@@ -63,7 +73,11 @@ class LongTermMemory:
         self._write_lock = asyncio.Lock()     # 保护所有修改操作的并发锁
 
     async def connect(self) -> bool:
-        """Connect to Milvus (fast). Embedding is deferred to first use. Returns True if Milvus available."""
+        """连接 Milvus（快速）。嵌入推迟到首次使用时加载。
+
+        Returns:
+            True 表示 Milvus 可用，False 表示不可用（降级到纯内存模式）。
+        """
         if self._repo is None:
             from core.storage.memory_repo import MemoryRepository
             self._repo = MemoryRepository()
@@ -77,7 +91,11 @@ class LongTermMemory:
             return False
 
     async def _load_from_milvus(self) -> int:
-        """从 Milvus 恢复已有条目到内存。返回加载数量。"""
+        """从 Milvus 恢复已有条目到内存。
+
+        Returns:
+            成功加载的条目数量。加载失败返回 0。
+        """
         if self._repo is None:
             return 0
         try:
@@ -118,19 +136,24 @@ class LongTermMemory:
         return loaded
 
     async def health_check(self) -> bool:
-        """尝试重连 Milvus。已连接则直接返回 True。"""
+        """尝试重连 Milvus。
+
+        Returns:
+            True 表示已连接或重连成功，False 表示不可用。
+        """
         if self._repo is not None:
             return await self._repo.health_check()
         return False
 
     # ---- Write ----
 
-    async def insert(self, text: str, **metadata) -> None:
-        """Insert a memory entry. Auto-embeds lazily if embedding is available.
+    async def insert(self, text: str, **metadata: object) -> None:
+        """插入一条记忆。如果有嵌入后端则自动嵌入。
 
-        Keyword metadata may include: type (alias for memory_type), memory_type,
-        poignancy, timestamp, source, etc.
-        These become structured fields on MemoryEntry and are stored in Milvus.
+        Args:
+            text: 记忆文本。
+            **metadata: 可选元数据，支持 memory_type (或 type)、
+                poignancy (1-10)、timestamp (Unix 时间戳)、source 等关键字。
         """
         embedding = await self._embedding_provider.embed(text)
 
@@ -177,9 +200,12 @@ class LongTermMemory:
                 await self._evict_overflow()
 
     async def _evict_overflow(self) -> int:
-        """数量上限驱逐：超过 max_entries 时保留最新的 N 条。返回驱逐数量。
+        """数量上限驱逐：超过 max_entries 时保留最新的 N 条。
 
         在每次 insert() 后调用，保持内存列表 + Milvus 健康。
+
+        Returns:
+            驱逐的条目数量。未超限时返回 0。
         """
         removed = 0
         if len(self._entries) <= self._max_entries:
@@ -211,18 +237,33 @@ class LongTermMemory:
         return removed
 
     def _get_by_id(self, entry_id: str) -> MemoryEntry | None:
-        """通过 ID 查找条目。"""
+        """通过 ID 查找条目。
+
+        Args:
+            entry_id: 条目唯一标识。
+
+        Returns:
+            找到的 MemoryEntry，未找到返回 None。
+        """
         for e in self._entries:
             if e.id == entry_id:
                 return e
         return None
 
     def get_all(self) -> list[MemoryEntry]:
-        """返回全部活跃条目的副本（排除已吸收条目）。"""
+        """返回全部活跃条目的副本。
+
+        Returns:
+            排除已吸收（absorbed）条目后的 MemoryEntry 列表。
+        """
         return [e for e in self._entries if e.id not in self._absorbed_ids]
 
     async def mark_absorbed(self, entry_id: str) -> None:
-        """标记条目已被 merge 吸收，同步清理 Milvus。"""
+        """标记条目已被 merge 吸收，同步清理 Milvus。
+
+        Args:
+            entry_id: 被吸收的条目 ID。
+        """
         self._absorbed_ids.add(entry_id)
         async with self._write_lock:
             entry = self._get_by_id(entry_id)
@@ -234,7 +275,11 @@ class LongTermMemory:
                                entry_id, exc_info=True)
 
     async def _sync_dirty_entries(self) -> int:
-        """尝试将脏条目同步到 Milvus。返回成功同步数。"""
+        """尝试将脏条目同步到 Milvus。
+
+        Returns:
+            成功同步的条目数。
+        """
         if self._repo is None or not self._dirty_ids:
             return 0
         synced = 0
@@ -271,7 +316,17 @@ class LongTermMemory:
         poignancy: int | None = None,
         memory_type: str | None = None,
     ) -> bool:
-        """更新记忆文本（内存 + Milvus 重建）。返回 True 表示成功。"""
+        """更新记忆文本（内存 + Milvus 重建）。
+
+        Args:
+            entry_id: 要更新的条目 ID。
+            new_text: 新的记忆文本。
+            poignancy: 新的重要性分数（1-10），None 表示不更新。
+            memory_type: 新的记忆类型，None 表示不更新。
+
+        Returns:
+            True 表示找到并更新了条目，False 表示条目不存在。
+        """
         async with self._write_lock:
             for i, e in enumerate(self._entries):
                 if e.id == entry_id:
@@ -315,7 +370,14 @@ class LongTermMemory:
             return False
 
     async def delete(self, entry_id: str) -> bool:
-        """删除单条记忆（内存 + Milvus）。返回 True 表示成功删除。"""
+        """删除单条记忆（内存 + Milvus）。
+
+        Args:
+            entry_id: 要删除的条目 ID。
+
+        Returns:
+            True 表示找到并删除了条目，False 表示条目不存在。
+        """
         async with self._write_lock:
             for i, e in enumerate(self._entries):
                 if e.id == entry_id:
@@ -332,7 +394,11 @@ class LongTermMemory:
             return False
 
     async def clear_all(self) -> int:
-        """清空所有记忆（内存 + Milvus 重建 collection）。可独立调用，无需先 connect()。"""
+        """清空所有记忆（内存 + Milvus 重建 collection）。可独立调用，无需先 connect()。
+
+        Returns:
+            清除的条目总数。
+        """
         async with self._write_lock:
             count = len(self._entries)
             logger.info("LongTermMemory: clearing all %d entries", count)
@@ -370,7 +436,17 @@ class LongTermMemory:
         top_k: int = 5,
         memory_type: str | None = None,
     ) -> list[MemoryEntry]:
-        """向量搜索 + rerank（相似度 + 重要性 + 新鲜度）。"""
+        """向量搜索 + rerank（相似度 + 重要性 + 新鲜度）。
+
+        Args:
+            query_text: 查询文本，用于向量化搜索。
+            query_embedding: 查询向量，提供时跳过文本向量化。
+            top_k: 返回的最大结果数。
+            memory_type: 按记忆类型过滤（如 "Fact"、"Preference"）。
+
+        Returns:
+            按综合分数降序排列的 MemoryEntry 列表。
+        """
         backend = await self._embedding_provider.ensure(wait=False)
 
         if not self._entries and self._repo is None:
@@ -466,7 +542,15 @@ class LongTermMemory:
         return [e for _, e in scored[:top_k]]
 
     def _search_fallback(self, query: str, top_k: int) -> list[tuple[float, MemoryEntry]]:
-        """In-memory text overlap search. Returns (score, entry) pairs for rerank."""
+        """In-memory 文本重叠搜索，供 rerank 使用。
+
+        Args:
+            query: 查询文本。
+            top_k: 返回的最大结果数。
+
+        Returns:
+            (score, entry) 元组列表，按分数降序排列。
+        """
         if not query:
             return [(0.0, e) for e in self._entries[-top_k:]] if self._entries else []
 
@@ -486,9 +570,11 @@ class LongTermMemory:
 
     @property
     def count(self) -> int:
+        """当前活跃条目总数。"""
         return len(self._entries)
 
     async def close(self) -> None:
+        """关闭长期记忆：取消嵌入加载、关闭 Milvus 连接。"""
         self._embedding_provider.cancel()
         if self._repo:
             await self._repo.close()

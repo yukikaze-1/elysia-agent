@@ -28,6 +28,7 @@ class EventBus:
     """
 
     def __init__(self):
+        """初始化事件总线，创建空优先队列。"""
         self._queue: asyncio.PriorityQueue[Event] = asyncio.PriorityQueue()
         self._seq = 0
 
@@ -35,7 +36,13 @@ class EventBus:
         self, data: EventData, priority: int = EventPriority.NORMAL,
         *, type: str | None = None,
     ) -> None:
-        """Post a typed event. type 默认从 data.event_type 推导；显式传 type 覆盖。"""
+        """投递一个带类型的事件到队列中。
+
+        Args:
+            data: 事件数据，必须包含 event_type 字段。
+            priority: 事件优先级，值越小越紧急。默认 NORMAL。
+            type: 事件类型字符串。默认从 data.event_type 推导；显式传 type 覆盖。
+        """
         self._seq += 1
         event_type = type if type is not None else data.event_type  # noqa: SIM108
         event = Event(priority=priority, type=event_type, data=data, seq=self._seq)
@@ -61,4 +68,9 @@ class EventBus:
 
     @property
     def pending_count(self) -> int:
+        """队列中待处理的事件数量。
+
+        Returns:
+            当前优先队列中的事件数量。
+        """
         return self._queue.qsize()

@@ -26,6 +26,13 @@ class IdleMonitor:
         fsm: AgentFSM,
         event_bus: EventBus,
     ):
+        """初始化空闲监听器。
+
+        Args:
+            character: 角色配置，包含唤醒词和主动触发配置。
+            fsm: Agent 状态机，用于检查当前状态。
+            event_bus: 事件总线，用于投递主动触发事件。
+        """
         self._character = character
         self._fsm = fsm
         self._bus = event_bus
@@ -42,6 +49,7 @@ class IdleMonitor:
                      self._character.proactive.enabled)
 
     async def stop(self) -> None:
+        """停止空闲监听循环，取消后台任务。"""
         self._running = False
         if self._task:
             self._task.cancel()
@@ -52,6 +60,7 @@ class IdleMonitor:
         self._last_interaction = time.monotonic()
 
     async def _loop(self) -> None:
+        """空闲监听主循环，每秒检查一次主动触发条件。"""
         proactive_interval = self._character.proactive.interval
 
         while self._running:

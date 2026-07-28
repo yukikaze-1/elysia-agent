@@ -1,6 +1,7 @@
 """时间工具插件 — 获取当前时间（支持时区和格式）。"""
 
 from datetime import datetime, timezone, timedelta
+from typing import Any
 
 try:
     import zoneinfo as _zoneinfo
@@ -32,8 +33,18 @@ class TimePlugin(ToolPlugin):
     safety = SafetyProfile()
 
     async def execute(
-        self, *, ctx: ToolContext, emit=None, params: TimeParams,
+        self, *, ctx: ToolContext, emit: Any = None, params: TimeParams,
     ) -> str:
+        """获取当前日期和时间。
+
+        Args:
+            ctx: 工具调用上下文。
+            emit: 进度上报器（未使用）。
+            params: 时间参数，包含时区和输出格式。
+
+        Returns:
+            当前时间字符串。
+        """
         tz_str = params.timezone.strip()
         tz: timezone | None = None
         if tz_str.startswith(("+", "-")):

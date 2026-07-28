@@ -29,6 +29,15 @@ def _normalize_utc(v: object) -> str:
     接受 datetime 或 str，输出 UTC ISO 8601 字符串（Z 后缀）。
     空字符串直通（未设置的时间戳）。
     naive datetime（无 tzinfo）视为 UTC。
+
+    Args:
+        v: datetime 对象或 ISO 8601 字符串。
+
+    Returns:
+        str: UTC ISO 8601 格式字符串（Z 后缀）。
+
+    Raises:
+        ValueError: 无法解析输入值。
     """
     if isinstance(v, str) and v == "":
         return v
@@ -48,7 +57,12 @@ def parse_iso(ts: str) -> datetime:
     """将 IsoTimestamp 字符串解析为 offset-aware UTC datetime。
 
     替代各处重复的 try/except + fromisoformat + replace(tzinfo=...) 样板代码。
-    空字符串返回 epoch（1970-01-01 UTC）。
+
+    Args:
+        ts: ISO 8601 时间戳字符串。空字符串返回 epoch。
+
+    Returns:
+        datetime: offset-aware UTC datetime，空字符串返回 1970-01-01 UTC。
     """
     if not ts:
         return datetime(1970, 1, 1, tzinfo=timezone.utc)

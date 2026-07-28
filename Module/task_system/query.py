@@ -31,6 +31,7 @@ from Module.task_system.schema import (
 )
 
 if TYPE_CHECKING:
+    from Module.task_system.core.execution import ExecutionState
     from Module.task_system.core.sub_agent import SubAgent
     from Module.task_system.mailbox import TaskMailbox
 
@@ -45,6 +46,13 @@ def get_task_status(
 
     只查活跃任务（仍在 tasks 注册表中的）。任务终态清理后不可查询——
     此时返回 None，调用方应通过上层缓存获取历史状态。
+
+    Args:
+        tasks: 所有活跃任务的 SubAgent 映射。
+        task_id: 要查询的任务 ID。
+
+    Returns:
+        TaskStatus | None: 任务状态，不存在返回 None。
     """
     sub_agent = tasks.get(task_id)
     if sub_agent is None:
@@ -62,6 +70,13 @@ def get_task_mailbox(
     """获取指定任务的 mailbox（供 Agent 轮询消费）。
 
     任务不存在或已清理时返回 None。
+
+    Args:
+        mailboxes: 所有活跃任务的事件邮箱映射。
+        task_id: 要查询的任务 ID。
+
+    Returns:
+        TaskMailbox | None: 邮箱对象，不存在返回 None。
     """
     return mailboxes.get(task_id)
 
@@ -70,7 +85,15 @@ async def get_task_summary(
     tasks: dict[TaskId, SubAgent],
     task_id: TaskId,
 ) -> TaskSummary | None:
-    """获取单个任务摘要。"""
+    """获取单个任务摘要。
+
+    Args:
+        tasks: 所有活跃任务的 SubAgent 映射。
+        task_id: 要查询的任务 ID。
+
+    Returns:
+        TaskSummary | None: 任务摘要，不存在返回 None。
+    """
     summaries = await list_active_tasks(tasks)
     for s in summaries:
         if s.task_id == task_id:
@@ -81,7 +104,14 @@ async def get_task_summary(
 async def list_active_tasks(
     tasks: dict[TaskId, SubAgent],
 ) -> list[TaskSummary]:
-    """列出所有活跃任务。"""
+    """列出所有活跃任务。
+
+    Args:
+        tasks: 所有活跃任务的 SubAgent 映射。
+
+    Returns:
+        list[TaskSummary]: 任务摘要列表。
+    """
     summaries: list[TaskSummary] = []
     for task_id, sub_agent in tasks.items():
         ts = sub_agent._task_state
@@ -147,7 +177,13 @@ def get_progress(
     """查询任务执行进度。用户问"到哪一步了？"时 LLM 调用。
 
     返回当前执行节点、完成数/总数、耗时、预估剩余时间。
-    任务不存在或尚未开始执行时返回 None。
+
+    Args:
+        tasks: 所有活跃任务的 SubAgent 映射。
+        task_id: 要查询的任务 ID。
+
+    Returns:
+        TaskProgress | None: 进度信息，任务不存在或尚未开始执行时返回 None。
     """
     sub_agent = tasks.get(task_id)
     if sub_agent is None:
@@ -216,7 +252,15 @@ async def get_task_dag(
     tasks: dict[TaskId, SubAgent],
     task_id: TaskId,
 ) -> TaskDAG | None:
-    """获取任务的 DAG 可视化数据。"""
+    """获取任务的 DAG 可视化数据。
+
+    Args:
+        tasks: 所有活跃任务的 SubAgent 映射。
+        task_id: 要查询的任务 ID。
+
+    Returns:
+        TaskDAG | None: DAG 可视化数据，不存在返回 None。
+    """
     sub_agent = tasks.get(task_id)
     if sub_agent is None:
         # CheckpointManager 现为 per-task（由 SubAgent.run() 创建），
@@ -240,7 +284,13 @@ def get_token_usage(
     """查询单任务的 token 消耗明细（含完整审计日志）。
 
     返回 TokenUsage（含 components 列表），每次 LLM 调用一条记录。
-    任务不存在或尚未初始化时返回 None。
+
+    Args:
+        tasks: 所有活跃任务的 SubAgent 映射。
+        task_id: 要查询的任务 ID。
+
+    Returns:
+        TokenUsage | None: token 消耗明细，任务不存在或尚未初始化时返回 None。
     """
     sub_agent = tasks.get(task_id)
     ts = sub_agent._task_state if sub_agent else None
@@ -260,6 +310,14 @@ def list_agents(
     """当前活跃的 Sub-Agent 和 Worker Agent 列表。Debug 用。
 
     v1 只有 SubAgent（无 Worker），worker_agents 固定为空列表。
+
+    Args:
+        tasks: 所有活跃任务的 SubAgent 映射。
+        max_sub_agents: 最大并发 Sub-Agent 数。
+        has_slots: 是否还有可用槽位。
+
+    Returns:
+        AgentList: Sub-Agent 和 Worker Agent 列表。
     """
 
     now = datetime.now(timezone.utc)
@@ -324,6 +382,13 @@ def get_token_stats(
 
     遍历所有活跃任务，按 period 过滤，按 component/model 聚合。
     只统计活跃任务（tasks dict 中的），已清理的任务不可查询。
+
+    Args:
+        tasks: 所有活跃任务的 SubAgent 映射。
+        period: 统计时间段。
+
+    Returns:
+        TokenStats: 聚合后的 token 统计。
     """
     now = datetime.now(timezone.utc)
     cutoff: datetime | None = None
@@ -381,6 +446,14 @@ def get_debug_snapshot(
 
         约束：本方法内禁止加 await。若将来需要异步 I/O，必须在 await 之前
         复制快照，await 之后重新获取 exec_state 引用。
+
+    Args:
+        tasks: 所有活跃任务的 SubAgent 映射。
+        mailboxes: 所有活跃任务的事件邮箱映射。
+        max_sub_agents: 最大并发 Sub-Agent 数。
+
+    Returns:
+        dict: 包含 tasks 列表和 slots_total/slots_used 的调试快照。
     """
     task_list = []
     for task_id, sub_agent in tasks.items():
@@ -399,13 +472,19 @@ def get_debug_snapshot(
 
 async def collect_tools_used(
     sub_agent: SubAgent,
-    exec_state,  # ExecutionState | None
+    exec_state: "ExecutionState | None",
 ) -> list[str]:
     """从执行状态 + ArtifactStore 收集实际被调用的工具名。
 
     遍历已完成节点的 artifact_refs → ArtifactStore.get() →
     读取 metadata.tool_name，生成真实的工具审计列表。
-    无 exec_state / 无 artifact_store 时回退为空列表。
+
+    Args:
+        sub_agent: SubAgent 实例。
+        exec_state: 执行状态对象，None 时返回空列表。
+
+    Returns:
+        list[str]: 实际被调用的工具名列表（去重）。
     """
     tool_names: list[str] = []
     if exec_state is None:

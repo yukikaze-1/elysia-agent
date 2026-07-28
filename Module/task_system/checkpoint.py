@@ -41,6 +41,7 @@ class CheckpointManager:
     """
 
     def __init__(self) -> None:
+        """Initialize the checkpoint manager with empty in-memory store."""
         self._store: dict[str, TaskCheckpoint] = {}
 
     # ── 持久化 ──────────────────────────────────────────────────────────
@@ -50,15 +51,25 @@ class CheckpointManager:
 
         v1 直接存储 Pydantic 对象（内存，零序列化开销）。
         v2 在此基础上增加文件写入（model_dump → 文件）。
+
+        Args:
+            task_id: 任务的唯一标识。
+            checkpoint: 任务状态快照（TaskState + ExecutionState）。
         """
         self._store[str(task_id)] = checkpoint
         logger.debug("CheckpointManager.save: task_id=%s", task_id)
 
     async def load(self, task_id: TaskId) -> TaskCheckpoint | None:
-        """加载 checkpoint 快照。不存在返回 None。
+        """加载 checkpoint 快照。
 
         v1 直接返回内存中的 Pydantic 对象。
         v2 从文件读取 + model_validate 恢复。
+
+        Args:
+            task_id: 任务的唯一标识。
+
+        Returns:
+            TaskCheckpoint | None: 快照对象，不存在返回 None。
         """
         cp = self._store.get(str(task_id))
         if cp is not None:
@@ -66,7 +77,11 @@ class CheckpointManager:
         return cp
 
     async def delete(self, task_id: TaskId) -> None:
-        """删除任务的 checkpoint。"""
+        """删除任务的 checkpoint。
+
+        Args:
+            task_id: 任务的唯一标识。
+        """
         existed = self._store.pop(str(task_id), None) is not None
         if existed:
             logger.debug("CheckpointManager.delete: task_id=%s", task_id)

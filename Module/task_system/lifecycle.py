@@ -43,6 +43,11 @@ async def pause(
     Orchestrator 在当前节点执行完成后检测到 pause_requested，
     保存 checkpoint 后返回 PAUSED，SubAgent 推送 PAUSED 事件后退出循环。
 
+    Args:
+        tasks: 所有活跃任务的 SubAgent 映射。
+        task_id: 要暂停的任务 ID。
+        timeout: 等待 PAUSED 确认的超时秒数。
+
     Returns:
         True:  暂停已确认（task_state.status == PAUSED）
         False: 超时——orchestrator 在 timeout 秒内未到达检查点
@@ -103,6 +108,17 @@ async def cancel(
     - PAUSED  → 直接标记 CANCELLED，已有 checkpoint
     - 已终态   → True（无需操作）
     - 已清理   → True（任务已不存在）
+
+    Args:
+        tasks: 所有活跃任务的 SubAgent 映射。
+        mailboxes: 所有活跃任务的事件邮箱映射。
+        semaphore: 并发控制信号量，PAUSED 分支需 release()。
+        cleanup_task: 清理任务注册表回调。
+        cleanup_storage: 清理存储（checkpoint + artifact）回调。
+        task_id: 要取消的任务 ID。
+
+    Returns:
+        True: 取消信号已发送（幂等，已终态/已清理也返回 True）。
     """
     # TODO: v1 只设标志，无超时反馈。
     #   若 Orchestrator 因异常永远不到达下一个循环迭代，
@@ -155,7 +171,7 @@ async def cancel(
 
 
 def submit_approval(
-    tool_registry,  # ToolManager 实例
+    tool_registry: object,  # ToolManager 实例
     agent_id: str,
     approved: bool,
 ) -> bool:
@@ -163,6 +179,11 @@ def submit_approval(
 
     将 agent_id 作为 request_id 委托给 tool_registry.submit_approval()。
     ToolManager 内部 SafetyPipeline 设置 asyncio.Event 唤醒等待中的工具调用。
+
+    Args:
+        tool_registry: ToolManager 实例（runtime 类型，使用 object 避免循环导入）。
+        agent_id: 审批请求 ID（用作 request_id）。
+        approved: 审批通过为 True，拒绝为 False。
 
     Returns:
         True:  审批请求已找到并处理

@@ -17,8 +17,23 @@ _BACKENDS: dict[str, dict] = {
 
 
 class DocumentDBFactory:
+    """文档数据库工厂 — 按 provider/database 格式标识创建后端实例。"""
+
     @staticmethod
     def create(provider_id: str, **kwargs) -> "DocumentDBBackend":
+        """创建文档数据库后端实例。
+
+        Args:
+            provider_id: 格式为 "provider/database" 的标识字符串，
+                如 "mongodb/elysia"。
+            **kwargs: 传递给后端构造函数的附加参数（如 logger）。
+
+        Returns:
+            对应 provider 的 DocumentDBBackend 实例。
+
+        Raises:
+            ValueError: provider_id 格式不合法或 provider 未知时抛出。
+        """
         if "/" not in provider_id:
             raise ValueError(
                 f"Invalid provider_id '{provider_id}': expected 'provider/database' format"
@@ -46,7 +61,16 @@ class DocumentDBFactory:
 
     @classmethod
     def from_config(cls, provider_id: str, config: "DocumentDBConfig", **overrides) -> "DocumentDBBackend":
-        """从 DocumentDBConfig dataclass 创建后端，overrides 优先级最高。"""
+        """从 DocumentDBConfig dataclass 创建后端。
+
+        Args:
+            provider_id: 格式为 "provider/database" 的标识字符串。
+            config: DocumentDBConfig dataclass 实例。
+            **overrides: 覆盖 config 中字段的附加参数，优先级最高。
+
+        Returns:
+            对应 provider 的 DocumentDBBackend 实例。
+        """
         kwargs = dataclasses.asdict(config)
         kwargs.update(overrides)
         # 空 base_url 不传入，让 create() 从 env var 解析

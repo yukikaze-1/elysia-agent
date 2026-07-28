@@ -41,7 +41,17 @@ def pcm_to_wav(
     channels: int = 1,
     bits: int = 16,
 ) -> bytes:
-    """Wrap raw PCM data with a WAV header. Pure Python, no dependencies."""
+    """Wrap raw PCM data with a WAV header. Pure Python, no dependencies.
+
+    Args:
+        pcm_data: Raw PCM audio data (Int16 samples).
+        sample_rate: Audio sample rate in Hz.
+        channels: Number of audio channels (1 = mono).
+        bits: Bit depth per sample.
+
+    Returns:
+        bytes: WAV file data including RIFF header.
+    """
     byte_rate = sample_rate * channels * bits // 8
     block_align = channels * bits // 8
     data_size = len(pcm_data)
@@ -87,12 +97,22 @@ class AudioBuffer:
         sample_rate: int = 16000,
         on_interrupt: Callback | None = None,
         on_transcription: TranscriptionCallback | None = None,
-        stt_transcribe=None,  # async callable(bytes) -> str
+        stt_transcribe: "Callable[[bytes], Coroutine[object, object, str]] | None" = None,
         wake_words: list[str] | None = None,
         on_wake_notify: Callback | None = None,
     ):
-        # WebRTC VAD aggressiveness: 0 (least) to 3 (most).
-        # 3 is best for desktop companion — aggressively filters non-speech.
+        """Initialize the audio buffer with VAD and STT pipeline.
+
+        Args:
+            aggressiveness: WebRTC VAD aggressiveness (0=least, 3=most).
+            silence_duration: Seconds of silence to end a speech segment.
+            sample_rate: Audio sample rate in Hz.
+            on_interrupt: Callback when speech interruption is detected.
+            on_transcription: Callback invoked with transcribed text.
+            stt_transcribe: Async callable(bytes) -> str for speech-to-text.
+            wake_words: List of wake words for voice activation.
+            on_wake_notify: Callback when a wake word is detected.
+        """
         self._aggressiveness = aggressiveness
         self._silence_dur = silence_duration       # seconds of silence to end segment
         self._sample_rate = sample_rate
@@ -160,6 +180,12 @@ class AudioBuffer:
         Creates a fresh VAD instance per call to avoid state drift —
         WebRTC VAD accumulates a noise estimate that can cause false
         negatives after processing many chunks.
+
+        Args:
+            chunk: Raw Int16 PCM audio chunk.
+
+        Returns:
+            bool: True if speech is detected in the chunk.
         """
         if len(chunk) < _FRAME_BYTES:
             return False

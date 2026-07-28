@@ -44,8 +44,19 @@ class CompressionManager:
         l1_core: str,
         pm: "PromptManager | None",
         version_repo: "CharacterVersionRepository | None",
-        character_config,  # CharacterConfig — 拿 emotion.idle_expressions
+        character_config: object,  # CharacterConfig — 拿 emotion.idle_expressions
     ):
+        """初始化压缩管理器。
+
+        Args:
+            llm: LLM 适配器。
+            state: 角色状态对象。
+            character_name: 角色名。
+            l1_core: L1 核心性格文本。
+            pm: PromptManager 实例。
+            version_repo: 角色版本仓库，用于 L2/C6 版本历史持久化。
+            character_config: CharacterConfig 配置对象。
+        """
         self._llm = llm
         self._state = state
         self._character_name = character_name
@@ -62,8 +73,9 @@ class CompressionManager:
     ) -> None:
         """检查压缩条件，满足时触发压缩。带双重检查锁。
 
-        _refresh_cb: 压缩完成后调用的 C6 刷新回调。由 engine 委托方法传入，
-                     确保 mock 能正确拦截 C6 刷新。
+        Args:
+            _refresh_cb: 压缩完成后调用的 C6 刷新回调。由 engine 委托方法传入，
+                确保 mock 能正确拦截 C6 刷新。
         """
         if self._pm is None:
             return
@@ -113,6 +125,9 @@ class CompressionManager:
         2. 距上次压缩 > COMPRESSION_TIME_THRESHOLD 秒
 
         同时要求 state_history 至少有 COMPRESSION_MIN_ENTRIES 条。
+
+        Returns:
+            True 表示满足压缩触发条件。
         """
         history = self._state.state_history
         total = len(history)
@@ -137,7 +152,11 @@ class CompressionManager:
         return False
 
     def _get_new_entries(self) -> "list[StateHistoryEntry]":
-        """取上次压缩后新增的 state_history 条目。"""
+        """取上次压缩后新增的 state_history 条目。
+
+        Returns:
+            上次压缩后新增的 StateHistoryEntry 列表。
+        """
         history = self._state.state_history
         last_count: int = self._state.compression_last_count
         return history[last_count:]
@@ -150,9 +169,11 @@ class CompressionManager:
     ) -> None:
         """执行 L3→L2 压缩：渲染模板 → 调 LLM → 解析 <new_self> + <changes> → 写版本历史。
 
-        _refresh_cb: 写版本历史后调用的 C6 刷新回调。
-                     由 engine._compress 委托方法或 check_and_compress 传入；
-                     flush 路径不传，单独调用 _refresh_c6。
+        Args:
+            trigger: 压缩触发类型（COMPRESSION / FLUSH）。
+            _refresh_cb: 写版本历史后调用的 C6 刷新回调。
+                由 engine._compress 委托方法或 check_and_compress 传入；
+                flush 路径不传，单独调用 _refresh_c6。
         """
         if self._pm is None:
             return

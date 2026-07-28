@@ -24,6 +24,11 @@ class EnvManager:
 
     @classmethod
     def ensure_dotenv(cls, dotenv_path: str | None = None) -> None:
+        """加载 .env 文件，确保全局只执行一次。
+
+        Args:
+            dotenv_path: .env 文件的显式路径，为 None 时自动查找。
+        """
         if cls._loaded:
             return
         from dotenv import load_dotenv
@@ -36,18 +41,30 @@ class EnvManager:
 
     @staticmethod
     def resolve_env_name(field_name: str) -> str:
-        """Derive the environment variable name for a field."""
+        """从字段名推导环境变量名（大写转换）。
+
+        Args:
+            field_name: 字段名（snake_case）。
+
+        Returns:
+            str: 大写的环境变量名。
+        """
         return field_name.upper()
 
     @staticmethod
     def coerce(value_str: str, target_type: type) -> Any:
-        """Coerce a string (from env var) to *target_type*.
+        """将环境变量字符串强制转换为 *target_type*。
 
-        Supports ``Optional[X]`` by unwrapping to the inner type.
-        For ``Union[X, Y, ...]`` only the **first** non-None type is used
-        (e.g. ``Union[int, str]`` tries ``int``).  If you need alternate
-        parsing, provide the value as a string-typed field and parse it
-        yourself after loading.
+        支持 ``Optional[X]``（解包到内层类型）。对于 ``Union[X, Y, ...]`` 只使用
+        **第一个**非 None 类型（如 ``Union[int, str]`` 尝试 ``int``）。
+        如需其他解析方式，可将字段声明为 str 类型并在加载后自行解析。
+
+        Args:
+            value_str: 环境变量的原始字符串值。
+            target_type: 目标类型。
+
+        Returns:
+            转换后的值。
         """
         origin = getattr(target_type, "__origin__", None)
         base_type = origin if origin is not None else target_type
@@ -103,6 +120,14 @@ class ConfigLoader(Generic[T]):
         yaml_path: str | None = None,
         yaml_key: str | None = None,
     ):
+        """初始化配置加载器。
+
+        Args:
+            config_class: 目标 dataclass 类型。
+            env_path: .env 文件的显式路径，为 None 时自动查找。
+            yaml_path: YAML 配置文件的路径，为 None 时跳过 YAML 加载。
+            yaml_key: YAML 中的顶级键（如 "Server"），支持点号分隔的子键。
+        """
         self.config_class = config_class
         self.env_path = env_path
         self.yaml_path = yaml_path
@@ -111,7 +136,11 @@ class ConfigLoader(Generic[T]):
     # ── public API ─────────────────────────────────────────────────
 
     def load(self) -> T:
-        """Full pipeline: defaults → YAML → env → validate."""
+        """完整管线：默认值 → YAML → 环境变量 → 校验。
+
+        Returns:
+            T: 加载并校验完成的配置实例。
+        """
         EnvManager.ensure_dotenv(self.env_path)
 
         instance = self._instantiate_defaults()
@@ -122,7 +151,14 @@ class ConfigLoader(Generic[T]):
         return instance
 
     def load_from_dict(self, data: dict[str, Any]) -> T:
-        """Load from a programmatic dict (same merge/env/validate pipeline, no YAML file)."""
+        """从程序化字典加载（同样的 merge/env/validate 管线，无需 YAML 文件）。
+
+        Args:
+            data: 配置字典，key 对应字段名。
+
+        Returns:
+            T: 加载并校验完成的配置实例。
+        """
         EnvManager.ensure_dotenv(self.env_path)
 
         instance = self._instantiate_defaults()
@@ -134,12 +170,25 @@ class ConfigLoader(Generic[T]):
     # ── internal steps ─────────────────────────────────────────────
 
     def _instantiate_defaults(self) -> T:
+        """使用 dataclass 默认值实例化配置对象。
+
+        Returns:
+            T: 只含默认值的配置实例。
+        """
         return self.config_class()
 
     def _load_yaml(
         self, yaml_path: str | None, yaml_key: str | None
     ) -> dict[str, Any]:
-        """Read and (optionally) scope a YAML file. Returns {} if no path given."""
+        """读取并（可选）限定 YAML 文件的作用域。
+
+        Args:
+            yaml_path: YAML 文件路径，为 None 时返回空字典。
+            yaml_key: YAML 顶级键（支持点号分隔），为 None 时返回全部内容。
+
+        Returns:
+            dict[str, Any]: 解析后的 YAML 数据字典。
+        """
         if not yaml_path:
             return {}
         with open(yaml_path, "r", encoding="utf-8") as fh:

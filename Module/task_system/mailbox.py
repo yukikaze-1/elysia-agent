@@ -37,6 +37,11 @@ class TaskMailbox:
     """
 
     def __init__(self, task_id: TaskId) -> None:
+        """Initialize a mailbox for a single task.
+
+        Args:
+            task_id: The task this mailbox belongs to.
+        """
         self.task_id: TaskId = task_id
         self._deque: deque[TaskEvent] = deque()
         self._event = asyncio.Event()
@@ -44,9 +49,13 @@ class TaskMailbox:
     # ── 消费者 API ─────────────────────────────────────────────────────────
 
     async def get(self, timeout: float | None = None) -> TaskEvent | None:
-        """阻塞等待下一个事件。timeout 秒后返回 None。
+        """阻塞等待下一个事件。
 
-        timeout=None 时无限等待。
+        Args:
+            timeout: 超时秒数，None 表示无限等待。
+
+        Returns:
+            TaskEvent | None: 下一个事件，超时返回 None。
         """
         self._event.clear()  # 先清再检查——避免"if 后 clear 前"的视觉竞态窗口
         if not self._deque:
@@ -57,11 +66,19 @@ class TaskMailbox:
         return self._deque.popleft()
 
     def get_nowait(self) -> TaskEvent | None:
-        """非阻塞获取，无事件时返回 None。"""
+        """非阻塞获取。
+
+        Returns:
+            TaskEvent | None: 下一个事件，无事件返回 None。
+        """
         return self._deque.popleft() if self._deque else None
 
     def count(self) -> int:
-        """待消费事件数量。"""
+        """待消费事件数量。
+
+        Returns:
+            int: 队列中待消费的事件数。
+        """
         return len(self._deque)
 
     # ── 内部 ────────────────────────────────────────────────────────────────
@@ -72,6 +89,12 @@ class TaskMailbox:
         优先删除最旧的 progress。若没有 progress 可删：
         - 新事件非 progress → 删最旧事件（关键事件不能丢）
         - 新事件是 progress → 不放入，静默丢弃（进度丢失可接受）
+
+        Args:
+            new_type: 待写入的新事件类型。
+
+        Raises:
+            _EvictNewEvent: 新事件被丢弃时抛出内部信号。
         """
         for i, item in enumerate(self._deque):
             if item.type == TaskEventType.PROGRESS:
@@ -102,6 +125,9 @@ class TaskMailbox:
         无线程安全问题——TaskSystem 全部 asyncio 协程，单生产者单消费者，
         _push 和 get_nowait 都是同步方法（无 await），不存在竞态。
         CPU 密集工具走按需子进程，通过 JSON stdin/stdout 通信，不直接 push。
+
+        Args:
+            event: 要写入的 TaskEvent。
         """
         if len(self._deque) >= _MAXSIZE:
             try:
@@ -132,7 +158,12 @@ def push_mailbox_event(
     """构造 TaskEvent 并写入 Mailbox 队列——Orchestrator / SubAgent 共用。
 
     生产者（单协程，无竞态）。消费者是 CognitiveLoop 的 Agent。
-    caller 用于日志标识（如 "Orchestrator" / "SubAgent"）。
+
+    Args:
+        mailbox: 目标任务的邮箱。
+        event_type: 事件类型。
+        data: 事件数据 dict。
+        caller: 调用方标识（用于日志，如 "Orchestrator" / "SubAgent"）。
     """
     from Module.task_system.schema import TaskEvent
 

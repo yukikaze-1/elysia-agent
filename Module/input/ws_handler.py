@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from typing import TYPE_CHECKING, Callable, Coroutine
 
 from aiohttp import web, WSMsgType
 from pydantic import ValidationError
@@ -11,16 +12,34 @@ from core.schema.event import InterruptData, UserInputData
 from Module.output import WebSocketChannel
 from .audio_buffer import AudioBuffer
 
+if TYPE_CHECKING:
+    from core.agent import Agent
+
 logger = logging.getLogger(__name__)
 
 
 async def handle_ws(
     request: web.Request,
-    agent,
-    stt_transcribe,
+    agent: "Agent",
+    stt_transcribe: "Callable[[bytes], Coroutine[object, object, str]] | None",
     stt_emotion_state: dict | None = None,
     wake_word_enabled: bool = False,
 ) -> web.WebSocketResponse:
+    """Handle an incoming WebSocket connection for a browser client.
+
+    Manages the full WS lifecycle: connection, session history replay,
+    capability announcement, audio buffer setup, message routing, and cleanup.
+
+    Args:
+        request: aiohttp Request initiating the WebSocket upgrade.
+        agent: Agent instance providing output channels and message processing.
+        stt_transcribe: Async callable(bytes) -> str for speech-to-text, or None.
+        stt_emotion_state: Mutable dict updated with emotion/events from STT.
+        wake_word_enabled: Enable wake word detection for this connection.
+
+    Returns:
+        web.WebSocketResponse: The WebSocket connection object after close.
+    """
     ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024)
     await ws.prepare(request)
 
@@ -140,7 +159,15 @@ async def handle_ws(
     return ws
 
 
-async def handle_json_message(data: dict, agent, audio_buf=None, ws=None) -> None:
+async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None) -> None:
+    """Route a JSON message from the WebSocket client to the appropriate handler.
+
+    Args:
+        data: Parsed JSON message dict with a "type" key.
+        agent: Agent instance for processing messages and tool approvals.
+        audio_buf: AudioBuffer instance for audio/wake-word handling, or None.
+        ws: WebSocket connection for sending responses, or None.
+    """
     msg_type = data.get("type", "")
     if msg_type == "wake_toggle":
         enabled = data.get("enabled", False)
@@ -198,17 +225,31 @@ async def handle_json_message(data: dict, agent, audio_buf=None, ws=None) -> Non
         logger.debug("WS 未知消息类型: %s", msg_type)
 
 
-async def do_interrupt(agent, skip_if: set | None = None) -> None:
-    """Post INTERRUPT event. skip_if 可阻止特定状态下的 VAD 误触发。"""
+async def do_interrupt(agent: "Agent", skip_if: set | None = None) -> None:
+    """Post INTERRUPT event. skip_if 可阻止特定状态下的 VAD 误触发。
+
+    Args:
+        agent: Agent instance with an event bus.
+        skip_if: Set of FSM states to skip interrupt for (prevents VAD false triggers).
+    """
     if skip_if and agent._fsm.state in skip_if:
         return
     from core.event_bus import EventPriority
     agent._bus.post(InterruptData(source="websocket"), priority=EventPriority.INTERRUPT)
 
 
-async def do_transcription(agent, ws, text: str, audio_buf=None,
+async def do_transcription(agent: "Agent", ws: "web.WebSocketResponse", text: str,
+                           audio_buf: "AudioBuffer | None" = None,
                            stt_emotion_state: dict | None = None) -> None:
-    # 从 STT emotion state 读取情绪和事件
+    """Handle an STT transcription result: echo to client, deafen mic, post event.
+
+    Args:
+        agent: Agent instance for output and event posting.
+        ws: WebSocket connection to echo transcription back to client.
+        text: Transcribed text from STT.
+        audio_buf: AudioBuffer to deafen during TTS playback, or None.
+        stt_emotion_state: Optional dict with 'emotion' and 'events' from STT.
+    """
     emotion = ""
     events: list[str] = []
     if stt_emotion_state:
@@ -237,8 +278,12 @@ async def do_transcription(agent, ws, text: str, audio_buf=None,
     ))
 
 
-async def send_wake(ws) -> None:
-    """Notify frontend that a wake word was detected."""
+async def send_wake(ws: "web.WebSocketResponse") -> None:
+    """Notify frontend that a wake word was detected.
+
+    Args:
+        ws: WebSocket connection to send the notification to.
+    """
     try:
         await ws.send_json({"type": "wake"})
     except Exception:

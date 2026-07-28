@@ -8,6 +8,11 @@ class SpeakingStyleSection(Jinja2Section):
     description = "回复风格：五模式切换，支持 L2 驱动的动态演化"
 
     def __init__(self, template_path: str):
+        """初始化 SpeakingStyle section。
+
+        Args:
+            template_path: 模板文件路径。
+        """
         super().__init__(template_path)
         self._user_name = ""
         self._speaking_style_c6 = ""

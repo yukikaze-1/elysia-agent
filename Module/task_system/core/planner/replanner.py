@@ -43,6 +43,12 @@ class Replanner:
         infra: AgentInfra,
         token_ledger: TokenLedger | None = None,
     ) -> None:
+        """初始化 Replanner。
+
+        Args:
+            infra: Agent 基础设施，提供 LLM 模型引用。
+            token_ledger: Token 账本，用于记录 token 消耗；可选。
+        """
         self._infra = infra
         self._token_ledger = token_ledger
 
@@ -131,7 +137,16 @@ class Replanner:
         plan: Plan,
         statuses: set[NodeStatus],
     ) -> str:
-        """将指定状态的节点格式化为 prompt 可读文本。"""
+        """将指定状态的节点格式化为 prompt 可读文本。
+
+        Args:
+            node_results: node_id → NodeState 的映射。
+            plan: 当前计划，包含所有 DAG 节点。
+            statuses: 要筛选的节点状态集合。
+
+        Returns:
+            格式化后的节点状态文本，每行一个节点。
+        """
         lines: list[str] = []
         for node in plan.dag.nodes:
             nid_str = str(node.node_id)
@@ -162,8 +177,14 @@ class Replanner:
     def _parse_replan_response(self, raw: str) -> DAGPatch | Plan:
         """解析 replan LLM 响应 → DAGPatch 或 Plan。
 
+        Args:
+            raw: LLM 原始返回文本。
+
+        Returns:
+            DAGPatch（局部修复）或 Plan（全量重建）。
+
         Raises:
-            PlanParseError: JSON 不合法或缺少必要字段
+            PlanParseError: JSON 不合法或缺少必要字段。
         """
         text = strip_markdown_fence(raw)
 

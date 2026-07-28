@@ -1,6 +1,7 @@
 """文档数据库后端抽象接口。"""
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 
 class DocumentDBBackend(ABC):
@@ -11,12 +12,28 @@ class DocumentDBBackend(ABC):
 
     @abstractmethod
     async def insert_one(self, collection: str, document: dict) -> str:
-        """插入单条文档，返回 _id。"""
+        """插入单条文档。
+
+        Args:
+            collection: 目标 collection 名称。
+            document: 待插入的文档，dict 格式。
+
+        Returns:
+            插入文档的 _id 字符串。
+        """
         ...
 
     @abstractmethod
     async def insert_many(self, collection: str, documents: list[dict]) -> list[str]:
-        """批量插入，返回 _id 列表。"""
+        """批量插入文档。
+
+        Args:
+            collection: 目标 collection 名称。
+            documents: 待插入的文档列表。
+
+        Returns:
+            插入文档的 _id 字符串列表。
+        """
         ...
 
     @abstractmethod
@@ -29,37 +46,93 @@ class DocumentDBBackend(ABC):
         limit: int = 100,
         skip: int = 0,
     ) -> list[dict]:
-        """查询文档列表，支持排序和分页。"""
+        """查询文档列表，支持排序和分页。
+
+        Args:
+            collection: 目标 collection 名称。
+            filter_expr: MongoDB 查询过滤条件。
+            sort: 排序规则，列表元素为 (字段名, 方向) 元组，1 升序 -1 降序。
+            limit: 最大返回文档数，默认 100。
+            skip: 跳过的文档数，用于分页。
+
+        Returns:
+            匹配的文档列表，_id 已转换为字符串。
+        """
         ...
 
     @abstractmethod
     async def update_one(
         self, collection: str, filter_expr: dict, update: dict, upsert: bool = False,
     ) -> int:
-        """更新单条文档，返回修改数。设置 upsert=True 实现原子 upsert。"""
+        """更新单条文档。
+
+        Args:
+            collection: 目标 collection 名称。
+            filter_expr: 匹配条件。
+            update: 更新操作符（如 {"$set": {...}}）。
+            upsert: 为 True 时，如果不存在则插入。
+
+        Returns:
+            实际修改的文档数（0 或 1）。
+        """
         ...
 
     @abstractmethod
     async def delete_many(self, collection: str, filter_expr: dict) -> int:
-        """按条件删除，返回删除数。"""
+        """按条件删除文档。
+
+        Args:
+            collection: 目标 collection 名称。
+            filter_expr: 删除条件。
+
+        Returns:
+            被删除的文档数。
+        """
         ...
 
     @abstractmethod
     async def count(self, collection: str, filter_expr: dict) -> int:
-        """按条件计数。"""
+        """按条件计数。
+
+        Args:
+            collection: 目标 collection 名称。
+            filter_expr: 计数条件。
+
+        Returns:
+            匹配的文档数。
+        """
         ...
 
     @abstractmethod
     async def ensure_index(
-        self, collection: str, keys: list[tuple[str, int]], **kwargs
+        self, collection: str, keys: list[tuple[str, int]], **kwargs: Any,
     ) -> str:
-        """创建索引（如不存在）。返回索引名。"""
+        """创建索引（如不存在）。
+
+        Args:
+            collection: 目标 collection 名称。
+            keys: 索引键列表，元素为 (字段名, 方向) 元组。
+            **kwargs: 传递给底层 create_index 的附加参数。
+
+        Returns:
+            创建的索引名。
+        """
         ...
 
     @abstractmethod
     async def aggregate(self, collection: str, pipeline: list[dict]) -> list[dict]:
-        """执行 MongoDB 聚合管道。返回结果文档列表。"""
+        """执行 MongoDB 聚合管道。
+
+        Args:
+            collection: 目标 collection 名称。
+            pipeline: MongoDB 聚合管道阶段列表。
+
+        Returns:
+            聚合结果文档列表，_id 已转换为字符串。
+        """
         ...
 
     @abstractmethod
-    async def close(self) -> None: ...
+    async def close(self) -> None:
+        """关闭数据库连接。"""
+        ...

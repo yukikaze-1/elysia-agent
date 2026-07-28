@@ -50,7 +50,18 @@ async def execute_nodes(
     对每个就绪节点：更新 NodeState → 调 Executor → 收集 NodeResult。
     v1 不做并发（顺序执行），v2 考虑 Worker Agent 池并发。
     NodeResult 仅包含 Executor 产出（ArtifactStore 引用 + 错误码 + 耗时），
-    不含 Evaluator 判定——判定由 _evaluate_node 产出 NodeResultEvaluation。
+    不含 Evaluator 判定——判定由 evaluate_node 产出 NodeResultEvaluation。
+
+    Args:
+        executor: Executor 实例。
+        exec_state: 当前执行状态（用于更新 NodeState）。
+        nodes: 待执行的 DAGNode 列表（已按拓扑排序）。
+        task_id: 任务 ID。
+        tools: 可用工具列表。
+        session_id: 会话 ID。
+
+    Returns:
+        list[NodeResult]: 所有节点的执行结果列表。
     """
     results: list[NodeResult] = []
     for node in nodes:
@@ -77,6 +88,15 @@ async def evaluate_node(
 
     传入 DAGNode（含 output_contract）和 Plan（上下文），
     Evaluator 内部做双重判定：ExecutionStatus + BusinessStatus。
+
+    Args:
+        evaluator: Evaluator 实例。
+        node: 原始 DAGNode。
+        result: Executor 产出的节点执行结果。
+        plan: 当前 Plan（可为 None，Plan 缺失时返回 ABORT 判定）。
+
+    Returns:
+        NodeResultEvaluation: 双重判定结果。
     """
     if plan is None:
         # Plan 缺失——严重内部错误，不应发生。直接 ABORT 而非静默成功，
@@ -107,7 +127,17 @@ def apply_evaluation(
 ) -> EvaluatorAction:
     """根据 action 分发到对应处理函数——更新 NodeState + 推送 Mailbox 事件。
 
-    返回 suggested_action，调用方据此决定是否退出主循环。
+    Args:
+        node_id: 节点 ID。
+        evaluation: Evaluator 产出的双重判定结果。
+        exec_state: 当前执行状态。
+        graph: DAG 图。
+        constraints: 全局约束配置。
+        task_state: 任务状态。
+        mailbox: 任务事件邮箱。
+
+    Returns:
+        EvaluatorAction: suggested_action，调用方据此决定是否退出主循环。
     """
     ns = exec_state.node_states[node_id]
     ns.finished_at = now_iso()
@@ -149,7 +179,17 @@ def _push_progress(
     description: str,
     message: str,
 ) -> None:
-    """推送 PROGRESS 事件到 mailbox——CONTINUE/SKIP/RETRY/REPLAN 四个分支复用。"""
+    """推送 PROGRESS 事件到 mailbox——CONTINUE/SKIP/RETRY/REPLAN 四个分支复用。
+
+    Args:
+        node_id: 节点 ID。
+        exec_state: 当前执行状态（用于计算完成比例）。
+        graph: DAG 图（用于计算进度百分比）。
+        task_state: 任务状态。
+        mailbox: 任务事件邮箱。
+        description: 节点描述文本。
+        message: 进度消息。
+    """
     completed_count = sum(
         1 for s in exec_state.node_states.values()
         if s.status in (NodeStatus.SUCCESS, NodeStatus.SKIPPED)
@@ -175,7 +215,20 @@ def _handle_continue(
     task_state: TaskState,
     mailbox: TaskMailbox,
 ) -> EvaluatorAction:
-    """节点执行成功——标记 SUCCESS + 收集 artifact 引用 + 推送进度。"""
+    """节点执行成功——标记 SUCCESS + 收集 artifact 引用 + 推送进度。
+
+    Args:
+        ns: 节点运行时状态。
+        evaluation: Evaluator 判定结果。
+        node_id: 节点 ID。
+        exec_state: 当前执行状态。
+        graph: DAG 图。
+        task_state: 任务状态。
+        mailbox: 任务事件邮箱。
+
+    Returns:
+        EvaluatorAction.CONTINUE
+    """
     ns.status = NodeStatus.SUCCESS
     ns.summary = evaluation.reason
     ns.artifact_refs = evaluation.result.artifact_refs
@@ -198,7 +251,20 @@ def _handle_skip(
     task_state: TaskState,
     mailbox: TaskMailbox,
 ) -> EvaluatorAction:
-    """跳过可选节点——若 required 节点被建议 SKIP 则降级为 REPLAN（防死锁）。"""
+    """跳过可选节点——若 required 节点被建议 SKIP 则降级为 REPLAN（防死锁）。
+
+    Args:
+        ns: 节点运行时状态。
+        evaluation: Evaluator 判定结果。
+        node_id: 节点 ID。
+        exec_state: 当前执行状态。
+        graph: DAG 图。
+        task_state: 任务状态。
+        mailbox: 任务事件邮箱。
+
+    Returns:
+        EvaluatorAction.SKIP 或 REPLAN（required 节点降级时）。
+    """
     if graph.nodes[node_id].required:
         logger.error(
             "Orchestrator: required 节点 %s 收到 SKIP——降级为 REPLAN", node_id,
@@ -229,7 +295,21 @@ def _handle_retry(
     task_state: TaskState,
     mailbox: TaskMailbox,
 ) -> EvaluatorAction:
-    """重试节点——检查上限：未达上限 → PENDING 重新入队；已达上限 → REPLAN。"""
+    """重试节点——检查上限：未达上限 → PENDING 重新入队；已达上限 → REPLAN。
+
+    Args:
+        ns: 节点运行时状态。
+        evaluation: Evaluator 判定结果。
+        node_id: 节点 ID。
+        exec_state: 当前执行状态。
+        graph: DAG 图。
+        constraints: 全局约束配置（含 max_retries_per_node）。
+        task_state: 任务状态。
+        mailbox: 任务事件邮箱。
+
+    Returns:
+        EvaluatorAction.RETRY 或 REPLAN（重试耗竭时）。
+    """
     node = graph.nodes[node_id]
     max_retries = (
         node.max_retries
@@ -277,7 +357,20 @@ def _handle_replan_progress(
     task_state: TaskState,
     mailbox: TaskMailbox,
 ) -> EvaluatorAction:
-    """节点结构性失败——标记 FAILED + 推送进度（通知前端 DAG 即将修复）。"""
+    """节点结构性失败——标记 FAILED + 推送进度（通知前端 DAG 即将修复）。
+
+    Args:
+        ns: 节点运行时状态。
+        evaluation: Evaluator 判定结果。
+        node_id: 节点 ID。
+        exec_state: 当前执行状态。
+        graph: DAG 图。
+        task_state: 任务状态。
+        mailbox: 任务事件邮箱。
+
+    Returns:
+        EvaluatorAction.REPLAN
+    """
     ns.status = NodeStatus.FAILED
     ns.error = evaluation.reason
     ns.error_code = evaluation.result.error

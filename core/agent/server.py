@@ -46,7 +46,15 @@ class AgentServer:
         process_message: Any
 
     def _print_startup_banner(self, mongo_ok: bool, milvus_ok: bool) -> str:
-        """构建启动横幅字符串。调用方负责打印/记录。"""
+        """构建启动横幅字符串。调用方负责打印/记录。
+
+        Args:
+            mongo_ok: MongoDB 连接是否正常。
+            milvus_ok: Milvus 连接是否正常。
+
+        Returns:
+            包含 LLM、记忆、人格、工具信息的启动横幅字符串。
+        """
         db_parts = []
         if mongo_ok: db_parts.append("MongoDB")
         if milvus_ok: db_parts.append("Milvus")
@@ -67,14 +75,25 @@ class AgentServer:
         return banner  # 调用方可 continue 追加服务器信息
 
     def next_request_id(self) -> str:
-        """生成并返回请求 ID，同时设置 ContextVar。供外部模块（STT 等）使用。"""
+        """生成并返回请求 ID，同时设置 ContextVar。供外部模块（STT 等）使用。
+
+        Returns:
+            格式为 ``{req_counter:03d}`` 的请求 ID 字符串。
+        """
         self._req_counter += 1
         rid = f"{self._req_counter:03d}"
         set_request_id(rid)
         return rid
 
     async def switch_llm(self, model_id: str) -> dict:
-        """热切换 LLM 模型。切换前打断当前 cognitive task 防止卡 thinking。"""
+        """热切换 LLM 模型。切换前打断当前 cognitive task 防止卡 thinking。
+
+        Args:
+            model_id: 新的 LLM 模型标识符（如 ``deepseek/deepseek-v4-flash``）。
+
+        Returns:
+            包含 ``ok`` 状态和可选的 ``error`` 信息的字典。
+        """
         try:
             self._cognitive.cancel_current()  # 打断正在进行的 LLM 调用
             self._llm.switch_model(model_id)
@@ -85,13 +104,27 @@ class AgentServer:
             return {"ok": False, "error": str(e)}
 
     async def switch_stt(self, model_id: str) -> dict:
-        """运行时更新 STT model_id（下次 transcribe 请求生效）。"""
+        """运行时更新 STT model_id（下次 transcribe 请求生效）。
+
+        Args:
+            model_id: 新的 STT 模型标识符（如 ``sensevoice/sense-voice``）。
+
+        Returns:
+            包含 ``ok`` 状态的字典。
+        """
         self._config.stt.model = model_id
         logger.info("STT model set to: %s (takes effect on next request)", model_id)
         return {"ok": True}
 
     async def switch_tts(self, model_id: str) -> dict:
-        """热切换 TTS 后端。更新 self._tts 和 self._cognitive._tts 引用。"""
+        """热切换 TTS 后端。更新 self._tts 和 self._cognitive._tts 引用。
+
+        Args:
+            model_id: 新的 TTS 模型标识符（如 ``minimax/speech-2.8-hd``）。
+
+        Returns:
+            包含 ``ok`` 状态的字典，失败时含 ``error`` 信息。
+        """
         from Module.tts import TTSFactory
         try:
             if self._tts:
@@ -108,7 +141,11 @@ class AgentServer:
             return {"ok": False, "error": str(e)}
 
     def get_wake_words(self) -> list[str]:
-        """Return wake words from character config, for AudioBuffer in server mode."""
+        """从角色配置中获取唤醒词，供服务端模式 AudioBuffer 使用。
+
+        Returns:
+            唤醒词字符串列表。
+        """
         return getattr(self._character, 'wake_words', [])
 
     async def run_server(self) -> None:

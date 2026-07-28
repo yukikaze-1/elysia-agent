@@ -13,7 +13,15 @@ from Module._common.test_helpers import make_test_method
 
 
 def _make_silence_wav(duration_sec: float = 1.0, sample_rate: int = 16000) -> bytes:
-    """生成静音 WAV 字节，用于连通性测试。"""
+    """生成静音 WAV 字节，用于连通性测试。
+
+    Args:
+        duration_sec: 静音时长（秒）。
+        sample_rate: 采样率（Hz）。
+
+    Returns:
+        完整的 WAV 格式静音字节数据。
+    """
     num_samples = int(sample_rate * duration_sec)
     data = b"\x00\x00" * num_samples
     header = struct.pack(
@@ -38,6 +46,14 @@ class OpenAICompatSTTBackend(STTBackend):
         base_url: str = "",
         logger: logging.Logger | None = None,
     ):
+        """初始化 OpenAI 兼容 STT 后端。
+
+        Args:
+            model: 模型名称。
+            api_key: API 密钥，不传则使用默认值 "stt"。
+            base_url: 服务地址，为空则使用 OpenAI 默认地址。
+            logger: 日志记录器，不传则使用模块默认 logger。
+        """
         self._model = model
         self._logger = logger or logging.getLogger(__name__)
         self._client = AsyncOpenAI(
@@ -71,6 +87,15 @@ class OpenAICompatSTTBackend(STTBackend):
         return await self._test_fn(self)
 
     async def transcribe(self, audio: bytes, **kwargs) -> str:
+        """非流式识别 — 返回完整转写文本。
+
+        Args:
+            audio: 原始音频 bytes。
+            **kwargs: 透传 language 等参数。
+
+        Returns:
+            完整转写文本。调用后 last_emotion 设为 "NEUTRAL"，last_events 设为空列表。
+        """
         result = await self._client.audio.transcriptions.create(
             model=self._model,
             file=("audio.wav", BytesIO(audio), "audio/wav"),
@@ -81,6 +106,15 @@ class OpenAICompatSTTBackend(STTBackend):
         return result.text
 
     async def transcribe_stream(self, audio: bytes, **kwargs) -> AsyncIterator[str]:
+        """流式识别 — OpenAI 兼容后端不支持真正流式，yield 完整结果作为单个 chunk。
+
+        Args:
+            audio: 原始音频 bytes。
+            **kwargs: 透传 language 等参数。
+
+        Yields:
+            完整转写文本。
+        """
         text = await self.transcribe(audio, **kwargs)
         self.last_emotion = "NEUTRAL"
         self.last_events = []

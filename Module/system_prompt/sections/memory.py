@@ -12,6 +12,13 @@ class MemorySection(Jinja2Section):
     description = "她记得的过去 + 可靠性规则"
 
     def __init__(self, template_path: str, long_term=None, session=None):
+        """初始化 Memory section。
+
+        Args:
+            template_path: 模板文件路径。
+            long_term: LongTermMemory 实例，用于搜索相关记忆。
+            session: Session 实例。
+        """
         super().__init__(template_path)
         self._long_term = long_term
         self._session = session

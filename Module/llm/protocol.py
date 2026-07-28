@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
+from typing import Any
 
 
 class LLMBackend(ABC):
@@ -12,18 +13,37 @@ class LLMBackend(ABC):
     """
 
     @abstractmethod
-    async def chat(self, messages: list[dict], **kwargs) -> str:
-        """非流式对话 — 返回完整回复文本。"""
+    async def chat(self, messages: list[dict], **kwargs: Any) -> str:
+        """非流式对话 — 返回完整回复文本。
+
+        Args:
+            messages: OpenAI 格式的消息列表，
+                如 [{"role": "user", "content": "你好"}]。
+            **kwargs: 透传给底层 API 的参数（temperature、max_tokens 等）。
+
+        Returns:
+            模型生成的完整回复文本。
+        """
         ...
 
     @abstractmethod
-    async def chat_stream(self, messages: list[dict], **kwargs) -> AsyncGenerator[str, None]:
-        """流式对话 — 逐 token 产出回复文本。"""
+    async def chat_stream(
+        self, messages: list[dict], **kwargs: Any,
+    ) -> AsyncGenerator[str, None]:
+        """流式对话 — 逐 token 产出回复文本。
+
+        Args:
+            messages: OpenAI 格式的消息列表。
+            **kwargs: 透传给底层 API 的参数（temperature、max_tokens 等）。
+
+        Yields:
+            逐个 token 的文本片段。
+        """
         ...
         yield ""  # type: ignore[misc]  # pragma: no cover — 让抽象方法成为生成器
 
     async def stream_think(
-        self, messages: list[dict], **kwargs
+        self, messages: list[dict], **kwargs: Any,
     ) -> AsyncGenerator[dict, None]:
         """流式思考 — 逐 chunk 产出结构化 dict，支持 tool_calls 检测和 usage 统计。
 
@@ -32,6 +52,14 @@ class LLMBackend(ABC):
           {"content": None, "tool_calls": None, "usage": {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}}
         默认实现回退到 chat()，逐字符 yield 纯文本（无 tool_calls）。
         支持 tool calling 的 backend 应覆盖此方法。
+
+        Args:
+            messages: OpenAI 格式的消息列表。
+            **kwargs: 透传给底层 API 的参数。
+
+        Yields:
+            结构化 dict，包含 content（文本片段）、tool_calls（工具调用 delta）
+            以及可选的 usage（token 统计）。
         """
         text = await self.chat(messages, **kwargs)
         for char in text:
@@ -39,7 +67,11 @@ class LLMBackend(ABC):
 
     @abstractmethod
     async def test(self) -> dict:
-        """测试连通性。返回 {"ok": bool, "latency_ms": int, "error": str}"""
+        """测试连通性。
+
+        Returns:
+            {"ok": bool, "latency_ms": int, "error": str}
+        """
         ...
 
     @abstractmethod

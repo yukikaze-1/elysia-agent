@@ -9,7 +9,11 @@ class Repository(ABC):
 
     @abstractmethod
     async def connect(self) -> bool:
-        """建立连接。返回 True 表示成功。"""
+        """建立连接。
+
+        Returns:
+            True 表示连接成功，False 表示失败。
+        """
         ...
 
     @abstractmethod
@@ -19,5 +23,9 @@ class Repository(ABC):
 
     @abstractmethod
     async def health_check(self) -> bool:
-        """健康检查。返回 True 表示可用。"""
+        """健康检查。
+
+        Returns:
+            True 表示可用，False 表示不可用。
+        """
         ...

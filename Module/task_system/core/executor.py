@@ -212,6 +212,13 @@ class Executor:
 
         上游节点执行完成后将产物以 output_as 为 key 存入 ArtifactStore，
         下游节点通过 input_bindings 引用这些 key 来获取上下文数据。
+
+        Args:
+            node:    待执行的 DAG 节点
+            task_id: 所属任务 ID
+
+        Returns:
+            以 artifact_id 为 key、产物内容为 value 的字典
         """
         inputs: dict[ArtifactId, Any] = {}
         for aid in node.input_bindings:
@@ -242,6 +249,11 @@ class Executor:
                - 匹配到工具 → 返回 (tool_name, params)
                - LLM 直出文本 → 返回 ("__llm_direct__", {"content": ...})
             4. 解析返回的 tool_calls → (tool_name, params)
+
+        Args:
+            node:          待执行的 DAG 节点
+            tools:         本次任务可用的工具列表
+            upstream_data: 上游产物数据（artifact_id → 内容）
 
         Returns:
             (tool_name, params_dict)
@@ -343,6 +355,13 @@ class Executor:
 
         建模为简单的 chat completion（无 tools），让 LLM 基于上游数据
         和节点描述生成内容。token 消耗由 token_ledger 记录。
+
+        Args:
+            node:          待执行的 DAG 节点
+            upstream_data: 上游产物数据（artifact_id → 内容）
+
+        Returns:
+            LLM 生成的文本内容
         """
         system = "你是一个任务执行助手。根据上游数据和节点描述，直接产出结果。"
 
@@ -398,6 +417,16 @@ class Executor:
 
         ToolManager 内部已处理：参数验证、安全检查、HITL 审批、并发控制、超时、token 截断。
         Executor 只负责透传参数和收集结果。
+
+        Args:
+            tool_name:  工具名称
+            params:     工具参数
+            task_id:    所属任务 ID
+            node_id:    节点 ID（用于 trace_id）
+            session_id: 会话 ID
+
+        Returns:
+            工具执行结果
         """
         ctx = ToolContext(
             session_id=session_id,
@@ -427,6 +456,14 @@ class Executor:
 
         artifact_id 使用 node.output_as，下游节点通过 input_bindings 引用，
         形成 DAG 的数据流（push 模式：上游产出 → 下游引用）。
+
+        Args:
+            node:        待执行的 DAG 节点
+            task_id:     所属任务 ID
+            tool_result: 工具执行结果
+
+        Returns:
+            存储后的 Artifact 对象，无 output_as 时返回 None
         """
         if not node.output_as:  # None 或空串均视为无产物
             logger.warning("Executor: node=%s 没有 output_as，跳过存储", node.node_id)
@@ -468,6 +505,12 @@ class Executor:
 
         ToolManager 的 ErrorType 和 task_system 的 NodeErrorCode 是两套独立的
         错误码体系——Executor 负责桥接。
+
+        Args:
+            tool_result: 工具执行结果
+
+        Returns:
+            映射后的 NodeErrorCode
         """
         from Module.tool.protocol import ErrorType as ToolErrorType
 

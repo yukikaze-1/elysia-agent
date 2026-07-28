@@ -7,6 +7,10 @@ SystemPromptManager, delegates message assembly to MessageBuilder.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.personality.engine import CharacterEngine
 
 from core.adapter.message_builder import MessageBuilder
 from Module.system_prompt.system_prompt_manager import SystemPromptManager
@@ -40,8 +44,16 @@ class PromptAssembler:
         character: CharacterConfig,
         session: SessionMemory,
         long_term: LongTermMemory,
-        personality_engine=None,  # PersonalityEngine | None
+        personality_engine: "CharacterEngine | None" = None,
     ):
+        """初始化 PromptAssembler，创建所有 system prompt section 和管理器。
+
+        Args:
+            character: 角色配置。
+            session: 会话记忆实例。
+            long_term: 长期记忆实例。
+            personality_engine: 人格引擎实例（可选），用于获取 mood、C1/C6/C9 数据。
+        """
         self._character = character
         self._session = session
         self._long_term = long_term
@@ -88,8 +100,20 @@ class PromptAssembler:
         )
 
     async def build_system_prompt(self, user_message: str = "", user_name: str = "",
-                                   stt_emotion: str = "", stt_events=None,
+                                   stt_emotion: str = "", stt_events: list | None = None,
                                    tts_provider: str = "") -> str:
+        """构建渲染后的 system prompt 字符串。
+
+        Args:
+            user_message: 当前用户消息文本。
+            user_name: 用户名。
+            stt_emotion: STT 识别的情感标签。
+            stt_events: STT 识别的事件列表。
+            tts_provider: TTS 提供商名称。
+
+        Returns:
+            渲染后的完整 system prompt 字符串。
+        """
         # 从 CharacterEngine 获取当前 mood 和 C6 数据
         mood = "neutral"
         speaking_style_c6 = ""
@@ -113,10 +137,24 @@ class PromptAssembler:
     async def build_messages(self, user_message: str = "",
                               user_name: str = "",
                               stt_emotion: str = "",
-                              stt_events=None,
-                              content=None,
+                              stt_events: list | None = None,
+                              content: list[dict] | str | None = None,
                               supports_multimodal: bool = False,
                               tts_provider: str = "") -> list[dict]:
+        """构建发送给 LLM 的完整消息列表。
+
+        Args:
+            user_message: 当前用户消息文本。
+            user_name: 用户名。
+            stt_emotion: STT 识别的情感标签。
+            stt_events: STT 识别的事件列表。
+            content: 多模态内容（如图片），为 None 时使用 user_message。
+            supports_multimodal: 当前模型是否支持多模态。
+            tts_provider: TTS 提供商名称。
+
+        Returns:
+            LLM API 的 messages 列表，包含 system prompt + 历史 + 用户消息。
+        """
         text = content_text_from_raw(content) if content else user_message
         system = await self.build_system_prompt(
             user_message=text, user_name=user_name,

@@ -38,6 +38,12 @@ class StreamProcessor:
 
     def __init__(self, *, min_chunk_length: int = 5,
                  max_buffer_length: int = 2000) -> None:
+        """初始化流处理器。
+
+        Args:
+            min_chunk_length: SentenceBuffer 最小分块长度（字符数）。
+            max_buffer_length: SentenceBuffer 最大缓冲长度（字符数）。
+        """
         self._block_filter = BlockFilter()
         self._sentence_buf = SentenceBuffer(
             min_chunk_length=min_chunk_length,
@@ -52,7 +58,14 @@ class StreamProcessor:
         self._ttft_sent = False
 
     def feed(self, delta: str) -> list[StreamEvent]:
-        """输入流式文本片段，返回零到多个事件。"""
+        """输入流式文本片段，返回零到多个事件。
+
+        Args:
+            delta: LLM 输出的增量文本片段。
+
+        Returns:
+            解析出的 StreamEvent 列表，可能为空。
+        """
         if not delta:
             return []
         events: list[StreamEvent] = []
@@ -85,7 +98,12 @@ class StreamProcessor:
         return events
 
     def flush(self) -> list[StreamEvent]:
-        """流结束时调用：吐出尾句、丢弃未闭合块、处理未闭合标签。"""
+        """流结束时调用：吐出尾句、丢弃未闭合块、处理未闭合标签。
+
+        Returns:
+            残留的 StreamEvent 列表，包括未闭合的 inner_voice、
+            BlockFilter 尾部和 SentenceBuffer 残留。
+        """
         events: list[StreamEvent] = []
 
         # MOOD_PRE 状态残留 tail → 路由经 inner_voice 管道
@@ -160,7 +178,16 @@ class StreamProcessor:
     # ---- mood 状态机 ----
 
     def _process_mood(self, delta: str) -> tuple[str, list[StreamEvent]]:
-        """MOOD_PRE → MOOD → DONE。返回 (remainder_delta, events)。"""
+        """Mood 标签状态机：MOOD_PRE → MOOD → DONE。
+
+        Args:
+            delta: 输入的增量文本片段。
+
+        Returns:
+            (remainder_delta, events) 元组：
+            remainder_delta 为剥离 mood 标签后剩余文本，
+            events 为解析出的 MOOD 事件列表。
+        """
         events: list[StreamEvent] = []
 
         if self._mood_state == "MOOD_PRE":
@@ -224,7 +251,16 @@ class StreamProcessor:
     # ---- inner_voice 状态机 ----
 
     def _process_inner_voice(self, delta: str) -> tuple[str, list[StreamEvent]]:
-        """PRE → THINK → REPLY。返回 (remainder_delta, events)。"""
+        """Inner_voice 标签状态机：PRE → THINK → REPLY。
+
+        Args:
+            delta: 输入的增量文本片段。
+
+        Returns:
+            (remainder_delta, events) 元组：
+            remainder_delta 为剥离 inner_voice 标签后剩余文本，
+            events 为解析出的 INNER_VOICE / TEXT_DELTA / SENTENCE 事件列表。
+        """
         events: list[StreamEvent] = []
 
         if self._iv_state == "PRE":

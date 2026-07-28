@@ -38,6 +38,7 @@ from Module.task_system.schema import (
 from Module.task_system.core.sub_agent import SubAgent
 
 if TYPE_CHECKING:
+    from Module.task_system.core.execution import ExecutionState
     from Module.task_system.infra import AgentInfra
     from Module.task_system.protocol import HITLNotifier
 
@@ -70,6 +71,13 @@ class TaskSystem:
         *,
         max_sub_agents: int = 5,
     ) -> None:
+        """Initialize the TaskSystem.
+
+        Args:
+            infra: 跨任务共享的底层资源容器。
+            hitl_notifier: 审批快速通道实现。
+            max_sub_agents: 最大并发 Sub-Agent 数量。
+        """
         self._infra = infra
         self._hitl = hitl_notifier
         self._max_sub_agents = max_sub_agents
@@ -114,6 +122,9 @@ class TaskSystem:
         3. 超时后 cancel 剩余任务——CancelledError 传播到 Orchestrator 的
            下一个 await 点，finally 块自动执行 cleanup + semaphore.release
         4. 兜底清理（防止 finally 未执行的情况）
+
+        Args:
+            timeout: 等待活跃任务自然完成的超时秒数。
         """
         logger.info("TaskSystem.stop: 活跃任务数=%d, timeout=%.0fs", len(self._tasks), timeout)
         self._started = False
@@ -155,6 +166,9 @@ class TaskSystem:
 
         DelegationPreparer.prepare() 已在 CognitiveLoop 侧完成，
         context 是干净的委派沙盒（筛选后的工具 + 摘要上下文 + 任务约束）。
+
+        Args:
+            context: 委派上下文（筛选后的工具 + 摘要上下文 + 任务约束）。
 
         Returns:
             TaskMailbox — 调用方直接 await mailbox.get() 消费事件流
@@ -249,7 +263,11 @@ class TaskSystem:
         return mailbox
 
     def _get_debug_snapshot(self) -> dict:
-        """供 TaskDebugAPI 内部轮询使用。"""
+        """供 TaskDebugAPI 内部轮询使用。
+
+        Returns:
+            dict: 调试快照字典。
+        """
         return query.get_debug_snapshot(
             self._tasks, self._mailboxes, self._max_sub_agents,
         )
@@ -260,6 +278,10 @@ class TaskSystem:
         """暂停任务——委托给 lifecycle.pause()。
 
         等待 orchestrator 确认 PAUSED 状态，带超时。
+
+        Args:
+            task_id: 要暂停的任务 ID。
+            timeout: 等待确认的超时秒数。
 
         Returns:
             True:  暂停已确认
@@ -273,6 +295,13 @@ class TaskSystem:
         幂等——已在 RUNNING/RESUMING 的任务直接返回 mailbox。
         仅 PAUSED 状态经过 CAS 检查后进入实际恢复流程。
         v1 限制：使用原始 DelegationContext，不支持注入新上下文。
+
+        Args:
+            task_id: 要恢复的任务 ID。
+
+        Returns:
+            TaskMailbox: 恢复成功，返回 mailbox 继续消费事件流。
+            ResumeError: 恢复失败（任务不存在、状态不允许等）。
         """
         sub_agent = self._tasks.get(task_id)
         if sub_agent is None:
@@ -369,6 +398,12 @@ class TaskSystem:
 
         PAUSED 分支的 semaphore 释放 + 清理已由 lifecycle.cancel() 内部完成。
         调用方不得再次释放。
+
+        Args:
+            task_id: 要取消的任务 ID。
+
+        Returns:
+            True: 取消信号已发送（幂等）。
         """
         return await lifecycle.cancel(
             self._tasks, self._mailboxes, self._semaphore,
@@ -385,6 +420,15 @@ class TaskSystem:
         """审批结果回传——委托给 lifecycle.submit_approval()。
 
         task_id / feedback 为 v2 预留，v1 不使用。
+
+        Args:
+            task_id: 任务 ID（v2 预留）。
+            agent_id: 审批请求 ID。
+            approved: 审批通过为 True，拒绝为 False。
+            feedback: 审批反馈文本（v2 预留）。
+
+        Returns:
+            True: 审批已找到并处理；False: 审批不存在。
         """
         return lifecycle.submit_approval(
             self._infra.tool_registry, str(agent_id), approved,
@@ -462,22 +506,31 @@ class TaskSystem:
     async def _collect_tools_used(
         self,
         sub_agent: SubAgent,
-        exec_state,  # ExecutionState | None
+        exec_state: "ExecutionState | None",
     ) -> list[str]:
         """从执行状态 + ArtifactStore 收集实际被调用的工具名。
 
         遍历已完成节点的 artifact_refs → ArtifactStore.get() →
         读取 metadata.tool_name，生成真实的工具审计列表。
-        无 exec_state / 无 artifact_store 时回退为空列表。
+
+        Args:
+            sub_agent: SubAgent 实例。
+            exec_state: 执行状态对象，None 时返回空列表。
+
+        Returns:
+            list[str]: 实际被调用的工具名列表（去重）。
         """
         return await query.collect_tools_used(sub_agent, exec_state)
 
     # ── 内部方法 ─────────────────────────────────────────────────────────
 
     def _cleanup_task(self, task_id: TaskId) -> None:
-        """任务终态后清理注册表 + 存储层。
+        """任务终态后清理注册表。
 
         调用方：_run_and_cleanup() finally 块、stop() 兜底。
+
+        Args:
+            task_id: 要清理的任务 ID。
         """
         self._tasks.pop(task_id, None)
         self._mailboxes.pop(task_id, None)
@@ -489,6 +542,10 @@ class TaskSystem:
 
         必须在 _cleanup_task() 之后调用——存储清理可能涉及 I/O（v2），
         不阻塞注册表释放。
+
+        Args:
+            task_id: 要清理的任务 ID。
+            sub_agent: SubAgent 实例，用于访问 checkpoint/artifact store。
         """
         if sub_agent._checkpoint_mgr:
             await sub_agent._checkpoint_mgr.delete(task_id)

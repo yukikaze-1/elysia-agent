@@ -6,6 +6,8 @@
 import json
 import logging
 import os
+from typing import TYPE_CHECKING
+
 from aiohttp import web
 
 from core.debug.info import collect, asdict
@@ -15,6 +17,9 @@ from core.schema.message import Message, MessageRole
 from core.schema.types import SessionId
 from .api_routes import _archive_to_client
 
+if TYPE_CHECKING:
+    from core.agent import Agent
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,7 +27,14 @@ def register_debug_routes(app: web.Application) -> None:
     """注册所有 /debug/api/* 路由到 aiohttp Application。"""
 
     def _sessions_to_client(msgs: list[Message] | list[dict]) -> list[dict]:
-        """将消息列表转为 session 详情前端兼容格式。接受 Message 或原始 dict。"""
+        """将消息列表转为 session 详情前端兼容格式。接受 Message 或原始 dict。
+
+        Args:
+            msgs: Message 对象列表或原始 dict 列表。
+
+        Returns:
+            list[dict]: 前端兼容的消息字典列表，每项包含 role、timestamp、parts 等字段。
+        """
         result = []
         for m in msgs:
             if isinstance(m, Message):
@@ -51,6 +63,14 @@ def register_debug_routes(app: web.Application) -> None:
         return result
 
     async def debug_api_handler(request: web.Request) -> web.Response:
+        """Return aggregated debug info for the overview dashboard.
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: JSON with all debug panels (system, memory, scheduler, etc.).
+        """
         info = await collect(request.app["agent"])
         return web.json_response(asdict(info))
     app.router.add_get("/debug/api", debug_api_handler)
@@ -72,6 +92,14 @@ def register_debug_routes(app: web.Application) -> None:
     # ---- Debug: 数据库管理 API ----
 
     async def db_status_handler(request: web.Request) -> web.Response:
+        """Return database status (LTM count, session count, archive count, health checks).
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: JSON with ltm/session/archive status and health_check results.
+        """
         agent = request.app["agent"]
         ltm = agent._long_term
         return web.json_response({
@@ -93,6 +121,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_get("/debug/api/db-status", db_status_handler)
 
     async def ltm_list_handler(request: web.Request) -> web.Response:
+        """List LTM entries with optional search and type filter.
+
+        Args:
+            request: aiohttp Request, query params: search, type, limit, offset。
+
+        Returns:
+            web.Response: {"total": ..., "entries": [...]}。
+        """
         agent = request.app["agent"]
         search = request.query.get("search", "").strip()
         mem_type = request.query.get("type", "").strip()
@@ -129,6 +165,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_get("/debug/api/ltm", ltm_list_handler)
 
     async def ltm_insert_handler(request: web.Request) -> web.Response:
+        """Insert a new LTM entry.
+
+        Args:
+            request: aiohttp Request, JSON body: text, memory_type, poignancy。
+
+        Returns:
+            web.Response: {"ok": True} or error.
+        """
         agent = request.app["agent"]
         try:
             body = await request.json()
@@ -146,6 +190,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_post("/debug/api/ltm", ltm_insert_handler)
 
     async def ltm_delete_single_handler(request: web.Request) -> web.Response:
+        """Delete a single LTM entry by ID.
+
+        Args:
+            request: aiohttp Request, URL path: /{entry_id}。
+
+        Returns:
+            web.Response: {"ok": True/False}。
+        """
         agent = request.app["agent"]
         entry_id = request.match_info.get("entry_id", "")
         if not entry_id:
@@ -156,6 +208,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_delete("/debug/api/ltm/{entry_id}", ltm_delete_single_handler)
 
     async def ltm_update_handler(request: web.Request) -> web.Response:
+        """Update an LTM entry's text by ID.
+
+        Args:
+            request: aiohttp Request, URL path: /{entry_id}, JSON body: text。
+
+        Returns:
+            web.Response: {"ok": True/False}。
+        """
         agent = request.app["agent"]
         entry_id = request.match_info.get("entry_id", "")
         if not entry_id:
@@ -170,6 +230,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_put("/debug/api/ltm/{entry_id}", ltm_update_handler)
 
     async def ltm_clear_handler(request: web.Request) -> web.Response:
+        """Clear all LTM entries.
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: {"ok": True, "deleted": count}。
+        """
         agent = request.app["agent"]
         count = await agent._long_term.clear_all()
         logger.warning("DEBUG API: ltm_clear deleted=%d", count)
@@ -179,7 +247,14 @@ def register_debug_routes(app: web.Application) -> None:
     # ---- Debug: 消息归档管理 ----
 
     async def archive_list_handler(request: web.Request) -> web.Response:
-        """分页浏览归档消息（debug 专用，offset 分页 + 搜索）。"""
+        """分页浏览归档消息（debug 专用，offset 分页 + 搜索）。
+
+        Args:
+            request: aiohttp Request, query params: limit, skip, search, role。
+
+        Returns:
+            web.Response: {"messages": [...], "total": ..., "limit": ..., "skip": ...}。
+        """
         agent = request.app["agent"]
         repo = agent._message_repo
 
@@ -209,6 +284,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_get("/debug/api/archive", archive_list_handler)
 
     async def archive_delete_handler(request: web.Request) -> web.Response:
+        """Delete a single archived message by ID.
+
+        Args:
+            request: aiohttp Request, URL path: /{msg_id}。
+
+        Returns:
+            web.Response: {"ok": True/False}。
+        """
         agent = request.app["agent"]
         repo = agent._message_repo
         msg_id = request.match_info.get("msg_id", "")
@@ -220,6 +303,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_delete("/debug/api/archive/{msg_id}", archive_delete_handler)
 
     async def archive_update_handler(request: web.Request) -> web.Response:
+        """Update an archived message's text by ID.
+
+        Args:
+            request: aiohttp Request, URL path: /{msg_id}, JSON body: text。
+
+        Returns:
+            web.Response: {"ok": True/False}。
+        """
         agent = request.app["agent"]
         repo = agent._message_repo
         msg_id = request.match_info.get("msg_id", "")
@@ -235,7 +326,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_put("/debug/api/archive/{msg_id}", archive_update_handler)
 
     async def archive_clear_handler(request: web.Request) -> web.Response:
-        """清空全部归档（debug 专用）。"""
+        """清空全部归档（debug 专用）。
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: {"ok": True, "deleted": count}。
+        """
         agent = request.app["agent"]
         deleted = await agent._message_repo.clear_all()
         logger.warning("DEBUG API: archive_clear deleted=%d", deleted)
@@ -244,6 +342,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_delete("/debug/api/archive", archive_clear_handler)
 
     async def sessions_list_handler(request: web.Request) -> web.Response:
+        """List all sessions with message counts and token totals.
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: {"sessions": [{session_id, message_count, updated_at, token_total}, ...]}。
+        """
         agent = request.app["agent"]
         summaries = await agent._session_repo.list_all()
         if not summaries:
@@ -276,6 +382,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_get("/debug/api/sessions", sessions_list_handler)
 
     async def session_detail_handler(request: web.Request) -> web.Response:
+        """Get session detail: messages, character state params, and total count.
+
+        Args:
+            request: aiohttp Request, URL path: /{session_id}。
+
+        Returns:
+            web.Response: {"session_id": ..., "messages": [...], "params": {...}, "total": ...}。
+        """
         agent = request.app["agent"]
         sid = request.match_info.get("session_id", "")
         if not sid:
@@ -325,6 +439,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_get("/debug/api/sessions/{session_id}", session_detail_handler)
 
     async def session_delete_handler(request: web.Request) -> web.Response:
+        """Delete a session by ID. Clears in-memory session if it matches the current one.
+
+        Args:
+            request: aiohttp Request, URL path: /{session_id}。
+
+        Returns:
+            web.Response: {"ok": True, "deleted": count} or error.
+        """
         agent = request.app["agent"]
         sid = request.match_info.get("session_id", "")
         if not sid:
@@ -345,6 +467,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_delete("/debug/api/sessions/{session_id}", session_delete_handler)
 
     async def sessions_clear_handler(request: web.Request) -> web.Response:
+        """Clear all sessions and in-memory session state.
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: {"ok": True, "deleted": count} or error.
+        """
         agent = request.app["agent"]
         if not await agent._session_repo.health_check():
             return web.json_response(
@@ -360,7 +490,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_delete("/debug/api/sessions", sessions_clear_handler)
 
     async def prompts_list_handler(request: web.Request) -> web.Response:
-        """返回最近 N 次 LLM 调用的 prompt 摘要列表。"""
+        """返回最近 N 次 LLM 调用的 prompt 摘要列表。
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: {"records": [...], "total": ..., "max": ...}。
+        """
         agent = request.app["agent"]
         recorder = getattr(agent, "_prompt_recorder", None)
         if recorder is None:
@@ -369,7 +506,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_get("/debug/api/prompts", prompts_list_handler)
 
     async def prompt_detail_handler(request: web.Request) -> web.Response:
-        """返回指定记录的完整 prompt 内容 + 模板源码。"""
+        """返回指定记录的完整 prompt 内容 + 模板源码。
+
+        Args:
+            request: aiohttp Request, URL path: /{index}。
+
+        Returns:
+            web.Response: {"index": ..., "timestamp": ..., "messages": [...], "tools": [...], ...}。
+        """
         index = int(request.match_info["index"])
         agent = request.app["agent"]
         recorder = getattr(agent, "_prompt_recorder", None)
@@ -407,7 +551,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_get(r"/debug/api/prompts/{index:\d+}", prompt_detail_handler)
 
     async def responses_list_handler(request: web.Request) -> web.Response:
-        """返回最近 N 次 LLM 调用的原始回复摘要列表。"""
+        """返回最近 N 次 LLM 调用的原始回复摘要列表。
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: {"records": [...], "total": ..., "max": ...}。
+        """
         agent = request.app["agent"]
         recorder = getattr(agent, "_response_recorder", None)
         if recorder is None:
@@ -416,7 +567,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_get("/debug/api/responses", responses_list_handler)
 
     async def response_detail_handler(request: web.Request) -> web.Response:
-        """返回指定记录的完整原始回复。"""
+        """返回指定记录的完整原始回复。
+
+        Args:
+            request: aiohttp Request, URL path: /{index}。
+
+        Returns:
+            web.Response: {"index": ..., "timestamp": ..., "raw_text": ..., "inner_voice": ...}。
+        """
         index = int(request.match_info["index"])
         agent = request.app["agent"]
         recorder = getattr(agent, "_response_recorder", None)
@@ -438,8 +596,19 @@ def register_debug_routes(app: web.Application) -> None:
 
     # ---- Character 版本历史 API ----
 
-    async def _list_character_versions(agent, content_type: str,
+    async def _list_character_versions(agent: "Agent", content_type: str,
                                         limit: int, before_version: int | None):
+        """List character version history (L2 or C6) for the current session.
+
+        Args:
+            agent: Agent instance with character engine.
+            content_type: "l2" or "c6".
+            limit: Maximum number of versions to return.
+            before_version: Optional upper bound version number (exclusive).
+
+        Returns:
+            tuple: (result_dict | None, error_str | None, http_status_code)
+        """
         engine = getattr(agent, "_character_engine", None)
         if not engine or not getattr(engine, "_version_repo", None):
             return None, "版本历史不可用", 503
@@ -455,7 +624,17 @@ def register_debug_routes(app: web.Application) -> None:
             "has_more": len(versions) == limit and versions[-1]["version"] > 1,
         }, None, 200
 
-    async def _character_rollback(agent, content_type: str, target_version: int):
+    async def _character_rollback(agent: "Agent", content_type: str, target_version: int):
+        """Rollback character content (L2 or C6) to a specific version.
+
+        Args:
+            agent: Agent instance with character engine.
+            content_type: "l2" or "c6".
+            target_version: Version number to rollback to.
+
+        Returns:
+            tuple: (result_dict | None, error_str | None, http_status_code)
+        """
         engine = getattr(agent, "_character_engine", None)
         if not engine or not getattr(engine, "_version_repo", None):
             return None, "版本历史不可用", 503
@@ -489,6 +668,14 @@ def register_debug_routes(app: web.Application) -> None:
 
     # 旧 L2 路由（兼容）
     async def l2_versions_handler(request: web.Request) -> web.Response:
+        """List L2 self-image version history (legacy route).
+
+        Args:
+            request: aiohttp Request, query params: limit, before。
+
+        Returns:
+            web.Response: {"versions": [...], "total": ..., "has_more": ...}。
+        """
         agent = request.app["agent"]
         limit = int(request.query.get("limit", "20"))
         before = request.query.get("before")
@@ -502,6 +689,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_get("/debug/api/l2-versions", l2_versions_handler)
 
     async def l2_rollback_handler(request: web.Request) -> web.Response:
+        """Rollback L2 self-image to a specific version (legacy route).
+
+        Args:
+            request: aiohttp Request, JSON body: version。
+
+        Returns:
+            web.Response: {"status": "ok", "new_version": ..., "text": ...} or error.
+        """
         agent = request.app["agent"]
         try:
             body = await request.json()
@@ -520,6 +715,14 @@ def register_debug_routes(app: web.Application) -> None:
 
     # 新通用路由
     async def character_versions_handler(request: web.Request) -> web.Response:
+        """List character version history (L2 or C6).
+
+        Args:
+            request: aiohttp Request, query params: type (l2/c6), limit, before。
+
+        Returns:
+            web.Response: {"versions": [...], "total": ..., "has_more": ...}。
+        """
         agent = request.app["agent"]
         content_type = request.query.get("type", "l2")
         if content_type not in ("l2", "c6"):
@@ -536,6 +739,14 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_get("/debug/api/character-versions", character_versions_handler)
 
     async def character_rollback_handler(request: web.Request) -> web.Response:
+        """Rollback character content (L2 or C6) to a specific version.
+
+        Args:
+            request: aiohttp Request, JSON body: type (l2/c6), version。
+
+        Returns:
+            web.Response: {"status": "ok", "new_version": ..., "text": ...} or error.
+        """
         agent = request.app["agent"]
         try:
             body = await request.json()
@@ -556,12 +767,22 @@ def register_debug_routes(app: web.Application) -> None:
     app.router.add_post("/debug/api/character-rollback", character_rollback_handler)
 
     # TaskDebugAPI 生命周期管理
-    async def on_startup(app):
+    async def on_startup(app: web.Application) -> None:
+        """Start TaskDebugAPI on application startup.
+
+        Args:
+            app: aiohttp Application instance.
+        """
         task_api = app.get('task_debug_api')
         if task_api:
             await task_api.start()
 
-    async def on_shutdown(app):
+    async def on_shutdown(app: web.Application) -> None:
+        """Stop TaskDebugAPI on application shutdown.
+
+        Args:
+            app: aiohttp Application instance.
+        """
         task_api = app.get('task_debug_api')
         if task_api:
             await task_api.stop()

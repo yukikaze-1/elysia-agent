@@ -31,6 +31,11 @@ class ResponseRecorder:
     """
 
     def __init__(self, max_records: int = 20):
+        """初始化 ResponseRecorder。
+
+        Args:
+            max_records: 环形缓冲区最大容量，默认 20。
+        """
         self._records: deque[ResponseRecord] = deque(maxlen=max_records)
         self._counter: int = 0
         self._max_records = max_records
@@ -41,7 +46,16 @@ class ResponseRecorder:
         inner_voice: str | None,
         round_num: int = 0,
     ) -> ResponseRecord:
-        """保存一次 LLM 调用的原始回复。"""
+        """保存一次 LLM 调用的原始回复。
+
+        Args:
+            raw_text: LLM 返回的完整原始文本（含 inner_voice 标签）。
+            inner_voice: 剥离出的 inner_voice 内容，可为 None。
+            round_num: 当前回合编号，默认 0。
+
+        Returns:
+            创建的 ResponseRecord 实例。
+        """
         self._counter += 1
         record = ResponseRecord(
             index=self._counter,
@@ -56,7 +70,11 @@ class ResponseRecorder:
         return record
 
     def list_summaries(self) -> dict:
-        """返回轻量摘要列表，供 DebugInfo 使用。不包含完整 raw_text。"""
+        """返回轻量摘要列表，供 DebugInfo 使用。不包含完整 raw_text。
+
+        Returns:
+            包含 records 列表、total 计数和 max 容量的字典。
+        """
         records = []
         for r in self._records:
             records.append({
@@ -73,7 +91,14 @@ class ResponseRecorder:
         }
 
     def get_full(self, index: int) -> ResponseRecord | None:
-        """按序号获取完整记录。"""
+        """按序号获取完整记录。
+
+        Args:
+            index: 记录的序号。
+
+        Returns:
+            匹配的 ResponseRecord，若未找到则返回 None。
+        """
         for r in self._records:
             if r.index == index:
                 return r

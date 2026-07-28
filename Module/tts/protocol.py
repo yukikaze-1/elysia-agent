@@ -17,6 +17,14 @@ class TTSBackend(ABC):
         """非流式合成 — 返回完整 WAV bytes。
 
         采样率因后端而异：GPT-SoVits 为 32000Hz/mono/int16，OpenAI TTS 为 24000Hz。
+
+        Args:
+            text: 要合成的文本。
+            character: 发音人/音色名称，对应后端配置中的角色标识。
+            emotion: 可选的情绪参数，部分后端不支持（传了会被忽略）。
+
+        Returns:
+            完整的 WAV 格式音频字节数据。
         """
         ...
 
@@ -29,12 +37,25 @@ class TTSBackend(ABC):
     def synthesize_stream(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> AsyncGenerator[bytes, None]:
-        """流式合成 — 边生成边产出音频 chunk。首 chunk 包含 WAV header 及初始音频数据。"""
+        """流式合成 — 边生成边产出音频 chunk。首 chunk 包含 WAV header 及初始音频数据。
+
+        Args:
+            text: 要合成的文本。
+            character: 发音人/音色名称，对应后端配置中的角色标识。
+            emotion: 可选的情绪参数，部分后端不支持（传了会被忽略）。
+
+        Yields:
+            音频字节数据 chunk。
+        """
         ...
 
     @abstractmethod
     async def test(self) -> dict:
-        """测试连通性。返回 {"ok": bool, "latency_ms": int, "error": str}"""
+        """测试连通性。
+
+        Returns:
+            {"ok": bool, "latency_ms": int, "error": str} 格式的连通性检测结果。
+        """
         ...
 
     @property
@@ -44,7 +65,10 @@ class TTSBackend(ABC):
         ...
 
     def get_preprocess(self):
-        """返回本后端使用的预处理函数，默认 None（不预处理）。"""
+        """返回本后端使用的预处理函数，默认 None（不预处理）。
+
+        Returns:
+            预处理函数 callable，或 None。"""
         return None
 
     @abstractmethod

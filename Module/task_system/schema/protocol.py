@@ -89,6 +89,12 @@ class TaskConstraints(BaseModel):
 
         任务级约束是全局的"子集天花板"——只应更严格，不应更宽松。
         DelegationPreparer 产出超过全局的值是 bug，但不会导致崩溃。
+
+        Args:
+            global_: 全局约束配置（天花板）。
+
+        Returns:
+            TaskConstraints: 全量有效约束（所有字段已填充，不超过全局上限）。
         """
         import logging
         _log = logging.getLogger(__name__)

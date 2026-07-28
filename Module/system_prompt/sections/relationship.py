@@ -8,6 +8,12 @@ class RelationshipSection(Jinja2Section):
     description = "关系：主动靠近不占有、四阶段发展、尊重边界（sol_pro 基准）"
 
     def __init__(self, template_path: str, character_name: str = ""):
+        """初始化 Relationship section。
+
+        Args:
+            template_path: 模板文件路径。
+            character_name: 角色名称。
+        """
         super().__init__(template_path)
         self._character_name = character_name
         self._user_name = ""

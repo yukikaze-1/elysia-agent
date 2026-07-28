@@ -23,6 +23,16 @@ class PromptManager:
         auto_reload: bool = False,
         logger: logging.Logger | None = None,
     ):
+        """初始化 Jinja2 模板渲染器。
+
+        Args:
+            template_dir: 模板目录路径。
+            auto_reload: 是否启用模板自动重载（开发模式）。
+            logger: 可选的日志记录器。
+
+        Raises:
+            FileNotFoundError: 模板目录不存在。
+        """
         if not os.path.isdir(template_dir):
             raise FileNotFoundError(
                 f"Template directory not found: {template_dir}"
@@ -48,9 +58,16 @@ class PromptManager:
     def render(self, template_name: str, **kwargs) -> str:
         """渲染整个模板文件。
 
-        :param template_name: 模板文件名 (如 "simple.j2")
-        :param kwargs: 传递给模板的变量
-        :return: 渲染后的字符串
+        Args:
+            template_name: 模板文件名 (如 "simple.j2")。
+            **kwargs: 传递给模板的变量。
+
+        Returns:
+            渲染后的字符串。
+
+        Raises:
+            FileNotFoundError: 模板文件不存在。
+            RuntimeError: 渲染过程出错。
         """
         try:
             template = self.env.get_template(template_name)
@@ -72,10 +89,17 @@ class PromptManager:
     ) -> str:
         """渲染模板中的指定 macro。
 
-        :param template_name: 模板文件名 (如 "Brain.j2")
-        :param macro_name: 模板内定义的 macro 名
-        :param kwargs: 传递给 macro 的参数
-        :return: 渲染后的字符串
+        Args:
+            template_name: 模板文件名 (如 "Brain.j2")。
+            macro_name: 模板内定义的 macro 名。
+            **kwargs: 传递给 macro 的参数。
+
+        Returns:
+            渲染后的字符串。
+
+        Raises:
+            FileNotFoundError: 模板文件不存在。
+            ValueError: macro 名在模板中找不到。
         """
         try:
             template = self.env.get_template(template_name)

@@ -58,7 +58,15 @@ class ToolContext:
     services: dict[str, Any] = field(default_factory=dict)
 
     def get(self, name: str, default: Any = None) -> Any:
-        """获取已注册的服务。"""
+        """获取已注册的服务。
+
+        Args:
+            name: 服务名称。
+            default: 未找到时的默认值。
+
+        Returns:
+            已注册的服务实例或 default。
+        """
         return self.services.get(name, default)
 
 
@@ -110,6 +118,14 @@ class ToolEmitter:
         """向 execute_stream() 调用方发送进度事件。
 
         如果不在 execute_stream() 上下文中（即普通 execute()），此方法是 no-op。
+
+        Args:
+            percent: 进度百分比（0.0 ~ 1.0），可为 None。
+            message: 进度描述信息。
+            data: 附加数据，必须可 JSON 序列化。
+
+        Returns:
+            None
         """
         if self._queue is not None:
             await self._queue.put(ToolProgress(
@@ -126,6 +142,9 @@ class ToolEmitter:
                 if emit.is_cancelled():
                     return ToolResult.fail(...)
                 process(item)
+
+        Returns:
+            True 如果当前工具执行已被取消。
         """
         return self._task is not None and self._task.cancelled()
 
@@ -161,6 +180,21 @@ class ToolParameter:
         maximum: int | float | None = None,
         pattern: str | None = None,
     ):
+        """初始化工具参数定义。
+
+        Args:
+            type: JSON Schema 类型（"string", "integer", "number", "boolean", "object", "array" 等）。
+            description: 参数描述，会展示给 LLM。
+            required: 是否为必填参数。
+            default: 默认值。
+            default_set: True 表示 default=None 是有意设置的（Optional 参数），而非未提供默认。
+            enum: 允许的枚举值列表。
+            properties: object 类型的子属性映射。
+            items: array 类型的元素类型定义。
+            minimum: 数值最小值。
+            maximum: 数值最大值。
+            pattern: 字符串正则约束。
+        """
         self.type = type
         self.description = description
         self.required = required
@@ -275,6 +309,9 @@ class ToolDefinition:
 
         _hidden_params 中的参数不出现在 schema 中（对 LLM 不可见）。
         若 _schema 已设置则直接返回（Pydantic 模型路径）。
+
+        Returns:
+            标准 JSON Schema object（type="object", properties, required）。
         """
         if self._schema is not None:
             return self._schema
@@ -326,23 +363,55 @@ class ToolPlugin:
     # ---- 生命周期 ----
 
     async def setup(self, ctx: PluginContext) -> None:
-        """初始化 — 检测能力可用性，失败则抛出异常（工具不注册）。"""
+        """初始化插件。
+
+        Args:
+            ctx: 依赖注入容器，包含 memory、mongodb、milvus、http_client 等资源。
+
+        Raises:
+            Exception: 初始化失败时抛出异常，工具将不会被注册。
+        """
 
     async def teardown(self) -> None:
-        """清理资源 — 关闭连接池、释放锁等。"""
+        """清理资源 — 关闭连接池、释放锁等。
+
+        Returns:
+            None
+        """
 
     # ---- 执行 ----
 
     async def execute(
         self, *, ctx: ToolContext, emit: Any = None, params: Any = None,
     ) -> Any:
-        """执行工具 — params 是 Pydantic Model 实例。"""
+        """执行工具（非流式）。
+
+        Args:
+            ctx: 运行时上下文，包含 session_id、trace_id 等。
+            emit: 进度上报器（ToolEmitter），用于 report 中间进度。
+            params: 工具参数，通常为 Pydantic Model 实例或 None。
+
+        Returns:
+            ToolResult: 工具执行结果。
+
+        Raises:
+            NotImplementedError: 子类必须实现。
+        """
         raise NotImplementedError
 
     async def execute_stream(
         self, *, ctx: ToolContext, emit: Any, params: Any = None,
     ) -> AsyncIterator[Any]:
-        """流式执行 — yield ToolProgress | ToolResult。"""
+        """流式执行工具。
+
+        Args:
+            ctx: 运行时上下文，包含 session_id、trace_id 等。
+            emit: 进度上报器（ToolEmitter），用于 report 中间进度。
+            params: 工具参数，通常为 Pydantic Model 实例或 None。
+
+        Yields:
+            ToolProgress | ToolResult: 中间进度事件或最终执行结果。
+        """
         raise NotImplementedError
         yield  # make this an async generator
 
@@ -470,6 +539,9 @@ class ToolResult:
           TIMEOUT          → "...timed out...retry with a smaller scope"
           UNAVAILABLE      → "...unavailable...Do not retry this action"
           other            → "...failed. Do not retry with the same arguments"
+
+        Returns:
+            应注入 LLM context 的文本内容。
         """
         if not self.success:
             return self._format_error_for_llm()
@@ -485,7 +557,11 @@ class ToolResult:
         return base
 
     def _format_error_for_llm(self) -> str:
-        """将错误信息格式化为 LLM 可理解的提示。"""
+        """将错误信息格式化为 LLM 可理解的提示。
+
+        Returns:
+            根据 error_type 生成的 LLM 纠错指引文本。
+        """
         if self.error_type == ErrorType.INVALID_ARGUMENT:
             return (
                 f"Action '{self.tool_name}' failed due to invalid arguments. "

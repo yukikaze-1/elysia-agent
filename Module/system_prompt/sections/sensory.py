@@ -34,6 +34,11 @@ class SensorySection(Jinja2Section):
     description = "此刻感知：环境事实 + 输入来源 + 语音情绪（用户消息由消息列表传递）"
 
     def __init__(self, template_path: str):
+        """初始化 Sensory section。
+
+        Args:
+            template_path: 模板文件路径。
+        """
         super().__init__(template_path)
         self._stt_emotion = ""
         self._stt_events: list[str] = []
@@ -57,7 +62,13 @@ class SensorySection(Jinja2Section):
         return self._render_template(sensory_ctx=sensory_ctx)
 
     def _build_voice(self) -> str:
-        """构建 <voice> 内容。无 STT 数据时返回空串。"""
+        """构建语音感知描述。
+
+        无 STT 数据时返回空串。
+
+        Returns:
+            "语调: HAPPY :) | 事件: Laughter, Applause" 格式的语音描述字符串。
+        """
         parts = []
         if self._stt_emotion and self._stt_emotion != "NEUTRAL":
             emoji = self._emotion_emoji()
@@ -68,9 +79,19 @@ class SensorySection(Jinja2Section):
         return " | ".join(parts) if parts else ""
 
     def _emotion_emoji(self) -> str:
+        """获取当前 STT 情绪对应的 emoji。
+
+        Returns:
+            情绪 emoji 字符；无情绪数据时返回空串。
+        """
         return _stt_emotion_emoji(self._stt_emotion) if self._stt_emotion else ""
 
     def _format_events(self) -> str:
+        """格式化 STT 音频事件列表为可读字符串。
+
+        Returns:
+            "Laughter :) , Applause" 格式的事件字符串；无事件时返回空串。
+        """
         if not self._stt_events:
             return ""
         parts = []

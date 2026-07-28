@@ -38,7 +38,11 @@ _message_adapter: TypeAdapter[Message] = TypeAdapter(Message)
 
 
 def _archive_done(task: asyncio.Task) -> None:
-    """fire-and-forget 归档回调：静默吞掉异常（归档为 best-effort）。"""
+    """fire-and-forget 归档回调：静默吞掉异常（归档为 best-effort）。
+
+    Args:
+        task: 已完成的归档 asyncio.Task。
+    """
     try:
         task.result()
     except Exception:
@@ -53,6 +57,15 @@ class SessionMemory:
                  repo: SessionRepository | None = None,
                  msg_repo: MessageRepository | None = None,
                  character_state: CharacterState | None = None):
+        """初始化会话记忆。
+
+        Args:
+            max_messages: 消息窗口最大长度。
+            session_id: 会话唯一标识。
+            repo: SessionRepository 实例，用于 MongoDB 持久化。
+            msg_repo: MessageRepository 实例，用于消息归档。
+            character_state: 角色状态对象，None 时自动创建默认实例。
+        """
         self._messages: deque[Message] = deque(maxlen=max_messages)
         self._max_messages = max_messages
         self._session_id: SessionId = session_id
@@ -81,7 +94,11 @@ class SessionMemory:
     # ---- messages ----
 
     def add_message(self, msg: Message) -> None:
-        """存储一条 Pydantic Message 对象，同时 fire-and-forget 归档到永久存储。"""
+        """存储一条 Pydantic Message 对象，同时 fire-and-forget 归档到永久存储。
+
+        Args:
+            msg: 要存储的 Message 对象（UserMessage / AssistantMessage / ToolResultMessage）。
+        """
         self._messages.append(msg)
         if self._msg_repo is not None:
             task = asyncio.ensure_future(
@@ -90,14 +107,28 @@ class SessionMemory:
             task.add_done_callback(_archive_done)
 
     def recent_messages(self, n: int | None = None) -> list[Message]:
-        """返回最近 n 条消息（Pydantic 对象）。n 为 None 时返回全部。"""
+        """返回最近 n 条消息（Pydantic 对象）。
+
+        Args:
+            n: 返回的消息数量，None 时返回全部。
+
+        Returns:
+            Message 对象列表，从旧到新排列。
+        """
         msgs = list(self._messages)
         if n is not None:
             msgs = msgs[-n:]
         return msgs
 
     def messages_for_client(self, n: int | None = None) -> list[ClientMessageDict]:
-        """返回客户端友好的消息格式，从 Pydantic Message 转换为前端 dict。"""
+        """返回客户端友好的消息格式，从 Pydantic Message 转换为前端 dict。
+
+        Args:
+            n: 返回的消息数量，None 时返回全部。
+
+        Returns:
+            前端可用的 ClientMessageDict 列表。
+        """
         msgs = self.recent_messages(n)
         result: list[ClientMessageDict] = []
         for msg in msgs:
@@ -147,25 +178,42 @@ class SessionMemory:
 
     # ---- memory reflector ----
 
-    def set_memory_reflector(self, mr) -> None:
+    def set_memory_reflector(self, mr: object) -> None:
+        """设置 MemoryReflector 引用，供 save/load 时持久化反射器状态。
+
+        Args:
+            mr: MemoryReflector 实例。
+        """
         self._memory_reflector = mr
 
     # ---- MongoDB persistence ----
 
     async def connect_db(self) -> bool:
-        """Try to connect to MongoDB. Returns True if successful."""
+        """尝试连接 MongoDB。
+
+        Returns:
+            True 表示连接成功，False 表示不可用。
+        """
         if self._repo is None:
             self._repo = SessionRepository()
         return await self._repo.connect()
 
     async def health_check(self) -> bool:
-        """尝试重连 MongoDB。已连接则直接返回 True。"""
+        """尝试重连 MongoDB。
+
+        Returns:
+            True 表示已连接或重连成功，False 表示不可用。
+        """
         if self._repo is None:
             return False
         return await self._repo.health_check()
 
     async def save(self) -> bool:
-        """Persist current session。MongoDB 不可用时降级到本地 JSONL 文件。"""
+        """持久化当前会话。MongoDB 不可用时降级到本地 JSONL 文件。
+
+        Returns:
+            True 表示保存成功，False 表示所有存储方式均失败。
+        """
         # 同步子系统的内存状态到 character_state（reflector buffer 等）
         if self._pre_save_hook:
             self._pre_save_hook()
@@ -211,7 +259,14 @@ class SessionMemory:
             return False
 
     async def load_from_jsonl(self, merge: bool = False) -> bool:
-        """公开接口——从本地 JSONL 文件恢复 session。"""
+        """从本地 JSONL 文件恢复 session。
+
+        Args:
+            merge: True 时合并到现有消息，False 时替换现有消息。
+
+        Returns:
+            True 表示恢复成功，False 表示文件不存在或解析失败。
+        """
         return await self._load_from_jsonl(merge=merge)
 
     async def _load_from_jsonl(self, merge: bool = False) -> bool:
@@ -219,6 +274,12 @@ class SessionMemory:
 
         merge=False: 直接替换 _messages（用于 MongoDB 不可用时的独立恢复）
         merge=True:  合并到现有 _messages 后面（用于 MongoDB 恢复后补充 JSONL 数据）
+
+        Args:
+            merge: 是否合并模式（保留现有消息）。
+
+        Returns:
+            True 表示恢复成功，False 表示失败。
         """
         if not os.path.exists(self._pending_file):
             return False
@@ -262,7 +323,14 @@ class SessionMemory:
             return False
 
     async def load(self, session_id: SessionId | None = None) -> bool:
-        """Load session from MongoDB。MongoDB 不可用时尝试本地 JSONL 恢复。"""
+        """从 MongoDB 加载会话。MongoDB 不可用时尝试本地 JSONL 恢复。
+
+        Args:
+            session_id: 要加载的会话 ID，None 时使用当前 session_id。
+
+        Returns:
+            True 表示加载成功，False 表示所有方式均失败。
+        """
         if self._repo is None:
             return await self._load_from_jsonl()
         sid = session_id or self._session_id

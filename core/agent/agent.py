@@ -97,6 +97,12 @@ class Agent(AgentLifecycle, AgentServer):
     """Complete Agent wired from L0/L1/L2 components."""
 
     def __init__(self, *, config: AppConfig, config_path: str | None = None):
+        """初始化 Agent 并创建所有 L0/L1/L2 组件。
+
+        Args:
+            config: 应用配置（AppConfig 实例）。
+            config_path: 配置文件路径，用于 /restart 时重新加载配置。
+        """
         self._config = config
         self._config_path = config_path
         self._user_name = config.agent.user_name
@@ -236,13 +242,15 @@ class Agent(AgentLifecycle, AgentServer):
 
     async def process_message(self, text: str = "", user_name: str = "",
                                content: list[dict] | None = None) -> None:
-        """Process a single user message through the pipeline.
+        """处理单条用户消息，通过管道送入 CognitiveLoop。
 
-        text: 纯文本消息（兼容旧调用）
-        content: 多模态内容数组（ChatMessageV2 content）— 新接口
+        Agent 忙碌时消息入队（FIFO），IDLE 时出队处理。
+        显式中断（停止按钮、VAD）仍通过 EventBus INTERRUPT 机制生效。
 
-        If the agent is busy, the message is queued and processed when IDLE.
-        Explicit interrupt (stop button, VAD) still works via EventBus INTERRUPT.
+        Args:
+            text: 纯文本消息（兼容旧调用）。
+            user_name: 发送者名称，为空时使用配置中的默认用户名。
+            content: 多模态内容数组（ChatMessageV2 content），新接口。
         """
         user_name = user_name or self._user_name
         if not text.strip() and not content:
@@ -271,8 +279,15 @@ class Agent(AgentLifecycle, AgentServer):
 
     # ---- Background task lifecycle ----
 
-    def _register_background_task(self, task_id: str, mailbox, intent: str, dispatched_at: IsoTimestamp) -> None:
-        """CognitiveLoop 提交后台任务后调用——注册到轮询列表。"""
+    def _register_background_task(self, task_id: str, mailbox: Any, intent: str, dispatched_at: IsoTimestamp) -> None:
+        """CognitiveLoop 提交后台任务后调用——注册到轮询列表。
+
+        Args:
+            task_id: 后台任务的唯一标识符。
+            mailbox: asyncio.Queue，用于接收任务完成/失败事件。
+            intent: 任务意图描述。
+            dispatched_at: 任务派发时间（ISO 8601 格式）。
+        """
         self._background_tasks[task_id] = _BackgroundTaskEntry(
             intent=intent,
             dispatched_at=dispatched_at,
@@ -359,6 +374,9 @@ class Agent(AgentLifecycle, AgentServer):
         """处理 INTERRUPT 事件：cancel cognitive task，清空队列。
 
         保留 STATE_CHANGE 事件（前端 UI 需要），丢弃其余排队事件。
+
+        Args:
+            data: 中断事件数据，包含中断来源等信息。
         """
         set_request_id("-")
         logger.info("EventBus: INTERRUPT (%s)", data.source)
@@ -370,7 +388,11 @@ class Agent(AgentLifecycle, AgentServer):
         self._pending_messages.clear()
 
     def _handle_user_input(self, data: UserInputData) -> None:
-        """处理 USER_INPUT 事件：创建 cognitive task 异步运行。"""
+        """处理 USER_INPUT 事件：创建 cognitive task 异步运行。
+
+        Args:
+            data: 用户输入事件数据，包含文本、用户名、情感、多模态内容等。
+        """
         text = data.text
         user_name = data.user_name
         stt_emotion = data.emotion
@@ -393,7 +415,11 @@ class Agent(AgentLifecycle, AgentServer):
         self._cognitive._current_task = task
 
     def _handle_system_tick(self, data: SystemTickData) -> None:
-        """处理 SYSTEM_TICK 事件——silence_timeout 时主动开启话题。"""
+        """处理 SYSTEM_TICK 事件——silence_timeout 时主动开启话题。
+
+        Args:
+            data: 系统定时事件数据，包含触发原因和已过秒数。
+        """
         # TODO: time_of_day 事件未处理——producer 在 idle_monitor._check_proactive 中，
         #       此处只消费 silence_timeout。time_of_day 事件静默丢弃，等待后续实现。
         if data.reason == "silence_timeout":
@@ -413,7 +439,11 @@ class Agent(AgentLifecycle, AgentServer):
             self._cognitive._current_task = task
 
     def _handle_task_result(self, data: TaskResultData) -> None:
-        """处理 TASK_RESULT 事件——后台任务完成，唤醒 CognitiveLoop。"""
+        """处理 TASK_RESULT 事件——后台任务完成，唤醒 CognitiveLoop。
+
+        Args:
+            data: 任务结果事件数据，包含 task_id、结果文本和原始意图。
+        """
         rid = self.next_request_id()
         set_request_id(rid)
         task = asyncio.create_task(
@@ -431,6 +461,9 @@ class Agent(AgentLifecycle, AgentServer):
 
         IDLE/IDLE_BACKGROUND_TASK 时检查排队消息（FIFO 出队），
         通知所有输出通道状态变更（前端据此切换动画）。
+
+        Args:
+            data: 状态变更事件数据，包含新状态名称。
         """
         state = data.state
         logger.info("FSM → %s", state)

@@ -38,6 +38,12 @@ class LLMAdapter:
 
     def __init__(self, model: str | None = None, *,
                  _test_backend: "LLMBackend | None" = None):
+        """初始化 LLM 适配器。
+
+        Args:
+            model: LLM 模型标识符（如 "deepseek/deepseek-chat"），为 None 时使用默认值。
+            _test_backend: 测试用后端实例，为 None 时通过工厂创建。
+        """
         self._requested_model = model or "deepseek/deepseek-chat"
 
         if _test_backend is not None:
@@ -50,7 +56,16 @@ class LLMAdapter:
 
     async def think(self, messages: list[dict], tools: list[dict] | None = None,
                     **kwargs) -> ThoughtResult:
-        """Think: call LLM and return structured result (text + optional tool_calls)."""
+        """调用 LLM 并返回结构化结果（text + 可选 tool_calls）。
+
+        Args:
+            messages: LLM 对话消息列表。
+            tools: 可选的工具定义列表，非 None 时启用 tool_choice=auto。
+            **kwargs: 传递给后端 chat() 的额外参数。
+
+        Returns:
+            ThoughtResult: 包含 text 和 tool_calls 的结构化结果。
+        """
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
@@ -67,20 +82,35 @@ class LLMAdapter:
         return ThoughtResult(text=response)
 
     async def think_stream(self, messages: list[dict]) -> AsyncIterator[str]:
-        """Stream tokens from the LLM. For final answer delivery only (no tools)."""
+        """从 LLM 流式获取 token。仅用于最终回答输出（不支持工具调用）。
+
+        Args:
+            messages: LLM 对话消息列表。
+
+        Returns:
+            AsyncIterator[str]: 流式文本 token 迭代器。
+        """
         async for token in self._backend.chat_stream(messages):
             yield token
 
     async def stream_think(
         self, messages: list[dict], tools: list[dict] | None = None, **kwargs
     ) -> AsyncIterator[dict]:
-        """Stream structured chunks with tool_call detection + retry on 429/5xx.
+        """流式输出结构化 chunk，支持工具调用检测 + 429/5xx 重试。
 
         Yields dicts: {"content": str | None, "tool_calls": list[dict] | None}
         流最后一个 chunk 可能包含可选的 "usage" 键:
           {"content": None, "tool_calls": None, "usage": {prompt_tokens, completion_tokens, total_tokens}}
-        Retries on transient server errors (429, 500-504) with exponential backoff.
-        Only retries if streaming hasn't started yet (no duplicate content).
+        对临时服务器错误（429, 500-504）以指数退避重试。
+        仅在流尚未开始输出时重试（避免重复内容）。
+
+        Args:
+            messages: LLM 对话消息列表。
+            tools: 可选的工具定义列表，非 None 时启用 tool_choice=auto。
+            **kwargs: 传递给后端的额外参数。
+
+        Returns:
+            AsyncIterator[dict]: 结构化 chunk 迭代器，每个 chunk 包含 content 和 tool_calls 键。
         """
         if tools:
             kwargs["tools"] = tools
@@ -115,7 +145,14 @@ class LLMAdapter:
 
     @staticmethod
     def _extract_status(exc: Exception) -> int | None:
-        """从异常中提取 HTTP 状态码。"""
+        """从异常中提取 HTTP 状态码。
+
+        Args:
+            exc: 异常对象（如 httpx.HTTPStatusError 或 openai.APIStatusError）。
+
+        Returns:
+            int | None: HTTP 状态码，无法提取时返回 None。
+        """
         # httpx.HTTPStatusError / openai.APIStatusError
         status: int | None = getattr(exc, 'status_code', None)  # type: ignore[union-attr]
         if status is not None:
@@ -127,6 +164,7 @@ class LLMAdapter:
         return None
 
     async def close(self) -> None:
+        """关闭底层 LLM 后端的连接。"""
         if self._backend:
             await self._backend.close()
 
@@ -138,7 +176,11 @@ class LLMAdapter:
             await reconnect_meth()
 
     def switch_model(self, new_model_id: str) -> None:
-        """热切换 LLM 模型。关闭当前后端，用新 model_id 创建后端。"""
+        """热切换 LLM 模型。关闭当前后端，用新 model_id 创建后端。
+
+        Args:
+            new_model_id: 新的模型标识符（如 "deepseek/deepseek-v4-flash"）。
+        """
         if hasattr(self._backend, 'close'):
             try:
                 import asyncio as _asyncio
@@ -157,7 +199,7 @@ class LLMAdapter:
     def model(self) -> str:
         return self._requested_model
 
-    def get_raw_client(self):
+    def get_raw_client(self) -> "object | None":
         """返回底层异步 HTTP 客户端，供 TaskSystem Planner/Executor 使用。
 
         Returns:

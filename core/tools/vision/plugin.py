@@ -6,10 +6,11 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from Module.tool.protocol import ToolPlugin, ToolResult
+from Module.tool.protocol import ToolPlugin, ToolResult, ToolContext, PluginContext
 from Module.tool.safety import SafetyProfile
 from Module.llm.registry import LLMFactory
 from core.schema.message import UserMessage
@@ -57,13 +58,32 @@ class DescribeImagePlugin(ToolPlugin):
     capabilities: set = set()
     safety = SafetyProfile(requires_human_approval=False, request_timeout=120.0)
 
-    async def setup(self, ctx) -> None:
+    async def setup(self, ctx: PluginContext) -> None:
+        """初始化插件，保存插件上下文。
+
+        Args:
+            ctx: 插件上下文，包含依赖注入的服务。
+        """
         self._ctx = ctx
 
     # ------------------------------------------------------------------
     # 公共入口 — 根据参数分发到单图或批量路径
     # ------------------------------------------------------------------
-    async def execute(self, *, ctx, emit=None, params: DescribeImageParams) -> ToolResult:
+    async def execute(
+        self, *, ctx: ToolContext, emit: Any = None, params: DescribeImageParams,
+    ) -> ToolResult:
+        """查看用户发送的图片并描述其内容。
+
+        根据参数分发到单图模式或批量模式。
+
+        Args:
+            ctx: 工具调用上下文。
+            emit: 进度上报器（未使用）。
+            params: 图片描述参数，包含提示词和图片索引。
+
+        Returns:
+            ToolResult，包含图片描述或错误信息。
+        """
         session = ctx.get("session")
         if session is None:
             return ToolResult.fail(name=self.name, error="session 不可用")
@@ -87,7 +107,19 @@ class DescribeImagePlugin(ToolPlugin):
     # ------------------------------------------------------------------
     # 单图模式 — 保留原有逻辑不变
     # ------------------------------------------------------------------
-    async def _describe_single(self, ctx, images: list[ImagePart], params: DescribeImageParams) -> ToolResult:
+    async def _describe_single(
+        self, ctx: ToolContext, images: list[ImagePart], params: DescribeImageParams,
+    ) -> ToolResult:
+        """单图模式：使用视觉模型描述单张图片。
+
+        Args:
+            ctx: 工具调用上下文。
+            images: 用户消息中的图片列表。
+            params: 图片描述参数。
+
+        Returns:
+            ToolResult，包含图片描述或错误信息。
+        """
         if params.image_index >= len(images):
             return ToolResult.fail(
                 name=self.name,
@@ -149,7 +181,19 @@ class DescribeImagePlugin(ToolPlugin):
     # ------------------------------------------------------------------
     # 批量模式 — 一次 MIMO 调用处理多张图片
     # ------------------------------------------------------------------
-    async def _describe_batch(self, ctx, images: list[ImagePart], params: DescribeImageParams) -> ToolResult:
+    async def _describe_batch(
+        self, ctx: ToolContext, images: list[ImagePart], params: DescribeImageParams,
+    ) -> ToolResult:
+        """批量模式：一次 MIMO 调用处理多张图片。
+
+        Args:
+            ctx: 工具调用上下文。
+            images: 用户消息中的图片列表。
+            params: 图片描述参数，包含 image_indices。
+
+        Returns:
+            ToolResult，包含批量图片描述或错误信息。
+        """
         indices = params.image_indices
 
         # 校验索引范围
@@ -204,8 +248,15 @@ class DescribeImagePlugin(ToolPlugin):
     # 共享工具方法
     # ------------------------------------------------------------------
     @staticmethod
-    def _get_vision_model_id(ctx) -> str:
-        """读取 vision model ID，默认 mimo/mimo-v2.5。"""
+    def _get_vision_model_id(ctx: ToolContext) -> str:
+        """读取 vision model ID，默认 mimo/mimo-v2.5。
+
+        Args:
+            ctx: 工具调用上下文。
+
+        Returns:
+            vision model ID 字符串。
+        """
         config = ctx.get("config")
         if config:
             vision_cfg = getattr(config, "vision", None)
@@ -215,10 +266,26 @@ class DescribeImagePlugin(ToolPlugin):
 
 
 def _cache_path(key: str) -> Path:
+    """根据缓存键生成缓存文件路径。
+
+    Args:
+        key: 缓存键（hash 字符串）。
+
+    Returns:
+        缓存文件路径。
+    """
     return _CACHE_DIR / f"{key}.json"
 
 
 def _load_cache(key: str) -> str | None:
+    """从缓存文件加载图片描述。
+
+    Args:
+        key: 缓存键（hash 字符串）。
+
+    Returns:
+        缓存的描述字符串，未命中时返回 None。
+    """
     p = _cache_path(key)
     if p.exists():
         try:
@@ -230,6 +297,13 @@ def _load_cache(key: str) -> str | None:
 
 
 def _save_cache(key: str, description: str, model: str) -> None:
+    """将图片描述保存到缓存文件。
+
+    Args:
+        key: 缓存键（hash 字符串）。
+        description: 图片描述文本。
+        model: 使用的视觉模型 ID。
+    """
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     import time
     _cache_path(key).write_text(

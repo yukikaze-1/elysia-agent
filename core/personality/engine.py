@@ -74,11 +74,24 @@ class CharacterEngine:
         character_name: str,
         user_name: str,
         base_personality: str,
-        character_config,          # CharacterConfig
+        character_config: object,          # CharacterConfig
         output: OutputManager,
         prompt_dir: str | None = None,
         version_repo: "CharacterVersionRepository | None" = None,
     ):
+        """初始化角色引擎。
+
+        Args:
+            llm: LLM 适配器。
+            state: 角色状态对象。
+            character_name: 角色名。
+            user_name: 用户名。
+            base_personality: L1 核心性格文本。
+            character_config: CharacterConfig 配置对象。
+            output: 输出管理器。
+            prompt_dir: prompt 模板目录路径，None 时使用默认路径。
+            version_repo: 角色版本仓库，用于 L2/C6 版本历史持久化。
+        """
         self._llm = llm
         self.state = state
         self._character_name = character_name
@@ -139,7 +152,11 @@ class CharacterEngine:
     # ---- 数据提供（给 section 渲染用）----
 
     def render_c1(self) -> C1Data:
-        """产出 C1 Personality section 的数据。"""
+        """产出 C1 Personality section 的数据。
+
+        Returns:
+            C1Data（core_personality + self_personality）。
+        """
         l2 = self.state.self_l2
         return C1Data(
             core_personality=self._l1_core,
@@ -151,6 +168,9 @@ class CharacterEngine:
 
         Phase 2: 从 judge 缓存读取，不再直接使用 raw L3。
         加冷却 + 展示次数门控。
+
+        Returns:
+            C9Data（awareness_text，不允许时为空字符串）。
         """
         if not self._awareness.is_allowed():
             return C9Data(awareness_text="")
@@ -161,7 +181,11 @@ class CharacterEngine:
         return C9Data(awareness_text=self.state.approved_awareness_text)
 
     def render_c6(self) -> C6Data:
-        """产出 C6 SpeakingStyle section 的数据。"""
+        """产出 C6 SpeakingStyle section 的数据。
+
+        Returns:
+            C6Data（speaking_style_c6，空字符串表示使用默认模板）。
+        """
         return C6Data(speaking_style_c6=self.state.speaking_style_c6)
 
     # ---- 触发事件 ----
@@ -207,12 +231,23 @@ class CharacterEngine:
         self._awareness._last_awareness_time = value
 
     def _awareness_allowed(self) -> bool:
+        """检查当前是否允许 C9 渲染。
+
+        Returns:
+            True 表示允许展示觉察文本。
+        """
         return self._awareness.is_allowed()
 
     def _maybe_judge_awareness(self) -> None:
+        """触发异步 awareness 判定（fire-and-forget）。"""
         self._awareness.maybe_judge()
 
     async def _judge_awareness(self, l3_text: str) -> None:
+        """执行 LLM 觉察判定。
+
+        Args:
+            l3_text: 当前 L3 状态文本。
+        """
         if self._pm is None:
             return
         await self._awareness._judge(l3_text)
@@ -220,12 +255,23 @@ class CharacterEngine:
     # ---- L3→L2 压缩（委托给 CompressionManager）----
 
     def _should_compress(self) -> bool:
+        """检查是否应触发 L3→L2 压缩。
+
+        Returns:
+            True 表示满足压缩触发条件。
+        """
         return self._compression._should_compress()
 
     async def _maybe_compress(self) -> None:
+        """检查并触发 L3→L2 压缩（如满足条件）。"""
         await self._compression.check_and_compress(_refresh_cb=self._refresh_c6)
 
     async def _compress(self, trigger: CompressionTrigger = CompressionTrigger.COMPRESSION) -> None:
+        """执行 L3→L2 压缩。
+
+        Args:
+            trigger: 压缩触发类型（COMPRESSION / FLUSH）。
+        """
         await self._compression._compress(trigger, _refresh_cb=self._refresh_c6)
 
     async def _refresh_c6(self) -> None:
@@ -241,19 +287,31 @@ class CharacterEngine:
     # ---- 内部状态管理 ----
 
     def _set_state_l3(self, text: str) -> None:
-        """设置 L3 State，追加历史。"""
+        """设置 L3 State，追加历史。
+
+        Args:
+            text: 要设置的 L3 状态文本。
+        """
         self.state.state_l3 = text
         self._append_history(text)
 
     def _append_state_l3(self, text: str) -> None:
-        """追加内容到 L3 State。"""
+        """追加内容到 L3 State。
+
+        Args:
+            text: 要追加的内容。
+        """
         current = self.state.state_l3
         new = f"{current}\n{text}" if current else text
         self.state.state_l3 = new
         self._append_history(text)
 
     def _append_history(self, content: str) -> None:
-        """追加条目到 state_history，控制长度。"""
+        """追加条目到 state_history，控制长度。
+
+        Args:
+            content: 要追加的历史内容。
+        """
         history = self.state.state_history
         history.append({"timestamp": time.time(), "content": content})
         if len(history) > AWARENESS_MAX_HISTORY:
@@ -272,7 +330,12 @@ class CharacterEngine:
     # ---- Reflector 代理 ----
 
     def buffer_message(self, user_msg: str, assistant_msg: str) -> None:
-        """缓冲一轮对话到 CharacterReflector。"""
+        """缓冲一轮对话到 CharacterReflector。
+
+        Args:
+            user_msg: 用户消息文本。
+            assistant_msg: 助手回复文本。
+        """
         if self._reflector:
             asyncio.create_task(self._reflector.buffer(user_msg, assistant_msg))
 
@@ -286,12 +349,28 @@ class CharacterEngine:
     # ================================================================
 
     def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None) -> None:
+        """处理 STT 音频情绪事件。
+
+        Args:
+            emotion_tag: 音频识别的情绪标签。
+            events: 音频事件列表（如 Laughter、Cry、Applause）。
+        """
         self._emotion.analyze_user_stt(emotion_tag, events)
 
     def analyze_user(self, text: str) -> None:
+        """关键词检测用户消息中的情绪。
+
+        Args:
+            text: 用户消息文本。
+        """
         self._emotion.analyze_user(text)
 
     def analyze_assistant(self, text: str) -> None:
+        """衰减助手回复后的情绪强度。
+
+        Args:
+            text: 助手回复文本（当前未使用，保留接口兼容）。
+        """
         self._emotion.analyze_assistant(text)
 
     async def push_idle_expression(self) -> None:
@@ -300,12 +379,27 @@ class CharacterEngine:
     # ---- 内部委托方法（向后兼容：测试直接访问这些私有 API）----
 
     def _detect_mood(self, text: str) -> str:
+        """关键词情绪检测。
+
+        Args:
+            text: 要检测的文本。
+
+        Returns:
+            检测到的情绪标签字符串。
+        """
         return self._emotion._detect_mood(text)
 
     def _push_idle(self) -> None:
+        """推送随机空闲表情。"""
         self._emotion._push_idle()
 
     def _push_expression(self, mood_text: str, intensity: float) -> None:
+        """推送表情到输出通道。
+
+        Args:
+            mood_text: 情绪描述文本。
+            intensity: 情绪强度（0.0-1.0）。
+        """
         self._emotion._push_expression(mood_text, intensity)
 
     @property

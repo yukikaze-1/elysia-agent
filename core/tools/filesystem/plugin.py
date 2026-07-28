@@ -3,6 +3,7 @@
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +13,14 @@ from Module.tool.safety import SafetyProfile
 
 
 def _format_size(size: int) -> str:
+    """将字节数格式化为人类可读的大小字符串。
+
+    Args:
+        size: 字节数。
+
+    Returns:
+        格式化后的大小字符串（如 "1.5M"）。
+    """
     if size < 1024:
         return f"{size}B"
     elif size < 1024 * 1024:
@@ -45,8 +54,18 @@ class ReadFilePlugin(ToolPlugin):
     )
 
     async def execute(
-        self, *, ctx: ToolContext, emit=None, params: ReadFileParams,
+        self, *, ctx: ToolContext, emit: Any = None, params: ReadFileParams,
     ) -> str:
+        """读取指定文件的内容。
+
+        Args:
+            ctx: 工具调用上下文。
+            emit: 进度上报器（未使用）。
+            params: 读取参数，包含路径、起始行和最大行数。
+
+        Returns:
+            文件内容字符串，或错误信息。
+        """
         path = ctx.get("_safe_path") or params.path
         resolved = Path(path)
 
@@ -116,8 +135,18 @@ class ListDirPlugin(ToolPlugin):
     )
 
     async def execute(
-        self, *, ctx: ToolContext, emit=None, params: ListDirParams,
+        self, *, ctx: ToolContext, emit: Any = None, params: ListDirParams,
     ) -> str:
+        """列出目录中的文件和子目录。
+
+        Args:
+            ctx: 工具调用上下文。
+            emit: 进度上报器（未使用）。
+            params: 列表参数，包含路径和遍历深度。
+
+        Returns:
+            目录列表字符串，或错误信息。
+        """
         path = ctx.get("_safe_path") or params.path
         resolved = Path(path)
 
@@ -195,8 +224,18 @@ class WriteFilePlugin(ToolPlugin):
     )
 
     async def execute(
-        self, *, ctx: ToolContext, emit=None, params: WriteFileParams,
+        self, *, ctx: ToolContext, emit: Any = None, params: WriteFileParams,
     ) -> str:
+        """在安全目录下写入文件。
+
+        Args:
+            ctx: 工具调用上下文。
+            emit: 进度上报器（未使用）。
+            params: 写入参数，包含路径和内容。
+
+        Returns:
+            写入结果字符串。
+        """
         path = ctx.get("_safe_path") or params.path
         resolved = Path(path)
 

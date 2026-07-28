@@ -20,8 +20,21 @@ _KNOWN_DIMS: dict[str, int] = {
 }
 
 
-def _find_local_model(model_name: str, cache_folder: str) -> str | None:
-    """Find a model in local cache. Returns path or None."""
+def _find_local_model(model_name: str, cache_folder: str | None) -> str | None:
+    """在本地缓存中查找模型，返回路径或 None。
+
+    依次检查：
+    1. 显式缓存目录（如 {cache_folder}/BAAI/bge-large-zh-v1.5）
+    2. HuggingFace hub 缓存（~/.cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5）
+
+    Args:
+        model_name: HuggingFace 模型名（如 "BAAI/bge-large-zh-v1.5"）。
+        cache_folder: 显式缓存根目录，可为 None。
+
+    Returns:
+        本地模型路径字符串，未找到时返回 None。
+    """
+    cache_folder = cache_folder or ""
     # 1. Explicit cache folder (e.g. /home/yomu/Elysia/model_cache/BAAI/bge-large-zh-v1.5)
     explicit = os.path.join(cache_folder, model_name)
     if os.path.isdir(explicit):
@@ -60,6 +73,18 @@ class HuggingFaceBackend(EmbeddingBackend):
         dimension: int = 0,
         logger: logging.Logger | None = None,
     ):
+        """初始化 HuggingFace embedding 后端。
+
+        Args:
+            model_name: HuggingFace 模型名，默认 "BAAI/bge-large-zh-v1.5"。
+            device: 推理设备，None 时自动检测（CUDA >= compute 7 → cuda，否则 cpu）。
+            cache_folder: 模型缓存目录，None 时使用 MODEL_CACHE_DIR 环境变量
+                或项目根目录的 .model_cache。
+            normalize: 是否对输出向量做 L2 归一化，默认 True。
+            dimension: 向量维度，0 表示从 _KNOWN_DIMS 自动获取，
+                未知模型需显式指定。
+            logger: 日志记录器，未提供时自动创建。
+        """
         if device is None:
             if torch.cuda.is_available():
                 try:

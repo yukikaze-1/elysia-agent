@@ -26,8 +26,24 @@ _BACKENDS: dict[str, dict] = {
 
 
 class VectorDBFactory:
+    """向量数据库工厂 — 按 provider/name 格式标识创建后端实例。"""
+
     @staticmethod
     def create(provider_id: str, **kwargs) -> "VectorDBBackend":
+        """创建向量数据库后端实例。
+
+        Args:
+            provider_id: 格式为 "provider/name" 的标识字符串，
+                如 "milvus/long_term_memory"。
+            **kwargs: 传递给后端构造函数的附加参数（如 logger、token）。
+
+        Returns:
+            对应 provider 的 VectorDBBackend 实例。
+
+        Raises:
+            ValueError: provider_id 格式不合法或 provider 未知时抛出。
+            NotImplementedError: provider 尚未实现时抛出。
+        """
         if "/" not in provider_id:
             raise ValueError(
                 f"Invalid provider_id '{provider_id}': expected 'provider/name' format"
@@ -59,7 +75,16 @@ class VectorDBFactory:
 
     @classmethod
     def from_config(cls, provider_id: str, config: "VectorDBConfig", **overrides) -> "VectorDBBackend":
-        """从 VectorDBConfig dataclass 创建后端，overrides 优先级最高。"""
+        """从 VectorDBConfig dataclass 创建后端。
+
+        Args:
+            provider_id: 格式为 "provider/name" 的标识字符串。
+            config: VectorDBConfig dataclass 实例。
+            **overrides: 覆盖 config 中字段的附加参数，优先级最高。
+
+        Returns:
+            对应 provider 的 VectorDBBackend 实例。
+        """
         kwargs = dataclasses.asdict(config)
         kwargs.update(overrides)
         # 空 base_url 不传入，让 create() 从 env var 解析

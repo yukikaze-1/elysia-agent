@@ -23,7 +23,12 @@ logger = logging.getLogger(__name__)
 async def handle_success(
     result: OrchestratorResult, task_state: TaskState,
 ) -> None:
-    """所有 required 节点完成——任务成功。"""
+    """所有 required 节点完成——任务成功。
+
+    Args:
+        result: Orchestrator 执行结果
+        task_state: 当前任务状态
+    """
     logger.info("SubAgent: task_id=%s 成功完成", task_state.task_id)
 
 
@@ -33,7 +38,14 @@ async def handle_failed(
     mailbox: TaskMailbox,
     push_mailbox_fn: Callable[..., Awaitable[None]],
 ) -> None:
-    """不可恢复失败——推送 FAILED 事件。"""
+    """不可恢复失败——推送 FAILED 事件。
+
+    Args:
+        result: Orchestrator 执行结果，包含 error_context
+        task_state: 当前任务状态
+        mailbox: 任务邮箱，用于推送事件
+        push_mailbox_fn: 推送邮箱事件的异步回调
+    """
     error_reason = result.error_context.get("reason", "未知")
     logger.error(
         "SubAgent: task_id=%s 失败: %s",
@@ -56,6 +68,12 @@ async def handle_cancelled(
 
     Orchestrator 已将 task_state.status 设为 CANCELLED 并保存了 checkpoint。
     推送事件后退出执行循环，_run_and_cleanup finally 块负责清理。
+
+    Args:
+        result: Orchestrator 执行结果
+        task_state: 当前任务状态
+        mailbox: 任务邮箱，用于推送事件
+        push_mailbox_fn: 推送邮箱事件的异步回调
     """
     logger.info("SubAgent: task_id=%s 已取消", task_state.task_id)
     await push_mailbox_fn(mailbox, TaskEventType.CANCELLED, {
@@ -76,6 +94,12 @@ async def handle_blocked(
     返回后由 TaskSystem 主类接管：
         1. 等待 HITLNotifier.submit_approval() 回调
         2. 审批通过后从 checkpoint 重建 exec_state → 继续 run()
+
+    Args:
+        result: Orchestrator 执行结果
+        task_state: 当前任务状态
+        mailbox: 任务邮箱，用于推送事件
+        push_mailbox_fn: 推送邮箱事件的异步回调
     """
     logger.info("SubAgent: task_id=%s 等待审批", task_state.task_id)
     await push_mailbox_fn(mailbox, TaskEventType.APPROVAL_NEEDED, {
@@ -91,7 +115,15 @@ async def handle_paused(
     checkpoint_mgr: CheckpointManager,
     push_mailbox_fn: Callable[..., Awaitable[None]],
 ) -> None:
-    """收到暂停请求——保存 checkpoint，推送 PAUSED 事件。"""
+    """收到暂停请求——保存 checkpoint，推送 PAUSED 事件。
+
+    Args:
+        result: Orchestrator 执行结果，包含 checkpoint_state
+        task_state: 当前任务状态
+        mailbox: 任务邮箱，用于推送事件
+        checkpoint_mgr: 检查点管理器，用于持久化 checkpoint
+        push_mailbox_fn: 推送邮箱事件的异步回调
+    """
     if result.checkpoint_state is None:
         logger.error(
             "SubAgent: task_id=%s PAUSED 但 checkpoint_state 为 None",

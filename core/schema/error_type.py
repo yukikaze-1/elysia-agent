@@ -19,7 +19,11 @@ class ErrorType(str, Enum):
 
     @property
     def is_retryable(self) -> bool:
-        """是否适合重试。"""
+        """是否适合重试。
+
+        Returns:
+            True 如果此错误类型可以通过退避或缩小参数范围重试。
+        """
         return self in (
             ErrorType.TIMEOUT,
             ErrorType.RATE_LIMITED,

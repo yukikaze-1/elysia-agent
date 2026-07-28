@@ -12,6 +12,14 @@ _COLLECTION_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 def _validate_collection(name: str) -> None:
+    """校验 collection 名称是否合法（仅允许字母、数字、下划线、连字符）。
+
+    Args:
+        name: 待校验的 collection 名称。
+
+    Raises:
+        ValueError: 名称包含不允许的字符时抛出。
+    """
     if not _COLLECTION_NAME_RE.match(name):
         raise ValueError(
             f"无效的 collection 名: {name!r}，"
@@ -33,6 +41,14 @@ class MongoDBBackend(DocumentDBBackend):
         logger: logging.Logger | None = None,
         server_selection_timeout_ms: int = 3000,
     ):
+        """初始化 MongoDB 后端。
+
+        Args:
+            uri: MongoDB 连接串（如 mongodb://localhost:27017）。
+            database: 目标数据库名，默认 "elysia"。
+            logger: 日志记录器，未提供时自动创建。
+            server_selection_timeout_ms: 服务端选择超时毫秒数，默认 3000。
+        """
         self._logger = logger or logging.getLogger(__name__)
         self._client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=server_selection_timeout_ms)
         self._db = self._client[database]

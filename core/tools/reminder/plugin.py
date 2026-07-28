@@ -1,6 +1,8 @@
 """提醒工具插件 — 设置定时提醒。"""
 
 import asyncio
+from typing import Any
+
 from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin, ToolContext
 from Module.tool.capability import Capability
@@ -23,8 +25,18 @@ class SetReminderPlugin(ToolPlugin):
     safety = SafetyProfile()
 
     async def execute(
-        self, *, ctx: ToolContext, emit=None, params: ReminderParams,
+        self, *, ctx: ToolContext, emit: Any = None, params: ReminderParams,
     ) -> str:
+        """设置定时提醒，在指定秒数后通知用户。
+
+        Args:
+            ctx: 工具调用上下文。
+            emit: 进度上报器（未使用）。
+            params: 提醒参数，包含提醒内容和延迟秒数。
+
+        Returns:
+            设置结果字符串。
+        """
         async def _remind():
             import asyncio
             await asyncio.sleep(params.delay_seconds)

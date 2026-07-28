@@ -16,7 +16,11 @@ class ToolCallFunction(BaseModel):
 
     @property
     def parsed(self) -> dict[str, Any]:
-        """将 arguments JSON 字符串解析为 dict。解析失败返回 {}。"""
+        """将 arguments JSON 字符串解析为 dict。
+
+        Returns:
+            解析后的参数字典，解析失败返回空字典。
+        """
         try:
             return json.loads(self.arguments)
         except json.JSONDecodeError:

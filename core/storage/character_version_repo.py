@@ -19,11 +19,21 @@ class CharacterVersionRepository(Repository):
     支持多种 content_type: "l2", "c6", 未来扩展 "c7", "c2" 等。"""
 
     def __init__(self, db: DocumentDBBackend | None = None):
+        """初始化角色版本存储。
+
+        Args:
+            db: 可选的文档数据库后端，为 None 时需调用 connect() 建立连接。
+        """
         self._db: DocumentDBBackend | None = db
 
     # ---- lifecycle ----
 
     async def connect(self) -> bool:
+        """建立 MongoDB 连接，创建索引。
+
+        Returns:
+            True 表示连接成功，False 表示连接失败。
+        """
         try:
             self._db = DocumentDBFactory.create("mongodb/default")
             # 检查脏数据（重复文档），有重复时降级为非唯一索引
@@ -53,11 +63,17 @@ class CharacterVersionRepository(Repository):
             return False
 
     async def close(self) -> None:
+        """关闭数据库连接，释放资源。"""
         if self._db:
             await self._db.close()
             self._db = None
 
     async def health_check(self) -> bool:
+        """健康检查。
+
+        Returns:
+            True 表示可用，False 表示不可用。
+        """
         return self._db is not None
 
     # ---- core API ----
@@ -68,7 +84,19 @@ class CharacterVersionRepository(Repository):
         change_summary: list[str],
         content_type: str = "l2",
     ) -> int:
-        """追加一个版本。自动计算 version 序号（per content_type，max+1）。返回新版本号。"""
+        """追加一个版本。自动计算 version 序号（per content_type，max+1）。
+
+        Args:
+            session_id: 会话 ID。
+            text: 版本文本内容。
+            timestamp: ISO 格式时间戳。
+            trigger: 压缩触发器类型。
+            change_summary: 变更摘要列表。
+            content_type: 内容类型标识，默认 "l2"。
+
+        Returns:
+            新版本号。若数据库不可用返回 0。
+        """
         if self._db is None:
             return 0
         # 计算下一个版本号 — 必须加 content_type 过滤
@@ -98,7 +126,17 @@ class CharacterVersionRepository(Repository):
         limit: int = 20, before_version: int | None = None,
         content_type: str = "l2",
     ) -> list[VersionEntry]:
-        """分页查询版本历史。默认返回最近 20 条。"""
+        """分页查询版本历史。
+
+        Args:
+            session_id: 会话 ID。
+            limit: 返回条数上限，默认 20。
+            before_version: 游标，只返回此版本号之前的记录。
+            content_type: 内容类型标识，默认 "l2"。
+
+        Returns:
+            版本条目列表，按版本号降序排列。若数据库不可用返回空列表。
+        """
         if self._db is None:
             return []
         # 兼容旧文档（无 content_type 字段）— 当作 l2
@@ -131,7 +169,16 @@ class CharacterVersionRepository(Repository):
         self, session_id: SessionId, version: int,
         content_type: str = "l2",
     ) -> VersionEntry | None:
-        """获取指定版本。"""
+        """获取指定版本。
+
+        Args:
+            session_id: 会话 ID。
+            version: 版本号。
+            content_type: 内容类型标识，默认 "l2"。
+
+        Returns:
+            版本条目，若不存在或数据库不可用返回 None。
+        """
         if self._db is None:
             return None
         type_filter: dict = (
@@ -161,7 +208,15 @@ class CharacterVersionRepository(Repository):
         self, session_id: SessionId,
         content_type: str = "l2",
     ) -> int:
-        """返回版本总数。"""
+        """返回版本总数。
+
+        Args:
+            session_id: 会话 ID。
+            content_type: 内容类型标识，默认 "l2"。
+
+        Returns:
+            版本总数。若数据库不可用返回 0。
+        """
         if self._db is None:
             return 0
         type_filter: dict = (

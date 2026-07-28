@@ -41,6 +41,12 @@ class PlanGraph:
     """
 
     def __init__(self, g: nx.DiGraph, nodes: dict[NodeId, DAGNode]) -> None:
+        """初始化 PlanGraph。
+
+        Args:
+            g: NetworkX 有向图，节点为 NodeId。
+            nodes: NodeId 到 DAGNode 的映射，保存节点的完整元数据。
+        """
         self._g = g
         self._nodes = nodes  # NodeId → DAGNode（含 description, output_contract, required 等）
 
@@ -51,6 +57,12 @@ class PlanGraph:
         """从 Pydantic Plan 构建 PlanGraph。
 
         plan.dag 持有 nodes + edges，直接建图，无需遍历 node.depends_on。
+
+        Args:
+            plan: Pydantic Plan 模型，包含 dag.nodes 和 dag.edges。
+
+        Returns:
+            构建好的 PlanGraph 实例。
         """
         g = nx.DiGraph()
         nodes: dict[NodeId, DAGNode] = {}
@@ -77,6 +89,12 @@ class PlanGraph:
         """将当前图状态写回 Plan（更新 dag.nodes + dag.edges）。
 
         若 plan 为 None，创建新 Plan。调用方通常传入已有 Plan 实例。
+
+        Args:
+            plan: 要更新的 Plan 实例。为 None 时创建新 Plan。
+
+        Returns:
+            更新后的 Plan 实例。
         """
         from Module.task_system.schema import DAG, Plan
         if plan is None:
@@ -89,10 +107,12 @@ class PlanGraph:
 
     @property
     def node_count(self) -> int:
+        """图中节点的数量。"""
         return len(self._g.nodes)
 
     @property
     def nodes(self) -> dict[NodeId, DAGNode]:
+        """NodeId 到 DAGNode 的映射字典。"""
         return self._nodes
 
     # ── 调度 ─────────────────────────────────────────────────────────────────
@@ -108,6 +128,12 @@ class PlanGraph:
 
         遍历 DAG 中每个节点，检查其所有前驱（predecessors）的状态。
         时间复杂度 O(n+e)。
+
+        Args:
+            node_states: NodeId 到 NodeState 的映射，记录每个节点的当前执行状态。
+
+        Returns:
+            所有就绪节点的 NodeId 列表。
         """
         ready: list[NodeId] = []
         for node_id in self._g.nodes:
@@ -127,11 +153,22 @@ class PlanGraph:
         return ready
 
     def topological_order(self) -> list[NodeId]:
-        """拓扑排序——Executor 的调度顺序。"""
+        """拓扑排序——Executor 的调度顺序。
+
+        Returns:
+            按拓扑顺序排列的 NodeId 列表。
+        """
         return list(nx.topological_sort(self._g))
 
     def is_terminal(self, node_states: dict[NodeId, NodeState]) -> bool:
-        """所有 required=True 的节点都是 SUCCESS 状态。"""
+        """所有 required=True 的节点都是 SUCCESS 状态。
+
+        Args:
+            node_states: NodeId 到 NodeState 的映射，记录每个节点的当前执行状态。
+
+        Returns:
+            如果所有必需节点都已成功完成则返回 True，否则返回 False。
+        """
         for node_id, node in self._nodes.items():
             if not node.required:
                 continue
@@ -141,7 +178,14 @@ class PlanGraph:
         return True
 
     def has_failed_required(self, node_states: dict[NodeId, NodeState]) -> bool:
-        """是否有 required=True 的节点处于 FAILED 或 UNRECOVERABLE。"""
+        """是否有 required=True 的节点处于 FAILED 或 UNRECOVERABLE。
+
+        Args:
+            node_states: NodeId 到 NodeState 的映射，记录每个节点的当前执行状态。
+
+        Returns:
+            如果有必需节点处于失败或不可恢复状态则返回 True，否则返回 False。
+        """
         for node_id, node in self._nodes.items():
             if not node.required:
                 continue
@@ -151,7 +195,15 @@ class PlanGraph:
         return False
 
     def collect_failure_info(self, node_states: dict[NodeId, NodeState]) -> dict:
-        """收集失败节点的诊断信息，供 Sub-Agent 传给 Replanner.replan()。"""
+        """收集失败节点的诊断信息，供 Sub-Agent 传给 Replanner.replan()。
+
+        Args:
+            node_states: NodeId 到 NodeState 的映射，记录每个节点的当前执行状态。
+
+        Returns:
+            包含 failed_nodes（失败节点 ID 列表）、reason（失败原因字符串）和
+            error_codes（节点 ID 到错误码的映射）的字典。
+        """
         failed: list[str] = []
         reasons: list[str] = []
         error_codes: dict[str, str] = {}
@@ -181,6 +233,9 @@ class PlanGraph:
 
         注意：不检查工具名——v1 的 DAGNode 没有 tool_name 字段，
         工具匹配由 Executor 运行时完成。待 v2 补充。
+
+        Returns:
+            ValidationIssue 列表，每个元素描述一个结构问题。无问题时返回空列表。
         """
         issues: list[ValidationIssue] = []
 
@@ -234,6 +289,10 @@ class PlanGraph:
 
     def apply_patch(self, patch: DAGPatch) -> None:
         """应用 DAGPatch 到当前图——五种操作，按序执行。
+
+        Args:
+            patch: DAGPatch 实例，包含 replace_nodes、remove_nodes、add_nodes、
+                remove_edges、add_edges 五种操作。
 
         顺序保证了依赖一致性：
             1. replace_nodes — 替换节点（同 ID 仅更新元数据，异 ID 自动重连边）
@@ -300,7 +359,14 @@ class PlanGraph:
     def to_dag_view(
         self, node_states: dict[NodeId, NodeState],
     ) -> TaskDAG:
-        """构建 Debug WebUI 用的 DAG 视图。"""
+        """构建 Debug WebUI 用的 DAG 视图。
+
+        Args:
+            node_states: NodeId 到 NodeState 的映射，记录每个节点的当前执行状态。
+
+        Returns:
+            包含节点信息（DAGNodeInfo）和边列表的 TaskDAG 视图。
+        """
         dag_nodes: list[DAGNodeInfo] = []
         for node_id in self._g.nodes:
             ns = node_states.get(node_id)
@@ -321,7 +387,14 @@ class PlanGraph:
         return TaskDAG(nodes=dag_nodes, edges=edges)
 
     def compute_progress(self, node_states: dict[NodeId, NodeState]) -> float:
-        """计算任务完成百分比（0~1）。"""
+        """计算任务完成百分比（0~1）。
+
+        Args:
+            node_states: NodeId 到 NodeState 的映射，记录每个节点的当前执行状态。
+
+        Returns:
+            已完成节点数占总节点数的比例，范围 0.0~1.0。空 DAG 返回 0.0。
+        """
         total = len(self._nodes)
         if total == 0:
             return 0.0
@@ -337,6 +410,9 @@ class PlanGraph:
 
         拓扑排序后动态规划：从叶子到根反向计算每个节点的最长路径。
         空 DAG 返回 0，单节点返回 1。
+
+        Returns:
+            最长路径上的节点数。空 DAG 或检测到环时返回 0。
         """
         if not self._g.nodes:
             return 0
@@ -361,6 +437,9 @@ class PlanGraph:
 
         直接替换内部的 NetworkX DiGraph 和 nodes 字典，
         外部持有此 PlanGraph 引用的调用方无需替换引用。
+
+        Args:
+            other: 用于替换的 PlanGraph 实例。
         """
         self._g = other._g
         self._nodes = other._nodes
@@ -369,5 +448,9 @@ class PlanGraph:
 
     @property
     def _graph(self) -> nx.DiGraph:
-        """直接访问 NetworkX DiGraph。仅用于调试。"""
+        """直接访问 NetworkX DiGraph。仅用于调试。
+
+        Returns:
+            内部的 NetworkX DiGraph 实例。
+        """
         return self._g

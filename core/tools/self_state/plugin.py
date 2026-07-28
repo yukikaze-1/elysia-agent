@@ -1,5 +1,7 @@
 """自我感知工具插件 — agent 查看自身状态。"""
 
+from typing import Any
+
 from Module.tool.protocol import ToolPlugin, ToolContext
 from Module.tool.safety import SafetyProfile
 
@@ -12,8 +14,18 @@ class SelfStatePlugin(ToolPlugin):
     safety = SafetyProfile()
 
     async def execute(
-        self, *, ctx: ToolContext, emit=None, params=None,
+        self, *, ctx: ToolContext, emit: Any = None, params: Any = None,
     ) -> str:
+        """查看 agent 的当前运行状态。
+
+        Args:
+            ctx: 工具调用上下文。
+            emit: 进度上报器（未使用）。
+            params: 未使用（此工具不需要参数）。
+
+        Returns:
+            agent 运行状态字符串。
+        """
         fsm_state = ctx.get("_fsm_state", "unknown")
         session_count = ctx.get("_session_msg_count", 0)
         tool_count = ctx.get("_tool_count", 0)

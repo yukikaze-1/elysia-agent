@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import Any, AsyncIterator, TYPE_CHECKING
 
 from Module.tool import ToolManager, PluginContext, ToolContext
 from Module.tool.protocol import ToolResult
@@ -42,6 +42,16 @@ class ToolAdapter:
         services: dict[str, Any] | None = None,
         hitl_broadcast: "OutputManager | None" = None,
     ):
+        """初始化工具适配器。
+
+        Args:
+            plugins: 工具插件类型列表（如 ALL_PLUGINS）。
+            session_id: 会话 ID，用于 ToolContext。
+            user_name: 用户名，用于 ToolContext.user_id。
+            config: 应用配置，传入 PluginContext 和 ToolContext。
+            services: 初始服务字典（运行时依赖注入）。
+            hitl_broadcast: HITL 审批广播输出管理器。
+        """
         self._plugins = plugins
         self._session_id = session_id
         self._user_name = user_name
@@ -73,6 +83,9 @@ class ToolAdapter:
 
         extra_services 合并到 tool_context.services（运行时依赖注入）。
         幂等：重复调用 no-op。
+
+        Args:
+            extra_services: 额外的运行时服务，合并到 tool_context.services。
         """
         if self._started:
             return
@@ -119,16 +132,44 @@ class ToolAdapter:
     # ---- ToolExecutor Protocol ----
 
     async def execute(self, name: str, *, ctx: ToolContext, **raw_params: Any) -> ToolResult:
-        """执行工具。委托给 ToolManager.execute()。"""
+        """执行工具。委托给 ToolManager.execute()。
+
+        Args:
+            name: 工具名称。
+            ctx: 工具执行上下文。
+            **raw_params: 工具参数（键值对）。
+
+        Returns:
+            ToolResult: 工具执行结果。
+        """
         return await self._manager.execute(name, ctx=ctx, **raw_params)
 
-    async def execute_stream(self, name: str, *, ctx: ToolContext, emit: Any, **raw_params: Any):
-        """流式执行工具。委托给 ToolManager.execute_stream()。"""
+    async def execute_stream(
+        self, name: str, *, ctx: ToolContext, emit: Any, **raw_params: Any
+    ) -> AsyncIterator[Any]:
+        """流式执行工具。委托给 ToolManager.execute_stream()。
+
+        Args:
+            name: 工具名称。
+            ctx: 工具执行上下文。
+            emit: 流式事件发射器。
+            **raw_params: 工具参数（键值对）。
+
+        Returns:
+            AsyncIterator[Any]: 流式工具的异步事件迭代器。
+        """
         async for event in self._manager.execute_stream(name, ctx=ctx, emit=emit, **raw_params):
             yield event
 
     def definitions(self, format: str = "openai") -> list[dict]:
-        """返回已注册工具的 LLM function schema 列表。"""
+        """返回已注册工具的 LLM function schema 列表。
+
+        Args:
+            format: 输出格式（默认 "openai"）。
+
+        Returns:
+            list[dict]: OpenAI function-calling 格式的工具定义列表。
+        """
         return self._manager.definitions(format)
 
     async def cancel_all(self) -> None:
@@ -136,5 +177,9 @@ class ToolAdapter:
         await self._manager.cancel_all()
 
     def execute_now(self) -> list[str]:
-        """返回可立即执行的工具名列表。"""
+        """返回可立即执行的工具名列表。
+
+        Returns:
+            list[str]: 已注册工具的名称列表。
+        """
         return list(self._manager.tool_names)

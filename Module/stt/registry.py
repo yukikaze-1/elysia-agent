@@ -20,6 +20,18 @@ class STTFactory:
 
     @staticmethod
     def create(model_id: str, **kwargs) -> "STTBackend":
+        """根据 model_id 创建 STT 后端实例。
+
+        Args:
+            model_id: 格式为 "provider/model-name" 的模型标识。
+            **kwargs: 透传给后端构造函数的额外参数。
+
+        Returns:
+            对应 provider 的 STTBackend 实例。
+
+        Raises:
+            ValueError: 当 model_id 格式无效或 provider 未知时。
+        """
         if "/" not in model_id:
             raise ValueError(
                 f"Invalid model_id '{model_id}': expected 'provider/model-name' format"

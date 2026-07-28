@@ -37,9 +37,10 @@ def set_request_id(rid: str) -> None:
 def log_conversation(role: str, name: str, text: str) -> None:
     """记录对话内容到 log/conversation.log，与后台日志分离。
 
-    role: "user" 或 "assistant"
-    name: 说话者名称（用户昵称或角色名）
-    text: 完整对话文本
+    Args:
+        role: "user" 或 "assistant"
+        name: 说话者名称（用户昵称或角色名）
+        text: 完整对话文本
     """
     if _conv_logger is None:
         return
@@ -49,13 +50,26 @@ def log_conversation(role: str, name: str, text: str) -> None:
 
 class _RequestIdFilter(logging.Filter):
     """将 ContextVar 中的请求 ID 注入 LogRecord，供 Formatter 使用。"""
+
     def filter(self, record: logging.LogRecord) -> bool:
+        """将当前请求 ID 注入 LogRecord。
+
+        Args:
+            record: 日志记录
+
+        Returns:
+            bool: 始终返回 True，不过滤任何记录
+        """
         record.request_id = _request_id_var.get()
         return True
 
 
 def setup(verbose: bool = False) -> None:
-    """Configure logging: libraries → files, app → stderr, stdout clean."""
+    """配置日志系统：库日志 → 文件，应用日志 → stderr + 文件，stdout 保持干净。
+
+    Args:
+        verbose: 若为 True，stderr 输出 DEBUG 级别日志
+    """
     LOG_DIR.mkdir(exist_ok=True)
 
     # Root logger: quiet, don't propagate to stdout
@@ -177,7 +191,13 @@ def setup(verbose: bool = False) -> None:
 
 
 def _file_logger(name: str, filename: str, level: int) -> None:
-    """Route a logger to a file, detached from root."""
+    """将指定 logger 路由到文件，与 root logger 分离。
+
+    Args:
+        name: logger 名称
+        filename: 日志文件名（相对于 LOG_DIR）
+        level: 日志级别
+    """
     logger = logging.getLogger(name)
     logger.setLevel(level)
     logger.handlers.clear()

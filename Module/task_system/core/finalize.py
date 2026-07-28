@@ -34,6 +34,12 @@ def init_exec_state(graph: PlanGraph) -> ExecutionState:
 
     遍历所有 DAG 节点，为每个节点创建初始 NodeState（全部 PENDING）。
     新任务首次执行时调用。Replan 恢复时用 merge_exec_state 代替。
+
+    Args:
+        graph: PlanGraph，从中构建初始执行状态。
+
+    Returns:
+        ExecutionState: 初始执行状态，所有节点均为 PENDING。
     """
     now = now_iso()
     node_states: dict[NodeId, NodeState] = {}
@@ -59,6 +65,13 @@ def merge_exec_state(
         2. 移除旧 graph 中已不存在的节点（replan 删除的节点）
         3. 旧 graph 中不存在的节点 → 新建 PENDING
         4. FAILED / UNRECOVERABLE 节点 → 重置为 PENDING（replan 已处理，需重新执行）
+
+    Args:
+        old: 旧的 ExecutionState，包含之前执行的状态。
+        graph: 新的 PlanGraph，replan 后的图。
+
+    Returns:
+        ExecutionState: 合并后的执行状态。
     """
     now = now_iso()
     merged: dict[NodeId, NodeState] = {}
@@ -87,6 +100,12 @@ def has_blocked_nodes(exec_state: ExecutionState) -> bool:
 
     v1 始终返回 False——waiting_for_approval 仅由 ASK_APPROVAL 设置，
     而 Evaluator v1 不产出 ASK_APPROVAL。v2 启用审批风暴检测后可达。
+
+    Args:
+        exec_state: 当前执行状态。
+
+    Returns:
+        bool: 是否有节点因等待审批而阻塞。
     """
     return exec_state.waiting_for_approval
 
@@ -109,6 +128,12 @@ def needs_approval(node: DAGNode) -> bool:
 
         当前 needs_approval 只在审批检查循环中被调用，返回 True 时节点
         被排除在 ready_nodes 之外，由 wait_for_approval → BLOCKED 路径处理。
+
+    Args:
+        node: 要检查的 DAG 节点。
+
+    Returns:
+        bool: v1 始终返回 False。
     """
     return False
 
@@ -122,6 +147,12 @@ async def finalize(
     """任务终态处理——推送 completed 事件（含节点产出摘要，供 CognitiveLoop 渐进式唤醒）+ 写最终 checkpoint。
 
     run() 在调用后自行构造 OrchestratorResult(status=SUCCESS)。
+
+    Args:
+        task_state: 任务状态。
+        exec_state: 执行状态。
+        mailbox: 任务 mailbox，用于推送完成事件。
+        checkpoint_mgr: checkpoint 管理器，用于保存最终快照。
     """
     task_state.status = TaskStatus.COMPLETED
     task_state.updated_at = now_iso()
@@ -191,7 +222,15 @@ async def finalize(
 def build_checkpoint(
     task_state: TaskState, exec_state: ExecutionState,
 ) -> TaskCheckpoint:
-    """组合 TaskState + ExecutionState 为类型化 checkpoint 快照。"""
+    """组合 TaskState + ExecutionState 为类型化 checkpoint 快照。
+
+    Args:
+        task_state: 任务状态。
+        exec_state: 执行状态。
+
+    Returns:
+        TaskCheckpoint: 组合后的 checkpoint 快照。
+    """
     return TaskCheckpoint(task=task_state, exec=exec_state)
 
 
@@ -200,7 +239,13 @@ async def save_checkpoint(
     task_state: TaskState,
     exec_state: ExecutionState,
 ) -> None:
-    """保存当前状态快照。"""
+    """保存当前状态快照。
+
+    Args:
+        checkpoint_mgr: checkpoint 管理器。
+        task_state: 任务状态。
+        exec_state: 执行状态。
+    """
     checkpoint = build_checkpoint(task_state, exec_state)
     await checkpoint_mgr.save(task_state.task_id, checkpoint)
 
@@ -210,5 +255,11 @@ def push_mailbox(
     event_type: TaskEventType,
     data: dict[str, Any],
 ) -> None:
-    """推送任务事件到 mailbox。"""
+    """推送任务事件到 mailbox。
+
+    Args:
+        mailbox: 目标 mailbox。
+        event_type: 事件类型。
+        data: 事件数据。
+    """
     push_mailbox_event(mailbox, event_type, data, caller="Orchestrator")

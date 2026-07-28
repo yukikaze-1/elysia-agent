@@ -38,7 +38,14 @@ _EMOJI_RE = re.compile(
 
 
 def is_emoji_only(text: str) -> bool:
-    """句子去掉 emoji 后是否只剩空白 — 用于跳过 TTS 合成。"""
+    """句子去掉 emoji 后是否只剩空白 — 用于跳过 TTS 合成。
+
+    Args:
+        text: 待检测的句子。
+
+    Returns:
+        bool: 纯 emoji 句时为 True。
+    """
     return not _EMOJI_RE.sub("", text).strip()
 
 
@@ -56,7 +63,14 @@ _CN_ACTION_RE = re.compile(r"[\(\（][^\)\）]*[一-鿿][^\)\）]*[\)\）]")
 
 
 def _mood_text_to_tts_emotion(mood_text: str) -> str:
-    """自由文本 mood → TTS 情绪参数 (happy/sad/neutral)。"""
+    """自由文本 mood → TTS 情绪参数 (happy/sad/neutral)。
+
+    Args:
+        mood_text: 自由文本情绪描述。
+
+    Returns:
+        str: TTS 情绪参数，值为 "happy"、"sad" 或 "neutral"。
+    """
     sad_words = {"难过", "悲伤", "伤心", "低落", "沮丧", "消沉", "失落"}
     happy_words = {"开心", "高兴", "兴奋", "快乐", "喜悦", "期待", "惊喜"}
     # happy 优先 — "虽然难过但还是很开心" → happy
@@ -83,6 +97,13 @@ class TTSStreamManager:
         output: OutputManager,
         character_name: str,
     ) -> None:
+        """初始化 TTS 流管理器。
+
+        Args:
+            tts: TTS 后端实例，为 None 时 TTS 不可用。
+            output: 输出管理器，用于广播音频和文本到前端。
+            character_name: 角色名称，传递给 TTS 后端用于音色选择。
+        """
         self._tts = tts
         self._output = output
         self._char_name = character_name
@@ -103,7 +124,11 @@ class TTSStreamManager:
     # ---- 公开 API ----
 
     def reset_for_turn(self, emotion: str | None = None) -> None:
-        """每轮 process() 开始时调用。"""
+        """每轮 process() 开始时调用。
+
+        Args:
+            emotion: 本轮 TTS 情绪参数（自由文本，自动映射为 happy/sad/neutral）。
+        """
         self._emotion = emotion
         self._seq = 0
         self._turn_chars = 0
@@ -119,6 +144,9 @@ class TTSStreamManager:
 
         自动判断：纯 emoji 句排队到上一句之后，其余送 TTS 合成。
         TTS 不可用时是 no-op。
+
+        Args:
+            sentence: 待合成的句子文本。
         """
         if not self._tts:
             return
@@ -186,11 +214,19 @@ class TTSStreamManager:
         self._tasks.clear()
 
     def set_emotion(self, emotion: str | None) -> None:
-        """设置本轮 TTS 情绪。自由文本会自动映射为 TTS 参数 (happy/sad/neutral)。"""
+        """设置本轮 TTS 情绪。自由文本会自动映射为 TTS 参数 (happy/sad/neutral)。
+
+        Args:
+            emotion: 自由文本情绪描述，为 None 时清除情绪设置。
+        """
         self._emotion = _mood_text_to_tts_emotion(emotion) if emotion else None
 
     def set_backend(self, tts: TTSBackend | None) -> None:
-        """热切换 TTS 后端。"""
+        """热切换 TTS 后端。
+
+        Args:
+            tts: 新的 TTS 后端实例，为 None 时禁用 TTS。
+        """
         self._tts = tts
         if tts is not None:
             fn = tts.get_preprocess()
@@ -210,6 +246,11 @@ class TTSStreamManager:
 
         Phase 1（并行）: 发送文本到云端，下载完整音频。
         Phase 2（串行）: 按 seq 顺序分块转发音频到前端。
+
+        Args:
+            sid: 全局流 ID（跨轮次递增）。
+            seq: 本轮序号（用于门控排序）。
+            sentence: 待合成的句子文本。
         """
         if not self._tts:
             return
@@ -314,6 +355,9 @@ class TTSStreamManager:
         """Legacy 非流式 TTS — 保留向后兼容（供测试用）。
 
         流式路径请用 stream_sentence() + wait_all()。
+
+        Args:
+            sentence: 待合成的句子文本。
         """
         if not self._tts:
             return

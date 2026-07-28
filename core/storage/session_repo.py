@@ -34,10 +34,21 @@ class SessionRepository(Repository):
     """会话存储 — MongoDB sessions 集合。"""
 
     def __init__(self, db: DocumentDBBackend | None = None, *, database_name: str = "default"):
+        """初始化会话存储。
+
+        Args:
+            db: 可选的文档数据库后端，为 None 时需调用 connect() 建立连接。
+            database_name: MongoDB 数据库名称，默认 "default"。
+        """
         self._db: DocumentDBBackend | None = db
         self._database_name = database_name
 
     async def connect(self) -> bool:
+        """建立 MongoDB 连接，创建索引和 TTL。
+
+        Returns:
+            True 表示连接成功，False 表示连接失败。
+        """
         try:
             self._db = DocumentDBFactory.create(f"mongodb/{self._database_name}")
             await self._db.ensure_index(COLLECTION, [("session_id", 1)])
@@ -55,11 +66,17 @@ class SessionRepository(Repository):
             return False
 
     async def close(self) -> None:
+        """关闭数据库连接，释放资源。"""
         if self._db:
             await self._db.close()
             self._db = None
 
     async def health_check(self) -> bool:
+        """健康检查。若连接断开则尝试重连并重建索引。
+
+        Returns:
+            True 表示可用，False 表示不可用。
+        """
         if self._db is not None:
             return True
         try:
@@ -79,7 +96,14 @@ class SessionRepository(Repository):
     async def save(self, session_id: SessionId, messages: Sequence[Message],
                    character_state: CharacterState,
                    reflector_state: MemoryReflectorState | None = None) -> None:
-        """保存或更新 session。"""
+        """保存或更新 session。
+
+        Args:
+            session_id: 会话 ID。
+            messages: 消息列表。
+            character_state: 角色状态。
+            reflector_state: 记忆反射器状态，为 None 时写入空对象。
+        """
         if self._db is None:
             return
         serialized = [m.model_dump(mode="json") for m in messages]
@@ -96,7 +120,14 @@ class SessionRepository(Repository):
 
     async def load(self, session_id: SessionId
                    ) -> tuple[list[Message], CharacterState, MemoryReflectorState] | None:
-        """加载 session。返回 (messages, character_state, reflector_state) 或 None。"""
+        """加载 session。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            (消息列表, 角色状态, 记忆反射器状态) 元组，若不存在或数据库不可用返回 None。
+        """
         if self._db is None:
             return None
         results = await self._db.find(COLLECTION, {"session_id": session_id}, limit=1)
@@ -114,6 +145,14 @@ class SessionRepository(Repository):
         return messages, cs, rs
 
     async def delete(self, session_id: SessionId) -> int:
+        """删除指定会话。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            删除的会话数。若数据库不可用返回 0。
+        """
         if self._db is None:
             return 0
         result = await self._db.delete_many(COLLECTION, {"session_id": session_id})
@@ -121,6 +160,11 @@ class SessionRepository(Repository):
         return result
 
     async def list_all(self) -> list[SessionSummary]:
+        """列出最近会话摘要。
+
+        Returns:
+            会话摘要列表，按更新时间降序，最多 200 条。若数据库不可用返回空列表。
+        """
         if self._db is None:
             return []
         docs = await self._db.find(COLLECTION, {}, sort=[("updated_at", -1)], limit=200)
@@ -134,6 +178,11 @@ class SessionRepository(Repository):
         ]
 
     async def clear_all(self) -> int:
+        """清空全部会话。
+
+        Returns:
+            删除的会话数。若数据库不可用返回 0。
+        """
         if self._db is None:
             return 0
         result = await self._db.delete_many(COLLECTION, {})

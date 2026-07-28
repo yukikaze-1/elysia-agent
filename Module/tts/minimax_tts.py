@@ -20,7 +20,14 @@ _TTS_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 
 
 def _load_voice_map(voices_config: str = "") -> dict[str, str]:
-    """加载 MiniMax 音色 YAML，返回 {character_name: voice_id}。"""
+    """加载 MiniMax 音色 YAML，返回 {character_name: voice_id}。
+
+    Args:
+        voices_config: 音色配置文件路径，为空则使用默认 minimax_voices.yaml。
+
+    Returns:
+        {character_name: voice_id} 映射字典。文件不存在时返回空字典。
+    """
     if voices_config:
         path = Path(voices_config)
     else:
@@ -55,6 +62,22 @@ class MiniMaxTTSBackend(TTSBackend):
         audio_format: str = "wav",
         logger: logging.Logger | None = None,
     ):
+        """初始化 MiniMax TTS 后端。
+
+        Args:
+            model: MiniMax 模型名称。
+            api_key: MiniMax API 密钥。
+            base_url: MiniMax 服务地址。
+            voices_config: 音色配置文件路径，为空则使用默认 minimax_voices.yaml。
+            voice_id: 默认音色 ID，voice_map 未命中时 fallback。
+            voice_map: 显式指定 {character_name: voice_id} 映射，会覆盖 YAML 配置。
+            speed: 语速（MiniMax API 仅接受整数值）。
+            vol: 音量。
+            pitch: 音调。
+            sample_rate: 采样率（Hz）。
+            audio_format: 音频格式（wav/mp3）。
+            logger: 日志记录器，不传则使用模块默认 logger。
+        """
         self._model = model
         self._api_key = api_key
         self._base_url = base_url
@@ -97,6 +120,19 @@ class MiniMaxTTSBackend(TTSBackend):
     async def synthesize(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> bytes:
+        """非流式合成 — 返回完整 WAV bytes。
+
+        Args:
+            text: 要合成的文本。
+            character: 发音人/音色名称，通过 voice_map 映射为 voice_id。
+            emotion: 可选的情绪参数，映射为 MiniMax voice_setting.emotion。
+
+        Returns:
+            完整的 WAV 格式音频字节数据。
+
+        Raises:
+            RuntimeError: 无法连接 MiniMax 服务或 API 返回错误。
+        """
         text = self._preprocess(text)
         voice_id = self._resolve_voice(character)
         payload = self._build_payload(text, voice_id, emotion, stream=False)
@@ -122,6 +158,14 @@ class MiniMaxTTSBackend(TTSBackend):
 
         MiniMax 流式 API 仅输出 mp3，前端期望 wav，故先下载完整音频再分块。
         注意：并非真正的流式——首个 chunk 延迟与 synthesize() 相同。
+
+        Args:
+            text: 要合成的文本。
+            character: 发音人/音色名称。
+            emotion: 可选的情绪参数。
+
+        Yields:
+            音频字节数据 chunk（4096 字节每块）。
         """
         # 复用 synthesize() 的非流式 wav 逻辑
         audio = await self.synthesize(text, character=character, emotion=emotion)
@@ -139,6 +183,11 @@ class MiniMaxTTSBackend(TTSBackend):
         return "wav"
 
     def get_preprocess(self):
+        """返回本后端使用的预处理函数。
+
+        Returns:
+            strip_for_minimax 预处理函数。
+        """
         return self._preprocess
 
     async def close(self) -> None:
@@ -147,13 +196,30 @@ class MiniMaxTTSBackend(TTSBackend):
     # ---- 内部方法 ----
 
     def _resolve_voice(self, character: str) -> str:
-        """按 voice_map 查找 voice_id，未命中 fallback 到默认值。"""
+        """按 voice_map 查找 voice_id。
+
+        Args:
+            character: 发音人/角色名称。
+
+        Returns:
+            对应的 voice_id，未命中则返回默认的 self._voice_id。
+        """
         return self._voice_map.get(character, self._voice_id)
 
     def _build_payload(
         self, text: str, voice_id: str, emotion: str | None, stream: bool
     ) -> dict:
-        """构建 MiniMax /v1/t2a_v2 请求体。"""
+        """构建 MiniMax /v1/t2a_v2 请求体。
+
+        Args:
+            text: 要合成的文本。
+            voice_id: MiniMax 音色 ID。
+            emotion: 可选的情绪标签。
+            stream: 是否流式模式。
+
+        Returns:
+            MiniMax API 请求 JSON 字典。
+        """
         if not voice_id:
             raise ValueError(
                 "MiniMax TTS 需要 voice_id。请通过 voice_map 或 voice_id 参数指定音色。"
@@ -181,7 +247,14 @@ class MiniMaxTTSBackend(TTSBackend):
 
     @staticmethod
     def _check_base_resp(data: dict) -> None:
-        """检查 base_resp.status_code，非 0 抛 RuntimeError。"""
+        """检查 base_resp.status_code。
+
+        Args:
+            data: MiniMax API 响应 JSON 字典。
+
+        Raises:
+            RuntimeError: status_code 非 0 或缺少 base_resp 字段时。
+        """
         base_resp = data.get("base_resp")
         if base_resp is None:
             raise RuntimeError("MiniMax API 响应缺少 base_resp 字段")

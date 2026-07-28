@@ -59,6 +59,14 @@ def _is_dot_boundary(
     - 首字母缩写，例如 ``U.S.``
 
     注意：``3.14.`` 的最后一个句号会被视为句子边界。
+
+    Args:
+        text: 完整文本。
+        dot_pos: 句号字符的索引位置。
+        abbreviations: 不触发切分的缩写词集合（小写）。
+
+    Returns:
+        True 表示该句号应作为句子边界进行切分。
     """
 
     before = text[dot_pos - 1] if dot_pos > 0 else ""
@@ -119,6 +127,7 @@ class SentenceBuffer:
         max_buffer_length: int = 2000,
         abbreviations: Iterable[str] | None = None,
     ) -> None:
+        """初始化分句缓冲器。参数说明见类文档。"""
         if delimiters is None:
             delimiter_set = set(_DEFAULT_DELIMITERS)
         else:
@@ -148,6 +157,12 @@ class SentenceBuffer:
         """输入一段流式文本。
 
         一次最多返回一个句子。调用方应持续调用，直到返回 ``None``。
+
+        Args:
+            delta: 流式输入的文本增量。
+
+        Returns:
+            一个完整句子（如果有），否则 None。
         """
         if not delta:
             return None
@@ -156,7 +171,11 @@ class SentenceBuffer:
         return self._extract()
 
     def flush(self) -> str | None:
-        """返回剩余文本，并清空缓冲区。"""
+        """返回剩余文本，并清空缓冲区。
+
+        Returns:
+            缓冲区中剩余的文本；空内容返回 None。
+        """
         if not self._buffer.strip():
             self._buffer = ""
             return None
@@ -170,6 +189,11 @@ class SentenceBuffer:
         self._buffer = ""
 
     def _extract(self) -> str | None:
+        """从缓冲区提取一个完整句子。
+
+        Returns:
+            一个完整句子（如果有），否则 None。
+        """
         text = self._buffer
 
         split_pos = self._find_split(text)
@@ -209,7 +233,15 @@ class SentenceBuffer:
         text: str,
         split_pos: int,
     ) -> tuple[str, str]:
-        """消费一个句子及其连续标点。"""
+        """消费一个句子及其连续标点。
+
+        Args:
+            text: 当前缓冲区完整文本。
+            split_pos: 分隔符的索引位置。
+
+        Returns:
+            (完整句子含连续标点, 剩余文本) 元组。
+        """
 
         index = split_pos + 1
 
@@ -238,10 +270,18 @@ class SentenceBuffer:
 
     @property
     def _run_delimiters(self) -> frozenset[str]:
+        """连续标点合并时使用的分隔符集合（包含英文句号）。"""
         return self._delimiters | {"."}
 
     def _find_split(self, text: str) -> int:
-        """单次扫描，寻找第一个有效句子边界。"""
+        """单次扫描，寻找第一个有效句子边界。
+
+        Args:
+            text: 当前缓冲区完整文本。
+
+        Returns:
+            第一个有效分隔符的索引；无有效边界时返回 -1。
+        """
 
         for index, char in enumerate(text):
             if char not in self._delimiters:
@@ -263,6 +303,12 @@ class SentenceBuffer:
 
         优先选择最大长度前的空格；如果不存在空格，
         则直接在最大长度处切分。
+
+        Args:
+            text: 当前缓冲区完整文本。
+
+        Returns:
+            强制切分的位置索引。
         """
 
         limit = min(self._max_buffer_length, len(text))

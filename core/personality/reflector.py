@@ -42,6 +42,16 @@ class CharacterReflector:
         user_name: str = "妖梦",
         prompt_dir: str | None = None,
     ):
+        """初始化角色反射器。
+
+        Args:
+            engine: 父 CharacterEngine 实例，用于 consume_trigger。
+            l1_core: L1 核心性格文本。
+            llm: LLM 适配器。
+            character_name: 角色名。
+            user_name: 用户名。
+            prompt_dir: prompt 模板目录路径，None 时使用默认路径。
+        """
         self._engine = engine
         self._l1_core = l1_core
         self._llm = llm
@@ -85,7 +95,12 @@ class CharacterReflector:
     # ---- buffer / flush ----
 
     async def buffer(self, user_msg: str, assistant_msg: str) -> None:
-        """缓冲一轮对话。达到阈值时触发反思。"""
+        """缓冲一轮对话。达到阈值时触发反思。
+
+        Args:
+            user_msg: 用户消息文本。
+            assistant_msg: 助手回复文本。
+        """
         if not assistant_msg.strip() or not user_msg.strip():
             return
 
@@ -112,6 +127,9 @@ class CharacterReflector:
 
         少量对话不强制反思——产出质量低且会清空 buffer，
         导致重启后丢失累积进度。留到下次启动继续攒。
+
+        Returns:
+            无返回值。结果通过 engine.consume_trigger 异步提交。
         """
         if not self._buffer:
             return
@@ -169,6 +187,9 @@ class CharacterReflector:
         规范规定首次无历史时"视为已超 24h"，但纯时间触发会导致第 1 轮
         对话就立即反思——此时上下文不足以产生有意义的 self_perception。
         因此首次改用 10 对 buffer 阈值，确保有足够对话上下文再反思。
+
+        Returns:
+            True 表示满足触发条件，应执行反思。
         """
         if len(self._buffer) >= self.BUFFER_THRESHOLD:
             return True

@@ -62,16 +62,31 @@ def _parse_provider(model_id: str) -> str:
 
 
 def _fail(msg: str) -> None:
+    """记录一个失败项并打印 [FAIL] 消息。
+
+    Args:
+        msg: 失败描述信息。
+    """
     _COUNTS.failed += 1
     print(f"  [FAIL] {msg}")
 
 
 def _warn(msg: str) -> None:
+    """记录一个警告项并打印 [WARN] 消息。
+
+    Args:
+        msg: 警告描述信息。
+    """
     _COUNTS.warned += 1
     print(f"  [WARN] {msg}")
 
 
 def _pass(msg: str) -> None:
+    """记录一个通过项并打印 [PASS] 消息。
+
+    Args:
+        msg: 通过描述信息。
+    """
     _COUNTS.passed += 1
     print(f"  [PASS] {msg}")
 

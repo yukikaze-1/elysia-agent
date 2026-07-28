@@ -19,13 +19,25 @@ class EmbeddingProvider:
     """
 
     def __init__(self, embed_timeout: float = 10.0):
+        """初始化嵌入提供器。
+
+        Args:
+            embed_timeout: 嵌入后端加载超时（秒），默认 10s。
+        """
         self._backend: EmbeddingBackend | None = None
         self._tried = False
         self._task: asyncio.Task | None = None
         self._timeout = embed_timeout
 
-    async def ensure(self, wait: bool = False) -> EmbeddingBackend | None:
-        """确保嵌入后端已加载。返回 backend 或 None。"""
+    async def ensure(self, wait: bool = False) -> "EmbeddingBackend | None":
+        """确保嵌入后端已加载。
+
+        Args:
+            wait: 是否阻塞等待加载完成。默认 False，启动后台加载后立即返回。
+
+        Returns:
+            已加载的 EmbeddingBackend 实例，加载中或失败时返回 None。
+        """
         if self._backend is not None:
             return self._backend
         if self._tried:
@@ -62,7 +74,14 @@ class EmbeddingProvider:
         return self._backend
 
     async def embed(self, text: str) -> list[float]:
-        """封装 embed_query：阻塞加载 + 嵌入。失败返回空列表。"""
+        """封装 embed_query：阻塞加载 + 嵌入。
+
+        Args:
+            text: 要嵌入的文本。
+
+        Returns:
+            嵌入向量，嵌入失败或后端不可用时返回空列表。
+        """
         await self.ensure(wait=True)
         if self._backend is None:
             return []
@@ -72,11 +91,14 @@ class EmbeddingProvider:
             logger.debug("Embedding failed", exc_info=True)
             return []
 
-    def _try_load_sync(self):
-        """Try to load embedding backend. Returns instance or None. Runs in thread.
+    def _try_load_sync(self) -> "EmbeddingBackend | None":
+        """Try to load embedding backend. Runs in thread.
 
         不直接写 self._backend——由调用方 coroutine 赋值，
         确保 timeout 后线程即使继续运行也不会产生竞态写入。
+
+        Returns:
+            EmbeddingBackend 实例，加载失败返回 None。
         """
         from Module.embedding import EmbeddingFactory
 
@@ -102,6 +124,6 @@ class EmbeddingProvider:
             return None
 
     def cancel(self) -> None:
-        """取消后台加载任务。"""
+        """取消后台嵌入模型加载任务（如正在进行）。"""
         if self._task and not self._task.done():
             self._task.cancel()

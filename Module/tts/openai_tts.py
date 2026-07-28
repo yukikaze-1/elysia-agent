@@ -29,6 +29,14 @@ class OpenAICompatTTSBackend(TTSBackend):
         base_url: str = "",
         logger: logging.Logger | None = None,
     ):
+        """初始化 OpenAI 兼容 TTS 后端。
+
+        Args:
+            model: 模型名称（如 tts-1, tts-1-hd）。
+            api_key: API 密钥，不传则使用默认值 "tts"。
+            base_url: 服务地址，为空则使用 OpenAI 默认地址。
+            logger: 日志记录器，不传则使用模块默认 logger。
+        """
         self._model = model
         self._base_url = base_url
         self._logger = logger or logging.getLogger(__name__)
@@ -55,6 +63,16 @@ class OpenAICompatTTSBackend(TTSBackend):
     async def synthesize(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> bytes:
+        """非流式合成 — 返回完整 WAV bytes。
+
+        Args:
+            text: 要合成的文本。
+            character: 发音人名称，映射为 OpenAI TTS API 的 voice 字段。
+            emotion: 可选的情绪参数（OpenAI TTS 不支持，传了会被忽略）。
+
+        Returns:
+            完整的 WAV 格式音频字节数据。采样率 24000Hz。
+        """
         text = self._preprocess(text)
         chunks: list[bytes] = []
         async for chunk in self.synthesize_stream(text, character=character, emotion=emotion):
@@ -64,7 +82,16 @@ class OpenAICompatTTSBackend(TTSBackend):
     async def synthesize_stream(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> AsyncIterator[bytes]:
-        """流式合成 — OpenAI TTS 非真正流式，一次返回完整音频。"""
+        """流式合成 — OpenAI TTS 非真正流式，一次返回完整音频。
+
+        Args:
+            text: 要合成的文本。
+            character: 发音人名称，映射为 OpenAI TTS API 的 voice 字段。
+            emotion: 可选的情绪参数（OpenAI TTS 不支持，传了会被忽略）。
+
+        Yields:
+            音频字节数据 chunk（4096 字节每块）。
+        """
         text = self._preprocess(text)
         async with self._client.audio.speech.with_streaming_response.create(
             model=self._model,
@@ -80,6 +107,11 @@ class OpenAICompatTTSBackend(TTSBackend):
         return "custom"
 
     def get_preprocess(self):
+        """返回本后端使用的预处理函数。
+
+        Returns:
+            strip_all_markup 预处理函数。
+        """
         return self._preprocess
 
     async def close(self) -> None:

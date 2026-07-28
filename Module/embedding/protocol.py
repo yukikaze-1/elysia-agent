@@ -1,6 +1,7 @@
 """Embedding 后端抽象接口。所有文本向量化后端必须实现此协议。"""
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 
 class EmbeddingBackend(ABC):
@@ -17,13 +18,29 @@ class EmbeddingBackend(ABC):
         ...
 
     @abstractmethod
-    async def embed_documents(self, texts: list[str], **kwargs) -> list[list[float]]:
-        """批量文本 → 向量列表（用于插入）。"""
+    async def embed_documents(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
+        """批量文本 → 向量列表（用于插入）。
+
+        Args:
+            texts: 待向量化的文本列表。
+            **kwargs: 传递给底层 embedding API 的附加参数。
+
+        Returns:
+            与 texts 一一对应的向量列表，每个向量为 float 列表。
+        """
         ...
 
     @abstractmethod
-    async def embed_query(self, text: str, **kwargs) -> list[float]:
-        """单条文本 → 单个向量（用于搜索）。等价于 embed_documents([text])[0]。"""
+    async def embed_query(self, text: str, **kwargs: Any) -> list[float]:
+        """单条文本 → 单个向量（用于搜索）。等价于 embed_documents([text])[0]。
+
+        Args:
+            text: 待向量化的单条文本。
+            **kwargs: 传递给底层 embedding API 的附加参数。
+
+        Returns:
+            文本对应的向量，为 float 列表。
+        """
         ...
 
     @abstractmethod

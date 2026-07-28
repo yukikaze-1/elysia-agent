@@ -34,14 +34,28 @@ class CharacterConfig:
 
     @property
     def traits(self) -> list[str]:
+        """性格特质列表。"""
         return self.personality.get("traits", [])  # type: ignore[return-value]
 
     @property
     def speaking_style(self) -> str:
+        """说话风格描述。"""
         return str(self.personality.get("speaking_style", ""))
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "CharacterConfig":
+        """从 YAML 文件加载角色配置。
+
+        Args:
+            path: YAML 配置文件路径。
+
+        Returns:
+            解析后的 CharacterConfig 实例。
+
+        Raises:
+            FileNotFoundError: 配置文件不存在。
+            PermissionError: 配置文件无读取权限。
+        """
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Character config not found: {path}")
@@ -78,11 +92,21 @@ class CharacterConfig:
 
     @staticmethod
     def _load_base_personality(base_file: str, name: str, yaml_path: Path) -> str:
-        """加载 L1 Core personality 文本。路径解析策略：
+        """加载 L1 Core personality 文本。
+
+        路径解析策略：
         1. 相对于 character YAML 所在目录
         2. 回退项目根目录
         3. 未指定时推导 character/{name}_personality.md
         4. 文件不存在 → WARN，返回空串
+
+        Args:
+            base_file: YAML 中指定的 base_personality_file 路径，可为空字符串。
+            name: 角色名称，用于自动推导 personality 文件路径。
+            yaml_path: YAML 配置文件所在路径，用作相对路径解析基准。
+
+        Returns:
+            加载的 personality 文本内容；文件不存在时返回空字符串。
         """
         logger = logging.getLogger(__name__)
 
@@ -106,7 +130,11 @@ class CharacterConfig:
 
     def personality_block(self) -> str:
         """Render a compact personality description for prompt injection。
+
         优先使用 base_personality，降级使用 traits + speaking_style（兼容旧 YAML）。
+
+        Returns:
+            紧凑的人格描述文本。
         """
         if self.base_personality:
             return self.base_personality

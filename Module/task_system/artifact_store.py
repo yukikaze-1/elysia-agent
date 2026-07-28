@@ -36,6 +36,7 @@ class ArtifactStore:
     """
 
     def __init__(self) -> None:
+        """Initialize the artifact store with empty internal storage and indexes."""
         self._artifacts: dict[ArtifactId, Artifact] = {}
         self._by_node: dict[NodeId, set[ArtifactId]] = {}   # NodeId → {ArtifactId}
         self._by_task: dict[TaskId, set[ArtifactId]] = {}   # TaskId → {ArtifactId}
@@ -50,6 +51,9 @@ class ArtifactStore:
         只负责存储和索引。
 
         幂等——同 ID 重复写入是覆盖。
+
+        Args:
+            artifact: Artifact 对象，需已设置 artifact_id、node_id、task_id。
         """
         aid = artifact.artifact_id
         nid = artifact.node_id
@@ -65,11 +69,25 @@ class ArtifactStore:
     # ── 查询 ──────────────────────────────────────────────────────────────
 
     async def get(self, artifact_id: ArtifactId) -> Artifact | None:
-        """按 ID 获取 artifact。不存在返回 None。"""
+        """按 ID 获取 artifact。
+
+        Args:
+            artifact_id: Artifact 的唯一标识。
+
+        Returns:
+            Artifact | None: 匹配的 artifact，不存在返回 None。
+        """
         return self._artifacts.get(artifact_id)
 
     async def get_by_node(self, node_id: NodeId) -> list[Artifact]:
-        """获取某个节点产出的所有 artifact。无结果返回空列表。"""
+        """获取某个节点产出的所有 artifact。
+
+        Args:
+            node_id: 节点的唯一标识。
+
+        Returns:
+            list[Artifact]: 该节点产出的所有 artifact。无结果返回空列表。
+        """
         ids = self._by_node.get(node_id, set())
         artifacts: list[Artifact] = []
         for aid in ids:
@@ -84,7 +102,14 @@ class ArtifactStore:
         return artifacts
 
     async def get_by_task(self, task_id: TaskId) -> list[Artifact]:
-        """获取某个任务的所有 artifact。无结果返回空列表。"""
+        """获取某个任务的所有 artifact。
+
+        Args:
+            task_id: 任务的唯一标识。
+
+        Returns:
+            list[Artifact]: 该任务的所有 artifact。无结果返回空列表。
+        """
         ids = self._by_task.get(task_id, set())
         artifacts: list[Artifact] = []
         for aid in ids:
@@ -107,6 +132,9 @@ class ArtifactStore:
 
         同时清理主存储和 node/task 两个索引。
         即使 _artifacts 中部分数据已缺失（如崩溃恢复），也能正确清理索引残留。
+
+        Args:
+            task_id: 任务的唯一标识。
         """
         ids = self._by_task.pop(task_id, set())
         if not ids:

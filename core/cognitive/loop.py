@@ -39,6 +39,11 @@ from Module.llm.registry import LLMFactory
 
 if TYPE_CHECKING:
     from Module.task_system.delegation_preparer import DelegationPreparer
+    from Module.tool.protocol import ToolExecutor
+    from ..token_tracker import TokenTracker
+    from ..debug.prompt_recorder import PromptRecorder
+    from ..debug.response_recorder import ResponseRecorder
+    from ..personality.engine import CharacterEngine
 
 from ..text.block_filter import BlockFilter, build_parts_with_blocks
 from ..adapter.tts_adapter import TTSStreamManager
@@ -67,8 +72,18 @@ class TurnPhase(str, Enum):
     FINALIZING = "finalizing"
 
 
-def _apply_mood(raw: str, engine, tts_mgr) -> None:
-    """解析 <mood> 标签内容，更新 CharacterState + push expression + TTS emotion."""
+def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamManager) -> None:
+    """解析 <mood> 标签内容，更新 CharacterState + push expression + TTS emotion。
+
+    支持格式: "情绪文本" 或 "情绪文本|强度"（强度 0.1–1.0）。
+    同时更新 CharacterEngine state.mood / state.mood_intensity，
+    推送表情（_push_expression），设置 TTS 情绪参数。
+
+    Args:
+        raw: <mood> 标签内的原始文本
+        engine: CharacterEngine 实例
+        tts_mgr: TTSStreamManager 实例
+    """
     if "|" in raw:
         mood_text, intensity_str = raw.rsplit("|", 1)
         try:
@@ -108,13 +123,29 @@ class CognitiveLoop(CognitiveTools):
         output: OutputManager,
         prompt: PromptAssembler,
         session: SessionMemory,
-        tool_executor=None,  # ToolExecutor Protocol
-        character_engine=None,  # CharacterEngine | None
+        tool_executor: "ToolExecutor | None" = None,
+        character_engine: "CharacterEngine | None" = None,
         consolidator: MemoryConsolidator | None = None,
         tts: TTSBackend | None = None,
-        token_tracker=None,  # TokenTracker | None
-        prompt_recorder=None,  # PromptRecorder | None
+        token_tracker: "TokenTracker | None" = None,
+        prompt_recorder: "PromptRecorder | None" = None,
     ):
+        """初始化认知循环。
+
+        Args:
+            llm: LLM 适配器，负责流式/非流式调用
+            fsm: Agent 状态机，驱动 THINKING/EXECUTING/SPEAKING/IDLE 转换
+            event_bus: 事件总线，广播 StateChangeData
+            output: 多通道输出管理器
+            prompt: 系统提示词组装器
+            session: 会话记忆
+            tool_executor: 工具执行器（ToolExecutor 协议）
+            character_engine: 角色引擎（4 层性格模型）
+            consolidator: 记忆沉淀器，提取对话记忆
+            tts: TTS 后端，经 TTSStreamManager 代理
+            token_tracker: LLM token 用量追踪器
+            prompt_recorder: LLM prompt 记录器（供 debug 面板）
+        """
         self._llm = llm
         self._fsm = fsm
         self._bus = event_bus
@@ -167,6 +198,11 @@ class CognitiveLoop(CognitiveTools):
 
         由 agent.py 在 __init__ / start() 中调用。有副作用的属性（如 tts）
         在此方法内联处理。
+
+        Args:
+            **kwargs: 键值对，键为属性名（不含 _ 前缀），值为注入对象。
+                常用键: tool_adapter, memory_reflector, response_recorder,
+                task_system, delegation_preparer, on_background_task, user_profile, tts
         """
         for name, value in kwargs.items():
             setattr(self, f"_{name}", value)
@@ -177,15 +213,22 @@ class CognitiveLoop(CognitiveTools):
 
     async def process(self, user_message: str = "", user_name: str = "妖梦",
                        stt_emotion: str = "", stt_events: list[str] | None = None,
-                       _on_tool_calls=None,
+                       _on_tool_calls: Callable | None = None,
                        content: list[dict] | None = None,
                        is_task_result: bool = False,
                        task_result_context: dict | None = None,
                        ) -> None:
-        """处理用户消息。
+        """处理用户消息，驱动一轮完整的 ReAct 认知循环。
 
-        user_message: 纯文本（STT/键盘输入）— 兼容旧调用
-        content: 多模态内容数组（ChatMessageV2 content）— 新接口
+        Args:
+            user_message: 纯文本输入（STT 识别结果或键盘输入），兼容旧调用
+            user_name: 用户名，注入系统提示词
+            stt_emotion: STT 语音情绪标签（如 "HAPPY", "SAD", "NEUTRAL"）
+            stt_events: STT 语音事件列表（如 ["laughter", "sigh"]）
+            _on_tool_calls: 外部工具回调（测试/自定义 dispatch），None 时走 _execute_tools_directly
+            content: 多模态内容数组（ChatMessageV2 content），优先级高于 user_message
+            is_task_result: 是否为后台任务结果触发的唤醒
+            task_result_context: 后台任务结果上下文，含 original_intent / result 等字段
         """
         async with self._process_lock:
             if not self._fsm.can_transition(AgentState.THINKING):
@@ -268,7 +311,19 @@ class CognitiveLoop(CognitiveTools):
         stt_emotion: str, stt_events: list[str] | None,
         is_task_result: bool,
     ) -> tuple[list[dict], list[dict]]:
-        """构建本轮 LLM 调用的 messages + tool definitions。"""
+        """构建本轮 LLM 调用的 messages + tool definitions。
+
+        Args:
+            user_message: 用户纯文本输入
+            user_name: 用户名
+            content: 多模态内容数组（优先于 user_message）
+            stt_emotion: STT 情绪标签
+            stt_events: STT 事件列表
+            is_task_result: 是否为任务结果唤醒（决定是否写入 session）
+
+        Returns:
+            (messages, tool_defs): LLM 消息列表 + 工具定义列表
+        """
         assert self._clock is not None
         with self._clock.span("prompt") as t:
             supports_mm = LLMFactory.supports_multimodal(self._llm.model)
@@ -305,9 +360,23 @@ class CognitiveLoop(CognitiveTools):
     async def _stream_llm_response(
         self, messages: list[dict], tool_defs: list[dict], round_num: int,
     ) -> tuple[str, list[dict], bool, list[str], str]:
-        """流式调用 LLM，分发 StreamProcessor 事件。
+        """流式调用 LLM，逐 chunk 分发 StreamProcessor 事件。
 
-        Returns: (acc_text, raw_tool_calls, speaking_started, all_sentences, inner_voice)
+        驱动 StreamProcessor 状态机，将解析出的文本增量转为 TTS/UI 副作用。
+        同时累积 tool_call delta 供后续 normalize。
+
+        Args:
+            messages: 已构建的 LLM 消息列表（含 system + history + user）
+            tool_defs: 工具定义列表（OpenAI function calling 格式）
+            round_num: 当前工具调用轮次（0 = 首轮）
+
+        Returns:
+            (acc_text, raw_tool_calls, speaking_started, all_sentences, inner_voice):
+            - acc_text: LLM 原始输出全文（含标签）
+            - raw_tool_calls: 合并后的 streaming tool_call delta 列表
+            - speaking_started: 是否已开始语音/文本输出
+            - all_sentences: 所有分句文本列表
+            - inner_voice: 内心独白文本（<inner_voice> 标签内容）
         """
         acc_text = ""
         raw_tool_calls: list[dict] = []
@@ -378,11 +447,21 @@ class CognitiveLoop(CognitiveTools):
 
     async def _execute_tool_round(
         self, messages: list[dict], acc_text: str,
-        raw_tool_calls: list[dict], _on_tool_calls,
+        raw_tool_calls: list[dict], _on_tool_calls: Callable | None,
     ) -> None:
-        """执行工具调用轮次：submit_task 拦截 → dispatch → 结果注入。
+        """执行一轮工具调用：submit_task 拦截 → Gate 校验 → dispatch → 结果注入。
 
-        副作用：修改 messages（in-place）、写 session、推 output 事件。
+        副作用（全部就地修改）：
+        - messages 追加 assistant entry + tool result messages
+        - session 写入 AssistantMessage + ToolResultMessage
+        - output 推送 tool_executing / tool_done action
+        - fsm 切换 EXECUTING → THINKING
+
+        Args:
+            messages: LLM 消息列表（in-place 修改，追加 assistant + tool results）
+            acc_text: LLM 原始输出全文
+            raw_tool_calls: streaming 累积的 tool_call delta（合并后未归一化）
+            _on_tool_calls: 外部工具回调（测试/自定义 dispatch），None 时走 _execute_tools_directly
         """
         # 切断气泡 — TTS tasks 独立运行，不 cancel
         await self._output.send("")
@@ -414,7 +493,7 @@ class CognitiveLoop(CognitiveTools):
 
         # submit_task 工具调用——拦截处理
         if submit_tcs:
-            for i, tc in enumerate(submit_tcs):
+            for tc in submit_tcs:
                 result = await self._handle_submit_task(tc)
                 tc_id = tc.id
                 messages.append({
@@ -534,7 +613,20 @@ class CognitiveLoop(CognitiveTools):
         iv_think_buf: str, speaking_started: bool,
         user_message: str, round_num: int,
     ) -> None:
-        """收尾：标签剥离 → 归档 session → 推送结构化块 → 触发 after_response。"""
+        """收尾本轮：标签剥离 → mood fallback → 归档 session → 推送结构化块 → after_response。
+
+        将 acc_text 中的 <mood> / <inner_voice> 标签剥离得到 public_text，
+        构建 AssistantMessage 写入 session，推送 code/markdown 块到前端，
+        最后触发 fire-and-forget _after_response。
+
+        Args:
+            acc_text: LLM 原始输出全文（含标签）
+            all_sentences: 所有分句文本列表（用于 block 构建）
+            iv_think_buf: 内心独白文本
+            speaking_started: 是否已开始语音/文本输出
+            user_message: 用户原始输入（传给 _after_response）
+            round_num: 当前轮次编号（传给 response_recorder）
+        """
         await self._tts_mgr.flush_emojis()
 
         # Fallback: LLM 未输出 <mood> → 关键词检测
@@ -618,12 +710,31 @@ class CognitiveLoop(CognitiveTools):
 
     async def _think_loop(self, user_message: str, user_name: str,
                           stt_emotion: str = "", stt_events: list[str] | None = None,
-                          _on_tool_calls=None,
+                          _on_tool_calls: Callable | None = None,
                           content: list[dict] | None = None,
                           is_task_result: bool = False,
                           task_result_context: dict | None = None,
                           ) -> None:
-        """ReAct 主循环：build → [stream → (execute | finalize)] * MAX_ROUNDS。"""
+        """ReAct 主循环：build → [stream → (execute | finalize)] × MAX_TOOL_ROUNDS。
+
+        1. 前置：STT 情绪分析 + 渐进式唤醒消息构建
+        2. 构建 prompt（_build_turn_prompt）→ 记录 prompt + 启动 token turn
+        3. ReAct 循环（最多 MAX_TOOL_ROUNDS 轮）：
+           - 流式调用 LLM（_stream_llm_response）
+           - 有 tool_calls → 执行工具轮（_execute_tool_round）→ 继续循环
+           - 无 tool_calls → 收尾（_finalize_turn）→ 退出
+        4. 异常时清理 executing_tools + TTS
+
+        Args:
+            user_message: 用户纯文本输入
+            user_name: 用户名
+            stt_emotion: STT 语音情绪标签
+            stt_events: STT 语音事件列表
+            _on_tool_calls: 外部工具回调
+            content: 多模态内容数组
+            is_task_result: 是否为后台任务结果唤醒
+            task_result_context: 任务结果上下文（含 original_intent / result）
+        """
         # 前置：STT 情绪分析 + 渐进式唤醒
         if self._character_engine:
             if stt_emotion and stt_emotion != "NEUTRAL":
@@ -672,7 +783,15 @@ class CognitiveLoop(CognitiveTools):
     # ---- Post-response ----
 
     async def _after_response(self, user_message: str, assistant_response: str) -> None:
-        """Post-response hooks: consolidate memory, character reflection, save session."""
+        """Post-response hooks: consolidate memory, character reflection, save session.
+
+        以 fire-and-forget 方式由 _finalize_turn 调用。
+        执行顺序：Consolidator 提取记忆 → CharacterReflector 缓冲 → MemoryReflector 去重 → 保存 session。
+
+        Args:
+            user_message: 用户原始输入
+            assistant_response: 剥离标签后的公开回复文本
+        """
         items = []  # 初始化，避免 NameError
         if self._consolidator:
             try:
@@ -719,7 +838,17 @@ class CognitiveLoop(CognitiveTools):
         """分发 StreamEvent → 副作用。
 
         这是 StreamProcessor（纯状态机）和 CognitiveLoop（副作用世界）之间的桥。
-        返回更新后的 (speaking_started, all_sentences)。
+        按事件类型分发：mood → CharacterEngine, inner_voice → UI command,
+        ttft → clock span, sentence → TTS/UI, text_delta → 纯文本模式输出。
+
+        Args:
+            event: StreamProcessor 产出的解析事件
+            speaking_started: 当前轮是否已开始语音/文本输出
+            all_sentences: 已累积的分句列表（in-place 追加）
+            iv_think_buf_holder: 单元素列表，用于承载 inner_voice 文本（可变容器绕过 Python 闭包限制）
+
+        Returns:
+            (speaking_started, all_sentences): 更新后的状态
         """
         if event.type == StreamEventType.MOOD:
             if self._character_engine:
@@ -782,6 +911,12 @@ class CognitiveLoop(CognitiveTools):
 
         注入当前时间避免 LLM 产生时间幻觉（如凌晨说"今早"）。
         v1: 统一礼貌询问。后续 TODO(v2): 检查对话上下文动态调整。
+
+        Args:
+            ctx: 任务结果上下文字典，含 original_intent（原始意图）和 result（结果摘要）
+
+        Returns:
+            格式化的系统唤醒消息字符串
         """
         now = datetime.datetime.now()
         time_str = now.strftime("%Y-%m-%d %H:%M:%S")

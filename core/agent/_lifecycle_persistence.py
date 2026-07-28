@@ -42,7 +42,11 @@ class _LifecyclePersistence:
         self._db_health_task = asyncio.create_task(self._db_health_loop())
 
     async def _start_persistence(self) -> tuple[bool, bool]:
-        """连接 MongoDB/Milvus，加载 session，恢复 JSONL 快照。"""
+        """连接 MongoDB/Milvus，加载 session，恢复 JSONL 快照。
+
+        Returns:
+            (mongo_ok, milvus_ok) 两个布尔值，分别表示 MongoDB 和 Milvus 是否连接成功。
+        """
         mongo_ok, milvus_ok = await asyncio.gather(
             self._session.connect_db(),
             self._long_term.connect(),

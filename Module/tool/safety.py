@@ -13,9 +13,15 @@ _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 def _sanitize_session_id(session_id: str) -> str:
-    """Sanitize session_id 防止路径穿越攻击。
+    """对 session_id 做安全过滤，防止路径穿越攻击。
 
     仅允许 [a-zA-Z0-9_-]。不匹配时返回 "default"。
+
+    Args:
+        session_id: 原始 session_id 字符串。
+
+    Returns:
+        过滤后的安全 session_id，非法时返回 "default"。
     """
     if _SESSION_ID_RE.match(session_id):
         return session_id
@@ -71,14 +77,28 @@ class SafetyProfile:
 # ============================================================================
 
 def _estimate_tokens(text: str) -> int:
-    """粗略 token 估算：英文 ~4 chars/token，中文 ~1 char/token。"""
+    """粗略 token 估算：英文 ~4 chars/token，中文 ~1 char/token。
+
+    Args:
+        text: 待估算的文本。
+
+    Returns:
+        估算的 token 数量。
+    """
     latin = len(re.findall(r"[a-zA-Z0-9\s\W]", text))
     cjk = len(text) - latin
     return int(latin / 4 + cjk)
 
 
 def _format_validation_error(exc: ValidationError) -> str:
-    """将 Pydantic ValidationError 精简为一行一句话（≤200 字符）。"""
+    """将 Pydantic ValidationError 精简为一行一句话（≤200 字符）。
+
+    Args:
+        exc: Pydantic 校验异常。
+
+    Returns:
+        格式化后的错误描述字符串。
+    """
     messages = []
     for err in exc.errors():
         loc = ".".join(str(x) for x in err["loc"])
@@ -88,7 +108,15 @@ def _format_validation_error(exc: ValidationError) -> str:
 
 
 def _format_args(raw_params: dict, max_len: int = 60) -> str:
-    """格式化工具参数用于日志，截断长值。"""
+    """格式化工具参数用于日志，截断长值。
+
+    Args:
+        raw_params: 原始参数字典。
+        max_len: 每个参数值的最大展示长度。
+
+    Returns:
+        格式化后的参数字符串（如 "key1=val1, key2=val2"）。
+    """
     if not raw_params:
         return ""
     parts = []
@@ -103,7 +131,16 @@ def _format_args(raw_params: dict, max_len: int = 60) -> str:
 def _truncate_text(
     text: str, max_tokens: int, strategy: str,
 ) -> tuple[str, bool]:
-    """Token-aware 截断。返回 (文本, 是否截断)。"""
+    """Token-aware 截断。
+
+    Args:
+        text: 待截断的文本。
+        max_tokens: 最大 token 数。
+        strategy: 截断策略（"head_tail" 或 "head_only"）。
+
+    Returns:
+        (截断后的文本, 是否被截断)。
+    """
     est = _estimate_tokens(text)
     if est <= max_tokens:
         return text, False
@@ -129,7 +166,15 @@ def _truncate_text(
 # ============================================================================
 
 def _validate_url(url: str, profile: SafetyProfile) -> str | None:
-    """URL 安全检查（内网 IP 过滤 + scheme 检查）。返回错误字符串或 None。"""
+    """URL 安全检查（内网 IP 过滤 + scheme 检查）。
+
+    Args:
+        url: 待验证的 URL 字符串。
+        profile: 安全配置声明。
+
+    Returns:
+        错误描述字符串；None 表示通过检查。
+    """
     from urllib.parse import urlparse
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -148,7 +193,17 @@ def _validate_url(url: str, profile: SafetyProfile) -> str | None:
 def _resolve_sandbox_path(
     path: str, profile: SafetyProfile, session_id: str, is_write: bool,
 ) -> tuple[Path, str | None]:
-    """Sandbox 路径解析。返回 (resolved_path, error_or_none)。"""
+    """Sandbox 路径解析。
+
+    Args:
+        path: 原始路径字符串。
+        profile: 安全配置声明。
+        session_id: 当前会话 ID，用于模板变量替换。
+        is_write: 是否为写入操作（影响 sandbox 目录选择）。
+
+    Returns:
+        (解析后的绝对路径, 错误信息或 None)。
+    """
     raw = Path(path)
     safe_sid = _sanitize_session_id(session_id)
     if not raw.is_absolute():
@@ -175,7 +230,15 @@ def _resolve_sandbox_path(
 def _validate_path(
     resolved: Path, profile: SafetyProfile,
 ) -> str | None:
-    """路径安全检查。返回 None 表示通过，否则返回错误字符串。"""
+    """路径安全检查。
+
+    Args:
+        resolved: 已解析的绝对路径。
+        profile: 安全配置声明。
+
+    Returns:
+        None 表示通过检查，否则返回错误描述字符串。
+    """
     path_str = str(resolved)
 
     if profile.read_dirs:
@@ -206,6 +269,10 @@ class SafetyPipeline:
     """工具执行中间件管道：validate → safety → hitl → execute → truncate。"""
 
     def __init__(self) -> None:
+        """初始化安全管道。
+
+        初始化 HITL 审批请求/结果字典、审批超时（默认 60s）、执行统计计数器。
+        """
         self._hitl_requests: dict[str, tuple[asyncio.Event, str, dict]] = {}  # request_id → (event, tool_name, params)
         self._hitl_results: dict[str, tuple[bool, str]] = {}
         self._hitl_timeout: float = 60.0
@@ -216,7 +283,15 @@ class SafetyPipeline:
     # ---- HITL public API ----
 
     def submit_approval(self, request_id: str, approved: bool) -> bool:
-        """前端提交审批结果。返回 True 如果找到了对应的审批请求。"""
+        """前端提交审批结果。
+
+        Args:
+            request_id: 审批请求 ID。
+            approved: True 表示批准，False 表示拒绝。
+
+        Returns:
+            True 如果找到了对应的审批请求并已处理。
+        """
         if request_id not in self._hitl_requests:
             return False
         self._hitl_results[request_id] = (
@@ -226,22 +301,36 @@ class SafetyPipeline:
         return True
 
     def request_exists(self, request_id: str) -> bool:
+        """检查审批请求是否存在。
+
+        Args:
+            request_id: 审批请求 ID。
+
+        Returns:
+            True 如果存在对应的审批请求。
+        """
         return request_id in self._hitl_requests
 
     def get_pending_approvals(self) -> list[tuple[str, str, dict]]:
-        """返回所有待审批请求的 (request_id, tool_name, params)。
-        用于 WS 重连时重新广播审批弹窗到新客户端。"""
+        """返回所有待审批请求。
+
+        用于 WS 重连时重新广播审批弹窗到新客户端。
+
+        Returns:
+            [(request_id, tool_name, params), ...] 列表。
+        """
         return [
             (rid, tool_name, params)
             for rid, (event, tool_name, params) in self._hitl_requests.items()
             if not event.is_set()
         ]
 
-    def set_hitl_broadcast(self, callback):
-        """Set the HITL approval broadcast callback.
+    def set_hitl_broadcast(self, callback) -> None:
+        """设置 HITL 审批广播回调。
 
-        callback(request_id, tool_name, params) -> None
-        Should broadcast approval request to frontend via OutputManager.
+        Args:
+            callback: async callable(request_id, tool_name, params) -> None，
+                      用于向前端广播审批请求。
         """
         self._broadcast_hitl = callback
 
@@ -255,7 +344,18 @@ class SafetyPipeline:
         raw_params: dict,
         semaphore: asyncio.Semaphore | None,
     ) -> Any:  # ToolResult
-        """执行完整管道（非流式）。"""
+        """执行完整安全管道（非流式）。
+
+        Args:
+            plugin: ToolPlugin 实例。
+            name: 工具名称。
+            ctx: ToolContext 运行时上下文。
+            raw_params: 原始参数字典（未经校验）。
+            semaphore: 并发控制信号量。
+
+        Returns:
+            ToolResult: 工具执行结果。
+        """
         from Module.tool.protocol import ToolResult, ErrorType  # noqa: F811
 
         start = asyncio.get_event_loop().time()
@@ -359,7 +459,18 @@ class SafetyPipeline:
         raw_params: dict,
         semaphore: asyncio.Semaphore | None,
     ) -> AsyncIterator[Any]:
-        """执行流式管道。"""
+        """执行流式安全管道。
+
+        Args:
+            plugin: ToolPlugin 实例。
+            name: 工具名称。
+            ctx: ToolContext 运行时上下文。
+            raw_params: 原始参数字典（未经校验）。
+            semaphore: 并发控制信号量。
+
+        Yields:
+            ToolProgress | ToolResult: 中间进度事件或最终执行结果。
+        """
         from Module.tool.protocol import ToolResult, ErrorType  # noqa: F811
 
         # Pre-checks
@@ -442,7 +553,16 @@ class SafetyPipeline:
     async def _check_safety(
         self, plugin: Any, ctx: Any, raw_params: dict,
     ) -> str | None:
-        """Check URL and file path safety. Returns error string or None."""
+        """检查 URL 和文件路径安全。
+
+        Args:
+            plugin: ToolPlugin 实例。
+            ctx: ToolContext 运行时上下文。
+            raw_params: 原始参数字典。
+
+        Returns:
+            错误字符串或 None（通过检查）。
+        """
         profile = plugin.safety
         if profile is None:
             return None
@@ -485,7 +605,16 @@ class SafetyPipeline:
     async def _run_hitl(
         self, plugin: Any, name: str, params: dict,
     ) -> tuple[bool, str]:
-        """HITL 审批流程。返回 (approved, status)。"""
+        """执行 HITL 审批流程。
+
+        Args:
+            plugin: ToolPlugin 实例。
+            name: 工具名称。
+            params: 工具参数。
+
+        Returns:
+            (是否批准, 状态字符串)，状态为 "confirmed" / "denied" / "timeout" / "expired"。
+        """
         from core.utils import new_message_id
         request_id = new_message_id()
         event = asyncio.Event()
@@ -509,7 +638,17 @@ class SafetyPipeline:
         self, raw: Any, name: str, duration_ms: float,
         profile: SafetyProfile | None,
     ) -> Any:  # ToolResult
-        """Wrap raw result into ToolResult with token truncation."""
+        """将原始结果包装为 ToolResult 并进行 token 截断。
+
+        Args:
+            raw: 原始执行结果（ToolResult 或任意值）。
+            name: 工具名称。
+            duration_ms: 执行耗时（毫秒）。
+            profile: 安全配置声明，用于 token 截断。
+
+        Returns:
+            ToolResult: 标准化工具执行结果。
+        """
         from Module.tool.protocol import ToolResult  # noqa: F811
 
         if isinstance(raw, ToolResult):
@@ -545,12 +684,32 @@ class SafetyPipeline:
 # ============================================================================
 
 async def execute_with_timeout(func, kwargs: dict, timeout: float) -> Any:
-    """asyncio.wait_for 包裹执行。"""
+    """带超时的函数执行包装。
+
+    Args:
+        func: 异步 callable。
+        kwargs: 传递给 func 的关键字参数。
+        timeout: 超时秒数。
+
+    Returns:
+        func 的返回值。
+
+    Raises:
+        asyncio.TimeoutError: 超时。
+    """
     return await asyncio.wait_for(func(**kwargs), timeout=timeout)
 
 
 def truncate_result(result: Any, max_len: int) -> tuple[str, bool]:
-    """str() 转换后截断到 max_len 字符。"""
+    """str() 转换后截断到 max_len 字符。
+
+    Args:
+        result: 任意结果对象。
+        max_len: 最大字符数。
+
+    Returns:
+        (截断后的字符串, 是否被截断)。
+    """
     text = str(result)
     if len(text) <= max_len:
         return text, False
@@ -558,7 +717,15 @@ def truncate_result(result: Any, max_len: int) -> tuple[str, bool]:
 
 
 def validate_args(params: dict[str, ToolParameter], raw_args: dict) -> tuple[dict, list[str]]:
-    """类型转换 + 必填检查。"""
+    """类型转换 + 必填检查。
+
+    Args:
+        params: 参数定义映射（name → ToolParameter）。
+        raw_args: 原始参数字典。
+
+    Returns:
+        (转换后的参数字典, 错误信息列表)。
+    """
     coerced: dict[str, Any] = {}
     errors: list[str] = []
 
@@ -585,7 +752,16 @@ def validate_args(params: dict[str, ToolParameter], raw_args: dict) -> tuple[dic
 
 
 def _coerce_value(name: str, value: Any, target_type: str) -> tuple[Any, str | None]:
-    """将 value 转换为 target_type。"""
+    """将 value 转换为 target_type。
+
+    Args:
+        name: 参数名（用于错误消息）。
+        value: 原始值。
+        target_type: 目标类型（"integer", "number", "boolean" 等）。
+
+    Returns:
+        (转换后的值, 错误消息或 None)。
+    """
     if target_type == "integer":
         if isinstance(value, bool):
             return value, None

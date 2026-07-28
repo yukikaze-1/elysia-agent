@@ -28,6 +28,12 @@ class Range(_Constraint):
     """Value must be within [*min*, *max*] (inclusive by default)."""
 
     def __init__(self, min: float | int | None = None, max: float | int | None = None):
+        """初始化范围约束。
+
+        Args:
+            min: 最小值（含），None 表示无下限。
+            max: 最大值（含），None 表示无上限。
+        """
         self.min = min
         self.max = max
 
@@ -47,6 +53,14 @@ class Choices(_Constraint):
     """Value must be one of the *allowed* values."""
 
     def __init__(self, allowed: list[Any]):
+        """初始化选项约束。
+
+        Args:
+            allowed: 允许的值列表，至少包含一个元素。
+
+        Raises:
+            ValueError: 当 allowed 为空时。
+        """
         if not allowed:
             raise ValueError("Choices must have at least one allowed value")
         self.allowed = allowed
@@ -63,6 +77,12 @@ class Regex(_Constraint):
     """Value (str) must match *pattern* (uses ``re.search`` — matches anywhere)."""
 
     def __init__(self, pattern: str, *, message: str | None = None):
+        """初始化正则约束。
+
+        Args:
+            pattern: 正则表达式模式字符串。
+            message: 校验失败时的自定义错误信息，为 None 时使用默认信息。
+        """
         self.pattern = re.compile(pattern)
         self._message = message or f"must match pattern {pattern!r}"
 

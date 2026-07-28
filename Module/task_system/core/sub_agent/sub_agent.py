@@ -123,6 +123,10 @@ class SubAgent:
         1. 创建 TaskState（任务级）
         2. _plan_and_validate() → PlanGraph
         3. _execute() → 执行-决策循环
+
+        Args:
+            context: 委托上下文，包含 intent / tools / constraints。
+            mailbox: 任务邮箱，用于推送生命周期事件。
         """
         task_id = mailbox.task_id
 
@@ -240,6 +244,13 @@ class SubAgent:
     ) -> tuple[bool, ExecutionState | None]:
         """按 OrchestratorRunStatus 分发到对应 handler。
 
+        Args:
+            result: Orchestrator 执行结果。
+            task_state: 当前任务状态。
+            graph: 当前执行计划图。
+            mailbox: 任务邮箱。
+            context: 委托上下文。
+
         Returns:
             (True, resume_state)  — 继续执行循环
             (False, None)         — 终止循环
@@ -282,6 +293,16 @@ class SubAgent:
         task_state: TaskState,
         mailbox: TaskMailbox,
     ) -> PlanGraph | None:
+        """规划 + 校验——委托到 planning.plan_and_validate。
+
+        Args:
+            context: 委托上下文。
+            task_state: 当前任务状态。
+            mailbox: 任务邮箱。
+
+        Returns:
+            校验通过时返回 PlanGraph，ABORT 时返回 None。
+        """
         assert self._planner is not None
         assert self._plan_validator is not None
         return await planning.plan_and_validate(
@@ -299,6 +320,15 @@ class SubAgent:
         context: DelegationContext,
         resume_from: ExecutionState | None = None,
     ) -> None:
+        """执行-决策循环——委托到 execution_loop.execute_loop。
+
+        Args:
+            task_state: 当前任务状态。
+            graph: 执行计划图。
+            mailbox: 任务邮箱。
+            context: 委托上下文。
+            resume_from: 恢复执行时传入的 ExecutionState，首次执行为 None。
+        """
         assert self._orchestrator is not None
         return await execution_loop.execute_loop(
             self._orchestrator, task_state, graph, mailbox, context, resume_from,
@@ -310,11 +340,24 @@ class SubAgent:
     async def _handle_success(
         self, result: OrchestratorResult, task_state: TaskState,
     ) -> None:
+        """处理执行成功结果——委托到 result_handlers.handle_success。
+
+        Args:
+            result: Orchestrator 执行结果。
+            task_state: 当前任务状态。
+        """
         return await result_handlers.handle_success(result, task_state)
 
     async def _handle_failed(
         self, result: OrchestratorResult, task_state: TaskState, mailbox: TaskMailbox,
     ) -> None:
+        """处理执行失败结果——委托到 result_handlers.handle_failed。
+
+        Args:
+            result: Orchestrator 执行结果。
+            task_state: 当前任务状态。
+            mailbox: 任务邮箱。
+        """
         return await result_handlers.handle_failed(
             result, task_state, mailbox, self._push_mailbox,
         )
@@ -322,6 +365,13 @@ class SubAgent:
     async def _handle_cancelled(
         self, result: OrchestratorResult, task_state: TaskState, mailbox: TaskMailbox,
     ) -> None:
+        """处理取消结果——委托到 result_handlers.handle_cancelled。
+
+        Args:
+            result: Orchestrator 执行结果。
+            task_state: 当前任务状态。
+            mailbox: 任务邮箱。
+        """
         return await result_handlers.handle_cancelled(
             result, task_state, mailbox, self._push_mailbox,
         )
@@ -329,6 +379,13 @@ class SubAgent:
     async def _handle_blocked(
         self, result: OrchestratorResult, task_state: TaskState, mailbox: TaskMailbox,
     ) -> None:
+        """处理阻塞结果——委托到 result_handlers.handle_blocked。
+
+        Args:
+            result: Orchestrator 执行结果。
+            task_state: 当前任务状态。
+            mailbox: 任务邮箱。
+        """
         return await result_handlers.handle_blocked(
             result, task_state, mailbox, self._push_mailbox,
         )
@@ -336,6 +393,13 @@ class SubAgent:
     async def _handle_paused(
         self, result: OrchestratorResult, task_state: TaskState, mailbox: TaskMailbox,
     ) -> None:
+        """处理暂停结果——委托到 result_handlers.handle_paused。
+
+        Args:
+            result: Orchestrator 执行结果。
+            task_state: 当前任务状态。
+            mailbox: 任务邮箱。
+        """
         assert self._checkpoint_mgr is not None
         return await result_handlers.handle_paused(
             result, task_state, mailbox, self._checkpoint_mgr, self._push_mailbox,
@@ -351,6 +415,19 @@ class SubAgent:
         mailbox: TaskMailbox,
         context: DelegationContext,
     ) -> tuple[bool, ExecutionState | None]:
+        """处理需要重新规划的结果——委托到 replan.handle_replan。
+
+        Args:
+            result: Orchestrator 执行结果。
+            task_state: 当前任务状态。
+            graph: 当前执行计划图。
+            mailbox: 任务邮箱。
+            context: 委托上下文。
+
+        Returns:
+            (True, resume_state)  — 继续执行循环
+            (False, None)         — 终止循环
+        """
         assert self._replanner is not None
         assert self._plan_validator is not None
         assert self._orchestrator is not None
@@ -363,6 +440,14 @@ class SubAgent:
         )
 
     def _check_meltdown(self, task_state: TaskState) -> str | None:
+        """检查任务是否触发熔断——委托到 replan.check_meltdown。
+
+        Args:
+            task_state: 当前任务状态。
+
+        Returns:
+            熔断原因字符串，未触发时返回 None。
+        """
         assert task_state.plan is not None, "熔断检查前 plan 必须已赋值"
         return replan.check_meltdown(
             task_state.plan.plan_version,
@@ -376,6 +461,14 @@ class SubAgent:
     def _extract_node_results(
         self, checkpoint: TaskCheckpoint,
     ) -> dict[str, NodeState]:
+        """从 checkpoint 提取已完成节点的结果——委托到 replan.extract_node_results。
+
+        Args:
+            checkpoint: 任务检查点。
+
+        Returns:
+            node_id → NodeState 的映射字典。
+        """
         return replan.extract_node_results(checkpoint)
 
     # ── static helpers ────────────────────────────────────────────────────────
@@ -384,7 +477,13 @@ class SubAgent:
     async def _push_mailbox(
         mailbox: TaskMailbox, event_type: TaskEventType, data: dict[str, Any],
     ) -> None:
-        """推送事件到 TaskMailbox——委托 push_mailbox_event。"""
+        """推送事件到 TaskMailbox——委托 push_mailbox_event。
+
+        Args:
+            mailbox: 目标任务邮箱。
+            event_type: 事件类型。
+            data: 事件数据字典。
+        """
         from Module.task_system.mailbox import push_mailbox_event
         push_mailbox_event(mailbox, event_type, data, caller="SubAgent")
 
@@ -394,6 +493,12 @@ class SubAgent:
 
         PLAN_TOO_LARGE：节点数/深度/结构问题（Planner 产出质量）
         INTERNAL_ERROR：未知/预期外的错误类型
+
+        Args:
+            issues: 校验问题列表。
+
+        Returns:
+            TaskErrorCode 字符串值。
         """
         plan_quality_types = {
             ValidationIssueType.MAX_NODES_EXCEEDED,

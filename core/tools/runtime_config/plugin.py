@@ -3,6 +3,8 @@
 import asyncio
 import time
 from datetime import datetime, timezone
+from typing import Any
+
 from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin, ToolContext
 from Module.tool.capability import Capability
@@ -35,8 +37,18 @@ class RuntimeConfigPlugin(ToolPlugin):
     safety = SafetyProfile()
 
     async def execute(
-        self, *, ctx: ToolContext, emit=None, params: RuntimeConfigParams,
+        self, *, ctx: ToolContext, emit: Any = None, params: RuntimeConfigParams,
     ) -> str:
+        """查看当前运行时配置。
+
+        Args:
+            ctx: 工具调用上下文。
+            emit: 进度上报器（未使用）。
+            params: 查询参数，可指定要查看的配置项。
+
+        Returns:
+            运行时配置信息字符串。
+        """
         query = (params.query or "").strip().lower()
 
         if query == "tools":
@@ -348,9 +360,11 @@ class RuntimeConfigPlugin(ToolPlugin):
         return "\n".join(s for s in sections if s)
 
     def _render_filesystem(self, ctx: ToolContext) -> str:
+        """渲染文件系统权限详情（query="filesystem" 入口）。"""
         return self._section_filesystem(ctx)
 
     def _render_network(self, ctx: ToolContext) -> str:
+        """渲染网络权限详情（query="network" 入口）。"""
         return self._section_network(ctx)
 
     async def _render_tasks_detail(self, ctx: ToolContext) -> str:

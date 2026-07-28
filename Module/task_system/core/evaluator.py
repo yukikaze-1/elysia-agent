@@ -70,6 +70,13 @@ class Evaluator:
         artifact_store: ArtifactStore,
         token_ledger: TokenLedger | None = None,
     ) -> None:
+        """Initialize the Evaluator.
+
+        Args:
+            infra: 跨任务共享的底层资源容器（LLM client）。
+            artifact_store: 节点产物存储，用于读取实际产物内容。
+            token_ledger: Token 账本（可选），用于记录 Evaluator 的 LLM 消耗。
+        """
         self._infra = infra
         self._artifact_store = artifact_store
         self._token_ledger = token_ledger
@@ -133,6 +140,12 @@ class Evaluator:
         """NodeResult.error → ExecutionStatus 确定性映射。
 
         无错误 = OK，有错误按类型映射。
+
+        Args:
+            result: Executor 产出的节点执行结果。
+
+        Returns:
+            ExecutionStatus: 对应的执行状态。
         """
         if result.error is None:
             return ExecutionStatus.OK
@@ -169,8 +182,12 @@ class Evaluator:
         从 ArtifactStore 按 artifact_refs 取实际产物，与 output_contract 一起
         发给 LLM 做语义比对。
 
+        Args:
+            result: Executor 产出的节点执行结果。
+            node: 原始 DAGNode（含 output_contract）。
+
         Returns:
-            (business_status, reason)
+            tuple: (business_status, reason)。
         """
         # 读取产物内容
         artifacts_data = await self._fetch_artifacts(result)
@@ -234,8 +251,12 @@ class Evaluator:
     async def _call_llm_for_judge(self, user_message: str, node: DAGNode) -> str | None:
         """调用 LLM 做业务判定。空响应时重试 1 次（DeepSeek 偶发空 content）。
 
+        Args:
+            user_message: 发送给 LLM 的用户消息。
+            node: 当前 DAGNode（用于 token 记录）。
+
         Returns:
-            LLM 响应文本，两次都失败时返回 None。
+            str | None: LLM 响应文本，两次都失败时返回 None。
         """
         # TODO: 大产物 / 复杂 json_schema 可能超出上下文窗口，
         #       后续参考 ConstraintConfig.max_context_tokens 做截断。
@@ -283,7 +304,14 @@ class Evaluator:
         return None
 
     async def _fetch_artifacts(self, result: NodeResult) -> dict[str, Any]:
-        """从 ArtifactStore 按 artifact_refs 获取实际产物数据。"""
+        """从 ArtifactStore 按 artifact_refs 获取实际产物数据。
+
+        Args:
+            result: 节点执行结果，含 artifact_refs。
+
+        Returns:
+            dict[str, Any]: artifact_id → content 的映射。
+        """
         data: dict[str, Any] = {}
         for aid in result.artifact_refs:
             artifact = await self._artifact_store.get(aid)
@@ -301,6 +329,15 @@ class Evaluator:
         result: NodeResult,
     ) -> EvaluatorAction:
         """根据执行状态 + 业务状态 + 节点属性推导建议动作。
+
+        Args:
+            execution_status: 工具是否正常返回。
+            business_status: Plan 期望是否达成。
+            node: 原始 DAGNode（含 required 属性）。
+            result: Executor 产出的节点执行结果。
+
+        Returns:
+            EvaluatorAction: 建议的下一步动作。
 
         规则表：
             OK + goal_achieved        → CONTINUE

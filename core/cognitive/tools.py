@@ -17,8 +17,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _default_user_profile():
-    """返回默认 UserProfile（v1: 空实例，后续由 CognitiveLoop 填充偏好/语言等）。"""
+def _default_user_profile() -> "UserProfile":
+    """返回默认 UserProfile（v1: 空实例，后续由 CognitiveLoop 填充偏好/语言等）。
+
+    Returns:
+        空的 UserProfile 实例。
+    """
     from Module.task_system.schema import UserProfile
     return UserProfile()
 
@@ -45,6 +49,12 @@ class CognitiveTools:
 
         每个工具在独立的 asyncio.Task 中并行执行，
         CancelledError 由 asyncio.gather 的 return_exceptions 捕获。
+
+        Args:
+            normalized: 标准化后的 ToolCall 列表。
+
+        Returns:
+            list[tuple[ToolCall, ToolResult]] — 每个工具调用与其结果的配对列表。
         """
         async def _execute_one(tc: ToolCall):
             func_name = tc.function.name
@@ -80,6 +90,14 @@ class CognitiveTools:
         任一被拒 → 注入 GATE_REJECTED tool messages 到 messages，返回 False。
 
         submit_task 被跳过——它是合成工具，有自己的 _handle_submit_task 校验。
+
+        Args:
+            tool_calls: LLM 产出的 ToolCall 列表。
+            messages: 当前消息列表（校验失败时会被原地追加 tool messages）。
+            blocked_tools: 已禁用的工具名集合，其中的工具调用会被拒绝。
+
+        Returns:
+            True 表示全部通过，False 表示有工具被拒绝。
         """
         # 1. 拆分：submit_task 单独放行
         gate_tcs = [tc for tc in tool_calls if tc.function.name != "submit_task"]
@@ -143,6 +161,9 @@ class CognitiveTools:
 
         不注册为 ToolPlugin——只在 tool_defs 中合并，LLM 可调用，
         但 ToolAdapter 永远不执行它（CognitiveLoop 拦截处理）。
+
+        Returns:
+            OpenAI 格式的 function definition dict。
         """
         return {
             "type": "function",
@@ -180,6 +201,12 @@ class CognitiveTools:
 
         校验 intent → DelegationPreparer.prepare() → TaskSystem.submit()。
         返回 ToolResult——LLM 在下一轮看到成功/失败。
+
+        Args:
+            tc: submit_task 的 ToolCall，其 function.parsed 包含 intent 和 hints。
+
+        Returns:
+            操作结果的 ToolResult，成功时携带 async_task_id。
         """
         from Module.task_system.schema import SubmitError
 

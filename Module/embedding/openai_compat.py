@@ -27,6 +27,14 @@ class OpenAICompatEmbeddingBackend(EmbeddingBackend):
         base_url: str = "",
         logger: logging.Logger | None = None,
     ):
+        """初始化 OpenAI 兼容 embedding 后端。
+
+        Args:
+            model: embedding 模型名，默认 "text-embedding-3-large"。
+            api_key: API 密钥，空串时从 OPENAI_API_KEY 环境变量读取。
+            base_url: API 基础 URL，空串时使用 OpenAI 默认地址。
+            logger: 日志记录器，未提供时自动创建。
+        """
         key = api_key or os.getenv("OPENAI_API_KEY", "")
         self._model = model
         self._dimension = 0  # 首次 API 调用后解析

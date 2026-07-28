@@ -135,7 +135,11 @@ class TaskState(BaseModel):
     token_usage: dict[str, int] = Field(default_factory=dict)  # 按组件汇总 {"planner": N, "executor": N, ...}
 
     def is_terminal(self) -> bool:
-        """任务是否已到达终态。"""
+        """任务是否已到达终态。
+
+        Returns:
+            bool: True 表示 COMPLETED/FAILED/CANCELLED 终态。
+        """
         return self.status in (
             TaskStatus.COMPLETED,
             TaskStatus.FAILED,

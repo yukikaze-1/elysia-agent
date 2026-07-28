@@ -34,6 +34,11 @@ class TokenLedger:
     """
 
     def __init__(self, task_state: TaskState) -> None:
+        """Initialize the token ledger.
+
+        Args:
+            task_state: TaskState to write token entries into.
+        """
         self._ts = task_state
 
     def record(
@@ -67,7 +72,11 @@ class TokenLedger:
         self._ts.token_usage[key] = self._ts.token_usage.get(key, 0) + total
 
     def to_token_usage(self) -> TokenUsage:
-        """导出 TokenUsage（供查询 API）。"""
+        """导出 TokenUsage（供查询 API）。
+
+        Returns:
+            TokenUsage: 包含完整 components 列表的 token 使用明细。
+        """
         return TokenUsage(
             task_id=self._ts.task_id,
             components=list(self._ts.token_entries),
@@ -75,4 +84,5 @@ class TokenLedger:
 
     @property
     def total_tokens(self) -> int:
+        """Return the total number of tokens consumed across all entries."""
         return sum(e.total_tokens for e in self._ts.token_entries)

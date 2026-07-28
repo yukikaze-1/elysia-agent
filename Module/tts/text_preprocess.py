@@ -15,6 +15,14 @@ _EMOJI_RE = re.compile(
 
 
 def strip_all_markup(text: str) -> str:
+    """移除所有 TTS 标记和 emoji，返回纯文本。
+
+    Args:
+        text: 包含标记的原始文本。
+
+    Returns:
+        移除所有标记后的纯文本。
+    """
     text = re.sub(r"\[.*?\]", "", text)        # [动作描写]
     text = re.sub(r"\<\<.*?\>\>", "", text)    # <<心情描写>> —— 必须在单 <> 之前
     text = re.sub(r"<(.*?)>", "", text)         # <表情描写>
@@ -24,6 +32,14 @@ def strip_all_markup(text: str) -> str:
 
 
 def strip_action_only(text: str) -> str:
+    """移除动作描写和 emoji，保留语气词和心情标记。
+
+    Args:
+        text: 包含标记的原始文本。
+
+    Returns:
+        移除动作描写后的文本（保留 <语气词> <<心情>>）。
+    """
     text = re.sub(r"\[.*?\]", "", text)         # [动作描写]
     text = re.sub(r"[\(\（].*?[\)\）]", "", text)  # (动作) 含全角括号
     text = _EMOJI_RE.sub("", text)              # emoji
@@ -38,6 +54,12 @@ def strip_for_minimax(text: str) -> str:
     删除 MiniMax 不支持的标记：[]（动作描写）、<<>>（心情描写）、emoji。
 
     注意：不引入 strip_all_markup 中的 <.*?> 正则（会误删 <#x#> 停顿标签）。
+
+    Args:
+        text: 包含标记的原始文本。
+
+    Returns:
+        移除不支持标记后的文本（保留 () 和 <> 标记）。
     """
     text = re.sub(r"\[.*?\]", "", text)         # [动作描写]
     text = re.sub(r"\<\<.*?\>\>", "", text)     # <<心情描写>>

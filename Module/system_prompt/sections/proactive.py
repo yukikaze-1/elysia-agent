@@ -8,6 +8,11 @@ class ProactiveSection(Jinja2Section):
     description = "主动性：何时主动说话、冷却机制"
 
     def __init__(self, template_path: str):
+        """初始化 Proactive section。
+
+        Args:
+            template_path: 模板文件路径。
+        """
         super().__init__(template_path)
         self._user_name = ""
         self._user_pronoun = "她"

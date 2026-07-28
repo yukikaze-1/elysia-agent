@@ -36,6 +36,13 @@ class WakeWordDetector:
         model_paths: dict[str, str] | None = None,
         on_wake: Callable[[], object] | None = None,
     ):
+        """Initialize the wake word detector.
+
+        Args:
+            wake_words: List of wake words to detect (e.g. ["alexa"]).
+            model_paths: Optional mapping of wake word to custom model file path.
+            on_wake: Callback invoked when a wake word is detected.
+        """
         self._wake_words = wake_words
         self._model_paths = model_paths or {}
         self._on_wake = on_wake
@@ -101,9 +108,15 @@ class WakeWordDetector:
 
     @property
     def enabled(self) -> bool:
+        """Return True if at least one wake word model is loaded."""
         return len(self._models) > 0
 
     def feed(self, chunk: bytes) -> None:
+        """Feed a raw PCM audio chunk for wake word detection.
+
+        Args:
+            chunk: Raw Int16 PCM audio data (256ms at 16kHz).
+        """
         if not self._models:
             return
 
@@ -134,8 +147,10 @@ class WakeWordDetector:
                             self._on_wake()
 
     def reset(self) -> None:
+        """Clear the internal audio buffer (e.g., on interruption)."""
         self._buffer.clear()
 
     def close(self) -> None:
+        """Release all models and clear buffers."""
         self._models.clear()
         self._buffer.clear()

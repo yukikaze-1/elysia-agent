@@ -84,11 +84,19 @@ class EventBusHITLNotifier(HITLNotifier):
     HITL_CANCEL = "hitl_cancel"
 
     def __init__(self, bus: Any) -> None:
-        """bus: core.event_bus.EventBus 实例"""
+        """Initialize the EventBus-based HITL notifier.
+
+        Args:
+            bus: core.event_bus.EventBus 实例。
+        """
         self._bus = bus
 
     async def request_approval(self, event_data: HITLData) -> None:
-        """通过 EventBus 推送审批到前端收件箱。"""
+        """通过 EventBus 推送审批到前端收件箱。
+
+        Args:
+            event_data: HITLData 审批事件数据。
+        """
         try:
             # 转为 dict 投递到 EventBus，前端通过 WebSocket 订阅
             self._bus.post(
@@ -103,7 +111,11 @@ class EventBusHITLNotifier(HITLNotifier):
             # 不抛异常——Mailbox 审计流兜底
 
     async def cancel_approval(self, approval_ids: list[ApprovalId]) -> None:
-        """通过 EventBus 批量通知前端移除审批卡片。"""
+        """通过 EventBus 批量通知前端移除审批卡片。
+
+        Args:
+            approval_ids: 要取消的审批 ID 列表。
+        """
         if not approval_ids:
             return
         try:

@@ -8,6 +8,12 @@ class EmotionSection(Jinja2Section):
     description = "当前心情 + 情绪响应规则（sol_pro 基准，含心理结构）"
 
     def __init__(self, template_path: str, session=None):
+        """初始化 Emotion section。
+
+        Args:
+            template_path: 模板文件路径。
+            session: Session 实例，用于读取当前 mood。
+        """
         super().__init__(template_path)
         self._session = session
         self._user_name = ""

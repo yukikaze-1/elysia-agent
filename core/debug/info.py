@@ -125,11 +125,27 @@ class DebugInfo:
     task_tree: dict = field(default_factory=dict)
 
 def _truncate(text: str, n: int = 80) -> str:
+    """截断文本到指定长度，超出部分用省略号替代。
+
+    Args:
+        text: 待截断的文本。
+        n: 最大字符数，默认 80。
+
+    Returns:
+        截断后的文本字符串。
+    """
     return text if len(text) <= n else text[:n] + "…"
 
 
 async def collect(agent: "Agent") -> DebugInfo:
-    """Gather all debug data from a Agent instance."""
+    """收集 Agent 实例的所有调试数据。
+
+    Args:
+        agent: 要收集调试数据的 Agent 实例。
+
+    Returns:
+        包含完整调试数据的 DebugInfo 对象。
+    """
     info = DebugInfo()
 
     # ---- System ----

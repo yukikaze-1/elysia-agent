@@ -8,6 +8,12 @@ class OwnLifeSection(Jinja2Section):
     description = "她自己的事：最近在干嘛"
 
     def __init__(self, template_path: str, session=None):
+        """初始化 OwnLife section。
+
+        Args:
+            template_path: 模板文件路径。
+            session: Session 实例，用于读取 own_life 文本。
+        """
         super().__init__(template_path)
         self._session = session
 

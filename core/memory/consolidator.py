@@ -72,7 +72,14 @@ _compare_actions_adapter = TypeAdapter(list[CompareAction])
 
 
 def _extract_json_array(text: str) -> list[dict]:
-    """纯文本→list[dict]。去掉 markdown fence → json.loads → regex fallback。"""
+    """纯文本→list[dict]。去掉 markdown fence → json.loads → regex fallback。
+
+    Args:
+        text: LLM 输出的原始文本，可能包含 markdown 代码块。
+
+    Returns:
+        解析出的 dict 列表，解析失败时返回空列表。
+    """
     text = text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
@@ -100,6 +107,12 @@ def _parse_extraction(text: str) -> list[ExtractedMemory]:
 
     逐条 .model_validate()——一个坏元素只跳过该项，不影响同批次其他合规项。
     .model_validate() 确保非 dict 元素统一抛 ValidationError（而非 TypeError）。
+
+    Args:
+        text: LLM 提取输出的原始文本。
+
+    Returns:
+        合规的 ExtractedMemory 列表，不合规的元素被跳过。
     """
     items = _extract_json_array(text)
     result: list[ExtractedMemory] = []
@@ -118,8 +131,16 @@ def _parse_compare_actions(text: str, expected_count: int | None = None) -> list
     _compare_and_resolve() 的 except Exception 捕获后走 insert-all 回退，
     确保一个坏元素不导致静默丢记忆。
 
-    expected_count: prompt 约定输出数组元素数必须与 new_items 一致。传入时
-    数量不符同样 raise ValueError（如 LLM 返回空数组 → 回退，避免静默丢记忆）。
+    Args:
+        text: LLM 比对输出的原始文本。
+        expected_count: 期望的 actions 数量，与 new_items 一致。
+            数量不符时 raise ValueError（如 LLM 返回空数组 → 回退，避免静默丢记忆）。
+
+    Returns:
+        解析出的 CompareAction 列表。
+
+    Raises:
+        ValueError: 校验失败或数量不符时抛出。
     """
     items = _extract_json_array(text)
     try:
@@ -140,6 +161,16 @@ class MemoryConsolidator:
 
     def __init__(self, llm: LLMAdapter, memory: LongTermMemory, character_name: str = "Elysia",
                  user_name: str = "用户", buffer_threshold: int | None = None):
+        """初始化记忆整合器。
+
+        Args:
+            llm: LLM 适配器，用于提取和比对记忆。
+            memory: 长期记忆后端。
+            character_name: 角色名，用于格式化对话文本。
+            user_name: 用户名，用于格式化对话文本。
+            buffer_threshold: 缓冲阈值，攒够此数量的消息后触发提取。
+                默认使用 BUFFER_THRESHOLD (6)。
+        """
         self._llm = llm
         self._memory = memory
         self._character_name = character_name
@@ -150,9 +181,16 @@ class MemoryConsolidator:
         self._consolidate_lock = asyncio.Lock()
 
     async def consolidate(self, user_message: str, assistant_response: str) -> list[ExtractedMemory]:
-        """缓冲对话，攒够阈值后调 LLM 提取。返回本次提取的条目（可能为空）。
+        """缓冲对话，攒够阈值后调 LLM 提取。
 
         如果已有 consolidation 正在运行则跳过本轮（防止并发 LLM 调用）。
+
+        Args:
+            user_message: 用户消息文本。
+            assistant_response: 助手回复文本。
+
+        Returns:
+            本次提取的 ExtractedMemory 列表，可能为空。
         """
         if not assistant_response.strip() or not user_message.strip():
             return []
@@ -170,10 +208,12 @@ class MemoryConsolidator:
             return await self._do_consolidate()
 
     async def flush(self) -> list[ExtractedMemory]:
-        """Force consolidation of buffered turns regardless of threshold.
+        """强制整合缓冲中的对话轮次，不等待阈值。
 
         Called on shutdown to avoid losing unconsolidated messages.
-        Returns extracted items (may be empty if buffer was empty or LLM fails).
+
+        Returns:
+            提取的 ExtractedMemory 列表，缓冲为空或 LLM 失败时为空。
         """
         if not self._buffer:
             return []
@@ -186,7 +226,11 @@ class MemoryConsolidator:
             return await self._do_consolidate()
 
     async def _do_consolidate(self) -> list[ExtractedMemory]:
-        """执行实际的 LLM 提取和存储（需持有 consolidate_lock）。"""
+        """执行实际的 LLM 提取和存储（需持有 consolidate_lock）。
+
+        Returns:
+            提取并比对后的 ExtractedMemory 列表，LLM 失败时为空。
+        """
         # 合并缓冲中的多轮对话为一段文本
         turns: list[str] = []
         for u, a in self._buffer:
@@ -222,7 +266,13 @@ class MemoryConsolidator:
 
     async def _compare_and_resolve(self, new_items: list[ExtractedMemory]) -> int:
         """将新提取的记忆与已有记忆比对，执行 insert/update/merge/skip。
-        返回实际新增的记忆数。失败时回退：全部 insert。"""
+
+        Args:
+            new_items: 新提取的记忆列表。
+
+        Returns:
+            实际新增（insert）的记忆数。失败时回退为全部 insert。
+        """
         if not new_items or not self._memory.get_all():
             # 无已有记忆，全部直接 insert
             for item in new_items:

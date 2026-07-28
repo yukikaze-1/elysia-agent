@@ -38,6 +38,14 @@ class GPTSoVitsBackend(TTSBackend):
         model: str = "default",
         logger: logging.Logger | None = None,
     ):
+        """初始化 GPT-SoVits 后端。
+
+        Args:
+            base_url: GPT-SoVits 服务地址。
+            voices_config: 音色配置文件路径，为空则使用默认 gpt_sovits_voices.yaml。
+            model: 模型名称。
+            logger: 日志记录器，不传则使用模块默认 logger。
+        """
         self._logger = logger or logging.getLogger(__name__)
         self._base_url = base_url
         self._model = model
@@ -64,6 +72,16 @@ class GPTSoVitsBackend(TTSBackend):
     async def synthesize(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> bytes:
+        """非流式合成 — 返回完整 WAV bytes。
+
+        Args:
+            text: 要合成的文本。
+            character: 发音人/音色名称。
+            emotion: 可选的情绪参数（GPT-SoVits 当前被忽略）。
+
+        Returns:
+            完整的 WAV 格式音频字节数据。采样率 32000Hz/mono/int16。
+        """
         chunks: list[bytes] = []
         async for chunk in self._call_api(text, character, emotion, streaming=False):
             chunks.append(chunk)
@@ -72,6 +90,16 @@ class GPTSoVitsBackend(TTSBackend):
     async def synthesize_stream(
         self, text: str, *, character: str, emotion: str | None = None
     ) -> AsyncIterator[bytes]:
+        """流式合成 — 边生成边产出音频 chunk。
+
+        Args:
+            text: 要合成的文本。
+            character: 发音人/音色名称。
+            emotion: 可选的情绪参数（GPT-SoVits 当前被忽略）。
+
+        Yields:
+            音频字节数据 chunk。首 chunk 包含 WAV header。
+        """
         async for chunk in self._call_api(text, character, emotion, streaming=True):
             yield chunk
 
@@ -82,6 +110,19 @@ class GPTSoVitsBackend(TTSBackend):
 
         每次请求创建独立的 httpx.AsyncClient，用完即关。
         避免连接池复用时服务端空闲断开导致后续请求失败。
+
+        Args:
+            text: 要合成的文本。
+            character: 发音人/音色名称。
+            emotion: 可选的情绪参数。
+            streaming: 是否流式模式。
+
+        Yields:
+            音频字节数据 chunk。
+
+        Raises:
+            KeyError: 发音人名称未在音色配置中找到。
+            RuntimeError: 无法连接 GPT-SoVits 服务。
         """
         try:
             voice_cfg = self._voices[character]
@@ -168,6 +209,11 @@ class GPTSoVitsBackend(TTSBackend):
         return "gpt-sovits"
 
     def get_preprocess(self):
+        """返回本后端使用的预处理函数。
+
+        Returns:
+            strip_all_markup 预处理函数。
+        """
         return self._preprocess
 
     async def close(self) -> None:

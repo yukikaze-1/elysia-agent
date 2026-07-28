@@ -1,6 +1,8 @@
 """记忆工具插件 — 搜索和保存长期记忆。"""
 
 import logging
+from typing import Any
+
 from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin, ToolContext
 from Module.tool.capability import Capability
@@ -23,8 +25,18 @@ class MemorySearchPlugin(ToolPlugin):
     safety = SafetyProfile(database_allowed=True, database_readonly=True)
 
     async def execute(
-        self, *, ctx: ToolContext, emit=None, params: SearchMemoryParams,
+        self, *, ctx: ToolContext, emit: Any = None, params: SearchMemoryParams,
     ) -> str:
+        """在长期记忆中搜索相关信息。
+
+        Args:
+            ctx: 工具调用上下文。
+            emit: 进度上报器（未使用）。
+            params: 搜索参数，包含查询文本和结果数量上限。
+
+        Returns:
+            搜索结果字符串，或错误信息。
+        """
         memory = ctx.get("memory")
         if memory is None:
             return "记忆系统当前不可用。"
@@ -72,8 +84,18 @@ class MemorySavePlugin(ToolPlugin):
     )
 
     async def execute(
-        self, *, ctx: ToolContext, emit=None, params: SaveMemoryParams,
+        self, *, ctx: ToolContext, emit: Any = None, params: SaveMemoryParams,
     ) -> str:
+        """将重要信息保存到长期记忆库。
+
+        Args:
+            ctx: 工具调用上下文。
+            emit: 进度上报器（未使用）。
+            params: 保存参数，包含记忆内容和类型。
+
+        Returns:
+            保存结果字符串。
+        """
         try:
             mem_type = MemoryType(params.type.strip().title())
         except ValueError:

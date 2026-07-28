@@ -66,6 +66,13 @@ class EmotionDetector:
         output: OutputManager,
         idle_expressions: list[str],
     ):
+        """初始化情绪检测器。
+
+        Args:
+            state: 角色状态对象。
+            output: 输出管理器，用于推送表情。
+            idle_expressions: 空闲表情列表，随机选取推送。
+        """
         self._state = state
         self._output = output
         self._idle_expressions = idle_expressions
@@ -73,7 +80,11 @@ class EmotionDetector:
     # ---- 公共方法 ----
 
     def analyze_user(self, text: str) -> None:
-        """关键词 mood 检测。匹配到非 neutral mood 时更新 state 并推送表情。"""
+        """关键词 mood 检测。匹配到非 neutral mood 时更新 state 并推送表情。
+
+        Args:
+            text: 用户消息文本。
+        """
         detected = self._detect_mood(text)
         if detected == "neutral":
             return
@@ -90,7 +101,11 @@ class EmotionDetector:
             self._state.mood_intensity = min(1.0, intensity + 0.05)
 
     def analyze_assistant(self, _text: str) -> None:
-        """每轮回复后衰减 mood intensity。mood 文本由 LLM 下轮 <mood> 更新。"""
+        """每轮回复后衰减 mood intensity。mood 文本由 LLM 下轮 <mood> 更新。
+
+        Args:
+            _text: 助手回复文本（当前未使用，保留接口兼容）。
+        """
         intensity = self._state.mood_intensity
         new_intensity = max(0.1, intensity - 0.15)
         self._state.mood_intensity = new_intensity
@@ -98,7 +113,12 @@ class EmotionDetector:
             self._push_idle()
 
     def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None) -> None:
-        """处理 STT 音频事件，推送对应表情。mood 决策交给 LLM（通过 C5 Sensory）。"""
+        """处理 STT 音频事件，推送对应表情。mood 决策交给 LLM（通过 C5 Sensory）。
+
+        Args:
+            emotion_tag: 音频识别的情绪标签。
+            events: 音频事件列表（如 Laughter、Cry、Applause）。
+        """
         if events:
             for evt in events:
                 if evt == "Laughter":
@@ -115,7 +135,14 @@ class EmotionDetector:
     # ---- 私有方法 ----
 
     def _detect_mood(self, text: str) -> str:
-        """Simple keyword-based mood detection. Returns the strongest match."""
+        """Simple keyword-based mood detection.
+
+        Args:
+            text: 要检测的文本。
+
+        Returns:
+            最匹配的情绪标签，无匹配时返回 "neutral"。
+        """
         scores: dict[str, int] = {}
         for mood_key, (user_kw, _) in MOOD_KEYWORDS.items():
             if mood_key == "neutral":
@@ -129,7 +156,12 @@ class EmotionDetector:
         return best_key
 
     def _push_expression(self, mood_text: str, intensity: float) -> None:
-        """Push expression to output channels. mood_text is plain string. 保留关键词回退兼容。"""
+        """推送表情到输出通道。
+
+        Args:
+            mood_text: 情绪描述文本（纯字符串）。
+            intensity: 情绪强度（0.0-1.0）。
+        """
         _schedule(self._output.expression(mood_text, intensity=intensity))
 
     def _push_idle(self) -> None:

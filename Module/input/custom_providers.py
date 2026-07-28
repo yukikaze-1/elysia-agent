@@ -14,7 +14,14 @@ _SKELETON = {"llm": [], "stt": [], "tts": []}
 
 
 def load(path: str | Path | None = None) -> dict:
-    """读取自定义 provider 配置。文件不存在时返回空骨架。"""
+    """读取自定义 provider 配置。文件不存在时返回空骨架。
+
+    Args:
+        path: YAML 配置文件路径，默认使用 _DEFAULT_PATH。
+
+    Returns:
+        dict: 包含 llm/stt/tts 三个键的 provider 配置字典。
+    """
     p = Path(path) if path else _DEFAULT_PATH
     if not p.exists():
         return {k: list(v) for k, v in _SKELETON.items()}
@@ -31,7 +38,12 @@ def load(path: str | Path | None = None) -> dict:
 
 
 def save(data: dict, path: str | Path | None = None) -> None:
-    """保存自定义 provider 配置到 YAML 文件。"""
+    """保存自定义 provider 配置到 YAML 文件。
+
+    Args:
+        data: 包含 llm/stt/tts 三个键的 provider 配置字典。
+        path: YAML 配置文件路径，默认使用 _DEFAULT_PATH。
+    """
     p = Path(path) if path else _DEFAULT_PATH
     with open(p, "w", encoding="utf-8") as f:
         f.write("# 自定义接入端点 — 通过前端设置面板管理，不手动编辑\n")
@@ -41,7 +53,17 @@ def save(data: dict, path: str | Path | None = None) -> None:
 def add_provider(service: str, entry: dict, path: str | Path | None = None) -> dict:
     """添加一个自定义 provider，返回更新后的完整数据。
 
-    entry 格式: {"name": "siliconflow", "base_url": "...", "api_key_env": "...", "models": [...]}
+    Args:
+        service: 服务类型，必须为 "llm"、"stt" 或 "ttt" 之一。
+        entry: provider 配置项，格式为
+            {"name": "siliconflow", "base_url": "...", "api_key_env": "...", "models": [...]}。
+        path: YAML 配置文件路径，默认使用 _DEFAULT_PATH。
+
+    Returns:
+        dict: 更新后的完整配置数据。
+
+    Raises:
+        ValueError: service 不在已知服务列表中。
     """
     data = load(path)
     if service not in data:
@@ -56,7 +78,19 @@ def add_provider(service: str, entry: dict, path: str | Path | None = None) -> d
 
 
 def remove_provider(service: str, name: str, path: str | Path | None = None) -> dict:
-    """删除一个自定义 provider，返回更新后的完整数据。"""
+    """删除一个自定义 provider，返回更新后的完整数据。
+
+    Args:
+        service: 服务类型，必须为 "llm"、"stt" 或 "ttt" 之一。
+        name: 要删除的 provider 名称。
+        path: YAML 配置文件路径，默认使用 _DEFAULT_PATH。
+
+    Returns:
+        dict: 更新后的完整配置数据。
+
+    Raises:
+        ValueError: service 不在已知服务列表中。
+    """
     data = load(path)
     if service not in data:
         raise ValueError(f"Unknown service: {service}")

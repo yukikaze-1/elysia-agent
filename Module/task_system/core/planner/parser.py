@@ -40,7 +40,20 @@ async def call_llm(
     system: str,
     user: str,
 ) -> str:
-    """调用 LLM，推理模式 + JSON Output。"""
+    """调用 LLM，推理模式 + JSON Output。
+
+    Args:
+        infra: Agent 基础设施，提供 LLM 模型引用。
+        token_ledger: Token 账本，用于记录 token 消耗；可为 None。
+        system: 系统提示词。
+        user: 用户提示词。
+
+    Returns:
+        LLM 返回的文本内容。
+
+    Raises:
+        PlanParseError: LLM 返回空响应。
+    """
     model = infra.llm_model
     response = await infra.llm.chat.completions.create(
         model=model,
@@ -71,7 +84,17 @@ async def call_llm(
 
 
 def parse_plan_from_dict(data: dict) -> Plan:
-    """从 dict 解析 Plan（nodes + edges）。"""
+    """从 dict 解析 Plan（nodes + edges）。
+
+    Args:
+        data: 包含 nodes 和 edges 字段的字典。
+
+    Returns:
+        解析后的 Plan 对象。
+
+    Raises:
+        PlanParseError: nodes 为空或不是数组，edges 不是数组，或节点字段缺失/非法。
+    """
     raw_nodes = data.get("nodes")
     if not isinstance(raw_nodes, list) or not raw_nodes:
         raise PlanParseError("nodes 为空或不是数组")
@@ -119,7 +142,18 @@ def parse_plan_from_dict(data: dict) -> Plan:
 
 
 def parse_patch_from_dict(data: dict) -> DAGPatch:
-    """从 dict 解析 DAGPatch（局部修复）。"""
+    """从 dict 解析 DAGPatch（局部修复）。
+
+    Args:
+        data: 包含 patch_type、trigger_nodes、replace_nodes、add_nodes、remove_nodes、
+            remove_edges、add_edges 等字段的字典。
+
+    Returns:
+        解析后的 DAGPatch 对象。
+
+    Raises:
+        PlanParseError: patch_type 未知，或必要字段格式非法。
+    """
     patch_type_str = data.get("patch_type", "replace_nodes")
     try:
         patch_type = DAGPatchType(patch_type_str)
@@ -239,8 +273,15 @@ def parse_patch_from_dict(data: dict) -> DAGPatch:
     )
 
 
-def parse_execution_mode(raw) -> ExecutionMode:
-    """解析 execution_mode 字段，容错 LLM 输出。"""
+def parse_execution_mode(raw: str | ExecutionMode | None) -> ExecutionMode:
+    """解析 execution_mode 字段，容错 LLM 输出。
+
+    Args:
+        raw: LLM 输出的原始值，可为字符串、ExecutionMode 或 None。
+
+    Returns:
+        解析后的 ExecutionMode 枚举值（None 或未知值时默认 TOOL_CALL）。
+    """
     if raw is None:
         return ExecutionMode.TOOL_CALL
     if isinstance(raw, ExecutionMode):

@@ -36,6 +36,17 @@ class OpenAICompatBackend(LLMBackend):
         supports_prefix: bool = False,
         logger: logging.Logger | None = None,
     ):
+        """初始化 OpenAI 兼容协议后端。
+
+        Args:
+            model: 模型名称（如 "deepseek-v4-pro"）。
+            api_key: API 密钥，空串时默认 "ollama"（Ollama 接受任意非空值）。
+            base_url: 常规 API 的基础 URL。
+            beta_url: DeepSeek prefix 续写专用的 beta API URL，
+                非空时创建独立的 _beta_client。
+            supports_prefix: 是否支持 prefix continuation 特性。
+            logger: 日志记录器，未提供时自动创建。
+        """
         key = api_key or "ollama"  # Ollama accepts any non-empty value
         self._model = model
         self._supports_prefix = supports_prefix
@@ -224,7 +235,11 @@ class OpenAICompatBackend(LLMBackend):
             await self._beta_client.close()
 
     async def reconnect(self) -> None:
-        """重建 HTTP 客户端 — 用于服务重启后恢复连接（close() 之后调用）。"""
+        """重建 HTTP 客户端 — 用于服务重启后恢复连接（close() 之后调用）。
+
+        先关闭尚存的旧 client（忽略异常），再通过 _create_clients() 重新创建。
+        幂等操作：可安全多次调用。
+        """
         # 关闭尚存的旧 client
         try:
             await self._client.close()
@@ -238,7 +253,11 @@ class OpenAICompatBackend(LLMBackend):
         self._create_clients()
 
     def _create_clients(self) -> None:
-        """创建/重建 OpenAI client，共用超时配置。"""
+        """创建/重建 OpenAI client（常规 + beta），共用超时配置。
+
+        创建 self._client（常规 API），如果提供了 beta_url 则额外创建
+        self._beta_client。超时配置：60s 总超时，10s 连接超时。
+        """
         timeout = httpx.Timeout(60.0, connect=10.0)
         self._client = AsyncOpenAI(
             api_key=self._api_key,

@@ -35,7 +35,14 @@ _EVENT_RE = re.compile(
 
 
 def _parse_emotion(raw_text: str) -> str:
-    """从 raw_text 提取情绪标签，返回 NEUTRAL 或具体情绪名。"""
+    """从 raw_text 提取情绪标签。
+
+    Args:
+        raw_text: SenseVoice 返回的原始文本，包含 <|情绪|> 标签。
+
+    Returns:
+        NEUTRAL 或具体情绪名（HAPPY/SAD/ANGRY/FEARFUL/DISGUSTED/SURPRISED）。
+    """
     m = _EMOTION_RE.search(raw_text)
     if not m:
         return "NEUTRAL"
@@ -44,7 +51,14 @@ def _parse_emotion(raw_text: str) -> str:
 
 
 def _parse_events(raw_text: str) -> list[str]:
-    """从 raw_text 提取所有音频事件标签（不包含 Speech）。"""
+    """从 raw_text 提取所有音频事件标签（不包含 Speech）。
+
+    Args:
+        raw_text: SenseVoice 返回的原始文本，包含 <|事件|> 标签。
+
+    Returns:
+        音频事件标签列表（如 Applause/Laughter/Cough 等，不包含 Speech）。
+    """
     events = _EVENT_RE.findall(raw_text)
     return [e for e in events if e != "Speech"]
 
@@ -64,6 +78,14 @@ class SenseVoiceBackend(STTBackend):
         base_url: str = "http://localhost:20042",
         logger: logging.Logger | None = None,
     ):
+        """初始化 SenseVoice 后端。
+
+        Args:
+            model: 模型名称。
+            api_key: API 密钥（SenseVoice 本地服务通常不需要）。
+            base_url: SenseVoice 服务地址。
+            logger: 日志记录器，不传则使用模块默认 logger。
+        """
         self._model = model
         self._logger = logger or logging.getLogger(__name__)
         self._client = httpx.AsyncClient(
@@ -90,6 +112,15 @@ class SenseVoiceBackend(STTBackend):
         return "".join(chunks)
 
     async def transcribe_stream(self, audio: bytes, **kwargs) -> AsyncIterator[str]:
+        """流式识别 — 当前 yield 完整结果（SenseVoice 是整句识别，非真正流式）。
+
+        Args:
+            audio: 原始音频 bytes。
+            **kwargs: 透传 language / task 等参数。
+
+        Yields:
+            识别到的文本 chunk。
+        """
         async for chunk in self._call_api(audio, **kwargs):
             yield chunk
 

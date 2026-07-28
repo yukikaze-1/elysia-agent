@@ -116,6 +116,7 @@ class DelegationPreparer:
     """
 
     def __init__(self) -> None:
+        """Initialize the delegation preparer with a DeepSeek LLM client."""
         api_key = os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
             raise ValueError(
@@ -187,7 +188,18 @@ class DelegationPreparer:
         user_profile: UserProfile,
         tools: list[Tool],
     ) -> str:
-        """构建 user prompt——格式化所有输入。"""
+        """构建 user prompt——格式化所有输入。
+
+        Args:
+            intent: 任务意图文本。
+            hints: 可选的提示信息。
+            session_messages: 对话历史消息列表。
+            user_profile: 用户画像。
+            tools: 可用工具列表。
+
+        Returns:
+            str: 格式化后的 user prompt 字符串。
+        """
         return _USER_PROMPT.format(
             intent=intent,
             hints=hints or "（无）",
@@ -203,6 +215,16 @@ class DelegationPreparer:
 
         token_usage 格式: {"prompt_tokens": N, "completion_tokens": N, "total_tokens": N}
         usage 为 None 时返回空 dict。
+
+        Args:
+            system: 系统 prompt。
+            user: 用户 prompt。
+
+        Returns:
+            tuple: (响应文本, token_usage dict)。
+
+        Raises:
+            _PrepareParseError: LLM 返回空响应。
         """
         response = await self._client.chat.completions.create(
             model=os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro"),
@@ -232,8 +254,14 @@ class DelegationPreparer:
     def _parse_response(self, raw: str) -> dict:
         """解析 LLM 返回的 JSON → dict。
 
+        Args:
+            raw: LLM 返回的原始文本。
+
+        Returns:
+            dict: 解析后的 JSON 对象。
+
         Raises:
-            _PrepareParseError: JSON 不合法或缺少必要字段
+            _PrepareParseError: JSON 不合法或缺少必要字段。
         """
         text = strip_markdown_fence(raw)
 
@@ -263,8 +291,12 @@ class DelegationPreparer:
         3. 如果 status=ok 但剔除后 tools 为空 → 降级为 no_matching_tools
         4. 如果 status=no_matching_tools 但 tools 非空 → 认为 LLM 判断有误，保持原判
 
+        Args:
+            parsed: LLM 解析后的 dict。
+            tools: 实际可用的工具列表。
+
         Returns:
-            修正后的 parsed dict（原地修改 + 返回）
+            dict: 修正后的 parsed dict（原地修改 + 返回）。
         """
         valid_names = {t.name for t in tools}
         llm_tools: list[str] = parsed.get("tools", [])
@@ -310,6 +342,16 @@ class DelegationPreparer:
         工具匹配：从输入 tools 中查找 LLM 选中的工具名，
         保留完整的 Tool 对象（含 description + capabilities），
         以便 Planner 后续注入 prompt。
+
+        Args:
+            parsed: 校验后的 LLM 输出 dict。
+            intent: 任务意图文本。
+            hints: 可选的提示信息。
+            tools: 可用工具列表。
+            session_id: 会话 ID。
+
+        Returns:
+            DelegationResult: status=ok/no_matching_tools/too_vague 的结果。
         """
         status = DelegationStatus(parsed["status"])
         reason = parsed.get("reason", "")
@@ -369,6 +411,12 @@ class DelegationPreparer:
         LLM 估算的 task_constraints 不应超过这些值——
         即便超过了，TaskConstraints.resolve() 也会 clamp，
         但提前告知 LLM 可以避免浪费思考。
+
+        Args:
+            constraints: 全局约束配置。
+
+        Returns:
+            str: 格式化后的约束文本。
         """
         return (
             f"## 全局约束（天花板，你的估算不应超过这些值）\n"
@@ -385,7 +433,14 @@ class DelegationPreparer:
 
     @staticmethod
     def _format_session_messages(messages: list[Message]) -> str:
-        """将会话消息列表格式化为 LLM prompt 可读的文本。"""
+        """将会话消息列表格式化为 LLM prompt 可读的文本。
+
+        Args:
+            messages: 会话消息列表。
+
+        Returns:
+            str: 格式化的对话历史文本，空列表返回"(无对话历史)"。
+        """
         if not messages:
             return "（无对话历史）"
 
@@ -411,6 +466,12 @@ class DelegationPreparer:
         """v1: UserProfile 为占位符，直接序列化为 JSON 字符串。
 
         TODO: 后续 UserProfile 定义正式字段后，改为结构化格式化。
+
+        Args:
+            profile: 用户画像对象。
+
+        Returns:
+            str: JSON 格式化的用户画像字符串，空返回"(无用户画像)"。
         """
         dumped = profile.model_dump(exclude_none=True)
         if not dumped:

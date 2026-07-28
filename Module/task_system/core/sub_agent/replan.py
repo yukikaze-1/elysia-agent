@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from Module.task_system.core.plan_validator import PlanValidator
     from Module.task_system.core.orchestrator import Orchestrator
     from Module.task_system.mailbox import TaskMailbox
+    from Module.task_system.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ def check_meltdown(
     max_failure_count: int,
     max_task_duration_s: float,
     created_at: str,
-    token_ledger,           # TokenLedger | None
+    token_ledger: "TokenLedger | None",
     max_total_tokens: int,
 ) -> str | None:
     """检查是否触发熔断——plan_version / 时间预算 / token 预算。
@@ -46,6 +47,14 @@ def check_meltdown(
     plan_version 从 1 开始，每次 Replan 递增。用 > 比较意味着
     max_failure_count=5 时允许多达 5 次 Replan（version 2→6），
     version 7 触发熔断。
+
+    Args:
+        plan_version: 当前计划版本号，从 1 开始
+        max_failure_count: 最大允许的 Replan 次数上限
+        max_task_duration_s: 任务最大允许耗时（秒）
+        created_at: 任务创建时间的 ISO 时间戳
+        token_ledger: Token 记账器，用于检查 token 预算；None 时跳过 token 检查
+        max_total_tokens: 任务最大允许消耗的 token 总数
 
     Returns:
         None → 可以继续
@@ -79,7 +88,14 @@ def check_meltdown(
 
 
 def _elapsed_seconds(created_at: str) -> float:
-    """从 IsoTimestamp 计算已过去秒数。解析失败返回 0.0（优雅降级）。"""
+    """从 IsoTimestamp 计算已过去秒数。解析失败返回 0.0（优雅降级）。
+
+    Args:
+        created_at: ISO 格式的时间戳字符串
+
+    Returns:
+        从 created_at 到现在的秒数；解析失败时返回 0.0
+    """
     from datetime import datetime, timezone
 
     try:
@@ -98,6 +114,12 @@ def extract_node_results(checkpoint: TaskCheckpoint) -> dict[str, NodeState]:
         - summary（简短摘要）
         - error / error_code
         - evaluation（NodeResultEvaluation：execution_status + business_status + suggested_action）
+
+    Args:
+        checkpoint: 任务检查点，包含所有节点的执行状态
+
+    Returns:
+        节点 ID 到 NodeState 的映射字典
     """
     return {
         str(nid): ns
@@ -117,9 +139,23 @@ async def handle_replan(
     checkpoint_mgr: CheckpointManager,
     constraints: ConstraintConfig,
     push_mailbox_fn: Callable[..., Awaitable[None]],
-    token_ledger=None,                     # TokenLedger | None
+    token_ledger: "TokenLedger | None" = None,
 ) -> tuple[bool, ExecutionState | None]:
     """结构性失败——熔断检查 → Replan → DAGPatch 应用 → 构建 resume_state。
+
+    Args:
+        result: Orchestrator 执行结果，包含 error_context 和 checkpoint_state
+        task_state: 当前任务状态
+        graph: 任务 DAG 图
+        mailbox: 任务邮箱，用于推送事件
+        context: 委托上下文（意图、工具、约束等）
+        replanner: Replan 引擎
+        plan_validator: 计划校验器
+        orchestrator: Orchestrator 实例，用于检查中断信号
+        checkpoint_mgr: 检查点管理器
+        constraints: 全局约束配置
+        push_mailbox_fn: 推送邮箱事件的异步回调
+        token_ledger: Token 记账器，用于熔断时的 token 预算检查
 
     Returns:
         (True, resume_state)  — replan 成功，DAG 已更新，resume_state 供下次 run()

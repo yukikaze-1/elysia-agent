@@ -18,12 +18,29 @@ _BACKENDS: dict[str, dict] = load_provider_defaults("embedding")
 
 
 class EmbeddingFactory:
-    """静态工厂 — EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")。"""
+    """Embedding 后端工厂 — EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")。
+
+    自动缓存实例，相同 model_id + kwargs 组合返回同一实例。
+    """
 
     _instances: dict[str, "EmbeddingBackend"] = {}
 
     @classmethod
     def create(cls, model_id: str, **kwargs) -> "EmbeddingBackend":
+        """创建或返回缓存的 embedding 后端实例。
+
+        Args:
+            model_id: 格式为 "provider/model-name" 的标识字符串，
+                如 "huggingface/BAAI/bge-large-zh-v1.5"。
+            **kwargs: 传递给后端构造函数的附加参数。
+
+        Returns:
+            对应 provider 的 EmbeddingBackend 实例。
+
+        Raises:
+            ValueError: model_id 格式不合法或 provider 未知时抛出。
+            NotImplementedError: provider 尚未实现时抛出。
+        """
         # 缓存 key 包含 kwargs，避免不同参数返回同一实例
         cache_key = model_id + "|" + json.dumps(kwargs, sort_keys=True, default=str)
         if cache_key in cls._instances:
@@ -65,7 +82,11 @@ class EmbeddingFactory:
 
     @classmethod
     async def shutdown(cls) -> None:
-        """关闭所有缓存的 embedding 实例，释放显存/内存。幂等。"""
+        """关闭所有缓存的 embedding 实例，释放显存/内存。
+
+        幂等操作：可多次调用，已关闭的实例会被跳过。
+        关闭后清空实例缓存，后续 create() 将重新创建。
+        """
         for name, instance in list(cls._instances.items()):
             try:
                 await instance.close()
@@ -75,7 +96,16 @@ class EmbeddingFactory:
 
     @classmethod
     def from_config(cls, model_id: str, config: "EmbeddingConfig", **overrides) -> "EmbeddingBackend":
-        """从 EmbeddingConfig dataclass 创建后端，overrides 优先级最高。"""
+        """从 EmbeddingConfig dataclass 创建后端。
+
+        Args:
+            model_id: 格式为 "provider/model-name" 的标识字符串。
+            config: EmbeddingConfig dataclass 实例。
+            **overrides: 覆盖 config 中字段的附加参数，优先级最高。
+
+        Returns:
+            对应 provider 的 EmbeddingBackend 实例。
+        """
         kwargs = dataclasses.asdict(config)
         kwargs.update(overrides)
         return cls.create(model_id, **kwargs)

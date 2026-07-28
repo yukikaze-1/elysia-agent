@@ -7,7 +7,12 @@ class ConfigError(Exception):
 
 
 class ConfigMissingError(ConfigError):
-    """A required field has no value after loading."""
+    """A required field has no value after loading.
+
+    Args:
+        class_name: 所属 dataclass 类名。
+        field_name: 字段名。
+    """
 
     def __init__(self, class_name: str, field_name: str):
         super().__init__(f"{class_name}.{field_name}: required field is missing")
@@ -16,7 +21,14 @@ class ConfigMissingError(ConfigError):
 
 
 class ConfigTypeError(ConfigError):
-    """A field's value does not match the declared type annotation."""
+    """A field's value does not match the declared type annotation.
+
+    Args:
+        class_name: 所属 dataclass 类名。
+        field_name: 字段名。
+        expected: 期望的类型。
+        got_value: 实际拿到的值。
+    """
 
     def __init__(self, class_name: str, field_name: str, expected: type, got_value: Any):
         super().__init__(
@@ -29,7 +41,14 @@ class ConfigTypeError(ConfigError):
 
 
 class ConfigConstraintError(ConfigError):
-    """A constraint on a field was violated."""
+    """A constraint on a field was violated.
+
+    Args:
+        class_name: 所属 dataclass 类名。
+        field_name: 字段名。
+        constraint: 约束描述字符串。
+        value: 违反约束的值。
+    """
 
     def __init__(self, class_name: str, field_name: str, constraint: str, value: Any):
         super().__init__(
@@ -42,7 +61,13 @@ class ConfigConstraintError(ConfigError):
 
 
 class ConfigEnvFormatError(ConfigError):
-    """An environment variable string could not be coerced to the target type."""
+    """An environment variable string could not be coerced to the target type.
+
+    Args:
+        env_key: 环境变量名。
+        value: 环境变量的原始字符串值。
+        target_type: 期望的目标类型。
+    """
 
     def __init__(self, env_key: str, value: str, target_type: type):
         super().__init__(
@@ -54,7 +79,11 @@ class ConfigEnvFormatError(ConfigError):
 
 
 class ConfigValidationError(ConfigError):
-    """Aggregate error that collects multiple ConfigError instances."""
+    """Aggregate error that collects multiple ConfigError instances.
+
+    Args:
+        errors: 收集到的 ConfigError 列表。
+    """
 
     def __init__(self, errors: list[ConfigError]):
         self.errors = errors

@@ -27,6 +27,11 @@ class Timer:
     __slots__ = ("_label", "_t0", "_elapsed_ms")
 
     def __init__(self, label: str = "") -> None:
+        """初始化计时器。
+
+        Args:
+            label: 计时标签，用于日志输出。
+        """
         self._label = label
         self._t0: float = 0.0
         self._elapsed_ms: int = 0
@@ -36,6 +41,11 @@ class Timer:
         return self
 
     def __exit__(self, *args: object) -> None:
+        """退出上下文，计算并存储已用时间（毫秒）。
+
+        Args:
+            args: 上下文管理器退出参数（异常类型、值、traceback）。
+        """
         self._elapsed_ms = int((time.perf_counter() - self._t0) * 1000)
 
     @property
@@ -55,13 +65,19 @@ class TimingClock:
     """
 
     def __init__(self) -> None:
+        """初始化计时聚合器，span 和 counter 均为空。"""
         self._spans: dict[str, int] = defaultdict(int)
         self._counts: dict[str, int] = defaultdict(int)
         self._t_total: int = 0
 
     def span(self, label: str) -> Timer:
-        """开始一个计时段。返回 Timer context manager。
-        结束时自动将耗时累计到 label 名下。
+        """开始一个计时段。
+
+        Args:
+            label: 计时段标签，同名标签自动累计。
+
+        Returns:
+            Timer 上下文管理器，退出时自动将耗时累计到 label 名下。
         """
         clock = self  # 捕获 TimingClock 引用供内部类访问
 
@@ -74,11 +90,11 @@ class TimingClock:
         return _AccumTimer(label)
 
     def start(self) -> None:
-        """标记请求开始时间。"""
+        """标记请求开始时间（纳秒级精度）。"""
         self._t_total = time.perf_counter_ns()
 
     def stop(self) -> None:
-        """标记请求结束，计算总耗时。"""
+        """标记请求结束，计算从 start() 到现在的总耗时（毫秒）。"""
         self._t_total = int((time.perf_counter_ns() - self._t_total) / 1_000_000)
 
     @property
@@ -87,7 +103,9 @@ class TimingClock:
 
     def summary(self) -> str:
         """生成单行汇总，按耗时降序排列。
-        格式: "total_ms | label1:XXms | label2(N):XXms"
+
+        Returns:
+            格式: "total_ms | label1:XXms | label2(N):XXms"
         """
         parts = [f"{self._t_total}ms"]
         for label, elapsed in sorted(self._spans.items(), key=lambda x: -x[1]):
@@ -99,6 +117,7 @@ class TimingClock:
         return " | ".join(parts)
 
     def reset(self) -> None:
+        """重置所有 span 计数和总耗时。"""
         self._spans.clear()
         self._counts.clear()
         self._t_total = 0

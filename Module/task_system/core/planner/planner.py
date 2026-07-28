@@ -41,6 +41,12 @@ class Planner:
         infra: AgentInfra,
         token_ledger: TokenLedger | None = None,
     ) -> None:
+        """初始化 Planner。
+
+        Args:
+            infra: Agent 基础设施，提供 LLM 模型引用。
+            token_ledger: Token 账本，用于记录 token 消耗；可选。
+        """
         self._infra = infra
         self._token_ledger = token_ledger
 
@@ -96,8 +102,14 @@ class Planner:
     def _parse_response(self, raw: str) -> Plan:
         """解析 LLM 返回的 JSON → Plan。
 
+        Args:
+            raw: LLM 原始返回文本。
+
+        Returns:
+            解析后的 Plan 对象。
+
         Raises:
-            PlanParseError: JSON 不合法或缺少必要字段
+            PlanParseError: JSON 不合法或缺少必要字段。
         """
         text = strip_markdown_fence(raw)
 

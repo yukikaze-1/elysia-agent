@@ -86,6 +86,7 @@ class Task:
     # ---- 时间戳 ----
 
     def touch(self) -> None:
+        """更新时间戳为当前时间。"""
         self.updated_at = time.time()
 
     # ---- 重试 ----
@@ -105,7 +106,11 @@ class Task:
     # ---- 树操作 ----
 
     def add_child(self, child_id: str) -> None:
-        """添加子任务 ID。"""
+        """添加子任务 ID。
+
+        Args:
+            child_id: 子任务 ID
+        """
         self.children_ids.append(child_id)
 
     # ---- 工厂方法 ----
@@ -118,6 +123,17 @@ class Task:
         arguments: dict[str, Any],
         priority: int = 5,
     ) -> "Task":
+        """创建工具调用子任务。
+
+        Args:
+            parent_id: 父任务 ID
+            tool_name: 工具名称
+            arguments: 工具参数
+            priority: 优先级，0=最高, 5=默认
+
+        Returns:
+            Task: 新创建的工具调用任务
+        """
         payload: ToolCallPayload = {"tool_name": tool_name, "arguments": arguments}
         return cls(
             id=new_message_id(),
@@ -133,7 +149,15 @@ class Task:
         payload: dict[str, Any],
         priority: int = 9,
     ) -> "Task":
-        """创建后台任务。"""
+        """创建后台任务。
+
+        Args:
+            payload: 任务负载数据
+            priority: 优先级，默认 9（后台）
+
+        Returns:
+            Task: 新创建的后台任务
+        """
         return cls(
             id=new_message_id(),
             type=TaskType.BACKGROUND,
@@ -146,6 +170,11 @@ class Task:
     # ---- 序列化 (checkpoint) ----
 
     def to_dict(self) -> dict[str, Any]:
+        """序列化为字典，用于 checkpoint 持久化。
+
+        Returns:
+            dict[str, Any]: 任务的字典表示（不含运行时字段）
+        """
         return {
             "id": self.id,
             "type": self.type.value,
@@ -166,6 +195,14 @@ class Task:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Task":
+        """从字典反序列化，用于 checkpoint 恢复。
+
+        Args:
+            d: 任务的字典表示
+
+        Returns:
+            Task: 反序列化的任务实例
+        """
         return cls(
             id=d["id"],
             type=TaskType(d["type"]),

@@ -30,10 +30,22 @@ class SystemPromptManager:
     """持有 section 列表，按序 async render，拼接最终 system prompt。"""
 
     def __init__(self, sections: Sequence[PromptSection]):
+        """初始化 system prompt 管理器。
+
+        按 _RENDER_ORDER 对 sections 排序，确保前缀缓存命中率最大化。
+
+        Args:
+            sections: PromptSection 实例序列（任意顺序）。
+        """
         order_map = {name: i for i, name in enumerate(_RENDER_ORDER)}
         self._sections = sorted(sections, key=lambda s: order_map.get(s.name, 999))
 
     async def render(self) -> str:
+        """渲染完整 system prompt。
+
+        Returns:
+            所有 section 拼接后的完整 system prompt 字符串。
+        """
         parts = []
         for s in self._sections:
             result = await s.render()
@@ -42,16 +54,31 @@ class SystemPromptManager:
         return "\n\n".join(parts)
 
     def set_context(self, **kwargs) -> None:
-        """透传 per-request 上下文给所有 section。"""
+        """透传 per-request 上下文给所有 section。
+
+        Args:
+            **kwargs: 上下文键值对（如 user_name、mood 等）。
+        """
         for s in self._sections:
             s.set_context(**kwargs)
 
     def get_versions(self) -> dict[str, str]:
+        """获取所有 section 的版本号。
+
+        Returns:
+            {section_name: version, ...} 映射。
+        """
         return {s.name: s.version for s in self._sections}
 
     async def reload_all(self) -> None:
+        """热重载所有 section 的模板和数据。"""
         for s in self._sections:
             s.reload()
 
     def validate_all(self) -> list[str]:
+        """自检所有 section。
+
+        Returns:
+            未通过自检的 section 名称列表。
+        """
         return [s.name for s in self._sections if not s.validate()]

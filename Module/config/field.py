@@ -18,10 +18,19 @@ class _Constraint:
     """Base class for field constraints. Subclass and implement check()."""
 
     def check(self, value: Any) -> None:
-        """Raise an error if the value violates this constraint."""
+        """检查 value 是否满足约束，不满足则抛出异常。
+
+        Returns:
+            None
+        """
         raise NotImplementedError
 
     def describe(self) -> str:
+        """返回约束的人类可读描述。
+
+        Returns:
+            str: 约束描述字符串。
+        """
         return self.__class__.__name__
 
 
@@ -90,21 +99,62 @@ def ConfigField(
 
 
 def _get_metadata(field: dataclasses.Field[Any], key: str, default: Any = None) -> Any:
-    """Read a value from a field's metadata dict, falling back to *default*."""
+    """从字段 metadata 字典中读取一个值，不存在时返回 *default*。
+
+    Args:
+        field: dataclass 字段对象。
+        key: metadata 中的键名。
+        default: 键不存在时的回退值。
+
+    Returns:
+        读取到的 metadata 值，或 default。
+    """
     return field.metadata.get(key, default)
 
 
 def is_secret(field: dataclasses.Field[Any]) -> bool:
+    """判断字段是否标记为 secret（只从环境变量读取）。
+
+    Args:
+        field: dataclass 字段对象。
+
+    Returns:
+        bool: 是否为 secret 字段。
+    """
     return _get_metadata(field, _KEY_SECRET, False)
 
 
 def get_env_name(field: dataclasses.Field[Any]) -> str | None:
+    """获取字段显式指定的环境变量名。
+
+    Args:
+        field: dataclass 字段对象。
+
+    Returns:
+        str | None: 环境变量名，未指定时返回 None。
+    """
     return _get_metadata(field, _KEY_ENV, None)
 
 
 def get_constraints(field: dataclasses.Field[Any]) -> list[_Constraint]:
+    """获取字段上绑定的约束列表。
+
+    Args:
+        field: dataclass 字段对象。
+
+    Returns:
+        list[_Constraint]: 约束对象列表，未设置时返回空列表。
+    """
     return _get_metadata(field, _KEY_CONSTRAINTS, [])
 
 
 def is_required(field: dataclasses.Field[Any]) -> bool:
+    """判断字段是否为必填。
+
+    Args:
+        field: dataclass 字段对象。
+
+    Returns:
+        bool: 是否为必填字段。
+    """
     return _get_metadata(field, _KEY_REQUIRED, False)

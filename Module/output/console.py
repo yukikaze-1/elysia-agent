@@ -11,6 +11,7 @@ class ConsoleChannel(OutputChannel):
     """
 
     def __init__(self):
+        """初始化终端输出通道。"""
         self._delta_printed = False
 
     @property
@@ -18,12 +19,22 @@ class ConsoleChannel(OutputChannel):
         return {ChannelCapability.TEXT_DELTA, ChannelCapability.TEXT_MESSAGE}
 
     async def on_text_delta(self, delta: str, *, stream_id: int | None = None) -> None:
-        """逐字打印，无换行。"""
+        """逐字打印，无换行。
+
+        Args:
+            delta: 单个文本增量。
+            stream_id: 流标识（未使用）。
+        """
         self._delta_printed = True
         print(delta, end="", flush=True)
 
     async def on_message(self, msg) -> None:
-        """Print formatted message. If deltas were already streamed, skip content."""
+        """打印格式化消息。
+
+        Args:
+            msg: 消息对象（str 或 ChatMessage）。若为 str 且已通过 delta 输出则仅换行。若为 ChatMessage
+                则打印 role/content/inner_voice。
+        """
         if isinstance(msg, str):
             if self._delta_printed:
                 print()

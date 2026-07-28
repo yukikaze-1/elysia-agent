@@ -1,5 +1,7 @@
 """确定性 web_search mock —— 集成测试用，返回固定结果，不发起网络请求。"""
 
+from typing import Any
+
 from Module.tool.protocol import ToolPlugin, ToolContext
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
@@ -25,9 +27,18 @@ class MockWebSearchPlugin(ToolPlugin):
     )
 
     async def execute(
-        self, *, ctx: ToolContext, emit=None, params: WebSearchParams,
+        self, *, ctx: ToolContext, emit: Any = None, params: WebSearchParams,
     ) -> str:
-        """返回基于 query 关键词的预设搜索结果，不发起网络请求。"""
+        """返回基于 query 关键词的预设搜索结果，不发起网络请求。
+
+        Args:
+            ctx: 工具调用上下文。
+            emit: 进度上报器（未使用）。
+            params: 搜索参数，包含查询关键词和结果数量。
+
+        Returns:
+            预设的搜索结果字符串。
+        """
         query = params.query
         limit = min(params.limit, 10)
 

@@ -29,35 +29,80 @@ class OutputChannel(ABC):
         ...
 
     async def on_typing(self, typing: bool) -> None:
-        """正在输入... / 输入结束"""
+        """正在输入... / 输入结束
+
+        Args:
+            typing: True 表示开始输入，False 表示输入结束。
+        """
 
     async def on_text_delta(self, delta: str) -> None:
-        """流式文本增量 — 逐 token 推送"""
+        """流式文本增量 — 逐 token 推送
+
+        Args:
+            delta: 单个文本增量（token）。
+        """
 
     async def on_expression(self, expression: str, intensity: float = 1.0) -> None:
-        """表情/情绪变更 — 前端可驱动 Live2D / 头像动画"""
+        """表情/情绪变更 — 前端可驱动 Live2D / 头像动画
+
+        Args:
+            expression: 表情/情绪标识。
+            intensity: 强度，0.0~1.0。
+        """
 
     async def on_action(self, action: str, *, params: dict | None = None) -> None:
-        """动作变更 — 如 wave, nod, surprised + 参数"""
+        """动作变更 — 如 wave, nod, surprised + 参数
+
+        Args:
+            action: 动作标识。
+            params: 可选的动作参数。
+        """
 
     async def on_audio_chunk(self, chunk: bytes, *, stream_id: int = 0) -> None:
-        """音频流 chunk — stream_id 区分并发流"""
+        """音频流 chunk — stream_id 区分并发流
+
+        Args:
+            chunk: 音频字节数据。
+            stream_id: 流标识，用于区分并发音频流。
+        """
 
     async def on_audio_end(self, stream_id: int = 0, *, format: str = "wav") -> None:
-        """音频流结束标记 — 前端可据此 finalize 播放。format: 'wav' / 'mp3'"""
+        """音频流结束标记 — 前端可据此 finalize 播放。
+
+        Args:
+            stream_id: 流标识，用于区分并发音频流。
+            format: 音频格式，'wav' 或 'mp3'。
+        """
 
     async def on_command(self, cmd: str, *, params: dict | None = None) -> None:
-        """前端指令 — 换背景、播放特效、弹出图片"""
+        """前端指令 — 换背景、播放特效、弹出图片
+
+        Args:
+            cmd: 指令标识。
+            params: 可选的指令参数。
+        """
 
     async def on_state(self, state: str) -> None:
-        """FSM 状态变更 — 前端据此切换动画（待机/思考/说话）"""
+        """FSM 状态变更 — 前端据此切换动画（待机/思考/说话）
+
+        Args:
+            state: FSM 状态名。
+        """
 
     async def on_token_usage(self, data: dict) -> None:
-        """Token 消耗统计 — 前端展示用量条形图/标签"""
+        """Token 消耗统计 — 前端展示用量条形图/标签
+
+        Args:
+            data: token 消耗统计数据字典。
+        """
 
     @abstractmethod
     async def on_message(self, msg) -> None:
-        """完整消息 — 流式结束后发送，或非流式消息直接发送。"""
+        """完整消息 — 流式结束后发送，或非流式消息直接发送。
+
+        Args:
+            msg: 消息对象（ChatMessage 或 str）。
+        """
         ...
 
     @abstractmethod

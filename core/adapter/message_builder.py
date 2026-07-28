@@ -100,7 +100,14 @@ class MessageBuilder:
 
 
 def _format_tool_summary(tool_calls: list[ToolCall]) -> str:
-    """将工具调用列表格式化为 LLM 上下文摘要。"""
+    """将工具调用列表格式化为 LLM 上下文摘要。
+
+    Args:
+        tool_calls: ToolCall 对象列表。
+
+    Returns:
+        str: 格式化后的摘要字符串（如 " [已调用: search(query=...)]"），空列表时返回空字符串。
+    """
     if not tool_calls:
         return ""
     names: list[str] = []
@@ -119,7 +126,14 @@ def _format_tool_summary(tool_calls: list[ToolCall]) -> str:
 
 
 def _format_image_history_hint(count: int) -> str:
-    """历史用户消息中图片的降级提示。"""
+    """历史用户消息中图片的降级提示。
+
+    Args:
+        count: 图片数量。
+
+    Returns:
+        str: 降级提示文本（如 "[用户曾发送一张图片] "）。
+    """
     if count == 1:
         return "[用户曾发送一张图片] "
     return f"[用户曾发送{count}张图片] "

@@ -33,6 +33,11 @@ _REFLECTOR_PROMPT: str | None = None
 
 
 def _get_reflector_prompt() -> str:
+    """获取 MemoryReflector prompt 模板。
+
+    Returns:
+        prompt 模板字符串（从 .j2 文件或内置 fallback 加载）。
+    """
     global _REFLECTOR_PROMPT
     if _REFLECTOR_PROMPT is not None:
         return _REFLECTOR_PROMPT
@@ -67,6 +72,13 @@ class MemoryReflector:
         memory: "LongTermMemory",
         session: "SessionMemory",
     ):
+        """初始化记忆反射器。
+
+        Args:
+            llm: LLM 适配器，用于审查记忆。
+            memory: 长期记忆后端。
+            session: 会话记忆，用于访问 character_state 等。
+        """
         self._llm = llm
         self._memory = memory
         self._session = session
@@ -82,20 +94,33 @@ class MemoryReflector:
         self._round_count += 1
 
     def increment_new_memories(self, count: int) -> None:
-        """consolidation 有新记忆后 +N。"""
+        """consolidation 有新记忆后 +N。
+
+        Args:
+            count: 新增的记忆数量。
+        """
         self._new_memory_count += count
 
     # ---- 触发检查 ----
 
     def _should_run(self) -> bool:
-        """检查是否满足触发条件。"""
+        """检查是否满足触发条件。
+
+        Returns:
+            True 表示满足轮次或新增记忆阈值，应执行反射。
+        """
         return (
             self._round_count >= self.ROUND_THRESHOLD
             or self._new_memory_count >= self.NEW_MEMORY_THRESHOLD
         )
 
     async def check_and_reflect(self) -> dict | None:
-        """在 _after_response() 中调用。满足条件则执行反射。返回执行摘要或 None。"""
+        """在 _after_response() 中调用。满足条件则执行反射。
+
+        Returns:
+            执行摘要 dict（包含 ran_at, merges, updates, deletes），
+            不满足条件时返回 None。
+        """
         if not self._should_run():
             return None
 
@@ -109,7 +134,11 @@ class MemoryReflector:
     # ---- 核心逻辑 ----
 
     async def _do_reflect(self) -> dict:
-        """执行一次完整的去重周期。"""
+        """执行一次完整的去重周期。
+
+        Returns:
+            执行摘要 dict，包含 ran_at, merges, updates, deletes 字段。
+        """
         all_entries = self._memory.get_all()
         if not all_entries:
             self._reset_counters()
@@ -152,10 +181,16 @@ class MemoryReflector:
             )
         return summary
 
-    def _cluster_entries(self, entries) -> list[list]:
+    def _cluster_entries(self, entries: list) -> list[list]:
         """将条目按相似度聚类分组，每组 ≤ CLUSTER_SIZE 条。
 
         首选 embedding KMeans，降级按 memory_type 分组 + oversized 拆分。
+
+        Args:
+            entries: MemoryEntry 列表。
+
+        Returns:
+            分组后的嵌套列表，每个子列表为不超过 CLUSTER_SIZE 条的条目组。
         """
         n = len(entries)
         if n <= self.CLUSTER_SIZE:
@@ -197,8 +232,15 @@ class MemoryReflector:
                 result.append(type_entries[i:i + self.CLUSTER_SIZE])
         return result
 
-    async def _review_group(self, group) -> ReflectorActions:
-        """LLM 审查一组记忆，返回 ReflectorActions。"""
+    async def _review_group(self, group: list) -> ReflectorActions:
+        """LLM 审查一组记忆。
+
+        Args:
+            group: MemoryEntry 列表，单组不超过 CLUSTER_SIZE 条。
+
+        Returns:
+            解析出的 ReflectorActions，含 merges/updates/deletes 建议。
+        """
         entries_json = [
             {"id": e.id, "type": e.memory_type, "content": e.text,
              "poignancy": e.poignancy, "timestamp": e.timestamp}
@@ -222,6 +264,15 @@ class MemoryReflector:
         不可解析的文本或 schema 校验失败 → raise ValueError，
         由 _do_reflect 的 per-group except 捕获后跳过该组（下轮重试）。
         {} 或部分键是合法输入（字段默认空列表）。
+
+        Args:
+            text: LLM 审查输出的原始文本。
+
+        Returns:
+            解析并校验后的 ReflectorActions。
+
+        Raises:
+            ValueError: JSON 无法解析或 schema 校验失败。
         """
         text = text.strip()
         if text.startswith("```"):
@@ -246,7 +297,14 @@ class MemoryReflector:
             raise ValueError(f"actions 校验失败: {e}") from e
 
     async def _execute_actions(self, actions: ReflectorActions) -> tuple[int, int, int]:
-        """执行 actions（merge → update → delete）。返回 (merges, updates, deletes) 计数。"""
+        """执行 actions（merge → update → delete）。
+
+        Args:
+            actions: LLM 审查产出的 ReflectorActions。
+
+        Returns:
+            (merges, updates, deletes) 三元组，分别为各项操作执行成功的计数。
+        """
         merges = updates = deletes = 0
 
         for m in actions.merges:
@@ -290,7 +348,11 @@ class MemoryReflector:
         self._new_memory_count = 0
 
     def save_state(self) -> MemoryReflectorState:
-        """返回当前计数器状态，供 SessionMemory.save() 持久化。"""
+        """返回当前计数器状态，供 SessionMemory.save() 持久化。
+
+        Returns:
+            包含 round_count、new_memory_count、last_summary 的状态对象。
+        """
         return MemoryReflectorState(
             mr_round_count=self._round_count,
             mr_new_memory_count=self._new_memory_count,
@@ -298,7 +360,11 @@ class MemoryReflector:
         )
 
     def restore_state(self, state: MemoryReflectorState) -> None:
-        """从 MemoryReflectorState 恢复计数器和上次执行摘要。"""
+        """从 MemoryReflectorState 恢复计数器和上次执行摘要。
+
+        Args:
+            state: 从 MongoDB/JSONL 加载的状态对象。
+        """
         self._round_count = state.mr_round_count
         self._new_memory_count = state.mr_new_memory_count
         self._last_summary = state.mr_last_summary

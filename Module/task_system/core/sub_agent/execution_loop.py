@@ -41,6 +41,19 @@ async def execute_loop(
     resume_from 在 Replan 后携带旧 ExecutionState，
     Orchestrator 合并后保留已成功节点的状态，避免重复执行。
     resume 时传入 pause checkpoint 的 ExecutionState。
+
+    Args:
+        orchestrator: Orchestrator 实例，管理执行状态并驱动执行。
+        task_state: 任务状态对象，用于状态追踪和更新。
+        graph: 计划图（PlanGraph），包含执行 DAG。
+        mailbox: 任务邮箱，用于推送事件。
+        context: 委托上下文，包含任务意图、提示、可用工具等。
+        resume_from: 恢复执行的旧 ExecutionState（Replan/暂停后），\n            全新执行时为 None。
+        dispatch_fn: 异步回调，处理 Orchestrator.run() 结果，\n            返回 (should_continue, resume_from)。
+        push_mailbox_fn: 异步回调，向邮箱推送生命周期事件。
+
+    Returns:
+        None: 函数通过修改 task_state 和推送邮箱事件产生副作用。
     """
     while True:
         # 检查外部中断信号——拦截 Orchestrator.run() 入口。

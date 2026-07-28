@@ -7,14 +7,18 @@ Each client gets an independent WebSocketChannel (outbound) and AudioBuffer
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Coroutine
 
 from aiohttp import web
 
-from core.agent import RunState
+from core.agent import Agent, RunState
 
 from .ws_handler import handle_ws
 from .api_routes import register_api_routes
 from .debug_routes import register_debug_routes
+
+if TYPE_CHECKING:
+    from Module.task_system.task_system import TaskSystem
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +27,12 @@ _LIVE2D_DIR = Path(__file__).parent.parent.parent / "data" / "live2d-assets"
 
 
 def create_app(
-    agent,
-    stt_transcribe=None,
+    agent: "Agent",
+    stt_transcribe: "Callable[[bytes], Coroutine[object, object, str]] | None" = None,
     serve_static: bool = True,
     stt_emotion_state: dict | None = None,
     wake_word_enabled: bool = False,
-    task_system=None,  # TaskSystem | None
+    task_system: "TaskSystem | None" = None,
     auth_token: str = "",
 ) -> web.Application:
     """Create an aiohttp Application with WebSocket handler and optional static files.
@@ -39,9 +43,13 @@ def create_app(
         serve_static: serve static/index.html at /
         stt_emotion_state: mutable dict with 'emotion' and 'events' keys,
             updated by the STT wrapper after each transcription.
+        wake_word_enabled: enable wake word detection for audio input.
         task_system: TaskSystem instance for debug routes (optional)
         auth_token: if non-empty, /shutdown, /restart, /tools/reload require
             Authorization: Bearer <auth_token> header.
+
+    Returns:
+        web.Application: Configured aiohttp Application instance.
     """
     app = web.Application()
 
@@ -51,7 +59,14 @@ def create_app(
         app["task_system"] = task_system
 
     def _check_auth(request: web.Request) -> bool:
-        """Return True if the request is authorized for sensitive endpoints."""
+        """Return True if the request is authorized for sensitive endpoints.
+
+        Args:
+            request: aiohttp Request with optional Authorization header.
+
+        Returns:
+            bool: True if authorized (no token set, or token matches).
+        """
         if not auth_token:
             return True
         auth_header = request.headers.get("Authorization", "")
@@ -59,6 +74,14 @@ def create_app(
         return auth_header == expected
 
     async def ws_handler(request: web.Request) -> web.WebSocketResponse:
+        """WebSocket 连接处理入口。
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.WebSocketResponse: WebSocket 连接对象。
+        """
         return await handle_ws(request, agent, stt_transcribe, stt_emotion_state, wake_word_enabled)
 
     app.router.add_get("/ws", ws_handler)
@@ -73,6 +96,14 @@ def create_app(
     index_path = _STATIC_DIR / "index.html"
     if index_path.is_file():
         async def index_handler(_request: web.Request) -> web.FileResponse:
+            """Serve the main chat application HTML page.
+
+            Args:
+                _request: aiohttp Request (unused).
+
+            Returns:
+                web.FileResponse: index.html file response.
+            """
             return web.FileResponse(index_path)
         app.router.add_get("/", index_handler)
 
@@ -80,11 +111,27 @@ def create_app(
         debug_path = _STATIC_DIR / "debug.html"
         if debug_path.is_file():
             async def debug_handler(_request: web.Request) -> web.FileResponse:
+                """Serve the debug dashboard HTML page.
+
+                Args:
+                    _request: aiohttp Request (unused).
+
+                Returns:
+                    web.FileResponse: debug.html file response.
+                """
                 return web.FileResponse(debug_path)
             app.router.add_get("/debug", debug_handler)
 
     # Health check endpoint — for Docker/Kubernetes probes
     async def health_handler(request: web.Request) -> web.Response:
+        """Health/readiness check endpoint for Docker/Kubernetes probes.
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: JSON status including FSM state, LLM model, memory counts, tool list.
+        """
         agent = request.app["agent"]
         try:
             fsm_state = agent._fsm.state
@@ -105,6 +152,14 @@ def create_app(
 
     # Shutdown endpoint — triggers graceful agent stop
     async def shutdown_handler(request: web.Request) -> web.Response:
+        """Graceful shutdown endpoint. Sets agent state to STOPPING.
+
+        Args:
+            request: aiohttp Request (requires auth if token is set).
+
+        Returns:
+            web.Response: {"status": "shutting_down"} or 401 unauthorized.
+        """
         if not _check_auth(request):
             return web.json_response({"error": "unauthorized"}, status=401)
         import logging
@@ -117,6 +172,14 @@ def create_app(
 
     # Restart endpoint — triggers graceful restart with config reload
     async def restart_handler(request: web.Request) -> web.Response:
+        """Graceful restart endpoint. Sets agent state to RESTARTING.
+
+        Args:
+            request: aiohttp Request (requires auth if token is set).
+
+        Returns:
+            web.Response: {"status": "restarting"} or 401 unauthorized.
+        """
         if not _check_auth(request):
             return web.json_response({"error": "unauthorized"}, status=401)
         import logging
@@ -128,6 +191,14 @@ def create_app(
 
     # Tools endpoint — list loaded plugins
     async def tools_handler(request: web.Request) -> web.Response:
+        """List loaded tool plugins.
+
+        Args:
+            request: aiohttp Request (requires auth if token is set).
+
+        Returns:
+            web.Response: {"plugins": [...]} or 401 unauthorized.
+        """
         if not _check_auth(request):
             return web.json_response({"error": "unauthorized"}, status=401)
         agent = request.app["agent"]
@@ -138,6 +209,15 @@ def create_app(
 
     # Tool reload endpoint — hot-reload a single plugin
     async def tool_reload_handler(request: web.Request) -> web.Response:
+        """Hot-reload a single tool plugin.
+
+        Args:
+            request: aiohttp Request (requires auth if token is set),
+                JSON body with plugin "name".
+
+        Returns:
+            web.Response: {"ok": True, "name": ...} or error.
+        """
         if not _check_auth(request):
             return web.json_response({"error": "unauthorized"}, status=401)
         agent = request.app["agent"]

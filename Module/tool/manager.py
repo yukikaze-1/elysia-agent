@@ -26,6 +26,10 @@ class ToolManager:
     """工具管理器 — 实现 ToolExecutor Protocol。"""
 
     def __init__(self) -> None:
+        """初始化工具管理器。
+
+        初始化插件注册表、安全管道、执行历史、in-flight 任务追踪等内部数据结构。
+        """
         self._plugins: dict[str, ToolPlugin] = {}
         self._plugin_classes: dict[str, type[ToolPlugin]] = {}
         self._plugin_modules: dict[str, str] = {}
@@ -43,7 +47,15 @@ class ToolManager:
         plugin_classes: list[type[ToolPlugin]],
         ctx: PluginContext,
     ) -> None:
-        """加载并检测所有插件。setup() 失败则跳过并 log warning。"""
+        """加载并检测所有插件。
+
+        逐个调用 setup()，从插件目录加载 config.yaml 覆盖 SafetyProfile。
+        setup() 失败则跳过并 log warning。
+
+        Args:
+            plugin_classes: 待注册的 ToolPlugin 子类列表。
+            ctx: 依赖注入容器。
+        """
         self._plugin_context = ctx
         for cls in plugin_classes:
             instance = cls()
@@ -82,7 +94,10 @@ class ToolManager:
         logger.info("工具: 已加载 %d 个 (%s)", len(names), ", ".join(names))
 
     async def shutdown(self) -> None:
-        """优雅关闭：取消所有 in-flight 任务，调用所有 teardown()。"""
+        """优雅关闭管理器。
+
+        取消所有 in-flight 工具执行任务，依次调用所有插件的 teardown()。
+        """
         await self.cancel_all()
         teardowns = [
             p.teardown()
@@ -102,7 +117,16 @@ class ToolManager:
     async def execute(
         self, name: str, *, ctx: ToolContext, **raw_params,
     ) -> ToolResult:
-        """执行工具（非流式）。"""
+        """执行工具（非流式）。
+
+        Args:
+            name: 工具名称。
+            ctx: 运行时上下文。
+            **raw_params: 工具参数。
+
+        Returns:
+            ToolResult: 工具执行结果。
+        """
         plugin = self._plugins.get(name)
         if plugin is None:
             return self._unknown_tool_result(name)
@@ -124,7 +148,17 @@ class ToolManager:
     async def execute_stream(
         self, name: str, *, ctx: ToolContext, emit: Any = None, **raw_params,
     ) -> AsyncIterator[Any]:
-        """执行工具（流式）。"""
+        """执行工具（流式）。
+
+        Args:
+            name: 工具名称。
+            ctx: 运行时上下文。
+            emit: 进度上报器（注入到 ctx.services["_emit"]）。
+            **raw_params: 工具参数。
+
+        Yields:
+            ToolProgress | ToolResult: 中间进度事件或最终执行结果。
+        """
         plugin = self._plugins.get(name)
         if plugin is None:
             yield self._unknown_tool_result(name)
@@ -173,6 +207,15 @@ class ToolManager:
         """导出已激活插件的 LLM function calling schema。
 
         支持 openai / anthropic / gemini 三种格式。
+
+        Args:
+            format: 输出格式 ("openai", "anthropic", "gemini")。
+
+        Returns:
+            各 provider 格式的 function/tool schema 字典列表。
+
+        Raises:
+            ValueError: 不支持的格式。
         """
         format_methods = {
             "openai": "to_openai",
@@ -201,7 +244,14 @@ class ToolManager:
         return schemas
 
     def _flatten_refs(self, schema: dict) -> dict:
-        """内联展开 $defs/$ref，确保 LLM 兼容性。"""
+        """内联展开 $defs/$ref，确保 LLM 兼容性。
+
+        Args:
+            schema: 包含 $defs 的 JSON Schema 字典。
+
+        Returns:
+            已展开 $ref 引用的 JSON Schema 字典。
+        """
         schema = dict(schema)  # 浅拷贝避免修改原始 schema
         defs = schema.pop("$defs", {})
         if not defs:
@@ -209,6 +259,15 @@ class ToolManager:
         return self._resolve_refs(schema, defs)
 
     def _resolve_refs(self, node: Any, defs: dict) -> Any:
+        """递归解析 $ref 引用。
+
+        Args:
+            node: 当前节点（dict、list 或标量）。
+            defs: $defs 定义字典。
+
+        Returns:
+            已解析引用的节点副本。
+        """
         if isinstance(node, dict):
             if "$ref" in node:
                 ref_name = node["$ref"].split("/")[-1]
@@ -221,7 +280,7 @@ class ToolManager:
     # ---- Control ----
 
     async def cancel_all(self) -> None:
-        """显式取消所有 in-flight 工具执行。"""
+        """取消所有 in-flight 工具执行任务。"""
         for name in list(self._executing):
             task = self._tasks.get(name)
             if task and not task.done():
@@ -230,15 +289,35 @@ class ToolManager:
         self._tasks.clear()
 
     def submit_approval(self, request_id: str, approved: bool) -> bool:
-        """提交 HITL 审批结果。由 server 层在收到前端审批响应后调用。"""
+        """提交 HITL 审批结果。
+
+        由 server 层在收到前端审批响应后调用。
+
+        Args:
+            request_id: 审批请求 ID。
+            approved: True 表示批准，False 表示拒绝。
+
+        Returns:
+            True 如果找到了对应的审批请求。
+        """
         return self._pipeline.submit_approval(request_id, approved)
 
     def get_pending_approvals(self) -> list[tuple[str, str, dict]]:
-        """返回待审批请求列表，用于 WS 重连时重新广播审批弹窗。"""
+        """返回待审批请求列表。
+
+        用于 WS 重连时重新广播审批弹窗。
+
+        Returns:
+            [(request_id, tool_name, params), ...] 列表。
+        """
         return self._pipeline.get_pending_approvals()
 
     def set_hitl_broadcast(self, output_manager) -> None:
-        """Wire HITL approval broadcast through OutputManager."""
+        """绑定 HITL 审批广播回调到 OutputManager。
+
+        Args:
+            output_manager: OutputManager 实例，用于 command("tool_approval", ...) 广播。
+        """
         if output_manager is not None:
             async def _broadcast(request_id: str, tool_name: str,
                                  params: dict) -> None:
@@ -256,7 +335,16 @@ class ToolManager:
             self._pipeline.set_hitl_broadcast(_broadcast)
 
     async def reload_plugin(self, name: str) -> bool:
-        """热重载单个插件 — 不中断正在执行的任务。"""
+        """热重载单个插件。
+
+        不中断正在执行的任务。先 teardown 旧实例，importlib.reload 模块，再 setup 新实例。
+
+        Args:
+            name: 要重载的工具名称。
+
+        Returns:
+            True 如果重载成功。
+        """
         old = self._plugins.get(name)
         module_path = self._plugin_modules.get(name)
         if old is None or module_path is None:
@@ -382,9 +470,22 @@ class ToolManager:
         return self._pipeline.stats
 
     def _record(self, result: ToolResult) -> None:
+        """将工具执行结果写入历史环形缓冲区。
+
+        Args:
+            result: 工具执行结果。
+        """
         self._history.append(result)
 
     def _unknown_tool_result(self, name: str) -> ToolResult:
+        """生成"未知工具"的错误结果。
+
+        Args:
+            name: 工具名称。
+
+        Returns:
+            ToolResult.fail(...)，error_type=UNKNOWN_TOOL。
+        """
         return ToolResult.fail(
             name=name,
             error=(

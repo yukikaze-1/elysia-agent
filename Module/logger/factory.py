@@ -22,6 +22,17 @@ _LEVEL_MAP: dict[str, int] = {
 
 
 def _resolve_level(level: str | int) -> int:
+    """将字符串或 int 日志级别转为 int。
+
+    Args:
+        level: 日志级别字符串（如 "DEBUG"、"INFO"）或整数。
+
+    Returns:
+        对应的 logging 级别整数。
+
+    Raises:
+        ValueError: level 为无效值。
+    """
     if isinstance(level, int):
         if level <= 0:
             raise ValueError(f"Invalid log level: {level}")
@@ -48,10 +59,20 @@ def get_caller_logger() -> logging.Logger:
 
 
 class _JsonFormatter(logging.Formatter):
+    """JSON 行格式化器 — 每条日志一行 JSON。"""
+
     def __init__(self) -> None:
         super().__init__(datefmt="%Y-%m-%dT%H:%M:%S")
 
     def format(self, record: logging.LogRecord) -> str:
+        """将 LogRecord 格式化为 JSON 字符串。
+
+        Args:
+            record: Python logging 的日志记录。
+
+        Returns:
+            单行 JSON 字符串。
+        """
         data: dict[str, object] = {
             "time": self.formatTime(record, self.datefmt),
             "level": record.levelname,
@@ -68,6 +89,17 @@ _PLAIN_DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 
 class LoggerFactory:
+    """日志工厂 — 创建并管理 logger 实例，支持多模块差异化级别。
+
+    Args:
+        log_dir: 日志文件目录。
+        level: 默认日志级别（字符串或 int）。
+        json_format: 是否使用 JSON 格式输出。
+        module_levels: 按模块前缀设置差异级别，如 {"Module.llm": "DEBUG"}。
+        setup_root: 是否初始化 root logger handler。
+        backup_count: 日志文件备份天数。
+    """
+
     def __init__(
         self,
         *,
@@ -100,6 +132,14 @@ class LoggerFactory:
     # ── public API ──────────────────────────────────────────────────
 
     def get(self, name: str) -> logging.Logger:
+        """获取或创建指定名称的 logger。
+
+        Args:
+            name: logger 名称（通常是模块路径）。
+
+        Returns:
+            配置好的 Logger 实例。若已存在同名 handler 则直接返回。
+        """
         logger = logging.getLogger(name)
         if logger.handlers:
             return logger
@@ -114,6 +154,12 @@ class LoggerFactory:
         return logger
 
     def set_level(self, name: str, level: str | int) -> None:
+        """动态修改指定 logger 及其所有 handler 的日志级别。
+
+        Args:
+            name: logger 名称。
+            level: 新日志级别（字符串或整数）。
+        """
         lv = _resolve_level(level)
         logger = logging.getLogger(name)
         logger.setLevel(lv)
@@ -121,6 +167,7 @@ class LoggerFactory:
             h.setLevel(lv)
 
     def close(self) -> None:
+        """关闭所有由本工厂创建的 logger handler 及 root handler。"""
         for name in list(self._created):
             logger = logging.getLogger(name)
             for h in list(logger.handlers):
@@ -137,18 +184,43 @@ class LoggerFactory:
     # ── internal ────────────────────────────────────────────────────
 
     def _resolve_module_level(self, name: str) -> int:
+        """最长前缀匹配模块日志级别，无匹配则使用默认级别。
+
+        Args:
+            name: 模块名（如 "Module.llm.openai_compat"）。
+
+        Returns:
+            匹配的日志级别整数。
+        """
         for prefix, lv in sorted(self._module_levels.items(), key=lambda x: -len(x[0])):
             if name == prefix or name.startswith(prefix + "."):
                 return lv
         return self._default_level
 
     def _make_stream_handler(self, level: int) -> logging.Handler:
+        """创建 stdout 流 handler。
+
+        Args:
+            level: 日志级别。
+
+        Returns:
+            配置好的 StreamHandler 实例。
+        """
         h = logging.StreamHandler(sys.stdout)
         h.setLevel(level)
         h.setFormatter(self._formatter)
         return h
 
     def _make_file_handler(self, name: str, level: int) -> logging.Handler:
+        """创建按天轮转的文件 handler。
+
+        Args:
+            name: logger 名称（用于生成文件名）。
+            level: 日志级别。
+
+        Returns:
+            配置好的 TimedRotatingFileHandler 实例。
+        """
         self._log_dir.mkdir(parents=True, exist_ok=True)
         fpath = self._log_dir / f"logger_{name}.log"
         h = TimedRotatingFileHandler(
@@ -159,6 +231,7 @@ class LoggerFactory:
         return h
 
     def _setup_root_handler(self) -> None:
+        """为 root logger 安装兜底 handler（仅 WARNING 级别）。"""
         root = logging.getLogger()
         if not root.handlers:
             h = logging.StreamHandler(sys.stdout)

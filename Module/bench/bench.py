@@ -27,6 +27,13 @@ class LatencyBench:
         tts_url: str = "",
         stt_url: str = "",
     ):
+        """初始化延迟基准测试。
+
+        Args:
+            audio_file: 用于 STT 测试的音频文件路径。
+            tts_url: TTS 服务 base URL（默认从 TTS_API_URL 环境变量读取）。
+            stt_url: STT 服务 base URL（默认从 STT_API_URL 环境变量读取）。
+        """
         self.audio_file = audio_file
         self.tts_url = tts_url or os.getenv("TTS_API_URL", "http://localhost:9880")
         self.stt_url = stt_url or os.getenv("STT_API_URL", "http://localhost:20042")
@@ -35,12 +42,29 @@ class LatencyBench:
 
     @staticmethod
     def _fmt(seconds: float) -> str:
+        """格式化时间为人类可读字符串。
+
+        Args:
+            seconds: 秒数。
+
+        Returns:
+            "<1s 时用 ms，>=1s 时用 s" 的格式化字符串。
+        """
         if seconds < 1:
             return f"{seconds * 1000:.0f}ms"
         return f"{seconds:.3f}s"
 
     @staticmethod
     def _rtf(audio_duration: float, elapsed: float) -> str:
+        """计算实时因子（Real-Time Factor）。
+
+        Args:
+            audio_duration: 音频长度（秒）。
+            elapsed: 处理耗时（秒）。
+
+        Returns:
+            RTF 字符串（如 "2.50x (realtime)" 或 "0.50x"）。
+        """
         if elapsed <= 0:
             return "-"
         factor = audio_duration / elapsed
@@ -48,7 +72,18 @@ class LatencyBench:
 
     @staticmethod
     async def _probe_http(url: str, label: str, timeout: float = 3.0) -> bool:
-        """短超时探测 HTTP 服务是否可达。不可达打印跳过信息并返回 False。"""
+        """短超时探测 HTTP 服务是否可达。
+
+        不可达时打印跳过信息并返回 False。
+
+        Args:
+            url: 服务 base URL。
+            label: 服务的人类可读标签。
+            timeout: HTTP 请求超时秒数。
+
+        Returns:
+            True 如果服务可达。
+        """
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 await client.get(f"{url}/")
@@ -60,6 +95,7 @@ class LatencyBench:
     # ---- public ----
 
     async def run_all(self) -> None:
+        """运行所有基准测试：LLM、TTS、STT、端到端管线。"""
         print("Module 延迟基准测试")
         print()
         await self.bench_llm("deepseek/deepseek-v4-pro", "V4 Pro")
@@ -76,8 +112,12 @@ class LatencyBench:
     # ---- 端到端管线 ----
 
     async def bench_e2e(self) -> None:
-        """端到端管线延迟: start → first delta → complete (不含 TTS/STT)."""
-        print("=" * 50)
+        """端到端管线延迟测试。
+
+        测试完整 Agent process_message 管线（不含 TTS/STT），
+        包括启动耗时、简单问候、记忆搜索、Web 搜索等场景。
+        需要 DEEPSEEK_API_KEY 和有效的 config.yaml。
+        """
         print("端到端管线 (Agent process_message)")
         print("=" * 50)
 
@@ -140,6 +180,14 @@ class LatencyBench:
     # ---- LLM ----
 
     async def bench_llm(self, model_id: str, label: str) -> None:
+        """LLM 延迟基准测试。
+
+        测试 chat()、chat_stream()、prefix 补全、no-thinking 模式的延迟和吞吐量。
+
+        Args:
+            model_id: LLM 模型 ID（如 "deepseek/deepseek-v4-pro"）。
+            label: 人类可读标签。
+        """
         print("=" * 50)
         print(f"LLM ({label})")
         print("=" * 50)
@@ -237,7 +285,14 @@ class LatencyBench:
     ) -> None:
         """通用 TTS 延迟测试。
 
+        测试 synthesize() 和 synthesize_stream() 的延迟和 RTF。
+
         Args:
+            provider_model: TTS provider/model 标识（如 "gpt-sovits/default"）。
+            label: 人类可读标签。
+            env_key: 需要的 API Key 环境变量名（空表示不需要）。
+            base_url: TTS 服务 base URL。
+            character: 角色名（用于 voice 映射），None 表示不传。
             probe: 是否在测试前 HTTP 探活。云端 API 应设为 False。
         """
         print()
@@ -302,14 +357,17 @@ class LatencyBench:
             await tts.close()
 
     async def bench_tts(self) -> None:
-        """TTS: GPT-SoVits。"""
+        """TTS 延迟基准测试：GPT-SoVits（本地服务）。"""
         await self._bench_tts_provider(
             "gpt-sovits/default", "GPT-SoVits",
             base_url=self.tts_url, character="Elysia",
         )
 
     async def bench_tts_minimax(self) -> None:
-        """TTS: MiniMax（云端 API，无需本地探活）。"""
+        """TTS 延迟基准测试：MiniMax（云端 API，无需本地探活）。
+
+        需要 MINIMAX_API_KEY 环境变量。
+        """
         await self._bench_tts_provider(
             "minimax/speech-2.8-hd", "MiniMax",
             env_key="MINIMAX_API_KEY",
@@ -318,7 +376,10 @@ class LatencyBench:
         )
 
     async def bench_tts_custom(self) -> None:
-        """TTS: OpenAI 兼容 (custom)。"""
+        """TTS 延迟基准测试：OpenAI 兼容自定义 TTS。
+
+        需要 CUSTOM_TTS_API_KEY 和 CUSTOM_TTS_BASE_URL 环境变量。
+        """
         base_url = os.getenv("CUSTOM_TTS_BASE_URL", "")
         await self._bench_tts_provider(
             "custom/default", "Custom (OpenAI 兼容)",
@@ -336,7 +397,13 @@ class LatencyBench:
     ) -> None:
         """通用 STT 延迟测试。
 
+        测试 transcribe() 和 transcribe_stream() 的延迟和 RTF。
+
         Args:
+            provider_model: STT provider/model 标识（如 "sensevoice/sense-voice"）。
+            label: 人类可读标签。
+            env_key: 需要的 API Key 环境变量名（空表示不需要）。
+            base_url: STT 服务 base URL。
             probe: 是否在测试前 HTTP 探活。云端 API 应设为 False。
         """
         print()
@@ -404,14 +471,17 @@ class LatencyBench:
             await backend.close()
 
     async def bench_stt(self) -> None:
-        """STT: SenseVoice。"""
+        """STT 延迟基准测试：SenseVoice（本地服务）。"""
         await self._bench_stt_provider(
             "sensevoice/sense-voice", "SenseVoice",
             base_url=self.stt_url,
         )
 
     async def bench_stt_custom(self) -> None:
-        """STT: OpenAI 兼容 (custom)。"""
+        """STT 延迟基准测试：OpenAI 兼容自定义 STT。
+
+        需要 CUSTOM_STT_API_KEY 和 CUSTOM_STT_BASE_URL 环境变量。
+        """
         base_url = os.getenv("CUSTOM_STT_BASE_URL", "")
         await self._bench_stt_provider(
             "custom/default", "Custom (OpenAI 兼容)",
