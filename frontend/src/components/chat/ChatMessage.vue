@@ -24,6 +24,9 @@ function contentText(): string {
 </script>
 
 <template>
+  <!-- InnerVoice bubble — rendered above assistant/user messages, not instead of them -->
+  <InnerVoice v-if="message.innerVoice" :content="message.innerVoice" />
+
   <!-- Tool role: render ToolCard for each toolCall -->
   <template v-if="message.role === 'tool'">
     <div
@@ -38,12 +41,7 @@ function contentText(): string {
     </div>
   </template>
 
-  <!-- System role with innerVoice -->
-  <template v-else-if="message.innerVoice">
-    <InnerVoice :content="message.innerVoice" />
-  </template>
-
-  <!-- System role without innerVoice (status messages, etc.) -->
+  <!-- System role (status messages, etc.) -->
   <template v-else-if="message.role === 'system'">
     <div class="msg-row system">
       <div class="msg-status">{{ contentText() }}</div>
