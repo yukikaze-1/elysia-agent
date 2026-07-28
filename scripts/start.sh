@@ -53,21 +53,16 @@ else
     echo "  ⚠ Docker 未安装且数据库未运行"
 fi
 
-# ── 2. 检查前端构建 ──────────────────────────────────────────────────────────
+# ── 2. 构建前端 ──────────────────────────────────────────────────────────────
 
-echo "→ 前端..."
+echo "→ 构建前端..."
 
-if [[ -f "static/index.html" ]] && [[ -f "static/debug.html" ]]; then
-    echo "  ✓ 前端已构建"
+if command -v npm &> /dev/null; then
+    cd frontend && npm install --silent 2>&1 && npm run build --silent 2>&1 && cd ..
+    echo "  ✓ 前端构建完成"
 else
-    echo "  ⚠ 前端构建产物缺失，正在构建..."
-    if command -v npm &> /dev/null; then
-        cd frontend && npm install --silent 2>&1 && npm run build --silent 2>&1 && cd ..
-        echo "  ✓ 前端构建完成"
-    else
-        echo "  错误: 未找到 npm。请先运行 bash scripts/setup.sh"
-        exit 1
-    fi
+    echo "  错误: 未找到 npm。请先运行 bash scripts/setup.sh"
+    exit 1
 fi
 
 # ── 3. 快速预检 ─────────────────────────────────────────────────────────────
