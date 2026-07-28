@@ -3,9 +3,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING, Any
 
 from ._types import RunState
 from ..utils import set_request_id
+
+if TYPE_CHECKING:
+    from ..config import AppConfig, CharacterConfig
+    from ..adapter.llm_adapter import LLMAdapter
+    from ..memory.long_term import LongTermMemory
+    from ..adapter.tool_adapter import ToolAdapter
+    from ..cognitive import CognitiveLoop
+    from Module.task_system.task_system import TaskSystem
+    from Module.tts.protocol import TTSBackend
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +25,25 @@ class AgentServer:
 
     所有属性由 Agent.__init__ 初始化，本 mixin 不含 __init__。
     """
+
+    if TYPE_CHECKING:
+        _character: CharacterConfig
+        _llm: LLMAdapter
+        _long_term: LongTermMemory
+        _tool_adapter: ToolAdapter
+        _cognitive: CognitiveLoop
+        _task_system: TaskSystem | None
+        _state: RunState
+        _config_path: str | None
+        _config: AppConfig
+        _tts: TTSBackend | None
+        _stt_ok: bool
+        _req_counter: int
+        _mongo_ok: bool
+        _milvus_ok: bool
+        start: Any
+        stop: Any
+        process_message: Any
 
     def _print_startup_banner(self, mongo_ok: bool, milvus_ok: bool) -> str:
         """构建启动横幅字符串。调用方负责打印/记录。"""

@@ -41,6 +41,7 @@ class _LifecycleTools:
         _embed_task: asyncio.Task[Any] | None
         _idle: IdleMonitor
         _event_task: asyncio.Task[Any] | None
+        _process_events: Any
 
     async def _start_tool_context(self) -> None:
         """启动 ToolAdapter，注入运行时服务。"""
