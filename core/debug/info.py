@@ -182,7 +182,7 @@ async def collect(agent: "Agent") -> DebugInfo:
     ]
     repo = agent._long_term._repo
     info.milvus_ok = await agent._memory_repo.health_check()
-    info.embedding_ok = agent._long_term._embedding is not None
+    info.embedding_ok = agent._long_term._embedding_provider._backend is not None
     info.mongodb_ok = await agent._session_repo.health_check()
 
     # ---- Tools ----
