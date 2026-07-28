@@ -2,6 +2,16 @@
 
 ## 已完成
 
+### 2026-07-28: AgentLifecycle 拆分 + EmbeddingProvider + Action Gate + LTM 驱逐修复
+
+**AgentLifecycle 拆分为 mixin（522 → ~120 行）：** `lifecycle.py` 从手写 10 步 startup 序列改为数据驱动 `_STARTUP_STEPS` 循环（镜像已有的 `_SHUTDOWN_STEPS`）。4 个 mixin 文件：`_lifecycle_persistence.py`（持久化层启停）、`_lifecycle_services.py`（LLM/TTS/Output/Token 启停）、`_lifecycle_tools.py`（ToolAdapter/Scheduler/IdleMonitor 启停）、`_lifecycle_task_system.py`（TaskSystem/mailbox 启停）。模式与 CharacterEngine 拆分一致。
+
+**EmbeddingProvider 提取（`core/memory/embedding_provider.py`）：** 将 `long_term.py` 中 72 行嵌入加载逻辑（懒加载、超时、OpenAI/HuggingFace fallback、线程池）提取为独立类。对外暴露 `ensure(wait)`、`embed(text)`、`cancel()` 三个方法。`LongTermMemory` 从 589 → ~520 行。
+
+**Action Gate（工具调用决策校验）：** `CognitiveTools._gate_tool_calls()` 在 LLM 产出 tool_calls 后、dispatch 前校验工具名是否在注册表。任一未知工具 → 整轮 abort 注入 `GATE_REJECTED` failure messages。新增 `ErrorType.GATE_REJECTED`。
+
+**LTM 驱逐修复 + mark_absorbed Milvus 清理：** `_evict_old_entries()` 重命名为 `_evict_overflow()`，去掉年龄驱逐只保留数量上限，加 Milvus 同步删除。`insert()` 中恢复驱逐调用（`enable_eviction` 开关门控）。`mark_absorbed()` 改为 async 加 `_write_lock` + Milvus 删除，消除僵尸向量累积。
+
 ### 2026-07-22: C6 说话风格动态联动 + CharacterState 共享修复
 
 **C6 动态联动**：L3→L2 压缩完成后自动触发 C6 说话风格刷新。LLM 编辑模式，版本历史与 L2 共享 `character_versions` 集合（按 `content_type` 区分）。C6 模板支持条件渲染：非空时渲染动态文本，为空时回退 L1 默认。
@@ -99,7 +109,7 @@
 - **MemoryReflector** (`core/memory/memory_reflector.py`): 定期深度去重。双条件触发（50 轮 + 30 条新记忆），KMeans 聚类分组，LLM 批量审查（merge/update/delete），上限控制（5+5+3）。对标 CharacterReflector 生命周期（restore_state/flush）。
 - **ConsolidationCompare** (`core/consolidator.py`): 提取时轻量比对。新记忆 vs 已有记忆 top 10 → LLM 判断 insert/update/merge/skip → 预校验 → 执行。失败回退全 insert。
 - **LTM 数据模型扩展**: `_absorbed_ids` + `_write_lock` + `get_all()` + `mark_absorbed()` + `update_text()` 扩展（支持 poignancy/memory_type）+ `search()` 过滤已吸收条目
-- **驱逐暂停**: 开发阶段 `_evict_old_entries()` 已注释
+- **驱逐**: 开发阶段 `_evict_old_entries()` 已注释（2026-07-28 已修复：重命名为 `_evict_overflow()`，count-only，加 Milvus 清理，re-enabled）
 - **Prompt 文件** (GPT 5.6 sol_pro 生成):
   - `prompt/ExtractMemory.j2` — 反幻觉提取（13 节，含正反示例 + 自检清单）
   - `prompt/ConsolidationCompare.j2` — 比对去重（186 行）

@@ -381,6 +381,7 @@ class CognitiveLoop:
 - **asyncio.Lock**: 确保 `process()` 不可重入，防止并发消息导致状态混乱
 - **Fire-and-forget 后处理**: consolidation + session save 异步执行，用户可立即发下一条消息
 - **TTS 绑定发送**: 文字和音频在服务端绑在一起发送，前端无需同步逻辑
+- **Action Gate**: `_gate_tool_calls()` 在 LLM 产出 tool_calls 后、dispatch 前校验工具名是否在注册表。任一未知工具 → 整轮 abort 注入 `GATE_REJECTED` failure messages，LLM 自行修正
 - **并行工具调用**: `asyncio.gather` + `return_exceptions=True`，单工具失败不影响其他
 - **VAD 状态保护**: THINKING/EXECUTING 时 VAD 不打断，STT 文本和显式按钮始终生效
 - **inner_voice 流式分流**: StreamProcessor 纯状态机检测 `<inner_voice>` 标签，通过 `_dispatch_stream_event()` 事件→副作用翻译。详见 `docs/superpowers/specs/archive/2026-06-24-inner-voice-design.md`
@@ -544,17 +545,16 @@ class SessionMemory:
 ```python
 class LongTermMemory:
     _entries: list[MemoryEntry]          # 内存缓存 (always available)
-    _vector_db: VectorDBBackend | None   # Milvus (optional)
-    _embedding: EmbeddingBackend | None  # HuggingFace/OpenAI (lazy)
+    _repo: MemoryRepository | None       # Milvus (optional)
+    _embedding_provider: EmbeddingProvider  # 嵌入懒加载 (lazy, thread-pool)
 
     async connect()          # Milvus 连接 (fast)
-    async insert(text, ...)  # 写 Milvus + 内存
-    async search(query, k)   # Milvus ANN → fallback: 字符重叠
+    async insert(text, ...)  # 写 Milvus + 内存 → 触发 _evict_overflow() 数量驱逐
+    async search(query, k)   # Milvus ANN → fallback: 字符重叠 → rerank (0.5×sim + 0.3×poi + 0.2×rec)
 
-    # 懒加载: _ensure_embedding() 在 thread pool 运行
-    # 优先 OpenAI API (fast)，fallback HuggingFace 本地模型
-    # 超时 10s → 降级为 text-only
-    # GPU 兼容: sm_<70 → CPU fallback
+    # 驱逐: 超过 max_entries 时保留最新 N 条，同步清理 Milvus
+    # mark_absorbed(): async，含 Milvus 清理，加 _write_lock
+    # EmbeddingProvider: 优先 OpenAI API (fast)，fallback HuggingFace，超时 10s → 降级 text-only
 ```
 
 ### 5.4 MemoryConsolidator
@@ -588,7 +588,8 @@ tool_manager.load_all(ALL_PLUGINS, plugin_ctx)
 
 # CognitiveLoop 自动:
 # tool_definitions() → LLM 请求（通过 API tools 参数传递，不再注入 system prompt）
-# LLM 返回 tool_calls → SafetyPipeline (validate→safety→hitl→execute→truncate) → 结果回注 messages
+# LLM 返回 tool_calls → Action Gate (工具存在性校验) → SafetyPipeline (validate→safety→hitl→execute→truncate) → 结果回注 messages
+# GATE_REJECTED: 调度前被 gate 拦截，与 UNKNOWN_TOOL（执行层发现）分工明确
 ```
 
 详见 `Module/tool/README.md`。
@@ -935,11 +936,15 @@ Agent/
 │   └── bench/               # Bench: 延迟基准
 │
 ├── core/                    # L1 认知控制 + L2 记忆
-│   ├── agent/                #   Agent 组装包 (agent + lifecycle + server + _types)
+│   ├── agent/                #   Agent 组装包 (agent + lifecycle + server + _types + 4 lifecycle mixins)
 │   │   ├── agent.py          #     Agent.__init__ + 事件处理 + process_message
-│   │   ├── lifecycle.py      #     AgentLifecycle: start/stop 编排
+│   │   ├── lifecycle.py      #     AgentLifecycle: start/stop 编排 + _STARTUP_STEPS / _SHUTDOWN_STEPS
 │   │   ├── server.py         #     AgentServer: run_server/repl + provider 切换
-│   │   └── _types.py         #     RunState + 辅助类
+│   │   ├── _types.py         #     RunState + 辅助类
+│   │   ├── _lifecycle_persistence.py  #  持久化层启停
+│   │   ├── _lifecycle_services.py     #  LLM/TTS/Output/Token 启停
+│   │   ├── _lifecycle_tools.py        #  工具/调度/空闲监控 启停
+│   │   └── _lifecycle_task_system.py  #  TaskSystem/DelegationPreparer/mailbox 启停
 │   ├── adapter/
 │   │   ├── llm_adapter.py
 │   │   ├── tts_adapter.py
@@ -978,6 +983,7 @@ Agent/
 │   ├── memory/              #   记忆子系统
 │   │   ├── session.py       #     SessionMemory (MongoDB + deque)
 │   │   ├── long_term.py     #     LongTermMemory (Milvus + Embedding)
+│   │   ├── embedding_provider.py #  EmbeddingProvider: 嵌入懒加载 + fallback
 │   │   ├── consolidator.py  #     MemoryConsolidator (提取 + 比对 + 写入)
 │   │   └── memory_reflector.py #  MemoryReflector (定期去重 + KMeans)
 │   ├── prompts/              # Jinja2 模板 (.j2, PascalCase)

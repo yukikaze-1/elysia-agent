@@ -85,15 +85,19 @@ Module/<service>/
 
 ```
 core/
-├── agent/                 # Agent (package): AgentLifecycle mixin + AgentServer mixin + _types
+├── agent/                 # Agent (package): AgentLifecycle mixin + AgentServer mixin + _types + 4 lifecycle mixins
 │   ├── agent.py           #   Agent.__init__ + event handling + process_message + background tasks
-│   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + 所有 _start_*/_stop_*/_flush_*
+│   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + _STARTUP_STEPS + _SHUTDOWN_STEPS + 3 flush
 │   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
-│   └── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
+│   ├── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
+│   ├── _lifecycle_persistence.py  #   持久化层启停 (MongoDB/Milvus/session/repos)
+│   ├── _lifecycle_services.py     #   LLM/TTS/Output/TokenTracker 启停
+│   ├── _lifecycle_tools.py        #   ToolAdapter/Scheduler/IdleMonitor/event loop 启停
+│   └── _lifecycle_task_system.py  #   TaskSystem/DelegationPreparer/mailbox 启停
 ├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing + TurnPhase
 │   ├── loop.py            #   CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
 │   ├── stream_processor.py #   StreamProcessor: 流式标签检测 + 文本管道
-│   ├── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task
+│   ├── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task + _gate_tool_calls
 │   └── timing.py          #   Timer + TimingClock latency tracking
 ├── adapter/               # Adapter layer: wraps Module/ backends for core/ consumption
 │   ├── llm_adapter.py     #   LLMAdapter: tool-calling + retry + streaming + hot-switch
@@ -115,7 +119,8 @@ core/
 │   └── tests/
 ├── memory/
 │   ├── session.py          # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive
-│   ├── long_term.py        # LongTermMemory: Milvus-backed vector search + reranking; _absorbed_ids for merge tracking
+│   ├── long_term.py        # LongTermMemory: Milvus-backed vector search + reranking; count-based _evict_overflow; async mark_absorbed with Milvus cleanup
+│   ├── embedding_provider.py # EmbeddingProvider: 嵌入后端懒加载 + 超时 + OpenAI/HuggingFace fallback
 │   ├── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM review)
 │   └── consolidator.py     # MemoryConsolidator: buffers 6 msgs → LLM extracts + compares → insert/update/merge/skip
 ├── config/                 # Config sub-package: character_config + app_config

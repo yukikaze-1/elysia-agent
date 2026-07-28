@@ -203,7 +203,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Core 总览 | [core/README.md](core/README.md) | 认知中枢架构 + 组件详解 |
 | Agent | [core/agent/README.md](core/agent/README.md) | 组装入口 + 生命周期管理 |
 | CognitiveLoop | [core/cognitive/README.md](core/cognitive/README.md) | ReAct 调度器 + StreamProcessor 流式解析 |
-| Memory | [core/memory/README.md](core/memory/README.md) | 记忆子系统（Session + LTM + 沉淀 + 去重） |
+| Memory | [core/memory/README.md](core/memory/README.md) | 记忆子系统（Session + LTM + EmbeddingProvider + 沉淀 + 去重） |
 | Debug | [core/debug/README.md](core/debug/README.md) | 调试仪表板数据层（16 panel + 录制） |
 | Text | [core/text/README.md](core/text/README.md) | 文本流处理管线（BlockFilter + SentenceBuffer） |
 | Storage | [core/storage/README.md](core/storage/README.md) | 统一存储层（Repository 模式） |
@@ -342,7 +342,7 @@ Agent/
 │   ├── adapter/             # 适配层: LLM + TTS + tool_call_parser
 │   ├── text/                # 文本流处理 (BlockFilter + SentenceBuffer)
 │   ├── debug/               # Debug 面板数据层
-│   ├── memory/              # 记忆子系统 (Session + LTM + Consolidator + Reflector)
+│   ├── memory/              # 记忆子系统 (Session + LTM + EmbeddingProvider + Consolidator + Reflector)
 │   ├── personality/         # CharacterEngine: 四层性格模型
 │   ├── schema/              # 共享 Pydantic 类型 (Event, Message, Part 等)
 │   ├── tools/               # 工具插件 (filesystem, web, memory 等)
