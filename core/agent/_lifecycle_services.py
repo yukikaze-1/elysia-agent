@@ -10,13 +10,32 @@ from Module.output import OutputManager
 
 if TYPE_CHECKING:
     from ..adapter.llm_adapter import LLMAdapter
+    from ..cognitive import CognitiveLoop
+    from ..memory.session import SessionMemory
     from Module.tts.protocol import TTSBackend
+    from core.token_tracker import TokenTracker
+    from core.debug.prompt_recorder import PromptRecorder
+    from core.debug.response_recorder import ResponseRecorder
+    from core.storage.token_repo import TokenRepository
 
 logger = logging.getLogger(__name__)
 
 
 class _LifecycleServices:
     """LLM/TTS/Output 服务生命周期 mixin。"""
+
+    if TYPE_CHECKING:
+        _token_tracker: TokenTracker
+        _session: SessionMemory
+        _output: OutputManager
+        _token_repo: TokenRepository
+        _mongo_ok: bool
+        _prompt_recorder: PromptRecorder
+        _response_recorder: ResponseRecorder
+        _cognitive: CognitiveLoop
+        _config: AppConfig
+        _tts: TTSBackend | None
+        _llm: LLMAdapter
 
     async def _start_token_and_prompt(self) -> None:
         """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""

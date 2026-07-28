@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..event_bus import EventBus, EventPriority, EventType
 from ..agent_fsm import AgentFSM, AgentState
@@ -27,6 +27,20 @@ logger = logging.getLogger(__name__)
 
 class _LifecycleTools:
     """工具/调度/空闲监控 生命周期 mixin。"""
+
+    if TYPE_CHECKING:
+        _tool_adapter: ToolAdapter
+        _long_term: LongTermMemory
+        _scheduler: TaskScheduler
+        _config: AppConfig
+        _session: SessionMemory
+        _started_at: float
+        _token_tracker: TokenTracker
+        _fsm: AgentFSM
+        _cognitive: CognitiveLoop
+        _embed_task: asyncio.Task[Any] | None
+        _idle: IdleMonitor
+        _event_task: asyncio.Task[Any] | None
 
     async def _start_tool_context(self) -> None:
         """启动 ToolAdapter，注入运行时服务。"""

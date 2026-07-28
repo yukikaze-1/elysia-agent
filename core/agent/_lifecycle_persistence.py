@@ -4,18 +4,38 @@ from __future__ import annotations
 import asyncio
 import os
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from Module.embedding import EmbeddingFactory
 
 if TYPE_CHECKING:
     from core.storage.character_version_repo import CharacterVersionRepository
+    from core.storage.message_repo import MessageRepository
+    from core.storage.session_repo import SessionRepository
+    from core.storage.token_repo import TokenRepository
+    from ..memory.session import SessionMemory
+    from ..memory.long_term import LongTermMemory
+    from ..personality import CharacterEngine
 
 logger = logging.getLogger(__name__)
 
 
 class _LifecyclePersistence:
     """持久化层生命周期 mixin。"""
+
+    if TYPE_CHECKING:
+        _db_health_task: asyncio.Task[Any] | None
+        _session: SessionMemory
+        _long_term: LongTermMemory
+        _message_repo: MessageRepository
+        _version_repo: CharacterVersionRepository
+        _character_engine: CharacterEngine
+        _mongo_ok: bool
+        _milvus_ok: bool
+        _mongo_available: bool
+        _milvus_available: bool
+        _token_repo: TokenRepository
+        _session_repo: SessionRepository
 
     def _start_db_health(self) -> None:
         """启动数据库健康检查后台任务。"""

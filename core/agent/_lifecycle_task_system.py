@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 if TYPE_CHECKING:
     from ..event_bus import EventBus
@@ -12,12 +12,25 @@ if TYPE_CHECKING:
     from Module.task_system.task_system import TaskSystem
     from Module.task_system.delegation_preparer import DelegationPreparer
     from ..adapter.llm_adapter import LLMAdapter
+    from core.schema.types import IsoTimestamp
 
 logger = logging.getLogger(__name__)
 
 
 class _LifecycleTaskSystem:
     """TaskSystem + mailbox 生命周期 mixin。"""
+
+    if TYPE_CHECKING:
+        _llm: LLMAdapter
+        _tool_adapter: ToolAdapter
+        _bus: EventBus
+        _task_system: TaskSystem | None
+        _delegation_preparer: DelegationPreparer | None
+        _cognitive: CognitiveLoop
+        _user_name: str
+        _register_background_task: Callable[[str, Any, str, IsoTimestamp], None]
+        _mailbox_task: asyncio.Task[Any] | None
+        _poll_mailboxes: Callable[[], Coroutine[Any, Any, None]]
 
     async def _start_task_system(self) -> None:
         """创建 TaskSystem + DelegationPreparer + HITLNotifier，注入 CognitiveLoop。"""
