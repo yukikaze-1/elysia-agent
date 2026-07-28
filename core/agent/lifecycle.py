@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
+from ._lifecycle_persistence import _LifecyclePersistence
 from ._types import RunState, _PendingMessage, _BackgroundTaskEntry
 
 from Module.output import OutputManager, ConsoleChannel
@@ -16,8 +16,6 @@ from ..event_bus import EventBus, EventPriority, EventType
 from ..agent_fsm import AgentFSM, AgentState
 from ..utils import set_request_id, get_request_id
 from ..config import CharacterConfig
-from ..memory.session import SessionMemory
-from ..memory.long_term import LongTermMemory
 from ..prompt_assembler import PromptAssembler
 from ..cognitive import CognitiveLoop
 from ..idle_monitor import IdleMonitor
@@ -31,18 +29,18 @@ from core.schema.character import CharacterState
 from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )
-from Module.embedding import EmbeddingFactory
 from ..task import TaskScheduler
-from core.storage.session_repo import SessionRepository
-from core.storage.message_repo import MessageRepository
-from core.storage.token_repo import TokenRepository
-from core.storage.memory_repo import MemoryRepository
 
 if TYPE_CHECKING:
     from core.storage.character_version_repo import CharacterVersionRepository
+    from core.storage.session_repo import SessionRepository
+    from core.storage.message_repo import MessageRepository
+    from core.storage.token_repo import TokenRepository
     from core.token_tracker import TokenTracker
     from core.debug.prompt_recorder import PromptRecorder
     from core.debug.response_recorder import ResponseRecorder
+    from ..memory.session import SessionMemory
+    from ..memory.long_term import LongTermMemory
     from Module.task_system.task_system import TaskSystem
     from Module.task_system.delegation_preparer import DelegationPreparer
     from Module.tts.protocol import TTSBackend
@@ -50,7 +48,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AgentLifecycle:
+class AgentLifecycle(_LifecyclePersistence):
     """Agent 生命周期 mixin — start/stop 编排。
 
     所有属性由 Agent.__init__ 初始化，本 mixin 不含 __init__。
@@ -154,59 +152,7 @@ class AgentLifecycle:
         self._start_mailbox_polling()
 
         # 9. 数据库健康检查循环（120s 间隔自动重连）
-        self._db_health_task = asyncio.create_task(self._db_health_loop())
-
-        # 10. 保存启动状态供入口打印横幅
-        self._mongo_ok = mongo_ok
-        self._milvus_ok = milvus_ok
-
-    async def _start_persistence(self) -> tuple[bool, bool]:
-        """连接 MongoDB/Milvus，加载 session，恢复 JSONL 快照。"""
-        mongo_ok, milvus_ok = await asyncio.gather(
-            self._session.connect_db(),
-            self._long_term.connect(),
-        )
-        # 消息归档独立连接（与 session 共享 MongoDB，但使用独立 repo）
-        await self._message_repo.connect()
-        # L2 版本历史
-        if not await self._version_repo.connect():
-            logger.warning("CharacterVersionRepository 离线")
-        if mongo_ok:
-            await self._session.load()
-            # CharacterState 已由 session.load() 原地恢复到 engine.state
-            if self._character_engine.state.last_awareness_time:
-                self._character_engine._last_awareness_time = self._character_engine.state.last_awareness_time
-            self._character_engine._reflector._restore_from_state()
-            # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
-            if os.path.exists(self._session.pending_file):
-                if await self._session.load_from_jsonl(merge=True):
-                    if await self._session.save():
-                        os.remove(self._session.pending_file)
-                        logger.info("Session JSONL 已导入 MongoDB 并删除")
-                    else:
-                        logger.warning("Session MongoDB 写入失败，保留 JSONL")
-        if not mongo_ok:
-            logger.warning("MongoDB 不可用，会话记忆仅使用内存+JSONL 持久化")
-        if not milvus_ok:
-            logger.warning("Milvus 不可用，长期记忆检索降级为纯本地匹配")
-        return mongo_ok, milvus_ok
-
-    async def _db_health_loop(self) -> None:
-        """每 120s 检查数据库连接，失败时尝试自动重连。"""
-        while True:
-            await asyncio.sleep(120)
-            try:
-                mongo_ok = await self._session.health_check()
-                milvus_ok = await self._long_term.health_check()
-                self._mongo_available = mongo_ok
-                self._milvus_available = milvus_ok
-                # 检查其他 repo 连接状态（不阻塞，仅日志）
-                if not await self._message_repo.health_check():
-                    logger.debug("MessageRepository 离线")
-                if not await self._token_repo.health_check():
-                    logger.debug("TokenRepository 离线")
-            except Exception:
-                logger.debug("Database health check failed", exc_info=True)
+        self._start_db_health()
 
     async def _start_token_and_prompt(self, mongo_ok: bool) -> None:
         """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""
@@ -405,17 +351,6 @@ class AgentLifecycle:
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 
-    async def _stop_db_health(self) -> None:
-        """停止数据库健康检查循环。"""
-        if self._db_health_task:
-            logger.debug("Cancelling db health task...")
-            self._db_health_task.cancel()
-            try:
-                await asyncio.wait_for(self._db_health_task, timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
-            self._db_health_task = None
-
     async def _stop_mailbox(self) -> None:
         """停止后台任务 mailbox 轮询——cancel 后必须 await 消耗 CancelledError。"""
         if self._mailbox_task:
@@ -448,55 +383,6 @@ class AgentLifecycle:
         """停止 IdleMonitor。"""
         logger.debug("Stopping idle monitor...")
         await self._idle.stop()
-
-    async def _stop_persistence(self) -> None:
-        """持久化关闭：session.save() → long_term.close() → EmbeddingFactory.shutdown()。
-
-        顺序要求：先 save session（需要 L2 连接仍然有效），再关闭 L2，最后关 embedding。
-        """
-        logger.debug("Saving session...")
-        try:
-            await asyncio.wait_for(self._session.save(), timeout=3.0)
-        except asyncio.TimeoutError:
-            logger.warning("Session save timed out")
-        except Exception:
-            logger.debug("Session save failed", exc_info=True)
-
-        logger.debug("Closing long-term memory...")
-        try:
-            await asyncio.wait_for(self._long_term.close(), timeout=3.0)
-        except asyncio.TimeoutError:
-            logger.warning("Long-term memory close timed out")
-
-        logger.debug("Closing session repo...")
-        try:
-            await asyncio.wait_for(self._session_repo.close(), timeout=3.0)
-        except asyncio.TimeoutError:
-            logger.warning("Session repo close timed out")
-
-        logger.debug("Closing message repo...")
-        try:
-            await asyncio.wait_for(self._message_repo.close(), timeout=3.0)
-        except asyncio.TimeoutError:
-            logger.warning("Message repo close timed out")
-
-        logger.debug("Closing token repo...")
-        try:
-            await asyncio.wait_for(self._token_repo.close(), timeout=3.0)
-        except asyncio.TimeoutError:
-            logger.warning("Token repo close timed out")
-
-        logger.debug("Closing version repo...")
-        try:
-            await asyncio.wait_for(self._version_repo.close(), timeout=3.0)
-        except asyncio.TimeoutError:
-            logger.warning("Version repo close timed out")
-
-        logger.debug("Shutting down embedding factory...")
-        try:
-            await asyncio.wait_for(EmbeddingFactory.shutdown(), timeout=5.0)
-        except asyncio.TimeoutError:
-            logger.warning("Embedding factory shutdown timed out")
 
     async def _stop_llm_and_tts(self) -> None:
         """关闭 LLM 和 TTS 客户端连接。"""
