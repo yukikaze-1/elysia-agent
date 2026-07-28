@@ -28,6 +28,7 @@ from core.schema.compression import CompressionTrigger
 from ._utils import _schedule, _extract_tag  # _extract_tag 保持向后兼容
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
+    from core.config.character_config import CharacterConfig
     from core.schema.character import CharacterState
     from core.storage.character_version_repo import CharacterVersionRepository
 
@@ -74,7 +75,7 @@ class CharacterEngine:
         character_name: str,
         user_name: str,
         base_personality: str,
-        character_config: object,          # CharacterConfig
+        character_config: "CharacterConfig",
         output: OutputManager,
         prompt_dir: str | None = None,
         version_repo: "CharacterVersionRepository | None" = None,

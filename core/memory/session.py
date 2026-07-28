@@ -5,12 +5,15 @@ process restarts via save_session() / load_session().
 Otherwise falls back to in-memory deque (existing behavior).
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import os
 from collections import deque
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
@@ -30,6 +33,9 @@ from core.schema.part import TextPart
 from core.schema.types import SessionId
 from core.storage.message_repo import MessageRepository
 from core.storage.session_repo import SessionRepository
+
+if TYPE_CHECKING:
+    from .memory_reflector import MemoryReflector
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +184,7 @@ class SessionMemory:
 
     # ---- memory reflector ----
 
-    def set_memory_reflector(self, mr: object) -> None:
+    def set_memory_reflector(self, mr: "MemoryReflector") -> None:
         """设置 MemoryReflector 引用，供 save/load 时持久化反射器状态。
 
         Args:

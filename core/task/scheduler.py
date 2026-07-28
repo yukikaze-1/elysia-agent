@@ -399,6 +399,8 @@ class TaskScheduler:
         arguments = task.payload.get("arguments", {})
 
         assert self._tool_executor is not None, "Scheduler 启动前 tool_executor 必须已注入"
+        if self._tool_ctx is None:
+            self._tool_ctx = ToolContext()
         while True:
             try:
                 result = await asyncio.wait_for(

@@ -9,7 +9,7 @@ import logging
 import math
 import time as _time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .embedding_provider import EmbeddingProvider
 
@@ -160,16 +160,16 @@ class LongTermMemory:
         async with self._write_lock:
             from core.utils import new_message_id
             # Work on a copy to avoid mutating caller's dict
-            meta = dict(metadata)
+            meta: dict[str, Any] = dict(metadata)
             # Accept 'type' as alias for 'memory_type'
-            memory_type = meta.pop("memory_type", meta.pop("type", "Note"))
+            memory_type: str = meta.pop("memory_type", meta.pop("type", "Note"))  # type: ignore[assignment]
             entry = MemoryEntry(
                 id=new_message_id(),
                 text=text,
                 embedding=embedding,
                 memory_type=memory_type,
-                poignancy=meta.pop("poignancy", 5),
-                timestamp=meta.pop("timestamp", _time.time()),
+                poignancy=int(meta.pop("poignancy", 5)),
+                timestamp=float(meta.pop("timestamp", _time.time())),
                 metadata=meta,
             )
 

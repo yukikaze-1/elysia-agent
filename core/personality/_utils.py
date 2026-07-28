@@ -1,7 +1,11 @@
 """core/personality 共享工具函数。"""
+from __future__ import annotations
+
 import asyncio
 import logging
 import re
+from collections.abc import Coroutine
+from typing import Any
 
 
 def _extract_tag(text: str, tag: str) -> str:
@@ -19,7 +23,7 @@ def _extract_tag(text: str, tag: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def _schedule(coro: object) -> None:
+def _schedule(coro: Coroutine[Any, Any, Any]) -> None:
     """在事件循环上调度一个协程（fire-and-forget）。
 
     Wrapped so exceptions in the fire-and-forget task are logged.

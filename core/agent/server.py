@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ._types import RunState
 from ..utils import set_request_id
@@ -189,7 +189,7 @@ class AgentServer:
                 except Exception:
                     logger.info("STT not available — text-only mode", exc_info=False)
 
-            app = create_app(self, stt_transcribe=stt_transcribe, serve_static=True,
+            app = create_app(cast(Any, self), stt_transcribe=stt_transcribe, serve_static=True,
                             stt_emotion_state=stt_emotion_state,
                             wake_word_enabled=wake_word_enabled,
                             task_system=self._task_system,

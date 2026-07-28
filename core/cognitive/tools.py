@@ -12,7 +12,7 @@ from ..schema.tool import ToolCall
 from ..utils import new_message_id
 
 if TYPE_CHECKING:
-    from Module.task_system.schema import SubmitError
+    from Module.task_system.schema import SubmitError, UserProfile
 
 logger = logging.getLogger(__name__)
 

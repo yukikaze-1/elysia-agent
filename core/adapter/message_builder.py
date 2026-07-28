@@ -54,7 +54,7 @@ class MessageBuilder:
 
             parts = msg.content  # list[Part]
             if supports_multimodal:
-                msg_content = content_to_openai(parts)
+                msg_content = content_to_openai(list(parts))
                 if tool_summary:
                     if isinstance(msg_content, list):
                         msg_content.append({"type": "text", "text": tool_summary})

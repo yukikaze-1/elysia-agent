@@ -97,9 +97,11 @@ class MemoryRepository(Repository):
         """
         if self._db is None:
             return []
+        kwargs: dict = {"output_fields": output_fields}
+        if filter_expr is not None:
+            kwargs["filter_expr"] = filter_expr
         return await self._db.search(
-            COLLECTION, vector, top_k=top_k,
-            filter_expr=filter_expr, output_fields=output_fields,
+            COLLECTION, vector, top_k=top_k, **kwargs,
         )
 
     async def query(self, *, filter_expr: str | None = None,
@@ -117,10 +119,10 @@ class MemoryRepository(Repository):
         """
         if self._db is None:
             return []
-        return await self._db.query(
-            COLLECTION, filter_expr=filter_expr,
-            output_fields=output_fields, limit=limit,
-        )
+        kwargs: dict = {"output_fields": output_fields, "limit": limit}
+        if filter_expr is not None:
+            kwargs["filter_expr"] = filter_expr
+        return await self._db.query(COLLECTION, **kwargs)
 
     async def delete(self, ids: list[int]) -> int:
         """按主键删除记忆。

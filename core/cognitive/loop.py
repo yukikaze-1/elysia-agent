@@ -39,7 +39,6 @@ from Module.llm.registry import LLMFactory
 
 if TYPE_CHECKING:
     from Module.task_system.delegation_preparer import DelegationPreparer
-    from Module.tool.protocol import ToolExecutor
     from ..token_tracker import TokenTracker
     from ..debug.prompt_recorder import PromptRecorder
     from ..debug.response_recorder import ResponseRecorder
@@ -123,7 +122,7 @@ class CognitiveLoop(CognitiveTools):
         output: OutputManager,
         prompt: PromptAssembler,
         session: SessionMemory,
-        tool_executor: "ToolExecutor | None" = None,
+        tool_executor: Any = None,  # ToolAdapter / ToolExecutor Protocol
         character_engine: "CharacterEngine | None" = None,
         consolidator: MemoryConsolidator | None = None,
         tts: TTSBackend | None = None,

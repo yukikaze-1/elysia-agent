@@ -7,8 +7,8 @@
 import asyncio
 import logging
 import time
-from collections.abc import Callable
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Coroutine
+from typing import Any, TYPE_CHECKING
 
 from core.schema.compression import CompressionTrigger
 from core.schema._utils import now_iso
@@ -69,7 +69,7 @@ class CompressionManager:
     # ---- 公共接口 ----
 
     async def check_and_compress(
-        self, *, _refresh_cb: "Callable[[], object] | None" = None,
+        self, *, _refresh_cb: "Callable[[], Coroutine[Any, Any, None]] | None" = None,
     ) -> None:
         """检查压缩条件，满足时触发压缩。带双重检查锁。
 
@@ -165,7 +165,7 @@ class CompressionManager:
         self,
         trigger: CompressionTrigger = CompressionTrigger.COMPRESSION,
         *,
-        _refresh_cb: "Callable[[], object] | None" = None,
+        _refresh_cb: "Callable[[], Coroutine[Any, Any, None]] | None" = None,
     ) -> None:
         """执行 L3→L2 压缩：渲染模板 → 调 LLM → 解析 <new_self> + <changes> → 写版本历史。
 
