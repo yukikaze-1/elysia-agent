@@ -3,6 +3,7 @@
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import yaml
 
@@ -35,7 +36,7 @@ class CharacterConfig:
     @property
     def traits(self) -> list[str]:
         """性格特质列表。"""
-        return self.personality.get("traits", [])  # type: ignore[return-value]
+        return cast(list[str], self.personality.get("traits", []))
 
     @property
     def speaking_style(self) -> str:

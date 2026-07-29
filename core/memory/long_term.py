@@ -9,7 +9,7 @@ import logging
 import math
 import time as _time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .embedding_provider import EmbeddingProvider
 
@@ -162,7 +162,7 @@ class LongTermMemory:
             # Work on a copy to avoid mutating caller's dict
             meta: dict[str, Any] = dict(metadata)
             # Accept 'type' as alias for 'memory_type'
-            memory_type: str = meta.pop("memory_type", meta.pop("type", "Note"))  # type: ignore[assignment]
+            memory_type: str = cast(str, meta.pop("memory_type", meta.pop("type", "Note")))
             entry = MemoryEntry(
                 id=new_message_id(),
                 text=text,

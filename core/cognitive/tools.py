@@ -32,9 +32,9 @@ class CognitiveTools:
 
     所有属性由 CognitiveLoop.__init__ 初始化，本 mixin 不含 __init__。
     """
-    # 类型声明 — 属性由 CognitiveLoop.__init__ 注入
-    _tool_executor: Any = None  # type: ignore[assignment]
-    _tool_adapter: Any = None   # type: ignore[assignment]
+    # 类型声明 — 属性由 CognitiveLoop.__init__ 初始化（mixin 无 __init__）
+    _tool_executor: Any  # CognitiveLoop.__init__ 注入
+    _tool_adapter: Any   # CognitiveLoop.configure() 注入
     _delegation_preparer: Any = None
     _session: Any = None
     _user_profile: Any = None

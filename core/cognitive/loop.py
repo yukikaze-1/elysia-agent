@@ -179,6 +179,7 @@ class CognitiveLoop(CognitiveTools):
         self._delegation_preparer: Any = None  # 由 configure() 注入
         self._on_background_task: Callable | None = None  # Agent 注入的回调
         self._user_profile: Any = None         # 由 configure() 注入
+        self._clock: TimingClock | None = None # 当前轮次的计时器（process() 设置，finally 清除）
         self._phase: TurnPhase | None = None   # 当前轮次处理阶段（供 debug 面板）
 
     # ---- Public API ----
@@ -300,7 +301,7 @@ class CognitiveLoop(CognitiveTools):
                     pass
                 await self._handle_interrupt()
             finally:
-                self._clock = None  # type: ignore[assignment]
+                self._clock = None
 
     # ---- Core loop: prompt construction ----
 

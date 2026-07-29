@@ -13,7 +13,7 @@ import logging
 import os
 from collections import deque
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import TypeAdapter
 
@@ -171,14 +171,15 @@ class SessionMemory:
                     "timestamp": msg.timestamp,
                 }
                 if isinstance(msg, AssistantMessage):
+                    _e = cast(ClientAssistantMessage, chat_entry)
                     if msg.inner_voice:
-                        chat_entry["inner_voice"] = msg.inner_voice  # type: ignore[typeddict-item]
+                        _e["inner_voice"] = msg.inner_voice
                     if msg.tool_calls:
-                        chat_entry["tool_calls"] = [tc.model_dump(mode="json") for tc in msg.tool_calls]  # type: ignore[typeddict-item]
+                        _e["tool_calls"] = [tc.model_dump(mode="json") for tc in msg.tool_calls]
                     if msg.token_usage:
-                        chat_entry["token_usage"] = msg.token_usage.model_dump(mode="json")  # type: ignore[typeddict-item]
+                        _e["token_usage"] = msg.token_usage.model_dump(mode="json")
                     if msg.block_index:
-                        chat_entry["content_type"] = msg.block_index  # type: ignore[typeddict-item]
+                        _e["content_type"] = msg.block_index
                 result.append(chat_entry)
         return result
 
