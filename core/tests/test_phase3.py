@@ -131,7 +131,7 @@ class TestCognitiveLoopMethods:
         """Create a minimal CognitiveLoop with mocks for all dependencies."""
         from Module.output import OutputManager, ChannelCapability
         from core.adapter.prompt_assembler import PromptAssembler
-        from Module.tool import ToolManager, PluginContext, ToolContext
+        from core.adapter import ToolAdapter
         from core.memory.session import SessionMemory
         from core.config import CharacterConfig
         from core.memory.consolidator import MemoryConsolidator
@@ -148,7 +148,7 @@ class TestCognitiveLoopMethods:
         session = SessionMemory()
         lt = LongTermMemory()
         prompt = PromptAssembler(char, session, lt)
-        tools = ToolManager()
+        tools = ToolAdapter([])
         state = CharacterState(session_id=SessionId("test-sid"))
         output.expression = MagicMock(return_value=MagicMock())
         char_engine = CharacterEngine(
@@ -298,7 +298,7 @@ class TestCognitiveLoopTTS:
         from Module.output import OutputManager
         from core.adapter.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
-        from Module.tool import ToolManager, PluginContext, ToolContext
+        from core.adapter import ToolAdapter
         from core.adapter.llm_adapter import LLMAdapter
 
         fsm = AgentFSM()
@@ -315,7 +315,7 @@ class TestCognitiveLoopTTS:
             {"role": "user", "content": "hello"},
         ])
         prompt._character = char
-        tools = ToolManager()
+        tools = ToolAdapter([])
         tts = MagicMock()
         tts.synthesize_stream = AsyncMock(return_value=AsyncMock())
         # Make synthesize_stream return no chunks (empty stream)
@@ -374,7 +374,7 @@ class TestCognitiveLoopTTS:
             async def execute(self, *, ctx, emit=None, params):
                 return f"result for {params.q}"
 
-        await loop._tool_executor.load_all([_TestTool], PluginContext(session_id="test"))
+        await loop._tool_executor._manager.load_all([_TestTool], PluginContext(session_id="test"))
 
         # After process, the tool should have been called (tool history)
         await loop.process("use test_tool")
@@ -413,7 +413,7 @@ class TestCognitiveLoopSync:
         from Module.output import OutputManager
         from core.adapter.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
-        from Module.tool import ToolManager, PluginContext, ToolContext
+        from core.adapter import ToolAdapter
         from core.adapter.llm_adapter import LLMAdapter
 
         fsm = AgentFSM()
@@ -430,7 +430,7 @@ class TestCognitiveLoopSync:
             {"role": "user", "content": "hello"},
         ])
         prompt._character = char
-        tools = ToolManager()
+        tools = ToolAdapter([])
         return CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
             prompt=prompt, session=session, tool_executor=tools, tts=None,
