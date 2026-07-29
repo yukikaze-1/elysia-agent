@@ -2,13 +2,15 @@
 
 import pytest
 
+from core.schema.types import SessionId
+
 
 @pytest.mark.unit
 class TestSpeakingStyleC6:
     def test_default_empty_string(self):
         """新字段默认值为空串。"""
         from core.schema.character import CharacterState
-        s = CharacterState(session_id="test")
+        s = CharacterState(session_id=SessionId("test"))
         assert s.speaking_style_c6 == ""
 
     def test_assignable(self):
