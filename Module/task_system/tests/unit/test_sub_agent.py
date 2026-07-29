@@ -344,7 +344,7 @@ async def test_run_loop_paused():
 
     # 验证 checkpoint 被保存
     assert agent._checkpoint_mgr is not None
-    agent._checkpoint_mgr.save.assert_called_once_with(TaskId("t1"), cp)
+    agent._checkpoint_mgr.save.assert_called_once_with(TaskId("t1"), cp)  # type: ignore[reportAttributeAccessIssue]
 
     # 验证 PAUSED 事件
     events = _collect_mailbox_events(mailbox)
