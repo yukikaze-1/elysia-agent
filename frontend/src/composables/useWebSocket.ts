@@ -31,10 +31,7 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
       case 'action':        handleAction(m); break
       case 'command':       handleCommand(m); break
       case 'session':       chat.restoreFromServer(m.messages, m.token_stats); break
-      case 'capabilities':  settings.sttAvailable = m.stt !== false
-                            settings.ttsAvailable = m.tts !== false
-                            settings.llmModelName = m.llm_model || ''
-                            settings.live2dStaticImage = m.live2d_static_image || ''; break
+      case 'capabilities':  settings.updateCapabilities(m); break
       case 'typing':        chat.typing = m.typing; break
       case 'transcription': {
         let display = m.text

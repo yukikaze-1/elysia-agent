@@ -63,6 +63,22 @@ export const useSettingsStore = defineStore('settings', () => {
   // ---- Actions ----
 
   /**
+   * Update capability flags from the server's capabilities message.
+   * Called once on initial connection; keeps all capability fields in one place.
+   */
+  function updateCapabilities(msg: {
+    stt?: boolean
+    tts?: boolean
+    llm_model?: string
+    live2d_static_image?: string
+  }): void {
+    sttAvailable.value = msg.stt !== false
+    ttsAvailable.value = msg.tts !== false
+    llmModelName.value = msg.llm_model || ''
+    live2dStaticImage.value = msg.live2d_static_image || ''
+  }
+
+  /**
    * Switch the active model for a given service.
    * Persists the choice to localStorage and sends a `switch_model` message
    * over the WebSocket connection.
@@ -94,6 +110,7 @@ export const useSettingsStore = defineStore('settings', () => {
     ttsAvailable,
     llmModelName,
     live2dStaticImage,
+    updateCapabilities,
     switchModel,
   }
 })

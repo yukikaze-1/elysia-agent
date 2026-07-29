@@ -11,14 +11,6 @@ function backoff(attempt: number): number {
   return Math.round(base + jitter)
 }
 
-function updateLegacyConnStatusEl(cls: string, text: string): void {
-  const el = document.getElementById('conn-status')
-  if (el) {
-    el.className = cls
-    el.textContent = text
-  }
-}
-
 /**
  * WebSocket connection store with exponential backoff reconnection.
  *
@@ -29,9 +21,8 @@ function updateLegacyConnStatusEl(cls: string, text: string): void {
  *   touching the WebSocket reference or clearing chat messages (used before
  *   reconnect attempts).
  *
- * Legacy DOM sync:
- * The store also updates `#conn-status`, `#send-btn`, and `#text-input`
- * elements for backward compatibility with the original vanilla HTML shell.
+ * Connection state is exposed via reactive refs (`connected`, `connStatusText`)
+ * consumed by components like SettingsPanel and InputBar.
  */
 export const useConnectionStore = defineStore('connection', () => {
   const ws = ref<WebSocket | null>(null)
@@ -96,12 +87,6 @@ export const useConnectionStore = defineStore('connection', () => {
       retryCount.value = 0
       connected.value = true
       connStatusText.value = '已连接'
-      updateLegacyConnStatusEl('connected', '已连接')
-
-      const sendBtn = document.getElementById('send-btn') as HTMLButtonElement | null
-      const textInput = document.getElementById('text-input') as HTMLInputElement | null
-      if (sendBtn) sendBtn.disabled = false
-      if (textInput) textInput.placeholder = '输入消息...'
     }
 
     socket.onerror = () => {
@@ -111,13 +96,6 @@ export const useConnectionStore = defineStore('connection', () => {
     socket.onclose = () => {
       connected.value = false
       connStatusText.value = '断开 — 重连中...'
-      updateLegacyConnStatusEl('disconnected', '断开 — 重连中...')
-
-      const sendBtn = document.getElementById('send-btn') as HTMLButtonElement | null
-      const textInput = document.getElementById('text-input') as HTMLInputElement | null
-      if (sendBtn) sendBtn.disabled = true
-      if (textInput) textInput.placeholder = '连接断开，重连中...'
-
       scheduleReconnect()
     }
 
@@ -191,7 +169,6 @@ export const useConnectionStore = defineStore('connection', () => {
     }
     connected.value = false
     connStatusText.value = '未连接'
-    updateLegacyConnStatusEl('disconnected', '未连接')
   }
 
   /**

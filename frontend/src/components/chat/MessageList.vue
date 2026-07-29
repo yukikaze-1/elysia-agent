@@ -32,7 +32,7 @@ function scrollToBottom() {
   requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
 }
 
-function onScroll() {
+async function onScroll() {
   const wasUp = chatStore.userScrolledUp
   chatStore.userScrolledUp = isUserScrolledUp()
   // 用户滚动回底部时自动隐藏指示器
@@ -42,7 +42,13 @@ function onScroll() {
   const el = chatWrapRef.value
   if (el && el.scrollTop <= 80 && !isLoadingMore.value && chatStore.hasMoreMessages) {
     isLoadingMore.value = true
-    // fetch loaded — hook for future implementation
+    const prevScrollHeight = el.scrollHeight
+    const loaded = await chatStore.loadMoreMessages()
+    if (loaded) {
+      // 保持滚动位置：新 scrollHeight - 旧 scrollHeight = 新增内容高度
+      await nextTick()
+      el.scrollTop = el.scrollHeight - prevScrollHeight
+    }
     isLoadingMore.value = false
   }
 }

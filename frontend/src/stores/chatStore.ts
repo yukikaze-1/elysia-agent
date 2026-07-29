@@ -229,101 +229,50 @@ export const useChatStore = defineStore('chat', () => {
     lastMsgTime.value = 0
     nextBubbleQueue.value = []
     playingMessageId.value = null
+    // 从第一条服务端消息提取 _id 作为历史加载游标
+    earliestMessageId.value = serverMessages[0]?._id || null
 
     for (const m of serverMessages) {
-      if (m.role === 'tool') {
-        const toolMsg: ChatMessage = {
-          id: generateId(),
-          role: 'tool',
-          content: m.content || '',
-          timestamp: Date.parse(m.created_at) || Date.now(),
-          toolCalls: [{
-            id: m.tool_call_id,
-            function: { name: m.name || 'tool', arguments: '{}' },
-          }],
-        }
-        toolMsg.toolCallResults = {}
-        toolMsg.toolCallResults[m.tool_call_id] = {
-          success: m.success !== false,
-          content: m.content || '',
-          error: m.error,
-          error_type: m.error_type,
-          duration_ms: m.duration_ms || 0,
-          truncated: m.truncated || false,
-        }
-        messages.value.push(toolMsg)
-        continue
-      }
-
-      // 内心独白在公开回复之前单独渲染（尊重开关设置）
-      const settingsStore = useSettingsStore()
-      if (m.inner_voice && settingsStore.innerVoiceEnabled) {
-        messages.value.push({
-          id: generateId(),
-          role: 'system',
-          content: '',
-          innerVoice: m.inner_voice,
-          timestamp: Date.parse(m.created_at) || Date.now(),
-        } as ChatMessage)
-      }
-
-      // 每个 part 独立一个气泡（一句一个，保持分句显示）
-      const parts: any[] = m.parts || []
-      const contentParts: any[] = (Array.isArray(m.content) ? m.content : [])
-      // 收集 content 中的 image parts（如果有）
-      const imageParts = contentParts.filter((p: any) => p && p.type === 'image' && p.src)
-
-      for (let i = 0; i < parts.length; i++) {
-        const p = parts[i]
-        if (!p.content) continue
-        const text = p.content
-        // 舞台指示拆分：检测中文括号包裹的开头文本
-        const split = splitAction(text)
-        if (split) {
-          messages.value.push({
-            id: generateId(),
-            role: m.role as ChatMessage['role'],
-            content: split.action,
-            timestamp: Date.parse(m.created_at) || Date.now(),
-          } as ChatMessage)
-          if (split.rest) {
-            messages.value.push({
-              id: generateId(),
-              role: m.role as ChatMessage['role'],
-              content: split.rest,
-              timestamp: Date.parse(m.created_at) || Date.now(),
-              tokenUsage: (i === parts.length - 1 && imageParts.length === 0) ? m.token_usage : undefined,
-            } as ChatMessage)
-          }
-        } else {
-          messages.value.push({
-            id: generateId(),
-            role: m.role as ChatMessage['role'],
-            content: text,
-            timestamp: Date.parse(m.created_at) || Date.now(),
-            // 只在最后一句且没有图片时附加 token 统计
-            tokenUsage: (i === parts.length - 1 && imageParts.length === 0) ? m.token_usage : undefined,
-          } as ChatMessage)
-        }
-      }
-
-      // 渲染图片 content parts（如果有）
-      for (const img of imageParts) {
-        messages.value.push({
-          id: generateId(),
-          role: m.role as ChatMessage['role'],
-          content: [{ type: 'image', src: img.src, mime: img.mime }] as any,
-          timestamp: Date.parse(m.created_at) || Date.now(),
-          tokenUsage: m.token_usage,
-        } as ChatMessage)
+      const converted = convertServerMessage(m)
+      for (const cm of converted) {
+        messages.value.push(cm)
       }
     }
 
     finalizeDelta()
   }
 
-  function loadMoreMessages() {
-    // 后续迭代：fetch('/api/messages?limit=50&before=...')
+  async function loadMoreMessages(): Promise<boolean> {
+    if (!hasMoreMessages.value) return false
+    const before = earliestMessageId.value
+    try {
+      const params = new URLSearchParams({ limit: '50' })
+      if (before) params.set('before', before)
+      const resp = await fetch(`/api/messages?${params}`)
+      if (!resp.ok) return false
+      const data = await resp.json()
+      const serverMsgs: any[] = data.messages || []
+
+      const olderMsgs: ChatMessage[] = []
+      for (const m of serverMsgs) {
+        const converted = convertServerMessage(m)
+        for (const cm of converted) {
+          olderMsgs.push(cm)
+        }
+      }
+
+      if (olderMsgs.length > 0) {
+        // 保持旧消息在前
+        messages.value = [...olderMsgs, ...messages.value]
+        // 更新最早消息 ID 用于下一次加载
+        earliestMessageId.value = serverMsgs[0]?._id || null
+      }
+      hasMoreMessages.value = data.has_more !== false
+      return olderMsgs.length > 0
+    } catch (e) {
+      console.warn('加载历史消息失败:', e)
+      return false
+    }
   }
 
   const visibleMessages = computed(() => {
@@ -352,6 +301,100 @@ export const useChatStore = defineStore('chat', () => {
 })
 
 // ---- 工具函数 ----
+
+/** 将服务端消息转为 ChatMessage 数组（一条服务端消息可拆成多条 UI 消息） */
+function convertServerMessage(m: any): ChatMessage[] {
+  const settingsStore = useSettingsStore()
+  const out: ChatMessage[] = []
+
+  if (m.role === 'tool') {
+    const toolMsg: ChatMessage = {
+      id: generateId(),
+      role: 'tool',
+      content: m.content || '',
+      timestamp: Date.parse(m.created_at) || Date.now(),
+      toolCalls: [{
+        id: m.tool_call_id,
+        function: { name: m.name || 'tool', arguments: '{}' },
+      }],
+    }
+    toolMsg.toolCallResults = {}
+    toolMsg.toolCallResults[m.tool_call_id] = {
+      success: m.success !== false,
+      content: m.content || '',
+      error: m.error,
+      error_type: m.error_type,
+      duration_ms: m.duration_ms || 0,
+      truncated: m.truncated || false,
+    }
+    out.push(toolMsg)
+    return out
+  }
+
+  // 内心独白在公开回复之前单独渲染（尊重开关设置）
+  if (m.inner_voice && settingsStore.innerVoiceEnabled) {
+    out.push({
+      id: generateId(),
+      role: 'system',
+      content: '',
+      innerVoice: m.inner_voice,
+      timestamp: Date.parse(m.created_at) || Date.now(),
+    } as ChatMessage)
+  }
+
+  // 每个 part 独立一个气泡（一句一个，保持分句显示）
+  const parts: any[] = m.parts || []
+  const contentParts: any[] = (Array.isArray(m.content) ? m.content : [])
+  // 收集 content 中的 image parts（如果有）
+  const imageParts = contentParts.filter((p: any) => p && p.type === 'image' && p.src)
+
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i]
+    if (!p.content) continue
+    const text = p.content
+    // 舞台指示拆分：检测中文括号包裹的开头文本
+    const split = splitAction(text)
+    if (split) {
+      out.push({
+        id: generateId(),
+        role: m.role as ChatMessage['role'],
+        content: split.action,
+        timestamp: Date.parse(m.created_at) || Date.now(),
+      } as ChatMessage)
+      if (split.rest) {
+        out.push({
+          id: generateId(),
+          role: m.role as ChatMessage['role'],
+          content: split.rest,
+          timestamp: Date.parse(m.created_at) || Date.now(),
+          tokenUsage: (i === parts.length - 1 && imageParts.length === 0) ? m.token_usage : undefined,
+        } as ChatMessage)
+      }
+    } else {
+      out.push({
+        id: generateId(),
+        role: m.role as ChatMessage['role'],
+        content: text,
+        timestamp: Date.parse(m.created_at) || Date.now(),
+        // 只在最后一句且没有图片时附加 token 统计
+        tokenUsage: (i === parts.length - 1 && imageParts.length === 0) ? m.token_usage : undefined,
+      } as ChatMessage)
+    }
+  }
+
+  // 渲染图片 content parts（如果有）
+  for (const img of imageParts) {
+    out.push({
+      id: generateId(),
+      role: m.role as ChatMessage['role'],
+      content: [{ type: 'image', src: img.src, mime: img.mime }] as any,
+      timestamp: Date.parse(m.created_at) || Date.now(),
+      tokenUsage: m.token_usage,
+    } as ChatMessage)
+  }
+
+  return out
+}
 
 /** 中文舞台指示检测正则：匹配括号包裹的中文动作描述 */
 const CN_ACTION_RE = /[(（][^)）]*[一-鿿][^)）]*[)）]/
