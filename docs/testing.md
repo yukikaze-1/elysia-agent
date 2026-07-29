@@ -43,6 +43,10 @@ pytest Module/llm/ -v                      # LLM 模块
 pytest Module/tts/ -v                      # TTS 模块
 pytest Module/database/ -v                 # 数据库模块
 pytest core/tests/ -v                      # Core 测试
+pytest core/agent/tests/ -v                # Agent 生命周期
+pytest core/config/tests/ -v               # 配置 dataclass
+pytest core/monitoring/tests/ -v           # Token 监控
+pytest core/task/tests/ -v                 # Task 调度
 pytest core/tools/ -v                      # 工具插件
 pytest Module/task_system/tests/unit/ -v   # TaskSystem 单元
 pytest Module/task_system/tests/integration/ -v  # TaskSystem 集成
@@ -107,17 +111,26 @@ pytest core/tests/test_phase3.py -v
 | | `test_planner.py` | 4 | integration |
 | | `test_task_system_lifecycle.py` | 10 | slow |
 
-### core/ 层（24 文件）
+### core/ 层（31 文件）
 
 | 目录 | 文件 | 测试数 | 层级 |
 |------|------|--------|------|
 | `core/tests/` | `test_phase1.py` | 32 | unit+service+slow+integration |
 | | `test_phase2.py` | 72 | unit+service+slow+integration |
 | | `test_phase3.py` | 110 | unit+service+slow |
-| | `test_task_model.py` | 15 | unit |
-| | `test_task_scheduler.py` | 26 | service+slow |
 | | `test_log_setup.py` | 3 | unit |
-| | `test_token_tracker.py` | 17 | unit |
+| `core/agent/tests/` | `test_agent_fsm.py` | 10 | unit |
+| | `test_types.py` | 5 | unit |
+| | `test_lifecycle_steps.py` | 7 | unit |
+| | `test_lifecycle_flush.py` | 7 | service |
+| | `test_server_banner.py` | 4 | service |
+| | `test_agent_methods.py` | 5 | service |
+| `core/config/tests/` | `test_database_config.py` | 6 | unit |
+| | `test_app_config.py` | 4 | unit |
+| | `test_character_config.py` | 8 | unit |
+| `core/monitoring/tests/` | `test_token_tracker.py` | 17 | unit |
+| `core/task/tests/` | `test_task_model.py` | 15 | unit |
+| | `test_task_scheduler.py` | 26 | service+slow |
 | `core/text/tests/` | `test_block_filter.py` | 18 | unit |
 | | `test_sentence_buffer.py` | 65 | unit |
 | `core/debug/tests/` | `test_prompt_recorder.py` | 7 | unit |

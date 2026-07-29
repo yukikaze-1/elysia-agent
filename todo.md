@@ -85,7 +85,7 @@
 | ~~高~~ ✅ | **~~静默吞异常 — 数据丢失风险~~** | 已修复：9 处 `except Exception: log.debug()` → WARNING/ERROR（见 `docs/completed.md` 2026-07-29 第二条）|
 | **高** | **无 CI/CD** | 无 `.github/workflows/` 或其他 CI 配置。1793 个测试全靠手动 `make test-quick`。`Makefile` test 目标已就绪，只需加 GitHub Actions workflow |
 | **高** | **无数据库迁移机制** | MongoDB 索引在 `connect()` 时 ad-hoc 创建，Milvus collection 硬编码创建。若字段/索引/维度需变更，无 upgrade path。`memory_repo.clear_all()` 是破坏性操作无安全守卫 |
-| **高** | **`core/agent/` 零测试** | 中枢组件（500+ 行，编排 30+ 子系统）无专属测试目录。`core/config/`、`core/monitoring/`、`core/task/` 也缺测试 |
+| ~~高~~ ✅ | **~~`core/agent/` 零测试~~** | 中枢组件（500+ 行，编排 30+ 子系统） — 已补 `core/agent/tests/` (38 tests)、`core/config/tests/` (18 tests)、`core/monitoring/tests/` (17 tests)、`core/task/tests/` (41 tests) |
 | ~~高~~ ✅ | **~~`config.yaml` 缺少 `database` 段~~** | 已修复：新增 `DatabaseConfig` dataclass + `config.yaml` `database:` 段 + 5 个 Repository 接受 config 参数。详见 `docs/completed.md` 2026-07-29 第四条 |
 | 中 | **缺少 README（3 个模块）** | `Module/task_system/`（30+ 文件复杂系统）、`Module/_common/`、`core/monitoring/` 无 README |
 | 低 | **`character/cyrene/` 不可用** | 缺少 `config.yaml` 和 `personality.md`，仅含 GPT 参考材料，无法作为角色加载 |
@@ -128,10 +128,10 @@
 
 ## 测试补充
 
-- `core/agent/` (0 tests) — 中枢组件，500+ 行编排 30+ 子系统
-- `core/config/` (0 tests) — 所有配置 dataclass
-- `core/monitoring/` (0 tests) — EventBus、IdleMonitor、TokenTracker
-- `core/task/` (0 tests) — TaskScheduler
+- ~~`core/agent/` (0 tests) — 中枢组件，500+ 行编排 30+ 子系统~~ ✅
+- ~~`core/config/` (0 tests) — 所有配置 dataclass~~ ✅
+- ~~`core/monitoring/` (0 tests) — EventBus、IdleMonitor、TokenTracker~~ ✅
+- ~~`core/task/` (0 tests) — TaskScheduler~~ ✅
 - `core/input/audio_buffer.py` (3)
 - `core/input/server.py` (4)
 - `Module/output/console.py` (1)

@@ -44,6 +44,18 @@ python -m pytest core/tests/ -v
 # TaskSystem tests
 python -m pytest Module/task_system/tests/ -v
 
+# Agent lifecycle tests
+python -m pytest core/agent/tests/ -v
+
+# Config tests
+python -m pytest core/config/tests/ -v
+
+# Monitoring tests
+python -m pytest core/monitoring/tests/ -v
+
+# Task tests
+python -m pytest core/task/tests/ -v
+
 # 其他模块
 python -m pytest Module/llm/tests/ -v
 python -m pytest Module/tts/tests/ -v
@@ -94,7 +106,8 @@ core/
 │   ├── _lifecycle_persistence.py  #   持久化层启停 (MongoDB/Milvus/session/repos)
 │   ├── _lifecycle_services.py     #   LLM/TTS/Output/TokenTracker 启停
 │   ├── _lifecycle_tools.py        #   ToolAdapter/Scheduler/IdleMonitor/event loop 启停
-│   └── _lifecycle_task_system.py  #   TaskSystem/DelegationPreparer/mailbox 启停
+│   ├── _lifecycle_task_system.py  #   TaskSystem/DelegationPreparer/mailbox 启停
+│   └── tests/
 ├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing + TurnPhase
 │   ├── loop.py            #   CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
 │   ├── stream_processor.py #   StreamProcessor: 流式标签检测 + 文本管道
@@ -110,7 +123,8 @@ core/
 ├── monitoring/             # Monitoring (package): event bus + idle monitor + token tracking
 │   ├── event_bus.py       #   EventBus: pub/sub for agent internal events
 │   ├── idle_monitor.py    #   IdleMonitor: wake-word detection + proactive triggers
-│   └── token_tracker.py   #   TokenTracker: usage counting + cost estimation
+│   ├── token_tracker.py   #   TokenTracker: usage counting + cost estimation
+│   └── tests/
 ├── text/                  # Text stream processing (package): BlockFilter + SentenceBuffer + text utils
 │   ├── block_filter.py    #   BlockFilter: streaming block tag filter + post-hoc block parsing
 │   ├── sentence_buffer.py #   SentenceBuffer: split on sentence delimiters for TTS streaming
@@ -141,11 +155,13 @@ core/
 │   └── character_version_repo.py # CharacterVersionRepository: L2/C6 version history
 ├── config/                 # Config sub-package: character_config + app_config
 │   ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
-│   └── app_config.py          # AgentConfig: YAML-loaded app configuration
+│   ├── app_config.py          # AgentConfig: YAML-loaded app configuration
+│   └── tests/
 ├── utils/                  # Utility functions: message_id + log_setup
 ├── task/                   # Task sub-package: task model + scheduler
 │   ├── task.py             # Task dataclass + TaskType/TaskStatus enums + Future binding
-│   └── scheduler.py        # TaskScheduler: worker pool for ReAct tool calls (5 workers)
+│   ├── scheduler.py        # TaskScheduler: worker pool for ReAct tool calls (5 workers)
+│   └── tests/
 └── tools/                 # Tool plugins (filesystem, web, memory, time, reminder, etc.)
 ```
 

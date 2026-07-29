@@ -2,6 +2,14 @@
 
 ## 已完成
 
+### 2026-07-29: core/ 测试补全 & 迁移 — agent+config +55 tests, 4 files migrated
+
+**新增**：core/config/tests/ (18 tests) + core/agent/tests/ (38 tests)
+**迁移**：test_token_tracker → core/monitoring/tests/,
+test_task_scheduler + test_task_model → core/task/tests/,
+test_mood_engine → core/cognitive/tests/
+**文档**：testing.md + CLAUDE.md 更新
+
 ### 2026-07-29: `config.yaml` 新增 `database` 段
 
 **问题**：数据库连接（MongoDB + Milvus）只能通过环境变量 `MONGODB_URI` / `MILVUS_URI` / `MILVUS_TOKEN` 配置，`config.yaml` 完全没有数据库相关键。LLM/TTS/STT 都有对应 YAML 段 + 环境变量覆盖的双通道，数据库缺失。
