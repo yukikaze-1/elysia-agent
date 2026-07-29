@@ -11,13 +11,13 @@ class TestTokenRepository:
     def test_record_calls_insert_one(self):
         import asyncio
         repo = TokenRepository(db=MagicMock())
-        repo._db.insert_one = AsyncMock()
+        repo._db.insert_one = AsyncMock()  # type: ignore[reportOptionalMemberAccess]
         entry = TokenUsageEntry(
             session_id=SessionId("s1"), model="m", prompt_tokens=10,
             completion_tokens=20, total_tokens=30, round_num=1,
         )
         asyncio.run(repo.record(entry))
-        repo._db.insert_one.assert_called_once()
+        repo._db.insert_one.assert_called_once()  # type: ignore[reportOptionalMemberAccess]
 
     def test_returns_empty_when_db_none(self):
         import asyncio
