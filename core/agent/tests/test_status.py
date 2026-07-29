@@ -163,3 +163,142 @@ class TestFSMBackedStatus:
         status = FSMBackedStatus(fsm)
         await status.wait_until_idle(timeout=0.02)
         # timeout 不抛异常——通过
+
+
+@pytest.mark.unit
+class TestFSMBackedPhaseController:
+    """FSMBackedPhaseController 的阶段转换测试。"""
+
+    @pytest.fixture
+    def fsm(self) -> AgentFSM:
+        return AgentFSM()
+
+    @pytest.fixture
+    def bus(self) -> Mock:
+        return Mock()
+
+    @pytest.fixture
+    def output(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def status(self, fsm) -> "FSMBackedStatus":
+        from core.agent.status import FSMBackedStatus
+        return FSMBackedStatus(fsm)
+
+    def _make_controller(self, fsm, bus, output, status, tts_mgr=None):
+        from core.agent.status import FSMBackedPhaseController
+        return FSMBackedPhaseController(
+            fsm=fsm, bus=bus, output=output,
+            tts_mgr=tts_mgr, status=status,
+        )
+
+    @pytest.mark.asyncio
+    async def test_enter_thinking(self, fsm, bus, output, status):
+        from core.agent.status import FSMBackedPhaseController
+        from core.monitoring.event_bus import EventPriority
+        ph = FSMBackedPhaseController(
+            fsm=fsm, bus=bus, output=output, tts_mgr=None, status=status,
+        )
+        await ph.enter_thinking()
+        assert fsm.state == AgentState.THINKING
+        bus.post.assert_called_once()
+        call_args = bus.post.call_args
+        assert call_args[0][0].state == "thinking"
+        assert call_args[1]["priority"] == EventPriority.STATE_CHANGE
+
+    @pytest.mark.asyncio
+    async def test_enter_executing(self, fsm, bus, output, status):
+        fsm.transition(AgentState.THINKING)
+        ph = self._make_controller(fsm, bus, output, status)
+        await ph.enter_executing()
+        assert fsm.state == AgentState.EXECUTING
+        output.send.assert_called_once_with("")
+        output.typing.assert_called_once_with(False)
+        bus.post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_return_to_thinking(self, fsm, bus, output, status):
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.EXECUTING)
+        ph = self._make_controller(fsm, bus, output, status)
+        await ph.return_to_thinking()
+        assert fsm.state == AgentState.THINKING
+        output.typing.assert_called_once_with(True)
+        bus.post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_enter_speaking(self, fsm, bus, output, status):
+        fsm.transition(AgentState.THINKING)
+        ph = self._make_controller(fsm, bus, output, status)
+        await ph.enter_speaking()
+        assert fsm.state == AgentState.SPEAKING
+        output.typing.assert_called_once_with(False)
+        bus.post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_finish_turn_idle(self, fsm, bus, output, status):
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.SPEAKING)
+        ph = self._make_controller(fsm, bus, output, status)
+        await ph.finish_turn(has_background_tasks=False)
+        assert fsm.state == AgentState.IDLE
+        bus.post.assert_called_once()
+        assert bus.post.call_args[0][0].state == "idle"
+
+    @pytest.mark.asyncio
+    async def test_finish_turn_idle_background(self, fsm, bus, output, status):
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.SPEAKING)
+        ph = self._make_controller(fsm, bus, output, status)
+        await ph.finish_turn(has_background_tasks=True)
+        assert fsm.state == AgentState.IDLE_BACKGROUND_TASK
+        bus.post.assert_called_once()
+        assert bus.post.call_args[0][0].state == "idle_background_task"
+
+    @pytest.mark.asyncio
+    async def test_finish_turn_from_thinking(self, fsm, bus, output, status):
+        """finish_turn 从 THINKING 出发——defensive SPEAKING 过渡。"""
+        fsm.transition(AgentState.THINKING)
+        # 仍在 THINKING——模拟纯工具调用轮次（无文本输出）
+        ph = self._make_controller(fsm, bus, output, status)
+        await ph.finish_turn(has_background_tasks=False)
+        # 应经过 SPEAKING 再到 IDLE
+        assert fsm.state == AgentState.IDLE
+        bus.post.assert_called_once()
+        assert bus.post.call_args[0][0].state == "idle"
+
+    @pytest.mark.asyncio
+    async def test_finish_turn_waits_tts(self, fsm, bus, output, status):
+        """finish_turn 等 TTS 完成再 transition。"""
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.SPEAKING)
+        tts_mgr = AsyncMock()
+        tts_mgr.wait_all = AsyncMock()
+        ph = self._make_controller(fsm, bus, output, status, tts_mgr=tts_mgr)
+        await ph.finish_turn(has_background_tasks=False)
+        tts_mgr.wait_all.assert_awaited_once()
+        assert fsm.state == AgentState.IDLE
+
+    @pytest.mark.asyncio
+    async def test_handle_interrupt(self, fsm, bus, output, status):
+        fsm.transition(AgentState.THINKING)
+        ph = self._make_controller(fsm, bus, output, status)
+        await ph.handle_interrupt()
+        # 最终回到 IDLE
+        assert fsm.state == AgentState.IDLE
+        # 两次 post：interrupted + idle
+        assert bus.post.call_count == 2
+        first_state = bus.post.call_args_list[0][0][0].state
+        second_state = bus.post.call_args_list[1][0][0].state
+        assert first_state == "interrupted"
+        assert second_state == "idle"
+
+    @pytest.mark.asyncio
+    async def test_tts_none_does_not_crash(self, fsm, bus, output, status):
+        """TTS 为 None 时 finish_turn 不崩溃。"""
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.SPEAKING)
+        ph = self._make_controller(fsm, bus, output, status, tts_mgr=None)
+        await ph.finish_turn(has_background_tasks=False)
+        assert fsm.state == AgentState.IDLE
