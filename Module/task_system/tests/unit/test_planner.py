@@ -200,8 +200,8 @@ def test_parse_input_bindings(planner):
         nodes=[{
             "node_id": "step2",
             "description": "第二步",
-            "input_bindings": ["output:step1"],
-            "output_as": "output:step2",
+            "input_bindings": ["output:step1"],  # type: ignore[reportArgumentType]
+            "output_as": "output:step2",  # type: ignore[reportArgumentType]
         }],
         edges=[],
     )

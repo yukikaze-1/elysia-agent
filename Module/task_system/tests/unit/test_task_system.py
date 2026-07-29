@@ -772,7 +772,7 @@ async def test_cancel_paused_sets_cancelled_directly():
     # _build_task_system 创建了 max=5 的 semaphore，当前无占用（值=5）
     # cancel 会 release → 从 5 到 6 超上限
     # 模拟占用一个槽位：acquire 后 release 就会回到 5
-    await ts._semaphore.acquire()
+    await ts._semaphore.acquire()  # type: ignore[reportOptionalMemberAccess]
 
     assert await ts.cancel(tid) is True
     assert task_state.status == TaskStatus.CANCELLED
@@ -919,7 +919,7 @@ async def test_paused_task_visible_in_query_apis():
         dag=DAG(nodes=[DAGNode(
             node_id=NodeId("n1"),
             description="获取时间",
-            output_as="output:time",
+            output_as="output:time",  # type: ignore[reportArgumentType]
         )]),
         plan_version=1,
     )

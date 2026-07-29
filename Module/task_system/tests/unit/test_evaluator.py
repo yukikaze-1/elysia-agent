@@ -41,7 +41,7 @@ def mock_llm_client():
     async def _respond(**kwargs):
         return ChatCompletion(
             id="eval-test",
-            choices=[{
+            choices=[{  # type: ignore[reportArgumentType]
                 "index": 0,
                 "message": ChatCompletionMessage(
                     role="assistant",
@@ -64,7 +64,7 @@ def mock_llm_client():
 def mock_artifact_store():
     """Mock ArtifactStore——返回预设产物。"""
     store = MagicMock()
-    store._artifacts: dict = {}
+    store._artifacts: dict = {}  # type: ignore[reportInvalidTypeForm]
     store.get = AsyncMock(side_effect=lambda aid: store._artifacts.get(aid))
     store.put = AsyncMock()
     return store
@@ -333,7 +333,7 @@ async def test_evaluate_success_goal_failed(evaluator, sample_node, sample_plan,
     async def _respond_failed(**kwargs):
         return ChatCompletion(
             id="eval-test",
-            choices=[{
+            choices=[{  # type: ignore[reportArgumentType]
                 "index": 0,
                 "message": ChatCompletionMessage(
                     role="assistant",
@@ -442,7 +442,7 @@ async def test_evaluate_llm_empty_content(evaluator, sample_node, sample_plan, m
     async def _empty(**kwargs):
         return ChatCompletion(
             id="eval-test",
-            choices=[{
+            choices=[{  # type: ignore[reportArgumentType]
                 "index": 0,
                 "message": ChatCompletionMessage(role="assistant", content=""),
                 "finish_reason": "stop",
@@ -470,7 +470,7 @@ async def test_evaluate_llm_missing_biz_status(evaluator, sample_node, sample_pl
     async def _missing_key(**kwargs):
         return ChatCompletion(
             id="eval-test",
-            choices=[{
+            choices=[{  # type: ignore[reportArgumentType]
                 "index": 0,
                 "message": ChatCompletionMessage(
                     role="assistant",
@@ -501,7 +501,7 @@ async def test_evaluate_llm_unknown_biz_status(evaluator, sample_node, sample_pl
     async def _unknown(**kwargs):
         return ChatCompletion(
             id="eval-test",
-            choices=[{
+            choices=[{  # type: ignore[reportArgumentType]
                 "index": 0,
                 "message": ChatCompletionMessage(
                     role="assistant",
@@ -592,7 +592,7 @@ async def test_token_ledger_record_after_llm(evaluator, sample_node, sample_plan
     async def _respond_with_usage(**kwargs):
         return ChatCompletion(
             id="eval-test",
-            choices=[{
+            choices=[{  # type: ignore[reportArgumentType]
                 "index": 0,
                 "message": ChatCompletionMessage(
                     role="assistant",

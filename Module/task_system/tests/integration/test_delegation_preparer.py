@@ -240,7 +240,7 @@ async def test_integration_context_summarization():
             AssistantMessage(content=[TextPart(content="上海最近天气多变，建议带伞。你已经定了酒店吗？")], message_id=MessageId("it5-a2")),
             UserMessage(content=[TextPart(content="还没订，先查天气吧，下雨的话就不去了")], message_id=MessageId("it5-u3")),
         ],
-        user_profile=UserProfile(preferences="喜欢详细报告", city="北京"),
+        user_profile=UserProfile(preferences="喜欢详细报告", city="北京"),  # type: ignore[reportCallIssue]
         tools=_make_integration_tools(),
         global_constraints=ConstraintConfig(),
         session_id=SessionId("integration-test-5"),
@@ -274,7 +274,7 @@ async def test_integration_user_profile_influence():
         hints="关注大模型安全和对齐方面的进展",
         session_messages=[],
         user_profile=UserProfile(
-            role="技术总监",
+            role="技术总监",  # type: ignore[reportCallIssue]
             preferences="喜欢详细的报告，包含数据和图表",
             language="zh-CN",
         ),

@@ -35,7 +35,7 @@ pytestmark = pytest.mark.unit
 def mock_artifact_store():
     """Mock ArtifactStore——支持 put/get 操作。"""
     store = MagicMock()
-    store._artifacts: dict[str, Artifact] = {}
+    store._artifacts: dict[str, Artifact] = {}  # type: ignore[reportInvalidTypeForm]
     store.put = AsyncMock(side_effect=lambda a: store._artifacts.update({a.artifact_id: a}))
     store.get = AsyncMock(side_effect=lambda aid: store._artifacts.get(aid))
     store.get_by_node = AsyncMock(return_value=[])
@@ -55,7 +55,7 @@ def mock_llm_client():
 
         return ChatCompletion(
             id="test-id",
-            choices=[{
+            choices=[{  # type: ignore[reportArgumentType]
                 "index": 0,
                 "message": ChatCompletionMessage(
                     role="assistant",
@@ -76,7 +76,7 @@ def mock_llm_client():
             created=1234567890,
             model="deepseek-v4-pro",
             object="chat.completion",
-            usage={
+            usage={  # type: ignore[reportArgumentType]
                 "prompt_tokens": 150,
                 "completion_tokens": 50,
                 "total_tokens": 200,
@@ -213,7 +213,7 @@ async def test_execute_tool_match_failure(executor, sample_node, sample_tools, m
     async def _no_tool_calls(**kwargs):
         return ChatCompletion(
             id="test-id",
-            choices=[{
+            choices=[{  # type: ignore[reportArgumentType]
                 "index": 0,
                 "message": ChatCompletionMessage(
                     role="assistant",
@@ -241,7 +241,7 @@ async def test_execute_llm_direct_text(executor, sample_node, sample_tools, mock
     async def _direct_text(**kwargs):
         return ChatCompletion(
             id="test-id",
-            choices=[{
+            choices=[{  # type: ignore[reportArgumentType]
                 "index": 0,
                 "message": ChatCompletionMessage(
                     role="assistant",
