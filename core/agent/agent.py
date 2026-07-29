@@ -47,12 +47,13 @@ import time
 import os
 from dataclasses import asdict
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..monitoring.token_tracker import TokenTracker
     from ..debug.prompt_recorder import PromptRecorder
     from ..debug.response_recorder import ResponseRecorder
+    from Module.task_system.mailbox import TaskMailbox
 
 from Module.output import OutputManager, ConsoleChannel
 
@@ -279,7 +280,7 @@ class Agent(AgentLifecycle, AgentServer):
 
     # ---- Background task lifecycle ----
 
-    def _register_background_task(self, task_id: str, mailbox: Any, intent: str, dispatched_at: IsoTimestamp) -> None:
+    def _register_background_task(self, task_id: str, mailbox: TaskMailbox, intent: str, dispatched_at: IsoTimestamp) -> None:
         """CognitiveLoop 提交后台任务后调用——注册到轮询列表。
 
         Args:

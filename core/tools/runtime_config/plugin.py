@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
-from Module.tool.protocol import ToolPlugin, ToolContext
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
 
@@ -37,7 +37,7 @@ class RuntimeConfigPlugin(ToolPlugin):
     safety = SafetyProfile()
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: RuntimeConfigParams,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: RuntimeConfigParams,
     ) -> str:
         """查看当前运行时配置。
 

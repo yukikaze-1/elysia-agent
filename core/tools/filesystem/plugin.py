@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from Module.tool.protocol import ToolPlugin, ToolContext
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
 
@@ -54,7 +54,7 @@ class ReadFilePlugin(ToolPlugin):
     )
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: ReadFileParams,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: ReadFileParams,
     ) -> str:
         """读取指定文件的内容。
 
@@ -135,7 +135,7 @@ class ListDirPlugin(ToolPlugin):
     )
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: ListDirParams,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: ListDirParams,
     ) -> str:
         """列出目录中的文件和子目录。
 
@@ -224,7 +224,7 @@ class WriteFilePlugin(ToolPlugin):
     )
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: WriteFileParams,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: WriteFileParams,
     ) -> str:
         """在安全目录下写入文件。
 

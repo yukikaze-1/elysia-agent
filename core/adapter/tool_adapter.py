@@ -10,7 +10,7 @@ import logging
 from typing import Any, AsyncIterator, TYPE_CHECKING
 
 from Module.tool import ToolManager, PluginContext, ToolContext
-from Module.tool.protocol import ToolResult
+from Module.tool.protocol import ToolResult, ToolEmitter
 from core.schema.error_type import ErrorType  # noqa: F401 — 由 __init__.py 重导出
 
 if TYPE_CHECKING:
@@ -145,7 +145,7 @@ class ToolAdapter:
         return await self._manager.execute(name, ctx=ctx, **raw_params)
 
     async def execute_stream(
-        self, name: str, *, ctx: ToolContext, emit: Any, **raw_params: Any
+        self, name: str, *, ctx: ToolContext, emit: ToolEmitter, **raw_params: Any
     ) -> AsyncIterator[Any]:
         """流式执行工具。委托给 ToolManager.execute_stream()。
 

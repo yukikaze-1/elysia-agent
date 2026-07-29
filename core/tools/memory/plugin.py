@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
-from Module.tool.protocol import ToolPlugin, ToolContext
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
 from core.schema.memory import MemoryType
@@ -25,7 +25,7 @@ class MemorySearchPlugin(ToolPlugin):
     safety = SafetyProfile(database_allowed=True, database_readonly=True)
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: SearchMemoryParams,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: SearchMemoryParams,
     ) -> str:
         """在长期记忆中搜索相关信息。
 
@@ -84,7 +84,7 @@ class MemorySavePlugin(ToolPlugin):
     )
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: SaveMemoryParams,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: SaveMemoryParams,
     ) -> str:
         """将重要信息保存到长期记忆库。
 

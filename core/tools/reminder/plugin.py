@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from pydantic import BaseModel, Field
-from Module.tool.protocol import ToolPlugin, ToolContext
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
 
@@ -25,7 +25,7 @@ class SetReminderPlugin(ToolPlugin):
     safety = SafetyProfile()
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: ReminderParams,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: ReminderParams,
     ) -> str:
         """设置定时提醒，在指定秒数后通知用户。
 

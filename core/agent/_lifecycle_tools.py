@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from ..monitoring.event_bus import EventBus, EventPriority, EventType
@@ -41,7 +42,7 @@ class _LifecycleTools:
         _embed_task: asyncio.Task[Any] | None
         _idle: IdleMonitor
         _event_task: asyncio.Task[None] | None
-        _process_events: Any
+        _process_events: Callable[[], Coroutine[Any, Any, None]]
 
     async def _start_tool_context(self) -> None:
         """启动 ToolAdapter，注入运行时服务。"""

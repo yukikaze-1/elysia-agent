@@ -382,7 +382,7 @@ class ToolPlugin:
     # ---- 执行 ----
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: Any = None,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: Any = None,
     ) -> Any:
         """执行工具（非流式）。
 
@@ -400,8 +400,8 @@ class ToolPlugin:
         raise NotImplementedError
 
     async def execute_stream(
-        self, *, ctx: ToolContext, emit: Any, params: Any = None,
-    ) -> AsyncIterator[Any]:
+        self, *, ctx: ToolContext, emit: ToolEmitter, params: Any = None,
+    ) -> AsyncIterator[ToolProgress | ToolResult]:
         """流式执行工具。
 
         Args:
@@ -428,7 +428,7 @@ class ToolExecutor(Protocol):
     ) -> ToolResult: ...
 
     async def execute_stream(
-        self, name: str, *, ctx: ToolContext, emit: Any, **raw_params,
+        self, name: str, *, ctx: ToolContext, emit: ToolEmitter, **raw_params: Any,
     ) -> AsyncIterator[Any]: ...
 
     def definitions(self, format: str = "openai") -> list[dict]: ...

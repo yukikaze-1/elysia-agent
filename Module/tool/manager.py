@@ -15,7 +15,7 @@ import yaml
 from .capability import Capability
 from .protocol import (
     ErrorType, PluginContext, ToolContext, ToolDefinition,
-    ToolPlugin, ToolResult, ToolExecutor,
+    ToolEmitter, ToolPlugin, ToolResult, ToolExecutor,
 )
 from .safety import SafetyPipeline
 
@@ -146,7 +146,7 @@ class ToolManager:
             self._tasks.pop(name, None)
 
     async def execute_stream(
-        self, name: str, *, ctx: ToolContext, emit: Any = None, **raw_params,
+        self, name: str, *, ctx: ToolContext, emit: ToolEmitter | None = None, **raw_params: Any,
     ) -> AsyncIterator[Any]:
         """执行工具（流式）。
 

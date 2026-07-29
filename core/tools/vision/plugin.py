@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from Module.tool.protocol import ToolPlugin, ToolResult, ToolContext, PluginContext
+from Module.tool.protocol import ToolPlugin, ToolResult, ToolContext, PluginContext, ToolEmitter
 from Module.tool.safety import SafetyProfile
 from Module.llm.registry import LLMFactory
 from core.schema.message import UserMessage
@@ -70,7 +70,7 @@ class DescribeImagePlugin(ToolPlugin):
     # 公共入口 — 根据参数分发到单图或批量路径
     # ------------------------------------------------------------------
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: DescribeImageParams,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: DescribeImageParams,
     ) -> ToolResult:
         """查看用户发送的图片并描述其内容。
 

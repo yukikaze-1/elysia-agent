@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from Module.tool.protocol import ToolPlugin, ToolContext
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.safety import SafetyProfile
 
 
@@ -14,7 +14,7 @@ class SelfStatePlugin(ToolPlugin):
     safety = SafetyProfile()
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: Any = None,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: Any = None,
     ) -> str:
         """查看 agent 的当前运行状态。
 

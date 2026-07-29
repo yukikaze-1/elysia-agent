@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
-from Module.tool.protocol import ToolPlugin, ToolContext
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
 
@@ -120,7 +120,7 @@ class WebSearchPlugin(ToolPlugin):
     )
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: WebSearchParams,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: WebSearchParams,
     ) -> str:
         """搜索互联网，返回相关网页的标题、URL 和摘要。
 
@@ -234,7 +234,7 @@ class WebFetchPlugin(ToolPlugin):
     )
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: WebFetchParams,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: WebFetchParams,
     ) -> str:
         """抓取并解析指定网页的文本内容。
 

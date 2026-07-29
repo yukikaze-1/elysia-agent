@@ -10,7 +10,7 @@ except ImportError:
     HAS_ZONEINFO = False
 
 from pydantic import BaseModel, Field
-from Module.tool.protocol import ToolPlugin, ToolContext
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.safety import SafetyProfile
 
 
@@ -33,7 +33,7 @@ class TimePlugin(ToolPlugin):
     safety = SafetyProfile()
 
     async def execute(
-        self, *, ctx: ToolContext, emit: Any = None, params: TimeParams,
+        self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: TimeParams,
     ) -> str:
         """获取当前日期和时间。
 

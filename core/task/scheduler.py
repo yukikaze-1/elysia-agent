@@ -132,7 +132,7 @@ class TaskScheduler:
 
     async def dispatch_tool_calls(
         self, parent_id: str, calls: list[ToolCall],
-    ) -> list[tuple[ToolCall, Any]]:
+    ) -> list[tuple[ToolCall, ToolResult | BaseException]]:
         """CognitiveLoop 调用：将 tool_calls 创建为子任务，并行执行，返回结果。
 
         Args:
@@ -176,7 +176,7 @@ class TaskScheduler:
             raise
 
         # 组装返回: [(tc, result), ...]
-        out: list[tuple[ToolCall, Any]] = []
+        out: list[tuple[ToolCall, ToolResult | BaseException]] = []
         for idx, (tc, st) in enumerate(zip(calls, sub_tasks)):
             raw = results[idx]
             if isinstance(raw, BaseException):
