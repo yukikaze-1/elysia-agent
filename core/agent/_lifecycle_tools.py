@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ..memory.session import SessionMemory
     from core.monitoring.token_tracker import TokenTracker
     from Module.tts.protocol import TTSBackend
+    from core.status import AgentStatus, CognitivePhaseController
     from ..adapter.tool_adapter import ToolAdapter
     from ..monitoring.idle_monitor import IdleMonitor
     from ..cognitive import CognitiveLoop
@@ -37,6 +38,8 @@ class _LifecycleTools:
         _session: SessionMemory
         _started_at: float
         _token_tracker: TokenTracker
+        status: AgentStatus
+        phases: CognitivePhaseController
         _fsm: AgentFSM
         _cognitive: CognitiveLoop
         _embed_task: asyncio.Task[Any] | None
