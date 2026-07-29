@@ -24,16 +24,17 @@ class TestPendingMessage:
 
 class TestBackgroundTaskEntry:
     def test_fields(self):
-        from asyncio import Queue
-        q = Queue()
+        from Module.task_system.mailbox import TaskMailbox
+        from Module.task_system.schema import TaskId
+        mailbox = TaskMailbox(task_id=TaskId("test-task"))
         entry = _BackgroundTaskEntry(
             intent="test intent",
             dispatched_at="2026-01-01T00:00:00Z",
-            mailbox=q,
+            mailbox=mailbox,
         )
         assert entry.intent == "test intent"
         assert entry.dispatched_at == "2026-01-01T00:00:00Z"
-        assert entry.mailbox is q
+        assert entry.mailbox is mailbox
 
 
 class TestRunState:
