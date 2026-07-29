@@ -66,9 +66,7 @@ async def run_interactive(config) -> None:
                 break
             await agent.process_message(line)
             # Wait for idle
-            await asyncio.sleep(0.3)
-            while agent._fsm.state != "idle":
-                await asyncio.sleep(0.1)
+            await agent.status.wait_until_idle()
         except (EOFError, KeyboardInterrupt):
             print()
             break

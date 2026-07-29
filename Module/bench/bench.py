@@ -157,16 +157,8 @@ class LatencyBench:
             for label, msg in messages:
                 t0 = time.perf_counter()
                 await agent.process_message(msg)
-                # 等离开 IDLE（处理已开始），再等回到 IDLE（处理完成）
-                if hasattr(agent, "_fsm") and agent._fsm:
-                    for _ in range(500):
-                        if agent._fsm.state != "idle":
-                            break
-                        await asyncio.sleep(0.01)
-                    for _ in range(5000):
-                        if agent._fsm.state == "idle":
-                            break
-                        await asyncio.sleep(0.01)
+                # 等待处理完成回到 IDLE
+                await agent.status.wait_until_idle(timeout=55.0)
                 total_ms = (time.perf_counter() - t0) * 1000
                 print(f"  {label}: {self._fmt(total_ms / 1000)}  "
                       f"({int(total_ms)} ms)  — \"{msg[:30]}...\"")
