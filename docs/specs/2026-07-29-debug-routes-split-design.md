@@ -5,7 +5,7 @@
 
 ## 动机
 
-`core/input/debug_routes.py`（802 行）是 `core/` 下仅次于 `cognitive/loop.py`（986 行）的第二大单文件。包含 22 个 route handler + 2 个 helper + TaskSystem SSE 接线 + startup/shutdown 生命周期，全部嵌套在 `register_debug_routes()` 闭包内。按资源自然分为 5 组（Overview/LTM/Archive+Sessions/Prompts+Responses/Character），适合拆分为独立模块。
+`core/input/debug_routes.py`（802 行）是 `core/` 下仅次于 `cognitive/loop.py`（986 行）的第二大单文件。包含 23 个 route handler + 3 个 helper（`_sessions_to_client`、`_list_character_versions`、`_character_rollback`）+ `session_detail_handler` 内部嵌套的 `_get_character_state` + TaskSystem SSE 接线 + startup/shutdown 生命周期，全部嵌套在 `register_debug_routes()` 闭包内。按资源自然分为 5 组（Overview/LTM/Archive+Sessions/Prompts+Responses/Character），适合拆分为独立模块。
 
 ## 设计
 
@@ -95,7 +95,7 @@ async def session_delete_handler(request: web.Request) -> web.Response: ...
 async def sessions_clear_handler(request: web.Request) -> web.Response: ...
 ```
 
-8 个端点：消息归档 CRUD（分页/编辑/单条删除/清空）+ Session 管理（列表/详情/删除/清空）。`sessions_to_client` 作为参数传入（`session_detail_handler` 需要它格式化消息）。
+8 个端点：消息归档 CRUD（分页/编辑/单条删除/清空）+ Session 管理（列表/详情/删除/清空）。`sessions_to_client` 作为参数传入（`session_detail_handler` 需要它格式化消息）。`session_detail_handler` 内部保留了 `_get_character_state` 嵌套闭包（仅被该 handler 使用，不提升）。
 
 #### `recording.py`
 
@@ -147,7 +147,7 @@ Handler 通过 `request.app["agent"]` 获取 Agent——aiohttp 的 `Request.app
 
 ### 调用方兼容
 
-`core/input/server.py` 第 11 行：
+`core/input/server.py`（约第 18 行）：
 ```python
 from .debug_routes import register_debug_routes
 ```
