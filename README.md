@@ -188,7 +188,9 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Output | [Module/output/README.md](Module/output/README.md) | 多通道输出（Console + WebSocket） |
 | Config | [Module/config/README.md](Module/config/README.md) | 配置基础设施（YAML + env + 校验） |
 | Logger | [Module/logger/README.md](Module/logger/README.md) | 日志工厂（plain + JSON） |
+| _common | [Module/_common/README.md](Module/_common/README.md) | 共享工具层（env + registry_helpers + test 工厂） |
 | System Prompt | [Module/system_prompt/README.md](Module/system_prompt/README.md) | System Prompt 引擎 + Section Provider |
+| TaskSystem | [Module/task_system/README.md](Module/task_system/README.md) | 后台任务委派与 DAG 编排 |
 | Tool | [Module/tool/README.md](Module/tool/README.md) | 工具执行框架（Plugin + SafetyPipeline） |
 | Database | [Module/database/README.md](Module/database/README.md) | 数据库总览（Milvus + MongoDB） |
 | VectorDB | [Module/database/vectordb/README.md](Module/database/vectordb/README.md) | 向量数据库（Milvus） |
@@ -204,6 +206,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Agent | [core/agent/README.md](core/agent/README.md) | 组装入口 + 生命周期管理 |
 | CognitiveLoop | [core/cognitive/README.md](core/cognitive/README.md) | ReAct 调度器 + StreamProcessor 流式解析 |
 | Memory | [core/memory/README.md](core/memory/README.md) | 记忆子系统（Session + LTM + EmbeddingProvider + 沉淀 + 去重） |
+| Monitoring | [core/monitoring/README.md](core/monitoring/README.md) | 运行时可观测性（EventBus + IdleMonitor + TokenTracker） |
 | Debug | [core/debug/README.md](core/debug/README.md) | 调试仪表板数据层（16 panel + 录制） |
 | Text | [core/text/README.md](core/text/README.md) | 文本流处理管线（BlockFilter + SentenceBuffer） |
 | Storage | [core/storage/README.md](core/storage/README.md) | 统一存储层（Repository 模式） |
