@@ -2,6 +2,76 @@
 
 ## 已完成
 
+### 2026-07-30: core/ + Module/task_system/ IDE 类型错误批量修复（~155 处）
+
+**背景**：Pylance/Pyright 诊断累积了大量类型错误，分布在生产代码和测试文件中。
+
+**生产代码修复（2 文件）：**
+- `core/input/debug_routes/character.py`：`_character_rollback()` 返回 `tuple[dict|None, str|None, int]`，handler 中 `result.get()` 前加 `assert result is not None`（2 处）
+- `core/task/task.py`：`@classmethod` 工厂方法中 `cls(...)` 调用无法静态验证，加 `# type: ignore[reportCallIssue]`（3 处）
+
+**测试修复 — NewType 包装（~50 处，7 文件）：**
+- `SessionId()` 包装裸字符串（test_session, test_token_tracker, test_character, test_phase2 等）
+- `ToolCallId()` 包装裸字符串（test_message, test_tool_gate）
+- `MemoryType`、`MessageRole` 枚举替换字面量（test_phase2, test_phase3）
+
+**测试修复 — ToolAdapter 替换 ToolManager（~30 处，2 文件）：**
+- `test_task_scheduler.py`：`ToolManager()` → `ToolAdapter(plugins, session_id="test")` + `start()`
+- `test_phase3.py`：3 个 `CognitiveLoop` fixture 全部改用 `ToolAdapter`
+
+**测试修复 — type: ignore（~70 处，17 文件）：**
+- MagicMock/MethodType 属性访问（test_engine, test_sub_agent, test_audio_buffer）
+- `BaseException` 无 `.success/.error`（test_task_scheduler）
+- `Part` 联合类型无 `.content`（test_message, test_phase2）
+- `AbstractRoute.path` 静态不可见（test_server）
+- Optional `_collection` 链式调用（4 个 repo test 文件）
+- `Choice`/`CompletionUsage`/`ArtifactId`/`TypedDict` 键窄化（test_executor, test_evaluator, test_planner, test_delegation_preparer 等）
+- `test_clean_db.py` `sys.path` 运行时注入的 `clean_db` 模块（16 处）
+- `test_task_system_lifecycle.py` / `test_e2e_mvp.py` `object`→`ToolManager` 参数类型（16 处）
+
+**关联 commit：** `ded85df` ~ `7616385`（29 commits）
+
+### 2026-07-29: debug_routes.py 拆分为 debug_routes/ package
+
+**问题**：`core/input/debug_routes.py`（802 行）是 `core/` 下第二大单文件。23 个 route handler + 3 个 helper + TaskSystem SSE 接线全部嵌套在 `register_debug_routes()` 闭包内。
+
+**拆分方案**：按资源分组为 7 个模块：
+```
+core/input/debug_routes.py        → 删除
+core/input/debug_routes/
+├── __init__.py                   → register_debug_routes() 入口 + TaskSystem SSE
+├── _common.py                    → sessions_to_client() 共享 helper
+├── overview.py                   → GET /debug/api, GET /debug/api/db-status
+├── ltm.py                        → LTM CRUD（5 端点）
+├── archive.py                    → Archive + Sessions CRUD（8 端点）
+├── recording.py                  → Prompts + Responses（4 端点）
+└── character.py                  → 版本历史 + 回滚（4 端点 + 2 helper）
+```
+
+**关键变更**：Handler 从闭包提升为顶层 async 函数，通过 `request.app["agent"]` 获取 Agent（不再依赖闭包捕获）。`server.py` import 路径 `from .debug_routes import register_debug_routes` 保持不变——Python 自动从 `debug_routes/__init__.py` 解析。
+
+**关联 commit：** `33d25ff` `9284180` `fbe3f05` `e1ed590` `91eb07a` `5114b68` `18ac95d` `e62aa9b`
+
+### 2026-07-29: 文档同步 — core/README.md + README.md + architecture.md
+
+**core/README.md：**
+- 文件索引行数全部刷新（agent.py: 1004→522, loop.py: 1042→986, scheduler.py: ~430→509 等 18 处）
+- `ToolManager` → `ToolAdapter`（3 处：启动顺序、Agent.start()、扩展指南）
+- 新增 `debug_routes/` 条目（7 文件, 888 行）
+- Python 文件总数 40→120
+
+**根 README.md：**
+- 文件树重写：移除 5 个已迁移的顶层 `.py` 引用（agent_fsm/event_bus/idle_monitor/prompt_assembler/token_tracker），新增 `monitoring/`、`input/`、`storage/` package
+- `input/` 从 Module 树下移到 core 树下
+- 文档导航：Input 从 Module 层表格移到 Core 层表格
+- 测试数：1384 → 1869
+
+**architecture.md：**
+- 四处 `ToolManager` → `ToolAdapter`（section 标题、代码注释、Agent 组装/启动注释）
+- `Module/tool/` 下的 `ToolManager` 保留（`Module/tool/manager.py` 确实有这个类）
+
+**关联 commit：** `102451b` `91f3aac` `ed83041`
+
 ### 2026-07-29: core/ 测试补全 & 迁移 — agent+config +55 tests, 4 files migrated
 
 **新增**：core/config/tests/ (18 tests) + core/agent/tests/ (38 tests)

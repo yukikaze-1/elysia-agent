@@ -66,6 +66,7 @@
 | ~~低~~ ✅ | **`core/schema/__init__.py` 导出 70+ 符号** | 已按 9 个子领域分组导出（基础类型→消息→Part→工具→事件→记忆→角色→Token→情绪） |
 | ~~低~~ ✅ | **`Module/task_system/__init__.py` 导出 70+ 符号** | 已按 7 个子领域分组导出（公共API→基础类型→跨层协议→对外输出→内部编排→校验→运行时状态） |
 | ~~低~~ ✅ | **`core/input/` 反向依赖 `core/`** | 已移入 core/input/，消除层违反。原 Module/input/ → core/input/ |
+| ~~低~~ ✅ | **`core/input/debug_routes.py`（802 行）** | 已拆分为 `debug_routes/` package（7 模块）：overview / ltm / archive / recording / character + _common + __init__。23 handler 从闭包提升为顶层函数。2026-07-29
 
 ## 多模态 Phase 2
 
@@ -86,7 +87,7 @@
 | **高** | **无数据库迁移机制** | MongoDB 索引在 `connect()` 时 ad-hoc 创建，Milvus collection 硬编码创建。若字段/索引/维度需变更，无 upgrade path。`memory_repo.clear_all()` 是破坏性操作无安全守卫 |
 | 低 | **`character/cyrene/` 不可用** | 缺少 `config.yaml` 和 `personality.md`，仅含 GPT 参考材料，无法作为角色加载 |
 | 低 | **依赖无版本上限** | `requirements.txt` 中 pydantic、openai、torch 等均无上限约束，上游 breaking change 可导致不可预期问题。`torch` 是 2GB+ 重依赖 |
-| 低 | **`# type: ignore` + `Any` 类型清理** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（二/三梯队）。**`Any` 类型替换**：core/ 下 63 处→已消除 ~44 处（属性声明/task/emit 签名/mailbox/_process_events）。**剩余不可消除**：`dict[str, Any]` JSON 容器（~12 处）、流式协议 `**raw_params: Any`+`AsyncIterator[Any]`（5 处）、`Coroutine[Any, Any, Any]` 通用协程（3 处）、`_embed_task: Task[Any]`（2 处）。详见 `docs/completed.md` 2026-07-29 第一、三条。 |
+| 低 | **`# type: ignore` + `Any` 类型清理** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（二/三梯队）。测试文件 IDE 类型错误已批量修复 ~155 处（2026-07-29/30：NewType 包装、ToolAdapter 替换、type: ignore 补充）。**`Any` 类型替换**：core/ 下 63 处→已消除 ~44 处（属性声明/task/emit 签名/mailbox/_process_events）。**剩余不可消除**：`dict[str, Any]` JSON 容器（~12 处）、流式协议 `**raw_params: Any`+`AsyncIterator[Any]`（5 处）、`Coroutine[Any, Any, Any]` 通用协程（3 处）、`_embed_task: Task[Any]`（2 处）。详见 `docs/completed.md` 2026-07-29 第一、三条 + 2026-07-30 第一条。 |
 
 
 ## 来自 code-review-2026-07-22 的遗留问题
