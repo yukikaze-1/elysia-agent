@@ -27,6 +27,7 @@ class TestVersionEntry:
             "timestamp": "2026-07-21T00:00:00.000Z",
             "trigger": "compression",
             "change_summary": ["新增: 测试"],
+            "content_type": "l2",
         }
         assert entry["session_id"] == "default"
         assert entry["version"] == 1
