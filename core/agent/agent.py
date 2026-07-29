@@ -71,7 +71,6 @@ from ..memory.long_term import LongTermMemory
 from ..adapter.prompt_assembler import PromptAssembler
 from core.adapter import ToolAdapter
 from core.tools import ALL_PLUGINS
-from ..cognitive import CognitiveLoop
 from ..monitoring.idle_monitor import IdleMonitor
 from ..adapter.llm_adapter import LLMAdapter
 from ..memory.consolidator import MemoryConsolidator
@@ -211,6 +210,7 @@ class Agent(AgentLifecycle, AgentServer):
         self._prompt_recorder: "PromptRecorder | None" = None   # 在 start() 中创建
         self._response_recorder: "ResponseRecorder | None" = None # 在 start() 中创建
 
+        from ..cognitive import CognitiveLoop  # function-level: break circular import
         self._cognitive = CognitiveLoop(
             llm=self._llm,
             fsm=self._fsm,
