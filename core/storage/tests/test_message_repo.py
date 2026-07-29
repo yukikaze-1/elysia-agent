@@ -48,11 +48,11 @@ def _make_assistant_doc(content: str = "hello", msg_id: str = "msg-2", **extra) 
 class TestMessageRepository:
     def test_append_calls_insert_one(self):
         repo = MessageRepository(db=MagicMock())
-        repo._db.insert_one = AsyncMock()
+        repo._db.insert_one = AsyncMock()  # type: ignore[reportOptionalMemberAccess]
         msg = _make_user_msg()
         asyncio.run(repo.append(SessionId("sid"), msg))
-        repo._db.insert_one.assert_called_once()
-        call_args = repo._db.insert_one.call_args
+        repo._db.insert_one.assert_called_once()  # type: ignore[reportOptionalMemberAccess]
+        call_args = repo._db.insert_one.call_args  # type: ignore[reportOptionalMemberAccess]
         assert call_args[0][0] == "message_archive"  # collection name
         assert call_args[0][1]["session_id"] == "sid"
 
@@ -68,7 +68,7 @@ class TestMessageRepository:
 
     def test_clear_all_calls_delete_many(self):
         repo = MessageRepository(db=MagicMock())
-        repo._db.delete_many = AsyncMock(return_value=5)
+        repo._db.delete_many = AsyncMock(return_value=5)  # type: ignore[reportOptionalMemberAccess]
         result = asyncio.run(repo.clear_all())
         assert result == 5
 
@@ -85,7 +85,7 @@ class TestMessageRepository:
             _make_assistant_doc(content="middle", msg_id="msg-2", _id=ObjectId()),
         ]
 
-        repo._db.find = AsyncMock(return_value=fake_docs)
+        repo._db.find = AsyncMock(return_value=fake_docs)  # type: ignore[reportOptionalMemberAccess]
 
         # 请求 limit=1，返回 2 条（内部请求 limit+1），has_more=True
         messages, has_more = asyncio.run(repo.query(before=None, limit=1))
@@ -95,14 +95,14 @@ class TestMessageRepository:
         assert messages[0].metadata["_mongo_id"] == str(now)
 
         # before 游标过滤
-        repo._db.find = AsyncMock(return_value=[
+        repo._db.find = AsyncMock(return_value=[  # type: ignore[reportOptionalMemberAccess]
             _make_user_doc(content="older", msg_id="msg-3", _id=earlier),
         ])
         messages, has_more = asyncio.run(repo.query(before=str(now), limit=20))
         assert has_more is False
 
         # 验证 filter 包含 $lt 条件
-        call_args = repo._db.find.call_args
+        call_args = repo._db.find.call_args  # type: ignore[reportOptionalMemberAccess]
         assert call_args[0][1]["_id"] == {"$lt": now}
 
     def test_query_returns_empty_when_db_none(self):
