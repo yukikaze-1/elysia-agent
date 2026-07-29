@@ -41,7 +41,7 @@ class TestCreateApp:
 
         app = create_app(agent, serve_static=False)
 
-        routes = {r.path for r in app.router.routes() if hasattr(r, 'path')}
+        routes = {getattr(r, 'path', None) for r in app.router.routes()}
         # For aiohttp route resources, check the canonical path
         route_paths = set()
         for r in app.router.routes():
