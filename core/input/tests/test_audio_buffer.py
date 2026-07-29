@@ -344,8 +344,8 @@ class TestSTTErrors:
             return "late"
 
         buf = AudioBuffer(stt_transcribe=slow_stt, silence_duration=0.05)
-        buf._logger = logging.getLogger("test_audio")
-        buf._logger.setLevel(logging.WARNING)
+        buf._logger = logging.getLogger("test_audio")  # type: ignore[reportAttributeAccessIssue]
+        buf._logger.setLevel(logging.WARNING)  # type: ignore[reportAttributeAccessIssue]
 
         for _ in range(30):
             await buf.feed(_loud(320))
@@ -361,8 +361,8 @@ class TestSTTErrors:
             raise RuntimeError("STT down")
 
         buf = AudioBuffer(stt_transcribe=failing_stt, silence_duration=0.05)
-        buf._logger = logging.getLogger("test_audio")
-        buf._logger.setLevel(logging.WARNING)
+        buf._logger = logging.getLogger("test_audio")  # type: ignore[reportAttributeAccessIssue]
+        buf._logger.setLevel(logging.WARNING)  # type: ignore[reportAttributeAccessIssue]
 
         for _ in range(30):
             await buf.feed(_loud(320))
