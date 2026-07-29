@@ -30,7 +30,7 @@ class TestUserMessage:
         )
         assert msg.role == MessageRole.USER
         assert len(msg.content) == 1
-        assert msg.content[0].content == "hello"
+        assert msg.content[0].content == "hello"  # type: ignore[reportAttributeAccessIssue]
         assert msg.timestamp  # now_iso 自动生成
 
     def test_role_is_frozen(self):
@@ -49,7 +49,7 @@ class TestUserMessage:
         }
         msg = UserMessage.model_validate(d)
         assert msg.role == MessageRole.USER  # auto-filled
-        assert msg.content[0].content == "hello world"
+        assert msg.content[0].content == "hello world"  # type: ignore[reportAttributeAccessIssue]
         assert isinstance(msg.message_id, str)
         assert msg.message_id == "msg-003"
 
