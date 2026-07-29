@@ -399,8 +399,8 @@ class TestMultiTurnConversation:
         await asyncio.sleep(15)  # Generous timeout for embedding lazy load + LLM
         msgs_1 = agent._session.recent_messages()
         assert any(
-            isinstance(m.get("content"), (list, str)) and
-            any("我叫妖梦" in p.get("content", "") for p in (m["content"] if isinstance(m.get("content"), list) else [{"content": m.get("content", "")}]))
+            isinstance(m.content, list) and
+            any("我叫妖梦" in getattr(p, "content", "") for p in m.content)
             for m in msgs_1
         )
 
