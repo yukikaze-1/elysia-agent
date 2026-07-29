@@ -13,9 +13,10 @@ from core.task import Task, TaskType, TaskStatus
 from core.task import TaskScheduler
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
-from Module.tool import ToolManager, ToolContext, PluginContext
+from Module.tool import PluginContext
 from Module.tool.protocol import ToolPlugin, ToolResult, ErrorType
 from Module.tool.safety import SafetyProfile
+from core.adapter import ToolAdapter
 
 pytestmark = pytest.mark.service
 
@@ -86,30 +87,28 @@ class WaiterPlugin(ToolPlugin):
 # Helpers
 # ═══════════════════════════════════════════════════════════════════
 
-async def _make_manager() -> ToolManager:
-    """单一 EchoPlugin 的 ToolManager。"""
-    tm = ToolManager()
-    await tm.load_all([EchoPlugin], PluginContext(session_id="test"))
+async def _make_manager() -> ToolAdapter:
+    """单一 EchoPlugin 的 ToolAdapter。"""
+    tm = ToolAdapter([EchoPlugin], session_id="test")
+    await tm.start()
     return tm
 
 
-async def _make_multi_manager() -> ToolManager:
-    """Echo + Failing + Crashing 的 ToolManager。"""
-    tm = ToolManager()
-    await tm.load_all(
-        [EchoPlugin, FailingPlugin, CrashPlugin],
-        PluginContext(session_id="test"),
-    )
+async def _make_multi_manager() -> ToolAdapter:
+    """Echo + Failing + Crashing 的 ToolAdapter。"""
+    tm = ToolAdapter([EchoPlugin, FailingPlugin, CrashPlugin], session_id="test")
+    await tm.start()
     return tm
 
 
-async def _make_sleep_manager(barrier: asyncio.Event) -> ToolManager:
-    """包含 WaiterPlugin 的 ToolManager — barrier 控制执行。"""
-    tm = ToolManager()
+async def _make_sleep_manager(barrier: asyncio.Event) -> ToolAdapter:
+    """包含 WaiterPlugin 的 ToolAdapter — barrier 控制执行。"""
+    tm = ToolAdapter([], session_id="test")
+    await tm.start()
     plugin = WaiterPlugin()
     plugin._barrier = barrier  # type: ignore[attr-defined]
     await plugin.setup(PluginContext(session_id="test"))
-    tm._plugins["waiter"] = plugin
+    tm._manager._plugins["waiter"] = plugin
     return tm
 
 
@@ -184,8 +183,8 @@ async def test_priority_ordering():
             completed.append(params.msg)
             return params.msg
 
-    tm = ToolManager()
-    await tm.load_all([OrderedPlugin], PluginContext(session_id="test"))
+    tm = ToolAdapter([OrderedPlugin], session_id="test")
+    await tm.start()
     sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
@@ -420,8 +419,8 @@ async def test_tool_retries_on_failure():
                 )
             return ToolResult.ok(name="flaky", content="ok", duration_ms=0.0)
 
-    tm = ToolManager()
-    await tm.load_all([FlakyPlugin], PluginContext(session_id="test"))
+    tm = ToolAdapter([FlakyPlugin], session_id="test")
+    await tm.start()
 
     sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
@@ -457,8 +456,8 @@ async def test_tool_gives_up_after_max_retries():
                 error_type=ErrorType.NETWORK_ERROR,
             )
 
-    tm = ToolManager()
-    await tm.load_all([FailerPlugin], PluginContext(session_id="test"))
+    tm = ToolAdapter([FailerPlugin], session_id="test")
+    await tm.start()
 
     sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
@@ -675,7 +674,7 @@ async def test_cognitive_loop_callback_wired():
     output = OutputManager()
     fsm = AgentFSM()
     bus = EventBus()
-    tm = ToolManager()
+    tm = ToolAdapter([])
     prompt = AsyncMock()
     prompt._character = MagicMock(name="TestBot")
     prompt._character.traits = []
@@ -730,7 +729,7 @@ async def test_cognitive_loop_no_callback_backward_compat():
     output = OutputManager()
     fsm = AgentFSM()
     bus = EventBus()
-    tm = ToolManager()
+    tm = ToolAdapter([])
     prompt = AsyncMock()
     prompt._character = MagicMock(name="TestBot")
     prompt._character.traits = []
