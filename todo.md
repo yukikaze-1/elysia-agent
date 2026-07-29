@@ -67,6 +67,7 @@
 | ~~低~~ ✅ | **`Module/task_system/__init__.py` 导出 70+ 符号** | 已按 7 个子领域分组导出（公共API→基础类型→跨层协议→对外输出→内部编排→校验→运行时状态） |
 | ~~低~~ ✅ | **`core/input/` 反向依赖 `core/`** | 已移入 core/input/，消除层违反。原 Module/input/ → core/input/ |
 | ~~低~~ ✅ | **`core/input/debug_routes.py`（802 行）** | 已拆分为 `debug_routes/` package（7 模块）：overview / ltm / archive / recording / character + _common + __init__。23 handler 从闭包提升为顶层函数。2026-07-29
+| 高 | **AgentStatus 接口层** | 解耦 FSM 与 15+ 消费者。Phase 1：新增 `AgentStatus` + `CognitivePhaseController` 接口+实现，loop.py 内部替换。Phase 2：外部消费者迁移。Phase 3：清理 `agent._fsm` 改为私有。Spec: [2026-07-30-agent-status-interface-design.md](docs/specs/2026-07-30-agent-status-interface-design.md) |
 
 ## 多模态 Phase 2
 
