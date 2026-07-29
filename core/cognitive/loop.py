@@ -27,7 +27,7 @@ from .timing import TimingClock
 from Module.output import OutputManager, ChannelCapability
 from Module.tts import TTSBackend
 
-from ..agent.agent_fsm import AgentFSM, AgentState
+from ..agent.agent_fsm import AgentFSM
 from ..monitoring.event_bus import EventBus
 from ..utils import set_request_id, get_request_id, log_conversation
 from Module.tool.protocol import ToolResult
@@ -188,6 +188,7 @@ class CognitiveLoop(CognitiveTools):
         self._clock: TimingClock | None = None # 当前轮次的计时器（process() 设置，finally 清除）
         self._phase: TurnPhase | None = None   # 当前轮次处理阶段（供 debug 面板）
         self._phases = None  # CognitivePhaseController（由 agent.py 注入，或懒加载）
+        self._status = None  # AgentStatus（由 agent.py 注入，或懒加载）
 
     @property
     def phases(self):
@@ -204,6 +205,18 @@ class CognitiveLoop(CognitiveTools):
     @phases.setter
     def phases(self, value):
         self._phases = value
+
+    @property
+    def status(self):
+        """AgentStatus — 由 agent.py 注入（或直接构造时懒加载回退）。"""
+        if self._status is None:
+            from ..agent.status import FSMBackedStatus
+            self._status = FSMBackedStatus(self._fsm)
+        return self._status
+
+    @status.setter
+    def status(self, value):
+        self._status = value
 
     # ---- Public API ----
 
@@ -254,8 +267,8 @@ class CognitiveLoop(CognitiveTools):
             task_result_context: 后台任务结果上下文，含 original_intent / result 等字段
         """
         async with self._process_lock:
-            if not self._fsm.can_transition(AgentState.THINKING):
-                logger.warning("Cannot transition to THINKING from %s", self._fsm.state)
+            if not self.status.is_accepting_input:
+                logger.warning("Agent not accepting input — skipping turn")
                 return
 
             rid = get_request_id()
@@ -952,7 +965,7 @@ class CognitiveLoop(CognitiveTools):
 
     async def _handle_interrupt(self) -> None:
         """Clean up after interruption — cancel TTS tasks, return to IDLE."""
-        if self._fsm.state == AgentState.IDLE:  # ← 此处保持直接读 _fsm（Phase 3 迁移）
+        if self.status.is_completely_idle:
             return
         if self._sentence_buf is not None:
             self._sentence_buf.reset()

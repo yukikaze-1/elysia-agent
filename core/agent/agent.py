@@ -245,6 +245,7 @@ class Agent(AgentLifecycle, AgentServer):
             status=self.status,
         )
         self._cognitive.phases = self.phases
+        self._cognitive.status = self.status
 
         # Worker Pool — 执行 AI 规划的工具子任务 + 后台任务
         self._scheduler = TaskScheduler(
