@@ -104,7 +104,7 @@ class TestCharacterEngineTrigger:
         """简单状态更新不调用 LLM。"""
         engine = _make_engine()
         asyncio.run(engine.consume_trigger("test", {"content": "test state"}))
-        engine._llm.think.assert_not_called()
+        engine._llm.think.assert_not_called()  # type: ignore[reportAttributeAccessIssue]
 
 
 @pytest.mark.unit
@@ -145,7 +145,7 @@ class TestCharacterEngineCompression:
         engine = _make_engine(state=s)
         self._fill_state_history(s, 5)
         s.state_l3 = "最近变得温柔了"
-        engine._llm.think.return_value = ThoughtResult(
+        engine._llm.think.return_value = ThoughtResult(  # type: ignore[reportAttributeAccessIssue]
             text="<new_self>我似乎更在意妖梦的感受了</new_self>\n<changes>\n- 更在意妖梦了\n</changes>"
         )
 
@@ -167,7 +167,7 @@ class TestCharacterEngineCompression:
         engine = _make_engine(state=s)
         s.self_l2 = "已有自我认知"
         self._fill_state_history(s, 5)
-        engine._llm.think.return_value = ThoughtResult(text="")
+        engine._llm.think.return_value = ThoughtResult(text="")  # type: ignore[reportAttributeAccessIssue]
         mock_pm = MagicMock()
         mock_pm.render_macro.return_value = "rendered prompt"
         engine._pm = mock_pm
@@ -183,7 +183,7 @@ class TestCharacterEngineCompression:
         s = CharacterState(session_id=SessionId("test-sid"))
         engine = _make_engine(state=s)
         self._fill_state_history(s, 5)
-        engine._llm.think.side_effect = RuntimeError("API 不可用")
+        engine._llm.think.side_effect = RuntimeError("API 不可用")  # type: ignore[reportAttributeAccessIssue]
         mock_pm = MagicMock()
         mock_pm.render_macro.return_value = "rendered prompt"
         engine._pm = mock_pm
@@ -199,7 +199,7 @@ class TestCharacterEngineCompression:
         s = CharacterState(session_id=SessionId("test-sid"))
         engine = _make_engine(state=s)
         self._fill_state_history(s, 5)
-        engine._llm.think.return_value = ThoughtResult(text="test")
+        engine._llm.think.return_value = ThoughtResult(text="test")  # type: ignore[reportAttributeAccessIssue]
         mock_pm = MagicMock()
         mock_pm.render_macro.return_value = "rendered prompt"
         engine._pm = mock_pm
@@ -370,7 +370,7 @@ class TestAwarenessJudge:
 
         assert s.approved_awareness_text == "最近感觉自己变得更温柔了。"
         assert s.approved_awareness_at is not None
-        engine._llm.think.assert_not_called()
+        engine._llm.think.assert_not_called()  # type: ignore[reportAttributeAccessIssue]
 
     def test_judge_llm_failure_preserves_cache(self):
         """LLM 调用异常时保留旧缓存。"""
@@ -414,7 +414,7 @@ class TestAwarenessJudge:
 
         asyncio.run(engine._judge_awareness(s.state_l3))
 
-        engine._llm.think.assert_not_called()
+        engine._llm.think.assert_not_called()  # type: ignore[reportAttributeAccessIssue]
 
     def test_judge_overwrites_old_cache_on_approve(self):
         """新 <approved> 替换旧缓存。"""
@@ -444,11 +444,11 @@ class TestAwarenessJudge:
         s = self._make_state(state_l3="")
         engine = _make_engine(state=s)
         # _schedule 不应该被调用
-        engine._schedule = MagicMock()
+        engine._schedule = MagicMock()  # type: ignore[reportAttributeAccessIssue]
 
         engine._maybe_judge_awareness()
 
-        engine._schedule.assert_not_called()
+        engine._schedule.assert_not_called()  # type: ignore[reportAttributeAccessIssue]
 
     # ---- _awareness_allowed ----
 
