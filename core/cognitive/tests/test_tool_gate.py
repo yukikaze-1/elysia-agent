@@ -1,9 +1,12 @@
 """Action Gate 单元测试 — _gate_tool_calls() 工具校验。"""
 import json
+from typing import cast
 
 import pytest
+from core.adapter.tool_adapter import ToolAdapter
 from core.cognitive.tools import CognitiveTools
 from core.schema.tool import ToolCall, ToolCallFunction
+from core.schema.types import ToolCallId
 
 
 pytestmark = pytest.mark.unit
@@ -26,7 +29,7 @@ class _FakeExecutor:
 
 def _make_tc(name: str, call_id: str = "call_1", args: dict | None = None) -> ToolCall:
     return ToolCall(
-        id=call_id,
+        id=ToolCallId(call_id),
         function=ToolCallFunction(name=name, arguments=json.dumps(args or {})),
     )
 
@@ -35,7 +38,7 @@ def _gate(calls: list[ToolCall], executor_names: list[str] | None = None,
           blocked: set[str] | None = None) -> tuple[bool, list[dict]]:
     """Helper: 创建 CognitiveTools 实例，调用 _gate_tool_calls。"""
     tools = CognitiveTools()
-    tools._tool_executor = _FakeExecutor(executor_names)
+    tools._tool_executor = cast(ToolAdapter, _FakeExecutor(executor_names))
     tools._tool_adapter = None
     messages: list[dict] = []
     ok = tools._gate_tool_calls(calls, messages, blocked_tools=blocked)
