@@ -90,7 +90,7 @@
 | 中 | **缺少 README（3 个模块）** | `Module/task_system/`（30+ 文件复杂系统）、`Module/_common/`、`core/monitoring/` 无 README |
 | 低 | **`character/cyrene/` 不可用** | 缺少 `config.yaml` 和 `personality.md`，仅含 GPT 参考材料，无法作为角色加载 |
 | 低 | **依赖无版本上限** | `requirements.txt` 中 pydantic、openai、torch 等均无上限约束，上游 breaking change 可导致不可预期问题。`torch` 是 2GB+ 重依赖 |
-| 低 | **`# type: ignore` + `Any` 类型清理（进行中）** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（分二/三梯队）。**`Any` 类型替换**：core/ 下原有 63 处 `Any`，已消除 25 处（17 处属性→具体类型+8 处 `Task[Any]`→`Task[None]`）。剩余 38 处：**待讨论**（插件 emit 签名 12 处+JSON 容器 ~4 处+其他 2 处）|**不可消除**（流式协议/协程参数/回调签名 ~22 处）。详见 2026-07-29 第三条 completed。
+| 低 | **`# type: ignore` + `Any` 类型清理** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（二/三梯队）。**`Any` 类型替换**：core/ 下 63 处→已消除 ~44 处（属性声明/task/emit 签名/mailbox/_process_events）。**剩余不可消除**：`dict[str, Any]` JSON 容器（~12 处）、流式协议 `**raw_params: Any`+`AsyncIterator[Any]`（5 处）、`Coroutine[Any, Any, Any]` 通用协程（3 处）、`_embed_task: Task[Any]`（2 处）。详见 `docs/completed.md` 2026-07-29 第一、三条。 |
 
 
 ## 来自 code-review-2026-07-22 的遗留问题

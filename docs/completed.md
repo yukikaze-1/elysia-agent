@@ -2,6 +2,22 @@
 
 ## 已完成
 
+### 2026-07-29: `Any` 类型清理收尾 — emit→ToolEmitter + scheduler + mailbox
+
+**议题1 — 插件 `emit: Any` → `ToolEmitter`（15 处）**：`ToolPlugin`/`ToolManager`/`ToolAdapter` 基类 + 9 个插件文件，全部改用已存在的 `ToolEmitter` 类型。同时收窄 `execute_stream` 返回类型 `AsyncIterator[Any]` → `AsyncIterator[ToolProgress | ToolResult]`。
+
+**议题3 — scheduler 返回类型（2 处）**：`dispatch_tool_calls` 返回 `list[tuple[ToolCall, ToolResult | BaseException]]`，注释已写明实际类型。
+
+**议题4 — `_register_background_task` mailbox（1 处）**：`mailbox: Any` → `TaskMailbox`（TYPE_CHECKING import）。
+
+**议题5 — `_process_events`（1 处）**：`Any` → `Callable[[], Coroutine[Any, Any, None]]`。
+
+**后续修正**：`_BackgroundTaskEntry.mailbox` 从 `asyncio.Queue` → `TaskMailbox`（TYPE_CHECKING import）。
+
+**最终状态**：core/ 下剩余 `Any` 均为不可消除——`dict[str, Any]` JSON 容器（12 处）、流式协议 `**raw_params: Any` + `AsyncIterator[Any]`（5 处）、`Coroutine[Any, Any, Any]` 通用协程（3 处）、`_embed_task: Task[Any]`（2 处，`ensure()` 返回值类型不固定）。
+
+涉及文件：`Module/tool/protocol.py`、`Module/tool/manager.py`、`core/adapter/tool_adapter.py`、`core/task/scheduler.py`、`core/agent/agent.py`、`core/agent/_types.py`、`core/agent/_lifecycle_tools.py`、`core/tools/*/plugin.py`（9 个）、`core/tools/web/mock_plugin.py`
+
 ### 2026-07-29: `Any` 类型替换 — 第一+二层 25 处
 
 对 `core/` 下全部 63 处 `Any` 使用排查后，按分层修复：
