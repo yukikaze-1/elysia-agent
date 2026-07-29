@@ -225,10 +225,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .agent_fsm import AgentFSM
+from .agent_fsm import AgentFSM, AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -401,7 +398,7 @@ class FSMBackedStatus(AgentStatus):
 
 ```bash
 pytest core/agent/tests/test_status.py -v
-# 预期: 15 passed
+# 预期: 17 passed
 ```
 
 等 Task 2 的 CognitivePhaseController 测试加入后一起跑。
@@ -756,11 +753,11 @@ class FSMBackedPhaseController(CognitivePhaseController):
         await self._status._notify("idle")
 ```
 
-- [ ] **Step 4: 跑全部 test_status.py 确认 25 PASS**
+- [ ] **Step 4: 跑全部 test_status.py 确认 27 PASS**
 
 ```bash
 pytest core/agent/tests/test_status.py -v
-# 预期: 25 passed（15 Status + 10 PhaseController）
+# 预期: 27 passed（17 Status + 10 PhaseController）
 ```
 
 - [ ] **Step 5: Commit**
@@ -997,7 +994,7 @@ make test-quick
 
 ```bash
 pytest core/agent/tests/test_status.py -v
-# 预期: 25 passed
+# 预期: 27 passed
 ```
 
 - [ ] grep 确认 `loop.py` 中无残留的 `self._fsm.transition` 调用
