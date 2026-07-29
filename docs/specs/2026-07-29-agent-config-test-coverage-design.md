@@ -62,8 +62,8 @@ class TestDatabaseConfigEnvOverride:
     然后创建 ConfigField 验证 resolve 逻辑"""
     def test_mongodb_uri_from_env(self, monkeypatch):
         monkeypatch.setenv("MONGODB_URI", "mongodb://custom:27017")
-        cfg = ConfigLoader.load(config_class=DatabaseConfig, data={"base_url": ""})
-        assert cfg.base_url == "mongodb://custom:27017"
+        cfg = DatabaseConfig()  # ConfigField 从 env var 读取
+        assert cfg.mongodb_uri == "mongodb://custom:27017"
 ```
 
 ### 应用配置：`test_app_config.py`（~4 tests）
@@ -103,11 +103,11 @@ class TestCharacterConfigYAML:
         return tmp_path
 
     def test_load_name(self, char_dir):
-        cfg = CharacterConfig.load(char_dir / "config.yaml")
+        cfg = CharacterConfig.from_yaml(char_dir / "config.yaml")
         assert cfg.name == "测试角色"
 
     def test_traits_property(self, char_dir):
-        cfg = CharacterConfig.load(char_dir / "config.yaml")
+        cfg = CharacterConfig.from_yaml(char_dir / "config.yaml")
         assert cfg.traits == ["温柔", "细心"]
 
     def test_missing_personality_md(self, tmp_path):
@@ -189,9 +189,9 @@ class TestAgentFSM:
         ...
 
     def test_invalid_transition_raises(self):
-        """非法状态转换抛 RuntimeError"""
+        """非法状态转换抛 ValueError"""
         fsm = AgentFSM()
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ValueError):
             fsm.transition(AgentState.SPEAKING)  # IDLE → SPEAKING 需先 THINKING
 
     def test_transition_from_any_interrupted(self):
@@ -242,15 +242,25 @@ class TestShutdownSteps:
 #### `test_server_banner.py`（~5 tests）— unit
 
 ```python
+# 注：_print_startup_banner 是实例方法，访问 self._config/self._character/self._llm 等属性。
+# 需用 fake_agent fixture（见 L2 conftest）提供 mock 属性。
 class TestStartupBanner:
-    def test_both_ok(self):
-        banner = AgentServer._print_startup_banner(
-            AgentServer, mongo_ok=True, milvus_ok=True)
+    def test_both_ok(self, fake_agent):
+        fake_agent._config.tts.model = "test-tts"
+        fake_agent._character.name = "测试"
+        fake_agent._llm.model = "test-llm"
+        fake_agent._long_term.count = 0
+        fake_agent._tool_adapter.execute_now = MagicMock(return_value=["echo"])
+        banner = AgentServer._print_startup_banner(fake_agent, mongo_ok=True, milvus_ok=True)
         assert "MongoDB" in banner and "Milvus" in banner
 
-    def test_mongo_offline(self):
-        banner = AgentServer._print_startup_banner(
-            AgentServer, mongo_ok=False, milvus_ok=True)
+    def test_mongo_offline(self, fake_agent):
+        fake_agent._config.tts.model = "test-tts"
+        fake_agent._character.name = "测试"
+        fake_agent._llm.model = "test-llm"
+        fake_agent._long_term.count = 0
+        fake_agent._tool_adapter.execute_now = MagicMock(return_value=["echo"])
+        banner = AgentServer._print_startup_banner(fake_agent, mongo_ok=False, milvus_ok=True)
         assert "offline" in banner.lower() or "❌" in banner
 ```
 
@@ -322,8 +332,8 @@ core/agent/tests/
 ├── test_agent_fsm.py           # L1: 状态机
 ├── test_types.py               # L1: dataclass
 ├── test_lifecycle_steps.py     # L1: STARTUP/SHUTDOWN 步骤验证
-├── test_server_banner.py       # L1: banner 格式化
 ├── test_lifecycle_flush.py     # L2: flush 方法
+├── test_server_banner.py       # L2: banner（需 mock 实例属性）
 └── test_agent_methods.py       # L2: purge/register
 ```
 
