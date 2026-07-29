@@ -32,11 +32,11 @@ class TestPartsFromDicts:
 @pytest.mark.unit
 class TestContentText:
     def test_single_text(self):
-        parts = [TextPart(content="hello")]
+        parts: list = [TextPart(content="hello")]
         assert content_text(parts) == "hello"
 
     def test_multiple_text(self):
-        parts = [TextPart(content="a"), TextPart(content="b")]
+        parts: list = [TextPart(content="a"), TextPart(content="b")]
         assert content_text(parts) == "ab"
 
     def test_mixed_parts(self):
@@ -93,8 +93,8 @@ class TestContentToOpenai:
             TextPart(content="describe this"),
             ImagePart(src="https://example.com/img.png"),
         ])
-        assert result[0]["type"] == "image_url"
-        assert result[1]["type"] == "text"
+        assert result[0]["type"] == "image_url"  # type: ignore[reportIndexIssue]
+        assert result[1]["type"] == "text"  # type: ignore[reportIndexIssue]
 
     def test_empty_parts(self):
         result = content_to_openai([])
@@ -107,5 +107,5 @@ class TestContentToOpenai:
             {"type": "image", "src": "https://example.com/i.png"},
         ]
         result = content_to_openai(parts_from_dicts(dicts))
-        assert result[0]["type"] == "image_url"
+        assert result[0]["type"] == "image_url"  # type: ignore[reportIndexIssue]
         assert result[1] == {"type": "text", "text": "看这张图"}
