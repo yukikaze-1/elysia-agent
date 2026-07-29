@@ -268,7 +268,7 @@ async def test_dispatch_tool_calls_unknown_tool():
     ]
     results = await sched.dispatch_tool_calls("p1", calls)
     assert len(results) == 1
-    assert not results[0][1].success
+    assert not results[0][1].success  # type: ignore[reportAttributeAccessIssue]
 
     await sched.stop()
 

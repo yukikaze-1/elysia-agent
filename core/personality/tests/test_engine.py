@@ -159,6 +159,7 @@ class TestCharacterEngineCompression:
 
         assert s.self_l2 == "我似乎更在意妖梦的感受了"
         assert s.compression_last_count == 5
+        assert s.compression_last_at is not None
         assert s.compression_last_at > 0
 
     def test_compress_no_overwrite_on_empty_result(self):
