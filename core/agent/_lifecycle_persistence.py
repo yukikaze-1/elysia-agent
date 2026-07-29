@@ -117,7 +117,7 @@ class _LifecyclePersistence:
         except asyncio.TimeoutError:
             logger.warning("Session save timed out")
         except Exception:
-            logger.debug("Session save failed", exc_info=True)
+            logger.error("Session save failed on shutdown", exc_info=True)
 
         logger.debug("Closing long-term memory...")
         try:

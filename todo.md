@@ -79,9 +79,18 @@
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| **高** | `.env` API key 需要轮换 | 已有 `.env.example` + `setup.sh` 生成 `.env` + `app.py --check` 验证；实际轮换需在各 API 后台手动操作 |
+| **高** | `.env` 仍含真实 API Key | DeepSeek、MiMo、Tavily、MiniMax 的真实 key 仍在 `.env` 文件中。已有 `.env.example` + `setup.sh` + `app.py --check`，但 `.env` 不应提交真实密钥。建议：将 `.env` 中 key 替换为占位符，真实 key 通过 shell 环境变量或密钥管理器注入 |
 | 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
 | 低 | 会话管理 | 无法新建/切换/列出对话。SessionMemory 的 MongoDB 持久化已为此做好准备，需前后端联动 |
+| ~~高~~ ✅ | **~~静默吞异常 — 数据丢失风险~~** | 已修复：9 处 `except Exception: log.debug()` → WARNING/ERROR（见 `docs/completed.md` 2026-07-29 第二条）|
+| **高** | **无 CI/CD** | 无 `.github/workflows/` 或其他 CI 配置。1793 个测试全靠手动 `make test-quick`。`Makefile` test 目标已就绪，只需加 GitHub Actions workflow |
+| **高** | **无数据库迁移机制** | MongoDB 索引在 `connect()` 时 ad-hoc 创建，Milvus collection 硬编码创建。若字段/索引/维度需变更，无 upgrade path。`memory_repo.clear_all()` 是破坏性操作无安全守卫 |
+| **高** | **`core/agent/` 零测试** | 中枢组件（500+ 行，编排 30+ 子系统）无专属测试目录。`core/config/`、`core/monitoring/`、`core/task/` 也缺测试 |
+| **高** | **`config.yaml` 缺少 `database` 段** | MongoDB URI、Milvus URI、数据库名只能通过环境变量配置，YAML 中完全没有数据库相关键。`database-storage.md` 文档列的参数用户无法在 config.yaml 找到 |
+| 中 | **缺少 README（3 个模块）** | `Module/task_system/`（30+ 文件复杂系统）、`Module/_common/`、`core/monitoring/` 无 README |
+| 低 | **`character/cyrene/` 不可用** | 缺少 `config.yaml` 和 `personality.md`，仅含 GPT 参考材料，无法作为角色加载 |
+| 低 | **依赖无版本上限** | `requirements.txt` 中 pydantic、openai、torch 等均无上限约束，上游 breaking change 可导致不可预期问题。`torch` 是 2GB+ 重依赖 |
+| 低 | **15 处 `# type: ignore`** | 主要在 `llm_adapter.py` 动态属性访问、`tools.py` Any 覆写。协议边界类型安全有缺口 |
 
 
 ## 来自 code-review-2026-07-22 的遗留问题
@@ -115,10 +124,14 @@
 | llm_adapter close fire-and-forget | `core/adapter/llm_adapter.py:140-143` |
 | openai_tts test() 假阴性 | `tts/openai_tts.py:73` |
 | TTS 取消+HTTP 流清理交互可能泄漏 | `tts/gpt_sovits.py:134-150` |
-| 缺失测试覆盖 | DescribeImagePlugin (0)、CognitiveLoop 边界、OutputManager 错误隔离 |
+| 缺失测试覆盖 | DescribeImagePlugin (0)、CognitiveLoop 边界、OutputManager 错误隔离、**core/agent/** (0)、core/config/ (0)、core/monitoring/ (0)、core/task/ (0) |
 
 ## 测试补充
 
+- `core/agent/` (0 tests) — 中枢组件，500+ 行编排 30+ 子系统
+- `core/config/` (0 tests) — 所有配置 dataclass
+- `core/monitoring/` (0 tests) — EventBus、IdleMonitor、TokenTracker
+- `core/task/` (0 tests) — TaskScheduler
 - `core/input/audio_buffer.py` (3)
 - `core/input/server.py` (4)
 - `Module/output/console.py` (1)

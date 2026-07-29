@@ -802,12 +802,12 @@ class CognitiveLoop(CognitiveTools):
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.debug("记忆沉淀失败", exc_info=True)
+                logger.warning("记忆沉淀失败", exc_info=True)
         if self._character_engine:
             try:
                 self._character_engine.buffer_message(user_message, assistant_response)
             except Exception:
-                logger.debug("性格反思缓冲失败", exc_info=True)
+                logger.warning("性格反思缓冲失败", exc_info=True)
         # 更新 MemoryReflector 计数器
         if self._memory_reflector:
             self._memory_reflector.increment_round()
@@ -817,14 +817,14 @@ class CognitiveLoop(CognitiveTools):
             try:
                 await self._memory_reflector.check_and_reflect()
             except Exception:
-                logger.debug("MemoryReflector check failed", exc_info=True)
+                logger.warning("MemoryReflector check failed", exc_info=True)
         # Save session asynchronously (fire-and-forget)
         try:
             await self._session.save()
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.debug("会话保存失败", exc_info=True)
+            logger.error("会话保存失败", exc_info=True)
 
 
     # ---- StreamProcessor event dispatch ----

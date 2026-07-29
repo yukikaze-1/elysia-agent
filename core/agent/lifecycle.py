@@ -157,7 +157,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
                 if hasattr(result, "__await__"):
                     await result
             except Exception:
-                logger.debug("Shutdown step %s failed", name, exc_info=True)
+                logger.warning("Shutdown step %s failed", name, exc_info=True)
 
         logger.info("Agent stopped")
 
@@ -173,7 +173,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
             except asyncio.TimeoutError:
                 logger.warning("Consolidator flush timed out during shutdown")
             except Exception:
-                logger.debug("Consolidator flush failed", exc_info=True)
+                logger.warning("Consolidator flush failed", exc_info=True)
 
     async def _flush_reflector(self) -> None:
         """CharacterReflector buffer 落盘，防止未持久化的性格反思丢失。"""
@@ -183,7 +183,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
             except asyncio.TimeoutError:
                 logger.warning("CharacterReflector flush timed out during shutdown")
             except Exception:
-                logger.debug("CharacterReflector flush failed", exc_info=True)
+                logger.warning("CharacterReflector flush failed", exc_info=True)
 
     async def _flush_compression(self) -> None:
         """L3→L2 性格压缩 flush — 如有未处理的 state_history 条目，触发压缩。"""
@@ -195,5 +195,5 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
             except asyncio.TimeoutError:
                 logger.warning("CharacterEngine compression flush timed out")
             except Exception:
-                logger.debug("CharacterEngine compression flush failed", exc_info=True)
+                logger.warning("CharacterEngine compression flush failed", exc_info=True)
 

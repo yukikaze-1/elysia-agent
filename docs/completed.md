@@ -2,6 +2,17 @@
 
 ## 已完成
 
+### 2026-07-29: 日志级别修复 — shutdown/持久化路径静默吞异常
+
+**问题**：`core/agent/lifecycle.py`、`core/cognitive/loop.py`、`core/agent/_lifecycle_persistence.py` 共 9 处 `except Exception: log.debug()` 静默吞异常。shutdown 失败、session 持久化失败、记忆沉淀/性格反思失败全打 DEBUG 级日志——数据丢失无感知。
+
+**修复**：按严重程度分级调整日志级别：
+- **ERROR（2 处）**：session save 失败（shutdown 路径 + fire-and-forget `_after_response` 路径）—— 对话上下文丢失
+- **WARNING（7 处）**：shutdown 步骤失败、Consolidator/CharacterReflector/Compression flush 失败、记忆沉淀失败、性格反思缓冲失败、MemoryReflector check 失败
+- **保留 DEBUG（2 处）**：db health check 轮询（瞬时故障是常态）、inner_voice broadcast（UI 装饰性功能）
+
+**涉及文件**：[core/agent/lifecycle.py](../core/agent/lifecycle.py)（4 处）、[core/agent/_lifecycle_persistence.py](../core/agent/_lifecycle_persistence.py)（1 处）、[core/cognitive/loop.py](../core/cognitive/loop.py)（4 处）
+
 ### 2026-07-29: 前端功能回归 + 分句/消息同步修复
 
 **前端 11 项功能回归**（Vue 3 重构后相对于旧 vanilla JS 的缺失）：
