@@ -185,7 +185,7 @@ class TestCharacterConfigFromYAML:
 
     @pytest.fixture
     def char_dir(self, tmp_path: Path):
-        """创建最小角色目录：config.yaml + personality.md"""
+        """创建最小角色目录：config.yaml + {name}_personality.md"""
         (tmp_path / "config.yaml").write_text(
             "name: 测试角色\n"
             "wake_words: [你好, 测试]\n"
@@ -193,7 +193,8 @@ class TestCharacterConfigFromYAML:
             "  traits: [温柔, 细心]\n"
             "  speaking_style: 轻声细语\n"
         )
-        (tmp_path / "personality.md").write_text("我是一个测试角色。")
+        # 自动推导: {name}_personality.md → 测试角色_personality.md
+        (tmp_path / "测试角色_personality.md").write_text("我是测试角色。")
         return tmp_path
 
     def test_load_name(self, char_dir):
