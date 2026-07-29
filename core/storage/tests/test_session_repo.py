@@ -13,19 +13,19 @@ class TestSessionRepository:
     def test_save_calls_update_one(self):
         import asyncio
         repo = SessionRepository(db=MagicMock())
-        repo._db.update_one = AsyncMock()
+        repo._db.update_one = AsyncMock()  # type: ignore[reportOptionalMemberAccess]
         cs = CharacterState(session_id=SessionId("sid"))
         rs = MemoryReflectorState()
         asyncio.run(repo.save(SessionId("sid"), [], cs, rs))
-        repo._db.update_one.assert_called_once()
+        repo._db.update_one.assert_called_once()  # type: ignore[reportOptionalMemberAccess]
 
     def test_save_without_reflector_state(self):
         import asyncio
         repo = SessionRepository(db=MagicMock())
-        repo._db.update_one = AsyncMock()
+        repo._db.update_one = AsyncMock()  # type: ignore[reportOptionalMemberAccess]
         cs = CharacterState(session_id=SessionId("sid"))
         asyncio.run(repo.save(SessionId("sid"), [], cs))
-        repo._db.update_one.assert_called_once()
+        repo._db.update_one.assert_called_once()  # type: ignore[reportOptionalMemberAccess]
 
     def test_save_returns_none_when_db_none(self):
         import asyncio
