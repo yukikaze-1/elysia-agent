@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 from core.schema.message import MessageRole, UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.part import TextPart
-from core.schema.types import MessageId
+from core.schema.types import MessageId, ToolCallId
 from Module.tool.protocol import ErrorType
 
 
@@ -123,7 +123,7 @@ class TestToolResultMessage:
     def test_success_result(self):
         msg = ToolResultMessage(
             content=[TextPart(content="done")],
-            tool_call_id="call_001",
+            tool_call_id=ToolCallId("call_001"),
             tool_name="web_search",
             success=True,
             duration_ms=1234.5,
@@ -137,7 +137,7 @@ class TestToolResultMessage:
     def test_error_result(self):
         msg = ToolResultMessage(
             content=[TextPart(content="timeout")],
-            tool_call_id="call_002",
+            tool_call_id=ToolCallId("call_002"),
             tool_name="web_search",
             success=False,
             error="request timed out",
