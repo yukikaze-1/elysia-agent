@@ -503,7 +503,7 @@ async def test_e2e_simple_query():
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -543,7 +543,7 @@ async def test_e2e_multi_step_success():
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -581,7 +581,7 @@ async def test_e2e_search_and_report():
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -622,7 +622,7 @@ async def test_e2e_replan_recovery():
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -781,7 +781,7 @@ async def test_e2e_llm_direct_execution():
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -820,7 +820,7 @@ async def test_e2e_cancel():
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
@@ -936,7 +936,7 @@ async def test_e2e_pause_resume():
         wrap_llm=False,
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
     _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
