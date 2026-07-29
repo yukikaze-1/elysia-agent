@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from ..debug.prompt_recorder import PromptRecorder
     from ..debug.response_recorder import ResponseRecorder
     from Module.task_system.mailbox import TaskMailbox
+    from .status import AgentStatus, CognitivePhaseController
 
 from Module.output import OutputManager, ConsoleChannel
 
@@ -230,6 +231,18 @@ class Agent(AgentLifecycle, AgentServer):
             character=self._character,
             fsm=self._fsm,
             event_bus=self._bus,
+        )
+
+        # ---- Status & Phase Controller ----
+        from .status import FSMBackedStatus, FSMBackedPhaseController
+
+        self.status: AgentStatus = FSMBackedStatus(self._fsm)
+        self.phases: CognitivePhaseController = FSMBackedPhaseController(
+            fsm=self._fsm,
+            bus=self._bus,
+            output=self._output,
+            tts_mgr=self._cognitive._tts_mgr,
+            status=self.status,
         )
 
         # Worker Pool — 执行 AI 规划的工具子任务 + 后台任务
