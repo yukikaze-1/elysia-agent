@@ -978,7 +978,7 @@ Agent/
 │   │   ├── server.py         #     aiohttp 应用入口
 │   │   ├── ws_handler.py     #     WebSocket 消息路由
 │   │   ├── api_routes.py     #     REST API 路由
-│   │   ├── debug_routes.py   #     Debug API 路由
+│   │   ├── debug_routes/     #     Debug API 路由 (package: 7 modules)
 │   │   ├── audio_buffer.py   #     音频缓冲 + VAD
 │   │   ├── wakeword.py       #     唤醒词检测
 │   │   └── custom_providers.py #   自定义 provider 路由

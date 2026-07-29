@@ -213,7 +213,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.database.documentdb` | Document DB | `mongodb` |
 | `Module.database.graphdb` | Graph DB | stub only |
 | `Module.bench` | Latency benchmarking | Covers LLM/TTS/STT |
-| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (glue), `ws_handler.py`, `api_routes.py`, `debug_routes.py` |
+| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (glue), `ws_handler.py`, `api_routes.py`, `debug_routes/` (package, 7 modules) |
 | `Module._common` | Shared utility layer | env, registry helpers, test helpers |
 
 ## Config system
@@ -364,7 +364,7 @@ cd frontend && npm run build
 
 **Stores**: `debugStore.ts` — Pinia (Composition API): poll lifecycle, activeTab switching, pause/resume, LTM/Archive pagination state.
 
-### Server routing (`core/input/` — `server.py` + `ws_handler.py` + `api_routes.py` + `debug_routes.py`)
+### Server routing (`core/input/` — `server.py` + `ws_handler.py` + `api_routes.py` + `debug_routes/` package)
 
 `/` → `static/index.html`, `/debug` → `static/debug.html`, `/ws` → WebSocket, `/health` `/ready` `/shutdown` `/restart` `/api/chat` `/api/messages` `/api/images` `/api/providers` `/tools` `/tools/reload`。Debug API: `/debug/api` `/debug/api/prompts/{n}` `/debug/api/responses/{n}` `/debug/api/db-status` `/debug/api/ltm` `/debug/api/sessions` `/debug/api/archive` `/debug/api/tasks/stream`
 

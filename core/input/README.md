@@ -14,7 +14,7 @@ input/
 ├── server.py            # 胶水组装 + 基础路由
 ├── ws_handler.py        # WebSocket 处理
 ├── api_routes.py        # 业务 API 路由
-├── debug_routes.py      # Debug API 路由
+├── debug_routes/         # Debug API 路由 (package: 7 modules)
 ├── wakeword.py          # WakeWordDetector — 唤醒词检测
 ├── tests/               # 单元测试
 └── README.md
