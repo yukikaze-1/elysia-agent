@@ -256,10 +256,11 @@ class TestDoInterruptSkipIf:
         from core.input.ws_handler import do_interrupt as _do_interrupt
 
         agent = MagicMock()
-        agent._fsm.state = "thinking"
+        agent.status = MagicMock()
+        agent.status.should_suppress_vad_interrupt = True
         agent._bus.post = MagicMock()
 
-        await _do_interrupt(agent, skip_if={"thinking", "executing"})
+        await _do_interrupt(agent, skip_vad=True)
 
         agent._bus.post.assert_not_called()
 
@@ -268,10 +269,11 @@ class TestDoInterruptSkipIf:
         from core.input.ws_handler import do_interrupt as _do_interrupt
 
         agent = MagicMock()
-        agent._fsm.state = "executing"
+        agent.status = MagicMock()
+        agent.status.should_suppress_vad_interrupt = True
         agent._bus.post = MagicMock()
 
-        await _do_interrupt(agent, skip_if={"thinking", "executing"})
+        await _do_interrupt(agent, skip_vad=True)
 
         agent._bus.post.assert_not_called()
 
@@ -282,10 +284,11 @@ class TestDoInterruptSkipIf:
         from core.schema.event import InterruptData
 
         agent = MagicMock()
-        agent._fsm.state = "speaking"
+        agent.status = MagicMock()
+        agent.status.should_suppress_vad_interrupt = False
         agent._bus.post = MagicMock()
 
-        await _do_interrupt(agent, skip_if={"thinking", "executing"})
+        await _do_interrupt(agent, skip_vad=True)
 
         agent._bus.post.assert_called_once()
         args, kwargs = agent._bus.post.call_args
@@ -299,10 +302,11 @@ class TestDoInterruptSkipIf:
         from core.schema.event import InterruptData
 
         agent = MagicMock()
-        agent._fsm.state = "executing"
+        agent.status = MagicMock()
+        agent.status.should_suppress_vad_interrupt = False
         agent._bus.post = MagicMock()
 
-        await _do_interrupt(agent)  # no skip_if
+        await _do_interrupt(agent)
 
         agent._bus.post.assert_called_once()
         args, kwargs = agent._bus.post.call_args
@@ -347,7 +351,8 @@ class TestHandleJsonEdges:
         from core.input.ws_handler import handle_json_message as _handle_json
 
         agent = MagicMock()
-        agent._fsm.state = "speaking"
+        agent.status = MagicMock()
+        agent.status.should_suppress_vad_interrupt = False
         agent._bus.post = MagicMock()
         await _handle_json({"type": "interrupt"}, agent)
         agent._bus.post.assert_called_once()
@@ -372,7 +377,7 @@ class TestEndpoints:
         from core.input.server import create_app
 
         agent = MagicMock()
-        agent._fsm.state = "idle"
+        agent.status.current_name.return_value = "idle"
         agent._llm.model = "test-model"
         agent._session._messages = [1, 2, 3]
         agent._long_term.count = 42
@@ -428,7 +433,7 @@ class TestToolEndpoints:
         from core.input.server import create_app
 
         agent = MagicMock()
-        agent._fsm.state = "idle"
+        agent.status.current_name.return_value = "idle"
         agent._output = MagicMock()
         agent._bus = MagicMock()
         agent._tool_adapter._manager.plugin_list = [

@@ -101,7 +101,7 @@ async def handle_ws(
         audio_buf = AudioBuffer(
             stt_transcribe=stt_transcribe,
             aggressiveness=3,
-            on_interrupt=lambda: do_interrupt(agent, skip_if={"thinking", "executing"}),
+            on_interrupt=lambda: do_interrupt(agent, skip_vad=True),
             on_transcription=lambda text: do_transcription(
                 agent, ws, text, audio_buf, stt_emotion_state,
             ),
@@ -111,14 +111,14 @@ async def handle_ws(
 
         # Monitor FSM state to deafen mic when assistant is speaking (echo prevention)
         async def _monitor_state():
-            prev_state = None
+            prev_speaking = False
             while not ws.closed:
                 try:
                     await asyncio.sleep(0.1)
-                    current = agent._fsm.state
-                    if current != prev_state and current == "speaking" and audio_buf:
+                    current = agent.status.is_speaking
+                    if current and not prev_speaking and audio_buf:
                         audio_buf.deafen(2.0)
-                    prev_state = current
+                    prev_speaking = current
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -225,14 +225,15 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         logger.debug("WS 未知消息类型: %s", msg_type)
 
 
-async def do_interrupt(agent: "Agent", skip_if: set | None = None) -> None:
-    """Post INTERRUPT event. skip_if 可阻止特定状态下的 VAD 误触发。
+async def do_interrupt(agent: "Agent", skip_vad: bool = False) -> None:
+    """Post INTERRUPT event.
 
     Args:
-        agent: Agent instance with an event bus.
-        skip_if: Set of FSM states to skip interrupt for (prevents VAD false triggers).
+        agent: Agent instance.
+        skip_vad: If True, suppress during THINKING/EXECUTING (VAD false-positive).
+                  Button-press interrupts should pass skip_vad=False (default).
     """
-    if skip_if and agent._fsm.state in skip_if:
+    if skip_vad and agent.status.should_suppress_vad_interrupt:
         return
     from core.monitoring.event_bus import EventPriority
     agent._bus.post(InterruptData(source="websocket"), priority=EventPriority.INTERRUPT)

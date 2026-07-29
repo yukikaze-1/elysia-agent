@@ -134,7 +134,7 @@ def create_app(
         """
         agent = request.app["agent"]
         try:
-            fsm_state = agent._fsm.state
+            fsm_state = agent.status.current_name()
         except Exception:
             fsm_state = "unknown"
         return web.json_response({

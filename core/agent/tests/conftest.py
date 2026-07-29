@@ -21,11 +21,14 @@ def fake_agent():
     a._session = MagicMock()
     a._session.save = AsyncMock()
     a._session.messages = deque(maxlen=20)
-    # event bus + fsm
+    # event bus + fsm + status
     a._bus = MagicMock()
     a._bus.post = MagicMock()
     a._fsm = MagicMock()
     a._fsm.state = MagicMock()
+    a.status = MagicMock()
+    a.status.is_accepting_input = True
+    a.status.current_name.return_value = "idle"
     # 后台任务
     a._background_tasks = {}
     a._task_system = MagicMock()

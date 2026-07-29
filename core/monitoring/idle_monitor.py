@@ -8,11 +8,15 @@ import asyncio
 import logging
 import time
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from .event_bus import EventBus, EventPriority, EventType
-from ..agent.agent_fsm import AgentFSM, AgentState
+from ..agent.agent_fsm import AgentFSM
 from ..config.character_config import CharacterConfig
 from core.schema.event import SystemTickData
+
+if TYPE_CHECKING:
+    from core.agent.status import AgentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +29,7 @@ class IdleMonitor:
         character: CharacterConfig,
         fsm: AgentFSM,
         event_bus: EventBus,
+        status: "AgentStatus | None" = None,
     ):
         """初始化空闲监听器。
 
@@ -32,10 +37,16 @@ class IdleMonitor:
             character: 角色配置，包含唤醒词和主动触发配置。
             fsm: Agent 状态机，用于检查当前状态。
             event_bus: 事件总线，用于投递主动触发事件。
+            status: Agent 状态查询接口（可选，回退到 FSM 内联检查）。
         """
         self._character = character
         self._fsm = fsm
         self._bus = event_bus
+        if status is None:
+            from core.agent.status import FSMBackedStatus
+            self.status = FSMBackedStatus(fsm)
+        else:
+            self.status = status
         self._last_interaction: float = time.monotonic()
         self._running = False
         self._task: asyncio.Task | None = None
@@ -67,7 +78,7 @@ class IdleMonitor:
             try:
                 await asyncio.sleep(1.0)  # Tick every second
 
-                if self._fsm.state != AgentState.IDLE:
+                if not self.status.is_completely_idle:
                     continue
 
                 # Check proactive triggers

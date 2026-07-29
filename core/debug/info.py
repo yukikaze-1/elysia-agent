@@ -149,8 +149,8 @@ async def collect(agent: "Agent") -> DebugInfo:
     info = DebugInfo()
 
     # ---- System ----
-    info.fsm_state = str(agent._fsm.state)
-    info.fsm_previous = str(agent._fsm.previous) if agent._fsm.previous else None
+    info.fsm_state = agent.status.current_name()
+    info.fsm_previous = agent.status.previous_name()
     phase = agent._cognitive._phase
     info.turn_phase = phase.value if phase else None
     ct = agent._cognitive._current_task

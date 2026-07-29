@@ -290,14 +290,14 @@ class Agent(AgentLifecycle, AgentServer):
 
         self._idle.touch()
 
-        if self._fsm.state not in (AgentState.IDLE, AgentState.IDLE_BACKGROUND_TASK):
+        if not self.status.is_accepting_input:
             # Queue message instead of interrupting
             max_queue = self._config.agent.max_pending_messages
             if len(self._pending_messages) >= max_queue:
                 logger.warning("消息队列已满 (%d) — 丢弃消息", max_queue)
                 return
             logger.debug("Agent busy — 消息排队 (state=%s, queue=%d)",
-                       self._fsm.state, len(self._pending_messages) + 1)
+                       self.status.current_name(), len(self._pending_messages) + 1)
             self._pending_messages.append(_PendingMessage(
                 text=text, user_name=user_name, request_id=rid,
                 content=content,

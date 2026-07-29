@@ -53,7 +53,7 @@ class _LifecycleTools:
             "session": self._session,
             "_started_at": self._started_at,
             "_token_tracker": self._token_tracker,
-            "_fsm_state": str(self._fsm.state),
+            "_fsm_state": self.status.current_name(),
             "_session_msg_count": len(self._session.messages),
         })
         self._cognitive.configure(tool_adapter=self._tool_adapter)
