@@ -72,7 +72,7 @@ Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板
 | `log/README.md` | 日志文件详细说明 |
 | `.model_cache/` | 嵌入模型（`BAAI/bge-large-zh-v1.5/`，约 1.3GB） |
 | `data/ref/Elysia.wav` | GPT-SoVits 音色克隆参考音频（1.6MB） |
-| `frontend/` | Vue 3 前端源码（Vite + Pinia + TypeScript，含 Debug 应用） |
+| `frontend/` | Vue 3 前端源码（Vite + Pinia + TypeScript，含 Debug 应用）。详见 [frontend/README.md](frontend/README.md) |
 | `static/` | Vite 构建产物 + 非代码资源（由 aiohttp serve） |
 | `static/live2d-demo/` | Live2D 前端（Cubism SDK，index.html 待创建） |
 | `data/live2d-assets/` | Live2D 角色模型（.moc3 + 纹理，服务端映射到 `/live2d/`） |
