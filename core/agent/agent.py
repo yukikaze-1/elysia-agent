@@ -330,6 +330,8 @@ class Agent(AgentLifecycle, AgentServer):
                             event = mailbox.get_nowait()
                         except asyncio.QueueEmpty:
                             break  # 队列已空，继续下一个 task
+                        if event is None:
+                            continue  # 队列投递了 None 哨兵，跳过
                         data = event.data or {}
                         if event.type.value == "completed":
                             self._bus.post(TaskResultData(
