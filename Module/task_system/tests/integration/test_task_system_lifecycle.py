@@ -57,7 +57,7 @@ async def test_stop_after_task_completion():
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
     ts = await build_test_task_system(plugins=[TimePlugin])
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     # 提交简单任务
     ctx = DelegationContext(
@@ -135,7 +135,7 @@ async def test_pause_sets_flag_and_cleanly_stops():
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
     ts = await build_test_task_system(plugins=[TimePlugin])
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     ctx = DelegationContext(
         intent="现在几点了",
@@ -158,7 +158,7 @@ async def test_pause_sets_flag_and_cleanly_stops():
         sub_agent = ts._tasks.get(task_id)
         if sub_agent is not None:
             orch = sub_agent._orchestrator
-            assert orch._exec_state.pause_requested is True
+            assert orch._exec_state.pause_requested is True  # type: ignore[reportOptionalMemberAccess]
     except KeyError:
         # 任务已完成并清理——pause 对其无意义
         pass
@@ -191,7 +191,7 @@ async def test_concurrent_slot_limit():
     ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=1)
     await ts.start()
 
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     # 提交第一个任务——立刻拿到 mailbox
     ctx1 = DelegationContext(
@@ -271,7 +271,7 @@ async def test_goal_failed_triggers_replan():
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
     ts = await build_test_task_system(plugins=[TimePlugin])
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     # 缩小熔断阈值——2 次 replan 即触发熔断（而非默认 5），大幅缩短测试耗时。
     # 在完整套件中 LLM 可能被限速，每次 Replanner.replan() 耗时更长。
@@ -363,7 +363,7 @@ async def test_cancel_during_execution():
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
     ts = await build_test_task_system(plugins=[TimePlugin])
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     ctx = DelegationContext(
         intent="现在几点了",
@@ -430,7 +430,7 @@ async def test_pause_and_resume():
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
     ts = await build_test_task_system(plugins=[TimePlugin])
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     ctx = DelegationContext(
         intent="现在几点了",
@@ -530,7 +530,7 @@ async def test_cancel_on_paused_task():
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
     ts = await build_test_task_system(plugins=[TimePlugin])
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     ctx = DelegationContext(
         intent="现在几点了",
@@ -622,7 +622,7 @@ async def test_resume_idempotent_on_running():
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
     ts = await build_test_task_system(plugins=[TimePlugin])
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     ctx = DelegationContext(
         intent="现在几点了",
@@ -695,7 +695,7 @@ async def test_concurrent_tasks_no_interference():
     ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=2)
     await ts.start()
 
-    tools = get_tools_from_manager(ts._infra.tool_registry)
+    tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     ctx1 = DelegationContext(
         intent="现在几点了",
