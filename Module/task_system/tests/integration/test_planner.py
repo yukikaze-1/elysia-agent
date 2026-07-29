@@ -146,7 +146,7 @@ def _make_sample_plan() -> Plan:
                         description="天气信息的结构化 JSON，包含 temperature, humidity, precipitation"
                     ),
                     required=True,
-                    output_as="output:search_weather",
+                    output_as="output:search_weather",  # type: ignore[reportArgumentType]
                 ),
                 DAGNode(
                     node_id=NodeId("send_email"),
@@ -155,8 +155,8 @@ def _make_sample_plan() -> Plan:
                         description="邮件发送成功的确认信息"
                     ),
                     required=True,
-                    input_bindings=["output:search_weather"],
-                    output_as="output:send_email",
+                    input_bindings=["output:search_weather"],  # type: ignore[reportArgumentType]
+                    output_as="output:send_email",  # type: ignore[reportArgumentType]
                 ),
             ],
             edges=[(NodeId("search_weather"), NodeId("send_email"))],
