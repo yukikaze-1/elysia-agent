@@ -13,7 +13,7 @@ pytestmark = pytest.mark.unit
 class TestMongoCleaner:
     @pytest.mark.asyncio
     async def test_mongo_cleaner_deletes_all_collections(self):
-        from clean_db import MongoCleaner
+        from clean_db import MongoCleaner  # type: ignore[reportMissingImports]
 
         mock_db = AsyncMock()
         mock_db.delete_many = AsyncMock(return_value=10)
@@ -48,7 +48,7 @@ class TestMongoCleaner:
 
     @pytest.mark.asyncio
     async def test_mongo_cleaner_handles_failure(self):
-        from clean_db import MongoCleaner
+        from clean_db import MongoCleaner  # type: ignore[reportMissingImports]
 
         mock_db = AsyncMock()
         mock_db.close = AsyncMock()
@@ -79,7 +79,7 @@ class TestMongoCleaner:
     @pytest.mark.asyncio
     async def test_mongo_cleaner_factory_failure_is_caught(self):
         """DocumentDBFactory.create failure propagates so gather can catch it"""
-        from clean_db import MongoCleaner
+        from clean_db import MongoCleaner  # type: ignore[reportMissingImports]
 
         with patch(
             "clean_db.DocumentDBFactory.create",
@@ -93,7 +93,7 @@ class TestMongoCleaner:
 class TestMilvusCleaner:
     @pytest.mark.asyncio
     async def test_milvus_cleaner_calls_clear_all(self):
-        from clean_db import MilvusCleaner, MEM_COLLECTION
+        from clean_db import MilvusCleaner, MEM_COLLECTION  # type: ignore[reportMissingImports]
         from core.memory.long_term import LongTermMemory
 
         with patch(
@@ -115,7 +115,7 @@ class TestMilvusCleaner:
 
     @pytest.mark.asyncio
     async def test_milvus_cleaner_handles_failure(self):
-        from clean_db import MilvusCleaner, MEM_COLLECTION
+        from clean_db import MilvusCleaner, MEM_COLLECTION  # type: ignore[reportMissingImports]
         from core.memory.long_term import LongTermMemory
 
         with patch(
@@ -134,7 +134,7 @@ class TestMilvusCleaner:
 
 class TestFileCleaner:
     def test_file_cleaner_deletes_known_files(self, tmp_path):
-        from clean_db import FileCleaner
+        from clean_db import FileCleaner  # type: ignore[reportMissingImports]
 
         data_dir = tmp_path / "data"
         cache_dir = data_dir / "cache" / "vision"
@@ -168,7 +168,7 @@ class TestFileCleaner:
         assert len(succeeded) >= 4  # at least 4 files deleted
 
     def test_file_cleaner_handles_missing_files(self, tmp_path):
-        from clean_db import FileCleaner
+        from clean_db import FileCleaner  # type: ignore[reportMissingImports]
 
         data_dir = tmp_path / "data"
         data_dir.mkdir(parents=True)
@@ -185,7 +185,7 @@ class TestFileCleaner:
 
 class TestCliArgs:
     def test_default_cleans_all(self):
-        from clean_db import parse_args
+        from clean_db import parse_args  # type: ignore[reportMissingImports]
         args = parse_args([])
         assert args.mongo_only is False
         assert args.milvus_only is False
@@ -194,26 +194,26 @@ class TestCliArgs:
         assert args.dry_run is False
 
     def test_force_flag(self):
-        from clean_db import parse_args
+        from clean_db import parse_args  # type: ignore[reportMissingImports]
         args = parse_args(["-f"])
         assert args.force is True
 
     def test_selective_flags(self):
-        from clean_db import parse_args
+        from clean_db import parse_args  # type: ignore[reportMissingImports]
         args = parse_args(["--mongo-only", "--files-only"])
         assert args.mongo_only is True
         assert args.files_only is True
         assert args.milvus_only is False
 
     def test_dry_run(self):
-        from clean_db import parse_args
+        from clean_db import parse_args  # type: ignore[reportMissingImports]
         args = parse_args(["--dry-run"])
         assert args.dry_run is True
 
 
 class TestBuildTargets:
     def test_no_flags_includes_all(self):
-        from clean_db import parse_args, build_targets
+        from clean_db import parse_args, build_targets  # type: ignore[reportMissingImports]
         args = parse_args([])
         targets = build_targets(args)
         assert "mongo" in targets
@@ -221,13 +221,13 @@ class TestBuildTargets:
         assert "files" in targets
 
     def test_mongo_only(self):
-        from clean_db import parse_args, build_targets
+        from clean_db import parse_args, build_targets  # type: ignore[reportMissingImports]
         args = parse_args(["--mongo-only"])
         targets = build_targets(args)
         assert targets == {"mongo"}
 
     def test_combined_flags(self):
-        from clean_db import parse_args, build_targets
+        from clean_db import parse_args, build_targets  # type: ignore[reportMissingImports]
         args = parse_args(["--mongo-only", "--milvus-only"])
         targets = build_targets(args)
         assert targets == {"mongo", "milvus"}
@@ -236,7 +236,7 @@ class TestBuildTargets:
 class TestDryRun:
     @pytest.mark.asyncio
     async def test_dry_run_checks_connections(self):
-        from clean_db import dry_run_check
+        from clean_db import dry_run_check  # type: ignore[reportMissingImports]
 
         with patch(
             "clean_db.DocumentDBFactory.create"
@@ -263,7 +263,7 @@ class TestDryRun:
 
     @pytest.mark.asyncio
     async def test_dry_run_reports_failure(self):
-        from clean_db import dry_run_check
+        from clean_db import dry_run_check  # type: ignore[reportMissingImports]
 
         with patch(
             "clean_db.DocumentDBFactory.create",
