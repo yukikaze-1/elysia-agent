@@ -62,7 +62,7 @@ class TestDatabaseConfigEnvOverride:
     然后创建 ConfigField 验证 resolve 逻辑"""
     def test_mongodb_uri_from_env(self, monkeypatch):
         monkeypatch.setenv("MONGODB_URI", "mongodb://custom:27017")
-        cfg = DatabaseConfig()  # ConfigField 从 env var 读取
+        cfg = ConfigLoader(DatabaseConfig).load()
         assert cfg.mongodb_uri == "mongodb://custom:27017"
 ```
 
