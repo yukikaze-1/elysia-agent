@@ -117,22 +117,18 @@ class FSMBackedStatus(AgentStatus):
 
     @property
     def is_accepting_input(self) -> bool:
-        from .agent_fsm import AgentState
         return self._fsm.state in (AgentState.IDLE, AgentState.IDLE_BACKGROUND_TASK)
 
     @property
     def is_completely_idle(self) -> bool:
-        from .agent_fsm import AgentState
         return self._fsm.state == AgentState.IDLE
 
     @property
     def is_speaking(self) -> bool:
-        from .agent_fsm import AgentState
         return self._fsm.state == AgentState.SPEAKING
 
     @property
     def should_suppress_vad_interrupt(self) -> bool:
-        from .agent_fsm import AgentState
         return self._fsm.state in (AgentState.THINKING, AgentState.EXECUTING)
 
     def current_name(self) -> str:
@@ -152,8 +148,6 @@ class FSMBackedStatus(AgentStatus):
         include_background: bool = False,
         timeout: float | None = None,
     ) -> None:
-        from .agent_fsm import AgentState
-
         # 当前已满足条件？立即返回
         if self.is_completely_idle:
             return
@@ -306,7 +300,6 @@ class FSMBackedPhaseController(CognitivePhaseController):
         await self._status._notify("speaking")
 
     async def finish_turn(self, *, has_background_tasks: bool) -> None:
-        import asyncio
         from core.monitoring.event_bus import EventPriority
         from core.schema.event import StateChangeData
         from core.utils import get_request_id
@@ -339,7 +332,6 @@ class FSMBackedPhaseController(CognitivePhaseController):
             await self._status._notify("idle")
 
     async def handle_interrupt(self) -> None:
-        import asyncio
         from core.monitoring.event_bus import EventPriority
         from core.schema.event import StateChangeData
         from core.utils import get_request_id
