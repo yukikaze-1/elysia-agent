@@ -50,14 +50,14 @@ Agent.__init__()
   ├── SessionMemory / LongTermMemory
   ├── CharacterEngine
   ├── PromptAssembler (12 sections)
-  ├── ToolManager (plugin loading)
+  ├── ToolAdapter (tool plugin loading)
   ├── TaskScheduler
   ├── IdleMonitor
   └── OutputManager
 Agent.start()
   ├── DB connect (MongoDB + Milvus, parallel)
   ├── Embedding preload (background, 10s timeout)
-  ├── ToolManager.load_all()
+  ├── ToolAdapter.load_all()
   ├── IdleMonitor.start()
   ├── TaskScheduler.start()
   ├── EventBus loop start
@@ -69,7 +69,7 @@ Agent.start()
 
 ## 核心组件
 
-`core/` 根目录 + 子包共约 40 个 `.py` 文件。其中 9 个为核心组件（详细描述），12 个为支撑模块（简表），另有 6 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
+`core/` 根目录 + 子包共约 120 个 `.py` 文件。其中 9 个为核心组件（详细描述），12 个为支撑模块（简表），另有 15 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`, `input/` 等）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
 
 ### 核心组件详解（9 个）
 
@@ -214,7 +214,7 @@ core/tools/<name>/
 └── README.md
 ```
 
-在 `core/tools/__init__.py` 的 `ALL_PLUGINS` 列表中注册插件类。Agent 启动时 `ToolManager.load_all(ALL_PLUGINS, plugin_ctx)` 自动加载。如需为工具提供依赖服务，在 `Agent._start_tool_context()` 中向 `ToolContext.services` 注入。
+在 `core/tools/__init__.py` 的 `ALL_PLUGINS` 列表中注册插件类。Agent 启动时 `ToolAdapter` 通过 `ALL_PLUGINS` 自动加载。如需为工具提供依赖服务，在 `Agent._start_tool_context()` 中向 `ToolContext.services` 注入。
 
 ### 添加新 Prompt Section
 
@@ -244,24 +244,25 @@ Agent 生命周期中的关键扩展点：
 
 ### 文件索引
 
-| 文件 | 行数（约） | 类型 |
-|------|-----------|------|
-| `agent/agent.py` | 1004 | 核心组件 |
-| `agent/agent_fsm.py` | 57 | 核心组件 |
-| `monitoring/event_bus.py` | 60 | 核心组件 |
-| `cognitive/loop.py` | 1042 | 核心组件 |
-| `personality/engine.py` | ~320 | 核心组件 |
-| `memory/consolidator.py` | ~300 | 核心组件 |
-| `adapter/prompt_assembler.py` | ~130 | 核心组件 |
-| `monitoring/idle_monitor.py` | ~130 | 核心组件 |
-| `task/scheduler.py` | ~430 | 核心组件 |
-| `config/character_config.py` | ~80 | 支撑模块 |
-| `config/app_config.py` | ~70 | 支撑模块 |
-| `text/` | 3 文件 (~610) | 支撑模块 |
-| `utils/message_id.py` | 11 | 支撑模块 |
-| `debug/` | 3 文件 (~520) | 支撑模块 |
-| `utils/log_setup.py` | ~150 | 支撑模块 |
-| `monitoring/token_tracker.py` | ~190 | 支撑模块 |
-| `task/task.py` | ~80 | 支撑模块 |
+| 文件 | 行数 | 类型 |
+|------|------|------|
+| `agent/agent.py` | 522 | 核心组件 |
+| `agent/agent_fsm.py` | 83 | 核心组件 |
+| `monitoring/event_bus.py` | 76 | 核心组件 |
+| `cognitive/loop.py` | 986 | 核心组件 |
+| `personality/engine.py` | 414 | 核心组件 |
+| `memory/consolidator.py` | 349 | 核心组件 |
+| `adapter/prompt_assembler.py` | 169 | 核心组件 |
+| `monitoring/idle_monitor.py` | 112 | 核心组件 |
+| `task/scheduler.py` | 509 | 核心组件 |
+| `config/character_config.py` | 148 | 支撑模块 |
+| `config/app_config.py` | 107 | 支撑模块 |
+| `text/` | 3 文件 (708) | 支撑模块 |
+| `utils/message_id.py` | 15 | 支撑模块 |
+| `debug/` | 3 文件 (622) | 支撑模块 |
+| `utils/log_setup.py` | 213 | 支撑模块 |
+| `monitoring/token_tracker.py` | 191 | 支撑模块 |
+| `task/task.py` | 222 | 支撑模块 |
+| `input/debug_routes/` | 7 文件 (888) | 支撑模块 |
 | `schema/` | 目录（13 .py + adapters/） | 支撑模块 |
 | `__init__.py` | 0 | 包标记 |
