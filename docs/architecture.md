@@ -570,7 +570,7 @@ _history: 最近 20 条 (供 /debug 面板)
 _buffer: 未达阈值的待处理对话
 ```
 
-### 5.5 ToolManager
+### 5.5 ToolAdapter
 
 Pydantic ToolPlugin 架构：
 
@@ -583,8 +583,8 @@ class WebSearchPlugin(ToolPlugin):
     capabilities = {Capability.NETWORK}
     safety = SafetyProfile(network_allowed=True, block_private_ips=True, ...)
 
-# ToolManager 统一管理: 加载、执行、HITL 审批、热重载
-tool_manager.load_all(ALL_PLUGINS, plugin_ctx)
+# ToolAdapter 统一管理: 加载、执行、HITL 审批、热重载
+tool_adapter.load_all(ALL_PLUGINS, plugin_ctx)
 
 # CognitiveLoop 自动:
 # tool_definitions() → LLM 请求（通过 API tools 参数传递，不再注入 system prompt）
@@ -823,7 +823,7 @@ class Agent:
     def __init__(self, *, config: AppConfig):
         # L0: OutputManager + ConsoleChannel
         # Character: CharacterConfig.from_yaml(config.agent.character)
-        # L2: SessionMemory + LongTermMemory + ToolManager
+        # L2: SessionMemory + LongTermMemory + ToolAdapter
         #     + register 12 tools (ALL_PLUGINS)
         # L1: EventBus + AgentFSM + LLMAdapter + PromptAssembler
         #     + CharacterEngine + MemoryConsolidator
@@ -840,7 +840,7 @@ class Agent:
         # MongoDB + Milvus 并行连接
         # SessionMemory.load() — 恢复历史会话
         # TokenTracker + PromptRecorder 初始化
-        # ToolManager.load_all(ALL_PLUGINS) — 加载工具插件
+        # ToolAdapter.load_all(ALL_PLUGINS) — 加载工具插件
         # TaskScheduler Worker Pool 启动
         # IdleMonitor.start()
         # TTS 条件启动（STT 在 run_server() 中初始化）

@@ -160,7 +160,7 @@ bash scripts/setup.sh
 ```
 L0  Module/              无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/, system_prompt, tool
 L1  core/                认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
-L2  core/memory/         记忆与工具 — SessionMemory, LongTermMemory, ToolManager (Plugin 架构)
+L2  core/memory/         记忆与工具 — SessionMemory, LongTermMemory, ToolAdapter (Plugin 架构)
 L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
 ```
 
@@ -195,7 +195,6 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Database | [Module/database/README.md](Module/database/README.md) | 数据库总览（Milvus + MongoDB） |
 | VectorDB | [Module/database/vectordb/README.md](Module/database/vectordb/README.md) | 向量数据库（Milvus） |
 | DocumentDB | [Module/database/documentdb/README.md](Module/database/documentdb/README.md) | 文档数据库（MongoDB） |
-| Input | [core/input/README.md](core/input/README.md) | AudioBuffer + WebSocket 服务器 |
 | Bench | [Module/bench/README.md](Module/bench/README.md) | 延迟基准测试 |
 | Module 总览 | [Module/README.md](Module/README.md) | 架构模式 + 各模块 API 速览 |
 
@@ -203,6 +202,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | 模块 | README | 说明 |
 |------|--------|------|
 | Core 总览 | [core/README.md](core/README.md) | 认知中枢架构 + 组件详解 |
+| Input | [core/input/README.md](core/input/README.md) | AudioBuffer + WebSocket 服务器 + Debug API |
 | Agent | [core/agent/README.md](core/agent/README.md) | 组装入口 + 生命周期管理 |
 | CognitiveLoop | [core/cognitive/README.md](core/cognitive/README.md) | ReAct 调度器 + StreamProcessor 流式解析 |
 | Memory | [core/memory/README.md](core/memory/README.md) | 记忆子系统（Session + LTM + EmbeddingProvider + 沉淀 + 去重） |
@@ -334,7 +334,6 @@ Agent/
 │   ├── system_prompt/      # Brain Prompt 引擎 — SystemPromptManager + 12 PromptSections
 │   ├── tool/               # 工具框架 (129 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB
-│   ├── input/              # AudioBuffer + WebSocket server
 │   ├── task_system/        # TaskSystem v1 (339 tests)
 │   │   └── tests/          #     测试
 │   └── bench/              # 延迟基准
@@ -345,19 +344,17 @@ Agent/
 │   ├── adapter/             # 适配层: LLM + TTS + tool_call_parser
 │   ├── text/                # 文本流处理 (BlockFilter + SentenceBuffer)
 │   ├── debug/               # Debug 面板数据层
+│   ├── input/               # 输入层: AudioBuffer + WebSocket server + debug API
 │   ├── memory/              # 记忆子系统 (Session + LTM + EmbeddingProvider + Consolidator + Reflector)
+│   ├── monitoring/          # 可观测性: EventBus + IdleMonitor + TokenTracker
 │   ├── personality/         # CharacterEngine: 四层性格模型
 │   ├── schema/              # 共享 Pydantic 类型 (Event, Message, Part 等)
+│   ├── storage/             # Repository 层 (Session/Message/Token/Memory/CharacterVersion)
 │   ├── tools/               # 工具插件 (filesystem, web, memory 等)
 │   ├── tests/               # 测试套件
-│   ├── agent_fsm.py         # 状态机: IDLE → THINKING → EXECUTING → SPEAKING
 │   ├── config/               # 配置子包 (AppConfig + CharacterConfig)
-│   ├── event_bus.py           # 优先级事件总线 (asyncio.PriorityQueue)
-│   ├── idle_monitor.py        # IdleMonitor: 唤醒词 + 主动触发
 │   ├── utils/                  # 通用工具 (message_id + log_setup)
-│   ├── prompt_assembler.py    # PromptAssembler: 12 sections → SystemPromptManager
 │   ├── task/                  # 任务子系统 (Task 数据模型 + TaskScheduler Worker Pool)
-│   ├── token_tracker.py     # Token 消耗追踪
 │   ├── prompts/              # Prompt 模板 (Jinja2 .j2)
 │   │   ├── ExtractMemory.j2  #   对话提取记忆
 │   │   ├── ConsolidationCompare.j2 # 记忆比对
@@ -416,7 +413,7 @@ Agent/
 
 ## 测试
 
-1384 个测试按 4 层 markers 组织。详见 [docs/testing.md](docs/testing.md)。
+1869 个测试按 4 层 markers 组织。详见 [docs/testing.md](docs/testing.md)。
 
 ```bash
 conda activate Elysia
