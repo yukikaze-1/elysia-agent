@@ -135,7 +135,7 @@ class Task:
             Task: 新创建的工具调用任务
         """
         payload: ToolCallPayload = {"tool_name": tool_name, "arguments": arguments}
-        return cls(
+        return cls(  # type: ignore[reportCallIssue]
             id=new_message_id(),
             type=TaskType.TOOL_CALL,
             parent_id=parent_id,
@@ -158,7 +158,7 @@ class Task:
         Returns:
             Task: 新创建的后台任务
         """
-        return cls(
+        return cls(  # type: ignore[reportCallIssue]
             id=new_message_id(),
             type=TaskType.BACKGROUND,
             priority=priority,
@@ -203,7 +203,7 @@ class Task:
         Returns:
             Task: 反序列化的任务实例
         """
-        return cls(
+        return cls(  # type: ignore[reportCallIssue]
             id=d["id"],
             type=TaskType(d["type"]),
             status=TaskStatus(d.get("status", "pending")),
