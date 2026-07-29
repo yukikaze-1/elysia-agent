@@ -171,13 +171,14 @@ class CognitivePhaseController:
         """
 
     async def handle_interrupt(self) -> None:
-        """中断当前处理——取消 TTS，重置缓冲区，返回 IDLE。
+        """中断状态转换——进入 INTERRUPTED，50ms 后回到 IDLE。
         
-        封装：sentence_buf.reset + block_filter.reset + executing_tools.clear
-              + tts_mgr.cancel_all + output.typing(False)
-              + transition(→ INTERRUPTED) + post StateChangeData("interrupted")
+        封装：transition(→ INTERRUPTED) + post + _notify
               + asyncio.sleep(0.05)
-              + transition(→ IDLE) + post StateChangeData("idle")。
+              + transition(→ IDLE) + post + _notify。
+        资源清理（sentence_buf/block_filter reset、executing_tools clear、
+        tts_mgr cancel_all、output.typing(False)）由调用方完成——这些是流式管线的
+        职责，不属于状态转换。
         
         前置：调用方需先检查 !is_completely_idle（防止 stale CancelledError）。
         """
@@ -404,6 +405,7 @@ Phase 1 期间，`agent._fsm` 不做 `__private` 改名。新增 `agent.status` 
 | 文件 | 当前 | 改为 |
 |------|------|------|
 | `core/agent/agent.py` L279 | `self._fsm.state not in (IDLE, IDLE_BG)` | `not self.status.is_accepting_input` |
+| `core/agent/agent.py` L286 | `self._fsm.state`（debug 日志） | `self.status.current_name()` |
 | `core/monitoring/idle_monitor.py` L70 | `self._fsm.state != AgentState.IDLE` | `not self.status.is_completely_idle` |
 | `core/input/ws_handler.py` L118-121 | 100ms 轮询 `agent._fsm.state` | `agent.status.on_change(_mic_callback)` |
 | `core/input/ws_handler.py` L104,235 | `state in {"thinking","executing"}` | `agent.status.should_suppress_vad_interrupt` |
