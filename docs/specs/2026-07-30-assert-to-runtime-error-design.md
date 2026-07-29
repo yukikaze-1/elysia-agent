@@ -16,15 +16,15 @@
 
 | 类别 | 数量 | 策略 |
 |------|------|------|
-| 防御式忽略 | 5 | `if x: do()` / 返回 500 |
-| RuntimeError | 24 | `if x is None: raise RuntimeError("msg")` |
-| 冒烟测试（不碰） | 20 | `Module/tool/__main__.py` |
+| 防御式忽略 | 6 | `if x: do()` / 返回 500 |
+| RuntimeError | 22 | `if x is None: raise RuntimeError("msg")` |
+| 冒烟测试（不碰） | 19 | `Module/tool/__main__.py` |
 
 ---
 
 ## 具体变更
 
-### A. 防御式忽略（5 处）
+### A. 防御式忽略（6 处）
 
 #### `Module/task_system/task_system.py`（3 处）
 
@@ -44,7 +44,7 @@
 
 ---
 
-### B. RuntimeError（24 处）
+### B. RuntimeError（22 处）
 
 #### `core/cognitive/tools.py`（3 处）
 
@@ -123,6 +123,6 @@ make test-quick
 
 ## 不做
 
-- `Module/tool/__main__.py` 的 20 处 assert 保持不动（冒烟测试文件）
+- `Module/tool/__main__.py` 的 19 处 assert 保持不动（冒烟测试文件）
 - 不改变任何函数的签名或返回值类型
 - 不引入新的依赖
