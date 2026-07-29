@@ -194,11 +194,10 @@ class CognitiveLoop(CognitiveTools):
     def phases(self):
         """CognitivePhaseController — 由 agent.py 注入（或直接构造时懒加载回退）。"""
         if self._phases is None:
-            from ..agent.status import FSMBackedPhaseController, FSMBackedStatus
-            status = FSMBackedStatus(self._fsm)
+            from ..agent.status import FSMBackedPhaseController
             self._phases = FSMBackedPhaseController(
                 fsm=self._fsm, bus=self._bus, output=self._output,
-                tts_mgr=self._tts_mgr, status=status,
+                tts_mgr=self._tts_mgr, status=self.status,
             )
         return self._phases
 
