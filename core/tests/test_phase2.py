@@ -35,15 +35,15 @@ class TestSessionPersistence:
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
-        from core.schema.types import MessageId
+        from core.schema.types import MessageId, SessionId
 
-        s1 = SessionMemory(max_messages=3, session_id="test-max-restore")
+        s1 = SessionMemory(max_messages=3, session_id=SessionId("test-max-restore"))
         for i in range(5):
             s1.add_message(UserMessage(content=[TextPart(content=f"msg{i}")], message_id=MessageId(f"max-r-{i}")))
 
         assert await s1.save() is True
 
-        s2 = SessionMemory(max_messages=3, session_id="test-max-restore")
+        s2 = SessionMemory(max_messages=3, session_id=SessionId("test-max-restore"))
         await s2.load()
         assert len(s2.recent_messages()) == 3
 
@@ -57,7 +57,8 @@ class TestSessionPersistence:
     async def test_connect_fallback(self):
         """connect_db should return False when MongoDB is unavailable."""
         from core.memory.session import SessionMemory
-        s = SessionMemory(session_id="test")
+        from core.schema.types import SessionId
+        s = SessionMemory(session_id=SessionId("test"))
         result = await s.connect_db()
         # MongoDB may or may not be available — either is fine
         assert result in (True, False)
@@ -70,13 +71,13 @@ class TestSessionPersistence:
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
-        from core.schema.types import MessageId
+        from core.schema.types import MessageId, SessionId
 
-        s = SessionMemory(session_id="test-save-load")
+        s = SessionMemory(session_id=SessionId("test-save-load"))
         s.add_message(UserMessage(content=[TextPart(content="hello")], message_id=MessageId("svld-1")))
         # No connect_db called, so _db is None — local file fallback
         assert await s.save() is True
-        s2 = SessionMemory(session_id="test-save-load")
+        s2 = SessionMemory(session_id=SessionId("test-save-load"))
         ok = await s2.load()
         assert ok is True
         assert len(s2._messages) == 1
@@ -388,16 +389,16 @@ class TestSessionMemoryEdgeCases:
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
-        from core.schema.types import MessageId
+        from core.schema.types import MessageId, SessionId
 
-        s1 = SessionMemory(session_id="alice")
-        s2 = SessionMemory(session_id="bob")
+        s1 = SessionMemory(session_id=SessionId("alice"))
+        s2 = SessionMemory(session_id=SessionId("bob"))
 
         s1.add_message(UserMessage(content=[TextPart(content="alice msg")], message_id=MessageId("indep-1")))
         s2.add_message(UserMessage(content=[TextPart(content="bob msg")], message_id=MessageId("indep-2")))
 
-        s1_msgs = [m.content[0].content for m in s1.recent_messages()]
-        s2_msgs = [m.content[0].content for m in s2.recent_messages()]
+        s1_msgs = [m.content[0].content for m in s1.recent_messages()]  # type: ignore[reportAttributeAccessIssue]
+        s2_msgs = [m.content[0].content for m in s2.recent_messages()]  # type: ignore[reportAttributeAccessIssue]
 
         assert "alice msg" in s1_msgs
         assert "bob msg" in s2_msgs
@@ -419,7 +420,7 @@ class TestSessionMemoryEdgeCases:
 
         msgs = s.recent_messages()
         assert len(msgs) == 3
-        contents = [m.content[0].content for m in msgs]
+        contents = [m.content[0].content for m in msgs]  # type: ignore[reportAttributeAccessIssue]
         assert "first" not in contents
         assert "second" not in contents
         assert "third" in contents
@@ -437,7 +438,7 @@ class TestSessionMemoryEdgeCases:
             s.add_message(UserMessage(content=[TextPart(content=f"msg{i}")], message_id=MessageId(f"recn-{i}")))
 
         assert len(s.recent_messages(3)) == 3
-        assert s.recent_messages(3)[-1].content[0].content == "msg9"
+        assert s.recent_messages(3)[-1].content[0].content == "msg9"  # type: ignore[reportAttributeAccessIssue]
 
     def test_meta_data_on_messages(self):
         """Messages with extra metadata should preserve it."""
@@ -463,20 +464,20 @@ class TestSessionMemoryEdgeCases:
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
-        from core.schema.types import MessageId
+        from core.schema.types import MessageId, SessionId
 
-        s = SessionMemory(max_messages=3, session_id="caps-test")
+        s = SessionMemory(max_messages=3, session_id=SessionId("caps-test"))
         for i in range(10):
             s.add_message(UserMessage(content=[TextPart(content=f"msg{i}")], message_id=MessageId(f"cap-{i}")))
 
         await s.save()
 
-        s2 = SessionMemory(max_messages=3, session_id="caps-test")
+        s2 = SessionMemory(max_messages=3, session_id=SessionId("caps-test"))
         await s2.load()
         msgs = s2.recent_messages()
         assert len(msgs) == 3
-        assert msgs[0].content[0].content == "msg7"
-        assert msgs[2].content[0].content == "msg9"
+        assert msgs[0].content[0].content == "msg7"  # type: ignore[reportAttributeAccessIssue]
+        assert msgs[2].content[0].content == "msg9"  # type: ignore[reportAttributeAccessIssue]
 
         try:
             _os.remove(s._pending_file)
@@ -488,9 +489,9 @@ class TestSessionMemoryEdgeCases:
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
-        from core.schema.types import MessageId
+        from core.schema.types import MessageId, SessionId
 
-        s = SessionMemory(session_id="persist")
+        s = SessionMemory(session_id=SessionId("persist"))
         s.add_message(UserMessage(content=[TextPart(content="data")], message_id=MessageId("clrp-1")))
         s.character_state.mood = "happy"
         s.clear()
@@ -515,9 +516,9 @@ class TestSessionMemoryEdgeCases:
             message_id=MessageId("client-s-2"),
         ))
         result = s.messages_for_client()
-        assert result[0]["parts"] == [{"content": "Hello"}, {"content": "world"}]
-        assert result[0]["role"] == "assistant"
-        assert result[1]["role"] == "user"
+        assert result[0]["parts"] == [{"content": "Hello"}, {"content": "world"}]  # type: ignore[reportGeneralTypeIssues]
+        assert result[0]["role"] == "assistant"  # type: ignore[reportGeneralTypeIssues]
+        assert result[1]["role"] == "user"  # type: ignore[reportGeneralTypeIssues]
 
     def test_messages_for_client_new_format(self):
         """messages_for_client should serialize Pydantic Message to client dict."""
@@ -534,9 +535,9 @@ class TestSessionMemoryEdgeCases:
         )
         s.add_message(msg)
         result = s.messages_for_client()
-        assert result[0]["message_id"] == "msg_abc"
-        assert result[0]["role"] == "assistant"
-        assert result[0]["inner_voice"] == "feeling good"
+        assert result[0]["message_id"] == "msg_abc"  # type: ignore[reportGeneralTypeIssues]
+        assert result[0]["role"] == "assistant"  # type: ignore[reportGeneralTypeIssues]
+        assert result[0]["inner_voice"] == "feeling good"  # type: ignore[reportGeneralTypeIssues]
 
     def test_messages_for_client_empty(self):
         from core.memory.session import SessionMemory
@@ -745,7 +746,7 @@ class TestCompareAndResolve:
         """merge/update → update_text；insert → insert 且计数；skip → 无操作。"""
         import json
         from core.memory.consolidator import MemoryConsolidator
-        from core.schema.memory import ExtractedMemory
+        from core.schema.memory import ExtractedMemory, MemoryType
 
         actions = [
             {"action": "merge", "target_id": "mem-1", "merged_content": "合并内容",
@@ -757,7 +758,7 @@ class TestCompareAndResolve:
         mem = self._make_memory()
         c = MemoryConsolidator(self._make_llm(json.dumps(actions, ensure_ascii=False)), mem)  # type: ignore[arg-type]
 
-        new_items = [ExtractedMemory(type="Fact", content=f"新提取{i}") for i in range(4)]
+        new_items = [ExtractedMemory(type=MemoryType.FACT, content=f"新提取{i}") for i in range(4)]
         inserted = await c._compare_and_resolve(new_items)
 
         assert inserted == 1
@@ -771,15 +772,15 @@ class TestCompareAndResolve:
     async def test_bad_element_falls_back_to_insert_all(self):
         """比对输出含未知 action → _parse_compare_actions raise → 回退全部 insert。"""
         from core.memory.consolidator import MemoryConsolidator
-        from core.schema.memory import ExtractedMemory
+        from core.schema.memory import ExtractedMemory, MemoryType
 
         mem = self._make_memory()
         c = MemoryConsolidator(
             self._make_llm('[{"action": "skip"}, {"action": "unknown_action"}]'), mem)  # type: ignore[arg-type]
 
         new_items = [
-            ExtractedMemory(type="Fact", content="事实A", poignancy=4),
-            ExtractedMemory(type="Plan", content="计划B", poignancy=6),
+            ExtractedMemory(type=MemoryType.FACT, content="事实A", poignancy=4),
+            ExtractedMemory(type=MemoryType.PLAN, content="计划B", poignancy=6),
         ]
         inserted = await c._compare_and_resolve(new_items)
 
@@ -795,14 +796,14 @@ class TestCompareAndResolve:
     async def test_empty_compare_output_falls_back_to_insert_all(self):
         """LLM 比对返回 [] 但有 2 条 new_items → 数量不符 → 回退全部 insert（不静默丢失）。"""
         from core.memory.consolidator import MemoryConsolidator
-        from core.schema.memory import ExtractedMemory
+        from core.schema.memory import ExtractedMemory, MemoryType
 
         mem = self._make_memory()
         c = MemoryConsolidator(self._make_llm("[]"), mem)  # type: ignore[arg-type]
 
         new_items = [
-            ExtractedMemory(type="Fact", content="事实A"),
-            ExtractedMemory(type="Event", content="事件B"),
+            ExtractedMemory(type=MemoryType.FACT, content="事实A"),
+            ExtractedMemory(type=MemoryType.EVENT, content="事件B"),
         ]
         inserted = await c._compare_and_resolve(new_items)
 
@@ -839,9 +840,9 @@ class TestMemoryStress:
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage, AssistantMessage
         from core.schema.part import TextPart
-        from core.schema.types import MessageId
+        from core.schema.types import MessageId, SessionId
 
-        s = SessionMemory(max_messages=100, session_id="stress-snap")
+        s = SessionMemory(max_messages=100, session_id=SessionId("stress-snap"))
 
         for i in range(30):
             if i % 2 == 0:
@@ -850,7 +851,7 @@ class TestMemoryStress:
                 s.add_message(AssistantMessage(content=[TextPart(content=f"reply {i}")], message_id=MessageId(f"stress-{i}")))
 
         await s.save()
-        s2 = SessionMemory(max_messages=100, session_id="stress-snap")
+        s2 = SessionMemory(max_messages=100, session_id=SessionId("stress-snap"))
         await s2.load()
 
         orig = s.recent_messages()
@@ -878,9 +879,10 @@ class TestMemoryStress:
         sid2 = f"test-isolation-{uuid.uuid4()}"
 
         from core.config import AppConfig
+        from core.schema.types import SessionId
         a1 = Agent(config=AppConfig())
         a1._llm._backend = FakeLLMBackend(response="好的我记住了")
-        a1._session._session_id = sid1
+        a1._session._session_id = SessionId(sid1)
         await a1.start()
         await a1.process_message("只有agent1知道的消息")
         # Wait for cognitive task to start
@@ -898,7 +900,7 @@ class TestMemoryStress:
 
         a2 = Agent(config=AppConfig())
         a2._llm._backend = FakeLLMBackend(response="你好")
-        a2._session._session_id = sid2
+        a2._session._session_id = SessionId(sid2)
         await a2.start()
         a2_msgs = len(a2._session.recent_messages())
         assert a1_msgs >= 2  # user msg + assistant reply
@@ -907,8 +909,8 @@ class TestMemoryStress:
 
         # 清理测试遗留的 session 文档
         try:
-            await a1._session_repo.delete(sid1)
-            await a1._session_repo.delete(sid2)
+            await a1._session_repo.delete(SessionId(sid1))
+            await a1._session_repo.delete(SessionId(sid2))
         except Exception:
             pass
 
