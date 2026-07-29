@@ -101,7 +101,7 @@ core/
 │   ├── agent.py           #   Agent.__init__ + event handling + process_message + background tasks
 │   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + _STARTUP_STEPS + _SHUTDOWN_STEPS + 3 flush
 │   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
-│   ├── status.py          #   AgentStatus（对外只读）+ CognitivePhaseController（对内写）, FSMBacked 实现
+│   ├── status.py          #   AgentStatus（对外只读）+ CognitivePhaseController（对内写）, FSMBacked 实现 → 已提取为 core/status/ 包
 │   ├── agent_fsm.py       #   AgentFSM: 底层状态机（通过 status.py 封装，不对外暴露）
 │   ├── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
 │   ├── _lifecycle_persistence.py  #   持久化层启停 (MongoDB/Milvus/session/repos)
@@ -109,6 +109,7 @@ core/
 │   ├── _lifecycle_tools.py        #   ToolAdapter/Scheduler/IdleMonitor/event loop 启停
 │   ├── _lifecycle_task_system.py  #   TaskSystem/DelegationPreparer/mailbox 启停
 │   └── tests/
+├── status/                # AgentStatus 接口层：protocol.py（ABC）+ fsm.py（FSM-backed 实现）
 ├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing + TurnPhase
 │   ├── loop.py            #   CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
 │   ├── stream_processor.py #   StreamProcessor: 流式标签检测 + 文本管道

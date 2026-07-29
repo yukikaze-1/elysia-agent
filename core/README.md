@@ -80,7 +80,7 @@ Agent.start()
 
 关键方法：`start()`, `stop()`, `process_message()`, `run_server()`, `run_repl()`, `switch_llm()`, `switch_tts()`
 
-#### AgentStatus + CognitivePhaseController (`agent/status.py`)
+#### AgentStatus + CognitivePhaseController (`status/` package)
 
 语义状态接口层，将底层 FSM 封装为对外只读的 `AgentStatus`（`is_accepting_input`、`is_completely_idle`、`is_speaking`、`should_suppress_vad_interrupt` 等 property）和对内写入的 `CognitivePhaseController`（`enter_thinking()`、`enter_executing()`、`enter_speaking()`、`finish_turn()`、`handle_interrupt()`）。实现类 `FSMBackedStatus` 和 `FSMBackedPhaseController` 基于 `AgentFSM`，但消费者只依赖接口。
 

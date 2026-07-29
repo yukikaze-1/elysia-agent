@@ -1,4 +1,4 @@
 """Agent 包 — 对外透出 Agent 和 RunState。"""
 from .agent import Agent
 from ._types import RunState
-from .status import AgentStatus, CognitivePhaseController
+from core.status import AgentStatus, CognitivePhaseController

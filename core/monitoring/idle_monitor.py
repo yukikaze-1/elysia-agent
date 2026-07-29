@@ -16,7 +16,7 @@ from ..config.character_config import CharacterConfig
 from core.schema.event import SystemTickData
 
 if TYPE_CHECKING:
-    from core.agent.status import AgentStatus
+    from core.status import AgentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class IdleMonitor:
         self._fsm = fsm
         self._bus = event_bus
         if status is None:
-            from core.agent.status import FSMBackedStatus
+            from core.status import FSMBackedStatus
             self.status = FSMBackedStatus(fsm)
         else:
             self.status = status

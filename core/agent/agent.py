@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from ..debug.prompt_recorder import PromptRecorder
     from ..debug.response_recorder import ResponseRecorder
     from Module.task_system.mailbox import TaskMailbox
-    from .status import AgentStatus, CognitivePhaseController
+    from core.status import AgentStatus, CognitivePhaseController
 
 from Module.output import OutputManager, ConsoleChannel
 
@@ -234,7 +234,7 @@ class Agent(AgentLifecycle, AgentServer):
         )
 
         # ---- Status & Phase Controller ----
-        from .status import FSMBackedStatus, FSMBackedPhaseController
+        from core.status import FSMBackedStatus, FSMBackedPhaseController
 
         self.status: AgentStatus = FSMBackedStatus(self._fsm)
         self.phases: CognitivePhaseController = FSMBackedPhaseController(
