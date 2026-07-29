@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 from ..text.block_filter import BlockFilter, build_parts_with_blocks
 from ..adapter.tts_adapter import TTSStreamManager
 from ..adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
+from Module.task_system.schema.types import TaskId
 from ..text.text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageRecord, TokenUsageSummary
@@ -527,7 +528,7 @@ class CognitiveLoop(CognitiveTools):
                 ))
                 # 注册后台任务
                 if result.success and result.async_task_id and self._on_background_task and self._task_system:
-                    mailbox = self._task_system.get_task_mailbox(result.async_task_id)
+                    mailbox = self._task_system.get_task_mailbox(TaskId(result.async_task_id))
                     if mailbox:
                         dispatched_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
                         self._on_background_task(

@@ -37,7 +37,7 @@ class CognitiveTools:
     所有属性由 CognitiveLoop.__init__ 初始化，本 mixin 不含 __init__。
     """
     # 类型声明 — 属性由 CognitiveLoop 初始化（mixin 无 __init__）
-    _tool_executor: ToolAdapter  # CognitiveLoop.__init__ 注入（必需参数）
+    _tool_executor: ToolAdapter | None = None  # CognitiveLoop.__init__ 注入
     _tool_adapter: ToolAdapter | None = None   # CognitiveLoop.configure() 注入
     _session: SessionMemory  # CognitiveLoop.__init__ 注入（必需参数）
     _delegation_preparer: DelegationPreparer | None = None
@@ -67,6 +67,7 @@ class CognitiveTools:
             logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
             try:
                 assert self._tool_executor is not None
+                assert self._tool_adapter is not None
                 tr = await self._tool_executor.execute(func_name, ctx=self._tool_adapter.tool_context, **args)
             except asyncio.CancelledError:
                 logger.info("工具取消: %s", func_name)
@@ -227,10 +228,14 @@ class CognitiveTools:
 
         hints = (args.get("hints") or "").strip() or None
 
-        # 2. DelegationPreparer
+        # 2. DelegationPreparer + TaskSystem guard
         if self._delegation_preparer is None:
             return ToolResult.fail(name="submit_task",
                 error="DelegationPreparer 未初始化，请告知用户后台任务系统暂不可用。")
+        task_system = self._task_system
+        if task_system is None:
+            return ToolResult.fail(name="submit_task",
+                error="TaskSystem 未初始化，请告知用户后台任务系统暂不可用。")
 
         # 将 ToolExecutor.definitions() 的 dict 格式转换为 DelegationPreparer 期望的 Tool 列表
         from Module.task_system.schema import Tool
@@ -244,15 +249,16 @@ class CognitiveTools:
             for d in tool_defs
         ]
 
+        from Module.task_system.schema.types import SessionId as _SessionId
+
         prep_result = await self._delegation_preparer.prepare(
             intent=intent,
             hints=hints,
             session_messages=self._session.recent_messages(),
             user_profile=self._user_profile or _default_user_profile(),
             tools=tool_list,
-            global_constraints=(self._task_system._infra.constraints
-                                if self._task_system else None),
-            session_id=getattr(self._session, "_session_id", "default"),
+            global_constraints=task_system._infra.constraints,
+            session_id=_SessionId(getattr(self._session, "_session_id", "default")),
         )
 
         if prep_result.status.value == "no_matching_tools":
@@ -266,11 +272,8 @@ class CognitiveTools:
                 error=f"意图不够明确: {suggestion}。请向用户澄清，不要重复尝试。")
 
         # 3. TaskSystem.submit
-        if self._task_system is None:
-            return ToolResult.fail(name="submit_task",
-                error="TaskSystem 未初始化，请告知用户后台任务系统暂不可用。")
-
-        mailbox_or_error = await self._task_system.submit(prep_result.context)
+        assert prep_result.context is not None  # status=ok 保证 context 非空
+        mailbox_or_error = await task_system.submit(prep_result.context)
         if isinstance(mailbox_or_error, SubmitError):
             return ToolResult.fail(name="submit_task",
                 error=f"任务提交失败: {mailbox_or_error.message}。请告知用户具体原因。")
