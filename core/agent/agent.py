@@ -244,6 +244,7 @@ class Agent(AgentLifecycle, AgentServer):
             tts_mgr=self._cognitive._tts_mgr,
             status=self.status,
         )
+        self._cognitive.phases = self.phases
 
         # Worker Pool — 执行 AI 规划的工具子任务 + 后台任务
         self._scheduler = TaskScheduler(

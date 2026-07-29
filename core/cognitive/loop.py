@@ -28,7 +28,7 @@ from Module.output import OutputManager, ChannelCapability
 from Module.tts import TTSBackend
 
 from ..agent.agent_fsm import AgentFSM, AgentState
-from ..monitoring.event_bus import EventBus, EventPriority, EventType
+from ..monitoring.event_bus import EventBus
 from ..utils import set_request_id, get_request_id, log_conversation
 from Module.tool.protocol import ToolResult
 from ..adapter.prompt_assembler import PromptAssembler
@@ -62,7 +62,6 @@ from core.schema.tool import ToolCall, ToolCallId
 from core.schema.part import TextPart
 from core.schema.adapters.message_adapter import parts_from_dicts
 from core.schema._utils import now_iso as _now_iso
-from core.schema.event import StateChangeData
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +187,23 @@ class CognitiveLoop(CognitiveTools):
         self._user_profile: UserProfile | None = None         # 由 configure() 注入
         self._clock: TimingClock | None = None # 当前轮次的计时器（process() 设置，finally 清除）
         self._phase: TurnPhase | None = None   # 当前轮次处理阶段（供 debug 面板）
+        self._phases = None  # CognitivePhaseController（由 agent.py 注入，或懒加载）
+
+    @property
+    def phases(self):
+        """CognitivePhaseController — 由 agent.py 注入（或直接构造时懒加载回退）。"""
+        if self._phases is None:
+            from ..agent.status import FSMBackedPhaseController, FSMBackedStatus
+            status = FSMBackedStatus(self._fsm)
+            self._phases = FSMBackedPhaseController(
+                fsm=self._fsm, bus=self._bus, output=self._output,
+                tts_mgr=self._tts_mgr, status=status,
+            )
+        return self._phases
+
+    @phases.setter
+    def phases(self, value):
+        self._phases = value
 
     # ---- Public API ----
 
@@ -270,9 +286,7 @@ class CognitiveLoop(CognitiveTools):
             logger.info(">>> 用户输入 (%s)%s: %s", user_name, emo_tag, log_text[:200])
             log_conversation("user", user_name, log_text)
 
-            self._fsm.transition(AgentState.THINKING)
-            self._bus.post(StateChangeData(state="thinking", request_id=rid),
-                          priority=EventPriority.STATE_CHANGE)
+            await self.phases.enter_thinking()
 
             self._current_task = asyncio.current_task()
             try:
@@ -472,12 +486,7 @@ class CognitiveLoop(CognitiveTools):
             _on_tool_calls: 外部工具回调（测试/自定义 dispatch），None 时走 _execute_tools_directly
         """
         # 切断气泡 — TTS tasks 独立运行，不 cancel
-        await self._output.send("")
-
-        await self._output.typing(False)
-        self._fsm.transition(AgentState.EXECUTING)
-        self._bus.post(StateChangeData(state="executing", request_id=get_request_id()),
-                       priority=EventPriority.STATE_CHANGE)
+        await self.phases.enter_executing()
 
         normalized = normalize_tool_calls(raw_tool_calls)
 
@@ -610,10 +619,7 @@ class CognitiveLoop(CognitiveTools):
             except ValueError:
                 pass
 
-        self._fsm.transition(AgentState.THINKING)
-        self._bus.post(StateChangeData(state="thinking", request_id=get_request_id()),
-                       priority=EventPriority.STATE_CHANGE)
-        await self._output.typing(True)
+        await self.phases.return_to_thinking()
 
     # ---- Core loop: finalize ----
 
@@ -888,12 +894,7 @@ class CognitiveLoop(CognitiveTools):
             all_sentences.append(sentence)
             logger.debug("分句 (%d 字符)", len(sentence))
             if not speaking_started:
-                await self._output.typing(False)
-                self._fsm.transition(AgentState.SPEAKING)
-                self._bus.post(
-                    StateChangeData(state="speaking", request_id=get_request_id()),
-                    priority=EventPriority.STATE_CHANGE,
-                )
+                await self.phases.enter_speaking()
                 speaking_started = True
             if self._tts_mgr.active:
                 self._tts_mgr.stream_sentence(sentence)
@@ -943,36 +944,16 @@ class CognitiveLoop(CognitiveTools):
     # ---- State transitions ----
 
     async def _transition_idle(self) -> None:
-        """等待所有 TTS 任务完成，然后转换到 IDLE。"""
-        await self._tts_mgr.wait_all()
-
-        # 如果有后台任务活跃 → 进入 IDLE_BACKGROUND_TASK 而非 IDLE
+        """等待 TTS 完成 → 检查后台任务 → 转换到 IDLE/IDLE_BG。"""
+        active_tasks: list = []
         if self._on_background_task is not None and self._task_system is not None:
-            active = await self._task_system.list_active_tasks()
-            if active:
-                if self._fsm.state == AgentState.SPEAKING:
-                    self._fsm.transition(AgentState.IDLE_BACKGROUND_TASK)
-                else:
-                    # 防御性: 确保经过 SPEAKING
-                    if self._fsm.can_transition(AgentState.SPEAKING):
-                        self._fsm.transition(AgentState.SPEAKING)
-                    self._fsm.transition(AgentState.IDLE_BACKGROUND_TASK)
-                self._bus.post(StateChangeData(state="idle_background_task", request_id=get_request_id()),
-                               priority=EventPriority.STATE_CHANGE)
-                return
-
-        # 原有 IDLE 转换
-        logger.info("→ IDLE")
-        if self._fsm.state == AgentState.THINKING:
-            # 仅 tool_calls 无文本时 FSM 仍在 THINKING，需经过 SPEAKING 才能到 IDLE
-            self._fsm.transition(AgentState.SPEAKING)
-        self._fsm.transition(AgentState.IDLE)
-        self._bus.post(StateChangeData(state="idle", request_id=get_request_id()), priority=EventPriority.STATE_CHANGE)
+            active_tasks = await self._task_system.list_active_tasks()
+        await self.phases.finish_turn(has_background_tasks=bool(active_tasks))
 
     async def _handle_interrupt(self) -> None:
         """Clean up after interruption — cancel TTS tasks, return to IDLE."""
-        if self._fsm.state == AgentState.IDLE:
-            return  # 重启后旧 task 的 CancelledError 可能触发重复清理
+        if self._fsm.state == AgentState.IDLE:  # ← 此处保持直接读 _fsm（Phase 3 迁移）
+            return
         if self._sentence_buf is not None:
             self._sentence_buf.reset()
         if self._block_filter is not None:
@@ -980,9 +961,5 @@ class CognitiveLoop(CognitiveTools):
         self._executing_tools.clear()
         self._tts_mgr.cancel_all()
         await self._output.typing(False)
-        self._fsm.transition(AgentState.INTERRUPTED)
-        self._bus.post(StateChangeData(state="interrupted", request_id=get_request_id()), priority=EventPriority.STATE_CHANGE)
-        await asyncio.sleep(0.05)
-        self._fsm.transition(AgentState.IDLE)
-        self._bus.post(StateChangeData(state="idle", request_id=get_request_id()), priority=EventPriority.STATE_CHANGE)
+        await self.phases.handle_interrupt()
         logger.debug("Interrupt complete — agent is IDLE")
