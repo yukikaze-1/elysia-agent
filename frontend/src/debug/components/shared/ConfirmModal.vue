@@ -1,16 +1,35 @@
 <script setup lang="ts">
-defineProps<{ message: string; visible: boolean }>()
+import { ref, watch, nextTick } from 'vue'
+
+const props = defineProps<{ message: string; visible: boolean }>()
 const emit = defineEmits<{ confirm: []; cancel: [] }>()
+
+const confirmBtnRef = ref<HTMLButtonElement | null>(null)
+
+// 打开时聚焦确认按钮 + 注册 Escape 监听
+watch(() => props.visible, async (v) => {
+  if (v) {
+    await nextTick()
+    confirmBtnRef.value?.focus()
+  }
+})
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    emit('cancel')
+  }
+}
 </script>
 
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="confirm-overlay" @click.self="emit('cancel')">
+    <div v-if="visible" class="confirm-overlay" @click.self="emit('cancel')" @keydown="onKeydown">
       <div class="confirm-box">
         <p class="confirm-msg">{{ message }}</p>
         <div class="confirm-actions">
           <button class="confirm-btn cancel" @click="emit('cancel')">取消</button>
-          <button class="confirm-btn danger" @click="emit('confirm')">确认</button>
+          <button ref="confirmBtnRef" class="confirm-btn danger" @click="emit('confirm')">确认</button>
         </div>
       </div>
     </div>

@@ -93,7 +93,11 @@ export const useSettingsStore = defineStore('settings', () => {
     else if (service === 'tts') ttsModel.value = modelId
 
     const connectionStore = useConnectionStore()
-    connectionStore.send({ type: 'switch_model', service, model: modelId })
+    const sent = connectionStore.send({ type: 'switch_model', service, model: modelId })
+    if (!sent) {
+      // WS 未连接时，模型切换仅持久化到 localStorage，连接恢复后由服务器下发实际模型
+      console.warn('switchModel: WS 未连接，模型选择仅保存到本地')
+    }
   }
 
   return {

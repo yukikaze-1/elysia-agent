@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { fmt } from '@/utils/format'
 import type { TokenUsage } from '@/types/protocol'
 
 defineProps<{ tokenUsage: TokenUsage }>()
@@ -10,9 +11,11 @@ function toggle() {
   expanded.value = !expanded.value
 }
 
-function fmt(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
-  return String(n)
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    toggle()
+  }
 }
 </script>
 
@@ -20,7 +23,10 @@ function fmt(n: number): string {
   <div
     class="token-label"
     :class="{ expanded }"
+    tabindex="0"
+    role="button"
     @click="toggle"
+    @keydown="handleKeydown"
   >
     <span class="token-summary">&#129409; {{ fmt(tokenUsage.turn_total) }} tokens &#9660;</span>
     <div class="token-detail">

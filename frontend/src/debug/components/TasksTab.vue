@@ -21,27 +21,43 @@ function connect() {
   reconnectDelay = 1000
 
   es.addEventListener('snapshot', (e: MessageEvent) => {
-    const data = JSON.parse(e.data)
-    tasks.value = Array.isArray(data) ? data : []
+    try {
+      const data = JSON.parse(e.data)
+      tasks.value = Array.isArray(data) ? data : []
+    } catch (err) { console.warn('SSE snapshot 解析失败:', err) }
   })
   es.addEventListener('task_new', (e: MessageEvent) => {
-    const t = JSON.parse(e.data)
-    if (!tasks.value.find(x => x.task_id === t.task_id)) tasks.value.unshift(t)
+    try {
+      const t = JSON.parse(e.data)
+      if (!tasks.value.find(x => x.task_id === t.task_id)) tasks.value.unshift(t)
+    } catch (err) { console.warn('SSE task_new 解析失败:', err) }
   })
   es.addEventListener('task_update', (e: MessageEvent) => {
-    const t = JSON.parse(e.data)
-    const idx = tasks.value.findIndex(x => x.task_id === t.task_id)
-    if (idx >= 0) tasks.value[idx] = { ...tasks.value[idx], ...t }
+    try {
+      const t = JSON.parse(e.data)
+      const idx = tasks.value.findIndex(x => x.task_id === t.task_id)
+      if (idx >= 0) tasks.value[idx] = { ...tasks.value[idx], ...t }
+    } catch (err) { console.warn('SSE task_update 解析失败:', err) }
   })
   es.addEventListener('task_done', (e: MessageEvent) => {
-    const t = JSON.parse(e.data)
-    tasks.value = tasks.value.filter(x => x.task_id !== t.task_id)
-    if (!doneTasks.value.find(x => x.task_id === t.task_id)) doneTasks.value.unshift(t)
+    try {
+      const t = JSON.parse(e.data)
+      tasks.value = tasks.value.filter(x => x.task_id !== t.task_id)
+      if (!doneTasks.value.find(x => x.task_id === t.task_id)) {
+        doneTasks.value.unshift(t)
+        // 限制已完成任务列表最多 100 条，防止无限增长
+        if (doneTasks.value.length > 100) {
+          doneTasks.value = doneTasks.value.slice(0, 100)
+        }
+      }
+    } catch (err) { console.warn('SSE task_done 解析失败:', err) }
   })
   es.addEventListener('node_update', (e: MessageEvent) => {
-    const { task_id, node_id, status, attempt } = JSON.parse(e.data)
-    const task = tasks.value.find(x => x.task_id === task_id)
-    if (task) { const node = task.nodes.find(n => n.node_id === node_id); if (node) { node.status = status; node.attempt = attempt } }
+    try {
+      const { task_id, node_id, status, attempt } = JSON.parse(e.data)
+      const task = tasks.value.find(x => x.task_id === task_id)
+      if (task) { const node = task.nodes.find(n => n.node_id === node_id); if (node) { node.status = status; node.attempt = attempt } }
+    } catch (err) { console.warn('SSE node_update 解析失败:', err) }
   })
 
   es.onerror = () => {

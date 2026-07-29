@@ -16,6 +16,17 @@ const error = ref('')
 const search = ref('')
 const typeFilter = ref('')
 const selectedIds = ref<Set<string>>(new Set())
+
+// 300ms 防抖 — 避免每次按键都触发 API 请求
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
+function debouncedLoad() {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    store.ltmPage.offset = 0
+    load()
+  }, 300)
+}
 const editingId = ref<string | null>(null)
 const editText = ref('')
 
@@ -53,7 +64,7 @@ async function load() {
 }
 
 onMounted(load)
-watch([search, typeFilter], () => { store.ltmPage.offset = 0; load() })
+watch([search, typeFilter], debouncedLoad)
 
 function onPageChange(newOffset: number) { store.ltmPage.offset = newOffset; load() }
 

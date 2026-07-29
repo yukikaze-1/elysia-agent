@@ -419,7 +419,7 @@ async function testCustomProvider() {
 
 .settings-btn {
   position: fixed;
-  top: 12px;
+  top: 52px;
   right: 16px;
   width: 36px;
   height: 36px;

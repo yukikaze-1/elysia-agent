@@ -126,7 +126,7 @@ function safetyLabel(plugin: PluginInfo): string {
 <style scoped>
 .tools-toggle-btn {
   position: fixed;
-  top: 48px;
+  top: 16px;
   right: 16px;
   width: 36px;
   height: 36px;

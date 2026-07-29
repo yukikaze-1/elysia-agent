@@ -26,7 +26,9 @@ async function load(before?: number) {
   finally { loading.value = false }
 }
 
-watch(() => props.visible, (v) => { if (v) load() })
+// 监听 visible 和 contentType 两个维度：
+// 打开弹窗 或 切换 content type（l2 ↔ c6）时都重新加载数据
+watch(() => [props.visible, props.contentType], ([v]) => { if (v) load() })
 
 async function doRollback() {
   if (rollbackVersion.value === null) return

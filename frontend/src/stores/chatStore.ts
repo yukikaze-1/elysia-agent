@@ -212,6 +212,16 @@ export const useChatStore = defineStore('chat', () => {
     playingMessageId.value = null
   }
 
+  /** 移除单张预览图片 */
+  function removePreviewImage(url: string) {
+    previewImages.value = previewImages.value.filter(p => p.url !== url)
+  }
+
+  /** 清空全部预览图片 */
+  function clearPreviewImages() {
+    previewImages.value = []
+  }
+
   function revealNextQueued() {
     if (!nextBubbleQueue.value.length) {
       playingMessageId.value = null
@@ -242,8 +252,12 @@ export const useChatStore = defineStore('chat', () => {
     finalizeDelta()
   }
 
+  // 并发保护：防止多次快速触发导致的重复加载
+  let _loadingMore = false
+
   async function loadMoreMessages(): Promise<boolean> {
-    if (!hasMoreMessages.value) return false
+    if (!hasMoreMessages.value || _loadingMore) return false
+    _loadingMore = true
     const before = earliestMessageId.value
     try {
       const params = new URLSearchParams({ limit: '50' })
@@ -272,6 +286,8 @@ export const useChatStore = defineStore('chat', () => {
     } catch (e) {
       console.warn('加载历史消息失败:', e)
       return false
+    } finally {
+      _loadingMore = false
     }
   }
 
@@ -296,6 +312,7 @@ export const useChatStore = defineStore('chat', () => {
     appendDelta, addUserMessage, addStatusMessage, addToolCard, updateToolCard,
     handleCompleteMessage, addInnerVoice, addBlockBubble, setMood, setState,
     updateTokenUsage, attachTokenLabel, finalizeDelta, clearPlayingHighlight,
+    removePreviewImage, clearPreviewImages,
     revealNextQueued, restoreFromServer, loadMoreMessages,
   }
 })
@@ -413,6 +430,8 @@ function splitAction(text: string): { action: string; rest: string } | null {
   return null
 }
 
-// Lazy imports to avoid circular dependencies — placed here to signal that
-// these are only ever called inside function bodies (never at module scope).
+// ---- 循环依赖说明 ----
+// chatStore ↔ audioStore 互相导入，形成循环依赖。见 audioStore.ts 中对应注释的完整说明。
+// 约束同上：所有跨 store 调用必须在函数体内进行，不得在模块顶层。
+// ---- Lazy import（函数体内使用，避免模块顶层循环引用报错） ----
 import { useSettingsStore } from './settingsStore'

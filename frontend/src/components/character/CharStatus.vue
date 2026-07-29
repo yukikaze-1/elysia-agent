@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useChatStore } from '@/stores/chatStore'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { fmt } from '@/utils/format'
 
 const chat = useChatStore()
 const settings = useSettingsStore()
@@ -16,15 +17,10 @@ const sessionTokenDisplay = computed(() => {
   const models = Object.entries(st.byModel || {})
   const parts = models.map(([m, t]) => {
     const short = m.split('/').pop() || m
-    return short + ': ' + fmtTokens(t as number)
+    return short + ': ' + fmt(t as number)
   })
-  return '\u{1FA99} 总计 ' + fmtTokens(st.total) + (parts.length ? ' (' + parts.join(', ') + ')' : '')
+  return '\u{1FA99} 总计 ' + fmt(st.total) + (parts.length ? ' (' + parts.join(', ') + ')' : '')
 })
-
-function fmtTokens(n: number): string {
-  if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
-  return String(n)
-}
 </script>
 
 <template>

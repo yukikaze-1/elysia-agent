@@ -39,13 +39,12 @@ export const useConnectionStore = defineStore('connection', () => {
 
   function scheduleReconnect(): void {
     if (_reconnectTimer !== null) return
-    const delay = backoff(retryCount.value)
     retryCount.value++
+    const delay = backoff(retryCount.value)
     console.log(`WS: ${delay}ms 后重连 (第 ${retryCount.value} 次)`)
     _reconnectTimer = setTimeout(() => {
       _reconnectTimer = null
       if (_lastUrl) {
-        resetConnection()
         connect(_lastUrl)
       }
     }, delay)

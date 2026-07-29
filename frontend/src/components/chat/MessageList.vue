@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { watch, ref, onMounted, nextTick } from 'vue'
 import { useChatStore } from '@/stores/chatStore'
+import { useImageUpload } from '@/composables/useImageUpload'
 import type { ChatMessage as ChatMessageType } from '@/stores/chatStore'
 import ChatMessageComp from './ChatMessage.vue'
 import TimeDivider from './TimeDivider.vue'
@@ -12,6 +13,11 @@ const isLoadingMore = ref(false)
 
 const FIVE_MINUTES = 5 * 60 * 1000
 const SCROLL_THRESHOLD = 60
+
+// 拖拽上传 — 拖拽到聊天区时在 chat-wrap 上切换 drag-over class
+const { onDragOver, onDragLeave, onDrop } = useImageUpload(
+  () => chatWrapRef.value
+)
 
 function shouldShowTimeDivider(msg: ChatMessageType, index: number): boolean {
   if (index === 0) return false
@@ -91,44 +97,6 @@ watch(
     }
   }
 )
-
-// ---- 拖拽图片到聊天区视觉反馈 + 上传 ----
-function getChatWrap(): HTMLElement | null {
-  return document.getElementById('chat-wrap')
-}
-
-function onDragOver(e: DragEvent) {
-  e.preventDefault()
-  getChatWrap()?.classList.add('drag-over')
-}
-function onDragLeave(_e: DragEvent) {
-  getChatWrap()?.classList.remove('drag-over')
-}
-async function onDrop(e: DragEvent) {
-  e.preventDefault()
-  getChatWrap()?.classList.remove('drag-over')
-  const file = e.dataTransfer?.files[0]
-  if (file && file.type.startsWith('image/')) {
-    await uploadImage(file)
-  }
-}
-
-async function uploadImage(file: File) {
-  const form = new FormData()
-  form.append('image', file)
-  try {
-    const resp = await fetch('/api/images', { method: 'POST', body: form })
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}))
-      chatStore.addStatusMessage('图片上传失败: ' + (err.error || resp.status))
-      return
-    }
-    const { url, mime } = await resp.json()
-    chatStore.previewImages.push({ url, mime })
-  } catch (e) {
-    chatStore.addStatusMessage('图片上传失败: ' + (e as Error).message)
-  }
-}
 
 onMounted(() => {
   scrollToBottom()

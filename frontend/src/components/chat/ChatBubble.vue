@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import CodeBlock from '@/components/shared/CodeBlock.vue'
 
 const props = defineProps<{
@@ -11,7 +12,7 @@ const props = defineProps<{
 
 const renderedHtml = computed(() => {
   if (props.contentType !== 'markdown') return ''
-  return marked.parse(props.content) as string
+  return DOMPurify.sanitize(marked.parse(props.content) as string)
 })
 </script>
 

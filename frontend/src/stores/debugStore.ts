@@ -37,6 +37,8 @@ export const useDebugStore = defineStore('debug', () => {
 
   function startPoll() {
     if (paused.value) return
+    // 防御性清理：避免 stopPoll 后被其他地方意外创建重复定时器
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
     fetchDebugData()
     pollTimer = setInterval(fetchDebugData, pollInterval)
   }

@@ -3,7 +3,12 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useAudioStore } from '@/stores/audioStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import type { ActionMessage, CommandMessage, SwitchModelResultMessage } from '@/types/protocol'
+import type {
+  ActionMessage, AudioEndMessage, AudioMessage, CapabilitiesMessage, CommandMessage,
+  DeltaMessage, ErrorMessage, ExpressionMessage, MessageMessage, ServerMessage,
+  SessionMessage, StateMessage, SwitchModelResultMessage, TokenUsageMessage,
+  TranscriptionMessage, TypingMessage,
+} from '@/types/protocol'
 
 // 转录情绪/事件 emoji 映射（与服务端同步）
 const EMOTION_EMOJI: Record<string, string> = {
@@ -22,23 +27,40 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
   const settings = useSettingsStore()
 
   function handleMessage(msg: unknown) {
-    const m = msg as any
+    const m = msg as ServerMessage
     switch (m.type) {
-      case 'delta':         chat.appendDelta(m.content, m.stream_id); break
-      case 'message':       chat.handleCompleteMessage(m); break
-      case 'audio':         audio.bufferChunk(m.stream_id, m.seq, m.data); break
-      case 'audio_end':     audio.finalizeStream(m.stream_id, m.format); break
-      case 'action':        handleAction(m); break
-      case 'command':       handleCommand(m); break
-      case 'session':       chat.restoreFromServer(m.messages, m.token_stats); break
-      case 'capabilities':  settings.updateCapabilities(m); break
-      case 'typing':        chat.typing = m.typing; break
+      case 'delta': {
+        const d = m as DeltaMessage
+        chat.appendDelta(d.content, d.stream_id)
+        break
+      }
+      case 'message':       chat.handleCompleteMessage(m as MessageMessage); break
+      case 'audio': {
+        const a = m as AudioMessage
+        audio.bufferChunk(a.stream_id, a.seq, a.data)
+        break
+      }
+      case 'audio_end': {
+        const ae = m as AudioEndMessage
+        audio.finalizeStream(ae.stream_id, ae.format)
+        break
+      }
+      case 'action':        handleAction(m as ActionMessage); break
+      case 'command':       handleCommand(m as CommandMessage); break
+      case 'session': {
+        const s = m as SessionMessage
+        chat.restoreFromServer(s.messages, s.token_stats)
+        break
+      }
+      case 'capabilities':  settings.updateCapabilities(m as CapabilitiesMessage); break
+      case 'typing':        chat.typing = (m as TypingMessage).typing; break
       case 'transcription': {
-        let display = m.text
-        const emotionEmoji = EMOTION_EMOJI[m.emotion] || ''
+        const t = m as TranscriptionMessage
+        let display = t.text
+        const emotionEmoji = EMOTION_EMOJI[t.emotion as string] || ''
         if (emotionEmoji) display += ' ' + emotionEmoji
-        if (m.events && m.events.length > 0) {
-          for (const evt of m.events) {
+        if (t.events && t.events.length > 0) {
+          for (const evt of t.events) {
             const evtEmoji = EVENT_EMOJI[evt] || ''
             if (evtEmoji) display += ' ' + evtEmoji
           }
@@ -46,13 +68,21 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
         chat.addUserMessage('🎤 ' + display)
         break
       }
-      case 'expression':    chat.setMood(m.expression, m.intensity); break
-      case 'state':         chat.setState(m.state)
-                            if (m.state === 'executing') chat.finalizeDelta(); break
-      case 'token_usage':   chat.updateTokenUsage(m); break
-      case 'error':         console.warn('Server:', m.message); break
+      case 'expression': {
+        const ex = m as ExpressionMessage
+        chat.setMood(ex.expression, ex.intensity)
+        break
+      }
+      case 'state': {
+        const st = m as StateMessage
+        chat.setState(st.state)
+        if (st.state === 'executing') chat.finalizeDelta()
+        break
+      }
+      case 'token_usage':   chat.updateTokenUsage(m as TokenUsageMessage as any); break
+      case 'error':         console.warn('Server:', (m as ErrorMessage).message); break
       case 'wake':          if (settings.wakeEnabled) audio.flashWakeIndicator(); break
-      case 'switch_model_result': handleSwitchResult(m); break
+      case 'switch_model_result': handleSwitchResult(m as SwitchModelResultMessage); break
       default:              console.warn('Unknown type:', m.type); break
     }
   }

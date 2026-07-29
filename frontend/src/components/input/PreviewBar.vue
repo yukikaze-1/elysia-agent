@@ -1,16 +1,13 @@
 <script setup lang="ts">
 import { useChatStore } from '@/stores/chatStore'
 const chat = useChatStore()
-function removePreview(url: string) {
-  chat.previewImages = chat.previewImages.filter(p => p.url !== url)
-}
 </script>
 
 <template>
   <div id="preview-bar" v-if="chat.previewImages.length > 0">
     <div v-for="img in chat.previewImages" :key="img.url" class="preview-item">
       <img :src="img.url" alt="预览" />
-      <span class="preview-remove" @click="removePreview(img.url)">×</span>
+      <span class="preview-remove" @click="chat.removePreviewImage(img.url)">×</span>
     </div>
   </div>
 </template>

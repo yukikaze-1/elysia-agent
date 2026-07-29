@@ -33,8 +33,14 @@ interface ProvidersResponse {
 }
 
 const options = ref<{ value: string; label: string }[]>([])
+const loading = ref(false)
 
-onMounted(async () => {
+async function refreshProviders() {
+  await loadProviders()
+}
+
+async function loadProviders() {
+  loading.value = true
   try {
     const res = await fetch('/api/providers')
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -59,8 +65,15 @@ onMounted(async () => {
     options.value = opts
   } catch (e) {
     console.warn('加载 provider 列表失败', e)
+  } finally {
+    loading.value = false
   }
-})
+}
+
+onMounted(loadProviders)
+
+// 暴露 refresh 方法供父组件在添加自定义端点后调用
+defineExpose({ refreshProviders })
 
 function onChange(event: Event) {
   const select = event.target as HTMLSelectElement

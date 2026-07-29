@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { Network } from 'vis-network'
 import { DataSet } from 'vis-data'
 
@@ -12,31 +12,40 @@ const props = defineProps<{
 
 const d3Container = ref<HTMLDivElement | null>(null)
 let network: Network | null = null
+let nodesDs: DataSet<any> | null = null
+let edgesDs: DataSet<any> | null = null
 
 const STATUS_COLORS: Record<string, string> = { pending: '#ffa726', running: '#42a5f5', success: '#66bb6a', failed: '#ef5350', skipped: '#bdbdbd' }
 const TASK_STATUS_COLORS: Record<string, string> = { running: '#42a5f5', completed: '#66bb6a', failed: '#ef5350', cancelled: '#bdbdbd' }
 
 function taskColor(s: string) { return TASK_STATUS_COLORS[s] || '#888' }
 
-function renderDag() {
-  if (!d3Container.value || !props.task.nodes.length) return
-  if (network) { network.destroy(); network = null }
-
-  const nodes = new DataSet(props.task.nodes.map(n => ({
+function buildNodes() {
+  return props.task.nodes.map(n => ({
     id: n.node_id,
     label: `${n.node_id}\n${n.summary?.slice(0, 20) || ''}`,
     color: { background: STATUS_COLORS[n.status] || '#888', border: '#333' },
     font: { size: 11, color: '#ccc' },
-    shape: 'box',
+    shape: 'box' as const,
     margin: { top: 8, bottom: 8, left: 10, right: 10 },
-  })))
+  }))
+}
 
-  const edges = new DataSet(props.task.edges.map((e, i) => ({
-    id: i, from: e[0], to: e[1], arrows: 'to',
+function buildEdges() {
+  return props.task.edges.map((e, i) => ({
+    id: i, from: e[0], to: e[1], arrows: 'to' as const,
     color: { color: '#555' },
-  })))
+  }))
+}
 
-  network = new Network(d3Container.value, { nodes, edges }, {
+function renderDag() {
+  if (!d3Container.value || !props.task.nodes.length) return
+  if (network) { network.destroy(); network = null }
+
+  nodesDs = new DataSet(buildNodes())
+  edgesDs = new DataSet(buildEdges())
+
+  network = new Network(d3Container.value, { nodes: nodesDs, edges: edgesDs }, {
     layout: { hierarchical: { direction: 'TB', sortMethod: 'directed', nodeSpacing: 80, levelSeparation: 100 } },
     physics: false,
     interaction: { zoomView: true, dragView: true },
@@ -44,6 +53,15 @@ function renderDag() {
     height: '300px',
   })
 }
+
+// 响应 SSE node_update 事件：直接更新 DataSet，不重建 Network 实例
+watch(() => [props.task.nodes, props.task.edges], () => {
+  if (!nodesDs || !edgesDs || !network) return
+  nodesDs.clear()
+  edgesDs.clear()
+  nodesDs.add(buildNodes())
+  edgesDs.add(buildEdges())
+}, { deep: true })
 
 onMounted(() => nextTick(renderDag))
 onUnmounted(() => { if (network) { network.destroy(); network = null } })

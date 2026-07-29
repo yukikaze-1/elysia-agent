@@ -1,9 +1,14 @@
 <script setup lang="ts">
-defineProps<{ time: number }>()
+withDefaults(defineProps<{
+  time: number
+  locale?: string
+}>(), {
+  locale: 'zh-CN',
+})
 </script>
 
 <template>
-  <div class="time-divider">{{ new Date(time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }}</div>
+  <div class="time-divider">{{ new Date(time).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) }}</div>
 </template>
 
 <style scoped>

@@ -17,6 +17,17 @@ const confirmVisible = ref(false); const confirmMsg = ref(''); const pendingConf
 const perPage = ref(100)
 const store = useDebugStore()
 
+// 300ms 防抖 — 避免每次按键都触发 API 请求
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
+function debouncedLoad() {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    store.archivePage.offset = 0
+    load()
+  }, 300)
+}
+
 async function load() {
   loading.value = true; error.value = ''
   try {
@@ -31,7 +42,7 @@ async function load() {
 }
 
 onMounted(load)
-watch([search, roleFilter], () => { store.archivePage.offset = 0; load() })
+watch([search, roleFilter], debouncedLoad)
 
 function onPageChange(newOffset: number) { store.archivePage.offset = newOffset; load() }
 
@@ -45,7 +56,7 @@ async function clearAll() { await fetch('/debug/api/archive', { method: 'DELETE'
 function startEdit(e: ArchiveEntry) { editingId.value = e._id; editText.value = (e.parts || []).map(p => p.content).join(' ') }
 async function saveEdit(id: string) { await fetch(`/debug/api/archive/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.value }) }); editingId.value = null; load() }
 
-function roleColor(r: string) { const m: Record<string, string> = { user: '#6af', assistant: '#f6a', tool: '#fa6' }; return m[r] || '#888' }
+function roleColor(r: string) { const m: Record<string, string> = { user: '#6af', assistant: '#f6a', tool: '#fa6', system: '#888' }; return m[r] || '#888' }
 function confirmThen(fn: () => Promise<void>, msg: string) { confirmMsg.value = msg; confirmVisible.value = true; pendingConfirm.value = fn }
 async function onConfirm() { confirmVisible.value = false; await pendingConfirm.value?.() }
 </script>

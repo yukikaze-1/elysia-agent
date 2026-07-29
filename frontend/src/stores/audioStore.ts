@@ -111,14 +111,37 @@ export const useAudioStore = defineStore('audio', () => {
     }, 800)
   }
 
+  /**
+   * 清理所有未完成的音频流数据。
+   * 在 WS 断开或 TTS 关闭时调用，防止 audioChunks 中残留的 chunks 内存泄漏。
+   */
+  function cleanup() {
+    // 释放所有已累积的 chunk 内存
+    for (const streamId of Object.keys(audioChunks.value)) {
+      delete audioChunks.value[Number(streamId)]
+    }
+    // 释放所有已入队但未播放的 Blob URL
+    for (const item of audioQueue.value) {
+      URL.revokeObjectURL(item.url)
+    }
+    audioQueue.value = []
+    audioPlaying.value = false
+  }
+
   return {
     audioQueue, audioPlaying, audioChunks, streamBubbles, isMicActive,
     decodeBase64, bufferChunk, finalizeStream, playNext,
-    setMicActive, flashWakeIndicator,
+    setMicActive, flashWakeIndicator, cleanup,
   }
 })
 
-// Lazy imports to avoid circular dependencies — placed here to signal that
-// these are only ever called inside function bodies (never at module scope).
+// ---- 循环依赖说明 ----
+// audioStore ↔ chatStore 互相导入，形成循环依赖。
+// 这是有意为之：两个 store 都需要在函数体内惰性调用对方的 getter（Pinia 惰性初始化允许这样做）。
+// 约束：
+//   1. useChatStore() / useAudioStore() 调用仅限于函数体内部，绝不能在模块顶层。
+//   2. 如需提取共享逻辑，优先放入独立的 composable 或 utility 模块。
+//   3. 新功能不得加剧此循环依赖；如需新增跨 store 调用，先评估是否可单向化。
+// ---- Lazy imports（函数体内使用，避免模块顶层循环引用报错） ----
 import { useChatStore } from './chatStore'
 import { useSettingsStore } from './settingsStore'

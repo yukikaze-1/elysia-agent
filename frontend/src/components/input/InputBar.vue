@@ -4,6 +4,7 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useAudioStore } from '@/stores/audioStore'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { useImageUpload } from '@/composables/useImageUpload'
 import type { ContentPart } from '@/types/protocol'
 
 const SEND_COOLDOWN_MS = 800
@@ -25,6 +26,8 @@ const connectionStore = useConnectionStore()
 const chat = useChatStore()
 const audioStore = useAudioStore()
 const settingsStore = useSettingsStore()
+
+const { uploadImage, onDragOver, onDragLeave, onDrop } = useImageUpload()
 
 // ---- Send ----
 
@@ -139,25 +142,6 @@ function toggleMic() {
   startMic()
 }
 
-// ---- Image upload ----
-
-async function uploadImage(file: File) {
-  const form = new FormData()
-  form.append('image', file)
-  try {
-    const resp = await fetch('/api/images', { method: 'POST', body: form })
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}))
-      chat.addStatusMessage('图片上传失败: ' + (err.error || resp.status))
-      return
-    }
-    const { url, mime } = await resp.json()
-    chat.previewImages.push({ url, mime })
-  } catch (e) {
-    chat.addStatusMessage('图片上传失败: ' + (e as Error).message)
-  }
-}
-
 function onAttachClick() {
   fileInputRef.value?.click()
 }
@@ -169,7 +153,7 @@ function onFileChange(e: Event) {
   target.value = ''
 }
 
-// ---- Paste / Drag-drop ----
+// ---- Paste (scoped to component root, not document) ----
 
 function onPaste(e: ClipboardEvent) {
   const items = e.clipboardData?.items
@@ -184,67 +168,54 @@ function onPaste(e: ClipboardEvent) {
   }
 }
 
-function onDragOver(e: DragEvent) {
-  e.preventDefault()
-}
-
-function onDragEnter(e: DragEvent) {
-  e.preventDefault()
-}
-
-function onDragLeave(e: DragEvent) {
-  e.preventDefault()
-}
-
-function onDrop(e: DragEvent) {
-  e.preventDefault()
-  const file = e.dataTransfer?.files[0]
-  if (file && file.type.startsWith('image/')) uploadImage(file)
-}
-
 // ---- Lifecycle ----
 
 onMounted(() => {
-  document.addEventListener('paste', onPaste)
   autoResize()
 })
 
 onUnmounted(() => {
-  document.removeEventListener('paste', onPaste)
   if (micStream) stopMic()
 })
 </script>
 
 <template>
-  <button id="attach-btn" title="添加图片" @click="onAttachClick">📷</button>
-  <input type="file" ref="fileInputRef" hidden accept="image/png,image/jpeg,image/gif,image/webp" @change="onFileChange" />
-  <button
-    id="mic-btn"
-    title="麦克风"
-    :class="{ active: audioStore.isMicActive }"
-    @click="toggleMic"
-  >🎤</button>
-  <textarea
-    ref="textareaRef"
-    v-model="textInput"
-    placeholder="输入消息..."
-    rows="1"
-    @keydown="handleKeydown"
-    @input="autoResize"
-    @dragover="onDragOver"
-    @dragenter="onDragEnter"
-    @dragleave="onDragLeave"
-    @drop="onDrop"
-  ></textarea>
-  <button
-    id="send-btn"
-    :disabled="cooldown || !connectionStore.connected"
-    :class="{ sent: cooldown }"
-    @click="sendText"
-  >➤</button>
+  <div class="input-bar" @paste="onPaste">
+    <button id="attach-btn" title="添加图片" @click="onAttachClick">📷</button>
+    <input type="file" ref="fileInputRef" hidden accept="image/png,image/jpeg,image/gif,image/webp" @change="onFileChange" />
+    <button
+      id="mic-btn"
+      title="麦克风"
+      :class="{ active: audioStore.isMicActive }"
+      @click="toggleMic"
+    >🎤</button>
+    <textarea
+      ref="textareaRef"
+      v-model="textInput"
+      placeholder="输入消息..."
+      rows="1"
+      @keydown="handleKeydown"
+      @input="autoResize"
+      @dragover="onDragOver"
+      @dragenter="onDragOver"
+      @dragleave="onDragLeave"
+      @drop="onDrop"
+    ></textarea>
+    <button
+      id="send-btn"
+      :disabled="cooldown || !connectionStore.connected"
+      :class="{ sent: cooldown }"
+      @click="sendText"
+    >➤</button>
+  </div>
 </template>
 
 <style scoped>
+.input-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 #attach-btn {
   width: 42px; height: 42px; border-radius: 50%;
   border: 1px solid var(--border); background: var(--surface);

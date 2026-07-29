@@ -1,12 +1,24 @@
 <script setup lang="ts">
-defineProps<{ modelValue: boolean }>()
+const props = defineProps<{ modelValue: boolean; ariaLabel?: string }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
+
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    emit('update:modelValue', !props.modelValue)
+  }
+}
 </script>
 
 <template>
   <div
     :class="['toggle', { on: modelValue }]"
+    role="switch"
+    :aria-checked="modelValue"
+    :aria-label="ariaLabel || '开关'"
+    tabindex="0"
     @click="emit('update:modelValue', !modelValue)"
+    @keydown="handleKeydown"
   ></div>
 </template>
 

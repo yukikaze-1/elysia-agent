@@ -7,33 +7,12 @@
   </div>
 </template>
 
+<!-- 共享消息布局样式（与 ChatMessage.vue 共用） -->
+<style>
+@import '@/styles/message-layout.css';
+</style>
+
 <style scoped>
-.msg-row {
-  display: flex;
-  gap: 10px;
-  max-width: 85%;
-  align-self: flex-start;
-}
-
-.msg-avatar {
-  font-size: 28px;
-  line-height: 1;
-  flex-shrink: 0;
-  margin-top: 4px;
-}
-
-.msg-bubble {
-  padding: 10px 14px;
-  border-radius: var(--radius);
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 14px;
-  position: relative;
-  background: var(--assistant-bg);
-  border-bottom-left-radius: 4px;
-}
-
 .typing-dots {
   display: flex;
   gap: 4px;
