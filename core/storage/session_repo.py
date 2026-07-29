@@ -33,15 +33,19 @@ class SessionSummary:
 class SessionRepository(Repository):
     """会话存储 — MongoDB sessions 集合。"""
 
-    def __init__(self, db: DocumentDBBackend | None = None, *, database_name: str = "default"):
+    def __init__(self, db: DocumentDBBackend | None = None, *,
+                 database_name: str = "default",
+                 base_url: str | None = None):
         """初始化会话存储。
 
         Args:
             db: 可选的文档数据库后端，为 None 时需调用 connect() 建立连接。
             database_name: MongoDB 数据库名称，默认 "default"。
+            base_url: MongoDB 连接串，为 None 时从 MONGODB_URI 环境变量读取。
         """
         self._db: DocumentDBBackend | None = db
         self._database_name = database_name
+        self._base_url = base_url
 
     async def connect(self) -> bool:
         """建立 MongoDB 连接，创建索引和 TTL。
@@ -50,7 +54,10 @@ class SessionRepository(Repository):
             True 表示连接成功，False 表示连接失败。
         """
         try:
-            self._db = DocumentDBFactory.create(f"mongodb/{self._database_name}")
+            self._db = DocumentDBFactory.create(
+                f"mongodb/{self._database_name}",
+                base_url=self._base_url,
+            )
             await self._db.ensure_index(COLLECTION, [("session_id", 1)])
             await self._db.ensure_index(COLLECTION, [("updated_at", -1)])
             try:
@@ -80,7 +87,10 @@ class SessionRepository(Repository):
         if self._db is not None:
             return True
         try:
-            self._db = DocumentDBFactory.create(f"mongodb/{self._database_name}")
+            self._db = DocumentDBFactory.create(
+                f"mongodb/{self._database_name}",
+                base_url=self._base_url,
+            )
             await self._db.ensure_index(COLLECTION, [("session_id", 1)])
             await self._db.ensure_index(COLLECTION, [("updated_at", -1)])
             try:

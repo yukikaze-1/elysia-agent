@@ -72,6 +72,28 @@ class VisionConfig:
 
 
 @dataclass
+class DatabaseConfig:
+    """数据库连接配置 — MongoDB + Milvus。"""
+    mongodb_uri: str = ConfigField(
+        default="mongodb://localhost:27017",
+        env="MONGODB_URI",
+        help="MongoDB 连接串（如 mongodb://localhost:27017）",
+    )
+    milvus_uri: str = ConfigField(
+        default="http://localhost:19530",
+        env="MILVUS_URI",
+        help="Milvus 服务端点（如 http://localhost:19530）",
+    )
+    milvus_token: str = ConfigField(
+        default="",
+        secret=True,
+        env="MILVUS_TOKEN",
+        help="Milvus 认证令牌",
+    )
+    db_name: str = ConfigField(default="default", help="MongoDB 数据库名")
+
+
+@dataclass
 class AppConfig:
     agent: AgentConfig = ConfigField(default_factory=AgentConfig)
     llm: LLMConfig = ConfigField(default_factory=LLMConfig)
@@ -82,3 +104,4 @@ class AppConfig:
     wake_word: WakeWordConfig = ConfigField(default_factory=WakeWordConfig)
     live2d: Live2DConfig = ConfigField(default_factory=Live2DConfig)
     vision: VisionConfig = ConfigField(default_factory=VisionConfig)
+    database: DatabaseConfig = ConfigField(default_factory=DatabaseConfig)

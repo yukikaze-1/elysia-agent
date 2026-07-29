@@ -17,13 +17,19 @@ DIMENSION = 1024
 class MemoryRepository(Repository):
     """长期记忆存储 — Milvus 向量数据库。"""
 
-    def __init__(self, db: VectorDBBackend | None = None):
+    def __init__(self, db: VectorDBBackend | None = None, *,
+                 base_url: str | None = None,
+                 token: str | None = None):
         """初始化长期记忆存储。
 
         Args:
             db: 可选的向量数据库后端，为 None 时需调用 connect() 建立连接。
+            base_url: Milvus 服务端点，为 None 时从 MILVUS_URI 环境变量读取。
+            token: Milvus 认证令牌，为 None 时从 MILVUS_TOKEN 环境变量读取。
         """
         self._db: VectorDBBackend | None = db
+        self._base_url = base_url
+        self._token = token
 
     async def connect(self) -> bool:
         """建立 Milvus 连接，创建或加载 collection。
@@ -32,7 +38,11 @@ class MemoryRepository(Repository):
             True 表示连接成功，False 表示连接失败。
         """
         try:
-            self._db = VectorDBFactory.create("milvus/memory")
+            self._db = VectorDBFactory.create(
+                "milvus/memory",
+                base_url=self._base_url,
+                token=self._token,
+            )
             if not await self._db.collection_exists(COLLECTION):
                 await self._db.create_collection(COLLECTION, DIMENSION)
             else:
@@ -59,7 +69,11 @@ class MemoryRepository(Repository):
         if self._db is not None:
             return True
         try:
-            self._db = VectorDBFactory.create("milvus/memory")
+            self._db = VectorDBFactory.create(
+                "milvus/memory",
+                base_url=self._base_url,
+                token=self._token,
+            )
             logger.info("MemoryRepository: Milvus 已恢复连接")
             return True
         except Exception:

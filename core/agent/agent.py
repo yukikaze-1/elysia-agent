@@ -116,11 +116,26 @@ class Agent(AgentLifecycle, AgentServer):
         self._character = CharacterConfig.from_yaml(config.agent.character)
 
         # ---- Storage Repositories ----
-        self._session_repo = SessionRepository()
-        self._message_repo = MessageRepository()
-        self._token_repo = TokenRepository()
-        self._memory_repo = MemoryRepository()
-        self._version_repo = CharacterVersionRepository()
+        db_cfg = config.database
+        self._session_repo = SessionRepository(
+            database_name=db_cfg.db_name,
+            base_url=db_cfg.mongodb_uri,
+        )
+        self._message_repo = MessageRepository(
+            database_name=db_cfg.db_name,
+            base_url=db_cfg.mongodb_uri,
+        )
+        self._token_repo = TokenRepository(
+            database_name=db_cfg.db_name,
+            base_url=db_cfg.mongodb_uri,
+        )
+        self._memory_repo = MemoryRepository(
+            base_url=db_cfg.milvus_uri,
+            token=db_cfg.milvus_token or None,
+        )
+        self._version_repo = CharacterVersionRepository(
+            base_url=db_cfg.mongodb_uri,
+        )
 
         # ---- L2: Memory ----
         self._session = SessionMemory(

@@ -53,6 +53,13 @@ wake_word:
 live2d:
   static_image: "/static/Elysia.png"  # Live2D 未启用时的静态立绘
 
+# ---- 数据库 ----
+database:
+  mongodb_uri: mongodb://localhost:27017  # MongoDB 连接串（env: MONGODB_URI）
+  milvus_uri: http://localhost:19530     # Milvus 服务端点（env: MILVUS_URI）
+  milvus_token: ""                        # Milvus 认证令牌（env: MILVUS_TOKEN）
+  db_name: default                       # MongoDB 数据库名
+
 # ---- Vision ----
 vision:
   model: mimo/mimo-v2.5               # describe_image 工具使用的视觉模型

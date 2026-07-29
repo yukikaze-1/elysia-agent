@@ -2,6 +2,20 @@
 
 ## 已完成
 
+### 2026-07-29: `config.yaml` 新增 `database` 段
+
+**问题**：数据库连接（MongoDB + Milvus）只能通过环境变量 `MONGODB_URI` / `MILVUS_URI` / `MILVUS_TOKEN` 配置，`config.yaml` 完全没有数据库相关键。LLM/TTS/STT 都有对应 YAML 段 + 环境变量覆盖的双通道，数据库缺失。
+
+**新增**：
+- `core/config/app_config.py`：新增 `DatabaseConfig` dataclass（`mongodb_uri` / `milvus_uri` / `milvus_token` / `db_name`），加入 `AppConfig`
+- `config.yaml`：新增 `database:` 段，含完整默认值
+- 5 个 Repository（`session_repo` / `message_repo` / `token_repo` / `memory_repo` / `character_version_repo`）：`__init__` 接受 `base_url` / `token` 参数，`connect()` + `health_check()` 中传给 `create()`
+- `agent.py`：从 `config.database` 提取配置传给所有 repo
+- `docs/database-storage.md`：更新第二节（Milvus/MongoDB 连接）和第七节（环境变量表→配置方式），标注 YAML 路径
+- 修复 1 个测试断言（`test_long_term.py` 适配 `create()` 新 kwargs）
+
+**优先级**：环境变量 > config.yaml > 默认值。向后兼容——不设 YAML 值时行为与原来完全一致。
+
 ### 2026-07-29: `Any` 类型清理收尾 — emit→ToolEmitter + scheduler + mailbox
 
 **议题1 — 插件 `emit: Any` → `ToolEmitter`（15 处）**：`ToolPlugin`/`ToolManager`/`ToolAdapter` 基类 + 9 个插件文件，全部改用已存在的 `ToolEmitter` 类型。同时收窄 `execute_stream` 返回类型 `AsyncIterator[Any]` → `AsyncIterator[ToolProgress | ToolResult]`。

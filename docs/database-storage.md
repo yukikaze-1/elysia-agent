@@ -13,7 +13,7 @@
 
 ## 一、Milvus 向量数据库
 
-**连接**: `MILVUS_URI`（默认 `http://localhost:19530`），`MILVUS_TOKEN` 认证
+**连接**: 优先级 `config.yaml` → 环境变量 → 默认值。YAML 路径 `database.milvus_uri` / `database.milvus_token`，环境变量 `MILVUS_URI`（默认 `http://localhost:19530`）/ `MILVUS_TOKEN`
 
 ### 集合: `long_term_memory`
 
@@ -35,7 +35,7 @@
 
 ## 二、MongoDB 文档数据库
 
-**连接**: `MONGODB_URI`（默认 `mongodb://localhost:27017`）
+**连接**: 优先级 `config.yaml` → 环境变量 → 默认值。YAML 路径 `database.mongodb_uri`，环境变量 `MONGODB_URI`（默认 `mongodb://localhost:27017`）
 
 ### 集合: `sessions`（数据库: `default`，可配置）
 
@@ -210,11 +210,22 @@
 
 ---
 
-## 七、环境变量
+## 七、配置方式
 
-| 变量 | 用途 | 默认值 |
-|------|------|--------|
-| `MILVUS_URI` | Milvus 连接地址 | `http://localhost:19530` |
-| `MILVUS_TOKEN` | Milvus 认证令牌 | 空 |
-| `MONGODB_URI` | MongoDB 连接地址 | `mongodb://localhost:27017` |
-| `OPENAI_API_KEY` | 嵌入模型 API Key（可选） | 空 |
+数据库连接可通过 `config.yaml` 或环境变量配置。优先级：环境变量 > config.yaml > 默认值。
+
+```yaml
+# config.yaml
+database:
+  mongodb_uri: mongodb://localhost:27017  # MongoDB 连接串（env: MONGODB_URI）
+  milvus_uri: http://localhost:19530     # Milvus 服务端点（env: MILVUS_URI）
+  milvus_token: ""                        # Milvus 认证令牌（env: MILVUS_TOKEN）
+  db_name: default                       # MongoDB 数据库名
+```
+
+| 变量 | YAML 路径 | 用途 | 默认值 |
+|------|-----------|------|--------|
+| `MILVUS_URI` | `database.milvus_uri` | Milvus 连接地址 | `http://localhost:19530` |
+| `MILVUS_TOKEN` | `database.milvus_token` | Milvus 认证令牌 | 空 |
+| `MONGODB_URI` | `database.mongodb_uri` | MongoDB 连接地址 | `mongodb://localhost:27017` |
+| `OPENAI_API_KEY` | — | 嵌入模型 API Key（可选） | 空 |

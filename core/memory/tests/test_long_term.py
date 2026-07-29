@@ -220,7 +220,7 @@ class TestLongTermMemoryClearAll:
         assert deleted == 3
         assert len(ltm._entries) == 0
         # 临时 repo 创建时调用 factory
-        mock_create.assert_called_once_with("milvus/memory")
+        mock_create.assert_called_once_with("milvus/memory", base_url=None, token=None)
         mock_backend.close.assert_awaited_once()
 
     @pytest.mark.asyncio

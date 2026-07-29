@@ -18,13 +18,16 @@ class CharacterVersionRepository(Repository):
     """角色 Section 版本历史存储 — append-only, 永久保留。
     支持多种 content_type: "l2", "c6", 未来扩展 "c7", "c2" 等。"""
 
-    def __init__(self, db: DocumentDBBackend | None = None):
+    def __init__(self, db: DocumentDBBackend | None = None, *,
+                 base_url: str | None = None):
         """初始化角色版本存储。
 
         Args:
             db: 可选的文档数据库后端，为 None 时需调用 connect() 建立连接。
+            base_url: MongoDB 连接串，为 None 时从 MONGODB_URI 环境变量读取。
         """
         self._db: DocumentDBBackend | None = db
+        self._base_url = base_url
 
     # ---- lifecycle ----
 
@@ -35,7 +38,10 @@ class CharacterVersionRepository(Repository):
             True 表示连接成功，False 表示连接失败。
         """
         try:
-            self._db = DocumentDBFactory.create("mongodb/default")
+            self._db = DocumentDBFactory.create(
+                "mongodb/default",
+                base_url=self._base_url,
+            )
             # 检查脏数据（重复文档），有重复时降级为非唯一索引
             dup_pipeline = [
                 {"$group": {
