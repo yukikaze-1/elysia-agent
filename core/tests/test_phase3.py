@@ -671,7 +671,7 @@ class TestEmotionEngineEdges:
         """_schedule should be a no-op when no event loop is running."""
         # In sync test context, no running loop → should not raise
         from core.personality.engine import CharacterEngine
-        CharacterEngine._schedule(MagicMock())  # coroutine mock, no loop
+        CharacterEngine._schedule(MagicMock())  # type: ignore[reportAttributeAccessIssue]  # coroutine mock, no loop
 
     def test_push_idle_uses_list(self, engine):
         """push_idle_expression picks from idle_expressions."""
@@ -1041,7 +1041,8 @@ class TestConsoleChannelDedup:
 @pytest.mark.unit
 class TestMessageObj:
     def test_to_dict(self):
-        msg = MessageObj(role="assistant", content="hello world")
+        from core.schema.message import MessageRole
+        msg = MessageObj(role=MessageRole.ASSISTANT, content="hello world")
         d = msg.to_dict()
         assert d == {"role": "assistant", "content": "hello world"}
 
