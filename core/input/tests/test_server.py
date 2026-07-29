@@ -45,8 +45,9 @@ class TestCreateApp:
         # For aiohttp route resources, check the canonical path
         route_paths = set()
         for r in app.router.routes():
-            info = r.resource.get_info() if hasattr(r.resource, 'get_info') else {}
-            path = info.get('path', getattr(r.resource, '_path', None))
+            resource = r.resource  # may be None for AbstractRoute
+            info = resource.get_info() if resource is not None and hasattr(resource, 'get_info') else {}
+            path = info.get('path', getattr(resource, '_path', None))
             if path:
                 route_paths.add(path)
 
@@ -511,6 +512,7 @@ class TestAssertionFixes:
                 msg = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
                 if msg["type"] == "error":
                     break
+            assert msg is not None, "Expected error response, got None"
             assert msg["type"] == "error"
             assert "Invalid JSON" in msg["message"]
 
