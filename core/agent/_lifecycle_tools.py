@@ -38,9 +38,9 @@ class _LifecycleTools:
         _token_tracker: TokenTracker
         _fsm: AgentFSM
         _cognitive: CognitiveLoop
-        _embed_task: asyncio.Task[Any] | None
+        _embed_task: asyncio.Task[None] | None
         _idle: IdleMonitor
-        _event_task: asyncio.Task[Any] | None
+        _event_task: asyncio.Task[None] | None
         _process_events: Any
 
     async def _start_tool_context(self) -> None:

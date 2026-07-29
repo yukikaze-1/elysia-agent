@@ -105,10 +105,10 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _prompt_recorder: PromptRecorder
         _response_recorder: ResponseRecorder
         _tts: TTSBackend | None
-        _event_task: asyncio.Task[Any] | None
-        _mailbox_task: asyncio.Task[Any] | None
-        _db_health_task: asyncio.Task[Any] | None
-        _embed_task: asyncio.Task[Any] | None
+        _event_task: asyncio.Task[None] | None
+        _mailbox_task: asyncio.Task[None] | None
+        _db_health_task: asyncio.Task[None] | None
+        _embed_task: asyncio.Task[None] | None
         _pending_messages: list[_PendingMessage]
         _background_tasks: dict[str, _BackgroundTaskEntry]
         _mongo_ok: bool

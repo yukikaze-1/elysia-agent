@@ -90,7 +90,7 @@
 | 中 | **缺少 README（3 个模块）** | `Module/task_system/`（30+ 文件复杂系统）、`Module/_common/`、`core/monitoring/` 无 README |
 | 低 | **`character/cyrene/` 不可用** | 缺少 `config.yaml` 和 `personality.md`，仅含 GPT 参考材料，无法作为角色加载 |
 | 低 | **依赖无版本上限** | `requirements.txt` 中 pydantic、openai、torch 等均无上限约束，上游 breaking change 可导致不可预期问题。`torch` 是 2GB+ 重依赖 |
-| 低 | **`# type: ignore` 清理（进行中）** | 生产代码共 32 处，已消除 9 处（第一梯队）。剩余 23 处分两梯队：<br>**第二梯队（12 处，需逐个消除）**：[llm_adapter.py](core/adapter/llm_adapter.py) 5 处（`getattr`+`union-attr`+`raise last_exc`）、[openai_compat.py](Module/llm/openai_compat.py) 5 处（`arg-type`+`union-attr`）、[logger/factory.py](Module/logger/factory.py) 2 处（`frame.f_back` union）<br>**第三梯队（7 处，需协议/接口改动）**：[executor.py](Module/task_system/core/executor.py) 5 处（ToolRegistry Protocol 缺口）、[lifecycle.py](Module/task_system/lifecycle.py) 1 处、[_lifecycle_task_system.py](core/agent/_lifecycle_task_system.py) 1 处<br>**不可消除（2 处）**：[llm/protocol.py](Module/llm/protocol.py):43 + [stt/protocol.py](Module/stt/protocol.py):49（Python 类型系统无"抽象 async generator"语法）<br>**豁免（2 处）**：[wakeword.py](core/input/wakeword.py):57（第三方无 stub）+ [factory.py](Module/logger/factory.py):125（logging.Formatter 动态属性）
+| 低 | **`# type: ignore` + `Any` 类型清理（进行中）** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（分二/三梯队）。**`Any` 类型替换**：core/ 下原有 63 处 `Any`，已消除 25 处（17 处属性→具体类型+8 处 `Task[Any]`→`Task[None]`）。剩余 38 处：**待讨论**（插件 emit 签名 12 处+JSON 容器 ~4 处+其他 2 处）|**不可消除**（流式协议/协程参数/回调签名 ~22 处）。详见 2026-07-29 第三条 completed。
 
 
 ## 来自 code-review-2026-07-22 的遗留问题

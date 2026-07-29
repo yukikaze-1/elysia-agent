@@ -31,7 +31,7 @@ class _LifecycleTaskSystem:
         _cognitive: CognitiveLoop
         _user_name: str
         _register_background_task: Callable[[str, Any, str, IsoTimestamp], None]
-        _mailbox_task: asyncio.Task[Any] | None
+        _mailbox_task: asyncio.Task[None] | None
         _poll_mailboxes: Callable[[], Coroutine[Any, Any, None]]
 
     async def _start_task_system(self) -> None:

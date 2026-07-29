@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from core.adapter import ToolResult, ErrorType
 from ..schema.tool import ToolCall
@@ -13,6 +13,10 @@ from ..utils import new_message_id
 
 if TYPE_CHECKING:
     from Module.task_system.schema import SubmitError, UserProfile
+    from Module.task_system.delegation_preparer import DelegationPreparer
+    from Module.task_system.task_system import TaskSystem
+    from ..adapter.tool_adapter import ToolAdapter
+    from ..memory.session import SessionMemory
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +36,13 @@ class CognitiveTools:
 
     所有属性由 CognitiveLoop.__init__ 初始化，本 mixin 不含 __init__。
     """
-    # 类型声明 — 属性由 CognitiveLoop.__init__ 初始化（mixin 无 __init__）
-    _tool_executor: Any  # CognitiveLoop.__init__ 注入
-    _tool_adapter: Any   # CognitiveLoop.configure() 注入
-    _delegation_preparer: Any = None
-    _session: Any = None
-    _user_profile: Any = None
-    _task_system: Any = None
+    # 类型声明 — 属性由 CognitiveLoop 初始化（mixin 无 __init__）
+    _tool_executor: ToolAdapter  # CognitiveLoop.__init__ 注入（必需参数）
+    _tool_adapter: ToolAdapter | None = None   # CognitiveLoop.configure() 注入
+    _session: SessionMemory  # CognitiveLoop.__init__ 注入（必需参数）
+    _delegation_preparer: DelegationPreparer | None = None
+    _user_profile: UserProfile | None = None
+    _task_system: TaskSystem | None = None
 
     # ---- Tool execution ----
 

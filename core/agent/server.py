@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
 
 from ._types import RunState
@@ -41,9 +42,9 @@ class AgentServer:
         _req_counter: int
         _mongo_ok: bool
         _milvus_ok: bool
-        start: Any
-        stop: Any
-        process_message: Any
+        start: Callable[..., Coroutine[Any, Any, None]]
+        stop: Callable[..., Coroutine[Any, Any, None]]
+        process_message: Callable[..., Coroutine[Any, Any, None]]
 
     def _print_startup_banner(self, mongo_ok: bool, milvus_ok: bool) -> str:
         """构建启动横幅字符串。调用方负责打印/记录。

@@ -2,6 +2,15 @@
 
 ## 已完成
 
+### 2026-07-29: `Any` 类型替换 — 第一+二层 25 处
+
+对 `core/` 下全部 63 处 `Any` 使用排查后，按分层修复：
+- **第一层（17 处）**：属性声明 `Any` → 具体类型。`tools.py` 6 处（`ToolAdapter`/`DelegationPreparer`/`SessionMemory`/`UserProfile`/`TaskSystem`）、`loop.py` 7 处（同 + `MemoryReflector`/`ResponseRecorder`）、`server.py` 3 处（`Callable[..., Coroutine]`）、`_types.py` 1 处（`asyncio.Queue`）
+- **第二层（8 处）**：`asyncio.Task[Any]` → `Task[None]`（4 个 lifecycle mixin 文件中的所有 task handles）。后台 task 均不返回值，`None` 更精确
+- 另同时移除 3 个文件不再需要的 `from typing import Any`
+
+涉及文件：[tools.py](../core/cognitive/tools.py)、[loop.py](../core/cognitive/loop.py)、[server.py](../core/agent/server.py)、[_types.py](../core/agent/_types.py)、[lifecycle.py](../core/agent/lifecycle.py)、[_lifecycle_persistence.py](../core/agent/_lifecycle_persistence.py)、[_lifecycle_task_system.py](../core/agent/_lifecycle_task_system.py)、[_lifecycle_tools.py](../core/agent/_lifecycle_tools.py)
+
 ### 2026-07-29: 日志级别修复 — shutdown/持久化路径静默吞异常
 
 **问题**：`core/agent/lifecycle.py`、`core/cognitive/loop.py`、`core/agent/_lifecycle_persistence.py` 共 9 处 `except Exception: log.debug()` 静默吞异常。shutdown 失败、session 持久化失败、记忆沉淀/性格反思失败全打 DEBUG 级日志——数据丢失无感知。

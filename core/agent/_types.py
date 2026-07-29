@@ -1,9 +1,9 @@
 """Agent 共享类型 — 零包内依赖，消除循环导入。"""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any
 
 
 @dataclass
@@ -20,7 +20,7 @@ class _BackgroundTaskEntry:
     """后台任务注册信息。"""
     intent: str
     dispatched_at: str
-    mailbox: Any  # asyncio.Queue
+    mailbox: asyncio.Queue
 
 
 class RunState(Enum):

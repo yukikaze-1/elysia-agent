@@ -16,7 +16,7 @@ import logging
 import time
 from dataclasses import asdict
 from enum import Enum
-from typing import Any, Callable, TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING
 
 from ..utils import new_message_id
 
@@ -39,10 +39,14 @@ from Module.llm.registry import LLMFactory
 
 if TYPE_CHECKING:
     from Module.task_system.delegation_preparer import DelegationPreparer
+    from Module.task_system.schema import UserProfile
+    from Module.task_system.task_system import TaskSystem
     from ..monitoring.token_tracker import TokenTracker
     from ..debug.prompt_recorder import PromptRecorder
     from ..debug.response_recorder import ResponseRecorder
     from ..personality.engine import CharacterEngine
+    from ..adapter.tool_adapter import ToolAdapter
+    from ..memory.memory_reflector import MemoryReflector
 
 from ..text.block_filter import BlockFilter, build_parts_with_blocks
 from ..adapter.tts_adapter import TTSStreamManager
@@ -122,7 +126,7 @@ class CognitiveLoop(CognitiveTools):
         output: OutputManager,
         prompt: PromptAssembler,
         session: SessionMemory,
-        tool_executor: Any = None,  # ToolAdapter / ToolExecutor Protocol
+        tool_executor: ToolAdapter | None = None,
         character_engine: "CharacterEngine | None" = None,
         consolidator: MemoryConsolidator | None = None,
         tts: TTSBackend | None = None,
@@ -155,12 +159,12 @@ class CognitiveLoop(CognitiveTools):
         self._req_counter: int = 0
         self._character_engine = character_engine
         self._consolidator = consolidator
-        self._tool_adapter: Any = None     # 由 configure() 注入
-        self._memory_reflector: Any = None  # 由 configure() 注入
+        self._tool_adapter: ToolAdapter | None = None     # 由 configure() 注入
+        self._memory_reflector: MemoryReflector | None = None  # 由 configure() 注入
         self._tts = tts  # 保留供 agent.py stop() 读取
         self._token_tracker = token_tracker
         self._prompt_recorder = prompt_recorder
-        self._response_recorder: Any = None  # 由 configure() 注入
+        self._response_recorder: ResponseRecorder | None = None  # 由 configure() 注入
         self._sentence_buf: SentenceBuffer | None = None
         self._block_filter: BlockFilter | None = None
         self._ttft_start: float = 0.0
@@ -175,10 +179,10 @@ class CognitiveLoop(CognitiveTools):
         )
         self._executing_tools: list[str] = []  # 当前正在执行中的工具名 (供 debug 面板)
         self._timing_history: list[dict] = []  # 最近 100 轮请求的计时数据 (供 debug 面板)
-        self._task_system: Any = None          # 由 configure() 注入
-        self._delegation_preparer: Any = None  # 由 configure() 注入
+        self._task_system: TaskSystem | None = None          # 由 configure() 注入
+        self._delegation_preparer: DelegationPreparer | None = None  # 由 configure() 注入
         self._on_background_task: Callable | None = None  # Agent 注入的回调
-        self._user_profile: Any = None         # 由 configure() 注入
+        self._user_profile: UserProfile | None = None         # 由 configure() 注入
         self._clock: TimingClock | None = None # 当前轮次的计时器（process() 设置，finally 清除）
         self._phase: TurnPhase | None = None   # 当前轮次处理阶段（供 debug 面板）
 

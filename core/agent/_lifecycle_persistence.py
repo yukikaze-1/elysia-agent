@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import os
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from Module.embedding import EmbeddingFactory
 
@@ -24,7 +24,7 @@ class _LifecyclePersistence:
     """持久化层生命周期 mixin。"""
 
     if TYPE_CHECKING:
-        _db_health_task: asyncio.Task[Any] | None
+        _db_health_task: asyncio.Task[None] | None
         _session: SessionMemory
         _long_term: LongTermMemory
         _message_repo: MessageRepository
