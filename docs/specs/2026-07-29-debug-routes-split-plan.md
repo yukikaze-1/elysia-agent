@@ -1172,10 +1172,10 @@ git commit -m "refactor: wire debug_routes/__init__.py — entry point + TaskSys
 **Files:**
 - Delete: `core/input/debug_routes.py`
 
-- [ ] **Step 1: 删除 `core/input/debug_routes.py`**
+- [ ] **Step 1: 删除 `core/input/debug_routes.py` 并暂存**
 
 ```bash
-rm core/input/debug_routes.py
+git rm core/input/debug_routes.py
 ```
 
 - [ ] **Step 2: 验证 server.py import 自动解析到 package `__init__`**
@@ -1199,7 +1199,6 @@ make test-quick
 - [ ] **Step 5: Commit**
 
 ```bash
-git rm core/input/debug_routes.py
 git commit -m "refactor: remove old debug_routes.py — replaced by debug_routes/ package"
 ```
 
