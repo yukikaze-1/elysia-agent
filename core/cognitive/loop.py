@@ -331,7 +331,8 @@ class CognitiveLoop(CognitiveTools):
         Returns:
             (messages, tool_defs): LLM 消息列表 + 工具定义列表
         """
-        assert self._clock is not None
+        if self._clock is None:
+            raise RuntimeError("TimingClock 未初始化")
         with self._clock.span("prompt") as t:
             supports_mm = LLMFactory.supports_multimodal(self._llm.model)
             tts_provider = self._tts.provider_name if self._tts else ""
@@ -562,7 +563,8 @@ class CognitiveLoop(CognitiveTools):
                 "args": {k: str(v) for k, v in args.items()},
             })
 
-        assert self._clock is not None
+        if self._clock is None:
+            raise RuntimeError("TimingClock 未初始化")
         with self._clock.span("tools"):
             if _on_tool_calls is not None:
                 results = await _on_tool_calls(dispatch_tcs)

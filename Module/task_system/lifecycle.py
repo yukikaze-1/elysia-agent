@@ -150,8 +150,8 @@ async def cancel(
             logger.exception(
                 "lifecycle: task_id=%s cancel(PAUSED) 存储清理失败", task_id,
             )
-        assert semaphore is not None
-        semaphore.release()
+        if semaphore:
+            semaphore.release()
         return True
 
     # ── 分支 2: RUNNING / PLANNING → 设取消标志 ──

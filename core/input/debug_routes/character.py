@@ -133,7 +133,8 @@ async def l2_rollback_handler(request: web.Request) -> web.Response:
         agent, "l2", target_version)
     if error:
         return web.json_response({"error": error}, status=status)
-    assert result is not None
+    if result is None:
+        return web.json_response({"error": "内部错误"}, status=500)
     logger.warning("DEBUG API: l2_rollback version=%d, new_version=%s",
                   target_version, result.get("new_version"))
     return web.json_response(result)
@@ -184,7 +185,8 @@ async def character_rollback_handler(request: web.Request) -> web.Response:
         agent, content_type, target_version)
     if error:
         return web.json_response({"error": error}, status=status)
-    assert result is not None
+    if result is None:
+        return web.json_response({"error": "内部错误"}, status=500)
     logger.warning("DEBUG API: character_rollback type=%s, version=%d, new_version=%s",
                   content_type, target_version, result.get("new_version"))
     return web.json_response(result)

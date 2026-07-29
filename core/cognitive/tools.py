@@ -66,8 +66,10 @@ class CognitiveTools:
             args = tc.function.parsed
             logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
             try:
-                assert self._tool_executor is not None
-                assert self._tool_adapter is not None
+                if self._tool_executor is None:
+                    raise RuntimeError("ToolExecutor 未初始化")
+                if self._tool_adapter is None:
+                    raise RuntimeError("ToolAdapter 未初始化")
                 tr = await self._tool_executor.execute(func_name, ctx=self._tool_adapter.tool_context, **args)
             except asyncio.CancelledError:
                 logger.info("工具取消: %s", func_name)
@@ -272,7 +274,8 @@ class CognitiveTools:
                 error=f"意图不够明确: {suggestion}。请向用户澄清，不要重复尝试。")
 
         # 3. TaskSystem.submit
-        assert prep_result.context is not None  # status=ok 保证 context 非空
+        if prep_result.context is None:
+            raise RuntimeError("submit_task: DelegationPreparer 返回 ok 但 context 为空")
         mailbox_or_error = await task_system.submit(prep_result.context)
         if isinstance(mailbox_or_error, SubmitError):
             return ToolResult.fail(name="submit_task",

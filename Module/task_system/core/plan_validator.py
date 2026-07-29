@@ -96,7 +96,8 @@ class PlanValidator:
         #    没有独立的 max_depth 字段——节点数已经约束了规模的物理上限。
         tc = task_constraints.resolve(global_constraints)
         max_nodes = tc.max_dag_nodes
-        assert max_nodes is not None  # resolve() 保证所有字段已填充
+        if max_nodes is None:
+            raise RuntimeError("max_dag_nodes 在 resolve() 后不应为 None")
         try:
             max_depth = graph.compute_max_depth()
             if max_depth > max_nodes:

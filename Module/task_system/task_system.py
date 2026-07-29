@@ -181,7 +181,8 @@ class TaskSystem:
             )
 
         # start() 已调用，信号量必定初始化
-        assert self._semaphore is not None
+        if self._semaphore is None:
+            raise RuntimeError("TaskSystem 信号量未初始化，请先调用 start()")
 
         # ── 参数校验 ──
         if not context.intent.strip():
@@ -248,8 +249,8 @@ class TaskSystem:
                     logger.exception(
                         "TaskSystem: task_id=%s 存储清理失败，槽位仍会释放", task_id,
                     )
-                assert self._semaphore is not None
-                self._semaphore.release()
+                if self._semaphore:
+                    self._semaphore.release()
 
         try:
             task = asyncio.create_task(_run_and_cleanup())
@@ -379,16 +380,16 @@ class TaskSystem:
                     logger.exception(
                         "TaskSystem: task_id=%s resume 后存储清理失败", task_id,
                     )
-                assert self._semaphore is not None
-                self._semaphore.release()
+                if self._semaphore:
+                    self._semaphore.release()
 
         try:
             task = asyncio.create_task(_run_resume())
         except Exception:
             logger.exception("TaskSystem.resume: task_id=%s create_task 失败", task_id)
             self._cleanup_task(task_id)
-            assert self._semaphore is not None
-            self._semaphore.release()
+            if self._semaphore:
+                self._semaphore.release()
             raise
         self._task_futures[task_id] = task
         logger.info("TaskSystem.resume: task_id=%s 已恢复", task_id)

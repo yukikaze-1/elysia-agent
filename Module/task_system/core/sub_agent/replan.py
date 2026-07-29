@@ -162,7 +162,8 @@ async def handle_replan(
         (False, None)         — 熔断 / checkpoint 缺失 / replan 异常，已降级为 FAILED
     """
     # 1. 熔断检查
-    assert task_state.plan is not None, "NEEDS_REPLAN 时 plan 不应为 None"
+    if task_state.plan is None:
+        raise RuntimeError("NEEDS_REPLAN 时 plan 不应为 None")
     meltdown_reason = check_meltdown(
         task_state.plan.plan_version, constraints.max_failure_count,
         constraints.max_task_duration_s, task_state.created_at,

@@ -398,7 +398,8 @@ class TaskScheduler:
         tool_name = task.payload.get("tool_name", "")
         arguments = task.payload.get("arguments", {})
 
-        assert self._tool_executor is not None, "Scheduler 启动前 tool_executor 必须已注入"
+        if self._tool_executor is None:
+            raise RuntimeError("ToolExecutor 未注入，请先调用 Scheduler.start()")
         if self._tool_ctx is None:
             self._tool_ctx = ToolContext()
         while True:
