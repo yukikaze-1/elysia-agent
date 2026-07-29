@@ -97,11 +97,12 @@ Module/<service>/
 
 ```
 core/
-├── agent/                 # Agent (package): AgentLifecycle mixin + AgentServer mixin + _types + FSM + 4 lifecycle mixins
+├── agent/                 # Agent (package): AgentLifecycle mixin + AgentServer mixin + _types + AgentStatus + FSM + 4 lifecycle mixins
 │   ├── agent.py           #   Agent.__init__ + event handling + process_message + background tasks
 │   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + _STARTUP_STEPS + _SHUTDOWN_STEPS + 3 flush
 │   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
-│   ├── agent_fsm.py       #   AgentFSM: 状态机 IDLE→THINKING→(EXECUTING→THINKING)*→SPEAKING→IDLE
+│   ├── status.py          #   AgentStatus（对外只读）+ CognitivePhaseController（对内写）, FSMBacked 实现
+│   ├── agent_fsm.py       #   AgentFSM: 底层状态机（通过 status.py 封装，不对外暴露）
 │   ├── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
 │   ├── _lifecycle_persistence.py  #   持久化层启停 (MongoDB/Milvus/session/repos)
 │   ├── _lifecycle_services.py     #   LLM/TTS/Output/TokenTracker 启停
@@ -234,7 +235,7 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **MongoDB**: motor async driver. `insert_one/insert_many` pass `dict()` copy to avoid motor mutating callers' dicts.
 - **Session params**: `session.set_param("key", value)` / `session.get_param("key", default)` for runtime state. Persisted to MongoDB with session.
 - **inner_voice protocol**: Every reply has one `<inner_voice>` block (1-2 sentences: current feeling + response intent, no reasoning chains).
-- **FSM**: `AgentFSM` manages state transitions: IDLE → THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE.
+- **AgentStatus**: `agent.status`（`AgentStatus`）提供语义状态查询（`is_accepting_input` / `is_speaking` / `should_suppress_vad_interrupt` 等）；`agent.phases`（`CognitivePhaseController`）驱动阶段转换。底层 `AgentFSM` 不对外暴露。设计文档：[spec](docs/specs/2026-07-30-agent-status-interface-design.md)。
 
 ## Prompt files (`core/prompts/`)
 

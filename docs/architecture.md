@@ -312,25 +312,29 @@ INTERRUPT 处理流程：
 4. FSM: 当前态 → INTERRUPTED → IDLE
 ```
 
-### 4.2 有限状态机 (AgentFSM)
+### 4.2 AgentStatus 接口层
 
-```
-  ┌──────┐   USER_INPUT   ┌──────────┐      tool_calls   ┌──────────┐
-  │ IDLE │ ─────────────► │ THINKING │ ◄───────────────► │EXECUTING │
-  │      │ ◄───────────── │          │                    │          │
-  └──┬───┘    INTERRUPT   └────┬─────┘                    └──────────┘
-     │                         │
-     │  TASK_RESULT       LLM done
-     │                         │
-  ┌──▼──────────────────┐  ┌───▼─────┐
-  │ IDLE_BACKGROUND_TASK│  │ SPEAKING │
-  │ (mailbox polling)   │  │          │
-  └─────────────────────┘  └─────────┘
-```
+`AgentStatus` 是 FSM 之上的语义接口，将消费者与底层 `AgentFSM` 解耦。设计详见 [spec](../docs/specs/2026-07-30-agent-status-interface-design.md)。
 
-有效转移：
+**对外只读：`AgentStatus`（`agent.status`）**
+- `is_accepting_input` — IDLE 或 IDLE_BACKGROUND_TASK
+- `is_completely_idle` — 仅 IDLE
+- `is_speaking` — SPEAKING
+- `should_suppress_vad_interrupt` — THINKING 或 EXECUTING
+- `current_name()` / `previous_name()` — 用于日志和调试
+- `on_change(callback)` — 事件驱动订阅，替代轮询
+- `wait_until_idle(timeout)` — 异步等待空闲
+
+**对内写入：`CognitivePhaseController`（`agent.phases`）**
+- `enter_thinking()` / `enter_executing()` / `return_to_thinking()` / `enter_speaking()` — 阶段入口
+- `finish_turn(has_background_tasks)` — 结束 turn，转换到 IDLE 或 IDLE_BACKGROUND_TASK
+- `handle_interrupt()` — 中断状态转换（INTERRUPTED → IDLE）
+
+底层由 `AgentFSM`（`agent/agent_fsm.py`）实现状态转换验证，通过 `FSMBackedStatus` + `FSMBackedPhaseController`（`agent/status.py`）桥接。
+
+有效转移（与旧版 FSM 一致）：
 ```
-IDLE        → THINKING | IDLE_BACKGROUND_TASK
+IDLE        → THINKING
 IDLE_BACKGROUND_TASK → THINKING | INTERRUPTED
 THINKING    → SPEAKING | EXECUTING | INTERRUPTED
 EXECUTING   → THINKING | INTERRUPTED
@@ -340,7 +344,7 @@ INTERRUPTED → IDLE
 
 ### 4.3 认知循环 (CognitiveLoop)
 
-ReAct 调度器，采用 mixin 模式 `CognitiveLoop(CognitiveTools)`。`_think_loop()` 从 378 行提取为 4 个独立方法 + ~30 行主循环，每步设置 `self._phase`（TurnPhase）供 debug 面板观测内部进度：
+ReAct 调度器，采用 mixin 模式 `CognitiveLoop(CognitiveTools)`。通过 `agent.phases`（`CognitivePhaseController`）驱动状态转换，`_think_loop()` 从 378 行提取为 4 个独立方法 + ~30 行主循环，每步设置 `self._phase`（TurnPhase）供 debug 面板观测内部进度：
 
 ```python
 class CognitiveLoop:
@@ -348,16 +352,15 @@ class CognitiveLoop:
 
     async def process(self, user_message, ...):
         async with self._process_lock:          # 串行化并发调用
-            if not can_transition(THINKING):     # 已在处理中 → skip
+            if not self.status.is_accepting_input:  # 已在处理中 → skip
                 return
-            fsm.transition(THINKING)
+            await self.phases.enter_thinking()
             try:
                 await self._think_loop(user_message, ...)
             except CancelledError:
                 await self._handle_interrupt()    # 清理 → INTERRUPTED → IDLE
 
     async def _think_loop(self, user_message, ...):
-        # 前置: STT 情绪分析 + 唤醒消息
         self._phase = TurnPhase.BUILD_PROMPT
         messages, tool_defs = await self._build_turn_prompt(...)
 
@@ -375,7 +378,7 @@ class CognitiveLoop:
             return
 ```
 
-**TurnPhase 内部追踪：** 4 个阶段标记（`BUILD_PROMPT` / `STREAMING` / `EXECUTING_TOOLS` / `FINALIZING`）不同于 `AgentFSM`（外部状态机），TurnPhase 是纯追踪标记，不设状态转换验证，通过 `/debug/api` 的 `turn_phase` 字段暴露。
+**TurnPhase 内部追踪：** 4 个阶段标记（`BUILD_PROMPT` / `STREAMING` / `EXECUTING_TOOLS` / `FINALIZING`）不同于外部状态，TurnPhase 是纯追踪标记，不设状态转换验证，通过 `/debug/api` 的 `turn_phase` 字段暴露。
 
 关键设计决策：
 - **asyncio.Lock**: 确保 `process()` 不可重入，防止并发消息导致状态混乱

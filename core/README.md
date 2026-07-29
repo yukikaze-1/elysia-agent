@@ -18,7 +18,7 @@
 ```
 L0  Module/    无状态原子能力（LLM/STT/TTS/Embedding/DB/Config/...）
      ↑ 依赖
-L1  core/      认知中枢 — Agent → FSM → CognitiveLoop → PromptAssembler
+L1  core/      认知中枢 — Agent → AgentStatus → CognitiveLoop → PromptAssembler
      ↑ 使用
 L2  core/memory/      记忆子系统 — SessionMemory / LongTermMemory
 L2  core/tools/       工具插件 — filesystem / web / memory / time / ...
@@ -30,9 +30,10 @@ L2  core/personality/ 性格引擎 — CharacterEngine / CharacterReflector
 ```
 EventBus ← 用户输入/系统事件
     ↓
-AgentFSM (IDLE → THINKING → EXECUTING → SPEAKING → IDLE)
+AgentStatus（语义状态接口：is_accepting_input / is_speaking / ...）
     ↓
 CognitiveLoop (ReAct 调度 + inner_voice 状态机)
+    ├── CognitivePhaseController（阶段转换：enter_thinking / enter_speaking / ...）
     ├── PromptAssembler (12 PromptSection → SystemPromptManager)
     ├── CharacterEngine (合并 EmotionEngine，关键词 → mood → expression)
     ├── MemoryConsolidator (对话 → LLM 提取 → LTM)
@@ -79,11 +80,15 @@ Agent.start()
 
 关键方法：`start()`, `stop()`, `process_message()`, `run_server()`, `run_repl()`, `switch_llm()`, `switch_tts()`
 
+#### AgentStatus + CognitivePhaseController (`agent/status.py`)
+
+语义状态接口层，将底层 FSM 封装为对外只读的 `AgentStatus`（`is_accepting_input`、`is_completely_idle`、`is_speaking`、`should_suppress_vad_interrupt` 等 property）和对内写入的 `CognitivePhaseController`（`enter_thinking()`、`enter_executing()`、`enter_speaking()`、`finish_turn()`、`handle_interrupt()`）。实现类 `FSMBackedStatus` 和 `FSMBackedPhaseController` 基于 `AgentFSM`，但消费者只依赖接口。
+
+`on_change(callback)` 支持事件驱动订阅替代轮询；`wait_until_idle(timeout)` 替代 `while fsm.state != "idle"` 忙等。
+
 #### AgentFSM (`agent/agent_fsm.py`)
 
-有限状态机，管理认知流水线的状态转换。状态：`IDLE → THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE`，另有 `IDLE_BACKGROUND_TASK` 表示空闲但有后台任务运行。`INTERRUPTED` 可从除 IDLE 外的任意状态进入，只能迁到 IDLE。同状态迁移幂等（idle → idle no-op）。`reset()` 强制回 IDLE，用于服务重启清理残留状态。
-
-关键方法：`transition()`, `interrupt()`, `can_transition()`, `reset()`
+有限状态机，`AgentStatus` / `CognitivePhaseController` 的底层实现。管理状态转换：`IDLE → THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE`，另有 `IDLE_BACKGROUND_TASK` 和 `INTERRUPTED`。`reset()` 强制回 IDLE 用于服务重启。不对外暴露——外部消费者通过 `agent.status` 查询。
 
 #### EventBus (`monitoring/event_bus.py`)
 
