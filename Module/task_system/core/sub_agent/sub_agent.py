@@ -111,6 +111,14 @@ class SubAgent:
         self._context: DelegationContext | None = None
         self._mailbox: TaskMailbox | None = None
 
+    def _require(self, *attrs: str) -> None:
+        """确保 run() 已调用——所有入口方法的前置条件。"""
+        for attr in attrs:
+            if getattr(self, attr, None) is None:
+                raise RuntimeError(
+                    f"SubAgent.{attr} 未初始化，请先调用 run()"
+                )
+
     # ── 主入口 ─────────────────────────────────────────────────────────────────
 
     async def run(
@@ -206,8 +214,7 @@ class SubAgent:
         ts.status = TaskStatus.RESUMING
         ts.updated_at = now_iso()
 
-        assert self._checkpoint_mgr is not None, "run() 必须先于 resume_from_pause()"
-        assert self._mailbox is not None, "run() 必须先于 resume_from_pause()"
+        self._require("_checkpoint_mgr", "_mailbox")
         checkpoint = await self._checkpoint_mgr.load(self._mailbox.task_id)
         if checkpoint is None:
             ts.status = TaskStatus.FAILED
@@ -219,14 +226,15 @@ class SubAgent:
             ts.updated_at = now_iso()
             raise RuntimeError("graph 缺失，无法恢复")
 
-        assert self._context is not None, "run() 必须先于 resume_from_pause()"
+        self._require("_context")
 
         # 清零中断标志
         checkpoint.exec.pause_requested = False
         checkpoint.exec.cancel_requested = False
 
         mailbox = self._mailbox
-        assert mailbox is not None, "run() 必须先于 resume_from_pause()"
+        if mailbox is None:
+            raise RuntimeError("mailbox 未初始化，请先调用 run()")
         await self._execute(
             ts, self._graph, mailbox, self._context,
             resume_from=checkpoint.exec,
@@ -303,8 +311,7 @@ class SubAgent:
         Returns:
             校验通过时返回 PlanGraph，ABORT 时返回 None。
         """
-        assert self._planner is not None
-        assert self._plan_validator is not None
+        self._require("_planner", "_plan_validator")
         return await planning.plan_and_validate(
             self._planner, self._plan_validator, context, task_state, mailbox,
             self._infra.constraints, self._push_mailbox, self._abort_error_code,
@@ -329,7 +336,7 @@ class SubAgent:
             context: 委托上下文。
             resume_from: 恢复执行时传入的 ExecutionState，首次执行为 None。
         """
-        assert self._orchestrator is not None
+        self._require("_orchestrator")
         return await execution_loop.execute_loop(
             self._orchestrator, task_state, graph, mailbox, context, resume_from,
             self._dispatch_result, self._push_mailbox,
@@ -400,7 +407,7 @@ class SubAgent:
             task_state: 当前任务状态。
             mailbox: 任务邮箱。
         """
-        assert self._checkpoint_mgr is not None
+        self._require("_checkpoint_mgr")
         return await result_handlers.handle_paused(
             result, task_state, mailbox, self._checkpoint_mgr, self._push_mailbox,
         )
@@ -428,10 +435,7 @@ class SubAgent:
             (True, resume_state)  — 继续执行循环
             (False, None)         — 终止循环
         """
-        assert self._replanner is not None
-        assert self._plan_validator is not None
-        assert self._orchestrator is not None
-        assert self._checkpoint_mgr is not None
+        self._require("_replanner", "_plan_validator", "_orchestrator", "_checkpoint_mgr")
         return await replan.handle_replan(
             result, task_state, graph, mailbox, context,
             self._replanner, self._plan_validator, self._orchestrator,
@@ -448,7 +452,8 @@ class SubAgent:
         Returns:
             熔断原因字符串，未触发时返回 None。
         """
-        assert task_state.plan is not None, "熔断检查前 plan 必须已赋值"
+        if task_state.plan is None:
+            raise RuntimeError("熔断检查前 plan 必须已赋值")
         return replan.check_meltdown(
             task_state.plan.plan_version,
             self._infra.constraints.max_failure_count,
