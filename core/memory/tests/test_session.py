@@ -135,7 +135,7 @@ class TestSessionMemorySaveLoad:
         mock_repo._db = object()  # 模拟已连接
         mock_repo.load = AsyncMock(return_value=([msg], cs, MemoryReflectorState()))
         sm = SessionMemory(session_id=SessionId("test-load"), repo=mock_repo)
-        result = await sm.load("test-load")
+        result = await sm.load(SessionId("test-load"))
         assert result is True
         assert len(sm._messages) == 1
         assert sm._messages[0].message_id == "m1"
@@ -147,7 +147,7 @@ class TestSessionMemorySaveLoad:
         mock_repo._db = object()
         mock_repo.load = AsyncMock(return_value=None)
         sm = SessionMemory(session_id=SessionId("test-miss"), repo=mock_repo)
-        result = await sm.load("test-miss")
+        result = await sm.load(SessionId("test-miss"))
         assert result is False
 
     @pytest.mark.asyncio
