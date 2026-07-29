@@ -44,7 +44,7 @@ class TestTokenTracker:
     @pytest.fixture
     def tracker(self, output_mock):
         return TokenTracker(
-            session_id="test-session",
+            session_id=SessionId("test-session"),
             output_manager=output_mock,
             repo=None,
         )
@@ -171,7 +171,7 @@ class TestTokenTracker:
         repo_mock = MagicMock()
         repo_mock.record = AsyncMock()
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, repo=repo_mock,
+            session_id=SessionId("s1"), output_manager=output_mock, repo=repo_mock,
         )
 
         await tracker.record(
@@ -189,7 +189,7 @@ class TestTokenTracker:
         repo_mock = MagicMock()
         repo_mock.record = AsyncMock(side_effect=RuntimeError("connection lost"))
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, repo=repo_mock,
+            session_id=SessionId("s1"), output_manager=output_mock, repo=repo_mock,
         )
 
         with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".jsonl") as f:
@@ -218,7 +218,7 @@ class TestTokenTracker:
         repo_mock = MagicMock()
         repo_mock.flush = AsyncMock()
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, repo=repo_mock,
+            session_id=SessionId("s1"), output_manager=output_mock, repo=repo_mock,
         )
 
         # 写 TokenUsageEntry 兼容格式的 JSONL
@@ -248,7 +248,7 @@ class TestTokenTracker:
         repo_mock = MagicMock()
         repo_mock.flush = AsyncMock()
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, repo=repo_mock,
+            session_id=SessionId("s1"), output_manager=output_mock, repo=repo_mock,
         )
         tracker._pending_file = "/tmp/nonexistent_token_test_file.jsonl"
         await tracker.flush_pending()
@@ -258,7 +258,7 @@ class TestTokenTracker:
     async def test_flush_pending_no_db_is_noop(self, output_mock):
         """没有 MongoDB 时 flush 不执行任何操作。"""
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, repo=None,
+            session_id=SessionId("s1"), output_manager=output_mock, repo=None,
         )
         with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".jsonl") as f:
             f.write(json.dumps({"a": 1}) + "\n")
@@ -294,7 +294,7 @@ class TestTokenTracker:
             "openai/gpt-4o": 50,
         })
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, repo=repo_mock,
+            session_id=SessionId("s1"), output_manager=output_mock, repo=repo_mock,
         )
         tracker._pending_file = "/tmp/test_stats_s1_nonexistent.jsonl"  # 隔离 pending 文件
 
@@ -311,7 +311,7 @@ class TestTokenTracker:
         repo_mock = MagicMock()
         repo_mock.total_tokens_by_model = AsyncMock(side_effect=RuntimeError("db down"))
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, repo=repo_mock,
+            session_id=SessionId("s1"), output_manager=output_mock, repo=repo_mock,
         )
 
         # 先在内存累计一些数据
@@ -330,7 +330,7 @@ class TestTokenTracker:
         repo_mock = MagicMock()
         repo_mock.total_tokens_by_model = AsyncMock(return_value={"a": 100})
         tracker = TokenTracker(
-            session_id="s1", output_manager=output_mock, repo=repo_mock,
+            session_id=SessionId("s1"), output_manager=output_mock, repo=repo_mock,
         )
 
         # 写 TokenUsageEntry 兼容格式的 pending 数据
