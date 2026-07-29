@@ -246,12 +246,12 @@ async def test_dispatch_tool_calls_mixed_results():
     assert len(results) == 3
 
     # c1 成功
-    assert results[0][1].success
+    assert results[0][1].success  # type: ignore[reportAttributeAccessIssue]
     # c2 失败
-    assert not results[1][1].success
-    assert "always fails" in results[1][1].error
+    assert not results[1][1].success  # type: ignore[reportAttributeAccessIssue]
+    assert "always fails" in results[1][1].error  # type: ignore[reportAttributeAccessIssue]
     # c3 异常
-    assert not results[2][1].success
+    assert not results[2][1].success  # type: ignore[reportAttributeAccessIssue]
 
     await sched.stop()
 
@@ -317,7 +317,7 @@ async def test_cancel_cascades_to_children():
     sched = TaskScheduler(tool_executor=tm, num_workers=2, checkpoint_path=None)
     await sched.start()
 
-    parent = Task(id="root", type=TaskType.TOOL_CALL)
+    parent = Task(id="root", type=TaskType.TOOL_CALL)  # type: ignore[reportCallIssue]
     child = Task.new_tool_call("root", "echo", {"msg": "c"})
     grandchild = Task.new_tool_call(child.id, "echo", {"msg": "gc"})
     child.children_ids = [grandchild.id]
@@ -546,7 +546,7 @@ async def test_checkpoint_save_and_restore():
         sched1 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
         await sched1.start()
         t = Task(id="bg-1", type=TaskType.BACKGROUND, status=TaskStatus.PENDING,
-                 payload={"msg": "persist"}, run_in_background=True)
+                 payload={"msg": "persist"}, run_in_background=True)  # type: ignore[reportCallIssue]
         sched1._tasks[t.id] = t
         sched1._completed_count = 5  # type: ignore[attr-defined]
         sched1._save_checkpoint()
@@ -559,7 +559,7 @@ async def test_checkpoint_save_and_restore():
         restored = sched2._tasks.get("bg-1")
         assert restored is not None
         assert restored.type == TaskType.BACKGROUND
-        assert restored.payload["msg"] == "persist"
+        assert restored.payload["msg"] == "persist"  # type: ignore[reportGeneralTypeIssues]
     finally:
         try:
             Path(cp).unlink()
@@ -585,9 +585,9 @@ async def test_checkpoint_multiple_tasks():
 
         sched2 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
         sched2._restore_checkpoint()
-        assert sched2._tasks["bg-0"].payload["idx"] == 0
-        assert sched2._tasks["bg-1"].payload["idx"] == 1
-        assert sched2._tasks["bg-2"].payload["idx"] == 2
+        assert sched2._tasks["bg-0"].payload["idx"] == 0  # type: ignore[reportGeneralTypeIssues]
+        assert sched2._tasks["bg-1"].payload["idx"] == 1  # type: ignore[reportGeneralTypeIssues]
+        assert sched2._tasks["bg-2"].payload["idx"] == 2  # type: ignore[reportGeneralTypeIssues]
         assert sched2.pending_count == 3
     finally:
         try:
@@ -631,7 +631,7 @@ async def test_checkpoint_no_path():
     sched._save_checkpoint()  # 不应抛异常
 
     t = Task(id="t1", type=TaskType.BACKGROUND, status=TaskStatus.PENDING,
-             payload={}, run_in_background=True)
+             payload={}, run_in_background=True)  # type: ignore[reportCallIssue]
     sched._tasks[t.id] = t
     sched._save_checkpoint()  # 仍不应抛异常
 
@@ -830,7 +830,7 @@ async def test_agent_interrupt_clears_queue():
     agent._llm._backend = FakeLLMBackend(response="hello")
     await agent.start()
 
-    agent._pending_messages = [
+    agent._pending_messages = [  # type: ignore[reportAttributeAccessIssue]
         {"text": "排队1", "user_name": "test", "request_id": "001"},
         {"text": "排队2", "user_name": "test", "request_id": "002"},
     ]
