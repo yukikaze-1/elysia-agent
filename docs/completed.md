@@ -110,6 +110,26 @@
 
 ---
 
+### 2026-07-30: CI/CD — GitHub Actions Self-hosted Runner
+
+**背景**：项目 1,893 个测试全靠手动 `make test-quick`，无任何自动化 CI。
+
+**方案**：GitHub Actions + self-hosted runner（跑在自己服务器上，复用现有 conda 环境 + 常驻 MongoDB/Milvus）。
+
+**新增文件：**
+| 文件 | 用途 |
+|------|------|
+| `.github/workflows/ci.yml` | PR + push to main: `make test-quick` + `make test-normal` 并行 |
+| `.github/workflows/nightly.yml` | 每日 3:17 AM UTC 全量 + `workflow_dispatch` 手动触发 |
+
+**服务器前置配置：**
+1. 安装 GitHub Actions runner agent → systemd 服务
+2. `Settings > Secrets > Actions` 添加 `DEEPSEEK_API_KEY`
+
+**修复日期**：2026-07-30
+
+---
+
 ### 2026-07-30: core/ + Module/task_system/ IDE 类型错误批量修复（~155 处）
 
 **背景**：Pylance/Pyright 诊断累积了大量类型错误，分布在生产代码和测试文件中。

@@ -1,0 +1,19 @@
+name: Nightly Full Suite
+
+on:
+  schedule:
+    # 每天 UTC 3:17，北京时间 11:17
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  full:
+    name: Full Suite
+    runs-on: self-hosted
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run full test suite
+        run: make test-full
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}

@@ -96,7 +96,7 @@
 | **高** | `.env` 仍含真实 API Key | DeepSeek、MiMo、Tavily、MiniMax 的真实 key 仍在 `.env` 文件中。已有 `.env.example` + `setup.sh` + `app.py --check`，但 `.env` 不应提交真实密钥。建议：将 `.env` 中 key 替换为占位符，真实 key 通过 shell 环境变量或密钥管理器注入 |
 | 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
 | 低 | 会话管理 | 无法新建/切换/列出对话。SessionMemory 的 MongoDB 持久化已为此做好准备，需前后端联动 |
-| **高** | **无 CI/CD** | 无 `.github/workflows/` 或其他 CI 配置。1793 个测试全靠手动 `make test-quick`。`Makefile` test 目标已就绪，只需加 GitHub Actions workflow |
+| ~~高~~ ✅ | **无 CI/CD** | 已添加 `.github/workflows/`（ci.yml + nightly.yml），通过 self-hosted runner 在自己服务器上执行。PR 自动跑 quick + normal，每日凌晨全量。2026-07-30 |
 | **高** | **无数据库迁移机制** | MongoDB 索引在 `connect()` 时 ad-hoc 创建，Milvus collection 硬编码创建。若字段/索引/维度需变更，无 upgrade path。`memory_repo.clear_all()` 是破坏性操作无安全守卫 |
 | 低 | **`character/cyrene/` 不可用** | 缺少 `config.yaml` 和 `personality.md`，仅含 GPT 参考材料，无法作为角色加载 |
 | 低 | **依赖无版本上限** | `requirements.txt` 中 pydantic、openai、torch 等均无上限约束，上游 breaking change 可导致不可预期问题。`torch` 是 2GB+ 重依赖 |
