@@ -5,10 +5,13 @@ import { useChatStore } from '@/stores/chatStore'
  * 用于 InputBar（textarea 拖拽上传）和 MessageList（聊天区拖拽上传）。
  *
  * @param dropTarget 可选 — 返回拖拽时需要切换 class 的 DOM 元素。
- *   传入时 onDragOver 会添加 'drag-over' class，onDragLeave/onDrop 会移除。
+ *   传入时 onDragEnter 会添加 'drag-over' class，onDragLeave/onDrop 会移除。
  */
 export function useImageUpload(dropTarget?: () => HTMLElement | null) {
   const chat = useChatStore()
+
+  // dragCounter 避免子元素间的 dragenter/dragleave 闪烁
+  let dragCounter = 0
 
   async function uploadImage(file: File) {
     const form = new FormData()
@@ -29,20 +32,30 @@ export function useImageUpload(dropTarget?: () => HTMLElement | null) {
 
   function onDragOver(e: DragEvent) {
     e.preventDefault()
+  }
+
+  function onDragEnter(e: DragEvent) {
+    e.preventDefault()
+    dragCounter++
     dropTarget?.()?.classList.add('drag-over')
   }
 
   function onDragLeave(e: DragEvent) {
     e.preventDefault()
-    dropTarget?.()?.classList.remove('drag-over')
+    dragCounter--
+    if (dragCounter <= 0) {
+      dragCounter = 0
+      dropTarget?.()?.classList.remove('drag-over')
+    }
   }
 
   function onDrop(e: DragEvent) {
     e.preventDefault()
+    dragCounter = 0
     dropTarget?.()?.classList.remove('drag-over')
     const file = e.dataTransfer?.files[0]
     if (file && file.type.startsWith('image/')) uploadImage(file)
   }
 
-  return { uploadImage, onDragOver, onDragLeave, onDrop }
+  return { uploadImage, onDragOver, onDragEnter, onDragLeave, onDrop }
 }

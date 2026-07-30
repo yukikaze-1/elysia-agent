@@ -183,7 +183,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function updateTokenUsage(msg: { turn?: { rounds: unknown[]; turn_total: number }; session?: unknown }) {
+  function updateTokenUsage(msg: { turn?: { rounds?: unknown[]; turn_total?: number }; session?: unknown }) {
     if (msg.turn) {
       const last = messages.value[messages.value.length - 1]
       if (last && last.role === 'assistant') {

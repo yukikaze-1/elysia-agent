@@ -127,9 +127,6 @@ async function copyText() {
 
 <style scoped>
 .msg-row {
-  display: flex;
-  gap: 10px;
-  max-width: 85%;
   animation: fadeIn .2s ease;
 }
 
@@ -149,23 +146,6 @@ async function copyText() {
 
 .msg-row.system {
   align-self: center;
-}
-
-.msg-avatar {
-  font-size: 28px;
-  line-height: 1;
-  flex-shrink: 0;
-  margin-top: 4px;
-}
-
-.msg-bubble {
-  padding: 10px 14px;
-  border-radius: var(--radius);
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 14px;
-  position: relative;
 }
 
 .msg-row.assistant .msg-bubble {
@@ -251,4 +231,8 @@ async function copyText() {
   0%, 100% { box-shadow: 0 0 10px rgba(124, 179, 255, 0.25), inset 0 0 4px rgba(124, 179, 255, 0.04); }
   50% { box-shadow: 0 0 20px rgba(124, 179, 255, 0.50), inset 0 0 12px rgba(124, 179, 255, 0.12); }
 }
+</style>
+
+<style>
+@import '@/styles/message-layout.css';
 </style>

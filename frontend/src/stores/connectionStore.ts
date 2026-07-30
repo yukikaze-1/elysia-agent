@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { useAudioStore } from './audioStore'
 
 export const WS_RECONNECT_BASE_MS = 1000
 export const WS_RECONNECT_MAX_MS = 30000
@@ -168,6 +169,8 @@ export const useConnectionStore = defineStore('connection', () => {
     }
     connected.value = false
     connStatusText.value = '未连接'
+    // Clean up orphaned audio chunks from any in-flight TTS streams
+    useAudioStore().cleanup()
   }
 
   /**

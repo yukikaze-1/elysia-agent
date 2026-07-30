@@ -80,32 +80,42 @@ function toggleAll() {
 }
 
 async function deleteEntry(id: string) {
-  await fetch(`/debug/api/ltm/${id}`, { method: 'DELETE' })
-  load()
+  try {
+    await fetch(`/debug/api/ltm/${id}`, { method: 'DELETE' })
+    load()
+  } catch (e) { error.value = '删除失败: ' + (e as Error).message }
 }
 
 async function deleteSelected() {
-  for (const id of selectedIds.value) { await fetch(`/debug/api/ltm/${id}`, { method: 'DELETE' }) }
-  selectedIds.value = new Set()
-  load()
+  try {
+    for (const id of selectedIds.value) { await fetch(`/debug/api/ltm/${id}`, { method: 'DELETE' }) }
+    selectedIds.value = new Set()
+    load()
+  } catch (e) { error.value = '批量删除失败: ' + (e as Error).message }
 }
 
 async function clearAll() {
-  await fetch('/debug/api/ltm', { method: 'DELETE' })
-  load()
+  try {
+    await fetch('/debug/api/ltm', { method: 'DELETE' })
+    load()
+  } catch (e) { error.value = '清空失败: ' + (e as Error).message }
 }
 
 function startEdit(entry: LtmEntry) { editingId.value = entry.id; editText.value = entry.text }
 
 async function saveEdit(id: string) {
-  await fetch(`/debug/api/ltm/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.value }) })
-  editingId.value = null
-  load()
+  try {
+    await fetch(`/debug/api/ltm/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.value }) })
+    editingId.value = null
+    load()
+  } catch (e) { error.value = '保存失败: ' + (e as Error).message }
 }
 
 async function createEntry() {
-  await fetch('/debug/api/ltm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: createText.value, memory_type: createType.value, poignancy: createPoignancy.value }) })
-  createVisible.value = false; createText.value = ''; load()
+  try {
+    await fetch('/debug/api/ltm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: createText.value, memory_type: createType.value, poignancy: createPoignancy.value }) })
+    createVisible.value = false; createText.value = ''; load()
+  } catch (e) { error.value = '创建失败: ' + (e as Error).message }
 }
 
 function memoryColor(t: string) {
@@ -131,7 +141,7 @@ async function onConfirm() {
     <!-- Toolbar -->
     <div class="toolbar">
       <input v-model="search" placeholder="搜索..." class="field" @keydown.enter="load" />
-      <select v-model="typeFilter" class="field" @change="load">
+      <select v-model="typeFilter" class="field">
         <option value="">全部类型</option>
         <option value="fact">Fact</option>
         <option value="plan">Plan</option>

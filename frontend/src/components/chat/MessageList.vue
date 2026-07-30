@@ -15,7 +15,7 @@ const FIVE_MINUTES = 5 * 60 * 1000
 const SCROLL_THRESHOLD = 60
 
 // 拖拽上传 — 拖拽到聊天区时在 chat-wrap 上切换 drag-over class
-const { onDragOver, onDragLeave, onDrop } = useImageUpload(
+const { onDragOver, onDragEnter, onDragLeave, onDrop } = useImageUpload(
   () => chatWrapRef.value
 )
 
@@ -109,7 +109,7 @@ onMounted(() => {
     class="chat-wrap"
     @scroll="onScroll"
     @dragover="onDragOver"
-    @dragenter="onDragOver"
+    @dragenter="onDragEnter"
     @dragleave="onDragLeave"
     @drop="onDrop"
   >

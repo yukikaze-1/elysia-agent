@@ -11,6 +11,9 @@ watch(() => props.visible, (v) => {
   if (v) {
     loading.value = true
     error.value = false
+    document.addEventListener('keydown', onKeydown)
+  } else {
+    document.removeEventListener('keydown', onKeydown)
   }
 })
 
@@ -32,12 +35,13 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="lightbox-overlay" @click="emit('close')" @keydown="onKeydown">
+    <div v-if="visible" class="lightbox-overlay" @click="emit('close')">
       <div v-if="loading" class="lightbox-status">加载中...</div>
       <div v-else-if="error" class="lightbox-status error">图片加载失败</div>
       <img
         v-show="!loading && !error"
         :src="src"
+        alt="图片预览"
         class="lightbox-img"
         @click.stop
         @load="onLoad"

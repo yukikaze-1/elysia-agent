@@ -30,14 +30,13 @@ export const useAudioStore = defineStore('audio', () => {
   }
 
   function finalizeStream(streamId: number, format: string = 'wav') {
-    // 尊重 TTS 开关设置
-    const settingsStore = useSettingsStore()
-    if (!settingsStore.ttsEnabled) return
-
+    // Always clean up chunk storage, even when TTS is off
     const chunks = audioChunks.value[streamId]
+    delete audioChunks.value[streamId]
     if (!chunks) return
 
-    delete audioChunks.value[streamId]
+    const settingsStore = useSettingsStore()
+    if (!settingsStore.ttsEnabled) return
 
     // 设置 stream bubble 映射的 TTL 清理
     if (streamId != null) {

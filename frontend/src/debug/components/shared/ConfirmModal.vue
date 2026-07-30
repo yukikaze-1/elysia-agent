@@ -5,6 +5,7 @@ const props = defineProps<{ message: string; visible: boolean }>()
 const emit = defineEmits<{ confirm: []; cancel: [] }>()
 
 const confirmBtnRef = ref<HTMLButtonElement | null>(null)
+const cancelBtnRef = ref<HTMLButtonElement | null>(null)
 
 // 打开时聚焦确认按钮 + 注册 Escape 监听
 watch(() => props.visible, async (v) => {
@@ -18,6 +19,13 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     e.preventDefault()
     emit('cancel')
+  } else if (e.key === 'Tab') {
+    e.preventDefault()
+    if (document.activeElement === confirmBtnRef.value) {
+      cancelBtnRef.value?.focus()
+    } else {
+      confirmBtnRef.value?.focus()
+    }
   }
 }
 </script>
@@ -25,10 +33,19 @@ function onKeydown(e: KeyboardEvent) {
 <template>
   <Teleport to="body">
     <div v-if="visible" class="confirm-overlay" @click.self="emit('cancel')" @keydown="onKeydown">
-      <div class="confirm-box">
-        <p class="confirm-msg">{{ message }}</p>
+      <div
+        class="confirm-box"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-msg"
+      >
+        <p id="confirm-msg" class="confirm-msg">{{ message }}</p>
         <div class="confirm-actions">
-          <button class="confirm-btn cancel" @click="emit('cancel')">取消</button>
+          <button
+            ref="cancelBtnRef"
+            class="confirm-btn cancel"
+            @click="emit('cancel')"
+          >取消</button>
           <button ref="confirmBtnRef" class="confirm-btn danger" @click="emit('confirm')">确认</button>
         </div>
       </div>

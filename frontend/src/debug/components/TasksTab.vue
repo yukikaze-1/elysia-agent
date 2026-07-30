@@ -15,6 +15,7 @@ let reconnectDelay = 1000
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 function connect() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
   if (es) { es.close(); es = null }
   es = new EventSource('/debug/api/tasks/stream')
   connState.value = 'connected'

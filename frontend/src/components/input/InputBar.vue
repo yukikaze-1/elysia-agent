@@ -16,6 +16,7 @@ const textInput = ref('')
 const cooldown = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const inputBarRef = ref<HTMLElement | null>(null)
 
 // Local mic state (not reactive — managed imperatively)
 let micStream: MediaStream | null = null
@@ -27,7 +28,9 @@ const chat = useChatStore()
 const audioStore = useAudioStore()
 const settingsStore = useSettingsStore()
 
-const { uploadImage, onDragOver, onDragLeave, onDrop } = useImageUpload()
+const { uploadImage, onDragOver, onDragEnter, onDragLeave, onDrop } = useImageUpload(
+  () => inputBarRef.value
+)
 
 // ---- Send ----
 
@@ -180,7 +183,15 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="input-bar" @paste="onPaste">
+  <div
+    ref="inputBarRef"
+    class="input-bar"
+    @paste="onPaste"
+    @dragover="onDragOver"
+    @dragenter="onDragEnter"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
+  >
     <button id="attach-btn" title="添加图片" @click="onAttachClick">📷</button>
     <input type="file" ref="fileInputRef" hidden accept="image/png,image/jpeg,image/gif,image/webp" @change="onFileChange" />
     <button
@@ -196,10 +207,6 @@ onUnmounted(() => {
       rows="1"
       @keydown="handleKeydown"
       @input="autoResize"
-      @dragover="onDragOver"
-      @dragenter="onDragOver"
-      @dragleave="onDragLeave"
-      @drop="onDrop"
     ></textarea>
     <button
       id="send-btn"

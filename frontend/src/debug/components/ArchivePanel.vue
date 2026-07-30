@@ -49,12 +49,12 @@ function onPageChange(newOffset: number) { store.archivePage.offset = newOffset;
 function toggleSelect(id: string) { const s = new Set(selectedIds.value); s.has(id) ? s.delete(id) : s.add(id); selectedIds.value = s }
 function toggleAll() { if (selectedIds.value.size === entries.value.length) selectedIds.value = new Set(); else selectedIds.value = new Set(entries.value.map(e => e._id)) }
 
-async function deleteEntry(id: string) { await fetch(`/debug/api/archive/${id}`, { method: 'DELETE' }); load() }
-async function deleteSelected() { for (const id of selectedIds.value) await fetch(`/debug/api/archive/${id}`, { method: 'DELETE' }); selectedIds.value = new Set(); load() }
-async function clearAll() { await fetch('/debug/api/archive', { method: 'DELETE' }); load() }
+async function deleteEntry(id: string) { try { await fetch(`/debug/api/archive/${id}`, { method: 'DELETE' }); load() } catch (e) { error.value = '删除失败: ' + (e as Error).message } }
+async function deleteSelected() { try { for (const id of selectedIds.value) await fetch(`/debug/api/archive/${id}`, { method: 'DELETE' }); selectedIds.value = new Set(); load() } catch (e) { error.value = '批量删除失败: ' + (e as Error).message } }
+async function clearAll() { try { await fetch('/debug/api/archive', { method: 'DELETE' }); load() } catch (e) { error.value = '清空失败: ' + (e as Error).message } }
 
 function startEdit(e: ArchiveEntry) { editingId.value = e._id; editText.value = (e.parts || []).map(p => p.content).join(' ') }
-async function saveEdit(id: string) { await fetch(`/debug/api/archive/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.value }) }); editingId.value = null; load() }
+async function saveEdit(id: string) { try { await fetch(`/debug/api/archive/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.value }) }); editingId.value = null; load() } catch (e) { error.value = '保存失败: ' + (e as Error).message } }
 
 function roleColor(r: string) { const m: Record<string, string> = { user: '#6af', assistant: '#f6a', tool: '#fa6', system: '#888' }; return m[r] || '#888' }
 function confirmThen(fn: () => Promise<void>, msg: string) { confirmMsg.value = msg; confirmVisible.value = true; pendingConfirm.value = fn }

@@ -79,7 +79,7 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
         if (st.state === 'executing') chat.finalizeDelta()
         break
       }
-      case 'token_usage':   chat.updateTokenUsage(m as TokenUsageMessage as any); break
+      case 'token_usage':   chat.updateTokenUsage(m as TokenUsageMessage); break
       case 'error':         console.warn('Server:', (m as ErrorMessage).message); break
       case 'wake':          if (settings.wakeEnabled) audio.flashWakeIndicator(); break
       case 'switch_model_result': handleSwitchResult(m as SwitchModelResultMessage); break
