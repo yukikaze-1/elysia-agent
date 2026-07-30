@@ -109,23 +109,10 @@ async function onConfirm() { confirmVisible.value = false; await pendingConfirm.
   </div>
 </template>
 
+<style>
+@import '@/debug/styles/panel.css';
+</style>
+
 <style scoped>
-.panel { background: var(--debug-surface); border: 1px solid var(--debug-border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
-.panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--debug-accent); margin: 0 0 10px; border-bottom: 1px solid var(--debug-border); padding-bottom: 6px; }
-.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-.field { background: var(--debug-bg); color: var(--debug-text); border: 1px solid var(--debug-border); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
-.field.flex-1 { flex: 1; }
-.btn { padding: 4px 12px; border: 1px solid var(--debug-border); border-radius: 4px; background: transparent; color: var(--debug-text); cursor: pointer; font-size: 12px; }
-.btn:hover { border-color: var(--debug-accent); }
-.btn.primary { background: var(--debug-accent); color: #fff; border-color: var(--debug-accent); }
-.btn.danger { color: var(--debug-red); border-color: var(--debug-red); }
-.btn-sm { padding: 1px 6px; border: 1px solid var(--debug-border); border-radius: 3px; background: transparent; color: var(--debug-muted); cursor: pointer; font-size: 11px; }
-.btn-sm:hover { color: var(--debug-text); }
-.status { color: var(--debug-muted); padding: 12px 0; text-align: center; font-size: 13px; }
-.status.error { color: var(--debug-red); }
-.list-actions { display: flex; gap: 12px; align-items: center; margin-bottom: 6px; font-size: 12px; color: var(--debug-muted); }
-.list-row { display: flex; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 12px; }
 .role-tag { font-size: 10px; padding: 1px 6px; border-radius: 3px; color: #fff; white-space: nowrap; font-weight: 600; min-width: 60px; text-align: center; }
-.row-text { flex: 1; min-width: 0; }
-.row-meta { font-size: 10px; color: var(--debug-muted); white-space: nowrap; }
 </style>

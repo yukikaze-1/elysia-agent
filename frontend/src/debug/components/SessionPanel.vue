@@ -106,22 +106,12 @@ function roleColor(r: string) { const m: Record<string, string> = { user: '#6af'
   </div>
 </template>
 
+<style>
+@import '@/debug/styles/panel.css';
+</style>
+
 <style scoped>
-.panel { background: var(--debug-surface); border: 1px solid var(--debug-border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
-.panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--debug-accent); margin: 0 0 10px; border-bottom: 1px solid var(--debug-border); padding-bottom: 6px; }
-.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-.btn { padding: 4px 12px; border: 1px solid var(--debug-border); border-radius: 4px; background: transparent; color: var(--debug-text); cursor: pointer; font-size: 12px; }
-.btn:hover { border-color: var(--debug-accent); }
-.btn.danger { color: var(--debug-red); border-color: var(--debug-red); }
-.btn-sm { padding: 1px 6px; border: 1px solid var(--debug-border); border-radius: 3px; background: transparent; color: var(--debug-muted); cursor: pointer; font-size: 11px; }
-.btn-sm:hover { color: var(--debug-text); }
-.status { color: var(--debug-muted); padding: 12px 0; text-align: center; font-size: 13px; }
-.status.error { color: var(--debug-red); }
-.list-actions { display: flex; gap: 12px; align-items: center; margin-bottom: 6px; font-size: 12px; color: var(--debug-muted); }
-.list-row { display: flex; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 12px; }
-.row-text { flex: 1; min-width: 0; }
 .row-text.mono { font-family: monospace; font-size: 11px; }
-.row-meta { font-size: 10px; color: var(--debug-muted); white-space: nowrap; }
 .detail-block { margin-top: 12px; padding: 10px; background: var(--debug-bg); border-radius: 6px; }
 .detail-block h4 { font-size: 12px; color: var(--debug-accent); margin: 0 0 8px; }
 .detail-msg { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; font-size: 11px; }

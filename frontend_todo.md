@@ -57,9 +57,9 @@
 
 类型安全已大幅改进（每个 case 分支显式类型收窄），但建议进一步建立 `messageRouter` 集中管理映射 + try/catch 边界。
 
-### 4.3 提取共享 CSS（Debug 面板）
+### 4.3 ✅ 提取共享 CSS（Debug 面板）— 已完成
 
-`LtmPanel.vue`、`SessionPanel.vue`、`ArchivePanel.vue` 之间存在大量重复样式。
+`LtmPanel.vue`、`SessionPanel.vue`、`ArchivePanel.vue` 之间 17 个重复选择器已提取为 `debug/styles/panel.css`。提交 `c912a8f` 后续。
 
 ### 4.4 建立持久化管理模式
 

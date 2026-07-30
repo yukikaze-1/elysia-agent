@@ -111,6 +111,10 @@ Escape 键盘处理器查找 `.lightbox-hidden`（已隐藏元素），找到后
 
 图片上传逻辑从 `InputBar.vue` / `MessageList.vue` 提取为 `composables/useImageUpload.ts`。返回 `{ uploadImage, onDragOver, onDragLeave, onDrop }`，支持可选的 `dropTarget` 回调用于 class 切换。
 
+### 4.4 ✅ 提取共享 CSS（Debug 面板）— 已完成（`c912a8f` 后续）
+
+`LtmPanel.vue`、`SessionPanel.vue`、`ArchivePanel.vue` 中 17 个重复选择器（`.panel`、`.toolbar`、`.btn`、`.status`、`.list-row` 等）提取为 `debug/styles/panel.css`。3 个面板通过非 scoped `<style>@import</style>` 引用，组件特有样式保留在各自 scoped 块中。Debug CSS 产物从 21.46KB → 17.84KB。
+
 ### 4.7 ✅ 统一 Store 状态突变模式 — 已完成
 
 新增 `chatStore.removePreviewImage(url)` 和 `chatStore.clearPreviewImages()` actions，替代直接赋值模式。
@@ -128,6 +132,7 @@ WebSocket 消息类型从 `as any` 迁移为 `ServerMessage` 判别联合 + 类�
 | `composables/useImageUpload.ts` | InputBar + MessageList 共享上传/拖拽逻辑 |
 | `utils/format.ts` | Token 计数格式化（CharStatus + TokenLabel 复用） |
 | `styles/message-layout.css` | ChatMessage + TypingIndicator 共享消息布局 CSS |
+| `debug/styles/panel.css` | Debug 面板共享样式（LtmPanel/SessionPanel/ArchivePanel 复用） |
 | `frontend/README.md` | 前端完整文档（组件树、架构、技术要点） |
 
 ---
