@@ -10,6 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from paths import ProjectPath
+
 from Module.tool.protocol import ToolPlugin, ToolResult, ToolContext, PluginContext, ToolEmitter
 from Module.tool.safety import SafetyProfile
 from Module.llm.registry import LLMFactory
@@ -19,7 +21,7 @@ from core.schema.adapters.message_adapter import _resolve_image_source
 
 logger = logging.getLogger(__name__)
 
-_CACHE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "cache" / "vision"
+_CACHE_DIR = ProjectPath.DATA_CACHE_VISION.resolve()
 
 
 class DescribeImageParams(BaseModel):

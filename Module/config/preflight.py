@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from paths import ProjectPath
+
 
 @dataclass
 class _Counts:
@@ -225,8 +227,8 @@ def _check_embedding_model() -> None:
     # HF hub 快照格式: models--BAAI--bge-large-zh-v1.5/snapshots/{hash}/config.json
     # 直接格式: BAAI/bge-large-zh-v1.5/config.json
     candidates = [
-        Path(".model_cache/models--BAAI--bge-large-zh-v1.5/snapshots"),
-        Path(".model_cache/BAAI/bge-large-zh-v1.5"),
+        ProjectPath.MODEL_CACHE.resolve() / "models--BAAI--bge-large-zh-v1.5" / "snapshots",
+        ProjectPath.MODEL_CACHE.resolve() / "BAAI" / "bge-large-zh-v1.5",
         Path.home() / ".cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5/snapshots",
         Path.home() / ".cache/huggingface/hub/BAAI/bge-large-zh-v1.5",
     ]
@@ -239,7 +241,7 @@ def _check_embedding_model() -> None:
 
 def _check_writable_dirs() -> None:
     """检查 log/、data/ 目录是否可写。"""
-    for d in ("log", "data"):
+    for d in (str(ProjectPath.LOG.resolve()), str(ProjectPath.DATA.resolve())):
         try:
             Path(d).mkdir(exist_ok=True)
             test_file = Path(d) / ".preflight_write_test"
