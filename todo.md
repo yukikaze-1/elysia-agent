@@ -51,6 +51,9 @@
 | 中 | `OutputManager.stream()` 未使用 | `manager.py:63-88`，保留参考 |
 | 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行，保留参考 |
 | 中 | `Module/bench/` 位置不当 | bench.py 自注释"将移至 tools/bench/"，依赖 core/，后续考虑迁移 |
+| ~~中~~ ✅ | **`_tool_executor` / `_tool_adapter` 两套引用** | 统一为 `_tool_adapter`，删除 `_tool_executor` 别名。2026-07-30 |
+| 低 | **FilePart/AudioPart/VideoPart 预留代码** | `part.py` ~70 行 + `message_adapter.py` 3 个 helper + `Part` union。`message_adapter.py:188` 注释明确 Phase 2。暂保留 |
+| ~~中~~ ✅ | **`_after_response` fire-and-forget** | `flush_after_response()` + lifecycle shutdown step。2026-07-30 |
 
 ## 模块化改进
 

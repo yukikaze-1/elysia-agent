@@ -2,6 +2,21 @@
 
 ## 已完成
 
+### 2026-07-30: 代码审查修复——`_tool_executor` 统一 + `_after_response` lifecycle tracking
+
+**背景**：外部代码审查发现 5 个问题，3 个确认需修复。
+
+**修复（2 项）：**
+- `_tool_executor` / `_tool_adapter` 两套引用统一为 `_tool_adapter`：`CognitiveTools` + `CognitiveLoop.__init__` 参数名 + 4 个测试文件。1 commit (`ebcfb71`)
+- `_after_response` fire-and-forget：新增 `_pending_after_response` task 追踪 + `flush_after_response()` 方法 + lifecycle `_SHUTDOWN_STEPS` 首个步骤。1 commit (`73ccf46`)
+
+**标记解决：**
+- transition 幂等设计死锁风险：审阅误判。`is_accepting_input` guard + `_process_lock` + `CancelledError` handler 三层保护，不存在死锁
+
+**修复日期**：2026-07-30
+
+---
+
 ### 2026-07-30: core/ + Module/task_system/ IDE 类型错误批量修复（~155 处）
 
 **背景**：Pylance/Pyright 诊断累积了大量类型错误，分布在生产代码和测试文件中。
