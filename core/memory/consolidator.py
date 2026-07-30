@@ -11,8 +11,6 @@ import asyncio
 import json
 import logging
 import re
-from pathlib import Path
-
 from pydantic import TypeAdapter, ValidationError
 
 from core.schema.memory import (
@@ -23,13 +21,14 @@ from core.schema.memory import (
     InsertAction,
 )
 
+from paths import ProjectPath
 from .long_term import LongTermMemory
 from ..adapter.llm_adapter import LLMAdapter
 
 logger = logging.getLogger(__name__)
 
 # Extraction prompt — 文件路径，运行时加载
-_EXTRACTION_PATH = Path(__file__).resolve().parent.parent / "prompts" / "ExtractMemory.j2"
+_EXTRACTION_PATH = ProjectPath.PROMPTS.resolve() / "ExtractMemory.j2"
 _EXTRACTION_PROMPT: str | None = None
 
 
@@ -55,7 +54,7 @@ def _get_compare_prompt() -> str:
     global _COMPARE_PROMPT
     if _COMPARE_PROMPT is not None:
         return _COMPARE_PROMPT
-    path = Path(__file__).resolve().parent.parent / "prompts" / "ConsolidationCompare.j2"
+    path = ProjectPath.PROMPTS.resolve() / "ConsolidationCompare.j2"
     if path.exists():
         _COMPARE_PROMPT = path.read_text(encoding="utf-8")
     else:
