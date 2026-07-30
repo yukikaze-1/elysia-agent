@@ -4,10 +4,11 @@ import logging
 from pathlib import Path
 
 import yaml
+from paths import ProjectPath
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PATH = Path("custom_providers.yaml")
+_DEFAULT_PATH = ProjectPath.CUSTOM_PROVIDERS_YAML.resolve()
 
 # 文件初始骨架
 _SKELETON = {"llm": [], "stt": [], "tts": []}

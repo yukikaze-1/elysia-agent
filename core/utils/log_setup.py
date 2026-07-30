@@ -12,8 +12,10 @@ import os
 import sys
 from pathlib import Path
 
+from paths import ProjectPath
 
-LOG_DIR = Path("log")
+
+LOG_DIR = ProjectPath.LOG.resolve()
 
 # 请求 ID — CognitiveLoop 在每轮开始时设置，日志 Filter 自动注入到 LogRecord
 _request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(

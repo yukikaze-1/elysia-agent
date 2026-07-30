@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
 from pydantic import TypeAdapter
+from paths import ProjectPath
 
 from core.schema.character import CharacterState
 from core.schema.memory_reflector import MemoryReflectorState
@@ -77,7 +78,7 @@ class SessionMemory:
         self._session_id: SessionId = session_id
         self._repo: SessionRepository | None = repo
         self._msg_repo: MessageRepository | None = msg_repo
-        self._pending_file = os.path.join("data", f"session_{session_id}.json")
+        self._pending_file = str(ProjectPath.SESSION_PENDING.resolve(session_id=session_id))
         self.character_state = character_state or CharacterState(session_id=session_id)
         self.own_life: str = ""
         self._memory_reflector = None
