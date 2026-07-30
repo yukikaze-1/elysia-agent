@@ -130,6 +130,44 @@
 
 ---
 
+### 2026-06 ~ 2026-07: 已知 Bug 修复 + 模块化改进 + 代码清理（归档）
+
+将 todo.md 中 2026-07-30 前完成的 19 项一次性归档。
+
+**已知 Bug 修复（7 项）：**
+| 问题 | 修复 |
+|------|------|
+| L3→L2 压缩计数触发永久失效 | `_append_history` 截断时同步下调 `compression_last_count` |
+| Consolidator 缓冲区在 LLM 调用前清空 | `buffer.clear()` 移到 LLM 成功解析后 |
+| `_sentence_buf`/`_block_filter` 始终为 None | 删除死代码字段 + no-op 检查 + 未使用 import |
+| `_current_task` 覆盖导致认知任务孤儿 | `_handle_user_input` 先 `cancel_current()` 再创建新 task |
+| `time_of_day` 主动触发每秒重复投递 | `_last_time_of_day_trigger` 防重 |
+| 已吸收记忆条目残留 `_entries` | `mark_absorbed` 中从 `_entries` 移除 + 清理 `_dirty_ids` |
+| `_sync_dirty_entries` 一条失败即跳出 | `break` → `logger.debug` + 继续循环 |
+
+**代码清理（2 项）：**
+| 问题 | 修复 |
+|------|------|
+| `_tool_executor` / `_tool_adapter` 两套引用 | 统一为 `_tool_adapter` |
+| `_after_response` fire-and-forget | `flush_after_response()` + lifecycle shutdown step |
+
+**模块化改进（9 项）：**
+| 目标 | 说明 |
+|------|------|
+| `core/agent/lifecycle.py`（522 行） | facade + 4 mixin（Persistence/Services/Tools/TaskSystem）+ 数据驱动 `_STARTUP_STEPS` |
+| `core/cognitive/loop.py`（844 行） | 评估不拆，补全参数文档+类型注解 |
+| `core/memory/long_term.py`（588 行） | 提取 EmbeddingProvider，其余耦合紧密不拆 |
+| `core/` 根目录散落文件归位 | agent_fsm/event_bus/idle_monitor/token_tracker/prompt_assembler 各归其位 |
+| `core/schema/__init__.py` | 9 个子领域分组导出 |
+| `Module/task_system/__init__.py` | 7 个子领域分组导出 |
+| `core/input/` 反向依赖 | 移入 core/input/ 消除层违反 |
+| `core/input/debug_routes.py`（802 行） | 拆为 7 模块 package |
+| AgentStatus 接口层 | 解耦 FSM 与 15+ 消费者，spec: `docs/specs/2026-07-30-agent-status-interface-design.md` |
+
+**修复日期**：2026-06 ~ 2026-07-30
+
+---
+
 ### 2026-07-30: core/ + Module/task_system/ IDE 类型错误批量修复（~155 处）
 
 **背景**：Pylance/Pyright 诊断累积了大量类型错误，分布在生产代码和测试文件中。

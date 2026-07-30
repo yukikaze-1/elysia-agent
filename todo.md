@@ -13,13 +13,6 @@
 | 中 | **TTS 密集短句导致 wait_all 阻塞** | TTS 连续 5+ 短句密集入队时 MiniMax 部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING。已缩短 read timeout 120s→30s 缓解，根因（wait_all 无超时）待重现后修复。 |
 | 低 | **`flush_after_response` 超时层不匹配** | 内层 `loop.py:875` 每 task 5s，外层 `lifecycle.py:170` 整体 10s。3+ task 同时超时可能被外层截断。实际 pending 典型 0-2 个、亚秒级完成，impact 极低。修法：外层 timeout 改为 `max(10.0, len(pending) * 5.0 + 1.0)` |
 | 低 | **`ConfirmModal` @keydown 在不可聚焦 `<div>`** | `frontend/src/debug/components/shared/ConfirmModal.vue:35` — overlay div 无 `tabindex`，依赖按钮聚焦后事件冒泡。弹窗内只有文字+两个按钮，点击文字不会失焦，现有行为已可靠。加固：加 `tabindex="0"` |
-| ~~高~~ ✅ | **L3→L2 压缩计数触发永久失效** | 修复：`_append_history` 截断时同步下调 `compression_last_count`。2026-07-30 |
-| ~~高~~ ✅ | **Consolidator 缓冲区在 LLM 调用前清空** | 修复：`buffer.clear()` 移到 LLM 成功解析后。2026-07-30 |
-| ~~中~~ ✅ | **`_sentence_buf`/`_block_filter` 始终为 None** | 修复：删除死代码字段 + no-op 检查 + 未使用 import。2026-07-30 |
-| ~~中~~ ✅ | **`_current_task` 覆盖导致认知任务孤儿** | 修复：`_handle_user_input` 先 `cancel_current()` 再创建新 task。2026-07-30 |
-| ~~低~~ ✅ | **`time_of_day` 主动触发每秒重复投递** | 修复：`_last_time_of_day_trigger` 防重，同分钟只触发一次。2026-07-30 |
-| ~~低~~ ✅ | **已吸收记忆条目残留 `_entries`** | 修复：`mark_absorbed` 中从 `_entries` 移除 + 清理 `_dirty_ids`。2026-07-30 |
-| ~~低~~ ✅ | **`_sync_dirty_entries` 一条失败即跳出** | 修复：`break` → `logger.debug` + 继续循环。2026-07-30 |
 
 ## 功能改进
 
@@ -61,26 +54,13 @@
 | 中 | `OutputManager.stream()` 未使用 | `manager.py:63-88`，保留参考 |
 | 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行，保留参考 |
 | 中 | `Module/bench/` 位置不当 | bench.py 自注释"将移至 tools/bench/"，依赖 core/，后续考虑迁移 |
-| ~~中~~ ✅ | **`_tool_executor` / `_tool_adapter` 两套引用** | 统一为 `_tool_adapter`，删除 `_tool_executor` 别名。2026-07-30 |
 | 低 | **FilePart/AudioPart/VideoPart 预留代码** | `part.py` ~70 行 + `message_adapter.py` 3 个 helper + `Part` union。`message_adapter.py:188` 注释明确 Phase 2。暂保留 |
-| ~~中~~ ✅ | **`_after_response` fire-and-forget** | `flush_after_response()` + lifecycle shutdown step。2026-07-30 |
 
 ## 模块化改进
 
-近期已完成 Agent 拆分、CognitiveLoop 提取、CharacterEngine 拆分、server 拆分，整体趋势向好。以下为下次重构候选（按优先级排序）：
-
 | 优先级 | 目标 | 说明 |
 |--------|------|------|
-| ~~中~~ ✅ | **`core/agent/lifecycle.py`（522 行）** | 已拆分为 facade + 4 mixin（Persistence, Services, Tools, TaskSystem）+ 数据驱动 _STARTUP_STEPS |
-| ~~中~~ ✅ | **`core/cognitive/loop.py`（844 行）** | 评估结论：剩余方法多为编排胶水，提取收益不大。已补全参数文档+类型注解 |
-| ~~中~~ ✅ | **`core/memory/long_term.py`（588 行）** | 已提取 EmbeddingProvider。Milvus 适配器+驱逐+吸收 ID 追踪评估后不拆（耦合紧密） |
-| ~~低~~ ❌ | **`Module/tool/safety.py`（618 行）** | 评估结论：7 阶段是线性管道而非独立策略，阶段间有不变量（semaphore acquire/release 配对），拆分反而增加复杂度。不拆 |
-| ~~低~~ ✅ | **`core/` 根目录散落文件归位** | 已归位：agent_fsm→core/agent/，prompt_assembler→core/adapter/，event_bus/idle_monitor/token_tracker→core/monitoring/ |
-| ~~低~~ ✅ | **`core/schema/__init__.py` 导出 70+ 符号** | 已按 9 个子领域分组导出（基础类型→消息→Part→工具→事件→记忆→角色→Token→情绪） |
-| ~~低~~ ✅ | **`Module/task_system/__init__.py` 导出 70+ 符号** | 已按 7 个子领域分组导出（公共API→基础类型→跨层协议→对外输出→内部编排→校验→运行时状态） |
-| ~~低~~ ✅ | **`core/input/` 反向依赖 `core/`** | 已移入 core/input/，消除层违反。原 Module/input/ → core/input/ |
-| ~~低~~ ✅ | **`core/input/debug_routes.py`（802 行）** | 已拆分为 `debug_routes/` package（7 模块）：overview / ltm / archive / recording / character + _common + __init__。23 handler 从闭包提升为顶层函数。2026-07-29
-| ~~高~~ ✅ | **AgentStatus 接口层** | 解耦 FSM 与 15+ 消费者。Phase 1：接口+实现+loop.py 内部替换。Phase 2：外部消费者迁移（10 文件）。Phase 3：loop.py 残余 guard 清理。2026-07-30。Spec: [2026-07-30-agent-status-interface-design.md](docs/specs/2026-07-30-agent-status-interface-design.md) |
+| ~~低~~ ❌ | **`Module/tool/safety.py`（618 行）** | 评估结论：不拆 |
 
 ## 多模态 Phase 2
 
@@ -97,7 +77,6 @@
 | **高** | `.env` 仍含真实 API Key | DeepSeek、MiMo、Tavily、MiniMax 的真实 key 仍在 `.env` 文件中。已有 `.env.example` + `setup.sh` + `app.py --check`，但 `.env` 不应提交真实密钥。建议：将 `.env` 中 key 替换为占位符，真实 key 通过 shell 环境变量或密钥管理器注入 |
 | 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
 | 低 | 会话管理 | 无法新建/切换/列出对话。SessionMemory 的 MongoDB 持久化已为此做好准备，需前后端联动 |
-| ~~高~~ ✅ | **无 CI/CD** | 已添加 `.github/workflows/`（ci.yml + nightly.yml），通过 self-hosted runner 在自己服务器上执行。PR 自动跑 quick + normal，每日凌晨全量。2026-07-30 |
 | **高** | **无数据库迁移机制** | MongoDB 索引在 `connect()` 时 ad-hoc 创建，Milvus collection 硬编码创建。若字段/索引/维度需变更，无 upgrade path。`memory_repo.clear_all()` 是破坏性操作无安全守卫 |
 | 低 | **`character/cyrene/` 不可用** | 缺少 `config.yaml` 和 `personality.md`，仅含 GPT 参考材料，无法作为角色加载 |
 | 低 | **依赖无版本上限** | `requirements.txt` 中 pydantic、openai、torch 等均无上限约束，上游 breaking change 可导致不可预期问题。`torch` 是 2GB+ 重依赖 |
