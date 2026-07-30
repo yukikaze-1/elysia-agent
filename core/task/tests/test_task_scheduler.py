@@ -113,6 +113,11 @@ async def _make_sleep_manager(barrier: asyncio.Event) -> ToolAdapter:
     return tm
 
 
+def _make_sync_manager() -> MagicMock:
+    """返回 mock ToolAdapter — 用于纯同步 _prune_tasks 测试。"""
+    return MagicMock(spec=ToolAdapter)
+
+
 def _tc(id_="c1", name="echo", args="{}"):
     return ToolCall(
         id=ToolCallId(id_),
@@ -627,6 +632,79 @@ async def test_checkpoint_no_path():
 
     sched._restore_checkpoint()  # 无文件 → 静默跳过
     await sched.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 五.5、_prune_tasks — 终态任务清理
+# ═══════════════════════════════════════════════════════════════════
+
+def _make_terminal_task(tid: str, children: list[str] | None = None) -> Task:
+    """创建一个终态（COMPLETED）任务。"""
+    return Task(id=tid, type=TaskType.BACKGROUND, status=TaskStatus.COMPLETED,
+                payload={}, children_ids=children or [],
+                run_in_background=True)  # type: ignore[reportCallIssue]
+
+
+def _make_active_task(tid: str, children: list[str] | None = None) -> Task:
+    """创建一个活跃（DISPATCHED）任务。"""
+    return Task(id=tid, type=TaskType.BACKGROUND, status=TaskStatus.DISPATCHED,
+                payload={}, children_ids=children or [],
+                run_in_background=True)  # type: ignore[reportCallIssue]
+
+
+def test_prune_removes_terminal_without_active_children():
+    """终态任务无活跃子任务 → 被删除。"""
+    tm = _make_sync_manager()
+    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    t = _make_terminal_task("t1")
+    sched._tasks["t1"] = t
+    sched._prune_tasks()
+    assert "t1" not in sched._tasks
+
+
+def test_prune_keeps_active_task():
+    """活跃任务 → 保留。"""
+    tm = _make_sync_manager()
+    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    t = _make_active_task("t1")
+    sched._tasks["t1"] = t
+    sched._prune_tasks()
+    assert "t1" in sched._tasks
+
+
+def test_prune_keeps_terminal_with_active_child():
+    """终态父任务有活跃子任务 → 保留（子任务还在跑）。"""
+    tm = _make_sync_manager()
+    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    parent = _make_terminal_task("parent", children=["child"])
+    child = _make_active_task("child")
+    sched._tasks["parent"] = parent
+    sched._tasks["child"] = child
+    sched._prune_tasks()
+    assert "parent" in sched._tasks
+    assert "child" in sched._tasks
+
+
+def test_prune_removes_all_when_all_terminal():
+    """全部终端且无活跃子 → 全部删除。"""
+    tm = _make_sync_manager()
+    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    for i in range(5):
+        sched._tasks[f"t{i}"] = _make_terminal_task(f"t{i}")
+    sched._prune_tasks()
+    assert len(sched._tasks) == 0
+
+
+def test_prune_removes_terminal_parent_when_child_also_terminal():
+    """父终态 + 子终态 → 父子都删除。"""
+    tm = _make_sync_manager()
+    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    parent = _make_terminal_task("parent", children=["child"])
+    child = _make_terminal_task("child")
+    sched._tasks["parent"] = parent
+    sched._tasks["child"] = child
+    sched._prune_tasks()
+    assert len(sched._tasks) == 0
 
 
 # ═══════════════════════════════════════════════════════════════════

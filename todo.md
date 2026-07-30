@@ -157,18 +157,18 @@
 
 > 保留不动的低价值测试：`test_task_model.py` dataclass 默认值/字段赋值测试、`test_session.py` 字符串常量测试（无害 smoke test）。
 
-### 覆盖率缺口（未修复）
+### 覆盖率缺口
 
-| 严重性 | 路径 | 影响 |
-|--------|------|------|
-| 关键 | `_flush_after_response` 完全未测 | 关闭时内存持久化的关键路径 |
-| 关键 | FSM 15 条有效转换中 9 条未测 | EXECUTING/IDLE_BACKGROUND_TASK/INTERRUPTED 相关路径 |
-| 高 | `dispatch_background()` 完全未测 | TaskScheduler 后台任务派发 |
-| 高 | `execute_stream()` 完全未测 | ToolAdapter 流式执行 |
-| 高 | `_prune_tasks()` 完全未测 | 任务周期性清理 |
-| 中 | `fake_llm.py` 逐字符流式不符合真实 LLM | 所有使用 fake_llm 的集成测试有假阳性风险 |
-| 中 | EventBus drain() 与认知循环中断竞态 | 中断时 TASK_RESULT 事件丢失 |
-| 中 | `agent/tests/conftest.py` MagicMock 过于宽松 | `_fsm.state = MagicMock()` 是地雷 |
+| 严重性 | 路径 | 影响 | 状态 |
+|--------|------|------|------|
+| ~~关键~~ ✅ | `_flush_after_response` 完全未测 | 关闭时内存持久化的关键路径 | 2026-07-30 修复：5 个测试覆盖空/已完成/正常/超时/异常 |
+| ~~关键~~ ✅ | FSM 10 条有效转换未测 | EXECUTING/IDLE_BACKGROUND_TASK/INTERRUPTED 相关路径 | 2026-07-30 修复：新增 10 条 transition + 3 条 interrupt 测试 |
+| ~~高~~ ✅ | `_prune_tasks()` 完全未测 | 任务周期性清理 | 2026-07-30 修复：5 个测试覆盖删除/保留/父子关系 |
+| 高 | `dispatch_background()` 完全未测 | TaskScheduler 后台任务派发。**死代码**（唯一引用是注释说"不要用"），不补测试 |
+| 高 | `execute_stream()` 完全未测 | ToolAdapter 流式执行。**一行 pass-through 委托**，无独立逻辑，不补测试 |
+| ~~中~~ ✅ | `fake_llm.py` 逐字符流式不符合真实 LLM | 第二轮已修复：正则分词逐 token yield + 故障注入 |
+| 中 | EventBus drain() 与认知循环中断竞态 | 中断时 TASK_RESULT 事件丢失。注：`drain()` 是**死代码**，从未被调用，不补测试 |
+| ~~中~~ ✅ | `agent/tests/conftest.py` MagicMock 过于宽松 | `_fsm.state = MagicMock()` 是地雷 | 2026-07-30 修复：改为 `AgentState.IDLE` 真实枚举值，16 个受影响测试全部通过 |
 
 ## ~~测试质量问题 — 第二轮 (2026-07-30, f413a9f)~~ ✅ 已修复
 

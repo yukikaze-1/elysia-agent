@@ -130,6 +130,31 @@
 
 ---
 
+### 2026-07-30: 测试覆盖率缺口补全（4 项）
+
+**背景**：todo.md 记录了 7 项测试覆盖率缺口，经分析 3 项为死代码/trivial，4 项实施修复。
+
+**修复项：**
+
+| 项 | 文件 | 修复方式 |
+|----|------|----------|
+| `_flush_after_response` 完全未测 | `core/cognitive/tests/test_flush.py`（新增） | 5 个场景：空/已完成/正常/超时取消/异常捕获 |
+| FSM 10 条转换 + 3 条 interrupt 未测 | `core/agent/tests/test_agent_fsm.py`（追加） | 20 条测试，覆盖全部 14 条有效转换 + 4 条 interrupt 路径 |
+| `_prune_tasks()` 完全未测 | `core/task/tests/test_task_scheduler.py`（追加） | 5 个场景：终端删除/活跃保留/父子关系/全删 |
+| `conftest.py` `_fsm.state = MagicMock()` 过于宽松 | `core/agent/tests/conftest.py` | 改为 `AgentState.IDLE` 真实枚举值，16 个受影响测试全部通过 |
+
+**不补测试的 3 项（死代码/trivial）：**
+
+| 项 | 原因 |
+|----|------|
+| `dispatch_background()` | 死代码 — 唯一引用是注释说"不要用" |
+| `execute_stream()` | 一行 pass-through 委托，无独立逻辑 |
+| EventBus `drain()` 竞态 | `drain()` 从未被调用，死代码 |
+
+**修复日期**：2026-07-30
+
+---
+
 ### 2026-06 ~ 2026-07: 已知 Bug 修复 + 模块化改进 + 代码清理（归档）
 
 将 todo.md 中 2026-07-30 前完成的 19 项一次性归档。

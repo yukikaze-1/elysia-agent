@@ -72,3 +72,87 @@ class TestAgentFSM:
         fsm = AgentFSM()
         assert not fsm.interrupt()
         assert fsm.state == AgentState.IDLE
+
+    # —— 补充未测的有效转换 ——
+
+    def test_thinking_to_executing(self):
+        """THINKING → EXECUTING"""
+        fsm = AgentFSM()
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.EXECUTING)
+        assert fsm.state == AgentState.EXECUTING
+
+    def test_executing_to_thinking(self):
+        """EXECUTING → THINKING"""
+        fsm = AgentFSM()
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.EXECUTING)
+        fsm.transition(AgentState.THINKING)
+        assert fsm.state == AgentState.THINKING
+
+    def test_interrupt_from_executing(self):
+        """EXECUTING 状态可 interrupt"""
+        fsm = AgentFSM()
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.EXECUTING)
+        assert fsm.interrupt()
+        assert fsm.state == AgentState.INTERRUPTED
+
+    def test_speaking_to_executing(self):
+        """SPEAKING → EXECUTING"""
+        fsm = AgentFSM()
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.SPEAKING)
+        fsm.transition(AgentState.EXECUTING)
+        assert fsm.state == AgentState.EXECUTING
+
+    def test_speaking_to_thinking(self):
+        """SPEAKING → THINKING"""
+        fsm = AgentFSM()
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.SPEAKING)
+        fsm.transition(AgentState.THINKING)
+        assert fsm.state == AgentState.THINKING
+
+    def test_interrupt_from_speaking(self):
+        """SPEAKING 状态可 interrupt"""
+        fsm = AgentFSM()
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.SPEAKING)
+        assert fsm.interrupt()
+        assert fsm.state == AgentState.INTERRUPTED
+
+    def test_speaking_to_idle_background_task(self):
+        """SPEAKING → IDLE_BACKGROUND_TASK"""
+        fsm = AgentFSM()
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.SPEAKING)
+        fsm.transition(AgentState.IDLE_BACKGROUND_TASK)
+        assert fsm.state == AgentState.IDLE_BACKGROUND_TASK
+
+    def test_interrupted_to_idle(self):
+        """INTERRUPTED → IDLE"""
+        fsm = AgentFSM()
+        fsm.transition(AgentState.THINKING)
+        fsm.interrupt()
+        assert fsm.state == AgentState.INTERRUPTED
+        fsm.transition(AgentState.IDLE)
+        assert fsm.state == AgentState.IDLE
+
+    def test_idle_background_task_to_thinking(self):
+        """IDLE_BACKGROUND_TASK → THINKING"""
+        fsm = AgentFSM()
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.SPEAKING)
+        fsm.transition(AgentState.IDLE_BACKGROUND_TASK)
+        fsm.transition(AgentState.THINKING)
+        assert fsm.state == AgentState.THINKING
+
+    def test_interrupt_from_idle_background_task(self):
+        """IDLE_BACKGROUND_TASK 状态可 interrupt"""
+        fsm = AgentFSM()
+        fsm.transition(AgentState.THINKING)
+        fsm.transition(AgentState.SPEAKING)
+        fsm.transition(AgentState.IDLE_BACKGROUND_TASK)
+        assert fsm.interrupt()
+        assert fsm.state == AgentState.INTERRUPTED

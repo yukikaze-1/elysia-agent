@@ -5,6 +5,8 @@ from collections import deque
 from unittest.mock import MagicMock, AsyncMock
 import pytest
 
+from core.schema import AgentState
+
 
 @pytest.fixture
 def fake_agent():
@@ -25,7 +27,7 @@ def fake_agent():
     a._bus = MagicMock()
     a._bus.post = MagicMock()
     a._fsm = MagicMock()
-    a._fsm.state = MagicMock()
+    a._fsm.state = AgentState.IDLE  # 真实枚举值，避免 MagicMock 比较恒真
     a.status = MagicMock()
     a.status.is_accepting_input = True
     a.status.current_name.return_value = "idle"
