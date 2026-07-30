@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { useDebugStore } from '@/stores/debugStore'
+import { useAbortController } from '@/composables/useAbortController'
 import PaginationBar from './shared/PaginationBar.vue'
 import ConfirmModal from './shared/ConfirmModal.vue'
 import ExpandableText from './shared/ExpandableText.vue'
@@ -8,6 +9,7 @@ import ExpandableText from './shared/ExpandableText.vue'
 interface LtmEntry { id: string; text: string; memory_type: string; poignancy: number; timestamp: string | number; metadata?: Record<string, unknown> }
 
 const store = useDebugStore()
+const { signal } = useAbortController()
 
 const entries = ref<LtmEntry[]>([])
 const total = ref(0)
@@ -55,11 +57,11 @@ async function load() {
     const params = new URLSearchParams({ limit: String(perPage.value), offset: String(store.ltmPage.offset) })
     if (search.value) params.set('search', search.value)
     if (typeFilter.value) params.set('type', typeFilter.value)
-    const res = await fetch(`/debug/api/ltm?${params}`)
+    const res = await fetch(`/debug/api/ltm?${params}`, { signal: signal() })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     entries.value = data.entries; total.value = data.total
-  } catch (e) { error.value = (e as Error).message }
+  } catch (e) { if ((e as Error).name === 'AbortError') return; error.value = (e as Error).message }
   finally { loading.value = false }
 }
 

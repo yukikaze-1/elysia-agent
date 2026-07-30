@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useAbortController } from '@/composables/useAbortController'
 
 const props = defineProps<{
   service: 'llm' | 'stt' | 'tts'
@@ -34,6 +35,7 @@ interface ProvidersResponse {
 
 const options = ref<{ value: string; label: string }[]>([])
 const loading = ref(false)
+const { signal } = useAbortController()
 
 async function refreshProviders() {
   await loadProviders()
@@ -42,7 +44,7 @@ async function refreshProviders() {
 async function loadProviders() {
   loading.value = true
   try {
-    const res = await fetch('/api/providers')
+    const res = await fetch('/api/providers', { signal: signal() })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data: ProvidersResponse = await res.json()
 
@@ -64,6 +66,7 @@ async function loadProviders() {
 
     options.value = opts
   } catch (e) {
+    if ((e as Error).name === 'AbortError') return
     console.warn('加载 provider 列表失败', e)
   } finally {
     loading.value = false

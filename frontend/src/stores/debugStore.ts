@@ -13,15 +13,19 @@ export const useDebugStore = defineStore('debug', () => {
 
   let pollTimer: ReturnType<typeof setInterval> | null = null
   let pollInterval = 2000
+  let _abortController: AbortController | null = null
 
   async function fetchDebugData() {
     try {
-      const res = await fetch('/debug/api')
+      _abortController?.abort()
+      _abortController = new AbortController()
+      const res = await fetch('/debug/api', { signal: _abortController.signal })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       data.value = await res.json()
       error.value = null
       pollInterval = 2000 // 成功时重置退避
     } catch (e) {
+      if ((e as Error).name === 'AbortError') return
       error.value = (e as Error).message
       pollInterval = Math.min(pollInterval * 2, 30000) // 指数退避到 30s
       restartPollTimer()
@@ -45,6 +49,7 @@ export const useDebugStore = defineStore('debug', () => {
 
   function stopPoll() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+    _abortController?.abort(); _abortController = null
     pollInterval = 2000
   }
 

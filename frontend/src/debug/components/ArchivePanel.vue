@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { useDebugStore } from '@/stores/debugStore'
+import { useAbortController } from '@/composables/useAbortController'
 import PaginationBar from './shared/PaginationBar.vue'
 import ConfirmModal from './shared/ConfirmModal.vue'
 import ExpandableText from './shared/ExpandableText.vue'
@@ -16,6 +17,7 @@ const editingId = ref<string | null>(null); const editText = ref('')
 const confirmVisible = ref(false); const confirmMsg = ref(''); const pendingConfirm = ref<(() => Promise<void>) | null>(null)
 const perPage = ref(100)
 const store = useDebugStore()
+const { signal } = useAbortController()
 
 // 300ms 防抖 — 避免每次按键都触发 API 请求
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -34,10 +36,10 @@ async function load() {
     const params = new URLSearchParams({ limit: String(perPage.value), skip: String(store.archivePage.offset) })
     if (search.value) params.set('search', search.value)
     if (roleFilter.value) params.set('role', roleFilter.value)
-    const res = await fetch(`/debug/api/archive?${params}`)
+    const res = await fetch(`/debug/api/archive?${params}`, { signal: signal() })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json(); entries.value = data.messages; total.value = data.total
-  } catch (e) { error.value = (e as Error).message }
+  } catch (e) { if ((e as Error).name === 'AbortError') return; error.value = (e as Error).message }
   finally { loading.value = false }
 }
 

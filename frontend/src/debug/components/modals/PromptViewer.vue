@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, nextTick } from 'vue'
+import { useAbortController } from '@/composables/useAbortController'
 
 const props = defineProps<{ index: number; visible: boolean }>()
 const emit = defineEmits<{ close: []; nav: [delta: number] }>()
+const { signal } = useAbortController()
 const overlayRef = ref<HTMLElement | null>(null)
 
 interface ToolItem { function?: { name?: string; description?: string }; name?: string; description?: string }
@@ -17,12 +19,12 @@ async function fetchPrompt() {
   if (!props.visible) return
   loading.value = true; error.value = ''
   try {
-    const res = await fetch(`/debug/api/prompts/${props.index}`)
+    const res = await fetch(`/debug/api/prompts/${props.index}`, { signal: signal() })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     detail.value = await res.json()
     expandedMsgs.value = new Set([0])
     expandedSections.value = new Set()
-  } catch (e) { error.value = (e as Error).message; detail.value = null }
+  } catch (e) { if ((e as Error).name === 'AbortError') return; error.value = (e as Error).message; detail.value = null }
   finally { loading.value = false }
 }
 

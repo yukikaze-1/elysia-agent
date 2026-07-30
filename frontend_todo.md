@@ -16,11 +16,9 @@
 
 ---
 
-### 2. ⬜ 无 AbortController — 多个组件
+### 2. ✅ AbortController — 已完成
 
-所有 fetch 请求（Debug 面板的轮询、LTM 查询、消息加载等）均未使用 `AbortController`。组件卸载后，网络回调仍会尝试更新已销毁的响应式状态。
-
-**阻塞原因：** 需全域架构变更。
+8 个文件已集成 `composables/useAbortController.ts`：LtmPanel、ArchivePanel、SessionPanel、PromptViewer、ResponseViewer（A 类防竞态）+ ModelSelector、debugStore（B 类卸载清理）。
 
 ---
 
@@ -41,7 +39,7 @@
 
 | # | 问题 | 涉及文件 | 原因 |
 |---|------|----------|------|
-| L-#6 | 无 AbortController | 多组件 | 同上，全域架构变更 |
+| L-#6 | 无 AbortController | 多组件 | ✅ 已完成 — A+B 类全部集成 |
 | L-#13 | ArchivePanel 分页参数命名误导 | `ArchivePanel.vue` | API 契约不变，仅命名建议 |
 | L-#15 | 硬编码颜色绕过 CSS 变量 | `variables.css:33` | 不影响功能 |
 
@@ -69,6 +67,6 @@
 
 目前没有任何 `errorCaptured` 钩子或全局 `app.config.errorHandler`。
 
-### 4.6 添加请求取消机制
+### 4.6 ✅ 添加请求取消机制 — 已完成
 
-同暂缓项 #2。所有 fetch 请求需 `AbortController` 支持。
+同暂缓项 #2。8 文件集成 `composables/useAbortController.ts`。
