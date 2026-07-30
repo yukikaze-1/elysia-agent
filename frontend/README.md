@@ -27,6 +27,7 @@ frontend/
     │
     ├── composables/            # 可复用逻辑
     │   ├── useWebSocket.ts     # WS 消息路由（类型安全的 ServerMessage 分发）
+    │   ├── useAbortController.ts # AbortController 封装（请求取消）
     │   ├── useImageUpload.ts   # 共享图片上传 + 拖拽处理（InputBar + MessageList 复用）
     │   └── useLightbox.ts      # 全局图片灯箱状态
     │

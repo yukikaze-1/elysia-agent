@@ -276,9 +276,11 @@ frontend/
 └── src/
     ├── main.ts             # Chat 应用入口（Pinia + marked + highlight.js）
     ├── App.vue             # 根组件（三栏布局 + 全局快捷键）
-    ├── styles/variables.css # 全局 CSS 变量（从旧版 chat.css 提取）
+    ├── styles/variables.css     # 全局 CSS 变量（从旧版 chat.css 提取）
+    ├── styles/message-layout.css # 共享消息布局样式（ChatMessage + TypingIndicator）
     ├── types/protocol.ts   # 20+ WebSocket 消息类型定义
     ├── utils/escape.ts     # HTML 转义工具
+    ├── utils/format.ts     # 数字格式化（fmt: 1.0k）
     ├── stores/
     │   ├── connectionStore.ts  # WebSocket 连接生命周期
     │   ├── chatStore.ts        # 消息列表 + delta 流式追加 + TTS 排队

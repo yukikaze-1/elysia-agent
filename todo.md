@@ -2,22 +2,6 @@
 
 > **CI 配置**：`Module/task_system/` 尚未完善、非当前开发重点，`test-quick` 和 `test-normal` 已通过 Makefile 跳过该目录（`--ignore=Module/task_system/tests`）。完整跑 `test-full` 或手动指定路径时仍会执行。
 
-## 文档审查遗留（2026-07-31）
-
-> 已完成 25 项主问题修复（architecture.md 15 项 + 其他文档 10 项），详见 [docs/completed.md](docs/completed.md)。以下为审查中发现的较次要/未修复问题：
-
-| 文件 | 问题 |
-|------|------|
-| `docs/testing.md` | 测试数量全面过时：总测试 ~1800→1927，unit ~1030→1112，service ~710→728。测试文件索引不全：Module/ 层 39→44，core/ 层 31→52（偏差 +68%），2 个不存在文件，遗漏多个新增测试目录 |
-| `data-structure-survey.md` | 行号偏移、AppConfig 缺 database 字段、常量定位错误、AgentState/EventType 定义位置不精确 |
-| `companion-prompt-guide.md` | 11 vs 12 个 PromptSection、交叉引用缺失 `archive/`、4 处 `memory.j2`→`c4_memory.j2` |
-| `Module/README.md` + `Module/tool/README.md` | Python 版本多处 3.13 vs CLAUDE.md 的 3.11+ |
-| `core/README.md` + `core/adapter/README.md` | 多处文件行数过时（数十行偏差） |
-| `CLAUDE.md` | styles 节缺 `message-layout.css`，utils 节缺 `format.ts` |
-| `docs/completed.md:1346` | 引用不存在的 `core/memory/message_archive.py` |
-| `frontend/README.md:382` | composables 数量"3 个"→4 个（缺 `useAbortController.ts`） |
-| `docs/code-review-2026-07-22.md` | 旧路径残留（`Module/input/`→`core/input/`）、项目规模夸大（~1.4M 行，实际 ~69K）、#3/#6 等已修复但列为严重 bug |
-
 ## 已知 Bug
 
 | 优先级 | 问题 | 说明 |
@@ -106,7 +90,7 @@
 
 ## 来自 code-review-2026-07-22 的遗留问题
 
-已修复 19/30，详见 [code-review 报告](docs/code-review-2026-07-22.md)。
+已修复 19/30，11 项遗留（含 4 项 ⏭️ 跳过未修）。
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
@@ -117,6 +101,10 @@
 | MEDIUM | **#13 API Key 明文泄露** | `/api/providers` GET 返回完整 api_key |
 | LOW | **#25 私有 _infra 访问** | `cognitive/tools.py` 直接访问 `TaskSystem._infra` |
 | LOW | **#26 取消的 Task 永不等待** | `idle_monitor.stop()` cancel 后不 await |
+| LOW | **#5 认知任务引用被覆盖导致竞态** | `agent.py:348-390` 两路径覆盖 `_current_task`，中断时只取消一个 |
+| MEDIUM | **#6 驱逐被注释，内存无界增长** | `long_term.py:250` `_evict_old_entries()` 被注释，新条目永远积累 |
+| MEDIUM | **#7 提醒通知永不送达** | `tools/reminder/plugin.py:33-37` 提醒结果未转发到任何输出通道 |
+| LOW | **#23 Fire-and-forget MongoDB 写入无限并发** | `session.py:87-90` 每次 `add_message()` 创建新 Task，无并发限制 |
 
 ## 来自 code-review-report-2026-06-22 的遗留问题
 

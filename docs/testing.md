@@ -2,14 +2,14 @@
 
 ## 分层体系
 
-约 1800 个测试按 4 层 markers 组织:
+1927 个测试按 4 层 markers 组织:
 
 | 层 | marker | 标准 | 测试数 | 耗时 |
 |---|--------|------|--------|------|
-| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | ~1030 | ~40s |
-| 服务 | `service` | 单模块 + mock，不启动 Agent | ~710 | 秒级 |
-| 集成 | `integration` | 需真实数据库或外部 API | ~37 | 不定 |
-| 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | ~51 | ~15min |
+| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 1112 | ~40s |
+| 服务 | `service` | 单模块 + mock，不启动 Agent | 728 | 秒级 |
+| 集成 | `integration` | 需真实数据库或外部 API | 35 | 不定 |
+| 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | 52 | ~15min |
 
 ## 日常命令
 
@@ -59,7 +59,7 @@ pytest core/tests/test_phase3.py -v
 
 ## 测试文件索引
 
-### Module/ 层（39 文件）
+### Module/ 层（44 文件）
 
 | 目录 | 文件 | 测试数 | 层级 |
 |------|------|--------|------|
@@ -111,7 +111,7 @@ pytest core/tests/test_phase3.py -v
 | | `test_planner.py` | 4 | integration |
 | | `test_task_system_lifecycle.py` | 10 | slow |
 
-### core/ 层（31 文件）
+### core/ 层（60 文件）
 
 | 目录 | 文件 | 测试数 | 层级 |
 |------|------|--------|------|
@@ -135,10 +135,13 @@ pytest core/tests/test_phase3.py -v
 | | `test_sentence_buffer.py` | 65 | unit |
 | `core/debug/tests/` | `test_prompt_recorder.py` | 7 | unit |
 | `core/cognitive/tests/` | `test_timing.py` | 16 | service |
+| | `test_flush.py` | 5 | unit |
+| | `test_mood_engine.py` | 15 | unit |
+| | `test_stream_processor.py` | 20 | unit |
+| | `test_tool_gate.py` | 10 | unit |
 | `core/memory/tests/` | `test_long_term.py` | 8 | service |
 | | `test_consolidator.py` | 21 | service+unit |
-| | `test_message_archive.py` | 12 | service |
-| | `test_session_archive_integration.py` | 3 | service |
+| | `test_memory_reflector.py` | 15 | service |
 | | `test_session.py` | 4 | service |
 | `core/personality/tests/` | `test_engine.py` | 14 | unit |
 | | `test_reflector.py` | 15 | service |
@@ -150,6 +153,22 @@ pytest core/tests/test_phase3.py -v
 | `core/tools/self_state/` | `test_self_state.py` | 3 | unit |
 | `core/tools/time/` | `test_time.py` | 8 | unit |
 | `core/tools/web/` | `test_web.py` | 20 | service |
+| `core/schema/tests/` | `test_adapters.py` | 18 | unit |
+| | `test_character.py` | 2 | unit |
+| | `test_compression.py` | 5 | unit |
+| | `test_event.py` | 10 | unit |
+| | `test_memory.py` | 8 | unit |
+| | `test_memory_reflector.py` | 12 | unit |
+| | `test_message.py` | 10 | unit |
+| | `test_part.py` | 10 | unit |
+| | `test_tool.py` | 4 | unit |
+| | `test_types.py` | 7 | unit |
+| `core/storage/tests/` | `test_character_version_repo.py` | 11 | unit |
+| | `test_memory_repo.py` | 3 | unit |
+| | `test_message_repo.py` | 6 | unit |
+| | `test_session_repo.py` | 6 | unit |
+| | `test_token_repo.py` | 2 | unit |
+| `core/adapter/tests/` | `test_tool_adapter.py` | 11 | service |
 
 ## Marker 标准
 

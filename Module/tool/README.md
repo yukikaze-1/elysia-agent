@@ -192,7 +192,7 @@ core/tools/     ← Elysia 项目的具体工具插件
 
 ## 依赖
 
-- Python 3.13+
+- Python 3.11+
 - Pydantic v2（参数校验 + Schema 生成）
 - 无其他强制依赖（`httpx`、`psutil` 等由插件自行声明）
 

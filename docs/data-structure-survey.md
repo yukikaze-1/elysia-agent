@@ -26,9 +26,9 @@
 
 | 文件 | 名称 | 成员 | 用途 |
 |------|------|------|------|
-| `core/schema/__init__.py` | `AgentState` (StrEnum) | IDLE, THINKING, EXECUTING, SPEAKING, INTERRUPTED, IDLE_BACKGROUND_TASK | Agent 认知流水线状态 |
-| `core/schema/__init__.py` | `EventPriority` (IntEnum) | INTERRUPT=0, STATE_CHANGE=1, NORMAL=2 | 事件总线优先级 |
-| `core/schema/__init__.py` | `EventType` (StrEnum) | INTERRUPT, STATE_CHANGE, USER_INPUT, SYSTEM_TICK, TASK_RESULT | 事件类型 |
+| `core/schema/agent.py` | `AgentState` (StrEnum) | IDLE, THINKING, EXECUTING, SPEAKING, INTERRUPTED, IDLE_BACKGROUND_TASK | Agent 认知流水线状态 |
+| `core/schema/agent.py` | `EventPriority` (IntEnum) | INTERRUPT=0, STATE_CHANGE=1, NORMAL=2 | 事件总线优先级 |
+| `core/schema/agent.py` | `EventType` (StrEnum) | INTERRUPT, STATE_CHANGE, USER_INPUT, SYSTEM_TICK, TASK_RESULT | 事件类型 |
 | `core/task/task.py:18` | `TaskType` (Enum) | TOOL_CALL, BACKGROUND | 任务分类 |
 | `core/task/task.py:23` | `TaskStatus` (Enum) | PENDING, DISPATCHED, COMPLETED, FAILED, CANCELLED | 任务生命周期 |
 
@@ -62,7 +62,7 @@
 | `core/config/app_config.py:56` | `WakeWordConfig` | enabled | 唤醒词 |
 | `core/config/app_config.py:61` | `Live2DConfig` | static_image | Live2D |
 | `core/config/app_config.py:67` | `VisionConfig` | model | 图片理解模型 |
-| `core/config/app_config.py:73` | `AppConfig` | agent, llm, memory, server, tts, stt, wake_word, live2d, vision | **顶层配置** |
+| `core/config/app_config.py:97` | `AppConfig` | agent, llm, memory, server, tts, stt, wake_word, live2d, vision, database | **顶层配置** |
 | `core/config/character_config.py:10` | `EmotionConfig` | thresholds, idle_expressions | 情绪阈值配置 |
 | `core/config/character_config.py:16` | `ProactiveConfig` | enabled, interval, triggers | 主动搭话配置 |
 | `core/config/character_config.py:23` | `CharacterConfig` | name, voice, user_pronoun, base_personality_file, base_personality, emotion, wake_words, proactive | **角色配置** |
@@ -450,10 +450,10 @@ wake_words: [Elysia, 爱莉, 爱莉希雅, 妖精小姐]
 |------|------|-----|------|
 | `core/personality/engine.py` | `AWARENESS_COOLDOWN_SECONDS` | 3600 | C9 冷却（1h） |
 | `core/personality/engine.py` | `AWARENESS_MAX_HISTORY` | 10 | state_history 上限 |
-| `core/personality/engine.py` | `COMPRESSION_COUNT_THRESHOLD` | 5 | L3→L2 计数触发 |
-| `core/personality/engine.py` | `COMPRESSION_TIME_THRESHOLD` | 604800 | L3→L2 时间触发（7d） |
-| `core/personality/engine.py` | `COMPRESSION_MIN_ENTRIES` | 3 | 首次压缩最少条目 |
-| `core/personality/engine.py` | `MOOD_KEYWORDS` | dict | 10 种 mood 的关键词 |
+| `core/personality/compression.py` | `COMPRESSION_COUNT_THRESHOLD` | 5 | L3→L2 计数触发 |
+| `core/personality/compression.py` | `COMPRESSION_TIME_THRESHOLD` | 604800 | L3→L2 时间触发（7d） |
+| `core/personality/compression.py` | `COMPRESSION_MIN_ENTRIES` | 3 | 首次压缩最少条目 |
+| `core/personality/emotion.py` | `MOOD_KEYWORDS` | dict | 10 种 mood 的关键词 |
 | — | `_STT_EMOTION_TO_MOOD` | — | 已移除：STT 情感现在直接传给 LLM 由 C5 Sensory 处理 |
 | `core/schema/error_type.py` | `ErrorType` | StrEnum | 统一错误类型枚举（替代原 `Module/schema/constants.py` 中 DEFAULT_ERROR_* 常量） |
 | `Module/database/vectordb/milvus.py` | `INDEX_PRESETS` | dict | 4 种向量索引预设 |

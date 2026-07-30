@@ -2,7 +2,7 @@
 
 > 文档导航：[项目文档](../README.md)
 
-AI 伴侣基础设施的 Python 3.13 共享库。为上层 Elysia/Agent 应用提供 LLM、STT、TTS、Embedding、数据库、输出通道和配置管理等模块，每个模块通过统一的 Protocol-Registry-Backend 模式隔离后端差异。
+AI 伴侣基础设施的 Python 3.11+ 共享库。为上层 Elysia/Agent 应用提供 LLM、STT、TTS、Embedding、数据库、输出通道和配置管理等模块，每个模块通过统一的 Protocol-Registry-Backend 模式隔离后端差异。
 
 ## 模块结构
 

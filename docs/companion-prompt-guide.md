@@ -8,7 +8,7 @@
 **最后更新**: 2026-07-07 — Section Provider 架构完善
 **目的**: 记录 prompt 编写中的隐性约束、设计原则和验证方法，方便迭代和后续维护。
 
-> **Section Provider 架构**: `Module/system_prompt/sections/` 下 11 个独立 PromptSection 模块。
+> **Section Provider 架构**: `Module/system_prompt/sections/` 下 12 个独立 PromptSection 模块。
 > 编辑 prompt 时直接修改对应 section 文件即可，无需 touch 整个单体模板。
 > 详见 `docs/superpowers/specs/archive/2026-07-04-prompt-section-provider-design.md`。
 
@@ -147,7 +147,7 @@ prompt 中必须明确描述**关系**，而不是只描述**性格**：
 
 inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出来的话**。两者不一定一致。
 
-当前 `f2_output_format.j2` 已完整实现 inner_voice 标签输出（`<inner_voice>...</inner_voice>`），包含 few-shot 示例和强制输出指令。cognitive_loop 通过 PRE→THINK→REPLY 三状态机流式检测标签并分流：THINK 内容不进 TTS/前端 delta，闭合后一次性广播。详见 `docs/superpowers/specs/2026-06-24-inner-voice-design.md`。
+当前 `f2_output_format.j2` 已完整实现 inner_voice 标签输出（`<inner_voice>...</inner_voice>`），包含 few-shot 示例和强制输出指令。cognitive_loop 通过 PRE→THINK→REPLY 三状态机流式检测标签并分流：THINK 内容不进 TTS/前端 delta，闭合后一次性广播。详见 `docs/superpowers/specs/archive/2026-06-24-inner-voice-design.md`。
 
 ### 4.2 设计原则
 
@@ -184,7 +184,7 @@ inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出�
 - 如果记忆和当前话题矛盾（妖梦今天说"不喜欢香菜"，三个月前说"还行"）→ inner_voice 困惑一下，public_reply 以当下为准
 ```
 
-**memory.j2 落地**：在 `<memory_bank>` 段之后加一个简短的记忆处理指引，明确：检索到的记忆是给 inner_voice 提供"背景感知"的，不是必须说出来的。只有**自然相关**时才在 public_reply 中提。
+**c4_memory.j2 落地**：在 `<memory_bank>` 段之后加一个简短的记忆处理指引，明确：检索到的记忆是给 inner_voice 提供"背景感知"的，不是必须说出来的。只有**自然相关**时才在 public_reply 中提。
 
 ---
 
@@ -219,7 +219,7 @@ inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出�
 如果三个都是"是"，才在对话中自然带出来。
 ```
 
-**memory.j2 落地**：在记忆段之后，用 1-2 个 few-shot 示例展示"提 vs 不提"的判断。示例比指令更有效。
+**c4_memory.j2 落地**：在记忆段之后，用 1-2 个 few-shot 示例展示"提 vs 不提"的判断。示例比指令更有效。
 
 ### 5.3 记忆冲突
 
@@ -242,7 +242,7 @@ inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出�
 | 情感事件（"那天很开心"） | 中等衰减 | 开心的事可以多提，伤心的事谨慎 |
 | 反复确认的信息 | 每次提及刷新时效性 | "你之前说过"权重上升 |
 
-**memory.j2 落地**：当前记忆系统输出 `poignancy` 和 `timestamp`。prompt 中利用这两个字段——高 poignancy 的提，低 poignancy + 很久以前的，不相关就略过。
+**c4_memory.j2 落地**：当前记忆系统输出 `poignancy` 和 `timestamp`。prompt 中利用这两个字段——高 poignancy 的提，低 poignancy + 很久以前的，不相关就略过。
 
 ### 5.5 记忆与情绪的联动
 
@@ -253,7 +253,7 @@ inner_voice 是 Elysia 的**真实想法**。public_reply 是她**选择说出�
 - 检索到的记忆和你当前 mood 冲突 → inner_voice 感到矛盾，public_reply 可能稍微犹豫
 ```
 
-**memory.j2 落地**：记忆段渲染后，追加一个简短的情绪提示——"以上记忆中，特别值得注意的是：[有一条关于xxx的开心记忆]"——让记忆不只是数据，而是情绪的上下文。
+**c4_memory.j2 落地**：记忆段渲染后，追加一个简短的情绪提示——"以上记忆中，特别值得注意的是：[有一条关于xxx的开心记忆]"——让记忆不只是数据，而是情绪的上下文。
 
 ### 5.6 记忆应该进 public_reply 还是 inner_voice？
 

@@ -253,23 +253,23 @@ Agent 生命周期中的关键扩展点：
 
 | 文件 | 行数 | 类型 |
 |------|------|------|
-| `agent/agent.py` | 522 | 核心组件 |
+| `agent/agent.py` | 539 | 核心组件 |
 | `agent/agent_fsm.py` | 83 | 核心组件 |
 | `monitoring/event_bus.py` | 76 | 核心组件 |
-| `cognitive/loop.py` | 986 | 核心组件 |
-| `personality/engine.py` | 414 | 核心组件 |
-| `memory/consolidator.py` | 349 | 核心组件 |
-| `adapter/prompt_assembler.py` | 169 | 核心组件 |
-| `monitoring/idle_monitor.py` | 112 | 核心组件 |
-| `task/scheduler.py` | 509 | 核心组件 |
-| `config/character_config.py` | 148 | 支撑模块 |
+| `cognitive/loop.py` | 999 | 核心组件 |
+| `personality/engine.py` | 421 | 核心组件 |
+| `memory/consolidator.py` | 350 | 核心组件 |
+| `adapter/prompt_assembler.py` | 170 | 核心组件 |
+| `monitoring/idle_monitor.py` | 128 | 核心组件 |
+| `task/scheduler.py` | 510 | 核心组件 |
+| `config/character_config.py` | 149 | 支撑模块 |
 | `config/app_config.py` | 107 | 支撑模块 |
 | `text/` | 3 文件 (708) | 支撑模块 |
 | `utils/message_id.py` | 15 | 支撑模块 |
-| `debug/` | 3 文件 (622) | 支撑模块 |
-| `utils/log_setup.py` | 213 | 支撑模块 |
-| `monitoring/token_tracker.py` | 191 | 支撑模块 |
+| `debug/` | 3 文件 (623) | 支撑模块 |
+| `utils/log_setup.py` | 215 | 支撑模块 |
+| `monitoring/token_tracker.py` | 193 | 支撑模块 |
 | `task/task.py` | 222 | 支撑模块 |
-| `input/debug_routes/` | 7 文件 (888) | 支撑模块 |
+| `input/debug_routes/` | 7 文件 (893) | 支撑模块 |
 | `schema/` | 目录（13 .py + adapters/） | 支撑模块 |
 | `__init__.py` | 0 | 包标记 |
