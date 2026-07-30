@@ -13,6 +13,7 @@ from typing import Any, TYPE_CHECKING
 from core.schema.compression import CompressionTrigger
 from core.schema._utils import now_iso
 from ._utils import _extract_tag
+from paths import ProjectPath
 
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
@@ -265,7 +266,7 @@ class CompressionManager:
             # 首次：渲染 L1 默认模板获取基准文本
             try:
                 from Module.system_prompt.sections.speaking_style import SpeakingStyleSection
-                sec = SpeakingStyleSection("Module/system_prompt/templates/c6_speaking_style.j2")
+                sec = SpeakingStyleSection(str(ProjectPath.SYSTEM_PROMPT_TEMPLATES.resolve() / "c6_speaking_style.j2"))
                 sec.set_context(user_name="")
                 current = await sec.render()
             except Exception:
