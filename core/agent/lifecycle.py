@@ -48,6 +48,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
 
     # shutdown 步骤按依赖顺序排列（stop() 中正序执行）
     _SHUTDOWN_STEPS: list[tuple[str, str]] = [
+        ("flush_after_response", "_flush_after_response"),
         ("flush_consolidator",   "_flush_consolidator"),
         ("flush_reflector",      "_flush_reflector"),
         ("flush_compression",    "_flush_compression"),
@@ -162,6 +163,15 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         logger.info("Agent stopped")
 
     # ---- stop() sub-methods ----
+
+    async def _flush_after_response(self) -> None:
+        """等待 fire-and-forget after-response task 完成，防止记忆保存丢失。"""
+        try:
+            await asyncio.wait_for(self._cognitive.flush_after_response(), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning("flush_after_response timed out during shutdown")
+        except Exception:
+            logger.warning("flush_after_response failed", exc_info=True)
 
     async def _flush_consolidator(self) -> None:
         """Memory consolidation buffer 落盘，防止未持久化的记忆丢失。"""

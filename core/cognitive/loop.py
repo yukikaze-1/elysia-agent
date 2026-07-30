@@ -173,6 +173,7 @@ class CognitiveLoop(CognitiveTools):
         self._process_lock = asyncio.Lock()
         self._current_task: asyncio.Task | None = None
         self._tts_task: asyncio.Task | None = None  # 保留供 agent.py stop() 读取
+        self._pending_after_response: list[asyncio.Task] = []  # shutdown 时等待
         # TTS streaming manager — extracted sub-system
         self._tts_mgr = TTSStreamManager(
             tts, output,
@@ -712,8 +713,14 @@ class CognitiveLoop(CognitiveTools):
                 logger.info("💭 %s", iv_think_buf.strip())
                 log_conversation("inner_voice", self._prompt._character.name,
                                  iv_think_buf.strip())
-            asyncio.create_task(self._after_response(user_message, public_text),
-                               name="after-response")
+            task = asyncio.create_task(
+                self._after_response(user_message, public_text),
+                name="after-response")
+            self._pending_after_response.append(task)
+            # 清理已完成的 task，避免列表无限增长
+            self._pending_after_response = [
+                t for t in self._pending_after_response if not t.done()
+            ]
 
             # 推送结构化块到前端
             for idx in content_type.get("markdown", []):
@@ -853,6 +860,27 @@ class CognitiveLoop(CognitiveTools):
         except Exception:
             logger.error("会话保存失败", exc_info=True)
 
+    async def flush_after_response(self, timeout: float = 5.0) -> None:
+        """等待所有 pending _after_response task 完成。
+
+        shutdown 时由 lifecycle 调用，防止内存沉淀和 session 保存丢失。
+
+        Args:
+            timeout: 每个 task 的最长等待时间（秒）。
+        """
+        pending = [t for t in self._pending_after_response if not t.done()]
+        if not pending:
+            return
+        logger.info("等待 %d 个 after-response task 完成...", len(pending))
+        for t in pending:
+            try:
+                await asyncio.wait_for(t, timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.warning("after-response task 超时，取消")
+                t.cancel()
+            except Exception:
+                logger.warning("after-response task 异常", exc_info=True)
+        self._pending_after_response.clear()
 
     # ---- StreamProcessor event dispatch ----
 
