@@ -10,6 +10,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Load .env
+        run: cp /home/yomu/Agent/.env .env
       - name: Run full test suite
         run: |
           set -a
