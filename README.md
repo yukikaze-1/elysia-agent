@@ -286,7 +286,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | 日志系统 — stderr + log/app.log + log/conversation.log + 库日志分离 | done |
 | 会话恢复 (localStorage + 服务端持久化) | done |
 | **一键部署** — setup.sh + start.sh + download_model.py | done |
-| **环境预检** — app.py --check / --check --full (14 项) | done |
+| **环境预检** — app.py --check / --check --full (16 项：11 基础 + 5 连通性) | done |
 | **Docker 数据库** — docker-compose.yml (MongoDB 7 + Milvus v2.4) | done |
 
 ---
@@ -413,7 +413,7 @@ Agent/
 
 ## 测试
 
-1869 个测试按 4 层 markers 组织。详见 [docs/testing.md](docs/testing.md)。
+1927 个测试按 4 层 markers 组织。详见 [docs/testing.md](docs/testing.md)。
 
 ```bash
 conda activate Elysia
@@ -424,7 +424,7 @@ make test-quick
 # 提交前 — 排除慢速（~5min）
 make test-normal
 
-# 全量（~20min）
+# 全量（~22min）
 make test-full
 ```
 

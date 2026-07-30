@@ -227,13 +227,13 @@ _BACKENDS = {
 | `Module.stt` | `sensevoice`, `custom` | HTTP API | SenseVoice: localhost:20042，返回文本 + 情绪标签 + 音频事件；Custom: OpenAI-compatible。`openai`/`deepgram` 已注册但抛出 NotImplementedError |
 | `Module.tts` | `gpt-sovits`, `minimax`, `custom` | HTTP API | `synthesize_stream()` 异步生成器，逐 chunk WAV；MiniMax: speech-2.8-hd，hex 编码音频 |
 | `Module.embedding` | `huggingface`, `openai` | 本地模型 / API | HF 离线加载 + GPU 兼容 (sm_<70 → CPU fallback) |
-| `Module.database.vectordb` | `milvus` | gRPC | ANN 语义搜索 |
+| `Module.database.vectordb` | `milvus`, `pinecone*`, `qdrant*` | gRPC / REST | ANN 语义搜索。`pinecone`/`qdrant` 已注册但抛出 NotImplementedError |
 | `Module.database.documentdb` | `mongodb` | motor async | `serverSelectionTimeoutMS=3000` |
 | `Module.database.graphdb` | stub | — | 预留 |
 | `Module.output` | `ConsoleChannel`, `WebSocketChannel` | — | 多通道广播 + capability 路由 |
 | `Module.config` | `ConfigLoader` | YAML + env | 分层配置 + 类型校验 |
 | `Module.logger` | `LoggerFactory` | — | caller-aware 日志工厂 |
-| `Module.system_prompt` | `PromptManager`, `SystemPromptManager`, `PromptSection` | Jinja2 | Section Provider 架构 + 通用模板渲染 |
+| `Module.system_prompt` | `PromptManager`, `SystemPromptManager`, `PromptSection` | Jinja2 | Section Provider 架构 + 通用模板渲染。注：`SystemPromptManager` 需通过 `Module.system_prompt.system_prompt_manager` 子模块导入（`__init__.py` 不导出） |
 
 ### 3.3 Config 系统
 
@@ -250,6 +250,7 @@ class AppConfig:
     wake_word: WakeWordConfig = ConfigField(default_factory=WakeWordConfig)
     live2d: Live2DConfig = ConfigField(default_factory=Live2DConfig)
     vision: VisionConfig = ConfigField(default_factory=VisionConfig)
+    database: DatabaseConfig = ConfigField(default_factory=DatabaseConfig)
 
 # 使用
 config = ConfigLoader(AppConfig, yaml_path="config.yaml").load()
@@ -454,7 +455,7 @@ MOOD_KEYWORDS = {
 ### 4.6 分句缓冲 (SentenceBuffer)
 
 ```
-默认分隔符: 。！？!?\n～…〜.
+默认分隔符: `_HARD_DELIMITERS = frozenset("。！？!?\n")` + `_DEFAULT_DELIMITERS` 添加 `.`（不包含 `～` `…` `〜`）
 
 逐 token feed → 检测分隔符 → 提取完整句
   英文句号检测: 过滤数字(3.14)、缩写(Dr./Mr./U.S.)、URL
@@ -526,7 +527,7 @@ L4 Mood（当前情绪）    LLM `<mood>` 标签每轮更新（自由文本）�
 
 **CharacterReflector**（子组件）：缓冲 50 对 user/assistant 消息 → LLM 反思 → 提交事件到 `CharacterEngine.consume_trigger("reflector", ...)`，更新 L3 State。
 
-**AwarenessTrigger**（C9 激活判定）：L3 非空 + 距上次触发超过 1h → C9 渲染。冷却时间戳持久化到 CharacterState，重启不丢失。
+**AwarenessTrigger**（C9 激活判定）：L3 非空 + 距上次触发超过 5 分钟（300s） → C9 渲染。冷却时间戳持久化到 CharacterState，重启不丢失。（注：`engine.py` 中 `AWARENESS_COOLDOWN_SECONDS=3600` 为已废弃的死代码，实际冷却由 `awareness.py` 的 `AWARENESS_JUDGMENT_COOLDOWN=300` 控制。）
 
 **阻尼机制**：L3 偏移 L1 特质时，L1 决定"怎么说"（表达方式），L3 影响"说什么"（内容倾向）。Phase 2 引入 L4→L3、L3→L2 向上回流压缩。
 
@@ -555,9 +556,9 @@ class SessionMemory:
 
     # MongoDB 自动检测 — 不可用时静默降级为 in-memory
     async connect_db() → bool
-    async save() → bool           # Upsert by session_id
-    async load(sid?) → bool       # 恢复最近 max_messages 条
-    snapshot() / restore()        # 快照 (测试用)
+    async save() → bool           # Upsert by session_id（MongoDB 优先，不可用时降级 JSONL）
+    async load(sid?) → bool       # 从 MongoDB 恢复（JSONL fallback）
+    async load_from_jsonl() → bool  # 从本地 JSONL 文件恢复
 ```
 
 ### 5.3 LongTermMemory
@@ -604,7 +605,7 @@ class WebSearchPlugin(ToolPlugin):
     safety = SafetyProfile(network_allowed=True, block_private_ips=True, ...)
 
 # ToolAdapter 统一管理: 加载、执行、HITL 审批、热重载
-tool_adapter.load_all(ALL_PLUGINS, plugin_ctx)
+tool_adapter = ToolAdapter(ALL_PLUGINS, ...); await tool_adapter.start()
 
 # CognitiveLoop 自动:
 # tool_definitions() → LLM 请求（通过 API tools 参数传递，不再注入 system prompt）
@@ -664,9 +665,10 @@ Browser Microphone
 | `message` | `{"role":"assistant","content":"..."}` | 完整消息（流式结束） |
 | `typing` | `{"typing": true/false}` | 输入中指示器 |
 | `state` | `{"state": "idle/thinking/speaking/..."}` | FSM 状态 |
+| `action` | `{"action":"wave","params":{...}}` | 动作指令（预制动画） |
 | `expression` | `{"expression":"happy","intensity":0.8}` | 情绪/表情 |
-| `audio` | `{"data":"base64...","stream_id":...,"seq":...}` | 音频 chunk |
-| `audio_end` | `{"stream_id": ...}` | 音频流结束 |
+| `audio` | `{"data":"base64...","stream_id":...,"seq":...,"is_final":false}` | 音频 chunk |
+| `audio_end` | `{"stream_id": ...,"format":"wav"}` | 音频流结束 |
 | `transcription` | `{"text":"...","emotion":"HAPPY","events":["Laughter"]}` | STT 结果 |
 | `command` | `{"command":"inner_voice","params":{"content":"..."}}` | AI 内心独白（淡色气泡） |
 | `command` | `{"command":"tool_approval","params":{...}}` | 工具审批请求 |
@@ -674,6 +676,7 @@ Browser Microphone
 | `session` | `{"type":"session","messages":[...],"token_stats":{...}}` | 连接时推送会话历史 |
 | `capabilities` | `{"type":"capabilities","stt":true,...}` | 服务能力声明 |
 | `wake` | `{"type":"wake"}` | 唤醒词检测通知 |
+| `token_usage` | `{"turn":{"rounds":[...],"turn_total":N},"session":{"total":N,"by_model":{...}}}` | Token 消耗统计 |
 | `switch_model_result` | `{"type":"switch_model_result","service":"...","ok":true}` | 模型切换结果 |
 | `error` | `{"type":"error","message":"..."}` | 错误通知 |
 
@@ -691,7 +694,7 @@ Browser Microphone
 ### 6.3 WebSocket 服务器 (core/input/)
 
 ```
-aiohttp Application (41 条路由):
+aiohttp Application (45 条路由):
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
@@ -728,6 +731,10 @@ aiohttp Application (41 条路由):
 | PUT\|DELETE | `/debug/api/archive/{msg_id}` | 更新 / 删除单条归档 |
 | GET | `/debug/api/tasks` | TaskSystem 快照 |
 | GET | `/debug/api/tasks/stream` | TaskSystem SSE 事件流 |
+| GET | `/debug/api/l2-versions` | L2 self-image 版本历史 |
+| POST | `/debug/api/l2-rollback` | L2 self-image 回滚（指定版本） |
+| GET | `/debug/api/character-versions` | Character 版本历史（L2/C6，通过 type 参数选择） |
+| POST | `/debug/api/character-rollback` | Character 内容回滚（L2/C6，通过 type/version 参数） |
 
 每个 WS 连接:
   └── 创建 WebSocketChannel → OutputManager
@@ -749,7 +756,7 @@ Vue 3 + Vite + Pinia + TypeScript。开发时通过 Vite 代理（:5173 → :876
 
 关键实现：
 - 21 个 Vue 3 组件，全部使用 `<script setup lang="ts">` + `<style scoped>`
-- 5 个 Pinia store（connectionStore, chatStore, audioStore, settingsStore, toolsStore）
+- 6 个 Pinia store（connectionStore, chatStore, audioStore, settingsStore, toolsStore, debugStore）
 - WebSocket 消息路由通过 `useWebSocket` composable 分发到 store action（替代旧版 switch）
 - AudioContext 16kHz → Int16 PCM → WS binary
 - 流式 delta 追加（Vue 响应式 + `chatStore.appendDelta()`）
@@ -783,6 +790,20 @@ tts:
 
 stt:
   enabled: true                      # CLI --stt 可覆盖
+
+wake_word:
+  enabled: false                     # 语音唤醒开关
+
+live2d:
+  static_image: "/static/Elysia.png" # Live2D 未启用时的静态立绘
+
+database:
+  mongodb_uri: mongodb://localhost:27017  # MongoDB 连接串
+  milvus_uri: http://localhost:19530     # Milvus 服务端点
+  db_name: default                       # MongoDB 数据库名
+
+vision:
+  model: mimo/mimo-v2.5              # describe_image 视觉模型
 ```
 
 优先级: `CLI flag > 环境变量 (.env) > config.yaml > AppConfig 默认值`
@@ -860,7 +881,7 @@ class Agent:
         # MongoDB + Milvus 并行连接
         # SessionMemory.load() — 恢复历史会话
         # TokenTracker + PromptRecorder 初始化
-        # ToolAdapter.load_all(ALL_PLUGINS) — 加载工具插件
+        # await tool_adapter.start() — 加载工具插件
         # TaskScheduler Worker Pool 启动
         # IdleMonitor.start()
         # TTS 条件启动（STT 在 run_server() 中初始化）
@@ -868,18 +889,22 @@ class Agent:
         # 事件处理循环 (_process_events)
 
     async def stop():
-        # 1. Buffer flush: consolidator → CharacterReflector → L3→L2 compression → MemoryReflector
-        # 2. _stop_event_task() — cancel event processing
-        # 3. cancel cognitive + TTS tasks
-        # 4. _stop_mailbox() — cancel mailbox polling
-        # 5. _stop_task_system() — stop TaskSystem
-        # 6. scheduler.stop()
-        # 7. tool_manager.shutdown()
-        # 8. idle_monitor.stop()
-        # 9. _stop_embedding_if_running() — cancel embedding preload
-        # 10. _stop_persistence() — session.save() → EmbeddingFactory.shutdown() → long_term.close()
-        # 11. _stop_db_health() — cancel db_health_task
-        # 12. llm.close() + tts.close() + output.close()
+        # 1. _flush_after_response() — 等待 fire-and-forget after-response task 完成
+        # 2. _flush_consolidator() — Memory consolidation buffer 落盘
+        # 3. _flush_reflector() — CharacterReflector buffer 落盘
+        # 4. _flush_compression() — L3→L2 压缩触发
+        # 5. _stop_event_task() — cancel event processing
+        # 6. _stop_cognitive_and_tts() — cancel cognitive + TTS tasks
+        # 7. _stop_db_health() — cancel db_health_task
+        # 8. _stop_mailbox() — cancel mailbox polling
+        # 9. _stop_task_system() — stop TaskSystem
+        # 10. _stop_scheduler() — scheduler.shutdown()
+        # 11. _stop_tool_adapter() — tool_adapter.shutdown()
+        # 12. _stop_idle() — idle_monitor.stop()
+        # 13. _stop_embedding_if_running() — cancel embedding preload
+        # 14. _stop_persistence() — session.save() → EmbeddingFactory.shutdown() → long_term.close()
+        # 15. _stop_llm_and_tts() — llm.close() + tts.close()
+        # 16. _stop_output() — output.close()
         # (每步 3s timeout，少数关键步骤 5s，单步失败不阻塞后续)
 
     async def process_message(text):
@@ -990,6 +1015,15 @@ Agent/
 │   │   └── scheduler.py      #     Worker Pool 调度器
 │   ├── utils/                #   通用工具包
 │   ├── schema/               #   共享类型包 (agent + types + part + tool + message + adapters)
+│   ├── status/                #   AgentStatus 接口层 (protocol + FSMBacked 实现)
+│   │   ├── protocol.py       #     AgentStatus（对外只读）+ CognitivePhaseController（对内写）
+│   │   └── fsm.py            #     FSMBackedStatus + FSMBackedPhaseController
+│   ├── storage/               #   存储层 — Repository 模式 (MongoDB/Milvus)
+│   │   ├── session_repo.py   #     SessionRepository: session CRUD + TTL
+│   │   ├── message_repo.py   #     MessageRepository: 消息归档 append-only
+│   │   ├── token_repo.py     #     TokenRepository: token 统计持久化
+│   │   ├── memory_repo.py    #     MemoryRepository: LTM Milvus 操作
+│   │   └── character_version_repo.py # CharacterVersionRepository: L2/C6 版本历史
 │   ├── debug/                #   Debug 仪表板包
 │   │   ├── info.py           #     /debug 数据聚合
 │   │   ├── prompt_recorder.py #   Prompt 记录器
@@ -1118,6 +1152,7 @@ INTERRUPT:
 | 3 | agent/agent.py | cognitive process (USER_INPUT) | `_current_task`，INTERRUPT cancel |
 | 4 | agent/agent.py | cognitive process (SYSTEM_TICK) | 同上 |
 | 5 | cognitive/loop.py | `_after_response` | fire-and-forget，无追踪 |
+| 6 | adapter/tts_adapter.py | TTS 音频下载 + 转发（每句） | fire-and-forget，_tts_tasks[] 追踪 |
 | 7 | idle_monitor.py | idle 监控 tick | 常驻，stop 时 cancel |
 | 8 | long_term.py | embedding 加载 | insert 时 await (wait=True), search 时 fire-and-forget |
 | 9 | personality/engine.py | expression 输出 | 纯 fire-and-forget，无追踪 |

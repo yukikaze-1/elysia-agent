@@ -1,6 +1,72 @@
 # 待做
 
+## 2026-07-31 架构文档审查 — docs/architecture.md 与代码不一致
+
+以下问题来自 `docs/architecture.md` 及其关联文档与代码的对比审查。按严重性降序排列。
+
+### 高
+
+| # | 文件 | 行号 | 摘要 | 失败场景 |
+|---|------|------|------|----------|
+| 1 | `docs/architecture.md` | 560 | **`SessionMemory.snapshot()/restore()` 不存在** — 文档声称存在这两个方法，实际代码中 `session.py` 没有 `def snapshot` 或 `def restore` | 测试用 `session.snapshot()` 会触发 `AttributeError` |
+| 2 | `docs/architecture.md` | 242-252 | **AppConfig 缺少 `database: DatabaseConfig` 字段** — 文档列出 9 个字段，实际代码 `app_config.py` 有 10 个（`database` 缺失） | 用户依赖文档了解配置结构会完全错过 `database` 配置节 |
+| 3 | `docs/architecture.md` | 694-730 | **4 个角色版本路由未文档化** — `debug_routes/character.py` 注册了 4 条路由（l2-versions, l2-rollback, character-versions, character-rollback），不在文档路由表中。文档说"41 条路由"，实际 45 条 | API 使用者不知道这些端点存在 |
+| 4 | `docs/architecture.md` | 530 | **AwarenessTrigger 冷却时间: 文档说 1h，实际 5 分钟** — 文档："距上次触发超过 1h"。实际: `AWARENESS_JUDGMENT_COOLDOWN = 300`（`awareness.py:20`）。`AWARENESS_COOLDOWN_SECONDS = 3600` 定义在 `engine.py:40` 但从未被使用 | 依赖文档理解 C9 触发频率的开发者和文档不符 |
+| 5 | `docs/architecture.md` | 457 | **SentenceBuffer 默认分隔符包括 `～…〜` 但代码没有** — 文档："默认分隔符: 。！？!?\n～…〜." 实际默认值: `_HARD_DELIMITERS = frozenset("。！？!?\n")` + `_DEFAULT_DELIMITERS = _HARD_DELIMITERS \| {"."}` = `。！？!?\n.`（7 字符，非 10 字符） | `～`, `…`, `〜` 不会按文档所述触发分句 |
+| 6 | `docs/architecture.md` | 231 | **vectordb 文档说"milvus"唯一，`pinecone`/`qdrant` 已注册** — 文档表格只列出 milvus。实际: 3 个 backend 注册（milvus + pinecone + qdrant），后两者抛 `NotImplementedError`。与其他模块（stt 的 openai/deepgram）不一致 | 文档模式不统一，遗漏注册的 stub |
+
+### 中
+
+| # | 文件 | 行号 | 摘要 | 失败场景 |
+|---|------|------|------|----------|
+| 7 | `docs/architecture.md` | 663-678 | **`action` 和 `token_usage` WS 消息类型未文档化** — `WebSocketChannel.on_action()` (websocket.py:96) 和 `on_token_usage()` (websocket.py:159) 实际发送，但不在 6.2 协议表中 | 前端开发者会漏接这两个消息类型 |
+| 8 | `docs/architecture.md` | 668-669 | **`audio`/`audio_end` 报文格式字段缺失** — `audio` 报文含 `is_final: False`，`audio_end` 含 `format: "wav"`，但文档未列出 | 前端解析可能忽略这些字段 |
+| 9 | `docs/architecture.md` | 957-1037 | **`core/status/` 和 `core/storage/` 目录从文件树中缺失** — 两个目录（AgentStatus 接口层 + Storage repository 层）完全不在第 12 节文件结构中 | 开发者理解项目结构时遗漏重要组件 |
+| 10 | `docs/architecture.md` | 607 | **ToolAdapter 公共 API 文档用 `load_all()` 实际用 `start()`** — 文档: `tool_adapter.load_all(ALL_PLUGINS, plugin_ctx)`。实际: `ToolAdapter.start()` 是公共入口 | 开发者调用 `load_all()` 会报错或方法不存在 |
+| 11 | `docs/architecture.md` | 755, 1056 | **第 6.4 节说 5 个 Pinia store，第 12 节说 6 个** — 文档内部矛盾: 6.4 列出 5 个（缺 `debugStore`），12 节说 6 个。实际代码 6 个 | 读者困惑实际 store 数量 |
+| 12 | `docs/architecture.md` | 1112 | **并发任务表称 19 个调用点但编号只有 18（缺 #6）** — 第 13 节表格编号 1,2,3,4,5,7,...19，缺 #6，标题却说"19 个调用点"。实际 18 个条目 | 编号混乱，#6 缺失原因不明 |
+| 13 | `docs/architecture.md` | 767-786 | **config.yaml 文档块缺少 database/vision/wake_word/live2d 节** — 第 7.1 节 YAML 示例省略了 4 个完整配置节 + 若干字段 | 文档作为配置参考不完整 |
+| 14 | `docs/architecture.md` | 236 | **SystemPromptManager 未从 `Module/system_prompt/__init__.py` 重导出** — 文档表格将其列为可导出类型，实际 `__init__.py` 没有 `SystemPromptManager`，必须通过完整子模块路径导入 | `from Module.system_prompt import SystemPromptManager` 会失败 |
+| 15 | `docs/architecture.md` | 871-883 | **Agent.stop() 步骤顺序不一致** — 文档列出: persistence(10) → db_health(11)。实际 `_SHUTDOWN_STEPS`: `stop_db_health`(#7) 在 `stop_persistence`(#14) 之前 | 文档与实际 cleanup 顺序不符 |
+
 > **CI 配置**：`Module/task_system/` 尚未完善、非当前开发重点，`test-quick` 和 `test-normal` 已通过 Makefile 跳过该目录（`--ignore=Module/task_system/tests`）。完整跑 `test-full` 或手动指定路径时仍会执行。
+
+## 2026-07-31 其他文档审查 — docs/*.md、CLAUDE.md、README.md、Module/README 等与代码不一致
+
+审查范围：`docs/` 下除 `specs/`、`plans/`、`superpowers/` 之外的全部文档、根级 `README.md`/`CLAUDE.md`、`Module/` 和 `core/` 各 README、`frontend/README.md`。方法：逐文件与代码交叉验证。
+
+### 高
+
+| # | 文件 | 行号 | 摘要 | 失败场景 |
+|---|------|------|------|----------|
+| 1 | `static/debug.md` | 全文 | **文档完全过时** — 描述的是旧版独立 HTML debug 页（~2100 行、单文件、无构建步骤、内联 JS），实际 `static/debug.html` 仅为 15 行 Vite 构建产物入口（加载 module JS + CSS bundle）。文档的"单文件 HTML + CSS + JS，无依赖"、"ES5 兼容 JavaScript，无框架依赖"等描述全部错误 | 用户按文档理解 debug 页面架构和实现会得到完全错误的信息 |
+| 2 | `CLAUDE.md` | 292-293 | **列出不存在的前端 composable 文件** — 树结构中列出 `useAudio.ts`（TTS 播放控制）和 `useMic.ts`（麦克风采集封装），同时缺少实际存在的 `useAbortController.ts` 和 `useImageUpload.ts`。实际 composables 目录含 4 个文件：`useAbortController.ts`、`useImageUpload.ts`、`useLightbox.ts`、`useWebSocket.ts`。音频/麦克风逻辑已移至 `audioStore.ts`（Pinia store） | 开发者按 CLAUDE.md 查找 `useAudio.ts`/`useMic.ts` 找不到文件；AI agent 按 CLAUDE.md 生成代码会引用不存在的模块 |
+| 3 | `CLAUDE.md` | 104 | **列出已删除的 `core/agent/status.py`** — 树结构中仍列出 `status.py`（虽有注释"已提取为 core/status/ 包"），但该文件已完全不存在，非薄包装或重导出 | 开发者和 IDE 导航会尝试访问不存在的文件路径 |
+| 4 | `README.md` + `Module/llm/README.md` | README:327, llm:85 | **MiMo 列为 LLM 后端但未注册** — 两处文档均列出 `mimo` 为可用后端，但 `Module/llm/registry.py` 中无 `mimo` 条目。`Module/config/preflight.py` 的 `_LLM_PROVIDER_ENV` 虽定义了 `MIMO_API_KEY`，但 factory 无法创建 | 用户尝试 `LLMFactory.create("mimo/...")` 会因 registry key error 而失败 |
+| 5 | `Module/llm/README.md` | 50 | **`test()` 返回类型错误** — 文档写 `async def test(self) -> bool: ...`，实际 `protocol.py:69` 签名为 `async def test(self) -> dict:` | 开发者写 `if await backend.test():` 会得到 `dict` truthy（恒真），错过 `{"ok": False}` 的失败检测 |
+
+### 中
+
+| # | 文件 | 行号 | 摘要 | 失败场景 |
+|---|------|------|------|----------|
+| 6 | `database-storage.md` | 5-10, 23 | **遗漏 `character_versions` 集合 + 嵌入模型名不准确** — 主表只列 4 个集合（缺第 5 个 `character_versions`，定义在 `character_version_repo.py`，用于 L2/C6 版本历史）。嵌入模型写 `BGE-large-zh-v1.5`（应为 `BAAI/bge-large-zh-v1.5`），且未提及 `openai/text-embedding-3-small` 是主后端（`embedding_provider.py:105-112`），BGE 为 fallback | DBA 无法从文档了解完整集合清单；配置嵌入管线的用户会使用错误的模型名且不了解分层 fallback 策略 |
+| 7 | `core/prompts/README.md` | 15 | **`PersonalityCompression.j2` 加载方写错** — 文档声称由 `core/personality/engine.py` 加载，实际加载代码在 `core/personality/compression.py:191-196`（`PromptManager.render_macro("PersonalityCompression.j2", ...)`） | 开发者追踪 PersonalityCompression 模板的消费者时会在 engine.py 中找不到任何引用 |
+| 8 | `README.md` | 289, 416, 428 | **3 处计数/时间数据过时** — (a) 预检项数"14 项"，实际 `--check --full` 执行 16 项（11 基础 + 5 连通性）；(b) 测试计数"1869 个测试"，实际 `pytest --collect-only` 返回 1927（差 58）；(c) 全量测试耗时 `README` 写"~20min"，`CLAUDE.md:28` 写"~22min"，不一致 | 引用这些数字的报告/changelog/外部文档会传播错误数据 |
+| 9 | `companion-roadmap.md` | 64 | **关键文件列表含已删除文件 + 错误路径** — 列出 `static/js/main.js`、`static/js/persistence.js`、`static/css/chat.css`（均已随 Vue 2→Vue 3 迁移删除），且 `core/prompt_assembler.py` 应为 `core/adapter/prompt_assembler.py`，`Module/input/server.py` 应为 `core/input/server.py` | 虽文档已有废弃声明，但关键文件列表仍然误导想了解当时实现的新读者 |
+| 10 | `database-storage.md` | 91 | **`message_archive` 索引表不完整** — 文档只写 `_id`（MongoDB 内置默认降序扫描），实际 `message_repo.py:70-71` 额外创建了 `session_id` 索引和 `(session_id, _id)` 复合索引 | DBA 规划查询时不知道已存在的索引，可能创建重复索引或写出次优查询 |
+
+> **补充**：以上为 top-10 精选。完整审查中还发现以下较次要问题（不纳入编号）：
+> - `docs/testing.md`：**测试数量全面过时** — 总测试声称"约 1800"，实际 1927（+7%）；unit ~1030→1112；service ~710→728；integration ~37→35；slow ~51→52。**测试文件索引严重不全** — Module/ 层声称 39 文件实际 44；core/ 层声称 31 文件实际 52（偏差 +68%）；列出 2 个不存在的测试文件（`test_message_archive.py`、`test_session_archive_integration.py`）；遗漏 `core/schema/tests/`、`core/storage/tests/`、`core/cognitive/tests/` 中多个文件
+> - `data-structure-survey.md`（2026-07-15）：多处行号偏移（代码变更所致）、`AppConfig` 缺 `database` 字段（同 architecture.md 发现 #2）、常量定位错误（6 个常量中 4 个不在 engine.py）、`AgentState`/`EventType` 定义位置不精确（列 `__init__.py` 而非实际定义文件 `agent.py`）
+> - `companion-prompt-guide.md:11`：11 vs 12 个 PromptSection（同 architecture.md 发现）
+> - `companion-prompt-guide.md:150`：交叉引用缺失 `archive/` 路径段
+> - `companion-prompt-guide.md:187,222,245,256`：4 处 `memory.j2` 应为 `c4_memory.j2`
+> - `Module/README.md:5` + `Module/tool/README.md:195`：Python 版本多处不一致（3.13  vs CLAUDE.md 的 3.11+）
+> - `core/README.md` + `core/adapter/README.md`：多处文件行数过时（数十行偏差）
+> - `CLAUDE.md`：styles 缺 `message-layout.css`，utils 缺 `format.ts`
+> - `docs/completed.md:1346`：引用不存在的 `core/memory/message_archive.py`
+> - `frontend/README.md:382`：composables 数量"3 个"，实际 4 个（缺 `useAbortController.ts`）
+> - `docs/code-review-2026-07-22.md`：旧路径残留（`Module/input/` 应为 `core/input/`）、项目规模夸大（"~1.4M 行" 实际 Python ~69K）、#3/#6 等 issue 已修复但仍列为严重 bug
 
 ## 已知 Bug
 

@@ -12,7 +12,7 @@ Jinja2 `.j2` 模板目录，PascalCase 命名。运行时通过 Python `str.repl
 | `ConsolidationCompare.j2` | `core/memory/consolidator.py` | 新记忆 vs 已有记忆比对（insert/update/merge/skip） | `{new_items}`, `{existing_items}` |
 | `MemoryReflector.j2` | `core/memory/memory_reflector.py` | 定期深度去重（合并相似、修正过时、删除垃圾） | `{memories}`, `{last_summary}` |
 | `CharacterReflector.j2` | `core/personality/reflector.py` | 性格反思 — L3 State 更新（情境反应 vs 人格偏移） | 10 变量: character_name, user_name, l1_core, l2_self, l3_history, last_self_perception, mood_snapshot, time_span, buffer_size, recent_conversations |
-| `PersonalityCompression.j2` | `core/personality/engine.py` | L3→L2 性格压缩（长期自我沉淀） | `{l2_self}`, `{l3_history}` |
+| `PersonalityCompression.j2` | `core/personality/compression.py` | L3→L2 性格压缩（长期自我沉淀） | `{l2_self}`, `{l3_history}` |
 | `AwarenessJudge.j2` | `core/personality/awareness.py` | C9 觉察判定 — LLM 判断是否批准展示 L3 | Jinja2 宏渲染 (`render_macro`) |
 | `SpeakingStyleEdit.j2` | `core/personality/engine.py` | C6 说话风格编辑 — L2 演化后联动刷新 | Jinja2 宏渲染 (`render_macro`) |
 

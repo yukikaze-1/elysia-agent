@@ -1,6 +1,6 @@
 # 数据库存储表格
 
-项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），4 个集合，外加若干内存/文件存储结构。没有使用 SQL 数据库。
+项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），5 个集合，外加若干内存/文件存储结构。没有使用 SQL 数据库。
 
 | 集合 | 位置 | 用途 | 保留策略 |
 |------|------|------|----------|
@@ -8,6 +8,7 @@
 | `sessions` | MongoDB | LLM 上下文窗口 | max_messages 截断, 30天 TTL |
 | `message_archive` | MongoDB | 对话消息永久归档 | 永久, 只增不删 |
 | `token_usage` | MongoDB | LLM token 统计 | 永久, 只增不删 |
+| `character_versions` | MongoDB | L2/C6 性格版本历史 | 永久，per content_type 独立计数 |
 
 ---
 
@@ -20,7 +21,7 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `id` | INT64（主键，自增） | 自动生成 |
-| `embedding` | FLOAT_VECTOR[1024] | 文本嵌入向量（BGE-large-zh-v1.5） |
+| `embedding` | FLOAT_VECTOR[1024]（openai/text-embedding-3-small）/ 1024（BAAI/bge-large-zh-v1.5 fallback） | 文本嵌入向量，主后端 openai，BGE 为离线 fallback |
 | `text` | VARCHAR（动态字段） | 记忆文本内容 |
 | `memory_type` | VARCHAR（动态字段） | 类型：`fact` / `plan` / `preference` / `note` |
 | `poignancy` | INT（动态字段） | 重要性 1-10 |
@@ -88,7 +89,14 @@
 | `token_usage` | TokenUsageSummary? | assistant 的 token 统计（rounds: TokenUsageRecord[], turn_total: int） |
 | `tool_call_id` / `name` / `success` / `error` | — | tool 角色专用字段 |
 
-**索引**: `_id`（MongoDB 内置默认降序扫描），无 TTL，不截断。
+**索引**:
+| 索引 | 说明 |
+|------|------|
+| `_id` | MongoDB 内置（默认降序扫描） |
+| `session_id` ASC | 按会话查询 |
+| `(session_id, _id)` 复合 | 会话内消息排序 |
+
+无 TTL，不截断。
 
 **操作**: `insert_one`（fire-and-forget），`find`（分页游标），`delete_many({})`（debug 清空）。
 

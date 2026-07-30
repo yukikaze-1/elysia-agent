@@ -61,7 +61,7 @@ Elysia 目前是一个**反应式系统**——你说一句，她回一段。真
 - prompt 加入 few-shot 示例确保标签输出稳定
 - ResponseRecorder 环形缓冲区
 
-**关键文件**: `Module/system_prompt/sections/`, `core/cognitive/loop.py`, `core/debug/response_recorder.py`, `core/prompt_assembler.py`, `core/memory/session.py`, `static/js/main.js`, `static/js/persistence.js`, `static/css/chat.css`, `static/debug.html`, `core/debug/info.py`, `Module/input/server.py`
+**关键文件**: `Module/system_prompt/sections/`, `core/cognitive/loop.py`, `core/debug/response_recorder.py`, `core/adapter/prompt_assembler.py`, `core/memory/session.py`, `frontend/src/` (Vue 3 + Vite 构建), `static/debug.html`, `core/debug/info.py`, `core/input/server.py`
 
 **已完成**: 前端 inner_voice 显示/隐藏 toggle（设置面板"内心独白"开关，localStorage 持久化）
 

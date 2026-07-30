@@ -101,8 +101,7 @@ core/
 │   ├── agent.py           #   Agent.__init__ + event handling + process_message + background tasks
 │   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + _STARTUP_STEPS + _SHUTDOWN_STEPS + 3 flush
 │   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
-│   ├── status.py          #   AgentStatus（对外只读）+ CognitivePhaseController（对内写）, FSMBacked 实现 → 已提取为 core/status/ 包
-│   ├── agent_fsm.py       #   AgentFSM: 底层状态机（通过 status.py 封装，不对外暴露）
+│   ├── agent_fsm.py       #   AgentFSM: 底层状态机（由 core/status/ 封装，不对外暴露）
 │   ├── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
 │   ├── _lifecycle_persistence.py  #   持久化层启停 (MongoDB/Milvus/session/repos)
 │   ├── _lifecycle_services.py     #   LLM/TTS/Output/TokenTracker 启停
@@ -289,8 +288,8 @@ frontend/
     │   └── debugStore.ts       # Debug 仪表盘：轮询生命周期 + Tab 切换 + 分页状态
     ├── composables/
     │   ├── useWebSocket.ts  # WS 消息路由（替代旧版巨型 switch）
-    │   ├── useAudio.ts      # TTS 播放控制
-    │   ├── useMic.ts        # 麦克风采集封装
+    │   ├── useAbortController.ts  # AbortController 封装
+    │   ├── useImageUpload.ts      # 图片上传管理
     │   └── useLightbox.ts   # 全局图片灯箱（任意组件 open(url) 即可全屏查看）
     ├── components/
     │   ├── layout/AppLayout.vue           # 三栏布局
