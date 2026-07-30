@@ -153,7 +153,7 @@ class TestMemoryConsolidator:
             "好的妖梦！我记住了，你喜欢蓝色，而且明天要去爬山。"
         )
 
-        assert isinstance(items, list)
+        assert len(items) >= 2
         types = {item.type.value for item in items}
         assert "Preference" in types
         assert "Plan" in types
@@ -230,7 +230,7 @@ class TestMemoryConsolidatorEdgeCases:
 
         long_msg = "长消息" * 300
         items = await consolidator.consolidate(long_msg, long_msg)
-        assert isinstance(items, list)
+        assert items == []  # FakeLLMBackend 无提取输出 → 空列表
 
         await adapter.close()
 

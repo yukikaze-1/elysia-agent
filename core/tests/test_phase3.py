@@ -386,7 +386,7 @@ class TestCognitiveLoopTTS:
         await loop._handle_interrupt()
 
         assert len(loop._tts_mgr._tasks) == 0
-        assert loop._fsm.state == "idle"
+        assert loop._fsm.state == AgentState.IDLE
 
 
 # ============================================================================
@@ -430,7 +430,7 @@ class TestCognitiveLoopSync:
         """无 TTS 时文本直接发送，不经过缓冲。"""
         await loop.process("hello")
         # process() 成功完成即表明文本已直接发送
-        assert loop._fsm.state == "idle"
+        assert loop._fsm.state == AgentState.IDLE
 
     @pytest.mark.asyncio
     async def test_process_lock_serializes(self, loop):
@@ -1027,7 +1027,7 @@ class TestMessageObj:
 # 14. Agent — lifecycle
 # ============================================================================
 
-@pytest.mark.slow
+@pytest.mark.service
 class TestAgentLifecycle:
     @pytest.mark.asyncio
     async def test_register_tools(self):

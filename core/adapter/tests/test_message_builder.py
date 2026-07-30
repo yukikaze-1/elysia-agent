@@ -143,6 +143,8 @@ class TestBuildMessages:
         messages = builder.build_messages("system", history, "done")
         assistant = [m for m in messages if m["role"] == "assistant"]
         assert len(assistant) > 0
+        # JSON 解析失败时只输出工具名，不含参数
+        assert "[已调用: test]" in assistant[0]["content"]
 
     def test_single_image_unsupported(self):
         """单张图片 + 不支持多模态 → describe_image 提示。"""

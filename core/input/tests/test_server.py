@@ -28,66 +28,46 @@ def _make_agent():
     return agent
 
 
+# ── helpers ─────────────────────────────────────────────────────────────────
+
+def _make_app():
+    """创建用于路由测试的最小 app（serve_static=False）。"""
+    from core.input.server import create_app
+    agent = MagicMock()
+    agent._output = MagicMock()
+    agent._bus = MagicMock()
+    agent._state = RunState.RUNNING
+    return create_app(agent, serve_static=False)
+
+
+def _find_routes_by_name(app, name_fragment: str):
+    """查找资源名包含 name_fragment 的路由。"""
+    return [
+        r for r in app.router.routes()
+        if hasattr(r, 'resource') and r.resource and name_fragment in str(r.resource)
+    ]
+
+
 # ── tests ──────────────────────────────────────────────────────────────────
 
 @pytest.mark.unit
 class TestCreateApp:
-    def test_registers_routes(self):
-        from core.input.server import create_app
-
-        agent = MagicMock()
-        agent._output = MagicMock()
-        agent._bus = MagicMock()
-
-        app = create_app(agent, serve_static=False)
-
-        routes = {getattr(r, 'path', None) for r in app.router.routes()}
-        # For aiohttp route resources, check the canonical path
-        route_paths = set()
-        for r in app.router.routes():
-            resource = r.resource  # may be None for AbstractRoute
-            info = resource.get_info() if resource is not None and hasattr(resource, 'get_info') else {}
-            path = info.get('path', getattr(resource, '_path', None))
-            if path:
-                route_paths.add(path)
-
-        # Core routes should be registered
+    def test_ws_route_exists(self):
+        """WebSocket /ws route 已注册。"""
+        app = _make_app()
         route_strs = {str(r) for r in app.router.routes()}
-        assert any('/ws' in s or 'ws_handler' in s for s in route_strs), f"No /ws route in {route_strs}"
+        assert any('/ws' in s or 'ws_handler' in s for s in route_strs), \
+            f"No /ws route in {route_strs}"
 
     def test_shutdown_route_exists(self):
         """POST /shutdown route 已注册。"""
-        from core.input.server import create_app
-
-        agent = MagicMock()
-        agent._output = MagicMock()
-        agent._bus = MagicMock()
-        agent._state = RunState.RUNNING
-
-        app = create_app(agent, serve_static=False)
-
-        shutdown_routes = [
-            r for r in app.router.routes()
-            if hasattr(r, 'resource') and r.resource and 'shutdown' in str(r.resource)
-        ]
-        assert len(shutdown_routes) > 0, "shutdown route 未注册"
+        app = _make_app()
+        assert len(_find_routes_by_name(app, 'shutdown')) > 0, "shutdown route 未注册"
 
     def test_restart_route_exists(self):
         """POST /restart route 已注册。"""
-        from core.input.server import create_app
-
-        agent = MagicMock()
-        agent._output = MagicMock()
-        agent._bus = MagicMock()
-        agent._state = RunState.RUNNING
-
-        app = create_app(agent, serve_static=False)
-
-        restart_routes = [
-            r for r in app.router.routes()
-            if hasattr(r, 'resource') and r.resource and 'restart' in str(r.resource)
-        ]
-        assert len(restart_routes) > 0, "restart route 未注册"
+        app = _make_app()
+        assert len(_find_routes_by_name(app, 'restart')) > 0, "restart route 未注册"
 
 
 @pytest.mark.service
@@ -147,7 +127,7 @@ class TestCreateAppIntegration:
         assert agent._state == RunState.RESTARTING
 
 
-@pytest.mark.service
+@pytest.mark.slow
 class TestWebSocketHandler:
     @pytest.mark.asyncio
     async def test_text_message_triggers_process_message(self, aiohttp_client):
@@ -490,7 +470,7 @@ class TestToolEndpoints:
 # Fix assertion-less tests
 # ============================================================
 
-@pytest.mark.service
+@pytest.mark.slow
 class TestAssertionFixes:
     @pytest.mark.asyncio
     async def test_invalid_json_returns_error_message(self, aiohttp_client):

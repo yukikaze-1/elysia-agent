@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import shutil
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -560,10 +561,7 @@ async def test_checkpoint_save_and_restore():
         assert restored.type == TaskType.BACKGROUND
         assert restored.payload["msg"] == "persist"  # type: ignore[reportGeneralTypeIssues]
     finally:
-        try:
-            Path(cp).unlink()
-        except Exception:
-            pass
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 @pytest.mark.asyncio
 async def test_checkpoint_multiple_tasks():
@@ -589,10 +587,7 @@ async def test_checkpoint_multiple_tasks():
         assert sched2._tasks["bg-2"].payload["idx"] == 2  # type: ignore[reportGeneralTypeIssues]
         assert sched2.pending_count == 3
     finally:
-        try:
-            Path(cp).unlink()
-        except Exception:
-            pass
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
@@ -614,10 +609,7 @@ async def test_checkpoint_ignores_non_background():
         sched2._restore_checkpoint()
         assert len(sched2._tasks) == 0
     finally:
-        try:
-            Path(cp).unlink()
-        except Exception:
-            pass
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 @pytest.mark.asyncio

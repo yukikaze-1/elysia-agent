@@ -191,23 +191,30 @@ class TestLongTermMemory:
         assert mem.count == 0
 
     @pytest.mark.asyncio
-    async def test_insert_stores_milvus_pk(self):
-        """insert 时应为 entry 分配 id。"""
+    async def test_insert_assigns_id(self):
+        """insert 时应为 entry 分配内存 id（_milvus_pk 仅在 Milvus 在线时设置）。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         await mem.insert("test entry", type="note")
         assert mem._entries[0].id
-        # _milvus_pk 仅在 Milvus 可用时设置，否则为 None
+        assert mem._entries[0].id.startswith("msg_")
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_connect_fallback(self):
-        """connect should work or gracefully fall back."""
+    async def test_connect_delegates_to_repo(self):
+        """connect 创建 MilvusVectorRepo 并委托 connect。"""
+        from unittest.mock import AsyncMock, patch
         from core.memory.long_term import LongTermMemory
-        mem = LongTermMemory()
-        result = await mem.connect()
-        assert result in (True, False)
-        await mem.close()
+
+        mock_repo = AsyncMock()
+        mock_repo.connect = AsyncMock(return_value=True)
+
+        with patch("core.storage.memory_repo.MemoryRepository", return_value=mock_repo):
+            mem = LongTermMemory()
+            result = await mem.connect()
+
+        assert result is True
+        mock_repo.connect.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_insert_without_connect(self):
@@ -1011,49 +1018,31 @@ async def test_long_term_memory_empty_search():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_long_term_memory_overflow_eviction():
+@pytest.mark.parametrize("entry_count,max_entries,expected_removed", [
+    (8, 5, 3),
+    (10, 5, 5),
+])
+async def test_long_term_memory_evicts_overflow(entry_count, max_entries, expected_removed):
     """验证超过上限的条目被驱逐（保留最新的）。"""
     from core.memory.long_term import LongTermMemory, MemoryEntry
 
     ltm = LongTermMemory()
     now = _time_module.time()
-    ltm._max_entries = 5
+    ltm._max_entries = max_entries
 
-    # 构造 8 条数据，只有 5 条能保留
     ltm._entries = [
         MemoryEntry(text=f"entry-{i}", metadata={}, timestamp=now - 100 + i)
-        for i in range(8)
+        for i in range(entry_count)
     ]
 
     removed = await ltm._evict_overflow()
-    assert removed == 3  # 8 - 5 = 3
-    assert len(ltm._entries) == 5
-    # 保留的应该是最新的 5 条 (i=3,4,5,6,7)
+    assert removed == expected_removed
+    assert len(ltm._entries) == max_entries
+    # 保留的应该是最新的条目
+    min_retained = entry_count - max_entries
     for e in ltm._entries:
         idx = int(e.text.split("-")[1])
-        assert idx >= 3
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_long_term_memory_evicts_overflow():
-    """验证超过上限的条目被驱逐（保留最新的）。"""
-    from core.memory.long_term import LongTermMemory, MemoryEntry
-
-    ltm = LongTermMemory()
-    now = _time_module.time()
-    ltm._max_entries = 5
-
-    ltm._entries = [
-        MemoryEntry(text=f"entry-{i}", metadata={}, timestamp=now - 100 + i)
-        for i in range(10)
-    ]
-
-    removed = await ltm._evict_overflow()
-    assert removed >= 5
-    assert len(ltm._entries) <= 5
-    for e in ltm._entries:
-        assert int(e.text.split("-")[1]) >= 5
+        assert idx >= min_retained
 
 
 @pytest.mark.asyncio
