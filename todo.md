@@ -1,5 +1,7 @@
 # 待做
 
+> **CI 配置**：`Module/task_system/` 尚未完善、非当前开发重点，`test-quick` 和 `test-normal` 已通过 Makefile 跳过该目录（`--ignore=Module/task_system/tests`）。完整跑 `test-full` 或手动指定路径时仍会执行。
+
 ## 已知 Bug
 
 | 优先级 | 问题 | 说明 |

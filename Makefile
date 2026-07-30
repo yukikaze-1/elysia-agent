@@ -18,11 +18,14 @@ test-all:
 	$(PYTEST) Module/ core/tests/ core/tools/ -v --tb=short
 
 # 测试分层命令
+# TaskSystem 尚未完善、非当前开发重点，CI + 日常跳过
+TASK_SYSTEM_IGNORE = --ignore=Module/task_system/tests
+
 test-quick:
-	conda run -n Elysia python -m pytest -m "unit or service" -q -x --tb=short
+	conda run -n Elysia python -m pytest -m "unit or service" -q -x --tb=short $(TASK_SYSTEM_IGNORE)
 
 test-normal:
-	conda run -n Elysia python -m pytest -m "not slow" -q --tb=short
+	conda run -n Elysia python -m pytest -m "not slow" -q --tb=short $(TASK_SYSTEM_IGNORE)
 
 test-full:
 	conda run -n Elysia python -m pytest -q
