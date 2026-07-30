@@ -1,9 +1,6 @@
-name: Nightly Full Suite
+name: Full Suite (Manual)
 
 on:
-  schedule:
-    # 每天 UTC 3:17，北京时间 11:17
-    - cron: "17 3 * * *"
   workflow_dispatch:
 
 jobs:
