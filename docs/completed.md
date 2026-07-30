@@ -2,6 +2,27 @@
 
 ## 已完成
 
+### 2026-07-30: core/ 代码审查修复（7 项）
+
+**背景**：外部对 `core/` 的 31 项 review，经逐一核实确认 7 项真实问题。
+
+**修复（7 项）：**
+| 严重度 | 问题 | 文件 | 修复方式 |
+|--------|------|------|----------|
+| 高 | L3→L2 压缩计数触发永久失效 | `engine.py` | `_append_history` 截断时同步下调 `compression_last_count` |
+| 高 | Consolidator buffer 在 LLM 前清空 | `consolidator.py` | `buffer.clear()` 移到 LLM 成功解析后 |
+| 中 | `_sentence_buf`/`_block_filter` 死代码 | `loop.py` | 删除 None 字段 + no-op 检查 + 未使用 import |
+| 中 | `_current_task` 覆盖孤儿 | `agent.py` | `_handle_user_input` 先 `cancel_current()` 再创建新 task |
+| 低 | `time_of_day` 事件洪泛 | `idle_monitor.py` | `_last_time_of_day_trigger` 防重 |
+| 低 | 已吸收条目残留 `_entries` | `long_term.py` | `mark_absorbed` 从 `_entries` 移除 + 清理 `_dirty_ids` |
+| 低 | `_sync_dirty_entries` 单条失败跳出 | `long_term.py` | `break` → `continue` |
+
+**标记为误报**：review 中其余 24 项经核实为误报/设计意图/极低概率/仅代码质量建议，不修复。
+
+**修复日期**：2026-07-30
+
+---
+
 ### 2026-07-30: 代码审查修复——`_tool_executor` 统一 + `_after_response` lifecycle tracking
 
 **背景**：外部代码审查发现 5 个问题，3 个确认需修复。
