@@ -18,6 +18,8 @@
 
 ## 功能改进
 
+- ✅ **项目路径统一管理** — 2026-07-31 已实现。新建顶层 `paths.py`（`ProjectPath(str, Enum)`，20 个枚举成员），项目根由 `ELYSIA_ROOT` 环境变量锚定。迁移 ~27 处硬编码路径（`__file__`-relative、cwd-relative、裸字符串），验证 3 项 grep check 全 clean。详见 `docs/superpowers/specs/2026-07-31-project-paths-unification-design.md`。
+
 - ✅ **CognitiveLoop: 工具执行后注入结构化决策提示** — 2026-07-31 已实现。`loop.py:801`: `messages.append({"role": "system", "content": "[TOOL_EXECUTED]"})` 在 `_execute_tool_round()` 返回后、`continue` 前。`[TOOL_EXECUTED]` 作为显式模式切换信号，帮助 LLM 从"工具执行模式"切回"对话模式"。改动量 1 行。
 - **README 截图**: 添加聊天界面 / debug 面板 / 启动流程截图，让新用户第一眼就知道项目长什么样
 - **Live2D 集成**: Cubism SDK v5 需 TypeScript + npm + bundler 构建，当前仅 SDK 文件到位、默认关闭

@@ -2,6 +2,18 @@
 
 ## 已完成
 
+### 2026-07-31: 项目路径统一管理
+
+**Spec**: [docs/superpowers/specs/2026-07-31-project-paths-unification-design.md](superpowers/specs/2026-07-31-project-paths-unification-design.md)
+
+**Plan**: [docs/superpowers/plans/2026-07-31-project-paths-unification.md](superpowers/plans/2026-07-31-project-paths-unification.md)
+
+新建顶层 `paths.py`（`ProjectPath(str, Enum)`，20 个枚举成员：13 目录 + 7 文件），项目根由 `ELYSIA_ROOT` 环境变量锚定（fallback 到 `paths.py` 所在目录）。每个路径支持 `ELYSIA_PATH_{NAME}` 环境变量覆盖。
+
+迁移 ~27 处硬编码路径（`__file__`-relative `parents[N]`、cwd-relative `Path("log")`、裸字符串 `"Module/system_prompt/templates"`），涉及 20 个生产文件。新增 14 个单元测试。3 项 grep 验证全 clean，`make test-quick` 全绿（1514 passed）。
+
+**关键设计决策**：不纳入 URL/URI、`config.yaml` 中的配置值、`__file__` 同目录引用（如 `*_voices.yaml`）。路径值语义不变，只改获取方式。
+
 ### 2026-07-30: core/ 代码审查修复（7 项）
 
 **背景**：外部对 `core/` 的 31 项 review，经逐一核实确认 7 项真实问题。

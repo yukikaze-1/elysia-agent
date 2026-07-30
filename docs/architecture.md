@@ -280,6 +280,23 @@ class OutputManager:
         # 单通道失败不影响其他通道 (return_exceptions=True)
 ```
 
+### 3.5 项目路径管理 (paths.py)
+
+顶层模块 `paths.py`（项目根目录），集中管理所有项目级文件系统路径。`Module/` 和 `core/` 均可 import。
+
+```python
+from paths import ProjectPath, get_project_root
+
+log_dir = ProjectPath.LOG.resolve()                        # → <root>/log
+tmpl = ProjectPath.SYSTEM_PROMPT_TEMPLATES.resolve()       # → <root>/Module/system_prompt/templates
+sandbox = ProjectPath.DATA_SANDBOX.resolve(session_id="a") # → <root>/data/sandbox/a
+```
+
+- **项目根检测**: `ELYSIA_ROOT` 环境变量 > `paths.py` 所在目录
+- **环境变量覆盖**: `ELYSIA_PATH_{NAME}` 可逐路径覆盖（如 `ELYSIA_PATH_LOG=/var/log/elysia`）
+- **20 个枚举成员**: 13 目录 + 7 文件，枚举类 `ProjectPath(str, Enum)`
+- **语义**: `resolve()` 纯计算返回 `pathlib.Path`，不检查存在性
+
 ---
 
 ## 4. L1 认知控制层

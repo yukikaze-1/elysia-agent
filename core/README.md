@@ -23,6 +23,8 @@ L1  core/      认知中枢 — Agent → AgentStatus → CognitiveLoop → Prom
 L2  core/memory/      记忆子系统 — SessionMemory / LongTermMemory
 L2  core/tools/       工具插件 — filesystem / web / memory / time / ...
 L2  core/personality/ 性格引擎 — CharacterEngine / CharacterReflector
+
+顶层 paths.py   项目路径统一管理 — Module/ 和 core/ 均 import
 ```
 
 ### 核心组件关系
