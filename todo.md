@@ -190,49 +190,49 @@
 | 中 | EventBus drain() 与认知循环中断竞态 | 中断时 TASK_RESULT 事件丢失 |
 | 中 | `agent/tests/conftest.py` MagicMock 过于宽松 | `_fsm.state = MagicMock()` 是地雷 |
 
-## 测试质量问题 — 第二轮 (2026-07-30, f413a9f)
+## ~~测试质量问题 — 第二轮 (2026-07-30, f413a9f)~~ ✅ 已修复
 
-基于 `f413a9f` 提交的集成测试 & E2E 审查，上一轮 17 项修复之后的遗留问题。
+基于 `f413a9f` 提交的集成测试 & E2E 审查，以下问题已确认并修复 (2026-07-30)。
 
-### 假测试（遗留）
+### 假测试（遗留 — 已修复）
 
-| 优先级 | 文件:行 | 问题 | 说明 |
+| 优先级 | 文件:行 | 问题 | 修复 |
 |--------|---------|------|------|
-| 高 | `core/tests/test_phase2.py:209` | **`assert result in (True, False)` 恒真（遗留）** | LongTermMemory.connect() 的 `test_connect_fallback`。与上一轮已修复的 SessionMemory 同模式（63 行），被遗漏 |
-| 中 | `core/tests/test_phase2.py:194` | **`test_insert_stores_milvus_pk` 空操作** | 测试名声称验证 Milvus PK 存储，但只检查内存 UUID。注释承认 `_milvus_pk` 仅在 Milvus 在线时设置 |
-| 中 | `core/memory/tests/test_consolidator.py:223` | **仅防崩溃测试** | `assert isinstance(items, list)` 从未验证内容正确性或回退行为 |
-| 低 | `core/adapter/tests/test_message_builder.py:126` | **仅防崩溃测试** | `assert len(assistant) > 0` 从未验证工具摘要格式内容 |
-| 低 | `core/memory/tests/test_consolidator.py:156,233` | **`isinstance(items, list)` 恒真（遗留）** | 上一轮修复了 :55，这两处被遗漏（:156 附带类型检查故危害较低） |
+| ~~高~~ ✅ | `core/tests/test_phase2.py:209` | **`assert result in (True, False)` 恒真（遗留）** | mock `MemoryRepository`，验证 true/false 两条路径 |
+| ~~中~~ ✅ | `core/tests/test_phase2.py:194` | **`test_insert_stores_milvus_pk` 空操作** | 重命名为 `test_insert_assigns_id`，加 `assert id.startswith("msg_")` |
+| ~~中~~ ✅ | `core/memory/tests/test_consolidator.py:223` | **仅防崩溃测试** | `isinstance`→`assert items == []`（FakeLLMBackend 无提取） |
+| ~~低~~ ✅ | `core/adapter/tests/test_message_builder.py:126` | **仅防崩溃测试** | 加 `assert "[已调用: test]" in assistant[0]["content"]` |
+| ~~低~~ ✅ | `core/memory/tests/test_consolidator.py:156,233` | **`isinstance(items, list)` 恒真（遗留）** | :156→`assert len(items) >= 2`，:233→`assert items == []` |
 
-### 标记/风格不一致
+### 标记/风格不一致（已修复）
 
-| 优先级 | 文件:行 | 问题 | 说明 |
+| 优先级 | 文件:行 | 问题 | 修复 |
 |--------|---------|------|------|
-| 中 | `core/input/tests/test_server.py:150,493` | **`@pytest.mark.service` 却调用 `agent.start()`** | 根据 docs/testing.md：service=不启动 Agent，slow=调用 agent.start()。这些测试启动完整生命周期，应标记为 slow |
-| 中 | `core/tests/test_phase3.py:1030` | **`@pytest.mark.slow` 但不调用 `agent.start()`** | 标记反转——应为 service。不必要地排除了日常开发套件的回归检测 |
-| 低 | `core/tests/test_phase3.py:389` | **字符串 `"idle"` vs `AgentState.IDLE`** | :377 用 `AgentState.IDLE`，:389 用字符串 `"idle"`，不一致 |
+| ~~中~~ ✅ | `core/input/tests/test_server.py:150,493` | **`@pytest.mark.service` 却调用 `agent.start()`** | → `@pytest.mark.slow` |
+| ~~中~~ ✅ | `core/tests/test_phase3.py:1030` | **`@pytest.mark.slow` 但不调用 `agent.start()`** | → `@pytest.mark.service` |
+| ~~低~~ ✅ | `core/tests/test_phase3.py:389,433` | **字符串 `"idle"` vs `AgentState.IDLE`** | 两处改为 `AgentState.IDLE` |
 
-### E2E/集成测试覆盖缺口
+### E2E/集成测试覆盖缺口（fake_llm 已改进）
 
-| 优先级 | 问题 | 说明 |
+| 优先级 | 问题 | 状态 |
 |--------|------|------|
-| 高 | **E2E 测试在无 API_KEY 时静默跳过** | `test_e2e_mvp.py` 7 个 + `test_task_system_lifecycle.py` 10 个测试均依赖 DEEPSEEK_API_KEY。TaskSystem 整条管线（Planner→Executor→Evaluator→SubAgent）在 CI/日常开发中零覆盖 |
-| 高 | **fake_llm.py 逐字符流式不符合真实 LLM** | `chat_stream` 逐字符 yield 而非逐 token。所有使用 FakeLLMBackend 的集成测试从未在真实 token 粒度下运行，tool call 边界检测/流式解析 bug 无法触发 |
-| 中 | **fake_llm.py 无故障注入** | 无可配置错误模式（429/503/超时/断连），错误恢复测试只能覆盖正常路径 |
+| ~~高~~ ✅ | **fake_llm.py 逐字符流式不符合真实 LLM** | `chat_stream` 改为正则分词逐 token yield |
+| ~~中~~ ✅ | **fake_llm.py 无故障注入** | 新增 `fault` 参数：http_429/http_503/timeout/disconnect |
+| 高 | **E2E 测试在无 API_KEY 时静默跳过** | 17 个测试依赖真实 LLM，需 CI 环境配置 KEY。暂无修复（需基础设施配合） |
 
-### 重复/冗余
+### 重复/冗余（已修复）
 
-| 优先级 | 文件 | 问题 |
-|--------|------|------|
-| 低 | `core/tests/test_phase2.py:1012,1039,1090` | 三个驱逐测试可合并为一个参数化测试 |
-| 低 | `core/input/tests/test_server.py:44-56` | 路由验证模式在 3 个测试中复制（`test_registers_routes`、`test_shutdown_route_exists`、`test_restart_route_exists`） |
+| 优先级 | 文件 | 问题 | 修复 |
+|--------|------|------|------|
+| ~~低~~ ✅ | `core/tests/test_phase2.py:1012,1039,1090` | 三个驱逐测试 | 合并为 `@pytest.mark.parametrize` 参数化测试 |
+| ~~低~~ ✅ | `core/input/tests/test_server.py:44-56` | 路由验证 3 处复制 | 提取 `_make_app()` + `_find_routes_by_name()` 共享 helper |
 
-### tempfile 泄漏
+### tempfile 泄漏（已修复）
 
-| 文件:行 | 问题 |
+| 文件:行 | 修复 |
 |---------|------|
-| `core/monitoring/tests/test_token_tracker.py:52` | fixture `tracker` 中 `tempfile.mkdtemp()` 无清理 |
-| `core/task/tests/test_task_scheduler.py:542,572,602` | `tempfile.mkdtemp()` 只 unlink 内部文件，目录本身泄漏 |
+| `core/monitoring/tests/test_token_tracker.py:52` | `tempfile.mkdtemp()` → pytest `tmp_path`（自动清理） |
+| `core/task/tests/test_task_scheduler.py:542,572,602` | `Path(cp).unlink()` → `shutil.rmtree(tmpdir, ignore_errors=True)` |
 
 ## 测试补充
 

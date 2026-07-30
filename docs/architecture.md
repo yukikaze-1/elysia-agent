@@ -490,7 +490,7 @@ proactive.enabled: false → 整个机制关闭
 
 薄适配层 (~170 行)：接收 `model` 标识符 (如 `"deepseek/deepseek-chat"`)，通过 `LLMFactory.create()` 创建 Module 层 backend，提供 `think()` 和 `stream_think()` 方法。
 
-测试用 `FakeLLMBackend` (core/tests/fake_llm.py) — 最小化 test double，直接 yield 预设字符串。
+测试用 `FakeLLMBackend` ([core/tests/fake_llm.py](core/tests/fake_llm.py)) — 可配置 test double，支持正则分词逐 token 流式输出 + 故障注入（HTTP 429/503、超时、断连）。
 
 ---
 

@@ -82,7 +82,7 @@ pytest core/tests/test_phase3.py -v
 | | `test_config.py` | 2 | unit |
 | `Module/tts/tests/` | `test_tts.py` | 70 | service |
 | | `test_config.py` | 2 | unit |
-| `core/input/tests/` | `test_server.py` | 30 | unit+service |
+| `core/input/tests/` | `test_server.py` | 30 | unit+service+slow |
 | | `test_audio_buffer.py` | 29 | unit+service |
 | | `test_wakeword.py` | 8 | unit |
 | `Module/output/tests/` | `test_output.py` | 54 | unit+service |

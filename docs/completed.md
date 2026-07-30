@@ -56,6 +56,45 @@
 
 ---
 
+### 2026-07-30: 测试质量修复 — 第二轮（12 项）
+
+**背景**：提交 `f413a9f` 之后的第二轮集成测试 & E2E 审查，确认 17 项中的 12 项真实问题（4 项为遗留覆盖率缺口，1 项 E2E 需基础设施配合暂不修复）。
+
+**假测试遗留修复（5 项）：**
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `core/tests/test_phase2.py:209` | `assert result in (True, False)` 恒真 | mock `MemoryRepository` 验证 |
+| `core/tests/test_phase2.py:194` | 测试名声称验证 Milvus PK 实为空操作 | 重命名 `test_insert_assigns_id` + 加断言 |
+| `core/memory/tests/test_consolidator.py:156,223,233` | `isinstance(items, list)` 恒真 / 防崩溃 | → 有意义断言 |
+| `core/adapter/tests/test_message_builder.py:126` | 仅防崩溃 | 加 `[已调用: test]` 格式验证 |
+
+**标记/风格修复（3 项）：**
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `core/input/tests/test_server.py:150,493` | `@service` 却调 `agent.start()` | → `@slow` |
+| `core/tests/test_phase3.py:1030` | `@slow` 不调 `agent.start()` | → `@service` |
+| `core/tests/test_phase3.py:389,433` | 字符串 `"idle"` | → `AgentState.IDLE` |
+
+**重复消除（2 项）：**
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `core/tests/test_phase2.py` | 三个驱逐测试重复 | 合并为 `@parametrize` |
+| `core/input/tests/test_server.py` | 路由验证 3 处复制 | 提取 `_make_app()` + `_find_routes_by_name()` |
+
+**tempfile 泄漏（2 项）：**
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `core/monitoring/tests/test_token_tracker.py:52` | `mkdtemp()` 无清理 | → pytest `tmp_path` |
+| `core/task/tests/test_task_scheduler.py` | 3 处 `mkdtemp()` 目录泄漏 | → `shutil.rmtree(tmpdir)` |
+
+**fake_llm.py 改进：**
+- `chat_stream`: 逐字符 → 正则分词逐 token yield，更接近真实 LLM 流式行为
+- 新增 `fault` 参数：`http_429` / `http_503` / `timeout` / `disconnect` 四种故障注入
+
+**修复日期**：2026-07-30
+
+---
+
 ### 2026-07-30: 代码审查修复——`_tool_executor` 统一 + `_after_response` lifecycle tracking
 
 **背景**：外部代码审查发现 5 个问题，3 个确认需修复。
