@@ -12,6 +12,7 @@ from pathlib import Path
 import torch
 from langchain_huggingface import HuggingFaceEmbeddings
 
+from paths import ProjectPath
 from .protocol import EmbeddingBackend
 
 # 已知模型的向量维度 — 避免首次推理才能获取
@@ -101,7 +102,7 @@ class HuggingFaceBackend(EmbeddingBackend):
         if cache_folder is None:
             cache_folder = os.environ.get(
                 "MODEL_CACHE_DIR",
-                str(Path(__file__).parent.parent.parent / ".model_cache"),
+                str(ProjectPath.MODEL_CACHE.resolve()),
             )
 
         self._model_name = model_name
