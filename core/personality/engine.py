@@ -16,8 +16,9 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
+
+from paths import ProjectPath
 
 from Module.system_prompt import PromptManager
 from Module.output import OutputManager
@@ -104,7 +105,7 @@ class CharacterEngine:
 
         # PromptManager（压缩 + awareness 共用）
         if prompt_dir is None:
-            prompt_dir = str(Path(__file__).resolve().parent.parent / "prompts")
+            prompt_dir = str(ProjectPath.PROMPTS.resolve())
         try:
             self._pm = PromptManager(prompt_dir)
         except FileNotFoundError:

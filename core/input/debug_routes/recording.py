@@ -4,6 +4,7 @@ import logging
 import os
 
 from aiohttp import web
+from paths import ProjectPath
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ async def prompt_detail_handler(request: web.Request) -> web.Response:
 
     # 读取模板源码（从 Module/system_prompt/templates/）
     template_source = None
-    templates_dir = "Module/system_prompt/templates"
+    templates_dir = str(ProjectPath.SYSTEM_PROMPT_TEMPLATES.resolve())
     try:
         sources = {}
         for fname in sorted(os.listdir(templates_dir)):

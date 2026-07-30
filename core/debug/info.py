@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, asdict
 from typing import TYPE_CHECKING
 
 import psutil
+from paths import ProjectPath
 
 if TYPE_CHECKING:
     from core.agent import Agent
@@ -349,11 +350,11 @@ async def collect(agent: "Agent") -> DebugInfo:
             ],
         }
         # Pending 文件状态
-        token_pending = "data/token_usage_pending.jsonl"
+        token_pending = str(ProjectPath.TOKEN_PENDING.resolve())
         if os.path.exists(token_pending):
             with open(token_pending) as f:
                 info.pending_token_count = sum(1 for _ in f)
-        info.pending_session_exists = os.path.exists("data/session_pending.jsonl")
+        info.pending_session_exists = os.path.exists(str(ProjectPath.SESSION_PENDING_CHECK.resolve()))
 
     # ---- Prompt 记录 ----
     recorder = agent._prompt_recorder

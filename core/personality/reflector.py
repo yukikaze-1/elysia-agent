@@ -9,9 +9,9 @@
 import asyncio
 import logging
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING
 
+from paths import ProjectPath
 from Module.system_prompt import PromptManager
 from ..adapter.llm_adapter import LLMAdapter
 
@@ -63,7 +63,7 @@ class CharacterReflector:
         self._context: list[dict] = []  # 滚动窗口：保留最近 N 轮对话用于反思
         _dir = self._prompt_dir
         if _dir is None:
-            _dir = str(Path(__file__).resolve().parent.parent / "prompts")
+            _dir = str(ProjectPath.PROMPTS.resolve())
         try:
             self._pm = PromptManager(_dir)
         except FileNotFoundError:

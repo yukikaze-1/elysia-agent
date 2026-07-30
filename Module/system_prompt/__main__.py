@@ -1,7 +1,6 @@
 """集成测试：渲染 Section 模板。运行: python -m Module.system_prompt"""
 
-import os
-
+from paths import ProjectPath
 from Module._common.main_runner import run_module_main
 from .system_prompt_manager import SystemPromptManager
 from .sections.conflict_rules import ConflictRulesSection
@@ -16,7 +15,7 @@ from .sections.proactive import ProactiveSection
 from .sections.own_life import OwnLifeSection
 from .sections.self_perception import SelfPerceptionSection
 
-_SECTION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+_SECTION_DIR = str(ProjectPath.SYSTEM_PROMPT_TEMPLATES.resolve())
 
 
 async def main():

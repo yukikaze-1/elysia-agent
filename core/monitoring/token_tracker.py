@@ -16,6 +16,8 @@ import time
 from dataclasses import dataclass, asdict
 from typing import TYPE_CHECKING
 
+from paths import ProjectPath
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -44,7 +46,7 @@ class TokenTracker:
     - MongoDB 持久化（不可用时降级到本地 JSONL 文件）
     """
 
-    _pending_file = os.path.join("data", "token_usage_pending.jsonl")
+    _pending_file = str(ProjectPath.TOKEN_PENDING.resolve())
 
     @staticmethod
     async def clear_all(repo: "TokenRepository") -> int:

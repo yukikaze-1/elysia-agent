@@ -13,11 +13,11 @@ import json
 import logging
 import re
 import time as _time
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
+from paths import ProjectPath
 from core.schema.memory_reflector import MemoryReflectorState, ReflectorActions
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # MemoryReflector prompt — 文件路径，运行时加载
-REFLECTOR_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "MemoryReflector.j2"
+REFLECTOR_PROMPT_PATH = ProjectPath.PROMPTS.resolve() / "MemoryReflector.j2"
 _REFLECTOR_PROMPT: str | None = None
 
 

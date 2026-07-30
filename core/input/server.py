@@ -22,8 +22,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STATIC_DIR = Path(__file__).parent.parent.parent / "static"
-_LIVE2D_DIR = Path(__file__).parent.parent.parent / "data" / "live2d-assets"
+from paths import ProjectPath
+
+_STATIC_DIR = ProjectPath.STATIC.resolve()
+_LIVE2D_DIR = ProjectPath.LIVE2D_ASSETS.resolve()
 
 
 def create_app(
@@ -246,7 +248,7 @@ def create_app(
     register_debug_routes(app)
 
     # ---- 用户上传文件目录 ----
-    _UPLOADS_DIR = Path(__file__).parent.parent.parent / "data" / "uploads"
+    _UPLOADS_DIR = ProjectPath.DATA_UPLOADS.resolve()
     _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     app.router.add_static("/uploads/", str(_UPLOADS_DIR), show_index=False)
 

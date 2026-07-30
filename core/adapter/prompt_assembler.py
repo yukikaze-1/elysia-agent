@@ -33,7 +33,8 @@ from ..text.text_utils import content_text_from_content as content_text_from_raw
 
 logger = logging.getLogger(__name__)
 
-_SECTION = "Module/system_prompt/templates"
+from paths import ProjectPath
+_SECTION = str(ProjectPath.SYSTEM_PROMPT_TEMPLATES.resolve())
 
 
 class PromptAssembler:

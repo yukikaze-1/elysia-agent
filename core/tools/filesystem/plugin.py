@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from paths import ProjectPath
+
 from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
@@ -218,7 +220,7 @@ class WriteFilePlugin(ToolPlugin):
     capabilities = {Capability.FILESYSTEM_WRITE}
     safety = SafetyProfile(
         filesystem_allowed=True,
-        write_dir="data/sandbox/{session_id}",
+        write_dir=ProjectPath.DATA_SANDBOX,
         max_file_bytes=10 * 1024 * 1024,
         requires_human_approval=True,
     )

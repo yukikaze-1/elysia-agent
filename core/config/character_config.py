@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import cast
 
 import yaml
+from paths import get_project_root
 
 
 @dataclass
@@ -114,7 +115,7 @@ class CharacterConfig:
         candidates = []
         if base_file:
             candidates.append(yaml_path.parent / base_file)          # Step 1: YAML 目录
-            candidates.append(Path(".") / base_file)                 # Step 2: 项目根目录
+            candidates.append(get_project_root() / base_file)          # Step 2: 项目根目录
 
         # Step 3: 自动推导 character/{name}_personality.md
         candidates.append(yaml_path.parent / f"{name}_personality.md")

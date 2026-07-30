@@ -264,6 +264,9 @@ class TestRun:
         monkeypatch.setenv("DEEPSEEK_URL", "https://api.deepseek.com")
         monkeypatch.setenv("MONGODB_URI", "mongodb://localhost:27017")
         monkeypatch.setenv("MILVUS_URI", "http://localhost:19530")
+        monkeypatch.setenv("ELYSIA_PATH_MODEL_CACHE", str(tmp_path / ".model_cache"))
+        monkeypatch.setenv("ELYSIA_PATH_LOG", str(tmp_path / "log"))
+        monkeypatch.setenv("ELYSIA_PATH_DATA", str(tmp_path / "data"))
         m = _fresh_module()
         cfg = MagicMock()
         cfg.llm.model = "deepseek/deepseek-chat"
