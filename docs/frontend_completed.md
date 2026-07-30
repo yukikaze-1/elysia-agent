@@ -2,13 +2,15 @@
 
 审查日期：2026-07-30
 修复日期：2026-07-30
-提交：`60ac3e5` + `99e821c` · 34 文件 · +865/-682
+提交：`60ac3e5` + `99e821c`（第一轮，34 文件） + `c912a8f`（第二轮，14 文件）
 
 > 本文归档已修复的问题。未修复项见 [frontend_todo.md](../frontend_todo.md)。
 
 ---
 
-## 一、关键问题（High Severity）— 7/9 已修复
+## 第一轮修复（`60ac3e5` + `99e821c`）
+
+### 一、关键问题（High Severity）— 7/9 已修复
 
 ### 1. ✅ XSS 漏洞 — ChatBubble.vue 未消毒的 `v-html`
 
@@ -127,3 +129,48 @@ WebSocket 消息类型从 `as any` 迁移为 `ServerMessage` 判别联合 + 类�
 | `utils/format.ts` | Token 计数格式化（CharStatus + TokenLabel 复用） |
 | `styles/message-layout.css` | ChatMessage + TypingIndicator 共享消息布局 CSS |
 | `frontend/README.md` | 前端完整文档（组件树、架构、技术要点） |
+
+---
+
+## 第二轮修复（`c912a8f`）
+
+审查日期：2026-07-30 · 第二次审查发现 7 个新问题 + 7 个修复不完整项，全部修复。
+
+### 关键修复（3 项）
+
+| # | 问题 | 文件 | 修复 |
+|---|------|------|------|
+| 1 | `cleanup()` 定义但从未调用 | `audioStore.ts` / `connectionStore.ts` | `connectionStore.disconnect()` 中调用 `useAudioStore().cleanup()`，释放断线残留 chunks + Blob URLs |
+| 2 | `finalizeStream` TTS 关闭时泄漏 | `audioStore.ts` | `delete audioChunks[streamId]` 移到 `if (!ttsEnabled) return` 之前 |
+| 3 | InputBar 缺 dropTarget，拖拽无视觉反馈 | `InputBar.vue` | `useImageUpload(() => inputBarRef.value)` 传入 dropTarget；模板加 `ref="inputBarRef"` |
+
+### 重要修复（4 项）
+
+| # | 问题 | 文件 | 修复 |
+|---|------|------|------|
+| 4 | useImageUpload 子元素拖拽闪烁 | `useImageUpload.ts` | dragCounter 计数替代 class toggle；拆分为 `onDragOver`(preventDefault) + `onDragEnter`(counter++) |
+| 5 | LtmPanel typeFilter 双次加载 | `LtmPanel.vue` | 移除 `<select @change="load">`，只靠 `watch([search, typeFilter], debouncedLoad)` 驱动 |
+| 6 | ImageLightbox Escape 从不触发 | `ImageLightbox.vue` | 改用 `document.addEventListener('keydown', ...)` 在 visible watch 中注册/注销 |
+| 7 | TasksTab reconnectTimer 竞争 | `TasksTab.vue` | `connect()` 开头 `clearTimeout(reconnectTimer)` |
+
+### 修复不完整（3 项）
+
+| # | 问题 | 文件 | 修复 |
+|---|------|------|------|
+| R2 | token_usage 仍 `as any` 双转换 | `useWebSocket.ts` | 改为 `m as TokenUsageMessage`；`chatStore.updateTokenUsage` 签名放松为可选字段 |
+| R5 | ConfirmModal 缺 ARIA + 焦点陷阱 | `ConfirmModal.vue` | `role="dialog"` + `aria-modal` + `aria-labelledby` + Tab 焦点循环 |
+| R6 | ChatMessage 仍重复 msg-row 样式 | `ChatMessage.vue` | 移除重复的 `.msg-row/.msg-avatar/.msg-bubble` scoped 样式，`@import` 共享 CSS |
+
+### 健壮性改进（2 项）
+
+| # | 问题 | 文件 | 修复 |
+|---|------|------|------|
+| R4 | LtmPanel 突变操作无错误处理 | `LtmPanel.vue` | 5 个方法（delete/save/create/clear/deleteSelected）全部 try/catch |
+| R4 | ArchivePanel 突变操作无错误处理 | `ArchivePanel.vue` | 4 个方法（delete/save/clear/deleteSelected）全部 try/catch |
+
+### 次要修复（2 项）
+
+| # | 问题 | 文件 | 修复 |
+|---|------|------|------|
+| R7 | ImageLightbox 缺 alt 属性 | `ImageLightbox.vue` | `<img alt="图片预览">` |
+| — | useWebSocket 各 case 分支显式类型收窄 | `useWebSocket.ts` | 每个 case 分支用局部变量 + `as NarrowType` 替代直接访问 `m.xxx` |
