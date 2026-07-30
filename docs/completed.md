@@ -2,6 +2,16 @@
 
 ## 已完成
 
+### 2026-07-31: 文档审查修复（25 项）
+
+**背景**：对 `docs/architecture.md` 及其他 9 份文档与代码的交叉审查，发现 ~30 处不一致。修复了其中 25 项直接影响开发体验的问题。
+
+**architecture.md（15 项）**：SessionMemory API（snapshot/restore→save/load）、AppConfig 补 database 字段、debug 路由 41→45（+4 条角色版本路由）、AwarenessTrigger 冷却 1h→5min、SentenceBuffer 分隔符修正、vectordb 表格补 pinecone/qdrant stub、WS 协议表补 action/token_usage、audio 报文补 is_final/format、文件树补 core/status/ 和 core/storage/、ToolAdapter API load_all→start、Pinia store 5→6、并发任务表补 #6、config.yaml 文档补 4 个缺失节、SystemPromptManager 导入路径、Agent.stop() 顺序对齐 _SHUTDOWN_STEPS。
+
+**其他文档（10 项）**：CLAUDE.md composable 列表 + status.py、README.md 3 处数字更新、static/debug.md 全文重写、Module/llm/README.md test() 类型、database-storage.md 补 character_versions + 索引 + 嵌入模型、core/prompts/README.md PersonalityCompression 加载方、companion-roadmap.md 4 处文件路径。
+
+**未修复**：docs/testing.md 测试数量/文件索引过时、data-structure-survey.md 行号偏移、companion-prompt-guide.md 多处不一致、各 README 行数过时等较次要问题，记录在 todo.md "文档审查遗留"。
+
 ### 2026-07-31: 项目路径统一管理
 
 **Spec**: [docs/superpowers/specs/2026-07-31-project-paths-unification-design.md](superpowers/specs/2026-07-31-project-paths-unification-design.md)
@@ -1343,7 +1353,7 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 
 所有对话消息永久保留到 MongoDB `message_archive` 集合，与 session 职责分离。
 
-- `core/memory/message_archive.py` — MessageArchive 类（只增不删、分页查询、fire-and-forget 写入）
+- `core/storage/message_repo.py` — MessageRepository 类（只增不删、分页查询、fire-and-forget 写入）
 - `SessionMemory.add_message()` 中自动写入 archive
 - `GET /api/messages` — 前端滚动到顶懒加载历史（游标分页）
 - `GET /debug/api/archive` — debug 浏览/搜索/清空
