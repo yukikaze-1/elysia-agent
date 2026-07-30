@@ -186,7 +186,9 @@ def register_api_routes(app: web.Application) -> None:
 
     # ---- 图片上传 ----
 
-    _IMAGES_DIR = Path(__file__).parent.parent.parent / "data" / "uploads" / "images"
+    from paths import ProjectPath
+
+    _IMAGES_DIR = ProjectPath.DATA_UPLOADS_IMAGES.resolve()
 
     async def image_upload_handler(request: web.Request) -> web.Response:
         """处理图片上传请求。

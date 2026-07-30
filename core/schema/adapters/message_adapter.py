@@ -100,8 +100,10 @@ def has_audio(parts: list[Part]) -> bool:
 
 # ── OpenAI 格式转换 ────────────────────────────────────
 
-_IMAGES_DIR = _Path(__file__).resolve().parent.parent.parent.parent / "data" / "uploads" / "images"
-_STATIC_DIR = _Path(__file__).resolve().parent.parent.parent.parent / "static"
+from paths import ProjectPath as _ProjectPath
+
+_IMAGES_DIR = _ProjectPath.DATA_UPLOADS_IMAGES.resolve()
+_STATIC_DIR = _ProjectPath.STATIC.resolve()
 
 
 def _to_data_uri(path: _Path) -> str:
