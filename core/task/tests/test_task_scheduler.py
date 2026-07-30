@@ -548,7 +548,6 @@ async def test_checkpoint_save_and_restore():
         t = Task(id="bg-1", type=TaskType.BACKGROUND, status=TaskStatus.PENDING,
                  payload={"msg": "persist"}, run_in_background=True)  # type: ignore[reportCallIssue]
         sched1._tasks[t.id] = t
-        sched1._completed_count = 5  # type: ignore[attr-defined]
         sched1._save_checkpoint()
         await sched1.stop()
 
@@ -608,7 +607,6 @@ async def test_checkpoint_ignores_non_background():
         await sched.start()
         t = Task.new_tool_call("p1", "echo", {"msg": "x"})
         sched._tasks[t.id] = t
-        sched._completed_count = 5  # type: ignore[attr-defined]
         sched._save_checkpoint()
         await sched.stop()
 
@@ -654,7 +652,7 @@ def _ensure_api_key():
 
 @pytest.mark.asyncio
 async def test_cognitive_loop_callback_wired():
-    """_on_tool_calls 回调被正确传递到 _think_loop。"""
+    """_on_tool_calls 回调被正确传递到 _execute_tool_round。"""
     from unittest.mock import AsyncMock, MagicMock
     from core.agent.agent_fsm import AgentFSM
     from core.monitoring.event_bus import EventBus
@@ -702,7 +700,8 @@ async def test_cognitive_loop_callback_wired():
             break
         await asyncio.sleep(0.01)
 
-    # 回调被传递了（即使 mock LLM 不产生 tool_calls，流程应该正常完成）
+    # 流程正常完成，回调未被调用（因为 mock LLM 不产生 tool_calls）
+    # 但 _on_tool_calls 参数已被正确传递到 _think_loop
     assert fsm.state.value == "idle"
     await output.close()
 

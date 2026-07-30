@@ -55,7 +55,8 @@ class TestCreateApp:
         route_strs = {str(r) for r in app.router.routes()}
         assert any('/ws' in s or 'ws_handler' in s for s in route_strs), f"No /ws route in {route_strs}"
 
-    def test_shutdown_endpoint(self):
+    def test_shutdown_route_exists(self):
+        """POST /shutdown route 已注册。"""
         from core.input.server import create_app
 
         agent = MagicMock()
@@ -65,16 +66,14 @@ class TestCreateApp:
 
         app = create_app(agent, serve_static=False)
 
-        # Find and call shutdown handler
-        for r in app.router.routes():
-            if hasattr(r, 'resource') and 'shutdown' in str(r.resource):
-                pass  # tested via integration
+        shutdown_routes = [
+            r for r in app.router.routes()
+            if hasattr(r, 'resource') and r.resource and 'shutdown' in str(r.resource)
+        ]
+        assert len(shutdown_routes) > 0, "shutdown route 未注册"
 
-        # Simulate: POST /shutdown
-        agent._state = RunState.STOPPING
-        assert agent._state == RunState.STOPPING
-
-    def test_restart_endpoint(self):
+    def test_restart_route_exists(self):
+        """POST /restart route 已注册。"""
         from core.input.server import create_app
 
         agent = MagicMock()
@@ -84,12 +83,11 @@ class TestCreateApp:
 
         app = create_app(agent, serve_static=False)
 
-        for r in app.router.routes():
-            if hasattr(r, 'resource') and 'restart' in str(r.resource):
-                pass  # route exists
-
-        agent._state = RunState.RESTARTING
-        assert agent._state == RunState.RESTARTING
+        restart_routes = [
+            r for r in app.router.routes()
+            if hasattr(r, 'resource') and r.resource and 'restart' in str(r.resource)
+        ]
+        assert len(restart_routes) > 0, "restart route 未注册"
 
 
 @pytest.mark.service

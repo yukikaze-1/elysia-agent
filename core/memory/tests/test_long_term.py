@@ -33,16 +33,8 @@ class TestLongTermMemoryHealthCheck:
     """health_check() 在连接丢失后应尝试重连。"""
 
     @pytest.mark.asyncio
-    async def test_returns_true_when_already_connected(self):
-        ltm = LongTermMemory(max_entries=10)
-        mock_repo = MagicMock()
-        mock_repo.health_check = AsyncMock(return_value=True)
-        ltm._repo = mock_repo
-        result = await ltm.health_check()
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_reconnects_when_disconnected(self):
+    async def test_delegates_to_repo_when_connected(self):
+        """health_check delegates to repo.health_check when repo exists."""
         ltm = LongTermMemory(max_entries=10)
         mock_repo = MagicMock()
         mock_repo.health_check = AsyncMock(return_value=True)
@@ -52,7 +44,7 @@ class TestLongTermMemoryHealthCheck:
         mock_repo.health_check.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_returns_false_when_reconnect_fails(self):
+    async def test_returns_false_when_repo_unhealthy(self):
         ltm = LongTermMemory(max_entries=10)
         mock_repo = MagicMock()
         mock_repo.health_check = AsyncMock(return_value=False)
@@ -143,45 +135,26 @@ class TestPKMatching:
         assert idx1 < idx2, f"e1 (distance=0.3) 应排在 e2 (distance=0.7) 之前，实际: {idx1} vs {idx2}"
 
     @pytest.mark.asyncio
-    async def test_text_fallback_when_no_pk(self):
-        """_milvus_pk=None 的历史条目仍能通过 text fallback 匹配。"""
+    async def test_text_fallback_when_no_milvus_id(self):
+        """Milvus 返回结果中无 id 字段或无 PK 时，走 text fallback 匹配。"""
 
         ltm = LongTermMemory(max_entries=10)
 
+        # 两个条目：一个有 _milvus_pk=None，另一个也无 PK
         e1 = MemoryEntry(
             id="old-1", text="历史记忆", memory_type="note",
-            poignancy=5, timestamp=1000.0, _milvus_pk=None,  # 无 PK
-        )
-        ltm._entries = [e1]
-
-        mock_repo = MagicMock()
-        # Milvus 返回无 id 字段的结果（模拟旧数据）
-        mock_repo.search = AsyncMock(return_value=[
-            {"text": "历史记忆", "distance": 0.5},
-        ])
-        mock_repo.health_check = AsyncMock(return_value=True)
-        ltm._repo = mock_repo
-
-        results = await ltm.search(query_embedding=[0.1] * 896, top_k=5)
-
-        assert len(results) == 1
-        assert results[0].id == "old-1"
-
-    @pytest.mark.asyncio
-    async def test_no_id_field_in_raw_falls_back_to_text(self):
-        """Milvus 返回结果中无 id 字段时，走 text fallback 不崩溃。"""
-
-        ltm = LongTermMemory(max_entries=10)
-
-        e1 = MemoryEntry(
-            id="e1", text="无ID字段测试", memory_type="note",
             poignancy=5, timestamp=1000.0, _milvus_pk=None,
         )
-        ltm._entries = [e1]
+        e2 = MemoryEntry(
+            id="e2", text="无ID字段测试", memory_type="note",
+            poignancy=5, timestamp=1000.0, _milvus_pk=None,
+        )
+        ltm._entries = [e1, e2]
 
         mock_repo = MagicMock()
-        # raw 中没有 "id" 字段
+        # Milvus 返回无 id 字段的结果
         mock_repo.search = AsyncMock(return_value=[
+            {"text": "历史记忆", "distance": 0.5},
             {"text": "无ID字段测试", "distance": 0.2},
         ])
         mock_repo.health_check = AsyncMock(return_value=True)
@@ -189,9 +162,9 @@ class TestPKMatching:
 
         results = await ltm.search(query_embedding=[0.1] * 896, top_k=5)
 
-        # 不应崩溃，应通过 text fallback 找到
-        assert len(results) == 1
-        assert results[0].id == "e1"
+        assert len(results) == 2
+        result_ids = {r.id for r in results}
+        assert result_ids == {"old-1", "e2"}
 
 
 @pytest.mark.service

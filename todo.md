@@ -136,11 +136,57 @@
 | TTS 取消+HTTP 流清理交互可能泄漏 | `tts/gpt_sovits.py:134-150` |
 | 缺失测试覆盖 | DescribeImagePlugin (0)、CognitiveLoop 边界、OutputManager 错误隔离 |
 
+## ~~测试质量问题 (2026-07-30 review)~~ ✅ 已修复
+
+基于 `cfc48f6` 的全面审查，以下问题已确认并修复 (2026-07-30)。
+
+### 假测试（已全部修复）
+
+| 优先级 | 文件:行 | 问题 | 修复 |
+|--------|---------|------|------|
+| ~~高~~ ✅ | `core/tests/test_request_id.py`（原 `test_log_setup.py`） | **文件名完全误导** | 重命名为 `test_request_id.py`，docstring 更正为 "Tests for core/utils" |
+| ~~高~~ ✅ | `core/tests/test_phase2.py:63` | **`assert result in (True, False)` 恒真** | 拆为两个带 mock 的 unit 测试，验证 true/false 两条路径 |
+| ~~高~~ ✅ | `core/tests/test_phase2.py:361` | **`len(messages) > 1` 后门使断言无意义** | 删除 `or len(messages) > 1` 后门 |
+| ~~高~~ ✅ | `core/tests/test_phase3.py:210` | **零断言** | 补上 `assert loop._fsm.state == AgentState.INTERRUPTED` |
+| ~~高~~ ✅ | `core/tests/test_phase3.py:239-285` | **错误处理逻辑被本地重新实现** | 改为调用真实的 `_execute_tools_directly()`，验证 `ToolResult.fail` |
+| ~~高~~ ✅ | `core/tests/test_phase3.py:651-662` | **try/except RuntimeError 吞掉唯一可能的失败** | 改为 `@pytest.mark.asyncio` + `await engine.push_idle_expression()` |
+| ~~高~~ ✅ | `core/tests/test_phase3.py:972` | **只验证"没崩溃"** | 使用 `capsys` 捕获 stdout，验证 `captured.out.count("hello") == 1` |
+| ~~中~~ ✅ | `core/memory/tests/test_consolidator.py:60` | **逗号尾缀测试没有逗号** | 输入改为 `'[{...},]'`（带尾缀逗号），验证返回 `[]` |
+| ~~中~~ ✅ | `core/memory/tests/test_long_term.py:44` | **假重连测试** | 合并为 `test_delegates_to_repo_when_connected`，正确描述行为 |
+| ~~高~~ ✅ | `core/adapter/tests/test_message_builder.py:147` | **用错 dict key** | `"text"`→`"content"`, `"image_url"`→`"src"` |
+| ~~高~~ ✅ | `core/task/tests/test_task_scheduler.py:656` | **回调从未被验证** | 修正测试注释，诚实说明 mock LLM 不产生 tool_calls 时回调不被触发 |
+
+### 弱断言和逻辑问题（已全部修复）
+
+| 优先级 | 文件:行 | 问题 | 修复 |
+|--------|---------|------|------|
+| ~~中~~ ✅ | `core/tests/test_phase3.py:378` | **`in ("idle", "thinking")` 应改为 `== "idle"`** | 改为 `== AgentState.IDLE` |
+| ~~低~~ ✅ | `core/memory/tests/test_consolidator.py:55` | **`isinstance(items, list)` 恒真** | 改为 `assert items == []` |
+| ~~低~~ ✅ | `core/tests/test_clean_db.py:168` | **`>= 4` 应改为 `== 5`** | 改为 `== 5` |
+| ~~低~~ ✅ | `core/tests/test_clean_db.py:19` | **Mock 返回 int 而非 DeleteResult** | 驳回 — `DocumentDB.delete_many` 返回类型就是 `int` |
+| ~~中~~ ✅ | `core/monitoring/tests/test_token_tracker.py:55` | **多个测试污染项目数据目录** | fixture 中 `_pending_file` 指向 tempfile |
+| ~~低~~ ✅ | `core/task/tests/test_task_scheduler.py:551,611` | **`_completed_count` 死代码** | 删除两处 `sched._completed_count = 5` |
+
+### 重复/低价值测试（已清理）
+
+| 优先级 | 文件 | 问题 | 修复 |
+|--------|------|------|------|
+| ~~低~~ ✅ | `core/task/tests/test_task_model.py:45` | **`test_can_retry_wrong_status` 被 `:117` 完全覆盖** | 删除冗余测试 |
+| ~~低~~ ✅ | `core/memory/tests/test_long_term.py:146,171` | **text_fallback 两个测试几乎相同** | 合并为 `test_text_fallback_when_no_milvus_id` |
+| ~~低~~ ✅ | `core/input/tests/test_server.py:65-92` | **shutdown/restart 只设状态变量，无 HTTP 测试** | 改为验证 route 已注册（集成测试已有 HTTP 覆盖） |
+
+> 保留不动的低价值测试：`test_task_model.py` dataclass 默认值/字段赋值测试、`test_session.py` 字符串常量测试（无害 smoke test）。
+| 高 | `_prune_tasks()` 完全未测 | 任务周期性清理 |
+| 中 | `fake_llm.py` 逐字符流式不符合真实 LLM | 所有使用 fake_llm 的集成测试有假阳性风险 |
+| 中 | EventBus drain() 与认知循环中断竞态 | 中断时 TASK_RESULT 事件丢失 |
+| 中 | `agent/tests/conftest.py` MagicMock 过于宽松 | `_fsm.state = MagicMock()` 是地雷 |
+
 ## 测试补充
 
 - `core/input/audio_buffer.py` (3)
 - `core/input/server.py` (4)
 - `Module/output/console.py` (1)
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
+- 上述覆盖率缺口中标记为"关键"和"高"的路径
 
 > 已完成的工作归档在 [docs/completed.md](docs/completed.md)。

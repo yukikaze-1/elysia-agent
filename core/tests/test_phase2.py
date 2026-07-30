@@ -52,16 +52,41 @@ class TestSessionPersistence:
         except Exception:
             pass
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_connect_fallback(self):
-        """connect_db should return False when MongoDB is unavailable."""
+    async def test_connect_db_creates_repo_and_connects(self):
+        """connect_db creates SessionRepository and delegates to repo.connect()."""
+        from unittest.mock import AsyncMock, patch
         from core.memory.session import SessionMemory
         from core.schema.types import SessionId
-        s = SessionMemory(session_id=SessionId("test"))
-        result = await s.connect_db()
-        # MongoDB may or may not be available — either is fine
-        assert result in (True, False)
+
+        mock_repo = AsyncMock()
+        mock_repo.connect = AsyncMock(return_value=True)
+
+        with patch("core.memory.session.SessionRepository", return_value=mock_repo):
+            s = SessionMemory(session_id=SessionId("test"))
+            result = await s.connect_db()
+
+        assert result is True
+        mock_repo.connect.assert_awaited_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_connect_db_returns_false_when_mongo_unavailable(self):
+        """connect_db returns False when repo.connect() raises."""
+        from unittest.mock import AsyncMock, patch
+        from core.memory.session import SessionMemory
+        from core.schema.types import SessionId
+
+        mock_repo = AsyncMock()
+        mock_repo.connect = AsyncMock(return_value=False)
+
+        with patch("core.memory.session.SessionRepository", return_value=mock_repo):
+            s = SessionMemory(session_id=SessionId("test"))
+            result = await s.connect_db()
+
+        assert result is False
+        mock_repo.connect.assert_awaited_once()
 
     @pytest.mark.service
     @pytest.mark.asyncio
@@ -358,7 +383,7 @@ class TestPromptAssembler:
 
         system = messages[0]["content"]
         # System prompt should include recalled memory about birthday
-        assert "生日" in system or "5月" in system or len(messages) > 1
+        assert "生日" in system or "5月" in system
 
     @pytest.mark.asyncio
     async def test_no_memories_when_empty(self):

@@ -209,6 +209,7 @@ class TestCognitiveLoopMethods:
         # Now INTERRUPTED — can only go to IDLE, not THINKING
         await loop.process("hello")
         # Should warn and return without transitioning to THINKING
+        assert loop._fsm.state == AgentState.INTERRUPTED
 
     @pytest.mark.asyncio
     async def test_process_normal_flow(self, loop):
@@ -233,7 +234,7 @@ class TestCognitiveLoopMethods:
 
     @pytest.mark.asyncio
     async def test_tool_cancelled_error_returns_fail(self, loop):
-        """Tool raising CancelledError returns ToolResult.fail with error."""
+        """Tool raising CancelledError returns ToolResult.fail via _execute_tools_directly."""
         from Module.tool.protocol import ToolResult
         import asyncio as _asyncio
 
@@ -242,25 +243,22 @@ class TestCognitiveLoopMethods:
 
         loop._tool_adapter.execute = cancelled_tool
 
-        # Create a minimal _execute_one context manually
-        async def _test_cancel():
-            tc = {"function": {"name": "test_tool", "arguments": "{}"}, "id": "call_1"}
-            try:
-                tr = await loop._tool_adapter.execute("test_tool", ctx=None)
-            except _asyncio.CancelledError:
-                return ToolResult.fail(name="test_tool", error="用户取消")
-            except Exception as e:
-                return ToolResult.fail(name="test_tool", error=str(e))
-            return tr
+        tc = ToolCall(
+            id="call_1",
+            function=ToolCallFunction(name="cancelled_tool", arguments="{}", parsed={}),
+        )
+        results = await loop._execute_tools_directly([tc])
 
-        result = await _test_cancel()
-        assert isinstance(result, ToolResult)
-        assert result.success is False
-        assert result.error is not None and "用户取消" in result.error
+        assert len(results) == 1
+        tc_out, tr = results[0]
+        assert tc_out is tc
+        assert isinstance(tr, ToolResult)
+        assert tr.success is False
+        assert "用户取消" in (tr.error or "")
 
     @pytest.mark.asyncio
     async def test_tool_exception_returns_fail(self, loop):
-        """Tool raising RuntimeError returns ToolResult.fail."""
+        """Tool raising RuntimeError returns ToolResult.fail via _execute_tools_directly."""
         from Module.tool.protocol import ToolResult
 
         async def failing_tool(*args, **kwargs):
@@ -268,17 +266,18 @@ class TestCognitiveLoopMethods:
 
         loop._tool_adapter.execute = failing_tool
 
-        async def _test_fail():
-            tc = {"function": {"name": "test_tool", "arguments": "{}"}, "id": "call_1"}
-            try:
-                tr = await loop._tool_adapter.execute("test_tool", ctx=None)
-            except Exception as e:
-                return ToolResult.fail(name="test_tool", error=str(e))
-            return tr
+        tc = ToolCall(
+            id="call_1",
+            function=ToolCallFunction(name="failing_tool", arguments="{}", parsed={}),
+        )
+        results = await loop._execute_tools_directly([tc])
 
-        result = await _test_fail()
-        assert result.success is False
-        assert result.error is not None and "tool crash" in result.error
+        assert len(results) == 1
+        tc_out, tr = results[0]
+        assert tc_out is tc
+        assert isinstance(tr, ToolResult)
+        assert tr.success is False
+        assert "tool crash" in (tr.error or "")
 
 
 # ============================================================================
@@ -375,7 +374,7 @@ class TestCognitiveLoopTTS:
         # After process, the tool should have been called (tool history)
         await loop.process("use test_tool")
         # Tool was registered, process completed without error
-        assert loop._fsm.state in ("idle", "thinking")
+        assert loop._fsm.state == AgentState.IDLE
 
     @pytest.mark.asyncio
     async def test_handle_interrupt_clears_state(self, loop):
@@ -648,18 +647,12 @@ class TestEmotionEngineEdges:
         from core.personality.engine import CharacterEngine
         CharacterEngine._schedule(MagicMock())  # type: ignore[reportAttributeAccessIssue]  # coroutine mock, no loop
 
-    def test_push_idle_uses_list(self, engine):
+    @pytest.mark.asyncio
+    async def test_push_idle_uses_list(self, engine):
         """push_idle_expression picks from idle_expressions."""
         engine._idle_expressions = ["neutral", "blink"]
-        # Should not raise — picks randomly
-        import asyncio
-        async def _run():
-            await engine.push_idle_expression()
-        try:
-            asyncio.get_running_loop()
-            # Loop exists, schedule should work
-        except RuntimeError:
-            pass  # No loop in sync context, expected
+        # Should not raise — picks randomly from list
+        await engine.push_idle_expression()
 
 
 # ============================================================================
@@ -969,16 +962,19 @@ class TestAudioBufferErrors:
 @pytest.mark.service
 class TestConsoleChannelDedup:
     @pytest.mark.asyncio
-    async def test_on_message_after_stream_skips_content(self):
+    async def test_on_message_after_stream_skips_content(self, capsys):
         from Module.output import ConsoleChannel
         ch = ConsoleChannel()
         # Simulate streaming
         await ch.on_text_delta("hello")
-        # on_message after streaming should not print content line
+        # on_message after streaming should not print content again
         msg = MessageObj(content="hello")
-        # We can't easily capture stdout in pytest, but we verify no crash
         await ch.on_message(msg)
-        assert ch._delta_printed is False  # reset after on_message
+        # Verify delta_printed flag is reset
+        assert ch._delta_printed is False
+        # Verify content was printed exactly once (from delta, not from on_message)
+        captured = capsys.readouterr()
+        assert captured.out.count("hello") == 1
 
     @pytest.mark.asyncio
     async def test_on_message_without_stream(self):

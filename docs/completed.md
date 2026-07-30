@@ -19,6 +19,39 @@
 
 **标记为误报**：review 中其余 24 项经核实为误报/设计意图/极低概率/仅代码质量建议，不修复。
 
+### 2026-07-30: 测试质量修复（17 项）
+
+**背景**：对全部 55+ 测试文件的全面审查（提交 `cfc48f6`），发现 17 项确认真实问题。
+
+**假测试修复（11 项）：**
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `core/tests/test_log_setup.py` | 文件名误导（测 ContextVar 非 log_setup） | 重命名为 `test_request_id.py` |
+| `core/tests/test_phase2.py:63` | `assert result in (True, False)` 恒真 | 拆为 mock 测试验证 true/false |
+| `core/tests/test_phase2.py:361` | `len(messages) > 1` 后门 | 删除后门，保留有意义的断言 |
+| `core/tests/test_phase3.py:210` | 零断言 | 补 `assert == AgentState.INTERRUPTED` |
+| `core/tests/test_phase3.py:239-285` | 错误处理本地重实现 | 改为调用真实 `_execute_tools_directly()` |
+| `core/tests/test_phase3.py:651` | try/except RuntimeError 吞错 | 改为 async + `await` |
+| `core/tests/test_phase3.py:972` | 只验证"没崩溃" | 用 `capsys` 捕获 stdout 验证 |
+| `core/memory/tests/test_consolidator.py:60` | 逗号尾缀测试无逗号 | 加真正的尾缀逗号 |
+| `core/memory/tests/test_long_term.py:44` | 假重连测试 | 合并+重命名 |
+| `core/adapter/tests/test_message_builder.py:147` | dict key 错误 | `"text"`→`"content"`, `"image_url"`→`"src"` |
+| `core/task/tests/test_task_scheduler.py:656` | 回调从未触发 | 修正注释 |
+
+**弱断言/逻辑修复（6 项）：**
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `core/tests/test_phase3.py:378` | `in ("idle","thinking")` | 改为 `== AgentState.IDLE` |
+| `core/memory/tests/test_consolidator.py:55` | `isinstance(items,list)` 恒真 | 改为 `== []` |
+| `core/tests/test_clean_db.py:168` | `>=4` | 改为 `==5` |
+| `core/monitoring/tests/test_token_tracker.py` | 污染 `data/` | fixture 用 tempfile |
+| `core/task/tests/test_task_scheduler.py:551,611` | `_completed_count` 死代码 | 删除 |
+| `core/task/tests/test_task_model.py:45` | 冗余测试 | 删除 |
+| `core/memory/tests/test_long_term.py:146,171` | 重复测试 | 合并 |
+| `core/input/tests/test_server.py:58-92` | 弱单元测试 | 改为验证 route 注册 |
+
+**驳回 1 项**：`test_clean_db.py:19` Mock 返回 `int` 是正确的（`DocumentDB.delete_many` 返回类型为 `int`）。
+
 **修复日期**：2026-07-30
 
 ---
@@ -693,7 +726,7 @@ EventBus → Agent 排队 → CognitiveLoop.process() (专属路径)
 | TaskScheduler prune 并发安全 | 从 worker loop 移出为独立 `_prune_loop()` 周期任务 |
 | SessionMemory MongoDB 原子 upsert | `update_one(upsert=True)` 替代 find-then-update 竞态 |
 | DocumentDB protocol upsert 支持 | `update_one()` 增加可选 `upsert` 参数，MongoDB backend 透传 |
-| 测试补充: `test_log_setup.py` | 3 tests — request_id 读写 + ContextVar 隔离 |
+| 测试补充: `test_request_id.py` | 3 tests — request_id 读写 + ContextVar 隔离 |
 | 测试补充: long_term_memory | 2 tests — fallback search + empty search |
 | `Module/schema/` deprecation 标注 | 添加模块级注释说明当前未被 core/ 使用 |
 

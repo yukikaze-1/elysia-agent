@@ -50,19 +50,20 @@ class TestParseExtraction:
         assert items[0].content == "found"
 
     def test_parse_multiple_arrays_returns_first(self):
-        """When multiple arrays exist, greedy regex captures from first [ to last ].
-        This may fail JSON parse, which is acceptable — caller should provide clean JSON."""
+        """When multiple arrays exist, greedy regex captures from first [ to last ],
+        producing invalid JSON → returns empty list."""
         text = '[{"type": "fact", "content": "a"}] other [{"type": "plan", "content": "b"}]'
         items = _parse_extraction(text)
-        # Greedy regex may fail to parse — both outcomes are acceptable
-        assert isinstance(items, list)
+        # Greedy regex matches first [ to last ] → invalid JSON → empty result
+        assert items == []
 
     def test_parse_trailing_comma(self):
-        """Trailing comma in JSON array should be handled."""
+        """Trailing comma in JSON array (invalid JSON) returns empty."""
         items = _parse_extraction(
-            '[{"type": "Fact", "content": "test"}]'
+            '[{"type": "Fact", "content": "test"},]'
         )
-        assert len(items) == 1
+        # Trailing comma is invalid JSON → json.loads + regex both fail → empty
+        assert items == []
 
     def test_parse_whitespace_only(self):
         assert _parse_extraction("   \n  ") == []

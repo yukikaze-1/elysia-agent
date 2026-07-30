@@ -43,11 +43,14 @@ class TestTokenTracker:
 
     @pytest.fixture
     def tracker(self, output_mock):
-        return TokenTracker(
+        t = TokenTracker(
             session_id=SessionId("test-session"),
             output_manager=output_mock,
             repo=None,
         )
+        # 使用临时文件避免污染项目 data/ 目录
+        t._pending_file = os.path.join(tempfile.mkdtemp(), "token_usage_pending.jsonl")
+        return t
 
     # ── record ──────────────────────────────────────────────
 

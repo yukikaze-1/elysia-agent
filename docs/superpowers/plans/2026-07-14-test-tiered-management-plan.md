@@ -394,7 +394,7 @@ conda run -n Elysia python -m pytest Module/database/ Module/embedding/ -v -q
 - `core/tests/test_task_model.py` (15 tests)
 - `core/tests/test_task_scheduler.py` (26 tests)
 - `core/tests/test_timing.py` (16 tests)
-- `core/tests/test_log_setup.py` (3 tests)
+- `core/tests/test_request_id.py` (3 tests)
 - `core/tests/test_prompt_recorder.py` (7 tests)
 - `core/tests/test_token_tracker.py` (17 tests)
 

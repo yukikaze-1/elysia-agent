@@ -148,8 +148,8 @@ class TestBuildMessages:
         """单张图片 + 不支持多模态 → describe_image 提示。"""
         builder = MessageBuilder()
         content = [
-            {"type": "text", "text": "hello"},
-            {"type": "image", "image_url": {"url": "http://a.com/1.png"}},
+            {"type": "text", "content": "hello"},
+            {"type": "image", "src": "http://a.com/1.png"},
         ]
         messages = builder.build_messages("system", [], content, supports_multimodal=False)
         assert "describe_image" in messages[-1]["content"]

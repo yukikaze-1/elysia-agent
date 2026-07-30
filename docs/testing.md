@@ -118,7 +118,7 @@ pytest core/tests/test_phase3.py -v
 | `core/tests/` | `test_phase1.py` | 32 | unit+service+slow+integration |
 | | `test_phase2.py` | 72 | unit+service+slow+integration |
 | | `test_phase3.py` | 110 | unit+service+slow |
-| | `test_log_setup.py` | 3 | unit |
+| | `test_request_id.py` | 3 | unit |
 | `core/agent/tests/` | `test_agent_fsm.py` | 10 | unit |
 | | `test_types.py` | 5 | unit |
 | | `test_lifecycle_steps.py` | 7 | unit |

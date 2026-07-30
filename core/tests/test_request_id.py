@@ -1,4 +1,4 @@
-"""Tests for core/log_setup.py — request_id ContextVar propagation."""
+"""Tests for core/utils — set_request_id / get_request_id ContextVar propagation."""
 import asyncio
 import pytest
 from core.utils import set_request_id, get_request_id

@@ -42,15 +42,6 @@ def test_can_retry_exceeded():
     assert t.can_retry() is False
 
 
-def test_can_retry_wrong_status():
-    """COMPLETED/CANCELLED 终态任务不可重试，即使 retry_count < max_retries。"""
-    t = Task.new_tool_call("p1", "x", {})
-    t.status = TaskStatus.COMPLETED
-    t.retry_count = 0
-    t.max_retries = 2
-    assert t.can_retry() is False  # 终态不可重试
-
-
 def test_retry_backoff_first():
     t = Task.new_tool_call("p1", "x", {})
     t.retry_count = 0

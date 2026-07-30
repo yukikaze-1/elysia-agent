@@ -24,7 +24,7 @@
 ### 保留不动
 
 - `core/tests/test_phase1/2/3.py` — 跨模块集成测试
-- `core/tests/test_log_setup.py` / `test_clean_db.py` — 工具性质
+- `core/tests/test_request_id.py` / `test_clean_db.py` — 工具性质
 - `core/tests/fake_llm.py` — 共享 test double
 
 ### 文档更新
@@ -382,7 +382,7 @@ core/tests/
 ├── test_phase1.py
 ├── test_phase2.py
 ├── test_phase3.py
-├── test_log_setup.py
+├── test_request_id.py
 └── test_clean_db.py
 ```
 

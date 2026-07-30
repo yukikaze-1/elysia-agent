@@ -163,9 +163,9 @@ class TestFileCleaner:
         # 验证无关文件未被删除
         assert (data_dir / "keep_me.txt").exists()
 
-        # 结果计数
+        # 结果计数 — 5 个目标文件全部应被删除
         succeeded = [r for r in results if r[1] is True]
-        assert len(succeeded) >= 4  # at least 4 files deleted
+        assert len(succeeded) == 5
 
     def test_file_cleaner_handles_missing_files(self, tmp_path):
         from clean_db import FileCleaner  # type: ignore[reportMissingImports]
