@@ -797,6 +797,8 @@ class CognitiveLoop(CognitiveTools):
                     self._phase = TurnPhase.EXECUTING_TOOLS
                     await self._execute_tool_round(
                         messages, acc_text, raw_tool_calls, _on_tool_calls)
+                    # 显式模式切换信号：帮助 LLM 从"工具执行模式"切回"对话模式"
+                    messages.append({"role": "system", "content": "[TOOL_EXECUTED]"})
                     continue
 
                 self._phase = TurnPhase.FINALIZING

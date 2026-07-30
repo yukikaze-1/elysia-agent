@@ -18,6 +18,7 @@
 
 ## 功能改进
 
+- ✅ **CognitiveLoop: 工具执行后注入结构化决策提示** — 2026-07-31 已实现。`loop.py:801`: `messages.append({"role": "system", "content": "[TOOL_EXECUTED]"})` 在 `_execute_tool_round()` 返回后、`continue` 前。`[TOOL_EXECUTED]` 作为显式模式切换信号，帮助 LLM 从"工具执行模式"切回"对话模式"。改动量 1 行。
 - **README 截图**: 添加聊天界面 / debug 面板 / 启动流程截图，让新用户第一眼就知道项目长什么样
 - **Live2D 集成**: Cubism SDK v5 需 TypeScript + npm + bundler 构建，当前仅 SDK 文件到位、默认关闭
 - **poignancy 时间衰减**: rerank 含时效衰减但 poignancy 本身不变，长期不访问的记忆应逐渐降级
