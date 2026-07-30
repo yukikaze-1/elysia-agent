@@ -316,8 +316,14 @@ class CharacterEngine:
         """
         history = self.state.state_history
         history.append({"timestamp": now_iso(), "content": content})
-        if len(history) > AWARENESS_MAX_HISTORY:
+        overflow = len(history) - AWARENESS_MAX_HISTORY
+        if overflow > 0:
             del history[:-AWARENESS_MAX_HISTORY]
+            # 截断时同步调整 compression_last_count，避免计数触发永久失效。
+            # 被删除的最旧条目已在 last_count 中计数，需减去等量。
+            lc = self.state.compression_last_count
+            if lc > 0:
+                self.state.compression_last_count = max(0, lc - overflow)
 
     # ---- 持久化 ----
 

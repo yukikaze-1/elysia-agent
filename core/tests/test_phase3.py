@@ -194,17 +194,13 @@ class TestCognitiveLoopMethods:
 
     @pytest.mark.asyncio
     async def test_handle_interrupt(self, loop):
-        from core.text.sentence_buffer import SentenceBuffer
-        from core.text.block_filter import BlockFilter
         loop._fsm.transition(AgentState.THINKING)
-        loop._sentence_buf = SentenceBuffer()
-        loop._block_filter = BlockFilter()
-        loop._sentence_buf.feed("partial text")
 
         await loop._handle_interrupt()
 
         assert loop._fsm.state == AgentState.IDLE
-        assert loop._sentence_buf._buffer == ""
+        # SentenceBuffer/BlockFilter 在每轮 StreamProcessor 中独立创建，
+        # CognitiveLoop 不再持有引用——中断后新轮次自然获得干净缓冲区。
 
     @pytest.mark.asyncio
     async def test_process_rejects_invalid_fsm_state(self, loop):
@@ -384,18 +380,12 @@ class TestCognitiveLoopTTS:
     @pytest.mark.asyncio
     async def test_handle_interrupt_clears_state(self, loop):
         """_handle_interrupt resets sentence buffer, cancels TTS tasks, returns to IDLE."""
-        from core.text.sentence_buffer import SentenceBuffer
-        from core.text.block_filter import BlockFilter
-        loop._sentence_buf = SentenceBuffer()
-        loop._block_filter = BlockFilter()
-        loop._sentence_buf.feed("partial")
         t = asyncio.create_task(asyncio.sleep(10))
         loop._tts_mgr._tasks.append(t)
         loop._fsm.transition("thinking")
 
         await loop._handle_interrupt()
 
-        assert loop._sentence_buf._buffer == ""
         assert len(loop._tts_mgr._tasks) == 0
         assert loop._fsm.state == "idle"
 
@@ -442,21 +432,6 @@ class TestCognitiveLoopSync:
         await loop.process("hello")
         # process() 成功完成即表明文本已直接发送
         assert loop._fsm.state == "idle"
-
-    @pytest.mark.asyncio
-    async def test_process_resets_sentence_buffer(self, loop):
-        """每次 process() 调用创建全新的 StreamProcessor（无跨轮污染）。
-
-        _sentence_buf 现在始终为 None — StreamProcessor 内部持有 SentenceBuffer，
-        每次 _think_loop 创建新的 StreamProcessor 实例保证隔离。
-        """
-        # _sentence_buf 在 __init__ 中初始化为 None，保持 None
-        assert loop._sentence_buf is None
-
-        await loop.process("hello")
-
-        # 集成 StreamProcessor 后不再由 CognitiveLoop 管理 SentenceBuffer
-        assert loop._sentence_buf is None
 
     @pytest.mark.asyncio
     async def test_process_lock_serializes(self, loop):

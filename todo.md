@@ -12,6 +12,13 @@
 | 中 | **TTS 密集短句导致 wait_all 阻塞** | TTS 连续 5+ 短句密集入队时 MiniMax 部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING。已缩短 read timeout 120s→30s 缓解，根因（wait_all 无超时）待重现后修复。 |
 | 低 | **`flush_after_response` 超时层不匹配** | 内层 `loop.py:875` 每 task 5s，外层 `lifecycle.py:170` 整体 10s。3+ task 同时超时可能被外层截断。实际 pending 典型 0-2 个、亚秒级完成，impact 极低。修法：外层 timeout 改为 `max(10.0, len(pending) * 5.0 + 1.0)` |
 | 低 | **`ConfirmModal` @keydown 在不可聚焦 `<div>`** | `frontend/src/debug/components/shared/ConfirmModal.vue:35` — overlay div 无 `tabindex`，依赖按钮聚焦后事件冒泡。弹窗内只有文字+两个按钮，点击文字不会失焦，现有行为已可靠。加固：加 `tabindex="0"` |
+| 高 | **L3→L2 压缩计数触发永久失效** | `compression.py:120-152` + `engine.py:311-320`。首次压缩后 `compression_last_count = len(history)` (=10)，新条目添加后 history 被 `AWARENESS_MAX_HISTORY=10` 截断，`new_count = total - last_count = 10 - 10 = 0`，计数触发器永不再激活。**时间触发（7天）仍有效**，但 `COMPRESSION_COUNT_THRESHOLD=5` 的计数触发永久失效。修法：用递增计数器替代 `total - last_count` 差值，或在 `_append_history` 截断时同步调低 `compression_last_count` |
+| 高 | **Consolidator 缓冲区在 LLM 调用前清空** | `consolidator.py:240`：`self._buffer.clear()` 在 LLM 调用和解析之前执行。LLM 调用失败（网络/超时/异常）时返回 `[]`，但 buffer 已被清空——缓存的对话轮次永久丢失。修法：将 `clear()` 移到 LLM 成功解析之后 |
+| 中 | **`_sentence_buf`/`_block_filter` 始终为 None** | `loop.py:169-170` 初始化为 None 后从未赋值。实际 SentenceBuffer/BlockFilter 存在于每轮新建的 `StreamProcessor` 中。`_handle_interrupt` 的 `is not None` 守卫（996-999 行）始终通过（no-op），中断时不会清除当前 StreamProcessor 的缓冲区。实际影响因每轮新建 StreamProcessor 而减轻，但死代码造成虚假安全保证。修法：删除这两个字段，或改为在 `_handle_interrupt` 中操作当前 proc 的 buffer |
+| 中 | **`_current_task` 覆盖导致认知任务孤儿** | `agent.py:461-469`：`_handle_user_input` 同步创建 task 并赋值 `_current_task`。连续两事件（如快速 API 调用）可在大脑 task 获取 `_process_lock` 前覆盖 `_current_task`。被覆盖的 task1 不被任何引用持有 → `cancel_current()` 取消错误的 task → task1 继续运行（LLM 流/工具调用）成为孤儿。概率低（需 <1ms 级的连续事件），但后果严重（副作用的工具调用）。修法：`_current_task` 改为在 `process()` 内部获取锁后设置，而非在 `_handle_user_input` 中 |
+| 低 | **`time_of_day` 主动触发每秒重复投递** | `idle_monitor.py:114-123`：`_loop` 每秒执行，`time_of_day` 匹配 `"HH:MM"` 字符串在整个一分钟内为真 → 每分钟投递 60 个 `SystemTickData`。`_handle_system_tick` 对此类事件静默丢弃（有 TODO 注释），所以实际无功能影响，仅浪费 CPU。修法：加 `_last_time_of_day_trigger` 防重 |
+| 低 | **已吸收记忆条目残留 `_entries`** | `long_term.py:261-275`：`mark_absorbed` 将 ID 加入 `_absorbed_ids` 集合并清理 Milvus，但 `MemoryEntry` 对象一直留在 `_entries`。`get_all()` 正确过滤，但 `count` 属性统计膨胀，长期运行后占用内存。`_max_entries=10000` 限制了上限，但被吸收条目挤占有用空间。修法：在 `mark_absorbed` 中同时从 `_entries` 移除 |
+| 低 | **`_sync_dirty_entries` 一条失败即跳出** | `long_term.py:307`：`except Exception: break`——单条同步失败即跳出循环，放弃同步剩余脏条目。注释说"Milvus 仍然不可用"，但个别条目失败（如 malformed data）不应阻塞其余。修法：`break` → `continue` |
 
 ## 功能改进
 

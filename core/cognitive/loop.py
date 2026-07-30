@@ -33,7 +33,6 @@ from ..utils import set_request_id, get_request_id, log_conversation
 from Module.tool.protocol import ToolResult
 from ..adapter.prompt_assembler import PromptAssembler
 from ..memory.session import SessionMemory
-from ..text.sentence_buffer import SentenceBuffer
 from .stream_processor import StreamProcessor, StreamEvent, StreamEventType
 from ..adapter.llm_adapter import LLMAdapter
 from ..memory.consolidator import MemoryConsolidator
@@ -50,7 +49,7 @@ if TYPE_CHECKING:
     from ..adapter.tool_adapter import ToolAdapter
     from ..memory.memory_reflector import MemoryReflector
 
-from ..text.block_filter import BlockFilter, build_parts_with_blocks
+from ..text.block_filter import build_parts_with_blocks
 from ..adapter.tts_adapter import TTSStreamManager
 from ..adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from Module.task_system.schema.types import TaskId
@@ -166,8 +165,6 @@ class CognitiveLoop(CognitiveTools):
         self._token_tracker = token_tracker
         self._prompt_recorder = prompt_recorder
         self._response_recorder: ResponseRecorder | None = None  # 由 configure() 注入
-        self._sentence_buf: SentenceBuffer | None = None
-        self._block_filter: BlockFilter | None = None
         self._ttft_start: float = 0.0
         self._mood_applied: bool = False
         self._process_lock = asyncio.Lock()
@@ -993,10 +990,6 @@ class CognitiveLoop(CognitiveTools):
         """Clean up after interruption — cancel TTS tasks, return to IDLE."""
         if self.status.is_completely_idle:
             return
-        if self._sentence_buf is not None:
-            self._sentence_buf.reset()
-        if self._block_filter is not None:
-            self._block_filter.reset()
         self._executing_tools.clear()
         self._tts_mgr.cancel_all()
         await self._output.typing(False)

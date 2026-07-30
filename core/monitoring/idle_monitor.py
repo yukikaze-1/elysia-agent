@@ -48,6 +48,7 @@ class IdleMonitor:
         else:
             self.status = status
         self._last_interaction: float = time.monotonic()
+        self._last_time_of_day_trigger: str = ""  # 防重：上次触发的 "HH:MM"
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -113,8 +114,12 @@ class IdleMonitor:
 
             elif ttype == "time_of_day":
                 now = datetime.now().strftime("%H:%M")
+                # 防重：同一分钟只触发一次，避免每秒重复投递
+                if now == self._last_time_of_day_trigger:
+                    return
                 times = trigger.get("times", [])
                 if now in times:
+                    self._last_time_of_day_trigger = now
                     self._bus.post(
                         SystemTickData(reason="time_of_day", time=now),
                         priority=EventPriority.NORMAL,

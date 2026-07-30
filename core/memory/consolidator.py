@@ -237,7 +237,6 @@ class MemoryConsolidator:
             turns.append(f"{self._user_name}: {u[:300]}")
             turns.append(f"{self._character_name}: {a[:500]}")
         conversation_text = "\n".join(turns)
-        self._buffer.clear()
 
         logger.debug("Consolidation: 开始提取 (%d turns)", len(turns))
 
@@ -252,6 +251,9 @@ class MemoryConsolidator:
         except Exception:
             logger.debug("Consolidation extraction failed", exc_info=True)
             return []
+
+        # LLM 成功 → 清空缓冲区，防止数据丢失
+        self._buffer.clear()
 
         if items:
             inserted = await self._compare_and_resolve(items)

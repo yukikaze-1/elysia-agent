@@ -455,6 +455,8 @@ class Agent(AgentLifecycle, AgentServer):
         rid = data.request_id
         logger.debug("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
                    "websocket" if stt_emotion else "text", stt_emotion or "无")
+        # 取消上一个未完成的 task，防止快速连续事件造成孤儿
+        self._cognitive.cancel_current()
         _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
             parent_id=rid, calls=calls,
         )
