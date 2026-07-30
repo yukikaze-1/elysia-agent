@@ -11,6 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run full test suite
-        run: make test-full
+        run: |
+          set -a
+          source .env
+          set +a
+          make test-full
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
