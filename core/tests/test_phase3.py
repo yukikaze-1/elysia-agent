@@ -161,7 +161,7 @@ class TestCognitiveLoopMethods:
 
         loop = CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
-            prompt=prompt, session=session, tool_executor=tools,
+            prompt=prompt, session=session, tool_adapter=tools,
             character_engine=char_engine, consolidator=consolidator, tts=tts,
         )
         return loop
@@ -244,13 +244,13 @@ class TestCognitiveLoopMethods:
         async def cancelled_tool(*args, **kwargs):
             raise _asyncio.CancelledError()
 
-        loop._tool_executor.execute = cancelled_tool
+        loop._tool_adapter.execute = cancelled_tool
 
         # Create a minimal _execute_one context manually
         async def _test_cancel():
             tc = {"function": {"name": "test_tool", "arguments": "{}"}, "id": "call_1"}
             try:
-                tr = await loop._tool_executor.execute("test_tool", ctx=None)
+                tr = await loop._tool_adapter.execute("test_tool", ctx=None)
             except _asyncio.CancelledError:
                 return ToolResult.fail(name="test_tool", error="用户取消")
             except Exception as e:
@@ -270,12 +270,12 @@ class TestCognitiveLoopMethods:
         async def failing_tool(*args, **kwargs):
             raise RuntimeError("tool crash")
 
-        loop._tool_executor.execute = failing_tool
+        loop._tool_adapter.execute = failing_tool
 
         async def _test_fail():
             tc = {"function": {"name": "test_tool", "arguments": "{}"}, "id": "call_1"}
             try:
-                tr = await loop._tool_executor.execute("test_tool", ctx=None)
+                tr = await loop._tool_adapter.execute("test_tool", ctx=None)
             except Exception as e:
                 return ToolResult.fail(name="test_tool", error=str(e))
             return tr
@@ -329,7 +329,7 @@ class TestCognitiveLoopTTS:
         tts.synthesize_stream = _fake_stream
         return CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
-            prompt=prompt, session=session, tool_executor=tools, tts=tts,
+            prompt=prompt, session=session, tool_adapter=tools, tts=tts,
         )
 
     @pytest.mark.asyncio
@@ -374,7 +374,7 @@ class TestCognitiveLoopTTS:
             async def execute(self, *, ctx, emit=None, params):
                 return f"result for {params.q}"
 
-        await loop._tool_executor._manager.load_all([_TestTool], PluginContext(session_id="test"))
+        await loop._tool_adapter._manager.load_all([_TestTool], PluginContext(session_id="test"))
 
         # After process, the tool should have been called (tool history)
         await loop.process("use test_tool")
@@ -433,7 +433,7 @@ class TestCognitiveLoopSync:
         tools = ToolAdapter([])
         return CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
-            prompt=prompt, session=session, tool_executor=tools, tts=None,
+            prompt=prompt, session=session, tool_adapter=tools, tts=None,
         )
 
     @pytest.mark.asyncio

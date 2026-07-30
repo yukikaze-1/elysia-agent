@@ -37,8 +37,7 @@ class CognitiveTools:
     所有属性由 CognitiveLoop.__init__ 初始化，本 mixin 不含 __init__。
     """
     # 类型声明 — 属性由 CognitiveLoop 初始化（mixin 无 __init__）
-    _tool_executor: ToolAdapter | None = None  # CognitiveLoop.__init__ 注入
-    _tool_adapter: ToolAdapter | None = None   # CognitiveLoop.configure() 注入
+    _tool_adapter: ToolAdapter | None = None  # CognitiveLoop.__init__ 注入 + configure() 补充
     _session: SessionMemory  # CognitiveLoop.__init__ 注入（必需参数）
     _delegation_preparer: DelegationPreparer | None = None
     _user_profile: UserProfile | None = None
@@ -66,11 +65,9 @@ class CognitiveTools:
             args = tc.function.parsed
             logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
             try:
-                if self._tool_executor is None:
-                    raise RuntimeError("ToolExecutor 未初始化")
                 if self._tool_adapter is None:
                     raise RuntimeError("ToolAdapter 未初始化")
-                tr = await self._tool_executor.execute(func_name, ctx=self._tool_adapter.tool_context, **args)
+                tr = await self._tool_adapter.execute(func_name, ctx=self._tool_adapter.tool_context, **args)
             except asyncio.CancelledError:
                 logger.info("工具取消: %s", func_name)
                 tr = ToolResult.fail(name=func_name, error="用户取消")
@@ -111,8 +108,8 @@ class CognitiveTools:
 
         # 2. 构建已知工具名集合
         known_names: set[str] = set()
-        if self._tool_executor is not None:
-            for d in self._tool_executor.definitions():
+        if self._tool_adapter is not None:
+            for d in self._tool_adapter.definitions():
                 name = d.get("function", {}).get("name", "")
                 if name:
                     known_names.add(name)
@@ -241,7 +238,7 @@ class CognitiveTools:
 
         # 将 ToolExecutor.definitions() 的 dict 格式转换为 DelegationPreparer 期望的 Tool 列表
         from Module.task_system.schema import Tool
-        tool_defs = self._tool_executor.definitions() if self._tool_executor else []
+        tool_defs = self._tool_adapter.definitions() if self._tool_adapter else []
         tool_list = [
             Tool(
                 name=d["function"]["name"],

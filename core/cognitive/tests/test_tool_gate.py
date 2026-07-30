@@ -38,8 +38,7 @@ def _gate(calls: list[ToolCall], executor_names: list[str] | None = None,
           blocked: set[str] | None = None) -> tuple[bool, list[dict]]:
     """Helper: 创建 CognitiveTools 实例，调用 _gate_tool_calls。"""
     tools = CognitiveTools()
-    tools._tool_executor = cast(ToolAdapter, _FakeExecutor(executor_names))
-    tools._tool_adapter = None
+    tools._tool_adapter = cast(ToolAdapter, _FakeExecutor(executor_names))
     messages: list[dict] = []
     ok = tools._gate_tool_calls(calls, messages, blocked_tools=blocked)
     return ok, messages
@@ -147,9 +146,8 @@ def test_blocked_tool_rejected():
 # ---- executor 为 None ----
 
 def test_executor_none_all_unknown():
-    """_tool_executor 为 None → 所有非 submit_task 都是未知。"""
+    """_tool_adapter 为 None → 所有非 submit_task 都是未知。"""
     tools = CognitiveTools()
-    tools._tool_executor = None
     tools._tool_adapter = None
     messages: list[dict] = []
     ok = tools._gate_tool_calls([_make_tc("get_time", "c1")], messages)

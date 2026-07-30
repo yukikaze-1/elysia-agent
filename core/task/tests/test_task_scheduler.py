@@ -687,7 +687,7 @@ async def test_cognitive_loop_callback_wired():
 
     loop = CognitiveLoop(
         llm=llm, fsm=fsm, event_bus=bus, output=output,
-        prompt=prompt, session=session, tool_executor=tm,
+        prompt=prompt, session=session, tool_adapter=tm,
     )
 
     callback_called = []
@@ -742,7 +742,7 @@ async def test_cognitive_loop_no_callback_backward_compat():
 
     loop = CognitiveLoop(
         llm=llm, fsm=fsm, event_bus=bus, output=output,
-        prompt=prompt, session=session, tool_executor=tm,
+        prompt=prompt, session=session, tool_adapter=tm,
     )
 
     await loop.process("hello")

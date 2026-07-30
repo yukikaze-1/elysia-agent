@@ -128,7 +128,7 @@ class CognitiveLoop(CognitiveTools):
         output: OutputManager,
         prompt: PromptAssembler,
         session: SessionMemory,
-        tool_executor: ToolAdapter | None = None,
+        tool_adapter: ToolAdapter | None = None,
         character_engine: "CharacterEngine | None" = None,
         consolidator: MemoryConsolidator | None = None,
         tts: TTSBackend | None = None,
@@ -144,7 +144,7 @@ class CognitiveLoop(CognitiveTools):
             output: 多通道输出管理器
             prompt: 系统提示词组装器
             session: 会话记忆
-            tool_executor: 工具执行器（ToolExecutor 协议）
+            tool_adapter: 工具适配器（ToolAdapter 实例）
             character_engine: 角色引擎（4 层性格模型）
             consolidator: 记忆沉淀器，提取对话记忆
             tts: TTS 后端，经 TTSStreamManager 代理
@@ -157,11 +157,10 @@ class CognitiveLoop(CognitiveTools):
         self._output = output
         self._prompt = prompt
         self._session = session
-        self._tool_executor = tool_executor
+        self._tool_adapter = tool_adapter
         self._req_counter: int = 0
         self._character_engine = character_engine
         self._consolidator = consolidator
-        self._tool_adapter: ToolAdapter | None = None     # 由 configure() 注入
         self._memory_reflector: MemoryReflector | None = None  # 由 configure() 注入
         self._tts = tts  # 保留供 agent.py stop() 读取
         self._token_tracker = token_tracker
@@ -377,7 +376,7 @@ class CognitiveLoop(CognitiveTools):
                 message_id=new_message_id(),
                 timestamp=_now_iso(),
             ))
-        tool_defs = self._tool_executor.definitions() if self._tool_executor else None
+        tool_defs = self._tool_adapter.definitions() if self._tool_adapter else None
         # 多模态 LLM 可直接看图，排除 describe_image 避免 LLM 只调用一次
         if tool_defs and supports_mm:
             tool_defs = [t for t in tool_defs if t.get("function", {}).get("name") != "describe_image"]

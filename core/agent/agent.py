@@ -219,7 +219,7 @@ class Agent(AgentLifecycle, AgentServer):
             output=self._output,
             prompt=self._prompt,
             session=self._session,
-            tool_executor=self._tool_adapter,
+            tool_adapter=self._tool_adapter,
             character_engine=self._character_engine,
             consolidator=self._consolidator,
             tts=self._tts,
