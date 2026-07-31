@@ -10,15 +10,58 @@
 
 import base64 as _base64
 from pathlib import Path as _Path
+from typing import Annotated, Union
 
-from pydantic import TypeAdapter
+from pydantic import Discriminator, Tag, TypeAdapter, ValidationError
 
 from ..part import Part, TextPart, ImagePart, FilePart, AudioPart, VideoPart, ImageMime
+from ..message import Message, AssistantMessage, ToolResultMessage, UserMessage
 
 
 # ── dict → Part 边界转换 ──────────────────────────────
 
 _PARTS_ADAPTER: TypeAdapter[list[Part]] = TypeAdapter(list[Part])
+
+
+# ── Message 校验 + 旧 token_usage 降级 ──────────────────
+
+def _discriminate_message_role(v) -> str | None:
+    """按 role 判别 Message 联合成员。非 dict 输入返回 None。"""
+    if isinstance(v, dict):
+        return v.get("role")
+    return None
+
+
+# 带 role 判别标签的 Message 联合：按 role 可靠路由到对应模型，
+# 避免 Pydantic 普通 union 把 role=assistant 的 dict 静默解析为 UserMessage
+# （token_usage 被当作 UserMessage 的未知额外字段忽略，导致角色错乱）。
+_MessageByRole = Annotated[
+    Union[
+        Annotated[UserMessage, Tag("user")],
+        Annotated[AssistantMessage, Tag("assistant")],
+        Annotated[ToolResultMessage, Tag("tool")],
+    ],
+    Discriminator(_discriminate_message_role),
+]
+_MESSAGE_ADAPTER: TypeAdapter[Message] = TypeAdapter(_MessageByRole)
+
+
+def validate_message_legacy_compat(data: dict) -> Message:
+    """校验消息 dict → Message；旧格式 token_usage 剥除后重试。
+
+    旧会话/归档消息的 token_usage 为 prompt_tokens/completion_tokens 旧字段，
+    新模型无法校验。剥除 token_usage（置 None）保留消息正文，避免整批加载
+    失败导致会话上下文丢失。token_usage 不存在或重试仍失败时抛原异常。
+    """
+    try:
+        return _MESSAGE_ADAPTER.validate_python(data)
+    except ValidationError:
+        if isinstance(data, dict) and "token_usage" in data:
+            try:
+                return _MESSAGE_ADAPTER.validate_python({**data, "token_usage": None})
+            except ValidationError:
+                pass
+        raise  # 重新抛出原始异常
 
 
 def parts_from_dicts(dicts: list[dict]) -> list[Part]:

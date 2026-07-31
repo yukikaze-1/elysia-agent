@@ -3,19 +3,16 @@
 import logging
 
 from bson import ObjectId
-from pydantic import TypeAdapter
 
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
 from .base import Repository
+from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.types import MessageId, SessionId
 from core.schema.message import Message, MessageRole
 
 logger = logging.getLogger(__name__)
 
 COLLECTION = "message_archive"
-
-# TypeAdapter for Message union — cached at module level
-_message_adapter: TypeAdapter[Message] = TypeAdapter(Message)
 
 
 def _doc_to_message(doc: dict) -> Message:
@@ -31,7 +28,7 @@ def _doc_to_message(doc: dict) -> Message:
     Returns:
         转换后的 Message 对象。
     """
-    msg = _message_adapter.validate_python(doc)
+    msg = validate_message_legacy_compat(doc)
     if "_id" in doc:
         msg.metadata["_mongo_id"] = str(doc["_id"])
     return msg

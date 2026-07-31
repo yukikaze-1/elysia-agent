@@ -8,7 +8,7 @@
   - 事件/状态: EventData, StateChangeData, UserInputData 等 + AgentState / EventPriority
   - 记忆:      MemoryType, ExtractedMemory, CompareAction 等 + ReflectorActions
   - 角色:      CharacterState, StateHistoryEntry, CompressionTrigger, VersionEntry
-  - Token:     TokenUsageEntry, TokenUsageRecord, TokenUsageSummary
+  - Token:     TokenUsage, TokenUsageSummary
   - 情绪:      stt_emotion_emoji, stt_event_emoji
 """
 
@@ -92,7 +92,7 @@ from core.schema.character import CharacterState, StateHistoryEntry  # noqa: F40
 from core.schema.compression import CompressionTrigger, VersionEntry  # noqa: F401
 
 # ── Token ──
-from core.schema.token import TokenUsageEntry, TokenUsageRecord, TokenUsageSummary  # noqa: F401
+from core.schema.token import TokenUsage, TokenUsageSummary  # noqa: F401
 
 # ── 情绪 ──
 from core.schema.mood import stt_emotion_emoji, stt_event_emoji  # noqa: F401

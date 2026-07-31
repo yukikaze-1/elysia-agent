@@ -15,9 +15,9 @@ from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
-from pydantic import TypeAdapter
 from paths import ProjectPath
 
+from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.character import CharacterState
 from core.schema.memory_reflector import MemoryReflectorState
 from core.schema.message import (
@@ -39,9 +39,6 @@ if TYPE_CHECKING:
     from .memory_reflector import MemoryReflector
 
 logger = logging.getLogger(__name__)
-
-# TypeAdapter for Message union — cached at module level
-_message_adapter: TypeAdapter[Message] = TypeAdapter(Message)
 
 # 限制并发 MongoDB 写入，防止 fire-and-forget 任务无限堆积
 _archive_semaphore = asyncio.Semaphore(8)
@@ -310,7 +307,7 @@ class SessionMemory:
             with open(self._pending_file) as f:
                 doc = json.loads(f.readline())
             msgs_raw = doc.get("messages", [])
-            converted = [_message_adapter.validate_python(m) for m in msgs_raw]
+            converted = [validate_message_legacy_compat(m) for m in msgs_raw]
             if merge and self._messages:
                 # 合并：现有消息（from MongoDB）+ JSONL 消息，按 message_id 去重
                 existing_ids = {m.message_id for m in self._messages if m.message_id}

@@ -4,10 +4,9 @@ import logging
 from dataclasses import dataclass
 from typing import Sequence
 
-from pydantic import TypeAdapter
-
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.schema._utils import now_iso
+from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.character import CharacterState
 from core.schema.memory_reflector import MemoryReflectorState
 from core.schema.message import Message
@@ -17,9 +16,6 @@ from .base import Repository
 
 logger = logging.getLogger(__name__)
 COLLECTION = "sessions"
-
-# TypeAdapter for Message union — cached at module level
-_message_adapter: TypeAdapter[Message] = TypeAdapter(Message)
 
 
 @dataclass
@@ -147,7 +143,7 @@ class SessionRepository(Repository):
         msgs_raw = doc.get("messages", [])
         for m in msgs_raw:
             m.pop("_id", None)
-        messages = [_message_adapter.validate_python(m) for m in msgs_raw]
+        messages = [validate_message_legacy_compat(m) for m in msgs_raw]
         cs_data = doc.get("character_state", {})
         cs = CharacterState.model_validate(cs_data) if cs_data else CharacterState(session_id=session_id)
         rs_data = doc.get("reflector_state", {})
