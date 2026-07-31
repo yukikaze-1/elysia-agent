@@ -35,13 +35,12 @@
 
 验证 27 个 @property 存在且返回正确的内部对象，以及状态写方法。
 因实例化 Agent（不调 start()），标记 service。
-注：启动期创建的 4 个成员（token_tracker/prompt_recorder/response_recorder/started_at）
-在 start() 前不存在，需单独断言 AttributeError。
+注：token_tracker/prompt_recorder/response_recorder 在 __init__ 初始化为 None
+（start() 才创建），pre-start 断言 is None；started_at 仅 start() 赋值，断言 AttributeError。
 """
 
 import pytest
-from core.agent import Agent
-from core.agent._types import RunState
+from core.agent import Agent, RunState
 from core.config import AppConfig
 
 pytestmark = pytest.mark.service
@@ -90,10 +89,15 @@ class TestSubsystemProperties:
 
 
 class TestStartupProperties:
-    @pytest.mark.parametrize("pub,priv", STARTUP_PROPS)
-    def test_raises_before_start(self, agent, pub, priv):
+    @pytest.mark.parametrize("pub,priv", [p for p in STARTUP_PROPS if p[0] != "started_at"])
+    def test_none_before_start(self, agent, pub, priv):
+        # __init__ 中初始化为 None（start() 才创建），getter 返回 None 不抛异常
+        assert getattr(agent, pub) is None
+
+    def test_started_at_raises_before_start(self, agent):
+        # _started_at 仅在 start() 赋值，pre-start 访问抛 AttributeError
         with pytest.raises(AttributeError):
-            getattr(agent, pub)
+            agent.started_at
 
 
 class TestScalarProperties:
@@ -281,7 +285,7 @@ Expected: FAIL with `AttributeError: 'Agent' object has no attribute 'session'` 
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `conda run -n Elysia python -m pytest core/agent/tests/test_public_interface.py core/agent/tests/test_agent_methods.py -q --tb=short`
-Expected: PASS（`test_startup_*` 4 个验证 `AttributeError`，其余验证 `is` 同一对象；test_agent_methods 3 个 purge 测试通过）
+Expected: PASS（`test_none_before_start` 3 个验证 `is None`，`test_started_at_raises_before_start` 验证 `AttributeError`，其余验证 `is` 同一对象；test_agent_methods 3 个 purge 测试通过）
 
 - [ ] **Step 5: 提交**
 
@@ -375,10 +379,10 @@ git commit -m "refactor(input): 迁移 core/input 层 agent._xxx → 公开接�
 ### Task 3: 迁移 debug_routes（40 处点式 + 8 处 getattr）
 
 **Files:**
-- Modify: `core/input/debug_routes/archive.py`（19 处）
-- Modify: `core/input/debug_routes/ltm.py`（5 处 + 1 深读豁免）
+- Modify: `core/input/debug_routes/archive.py`（26 处）
+- Modify: `core/input/debug_routes/ltm.py`（6 处，其中 1 深读豁免）
 - Modify: `core/input/debug_routes/overview.py`（6 处）
-- Modify: `core/input/debug_routes/character.py`（2 点式 + 2 getattr + 6 深读豁免）
+- Modify: `core/input/debug_routes/character.py`（2 点式 + 2 getattr + 5 深读豁免）
 - Modify: `core/input/debug_routes/recording.py`（4 getattr）
 
 **Interfaces:**
@@ -544,7 +548,7 @@ git commit -m "docs: 标注 Agent 公开接口已实现 + 模块化评估接口�
 - ✅ 27 property（Task 1 实现清单，与 spec 接口清单逐一对齐：23 子系统 + 4 标量）
 - ✅ `request_shutdown`/`request_restart`（Task 1 + Task 2 server.py 写迁移）
 - ✅ `purge_message_from_session` 公开化（Task 1 + Task 3 archive.py）
-- ✅ core/input 点式浅读（Task 2：ws_handler 17 + server 3 + api_routes 3 = 23，server 另有 2 写迁移 + 3 深读豁免）
+- ✅ core/input 点式浅读（Task 2：ws_handler 14 浅读 + 3 深读豁免 + server 3 浅读 + 2 写迁移 + 3 深读豁免 + api_routes 3 浅读）
 - ✅ debug_routes 点式浅读 + 8 处 getattr + 深读豁免（Task 3：archive 19 + ltm 5(+1豁免) + overview 6 + character 2(+6豁免) + recording 4）
 - ✅ info.py 33 处浅读 + 深读豁免（Task 4）
 - ✅ 测试 marker `pytest.mark.service`（Task 1）
