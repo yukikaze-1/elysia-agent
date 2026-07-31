@@ -208,7 +208,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         from Module.output import WebSocketChannel
         if ws is not None:
             for ch in agent.output._channels:  # noqa: SLF001
-                if isinstance(ch, WebSocketChannel) and ch._ws is ws:
+                if isinstance(ch, WebSocketChannel) and ch._ws is ws:  # noqa: SLF001
                     try:
                         await ws.send_json({
                             "type": "switch_model_result",

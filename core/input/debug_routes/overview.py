@@ -43,7 +43,7 @@ async def db_status_handler(request: web.Request) -> web.Response:
         "ltm": {
             "count": ltm.count,
             "milvus_ok": await agent.memory_repo.health_check(),
-            "dirty_count": len(ltm._dirty_ids),
+            "dirty_count": len(ltm._dirty_ids),  # noqa: SLF001
         },
         "session": {
             "count": 1,  # 当前只有单个 session
