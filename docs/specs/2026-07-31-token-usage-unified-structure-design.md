@@ -136,8 +136,8 @@ def validate_message_legacy_compat(data):
 | `core/input/ws_handler.py` | `get_session_stats` 返回结构不变（`{total, by_model}`） |
 | `core/debug/info.py` | `current_turn` 改为 `[u.model_dump() for u in ...]`，新字段自动带出 |
 | `core/tools/runtime_config/plugin.py` | 只读 `session_total`/`per_model`，不动 |
-| `frontend/src/types/protocol.ts` | `TokenRound` → `input_tokens/output_tokens/cached_tokens?/reasoning_tokens?`；`timestamp?: number` → `string`（后端 model_dump 产 ISO 字符串）；删 `byModel` 双兼容（`TokenStats.by_model` 单一） |
-| `frontend/src/stores/chatStore.ts` | `sessionTokens` 内部类型 `byModel` → `by_model`（L41）；`updateTokenUsage` 的 `s.by_model || s.byModel` 双兼容改为只读 `s.by_model`（L203） |
+| `frontend/src/types/protocol.ts` | `TokenRound` → `input_tokens/output_tokens/cached_tokens?/reasoning_tokens?`；`timestamp?: number` → `string`（后端 model_dump 产 ISO 字符串）；`TokenStats.byModel?:` **改名单字段**为 `by_model: Record<string, number>`（后端唯一键，非"删兼容"） |
+| `frontend/src/stores/chatStore.ts` | `sessionTokens` 内部类型 `byModel` → `by_model`（L41）；`updateTokenUsage` 三处：**L202 as-cast 类型注解删 `byModel?:`**、**L203 赋值键 `byModel:` → `by_model:`**、双兼容 `s.by_model || s.byModel` → 只读 `s.by_model` |
 | `frontend/src/components/character/CharStatus.vue` | `st.byModel` → `st.by_model`（L17） |
 | `frontend/src/components/chat/TokenLabel.vue` | 显示 In/Out，有值时显示 cached/reasoning |
 | `frontend/src/debug/types.ts` | `TokenRoundItem` 同步 input/output |
@@ -147,10 +147,13 @@ def validate_message_legacy_compat(data):
 | `core/monitoring/README.md` | TokenUsageRecord/TokenUsage 引用（L48/L59）更新 |
 | `core/adapter/llm_adapter.py` | `stream_chat` docstring 的 usage 键契约（L102-103）更新为 input/output |
 | `Module/llm/protocol.py` | `stream_thinking` docstring 的 usage 键契约（L52）更新为 input/output |
+| `docs/data-structure-survey.md` | `TokenUsage` 记录（L42）与 usage dict 样例（L342-343）更新（非 README，readme-conventions 不强制，但避免文档与实现漂移） |
+| `docs/database-storage.md` | `token_usage` 集合字段表（L111-112）更新 |
+| `docs/frontend-api.md` | WS `token_usage` 消息样例（L84, L447-448）更新 |
 
 ### 6. 测试
 
-- `Module/llm/tests/` — `_extract_usage` 新字段提取（cached/reasoning，流式 + 非流式）；**details 缺失（Ollama 风格）→ None 不抛**；`test_llm.py:547,595` 的 last_usage 全 dict 相等断言（现期望 3 键 `{prompt_tokens,...}`）更新为 5 键 `{input_tokens,...}`（或省略 None 键的变体）
+- `Module/llm/tests/` — `_extract_usage` 新字段提取（cached/reasoning，流式 + 非流式）；**details 缺失（Ollama 风格）→ None 不抛**；`test_llm.py:547,595` 的 last_usage 全 dict 相等断言（现期望 3 键 `{prompt_tokens,...}`）更新为 5 键 `{input_tokens,...}`（或省略 None 键的变体）；**新增 M6 守卫不对称回归测试**：`_call_api` 流式路径（[openai_compat.py:200-210](Module/llm/openai_compat.py#L200)）构造「空 choices + usage chunk」chunk 序列，断言产出 usage 不抛 IndexError、且空 choices 无 content 不产出 delta——现 `TestUsageTracking` 仅覆盖 truthy 路径与非流式，该场景零覆盖，重构守卫或改顺序时无拦截
 - `core/monitoring/tests/test_token_tracker.py` — record/persist/flush 换新模型、字段改名
 - `core/storage/tests/test_token_repo.py` — legacy 文档跳过
 - `core/tests/`（或 session/message_repo 现有测试）— `validate_message_legacy_compat`：旧 token_usage 消息剥除后保留正文；无 token_usage 消息直接过；剥除后仍失败抛原异常
@@ -178,10 +181,13 @@ def validate_message_legacy_compat(data):
 ```bash
 # 权威模型唯一性：core/ 下无旧字段结构定义（LLM 层 openai_compat 的属性访问 u.prompt_tokens
 # 与 docstring 契约属于 Module/llm，不在本 grep 范围，且属性访问本身不可消除）
-grep -rn "prompt_tokens\|completion_tokens" core/ --include="*.py" | grep -v test | grep -v __pycache__
+# 例外：message_adapter.py 的 validate_message_legacy_compat docstring 逐字描述旧字段
+# （"prompt_tokens/completion_tokens 旧字段"），属本设计要求保留的说明性文本，予以排除。
+grep -rn "prompt_tokens\|completion_tokens" core/ --include="*.py" \
+  | grep -v test | grep -v __pycache__ | grep -v "message_adapter.py"
 # 预期空输出
 
-# 前端无 byModel 双兼容（已清空的判断）
+# 前端 byModel 字段全部改名 by_model（无残留）
 grep -rn "byModel" frontend/src/
 # 预期空输出
 
