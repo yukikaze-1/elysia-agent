@@ -18,9 +18,6 @@
 
 ## 功能改进
 
-- ✅ **项目路径统一管理** — 2026-07-31 已实现。新建顶层 `paths.py`（`ProjectPath(str, Enum)`，20 个枚举成员），项目根由 `ELYSIA_ROOT` 环境变量锚定。迁移 ~27 处硬编码路径（`__file__`-relative、cwd-relative、裸字符串），验证 3 项 grep check 全 clean。详见 `docs/superpowers/specs/2026-07-31-project-paths-unification-design.md`。
-
-- ✅ **CognitiveLoop: 工具执行后注入结构化决策提示** — 2026-07-31 已实现。`loop.py:801`: `messages.append({"role": "system", "content": "[TOOL_EXECUTED]"})` 在 `_execute_tool_round()` 返回后、`continue` 前。`[TOOL_EXECUTED]` 作为显式模式切换信号，帮助 LLM 从"工具执行模式"切回"对话模式"。改动量 1 行。
 - **README 截图**: 添加聊天界面 / debug 面板 / 启动流程截图，让新用户第一眼就知道项目长什么样
 - **Live2D 集成**: Cubism SDK v5 需 TypeScript + npm + bundler 构建，当前仅 SDK 文件到位、默认关闭
 - **poignancy 时间衰减**: rerank 含时效衰减但 poignancy 本身不变，长期不访问的记忆应逐渐降级
@@ -88,24 +85,6 @@
 | 低 | **`# type: ignore` + `Any` 类型清理** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（二/三梯队）。测试文件 IDE 类型错误已批量修复 ~155 处（2026-07-29/30：NewType 包装、ToolAdapter 替换、type: ignore 补充）。**`Any` 类型替换**：core/ 下 63 处→已消除 ~44 处（属性声明/task/emit 签名/mailbox/_process_events）。**剩余不可消除**：`dict[str, Any]` JSON 容器（~12 处）、流式协议 `**raw_params: Any`+`AsyncIterator[Any]`（5 处）、`Coroutine[Any, Any, Any]` 通用协程（3 处）、`_embed_task: Task[Any]`（2 处）。详见 `docs/completed.md` 2026-07-29 第一、三条 + 2026-07-30 第一条。 |
 
 
-## 来自 code-review-2026-07-22 的遗留问题
-
-已修复 26/30，4 项遗留（含 3 项 ✅ 已在更早版本解决、1 项 ⏭️ 跳过未修）。
-
-| 优先级 | 问题 | 说明 |
-|--------|------|------|
-| ~~HIGH~~ ✅ | **#9 管理端点无认证** | 2026-07-31 修复：`register_debug_routes()` 添加 auth middleware，所有 `/debug/api/*` 需 Bearer token（`/shutdown`、`/restart` 此前已有认证） |
-| ~~HIGH~~ ✅ | **#10 SSE CORS 通配符** | 此前已修复：`Access-Control-Allow-Origin: *` 显式设置 |
-| ~~MEDIUM~~ ✅ | **#11 /static/ 目录列表** | 此前已修复：3 处 `add_static()` 全部 `show_index=False` |
-| ~~MEDIUM~~ ✅ | **#12 用户消息明文日志** | 2026-07-31 修复：`ws_handler.py` 3 处 `logger.info`→`logger.debug` |
-| LOW ⏭️ | **#13 API Key 明文泄露** | `/api/providers` GET 返回 `api_key_env`（环境变量名）而非裸 key，约定安全。保留现状 |
-| ~~LOW~~ ✅ | **#25 私有 _infra 访问** | 2026-07-31 修复：TaskSystem 加 `constraints` property，`tools.py` 改为 `task_system.constraints` |
-| ~~LOW~~ ✅ | **#26 取消的 Task 永不等待** | 2026-07-31 修复：`IdleMonitor.stop()` + `TaskDebugAPI.stop()` 均 `try/await/CancelledError` |
-| ~~LOW~~ ✅ | **#5 认知任务引用被覆盖导致竞态** | 2026-07-31 修复：`_handle_system_tick` + `_handle_task_result` 在 `create_task` 前调用 `cancel_current()` |
-| ~~MEDIUM~~ ✅ | **#6 驱逐被注释，内存无界增长** | 此前已修复：旧方法已删除，`_evict_overflow()` 完整实现在 `insert()` 中调用 |
-| ~~MEDIUM~~ ✅ | **#7 提醒通知永不送达** | 2026-07-31 修复：提醒到期后通过 EventBus 投递 `TaskResultData` 事件，Agent 拾取后唤醒 CognitiveLoop 显示提醒 |
-| ~~LOW~~ ✅ | **#23 Fire-and-forget MongoDB 写入无限并发** | 2026-07-31 修复：`asyncio.Semaphore(8)` 限制并发归档写入 |
-
 ## 来自 code-review-report-2026-06-22 的遗留问题
 
 ### 需独立 spec
@@ -124,104 +103,6 @@
 | openai_tts test() 假阴性 | `tts/openai_tts.py:73` |
 | TTS 取消+HTTP 流清理交互可能泄漏 | `tts/gpt_sovits.py:134-150` |
 | 缺失测试覆盖 | DescribeImagePlugin (0)、CognitiveLoop 边界、OutputManager 错误隔离 |
-
-## ~~测试质量问题 (2026-07-30 review)~~ ✅ 已修复
-
-基于 `cfc48f6` 的全面审查，以下问题已确认并修复 (2026-07-30)。
-
-### 假测试（已全部修复）
-
-| 优先级 | 文件:行 | 问题 | 修复 |
-|--------|---------|------|------|
-| ~~高~~ ✅ | `core/tests/test_request_id.py`（原 `test_log_setup.py`） | **文件名完全误导** | 重命名为 `test_request_id.py`，docstring 更正为 "Tests for core/utils" |
-| ~~高~~ ✅ | `core/tests/test_phase2.py:63` | **`assert result in (True, False)` 恒真** | 拆为两个带 mock 的 unit 测试，验证 true/false 两条路径 |
-| ~~高~~ ✅ | `core/tests/test_phase2.py:361` | **`len(messages) > 1` 后门使断言无意义** | 删除 `or len(messages) > 1` 后门 |
-| ~~高~~ ✅ | `core/tests/test_phase3.py:210` | **零断言** | 补上 `assert loop._fsm.state == AgentState.INTERRUPTED` |
-| ~~高~~ ✅ | `core/tests/test_phase3.py:239-285` | **错误处理逻辑被本地重新实现** | 改为调用真实的 `_execute_tools_directly()`，验证 `ToolResult.fail` |
-| ~~高~~ ✅ | `core/tests/test_phase3.py:651-662` | **try/except RuntimeError 吞掉唯一可能的失败** | 改为 `@pytest.mark.asyncio` + `await engine.push_idle_expression()` |
-| ~~高~~ ✅ | `core/tests/test_phase3.py:972` | **只验证"没崩溃"** | 使用 `capsys` 捕获 stdout，验证 `captured.out.count("hello") == 1` |
-| ~~中~~ ✅ | `core/memory/tests/test_consolidator.py:60` | **逗号尾缀测试没有逗号** | 输入改为 `'[{...},]'`（带尾缀逗号），验证返回 `[]` |
-| ~~中~~ ✅ | `core/memory/tests/test_long_term.py:44` | **假重连测试** | 合并为 `test_delegates_to_repo_when_connected`，正确描述行为 |
-| ~~高~~ ✅ | `core/adapter/tests/test_message_builder.py:147` | **用错 dict key** | `"text"`→`"content"`, `"image_url"`→`"src"` |
-| ~~高~~ ✅ | `core/task/tests/test_task_scheduler.py:656` | **回调从未被验证** | 修正测试注释，诚实说明 mock LLM 不产生 tool_calls 时回调不被触发 |
-
-### 弱断言和逻辑问题（已全部修复）
-
-| 优先级 | 文件:行 | 问题 | 修复 |
-|--------|---------|------|------|
-| ~~中~~ ✅ | `core/tests/test_phase3.py:378` | **`in ("idle", "thinking")` 应改为 `== "idle"`** | 改为 `== AgentState.IDLE` |
-| ~~低~~ ✅ | `core/memory/tests/test_consolidator.py:55` | **`isinstance(items, list)` 恒真** | 改为 `assert items == []` |
-| ~~低~~ ✅ | `core/tests/test_clean_db.py:168` | **`>= 4` 应改为 `== 5`** | 改为 `== 5` |
-| ~~低~~ ✅ | `core/tests/test_clean_db.py:19` | **Mock 返回 int 而非 DeleteResult** | 驳回 — `DocumentDB.delete_many` 返回类型就是 `int` |
-| ~~中~~ ✅ | `core/monitoring/tests/test_token_tracker.py:55` | **多个测试污染项目数据目录** | fixture 中 `_pending_file` 指向 tempfile |
-| ~~低~~ ✅ | `core/task/tests/test_task_scheduler.py:551,611` | **`_completed_count` 死代码** | 删除两处 `sched._completed_count = 5` |
-
-### 重复/低价值测试（已清理）
-
-| 优先级 | 文件 | 问题 | 修复 |
-|--------|------|------|------|
-| ~~低~~ ✅ | `core/task/tests/test_task_model.py:45` | **`test_can_retry_wrong_status` 被 `:117` 完全覆盖** | 删除冗余测试 |
-| ~~低~~ ✅ | `core/memory/tests/test_long_term.py:146,171` | **text_fallback 两个测试几乎相同** | 合并为 `test_text_fallback_when_no_milvus_id` |
-| ~~低~~ ✅ | `core/input/tests/test_server.py:65-92` | **shutdown/restart 只设状态变量，无 HTTP 测试** | 改为验证 route 已注册（集成测试已有 HTTP 覆盖） |
-
-> 保留不动的低价值测试：`test_task_model.py` dataclass 默认值/字段赋值测试、`test_session.py` 字符串常量测试（无害 smoke test）。
-
-### 覆盖率缺口
-
-| 严重性 | 路径 | 影响 | 状态 |
-|--------|------|------|------|
-| ~~关键~~ ✅ | `_flush_after_response` 完全未测 | 关闭时内存持久化的关键路径 | 2026-07-30 修复：5 个测试覆盖空/已完成/正常/超时/异常 |
-| ~~关键~~ ✅ | FSM 10 条有效转换未测 | EXECUTING/IDLE_BACKGROUND_TASK/INTERRUPTED 相关路径 | 2026-07-30 修复：新增 10 条 transition + 3 条 interrupt 测试 |
-| ~~高~~ ✅ | `_prune_tasks()` 完全未测 | 任务周期性清理 | 2026-07-30 修复：5 个测试覆盖删除/保留/父子关系 |
-| 高 | `dispatch_background()` 完全未测 | TaskScheduler 后台任务派发。**死代码**（唯一引用是注释说"不要用"），不补测试 |
-| 高 | `execute_stream()` 完全未测 | ToolAdapter 流式执行。**一行 pass-through 委托**，无独立逻辑，不补测试 |
-| ~~中~~ ✅ | `fake_llm.py` 逐字符流式不符合真实 LLM | 第二轮已修复：正则分词逐 token yield + 故障注入 |
-| 中 | EventBus drain() 与认知循环中断竞态 | 中断时 TASK_RESULT 事件丢失。注：`drain()` 是**死代码**，从未被调用，不补测试 |
-| ~~中~~ ✅ | `agent/tests/conftest.py` MagicMock 过于宽松 | `_fsm.state = MagicMock()` 是地雷 | 2026-07-30 修复：改为 `AgentState.IDLE` 真实枚举值，16 个受影响测试全部通过 |
-
-## ~~测试质量问题 — 第二轮 (2026-07-30, f413a9f)~~ ✅ 已修复
-
-基于 `f413a9f` 提交的集成测试 & E2E 审查，以下问题已确认并修复 (2026-07-30)。
-
-### 假测试（遗留 — 已修复）
-
-| 优先级 | 文件:行 | 问题 | 修复 |
-|--------|---------|------|------|
-| ~~高~~ ✅ | `core/tests/test_phase2.py:209` | **`assert result in (True, False)` 恒真（遗留）** | mock `MemoryRepository`，验证 true/false 两条路径 |
-| ~~中~~ ✅ | `core/tests/test_phase2.py:194` | **`test_insert_stores_milvus_pk` 空操作** | 重命名为 `test_insert_assigns_id`，加 `assert id.startswith("msg_")` |
-| ~~中~~ ✅ | `core/memory/tests/test_consolidator.py:223` | **仅防崩溃测试** | `isinstance`→`assert items == []`（FakeLLMBackend 无提取） |
-| ~~低~~ ✅ | `core/adapter/tests/test_message_builder.py:126` | **仅防崩溃测试** | 加 `assert "[已调用: test]" in assistant[0]["content"]` |
-| ~~低~~ ✅ | `core/memory/tests/test_consolidator.py:156,233` | **`isinstance(items, list)` 恒真（遗留）** | :156→`assert len(items) >= 2`，:233→`assert items == []` |
-
-### 标记/风格不一致（已修复）
-
-| 优先级 | 文件:行 | 问题 | 修复 |
-|--------|---------|------|------|
-| ~~中~~ ✅ | `core/input/tests/test_server.py:150,493` | **`@pytest.mark.service` 却调用 `agent.start()`** | → `@pytest.mark.slow` |
-| ~~中~~ ✅ | `core/tests/test_phase3.py:1030` | **`@pytest.mark.slow` 但不调用 `agent.start()`** | → `@pytest.mark.service` |
-| ~~低~~ ✅ | `core/tests/test_phase3.py:389,433` | **字符串 `"idle"` vs `AgentState.IDLE`** | 两处改为 `AgentState.IDLE` |
-
-### E2E/集成测试覆盖缺口（fake_llm 已改进）
-
-| 优先级 | 问题 | 状态 |
-|--------|------|------|
-| ~~高~~ ✅ | **fake_llm.py 逐字符流式不符合真实 LLM** | `chat_stream` 改为正则分词逐 token yield |
-| ~~中~~ ✅ | **fake_llm.py 无故障注入** | 新增 `fault` 参数：http_429/http_503/timeout/disconnect |
-| 高 | **E2E 测试在无 API_KEY 时静默跳过** | 17 个测试依赖真实 LLM，需 CI 环境配置 KEY。暂无修复（需基础设施配合） |
-
-### 重复/冗余（已修复）
-
-| 优先级 | 文件 | 问题 | 修复 |
-|--------|------|------|------|
-| ~~低~~ ✅ | `core/tests/test_phase2.py:1012,1039,1090` | 三个驱逐测试 | 合并为 `@pytest.mark.parametrize` 参数化测试 |
-| ~~低~~ ✅ | `core/input/tests/test_server.py:44-56` | 路由验证 3 处复制 | 提取 `_make_app()` + `_find_routes_by_name()` 共享 helper |
-
-### tempfile 泄漏（已修复）
-
-| 文件:行 | 修复 |
-|---------|------|
-| `core/monitoring/tests/test_token_tracker.py:52` | `tempfile.mkdtemp()` → pytest `tmp_path`（自动清理） |
-| `core/task/tests/test_task_scheduler.py:542,572,602` | `Path(cp).unlink()` → `shutil.rmtree(tmpdir, ignore_errors=True)` |
 
 ## 测试补充
 

@@ -20,6 +20,12 @@
 
 `make test-quick`：1817 passed，无回归。
 
+### 2026-07-31: CognitiveLoop [TOOL_EXECUTED] 模式切换信号
+
+**背景**：LLM 执行完工具调用后缺少显式信号来切换上下文模式，部分模型在工具结果返回后仍停留在"工具执行模式"。
+
+**修复**：`loop.py:801` — 在 `_execute_tool_round()` 返回后、`continue` 前注入 `messages.append({"role": "system", "content": "[TOOL_EXECUTED]"})`。`[TOOL_EXECUTED]` 作为显式模式切换信号，帮助 LLM 从"工具执行模式"切回"对话模式"。改动量 1 行。
+
 ### 2026-07-31: 文档审查修复（25 项）
 
 **背景**：对 `docs/architecture.md` 及其他 9 份文档与代码的交叉审查，发现 ~30 处不一致。修复了其中 25 项直接影响开发体验的问题。
