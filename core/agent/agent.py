@@ -325,7 +325,7 @@ class Agent(AgentLifecycle, AgentServer):
             mailbox=mailbox,
         )
 
-    def _purge_message_from_session(self, msg_id: str) -> int:
+    def purge_message_from_session(self, msg_id: str) -> int:
         """从当前 session 中移除匹配 message_id 的消息。
 
         Archive 和 session 是独立存储，只删 archive 不改 session 会导致
@@ -539,3 +539,151 @@ class Agent(AgentLifecycle, AgentServer):
         await self._output.notify_state(state)
 
     # Tool registration is done via ToolAdapter.start() in start()
+
+    # ---- 公开只读接口（薄 getter 直通）----
+    # 27 个 @property：通往 Agent 组合根持有的子系统，可写性由子系统 API 自管。
+
+    @property
+    def session(self):
+        """当前会话内存。"""
+        return self._session
+
+    @property
+    def long_term(self):
+        """长期记忆（Milvus 向量库）。"""
+        return self._long_term
+
+    @property
+    def message_repo(self):
+        """消息归档仓库。"""
+        return self._message_repo
+
+    @property
+    def session_repo(self):
+        """会话仓库。"""
+        return self._session_repo
+
+    @property
+    def memory_repo(self):
+        """长期记忆仓库。"""
+        return self._memory_repo
+
+    @property
+    def token_repo(self):
+        """token 用量仓库。"""
+        return self._token_repo
+
+    @property
+    def tool_adapter(self):
+        """工具子系统适配器。"""
+        return self._tool_adapter
+
+    @property
+    def output(self):
+        """多通道输出管理器。"""
+        return self._output
+
+    @property
+    def llm(self):
+        """LLM 适配器。"""
+        return self._llm
+
+    @property
+    def tts(self):
+        """TTS 流管理器（启动后才有，可能为 None）。"""
+        return self._tts
+
+    @property
+    def config(self):
+        """应用配置。"""
+        return self._config
+
+    @property
+    def bus(self):
+        """事件总线。"""
+        return self._bus
+
+    @property
+    def cognitive(self):
+        """认知循环。"""
+        return self._cognitive
+
+    @property
+    def idle(self):
+        """空闲监控。"""
+        return self._idle
+
+    @property
+    def scheduler(self):
+        """任务调度器。"""
+        return self._scheduler
+
+    @property
+    def consolidator(self):
+        """记忆整合器。"""
+        return self._consolidator
+
+    @property
+    def memory_reflector(self):
+        """长期记忆反思。"""
+        return self._memory_reflector
+
+    @property
+    def character_engine(self):
+        """角色引擎。"""
+        return self._character_engine
+
+    @property
+    def character_reflector(self):
+        """角色反思器。"""
+        return self._character_reflector
+
+    @property
+    def character(self):
+        """角色配置（L1 Core + config）。"""
+        return self._character
+
+    @property
+    def token_tracker(self):
+        """token 统计（启动时创建）。"""
+        return self._token_tracker
+
+    @property
+    def prompt_recorder(self):
+        """LLM prompt 记录器（启动时创建）。"""
+        return self._prompt_recorder
+
+    @property
+    def response_recorder(self):
+        """LLM 响应记录器（启动时创建）。"""
+        return self._response_recorder
+
+    @property
+    def user_name(self):
+        """注入的用户名。"""
+        return self._user_name
+
+    @property
+    def state(self):
+        """Agent 运行状态（只读）。"""
+        return self._state
+
+    @property
+    def started_at(self):
+        """启动时间戳（启动时创建）。"""
+        return self._started_at
+
+    @property
+    def stt_ok(self):
+        """STT 可用标志。"""
+        return self._stt_ok
+
+    # ---- 状态写方法（引导主循环退出，不做清理）----
+
+    def request_shutdown(self) -> None:
+        """请求关机——设 _state = STOPPING，引导主循环退出。"""
+        self._state = RunState.STOPPING
+
+    def request_restart(self) -> None:
+        """请求重启——设 _state = RESTARTING，引导主循环退出。"""
+        self._state = RunState.RESTARTING
