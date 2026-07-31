@@ -360,6 +360,20 @@ SPEAKING    → IDLE | EXECUTING | THINKING | INTERRUPTED | IDLE_BACKGROUND_TASK
 INTERRUPTED → IDLE
 ```
 
+### 4.2.1 Agent 公开接口（组合根访问路径）
+
+`Agent` 是组合根（composition root），持有 22+ 子系统。除 `agent.status` / `agent.phases` 外，通过 **27 个同名 `@property`** 公开子系统访问路径——`@property` 只是薄 getter（`return self._xxx`），可写性由子系统自身 API 自管。设计详见 [spec](../superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+
+**子系统对象（23 个）**：`agent.session` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.tts` / `agent.config` / `agent.bus` / `agent.cognitive` / `agent.idle` / `agent.scheduler` / `agent.consolidator` / `agent.memory_reflector` / `agent.character_engine` / `agent.character_reflector` / `agent.character` / `agent.token_tracker` / `agent.prompt_recorder` / `agent.response_recorder`
+
+**标量（4 个）**：`agent.user_name` / `agent.state` / `agent.started_at` / `agent.stt_ok`
+
+**状态写方法（2 个）**：`agent.request_shutdown()` / `agent.request_restart()` — 设 `_state` 信号（STOPPING / RESTARTING）引导主循环退出，不做清理（`agent.stop()` 才做）。
+
+**公开方法**：`agent.purge_message_from_session(msg_id)` — 从当前 session 移除匹配消息，archive 删除时同步清理。
+
+**约定**：跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省（`agent.<sub>._<attr>`）用 `# noqa: SLF001` 显式豁免。
+
 ### 4.3 认知循环 (CognitiveLoop)
 
 ReAct 调度器，采用 mixin 模式 `CognitiveLoop(CognitiveTools)`。通过 `agent.phases`（`CognitivePhaseController`）驱动状态转换，`_think_loop()` 从 378 行提取为 4 个独立方法 + ~30 行主循环，每步设置 `self._phase`（TurnPhase）供 debug 面板观测内部进度：
@@ -981,7 +995,7 @@ Agent/
 │
 ├── core/                    # L1 认知控制 + L2 记忆
 │   ├── agent/                #   Agent 组装包 (agent + lifecycle + server + _types + 4 lifecycle mixins)
-│   │   ├── agent.py          #     Agent.__init__ + 事件处理 + process_message
+│   │   ├── agent.py          #     Agent.__init__ + 事件处理 + process_message + 27 公开 @property
 │   │   ├── lifecycle.py      #     AgentLifecycle: start/stop 编排 + _STARTUP_STEPS / _SHUTDOWN_STEPS
 │   │   ├── server.py         #     AgentServer: run_server/repl + provider 切换
 │   │   ├── _types.py         #     RunState + 辅助类

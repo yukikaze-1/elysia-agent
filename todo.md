@@ -43,7 +43,7 @@
 - `Module._common → Module.config → Module.llm/stt/tts → Module._common` — [preflight.py](Module/config/preflight.py) 函数内懒加载后端
 - `Module.system_prompt → core.adapter → core.memory/personality/storage → Module.system_prompt` — system_prompt 的 MessageBuilder 懒加载已废弃
 
-### 接口暴露不足：跨模块使用依赖内部属性（未修）
+### 接口暴露不足：跨模块使用依赖内部属性（已修）
 
 **核心发现**：`Agent` 只暴露 1 个公开方法（`process_message`）+ `agent.status`（`AgentStatus` 状态查询，这部分做对了）。但 session/repo/tool_adapter/output/config 等子系统**没有任何公开 getter**，下游层只能 `agent._xxx` 硬取 —— `_` 前缀语义（"请勿触碰"）与真实使用契约矛盾。
 

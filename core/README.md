@@ -76,11 +76,13 @@ Agent.start()
 
 ### 核心组件详解（9 个）
 
-#### Agent (`agent/` package, 4 files)
+#### Agent (`agent/` package, 9 files)
 
 组装入口，持有所有子系统的引用。使用双 mixin 模式：`Agent(AgentLifecycle, AgentServer)`。`__init__` 创建 L0/L1/L2 全部组件；`AgentLifecycle.start()` 按序连接数据库、启动后台任务、加载插件；`AgentLifecycle.stop()` 按序 flush → cancel → close → save。暴露 `process_message()` 接收用户输入（支持纯文本和多模态 content 数组），`AgentServer.run_server()` 启动 WebSocket 服务，`AgentServer.run_repl()` 启动交互式命令行。管理 `RunState` 生命周期（STOPPED / RUNNING / STOPPING / RESTARTING），支持 `/restart` 热重载配置。共享类型（`RunState`, `_PendingMessage`, `_BackgroundTaskEntry`）在 `_types.py` 中。
 
-关键方法：`start()`, `stop()`, `process_message()`, `run_server()`, `run_repl()`, `switch_llm()`, `switch_tts()`
+**公开接口**：作为组合根，通过 27 个同名 `@property` 公开子系统访问路径——`agent.session` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.tts` / `agent.config` / `agent.bus` / `agent.cognitive` / `agent.idle` / `agent.scheduler` / `agent.consolidator` / `agent.memory_reflector` / `agent.character_engine` / `agent.character_reflector` / `agent.character` / `agent.token_tracker` / `agent.prompt_recorder` / `agent.response_recorder` / `agent.user_name` / `agent.state` / `agent.started_at` / `agent.stt_ok`。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）。公开方法 `agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口（debug 深读用 `# noqa: SLF001` 豁免）。设计文档：[spec](../docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+
+关键方法：`start()`, `stop()`, `process_message()`, `run_server()`, `run_repl()`, `switch_llm()`, `switch_tts()`, `request_shutdown()`, `request_restart()`, `purge_message_from_session()`
 
 #### AgentStatus + CognitivePhaseController (`status/` package)
 
@@ -253,8 +255,8 @@ Agent 生命周期中的关键扩展点：
 
 | 文件 | 行数 | 类型 |
 |------|------|------|
-| `agent/agent.py` | 539 | 核心组件 |
-| `agent/agent_fsm.py` | 83 | 核心组件 |
+| `agent/agent.py` | 689 | 核心组件 |
+| `status/agent_fsm.py` | 83 | 核心组件 |
 | `monitoring/event_bus.py` | 76 | 核心组件 |
 | `cognitive/loop.py` | 999 | 核心组件 |
 | `personality/engine.py` | 421 | 核心组件 |
