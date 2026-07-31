@@ -1072,8 +1072,34 @@ async def test_long_term_memory_sync_handles_milvus_down():
     ltm._repo = None  # Milvus 不可用
 
     await ltm.insert("离线数据")
-    synced = await ltm._sync_dirty_entries()
+    synced = await ltm.sync_dirty_entries()
     assert synced == 0
+
+
+@pytest.mark.asyncio
+async def test_long_term_memory_sync_on_recovery():
+    """Milvus 恢复后 sync 应把脏条目补写并建立 _milvus_pk。"""
+    from core.memory.long_term import LongTermMemory
+    from unittest.mock import AsyncMock
+
+    # 第一阶段：Milvus 不可用 → 条目标记 dirty
+    ltm = LongTermMemory()
+    ltm._repo = None
+    await ltm.insert("离线记忆")
+    assert len(ltm._dirty_ids) >= 1
+    entry = ltm._entries[-1]
+    assert entry._milvus_pk is None
+
+    # 第二阶段：Milvus 恢复 → sync 补写
+    fake_repo = AsyncMock()
+    fake_repo.insert.return_value = [42]
+    ltm._repo = fake_repo
+    synced = await ltm.sync_dirty_entries()
+
+    assert synced == 1
+    assert entry._milvus_pk == 42
+    assert len(ltm._dirty_ids) == 0
+    fake_repo.insert.assert_awaited_once()
 
 
 @pytest.mark.unit

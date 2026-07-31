@@ -79,7 +79,12 @@ class _LifecyclePersistence:
         return mongo_ok, milvus_ok
 
     async def _db_health_loop(self) -> None:
-        """每 120s 检查数据库连接，失败时尝试自动重连。"""
+        """每 120s 检查数据库连接，失败时尝试自动重连。
+
+        Milvus 从故障恢复时（False→True）同步脏条目——Milvus 写入失败的记忆
+        此前仅在内存（_milvus_pk=None，重启后丢失），恢复后补写建立向量索引。
+        """
+        prev_milvus_ok: bool | None = None
         while True:
             await asyncio.sleep(120)
             try:
@@ -87,6 +92,15 @@ class _LifecyclePersistence:
                 milvus_ok = await self._long_term.health_check()
                 self._mongo_available = mongo_ok
                 self._milvus_available = milvus_ok
+                # Milvus 恢复边界触发脏条目同步
+                if prev_milvus_ok is not None and milvus_ok and not prev_milvus_ok:
+                    try:
+                        synced = await self._long_term.sync_dirty_entries()
+                        if synced:
+                            logger.info("Milvus 恢复，同步 %d 条脏记忆", synced)
+                    except Exception:
+                        logger.warning("Milvus 恢复后同步脏条目失败", exc_info=True)
+                prev_milvus_ok = milvus_ok
                 # 检查其他 repo 连接状态（不阻塞，仅日志）
                 if not await self._message_repo.health_check():
                     logger.debug("MessageRepository 离线")

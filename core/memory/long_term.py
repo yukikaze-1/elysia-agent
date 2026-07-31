@@ -279,8 +279,11 @@ class LongTermMemory:
             self._entries = [e for e in self._entries if e.id != entry_id]
             self._dirty_ids.discard(entry_id)
 
-    async def _sync_dirty_entries(self) -> int:
+    async def sync_dirty_entries(self) -> int:
         """尝试将脏条目同步到 Milvus。
+
+        由 _db_health_loop 在 Milvus 从故障恢复时调用——Milvus 写入失败的记忆
+        此前仅在内存（_milvus_pk=None，重启后丢失），恢复后补写并建立向量索引。
 
         Returns:
             成功同步的条目数。
@@ -345,7 +348,7 @@ class LongTermMemory:
                         old_pk = e._milvus_pk
                         emb = await self._embedding_provider.embed(new_text)
                         if not emb:
-                            # embedding 后端不可用——标记脏，等 _sync_dirty_entries 重试，
+                            # embedding 后端不可用——标记脏，等 sync_dirty_entries 重试，
                             # 否则旧向量与新文本绑定参与 rerank、重启后旧文本静默回滚
                             self._dirty_ids.add(entry_id)
                         else:

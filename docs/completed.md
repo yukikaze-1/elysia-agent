@@ -95,7 +95,12 @@
 - 实测验证 `<#0.5#>` 内小数点已被 `_is_dot_boundary` 数字保护，原剥离（ec02ec34 的 workaround）是过度防御，可安全去掉
 - 补 4 个测试：完整标签保留/剥离、标签不破坏分句、整数标签、尾部残缺剥离
 
-**累计修复 41/44**。遗留 3 项：M2（需设计）/M19/M20（随 TaskSystem 接入），记录在 todo.md。`make test-quick`：1817 passed。
+**M2 脏条目同步修复（2026-07-31）：**
+- `_sync_dirty_entries` 重命名为公开 `sync_dirty_entries()`（跨类真实调用点）
+- 接线到 `_db_health_loop` 的 Milvus 恢复边界（False→True）——Milvus 写入失败的记忆在恢复后补写建立向量索引，不再重启丢失
+- 补 1 个恢复测试（repo 恢复 → 脏条目补写 + `_milvus_pk` 建立）
+
+**累计修复 42/44**。遗留 2 项：M19/M20（随 TaskSystem 接入），记录在 todo.md。`make test-quick`：1818 passed。
 
 ### 2026-07-31: CognitiveLoop [TOOL_EXECUTED] 模式切换信号
 
