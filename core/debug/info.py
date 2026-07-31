@@ -152,26 +152,26 @@ async def collect(agent: "Agent") -> DebugInfo:
     # ---- System ----
     info.fsm_state = agent.status.current_name()
     info.fsm_previous = agent.status.previous_name()
-    phase = agent._cognitive._phase
+    phase = agent.cognitive._phase  # noqa: SLF001
     info.turn_phase = phase.value if phase else None
-    ct = agent._cognitive._current_task
+    ct = agent.cognitive._current_task  # noqa: SLF001
     info.processing = ct is not None and not ct.done()
     # uptime
-    info.uptime_seconds = time.monotonic() - agent._started_at
+    info.uptime_seconds = time.monotonic() - agent.started_at
 
     # ---- IdleMonitor ----
-    im = agent._idle
+    im = agent.idle
     info.proactive_enabled = im._character.proactive.enabled
     info.proactive_interval = im._character.proactive.interval
     if im._last_interaction:
         info.last_interaction_ago = time.monotonic() - im._last_interaction
 
     # ---- Session ----
-    msgs = agent._session.messages_for_client()
+    msgs = agent.session.messages_for_client()
     info.session_messages = len(msgs)
     # archive count — 直调 message_repo
     try:
-        info.archive_msg_count = await agent._message_repo.count()
+        info.archive_msg_count = await agent.message_repo.count()
     except Exception:
         pass
     info.session_recent = [
@@ -183,10 +183,10 @@ async def collect(agent: "Agent") -> DebugInfo:
         }
         for m in msgs[-5:]
     ]
-    info.character_state_raw = agent._session.character_state.model_dump(mode="json")
+    info.character_state_raw = agent.session.character_state.model_dump(mode="json")
 
     # ---- Long-term memory ----
-    info.lt_count = agent._long_term.count
+    info.lt_count = agent.long_term.count
     info.lt_recent = [
         {
             "id": e.id,
@@ -195,30 +195,30 @@ async def collect(agent: "Agent") -> DebugInfo:
             "poignancy": e.poignancy,
             "metadata": e.metadata,
         }
-        for e in agent._long_term._entries[-5:]
+        for e in agent.long_term._entries[-5:]  # noqa: SLF001
     ]
-    repo = agent._long_term._repo
-    info.milvus_ok = await agent._memory_repo.health_check()
-    info.embedding_ok = agent._long_term._embedding_provider._backend is not None
-    info.mongodb_ok = await agent._session_repo.health_check()
+    repo = agent.long_term._repo  # noqa: SLF001
+    info.milvus_ok = await agent.memory_repo.health_check()
+    info.embedding_ok = agent.long_term._embedding_provider._backend is not None  # noqa: SLF001
+    info.mongodb_ok = await agent.session_repo.health_check()
 
     # ---- Tools ----
-    tm = agent._tool_adapter._manager
+    tm = agent.tool_adapter._manager  # noqa: SLF001
     info.currently_executing = list(tm.executing_now)
     info.tools = tm.plugin_list
     info.tool_history = list(tm.history)[-5:]
 
     # ---- Consolidation ----
-    info.consolidation_history = list(agent._consolidator._history)[-5:]
+    info.consolidation_history = list(agent.consolidator._history)[-5:]  # noqa: SLF001
 
     # ---- Character ----
-    info.character_name = agent._character.name
-    bp = agent._character.base_personality
+    info.character_name = agent.character.name
+    bp = agent.character.base_personality
     info.base_personality_summary = bp[:120] + "..." if len(bp) > 120 else bp
 
     # ---- CharacterEngine ----
     # ---- CharacterEngine ----
-    pe = agent._character_engine
+    pe = agent.character_engine
     info.character_engine_exists = True
     c1 = pe.render_c1()
     info.self_l2 = c1.self_personality[:200] if c1.self_personality else "（未演化）"
@@ -230,25 +230,25 @@ async def collect(agent: "Agent") -> DebugInfo:
     # ---- L2/C6 Version History ----
     try:
         info.l2_version_count = 0
-        engine = getattr(agent, "_character_engine", None)
+        engine = getattr(agent, "character_engine", None)
         if engine and getattr(engine, "_version_repo", None):
-            sid = agent._session.session_id
-            info.l2_version_count = await engine._version_repo.count_versions(
+            sid = agent.session.session_id
+            info.l2_version_count = await engine._version_repo.count_versions(  # noqa: SLF001
                 sid, content_type="l2")
     except Exception:
         info.l2_version_count = 0
 
     try:
         info.c6_version_count = 0
-        engine = getattr(agent, "_character_engine", None)
+        engine = getattr(agent, "character_engine", None)
         if engine and getattr(engine, "_version_repo", None):
-            info.c6_version_count = await engine._version_repo.count_versions(
-                agent._session.session_id, content_type="c6")
+            info.c6_version_count = await engine._version_repo.count_versions(  # noqa: SLF001
+                agent.session.session_id, content_type="c6")
     except Exception:
         info.c6_version_count = 0
 
     # ---- Character Reflector ----
-    ref = agent._character_reflector
+    ref = agent.character_reflector
     info.reflector_exists = True
     info.reflector_buffer_size = ref.buffer_size
     info.reflector_last_reflection_at = ref.last_reflection_at
@@ -263,18 +263,18 @@ async def collect(agent: "Agent") -> DebugInfo:
     info.self_perception_history = list(history[-5:])
 
     # ---- Connections ----
-    info.tts_ok = agent._tts is not None
-    info.stt_ok = agent._stt_ok
+    info.tts_ok = agent.tts is not None
+    info.stt_ok = agent.stt_ok
     info.ws_clients = sum(
-        1 for ch in agent._output._channels
+        1 for ch in agent.output._channels  # noqa: SLF001
         if type(ch).__name__ == "WebSocketChannel"
     )
 
     # ---- LLM ----
-    info.llm_model = agent._llm.model or "?"
+    info.llm_model = agent.llm.model or "?"
 
     # ---- Latency ----
-    info.timing_history = list(agent._cognitive._timing_history)
+    info.timing_history = list(agent.cognitive._timing_history)  # noqa: SLF001
     if info.timing_history:
         totals = sorted(h["total_ms"] for h in info.timing_history)
         n = len(totals)
@@ -289,7 +289,7 @@ async def collect(agent: "Agent") -> DebugInfo:
 
     # ---- Scheduler ----
     try:
-        sched = agent._scheduler
+        sched = agent.scheduler
         info.scheduler_pending = sched.pending_count
         info.scheduler_running = sched.running_count
         info.scheduler_total = sched.total_count
@@ -302,23 +302,23 @@ async def collect(agent: "Agent") -> DebugInfo:
         pass
 
     # ---- MemoryReflector ----
-    mr = agent._memory_reflector
+    mr = agent.memory_reflector
     info.mreflector_exists = True
-    info.mreflector_round_count = mr._round_count
+    info.mreflector_round_count = mr._round_count  # noqa: SLF001
     info.mreflector_round_threshold = mr.ROUND_THRESHOLD
-    info.mreflector_new_memory_count = mr._new_memory_count
+    info.mreflector_new_memory_count = mr._new_memory_count  # noqa: SLF001
     info.mreflector_memory_threshold = mr.NEW_MEMORY_THRESHOLD
-    info.mreflector_locked = mr._lock.locked()
-    info.mreflector_last_summary = dict(mr._last_summary) if mr._last_summary else {}
+    info.mreflector_locked = mr._lock.locked()  # noqa: SLF001
+    info.mreflector_last_summary = dict(mr._last_summary) if mr._last_summary else {}  # noqa: SLF001
 
     # ---- Consolidator buffer ----
-    cons = agent._consolidator
+    cons = agent.consolidator
     info.consolidator_buffer_size = len(cons._buffer)
     info.consolidator_threshold = cons._threshold
 
     # ---- Mood (L4 Emotion) ----
     try:
-        info.mood = agent._session.character_state.mood
+        info.mood = agent.session.character_state.mood
     except Exception:
         pass
 
@@ -333,7 +333,7 @@ async def collect(agent: "Agent") -> DebugInfo:
     }
 
     # ---- Token 统计 ----
-    tracker = agent._token_tracker
+    tracker = agent.token_tracker
     if tracker is not None:
         info.token_stats = {
             "session_total": tracker.session_total,
@@ -351,12 +351,12 @@ async def collect(agent: "Agent") -> DebugInfo:
         info.pending_session_exists = os.path.exists(str(ProjectPath.SESSION_PENDING_CHECK.resolve()))
 
     # ---- Prompt 记录 ----
-    recorder = agent._prompt_recorder
+    recorder = agent.prompt_recorder
     if recorder is not None:
         info.prompt_summary = recorder.list_summaries()
 
     # ---- Response 记录 ----
-    resp_recorder = agent._response_recorder
+    resp_recorder = agent.response_recorder
     if resp_recorder is not None:
         info.response_summary = resp_recorder.list_summaries()
 
