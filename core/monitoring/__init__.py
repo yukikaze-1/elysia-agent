@@ -1,6 +1,6 @@
 """运行时可观测性：事件总线 + 空闲监控 + Token 追踪。"""
 from .event_bus import EventBus, EventPriority, EventType
-from .token_tracker import TokenTracker, TokenUsage
+from .token_tracker import TokenTracker
 
 __all__ = [
     "EventBus",
@@ -8,7 +8,6 @@ __all__ = [
     "EventType",
     "IdleMonitor",
     "TokenTracker",
-    "TokenUsage",
 ]
 
 

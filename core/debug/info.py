@@ -339,13 +339,7 @@ async def collect(agent: "Agent") -> DebugInfo:
             "session_total": tracker.session_total,
             "per_model": dict(tracker.per_model),
             "current_turn": [
-                {
-                    "model": u.model,
-                    "prompt_tokens": u.prompt_tokens,
-                    "completion_tokens": u.completion_tokens,
-                    "total_tokens": u.total_tokens,
-                    "round_num": u.round_num,
-                }
+                u.model_dump(mode="json")
                 for u in tracker.current_turn_usages[-10:]
             ],
         }

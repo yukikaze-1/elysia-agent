@@ -5,31 +5,11 @@ import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock
 import pytest
-from core.monitoring.token_tracker import TokenTracker, TokenUsage
-from core.schema.token import TokenUsageEntry
+from core.monitoring.token_tracker import TokenTracker
+from core.schema.token import TokenUsage
 from core.schema.types import SessionId
 
 pytestmark = pytest.mark.unit
-
-
-class TestTokenUsage:
-    """TokenUsage 数据类字段测试。"""
-
-    def test_dataclass_fields(self):
-        u = TokenUsage(
-            model="deepseek/deepseek-chat",
-            prompt_tokens=800,
-            completion_tokens=200,
-            total_tokens=1000,
-            round_num=0,
-            timestamp=1717718400.0,
-        )
-        assert u.model == "deepseek/deepseek-chat"
-        assert u.total_tokens == 1000
-        assert u.round_num == 0
-        assert u.prompt_tokens == 800
-        assert u.completion_tokens == 200
-        assert u.timestamp == 1717718400.0
 
 
 class TestTokenTracker:
@@ -57,7 +37,7 @@ class TestTokenTracker:
     @pytest.mark.asyncio
     async def test_record_accumulates_session_total(self, tracker):
         await tracker.record(
-            usage={"prompt_tokens": 800, "completion_tokens": 200, "total_tokens": 1000},
+            usage={"input_tokens": 800, "output_tokens": 200, "total_tokens": 1000},
             model="deepseek/deepseek-chat",
             round_num=0,
         )
@@ -67,11 +47,11 @@ class TestTokenTracker:
     @pytest.mark.asyncio
     async def test_record_per_model_separate(self, tracker):
         await tracker.record(
-            usage={"prompt_tokens": 500, "completion_tokens": 500, "total_tokens": 1000},
+            usage={"input_tokens": 500, "output_tokens": 500, "total_tokens": 1000},
             model="deepseek/deepseek-chat", round_num=0,
         )
         await tracker.record(
-            usage={"prompt_tokens": 100, "completion_tokens": 100, "total_tokens": 200},
+            usage={"input_tokens": 100, "output_tokens": 100, "total_tokens": 200},
             model="openai/gpt-4o", round_num=0,
         )
         assert tracker.session_total == 1200
@@ -83,7 +63,7 @@ class TestTokenTracker:
     @pytest.mark.asyncio
     async def test_record_broadcasts_token_usage(self, tracker):
         await tracker.record(
-            usage={"prompt_tokens": 800, "completion_tokens": 200, "total_tokens": 1000},
+            usage={"input_tokens": 800, "output_tokens": 200, "total_tokens": 1000},
             model="deepseek/deepseek-chat", round_num=0,
         )
         tracker._output.token_usage.assert_awaited_once()
@@ -96,11 +76,11 @@ class TestTokenTracker:
     async def test_record_multiple_calls_in_same_turn(self, tracker):
         """同一轮内多次 record，turn.rounds 应包含多条记录。"""
         await tracker.record(
-            usage={"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            usage={"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
             model="deepseek/deepseek-chat", round_num=0,
         )
         await tracker.record(
-            usage={"prompt_tokens": 200, "completion_tokens": 80, "total_tokens": 280},
+            usage={"input_tokens": 200, "output_tokens": 80, "total_tokens": 280},
             model="deepseek/deepseek-chat", round_num=1,
         )
         # 第二次广播应包含 2 条 round
@@ -114,7 +94,7 @@ class TestTokenTracker:
     @pytest.mark.asyncio
     async def test_start_turn_clears_current_usages(self, tracker):
         await tracker.record(
-            usage={"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            usage={"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
             model="deepseek/deepseek-chat", round_num=0,
         )
         assert len(tracker.current_turn_usages) == 1
@@ -132,7 +112,7 @@ class TestTokenTracker:
 
         try:
             await tracker.record(
-                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
                 model="test/model", round_num=0,
             )
             with open(tracker._pending_file) as f:
@@ -153,11 +133,11 @@ class TestTokenTracker:
 
         try:
             await tracker.record(
-                usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                usage={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
                 model="a", round_num=0,
             )
             await tracker.record(
-                usage={"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4},
+                usage={"input_tokens": 2, "output_tokens": 2, "total_tokens": 4},
                 model="b", round_num=0,
             )
             with open(tracker._pending_file) as f:
@@ -178,7 +158,7 @@ class TestTokenTracker:
         )
 
         await tracker.record(
-            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
             model="test/model", round_num=0,
         )
         repo_mock.record.assert_awaited_once()
@@ -200,7 +180,7 @@ class TestTokenTracker:
 
         try:
             await tracker.record(
-                usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                usage={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
                 model="fallback/model", round_num=0,
             )
             repo_mock.record.assert_awaited_once()
@@ -224,10 +204,10 @@ class TestTokenTracker:
             session_id=SessionId("s1"), output_manager=output_mock, repo=repo_mock,
         )
 
-        # 写 TokenUsageEntry 兼容格式的 JSONL
-        entry = TokenUsageEntry(
+        # 写 TokenUsage 兼容格式的 JSONL
+        entry = TokenUsage(
             session_id=SessionId("s1"), model="m",
-            prompt_tokens=1, completion_tokens=1, total_tokens=2,
+            input_tokens=1, output_tokens=1, total_tokens=2,
             round_num=0,
         )
         with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".jsonl") as f:
@@ -244,6 +224,24 @@ class TestTokenTracker:
         finally:
             if os.path.exists(tracker._pending_file):
                 os.unlink(tracker._pending_file)
+
+    @pytest.mark.asyncio
+    async def test_flush_pending_skips_legacy_lines(self, output_mock, tmp_path):
+        """旧格式 pending 行跳过不导入，文件仍删除（tmp_path 隔离，不污染 data/）。"""
+        repo_mock = AsyncMock()
+        tracker = TokenTracker(
+            session_id=SessionId("default"), output_manager=output_mock, repo=repo_mock,
+        )
+        tracker._pending_file = str(tmp_path / "token_usage_pending.jsonl")
+        with open(tracker._pending_file, "w") as f:
+            f.write(json.dumps({
+                "session_id": "default", "model": "m",
+                "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2,
+                "round_num": 0, "timestamp": "2026-07-01T00:00:00+00:00",
+            }) + "\n")
+        await tracker.flush_pending()
+        repo_mock.flush.assert_not_awaited()  # 无有效记录 → 不调用 flush
+        assert not os.path.exists(tracker._pending_file)  # 整文件仍删除，旧行不保留
 
     @pytest.mark.asyncio
     async def test_flush_pending_no_file_is_noop(self, output_mock):
@@ -281,7 +279,7 @@ class TestTokenTracker:
     async def test_get_session_stats_from_memory(self, tracker):
         """无 MongoDB 时，从内存返回统计数据。"""
         await tracker.record(
-            usage={"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            usage={"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
             model="deepseek/deepseek-chat", round_num=0,
         )
         stats = await tracker.get_session_stats()
@@ -319,7 +317,7 @@ class TestTokenTracker:
 
         # 先在内存累计一些数据
         await tracker.record(
-            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
             model="test/model", round_num=0,
         )
 
@@ -336,10 +334,10 @@ class TestTokenTracker:
             session_id=SessionId("s1"), output_manager=output_mock, repo=repo_mock,
         )
 
-        # 写 TokenUsageEntry 兼容格式的 pending 数据
-        pending_entry = TokenUsageEntry(
+        # 写 TokenUsage 兼容格式的 pending 数据
+        pending_entry = TokenUsage(
             session_id=SessionId("s1"), model="a",
-            prompt_tokens=10, completion_tokens=10, total_tokens=20, round_num=0,
+            input_tokens=10, output_tokens=10, total_tokens=20, round_num=0,
         )
         with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".jsonl") as f:
             f.write(json.dumps(pending_entry.model_dump(mode="json"), ensure_ascii=False) + "\n")

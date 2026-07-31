@@ -55,7 +55,7 @@ from ..adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_c
 from Module.task_system.schema.types import TaskId
 from ..text.text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
-from core.schema.token import TokenUsageRecord, TokenUsageSummary
+from core.schema.token import TokenUsageSummary
 from core.schema.tool import ToolCall, ToolCallId
 
 from core.schema.part import TextPart
@@ -699,14 +699,7 @@ class CognitiveLoop(CognitiveTools):
                 inner_voice=iv_think_buf.strip() or None,
                 block_index=content_type,
                 token_usage=TokenUsageSummary(
-                    rounds=[TokenUsageRecord(
-                        model=r.model,
-                        prompt_tokens=r.prompt_tokens,
-                        completion_tokens=r.completion_tokens,
-                        total_tokens=r.total_tokens,
-                        round_num=r.round_num,
-                        timestamp=r.timestamp,
-                    ) for r in self._token_tracker.current_turn_usages],
+                    rounds=list(self._token_tracker.current_turn_usages),
                     turn_total=sum(r.total_tokens for r in self._token_tracker.current_turn_usages),
                 ) if self._token_tracker and self._token_tracker.current_turn_usages else None,
             ))

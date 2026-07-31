@@ -12,11 +12,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
-from dataclasses import dataclass, asdict
 from typing import TYPE_CHECKING
 
 from paths import ProjectPath
+from core.schema.token import TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -24,17 +23,6 @@ if TYPE_CHECKING:
     from Module.output import OutputManager
     from core.schema.types import SessionId
     from core.storage.token_repo import TokenRepository
-
-
-@dataclass
-class TokenUsage:
-    """单次 API 调用的 token 消耗记录。"""
-    model: str
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    round_num: int
-    timestamp: float
 
 
 class TokenTracker:
@@ -79,19 +67,14 @@ class TokenTracker:
         """新一轮用户对话开始前清空 turn 缓存。"""
         self.current_turn_usages.clear()
 
-    async def record(self, usage: dict[str, int], model: str, round_num: int) -> None:
+    async def record(self, usage: dict, model: str, round_num: int) -> None:
         """记录一次 API 调用的 token 消耗。
 
         每轮 LLM 调用完成后由 CognitiveLoop 调用一次。
         自动完成：内存累计、WS 广播、持久化。
         """
-        u = TokenUsage(
-            model=model,
-            prompt_tokens=usage["prompt_tokens"],
-            completion_tokens=usage["completion_tokens"],
-            total_tokens=usage["total_tokens"],
-            round_num=round_num,
-            timestamp=time.time(),
+        u = TokenUsage.from_api(
+            usage, model=model, session_id=self.session_id, round_num=round_num,
         )
 
         # 1. 内存累计
@@ -102,7 +85,7 @@ class TokenTracker:
         # 2. WS 广播（前端实时更新）
         await self._output.token_usage({
             "turn": {
-                "rounds": [asdict(r) for r in self.current_turn_usages],
+                "rounds": [r.model_dump(mode="json") for r in self.current_turn_usages],
                 "turn_total": sum(r.total_tokens for r in self.current_turn_usages),
             },
             "session": {
@@ -150,44 +133,44 @@ class TokenTracker:
         return {"total": self.session_total, "by_model": dict(self.per_model)}
 
     async def flush_pending(self) -> None:
-        """将本地 pending 文件中的数据批量导入 MongoDB，成功后删除文件。"""
+        """将本地 pending 文件中的数据批量导入 MongoDB，成功后删除文件。
+
+        旧格式行（prompt/completion）validate 失败时跳过且不保留——
+        整文件导入成功后删除，与"不兼容直接改名、旧数据自然老化"一致。
+        """
         if self._repo is None:
             return
         if not os.path.exists(self._pending_file):
             return
         try:
-            from core.schema.token import TokenUsageEntry
+            records: list[TokenUsage] = []
+            skipped = 0
             with open(self._pending_file) as f:
-                records = [json.loads(line) for line in f if line.strip()]
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        records.append(TokenUsage.model_validate(json.loads(line)))
+                    except Exception:
+                        skipped += 1  # 旧格式行，跳过不保留
             if records:
-                entries = [TokenUsageEntry.model_validate(r) for r in records]
-                await self._repo.flush(entries)
-                logger.info("pending 文件导入完成: %d 条 token 记录已写入 MongoDB", len(records))
+                await self._repo.flush(records)
+                logger.info("pending 文件导入完成: %d 条 token 记录已写入 MongoDB (跳过 %d 条旧格式)",
+                            len(records), skipped)
             os.remove(self._pending_file)
         except Exception:
             logger.warning("pending 文件导入失败，下次启动重试", exc_info=True)
 
     async def _persist(self, usage: TokenUsage) -> None:
         """持久化单条记录：MongoDB 优先，失败则写本地 JSONL。"""
-        from core.schema.token import TokenUsageEntry
-        from core.schema.types import SessionId
-
-        entry = TokenUsageEntry(
-            session_id=SessionId(self.session_id),
-            model=usage.model,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            round_num=usage.round_num,
-        )
         if self._repo is not None:
             try:
-                await self._repo.record(entry)
+                await self._repo.record(usage)
                 return
             except Exception:
                 logger.debug("MongoDB 不可用，token 记录写入 %s", self._pending_file)
-        # 追加到本地 JSONL
+        # 追加到本地 JSONL（session_id 已在 usage 内）
         os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
-        doc = entry.model_dump(mode="json")
+        doc = usage.model_dump(mode="json")
         with open(self._pending_file, "a") as f:
             f.write(json.dumps(doc, ensure_ascii=False) + "\n")

@@ -7,7 +7,7 @@ from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
 from .base import Repository
 
 if TYPE_CHECKING:
-    from core.schema.token import TokenUsageEntry
+    from core.schema.token import TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -63,45 +63,37 @@ class TokenRepository(Repository):
         """
         return self._db is not None
 
-    async def record(self, entry: "TokenUsageEntry") -> None:
-        """记录一条 token 用量。
-
-        Args:
-            entry: Token 用量条目。
-        """
+    async def record(self, entry: "TokenUsage") -> None:
+        """记录一条 token 用量。"""
         if self._db is None:
             return
         await self._db.insert_one(COLLECTION, entry.model_dump(mode="json"))
 
-    async def flush(self, entries: list["TokenUsageEntry"]) -> None:
-        """批量写入 token 用量。
-
-        Args:
-            entries: Token 用量条目列表。为空时直接返回。
-        """
+    async def flush(self, entries: list["TokenUsage"]) -> None:
+        """批量写入 token 用量。"""
         if self._db is None or not entries:
             return
         docs = [e.model_dump(mode="json") for e in entries]
         await self._db.insert_many(COLLECTION, docs)
 
     async def query_by_session(self, session_id: str, *,
-                               limit: int = 100) -> list["TokenUsageEntry"]:
+                               limit: int = 100) -> list["TokenUsage"]:
         """按会话查询 Token 用量记录。
 
-        Args:
-            session_id: 会话 ID。
-            limit: 返回条数上限，默认 100。
-
-        Returns:
-            Token 用量条目列表。若数据库不可用返回空列表。
+        旧文档（prompt_tokens/completion_tokens 字段）validate 失败时跳过，
+        不迁移、自然老化。
         """
         if self._db is None:
             return []
-        from core.schema.token import TokenUsageEntry
-        docs = await self._db.find(
-            COLLECTION, {"session_id": session_id}, limit=limit
-        )
-        return [TokenUsageEntry.model_validate(d) for d in docs]
+        from core.schema.token import TokenUsage
+        docs = await self._db.find(COLLECTION, {"session_id": session_id}, limit=limit)
+        result: list[TokenUsage] = []
+        for d in docs:
+            try:
+                result.append(TokenUsage.model_validate(d))
+            except Exception:
+                continue  # 旧文档跳过
+        return result
 
     async def total_tokens_by_session(self) -> dict[str, int]:
         """聚合每个 session 的 token 总量（MongoDB $group，单次查询）。
