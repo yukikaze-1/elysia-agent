@@ -26,7 +26,6 @@
 |--------|------|------|
 | ~~中~~ ✅ | [Module/tool/protocol.py:15](Module/tool/protocol.py#L15) | eager `from core.schema.error_type import ErrorType` — **已评估：接受**。ErrorType 是跨层类型（`core.schema.message.ToolResultMessage` + `Module.tool.ToolResult` 双侧消费），不能挪进 Module/tool（会反向拖累 schema）；core.schema 是叶子无反向依赖、无环。唯一 test 级反向边已修复：`core/schema/tests/test_message.py` 改从 `core.schema.error_type` 正典导入 |
 | 中 | [Module/task_system/delegation_preparer.py:20-21](Module/task_system/delegation_preparer.py#L20) | eager `from core.schema.message import Message` 等 |
-| 低 | [Module/system_prompt/__init__.py:13](Module/system_prompt/__init__.py#L13) | lazy `from core.adapter.message_builder import MessageBuilder`（带 deprecation 警告，已知违规） |
 | 低 | [Module/tool/safety.py:618](Module/tool/safety.py#L618) | lazy `from core.utils import new_message_id` |
 | 低 | [Module/bench/bench.py:129-139](Module/bench/bench.py#L129) | lazy `core.config`/`core.agent`（bench 是 dev 工具，可豁免） |
 
@@ -35,7 +34,7 @@
 ### 软环（lazy import 运行时解决，无需处理）
 
 - `Module._common → Module.config → Module.llm/stt/tts → Module._common` — [preflight.py](Module/config/preflight.py) 函数内懒加载后端
-- `Module.system_prompt → core.adapter → core.memory/personality/storage → Module.system_prompt` — system_prompt 的 MessageBuilder 懒加载已废弃
+- `Module.system_prompt → core.adapter → core.memory/personality/storage → Module.system_prompt` — ✅ 已消除：`__init__.py` 的 deprecated MessageBuilder lazy import 已删除（无消费方），Module/system_prompt 生产代码现零 core 依赖
 
 ### 遗留：`core.schema._utils` 跨包导入（未修）
 
