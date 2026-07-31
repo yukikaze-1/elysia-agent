@@ -27,7 +27,7 @@ async def prompts_list_handler(request: web.Request) -> web.Response:
         web.Response: {"records": [...], "total": ..., "max": ...}。
     """
     agent = request.app["agent"]
-    recorder = getattr(agent, "_prompt_recorder", None)
+    recorder = getattr(agent, "prompt_recorder", None)
     if recorder is None:
         return web.json_response({"records": [], "total": 0, "max": 0})
     return web.json_response(recorder.list_summaries())
@@ -44,7 +44,7 @@ async def prompt_detail_handler(request: web.Request) -> web.Response:
     """
     index = int(request.match_info["index"])
     agent = request.app["agent"]
-    recorder = getattr(agent, "_prompt_recorder", None)
+    recorder = getattr(agent, "prompt_recorder", None)
     if recorder is None:
         raise web.HTTPNotFound(text="PromptRecorder 未初始化")
     record = recorder.get_full(index)
@@ -87,7 +87,7 @@ async def responses_list_handler(request: web.Request) -> web.Response:
         web.Response: {"records": [...], "total": ..., "max": ...}。
     """
     agent = request.app["agent"]
-    recorder = getattr(agent, "_response_recorder", None)
+    recorder = getattr(agent, "response_recorder", None)
     if recorder is None:
         return web.json_response({"records": [], "total": 0, "max": 0})
     return web.json_response(recorder.list_summaries())
@@ -104,7 +104,7 @@ async def response_detail_handler(request: web.Request) -> web.Response:
     """
     index = int(request.match_info["index"])
     agent = request.app["agent"]
-    recorder = getattr(agent, "_response_recorder", None)
+    recorder = getattr(agent, "response_recorder", None)
     if recorder is None:
         raise web.HTTPNotFound(text="ResponseRecorder 未初始化")
     record = recorder.get_full(index)

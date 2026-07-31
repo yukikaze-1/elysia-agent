@@ -38,20 +38,20 @@ async def db_status_handler(request: web.Request) -> web.Response:
         web.Response: JSON with ltm/session/archive status and health_check results.
     """
     agent = request.app["agent"]
-    ltm = agent._long_term
+    ltm = agent.long_term
     return web.json_response({
         "ltm": {
             "count": ltm.count,
-            "milvus_ok": await agent._memory_repo.health_check(),
+            "milvus_ok": await agent.memory_repo.health_check(),
             "dirty_count": len(ltm._dirty_ids),
         },
         "session": {
             "count": 1,  # 当前只有单个 session
-            "current_id": str(agent._session.session_id),
-            "mongodb_ok": await agent._session_repo.health_check(),
+            "current_id": str(agent.session.session_id),
+            "mongodb_ok": await agent.session_repo.health_check(),
         },
         "archive": {
-            "count": await agent._message_repo.count(),
-            "mongodb_ok": await agent._message_repo.health_check(),
+            "count": await agent.message_repo.count(),
+            "mongodb_ok": await agent.message_repo.health_check(),
         },
     })

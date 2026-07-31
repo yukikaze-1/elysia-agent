@@ -35,9 +35,9 @@ async def ltm_list_handler(request: web.Request) -> web.Response:
     except ValueError:
         return web.json_response({"error": "无效的分页参数"}, status=400)
 
-    if agent._long_term is None:
+    if agent.long_term is None:
         return web.json_response({"error": "长期记忆未初始化"}, status=503)
-    entries = agent._long_term._entries
+    entries = agent.long_term._entries  # noqa: SLF001
     if search:
         entries = [e for e in entries if search in e.text]
     if mem_type:
@@ -81,7 +81,7 @@ async def ltm_insert_handler(request: web.Request) -> web.Response:
     except (json.JSONDecodeError, ValueError):
         return web.json_response({"error": "无效的请求体"}, status=400)
 
-    await agent._long_term.insert(text, memory_type=mem_type, poignancy=poignancy)
+    await agent.long_term.insert(text, memory_type=mem_type, poignancy=poignancy)
     logger.info("DEBUG API: ltm_insert type=%s, text_len=%d, poignancy=%d", mem_type, len(text), poignancy)
     return web.json_response({"ok": True})
 
@@ -99,7 +99,7 @@ async def ltm_delete_single_handler(request: web.Request) -> web.Response:
     entry_id = request.match_info.get("entry_id", "")
     if not entry_id:
         return web.json_response({"error": "缺少 entry_id"}, status=400)
-    ok = await agent._long_term.delete(entry_id)
+    ok = await agent.long_term.delete(entry_id)
     logger.warning("DEBUG API: ltm_delete entry_id=%s, ok=%s", entry_id, ok)
     return web.json_response({"ok": ok})
 
@@ -121,7 +121,7 @@ async def ltm_update_handler(request: web.Request) -> web.Response:
     new_text = (body.get("text") or "").strip()
     if not new_text:
         return web.json_response({"error": "text 不能为空"}, status=400)
-    ok = await agent._long_term.update_text(entry_id, new_text)
+    ok = await agent.long_term.update_text(entry_id, new_text)
     logger.info("DEBUG API: ltm_update entry_id=%s, text_len=%d, ok=%s", entry_id, len(new_text), ok)
     return web.json_response({"ok": ok})
 
@@ -136,6 +136,6 @@ async def ltm_clear_handler(request: web.Request) -> web.Response:
         web.Response: {"ok": True, "deleted": count}。
     """
     agent = request.app["agent"]
-    count = await agent._long_term.clear_all()
+    count = await agent.long_term.clear_all()
     logger.warning("DEBUG API: ltm_clear deleted=%d", count)
     return web.json_response({"ok": True, "deleted": count})

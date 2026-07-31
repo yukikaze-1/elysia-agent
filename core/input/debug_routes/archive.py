@@ -35,7 +35,7 @@ async def archive_list_handler(request: web.Request) -> web.Response:
         web.Response: {"messages": [...], "total": ..., "limit": ..., "skip": ...}。
     """
     agent = request.app["agent"]
-    repo = agent._message_repo
+    repo = agent.message_repo
 
     try:
         limit = int(request.query.get("limit", "100"))
@@ -74,16 +74,16 @@ async def archive_delete_handler(request: web.Request) -> web.Response:
         web.Response: {"ok": True/False, "session_purged": count}。
     """
     agent = request.app["agent"]
-    repo = agent._message_repo
+    repo = agent.message_repo
     msg_id = request.match_info.get("msg_id", "")
     if not msg_id:
         return web.json_response({"error": "缺少 msg_id"}, status=400)
     ok = await repo.delete_one(msg_id)
     # 同步清理当前 session —— archive 和 session 是独立存储，
     # 只删 archive 不改 session 会导致 LLM prompt 仍包含已删消息
-    session_purged = agent._purge_message_from_session(msg_id)
+    session_purged = agent.purge_message_from_session(msg_id)
     if session_purged:
-        await agent._session.save()
+        await agent.session.save()
     logger.info("DEBUG API: archive_delete msg_id=%s, ok=%s, session_purged=%d", msg_id, ok, session_purged)
     return web.json_response({"ok": ok, "session_purged": session_purged})
 
@@ -98,7 +98,7 @@ async def archive_update_handler(request: web.Request) -> web.Response:
         web.Response: {"ok": True/False}。
     """
     agent = request.app["agent"]
-    repo = agent._message_repo
+    repo = agent.message_repo
     msg_id = request.match_info.get("msg_id", "")
     if not msg_id:
         return web.json_response({"error": "缺少 msg_id"}, status=400)
@@ -121,9 +121,9 @@ async def archive_clear_handler(request: web.Request) -> web.Response:
         web.Response: {"ok": True, "deleted": count}。
     """
     agent = request.app["agent"]
-    deleted = await agent._message_repo.clear_all()
+    deleted = await agent.message_repo.clear_all()
     # 同步清空当前 session：archive 删光后 session 也要保持一致
-    session = agent._session
+    session = agent.session
     n_session = len(session.messages)
     if n_session:
         session.clear()
@@ -142,20 +142,20 @@ async def sessions_list_handler(request: web.Request) -> web.Response:
         web.Response: {"sessions": [{session_id, message_count, updated_at, token_total}, ...]}。
     """
     agent = request.app["agent"]
-    summaries = await agent._session_repo.list_all()
+    summaries = await agent.session_repo.list_all()
     if not summaries:
         # MongoDB 不可用，返回内存中的当前 session
         return web.json_response({
             "sessions": [{
-                "session_id": str(agent._session.session_id),
-                "message_count": len(agent._session.messages),
+                "session_id": str(agent.session.session_id),
+                "message_count": len(agent.session.messages),
                 "updated_at": "",
                 "token_total": 0,
             }],
         })
     try:
         # 聚合 token 用量（MongoDB $group，单次查询）
-        token_totals = await agent._token_repo.total_tokens_by_session()
+        token_totals = await agent.token_repo.total_tokens_by_session()
         return web.json_response({
             "sessions": [
                 {
@@ -188,16 +188,16 @@ async def session_detail_handler(request: web.Request) -> web.Response:
 
     # 辅助函数：从 session repo 取 character_state（目标 session，非当前 session）
     async def _get_character_state(sid: SessionId) -> dict:
-        result = await agent._session_repo.load(sid)
+        result = await agent.session_repo.load(sid)
         if result is not None:
             _, character_state, _ = result  # (messages, CharacterState, MemoryReflectorState)
             return character_state.model_dump(mode="json")
         return {}
 
-    if await agent._message_repo.health_check():
+    if await agent.message_repo.health_check():
         # 从 message archive（权威源）读取消息
         try:
-            msgs, total = await agent._message_repo.query_by_session(sid, limit=20)
+            msgs, total = await agent.message_repo.query_by_session(sid, limit=20)
             formatted = sessions_to_client(msgs)
             character_state = await _get_character_state(SessionId(sid))
             return web.json_response({
@@ -210,14 +210,14 @@ async def session_detail_handler(request: web.Request) -> web.Response:
             logger.warning("message_repo query_by_session failed: %s", e)
 
     # MessageRepo 不可用 — 降级读 sessions 快照（或内存）
-    result = await agent._session_repo.load(sid)
+    result = await agent.session_repo.load(sid)
     if result is None:
         # MongoDB 不可用，返回当前内存 session（仅当 sid 匹配时）
-        if sid == str(agent._session.session_id):
+        if sid == str(agent.session.session_id):
             return web.json_response({
                 "session_id": sid,
-                "messages": agent._session.messages_for_client(),
-                "params": agent._session.character_state.model_dump(mode="json"),
+                "messages": agent.session.messages_for_client(),
+                "params": agent.session.character_state.model_dump(mode="json"),
             })
         return web.json_response({"error": "会话不存在"}, status=404)
     raw_msgs, character_state, _ = result
@@ -242,15 +242,15 @@ async def session_delete_handler(request: web.Request) -> web.Response:
     sid = request.match_info.get("session_id", "")
     if not sid:
         return web.json_response({"error": "缺少 session_id"}, status=400)
-    if not await agent._session_repo.health_check():
+    if not await agent.session_repo.health_check():
         return web.json_response(
             {"error": "MongoDB 不可用"}, status=503)
     try:
-        deleted = await agent._session_repo.delete(sid)
+        deleted = await agent.session_repo.delete(sid)
         logger.warning("DEBUG API: session_delete sid=%s, current=%s, deleted=%d",
-                      sid, str(agent._session.session_id), deleted)
-        if sid == str(agent._session.session_id):
-            agent._session.clear()
+                      sid, str(agent.session.session_id), deleted)
+        if sid == str(agent.session.session_id):
+            agent.session.clear()
         return web.json_response({"ok": True, "deleted": deleted})
     except Exception as e:
         return web.json_response(
@@ -267,13 +267,13 @@ async def sessions_clear_handler(request: web.Request) -> web.Response:
         web.Response: {"ok": True, "deleted": count} or error.
     """
     agent = request.app["agent"]
-    if not await agent._session_repo.health_check():
+    if not await agent.session_repo.health_check():
         return web.json_response(
             {"error": "MongoDB 不可用"}, status=503)
     try:
-        deleted = await agent._session_repo.clear_all()
+        deleted = await agent.session_repo.clear_all()
         logger.warning("DEBUG API: sessions_clear deleted=%d", deleted)
-        agent._session.clear()
+        agent.session.clear()
         return web.json_response({"ok": True, "deleted": deleted})
     except Exception as e:
         return web.json_response(

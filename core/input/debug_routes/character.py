@@ -35,15 +35,15 @@ async def _list_character_versions(agent: "Agent", content_type: str,
     Returns:
         tuple: (result_dict | None, error_str | None, http_status_code)
     """
-    engine = getattr(agent, "_character_engine", None)
+    engine = getattr(agent, "character_engine", None)
     if not engine or not getattr(engine, "_version_repo", None):
         return None, "版本历史不可用", 503
-    sid = agent._session.session_id
-    versions = await engine._version_repo.list_versions(
+    sid = agent.session.session_id
+    versions = await engine._version_repo.list_versions(  # noqa: SLF001
         sid, limit=limit, before_version=before_version,
         content_type=content_type,
     )
-    total = await engine._version_repo.count_versions(sid, content_type=content_type)
+    total = await engine._version_repo.count_versions(sid, content_type=content_type)  # noqa: SLF001
     return {
         "versions": versions,
         "total": total,
@@ -62,11 +62,11 @@ async def _character_rollback(agent: "Agent", content_type: str, target_version:
     Returns:
         tuple: (result_dict | None, error_str | None, http_status_code)
     """
-    engine = getattr(agent, "_character_engine", None)
+    engine = getattr(agent, "character_engine", None)
     if not engine or not getattr(engine, "_version_repo", None):
         return None, "版本历史不可用", 503
-    sid = agent._session.session_id
-    entry = await engine._version_repo.get_version(sid, target_version,
+    sid = agent.session.session_id
+    entry = await engine._version_repo.get_version(sid, target_version,  # noqa: SLF001
                                                     content_type=content_type)
     if entry is None:
         return None, f"版本 {target_version} 不存在", 404
@@ -77,7 +77,7 @@ async def _character_rollback(agent: "Agent", content_type: str, target_version:
     elif content_type == "c6":
         engine.state.speaking_style_c6 = entry["text"]
 
-    new_version = await engine._version_repo.append_version(
+    new_version = await engine._version_repo.append_version(  # noqa: SLF001
         session_id=sid, text=entry["text"], timestamp=now_iso(),
         trigger=CompressionTrigger.MANUAL,
         change_summary=[f"回滚到版本 {target_version}"],
@@ -87,7 +87,7 @@ async def _character_rollback(agent: "Agent", content_type: str, target_version:
     # L2 rollback 后触发 C6 刷新
     if content_type == "l2":
         try:
-            await engine._refresh_c6()
+            await engine._refresh_c6()  # noqa: SLF001
         except Exception:
             pass
 
