@@ -41,6 +41,7 @@
 
 import pytest
 from core.agent import Agent
+from core.agent._types import RunState
 from core.config import AppConfig
 
 pytestmark = pytest.mark.service
@@ -104,12 +105,11 @@ class TestScalarProperties:
 class TestWriteMethods:
     def test_request_shutdown_sets_state(self, agent):
         agent.request_shutdown()
-        assert agent.state == agent._state
-        assert agent.state.value == "stopping"
+        assert agent.state == RunState.STOPPING
 
     def test_request_restart_sets_state(self, agent):
         agent.request_restart()
-        assert agent.state.value == "restarting"
+        assert agent.state == RunState.RESTARTING
 
 
 class TestPurgeMessagePublic:
@@ -276,17 +276,17 @@ Expected: FAIL with `AttributeError: 'Agent' object has no attribute 'session'` 
         self._state = RunState.RESTARTING
 ```
 
-同时把 `_purge_message_from_session` 改名 `purge_message_from_session`（去掉下划线）。`debug_routes/archive.py:84` 的调用同步改（见 Task 3）。
+同时把 `_purge_message_from_session` 改名 `purge_message_from_session`（去掉下划线）。**同步更新 3 处现有测试引用**（`core/agent/tests/test_agent_methods.py:23,35,43`——`Agent._purge_message_from_session(fake_agent, ...)` → `Agent.purge_message_from_session(fake_agent, ...)`），否则改名立即破坏这 3 个 service 测试。`debug_routes/archive.py:84` 的调用延迟到 Task 3。
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `conda run -n Elysia python -m pytest core/agent/tests/test_public_interface.py -q --tb=short`
-Expected: PASS（`test_startup_*` 4 个验证 `AttributeError`，其余验证 `is` 同一对象）
+Run: `conda run -n Elysia python -m pytest core/agent/tests/test_public_interface.py core/agent/tests/test_agent_methods.py -q --tb=short`
+Expected: PASS（`test_startup_*` 4 个验证 `AttributeError`，其余验证 `is` 同一对象；test_agent_methods 3 个 purge 测试通过）
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add core/agent/agent.py core/agent/tests/test_public_interface.py
+git add core/agent/agent.py core/agent/tests/test_public_interface.py core/agent/tests/test_agent_methods.py
 git commit -m "feat(agent): 新增 27 个公开只读 property + request_shutdown/restart + purge 公开化"
 ```
 
@@ -295,8 +295,8 @@ git commit -m "feat(agent): 新增 27 个公开只读 property + request_shutdow
 ### Task 2: 迁移 core/input 层（ws_handler/server/api_routes）
 
 **Files:**
-- Modify: `core/input/ws_handler.py`（17 处 + 2 深读豁免）
-- Modify: `core/input/server.py`（4 浅读 + 2 写迁移 + 3 深读豁免）
+- Modify: `core/input/ws_handler.py`（17 处 + 3 深读豁免）
+- Modify: `core/input/server.py`（3 浅读 + 2 写迁移 + 3 深读豁免）
 - Modify: `core/input/api_routes.py`（3 处）
 
 **Interfaces:**
@@ -375,10 +375,10 @@ git commit -m "refactor(input): 迁移 core/input 层 agent._xxx → 公开接�
 ### Task 3: 迁移 debug_routes（40 处点式 + 8 处 getattr）
 
 **Files:**
-- Modify: `core/input/debug_routes/archive.py`（18 处）
+- Modify: `core/input/debug_routes/archive.py`（19 处）
 - Modify: `core/input/debug_routes/ltm.py`（5 处 + 1 深读豁免）
-- Modify: `core/input/debug_routes/overview.py`（5 处）
-- Modify: `core/input/debug_routes/character.py`（2 点式 + 2 getattr）
+- Modify: `core/input/debug_routes/overview.py`（6 处）
+- Modify: `core/input/debug_routes/character.py`（2 点式 + 2 getattr + 6 深读豁免）
 - Modify: `core/input/debug_routes/recording.py`（4 getattr）
 
 **Interfaces:**
@@ -387,7 +387,7 @@ git commit -m "refactor(input): 迁移 core/input 层 agent._xxx → 公开接�
 - [ ] **Step 1: archive.py 迁移**
 
 逐行替换（全部浅读，无深读）：
-`_message_repo`→`message_repo`（行 38,77,101,124,197,200）、`_session`→`session`（行 86,126,150,151,216,219,220,251,253,276）、`_session_repo`→`session_repo`（行 145,191,213,245,249,270,274）、`_token_repo`→`token_repo`（行 158）、`_purge_message_from_session`→`purge_message_from_session`（行 84）
+`_message_repo`→`message_repo`（行 38,77,101,124,197,200）、`_session`→`session`（行 86,126,150,151,216,219,220,251,252,253,276）、`_session_repo`→`session_repo`（行 145,191,213,245,249,270,274）、`_token_repo`→`token_repo`（行 158）、`_purge_message_from_session`→`purge_message_from_session`（行 84）
 
 - [ ] **Step 2: ltm.py 迁移**
 
@@ -397,9 +397,17 @@ git commit -m "refactor(input): 迁移 core/input 层 agent._xxx → 公开接�
 
 行 41 `agent._long_term` → `agent.long_term`；行 45 `agent._memory_repo` → `agent.memory_repo`；行 50,51,54,55 `_session`/`_session_repo`/`_message_repo` → 去 `_`
 
-- [ ] **Step 4: character.py 迁移**
+- [ ] **Step 4: character.py 迁移 + 深读豁免**
 
+点式浅读：
 行 41,68 `agent._session.session_id` → `agent.session.session_id`；行 38,65 `getattr(agent, "_character_engine", None)` → `getattr(agent, "character_engine", None)`
+
+深读豁免（`engine` 来自 `getattr(agent, "character_engine", None)` 的局部变量，`_` 访问保留并标注 `# noqa: SLF001`）：
+- 行 42 `engine._version_repo.list_versions(...)`
+- 行 46 `engine._version_repo.count_versions(...)`
+- 行 69 `engine._version_repo.get_version(...)`
+- 行 80 `engine._version_repo.append_version(...)`
+- 行 90 `engine._refresh_c6()`
 
 - [ ] **Step 5: recording.py 迁移**
 
@@ -410,8 +418,8 @@ git commit -m "refactor(input): 迁移 core/input 层 agent._xxx → 公开接�
 Run: `conda run -n Elysia python -m pytest core/input/ -q --tb=short 2>&1 | tail -5`
 Expected: 无 FAIL（debug_routes 无独立测试，此步验证 import 不炸）
 
-Run: `grep -rn "agent\._" core/input/debug_routes/ | grep -v noqa`
-Expected: 仅剩 `agent.long_term._entries`（已带 noqa，此 grep 应无输出）
+Run: `grep -rn "agent\._\|\._version_repo\|\._refresh_c6" core/input/debug_routes/ | grep -v noqa`
+Expected: 空（所有深读点均已带 `# noqa: SLF001`）
 
 - [ ] **Step 7: 提交**
 
@@ -474,8 +482,8 @@ git commit -m "refactor(debug_routes): 迁移 agent._xxx → 公开接口 + geta
 | 212 | `agent._consolidator._history` | `agent.consolidator._history  # noqa: SLF001` |
 | 277 | `agent._cognitive._timing_history` | `agent.cognitive._timing_history  # noqa: SLF001` |
 | 269 | `agent._output._channels` | `agent.output._channels  # noqa: SLF001` |
-| 236 | `engine._version_repo`（经 `pe = agent.character_engine`） | `pe._version_repo  # noqa: SLF001`（变量已是公开 getter，`_version_repo` 深读） |
-| 245 | 同上 | `pe._version_repo  # noqa: SLF001` |
+| 236 | `engine._version_repo`（局部变量 `engine`，来自 getattr） | 保持 `engine._version_repo` 并加 `# noqa: SLF001` |
+| 245 | 同上 | 保持 `engine._version_repo` 并加 `# noqa: SLF001` |
 | 303-316 | `mr._round_count` 等（经 `mr = agent.memory_reflector`） | 保持 `mr._xxx` 并加 `# noqa: SLF001` 于每行 |
 
 - [ ] **Step 3: 验证**
@@ -536,8 +544,8 @@ git commit -m "docs: 标注 Agent 公开接口已实现 + 模块化评估接口�
 - ✅ 27 property（Task 1 实现清单，与 spec 接口清单逐一对齐：23 子系统 + 4 标量）
 - ✅ `request_shutdown`/`request_restart`（Task 1 + Task 2 server.py 写迁移）
 - ✅ `purge_message_from_session` 公开化（Task 1 + Task 3 archive.py）
-- ✅ core/input 26 处点式（Task 2：ws_handler 17 + server 6 + api_routes 3）
-- ✅ debug_routes 40 处点式 + 8 处 getattr（Task 3）
+- ✅ core/input 点式浅读（Task 2：ws_handler 17 + server 3 + api_routes 3 = 23，server 另有 2 写迁移 + 3 深读豁免）
+- ✅ debug_routes 点式浅读 + 8 处 getattr + 深读豁免（Task 3：archive 19 + ltm 5(+1豁免) + overview 6 + character 2(+6豁免) + recording 4）
 - ✅ info.py 33 处浅读 + 深读豁免（Task 4）
 - ✅ 测试 marker `pytest.mark.service`（Task 1）
 - ✅ 深读豁免 `# noqa: SLF001`（Task 2/3/4）
