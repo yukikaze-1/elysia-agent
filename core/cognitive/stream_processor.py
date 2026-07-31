@@ -35,21 +35,31 @@ def _is_emoji_only(text: str) -> bool:
 
 
 def _strip_pause_tags(text: str) -> str:
-    """剥离 TTS 停顿标签 <#x.x#>，包括跨 delta 的尾部残缺标签。
-
-    必须在 SentenceBuffer 之前调用，防止标签内的 . 被误判为句子边界。
-    <#0.5#> 中的 . 到达缓冲区末尾时后面没有字符，
-    _is_dot_boundary 会将其误判为句号边界，导致标签被截断成 <#0. 和 5#>。
+    """剥离完整 TTS 停顿标签 <#x.x#>（保留尾部残缺标签交给调用方处理）。
 
     Args:
         text: 待清理的文本。
 
     Returns:
-        剥离停顿标签后的文本。
+        剥离完整停顿标签后的文本。
     """
-    text = _PAUSE_TAG_RE.sub("", text)
-    text = _PAUSE_TAG_TAIL_RE.sub("", text)
-    return text
+    return _PAUSE_TAG_RE.sub("", text)
+
+
+def _strip_tail_pause_tags(text: str) -> str:
+    """仅剥离尾部残缺停顿标签 <#0. 或 <#0.5（跨 delta 未补全的半个标签）。
+
+    残缺标签会破坏 SentenceBuffer 分句——<#0. 末尾的 . 后面无数字，
+    会被 _is_dot_boundary 误判为句号边界。完整标签 <#0.5#> 由
+    _is_dot_boundary 的数字保护正常处理，此处不剥。
+
+    Args:
+        text: 待清理的文本。
+
+    Returns:
+        剥离尾部残缺标签后的文本。
+    """
+    return _PAUSE_TAG_TAIL_RE.sub("", text)
 
 
 class StreamEventType(StrEnum):
@@ -129,14 +139,32 @@ class StreamProcessor:
         # --- BlockFilter + SentenceBuffer ---
         clean = self._block_filter.feed(delta)
         if clean:
-            clean = _strip_pause_tags(clean)
-            if clean:
-                events.append(StreamEvent(type=StreamEventType.TEXT_DELTA, text=clean))
-                sentence = self._sentence_buf.feed(clean)
-                if sentence:
-                    events.append(StreamEvent(type=StreamEventType.SENTENCE, text=sentence))
+            self._emit_text_events(clean, events)
 
         return events
+
+    def _emit_text_events(self, clean: str, events: list[StreamEvent]) -> None:
+        """产出文本事件：TEXT_DELTA（前端显示）剥离完整停顿标签，SENTENCE（TTS）保留。
+
+        停顿标签 <#0.5#> 是 MiniMax 原生控制标记——TTS 合成需要它产生语音停顿，
+        但前端显示不应看到。因此:
+        - TEXT_DELTA: 剥离完整标签（前端显示）
+        - SENTENCE: 剥离尾部残缺标签（防分句误判），保留完整标签（送 TTS）
+
+        Args:
+            clean: BlockFilter 输出的干净文本。
+            events: 事件列表（就地追加）。
+        """
+        # TEXT_DELTA 用剥离完整标签的文本（前端显示）
+        display = _strip_pause_tags(clean)
+        if display:
+            events.append(StreamEvent(type=StreamEventType.TEXT_DELTA, text=display))
+        # SENTENCE 用保留完整标签的文本（TTS 停顿需要），但剥尾部残缺标签防分句误判
+        tts_text = _strip_tail_pause_tags(clean)
+        if tts_text:
+            sentence = self._sentence_buf.feed(tts_text)
+            if sentence:
+                events.append(StreamEvent(type=StreamEventType.SENTENCE, text=sentence))
 
     def flush(self) -> list[StreamEvent]:
         """流结束时调用：吐出尾句、丢弃未闭合块、处理未闭合标签。
@@ -157,20 +185,10 @@ class StreamProcessor:
             if tail:
                 clean = self._block_filter.feed(tail)
                 if clean:
-                    clean = _strip_pause_tags(clean)
-                    if clean:
-                        events.append(StreamEvent(type=StreamEventType.TEXT_DELTA, text=clean))
-                        sentence = self._sentence_buf.feed(clean)
-                        if sentence:
-                            events.append(StreamEvent(type=StreamEventType.SENTENCE, text=sentence))
+                    self._emit_text_events(clean, events)
                 pending = self._block_filter.flush()
                 if pending:
-                    pending = _strip_pause_tags(pending)
-                    if pending:
-                        events.append(StreamEvent(type=StreamEventType.TEXT_DELTA, text=pending))
-                        sentence = self._sentence_buf.feed(pending)
-                        if sentence:
-                            events.append(StreamEvent(type=StreamEventType.SENTENCE, text=sentence))
+                    self._emit_text_events(pending, events)
 
         # 未闭合 inner_voice → 广播残留
         if self._iv_state == "THINK":
@@ -187,23 +205,13 @@ class StreamProcessor:
         if self._iv_state == "PRE" and self._iv_tail:
             clean = self._block_filter.feed(self._iv_tail)
             if clean:
-                clean = _strip_pause_tags(clean)
-                if clean:
-                    events.append(StreamEvent(type=StreamEventType.TEXT_DELTA, text=clean))
-                    sentence = self._sentence_buf.feed(clean)
-                    if sentence:
-                        events.append(StreamEvent(type=StreamEventType.SENTENCE, text=sentence))
+                self._emit_text_events(clean, events)
             self._iv_tail = ""
 
         # BlockFilter flush
         trailing = self._block_filter.flush()
         if trailing:
-            trailing = _strip_pause_tags(trailing)
-            if trailing:
-                events.append(StreamEvent(type=StreamEventType.TEXT_DELTA, text=trailing))
-                sentence = self._sentence_buf.feed(trailing)
-                if sentence:
-                    events.append(StreamEvent(type=StreamEventType.SENTENCE, text=sentence))
+            self._emit_text_events(trailing, events)
 
         # SentenceBuffer flush — emoji-only 尾部合并到最后一个 SENTENCE
         remaining = self._sentence_buf.flush()
@@ -334,12 +342,7 @@ class StreamProcessor:
                 if before:
                     clean = self._block_filter.feed(before)
                     if clean:
-                        clean = _strip_pause_tags(clean)
-                        if clean:
-                            events.append(StreamEvent(type=StreamEventType.TEXT_DELTA, text=clean))
-                            sentence = self._sentence_buf.feed(clean)
-                            if sentence:
-                                events.append(StreamEvent(type=StreamEventType.SENTENCE, text=sentence))
+                        self._emit_text_events(clean, events)
                 self._iv_state = "THINK"
                 self._iv_tail = ""
                 delta = combined[idx + len(self._IV_OPEN):]

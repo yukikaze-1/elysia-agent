@@ -18,7 +18,7 @@
 
 ## 来自 code-review-2026-07-31 的遗留问题
 
-已修复 40/44（1 Critical + 19 Major + 20 Minor），4 项遗留。详见 [docs/code-review-2026-07-31.md](docs/code-review-2026-07-31.md)。
+已修复 41/44（1 Critical + 20 Major + 20 Minor），3 项遗留。详见 [docs/code-review-2026-07-31.md](docs/code-review-2026-07-31.md)。
 
 ### 已修复（2026-07-31）
 
@@ -66,17 +66,17 @@
 | m9 `deafen(2.0)` 长回复回声 | SPEAKING 期间持续刷新 deafen，TTS 停止后自然过期 |
 | m12 `flush_emojis()` 时序 | 从 `_finalize_turn` 移到 `finish_turn`（wait_all 之后） |
 | m16 DelegationPreparer 连接池泄漏 | 加 `aclose()`，`_stop_task_system` 中调用 |
+| M8 MiniMax 停顿标签剥离，F3 停顿失效 | StreamProcessor 拆分 `_strip_pause_tags`/`_strip_tail_pause_tags`——SENTENCE 保留完整标签送 TTS，TEXT_DELTA 剥离供前端；TTSAdapter `tts_text` 不再剥标签。验证 `<#0.5#>` 内小数点已被 `_is_dot_boundary` 数字保护，原剥离是过度防御。补 4 个测试 |
 
-### 遗留（4 项）
+### 遗留（3 项）
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
 | **中** | **M2 `_sync_dirty_entries` 死代码，Milvus 失败记忆永不重试** | [long_term.py:282-315](core/memory/long_term.py#L282)。insert 失败入 `_dirty_ids` 但无调用者同步；重启后脏条目彻底丢失。需接线到 `_db_health_loop` |
-| **中** | **M8 MiniMax 停顿标签 `<#x#>` 剥离，F3 停顿失效** | [tts_adapter.py:258-268](core/adapter/tts_adapter.py#L258)。docstring 声明送 TTS 但两处剥离。需额外设计流式分句下的标签保留 |
 | **中** | **M19 resume 后再次 pause 被销毁** | [task_system.py:384-393](Module/task_system/task_system.py#L384)。缺 PAUSED early-return 保护，mailbox 消费者永久阻塞 |
 | **中** | **M20 cancel 在规划阶段不推终态事件** | [lifecycle.py:157-167](Module/task_system/lifecycle.py#L157) + [planning.py:143-145](Module/task_system/core/planning.py#L143)。`cancel()` 尚无调用方接线，随任务系统接入时修复 |
 
-> 已过滤 3 条（1 误报：重试 off-by-one；2 条置信度 50）。M2/M8 需设计，M19/M20 随 TaskSystem 接入。修复优先级建议见源文档末尾。
+> 已过滤 3 条（1 误报：重试 off-by-one；2 条置信度 50）。M2 需设计，M19/M20 随 TaskSystem 接入。修复优先级建议见源文档末尾。
 
 ## 功能改进
 

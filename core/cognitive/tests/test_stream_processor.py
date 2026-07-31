@@ -241,3 +241,46 @@ class TestReset:
         # 短文本在 BlockFilter 缓冲中，flush 产出 SENTENCE
         flush_events = proc.flush()
         assert any(e.type == StreamEventType.SENTENCE for e in flush_events)
+
+
+class TestPauseTags:
+    """TTS 停顿标签 <#x#> 处理 — SENTENCE 保留完整标签（送 TTS），TEXT_DELTA 剥离（前端显示）。"""
+
+    def _collect(self, proc, text):
+        """feed + flush 全部事件，返回 (sentence_texts, delta_texts)。"""
+        proc.feed(text)
+        events = proc.flush()
+        sentences = [e.text for e in events if e.type == StreamEventType.SENTENCE]
+        deltas = [e.text for e in events if e.type == StreamEventType.TEXT_DELTA]
+        return sentences, deltas
+
+    def test_full_tag_kept_in_sentence_stripped_in_delta(self):
+        """完整标签 <#0.5#>：SENTENCE 保留（TTS 停顿需要），TEXT_DELTA 剥离（前端显示）。"""
+        proc = StreamProcessor()
+        sentences, deltas = self._collect(proc, "<#0.5#>你好。")
+        # SENTENCE 保留完整标签
+        assert any("<#0.5#>" in s for s in sentences)
+        # TEXT_DELTA 剥离标签
+        assert all("<#0.5#>" not in d for d in deltas)
+        assert any("你好" in d for d in deltas)
+
+    def test_full_tag_does_not_break_sentence_splitting(self):
+        """<#0.5#> 内的小数点不触发分句——_is_dot_boundary 数字保护。"""
+        proc = StreamProcessor()
+        sentences, _ = self._collect(proc, "哼<#0.5#>……那又怎样？")
+        # 标签未把句子截断成两半
+        assert any("那又怎样" in s for s in sentences)
+
+    def test_integer_tag(self):
+        """整数停顿 <#1#> 同样保留。"""
+        proc = StreamProcessor()
+        sentences, deltas = self._collect(proc, "稍等<#1#>。")
+        assert any("<#1#>" in s for s in sentences)
+        assert all("<#1#>" not in d for d in deltas)
+
+    def test_tail_partial_tag_stripped_from_sentence(self):
+        """尾部残缺标签 <#0. 剥离——防分句误判（. 后无数字会被误判句末）。"""
+        proc = StreamProcessor()
+        sentences, _ = self._collect(proc, "哈<#0.")
+        # 残缺标签被剥，句子不残留 <#0.
+        assert all("<#0." not in s for s in sentences)

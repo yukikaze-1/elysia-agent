@@ -89,7 +89,13 @@
 | m12 `flush_emojis()` 时序 | 从 `_finalize_turn` 移到 `finish_turn`（wait_all 之后）——最后一句 TTS 的 pop 先执行，依附顺序正确 |
 | m16 DelegationPreparer 客户端从不关闭 | 加 `aclose()`，`_stop_task_system` 中调用，/restart 不再泄漏 httpx 连接池 |
 
-**累计修复 40/44**。遗留 4 项：M2/M8/M19/M20（M2/M8 需设计，M19/M20 随 TaskSystem 接入），记录在 todo.md。`make test-quick`：1817 passed。
+**M8 停顿标签修复（2026-07-31）：**
+- StreamProcessor 拆分 `_strip_pause_tags`（剥完整标签）/`_strip_tail_pause_tags`（剥尾部残缺）——SENTENCE 保留完整标签送 TTS，TEXT_DELTA 剥离供前端显示
+- TTSAdapter `tts_text` 不再剥标签（`display_text` 照旧剥离）——MiniMax 原生支持 `<#x#>` 停顿
+- 实测验证 `<#0.5#>` 内小数点已被 `_is_dot_boundary` 数字保护，原剥离（ec02ec34 的 workaround）是过度防御，可安全去掉
+- 补 4 个测试：完整标签保留/剥离、标签不破坏分句、整数标签、尾部残缺剥离
+
+**累计修复 41/44**。遗留 3 项：M2（需设计）/M19/M20（随 TaskSystem 接入），记录在 todo.md。`make test-quick`：1817 passed。
 
 ### 2026-07-31: CognitiveLoop [TOOL_EXECUTED] 模式切换信号
 

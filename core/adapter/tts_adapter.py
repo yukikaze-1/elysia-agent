@@ -259,7 +259,7 @@ class TTSStreamManager:
         if not self._tts:
             return
 
-        # 显示文本：去掉停顿标签
+        # 显示文本：去掉停顿标签（前端不显示 <#x#>）
         display_text = _PAUSE_TAG_RE.sub("", sentence).strip()
         # 提取句首中文舞台指示，单独一行显示
         action_text = ""
@@ -267,9 +267,9 @@ class TTSStreamManager:
         if m:
             action_text = m.group()
             display_text = display_text[m.end():].strip()
-        # TTS 文本：去掉停顿标签和中文舞台指示（英文语气标签保留，MiniMax 原生支持）
-        tts_text = _PAUSE_TAG_RE.sub("", sentence)
-        tts_text = _CN_ACTION_RE.sub("", tts_text).strip()
+        # TTS 文本：保留停顿标签（MiniMax 原生支持 <#x#> 产生语音停顿），
+        # 去掉中文舞台指示（英文语气标签保留，MiniMax 原生支持）
+        tts_text = _CN_ACTION_RE.sub("", sentence).strip()
 
         try:
             # Phase 1: 下载音频（并行，与其他句同时进行）
