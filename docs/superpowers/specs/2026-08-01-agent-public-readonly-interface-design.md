@@ -4,14 +4,15 @@
 
 ## 动机
 
-`Agent` 是组合根，持有 22 个内部成员（`self._session`/`_long_term`/`_tool_adapter` 等，其中 16 个在 `__init__` 赋值、6 个在启动流程创建），但只暴露 1 个公开方法（`process_message`）+ `agent.status`。下游层（`core/input`、`core/debug`）为访问子系统，只能 `agent._xxx` 硬取——约 **27 个私有成员（23 子系统 + 4 标量）、100+ 处跨模块访问**（`core/input` 26 处 + `debug_routes` 40 处 + `debug/info.py` 35 处）。
+`Agent` 是组合根，持有约 33 个内部成员（`self._session`/`_long_term`/`_tool_adapter` 等，其中 29 个在 `__init__` 赋值、4 个在启动流程创建），但只暴露 1 个公开方法（`process_message`）+ `agent.status`。下游层（`core/input`、`core/debug`）为访问子系统，只能 `agent._xxx` 硬取——27 个私有成员被跨模块消费（23 子系统 + 4 标量），约 **100+ 处跨模块访问**（`core/input` 17+6+3=26 处 + `debug_routes` 40 处 + `debug/info.py` 33 处 + getattr 字符串式 8 处）。
 
 `_` 前缀语义（"请勿触碰"）与真实使用契约矛盾：私有标注了，下游却必须用。`agent.status`（`AgentStatus` 接口）是成功的公开接口范例，本次按同样思路补齐其余子系统的访问路径。
 
 ## 目标
 
 - 为被跨模块消费的 27 个私有成员（23 子系统 + 4 标量）加同名 `@property`，作为公开访问路径
-- 迁移 `core/input`（26 处）+ `core/input/debug_routes`（40 处）+ `core/debug/info.py` 的浅读
+- 迁移 `core/input`（26 处）+ `core/input/debug_routes`（40 处）+ `core/debug/info.py`（33 处）的点式 `agent._xxx` 浅读
+- 迁移 8 处 `getattr(agent, "_xxx")` 字符串式访问（recording.py 4 + character.py 2 + info.py 2）→ `getattr(agent, "xxx")`（或改 `agent.xxx if hasattr(...)` 形式）
 - debug 深度下钻（`agent.<sub>._<attr>` 约 25 处）保留 `_` 访问，标注显式内省豁免
 - 迁移后 `agent._xxx` 只剩深读豁免点
 
@@ -114,11 +115,12 @@ def request_restart(self) -> None:
 
 | 文件 | 处数 | 说明 |
 |------|------|------|
-| `core/input/ws_handler.py` | 26 | `_output`/`_session`/`_user_name`/`_config`/`_llm`/`_tts`/`_bus`/`_idle`/`_token_tracker`/`_tool_adapter` 等（无 `_message_repo`——该文件未引用） |
+| `core/input/ws_handler.py` | 17 | `_output`/`_session`/`_user_name`/`_config`/`_llm`/`_tts`/`_bus`/`_idle`/`_token_tracker`/`_tool_adapter` 等（无 `_message_repo`——该文件未引用） |
 | `core/input/server.py` | 6 | 浅读：`_llm`/`_session`/`_long_term`/`_config`；写迁移：`_state` 2 处 → `request_shutdown()`/`request_restart()`；深读豁免：`_tool_adapter._manager` 3 处 |
 | `core/input/api_routes.py` | 3 | `_config`/`_user_name`/`_message_repo` |
 | `core/input/debug_routes/*.py` | 40 | `_session`/`_session_repo`/`_message_repo`/`_long_term`/`_memory_repo`/`_token_repo` 等 |
-| `core/debug/info.py` | 浅读部分 | `_session`/`_message_repo`/`_long_term.count`/`_memory_repo`/`_session_repo`/`_character`/`_character_engine`/`_character_reflector`/`_tts`/`_stt_ok`/`_llm`/`_scheduler`/`_memory_reflector`/`_consolidator`/`_token_tracker`/`_prompt_recorder`/`_response_recorder`/`_started_at` |
+| `core/debug/info.py` | 浅读 33 处 | `_session`/`_message_repo`/`_long_term.count`/`_memory_repo`/`_session_repo`/`_character`/`_character_engine`/`_character_reflector`/`_tts`/`_stt_ok`/`_llm`/`_scheduler`/`_memory_reflector`/`_consolidator`/`_token_tracker`/`_prompt_recorder`/`_response_recorder`/`_started_at` |
+| `getattr(agent, "_xxx")` 字符串式 | 8 | recording.py:30,47,90,107（`_prompt_recorder`/`_response_recorder`）、character.py:38,65（`_character_engine`）、info.py:233,243（`_character_engine`）→ 字符串去掉 `_` 前缀（`getattr(agent, "prompt_recorder", None)`） |
 
 ### 深度下钻豁免（约 25 处，迁移后仍用 `_`）
 
@@ -133,7 +135,7 @@ def request_restart(self) -> None:
 | info.py:212 | `agent.consolidator._history` |
 | info.py:236,245 | `agent.character_engine._version_repo` |
 | info.py:269 | `agent.output._channels` |
-| info.py:307-316 | `agent.consolidator._history` / `agent.scheduler._xxx` 等 |
+| info.py:303-316 | `agent.memory_reflector._round_count` / `._new_memory_count` / `._lock` / `._last_summary`、`agent.consolidator._buffer` / `._threshold` |
 | ws_handler.py:79,227 | `agent.tool_adapter._manager` |
 | ws_handler.py:210 | `agent.output._channels` |
 | server.py:150,208,237 | `agent.tool_adapter._manager` |
@@ -143,13 +145,13 @@ def request_restart(self) -> None:
 
 ## 错误处理
 
-- `@property` 均为纯读取，不抛异常。子系统对象在 `__init__` 中创建（`_tts` 初始为 `None`，启动后才创建），getter 原样返回——`tts` 可能为 `None`，消费者已有 `is not None` 判断，行为不变。
+- `@property` 均为纯读取，不抛异常。子系统对象 29 个在 `__init__` 创建、4 个在启动流程创建（`token_tracker`/`prompt_recorder`/`response_recorder`/`started_at`）。启动期创建的成员在 `start()` 前访问会抛 `AttributeError`——但现状 `getattr(agent, "_xxx", None)` 已防御，迁移为 `getattr(agent, "xxx", None)` 保持相同行为。`_tts` 初始为 `None`（`_start_tts()` 后创建），getter 原样返回——消费者已有 `is not None` 判断，行为不变。
 - `state` 返回 `RunState` 枚举，消费者（`agent.state == RunState.RUNNING`）语义不变。
 - **写路径**：`state` 只读，`/shutdown`、`/restart` 的写由 `request_shutdown()`/`request_restart()` 承接，设 `_state` 信号引导主循环退出。这两个方法不做清理（`stop()` 才做），语义与现有 `stop()` 区分。
 
 ## 测试
 
-- `core/agent/tests/test_public_interface.py`（新增）：断言每个 property 存在且返回正确的内部对象（`agent.session is agent._session`）。因实例化 `Agent`（不调 `start()`），声明 `pytestmark = pytest.mark.service`（见 [docs/testing.md](../../../docs/testing.md) 分层 + `core/agent/tests/test_agent_methods.py` 现成范例）
+- `core/agent/tests/test_public_interface.py`（新增）：断言每个 property 存在且返回正确的内部对象（`agent.session is agent._session`）。因实例化 `Agent`（不调 `start()`），声明 `pytestmark = pytest.mark.service`（见 [docs/testing.md](../../../docs/testing.md) 分层 + `core/agent/tests/test_agent_methods.py` 现成范例）。注：启动期创建的 4 个成员（`token_tracker` 等）在 `start()` 前的 getter 访问需在测试中单独处理（mock 或调 `_start_services` 相关步骤）
 - `make test-quick` 全绿（迁移不改行为，只改属性访问路径）。注：全量约 1927 测试（`docs/testing.md`），日常验证用 `test-quick`（~1526）
 
 ## 影响范围
