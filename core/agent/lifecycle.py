@@ -122,27 +122,47 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _poll_mailboxes: Callable[[], Coroutine[Any, Any, None]]
 
     async def start(self) -> None:
-        """Start the agent: connect persistence, idle monitor, event loop."""
+        """Start the agent: connect persistence, idle monitor, event loop.
+
+        幂等：已在 RUNNING 状态时 no-op。失败时回滚已启动的步骤（调 stop()），
+        避免留下 _state=RUNNING 的僵尸 Agent 和重复后台循环。
+        """
+        if self._state == RunState.RUNNING:
+            logger.info("Agent already running, skip")
+            return
+
         logger.info("Agent starting...")
         self._state = RunState.RUNNING
         self._started_at = time.monotonic()
         self._fsm.reset()
-        await self._llm.reconnect()
+        try:
+            await self._llm.reconnect()
+        except Exception:
+            logger.error("LLM reconnect failed", exc_info=True)
+            self._state = RunState.STOPPED
+            raise
 
-        # persistence 特殊处理——先于循环，返回值由 _start_persistence() 写入 self
-        await self._start_persistence()
+        try:
+            # persistence 特殊处理——先于循环，返回值由 _start_persistence() 写入 self
+            await self._start_persistence()
 
-        # 其余步骤走 _STARTUP_STEPS 数据驱动循环
-        for name, method_name in self._STARTUP_STEPS:
-            logger.debug("Startup step: %s", name)
-            method = getattr(self, method_name)
-            try:
-                result = method()
-                if hasattr(result, "__await__"):
-                    await result
-            except Exception:
-                logger.error("Startup step %s failed", name, exc_info=True)
-                raise
+            # 其余步骤走 _STARTUP_STEPS 数据驱动循环
+            for name, method_name in self._STARTUP_STEPS:
+                logger.debug("Startup step: %s", name)
+                method = getattr(self, method_name)
+                try:
+                    result = method()
+                    if hasattr(result, "__await__"):
+                        await result
+                except Exception:
+                    logger.error("Startup step %s failed", name, exc_info=True)
+                    raise
+        except Exception:
+            # 回滚——清理已启动的步骤，避免僵尸 Agent + 重复后台循环
+            logger.warning("Agent start failed, rolling back", exc_info=True)
+            self._state = RunState.STOPPED
+            await self.stop()
+            raise
 
     async def stop(self) -> None:
         """Stop the agent — 按 _SHUTDOWN_STEPS 顺序执行清理。"""

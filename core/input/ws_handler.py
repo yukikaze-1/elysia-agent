@@ -115,15 +115,16 @@ async def handle_ws(
         )
 
         # Monitor FSM state to deafen mic when assistant is speaking (echo prevention)
+        # 只在上升沿 deafen 一次 2s 不够——长回复（5-30s 多句 TTS）后半段回声会越过
+        # deafen 窗口触发 VAD interrupt，自我打断剩余回复。改为 SPEAKING 期间持续刷新。
         async def _monitor_state():
-            prev_speaking = False
             while not ws.closed:
                 try:
                     await asyncio.sleep(0.1)
-                    current = agent.status.is_speaking
-                    if current and not prev_speaking and audio_buf:
+                    if agent.status.is_speaking and audio_buf:
+                        # 持续刷新 deafen——TTS 播放期间麦克风保持静音（回声被抑制）；
+                        # is_speaking 变 False 后 deafen 自然过期，用户语音可正常触发打断
                         audio_buf.deafen(2.0)
-                    prev_speaking = current
                 except asyncio.CancelledError:
                     raise
                 except Exception:

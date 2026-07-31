@@ -114,3 +114,9 @@ class _LifecycleTaskSystem:
                 await asyncio.wait_for(self._task_system.stop(), timeout=5.0)
             except asyncio.TimeoutError:
                 logger.warning("TaskSystem stop timed out")
+        # 关闭 DelegationPreparer 内部 AsyncOpenAI 客户端，避免 /restart 泄漏 httpx 连接池
+        if self._delegation_preparer:
+            try:
+                await self._delegation_preparer.aclose()
+            except Exception:
+                logger.warning("DelegationPreparer close failed", exc_info=True)

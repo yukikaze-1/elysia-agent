@@ -478,6 +478,18 @@ class DelegationPreparer:
             return "（无用户画像）"
         return json.dumps(dumped, ensure_ascii=False, indent=2)
 
+    async def aclose(self) -> None:
+        """关闭内部 AsyncOpenAI 客户端，释放 httpx 连接池。
+
+        每次 Agent 生命周期启动时创建新 client，/restart 进程内重启会泄漏连接池，
+        需在 shutdown 时显式关闭（httpx 在 GC 时仅能警告 "Unclosed client session"）。
+        """
+        if self._client is not None:
+            try:
+                await self._client.close()
+            except Exception:
+                pass  # close 失败不阻塞 shutdown
+
 
 # ── 内部异常 ────────────────────────────────────────────────────────────────────
 

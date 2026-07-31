@@ -88,6 +88,7 @@ class _LifecycleTools:
 
     def _stop_cognitive_and_tts(self) -> None:
         """Cancel 当前 cognitive task + TTS 任务（belt-and-suspenders）。"""
+        self._cognitive.mark_shutting_down()  # 门禁——after_response 检查后提前退出
         self._cognitive.cancel_current()
         self._cognitive._tts_mgr.cancel_all()
 

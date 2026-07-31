@@ -78,7 +78,18 @@
 | m17 `Module/system_prompt` eager import | `MessageBuilder` 改为 `__getattr__` 内延迟导入 |
 | m20 SSE 重连退避失效 | `connect()` 不再清零 `reconnectDelay`，`onopen` 时重置为 1000 |
 
-**累计修复 33/44**。遗留 11 项：M2/M8/M19/M20 + m1/m2/m5/m6/m9/m12/m16（M2/M8 需设计，M19/M20 随 TaskSystem 接入），记录在 todo.md。`make test-quick`：1817 passed，前端构建通过。
+**第三批（+7 项，2026-07-31）：**
+| 问题 | 修复 |
+|------|------|
+| m1 shutdown flush 与 cancel 认知任务竞态 | CognitiveLoop `mark_shutting_down()` 门禁——after_response 检查后提前退出，避免与已关闭 LLM/session 并发 |
+| m2 start() 失败留下僵尸 Agent | start() 幂等检查（RUNNING no-op）+ 失败时回滚调 stop() |
+| m5 `update_text` embedding 不可用陈旧向量残留 | emb 为空时标记 `_dirty_ids`（对称 except 分支） |
+| m6 图片上传 multipart 绕过 client_max_size | `field.read(max_bytes + 1)` 限制读取，超大提前 413（DoS 向量关闭） |
+| m9 `deafen(2.0)` 长回复回声自我打断 | SPEAKING 期间持续刷新 deafen，TTS 停止后自然过期（保留 FSM "SPEAKING 允许打断"语义） |
+| m12 `flush_emojis()` 时序 | 从 `_finalize_turn` 移到 `finish_turn`（wait_all 之后）——最后一句 TTS 的 pop 先执行，依附顺序正确 |
+| m16 DelegationPreparer 客户端从不关闭 | 加 `aclose()`，`_stop_task_system` 中调用，/restart 不再泄漏 httpx 连接池 |
+
+**累计修复 40/44**。遗留 4 项：M2/M8/M19/M20（M2/M8 需设计，M19/M20 随 TaskSystem 接入），记录在 todo.md。`make test-quick`：1817 passed。
 
 ### 2026-07-31: CognitiveLoop [TOOL_EXECUTED] 模式切换信号
 

@@ -214,7 +214,9 @@ def register_api_routes(app: web.Application) -> None:
             if field is None:
                 return web.json_response({"error": "未找到图片字段"}, status=400)
 
-            data = await cast(BodyPartReader, field).read()
+            # read(max_bytes + 1) 限制单次读取——multipart 原始流不受
+            # client_max_size 约束，若整块 read() 会允许超大 body 造成内存尖峰（DoS 向量）
+            data = await cast(BodyPartReader, field).read(max_bytes + 1)
             if len(data) > max_bytes:
                 return web.json_response({"error": f"图片过大，上限 {max_bytes // 1024 // 1024}MB"}, status=413)
 

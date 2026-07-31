@@ -171,6 +171,7 @@ class CognitiveLoop(CognitiveTools):
         self._current_task: asyncio.Task | None = None
         self._tts_task: asyncio.Task | None = None  # 保留供 agent.py stop() 读取
         self._pending_after_response: list[asyncio.Task] = []  # shutdown 时等待
+        self._shutting_down: bool = False  # shutdown 门禁——after_response 检查后提前退出
         # TTS streaming manager — extracted sub-system
         self._tts_mgr = TTSStreamManager(
             tts, output,
@@ -224,6 +225,12 @@ class CognitiveLoop(CognitiveTools):
             return True
         self._current_task = None
         return False
+
+    def mark_shutting_down(self) -> None:
+        """标记 CognitiveLoop 进入 shutdown——turn 收尾新创建的 after_response task
+        检查此标志后提前退出，避免与已关闭的 LLM/session repo 并发。
+        """
+        self._shutting_down = True
 
     def configure(self, **kwargs) -> None:
         """一次性注入所有延迟依赖（替代 10 个 setter 方法）。
@@ -655,7 +662,8 @@ class CognitiveLoop(CognitiveTools):
             user_message: 用户原始输入（传给 _after_response）
             round_num: 当前轮次编号（传给 response_recorder）
         """
-        await self._tts_mgr.flush_emojis()
+        # 注意：不在此处 flush_emojis——最后一句 TTS 的 pop(sid-1) 在 wait_all 后才执行。
+        # emoji 依附顺序由 finish_turn → wait_all → flush_emojis 保证（见 _transition_idle）。
 
         # Fallback: LLM 未输出 <mood> → 关键词检测
         if self._character_engine and not self._mood_applied:
@@ -828,6 +836,13 @@ class CognitiveLoop(CognitiveTools):
             user_message: 用户原始输入
             assistant_response: 剥离标签后的公开回复文本
         """
+        # shutdown 门禁——stop() 开始后（cognitive task 已 cancel、LLM/session repo 将关闭），
+        # 本轮 turn 收尾新创建的 after_response task 立即退出，避免与已关闭资源并发。
+        # 否则最后轮记忆沉淀丢失、session 降级写 JSONL。
+        if self._shutting_down:
+            logger.debug("after_response 跳过——agent 正在关闭")
+            return
+
         items = []  # 初始化，避免 NameError
         if self._consolidator:
             try:

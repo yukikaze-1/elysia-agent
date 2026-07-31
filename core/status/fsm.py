@@ -170,6 +170,9 @@ class FSMBackedPhaseController(CognitivePhaseController):
 
         if self._tts_mgr is not None:
             await self._tts_mgr.wait_all()
+            # wait_all 后 flush emoji——此时最后一句 TTS 已完成，
+            # 残留 emoji 不会提前广播，依附顺序（"句子😊"）保持正确
+            await self._tts_mgr.flush_emojis()
 
         if has_background_tasks:
             if self._fsm.state == AgentState.SPEAKING:

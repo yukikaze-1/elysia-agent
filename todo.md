@@ -18,7 +18,7 @@
 
 ## 来自 code-review-2026-07-31 的遗留问题
 
-已修复 33/44（1 Critical + 19 Major + 13 Minor），11 项遗留。详见 [docs/code-review-2026-07-31.md](docs/code-review-2026-07-31.md)。
+已修复 40/44（1 Critical + 19 Major + 20 Minor），4 项遗留。详见 [docs/code-review-2026-07-31.md](docs/code-review-2026-07-31.md)。
 
 ### 已修复（2026-07-31）
 
@@ -59,8 +59,15 @@
 | m15 MilvusBackend.close() 空实现 | `asyncio.to_thread(self._client.close)`（pymilvus 有 close） |
 | m17 `Module/system_prompt` eager import | `MessageBuilder` 改为 `__getattr__` 内延迟导入 |
 | m20 SSE 重连退避失效 | `connect()` 不再清零 `reconnectDelay`，`onopen` 时重置为 1000 |
+| m1 shutdown flush 与 cancel 竞态 | CognitiveLoop `mark_shutting_down()` 门禁——after_response 检查后提前退出 |
+| m2 start() 失败僵尸 Agent | start() 幂等检查 + 失败时回滚（调 stop()） |
+| m5 `update_text` embedding 不可用陈旧向量残留 | emb 为空时标记 `_dirty_ids`（对称 except 分支） |
+| m6 图片上传 multipart DoS | `field.read(max_bytes + 1)` 限制读取，超大提前 413 |
+| m9 `deafen(2.0)` 长回复回声 | SPEAKING 期间持续刷新 deafen，TTS 停止后自然过期 |
+| m12 `flush_emojis()` 时序 | 从 `_finalize_turn` 移到 `finish_turn`（wait_all 之后） |
+| m16 DelegationPreparer 连接池泄漏 | 加 `aclose()`，`_stop_task_system` 中调用 |
 
-### 遗留（11 项）
+### 遗留（4 项）
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
@@ -68,15 +75,8 @@
 | **中** | **M8 MiniMax 停顿标签 `<#x#>` 剥离，F3 停顿失效** | [tts_adapter.py:258-268](core/adapter/tts_adapter.py#L258)。docstring 声明送 TTS 但两处剥离。需额外设计流式分句下的标签保留 |
 | **中** | **M19 resume 后再次 pause 被销毁** | [task_system.py:384-393](Module/task_system/task_system.py#L384)。缺 PAUSED early-return 保护，mailbox 消费者永久阻塞 |
 | **中** | **M20 cancel 在规划阶段不推终态事件** | [lifecycle.py:157-167](Module/task_system/lifecycle.py#L157) + [planning.py:143-145](Module/task_system/core/planning.py#L143)。`cancel()` 尚无调用方接线，随任务系统接入时修复 |
-| 低 | m1 shutdown flush 与 cancel 认知任务竞态 | `lifecycle.py:50-66` orphan after_response task 与已关闭 LLM/session 并发 |
-| 低 | m2 start() 失败留下僵尸 Agent | `lifecycle.py:124-145` 无回滚 + 无幂等保护 |
-| 低 | m5 `update_text` embedding 不可用时陈旧向量残留 | `long_term.py:344-373` 无 `_dirty_ids` 标记（与 M2 关联） |
-| 低 | m6 图片上传 multipart 绕过 client_max_size | `api_routes.py:217-218` 真实 DoS 向量 |
-| 低 | m9 `deafen(2.0)` 长回复回声自我打断 | `ws_handler.py:113-126` |
-| 低 | m12 `flush_emojis()` 时序 | `tts_adapter.py:181-190` emoji 先于文字 |
-| 低 | m16 DelegationPreparer 客户端从不关闭 | `delegation_preparer.py:118-128` httpx 连接池泄漏 |
 
-> 已过滤 3 条（1 误报：重试 off-by-one；2 条置信度 50）。修复优先级建议见源文档末尾。
+> 已过滤 3 条（1 误报：重试 off-by-one；2 条置信度 50）。M2/M8 需设计，M19/M20 随 TaskSystem 接入。修复优先级建议见源文档末尾。
 
 ## 功能改进
 

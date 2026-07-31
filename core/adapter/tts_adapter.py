@@ -179,7 +179,11 @@ class TTSStreamManager:
         self._tasks = [t for t in self._tasks if not t.done()]
 
     async def flush_emojis(self) -> None:
-        """发送所有还未排出的 emoji（最后一句 TTS 之后的）。"""
+        """发送所有还未排出的 emoji（最后一句 TTS 之后的）。
+
+        调用方须保证在 wait_all() 之后调用——否则最后一句的 pop(sid-1)
+        尚未执行，残留 emoji 会以无 stream_id 方式提前广播，破坏"句子😊"依附顺序。
+        """
         for seq in sorted(self._pending_emojis):
             for e in self._pending_emojis[seq]:
                 await self._output._broadcast(

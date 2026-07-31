@@ -344,7 +344,11 @@ class LongTermMemory:
                     if self._repo is not None and e._milvus_pk is not None:
                         old_pk = e._milvus_pk
                         emb = await self._embedding_provider.embed(new_text)
-                        if emb:
+                        if not emb:
+                            # embedding 后端不可用——标记脏，等 _sync_dirty_entries 重试，
+                            # 否则旧向量与新文本绑定参与 rerank、重启后旧文本静默回滚
+                            self._dirty_ids.add(entry_id)
+                        else:
                             try:
                                 pk_list = await self._repo.insert(
                                     vectors=[emb],
