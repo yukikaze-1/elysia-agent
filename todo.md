@@ -43,6 +43,23 @@
 - `Module._common → Module.config → Module.llm/stt/tts → Module._common` — [preflight.py](Module/config/preflight.py) 函数内懒加载后端
 - `Module.system_prompt → core.adapter → core.memory/personality/storage → Module.system_prompt` — system_prompt 的 MessageBuilder 懒加载已废弃
 
+### 接口暴露不足：跨模块使用依赖内部属性（未修）
+
+**核心发现**：`Agent` 只暴露 1 个公开方法（`process_message`）+ `agent.status`（`AgentStatus` 状态查询，这部分做对了）。但 session/repo/tool_adapter/output/config 等子系统**没有任何公开 getter**，下游层只能 `agent._xxx` 硬取 —— `_` 前缀语义（"请勿触碰"）与真实使用契约矛盾。
+
+| 优先级 | 位置 | 说明 |
+|--------|------|------|
+| 中 | `core/input/*` → `agent._xxx`（76 处） | [ws_handler.py](core/input/ws_handler.py#L52) 等读 `_session`(16)/`_message_repo`(9)/`_session_repo`(8)/`_long_term`(8)/`_tool_adapter._manager`(6)/`_output`(3)/`_user_name`(3)/`_llm`(2)/`_config`(2)/`_bus`(2) |
+| 中 | `core/debug/info.py` 三层下钻（45 处） | [info.py](core/debug/info.py#L155) 读 `agent._cognitive._phase`、`agent._long_term._entries[-5:]`、`agent._long_term._repo`、`agent._tool_adapter._manager`、`agent._consolidator._history`、`agent._idle._character.proactive.enabled` |
+| 低 | `core.schema._utils` 跨包导入 | [core/cognitive/loop.py:63](core/cognitive/loop.py#L63)、core/personality 直接 `from core.schema._utils import now_iso` —— `_utils` 标了私有却跨包用。若共享应改名 `core.schema.utils` 或收敛到各包内 |
+
+**修法（按收益排序）**：
+1. 给 `Agent` 加公开只读接口：`@property agent.session/llm/tool_adapter/output/config/long_term` 等 → `core/input` 的 76 处 `agent._session` 改 `agent.session`，恢复 `_` 私有语义
+2. debug 层下钻收敛：`_entries`/`_repo`/`_history` 三层访问 → Agent 加聚合只读接口（如 `agent.recent_memories()`）或文档标注 debug 层为显式内省层豁免
+3. `core.schema._utils` 跨包 → 改名去下划线或收敛
+
+**已实现（2026-08-01）**：Agent 加 27 个公开 property + request_shutdown/request_restart + purge 公开化；core/input + debug_routes + debug/info.py 全部浅读迁移；8 处 getattr 去下划线；深读豁免 `# noqa: SLF001` 标注。
+
 ## token 统一结构（2026-07-31）遗留可接受项
 
 全链路统一 `TokenUsage` 模型的最终 review（opus）**APPROVE FOR MERGE** 后的可接受 residual，均为低优先级。详见 [docs/superpowers/specs/2026-07-31-token-usage-unified-structure-design.md](docs/superpowers/specs/2026-07-31-token-usage-unified-structure-design.md)。
