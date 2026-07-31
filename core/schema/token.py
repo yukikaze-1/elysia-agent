@@ -3,10 +3,12 @@
 单一权威定义，各层（内存/持久化/消息嵌入/WS 传输）统一使用。
 """
 
+from typing import Any, cast
+
 from pydantic import BaseModel, Field
 
 from .types import SessionId, IsoTimestamp
-from ._utils import now_iso
+from .utils import now_iso
 
 
 class TokenUsage(BaseModel):
@@ -22,7 +24,7 @@ class TokenUsage(BaseModel):
     timestamp: IsoTimestamp = Field(default_factory=now_iso)
 
     @classmethod
-    def from_api(cls, usage: dict, *, model, session_id, round_num) -> "TokenUsage":
+    def from_api(cls, usage: dict[str, Any], *, model, session_id, round_num) -> "TokenUsage":
         """从 LLM 层归一化 usage dict 构造（含字段校验）。
 
         usage 键名契约（由 LLM 层 _extract_usage 产出）：
@@ -37,9 +39,10 @@ class TokenUsage(BaseModel):
             model=model,
             session_id=session_id,
             round_num=round_num,
-            input_tokens=usage.get("input_tokens"),
-            output_tokens=usage.get("output_tokens"),
-            total_tokens=usage.get("total_tokens"),
+            # cast：契约保证必填键为 int；缺失时传入 None 由 Pydantic 校验失败
+            input_tokens=cast(int, usage.get("input_tokens")),
+            output_tokens=cast(int, usage.get("output_tokens")),
+            total_tokens=cast(int, usage.get("total_tokens")),
             cached_tokens=usage.get("cached_tokens"),
             reasoning_tokens=usage.get("reasoning_tokens"),
         )

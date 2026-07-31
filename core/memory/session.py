@@ -29,7 +29,7 @@ from core.schema.message import (
     Message,
     ToolResultMessage,
 )
-from core.schema._utils import now_iso
+from core.schema.utils import now_iso
 from core.schema.part import TextPart
 from core.schema.types import SessionId
 from core.storage.message_repo import MessageRepository

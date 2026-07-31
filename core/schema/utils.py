@@ -1,6 +1,7 @@
-"""core/schema 工具函数 — 类型定义之外的小型辅助函数。
+"""core/schema 工具函数 — 类型定义之外的小型辅助函数（共享工具模块）。
 
-IsoTimestamp: 兼容 ISO 8601 字符串和旧 float Unix 时间戳。
+now_iso:          跨包共享（core/personality、cognitive、input、storage、memory 等）。
+_normalize_iso_ts / _validate_src: schema 内部私有 helper（下划线前缀，勿跨包引用）。
 """
 
 from datetime import datetime, timezone

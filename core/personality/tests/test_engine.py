@@ -1,7 +1,7 @@
 """CharacterEngine 单元测试。"""
 import asyncio
 import time
-from core.schema._utils import now_iso
+from core.schema.utils import now_iso
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from core.personality import CharacterEngine

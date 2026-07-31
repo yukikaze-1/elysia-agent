@@ -5,7 +5,7 @@ from typing import TypedDict
 from pydantic import BaseModel, Field
 
 from .types import SessionId, IsoTimestamp
-from ._utils import now_iso
+from .utils import now_iso
 
 
 class StateHistoryEntry(TypedDict):

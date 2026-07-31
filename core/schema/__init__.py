@@ -13,7 +13,7 @@
 """
 
 # ── 基础类型（ID、时间戳、工具函数） ──
-from core.schema._utils import now_iso  # noqa: F401
+from core.schema.utils import now_iso  # noqa: F401
 from core.schema.types import (  # noqa: F401
     IsoTimestamp,
     MessageId,

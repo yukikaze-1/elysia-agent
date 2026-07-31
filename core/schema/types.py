@@ -4,7 +4,7 @@ from typing import Annotated, NewType
 
 from pydantic import BeforeValidator
 
-from ._utils import _normalize_iso_ts
+from .utils import _normalize_iso_ts
 
 
 IsoTimestamp = Annotated[str, BeforeValidator(_normalize_iso_ts)]

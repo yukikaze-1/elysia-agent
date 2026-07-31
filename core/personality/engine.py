@@ -27,7 +27,7 @@ from .emotion import EmotionDetector
 from .awareness import AwarenessJudge
 from core.schema.compression import CompressionTrigger
 from ._utils import _schedule, _extract_tag  # _extract_tag 保持向后兼容
-from core.schema._utils import now_iso
+from core.schema.utils import now_iso
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
     from core.config.character_config import CharacterConfig

@@ -15,7 +15,7 @@ from .error_type import ErrorType
 from .part import Part
 from .token import TokenUsageSummary
 from .tool import ToolCall, ToolCallId
-from ._utils import now_iso
+from .utils import now_iso
 from .types import IsoTimestamp, MessageId, SessionId
 
 

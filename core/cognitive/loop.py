@@ -60,7 +60,7 @@ from core.schema.tool import ToolCall, ToolCallId
 
 from core.schema.part import TextPart
 from core.schema.adapters.message_adapter import parts_from_dicts
-from core.schema._utils import now_iso as _now_iso
+from core.schema.utils import now_iso as _now_iso
 
 logger = logging.getLogger(__name__)
 

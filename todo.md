@@ -35,10 +35,7 @@
 
 - `Module._common → Module.config → Module.llm/stt/tts → Module._common` — [preflight.py](Module/config/preflight.py) 函数内懒加载后端
 - `Module.system_prompt → core.adapter → core.memory/personality/storage → Module.system_prompt` — ✅ 已消除：`__init__.py` 的 deprecated MessageBuilder lazy import 已删除（无消费方），Module/system_prompt 生产代码现零 core 依赖
-
-### 遗留：`core.schema._utils` 跨包导入（未修）
-
-[core/cognitive/loop.py:63](core/cognitive/loop.py#L63)、core/personality 直接 `from core.schema._utils import now_iso` —— `_utils` 标了私有却跨包用。若共享应改名 `core.schema.utils` 或收敛到各包内。
+- ✅ `core.schema._utils` 跨包导入已消除：改名 `core.schema.utils`（`now_iso` 被 7 个包共享），私有 helper `_normalize_iso_ts`/`_validate_src` 保持下划线前缀仅 schema 内部使用
 
 ## token 统一结构（2026-07-31）遗留可接受项
 

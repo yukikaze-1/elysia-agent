@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
-from core.schema._utils import now_iso
+from core.schema.utils import now_iso
 from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.character import CharacterState
 from core.schema.memory_reflector import MemoryReflectorState
