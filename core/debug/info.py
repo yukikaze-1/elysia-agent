@@ -161,10 +161,10 @@ async def collect(agent: "Agent") -> DebugInfo:
 
     # ---- IdleMonitor ----
     im = agent.idle
-    info.proactive_enabled = im._character.proactive.enabled
-    info.proactive_interval = im._character.proactive.interval
-    if im._last_interaction:
-        info.last_interaction_ago = time.monotonic() - im._last_interaction
+    info.proactive_enabled = im._character.proactive.enabled  # noqa: SLF001
+    info.proactive_interval = im._character.proactive.interval  # noqa: SLF001
+    if im._last_interaction:  # noqa: SLF001
+        info.last_interaction_ago = time.monotonic() - im._last_interaction  # noqa: SLF001
 
     # ---- Session ----
     msgs = agent.session.messages_for_client()
@@ -313,8 +313,8 @@ async def collect(agent: "Agent") -> DebugInfo:
 
     # ---- Consolidator buffer ----
     cons = agent.consolidator
-    info.consolidator_buffer_size = len(cons._buffer)
-    info.consolidator_threshold = cons._threshold
+    info.consolidator_buffer_size = len(cons._buffer)  # noqa: SLF001
+    info.consolidator_threshold = cons._threshold  # noqa: SLF001
 
     # ---- Mood (L4 Emotion) ----
     try:

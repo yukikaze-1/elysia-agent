@@ -144,7 +144,7 @@ class LatencyBench:
             await agent.start()
             setup_ms = (time.perf_counter() - t_setup) * 1000
             print(f"  启动耗时: {int(setup_ms)} ms")
-            mem_count = agent._long_term.count if hasattr(agent, "_long_term") and agent._long_term else "N/A"
+            mem_count = agent.long_term.count if hasattr(agent, "long_term") and agent.long_term else "N/A"
             print(f"  记忆条目: {mem_count}")
             print()
 
