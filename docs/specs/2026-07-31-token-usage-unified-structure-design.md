@@ -22,7 +22,7 @@
 | 决策 | 结论 |
 |------|------|
 | 字段形态 | `input_tokens`/`output_tokens`/`total_tokens` + 可选 `cached_tokens`/`reasoning_tokens`（全明细） |
-| 旧数据 | 不兼容，直接改名。旧 Mongo 文档/旧 pending 行 validate 失败时跳过，自然老化 |
+| 旧数据 | 不兼容，直接改名。token_usage 集合/旧 pending 行 validate 失败时跳过；**消息内嵌路径（会话上下文）用加载点降级**——旧 token_usage 剥除、消息正文保留，避免整批加载失败丢会话 |
 | timestamp | `IsoTimestamp`（`core/schema/_utils.py` 已有，自动兼容旧 float Unix 输入） |
 | 范围 | 全链路：权威模型 + 后端各层统一 + LLM 解析 + 前端 + 测试 |
 
@@ -45,7 +45,13 @@ class TokenUsage(BaseModel):
 
     @classmethod
     def from_api(cls, usage: dict, *, model, session_id, round_num) -> "TokenUsage":
-        """从 LLM 层归一化 usage dict 构造（含字段校验）。"""
+        """从 LLM 层归一化 usage dict 构造（含字段校验）。
+
+        usage 键名契约（由 LLM 层 _extract_usage 产出）：
+        {"input_tokens": int, "output_tokens": int, "total_tokens": int,
+         "cached_tokens": int | None, "reasoning_tokens": int | None}
+        缺失可选键时对应字段为 None。仅作校验 + 补 model/session_id/round_num/timestamp。
+        """
 ```
 
 **删除**：`TokenUsage`（dataclass，`token_tracker.py`）、`TokenUsageEntry`、`TokenUsageRecord`。
@@ -55,15 +61,56 @@ class TokenUsage(BaseModel):
 
 ### 2. LLM 解析层 — `Module/llm/openai_compat.py`
 
-三处 usage 提取（两处流式 + 一处非流式）抽为统一 helper，新增字段提取：
+三处 usage 提取（两处流式 + 一处非流式）抽为统一 helper `_extract_usage(u) -> dict`，产出第 1 节定义的 usage dict 契约：
 
 | 新字段 | 来源 |
 |--------|------|
 | `input_tokens` | `u.prompt_tokens` |
 | `output_tokens` | `u.completion_tokens` |
-| `cached_tokens` | `u.prompt_tokens_details.cached_tokens`（无则 None） |
-| `reasoning_tokens` | `u.completion_tokens_details.reasoning_tokens`（无则 None） |
+| `cached_tokens` | `(u.prompt_tokens_details or {}).cached_tokens`（无则 None） |
+| `reasoning_tokens` | `(u.completion_tokens_details or {}).reasoning_tokens`（无则 None） |
 | `total_tokens` | `u.total_tokens` |
+
+**helper 边界（防 M6 回归）**：`_extract_usage` **只接收 SDK usage 对象做字段映射**，不碰 chunk 遍历 / `choices` 空数组哨兵 / `is not None` 守卫——三处调用点各自保留原有的 chunk 层守卫（`_stream_structured` 的 truthy 检查与 `_call_api` 的 `not choices` 哨兵不对称是 M6 修复的核心，不得并入 helper）。
+
+**details Optional 防护**：openai SDK 的 `prompt_tokens_details`/`completion_tokens_details` 为 Optional，Ollama 等 provider 不返回——必须 `(u.prompt_tokens_details or {}).cached_tokens` 式守卫，禁止直接属性访问。
+
+其他 backend（ollama/mimo/custom）均继承 `openai_compat` 或复用其流式路径，不单独处理 usage。
+
+### 2b. 消息内嵌路径：加载点降级（会话上下文保护）
+
+`TokenUsageSummary` 内嵌在 `AssistantMessage.token_usage` 随会话文档/归档持久化。旧会话消息含 `prompt_tokens`/`completion_tokens` 字段，新模型下整条消息校验失败。当前 `session_repo.load` / `session.load_from_jsonl` 是**整批 `TypeAdapter[Message]` 校验、无 per-message try/except**（[session_repo.py:150](core/storage/session_repo.py#L150)、[session.py:313](core/memory/session.py#L313)）——单条消息失败即整个会话加载失败，回退 JSONL 同样失败，内存变空会话，下次 `save()` 覆盖旧文档 → **旧会话上下文永久丢失**。
+
+**方案**：`core/schema/adapters/message_adapter.py` 新增 `validate_message_legacy_compat(data: dict) -> Message`：
+
+```python
+def validate_message_legacy_compat(data):
+    """校验消息 dict → Message；旧格式 token_usage 剥除后重试。
+
+    旧会话/归档消息的 token_usage 为 prompt_tokens/completion_tokens 旧字段，
+    新模型无法校验。剥除 token_usage（置 None）保留消息正文，避免整批加载
+    失败导致会话上下文丢失。token_usage 不存在或重试仍失败时抛原异常。
+    """
+    try:
+        return _MESSAGE_ADAPTER.validate_python(data)
+    except ValidationError:
+        if isinstance(data, dict) and "token_usage" in data:
+            try:
+                return _MESSAGE_ADAPTER.validate_python({**data, "token_usage": None})
+            except ValidationError:
+                pass
+        raise  # 重新抛出原始异常
+```
+
+**三处加载点统一改用该 helper**。`_MESSAGE_ADAPTER: TypeAdapter[Message]` 与 `validate_message_legacy_compat` 均定义在 `message_adapter.py`（`message.py` 不依赖 adapters，无循环 import）；三处加载点删除各自本地 `TypeAdapter[Message]`，改为 `from core.schema.adapters.message_adapter import validate_message_legacy_compat`：
+
+| 加载点 | 现状 | 改为 |
+|--------|------|------|
+| `core/storage/session_repo.py:22,150` | 本地 `_message_adapter` + `[_message_adapter.validate_python(m) for m in msgs_raw]` | 删本地 adapter，`[validate_message_legacy_compat(m) for m in msgs_raw]` |
+| `core/memory/session.py:44,313` | 同上（JSONL 恢复） | 同上 |
+| `core/storage/message_repo.py:18,34` | 本地 `_message_adapter` + `validate_python(doc)`（归档读取） | 删本地 adapter，`validate_message_legacy_compat(doc)` |
+
+> 新写入的会话无此开销：helper 仅在校验失败时才做第二次剥除重试，新格式消息首次校验即过。
 
 ### 3. TokenTracker — `core/monitoring/token_tracker.py`
 
@@ -86,23 +133,34 @@ class TokenUsage(BaseModel):
 | `core/input/ws_handler.py` | `get_session_stats` 返回结构不变（`{total, by_model}`） |
 | `core/debug/info.py` | `current_turn` 改为 `[u.model_dump() for u in ...]`，新字段自动带出 |
 | `core/tools/runtime_config/plugin.py` | 只读 `session_total`/`per_model`，不动 |
-| `frontend/src/types/protocol.ts` | `TokenRound` → `input_tokens/output_tokens/cached_tokens?/reasoning_tokens?`；删 `byModel` 双兼容（`TokenStats.by_model` 单一） |
-| `frontend/src/stores/chatStore.ts` | `updateTokenUsage` 的 `s.by_model || s.byModel` 双兼容改为只读 `s.by_model` |
+| `frontend/src/types/protocol.ts` | `TokenRound` → `input_tokens/output_tokens/cached_tokens?/reasoning_tokens?`；`timestamp?: number` → `string`（后端 model_dump 产 ISO 字符串）；删 `byModel` 双兼容（`TokenStats.by_model` 单一） |
+| `frontend/src/stores/chatStore.ts` | `sessionTokens` 内部类型 `byModel` → `by_model`（L41）；`updateTokenUsage` 的 `s.by_model || s.byModel` 双兼容改为只读 `s.by_model`（L203） |
+| `frontend/src/components/character/CharStatus.vue` | `st.byModel` → `st.by_model`（L17） |
 | `frontend/src/components/chat/TokenLabel.vue` | 显示 In/Out，有值时显示 cached/reasoning |
-| `frontend/src/debug/types.ts` | `TokenRoundItem` 同步 |
+| `frontend/src/debug/types.ts` | `TokenRoundItem` 同步 input/output |
+| `core/schema/__init__.py` | re-export 改 `TokenUsage, TokenUsageSummary`（删 TokenUsageEntry/TokenUsageRecord） |
+| `core/monitoring/__init__.py` | `from .token_tracker import TokenTracker`（删 dataclass TokenUsage re-export） |
+| `core/schema/README.md` | `token.py` 行（L19/L47）更新为 TokenUsage |
+| `core/monitoring/README.md` | TokenUsageRecord/TokenUsage 引用（L48/L59）更新 |
+| `core/adapter/llm_adapter.py` | `stream_chat` docstring 的 usage 键契约（L102-103）更新为 input/output |
+| `Module/llm/protocol.py` | `stream_thinking` docstring 的 usage 键契约（L52）更新为 input/output |
 
 ### 6. 测试
 
-- `Module/llm/tests/` — openai_compat 新字段提取（cached/reasoning，流式 + 非流式）
+- `Module/llm/tests/` — `_extract_usage` 新字段提取（cached/reasoning，流式 + 非流式）；**details 缺失（Ollama 风格）→ None 不抛**
 - `core/monitoring/tests/test_token_tracker.py` — record/persist/flush 换新模型、字段改名
 - `core/storage/tests/test_token_repo.py` — legacy 文档跳过
+- `core/tests/`（或 session/message_repo 现有测试）— `validate_message_legacy_compat`：旧 token_usage 消息剥除后保留正文；无 token_usage 消息直接过；剥除后仍失败抛原异常
 - 前端 TS 编译 + TokenLabel 显示
 
 ## 错误处理
 
-- 旧 Mongo 文档：`query_by_session` validate 失败 → 跳过（不迁移、不清库、不崩）
-- 旧 pending 行：`flush_pending` validate 失败 → 跳过
-- `cached_tokens`/`reasoning_tokens`：provider 未返回即 None，前端有值才显示
+| 数据面 | 策略 |
+|--------|------|
+| token_usage 集合旧文档 | `query_by_session` validate 失败 → 跳过（不迁移、不清库、不崩） |
+| pending 文件旧行 | `flush_pending` validate 失败 → 跳过 |
+| **消息内嵌旧 token_usage** | **加载点降级：剥 token_usage、保留消息正文**（防会话上下文丢失） |
+| `cached_tokens`/`reasoning_tokens` | provider 未返回即 None，前端有值才显示 |
 
 ## 不做
 
@@ -110,15 +168,17 @@ class TokenUsage(BaseModel):
 - 不写 MongoDB 迁移脚本、不清空 `token_usage` 集合
 - 不改 WS `token_usage` 消息的外层 envelope 结构（`turn`/`session` 形状不变）
 - 不改 `get_session_stats` 返回结构
+- 不改 `Module/task_system/schema/output.py` 的 `TokenUsage`（[output.py:239](Module/task_system/schema/output.py#L239)，任务级 token 明细，同名不同实体，范围外）
 
 ## 验证
 
 ```bash
-# 权威模型唯一性：无残留 dataclass TokenUsage / 旧字段名
-grep -rn "prompt_tokens\|completion_tokens" core/ Module/llm/ --include="*.py" | grep -v test | grep -v __pycache__
-# 预期：仅剩 LLM SDK 对象属性访问（u.prompt_tokens 等），无结构定义
+# 权威模型唯一性：core/ 下无旧字段结构定义（LLM 层 openai_compat 的属性访问 u.prompt_tokens
+# 与 docstring 契约属于 Module/llm，不在本 grep 范围，且属性访问本身不可消除）
+grep -rn "prompt_tokens\|completion_tokens" core/ --include="*.py" | grep -v test | grep -v __pycache__
+# 预期空输出
 
-# 前端无 byModel 双兼容
+# 前端无 byModel 双兼容（已清空的判断）
 grep -rn "byModel" frontend/src/
 # 预期空输出
 
