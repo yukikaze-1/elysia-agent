@@ -45,7 +45,7 @@
 ### TokenTracker
 
 - **回合追踪**：`start_turn()` → 每 LLM 调用 `record(usage)` → 回合结束广播 `on_token_usage`
-- **累计统计**：`current_turn_usages: list[TokenUsageRecord]`，回合结束写入 AssistantMessage.token_usage
+- **累计统计**：`current_turn_usages: list[TokenUsage]`，回合结束写入 AssistantMessage.token_usage
 - **持久化**：`TokenRepository` → MongoDB `token_usage` 集合，异步 fire-and-forget
 - **前端**：`on_token_usage` → CharStatus 组件显示 session 累计 token
 
@@ -56,7 +56,7 @@ core/monitoring/
 ├── __init__.py        — 重导出 + IdleMonitor PEP 562 懒加载
 ├── event_bus.py       — EventBus + EventPriority + EventType
 ├── idle_monitor.py    — IdleMonitor + 唤醒词 + 主动搭话
-├── token_tracker.py   — TokenTracker + TokenUsage
+├── token_tracker.py   — TokenTracker（TokenUsage 在 core.schema.token）
 └── tests/
     └── test_token_tracker.py
 

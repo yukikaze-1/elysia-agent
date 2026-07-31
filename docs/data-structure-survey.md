@@ -39,7 +39,7 @@
 | `core/monitoring/event_bus.py:15` | `Event` | priority, type, data, seq | 优先级队列事件 |
 | `core/adapter/llm_adapter.py:23` | `ThoughtResult` | text: str, tool_calls: list[dict] | LLM 返回结构 |
 | `core/memory/long_term.py:22` | `MemoryEntry` | id, text, embedding, memory_type, poignancy, timestamp, metadata | 长期记忆条目 |
-| `core/monitoring/token_tracker.py:25` | `TokenUsage` | model, prompt_tokens, completion_tokens, total_tokens, round_num, timestamp | Token 消耗记录 |
+| `core/schema/token.py` | `TokenUsage` | model, session_id, round_num, input_tokens, output_tokens, total_tokens, cached_tokens?, reasoning_tokens?, timestamp | Token 消耗记录 |
 | `core/task/task.py:37` | `Task` | id, type, status, priority, parent_id, depends_on, children_ids, payload, result, error... | 统一任务单元 |
 | `core/text/text_utils.py:21` | `MessageObj` | role, content | 轻量 assistant 消息 |
 | `core/debug/prompt_recorder.py:8` | `PromptRecord` | index, timestamp, round_num, model, messages, tools | 调试用 prompt 快照 |
@@ -339,9 +339,11 @@
     "_id": ObjectId,
     "session_id": str,
     "model": str,               # "deepseek/deepseek-chat"
-    "prompt_tokens": int,
-    "completion_tokens": int,
+    "input_tokens": int,
+    "output_tokens": int,
     "total_tokens": int,
+    "cached_tokens": int | None,
+    "reasoning_tokens": int | None,
     "round_num": int,
     "timestamp": float
 }

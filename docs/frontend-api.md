@@ -81,7 +81,7 @@ Client ──→ Server (5 种):
       "inner_voice": "她今天看起来心情不错，想用更温柔的语气回应",
       "mood": "被妖梦的好消息感染，心里暖暖的",
       "tool_calls": [],
-      "token_usage": { "rounds": [{ "round_num": 0, "prompt_tokens": 1234, "completion_tokens": 567, "total_tokens": 1801 }], "turn_total": 1801 }
+      "token_usage": { "rounds": [{ "round_num": 0, "input_tokens": 1234, "output_tokens": 567, "total_tokens": 1801 }], "turn_total": 1801 }
     },
     {
       "role": "tool",
@@ -444,8 +444,8 @@ LLM 回复中的代码块或 Markdown 块单独推送。`block_type` 取值：`"
     "rounds": [
       {
         "model": "deepseek/deepseek-v4-flash",
-        "prompt_tokens": 1234,
-        "completion_tokens": 567,
+        "input_tokens": 1234,
+        "output_tokens": 567,
         "total_tokens": 1801,
         "round_num": 0,
         "timestamp": 1719000000.123

@@ -86,7 +86,7 @@
 | `parts` | Array\<Object\> | 客户端友好格式（写入时不含，API 查询时补） |
 | `timestamp` | String（ISO 格式） | 消息时间 |
 | `inner_voice` | String? | assistant 的内心独白 |
-| `token_usage` | TokenUsageSummary? | assistant 的 token 统计（rounds: TokenUsageRecord[], turn_total: int） |
+| `token_usage` | TokenUsageSummary? | assistant 的 token 统计（rounds: TokenUsage[], turn_total: int） |
 | `tool_call_id` / `name` / `success` / `error` | — | tool 角色专用字段 |
 
 **索引**:
@@ -108,9 +108,11 @@
 |------|------|------|
 | `session_id` | String | 会话标识 |
 | `model` | String | LLM 模型名 |
-| `prompt_tokens` | Int | 输入 token 数 |
-| `completion_tokens` | Int | 输出 token 数 |
+| `input_tokens` | Int | 输入 token 数 |
+| `output_tokens` | Int | 输出 token 数 |
 | `total_tokens` | Int | 总 token 数 |
+| `cached_tokens` | Int \| null | 缓存命中 token（可选） |
+| `reasoning_tokens` | Int \| null | 思考 token（可选） |
 | `round_num` | Int | 轮次编号 |
 | `timestamp` | Float | Unix 时间戳 |
 
