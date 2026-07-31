@@ -147,7 +147,7 @@ class MemoryReflector:
         logger.info("MemoryReflector: 开始审查 (%d entries)", len(all_entries))
 
         # 1. 聚类分组
-        groups = self._cluster_entries(all_entries)
+        groups = await self._cluster_entries(all_entries)
 
         total_merges = 0
         total_updates = 0
@@ -181,7 +181,7 @@ class MemoryReflector:
             )
         return summary
 
-    def _cluster_entries(self, entries: list) -> list[list]:
+    async def _cluster_entries(self, entries: list) -> list[list]:
         """将条目按相似度聚类分组，每组 ≤ CLUSTER_SIZE 条。
 
         首选 embedding KMeans，降级按 memory_type 分组 + oversized 拆分。
@@ -197,15 +197,13 @@ class MemoryReflector:
             return [entries]
 
         # 首选：embedding KMeans（要求全部条目都有 embedding，避免索引越界）
+        # KMeans(n_init=10) 是 CPU 密集同步调用——放入线程池，避免阻塞事件循环
+        # （数百条即数秒、近万条达分钟级，期间消息处理/TTS/WS 全部冻结）
         embeddings = [e.embedding for e in entries if e.embedding]
         if len(embeddings) == len(entries):  # 100% 有 embedding
             try:
-                from sklearn.cluster import KMeans
-                import numpy as np
-                n_clusters = max(1, (n + self.CLUSTER_SIZE - 1) // self.CLUSTER_SIZE)
-                X = np.array(embeddings)
-                kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                labels = kmeans.fit_predict(X)
+                labels = await asyncio.to_thread(self._kmeans_fit_predict, embeddings, n)
+
                 groups: dict[int, list] = {}
                 for i, e in enumerate(entries):
                     groups.setdefault(int(labels[i]), []).append(e)
@@ -231,6 +229,16 @@ class MemoryReflector:
             for i in range(0, len(type_entries), self.CLUSTER_SIZE):
                 result.append(type_entries[i:i + self.CLUSTER_SIZE])
         return result
+
+    @staticmethod
+    def _kmeans_fit_predict(embeddings: list, n: int) -> list[int]:
+        """在后台线程执行 KMeans 聚类，返回标签列表。"""
+        from sklearn.cluster import KMeans
+        import numpy as np
+        n_clusters = max(1, (n + MemoryReflector.CLUSTER_SIZE - 1) // MemoryReflector.CLUSTER_SIZE)
+        X = np.array(embeddings)
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        return kmeans.fit_predict(X)
 
     async def _review_group(self, group: list) -> ReflectorActions:
         """LLM 审查一组记忆。

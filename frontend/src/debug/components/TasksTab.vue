@@ -19,7 +19,10 @@ function connect() {
   if (es) { es.close(); es = null }
   es = new EventSource('/debug/api/tasks/stream')
   connState.value = 'connected'
-  reconnectDelay = 1000
+  // 注意：不在 connect() 内重置 reconnectDelay——
+  // onerror 重连会倍增，若在入口清零则指数退避失效，间隔恒 1000ms。
+  // 在 onopen（连接成功）时重置为初始值。
+  es.onopen = () => { reconnectDelay = 1000 }
 
   es.addEventListener('snapshot', (e: MessageEvent) => {
     try {

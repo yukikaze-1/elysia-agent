@@ -338,6 +338,13 @@ class CharacterEngine:
 
     # ---- Reflector 代理 ----
 
+    async def _safe_buffer(self, user_msg: str, assistant_msg: str) -> None:
+        """安全缓冲：捕获 reflector.buffer 异常，避免 fire-and-forget task 异常丢失。"""
+        try:
+            await self._reflector.buffer(user_msg, assistant_msg)
+        except Exception:
+            logger.warning("buffer_message: reflector.buffer 失败", exc_info=True)
+
     def buffer_message(self, user_msg: str, assistant_msg: str) -> None:
         """缓冲一轮对话到 CharacterReflector。
 
@@ -346,7 +353,7 @@ class CharacterEngine:
             assistant_msg: 助手回复文本。
         """
         if self._reflector:
-            asyncio.create_task(self._reflector.buffer(user_msg, assistant_msg))
+            asyncio.create_task(self._safe_buffer(user_msg, assistant_msg))
 
     async def flush_reflector(self) -> None:
         """Agent shutdown 时调用 — 触发未完成的反思。"""

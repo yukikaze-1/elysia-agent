@@ -326,10 +326,15 @@ class CharacterReflector:
             logger.debug("CharacterReflector: 反思结果为空，跳过")
             return
 
-        # 提交给 CharacterEngine
-        asyncio.create_task(
-            self._engine.consume_trigger("reflector", {"content": text})
-        )
+        # 提交给 CharacterEngine——加 done callback 捕获异常，
+        # 否则 MongoDB 写入失败会 "Task exception was never retrieved"
+        async def _consume():
+            try:
+                await self._engine.consume_trigger("reflector", {"content": text})
+            except Exception:
+                logger.warning("CharacterReflector: consume_trigger 失败", exc_info=True)
+
+        asyncio.create_task(_consume())
         self._last_success = True
         self._last_duration_ms = elapsed_ms
         self._last_text_len = len(text)

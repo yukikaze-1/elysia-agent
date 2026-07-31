@@ -47,11 +47,16 @@ def get_caller_logger() -> logging.Logger:
     """返回调用方模块的 logger。
 
     遍历调用栈找到调用方所在模块，返回 logging.getLogger(module_name)。
-    供 Factory.create() 在未显式传入 logger 时注入。
+    供调用方在未显式传入 logger 时注入。
+
+    调用点是直接调用（如 Module/output/websocket.py __init__ 内），
+    中间无 Factory.create() 层——因此只需一层 f_back 即可取到调用方模块。
+    之前双跳 f_back.f_back 会把 logger 名归属到调用方的调用者，
+    导致 %(name)s 来源错乱、module_levels 前缀匹配失效。
     """
     frame = inspect.currentframe()
     try:
-        caller = frame.f_back.f_back  # type: ignore[union-attr]
+        caller = frame.f_back  # type: ignore[union-attr]
         module_name = caller.f_globals.get("__name__", "__main__")  # type: ignore[union-attr]
         return logging.getLogger(module_name)
     finally:

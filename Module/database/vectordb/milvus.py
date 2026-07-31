@@ -190,4 +190,12 @@ class MilvusBackend(VectorDBBackend):
     # ---- Management ----
 
     async def close(self) -> None:
-        pass  # pymilvus MilvusClient has no explicit close
+        """关闭 Milvus 客户端连接，释放 gRPC 通道/线程池。
+
+        pymilvus 的 MilvusClient 有显式 close()（内部调用 connections.disconnect）。
+        不关闭会导致 /restart 每次 start() 新建连接时旧 gRPC 通道/线程随重启累积。
+        """
+        try:
+            await asyncio.to_thread(self._client.close)
+        except Exception:
+            pass  # close 失败不阻塞——幂等，可容忍

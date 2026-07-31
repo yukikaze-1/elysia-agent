@@ -63,7 +63,22 @@
 
 **Minor（7 项）：** m7（archive role 400）、m8（版本历史 int 保护）、m10（WS 非 dict JSON）、m18（by_model 兼容）、m19（created_at→timestamp）、m21/m22（同上 M21/M23）。
 
-**遗留 20 项**：M2/M8/M9/M11/M12/M19/M20 + m1-m6/m9/m11-m17/m20，记录在 todo.md。`make test-quick`：1817 passed，前端构建通过。
+**第二批（+11 项，2026-07-31）：**
+| 问题 | 修复 |
+|------|------|
+| M9 gpt-sovits `_pull` 异常静默吞掉 | `except httpx.HTTPError`（覆盖 RequestError + HTTPStatusError）+ 异常入队，消费者检测后 raise |
+| M11 `time_of_day` 去重键无日期 | 键加日期成分 `%Y-%m-%d %H:%M`，匹配用 `now[11:]` |
+| M12 STT 语音输入不 touch | 语音路径投递事件前调用 `agent._idle.touch()` |
+| m3 fire-and-forget consume_trigger 无异常处理 | reflector.py + engine.py 两处 `create_task` 加 try/except 包装 |
+| m4 KMeans 同步阻塞事件循环 | `_cluster_entries` 改 async，KMeans 移入 `asyncio.to_thread` |
+| m11 WS 无 heartbeat/接收超时 | `WebSocketResponse(heartbeat=30, receive_timeout=60)` |
+| m13 OpenAI embedding 无超时 | `AsyncOpenAI(timeout=60.0, max_retries=2)` |
+| m14 `get_caller_logger` 双跳 f_back | 改单跳 `frame.f_back`（调用点无 Factory.create 中间层） |
+| m15 MilvusBackend.close() 空实现 | `asyncio.to_thread(self._client.close)`（pymilvus 有 close） |
+| m17 `Module/system_prompt` eager import | `MessageBuilder` 改为 `__getattr__` 内延迟导入 |
+| m20 SSE 重连退避失效 | `connect()` 不再清零 `reconnectDelay`，`onopen` 时重置为 1000 |
+
+**累计修复 33/44**。遗留 11 项：M2/M8/M19/M20 + m1/m2/m5/m6/m9/m12/m16（M2/M8 需设计，M19/M20 随 TaskSystem 接入），记录在 todo.md。`make test-quick`：1817 passed，前端构建通过。
 
 ### 2026-07-31: CognitiveLoop [TOOL_EXECUTED] 模式切换信号
 

@@ -39,7 +39,12 @@ class OpenAICompatEmbeddingBackend(EmbeddingBackend):
         self._model = model
         self._dimension = 0  # 首次 API 调用后解析
         self._logger = logger or logging.getLogger(__name__)
-        self._client = AsyncOpenAI(api_key=key, base_url=base_url)
+        # 显式超时——SDK 默认 600s 总超时，上游挂起可拖住 insert/recall 10 分钟
+        # （对照 Module/llm/openai_compat.py 的 httpx.Timeout(60.0, connect=10.0)）
+        self._client = AsyncOpenAI(
+            api_key=key, base_url=base_url,
+            timeout=60.0, max_retries=2,
+        )
 
     @property
     def dimension(self) -> int:

@@ -18,7 +18,7 @@
 
 ## 来自 code-review-2026-07-31 的遗留问题
 
-已修复 24/44（1 Critical + 16 Major + 7 Minor），20 项遗留。详见 [docs/code-review-2026-07-31.md](docs/code-review-2026-07-31.md)。
+已修复 33/44（1 Critical + 19 Major + 13 Minor），11 项遗留。详见 [docs/code-review-2026-07-31.md](docs/code-review-2026-07-31.md)。
 
 ### 已修复（2026-07-31）
 
@@ -48,33 +48,33 @@
 | m21 模型切换双插 | 同上 M21 |
 | m22 时间分隔符索引错位 | `shouldShowTimeDivider` 用 visibleMessages 前一条 |
 | m23 审批弹窗 Escape 双重触发 | 同上 M23 |
+| M9 gpt-sovits `_pull` 异常静默吞掉 | `except httpx.HTTPError`（覆盖 RequestError + HTTPStatusError）+ 异常入队，消费者检测后 raise |
+| M11 `time_of_day` 去重键无日期 | 键加日期成分 `%Y-%m-%d %H:%M`，匹配用 `now[11:]` |
+| M12 STT 语音输入不 touch | 语音路径投递事件前调用 `agent._idle.touch()` |
+| m3 fire-and-forget consume_trigger 无异常处理 | reflector.py + engine.py 两处 `create_task` 加 try/except 包装 |
+| m4 KMeans 同步阻塞事件循环 | `_cluster_entries` 改 async，KMeans 移入 `asyncio.to_thread` |
+| m11 WS 无 heartbeat/接收超时 | `WebSocketResponse(heartbeat=30, receive_timeout=60)` |
+| m13 OpenAI embedding 无超时 | `AsyncOpenAI(timeout=60.0, max_retries=2)` |
+| m14 `get_caller_logger` 双跳 f_back | 改单跳 `frame.f_back`（调用点无 Factory.create 中间层） |
+| m15 MilvusBackend.close() 空实现 | `asyncio.to_thread(self._client.close)`（pymilvus 有 close） |
+| m17 `Module/system_prompt` eager import | `MessageBuilder` 改为 `__getattr__` 内延迟导入 |
+| m20 SSE 重连退避失效 | `connect()` 不再清零 `reconnectDelay`，`onopen` 时重置为 1000 |
 
-### 遗留（20 项）
+### 遗留（11 项）
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
 | **中** | **M2 `_sync_dirty_entries` 死代码，Milvus 失败记忆永不重试** | [long_term.py:282-315](core/memory/long_term.py#L282)。insert 失败入 `_dirty_ids` 但无调用者同步；重启后脏条目彻底丢失。需接线到 `_db_health_loop` |
 | **中** | **M8 MiniMax 停顿标签 `<#x#>` 剥离，F3 停顿失效** | [tts_adapter.py:258-268](core/adapter/tts_adapter.py#L258)。docstring 声明送 TTS 但两处剥离。需额外设计流式分句下的标签保留 |
-| **中** | **M9 gpt-sovits `_pull` 异常静默吞掉** | [gpt_sovits.py:162-205](Module/tts/gpt_sovits.py#L162)。`HTTPStatusError` 不匹配 `except httpx.RequestError`，空音频静默无声 |
-| **中** | **M11 `time_of_day` 去重键无日期成分** | [idle_monitor.py:120-127](core/monitoring/idle_monitor.py#L120)。跨天永久抑制。注：消费端 `_handle_system_tick` 仍以 TODO 丢弃 time_of_day 事件 |
-| **中** | **M12 STT 语音输入不调用 `idle.touch()`** | [ws_handler.py:271-279](core/input/ws_handler.py#L271)。纯语音对话误触发主动发言。默认 `proactive.enabled: false` 不触发 |
 | **中** | **M19 resume 后再次 pause 被销毁** | [task_system.py:384-393](Module/task_system/task_system.py#L384)。缺 PAUSED early-return 保护，mailbox 消费者永久阻塞 |
 | **中** | **M20 cancel 在规划阶段不推终态事件** | [lifecycle.py:157-167](Module/task_system/lifecycle.py#L157) + [planning.py:143-145](Module/task_system/core/planning.py#L143)。`cancel()` 尚无调用方接线，随任务系统接入时修复 |
 | 低 | m1 shutdown flush 与 cancel 认知任务竞态 | `lifecycle.py:50-66` orphan after_response task 与已关闭 LLM/session 并发 |
 | 低 | m2 start() 失败留下僵尸 Agent | `lifecycle.py:124-145` 无回滚 + 无幂等保护 |
-| 低 | m3 fire-and-forget consume_trigger 无异常处理 | `reflector.py:325-327` + `compression.py:243-250` 裸 create_task |
-| 低 | m4 KMeans 聚类同步阻塞事件循环 | `memory_reflector.py:200-221` 需 `run_in_executor` |
-| 低 | m5 `update_text` embedding 不可用时陈旧向量残留 | `long_term.py:344-373` 无 `_dirty_ids` 标记 |
+| 低 | m5 `update_text` embedding 不可用时陈旧向量残留 | `long_term.py:344-373` 无 `_dirty_ids` 标记（与 M2 关联） |
 | 低 | m6 图片上传 multipart 绕过 client_max_size | `api_routes.py:217-218` 真实 DoS 向量 |
 | 低 | m9 `deafen(2.0)` 长回复回声自我打断 | `ws_handler.py:113-126` |
-| 低 | m11 WS 无 heartbeat/接收超时 | `ws_handler.py:43` 僵尸 channel 累积 |
 | 低 | m12 `flush_emojis()` 时序 | `tts_adapter.py:181-190` emoji 先于文字 |
-| 低 | m13 OpenAI embedding 无超时 | `openai_compat.py:42` 默认 600s 超时 |
-| 低 | m14 `get_caller_logger` 双跳 f_back | `Module/logger/factory.py:54` logger 名归属错乱 |
-| 低 | m15 MilvusBackend.close() 空实现 | `milvus.py:192-193` 重启连接泄漏 |
 | 低 | m16 DelegationPreparer 客户端从不关闭 | `delegation_preparer.py:118-128` httpx 连接池泄漏 |
-| 低 | m17 `Module/system_prompt` eager import core.adapter | `__init__.py:9` 违反分层 |
-| 低 | m20 SSE 重连退避失效 | `TasksTab.vue:17-69` 间隔恒 1000ms |
 
 > 已过滤 3 条（1 误报：重试 off-by-one；2 条置信度 50）。修复优先级建议见源文档末尾。
 

@@ -48,7 +48,7 @@ class IdleMonitor:
         else:
             self.status = status
         self._last_interaction: float = time.monotonic()
-        self._last_time_of_day_trigger: str = ""  # 防重：上次触发的 "HH:MM"
+        self._last_time_of_day_trigger: str = ""  # 防重：上次触发的 "YYYY-MM-DD HH:MM"（含日期，跨天不抑制）
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -117,16 +117,17 @@ class IdleMonitor:
                     return
 
             elif ttype == "time_of_day":
-                now = datetime.now().strftime("%H:%M")
-                # 防重：同一分钟只触发一次，避免每秒重复投递
+                now = datetime.now().strftime("%Y-%m-%d %H:%M")
+                # 防重：同一分钟只触发一次，避免每秒重复投递。
+                # 键含日期——否则跨天同刻会被误判为已触发，每日定时主动搭话仅触发一次
                 if now == self._last_time_of_day_trigger:
                     return
                 times = trigger.get("times", [])
-                if now in times:
+                if now[11:] in times:
                     self._last_time_of_day_trigger = now
                     self._bus.post(
                         SystemTickData(reason="time_of_day", time=now),
                         priority=EventPriority.NORMAL,
                     )
-                    logger.info("Proactive trigger: time_of_day (%s)", now)
+                    logger.info("Proactive trigger: time_of_day (%s)", now[11:])
                     return

@@ -157,7 +157,7 @@ class GPTSoVitsBackend(TTSBackend):
             "repetition_penalty": 1.35,
         }
 
-        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
 
         async def _pull() -> None:
             """httpx 流式消费者 — 运行在独立 task 中。"""
@@ -173,14 +173,18 @@ class GPTSoVitsBackend(TTSBackend):
                     resp.raise_for_status()
                     async for chunk in resp.aiter_bytes(4096):
                         await queue.put(chunk)
-            except httpx.RequestError as e:
-                self._logger.debug(
-                    "GPT-SoVits 连接失败 (base_url=%s): %s",
+            except httpx.HTTPError as e:
+                # HTTPError 覆盖 RequestError（连接失败）+ HTTPStatusError（4xx/5xx）
+                # 若用 RequestError，raise_for_status() 抛的 HTTPStatusError 会漏网——
+                # 消费者收到空音频静默无声
+                self._logger.warning(
+                    "GPT-SoVits 请求失败 (base_url=%s): %s",
                     self._base_url, e,
                 )
-                raise RuntimeError(
-                    f"无法连接 GPT-SoVits 服务 ({self._base_url}): {e}"
-                ) from e
+                # 异常入队而非 raise——task 正常完成，消费者检测到异常对象后主动 raise
+                await queue.put(RuntimeError(
+                    f"GPT-SoVits 请求失败 ({self._base_url}): {e}"
+                ))
             finally:
                 await client.aclose()
                 await queue.put(None)  # 哨兵：流结束
@@ -189,6 +193,8 @@ class GPTSoVitsBackend(TTSBackend):
         try:
             while True:
                 item = await queue.get()
+                if isinstance(item, Exception):
+                    raise item
                 if item is None:
                     return
                 yield item
@@ -199,10 +205,6 @@ class GPTSoVitsBackend(TTSBackend):
                 await task
             except asyncio.CancelledError:
                 pass
-            except Exception as e:
-                logging.getLogger("Module.tts.gpt_sovits").debug(
-                    "TTS _pull task failed: %s", e
-                )
 
     @property
     def provider_name(self) -> str:

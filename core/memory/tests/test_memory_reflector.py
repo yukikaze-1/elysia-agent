@@ -213,7 +213,7 @@ class TestDoReflect:
         ])
         r = _reflector(llm, memory=mem)
         r._round_count = 50  # 触发条件
-        r._cluster_entries = MagicMock(return_value=[group_a, group_b])
+        r._cluster_entries = AsyncMock(return_value=[group_a, group_b])
 
         summary = await r._do_reflect()
 

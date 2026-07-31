@@ -40,7 +40,10 @@ async def handle_ws(
     Returns:
         web.WebSocketResponse: The WebSocket connection object after close.
     """
-    ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024)
+    # heartbeat=30s 定期发 ping 检测半开连接；receive_timeout=60s 关闭僵尸连接，
+    # 防止休眠/断 Wi-Fi 客户端产生永久僵尸 channel（_send_json 每次广播打 warning、
+    # STT monitor task 每 100ms 空转、连接无限累积）
+    ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024, heartbeat=30, receive_timeout=60)
     await ws.prepare(request)
 
     from core.utils import new_message_id
@@ -276,6 +279,9 @@ async def do_transcription(agent: "Agent", ws: "web.WebSocketResponse", text: st
         audio_buf.deafen(2.0)
     rid = agent.next_request_id()
     logger.debug("STT 识别: %s%s", text[:100], f" [{emotion}]" if emotion and emotion != "NEUTRAL" else "")
+    # 语音路径绕过 process_message，需手动 touch——否则纯语音对话
+    # 会被误判为"用户沉默"，触发 silence_timeout 主动搭话
+    agent._idle.touch()
     agent._bus.post(UserInputData(
         text=text, user_name=agent._user_name,
         emotion=emotion, events=events,
