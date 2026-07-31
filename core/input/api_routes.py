@@ -203,7 +203,7 @@ def register_api_routes(app: web.Application) -> None:
         import os as _os
 
         agent = request.app["agent"]
-        cfg = getattr(agent._config, "server", None)
+        cfg = getattr(agent.config, "server", None)
         mb = getattr(cfg, "image_max_mb", None)
         max_bytes = (mb if mb is not None and mb > 0 else 10) * 1024 * 1024
         allowed = getattr(cfg, "image_allowed_types", None) or ["image/png", "image/jpeg", "image/gif", "image/webp"]
@@ -256,7 +256,7 @@ def register_api_routes(app: web.Application) -> None:
         try:
             body = await request.json()
             content = body.get("content")
-            user_name = body.get("user_name", agent._user_name)
+            user_name = body.get("user_name", agent.user_name)
             text = body.get("text", "")
         except Exception:
             return web.json_response({"ok": False, "error": "无效的 JSON 请求体"}, status=400)
@@ -281,7 +281,7 @@ def register_api_routes(app: web.Application) -> None:
             web.Response: {"messages": [...], "has_more": ..., "total": ...}。
         """
         agent = request.app["agent"]
-        repo = agent._message_repo
+        repo = agent.message_repo
 
         before = request.query.get("before", "").strip() or None
         try:

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Callable, Coroutine
 
 from aiohttp import web
 
-from core.agent import Agent, RunState
+from core.agent import Agent
 
 from .ws_handler import handle_ws
 from .api_routes import register_api_routes
@@ -142,12 +142,12 @@ def create_app(
         return web.json_response({
             "status": "ok",
             "fsm": fsm_state,
-            "llm": getattr(agent._llm, 'model', 'unknown'),
+            "llm": getattr(agent.llm, 'model', 'unknown'),
             "memory": {
-                "session_count": len(getattr(agent._session, '_messages', [])),
-                "long_term_count": getattr(agent._long_term, 'count', 0),
+                "session_count": len(getattr(agent.session, '_messages', [])),
+                "long_term_count": getattr(agent.long_term, 'count', 0),
             },
-            "tools": getattr(agent._tool_adapter._manager, 'tool_names', ["<loading>"]),
+            "tools": getattr(agent.tool_adapter._manager, 'tool_names', ["<loading>"]),  # noqa: SLF001
         })
     app.router.add_get("/health", health_handler)
     app.router.add_get("/ready", health_handler)
@@ -167,7 +167,7 @@ def create_app(
         import logging
         _log = logging.getLogger(__name__)
         _log.info("Shutdown requested via HTTP")
-        request.app["agent"]._state = RunState.STOPPING
+        request.app["agent"].request_shutdown()
         return web.json_response({"status": "shutting_down"})
     app.router.add_post("/shutdown", shutdown_handler)
     app.router.add_get("/shutdown", shutdown_handler)  # 也接受浏览器直接访问
@@ -187,7 +187,7 @@ def create_app(
         import logging
         _log = logging.getLogger(__name__)
         _log.info("Restart requested via HTTP")
-        request.app["agent"]._state = RunState.RESTARTING
+        request.app["agent"].request_restart()
         return web.json_response({"status": "restarting"})
     app.router.add_post("/restart", restart_handler)
 
@@ -205,7 +205,7 @@ def create_app(
             return web.json_response({"error": "unauthorized"}, status=401)
         agent = request.app["agent"]
         return web.json_response({
-            "plugins": agent._tool_adapter._manager.plugin_list,
+            "plugins": agent.tool_adapter._manager.plugin_list,  # noqa: SLF001
         })
     app.router.add_get("/tools", tools_handler)
 
@@ -234,7 +234,7 @@ def create_app(
             return web.json_response(
                 {"ok": False, "error": "缺少插件名称"}, status=400,
             )
-        ok = await agent._tool_adapter._manager.reload_plugin(name)
+        ok = await agent.tool_adapter._manager.reload_plugin(name)  # noqa: SLF001
         if ok:
             return web.json_response({"ok": True, "name": name})
         else:

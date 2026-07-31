@@ -49,14 +49,14 @@ async def handle_ws(
     from core.utils import new_message_id
     client_id = new_message_id()
     channel = WebSocketChannel(ws)
-    agent._output.add_channel(channel)
+    agent.output.add_channel(channel)
 
     # 发送会话历史给新连接的客户端
     try:
-        session_msgs = agent._session.messages_for_client()
+        session_msgs = agent.session.messages_for_client()
         token_stats = {}
-        if hasattr(agent, '_token_tracker') and agent._token_tracker is not None:
-            token_stats = await agent._token_tracker.get_session_stats()
+        if hasattr(agent, 'token_tracker') and agent.token_tracker is not None:
+            token_stats = await agent.token_tracker.get_session_stats()
         await ws.send_json({"type": "session", "messages": session_msgs, "token_stats": token_stats})
     except Exception:
         logger.warning("Failed to send session on connect", exc_info=True)
@@ -66,17 +66,17 @@ async def handle_ws(
         await ws.send_json({
             "type": "capabilities",
             "stt": stt_transcribe is not None,
-            "tts": agent._tts is not None,
-            "llm_model": agent._llm.model,
-            "live2d_static_image": agent._config.live2d.static_image,
+            "tts": agent.tts is not None,
+            "llm_model": agent.llm.model,
+            "live2d_static_image": agent.config.live2d.static_image,
         })
     except Exception:
         logger.debug("Failed to send capabilities on connect", exc_info=True)
 
     # 重新广播挂起的 HITL 审批请求（前端重连后恢复审批弹窗）
     try:
-        if hasattr(agent, '_tool_adapter') and agent._tool_adapter is not None:
-            pending = agent._tool_adapter._manager.get_pending_approvals()
+        if hasattr(agent, 'tool_adapter') and agent.tool_adapter is not None:
+            pending = agent.tool_adapter._manager.get_pending_approvals()  # noqa: SLF001
             for request_id, tool_name, params in pending:
                 # 与正常路径（ToolManager._broadcast → websocket.on_command）格式一致
                 await ws.send_json({
@@ -161,7 +161,7 @@ async def handle_ws(
             monitor_task.cancel()
         if audio_buf:
             await audio_buf.flush()
-        agent._output.remove_channel(channel)
+        agent.output.remove_channel(channel)
         logger.info("WS client disconnected: %s", client_id)
 
     return ws
@@ -186,7 +186,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         text_content = data.get("content", "")
         if isinstance(text_content, list):
             from core.schema.adapters.message_adapter import content_text, parts_from_dicts
-            await agent.process_message(text=content_text(parts_from_dicts(text_content)), user_name=agent._user_name, content=text_content)
+            await agent.process_message(text=content_text(parts_from_dicts(text_content)), user_name=agent.user_name, content=text_content)
             logger.debug("WS 收到多模态消息")
         elif isinstance(text_content, str) and text_content.strip():
             await agent.process_message(text=text_content.strip())
@@ -207,7 +207,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             result = {"ok": False, "error": f"未知 service: {service}"}
         from Module.output import WebSocketChannel
         if ws is not None:
-            for ch in agent._output._channels:
+            for ch in agent.output._channels:  # noqa: SLF001
                 if isinstance(ch, WebSocketChannel) and ch._ws is ws:
                     try:
                         await ws.send_json({
@@ -224,7 +224,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         request_id = data.get("request_id", "")
         approved = data.get("approved", False)
         if request_id:
-            ok = agent._tool_adapter._manager.submit_approval(request_id, approved)
+            ok = agent.tool_adapter._manager.submit_approval(request_id, approved)  # noqa: SLF001
             if ok:
                 logger.info("WS 审批结果: request=%s approved=%s", request_id, approved)
             else:
@@ -244,7 +244,7 @@ async def do_interrupt(agent: "Agent", skip_vad: bool = False) -> None:
     if skip_vad and agent.status.should_suppress_vad_interrupt:
         return
     from core.monitoring.event_bus import EventPriority
-    agent._bus.post(InterruptData(source="websocket"), priority=EventPriority.INTERRUPT)
+    agent.bus.post(InterruptData(source="websocket"), priority=EventPriority.INTERRUPT)
 
 
 async def do_transcription(agent: "Agent", ws: "web.WebSocketResponse", text: str,
@@ -282,9 +282,9 @@ async def do_transcription(agent: "Agent", ws: "web.WebSocketResponse", text: st
     logger.debug("STT 识别: %s%s", text[:100], f" [{emotion}]" if emotion and emotion != "NEUTRAL" else "")
     # 语音路径绕过 process_message，需手动 touch——否则纯语音对话
     # 会被误判为"用户沉默"，触发 silence_timeout 主动搭话
-    agent._idle.touch()
-    agent._bus.post(UserInputData(
-        text=text, user_name=agent._user_name,
+    agent.idle.touch()
+    agent.bus.post(UserInputData(
+        text=text, user_name=agent.user_name,
         emotion=emotion, events=events,
         request_id=rid,
     ))
