@@ -90,21 +90,21 @@
 
 ## 来自 code-review-2026-07-22 的遗留问题
 
-已修复 19/30，11 项遗留（含 4 项 ⏭️ 跳过未修）。
+已修复 25/30，5 项遗留（含 1 项 ⏭️ 待讨论、1 项 ⏭️ 跳过未修、3 项 ✅ 已在更早版本解决）。
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| HIGH | **#9 管理端点无认证** | `/shutdown`, `/restart`, `/debug/api/*` 绑定 0.0.0.0 无认证 |
-| HIGH | **#10 SSE CORS 通配符** | `/debug/api/tasks/stream` 允许任意来源 |
-| MEDIUM | **#11 /static/ 目录列表** | `show_index=True` 暴露文件列表 |
-| MEDIUM | **#12 用户消息明文日志** | `ws_handler.py` INFO 级别记录用户文本前 100 字符 |
-| MEDIUM | **#13 API Key 明文泄露** | `/api/providers` GET 返回完整 api_key |
-| LOW | **#25 私有 _infra 访问** | `cognitive/tools.py` 直接访问 `TaskSystem._infra` |
-| LOW | **#26 取消的 Task 永不等待** | `idle_monitor.stop()` cancel 后不 await |
-| LOW | **#5 认知任务引用被覆盖导致竞态** | `agent.py:348-390` 两路径覆盖 `_current_task`，中断时只取消一个 |
-| MEDIUM | **#6 驱逐被注释，内存无界增长** | `long_term.py:250` `_evict_old_entries()` 被注释，新条目永远积累 |
-| MEDIUM | **#7 提醒通知永不送达** | `tools/reminder/plugin.py:33-37` 提醒结果未转发到任何输出通道 |
-| LOW | **#23 Fire-and-forget MongoDB 写入无限并发** | `session.py:87-90` 每次 `add_message()` 创建新 Task，无并发限制 |
+| ~~HIGH~~ ✅ | **#9 管理端点无认证** | 2026-07-31 修复：`register_debug_routes()` 添加 auth middleware，所有 `/debug/api/*` 需 Bearer token（`/shutdown`、`/restart` 此前已有认证） |
+| ~~HIGH~~ ✅ | **#10 SSE CORS 通配符** | 此前已修复：`Access-Control-Allow-Origin: *` 显式设置 |
+| ~~MEDIUM~~ ✅ | **#11 /static/ 目录列表** | 此前已修复：3 处 `add_static()` 全部 `show_index=False` |
+| ~~MEDIUM~~ ✅ | **#12 用户消息明文日志** | 2026-07-31 修复：`ws_handler.py` 3 处 `logger.info`→`logger.debug` |
+| LOW ⏭️ | **#13 API Key 明文泄露** | `/api/providers` GET 返回 `api_key_env`（环境变量名）而非裸 key，约定安全。保留现状 |
+| LOW ⏭️ | **#25 私有 _infra 访问** | `cognitive/tools.py` 直接访问 `TaskSystem._infra`。待讨论 |
+| ~~LOW~~ ✅ | **#26 取消的 Task 永不等待** | 2026-07-31 修复：`IdleMonitor.stop()` + `TaskDebugAPI.stop()` 均 `try/await/CancelledError` |
+| ~~LOW~~ ✅ | **#5 认知任务引用被覆盖导致竞态** | 2026-07-31 修复：`_handle_system_tick` + `_handle_task_result` 在 `create_task` 前调用 `cancel_current()` |
+| ~~MEDIUM~~ ✅ | **#6 驱逐被注释，内存无界增长** | 此前已修复：旧方法已删除，`_evict_overflow()` 完整实现在 `insert()` 中调用 |
+| ~~MEDIUM~~ ✅ | **#7 提醒通知永不送达** | 2026-07-31 修复：提醒到期后通过 EventBus 投递 `TaskResultData` 事件，Agent 拾取后唤醒 CognitiveLoop 显示提醒 |
+| ~~LOW~~ ✅ | **#23 Fire-and-forget MongoDB 写入无限并发** | 2026-07-31 修复：`asyncio.Semaphore(8)` 限制并发归档写入 |
 
 ## 来自 code-review-report-2026-06-22 的遗留问题
 

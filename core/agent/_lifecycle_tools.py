@@ -38,6 +38,7 @@ class _LifecycleTools:
         _session: SessionMemory
         _started_at: float
         _token_tracker: TokenTracker
+        _bus: EventBus
         status: AgentStatus
         phases: CognitivePhaseController
         _fsm: AgentFSM
@@ -54,6 +55,7 @@ class _LifecycleTools:
             "scheduler": self._scheduler,
             "config": self._config,
             "session": self._session,
+            "_bus": self._bus,
             "_started_at": self._started_at,
             "_token_tracker": self._token_tracker,
             "_fsm_state": self.status.current_name(),

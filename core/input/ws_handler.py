@@ -179,12 +179,12 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         if isinstance(text_content, list):
             from core.schema.adapters.message_adapter import content_text, parts_from_dicts
             await agent.process_message(text=content_text(parts_from_dicts(text_content)), user_name=agent._user_name, content=text_content)
-            logger.info("WS 收到多模态消息")
+            logger.debug("WS 收到多模态消息")
         elif isinstance(text_content, str) and text_content.strip():
             await agent.process_message(text=text_content.strip())
-            logger.info("WS 收到文本: %s", text_content.strip()[:100])
+            logger.debug("WS 收到文本: %s", text_content.strip()[:100])
     elif msg_type == "interrupt":
-        logger.info("WS 收到打断指令")
+        logger.debug("WS 收到打断指令")
         await do_interrupt(agent)
     elif msg_type == "switch_model":
         service = data.get("service", "")

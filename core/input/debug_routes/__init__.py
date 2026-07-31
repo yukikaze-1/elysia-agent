@@ -4,14 +4,34 @@
 """
 
 import logging
+from collections.abc import Callable
 
 from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
 
-def register_debug_routes(app: web.Application) -> None:
-    """注册所有 /debug/api/* 路由到 aiohttp Application。"""
+def register_debug_routes(
+    app: web.Application,
+    check_auth: Callable[[web.Request], bool] | None = None,
+) -> None:
+    """注册所有 /debug/api/* 路由到 aiohttp Application。
+
+    Args:
+        app: aiohttp Application 实例。
+        check_auth: 可选认证函数，接收 Request 返回 bool。
+            提供时，所有 /debug/api/* 请求需通过认证。
+    """
+
+    if check_auth is not None:
+        @web.middleware
+        async def _debug_auth_middleware(
+            request: web.Request, handler: Callable,
+        ) -> web.StreamResponse:
+            if request.path.startswith("/debug/api/") and not check_auth(request):
+                return web.json_response({"error": "unauthorized"}, status=401)
+            return await handler(request)
+        app.middlewares.append(_debug_auth_middleware)
 
     from .overview import register_overview_routes
     from .ltm import register_ltm_routes

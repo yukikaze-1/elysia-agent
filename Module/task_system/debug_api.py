@@ -64,6 +64,10 @@ class TaskDebugAPI:
         """Stop the polling loop and notify all subscribers to disconnect."""
         if self._poll_task is not None:
             self._poll_task.cancel()
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
             self._poll_task = None
         # 通知所有订阅者关闭连接
         for q in self._subscribers.values():

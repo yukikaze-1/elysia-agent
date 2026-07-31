@@ -43,6 +43,21 @@ logger = logging.getLogger(__name__)
 # TypeAdapter for Message union — cached at module level
 _message_adapter: TypeAdapter[Message] = TypeAdapter(Message)
 
+# 限制并发 MongoDB 写入，防止 fire-and-forget 任务无限堆积
+_archive_semaphore = asyncio.Semaphore(8)
+
+
+async def _archive_with_limit(msg_repo, session_id, msg) -> None:
+    """受并发限制的归档写入。
+
+    Args:
+        msg_repo: MessageRepository 实例。
+        session_id: 会话 ID。
+        msg: 要归档的 Message 对象。
+    """
+    async with _archive_semaphore:
+        await msg_repo.append(session_id, msg)
+
 
 def _archive_done(task: asyncio.Task) -> None:
     """fire-and-forget 归档回调：静默吞掉异常（归档为 best-effort）。
@@ -109,7 +124,7 @@ class SessionMemory:
         self._messages.append(msg)
         if self._msg_repo is not None:
             task = asyncio.ensure_future(
-                self._msg_repo.append(self._session_id, msg)
+                _archive_with_limit(self._msg_repo, self._session_id, msg)
             )
             task.add_done_callback(_archive_done)
 

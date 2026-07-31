@@ -2,6 +2,25 @@
 
 ## 已完成
 
+### 2026-07-31: code-review-2026-07-22 遗留问题修复（6 项）
+
+对 todo.md 中 code-review-2026-07-22 的 11 项遗留问题逐一评估，修复其中 6 项真实存在的问题：
+
+| 问题 | 严重度 | 文件 | 修复方式 |
+|------|--------|------|----------|
+| #9 管理端点无认证 | 高 | `debug_routes/__init__.py` + `server.py` | `register_debug_routes()` 添加 auth middleware，所有 `/debug/api/*` 需 Bearer token |
+| #12 用户消息明文日志 | 中 | `ws_handler.py` | 3 处 `logger.info`→`logger.debug`（多模态/文本/打断） |
+| #5 `_current_task` 覆盖竞态 | 中 | `agent.py` | `_handle_system_tick` + `_handle_task_result` 在 `create_task` 前调用 `cancel_current()` |
+| #7 提醒通知永不送达 | 高 | `tools/reminder/plugin.py` + `_lifecycle_tools.py` | 提醒到期后通过 EventBus 投递 `TaskResultData`；`_bus` 注入 tool services |
+| #26 取消的 Task 永不等待 | 低 | `idle_monitor.py` + `debug_api.py` | 两处 `stop()` 在 cancel 后 `try/await/CancelledError` |
+| #23 MongoDB 写入无限并发 | 中 | `session.py` | `asyncio.Semaphore(8)` 限制并发归档写入 |
+
+**已确认无需修复**：#10（SSE CORS 已显式设置）、#11（`show_index=False` 已生效）、#6（`_evict_overflow()` 已替换旧代码）、#13（`api_key_env` 约定安全，保留现状）。
+
+**待讨论**：#25（`_infra` 私有访问）。
+
+`make test-quick`：1817 passed，无回归。
+
 ### 2026-07-31: 文档审查修复（25 项）
 
 **背景**：对 `docs/architecture.md` 及其他 9 份文档与代码的交叉审查，发现 ~30 处不一致。修复了其中 25 项直接影响开发体验的问题。

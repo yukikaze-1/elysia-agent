@@ -1,12 +1,15 @@
 """提醒工具插件 — 设置定时提醒。"""
 
 import asyncio
-from typing import Any
+import logging
+import uuid
 
 from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
+
+logger = logging.getLogger(__name__)
 
 
 class ReminderParams(BaseModel):
@@ -29,22 +32,40 @@ class SetReminderPlugin(ToolPlugin):
     ) -> str:
         """设置定时提醒，在指定秒数后通知用户。
 
+        延迟到期后通过 EventBus 投递 TaskResultData 事件，
+        Agent 事件循环拾取后唤醒 CognitiveLoop 显示提醒消息。
+
         Args:
-            ctx: 工具调用上下文。
+            ctx: 工具调用上下文（需含 "_bus" EventBus 服务）。
             emit: 进度上报器（未使用）。
             params: 提醒参数，包含提醒内容和延迟秒数。
 
         Returns:
             设置结果字符串。
         """
+        bus = ctx.services.get("_bus")
+        task_id = f"reminder-{uuid.uuid4().hex[:8]}"
+        reminder_msg = f"⏰ 提醒: {params.message}"
+
         async def _remind():
-            import asyncio
             await asyncio.sleep(params.delay_seconds)
-            return f"⏰ 提醒: {params.message}"
+            if bus is not None:
+                from core.schema.event import TaskResultData
+                bus.post(
+                    TaskResultData(
+                        task_id=task_id,
+                        result=reminder_msg,
+                        original_intent=f"在 {params.delay_seconds} 秒后提醒用户: {params.message}",
+                        dispatched_at="",
+                    ),
+                    type="task_result",
+                )
+            else:
+                logger.warning(
+                    "提醒到期但 EventBus 不可用，消息丢弃: %s", params.message,
+                )
 
         try:
-            # 使用 asyncio.create_task 而非 scheduler.dispatch_background，
-            # 避免 coroutine 不可 JSON 序列化导致持久化/恢复时丢失提醒
             asyncio.ensure_future(_remind())
             return f"已设置提醒，{params.delay_seconds} 秒后通知: {params.message}"
         except Exception as e:

@@ -485,6 +485,7 @@ class Agent(AgentLifecycle, AgentServer):
             _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
                 parent_id=rid, calls=calls,
             )
+            self._cognitive.cancel_current()
             task = asyncio.create_task(
                 self._cognitive.process(
                     f"（系统提示：用户已经{int(elapsed)}秒没有说话了，请自然地开启一个话题）",
@@ -502,6 +503,7 @@ class Agent(AgentLifecycle, AgentServer):
         """
         rid = self.next_request_id()
         set_request_id(rid)
+        self._cognitive.cancel_current()
         task = asyncio.create_task(
             self._cognitive.process(
                 user_message="",

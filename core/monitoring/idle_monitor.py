@@ -65,6 +65,10 @@ class IdleMonitor:
         self._running = False
         if self._task:
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
             self._task = None
 
     def touch(self) -> None:

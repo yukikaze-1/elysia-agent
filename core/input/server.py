@@ -47,8 +47,8 @@ def create_app(
             updated by the STT wrapper after each transcription.
         wake_word_enabled: enable wake word detection for audio input.
         task_system: TaskSystem instance for debug routes (optional)
-        auth_token: if non-empty, /shutdown, /restart, /tools/reload require
-            Authorization: Bearer <auth_token> header.
+        auth_token: if non-empty, /shutdown, /restart, /tools/reload, and
+            /debug/api/* require Authorization: Bearer <auth_token> header.
 
     Returns:
         web.Application: Configured aiohttp Application instance.
@@ -245,7 +245,7 @@ def create_app(
 
     # 子模块路由
     register_api_routes(app)
-    register_debug_routes(app)
+    register_debug_routes(app, _check_auth)
 
     # ---- 用户上传文件目录 ----
     _UPLOADS_DIR = ProjectPath.DATA_UPLOADS.resolve()
