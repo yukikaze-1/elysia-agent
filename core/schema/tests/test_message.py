@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from core.schema.message import MessageRole, UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.part import TextPart
 from core.schema.types import MessageId, ToolCallId
-from Module.tool.protocol import ErrorType
+from core.schema.error_type import ErrorType
 
 
 @pytest.mark.unit

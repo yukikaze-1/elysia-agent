@@ -24,13 +24,13 @@
 
 | 优先级 | 位置 | 说明 |
 |--------|------|------|
-| 中 | [Module/tool/protocol.py:15](Module/tool/protocol.py#L15) | eager `from core.schema.error_type import ErrorType` — 工具框架依赖 core.schema |
+| ~~中~~ ✅ | [Module/tool/protocol.py:15](Module/tool/protocol.py#L15) | eager `from core.schema.error_type import ErrorType` — **已评估：接受**。ErrorType 是跨层类型（`core.schema.message.ToolResultMessage` + `Module.tool.ToolResult` 双侧消费），不能挪进 Module/tool（会反向拖累 schema）；core.schema 是叶子无反向依赖、无环。唯一 test 级反向边已修复：`core/schema/tests/test_message.py` 改从 `core.schema.error_type` 正典导入 |
 | 中 | [Module/task_system/delegation_preparer.py:20-21](Module/task_system/delegation_preparer.py#L20) | eager `from core.schema.message import Message` 等 |
 | 低 | [Module/system_prompt/__init__.py:13](Module/system_prompt/__init__.py#L13) | lazy `from core.adapter.message_builder import MessageBuilder`（带 deprecation 警告，已知违规） |
 | 低 | [Module/tool/safety.py:618](Module/tool/safety.py#L618) | lazy `from core.utils import new_message_id` |
 | 低 | [Module/bench/bench.py:129-139](Module/bench/bench.py#L129) | lazy `core.config`/`core.agent`（bench 是 dev 工具，可豁免） |
 
-根因：`core.schema` 名义在 core/ 下但承担跨层共享类型职责，Module.tool/task_system 引用它 = Module 层无法独立存在。评估结论：可接受（schema 本就是共享契约层），若需彻底解耦可将 ErrorType/Message 下移到独立共享包。
+根因：`core.schema` 名义在 core/ 下但承担跨层共享类型职责，Module.tool/task_system 引用它 = Module 层无法独立存在。评估结论：可接受（schema 本就是共享契约层、叶子节点），仅修掉 test 级反向边；若未来要求 Module 层作为独立库发布，才需将 ErrorType/Message 下移到根级共享包。
 
 ### 软环（lazy import 运行时解决，无需处理）
 
