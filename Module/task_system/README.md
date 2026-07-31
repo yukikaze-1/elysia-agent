@@ -24,7 +24,7 @@ submit_task tool call
 
 ### 委派管线（DelegationPreparer）
 
-- **输入**：LLM 输出的 intent（自由文本）+ hints + 当前 session 消息 + 全量工具列表 + 全局约束
+- **输入**：LLM 输出的 intent（自由文本）+ hints + 当前 session 消息 + 全量工具列表 + 全局约束（通过 `TaskSystem.constraints` 属性获取）
 - **LLM 调用**：筛选相关工具 + 填充参数 + 注入约束（单轮，无循环）
 - **产出**：`DelegationResult`——三态：`ok`（含 `DelegationContext`）、`no_matching_tools`、`too_vague`
 

@@ -256,7 +256,7 @@ class CognitiveTools:
             session_messages=self._session.recent_messages(),
             user_profile=self._user_profile or _default_user_profile(),
             tools=tool_list,
-            global_constraints=task_system._infra.constraints,
+            global_constraints=task_system.constraints,
             session_id=_SessionId(getattr(self._session, "_session_id", "default")),
         )
 

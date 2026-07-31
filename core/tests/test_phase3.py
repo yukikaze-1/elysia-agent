@@ -1726,8 +1726,7 @@ class TestHandleSubmitTask:
         ts_mailbox.task_id = "task-001"
         ts.submit = AsyncMock(return_value=ts_mailbox)
         ts.get_task_mailbox = MagicMock(return_value=ts_mailbox)
-        ts._infra = MagicMock()
-        ts._infra.constraints = MagicMock()
+        ts.constraints = MagicMock()
         ts.list_active_tasks = MagicMock(return_value=[])
 
         # Mock DelegationPreparer

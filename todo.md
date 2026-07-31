@@ -90,7 +90,7 @@
 
 ## 来自 code-review-2026-07-22 的遗留问题
 
-已修复 25/30，5 项遗留（含 1 项 ⏭️ 待讨论、1 项 ⏭️ 跳过未修、3 项 ✅ 已在更早版本解决）。
+已修复 26/30，4 项遗留（含 3 项 ✅ 已在更早版本解决、1 项 ⏭️ 跳过未修）。
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
@@ -99,7 +99,7 @@
 | ~~MEDIUM~~ ✅ | **#11 /static/ 目录列表** | 此前已修复：3 处 `add_static()` 全部 `show_index=False` |
 | ~~MEDIUM~~ ✅ | **#12 用户消息明文日志** | 2026-07-31 修复：`ws_handler.py` 3 处 `logger.info`→`logger.debug` |
 | LOW ⏭️ | **#13 API Key 明文泄露** | `/api/providers` GET 返回 `api_key_env`（环境变量名）而非裸 key，约定安全。保留现状 |
-| LOW ⏭️ | **#25 私有 _infra 访问** | `cognitive/tools.py` 直接访问 `TaskSystem._infra`。待讨论 |
+| ~~LOW~~ ✅ | **#25 私有 _infra 访问** | 2026-07-31 修复：TaskSystem 加 `constraints` property，`tools.py` 改为 `task_system.constraints` |
 | ~~LOW~~ ✅ | **#26 取消的 Task 永不等待** | 2026-07-31 修复：`IdleMonitor.stop()` + `TaskDebugAPI.stop()` 均 `try/await/CancelledError` |
 | ~~LOW~~ ✅ | **#5 认知任务引用被覆盖导致竞态** | 2026-07-31 修复：`_handle_system_tick` + `_handle_task_result` 在 `create_task` 前调用 `cancel_current()` |
 | ~~MEDIUM~~ ✅ | **#6 驱逐被注释，内存无界增长** | 此前已修复：旧方法已删除，`_evict_overflow()` 完整实现在 `insert()` 中调用 |

@@ -100,6 +100,15 @@ class TaskSystem:
 
     # ── 生命周期 ─────────────────────────────────────────────────────────
 
+    @property
+    def constraints(self):
+        """全局约束配置（只读），来自 AgentInfra.constraints。
+
+        CognitiveLoop 的 submit_task 工具路径通过此属性获取约束，
+        传给 DelegationPreparer.prepare()，避免直接访问私有 _infra。
+        """
+        return self._infra.constraints
+
     async def start(self) -> None:
         """启动 TaskSystem——初始化并发控制。
 

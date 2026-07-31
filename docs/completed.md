@@ -2,9 +2,9 @@
 
 ## 已完成
 
-### 2026-07-31: code-review-2026-07-22 遗留问题修复（6 项）
+### 2026-07-31: code-review-2026-07-22 遗留问题修复（7 项）
 
-对 todo.md 中 code-review-2026-07-22 的 11 项遗留问题逐一评估，修复其中 6 项真实存在的问题：
+对 todo.md 中 code-review-2026-07-22 的 11 项遗留问题逐一评估，修复其中 7 项真实存在的问题：
 
 | 问题 | 严重度 | 文件 | 修复方式 |
 |------|--------|------|----------|
@@ -14,10 +14,9 @@
 | #7 提醒通知永不送达 | 高 | `tools/reminder/plugin.py` + `_lifecycle_tools.py` | 提醒到期后通过 EventBus 投递 `TaskResultData`；`_bus` 注入 tool services |
 | #26 取消的 Task 永不等待 | 低 | `idle_monitor.py` + `debug_api.py` | 两处 `stop()` 在 cancel 后 `try/await/CancelledError` |
 | #23 MongoDB 写入无限并发 | 中 | `session.py` | `asyncio.Semaphore(8)` 限制并发归档写入 |
+| #25 私有 `_infra` 访问 | 低 | `task_system.py` + `tools.py` | TaskSystem 加 `constraints` property；`tools.py` 改用 `task_system.constraints` |
 
 **已确认无需修复**：#10（SSE CORS 已显式设置）、#11（`show_index=False` 已生效）、#6（`_evict_overflow()` 已替换旧代码）、#13（`api_key_env` 约定安全，保留现状）。
-
-**待讨论**：#25（`_infra` 私有访问）。
 
 `make test-quick`：1817 passed，无回归。
 
