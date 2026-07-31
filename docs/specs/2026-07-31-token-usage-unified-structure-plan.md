@@ -72,17 +72,17 @@ class TokenUsage(BaseModel):
         {"input_tokens": int, "output_tokens": int, "total_tokens": int,
          "cached_tokens": int | None, "reasoning_tokens": int | None}
         契约语义：cached_tokens/reasoning_tokens 为可选键，provider 未返回时
-        _extract_usage 可省略该键；from_api 必须用 .get() 读取可选键
-        （禁止方括号索引，否则省略键时 KeyError）。仅作校验 + 补
-        model/session_id/round_num/timestamp。
+        _extract_usage 可省略该键；from_api 统一用 .get() 读取所有键
+        （必填键缺失 → None → Pydantic ValidationError，契约违约即校验失败，
+        而非 KeyError）。仅作校验 + 补 model/session_id/round_num/timestamp。
         """
         return cls(
             model=model,
             session_id=session_id,
             round_num=round_num,
-            input_tokens=usage["input_tokens"],
-            output_tokens=usage["output_tokens"],
-            total_tokens=usage["total_tokens"],
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            total_tokens=usage.get("total_tokens"),
             cached_tokens=usage.get("cached_tokens"),
             reasoning_tokens=usage.get("reasoning_tokens"),
         )
@@ -113,6 +113,8 @@ from pydantic import ValidationError
 
 from core.schema.token import TokenUsage, TokenUsageSummary
 from core.schema.types import SessionId
+
+pytestmark = pytest.mark.unit  # 无 marker 会被 make test-quick（-m "unit or service"）静默跳过
 
 
 def test_from_api_full_keys():
@@ -258,6 +260,8 @@ from pydantic import ValidationError
 from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.message import AssistantMessage
 
+pytestmark = pytest.mark.unit  # 无 marker 会被 make test-quick（-m "unit or service"）静默跳过
+
 
 def _legacy_assistant() -> dict:
     """构造含旧格式 token_usage（prompt_tokens/completion_tokens）的 AssistantMessage dict。"""
@@ -393,8 +397,11 @@ def _extract_usage(u) -> dict:
                 continue  # usage chunk 没有实质内容，跳过后续处理
 ```
 
-`_call_api` 流式分支（L203-210）——**保留 M6 守卫顺序**（`not chunk.choices` 哨兵 + `getattr(...) is not None`），只替换赋值：
+`_call_api` 流式分支（L203-210）——**保留 M6 守卫顺序与理由注释**（`not chunk.choices` 哨兵 + `getattr(...) is not None`），只替换赋值：
 ```python
+                # 先判 choices 空：usage chunk 的 choices 恒为空数组（真实 API 契约），
+                # 不能先访问 chunk.choices[0] 否则 IndexError；也不能用 getattr(usage)
+                # 判真——MagicMock 下恒真。空 choices 也可能是 provider 流结束哨兵。
                 if not chunk.choices:
                     if getattr(chunk, "usage", None) is not None:
                         self.last_usage = _extract_usage(chunk.usage)
@@ -694,22 +701,22 @@ L336-351 改为：
 - record 后断言 `u.prompt_tokens` → `u.input_tokens`、`u.completion_tokens` → `u.output_tokens`
 - `flush_pending` 相关测试若构造旧格式 pending 行（如 `test_flush_pending_imports_and_deletes_file`），更新为新格式；新增一个旧格式行被跳过且文件删除的用例：
 ```python
-    async def test_flush_pending_skips_legacy_lines(self, output_mock):
-        """旧格式 pending 行跳过不导入，文件仍删除。"""
+    async def test_flush_pending_skips_legacy_lines(self, output_mock, tmp_path):
+        """旧格式 pending 行跳过不导入，文件仍删除（tmp_path 隔离，不污染 data/）。"""
         repo_mock = AsyncMock()
-        pending = Path(ProjectPath.TOKEN_PENDING.resolve())
-        pending.parent.mkdir(parents=True, exist_ok=True)
-        pending.write_text(
-            json.dumps({
+        tracker = TokenTracker(
+            session_id=SessionId("default"), output_manager=output_mock, repo=repo_mock,
+        )
+        tracker._pending_file = str(tmp_path / "token_usage_pending.jsonl")
+        with open(tracker._pending_file, "w") as f:
+            f.write(json.dumps({
                 "session_id": "default", "model": "m",
                 "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2,
                 "round_num": 0, "timestamp": "2026-07-01T00:00:00+00:00",
-            }) + "\n"
-        )
-        tracker = TokenTracker(session_id=SessionId("default"), output_manager=output_mock, repo=repo_mock)
+            }) + "\n")
         await tracker.flush_pending()
         repo_mock.flush.assert_not_awaited()  # 无有效记录 → 不调用 flush
-        assert not pending.exists()  # 整文件仍删除，旧行不保留
+        assert not os.path.exists(tracker._pending_file)  # 整文件仍删除，旧行不保留
 ```
 
 - [ ] **Step 6: 更新 `core/storage/tests/test_token_repo.py`**
