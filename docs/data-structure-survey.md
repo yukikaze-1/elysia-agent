@@ -345,7 +345,7 @@
     "cached_tokens": int | None,
     "reasoning_tokens": int | None,
     "round_num": int,
-    "timestamp": float
+    "timestamp": str  # ISO 8601（IsoTimestamp）
 }
 ```
 

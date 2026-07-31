@@ -114,7 +114,7 @@
 | `cached_tokens` | Int \| null | 缓存命中 token（可选） |
 | `reasoning_tokens` | Int \| null | 思考 token（可选） |
 | `round_num` | Int | 轮次编号 |
-| `timestamp` | Float | Unix 时间戳 |
+| `timestamp` | String | ISO 8601（IsoTimestamp；读取时自动兼容旧 float Unix 输入） |
 
 **操作**: `insert_one`（每次 LLM 调用后），`find`（按 session 聚合统计）。无 TTL，无上限。
 
