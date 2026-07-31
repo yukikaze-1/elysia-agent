@@ -64,7 +64,7 @@ from .server import AgentServer
 
 from ..config import AppConfig
 from ..monitoring.event_bus import EventBus, EventPriority, EventType
-from .agent_fsm import AgentFSM, AgentState
+from core.status.agent_fsm import AgentFSM, AgentState
 from ..utils import set_request_id, get_request_id
 from ..config import CharacterConfig
 from ..memory.session import SessionMemory

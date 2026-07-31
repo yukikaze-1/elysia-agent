@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from ..personality import CharacterEngine
     from ..task import TaskScheduler
     from ..monitoring.event_bus import EventBus
-    from .agent_fsm import AgentFSM
+    from core.status.agent_fsm import AgentFSM
     from ..cognitive import CognitiveLoop
     from ..monitoring.idle_monitor import IdleMonitor
     from Module.task_system.task_system import TaskSystem

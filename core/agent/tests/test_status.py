@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from core.agent.agent_fsm import AgentFSM, AgentState
+from core.status.agent_fsm import AgentFSM, AgentState
 
 
 @pytest.mark.unit

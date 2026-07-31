@@ -16,6 +16,33 @@
 | 低 | **`flush_after_response` 超时层不匹配** | 内层 `loop.py:875` 每 task 5s，外层 `lifecycle.py:170` 整体 10s。3+ task 同时超时可能被外层截断。实际 pending 典型 0-2 个、亚秒级完成，impact 极低。修法：外层 timeout 改为 `max(10.0, len(pending) * 5.0 + 1.0)` |
 | 低 | **`ConfirmModal` @keydown 在不可聚焦 `<div>`** | `frontend/src/debug/components/shared/ConfirmModal.vue:35` — overlay div 无 `tabindex`，依赖按钮聚焦后事件冒泡。弹窗内只有文字+两个按钮，点击文字不会失焦，现有行为已可靠。加固：加 `tabindex="0"` |
 
+## 模块化评估（2026-08-01）
+
+基于 import 图分析（AST 解析全仓 28 个包、~340 py 文件、118 条包间依赖边）。总体分层健康（`core → Module` 正向为主），但有 1 个硬环 + 4 处反向依赖。
+
+### 硬环（已修）
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| **高** | **`core.agent ↔ core.status` 硬环** | [core/agent/__init__.py:4](core/agent/__init__.py#L4) → `from core.status import ...`；[core/status/fsm.py:12](core/status/fsm.py#L12) → `from core.agent.agent_fsm import AgentFSM`。运行时能 import（Python 容忍部分初始化的父包）但属脆弱点。**已修**：`agent_fsm.py` 移入 `core/status/`（仅依赖 `core.schema`，40 行自包含） |
+
+### 反向依赖（Module → core，分层违规）
+
+| 优先级 | 位置 | 说明 |
+|--------|------|------|
+| 中 | [Module/tool/protocol.py:15](Module/tool/protocol.py#L15) | eager `from core.schema.error_type import ErrorType` — 工具框架依赖 core.schema |
+| 中 | [Module/task_system/delegation_preparer.py:20-21](Module/task_system/delegation_preparer.py#L20) | eager `from core.schema.message import Message` 等 |
+| 低 | [Module/system_prompt/__init__.py:13](Module/system_prompt/__init__.py#L13) | lazy `from core.adapter.message_builder import MessageBuilder`（带 deprecation 警告，已知违规） |
+| 低 | [Module/tool/safety.py:618](Module/tool/safety.py#L618) | lazy `from core.utils import new_message_id` |
+| 低 | [Module/bench/bench.py:129-139](Module/bench/bench.py#L129) | lazy `core.config`/`core.agent`（bench 是 dev 工具，可豁免） |
+
+根因：`core.schema` 名义在 core/ 下但承担跨层共享类型职责，Module.tool/task_system 引用它 = Module 层无法独立存在。评估结论：可接受（schema 本就是共享契约层），若需彻底解耦可将 ErrorType/Message 下移到独立共享包。
+
+### 软环（lazy import 运行时解决，无需处理）
+
+- `Module._common → Module.config → Module.llm/stt/tts → Module._common` — [preflight.py](Module/config/preflight.py) 函数内懒加载后端
+- `Module.system_prompt → core.adapter → core.memory/personality/storage → Module.system_prompt` — system_prompt 的 MessageBuilder 懒加载已废弃
+
 ## token 统一结构（2026-07-31）遗留可接受项
 
 全链路统一 `TokenUsage` 模型的最终 review（opus）**APPROVE FOR MERGE** 后的可接受 residual，均为低优先级。详见 [docs/superpowers/specs/2026-07-31-token-usage-unified-structure-design.md](docs/superpowers/specs/2026-07-31-token-usage-unified-structure-design.md)。

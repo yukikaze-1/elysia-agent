@@ -27,7 +27,7 @@ from .timing import TimingClock
 from Module.output import OutputManager, ChannelCapability
 from Module.tts import TTSBackend
 
-from ..agent.agent_fsm import AgentFSM
+from core.status.agent_fsm import AgentFSM
 from ..monitoring.event_bus import EventBus
 from ..utils import set_request_id, get_request_id, log_conversation
 from Module.tool.protocol import ToolResult

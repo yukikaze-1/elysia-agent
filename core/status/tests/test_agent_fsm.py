@@ -1,8 +1,8 @@
-# core/agent/tests/test_agent_fsm.py
+# core/status/tests/test_agent_fsm.py
 """AgentFSM 状态机单元测试。"""
 
 import pytest
-from core.agent.agent_fsm import AgentFSM
+from core.status.agent_fsm import AgentFSM
 from core.schema import AgentState
 
 pytestmark = pytest.mark.unit

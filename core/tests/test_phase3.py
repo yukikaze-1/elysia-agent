@@ -18,7 +18,7 @@ from core.text.text_utils import MessageObj
 from core.adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
-from core.agent.agent_fsm import AgentFSM, AgentState
+from core.status.agent_fsm import AgentFSM, AgentState
 from core.monitoring.event_bus import EventBus, EventType, EventPriority
 from core.schema.event import StateChangeData
 from core.adapter.llm_adapter import LLMAdapter
@@ -289,7 +289,7 @@ class TestCognitiveLoopTTS:
     @pytest.fixture
     def loop(self):
         from core.monitoring.event_bus import EventBus
-        from core.agent.agent_fsm import AgentFSM
+        from core.status.agent_fsm import AgentFSM
         from Module.output import OutputManager
         from core.adapter.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
@@ -398,7 +398,7 @@ class TestCognitiveLoopSync:
     @pytest.fixture
     def loop(self):
         from core.monitoring.event_bus import EventBus
-        from core.agent.agent_fsm import AgentFSM
+        from core.status.agent_fsm import AgentFSM
         from Module.output import OutputManager
         from core.adapter.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
@@ -1701,7 +1701,7 @@ class TestHandleSubmitTask:
     def loop_with_ts(self):
         """创建带 mock TaskSystem + DelegationPreparer 的 CognitiveLoop。"""
         from core.cognitive import CognitiveLoop
-        from core.agent.agent_fsm import AgentFSM
+        from core.status.agent_fsm import AgentFSM
         from core.monitoring.event_bus import EventBus
         from Module.output import OutputManager
         from core.memory.session import SessionMemory
@@ -1808,7 +1808,7 @@ class TestWakeUpMessage:
     def test_wake_up_message_includes_intent_and_result(self):
         """唤醒模板拼接 intent 和 result。"""
         from core.cognitive import CognitiveLoop
-        from core.agent.agent_fsm import AgentFSM
+        from core.status.agent_fsm import AgentFSM
         from Module.output import OutputManager
         from core.monitoring.event_bus import EventBus
         from core.memory.session import SessionMemory

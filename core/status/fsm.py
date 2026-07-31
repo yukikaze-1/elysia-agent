@@ -1,6 +1,6 @@
 """FSM-backed AgentStatus + CognitivePhaseController 实现。
 
-依赖 AgentFSM（core.agent.agent_fsm），将语义接口映射到具体状态转换。
+依赖 AgentFSM（core.status.agent_fsm），将语义接口映射到具体状态转换。
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from core.agent.agent_fsm import AgentFSM, AgentState
+from .agent_fsm import AgentFSM, AgentState
 from core.status.protocol import AgentStatus, CognitivePhaseController
 
 if TYPE_CHECKING:

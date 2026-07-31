@@ -348,7 +348,7 @@ INTERRUPT 处理流程：
 - `finish_turn(has_background_tasks)` — 结束 turn，转换到 IDLE 或 IDLE_BACKGROUND_TASK
 - `handle_interrupt()` — 中断状态转换（INTERRUPTED → IDLE）
 
-底层由 `AgentFSM`（`agent/agent_fsm.py`）实现状态转换验证，通过 `FSMBackedStatus` + `FSMBackedPhaseController`（`core/status/fsm.py`）桥接。接口定义在 `core/status/protocol.py`。
+底层由 `AgentFSM`（`core/status/agent_fsm.py`）实现状态转换验证，通过 `FSMBackedStatus` + `FSMBackedPhaseController`（`core/status/fsm.py`）桥接。接口定义在 `core/status/protocol.py`。
 
 有效转移（与旧版 FSM 一致）：
 ```

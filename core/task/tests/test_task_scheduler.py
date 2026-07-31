@@ -724,7 +724,7 @@ def _ensure_api_key():
 async def test_cognitive_loop_callback_wired():
     """_on_tool_calls 回调被正确传递到 _execute_tool_round。"""
     from unittest.mock import AsyncMock, MagicMock
-    from core.agent.agent_fsm import AgentFSM
+    from core.status.agent_fsm import AgentFSM
     from core.monitoring.event_bus import EventBus
     from Module.output import OutputManager
     from core.memory.session import SessionMemory
@@ -780,7 +780,7 @@ async def test_cognitive_loop_callback_wired():
 async def test_cognitive_loop_no_callback_backward_compat():
     """不传 _on_tool_calls → 正常完成（向后兼容）。"""
     from unittest.mock import AsyncMock, MagicMock
-    from core.agent.agent_fsm import AgentFSM
+    from core.status.agent_fsm import AgentFSM
     from core.monitoring.event_bus import EventBus
     from Module.output import OutputManager
     from core.memory.session import SessionMemory

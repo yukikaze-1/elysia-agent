@@ -7,7 +7,7 @@ from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from ..monitoring.event_bus import EventBus, EventPriority, EventType
-from .agent_fsm import AgentFSM, AgentState
+from core.status.agent_fsm import AgentFSM, AgentState
 from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )

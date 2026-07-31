@@ -8,7 +8,7 @@ INTERRUPTED can be entered from any state (except IDLE).
 
 import logging
 
-from ..schema import AgentState, VALID_TRANSITIONS  # noqa: F401 — re-export
+from core.schema import AgentState, VALID_TRANSITIONS  # noqa: F401 — re-export
 
 logger = logging.getLogger(__name__)
 

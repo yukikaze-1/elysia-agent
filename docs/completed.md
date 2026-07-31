@@ -259,7 +259,7 @@
 | 项 | 文件 | 修复方式 |
 |----|------|----------|
 | `_flush_after_response` 完全未测 | `core/cognitive/tests/test_flush.py`（新增） | 5 个场景：空/已完成/正常/超时取消/异常捕获 |
-| FSM 10 条转换 + 3 条 interrupt 未测 | `core/agent/tests/test_agent_fsm.py`（追加） | 20 条测试，覆盖全部 14 条有效转换 + 4 条 interrupt 路径 |
+| FSM 10 条转换 + 3 条 interrupt 未测 | `core/status/tests/test_agent_fsm.py`（追加） | 20 条测试，覆盖全部 14 条有效转换 + 4 条 interrupt 路径 |
 | `_prune_tasks()` 完全未测 | `core/task/tests/test_task_scheduler.py`（追加） | 5 个场景：终端删除/活跃保留/父子关系/全删 |
 | `conftest.py` `_fsm.state = MagicMock()` 过于宽松 | `core/agent/tests/conftest.py` | 改为 `AgentState.IDLE` 真实枚举值，16 个受影响测试全部通过 |
 

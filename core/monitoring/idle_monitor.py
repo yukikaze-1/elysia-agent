@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .event_bus import EventBus, EventPriority, EventType
-from ..agent.agent_fsm import AgentFSM
+from core.status.agent_fsm import AgentFSM
 from ..config.character_config import CharacterConfig
 from core.schema.event import SystemTickData
 

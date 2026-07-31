@@ -313,7 +313,7 @@ class TestMemoryIntegration:
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
-        from core.agent.agent_fsm import AgentState
+        from core.status.agent_fsm import AgentState
 
         from core.config import AppConfig
         agent = Agent(config=AppConfig())
