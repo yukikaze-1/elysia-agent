@@ -59,8 +59,8 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 |------|------|
 | [快速开始](#快速开始) | 安装、启动、配置、故障排查 |
 | [docs/testing.md](docs/testing.md) | 测试命令速查 + 分层体系 |
-| [docs/companion-roadmap.md](docs/companion-roadmap.md) | 伴侣化改造路线 |
-| [docs/companion-prompt-guide.md](docs/companion-prompt-guide.md) | Prompt 编写指南 |
+| [docs/legacy/companion-roadmap.md](docs/legacy/companion-roadmap.md) | 伴侣化改造路线 |
+| [docs/legacy/companion-prompt-guide.md](docs/legacy/companion-prompt-guide.md) | Prompt 编写指南 |
 
 ### Module 层
 | 模块 | README | 说明 |

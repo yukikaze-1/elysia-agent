@@ -2,7 +2,7 @@
 
 审查日期：2026-07-30
 修复日期：2026-07-30 · 提交 `60ac3e5` + `99e821c`（第一轮）+ `c912a8f`（第二轮）
-**已修复 42/47 项 → 归档至 [docs/frontend_completed.md](docs/frontend_completed.md)**
+**已修复 42/47 项 → 归档至 [docs/review/frontend_completed.md](docs/review/frontend_completed.md)**
 
 ---
 

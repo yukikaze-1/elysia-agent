@@ -332,7 +332,7 @@ INTERRUPT 处理流程：
 
 ### 4.2 AgentStatus 接口层
 
-`AgentStatus` 是 FSM 之上的语义接口，将消费者与底层 `AgentFSM` 解耦。设计详见 [spec](../docs/specs/2026-07-30-agent-status-interface-design.md)。
+`AgentStatus` 是 FSM 之上的语义接口，将消费者与底层 `AgentFSM` 解耦。设计详见 [spec](../superpowers/specs/2026-07-30-agent-status-interface-design.md)。
 
 **对外只读：`AgentStatus`（`agent.status`）**
 - `is_accepting_input` — IDLE 或 IDLE_BACKGROUND_TASK
@@ -1101,15 +1101,17 @@ Agent/
 │   ├── frontend-api.md     #   前端 API
 │   ├── testing.md          #   测试指南
 │   ├── readme-conventions.md #  README 编写规范
-│   ├── companion-roadmap.md  #   伴侣化路线
-│   ├── companion-prompt-guide.md  # Prompt 指南
 │   ├── database-storage.md #   数据库存储设计
 │   ├── completed.md        #   已完成记录
+│   ├── completed/          #   已完成月度归档
 │   ├── experience.md       #   开发经验
 │   ├── sync-lessons.md     #   同步经验
-│   ├── plans/              #   实施计划
-│   ├── specs/              #   设计规格
-│   └── superpowers/        #   Superpowers 计划/规格
+│   ├── review/             #   代码/文档审查报告
+│   ├── legacy/             #   已废弃文档（历史参考）
+│   └── superpowers/
+│       ├── specs/          #   设计规格（-design.md）
+│       ├── plans/          #   实施计划（-plan.md）
+│       └── archive/        #   历史归档
 ├── log/                     # 日志文件 (gitignore)
 └── scripts/                 # 启动/预检/工具/清理脚本
     ├── setup.sh            #   一键安装

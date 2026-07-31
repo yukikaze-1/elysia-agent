@@ -174,9 +174,10 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | 文档 | 内容 |
 |------|------|
 | [快速开始](#快速开始) | 安装、启动、配置、故障排查 |
+| [docs/README.md](docs/README.md) | docs/ 文档索引 |
 | [docs/testing.md](docs/testing.md) | 测试命令速查 + 分层体系 |
-| [docs/companion-roadmap.md](docs/companion-roadmap.md) | 伴侣化改造路线（⚠️ 已废弃，保留作历史参考） |
-| [docs/companion-prompt-guide.md](docs/companion-prompt-guide.md) | Prompt 编写指南（⚠️ 已废弃，保留作历史参考） |
+| [docs/legacy/companion-roadmap.md](docs/legacy/companion-roadmap.md) | 伴侣化改造路线（⚠️ 已废弃，保留作历史参考） |
+| [docs/legacy/companion-prompt-guide.md](docs/legacy/companion-prompt-guide.md) | Prompt 编写指南（⚠️ 已废弃，保留作历史参考） |
 
 ### Module 层
 | 模块 | README | 说明 |
@@ -240,7 +241,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | [scripts/README.md](scripts/README.md) | 工具脚本（启动/预检/清理数据库） |
 | [docs/readme-conventions.md](docs/readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
 | [docs/data-structure-survey.md](docs/data-structure-survey.md) | 全项目数据结构普查（2026-07-15） |
-| [docs/doc-review-2026-07-18.md](docs/doc-review-2026-07-18.md) | 文档审查报告（2026-07-18） |
+| [docs/review/doc-review-2026-07-18.md](docs/review/doc-review-2026-07-18.md) | 文档审查报告（2026-07-18） |
 
 ---
 
@@ -253,7 +254,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | 🥉 记忆人格化 | 待做 | 记忆融入对话，不是"引用"是"记得" |
 | 🏅 主动性 | 待做 | 注意到离开/回来，深夜关心 |
 
-详见 [`docs/companion-roadmap.md`](docs/companion-roadmap.md) 和 [`docs/companion-prompt-guide.md`](docs/companion-prompt-guide.md)
+详见 [`docs/legacy/companion-roadmap.md`](docs/legacy/companion-roadmap.md) 和 [`docs/legacy/companion-prompt-guide.md`](docs/legacy/companion-prompt-guide.md)
 
 ---
 
