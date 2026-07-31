@@ -1,7 +1,7 @@
 // ---- 子结构 ----
 
 export interface TokenRoundItem {
-  model: string; prompt_tokens: number; completion_tokens: number
+  model: string; input_tokens: number; output_tokens: number
   total_tokens: number; round_num: number
 }
 

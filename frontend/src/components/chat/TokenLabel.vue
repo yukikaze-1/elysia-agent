@@ -36,8 +36,10 @@ function handleKeydown(e: KeyboardEvent) {
         class="token-round"
       >
         <span class="token-round-num">#{{ round.round_num }}</span>
-        <span class="token-round-item">P:{{ fmt(round.prompt_tokens) }}</span>
-        <span class="token-round-item">C:{{ fmt(round.completion_tokens) }}</span>
+        <span class="token-round-item">In:{{ fmt(round.input_tokens) }}</span>
+        <span class="token-round-item">Out:{{ fmt(round.output_tokens) }}</span>
+        <span v-if="round.cached_tokens != null" class="token-round-item">cached:{{ fmt(round.cached_tokens) }}</span>
+        <span v-if="round.reasoning_tokens != null" class="token-round-item">think:{{ fmt(round.reasoning_tokens) }}</span>
         <span class="token-round-total">{{ fmt(round.total_tokens) }}</span>
       </div>
     </div>

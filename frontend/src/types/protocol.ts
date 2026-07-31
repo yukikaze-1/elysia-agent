@@ -22,16 +22,18 @@ export interface SessionMessageItem {
 
 export interface TokenRound {
   model?: string
-  prompt_tokens: number
-  completion_tokens: number
+  input_tokens: number
+  output_tokens: number
   total_tokens: number
+  cached_tokens?: number
+  reasoning_tokens?: number
   round_num: number
-  timestamp?: number
+  timestamp?: string
 }
 
 export interface TokenStats {
   total: number
-  byModel?: Record<string, number>
+  by_model: Record<string, number>
 }
 
 export type ContentPart =

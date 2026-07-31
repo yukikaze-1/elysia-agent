@@ -38,7 +38,7 @@ export const useChatStore = defineStore('chat', () => {
   const nextBubbleQueue = ref<string[]>([])
   const playingMessageId = ref<string | null>(null)
   const previewImages = ref<{ url: string; mime: string }[]>([])
-  const sessionTokens = ref<{ total: number; byModel: Record<string, number> }>({ total: 0, byModel: {} })
+  const sessionTokens = ref<{ total: number; by_model: Record<string, number> }>({ total: 0, by_model: {} })
   function appendDelta(text: string, streamId?: number) {
     const audioStore = useAudioStore()
     if (messages.value.length === 0 || lastRole.value !== 'assistant') {
@@ -199,8 +199,8 @@ export const useChatStore = defineStore('chat', () => {
     }
     // 更新 session 累计 token 统计（后端字段为 by_model）
     if (msg.session) {
-      const s = msg.session as { total: number; by_model?: Record<string, number>; byModel?: Record<string, number> }
-      sessionTokens.value = { total: s.total, byModel: s.by_model || s.byModel || {} }
+      const s = msg.session as { total: number; by_model: Record<string, number> }
+      sessionTokens.value = { total: s.total, by_model: s.by_model }
     }
   }
 
@@ -238,7 +238,10 @@ export const useChatStore = defineStore('chat', () => {
     playingMessageId.value = id
   }
 
-  function restoreFromServer(serverMessages: any[], _tokenStats?: any) {
+  function restoreFromServer(
+    serverMessages: any[],
+    tokenStats?: { total: number; by_model: Record<string, number> },
+  ) {
     messages.value = []
     lastRole.value = ''
     lastMsgTime.value = 0
@@ -246,6 +249,11 @@ export const useChatStore = defineStore('chat', () => {
     playingMessageId.value = null
     // 游标 = session 中最早一条消息（可能有 _id）；归档查询用 _id 游标
     earliestMessageId.value = serverMessages[serverMessages.length - 1]?._id || null
+
+    // 恢复 session 累计 token（消除刷新/重连后 CharStatus 归零直到下次广播的缺口）
+    if (tokenStats) {
+      sessionTokens.value = { total: tokenStats.total, by_model: tokenStats.by_model }
+    }
 
     for (const m of serverMessages) {
       const converted = convertServerMessage(m)
