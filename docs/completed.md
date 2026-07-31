@@ -32,6 +32,39 @@
 **已确认无需修复**：#10（SSE CORS 已显式设置）、#11（`show_index=False` 已生效）、#6（`_evict_overflow()` 已替换旧代码）、#13（`api_key_env` 约定安全，保留现状）。
 
 `make test-quick`：1817 passed，无回归。
+### 2026-07-31: code-review-2026-07-31 遗留问题修复（24 项）
+
+对全量审查 [docs/code-review-2026-07-31.md](code-review-2026-07-31.md) 的 44 项发现逐一评估，修复其中 24 项。
+
+**Critical（1 项）：**
+| 问题 | 修复 |
+|------|------|
+| C1 `_poll_mailboxes` 空 mailbox 无限自旋冻结事件循环 | `if event is None: continue`→`break`；`stop()` 清空 `_background_tasks`（restart 复用实例残留） |
+
+**Major（16 项）：**
+| 问题 | 修复 |
+|------|------|
+| M1 `conversation_text[:2000]` 截断方向错误 | `[-2000:]` 保留最新轮次 |
+| M3 CharacterReflector buffer 竞态 | `_reflect()` 记录 buffer 快照，只清反思前累积 |
+| M4 Gate 拒绝未恢复 THINKING，FSM 卡 EXECUTING | gate 拒绝时 `return_to_thinking()` |
+| M5 text-only 双路径重复广播 | SENTENCE 分支只发 `send("")` 边界信号，增量由 TEXT_DELTA 广播 |
+| M6 `chat_stream` usage 终结 chunk IndexError | `not chunk.choices` 先判空再访问 `choices[0]` |
+| M7 `_format_tool_summary` 非 dict 崩溃 | `isinstance(parsed, dict)` 检查（含 tool_executing emit 循环） |
+| M10 `/debug/api` 精确路径绕过认证 | `startswith("/debug/api")` 覆盖无尾斜杠路径 |
+| M13 重连审批广播缺 type 字段 | 补 `type: command` + 参数名对齐正常路径 |
+| M14 历史分页游标错位 + 重复气泡 | 游标取页尾最旧一条 + 前端按 message_id 去重 |
+| M15 queued 气泡永久隐藏 | `addUserMessage` 兜底清除所有 queued 标记 |
+| M16 唤醒词开关死 UI | `wakeEnabled` watch 发送 `wake_toggle` WS 消息 |
+| M17 `python -m Module.system_prompt` 必崩 | `ConflictRulesSection` 传 `f1_conflict_rules.j2` |
+| M18 `python -m Module.config` 必崩 | `__main__.py` 改用 `yaml.safe_load`（loader 需 dataclass） |
+| M21 模型切换乐观插入 + 双插 | 去掉乐观插入，等后端结果 |
+| M23 Escape 双重触发 | App.vue 在审批弹窗打开时跳过 interrupt |
+| （M7/M21/M23 同时覆盖 m7/m8/m10/m18/m19/m21/m22/m23） | |
+
+**Minor（7 项）：** m7（archive role 400）、m8（版本历史 int 保护）、m10（WS 非 dict JSON）、m18（by_model 兼容）、m19（created_at→timestamp）、m21/m22（同上 M21/M23）。
+
+**遗留 20 项**：M2/M8/M9/M11/M12/M19/M20 + m1-m6/m9/m11-m17/m20，记录在 todo.md。`make test-quick`：1817 passed，前端构建通过。
+
 ### 2026-07-31: CognitiveLoop [TOOL_EXECUTED] 模式切换信号
 
 **背景**：LLM 执行完工具调用后缺少显式信号来切换上下文模式，部分模型在工具结果返回后仍停留在"工具执行模式"。

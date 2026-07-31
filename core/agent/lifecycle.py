@@ -149,6 +149,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         logger.info("Agent stopping...")
         self._state = RunState.STOPPED
         self._pending_messages.clear()
+        self._background_tasks.clear()  # restart 复用同一实例，清理残留后台任务
 
         for name, method_name in self._SHUTDOWN_STEPS:
             logger.debug("Shutdown step: %s", name)

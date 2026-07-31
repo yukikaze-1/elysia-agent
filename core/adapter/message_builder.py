@@ -114,9 +114,11 @@ def _format_tool_summary(tool_calls: list[ToolCall]) -> str:
     for tc in tool_calls:
         name = tc.function.name
         try:
-            args = json.loads(tc.function.arguments)
+            parsed = json.loads(tc.function.arguments)
         except (json.JSONDecodeError, TypeError):
-            args = {}
+            parsed = None
+        # arguments 可能是合法 JSON 但非 dict（list/str/int），跳过避免 AttributeError
+        args = parsed if isinstance(parsed, dict) else {}
         arg_strs = [f"{k}={v}" for k, v in args.items()]
         if arg_strs:
             names.append(f"{name}({', '.join(arg_strs)})")

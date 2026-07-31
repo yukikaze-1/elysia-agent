@@ -15,6 +15,7 @@ export interface ChatMessage {
   contentType?: 'text' | 'markdown' | 'code'
   language?: string
   timestamp: number
+  messageId?: string
   toolCalls?: ToolCallData[]
   toolCallResults?: Record<string, ToolCallResult>
   innerVoice?: string
@@ -65,6 +66,9 @@ export const useChatStore = defineStore('chat', () => {
 
   function addUserMessage(text: string) {
     finalizeDelta()
+    // 用户新消息打断播放：清空排队队列，并兜底清除所有 queued 标记
+    // （防止音频中断/被移出队列时气泡永久隐藏）
+    for (const m of messages.value) m.queued = false
     nextBubbleQueue.value = []
     clearPlayingHighlight()
     const msg: ChatMessage = {
@@ -193,9 +197,10 @@ export const useChatStore = defineStore('chat', () => {
         } as unknown as TokenUsage
       }
     }
-    // 更新 session 累计 token 统计
+    // 更新 session 累计 token 统计（后端字段为 by_model）
     if (msg.session) {
-      sessionTokens.value = msg.session as { total: number; byModel: Record<string, number> }
+      const s = msg.session as { total: number; by_model?: Record<string, number>; byModel?: Record<string, number> }
+      sessionTokens.value = { total: s.total, byModel: s.by_model || s.byModel || {} }
     }
   }
 
@@ -239,8 +244,8 @@ export const useChatStore = defineStore('chat', () => {
     lastMsgTime.value = 0
     nextBubbleQueue.value = []
     playingMessageId.value = null
-    // 从第一条服务端消息提取 _id 作为历史加载游标
-    earliestMessageId.value = serverMessages[0]?._id || null
+    // 游标 = session 中最早一条消息（可能有 _id）；归档查询用 _id 游标
+    earliestMessageId.value = serverMessages[serverMessages.length - 1]?._id || null
 
     for (const m of serverMessages) {
       const converted = convertServerMessage(m)
@@ -267,10 +272,14 @@ export const useChatStore = defineStore('chat', () => {
       const data = await resp.json()
       const serverMsgs: any[] = data.messages || []
 
+      // 已存在的 message_id 集合（session 窗口内消息可能同时存在于归档）
+      const seen = new Set(messages.value.map(m => m.messageId).filter(Boolean))
       const olderMsgs: ChatMessage[] = []
       for (const m of serverMsgs) {
         const converted = convertServerMessage(m)
         for (const cm of converted) {
+          if (cm.messageId && seen.has(cm.messageId)) continue  // 去重，避免与 session 窗口重叠
+          if (cm.messageId) seen.add(cm.messageId)
           olderMsgs.push(cm)
         }
       }
@@ -278,8 +287,8 @@ export const useChatStore = defineStore('chat', () => {
       if (olderMsgs.length > 0) {
         // 保持旧消息在前
         messages.value = [...olderMsgs, ...messages.value]
-        // 更新最早消息 ID 用于下一次加载
-        earliestMessageId.value = serverMsgs[0]?._id || null
+        // 游标 = 本页最旧一条（serverMsgs 为 _id 降序，最后一条最旧）
+        earliestMessageId.value = serverMsgs[serverMsgs.length - 1]?._id || null
       }
       hasMoreMessages.value = data.has_more !== false
       return olderMsgs.length > 0
@@ -329,7 +338,8 @@ function convertServerMessage(m: any): ChatMessage[] {
       id: generateId(),
       role: 'tool',
       content: m.content || '',
-      timestamp: Date.parse(m.created_at) || Date.now(),
+      timestamp: Date.parse(m.timestamp) || Date.now(),
+      messageId: m.message_id,
       toolCalls: [{
         id: m.tool_call_id,
         function: { name: m.name || 'tool', arguments: '{}' },
@@ -355,7 +365,8 @@ function convertServerMessage(m: any): ChatMessage[] {
       role: 'system',
       content: '',
       innerVoice: m.inner_voice,
-      timestamp: Date.parse(m.created_at) || Date.now(),
+      timestamp: Date.parse(m.timestamp) || Date.now(),
+      messageId: m.message_id,
     } as ChatMessage)
   }
 
@@ -376,14 +387,16 @@ function convertServerMessage(m: any): ChatMessage[] {
         id: generateId(),
         role: m.role as ChatMessage['role'],
         content: split.action,
-        timestamp: Date.parse(m.created_at) || Date.now(),
+        timestamp: Date.parse(m.timestamp) || Date.now(),
+        messageId: m.message_id,
       } as ChatMessage)
       if (split.rest) {
         out.push({
           id: generateId(),
           role: m.role as ChatMessage['role'],
           content: split.rest,
-          timestamp: Date.parse(m.created_at) || Date.now(),
+          timestamp: Date.parse(m.timestamp) || Date.now(),
+          messageId: m.message_id,
           tokenUsage: (i === parts.length - 1 && imageParts.length === 0) ? m.token_usage : undefined,
         } as ChatMessage)
       }
@@ -392,7 +405,8 @@ function convertServerMessage(m: any): ChatMessage[] {
         id: generateId(),
         role: m.role as ChatMessage['role'],
         content: text,
-        timestamp: Date.parse(m.created_at) || Date.now(),
+        timestamp: Date.parse(m.timestamp) || Date.now(),
+        messageId: m.message_id,
         // 只在最后一句且没有图片时附加 token 统计
         tokenUsage: (i === parts.length - 1 && imageParts.length === 0) ? m.token_usage : undefined,
       } as ChatMessage)
@@ -405,7 +419,8 @@ function convertServerMessage(m: any): ChatMessage[] {
       id: generateId(),
       role: m.role as ChatMessage['role'],
       content: [{ type: 'image', src: img.src, mime: img.mime }] as any,
-      timestamp: Date.parse(m.created_at) || Date.now(),
+      timestamp: Date.parse(m.timestamp) || Date.now(),
+      messageId: m.message_id,
       tokenUsage: m.token_usage,
     } as ChatMessage)
   }

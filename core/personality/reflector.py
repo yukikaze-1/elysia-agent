@@ -213,6 +213,10 @@ class CharacterReflector:
         logger.info("CharacterReflector: 开始反思 (buffer=%d pairs, context=%d rounds)",
                     len(self._buffer), len(self._context))
 
+        # 记录反思开始时 buffer 大小——成功后只清此前累积的部分，
+        # 反思期间新 append 的对话对（未进入本次 prompt）保留到下一轮
+        _reflect_buffer_snapshot = len(self._buffer)
+
         pm = self._pm
         state = self._engine.state
 
@@ -310,7 +314,8 @@ class CharacterReflector:
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
         # LLM 调用成功后才清空 buffer
-        self._buffer.clear()
+        # 只清反思开始前累积的部分——反思期间新 append 的对话对（未进入 prompt）保留到下一轮
+        del self._buffer[:_reflect_buffer_snapshot]
         self._context.clear()
 
         if not text:

@@ -79,7 +79,7 @@ async function handleShutdown() {
 
 function handleModelSwitch(service: 'llm' | 'stt' | 'tts', modelId: string) {
   settings.switchModel(service, modelId)
-  chat.addStatusMessage(service.toUpperCase() + ' 已切换至 ' + modelId)
+  // 不乐观插入——等后端 switch_model_result 回包后统一显示（避免成功/失败双插）
 }
 
 // ---- Custom endpoints modal ----

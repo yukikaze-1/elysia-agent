@@ -21,7 +21,9 @@ const { onDragOver, onDragEnter, onDragLeave, onDrop } = useImageUpload(
 
 function shouldShowTimeDivider(msg: ChatMessageType, index: number): boolean {
   if (index === 0) return false
-  const prev = chatStore.messages[index - 1]
+  // 用 visible 列表的前一条（而非全量 messages）——queued 隐藏时索引一致
+  const visible = chatStore.visibleMessages
+  const prev = visible[index - 1]
   if (!prev) return false
   return (msg.timestamp - prev.timestamp) >= FIVE_MINUTES
 }

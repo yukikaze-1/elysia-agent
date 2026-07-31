@@ -75,12 +75,14 @@ async def handle_ws(
         if hasattr(agent, '_tool_adapter') and agent._tool_adapter is not None:
             pending = agent._tool_adapter._manager.get_pending_approvals()
             for request_id, tool_name, params in pending:
+                # 与正常路径（ToolManager._broadcast → websocket.on_command）格式一致
                 await ws.send_json({
+                    "type": "command",
                     "command": "tool_approval",
                     "params": {
+                        "tool": tool_name,
+                        "params": str(params)[:200],
                         "request_id": request_id,
-                        "tool_name": tool_name,
-                        "params": params,
                     },
                 })
                 logger.debug("Re-broadcast pending approval to new client: %s (%s)",
@@ -132,6 +134,8 @@ async def handle_ws(
             if msg.type == WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
+                    if not isinstance(data, dict):
+                        raise ValidationError("WS 消息必须是 JSON 对象")
                     await handle_json_message(data, agent, audio_buf, ws)
                 except json.JSONDecodeError:
                     await ws.send_json({"type": "error", "message": "Invalid JSON"})

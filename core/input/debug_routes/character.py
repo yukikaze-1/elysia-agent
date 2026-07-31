@@ -104,9 +104,12 @@ async def l2_versions_handler(request: web.Request) -> web.Response:
         web.Response: {"versions": [...], "total": ..., "has_more": ...}。
     """
     agent = request.app["agent"]
-    limit = int(request.query.get("limit", "20"))
-    before = request.query.get("before")
-    before_version = int(before) if before else None
+    try:
+        limit = int(request.query.get("limit", "20"))
+        before = request.query.get("before")
+        before_version = int(before) if before else None
+    except ValueError:
+        return web.json_response({"error": "limit/before 必须是整数"}, status=400)
     result, error, status = await _list_character_versions(
         agent, "l2", limit, before_version)
     if error:
@@ -153,9 +156,12 @@ async def character_versions_handler(request: web.Request) -> web.Response:
     content_type = request.query.get("type", "l2")
     if content_type not in ("l2", "c6"):
         return web.json_response({"error": "type 必须为 l2 或 c6"}, status=400)
-    limit = int(request.query.get("limit", "20"))
-    before = request.query.get("before")
-    before_version = int(before) if before else None
+    try:
+        limit = int(request.query.get("limit", "20"))
+        before = request.query.get("before")
+        before_version = int(before) if before else None
+    except ValueError:
+        return web.json_response({"error": "limit/before 必须是整数"}, status=400)
     result, error, status = await _list_character_versions(
         agent, content_type, limit, before_version)
     if error:

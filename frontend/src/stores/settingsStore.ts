@@ -50,6 +50,8 @@ export const useSettingsStore = defineStore('settings', () => {
 
   watch(wakeEnabled, (val) => {
     localStorage.setItem('elysia_wake', val ? 'on' : 'off')
+    // 同步到后端运行时（audio_buf.set_wake_enabled）
+    useConnectionStore().send({ type: 'wake_toggle', enabled: val })
   })
 
   watch(live2dEnabled, (val) => {

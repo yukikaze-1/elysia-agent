@@ -240,7 +240,7 @@ class MemoryConsolidator:
         logger.debug("Consolidation: 开始提取 (%d turns)", len(turns))
 
         prompt = _get_extraction_prompt().replace(
-            "{conversation}", conversation_text[:2000],
+            "{conversation}", conversation_text[-2000:],
         )
 
         try:

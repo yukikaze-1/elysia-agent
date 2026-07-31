@@ -46,7 +46,10 @@ async def archive_list_handler(request: web.Request) -> web.Response:
         limit = 100; skip = 0
     search = request.query.get("search", "").strip()
     role_str = request.query.get("role", "").strip()
-    role = MessageRole(role_str) if role_str else None
+    try:
+        role = MessageRole(role_str) if role_str else None
+    except ValueError:
+        return web.json_response({"error": f"非法 role: {role_str}"}, status=400)
 
     try:
         messages, total = await repo.query_offset(skip=skip, limit=limit, search=search, role=role)

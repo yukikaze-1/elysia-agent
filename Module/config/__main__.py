@@ -3,8 +3,9 @@
 import os
 import sys
 
+import yaml
+
 from Module._common.main_runner import run_module_main
-from .loader import ConfigLoader
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
@@ -20,8 +21,8 @@ async def main():
         return
 
     try:
-        loader = ConfigLoader(dict, yaml_path=CONFIG_PATH)
-        data = loader.load()
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
         print("已加载的 YAML 顶级键:")
         for key in sorted(data.keys()):
             val = data[key]

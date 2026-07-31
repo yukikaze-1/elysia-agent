@@ -361,7 +361,7 @@ class Agent(AgentLifecycle, AgentServer):
                         except asyncio.QueueEmpty:
                             break  # 队列已空，继续下一个 task
                         if event is None:
-                            continue  # 队列投递了 None 哨兵，跳过
+                            break  # 队列为空（get_nowait 空时返回 None），处理下一个 task
                         data = event.data or {}
                         if event.type.value == "completed":
                             self._bus.post(TaskResultData(

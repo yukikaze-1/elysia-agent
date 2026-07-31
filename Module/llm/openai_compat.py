@@ -197,16 +197,20 @@ class OpenAICompatBackend(LLMBackend):
                 **kwargs,
             )
             async for chunk in response:  # type: ignore[union-attr]
+                # 先判 choices 空：usage chunk 的 choices 恒为空数组（真实 API 契约），
+                # 不能先访问 chunk.choices[0] 否则 IndexError；也不能用 getattr(usage)
+                # 判真——MagicMock 下恒真。空 choices 也可能是 provider 流结束哨兵。
+                if not chunk.choices:
+                    if getattr(chunk, "usage", None) is not None:
+                        self.last_usage = {
+                            "prompt_tokens": chunk.usage.prompt_tokens or 0,
+                            "completion_tokens": chunk.usage.completion_tokens or 0,
+                            "total_tokens": chunk.usage.total_tokens or 0,
+                        }
+                    continue  # usage chunk / 空 choices 流结束哨兵，均无实质内容
                 delta = chunk.choices[0].delta
                 if delta and delta.content:
                     yield delta.content
-                # 流式最后一个 chunk 携带 usage 统计（需 stream_options.include_usage）
-                if getattr(chunk, "usage", None):
-                    self.last_usage = {
-                        "prompt_tokens": chunk.usage.prompt_tokens or 0,
-                        "completion_tokens": chunk.usage.completion_tokens or 0,
-                        "total_tokens": chunk.usage.total_tokens or 0,
-                    }
         else:
             response = await client.chat.completions.create(
                 model=self._model,

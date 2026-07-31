@@ -515,6 +515,7 @@ class CognitiveLoop(CognitiveTools):
 
         # Gate: 校验 tool_calls 合法性，拦截未知工具名
         if not self._gate_tool_calls(normalized, messages):
+            await self.phases.return_to_thinking()  # 恢复 THINKING，避免 FSM 卡在 EXECUTING 触发非法转换
             return  # gate 已注入 failure messages，跳过 dispatch
 
         # submit_task 工具调用——拦截处理
@@ -574,6 +575,9 @@ class CognitiveLoop(CognitiveTools):
             func_name = tc.function.name
             call_id = tc.id
             args = tc.function.parsed
+            # arguments 可能是合法 JSON 但非 dict（list/str/int），跳过避免 AttributeError
+            if not isinstance(args, dict):
+                args = {}
             self._executing_tools.append(func_name)
             await self._output.action("tool_executing", params={
                 "tool": func_name,
@@ -937,10 +941,7 @@ class CognitiveLoop(CognitiveTools):
             if self._tts_mgr.active:
                 self._tts_mgr.stream_sentence(sentence)
             else:
-                await self._output._broadcast(
-                    "on_text_delta", sentence,
-                    capability=ChannelCapability.TEXT_DELTA,
-                )
+                # text-only：TEXT_DELTA 已广播增量，此处只发句子边界信号结束气泡，避免整句重复显示
                 await self._output.send("")
 
         elif event.type == StreamEventType.TEXT_DELTA:

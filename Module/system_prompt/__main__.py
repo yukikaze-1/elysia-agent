@@ -24,7 +24,7 @@ async def main():
     print()
 
     sections = [
-        ConflictRulesSection(),
+        ConflictRulesSection(f"{_SECTION_DIR}/f1_conflict_rules.j2"),
         OutputFormatSection(f"{_SECTION_DIR}/f2_output_format.j2"),
         SensorySection(f"{_SECTION_DIR}/c5_sensory.j2"),
         EmotionSection(f"{_SECTION_DIR}/c3_emotion.j2"),

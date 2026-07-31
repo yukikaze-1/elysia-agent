@@ -16,71 +16,67 @@
 | 低 | **`flush_after_response` 超时层不匹配** | 内层 `loop.py:875` 每 task 5s，外层 `lifecycle.py:170` 整体 10s。3+ task 同时超时可能被外层截断。实际 pending 典型 0-2 个、亚秒级完成，impact 极低。修法：外层 timeout 改为 `max(10.0, len(pending) * 5.0 + 1.0)` |
 | 低 | **`ConfirmModal` @keydown 在不可聚焦 `<div>`** | `frontend/src/debug/components/shared/ConfirmModal.vue:35` — overlay div 无 `tabindex`，依赖按钮聚焦后事件冒泡。弹窗内只有文字+两个按钮，点击文字不会失焦，现有行为已可靠。加固：加 `tabindex="0"` |
 
-## 来自 code-review-2026-07-31 的遗留问题（44 项）
+## 来自 code-review-2026-07-31 的遗留问题
 
-> 来源：[docs/code-review-2026-07-31.md](docs/code-review-2026-07-31.md)。全量审查（core/ + Module/ + frontend/），7 agent 审查 + 47 agent 验证（≥75 分保留），4 条已实测复现。基线 commit `e782de9`。
+已修复 24/44（1 Critical + 16 Major + 7 Minor），20 项遗留。详见 [docs/code-review-2026-07-31.md](docs/code-review-2026-07-31.md)。
 
-### Critical（1 项）
+### 已修复（2026-07-31）
 
-| 优先级 | 问题 | 说明 |
-|--------|------|------|
-| **高** | **C1 `_poll_mailboxes` 空 mailbox 无限自旋冻结事件循环** | [agent.py:357-365](core/agent/agent.py#L357-L365) + [mailbox.py:68-74](Module/task_system/mailbox.py#L68-L74)。`get_nowait()` 空队列返回 `None` 而非抛 `QueueEmpty`，`if event is None: continue` 造成无 await 无限同步自旋。任何 `submit_task` 后 ~500ms 内触发，WS/HTTP/STT/TTS/认知循环全部冻结。修法：`continue`→`break`。另注意 restart 后 `_background_tasks` 未清空 |
+| 问题 | 修复 |
+|------|------|
+| C1 `_poll_mailboxes` 自旋 | `continue`→`break` + `stop()` 清空 `_background_tasks` |
+| M1 截断方向 | `conversation_text[-2000:]` |
+| M3 Reflector buffer 竞态 | `_reflect()` 记录 snapshot，只清反思前累积 |
+| M4 Gate 拒绝未恢复 THINKING | gate 拒绝时 `return_to_thinking()` |
+| M5 text-only 双广播 | SENTENCE 分支去重，只保留 TEXT_DELTA 增量 + `send("")` 边界信号 |
+| M6 usage chunk IndexError | `not chunk.choices` 先判空，usage 判断移到 `choices[0]` 前 |
+| M7 `_format_tool_summary` 崩溃 | `isinstance(parsed, dict)` 检查（含 tool_executing emit 循环） |
+| M10 `/debug/api` 认证绕过 | `startswith("/debug/api")` 覆盖精确路径 |
+| M13 重连审批广播 | 补 `type` 字段 + 参数名对齐正常路径 |
+| M14 历史分页重复气泡 | 游标取页尾最旧 + 按 message_id 去重 |
+| M15 queued 气泡永久隐藏 | `addUserMessage` 兜底清除所有 queued 标记 |
+| M16 唤醒词死 UI | `wakeEnabled` watch 发送 `wake_toggle` |
+| M17 `python -m Module.system_prompt` 必崩 | `ConflictRulesSection` 传 `f1_conflict_rules.j2` |
+| M18 `python -m Module.config` 必崩 | `__main__.py` 改用 `yaml.safe_load` |
+| M21 模型切换双插 | 去掉乐观插入，只等后端结果 |
+| M23 Escape 双重触发 | App.vue 检查 `approvalRequest` 非空时跳过 interrupt |
+| m7 archive role 非法值 500 | `MessageRole` 解析加 try → 400 |
+| m8 版本历史 `int()` 无保护 500 | 两处 GET handler 加 try → 400 |
+| m10 WS 非 dict JSON 崩溃 | `isinstance(data, dict)` 检查 → ValidationError 走 400 路径 |
+| m18 token_usage 字段名 | 前端兼容 `by_model`/`byModel` |
+| m19 消息时间戳恒当前时间 | 6 处 `m.created_at`→`m.timestamp` |
+| m21 模型切换双插 | 同上 M21 |
+| m22 时间分隔符索引错位 | `shouldShowTimeDivider` 用 visibleMessages 前一条 |
+| m23 审批弹窗 Escape 双重触发 | 同上 M23 |
 
-### Major（20 项）
-
-| 优先级 | 问题 | 说明 |
-|--------|------|------|
-| **高** | **M6 `chat_stream` usage 终结 chunk 抛 IndexError** | [openai_compat.py:199-209](Module/llm/openai_compat.py#L199-L209)。流式请求 `include_usage=True`，usage 收尾 chunk `choices` 恒为空，`chunk.choices[0].delta` 先于 usage 判断必然 IndexError。所有 provider 均经此路径，**每次流式回复结束崩溃**。`_stream_structured` 有 `if not chunk.choices: continue` 守卫，唯独 `_call_api` 漏掉 |
-| **高** | **M14 历史消息分页游标 `_id` 不存在且取错方向** | [chatStore.ts:243,258-292](frontend/src/stores/chatStore.ts#L243) + [message.py:82-100](core/schema/message.py#L82-L100) + [api_routes.py:292](core/input/api_routes.py#L292)。session 消息无 `_id` 字段，游标恒 null → 每页与上一页重叠 49/50 条。上滑加载历史是常态路径，历史分页实质不可用 |
-| **高** | **M15 排队气泡音频流中断时永久隐藏** | [chatStore.ts:51-58,225-234](frontend/src/stores/chatStore.ts#L51) + [audioStore.ts:64-96](frontend/src/stores/audioStore.ts#L64)。`queued` 标记唯一清除路径是 `revealNextQueued()`，播放中用户继续发消息时被移出队列的气泡永久消失 |
-| **高** | **M17 `python -m Module.system_prompt` 入口必崩** | [__main__.py:27](Module/system_prompt/__main__.py#L27)。`ConflictRulesSection()` 无参实例化，但 `Jinja2Section.__init__(template_path)` 参数必填。**已实测复现**。修法照抄 `prompt_assembler.py:73` 传 `f1_conflict_rules.j2` |
-| **高** | **M18 `python -m Module.config` 入口必崩** | [__main__.py:23](Module/config/__main__.py#L23) + [loader.py:215,240](Module/config/loader.py#L215)。`ConfigLoader(dict, ...)` 传普通类型，loader 无条件 `dataclasses.fields()` 抛 TypeError。**已实测复现**。其他调用方均传 `AppConfig` |
-| **高** | **M23 Escape 同时触发拒绝审批 + 打断生成** | [App.vue:23-28](frontend/src/App.vue#L23) + [ApprovalDialog.vue:39-46](frontend/src/components/ui/ApprovalDialog.vue#L39)。两个 document 级 keydown 都不阻止传播，Escape 拒绝审批连带杀掉整个回合 |
-| **中** | **M1 `conversation_text[:2000]` 截断方向错误** | [consolidator.py:243](core/memory/consolidator.py#L243)。`[:2000]` 保留最旧丢弃最新，而 `_buffer.clear()` 无条件执行，被截掉的最新轮次永远不再提取。应取 `[-2000:]` |
-| **中** | **M2 `_sync_dirty_entries` 死代码，Milvus 失败记忆永不重试** | [long_term.py:282-315](core/memory/long_term.py#L282)。insert 失败入 `_dirty_ids` 但全仓库无调用者同步；重启后 `_load_from_milvus` 只从 Milvus 恢复，脏条目彻底丢失 |
-| **中** | **M3 CharacterReflector buffer 竞态** | [reflector.py:107-123](core/personality/reflector.py#L107)。`buffer()` 在获取 `_reflect_lock` **之前** append；反思期间新到的对话对在 `_reflect()` 成功后无条件 `clear()` 时被清空，永久丢失 |
-| **中** | **M4 Gate 拒绝路径未恢复 THINKING，FSM 卡 EXECUTING** | [loop.py:517-518](core/cognitive/loop.py#L517) + [fsm.py:166-196](core/status/fsm.py#L166)。gate 拒绝直接 `return` 跳过 `return_to_thinking()`，下一轮 SENTENCE 触发非法转换抛 ValueError，向用户广播虚假错误 |
-| **中** | **M5 text-only 模式同一句文本双路径重复广播** | [loop.py:928-951](core/cognitive/loop.py#L928) + [stream_processor.py:134-137](core/cognitive/stream_processor.py#L134)。`_tts_mgr.active` False 时 TEXT_DELTA 与 SENTENCE 都向同一通道广播相同文本，text-only 模式输出翻倍 |
-| **中** | **M8 MiniMax 停顿标签 `<#x#>` 从 TTS 文本剥离** | [tts_adapter.py:258-268](core/adapter/tts_adapter.py#L258)。docstring 声明标签送 TTS，但 `_PAUSE_TAG_RE.sub("", ...)` 在合成前剥离，StreamProcessor 又剥一次，F3 停顿功能端到端失效。需额外设计流式分句下的标签保留 |
-| **中** | **M9 gpt-sovits `_pull` 任务异常静默吞掉** | [gpt_sovits.py:162-205](Module/tts/gpt_sovits.py#L162)。`raise_for_status()` 抛的 `HTTPStatusError` 不匹配 `except httpx.RequestError`，异常冒出但 finally 无条件入队 None 哨兵，调用方收到空音频静默无声 |
-| **中** | **M10 `/debug/api` 精确路径绕过认证中间件** | [debug_routes/__init__.py:31](core/input/debug_routes/__init__.py#L31) + [overview.py:14](core/input/debug_routes/overview.py#L14)。中间件 `startswith("/debug/api/")` 对精确路径 `/debug/api` 恒 False，而前端轮询的正是此路径。**（2026-07-31 #9 修复引入的边界漏洞）** |
-| **中** | **M11 `time_of_day` 去重键无日期成分，跨天永久抑制** | [idle_monitor.py:120-127](core/monitoring/idle_monitor.py#L120)。仅 `%H:%M`，触发后次日同刻恒 return，每日定时主动搭话在进程生命周期内仅触发一次。注：消费端 `_handle_system_tick` 目前以 TODO 静默丢弃 time_of_day 事件 |
-| **中** | **M13 重连时 HITL 审批重广播缺 type 字段，前端永远收不到** | [ws_handler.py:73-89](core/input/ws_handler.py#L73)。缺 `type` 字段 + 参数名 `tool_name` vs `tool` + `params` 对象 vs 字符串，三方全偏离。断线重连时挂起审批永远悬空 |
-| **中** | **M16 唤醒词开关是死 UI** | [settingsStore.ts:23,51-53](frontend/src/stores/settingsStore.ts#L23) + [ws_handler.py:172-176](core/input/ws_handler.py#L172)。前端无任何代码发送 `wake_toggle`，开关只写 localStorage，实际启用状态由启动配置决定 |
-| **中** | **M19 resume 后再次 pause 的任务被销毁而非保持 PAUSED** | [task_system.py:384-393](Module/task_system/task_system.py#L384)。`_run_resume` finally 无条件 cleanup + 删 checkpoint，缺 PAUSED early-return 保护。之后 resume 返回 CHECKPOINT_NOT_FOUND，mailbox 消费者永久阻塞 |
-| **中** | **M20 cancel 在规划/校验阶段不推终态事件** | [lifecycle.py:157-167](Module/task_system/lifecycle.py#L157) + [planning.py:143-145](Module/task_system/core/planning.py#L143)。`planning.plan_and_validate` 无条件把 status 覆写回 RUNNING，规划窗口取消被静默吞掉。`TaskSystem.cancel()` 尚无调用方接线，暂为潜在 |
-| **低** | **M7 `_format_tool_summary` 对非 dict arguments 抛 AttributeError** | [message_builder.py:116-121](core/adapter/message_builder.py#L116)。`[1,2]`/`"hello"`/`42` 都是合法 JSON，`args.items()` 抛 AttributeError 未被捕获；非 dict arguments 持久化进 session 后**下一轮必然再次触发**，持续毒化会话。同轮 tool_executing emit 循环同样未捕获 |
-| **低** | **M12 STT 语音输入不调用 `idle.touch()`** | [ws_handler.py:271-279](core/input/ws_handler.py#L271)。语音路径直投 `UserInputData` 绕过 `process_message`（全库唯一 touch 调用点），纯语音对话超 interval 误触发"用户没有说话"主动发言。默认 `proactive.enabled: false` 不触发 |
-
-### Minor（23 项）
+### 遗留（20 项）
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| 低 | m1 shutdown flush 与 cancel 认知任务竞态 | `lifecycle.py:50-66` flush 先于取消任务，orphan after_response task 与已关闭的 LLM/session repo 并发，最后轮记忆沉淀丢失 |
-| 低 | m2 start() 失败留下僵尸 Agent | `lifecycle.py:124-145` 先置 RUNNING 再跑 STARTUP_STEPS，失败无回滚；4 个 create_task 点无幂等保护，重试生成重复循环 |
-| 低 | m3 fire-and-forget consume_trigger 无异常处理 | `reflector.py:325-327` + `compression.py:243-250` 裸 create_task 无 done callback，MongoDB 写入失败丢 C6 刷新，异常 "Task exception was never retrieved" |
-| 低 | m4 KMeans 聚类在事件循环内同步执行 | `memory_reflector.py:200-221` 纯同步 CPU 密集，无 `run_in_executor`，大 LTM 下阻塞整个 agent |
-| 低 | m5 `update_text` embedding 不可用时陈旧向量残留 | `long_term.py:344-373` emb 为空跳过整个块无 `_dirty_ids` 标记（对比 except 分支不对称），旧向量与新文本绑定参与 rerank |
-| 低 | m6 图片上传先整读 body 再校验大小 | `api_routes.py:217-218` multipart 原始流不受 `client_max_size` 限制，10MB 上限在整块 read 后才检查。无认证端点 + 0.0.0.0 绑定 = 真实 DoS 向量 |
-| 低 | m7 archive `role` 非法值 500 | `debug_routes/archive.py:49` `MessageRole(role_str)` 抛 ValueError 在 try 外 |
-| 低 | m8 版本历史路由 `int()` 无保护 500 | `debug_routes/character.py:107-109,156-158` `?limit=abc`/`?before=xyz` 抛 ValueError；同包 ltm.py 有 400 惯例 |
-| 低 | m9 `deafen(2.0)` 只在 SPEAKING 上升沿触发 | `ws_handler.py:113-126` 长回复期间回声可自我打断（SPEAKING 不在抑制集合） |
-| 低 | m10 WS 接收循环只捕获 JSONDecodeError/ValidationError | `ws_handler.py:130-141` 客户端发非 dict JSON → `data.get` 抛 AttributeError 连接直接 1006 断开，无诊断 |
-| 低 | m11 WS 无 heartbeat/接收超时 | `ws_handler.py:43` 半开连接产生僵尸 channel + monitor task，广播被拖慢、连接无限累积 |
-| 低 | m12 `flush_emojis()` 在最后一句 TTS 下载完成前广播 | `tts_adapter.py:181-190` 最后一句 emoji 先于句子文字显示，破坏"句子😊"契约 |
-| 低 | m13 OpenAI embedding 无超时 | `openai_compat.py:42` AsyncOpenAI 默认 600s 总超时，`embed_query` 无 wait_for 兜底，insert/recall 被拖住 10 分钟 |
-| 低 | m14 `get_caller_logger` 双跳 f_back.f_back 取错模块 | `Module/logger/factory.py:54` 正确层级应一层，logger 名归属错乱（当前 app 走 log_setup，影响暂有限） |
-| 低 | m15 MilvusBackend.close() 空实现 | `milvus.py:192-193` pass + 事实错误注释；`/restart` 每次新建连接，gRPC 通道/线程随重启累积 |
-| 低 | m16 DelegationPreparer 自建 AsyncOpenAI 客户端从不关闭 | `delegation_preparer.py:118-128` 无 close 接口，`/restart` 每次泄漏一个 httpx 连接池 |
-| 低 | m17 `Module/system_prompt/__init__.py:9` eager import core.adapter | 任何 `import Module.system_prompt` 连带拉入整个 core.adapter，违反 Module 层 backend-agnostic 分层 |
-| 低 | m18 token_usage 字段名不匹配（by_model vs byModel） | 后端统一 `by_model`，前端按 `byModel` 读取恒 undefined，按模型拆分统计永不渲染。`restoreFromServer` 的 `_tokenStats` 形参完全未用 |
-| 低 | m19 消息时间戳恒为当前时间 | `chatStore.ts:332-411` 读 `m.created_at`（两数据源均只有 `timestamp`）→ NaN → `Date.now()`，时间分隔符失效。归档 tool 消息 `tool_name`/数组 content 渲染错乱 |
-| 低 | m20 SSE 重连"指数退避"失效 | `TasksTab.vue:17-69` `connect()` 无条件 `reconnectDelay = 1000` 把退避清零，间隔恒 1000ms |
-| 低 | m21 模型切换乐观插入 + 结果回包双插 | `SettingsPanel.vue:80-83` + `useWebSocket.ts:113-120` 成功时逐字重复，失败时先显示虚假成功再显示失败 |
-| 低 | m22 时间分隔符索引错位 | `MessageList.vue:22-27` 遍历 visibleMessages 却用 messages 下标，queued 隐藏期间错位/漏显 |
-| 低 | m23 审批弹窗 Escape 双重触发 | `App.vue:23-28` + `ApprovalDialog.vue:39-46` 同一次 Escape 同时 interrupt + deny |
+| **中** | **M2 `_sync_dirty_entries` 死代码，Milvus 失败记忆永不重试** | [long_term.py:282-315](core/memory/long_term.py#L282)。insert 失败入 `_dirty_ids` 但无调用者同步；重启后脏条目彻底丢失。需接线到 `_db_health_loop` |
+| **中** | **M8 MiniMax 停顿标签 `<#x#>` 剥离，F3 停顿失效** | [tts_adapter.py:258-268](core/adapter/tts_adapter.py#L258)。docstring 声明送 TTS 但两处剥离。需额外设计流式分句下的标签保留 |
+| **中** | **M9 gpt-sovits `_pull` 异常静默吞掉** | [gpt_sovits.py:162-205](Module/tts/gpt_sovits.py#L162)。`HTTPStatusError` 不匹配 `except httpx.RequestError`，空音频静默无声 |
+| **中** | **M11 `time_of_day` 去重键无日期成分** | [idle_monitor.py:120-127](core/monitoring/idle_monitor.py#L120)。跨天永久抑制。注：消费端 `_handle_system_tick` 仍以 TODO 丢弃 time_of_day 事件 |
+| **中** | **M12 STT 语音输入不调用 `idle.touch()`** | [ws_handler.py:271-279](core/input/ws_handler.py#L271)。纯语音对话误触发主动发言。默认 `proactive.enabled: false` 不触发 |
+| **中** | **M19 resume 后再次 pause 被销毁** | [task_system.py:384-393](Module/task_system/task_system.py#L384)。缺 PAUSED early-return 保护，mailbox 消费者永久阻塞 |
+| **中** | **M20 cancel 在规划阶段不推终态事件** | [lifecycle.py:157-167](Module/task_system/lifecycle.py#L157) + [planning.py:143-145](Module/task_system/core/planning.py#L143)。`cancel()` 尚无调用方接线，随任务系统接入时修复 |
+| 低 | m1 shutdown flush 与 cancel 认知任务竞态 | `lifecycle.py:50-66` orphan after_response task 与已关闭 LLM/session 并发 |
+| 低 | m2 start() 失败留下僵尸 Agent | `lifecycle.py:124-145` 无回滚 + 无幂等保护 |
+| 低 | m3 fire-and-forget consume_trigger 无异常处理 | `reflector.py:325-327` + `compression.py:243-250` 裸 create_task |
+| 低 | m4 KMeans 聚类同步阻塞事件循环 | `memory_reflector.py:200-221` 需 `run_in_executor` |
+| 低 | m5 `update_text` embedding 不可用时陈旧向量残留 | `long_term.py:344-373` 无 `_dirty_ids` 标记 |
+| 低 | m6 图片上传 multipart 绕过 client_max_size | `api_routes.py:217-218` 真实 DoS 向量 |
+| 低 | m9 `deafen(2.0)` 长回复回声自我打断 | `ws_handler.py:113-126` |
+| 低 | m11 WS 无 heartbeat/接收超时 | `ws_handler.py:43` 僵尸 channel 累积 |
+| 低 | m12 `flush_emojis()` 时序 | `tts_adapter.py:181-190` emoji 先于文字 |
+| 低 | m13 OpenAI embedding 无超时 | `openai_compat.py:42` 默认 600s 超时 |
+| 低 | m14 `get_caller_logger` 双跳 f_back | `Module/logger/factory.py:54` logger 名归属错乱 |
+| 低 | m15 MilvusBackend.close() 空实现 | `milvus.py:192-193` 重启连接泄漏 |
+| 低 | m16 DelegationPreparer 客户端从不关闭 | `delegation_preparer.py:118-128` httpx 连接池泄漏 |
+| 低 | m17 `Module/system_prompt` eager import core.adapter | `__init__.py:9` 违反分层 |
+| 低 | m20 SSE 重连退避失效 | `TasksTab.vue:17-69` 间隔恒 1000ms |
 
-> 已过滤 3 条（1 误报：重试 off-by-one 是刻意设计；2 条置信度 50：WS 吞 CancelledError、音色 YAML 解析）——见源文档"已过滤的发现"。修复优先级建议见源文档末尾。
+> 已过滤 3 条（1 误报：重试 off-by-one；2 条置信度 50）。修复优先级建议见源文档末尾。
 
 ## 功能改进
 

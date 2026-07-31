@@ -28,7 +28,7 @@ def register_debug_routes(
         async def _debug_auth_middleware(
             request: web.Request, handler: Callable,
         ) -> web.StreamResponse:
-            if request.path.startswith("/debug/api/") and not check_auth(request):
+            if request.path.startswith("/debug/api") and not check_auth(request):
                 return web.json_response({"error": "unauthorized"}, status=401)
             return await handler(request)
         app.middlewares.append(_debug_auth_middleware)

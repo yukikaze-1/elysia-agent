@@ -23,6 +23,8 @@ const { lightboxImage, close: closeLightbox } = useLightbox()
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (lightboxImage.value !== null) { closeLightbox(); return }
+    // 审批弹窗打开时 Escape 交给 ApprovalDialog 处理（拒绝审批），不打断生成
+    if (approvalRequest.value !== null) return
     useConnectionStore().send({ type: 'interrupt' })
   }
 }
