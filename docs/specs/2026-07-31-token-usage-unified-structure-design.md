@@ -68,11 +68,13 @@ class TokenUsage(BaseModel):
 
 | 新字段 | 来源 |
 |--------|------|
-| `input_tokens` | `u.prompt_tokens` |
-| `output_tokens` | `u.completion_tokens` |
+| `input_tokens` | `u.prompt_tokens or 0` |
+| `output_tokens` | `u.completion_tokens or 0` |
 | `cached_tokens` | `getattr(u.prompt_tokens_details, "cached_tokens", None)`（无则 None） |
 | `reasoning_tokens` | `getattr(u.completion_tokens_details, "reasoning_tokens", None)`（无则 None） |
-| `total_tokens` | `u.total_tokens` |
+| `total_tokens` | `u.total_tokens or 0` |
+
+> **`or 0` 归一化必须保留**：现网三处提取点均为 `u.prompt_tokens or 0`，正是为「provider 返回 None」而设。`input_tokens`/`output_tokens`/`total_tokens` 是必填 int，若裸取值 None，`from_api` 校验失败，且 [loop.py:461-467](core/cognitive/loop.py#L461) 的 `record()` 调用无 try/except，异常会从流式循环向上抛。统一 helper 保留行为语义。
 
 **helper 边界（防 M6 回归）**：`_extract_usage` **只接收 SDK usage 对象做字段映射**，不碰 chunk 遍历 / `choices` 空数组哨兵 / `is not None` 守卫——三处调用点各自保留原有的 chunk 层守卫（`_stream_structured` 的 truthy 检查与 `_call_api` 的 `not choices` 哨兵不对称是 M6 修复的核心，不得并入 helper）。
 
@@ -87,6 +89,8 @@ class TokenUsage(BaseModel):
 **方案**：`core/schema/adapters/message_adapter.py` 新增 `validate_message_legacy_compat(data: dict) -> Message`：
 
 ```python
+from pydantic import TypeAdapter, ValidationError  # 需补 ValidationError（现文件仅导 TypeAdapter）
+
 def validate_message_legacy_compat(data):
     """校验消息 dict → Message；旧格式 token_usage 剥除后重试。
 
@@ -117,7 +121,7 @@ def validate_message_legacy_compat(data):
 
 ### 3. TokenTracker — `core/monitoring/token_tracker.py`
 
-- `record()` 内部经 `TokenUsage.from_api(...)` 构造，内存累计 / WS 广播 / 持久化全部基于同一模型
+- `record()` 内部经 `TokenUsage.from_api(usage, model=model, session_id=self.session_id, round_num=round_num)` 构造（session_id 取 `token_tracker.py:69` 的 `self.session_id`），内存累计 / WS 广播 / 持久化全部基于同一模型
 - WS 广播 payload 用 `model_dump(mode="json")`（不再 `asdict()`）
 - `_persist` 直接 `repo.record(TokenUsage)`；pending JSONL 写 `model_dump(mode="json")`
 - `flush_pending` 用 `TokenUsage.model_validate`，旧格式行 try/except 跳过
@@ -132,7 +136,7 @@ def validate_message_legacy_compat(data):
 
 | 位置 | 改动 |
 |------|------|
-| `core/cognitive/loop.py` | 构造 `TokenUsageSummary` 处换新模型，其余透传 |
+| `core/cognitive/loop.py` | [L701-711](core/cognitive/loop.py#L701) 的手工 `TokenUsageRecord(model=r.model, prompt_tokens=...)` 映射循环**删除**，`rounds` 直接透传 `self._token_tracker.current_turn_usages`（已是 `list[TokenUsage]`，session_id 由 `record()` 注入）。不变式：round 与 summary 同属 tracker.session_id，与消息同会话必然一致 |
 | `core/input/ws_handler.py` | `get_session_stats` 返回结构不变（`{total, by_model}`） |
 | `core/debug/info.py` | `current_turn` 改为 `[u.model_dump() for u in ...]`，新字段自动带出 |
 | `core/tools/runtime_config/plugin.py` | 只读 `session_total`/`per_model`，不动 |
@@ -153,7 +157,7 @@ def validate_message_legacy_compat(data):
 
 ### 6. 测试
 
-- `Module/llm/tests/` — `_extract_usage` 新字段提取（cached/reasoning，流式 + 非流式）；**details 缺失（Ollama 风格）→ None 不抛**；`test_llm.py:547,595` 的 last_usage 全 dict 相等断言（现期望 3 键 `{prompt_tokens,...}`）更新为 5 键 `{input_tokens,...}`（或省略 None 键的变体）；**新增 M6 守卫不对称回归测试**：`_call_api` 流式路径（[openai_compat.py:200-210](Module/llm/openai_compat.py#L200)）构造「空 choices + usage chunk」chunk 序列，断言产出 usage 不抛 IndexError、且空 choices 无 content 不产出 delta——现 `TestUsageTracking` 仅覆盖 truthy 路径与非流式，该场景零覆盖，重构守卫或改顺序时无拦截
+- `Module/llm/tests/` — `_extract_usage` 新字段提取（cached/reasoning，流式 + 非流式）；**details 缺失（Ollama 风格）→ None 不抛**；`test_llm.py:547,595` 的 last_usage 全 dict 相等断言（现期望 3 键 `{prompt_tokens,...}`）更新为 5 键 `{input_tokens,...}`（或省略 None 键的变体）；**新增 M6 守卫不对称回归测试**：`_call_api` 流式路径（[openai_compat.py:200-210](Module/llm/openai_compat.py#L200)）构造「空 choices + usage chunk」chunk 序列，断言产出 usage 不抛 IndexError、且空 choices 无 content 不产出 delta——现 `TestUsageTracking` 仅覆盖 truthy 路径与非流式，该场景零覆盖，重构守卫或改顺序时无拦截。**放 `test_llm.py` 的 `TestUsageTracking` 类**（模块级 `pytestmark = pytest.mark.service` 自动继承，勿新建无 marker 文件，否则漏出 `make test-quick` 覆盖）
 - `core/monitoring/tests/test_token_tracker.py` — record/persist/flush 换新模型、字段改名
 - `core/storage/tests/test_token_repo.py` — legacy 文档跳过
 - `core/tests/`（或 session/message_repo 现有测试）— `validate_message_legacy_compat`：旧 token_usage 消息剥除后保留正文；无 token_usage 消息直接过；剥除后仍失败抛原异常
