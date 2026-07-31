@@ -9,6 +9,7 @@
 | 2026-05 | 27 | [2026-05.md](completed/2026-05.md) |
 | 2026-06 | 33 | [2026-06.md](completed/2026-06.md) |
 | 2026-07 | 44 | 见下方 ↓ |
+| 2026-08 | 3 | 见下方 ↓ |
 
 ---
 
@@ -702,3 +703,38 @@ Brain.j2 单体拆分 → 11 个独立 PromptSection + SystemPromptManager。
 - 触发机制暂保留批触发（5 条 or 7 天），todo 标注后续改为连续增量
 
 **关联 commit：** `b3caf14` `4af3c01` `4253bb8` `51ea0c8` `c8baa15`
+
+---
+
+## 2026-08
+
+### 2026-08-01: 模块化改进 — core.agent ↔ core.status 硬环拆除
+
+import 图分析发现 `core.agent ↔ core.status` 唯一硬环（eager 双向 import）。根因 `agent_fsm.py` 位于 `core/agent/`（`status/fsm.py` eager 导入它），而 `core/agent/__init__.py` eager 导入 `core.status`。
+
+**修复：** `core/agent/agent_fsm.py` → `core/status/agent_fsm.py`（仅依赖 `core.schema`，40 行自包含）；6 处源码 import + 6 个测试文件路径更新；测试文件随代码移到 `core/status/tests/`。AST 验证：eager import SCC 为空。
+
+**关联 commit：** `f73ab87`。测试：test-quick 1526 passed。
+
+### 2026-08-01: Agent 公开只读接口 — 27 @property + 状态写方法
+
+`Agent` 是组合根但只暴露 `process_message` + `agent.status`，下游层（core/input、core/debug）只能 `agent._xxx` 硬取（约 27 私有成员、100+ 处访问）——`_` 私有语义与真实使用契约矛盾。
+
+**方案：** 薄 getter 直通（Agent 保持组合根，不变成子系统门面）。
+
+**实现：**
+- Agent 加 27 个公开 `@property`（23 子系统 + 4 标量）：`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.config` / `agent.bus` 等
+- 状态写方法 `request_shutdown()` / `request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`_purge_message_from_session` 公开化为 `purge_message_from_session()`
+- 迁移全部消费方：core/input（ws_handler 17 + server 8 + api_routes 3）、debug_routes（40 点式 + 8 getattr）、debug/info.py（33 浅读）、bench.py
+- 深读豁免：`agent.<sub>._<attr>` 保留 `_` 并 `# noqa: SLF001` 标注（debug 层 = 显式内省层）
+- 测试：`core/agent/tests/test_public_interface.py`（30 测试，service marker）+ `test_server.py` mock 迁移
+
+**关联 commit：** `1096b86` `458a74e` `4dd3045` `ab5444c` `5b3e864` `15a9895` `5bdd942` `a6171f5`。测试：test-quick 1556 passed。设计文档：[spec](../docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+
+### 2026-08-01: 文档整理 — docs/ 目录统一
+
+- 合并 docs/specs + docs/plans 进 docs/superpowers/（统一 -design/-plan 后缀），stream-processor-design 去重
+- 根级归组：审查报告 → docs/review/，废弃文档 → docs/legacy/，新增 docs/README.md 索引
+- 移除 .gitignore 中 docs/superpowers/，206 个 spec/plan/archive 文件全部纳入版本控制
+
+**关联 commit：** `2ca3326`。

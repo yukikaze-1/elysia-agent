@@ -18,15 +18,9 @@
 
 ## 模块化评估（2026-08-01）
 
-基于 import 图分析（AST 解析全仓 28 个包、~340 py 文件、118 条包间依赖边）。总体分层健康（`core → Module` 正向为主），但有 1 个硬环 + 4 处反向依赖。
+基于 import 图分析（AST 解析全仓 28 个包、~340 py 文件、118 条包间依赖边）。总体分层健康（`core → Module` 正向为主）。**已修部分归档**：硬环拆除 + Agent 公开接口见 [docs/completed.md](docs/completed.md) 2026-08-01。
 
-### 硬环（已修）
-
-| 优先级 | 问题 | 说明 |
-|--------|------|------|
-| **高** | **`core.agent ↔ core.status` 硬环** | [core/agent/__init__.py:4](core/agent/__init__.py#L4) → `from core.status import ...`；[core/status/fsm.py:12](core/status/fsm.py#L12) → `from core.agent.agent_fsm import AgentFSM`。运行时能 import（Python 容忍部分初始化的父包）但属脆弱点。**已修**：`agent_fsm.py` 移入 `core/status/`（仅依赖 `core.schema`，40 行自包含） |
-
-### 反向依赖（Module → core，分层违规）
+### 反向依赖（Module → core，分层违规，未修）
 
 | 优先级 | 位置 | 说明 |
 |--------|------|------|
@@ -43,22 +37,9 @@
 - `Module._common → Module.config → Module.llm/stt/tts → Module._common` — [preflight.py](Module/config/preflight.py) 函数内懒加载后端
 - `Module.system_prompt → core.adapter → core.memory/personality/storage → Module.system_prompt` — system_prompt 的 MessageBuilder 懒加载已废弃
 
-### 接口暴露不足：跨模块使用依赖内部属性（已修）
+### 遗留：`core.schema._utils` 跨包导入（未修）
 
-**核心发现**：`Agent` 只暴露 1 个公开方法（`process_message`）+ `agent.status`（`AgentStatus` 状态查询，这部分做对了）。但 session/repo/tool_adapter/output/config 等子系统**没有任何公开 getter**，下游层只能 `agent._xxx` 硬取 —— `_` 前缀语义（"请勿触碰"）与真实使用契约矛盾。
-
-| 优先级 | 位置 | 说明 |
-|--------|------|------|
-| 中 | `core/input/*` → `agent._xxx`（76 处） | [ws_handler.py](core/input/ws_handler.py#L52) 等读 `_session`(16)/`_message_repo`(9)/`_session_repo`(8)/`_long_term`(8)/`_tool_adapter._manager`(6)/`_output`(3)/`_user_name`(3)/`_llm`(2)/`_config`(2)/`_bus`(2) |
-| 中 | `core/debug/info.py` 三层下钻（45 处） | [info.py](core/debug/info.py#L155) 读 `agent._cognitive._phase`、`agent._long_term._entries[-5:]`、`agent._long_term._repo`、`agent._tool_adapter._manager`、`agent._consolidator._history`、`agent._idle._character.proactive.enabled` |
-| 低 | `core.schema._utils` 跨包导入 | [core/cognitive/loop.py:63](core/cognitive/loop.py#L63)、core/personality 直接 `from core.schema._utils import now_iso` —— `_utils` 标了私有却跨包用。若共享应改名 `core.schema.utils` 或收敛到各包内 |
-
-**修法（按收益排序）**：
-1. 给 `Agent` 加公开只读接口：`@property agent.session/llm/tool_adapter/output/config/long_term` 等 → `core/input` 的 76 处 `agent._session` 改 `agent.session`，恢复 `_` 私有语义
-2. debug 层下钻收敛：`_entries`/`_repo`/`_history` 三层访问 → Agent 加聚合只读接口（如 `agent.recent_memories()`）或文档标注 debug 层为显式内省层豁免
-3. `core.schema._utils` 跨包 → 改名去下划线或收敛
-
-**已实现（2026-08-01）**：Agent 加 27 个公开 property + request_shutdown/request_restart + purge 公开化；core/input + debug_routes + debug/info.py 全部浅读迁移；8 处 getattr 去下划线；深读豁免 `# noqa: SLF001` 标注。
+[core/cognitive/loop.py:63](core/cognitive/loop.py#L63)、core/personality 直接 `from core.schema._utils import now_iso` —— `_utils` 标了私有却跨包用。若共享应改名 `core.schema.utils` 或收敛到各包内。
 
 ## token 统一结构（2026-07-31）遗留可接受项
 
@@ -74,65 +55,14 @@
 
 ## 来自 code-review-2026-07-31 的遗留问题
 
-已修复 42/44（1 Critical + 21 Major + 20 Minor），2 项遗留。详见 [docs/review/code-review-2026-07-31.md](docs/review/code-review-2026-07-31.md)。
-
-### 已修复（2026-07-31）
-
-| 问题 | 修复 |
-|------|------|
-| C1 `_poll_mailboxes` 自旋 | `continue`→`break` + `stop()` 清空 `_background_tasks` |
-| M1 截断方向 | `conversation_text[-2000:]` |
-| M3 Reflector buffer 竞态 | `_reflect()` 记录 snapshot，只清反思前累积 |
-| M4 Gate 拒绝未恢复 THINKING | gate 拒绝时 `return_to_thinking()` |
-| M5 text-only 双广播 | SENTENCE 分支去重，只保留 TEXT_DELTA 增量 + `send("")` 边界信号 |
-| M6 usage chunk IndexError | `not chunk.choices` 先判空，usage 判断移到 `choices[0]` 前 |
-| M7 `_format_tool_summary` 崩溃 | `isinstance(parsed, dict)` 检查（含 tool_executing emit 循环） |
-| M10 `/debug/api` 认证绕过 | `startswith("/debug/api")` 覆盖精确路径 |
-| M13 重连审批广播 | 补 `type` 字段 + 参数名对齐正常路径 |
-| M14 历史分页重复气泡 | 游标取页尾最旧 + 按 message_id 去重 |
-| M15 queued 气泡永久隐藏 | `addUserMessage` 兜底清除所有 queued 标记 |
-| M16 唤醒词死 UI | `wakeEnabled` watch 发送 `wake_toggle` |
-| M17 `python -m Module.system_prompt` 必崩 | `ConflictRulesSection` 传 `f1_conflict_rules.j2` |
-| M18 `python -m Module.config` 必崩 | `__main__.py` 改用 `yaml.safe_load` |
-| M21 模型切换双插 | 去掉乐观插入，只等后端结果 |
-| M23 Escape 双重触发 | App.vue 检查 `approvalRequest` 非空时跳过 interrupt |
-| m7 archive role 非法值 500 | `MessageRole` 解析加 try → 400 |
-| m8 版本历史 `int()` 无保护 500 | 两处 GET handler 加 try → 400 |
-| m10 WS 非 dict JSON 崩溃 | `isinstance(data, dict)` 检查 → ValidationError 走 400 路径 |
-| m18 token_usage 字段名 | 前端兼容 `by_model`/`byModel` |
-| m19 消息时间戳恒当前时间 | 6 处 `m.created_at`→`m.timestamp` |
-| m21 模型切换双插 | 同上 M21 |
-| m22 时间分隔符索引错位 | `shouldShowTimeDivider` 用 visibleMessages 前一条 |
-| m23 审批弹窗 Escape 双重触发 | 同上 M23 |
-| M9 gpt-sovits `_pull` 异常静默吞掉 | `except httpx.HTTPError`（覆盖 RequestError + HTTPStatusError）+ 异常入队，消费者检测后 raise |
-| M11 `time_of_day` 去重键无日期 | 键加日期成分 `%Y-%m-%d %H:%M`，匹配用 `now[11:]` |
-| M12 STT 语音输入不 touch | 语音路径投递事件前调用 `agent._idle.touch()` |
-| m3 fire-and-forget consume_trigger 无异常处理 | reflector.py + engine.py 两处 `create_task` 加 try/except 包装 |
-| m4 KMeans 同步阻塞事件循环 | `_cluster_entries` 改 async，KMeans 移入 `asyncio.to_thread` |
-| m11 WS 无 heartbeat/接收超时 | `WebSocketResponse(heartbeat=30, receive_timeout=60)` |
-| m13 OpenAI embedding 无超时 | `AsyncOpenAI(timeout=60.0, max_retries=2)` |
-| m14 `get_caller_logger` 双跳 f_back | 改单跳 `frame.f_back`（调用点无 Factory.create 中间层） |
-| m15 MilvusBackend.close() 空实现 | `asyncio.to_thread(self._client.close)`（pymilvus 有 close） |
-| m17 `Module/system_prompt` eager import | `MessageBuilder` 改为 `__getattr__` 内延迟导入 |
-| m20 SSE 重连退避失效 | `connect()` 不再清零 `reconnectDelay`，`onopen` 时重置为 1000 |
-| m1 shutdown flush 与 cancel 竞态 | CognitiveLoop `mark_shutting_down()` 门禁——after_response 检查后提前退出 |
-| m2 start() 失败僵尸 Agent | start() 幂等检查 + 失败时回滚（调 stop()） |
-| m5 `update_text` embedding 不可用陈旧向量残留 | emb 为空时标记 `_dirty_ids`（对称 except 分支） |
-| m6 图片上传 multipart DoS | `field.read(max_bytes + 1)` 限制读取，超大提前 413 |
-| m9 `deafen(2.0)` 长回复回声 | SPEAKING 期间持续刷新 deafen，TTS 停止后自然过期 |
-| m12 `flush_emojis()` 时序 | 从 `_finalize_turn` 移到 `finish_turn`（wait_all 之后） |
-| m16 DelegationPreparer 连接池泄漏 | 加 `aclose()`，`_stop_task_system` 中调用 |
-| M8 MiniMax 停顿标签剥离，F3 停顿失效 | StreamProcessor 拆分 `_strip_pause_tags`/`_strip_tail_pause_tags`——SENTENCE 保留完整标签送 TTS，TEXT_DELTA 剥离供前端；TTSAdapter `tts_text` 不再剥标签。验证 `<#0.5#>` 内小数点已被 `_is_dot_boundary` 数字保护，原剥离是过度防御。补 4 个测试 |
-| M2 `_sync_dirty_entries` 死代码，Milvus 失败记忆永不重试 | 重命名公开 `sync_dirty_entries`，接线到 `_db_health_loop` 的 Milvus 恢复边界（False→True）触发同步。补 1 个恢复测试 |
-
-### 遗留（2 项）
+已修复 42/44（详情见 [docs/completed.md](docs/completed.md) 2026-07-31 + [docs/review/code-review-2026-07-31.md](docs/review/code-review-2026-07-31.md)）。2 项遗留：
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
 | **中** | **M19 resume 后再次 pause 被销毁** | [task_system.py:384-393](Module/task_system/task_system.py#L384)。缺 PAUSED early-return 保护，mailbox 消费者永久阻塞 |
 | **中** | **M20 cancel 在规划阶段不推终态事件** | [lifecycle.py:157-167](Module/task_system/lifecycle.py#L157) + [planning.py:143-145](Module/task_system/core/planning.py#L143)。`cancel()` 尚无调用方接线，随任务系统接入时修复 |
 
-> 已过滤 3 条（1 误报：重试 off-by-one；2 条置信度 50）。M19/M20 随 TaskSystem 接入。
+> M19/M20 随 TaskSystem 接入。
 
 ## 功能改进
 
