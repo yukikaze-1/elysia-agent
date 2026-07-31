@@ -50,7 +50,10 @@ class TokenUsage(BaseModel):
         usage 键名契约（由 LLM 层 _extract_usage 产出）：
         {"input_tokens": int, "output_tokens": int, "total_tokens": int,
          "cached_tokens": int | None, "reasoning_tokens": int | None}
-        缺失可选键时对应字段为 None。仅作校验 + 补 model/session_id/round_num/timestamp。
+        契约语义：cached_tokens/reasoning_tokens 为可选键，provider 未返回时
+        _extract_usage **可省略该键**；from_api 必须用 `.get()` 读取可选键
+        （禁止方括号索引，否则省略键时 KeyError）。仅作校验 + 补
+        model/session_id/round_num/timestamp。
         """
 ```
 
@@ -67,13 +70,13 @@ class TokenUsage(BaseModel):
 |--------|------|
 | `input_tokens` | `u.prompt_tokens` |
 | `output_tokens` | `u.completion_tokens` |
-| `cached_tokens` | `(u.prompt_tokens_details or {}).cached_tokens`（无则 None） |
-| `reasoning_tokens` | `(u.completion_tokens_details or {}).reasoning_tokens`（无则 None） |
+| `cached_tokens` | `getattr(u.prompt_tokens_details, "cached_tokens", None)`（无则 None） |
+| `reasoning_tokens` | `getattr(u.completion_tokens_details, "reasoning_tokens", None)`（无则 None） |
 | `total_tokens` | `u.total_tokens` |
 
 **helper 边界（防 M6 回归）**：`_extract_usage` **只接收 SDK usage 对象做字段映射**，不碰 chunk 遍历 / `choices` 空数组哨兵 / `is not None` 守卫——三处调用点各自保留原有的 chunk 层守卫（`_stream_structured` 的 truthy 检查与 `_call_api` 的 `not choices` 哨兵不对称是 M6 修复的核心，不得并入 helper）。
 
-**details Optional 防护**：openai SDK 的 `prompt_tokens_details`/`completion_tokens_details` 为 Optional，Ollama 等 provider 不返回——必须 `(u.prompt_tokens_details or {}).cached_tokens` 式守卫，禁止直接属性访问。
+**details Optional 防护**：openai SDK 的 `prompt_tokens_details`/`completion_tokens_details` 为 Optional，Ollama 等 provider 不返回——必须 `getattr(u.prompt_tokens_details, "cached_tokens", None)` 式守卫。**禁止** `(u.prompt_tokens_details or {}).cached_tokens`（None 时 `{}.cached_tokens` 抛 AttributeError，恰在防护场景崩溃）也**禁止** `.get()`（details 是 Pydantic 对象非 dict）。
 
 其他 backend（ollama/mimo/custom）均继承 `openai_compat` 或复用其流式路径，不单独处理 usage。
 
@@ -147,7 +150,7 @@ def validate_message_legacy_compat(data):
 
 ### 6. 测试
 
-- `Module/llm/tests/` — `_extract_usage` 新字段提取（cached/reasoning，流式 + 非流式）；**details 缺失（Ollama 风格）→ None 不抛**
+- `Module/llm/tests/` — `_extract_usage` 新字段提取（cached/reasoning，流式 + 非流式）；**details 缺失（Ollama 风格）→ None 不抛**；`test_llm.py:547,595` 的 last_usage 全 dict 相等断言（现期望 3 键 `{prompt_tokens,...}`）更新为 5 键 `{input_tokens,...}`（或省略 None 键的变体）
 - `core/monitoring/tests/test_token_tracker.py` — record/persist/flush 换新模型、字段改名
 - `core/storage/tests/test_token_repo.py` — legacy 文档跳过
 - `core/tests/`（或 session/message_repo 现有测试）— `validate_message_legacy_compat`：旧 token_usage 消息剥除后保留正文；无 token_usage 消息直接过；剥除后仍失败抛原异常
