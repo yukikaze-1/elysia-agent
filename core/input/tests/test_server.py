@@ -24,7 +24,7 @@ def _make_agent():
 
     agent = Agent(config=AppConfig())
     from core.tests.fake_llm import FakeLLMBackend
-    agent._llm._backend = FakeLLMBackend(response="test")
+    agent.llm._backend = FakeLLMBackend(response="test")
     return agent
 
 
@@ -34,9 +34,8 @@ def _make_app():
     """创建用于路由测试的最小 app（serve_static=False）。"""
     from core.input.server import create_app
     agent = MagicMock()
-    agent._output = MagicMock()
-    agent._bus = MagicMock()
-    agent._state = RunState.RUNNING
+    agent.output = MagicMock()
+    agent.bus = MagicMock()
     return create_app(agent, serve_static=False)
 
 
@@ -79,9 +78,14 @@ class TestCreateAppIntegration:
         from core.input.server import create_app
 
         agent = MagicMock()
-        agent._output = MagicMock()
-        agent._bus = MagicMock()
+        agent.output = MagicMock()
+        agent.bus = MagicMock()
         agent._state = RunState.RUNNING
+
+        def _set_shutting_down():
+            agent._state = RunState.STOPPING
+
+        agent.request_shutdown = MagicMock(side_effect=_set_shutting_down)
 
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
@@ -90,6 +94,7 @@ class TestCreateAppIntegration:
         assert resp.status == 200
         data = await resp.json()
         assert data['status'] == 'shutting_down'
+        agent.request_shutdown.assert_called_once()
         assert agent._state == RunState.STOPPING
 
     @pytest.mark.asyncio
@@ -97,15 +102,21 @@ class TestCreateAppIntegration:
         from core.input.server import create_app
 
         agent = MagicMock()
-        agent._output = MagicMock()
-        agent._bus = MagicMock()
+        agent.output = MagicMock()
+        agent.bus = MagicMock()
         agent._state = RunState.RUNNING
+
+        def _set_shutting_down():
+            agent._state = RunState.STOPPING
+
+        agent.request_shutdown = MagicMock(side_effect=_set_shutting_down)
 
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
 
         resp = await client.get('/shutdown')
         assert resp.status == 200
+        agent.request_shutdown.assert_called_once()
         assert agent._state == RunState.STOPPING
 
     @pytest.mark.asyncio
@@ -113,9 +124,14 @@ class TestCreateAppIntegration:
         from core.input.server import create_app
 
         agent = MagicMock()
-        agent._output = MagicMock()
-        agent._bus = MagicMock()
+        agent.output = MagicMock()
+        agent.bus = MagicMock()
         agent._state = RunState.RUNNING
+
+        def _set_restarting():
+            agent._state = RunState.RESTARTING
+
+        agent.request_restart = MagicMock(side_effect=_set_restarting)
 
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
@@ -124,6 +140,7 @@ class TestCreateAppIntegration:
         assert resp.status == 200
         data = await resp.json()
         assert data['status'] == 'restarting'
+        agent.request_restart.assert_called_once()
         assert agent._state == RunState.RESTARTING
 
 
@@ -170,7 +187,7 @@ class TestWebSocketHandler:
 
         agent = _make_agent()
         await agent.start()
-        initial_count = len(agent._output._channels)
+        initial_count = len(agent.output._channels)
 
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
@@ -178,11 +195,11 @@ class TestWebSocketHandler:
         async with client.session.ws_connect(client.make_url('/ws')) as ws:
             await asyncio.sleep(0.1)
             # WebSocketChannel should be added
-            assert len(agent._output._channels) == initial_count + 1
+            assert len(agent.output._channels) == initial_count + 1
 
         # After disconnect, channel should be removed
         await asyncio.sleep(0.1)
-        assert len(agent._output._channels) == initial_count
+        assert len(agent.output._channels) == initial_count
 
         await agent.stop()
 
@@ -236,11 +253,11 @@ class TestDoInterruptSkipIf:
         agent = MagicMock()
         agent.status = MagicMock()
         agent.status.should_suppress_vad_interrupt = True
-        agent._bus.post = MagicMock()
+        agent.bus.post = MagicMock()
 
         await _do_interrupt(agent, skip_vad=True)
 
-        agent._bus.post.assert_not_called()
+        agent.bus.post.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_vad_skips_during_executing(self):
@@ -249,11 +266,11 @@ class TestDoInterruptSkipIf:
         agent = MagicMock()
         agent.status = MagicMock()
         agent.status.should_suppress_vad_interrupt = True
-        agent._bus.post = MagicMock()
+        agent.bus.post = MagicMock()
 
         await _do_interrupt(agent, skip_vad=True)
 
-        agent._bus.post.assert_not_called()
+        agent.bus.post.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_vad_allows_during_speaking(self):
@@ -264,12 +281,12 @@ class TestDoInterruptSkipIf:
         agent = MagicMock()
         agent.status = MagicMock()
         agent.status.should_suppress_vad_interrupt = False
-        agent._bus.post = MagicMock()
+        agent.bus.post = MagicMock()
 
         await _do_interrupt(agent, skip_vad=True)
 
-        agent._bus.post.assert_called_once()
-        args, kwargs = agent._bus.post.call_args
+        agent.bus.post.assert_called_once()
+        args, kwargs = agent.bus.post.call_args
         assert isinstance(args[0], InterruptData)
         assert kwargs["priority"] == EventPriority.INTERRUPT
 
@@ -282,12 +299,12 @@ class TestDoInterruptSkipIf:
         agent = MagicMock()
         agent.status = MagicMock()
         agent.status.should_suppress_vad_interrupt = False
-        agent._bus.post = MagicMock()
+        agent.bus.post = MagicMock()
 
         await _do_interrupt(agent)
 
-        agent._bus.post.assert_called_once()
-        args, kwargs = agent._bus.post.call_args
+        agent.bus.post.assert_called_once()
+        args, kwargs = agent.bus.post.call_args
         assert isinstance(args[0], InterruptData)
         assert kwargs["priority"] == EventPriority.INTERRUPT
 
@@ -331,9 +348,9 @@ class TestHandleJsonEdges:
         agent = MagicMock()
         agent.status = MagicMock()
         agent.status.should_suppress_vad_interrupt = False
-        agent._bus.post = MagicMock()
+        agent.bus.post = MagicMock()
         await _handle_json({"type": "interrupt"}, agent)
-        agent._bus.post.assert_called_once()
+        agent.bus.post.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_type_field(self):
@@ -356,12 +373,21 @@ class TestEndpoints:
 
         agent = MagicMock()
         agent.status.current_name.return_value = "idle"
-        agent._llm.model = "test-model"
-        agent._session._messages = [1, 2, 3]
-        agent._long_term.count = 42
-        agent._tool_adapter._manager.tool_names = ["t1", "t2"]
-        agent._output = MagicMock()
-        agent._bus = MagicMock()
+        agent.llm.model = "test-model"
+        agent.session._messages = [1, 2, 3]
+        agent.long_term.count = 42
+        agent.tool_adapter._manager.tool_names = ["t1", "t2"]
+        agent.output = MagicMock()
+        agent.bus = MagicMock()
+
+        def _set_shutting_down():
+            agent._state = RunState.STOPPING
+
+        def _set_restarting():
+            agent._state = RunState.RESTARTING
+
+        agent.request_shutdown = MagicMock(side_effect=_set_shutting_down)
+        agent.request_restart = MagicMock(side_effect=_set_restarting)
         return create_app(agent, serve_static=False)
 
     @pytest.mark.asyncio
@@ -412,13 +438,13 @@ class TestToolEndpoints:
 
         agent = MagicMock()
         agent.status.current_name.return_value = "idle"
-        agent._output = MagicMock()
-        agent._bus = MagicMock()
-        agent._tool_adapter._manager.plugin_list = [
+        agent.output = MagicMock()
+        agent.bus = MagicMock()
+        agent.tool_adapter._manager.plugin_list = [
             {"name": "web_search", "description": "搜索网页", "capabilities": ["network"], "safety": {}, "active": True},
             {"name": "read_file", "description": "读取文件", "capabilities": ["filesystem_read"], "safety": {}, "active": True},
         ]
-        agent._tool_adapter._manager.reload_plugin = AsyncMock(return_value=True)
+        agent.tool_adapter._manager.reload_plugin = AsyncMock(return_value=True)
         return create_app(agent, serve_static=False)
 
     @pytest.mark.asyncio
@@ -458,7 +484,7 @@ class TestToolEndpoints:
 
     @pytest.mark.asyncio
     async def test_reload_plugin_failure(self, app, aiohttp_client):
-        app["agent"]._tool_adapter._manager.reload_plugin = AsyncMock(return_value=False)
+        app["agent"].tool_adapter._manager.reload_plugin = AsyncMock(return_value=False)
         client = await aiohttp_client(app)
         resp = await client.post("/tools/reload", json={"name": "unknown"})
         assert resp.status == 200
