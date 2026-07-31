@@ -18,6 +18,27 @@ from .protocol import LLMBackend
 from Module._common.test_helpers import make_test_method
 
 
+def _extract_usage(u) -> dict:
+    """从 SDK usage 对象提取归一化 token 消耗 dict（input/output 语义）。
+
+    产出契约（供 TokenUsage.from_api 消费）：
+    {"input_tokens": int, "output_tokens": int, "total_tokens": int,
+     "cached_tokens": int | None, "reasoning_tokens": int | None}
+    cached/reasoning 始终带键，provider 未返回时值为 None（or 0 归一化保留，
+    防必填 int 校验失败；getattr 守卫防 details Optional 下 AttributeError）。
+    仅做字段映射，不碰 chunk 遍历 / choices 哨兵 / is-not-None 守卫（防 M6 回归）。
+    """
+    cached = getattr(u, "prompt_tokens_details", None)
+    reasoning = getattr(u, "completion_tokens_details", None)
+    return {
+        "input_tokens": u.prompt_tokens or 0,
+        "output_tokens": u.completion_tokens or 0,
+        "total_tokens": u.total_tokens or 0,
+        "cached_tokens": cached.cached_tokens if cached is not None else None,
+        "reasoning_tokens": reasoning.reasoning_tokens if reasoning is not None else None,
+    }
+
+
 class OpenAICompatBackend(LLMBackend):
     """OpenAI 兼容协议后端。
 
@@ -128,14 +149,8 @@ class OpenAICompatBackend(LLMBackend):
         async for chunk in response:  # type: ignore[union-attr]
             # 流式最后一个 chunk 可能携带 usage 统计（choices 通常为空）
             if getattr(chunk, "usage", None):
-                u = chunk.usage
-                usage = {
-                    "prompt_tokens": u.prompt_tokens or 0,
-                    "completion_tokens": u.completion_tokens or 0,
-                    "total_tokens": u.total_tokens or 0,
-                }
-                self.last_usage = usage
-                yield {"content": None, "tool_calls": None, "usage": usage}
+                self.last_usage = _extract_usage(chunk.usage)
+                yield {"content": None, "tool_calls": None, "usage": self.last_usage}
                 continue  # usage chunk 没有实质内容，跳过后续处理
             if not chunk.choices:
                 continue  # 某些 provider（MiMo 等）返回空 choices 表示流结束
@@ -202,11 +217,7 @@ class OpenAICompatBackend(LLMBackend):
                 # 判真——MagicMock 下恒真。空 choices 也可能是 provider 流结束哨兵。
                 if not chunk.choices:
                     if getattr(chunk, "usage", None) is not None:
-                        self.last_usage = {
-                            "prompt_tokens": chunk.usage.prompt_tokens or 0,
-                            "completion_tokens": chunk.usage.completion_tokens or 0,
-                            "total_tokens": chunk.usage.total_tokens or 0,
-                        }
+                        self.last_usage = _extract_usage(chunk.usage)
                     continue  # usage chunk / 空 choices 流结束哨兵，均无实质内容
                 delta = chunk.choices[0].delta
                 if delta and delta.content:
@@ -225,11 +236,7 @@ class OpenAICompatBackend(LLMBackend):
             content = response.choices[0].message.content
             # 捕获 usage 统计
             if getattr(response, "usage", None):
-                self.last_usage = {
-                    "prompt_tokens": response.usage.prompt_tokens or 0,
-                    "completion_tokens": response.usage.completion_tokens or 0,
-                    "total_tokens": response.usage.total_tokens or 0,
-                }
+                self.last_usage = _extract_usage(response.usage)
             if content:
                 yield content
 

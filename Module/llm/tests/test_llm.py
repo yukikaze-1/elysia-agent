@@ -514,6 +514,8 @@ class TestUsageTracking:
         usage_obj.prompt_tokens = 100
         usage_obj.completion_tokens = 50
         usage_obj.total_tokens = 150
+        usage_obj.prompt_tokens_details = None
+        usage_obj.completion_tokens_details = None
 
         delta = MagicMock()
         delta.content = "hello"
@@ -542,9 +544,15 @@ class TestUsageTracking:
         assert chunks[1] == {
             "content": None,
             "tool_calls": None,
-            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            "usage": {
+                "input_tokens": 100, "output_tokens": 50, "total_tokens": 150,
+                "cached_tokens": None, "reasoning_tokens": None,
+            },
         }
-        assert llm_backend.last_usage == {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+        assert llm_backend.last_usage == {
+            "input_tokens": 100, "output_tokens": 50, "total_tokens": 150,
+            "cached_tokens": None, "reasoning_tokens": None,
+        }
 
     @pytest.mark.asyncio
     async def test_stream_structured_no_usage_when_none(self, llm_backend):
@@ -580,6 +588,8 @@ class TestUsageTracking:
         usage_obj.prompt_tokens = 10
         usage_obj.completion_tokens = 5
         usage_obj.total_tokens = 15
+        usage_obj.prompt_tokens_details = None
+        usage_obj.completion_tokens_details = None
 
         choice = MagicMock()
         choice.message.content = "resp"
@@ -592,4 +602,49 @@ class TestUsageTracking:
 
         result = await llm_backend.chat([{"role": "user", "content": "hi"}])
         assert result == "resp"
-        assert llm_backend.last_usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        assert llm_backend.last_usage == {
+            "input_tokens": 10, "output_tokens": 5, "total_tokens": 15,
+            "cached_tokens": None, "reasoning_tokens": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_call_api_streaming_empty_choices_usage_chunk(self, llm_backend):
+        """_call_api 流式路径：空 choices + usage chunk 不抛 IndexError、捕获 usage、跳过 delta。
+
+        M6 回归：不能先访问 chunk.choices[0]（usage chunk 的 choices 恒空，会 IndexError）。
+        """
+        from unittest.mock import MagicMock, AsyncMock
+
+        usage_obj = MagicMock()
+        usage_obj.prompt_tokens = 100
+        usage_obj.completion_tokens = 50
+        usage_obj.total_tokens = 150
+        usage_obj.prompt_tokens_details = None
+        usage_obj.completion_tokens_details = None
+
+        delta = MagicMock()
+        delta.content = "hello"
+
+        chunk_usage = MagicMock()
+        chunk_usage.choices = []  # 空 choices —— 若先访问 choices[0] 会 IndexError（M6）
+        chunk_usage.usage = usage_obj
+
+        chunk_content = MagicMock()
+        chunk_content.choices = [MagicMock(delta=delta)]
+        chunk_content.usage = None
+
+        async def async_iter():
+            yield chunk_usage
+            yield chunk_content
+
+        llm_backend._client.chat.completions.create = AsyncMock(return_value=async_iter())
+
+        chunks = []
+        async for chunk in llm_backend.chat_stream([{"role": "user", "content": "hi"}]):
+            chunks.append(chunk)
+
+        assert chunks == ["hello"]  # usage chunk 无内容跳过
+        assert llm_backend.last_usage == {
+            "input_tokens": 100, "output_tokens": 50, "total_tokens": 150,
+            "cached_tokens": None, "reasoning_tokens": None,
+        }

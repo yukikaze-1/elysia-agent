@@ -100,7 +100,7 @@ class LLMAdapter:
 
         Yields dicts: {"content": str | None, "tool_calls": list[dict] | None}
         流最后一个 chunk 可能包含可选的 "usage" 键:
-          {"content": None, "tool_calls": None, "usage": {prompt_tokens, completion_tokens, total_tokens}}
+          {"content": None, "tool_calls": None, "usage": {"input_tokens": int, "output_tokens": int, "total_tokens": int, "cached_tokens": int | None, "reasoning_tokens": int | None}}
         对临时服务器错误（429, 500-504）以指数退避重试。
         仅在流尚未开始输出时重试（避免重复内容）。
 

@@ -49,7 +49,7 @@ class LLMBackend(ABC):
 
         每个 chunk: {"content": str | None, "tool_calls": list | None}
         最后一个 chunk 可能包含可选的 "usage" 键:
-          {"content": None, "tool_calls": None, "usage": {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}}
+          {"content": None, "tool_calls": None, "usage": {"input_tokens": int, "output_tokens": int, "total_tokens": int, "cached_tokens": int | None, "reasoning_tokens": int | None}}
         默认实现回退到 chat()，逐字符 yield 纯文本（无 tool_calls）。
         支持 tool calling 的 backend 应覆盖此方法。
 
