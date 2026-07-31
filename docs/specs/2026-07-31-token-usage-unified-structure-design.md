@@ -87,6 +87,7 @@ class TokenUsage(BaseModel):
 | `core/debug/info.py` | `current_turn` 改为 `[u.model_dump() for u in ...]`，新字段自动带出 |
 | `core/tools/runtime_config/plugin.py` | 只读 `session_total`/`per_model`，不动 |
 | `frontend/src/types/protocol.ts` | `TokenRound` → `input_tokens/output_tokens/cached_tokens?/reasoning_tokens?`；删 `byModel` 双兼容（`TokenStats.by_model` 单一） |
+| `frontend/src/stores/chatStore.ts` | `updateTokenUsage` 的 `s.by_model || s.byModel` 双兼容改为只读 `s.by_model` |
 | `frontend/src/components/chat/TokenLabel.vue` | 显示 In/Out，有值时显示 cached/reasoning |
 | `frontend/src/debug/types.ts` | `TokenRoundItem` 同步 |
 
