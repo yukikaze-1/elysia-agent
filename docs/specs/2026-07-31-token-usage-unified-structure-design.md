@@ -58,7 +58,7 @@ class TokenUsage(BaseModel):
 ```
 
 **删除**：`TokenUsage`（dataclass，`token_tracker.py`）、`TokenUsageEntry`、`TokenUsageRecord`。
-**保留**：`TokenUsageSummary`（`rounds: list[TokenUsage]` + `turn_total`，内嵌 `AssistantMessage.token_usage`，结构不变）。
+**保留**：`TokenUsageSummary`（`rounds: list[TokenUsage]` + `turn_total`，内嵌 `AssistantMessage.token_usage`）。外层 envelope 不变，但 `rounds` 元素从 `TokenUsageRecord` 换为 `TokenUsage`——新增必填 `session_id`、字段改名 input/output、timestamp 改为 ISO。
 
 > `session_id` 入模型：MongoDB 持久化必须带 session，而"统一为一个模型"优先于"内存瘦身"。WS/调试只显示它不用的字段，无害。
 
@@ -124,7 +124,7 @@ def validate_message_legacy_compat(data):
 - `record()` 内部经 `TokenUsage.from_api(usage, model=model, session_id=self.session_id, round_num=round_num)` 构造（session_id 取 `token_tracker.py:69` 的 `self.session_id`），内存累计 / WS 广播 / 持久化全部基于同一模型
 - WS 广播 payload 用 `model_dump(mode="json")`（不再 `asdict()`）
 - `_persist` 直接 `repo.record(TokenUsage)`；pending JSONL 写 `model_dump(mode="json")`
-- `flush_pending` 用 `TokenUsage.model_validate`，旧格式行 try/except 跳过
+- `flush_pending` 用 `TokenUsage.model_validate`，旧格式行 try/except 跳过且**不保留**——整文件导入成功后删除（与"不兼容直接改名、旧数据自然老化"一致，跳过行随文件删除永久丢弃）
 
 ### 4. Repo — `core/storage/token_repo.py`
 
@@ -141,7 +141,7 @@ def validate_message_legacy_compat(data):
 | `core/debug/info.py` | `current_turn` 改为 `[u.model_dump() for u in ...]`，新字段自动带出 |
 | `core/tools/runtime_config/plugin.py` | 只读 `session_total`/`per_model`，不动 |
 | `frontend/src/types/protocol.ts` | `TokenRound` → `input_tokens/output_tokens/cached_tokens?/reasoning_tokens?`；`timestamp?: number` → `string`（后端 model_dump 产 ISO 字符串）；`TokenStats.byModel?:` **改名单字段**为 `by_model: Record<string, number>`（后端唯一键，非"删兼容"） |
-| `frontend/src/stores/chatStore.ts` | `sessionTokens` 内部类型 `byModel` → `by_model`（L41）；`updateTokenUsage` 三处：**L202 as-cast 类型注解删 `byModel?:`**、**L203 赋值键 `byModel:` → `by_model:`**、双兼容 `s.by_model || s.byModel` → 只读 `s.by_model` |
+| `frontend/src/stores/chatStore.ts` | `sessionTokens` 内部类型 `byModel` → `by_model`（L41）；`updateTokenUsage` 三处：**L202 as-cast 类型注解删 `byModel?:`**、**L203 赋值键 `byModel:` → `by_model:`**、双兼容 `s.by_model || s.byModel` → 只读 `s.by_model`；**接通 `restoreFromServer`（L241 死参数 `_tokenStats`）**——session 消息的 `token_stats`（ws_handler `get_session_stats` 产出）写入 `sessionTokens`，消除刷新/重连后 CharStatus token 归零直到下次广播的缺口 |
 | `frontend/src/components/character/CharStatus.vue` | `st.byModel` → `st.by_model`（L17） |
 | `frontend/src/components/chat/TokenLabel.vue` | 显示 In/Out，有值时显示 cached/reasoning |
 | `frontend/src/debug/types.ts` | `TokenRoundItem` 同步 input/output |
@@ -149,15 +149,15 @@ def validate_message_legacy_compat(data):
 | `core/monitoring/__init__.py` | `from .token_tracker import TokenTracker`（删 dataclass TokenUsage re-export） |
 | `core/schema/README.md` | `token.py` 行（L19/L47）更新为 TokenUsage |
 | `core/monitoring/README.md` | TokenUsageRecord/TokenUsage 引用（L48/L59）更新 |
-| `core/adapter/llm_adapter.py` | `stream_chat` docstring 的 usage 键契约（L102-103）更新为 input/output |
-| `Module/llm/protocol.py` | `stream_thinking` docstring 的 usage 键契约（L52）更新为 input/output |
+| `core/adapter/llm_adapter.py` | `stream_think`（[L96](core/adapter/llm_adapter.py#L96)，**方法名是 stream_think 非 stream_chat**）docstring 的 usage 键契约（L102-103）更新为 input/output |
+| `Module/llm/protocol.py` | `stream_think`（[L45](Module/llm/protocol.py#L45)，非 stream_thinking）docstring 的 usage 键契约（L52）更新为 input/output |
 | `docs/data-structure-survey.md` | `TokenUsage` 记录（L42）与 usage dict 样例（L342-343）更新（非 README，readme-conventions 不强制，但避免文档与实现漂移） |
 | `docs/database-storage.md` | `token_usage` 集合字段表（L111-112）更新 |
 | `docs/frontend-api.md` | WS `token_usage` 消息样例（L84, L447-448）更新 |
 
 ### 6. 测试
 
-- `Module/llm/tests/` — `_extract_usage` 新字段提取（cached/reasoning，流式 + 非流式）；**details 缺失（Ollama 风格）→ None 不抛**；`test_llm.py:547,595` 的 last_usage 全 dict 相等断言（现期望 3 键 `{prompt_tokens,...}`）更新为 5 键 `{input_tokens,...}`（或省略 None 键的变体）；**新增 M6 守卫不对称回归测试**：`_call_api` 流式路径（[openai_compat.py:200-210](Module/llm/openai_compat.py#L200)）构造「空 choices + usage chunk」chunk 序列，断言产出 usage 不抛 IndexError、且空 choices 无 content 不产出 delta——现 `TestUsageTracking` 仅覆盖 truthy 路径与非流式，该场景零覆盖，重构守卫或改顺序时无拦截。**放 `test_llm.py` 的 `TestUsageTracking` 类**（模块级 `pytestmark = pytest.mark.service` 自动继承，勿新建无 marker 文件，否则漏出 `make test-quick` 覆盖）
+- `Module/llm/tests/` — `_extract_usage` 新字段提取（cached/reasoning，流式 + 非流式）；**details 缺失（Ollama 风格）→ None 不抛**；`test_llm.py:547,595` 的 last_usage 全 dict 相等断言（现期望 3 键 `{prompt_tokens,...}`）更新为 5 键 `{input_tokens,...}`（或省略 None 键的变体）。**⚠ fixture 必须同步设 `usage_obj.prompt_tokens_details = None` / `completion_tokens_details = None`**——现测试 fixture（[test_llm.py:513-516,579-582](Module/llm/tests/test_llm.py#L513)）用裸 `MagicMock()`，`getattr` 守卫在 MagicMock 上返回子 MagicMock 而非 None，5 键与省略 None 两种断言变体都会失败；**新增 M6 守卫不对称回归测试**：`_call_api` 流式路径（[openai_compat.py:200-210](Module/llm/openai_compat.py#L200)）构造「空 choices + usage chunk」chunk 序列，断言产出 usage 不抛 IndexError、且空 choices 无 content 不产出 delta——现 `TestUsageTracking` 仅覆盖 truthy 路径与非流式，该场景零覆盖，重构守卫或改顺序时无拦截。**放 `test_llm.py` 的 `TestUsageTracking` 类**（模块级 `pytestmark = pytest.mark.service` 自动继承，勿新建无 marker 文件，否则漏出 `make test-quick` 覆盖）
 - `core/monitoring/tests/test_token_tracker.py` — record/persist/flush 换新模型、字段改名
 - `core/storage/tests/test_token_repo.py` — legacy 文档跳过
 - `core/tests/`（或 session/message_repo 现有测试）— `validate_message_legacy_compat`：旧 token_usage 消息剥除后保留正文；无 token_usage 消息直接过；剥除后仍失败抛原异常
