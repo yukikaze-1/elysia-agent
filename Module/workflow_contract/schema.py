@@ -343,8 +343,7 @@ class HITLData(BaseModel):
     node_task: str                       # 当前节点的目标任务描述
     tool_name: str
     params: dict[str, Any] = Field(default_factory=dict)
-    # RBACLevel 顶部直接 import——default_factory 在实例创建时解析默认值，无循环风险。
-    rbac_level: RBACLevel = Field(default_factory=lambda: RBACLevel.MUTATION)
+    rbac_level: RBACLevel = RBACLevel.MUTATION
     risk_summary: str = ""
 
 

@@ -130,15 +130,15 @@
 
 | 名称 | 成员数 | 用途 |
 |------|--------|------|
-| `TaskStatus` | 11 (PENDING→PLANNING→RUNNING→PAUSED→CANCELLED→COMPLETED...) | 任务 FSM |
+| `WorkflowStatus` | 11 (PENDING→PLANNING→RUNNING→PAUSED→CANCELLED→COMPLETED...) | 任务 FSM |
 | `SubmitRejectionCode` | 5 (NOT_READY/INVALID_PARAM/PLAN_TOO_LARGE...) | 提交拒绝码 |
-| `TaskErrorCode` | 10 (PLANNING_FAILED/TOOL_ERROR/PERMISSION_DENIED...) | 任务错误码 |
+| `WorkflowErrorCode` | 10 (PLANNING_FAILED/TOOL_ERROR/PERMISSION_DENIED...) | 任务错误码 |
 | `ResumeErrorCode` | 6 (CHECKPOINT_NOT_FOUND/CORRUPTED/VERSION_MISMATCH...) | 恢复错误码 |
 | `NodeStatus` | 8 (PENDING/RUNNING/SUCCESS/FAILED/SKIPPED...) | DAG 节点状态 |
 | `NodeErrorCode` | 8 (TOOL_ERROR/TIMEOUT/NOT_FOUND/PERMISSION_DENIED...) | 节点错误码 |
 | `RBACLevel` | 3 (READ_ONLY/SAFE_WRITE/MUTATION) | 工具权限等级 |
 
-**NewType 别名 (6 个):** `TaskId`, `AgentId`, `ApprovalId`, `SessionId`, `NodeId`, `ArtifactId`
+**NewType 别名 (6 个):** `WorkflowId`, `AgentId`, `ApprovalId`, `SessionId`, `NodeId`, `ArtifactId`
 
 ### 跨层协议 (`protocol.py`)
 
@@ -164,11 +164,11 @@
 
 | 名称 | 用途 |
 |------|------|
-| `TaskEvent` | 任务邮箱事件（PROGRESS/APPROVAL_NEEDED/COMPLETED/FAILED...） |
-| `TaskSummary` | 任务完成摘要（给 Debug WebUI） |
-| `TaskProgress` | 任务进度快照 |
+| `WorkflowEvent` | 任务邮箱事件（PROGRESS/APPROVAL_NEEDED/COMPLETED/FAILED...） |
+| `WorkflowSummary` | 任务完成摘要（给 Debug WebUI） |
+| `WorkflowProgress` | 任务进度快照 |
 | `DAGNodeInfo` | DAG 节点展示信息 |
-| `TaskDAG` | DAG 可视化数据 |
+| `WorkflowDAG` | DAG 可视化数据 |
 | `AgentInfo` / `AgentList` | Agent 运行时信息 |
 | `TokenComponent` / `TokenUsage` / `TokenStats` | Token 统计（**与 core/monitoring/token_tracker.py 的 TokenUsage 同名不同义**） |
 
@@ -179,14 +179,14 @@
 | 名称 | 用途 |
 |------|------|
 | `OrchestratorResult` | 编排器运行结果 |
-| `NodeState` / `TaskState` / `ExecutionState` | 运行时状态 |
-| `TaskCheckpoint` | 任务检查点（TaskState + ExecutionState） |
+| `NodeState` / `WorkflowState` / `ExecutionState` | 运行时状态 |
+| `WorkflowCheckpoint` | 任务检查点（WorkflowState + ExecutionState） |
 | `Plan` / `DAG` / `DAGNode` | 规划输出 |
 | `DAGPatch` | 增量 DAG 修改（Replan） |
 | `ValidationResult` / `ValidationIssue` | Plan 校验 |
 | `Artifact` | 节点输出产物 |
 | `NodeResult` / `NodeResultEvaluation` | 执行结果 + 评估 |
-| `TaskResult` | 任务完成结构 |
+| `WorkflowResult` | 任务完成结构 |
 | `ExperienceRecord` | 经验记忆记录 |
 
 > **总计：WorkflowEngine 独占约 40 个类型，组织较规范。不建议拆改。**
@@ -209,7 +209,7 @@
 | `Module/system_prompt/protocol.py` | `PromptSection` | ABC | 提示词 section 基类 |
 | `Module/system_prompt/protocol.py` | `StaticSection` | class | 静态文本 section |
 | `Module/system_prompt/protocol.py` | `Jinja2Section` | class | Jinja2 模板 section |
-| `Module/workflow_engine/protocol.py` | `HITLNotifier` | ABC | 人工审批通知协议 |
+| `Module/workflow_contract/schema.py` | `HITLNotifier` | ABC | 人工审批通知协议 |
 
 ---
 

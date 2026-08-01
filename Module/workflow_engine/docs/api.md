@@ -1,4 +1,4 @@
-# TaskSystem API 接口定义
+# WorkflowEngine API 接口定义
 
 > 最终版。
 
@@ -7,7 +7,7 @@
 ## 总体原则
 
 - **`submit_task` 注册为 LLM 工具**：LLM 自主决定是否委派后台任务。零额外字段。
-- **简单任务不进 TaskSystem**：CognitiveLoop 直接调工具（现有 ReAct 流程）。
+- **简单任务不进 WorkflowEngine**：CognitiveLoop 直接调工具（现有 ReAct 流程）。
 - **一个入口**：`submit(context)`。只处理复杂任务。intent/hints 已合并进 DelegationContext。
 
 ---
@@ -20,21 +20,21 @@
 CognitiveLoop 工具执行器识别 submit_task
   │
   ├─ ① DelegationPreparer.prepare(intent, hints, 全量tools, 对话历史, ...)
-  │      │  一次 LLM 调用，调用者是 CognitiveLoop（代码在 TaskSystem 模块内）
+  │      │  一次 LLM 调用，调用者是 CognitiveLoop（代码在 WorkflowEngine 模块内）
   │      ▼
   │   DelegationResult
-  │      ├── status=NO_MATCHING_TOOLS → CognitiveLoop 回复用户"缺工具"（不进 TaskSystem）
-  │      ├── status=TOO_VAGUE         → CognitiveLoop 请用户澄清（不进 TaskSystem）
+  │      ├── status=NO_MATCHING_TOOLS → CognitiveLoop 回复用户"缺工具"（不进 WorkflowEngine）
+  │      ├── status=TOO_VAGUE         → CognitiveLoop 请用户澄清（不进 WorkflowEngine）
   │      └── status=OK → DelegationContext（含筛选后的 tools + 摘要上下文 + 任务约束）
   │                           │
-  └─ ② TaskSystem.submit(context) ────────────────────────────┐
+  └─ ② WorkflowEngine.submit(context) ────────────────────────────┐
          │  调用者仍是 CognitiveLoop                           │
          │  返回 (TaskId, TaskMailbox)，fire-and-forget       │
          └────────────────────────────────────────────────────┘
                                                                │
     ┌──────────────────────────────────────────────────────────┘
     ▼
-  TaskSystem 内部
+  WorkflowEngine 内部
     ├── TaskId + TaskMailbox 创建（Mailbox 创建在 Planner 之前）
     ├── SubAgent.run(context, mailbox)
     │     ├── Planner.plan(context)        ← 第二次 LLM: DelegationContext → Plan(DAG)
@@ -47,27 +47,27 @@ CognitiveLoop 工具执行器识别 submit_task
     └── HITLNotifier ─→ [EventBus] → 前端审批收件箱 (审批快速通道)
 ```
 
-**关键顺序**：`DelegationPreparer.prepare()` 和 `TaskSystem.submit()` 都是 CognitiveLoop 调用的，不是 TaskSystem 内部链式调用。DelegationPreparer 需要全量工具列表（CognitiveLoop 持有），TaskSystem 只需要筛选后的 DelegationContext。
+**关键顺序**：`DelegationPreparer.prepare()` 和 `WorkflowEngine.submit()` 都是 CognitiveLoop 调用的，不是 WorkflowEngine 内部链式调用。DelegationPreparer 需要全量工具列表（CognitiveLoop 持有），WorkflowEngine 只需要筛选后的 DelegationContext。
 
 - **TaskMailbox**：单播。消费者只有 Agent。WebUI 通过查询 API + SSE 拉数据，不从 Mailbox 消费。
-- **HITLNotifier**：审批快速通道。TaskSystem 依赖抽象协议，不依赖 EventBus。
+- **HITLNotifier**：审批快速通道。WorkflowEngine 依赖抽象协议，不依赖 EventBus。
 
 ---
 
 # 第一部分：核心契约
 
-> **受众**：CognitiveLoop 开发者。必须理解才能集成 TaskSystem。
+> **受众**：CognitiveLoop 开发者。必须理解才能集成 WorkflowEngine。
 
 ---
 
 ## 1. 生命周期
 
 ```python
-class TaskSystem:
+class WorkflowEngine:
     def __init__(self, infra: AgentInfra, hitl_notifier: HITLNotifier, *, max_sub_agents: int = 5):
         """
         infra: LLM Client, Milvus, HTTP, ToolRegistry, ConstraintConfig
-        hitl_notifier: 审批快速通道实现。TaskSystem 不关心另一端是什么。
+        hitl_notifier: 审批快速通道实现。WorkflowEngine 不关心另一端是什么。
         max_sub_agents: Sub-Agent 并发上限（keyword-only），默认 5。
         """
 
@@ -122,7 +122,7 @@ class TaskSystem:
         agent_id 作为 request_id 委托给 SafetyPipeline 处理。
         task_id / feedback 为 v2 预留。
         task_id: 任务 ID。
-        agent_id: 审批发起者 ID，TaskSystem 内部用 (task_id, agent_id)
+        agent_id: 审批发起者 ID，WorkflowEngine 内部用 (task_id, agent_id)
                   定位正在 await approval_future 的 Worker。
         approved=True  → Worker 继续执行 MUTATION。
         approved=False → PERMISSION_DENIED → Evaluator → 三层降级。
@@ -136,7 +136,7 @@ class TaskSystem:
 
 ## 4. HITLNotifier 协议（CognitiveLoop 实现）
 
-TaskSystem 不依赖 CognitiveLoop 的实现细节（EventBus、WebSocket 等），只依赖此协议。
+WorkflowEngine 不依赖 CognitiveLoop 的实现细节（EventBus、WebSocket 等），只依赖此协议。
 实现者放在 CognitiveLoop 侧。
 
 ```python
@@ -175,7 +175,7 @@ EventBusHITLNotifier 演示实现见 core/hitl.py（ABC 在契约层 Module/work
 > **状态**：v1 已实现（2026-06-14）
 > **将来**：可独立为 delegation 服务
 
-`submit_task` 被调用后、`TaskSystem.submit()` 之前，用一次 LLM 调用准备干净的委派上下文。
+`submit_task` 被调用后、`WorkflowEngine.submit()` 之前，用一次 LLM 调用准备干净的委派上下文。
 
 ```python
 class DelegationPreparer:
@@ -214,7 +214,7 @@ LLM 返回的 tools 与输入 tools 做交集（按 name 精确匹配）：
 
 | status | 含义 | context | CognitiveLoop 处理 |
 |--------|------|---------|-------------------|
-| `ok` | 有匹配工具 | DelegationContext（含 intent/hints/tools/return_mode） | 调用 TaskSystem.submit(context) |
+| `ok` | 有匹配工具 | DelegationContext（含 intent/hints/tools/return_mode） | 调用 WorkflowEngine.submit(context) |
 | `no_matching_tools` | 工具库缺少所需工具 | None | fail——不是参数问题，直接告知用户 |
 | `too_vague` | 意图过于模糊 | None | fail——请用户澄清，不反复猜测 |
 
@@ -336,7 +336,7 @@ class TaskStatus(StrEnum):
 
 ## 9. Push —— SSE 端点（Debug 专用）
 
-由 `TaskDebugAPI`（`debug_api.py`）管理：内部 500ms 轮询 TaskSystem → diff → SSE 推送。
+由 `TaskDebugAPI`（`debug_api.py`）管理：内部 500ms 轮询 WorkflowEngine → diff → SSE 推送。
 
 ```
 GET /debug/api/tasks          → JSON 全量快照（TaskDebugAPI.snapshot_handler）
@@ -365,16 +365,16 @@ SSE 事件类型：
 
 ```python
 TaskId = NewType("TaskId", str)
-"""任务唯一标识符。TaskSystem 内部生成，对外透明。NewType 防止调用方随意传 str。"""
+"""任务唯一标识符。WorkflowEngine 内部生成，对外透明。NewType 防止调用方随意传 str。"""
 
 AgentId = NewType("AgentId", str)
-"""Agent 唯一标识符。TaskSystem 内部生成，用于 submit_approval 路由。"""
+"""Agent 唯一标识符。WorkflowEngine 内部生成，用于 submit_approval 路由。"""
 
 ApprovalId = NewType("ApprovalId", str)
-"""审批请求唯一标识符。TaskSystem 内部生成，用于 cancel_approval 清理。"""
+"""审批请求唯一标识符。WorkflowEngine 内部生成，用于 cancel_approval 清理。"""
 
 SessionId = NewType("SessionId", str)
-"""会话唯一标识符。CognitiveLoop 管理，TaskSystem 仅用于日志关联和 Debug 追踪。"""
+"""会话唯一标识符。CognitiveLoop 管理，WorkflowEngine 仅用于日志关联和 Debug 追踪。"""
 
 NodeId = NewType("NodeId", str)
 """DAG 节点唯一标识符。出现在 DAGNodeInfo、TaskProgress、TokenComponent 中。
@@ -443,7 +443,7 @@ class ResumeErrorCode(StrEnum):
 
 ```python
 class ConstraintConfig:
-    """全局约束配置（TaskSystem 构造时注入）。所有执行路径的硬天花板。"""
+    """全局约束配置（WorkflowEngine 构造时注入）。所有执行路径的硬天花板。"""
     max_total_tokens: int = 100_000       # 整个任务 LLM 调用总 token 上限
     max_context_tokens: int = 32_000      # 单次 prompt 最大 token 数
     max_failure_count: int = 5            # 连续失败 N 次后熔断

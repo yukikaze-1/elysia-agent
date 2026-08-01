@@ -175,27 +175,26 @@ X 锁持有超过 3 轮对话或 2 分钟 → 租约超时 → 强制释放 → 
 
 ### 3.2 TaskSystem（新建）
 
-主模块，对外提供统一 API。查询方法（`get_progress`, `list_active_tasks` 等）和任务操作（`pause`, `cancel`, `submit_approval`）已提取到独立模块（`query.py` / `lifecycle.py`），`task_system.py` 保留生命周期方法 + 薄封装委托。
+主模块，对外提供统一 API。查询方法（`get_progress`, `list_active_tasks` 等）和任务操作（`pause`, `cancel`, `submit_approval`）已提取到独立模块（`query.py` / `lifecycle.py`），`workflow_engine.py` 保留生命周期方法 + 薄封装委托。
 
 ```
 Module/workflow_engine/
 ├── __init__.py          # 公开 API facade
-├── task_system.py        # TaskSystem 主类：生命周期 + submit/resume + 薄封装（~478行）
+├── workflow_engine.py     # WorkflowEngine 主类：生命周期 + submit/resume + 薄封装
 ├── query.py              # 查询 API：11 个只读模块函数
 ├── lifecycle.py          # 任务操作：pause / cancel / submit_approval 模块函数
-├── protocol.py           # HITLNotifier 等对外依赖协议（ABC）
-├── infra.py              # AgentInfra + 共享基础设施
-├── mailbox.py            # TaskMailbox（单播，Agent 唯一消费者）
+# protocol.py（HITLNotifier ABC）与 infra.py（AgentInfra）已迁契约层 Module/workflow_contract/（Task 10/11 分离）
+├── mailbox.py            # WorkflowMailbox（单播，Agent 唯一消费者）
 ├── checkpoint.py         # 任务级 Checkpoint（含节点粒度）
 ├── artifact_store.py     # ArtifactStore: 节点产物统一存储
 ├── debug_api.py          # TaskDebugAPI: SSE 推送 + 内部轮询 + diff 事件
-├── token_ledger.py       # TokenLedger: per-task token 账本（write-through 到 TaskState）
+├── token_ledger.py       # TokenLedger: per-task token 账本（write-through 到 WorkflowState）
 ├── schema/               # 核心数据结构（4 子模块 + __init__ re-export）
 │   ├── __init__.py       #   全部 re-export，向后兼容
 │   ├── types.py          #   工具函数 + NewType 别名 + 基础枚举（含 NodeErrorCode）
 │   ├── protocol.py       #   跨层协议（ConstraintConfig, DelegationContext, HITLData）
 │   ├── output.py         #   事件 + 查询视图（TaskEvent, TaskSummary, TokenStats）
-│   └── internal.py       #   编排数据模型（DAGNode, Plan, TaskState, NodeResult）
+│   └── internal.py       #   编排数据模型（DAGNode, Plan, WorkflowState, NodeResult）
 ├── core/                 # Plan-Execute-Evaluate 编排循环
 │   ├── __init__.py
 │   ├── orchestrator.py   # Orchestrator: run() 主循环 + 薄封装（~421行）
@@ -222,7 +221,6 @@ Module/workflow_engine/
 │   └── __init__.py       # 占位
 ├── learning/            # ⚠️ v2 TODO：经验记忆与学习
 │   └── __init__.py       # 占位
-└── utils.py             # 公共工具函数
 
 tests/
 ├── unit/                 # 纯 mock，无外部依赖，298 tests
@@ -260,7 +258,7 @@ tests/
 types.py     — 工具函数 (now_iso, parse_iso) + NewType 别名 + 基础枚举 (含 NodeErrorCode)
 protocol.py  — 第一层：跨层协议 (ConstraintConfig, DelegationContext, HITLData 等)
 output.py    — 第二层：事件 + 查询视图 (TaskEvent, TaskSummary, TokenStats 等)
-internal.py  — 第三层：编排数据模型 (DAGNode, Plan, TaskState, NodeResult 等)
+internal.py  — 第三层：编排数据模型 (DAGNode, Plan, WorkflowState, NodeResult 等)
 ```
 
 ```python
