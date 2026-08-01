@@ -30,8 +30,8 @@ from Module.workflow_contract import (
     SessionId,
 )
 from Module.tool.tool_descriptor import Tool
-from Module.workflow_engine.schema import UserProfile
 from Module.workflow_engine.workflow_engine import WorkflowEngine
+from core.cognitive.user_profile import UserProfile
 from core.tools.time.plugin import TimePlugin
 from core.tools.web.plugin import WebSearchPlugin
 from Module.workflow_engine.mailbox import WorkflowMailbox

@@ -85,7 +85,7 @@ class _LifecycleTaskSystem:
         self._delegation_preparer = DelegationPreparer()
 
         # 注入到 CognitiveLoop
-        from Module.workflow_engine.schema import UserProfile
+        from core.cognitive.user_profile import UserProfile
         self._cognitive.configure(
             task_system=self._task_system,
             delegation_preparer=self._delegation_preparer,

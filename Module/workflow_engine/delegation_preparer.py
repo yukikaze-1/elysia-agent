@@ -32,7 +32,7 @@ from Module.workflow_contract import (
     WorkflowConstraints,
 )
 from Module.tool.tool_descriptor import Tool
-from Module.workflow_engine.schema import UserProfile
+from core.cognitive.user_profile import UserProfile
 
 logger = logging.getLogger(__name__)
 

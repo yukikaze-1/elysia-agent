@@ -13,8 +13,8 @@ from ..utils import new_message_id
 
 if TYPE_CHECKING:
     from Module.workflow_contract import SubmitError
-    from Module.workflow_engine.schema import UserProfile
     from Module.workflow_engine.delegation_preparer import DelegationPreparer
+    from core.cognitive.user_profile import UserProfile
     from Module.workflow_engine.workflow_engine import WorkflowEngine
     from ..adapter.tool_adapter import ToolAdapter
     from ..memory.session import SessionMemory
@@ -28,7 +28,7 @@ def _default_user_profile() -> "UserProfile":
     Returns:
         空的 UserProfile 实例。
     """
-    from Module.workflow_engine.schema import UserProfile
+    from core.cognitive.user_profile import UserProfile
     return UserProfile()
 
 

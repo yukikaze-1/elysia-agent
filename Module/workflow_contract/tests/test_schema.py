@@ -2,6 +2,7 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+from Module.tool import RBACLevel
 from Module.workflow_contract import (
     AgentInfra,
     ConstraintConfig,
@@ -9,7 +10,6 @@ from Module.workflow_contract import (
     DelegationResult,
     DelegationStatus,
     HITLData,
-    RBACLevel,
     SessionId,
     WorkflowId,
     WorkflowStatus,
@@ -46,7 +46,7 @@ def test_delegation_context_roundtrip():
 
 
 def test_hitl_data_default_rbac_level():
-    # HITLData 引用契约层内解析的 RBACLevel / AgentId / NodeId 等
+    # HITLData 引用契约层延迟解析的 RBACLevel（canonical home: Module.tool）
     data = HITLData(
         task_id=WorkflowId("wf-1"),
         approval_id="ap-1",

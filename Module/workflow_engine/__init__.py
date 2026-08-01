@@ -5,7 +5,7 @@
 导出分组：
   - 公共 API:     WorkflowEngine, DelegationPreparer, SubAgent, Orchestrator
   - 基础类型:     NodeId, WorkflowId, WorkflowStatus, WorkflowErrorCode, etc.
-  - 本地协议:     UserProfile, ResumeError
+  - 本地协议:     ResumeError
   - 查询/输出:    WorkflowSummary, WorkflowDAG, TokenStats, AgentInfo, etc.
   - 内部编排:     Plan, DAGNode, DAGPatch, NodeResult, WorkflowState, WorkflowCheckpoint, etc.
   - 校验/产物:    ValidationIssue, OutputContract, Artifact, etc.
@@ -32,10 +32,9 @@ from Module.workflow_engine.schema import (
     WorkflowErrorCode,
 )
 
-# ── 本地协议（CognitiveLoop 侧类型 / resume 错误） ──
+# ── 本地协议（resume 错误） ──
 from Module.workflow_engine.schema import (
     ResumeError,
-    UserProfile,
 )
 
 # ── 查询 / 对外输出 ──
@@ -112,7 +111,6 @@ __all__ = [
     "WorkflowErrorCode",
     # 本地协议
     "ResumeError",
-    "UserProfile",
     # 对外输出
     "AgentInfo",
     "AgentList",

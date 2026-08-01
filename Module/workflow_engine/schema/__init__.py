@@ -21,7 +21,6 @@ from .types import (
 # ── protocol.py: 跨层协议（引擎本地剩余类型） ──
 from .protocol import (
     ResumeError,
-    UserProfile,
 )
 
 # ── output.py: 查询视图（事件已迁契约层） ──
@@ -77,6 +76,8 @@ from .internal import (
 # parse_iso 已随契约层迁至 Module.workflow_contract.utils（Task 6）
 # now_iso 因编排层 (orchestrator/sub_agent/task_system/parser) 大量使用，保留在公开导出中
 # 已迁契约层的类型: AgentId/ApprovalId/NodeId/SessionId/WorkflowId/WorkflowStatus/
-#   SubmitRejectionCode/RBACLevel/ConstraintConfig/WorkflowConstraints/ReturnMode/
+#   SubmitRejectionCode/ConstraintConfig/WorkflowConstraints/ReturnMode/
 #   DelegationContext/DelegationResult/DelegationStatus/SubmitError/HITLData/
 #   WorkflowEvent/WorkflowEventType/Tool
+# RBACLevel 已归位 Module/tool/capability.py（Task 8）——契约层 HITLData 延迟引用
+# UserProfile 已归位 core/cognitive/user_profile.py（Task 8）——CognitiveLoop 拥有

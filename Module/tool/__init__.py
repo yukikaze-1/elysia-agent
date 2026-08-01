@@ -14,7 +14,7 @@ from .protocol import (
     ToolProgress,
     ToolResult,
 )
-from .capability import Capability
+from .capability import Capability, RBACLevel
 from .safety import SafetyProfile, SafetyPipeline
 from .manager import ToolManager
 from .tool_descriptor import Tool
@@ -28,6 +28,7 @@ __all__ = [
     # Data models
     "ErrorType",
     "Capability",
+    "RBACLevel",
     "Tool",
     "MediaItem",
     "PluginContext",

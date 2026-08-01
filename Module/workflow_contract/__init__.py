@@ -19,7 +19,6 @@ from Module.workflow_contract.schema import (
     HITLData,
     HITLNotifier,
     NodeId,
-    RBACLevel,
     ReturnMode,
     SessionId,
     SubmitError,
@@ -51,7 +50,6 @@ __all__ = [
     "SessionId",
     "WorkflowId",
     # 基础枚举
-    "RBACLevel",
     "SubmitRejectionCode",
     "WorkflowStatus",
     # 约束

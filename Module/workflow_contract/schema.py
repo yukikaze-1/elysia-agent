@@ -112,17 +112,8 @@ class SubmitRejectionCode(StrEnum):
     CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"  # 上下文窗口不足
     TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"     # 预估 token 消耗超用户剩余配额
 
-
-class RBACLevel(StrEnum):
-    """工具权限级别。注册时声明，运行时校验。
-
-    TODO: 归属待定。Tools 在 Module/tool/ 声明权限级别，WorkflowEngine 执行时校验。
-    两个模块都需要此枚举。后续确定 canonical home（建议 Module/tool/），
-    WorkflowEngine 侧改为 re-export。
-    """
-    READ_ONLY = "read_only"       # 只读，完全自主
-    SAFE_WRITE = "safe_write"     # 安全写入（沙箱内），条件自主
-    MUTATION = "mutation"         # 外部变更，必须审批
+    # RBACLevel 已归位 Module/tool/capability.py（canonical home），
+    # 本模块底部延迟 import，供 HITLData.rbac_level 使用。
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -356,7 +347,9 @@ class HITLData(BaseModel):
     node_task: str                       # 当前节点的目标任务描述
     tool_name: str
     params: dict[str, Any] = Field(default_factory=dict)
-    rbac_level: RBACLevel = RBACLevel.MUTATION
+    # RBACLevel 延迟 import（见文件底部）——default_factory 保证默认值在实例创建时才解析，
+    # 避免类定义时 NameError。字符串注解 + model_rebuild() 在底部 import 后解析类型。
+    rbac_level: RBACLevel = Field(default_factory=lambda: RBACLevel.MUTATION)
     risk_summary: str = ""
 
 
@@ -491,10 +484,15 @@ class HITLNotifier(ABC):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 底部延迟导入 Tool + 重建引用
+# 底部延迟导入 Tool / RBACLevel + 重建引用
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from Module.tool.tool_descriptor import Tool  # noqa: E402  # 打破循环：Module.tool → core.schema → 本模块
 
 # DelegationContext.tools: list[Tool] 的字符串注解在此解析（Tool 此刻已入模块命名空间）。
 DelegationContext.model_rebuild()
+
+from Module.tool.capability import RBACLevel  # noqa: E402  # 与 Tool 相同：延迟 import 打破循环
+
+# HITLData.rbac_level: RBACLevel 的字符串注解在此解析（RBACLevel 此刻已入模块命名空间）。
+HITLData.model_rebuild()
