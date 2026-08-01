@@ -7,7 +7,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from aiohttp import web
+from aiohttp import web, WSMsgType
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from core.agent import RunState
@@ -200,6 +200,36 @@ class TestWebSocketHandler:
         # After disconnect, channel should be removed
         await asyncio.sleep(0.1)
         assert len(agent.output._channels) == initial_count
+
+        await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_ws_connect_sends_current_mood(self, aiohttp_client):
+        """连接后服务端应推送当前心情（expression 事件），前端据此渲染心情标签。"""
+        import json
+
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        await agent.start()
+        agent.character_engine.state.mood = "开心"
+        agent.character_engine.state.mood_intensity = 0.8
+
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+
+        async with client.session.ws_connect(client.make_url('/ws')) as ws:
+            got = None
+            for _ in range(5):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    if data.get("type") == "expression":
+                        got = data
+                        break
+            assert got is not None, "连接时未收到 expression 消息"
+            assert got["expression"] == "开心"
+            assert got["intensity"] == 0.8
 
         await agent.stop()
 

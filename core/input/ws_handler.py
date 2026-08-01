@@ -73,6 +73,19 @@ async def handle_ws(
     except Exception:
         logger.debug("Failed to send capabilities on connect", exc_info=True)
 
+    # 发送当前心情（expression 事件）。心情持久化在 session.character_state，
+    # 重启后服务端已恢复，但前端 `chat.mood` 只由 expression 事件更新——
+    # 连接时不推送，心情标签要等下一轮 <mood> 才出现。复用前端现有 handler，零改动。
+    try:
+        cs = agent.character_engine.state
+        await ws.send_json({
+            "type": "expression",
+            "expression": cs.mood,
+            "intensity": cs.mood_intensity,
+        })
+    except Exception:
+        logger.debug("Failed to send mood on connect", exc_info=True)
+
     # 重新广播挂起的 HITL 审批请求（前端重连后恢复审批弹窗）
     try:
         if hasattr(agent, 'tool_adapter') and agent.tool_adapter is not None:
