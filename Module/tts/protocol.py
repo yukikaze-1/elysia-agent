@@ -64,6 +64,19 @@ class TTSBackend(ABC):
         """返回 provider 标识：'gpt-sovits' / 'minimax' / 'custom'。"""
         ...
 
+    @property
+    def model(self) -> str:
+        """返回完整模型标识 ``provider/model``（如 ``minimax/speech-2.8-hd``）。
+
+        各后端把 model name 存在 ``self._model``（如 ``speech-2.8-hd``），
+        这里拼上 ``provider_name`` 得到前端下拉选项一致的完整 id。
+        用于 capabilities 下发当前 TTS 模型。
+        """
+        name = getattr(self, "_model", "")
+        if not name:
+            return ""
+        return f"{self.provider_name}/{name}"
+
     def get_preprocess(self):
         """返回本后端使用的预处理函数，默认 None（不预处理）。
 

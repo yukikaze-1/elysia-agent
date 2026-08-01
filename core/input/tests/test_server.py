@@ -234,6 +234,36 @@ class TestWebSocketHandler:
         await agent.stop()
 
     @pytest.mark.asyncio
+    async def test_ws_connect_capabilities_includes_models(self, aiohttp_client):
+        """capabilities 应携带三个服务的当前模型，前端据此回填下拉选中值。"""
+        import json
+
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        await agent.start()
+
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+
+        async with client.session.ws_connect(client.make_url('/ws')) as ws:
+            cap = None
+            for _ in range(5):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    if data.get("type") == "capabilities":
+                        cap = data
+                        break
+            assert cap is not None, "连接时未收到 capabilities 消息"
+            assert cap["llm_model"] == agent.llm.model
+            assert cap["stt_model"] == agent.config.stt.model
+            # tts 默认未启用时 agent.tts 为 None → tts_model 为 None；键必须存在
+            assert "tts_model" in cap
+
+        await agent.stop()
+
+    @pytest.mark.asyncio
     async def test_invalid_json_returns_error(self, aiohttp_client):
         from core.input.server import create_app
 

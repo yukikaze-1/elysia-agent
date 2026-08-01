@@ -95,6 +95,8 @@ export interface CapabilitiesMessage {
   stt?: boolean
   tts?: boolean
   llm_model?: string
+  stt_model?: string
+  tts_model?: string
   live2d_static_image?: string
 }
 

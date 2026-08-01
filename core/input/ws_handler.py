@@ -61,13 +61,17 @@ async def handle_ws(
     except Exception:
         logger.warning("Failed to send session on connect", exc_info=True)
 
-    # 发送服务能力状态（STT / TTS 是否可用）
+    # 发送服务能力状态（STT / TTS 是否可用 + 三个服务的当前模型）。
+    # llm/stt/tts_model 供前端回填设置面板下拉选中值——否则首次访问（无 localStorage）
+    # 下拉框显示"选择模型..."占位符，即使服务端已在运行某个模型。
     try:
         await ws.send_json({
             "type": "capabilities",
             "stt": stt_transcribe is not None,
             "tts": agent.tts is not None,
             "llm_model": agent.llm.model,
+            "stt_model": agent.config.stt.model,
+            "tts_model": agent.tts.model if agent.tts is not None else None,
             "live2d_static_image": agent.config.live2d.static_image,
         })
     except Exception:

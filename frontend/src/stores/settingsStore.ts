@@ -67,15 +67,24 @@ export const useSettingsStore = defineStore('settings', () => {
   /**
    * Update capability flags from the server's capabilities message.
    * Called once on initial connection; keeps all capability fields in one place.
+   *
+   * 服务端是运行模型的权威来源：把三个服务的当前模型回填到下拉选中值，
+   * 覆盖空值或过期的 localStorage 选择——否则首次访问（无 localStorage）
+   * 设置面板的三个模型下拉框显示"选择模型..."占位符，即使服务端已在运行某个模型。
    */
   function updateCapabilities(msg: {
     stt?: boolean
     tts?: boolean
     llm_model?: string
+    stt_model?: string
+    tts_model?: string
     live2d_static_image?: string
   }): void {
     sttAvailable.value = msg.stt !== false
     ttsAvailable.value = msg.tts !== false
+    if (msg.llm_model) llmModel.value = msg.llm_model
+    if (msg.stt_model) sttModel.value = msg.stt_model
+    if (msg.tts_model) ttsModel.value = msg.tts_model
     llmModelName.value = msg.llm_model || ''
     live2dStaticImage.value = msg.live2d_static_image || ''
   }
