@@ -42,7 +42,7 @@ from Module.llm.registry import LLMFactory
 if TYPE_CHECKING:
     from Module.workflow_engine.delegation_preparer import DelegationPreparer
     from Module.workflow_engine.schema import UserProfile
-    from Module.workflow_engine.workflow_engine import TaskSystem
+    from Module.workflow_engine.workflow_engine import WorkflowEngine
     from ..monitoring.token_tracker import TokenTracker
     from ..debug.prompt_recorder import PromptRecorder
     from ..debug.response_recorder import ResponseRecorder
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 from ..text.parts import BlockRef, build_parts
 from ..adapter.tts_adapter import TTSStreamManager
 from ..adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
-from Module.workflow_engine.schema.types import TaskId
+from Module.workflow_engine.schema.types import WorkflowId
 from ..utils.text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageSummary
@@ -180,7 +180,7 @@ class CognitiveLoop(CognitiveTools):
         )
         self._executing_tools: list[str] = []  # 当前正在执行中的工具名 (供 debug 面板)
         self._timing_history: list[dict] = []  # 最近 100 轮请求的计时数据 (供 debug 面板)
-        self._task_system: TaskSystem | None = None          # 由 configure() 注入
+        self._task_system: WorkflowEngine | None = None          # 由 configure() 注入
         self._delegation_preparer: DelegationPreparer | None = None  # 由 configure() 注入
         self._on_background_task: Callable | None = None  # Agent 注入的回调
         self._user_profile: UserProfile | None = None         # 由 configure() 注入
@@ -388,7 +388,7 @@ class CognitiveLoop(CognitiveTools):
             tool_defs = [t for t in tool_defs if t.get("function", {}).get("name") != "describe_image"]
         if tool_defs is None:
             tool_defs = []
-        # 附加 submit_task（如果 TaskSystem 和 DelegationPreparer 都已注入）
+        # 附加 submit_task（如果 WorkflowEngine 和 DelegationPreparer 都已注入）
         if self._task_system is not None and self._delegation_preparer is not None:
             tool_defs = list(tool_defs) + [self._submit_task_definition()]
         logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs))
@@ -568,7 +568,7 @@ class CognitiveLoop(CognitiveTools):
                 ))
                 # 注册后台任务
                 if result.success and result.async_task_id and self._on_background_task and self._task_system:
-                    mailbox = self._task_system.get_task_mailbox(TaskId(result.async_task_id))
+                    mailbox = self._task_system.get_task_mailbox(WorkflowId(result.async_task_id))
                     if mailbox:
                         dispatched_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
                         self._on_background_task(

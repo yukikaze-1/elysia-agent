@@ -1,4 +1,4 @@
-"""Agent 生命周期 — TaskSystem + mailbox 启停。"""
+"""Agent 生命周期 — WorkflowEngine + mailbox 启停。"""
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from ..monitoring.event_bus import EventBus
     from ..cognitive import CognitiveLoop
     from ..adapter.tool_adapter import ToolAdapter
-    from Module.workflow_engine.workflow_engine import TaskSystem
+    from Module.workflow_engine.workflow_engine import WorkflowEngine
     from Module.workflow_engine.delegation_preparer import DelegationPreparer
     from ..adapter.llm_adapter import LLMAdapter
     from core.schema.types import IsoTimestamp
@@ -20,13 +20,13 @@ logger = logging.getLogger(__name__)
 
 
 class _LifecycleTaskSystem:
-    """TaskSystem + mailbox 生命周期 mixin。"""
+    """WorkflowEngine + mailbox 生命周期 mixin。"""
 
     if TYPE_CHECKING:
         _llm: LLMAdapter
         _tool_adapter: ToolAdapter
         _bus: EventBus
-        _task_system: TaskSystem | None
+        _task_system: WorkflowEngine | None
         _delegation_preparer: DelegationPreparer | None
         _cognitive: CognitiveLoop
         _user_name: str
@@ -35,8 +35,8 @@ class _LifecycleTaskSystem:
         _poll_mailboxes: Callable[[], Coroutine[Any, Any, None]]
 
     async def _start_task_system(self) -> None:
-        """创建 TaskSystem + DelegationPreparer + HITLNotifier，注入 CognitiveLoop。"""
-        from Module.workflow_engine.workflow_engine import TaskSystem
+        """创建 WorkflowEngine + DelegationPreparer + HITLNotifier，注入 CognitiveLoop。"""
+        from Module.workflow_engine.workflow_engine import WorkflowEngine
         from Module.workflow_engine.delegation_preparer import DelegationPreparer
         from Module.workflow_engine.infra import AgentInfra
         from Module.workflow_engine.schema import ConstraintConfig
@@ -77,10 +77,10 @@ class _LifecycleTaskSystem:
                 pass  # v1: 同上，审批全流程走 ToolManager，不经过此通道
 
         _hitl = _EventBusHITLNotifier(self._bus)
-        self._task_system = TaskSystem(infra=_ts_infra, hitl_notifier=_hitl)
+        self._task_system = WorkflowEngine(infra=_ts_infra, hitl_notifier=_hitl)
         await self._task_system.start()
-        logger.info("TaskSystem started")
-        # 注入 TaskSystem 到 ToolContext，供 get_runtime_config 查询活跃任务
+        logger.info("WorkflowEngine started")
+        # 注入 WorkflowEngine 到 ToolContext，供 get_runtime_config 查询活跃任务
         self._tool_adapter.tool_context.services["_task_system"] = self._task_system
         self._delegation_preparer = DelegationPreparer()
 
@@ -108,12 +108,12 @@ class _LifecycleTaskSystem:
             self._mailbox_task = None
 
     async def _stop_task_system(self) -> None:
-        """停止 TaskSystem（5s 超时）。"""
+        """停止 WorkflowEngine（5s 超时）。"""
         if self._task_system:
             try:
                 await asyncio.wait_for(self._task_system.stop(), timeout=5.0)
             except asyncio.TimeoutError:
-                logger.warning("TaskSystem stop timed out")
+                logger.warning("WorkflowEngine stop timed out")
         # 关闭 DelegationPreparer 内部 AsyncOpenAI 客户端，避免 /restart 泄漏 httpx 连接池
         if self._delegation_preparer:
             try:

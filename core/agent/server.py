@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from ..memory.long_term import LongTermMemory
     from ..adapter.tool_adapter import ToolAdapter
     from ..cognitive import CognitiveLoop
-    from Module.workflow_engine.workflow_engine import TaskSystem
+    from Module.workflow_engine.workflow_engine import WorkflowEngine
     from Module.tts.protocol import TTSBackend
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class AgentServer:
         _long_term: LongTermMemory
         _tool_adapter: ToolAdapter
         _cognitive: CognitiveLoop
-        _task_system: TaskSystem | None
+        _task_system: WorkflowEngine | None
         _state: RunState
         _config_path: str | None
         _config: AppConfig

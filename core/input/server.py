@@ -18,7 +18,7 @@ from .api_routes import register_api_routes
 from .debug_routes import register_debug_routes
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.workflow_engine import TaskSystem
+    from Module.workflow_engine.workflow_engine import WorkflowEngine
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def create_app(
     serve_static: bool = True,
     stt_emotion_state: dict | None = None,
     wake_word_enabled: bool = False,
-    task_system: "TaskSystem | None" = None,
+    task_system: "WorkflowEngine | None" = None,
     auth_token: str = "",
 ) -> web.Application:
     """Create an aiohttp Application with WebSocket handler and optional static files.
@@ -46,7 +46,7 @@ def create_app(
         stt_emotion_state: mutable dict with 'emotion' and 'events' keys,
             updated by the STT wrapper after each transcription.
         wake_word_enabled: enable wake word detection for audio input.
-        task_system: TaskSystem instance for debug routes (optional)
+        task_system: WorkflowEngine instance for debug routes (optional)
         auth_token: if non-empty, /shutdown, /restart, /tools/reload, and
             /debug/api/* require Authorization: Bearer <auth_token> header.
 

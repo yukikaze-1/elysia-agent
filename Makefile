@@ -18,7 +18,7 @@ test-all:
 	$(PYTEST) Module/ core/tests/ core/tools/ -v --tb=short
 
 # 测试分层命令
-# TaskSystem 尚未完善、非当前开发重点，CI + 日常跳过
+# WorkflowEngine 尚未完善、非当前开发重点，CI + 日常跳过
 TASK_SYSTEM_IGNORE = --ignore=Module/workflow_engine/tests
 
 test-quick:

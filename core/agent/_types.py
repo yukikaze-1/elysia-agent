@@ -6,7 +6,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
 
 
 @dataclass
@@ -23,7 +23,7 @@ class _BackgroundTaskEntry:
     """后台任务注册信息。"""
     intent: str
     dispatched_at: str
-    mailbox: TaskMailbox
+    mailbox: WorkflowMailbox
 
 
 class RunState(Enum):

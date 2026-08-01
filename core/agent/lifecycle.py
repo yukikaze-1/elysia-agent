@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from core.status.agent_fsm import AgentFSM
     from ..cognitive import CognitiveLoop
     from ..monitoring.idle_monitor import IdleMonitor
-    from Module.workflow_engine.workflow_engine import TaskSystem
+    from Module.workflow_engine.workflow_engine import WorkflowEngine
     from Module.workflow_engine.delegation_preparer import DelegationPreparer
     from Module.tts.protocol import TTSBackend
     from Module.output import OutputManager
@@ -100,7 +100,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _idle: IdleMonitor
         _consolidator: MemoryConsolidator
         _session_repo: SessionRepository
-        _task_system: TaskSystem | None
+        _task_system: WorkflowEngine | None
         _delegation_preparer: DelegationPreparer | None
         _token_tracker: TokenTracker
         _prompt_recorder: PromptRecorder

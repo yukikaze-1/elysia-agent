@@ -277,7 +277,7 @@ class RuntimeConfigPlugin(ToolPlugin):
         """活跃任务详情——每个任务一行。"""
         ts = ctx.get("_task_system")
         if ts is None:
-            return "📋 后台任务: TaskSystem 不可用"
+            return "📋 后台任务: WorkflowEngine 不可用"
 
         try:
             active = await ts.list_active_tasks()

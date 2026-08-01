@@ -200,7 +200,7 @@ class LLMAdapter:
         return self._requested_model
 
     def get_raw_client(self) -> "object | None":
-        """返回底层异步 HTTP 客户端，供 TaskSystem Planner/Executor 使用。
+        """返回底层异步 HTTP 客户端，供 WorkflowEngine Planner/Executor 使用。
 
         Returns:
             openai.AsyncOpenAI | httpx.AsyncClient | None

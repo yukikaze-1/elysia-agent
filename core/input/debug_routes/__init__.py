@@ -45,12 +45,12 @@ def register_debug_routes(
     register_recording_routes(app)
     register_character_routes(app)
 
-    # TaskSystem debug API — SSE 实时推送任务状态
-    from Module.workflow_engine.debug_api import TaskDebugAPI
+    # WorkflowEngine debug API — SSE 实时推送任务状态
+    from Module.workflow_engine.debug_api import WorkflowDebugAPI
 
     ts = app.get('task_system')
     if ts is not None:
-        task_debug_api = TaskDebugAPI(ts)
+        task_debug_api = WorkflowDebugAPI(ts)
         app['task_debug_api'] = task_debug_api
         app.router.add_get("/debug/api/tasks", task_debug_api.snapshot_handler)
         app.router.add_get("/debug/api/tasks/stream", task_debug_api.sse_handler)
@@ -61,10 +61,10 @@ def register_debug_routes(
     app.on_shutdown.append(_on_shutdown)
 
 
-# TaskDebugAPI 生命周期管理
+# WorkflowDebugAPI 生命周期管理
 
 async def _on_startup(app: web.Application) -> None:
-    """Start TaskDebugAPI on application startup.
+    """Start WorkflowDebugAPI on application startup.
 
     Args:
         app: aiohttp Application instance.
@@ -75,7 +75,7 @@ async def _on_startup(app: web.Application) -> None:
 
 
 async def _on_shutdown(app: web.Application) -> None:
-    """Stop TaskDebugAPI on application shutdown.
+    """Stop WorkflowDebugAPI on application shutdown.
 
     Args:
         app: aiohttp Application instance.

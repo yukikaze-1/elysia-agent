@@ -14,7 +14,7 @@ from ..utils import new_message_id
 if TYPE_CHECKING:
     from Module.workflow_engine.schema import SubmitError, UserProfile
     from Module.workflow_engine.delegation_preparer import DelegationPreparer
-    from Module.workflow_engine.workflow_engine import TaskSystem
+    from Module.workflow_engine.workflow_engine import WorkflowEngine
     from ..adapter.tool_adapter import ToolAdapter
     from ..memory.session import SessionMemory
 
@@ -41,7 +41,7 @@ class CognitiveTools:
     _session: SessionMemory  # CognitiveLoop.__init__ 注入（必需参数）
     _delegation_preparer: DelegationPreparer | None = None
     _user_profile: UserProfile | None = None
-    _task_system: TaskSystem | None = None
+    _task_system: WorkflowEngine | None = None
 
     # ---- Tool execution ----
 
@@ -175,7 +175,7 @@ class CognitiveTools:
                 "name": "submit_task",
                 "description": (
                     "将复杂多步骤任务提交到后台异步执行。"
-                    "后台 TaskSystem 有自己的 LLM，会自动规划、搜索、执行所有步骤。"
+                    "后台 WorkflowEngine 有自己的 LLM，会自动规划、搜索、执行所有步骤。"
                     "你不需要在调用前做任何准备工作（如搜索、分析）——直接提交即可。"
                     "适用：涉及多步操作、状态变更、或长时间运行的任务。"
                     "简单单步操作（如单次搜索、单次文件读取）请直接用对应工具。"
@@ -203,7 +203,7 @@ class CognitiveTools:
     async def _handle_submit_task(self, tc: ToolCall) -> ToolResult:
         """处理 submit_task function call。
 
-        校验 intent → DelegationPreparer.prepare() → TaskSystem.submit()。
+        校验 intent → DelegationPreparer.prepare() → WorkflowEngine.submit()。
         返回 ToolResult——LLM 在下一轮看到成功/失败。
 
         Args:
@@ -227,14 +227,14 @@ class CognitiveTools:
 
         hints = (args.get("hints") or "").strip() or None
 
-        # 2. DelegationPreparer + TaskSystem guard
+        # 2. DelegationPreparer + WorkflowEngine guard
         if self._delegation_preparer is None:
             return ToolResult.fail(name="submit_task",
                 error="DelegationPreparer 未初始化，请告知用户后台任务系统暂不可用。")
         task_system = self._task_system
         if task_system is None:
             return ToolResult.fail(name="submit_task",
-                error="TaskSystem 未初始化，请告知用户后台任务系统暂不可用。")
+                error="WorkflowEngine 未初始化，请告知用户后台任务系统暂不可用。")
 
         # 将 ToolExecutor.definitions() 的 dict 格式转换为 DelegationPreparer 期望的 Tool 列表
         from Module.workflow_engine.schema import Tool
@@ -270,7 +270,7 @@ class CognitiveTools:
             return ToolResult.fail(name="submit_task",
                 error=f"意图不够明确: {suggestion}。请向用户澄清，不要重复尝试。")
 
-        # 3. TaskSystem.submit
+        # 3. WorkflowEngine.submit
         if prep_result.context is None:
             raise RuntimeError("submit_task: DelegationPreparer 返回 ok 但 context 为空")
         mailbox_or_error = await task_system.submit(prep_result.context)

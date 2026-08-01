@@ -1699,7 +1699,7 @@ class TestSubmitTaskDefinition:
 class TestHandleSubmitTask:
     @pytest.fixture
     def loop_with_ts(self):
-        """创建带 mock TaskSystem + DelegationPreparer 的 CognitiveLoop。"""
+        """创建带 mock WorkflowEngine + DelegationPreparer 的 CognitiveLoop。"""
         from core.cognitive import CognitiveLoop
         from core.status.agent_fsm import AgentFSM
         from core.monitoring.event_bus import EventBus
@@ -1720,7 +1720,7 @@ class TestHandleSubmitTask:
             prompt=prompt, session=session,
         )
 
-        # Mock TaskSystem
+        # Mock WorkflowEngine
         ts = MagicMock()
         ts_mailbox = MagicMock()
         ts_mailbox.task_id = "task-001"
@@ -1788,7 +1788,7 @@ class TestHandleSubmitTask:
 
     @pytest.mark.asyncio
     async def test_task_system_none_returns_fail(self, loop_with_ts):
-        """TaskSystem 未注入 → fail。"""
+        """WorkflowEngine 未注入 → fail。"""
         loop_with_ts.configure(task_system=None)
         tc = ToolCall(
             id=ToolCallId("call_1"),

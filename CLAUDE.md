@@ -41,7 +41,7 @@ python -m pytest Module/system_prompt/tests/ -v
 # Core tests
 python -m pytest core/tests/ -v
 
-# TaskSystem tests
+# WorkflowEngine tests
 python -m pytest Module/workflow_engine/tests/ -v
 
 # Agent lifecycle tests
@@ -105,7 +105,7 @@ core/
 │   ├── _lifecycle_persistence.py  #   持久化层启停 (MongoDB/Milvus/session/repos)
 │   ├── _lifecycle_services.py     #   LLM/TTS/Output/TokenTracker 启停
 │   ├── _lifecycle_tools.py        #   ToolAdapter/Scheduler/IdleMonitor/event loop 启停
-│   ├── _lifecycle_task_system.py  #   TaskSystem/DelegationPreparer/mailbox 启停
+│   ├── _lifecycle_task_system.py  #   WorkflowEngine/DelegationPreparer/mailbox 启停
 │   └── tests/
 ├── status/                # AgentStatus 接口层：protocol.py（ABC）+ fsm.py（FSM-backed 实现）+ agent_fsm.py（底层状态机）
 ├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing + TurnPhase
@@ -210,6 +210,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.config` | Config infrastructure | `ConfigLoader` (YAML + env + validation) |
 | `Module.logger` | Logging factory | `LoggerFactory` (plain + JSON, rotating) |
 | `Module.system_prompt` | System prompt engine | 12-section orchestration + templates |
+| `Module.workflow_engine` | 后台任务引擎（原 `task_system`）：ReAct 编排/规划/执行/子智能体。主类 `WorkflowEngine`；契约层 `Module/workflow_contract`（阶段 2 落位后补） | `orchestrator` + `planner` + `executor` + `sub_agent` |
 | `core.schema` | Shared Pydantic types: EventData (discriminated union, 5 event types), ToolCall, ExtractedMemory/CompareAction (discriminated union), ReflectorActions, MemoryType, message types, mood, etc. | |
 | `Module.database.vectordb` | Vector DB (ANN search) | `milvus` |
 | `Module.database.documentdb` | Document DB | `mongodb` |

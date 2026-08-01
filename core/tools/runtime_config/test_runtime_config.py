@@ -301,15 +301,15 @@ class TestRuntimeConfigPlugin:
         assert '"all"' in result
 
     @pytest.mark.asyncio
-    async def test_query_tasks_no_task_system(
+    async def test_query_tasks_no_workflow_engine(
         self, plugin: RuntimeConfigPlugin, base_ctx: ToolContext,
     ) -> None:
-        """query='tasks' 但 TaskSystem 不可用时优雅降级。"""
+        """query='tasks' 但 WorkflowEngine 不可用时优雅降级。"""
         base_ctx.services.pop("_task_system", None)
         params = RuntimeConfigParams(query="tasks")
         result = await plugin.execute(ctx=base_ctx, params=params)
 
-        assert "TaskSystem 不可用" in result
+        assert "WorkflowEngine 不可用" in result
 
     # ── RuntimeConfigParams ──────────────────────────────────────
 
