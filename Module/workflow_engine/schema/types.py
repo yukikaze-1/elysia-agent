@@ -61,7 +61,7 @@ IsoTimestamp = Annotated[str, BeforeValidator(_normalize_utc)]
 # ── 基础类型 ────────────────────────────────────────────────────────────────────
 
 # 跨边标识符别名（WorkflowId/AgentId/ApprovalId/SessionId/NodeId）已随契约层提取
-# 迁至 Module/workflow_contract/schema.py，本模块从契约层解析（见 schema/__init__.py）。
+# 迁至 Module/workflow_contract/schema.py——消费方直接从契约层 import（__init__ 已不重导出）。
 
 ArtifactId = NewType("ArtifactId", str)
 """产物唯一标识符。
@@ -71,8 +71,9 @@ NewType 防止调用方把 node_id / task_id 误当 artifact_id 传入。
 """
 
 
-# 跨边基础枚举（WorkflowStatus / SubmitRejectionCode / RBACLevel）已随契约层提取
-# 迁至 Module/workflow_contract/schema.py，本模块从契约层解析（见 schema/__init__.py）。
+# 跨边基础枚举（WorkflowStatus / SubmitRejectionCode）已随契约层提取迁至
+# Module/workflow_contract/schema.py；RBACLevel 归位 Module/tool/capability.py（Task 8）。
+# 消费方直接从契约层 import（__init__ 已不重导出）。
 
 # ── 基础枚举（引擎内部） ───────────────────────────────────────────────────────
 

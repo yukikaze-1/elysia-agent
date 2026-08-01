@@ -9,7 +9,7 @@
 | 2026-05 | 27 | [2026-05.md](completed/2026-05.md) |
 | 2026-06 | 33 | [2026-06.md](completed/2026-06.md) |
 | 2026-07 | 44 | 见下方 ↓ |
-| 2026-08 | 5 | 见下方 ↓ |
+| 2026-08 | 6 | 见下方 ↓ |
 
 ---
 
@@ -756,3 +756,17 @@ import 图分析发现 `core.agent ↔ core.status` 唯一硬环（eager 双向 
 - **META 路由注册表化：** `tags.META_TAGS` 加 `emit` 字段（与 `StreamEventType.value` 对齐），`stream_processor` META 路由查注册表 + `_EMIT_BY_NAME` 枚举自动派生映射——未来加 `<` 前缀新标签协调器零改动；未知 emit 从静默丢弃改为 `logger.warning` + 丢弃。关联 commit：`0373b26`。
 - **text_utils 迁出：** `content_text_from_content`/`MessageObj` 自 `core/text` 迁至 `core/utils`（消息工具与流式解析解耦）。关联 commit：`4107a71`。
 - **git 历史整理：** 39 个未推送 commit 合并为 10（文档簇合并 + 相邻代码按层合并），工作树内容零变化（`git diff` 验证一致）。当前 HEAD：`0373b26`。
+
+### 2026-08-02: workflow_engine 分离 — 模块改名 + 跨边契约层 + 剥皮归位（收官）
+
+把 `Module/task_system` 与 core 应用层分离干净，各自独立迭代：模块改名 `workflow_engine`（15 标识符 `Task*`→`Workflow*` + 主文件重命名），新建独立契约层 `Module/workflow_contract`，剥皮 7 项迁移清单全部归位，`Module/workflow_engine` 与 `Module/tool` 生产代码零 core 依赖。
+
+**阶段：**
+- **改名（Task 1-4）：** `Module/task_system` → `Module/workflow_engine`（目录 + 包路径 + 15 标识符 + 消费者侧 import + CLAUDE.md/文档 sed）
+- **契约层（Task 5-7）：** 新建 `Module/workflow_contract`（类型/枚举/协议 ABC/无状态纯函数/AgentInfra 运行时注入容器），跨边类型迁入；`parse_iso` 归契约层 utils；`Tool` 归位 `Module.tool`；`SessionId` 统一到契约层 + core 重导出
+- **剥皮 + 依赖反转（Task 8-11）：** migration.md 7 项全部归位——UserProfile→`core/cognitive/user_profile.py`、RBACLevel→`Module/tool/capability.py`、DelegationPreparer→`core/cognitive/delegation.py`、EventBusHITLNotifier→`core/hitl.py`、AgentInfra→契约层（覆盖原「Core 共享基础设施层」建议，理由见 spec §6.3）；`ErrorType` 迁 `Module/_common`；`new_message_id` 就地 uuid；契约层 Tool/RBACLevel 延迟 import 回退顶层（Task 11 循环解除后）
+- **收官（Task 12-14）：** 独立迭代门禁 `make test-workflow-engine` + 契约层 README + 全量文档清扫 + 最终验收（活跃文档零 `task_system` 残留）
+
+**验证：** `make test-quick` + `make test-workflow-engine` 绿；`grep -rn "from core\.\|import core\." Module/workflow_engine Module/tool --include="*.py"` 为空；活跃文档 grep 零残留。
+
+**关联 commit：** `d1fa9cb` `2940743` `3ae5a2d` `38ec8d0` `3ffcf60` `1b6bd56` `875adca` `21daf5a` `403eb1c` `aaa7518` `45ea2ab` `276c637` `5ab3341` `77c1b88` `a2c924a`（+ Task 14 待提交）。设计：[spec](../docs/superpowers/specs/2026-08-01-workflow-engine-separation-design.md)。

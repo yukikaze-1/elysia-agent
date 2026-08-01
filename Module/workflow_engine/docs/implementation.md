@@ -20,7 +20,7 @@ Module/workflow_engine/
 ├── __init__.py                # 公开 API facade（re-export 自 task_system.py）
 ├── task_system.py             # TaskSystem 主类：生命周期 (start/stop) + submit + 薄封装委托 (~430 行)
 ├── protocol.py                # HITLNotifier 等对外依赖协议（ABC）
-├── delegation_preparer.py     # DelegationPreparer: LLM 准备委派上下文（v1 已实现）
+├── (delegation_preparer.py 已迁 core/cognitive/delegation.py —— workflow_engine 分离 Task 9)
 ├── infra.py                   # AgentInfra + 共享基础设施
 ├── mailbox.py                 # TaskMailbox（单播，Agent 唯一消费者）
 ├── checkpoint.py              # CheckpointManager: 节点级 TaskState 快照（内存版）

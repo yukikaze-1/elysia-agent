@@ -191,7 +191,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | Logger | [Module/logger/README.md](Module/logger/README.md) | 日志工厂（plain + JSON） |
 | _common | [Module/_common/README.md](Module/_common/README.md) | 共享工具层（env + registry_helpers + test 工厂） |
 | System Prompt | [Module/system_prompt/README.md](Module/system_prompt/README.md) | System Prompt 引擎 + Section Provider |
-| TaskSystem | [Module/workflow_engine/README.md](Module/workflow_engine/README.md) | 后台任务委派与 DAG 编排 |
+| WorkflowEngine | [Module/workflow_engine/README.md](Module/workflow_engine/README.md) | 后台任务委派与 DAG 编排 |
 | WorkflowContract | [Module/workflow_contract/README.md](Module/workflow_contract/README.md) | 跨边契约层（core ↔ workflow_engine 类型来源） |
 | Tool | [Module/tool/README.md](Module/tool/README.md) | 工具执行框架（Plugin + SafetyPipeline） |
 | Database | [Module/database/README.md](Module/database/README.md) | 数据库总览（Milvus + MongoDB） |
@@ -275,7 +275,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | STT 语音识别 (SenseVoice / OpenAI-compatible) + 情绪标签 | done |
 | TTS 流式合成 (MiniMax / GPT-SoVits / OpenAI-compatible) + 句队列 | done |
 | 文字/语音绑定 + 逐句独立气泡 | done |
-| **TaskSystem v1** — DAG 编排 + Planner/Executor/Evaluator (339 tests) | done |
+| **WorkflowEngine v1** — DAG 编排 + Planner/Executor/Evaluator (339 tests) | done |
 | **Token 追踪** — TokenTracker + PromptRecorder + 前端标签 | done |
 | 工具系统 Plugin 架构 — 12 插件 + SafetyPipeline + HITL 审批 | done |
 | **模型切换** — DeepSeek/OpenAI/Ollama/MiMo + 运行时热切换 | done |
@@ -337,8 +337,9 @@ Agent/
 │   ├── system_prompt/      # Brain Prompt 引擎 — SystemPromptManager + 12 PromptSections
 │   ├── tool/               # 工具框架 (129 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB
-│   ├── workflow_engine/    # TaskSystem v1 (339 tests)
+│   ├── workflow_engine/    # WorkflowEngine v1 (339 tests)
 │   │   └── tests/          #     测试
+│   ├── workflow_contract/  # 跨边契约层 (types/enums/AgentInfra)
 │   └── bench/              # 延迟基准
 │
 ├── core/                   # Elysia Agent 应用程序

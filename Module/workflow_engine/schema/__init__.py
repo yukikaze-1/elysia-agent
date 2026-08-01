@@ -74,7 +74,7 @@ from .internal import (
 
 # 内部工具不导出: _normalize_utc, IsoTimestamp
 # parse_iso 已随契约层迁至 Module.workflow_contract.utils（Task 6）
-# now_iso 因编排层 (orchestrator/sub_agent/task_system/parser) 大量使用，保留在公开导出中
+# now_iso 因编排层 (orchestrator/sub_agent/workflow_engine/parser) 大量使用，保留在公开导出中
 # 已迁契约层的类型: AgentId/ApprovalId/NodeId/SessionId/WorkflowId/WorkflowStatus/
 #   SubmitRejectionCode/ConstraintConfig/WorkflowConstraints/ReturnMode/
 #   DelegationContext/DelegationResult/DelegationStatus/SubmitError/HITLData/

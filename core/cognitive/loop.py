@@ -180,7 +180,7 @@ class CognitiveLoop(CognitiveTools):
         )
         self._executing_tools: list[str] = []  # 当前正在执行中的工具名 (供 debug 面板)
         self._timing_history: list[dict] = []  # 最近 100 轮请求的计时数据 (供 debug 面板)
-        self._task_system: WorkflowEngine | None = None          # 由 configure() 注入
+        self._task_system: WorkflowEngine | None = None              # 由 configure() 注入
         self._delegation_preparer: DelegationPreparer | None = None  # 由 configure() 注入
         self._on_background_task: Callable | None = None  # Agent 注入的回调
         self._user_profile: UserProfile | None = None         # 由 configure() 注入

@@ -65,7 +65,7 @@ Agent.start()
   ├── TaskScheduler.start()
   ├── EventBus loop start
   ├── TTS backend test (conditional)
-  └── TaskSystem + DelegationPreparer
+  └── WorkflowEngine + DelegationPreparer（mailbox 轮询）
 ```
 
 ---
@@ -100,7 +100,7 @@ Agent.start()
 
 关键方法：`post()`, `next()`, `drain()`
 
-#### CognitiveLoop (`cognitive/` package, 3 files)
+#### CognitiveLoop (`cognitive/` package, 5 files)
 
 ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的核心执行引擎。使用 mixin 模式：`CognitiveLoop(CognitiveTools)`。流式标签检测（mood + inner_voice）由 `StreamProcessor` (`core/text/stream_processor.py`) 独立处理——纯状态机，零 I/O，将标签解析结果以 `StreamEvent` 事件流输出。`_dispatch_stream_event()` 负责事件→副作用翻译（mood 更新、inner_voice 广播、TTS 分发、FSM 切换）。工具调用检测后最多 5 轮工具循环。`_handle_submit_task` 拦截后台任务委托。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。`tools.py` 包含 `_execute_tools_directly`、`_submit_task_definition`、`_default_user_profile`。`timing.py` 包含 `Timer` context manager + `TimingClock` 请求级聚合（span 嵌套）。
 
@@ -136,11 +136,13 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 
 关键方法：`start()`, `stop()`, `dispatch_tool_calls()`, `cancel_all()`
 
-### 支撑模块（15 个）
+### 支撑模块（12 个）
 
 | 文件 | 职责 |
 |------|------|
 | `monitoring/` | 监控子包：`EventBus` 优先级事件总线、`IdleMonitor` 空闲检测+主动触发、`TokenTracker` token 统计+广播 |
+| `cognitive/delegation.py` | `DelegationPreparer`（workflow_engine 分离 Task 9 迁入）：submit_task 委派预处理——LLM 筛选工具 + 防幻觉校验 + 约束估算 → `DelegationContext` |
+| `hitl.py` | `EventBusHITLNotifier`（workflow_engine 分离 Task 10 迁入）：基于 EventBus 的 HITL 审批通知演示实现（ABC 在契约层 `Module/workflow_contract`） |
 | `adapter/` | 适配器层：`LLMAdapter` 封装 `Module.llm` 后端，提供 `stream_think()` 流式接口，自动重试（429/500/502/503/504，指数退避 3 次）。`TTSStreamManager` 管理 TTS 句队列 + emoji 同步 + 门控播放。`ToolAdapter` 封装工具子系统生命周期（创建+加载+关闭）。`tool_call_parser` 流式 tool_call 合并/归一化。详见 [`adapter/`](adapter/) |
 | `config/` | 配置子包：`character_config.py`（角色配置：从 YAML 加载角色名、wake words、emotion 阈值、proactive 参数、L1 Core personality 文本路径。`from_yaml()` 工厂方法）+ `app_config.py`（应用配置：`ConfigLoader` 加载 `config.yaml` + env override。包含 `AgentConfig`、`LLMConfig`、`MemoryConfig`、`TTSConfig` 等 dataclass） |
 | `text/` | 文本流处理包：`tags.py` 标签注册表（PAUSE/STAGE_CN/META/CODE/MARKDOWN 全部定义 + emoji 收口）。`tokenizer.py` 结构感知切分（`StreamTokenizer`，跨 chunk 不变式 + 持有上界）。`splitter.py` 结构感知分句（`SpeechSplitter`，边界扫描跳过受保护 span，输出 SENTENCE + TEXT_DELTA）。`parts.py` 从句子 + 块交错构建 `TextPart` + content_type（session 存储）。`stream_processor.py` 协调器（tokenizer + splitter + 事件发射 + get_blocks + public_text 重建；META 路由注册表化，`META_TAGS.emit` + 枚举自动派生，未知 emit 降级 warning）。详见 [`text/`](text/) |

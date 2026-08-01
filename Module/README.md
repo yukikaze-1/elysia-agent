@@ -245,16 +245,17 @@ if buf.is_speech_complete():  # VAD 检测到完整语音段
 
 > 📖 完整 API 文档 → [core/input/README.md](../core/input/README.md)
 
-### TaskSystem — 异步任务编排
+### WorkflowEngine — 异步任务编排
 
-Planner/Orchestrator/Executor 三层架构，支持子 Agent 委托、DAG 依赖图、checkpoint 持久化、mailbox 轮询。
+Planner/Orchestrator/Executor 三层架构，支持子 Agent 委托、DAG 依赖图、checkpoint 持久化、mailbox 轮询。主类 `WorkflowEngine`；跨边类型（`AgentInfra`/`HITLNotifier`/`DelegationContext` 等）自契约层 `Module/workflow_contract` 解析。
 
 ```python
-from Module.workflow_engine import TaskSystem
+from Module.workflow_engine import WorkflowEngine
+from Module.workflow_contract import AgentInfra, HITLNotifier, DelegationContext
 
-ts = TaskSystem(llm_adapter=llm, tools=tool_manager)
-task_id = await ts.submit("帮我查一下今天的天气")
-result = await ts.mailbox.wait(task_id, timeout=60)
+we = WorkflowEngine(infra=infra, hitl_notifier=hitl_notifier)  # infra/notifier 由 Agent 生命周期注入
+mailbox = await we.submit(context)  # context: DelegationContext（DelegationPreparer 产出，见 core/cognitive/delegation.py）
+event = await mailbox.get(timeout=60)
 ```
 
 > 📖 完整文档 → [Module/workflow_engine/docs/](workflow_engine/docs/)

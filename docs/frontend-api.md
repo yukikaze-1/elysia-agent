@@ -849,8 +849,8 @@ POST /tools/reload   → 请求: {"name": "web_search"} 响应: {"ok": true, "na
 ```
 GET  /debug                  → debug 页面 HTML
 GET  /debug/api              → Agent 完整内部状态 JSON
-GET  /debug/api/tasks        → TaskSystem 任务快照
-GET  /debug/api/tasks/stream → TaskSystem SSE 实时推送
+GET  /debug/api/tasks        → WorkflowEngine 任务快照
+GET  /debug/api/tasks/stream → WorkflowEngine SSE 实时推送
 GET  /debug/api/db-status    → MongoDB/Milvus 连接状态
 GET  /debug/api/ltm          → 长期记忆条目列表
 GET  /debug/api/sessions     → Session 列表

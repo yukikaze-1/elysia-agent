@@ -24,7 +24,7 @@ core/（应用层） ──import──▶ workflow_contract ◀──import─�
 
 - ✅ 不 import `core.*`（Task 12 门禁验证：含延迟 import 为零）
 - ✅ 不 import `Module.workflow_engine`（反向依赖会成环）
-- ✅ 允许 import `Module.tool`（`Tool` / `RBACLevel` 仅用于注解——通过延迟 import + `model_rebuild()` 打破 Module.tool → core.schema → 本模块的循环）
+- ✅ 允许 import `Module.tool`（`Tool` / `RBACLevel` 顶层直接 import——`Module.tool` 已不依赖 core/契约层，循环已解除）
 - ✅ 允许第三方库（pydantic / httpx / openai / enum / typing 等）
 
 ## 类型清单
@@ -41,7 +41,7 @@ core/（应用层） ──import──▶ workflow_contract ◀──import─�
 | `SubmitRejectionCode` | submit 拒绝原因码 |
 | `ReturnMode` | 回传模式（STRUCTURED / NATURAL_LANGUAGE） |
 | `DelegationStatus` | 委派结果三态（ok / no_matching_tools / too_vague） |
-| `WorkflowEventType` | 对外事件类型（progress/completed/failed/cancelled/paused） |
+| `WorkflowEventType` | 对外事件类型（progress/approval_needed/completed/failed/cancelled/paused） |
 
 ### 约束（Pydantic）
 

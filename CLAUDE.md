@@ -210,7 +210,8 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.config` | Config infrastructure | `ConfigLoader` (YAML + env + validation) |
 | `Module.logger` | Logging factory | `LoggerFactory` (plain + JSON, rotating) |
 | `Module.system_prompt` | System prompt engine | 12-section orchestration + templates |
-| `Module.workflow_engine` | 后台任务引擎（原 `task_system`）：ReAct 编排/规划/执行/子智能体。主类 `WorkflowEngine`；契约层 `Module/workflow_contract`（阶段 2 落位后补） | `orchestrator` + `planner` + `executor` + `sub_agent` |
+| `Module.workflow_engine` | 后台任务引擎（原 `task_system`）：ReAct 编排/规划/执行/子智能体。主类 `WorkflowEngine`；跨边类型经契约层 `Module/workflow_contract` | `orchestrator` + `planner` + `executor` + `sub_agent` |
+| `Module.workflow_contract` | 跨边契约层（core ↔ workflow_engine 唯一类型来源）：类型/枚举/协议 ABC/无状态纯函数/AgentInfra 运行时注入容器，零业务逻辑 | `schema` + `infra` + `utils` |
 | `core.schema` | Shared Pydantic types: EventData (discriminated union, 5 event types), ToolCall, ExtractedMemory/CompareAction (discriminated union), ReflectorActions, MemoryType, message types, mood, etc. | |
 | `Module.database.vectordb` | Vector DB (ANN search) | `milvus` |
 | `Module.database.documentdb` | Document DB | `mongodb` |

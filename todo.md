@@ -25,11 +25,11 @@
 | 优先级 | 位置 | 说明 |
 |--------|------|------|
 | ~~中~~ ✅ | [Module/tool/protocol.py:15](Module/tool/protocol.py#L15) | eager `from core.schema.error_type import ErrorType` — **已评估：接受**。ErrorType 是跨层类型（`core.schema.message.ToolResultMessage` + `Module.tool.ToolResult` 双侧消费），不能挪进 Module/tool（会反向拖累 schema）；core.schema 是叶子无反向依赖、无环。唯一 test 级反向边已修复：`core/schema/tests/test_message.py` 改从 `core.schema.error_type` 正典导入 |
-| ~~中~~ ✅ | [Module/workflow_engine/delegation_preparer.py:20-21](Module/workflow_engine/delegation_preparer.py#L20) | eager `from core.schema.message import Message` 等 — **已修**：文件迁至 `core/cognitive/delegation.py`（workflow_engine 分离 Task 9），core 引用随之合法，Module/workflow_engine 生产代码现零 core 依赖 |
+| ~~中~~ ✅ | [core/cognitive/delegation.py:20-21](core/cognitive/delegation.py#L20) | eager `from core.schema.message import Message` 等 — **已修**：文件迁至 `core/cognitive/delegation.py`（workflow_engine 分离 Task 9），core 引用随之合法，Module/workflow_engine 生产代码现零 core 依赖 |
 | 低 | [Module/tool/safety.py:618](Module/tool/safety.py#L618) | lazy `from core.utils import new_message_id` |
 | 低 | [Module/bench/bench.py:129-139](Module/bench/bench.py#L129) | lazy `core.config`/`core.agent`（bench 是 dev 工具，可豁免） |
 
-根因：`core.schema` 名义在 core/ 下但承担跨层共享类型职责，Module.tool/task_system 引用它 = Module 层无法独立存在。评估结论：可接受（schema 本就是共享契约层、叶子节点），仅修掉 test 级反向边；若未来要求 Module 层作为独立库发布，才需将 ErrorType/Message 下移到根级共享包。
+根因：`core.schema` 名义在 core/ 下但承担跨层共享类型职责，Module.tool/workflow_engine 引用它 = Module 层无法独立存在。评估结论：可接受（schema 本就是共享契约层、叶子节点），仅修掉 test 级反向边；若未来要求 Module 层作为独立库发布，才需将 ErrorType/Message 下移到根级共享包。
 
 ### 软环（lazy import 运行时解决，无需处理）
 
@@ -55,10 +55,10 @@
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| **中** | **M19 resume 后再次 pause 被销毁** | [task_system.py:384-393](Module/workflow_engine/task_system.py#L384)。缺 PAUSED early-return 保护，mailbox 消费者永久阻塞 |
-| **中** | **M20 cancel 在规划阶段不推终态事件** | [lifecycle.py:157-167](Module/workflow_engine/lifecycle.py#L157) + [planning.py:143-145](Module/workflow_engine/core/planning.py#L143)。`cancel()` 尚无调用方接线，随任务系统接入时修复 |
+| **中** | **M19 resume 后再次 pause 被销毁** | [workflow_engine.py:384-393](Module/workflow_engine/workflow_engine.py#L384)。缺 PAUSED early-return 保护，mailbox 消费者永久阻塞 |
+| **中** | **M20 cancel 在规划阶段不推终态事件** | [lifecycle.py:157-167](Module/workflow_engine/lifecycle.py#L157) + [planning.py:143-145](Module/workflow_engine/core/sub_agent/planning.py#L143)。`cancel()` 尚无调用方接线，随任务系统接入时修复 |
 
-> M19/M20 随 TaskSystem 接入。
+> M19/M20 随 WorkflowEngine 接入。
 
 ## 功能改进
 

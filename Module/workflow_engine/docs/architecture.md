@@ -777,7 +777,7 @@ Worker 遇到 MUTATION
 - 任务数据量大（Plan + 多步工具输出 + 错误信息），不适合混入控制通道
 - TaskMailbox 消费者只有一个（Agent），不存在多方分流
 
-**HITLNotifier 协议**：TaskSystem 不依赖 EventBus。定义在 `Module/workflow_engine/protocol.py`。CognitiveLoop 重构时只需换实现，TaskSystem 一行不改。
+**HITLNotifier 协议**：WorkflowEngine 不依赖 EventBus。ABC 定义在契约层 `Module/workflow_contract`（schema.py），EventBus 演示实现 `EventBusHITLNotifier` 在 `core/hitl.py`（原 `Module/workflow_engine/protocol.py` 已删除）。CognitiveLoop 重构时只需换实现，WorkflowEngine 一行不改。
 
 ### 6.3 暂停与取消（pause_requested 标志 + PAUSED 状态）
 

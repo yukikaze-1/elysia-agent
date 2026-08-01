@@ -9,7 +9,7 @@
 - [1. 核心类型 (core/)](#1-核心类型-core)
 - [2. 消息和媒体格式 (core/schema/)](#2-消息和媒体格式-coreschema)
 - [3. 工具系统 (Module/tool/)](#3-工具系统-moduletool)
-- [4. TaskSystem 类型 (Module/workflow_engine/schema/)](#4-tasksystem-类型-moduletask_systemschema)
+- [4. WorkflowEngine 类型 (Module/workflow_engine/schema/)](#4-workflowengine-类型-moduleworkflow_engineschema)
 - [5. 后端协议 ABC (Module/*/protocol.py)](#5-后端协议-abc-moduleprotocolpy)
 - [6. Session Params（裸 dict，无 schema）](#6-session-params裸-dict无-schema)
 - [7. WebSocket 消息格式（裸 dict）](#7-websocket-消息格式裸-dict)
@@ -122,7 +122,7 @@
 
 ---
 
-## 4. TaskSystem 类型 (Module/workflow_engine/schema/)
+## 4. WorkflowEngine 类型 (Module/workflow_engine/schema/)
 
 ### 基础类型 (`types.py`)
 
@@ -189,7 +189,7 @@
 | `TaskResult` | 任务完成结构 |
 | `ExperienceRecord` | 经验记忆记录 |
 
-> **总计：TaskSystem 独占约 40 个类型，组织较规范。不建议拆改。**
+> **总计：WorkflowEngine 独占约 40 个类型，组织较规范。不建议拆改。**
 
 ---
 
@@ -472,7 +472,7 @@ wake_words: [Elysia, 爱莉, 爱莉希雅, 妖精小姐]
 | **🟡 中** | MongoDB 文档 | sessions/messages/token_usage 隐式结构 | 至少给文档 dict 提供 TypedDict 或 dataclass，标注字段 |
 | **🟡 中** | 消息 Part 类型 | 原 `Module/schema/message_format.py` 标记废弃 | 已迁移到 `core/schema/part.py`（Pydantic BaseModel） |
 | **🟡 中** | PersonalityEngine params | self_l2/state_l3/compression_last_* 等都是裸 session param | 纳入 `SessionParams`，或独立 `PersonalityState` dataclass |
-| **🟢 低** | TaskSystem schema | 40+ 类型，组织良好，在独立目录 | 保持不动 |
+| **🟢 低** | WorkflowEngine schema | 40+ 类型，组织良好，在独立目录 | 保持不动 |
 | **🟢 低** | 后端 ABC | 各在 protocol.py，模式统一 | 保持不动 |
 | **🟢 低** | 配置 dataclass | 结构清晰，ConfigField 约束完整 | 保持不动 |
 

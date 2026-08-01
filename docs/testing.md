@@ -48,8 +48,8 @@ pytest core/config/tests/ -v               # 配置 dataclass
 pytest core/monitoring/tests/ -v           # Token 监控
 pytest core/task/tests/ -v                 # Task 调度
 pytest core/tools/ -v                      # 工具插件
-pytest Module/workflow_engine/tests/unit/ -v   # TaskSystem 单元
-pytest Module/workflow_engine/tests/integration/ -v  # TaskSystem 集成
+pytest Module/workflow_engine/tests/unit/ -v   # WorkflowEngine 单元
+pytest Module/workflow_engine/tests/integration/ -v  # WorkflowEngine 集成
 
 # 按文件运行
 pytest Module/llm/tests/ -v
@@ -95,7 +95,6 @@ pytest core/tests/test_phase3.py -v
 | `Module/tool/tests/` | `test_framework.py` | 96 | unit+service |
 | | `test_tool_safety.py` | 33 | unit |
 | `Module/workflow_engine/tests/unit/` | `test_checkpoint.py` | 9 | unit |
-| | `test_delegation_preparer.py` | 53 | unit |
 | | `test_evaluator.py` | 29 | unit |
 | | `test_executor.py` | 12 | unit |
 | | `test_graph.py` | 46 | unit |
@@ -141,6 +140,7 @@ pytest core/tests/test_phase3.py -v
 | | `test_flush.py` | 5 | unit |
 | | `test_mood_engine.py` | 15 | unit |
 | | `test_tool_gate.py` | 10 | unit |
+| | `test_delegation_preparer.py` | 51 | unit |
 | `core/memory/tests/` | `test_long_term.py` | 8 | service |
 | | `test_consolidator.py` | 21 | service+unit |
 | | `test_memory_reflector.py` | 15 | service |
@@ -228,7 +228,7 @@ class TestAgentLifecycle:
 ## 已知问题
 
 - **`test_touch_resets_timer`** — `IdleMonitor.__init__` 中 `asyncio.get_event_loop().time()` 在全量 suite 中偶现失败。已加 `time.sleep(0.001)` 缓解，建议后续改用 `time.monotonic()`。
-- **`test_resume_idempotent_on_running`** — TaskSystem race condition（task 过快完成导致 `resume()` 返回不符合预期）。
+- **`test_resume_idempotent_on_running`** — WorkflowEngine race condition（task 过快完成导致 `resume()` 返回不符合预期）。
 - **`test_ok_returns_latency`** — 之前 `ok_check(self)` 多余参数已修复（commit `963ee6b`）。
 
 ## 添加新测试

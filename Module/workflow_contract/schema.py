@@ -11,15 +11,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, NewType
+from typing import Any, NewType
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
-    from Module.tool.tool_descriptor import Tool
-
-# Tool 采用延迟导入（见文件底部）——Module.tool → core.schema → 本模块存在循环链，
-# 提前导入会在 core.schema.types 重导出 SessionId 时撞上部分初始化的本模块。
+from Module.tool.tool_descriptor import Tool  # 循环已解除（workflow_engine 分离 Task 11）：Module.tool 不再 import core
+from Module.tool.capability import RBACLevel  # 同上——顶层直接 import，无需底部延迟 import / model_rebuild
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -112,8 +109,7 @@ class SubmitRejectionCode(StrEnum):
     CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"  # 上下文窗口不足
     TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"     # 预估 token 消耗超用户剩余配额
 
-    # RBACLevel 已归位 Module/tool/capability.py（canonical home），
-    # 本模块底部延迟 import，供 HITLData.rbac_level 使用。
+    # RBACLevel 已归位 Module/tool/capability.py（canonical home），顶部直接 import，供 HITLData.rbac_level 使用。
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -347,8 +343,7 @@ class HITLData(BaseModel):
     node_task: str                       # 当前节点的目标任务描述
     tool_name: str
     params: dict[str, Any] = Field(default_factory=dict)
-    # RBACLevel 延迟 import（见文件底部）——default_factory 保证默认值在实例创建时才解析，
-    # 避免类定义时 NameError。字符串注解 + model_rebuild() 在底部 import 后解析类型。
+    # RBACLevel 顶部直接 import——default_factory 在实例创建时解析默认值，无循环风险。
     rbac_level: RBACLevel = Field(default_factory=lambda: RBACLevel.MUTATION)
     risk_summary: str = ""
 
@@ -483,16 +478,4 @@ class HITLNotifier(ABC):
         ...
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 底部延迟导入 Tool / RBACLevel + 重建引用
-# ═══════════════════════════════════════════════════════════════════════════════
-
-from Module.tool.tool_descriptor import Tool  # noqa: E402  # 打破循环：Module.tool → core.schema → 本模块
-
-# DelegationContext.tools: list[Tool] 的字符串注解在此解析（Tool 此刻已入模块命名空间）。
-DelegationContext.model_rebuild()
-
-from Module.tool.capability import RBACLevel  # noqa: E402  # 与 Tool 相同：延迟 import 打破循环
-
-# HITLData.rbac_level: RBACLevel 的字符串注解在此解析（RBACLevel 此刻已入模块命名空间）。
-HITLData.model_rebuild()
+# ── Tool / RBACLevel 已在文件顶部直接 import（Task 11 循环解除后无需延迟 import / model_rebuild）──

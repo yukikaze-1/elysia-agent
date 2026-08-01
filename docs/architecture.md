@@ -741,8 +741,8 @@ aiohttp Application (45 条路由):
 | GET\|DELETE | `/debug/api/sessions/{session_id}` | Session 详情 / 删除 |
 | GET\|DELETE | `/debug/api/archive` | Archive 分页 / 清空全部 |
 | PUT\|DELETE | `/debug/api/archive/{msg_id}` | 更新 / 删除单条归档 |
-| GET | `/debug/api/tasks` | TaskSystem 快照 |
-| GET | `/debug/api/tasks/stream` | TaskSystem SSE 事件流 |
+| GET | `/debug/api/tasks` | WorkflowEngine 快照 |
+| GET | `/debug/api/tasks/stream` | WorkflowEngine SSE 事件流 |
 | GET | `/debug/api/l2-versions` | L2 self-image 版本历史 |
 | POST | `/debug/api/l2-rollback` | L2 self-image 回滚（指定版本） |
 | GET | `/debug/api/character-versions` | Character 版本历史（L2/C6，通过 type 参数选择） |
@@ -865,7 +865,7 @@ proactive:
 |------|---------|------|
 | 概览 | `/debug/api` 轮询 | 12+ 卡片面板：System、Memory（含 Session Params 可展开）、Latency、Process Memory、Scheduler、Token、Prompt 查看器、Raw Response、LTM、Tools、Tool History、Consolidation、Character Reflector、CharacterEngine |
 | 数据库 | `/debug/api/db-status` + `/debug/api/ltm` + `/debug/api/sessions` + `/debug/api/archive` | LTM CRUD + 分页 + 搜索；Session 管理（从 archive 权威源读取，限 20 条）；Archive CRUD |
-| 任务 | `/debug/api/tasks/stream` SSE | TaskSystem 实时监控 + DAG 可视化 (vis-network) |
+| 任务 | `/debug/api/tasks/stream` SSE | WorkflowEngine 实时监控 + DAG 可视化 (vis-network) |
 
 ---
 
@@ -897,7 +897,7 @@ class Agent:
         # TaskScheduler Worker Pool 启动
         # IdleMonitor.start()
         # TTS 条件启动（STT 在 run_server() 中初始化）
-        # TaskSystem 启动 + Mailbox 轮询
+        # WorkflowEngine 启动 + Mailbox 轮询
         # 事件处理循环 (_process_events)
 
     async def stop():
@@ -909,7 +909,7 @@ class Agent:
         # 6. _stop_cognitive_and_tts() — cancel cognitive + TTS tasks
         # 7. _stop_db_health() — cancel db_health_task
         # 8. _stop_mailbox() — cancel mailbox polling
-        # 9. _stop_task_system() — stop TaskSystem
+        # 9. _stop_task_system() — stop WorkflowEngine
         # 10. _stop_scheduler() — scheduler.shutdown()
         # 11. _stop_tool_adapter() — tool_adapter.shutdown()
         # 12. _stop_idle() — idle_monitor.stop()
@@ -988,7 +988,8 @@ Agent/
 │   ├── system_prompt/       # System Prompt 引擎 + Section Provider + 12 templates
 │   ├── database/            # Database: Milvus / MongoDB / GraphDB (stub)
 │   ├── tool/                # Tool: ToolPlugin框架 + SafetyPipeline + ToolManager
-│   ├── workflow_engine/     # TaskSystem: 异步任务编排 (Planner/Orchestrator/Executor)
+│   ├── workflow_engine/     # WorkflowEngine: 异步任务编排 (Planner/Orchestrator/Executor)
+│   ├── workflow_contract/   # 跨边契约层 (core ↔ workflow_engine 唯一类型来源)
 │   └── bench/               # Bench: 延迟基准
 │
 ├── core/                    # L1 认知控制 + L2 记忆
@@ -1000,7 +1001,7 @@ Agent/
 │   │   ├── _lifecycle_persistence.py  #  持久化层启停
 │   │   ├── _lifecycle_services.py     #  LLM/TTS/Output/Token 启停
 │   │   ├── _lifecycle_tools.py        #  工具/调度/空闲监控 启停
-│   │   └── _lifecycle_task_system.py  #  TaskSystem/DelegationPreparer/mailbox 启停
+│   │   └── _lifecycle_task_system.py  #  WorkflowEngine/DelegationPreparer/mailbox 启停
 │   ├── adapter/
 │   │   ├── llm_adapter.py
 │   │   ├── tts_adapter.py
@@ -1136,6 +1137,8 @@ Agent/
     └── README.md           #   脚本说明
 ```
 
+> **后台任务子系统三区（workflow_engine 分离后）**：`core/`（应用层）──import──▶ `Module/workflow_contract`（跨边契约层）◀──import── `Module/workflow_engine`（引擎，干净叶子）。跨边类型（`DelegationContext` / `AgentInfra` / `HITLNotifier` 等）唯一来源在契约层，两边各自单向 import、互不感知对方内部实现。`DelegationPreparer` / `EventBusHITLNotifier` / `UserProfile` 已归位 core 侧（`cognitive/delegation.py`、`hitl.py`、`cognitive/user_profile.py`）。
+
 ---
 
 ## 13. 并发任务全景
@@ -1173,13 +1176,13 @@ INTERRUPT:
 | 8 | long_term.py | embedding 加载 | insert 时 await (wait=True), search 时 fire-and-forget |
 | 9 | personality/engine.py | expression 输出 | 纯 fire-and-forget，无追踪 |
 | 10 | tool/manager.py | SafetyPipeline 执行 | Pipeline 内部追踪 |
-| 11 | agent/agent.py | `_poll_mailboxes()` | TaskSystem mailbox 500ms 轮询，常驻，stop 时 cancel |
+| 11 | agent/agent.py | `_poll_mailboxes()` | WorkflowEngine mailbox 500ms 轮询，常驻，stop 时 cancel |
 | 12 | agent/agent.py | cognitive process (TASK_RESULT) | `_current_task` |
 | 13 | agent/lifecycle.py | `_db_health_loop()` | 数据库健康检查 120s 间隔，常驻，stop 时 cancel |
 | 14 | memory/session.py | archive_append | fire-and-forget，无追踪 |
 | 15 | input/server.py | per-connection state monitor | 常驻，disconnect 时 cancel |
-| 16 | workflow_engine/task_system.py | sub-agent task submit | TaskSystem 内部追踪 |
-| 17 | workflow_engine/task_system.py | sub-agent task resume | TaskSystem 内部追踪 |
+| 16 | workflow_engine/workflow_engine.py | sub-agent task submit | WorkflowEngine 内部追踪 |
+| 17 | workflow_engine/workflow_engine.py | sub-agent task resume | WorkflowEngine 内部追踪 |
 | 18 | personality/reflector.py | CharacterReflector fire-and-forget | fire-and-forget，无追踪 |
 | 19 | task/scheduler.py | Worker Pool + prune loop | 常驻，stop 时 cancel |
 
@@ -1211,7 +1214,7 @@ INTERRUPT:
 
 已解决:
   1. ✅ 消息排队 — pending_messages + 容量上限，busy 时暂存
-  2. ✅ 后台任务 — TaskSystem v1: Planner/Executor/Evaluator DAG 编排 + Mailbox 轮询
+  2. ✅ 后台任务 — WorkflowEngine v1: Planner/Executor/Evaluator DAG 编排 + Mailbox 轮询
   3. ✅ 流式中断 — CancelledError 防御 + FSM 幂等
 
 待解决:

@@ -28,7 +28,7 @@ Component dependency graph (top-down):
     PromptRecorder ────────────┤                           │
     ResponseRecorder ──────────┤                           │
     TTSBackend ────────────────┤                           │
-    WorkflowEngine ────────────────┤                           │
+    WorkflowEngine ────────────┤                           │
     DelegationPreparer ────────┤                           │
                                │                           │
                                └── IdleMonitor ────────────┘
