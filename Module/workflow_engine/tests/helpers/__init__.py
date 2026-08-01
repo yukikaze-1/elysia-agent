@@ -2,14 +2,14 @@
 
 用法:
     from Module.workflow_engine.tests.helpers import (
-        build_test_task_system,
+        build_test_workflow_engine,
         get_tools_from_manager,
         mock_replan_response,
         MOCK_PLUGIN_MAP,
     )
 
     # 创建带 mock 工具的 WorkflowEngine（默认）
-    ts = await build_test_task_system(
+    ts = await build_test_workflow_engine(
         plugins=[TimePlugin, WebSearchPlugin],  # WebSearchPlugin → MockWebSearchPlugin
     )
 
@@ -53,7 +53,7 @@ MOCK_PLUGIN_MAP: dict[str, type[ToolPlugin]] = {
 
 # ── WorkflowEngine 工厂 ──────────────────────────────────────────────────────────────
 
-async def build_test_task_system(
+async def build_test_workflow_engine(
     plugins: list[type[ToolPlugin]] | None = None,
     use_mocks: bool = True,
     wrap_llm: bool = False,

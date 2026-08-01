@@ -110,7 +110,7 @@ TaskSystem
 
 | 层级 | 文件 | 测试数 | 覆盖 |
 |------|------|--------|------|
-| unit/ | `test_task_system.py` | 25→40 | stop / pause / token / 查询 API |
+| unit/ | `test_workflow_engine.py` | 25→40 | stop / pause / token / 查询 API |
 | unit/ | `test_orchestrator.py` | 26 | 执行循环 / 重试 / 审批 / 暂停 |
 | unit/ | `test_sub_agent.py` | 22→24 | 决策循环 / 熔断 / replan |
 | unit/ | `test_graph.py` | 46 | PlanGraph + DAGPatch |
@@ -121,7 +121,7 @@ TaskSystem
 | unit/ | `test_checkpoint.py` | 9 | |
 | unit/ | `test_mailbox.py` | 10 | |
 | unit/ | `test_token_ledger.py` | 8 | write-through + 审计 + 损耗 |
-| integration/ | `test_task_system_lifecycle.py` | 10 | stop / pause / cancel / resume / 并发 / replan |
+| integration/ | `test_workflow_engine_lifecycle.py` | 10 | stop / pause / cancel / resume / 并发 / replan |
 | integration/ | `test_e2e_mvp.py` | 7 | 完整 7 链路（含 llm_direct / cancel / resume） |
 | integration/ | `test_delegation_preparer.py` | 11 | LLM 工具筛选 |
 | integration/ | `test_executor.py` | 4 | LLM tool-calling + llm_direct + 哨兵 |

@@ -5,7 +5,7 @@
 
 用法:
     conda activate Elysia
-    python -m pytest Module/workflow_engine/tests/integration/test_task_system_lifecycle.py -v -s
+    python -m pytest Module/workflow_engine/tests/integration/test_workflow_engine_lifecycle.py -v -s
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from Module.workflow_engine.mailbox import WorkflowMailbox
 from Module.tool.manager import ToolManager
 from Module.tool.protocol import PluginContext
 from core.tools.time.plugin import TimePlugin
-from Module.workflow_engine.tests.helpers import build_test_task_system, get_tools_from_manager
+from Module.workflow_engine.tests.helpers import build_test_workflow_engine, get_tools_from_manager
 
 pytestmark = pytest.mark.slow
 
@@ -56,7 +56,7 @@ async def test_stop_after_task_completion():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await build_test_task_system(plugins=[TimePlugin])
+    ts = await build_test_workflow_engine(plugins=[TimePlugin])
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     # 提交简单任务
@@ -110,7 +110,7 @@ async def test_stop_rejects_submit_after_shutdown():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await build_test_task_system(plugins=[TimePlugin])
+    ts = await build_test_workflow_engine(plugins=[TimePlugin])
     await ts.stop(timeout=10.0)
 
     from Module.workflow_contract import SubmitRejectionCode
@@ -134,7 +134,7 @@ async def test_pause_sets_flag_and_cleanly_stops():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await build_test_task_system(plugins=[TimePlugin])
+    ts = await build_test_workflow_engine(plugins=[TimePlugin])
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     ctx = DelegationContext(
@@ -270,7 +270,7 @@ async def test_goal_failed_triggers_replan():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await build_test_task_system(plugins=[TimePlugin])
+    ts = await build_test_workflow_engine(plugins=[TimePlugin])
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     # 缩小熔断阈值——2 次 replan 即触发熔断（而非默认 5），大幅缩短测试耗时。
@@ -364,7 +364,7 @@ async def test_cancel_during_execution():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await build_test_task_system(plugins=[TimePlugin])
+    ts = await build_test_workflow_engine(plugins=[TimePlugin])
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     ctx = DelegationContext(
@@ -431,7 +431,7 @@ async def test_pause_and_resume():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await build_test_task_system(plugins=[TimePlugin])
+    ts = await build_test_workflow_engine(plugins=[TimePlugin])
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     ctx = DelegationContext(
@@ -531,7 +531,7 @@ async def test_cancel_on_paused_task():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await build_test_task_system(plugins=[TimePlugin])
+    ts = await build_test_workflow_engine(plugins=[TimePlugin])
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     ctx = DelegationContext(
@@ -623,7 +623,7 @@ async def test_resume_idempotent_on_running():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    ts = await build_test_task_system(plugins=[TimePlugin])
+    ts = await build_test_workflow_engine(plugins=[TimePlugin])
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
 
     ctx = DelegationContext(

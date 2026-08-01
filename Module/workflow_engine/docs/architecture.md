@@ -224,7 +224,7 @@ Module/workflow_engine/
 
 tests/
 ├── unit/                 # 纯 mock，无外部依赖，298 tests
-│   ├── test_task_system.py    # stop, pause, 查询 API
+│   ├── test_workflow_engine.py    # stop, pause, 查询 API
 │   ├── test_orchestrator.py   # Orchestrator 执行循环
 │   ├── test_sub_agent.py      # SubAgent 决策层
 │   ├── test_graph.py          # PlanGraph + DAGPatch
@@ -236,7 +236,7 @@ tests/
 │   └── test_token_ledger.py   # TokenLedger write-through + 审计
 │   # DelegationPreparer 单测已迁 core/cognitive/tests/test_delegation_preparer.py
 └── integration/          # 需要 LLM / 外部服务，36 tests
-    ├── test_task_system_lifecycle.py  # stop, pause, cancel, resume, 并发, replan
+    ├── test_workflow_engine_lifecycle.py  # stop, pause, cancel, resume, 并发, replan
     ├── test_delegation_preparer.py    # DelegationPreparer LLM 调用
     ├── test_executor.py               # Executor LLM tool-calling
     ├── test_planner.py                # Planner + Replanner LLM DAG 生成

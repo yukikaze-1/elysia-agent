@@ -36,7 +36,7 @@ from core.tools.time.plugin import TimePlugin
 from core.tools.web.plugin import WebSearchPlugin
 from Module.workflow_engine.mailbox import WorkflowMailbox
 from Module.workflow_engine.tests.helpers import (
-    build_test_task_system,
+    build_test_workflow_engine,
     get_tools_from_manager,
 )
 
@@ -497,7 +497,7 @@ async def test_e2e_simple_query():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 WorkflowEngine + ToolManager")
-    ts = await build_test_task_system(
+    ts = await build_test_workflow_engine(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
         wrap_llm=False,
@@ -537,7 +537,7 @@ async def test_e2e_multi_step_success():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 WorkflowEngine + ToolManager")
-    ts = await build_test_task_system(
+    ts = await build_test_workflow_engine(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
         wrap_llm=False,
@@ -575,7 +575,7 @@ async def test_e2e_search_and_report():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 WorkflowEngine + ToolManager")
-    ts = await build_test_task_system(
+    ts = await build_test_workflow_engine(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
         wrap_llm=False,
@@ -616,7 +616,7 @@ async def test_e2e_replan_recovery():
 
     # ── 使用完整工具集（get_time + 真实 WebSearchPlugin）──
     step_start = _log_step(0, 6, "初始化 WorkflowEngine（get_time + web_search）")
-    ts = await build_test_task_system(
+    ts = await build_test_workflow_engine(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
         wrap_llm=False,
@@ -775,7 +775,7 @@ async def test_e2e_llm_direct_execution():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 WorkflowEngine（get_time + web_search）")
-    ts = await build_test_task_system(
+    ts = await build_test_workflow_engine(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
         wrap_llm=False,
@@ -814,7 +814,7 @@ async def test_e2e_cancel():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 WorkflowEngine（get_time + web_search）")
-    ts = await build_test_task_system(
+    ts = await build_test_workflow_engine(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
         wrap_llm=False,
@@ -930,7 +930,7 @@ async def test_e2e_pause_resume():
     print(f"{'#' * 70}")
 
     step_start = _log_step(0, 6, "初始化 WorkflowEngine（get_time + web_search）")
-    ts = await build_test_task_system(
+    ts = await build_test_workflow_engine(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
         wrap_llm=False,

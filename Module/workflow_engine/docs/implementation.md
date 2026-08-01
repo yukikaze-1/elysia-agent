@@ -70,7 +70,7 @@ Module/workflow_engine/
 │   │   └── __init__.py
 │   ├── unit/
 │   │   ├── __init__.py
-│   │   ├── test_task_system.py
+│   │   ├── test_workflow_engine.py
 │   │   ├── test_orchestrator.py
 │   │   ├── test_sub_agent.py
 │   │   ├── test_graph.py
@@ -84,7 +84,7 @@ Module/workflow_engine/
 │   ├── integration/
 │   │   ├── __init__.py
 │   │   ├── conftest.py
-│   │   ├── test_task_system_lifecycle.py
+│   │   ├── test_workflow_engine_lifecycle.py
 │   │   ├── test_e2e_mvp.py
 │   │   ├── test_delegation_preparer.py
 │   │   ├── test_executor.py

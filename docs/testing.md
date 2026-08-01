@@ -102,13 +102,13 @@ pytest core/tests/test_phase3.py -v
 | | `test_orchestrator.py` | 26 | unit |
 | | `test_planner.py` | 41 | unit |
 | | `test_sub_agent.py` | 27 | unit |
-| | `test_task_system.py` | 44 | unit |
+| | `test_workflow_engine.py` | 44 | unit |
 | | `test_token_ledger.py` | 8 | unit |
 | `Module/workflow_engine/tests/integration/` | `test_delegation_preparer.py` | 11 | integration |
 | | `test_e2e_mvp.py` | 7 | slow |
 | | `test_executor.py` | 4 | integration |
 | | `test_planner.py` | 4 | integration |
-| | `test_task_system_lifecycle.py` | 10 | slow |
+| | `test_workflow_engine_lifecycle.py` | 10 | slow |
 
 ### core/ 层（60 文件）
 
