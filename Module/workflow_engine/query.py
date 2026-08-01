@@ -16,6 +16,7 @@ from Module.workflow_contract import (
     WorkflowId,
     WorkflowStatus,
 )
+from Module.workflow_contract.utils import parse_iso
 from Module.workflow_engine.schema import (
     AgentInfo,
     AgentList,
@@ -29,7 +30,6 @@ from Module.workflow_engine.schema import (
     TokenStats,
     TokenUsage,
     now_iso,
-    parse_iso,
 )
 
 if TYPE_CHECKING:

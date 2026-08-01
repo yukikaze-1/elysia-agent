@@ -7,7 +7,7 @@ import logging
 
 from typing import TYPE_CHECKING
 
-from Module.workflow_engine.utils import format_tools, strip_markdown_fence
+from Module.workflow_contract.utils import format_tools, strip_markdown_fence
 
 from Module.workflow_contract import NodeId
 from Module.tool.tool_descriptor import Tool

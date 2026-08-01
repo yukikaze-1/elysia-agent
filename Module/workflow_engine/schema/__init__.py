@@ -16,7 +16,6 @@ from .types import (
     WorkflowErrorCode,
     # 工具（内部使用，仍通过此路径提供向后兼容）
     now_iso,
-    parse_iso,
 )
 
 # ── protocol.py: 跨层协议（引擎本地剩余类型） ──
@@ -74,7 +73,8 @@ from .internal import (
     ValidationResult,
 )
 
-# 内部工具不导出: _normalize_utc, parse_iso, IsoTimestamp
+# 内部工具不导出: _normalize_utc, IsoTimestamp
+# parse_iso 已随契约层迁至 Module.workflow_contract.utils（Task 6）
 # now_iso 因编排层 (orchestrator/sub_agent/task_system/parser) 大量使用，保留在公开导出中
 # 已迁契约层的类型: AgentId/ApprovalId/NodeId/SessionId/WorkflowId/WorkflowStatus/
 #   SubmitRejectionCode/RBACLevel/ConstraintConfig/WorkflowConstraints/ReturnMode/

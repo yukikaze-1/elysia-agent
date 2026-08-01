@@ -31,10 +31,19 @@ from Module.workflow_contract.schema import (
     WorkflowStatus,
 )
 from Module.workflow_contract.infra import AgentInfra
+from Module.workflow_contract.utils import (
+    format_tools,
+    parse_iso,
+    strip_markdown_fence,
+)
 
 __all__ = [
     # 跨边运行时注入容器
     "AgentInfra",
+    # 纯函数工具
+    "format_tools",
+    "parse_iso",
+    "strip_markdown_fence",
     # 标识符别名
     "AgentId",
     "ApprovalId",

@@ -20,7 +20,7 @@ from openai import AsyncOpenAI
 from core.schema.message import Message
 from core.schema.part import TextPart
 
-from Module.workflow_engine.utils import format_tools, strip_markdown_fence
+from Module.workflow_contract.utils import format_tools, strip_markdown_fence
 
 from Module.workflow_contract import (
     ConstraintConfig,

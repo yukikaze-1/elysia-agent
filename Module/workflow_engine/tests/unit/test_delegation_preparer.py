@@ -29,7 +29,7 @@ from Module.workflow_engine.delegation_preparer import (
     DelegationPreparer,
     _PrepareParseError,
 )
-from Module.workflow_engine.utils import strip_markdown_fence, format_tools
+from Module.workflow_contract.utils import strip_markdown_fence, format_tools
 from Module.workflow_contract import (
     ConstraintConfig,
     DelegationContext,
