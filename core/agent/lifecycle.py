@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from ..cognitive import CognitiveLoop
     from ..monitoring.idle_monitor import IdleMonitor
     from Module.workflow_engine.workflow_engine import WorkflowEngine
-    from Module.workflow_engine.delegation_preparer import DelegationPreparer
+    from core.cognitive.delegation import DelegationPreparer
     from Module.tts.protocol import TTSBackend
     from Module.output import OutputManager
     from ..adapter.llm_adapter import LLMAdapter

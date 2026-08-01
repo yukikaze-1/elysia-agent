@@ -25,7 +25,7 @@
 | 优先级 | 位置 | 说明 |
 |--------|------|------|
 | ~~中~~ ✅ | [Module/tool/protocol.py:15](Module/tool/protocol.py#L15) | eager `from core.schema.error_type import ErrorType` — **已评估：接受**。ErrorType 是跨层类型（`core.schema.message.ToolResultMessage` + `Module.tool.ToolResult` 双侧消费），不能挪进 Module/tool（会反向拖累 schema）；core.schema 是叶子无反向依赖、无环。唯一 test 级反向边已修复：`core/schema/tests/test_message.py` 改从 `core.schema.error_type` 正典导入 |
-| 中 | [Module/workflow_engine/delegation_preparer.py:20-21](Module/workflow_engine/delegation_preparer.py#L20) | eager `from core.schema.message import Message` 等 |
+| ~~中~~ ✅ | [Module/workflow_engine/delegation_preparer.py:20-21](Module/workflow_engine/delegation_preparer.py#L20) | eager `from core.schema.message import Message` 等 — **已修**：文件迁至 `core/cognitive/delegation.py`（workflow_engine 分离 Task 9），core 引用随之合法，Module/workflow_engine 生产代码现零 core 依赖 |
 | 低 | [Module/tool/safety.py:618](Module/tool/safety.py#L618) | lazy `from core.utils import new_message_id` |
 | 低 | [Module/bench/bench.py:129-139](Module/bench/bench.py#L129) | lazy `core.config`/`core.agent`（bench 是 dev 工具，可豁免） |
 

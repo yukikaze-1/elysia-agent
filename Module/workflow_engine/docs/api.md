@@ -170,7 +170,7 @@ EventBusHITLNotifier 演示实现见 protocol.py。
 
 ## 5. DelegationPreparer（CognitiveLoop 调用）
 
-> **代码位置**：`Module/workflow_engine/delegation_preparer.py`
+> **代码位置**：`core/cognitive/delegation.py`（2026-08 从 workflow_engine 迁出）
 > **调用者**：CognitiveLoop
 > **状态**：v1 已实现（2026-06-14）
 > **将来**：可独立为 delegation 服务

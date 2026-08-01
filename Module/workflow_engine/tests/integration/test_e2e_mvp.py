@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 from openai import AsyncOpenAI
 
-from Module.workflow_engine.delegation_preparer import DelegationPreparer
+from core.cognitive.delegation import DelegationPreparer
 from Module.workflow_contract import (
     ConstraintConfig,
     DelegationStatus,

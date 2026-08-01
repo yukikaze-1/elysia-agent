@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from ..cognitive import CognitiveLoop
     from ..adapter.tool_adapter import ToolAdapter
     from Module.workflow_engine.workflow_engine import WorkflowEngine
-    from Module.workflow_engine.delegation_preparer import DelegationPreparer
+    from core.cognitive.delegation import DelegationPreparer
     from ..adapter.llm_adapter import LLMAdapter
     from core.schema.types import IsoTimestamp
     from Module.workflow_contract import HITLData
@@ -37,7 +37,7 @@ class _LifecycleTaskSystem:
     async def _start_task_system(self) -> None:
         """创建 WorkflowEngine + DelegationPreparer + HITLNotifier，注入 CognitiveLoop。"""
         from Module.workflow_engine.workflow_engine import WorkflowEngine
-        from Module.workflow_engine.delegation_preparer import DelegationPreparer
+        from core.cognitive.delegation import DelegationPreparer
         from Module.workflow_contract.infra import AgentInfra
         from Module.workflow_contract import ConstraintConfig
 

@@ -3,7 +3,7 @@
 独立于 CognitiveLoop，通过 WorkflowMailbox + HITLNotifier 协议与外界通信。
 
 导出分组：
-  - 公共 API:     WorkflowEngine, DelegationPreparer, SubAgent, Orchestrator
+  - 公共 API:     WorkflowEngine, SubAgent, Orchestrator
   - 基础类型:     NodeId, WorkflowId, WorkflowStatus, WorkflowErrorCode, etc.
   - 本地协议:     ResumeError
   - 查询/输出:    WorkflowSummary, WorkflowDAG, TokenStats, AgentInfo, etc.
@@ -17,7 +17,6 @@
 # ── 公共 API ──
 from Module.workflow_engine.core.orchestrator import Orchestrator
 from Module.workflow_engine.core.sub_agent import SubAgent
-from Module.workflow_engine.delegation_preparer import DelegationPreparer
 from Module.workflow_engine.workflow_engine import WorkflowEngine
 
 # ── 基础类型（ID、状态、错误码） ──
@@ -96,7 +95,6 @@ from Module.workflow_engine.schema import (
 
 __all__ = [
     # 公共 API
-    "DelegationPreparer",
     "Orchestrator",
     "SubAgent",
     "WorkflowEngine",

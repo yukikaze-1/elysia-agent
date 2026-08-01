@@ -29,7 +29,7 @@ from Module.workflow_contract import (
     WorkflowEventType,
 )
 from Module.workflow_engine.workflow_engine import WorkflowEngine
-from Module.workflow_engine.delegation_preparer import DelegationPreparer
+from core.cognitive.delegation import DelegationPreparer
 from Module.workflow_engine.mailbox import WorkflowMailbox
 
 from Module.tool.manager import ToolManager

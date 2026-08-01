@@ -40,7 +40,7 @@ from ..memory.consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.delegation_preparer import DelegationPreparer
+    from core.cognitive.delegation import DelegationPreparer
     from Module.workflow_engine.workflow_engine import WorkflowEngine
     from core.cognitive.user_profile import UserProfile
     from ..monitoring.token_tracker import TokenTracker

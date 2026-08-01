@@ -9,7 +9,7 @@ import pytest
 from core.schema.message import AssistantMessage, MessageId, UserMessage
 from core.schema.part import TextPart
 
-from Module.workflow_engine.delegation_preparer import DelegationPreparer
+from core.cognitive.delegation import DelegationPreparer
 from Module.workflow_contract import (
     ConstraintConfig,
     DelegationStatus,

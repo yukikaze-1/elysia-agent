@@ -13,7 +13,7 @@ from core.schema.message import Message, UserMessage, AssistantMessage, MessageI
 from core.schema.part import TextPart, ImagePart
 
 # 加载项目根目录的 .env（CI/本地开发环境）
-_env_path = Path(__file__).resolve().parents[4] / ".env"
+_env_path = Path(__file__).resolve().parents[3] / ".env"
 if _env_path.exists():
     with open(_env_path) as _f:
         for _line in _f:
@@ -25,7 +25,7 @@ if _env_path.exists():
                 if _key not in os.environ:
                     os.environ[_key] = _value
 
-from Module.workflow_engine.delegation_preparer import (
+from core.cognitive.delegation import (
     DelegationPreparer,
     _PrepareParseError,
 )

@@ -57,7 +57,7 @@ class WorkflowEngine:
         - 提供只读查询方法（Pull 模式，供 CognitiveLoop + Debug WebUI）
 
     不负责：
-        - 委派上下文准备（DelegationPreparer——CognitiveLoop 调用）
+        - 委派上下文准备（DelegationPreparer 在 core/cognitive/delegation.py，由 CognitiveLoop 调用）
         - 审批前端推送（HITLNotifier——注入的外部实现）
         - 工具管理（ToolRegistry——CognitiveLoop 持有）
 
@@ -107,7 +107,8 @@ class WorkflowEngine:
         """全局约束配置（只读），来自 AgentInfra.constraints。
 
         CognitiveLoop 的 submit_task 工具路径通过此属性获取约束，
-        传给 DelegationPreparer.prepare()，避免直接访问私有 _infra。
+        传给 core/cognitive/delegation.py 的 DelegationPreparer.prepare()，
+        避免直接访问私有 _infra。
         """
         return self._infra.constraints
 
@@ -175,7 +176,8 @@ class WorkflowEngine:
     ) -> WorkflowMailbox | SubmitError:
         """提交新任务。fire-and-forget——立即返回 Mailbox。
 
-        DelegationPreparer.prepare() 已在 CognitiveLoop 侧完成，
+        DelegationPreparer.prepare() 已在 core/cognitive 侧完成
+        （core/cognitive/delegation.py，由 CognitiveLoop 调用），
         context 是干净的委派沙盒（筛选后的工具 + 摘要上下文 + 任务约束）。
 
         Args:

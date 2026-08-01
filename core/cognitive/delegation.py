@@ -5,7 +5,7 @@ CognitiveLoop 调用 submit_task 后、WorkflowEngine.submit() 之前，
 
 v1: 使用 DeepSeek v4，内部创建 AsyncOpenAI（DelegationPreparer 在 WorkflowEngine 创建前运行，
     无法使用 AgentInfra，因此自建客户端。Planner 已改用 infra.llm）。
-Prompt 全文见 architecture.md Section 9。
+Prompt 全文见 Module/workflow_engine/docs/architecture.md Section 9。
 """
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ _USER_PROMPT = """## 任务意图
 class DelegationPreparer:
     """一次 LLM 调用，准备委派上下文。
 
-    代码在 WorkflowEngine 模块内，调用者却是 CognitiveLoop——
+    代码在 core/cognitive 侧（CognitiveLoop 调用方同层），
     CognitiveLoop 截获 LLM 的 submit_task tool_call 后调 prepare()，
     拿到 DelegationResult 后决定 submit / fail / 澄清。
     将来可独立为单独的 delegation 服务。

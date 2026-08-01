@@ -13,7 +13,7 @@
         plugins=[TimePlugin, WebSearchPlugin],  # WebSearchPlugin → MockWebSearchPlugin
     )
 
-    # 从 WorkflowEngine 提取 Tool 列表给 DelegationPreparer
+    # 从 WorkflowEngine 提取 Tool 列表给 DelegationPreparer（core/cognitive/delegation.py）
     tools = get_tools_from_manager(ts.infra.tool_registry)
 
     # Mock Replanner 返回固定 DAGPatch（跳过 LLM 调用）
@@ -121,7 +121,7 @@ async def build_test_task_system(
 def get_tools_from_manager(tm: ToolManager) -> list[Tool]:
     """从 ToolManager 提取 WorkflowEngine 格式的 Tool 列表。
 
-    供 DelegationPreparer.prepare() 使用。
+    供 DelegationPreparer.prepare()（core/cognitive/delegation.py）使用。
 
     已知局限：访问 tm._plugins（私有属性）。后续建议给 ToolManager
     增加公共方法 list_tools()，届时此函数改为调用公共 API。

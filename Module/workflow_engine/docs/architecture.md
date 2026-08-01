@@ -184,7 +184,6 @@ Module/workflow_engine/
 ├── query.py              # 查询 API：11 个只读模块函数
 ├── lifecycle.py          # 任务操作：pause / cancel / submit_approval 模块函数
 ├── protocol.py           # HITLNotifier 等对外依赖协议（ABC）
-├── delegation_preparer.py # DelegationPreparer: LLM 准备委派上下文
 ├── infra.py              # AgentInfra + 共享基础设施
 ├── mailbox.py            # TaskMailbox（单播，Agent 唯一消费者）
 ├── checkpoint.py         # 任务级 Checkpoint（含节点粒度）
@@ -234,10 +233,10 @@ tests/
 │   ├── test_evaluator.py      # Evaluator 双重判定 + _derive_action
 │   ├── test_executor.py       # Executor tool-calling + LLM 直出
 │   ├── test_planner.py        # Planner + Replanner 解析
-│   ├── test_delegation_preparer.py  # DelegationPreparer 校验 + 格式化
 │   ├── test_checkpoint.py     # CheckpointManager
 │   ├── test_mailbox.py        # TaskMailbox
 │   └── test_token_ledger.py   # TokenLedger write-through + 审计
+│   # DelegationPreparer 单测已迁 core/cognitive/tests/test_delegation_preparer.py
 └── integration/          # 需要 LLM / 外部服务，36 tests
     ├── test_task_system_lifecycle.py  # stop, pause, cancel, resume, 并发, replan
     ├── test_delegation_preparer.py    # DelegationPreparer LLM 调用
@@ -1017,7 +1016,7 @@ Worker --> TaskBudget.reserve(estimated_tokens, priority, timeout=5.0)
 
 ### 9.1 架构
 
-**DelegationPreparer** 代码在 `Module/workflow_engine/delegation_preparer.py`，与 TaskSystem 共享类型。
+**DelegationPreparer** 代码在 `core/cognitive/delegation.py`（2026-08 从 workflow_engine 迁出），与契约层共享类型。
 但调用者是 CognitiveLoop——它在提交任务前先调用 `prepare()`。
 
 ```

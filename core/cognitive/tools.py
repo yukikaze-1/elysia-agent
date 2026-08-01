@@ -13,7 +13,7 @@ from ..utils import new_message_id
 
 if TYPE_CHECKING:
     from Module.workflow_contract import SubmitError
-    from Module.workflow_engine.delegation_preparer import DelegationPreparer
+    from core.cognitive.delegation import DelegationPreparer
     from core.cognitive.user_profile import UserProfile
     from Module.workflow_engine.workflow_engine import WorkflowEngine
     from ..adapter.tool_adapter import ToolAdapter
