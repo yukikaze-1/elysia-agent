@@ -13,6 +13,7 @@ Module/ 内部共享的零依赖工具函数，供各子模块的 registry、con
 | `test_helpers.py` | `test()` 工厂——消除 5 个 backend（LLM/STT/TTS/Embedding/DocumentDB）中逐字相同的连通性测试实现 |
 | `config_test_helpers.py` | Config 测试工厂——`make_config_test_classes()` 参数化生成 `TestDefaults` + `TestFromConfig` 两个 test class |
 | `main_runner.py` | 统一 `__main__` 入口——`ensure_dotenv()` + `asyncio.run()`，一行启动集成烟雾测试 |
+| `error_type.py` | `ErrorType` 工具错误分类枚举（纯 enum，零依赖）——Module.tool 与 core.schema 共用，`core.schema.error_type` 为此处的重导出壳 |
 
 ## 使用
 
