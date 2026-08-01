@@ -100,11 +100,11 @@ LLM delta → StreamProcessor.feed(delta)              (core/text/stream_process
 
 | 文件 | 职责 |
 |------|------|
-| `tags.py` | 标签注册表：PAUSE/STAGE_CN/META/CODE/MARKDOWN 全部定义 + emoji 收口（`is_emoji_only`）。纯数据模块，仅依赖 stdlib。未来加标签 = 加一行注册。`tts_adapter` 从这里导入共享正则（删本地副本 + 死代码 `_TONE_TAG_RE`） |
+| `tags.py` | 标签注册表：PAUSE/STAGE_CN/META/CODE/MARKDOWN 全部定义 + emoji 收口（`is_emoji_only`）。纯数据模块，仅依赖 stdlib。**META_TAGS 三元组 `(open, close, emit)`——emit 与 `StreamEventType.value` 对齐，标签→事件路由注册表驱动**。未来加 `<` 前缀新标签 = 加一行注册（编译期生效，`_OPEN_PATTERNS` 重新派生；`[action]` 式需另扩 tokenizer 起始识别）。`tts_adapter` 从这里导入共享正则（删本地副本 + 死代码 `_TONE_TAG_RE`） |
 | `tokenizer.py` | `StreamTokenizer`：增量输入 → 只吐完整 token。标签起始前缀 / PAUSE 尾串 / STAGE_CN K-M 计数窗口 / 行首反引号持有上界；行首双状态（`at_line_start` + 缩进计数）判定围栏 |
 | `splitter.py` | `SpeechSplitter`：消费 SPEECH/PAUSE/STAGE_CN token → SENTENCE + TEXT_DELTA。边界扫描只在 SPEECH 文本上进行，PAUSE/STAGE_CN 以零宽位置保护，内部标点不参与边界判定。`completed_count` 供 `after_sentence_idx` 块定位 |
 | `parts.py` | `build_parts(all_sentences, blocks)`：按 `after_sentence_idx` 交错出 `TextPart` + content_type（不再二次扫描 acc_text）。`rebuild_public_text()`：从 token 流重建去标记纯文本。仅服务 session 存储/归档，不参与显示推送 |
-| `stream_processor.py` | `StreamProcessor` 协调器：tokenizer + splitter + 事件发射 + `get_blocks()` + public_text 重建。吸收旧状态机 + 旧块过滤逻辑 + TTFT/emoji 逻辑。每轮对话创建新实例 |
+| `stream_processor.py` | `StreamProcessor` 协调器：tokenizer + splitter + 事件发射 + `get_blocks()` + public_text 重建。吸收旧状态机 + 旧块过滤逻辑 + TTFT/emoji 逻辑。**META 路由查注册表 `emit` 字段 + `_EMIT_BY_NAME` 枚举自动派生映射，未知 emit 降级 `logger.warning` + 丢弃**。每轮对话创建新实例 |
 
 ### 分句保护
 

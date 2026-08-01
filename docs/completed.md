@@ -9,7 +9,7 @@
 | 2026-05 | 27 | [2026-05.md](completed/2026-05.md) |
 | 2026-06 | 33 | [2026-06.md](completed/2026-06.md) |
 | 2026-07 | 44 | 见下方 ↓ |
-| 2026-08 | 3 | 见下方 ↓ |
+| 2026-08 | 5 | 见下方 ↓ |
 
 ---
 
@@ -738,3 +738,21 @@ import 图分析发现 `core.agent ↔ core.status` 唯一硬环（eager 双向 
 - 移除 .gitignore 中 docs/superpowers/，206 个 spec/plan/archive 文件全部纳入版本控制
 
 **关联 commit：** `2ca3326`。
+
+### 2026-08-01: stream-parser 重构 — 结构化流式解析器（core/text 组件族）
+
+分散的流式解析管道（旧 `StreamProcessor` 状态机 + `BlockFilter` + `SentenceBuffer` + tts_adapter 散落正则）重构为 `core/text/` 统一组件族。核心：**标签成为原子 token，分句器永远接触不到标签字符**。
+
+**组件：** `tags.py`（标签注册表 + emoji 收口）/ `tokenizer.py`（结构感知切分，跨 chunk 不变式 + 持有上界 + 行首双状态）/ `splitter.py`（span 保护分句 + 完成计数）/ `parts.py`（after_sentence_idx 交错 + public_text 重建）/ `stream_processor.py`（协调器，事件面 MOOD/INNER_VOICE/SENTENCE/TEXT_DELTA/TTFT 不变）。
+
+**5 项修复（行为对照表）：** ``` 围栏不进 TTS、句中 `<mood>` 剥离、多 `<inner_voice>` 每事件、尾句 PAUSE 保留、STAGE_CN 含标点 span 保护。
+
+**验证：** spec 8 轮 review（21 finding）、plan 3 轮、8 task 独立 review、whole-branch review + 外部 5 并行代理审查（修 1 严重 bug：围栏后幽灵 FENCE 吞尾句）。test-quick 1667 passed。前端协议零改动。
+
+**关联 commit（合并后）：** `f2b492a` `cdfc70a` `f86b94d` `3fbd819` `3bd39c8` `270dc85` `d538634`。设计：[spec](../docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md)。
+
+### 2026-08-01: META 路由注册表化 + text_utils 迁移
+
+- **META 路由注册表化：** `tags.META_TAGS` 加 `emit` 字段（与 `StreamEventType.value` 对齐），`stream_processor` META 路由查注册表 + `_EMIT_BY_NAME` 枚举自动派生映射——未来加 `<` 前缀新标签协调器零改动；未知 emit 从静默丢弃改为 `logger.warning` + 丢弃。关联 commit：`0373b26`。
+- **text_utils 迁出：** `content_text_from_content`/`MessageObj` 自 `core/text` 迁至 `core/utils`（消息工具与流式解析解耦）。关联 commit：`4107a71`。
+- **git 历史整理：** 39 个未推送 commit 合并为 10（文档簇合并 + 相邻代码按层合并），工作树内容零变化（`git diff` 验证一致）。当前 HEAD：`0373b26`。

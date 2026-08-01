@@ -129,7 +129,7 @@ core/
 │   ├── tokenizer.py       #   StreamTokenizer: 结构感知切分，只吐完整 token（跨 chunk 不变式 + 持有上界）
 │   ├── splitter.py        #   SpeechSplitter: 结构感知分句，边界扫描跳过受保护 span，输出 SENTENCE + TEXT_DELTA
 │   ├── parts.py           #   build_parts/rebuild_public_text: 句子 + 块交错 → TextPart + content_type
-│   ├── stream_processor.py #   StreamProcessor: 协调器（tokenizer + splitter + 事件发射 + get_blocks + public_text 重建）
+│   ├── stream_processor.py #   StreamProcessor: 协调器（tokenizer + splitter + 事件发射 + get_blocks + public_text 重建；META 路由注册表化，未知 emit 降级 warning）
 │   └── __init__.py         #   re-export（content_text_from_content/MessageObj 已迁 core/utils/text_utils）
 ├── debug/                 # Debug dashboard (package): DebugInfo aggregation + prompt/response recorders
 │   ├── info.py            #   DebugInfo: aggregates agent state (16 panels) for /debug dashboard
