@@ -235,7 +235,7 @@ class TestWebSocketHandler:
 
     @pytest.mark.asyncio
     async def test_ws_connect_capabilities_includes_models(self, aiohttp_client):
-        """capabilities 应携带三个服务的当前模型，前端据此回填下拉选中值。"""
+        """capabilities 携带三个服务当前模型；未连接的服务 model 为 None。"""
         import json
 
         from core.input.server import create_app
@@ -243,6 +243,7 @@ class TestWebSocketHandler:
         agent = _make_agent()
         await agent.start()
 
+        # 测试 app 不传 stt_transcribe → STT 未连接；默认 config tts 未启用 → TTS 未连接
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
 
@@ -257,9 +258,40 @@ class TestWebSocketHandler:
                         break
             assert cap is not None, "连接时未收到 capabilities 消息"
             assert cap["llm_model"] == agent.llm.model
+            # STT/TTS 未连接 → model 必须为 None（避免前端显示"选中"不可用模型）
+            assert cap["stt_model"] is None
+            assert cap["tts_model"] is None
+
+        await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_ws_connect_capabilities_stt_model_when_connected(self, aiohttp_client):
+        """STT 连接时 stt_model 应携带当前模型，供前端回填下拉选中值。"""
+        import json
+
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        await agent.start()
+
+        async def fake_transcribe(audio: bytes) -> str:
+            return "test"
+
+        app = create_app(agent, serve_static=False, stt_transcribe=fake_transcribe)
+        client = await aiohttp_client(app)
+
+        async with client.session.ws_connect(client.make_url('/ws')) as ws:
+            cap = None
+            for _ in range(5):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    if data.get("type") == "capabilities":
+                        cap = data
+                        break
+            assert cap is not None, "连接时未收到 capabilities 消息"
+            assert cap["stt"] is True
             assert cap["stt_model"] == agent.config.stt.model
-            # tts 默认未启用时 agent.tts 为 None → tts_model 为 None；键必须存在
-            assert "tts_model" in cap
 
         await agent.stop()
 

@@ -5,6 +5,8 @@ import { useAbortController } from '@/composables/useAbortController'
 const props = defineProps<{
   service: 'llm' | 'stt' | 'tts'
   currentModel: string
+  /** 服务未连接（如 STT 后端没启动）时禁用下拉，避免选一个不可用的模型。 */
+  disabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -89,18 +91,22 @@ function onChange(event: Event) {
 
 <template>
   <select
-    :value="currentModel"
+    :value="disabled ? '' : currentModel"
+    :disabled="disabled"
     class="model-select"
+    :class="{ 'is-disabled': disabled }"
     @change="onChange"
   >
-    <option value="" disabled>选择模型...</option>
-    <option
-      v-for="opt in options"
-      :key="opt.value"
-      :value="opt.value"
-    >
-      {{ opt.label }}
-    </option>
+    <option value="" disabled>{{ disabled ? '未连接' : '选择模型...' }}</option>
+    <template v-if="!disabled">
+      <option
+        v-for="opt in options"
+        :key="opt.value"
+        :value="opt.value"
+      >
+        {{ opt.label }}
+      </option>
+    </template>
   </select>
 </template>
 
@@ -119,5 +125,10 @@ function onChange(event: Event) {
 }
 .model-select:focus {
   border-color: var(--accent);
+}
+.model-select.is-disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 </style>

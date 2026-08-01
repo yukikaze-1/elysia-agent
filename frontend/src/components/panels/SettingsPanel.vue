@@ -255,18 +255,20 @@ async function testCustomProvider() {
         />
       </div>
       <div class="setting-row">
-        <span class="setting-label">STT 模型</span>
+        <span class="setting-label">STT 模型<span v-if="!settings.sttAvailable" class="unavailable-badge">（未连接）</span></span>
         <ModelSelector
           service="stt"
           :current-model="settings.sttModel"
+          :disabled="!settings.sttAvailable"
           @switch="handleModelSwitch('stt', $event)"
         />
       </div>
       <div class="setting-row">
-        <span class="setting-label">TTS 模型</span>
+        <span class="setting-label">TTS 模型<span v-if="!settings.ttsAvailable" class="unavailable-badge">（未连接）</span></span>
         <ModelSelector
           service="tts"
           :current-model="settings.ttsModel"
+          :disabled="!settings.ttsAvailable"
           @switch="handleModelSwitch('tts', $event)"
         />
       </div>

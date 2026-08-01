@@ -70,7 +70,8 @@ async def handle_ws(
             "stt": stt_transcribe is not None,
             "tts": agent.tts is not None,
             "llm_model": agent.llm.model,
-            "stt_model": agent.config.stt.model,
+            # 未连接的服务不下发 model——否则前端会显示"选中"一个实际不可用的模型
+            "stt_model": agent.config.stt.model if stt_transcribe is not None else None,
             "tts_model": agent.tts.model if agent.tts is not None else None,
             "live2d_static_image": agent.config.live2d.static_image,
         })
