@@ -131,13 +131,15 @@ pytest core/tests/test_phase3.py -v
 | `core/monitoring/tests/` | `test_token_tracker.py` | 17 | unit |
 | `core/task/tests/` | `test_task_model.py` | 15 | unit |
 | | `test_task_scheduler.py` | 26 | service+slow |
-| `core/text/tests/` | `test_block_filter.py` | 18 | unit |
-| | `test_sentence_buffer.py` | 65 | unit |
+| `core/text/tests/` | `test_tags.py` | 30 | unit |
+| | `test_tokenizer.py` | 45 | unit |
+| | `test_splitter.py` | 58 | unit |
+| | `test_parts.py` | 20 | unit |
+| | `test_stream_processor.py` | 46 | unit |
 | `core/debug/tests/` | `test_prompt_recorder.py` | 7 | unit |
 | `core/cognitive/tests/` | `test_timing.py` | 16 | service |
 | | `test_flush.py` | 5 | unit |
 | | `test_mood_engine.py` | 15 | unit |
-| | `test_stream_processor.py` | 20 | unit |
 | | `test_tool_gate.py` | 10 | unit |
 | `core/memory/tests/` | `test_long_term.py` | 8 | service |
 | | `test_consolidator.py` | 21 | service+unit |

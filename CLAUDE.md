@@ -110,7 +110,6 @@ core/
 ├── status/                # AgentStatus 接口层：protocol.py（ABC）+ fsm.py（FSM-backed 实现）+ agent_fsm.py（底层状态机）
 ├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing + TurnPhase
 │   ├── loop.py            #   CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
-│   ├── stream_processor.py #   StreamProcessor: 流式标签检测 + 文本管道
 │   ├── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task + _gate_tool_calls
 │   └── timing.py          #   Timer + TimingClock latency tracking
 ├── adapter/               # Adapter layer: wraps Module/ backends for core/ consumption
@@ -125,10 +124,13 @@ core/
 │   ├── idle_monitor.py    #   IdleMonitor: wake-word detection + proactive triggers
 │   ├── token_tracker.py   #   TokenTracker: usage counting + cost estimation
 │   └── tests/
-├── text/                  # Text stream processing (package): BlockFilter + SentenceBuffer + text utils
-│   ├── block_filter.py    #   BlockFilter: streaming block tag filter + post-hoc block parsing
-│   ├── sentence_buffer.py #   SentenceBuffer: split on sentence delimiters for TTS streaming
-│   └── text_utils.py      #   content_text_from_content + MessageObj
+├── text/                  # Text stream processing (package): 标签注册表 + tokenizer + splitter + parts + 协调器
+│   ├── tags.py            #   标签注册表：PAUSE/STAGE_CN/META/CODE/MARKDOWN 全部定义 + emoji 收口（未来加标签 = 加一行注册）
+│   ├── tokenizer.py       #   StreamTokenizer: 结构感知切分，只吐完整 token（跨 chunk 不变式 + 持有上界）
+│   ├── splitter.py        #   SpeechSplitter: 结构感知分句，边界扫描跳过受保护 span，输出 SENTENCE + TEXT_DELTA
+│   ├── parts.py           #   build_parts/rebuild_public_text: 句子 + 块交错 → TextPart + content_type
+│   ├── stream_processor.py #   StreamProcessor: 协调器（tokenizer + splitter + 事件发射 + get_blocks + public_text 重建）
+│   └── __init__.py         #   re-export（content_text_from_content/MessageObj 已迁 core/utils/text_utils）
 ├── debug/                 # Debug dashboard (package): DebugInfo aggregation + prompt/response recorders
 │   ├── info.py            #   DebugInfo: aggregates agent state (16 panels) for /debug dashboard
 │   ├── prompt_recorder.py #   PromptRecorder: ring buffer (20) for LLM prompts
@@ -157,7 +159,7 @@ core/
 │   ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
 │   ├── app_config.py          # AgentConfig: YAML-loaded app configuration
 │   └── tests/
-├── utils/                  # Utility functions: message_id + log_setup
+├── utils/                  # Utility functions: message_id + log_setup + text_utils
 ├── task/                   # Task sub-package: task model + scheduler
 │   ├── task.py             # Task dataclass + TaskType/TaskStatus enums + Future binding
 │   ├── scheduler.py        # TaskScheduler: worker pool for ReAct tool calls (5 workers)

@@ -44,7 +44,7 @@
 | `core/text/text_utils.py:21` | `MessageObj` | role, content | 轻量 assistant 消息 |
 | `core/debug/prompt_recorder.py:8` | `PromptRecord` | index, timestamp, round_num, model, messages, tools | 调试用 prompt 快照 |
 | `core/debug/response_recorder.py:9` | `ResponseRecord` | index, timestamp, round_num, raw_text, inner_voice | 调试用 response 快照 |
-| `core/text/block_filter.py:40` | `ParsedBlock` | kind, content, language | 解析后的代码/Markdown 块 |
+| `core/text/parts.py:28` | `BlockRef` | kind, content, lang, after_sentence_idx | 代码/Markdown 块引用（插入在第 after_sentence_idx 个已完成句子之后） |
 | `core/cognitive/timing.py:24` | `Timer` | _label, _t0, _elapsed_ms | 计时上下文管理器 |
 | `core/cognitive/timing.py:50` | `TimingClock` | _spans, _counts, _t_total | 请求级计时聚合 |
 | `core/debug/info.py:14` | `DebugInfo` | 60+ 字段（fsm_state, session_*, lt_*, reflector_*, personality_*...） | /debug 面板聚合数据 |

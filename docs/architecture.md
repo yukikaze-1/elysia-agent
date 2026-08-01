@@ -120,7 +120,7 @@
   │  for round in 0..MAX_TOOL_ROUNDS(5):                              │
   │    LLM.stream_think(messages, tools=tool_defs)                    │
   │      │                                                            │
-  │      ├── content delta ──► SentenceBuffer.feed(token)             │
+  │      ├── content delta ──► StreamProcessor.feed(delta)            │
   │      │    │    └── sentence complete                               │
   │      │    │          ├── [TTS on]  stream_sentence(sentence)    │
   │      │    │          │     └── bind-send delta + audio            │
@@ -154,7 +154,7 @@
 
 **Server 端** (CognitiveLoop):
 ```
-SentenceBuffer 分句 → stream_sentence(sentence) [background task]
+StreamProcessor 分句（splitter） → stream_sentence(sentence) [background task]
   → TTS 首 chunk 到达
     → 绑定发送: delta(完整句) + send("") + audio_chunks + audio_end
     → workers=1 FIFO 保证句间顺序
@@ -425,8 +425,8 @@ class CognitiveLoop:
 
 ```
 LLM token stream
-  → SentenceBuffer.feed(token)
-    → sentence complete → CognitiveLoop.stream_sentence(sentence)
+  → StreamProcessor.feed(delta)  [core/text 协调器]
+    → splitter 分句完成 → CognitiveLoop.stream_sentence(sentence)
       → TTS.synthesize_stream(sentence) [background task]
         → 首 chunk 到达 → 绑定发送: delta(完整句) + send("") + audio_chunks
           → WebSocket → browser appendDelta + audioQueue → playNext()
@@ -466,21 +466,19 @@ MOOD_KEYWORDS = {
 
 详见 [4.10 CharacterEngine](#410-characterengine--角色性格情绪引擎)。
 
-### 4.6 分句缓冲 (SentenceBuffer)
+### 4.6 文本流解析（结构感知分句）
 
-```
-默认分隔符: `_HARD_DELIMITERS = frozenset("。！？!?\n")` + `_DEFAULT_DELIMITERS` 添加 `.`（不包含 `～` `…` `〜`）
+统一文本流组件族位于 `core/text/`（Task 7 重构后替代旧的分块过滤 + 分句缓冲组件）：
 
-逐 token feed → 检测分隔符 → 提取完整句
-  英文句号检测: 过滤数字(3.14)、缩写(Dr./Mr./U.S.)、URL
-  连续分隔符合并: ？, ！, ～ 等连续标点合并为一句 ("啊？！" 不拆)
-  短句阈值: min_chunk_length=5, 短于阈值的句子暂存, 后续有文字时释放
-  flush() → 返回剩余未完成文本
+- **`tags.py` 标签注册表** — PAUSE/STAGE_CN/META/CODE/MARKDOWN 全部标签定义 + emoji 收口（`is_emoji_only`）
+- **`tokenizer.py`（StreamTokenizer）** — 增量输入 → 只吐完整 token。标签起始前缀 / PAUSE 尾串 / STAGE_CN K-M 计数窗口持有上界；跨 chunk 不变式（任意切分点解析结果与一次到达一致）
+- **`splitter.py`（SpeechSplitter）** — 结构感知分句：边界扫描只在 SPEECH 文本上进行，PAUSE `<#x#>` / STAGE_CN `（中文指示）` 以受保护 span 整体嵌入句子、内部标点不参与边界判定。标点逻辑（英文缩写/小数/URL 保护、连续标点合并、min_chunk 暂留、max_buffer 强制切分）从旧组件吸收
+- **`parts.py`** — 句子 + 块按 `after_sentence_idx` 交错 → TextPart + content_type（session 存储）
+- **`stream_processor.py`（协调器）** — tokenizer + splitter + 事件发射 + `get_blocks()` + public_text 重建
 
-配置项: delimiters, min_chunk_length, max_buffer_length (默认 2000),
-        abbreviations (可扩展英文缩写集)
-72 个单元测试覆盖边界
-```
+数据流：`LLM delta → StreamProcessor.feed(delta)` → token 流 → splitter → SENTENCE（含内嵌标签）+ TEXT_DELTA（剥离 PAUSE）事件 → `_dispatch_stream_event()` 分发。
+
+详细组件职责见 [core/text/README.md](../core/text/README.md)；设计基准（行为对照表 + 持有上界 + 围栏细则）见 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`。
 
 ### 4.7 提示词组装 (PromptAssembler + SystemPromptManager)
 
@@ -1010,18 +1008,20 @@ Agent/
 │   │   ├── tool_call_parser.py
 │   │   ├── message_builder.py
 │   │   └── prompt_assembler.py
-├── cognitive/            #   CognitiveLoop 包 (loop + stream_processor + tools + timing)
+├── cognitive/            #   CognitiveLoop 包 (loop + tools + timing)
 │   │   ├── loop.py           #     CognitiveLoop(CognitiveTools): process + _think_loop + _dispatch_stream_event
-│   │   ├── stream_processor.py  #  StreamProcessor: mood/inner_voice 标签检测 + BlockFilter + SentenceBuffer
 │   │   ├── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   │   └── timing.py         #     Timer + TimingClock 延迟统计
 │   ├── monitoring/            #   监控子包
 │   │   ├── event_bus.py       #     优先级事件总线
 │   │   ├── idle_monitor.py    #     空闲监控 + 主动触发
 │   │   └── token_tracker.py   #     Token 消耗统计
-│   ├── text/                #   文本流处理包
-│   │   ├── block_filter.py  #     流式块过滤 + 结构化块解析
-│   │   ├── sentence_buffer.py #   分句缓冲
+│   ├── text/                #   文本流处理包（标签注册表 + tokenizer + splitter + parts + 协调器）
+│   │   ├── tags.py          #     标签注册表：PAUSE/STAGE_CN/META/CODE/MARKDOWN 全部定义 + emoji 收口
+│   │   ├── tokenizer.py     #     StreamTokenizer: 结构感知切分（跨 chunk 不变式 + 持有上界）
+│   │   ├── splitter.py      #     SpeechSplitter: 结构感知分句（span 保护 + SENTENCE/TEXT_DELTA）
+│   │   ├── parts.py         #     TextPart + content_type 构建 / public_text 重建
+│   │   ├── stream_processor.py #  StreamProcessor 协调器（tokenizer + splitter + 事件发射 + get_blocks）
 │   │   └── text_utils.py    #     文本提取 + MessageObj
 │   ├── task/                 #   任务子系统包
 │   │   ├── __init__.py       #     重导出 Task + TaskScheduler

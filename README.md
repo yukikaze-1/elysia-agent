@@ -205,11 +205,11 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Core 总览 | [core/README.md](core/README.md) | 认知中枢架构 + 组件详解 |
 | Input | [core/input/README.md](core/input/README.md) | AudioBuffer + WebSocket 服务器 + Debug API |
 | Agent | [core/agent/README.md](core/agent/README.md) | 组装入口 + 生命周期管理 |
-| CognitiveLoop | [core/cognitive/README.md](core/cognitive/README.md) | ReAct 调度器 + StreamProcessor 流式解析 |
+| CognitiveLoop | [core/cognitive/README.md](core/cognitive/README.md) | ReAct 调度器 + 工具执行 + 计时（流式解析见 core/text） |
 | Memory | [core/memory/README.md](core/memory/README.md) | 记忆子系统（Session + LTM + EmbeddingProvider + 沉淀 + 去重） |
 | Monitoring | [core/monitoring/README.md](core/monitoring/README.md) | 运行时可观测性（EventBus + IdleMonitor + TokenTracker） |
 | Debug | [core/debug/README.md](core/debug/README.md) | 调试仪表板数据层（16 panel + 录制） |
-| Text | [core/text/README.md](core/text/README.md) | 文本流处理管线（BlockFilter + SentenceBuffer） |
+| Text | [core/text/README.md](core/text/README.md) | 文本流处理管线（标签注册表 + tokenizer + splitter + parts + 协调器） |
 | Storage | [core/storage/README.md](core/storage/README.md) | 统一存储层（Repository 模式） |
 | Schema | [core/schema/README.md](core/schema/README.md) | 基础类型层（AgentState/事件/多模态消息 Part） |
 | Config | [core/config/README.md](core/config/README.md) | 应用配置 + 角色配置 dataclass |
@@ -344,7 +344,7 @@ Agent/
 │   ├── agent/               # Agent (package): 主 agent + 生命周期 + server
 │   ├── cognitive/           # CognitiveLoop: ReAct 调度器 + inner_voice 状态机
 │   ├── adapter/             # 适配层: LLM + TTS + tool_call_parser
-│   ├── text/                # 文本流处理 (BlockFilter + SentenceBuffer)
+│   ├── text/                # 文本流处理 (tags + tokenizer + splitter + parts + 协调器)
 │   ├── debug/               # Debug 面板数据层
 │   ├── input/               # 输入层: AudioBuffer + WebSocket server + debug API
 │   ├── memory/              # 记忆子系统 (Session + LTM + EmbeddingProvider + Consolidator + Reflector)

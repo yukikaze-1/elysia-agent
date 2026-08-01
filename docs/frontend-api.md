@@ -493,7 +493,7 @@ LLM 回复中的代码块或 Markdown 块单独推送。`block_type` 取值：`"
 
 ### 分句策略
 
-服务端使用 `SentenceBuffer` 按标点符号（`。！？.!?\n～…` 等）切分 LLM 输出流。内置英文缩写检测（Dr./Mr./U.S. 等不会误切）和数字小数点过滤（3.14 不切句）。每检测到一个完整句子，根据 TTS 是否可用走不同路径。
+服务端使用 `core/text` 的 `SpeechSplitter` 按标点符号（`。！？.!?\n～…` 等）切分 LLM 输出流。内置英文缩写检测（Dr./Mr./U.S. 等不会误切）和数字小数点过滤（3.14 不切句）。每检测到一个完整句子，根据 TTS 是否可用走不同路径。
 
 ### TTS 开启时（绑定发送）
 
@@ -619,7 +619,7 @@ LLM 逐 token 产出 → 逐字 `delta`（无 `stream_id`）推送给前端：
 delta { content: "今" }
 delta { content: "天" }
 ...
-delta { content: "今天天气真好。" }   ← 完整句（SentenceBuffer 切出）
+delta { content: "今天天气真好。" }   ← 完整句（SpeechSplitter 切出）
 message { content: "" }              ← 句边界标记
 ```
 
