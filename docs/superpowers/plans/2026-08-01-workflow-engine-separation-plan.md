@@ -55,9 +55,10 @@ grep -rl "Module\.task_system" Module/workflow_engine core Module --include="*.p
 sed -i 's#--ignore=Module/task_system/tests#--ignore=Module/workflow_engine/tests#' Makefile
 
 # 文档（README/CLAUDE.md/architecture/Module-README 里的路径引用）
-# ⚠️ 排除整个 superpowers/（plans + specs + specs/archive）与 docs/review/、docs/completed/——设计/计划/历史记录不改写
+# ⚠️ 排除整个 superpowers/（plans + specs + specs/archive）与 docs/review/、docs/completed——设计/计划/历史记录不改写
+#    注意排除用 `docs/completed`（无尾斜杠）——`docs/completed/` 匹配不到文件 docs/completed.md（Task 1 实测发现）
 grep -rl "Module/task_system\|Module\.task_system" docs CLAUDE.md README.md Module/README.md Module/workflow_engine/README.md core/README.md --include="*.md" 2>/dev/null \
-  | grep -vE "superpowers/|docs/review/|docs/completed/" \
+  | grep -vE "superpowers/|docs/review/|docs/completed" \
   | xargs -r sed -i 's#Module/task_system#Module/workflow_engine#g; s#Module\.task_system#Module.workflow_engine#g'
 ```
 
