@@ -128,6 +128,18 @@
 | 低 | **依赖无版本上限** | `requirements.txt` 中 pydantic、openai、torch 等均无上限约束，上游 breaking change 可导致不可预期问题。`torch` 是 2GB+ 重依赖 |
 | 低 | **`# type: ignore` + `Any` 类型清理** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（二/三梯队）。测试文件 IDE 类型错误已批量修复 ~155 处（2026-07-29/30：NewType 包装、ToolAdapter 替换、type: ignore 补充）。**`Any` 类型替换**：core/ 下 63 处→已消除 ~44 处（属性声明/task/emit 签名/mailbox/_process_events）。**剩余不可消除**：`dict[str, Any]` JSON 容器（~12 处）、流式协议 `**raw_params: Any`+`AsyncIterator[Any]`（5 处）、`Coroutine[Any, Any, Any]` 通用协程（3 处）、`_embed_task: Task[Any]`（2 处）。详见 `docs/completed.md` 2026-07-29 第一、三条 + 2026-07-30 第一条。 |
 
+## 多前端支持（2026-08-01 评估，场景 A：新前端连运行中的服务端）
+
+**评估结论：不加中间层（YAGNI）。** `core/input/` 已是传输适配层（WS `/ws` + HTTP `/api/*` + Debug `/debug/api/*`），Agent 公开接口已是服务层（ws_handler 全部走公开接口），WS 协议 UI 无关（20+ 语义事件，非 DOM 操作）——Qt 等新前端可直接连同一 `/ws`。CLI 走进程内驱动（`run_repl` 不经过网络层，两套 driver 是已接受的现状）。若做 Qt 前端，需先补齐协议契约成熟度：
+
+| 优先级 | 事项 | 说明 |
+|--------|------|------|
+| 低 | **协议契约语言中立化** | 契约目前只存在于 `frontend/src/types/protocol.ts`（TS 类型），需产出 JSON Schema / OpenAPI / protocol.md 供非 TS 客户端实现 |
+| 低 | **协议版本化** | WS/HTTP 消息加 `protocol_version` 字段，服务端升级协议时不静默破坏旧客户端 |
+| 低 | **多 session / 身份** | 关联上表「单 Session 多客户端共享」——新前端需要独立 session 身份 |
+| 低 | **公开契约文档** | 20+ WS 服务端消息 + 5 入站类型 + HTTP/Debug 路由写为 protocol.md |
+
+> 触发条件：确定做 Qt 客户端（或任一第二前端）时再动，现仅记录评估结论。
 
 ## 来自 code-review-report-2026-06-22 的遗留问题
 
