@@ -168,8 +168,8 @@ core/ 世界                         契约层（独立包）                   
 | `delegation_preparer.py: from core.schema.part import TextPart` | 同上 |
 | `delegation_preparer.py` + `core/planner/{planner,replanner,parser}.py: from Module.task_system.utils import format_tools, strip_markdown_fence` | **utils 归位契约层**：两函数为无状态纯函数（LLM prompt 工具格式化 / markdown 围栏剥离），被迁往 core 的 DelegationPreparer 与留在引擎的 planner/replanner/parser 共用 → 迁至 `Module/workflow_contract/utils.py`，双方从契约层引用 |
 | `executor.py: from Module.tool.protocol import ToolContext, ToolResult` | **保留**（Module.tool 算 workflow_engine 世界）|
-| **传递依赖 ①**：`Module/tool/protocol.py:15: from core.schema.error_type import ErrorType`（顶层 import）| Module.tool 算 workflow_engine 世界，其 core 依赖使「干净叶子」被**传递性**破坏。`ErrorType` 为通用工具错误枚举（core 与 Module.tool 共用：adapter/task/schema.message/cognitive.tools 等）。消解：迁中性位置（建议 `Module/_common`），core 与 Module.tool 都从之引用（core/schema/error_type.py 重导出保持兼容）|
-| **传递依赖 ②**：`Module/tool/safety.py:618: from core.utils import new_message_id`（**延迟 import**，函数内部）| `new_message_id` 仅是 `MessageId("msg_" + uuid4().hex[:26])` 封装（core/utils/message_id.py:9），被 10 个 core 文件使用，属 core 消息域工具，**不宜迁出 core**。消解选项：**(a)** safety.py:618 的 `request_id` 就地改用 `uuid` 直接生成（行为等价，最小改动）；**(b)** 显式 park 为已知例外。阶段 3 处置，plan 定 a/b |
+| **传递依赖 ①**：`Module/tool/protocol.py:15: from core.schema.error_type import ErrorType`（顶层 import）| Module.tool 算 workflow_engine 世界，其 core 依赖使「干净叶子」被**传递性**破坏。`ErrorType` 为通用工具错误枚举（core 与 Module.tool 共用：adapter/task/schema.message/cognitive.tools 等）。**已定案：迁 `Module/_common`**，core 与 Module.tool 都从之引用（`core/schema/error_type.py` 重导出保持兼容）|
+| **传递依赖 ②**：`Module/tool/safety.py:618: from core.utils import new_message_id`（**延迟 import**，函数内部）| `new_message_id` 仅是 `MessageId("msg_" + uuid4().hex[:26])` 封装（core/utils/message_id.py:9），被 10 个 core 文件使用，属 core 消息域工具，**不宜迁出 core**。**已定案：就地 uuid 替换**——safety.py:618 的 `request_id` 改用 `uuid.uuid4().hex[:26]` 直接生成（行为等价，单点改动）|
 
 反转完成后，`Module/workflow_engine` 生产代码只依赖：stdlib + `Module.tool`（ErrorType 消解后不含 core.*）+ `Module.workflow_contract`。
 
@@ -179,7 +179,7 @@ core/ 世界                         契约层（独立包）                   
 |------|------|----------|------|
 | **1. 改名** | 目录/包/文件重命名 + 15 标识符 Task*→Workflow* + Makefile `--ignore` + 全量 import 更新 | 机械重构，行为零变化 | `make test-quick` 全绿 |
 | **2. 契约层提取** | 新建 `Module/workflow_contract/`（类型+协议+utils 纯函数 + AgentInfra），跨边类型迁入，外部消费者改 import | 边界真正成形 | `make test-quick` + 新增契约层单测 |
-| **3. 剥皮 + 依赖反转** | migration.md 7 项归位 + DelegationPreparer 迁 core + utils 迁契约层 + 消解 core.schema 反向依赖 + Module.tool 两处传递依赖消解（或显式 park）| workflow_engine 成干净叶子 | `make test-quick` + `grep -rn "from core\.\|import core\." Module/workflow_engine Module/tool --include="*.py" --exclude-dir=tests` 输出**仅含文档化 park 条目**（不锚定行首，覆盖延迟 import）|
+| **3. 剥皮 + 依赖反转** | migration.md 7 项归位 + DelegationPreparer 迁 core + utils 迁契约层 + 消解 core.schema 反向依赖 + Module.tool 两处传递依赖消解（ErrorType 迁 Module/_common + new_message_id 就地 uuid，均已定案）| workflow_engine 成干净叶子 | `make test-quick` + `grep -rn "from core\.\|import core\." Module/workflow_engine Module/tool --include="*.py" --exclude-dir=tests` 输出**为空**（不锚定行首，覆盖延迟 import）|
 | **4. 独立迭代基建** | `make test-workflow-engine`（unit-or-service 门禁）+ 独立 README + 独立 spec/plan 循环 + 全量文档更新 | 独立迭代成立 | 独立测试命令全绿 |
 
 ## 9. 测试策略
@@ -196,7 +196,7 @@ core/ 世界                         契约层（独立包）                   
 - **契约层 `WorkflowId` 与 core 侧 `SessionId` 并存**：core/schema/types.py 已有 SessionId 定义，契约层再统一一个 SessionId——两处都从契约层解析，无撞名。core/schema/types.py 与契约层的引用方向由 plan 定（重导出或直改）。
 - **`__init__.py` 大导出面**：改名后 `__all__` 全部更新；外部只用到子集，但公开 API 完整性由模块内测试兜底。
 - **DelegationPreparer 迁 core 的边界**：它调 LLM 做筛选/填充，迁 core 后仍通过契约层类型与 workflow_engine 交互（`DelegationContext` 等），不产生新跨边；其共享 utils 已随迁契约层（§7）。
-- **传递依赖（Module.tool → core.*，两处）**：§7 已列消解方案。① `ErrorType` 迁 `Module/_common`（涉及 core/adapter、core/task、core/schema/message、core/cognitive/tools 等 ~5 处 core 引用方 + Module.tool 4 处）；② `new_message_id` 就地 uuid 替换（safety.py 单点）或 park。若①②均判为跨切过大，在阶段 3 显式 park 为已知例外，§2 不变式措辞相应收窄为「不**直接** import core.*」，验收 grep 对 park 项标注排除。
+- **传递依赖（Module.tool → core.*，两处）**：§7 已定案消解。① `ErrorType` 迁 `Module/_common`（涉及 core/adapter、core/task、core/schema/message、core/cognitive/tools 等 ~5 处 core 引用方 + Module.tool 4 处，`core/schema/error_type.py` 重导出保持兼容）；② `new_message_id` 就地 `uuid4().hex[:26]` 替换（safety.py 单点，行为等价）。阶段 3 门禁预期 grep 输出为空；仅当 plan 实施时意外受阻才降级 park，并回改 §2/§8/§9 措辞。
 - **文档更新缺口**：改名影响 CLAUDE.md 模块索引、core/README、docs/architecture.md、`Module/task_system/README.md`→workflow_engine README、migration.md。每个阶段随改，阶段 4 全量核对（遵守 readme-conventions.md）。
 - **阶段 4 前允许单点注入**：`from Module.workflow_engine import WorkflowEngine` 在 core 保留一处（构造点），工厂抽象留待独立迭代时演进，不在本 spec 范围内强制。
 
