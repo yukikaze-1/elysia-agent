@@ -4,10 +4,11 @@ Orchestrates THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE.
 Uses structured streaming for sub-100ms TTFT and simultaneous tool-call detection.
 
 Sub-modules:
-  text/block_filter.py         — streaming block tag filter + post-hoc block parsing
+  text/stream_processor.py     — streaming parser coordinator (tokenizer + splitter + blocks)
+  text/parts.py                — sentence/block interleave → TextPart + public_text rebuild
   adapter/tts_adapter.py       — TTS stream manager + emoji queuing
   adapter/tool_call_parser.py  — merge/normalize streaming tool_call deltas
-  text/text_utils.py           — content text extraction + MessageObj
+  utils/text_utils.py          — content text extraction + MessageObj
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from ..utils import set_request_id, get_request_id, log_conversation
 from Module.tool.protocol import ToolResult
 from ..adapter.prompt_assembler import PromptAssembler
 from ..memory.session import SessionMemory
-from .stream_processor import StreamProcessor, StreamEvent, StreamEventType
+from ..text.stream_processor import StreamProcessor, StreamEvent, StreamEventType
 from ..adapter.llm_adapter import LLMAdapter
 from ..memory.consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
@@ -49,11 +50,11 @@ if TYPE_CHECKING:
     from ..adapter.tool_adapter import ToolAdapter
     from ..memory.memory_reflector import MemoryReflector
 
-from ..text.block_filter import build_parts_with_blocks
+from ..text.parts import BlockRef, build_parts
 from ..adapter.tts_adapter import TTSStreamManager
 from ..adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from Module.task_system.schema.types import TaskId
-from ..text.text_utils import content_text_from_content, MessageObj
+from ..utils.text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageSummary
 from core.schema.tool import ToolCall, ToolCallId
@@ -397,11 +398,12 @@ class CognitiveLoop(CognitiveTools):
 
     async def _stream_llm_response(
         self, messages: list[dict], tool_defs: list[dict], round_num: int,
-    ) -> tuple[str, list[dict], bool, list[str], str]:
+    ) -> tuple[str, list[dict], bool, list[str], str, list[BlockRef], str]:
         """流式调用 LLM，逐 chunk 分发 StreamProcessor 事件。
 
         驱动 StreamProcessor 状态机，将解析出的文本增量转为 TTS/UI 副作用。
-        同时累积 tool_call delta 供后续 normalize。
+        同时累积 tool_call delta 供后续 normalize。flush() 后在本方法内重建
+        blocks 与 public_text（proc 是局部变量，`_finalize_turn` 只收返回值）。
 
         Args:
             messages: 已构建的 LLM 消息列表（含 system + history + user）
@@ -409,18 +411,21 @@ class CognitiveLoop(CognitiveTools):
             round_num: 当前工具调用轮次（0 = 首轮）
 
         Returns:
-            (acc_text, raw_tool_calls, speaking_started, all_sentences, inner_voice):
+            (acc_text, raw_tool_calls, speaking_started, all_sentences,
+             inner_voice, blocks, public_text):
             - acc_text: LLM 原始输出全文（含标签）
             - raw_tool_calls: 合并后的 streaming tool_call delta 列表
             - speaking_started: 是否已开始语音/文本输出
             - all_sentences: 所有分句文本列表
-            - inner_voice: 内心独白文本（<inner_voice> 标签内容）
+            - inner_voice: 内心独白文本（多个 <inner_voice> 以换行合并）
+            - blocks: BlockRef 列表 —— (kind, content, lang, after_sentence_idx)
+            - public_text: 按 token 流重建的公开文本（去 META，保留 PAUSE/STAGE_CN/块内容）
         """
         acc_text = ""
         raw_tool_calls: list[dict] = []
         speaking_started = False
         all_sentences: list[str] = []
-        iv_think_buf_holder: list[str] = [""]
+        iv_think_buf_holder: list[str] = []
         t_think_start = time.perf_counter()
         self._ttft_start = t_think_start
 
@@ -479,7 +484,13 @@ class CognitiveLoop(CognitiveTools):
                 )
             )
 
-        return acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think_buf_holder[0]
+        # flush 后收集结构化块与公开文本（proc 是局部变量，只能在此重建）
+        blocks = proc.get_blocks()
+        public_text = proc.rebuild_public_text()
+        # 多个 <inner_voice> 累积合并（见 _dispatch_stream_event）
+        iv_think = "\n".join(iv_think_buf_holder)
+
+        return acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think, blocks, public_text
 
     # ---- Core loop: tool execution ----
 
@@ -647,20 +658,23 @@ class CognitiveLoop(CognitiveTools):
         self, acc_text: str, all_sentences: list[str],
         iv_think_buf: str, speaking_started: bool,
         user_message: str, round_num: int,
+        blocks: list[BlockRef], public_text: str,
     ) -> None:
-        """收尾本轮：标签剥离 → mood fallback → 归档 session → 推送结构化块 → after_response。
+        """收尾本轮：mood fallback → 归档 session → 推送结构化块 → after_response。
 
-        将 acc_text 中的 <mood> / <inner_voice> 标签剥离得到 public_text，
-        构建 AssistantMessage 写入 session，推送 code/markdown 块到前端，
-        最后触发 fire-and-forget _after_response。
+        public_text 已由 `_stream_llm_response` 重建（去 META，保留 PAUSE/STAGE_CN/
+        块内容），不再在此 find-strip。构建 AssistantMessage 写入 session，
+        推送 code/markdown 块到前端，最后触发 fire-and-forget _after_response。
 
         Args:
             acc_text: LLM 原始输出全文（含标签）
             all_sentences: 所有分句文本列表（用于 block 构建）
-            iv_think_buf: 内心独白文本
+            iv_think_buf: 内心独白文本（多个 <inner_voice> 换行合并）
             speaking_started: 是否已开始语音/文本输出
             user_message: 用户原始输入（传给 _after_response）
             round_num: 当前轮次编号（传给 response_recorder）
+            blocks: BlockRef 列表 —— (kind, content, lang, after_sentence_idx)
+            public_text: 重建后的公开文本（供 analyze_assistant / log_conversation / after_response）
         """
         # 注意：不在此处 flush_emojis——最后一句 TTS 的 pop(sid-1) 在 wait_all 后才执行。
         # emoji 依附顺序由 finish_turn → wait_all → flush_emojis 保证（见 _transition_idle）。
@@ -671,19 +685,6 @@ class CognitiveLoop(CognitiveTools):
             self._character_engine.analyze_user(user_message)
             self._tts_mgr.set_emotion(self._character_engine.state.mood)
 
-        # 从 acc_text 中剥离 <mood> 和 <inner_voice> 标签
-        public_text = acc_text
-        mood_start = public_text.find("<mood>")
-        if mood_start >= 0:
-            mood_close = public_text.find("</mood>", mood_start)
-            if mood_close >= 0:
-                public_text = (public_text[:mood_start] + public_text[mood_close + len("</mood>"):]).strip()
-        iv_start = public_text.find("<inner_voice>")
-        if iv_start >= 0:
-            iv_close = public_text.find("</inner_voice>", iv_start)
-            if iv_close >= 0:
-                public_text = (public_text[:iv_start] + public_text[iv_close + len("</inner_voice>"):]).strip()
-
         if public_text.strip():
             if self._character_engine:
                 self._character_engine.analyze_assistant(public_text)
@@ -692,7 +693,7 @@ class CognitiveLoop(CognitiveTools):
                 msg = MessageObj(content=public_text)
                 await self._output.send(msg)
         if public_text.strip():
-            assistant_parts, content_type = build_parts_with_blocks(public_text, all_sentences)
+            assistant_parts, content_type = build_parts(all_sentences, blocks)
             self._session.add_message(AssistantMessage(
                 content=assistant_parts,
                 message_id=new_message_id(),
@@ -724,20 +725,15 @@ class CognitiveLoop(CognitiveTools):
                 t for t in self._pending_after_response if not t.done()
             ]
 
-            # 推送结构化块到前端
-            for idx in content_type.get("markdown", []):
-                if idx < len(assistant_parts):
-                    await self._output.command("block", params={
-                        "block_type": "markdown",
-                        "content": assistant_parts[idx].content,
-                    })
-            for idx in content_type.get("code", []):
-                if idx < len(assistant_parts):
-                    await self._output.command("block", params={
-                        "block_type": "code",
-                        "content": assistant_parts[idx].content,
-                        "language": getattr(assistant_parts[idx], "language", ""),
-                    })
+            # 推送结构化块到前端（参数直接从 blocks 取——修复旧 getattr(...,"language","") 恒空）
+            for kind, content, lang, _after in blocks:
+                params: dict = {
+                    "block_type": kind,
+                    "content": content.strip(),
+                }
+                if kind == "code":
+                    params["language"] = lang
+                await self._output.command("block", params=params)
 
         await self._transition_idle()
 
@@ -795,7 +791,8 @@ class CognitiveLoop(CognitiveTools):
         try:
             for round_num in range(self.MAX_TOOL_ROUNDS + 1):
                 self._phase = TurnPhase.STREAMING
-                acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think = \
+                acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think, \
+                    blocks, public_text = \
                     await self._stream_llm_response(messages, tool_defs, round_num)
 
                 if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
@@ -808,7 +805,8 @@ class CognitiveLoop(CognitiveTools):
 
                 self._phase = TurnPhase.FINALIZING
                 await self._finalize_turn(
-                    acc_text, all_sentences, iv_think, speaking_started, user_message, round_num)
+                    acc_text, all_sentences, iv_think, speaking_started, user_message,
+                    round_num, blocks, public_text)
                 return
 
         except (Exception, asyncio.CancelledError):
@@ -910,7 +908,7 @@ class CognitiveLoop(CognitiveTools):
             event: StreamProcessor 产出的解析事件
             speaking_started: 当前轮是否已开始语音/文本输出
             all_sentences: 已累积的分句列表（in-place 追加）
-            iv_think_buf_holder: 单元素列表，用于承载 inner_voice 文本（可变容器绕过 Python 闭包限制）
+            iv_think_buf_holder: 累积列表，逐条 append inner_voice 文本（可变容器绕过 Python 闭包限制）
 
         Returns:
             (speaking_started, all_sentences): 更新后的状态
@@ -922,7 +920,7 @@ class CognitiveLoop(CognitiveTools):
 
         elif event.type == StreamEventType.INNER_VOICE:
             if event.text:
-                iv_think_buf_holder[0] = event.text
+                iv_think_buf_holder.append(event.text)
                 try:
                     await self._output.command(
                         "inner_voice",

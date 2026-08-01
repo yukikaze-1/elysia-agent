@@ -14,52 +14,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from typing import TYPE_CHECKING
 
 from Module.output import ChannelCapability, OutputManager
 from Module.tts import TTSBackend
 
+# 共享标签定义（core.text.tags 收口，替代本模块本地正则）
+#   PAUSE_RE     — MiniMax 停顿标签 <#x#>：送到 TTS 但不显示在前端
+#   STAGE_CN_RE  — 中文括号舞台指示（如 (清了清嗓子)、（眨了眨眼））：显示但 TTS 不合成
+#   is_emoji_only— 纯 emoji 句判定（跳过 TTS 合成）
+from core.text.tags import PAUSE_RE, STAGE_CN_RE, is_emoji_only
+
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-# ---- Emoji 检测 -----------------------------------------------------------
-
-_EMOJI_RE = re.compile(
-    r"[\U0001F300-\U0001F9FF"
-    r"\U0001F600-\U0001F64F"
-    r"\U00002600-\U000027BF"
-    r"\U00002300-\U000023FF]+",
-    flags=re.UNICODE,
-)
-
-
-def is_emoji_only(text: str) -> bool:
-    """句子去掉 emoji 后是否只剩空白 — 用于跳过 TTS 合成。
-
-    Args:
-        text: 待检测的句子。
-
-    Returns:
-        bool: 纯 emoji 句时为 True。
-    """
-    return not _EMOJI_RE.sub("", text).strip()
-
-
-# MiniMax 等 TTS 引擎的内部控制标签，送到 TTS 但不显示在前端
-_PAUSE_TAG_RE = re.compile(r"<#\d+\.?\d*#>")
-# MiniMax 英文语气标签：送到 TTS 合成语气
-_TONE_TAG_RE = re.compile(
-    r"\((?:laughs|sighs|crying|gasps|breath|humming|sniffs|sneezes|"
-    r"coughs|groans|pant|chuckle|clears?\s?throat|applause|inhale|exhale|"
-    r"snorts|burps|lip.?smacking|hissing|emm|whistles|sneezes)\)",
-    re.IGNORECASE,
-)
-# 中文括号舞台指示（如 (清了清嗓子)、（眨了眨眼））：显示但 TTS 不合成
-_CN_ACTION_RE = re.compile(r"[\(\（][^\)\）]*[一-鿿][^\)\）]*[\)\）]")
 
 
 def _mood_text_to_tts_emotion(mood_text: str) -> str:
@@ -260,16 +230,16 @@ class TTSStreamManager:
             return
 
         # 显示文本：去掉停顿标签（前端不显示 <#x#>）
-        display_text = _PAUSE_TAG_RE.sub("", sentence).strip()
+        display_text = PAUSE_RE.sub("", sentence).strip()
         # 提取句首中文舞台指示，单独一行显示
         action_text = ""
-        m = _CN_ACTION_RE.match(display_text)
+        m = STAGE_CN_RE.match(display_text)
         if m:
             action_text = m.group()
             display_text = display_text[m.end():].strip()
         # TTS 文本：保留停顿标签（MiniMax 原生支持 <#x#> 产生语音停顿），
         # 去掉中文舞台指示（英文语气标签保留，MiniMax 原生支持）
-        tts_text = _CN_ACTION_RE.sub("", sentence).strip()
+        tts_text = STAGE_CN_RE.sub("", sentence).strip()
 
         try:
             # Phase 1: 下载音频（并行，与其他句同时进行）
