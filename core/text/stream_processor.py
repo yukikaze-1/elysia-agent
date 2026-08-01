@@ -9,9 +9,13 @@ MOOD / INNER_VOICE / SENTENCE / TEXT_DELTA / TTFT（无新增事件类型）。
 
     feed(delta) → tokenizer.feed → token 流（跨 chunk 缓冲，只吐完整 token）
         按 kind 路由：
-            SPEECH/PAUSE/STAGE_CN → splitter → SENTENCE（含内嵌标签）+ TEXT_DELTA（剥离 PAUSE）
-            CODE/MARKDOWN          → 收集为块（闭合时记 splitter.completed_count）
-            META                   → MOOD / INNER_VOICE 事件（空内容不发）
+            SPEECH           → TTFT + TEXT_DELTA + splitter（SENTENCE）
+            PAUSE            → splitter（显示剥离，TTS 停顿）
+            STAGE_CN         → TTFT + TEXT_DELTA + splitter（显示保留，TTS 剥离）
+            STAGE_EN         → splitter（显示剥离，TTS 语气词保留）
+            ANGLE_EN         → 丢弃（违规格式，显示 + TTS 全剥）
+            CODE/MARKDOWN    → 收集为块（闭合时记 splitter.completed_count）
+            META             → MOOD / INNER_VOICE 事件（空内容不发）
     flush() → 处理残留（未闭合 inner_voice 广播、尾句、emoji-only 合并）
 
 关键语义：
@@ -140,6 +144,12 @@ class StreamProcessor:
             self._emit_ttft(events)
             events.append(StreamEvent(type=StreamEventType.TEXT_DELTA, text=token.text))
             self._splitter.feed(token)
+        elif kind is TokenKind.STAGE_EN:
+            # 英文语气词：显示剥离（无 TEXT_DELTA）、TTS 保留 → 只喂 splitter（同 PAUSE）
+            self._splitter.feed(token)
+        elif kind is TokenKind.ANGLE_EN:
+            # 尖括号语气词（F3 违规格式）：显示 + TTS 全丢弃（不进 splitter / 事件）
+            pass
         elif kind in (TokenKind.CODE, TokenKind.MARKDOWN):
             # 块：不产生流式事件；闭合时记 after_sentence_idx（已完成句子数）
             self._blocks.append(

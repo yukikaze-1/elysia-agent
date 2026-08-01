@@ -46,7 +46,9 @@ LLM delta → StreamProcessor（mood/inner_voice 状态机）
 | 7 | 未闭合 `<mood>` | 残留丢弃、不发事件 → `_mood_applied=False` → 关键词 fallback 触发（loop.py:669）| 同现状 | 现状 |
 | 8 | 未闭合 `<inner_voice>` | THINK 态残留广播为 INNER_VOICE 事件 | 同现状 | 现状 |
 | 9 | STAGE_CN 显示 | TTS 模式：句首独立行 + 句中内嵌（tts_adapter 逐句提取）；文本模式：内嵌 | 同现状（逐句提取留在显示路径）| 现状 |
-| 10 | `(laughs)` 英文语气 | 显示 + TTS 均保留 | 同现状（非特殊 token，随 SPEECH 流过）| 现状 |
+| 10 | `(laughs)` 英文语气 | 显示 + TTS 均保留 | **显示剥离、TTS 保留**（圆括号语气词识别为 STAGE_EN token，TTS 音效用途）| **修复** |
+| 10a | `<pant>` 尖括号语气词 | 无识别，随 SPEECH 流过 | 识别为 ANGLE_EN token，**显示 + TTS 全丢弃**（F3 明令禁止尖括号写法，解析器兜底）| **修复** |
+| 10b | `♪`/`♡` 句尾 | 不作为句子边界，整句连到后续标点 | 加入句分隔符（句子以 `♪`/`♡` 结尾，`♪`/`♡` 保留在句内）| **修复** |
 | 11 | 未闭合 CODE/MARKDOWN | BlockFilter.flush 整体丢弃，不进 TTS | 同现状 | 现状 |
 
 ## 非目标（Out of Scope）
@@ -66,7 +68,8 @@ LLM delta → StreamProcessor（mood/inner_voice 状态机）
 |------|------|------|----------|------|-----|
 | `<#x#>` | `<#0.5#>` | TTS 停顿 | ✅ 整体 | 剥离 | 保留 |
 | `（…中文…）` / `(…中文…)` | `（眨眼）`、`(眨眼)` | 中文舞台指示（半角+全角）| ✅ 整体 | 句首独立行 / 句中内嵌（现状）| 剥离 |
-| `(laughs)` 等英文语气 | `(laughs)` | 英文语气词 | 无需（无标点）| 保留（现状）| 保留（现状）|
+| `(laughs)` 等英文语气 | `(sighs)`、`(clears throat)` | 英文语气词（圆括号，半角+全角）| ✅ 整体 | 剥离 | 保留（TTS 音效）|
+| `<pant>` 等尖括号语气词 | `<pant>` | F3 违规格式兜底 | ✅ 整体 | 剥离 | 剥离（全丢弃）|
 | `<mood>..</mood>` | `<mood>开心|0.7</mood>` | 心情 → MOOD 事件（任意位置）| 带外 | — | — |
 | `<inner_voice>..</inner_voice>` | — | 内心独白 → INNER_VOICE 事件（可多个）| 带外 | — | — |
 | ```` ```lang ```` 围栏（仅行首）| ```` ```python ```` | 代码块 → finalize parts（**修复：现状被 TTS 朗读**）| 带外 | finalize block 命令 | — |
@@ -109,8 +112,10 @@ LLM delta → StreamProcessor（mood/inner_voice 状态机）
 | `SPEECH` | 普通文本 | ✅ 保留 | ✅ 保留 |
 | `PAUSE` | `<#x#>` | ✅ 嵌入句中 | ❌ 剥离 |
 | `STAGE_CN` | `[\(\（]…中文…[\)\）]`（半角+全角，含 CJK；**半角 `(` 同入触发集**，与全角统一保护）| ❌ 剥离（tts_adapter 逐句提取）| ✅ 句首独立行 / 句中内嵌（现状）|
+| `STAGE_EN` | `(sighs)` / `(clears throat)`（圆括号英文语气词，半角+全角，内容归一后命中 `STAGE_EN_WORDS`）| ✅ 嵌入句中（保留给 TTS 音效）| ❌ 剥离 |
+| `ANGLE_EN` | `<pant>`（尖括号英文语气词，F3 违规格式兜底）| ❌ 丢弃 | ❌ 剥离 |
 
-`(laughs)` 等英文语气**不是特殊 token**——显示与 TTS 均保留（现状），随 SPEECH 文本自然流过。tags.py 仍登记其词表用于文档化（现状 `_TONE_TAG_RE` 为死代码，一并移除）。
+`(laughs)` 等英文语气是**特殊 token（STAGE_EN）**——显示剥离、TTS 保留（`#10` 修复，反转旧「显示+TTS 均保留」）。尖括号违规格式 `<pant>` 识别为 `ANGLE_EN`，显示 + TTS 全丢弃（`#10a`）。tags.py 的 `STAGE_EN_WORDS` 同时是两类识别的词表基准。
 
 **带外 token（非语音，替换语音流，不参与分句）：**
 
@@ -129,11 +134,11 @@ LLM delta → StreamProcessor（mood/inner_voice 状态机）
 1. **标签起始前缀（`<#`/`<m`/`<i`/`<|`）**：按前缀匹配持有——若缓冲尾部全部字符都可能是某个起始模式的前缀 → 继续持有；一旦出现不可能构成任何起始模式的字符 → 立即释放为 SPEECH 文本（仅保留尾部可能构成标签的少量字符，对齐现状 `safe_len` 语义）。例：`价格<100元` 中 `<` 后是数字 `1`，不属于任何标签前缀 → 放行，文本正常流式输出。
 2. **PAUSE（`<#…#>`）**：内容为 `\d+\.?\d*` 数字串，无上界长度，固定前缀长度 N 框不住。持有由**尾串正则**驱动：持有规则 = 缓冲尾部匹配 `<#[\d.]*$`（或 `[\d.]` 序列），一旦出现非数字/点的字符（如 `元`）→ 释放为 SPEECH（尾部残留的 `<#` 前缀字符一并释放）。行为等效于现状 `_strip_tail_pause_tags` 的互补逻辑。
 3. **STAGE_CN（`（…中文…）`）**：内容 `[^\)\）]*` 可匹配任意字符，**不存在"不可能构成起始模式的字符"**，必须用**计数窗口**限制持有：
-   - **K 判定时机（关键，两条路径结果相反）**：CJK 检查在**闭合时对完整内容判定**——内容含 CJK → STAGE_CN；不含 CJK → 回落 SPEECH。扫描中若**已累积 K 字符仍未闭合且内容无 CJK** → 提前回落 SPEECH。三个条件：闭合时查内容、超 K 未闭合**且无 CJK** 提前回落、超 M 未闭合（无论 CJK）回落。**K 是英文早退窗（无 CJK 短括号不必等到 M）、M 是 CJK 上限**——含 CJK 的未闭口括号持有到 M 才回落（#6a「span ≤ M 且 CJK ≤ K」因此成立，K 窗不截断 CJK 舞台指示）。**禁止**"逐字符持有到第 K 字符才判定"——那会让短英文括号如 `(laughs)`（8 字符 < K）在闭合时被误判为 STAGE_CN 而从 TTS 剥离（违反行为表 #10）
+   - **K 判定时机（关键，两条路径结果相反）**：CJK 检查在**闭合时对完整内容判定**——内容含 CJK → STAGE_CN；不含 CJK → 查英文语气词（命中 → STAGE_EN，否则回落 SPEECH）。扫描中若**已累积 K 字符仍未闭合且内容无 CJK** → 提前回落 SPEECH。三个条件：闭合时查内容、超 K 未闭合**且无 CJK** 提前回落、超 M 未闭合（无论 CJK）回落。**K 是英文早退窗（无 CJK 短括号不必等到 M）、M 是 CJK 上限**——含 CJK 的未闭口括号持有到 M 才回落（#6a「span ≤ M 且 CJK ≤ K」因此成立，K 窗不截断 CJK 舞台指示）。**禁止**"逐字符持有到第 K 字符才判定"——那会让短英文括号如 `(laughs)`（8 字符 < K）在闭合时被误判为 STAGE_CN 而从 TTS 剥离（违反行为表 #10）
    - **M 字符内未见 `）`（或 `)`）→ 回落 SPEECH**（已持有的文本按普通文本输出）
    - M / K 为可配置常量，建议 M=64、K=16
    - 例：`（注意：以上结论来自分析…长文本` 无闭口 → M 字符后整体回落为 SPEECH，随流输出，不延迟
-   - 例：`(laughs)` → 闭合时内容无 CJK → 回落 SPEECH → 保留进 TTS（行为表 #10 现状）
+   - 例：`(laughs)` → 闭合时内容无 CJK 且为英文语气词 → STAGE_EN → 显示剥离、保留进 TTS（行为表 #10 修复）
    - 未闭合且已回落的内容，保持为普通文本显示（对齐现状：不完整括号按文本显示）
 
 ### 组件（全部位于 `core/text/`）
@@ -256,7 +261,7 @@ LLM delta → StreamProcessor.feed(delta)
    - **块前短句**（`好。\n` + 围栏，"好。"< min_chunk 暂留）→ 按完成计数块插在句**后**（与旧 build_parts_with_blocks 一致；已发出计数会错插到句前）
    - 句中 `<|code|>`（`看这个<|code|>x=1</|code|>示例`）→ 块闭合时句边界未消费 → **块落在句前**（与旧 build_parts_with_blocks 一致）
    - 段尾围栏（`第一段。` + ```` ``` ````，"第一段。"= 4 字符 < min_chunk 暂留未发出但边界已消费）→ 块插在**已完成句**（完成计数 = 1）之后
-10. **回落场景**：#6a 超窗（span > M / CJK > K）→ 回落 SPEECH 按文本输出，不延迟流式；`（长文本无闭口` 不扣住；**`(laughs)` 短英文括号闭合时内容无 CJK → 回落 SPEECH、保留进 TTS**（K 判定时机钉死，禁止逐字符持有到 K 的路径）
+10. **回落场景**：#6a 超窗（span > M / CJK > K）→ 回落 SPEECH 按文本输出，不延迟流式；`（长文本无闭口` 不扣住；**`(laughs)` 短英文括号闭合时内容无 CJK 且为语气词 → STAGE_EN**（显示剥离、TTS 保留）；`(chu3li3)` 拼音标注非语气词 → 回落 SPEECH（显示 + TTS 保留）；`<pant>` 尖括号 → ANGLE_EN 全丢弃；`<abc>` 非语气词 → 回落 SPEECH（K 判定时机钉死，禁止逐字符持有到 K 的路径）
 11. **围栏收尾**：代码内容中**行中** ```` ``` ````（at_line_start=False）不终止 CODE token；**行首 ```` ``` ````（长度 ≥ 开围栏）按 CommonMark 即收尾**；开围栏 4 反引号 + 内容含 3 反引号行 → 不终止（长度不足）；**行首状态跟踪：`\n`/空格立即作为 SPEECH 发出，`好的。\n` 的 SENTENCE 不因 fence 检测延迟**
 12. **多 inner_voice session 侧**：public_text 无标签泄漏；session.inner_voice 为合并文本（`"\n".join`，INNER_VOICE 分支内累积）；**public_text 句中代码块按语音偏移还原原文位置**（`看这个<|code|>x=1</|code|>示例` → `看这个x=1示例`）
 13. **回归**：现有 core/cognitive + core/text 测试全绿；`make test-quick` 全绿
@@ -276,7 +281,7 @@ LLM delta → StreamProcessor.feed(delta)
    - `_think_loop`（loop.py:798-799）：解包并透传 `blocks`
    - `_finalize_turn`（loop.py:646）：签名新增 `blocks` 参数；parts 构建改用 `parts.py(all_sentences, blocks)`（按 `after_sentence_idx` 交错，**不再重解析 acc_text，符合"不再二次扫描"**）；`all_sentences` 保留（现状已传，parts 仍需句序列）
    - `_dispatch_stream_event` 无**新增**分支，但 INNER_VOICE 分支内部（loop.py:923-925）的 `iv_think_buf_holder[0] = event.text` 覆盖式赋值改为**累积**（append 到列表，收尾 `"\n".join()`）——合并落点在此处，不算新增分支
-5. `core/cognitive/loop.py` finalize：parts 构建改用 `parts.py`（仅服务 session 存储）；**finalize block 命令推送保留原位（显示路径唯一，不双渲染），参数改从 `blocks` 取值（含 language，顺带修复语言标签丢失）**；**public_text 改由 token 流重建**（SPEECH + PAUSE + STAGE_CN + 代码块内容，无 META 标签）——替换现状字符串 find 剥离（loop.py:676-685），使第二个 inner_voice 不再泄漏进 analyze_assistant / log_conversation / after_response；session.inner_voice 合并多个（换行连接）。**public_text 中代码块按"块前累计语音字符数"插回原文位置**（tokenizer 直接记录，不依赖 SENTENCE 粒度）——句中块如 `看这个<|code|>x=1</|code|>示例` 重建为原文顺序；注意这与 parts 的 `after_sentence_idx` 交错是**两条独立路径**（parts 句级粒度、public_text 原文位置）。**与现状差异**：现状 public_text 保留 `<|code|>`/```` ``` ```` 标记原样剥 META；新设计去标记只留块内容按原序——这是 #4 修复的预期改进（下游 analyze_assistant/log/after_response 不再收到标记），非缺陷
+5. `core/cognitive/loop.py` finalize：parts 构建改用 `parts.py`（仅服务 session 存储）。**持久化 TextPart 经 `strip_display_hidden` 剥 PAUSE + 英文语气词（STAGE_CN 保留）**——气泡/历史消息不含 TTS 标记，SENTENCE 事件（TTS）仍由 splitter 保留；**finalize block 命令推送保留原位（显示路径唯一，不双渲染），参数改从 `blocks` 取值（含 language，顺带修复语言标签丢失）**；**public_text 改由 token 流重建**（SPEECH + PAUSE + STAGE_CN + 代码块内容，无 META 标签）——替换现状字符串 find 剥离（loop.py:676-685），使第二个 inner_voice 不再泄漏进 analyze_assistant / log_conversation / after_response；session.inner_voice 合并多个（换行连接）。**public_text 中代码块按"块前累计语音字符数"插回原文位置**（tokenizer 直接记录，不依赖 SENTENCE 粒度）——句中块如 `看这个<|code|>x=1</|code|>示例` 重建为原文顺序；注意这与 parts 的 `after_sentence_idx` 交错是**两条独立路径**（parts 句级粒度、public_text 原文位置）。**与现状差异**：现状 public_text 保留 `<|code|>`/```` ``` ```` 标记原样剥 META；新设计去标记只留块内容按原序——这是 #4 修复的预期改进（下游 analyze_assistant/log/after_response 不再收到标记），非缺陷
 6. `core/adapter/tts_adapter.py`：删本地正则（`_PAUSE_TAG_RE`/`_CN_ACTION_RE`/`_EMOJI_RE`/死代码 `_TONE_TAG_RE`），改用 `core.text.tags` 共享定义；逐句提取逻辑不动
 7. 删除 `core/text/block_filter.py`、`core/text/sentence_buffer.py`、`core/cognitive/stream_processor.py`（删除后跑 `grep -rn "block_filter\|sentence_buffer\|cognitive.stream_processor\|build_parts_with_blocks"` 确认零残留）
 8. 全量回归 + `make test-quick`

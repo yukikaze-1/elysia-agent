@@ -7,8 +7,9 @@
 - **边界扫描只在 SPEECH 文本上进行**。连续 SPEECH token 先按原序拼接
   （tokenizer 的确定性边界粒度，如 `价格<100元` → [S("价格"), S("<1"), S("00元")]），
   拼接后的文本才做标点扫描。
-- **PAUSE/STAGE_CN 是受保护 span**：以零宽位置记录（pos = 该 span 前累计的
-  SPEECH 字符数），切句时按原序内嵌回句子；span 内部标点永不参与边界判定。
+- **PAUSE/STAGE_CN/STAGE_EN 是受保护 span**：以零宽位置记录（pos = 该 span
+  前累计的 SPEECH 字符数），切句时按原序内嵌回句子；span 内部标点永不参与
+  边界判定。STAGE_EN（英文语气词）内嵌供 TTS，显示剥离由 parts/tts 路径做。
 - **completed_count** = 句边界已消费的句子数，含因 min_chunk 暂留未发出的短句
   （`好。\n` 暂留 → 计数 1）。强制切分（max_buffer 长度保护）发出的句子同样计入，
   保证计数与已发出句子列表对齐（供 `after_sentence_idx` 块定位）。
@@ -25,7 +26,7 @@ from collections.abc import Iterable
 from core.text.tokenizer import Token, TokenKind
 
 
-_HARD_DELIMITERS = frozenset("。！？!?\n")
+_HARD_DELIMITERS = frozenset("。！？!?\n♪♡")
 _DEFAULT_DELIMITERS = _HARD_DELIMITERS | {"."}
 
 # 常见英文缩写。可根据业务继续扩展。
@@ -168,7 +169,7 @@ class SpeechSplitter:
         if token.kind is TokenKind.SPEECH:
             self._text += token.text
             return self._extract()
-        if token.kind in (TokenKind.PAUSE, TokenKind.STAGE_CN):
+        if token.kind in (TokenKind.PAUSE, TokenKind.STAGE_CN, TokenKind.STAGE_EN):
             # 零宽位置：该 span 前累计的 SPEECH 字符数
             self._spans.append((len(self._text), token.text))
             return []

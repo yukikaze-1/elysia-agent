@@ -474,6 +474,63 @@ class TestPauseTags:
         assert any("（我有点，犹豫。）然后说" in s for s in sentences)
 
 
+class TestStageEn:
+    """英文语气词（圆括号）：显示剥离、TTS 保留、public_text 保留（同 PAUSE）。"""
+
+    def test_tone_word_stripped_from_delta_kept_in_sentence(self):
+        proc = StreamProcessor()
+        sentences, deltas = self._collect(proc, "不过——(sighs) 被你这么一亲，我今晚大概要想着你偷偷笑了。")
+        assert all("(sighs)" not in d for d in deltas)
+        assert any("(sighs)" in s for s in sentences)  # SENTENCE 供 TTS，保留语气词
+
+    def test_tone_word_does_not_trigger_ttft(self):
+        """TTFT 只在首个可见文本到达时发——(sighs) 显示隐藏，单独到达不触发。"""
+        proc = StreamProcessor()
+        proc.feed("(sighs)")
+        events = proc.flush()
+        assert all(e.type is not StreamEventType.TTFT for e in events)
+
+    def test_tone_word_kept_in_public_text(self):
+        """public_text 保留英文语气词（同 PAUSE，供 analyze/log/after_response）。"""
+        proc = StreamProcessor()
+        proc.feed("不过——(sighs) 你好。")
+        proc.flush()
+        assert "(sighs)" in proc.rebuild_public_text()
+
+    def _collect(self, proc, text):
+        proc.feed(text)
+        events = proc.flush()
+        sentences = [e.text for e in events if e.type == StreamEventType.SENTENCE]
+        deltas = [e.text for e in events if e.type == StreamEventType.TEXT_DELTA]
+        return sentences, deltas
+
+
+class TestAngleEn:
+    """尖括号语气词（F3 违规格式）：显示 + TTS + public_text 全丢弃。"""
+
+    def test_angle_tone_word_dropped_everywhere(self):
+        proc = StreamProcessor()
+        events = proc.feed("<pant>偷……偷袭可不行哦。") + proc.flush()
+        sentences = [e.text for e in events if e.type == StreamEventType.SENTENCE]
+        deltas = [e.text for e in events if e.type == StreamEventType.TEXT_DELTA]
+        assert all("<pant>" not in s for s in sentences)
+        assert all("<pant>" not in d for d in deltas)
+        assert any(s == "偷……偷袭可不行哦。" for s in sentences)
+
+    def test_angle_tone_word_not_in_public_text(self):
+        proc = StreamProcessor()
+        proc.feed("<pant>偷。")
+        proc.flush()
+        assert "<pant>" not in proc.rebuild_public_text()
+
+    def test_angle_non_tone_word_flows_through(self):
+        """非语气词尖括号（<b>）仍是普通文本（未知模式回落）。"""
+        proc = StreamProcessor()
+        events = proc.feed("看<b>示例。") + proc.flush()
+        deltas = [e.text for e in events if e.type == StreamEventType.TEXT_DELTA]
+        assert any("<b>" in d for d in deltas)
+
+
 # ============================================================================
 # Group 10: emoji-only 尾部合并（迁移旧 flush 行为）
 # ============================================================================

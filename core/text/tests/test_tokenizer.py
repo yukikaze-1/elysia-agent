@@ -69,6 +69,14 @@ PROPERTY_CORPUS = [
     "（长中文指示没有闭口",
     "(" + "a" * 20,  # K 窗口早退（无 CJK）
     "（" + "啊" * 70,  # M 窗口回落（含 CJK）
+    # ---- 用户实测案例：STAGE_EN / ANGLE_EN / ♪♡ 分隔符 ----
+    "<pant>偷……偷袭可不行哦。",
+    "好～那我就赖在这里不走了♪ 陪你聊到你开始犯困为止。",
+    "不客气♡ 能被你这么一句道谢，这一趟折腾也值了。",
+    "不过——(sighs) 被你这么一亲，我今晚大概要想着你偷偷笑了。",
+    "<#0.5#>夜深了，要是还有想让我\"写\"进备忘里的心愿，我随时都在。",
+    "(clears throat) 然后说",
+    "<clears throat> 然后说",
 ]
 
 _POOL = (
@@ -167,9 +175,23 @@ class TestStageCn:
             Token(TokenKind.STAGE_CN, "（我有点，犹豫。）")
         ]
 
-    def test_english_tone_released(self):
-        """(laughs) 闭合内容无 CJK → 回落 SPEECH 保留（行为表 #10）。"""
-        assert _whole("(laughs)") == [Token(TokenKind.SPEECH, "(laughs)")]
+    def test_english_tone_word_is_stage_en(self):
+        """(laughs) 闭合内容为英文语气词 → STAGE_EN（显示剥离、TTS 保留）。"""
+        assert _whole("(laughs)") == [Token(TokenKind.STAGE_EN, "(laughs)")]
+
+    def test_english_tone_word_fullwidth(self):
+        """（sighs）全角括号同样识别为 STAGE_EN。"""
+        assert _whole("（sighs）") == [Token(TokenKind.STAGE_EN, "（sighs）")]
+
+    def test_english_tone_word_case_and_space(self):
+        """大小写 / 词内多空格归一后仍命中语气词。"""
+        assert _whole("(SIGHS)") == [Token(TokenKind.STAGE_EN, "(SIGHS)")]
+        assert _whole("(clears  throat)") == [Token(TokenKind.STAGE_EN, "(clears  throat)")]
+
+    def test_non_tone_english_paren_released(self):
+        """(chu3li3) 拼音标注 / 非语气词 → 回落 SPEECH 保留（显示 + TTS）。"""
+        assert _whole("(chu3li3)") == [Token(TokenKind.SPEECH, "(chu3li3)")]
+        assert _whole("(hello)") == [Token(TokenKind.SPEECH, "(hello)")]
 
     def test_k_window_early_exit(self):
         """纯英文无闭口超 K=16 → 提前回落 SPEECH，不延迟。"""
@@ -197,6 +219,47 @@ class TestStageCn:
         assert _whole("（长中文指示没有闭口") == [
             Token(TokenKind.SPEECH, "（长中文指示没有闭口")
         ]
+
+
+# ============================================================================
+# Group 2b: ANGLE_EN（尖括号英文语气词，F3 违规格式）
+# ============================================================================
+
+class TestAngleEn:
+    def test_angle_tone_word_token(self):
+        """<pant> 命中语气词 → ANGLE_EN（全链路丢弃）。"""
+        assert _whole("<pant>") == [Token(TokenKind.ANGLE_EN, "<pant>")]
+
+    def test_angle_tone_word_with_space(self):
+        """<clears throat> 词内含空格 → ANGLE_EN。"""
+        assert _whole("<clears throat>") == [Token(TokenKind.ANGLE_EN, "<clears throat>")]
+
+    def test_angle_non_tone_released(self):
+        """<b> / <abc> 非语气词 → 回落 SPEECH。"""
+        assert _whole("<b>") == [Token(TokenKind.SPEECH, "<b>")]
+        assert _whole("<abc>") == [Token(TokenKind.SPEECH, "<abc>")]
+
+    def test_angle_tone_followed_by_speech(self):
+        """<pant> 后接中文 → ANGLE_EN + 后续 SPEECH 分离。"""
+        assert _whole("<pant>偷") == [
+            Token(TokenKind.ANGLE_EN, "<pant>"),
+            Token(TokenKind.SPEECH, "偷"),
+        ]
+
+    def test_angle_tag_prefixes_still_win(self):
+        """<mood> / <#1#> / <|code|> 等已注册标签不受 ANGLE 态干扰。"""
+        assert _whole("<mood>开心</mood>")[0].kind is TokenKind.META
+        assert _whole("<#1#>") == [Token(TokenKind.PAUSE, "<#1#>")]
+
+    def test_angle_unclosed_falls_back(self):
+        """未闭合 <pant → flush 回落 SPEECH。"""
+        assert _whole("<pant") == [Token(TokenKind.SPEECH, "<pant")]
+
+    def test_angle_overlong_falls_back(self):
+        """超窗（>ANGLE_MAX）无 `>` → 回落 SPEECH，不延迟。"""
+        long_word = "<" + "a" * 20
+        toks = _whole(long_word)
+        assert toks == [Token(TokenKind.SPEECH, long_word[:17]), Token(TokenKind.SPEECH, "a" * 4)]
 
 
 # ============================================================================

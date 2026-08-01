@@ -108,6 +108,26 @@ class TestBasicDelimiters:
         assert results == ["你好！", "今天天气真好。", "要不要出去玩？"]
 
 
+class TestMusicNoteDelimiters:
+    def test_music_note_splits(self):
+        """♪ (U+266A) 作为句子结尾。"""
+        buf = SpeechSplitter(min_chunk_length=3)
+        results = _collect_all(buf, "好～那我就赖在这里不走了♪ 陪你聊到你开始犯困为止。")
+        assert results == ["好～那我就赖在这里不走了♪", " 陪你聊到你开始犯困为止。"]
+
+    def test_heart_suit_splits(self):
+        """♡ (U+2661) 作为句子结尾。"""
+        buf = SpeechSplitter(min_chunk_length=3)
+        results = _collect_all(buf, "不客气♡ 能被你这么一句道谢，这一趟折腾也值了。")
+        assert results == ["不客气♡", " 能被你这么一句道谢，这一趟折腾也值了。"]
+
+    def test_music_note_alone_at_end(self):
+        """句尾 ♪ 并入前句（连续标点合并），不独占一行。"""
+        buf = SpeechSplitter(min_chunk_length=3)
+        results = _collect_all(buf, "今晚早点休息♪")
+        assert results == ["今晚早点休息♪"]
+
+
 class TestConsecutiveDelimiters:
     def test_exclamation_question(self):
         buf = SpeechSplitter(min_chunk_length=3)

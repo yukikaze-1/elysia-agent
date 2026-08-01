@@ -28,13 +28,16 @@ def _block(kind: str, content: str, after: int, lang: str = "") -> tuple[str, st
 
 class TestInterleaveCorpora:
     def test_corpus1_sentence_with_inline_pause(self):
-        """块前句子含内嵌标签：块插在该句之后（字符偏移式误插被钉死）。"""
+        """块前句子含内嵌标签：块插在该句之后（字符偏移式误插被钉死）。
+
+        持久化 TextPart 剥 PAUSE（显示剥离），块位置不变（after_sentence_idx 语义）。
+        """
         parts, content_type = build_parts(
             ["好的。<#0.5#>"],
             [_block("markdown", "表格", after=1)],
         )
         assert parts == [
-            TextPart(content="好的。<#0.5#>"),
+            TextPart(content="好的。"),
             TextPart(content="表格"),
         ]
         assert content_type == {"markdown": [1], "code": []}
@@ -176,12 +179,20 @@ class TestMultiBlock:
         assert set(content_type.keys()) == {"markdown", "code"}
 
     def test_sentence_text_preserved_exact(self):
-        """句子文本原样保留（含内嵌 PAUSE/STAGE_CN，不剥离）。"""
+        """持久化 TextPart 剥 PAUSE/语气词，STAGE_CN 保留（显示剥离）。"""
         parts, _ = build_parts(
             ["（眨眼）好的。<#1#>"],
             [_block("code", "x", after=1)],
         )
-        assert parts[0] == TextPart(content="（眨眼）好的。<#1#>")
+        assert parts[0] == TextPart(content="（眨眼）好的。")
+
+    def test_sentence_strips_tone_word_and_pause(self):
+        """持久化剥英文语气词 (sighs) + PAUSE；拼音标注 (chu3li3) 保留。"""
+        parts, _ = build_parts(
+            ["不过——(sighs) 好的。<#0.5#> 处理(chu3li3)。"],
+            [],
+        )
+        assert parts[0].content == "不过—— 好的。 处理(chu3li3)。"
 
 
 # ============================================================================

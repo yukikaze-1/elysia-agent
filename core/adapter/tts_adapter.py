@@ -21,10 +21,10 @@ from Module.output import ChannelCapability, OutputManager
 from Module.tts import TTSBackend
 
 # 共享标签定义（core.text.tags 收口，替代本模块本地正则）
-#   PAUSE_RE     — MiniMax 停顿标签 <#x#>：送到 TTS 但不显示在前端
-#   STAGE_CN_RE  — 中文括号舞台指示（如 (清了清嗓子)、（眨了眨眼））：显示但 TTS 不合成
-#   is_emoji_only— 纯 emoji 句判定（跳过 TTS 合成）
-from core.text.tags import PAUSE_RE, STAGE_CN_RE, is_emoji_only
+#   STAGE_CN_RE        — 中文括号舞台指示（如 (清了清嗓子)、（眨了眨眼））：显示但 TTS 不合成
+#   is_emoji_only      — 纯 emoji 句判定（跳过 TTS 合成）
+#   strip_display_hidden — 显示剥离：PAUSE <#x#> + 英文语气词 (sighs)（送到 TTS 但不显示在前端）
+from core.text.tags import STAGE_CN_RE, is_emoji_only, strip_display_hidden
 
 if TYPE_CHECKING:
     pass
@@ -229,8 +229,8 @@ class TTSStreamManager:
         if not self._tts:
             return
 
-        # 显示文本：去掉停顿标签（前端不显示 <#x#>）
-        display_text = PAUSE_RE.sub("", sentence).strip()
+        # 显示文本：去掉停顿标签与英文语气词（前端不显示 <#x#> / (sighs)）
+        display_text = strip_display_hidden(sentence).strip()
         # 提取句首中文舞台指示，单独一行显示
         action_text = ""
         m = STAGE_CN_RE.match(display_text)

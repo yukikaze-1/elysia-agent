@@ -13,7 +13,9 @@
                  <inner_voice>..</inner_voice>  内心独白（可多个）
     MARKDOWN     <|markdown|>..</|markdown|>
     CODE         <|code|lang>..</|code|>   + ```lang 围栏（仅行首）
-    STAGE_EN_WORDS  英文语气词表（文档化用途——行为上随 SPEECH 流过）
+    STAGE_EN      (sighs)/(laughs)          英文语气词（圆括号，显示剥离、TTS 保留）
+    ANGLE_EN      <pant>                    英文语气词尖括号（违规格式，全链路丢弃）
+    STAGE_EN_WORDS  英文语气词词表
 """
 
 from __future__ import annotations
@@ -66,15 +68,54 @@ STAGE_CN_RE = re.compile(r"[\(\（][^\)\）]*[一-鿿][^\)\）]*[\)\）]")
 STAGE_M: int = 64
 STAGE_K: int = 16
 
-# 英文语气词表（从旧死代码 _TONE_TAG_RE 提取）——仅文档化用途：
-# 这些词不是特殊 token，显示与 TTS 均保留，随 SPEECH 自然流过（行为表 #10）。
-# 正则中的可变量（clears?\s?throat、lip.?smacking）展开为可读形式。
+# 英文语气词表（从旧死代码 _TONE_TAG_RE 提取）——STAGE_EN / ANGLE_EN 识别基准。
+# 圆括号格式 (sighs) → STAGE_EN：显示剥离、TTS 保留（语气词用途）；
+# 尖括号格式 <pant> → ANGLE_EN：F3 明令禁止的违规格式，显示 + TTS 全丢弃。
+# 词内空白用 \s+ 归一，兼容 (clears  throat) 等多空格变体。
 STAGE_EN_WORDS: frozenset[str] = frozenset({
     "laughs", "sighs", "crying", "gasps", "breath", "humming", "sniffs",
     "sneezes", "coughs", "groans", "pant", "chuckle", "clears throat",
     "clear throat", "applause", "inhale", "exhale", "snorts", "burps",
     "lip smacking", "lipsmacking", "hissing", "emm", "whistles",
 })
+
+
+def is_tone_word(content: str) -> bool:
+    """内容归一（去空白 + 小写）后是否为英文语气词。
+
+    Args:
+        content: 括号内原始内容（可含前后空白 / 大小写 / 词内多空格）。
+
+    Returns:
+        bool: 归一后命中 STAGE_EN_WORDS 时为 True。
+    """
+    return " ".join(content.strip().lower().split()) in STAGE_EN_WORDS
+
+
+def _escape_tone_word(word: str) -> str:
+    """语气词 → 正则片段：词内空白转 \\s+（兼容多空格），其余转义。"""
+    return r"\s+".join(re.escape(part) for part in word.split())
+
+
+# 圆括号英文语气词正则（半角 + 全角括号）。STAGE_CN（中文指示）不在剥离范围。
+# 按长度降序排列备选，避免前缀短词抢先匹配（如 clear 先于 clears throat）。
+_TONE_WORD_RE = re.compile(
+    r"[\(\（]\s*(?:{})\s*[\)\）]".format(
+        "|".join(
+            _escape_tone_word(word)
+            for word in sorted(STAGE_EN_WORDS, key=len, reverse=True)
+        )
+    )
+)
+
+
+def strip_display_hidden(text: str) -> str:
+    """从句子文本剥离显示隐藏标记：PAUSE + 圆括号英文语气词，STAGE_CN 保留。
+
+    供持久化 parts 与 tts_adapter 显示路径共用（单一来源，避免正则散落）。
+    尖括号 ANGLE_EN 已被 tokenizer 丢弃，不会出现在句子文本中。
+    """
+    return _TONE_WORD_RE.sub("", PAUSE_RE.sub("", text))
 
 
 # ---- META（心情 / 内心独白）-------------------------------------------------

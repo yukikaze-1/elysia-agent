@@ -13,7 +13,10 @@
     匹配；一旦不可能构成任何起始模式 → 释放为 SPEECH。
   - PAUSE：尾串正则 `PAUSE_TAIL_RE` 驱动（内容无上界，固定前缀框不住）。
   - STAGE_CN：K/M 计数窗口——K=16 英文早退（无 CJK 提前回落）、
-    M=64 CJK 上限（含 CJK 的未闭口持有到 M 才回落）。
+    M=64 CJK 上限（含 CJK 的未闭口持有到 M 才回落）。闭合时无 CJK 且内容为
+    英文语气词 → STAGE_EN（显示剥离、TTS 保留）；否则回落 SPEECH。
+  - ANGLE（尖括号英文语气词候选）：`<` + 字母进入，内容上界 ANGLE_MAX=16；
+    `>` 时命中语气词 → ANGLE_EN（违规格式，全链路丢弃），否则回落 SPEECH。
   - 围栏：`\n`/空格立即作为 SPEECH 发出（零延迟，不参与持有）；
     行首反引号前缀（1-2 个）跨 chunk 持有等待第 3 个。
 - **行首双状态**：布尔 `at_line_start` + 缩进计数；围栏判定只看 `at_line_start`。
@@ -44,7 +47,12 @@ from core.text.tags import (
     STAGE_CN_OPEN,
     STAGE_K,
     STAGE_M,
+    is_tone_word,
 )
+
+# 尖括号英文语气词（<pant>）持有窗口：内容上界（最长语气词「clears throat」12 字符
+# + 裕量）。超窗未闭合 → 回落 SPEECH（不延迟流式输出）。对齐 STAGE_K=16 语义。
+ANGLE_MAX: int = 16
 
 
 # ---- Token 模型 ----------------------------------------------------------
@@ -53,6 +61,8 @@ class TokenKind(StrEnum):
     SPEECH = "speech"
     PAUSE = "pause"
     STAGE_CN = "stage_cn"
+    STAGE_EN = "stage_en"
+    ANGLE_EN = "angle_en"
     CODE = "code"
     MARKDOWN = "markdown"
     META = "meta"
@@ -137,6 +147,8 @@ class StreamTokenizer:
                 self._feed_pause(c, out)
             elif self._state == "STAGE":
                 self._feed_stage(c, out)
+            elif self._state == "ANGLE":
+                self._feed_angle(c, out)
             elif self._state == "META":
                 self._feed_meta(c, out)
             elif self._state == "CODE_TAG":
@@ -167,6 +179,9 @@ class StreamTokenizer:
         elif self._state == "STAGE":
             # 未闭合 STAGE_CN → 回落 SPEECH（不完整括号按文本显示）
             self._release_stage_speech(self._stage_open + self._stage_content, out)
+        elif self._state == "ANGLE":
+            # 未闭合 <pant → 回落 SPEECH（不完整尖括号按文本显示）
+            self._emit_speech_text(self._angle_buf, out)
         elif self._state == "META":
             if self._meta_kind == "inner_voice":
                 # 未闭合 inner_voice → 产出残留 token，由协调器广播 INNER_VOICE
@@ -196,6 +211,7 @@ class StreamTokenizer:
         self._stage_open = ""
         self._stage_content = ""
         self._stage_has_cjk = False
+        self._angle_buf = ""
         self._meta_kind = ""
         self._meta_content = ""
         self._code_lang = ""
@@ -278,6 +294,13 @@ class StreamTokenizer:
             state, param = complete
             self._enter_tag(state, param)
             return
+        # 尖括号英文语气词候选：`<` + 首字母（非任何已注册标签前缀）。
+        # 仅 `held=="<"` 且新字符为字母时进入——`<pant>` → ANGLE_EN，
+        # `<b>`/`<abc>` 等非语气词在 `>` 时回落 SPEECH（有界持有，超窗回落）。
+        # 已知盲区：`<inhale>` 首字母 i 被 inner_voice 前缀持有截走（罕见，F3 已禁尖括号）。
+        if self._held == "<" and c.isascii() and c.isalpha():
+            self._enter_angle(candidate)
+            return
         # 断裂：c 为 \n/空格时须走行首状态更新，故拆开发射
         if c in ("\n", " "):
             self._emit_speech_text(self._held, out)
@@ -304,6 +327,18 @@ class StreamTokenizer:
         self._stage_open = ""
         self._stage_content = ""
         self._stage_has_cjk = False
+
+    def _enter_angle(self, buf: str) -> None:
+        self._state = "ANGLE"
+        self._angle_buf = buf
+        self._at_line_start = False
+        # 关键：清空持有前缀——否则 `>` 退出后 `_held` 残留 `<`，
+        # 后续字符会经 _feed_normal_held 再次进入 ANGLE（幽灵标签吞文本）
+        self._held = ""
+
+    def _exit_angle(self) -> None:
+        self._state = "NORMAL"
+        self._angle_buf = ""
 
     def _enter_tag(self, state: str, param: str | None) -> None:
         self._at_line_start = False
@@ -379,6 +414,9 @@ class StreamTokenizer:
             full = self._stage_open + self._stage_content + c
             if self._stage_has_cjk:
                 out.append(Token(TokenKind.STAGE_CN, full))
+            elif is_tone_word(self._stage_content):
+                # 英文语气词（圆括号）→ STAGE_EN：显示剥离、TTS 保留
+                out.append(Token(TokenKind.STAGE_EN, full))
             else:
                 self._release_stage_speech(full, out)
             self._exit_stage()
@@ -396,6 +434,33 @@ class StreamTokenizer:
             # 英文早退窗：无 CJK 短括号不必等到 M
             self._release_stage_speech(self._stage_open + self._stage_content, out)
             self._exit_stage()
+
+    # ---- ANGLE 态（尖括号英文语气词候选）-------------------------------------
+
+    def _feed_angle(self, c: str, out: list[Token]) -> None:
+        """`<` + 字母的尖括号候选：`>` 时判英文语气词。
+
+        内容命中语气词 → ANGLE_EN（F3 违规格式，全链路丢弃）；否则 / 超窗 /
+        换行 / 非法字符 → 回落 SPEECH（按普通文本显示，有界持有不延迟流式）。
+        """
+        if c == ">":
+            full = self._angle_buf + ">"
+            if is_tone_word(self._angle_buf[1:]):
+                out.append(Token(TokenKind.ANGLE_EN, full))
+            else:
+                self._emit_speech_text(full, out)
+            self._exit_angle()
+            return
+        if len(self._angle_buf) - 1 >= ANGLE_MAX or not (
+            c.isascii() and (c.isalpha() or c == " ")
+        ):
+            # 超窗 / 换行 / 非字母空格字符（数字、CJK、标点）→ 非语气词，
+            # 回落 SPEECH 并重新处理 c（\n/空格走行首状态更新，`<` 可再成标签）
+            self._emit_speech_text(self._angle_buf, out)
+            self._exit_angle()
+            self._feed_normal(c, out)
+            return
+        self._angle_buf += c
 
     # ---- META / CODE_TAG / MARKDOWN 态（内容缓冲至闭合）---------------------
 

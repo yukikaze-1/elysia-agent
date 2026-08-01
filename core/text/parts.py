@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from core.schema.part import TextPart
+from core.text.tags import strip_display_hidden
 from core.text.tokenizer import Token, TokenKind
 
 
@@ -51,12 +52,19 @@ def build_parts(
     - 每块的位置相对**原始句子列表**计算，不做插入后重索引：多个块落在同一
       插入点时，按 blocks 列表顺序排列（同槽块 = 按闭合顺序）。
     - 块内容对齐旧 `_parse_blocks` 的 `.strip()` 语义（去首尾空白，内部结构保留）。
+
+    显示剥离（对齐 spec「显示路径」）：持久化 TextPart 是前端气泡/历史的消息文本，
+    经 `strip_display_hidden` 剥 PAUSE `<#x#>` + 英文语气词 `(sighs)`（STAGE_CN 保留）。
+    SENTENCE 事件（供 TTS）由 splitter 直接产出、保留 PAUSE/语气词——两条路径分离。
     """
     content_type: dict[str, list[int]] = {"markdown": [], "code": []}
 
     if not blocks:
         return (
-            [TextPart(content=sentence) for sentence in all_sentences],
+            [
+                TextPart(content=strip_display_hidden(sentence))
+                for sentence in all_sentences
+            ],
             content_type,
         )
 
@@ -76,7 +84,7 @@ def build_parts(
         parts.append(TextPart(content=content.strip()))
 
     for k in range(n):
-        parts.append(TextPart(content=all_sentences[k]))
+        parts.append(TextPart(content=strip_display_hidden(all_sentences[k])))
         for kind, content, _lang, _after in slots[k + 1]:
             content_type[kind].append(len(parts))
             parts.append(TextPart(content=content.strip()))
@@ -97,5 +105,11 @@ def rebuild_public_text(tokens: Iterable[Token]) -> str:
 
     与 build_parts 的 after_sentence_idx 交错是两条独立路径：本函数按 token
     原文位置重建，供 analyze_assistant / log_conversation / after_response。
+    排除 META（mood/inner_voice）+ ANGLE_EN（尖括号违规格式，全链路丢弃）。
+    PAUSE 与 STAGE_EN（圆括号语气词）保留——与 PAUSE 同为 TTS 标记，供分析文本。
     """
-    return "".join(tok.text for tok in tokens if tok.kind is not TokenKind.META)
+    return "".join(
+        tok.text
+        for tok in tokens
+        if tok.kind not in (TokenKind.META, TokenKind.ANGLE_EN)
+    )
