@@ -13,8 +13,8 @@ if TYPE_CHECKING:
     from Module.workflow_engine.delegation_preparer import DelegationPreparer
     from ..adapter.llm_adapter import LLMAdapter
     from core.schema.types import IsoTimestamp
-    from Module.workflow_engine.schema.protocol import HITLData
-    from Module.workflow_engine.schema.types import ApprovalId
+    from Module.workflow_contract import HITLData
+    from Module.workflow_contract import ApprovalId
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,8 @@ class _LifecycleTaskSystem:
         """创建 WorkflowEngine + DelegationPreparer + HITLNotifier，注入 CognitiveLoop。"""
         from Module.workflow_engine.workflow_engine import WorkflowEngine
         from Module.workflow_engine.delegation_preparer import DelegationPreparer
-        from Module.workflow_engine.infra import AgentInfra
-        from Module.workflow_engine.schema import ConstraintConfig
+        from Module.workflow_contract.infra import AgentInfra
+        from Module.workflow_contract import ConstraintConfig
 
         _ts_infra = AgentInfra(
             llm=self._llm.get_raw_client(),  # type: ignore[arg-type]
@@ -49,7 +49,7 @@ class _LifecycleTaskSystem:
             constraints=ConstraintConfig(),
         )
 
-        from Module.workflow_engine.protocol import HITLNotifier
+        from Module.workflow_contract import HITLNotifier
 
         class _EventBusHITLNotifier(HITLNotifier):
             def __init__(self, bus: EventBus) -> None:

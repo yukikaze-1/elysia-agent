@@ -25,7 +25,7 @@ class TestPendingMessage:
 class TestBackgroundTaskEntry:
     def test_fields(self):
         from Module.workflow_engine.mailbox import WorkflowMailbox
-        from Module.workflow_engine.schema import WorkflowId
+        from Module.workflow_contract import WorkflowId
         mailbox = WorkflowMailbox(task_id=WorkflowId("test-task"))
         entry = _BackgroundTaskEntry(
             intent="test intent",

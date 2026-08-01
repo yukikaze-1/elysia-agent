@@ -53,25 +53,6 @@ def _normalize_utc(v: object) -> str:
     raise ValueError(f"无法解析为 IsoTimestamp: {v!r}")
 
 
-def parse_iso(ts: str) -> datetime:
-    """将 IsoTimestamp 字符串解析为 offset-aware UTC datetime。
-
-    替代各处重复的 try/except + fromisoformat + replace(tzinfo=...) 样板代码。
-
-    Args:
-        ts: ISO 8601 时间戳字符串。空字符串返回 epoch。
-
-    Returns:
-        datetime: offset-aware UTC datetime，空字符串返回 1970-01-01 UTC。
-    """
-    if not ts:
-        return datetime(1970, 1, 1, tzinfo=timezone.utc)
-    dt = datetime.fromisoformat(ts)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
 # Pydantic 注解类型——声明为 Annotated[str, BeforeValidator(...)]，
 # Pydantic 在 model_dump/model_validate 时自动归一化。
 IsoTimestamp = Annotated[str, BeforeValidator(_normalize_utc)]

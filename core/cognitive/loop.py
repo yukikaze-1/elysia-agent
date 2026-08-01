@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 from ..text.parts import BlockRef, build_parts
 from ..adapter.tts_adapter import TTSStreamManager
 from ..adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
-from Module.workflow_engine.schema.types import WorkflowId
+from Module.workflow_contract import WorkflowId
 from ..utils.text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageSummary
