@@ -1,8 +1,9 @@
-"""WorkflowEngine 共享基础设施。
+"""WorkflowContract 契约层 — 跨边运行时注入容器。
 
-注意：本文件的内容后续会转移到其它地方，不会留在 WorkflowEngine 模块内。
-AgentInfra 最终可能上提到 Core 层或独立的共享层。
-当前暂时放在这里，方便 WorkflowEngine 开发阶段使用。
+AgentInfra 是 core 向 workflow_engine 提供运行资源
+（AsyncOpenAI/Milvus/http/ToolRegistry/ConstraintConfig）的注入容器，
+放在契约层：它是「core 提供资源、engine 消费」的运行时契约，
+唯一能同时被两边无环引用的位置。
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import TYPE_CHECKING
 import httpx
 from openai import AsyncOpenAI
 
-from Module.workflow_engine.schema import ConstraintConfig
+from Module.workflow_contract.schema import ConstraintConfig
 
 if TYPE_CHECKING:
     from pymilvus import MilvusClient

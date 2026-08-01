@@ -18,7 +18,8 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.schema import WorkflowCheckpoint, WorkflowId
+    from Module.workflow_contract import WorkflowId
+    from Module.workflow_engine.schema import WorkflowCheckpoint
 
 logger = logging.getLogger(__name__)
 

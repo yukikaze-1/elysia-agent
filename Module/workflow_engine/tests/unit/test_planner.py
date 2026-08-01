@@ -14,22 +14,24 @@ import pytest
 
 from Module.workflow_engine.core.planner import Planner, Replanner, PlanParseError
 from Module.workflow_engine.utils import strip_markdown_fence, format_tools
+from Module.workflow_contract import (
+    ConstraintConfig,
+    DelegationContext,
+    NodeId,
+    SessionId,
+)
+from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
     ArtifactId,
-    ConstraintConfig,
     DAG,
     DAGPatch,
     DAGPatchType,
     DAGNode,
-    DelegationContext,
-    NodeId,
     NodeState,
     NodeStatus,
     Plan,
     TokenComponentType,
-    Tool,
     OutputContract,
-    SessionId,
 )
 
 pytestmark = pytest.mark.unit
@@ -316,8 +318,11 @@ def test_parse_edge_not_pair(planner):
 def test_format_nodes_by_status_success(replanner):
     """成功节点 → 包含 node_id + description + summary + evaluation。"""
     from Module.workflow_engine.schema import (
-        BusinessStatus, EvaluatorAction, ExecutionStatus,
-        NodeResult, NodeResultEvaluation,
+        BusinessStatus,
+        EvaluatorAction,
+        ExecutionStatus,
+        NodeResult,
+        NodeResultEvaluation,
     )
 
     node_results = {
@@ -351,8 +356,11 @@ def test_format_nodes_by_status_success(replanner):
 def test_format_nodes_by_status_failed(replanner):
     """失败节点 → 包含 error + evaluation 信息。"""
     from Module.workflow_engine.schema import (
-        BusinessStatus, EvaluatorAction, ExecutionStatus,
-        NodeResult, NodeResultEvaluation,
+        BusinessStatus,
+        EvaluatorAction,
+        ExecutionStatus,
+        NodeResult,
+        NodeResultEvaluation,
     )
 
     node_results = {

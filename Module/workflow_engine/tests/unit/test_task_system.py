@@ -13,24 +13,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     AgentId,
+    ConstraintConfig,
+    NodeId,
+    SubmitError,
+    WorkflowId,
+    WorkflowStatus,
+)
+from Module.workflow_engine.schema import (
     AgentInfo,
     AgentList,
     AgentStatus,
     AgentType,
-    ConstraintConfig,
     ExecutionState,
     ExecutionPhase,
     NodeState,
     NodeStatus,
-    NodeId,
     ResumeError,
     ResumeErrorCode,
-    SubmitError,
-    WorkflowId,
     WorkflowState,
-    WorkflowStatus,
     TokenComponent,
     TokenComponentType,
     TokenPeriod,
@@ -86,7 +88,7 @@ def _make_mock_sub_agent(task_state, exec_state):
 async def _build_task_system():
     """构造一个已 start 的 WorkflowEngine（mock 内部组件）。"""
     from Module.workflow_engine.workflow_engine import WorkflowEngine
-    from Module.workflow_engine.infra import AgentInfra
+    from Module.workflow_contract import AgentInfra
 
     mock_llm = MagicMock()
     mock_llm.chat = MagicMock()
@@ -109,7 +111,7 @@ async def _build_task_system():
 def _build_task_system_raw():
     """构造 WorkflowEngine + mock ToolManager，供 submit_approval 同步测试使用。"""
     from Module.workflow_engine.workflow_engine import WorkflowEngine
-    from Module.workflow_engine.infra import AgentInfra
+    from Module.workflow_contract import AgentInfra
 
     tool_mgr = MagicMock()
     tool_mgr.submit_approval = MagicMock(return_value=True)
@@ -208,7 +210,11 @@ async def test_stop_rejects_new_submissions():
     ts = await _build_task_system()
     await ts.stop()
 
-    from Module.workflow_engine.schema import DelegationContext, SessionId, SubmitRejectionCode
+    from Module.workflow_contract import (
+        DelegationContext,
+        SessionId,
+        SubmitRejectionCode,
+    )
 
     ctx = DelegationContext(intent="测试", session_id=SessionId("s1"))
     result = await ts.submit(ctx)
@@ -914,7 +920,12 @@ async def test_paused_task_visible_in_query_apis():
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
 
     # 设置 plan 使其在 list_active_tasks 中可见
-    from Module.workflow_engine.schema import DAG, DAGNode, NodeId, Plan
+    from Module.workflow_contract import NodeId
+    from Module.workflow_engine.schema import (
+        DAG,
+        DAGNode,
+        Plan,
+    )
     task_state.plan = Plan(
         dag=DAG(nodes=[DAGNode(
             node_id=NodeId("n1"),

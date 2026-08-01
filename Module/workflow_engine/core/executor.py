@@ -14,6 +14,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from Module.workflow_contract import WorkflowId
+from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
     Artifact,
     ArtifactId,
@@ -21,16 +23,14 @@ from Module.workflow_engine.schema import (
     ExecutionMode,
     NodeErrorCode,
     NodeResult,
-    WorkflowId,
     TokenComponentType,
-    Tool,
 )
 from Module.tool.protocol import ToolContext, ToolResult
 
 if TYPE_CHECKING:
     from Module.workflow_engine.artifact_store import ArtifactStore
-    from Module.workflow_engine.infra import AgentInfra
-    from Module.workflow_engine.protocol import HITLNotifier
+    from Module.workflow_contract import AgentInfra
+    from Module.workflow_contract import HITLNotifier
     from Module.workflow_engine.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)

@@ -11,6 +11,13 @@ import pytest
 
 from Module.workflow_engine.core.graph import PlanGraph
 from Module.workflow_engine.core.orchestrator import Orchestrator
+from Module.workflow_contract import (
+    ConstraintConfig,
+    NodeId,
+    WorkflowStatus,
+    WorkflowId,
+)
+from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
     ArtifactId,
     DAGNode,
@@ -19,9 +26,7 @@ from Module.workflow_engine.schema import (
     ExecutionState,
     ExecutionStatus,
     BusinessStatus,
-    ConstraintConfig,
     NodeErrorCode,
-    NodeId,
     NodeResult,
     NodeResultEvaluation,
     NodeState,
@@ -30,10 +35,7 @@ from Module.workflow_engine.schema import (
     OrchestratorRunStatus,
     WorkflowErrorCode,
     WorkflowState,
-    WorkflowStatus,
-    WorkflowId,
-    Tool,
-    Plan
+    Plan,
 )
 
 pytestmark = pytest.mark.unit
@@ -124,7 +126,10 @@ def mock_mailbox():
 
 def _make_graph(nodes: list[str], edges: list[tuple[str, str]]) -> PlanGraph:
     """快速构建 PlanGraph（所有节点 required=True）。"""
-    from Module.workflow_engine.schema import DAG, Plan
+    from Module.workflow_engine.schema import (
+        DAG,
+        Plan,
+    )
     dag_nodes = [DAGNode(node_id=NodeId(n)) for n in nodes]
     plan = Plan(dag=DAG(
         nodes=dag_nodes,
@@ -269,7 +274,10 @@ async def test_apply_retry_node_max_retries(orchestrator, mock_mailbox):
 
 
 def _make_plan_with_node(nid: NodeId, **kwargs) -> Plan:
-    from Module.workflow_engine.schema import DAG, Plan
+    from Module.workflow_engine.schema import (
+        DAG,
+        Plan,
+    )
     return Plan(dag=DAG(
         nodes=[DAGNode(node_id=nid, **kwargs)],
         edges=[],

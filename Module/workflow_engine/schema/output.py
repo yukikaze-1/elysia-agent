@@ -1,4 +1,8 @@
-"""第二层：核心输出 —— WorkflowMailbox 事件 + 查询视图。"""
+"""第二层：核心输出 —— 查询视图。
+
+WorkflowMailbox 事件类型（WorkflowEvent/WorkflowEventType）已随契约层提取
+迁至 Module/workflow_contract/schema.py，本模块从契约层解析。
+"""
 
 from __future__ import annotations
 
@@ -7,100 +11,25 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .types import (
+from Module.workflow_contract import (
     AgentId,
-    IsoTimestamp,
-    NodeErrorCode,
     NodeId,
-    NodeStatus,
-    WorkflowErrorCode,
     WorkflowId,
     WorkflowStatus,
+)
+
+from .types import (
+    IsoTimestamp,
+    NodeErrorCode,
+    NodeStatus,
+    WorkflowErrorCode,
     now_iso,
 )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 第二层：核心输出 —— WorkflowMailbox 事件 + 查询视图
+# 第二层：核心输出 —— 查询视图
 # ═══════════════════════════════════════════════════════════════════════════════
-
-# ── WorkflowMailbox 事件 ────────────────────────────────────────────────────────────
-
-class WorkflowEventType(StrEnum):
-    """WorkflowMailbox 事件类型——6 种。"""
-    PROGRESS = "progress"
-    APPROVAL_NEEDED = "approval_needed"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    PAUSED = "paused"
-
-
-class WorkflowEvent(BaseModel):
-    """WorkflowMailbox 中传输的事件。
-
-    type 决定 data 的 shape（注释为参考 shape，不强制校验）：
-        progress:         进度更新（来自 Orchestrator）
-        approval_needed:  审批请求审计流副本（快通道由 HITLNotifier 推送）
-        completed:        任务成功完成
-        failed:           任务失败
-        cancelled:        任务被取消
-        paused:           任务已暂停并保存 checkpoint
-
-    字段：
-        type: 事件类型
-        data: 事件负载，shape 随 type 变化
-    """
-    type: WorkflowEventType
-    data: dict[str, Any] = Field(default_factory=dict)
-
-    # ── data shape 参考 ──────────────────────────────────────────────────────
-
-    # progress: {
-    #     "task_id": WorkflowId,
-    #     "node_id": NodeId,
-    #     "node_description": str,  # 当前节点在做什么
-    #     "percent": float,         # 0~1，整个任务的完成比例
-    #     "message": str,           # 简短描述
-    # }
-
-    # approval_needed: {            # 与 HITLData 字段一一对应
-    #     "task_id": WorkflowId,
-    #     "approval_id": ApprovalId,
-    #     "agent_id": AgentId,
-    #     "node_id": NodeId,
-    #     "node_task": str,
-    #     "tool_name": str,
-    #     "params": dict[str, Any],
-    #     "rbac_level": str,
-    #     "risk_summary": str,
-    # }
-
-    # completed: {
-    #     "task_id": WorkflowId,
-    #     "result": str,            # 自然语言摘要
-    #     "summary": str,           # 简短摘要
-    #     "total_nodes": int,
-    #     "completed_nodes": int,
-    #     "failed_nodes": int,
-    # }
-
-    # failed: {
-    #     "task_id": WorkflowId,
-    #     "error": str,             # 人类可读错误描述
-    #     "error_type": WorkflowErrorCode,  # 任务级错误码
-    # }
-
-    # cancelled: {
-    #     "task_id": WorkflowId,
-    #     "reason": str,            # 取消原因
-    # }
-
-    # paused: {
-    #     "task_id": WorkflowId,
-    #     "message": str,           # 暂停说明
-    # }
-
 
 # ── 查询视图：任务摘要 ──────────────────────────────────────────────────────────
 

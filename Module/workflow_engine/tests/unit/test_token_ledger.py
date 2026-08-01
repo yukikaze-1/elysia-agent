@@ -1,11 +1,13 @@
 """TokenLedger 单元测试——write-through 到 WorkflowState 的 token 账本。"""
 import pytest
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     NodeId,
     SessionId,
     WorkflowId,
-    WorkflowState,
     WorkflowStatus,
+)
+from Module.workflow_engine.schema import (
+    WorkflowState,
     TokenComponentType,
     TokenComponent,
     TokenUsage,

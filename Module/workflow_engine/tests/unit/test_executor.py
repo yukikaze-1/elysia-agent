@@ -12,17 +12,19 @@ from openai.types.chat.chat_completion_message_tool_call import (
 )
 
 from Module.workflow_engine.core.executor import Executor
+from Module.workflow_contract import (
+    NodeId,
+    WorkflowId,
+)
+from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
     Artifact,
     ArtifactId,
     DAGNode,
     NodeErrorCode,
-    NodeId,
     NodeResult,
     OutputContract,
-    WorkflowId,
     TokenComponentType,
-    Tool,
 )
 from Module.tool.protocol import ErrorType, ToolResult
 

@@ -17,6 +17,7 @@ from .protocol import (
 from .capability import Capability
 from .safety import SafetyProfile, SafetyPipeline
 from .manager import ToolManager
+from .tool_descriptor import Tool
 
 __all__ = [
     # Base classes
@@ -27,6 +28,7 @@ __all__ = [
     # Data models
     "ErrorType",
     "Capability",
+    "Tool",
     "MediaItem",
     "PluginContext",
     "ResultType",

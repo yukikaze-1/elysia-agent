@@ -5,20 +5,22 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     ConstraintConfig,
-    DAGPatch,
     DelegationContext,
-    ExecutionState,
     NodeId,
+    WorkflowEventType,
+    WorkflowStatus,
+)
+from Module.workflow_engine.schema import (
+    DAGPatch,
+    ExecutionState,
     NodeState,
     OrchestratorResult,
     Plan,
     WorkflowCheckpoint,
     WorkflowErrorCode,
-    WorkflowEventType,
     WorkflowState,
-    WorkflowStatus,
     now_iso,
 )
 

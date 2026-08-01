@@ -79,38 +79,8 @@ IsoTimestamp = Annotated[str, BeforeValidator(_normalize_utc)]
 
 # ── 基础类型 ────────────────────────────────────────────────────────────────────
 
-WorkflowId = NewType("WorkflowId", str)
-"""任务唯一标识符。
-
-NewType 而非 str：防止调用方随意传参（如把 user_input 当 task_id）。
-WorkflowEngine 内部生成，对外透明。序列化就是 str，零开销。
-"""
-
-AgentId = NewType("AgentId", str)
-"""Agent 唯一标识符（Sub-Agent / Worker Agent）。
-
-WorkflowEngine 内部生成，用于 submit_approval 路由到等待审批的 Worker。
-"""
-
-ApprovalId = NewType("ApprovalId", str)
-"""审批请求唯一标识符。
-
-WorkflowEngine 内部生成，用于 cancel_approval 清理前端收件箱卡片。
-"""
-
-SessionId = NewType("SessionId", str)
-"""会话唯一标识符。
-
-由 CognitiveLoop 管理，WorkflowEngine 仅用于日志关联和 Debug 追踪。
-NewType 防止调用方把 task_id / user_input 误当 session_id 传入。
-"""
-
-NodeId = NewType("NodeId", str)
-"""DAG / DBT 节点唯一标识符。
-
-Planner 生成 DAGNode 时分配，Executor 生成 DBTNode 时沿用或派生。
-NewType 防止调用方把 task_id / artifact_id 误当 node_id 传入。
-"""
+# 跨边标识符别名（WorkflowId/AgentId/ApprovalId/SessionId/NodeId）已随契约层提取
+# 迁至 Module/workflow_contract/schema.py，本模块从契约层解析（见 schema/__init__.py）。
 
 ArtifactId = NewType("ArtifactId", str)
 """产物唯一标识符。
@@ -120,58 +90,10 @@ NewType 防止调用方把 node_id / task_id 误当 artifact_id 传入。
 """
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 基础枚举
-# ═══════════════════════════════════════════════════════════════════════════════
+# 跨边基础枚举（WorkflowStatus / SubmitRejectionCode / RBACLevel）已随契约层提取
+# 迁至 Module/workflow_contract/schema.py，本模块从契约层解析（见 schema/__init__.py）。
 
-class WorkflowStatus(StrEnum):
-    """任务状态机——11 态。
-
-    入口阶段
-        PENDING → PLANNING → RUNNING
-
-    执行中分支（从 RUNNING 出发）
-        软暂停:   RUNNING → PAUSE_REQUESTED → PAUSED → RESUMING → RUNNING
-        取消暂停: PAUSED → CANCELLED（直接取消，无需 resume）
-        审批:     RUNNING → WAITING_APPROVAL → RUNNING
-                  WAITING_APPROVAL → CANCELLED（等待审批时取消）
-        软取消:   RUNNING → CANCEL_REQUESTED → CANCELLED
-        完成:     RUNNING → COMPLETED
-
-    早期退出
-        PENDING → CANCELLED（submit 后立即取消）
-        PLANNING → CANCELLED（规划阶段取消）
-        PLANNING → FAILED（规划阶段异常）
-
-    终态: COMPLETED / FAILED / CANCELLED（不可逆）
-    内部: REPLAN 在 RUNNING 内部完成（Replanner.replan → apply_patch → 继续 RUNNING），不暴露为独立状态。
-    """
-    PENDING = "pending"
-    PLANNING = "planning"
-    RUNNING = "running"
-    PAUSE_REQUESTED = "pause_requested"
-    PAUSED = "paused"
-    WAITING_APPROVAL = "waiting_approval"
-    RESUMING = "resuming"
-    CANCEL_REQUESTED = "cancel_requested"
-    CANCELLED = "cancelled"
-    FAILED = "failed"
-    COMPLETED = "completed"
-
-
-class SubmitRejectionCode(StrEnum):
-    """submit() 同步拒绝码——5 项。
-
-    WorkflowEngine.submit() 参数校验不通过时返回，
-    CognitiveLoop 据此生成用户可见的错误信息。
-    不会出现在 WorkflowState 或 WorkflowEvent 中。
-    """
-    NOT_READY = "not_ready"                              # WorkflowEngine 尚未 start()
-    INVALID_PARAM = "invalid_param"                     # 参数校验不通过
-    PLAN_TOO_LARGE = "plan_too_large"                   # DAG 预估节点数超限
-    CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"  # 上下文窗口不足
-    TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"     # 预估 token 消耗超用户剩余配额
-
+# ── 基础枚举（引擎内部） ───────────────────────────────────────────────────────
 
 class WorkflowErrorCode(StrEnum):
     """任务运行时错误码——10 项。
@@ -258,15 +180,3 @@ class NodeErrorCode(StrEnum):
     CONTEXT_OVERFLOW = "context_overflow"  # 单节点 prompt 超上下文窗口
     TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"  # 单节点 LLM 调用 token 超限
     NETWORK_ERROR = "network_error"        # 瞬态网络故障（可重试）
-
-
-class RBACLevel(StrEnum):
-    """工具权限级别。注册时声明，运行时校验。
-
-    TODO: 归属待定。Tools 在 Module/tool/ 声明权限级别，WorkflowEngine 执行时校验。
-    两个模块都需要此枚举。后续确定 canonical home（建议 Module/tool/），
-    WorkflowEngine 侧改为 re-export。
-    """
-    READ_ONLY = "read_only"       # 只读，完全自主
-    SAFE_WRITE = "safe_write"     # 安全写入（沙箱内），条件自主
-    MUTATION = "mutation"         # 外部变更，必须审批

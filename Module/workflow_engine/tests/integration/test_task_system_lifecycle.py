@@ -19,8 +19,8 @@ import pytest
 from openai import AsyncOpenAI
 
 
-from Module.workflow_engine.infra import AgentInfra
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import AgentInfra
+from Module.workflow_contract import (
     ConstraintConfig,
     DelegationContext,
     DelegationStatus,
@@ -113,7 +113,7 @@ async def test_stop_rejects_submit_after_shutdown():
     ts = await build_test_task_system(plugins=[TimePlugin])
     await ts.stop(timeout=10.0)
 
-    from Module.workflow_engine.schema import SubmitRejectionCode
+    from Module.workflow_contract import SubmitRejectionCode
 
     ctx = DelegationContext(
         intent="测试",
@@ -282,7 +282,9 @@ async def test_goal_failed_triggers_replan():
     # patch 打在 Evaluator 源类上，所有实例化后的 evaluate() 都会被替换。
     from unittest.mock import patch
     from Module.workflow_engine.schema import (
-        BusinessStatus, EvaluatorAction, ExecutionStatus,
+        BusinessStatus,
+        EvaluatorAction,
+        ExecutionStatus,
         NodeResultEvaluation,
     )
 

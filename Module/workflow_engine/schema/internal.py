@@ -11,21 +11,23 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from Module.workflow_contract import (
+    NodeId,
+    SessionId,
+    WorkflowId,
+    WorkflowStatus,
+)
+from Module.tool.tool_descriptor import Tool
+
 from .types import (
     ArtifactId,
     IsoTimestamp,
     NodeErrorCode,   # ★ 从 types.py 导入（原在 internal 区域）
-    NodeId,
     NodeStatus,
-    RBACLevel,
-    SessionId,
     WorkflowErrorCode,
-    WorkflowId,
-    WorkflowStatus,
     now_iso,
 )
-from .protocol import Tool
-from .output import WorkflowEventType, TokenComponentType, TokenComponent
+from .output import TokenComponentType, TokenComponent
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

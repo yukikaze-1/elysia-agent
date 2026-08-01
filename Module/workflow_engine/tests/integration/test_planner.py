@@ -21,26 +21,28 @@ if _env_path.exists():
                     os.environ[key] = value
 
 from Module.workflow_engine.core.planner import Planner, Replanner
-from Module.workflow_engine.infra import AgentInfra
+from Module.workflow_contract import AgentInfra
+from Module.workflow_contract import (
+    ConstraintConfig,
+    DelegationContext,
+    NodeId,
+    SessionId,
+    WorkflowConstraints,
+)
+from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
     BusinessStatus,
-    ConstraintConfig,
     DAG,
     DAGPatch,
     DAGNode,
-    DelegationContext,
     EvaluatorAction,
     ExecutionStatus,
-    NodeId,
     NodeResult,
     NodeResultEvaluation,
     NodeState,
     NodeStatus,
     OutputContract,
     Plan,
-    SessionId,
-    WorkflowConstraints,
-    Tool,
 )
 
 pytestmark = pytest.mark.integration

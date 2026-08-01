@@ -27,7 +27,7 @@ from Module.workflow_engine.schema import (
 
 if TYPE_CHECKING:
     from Module.workflow_engine.artifact_store import ArtifactStore
-    from Module.workflow_engine.infra import AgentInfra
+    from Module.workflow_contract import AgentInfra
     from Module.workflow_engine.schema import Plan
     from Module.workflow_engine.token_ledger import TokenLedger
 

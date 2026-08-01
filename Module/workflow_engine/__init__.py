@@ -3,55 +3,38 @@
 独立于 CognitiveLoop，通过 WorkflowMailbox + HITLNotifier 协议与外界通信。
 
 导出分组：
-  - 公共 API:     WorkflowEngine, DelegationPreparer, SubAgent, Orchestrator, AgentInfra, HITLNotifier
-  - 基础类型:     WorkflowId, NodeId, WorkflowStatus, WorkflowErrorCode, etc.
-  - 跨层协议:     DelegationContext, HITLData, ConstraintConfig, SubmitError, etc.
+  - 公共 API:     WorkflowEngine, DelegationPreparer, SubAgent, Orchestrator
+  - 基础类型:     NodeId, WorkflowId, WorkflowStatus, WorkflowErrorCode, etc.
+  - 本地协议:     UserProfile, ResumeError
   - 查询/输出:    WorkflowSummary, WorkflowDAG, TokenStats, AgentInfo, etc.
   - 内部编排:     Plan, DAGNode, DAGPatch, NodeResult, WorkflowState, WorkflowCheckpoint, etc.
   - 校验/产物:    ValidationIssue, OutputContract, Artifact, etc.
+
+跨边类型（DelegationContext/SubmitError/HITLData/HITLNotifier/AgentInfra/WorkflowId 等）
+已随契约层提取迁至 Module.workflow_contract，不再从本模块导出——消费方请从契约层解析。
 """
 
 # ── 公共 API ──
 from Module.workflow_engine.core.orchestrator import Orchestrator
 from Module.workflow_engine.core.sub_agent import SubAgent
 from Module.workflow_engine.delegation_preparer import DelegationPreparer
-from Module.workflow_engine.infra import AgentInfra
-from Module.workflow_engine.protocol import HITLNotifier
 from Module.workflow_engine.workflow_engine import WorkflowEngine
 
 # ── 基础类型（ID、状态、错误码） ──
 from Module.workflow_engine.schema import (
-    AgentId,
-    ApprovalId,
     ArtifactId,
     BusinessStatus,
     EvaluatorAction,
     ExecutionStatus,
     NodeErrorCode,
-    NodeId,
     NodeStatus,
-    RBACLevel,
     ResumeErrorCode,
-    SessionId,
-    SubmitRejectionCode,
     WorkflowErrorCode,
-    WorkflowId,
-    WorkflowStatus,
 )
 
-# ── 跨层协议（CognitiveLoop ↔ WorkflowEngine） ──
+# ── 本地协议（CognitiveLoop 侧类型 / resume 错误） ──
 from Module.workflow_engine.schema import (
-    ConstraintConfig,
-    DelegationContext,
-    DelegationResult,
-    DelegationStatus,
-    HITLData,
-    ReturnMode,
     ResumeError,
-    SubmitError,
-    WorkflowConstraints,
-    # CognitiveLoop 侧类型（WorkflowEngine 引用，不拥有）
-    Tool,
     UserProfile,
 )
 
@@ -63,8 +46,6 @@ from Module.workflow_engine.schema import (
     AgentType,
     DAGNodeInfo,
     WorkflowDAG,
-    WorkflowEvent,
-    WorkflowEventType,
     WorkflowProgress,
     WorkflowSummary,
     TokenComponent,
@@ -116,40 +97,21 @@ from Module.workflow_engine.schema import (
 
 __all__ = [
     # 公共 API
-    "AgentInfra",
     "DelegationPreparer",
-    "HITLNotifier",
     "Orchestrator",
     "SubAgent",
     "WorkflowEngine",
     # 基础类型
-    "AgentId",
-    "ApprovalId",
     "ArtifactId",
     "BusinessStatus",
     "EvaluatorAction",
     "ExecutionStatus",
     "NodeErrorCode",
-    "NodeId",
     "NodeStatus",
-    "RBACLevel",
     "ResumeErrorCode",
-    "SessionId",
-    "SubmitRejectionCode",
     "WorkflowErrorCode",
-    "WorkflowId",
-    "WorkflowStatus",
-    # 跨层协议
-    "ConstraintConfig",
-    "DelegationContext",
-    "DelegationResult",
-    "DelegationStatus",
-    "HITLData",
+    # 本地协议
     "ResumeError",
-    "ReturnMode",
-    "SubmitError",
-    "WorkflowConstraints",
-    "Tool",
     "UserProfile",
     # 对外输出
     "AgentInfo",
@@ -158,8 +120,6 @@ __all__ = [
     "AgentType",
     "DAGNodeInfo",
     "WorkflowDAG",
-    "WorkflowEvent",
-    "WorkflowEventType",
     "WorkflowProgress",
     "WorkflowSummary",
     "TokenComponent",

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from Module.workflow_engine.utils import strip_markdown_fence
 
+from Module.workflow_contract import NodeId
 from Module.workflow_engine.schema import (
     ArtifactId,
     DAG,
@@ -16,7 +17,6 @@ from Module.workflow_engine.schema import (
     DAGPatch,
     DAGPatchType,
     ExecutionMode,
-    NodeId,
     OutputContract,
     Plan,
     TokenComponentType,
@@ -24,7 +24,7 @@ from Module.workflow_engine.schema import (
 )
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.infra import AgentInfra
+    from Module.workflow_contract import AgentInfra
     from Module.workflow_engine.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)

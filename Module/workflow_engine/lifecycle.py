@@ -12,12 +12,12 @@ import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from Module.workflow_engine.mailbox import push_mailbox_event
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     WorkflowEventType,
     WorkflowId,
     WorkflowStatus,
-    now_iso,
 )
+from Module.workflow_engine.schema import now_iso
 
 if TYPE_CHECKING:
     from Module.workflow_engine.core.sub_agent import SubAgent

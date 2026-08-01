@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from Module.workflow_contract import NodeId
 from Module.workflow_engine.schema import (
-    NodeId,
     TokenComponent,
     TokenComponentType,
     TokenUsage,

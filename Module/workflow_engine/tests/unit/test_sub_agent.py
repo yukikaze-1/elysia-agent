@@ -18,31 +18,33 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from Module.workflow_engine.core.sub_agent import SubAgent
-from Module.workflow_engine.infra import AgentInfra
+from Module.workflow_contract import AgentInfra
 from Module.workflow_engine.mailbox import WorkflowMailbox
+from Module.workflow_contract import (
+    ConstraintConfig,
+    DelegationContext,
+    NodeId,
+    SessionId,
+    WorkflowConstraints,
+    WorkflowEventType,
+    WorkflowId,
+    WorkflowStatus,
+)
 from Module.workflow_engine.schema import (
     ArtifactId,
-    ConstraintConfig,
     DAG,
     DAGNode,
     DAGPatch,
     DAGPatchType,
-    DelegationContext,
     ExecutionState,
-    NodeId,
     NodeState,
     NodeStatus,
     OrchestratorResult,
     OrchestratorRunStatus,
     Plan,
-    SessionId,
     WorkflowCheckpoint,
-    WorkflowConstraints,
     WorkflowErrorCode,
-    WorkflowEventType,
-    WorkflowId,
     WorkflowState,
-    WorkflowStatus,
     ValidationAction,
     ValidationIssue,
     ValidationIssueType,

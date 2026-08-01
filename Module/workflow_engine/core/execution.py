@@ -5,24 +5,26 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from Module.workflow_contract import (
+    ConstraintConfig,
+    NodeId,
+    SessionId,
+    WorkflowEventType,
+    WorkflowId,
+)
+from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
     BusinessStatus,
-    ConstraintConfig,
     DAGNode,
     EvaluatorAction,
     ExecutionState,
     ExecutionStatus,
-    NodeId,
     NodeState,
     NodeResult,
     NodeResultEvaluation,
     NodeStatus,
-    SessionId,
     Plan,
-    WorkflowEventType,
     WorkflowState,
-    WorkflowId,
-    Tool,
     now_iso,
 )
 

@@ -15,20 +15,22 @@ from Module.workflow_engine import lifecycle
 from Module.workflow_engine import query
 from Module.workflow_engine.mailbox import WorkflowMailbox
 from Module.workflow_engine.mailbox import push_mailbox_event
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     AgentId,
-    AgentList,
     DelegationContext,
-    ResumeError,
-    ResumeErrorCode,
     SubmitError,
     SubmitRejectionCode,
-    WorkflowDAG,
-    WorkflowErrorCode,
     WorkflowEventType,
     WorkflowId,
-    WorkflowProgress,
     WorkflowStatus,
+)
+from Module.workflow_engine.schema import (
+    AgentList,
+    ResumeError,
+    ResumeErrorCode,
+    WorkflowDAG,
+    WorkflowErrorCode,
+    WorkflowProgress,
     WorkflowSummary,
     TokenPeriod,
     TokenStats,
@@ -39,8 +41,8 @@ from Module.workflow_engine.core.sub_agent import SubAgent
 
 if TYPE_CHECKING:
     from Module.workflow_engine.core.execution import ExecutionState
-    from Module.workflow_engine.infra import AgentInfra
-    from Module.workflow_engine.protocol import HITLNotifier
+    from Module.workflow_contract import AgentInfra
+    from Module.workflow_contract import HITLNotifier
 
 logger = logging.getLogger(__name__)
 

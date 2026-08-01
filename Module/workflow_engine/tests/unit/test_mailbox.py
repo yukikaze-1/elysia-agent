@@ -5,7 +5,11 @@ import asyncio
 import pytest
 
 from Module.workflow_engine.mailbox import WorkflowMailbox
-from Module.workflow_engine.schema import WorkflowEvent, WorkflowEventType, WorkflowId
+from Module.workflow_contract import (
+    WorkflowEvent,
+    WorkflowEventType,
+    WorkflowId,
+)
 
 pytestmark = pytest.mark.unit
 

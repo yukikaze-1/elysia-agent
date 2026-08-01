@@ -12,6 +12,10 @@ from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
 
 from Module.workflow_engine.core.evaluator import Evaluator
+from Module.workflow_contract import (
+    NodeId,
+    WorkflowId,
+)
 from Module.workflow_engine.schema import (
     Artifact,
     ArtifactId,
@@ -20,11 +24,9 @@ from Module.workflow_engine.schema import (
     EvaluatorAction,
     ExecutionStatus,
     NodeErrorCode,
-    NodeId,
     NodeResult,
     OutputContract,
     Plan,
-    WorkflowId,
     TokenComponentType,
 )
 

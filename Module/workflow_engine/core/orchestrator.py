@@ -20,6 +20,14 @@ from typing import TYPE_CHECKING, Any
 
 from Module.workflow_engine.core import execution, finalize
 
+from Module.workflow_contract import (
+    WorkflowEventType,
+    WorkflowStatus,
+    SessionId,
+    WorkflowId,
+    NodeId,
+)
+from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
     DAGNode,
     EvaluatorAction,
@@ -30,14 +38,8 @@ from Module.workflow_engine.schema import (
     OrchestratorResult,
     OrchestratorRunStatus,
     WorkflowErrorCode,
-    WorkflowEventType,
     WorkflowState,
-    WorkflowStatus,
     WorkflowCheckpoint,
-    SessionId,
-    WorkflowId,
-    Tool,
-    NodeId,
     now_iso,
 )
 
@@ -47,9 +49,9 @@ if TYPE_CHECKING:
     from Module.workflow_engine.core.evaluator import Evaluator
     from Module.workflow_engine.core.executor import Executor
     from Module.workflow_engine.core.graph import PlanGraph
-    from Module.workflow_engine.infra import AgentInfra
+    from Module.workflow_contract import AgentInfra
     from Module.workflow_engine.mailbox import WorkflowMailbox
-    from Module.workflow_engine.protocol import HITLNotifier
+    from Module.workflow_contract import HITLNotifier
 
 logger = logging.getLogger(__name__)
 

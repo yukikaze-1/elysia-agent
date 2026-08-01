@@ -14,12 +14,14 @@ from __future__ import annotations
 import pytest
 
 from Module.workflow_engine.checkpoint import CheckpointManager
+from Module.workflow_contract import (
+    WorkflowId,
+    WorkflowStatus,
+)
 from Module.workflow_engine.schema import (
     ExecutionState,
     WorkflowCheckpoint,
-    WorkflowId,
     WorkflowState,
-    WorkflowStatus,
 )
 
 pytestmark = pytest.mark.unit

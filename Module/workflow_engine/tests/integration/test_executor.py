@@ -10,17 +10,19 @@ from openai import AsyncOpenAI
 
 from Module.workflow_engine.core.executor import Executor
 from Module.workflow_engine.artifact_store import ArtifactStore
-from Module.workflow_engine.infra import AgentInfra
+from Module.workflow_contract import AgentInfra
+from Module.workflow_contract import (
+    ConstraintConfig,
+    NodeId,
+    WorkflowId,
+)
+from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
     ArtifactId,
-    ConstraintConfig,
     DAGNode,
     ExecutionMode,
     NodeErrorCode,
-    NodeId,
     OutputContract,
-    WorkflowId,
-    Tool,
 )
 from Module.tool.manager import ToolManager
 from Module.tool.protocol import PluginContext

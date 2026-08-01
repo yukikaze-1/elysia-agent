@@ -12,10 +12,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from Module.workflow_engine.schema import ArtifactId, NodeId
+from Module.workflow_contract import NodeId
+from Module.workflow_engine.schema import ArtifactId
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.schema import Artifact, WorkflowId
+    from Module.workflow_contract import WorkflowId
+    from Module.workflow_engine.schema import Artifact
 
 logger = logging.getLogger(__name__)
 

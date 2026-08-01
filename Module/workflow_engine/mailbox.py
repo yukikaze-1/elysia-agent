@@ -10,7 +10,11 @@ import asyncio
 import logging
 from collections import deque
 
-from Module.workflow_engine.schema import WorkflowEvent, WorkflowEventType, WorkflowId
+from Module.workflow_contract import (
+    WorkflowEvent,
+    WorkflowEventType,
+    WorkflowId,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +169,7 @@ def push_mailbox_event(
         data: 事件数据 dict。
         caller: 调用方标识（用于日志，如 "Orchestrator" / "SubAgent"）。
     """
-    from Module.workflow_engine.schema import WorkflowEvent
+    from Module.workflow_contract import WorkflowEvent
 
     event = WorkflowEvent(type=event_type, data=data)
     mailbox._push(event)

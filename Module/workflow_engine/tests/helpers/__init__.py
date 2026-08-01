@@ -29,12 +29,12 @@ from unittest.mock import MagicMock, patch
 
 from openai import AsyncOpenAI
 
-from Module.workflow_engine.infra import AgentInfra
+from Module.workflow_contract import AgentInfra
+from Module.workflow_contract import ConstraintConfig
+from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
-    ConstraintConfig,
     DAGPatch,
     Plan,
-    Tool,
 )
 from Module.workflow_engine.workflow_engine import WorkflowEngine
 from Module.tool.manager import ToolManager

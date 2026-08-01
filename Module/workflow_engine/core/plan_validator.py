@@ -13,11 +13,13 @@ import logging
 
 import networkx as nx
 
+from Module.workflow_contract import (
+    ConstraintConfig,
+    WorkflowConstraints,
+)
 from Module.workflow_engine.schema import (
     ArtifactId,
-    ConstraintConfig,
     Plan,
-    WorkflowConstraints,
     ValidationAction,
     ValidationIssue,
     ValidationIssueType,

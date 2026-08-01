@@ -22,17 +22,19 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     DelegationContext,
+    WorkflowEventType,
+    WorkflowStatus,
+)
+from Module.workflow_engine.schema import (
     ExecutionState,
     NodeState,
     OrchestratorResult,
     OrchestratorRunStatus,
     WorkflowCheckpoint,
     WorkflowErrorCode,
-    WorkflowEventType,
     WorkflowState,
-    WorkflowStatus,
     ValidationIssue,
     ValidationIssueType,
     now_iso,
@@ -54,9 +56,9 @@ if TYPE_CHECKING:
     from Module.workflow_engine.core.orchestrator import Orchestrator
     from Module.workflow_engine.core.planner import Planner, Replanner
     from Module.workflow_engine.core.plan_validator import PlanValidator
-    from Module.workflow_engine.infra import AgentInfra
+    from Module.workflow_contract import AgentInfra
     from Module.workflow_engine.mailbox import WorkflowMailbox
-    from Module.workflow_engine.protocol import HITLNotifier
+    from Module.workflow_contract import HITLNotifier
     from Module.workflow_engine.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)

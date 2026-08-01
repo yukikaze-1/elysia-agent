@@ -7,17 +7,19 @@ from typing import TYPE_CHECKING, Any
 
 from Module.workflow_engine.mailbox import push_mailbox_event
 
+from Module.workflow_contract import (
+    NodeId,
+    WorkflowEventType,
+    WorkflowStatus,
+)
 from Module.workflow_engine.schema import (
     DAGNode,
     ExecutionPhase,
     ExecutionState,
-    NodeId,
     NodeState,
     NodeStatus,
     WorkflowCheckpoint,
-    WorkflowEventType,
     WorkflowState,
-    WorkflowStatus,
     now_iso,
 )
 

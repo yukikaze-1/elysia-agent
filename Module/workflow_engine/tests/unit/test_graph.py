@@ -8,11 +8,11 @@ from __future__ import annotations
 import pytest
 
 from Module.workflow_engine.core.graph import PlanGraph
+from Module.workflow_contract import NodeId
 from Module.workflow_engine.schema import (
     DAG,
     DAGNode,
     DAGPatch,
-    NodeId,
     NodeState,
     NodeStatus,
     Plan,
@@ -94,7 +94,11 @@ def test_from_plan_edge_missing_endpoint(caplog):
 
 def test_from_plan_duplicate_node_id():
     """重复 node_id → ValueError（拒绝构建，防止旧边+新语义错配）。"""
-    from Module.workflow_engine.schema import DAGNode, OutputContract, NodeId as NID
+    from Module.workflow_contract import NodeId as NID
+    from Module.workflow_engine.schema import (
+        DAGNode,
+        OutputContract,
+    )
     plan = Plan(
         dag=DAG(
             nodes=[

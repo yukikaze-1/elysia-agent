@@ -30,7 +30,7 @@ from Module.workflow_engine.delegation_preparer import (
     _PrepareParseError,
 )
 from Module.workflow_engine.utils import strip_markdown_fence, format_tools
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     ConstraintConfig,
     DelegationContext,
     DelegationResult,
@@ -38,9 +38,9 @@ from Module.workflow_engine.schema import (
     ReturnMode,
     SessionId,
     WorkflowConstraints,
-    Tool,
-    UserProfile,
 )
+from Module.tool.tool_descriptor import Tool
+from Module.workflow_engine.schema import UserProfile
 
 pytestmark = pytest.mark.unit
 

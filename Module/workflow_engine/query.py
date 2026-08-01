@@ -10,18 +10,20 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
 
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     AgentId,
+    NodeId,
+    WorkflowId,
+    WorkflowStatus,
+)
+from Module.workflow_engine.schema import (
     AgentInfo,
     AgentList,
     AgentStatus,
     AgentType,
-    NodeId,
     NodeStatus,
     WorkflowDAG,
-    WorkflowId,
     WorkflowProgress,
-    WorkflowStatus,
     WorkflowSummary,
     TokenPeriod,
     TokenStats,

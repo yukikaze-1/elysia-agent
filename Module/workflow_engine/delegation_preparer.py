@@ -22,7 +22,7 @@ from core.schema.part import TextPart
 
 from Module.workflow_engine.utils import format_tools, strip_markdown_fence
 
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     ConstraintConfig,
     DelegationContext,
     DelegationResult,
@@ -30,9 +30,9 @@ from Module.workflow_engine.schema import (
     ReturnMode,
     SessionId,
     WorkflowConstraints,
-    Tool,
-    UserProfile,
 )
+from Module.tool.tool_descriptor import Tool
+from Module.workflow_engine.schema import UserProfile
 
 logger = logging.getLogger(__name__)
 

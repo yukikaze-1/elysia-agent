@@ -5,12 +5,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     DelegationContext,
-    ExecutionState,
     WorkflowEventType,
-    WorkflowState,
     WorkflowStatus,
+)
+from Module.workflow_engine.schema import (
+    ExecutionState,
+    WorkflowState,
     now_iso,
 )
 

@@ -1,64 +1,17 @@
-"""WorkflowEngine 对外依赖协议。
+"""WorkflowEngine 对外依赖协议 —— EventBus 演示实现。
 
-WorkflowEngine 不依赖 CognitiveLoop 的实现细节（如 EventBus），
-只依赖这里定义的抽象协议。CognitiveLoop 重构时只需换实现。
+HITLNotifier ABC 已随契约层提取迁至 Module/workflow_contract/schema.py，
+本文件仅保留基于 EventBus 的演示实现（非真实，后续由 CognitiveLoop 侧替换）。
 """
 
 from __future__ import annotations
 
 import logging
-from abc import ABC, abstractmethod
 from typing import Any
 
-from Module.workflow_engine.schema import ApprovalId, HITLData
+from Module.workflow_contract import ApprovalId, HITLData, HITLNotifier
 
 logger = logging.getLogger(__name__)
-
-
-class HITLNotifier(ABC):
-    """审批快速通道协议。
-
-    WorkflowEngine 推审批请求到前端时使用。
-    不关心谁在另一端——可能是 EventBus、WebSocket、或未来的任意机制。
-
-    实现者保证：
-    - 非阻塞：request_approval / cancel_approval 不应长时间阻塞
-    - 不抛异常：异常由实现者自行处理，WorkflowEngine 不感知
-    """
-
-    @abstractmethod
-    async def request_approval(self, event_data: HITLData) -> None:
-        """推送审批请求到前端收件箱。
-
-        审批进入前端收件箱列表，不弹窗打断用户。
-        无超时——用户随时可以处理。
-
-        Args:
-            event_data: HITLData（Pydantic model），包含:
-                - task_id: WorkflowId
-                - approval_id: ApprovalId
-                - agent_id: AgentId
-                - node_id: str
-                - node_task: str         # 当前节点的目标任务描述
-                - tool_name: str
-                - params: dict
-                - rbac_level: RBACLevel  # 工具权限级别
-                - risk_summary: str      # 操作类型、影响范围、参数预览
-        """
-        ...
-
-    @abstractmethod
-    async def cancel_approval(self, approval_ids: list[ApprovalId]) -> None:
-        """批量取消已发出的审批请求。
-
-        用于任务取消（该任务所有 pending approval）、
-        Worker 终止、Replan 换方案等场景，
-        清理前端收件箱中已不需要的审批卡片。
-
-        Args:
-            approval_ids: 要取消的审批请求 ID 列表。空列表无操作。
-        """
-        ...
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

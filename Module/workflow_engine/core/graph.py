@@ -15,11 +15,11 @@ from typing import TYPE_CHECKING
 
 import networkx as nx
 
+from Module.workflow_contract import NodeId
 from Module.workflow_engine.schema import (
     DAGNode,
     DAGNodeInfo,
     DAGPatch,
-    NodeId,
     NodeState,
     NodeStatus,
     WorkflowDAG,
@@ -96,7 +96,10 @@ class PlanGraph:
         Returns:
             更新后的 Plan 实例。
         """
-        from Module.workflow_engine.schema import DAG, Plan
+        from Module.workflow_engine.schema import (
+            DAG,
+            Plan,
+        )
         if plan is None:
             plan = Plan()
         plan.dag = DAG(

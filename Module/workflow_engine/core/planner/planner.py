@@ -9,9 +9,11 @@ from typing import TYPE_CHECKING
 
 from Module.workflow_engine.utils import format_tools, strip_markdown_fence
 
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     ConstraintConfig,
     DelegationContext,
+)
+from Module.workflow_engine.schema import (
     ExperienceRecord,
     Plan,
 )
@@ -20,7 +22,7 @@ from . import prompts
 from .parser import call_llm, parse_plan_from_dict, PlanParseError
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.infra import AgentInfra
+    from Module.workflow_contract import AgentInfra
     from Module.workflow_engine.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)

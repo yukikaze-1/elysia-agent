@@ -10,14 +10,14 @@ from core.schema.message import AssistantMessage, MessageId, UserMessage
 from core.schema.part import TextPart
 
 from Module.workflow_engine.delegation_preparer import DelegationPreparer
-from Module.workflow_engine.schema import (
+from Module.workflow_contract import (
     ConstraintConfig,
     DelegationStatus,
     SessionId,
     WorkflowConstraints,
-    Tool,
-    UserProfile,
 )
+from Module.tool.tool_descriptor import Tool
+from Module.workflow_engine.schema import UserProfile
 
 pytestmark = pytest.mark.integration
 

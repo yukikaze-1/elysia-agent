@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from Module.workflow_contract import WorkflowEventType
 from Module.workflow_engine.schema import (
     OrchestratorResult,
     WorkflowErrorCode,
-    WorkflowEventType,
     WorkflowState,
     now_iso,
 )

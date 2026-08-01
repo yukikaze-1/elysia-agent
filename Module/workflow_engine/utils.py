@@ -6,7 +6,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.schema import Tool
+    from Module.tool.tool_descriptor import Tool
 
 
 def strip_markdown_fence(text: str) -> str:

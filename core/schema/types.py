@@ -4,6 +4,8 @@ from typing import Annotated, NewType
 
 from pydantic import BeforeValidator
 
+from Module.workflow_contract.schema import SessionId
+
 from .utils import _normalize_iso_ts
 
 
@@ -13,12 +15,8 @@ IsoTimestamp = Annotated[str, BeforeValidator(_normalize_iso_ts)]
 使用 Pydantic BeforeValidator：空字符串和格式错误会抛出 ValidationError。
 """
 
-SessionId = NewType("SessionId", str)
-"""会话唯一标识符。
-
-注意：与 Module/workflow_engine/schema/types.py 的 SessionId 同名共存（Phase 1）。
-两者是相同的 NewType，运行时完全兼容（都是 str）。Phase 2 统一迁移到此。
-"""
+# SessionId 由契约层（Module.workflow_contract.schema）拥有，core 侧重导出保持公开 API。
+# 运行时即 str（NewType），与历史定义完全兼容。契约层不反向依赖 core。
 
 MessageId = NewType("MessageId", str)
 """消息唯一标识符。"""
