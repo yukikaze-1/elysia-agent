@@ -14,7 +14,7 @@ from Module.tool.protocol import ToolPlugin
 from Module.tool.safety import SafetyProfile
 
 from core.cognitive import CognitiveLoop
-from core.text.text_utils import MessageObj
+from core.utils.text_utils import MessageObj
 from core.adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
@@ -199,7 +199,7 @@ class TestCognitiveLoopMethods:
         await loop._handle_interrupt()
 
         assert loop._fsm.state == AgentState.IDLE
-        # SentenceBuffer/BlockFilter 在每轮 StreamProcessor 中独立创建，
+        # 句缓冲/块过滤状态在每轮 StreamProcessor 中独立创建，
         # CognitiveLoop 不再持有引用——中断后新轮次自然获得干净缓冲区。
 
     @pytest.mark.asyncio

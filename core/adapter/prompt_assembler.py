@@ -29,7 +29,7 @@ from Module.system_prompt.sections.self_perception import SelfPerceptionSection
 from ..config.character_config import CharacterConfig
 from ..memory.session import SessionMemory
 from ..memory.long_term import LongTermMemory
-from ..text.text_utils import content_text_from_content as content_text_from_raw
+from ..utils.text_utils import content_text_from_content as content_text_from_raw
 
 logger = logging.getLogger(__name__)
 

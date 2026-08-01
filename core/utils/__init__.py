@@ -1,6 +1,7 @@
 """core/utils/ — 通用工具函数。"""
 from .message_id import new_message_id
 from .log_setup import setup, set_request_id, get_request_id, log_conversation
+from .text_utils import content_text_from_content, MessageObj
 
 __all__ = [
     "new_message_id",
@@ -8,4 +9,6 @@ __all__ = [
     "set_request_id",
     "get_request_id",
     "log_conversation",
+    "content_text_from_content",
+    "MessageObj",
 ]
