@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine, Literal, Protocol, AsyncIterator
 
-from core.schema.error_type import ErrorType
+from Module._common.error_type import ErrorType
 
 ToolFunc = Callable[..., Coroutine[Any, Any, Any]]
 ResultType = Literal["text", "image", "audio", "file", "mixed"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 import logging
 import re
 from dataclasses import dataclass, field
@@ -615,8 +616,7 @@ class SafetyPipeline:
         Returns:
             (是否批准, 状态字符串)，状态为 "confirmed" / "denied" / "timeout" / "expired"。
         """
-        from core.utils import new_message_id
-        request_id = new_message_id()
+        request_id = f"msg_{uuid.uuid4().hex[:26]}"
         event = asyncio.Event()
         self._hitl_requests[request_id] = (event, name, params)
 
