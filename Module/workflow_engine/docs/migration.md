@@ -47,11 +47,11 @@
 
 ## 6. EventBusHITLNotifier
 
-- **当前位置**: `Module/workflow_engine/protocol.py`
+- **当前位置**: `core/hitl.py`（已迁入 core 侧）
 - **应移至**: CognitiveLoop 侧
 - **原因**: HITLNotifier 的演示实现，基于 EventBus（CognitiveLoop 的内部机制）。TaskSystem 只定义 HITLNotifier 抽象协议（ABC），不拥有具体实现。
 - **当前状态**: 演示代码，已标注 ⚠️。CognitiveLoop 重构时替换为正式实现。
-- **迁移后**: protocol.py 仅保留 HITLNotifier ABC。EventBusHITLNotifier 移入 CognitiveLoop 侧（如 `core/hitl.py`）
+- **迁移后**: `EventBusHITLNotifier` 已迁入 `core/hitl.py`，消费者改 `from core.hitl import EventBusHITLNotifier`（见 workflow_engine 分离项目 Task 10）。`Module/workflow_engine/protocol.py` 已删除
 
 ## 7. RBACLevel（待定）
 

@@ -58,7 +58,6 @@ Module/workflow_engine/
 ├── __init__.py              — 重导出（按 7 个子领域分组）
 ├── task_system.py           — TaskSystem 主类（对外 API 入口）
 ├── delegation_preparer.py   — LLM 驱动的委派上下文准备
-├── protocol.py              — 对外依赖协议（HITLNotifier, ToolExecutor 等）
 ├── lifecycle.py             — 任务操作函数（pause/cancel/submit_approval）
 ├── infra.py                 — AgentInfra 共享基础设施
 ├── mailbox.py               — TaskMailbox 单播异步事件队列

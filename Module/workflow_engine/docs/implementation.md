@@ -151,7 +151,7 @@ Module/workflow_engine/
 core/cognitive_loop.py          # 注册 submit_task 工具 → DelegationPreparer → TaskSystem.submit()
 core/agent.py                   # _process_events() + _process_task_events() 双协程
 core/agent_fsm.py               # 新增 AgentState.IDLE_BACKGROUND_TASK
-core/event_bus.py               # EventBusHITLNotifier 使用 HITL_REQUEST/HITL_CANCEL
+core/hitl.py                    # EventBusHITLNotifier 使用 HITL_REQUEST/HITL_CANCEL
 Module/output/manager.py        # 新增 task_progress、task_completed action
 static/                         # 审批收件箱 UI + /debug/tasks 面板
 ```

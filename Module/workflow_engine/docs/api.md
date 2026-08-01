@@ -164,7 +164,7 @@ class HITLNotifier(ABC):
         ...
 ```
 
-EventBusHITLNotifier 演示实现见 protocol.py。
+EventBusHITLNotifier 演示实现见 core/hitl.py（ABC 在契约层 Module/workflow_contract/schema.py）。
 
 ---
 

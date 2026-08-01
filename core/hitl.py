@@ -1,7 +1,8 @@
-"""WorkflowEngine 对外依赖协议 —— EventBus 演示实现。
+"""HITL（Human-in-the-Loop）通知器 —— EventBus 演示实现。
 
-HITLNotifier ABC 已随契约层提取迁至 Module/workflow_contract/schema.py，
-本文件仅保留基于 EventBus 的演示实现（非真实，后续由 CognitiveLoop 侧替换）。
+HITLNotifier ABC 定义在契约层 Module/workflow_contract/schema.py。
+本文件提供基于 EventBus 的演示实现（非真实，后续由 CognitiveLoop 侧替换），
+由 workflow_engine 分离项目自 Module/workflow_engine/protocol.py 迁入 core 侧。
 """
 
 from __future__ import annotations

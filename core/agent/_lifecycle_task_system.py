@@ -13,8 +13,6 @@ if TYPE_CHECKING:
     from core.cognitive.delegation import DelegationPreparer
     from ..adapter.llm_adapter import LLMAdapter
     from core.schema.types import IsoTimestamp
-    from Module.workflow_contract import HITLData
-    from Module.workflow_contract import ApprovalId
 
 logger = logging.getLogger(__name__)
 
@@ -49,34 +47,9 @@ class _LifecycleTaskSystem:
             constraints=ConstraintConfig(),
         )
 
-        from Module.workflow_contract import HITLNotifier
+        from core.hitl import EventBusHITLNotifier
 
-        class _EventBusHITLNotifier(HITLNotifier):
-            def __init__(self, bus: EventBus) -> None:
-                """初始化 EventBus 桥接的 HITL 通知器。
-
-                Args:
-                    bus: 事件总线实例，用于发布 HITL 审批事件。
-                """
-                self._bus = bus
-
-            async def request_approval(self, event_data: "HITLData") -> None:
-                """推送审批请求到前端收件箱（v1：不经过此通道）。
-
-                Args:
-                    event_data: HITLData 审批事件数据。
-                """
-                pass  # v1: 审批由 ToolManager SafetyPipeline 直接处理，不经过此通道
-
-            async def cancel_approval(self, approval_ids: "list[ApprovalId]") -> None:
-                """批量取消已发送的审批请求（v1：不经过此通道）。
-
-                Args:
-                    approval_ids: 需要取消的审批 ID 列表。
-                """
-                pass  # v1: 同上，审批全流程走 ToolManager，不经过此通道
-
-        _hitl = _EventBusHITLNotifier(self._bus)
+        _hitl = EventBusHITLNotifier(self._bus)
         self._task_system = WorkflowEngine(infra=_ts_infra, hitl_notifier=_hitl)
         await self._task_system.start()
         logger.info("WorkflowEngine started")
