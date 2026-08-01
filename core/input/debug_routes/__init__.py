@@ -46,7 +46,7 @@ def register_debug_routes(
     register_character_routes(app)
 
     # TaskSystem debug API — SSE 实时推送任务状态
-    from Module.task_system.debug_api import TaskDebugAPI
+    from Module.workflow_engine.debug_api import TaskDebugAPI
 
     ts = app.get('task_system')
     if ts is not None:

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from ..memory.long_term import LongTermMemory
     from ..adapter.tool_adapter import ToolAdapter
     from ..cognitive import CognitiveLoop
-    from Module.task_system.task_system import TaskSystem
+    from Module.workflow_engine.task_system import TaskSystem
     from Module.tts.protocol import TTSBackend
 
 logger = logging.getLogger(__name__)

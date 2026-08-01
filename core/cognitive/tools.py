@@ -12,9 +12,9 @@ from ..schema.tool import ToolCall
 from ..utils import new_message_id
 
 if TYPE_CHECKING:
-    from Module.task_system.schema import SubmitError, UserProfile
-    from Module.task_system.delegation_preparer import DelegationPreparer
-    from Module.task_system.task_system import TaskSystem
+    from Module.workflow_engine.schema import SubmitError, UserProfile
+    from Module.workflow_engine.delegation_preparer import DelegationPreparer
+    from Module.workflow_engine.task_system import TaskSystem
     from ..adapter.tool_adapter import ToolAdapter
     from ..memory.session import SessionMemory
 
@@ -27,7 +27,7 @@ def _default_user_profile() -> "UserProfile":
     Returns:
         空的 UserProfile 实例。
     """
-    from Module.task_system.schema import UserProfile
+    from Module.workflow_engine.schema import UserProfile
     return UserProfile()
 
 
@@ -212,7 +212,7 @@ class CognitiveTools:
         Returns:
             操作结果的 ToolResult，成功时携带 async_task_id。
         """
-        from Module.task_system.schema import SubmitError
+        from Module.workflow_engine.schema import SubmitError
 
         args = tc.function.parsed
         intent = (args.get("intent") or "").strip()
@@ -237,7 +237,7 @@ class CognitiveTools:
                 error="TaskSystem 未初始化，请告知用户后台任务系统暂不可用。")
 
         # 将 ToolExecutor.definitions() 的 dict 格式转换为 DelegationPreparer 期望的 Tool 列表
-        from Module.task_system.schema import Tool
+        from Module.workflow_engine.schema import Tool
         tool_defs = self._tool_adapter.definitions() if self._tool_adapter else []
         tool_list = [
             Tool(
@@ -248,7 +248,7 @@ class CognitiveTools:
             for d in tool_defs
         ]
 
-        from Module.task_system.schema.types import SessionId as _SessionId
+        from Module.workflow_engine.schema.types import SessionId as _SessionId
 
         prep_result = await self._delegation_preparer.prepare(
             intent=intent,

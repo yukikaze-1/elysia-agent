@@ -9,7 +9,7 @@
 - [1. 核心类型 (core/)](#1-核心类型-core)
 - [2. 消息和媒体格式 (core/schema/)](#2-消息和媒体格式-coreschema)
 - [3. 工具系统 (Module/tool/)](#3-工具系统-moduletool)
-- [4. TaskSystem 类型 (Module/task_system/schema/)](#4-tasksystem-类型-moduletask_systemschema)
+- [4. TaskSystem 类型 (Module/workflow_engine/schema/)](#4-tasksystem-类型-moduletask_systemschema)
 - [5. 后端协议 ABC (Module/*/protocol.py)](#5-后端协议-abc-moduleprotocolpy)
 - [6. Session Params（裸 dict，无 schema）](#6-session-params裸-dict无-schema)
 - [7. WebSocket 消息格式（裸 dict）](#7-websocket-消息格式裸-dict)
@@ -122,7 +122,7 @@
 
 ---
 
-## 4. TaskSystem 类型 (Module/task_system/schema/)
+## 4. TaskSystem 类型 (Module/workflow_engine/schema/)
 
 ### 基础类型 (`types.py`)
 
@@ -209,7 +209,7 @@
 | `Module/system_prompt/protocol.py` | `PromptSection` | ABC | 提示词 section 基类 |
 | `Module/system_prompt/protocol.py` | `StaticSection` | class | 静态文本 section |
 | `Module/system_prompt/protocol.py` | `Jinja2Section` | class | Jinja2 模板 section |
-| `Module/task_system/protocol.py` | `HITLNotifier` | ABC | 人工审批通知协议 |
+| `Module/workflow_engine/protocol.py` | `HITLNotifier` | ABC | 人工审批通知协议 |
 
 ---
 

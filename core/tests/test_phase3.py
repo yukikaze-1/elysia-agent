@@ -1731,7 +1731,7 @@ class TestHandleSubmitTask:
 
         # Mock DelegationPreparer
         dp = MagicMock()
-        from Module.task_system.schema import (
+        from Module.workflow_engine.schema import (
             DelegationResult, DelegationStatus, DelegationContext, SessionId,
         )
         delegation_context = DelegationContext(
@@ -1772,7 +1772,7 @@ class TestHandleSubmitTask:
     @pytest.mark.asyncio
     async def test_delegation_no_matching_tools_returns_fail(self, loop_with_ts):
         """DelegationPreparer 返回 no_matching_tools → fail。"""
-        from Module.task_system.schema import DelegationResult, DelegationStatus
+        from Module.workflow_engine.schema import DelegationResult, DelegationStatus
         dp = loop_with_ts._delegation_preparer
         dp.prepare = AsyncMock(return_value=DelegationResult(
             status=DelegationStatus.NO_MATCHING_TOOLS,

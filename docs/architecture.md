@@ -988,7 +988,7 @@ Agent/
 │   ├── system_prompt/       # System Prompt 引擎 + Section Provider + 12 templates
 │   ├── database/            # Database: Milvus / MongoDB / GraphDB (stub)
 │   ├── tool/                # Tool: ToolPlugin框架 + SafetyPipeline + ToolManager
-│   ├── task_system/         # TaskSystem: 异步任务编排 (Planner/Orchestrator/Executor)
+│   ├── workflow_engine/     # TaskSystem: 异步任务编排 (Planner/Orchestrator/Executor)
 │   └── bench/               # Bench: 延迟基准
 │
 ├── core/                    # L1 认知控制 + L2 记忆
@@ -1178,8 +1178,8 @@ INTERRUPT:
 | 13 | agent/lifecycle.py | `_db_health_loop()` | 数据库健康检查 120s 间隔，常驻，stop 时 cancel |
 | 14 | memory/session.py | archive_append | fire-and-forget，无追踪 |
 | 15 | input/server.py | per-connection state monitor | 常驻，disconnect 时 cancel |
-| 16 | task_system/task_system.py | sub-agent task submit | TaskSystem 内部追踪 |
-| 17 | task_system/task_system.py | sub-agent task resume | TaskSystem 内部追踪 |
+| 16 | workflow_engine/task_system.py | sub-agent task submit | TaskSystem 内部追踪 |
+| 17 | workflow_engine/task_system.py | sub-agent task resume | TaskSystem 内部追踪 |
 | 18 | personality/reflector.py | CharacterReflector fire-and-forget | fire-and-forget，无追踪 |
 | 19 | task/scheduler.py | Worker Pool + prune loop | 常驻，stop 时 cancel |
 

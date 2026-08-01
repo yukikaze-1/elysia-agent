@@ -16,7 +16,7 @@ IsoTimestamp = Annotated[str, BeforeValidator(_normalize_iso_ts)]
 SessionId = NewType("SessionId", str)
 """会话唯一标识符。
 
-注意：与 Module/task_system/schema/types.py 的 SessionId 同名共存（Phase 1）。
+注意：与 Module/workflow_engine/schema/types.py 的 SessionId 同名共存（Phase 1）。
 两者是相同的 NewType，运行时完全兼容（都是 str）。Phase 2 统一迁移到此。
 """
 

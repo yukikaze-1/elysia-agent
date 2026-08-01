@@ -48,8 +48,8 @@ pytest core/config/tests/ -v               # 配置 dataclass
 pytest core/monitoring/tests/ -v           # Token 监控
 pytest core/task/tests/ -v                 # Task 调度
 pytest core/tools/ -v                      # 工具插件
-pytest Module/task_system/tests/unit/ -v   # TaskSystem 单元
-pytest Module/task_system/tests/integration/ -v  # TaskSystem 集成
+pytest Module/workflow_engine/tests/unit/ -v   # TaskSystem 单元
+pytest Module/workflow_engine/tests/integration/ -v  # TaskSystem 集成
 
 # 按文件运行
 pytest Module/llm/tests/ -v
@@ -94,7 +94,7 @@ pytest core/tests/test_phase3.py -v
 | `core/adapter/tests/` | `test_message_builder.py` | 12 | integration |
 | `Module/tool/tests/` | `test_framework.py` | 96 | unit+service |
 | | `test_tool_safety.py` | 33 | unit |
-| `Module/task_system/tests/unit/` | `test_checkpoint.py` | 9 | unit |
+| `Module/workflow_engine/tests/unit/` | `test_checkpoint.py` | 9 | unit |
 | | `test_delegation_preparer.py` | 53 | unit |
 | | `test_evaluator.py` | 29 | unit |
 | | `test_executor.py` | 12 | unit |
@@ -105,7 +105,7 @@ pytest core/tests/test_phase3.py -v
 | | `test_sub_agent.py` | 27 | unit |
 | | `test_task_system.py` | 44 | unit |
 | | `test_token_ledger.py` | 8 | unit |
-| `Module/task_system/tests/integration/` | `test_delegation_preparer.py` | 11 | integration |
+| `Module/workflow_engine/tests/integration/` | `test_delegation_preparer.py` | 11 | integration |
 | | `test_e2e_mvp.py` | 7 | slow |
 | | `test_executor.py` | 4 | integration |
 | | `test_planner.py` | 4 | integration |

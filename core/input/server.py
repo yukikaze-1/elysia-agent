@@ -18,7 +18,7 @@ from .api_routes import register_api_routes
 from .debug_routes import register_debug_routes
 
 if TYPE_CHECKING:
-    from Module.task_system.task_system import TaskSystem
+    from Module.workflow_engine.task_system import TaskSystem
 
 logger = logging.getLogger(__name__)
 

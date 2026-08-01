@@ -9,12 +9,12 @@ if TYPE_CHECKING:
     from ..monitoring.event_bus import EventBus
     from ..cognitive import CognitiveLoop
     from ..adapter.tool_adapter import ToolAdapter
-    from Module.task_system.task_system import TaskSystem
-    from Module.task_system.delegation_preparer import DelegationPreparer
+    from Module.workflow_engine.task_system import TaskSystem
+    from Module.workflow_engine.delegation_preparer import DelegationPreparer
     from ..adapter.llm_adapter import LLMAdapter
     from core.schema.types import IsoTimestamp
-    from Module.task_system.schema.protocol import HITLData
-    from Module.task_system.schema.types import ApprovalId
+    from Module.workflow_engine.schema.protocol import HITLData
+    from Module.workflow_engine.schema.types import ApprovalId
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +36,10 @@ class _LifecycleTaskSystem:
 
     async def _start_task_system(self) -> None:
         """创建 TaskSystem + DelegationPreparer + HITLNotifier，注入 CognitiveLoop。"""
-        from Module.task_system.task_system import TaskSystem
-        from Module.task_system.delegation_preparer import DelegationPreparer
-        from Module.task_system.infra import AgentInfra
-        from Module.task_system.schema import ConstraintConfig
+        from Module.workflow_engine.task_system import TaskSystem
+        from Module.workflow_engine.delegation_preparer import DelegationPreparer
+        from Module.workflow_engine.infra import AgentInfra
+        from Module.workflow_engine.schema import ConstraintConfig
 
         _ts_infra = AgentInfra(
             llm=self._llm.get_raw_client(),  # type: ignore[arg-type]
@@ -49,7 +49,7 @@ class _LifecycleTaskSystem:
             constraints=ConstraintConfig(),
         )
 
-        from Module.task_system.protocol import HITLNotifier
+        from Module.workflow_engine.protocol import HITLNotifier
 
         class _EventBusHITLNotifier(HITLNotifier):
             def __init__(self, bus: EventBus) -> None:
@@ -85,7 +85,7 @@ class _LifecycleTaskSystem:
         self._delegation_preparer = DelegationPreparer()
 
         # 注入到 CognitiveLoop
-        from Module.task_system.schema import UserProfile
+        from Module.workflow_engine.schema import UserProfile
         self._cognitive.configure(
             task_system=self._task_system,
             delegation_preparer=self._delegation_preparer,

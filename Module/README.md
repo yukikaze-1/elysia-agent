@@ -21,7 +21,7 @@ Module/
 │   ├── vectordb/         # 向量数据库（Milvus）
 │   ├── documentdb/       # 文档数据库（MongoDB）
 │   └── graphdb/          # 图数据库（预留）
-├── task_system/          # 异步任务编排（Planner/Orchestrator/Executor）
+├── workflow_engine/      # 异步任务编排（Planner/Orchestrator/Executor）
 └── bench/                # 延迟基准测试
 ```
 
@@ -249,14 +249,14 @@ if buf.is_speech_complete():  # VAD 检测到完整语音段
 Planner/Orchestrator/Executor 三层架构，支持子 Agent 委托、DAG 依赖图、checkpoint 持久化、mailbox 轮询。
 
 ```python
-from Module.task_system import TaskSystem
+from Module.workflow_engine import TaskSystem
 
 ts = TaskSystem(llm_adapter=llm, tools=tool_manager)
 task_id = await ts.submit("帮我查一下今天的天气")
 result = await ts.mailbox.wait(task_id, timeout=60)
 ```
 
-> 📖 完整文档 → [Module/task_system/docs/](task_system/docs/)
+> 📖 完整文档 → [Module/workflow_engine/docs/](workflow_engine/docs/)
 
 ## 测试
 
@@ -277,7 +277,7 @@ python -m pytest Module/tool/tests/ -v
 python -m pytest Module/database/vectordb/tests/ -v
 python -m pytest Module/database/documentdb/tests/ -v
 python -m pytest core/input/ -v
-python -m pytest Module/task_system/tests/ -v
+python -m pytest Module/workflow_engine/tests/ -v
 
 # 集成冒烟测试（需要对应服务运行）
 python -m Module.llm          # 需要 DEEPSEEK_API_KEY

@@ -42,7 +42,7 @@ python -m pytest Module/system_prompt/tests/ -v
 python -m pytest core/tests/ -v
 
 # TaskSystem tests
-python -m pytest Module/task_system/tests/ -v
+python -m pytest Module/workflow_engine/tests/ -v
 
 # Agent lifecycle tests
 python -m pytest core/agent/tests/ -v

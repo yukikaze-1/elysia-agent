@@ -298,7 +298,7 @@ class RuntimeConfigPlugin(ToolPlugin):
                 intent = str(t.get("intent", ""))[:60]
             duration = ""
             if hasattr(t, 'created_at') and t.created_at:
-                from Module.task_system.schema import parse_iso
+                from Module.workflow_engine.schema import parse_iso
                 try:
                     created = parse_iso(str(t.created_at))
                     elapsed = int((datetime.now(timezone.utc) - created).total_seconds())

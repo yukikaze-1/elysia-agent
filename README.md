@@ -161,7 +161,7 @@ bash scripts/setup.sh
 L0  Module/              无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/, system_prompt, tool
 L1  core/                认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
 L2  core/memory/         记忆与工具 — SessionMemory, LongTermMemory, ToolAdapter (Plugin 架构)
-L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
+L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
 ```
 
 每层职责分明。每个 Module 服务遵循 Protocol-Registry-Backend 模式，可独立替换。
@@ -191,7 +191,7 @@ L2  Module/task_system/  后台任务 — Planner → Executor → Evaluator (DA
 | Logger | [Module/logger/README.md](Module/logger/README.md) | 日志工厂（plain + JSON） |
 | _common | [Module/_common/README.md](Module/_common/README.md) | 共享工具层（env + registry_helpers + test 工厂） |
 | System Prompt | [Module/system_prompt/README.md](Module/system_prompt/README.md) | System Prompt 引擎 + Section Provider |
-| TaskSystem | [Module/task_system/README.md](Module/task_system/README.md) | 后台任务委派与 DAG 编排 |
+| TaskSystem | [Module/workflow_engine/README.md](Module/workflow_engine/README.md) | 后台任务委派与 DAG 编排 |
 | Tool | [Module/tool/README.md](Module/tool/README.md) | 工具执行框架（Plugin + SafetyPipeline） |
 | Database | [Module/database/README.md](Module/database/README.md) | 数据库总览（Milvus + MongoDB） |
 | VectorDB | [Module/database/vectordb/README.md](Module/database/vectordb/README.md) | 向量数据库（Milvus） |
@@ -336,7 +336,7 @@ Agent/
 │   ├── system_prompt/      # Brain Prompt 引擎 — SystemPromptManager + 12 PromptSections
 │   ├── tool/               # 工具框架 (129 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB
-│   ├── task_system/        # TaskSystem v1 (339 tests)
+│   ├── workflow_engine/    # TaskSystem v1 (339 tests)
 │   │   └── tests/          #     测试
 │   └── bench/              # 延迟基准
 │

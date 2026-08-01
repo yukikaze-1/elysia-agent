@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from ..monitoring.token_tracker import TokenTracker
     from ..debug.prompt_recorder import PromptRecorder
     from ..debug.response_recorder import ResponseRecorder
-    from Module.task_system.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import TaskMailbox
     from core.status import AgentStatus, CognitivePhaseController
 
 from Module.output import OutputManager, ConsoleChannel

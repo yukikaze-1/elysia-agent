@@ -6,7 +6,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from Module.task_system.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import TaskMailbox
 
 
 @dataclass

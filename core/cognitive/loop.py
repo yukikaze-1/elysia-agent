@@ -40,9 +40,9 @@ from ..memory.consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
 
 if TYPE_CHECKING:
-    from Module.task_system.delegation_preparer import DelegationPreparer
-    from Module.task_system.schema import UserProfile
-    from Module.task_system.task_system import TaskSystem
+    from Module.workflow_engine.delegation_preparer import DelegationPreparer
+    from Module.workflow_engine.schema import UserProfile
+    from Module.workflow_engine.task_system import TaskSystem
     from ..monitoring.token_tracker import TokenTracker
     from ..debug.prompt_recorder import PromptRecorder
     from ..debug.response_recorder import ResponseRecorder
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 from ..text.parts import BlockRef, build_parts
 from ..adapter.tts_adapter import TTSStreamManager
 from ..adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
-from Module.task_system.schema.types import TaskId
+from Module.workflow_engine.schema.types import TaskId
 from ..utils.text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageSummary

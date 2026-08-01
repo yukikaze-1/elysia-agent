@@ -1,0 +1,331 @@
+"""TaskDebugAPI — TaskSystem 调试数据收集 + SSE 实时推送。
+
+内部 500ms 轮询 TaskSystem 内部状态，diff 后通过 SSE 推送给前端。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from typing import TYPE_CHECKING
+
+from aiohttp import web
+
+if TYPE_CHECKING:
+    from Module.workflow_engine.task_system import TaskSystem
+
+logger = logging.getLogger(__name__)
+
+_HEARTBEAT_INTERVAL = 30.0   # 30s 无事件则发心跳
+_POLL_INTERVAL = 0.5         # 500ms 内部轮询
+_SENTINEL: dict = {}          # shutdown 信号，替代 None（Queue[dict] 不接受 None）
+
+
+class TaskDebugAPI:
+    """收集 TaskSystem 运行时状态，diff 后 SSE 推送给前端。
+
+    使用方式：
+        api = TaskDebugAPI(task_system)
+        await api.start()
+
+        app.router.add_get('/debug/api/tasks', api.snapshot_handler)
+        app.router.add_get('/debug/api/tasks/stream', api.sse_handler)
+
+    生命周期：
+        start()  → 启动 _poll_loop 后台协程
+        stop()   → 取消 _poll_loop，清理 subscribers
+    """
+
+    def __init__(self, task_system: TaskSystem) -> None:
+        """Initialize the debug API.
+
+        Args:
+            task_system: TaskSystem instance to collect debug data from.
+        """
+        self._ts = task_system
+        self._subscribers: dict[str, asyncio.Queue[dict]] = {}
+        self._last_snapshot: list[dict] | None = None
+        self._last_task_ids: set[str] = set()
+        self._last_event_time: float = time.monotonic()
+        self._poll_task: asyncio.Task[None] | None = None
+
+    # ── 生命周期 ───────────────────────────────────────────────────────
+
+    async def start(self) -> None:
+        """Start the background polling loop if not already running."""
+        if self._poll_task is not None:
+            return
+        self._poll_task = asyncio.create_task(self._poll_loop())
+        logger.info("TaskDebugAPI: 轮询已启动 (interval=%ss)", _POLL_INTERVAL)
+
+    async def stop(self) -> None:
+        """Stop the polling loop and notify all subscribers to disconnect."""
+        if self._poll_task is not None:
+            self._poll_task.cancel()
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
+            self._poll_task = None
+        # 通知所有订阅者关闭连接
+        for q in self._subscribers.values():
+            await q.put(_SENTINEL)  # sentinel——通知 SSE handler 退出
+        self._subscribers.clear()
+        logger.info("TaskDebugAPI: 已停止")
+
+    # ── 数据收集 ───────────────────────────────────────────────────────
+
+    def _collect_snapshot(self) -> list[dict]:
+        """从 TaskSystem._get_debug_snapshot() 获取原始数据，裁剪后返回。
+
+        裁剪策略：
+        - node_states 只保留 {node_id, status, attempt, summary, error}
+        - 不序列化 evaluation（Planner replan 内部用，前端不需要）
+
+        Returns:
+            list[dict]: 裁剪后的任务快照列表，可直接序列化为 JSON。
+        """
+        raw = self._ts._get_debug_snapshot()
+        tasks = []
+        for t in raw["tasks"]:
+            ts = t["task_state"]
+            exec_state = t["exec_state"]
+
+            nodes = []
+            if exec_state:
+                for nid, ns in exec_state.node_states.items():
+                    nodes.append({
+                        "node_id": nid,
+                        "status": ns.status.value if hasattr(ns.status, 'value') else str(ns.status),
+                        "attempt": ns.attempt,
+                        "summary": ns.summary if ns.summary else "",
+                        "error": ns.error if ns.error else "",
+                    })
+
+            # edges: 从 graph 提取
+            edges = []
+            graph = t.get("graph")
+            if graph is not None:
+                try:
+                    raw_edges = list(graph._graph.edges)
+                    edges = [[str(e[0]), str(e[1])] for e in raw_edges]
+                except Exception:
+                    pass
+
+            # phase: 从 exec_state 提取
+            phase = ""
+            if exec_state and hasattr(exec_state, 'current_phase'):
+                phase = (exec_state.current_phase.value
+                         if hasattr(exec_state.current_phase, 'value')
+                         else str(exec_state.current_phase))
+
+            tasks.append({
+                "task_id": str(ts.task_id),
+                "status": ts.status.value if hasattr(ts.status, 'value') else str(ts.status),
+                "plan_version": ts.plan.plan_version if ts.plan else 0,
+                "created_at": ts.created_at,
+                "error": ts.error if ts.error else "",
+                "error_code": ts.error_code.value if ts.error_code else "",
+                "nodes": nodes,
+                "edges": edges,
+                "mailbox_depth": t["mailbox_depth"],
+                "phase": phase,
+            })
+        return tasks
+
+    # ── Diff ───────────────────────────────────────────────────────────
+
+    def _diff(self, old: list[dict] | None, new: list[dict]) -> list[dict]:
+        """比较两次快照，产出 SSE 事件列表。
+
+        Args:
+            old: 上一次快照，首次轮询时为 None。
+            new: 当前快照。
+
+        Returns:
+            list[dict]: SSE 事件列表，每项包含 event 和 data。
+        """
+        if old is None:
+            return []  # 首次轮询，等待 subscribe 触发全量 snapshot
+
+        events: list[dict] = []
+        old_by_id = {t["task_id"]: t for t in old}
+        new_by_id = {t["task_id"]: t for t in new}
+
+        # 新增任务
+        for tid in new_by_id:
+            if tid not in old_by_id:
+                events.append({"event": "task_new", "data": new_by_id[tid]})
+
+        # 状态/进度变更
+        for tid in new_by_id:
+            if tid in old_by_id:
+                nt = new_by_id[tid]
+                ot = old_by_id[tid]
+                if nt["status"] != ot["status"]:
+                    events.append({"event": "task_update", "data": {
+                        "task_id": tid,
+                        "status": nt["status"],
+                        "nodes": nt["nodes"],
+                    }})
+                    # 终态
+                    if nt["status"] in ("completed", "failed", "cancelled"):
+                        events.append({"event": "task_done", "data": {
+                            "task_id": tid,
+                            "status": nt["status"],
+                            "error": nt["error"],
+                        }})
+                # 节点状态变更
+                elif nt["nodes"] != ot["nodes"]:
+                    old_nodes = {n["node_id"]: n for n in ot["nodes"]}
+                    for nn in nt["nodes"]:
+                        on = old_nodes.get(nn["node_id"])
+                        if on and nn["status"] != on["status"]:
+                            events.append({"event": "node_update", "data": {
+                                "task_id": tid,
+                                "node_id": nn["node_id"],
+                                "status": nn["status"],
+                                "attempt": nn["attempt"],
+                            }})
+
+        # 消失的任务——补发 task_done
+        current_ids = set(new_by_id.keys())
+        removed_ids = self._last_task_ids - current_ids
+        for tid in removed_ids:
+            ot = old_by_id.get(tid)
+            if ot and ot["status"] not in ("completed", "failed", "cancelled"):
+                events.append({"event": "task_done", "data": {
+                    "task_id": tid,
+                    "status": ot["status"],
+                    "error": ot["error"],
+                }})
+
+        self._last_task_ids = current_ids
+        return events
+
+    # ── 轮询循环 ───────────────────────────────────────────────────────
+
+    async def _poll_loop(self) -> None:
+        """后台轮询循环：500ms 间隔收集快照，diff 后 broadcast 给订阅者。"""
+        while True:
+            try:
+                snapshot = self._collect_snapshot()
+                events = self._diff(self._last_snapshot, snapshot)
+                self._last_snapshot = snapshot
+
+                now = time.monotonic()
+                if events:
+                    self._last_event_time = now
+                    for event in events:
+                        await self._broadcast(event)
+                elif now - self._last_event_time >= _HEARTBEAT_INTERVAL:
+                    await self._broadcast({"event": "heartbeat", "data": {}})
+                    self._last_event_time = now
+
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("TaskDebugAPI._poll_loop: 异常")
+
+            await asyncio.sleep(_POLL_INTERVAL)
+
+    # ── 订阅管理 ───────────────────────────────────────────────────────
+
+    async def subscribe(self) -> tuple[str, asyncio.Queue[dict]]:
+        """新 SSE 客户端订阅。首条消息自动发送全量快照。
+
+        Returns:
+            tuple: (subscriber_id, queue)，队列用于接收 SSE 事件。
+        """
+        import uuid
+        sid = uuid.uuid4().hex[:8]
+        q: asyncio.Queue[dict] = asyncio.Queue(maxsize=256)
+        self._subscribers[sid] = q
+
+        if self._last_snapshot is not None:
+            await q.put({"event": "snapshot", "data": self._last_snapshot})
+        else:
+            # 首次 snapshot——立即收集
+            self._last_snapshot = self._collect_snapshot()
+            self._last_task_ids = {t["task_id"] for t in self._last_snapshot}
+            await q.put({"event": "snapshot", "data": self._last_snapshot})
+
+        logger.info("TaskDebugAPI: subscriber %s 已连接 (total=%d)", sid, len(self._subscribers))
+        return sid, q
+
+    async def unsubscribe(self, sid: str) -> None:
+        """Remove a subscriber.
+
+        Args:
+            sid: Subscriber ID returned by subscribe().
+        """
+        self._subscribers.pop(sid, None)
+        logger.info("TaskDebugAPI: subscriber %s 已断开 (total=%d)", sid, len(self._subscribers))
+
+    async def _broadcast(self, event: dict) -> None:
+        """推送给所有 subscriber。满队列的跳过（前端太慢）。
+
+        Args:
+            event: SSE 事件 dict，包含 event 和 data。
+        """
+        for sid, q in list(self._subscribers.items()):
+            try:
+                q.put_nowait(event)
+            except asyncio.QueueFull:
+                logger.debug(
+                    "TaskDebugAPI: subscriber %s 队列满，跳过事件 %s",
+                    sid, event.get("event"),
+                )
+
+    # ── aiohttp handlers ──────────────────────────────────────────────
+
+    async def snapshot_handler(self, request: web.Request) -> web.Response:
+        """GET /debug/api/tasks —— 当前全量快照 JSON。
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.Response: 当前所有任务状态的 JSON 快照。
+        """
+        snapshot = self._collect_snapshot()
+        return web.json_response(snapshot)
+
+    async def sse_handler(self, request: web.Request) -> web.StreamResponse:
+        """GET /debug/api/tasks/stream —— SSE 事件流。
+
+        Args:
+            request: aiohttp Request。
+
+        Returns:
+            web.StreamResponse: SSE 流连接，持续推送任务状态变更。
+        """
+        resp = web.StreamResponse(
+            status=200,
+            reason="OK",
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+        await resp.prepare(request)
+
+        sid, q = await self.subscribe()
+        try:
+            while True:
+                event = await q.get()
+                if event is _SENTINEL:  # sentinel——stop() 发送
+                    break
+                data = json.dumps(event["data"], ensure_ascii=False, default=str)
+                await resp.write(
+                    f"event: {event['event']}\ndata: {data}\n\n".encode("utf-8")
+                )
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        finally:
+            await self.unsubscribe(sid)
+        return resp
