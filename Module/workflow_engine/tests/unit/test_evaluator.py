@@ -24,7 +24,7 @@ from Module.workflow_engine.schema import (
     NodeResult,
     OutputContract,
     Plan,
-    TaskId,
+    WorkflowId,
     TokenComponentType,
 )
 
@@ -400,7 +400,7 @@ async def test_evaluate_with_artifact_data(evaluator, sample_node, sample_plan, 
         artifact_id=ArtifactId("artifact_1"),
         artifact_type="text",
         node_id=NodeId("node_1"),
-        task_id=TaskId("task_1"),
+        task_id=WorkflowId("task_1"),
         content={"temperature": 25, "humidity": 60},
     )
 

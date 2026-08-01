@@ -19,9 +19,9 @@ from Module.workflow_engine.schema import (
     NodeStatus,
     SessionId,
     Plan,
-    TaskEventType,
-    TaskState,
-    TaskId,
+    WorkflowEventType,
+    WorkflowState,
+    WorkflowId,
     Tool,
     now_iso,
 )
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from Module.workflow_engine.core.evaluator import Evaluator
     from Module.workflow_engine.core.executor import Executor
     from Module.workflow_engine.core.graph import PlanGraph
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ async def execute_nodes(
     executor: Executor,
     exec_state: ExecutionState,
     nodes: list[DAGNode],
-    task_id: TaskId,
+    task_id: WorkflowId,
     tools: list[Tool],
     session_id: SessionId
 ) -> list[NodeResult]:
@@ -100,7 +100,7 @@ async def evaluate_node(
     """
     if plan is None:
         # Plan 缺失——严重内部错误，不应发生。直接 ABORT 而非静默成功，
-        # 防止掩盖上游 bug（如 TaskState 未正确初始化）。
+        # 防止掩盖上游 bug（如 WorkflowState 未正确初始化）。
         logger.critical(
             "Orchestrator: node=%s Plan 为 None——这是严重 bug，任务中止",
             result.node_id,
@@ -122,8 +122,8 @@ def apply_evaluation(
     exec_state: ExecutionState,
     graph: PlanGraph,
     constraints: ConstraintConfig,
-    task_state: TaskState,
-    mailbox: TaskMailbox,
+    task_state: WorkflowState,
+    mailbox: WorkflowMailbox,
 ) -> EvaluatorAction:
     """根据 action 分发到对应处理函数——更新 NodeState + 推送 Mailbox 事件。
 
@@ -174,8 +174,8 @@ def _push_progress(
     node_id: NodeId,
     exec_state: ExecutionState,
     graph: PlanGraph,
-    task_state: TaskState,
-    mailbox: TaskMailbox,
+    task_state: WorkflowState,
+    mailbox: WorkflowMailbox,
     description: str,
     message: str,
 ) -> None:
@@ -194,7 +194,7 @@ def _push_progress(
         1 for s in exec_state.node_states.values()
         if s.status in (NodeStatus.SUCCESS, NodeStatus.SKIPPED)
     )
-    _finalize_mod.push_mailbox(mailbox, TaskEventType.PROGRESS, {
+    _finalize_mod.push_mailbox(mailbox, WorkflowEventType.PROGRESS, {
         "task_id": str(task_state.task_id),
         "node_id": node_id,
         "node_description": description,
@@ -212,8 +212,8 @@ def _handle_continue(
     node_id: NodeId,
     exec_state: ExecutionState,
     graph: PlanGraph,
-    task_state: TaskState,
-    mailbox: TaskMailbox,
+    task_state: WorkflowState,
+    mailbox: WorkflowMailbox,
 ) -> EvaluatorAction:
     """节点执行成功——标记 SUCCESS + 收集 artifact 引用 + 推送进度。
 
@@ -248,8 +248,8 @@ def _handle_skip(
     node_id: NodeId,
     exec_state: ExecutionState,
     graph: PlanGraph,
-    task_state: TaskState,
-    mailbox: TaskMailbox,
+    task_state: WorkflowState,
+    mailbox: WorkflowMailbox,
 ) -> EvaluatorAction:
     """跳过可选节点——若 required 节点被建议 SKIP 则降级为 REPLAN（防死锁）。
 
@@ -292,8 +292,8 @@ def _handle_retry(
     exec_state: ExecutionState,
     graph: PlanGraph,
     constraints: ConstraintConfig,
-    task_state: TaskState,
-    mailbox: TaskMailbox,
+    task_state: WorkflowState,
+    mailbox: WorkflowMailbox,
 ) -> EvaluatorAction:
     """重试节点——检查上限：未达上限 → PENDING 重新入队；已达上限 → REPLAN。
 
@@ -354,8 +354,8 @@ def _handle_replan_progress(
     node_id: NodeId,
     exec_state: ExecutionState,
     graph: PlanGraph,
-    task_state: TaskState,
-    mailbox: TaskMailbox,
+    task_state: WorkflowState,
+    mailbox: WorkflowMailbox,
 ) -> EvaluatorAction:
     """节点结构性失败——标记 FAILED + 推送进度（通知前端 DAG 即将修复）。
 

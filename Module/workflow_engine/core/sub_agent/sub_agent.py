@@ -1,10 +1,10 @@
-"""Sub-Agent —— TaskSystem 池中的任务级执行单元。
+"""Sub-Agent —— WorkflowEngine 池中的任务级执行单元。
 
 接收 DelegationContext，负责：
     1. 初始规划（Planner.plan()）
     2. 校验（PlanValidator.validate()）
     3. 构建 PlanGraph（NetworkX DAG）
-    4. 创建 TaskState（任务级）
+    4. 创建 WorkflowState（任务级）
     5. 驱动执行（Orchestrator.run()，内部自建 ExecutionState）
     6. 决策仲裁——Replan / 熔断 / 等待审批 / 暂停
 
@@ -28,11 +28,11 @@ from Module.workflow_engine.schema import (
     NodeState,
     OrchestratorResult,
     OrchestratorRunStatus,
-    TaskCheckpoint,
-    TaskErrorCode,
-    TaskEventType,
-    TaskState,
-    TaskStatus,
+    WorkflowCheckpoint,
+    WorkflowErrorCode,
+    WorkflowEventType,
+    WorkflowState,
+    WorkflowStatus,
     ValidationIssue,
     ValidationIssueType,
     now_iso,
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from Module.workflow_engine.core.planner import Planner, Replanner
     from Module.workflow_engine.core.plan_validator import PlanValidator
     from Module.workflow_engine.infra import AgentInfra
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
     from Module.workflow_engine.protocol import HITLNotifier
     from Module.workflow_engine.token_ledger import TokenLedger
 
@@ -69,7 +69,7 @@ class SubAgent:
         Sub-Agent  → 决策层（规划 / Replan / 熔断 / 审批等待 / 暂停）
         Orchestrator → 执行层（按 Plan 推进 DAG，遇到结构性障碍时返回中断信号）
 
-    TaskState 归 SubAgent 管理（任务生命周期），ExecutionState 归 Orchestrator（执行追踪）。
+    WorkflowState 归 SubAgent 管理（任务生命周期），ExecutionState 归 Orchestrator（执行追踪）。
     两者合并为 checkpoint 持久化。
 
     跨任务共享依赖（2 个）：
@@ -106,10 +106,10 @@ class SubAgent:
 
         # ── 运行时状态——run() 入口赋值，初始为 None ──
         # None = 尚未启动 / 已结束
-        self._task_state: TaskState | None = None
+        self._task_state: WorkflowState | None = None
         self._graph: PlanGraph | None = None
         self._context: DelegationContext | None = None
-        self._mailbox: TaskMailbox | None = None
+        self._mailbox: WorkflowMailbox | None = None
 
     def _require(self, *attrs: str) -> None:
         """确保 run() 已调用——所有入口方法的前置条件。"""
@@ -124,11 +124,11 @@ class SubAgent:
     async def run(
         self,
         context: DelegationContext,
-        mailbox: TaskMailbox,
+        mailbox: WorkflowMailbox,
     ) -> None:
-        """任务主入口——创建 TaskState → 规划 → 校验 → 执行-决策循环。
+        """任务主入口——创建 WorkflowState → 规划 → 校验 → 执行-决策循环。
 
-        1. 创建 TaskState（任务级）
+        1. 创建 WorkflowState（任务级）
         2. _plan_and_validate() → PlanGraph
         3. _execute() → 执行-决策循环
 
@@ -138,10 +138,10 @@ class SubAgent:
         """
         task_id = mailbox.task_id
 
-        # 0. 创建 TaskState
-        task_state = TaskState(
+        # 0. 创建 WorkflowState
+        task_state = WorkflowState(
             task_id=task_id,
-            status=TaskStatus.PENDING,
+            status=WorkflowStatus.PENDING,
             tools=context.tools,
             session_id=context.session_id,
             created_at=now_iso(),
@@ -205,24 +205,24 @@ class SubAgent:
             RuntimeError: 非 PAUSED 状态 / checkpoint 缺失 / graph 缺失
         """
         ts = self._task_state
-        if ts is None or ts.status != TaskStatus.PAUSED:
+        if ts is None or ts.status != WorkflowStatus.PAUSED:
             raise RuntimeError(
                 f"task_id={self._mailbox.task_id if self._mailbox else 'N/A'} 非 PAUSED 状态"
                 f"（{ts.status if ts else 'None'}），无法 resume"
             )
 
-        ts.status = TaskStatus.RESUMING
+        ts.status = WorkflowStatus.RESUMING
         ts.updated_at = now_iso()
 
         self._require("_checkpoint_mgr", "_mailbox")
         checkpoint = await self._checkpoint_mgr.load(self._mailbox.task_id)
         if checkpoint is None:
-            ts.status = TaskStatus.FAILED
+            ts.status = WorkflowStatus.FAILED
             ts.updated_at = now_iso()
             raise RuntimeError("checkpoint 缺失，无法恢复")
 
         if self._graph is None:
-            ts.status = TaskStatus.FAILED
+            ts.status = WorkflowStatus.FAILED
             ts.updated_at = now_iso()
             raise RuntimeError("graph 缺失，无法恢复")
 
@@ -245,9 +245,9 @@ class SubAgent:
     async def _dispatch_result(
         self,
         result: OrchestratorResult,
-        task_state: TaskState,
+        task_state: WorkflowState,
         graph: PlanGraph,
-        mailbox: TaskMailbox,
+        mailbox: WorkflowMailbox,
         context: DelegationContext,
     ) -> tuple[bool, ExecutionState | None]:
         """按 OrchestratorRunStatus 分发到对应 handler。
@@ -298,8 +298,8 @@ class SubAgent:
     async def _plan_and_validate(
         self,
         context: DelegationContext,
-        task_state: TaskState,
-        mailbox: TaskMailbox,
+        task_state: WorkflowState,
+        mailbox: WorkflowMailbox,
     ) -> PlanGraph | None:
         """规划 + 校验——委托到 planning.plan_and_validate。
 
@@ -321,9 +321,9 @@ class SubAgent:
 
     async def _execute(
         self,
-        task_state: TaskState,
+        task_state: WorkflowState,
         graph: PlanGraph,
-        mailbox: TaskMailbox,
+        mailbox: WorkflowMailbox,
         context: DelegationContext,
         resume_from: ExecutionState | None = None,
     ) -> None:
@@ -345,7 +345,7 @@ class SubAgent:
     # ── 薄封装：结果处理 ─────────────────────────────────────────────────────
 
     async def _handle_success(
-        self, result: OrchestratorResult, task_state: TaskState,
+        self, result: OrchestratorResult, task_state: WorkflowState,
     ) -> None:
         """处理执行成功结果——委托到 result_handlers.handle_success。
 
@@ -356,7 +356,7 @@ class SubAgent:
         return await result_handlers.handle_success(result, task_state)
 
     async def _handle_failed(
-        self, result: OrchestratorResult, task_state: TaskState, mailbox: TaskMailbox,
+        self, result: OrchestratorResult, task_state: WorkflowState, mailbox: WorkflowMailbox,
     ) -> None:
         """处理执行失败结果——委托到 result_handlers.handle_failed。
 
@@ -370,7 +370,7 @@ class SubAgent:
         )
 
     async def _handle_cancelled(
-        self, result: OrchestratorResult, task_state: TaskState, mailbox: TaskMailbox,
+        self, result: OrchestratorResult, task_state: WorkflowState, mailbox: WorkflowMailbox,
     ) -> None:
         """处理取消结果——委托到 result_handlers.handle_cancelled。
 
@@ -384,7 +384,7 @@ class SubAgent:
         )
 
     async def _handle_blocked(
-        self, result: OrchestratorResult, task_state: TaskState, mailbox: TaskMailbox,
+        self, result: OrchestratorResult, task_state: WorkflowState, mailbox: WorkflowMailbox,
     ) -> None:
         """处理阻塞结果——委托到 result_handlers.handle_blocked。
 
@@ -398,7 +398,7 @@ class SubAgent:
         )
 
     async def _handle_paused(
-        self, result: OrchestratorResult, task_state: TaskState, mailbox: TaskMailbox,
+        self, result: OrchestratorResult, task_state: WorkflowState, mailbox: WorkflowMailbox,
     ) -> None:
         """处理暂停结果——委托到 result_handlers.handle_paused。
 
@@ -417,9 +417,9 @@ class SubAgent:
     async def _handle_replan(
         self,
         result: OrchestratorResult,
-        task_state: TaskState,
+        task_state: WorkflowState,
         graph: PlanGraph,
-        mailbox: TaskMailbox,
+        mailbox: WorkflowMailbox,
         context: DelegationContext,
     ) -> tuple[bool, ExecutionState | None]:
         """处理需要重新规划的结果——委托到 replan.handle_replan。
@@ -443,7 +443,7 @@ class SubAgent:
             self._token_ledger,
         )
 
-    def _check_meltdown(self, task_state: TaskState) -> str | None:
+    def _check_meltdown(self, task_state: WorkflowState) -> str | None:
         """检查任务是否触发熔断——委托到 replan.check_meltdown。
 
         Args:
@@ -464,7 +464,7 @@ class SubAgent:
         )
 
     def _extract_node_results(
-        self, checkpoint: TaskCheckpoint,
+        self, checkpoint: WorkflowCheckpoint,
     ) -> dict[str, NodeState]:
         """从 checkpoint 提取已完成节点的结果——委托到 replan.extract_node_results。
 
@@ -480,9 +480,9 @@ class SubAgent:
 
     @staticmethod
     async def _push_mailbox(
-        mailbox: TaskMailbox, event_type: TaskEventType, data: dict[str, Any],
+        mailbox: WorkflowMailbox, event_type: WorkflowEventType, data: dict[str, Any],
     ) -> None:
-        """推送事件到 TaskMailbox——委托 push_mailbox_event。
+        """推送事件到 WorkflowMailbox——委托 push_mailbox_event。
 
         Args:
             mailbox: 目标任务邮箱。
@@ -494,7 +494,7 @@ class SubAgent:
 
     @staticmethod
     def _abort_error_code(issues: list[ValidationIssue]) -> str:
-        """从校验问题列表中推导最合适的 TaskErrorCode。
+        """从校验问题列表中推导最合适的 WorkflowErrorCode。
 
         PLAN_TOO_LARGE：节点数/深度/结构问题（Planner 产出质量）
         INTERNAL_ERROR：未知/预期外的错误类型
@@ -503,7 +503,7 @@ class SubAgent:
             issues: 校验问题列表。
 
         Returns:
-            TaskErrorCode 字符串值。
+            WorkflowErrorCode 字符串值。
         """
         plan_quality_types = {
             ValidationIssueType.MAX_NODES_EXCEEDED,
@@ -514,5 +514,5 @@ class SubAgent:
         }
         fatal_types = {i.type for i in issues}
         if fatal_types & plan_quality_types:
-            return TaskErrorCode.PLAN_TOO_LARGE.value
-        return TaskErrorCode.INTERNAL_ERROR.value
+            return WorkflowErrorCode.PLAN_TOO_LARGE.value
+        return WorkflowErrorCode.INTERNAL_ERROR.value

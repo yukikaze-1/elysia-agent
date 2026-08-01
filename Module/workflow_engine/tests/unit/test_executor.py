@@ -20,7 +20,7 @@ from Module.workflow_engine.schema import (
     NodeId,
     NodeResult,
     OutputContract,
-    TaskId,
+    WorkflowId,
     TokenComponentType,
     Tool,
 )
@@ -191,7 +191,7 @@ def sample_tools():
 @pytest.mark.asyncio
 async def test_execute_success(executor, sample_node, sample_tools, mock_tool_registry):
     """工具匹配成功 + 执行成功 → NodeResult 包含 artifact_refs。"""
-    result = await executor.execute(sample_node, TaskId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
 
     assert isinstance(result, NodeResult)
     assert result.node_id == NodeId("node_1")
@@ -229,7 +229,7 @@ async def test_execute_tool_match_failure(executor, sample_node, sample_tools, m
 
     mock_llm_client.chat.completions.create = AsyncMock(side_effect=_no_tool_calls)
 
-    result = await executor.execute(sample_node, TaskId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
 
     assert result.error == NodeErrorCode.TOOL_NOT_FOUND
     assert len(result.artifact_refs) == 0
@@ -257,7 +257,7 @@ async def test_execute_llm_direct_text(executor, sample_node, sample_tools, mock
 
     mock_llm_client.chat.completions.create = AsyncMock(side_effect=_direct_text)
 
-    result = await executor.execute(sample_node, TaskId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
 
     assert result.error is None, f"LLM 直出文本不应为错误，实际: {result.error}"
     assert len(result.artifact_refs) == 1
@@ -273,7 +273,7 @@ async def test_execute_tool_error(executor, sample_node, sample_tools, mock_tool
         error_type=ErrorType.UNAVAILABLE,
     ))
 
-    result = await executor.execute(sample_node, TaskId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
 
     assert result.error == NodeErrorCode.TOOL_ERROR
     assert result.duration_ms >= 0
@@ -286,7 +286,7 @@ async def test_upstream_inputs_flow(executor, mock_artifact_store, sample_tools)
         artifact_id=ArtifactId("upstream_1"),
         artifact_type="text",
         node_id=NodeId("node_0"),
-        task_id=TaskId("task_1"),
+        task_id=WorkflowId("task_1"),
         content={"city": "北京", "date": "2026-06-13"},
     )
     mock_artifact_store._artifacts["upstream_1"] = upstream_artifact
@@ -300,7 +300,7 @@ async def test_upstream_inputs_flow(executor, mock_artifact_store, sample_tools)
         output_as=ArtifactId("artifact_email"),
     )
 
-    result = await executor.execute(node, TaskId("task_1"), sample_tools)
+    result = await executor.execute(node, WorkflowId("task_1"), sample_tools)
 
     assert result.error is None
     mock_artifact_store.get.assert_any_call(ArtifactId("upstream_1"))
@@ -311,7 +311,7 @@ async def test_execute_exception_isolation(executor, sample_node, sample_tools, 
     """Executor 内部异常不抛出——捕获并返回 NodeErrorCode.TOOL_ERROR。"""
     mock_tool_registry.execute = AsyncMock(side_effect=RuntimeError("工具执行崩溃"))
 
-    result = await executor.execute(sample_node, TaskId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
 
     assert result.error == NodeErrorCode.TOOL_ERROR
     assert result.duration_ms >= 0
@@ -329,7 +329,7 @@ async def test_node_without_output_as(executor, sample_tools):
         output_as=None,
     )
 
-    result = await executor.execute(node, TaskId("task_1"), sample_tools)
+    result = await executor.execute(node, WorkflowId("task_1"), sample_tools)
 
     assert result.error is None
     assert len(result.artifact_refs) == 0
@@ -341,7 +341,7 @@ async def test_node_without_output_as(executor, sample_tools):
 @pytest.mark.asyncio
 async def test_token_ledger_record_called(executor, sample_node, sample_tools):
     """LLM 调用后 token_ledger.record() 被调用，参数正确。"""
-    result = await executor.execute(sample_node, TaskId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
 
     assert result.error is None
     # 验证 record 被调用
@@ -364,7 +364,7 @@ async def test_token_ledger_none_skips_record(mock_infra, mock_artifact_store, m
         hitl_notifier=mock_hitl,
         token_ledger=None,
     )
-    result = await executor_no_ledger.execute(sample_node, TaskId("task_1"), sample_tools)
+    result = await executor_no_ledger.execute(sample_node, WorkflowId("task_1"), sample_tools)
 
     assert result.error is None
     assert len(result.artifact_refs) == 1
@@ -423,7 +423,7 @@ async def test_execute_llm_direct_mode(executor, sample_tools):
         input_bindings=[ArtifactId("output:search")],
         output_as=ArtifactId("output:summarize"),
     )
-    result = await executor.execute(node, TaskId("t1"), sample_tools)
+    result = await executor.execute(node, WorkflowId("t1"), sample_tools)
     assert result.error is None
     # llm_direct 路径不应调用 tool_registry
     executor._infra.tool_registry.execute.assert_not_called()

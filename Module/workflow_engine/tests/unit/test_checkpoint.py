@@ -16,10 +16,10 @@ import pytest
 from Module.workflow_engine.checkpoint import CheckpointManager
 from Module.workflow_engine.schema import (
     ExecutionState,
-    TaskCheckpoint,
-    TaskId,
-    TaskState,
-    TaskStatus,
+    WorkflowCheckpoint,
+    WorkflowId,
+    WorkflowState,
+    WorkflowStatus,
 )
 
 pytestmark = pytest.mark.unit
@@ -27,11 +27,11 @@ pytestmark = pytest.mark.unit
 # ── 测试固件 ────────────────────────────────────────────────────────────────
 
 
-def _make_checkpoint(task_id: str = "t1") -> TaskCheckpoint:
-    """构造最小合法 TaskCheckpoint。"""
-    ts = TaskState(
-        task_id=TaskId(task_id),
-        status=TaskStatus.RUNNING,
+def _make_checkpoint(task_id: str = "t1") -> WorkflowCheckpoint:
+    """构造最小合法 WorkflowCheckpoint。"""
+    ts = WorkflowState(
+        task_id=WorkflowId(task_id),
+        status=WorkflowStatus.RUNNING,
         created_at="2026-01-01T00:00:00Z",
         updated_at="2026-01-01T00:01:00Z",
     )
@@ -39,7 +39,7 @@ def _make_checkpoint(task_id: str = "t1") -> TaskCheckpoint:
         created_at="2026-01-01T00:00:00Z",
         updated_at="2026-01-01T00:01:00Z",
     )
-    return TaskCheckpoint(task=ts, exec=es)
+    return WorkflowCheckpoint(task=ts, exec=es)
 
 
 # ── save + load ─────────────────────────────────────────────────────────────
@@ -51,12 +51,12 @@ async def test_save_and_load():
     mgr = CheckpointManager()
     cp = _make_checkpoint("t1")
 
-    await mgr.save(TaskId("t1"), cp)
-    loaded = await mgr.load(TaskId("t1"))
+    await mgr.save(WorkflowId("t1"), cp)
+    loaded = await mgr.load(WorkflowId("t1"))
 
     assert loaded is not None
-    assert loaded.task.task_id == TaskId("t1")
-    assert loaded.task.status == TaskStatus.RUNNING
+    assert loaded.task.task_id == WorkflowId("t1")
+    assert loaded.task.status == WorkflowStatus.RUNNING
     assert loaded.exec.created_at == "2026-01-01T00:00:00Z"
 
 
@@ -64,7 +64,7 @@ async def test_save_and_load():
 async def test_load_not_found():
     """不存在的 task_id → 返回 None。"""
     mgr = CheckpointManager()
-    loaded = await mgr.load(TaskId("nonexistent"))
+    loaded = await mgr.load(WorkflowId("nonexistent"))
     assert loaded is None
 
 
@@ -73,17 +73,17 @@ async def test_save_overwrites():
     """同一 task_id 再次 save → 覆盖旧数据。"""
     mgr = CheckpointManager()
     cp1 = _make_checkpoint("t1")
-    cp1.task.status = TaskStatus.RUNNING
+    cp1.task.status = WorkflowStatus.RUNNING
 
     cp2 = _make_checkpoint("t1")
-    cp2.task.status = TaskStatus.COMPLETED
+    cp2.task.status = WorkflowStatus.COMPLETED
 
-    await mgr.save(TaskId("t1"), cp1)
-    await mgr.save(TaskId("t1"), cp2)
+    await mgr.save(WorkflowId("t1"), cp1)
+    await mgr.save(WorkflowId("t1"), cp2)
 
-    loaded = await mgr.load(TaskId("t1"))
+    loaded = await mgr.load(WorkflowId("t1"))
     assert loaded is not None
-    assert loaded.task.status == TaskStatus.COMPLETED
+    assert loaded.task.status == WorkflowStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -91,9 +91,9 @@ async def test_object_identity():
     """v1 内存存储——load 返回同一对象实例（无序列化往返）。"""
     mgr = CheckpointManager()
     cp = _make_checkpoint("t1")
-    await mgr.save(TaskId("t1"), cp)
+    await mgr.save(WorkflowId("t1"), cp)
 
-    loaded = await mgr.load(TaskId("t1"))
+    loaded = await mgr.load(WorkflowId("t1"))
     assert loaded is cp  # 同一对象引用
 
 
@@ -105,10 +105,10 @@ async def test_delete_existing():
     """delete 后 load 返回 None。"""
     mgr = CheckpointManager()
     cp = _make_checkpoint("t1")
-    await mgr.save(TaskId("t1"), cp)
+    await mgr.save(WorkflowId("t1"), cp)
 
-    await mgr.delete(TaskId("t1"))
-    loaded = await mgr.load(TaskId("t1"))
+    await mgr.delete(WorkflowId("t1"))
+    loaded = await mgr.load(WorkflowId("t1"))
     assert loaded is None
 
 
@@ -116,7 +116,7 @@ async def test_delete_existing():
 async def test_delete_nonexistent():
     """delete 不存在的 task_id → 无异常。"""
     mgr = CheckpointManager()
-    await mgr.delete(TaskId("nonexistent"))  # 不抛异常
+    await mgr.delete(WorkflowId("nonexistent"))  # 不抛异常
 
 
 @pytest.mark.asyncio
@@ -124,12 +124,12 @@ async def test_delete_idempotent():
     """同一 task_id 删除两次——第二次无异常。"""
     mgr = CheckpointManager()
     cp = _make_checkpoint("t1")
-    await mgr.save(TaskId("t1"), cp)
+    await mgr.save(WorkflowId("t1"), cp)
 
-    await mgr.delete(TaskId("t1"))
-    await mgr.delete(TaskId("t1"))  # 幂等，无异常
+    await mgr.delete(WorkflowId("t1"))
+    await mgr.delete(WorkflowId("t1"))  # 幂等，无异常
 
-    loaded = await mgr.load(TaskId("t1"))
+    loaded = await mgr.load(WorkflowId("t1"))
     assert loaded is None
 
 
@@ -143,16 +143,16 @@ async def test_multiple_tasks_isolation():
     cp1 = _make_checkpoint("t1")
     cp2 = _make_checkpoint("t2")
 
-    await mgr.save(TaskId("t1"), cp1)
-    await mgr.save(TaskId("t2"), cp2)
+    await mgr.save(WorkflowId("t1"), cp1)
+    await mgr.save(WorkflowId("t2"), cp2)
 
-    loaded1 = await mgr.load(TaskId("t1"))
-    loaded2 = await mgr.load(TaskId("t2"))
+    loaded1 = await mgr.load(WorkflowId("t1"))
+    loaded2 = await mgr.load(WorkflowId("t2"))
 
     assert loaded1 is not None
     assert loaded2 is not None
-    assert loaded1.task.task_id == TaskId("t1")
-    assert loaded2.task.task_id == TaskId("t2")
+    assert loaded1.task.task_id == WorkflowId("t1")
+    assert loaded2.task.task_id == WorkflowId("t2")
     assert loaded1 is not loaded2  # 不同对象
 
 
@@ -160,10 +160,10 @@ async def test_multiple_tasks_isolation():
 async def test_delete_only_target():
     """delete t1 不影响 t2。"""
     mgr = CheckpointManager()
-    await mgr.save(TaskId("t1"), _make_checkpoint("t1"))
-    await mgr.save(TaskId("t2"), _make_checkpoint("t2"))
+    await mgr.save(WorkflowId("t1"), _make_checkpoint("t1"))
+    await mgr.save(WorkflowId("t2"), _make_checkpoint("t2"))
 
-    await mgr.delete(TaskId("t1"))
+    await mgr.delete(WorkflowId("t1"))
 
-    assert await mgr.load(TaskId("t1")) is None
-    assert await mgr.load(TaskId("t2")) is not None
+    assert await mgr.load(WorkflowId("t1")) is None
+    assert await mgr.load(WorkflowId("t2")) is not None

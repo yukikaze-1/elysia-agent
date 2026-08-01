@@ -7,21 +7,21 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from Module.workflow_engine.schema import (
     OrchestratorResult,
-    TaskErrorCode,
-    TaskEventType,
-    TaskState,
+    WorkflowErrorCode,
+    WorkflowEventType,
+    WorkflowState,
     now_iso,
 )
 
 if TYPE_CHECKING:
     from Module.workflow_engine.checkpoint import CheckpointManager
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
 
 logger = logging.getLogger(__name__)
 
 
 async def handle_success(
-    result: OrchestratorResult, task_state: TaskState,
+    result: OrchestratorResult, task_state: WorkflowState,
 ) -> None:
     """所有 required 节点完成——任务成功。
 
@@ -34,8 +34,8 @@ async def handle_success(
 
 async def handle_failed(
     result: OrchestratorResult,
-    task_state: TaskState,
-    mailbox: TaskMailbox,
+    task_state: WorkflowState,
+    mailbox: WorkflowMailbox,
     push_mailbox_fn: Callable[..., Awaitable[None]],
 ) -> None:
     """不可恢复失败——推送 FAILED 事件。
@@ -51,17 +51,17 @@ async def handle_failed(
         "SubAgent: task_id=%s 失败: %s",
         task_state.task_id, error_reason,
     )
-    await push_mailbox_fn(mailbox, TaskEventType.FAILED, {
+    await push_mailbox_fn(mailbox, WorkflowEventType.FAILED, {
         "task_id": str(task_state.task_id),
         "error": error_reason,
-        "error_type": TaskErrorCode.INTERNAL_ERROR.value,
+        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
     })
 
 
 async def handle_cancelled(
     result: OrchestratorResult,
-    task_state: TaskState,
-    mailbox: TaskMailbox,
+    task_state: WorkflowState,
+    mailbox: WorkflowMailbox,
     push_mailbox_fn: Callable[..., Awaitable[None]],
 ) -> None:
     """外部取消——推送 CANCELLED 事件。
@@ -76,7 +76,7 @@ async def handle_cancelled(
         push_mailbox_fn: 推送邮箱事件的异步回调
     """
     logger.info("SubAgent: task_id=%s 已取消", task_state.task_id)
-    await push_mailbox_fn(mailbox, TaskEventType.CANCELLED, {
+    await push_mailbox_fn(mailbox, WorkflowEventType.CANCELLED, {
         "task_id": str(task_state.task_id),
         "reason": "用户取消",
     })
@@ -84,14 +84,14 @@ async def handle_cancelled(
 
 async def handle_blocked(
     result: OrchestratorResult,
-    task_state: TaskState,
-    mailbox: TaskMailbox,
+    task_state: WorkflowState,
+    mailbox: WorkflowMailbox,
     push_mailbox_fn: Callable[..., Awaitable[None]],
 ) -> None:
     """等待用户审批——推送 APPROVAL_NEEDED 事件。
 
     Orchestrator 已将 task_state.status 设为 WAITING_APPROVAL。
-    返回后由 TaskSystem 主类接管：
+    返回后由 WorkflowEngine 主类接管：
         1. 等待 HITLNotifier.submit_approval() 回调
         2. 审批通过后从 checkpoint 重建 exec_state → 继续 run()
 
@@ -102,7 +102,7 @@ async def handle_blocked(
         push_mailbox_fn: 推送邮箱事件的异步回调
     """
     logger.info("SubAgent: task_id=%s 等待审批", task_state.task_id)
-    await push_mailbox_fn(mailbox, TaskEventType.APPROVAL_NEEDED, {
+    await push_mailbox_fn(mailbox, WorkflowEventType.APPROVAL_NEEDED, {
         "task_id": str(task_state.task_id),
         "message": "任务等待用户审批",
     })
@@ -110,8 +110,8 @@ async def handle_blocked(
 
 async def handle_paused(
     result: OrchestratorResult,
-    task_state: TaskState,
-    mailbox: TaskMailbox,
+    task_state: WorkflowState,
+    mailbox: WorkflowMailbox,
     checkpoint_mgr: CheckpointManager,
     push_mailbox_fn: Callable[..., Awaitable[None]],
 ) -> None:
@@ -137,7 +137,7 @@ async def handle_paused(
     await checkpoint_mgr.save(
         task_state.task_id, result.checkpoint_state,
     )
-    await push_mailbox_fn(mailbox, TaskEventType.PAUSED, {
+    await push_mailbox_fn(mailbox, WorkflowEventType.PAUSED, {
         "task_id": str(task_state.task_id),
         "message": "任务已暂停",
     })

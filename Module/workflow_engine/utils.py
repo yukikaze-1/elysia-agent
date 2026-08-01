@@ -1,4 +1,4 @@
-"""TaskSystem 共享工具函数——供 Planner / DelegationPreparer / 其他组件使用。"""
+"""WorkflowEngine 共享工具函数——供 Planner / DelegationPreparer / 其他组件使用。"""
 
 from __future__ import annotations
 

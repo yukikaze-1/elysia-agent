@@ -19,7 +19,7 @@ from Module.workflow_engine.schema import (
     NodeErrorCode,
     NodeId,
     OutputContract,
-    TaskId,
+    WorkflowId,
     Tool,
 )
 from Module.tool.manager import ToolManager
@@ -88,7 +88,7 @@ async def test_integration_execute_time_tool():
         Tool(name="get_time", description="获取当前日期和时间，支持指定时区和格式"),
     ]
 
-    result = await executor.execute(node, TaskId("task_int_1"), tools)
+    result = await executor.execute(node, WorkflowId("task_int_1"), tools)
 
     assert result.error is None, f"执行失败: {result.error}"
     assert result.duration_ms > 0
@@ -127,7 +127,7 @@ async def test_integration_no_matching_tool():
         Tool(name="get_time", description="获取当前日期和时间，支持指定时区和格式"),
     ]
 
-    result = await executor.execute(node, TaskId("task_int_2"), tools)
+    result = await executor.execute(node, WorkflowId("task_int_2"), tools)
 
     # tool_choice="auto" 时 LLM 可能：
     # 1. 返回 tool_call → 正确拒绝 → error
@@ -170,7 +170,7 @@ async def test_integration_execute_llm_direct_mode():
         Tool(name="get_time", description="获取当前日期和时间"),
     ]
 
-    result = await executor.execute(node, TaskId("task_llm_direct"), tools)
+    result = await executor.execute(node, WorkflowId("task_llm_direct"), tools)
 
     assert result.error is None, f"llm_direct 不应失败: {result.error}"
     assert result.duration_ms > 0
@@ -223,7 +223,7 @@ async def test_integration_execute_llm_direct_sentinel():
         Tool(name="get_time", description="获取当前日期和时间，支持指定时区和格式"),
     ]
 
-    result = await executor.execute(node, TaskId("task_sentinel"), tools)
+    result = await executor.execute(node, WorkflowId("task_sentinel"), tools)
 
     assert result.error is None, \
         f"哨兵路径应成功（LLM 直出文本），实际 error={result.error}"

@@ -22,7 +22,7 @@ from Module.workflow_engine.schema import (
     NodeId,
     NodeState,
     NodeStatus,
-    TaskDAG,
+    WorkflowDAG,
     ValidationIssue,
     ValidationIssueType,
 )
@@ -358,14 +358,14 @@ class PlanGraph:
 
     def to_dag_view(
         self, node_states: dict[NodeId, NodeState],
-    ) -> TaskDAG:
+    ) -> WorkflowDAG:
         """构建 Debug WebUI 用的 DAG 视图。
 
         Args:
             node_states: NodeId 到 NodeState 的映射，记录每个节点的当前执行状态。
 
         Returns:
-            包含节点信息（DAGNodeInfo）和边列表的 TaskDAG 视图。
+            包含节点信息（DAGNodeInfo）和边列表的 WorkflowDAG 视图。
         """
         dag_nodes: list[DAGNodeInfo] = []
         for node_id in self._g.nodes:
@@ -384,7 +384,7 @@ class PlanGraph:
             (u, v) for u, v in self._g.edges
         ]
 
-        return TaskDAG(nodes=dag_nodes, edges=edges)
+        return WorkflowDAG(nodes=dag_nodes, edges=edges)
 
     def compute_progress(self, node_states: dict[NodeId, NodeState]) -> float:
         """计算任务完成百分比（0~1）。

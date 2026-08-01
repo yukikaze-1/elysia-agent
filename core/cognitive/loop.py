@@ -42,7 +42,7 @@ from Module.llm.registry import LLMFactory
 if TYPE_CHECKING:
     from Module.workflow_engine.delegation_preparer import DelegationPreparer
     from Module.workflow_engine.schema import UserProfile
-    from Module.workflow_engine.task_system import TaskSystem
+    from Module.workflow_engine.workflow_engine import TaskSystem
     from ..monitoring.token_tracker import TokenTracker
     from ..debug.prompt_recorder import PromptRecorder
     from ..debug.response_recorder import ResponseRecorder

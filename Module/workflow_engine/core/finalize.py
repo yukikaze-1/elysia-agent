@@ -14,17 +14,17 @@ from Module.workflow_engine.schema import (
     NodeId,
     NodeState,
     NodeStatus,
-    TaskCheckpoint,
-    TaskEventType,
-    TaskState,
-    TaskStatus,
+    WorkflowCheckpoint,
+    WorkflowEventType,
+    WorkflowState,
+    WorkflowStatus,
     now_iso,
 )
 
 if TYPE_CHECKING:
     from Module.workflow_engine.checkpoint import CheckpointManager
     from Module.workflow_engine.core.graph import PlanGraph
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
 
 logger = logging.getLogger(__name__)
 
@@ -139,9 +139,9 @@ def needs_approval(node: DAGNode) -> bool:
 
 
 async def finalize(
-    task_state: TaskState,
+    task_state: WorkflowState,
     exec_state: ExecutionState,
-    mailbox: TaskMailbox,
+    mailbox: WorkflowMailbox,
     checkpoint_mgr: CheckpointManager,
 ) -> None:
     """任务终态处理——推送 completed 事件（含节点产出摘要，供 CognitiveLoop 渐进式唤醒）+ 写最终 checkpoint。
@@ -154,7 +154,7 @@ async def finalize(
         mailbox: 任务 mailbox，用于推送完成事件。
         checkpoint_mgr: checkpoint 管理器，用于保存最终快照。
     """
-    task_state.status = TaskStatus.COMPLETED
+    task_state.status = WorkflowStatus.COMPLETED
     task_state.updated_at = now_iso()
     await save_checkpoint(checkpoint_mgr, task_state, exec_state)
 
@@ -203,7 +203,7 @@ async def finalize(
     if node_summaries:
         result_text += "。\n\n节点产出:\n" + "\n".join(node_summaries)
 
-    push_mailbox(mailbox, TaskEventType.COMPLETED, {
+    push_mailbox(mailbox, WorkflowEventType.COMPLETED, {
         "task_id": str(task_state.task_id),
         "result": result_text,
         "summary": f"共 {total_nodes} 个节点，成功 {completed_nodes}，失败 {failed_nodes}",
@@ -220,23 +220,23 @@ async def finalize(
 
 
 def build_checkpoint(
-    task_state: TaskState, exec_state: ExecutionState,
-) -> TaskCheckpoint:
-    """组合 TaskState + ExecutionState 为类型化 checkpoint 快照。
+    task_state: WorkflowState, exec_state: ExecutionState,
+) -> WorkflowCheckpoint:
+    """组合 WorkflowState + ExecutionState 为类型化 checkpoint 快照。
 
     Args:
         task_state: 任务状态。
         exec_state: 执行状态。
 
     Returns:
-        TaskCheckpoint: 组合后的 checkpoint 快照。
+        WorkflowCheckpoint: 组合后的 checkpoint 快照。
     """
-    return TaskCheckpoint(task=task_state, exec=exec_state)
+    return WorkflowCheckpoint(task=task_state, exec=exec_state)
 
 
 async def save_checkpoint(
     checkpoint_mgr: CheckpointManager,
-    task_state: TaskState,
+    task_state: WorkflowState,
     exec_state: ExecutionState,
 ) -> None:
     """保存当前状态快照。
@@ -251,8 +251,8 @@ async def save_checkpoint(
 
 
 def push_mailbox(
-    mailbox: TaskMailbox,
-    event_type: TaskEventType,
+    mailbox: WorkflowMailbox,
+    event_type: WorkflowEventType,
     data: dict[str, Any],
 ) -> None:
     """推送任务事件到 mailbox。

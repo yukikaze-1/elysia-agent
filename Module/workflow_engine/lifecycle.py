@@ -1,7 +1,7 @@
-"""TaskSystem 任务操作函数 —— pause / cancel / submit_approval。
+"""WorkflowEngine 任务操作函数 —— pause / cancel / submit_approval。
 
-所有函数接受显式参数替代 TaskSystem 内部状态，
-供 TaskSystem 方法薄封装委托。
+所有函数接受显式参数替代 WorkflowEngine 内部状态，
+供 WorkflowEngine 方法薄封装委托。
 """
 
 from __future__ import annotations
@@ -13,22 +13,22 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 from Module.workflow_engine.mailbox import push_mailbox_event
 from Module.workflow_engine.schema import (
-    TaskEventType,
-    TaskId,
-    TaskStatus,
+    WorkflowEventType,
+    WorkflowId,
+    WorkflowStatus,
     now_iso,
 )
 
 if TYPE_CHECKING:
     from Module.workflow_engine.core.sub_agent import SubAgent
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
 
 logger = logging.getLogger(__name__)
 
 
 async def pause(
-    tasks: dict[TaskId, SubAgent],
-    task_id: TaskId,
+    tasks: dict[WorkflowId, SubAgent],
+    task_id: WorkflowId,
     timeout: float = 30.0,
 ) -> bool:
     """暂停任务——在下一个安全点停止执行并保存 checkpoint。幂等。
@@ -60,7 +60,7 @@ async def pause(
     ts = sub_agent._task_state
     if ts is None or ts.is_terminal():
         return False  # 已终态——无需暂停
-    if ts.status == TaskStatus.PAUSED:
+    if ts.status == WorkflowStatus.PAUSED:
         return True   # 已暂停——幂等
 
     if sub_agent._orchestrator is None:
@@ -75,7 +75,7 @@ async def pause(
     # 等待 orchestrator 确认 PAUSED
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if ts.status == TaskStatus.PAUSED:
+        if ts.status == WorkflowStatus.PAUSED:
             logger.info("lifecycle.pause: task_id=%s 暂停已确认", task_id)
             return True
         # 任务可能在等待期间进入终态（LLM 恰好在检查点前完成）
@@ -89,12 +89,12 @@ async def pause(
 
 
 async def cancel(
-    tasks: dict[TaskId, SubAgent],
-    mailboxes: dict[TaskId, TaskMailbox],
+    tasks: dict[WorkflowId, SubAgent],
+    mailboxes: dict[WorkflowId, WorkflowMailbox],
     semaphore: asyncio.BoundedSemaphore | None,
-    cleanup_task: Callable[[TaskId], None],
-    cleanup_storage: Callable[[TaskId, SubAgent], Awaitable[None]],
-    task_id: TaskId,
+    cleanup_task: Callable[[WorkflowId], None],
+    cleanup_storage: Callable[[WorkflowId, SubAgent], Awaitable[None]],
+    task_id: WorkflowId,
 ) -> bool:
     """软取消任务。幂等。
 
@@ -132,12 +132,12 @@ async def cancel(
         return True  # 已终态 = 已取消
 
     # ── 分支 1: PAUSED → 直接 CANCELLED ──
-    if ts.status == TaskStatus.PAUSED:
-        ts.status = TaskStatus.CANCELLED
+    if ts.status == WorkflowStatus.PAUSED:
+        ts.status = WorkflowStatus.CANCELLED
         ts.updated_at = now_iso()
         mailbox = mailboxes.get(task_id)
         if mailbox:
-            push_mailbox_event(mailbox, TaskEventType.CANCELLED, {
+            push_mailbox_event(mailbox, WorkflowEventType.CANCELLED, {
                 "task_id": str(task_id),
                 "reason": "用户取消",
             })
@@ -156,13 +156,13 @@ async def cancel(
 
     # ── 分支 2: RUNNING / PLANNING → 设取消标志 ──
     if sub_agent._orchestrator is None:
-        ts.status = TaskStatus.CANCELLED
+        ts.status = WorkflowStatus.CANCELLED
         ts.updated_at = now_iso()
         return True
     exec_state = sub_agent._orchestrator._exec_state
     if exec_state is None:
         # 尚未进入 Orchestrator（规划/校验阶段）
-        ts.status = TaskStatus.CANCELLED
+        ts.status = WorkflowStatus.CANCELLED
         ts.updated_at = now_iso()
         return True
 

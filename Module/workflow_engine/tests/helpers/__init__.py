@@ -1,4 +1,4 @@
-"""集成测试辅助工具 —— TaskSystem 工厂、工具提取、mock 工具函数。
+"""集成测试辅助工具 —— WorkflowEngine 工厂、工具提取、mock 工具函数。
 
 用法:
     from Module.workflow_engine.tests.helpers import (
@@ -8,12 +8,12 @@
         MOCK_PLUGIN_MAP,
     )
 
-    # 创建带 mock 工具的 TaskSystem（默认）
+    # 创建带 mock 工具的 WorkflowEngine（默认）
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],  # WebSearchPlugin → MockWebSearchPlugin
     )
 
-    # 从 TaskSystem 提取 Tool 列表给 DelegationPreparer
+    # 从 WorkflowEngine 提取 Tool 列表给 DelegationPreparer
     tools = get_tools_from_manager(ts.infra.tool_registry)
 
     # Mock Replanner 返回固定 DAGPatch（跳过 LLM 调用）
@@ -36,7 +36,7 @@ from Module.workflow_engine.schema import (
     Plan,
     Tool,
 )
-from Module.workflow_engine.task_system import TaskSystem
+from Module.workflow_engine.workflow_engine import WorkflowEngine
 from Module.tool.manager import ToolManager
 from Module.tool.protocol import PluginContext, ToolPlugin
 from core.tools.time.plugin import TimePlugin
@@ -51,14 +51,14 @@ MOCK_PLUGIN_MAP: dict[str, type[ToolPlugin]] = {
 """工具名 -> mock 插件类映射。后续新增不稳定工具的 mock 时往这里加条目。"""
 
 
-# ── TaskSystem 工厂 ──────────────────────────────────────────────────────────────
+# ── WorkflowEngine 工厂 ──────────────────────────────────────────────────────────────
 
 async def build_test_task_system(
     plugins: list[type[ToolPlugin]] | None = None,
     use_mocks: bool = True,
     wrap_llm: bool = False,
-) -> TaskSystem:
-    """创建并启动 TaskSystem（真实 LLM + 选定工具）。
+) -> WorkflowEngine:
+    """创建并启动 WorkflowEngine（真实 LLM + 选定工具）。
 
     Args:
         plugins: 要加载的插件类列表。默认 None -> [TimePlugin]（纯确定性工具）。
@@ -69,7 +69,7 @@ async def build_test_task_system(
         wrap_llm: True -> 包装 LLM client 以记录调用（e2e 测试日志用）。
 
     Returns:
-        已启动的 TaskSystem 实例。
+        已启动的 WorkflowEngine 实例。
 
     Raises:
         RuntimeError: DEEPSEEK_API_KEY 未设置。
@@ -111,7 +111,7 @@ async def build_test_task_system(
         constraints=ConstraintConfig(),
     )
 
-    ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=2)
+    ts = WorkflowEngine(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=2)
     await ts.start()
     return ts
 
@@ -119,7 +119,7 @@ async def build_test_task_system(
 # ── 工具提取 ─────────────────────────────────────────────────────────────────────
 
 def get_tools_from_manager(tm: ToolManager) -> list[Tool]:
-    """从 ToolManager 提取 TaskSystem 格式的 Tool 列表。
+    """从 ToolManager 提取 WorkflowEngine 格式的 Tool 列表。
 
     供 DelegationPreparer.prepare() 使用。
 

@@ -60,7 +60,7 @@ class Planner:
 
         Args:
             context:            委派上下文（intent/hints/tools/task_constraints/…）
-            global_constraints: 全局约束天花板，TaskConstraints.resolve() 的填充来源
+            global_constraints: 全局约束天花板，WorkflowConstraints.resolve() 的填充来源
             experience_records: v1 忽略（经验记忆未实现）
 
         Returns:

@@ -1,4 +1,4 @@
-"""TaskSystem 核心数据结构。
+"""WorkflowEngine 核心数据结构。
 
 所有类型通过此模块统一导出，保持向后兼容。
 现有 `from Module.workflow_engine.schema import X` 无需修改。
@@ -12,15 +12,15 @@ from .types import (
     ArtifactId,
     NodeId,
     SessionId,
-    TaskId,
+    WorkflowId,
     # 枚举
     NodeErrorCode,
     NodeStatus,
     RBACLevel,
     ResumeErrorCode,
     SubmitRejectionCode,
-    TaskErrorCode,
-    TaskStatus,
+    WorkflowErrorCode,
+    WorkflowStatus,
     # 工具（内部使用，仍通过此路径提供向后兼容）
     now_iso,
     parse_iso,
@@ -36,7 +36,7 @@ from .protocol import (
     ReturnMode,
     ResumeError,
     SubmitError,
-    TaskConstraints,
+    WorkflowConstraints,
     Tool,
     UserProfile,
 )
@@ -48,11 +48,11 @@ from .output import (
     AgentStatus,
     AgentType,
     DAGNodeInfo,
-    TaskDAG,
-    TaskEvent,
-    TaskEventType,
-    TaskProgress,
-    TaskSummary,
+    WorkflowDAG,
+    WorkflowEvent,
+    WorkflowEventType,
+    WorkflowProgress,
+    WorkflowSummary,
     TokenComponent,
     TokenComponentType,
     TokenPeriod,
@@ -83,9 +83,9 @@ from .internal import (
     OrchestratorRunStatus,
     OutputContract,
     Plan,
-    TaskCheckpoint,
-    TaskResult,
-    TaskState,
+    WorkflowCheckpoint,
+    WorkflowResult,
+    WorkflowState,
     ValidationAction,
     ValidationIssue,
     ValidationIssueType,

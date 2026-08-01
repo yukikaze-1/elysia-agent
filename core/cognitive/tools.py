@@ -14,7 +14,7 @@ from ..utils import new_message_id
 if TYPE_CHECKING:
     from Module.workflow_engine.schema import SubmitError, UserProfile
     from Module.workflow_engine.delegation_preparer import DelegationPreparer
-    from Module.workflow_engine.task_system import TaskSystem
+    from Module.workflow_engine.workflow_engine import TaskSystem
     from ..adapter.tool_adapter import ToolAdapter
     from ..memory.session import SessionMemory
 

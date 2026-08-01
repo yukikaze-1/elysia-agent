@@ -28,10 +28,10 @@ from Module.workflow_engine.schema import (
     NodeStatus,
     OrchestratorResult,
     OrchestratorRunStatus,
-    TaskErrorCode,
-    TaskState,
-    TaskStatus,
-    TaskId,
+    WorkflowErrorCode,
+    WorkflowState,
+    WorkflowStatus,
+    WorkflowId,
     Tool,
     Plan
 )
@@ -118,7 +118,7 @@ def orchestrator(mock_infra, mock_executor, mock_evaluator, mock_hitl, mock_chec
 
 @pytest.fixture
 def mock_mailbox():
-    """Mock TaskMailbox。"""
+    """Mock WorkflowMailbox。"""
     return MagicMock()
 
 
@@ -133,12 +133,12 @@ def _make_graph(nodes: list[str], edges: list[tuple[str, str]]) -> PlanGraph:
     return PlanGraph.from_plan(plan)
 
 
-def _task_state(task_id: str = "t1", graph: PlanGraph | None = None) -> TaskState:
-    """创建 TaskState——可选从 graph 导出 Plan。status=RUNNING（Orchestrator 入口状态）。"""
+def _task_state(task_id: str = "t1", graph: PlanGraph | None = None) -> WorkflowState:
+    """创建 WorkflowState——可选从 graph 导出 Plan。status=RUNNING（Orchestrator 入口状态）。"""
     plan = graph.to_plan() if graph else None
-    return TaskState(
-        task_id=TaskId(task_id),
-        status=TaskStatus.RUNNING,
+    return WorkflowState(
+        task_id=WorkflowId(task_id),
+        status=WorkflowStatus.RUNNING,
         plan=plan,
         created_at="2026-01-01T00:00:00",
         updated_at="2026-01-01T00:00:00",
@@ -337,7 +337,7 @@ async def test_finalize_counts_skipped(orchestrator, mock_mailbox):
 
     await orchestrator._finalize(ts, es, mock_mailbox)
 
-    assert ts.status == TaskStatus.COMPLETED
+    assert ts.status == WorkflowStatus.COMPLETED
 
     # 验证 Mailbox 推送了 completed 事件，且计数正确
     push_calls = [c for c in mock_mailbox._push.call_args_list
@@ -375,7 +375,7 @@ async def test_run_success(orchestrator, mock_mailbox):
     result = await orchestrator.run(ts, graph, mock_mailbox)
 
     assert result.status == OrchestratorRunStatus.SUCCESS
-    assert ts.status == TaskStatus.COMPLETED
+    assert ts.status == WorkflowStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -438,7 +438,7 @@ async def test_run_pause_requested(orchestrator, mock_mailbox):
     result = await orchestrator.run(ts, graph, mock_mailbox)
 
     assert result.status == OrchestratorRunStatus.PAUSED
-    assert ts.status == TaskStatus.PAUSED
+    assert ts.status == WorkflowStatus.PAUSED
 
 
 @pytest.mark.asyncio
@@ -459,7 +459,7 @@ async def test_run_blocked(orchestrator, mock_mailbox, mock_evaluator):
     result = await orchestrator.run(ts, graph, mock_mailbox)
 
     assert result.status == OrchestratorRunStatus.BLOCKED
-    assert ts.status == TaskStatus.WAITING_APPROVAL
+    assert ts.status == WorkflowStatus.WAITING_APPROVAL
 
 
 @pytest.mark.asyncio
@@ -626,20 +626,20 @@ async def test_evaluate_node_plan_none_abort(orchestrator, mock_mailbox):
 
 
 def test_build_checkpoint(orchestrator):
-    """_build_checkpoint 返回 TaskCheckpoint（task + exec 类型化）。"""
+    """_build_checkpoint 返回 WorkflowCheckpoint（task + exec 类型化）。"""
     graph = _make_graph(["a"], [])
     ts = _task_state(graph=graph)
     es = orchestrator._init_exec_state(graph)
 
     cp = orchestrator._build_checkpoint(ts, es)
 
-    assert cp.task.task_id == TaskId("t1")
+    assert cp.task.task_id == WorkflowId("t1")
     assert "a" in cp.exec.node_states
 
 
 @pytest.mark.asyncio
 async def test_save_checkpoint_calls_mgr(orchestrator, mock_checkpoint):
-    """_save_checkpoint 调用 checkpoint_mgr.save(TaskCheckpoint)。"""
+    """_save_checkpoint 调用 checkpoint_mgr.save(WorkflowCheckpoint)。"""
     graph = _make_graph(["a"], [])
     ts = _task_state(graph=graph)
     es = orchestrator._init_exec_state(graph)
@@ -648,8 +648,8 @@ async def test_save_checkpoint_calls_mgr(orchestrator, mock_checkpoint):
 
     mock_checkpoint.save.assert_called_once()
     args = mock_checkpoint.save.call_args
-    assert args[0][0] == TaskId("t1")         # task_id
-    assert args[0][1].task.task_id == TaskId("t1")  # TaskCheckpoint.task
+    assert args[0][0] == WorkflowId("t1")         # task_id
+    assert args[0][1].task.task_id == WorkflowId("t1")  # WorkflowCheckpoint.task
 
 
 @pytest.mark.asyncio

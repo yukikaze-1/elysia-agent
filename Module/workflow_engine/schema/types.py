@@ -1,4 +1,4 @@
-"""TaskSystem 基础类型——工具函数、NewType 别名、枚举。
+"""WorkflowEngine 基础类型——工具函数、NewType 别名、枚举。
 
 所有其他 schema 子模块的底层依赖。零 schema 内部依赖。
 """
@@ -17,7 +17,7 @@ from pydantic import BaseModel, BeforeValidator, Field
 def now_iso() -> str:
     """返回当前 UTC 时间的 ISO 8601 字符串。
 
-    TaskSystem 内所有 timestamp 字段统一使用此函数生成，
+    WorkflowEngine 内所有 timestamp 字段统一使用此函数生成，
     替代各模块内重复的 _now() / datetime.now(timezone.utc).isoformat() 样板代码。
     """
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -79,29 +79,29 @@ IsoTimestamp = Annotated[str, BeforeValidator(_normalize_utc)]
 
 # ── 基础类型 ────────────────────────────────────────────────────────────────────
 
-TaskId = NewType("TaskId", str)
+WorkflowId = NewType("WorkflowId", str)
 """任务唯一标识符。
 
 NewType 而非 str：防止调用方随意传参（如把 user_input 当 task_id）。
-TaskSystem 内部生成，对外透明。序列化就是 str，零开销。
+WorkflowEngine 内部生成，对外透明。序列化就是 str，零开销。
 """
 
 AgentId = NewType("AgentId", str)
 """Agent 唯一标识符（Sub-Agent / Worker Agent）。
 
-TaskSystem 内部生成，用于 submit_approval 路由到等待审批的 Worker。
+WorkflowEngine 内部生成，用于 submit_approval 路由到等待审批的 Worker。
 """
 
 ApprovalId = NewType("ApprovalId", str)
 """审批请求唯一标识符。
 
-TaskSystem 内部生成，用于 cancel_approval 清理前端收件箱卡片。
+WorkflowEngine 内部生成，用于 cancel_approval 清理前端收件箱卡片。
 """
 
 SessionId = NewType("SessionId", str)
 """会话唯一标识符。
 
-由 CognitiveLoop 管理，TaskSystem 仅用于日志关联和 Debug 追踪。
+由 CognitiveLoop 管理，WorkflowEngine 仅用于日志关联和 Debug 追踪。
 NewType 防止调用方把 task_id / user_input 误当 session_id 传入。
 """
 
@@ -124,7 +124,7 @@ NewType 防止调用方把 node_id / task_id 误当 artifact_id 传入。
 # 基础枚举
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class TaskStatus(StrEnum):
+class WorkflowStatus(StrEnum):
     """任务状态机——11 态。
 
     入口阶段
@@ -162,22 +162,22 @@ class TaskStatus(StrEnum):
 class SubmitRejectionCode(StrEnum):
     """submit() 同步拒绝码——5 项。
 
-    TaskSystem.submit() 参数校验不通过时返回，
+    WorkflowEngine.submit() 参数校验不通过时返回，
     CognitiveLoop 据此生成用户可见的错误信息。
-    不会出现在 TaskState 或 TaskEvent 中。
+    不会出现在 WorkflowState 或 WorkflowEvent 中。
     """
-    NOT_READY = "not_ready"                              # TaskSystem 尚未 start()
+    NOT_READY = "not_ready"                              # WorkflowEngine 尚未 start()
     INVALID_PARAM = "invalid_param"                     # 参数校验不通过
     PLAN_TOO_LARGE = "plan_too_large"                   # DAG 预估节点数超限
     CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"  # 上下文窗口不足
     TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"     # 预估 token 消耗超用户剩余配额
 
 
-class TaskErrorCode(StrEnum):
+class WorkflowErrorCode(StrEnum):
     """任务运行时错误码——10 项。
 
-    TaskState.error_code 使用，checkpoint 持久化，
-    TaskEvent(type="failed") 的 error_type 字段。
+    WorkflowState.error_code 使用，checkpoint 持久化，
+    WorkflowEvent(type="failed") 的 error_type 字段。
     调用方（CognitiveLoop）据此生成用户可见的错误信息。
 
     按发生阶段分组：
@@ -248,7 +248,7 @@ class NodeErrorCode(StrEnum):
     """节点执行错误码——NodeResult.error 使用。
 
     只覆盖 Executor 层（单节点工具调用）的失败原因。
-    任务级错误（PLANNING_FAILED、FAILURE_MELTDOWN 等）在 TaskErrorCode 中。
+    任务级错误（PLANNING_FAILED、FAILURE_MELTDOWN 等）在 WorkflowErrorCode 中。
     """
     TOOL_ERROR = "tool_error"              # 工具返回错误（runtime error）
     TOOL_TIMEOUT = "tool_timeout"          # 工具调用超时（区别于 ExecutionStatus.TIMEOUT 的语义）
@@ -263,9 +263,9 @@ class NodeErrorCode(StrEnum):
 class RBACLevel(StrEnum):
     """工具权限级别。注册时声明，运行时校验。
 
-    TODO: 归属待定。Tools 在 Module/tool/ 声明权限级别，TaskSystem 执行时校验。
+    TODO: 归属待定。Tools 在 Module/tool/ 声明权限级别，WorkflowEngine 执行时校验。
     两个模块都需要此枚举。后续确定 canonical home（建议 Module/tool/），
-    TaskSystem 侧改为 re-export。
+    WorkflowEngine 侧改为 re-export。
     """
     READ_ONLY = "read_only"       # 只读，完全自主
     SAFE_WRITE = "safe_write"     # 安全写入（沙箱内），条件自主

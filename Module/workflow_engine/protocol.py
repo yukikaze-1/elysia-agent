@@ -1,6 +1,6 @@
-"""TaskSystem 对外依赖协议。
+"""WorkflowEngine 对外依赖协议。
 
-TaskSystem 不依赖 CognitiveLoop 的实现细节（如 EventBus），
+WorkflowEngine 不依赖 CognitiveLoop 的实现细节（如 EventBus），
 只依赖这里定义的抽象协议。CognitiveLoop 重构时只需换实现。
 """
 
@@ -18,12 +18,12 @@ logger = logging.getLogger(__name__)
 class HITLNotifier(ABC):
     """审批快速通道协议。
 
-    TaskSystem 推审批请求到前端时使用。
+    WorkflowEngine 推审批请求到前端时使用。
     不关心谁在另一端——可能是 EventBus、WebSocket、或未来的任意机制。
 
     实现者保证：
     - 非阻塞：request_approval / cancel_approval 不应长时间阻塞
-    - 不抛异常：异常由实现者自行处理，TaskSystem 不感知
+    - 不抛异常：异常由实现者自行处理，WorkflowEngine 不感知
     """
 
     @abstractmethod
@@ -35,7 +35,7 @@ class HITLNotifier(ABC):
 
         Args:
             event_data: HITLData（Pydantic model），包含:
-                - task_id: TaskId
+                - task_id: WorkflowId
                 - approval_id: ApprovalId
                 - agent_id: AgentId
                 - node_id: str
@@ -76,7 +76,7 @@ class EventBusHITLNotifier(HITLNotifier):
     用法:
         bus = EventBus()
         hitl = EventBusHITLNotifier(bus)
-        task_system = TaskSystem(infra, hitl_notifier=hitl)
+        task_system = WorkflowEngine(infra, hitl_notifier=hitl)
     """
 
     # EventBus 事件类型——需要在 core/event_bus.py 中注册

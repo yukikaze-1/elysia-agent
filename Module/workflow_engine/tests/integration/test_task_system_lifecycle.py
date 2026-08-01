@@ -1,4 +1,4 @@
-"""TaskSystem 生命周期集成测试——stop / pause。
+"""WorkflowEngine 生命周期集成测试——stop / pause。
 
 用真实 LLM + get_time 工具，提交一个简单任务验证生命周期方法。
 只跑这一个文件（~15s），不走完整 e2e 套件。
@@ -26,11 +26,11 @@ from Module.workflow_engine.schema import (
     DelegationStatus,
     SessionId,
     SubmitError,
-    TaskEventType,
+    WorkflowEventType,
 )
-from Module.workflow_engine.task_system import TaskSystem
+from Module.workflow_engine.workflow_engine import WorkflowEngine
 from Module.workflow_engine.delegation_preparer import DelegationPreparer
-from Module.workflow_engine.mailbox import TaskMailbox
+from Module.workflow_engine.mailbox import WorkflowMailbox
 
 from Module.tool.manager import ToolManager
 from Module.tool.protocol import PluginContext
@@ -66,7 +66,7 @@ async def test_stop_after_task_completion():
         session_id=SessionId("lifecycle-test"),
     )
     result = await ts.submit(ctx)
-    assert isinstance(result, TaskMailbox), f"submit 失败: {result}"
+    assert isinstance(result, WorkflowMailbox), f"submit 失败: {result}"
 
     # 循环消费 Mailbox 事件，直到 completed 或 failed
     event = None
@@ -143,7 +143,7 @@ async def test_pause_sets_flag_and_cleanly_stops():
         session_id=SessionId("pause-test"),
     )
     result = await ts.submit(ctx)
-    assert isinstance(result, TaskMailbox), f"submit 失败: {result}"
+    assert isinstance(result, WorkflowMailbox), f"submit 失败: {result}"
     task_id = result.task_id
 
     # 等第一个 PROGRESS——表示 Orchestrator 已启动
@@ -177,7 +177,7 @@ async def test_concurrent_slot_limit():
     if not os.getenv("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY 未设置，跳过集成测试")
 
-    # 构建只有 1 个槽位的 TaskSystem
+    # 构建只有 1 个槽位的 WorkflowEngine
     api_key = os.getenv("DEEPSEEK_API_KEY")
     llm = AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
     tm = ToolManager()
@@ -188,7 +188,7 @@ async def test_concurrent_slot_limit():
         llm=llm, milvus=None, http=None,
         tool_registry=tm, constraints=ConstraintConfig(),
     )
-    ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=1)
+    ts = WorkflowEngine(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=1)
     await ts.start()
 
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
@@ -200,7 +200,7 @@ async def test_concurrent_slot_limit():
         session_id=SessionId("concurrent-1"),
     )
     result1 = await ts.submit(ctx1)
-    assert isinstance(result1, TaskMailbox)
+    assert isinstance(result1, WorkflowMailbox)
 
     # 提交第二个任务——semaphore 已满，submit 会阻塞在 acquire()
     # 用 create_task 让它在后台等待
@@ -235,12 +235,12 @@ async def test_concurrent_slot_limit():
             break
         if event is None:
             continue
-        if event.type in (TaskEventType.COMPLETED, TaskEventType.FAILED):
+        if event.type in (WorkflowEventType.COMPLETED, WorkflowEventType.FAILED):
             break
 
     # 任务 1 完成后，任务 2 应该拿到槽位
     result2 = await asyncio.wait_for(submit2_task, timeout=30.0)
-    assert isinstance(result2, TaskMailbox)
+    assert isinstance(result2, WorkflowMailbox)
 
     # 任务 2 也应该完成
     deadline2 = time.monotonic() + 45.0
@@ -254,7 +254,7 @@ async def test_concurrent_slot_limit():
             break
         if event is None:
             continue
-        if event.type in (TaskEventType.COMPLETED, TaskEventType.FAILED):
+        if event.type in (WorkflowEventType.COMPLETED, WorkflowEventType.FAILED):
             break
 
     await ts.stop(timeout=10.0)
@@ -278,7 +278,7 @@ async def test_goal_failed_triggers_replan():
     ts._infra.constraints.max_failure_count = 2
 
     # Evaluator 已改为 per-task 组件（SubAgent.run() 内部创建），
-    # 不再暴露在 TaskSystem 层——需要通过类级 monkeypatch 注入 mock。
+    # 不再暴露在 WorkflowEngine 层——需要通过类级 monkeypatch 注入 mock。
     # patch 打在 Evaluator 源类上，所有实例化后的 evaluate() 都会被替换。
     from unittest.mock import patch
     from Module.workflow_engine.schema import (
@@ -312,7 +312,7 @@ async def test_goal_failed_triggers_replan():
             session_id=SessionId("replan-test"),
         )
         result = await ts.submit(ctx)
-        assert isinstance(result, TaskMailbox)
+        assert isinstance(result, WorkflowMailbox)
 
         # 消费事件——由于 goal_failed 持续触发 REPLAN，最终会熔断
         # 2 轮 replan × (~15s Planner + ~2s Executor) ≈ 35s + buffer
@@ -329,13 +329,13 @@ async def test_goal_failed_triggers_replan():
             if event is None:
                 continue
             # PROGRESS 事件是 replan 过程中的正常产物，跳过
-            if event.type == TaskEventType.PROGRESS:
+            if event.type == WorkflowEventType.PROGRESS:
                 continue
-            if event.type in (TaskEventType.FAILED, TaskEventType.COMPLETED):
+            if event.type in (WorkflowEventType.FAILED, WorkflowEventType.COMPLETED):
                 break
 
         assert event is not None, "未收到终态事件"
-        assert event.type == TaskEventType.FAILED, \
+        assert event.type == WorkflowEventType.FAILED, \
             f"期望 FAILED（熔断），实际 {event.type}: {event.data}"
         assert "熔断" in event.data.get("error", ""), \
             f"期望熔断错误，实际: {event.data}"
@@ -371,7 +371,7 @@ async def test_cancel_during_execution():
         session_id=SessionId("cancel-test"),
     )
     result = await ts.submit(ctx)
-    assert isinstance(result, TaskMailbox), f"submit 失败: {result}"
+    assert isinstance(result, WorkflowMailbox), f"submit 失败: {result}"
     task_id = result.task_id
 
     # 等第一个 PROGRESS——表示 Orchestrator 已启动
@@ -394,15 +394,15 @@ async def test_cancel_during_execution():
             break
         if event is None:
             continue
-        if event.type in (TaskEventType.CANCELLED, TaskEventType.FAILED,
-                          TaskEventType.COMPLETED):
+        if event.type in (WorkflowEventType.CANCELLED, WorkflowEventType.FAILED,
+                          WorkflowEventType.COMPLETED):
             break
 
     # 三种可能：cancelled（取消成功）、completed（任务太快已完成）、
     # failed（取消路径中的异常）
     assert event is not None, "未收到终态事件"
     assert event.type in (
-        TaskEventType.CANCELLED, TaskEventType.COMPLETED, TaskEventType.FAILED
+        WorkflowEventType.CANCELLED, WorkflowEventType.COMPLETED, WorkflowEventType.FAILED
     ), f"意外的终态事件: {event.type.value}: {event.data}"
 
     # 等清理完成
@@ -438,7 +438,7 @@ async def test_pause_and_resume():
         session_id=SessionId("resume-test"),
     )
     result = await ts.submit(ctx)
-    assert isinstance(result, TaskMailbox), f"submit 失败: {result}"
+    assert isinstance(result, WorkflowMailbox), f"submit 失败: {result}"
     task_id = result.task_id
 
     # 等第一个 PROGRESS——表示 Orchestrator 已启动
@@ -465,11 +465,11 @@ async def test_pause_and_resume():
             event = await asyncio.wait_for(result.get(), timeout=remaining)
         except asyncio.TimeoutError:
             break
-        if event is not None and event.type == TaskEventType.PAUSED:
+        if event is not None and event.type == WorkflowEventType.PAUSED:
             paused_received = True
             break
         if event is not None and event.type in (
-            TaskEventType.COMPLETED, TaskEventType.FAILED,
+            WorkflowEventType.COMPLETED, WorkflowEventType.FAILED,
         ):
             # 任务在 pause 生效前就完成了
             break
@@ -485,8 +485,8 @@ async def test_pause_and_resume():
 
     # resume
     resume_result = await ts.resume(task_id)
-    assert isinstance(resume_result, TaskMailbox), \
-        f"resume 应返回 TaskMailbox，实际: {type(resume_result)}"
+    assert isinstance(resume_result, WorkflowMailbox), \
+        f"resume 应返回 WorkflowMailbox，实际: {type(resume_result)}"
 
     # 消费到终态
     event = None
@@ -501,11 +501,11 @@ async def test_pause_and_resume():
             break
         if event is None:
             continue
-        if event.type in (TaskEventType.COMPLETED, TaskEventType.FAILED):
+        if event.type in (WorkflowEventType.COMPLETED, WorkflowEventType.FAILED):
             break
 
     assert event is not None, "未收到终态事件"
-    assert event.type == TaskEventType.COMPLETED, \
+    assert event.type == WorkflowEventType.COMPLETED, \
         f"期望 COMPLETED，实际 {event.type.value}: {event.data}"
 
     # 等清理完成
@@ -538,7 +538,7 @@ async def test_cancel_on_paused_task():
         session_id=SessionId("cancel-paused-test"),
     )
     result = await ts.submit(ctx)
-    assert isinstance(result, TaskMailbox), f"submit 失败: {result}"
+    assert isinstance(result, WorkflowMailbox), f"submit 失败: {result}"
     task_id = result.task_id
 
     # 等第一个 PROGRESS——表示 Orchestrator 已启动
@@ -564,11 +564,11 @@ async def test_cancel_on_paused_task():
             event = await asyncio.wait_for(result.get(), timeout=remaining)
         except asyncio.TimeoutError:
             break
-        if event is not None and event.type == TaskEventType.PAUSED:
+        if event is not None and event.type == WorkflowEventType.PAUSED:
             paused_received = True
             break
         if event is not None and event.type in (
-            TaskEventType.COMPLETED, TaskEventType.FAILED,
+            WorkflowEventType.COMPLETED, WorkflowEventType.FAILED,
         ):
             break
 
@@ -596,11 +596,11 @@ async def test_cancel_on_paused_task():
             break
         if event is None:
             continue
-        if event.type in (TaskEventType.CANCELLED, TaskEventType.FAILED):
+        if event.type in (WorkflowEventType.CANCELLED, WorkflowEventType.FAILED):
             break
 
     assert event is not None, "未收到终态事件"
-    assert event.type == TaskEventType.CANCELLED, \
+    assert event.type == WorkflowEventType.CANCELLED, \
         f"期望 CANCELLED，实际 {event.type.value}: {event.data}"
 
     await asyncio.sleep(0.5)
@@ -612,10 +612,10 @@ async def test_cancel_on_paused_task():
 
 @pytest.mark.asyncio
 async def test_resume_idempotent_on_running():
-    """RUNNING 任务上调 resume → 幂等返回 TaskMailbox。
+    """RUNNING 任务上调 resume → 幂等返回 WorkflowMailbox。
 
     验证：
-    - resume() 对 RUNNING 任务返回 TaskMailbox（不是 ResumeError）
+    - resume() 对 RUNNING 任务返回 WorkflowMailbox（不是 ResumeError）
     - 任务正常完成不受影响
     """
     if not os.getenv("DEEPSEEK_API_KEY"):
@@ -630,7 +630,7 @@ async def test_resume_idempotent_on_running():
         session_id=SessionId("resume-idempotent-test"),
     )
     result = await ts.submit(ctx)
-    assert isinstance(result, TaskMailbox), f"submit 失败: {result}"
+    assert isinstance(result, WorkflowMailbox), f"submit 失败: {result}"
     task_id = result.task_id
 
     # 等第一个 PROGRESS——确认 Orchestrator 已启动（此时 status=RUNNING）
@@ -639,8 +639,8 @@ async def test_resume_idempotent_on_running():
 
     # 对 RUNNING 任务调 resume——应幂等返回 mailbox
     resume_result = await ts.resume(task_id)
-    assert isinstance(resume_result, TaskMailbox), \
-        f"RUNNING 任务 resume 应幂等返回 TaskMailbox，实际: {type(resume_result)}"
+    assert isinstance(resume_result, WorkflowMailbox), \
+        f"RUNNING 任务 resume 应幂等返回 WorkflowMailbox，实际: {type(resume_result)}"
 
     # 任务应照常完成
     event = None
@@ -655,11 +655,11 @@ async def test_resume_idempotent_on_running():
             break
         if event is None:
             continue
-        if event.type in (TaskEventType.COMPLETED, TaskEventType.FAILED):
+        if event.type in (WorkflowEventType.COMPLETED, WorkflowEventType.FAILED):
             break
 
     assert event is not None, "未收到终态事件"
-    assert event.type == TaskEventType.COMPLETED, \
+    assert event.type == WorkflowEventType.COMPLETED, \
         f"期望 COMPLETED，实际 {event.type.value}: {event.data}"
 
     await asyncio.sleep(0.5)
@@ -692,7 +692,7 @@ async def test_concurrent_tasks_no_interference():
         llm=llm, milvus=None, http=None,
         tool_registry=tm, constraints=ConstraintConfig(),
     )
-    ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=2)
+    ts = WorkflowEngine(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=2)
     await ts.start()
 
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
@@ -710,11 +710,11 @@ async def test_concurrent_tasks_no_interference():
 
     result1 = await ts.submit(ctx1)
     result2 = await ts.submit(ctx2)
-    assert isinstance(result1, TaskMailbox), f"task1 submit 失败: {result1}"
-    assert isinstance(result2, TaskMailbox), f"task2 submit 失败: {result2}"
+    assert isinstance(result1, WorkflowMailbox), f"task1 submit 失败: {result1}"
+    assert isinstance(result2, WorkflowMailbox), f"task2 submit 失败: {result2}"
     assert result1.task_id != result2.task_id, "两个任务应有不同 task_id"
 
-    async def _consume(mailbox: TaskMailbox, label: str) -> dict:
+    async def _consume(mailbox: WorkflowMailbox, label: str) -> dict:
         event = None
         deadline = time.monotonic() + 60.0
         while time.monotonic() < deadline:
@@ -727,7 +727,7 @@ async def test_concurrent_tasks_no_interference():
                 break
             if event is None:
                 continue
-            if event.type in (TaskEventType.COMPLETED, TaskEventType.FAILED):
+            if event.type in (WorkflowEventType.COMPLETED, WorkflowEventType.FAILED):
                 break
         return {"label": label, "event": event}
 
@@ -737,10 +737,10 @@ async def test_concurrent_tasks_no_interference():
     )
 
     assert r1["event"] is not None, "task1 未收到终态事件"
-    assert r1["event"].type == TaskEventType.COMPLETED, \
+    assert r1["event"].type == WorkflowEventType.COMPLETED, \
         f"task1 期望 COMPLETED，实际 {r1['event'].type.value}"
     assert r2["event"] is not None, "task2 未收到终态事件"
-    assert r2["event"].type == TaskEventType.COMPLETED, \
+    assert r2["event"].type == WorkflowEventType.COMPLETED, \
         f"task2 期望 COMPLETED，实际 {r2['event'].type.value}"
 
     t1_data = r1["event"].data

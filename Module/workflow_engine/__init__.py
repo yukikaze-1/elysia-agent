@@ -1,13 +1,13 @@
-"""TaskSystem — 异步 Plan-Execute-Evaluate-Replan 任务编排模块。
+"""WorkflowEngine — 异步 Plan-Execute-Evaluate-Replan 任务编排模块。
 
-独立于 CognitiveLoop，通过 TaskMailbox + HITLNotifier 协议与外界通信。
+独立于 CognitiveLoop，通过 WorkflowMailbox + HITLNotifier 协议与外界通信。
 
 导出分组：
-  - 公共 API:     TaskSystem, DelegationPreparer, SubAgent, Orchestrator, AgentInfra, HITLNotifier
-  - 基础类型:     TaskId, NodeId, TaskStatus, TaskErrorCode, etc.
+  - 公共 API:     WorkflowEngine, DelegationPreparer, SubAgent, Orchestrator, AgentInfra, HITLNotifier
+  - 基础类型:     WorkflowId, NodeId, WorkflowStatus, WorkflowErrorCode, etc.
   - 跨层协议:     DelegationContext, HITLData, ConstraintConfig, SubmitError, etc.
-  - 查询/输出:    TaskSummary, TaskDAG, TokenStats, AgentInfo, etc.
-  - 内部编排:     Plan, DAGNode, DAGPatch, NodeResult, TaskState, TaskCheckpoint, etc.
+  - 查询/输出:    WorkflowSummary, WorkflowDAG, TokenStats, AgentInfo, etc.
+  - 内部编排:     Plan, DAGNode, DAGPatch, NodeResult, WorkflowState, WorkflowCheckpoint, etc.
   - 校验/产物:    ValidationIssue, OutputContract, Artifact, etc.
 """
 
@@ -17,7 +17,7 @@ from Module.workflow_engine.core.sub_agent import SubAgent
 from Module.workflow_engine.delegation_preparer import DelegationPreparer
 from Module.workflow_engine.infra import AgentInfra
 from Module.workflow_engine.protocol import HITLNotifier
-from Module.workflow_engine.task_system import TaskSystem
+from Module.workflow_engine.workflow_engine import WorkflowEngine
 
 # ── 基础类型（ID、状态、错误码） ──
 from Module.workflow_engine.schema import (
@@ -34,12 +34,12 @@ from Module.workflow_engine.schema import (
     ResumeErrorCode,
     SessionId,
     SubmitRejectionCode,
-    TaskErrorCode,
-    TaskId,
-    TaskStatus,
+    WorkflowErrorCode,
+    WorkflowId,
+    WorkflowStatus,
 )
 
-# ── 跨层协议（CognitiveLoop ↔ TaskSystem） ──
+# ── 跨层协议（CognitiveLoop ↔ WorkflowEngine） ──
 from Module.workflow_engine.schema import (
     ConstraintConfig,
     DelegationContext,
@@ -49,8 +49,8 @@ from Module.workflow_engine.schema import (
     ReturnMode,
     ResumeError,
     SubmitError,
-    TaskConstraints,
-    # CognitiveLoop 侧类型（TaskSystem 引用，不拥有）
+    WorkflowConstraints,
+    # CognitiveLoop 侧类型（WorkflowEngine 引用，不拥有）
     Tool,
     UserProfile,
 )
@@ -62,11 +62,11 @@ from Module.workflow_engine.schema import (
     AgentStatus,
     AgentType,
     DAGNodeInfo,
-    TaskDAG,
-    TaskEvent,
-    TaskEventType,
-    TaskProgress,
-    TaskSummary,
+    WorkflowDAG,
+    WorkflowEvent,
+    WorkflowEventType,
+    WorkflowProgress,
+    WorkflowSummary,
     TokenComponent,
     TokenComponentType,
     TokenPeriod,
@@ -86,7 +86,7 @@ from Module.workflow_engine.schema import (
     NodeResult,
     NodeResultEvaluation,
     Plan,
-    TaskResult,
+    WorkflowResult,
 )
 
 # ── Plan 校验 ──
@@ -110,8 +110,8 @@ from Module.workflow_engine.schema import (
     NodeState,
     OrchestratorResult,
     OrchestratorRunStatus,
-    TaskCheckpoint,
-    TaskState,
+    WorkflowCheckpoint,
+    WorkflowState,
 )
 
 __all__ = [
@@ -121,7 +121,7 @@ __all__ = [
     "HITLNotifier",
     "Orchestrator",
     "SubAgent",
-    "TaskSystem",
+    "WorkflowEngine",
     # 基础类型
     "AgentId",
     "ApprovalId",
@@ -136,9 +136,9 @@ __all__ = [
     "ResumeErrorCode",
     "SessionId",
     "SubmitRejectionCode",
-    "TaskErrorCode",
-    "TaskId",
-    "TaskStatus",
+    "WorkflowErrorCode",
+    "WorkflowId",
+    "WorkflowStatus",
     # 跨层协议
     "ConstraintConfig",
     "DelegationContext",
@@ -148,7 +148,7 @@ __all__ = [
     "ResumeError",
     "ReturnMode",
     "SubmitError",
-    "TaskConstraints",
+    "WorkflowConstraints",
     "Tool",
     "UserProfile",
     # 对外输出
@@ -157,11 +157,11 @@ __all__ = [
     "AgentStatus",
     "AgentType",
     "DAGNodeInfo",
-    "TaskDAG",
-    "TaskEvent",
-    "TaskEventType",
-    "TaskProgress",
-    "TaskSummary",
+    "WorkflowDAG",
+    "WorkflowEvent",
+    "WorkflowEventType",
+    "WorkflowProgress",
+    "WorkflowSummary",
     "TokenComponent",
     "TokenComponentType",
     "TokenPeriod",
@@ -178,7 +178,7 @@ __all__ = [
     "NodeResult",
     "NodeResultEvaluation",
     "Plan",
-    "TaskResult",
+    "WorkflowResult",
     # Plan 校验
     "ValidationAction",
     "ValidationIssue",
@@ -193,6 +193,6 @@ __all__ = [
     "NodeState",
     "OrchestratorResult",
     "OrchestratorRunStatus",
-    "TaskCheckpoint",
-    "TaskState",
+    "WorkflowCheckpoint",
+    "WorkflowState",
 ]

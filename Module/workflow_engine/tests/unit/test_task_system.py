@@ -1,4 +1,4 @@
-"""TaskSystem 单元测试。
+"""WorkflowEngine 单元测试。
 
 覆盖：
     - stop()  graceful shutdown（正常 / 超时 / 空转）
@@ -28,9 +28,9 @@ from Module.workflow_engine.schema import (
     ResumeError,
     ResumeErrorCode,
     SubmitError,
-    TaskId,
-    TaskState,
-    TaskStatus,
+    WorkflowId,
+    WorkflowState,
+    WorkflowStatus,
     TokenComponent,
     TokenComponentType,
     TokenPeriod,
@@ -38,16 +38,16 @@ from Module.workflow_engine.schema import (
     TokenUsage,
     now_iso,
 )
-from Module.workflow_engine.mailbox import TaskMailbox
+from Module.workflow_engine.mailbox import WorkflowMailbox
 
 pytestmark = pytest.mark.unit
 
 # ── 工厂函数 ────────────────────────────────────────────────────────────────
 
 
-def _make_task_state(task_id: str = "t1", status: TaskStatus = TaskStatus.RUNNING) -> TaskState:
-    return TaskState(
-        task_id=TaskId(task_id),
+def _make_task_state(task_id: str = "t1", status: WorkflowStatus = WorkflowStatus.RUNNING) -> WorkflowState:
+    return WorkflowState(
+        task_id=WorkflowId(task_id),
         status=status,
         created_at=now_iso(),
         updated_at=now_iso(),
@@ -84,8 +84,8 @@ def _make_mock_sub_agent(task_state, exec_state):
 
 
 async def _build_task_system():
-    """构造一个已 start 的 TaskSystem（mock 内部组件）。"""
-    from Module.workflow_engine.task_system import TaskSystem
+    """构造一个已 start 的 WorkflowEngine（mock 内部组件）。"""
+    from Module.workflow_engine.workflow_engine import WorkflowEngine
     from Module.workflow_engine.infra import AgentInfra
 
     mock_llm = MagicMock()
@@ -101,14 +101,14 @@ async def _build_task_system():
         constraints=ConstraintConfig(),
     )
     with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-test"}):
-        ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=5)
+        ts = WorkflowEngine(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=5)
         await ts.start()
     return ts
 
 
 def _build_task_system_raw():
-    """构造 TaskSystem + mock ToolManager，供 submit_approval 同步测试使用。"""
-    from Module.workflow_engine.task_system import TaskSystem
+    """构造 WorkflowEngine + mock ToolManager，供 submit_approval 同步测试使用。"""
+    from Module.workflow_engine.workflow_engine import WorkflowEngine
     from Module.workflow_engine.infra import AgentInfra
 
     tool_mgr = MagicMock()
@@ -127,7 +127,7 @@ def _build_task_system_raw():
         constraints=ConstraintConfig(),
     )
     with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-test"}):
-        ts = TaskSystem(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=5)
+        ts = WorkflowEngine(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=5)
     return {"ts": ts, "tool_mgr": tool_mgr}
 
 
@@ -149,12 +149,12 @@ async def test_stop_waits_for_completion():
     """有活跃任务时 stop() 等待任务完成。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.RUNNING)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
 
-    # 注入到 TaskSystem 内部注册表
+    # 注入到 WorkflowEngine 内部注册表
     ts._tasks[tid] = sub_agent
 
     # 创建 fake asyncio.Task——立即完成的 coroutine
@@ -178,8 +178,8 @@ async def test_stop_cancels_pending():
     """超时后 stop() 取消未完成的任务。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.RUNNING)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
 
@@ -222,8 +222,8 @@ async def test_stop_cleans_up_remaining_tasks():
     """stop() 兜底清理所有未清理的任务。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.RUNNING)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
 
@@ -246,8 +246,8 @@ async def test_pause_sets_pause_requested():
     """正常暂停——设置 exec_state.pause_requested = True。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.RUNNING)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
 
@@ -262,7 +262,7 @@ async def test_pause_sets_pause_requested():
 async def test_pause_missing_task_no_error():
     """不存在的任务 → 无操作（幂等——已清理即已暂停）。"""
     ts = await _build_task_system()
-    await ts.pause(TaskId("nonexistent"))  # 不抛异常
+    await ts.pause(WorkflowId("nonexistent"))  # 不抛异常
 
 
 @pytest.mark.asyncio
@@ -270,8 +270,8 @@ async def test_pause_terminal_task_no_error():
     """已终态任务 → 无操作（幂等）。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.COMPLETED)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.COMPLETED)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
@@ -286,8 +286,8 @@ async def test_pause_already_paused_no_error():
     """已暂停任务 → 无操作（幂等）。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.PAUSED)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.PAUSED)
     exec_state = _make_exec_state()
     exec_state.pause_requested = True
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
@@ -301,8 +301,8 @@ async def test_pause_not_started_no_error():
     """尚未启动执行（_exec_state=None）→ 无操作。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.RUNNING)
     sub_agent = MagicMock()
     sub_agent._task_state = task_state
     orch = MagicMock()
@@ -322,8 +322,8 @@ async def test_pause_not_started_no_error():
 async def test_pause_confirmed():
     """pause() 在 orchestrator 确认 PAUSED 后返回 True（≤1s）。"""
     ts = await _build_task_system()
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.RUNNING)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
@@ -331,7 +331,7 @@ async def test_pause_confirmed():
     # 模拟 orchestrator 在检测到 pause_requested 后切换状态
     async def simulate_orch():
         await asyncio.sleep(0.05)
-        task_state.status = TaskStatus.PAUSED
+        task_state.status = WorkflowStatus.PAUSED
     asyncio.create_task(simulate_orch())
 
     t0 = time.monotonic()
@@ -346,8 +346,8 @@ async def test_pause_confirmed():
 async def test_pause_timeout():
     """pause() 在 orchestrator 不响应时超时返回 False。"""
     ts = await _build_task_system()
-    tid = TaskId("t2")
-    task_state = _make_task_state("t2", TaskStatus.RUNNING)
+    tid = WorkflowId("t2")
+    task_state = _make_task_state("t2", WorkflowStatus.RUNNING)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
@@ -365,8 +365,8 @@ async def test_pause_timeout():
 async def test_pause_terminal_during_wait():
     """pause() 等待期间任务进入终态——提前返回 False。"""
     ts = await _build_task_system()
-    tid = TaskId("t3")
-    task_state = _make_task_state("t3", TaskStatus.RUNNING)
+    tid = WorkflowId("t3")
+    task_state = _make_task_state("t3", WorkflowStatus.RUNNING)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
@@ -374,7 +374,7 @@ async def test_pause_terminal_during_wait():
     # 模拟：orchestrator 在 pause 轮询期间完成执行
     async def delayed_complete():
         await asyncio.sleep(0.15)
-        task_state.status = TaskStatus.COMPLETED
+        task_state.status = WorkflowStatus.COMPLETED
     asyncio.create_task(delayed_complete())
 
     t0 = time.monotonic()
@@ -389,8 +389,8 @@ async def test_pause_terminal_during_wait():
 async def test_pause_idempotent():
     """对已 PAUSED 的任务——立即返回 True，不进入轮询。"""
     ts = await _build_task_system()
-    tid = TaskId("t4")
-    task_state = _make_task_state("t4", TaskStatus.PAUSED)
+    tid = WorkflowId("t4")
+    task_state = _make_task_state("t4", WorkflowStatus.PAUSED)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
@@ -412,7 +412,7 @@ async def test_pause_idempotent():
 async def test_get_token_usage_returns_none_for_missing_task():
     """不存在的 task_id 返回 None。"""
     ts = await _build_task_system()
-    assert ts.get_token_usage(TaskId("nonexistent")) is None
+    assert ts.get_token_usage(WorkflowId("nonexistent")) is None
 
 
 @pytest.mark.asyncio
@@ -428,9 +428,9 @@ async def test_get_token_usage_returns_usage():
     task_state.token_usage["planner"] = 150
     sub_agent = MagicMock()
     sub_agent._task_state = task_state
-    ts._tasks[TaskId("t1")] = sub_agent
+    ts._tasks[WorkflowId("t1")] = sub_agent
 
-    usage = ts.get_token_usage(TaskId("t1"))
+    usage = ts.get_token_usage(WorkflowId("t1"))
     assert usage is not None
     assert len(usage.components) == 1
     assert usage.components[0].total_tokens == 150
@@ -449,7 +449,7 @@ async def test_get_token_stats_aggregates():
     task_state.token_usage["planner"] = 150
     sub_agent = MagicMock()
     sub_agent._task_state = task_state
-    ts._tasks[TaskId("t1")] = sub_agent
+    ts._tasks[WorkflowId("t1")] = sub_agent
 
     stats = ts.get_token_stats(TokenPeriod.ALL)
     assert stats.total_tokens == 150
@@ -474,7 +474,7 @@ async def test_get_token_stats_filters_by_period():
     task_state.token_usage["planner"] = 15
     sub_agent = MagicMock()
     sub_agent._task_state = task_state
-    ts._tasks[TaskId("old")] = sub_agent
+    ts._tasks[WorkflowId("old")] = sub_agent
 
     stats = ts.get_token_stats(TokenPeriod.TODAY)
     assert stats.total_tokens == 0  # 昨天的被过滤
@@ -490,13 +490,13 @@ async def test_get_task_status_returns_status():
     """活跃任务——返回当前状态。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.RUNNING)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
 
-    assert ts.get_task_status(tid) == TaskStatus.RUNNING
+    assert ts.get_task_status(tid) == WorkflowStatus.RUNNING
 
 
 @pytest.mark.asyncio
@@ -504,7 +504,7 @@ async def test_get_task_status_missing_task():
     """任务不存在或已清理 → None。"""
     ts = await _build_task_system()
 
-    assert ts.get_task_status(TaskId("nonexistent")) is None
+    assert ts.get_task_status(WorkflowId("nonexistent")) is None
 
 
 @pytest.mark.asyncio
@@ -512,12 +512,12 @@ async def test_get_task_status_pending_before_init():
     """SubAgent.run() 尚未初始化 _task_state → 返回 PENDING。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
+    tid = WorkflowId("t1")
     sub_agent = MagicMock()
     sub_agent._task_state = None  # 尚未初始化
     ts._tasks[tid] = sub_agent
 
-    assert ts.get_task_status(tid) == TaskStatus.PENDING
+    assert ts.get_task_status(tid) == WorkflowStatus.PENDING
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -530,8 +530,8 @@ async def test_get_progress_active_task():
     """活跃任务——返回完整进度快照。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.RUNNING)
     exec_state = ExecutionState(
         node_states={
             NodeId("a"): NodeState(
@@ -555,7 +555,7 @@ async def test_get_progress_active_task():
     progress = ts.get_progress(tid)
     assert progress is not None
     assert progress.task_id == tid
-    assert progress.status == TaskStatus.RUNNING
+    assert progress.status == WorkflowStatus.RUNNING
     assert progress.completed_nodes == 1
     assert progress.total_nodes == 3
     assert progress.current_node_id == NodeId("b")
@@ -571,7 +571,7 @@ async def test_get_progress_missing_task():
     """任务不存在 → None。"""
     ts = await _build_task_system()
 
-    assert ts.get_progress(TaskId("nonexistent")) is None
+    assert ts.get_progress(WorkflowId("nonexistent")) is None
 
 
 @pytest.mark.asyncio
@@ -579,8 +579,8 @@ async def test_get_progress_no_exec_state():
     """尚未进入 Orchestrator（_exec_state=None）→ 基础进度，无节点统计。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.PLANNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.PLANNING)
 
     # exec_state 为 None
     sub_agent = MagicMock()
@@ -593,7 +593,7 @@ async def test_get_progress_no_exec_state():
     progress = ts.get_progress(tid)
     assert progress is not None
     assert progress.task_id == tid
-    assert progress.status == TaskStatus.PLANNING
+    assert progress.status == WorkflowStatus.PLANNING
     assert progress.total_nodes == 0  # 无 plan，默认 0
     assert progress.completed_nodes == 0
     assert progress.current_node_id is None
@@ -604,8 +604,8 @@ async def test_get_progress_no_estimation_when_none_done():
     """所有节点 PENDING——无节点完成时预估为 None。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.RUNNING)
     exec_state = ExecutionState(
         node_states={
             NodeId("a"): NodeState(
@@ -649,14 +649,14 @@ async def test_list_agents_with_tasks():
     """有活跃任务时——每个任务对应一个 AgentInfo。"""
     ts = await _build_task_system()
 
-    tid1 = TaskId("t1")
-    task_state1 = _make_task_state("t1", TaskStatus.RUNNING)
+    tid1 = WorkflowId("t1")
+    task_state1 = _make_task_state("t1", WorkflowStatus.RUNNING)
     exec_state1 = _make_exec_state()
     sub_agent1 = _make_mock_sub_agent(task_state1, exec_state1)
     ts._tasks[tid1] = sub_agent1
 
-    tid2 = TaskId("t2")
-    task_state2 = _make_task_state("t2", TaskStatus.PAUSED)
+    tid2 = WorkflowId("t2")
+    task_state2 = _make_task_state("t2", WorkflowStatus.PAUSED)
     exec_state2 = _make_exec_state()
     sub_agent2 = _make_mock_sub_agent(task_state2, exec_state2)
     ts._tasks[tid2] = sub_agent2
@@ -680,7 +680,7 @@ async def test_list_agents_task_state_none():
     """_task_state=None（尚未初始化）→ RUNNING（默认）。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
+    tid = WorkflowId("t1")
     sub_agent = MagicMock()
     sub_agent._task_state = None
     ts._tasks[tid] = sub_agent
@@ -695,8 +695,8 @@ async def test_list_agents_waiting_approval():
     """WAITING_APPROVAL → AgentStatus.AWAITING_APPROVAL。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.WAITING_APPROVAL)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.WAITING_APPROVAL)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
@@ -715,7 +715,7 @@ async def test_list_agents_waiting_approval():
 async def test_cancel_missing_task_returns_true():
     """不存在的 task_id → True（幂等——已清理 = 已取消）。"""
     ts = await _build_task_system()
-    assert await ts.cancel(TaskId("nonexistent")) is True
+    assert await ts.cancel(WorkflowId("nonexistent")) is True
 
 
 @pytest.mark.asyncio
@@ -723,15 +723,15 @@ async def test_cancel_terminal_task_returns_true():
     """已终态任务 → True（幂等——已完成/已失败 = 已取消）。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.COMPLETED)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.COMPLETED)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
 
     assert await ts.cancel(tid) is True
     # 状态不变
-    assert task_state.status == TaskStatus.COMPLETED
+    assert task_state.status == WorkflowStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -739,8 +739,8 @@ async def test_cancel_running_sets_cancel_requested():
     """RUNNING 任务 → 设 exec_state.cancel_requested=True，不立即改 status。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.RUNNING)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
@@ -748,7 +748,7 @@ async def test_cancel_running_sets_cancel_requested():
     assert await ts.cancel(tid) is True
     assert exec_state.cancel_requested is True
     # RUNNING → 状态不变（由 Orchestrator 改为 CANCELLED）
-    assert task_state.status == TaskStatus.RUNNING
+    assert task_state.status == WorkflowStatus.RUNNING
 
 
 @pytest.mark.asyncio
@@ -756,8 +756,8 @@ async def test_cancel_paused_sets_cancelled_directly():
     """PAUSED 任务 → 直接 CANCELLED + 显式清理（不依赖 _run_and_cleanup）。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.PAUSED)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.PAUSED)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
@@ -775,7 +775,7 @@ async def test_cancel_paused_sets_cancelled_directly():
     await ts._semaphore.acquire()  # type: ignore[reportOptionalMemberAccess]
 
     assert await ts.cancel(tid) is True
-    assert task_state.status == TaskStatus.CANCELLED
+    assert task_state.status == WorkflowStatus.CANCELLED
     # 验证清理被调用
     sub_agent._checkpoint_mgr.delete.assert_called_once()
 
@@ -785,8 +785,8 @@ async def test_cancel_before_orchestrator_sets_cancelled():
     """尚未进入 Orchestrator（_exec_state=None）→ 直接 CANCELLED。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.PLANNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.PLANNING)
 
     # exec_state 为 None（尚未 run）
     sub_agent = MagicMock()
@@ -797,7 +797,7 @@ async def test_cancel_before_orchestrator_sets_cancelled():
     ts._tasks[tid] = sub_agent
 
     assert await ts.cancel(tid) is True
-    assert task_state.status == TaskStatus.CANCELLED
+    assert task_state.status == WorkflowStatus.CANCELLED
 
 
 @pytest.mark.asyncio
@@ -805,7 +805,7 @@ async def test_cancel_task_state_none_returns_true():
     """_task_state=None（尚未初始化）→ True（幂等）。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
+    tid = WorkflowId("t1")
     sub_agent = MagicMock()
     sub_agent._task_state = None
     ts._tasks[tid] = sub_agent
@@ -822,7 +822,7 @@ async def test_cancel_task_state_none_returns_true():
 async def test_resume_missing_task_returns_error():
     """不存在的 task_id → ResumeError(CHECKPOINT_NOT_FOUND)。"""
     ts = await _build_task_system()
-    result = await ts.resume(TaskId("nonexistent"))
+    result = await ts.resume(WorkflowId("nonexistent"))
     assert isinstance(result, ResumeError)
     assert result.code == ResumeErrorCode.CHECKPOINT_NOT_FOUND
 
@@ -832,8 +832,8 @@ async def test_resume_terminal_task_returns_error():
     """已终态任务 → ResumeError(INVALID_STATE)。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.COMPLETED)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.COMPLETED)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
@@ -848,16 +848,16 @@ async def test_resume_running_is_idempotent():
     """RUNNING 任务 → 直接返回 mailbox（幂等）。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.RUNNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.RUNNING)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
-    ts._mailboxes[tid] = TaskMailbox(tid)
+    ts._mailboxes[tid] = WorkflowMailbox(tid)
 
     result = await ts.resume(tid)
     # 幂等——返回 mailbox 而非 ResumeError
-    assert isinstance(result, TaskMailbox)
+    assert isinstance(result, WorkflowMailbox)
 
 
 @pytest.mark.asyncio
@@ -865,8 +865,8 @@ async def test_resume_not_paused_returns_error():
     """非 PAUSED/非 RUNNING 状态（PLANNING）→ ResumeError。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.PLANNING)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.PLANNING)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
@@ -881,15 +881,15 @@ async def test_resume_paused_returns_mailbox():
     """PAUSED 任务 → 返回 mailbox（恢复任务异步创建）。"""
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.PAUSED)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.PAUSED)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
     ts._tasks[tid] = sub_agent
-    ts._mailboxes[tid] = TaskMailbox(tid)
+    ts._mailboxes[tid] = WorkflowMailbox(tid)
 
     result = await ts.resume(tid)
-    assert isinstance(result, TaskMailbox)
+    assert isinstance(result, WorkflowMailbox)
     # resume() 返回后恢复任务已创建
     assert tid in ts._task_futures
 
@@ -908,8 +908,8 @@ async def test_paused_task_visible_in_query_apis():
     """
     ts = await _build_task_system()
 
-    tid = TaskId("t1")
-    task_state = _make_task_state("t1", TaskStatus.PAUSED)
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.PAUSED)
     exec_state = _make_exec_state()
     sub_agent = _make_mock_sub_agent(task_state, exec_state)
 
@@ -930,14 +930,14 @@ async def test_paused_task_visible_in_query_apis():
     sub_agent._checkpoint_mgr.load = AsyncMock(return_value=None)
 
     # get_task_status 可见
-    assert ts.get_task_status(tid) == TaskStatus.PAUSED
+    assert ts.get_task_status(tid) == WorkflowStatus.PAUSED
 
     # list_active_tasks 可见
     summaries = await ts.list_active_tasks()
     paused_summaries = [s for s in summaries if s.task_id == tid]
     assert len(paused_summaries) == 1, \
         f"PAUSED 任务应在活跃列表中，实际: {[s.task_id for s in summaries]}"
-    assert paused_summaries[0].status == TaskStatus.PAUSED
+    assert paused_summaries[0].status == WorkflowStatus.PAUSED
 
     # list_agents 可见
     agents = ts.list_agents()
@@ -961,7 +961,7 @@ def test_submit_approval_delegates_to_tool_manager():
     tool_mgr.submit_approval = MagicMock(return_value=True)
 
     result = ts.submit_approval(
-        task_id=TaskId("t1"),
+        task_id=WorkflowId("t1"),
         agent_id=AgentId("req-001"),
         approved=True,
     )
@@ -981,7 +981,7 @@ def test_submit_approval_returns_false_when_not_found():
     tool_mgr.submit_approval = MagicMock(return_value=False)
 
     result = ts.submit_approval(
-        task_id=TaskId("t1"),
+        task_id=WorkflowId("t1"),
         agent_id=AgentId("unknown"),
         approved=True,
     )
@@ -997,7 +997,7 @@ def test_submit_approval_no_tool_manager():
     ts._infra.tool_registry = object()
 
     result = ts.submit_approval(
-        task_id=TaskId("t1"),
+        task_id=WorkflowId("t1"),
         agent_id=AgentId("req-001"),
         approved=True,
     )

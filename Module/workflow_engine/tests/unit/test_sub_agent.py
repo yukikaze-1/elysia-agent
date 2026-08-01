@@ -19,7 +19,7 @@ import pytest
 
 from Module.workflow_engine.core.sub_agent import SubAgent
 from Module.workflow_engine.infra import AgentInfra
-from Module.workflow_engine.mailbox import TaskMailbox
+from Module.workflow_engine.mailbox import WorkflowMailbox
 from Module.workflow_engine.schema import (
     ArtifactId,
     ConstraintConfig,
@@ -36,13 +36,13 @@ from Module.workflow_engine.schema import (
     OrchestratorRunStatus,
     Plan,
     SessionId,
-    TaskCheckpoint,
-    TaskConstraints,
-    TaskErrorCode,
-    TaskEventType,
-    TaskId,
-    TaskState,
-    TaskStatus,
+    WorkflowCheckpoint,
+    WorkflowConstraints,
+    WorkflowErrorCode,
+    WorkflowEventType,
+    WorkflowId,
+    WorkflowState,
+    WorkflowStatus,
     ValidationAction,
     ValidationIssue,
     ValidationIssueType,
@@ -55,11 +55,11 @@ pytestmark = pytest.mark.unit
 # ── 工厂函数 ────────────────────────────────────────────────────────────────
 
 
-def _task_state(task_id: str = "t1") -> TaskState:
-    """最小 TaskState。"""
-    return TaskState(
-        task_id=TaskId(task_id),
-        status=TaskStatus.RUNNING,
+def _task_state(task_id: str = "t1") -> WorkflowState:
+    """最小 WorkflowState。"""
+    return WorkflowState(
+        task_id=WorkflowId(task_id),
+        status=WorkflowStatus.RUNNING,
         plan=Plan(dag=DAG(nodes=[], edges=[]), plan_version=1),
         created_at=now_iso(),
         updated_at=now_iso(),
@@ -74,8 +74,8 @@ def _delegation_context() -> DelegationContext:
     )
 
 
-def _checkpoint(task_id: str = "t1") -> TaskCheckpoint:
-    """最小 TaskCheckpoint（含一个 NodeState）。"""
+def _checkpoint(task_id: str = "t1") -> WorkflowCheckpoint:
+    """最小 WorkflowCheckpoint（含一个 NodeState）。"""
     ts = _task_state(task_id)
     es = ExecutionState(
         node_states={
@@ -87,7 +87,7 @@ def _checkpoint(task_id: str = "t1") -> TaskCheckpoint:
             ),
         },
     )
-    return TaskCheckpoint(task=ts, exec=es)
+    return WorkflowCheckpoint(task=ts, exec=es)
 
 
 def _mock_plan() -> Plan:
@@ -221,7 +221,7 @@ async def test_run_success():
         status=OrchestratorRunStatus.SUCCESS,
     )
 
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
 
     # patch 所有 run() 内部创建的组件类
     with patch(_RUN_COMPONENT_PATCHES[0], return_value=mock_planner), \
@@ -239,7 +239,7 @@ async def test_run_success():
     # 验证 Orchestrator 被调用（task_state + graph + mailbox）
     mock_orch.run.assert_called_once()
     call_args = mock_orch.run.call_args[0]
-    assert call_args[0].task_id == TaskId("t1")  # task_state
+    assert call_args[0].task_id == WorkflowId("t1")  # task_state
     assert call_args[1] is graph                 # graph
 
 
@@ -262,7 +262,7 @@ async def test_run_validation_abort():
         MagicMock(),  # graph——校验失败但 graph 仍返回
     )
 
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
 
     with patch(_RUN_COMPONENT_PATCHES[0], return_value=mock_planner), \
          patch(_RUN_COMPONENT_PATCHES[1], return_value=mock_validator), \
@@ -280,7 +280,7 @@ async def test_run_validation_abort():
     # 验证 FAILED 事件推送到 mailbox
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
-    assert events[0].type == TaskEventType.FAILED
+    assert events[0].type == WorkflowEventType.FAILED
     assert "plan_too_large" in events[0].data.get("error_type", "")
 
 
@@ -299,7 +299,7 @@ async def test_run_loop_success():
     from Module.workflow_engine.core.graph import PlanGraph
     graph = PlanGraph.from_plan(_mock_plan())
 
-    await agent._execute(_task_state(), graph, TaskMailbox(TaskId("t1")), _delegation_context())
+    await agent._execute(_task_state(), graph, WorkflowMailbox(WorkflowId("t1")), _delegation_context())
 
     mock_orch.run.assert_called_once()
 
@@ -316,13 +316,13 @@ async def test_run_loop_blocked():
 
     from Module.workflow_engine.core.graph import PlanGraph
     graph = PlanGraph.from_plan(_mock_plan())
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
 
     await agent._execute(_task_state(), graph, mailbox, _delegation_context())
 
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
-    assert events[0].type == TaskEventType.APPROVAL_NEEDED
+    assert events[0].type == WorkflowEventType.APPROVAL_NEEDED
 
 
 @pytest.mark.asyncio
@@ -338,18 +338,18 @@ async def test_run_loop_paused():
 
     from Module.workflow_engine.core.graph import PlanGraph
     graph = PlanGraph.from_plan(_mock_plan())
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
 
     await agent._execute(_task_state(), graph, mailbox, _delegation_context())
 
     # 验证 checkpoint 被保存
     assert agent._checkpoint_mgr is not None
-    agent._checkpoint_mgr.save.assert_called_once_with(TaskId("t1"), cp)  # type: ignore[reportAttributeAccessIssue]
+    agent._checkpoint_mgr.save.assert_called_once_with(WorkflowId("t1"), cp)  # type: ignore[reportAttributeAccessIssue]
 
     # 验证 PAUSED 事件
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
-    assert events[0].type == TaskEventType.PAUSED
+    assert events[0].type == WorkflowEventType.PAUSED
 
 
 @pytest.mark.asyncio
@@ -364,13 +364,13 @@ async def test_run_loop_failed():
 
     from Module.workflow_engine.core.graph import PlanGraph
     graph = PlanGraph.from_plan(_mock_plan())
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
 
     await agent._execute(_task_state(), graph, mailbox, _delegation_context())
 
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
-    assert events[0].type == TaskEventType.FAILED
+    assert events[0].type == WorkflowEventType.FAILED
     assert "检测到死锁" in events[0].data["error"]
 
 
@@ -393,12 +393,12 @@ async def test_run_loop_needs_replan_meltdown():
     ts = _task_state()
     ts.plan = Plan(dag=DAG(nodes=[], edges=[]), plan_version=2)  # 2 > 1
 
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
     await agent._execute(ts, graph, mailbox, _delegation_context())
 
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
-    assert events[0].type == TaskEventType.FAILED
+    assert events[0].type == WorkflowEventType.FAILED
     assert "failure_meltdown" in events[0].data.get("error_type", "")
 
 
@@ -439,7 +439,7 @@ async def test_handle_replan_dagpatch_success():
     ts.plan = graph.to_plan(_mock_plan())
     ts.plan.plan_version = 3
 
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
     await agent._execute(ts, graph, mailbox, _delegation_context())
 
     # 验证 DAGPatch 已应用
@@ -452,7 +452,7 @@ async def test_handle_replan_dagpatch_success():
     # 没有 FAILED 事件
     events = _collect_mailbox_events(mailbox)
     event_types = [e.type for e in events]
-    assert TaskEventType.FAILED not in event_types
+    assert WorkflowEventType.FAILED not in event_types
 
 
 @pytest.mark.asyncio
@@ -483,12 +483,12 @@ async def test_handle_replan_dagpatch_validation_failure():
     ts = _task_state()
     ts.plan = graph.to_plan(_mock_plan())
 
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
     await agent._execute(ts, graph, mailbox, _delegation_context())
 
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
-    assert events[0].type == TaskEventType.FAILED
+    assert events[0].type == WorkflowEventType.FAILED
     assert "DAGPatch 校验失败" in events[0].data["error"]
 
 
@@ -532,7 +532,7 @@ async def test_handle_replan_full_replan_success():
     old_version = 5
     ts.plan.plan_version = old_version
 
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
     await agent._execute(ts, graph, mailbox, _delegation_context())
 
     # 图已被替换
@@ -546,7 +546,7 @@ async def test_handle_replan_full_replan_success():
     # 没有 FAILED 事件
     events = _collect_mailbox_events(mailbox)
     event_types = [e.type for e in events]
-    assert TaskEventType.FAILED not in event_types
+    assert WorkflowEventType.FAILED not in event_types
 
 
 @pytest.mark.asyncio
@@ -590,12 +590,12 @@ async def test_handle_replan_full_replan_validation_failure():
     ts = _task_state()
     ts.plan = graph.to_plan(_mock_plan())
 
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
     await agent._execute(ts, graph, mailbox, _delegation_context())
 
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
-    assert events[0].type == TaskEventType.FAILED
+    assert events[0].type == WorkflowEventType.FAILED
     assert "全量重建校验失败" in events[0].data["error"]
 
 
@@ -616,12 +616,12 @@ async def test_handle_replan_checkpoint_none():
     ts = _task_state()
     ts.plan = graph.to_plan(_mock_plan())
 
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
     await agent._execute(ts, graph, mailbox, _delegation_context())
 
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
-    assert events[0].type == TaskEventType.FAILED
+    assert events[0].type == WorkflowEventType.FAILED
     assert "checkpoint 缺失" in events[0].data["error"]
 
 
@@ -644,12 +644,12 @@ async def test_handle_replan_not_implemented():
     ts = _task_state()
     ts.plan = graph.to_plan(_mock_plan())
 
-    mailbox = TaskMailbox(TaskId("t1"))
+    mailbox = WorkflowMailbox(WorkflowId("t1"))
     await agent._execute(ts, graph, mailbox, _delegation_context())
 
     events = _collect_mailbox_events(mailbox)
     assert len(events) == 1
-    assert events[0].type == TaskEventType.FAILED
+    assert events[0].type == WorkflowEventType.FAILED
     assert "Replan 调用异常" in events[0].data["error"]
 
 
@@ -735,9 +735,9 @@ def test_meltdown_no_token_ledger_skips_token_check():
 
 
 def test_extract_node_results():
-    """从 TaskCheckpoint 提取 node_states（NodeState 对象含 evaluation 字段）。"""
+    """从 WorkflowCheckpoint 提取 node_states（NodeState 对象含 evaluation 字段）。"""
     agent = _make_sub_agent()
-    cp = TaskCheckpoint(
+    cp = WorkflowCheckpoint(
         task=_task_state(),
         exec=ExecutionState(
             node_states={
@@ -776,7 +776,7 @@ def test_abort_error_code_max_nodes():
             message="节点数超限",
         ),
     ]
-    assert agent._abort_error_code(issues) == TaskErrorCode.PLAN_TOO_LARGE.value
+    assert agent._abort_error_code(issues) == WorkflowErrorCode.PLAN_TOO_LARGE.value
 
 
 def test_abort_error_code_max_depth():
@@ -788,7 +788,7 @@ def test_abort_error_code_max_depth():
             message="深度超限",
         ),
     ]
-    assert agent._abort_error_code(issues) == TaskErrorCode.PLAN_TOO_LARGE.value
+    assert agent._abort_error_code(issues) == WorkflowErrorCode.PLAN_TOO_LARGE.value
 
 
 def test_abort_error_code_other():
@@ -801,7 +801,7 @@ def test_abort_error_code_other():
             message="缺少 output_contract",
         ),
     ]
-    assert agent._abort_error_code(issues) == TaskErrorCode.INTERNAL_ERROR.value
+    assert agent._abort_error_code(issues) == WorkflowErrorCode.INTERNAL_ERROR.value
 
 
 def test_abort_error_code_cycle():
@@ -813,7 +813,7 @@ def test_abort_error_code_cycle():
             message="DAG 有环: A → B → A",
         ),
     ]
-    assert agent._abort_error_code(issues) == TaskErrorCode.PLAN_TOO_LARGE.value
+    assert agent._abort_error_code(issues) == WorkflowErrorCode.PLAN_TOO_LARGE.value
 
 
 def test_abort_error_code_duplicate_id():
@@ -826,7 +826,7 @@ def test_abort_error_code_duplicate_id():
             message="node_id 重复: a",
         ),
     ]
-    assert agent._abort_error_code(issues) == TaskErrorCode.PLAN_TOO_LARGE.value
+    assert agent._abort_error_code(issues) == WorkflowErrorCode.PLAN_TOO_LARGE.value
 
 
 def test_abort_error_code_missing_dependency():
@@ -839,13 +839,13 @@ def test_abort_error_code_missing_dependency():
             message="依赖的节点 x 不存在",
         ),
     ]
-    assert agent._abort_error_code(issues) == TaskErrorCode.PLAN_TOO_LARGE.value
+    assert agent._abort_error_code(issues) == WorkflowErrorCode.PLAN_TOO_LARGE.value
 
 
 # ── 辅助函数 ────────────────────────────────────────────────────────────────
 
 
-def _collect_mailbox_events(mailbox: TaskMailbox) -> list:
+def _collect_mailbox_events(mailbox: WorkflowMailbox) -> list:
     """从 mailbox 中收集所有已推送事件（非阻塞）。"""
     events: list = []
     while True:
@@ -864,7 +864,7 @@ def _collect_mailbox_events(mailbox: TaskMailbox) -> list:
 @pytest.mark.asyncio
 async def test_resume_from_pause_not_paused_raises():
     """非 PAUSED 状态调 resume_from_pause → RuntimeError。"""
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
 
     infra = AgentInfra(
         llm=MagicMock(),
@@ -876,13 +876,13 @@ async def test_resume_from_pause_not_paused_raises():
     sub_agent = SubAgent(infra=infra, hitl_notifier=MagicMock())
 
     # 手动设 task_state 为非 PAUSED
-    sub_agent._task_state = TaskState(
-        task_id=TaskId("t1"),
-        status=TaskStatus.RUNNING,
+    sub_agent._task_state = WorkflowState(
+        task_id=WorkflowId("t1"),
+        status=WorkflowStatus.RUNNING,
         created_at=now_iso(),
         updated_at=now_iso(),
     )
-    sub_agent._mailbox = TaskMailbox(TaskId("t1"))
+    sub_agent._mailbox = WorkflowMailbox(WorkflowId("t1"))
 
     with pytest.raises(RuntimeError, match="非 PAUSED"):
         await sub_agent.resume_from_pause()
@@ -891,7 +891,7 @@ async def test_resume_from_pause_not_paused_raises():
 @pytest.mark.asyncio
 async def test_resume_from_pause_no_checkpoint_raises():
     """PAUSED 但 checkpoint 缺失 → RuntimeError + 状态切到 FAILED。"""
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
 
     infra = AgentInfra(
         llm=MagicMock(),
@@ -902,14 +902,14 @@ async def test_resume_from_pause_no_checkpoint_raises():
     )
     sub_agent = SubAgent(infra=infra, hitl_notifier=MagicMock())
 
-    task_state = TaskState(
-        task_id=TaskId("t1"),
-        status=TaskStatus.PAUSED,
+    task_state = WorkflowState(
+        task_id=WorkflowId("t1"),
+        status=WorkflowStatus.PAUSED,
         created_at=now_iso(),
         updated_at=now_iso(),
     )
     sub_agent._task_state = task_state
-    sub_agent._mailbox = TaskMailbox(TaskId("t1"))
+    sub_agent._mailbox = WorkflowMailbox(WorkflowId("t1"))
 
     # 注入 mock CheckpointManager——load 返回 None（模拟缺失）
     mock_cm = MagicMock()
@@ -920,4 +920,4 @@ async def test_resume_from_pause_no_checkpoint_raises():
         await sub_agent.resume_from_pause()
 
     # 验证状态切到了 FAILED
-    assert task_state.status == TaskStatus.FAILED
+    assert task_state.status == WorkflowStatus.FAILED

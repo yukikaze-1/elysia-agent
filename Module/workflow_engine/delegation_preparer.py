@@ -1,9 +1,9 @@
 """DelegationPreparer: LLM 准备委派上下文。
 
-CognitiveLoop 调用 submit_task 后、TaskSystem.submit() 之前，
+CognitiveLoop 调用 submit_task 后、WorkflowEngine.submit() 之前，
 用一次 LLM 调用准备干净的委派上下文。
 
-v1: 使用 DeepSeek v4，内部创建 AsyncOpenAI（DelegationPreparer 在 TaskSystem 创建前运行，
+v1: 使用 DeepSeek v4，内部创建 AsyncOpenAI（DelegationPreparer 在 WorkflowEngine 创建前运行，
     无法使用 AgentInfra，因此自建客户端。Planner 已改用 infra.llm）。
 Prompt 全文见 architecture.md Section 9。
 """
@@ -29,7 +29,7 @@ from Module.workflow_engine.schema import (
     DelegationStatus,
     ReturnMode,
     SessionId,
-    TaskConstraints,
+    WorkflowConstraints,
     Tool,
     UserProfile,
 )
@@ -100,7 +100,7 @@ _USER_PROMPT = """## 任务意图
 class DelegationPreparer:
     """一次 LLM 调用，准备委派上下文。
 
-    代码在 TaskSystem 模块内，调用者却是 CognitiveLoop——
+    代码在 WorkflowEngine 模块内，调用者却是 CognitiveLoop——
     CognitiveLoop 截获 LLM 的 submit_task tool_call 后调 prepare()，
     拿到 DelegationResult 后决定 submit / fail / 澄清。
     将来可独立为单独的 delegation 服务。
@@ -109,7 +109,7 @@ class DelegationPreparer:
     1. 意图透传（intent/hints 原样写入 DelegationContext）
     2. 工具筛选（从全量 Tool 列表中选出相关的，传给 Planner）
     3. 上下文摘要（从对话历史中提取相关信息，≤500 字）
-    4. 任务级约束（估算 max_dag_nodes / max_mutations 等 TaskConstraints 字段）
+    4. 任务级约束（估算 max_dag_nodes / max_mutations 等 WorkflowConstraints 字段）
 
     v1: 内部创建 AsyncOpenAI（读 DEEPSEEK_API_KEY）。Planner 已改用 infra.llm。
         后续独立为 delegation 服务时改为 LLM client 注入。
@@ -147,7 +147,7 @@ class DelegationPreparer:
                                  后续统一为 ChatMessageV2 后重构此接口。
             user_profile:        用户画像（只读消费）
             tools:               全量工具列表（CognitiveLoop 持有，DelegationPreparer 筛选）
-            global_constraints:  TaskSystem 全局约束（天花板）
+            global_constraints:  WorkflowEngine 全局约束（天花板）
             session_id:          会话 ID（CognitiveLoop 透传，写入 DelegationContext）
 
         Returns:
@@ -377,7 +377,7 @@ class DelegationPreparer:
                 intent=intent,
                 hints=hints,
                 tools=selected_tools,
-                task_constraints=TaskConstraints(
+                task_constraints=WorkflowConstraints(
                     max_dag_nodes=parsed.get("max_dag_nodes"),
                     max_mutations=parsed.get("max_mutations"),
                     max_total_tokens=parsed.get("max_total_tokens"),
@@ -409,7 +409,7 @@ class DelegationPreparer:
         """将全局约束格式化为 LLM prompt，让 LLM 知晓天花板。
 
         LLM 估算的 task_constraints 不应超过这些值——
-        即便超过了，TaskConstraints.resolve() 也会 clamp，
+        即便超过了，WorkflowConstraints.resolve() 也会 clamp，
         但提前告知 LLM 可以避免浪费思考。
 
         Args:

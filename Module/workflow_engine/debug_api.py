@@ -1,6 +1,6 @@
-"""TaskDebugAPI — TaskSystem 调试数据收集 + SSE 实时推送。
+"""WorkflowDebugAPI — WorkflowEngine 调试数据收集 + SSE 实时推送。
 
-内部 500ms 轮询 TaskSystem 内部状态，diff 后通过 SSE 推送给前端。
+内部 500ms 轮询 WorkflowEngine 内部状态，diff 后通过 SSE 推送给前端。
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.task_system import TaskSystem
+    from Module.workflow_engine.workflow_engine import WorkflowEngine
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +23,11 @@ _POLL_INTERVAL = 0.5         # 500ms 内部轮询
 _SENTINEL: dict = {}          # shutdown 信号，替代 None（Queue[dict] 不接受 None）
 
 
-class TaskDebugAPI:
-    """收集 TaskSystem 运行时状态，diff 后 SSE 推送给前端。
+class WorkflowDebugAPI:
+    """收集 WorkflowEngine 运行时状态，diff 后 SSE 推送给前端。
 
     使用方式：
-        api = TaskDebugAPI(task_system)
+        api = WorkflowDebugAPI(task_system)
         await api.start()
 
         app.router.add_get('/debug/api/tasks', api.snapshot_handler)
@@ -38,11 +38,11 @@ class TaskDebugAPI:
         stop()   → 取消 _poll_loop，清理 subscribers
     """
 
-    def __init__(self, task_system: TaskSystem) -> None:
+    def __init__(self, task_system: WorkflowEngine) -> None:
         """Initialize the debug API.
 
         Args:
-            task_system: TaskSystem instance to collect debug data from.
+            task_system: WorkflowEngine instance to collect debug data from.
         """
         self._ts = task_system
         self._subscribers: dict[str, asyncio.Queue[dict]] = {}
@@ -58,7 +58,7 @@ class TaskDebugAPI:
         if self._poll_task is not None:
             return
         self._poll_task = asyncio.create_task(self._poll_loop())
-        logger.info("TaskDebugAPI: 轮询已启动 (interval=%ss)", _POLL_INTERVAL)
+        logger.info("WorkflowDebugAPI: 轮询已启动 (interval=%ss)", _POLL_INTERVAL)
 
     async def stop(self) -> None:
         """Stop the polling loop and notify all subscribers to disconnect."""
@@ -73,12 +73,12 @@ class TaskDebugAPI:
         for q in self._subscribers.values():
             await q.put(_SENTINEL)  # sentinel——通知 SSE handler 退出
         self._subscribers.clear()
-        logger.info("TaskDebugAPI: 已停止")
+        logger.info("WorkflowDebugAPI: 已停止")
 
     # ── 数据收集 ───────────────────────────────────────────────────────
 
     def _collect_snapshot(self) -> list[dict]:
-        """从 TaskSystem._get_debug_snapshot() 获取原始数据，裁剪后返回。
+        """从 WorkflowEngine._get_debug_snapshot() 获取原始数据，裁剪后返回。
 
         裁剪策略：
         - node_states 只保留 {node_id, status, attempt, summary, error}
@@ -227,7 +227,7 @@ class TaskDebugAPI:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("TaskDebugAPI._poll_loop: 异常")
+                logger.exception("WorkflowDebugAPI._poll_loop: 异常")
 
             await asyncio.sleep(_POLL_INTERVAL)
 
@@ -252,7 +252,7 @@ class TaskDebugAPI:
             self._last_task_ids = {t["task_id"] for t in self._last_snapshot}
             await q.put({"event": "snapshot", "data": self._last_snapshot})
 
-        logger.info("TaskDebugAPI: subscriber %s 已连接 (total=%d)", sid, len(self._subscribers))
+        logger.info("WorkflowDebugAPI: subscriber %s 已连接 (total=%d)", sid, len(self._subscribers))
         return sid, q
 
     async def unsubscribe(self, sid: str) -> None:
@@ -262,7 +262,7 @@ class TaskDebugAPI:
             sid: Subscriber ID returned by subscribe().
         """
         self._subscribers.pop(sid, None)
-        logger.info("TaskDebugAPI: subscriber %s 已断开 (total=%d)", sid, len(self._subscribers))
+        logger.info("WorkflowDebugAPI: subscriber %s 已断开 (total=%d)", sid, len(self._subscribers))
 
     async def _broadcast(self, event: dict) -> None:
         """推送给所有 subscriber。满队列的跳过（前端太慢）。
@@ -275,7 +275,7 @@ class TaskDebugAPI:
                 q.put_nowait(event)
             except asyncio.QueueFull:
                 logger.debug(
-                    "TaskDebugAPI: subscriber %s 队列满，跳过事件 %s",
+                    "WorkflowDebugAPI: subscriber %s 队列满，跳过事件 %s",
                     sid, event.get("event"),
                 )
 

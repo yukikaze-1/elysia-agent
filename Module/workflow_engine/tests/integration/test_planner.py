@@ -39,7 +39,7 @@ from Module.workflow_engine.schema import (
     OutputContract,
     Plan,
     SessionId,
-    TaskConstraints,
+    WorkflowConstraints,
     Tool,
 )
 
@@ -81,7 +81,7 @@ async def test_simple_task():
         intent="查询今天北京的天气",
         hints="用户在北京",
         tools=make_tools(),
-        task_constraints=TaskConstraints(max_dag_nodes=3, max_mutations=0),
+        task_constraints=WorkflowConstraints(max_dag_nodes=3, max_mutations=0),
         summarized_context="用户想了解今天天气情况",
         session_id=SessionId("test-session-1"),
     )
@@ -112,7 +112,7 @@ async def test_multi_step_task():
         intent="查询北京最近三天天气，如果有下雨的日子就发邮件给 boss@example.com",
         hints="老板邮箱是 boss@example.com，用户很着急",
         tools=make_tools(),
-        task_constraints=TaskConstraints(max_dag_nodes=6, max_mutations=1),
+        task_constraints=WorkflowConstraints(max_dag_nodes=6, max_mutations=1),
         summarized_context="用户是助理，负责向老板汇报天气情况",
         session_id=SessionId("test-session-2"),
     )

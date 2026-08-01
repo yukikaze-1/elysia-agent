@@ -1,7 +1,7 @@
 """第三层：内部编排 —— Planner / Executor / Evaluator 数据模型。
 
-注意：部分类型（TaskResult, NodeResultEvaluation, ExecutionStatus 等）
-通过 TaskEvent.data 和查询 API 暴露给外部消费者，是稳定公共契约的一部分。
+注意：部分类型（WorkflowResult, NodeResultEvaluation, ExecutionStatus 等）
+通过 WorkflowEvent.data 和查询 API 暴露给外部消费者，是稳定公共契约的一部分。
 """
 
 from __future__ import annotations
@@ -19,13 +19,13 @@ from .types import (
     NodeStatus,
     RBACLevel,
     SessionId,
-    TaskErrorCode,
-    TaskId,
-    TaskStatus,
+    WorkflowErrorCode,
+    WorkflowId,
+    WorkflowStatus,
     now_iso,
 )
 from .protocol import Tool
-from .output import TaskEventType, TokenComponentType, TokenComponent
+from .output import WorkflowEventType, TokenComponentType, TokenComponent
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -65,15 +65,15 @@ class OrchestratorResult(BaseModel):
     SUCCESS 时 checkpoint_state 有最终快照。
     NEEDS_REPLAN 时 error_context 包含失败节点和诊断信息。
     BLOCKED 时等待外部审批回传。
-    PAUSED 时保存了 checkpoint，TaskSystem 可调用 resume() 恢复。
+    PAUSED 时保存了 checkpoint，WorkflowEngine 可调用 resume() 恢复。
     """
     status: OrchestratorRunStatus
     error_context: dict[str, Any] = Field(default_factory=dict)
     # ↑ NEEDS_REPLAN / FAILED 时包含:
     #     {"reason": str, "failed_nodes": list[NodeId]}
     #     特殊情况（死锁、内部异常）只有 reason，无 failed_nodes
-    checkpoint_state: TaskCheckpoint | None = None
-    # ↑ 当前 TaskState + ExecutionState 快照。Sub-Agent 用于:
+    checkpoint_state: WorkflowCheckpoint | None = None
+    # ↑ 当前 WorkflowState + ExecutionState 快照。Sub-Agent 用于:
     #     PAUSED       → CheckpointManager.save(checkpoint_state)，等 resume 后恢复
     #     BLOCKED      → 等审批回传后恢复执行
     #     NEEDS_REPLAN → checkpoint_state.exec.node_states 传给 Replanner.replan()
@@ -112,16 +112,16 @@ class NodeState(BaseModel):
     #                                                  Replanner.replan() 做诊断决策用。
 
 
-class TaskState(BaseModel):
+class WorkflowState(BaseModel):
     """SubAgent 管理：任务级运行时状态。
 
     SubAgent 创建并控制生命周期。Orchestrator 运行时读取 status/plan，
-    写入 status（终态转换），但不拥有 TaskState。
+    写入 status（终态转换），但不拥有 WorkflowState。
 
     checkpoint 时与 ExecutionState 合并持久化。
     """
-    task_id: TaskId
-    status: TaskStatus = TaskStatus.PENDING
+    task_id: WorkflowId
+    status: WorkflowStatus = WorkflowStatus.PENDING
     plan: Plan | None = None                   # 当前生效的 Plan（Replan 后更新）
     tools: list[Tool] = Field(default_factory=list)  # 本次任务可用的工具列表（从 DelegationContext 透传，Executor 消费）
     session_id: SessionId = Field(
@@ -130,7 +130,7 @@ class TaskState(BaseModel):
     created_at: IsoTimestamp = Field(default_factory=now_iso)                       # ISO 8601
     updated_at: IsoTimestamp = Field(default_factory=now_iso)
     error: str | None = None                   # 人类可读的错误原因（终态 FAILED 时写入）
-    error_code: TaskErrorCode | None = None    # 机器可读的任务级错误码（终态 FAILED 时写入）
+    error_code: WorkflowErrorCode | None = None    # 机器可读的任务级错误码（终态 FAILED 时写入）
     token_entries: list[TokenComponent] = Field(default_factory=list)  # TokenLedger write-through 逐条记录
     token_usage: dict[str, int] = Field(default_factory=dict)  # 按组件汇总 {"planner": N, "executor": N, ...}
 
@@ -141,16 +141,16 @@ class TaskState(BaseModel):
             bool: True 表示 COMPLETED/FAILED/CANCELLED 终态。
         """
         return self.status in (
-            TaskStatus.COMPLETED,
-            TaskStatus.FAILED,
-            TaskStatus.CANCELLED,
+            WorkflowStatus.COMPLETED,
+            WorkflowStatus.FAILED,
+            WorkflowStatus.CANCELLED,
         )
 
 
 class ExecutionPhase(StrEnum):
     """Orchestrator 主循环的执行阶段。
 
-    比 TaskStatus 更细粒度——TaskStatus.RUNNING 内部有三个阶段轮转。
+    比 WorkflowStatus 更细粒度——WorkflowStatus.RUNNING 内部有三个阶段轮转。
     """
     EXECUTING = "executing"
     EVALUATING = "evaluating"
@@ -161,7 +161,7 @@ class ExecutionState(BaseModel):
     """Orchestrator 内部：Plan 执行层的运行时状态。
 
     Orchestrator 主循环中唯一可变的状态对象。
-    每次循环迭代后更新，与 TaskState 合并后 checkpoint 持久化。
+    每次循环迭代后更新，与 WorkflowState 合并后 checkpoint 持久化。
 
     SubAgent 不读 node_states 内容——它只负责在 checkpoint/resume 时传递。
     """
@@ -177,8 +177,8 @@ class ExecutionState(BaseModel):
 # ── Checkpoint ──────────────────────────────────────────────────────────────────
 
 
-class TaskCheckpoint(BaseModel):
-    """任务执行快照——TaskState + ExecutionState 的组合容器。
+class WorkflowCheckpoint(BaseModel):
+    """任务执行快照——WorkflowState + ExecutionState 的组合容器。
 
     Orchestrator._build_checkpoint() 产出，CheckpointManager 持久化，
     SubAgent 在 resume / NEEDS_REPLAN / PAUSED 路径消费。
@@ -186,7 +186,7 @@ class TaskCheckpoint(BaseModel):
     两个字段均为 Pydantic 模型实例（非 dict）——checkpoint 在内存中保持强类型，
     CheckpointManager 在 save/load 边界做 model_dump / model_validate 转换。
     """
-    task: TaskState
+    task: WorkflowState
     exec: ExecutionState
 
 
@@ -283,7 +283,7 @@ class Plan(BaseModel):
     """Planner 产出的 DAG 骨架。
 
     纯数据结构。dag 持有完整的图信息（nodes + edges）。
-    metadata（task_id）归 TaskState，委派上下文由 SubAgent 持有。
+    metadata（task_id）归 WorkflowState，委派上下文由 SubAgent 持有。
 
     字段：
         dag:          完整的 DAG（nodes + edges）
@@ -391,7 +391,7 @@ class Artifact(BaseModel):
     artifact_type: str                         # 产物类型。v1 来自 tool_result.result_type（如 "text"），
                                                 # v2 对齐 OutputContract.output_type 类型注册表 key
     node_id: NodeId
-    task_id: TaskId
+    task_id: WorkflowId
     content: Any = None                        # 实际产物数据——dict、list、str、bytes 等不做限制
     metadata: dict[str, Any] = Field(default_factory=dict)  # 附加信息：大小、格式、来源等
     created_at: IsoTimestamp = Field(default_factory=now_iso)                       # ISO 8601
@@ -497,29 +497,29 @@ class NodeResultEvaluation(BaseModel):
     result: NodeResult                     # 被评定的原始执行结果
 
 
-class TaskResult(BaseModel):
+class WorkflowResult(BaseModel):
     """任务完成后的结构化结果。
 
     包含所有节点结果 + 任务级摘要。
     CognitiveLoop 根据 return_mode 决定用自然语言还是结构化数据向用户汇报。
 
     错误分工：
-        任务级  → error (str) + error_code (TaskErrorCode)，来自 TaskState
+        任务级  → error (str) + error_code (WorkflowErrorCode)，来自 WorkflowState
         节点级  → node_results[node_id].reason + result.error，来自 NodeResultEvaluation
     """
-    task_id: TaskId
-    status: TaskStatus
+    task_id: WorkflowId
+    status: WorkflowStatus
     node_results: dict[NodeId, NodeResultEvaluation] = Field(default_factory=dict)
     summary: str = ""                           # 自然语言摘要
-    created_at: IsoTimestamp = Field(default_factory=now_iso)                        # TaskState.created_at（ISO 8601）
+    created_at: IsoTimestamp = Field(default_factory=now_iso)                        # WorkflowState.created_at（ISO 8601）
     completed_at: str = ""                      # 终态时间（ISO 8601），duration = completed_at - created_at
     token_usage: dict[str, int] = Field(        # {"planner": N, "executor": N, "evaluator": N, ...}
         default_factory=dict
     )
     tools_used: list[str] = Field(default_factory=list)   # 审计：本任务调用了哪些工具名
     # 任务级错误（仅在 failed/cancelled 时有值）
-    error: str | None = None                    # 人类可读，来自 TaskState.error
-    error_code: TaskErrorCode | None = None     # 机器可读，来自 TaskState.error_code
+    error: str | None = None                    # 人类可读，来自 WorkflowState.error
+    error_code: WorkflowErrorCode | None = None     # 机器可读，来自 WorkflowState.error_code
 
 
 # ── 经验记忆 ────────────────────────────────────────────────────────────────────
@@ -527,7 +527,7 @@ class TaskResult(BaseModel):
 class ExperienceRecord(BaseModel):
     """单条任务经验记忆。
 
-    存于 TaskSystem 专属 Milvus namespace，与用户 LTM 独立。
+    存于 WorkflowEngine 专属 Milvus namespace，与用户 LTM 独立。
 
     ⚠️ v1 不做——经验记忆（ExperienceRecord / Reflector / Milvus 写入）
     属于渐进式学习闭环，v1 骨架阶段仅保留类型定义占位。

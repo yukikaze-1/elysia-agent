@@ -8,7 +8,7 @@
 
 图操作委托给 PlanGraph（NetworkX），Orchestrator 不再手搓 DAG 遍历。
 
-TaskState（任务级）归 SubAgent 管理，ExecutionState（执行层）归 Orchestrator 管理。
+WorkflowState（任务级）归 SubAgent 管理，ExecutionState（执行层）归 Orchestrator 管理。
 Orchestrator 读写 task_state.status 做终态转换，读写 exec_state 做循环内追踪。
 """
 
@@ -29,13 +29,13 @@ from Module.workflow_engine.schema import (
     NodeResultEvaluation,
     OrchestratorResult,
     OrchestratorRunStatus,
-    TaskErrorCode,
-    TaskEventType,
-    TaskState,
-    TaskStatus,
-    TaskCheckpoint,
+    WorkflowErrorCode,
+    WorkflowEventType,
+    WorkflowState,
+    WorkflowStatus,
+    WorkflowCheckpoint,
     SessionId,
-    TaskId,
+    WorkflowId,
     Tool,
     NodeId,
     now_iso,
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from Module.workflow_engine.core.executor import Executor
     from Module.workflow_engine.core.graph import PlanGraph
     from Module.workflow_engine.infra import AgentInfra
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
     from Module.workflow_engine.protocol import HITLNotifier
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ class Orchestrator:
         - 生成 DBT（Executor）
         - 校验输出（Evaluator —— 但 Orchestrator 调它）
         - 推送审批卡片（HITLNotifier —— 但 Orchestrator 决定"何时需要审批"）
-        - 管理 TaskState 生命周期（SubAgent 拥有 TaskState）
+        - 管理 WorkflowState 生命周期（SubAgent 拥有 WorkflowState）
 
     依赖（6 个）:
         infra, hitl_notifier, executor, evaluator, checkpoint_manager, artifact_store
@@ -115,9 +115,9 @@ class Orchestrator:
 
     async def run(
         self,
-        task_state: TaskState,
+        task_state: WorkflowState,
         graph: PlanGraph,
-        mailbox: TaskMailbox,
+        mailbox: WorkflowMailbox,
         resume_from: ExecutionState | None = None,
     ) -> OrchestratorResult:
         """驱动 PlanGraph 直到完成或遇到结构性障碍。
@@ -179,7 +179,7 @@ class Orchestrator:
                 await self._save_checkpoint(task_state, exec_state)
 
             # ── 终态：COMPLETED ──
-            if task_state.status == TaskStatus.RUNNING:
+            if task_state.status == WorkflowStatus.RUNNING:
                 exec_state.current_phase = ExecutionPhase.FINALIZING
                 await self._finalize(task_state, exec_state, mailbox)
 
@@ -190,17 +190,17 @@ class Orchestrator:
 
         except asyncio.CancelledError:
             logger.warning("Orchestrator: task_id=%s 被取消", task_id)
-            task_state.status = TaskStatus.CANCELLED
+            task_state.status = WorkflowStatus.CANCELLED
             task_state.updated_at = now_iso()
             await self._save_checkpoint(task_state, exec_state)
             raise
         except Exception:
             logger.exception("Orchestrator 异常终止: task_id=%s", task_id)
-            task_state.status = TaskStatus.FAILED
+            task_state.status = WorkflowStatus.FAILED
             task_state.updated_at = now_iso()
-            await self._push_mailbox(mailbox, TaskEventType.FAILED, {
+            await self._push_mailbox(mailbox, WorkflowEventType.FAILED, {
                 "error": "Orchestrator 内部异常",
-                "error_type": TaskErrorCode.INTERNAL_ERROR.value,
+                "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
             })
             return OrchestratorResult(
                 status=OrchestratorRunStatus.FAILED,
@@ -214,7 +214,7 @@ class Orchestrator:
         self,
         graph: PlanGraph,
         resume_from: ExecutionState | None,
-        task_state: TaskState,
+        task_state: WorkflowState,
     ) -> ExecutionState:
         """初始化或合并 ExecutionState。复位审批标志 + RESUMING→RUNNING。
 
@@ -231,16 +231,16 @@ class Orchestrator:
         else:
             exec_state = self._init_exec_state(graph)
         exec_state.waiting_for_approval = False
-        if task_state.status == TaskStatus.RESUMING:
-            task_state.status = TaskStatus.RUNNING
+        if task_state.status == WorkflowStatus.RESUMING:
+            task_state.status = WorkflowStatus.RUNNING
             task_state.updated_at = now_iso()
         return exec_state
 
     async def _check_interrupts(
         self,
-        task_state: TaskState,
+        task_state: WorkflowState,
         exec_state: ExecutionState,
-        task_id: TaskId,
+        task_id: WorkflowId,
     ) -> OrchestratorResult | None:
         """检查外部中断信号（pause / cancel）。返回结果或 None。
 
@@ -254,7 +254,7 @@ class Orchestrator:
         """
         if exec_state.pause_requested:
             logger.info("Orchestrator: task_id=%s 收到暂停请求", task_id)
-            task_state.status = TaskStatus.PAUSED
+            task_state.status = WorkflowStatus.PAUSED
             task_state.updated_at = now_iso()
             await self._save_checkpoint(task_state, exec_state)
             return OrchestratorResult(
@@ -263,7 +263,7 @@ class Orchestrator:
             )
         if exec_state.cancel_requested:
             logger.info("Orchestrator: task_id=%s 收到取消请求", task_id)
-            task_state.status = TaskStatus.CANCELLED
+            task_state.status = WorkflowStatus.CANCELLED
             task_state.updated_at = now_iso()
             await self._save_checkpoint(task_state, exec_state)
             return OrchestratorResult(
@@ -274,10 +274,10 @@ class Orchestrator:
 
     async def _handle_no_ready(
         self,
-        task_state: TaskState,
+        task_state: WorkflowState,
         exec_state: ExecutionState,
         graph: PlanGraph,
-        task_id: TaskId,
+        task_id: WorkflowId,
     ) -> OrchestratorResult | None:
         """无就绪节点且未到终态——判定阻塞/失败/死锁并返回结果。
 
@@ -293,7 +293,7 @@ class Orchestrator:
             若判定为阻塞/需要重规划/死锁则返回 OrchestratorResult，否则返回 None。
         """
         if self._has_blocked_nodes(exec_state):
-            task_state.status = TaskStatus.WAITING_APPROVAL
+            task_state.status = WorkflowStatus.WAITING_APPROVAL
             task_state.updated_at = now_iso()
             await self._save_checkpoint(task_state, exec_state)
             return OrchestratorResult(
@@ -309,7 +309,7 @@ class Orchestrator:
                 checkpoint_state=self._build_checkpoint(task_state, exec_state),
             )
         logger.error("Orchestrator 死锁: task_id=%s", task_id)
-        task_state.status = TaskStatus.FAILED
+        task_state.status = WorkflowStatus.FAILED
         task_state.updated_at = now_iso()
         return OrchestratorResult(
             status=OrchestratorRunStatus.FAILED,
@@ -346,11 +346,11 @@ class Orchestrator:
 
     async def _evaluate_and_dispatch(
         self,
-        task_state: TaskState,
+        task_state: WorkflowState,
         exec_state: ExecutionState,
         results: list[NodeResult],
         graph: PlanGraph,
-        mailbox: TaskMailbox,
+        mailbox: WorkflowMailbox,
     ) -> OrchestratorResult | None:
         """评估每个 NodeResult → apply_evaluation → 根据 action 分发返回。
 
@@ -380,7 +380,7 @@ class Orchestrator:
                     checkpoint_state=self._build_checkpoint(task_state, exec_state),
                 )
             elif action == EvaluatorAction.ASK_APPROVAL:
-                task_state.status = TaskStatus.WAITING_APPROVAL
+                task_state.status = WorkflowStatus.WAITING_APPROVAL
                 task_state.updated_at = now_iso()
                 await self._save_checkpoint(task_state, exec_state)
                 return OrchestratorResult(
@@ -388,7 +388,7 @@ class Orchestrator:
                     checkpoint_state=self._build_checkpoint(task_state, exec_state),
                 )
             elif action == EvaluatorAction.ABORT:
-                task_state.status = TaskStatus.FAILED
+                task_state.status = WorkflowStatus.FAILED
                 task_state.updated_at = now_iso()
                 await self._save_checkpoint(task_state, exec_state)
                 return OrchestratorResult(
@@ -443,7 +443,7 @@ class Orchestrator:
         self,
         nodes: list[DAGNode],
         exec_state: ExecutionState,
-        task_id: TaskId,
+        task_id: WorkflowId,
         tools: list[Tool],
         session_id: SessionId = SessionId(""),
     ) -> list[NodeResult]:
@@ -467,7 +467,7 @@ class Orchestrator:
         self,
         result: NodeResult,
         node: DAGNode,
-        task_state: TaskState,
+        task_state: WorkflowState,
     ) -> NodeResultEvaluation:
         """对单个节点执行结果进行评估。
 
@@ -485,10 +485,10 @@ class Orchestrator:
 
     async def _apply_evaluation(
         self,
-        task_state: TaskState,
+        task_state: WorkflowState,
         exec_state: ExecutionState,
         evaluation: NodeResultEvaluation,
-        mailbox: TaskMailbox,
+        mailbox: WorkflowMailbox,
         graph: PlanGraph,
     ) -> EvaluatorAction:
         """将评估结果应用到执行状态，决定后续动作。
@@ -512,9 +512,9 @@ class Orchestrator:
 
     async def _finalize(
         self,
-        task_state: TaskState,
+        task_state: WorkflowState,
         exec_state: ExecutionState,
-        mailbox: TaskMailbox,
+        mailbox: WorkflowMailbox,
     ) -> None:
         """任务正常完成，写终态并推送 COMPLETED 事件。
 
@@ -543,8 +543,8 @@ class Orchestrator:
     # ── 工具方法 ───────────────────────────────────────────────────────────────
 
     def _build_checkpoint(
-        self, task_state: TaskState, exec_state: ExecutionState,
-    ) -> TaskCheckpoint:
+        self, task_state: WorkflowState, exec_state: ExecutionState,
+    ) -> WorkflowCheckpoint:
         """构建任务检查点快照（纯数据，无 I/O）。
 
         Args:
@@ -552,12 +552,12 @@ class Orchestrator:
             exec_state: 执行层状态。
 
         Returns:
-            任务检查点快照（TaskCheckpoint）。
+            任务检查点快照（WorkflowCheckpoint）。
         """
         return finalize.build_checkpoint(task_state, exec_state)
 
     async def _save_checkpoint(
-        self, task_state: TaskState, exec_state: ExecutionState,
+        self, task_state: WorkflowState, exec_state: ExecutionState,
     ) -> None:
         """保存检查点快照到持久化存储。
 
@@ -571,8 +571,8 @@ class Orchestrator:
 
     async def _push_mailbox(
         self,
-        mailbox: TaskMailbox,
-        event_type: TaskEventType,
+        mailbox: WorkflowMailbox,
+        event_type: WorkflowEventType,
         data: dict[str, Any],
     ) -> None:
         """向任务邮箱推送生命周期事件。

@@ -21,7 +21,7 @@ from Module.workflow_engine.schema import (
     ExecutionMode,
     NodeErrorCode,
     NodeResult,
-    TaskId,
+    WorkflowId,
     TokenComponentType,
     Tool,
 )
@@ -101,7 +101,7 @@ class Executor:
     async def execute(
         self,
         node: DAGNode,
-        task_id: TaskId,
+        task_id: WorkflowId,
         tools: list[Tool],
         session_id: str = "",
     ) -> NodeResult:
@@ -206,7 +206,7 @@ class Executor:
     # ── 输入解析 ────────────────────────────────────────────────────────────
 
     async def _resolve_inputs(
-        self, node: DAGNode, task_id: TaskId,
+        self, node: DAGNode, task_id: WorkflowId,
     ) -> dict[ArtifactId, Any]:
         """解析 input_bindings → 从 ArtifactStore 获取上游产物数据。
 
@@ -410,7 +410,7 @@ class Executor:
         self,
         tool_name: str,
         params: dict[str, Any],
-        task_id: TaskId,
+        task_id: WorkflowId,
         node_id: Any,
         session_id: str = "",
     ) -> ToolResult:
@@ -450,7 +450,7 @@ class Executor:
     async def _store_result(
         self,
         node: DAGNode,
-        task_id: TaskId,
+        task_id: WorkflowId,
         tool_result: ToolResult,
     ) -> Artifact | None:
         """将 ToolResult 包装为 Artifact 并存入 ArtifactStore。

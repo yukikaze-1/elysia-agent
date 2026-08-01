@@ -14,11 +14,11 @@ from Module.workflow_engine.schema import (
     NodeState,
     OrchestratorResult,
     Plan,
-    TaskCheckpoint,
-    TaskErrorCode,
-    TaskEventType,
-    TaskState,
-    TaskStatus,
+    WorkflowCheckpoint,
+    WorkflowErrorCode,
+    WorkflowEventType,
+    WorkflowState,
+    WorkflowStatus,
     now_iso,
 )
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from Module.workflow_engine.core.planner import Replanner
     from Module.workflow_engine.core.plan_validator import PlanValidator
     from Module.workflow_engine.core.orchestrator import Orchestrator
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
     from Module.workflow_engine.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)
@@ -105,8 +105,8 @@ def _elapsed_seconds(created_at: str) -> float:
         return 0.0
 
 
-def extract_node_results(checkpoint: TaskCheckpoint) -> dict[str, NodeState]:
-    """从 TaskCheckpoint 中提取 node_states，供 Replanner.replan() 使用。
+def extract_node_results(checkpoint: WorkflowCheckpoint) -> dict[str, NodeState]:
+    """从 WorkflowCheckpoint 中提取 node_states，供 Replanner.replan() 使用。
 
     NodeState 现包含 evaluation 字段（Evaluator 完整判定），
     Replanner.replan() 可直接读取每个节点的：
@@ -129,9 +129,9 @@ def extract_node_results(checkpoint: TaskCheckpoint) -> dict[str, NodeState]:
 
 async def handle_replan(
     result: OrchestratorResult,
-    task_state: TaskState,
+    task_state: WorkflowState,
     graph: PlanGraph,
-    mailbox: TaskMailbox,
+    mailbox: WorkflowMailbox,
     context: DelegationContext,
     replanner: Replanner,
     plan_validator: PlanValidator,
@@ -174,11 +174,11 @@ async def handle_replan(
             "SubAgent: task_id=%s 熔断: %s",
             task_state.task_id, meltdown_reason,
         )
-        task_state.status = TaskStatus.FAILED
+        task_state.status = WorkflowStatus.FAILED
         task_state.updated_at = now_iso()
-        await push_mailbox_fn(mailbox, TaskEventType.FAILED, {
+        await push_mailbox_fn(mailbox, WorkflowEventType.FAILED, {
             "error": meltdown_reason,
-            "error_type": TaskErrorCode.FAILURE_MELTDOWN.value,
+            "error_type": WorkflowErrorCode.FAILURE_MELTDOWN.value,
         })
         return False, None
 
@@ -190,9 +190,9 @@ async def handle_replan(
                 "SubAgent: task_id=%s Replan 前检测到取消信号，短路",
                 task_state.task_id,
             )
-            task_state.status = TaskStatus.CANCELLED
+            task_state.status = WorkflowStatus.CANCELLED
             task_state.updated_at = now_iso()
-            await push_mailbox_fn(mailbox, TaskEventType.CANCELLED, {
+            await push_mailbox_fn(mailbox, WorkflowEventType.CANCELLED, {
                 "task_id": str(task_state.task_id),
                 "reason": "用户取消",
             })
@@ -202,7 +202,7 @@ async def handle_replan(
                 "SubAgent: task_id=%s Replan 前检测到暂停信号，短路",
                 task_state.task_id,
             )
-            task_state.status = TaskStatus.PAUSED
+            task_state.status = WorkflowStatus.PAUSED
             task_state.updated_at = now_iso()
             # PAUSED 需要 checkpoint——复用上一次 run() 返回的 checkpoint
             checkpoint = result.checkpoint_state
@@ -210,7 +210,7 @@ async def handle_replan(
                 await checkpoint_mgr.save(
                     task_state.task_id, checkpoint,
                 )
-            await push_mailbox_fn(mailbox, TaskEventType.PAUSED, {
+            await push_mailbox_fn(mailbox, WorkflowEventType.PAUSED, {
                 "task_id": str(task_state.task_id),
                 "message": "任务已暂停",
             })
@@ -230,12 +230,12 @@ async def handle_replan(
             "SubAgent: task_id=%s NEEDS_REPLAN 但 checkpoint_state 为 None，"
             "跳过 Replan", task_state.task_id,
         )
-        task_state.status = TaskStatus.FAILED
+        task_state.status = WorkflowStatus.FAILED
         task_state.updated_at = now_iso()
-        await push_mailbox_fn(mailbox, TaskEventType.FAILED, {
+        await push_mailbox_fn(mailbox, WorkflowEventType.FAILED, {
             "task_id": str(task_state.task_id),
             "error": "NEEDS_REPLAN 但 checkpoint 缺失，无法恢复",
-            "error_type": TaskErrorCode.INTERNAL_ERROR.value,
+            "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
         })
         return False, None
 
@@ -258,12 +258,12 @@ async def handle_replan(
             "SubAgent: task_id=%s replan 调用异常: %s，降级为 FAILED",
             task_state.task_id, e,
         )
-        task_state.status = TaskStatus.FAILED
+        task_state.status = WorkflowStatus.FAILED
         task_state.updated_at = now_iso()
-        await push_mailbox_fn(mailbox, TaskEventType.FAILED, {
+        await push_mailbox_fn(mailbox, WorkflowEventType.FAILED, {
             "task_id": str(task_state.task_id),
             "error": f"Replan 调用异常: {e}",
-            "error_type": TaskErrorCode.INTERNAL_ERROR.value,
+            "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
         })
         return False, None
 
@@ -286,12 +286,12 @@ async def handle_replan(
                 "SubAgent: task_id=%s Replan 全量重建校验失败: %s",
                 task_state.task_id, issue_messages,
             )
-            task_state.status = TaskStatus.FAILED
+            task_state.status = WorkflowStatus.FAILED
             task_state.updated_at = now_iso()
-            await push_mailbox_fn(mailbox, TaskEventType.FAILED, {
+            await push_mailbox_fn(mailbox, WorkflowEventType.FAILED, {
                 "task_id": str(task_state.task_id),
                 "error": f"Replan 全量重建校验失败: {issue_messages}",
-                "error_type": TaskErrorCode.PLAN_TOO_LARGE.value,
+                "error_type": WorkflowErrorCode.PLAN_TOO_LARGE.value,
             })
             return False, None
 
@@ -319,12 +319,12 @@ async def handle_replan(
                 "SubAgent: task_id=%s Replan DAGPatch 引入结构问题: %s",
                 task_state.task_id, issue_msgs,
             )
-            task_state.status = TaskStatus.FAILED
+            task_state.status = WorkflowStatus.FAILED
             task_state.updated_at = now_iso()
-            await push_mailbox_fn(mailbox, TaskEventType.FAILED, {
+            await push_mailbox_fn(mailbox, WorkflowEventType.FAILED, {
                 "task_id": str(task_state.task_id),
                 "error": f"Replan DAGPatch 校验失败: {issue_msgs}",
-                "error_type": TaskErrorCode.PLAN_TOO_LARGE.value,
+                "error_type": WorkflowErrorCode.PLAN_TOO_LARGE.value,
             })
             return False, None
 

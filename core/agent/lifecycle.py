@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from core.status.agent_fsm import AgentFSM
     from ..cognitive import CognitiveLoop
     from ..monitoring.idle_monitor import IdleMonitor
-    from Module.workflow_engine.task_system import TaskSystem
+    from Module.workflow_engine.workflow_engine import TaskSystem
     from Module.workflow_engine.delegation_preparer import DelegationPreparer
     from Module.tts.protocol import TTSBackend
     from Module.output import OutputManager

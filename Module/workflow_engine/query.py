@@ -1,7 +1,7 @@
-"""TaskSystem 查询 API —— 只读访问函数。
+"""WorkflowEngine 查询 API —— 只读访问函数。
 
-所有函数接受显式参数替代 TaskSystem 内部状态，
-供 TaskSystem 方法薄封装委托，也可被 Debug API 直接调用。
+所有函数接受显式参数替代 WorkflowEngine 内部状态，
+供 WorkflowEngine 方法薄封装委托，也可被 Debug API 直接调用。
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ from Module.workflow_engine.schema import (
     AgentType,
     NodeId,
     NodeStatus,
-    TaskDAG,
-    TaskId,
-    TaskProgress,
-    TaskStatus,
-    TaskSummary,
+    WorkflowDAG,
+    WorkflowId,
+    WorkflowProgress,
+    WorkflowStatus,
+    WorkflowSummary,
     TokenPeriod,
     TokenStats,
     TokenUsage,
@@ -33,15 +33,15 @@ from Module.workflow_engine.schema import (
 if TYPE_CHECKING:
     from Module.workflow_engine.core.execution import ExecutionState
     from Module.workflow_engine.core.sub_agent import SubAgent
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
 
 logger = logging.getLogger(__name__)
 
 
 def get_task_status(
-    tasks: dict[TaskId, SubAgent],
-    task_id: TaskId,
-) -> TaskStatus | None:
+    tasks: dict[WorkflowId, SubAgent],
+    task_id: WorkflowId,
+) -> WorkflowStatus | None:
     """查询任务当前状态。最轻量——用户问"做完了吗？"时 LLM 调用。
 
     只查活跃任务（仍在 tasks 注册表中的）。任务终态清理后不可查询——
@@ -52,21 +52,21 @@ def get_task_status(
         task_id: 要查询的任务 ID。
 
     Returns:
-        TaskStatus | None: 任务状态，不存在返回 None。
+        WorkflowStatus | None: 任务状态，不存在返回 None。
     """
     sub_agent = tasks.get(task_id)
     if sub_agent is None:
         return None
     ts = sub_agent._task_state
     if ts is None:
-        return TaskStatus.PENDING
+        return WorkflowStatus.PENDING
     return ts.status
 
 
 def get_task_mailbox(
-    mailboxes: dict[TaskId, TaskMailbox],
-    task_id: TaskId,
-) -> TaskMailbox | None:
+    mailboxes: dict[WorkflowId, WorkflowMailbox],
+    task_id: WorkflowId,
+) -> WorkflowMailbox | None:
     """获取指定任务的 mailbox（供 Agent 轮询消费）。
 
     任务不存在或已清理时返回 None。
@@ -76,15 +76,15 @@ def get_task_mailbox(
         task_id: 要查询的任务 ID。
 
     Returns:
-        TaskMailbox | None: 邮箱对象，不存在返回 None。
+        WorkflowMailbox | None: 邮箱对象，不存在返回 None。
     """
     return mailboxes.get(task_id)
 
 
 async def get_task_summary(
-    tasks: dict[TaskId, SubAgent],
-    task_id: TaskId,
-) -> TaskSummary | None:
+    tasks: dict[WorkflowId, SubAgent],
+    task_id: WorkflowId,
+) -> WorkflowSummary | None:
     """获取单个任务摘要。
 
     Args:
@@ -92,7 +92,7 @@ async def get_task_summary(
         task_id: 要查询的任务 ID。
 
     Returns:
-        TaskSummary | None: 任务摘要，不存在返回 None。
+        WorkflowSummary | None: 任务摘要，不存在返回 None。
     """
     summaries = await list_active_tasks(tasks)
     for s in summaries:
@@ -102,17 +102,17 @@ async def get_task_summary(
 
 
 async def list_active_tasks(
-    tasks: dict[TaskId, SubAgent],
-) -> list[TaskSummary]:
+    tasks: dict[WorkflowId, SubAgent],
+) -> list[WorkflowSummary]:
     """列出所有活跃任务。
 
     Args:
         tasks: 所有活跃任务的 SubAgent 映射。
 
     Returns:
-        list[TaskSummary]: 任务摘要列表。
+        list[WorkflowSummary]: 任务摘要列表。
     """
-    summaries: list[TaskSummary] = []
+    summaries: list[WorkflowSummary] = []
     for task_id, sub_agent in tasks.items():
         ts = sub_agent._task_state
         if ts is None:
@@ -151,7 +151,7 @@ async def list_active_tasks(
             except (ValueError, TypeError):
                 pass
 
-        summaries.append(TaskSummary(
+        summaries.append(WorkflowSummary(
             task_id=ts.task_id,
             status=ts.status,
             intent=intent,
@@ -171,9 +171,9 @@ async def list_active_tasks(
 
 
 def get_progress(
-    tasks: dict[TaskId, SubAgent],
-    task_id: TaskId,
-) -> TaskProgress | None:
+    tasks: dict[WorkflowId, SubAgent],
+    task_id: WorkflowId,
+) -> WorkflowProgress | None:
     """查询任务执行进度。用户问"到哪一步了？"时 LLM 调用。
 
     返回当前执行节点、完成数/总数、耗时、预估剩余时间。
@@ -183,7 +183,7 @@ def get_progress(
         task_id: 要查询的任务 ID。
 
     Returns:
-        TaskProgress | None: 进度信息，任务不存在或尚未开始执行时返回 None。
+        WorkflowProgress | None: 进度信息，任务不存在或尚未开始执行时返回 None。
     """
     sub_agent = tasks.get(task_id)
     if sub_agent is None:
@@ -199,7 +199,7 @@ def get_progress(
     )
     if exec_state is None:
         # 尚未进入 Orchestrator（规划/校验阶段）
-        return TaskProgress(
+        return WorkflowProgress(
             task_id=task_id,
             status=ts.status,
             total_nodes=len(
@@ -237,7 +237,7 @@ def get_progress(
         avg_per_node = elapsed_ms / done
         estimated_remaining_ms = int(avg_per_node * (total - done))
 
-    return TaskProgress(
+    return WorkflowProgress(
         task_id=task_id,
         status=ts.status,
         current_node_id=current_node_id,
@@ -249,9 +249,9 @@ def get_progress(
 
 
 async def get_task_dag(
-    tasks: dict[TaskId, SubAgent],
-    task_id: TaskId,
-) -> TaskDAG | None:
+    tasks: dict[WorkflowId, SubAgent],
+    task_id: WorkflowId,
+) -> WorkflowDAG | None:
     """获取任务的 DAG 可视化数据。
 
     Args:
@@ -259,7 +259,7 @@ async def get_task_dag(
         task_id: 要查询的任务 ID。
 
     Returns:
-        TaskDAG | None: DAG 可视化数据，不存在返回 None。
+        WorkflowDAG | None: DAG 可视化数据，不存在返回 None。
     """
     sub_agent = tasks.get(task_id)
     if sub_agent is None:
@@ -278,8 +278,8 @@ async def get_task_dag(
 
 
 def get_token_usage(
-    tasks: dict[TaskId, SubAgent],
-    task_id: TaskId,
+    tasks: dict[WorkflowId, SubAgent],
+    task_id: WorkflowId,
 ) -> TokenUsage | None:
     """查询单任务的 token 消耗明细（含完整审计日志）。
 
@@ -303,7 +303,7 @@ def get_token_usage(
 
 
 def list_agents(
-    tasks: dict[TaskId, SubAgent],
+    tasks: dict[WorkflowId, SubAgent],
     max_sub_agents: int,
     has_slots: bool,
 ) -> AgentList:
@@ -326,15 +326,15 @@ def list_agents(
     for task_id, sub_agent in tasks.items():
         ts = sub_agent._task_state
 
-        # 映射 TaskStatus → AgentStatus
+        # 映射 WorkflowStatus → AgentStatus
         if ts is None:
             agent_status = AgentStatus.RUNNING
-        elif ts.status in (TaskStatus.RUNNING, TaskStatus.PLANNING,
-                           TaskStatus.PAUSE_REQUESTED, TaskStatus.RESUMING):
+        elif ts.status in (WorkflowStatus.RUNNING, WorkflowStatus.PLANNING,
+                           WorkflowStatus.PAUSE_REQUESTED, WorkflowStatus.RESUMING):
             agent_status = AgentStatus.RUNNING
-        elif ts.status == TaskStatus.PAUSED:
+        elif ts.status == WorkflowStatus.PAUSED:
             agent_status = AgentStatus.PAUSED
-        elif ts.status == TaskStatus.WAITING_APPROVAL:
+        elif ts.status == WorkflowStatus.WAITING_APPROVAL:
             agent_status = AgentStatus.AWAITING_APPROVAL
         else:
             # 终态（COMPLETED/FAILED/CANCELLED）——理论上已清理，
@@ -375,7 +375,7 @@ def list_agents(
 
 
 def get_token_stats(
-    tasks: dict[TaskId, SubAgent],
+    tasks: dict[WorkflowId, SubAgent],
     period: TokenPeriod = TokenPeriod.TODAY,
 ) -> TokenStats:
     """聚合 token 统计（按时间段 + 组件 + 模型）。
@@ -432,14 +432,14 @@ def get_token_stats(
 
 
 def get_debug_snapshot(
-    tasks: dict[TaskId, SubAgent],
-    mailboxes: dict[TaskId, TaskMailbox],
+    tasks: dict[WorkflowId, SubAgent],
+    mailboxes: dict[WorkflowId, WorkflowMailbox],
     max_sub_agents: int,
 ) -> dict:
-    """供 TaskDebugAPI 内部轮询使用。
+    """供 WorkflowDebugAPI 内部轮询使用。
 
     线程安全说明：
-        本方法在 TaskDebugAPI._poll_loop() 中调用，与 Orchestrator 主循环
+        本方法在 WorkflowDebugAPI._poll_loop() 中调用，与 Orchestrator 主循环
         运行在同一个 asyncio event loop 中。CPython + asyncio 的协作式调度
         保证本方法在遍历 tasks / exec_state 期间不会在非 await 点被挂起——
         因此读取 exec_state.node_states 等可变 dict 时不需显式加锁。

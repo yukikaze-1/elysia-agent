@@ -1,7 +1,7 @@
-"""TokenLedger — 单次任务 token 账本，write-through 到 TaskState。
+"""TokenLedger — 单次任务 token 账本，write-through 到 WorkflowState。
 
-每次 LLM 调用后立即 record()，直接写入 TaskState.token_entries + token_usage。
-任务暂停/崩溃/取消时数据已持久在 TaskState 中，不依赖最终 flush。
+每次 LLM 调用后立即 record()，直接写入 WorkflowState.token_entries + token_usage。
+任务暂停/崩溃/取消时数据已持久在 WorkflowState 中，不依赖最终 flush。
 """
 
 from __future__ import annotations
@@ -16,11 +16,11 @@ from Module.workflow_engine.schema import (
 )
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.schema import TaskState
+    from Module.workflow_engine.schema import WorkflowState
 
 
 class TokenLedger:
-    """单次任务 token 账本，write-through 到 TaskState。
+    """单次任务 token 账本，write-through 到 WorkflowState。
 
     用法:
         ledger = TokenLedger(task_state)
@@ -33,11 +33,11 @@ class TokenLedger:
         )
     """
 
-    def __init__(self, task_state: TaskState) -> None:
+    def __init__(self, task_state: WorkflowState) -> None:
         """Initialize the token ledger.
 
         Args:
-            task_state: TaskState to write token entries into.
+            task_state: WorkflowState to write token entries into.
         """
         self._ts = task_state
 
@@ -49,7 +49,7 @@ class TokenLedger:
         model: str,
         node_id: NodeId | None = None,
     ) -> None:
-        """记录一次 LLM 调用，立即写入 TaskState。
+        """记录一次 LLM 调用，立即写入 WorkflowState。
 
         Args:
             component:         消耗来源（planner / executor / evaluator）

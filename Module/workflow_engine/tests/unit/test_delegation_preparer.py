@@ -37,7 +37,7 @@ from Module.workflow_engine.schema import (
     DelegationStatus,
     ReturnMode,
     SessionId,
-    TaskConstraints,
+    WorkflowConstraints,
     Tool,
     UserProfile,
 )
@@ -286,7 +286,7 @@ class TestBuildResult:
         assert result.reason == "意图清晰，工具匹配"
 
     def test_ok_result_constraints_with_values(self, sample_tools):
-        """TaskConstraints 非 None 字段传入。"""
+        """WorkflowConstraints 非 None 字段传入。"""
         parsed = {
             "status": "ok",
             "tools": ["web_search"],

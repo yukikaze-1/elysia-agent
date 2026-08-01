@@ -1,4 +1,4 @@
-"""第二层：核心输出 —— TaskMailbox 事件 + 查询视图。"""
+"""第二层：核心输出 —— WorkflowMailbox 事件 + 查询视图。"""
 
 from __future__ import annotations
 
@@ -13,21 +13,21 @@ from .types import (
     NodeErrorCode,
     NodeId,
     NodeStatus,
-    TaskErrorCode,
-    TaskId,
-    TaskStatus,
+    WorkflowErrorCode,
+    WorkflowId,
+    WorkflowStatus,
     now_iso,
 )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 第二层：核心输出 —— TaskMailbox 事件 + 查询视图
+# 第二层：核心输出 —— WorkflowMailbox 事件 + 查询视图
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# ── TaskMailbox 事件 ────────────────────────────────────────────────────────────
+# ── WorkflowMailbox 事件 ────────────────────────────────────────────────────────────
 
-class TaskEventType(StrEnum):
-    """TaskMailbox 事件类型——6 种。"""
+class WorkflowEventType(StrEnum):
+    """WorkflowMailbox 事件类型——6 种。"""
     PROGRESS = "progress"
     APPROVAL_NEEDED = "approval_needed"
     COMPLETED = "completed"
@@ -36,8 +36,8 @@ class TaskEventType(StrEnum):
     PAUSED = "paused"
 
 
-class TaskEvent(BaseModel):
-    """TaskMailbox 中传输的事件。
+class WorkflowEvent(BaseModel):
+    """WorkflowMailbox 中传输的事件。
 
     type 决定 data 的 shape（注释为参考 shape，不强制校验）：
         progress:         进度更新（来自 Orchestrator）
@@ -51,13 +51,13 @@ class TaskEvent(BaseModel):
         type: 事件类型
         data: 事件负载，shape 随 type 变化
     """
-    type: TaskEventType
+    type: WorkflowEventType
     data: dict[str, Any] = Field(default_factory=dict)
 
     # ── data shape 参考 ──────────────────────────────────────────────────────
 
     # progress: {
-    #     "task_id": TaskId,
+    #     "task_id": WorkflowId,
     #     "node_id": NodeId,
     #     "node_description": str,  # 当前节点在做什么
     #     "percent": float,         # 0~1，整个任务的完成比例
@@ -65,7 +65,7 @@ class TaskEvent(BaseModel):
     # }
 
     # approval_needed: {            # 与 HITLData 字段一一对应
-    #     "task_id": TaskId,
+    #     "task_id": WorkflowId,
     #     "approval_id": ApprovalId,
     #     "agent_id": AgentId,
     #     "node_id": NodeId,
@@ -77,7 +77,7 @@ class TaskEvent(BaseModel):
     # }
 
     # completed: {
-    #     "task_id": TaskId,
+    #     "task_id": WorkflowId,
     #     "result": str,            # 自然语言摘要
     #     "summary": str,           # 简短摘要
     #     "total_nodes": int,
@@ -86,35 +86,35 @@ class TaskEvent(BaseModel):
     # }
 
     # failed: {
-    #     "task_id": TaskId,
+    #     "task_id": WorkflowId,
     #     "error": str,             # 人类可读错误描述
-    #     "error_type": TaskErrorCode,  # 任务级错误码
+    #     "error_type": WorkflowErrorCode,  # 任务级错误码
     # }
 
     # cancelled: {
-    #     "task_id": TaskId,
+    #     "task_id": WorkflowId,
     #     "reason": str,            # 取消原因
     # }
 
     # paused: {
-    #     "task_id": TaskId,
+    #     "task_id": WorkflowId,
     #     "message": str,           # 暂停说明
     # }
 
 
 # ── 查询视图：任务摘要 ──────────────────────────────────────────────────────────
 
-class TaskSummary(BaseModel):
+class WorkflowSummary(BaseModel):
     """任务完成后/查询时的摘要视图。
 
     Debug WebUI 和用户查询（"刚才那个任务怎么样了？"）使用。
     字段偏展示——tools_used 用字符串名，errors 用扁平字符串列表
     而非结构化 error+error_code。
     """
-    task_id: TaskId
-    status: TaskStatus
+    task_id: WorkflowId
+    status: WorkflowStatus
     intent: str
-    created_at: IsoTimestamp = Field(default_factory=now_iso)                  # ISO 8601，对齐 TaskState.created_at
+    created_at: IsoTimestamp = Field(default_factory=now_iso)                  # ISO 8601，对齐 WorkflowState.created_at
     duration_ms: int = 0                  # 总耗时（查询视图预计算，方便直接展示）
     nodes: dict[str, int] = Field(        # {"total": N, "completed": N, "failed": N, "skipped": N}
         default_factory=lambda: {"total": 0, "completed": 0, "failed": 0, "skipped": 0}
@@ -127,18 +127,18 @@ class TaskSummary(BaseModel):
     approvals: dict[str, int] = Field(    # {"requested": N, "approved": N, "denied": N}
         default_factory=lambda: {"requested": 0, "approved": 0, "denied": 0}
     )
-    error: str | None = None                    # 任务级错误消息（来自 TaskState.error，对齐 TaskResult）
-    error_code: TaskErrorCode | None = None     # 任务级错误码（来自 TaskState.error_code）
-    # 节点级诊断见 TaskResult.node_results
+    error: str | None = None                    # 任务级错误消息（来自 WorkflowState.error，对齐 WorkflowResult）
+    error_code: WorkflowErrorCode | None = None     # 任务级错误码（来自 WorkflowState.error_code）
+    # 节点级诊断见 WorkflowResult.node_results
     replans: int = 0
 
 
 # ── 查询视图：进度 ──────────────────────────────────────────────────────────────
 
-class TaskProgress(BaseModel):
+class WorkflowProgress(BaseModel):
     """单任务执行进度快照。"""
-    task_id: TaskId
-    status: TaskStatus = TaskStatus.PENDING
+    task_id: WorkflowId
+    status: WorkflowStatus = WorkflowStatus.PENDING
     current_node_id: NodeId | None = None       # 当前正在执行的节点
     completed_nodes: int = 0                    # 已完成节点数
     total_nodes: int = 0                        # 总节点数
@@ -163,7 +163,7 @@ class DAGNodeInfo(BaseModel):
     error_code: NodeErrorCode | None = None  # 机器可读，来自 NodeState.error_code
 
 
-class TaskDAG(BaseModel):
+class WorkflowDAG(BaseModel):
     """任务 DAG 的可视化数据（Debug WebUI 渲染用）。"""
     nodes: list[DAGNodeInfo] = Field(default_factory=list)
     edges: list[tuple[NodeId, NodeId]] = Field(default_factory=list)
@@ -178,7 +178,7 @@ class AgentType(StrEnum):
 
 
 class AgentStatus(StrEnum):
-    """Agent 运行时状态——TaskStatus 的子集（只含 Agent 可能的状态）。"""
+    """Agent 运行时状态——WorkflowStatus 的子集（只含 Agent 可能的状态）。"""
     RUNNING = "running"
     PAUSED = "paused"
     AWAITING_APPROVAL = "awaiting_approval"
@@ -188,7 +188,7 @@ class AgentInfo(BaseModel):
     """单个 Agent 的运行信息。"""
     agent_id: AgentId
     agent_type: AgentType
-    task_id: TaskId
+    task_id: WorkflowId
     node_id: NodeId | None = None          # Worker 专用
     status: AgentStatus = AgentStatus.RUNNING
     started_at: IsoTimestamp = Field(default_factory=now_iso)
@@ -238,7 +238,7 @@ class TokenComponent(BaseModel):
 
 class TokenUsage(BaseModel):
     """单个任务的 token 消耗明细。"""
-    task_id: TaskId
+    task_id: WorkflowId
     components: list[TokenComponent] = Field(default_factory=list)
 
 

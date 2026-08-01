@@ -1,6 +1,6 @@
 """ArtifactStore — 节点产物存储。
 
-独立于 TaskState——节点产出大对象（搜索结果、文档全文等）存于此，
+独立于 WorkflowState——节点产出大对象（搜索结果、文档全文等）存于此，
 NodeState.artifact_refs 只保存引用。
 
 v1: 内存 dict，任务终态时清理。
@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from Module.workflow_engine.schema import ArtifactId, NodeId
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.schema import Artifact, TaskId
+    from Module.workflow_engine.schema import Artifact, WorkflowId
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class ArtifactStore:
         """Initialize the artifact store with empty internal storage and indexes."""
         self._artifacts: dict[ArtifactId, Artifact] = {}
         self._by_node: dict[NodeId, set[ArtifactId]] = {}   # NodeId → {ArtifactId}
-        self._by_task: dict[TaskId, set[ArtifactId]] = {}   # TaskId → {ArtifactId}
+        self._by_task: dict[WorkflowId, set[ArtifactId]] = {}   # WorkflowId → {ArtifactId}
 
     # ── 写入 ──────────────────────────────────────────────────────────────
 
@@ -101,7 +101,7 @@ class ArtifactStore:
                 )
         return artifacts
 
-    async def get_by_task(self, task_id: TaskId) -> list[Artifact]:
+    async def get_by_task(self, task_id: WorkflowId) -> list[Artifact]:
         """获取某个任务的所有 artifact。
 
         Args:
@@ -127,7 +127,7 @@ class ArtifactStore:
     # TODO: v2 增加 delete_by_node(node_id)——DAGPatch 删除节点时需清理对应 artifact，
     #       当前 Replan stub 不会触发此场景
 
-    async def delete_by_task(self, task_id: TaskId) -> None:
+    async def delete_by_task(self, task_id: WorkflowId) -> None:
         """清理任务的所有 artifact（终态时调用）。
 
         同时清理主存储和 node/task 两个索引。

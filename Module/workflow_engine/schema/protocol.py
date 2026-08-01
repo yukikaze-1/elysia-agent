@@ -1,4 +1,4 @@
-"""第一层：跨层协议 —— CognitiveLoop ↔ TaskSystem 输入/输出契约。"""
+"""第一层：跨层协议 —— CognitiveLoop ↔ WorkflowEngine 输入/输出契约。"""
 
 from __future__ import annotations
 
@@ -15,26 +15,26 @@ from .types import (
     RBACLevel,
     SessionId,
     SubmitRejectionCode,
-    TaskErrorCode,
+    WorkflowErrorCode,
     ResumeErrorCode,
     NodeErrorCode,
-    TaskId,
-    TaskStatus,
+    WorkflowId,
+    WorkflowStatus,
     now_iso,
 )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 第一层：跨层协议 —— CognitiveLoop ↔ TaskSystem 输入/输出
+# 第一层：跨层协议 —— CognitiveLoop ↔ WorkflowEngine 输入/输出
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── 约束 ──────────────────────────────────────────────────────────────────────
 
 class ConstraintConfig(BaseModel):
-    """全局约束配置（TaskSystem 构造时注入）。
+    """全局约束配置（WorkflowEngine 构造时注入）。
 
-    TaskSystem 内所有执行路径强制遵守。这些是"天花板"——
-    通过 TaskConstraints.resolve(global) 合并，任务级 None → 全局值，超限 → clamp。
+    WorkflowEngine 内所有执行路径强制遵守。这些是"天花板"——
+    通过 WorkflowConstraints.resolve(global) 合并，任务级 None → 全局值，超限 → clamp。
 
     字段：
         max_total_tokens:     整个任务 LLM 调用总 token 上限（硬）
@@ -59,7 +59,7 @@ class ConstraintConfig(BaseModel):
     max_tool_error_chars: int   = Field(default=2000,      ge=0)
 
 
-class TaskConstraints(BaseModel):
+class WorkflowConstraints(BaseModel):
     """任务级约束（DelegationPreparer 产出）。
 
     所有字段 None 表示"不覆盖，使用全局默认"。
@@ -79,7 +79,7 @@ class TaskConstraints(BaseModel):
     max_task_duration_s: float | None = Field(default=None, ge=0)
     max_failure_count: int | None = Field(default=None, ge=1)
 
-    def resolve(self, global_: ConstraintConfig) -> TaskConstraints:
+    def resolve(self, global_: ConstraintConfig) -> WorkflowConstraints:
         """用全局约束填充所有 None 字段，返回全量有效约束。
 
         规则：
@@ -94,7 +94,7 @@ class TaskConstraints(BaseModel):
             global_: 全局约束配置（天花板）。
 
         Returns:
-            TaskConstraints: 全量有效约束（所有字段已填充，不超过全局上限）。
+            WorkflowConstraints: 全量有效约束（所有字段已填充，不超过全局上限）。
         """
         import logging
         _log = logging.getLogger(__name__)
@@ -105,13 +105,13 @@ class TaskConstraints(BaseModel):
                 return global_val
             if task_val > global_val:
                 _log.warning(
-                    "TaskConstraints.resolve: %s=%s 超过全局上限 %s，clamp 到全局值（%s）",
+                    "WorkflowConstraints.resolve: %s=%s 超过全局上限 %s，clamp 到全局值（%s）",
                     name, task_val, global_val, clamp_reason,
                 )
                 return global_val
             return task_val
 
-        return TaskConstraints(
+        return WorkflowConstraints(
             max_dag_nodes=_resolve_field(
                 "max_dag_nodes", self.max_dag_nodes, global_.max_dag_nodes,
                 "DAG 节点数",
@@ -135,7 +135,7 @@ class TaskConstraints(BaseModel):
         )
 
 
-# ── CognitiveLoop 侧类型（TaskSystem 只引用，不拥有）─────────────────────────────
+# ── CognitiveLoop 侧类型（WorkflowEngine 只引用，不拥有）─────────────────────────────
 
 # Tool 已升级为正式描述符模型（对齐 Module/tool.ToolPlugin 的描述层字段）。
 # UserProfile 仍为占位——字段由 CognitiveLoop 侧定义。
@@ -157,9 +157,9 @@ class UserProfile(BaseModel):
 
 
 class Tool(BaseModel):
-    """工具描述符——TaskSystem 对 Module/tool 工具的轻量投影。
+    """工具描述符——WorkflowEngine 对 Module/tool 工具的轻量投影。
 
-    只持有 TaskSystem 层需要的字段：
+    只持有 WorkflowEngine 层需要的字段：
         name:         工具唯一标识符（与 ToolPlugin.name 对应，Executor 据此过滤 definitions）
         description:  工具功能描述（Planner 注入 prompt 供 LLM 选工具）
         capabilities: 工具能力标签（对齐 Module/tool.Capability，v2 RBAC 校验用）
@@ -187,7 +187,7 @@ class DelegationContext(BaseModel):
     Planner 在这个沙盒内工作——只能看到 DelegationPreparer 筛选过的工具和上下文。
 
     所有字段由 DelegationPreparer.prepare() 填充，
-    传入 TaskSystem.submit() 后由 Planner 直接消费。
+    传入 WorkflowEngine.submit() 后由 Planner 直接消费。
 
     字段：
         intent:              LLM 输出的完整任务意图（非用户原始输入）
@@ -201,7 +201,7 @@ class DelegationContext(BaseModel):
     intent: str
     hints: str | None = None
     tools: list[Tool] = Field(default_factory=list)
-    task_constraints: TaskConstraints = Field(default_factory=TaskConstraints)
+    task_constraints: WorkflowConstraints = Field(default_factory=WorkflowConstraints)
     summarized_context: str = ""
     session_id: SessionId
     return_mode: ReturnMode = ReturnMode.NATURAL_LANGUAGE
@@ -220,7 +220,7 @@ class DelegationResult(BaseModel):
     """DelegationPreparer.prepare() 的产出。
 
     status 决定 context 是否有值：
-        ok               → context 有值，调用 TaskSystem.submit()
+        ok               → context 有值，调用 WorkflowEngine.submit()
         no_matching_tools → context=None，工具库缺所需工具
         too_vague        → context=None，意图模糊需用户澄清
 
@@ -284,10 +284,10 @@ class ResumeError(BaseModel):
 # ── HITL 审批数据 ──────────────────────────────────────────────────────────────
 
 class HITLData(BaseModel):
-    """HITL 审批请求数据（TaskSystem → HITLNotifier.request_approval）。
+    """HITL 审批请求数据（WorkflowEngine → HITLNotifier.request_approval）。
 
     同一份数据既走 HITLNotifier 快通道（强类型），
-    也走 TaskMailbox 审计流（TaskEvent.data.approval_needed）。
+    也走 WorkflowMailbox 审计流（WorkflowEvent.data.approval_needed）。
 
     字段：
         task_id:       所属任务 ID
@@ -301,7 +301,7 @@ class HITLData(BaseModel):
         rbac_level:    工具权限级别，前端据此渲染审批卡片危险程度
         risk_summary:  风险摘要（操作类型、影响范围、参数预览）
     """
-    task_id: TaskId
+    task_id: WorkflowId
     approval_id: ApprovalId
     agent_id: AgentId
     node_id: NodeId

@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from Module.workflow_engine.schema import (
     ConstraintConfig,
     DelegationContext,
-    TaskEventType,
-    TaskState,
-    TaskStatus,
+    WorkflowEventType,
+    WorkflowState,
+    WorkflowStatus,
     ValidationAction,
     now_iso,
 )
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from Module.workflow_engine.core.planner import Planner
     from Module.workflow_engine.core.plan_validator import PlanValidator
     from Module.workflow_engine.core.graph import PlanGraph
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +28,8 @@ async def plan_and_validate(
     planner: Planner,
     plan_validator: PlanValidator,
     context: DelegationContext,
-    task_state: TaskState,
-    mailbox: TaskMailbox,
+    task_state: WorkflowState,
+    mailbox: WorkflowMailbox,
     constraints: ConstraintConfig,
     push_mailbox_fn: Callable[..., Awaitable[None]],
     abort_error_code_fn: Callable[..., str],
@@ -45,8 +45,8 @@ async def plan_and_validate(
         planner: Planner 实例，用于生成初始计划。
         plan_validator: PlanValidator 实例，用于校验计划并构建 PlanGraph。
         context: DelegationContext，包含任务意图、提示、可用工具等。
-        task_state: TaskState，用于状态追踪和计划存储。
-        mailbox: TaskMailbox，用于推送生命周期事件。
+        task_state: WorkflowState，用于状态追踪和计划存储。
+        mailbox: WorkflowMailbox，用于推送生命周期事件。
         constraints: ConstraintConfig，规划/校验的全局约束。
         push_mailbox_fn: 异步回调，向邮箱推送事件。
         abort_error_code_fn: 可调用对象，从校验问题列表生成错误码字符串。
@@ -58,7 +58,7 @@ async def plan_and_validate(
     task_id = task_state.task_id
 
     # 1. 初始规划
-    task_state.status = TaskStatus.PLANNING
+    task_state.status = WorkflowStatus.PLANNING
     task_state.updated_at = now_iso()
     logger.info("SubAgent: 开始规划 task_id=%s", task_id)
     plan = await planner.plan(
@@ -80,9 +80,9 @@ async def plan_and_validate(
                 "SubAgent: Plan 校验 abort task_id=%s: %s",
                 task_id, issue_messages,
             )
-            task_state.status = TaskStatus.FAILED
+            task_state.status = WorkflowStatus.FAILED
             task_state.updated_at = now_iso()
-            await push_mailbox_fn(mailbox, TaskEventType.FAILED, {
+            await push_mailbox_fn(mailbox, WorkflowEventType.FAILED, {
                 "task_id": str(task_id),
                 "error": f"Plan 校验失败: {issue_messages}",
                 "error_type": abort_error_code_fn(validation.issues),
@@ -117,7 +117,7 @@ async def plan_and_validate(
             )
             if validation.valid:
                 task_state.plan = graph.to_plan(plan)
-                task_state.status = TaskStatus.RUNNING
+                task_state.status = WorkflowStatus.RUNNING
                 task_state.updated_at = now_iso()
                 logger.info(
                     "SubAgent: Plan 校验 fix_plan 修复成功 task_id=%s retry=%d",
@@ -130,18 +130,18 @@ async def plan_and_validate(
             "SubAgent: Plan 校验 fix_plan 耗尽 task_id=%s: %s",
             task_id, issue_msgs,
         )
-        task_state.status = TaskStatus.FAILED
+        task_state.status = WorkflowStatus.FAILED
         task_state.updated_at = now_iso()
-        await push_mailbox_fn(mailbox, TaskEventType.FAILED, {
+        await push_mailbox_fn(mailbox, WorkflowEventType.FAILED, {
             "task_id": str(task_id),
             "error": f"Plan 校验失败且重试耗尽: {issue_msgs}",
             "error_type": abort_error_code_fn(validation.issues),
         })
         return None
 
-    # 3. 存入 TaskState（graph 由 validate 返回，无需重复构造）
+    # 3. 存入 WorkflowState（graph 由 validate 返回，无需重复构造）
     task_state.plan = graph.to_plan(plan)
-    task_state.status = TaskStatus.RUNNING
+    task_state.status = WorkflowStatus.RUNNING
     task_state.updated_at = now_iso()
 
     return graph

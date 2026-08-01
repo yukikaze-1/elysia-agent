@@ -14,7 +14,7 @@ from Module.workflow_engine.schema import (
     ConstraintConfig,
     DelegationStatus,
     SessionId,
-    TaskConstraints,
+    WorkflowConstraints,
     Tool,
     UserProfile,
 )
@@ -462,7 +462,7 @@ async def test_integration_global_constraints_with_resolve():
     """真实 LLM：验证两段式约束安全机制。
 
     第一段：LLM 参考全局约束估算（prompt 注入天花板值）
-    第二段：TaskConstraints.resolve() 强制 clamp（真正的安全网）
+    第二段：WorkflowConstraints.resolve() 强制 clamp（真正的安全网）
 
     LLM 可能偶尔略超（如 max_dag_nodes=6 vs 上限=5），
     但 resolve() 保证最终值绝不超限。

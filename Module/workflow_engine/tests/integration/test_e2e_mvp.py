@@ -1,7 +1,7 @@
-"""TaskSystem MVP 端到端集成测试——真实 LLM + 真实工具。
+"""WorkflowEngine MVP 端到端集成测试——真实 LLM + 真实工具。
 
 验证完整链路：
-    DelegationPreparer → TaskSystem.submit() → SubAgent.run()
+    DelegationPreparer → WorkflowEngine.submit() → SubAgent.run()
     → Planner → Validator → Orchestrator → Executor → Evaluator → Mailbox
 
 每步打印 LLM prompt/response + 耗时，最后输出时间线总览。
@@ -31,10 +31,10 @@ from Module.workflow_engine.schema import (
     Tool,
     UserProfile,
 )
-from Module.workflow_engine.task_system import TaskSystem
+from Module.workflow_engine.workflow_engine import WorkflowEngine
 from core.tools.time.plugin import TimePlugin
 from core.tools.web.plugin import WebSearchPlugin
-from Module.workflow_engine.mailbox import TaskMailbox
+from Module.workflow_engine.mailbox import WorkflowMailbox
 from Module.workflow_engine.tests.helpers import (
     build_test_task_system,
     get_tools_from_manager,
@@ -231,14 +231,14 @@ def _wrap_llm_client(llm: AsyncOpenAI, label: str = "LLM") -> AsyncOpenAI:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TaskSystem 状态快照
+# WorkflowEngine 状态快照
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Token 汇总输出
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _log_token_summary(ts: TaskSystem, task_id: Any, event_data: dict | None = None) -> None:
+def _log_token_summary(ts: WorkflowEngine, task_id: Any, event_data: dict | None = None) -> None:
     """打印任务的 token 消耗汇总。
 
     优先从 COMPLETED 事件 data 中读取（SubAgent 清理后仍可用），
@@ -252,7 +252,7 @@ def _log_token_summary(ts: TaskSystem, task_id: Any, event_data: dict | None = N
         token_usage = event_data.get("token_usage")
         token_total = event_data.get("token_total", 0)
 
-    # 回退：从 TaskSystem 查询（仅任务尚未被 finally 清理时有效）
+    # 回退：从 WorkflowEngine 查询（仅任务尚未被 finally 清理时有效）
     if not token_usage:
         usage = ts.get_token_usage(task_id)
         if usage is not None and usage.components:
@@ -325,7 +325,7 @@ def _show_event_summary(event_type: str, data: dict, event_count: int) -> None:
 
 
 async def _run_task(
-    ts: TaskSystem,
+    ts: WorkflowEngine,
     tools: list[Tool],
     intent: str,
     hints: str | None,
@@ -375,10 +375,10 @@ async def _run_task(
     _log_ok("委派上下文就绪")
     _record_timeline("1.DelegationPreparer", _elapsed() - step_start)
 
-    # ── Step 2: TaskSystem.submit ──
-    step_start = _log_step(2, TOTAL_STEPS, "TaskSystem.submit() → 启动 SubAgent")
+    # ── Step 2: WorkflowEngine.submit ──
+    step_start = _log_step(2, TOTAL_STEPS, "WorkflowEngine.submit() → 启动 SubAgent")
     submit_result = await ts.submit(result.context)
-    assert isinstance(submit_result, TaskMailbox), f"submit 失败: {submit_result}"
+    assert isinstance(submit_result, WorkflowMailbox), f"submit 失败: {submit_result}"
     
     mailbox = submit_result
     task_id = mailbox.task_id
@@ -481,7 +481,7 @@ async def _run_task(
 async def test_e2e_simple_query():
     """端到端：简单单步任务——"现在几点了"。
 
-    链路: DelegationPreparer → TaskSystem.submit() → SubAgent.run()
+    链路: DelegationPreparer → WorkflowEngine.submit() → SubAgent.run()
           → Planner(1 node) → Validator → Orchestrator → Executor(get_time)
           → Evaluator → Mailbox(COMPLETED)
 
@@ -496,7 +496,7 @@ async def test_e2e_simple_query():
     print(f"#  E2E TEST: simple_query — \"现在几点了\"")
     print(f"{'#' * 70}")
 
-    step_start = _log_step(0, 6, "初始化 TaskSystem + ToolManager")
+    step_start = _log_step(0, 6, "初始化 WorkflowEngine + ToolManager")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
@@ -504,7 +504,7 @@ async def test_e2e_simple_query():
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
-    _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
+    _log_ok(f"WorkflowEngine 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
     await _run_task(
@@ -536,7 +536,7 @@ async def test_e2e_multi_step_success():
     print(f"#  E2E TEST: multi_step_success — \"搜索 AI 安全最新进展\"")
     print(f"{'#' * 70}")
 
-    step_start = _log_step(0, 6, "初始化 TaskSystem + ToolManager")
+    step_start = _log_step(0, 6, "初始化 WorkflowEngine + ToolManager")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
@@ -544,7 +544,7 @@ async def test_e2e_multi_step_success():
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
-    _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
+    _log_ok(f"WorkflowEngine 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
     await _run_task(
@@ -574,7 +574,7 @@ async def test_e2e_search_and_report():
     print(f"#  E2E TEST: search_and_report — \"搜索 AI 安全 + 整理摘要\"")
     print(f"{'#' * 70}")
 
-    step_start = _log_step(0, 6, "初始化 TaskSystem + ToolManager")
+    step_start = _log_step(0, 6, "初始化 WorkflowEngine + ToolManager")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
@@ -582,7 +582,7 @@ async def test_e2e_search_and_report():
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
-    _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
+    _log_ok(f"WorkflowEngine 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
     await _run_task(
@@ -615,7 +615,7 @@ async def test_e2e_replan_recovery():
     print(f"{'#' * 70}")
 
     # ── 使用完整工具集（get_time + 真实 WebSearchPlugin）──
-    step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
+    step_start = _log_step(0, 6, "初始化 WorkflowEngine（get_time + web_search）")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
@@ -623,7 +623,7 @@ async def test_e2e_replan_recovery():
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
-    _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
+    _log_ok(f"WorkflowEngine 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
     # ── 单步骤搜索任务——简单但依赖 web_search ──
@@ -659,10 +659,10 @@ async def test_e2e_replan_recovery():
     _log_ok("委派上下文就绪")
     _record_timeline("1.DelegationPreparer", _elapsed() - step_start)
 
-    # ── Step 2: TaskSystem.submit ──
-    step_start = _log_step(2, 6, "TaskSystem.submit() → 启动 SubAgent")
+    # ── Step 2: WorkflowEngine.submit ──
+    step_start = _log_step(2, 6, "WorkflowEngine.submit() → 启动 SubAgent")
     submit_result = await ts.submit(result.context)
-    assert isinstance(submit_result, TaskMailbox), f"submit 失败: {submit_result}"
+    assert isinstance(submit_result, WorkflowMailbox), f"submit 失败: {submit_result}"
 
     mailbox = submit_result
     task_id = mailbox.task_id
@@ -774,7 +774,7 @@ async def test_e2e_llm_direct_execution():
     print(f"#  E2E TEST: llm_direct_execution — \"搜索 AI 安全 + 汇总报告\"")
     print(f"{'#' * 70}")
 
-    step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
+    step_start = _log_step(0, 6, "初始化 WorkflowEngine（get_time + web_search）")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
@@ -782,7 +782,7 @@ async def test_e2e_llm_direct_execution():
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
-    _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
+    _log_ok(f"WorkflowEngine 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
     await _run_task(
@@ -813,7 +813,7 @@ async def test_e2e_cancel():
     print(f"#  E2E TEST: cancel — 运行时取消 → CANCELLED")
     print(f"{'#' * 70}")
 
-    step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
+    step_start = _log_step(0, 6, "初始化 WorkflowEngine（get_time + web_search）")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
@@ -821,7 +821,7 @@ async def test_e2e_cancel():
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
-    _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
+    _log_ok(f"WorkflowEngine 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
     step_start = _log_step(1, 6, "DelegationPreparer → submit → 等首个事件")
@@ -842,7 +842,7 @@ async def test_e2e_cancel():
     assert result.context is not None
 
     submit_result = await ts.submit(result.context)
-    assert isinstance(submit_result, TaskMailbox)
+    assert isinstance(submit_result, WorkflowMailbox)
     mailbox = submit_result
     task_id = mailbox.task_id
     _log_ok(f"task_id={task_id}, 等待首个 PROGRESS")
@@ -929,7 +929,7 @@ async def test_e2e_pause_resume():
     print(f"#  E2E TEST: pause_resume — 暂停 → 恢复 → 完成")
     print(f"{'#' * 70}")
 
-    step_start = _log_step(0, 6, "初始化 TaskSystem（get_time + web_search）")
+    step_start = _log_step(0, 6, "初始化 WorkflowEngine（get_time + web_search）")
     ts = await build_test_task_system(
         plugins=[TimePlugin, WebSearchPlugin],
         use_mocks=False,
@@ -937,7 +937,7 @@ async def test_e2e_pause_resume():
     )
     ts._infra.llm = _wrap_llm_client(ts._infra.llm)
     tools = get_tools_from_manager(ts._infra.tool_registry)  # type: ignore[reportArgumentType]
-    _log_ok(f"TaskSystem 就绪，工具: {[t.name for t in tools]}")
+    _log_ok(f"WorkflowEngine 就绪，工具: {[t.name for t in tools]}")
     _record_timeline("0.初始化", _elapsed() - step_start)
 
     step_start = _log_step(1, 6, "DelegationPreparer → submit → 等首个事件")
@@ -957,7 +957,7 @@ async def test_e2e_pause_resume():
     assert result.context is not None
 
     submit_result = await ts.submit(result.context)
-    assert isinstance(submit_result, TaskMailbox)
+    assert isinstance(submit_result, WorkflowMailbox)
     mailbox = submit_result
     task_id = mailbox.task_id
     _log_ok(f"task_id={task_id}, 等待首个 PROGRESS")
@@ -1011,8 +1011,8 @@ async def test_e2e_pause_resume():
     # resume
     step_start = _log_step(3, 6, "resume → 等 COMPLETED")
     resume_result = await ts.resume(task_id)
-    assert isinstance(resume_result, TaskMailbox)
-    _log_ok("resume() 返回 TaskMailbox")
+    assert isinstance(resume_result, WorkflowMailbox)
+    _log_ok("resume() 返回 WorkflowMailbox")
 
     event = None
     deadline = time.monotonic() + 120.0

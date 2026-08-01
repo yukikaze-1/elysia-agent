@@ -8,25 +8,25 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from Module.workflow_engine.schema import (
     DelegationContext,
     ExecutionState,
-    TaskEventType,
-    TaskState,
-    TaskStatus,
+    WorkflowEventType,
+    WorkflowState,
+    WorkflowStatus,
     now_iso,
 )
 
 if TYPE_CHECKING:
     from Module.workflow_engine.core.graph import PlanGraph
     from Module.workflow_engine.core.orchestrator import Orchestrator
-    from Module.workflow_engine.mailbox import TaskMailbox
+    from Module.workflow_engine.mailbox import WorkflowMailbox
 
 logger = logging.getLogger(__name__)
 
 
 async def execute_loop(
     orchestrator: Orchestrator,
-    task_state: TaskState,
+    task_state: WorkflowState,
     graph: PlanGraph,
-    mailbox: TaskMailbox,
+    mailbox: WorkflowMailbox,
     context: DelegationContext,
     resume_from: ExecutionState | None,
     dispatch_fn: Callable[..., Awaitable[tuple[bool, ExecutionState | None]]],
@@ -62,10 +62,10 @@ async def execute_loop(
         if orchestrator._exec_state is not None:
             if getattr(orchestrator._exec_state,
                        "cancel_requested", False) is True:
-                task_state.status = TaskStatus.CANCELLED
+                task_state.status = WorkflowStatus.CANCELLED
                 task_state.updated_at = now_iso()
                 await push_mailbox_fn(
-                    mailbox, TaskEventType.CANCELLED, {
+                    mailbox, WorkflowEventType.CANCELLED, {
                         "task_id": str(task_state.task_id),
                         "reason": "用户取消",
                     },
@@ -73,10 +73,10 @@ async def execute_loop(
                 return
             if getattr(orchestrator._exec_state,
                        "pause_requested", False) is True:
-                task_state.status = TaskStatus.PAUSED
+                task_state.status = WorkflowStatus.PAUSED
                 task_state.updated_at = now_iso()
                 await push_mailbox_fn(
-                    mailbox, TaskEventType.PAUSED, {
+                    mailbox, WorkflowEventType.PAUSED, {
                         "task_id": str(task_state.task_id),
                         "message": "任务已暂停",
                     },

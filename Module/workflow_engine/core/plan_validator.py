@@ -17,7 +17,7 @@ from Module.workflow_engine.schema import (
     ArtifactId,
     ConstraintConfig,
     Plan,
-    TaskConstraints,
+    WorkflowConstraints,
     ValidationAction,
     ValidationIssue,
     ValidationIssueType,
@@ -44,7 +44,7 @@ class PlanValidator:
         B. 业务规则（本模块）:
             6. node_id 唯一性（显式复检，提供友好错误信息）
             7. output_contract 合法性（required 节点必须有 description 或 json_schema）
-            8. 节点数是否超过有效 max_dag_nodes（经 TaskConstraints.resolve 合并）
+            8. 节点数是否超过有效 max_dag_nodes（经 WorkflowConstraints.resolve 合并）
         ⚠️ 待 v2 补充:
             - 工具名检查（需 DAGNode 有 tool_name 字段）
             - 高风险工具确认标记（需 RBAC 集成）
@@ -54,7 +54,7 @@ class PlanValidator:
         self,
         plan: Plan,
         global_constraints: ConstraintConfig,
-        task_constraints: TaskConstraints,
+        task_constraints: WorkflowConstraints,
     ) -> tuple[ValidationResult, PlanGraph]:
         """校验 DAG 合法性，同时返回构建好的 PlanGraph。
 
@@ -166,7 +166,7 @@ class PlanValidator:
                         message=f"节点 {node.node_id} 的 output_contract.json_schema 缺少 'type' 字段",
                     ))
 
-        # 8. 节点数检查 —— max_nodes 已通过 TaskConstraints.resolve() 合并全局与任务级约束
+        # 8. 节点数检查 —— max_nodes 已通过 WorkflowConstraints.resolve() 合并全局与任务级约束
         if len(plan.dag.nodes) > max_nodes:
             issues.append(ValidationIssue(
                 type=ValidationIssueType.MAX_NODES_EXCEEDED,

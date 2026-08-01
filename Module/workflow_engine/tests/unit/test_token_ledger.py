@@ -1,11 +1,11 @@
-"""TokenLedger 单元测试——write-through 到 TaskState 的 token 账本。"""
+"""TokenLedger 单元测试——write-through 到 WorkflowState 的 token 账本。"""
 import pytest
 from Module.workflow_engine.schema import (
     NodeId,
     SessionId,
-    TaskId,
-    TaskState,
-    TaskStatus,
+    WorkflowId,
+    WorkflowState,
+    WorkflowStatus,
     TokenComponentType,
     TokenComponent,
     TokenUsage,
@@ -15,10 +15,10 @@ from Module.workflow_engine.token_ledger import TokenLedger
 pytestmark = pytest.mark.unit
 
 
-def _make_task_state(task_id: str = "test-001") -> TaskState:
-    return TaskState(
-        task_id=TaskId(task_id),
-        status=TaskStatus.PENDING,
+def _make_task_state(task_id: str = "test-001") -> WorkflowState:
+    return WorkflowState(
+        task_id=WorkflowId(task_id),
+        status=WorkflowStatus.PENDING,
         session_id=SessionId("sess-1"),
     )
 
@@ -72,7 +72,7 @@ def test_to_token_usage():
     ledger.record(TokenComponentType.PLANNER, 10, 2, "m1")
     usage = ledger.to_token_usage()
     assert isinstance(usage, TokenUsage)
-    assert usage.task_id == TaskId("task-42")
+    assert usage.task_id == WorkflowId("task-42")
     assert len(usage.components) == 1
     assert usage.components[0].total_tokens == 12
 
