@@ -54,16 +54,25 @@ grep -rl "Module\.task_system" Module/workflow_engine core Module --include="*.p
 # Makefile --ignore
 sed -i 's#--ignore=Module/task_system/tests#--ignore=Module/workflow_engine/tests#' Makefile
 
-# 文档（README/CLAUDE.md/architecture 里的路径引用）
-grep -rl "Module/task_system\|Module\.task_system" docs CLAUDE.md README.md Module/workflow_engine/README.md core/README.md --include="*.md" 2>/dev/null | xargs -r sed -i 's#Module/task_system#Module/workflow_engine#g; s#Module\.task_system#Module.workflow_engine#g'
+# 文档（README/CLAUDE.md/architecture/Module-README 里的路径引用）
+# ⚠️ 排除：本计划文件、docs/review/*、docs/completed/*、docs/superpowers/archive/*——历史记录不改写
+grep -rl "Module/task_system\|Module\.task_system" docs CLAUDE.md README.md Module/README.md Module/workflow_engine/README.md core/README.md --include="*.md" 2>/dev/null \
+  | grep -vE "superpowers/plans/|docs/review/|docs/completed/|docs/superpowers/archive/" \
+  | xargs -r sed -i 's#Module/task_system#Module/workflow_engine#g; s#Module\.task_system#Module.workflow_engine#g'
 ```
 
-- [ ] **Step 4: 验证包路径 import 无误**
+> ⚠️ **文档 sed 三步防护**：① 排除本计划文件（`superpowers/plans/`）——它含 `Module/task_system` 的 sed 模式与 `git mv` 命令，被改写会破坏自身；② 排除 `docs/review/`、`docs/completed/`、`docs/superpowers/archive/`——历史记录按 Task 4 约定不改写；③ sed 后遗留的**裸相对链接**（如 `task_system/docs/`、`task_system/tests/`，无 `Module/` 前缀）不匹配任何模式，在 Step 4 中人工改 `workflow_engine/...`。
+
+- [ ] **Step 4: 验证包路径 import + 修复裸相对链接**
 
 ```bash
 # 收集阶段：不应再有任何 Module.task_system 引用
 grep -rn "Module\.task_system\|Module/task_system" Module/workflow_engine core Module --include="*.py" --exclude-dir=__pycache__ | head
 # 期望：空输出（task_system 目录自身已改名，只剩 workflow_engine）
+
+# 文档里的裸相对链接（无 Module/ 前缀）：人工改为 workflow_engine/...
+grep -rn "task_system/" README.md Module/README.md CLAUDE.md core/README.md docs/architecture.md --include="*.md" 2>/dev/null | grep -v "docs/review/\|docs/completed/\|superpowers/" | head
+# 逐个把 `task_system/docs/`、`task_system/tests/` 等改为 `workflow_engine/docs/`、`workflow_engine/tests/`
 ```
 
 - [ ] **Step 5: 跑 workflow_engine 模块测试（标识符名未变，应全绿）**
@@ -114,13 +123,23 @@ s/\bTaskResult\b/WorkflowResult/g;
 ' {} \;
 ```
 
-- [ ] **Step 2: 主文件重命名**
+- [ ] **Step 2: 主文件重命名 + 子模块路径改写**
 
 ```bash
 git mv Module/workflow_engine/task_system.py Module/workflow_engine/workflow_engine.py
+
+# ⚠️ 关键：改文件名的同时改写 `Module.workflow_engine.task_system` 子模块路径
+#（__init__.py、debug_api.py、core 消费者都 import 它；不改则 import 直接 ModuleNotFoundError）
+grep -rl "Module\.workflow_engine\.task_system" Module/workflow_engine core --include="*.py" --exclude-dir=__pycache__ \
+  | xargs -r sed -i 's#Module\.workflow_engine\.task_system#Module.workflow_engine.workflow_engine#g'
 ```
 
 - [ ] **Step 3: 验证模块内无 Task* 残留（排除注释允许）**
+
+```bash
+# 先确认子模块路径改写生效：import Module.workflow_engine 不再报 ModuleNotFoundError
+conda run -n Elysia python -c "import Module.workflow_engine.workflow_engine" 2>&1 | head -3
+```
 
 ```bash
 grep -rnE "\bTask[A-Z]" Module/workflow_engine --include="*.py" --exclude-dir=__pycache__ | grep -v "TaskSummaryStore\|TaskScheduler\|TaskResultData" | head
@@ -232,27 +251,45 @@ echo "Phase 1 完成：rename 全绿"
 
 **Interfaces:**
 - Consumes: Task 2 的 `Workflow*` 命名
-- Produces: `Module.workflow_contract` 导出以下跨边类型（从 `Module/workflow_engine/schema/protocol.py`、`schema/types.py`、`infra.py` **原样搬移**类定义）：
+- Produces: `Module.workflow_contract` 导出以下跨边类型（从 `Module/workflow_engine/schema/protocol.py`、`schema/types.py`、`schema/output.py`、`infra.py` **原样搬移**类定义；**`Tool` 不在契约层**，直接归位 Module.tool）：
 
 ```python
 # Module/workflow_contract/__init__.py 导出清单
 DelegationContext, DelegationResult, DelegationStatus,
 SubmitError, HITLData, ConstraintConfig, ApprovalId,
 WorkflowId, WorkflowStatus, WorkflowEvent, WorkflowEventType, WorkflowConstraints,
-SessionId, Tool, HITLNotifier, AgentInfra
+SessionId, HITLNotifier, AgentInfra
 ```
 
-> **字段类型同层解析**：`DelegationContext` 的 `tools: list[Tool]`、`task_constraints: WorkflowConstraints`、`session_id: SessionId` 三字段类型必须一并迁入契约层（`Tool` 为轻量投影，阶段 3 Task 8 再归位 Module.tool）。
+> **字段类型同层解析**：`DelegationContext` 三字段——`tools: list[Tool]`（**先归位 Module.tool，契约层从 `Module.tool.tool_descriptor` 引用**）、`task_constraints: WorkflowConstraints`（契约层）、`session_id: SessionId`（契约层）——全部在契约层或 Module.tool 可解析，不产生对 core/引擎内部的引用。
 
-- [ ] **Step 1: 搬移跨边类型定义（从源文件原样复制，非重写）**
+- [ ] **Step 1a: Tool 投影直接归位 Module.tool（契约层 DelegationContext 从之引用）**
 
-源 → 目标：
-- `Module/workflow_engine/schema/protocol.py` 中的 `DelegationContext`、`DelegationResult`、`DelegationStatus`、`SubmitError`、`HITLData`、`ConstraintConfig`、`ApprovalId`、`Tool`、`WorkflowConstraints`（原 `TaskConstraints`）→ `Module/workflow_contract/schema.py`
-- `Module/workflow_engine/schema/types.py` 中的 `SessionId`、`WorkflowId`（原 `TaskId`）、`WorkflowStatus`（原 `TaskStatus`）、`WorkflowEvent`、`WorkflowEventType`（原 `TaskEvent(Event)`）→ `Module/workflow_contract/schema.py`
+`Module/workflow_engine/schema/protocol.py` 的 `Tool` 轻量投影（`name: str`、`description: str = ""`、`capabilities: list[str]`）原样复制到 `Module/tool/tool_descriptor.py`。`Module/tool/__init__.py` 导出 `Tool`。契约层 `schema.py` 的 `DelegationContext.tools: list[Tool]` 改为 `from Module.tool.tool_descriptor import Tool`。**`Tool` 不进契约层**——这是允许方向（Module.tool 属 workflow_engine 世界）。
+
+- [ ] **Step 1b: 搬移跨边类型定义（从源文件原样复制，非重写）**
+
+源 → 目标（**源路径已核对实际位置**）：
+- `Module/workflow_engine/schema/protocol.py` 中的 `DelegationContext`、`DelegationResult`、`DelegationStatus`、`SubmitError`、`HITLData`、`ConstraintConfig`、`WorkflowConstraints`（原 `TaskConstraints`）→ `Module/workflow_contract/schema.py`
+- `Module/workflow_engine/schema/types.py` 中的 `ApprovalId`（`types.py:95`，NewType）、`SessionId`、`WorkflowId`（原 `TaskId`）、`WorkflowStatus`（原 `TaskStatus`，`types.py:127`）→ `Module/workflow_contract/schema.py`
+- `Module/workflow_engine/schema/output.py` 中的 `WorkflowEvent`、`WorkflowEventType`（原 `TaskEvent`/`TaskEventType`，`output.py:29,39`，`TaskEvent(BaseModel)` 无 Event 基类）→ `Module/workflow_contract/schema.py`
 - `Module/workflow_engine/protocol.py` 中的 `HITLNotifier`（ABC）→ `Module/workflow_contract/schema.py`
 - `Module/workflow_engine/infra.py` 整个 `AgentInfra` dataclass → `Module/workflow_contract/infra.py`
 
-搬移后契约层不得引用 `core.*`，不得引用 `Module.workflow_engine`；引用的枚举（`ReturnMode` 等）一并迁入。
+**契约闭合规则**：搬移后契约层不得引用 `core.*`，不得引用 `Module.workflow_engine`。凡被搬移类型引用但未在清单中的类型/枚举（`ReturnMode`、`AgentId`、`NodeId` 等）**一并迁入或改引用**。搬移完成用自检证明闭合：
+
+```bash
+# 契约层自包含验证：逐类 import + 构造，确保无缺失引用
+conda run -n Elysia python -c "
+import Module.workflow_contract as wc
+for n in ['DelegationContext','DelegationResult','DelegationStatus','SubmitError','HITLData','ConstraintConfig','WorkflowId','WorkflowStatus','WorkflowEvent','WorkflowEventType','WorkflowConstraints','SessionId','ApprovalId','HITLNotifier','AgentInfra']:
+    assert hasattr(wc, n), f'契约层缺 {n}'
+from Module.tool.tool_descriptor import Tool  # Tool 在 Module.tool
+print('契约层闭合 OK')
+"
+```
+
+**SessionId 定案**：`SessionId` 契约层拥有（NewType，str）。`core/schema/types.py` 的 SessionId 改为 `from Module.workflow_contract.schema import SessionId` 重导出（core 侧公开 API 不变，`core/schema → Module.workflow_contract` 是允许方向，契约层不反引 core）。
 
 - [ ] **Step 2: 更新 workflow_engine 内部引用**
 
@@ -269,7 +306,7 @@ pytestmark = pytest.mark.unit
 
 from Module.workflow_contract import (
     DelegationContext, DelegationResult, DelegationStatus,
-    ConstraintConfig, SessionId, WorkflowId, WorkflowStatus,
+    SessionId, WorkflowId, WorkflowStatus, WorkflowConstraints,
 )
 
 
@@ -290,7 +327,7 @@ def test_delegation_context_roundtrip():
     ctx = DelegationContext(
         intent="查天气",
         tools=[{"name": "web_search", "description": "", "capabilities": []}],
-        task_constraints=ConstraintConfig(),
+        task_constraints=WorkflowConstraints(),
         session_id=SessionId("s-1"),
     )
     # pydantic 校验 + 序列化往返
@@ -299,7 +336,7 @@ def test_delegation_context_roundtrip():
     assert again.session_id == "s-1"
 ```
 
-> 若 `Tool` 投影字段形状与上例不同，按 `Module/workflow_engine/schema/protocol.py` 中 `Tool` 的实际字段调整测试构造。
+> ⚠️ `DelegationContext.task_constraints` 的字段类型是 `TaskConstraints`（→ `WorkflowConstraints`），**不是** `ConstraintConfig`（后者是全局天花板约束）。若 `Tool` 投影字段形状与上例不同，按 `Module/workflow_engine/schema/protocol.py` 中 `Tool` 的实际字段调整测试构造。
 
 - [ ] **Step 4: 跑契约层 + workflow_engine 测试**
 
@@ -328,22 +365,39 @@ git add -A && git commit -m "feat: 新建 Module/workflow_contract 契约层（�
 - Consumes: Task 5 的契约层
 - Produces: `Module.workflow_contract.utils` 导出 `format_tools(tools, *, include_capabilities=True)` 与 `strip_markdown_fence(text)`
 
-- [ ] **Step 1: 搬移两函数**
+- [ ] **Step 1: 搬移纯函数到契约层 utils（3 个）**
 
-把 `Module/workflow_engine/utils.py` 的 `strip_markdown_fence(text: str) -> str` 与 `format_tools(tools: list[Tool], *, include_capabilities: bool = True) -> str` 原样复制到 `Module/workflow_contract/utils.py`（`Tool` 从 `Module.workflow_contract.schema` import）。`workflow_contract/__init__.py` 加 `from .utils import format_tools, strip_markdown_fence`。
+把以下无状态纯函数原样复制到 `Module/workflow_contract/utils.py`：
+- `Module/workflow_engine/utils.py` 的 `strip_markdown_fence(text: str) -> str`
+- `Module/workflow_engine/utils.py` 的 `format_tools(tools: list[Tool], *, include_capabilities: bool = True) -> str`（`Tool` 从 `Module.workflow_contract.schema` import）
+- `Module/workflow_engine/schema/types.py:56` 的 `parse_iso(ts: str) -> datetime`（**定案**：随迁契约层 utils——纯函数，core 侧 plugin.py 与编排层共用；`schema/__init__.py` 的『内部工具不导出』注释相应删除 parse_iso 条目）
 
-- [ ] **Step 2: 更新两处引用方**
+`workflow_contract/__init__.py` 加 `from .utils import format_tools, strip_markdown_fence, parse_iso`。
+
+- [ ] **Step 2: 更新全部引用方（含测试文件）**
 
 ```bash
-# delegation_preparer（迁 core 前的过渡位置）+ 引擎侧 3 文件
+# ⚠️ 6 个文件都要改：delegation_preparer + 引擎侧 3 文件 + 2 个测试文件
+# （test_planner.py:16、test_delegation_preparer.py:32 也顶层 import 这两个函数）
 sed -i 's#from Module\.workflow_engine\.utils import #from Module.workflow_contract.utils import #' \
   Module/workflow_engine/delegation_preparer.py \
   Module/workflow_engine/core/planner/planner.py \
   Module/workflow_engine/core/planner/replanner.py \
-  Module/workflow_engine/core/planner/parser.py
-# 删除 workflow_engine/utils.py（若模块内无其他使用者）
-grep -rn "workflow_engine.utils\|workflow_engine import utils" Module/workflow_engine --include="*.py" --exclude-dir=__pycache__ | grep -v delegation_preparer | grep -v planner | grep -v replanner | grep -v parser
-# 上面 grep 若为空 → git rm Module/workflow_engine/utils.py
+  Module/workflow_engine/core/planner/parser.py \
+  Module/workflow_engine/tests/unit/test_planner.py \
+  Module/workflow_engine/tests/unit/test_delegation_preparer.py
+
+# parse_iso：query.py 的多行 schema import 里移出 parse_iso，改单行 import 契约层
+#（query.py:30 在 `from Module.workflow_engine.schema import (..., parse_iso, ...)` 中）
+# 手工把 query.py 的 parse_iso 从 schema import 移到：from Module.workflow_contract.utils import parse_iso
+# schema/__init__.py:26 移除 parse_iso 导出；core 侧 plugin.py 在 Task 7 改
+
+# ⚠️ 删除前检查：不得用 -v planner / -v delegation_preparer 子串过滤——
+#    那会把 test_planner.py / test_delegation_preparer.py 的命中吞掉造成假空。
+#    只匹配 workflow_engine.utils（契约层 workflow_contract.utils 不命中）。
+grep -rn "workflow_engine\.utils" Module/workflow_engine --include="*.py" --exclude-dir=__pycache__
+# 期望：空输出 → 才可删除 utils.py
+git rm Module/workflow_engine/utils.py
 ```
 
 - [ ] **Step 3: 跑 workflow_engine 模块测试**
@@ -370,16 +424,35 @@ git add -A && git commit -m "refactor: format_tools/strip_markdown_fence 迁契�
 - Consumes: Task 5/6 的 `Module.workflow_contract`
 - Produces: 外部消费者全部从 `Module.workflow_contract` 引用契约类型，`make test-quick` 全绿
 
-- [ ] **Step 1: 消费者 import 改指向契约层**
+- [ ] **Step 1: 消费者 import 精确改写（逐文件，深路径覆盖）**
+
+> ⚠️ **不做整文件盲 sed**——`schema` 里还有 `UserProfile`（Task 8 归位 core，Task 7 期间仍可从 workflow_engine schema import）与引擎内部类型。盲目整体替换会指向不存在的契约导出。
 
 ```bash
-# 逐文件：from Module.workflow_engine.schema import X → from Module.workflow_contract import X
-# 涉及类型：DelegationContext/Result/Status, SubmitError, UserProfile(阶段3迁), Tool(阶段3迁),
-#           SessionId, WorkflowId, WorkflowStatus, ConstraintConfig, HITLData, ApprovalId, parse_iso
-grep -rln "from Module\.workflow_engine\.schema import" core/ --include="*.py" --exclude-dir=__pycache__ | xargs -r sed -i 's#from Module\.workflow_engine\.schema import #from Module.workflow_contract import #g'
+# ① core/cognitive/loop.py：深路径 schema.types → 契约层
+sed -i 's#from Module\.workflow_engine\.schema\.types import WorkflowId#from Module.workflow_contract import WorkflowId#' core/cognitive/loop.py
+
+# ② core/cognitive/tools.py：深路径 SessionId + 浅层 SubmitError + Tool→Module.tool
+sed -i 's#from Module\.workflow_engine\.schema\.types import SessionId as _SessionId#from Module.workflow_contract import SessionId as _SessionId#' core/cognitive/tools.py
+sed -i 's#from Module\.workflow_engine\.schema import SubmitError#from Module.workflow_contract import SubmitError#' core/cognitive/tools.py
+sed -i 's#from Module\.workflow_engine\.schema import Tool#from Module.tool.tool_descriptor import Tool#' core/cognitive/tools.py
+
+# ③ core/agent/_lifecycle_task_system.py：浅层 + 深路径（schema.protocol / schema.types）
+sed -i 's#from Module\.workflow_engine\.schema import ConstraintConfig#from Module.workflow_contract import ConstraintConfig#' core/agent/_lifecycle_task_system.py
+sed -i 's#from Module\.workflow_engine\.schema\.protocol import HITLData#from Module.workflow_contract import HITLData#' core/agent/_lifecycle_task_system.py
+sed -i 's#from Module\.workflow_engine\.schema\.types import ApprovalId#from Module.workflow_contract import ApprovalId#' core/agent/_lifecycle_task_system.py
+
+# ④ core/tools/runtime_config/plugin.py：parse_iso → 契约层 utils（Task 6 已迁）
+sed -i 's#from Module\.workflow_engine\.schema import parse_iso#from Module.workflow_contract.utils import parse_iso#' core/tools/runtime_config/plugin.py
+
+# ⑤ 测试文件：test_phase3 / test_types 只 import 契约类型，可整文件替换
+sed -i 's#from Module\.workflow_engine\.schema import#from Module.workflow_contract import#g' core/tests/test_phase3.py core/agent/tests/test_types.py
+
+# ⑥ 不动：UserProfile 的三处 import（loop.py:44 / tools.py:15,30 / _lifecycle:88）——
+#    Task 8 归位 core/cognitive/user_profile.py 时统一改
 ```
 
-> 逐个文件核对：`_lifecycle_task_system.py` 的 `from Module.workflow_engine.schema.protocol import HITLData`、`from Module.workflow_engine.schema.types import ApprovalId` 等深路径 import 也改为 `from Module.workflow_contract import ...`。`parse_iso` 若在契约层未定义，从 `Module.workflow_engine.schema` 保留的 utils 处引用或一并迁契约层。
+> `HITLData`/`ApprovalId`/`ConstraintConfig`/`WorkflowId`/`SessionId` 等类型在 Task 5 已从 workflow_engine schema 删走，深路径与浅层 import 必须在此改写；`UserProfile` 未迁走，此刻仍可用。
 
 - [ ] **Step 2: 全量测试**
 
@@ -388,11 +461,12 @@ make test-quick
 # 期望：全绿
 ```
 
-- [ ] **Step 3: 阶段 2 验收——消费者不再 import workflow_engine 的 schema**
+- [ ] **Step 3: 阶段 2 验收——消费者不再 import workflow_engine 的 schema（UserProfile 除外）**
 
 ```bash
-grep -rn "from Module\.workflow_engine\.schema" core/ --include="*.py" --exclude-dir=__pycache__ | head
-# 期望：空（契约类型全部经 Module.workflow_contract）
+grep -rn "from Module\.workflow_engine\.schema" core/ --include="*.py" --exclude-dir=__pycache__
+# 期望：仅剩 UserProfile 的三处 import（loop.py:44 / tools.py:15,30 / _lifecycle:88）——
+#       契约类型已全部经 Module.workflow_contract / Module.tool / contract.utils
 ```
 
 - [ ] **Step 4: Commit**
@@ -405,38 +479,42 @@ git add -A && git commit -m "refactor: 消费者契约类型 import 迁移到 Mo
 
 ## Phase 3：剥皮 + 依赖反转
 
-### Task 8: UserProfile / Tool / RBACLevel 归位
+### Task 8: UserProfile / RBACLevel 归位（Tool 已在 Task 5 Step 1a 归位 Module.tool）
 
 **Files:**
-- Modify: `Module/workflow_contract/schema.py`（Tool 投影迁走，改从 Module.tool 引用）、`Module/tool/`（新增 `Tool` 投影模型 + RBACLevel 迁入）、`core/cognitive/`（UserProfile 落位）
+- Modify: `Module/workflow_engine/schema/types.py`（RBACLevel 迁出）、`Module/workflow_engine/schema/protocol.py`（UserProfile 迁出）、`Module/tool/`（RBACLevel 迁入）、`core/cognitive/user_profile.py`（UserProfile 落位，新建）、core 侧 4 个消费者
 
 **Interfaces:**
-- Consumes: Task 5 契约层、Task 7 消费者迁移
-- Produces: `Tool`（轻量投影）与 `RBACLevel` 在 `Module.tool`；`UserProfile` 在 core 侧
+- Consumes: Task 5（Tool→Module.tool 已完成）、Task 7 消费者迁移（UserProfile 三处 import 仍指 workflow_engine schema）
+- Produces: `RBACLevel` 在 `Module.tool`；`UserProfile` 在 `core/cognitive/user_profile.py`
 
-- [ ] **Step 1: Tool 投影归位 Module.tool**
+- [ ] **Step 1: RBACLevel 归位 Module.tool**
 
-在 `Module/tool/` 下新增 `tool_descriptor.py`（或并入 `Module/tool/protocol.py`），定义 `Tool` 轻量投影（字段从 `Module/workflow_contract/schema.py` 原 `Tool` 复制：`name: str`、`description: str = ""`、`capabilities: list[str]`）。契约层 `schema.py` 删除 `Tool` 定义，`DelegationContext.tools: list[Tool]` 改为 `from Module.tool.tool_descriptor import Tool`。**契约层 → Module.tool 引用是允许方向**（Module.tool 属 workflow_engine 世界）。
+`Module/workflow_engine/schema/types.py` 的 `RBACLevel` 枚举 → `Module/tool/`（建议 `Module/tool/capability.py` 或协议文件）。workflow_engine 内引用改为从 Module.tool import。
 
-- [ ] **Step 2: RBACLevel 归位 Module.tool**
+- [ ] **Step 2: UserProfile 归位 core**
 
-`Module/workflow_engine/schema/types.py` 的 `RBACLevel` 枚举 → `Module/tool/`（建议 `Module/tool/capability.py` 或协议文件），`workflow_engine` 与契约层改为从 Module.tool 引用。
+`Module/workflow_engine/schema/protocol.py` 的 `UserProfile` → 新建 `core/cognitive/user_profile.py`（CognitiveLoop 拥有；`model_config = {"extra": "allow"}` 占位语义保持）。**消费者三处 + 一处全部改向**：
 
-- [ ] **Step 3: UserProfile 归位 core**
+```bash
+sed -i 's#from Module\.workflow_engine\.schema import UserProfile#from core.cognitive.user_profile import UserProfile#' \
+  core/cognitive/loop.py core/cognitive/tools.py core/agent/_lifecycle_task_system.py
+# workflow_engine schema/protocol.py 删除 UserProfile 定义；schema/__init__.py 移除导出
+```
 
-`Module/workflow_contract/schema.py` 的 `UserProfile` → `core/cognitive/user_profile.py`（CognitiveLoop 拥有）。`Module/workflow_engine` 内若引用改为契约层引用或删除；契约层 `schema.py` 删除 UserProfile。core 侧消费者改为 `from core.cognitive.user_profile import UserProfile`。
+> ⚠️ 若 `Module/workflow_engine` 内部（如 delegation_preparer）仍引用 UserProfile，改从 `core.cognitive.user_profile` 引用或删——`delegation_preparer` 已在 Task 9 迁 core，届时自然同层。
 
-- [ ] **Step 4: 测试**
+- [ ] **Step 3: 测试**
 
 ```bash
 make test-quick
 conda run -n Elysia python -m pytest Module/workflow_engine/tests -m "unit or service" -q --tb=short
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add -A && git commit -m "refactor: Tool/RBACLevel 归位 Module.tool，UserProfile 归位 core"
+git add -A && git commit -m "refactor: RBACLevel 归位 Module.tool，UserProfile 归位 core"
 ```
 
 ---
@@ -588,9 +666,14 @@ grep -rn "from core\.\|import core\." Module/workflow_contract --include="*.py" 
 - [ ] **Step 3: workflow_engine 生产 import 白名单核对**
 
 ```bash
-grep -rhnE "^(from|import) (?!Module\.(workflow_engine|workflow_contract|tool|_common))" Module/workflow_engine --include="*.py" --exclude-dir=__pycache__ --exclude-dir=tests -P | grep -vE "^(from|import) (asyncio|dataclasses|enum|functools|logging|os|pathlib|re|time|typing|uuid|json|collections|itertools|math|abc|hashlib|copy|datetime|random|textwrap|inspect|io|sys|urllib|string|pydantic|httpx|openai|pymilvus|bson|motor)" | head
-# 期望：仅剩 stdlib/第三方/Module.* 白名单内引用
+# ⚠️ 不用 -n（会给每行加 N: 前缀，破坏后续过滤的 ^ 锚点）。列清单人工核对：
+grep -rhE "^(from|import) " Module/workflow_engine --include="*.py" --exclude-dir=__pycache__ --exclude-dir=tests | sort -u
 ```
+
+人工核对标准：
+- `Module` 前缀仅允许 `workflow_engine` / `workflow_contract` / `tool` / `_common`；
+- 其余为 stdlib 或通用第三方（pydantic/httpx/openai/pymilvus/motor/bson 等）；
+- **不应出现** `from core.` 或 `import core.`（Step 1 已保证，此处双重确认）。
 
 - [ ] **Step 4: 全量回归**
 
@@ -661,9 +744,11 @@ git add -A && git commit -m "feat: make test-workflow-engine 门禁 + workflow_e
 2. `core/README.md` — `_lifecycle_task_system.py` 描述、`core/cognitive/delegation.py`、`core/hitl.py` 新增。
 3. `docs/architecture.md` — task_system 架构段落改名 + 三区说明。
 4. 根 `README.md` — 模块列表 + 文档导航中 task_system 引用。
-5. `Module/workflow_engine/docs/migration.md` — 7 项归位状态更新（已迁移标记），SessionId 目标改为契约层。
-6. `todo.md` — 若有 task_system 相关项，更新路径。
-7. `docs/completed.md` — 归档本次分离（2026-08 追加）。
+5. **`Module/README.md`**（review 补：6+ 处活跃引用，Task 1 sed 未覆盖）— 模块概览表 `task_system/` 行（L24）、示例代码 `from Module.task_system import TaskSystem`（L252）、文档导航相对链接 `task_system/docs/`（L259，**裸相对链接需手工改** `workflow_engine/docs/`）、测试命令 `Module/task_system/tests/`（L280）。
+6. `Module/workflow_engine/docs/migration.md` — 7 项归位状态更新（已迁移标记），SessionId 目标改为契约层；**AgentInfra 行加覆盖说明**：归契约层，覆盖原「Core 共享基础设施层」建议（理由见 spec §6.3）。
+7. `Module/workflow_contract/README.md` 已在 Task 13 创建；**按 readme-conventions.md 要求在 `Module/README.md` 模块概览表加 `> 📖` 链接**注册 workflow_contract。
+8. `todo.md` — 若有 task_system 相关项，更新路径。
+9. `docs/completed.md` — 归档本次分离（2026-08 追加）。
 
 - [ ] **Step 2: 全量测试 + 门禁复核**
 
@@ -671,7 +756,10 @@ git add -A && git commit -m "feat: make test-workflow-engine 门禁 + workflow_e
 make test-quick
 make test-workflow-engine
 grep -rn "from core\.\|import core\." Module/workflow_engine Module/tool --include="*.py" --exclude-dir=__pycache__ --exclude-dir=tests
-grep -rn "Module\.task_system\|Module/task_system" --include="*.md" docs CLAUDE.md README.md | grep -v docs/completed | grep -v docs/review
+# 活跃文档零 task_system 残留（含 Module/README.md 与裸相对链接；排除历史归档与计划自身）
+grep -rn "Module\.task_system\|Module/task_system\|task_system/" --include="*.md" docs CLAUDE.md README.md Module/README.md \
+  | grep -vE "docs/completed|docs/review|superpowers/plans/"
+# 期望：空（或仅历史归档 docs/completed、docs/review 与计划文档）
 # 各门禁均符合预期
 ```
 
@@ -687,5 +775,7 @@ git add -A && git commit -m "docs: workflow_engine 分离收官文档同步"
 
 - **Spec 覆盖**：§4 改名（Task 1-4）、§5 契约层（Task 5-7）、§6 剥皮（Task 8-10）、§7 依赖反转（Task 11）、§8 阶段划分（Task 1-14 对应）、§9 测试策略（各任务 gate + Task 12/14）、§10 风险（test-normal 不兜底 → 阶段 1 用 test-quick + 模块测试；传递依赖 → Task 11；文档缺口 → Task 14）。
 - **无占位符**：重命名用精确 sed；类型搬移给源→目标映射；门禁命令完整。
-- **类型一致性**：15 标识符新名在 Task 2/3 与 spec §4.1 一致；契约类型清单 Task 5 与 spec §5.1 一致。
-- **已知留给实现者的判断点**：Tool 投影字段形状（Task 5 测试构造）、`parse_iso` 归属、DelegationPreparer 的注入接线细节（Task 9）——均在对应任务标注。
+- **类型一致性**：15 标识符新名在 Task 2/3 与 spec §4.1 一致；契约类型清单 Task 5 与 spec §5.1 一致；`WorkflowConstraints`（非 `ConstraintConfig`）在 Task 5 测试与契约导出一致。
+- **二轮 review 修复已合入**（10 项）：Task 2 子模块路径改写、Task 1 docs sed 防护、Task 5 源路径勘误 + 契约闭合 + SessionId 定案、Task 5 测试类型修正、Task 6 测试文件引用 + parse_iso 定案、Task 7 逐文件深路径精确改写 + UserProfile 延迟 + Tool 提前归位 Module.tool、Task 12 Step 3 白名单 grep 修正、Task 14 Module/README.md + workflow_contract 📖 + migration.md AgentInfra 覆盖。
+- **已定案（原判断点）**：`parse_iso` → 契约层 utils（Task 6）；`Tool` → Module.tool（Task 5 Step 1a，不经契约层）；`SessionId` → 契约层 + core 重导出（Task 5）。
+- **留给实现者的判断点**：`Tool` 投影实际字段形状（Task 5 测试构造，按 `Module/workflow_engine/schema/protocol.py` 现值）、DelegationPreparer 的注入接线细节（Task 9）——均在对应任务标注。
