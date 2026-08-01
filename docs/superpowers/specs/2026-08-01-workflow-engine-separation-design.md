@@ -179,14 +179,14 @@ core/ 世界                         契约层（独立包）                   
 |------|------|----------|------|
 | **1. 改名** | 目录/包/文件重命名 + 15 标识符 Task*→Workflow* + Makefile `--ignore` + 全量 import 更新 | 机械重构，行为零变化 | `make test-quick` 全绿 |
 | **2. 契约层提取** | 新建 `Module/workflow_contract/`（类型+协议+utils 纯函数 + AgentInfra），跨边类型迁入，外部消费者改 import | 边界真正成形 | `make test-quick` + 新增契约层单测 |
-| **3. 剥皮 + 依赖反转** | migration.md 7 项归位 + DelegationPreparer 迁 core + utils 迁契约层 + 消解 core.schema 反向依赖 + Module.tool 两处传递依赖消解（或显式 park）| workflow_engine 成干净叶子 | `make test-quick` + `grep -rn "from core\.\|import core\." Module/workflow_engine Module/tool --include="*.py"` 为空（不锚定行首，覆盖延迟 import；已 park 例外除外）|
+| **3. 剥皮 + 依赖反转** | migration.md 7 项归位 + DelegationPreparer 迁 core + utils 迁契约层 + 消解 core.schema 反向依赖 + Module.tool 两处传递依赖消解（或显式 park）| workflow_engine 成干净叶子 | `make test-quick` + `grep -rn "from core\.\|import core\." Module/workflow_engine Module/tool --include="*.py" --exclude-dir=tests` 输出**仅含文档化 park 条目**（不锚定行首，覆盖延迟 import）|
 | **4. 独立迭代基建** | `make test-workflow-engine`（unit-or-service 门禁）+ 独立 README + 独立 spec/plan 循环 + 全量文档更新 | 独立迭代成立 | 独立测试命令全绿 |
 
 ## 9. 测试策略
 
 - 每阶段后 `make test-quick` 全绿（阶段 1 后 test-quick 与现在一样不含 workflow_engine tests）。
 - 阶段 2 新增 `Module/workflow_contract/tests/`（契约类型序列化/校验单测，marker=unit）。
-- 阶段 3 后验证：`grep -rn "from core\.\|import core\." Module/workflow_engine Module/tool --include="*.py"` 输出为空（不锚定行首，覆盖延迟 import，如 `safety.py:618` 的函数内 import；排除 tests 的测试辅助；已 park 的已知例外除外）。
+- 阶段 3 后验证：`grep -rn "from core\.\|import core\." Module/workflow_engine Module/tool --include="*.py" --exclude-dir=tests` 输出为空（不锚定行首，覆盖延迟 import，如 `safety.py:618` 的函数内 import；命令级排除 tests；**验收判定** = 输出仅含 §7/§10 文档化的 park 条目，实现时逐条核对）。
 - 阶段 4 提供 `make test-workflow-engine`：`pytest Module/workflow_engine/tests Module/workflow_contract/tests -m "unit or service" -q --tb=short`。
   - ⚠️ **不用 `-m "not slow"`**：`Module/task_system/tests/integration/` 下 `test_planner.py:46` / `test_executor.py:29` / `test_delegation_preparer.py:22` 均为 `pytestmark = pytest.mark.integration`，依赖 `.env` 加载的 `DEEPSEEK_API_KEY` 真实调用 LLM——环境条件性且花钱，不能作为独立迭代门禁。`-m "unit or service"` 与 docs/testing.md 分层约定一致（unit=纯函数无 I/O，service=单模块+mock），排除 integration/slow。
 
