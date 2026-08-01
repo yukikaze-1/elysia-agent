@@ -22,6 +22,7 @@ Module/
 │   ├── documentdb/       # 文档数据库（MongoDB）
 │   └── graphdb/          # 图数据库（预留）
 ├── workflow_engine/      # 异步任务编排（Planner/Orchestrator/Executor）
+├── workflow_contract/    # 跨边契约层（core ↔ workflow_engine 类型来源，零业务逻辑）
 └── bench/                # 延迟基准测试
 ```
 
@@ -257,6 +258,12 @@ result = await ts.mailbox.wait(task_id, timeout=60)
 ```
 
 > 📖 完整文档 → [Module/workflow_engine/docs/](workflow_engine/docs/)
+
+### WorkflowContract — 跨边契约层
+
+core 应用层与 `Module/workflow_engine` 之间唯一跨边类型来源：类型/枚举/协议 ABC/无状态纯函数/AgentInfra，零业务逻辑。不 import `core.*`，不 import `workflow_engine`；`Module.tool` 是允许方向。
+
+> 📖 完整文档 → [Module/workflow_contract/README.md](workflow_contract/README.md)
 
 ## 测试
 

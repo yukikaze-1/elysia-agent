@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full start
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-workflow-engine start
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -29,6 +29,10 @@ test-normal:
 
 test-full:
 	conda run -n Elysia python -m pytest -q
+
+# workflow_engine / workflow_contract 独立迭代门禁（不含 integration——需真实 LLM/DB）
+test-workflow-engine:
+	conda run -n Elysia python -m pytest Module/workflow_engine/tests Module/workflow_contract/tests -m "unit or service" -q --tb=short
 
 check:
 	conda run -n $(CONDA_ENV) python app.py --check

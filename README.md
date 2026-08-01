@@ -192,6 +192,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | _common | [Module/_common/README.md](Module/_common/README.md) | 共享工具层（env + registry_helpers + test 工厂） |
 | System Prompt | [Module/system_prompt/README.md](Module/system_prompt/README.md) | System Prompt 引擎 + Section Provider |
 | TaskSystem | [Module/workflow_engine/README.md](Module/workflow_engine/README.md) | 后台任务委派与 DAG 编排 |
+| WorkflowContract | [Module/workflow_contract/README.md](Module/workflow_contract/README.md) | 跨边契约层（core ↔ workflow_engine 类型来源） |
 | Tool | [Module/tool/README.md](Module/tool/README.md) | 工具执行框架（Plugin + SafetyPipeline） |
 | Database | [Module/database/README.md](Module/database/README.md) | 数据库总览（Milvus + MongoDB） |
 | VectorDB | [Module/database/vectordb/README.md](Module/database/vectordb/README.md) | 向量数据库（Milvus） |
