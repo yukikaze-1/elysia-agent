@@ -55,13 +55,13 @@ grep -rl "Module\.task_system" Module/workflow_engine core Module --include="*.p
 sed -i 's#--ignore=Module/task_system/tests#--ignore=Module/workflow_engine/tests#' Makefile
 
 # 文档（README/CLAUDE.md/architecture/Module-README 里的路径引用）
-# ⚠️ 排除：本计划文件、docs/review/*、docs/completed/*、docs/superpowers/archive/*——历史记录不改写
+# ⚠️ 排除整个 superpowers/（plans + specs + specs/archive）与 docs/review/、docs/completed/——设计/计划/历史记录不改写
 grep -rl "Module/task_system\|Module\.task_system" docs CLAUDE.md README.md Module/README.md Module/workflow_engine/README.md core/README.md --include="*.md" 2>/dev/null \
-  | grep -vE "superpowers/plans/|docs/review/|docs/completed/|docs/superpowers/archive/" \
+  | grep -vE "superpowers/|docs/review/|docs/completed/" \
   | xargs -r sed -i 's#Module/task_system#Module/workflow_engine#g; s#Module\.task_system#Module.workflow_engine#g'
 ```
 
-> ⚠️ **文档 sed 三步防护**：① 排除本计划文件（`superpowers/plans/`）——它含 `Module/task_system` 的 sed 模式与 `git mv` 命令，被改写会破坏自身；② 排除 `docs/review/`、`docs/completed/`、`docs/superpowers/archive/`——历史记录按 Task 4 约定不改写；③ sed 后遗留的**裸相对链接**（如 `task_system/docs/`、`task_system/tests/`，无 `Module/` 前缀）不匹配任何模式，在 Step 4 中人工改 `workflow_engine/...`。
+> ⚠️ **文档 sed 防护**：① 排除整个 `superpowers/`——**`docs/superpowers/specs/`（含本项目的 spec 与 13 个历史 spec、`specs/archive/` 下 22 个归档）与 `plans/` 都不改写**：设计/计划文档按时间点记录（spec §4.2 旧→新映射表的 `Module/task_system` 是 FROM 侧、本计划含 sed 模式与 `git mv` 命令，改写即破坏自身），违背「历史记录不改写」；② `docs/review/`、`docs/completed/` 同理不改写（注意归档真实路径是 `docs/superpowers/specs/archive/`，不是 `docs/superpowers/archive/`）；③ sed 后遗留的**裸相对链接**（如 `task_system/docs/`、`task_system/tests/`，无 `Module/` 前缀）不匹配任何模式，在 Step 4 中人工改 `workflow_engine/...`。
 
 - [ ] **Step 4: 验证包路径 import + 修复裸相对链接**
 
@@ -432,15 +432,24 @@ git add -A && git commit -m "refactor: format_tools/strip_markdown_fence 迁契�
 # ① core/cognitive/loop.py：深路径 schema.types → 契约层
 sed -i 's#from Module\.workflow_engine\.schema\.types import WorkflowId#from Module.workflow_contract import WorkflowId#' core/cognitive/loop.py
 
-# ② core/cognitive/tools.py：深路径 SessionId + 浅层 SubmitError + Tool→Module.tool
+# ② core/cognitive/tools.py：组合行拆分 + 深路径 SessionId + 单名 SubmitError + Tool→Module.tool
+# ⚠️ tools.py:15 是组合行 `import SubmitError, UserProfile`（TYPE_CHECKING 块内）——
+#    前缀子串替换会把 UserProfile 拖进契约层（契约层无 UserProfile）。先拆成两行：
+sed -i 's#from Module\.workflow_engine\.schema import SubmitError, UserProfile#from Module.workflow_contract import SubmitError\n    from Module.workflow_engine.schema import UserProfile#' core/cognitive/tools.py
 sed -i 's#from Module\.workflow_engine\.schema\.types import SessionId as _SessionId#from Module.workflow_contract import SessionId as _SessionId#' core/cognitive/tools.py
-sed -i 's#from Module\.workflow_engine\.schema import SubmitError#from Module.workflow_contract import SubmitError#' core/cognitive/tools.py
-sed -i 's#from Module\.workflow_engine\.schema import Tool#from Module.tool.tool_descriptor import Tool#' core/cognitive/tools.py
+# 单名 SubmitError（tools.py:215）——$ 行尾锚定，避免再次误伤组合行
+sed -i 's#from Module\.workflow_engine\.schema import SubmitError$#from Module.workflow_contract import SubmitError#' core/cognitive/tools.py
+sed -i 's#from Module\.workflow_engine\.schema import Tool$#from Module.tool.tool_descriptor import Tool#' core/cognitive/tools.py
 
-# ③ core/agent/_lifecycle_task_system.py：浅层 + 深路径（schema.protocol / schema.types）
-sed -i 's#from Module\.workflow_engine\.schema import ConstraintConfig#from Module.workflow_contract import ConstraintConfig#' core/agent/_lifecycle_task_system.py
-sed -i 's#from Module\.workflow_engine\.schema\.protocol import HITLData#from Module.workflow_contract import HITLData#' core/agent/_lifecycle_task_system.py
-sed -i 's#from Module\.workflow_engine\.schema\.types import ApprovalId#from Module.workflow_contract import ApprovalId#' core/agent/_lifecycle_task_system.py
+# ③ core/agent/_lifecycle_task_system.py：浅层 + 深路径 + 运行时 import（infra/protocol）
+# ⚠️ 该文件还有两条运行时 import（_start_task_system 方法内）：
+#    :41 AgentInfra（Task 5 已删 infra.py）与 :52 HITLNotifier（Task 5 已迁契约层）——
+#    不改则 agent 启动路径 ImportError，且 make test-quick 抓不到（无测试真正调 _start_task_system）
+sed -i 's#from Module\.workflow_engine\.schema import ConstraintConfig$#from Module.workflow_contract import ConstraintConfig#' core/agent/_lifecycle_task_system.py
+sed -i 's#from Module\.workflow_engine\.schema\.protocol import HITLData$#from Module.workflow_contract import HITLData#' core/agent/_lifecycle_task_system.py
+sed -i 's#from Module\.workflow_engine\.schema\.types import ApprovalId$#from Module.workflow_contract import ApprovalId#' core/agent/_lifecycle_task_system.py
+sed -i 's#from Module\.workflow_engine\.infra import AgentInfra#from Module.workflow_contract.infra import AgentInfra#' core/agent/_lifecycle_task_system.py
+sed -i 's#from Module\.workflow_engine\.protocol import HITLNotifier#from Module.workflow_contract import HITLNotifier#' core/agent/_lifecycle_task_system.py
 
 # ④ core/tools/runtime_config/plugin.py：parse_iso → 契约层 utils（Task 6 已迁）
 sed -i 's#from Module\.workflow_engine\.schema import parse_iso#from Module.workflow_contract.utils import parse_iso#' core/tools/runtime_config/plugin.py
@@ -758,8 +767,8 @@ make test-workflow-engine
 grep -rn "from core\.\|import core\." Module/workflow_engine Module/tool --include="*.py" --exclude-dir=__pycache__ --exclude-dir=tests
 # 活跃文档零 task_system 残留（含 Module/README.md 与裸相对链接；排除历史归档与计划自身）
 grep -rn "Module\.task_system\|Module/task_system\|task_system/" --include="*.md" docs CLAUDE.md README.md Module/README.md \
-  | grep -vE "docs/completed|docs/review|superpowers/plans/"
-# 期望：空（或仅历史归档 docs/completed、docs/review 与计划文档）
+  | grep -vE "docs/completed|docs/review|superpowers/"
+# 期望：空（或仅历史归档 docs/completed、docs/review 与设计/计划文档）
 # 各门禁均符合预期
 ```
 
@@ -777,5 +786,6 @@ git add -A && git commit -m "docs: workflow_engine 分离收官文档同步"
 - **无占位符**：重命名用精确 sed；类型搬移给源→目标映射；门禁命令完整。
 - **类型一致性**：15 标识符新名在 Task 2/3 与 spec §4.1 一致；契约类型清单 Task 5 与 spec §5.1 一致；`WorkflowConstraints`（非 `ConstraintConfig`）在 Task 5 测试与契约导出一致。
 - **二轮 review 修复已合入**（10 项）：Task 2 子模块路径改写、Task 1 docs sed 防护、Task 5 源路径勘误 + 契约闭合 + SessionId 定案、Task 5 测试类型修正、Task 6 测试文件引用 + parse_iso 定案、Task 7 逐文件深路径精确改写 + UserProfile 延迟 + Tool 提前归位 Module.tool、Task 12 Step 3 白名单 grep 修正、Task 14 Module/README.md + workflow_contract 📖 + migration.md AgentInfra 覆盖。
+- **三轮 review 修复已合入**（3 项）：Task 7 ② tools.py:15 组合行拆分（`$` 行尾锚定防误伤）+ Task 7 ③ _lifecycle 运行时 import（infra/protocol 两行补 sed）+ Task 1 docs sed 排除清单扩为整个 `superpowers/`（修 specs 漏排除 + archive 死路径）。
 - **已定案（原判断点）**：`parse_iso` → 契约层 utils（Task 6）；`Tool` → Module.tool（Task 5 Step 1a，不经契约层）；`SessionId` → 契约层 + core 重导出（Task 5）。
 - **留给实现者的判断点**：`Tool` 投影实际字段形状（Task 5 测试构造，按 `Module/workflow_engine/schema/protocol.py` 现值）、DelegationPreparer 的注入接线细节（Task 9）——均在对应任务标注。
