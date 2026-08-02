@@ -105,8 +105,12 @@ core/cognitive/
 ├── loop.py               — CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
 ├── tools.py              — CognitiveTools mixin: _execute_tools_directly + _handle_submit_task
 ├── timing.py      — Timer + TimingClock 延迟统计
+├── delegation.py  — DelegationPreparer: submit_task 前的委派准备（工具筛选/摘要/约束）
+├── user_profile.py — UserProfile: 用户画像模型（CognitiveLoop 管理）
 └── tests/
-    └── test_timing.py
+    ├── test_timing.py
+    ├── test_tools.py
+    └── ...（6 个测试文件）
 
 关联文件:
 core/

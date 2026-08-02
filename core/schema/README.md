@@ -10,7 +10,7 @@ core/ 层共享的基础类型：Agent 状态机、事件类型、多模态消�
 core.schema（统一入口，__init__.py re-export 全部类型）
 ├── agent.py     # AgentState, VALID_TRANSITIONS, EventPriority, EventType — FSM/EventBus 类型
 ├── types.py     # IsoTimestamp, now_iso, SessionId, MessageId, ToolCallId — 时间戳/标识符别名
-├── _utils.py    # now_iso, _normalize_iso_ts — 时间戳工厂/校验
+├── utils.py     # now_iso, _normalize_iso_ts, _validate_src — 时间戳/校验工具函数
 ├── part.py      # TextPart / ImagePart / FilePart / AudioPart / VideoPart → Part（discriminated union）
 ├── tool.py      # ToolCall, ToolCallFunction — OpenAI 兼容 tool_calls 结构
 ├── event.py    # EventData union + 5 种事件 data 模型（EventBus Pydantic 类型）
@@ -20,6 +20,8 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 ├── character.py # CharacterState — CharacterEngine 性格状态
 ├── mood.py     # STT emoji 工具函数（stt_emotion_emoji, stt_event_emoji）
 ├── memory_reflector.py # MemoryReflectorState + ReflectorActions — 状态 + LLM 输出类型
+├── compression.py  # CompressionTrigger + VersionEntry — L3→L2 压缩版本管理类型
+├── error_type.py   # ErrorType — 工具错误分类（从 Module/_common 重导出）
 └── adapters/
     └── message_adapter.py  # parts_from_dicts, content_to_openai, content_text 等纯函数适配器
 ```
@@ -45,12 +47,14 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 | `event.py` | EventData, InterruptData/StateChangeData/UserInputData/SystemTickData/TaskResultData — EventBus 事件 data 类型 |
 | `message.py` | UserMessage / AssistantMessage / ToolResultMessage / ClientUserMessage / ClientAssistantMessage / ClientToolMessage / ClientMessageDict — Message（按 role 拆分）+ 客户端 TypedDict |
 | `token.py` | TokenUsage / TokenUsageSummary — Token 用量记录 |
-| `character.py` | CharacterState — PersonalityEngine 性格状态 |
+| `character.py` | CharacterState — CharacterEngine 性格状态 |
 | `mood.py` | STT emoji 工具函数（stt_emotion_emoji, stt_event_emoji）|
 | `memory_reflector.py` | MemoryReflectorState + MergeItem/UpdateItem/DeleteItem/ReflectorActions — 状态 + MemoryReflector LLM 输出类型 |
-| `_utils.py` | now_iso — 时间戳工厂 |
+| `compression.py` | CompressionTrigger + VersionEntry — L3→L2 压缩版本管理类型 |
+| `error_type.py` | ErrorType — 工具错误分类（从 Module/_common 重导出） |
+| `utils.py` | now_iso, _normalize_iso_ts, _validate_src — 时间戳工厂/校验工具 |
 
-测试位于 `core/schema/tests/`（types/part/tool/message/adapters 各一个测试文件）。
+测试位于 `core/schema/tests/`（12 个文件：test_types / test_part / test_tool / test_message / test_adapters / test_character / test_compression / test_event / test_memory / test_memory_reflector / test_message_degradation / test_token）。
 
 ## 测试
 

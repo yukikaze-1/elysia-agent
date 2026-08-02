@@ -8,9 +8,9 @@
                         ┌──────────────────────────┐
                         │     Entry Points          │
                         │  app.py (argparse)       │
-                        │  ├── repl (stdin)         │
-                        │  ├── once (single-shot)   │
-                        │  └── server (WebSocket)   │
+                        │  ├── --cli (interactive)  │
+                        │  ├── --check / --full     │
+                        │  └── server (default)     │
                         └──────────┬───────────────┘
                                    │
               ┌────────────────────┼────────────────────┐
@@ -295,7 +295,7 @@ sandbox = ProjectPath.DATA_SANDBOX.resolve(session_id="a") # → <root>/data/san
 
 - **项目根检测**: `ELYSIA_ROOT` 环境变量 > `paths.py` 所在目录
 - **环境变量覆盖**: `ELYSIA_PATH_{NAME}` 可逐路径覆盖（如 `ELYSIA_PATH_LOG=/var/log/elysia`）
-- **20 个枚举成员**: 13 目录 + 7 文件，枚举类 `ProjectPath(str, Enum)`
+- **21 个枚举成员**: 13 目录 + 8 文件（含 `SESSION_PENDING_CHECK`），枚举类 `ProjectPath(str, Enum)`
 - **语义**: `resolve()` 纯计算返回 `pathlib.Path`，不检查存在性
 
 ---
@@ -332,7 +332,7 @@ INTERRUPT 处理流程：
 
 ### 4.2 AgentStatus 接口层
 
-`AgentStatus` 是 FSM 之上的语义接口，将消费者与底层 `AgentFSM` 解耦。设计详见 [spec](../superpowers/specs/2026-07-30-agent-status-interface-design.md)。
+`AgentStatus` 是 FSM 之上的语义接口，将消费者与底层 `AgentFSM` 解耦。设计详见 [spec](superpowers/specs/2026-07-30-agent-status-interface-design.md)。
 
 **对外只读：`AgentStatus`（`agent.status`）**
 - `is_accepting_input` — IDLE 或 IDLE_BACKGROUND_TASK
@@ -362,7 +362,7 @@ INTERRUPTED → IDLE
 
 ### 4.2.1 Agent 公开接口（组合根访问路径）
 
-`Agent` 是组合根（composition root），持有 22+ 子系统。除 `agent.status` / `agent.phases` 外，通过 **27 个同名 `@property`** 公开子系统访问路径——`@property` 只是薄 getter（`return self._xxx`），可写性由子系统自身 API 自管。设计详见 [spec](../superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+`Agent` 是组合根（composition root），持有 22+ 子系统。除 `agent.status` / `agent.phases` 外，通过 **27 个同名 `@property`** 公开子系统访问路径——`@property` 只是薄 getter（`return self._xxx`），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
 
 **子系统对象（23 个）**：`agent.session` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.tts` / `agent.config` / `agent.bus` / `agent.cognitive` / `agent.idle` / `agent.scheduler` / `agent.consolidator` / `agent.memory_reflector` / `agent.character_engine` / `agent.character_reflector` / `agent.character` / `agent.token_tracker` / `agent.prompt_recorder` / `agent.response_recorder`
 
@@ -518,9 +518,9 @@ proactive.enabled: false → 整个机制关闭
 
 ### 4.9 LLMAdapter
 
-薄适配层 (~170 行)：接收 `model` 标识符 (如 `"deepseek/deepseek-chat"`)，通过 `LLMFactory.create()` 创建 Module 层 backend，提供 `think()` 和 `stream_think()` 方法。
+薄适配层 (~213 行)：接收 `model` 标识符 (如 `"deepseek/deepseek-chat"`)，通过 `LLMFactory.create()` 创建 Module 层 backend，提供 `think()` 和 `stream_think()` 方法。
 
-测试用 `FakeLLMBackend` ([core/tests/fake_llm.py](core/tests/fake_llm.py)) — 可配置 test double，支持正则分词逐 token 流式输出 + 故障注入（HTTP 429/503、超时、断连）。
+测试用 `FakeLLMBackend` ([core/tests/fake_llm.py](../core/tests/fake_llm.py)) — 可配置 test double，支持正则分词逐 token 流式输出 + 故障注入（HTTP 429/503、超时、断连）。
 
 ---
 
@@ -545,7 +545,7 @@ L4 Mood（当前情绪）    LLM `<mood>` 标签每轮更新（自由文本）�
 
 **版本历史**：L2/C6 演化产物持久化到 `character_versions` MongoDB 集合（原 `character_l2_versions`），通过 `content_type` 字段区分 `"l2"` / `"c6"`，per type 独立计数。支持在线浏览 + 回滚；L2 回滚自动联动刷新 C6。
 
-完整四层模型、模板渲染、数据流、调试入口 → [core/personality/README.md](core/personality/README.md)
+完整四层模型、模板渲染、数据流、调试入口 → [core/personality/README.md](../core/personality/README.md)
 
 ---
 
@@ -958,7 +958,7 @@ core/utils/log_setup.py:
 
 ## 11. 测试架构
 
-~1,800 个测试按 4 层 markers 组织（unit / service / integration / slow）。
+2,163 个测试按 4 层 markers 组织（unit / service / integration / slow）。
 
 完整分层体系、测试文件索引、按模块运行命令 → [docs/testing.md](testing.md)
 
@@ -1022,8 +1022,7 @@ Agent/
 │   │   ├── tokenizer.py     #     StreamTokenizer: 结构感知切分（跨 chunk 不变式 + 持有上界）
 │   │   ├── splitter.py      #     SpeechSplitter: 结构感知分句（span 保护 + SENTENCE/TEXT_DELTA）
 │   │   ├── parts.py         #     TextPart + content_type 构建 / public_text 重建
-│   │   ├── stream_processor.py #  StreamProcessor 协调器（tokenizer + splitter + 事件发射 + get_blocks）
-│   │   └── text_utils.py    #     文本提取 + MessageObj
+│   │   └── stream_processor.py #  StreamProcessor 协调器（tokenizer + splitter + 事件发射 + get_blocks）
 │   ├── task/                 #   任务子系统包
 │   │   ├── __init__.py       #     重导出 Task + TaskScheduler
 │   │   ├── task.py           #     任务数据模型

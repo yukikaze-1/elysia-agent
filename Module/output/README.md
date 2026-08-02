@@ -116,5 +116,5 @@ python -m Module.output
 | 文档 | 内容 |
 |------|------|
 | [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
-| [core/input/README.md](../input/README.md) | WebSocket 服务器（Output 通道载体） |
+| [core/input/README.md](../../core/input/README.md) | WebSocket 服务器（Output 通道载体） |
 | [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 输出系统 |

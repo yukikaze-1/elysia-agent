@@ -93,7 +93,7 @@ backend = STTFactory.from_config("sensevoice/sense-voice", cfg)
 
 | 字段 | 默认值 | 环境变量 | 说明 |
 |------|--------|----------|------|
-| `base_url` | `http://localhost:20042` | `SENSEVOICE_API_URL` | STT 服务端点 |
+| `base_url` | `http://localhost:20042` | `STT_API_URL` | STT 服务端点 |
 
 ## 添加新后端
 
@@ -135,5 +135,5 @@ python -m Module.bench
 | 文档 | 内容 |
 |------|------|
 | [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
-| [core/input/README.md](../input/README.md) | AudioBuffer + WebSocket（STT 输入源） |
+| [core/input/README.md](../../core/input/README.md) | AudioBuffer + WebSocket（STT 输入源） |
 | [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 音频输入管道 |

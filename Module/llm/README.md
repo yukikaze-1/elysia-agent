@@ -172,8 +172,8 @@ backend = LLMFactory.from_config("openai/gpt-5", cfg, base_url="https://proxy/v1
 
 | 字段 | 默认值 | 环境变量 | 说明 |
 |------|--------|----------|------|
-| `base_url` | `https://api.deepseek.com` | `DEEPSEEK_API_BASE` | LLM API 端点 |
-| `api_key` | `""` | `DEEPSEEK_API_KEY` | API 密钥（secret，仅从 env 读取） |
+| `base_url` | `https://api.deepseek.com` | `LLM_API_BASE` | LLM API 端点 |
+| `api_key` | `""` | `LLM_API_KEY` | API 密钥（secret，仅从 env 读取） |
 
 ## 添加新后端
 

@@ -12,7 +12,6 @@ System prompt 引擎 + 通用 Jinja2 模板渲染。提供两套 API：
 ```
 Module/system_prompt/
 ├── __init__.py                # 导出 PromptManager, PromptSection, StaticSection, Jinja2Section
-│                              #   (MessageBuilder 已迁至 core/adapter/，此处保留 DeprecationWarning re-export)
 ├── protocol.py                # PromptSection ABC + StaticSection + Jinja2Section
 ├── system_prompt_manager.py   # SystemPromptManager 编排器
 ├── manager.py                 # PromptManager — 通用 Jinja2 渲染器
@@ -44,9 +43,12 @@ Module/system_prompt/
 │   ├── c8_own_life.j2
 │   ├── c9_self_perception.j2
 └── tests/
+    ├── test_prompt.py
     ├── unit/
     │   ├── test_protocol.py
-    │   └── test_system_prompt_manager.py
+    │   ├── test_system_prompt_manager.py
+    │   └── test_sections/
+    │       └── test_boundary.py
     └── integration/
         └── test_full_render.py
 ```
@@ -64,8 +66,7 @@ Module/system_prompt/
 
 ```
 PromptSection (ABC)
-├── StaticSection          # 纯文本 — ConflictRules (F1)
-└── Jinja2Section          # .j2 模板 — 其余 10 个 section
+└── Jinja2Section          # .j2 模板 — 全部 12 个 section（含 ConflictRules F1）
 ```
 
 ### 数据流

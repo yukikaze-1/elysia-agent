@@ -15,7 +15,7 @@ core/config/
 
 ## 组件
 
-### app_config.py（~70 行）
+### app_config.py（112 行）
 
 `AppConfig` dataclass — `ConfigLoader` 从 `config.yaml` + env var 加载：
 
@@ -28,7 +28,7 @@ core/config/
 
 优先级：env var > YAML > dataclass default。
 
-### character_config.py（~80 行）
+### character_config.py（149 行）
 
 `CharacterConfig` dataclass — `from_yaml()` 从 `character/<name>/config.yaml` 加载：
 

@@ -62,7 +62,7 @@
 ### LongTermMemory
 
 - 后端：Milvus 向量搜索 + rerank（时效衰减 + poignancy 加权）
-- `search(query, limit=20)` 返回最相关记忆
+- `search(query_text="", query_embedding=None, top_k=5, memory_type=None)` 返回最相关记忆
 - `_absorbed_ids` 追踪合并记录，避免重复返回
 - 无 Milvus 时降级为纯本地匹配（不 crash）
 
@@ -76,7 +76,7 @@
 ### MemoryReflector
 
 - 触发条件：距上次 round 数 >= 50 **或** 新增记忆 >= 30 条（OR 逻辑）
-- 聚类算法：KMeans（k=min(5, total_memories/2)）
+- 聚类算法：KMeans（n_clusters = ceil(记忆数 / CLUSTER_SIZE)，CLUSTER_SIZE = 20，单组最多约 20 条）
 - LLM 审查后决定合并 / 去噪 / 删除
 - `_reflect_lock` 防并发
 
@@ -84,7 +84,7 @@
 
 ```
 core/memory/
-├── __init__.py            — 空（各模块独立导入）
+├── __init__.py            — re-export SessionMemory / LongTermMemory
 ├── session.py             — SessionMemory: deque + MongoDB 持久化
 ├── long_term.py           — LongTermMemory: Milvus 向量搜索 + rerank
 ├── embedding_provider.py  — EmbeddingProvider: 嵌入后端懒加载 + 超时 + OpenAI/HuggingFace fallback

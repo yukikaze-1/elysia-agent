@@ -12,7 +12,7 @@
 │                                                          │
 │  EventBus          ── 发布/订阅事件总线                     │
 │    ├─ USER_INPUT / STATE_CHANGE / TASK_RESULT / INTERRUPT │
-│    └─ 5 级优先级（CRITICAL → LOW）                         │
+│    └─ 3 级优先级（INTERRUPT / STATE_CHANGE / NORMAL）          │
 │                                                          │
 │  IdleMonitor       ── 空闲检测 + 唤醒词 + 主动搭话          │
 │    ├─ 唤醒词检测（openWakeWord）                            │
@@ -30,7 +30,7 @@
 
 ### EventBus
 
-- **优先级队列**：CRITICAL(0) → HIGH(1) → NORMAL(2) → LOW(3) → BACKGROUND(4)
+- **优先级队列**：INTERRUPT(0) → STATE_CHANGE(1) → NORMAL(2)（3 级，数值越低越紧急）
 - **事件类型**：`USER_INPUT`（用户输入到达）、`STATE_CHANGE`（FSM 状态转换）、`TASK_RESULT`（后台任务完成）、`INTERRUPT`（用户打断）、`SYSTEM_TICK`（定时器）
 - **异步分发**：`post()` 非阻塞入队，`_process_events()` 独立 asyncio.Task 消费
 - **data**：`EventData` 判别联合（5 种 `StateChangeData` / `UserInputData` / `InterruptData` / `TaskResultData` / `SystemTickData`）

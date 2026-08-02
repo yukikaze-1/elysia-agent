@@ -91,7 +91,7 @@ C1 人格 (`Module/system_prompt/templates/c1_personality.j2`):
 
 C9 自我觉察 (`Module/system_prompt/templates/c9_self_perception.j2`):
 ```jinja2
-{% if awareness_text %}          {# L3 State，AwarenessTrigger 判定 #}
+{% if awareness_text %}          {# L3 State，AwarenessJudge 判定 #}
 <self_perception>
 你最近注意到自己的一些变化：
 {{ awareness_text }}
@@ -109,7 +109,7 @@ C9 自我觉察 (`Module/system_prompt/templates/c9_self_perception.j2`):
 
 Phase 1 通过 C1 文本末尾提示 LLM 遵守 L1 约束；Phase 2 移入 C6 SpeakingStyle。
 
-### AwarenessTrigger（C9 激活判定）
+### AwarenessJudge（C9 激活判定）
 
 Phase 2: LLM-judge 语义判定。Reflector 产出 L3 后，异步 judge 比较 L2 vs L3：
 
@@ -134,7 +134,7 @@ core/personality/
 ├── __init__.py        — 重导出 CharacterEngine, CharacterReflector
 ├── engine.py          — CharacterEngine 类（合并 PersonalityEngine + EmotionEngine）
 ├── reflector.py       — CharacterReflector 类（子组件）
-├── awareness.py       — AwarenessTrigger: C9 觉察判定 + cooldown 管理
+├── awareness.py       — AwarenessJudge: C9 觉察判定 + cooldown 管理
 ├── compression.py     — CompressionManager: L3→L2 压缩 + C6 联动编辑
 ├── emotion.py         — 情绪分析：LLM mood tag 解析 + keyword 回退
 ├── _utils.py          — 内部工具函数

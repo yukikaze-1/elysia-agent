@@ -41,9 +41,9 @@
 
 ### 结论
 
-- `prompt/` 目录下所有 prompt 模板统一使用 **PascalCase `.j2`** 扩展名，与现有 `MicroReflector.j2`、`MacroReflector.j2` 一致
-- 代码中文件路径使用 `Path("prompt/ExactName.j2")`，确保大小写匹配
-- GPT 生成的 prompt 参考文件放入 `prompt/ref/`，使用 `snake_case.md`
+- `core/prompts/` 目录下所有 prompt 模板统一使用 **PascalCase `.j2`** 扩展名，与现有 `MicroReflector.j2`、`MacroReflector.j2` 一致
+- 代码中文件路径使用 `Path("core/prompts/ExactName.j2")`，确保大小写匹配（实际通过 `PromptManager` 相对 `__file__` 加载，不受 cwd 影响）
+- GPT 生成的 prompt 参考文件放入 `core/prompts/ref/`，使用 `snake_case.md`
 - Prompt 需求文档放在根目录，交付 GPT 后移入 `prompt/ref/`
 
 ### 现有 Prompt 清单

@@ -20,9 +20,7 @@ tts/
 ├── text_preprocess.py        # 文本预处理函数
 ├── config.py                 # TTSConfig dataclass
 ├── __main__.py               # 冒烟测试
-├── tests/                    # 单元测试
-
-└── tests/
+└── tests/                    # 单元测试
 ```
 
 ## 快速开始

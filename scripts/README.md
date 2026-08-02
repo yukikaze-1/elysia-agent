@@ -22,7 +22,7 @@
 
 | 存储 | 目标 | 方法 |
 |------|------|------|
-| MongoDB (`default`) | `sessions`、`message_archive`、`token_usage` | `delete_many({})` 清空文档，保留 indexes |
+| MongoDB (`default`) | `sessions`、`message_archive`、`token_usage`、`character_versions`、`character_l2_versions`（旧） | `delete_many({})` 清空文档，保留 indexes |
 | Milvus | `long_term_memory` | drop 后自动重建（dimension=1024, IVF_FLAT） |
 | 本地文件 | `data/session_default.json`、`data/token_usage_pending.jsonl`、`data/scheduler_checkpoint.json`、`data/cache/vision/*.json` | 逐个删除 |
 

@@ -85,10 +85,18 @@ TaskSystem 实时推送:
 | `GET /debug/api/responses` | 列出全部 LLM response |
 | `GET /debug/api/responses/{index}` | 按 0-based index 查看单条 response |
 | `GET /debug/api/db-status` | MongoDB + Milvus 连接状态 |
-| `GET /debug/api/ltm` | LTM 条目查询（支持 filter + limit） |
-| `GET /debug/api/sessions` | Session 列表 |
-| `GET /debug/api/archive` | 消息归档查询 |
-| `GET /debug/api/tasks/stream` | TaskSystem DAG SSE 实时流 |
+| `GET/POST/DELETE /debug/api/ltm` | LTM 条目查询/新增/批量删除（支持 filter + limit） |
+| `PUT/DELETE /debug/api/ltm/{entry_id}` | 单条 LTM 编辑/删除 |
+| `GET/DELETE /debug/api/sessions` | Session 列表/清空 |
+| `GET/DELETE /debug/api/sessions/{session_id}` | 单 session 详情/删除 |
+| `GET/PUT/DELETE /debug/api/archive` | 消息归档查询/编辑/批量删除 |
+| `PUT/DELETE /debug/api/archive/{msg_id}` | 单条归档编辑/删除 |
+| `GET /debug/api/l2-versions` | L2 Self 版本历史 |
+| `POST /debug/api/l2-rollback` | L2 回滚 |
+| `GET /debug/api/character-versions` | 角色版本历史 |
+| `POST /debug/api/character-rollback` | 角色回滚 |
+| `GET /debug/api/tasks` | 任务全量快照 |
+| `GET /debug/api/tasks/stream` | WorkflowEngine DAG SSE 实时流 |
 
 ## 文件布局
 
@@ -105,7 +113,7 @@ core/debug/
 frontend/src/debug/     — Vue 3 Debug 应用（Vite 多入口构建 → static/debug.html）
 
 服务端:
-core/input/debug_routes.py — /debug/api 路由注册
+core/input/debug_routes/ — /debug/api 路由注册（package，7 modules）
 ```
 
 ## 调试

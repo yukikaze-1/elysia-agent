@@ -22,7 +22,7 @@ core/adapter/
 
 ## 组件
 
-### LLMAdapter（`llm_adapter.py`，212 行）
+### LLMAdapter（`llm_adapter.py`，213 行）
 
 封装 `Module/llm`：
 
@@ -32,7 +32,7 @@ core/adapter/
 - `get_raw_client()` — 暴露底层 HTTP client（供 TaskSystem 直接使用）
 - 非流式 tool-call JSON 解析兜底
 
-### TTSStreamManager（`tts_adapter.py`，370 行）
+### TTSStreamManager（`tts_adapter.py`，344 行）
 
 封装 `Module/tts` + `Module/output`：
 
@@ -57,7 +57,7 @@ core/adapter/
 - `merge_stream_tool_calls()` — 增量合并流式 tool_call delta
 - `normalize_tool_calls()` — 过滤不完整调用 → `ToolCall` Pydantic 模型
 
-### MessageBuilder（`message_builder.py`，139 行）
+### MessageBuilder（`message_builder.py`，141 行）
 
 提示词组装：
 

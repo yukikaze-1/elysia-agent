@@ -15,6 +15,8 @@ input/
 ├── ws_handler.py        # WebSocket 处理
 ├── api_routes.py        # 业务 API 路由
 ├── debug_routes/         # Debug API 路由 (package: 7 modules)
+├── custom_providers.py  # 自定义 provider 持久化（JSON 文件读写）
+├── provider_registry.py # /api/providers 响应组装（已配置/未配置区分）
 ├── wakeword.py          # WakeWordDetector — 唤醒词检测
 ├── tests/               # 单元测试
 └── README.md
@@ -61,6 +63,6 @@ python -m core.input
 | 文档 | 内容 |
 |------|------|
 | [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
-| [Module/stt/README.md](../stt/README.md) | STT（音频输入消费者） |
-| [Module/output/README.md](../output/README.md) | 输出通道（WebSocket 方向） |
+| [Module/stt/README.md](../../Module/stt/README.md) | STT（音频输入消费者） |
+| [Module/output/README.md](../../Module/output/README.md) | 输出通道（WebSocket 方向） |
 | [docs/architecture.md](../../docs/architecture.md) | 输入输出系统架构 |

@@ -15,7 +15,7 @@ core/task/
 
 ## 组件
 
-### task.py（~80 行）
+### task.py（222 行）
 
 `Task` dataclass + `TaskType`/`TaskStatus` 枚举：
 
@@ -25,7 +25,7 @@ core/task/
 - 支持 retry（2 次，指数退避）和超时（60s）
 - 可序列化 checkpoint（`data/scheduler_checkpoint.json`）
 
-### scheduler.py（~430 行）
+### scheduler.py（510 行）
 
 `TaskScheduler` — Worker Pool（N=5）：
 

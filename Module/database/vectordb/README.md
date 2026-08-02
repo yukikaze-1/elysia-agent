@@ -109,7 +109,7 @@ backend = VectorDBFactory.from_config("milvus/micro_memory", cfg)
 
 | 字段 | 默认值 | 环境变量 | 说明 |
 |------|--------|----------|------|
-| `base_url` | `http://localhost:19530` | `MILVUS_URI` | Milvus 服务端点 |
+| `base_url` | `""`（必填） | `MILVUS_URI` | Milvus 服务端点，如 `http://localhost:19530` |
 | `token` | `""` | `MILVUS_TOKEN` | 认证 token（secret，仅从 env 读取） |
 
 ## 测试

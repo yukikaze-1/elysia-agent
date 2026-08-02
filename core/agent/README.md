@@ -11,9 +11,9 @@
 │ Agent(AgentLifecycle, AgentServer)                           │
 │                                                              │
 │ __init__  创建所有组件、接线                                  │
-│ start()   按序: DB → TokenTracker → CognitiveLoop →          │
-│           MemoryReflector → CharacterReflector →             │
-│           IdleMonitor → TaskScheduler → WS server            │
+│ start()   按序: DB → token+prompt → tool_context →           │
+│           worker_pool → idle+events → tts → task_system →   │
+│           mailbox_polling → db_health                        │
 │ stop()    按序: flush → cancel → close → save                │
 │                                                              │
 │ AgentLifecycle  — 所有 _start_*/_stop_*/_flush_* 方法        │
@@ -56,9 +56,10 @@ RUNNING → /restart → STOPPING → RESTARTING → start() → RUNNING
 
 ### 后台任务
 
-`_background_tasks` 列表追踪所有持续运行的后台 task：
-- `_start_background_tasks()` — 启动 CharacterReflector tick、MemoryReflector 检查等
-- `_stop_background_tasks()` — shutdown 时级联 cancel
+`_background_tasks`（`dict[str, _BackgroundTaskEntry]`）追踪所有持续运行的后台 task：
+- `_register_background_task(task_id, mailbox, intent, dispatched_at)` — CognitiveLoop 提交后台任务时注册 mailbox 到轮询列表
+- `_poll_mailboxes()` — 每 500ms 轮询活跃任务 mailbox，处理完成/失败事件（由 `_start_mailbox_polling()` 启动）
+- stop() 时 `_background_tasks.clear()` 清理残留后台任务（restart 复用同一实例）
 
 ### Archive-Session 同步
 
@@ -72,7 +73,6 @@ core/agent/
 ├── agent.py                     — Agent.__init__ + process_message + 后台任务
 ├── lifecycle.py                 — AgentLifecycle: start/stop 编排
 ├── server.py                    — AgentServer: run_server/repl + switch_*/banner
-├── agent_fsm.py                 — AgentFSM 状态机（agent + cognitive 共享）
 ├── _types.py                    — RunState, _PendingMessage, _BackgroundTaskEntry
 ├── _lifecycle_persistence.py    — 持久化层启停 (MongoDB/Milvus/session/repos)
 ├── _lifecycle_services.py       — LLM/TTS/Output/TokenTracker 启停
@@ -84,6 +84,7 @@ core/agent/
 ```
 core/
 ├── monitoring/event_bus.py  — EventBus 事件总线（agent + cognitive + idle 共享）
+├── status/agent_fsm.py      — AgentFSM 状态机（agent + cognitive 共享）
 ├── config/                  — 配置子包（AppConfig + CharacterConfig）
 ```
 

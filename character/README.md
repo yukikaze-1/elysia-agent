@@ -16,11 +16,13 @@ character/
 
 ```
 character/<角色名>/
-├── config.yaml               # 必需：角色 YAML 配置（格式见下方）
-└── personality.md           # 必需：L1 Core 文本（base_personality_file 指向此文件）
+├── config.yaml               # 启用角色必需：角色 YAML 配置（格式见下方）
+└── personality.md           # 启用角色必需：L1 Core 文本（base_personality_file 指向此文件）
 ```
 
 `<角色名>` 使用小写英文，与 `config.yaml` 中的 `name` 字段对应（name 可包含大写）。
+
+> 例外：`character/cyrene/` 仅有 `reference/` 素材目录，未配置 `config.yaml`/`personality.md`，尚未启用。
 
 ## 字段说明
 
@@ -42,7 +44,7 @@ character/<角色名>/
 ### personality.md
 
 - 自然语言撰写的 L1 Core 性格描述（Core 层，不可变）
-- 由 PersonalityEngine 在启动时加载，注入 C1 system prompt
+- 由 CharacterEngine 在启动时加载，注入 C1 system prompt
 - 不包含 "你是 XXX。"——角色名由模板的 `{{ name }}` 变量渲染
 
 ## 数据流
@@ -52,7 +54,7 @@ character/elysia/config.yaml
   → CharacterConfig.from_yaml()
     → _load_base_personality() 读取 personality.md
       → config.base_personality = "温柔是你的底色..."
-        → PersonalityEngine.__init__(base_personality=...)
+        → CharacterEngine.__init__(base_personality=...)
           → engine.render_c1() → C1 section → system prompt
 ```
 
@@ -71,5 +73,5 @@ character/elysia/config.yaml
 | 文档 | 内容 |
 |------|------|
 | [项目 README](../README.md) | 快速开始 + 完整文档导航 |
-| [core/personality/README.md](../core/personality/README.md) | PersonalityEngine 四层模型 |
+| [core/personality/README.md](../core/personality/README.md) | CharacterEngine 四层模型 |
 | [docs/architecture.md](../docs/architecture.md) | 角色配置架构 |

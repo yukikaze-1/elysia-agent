@@ -72,9 +72,9 @@ Agent.start()
 
 ## 核心组件
 
-`core/` 根目录 + 子包共约 120 个 `.py` 文件。其中 9 个为核心组件（详细描述），12 个为支撑模块（简表），另有 15 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`, `input/` 等）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
+`core/` 根目录 + 子包共约 120 个 `.py` 文件。其中 10 个为核心组件（详细描述），12 个为支撑模块（简表），另有 15 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`, `input/` 等）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
 
-### 核心组件详解（9 个）
+### 核心组件详解（10 个）
 
 #### Agent (`agent/` package, 9 files)
 
@@ -90,7 +90,7 @@ Agent.start()
 
 `on_change(callback)` 支持事件驱动订阅替代轮询；`wait_until_idle(timeout)` 替代 `while fsm.state != "idle"` 忙等。
 
-#### AgentFSM (`agent/agent_fsm.py`)
+#### AgentFSM (`status/agent_fsm.py`)
 
 有限状态机，`AgentStatus` / `CognitivePhaseController` 的底层实现。管理状态转换：`IDLE → THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE`，另有 `IDLE_BACKGROUND_TASK` 和 `INTERRUPTED`。`reset()` 强制回 IDLE 用于服务重启。不对外暴露——外部消费者通过 `agent.status` 查询。
 
@@ -102,7 +102,7 @@ Agent.start()
 
 #### CognitiveLoop (`cognitive/` package, 5 files)
 
-ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的核心执行引擎。使用 mixin 模式：`CognitiveLoop(CognitiveTools)`。流式标签检测（mood + inner_voice）由 `StreamProcessor` (`core/text/stream_processor.py`) 独立处理——纯状态机，零 I/O，将标签解析结果以 `StreamEvent` 事件流输出。`_dispatch_stream_event()` 负责事件→副作用翻译（mood 更新、inner_voice 广播、TTS 分发、FSM 切换）。工具调用检测后最多 5 轮工具循环。`_handle_submit_task` 拦截后台任务委托。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。`tools.py` 包含 `_execute_tools_directly`、`_submit_task_definition`、`_default_user_profile`。`timing.py` 包含 `Timer` context manager + `TimingClock` 请求级聚合（span 嵌套）。
+ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的核心执行引擎。使用 mixin 模式：`CognitiveLoop(CognitiveTools)`。流式标签检测（mood + inner_voice）由 `StreamProcessor` (`core/text/stream_processor.py`) 独立处理——纯状态机，零 I/O，将标签解析结果以 `StreamEvent` 事件流输出。`_dispatch_stream_event()` 负责事件→副作用翻译（mood 更新、inner_voice 广播、TTS 分发、FSM 切换）。工具调用检测后最多 5 轮工具循环。`_handle_submit_task` 拦截后台任务委托。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。`tools.py` 包含 `_execute_tools_directly`、`_submit_task_definition`、`_default_user_profile`。`timing.py` 包含 `Timer` context manager + `TimingClock` 请求级聚合（span 嵌套）。`delegation.py` 包含 `DelegationPreparer`（submit_task 前的委派准备）。`user_profile.py` 定义 `UserProfile` 用户画像模型。
 
 关键方法：`process()`, `_think_loop()`, `_dispatch_stream_event()`, `cancel_current()`, `_after_response()`
 
@@ -150,7 +150,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `debug/` | Debug 面板数据聚合包：`DebugInfo` dataclass 涵盖 FSM（含 mood）、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator（含 buffer）、MemoryReflector、Character Reflector、CharacterEngine 等所有子系统状态。`collect()` 遍历 Agent 聚合数据，前端 16 面板。`PromptRecorder`/`ResponseRecorder` 环形缓冲区（容量 20），捕获 LLM 调用完整 messages/tools/回复/inner_voice，供 debug 面板查看。详见 [`debug/`](debug/) |
 | `monitoring/token_tracker.py` | Token 消耗追踪：`record()` 记录每次 LLM 调用的 token usage，`get_session_stats()` 聚合统计。支持 MongoDB 持久化和 OutputManager 广播 |
 | `task/` | 任务子包：`task.py`（Task 数据模型：`Task` dataclass + `TaskType`/`TaskStatus` 枚举 + `asyncio.Future` 双向绑定。支持 retry 和序列化）+ `scheduler.py`（TaskScheduler Worker Pool，N=5，dispatch_tool_calls/cancel_all/prune_loop） |
-| `schema/` | 共享类型包：`AgentState`、`EventData` 判别联合（5 种事件类型）、多模态 Part、`ToolCall`、`ExtractedMemory`/`CompareAction` 判别联合、`MemoryReflectorState`/`ReflectorActions`、消息、token、character/mood 状态等，含 `adapters/` 适配层。13 个 `.py` 文件 + `adapters/` 适配层 |
+| `schema/` | 共享类型包：`AgentState`、`EventData` 判别联合（5 种事件类型）、多模态 Part、`ToolCall`、`ExtractedMemory`/`CompareAction` 判别联合、`MemoryReflectorState`/`ReflectorActions`、消息、token、character/mood 状态等，含 `adapters/` 适配层。14 个 `.py` 文件 + `adapters/` 适配层 |
 | `__init__.py` | 包标记，当前为空 |
 
 ### 子目录
@@ -260,20 +260,20 @@ Agent 生命周期中的关键扩展点：
 | `agent/agent.py` | 689 | 核心组件 |
 | `status/agent_fsm.py` | 83 | 核心组件 |
 | `monitoring/event_bus.py` | 76 | 核心组件 |
-| `cognitive/loop.py` | 999 | 核心组件 |
-| `personality/engine.py` | 421 | 核心组件 |
+| `cognitive/loop.py` | 1031 | 核心组件 |
+| `personality/engine.py` | 428 | 核心组件 |
 | `memory/consolidator.py` | 350 | 核心组件 |
 | `adapter/prompt_assembler.py` | 170 | 核心组件 |
 | `monitoring/idle_monitor.py` | 128 | 核心组件 |
 | `task/scheduler.py` | 510 | 核心组件 |
 | `config/character_config.py` | 149 | 支撑模块 |
-| `config/app_config.py` | 107 | 支撑模块 |
-| `text/` | 7 文件 (1352) | 支撑模块 |
+| `config/app_config.py` | 112 | 支撑模块 |
+| `text/` | 6 文件 (1519) | 支撑模块 |
 | `utils/message_id.py` | 15 | 支撑模块 |
-| `debug/` | 3 文件 (623) | 支撑模块 |
+| `debug/` | 4 文件 (631) | 支撑模块 |
 | `utils/log_setup.py` | 215 | 支撑模块 |
-| `monitoring/token_tracker.py` | 193 | 支撑模块 |
+| `monitoring/token_tracker.py` | 176 | 支撑模块 |
 | `task/task.py` | 222 | 支撑模块 |
-| `input/debug_routes/` | 7 文件 (893) | 支撑模块 |
+| `input/debug_routes/` | 7 文件 (922) | 支撑模块 |
 | `schema/` | 目录（13 .py + adapters/） | 支撑模块 |
 | `__init__.py` | 0 | 包标记 |

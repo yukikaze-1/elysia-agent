@@ -117,7 +117,7 @@ TaskSystem
 | unit/ | `test_evaluator.py` | 29 | 双重判定 + `_derive_action` |
 | unit/ | `test_executor.py` | 12 | tool-calling + llm_direct |
 | unit/ | `test_planner.py` | 17→41 | plan + replan 解析（适配 Planner/Replanner 拆分） |
-| unit/ | `test_delegation_preparer.py` | 53 | 校验 + 格式化 |
+| unit/ | （`test_delegation_preparer.py` 已随 DelegationPreparer 迁 `core/cognitive/tests/`） | 53 | 校验 + 格式化 |
 | unit/ | `test_checkpoint.py` | 9 | |
 | unit/ | `test_mailbox.py` | 10 | |
 | unit/ | `test_token_ledger.py` | 8 | write-through + 审计 + 损耗 |

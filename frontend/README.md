@@ -15,7 +15,7 @@ frontend/
     ├── main.ts                 # 聊天应用入口（Pinia + marked + hljs）
     ├── App.vue                 # 根组件：全局快捷键 + approval 透传
     │
-    ├── types/protocol.ts       # WebSocket 消息类型（ServerMessage 判别联合，20+ 类型）
+    ├── types/protocol.ts       # WebSocket 消息类型（ServerMessage 判别联合，18 类型）
     │
     ├── stores/                 # Pinia 状态管理
     │   ├── connectionStore.ts  # WebSocket 连接 + 指数退避重连

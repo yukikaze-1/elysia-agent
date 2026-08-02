@@ -15,7 +15,6 @@ Event（事件）、Plan（计划）、Note（笔记）。输入大小写不敏�
 ## 配置 (config.yaml)
 
 - `database_allowed` — 是否允许数据库访问
-- `database_readonly` — 数据库操作是否只读
 - `max_result_tokens` — 最大返回 token 数
 
 ---

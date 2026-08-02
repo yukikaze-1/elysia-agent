@@ -101,7 +101,7 @@ backend = DocumentDBFactory.from_config("mongodb/elysia", cfg)
 
 | 字段 | 默认值 | 环境变量 | 说明 |
 |------|--------|----------|------|
-| `base_url` | `mongodb://localhost:27017` | `MONGODB_URI` | MongoDB 连接串 |
+| `base_url` | `""`（必填） | `MONGODB_URI` | MongoDB 连接串，如 `mongodb://localhost:27017` |
 
 ## 测试
 

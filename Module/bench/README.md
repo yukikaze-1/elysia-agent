@@ -12,7 +12,7 @@ from Module.bench import LatencyBench
 bench = LatencyBench(
     tts_url="http://localhost:9880",     # 或设置环境变量 TTS_API_URL
     stt_url="http://localhost:20042",    # 或设置环境变量 STT_API_URL
-    audio_file="ref/Elysia/Elysia.wav",
+    audio_file="data/ref/Elysia.wav",
 )
 await bench.run_all()
 ```
@@ -34,6 +34,7 @@ python -m Module.bench
 
 | 模块 | 方法 | 指标 |
 |------|------|------|
+| 全链路 | `bench_e2e()` | 依次跑通 LLM+TTS+STT 端到端 |
 | LLM | `chat()` | total elapsed, reply chars |
 | LLM | `chat_stream()` | TTFT, total elapsed, chars/sec |
 | LLM | `chat(prefix)` | total elapsed |

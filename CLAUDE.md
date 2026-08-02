@@ -18,11 +18,11 @@ Plain Python（无 `pyproject.toml` 等构建系统）。前端 Vue 3 + Vite + T
 ```bash
 # 日常开发 — 秒级（unit + service）
 make test-quick
-# 或: pytest -m "unit or service" -q -x --tb=short
+# 或: pytest -m "unit or service" -q -x --tb=short --ignore=Module/workflow_engine/tests
 
 # 提交前 — 排除 slow（~5min）
 make test-normal
-# 或: pytest -m "not slow" -q --tb=short
+# 或: pytest -m "not slow" -q --tb=short --ignore=Module/workflow_engine/tests
 
 # 全量 — 推之前（~22min）
 make test-full
@@ -206,7 +206,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 
 | Module | Purpose | Backends |
 |--------|---------|----------|
-| `Module.llm` | LLM chat/streaming | `deepseek`, `openai`, `ollama`, `mimo`, `custom` |
+| `Module.llm` | LLM chat/streaming | `deepseek`, `openai`, `ollama`, `mimo`, `gemini`, `custom` |
 | `Module.stt` | Speech-to-text | `sensevoice`, `custom` |
 | `Module.tts` | Text-to-speech | `gpt-sovits`, `minimax`, `custom` |
 | `Module.embedding` | Text vectorization | `huggingface`, `openai` |

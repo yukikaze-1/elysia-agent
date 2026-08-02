@@ -13,12 +13,13 @@
 | 低 | **`test_integration_global_constraints_respected` 偶发失败** | `Module/workflow_engine/tests/integration/test_delegation_preparer.py`: 全量跑偶发 FAIL，单独跑 PASS，疑似 WorkflowEngine 集成测试时序/资源竞争 |
 | 低 | **`test_multi_step_task` 偶发失败** | `Module/workflow_engine/tests/integration/test_planner.py`: DeepSeek API 偶发返回截断 JSON (`Unterminated string`)，LLM 输出不稳定导致 `PlanParseError` |
 | 中 | **TTS 密集短句导致 wait_all 阻塞** | TTS 连续 5+ 短句密集入队时 MiniMax 部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING。已缩短 read timeout 120s→30s 缓解，根因（wait_all 无超时）待重现后修复。 |
-| 低 | **`flush_after_response` 超时层不匹配** | 内层 `loop.py:875` 每 task 5s，外层 `lifecycle.py:170` 整体 10s。3+ task 同时超时可能被外层截断。实际 pending 典型 0-2 个、亚秒级完成，impact 极低。修法：外层 timeout 改为 `max(10.0, len(pending) * 5.0 + 1.0)` |
+| 低 | **`flush_after_response` 超时层不匹配** | 内层 `loop.py:897` 每 task 5s，外层 `lifecycle.py:191` 整体 10s。3+ task 同时超时可能被外层截断。实际 pending 典型 0-2 个、亚秒级完成，impact 极低。修法：外层 timeout 改为 `max(10.0, len(pending) * 5.0 + 1.0)` |
 | 低 | **`ConfirmModal` @keydown 在不可聚焦 `<div>`** | `frontend/src/debug/components/shared/ConfirmModal.vue:35` — overlay div 无 `tabindex`，依赖按钮聚焦后事件冒泡。弹窗内只有文字+两个按钮，点击文字不会失焦，现有行为已可靠。加固：加 `tabindex="0"` |
 | 中 | **STT 运行时切换不生效** | `switch_stt` 只改 `config.stt.model`，transcribe wrapper 是 `run_server` 启动时建的（持旧 backend），运行时切换需重启服务才生效。已与 LLM/TTS 热切换对比确认。修法：切换时重建 backend 并更新 transcribe wrapper 引用（需同步 ws_handler/server 的 wrapper 闭包） |
 | 低 | **`core/tests/test_phase2.py`/`test_phase3.py` 裸 `setdefault("DEEPSEEK_API_KEY","test")`** | 与 `test_task_scheduler._ensure_api_key` 同模式（后者已改 monkeypatch，2026-08-02）。当前 test-quick collection 顺序下未触发，但属进程 env 污染隐患——collection 顺序变化或并行跑时可能污染真实 LLM 集成测试。建议统一改 monkeypatch |
 | ~~中~~ ✅ | **空 LLM 响应被静默吞掉** | 2026-08-02 已修：`_think_loop` 空响应守卫——无文本+无工具调用 → 注入 nudge 系统消息重试一次 → 仍空发兜底回复。兜底同时注入 `all_sentences` 保证 session 归档与显示一致。见 `core/cognitive/loop.py` `_EMPTY_RESPONSE_NUDGE`/`_EMPTY_RESPONSE_FALLBACK` + `core/cognitive/tests/test_empty_response_guard.py` |
 | 低 | **NORMAL 态 `_pending`/`_held` 缓冲无界** | `tokenizer.py:288/300/306` — `_pending += c`（普通文本/行中反引号）、`_held += c`（行首反引号前缀）无上界。C 节加固（2026-08-02）只覆盖 tag 态 7 缓冲，NORMAL 态路径漏网：长无换行段落可把 `_pending` 撑到 MB 级、巨型反引号行撑 `_held`。既有行为非回归，final review 判 defer（load-bearing：分支成为"内存已全有界"引用来源但不覆盖此路径）。修法：给 `_pending`/`_held` 加上界（如 `FENCE_MAX_CONTENT` 同量级），超限按 SPEECH 落盘 |
+| 低 | **STT env 变量陈旧：`SENSEVOICE_URL` vs `STT_API_URL`** | `.env.example:49` 与 `Module/config/preflight.py:47` 用 `SENSEVOICE_URL`，但 `Module/stt/config.py` 实际读 `STT_API_URL`（默认 http://localhost:20042）。照 .env.example 配置会设一个代码不读的变量，preflight 会误报。README.md:146 写的是对的（STT_API_URL）。修法：统一到 `STT_API_URL`，删 `.env.example` 的 SENSEVOICE_URL 行 + preflight 改 key（doc-review 2026-08-02 #27） |
 
 ## 模块化评估（2026-08-01）
 
@@ -87,7 +88,7 @@
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + SenseVoice + GPT-SoVits）。数据库已完成 docker-compose.yml（MongoDB + Milvus）
 - **F2 代码块格式重新启用**: `f2_output_format.j2` 中 `<|code|>` 和 `<|markdown|>` 格式已注释。等需要代码/Markdown 渲染功能时取消注释即可启用。**注（2026-08-01）**：解析器已支持 ```` ``` ```` 围栏 + `<|code|>`/`<|markdown|>`（core/text tokenizer），LLM 主动输出代码块时即可正确分拣（不进 TTS、finalize parts）；仅需 F2 模板取消注释 + 前端代码渲染确认
-- **意图路由 + 渐进式工具披露**: 当前 13 个工具全量暴露给 LLM，每人次 ~1,643 schema tokens。大部分对话只用 2–4 个工具，~70% schema token 是浪费的。评估结论：13 个工具未到临界点，暂不做。触发条件：工具数 > 15 考虑规则分类，> 20 必须引入分类层，或累计 ≥ 3 次工具误用事件。推荐方案：关键词匹配分组（filesystem/web/memory/utility），零延迟零 token 成本，无命中则全量兜底。
+- **意图路由 + 渐进式工具披露**: 当前 12 个工具全量暴露给 LLM，每人次 ~1,643 schema tokens。大部分对话只用 2–4 个工具，~70% schema token 是浪费的。评估结论：12 个工具未到临界点，暂不做。触发条件：工具数 > 15 考虑规则分类，> 20 必须引入分类层，或累计 ≥ 3 次工具误用事件。推荐方案：关键词匹配分组（filesystem/web/memory/utility），零延迟零 token 成本，无命中则全量兜底。
 - **CharacterEngine Phase 2**（原 PersonalityEngine Phase 2）:
   - CharacterReflector.j2 模板 ~140 行偏长，LLM 注意力可能被稀释，后续观察产出质量决定是否精简
   - C3 情绪传染规则动态化
@@ -101,10 +102,10 @@
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
 | 中 | `database/graphdb/` 不完整 | 只有 protocol.py，保留参考 |
-| 中 | `OutputManager.stream()` 未使用 | `manager.py:63-88`，保留参考 |
-| 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 169 行，保留参考 |
+| 中 | `OutputManager.stream()` 未使用 | `manager.py:97`，保留参考 |
+| 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 246 行，保留参考 |
 | 中 | `Module/bench/` 位置不当 | bench.py 自注释"将移至 tools/bench/"，依赖 core/，后续考虑迁移 |
-| 低 | **FilePart/AudioPart/VideoPart 预留代码** | `part.py` ~70 行 + `message_adapter.py` 3 个 helper + `Part` union。`message_adapter.py:188` 注释明确 Phase 2。暂保留 |
+| 低 | **FilePart/AudioPart/VideoPart 预留代码** | `part.py` 130 行 + `message_adapter.py` 3 个 helper + `Part` union。`message_adapter.py:188` 注释明确 Phase 2。暂保留 |
 
 ## 模块化改进
 

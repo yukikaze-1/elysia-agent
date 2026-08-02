@@ -30,6 +30,6 @@
 
 ## 约定
 
-- spec/plan 文件统一 `YYYY-MM-DD-<主题>-design.md` / `YYYY-MM-DD-<主题>-plan.md` 命名。
+- spec 文件统一 `YYYY-MM-DD-<主题>-design.md` 命名；plan 文件推荐 `YYYY-MM-DD-<主题>-plan.md`（历史文件部分未带该后缀，见 `superpowers/plans/`）。
 - 新 spec/plan 一律放在 `superpowers/specs/` 和 `superpowers/plans/`（`docs/specs/`、`docs/plans/` 已废弃并入）。
 - 审查报告放 `review/`；已废弃文档移入 `legacy/`。

@@ -232,7 +232,7 @@ results = await backend.search("micro_memory", query_vector, top_k=10)
 
 ### Input — 音频输入 + WebSocket 服务器
 
-`AudioBuffer` 管理麦克风 PCM 缓冲 + WebRTC VAD 语音活动检测。`server.py`（胶水组装）+ `ws_handler.py` + `api_routes.py` + `debug_routes.py` 提供 41 路由的 aiohttp 应用（WebSocket、REST API、静态文件、debug API）。
+`AudioBuffer` 管理麦克风 PCM 缓冲 + WebRTC VAD 语音活动检测。`server.py`（胶水组装）+ `ws_handler.py` + `api_routes.py` + `debug_routes/`（包，7 个模块）提供 36 路由的 aiohttp 应用（WebSocket、REST API、静态文件、debug API）。
 
 ```python
 from core.input import AudioBuffer

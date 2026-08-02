@@ -83,7 +83,7 @@ Module/workflow_engine/
 │   ├── execution.py      # 节点执行管线（execute → evaluate → apply）
 │   ├── graph.py          # DAG 依赖拓扑（PlanGraph + DAGPatch）
 │   └── finalize.py       # 收尾 + checkpoint 工具
-├── safety/               # ConstraintConfig + PlanValidator（占位重导出）
+├── safety/               # 占位（空 __init__，安全约束在契约层 ConstraintConfig + core/safety）
 ├── schema/               # 引擎内部类型（types/protocol/output/internal，经 __init__ 统一导出）
 ├── learning/             # 学习模块（预留）
 └── tests/

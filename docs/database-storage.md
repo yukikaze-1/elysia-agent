@@ -4,7 +4,7 @@
 
 | 集合 | 位置 | 用途 | 保留策略 |
 |------|------|------|----------|
-| `long_term_memory` | Milvus | 记忆摘要（向量搜索）| 90天/1万条(内存)，Milvus 不自动删除 |
+| `long_term_memory` | Milvus | 记忆摘要（向量搜索）| 1万条数量上限（超限驱逐，同步删除 Milvus）；max_age_days=90 预留未使用 |
 | `sessions` | MongoDB | LLM 上下文窗口 | max_messages 截断, 30天 TTL |
 | `message_archive` | MongoDB | 对话消息永久归档 | 永久, 只增不删 |
 | `token_usage` | MongoDB | LLM token 统计 | 永久, 只增不删 |
@@ -14,7 +14,7 @@
 
 ## 一、Milvus 向量数据库
 
-**连接**: 优先级 `config.yaml` → 环境变量 → 默认值。YAML 路径 `database.milvus_uri` / `database.milvus_token`，环境变量 `MILVUS_URI`（默认 `http://localhost:19530`）/ `MILVUS_TOKEN`
+**连接**: 优先级 环境变量 → `config.yaml` → 默认值。YAML 路径 `database.milvus_uri` / `database.milvus_token`，环境变量 `MILVUS_URI`（默认 `http://localhost:19530`）/ `MILVUS_TOKEN`
 
 ### 集合: `long_term_memory`
 
@@ -23,20 +23,20 @@
 | `id` | INT64（主键，自增） | 自动生成 |
 | `embedding` | FLOAT_VECTOR[1024]（openai/text-embedding-3-small）/ 1024（BAAI/bge-large-zh-v1.5 fallback） | 文本嵌入向量，主后端 openai，BGE 为离线 fallback |
 | `text` | VARCHAR（动态字段） | 记忆文本内容 |
-| `memory_type` | VARCHAR（动态字段） | 类型：`fact` / `plan` / `preference` / `note` |
+| `memory_type` | VARCHAR（动态字段） | 类型：`Fact` / `Preference` / `Event` / `Plan` / `Note` |
 | `poignancy` | INT（动态字段） | 重要性 1-10 |
 | `timestamp` | FLOAT（动态字段） | Unix 时间戳 |
 
 - **索引**: IVF_FLAT，metric_type=L2，nlist=1024
 - **检索方式**: ANN 向量搜索 + 重排序（0.5 × 相似度 + 0.3 × 重要性 + 0.2 × 时效性）
-- **淘汰策略**: max_age_days=90，max_entries=10000
+- **淘汰策略**: max_entries=10000 数量上限驱逐（保留最新 N 条，驱逐时同步删除 Milvus）；max_age_days=90 当前未使用（预留供后续实现）
 - **降级**: Milvus 不可用时回退到内存列表 + 文本重叠搜索
 
 ---
 
 ## 二、MongoDB 文档数据库
 
-**连接**: 优先级 `config.yaml` → 环境变量 → 默认值。YAML 路径 `database.mongodb_uri`，环境变量 `MONGODB_URI`（默认 `mongodb://localhost:27017`）
+**连接**: 优先级 环境变量 → `config.yaml` → 默认值。YAML 路径 `database.mongodb_uri`，环境变量 `MONGODB_URI`（默认 `mongodb://localhost:27017`）
 
 ### 集合: `sessions`（数据库: `default`，可配置）
 
@@ -135,10 +135,10 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `id` | str（12 位 hex） | UUID4 前 12 位 |
+| `id` | str | `msg_` 前缀 + 26 位十六进制（`new_message_id()` 生成） |
 | `text` | str | 记忆文本 |
 | `embedding` | list[float] | 向量 |
-| `memory_type` | str | `fact` / `plan` / `preference` / `note` |
+| `memory_type` | str | `Fact` / `Preference` / `Event` / `Plan` / `Note` |
 | `poignancy` | int | 重要性 1-10 |
 | `timestamp` | float | Unix 时间 |
 | `metadata` | dict | 扩展元数据 |

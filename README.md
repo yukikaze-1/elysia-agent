@@ -8,7 +8,7 @@
 
 > **运行环境：Linux**（Windows/Mac 用户请使用 WSL2 或虚拟机）
 
-> 最近 (2026-07-03): Brain Prompt 提供者架构——12 个 PromptSection 独立模块，自管数据、自管模板。2026-06-26: Module/_common/ 轻量共享层重构——消除 6 个 registry + 5 个 test() + 9 个 __main__ + 6 个 test_config 重复代码，971 测试零回归。
+> 最近 (2026-08-02): 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）；导入风格门禁同步文档与 CI。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。当前 2163 测试。
 
 ---
 
@@ -182,7 +182,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 ### Module 层
 | 模块 | README | 说明 |
 |------|--------|------|
-| LLM | [Module/llm/README.md](Module/llm/README.md) | 大模型调用（DeepSeek/OpenAI/Ollama） |
+| LLM | [Module/llm/README.md](Module/llm/README.md) | 大模型调用（DeepSeek/OpenAI/Ollama/MiMo） |
 | STT | [Module/stt/README.md](Module/stt/README.md) | 语音识别（SenseVoice） |
 | TTS | [Module/tts/README.md](Module/tts/README.md) | 语音合成（GPT-SoVits/MiniMax） |
 | Embedding | [Module/embedding/README.md](Module/embedding/README.md) | 文本向量化（HuggingFace/OpenAI） |
@@ -280,7 +280,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | 工具系统 Plugin 架构 — 12 插件 + SafetyPipeline + HITL 审批 | done |
 | **模型切换** — DeepSeek/OpenAI/Ollama/MiMo + 运行时热切换 | done |
 | **多模态** — 图片上传/预览/lightbox + describe_image 视觉工具 | done |
-| Live2D 虚拟角色渲染 (Cubism SDK) | done |
+| Live2D 虚拟角色渲染 (Cubism SDK，默认静态图、需自建 index.html) | 可选 |
 | 前端 Vue 3 重构 (Vite + Pinia + TypeScript) | done |
 | 配置系统 (YAML + env + 类型校验 + providers.yaml) | done |
 | [/debug 面板](static/debug.md) (16+ 面板: FSM/记忆/工具/Token/DAG/LLM Prompt/Raw Response/数据库管理) | done |
@@ -349,6 +349,8 @@ Agent/
 │   ├── text/                # 文本流处理 (tags + tokenizer + splitter + parts + 协调器)
 │   ├── debug/               # Debug 面板数据层
 │   ├── input/               # 输入层: AudioBuffer + WebSocket server + debug API
+│   ├── status/              # AgentStatus 接口层 (ABC + FSM 实现 + 底层 AgentFSM)
+│   ├── hitl.py              # HITL 审批通知器 (EventBusHITLNotifier)
 │   ├── memory/              # 记忆子系统 (Session + LTM + EmbeddingProvider + Consolidator + Reflector)
 │   ├── monitoring/          # 可观测性: EventBus + IdleMonitor + TokenTracker
 │   ├── personality/         # CharacterEngine: 四层性格模型
@@ -383,13 +385,14 @@ Agent/
 │   ├── src/App.vue             # 根组件（三栏布局 + 全局快捷键）
 │   ├── src/components/         # 21 个聊天 Vue 组件
 │   ├── src/stores/             # 6 个 Pinia store
-│   ├── src/composables/        # 3 个 composables
+│   ├── src/composables/        # 4 个 composables (useWebSocket/useAbortController/useImageUpload/useLightbox)
 │   ├── src/types/protocol.ts   # WebSocket 消息类型定义
 │   ├── src/styles/variables.css # 全局 CSS 变量
 │   └── src/debug/              # 独立 Debug 应用（Vite 多入口）
 │       ├── main.ts             #   Pinia 注入入口
 │       ├── App.vue             #   Tab shell（概览 | 数据库 | 任务）
-│       ├── types.ts            #   DebugData TS 接口（40 字段）
+│       ├── types.ts            #   DebugData TS 接口（29 顶层字段）
+│       ├── styles/panel.css    #   Debug 面板样式
 │       └── components/         #   14 个 Debug 组件
 │           ├── OverviewTab.vue   #   16 面板 2 列 grid
 │           ├── DatabaseTab.vue   #   DB CRUD 容器
@@ -417,7 +420,7 @@ Agent/
 
 ## 测试
 
-1927 个测试按 4 层 markers 组织。详见 [docs/testing.md](docs/testing.md)。
+2163 个测试按 4 层 markers 组织（unit 1310 / service 782 / integration 35 / slow 56，少量多 marker 重复计入）。详见 [docs/testing.md](docs/testing.md)。
 
 ```bash
 conda activate Elysia

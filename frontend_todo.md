@@ -18,7 +18,7 @@
 
 ### 2. ✅ AbortController — 已完成
 
-8 个文件已集成 `composables/useAbortController.ts`：LtmPanel、ArchivePanel、SessionPanel、PromptViewer、ResponseViewer（A 类防竞态）+ ModelSelector、debugStore（B 类卸载清理）。
+6 个文件已集成 `composables/useAbortController.ts`：LtmPanel、ArchivePanel、SessionPanel、PromptViewer、ResponseViewer（A 类防竞态）+ ModelSelector（B 类卸载清理）。debugStore 用原生 AbortController，不在此列。
 
 ---
 

@@ -134,7 +134,8 @@ core/text/
     ├── test_tokenizer.py
     ├── test_splitter.py
     ├── test_parts.py
-    └── test_stream_processor.py
+    ├── test_stream_processor.py
+    └── test_fuzz_sequences.py
 
 消费者:
 core/cognitive/loop.py — CognitiveLoop._stream_llm_response() 唯一消费方（事件 + get_blocks + public_text）

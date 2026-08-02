@@ -1,5 +1,7 @@
 # 日志文件说明
 
+> 文档导航：[项目文档](../README.md)
+
 > `ls log/` 快速索引。更详细的日志系统设计见 [architecture.md](../docs/architecture.md#10-日志系统)。
 
 ## 文件一览
@@ -9,8 +11,8 @@
 | `app.log` | 应用主日志 — 关键事件：对话轮次、心情变化、压缩/反思、会话加载 | INFO+ | 10MB×3 |
 | `app-debug.log` | 全量调试日志 — 所有 DEBUG 及以上，开发调试用 | DEBUG+ | 20MB×5 |
 | `conversation.log` | 对话内容 — 用户消息（`>>>`）和 AI 回复（`<<<`），从 app.log 中分离 | INFO | 10MB×3 |
-| `mongo.log` | MongoDB 操作 — pymongo/motor 库日志 + 应用层 session/message/token/character_versions 的 CRUD | DEBUG | 10MB×3 |
-| `milvus.log` | Milvus 操作 — pymilvus/milvus_client 库日志 + 应用层 long_term_memory 的 CRUD | DEBUG | 10MB×3 |
+| `mongo.log` | MongoDB 操作 — pymongo/motor 库日志（WARNING+）+ 应用层 session/message/token/character_versions 的 CRUD（DEBUG） | DEBUG | 10MB×3 |
+| `milvus.log` | Milvus 操作 — pymilvus/milvus_client 库日志（WARNING+）+ 应用层 long_term_memory 的 CRUD（DEBUG） | DEBUG | 10MB×3 |
 | `http.log` | HTTP 请求 — httpx/httpcore/openai/urllib3 库日志 | WARNING+ | 10MB×3 |
 | `embedding.log` | 模型 — sentence_transformers/transformers/huggingface_hub + LTM embedding 操作 | WARNING / DEBUG | 10MB×3 |
 | `torch.log` | PyTorch 运行时（通常空） | WARNING+ | 10MB×3 |

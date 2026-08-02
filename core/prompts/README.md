@@ -14,7 +14,7 @@ Jinja2 `.j2` 模板目录，PascalCase 命名。运行时通过 Python `str.repl
 | `CharacterReflector.j2` | `core/personality/reflector.py` | 性格反思 — L3 State 更新（情境反应 vs 人格偏移） | 10 变量: character_name, user_name, l1_core, l2_self, l3_history, last_self_perception, mood_snapshot, time_span, buffer_size, recent_conversations |
 | `PersonalityCompression.j2` | `core/personality/compression.py` | L3→L2 性格压缩（长期自我沉淀） | `{l2_self}`, `{l3_history}` |
 | `AwarenessJudge.j2` | `core/personality/awareness.py` | C9 觉察判定 — LLM 判断是否批准展示 L3 | Jinja2 宏渲染 (`render_macro`) |
-| `SpeakingStyleEdit.j2` | `core/personality/engine.py` | C6 说话风格编辑 — L2 演化后联动刷新 | Jinja2 宏渲染 (`render_macro`) |
+| `SpeakingStyleEdit.j2` | `core/personality/compression.py` | C6 说话风格编辑 — L2 演化后联动刷新 | Jinja2 宏渲染 (`render_macro`) |
 
 ## 参考模板（不活跃）
 
@@ -36,8 +36,7 @@ GPT 生成的原始版本归档，snake_case 命名：
 - `prompt_gpt_5.6_terra_pro.md` — 同上（terra_pro 版本，未采用）
 - `optimized_prompt_gpt_5.6_sol_pro.md` — 优化版（含 `{character_name}` 变量，未采用——与 `.replace()` 冲突）
 - `extract_memory_gpt_5.6_sol_pro.md` — ExtractMemory（sol_pro 版本，已采用）
-- `优化后的prompt-requirements.md` — LTM 系统 prompt 需求文档
-- `character-reflector-prompt-requirements.md` — CharacterReflector 升级需求文档（2026-07-14）
+- `awareness-judge-requirements.md` — C9 觉察判定需求文档（AwarenessJudge.j2 设计依据）
 
 ## 命名规范
 
@@ -47,7 +46,7 @@ GPT 生成的原始版本归档，snake_case 命名：
 
 ## 渲染方式
 
-所有活跃模板使用 `str.replace()` 而非 `.format()` 或 Jinja2 渲染：
+多数活跃模板使用 `str.replace()` 而非 `.format()`（JSON 示例中 `{}` 与 `.format()` 冲突）。例外：`AwarenessJudge.j2` 与 `SpeakingStyleEdit.j2` 使用 Jinja2 宏，通过 `PromptManager.render_macro()` 渲染。两种方式均由 `PromptManager` 统一封装：
 
 ```python
 from pathlib import Path
