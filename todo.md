@@ -18,6 +18,7 @@
 | 中 | **STT 运行时切换不生效** | `switch_stt` 只改 `config.stt.model`，transcribe wrapper 是 `run_server` 启动时建的（持旧 backend），运行时切换需重启服务才生效。已与 LLM/TTS 热切换对比确认。修法：切换时重建 backend 并更新 transcribe wrapper 引用（需同步 ws_handler/server 的 wrapper 闭包） |
 | 低 | **`core/tests/test_phase2.py`/`test_phase3.py` 裸 `setdefault("DEEPSEEK_API_KEY","test")`** | 与 `test_task_scheduler._ensure_api_key` 同模式（后者已改 monkeypatch，2026-08-02）。当前 test-quick collection 顺序下未触发，但属进程 env 污染隐患——collection 顺序变化或并行跑时可能污染真实 LLM 集成测试。建议统一改 monkeypatch |
 | ~~中~~ ✅ | **空 LLM 响应被静默吞掉** | 2026-08-02 已修：`_think_loop` 空响应守卫——无文本+无工具调用 → 注入 nudge 系统消息重试一次 → 仍空发兜底回复。兜底同时注入 `all_sentences` 保证 session 归档与显示一致。见 `core/cognitive/loop.py` `_EMPTY_RESPONSE_NUDGE`/`_EMPTY_RESPONSE_FALLBACK` + `core/cognitive/tests/test_empty_response_guard.py` |
+| 低 | **NORMAL 态 `_pending`/`_held` 缓冲无界** | `tokenizer.py:288/300/306` — `_pending += c`（普通文本/行中反引号）、`_held += c`（行首反引号前缀）无上界。C 节加固（2026-08-02）只覆盖 tag 态 7 缓冲，NORMAL 态路径漏网：长无换行段落可把 `_pending` 撑到 MB 级、巨型反引号行撑 `_held`。既有行为非回归，final review 判 defer（load-bearing：分支成为"内存已全有界"引用来源但不覆盖此路径）。修法：给 `_pending`/`_held` 加上界（如 `FENCE_MAX_CONTENT` 同量级），超限按 SPEECH 落盘 |
 
 ## 模块化评估（2026-08-01）
 
