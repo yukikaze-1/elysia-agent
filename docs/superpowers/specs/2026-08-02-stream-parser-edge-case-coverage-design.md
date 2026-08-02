@@ -8,18 +8,18 @@
 
 2026-08-02 修复"空 LLM 响应被静默吞掉"（`_think_loop` 空响应守卫）时，暴露出现有测试对**边界情况**的覆盖有 4 类真实缺口 + 1 个未钉死的形态：
 
-1. **跨标签转换序列**——全仓搜不到"标签紧邻转换跨 chunk"测试（如 `</mood><#0.`、`</inner_voice>```` ``` ````）。这正是 2026-08-01 实际踩过的状态残留坑（fence 关闭后 `_held` 残留反引号 → 幽灵 FENCE 吞尾句）。当时只修了那一个具体 bug（`test_fence_closed_then_more_text_*`），没有系统化覆盖"进入→退出→再进入"组合序列。
+1. **跨标签转换序列**——全仓搜不到"标签紧邻转换跨 chunk"测试（如 `</mood><#0.`、`</inner_voice>\n```` ``` ````）。这正是 2026-08-01 实际踩过的状态残留坑（fence 关闭后 `_held` 残留反引号 → 幽灵 FENCE 吞尾句）。该 bug 在重构（f86b94d）中修复并附带回归测试（`test_fence_closed_then_more_text_*`），但**组合序列**（进入→退出→再进入、紧邻转换）的系统化覆盖仍未做。
 2. **同一轮多个代码块**——`get_blocks()` 的 `after_sentence_idx` 跨块计数、多块顺序、与 parts 交错，只有 parts 层孤立测试（`test_two_blocks_same_slot`），tokenizer→splitter→get_blocks 全链路无多块测试。
-3. **未闭合围栏无长度上界（内存隐患）**——标签扫描都有持有上界（STAGE_M/STAGE_K/ANGLE_MAX），但 `_fence_content` / `_code_content` / `_markdown_content` 三个块缓冲无限累积。LLM 输出永不开合的 ```` ``` ```` 或 `<|code|>` 会无限吃内存。
+3. **无界缓冲（内存隐患）**——块缓冲 `_fence_content` / `_code_content` / `_markdown_content` 及 `_meta_content` / `_fence_infostr` / `_fence_pending` / `_pause_buf` 均无限累积。注意：背景"标签扫描都有持有上界"不准确——tokenizer.py:14 自述 **PAUSE 内容无上界**（`<#111…` 长数字串持续命中 `PAUSE_TAIL_RE`），`_meta_content`（未闭合 `<mood>`）、`_fence_infostr`（围栏首行无 `\n`）同样无界。LLM 输出永不开合的 ```` ``` ```` / `<|code|>` 或长无界前缀会无限吃内存。
 4. **Loop 层集成边界**——空/纯空白/纯标签/纯 emoji 响应在 `_think_loop` 层的守卫行为未钉死。
 5. **tags-only 未钉死**——`<mood>..</mood><inner_voice>..</inner_voice>` 只出标签、无 speech 的形态，守卫测试用的是"全空元组"，没有专门测这个形态（`public_text=""` 但 `iv_think` 非空）。
 
-**现状覆盖良好、不动**：单标签四态、分句保护、各类标签持有上界、围栏 CommonMark 检测细则、emoji-only 尾部合并、parts 四条交错语料、property 切分不变式（tokenizer + stream_processor 双份）。约 110 个既有用例。
+**现状覆盖良好、不动**：单标签四态、分句保护、STAGE/ANGLE 持有上界、围栏 CommonMark 检测细则、emoji-only 尾部合并、parts 四条交错语料、property 切分不变式（tokenizer + stream_processor 双份）。既有 221 个用例。
 
 ## 目标
 
 - 按 4 类缺口 + tags-only 补测试，每项作确定性回归锚点
-- 给三个块缓冲加长度上界，堵住无限内存累积（唯一实现改动）
+- 给无界缓冲（块内容/元内容/pending/infostr/pause）加长度上界，堵住无限内存累积（唯一实现改动）
 - 自写确定性 fuzz（无新依赖）：跨 chunk 等价 + **序列后状态干净**两条不变式，穷举手写抽样漏掉的组合
 - 全部 `unit` marker，`make test-quick` 保持全绿
 
@@ -48,8 +48,10 @@
 | ANGLE_EN | `<pant>` | `<pant>说<pant>又说` |
 | mood | `<mood>..</mood>` | `<mood>开心</mood>说<mood>累</mood>又说` |
 | inner_voice | `<inner_voice>..</inner_voice>` | 两个 inner_voice → 两个 INNER_VOICE 事件 |
-| fence | ```` ```lang ``` ```` | ```` ```py 代码1 ``` `` ```` + 文本 + 再进围栏 |
+| fence | ```` ```lang\n…\n``` ````（多行，行首开启，尾部 `\n` 闭合） | `第一段。\n```` ```py\n代码1\n``` ````\n又说。\n```` ```js\n代码2\n``` ````\n结尾。` |
 | code_tag | `<|code|>..</|code|>` | 同上 |
+
+> **围栏语法约束**：围栏开启要求 `_at_line_start`（tokenizer.py:248），闭合要求**收尾行尾部的 `\n`**（tokenizer.py:510-516）。因此围栏示例**必须**用多行形式（内容在 `\n` 之后的行、收尾围栏行以 `\n` 结束）；单行 `` ```` ```py 代码1 ``` ```` `` 会在 info 态把整行吞进 `_fence_infostr`，flush 时整体丢弃，测不到围栏语义。
 
 **关键断言**：第二次进入前无上一轮残留（如 fence 关闭后 `_held` 为空、`at_line_start` 正确）；事件序列为"各自完整"的预期。
 
@@ -58,11 +60,11 @@
 闭合紧接着开启，切分点落在转换处（标签闭合字符与下一标签起始字符跨 chunk）：
 
 - `</mood><#0.` + `5#>`（mood 闭合紧跟 PAUSE 开启）
-- `</inner_voice>```` ``` ```` + `python`（inner_voice 闭合紧跟 fence 开启）
+- `</inner_voice>\n```` ``` ```` + `python\n…\n```` ``` ````（inner_voice 闭合 → `\n` 置行首 → fence 开启；`\n` 必须作为独立 chunk 边界测试）
 - `<#1#><mood>开` + `心</mood>`（PAUSE 紧跟 mood 开启）
 - `（笑）<#` + `1#>`（STAGE_CN 闭合紧跟 PAUSE）
 - `</|code|>` + `<#0.5#>`（code_tag 闭合紧跟 PAUSE）
-- ```` ```py 代码 ``` `` ```` + `（继续说话）`（fence 闭合紧跟 STAGE_CN）
+- `第一句。\n```` ```py\ncode\n``` ```` + `\n（继续说话）`（fence 闭合 → `\n` → 下一句行首紧跟 STAGE_CN）
 
 **关键断言**：转换处两个标签各自完整、无串扰；跨 chunk 与一次到达结果一致。
 
@@ -86,38 +88,61 @@
 
 ---
 
-## C. 围栏内存保护（唯一实现改动）
+## C. 无界缓冲加固（唯一实现改动）
 
 **位置**：`core/text/tokenizer.py`。
 
 ### 问题
 
-`_fence_content`（围栏）、`_code_content`（`<|code|>`）、`_markdown_content`（`<|markdown|>`）在未闭合时无限累积。
+七个累积缓冲均无限界。LLM 输出长无界前缀（永不开合的 ```` ``` ```` / `<|code|>` / `<mood>`、长数字串 PAUSE、无 `\n` 的围栏首行）会无限吃内存。
+
+### 关键约束：闭合检测机制决定截断策略
+
+tokenizer 有两类闭合检测，截断策略必须与之兼容：
+
+| 闭合检测 | 缓冲 | 含义 |
+|----------|------|------|
+| **结构化**（换行 + 反引号串、正则 break、闭合字符）| `_fence_content`、`_fence_pending`、`_pause_buf` | 闭合与内容缓冲无关，可安全"截断" |
+| **`endswith(close)`**（tokenizer.py:470/477/484）| `_meta_content`、`_code_content`、`_markdown_content` | 闭合靠**缓冲尾部**匹配闭合标签——**若截断保头，闭合标签永远进不了缓冲 → 永不闭合 → flush 整块丢弃，比现状更糟** |
+
+**因此块缓冲必须"前截断保尾"**（保留最近 N 字符，闭合标签在尾部存活，`endswith` 仍命中），**不能"停止累积保头"**。
 
 ### 改法
 
-1. 新增常量 `FENCE_MAX_CONTENT = 64 * 1024`（64KB；典型代码块 <4KB，16× 富余）。定义在 tokenizer.py 顶部常量区（与 `STAGE_M`/`STAGE_K` 同风格）。
-2. 新增一个通用私有 helper（DRY，三个缓冲共用）：
+1. **常量**（tokenizer.py 顶部常量区，与 `STAGE_M`/`STAGE_K` 同风格）：
+   - `FENCE_MAX_CONTENT = 64 * 1024`——块/元内容缓冲上限。**注意是码点数**（`len()` 对 str 计数码点，非字节）。典型代码块 <4KB，16× 富余。
+   - `FENCE_INFO_MAX = 256`——围栏信息串（首行）上限。
+   - `PAUSE_MAX = 32`——PAUSE 数字串上限。
+
+2. **通用前截断 helper**（四个内容缓冲共用，`endswith` 依赖的尾部永远保留）：
    ```python
-   def _append_block_content(self, attr: str, text: str) -> None:
-       buf = getattr(self, attr)
-       if len(buf) >= FENCE_MAX_CONTENT:
-           return
-       setattr(self, attr, buf + text)
+   def _append_bounded(self, attr: str, text: str) -> None:
+       buf = getattr(self, attr) + text
+       if len(buf) > FENCE_MAX_CONTENT:
+           buf = buf[-FENCE_MAX_CONTENT:]   # 前截断保尾
+       setattr(self, attr, buf)
    ```
-3. 将 `_feed_fence_body` 内全部 7 处 `self._fence_content += X`（tokenizer.py:519,532,541,551,554,560,564）替换为 `self._append_block_content("_fence_content", X)`。
-4. `_code_content`（tokenizer.py:476）与 `_markdown_content`（tokenizer.py:483）同样改走 helper（`attr` 传 `"_code_content"` / `"_markdown_content"`）。
+   应用：`_fence_content`（tokenizer.py:519,532,541,551,554,560,564 共 7 处）、`_code_content`（:476）、`_markdown_content`（:483）、`_meta_content`（:468）。
 
-**语义（已定稿）**：达到上限后**停止累积但继续按块状态消费**——真正的闭合仍照常 emit CODE token（内容截断在上限处），残余内容静默丢弃；**不强制回 NORMAL**（否则残余代码会泄漏进 TTS 被朗读，比截断更糟）。`_clear_fence()`/`reset()` 不变（已清空缓冲）。
+3. **`_fence_pending`**（:508/526 累积空白/反引号）——同走 `_append_bounded`（前截断；`_fence_run_len` 是独立计数器，不依赖 pending 内容，结构化闭合不受影响）。
 
-**行为影响**：超上限的代码块被截断为前 64KB。合法内容几乎不可能触发（典型 <4KB）。
+4. **`_fence_infostr`**（:499）——**保头不保尾**（`_fence_lang()` 取首段 token，前截断会丢 lang）：达 `FENCE_INFO_MAX` 后停止累积（首段保留）。
+
+5. **`_pause_buf`**（:399）——**不能前截断**（`PAUSE_RE.fullmatch(candidate)` 依赖 `<#` 前缀，截断保尾会丢前缀）：达 `PAUSE_MAX` 后按非数字字符处理——回落 SPEECH 释放。
+
+**语义**：超上限的闭合块 emit **截断内容 = 最近 FENCE_MAX_CONTENT 字符**（保尾）。**不强制回 NORMAL**（否则残余代码会泄漏进 TTS 被朗读，比截断更糟）。`_clear_fence()`/`reset()` 不变（已清空缓冲）。
+
+**行为影响（新行为，未登记 08-01 行为表）**：>64KB 的闭合代码块被截断为最近 64KB；未闭合超限块仍整体丢弃（同现状 #11），仅内存有界。合法内容（典型 <4KB）零影响。
 
 ### 测试（`core/text/tests/test_tokenizer.py`）
 
-- 未闭合围栏喂 >上限内容 → 内存有界（`len(_fence_content) <= FENCE_MAX_CONTENT`）+ flush 产出截断块
-- 闭合围栏喂 >上限内容 → 块截断但下游正常（CODE token 内容 = 前 64KB）
-- `<|code|>` / `<|markdown|>` 未闭合超上限 → 同上界
-- 正常（<上限）围栏 → 行为与现状一致（回归）
+- **闭合围栏**喂 >上限内容 → 内存有界 + CODE token 内容 = 最近 64KB（保尾截断）
+- **闭合 `<|code|>` / `<|markdown|>`** 喂 >上限内容 → **闭合仍被检测**（endswith 靠保尾存活）+ emit 截断块（关键：验证不落入"永不闭合丢弃"）
+- **未闭合**围栏 / code_tag / markdown 喂 >上限内容 → 内存有界 + flush 整体丢弃（对齐 #11）
+- 未闭合 `<mood>` 喂 >上限内容 → `_meta_content` 有界（前截断）+ flush 不发事件（对齐 #7）
+- 长数字串 `<#111…`（>PAUSE_MAX）→ 回落 SPEECH
+- 长围栏首行无 `\n`（>FENCE_INFO_MAX）→ 信息串截断 + lang 保留首段
+- **正常（<上限）** 全部 → 行为与现状一致（回归）
 
 ---
 
@@ -129,7 +154,9 @@
 
 ### D1. tags-only（核心，用户确认的形态）
 
-`<mood>开心</mood><inner_voice>我有点累</inner_voice>` 对应返回元组：`public_text=""`、`iv_think="我有点累"`、`raw_tool_calls=[]`、`mood_applied=True`。
+**返回元组契约**：`_stream_llm_response` 返回 **7 元组** `(acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think, blocks, public_text)`（loop.py:804-806，现有测试已固定正确形态 test_empty_response_guard.py:46-48）。`mood_applied` 是**实例属性**（loop.py:944），**不在返回元组里**——守卫也只读 `raw_tool_calls` + `public_text`，不读 `mood_applied`。
+
+tags-only 的 stub 返回元组：`("", [], False, [], "我有点累", [], "")`——`public_text=""`、`iv_think="我有点累"`、`raw_tool_calls=[]`。
 
 **断言**：
 - 守卫**必须**触发（`public_text.strip()` 为空，即使 `iv_think` 非空）→ nudge 重试一次
@@ -138,15 +165,15 @@
 
 ### D2. 纯空白
 
-`"\n\n  "` 对应返回元组（`public_text="\n\n  "`）→ 守卫触发（`strip()` 为空）→ nudge。
+stub 返回元组 `("", [], False, [], "", [], "\n\n  ")`（`public_text="\n\n  "`）→ 守卫触发（`strip()` 为空）→ nudge。
 
 ### D3. 纯 emoji（守卫不应触发）
 
-`"😊"` 对应返回元组（`public_text="😊"`）→ `strip()` 非空 → 守卫**不**触发 → 直接 `_finalize_turn`（emoji 是可见回复，正确行为）。断言 `_stream_llm_response` 只调用一次、无 nudge。
+stub 返回元组 `("😊", [], False, ["😊"], "", [], "😊")`（`public_text="😊"`）→ `strip()` 非空 → 守卫**不**触发 → 直接 `_finalize_turn`（emoji 是可见回复，正确行为）。断言 `_stream_llm_response` 只调用一次、无 nudge。
 
-### D4. 超长单句
+### D4. 删除（原本无效）
 
-一个 >max_buffer_length 的长句（强制切分路径）→ 正常走 `_finalize_turn`，守卫不触发。
+~~超长单句强制切分~~：`max_buffer_length`/`_forced_split` 在真实 `_stream_llm_response` 内部（loop.py:451、splitter.py:241-262），stub 下 D4 只是重复 `test_normal_response_not_retried`。强制切分路径已由既有 splitter 测试覆盖（`test_forced_split_*`，test_splitter.py:273/279/285），loop 层不需要重复。
 
 ---
 
@@ -178,18 +205,18 @@
 
 ### 不变式 2：序列后状态干净（平衡序列 + sentinel）
 
-平衡序列 → 追加 sentinel 语音 `"你好世界"` → 全部喂入 → flush → 断言：
-- sentinel 的语音以 SPEECH/SENTENCE 出现（**未被吞进未闭合 CODE/META**）
-- 无幽灵 token（sentinel 未被误判为其他 kind）
+平衡序列 → 追加 **sentinel = `"\n你好世界"`**（前导 `\n` 是硬分隔符，保证 sentinel 独立成句）→ 全部喂入 → flush → 断言：
+- 输出 token 中存在 `TokenKind.SPEECH` 且 **`text == "你好世界"` 精确相等**（未被吞进未闭合 CODE/META、未被并入前一句、未被误判为其他 kind）
 - 整串 vs 切分结果一致（与不变式 1 合并验证）
 
 > 设计依据：状态残留 bug 的特征是"序列本身解析正常，但污染后续输入"。平衡序列 + 尾随 sentinel 正好暴露此形态——幽灵 FENCE 会把 sentinel 吞掉。
+> **sentinel 断言必须精确匹配**：前导 `\n` 强制独立成句，使 `text == "你好世界"` 成立（`\n` 自身消费为独立 SPEECH token，`你好世界` 紧随其后为完整 SPEECH token）；若不带 `\n`，sentinel 可能并入前一句（如 `又说你好世界`），精确相等会假失败；若退化成"含 sentinel 文本"子串断言，在残留污染时又可能假通过（sentinel 被吞进 CODE 但子串仍存在）。
 
 ### 断言实现
 
 - token 级：整串 vs 切分的 `[(kind, text, meta_kind, lang)]` 列表逐一相等
 - 事件级（StreamProcessor）：`StreamEvent(type, text)` 列表相等
-- sentinel：输出 token 中存在 `TokenKind.SPEECH` 且 `text == "你好世界"`（或按拆词断言含 sentinel 文本）
+- sentinel：`TokenKind.SPEECH` 且 `text == "你好世界"`（精确相等）
 
 ---
 
@@ -200,8 +227,8 @@
 | A1 进入退出再进入 | test_tokenizer.py / test_stream_processor.py | 手写序列 |
 | A2 紧邻转换跨 chunk | 同上 | 手写序列 |
 | B 多代码块链路 | test_stream_processor.py | 手写全链路 |
-| C 围栏内存保护 | test_tokenizer.py | 实现改动 + 测试 |
-| D Loop 层集成边界 | test_empty_response_guard.py | 手写守卫测试 |
+| C 无界缓冲加固 | test_tokenizer.py | 实现改动 + 测试 |
+| D1-D3 Loop 层集成边界 | test_empty_response_guard.py | 手写守卫测试 |
 | E fuzz | test_fuzz_sequences.py（新） | 确定性随机 300 组 |
 
 - 全部 `pytest.mark.unit`
@@ -209,6 +236,6 @@
 
 ## 风险
 
-- **C 截断语义改变块行为**：仅影响 >64KB 的代码块（几乎不可能由 LLM 产出）。测试固化"<上限行为不变"。
+- **C 加固改变缓冲行为**：>64KB 的闭合块截断为最近 64KB（几乎不可能由 LLM 产出）、>32 的数字串 PAUSE 回落 SPEECH、>256 的围栏信息串截断——均为病理输入。测试固化"<上限行为与现状一致"。
 - **fuzz 确定性**：固定种子保证可复现；若 fuzz 暴露真实 bug，先修实现再归入回归测试。
 - **行为回归**：全部新测试为追加，不改既有行为（除 C）；以"现状行为对齐 + 新语义测试固化"为准。
