@@ -11,8 +11,6 @@ from core.input.server import create_app
 
 def _make_app_agent():
     """真实 Agent（不 start，无 DB），提供 llm/config/tts 供 fallback 读取。"""
-    import os as _os
-    _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
     from core.config import AppConfig
     from core.agent import Agent
     return Agent(config=AppConfig())

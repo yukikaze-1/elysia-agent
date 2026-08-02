@@ -714,10 +714,15 @@ def test_prune_removes_terminal_parent_when_child_also_terminal():
 import os as _os_module
 
 
-def _ensure_api_key():
-    """Ensure a dummy DEEPSEEK_API_KEY for Agent integration tests."""
+def _ensure_api_key(monkeypatch):
+    """确保 Agent 集成测试有 DEEPSEEK_API_KEY（DelegationPreparer 构造要求非空）。
+
+    用 monkeypatch.setenv 在测试作用域内设置，测试结束自动还原——避免裸写进程 env
+    永久污染，导致后收集的 core/tests/test_phase1.py 真实 LLM 测试拿到假 key 而 401
+    （openai.AuthenticationError: api key ... invalid）。
+    """
     if not _os_module.environ.get("DEEPSEEK_API_KEY"):
-        _os_module.environ["DEEPSEEK_API_KEY"] = "test-key-integration"
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-integration")
 
 
 @pytest.mark.asyncio
@@ -826,9 +831,9 @@ async def test_cognitive_loop_no_callback_backward_compat():
 
 @pytest.mark.slow
 @pytest.mark.asyncio
-async def test_agent_scheduler_lifecycle():
+async def test_agent_scheduler_lifecycle(monkeypatch):
     """Agent start → Scheduler 启动。Agent stop → Scheduler 停止。"""
-    _ensure_api_key()
+    _ensure_api_key(monkeypatch)
     from core.agent import Agent
     from core.config import AppConfig
     from core.tests.fake_llm import FakeLLMBackend
@@ -846,9 +851,9 @@ async def test_agent_scheduler_lifecycle():
 
 @pytest.mark.slow
 @pytest.mark.asyncio
-async def test_agent_fifo_queue():
+async def test_agent_fifo_queue(monkeypatch):
     """忙时发送消息 → 排队。空闲后 → 自动出队。"""
-    _ensure_api_key()
+    _ensure_api_key(monkeypatch)
     from core.agent import Agent
     from core.config import AppConfig
     from core.tests.fake_llm import FakeLLMBackend
@@ -886,9 +891,9 @@ async def test_agent_fifo_queue():
 
 @pytest.mark.slow
 @pytest.mark.asyncio
-async def test_agent_interrupt_clears_queue():
+async def test_agent_interrupt_clears_queue(monkeypatch):
     """INTERRUPT → 清空排队消息。"""
-    _ensure_api_key()
+    _ensure_api_key(monkeypatch)
     from core.agent import Agent
     from core.config import AppConfig
     from core.tests.fake_llm import FakeLLMBackend
@@ -914,9 +919,9 @@ async def test_agent_interrupt_clears_queue():
 
 @pytest.mark.slow
 @pytest.mark.asyncio
-async def test_scheduler_state_in_debug_info():
+async def test_scheduler_state_in_debug_info(monkeypatch):
     """DebugInfo.collect() 包含 Scheduler 状态。"""
-    _ensure_api_key()
+    _ensure_api_key(monkeypatch)
     from core.agent import Agent
     from core.config import AppConfig
     from core.tests.fake_llm import FakeLLMBackend
