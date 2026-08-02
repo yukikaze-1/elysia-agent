@@ -16,7 +16,7 @@
 ```
 客户端 ── WS 连接 ──→ /ws
          ←── { type: "session", messages: [...], token_stats: {...} }
-         ←── { type: "capabilities", stt: bool, tts: bool, llm_model: "...", stt_model: "...", tts_model: "...", ... }
+         ←── { type: "capabilities", live2d_static_image: "...", services: { llm: {...}, stt: {...}, tts: {...} } }
          ←── { type: "expression", expression: "...", intensity: 0 }
          （`state` 不随建连下发，仅在 FSM 状态转换时触发 notify_state）
          
@@ -33,7 +33,7 @@ WS 断开后 session 保留在服务端。重连时：
 
 ### 辅助通道：Binary 帧（麦克风）
 
-除 JSON 文本帧外，WS 还接受 **binary 帧** 用于语音输入。每帧为 Int16 PCM 音频（采样率取决于 STT 后端，通常 16000Hz/mono）。仅在服务端 `stt: true` 时有效。纯文本前端可忽略。
+除 JSON 文本帧外，WS 还接受 **binary 帧** 用于语音输入。每帧为 Int16 PCM 音频（采样率取决于 STT 后端，通常 16000Hz/mono）。仅在服务端 STT 服务启用（`capabilities.services.stt.enabled` 为 `true`）时有效。纯文本前端可忽略。
 
 ---
 
@@ -42,7 +42,7 @@ WS 断开后 session 保留在服务端。重连时：
 ### 发送方向总览
 
 ```
-Server ──→ Client (18 种 type，action/command 含子类型):
+Server ──→ Client (17 种 type，action/command 含子类型):
   session, capabilities, state
   delta, message, typing
   expression
@@ -50,10 +50,10 @@ Server ──→ Client (18 种 type，action/command 含子类型):
   command → tool_approval | inner_voice | block
   audio, audio_end
   transcription, wake
-  token_usage, switch_model_result, error
+  token_usage, switch_model_result, service_mode_result, error
 
-Client ──→ Server (5 种):
-  text, interrupt, switch_model, tool_approval, wake_toggle
+Client ──→ Server (6 种):
+  text, interrupt, switch_model, set_service, tool_approval, wake_toggle
 ```
 
 ---
@@ -145,26 +145,50 @@ Client ──→ Server (5 种):
 
 ### 2. `capabilities` — 服务能力声明
 
+> **破坏性变更（breaking change）：** `capabilities` 形状已从扁平字段改为嵌套 per-service `services` 对象。旧的 `stt`/`tts`/`llm_model`/`stt_model`/`tts_model` 扁平字段已移除，请按下方新形状迁移。新旧前端并存时建议按 `services` 字段是否存在做版本探测。
+
 ```json
 {
   "type": "capabilities",
-  "stt": true,
-  "tts": true,
-  "llm_model": "deepseek/deepseek-v4-flash",
-  "stt_model": "sensevoice/sense-voice",
-  "tts_model": "minimax/speech-2.8-hd",
-  "live2d_static_image": "/static/Elysia.png"
+  "live2d_static_image": "/static/Elysia.png",
+  "services": {
+    "llm": {
+      "available": true,
+      "enabled": true,
+      "model": "deepseek/deepseek-v4-flash",
+      "default": "deepseek/deepseek-v4-flash"
+    },
+    "stt": {
+      "available": true,
+      "enabled": true,
+      "model": "sensevoice/sense-voice",
+      "default": "sensevoice/sense-voice"
+    },
+    "tts": {
+      "available": true,
+      "enabled": true,
+      "model": "minimax/speech-2.8-hd",
+      "default": "minimax/speech-2.8-hd"
+    }
+  }
 }
 ```
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `stt` | bool | 语音识别是否可用 |
-| `tts` | bool | 语音合成是否可用 |
-| `llm_model` | string | 当前 LLM 模型标识 |
-| `stt_model` | string \| null | 当前 STT 模型；服务未连接时（`stt: false`）为 `null`，前端应禁用下拉 |
-| `tts_model` | string \| null | 当前 TTS 模型；服务未连接时（`tts: false`）为 `null` |
 | `live2d_static_image` | string | Live2D 静态图（无 Live2D 时用） |
+| `services` | object | 嵌套 per-service 能力声明，键为 `llm` \| `stt` \| `tts` |
+
+**`services.<service>` 每项字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `available` | bool | 后端是否已连接（`available: false` 时 `model` 恒为 `null`，前端应禁用下拉） |
+| `enabled` | bool | 用户当前开关状态（热插拔开关，独立于 `available`；`enabled: true` 但 `available: false` 表示期望启用但后端未连接） |
+| `model` | string \| null | 当前模型标识；服务不可用（`available: false`）时为 `null` |
+| `default` | string | `config.yaml` 中的默认模型 |
+
+**下发时机：** 建连时发送一次；`set_service`（服务开关）或 `switch_model`（模型切换）成功后**向所有已连接客户端重播**（见 `service_mode_result` / `switch_model_result`）。前端应以最新一份为准全量替换。
 
 ### 3. `state` — Agent 状态变更
 
@@ -489,7 +513,28 @@ LLM 回复中的代码块或 Markdown 块单独推送。`block_type` 取值：`"
 }
 ```
 
-### 15. `error` — 错误消息
+### 15. `service_mode_result` — 服务开关结果
+
+`set_service` 的异步结果，**广播给所有 WebSocket 客户端**（而非仅请求方）。
+
+```json
+{
+  "type": "service_mode_result",
+  "service": "tts",
+  "enabled": false,
+  "ok": true,
+  "error": null
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `service` | string | 目标服务：`"stt"` \| `"tts"` |
+| `enabled` | bool | 生效后的开关状态（**失败响应也携带**——取请求值，供前端回滚乐观 UI） |
+| `ok` | bool | 是否成功 |
+| `error` | string \| null | 错误信息（成功时为 `null`） |
+
+### 16. `error` — 错误消息
 
 ```json
 { "type": "error", "message": "Invalid JSON" }
@@ -722,6 +767,14 @@ state { state: "thinking" }   （或 "speaking" → 流式文字）
 { "type": "wake_toggle", "enabled": true }
 ```
 
+### 6. `set_service` — 服务开关（stt/tts 热插拔）
+
+```json
+{ "type": "set_service", "service": "tts", "enabled": false }
+```
+
+`service` 取值: `"stt"` | `"tts"`（`"llm"` 不可禁用，会收到 `ok: false`）。`enabled` 必须为 `bool`。后端异步广播 `service_mode_result` 给所有客户端，并重播 `capabilities`。
+
 ---
 
 ## HTTP REST API
@@ -884,7 +937,7 @@ GET  /debug/api/prompts      → Prompt 历史记录
 1. **WebSocket 客户端** — 使用 `System.Net.WebSockets.ClientWebSocket`，连接 `/ws`
 2. **JSON 序列化** — 使用 `System.Text.Json`，收到消息先读 `type` 字段路由
 3. **流式文字** —
-   - 检测 `capabilities.tts`：true → TTS 模式（delta 带 stream_id，完整句）；false → 纯文字模式（逐字 delta）
+   - 检测 `capabilities.services.tts.available`（或 `enabled`）：true → TTS 模式（delta 带 stream_id，完整句）；false → 纯文字模式（逐字 delta）
    - TTS 模式：每条 delta 创建新气泡，stream_id 关联音频流
    - 纯文字模式：逐字追加到气泡，遇到 `message { content: "" }` 归档当前气泡
 4. **音频播放** —
@@ -895,6 +948,7 @@ GET  /debug/api/prompts      → Prompt 历史记录
 7. **结构化内容** — 收到 `command.command === "block"` 独立渲染代码块（等宽字体+语法高亮）或 Markdown 块（富文本），不混入流式文字
 8. **图片上传** — 先 POST `/api/images` 拿到 `path`，再通过 WS 发送含 `source` 的多模态 `text` 消息
 9. **审批弹窗** — 收到 `type: "command", command: "tool_approval"` 时弹出确认框，用户选择后发回 `tool_approval` 消息
+10. **服务开关（stt/tts 热插拔）** — 通过 `set_service` 消息（`{"type":"set_service","service":"tts","enabled":false}`）切换 STT/TTS 开关。收到广播的 `service_mode_result`（含 `ok`/`error`/`enabled`）与 `capabilities` 重播后更新本地 UI；失败时 `service_mode_result.enabled` 为请求值，用于回滚乐观 UI。服务启用状态统一读 `capabilities.services.<svc>.enabled`（用户开关）与 `available`（后端连接）
 
 ### 最小接入代码（伪 C#）
 
