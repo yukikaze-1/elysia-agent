@@ -486,6 +486,49 @@ class TestHandleJsonEdges:
 
 
 # ============================================================
+# set_service 消息（agent.set_service + service_mode_result）
+# ============================================================
+
+@pytest.mark.service
+class TestSetService:
+    @pytest.mark.asyncio
+    async def test_set_service_tts_toggles_and_broadcasts(self, aiohttp_client):
+        from core.input.server import create_app
+
+        agent = _make_agent()  # AppConfig 默认 config.tts.enabled=False
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        async with client.session.ws_connect(client.make_url("/ws")) as ws:
+            await ws.send_json({"type": "set_service", "service": "tts", "enabled": False})
+            resp = None
+            for _ in range(5):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT and json.loads(msg.data).get("type") == "service_mode_result":
+                    resp = json.loads(msg.data)
+                    break
+            assert resp is not None and resp["ok"] is True and resp["enabled"] is False
+            assert agent.session.service_state.tts_enabled is None  # False == config(False) → 写 None
+            assert agent._tts_enabled is False  # 运行时槽位同步（原始 bool，非 None）
+
+    @pytest.mark.asyncio
+    async def test_set_service_llm_rejected(self, aiohttp_client):
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        async with client.session.ws_connect(client.make_url("/ws")) as ws:
+            await ws.send_json({"type": "set_service", "service": "llm", "enabled": False})
+            resp = None
+            for _ in range(5):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT and json.loads(msg.data).get("type") == "service_mode_result":
+                    resp = json.loads(msg.data)
+                    break
+            assert resp is not None and resp["ok"] is False  # llm 拒绝
+
+
+# ============================================================
 # Health / ready endpoints
 # ============================================================
 

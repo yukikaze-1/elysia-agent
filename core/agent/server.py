@@ -190,6 +190,53 @@ class AgentServer:
             logger.error("TTS switch failed: %s", e)
             return {"ok": False, "error": str(e)}
 
+    async def set_service(self, service: str, enabled: bool) -> dict:
+        """设置服务开关（stt/tts 热插拔"开/关"路径）。
+
+        三分支：未知 service / 非 bool enabled / 正常开关。启用时若后端为 None
+        先经 switch_stt/switch_tts 补建（失败不改运行时槽位、不持久化）。
+        运行时槽位存原始 bool；持久化走统一规则 ``persist = enabled if
+        enabled != cfg_enabled else None``——等于 config 默认值时写 None
+        （三态回退：None → config.<svc>.enabled）。
+
+        Args:
+            service: 服务名（``stt`` / ``tts``）。
+            enabled: 是否启用。
+
+        Returns:
+            包含 ``ok`` 状态、``enabled``（成功为请求值，补建失败为当前有效开关）
+            和可选 ``error`` 信息的字典。
+        """
+        if service not in ("stt", "tts"):
+            return {"ok": False, "error": "LLM 不可禁用"} if service == "llm" else {"ok": False, "error": f"未知 service: {service}"}
+        if not isinstance(enabled, bool):
+            return {"ok": False, "error": "enabled 必须为 bool"}
+        cfg_enabled = self._config.stt.enabled if service == "stt" else self._config.tts.enabled
+        persist = enabled if enabled != cfg_enabled else None  # 统一规则：== config 写 None
+        if enabled:
+            backend = self._stt if service == "stt" else self._tts
+            if backend is None:  # 补建（热插拔"开"路径）
+                model = (self.session.service_state.stt_model or self._config.stt.model) \
+                    if service == "stt" else (self.session.service_state.tts_model or self._config.tts.model)
+                if service == "stt":
+                    r = await self.switch_stt(model)
+                else:
+                    r = await self.switch_tts(model)
+                if not r["ok"]:
+                    return {"ok": False, "enabled": self.stt_enabled if service == "stt" else self.tts_enabled, "error": r.get("error")}
+        # 置运行时槽位（stt 或 tts）
+        if service == "stt":
+            self._stt_enabled = enabled
+        else:
+            self._tts_enabled = enabled
+            # 内部接线（loop gate 唯一来源），非跨模块访问
+            await self._cognitive._tts_mgr.set_enabled(enabled)  # noqa: SLF001
+        # 持久化 enabled（补建成功后才写，失败已 return）
+        setattr(self.session.service_state, f"{service}_enabled", persist)
+        await self.session.save()
+        # 重播 capabilities（Task 7 实现后替换为 build_capabilities 广播；此前可先跳过）
+        return {"ok": True, "enabled": enabled}
+
     def get_wake_words(self) -> list[str]:
         """从角色配置中获取唤醒词，供服务端模式 AudioBuffer 使用。
 

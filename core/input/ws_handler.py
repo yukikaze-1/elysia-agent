@@ -238,6 +238,23 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
                         logger.debug("Failed to send switch_model_result", exc_info=True)
                     break
         logger.info("WS 切换模型: service=%s model=%s ok=%s", service, model, result.get("ok"))
+    elif msg_type == "set_service":
+        service = data.get("service", "")
+        enabled = data.get("enabled", False)
+        result = await agent.set_service(service, enabled)
+        # 广播给所有 WebSocket 客户端（而非仅发送者）——含失败时的 enabled 字段。
+        # 不复制 switch_model_result 模式（那只回给请求方）。capabilities 重播在 Task 7 接入。
+        from Module.output import WebSocketChannel
+        for ch in agent.output._channels:  # noqa: SLF001
+            if isinstance(ch, WebSocketChannel):
+                await ch._send_json({  # noqa: SLF001
+                    "type": "service_mode_result",
+                    "service": service,
+                    "enabled": result.get("enabled", enabled),
+                    "ok": result.get("ok", False),
+                    "error": result.get("error"),
+                })
+        logger.info("WS 设置服务开关: service=%s enabled=%s ok=%s", service, enabled, result.get("ok"))
     elif msg_type == "tool_approval":
         request_id = data.get("request_id", "")
         approved = data.get("approved", False)
