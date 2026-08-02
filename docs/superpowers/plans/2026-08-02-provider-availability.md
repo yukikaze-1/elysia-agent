@@ -423,6 +423,25 @@ def test_custom_resolves_from_yaml(tmp_path):
 
 
 @pytest.mark.unit
+def test_custom_env_empty_skips_api_key(tmp_path):
+    """api_key_env 存在但 env 未设 → 不传 api_key（避免空串泄漏进 switch/test 调用）。"""
+    yaml_path = tmp_path / "custom_providers.yaml"
+    yaml_path.write_text(
+        "llm:\n"
+        "  - name: nokeyval\n"
+        "    base_url: http://nokey.local\n"
+        "    api_key_env: UNSET_KEY\n"
+        "    models: [m1]\n",
+        encoding="utf-8",
+    )
+    with patch.object(cp, "_DEFAULT_PATH", yaml_path), \
+         patch.dict(os.environ, {"UNSET_KEY": ""}, clear=True):
+        params = cp.resolve_model_params("llm", "custom/nokeyval")
+    assert params == {"base_url": "http://nokey.local"}
+    assert "api_key" not in params
+
+
+@pytest.mark.unit
 def test_custom_missing_api_key_env_no_crash(tmp_path):
     """api_key_env 缺失/为空 → 不传 api_key（避免 os.getenv(None) 抛 TypeError）。"""
     yaml_path = tmp_path / "custom_providers.yaml"
@@ -477,8 +496,10 @@ def resolve_model_params(service: str, model_id: str) -> dict:
         if entry.get("name") == name:
             params = {"base_url": entry.get("base_url", "")}
             env_name = entry.get("api_key_env", "")
-            if env_name:
-                params["api_key"] = os.getenv(env_name, "")
+            api_key = os.getenv(env_name, "") if env_name else ""
+            # 空 api_key 不传——避免 "" 泄漏进 switch/test 调用（assert_called_once_with 严格相等会失败）
+            if api_key:
+                params["api_key"] = api_key
             return params
     return {}
 ```
@@ -503,6 +524,7 @@ git commit -m "feat(input): resolve_model_params — custom 切换/测试参数�
 
 **Files:**
 - Modify: `core/input/api_routes.py`
+- Modify: `paths.py`（加 `STT_SAMPLE_WAV` 条目）
 - Create: `Module/stt/tests/fixtures/sample.wav`（STT usable 测试样例）
 - Test: `core/input/tests/test_providers_api.py`（新建）
 
@@ -510,7 +532,13 @@ git commit -m "feat(input): resolve_model_params — custom 切换/测试参数�
 - Consumes: Task 2 `build_providers_response`；Task 3 `resolve_model_params`；`request.app["agent"]`（create_app 注入）；`Module.llm/stt/tts` 的 `LLMFactory/STTFactory/TTSFactory.create`。
 - Produces: `/api/providers`（GET）返回过滤后响应；`/api/providers/test`（POST）支持任意 provider + `level`。
 
-- [ ] **Step 1: 生成 STT 样例 WAV + 写失败测试**
+- [ ] **Step 1: 生成 STT 样例 WAV + paths.py 注册路径 + 写失败测试**
+
+在 `paths.py` 的 `ProjectPath` 类中加一条（与既有 `DATA_REF = "data/ref"` 同风格）：
+
+```python
+    STT_SAMPLE_WAV = "Module/stt/tests/fixtures/sample.wav"
+```
 
 ```bash
 # 生成 1s 440Hz 正弦波 WAV（16kHz mono int16）
@@ -547,6 +575,7 @@ def _make_app_agent():
     return Agent(config=AppConfig())
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_providers_list_uses_registry(aiohttp_client):
     """GET /api/providers 返回过滤后结构（unconfigured 存在、custom 顶层、无内置 custom）。"""
@@ -568,6 +597,7 @@ async def test_providers_list_uses_registry(aiohttp_client):
     assert all(e["name"] != "deepgram" for e in data["unconfigured"]["stt"])
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_test_endpoint_builtin_connectivity(aiohttp_client):
     """内置 provider connectivity 级：Factory.create 建 backend 调 test()。"""
@@ -593,6 +623,7 @@ async def test_test_endpoint_builtin_connectivity(aiohttp_client):
     )
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_test_endpoint_custom_resolves_from_yaml(aiohttp_client, tmp_path):
     """custom 缺 body base_url → resolve_model_params 从 custom_providers.yaml 解析。"""
@@ -607,7 +638,10 @@ async def test_test_endpoint_custom_resolves_from_yaml(aiohttp_client, tmp_path)
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
 
+    # clear=True 清空全部 env + 显式置空 MY_LLM_KEY → resolve_model_params 不返回 api_key，
+    # 隔离外部环境变量，保证断言确定性
     with patch.object(cp, "_DEFAULT_PATH", yaml_path), \
+         patch.dict(os.environ, {"MY_LLM_KEY": ""}, clear=True), \
          patch("Module.llm.registry.LLMFactory.create") as mock_create:
         fake = AsyncMock()
         fake.test.return_value = {"ok": True, "latency_ms": 5, "error": ""}
@@ -621,6 +655,7 @@ async def test_test_endpoint_custom_resolves_from_yaml(aiohttp_client, tmp_path)
     mock_create.assert_called_once_with("custom/myllm", base_url="http://myllm.local")
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_test_endpoint_fallback_to_configured_model(aiohttp_client):
     """provider/model 均缺省 → 回退该服务当前模型（LLM → agent.llm.model）。"""
@@ -776,12 +811,14 @@ async def _run_usable_test(backend, service: str, request: web.Request, body: di
         }
 
     if service == "tts":
-        # character 缺省 → agent 当前角色名；该角色在 provider 无音色时后端报错，detail 带出
+        # character 缺省 → agent 角色名（agent.character.name，注意不是 config.agent.character——
+        # 那是角色配置路径 "character/elysia/config.yaml"，传给 synthesize 当音色名必然失败）。
+        # 该角色在 provider 无对应音色时后端抛"未知发音人"，detail 带出（spec 允许）。
         character = body.get("character", "")
         if not character:
             agent = request.app.get("agent")
             if agent is not None:
-                character = getattr(getattr(agent.config, "agent", None), "character", "") or ""
+                character = getattr(getattr(agent, "character", None), "name", "") or ""
         audio = await asyncio.wait_for(
             backend.synthesize("你好，测试", character=character),
             timeout=30.0,
@@ -793,9 +830,9 @@ async def _run_usable_test(backend, service: str, request: web.Request, body: di
             "detail": f"audio {len(audio)} bytes" if ok else "",
         }
 
-    # stt — 内置样例
-    from pathlib import Path
-    sample_path = Path(__file__).parent.parent.parent / "Module" / "stt" / "tests" / "fixtures" / "sample.wav"
+    # stt — 内置样例。路径走 ProjectPath（全项目路径唯一定义点，不用 Path(__file__) 硬编码跨目录）
+    from paths import ProjectPath
+    sample_path = ProjectPath.STT_SAMPLE_WAV.resolve()
     audio_bytes = sample_path.read_bytes()
     text = await asyncio.wait_for(backend.transcribe(audio_bytes), timeout=30.0)
     return {
@@ -854,7 +891,9 @@ git commit -m "feat(input): /api/providers 走 registry + /api/providers/test �
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
 
+        # clear=True + 置空 MY_LLM_KEY → resolve 不返回 api_key，断言确定性
         with patch.object(cp, "_DEFAULT_PATH", yaml_path), \
+             patch.dict(os.environ, {"MY_LLM_KEY": ""}, clear=True), \
              patch.object(agent.llm, "switch_model") as mock_switch:
             async with client.session.ws_connect(client.make_url('/ws')) as ws:
                 await ws.send_json({"type": "switch_model", "service": "llm", "model": "custom/myllm"})
@@ -1102,9 +1141,10 @@ function openConfigModal(service: 'llm' | 'stt' | 'tts') {
 }
 ```
 
-模板中三个 ModelSelector 各加 `@open-config`，并在每个下拉下加测试按钮行（LLM 示例，STT/TTS 同构）：
+模板中三个 ModelSelector 各加 `@open-config`，并在每个下拉下加测试按钮行。**STT/TTS 必须保留既有 `:disabled="!settings.xxxAvailable"` 绑定（a810bc7）**——否则未连接服务回归可点：
 
 ```html
+      <!-- LLM：始终启用 -->
       <div class="setting-row">
         <span class="setting-label">LLM 模型</span>
         <ModelSelector
@@ -1118,6 +1158,40 @@ function openConfigModal(service: 'llm' | 'stt' | 'tts') {
         <button class="panel-action-btn" :disabled="testLoading.llm" @click="handleTest('llm', 'connectivity')">测试连通性</button>
         <button class="panel-action-btn" :disabled="testLoading.llm" @click="handleTest('llm', 'usable')">测试可使用性</button>
         <span class="test-result" :class="{ success: testResult.llm.startsWith('✓'), fail: testResult.llm.startsWith('✗') }">{{ testResult.llm }}</span>
+      </div>
+
+      <!-- STT：保留 disabled（未连接禁用下拉） -->
+      <div class="setting-row">
+        <span class="setting-label">STT 模型<span v-if="!settings.sttAvailable" class="unavailable-badge">（未连接）</span></span>
+        <ModelSelector
+          service="stt"
+          :current-model="settings.sttModel"
+          :disabled="!settings.sttAvailable"
+          @switch="handleModelSwitch('stt', $event)"
+          @open-config="openConfigModal('stt')"
+        />
+      </div>
+      <div class="test-row">
+        <button class="panel-action-btn" :disabled="testLoading.stt" @click="handleTest('stt', 'connectivity')">测试连通性</button>
+        <button class="panel-action-btn" :disabled="testLoading.stt" @click="handleTest('stt', 'usable')">测试可使用性</button>
+        <span class="test-result" :class="{ success: testResult.stt.startsWith('✓'), fail: testResult.stt.startsWith('✗') }">{{ testResult.stt }}</span>
+      </div>
+
+      <!-- TTS：保留 disabled（同 STT） -->
+      <div class="setting-row">
+        <span class="setting-label">TTS 模型<span v-if="!settings.ttsAvailable" class="unavailable-badge">（未连接）</span></span>
+        <ModelSelector
+          service="tts"
+          :current-model="settings.ttsModel"
+          :disabled="!settings.ttsAvailable"
+          @switch="handleModelSwitch('tts', $event)"
+          @open-config="openConfigModal('tts')"
+        />
+      </div>
+      <div class="test-row">
+        <button class="panel-action-btn" :disabled="testLoading.tts" @click="handleTest('tts', 'connectivity')">测试连通性</button>
+        <button class="panel-action-btn" :disabled="testLoading.tts" @click="handleTest('tts', 'usable')">测试可使用性</button>
+        <span class="test-result" :class="{ success: testResult.tts.startsWith('✓'), fail: testResult.tts.startsWith('✗') }">{{ testResult.tts }}</span>
       </div>
 ```
 
@@ -1202,8 +1276,9 @@ git add -A && git commit -m "chore: provider 可用性实现收尾" || echo "无
 - 前端（custom 合并、测试按钮兄弟行、disabled 态回退、未配置引导 + 配置入口） → Task 6
 - 回归 → Task 7
 
-**已知偏差**（实现时注意，与 spec 有一处务实调整）：
+**已知偏差**（实现时注意，与 spec 有两处务实调整）：
 - STT usable 成功标准 = "transcribe 无异常"（spec 写"返回非空文本"）——内置 440Hz tone 样例未必产生非空文本，但能证明服务接受并处理音频。真实语音样本会返回文本，`detail` 报告实际识别结果。
+- TTS usable 缺省 character = **agent 角色名**（`agent.character.name`，不是 spec 含糊的"provider 默认音色"）——该角色在 provider 无对应音色时后端报"未知发音人"并返回 ok:false，`detail` 带出（spec 允许在 detail 提示音色缺失）。
 
 **类型一致性**：
 - `build_providers_response(custom_data) -> dict`：Task 2 定义，Task 4 使用。
