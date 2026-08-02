@@ -9,7 +9,7 @@
 | 2026-05 | 27 | [2026-05.md](completed/2026-05.md) |
 | 2026-06 | 33 | [2026-06.md](completed/2026-06.md) |
 | 2026-07 | 44 | 见下方 ↓ |
-| 2026-08 | 7 | 见下方 ↓ |
+| 2026-08 | 8 | 见下方 ↓ |
 
 ---
 
@@ -782,3 +782,21 @@ import 图分析发现 `core.agent ↔ core.status` 唯一硬环（eager 双向 
 **验证：** `make lint` 绿；非豁免文件相对导入清零；test-quick 2069 passed / 2 skipped；app --check 12/13 passed。
 
 **关联 commit：** `898ef8f`（门禁）+ `073902f`（转换）。
+
+### 2026-08-03: 服务运行时状态 + 热插拔 — STT/TTS 后端模式开关 + 跨重启持久化
+
+STT/TTS 的启用/禁用从「前端本地偏好 + 启动期配置」提升为**后端运行时状态**：前端发 `set_service` 开/关服务（TTS off 回落逐字文本流、STT off 停喂音频），当前模型与模式经 `session.service_state` 持久化（30d TTL），重启由 `_apply_service_state` 应用。
+
+**核心设计（spec 8 轮 + plan 12 轮评审）：**
+- **ServiceState 三态**：`stt_enabled`/`tts_enabled` 为 `bool | None`，None = 用户未显式改 → 回退 config；`persist = enabled if enabled != cfg_enabled else None` 保留「YAML 硬关」不被架空。
+- **STT 槽位化**：`agent.stt` 公开只读 @property（对齐 27 个既有惯例，现共 31 个）+ `stt_transcribe` 运行时动态读槽位 → 热切换对既有 WS 连接生效；生命周期 None 复位。
+- **switch_* 先建后关**：LLM/STT/TTS 建新后端成功才关旧；失败保留旧后端；`switch_stt` 从"只改 config"改为真正建后端（修复既有 TODO）。
+- **TTS 禁用兜底**：`async set_enabled(False)` → per-task `flush_on_cancel` 取消时自刷未播句文本（中途关不丢句）+ drain 后 flush emoji；`active`（后端可用）与 `enabled`（模式）分离。
+- **capabilities 嵌套**：`services.{llm,stt,tts}.{available,enabled,model,default}`，`model` 在 unavailable 时为 null，状态变化全量重播（破坏性协议变更，frontend-api.md 已标注）。
+- **STTBackend 补 `provider_name`/`model`**（对齐 TTSBackend），custom provider 经 `resolve_model_params` 重启存活。
+
+**前端：** settingsStore `ttsEnabled`/`sttEnabled` 改为后端模式（乐观更新 + `service_mode_result` 回滚 + `elysia_tts='off'` 旧值迁移）；InputBar 麦克风门控 `available && enabled`；audioStore gate 降为防御。
+
+**验证：** `make test-quick` 1837→1841 passed；`make lint` 绿；前端 vue-tsc + build 绿；最终全分支评审（opus）10 项 fix 全 ADDRESSED。顺带修复既存 marker 泄漏（`TestStreamingIntegration` 类级 service 把 2 个真网络 integration 测试拉进 test-quick）。
+
+**关联 commit：** `9871207` `6ca0e13` `ceb8792` `c235dd3` `f532ca8` `eb37348` `6931e71` `319b375` `80c4b35` `2bbe5d0` `de73bd4` `b19dd08` `c6ca296` `5dc2f67`。设计：[spec](../docs/superpowers/specs/2026-08-02-service-runtime-state-design.md)。

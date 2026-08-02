@@ -362,7 +362,7 @@ INTERRUPTED → IDLE
 
 ### 4.2.1 Agent 公开接口（组合根访问路径）
 
-`Agent` 是组合根（composition root），持有 22+ 子系统。除 `agent.status` / `agent.phases` 外，通过 **27 个同名 `@property`** 公开子系统访问路径——`@property` 只是薄 getter（`return self._xxx`），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+`Agent` 是组合根（composition root），持有 22+ 子系统。除 `agent.status` / `agent.phases` 外，通过 **31 个同名 `@property`** 公开子系统访问路径——`@property` 只是薄 getter（`return self._xxx`），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
 
 **子系统对象（23 个）**：`agent.session` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.tts` / `agent.config` / `agent.bus` / `agent.cognitive` / `agent.idle` / `agent.scheduler` / `agent.consolidator` / `agent.memory_reflector` / `agent.character_engine` / `agent.character_reflector` / `agent.character` / `agent.token_tracker` / `agent.prompt_recorder` / `agent.response_recorder`
 
@@ -686,10 +686,11 @@ Browser Microphone
 | `command` | `{"command":"tool_approval","params":{...}}` | 工具审批请求 |
 | `command` | `{"command":"block","params":{...}}` | 结构化内容块 |
 | `session` | `{"type":"session","messages":[...],"token_stats":{...}}` | 连接时推送会话历史 |
-| `capabilities` | `{"type":"capabilities","stt":true,...}` | 服务能力声明 |
+| `capabilities` | `{"type":"capabilities","live2d_static_image":"...","services":{"llm":{"available":true,"enabled":true,"model":"...","default":"..."},"stt":{...},"tts":{...}}}` | 服务能力声明（嵌套 per-service；`model` 在 `available:false` 时为 null；建连 + set_service/switch_model 后重播） |
 | `wake` | `{"type":"wake"}` | 唤醒词检测通知 |
 | `token_usage` | `{"turn":{"rounds":[...],"turn_total":N},"session":{"total":N,"by_model":{...}}}` | Token 消耗统计 |
 | `switch_model_result` | `{"type":"switch_model_result","service":"...","ok":true}` | 模型切换结果 |
+| `service_mode_result` | `{"type":"service_mode_result","service":"stt|tts","enabled":true,"ok":true,"error":null}` | STT/TTS 模式开关结果（失败也带 `enabled`，前端回滚乐观 UI） |
 | `error` | `{"type":"error","message":"..."}` | 错误通知 |
 
 **Browser → Server:**
@@ -700,6 +701,7 @@ Browser Microphone
 | `interrupt` | `{"type":"interrupt"}` | 打断按钮 |
 | `wake_toggle` | `{"type":"wake_toggle","enabled":true}` | 唤醒词开关 |
 | `switch_model` | `{"type":"switch_model","service":"llm","model":"..."}` | 切换模型 |
+| `set_service` | `{"type":"set_service","service":"stt|tts","enabled":false}` | 开/关 STT/TTS 后端模式（热插拔，后端补建/停用） |
 | `tool_approval` | `{"type":"tool_approval","request_id":"...","approved":true}` | 工具审批回复 |
 | binary | Int16 PCM bytes | 麦克风音频 |
 
@@ -994,12 +996,12 @@ Agent/
 │
 ├── core/                    # L1 认知控制 + L2 记忆
 │   ├── agent/                #   Agent 组装包 (agent + lifecycle + server + _types + 4 lifecycle mixins)
-│   │   ├── agent.py          #     Agent.__init__ + 事件处理 + process_message + 27 公开 @property
+│   │   ├── agent.py          #     Agent.__init__ + 事件处理 + process_message + 31 公开 @property（含 stt/stt_enabled/tts_enabled/stt_emotion_state）
 │   │   ├── lifecycle.py      #     AgentLifecycle: start/stop 编排 + _STARTUP_STEPS / _SHUTDOWN_STEPS
-│   │   ├── server.py         #     AgentServer: run_server/repl + provider 切换
+│   │   ├── server.py         #     AgentServer: run_server/repl + switch_*/set_service + run_server STT 槽位 + banner
 │   │   ├── _types.py         #     RunState + 辅助类
 │   │   ├── _lifecycle_persistence.py  #  持久化层启停
-│   │   ├── _lifecycle_services.py     #  LLM/TTS/Output/Token 启停
+│   │   ├── _lifecycle_services.py     #  LLM/TTS/STT/Output/Token 启停 + _apply_service_state 启动步骤
 │   │   ├── _lifecycle_tools.py        #  工具/调度/空闲监控 启停
 │   │   └── _lifecycle_task_system.py  #  WorkflowEngine/DelegationPreparer/mailbox 启停
 │   ├── adapter/
@@ -1028,7 +1030,7 @@ Agent/
 │   │   ├── task.py           #     任务数据模型
 │   │   └── scheduler.py      #     Worker Pool 调度器
 │   ├── utils/                #   通用工具包
-│   ├── schema/               #   共享类型包 (agent + types + part + tool + message + adapters)
+│   ├── schema/               #   共享类型包 (agent + types + part + tool + message + service_state + adapters)
 │   ├── status/                #   AgentStatus 接口层 (protocol + FSMBacked 实现)
 │   │   ├── protocol.py       #     AgentStatus（对外只读）+ CognitivePhaseController（对内写）
 │   │   └── fsm.py            #     FSMBackedStatus + FSMBackedPhaseController
@@ -1043,13 +1045,15 @@ Agent/
 │   │   ├── prompt_recorder.py #   Prompt 记录器
 │   │   └── response_recorder.py # Response 记录器
 │   ├── input/                #   Input: WebSocket + HTTP 服务器
-│   │   ├── server.py         #     aiohttp 应用入口
-│   │   ├── ws_handler.py     #     WebSocket 消息路由
+│   │   ├── server.py         #     aiohttp 应用入口（create_app 读 agent.stt 槽位，不再参数注入 STT）
+│   │   ├── ws_handler.py     #     WebSocket 消息路由（set_service + BINARY 防御）
+│   │   ├── capabilities.py   #     build_capabilities 嵌套 per-service 能力声明 + 全量重播
 │   │   ├── api_routes.py     #     REST API 路由
 │   │   ├── debug_routes/     #     Debug API 路由 (package: 7 modules)
 │   │   ├── audio_buffer.py   #     音频缓冲 + VAD
 │   │   ├── wakeword.py       #     唤醒词检测
-│   │   └── custom_providers.py #   自定义 provider 路由
+│   │   ├── custom_providers.py #   自定义 provider 路由
+│   │   └── provider_registry.py # /api/providers 响应组装（env 过滤 + 未配置引导）
 │   ├── config/               #   配置子包
 │   │   ├── __init__.py       #     重导出 AppConfig + CharacterConfig
 │   │   ├── app_config.py     #     App 配置
@@ -1062,7 +1066,7 @@ Agent/
 │   │   ├── emotion.py       #     情绪分析 (LLM mood tag + keyword fallback)
 │   │   └── _utils.py        #     内部工具
 │   ├── memory/              #   记忆子系统
-│   │   ├── session.py       #     SessionMemory (MongoDB + deque)
+│   │   ├── session.py       #     SessionMemory (MongoDB + deque; character_state/service_state 专用字段)
 │   │   ├── long_term.py     #     LongTermMemory (Milvus + Embedding)
 │   │   ├── embedding_provider.py #  EmbeddingProvider: 嵌入懒加载 + fallback
 │   │   ├── consolidator.py  #     MemoryConsolidator (提取 + 比对 + 写入)

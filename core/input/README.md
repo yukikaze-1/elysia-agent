@@ -12,7 +12,8 @@ input/
 ├── __main__.py          # 集成测试 (python -m core.input)
 ├── audio_buffer.py      # AudioBuffer — VAD 分帧 + 音频缓冲 + PCM/WAV 转换
 ├── server.py            # 胶水组装 + 基础路由
-├── ws_handler.py        # WebSocket 处理
+├── ws_handler.py        # WebSocket 处理（set_service 路由 + BINARY 防御）
+├── capabilities.py      # build_capabilities — 嵌套 per-service 能力声明 + 全量重播
 ├── api_routes.py        # 业务 API 路由
 ├── debug_routes/         # Debug API 路由 (package: 7 modules)
 ├── custom_providers.py  # 自定义 provider 持久化（JSON 文件读写）
@@ -28,11 +29,8 @@ input/
 from aiohttp import web
 from core.input import create_app, AudioBuffer
 
-async def my_stt(audio_bytes: bytes) -> str:
-    return "识别结果"
-
-# 创建 app（需要 agent 实例）
-app = create_app(agent, stt_transcribe=my_stt)
+# create_app 不再参数注入 STT——ws_handler 运行时读 agent.stt 槽位（支持热切换）
+app = create_app(agent)
 web.run_app(app, port=8000)
 ```
 
@@ -47,7 +45,11 @@ web.run_app(app, port=8000)
 
 ### create_app
 
-- `create_app(agent, stt_transcribe, *, serve_static, stt_emotion_state, wake_word_enabled)` — 创建 aiohttp Application
+- `create_app(agent, *, serve_static, wake_word_enabled, task_system, auth_token)` — 创建 aiohttp Application。STT 不再参数注入：建连时 `ws_handler` 读 `agent.stt` 槽位（`agent.stt_transcribe` / `agent.stt_emotion_state`），支持运行时热切换；BINARY 帧经 `agent.stt_enabled` 防御门控。
+
+### 服务模式开关
+
+- `set_service {service, enabled}` WS 消息 → `agent.set_service()` → `service_mode_result` 广播（所有 client）。TTS off → `_tts_mgr` 停用回落逐字文本流；STT off → 前端停麦 + 后端 BINARY 防御。模式与当前模型经 `session.service_state` 持久化（30d TTL），启动时 `_apply_service_state` 应用。
 
 ## 测试
 

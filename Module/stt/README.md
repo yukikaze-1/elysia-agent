@@ -44,10 +44,18 @@ await backend.close()
 class STTBackend(ABC):
     async def transcribe(self, audio: bytes, **kwargs) -> str: ...
     async def transcribe_stream(self, audio: bytes, **kwargs) -> AsyncGenerator[str, None]: ...
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str: ...   # "sensevoice" / "custom"
+
+    @property
+    def model(self) -> str: ...           # 完整标识 provider/model（拼接 _model），供 capabilities 下发
 ```
 
 - `audio` — 原始音频 bytes（WAV 等格式，由后端决定支持哪些）
 - `kwargs` — 透传 language / task 等参数，直接传给 API
+- `provider_name` + `model` — 对齐 `TTSBackend`（`model` 返回 `provider_name/_model` 完整 id，capabilities 下发当前模型用；空 `_model` 返回 `""`）
 
 ## 支持的后端
 

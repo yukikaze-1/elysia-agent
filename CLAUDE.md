@@ -118,7 +118,7 @@ core/
 │   └── timing.py          #   Timer + TimingClock latency tracking
 ├── adapter/               # Adapter layer: wraps Module/ backends for core/ consumption
 │   ├── llm_adapter.py     #   LLMAdapter: tool-calling + retry + streaming + hot-switch
-│   ├── tts_adapter.py     #   TTSStreamManager: sentence queuing + emoji sync + gated playback
+│   ├── tts_adapter.py     #   TTSStreamManager: sentence queuing + emoji sync + gated playback + async set_enabled 禁用兜底（per-task flush_on_cancel）
 │   ├── tool_call_parser.py #  merge/normalize streaming tool_call deltas
 │   ├── tool_adapter.py    #   ToolAdapter: tool subsystem lifecycle + ToolExecutor delegation
 │   ├── message_builder.py #   MessageBuilder: system prompt + history → LLM API messages[]
@@ -148,7 +148,7 @@ core/
 │   ├── _utils.py          #   内部工具函数
 │   └── tests/
 ├── memory/
-│   ├── session.py          # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive
+│   ├── session.py          # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive; 专用类型字段 character_state/service_state 经 save/load 同步
 │   ├── long_term.py        # LongTermMemory: Milvus-backed vector search + reranking; count-based _evict_overflow; async mark_absorbed with Milvus cleanup
 │   ├── embedding_provider.py # EmbeddingProvider: 嵌入后端懒加载 + 超时 + OpenAI/HuggingFace fallback
 │   ├── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM review)
@@ -221,7 +221,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.database.documentdb` | Document DB | `mongodb` |
 | `Module.database.graphdb` | Graph DB | stub only |
 | `Module.bench` | Latency benchmarking | Covers LLM/TTS/STT |
-| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (glue), `ws_handler.py`, `api_routes.py`, `debug_routes/` (package, 7 modules) |
+| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (glue), `ws_handler.py`, `capabilities.py` (嵌套 per-service 能力声明), `api_routes.py`, `debug_routes/` (package, 7 modules) |
 | `Module._common` | Shared utility layer | env, registry helpers, test helpers |
 
 ## Config system
@@ -240,11 +240,11 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **Logger injection**: `Factory.create()` auto-detects caller's module via `inspect`.
 - **env var precedence**: API keys and base URLs from `os.getenv()`, not YAML.
 - **MongoDB**: motor async driver. `insert_one/insert_many` pass `dict()` copy to avoid motor mutating callers' dicts.
-- **Session state**: 运行时状态用 SessionMemory 的**专用类型字段**（现有 `character_state`；反射器状态非字段，由 `session.save()` 经 `save_state()` 派生；`service_state` 待新增），经 `session.save()` 同步、`load()` 恢复（MongoDB 30d TTL + JSONL fallback）。无 `set_param/get_param` 通用接口——新增状态仿 `character_state` 加字段 + save/load 两侧同步。
+- **Session state**: 运行时状态用 SessionMemory 的**专用类型字段**（`character_state` / `service_state`；反射器状态非字段，由 `session.save()` 经 `save_state()` 派生），经 `session.save()` 同步、`load()` 恢复（MongoDB 30d TTL + JSONL fallback）。无 `set_param/get_param` 通用接口——新增状态仿 `character_state` 加字段 + save/load 两侧同步。`service_state`（服务运行时状态：当前模型 + STT/TTS 启用模式，enabled 三态 `bool | None`，None 回退 config）由 `agent.set_service` / `switch_*` 写、启动时经 `_apply_service_state` 应用。
 - **inner_voice protocol**: Every reply has one `<inner_voice>` block (1-2 sentences: current feeling + response intent, no reasoning chains).
 - **Project paths**: `from paths import ProjectPath, get_project_root` — 所有项目文件系统路径的唯一定义点。`ProjectPath.X.resolve()` 返回基于 `ELYSIA_ROOT` 环境变量（fallback 为项目根目录）的绝对 `Path`。
 - **AgentStatus**: `agent.status`（`AgentStatus`）提供语义状态查询（`is_accepting_input` / `is_speaking` / `should_suppress_vad_interrupt` 等）；`agent.phases`（`CognitivePhaseController`）驱动阶段转换。底层 `AgentFSM` 不对外暴露。设计文档：[spec](docs/superpowers/specs/2026-07-30-agent-status-interface-design.md)。
-- **Agent 公开接口**: `Agent` 作为组合根，通过 27 个同名 `@property` 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+- **Agent 公开接口**: `Agent` 作为组合根，通过 31 个同名 `@property` 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
 
 ## Prompt files (`core/prompts/`)
 
@@ -293,7 +293,7 @@ frontend/
     │   ├── connectionStore.ts  # WebSocket 连接生命周期
     │   ├── chatStore.ts        # 消息列表 + delta 流式追加 + TTS 排队
     │   ├── audioStore.ts       # TTS 缓冲/播放 + 麦克风
-    │   ├── settingsStore.ts    # 设置项 + localStorage 同步
+    │   ├── settingsStore.ts    # 设置项 + localStorage 同步 + 后端模式 toggle（sttEnabled/ttsEnabled → set_service）
     │   ├── toolsStore.ts       # 工具插件列表
     │   └── debugStore.ts       # Debug 仪表盘：轮询生命周期 + Tab 切换 + 分页状态
     ├── composables/
@@ -376,7 +376,7 @@ cd frontend && npm run build
 
 **Stores**: `debugStore.ts` — Pinia (Composition API): poll lifecycle, activeTab switching, pause/resume, LTM/Archive pagination state.
 
-### Server routing (`core/input/` — `server.py` + `ws_handler.py` + `api_routes.py` + `debug_routes/` package)
+### Server routing (`core/input/` — `server.py` + `ws_handler.py` + `capabilities.py` + `api_routes.py` + `debug_routes/` package)
 
 `/` → `static/index.html`, `/debug` → `static/debug.html`, `/ws` → WebSocket, `/health` `/ready` `/shutdown` `/restart` `/api/chat` `/api/messages` `/api/images` `/api/providers` `/tools` `/tools/reload`。Debug API: `/debug/api` `/debug/api/prompts/{n}` `/debug/api/responses/{n}` `/debug/api/db-status` `/debug/api/ltm` `/debug/api/sessions` `/debug/api/archive` `/debug/api/tasks/stream`
 

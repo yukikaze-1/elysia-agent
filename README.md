@@ -8,7 +8,7 @@
 
 > **运行环境：Linux**（Windows/Mac 用户请使用 WSL2 或虚拟机）
 
-> 最近 (2026-08-02): 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）；导入风格门禁同步文档与 CI。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。当前 2163 测试。
+> 最近 (2026-08-03): 服务运行时状态 + 热插拔——STT/TTS 后端模式开关（set_service）+ 模型/模式跨重启持久化（ServiceState）+ STT 槽位化热切换 + capabilities 嵌套 per-service。2026-08-02: 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）；导入风格门禁同步文档与 CI。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。当前 2187 测试。
 
 ---
 
@@ -242,7 +242,8 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | [scripts/README.md](scripts/README.md) | 工具脚本（启动/预检/清理数据库） |
 | [docs/readme-conventions.md](docs/readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
 | [docs/data-structure-survey.md](docs/data-structure-survey.md) | 全项目数据结构普查（2026-07-15） |
-| [docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md) | Agent 公开接口设计（27 个 @property + 写方法） |
+| [docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md) | Agent 公开接口设计（31 个 @property + 写方法） |
+| [docs/superpowers/specs/2026-08-02-service-runtime-state-design.md](docs/superpowers/specs/2026-08-02-service-runtime-state-design.md) | 服务运行时状态 + 热插拔设计（ServiceState + set_service + capabilities 嵌套） |
 | [docs/review/doc-review-2026-07-18.md](docs/review/doc-review-2026-07-18.md) | 文档审查报告（2026-07-18） |
 
 ---
@@ -420,7 +421,7 @@ Agent/
 
 ## 测试
 
-2163 个测试按 4 层 markers 组织（unit 1310 / service 782 / integration 35 / slow 56，少量多 marker 重复计入）。详见 [docs/testing.md](docs/testing.md)。
+2187 个测试按 4 层 markers 组织（unit 1324 / service 793 / integration 35 / slow 56，少量多 marker 重复计入）。详见 [docs/testing.md](docs/testing.md)。
 
 ```bash
 conda activate Elysia

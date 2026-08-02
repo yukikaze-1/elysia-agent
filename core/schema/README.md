@@ -18,6 +18,7 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 ├── message.py   # UserMessage / AssistantMessage / ToolResultMessage → Message（按 role 拆分）
 ├── token.py     # TokenUsage + TokenUsageSummary — Token 用量记录
 ├── character.py # CharacterState — CharacterEngine 性格状态
+├── service_state.py # ServiceState — 服务运行时状态（当前模型 + STT/TTS 启用模式，enabled 三态 bool | None）
 ├── mood.py     # STT emoji 工具函数（stt_emotion_emoji, stt_event_emoji）
 ├── memory_reflector.py # MemoryReflectorState + ReflectorActions — 状态 + LLM 输出类型
 ├── compression.py  # CompressionTrigger + VersionEntry — L3→L2 压缩版本管理类型
@@ -48,6 +49,7 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 | `message.py` | UserMessage / AssistantMessage / ToolResultMessage / ClientUserMessage / ClientAssistantMessage / ClientToolMessage / ClientMessageDict — Message（按 role 拆分）+ 客户端 TypedDict |
 | `token.py` | TokenUsage / TokenUsageSummary — Token 用量记录 |
 | `character.py` | CharacterState — CharacterEngine 性格状态 |
+| `service_state.py` | ServiceState — 服务运行时状态（llm_model/stt_model/tts_model + stt_enabled/tts_enabled 三态）|
 | `mood.py` | STT emoji 工具函数（stt_emotion_emoji, stt_event_emoji）|
 | `memory_reflector.py` | MemoryReflectorState + MergeItem/UpdateItem/DeleteItem/ReflectorActions — 状态 + MemoryReflector LLM 输出类型 |
 | `compression.py` | CompressionTrigger + VersionEntry — L3→L2 压缩版本管理类型 |

@@ -192,7 +192,7 @@
 
 ## 6. Session Params（已类型化）
 
-2026-08 已从裸 dict 迁入类型化 Pydantic 模型：`set_param`/`get_param` 已删除，字段拆分到 **`CharacterState`**（core/schema/character.py）与 **`MemoryReflectorState`**（core/schema/memory_reflector.py），随 session 持久化。
+2026-08 已从裸 dict 迁入类型化 Pydantic 模型：`set_param`/`get_param` 已删除，字段拆分到 **`CharacterState`**（core/schema/character.py）、**`MemoryReflectorState`**（core/schema/memory_reflector.py）与 **`ServiceState`**（core/schema/service_state.py），随 session 持久化。
 
 ### `CharacterState`（core/schema/character.py:16）
 
@@ -223,6 +223,18 @@
 | `mr_round_count` | int | MemoryReflector 轮次计数 |
 | `mr_new_memory_count` | int | 新增记忆计数 |
 | `mr_last_summary` | dict[str, object] | 上次记忆反思摘要 |
+
+### `ServiceState`（core/schema/service_state.py）
+
+| 字段 | 类型 | 用途 |
+|------|------|------|
+| `llm_model` | str | 当前 LLM 模型（空 = 用 config.yaml 默认） |
+| `stt_model` | str | 当前 STT 模型（空 = 用 config.yaml 默认） |
+| `tts_model` | str | 当前 TTS 模型（空 = 用 config.yaml 默认） |
+| `stt_enabled` | bool \| None | STT 模式；None = 未显式改 → 回退 config.stt.enabled |
+| `tts_enabled` | bool \| None | TTS 模式；None = 未显式改 → 回退 config.tts.enabled |
+
+由 `agent.set_service` / `switch_*` 写（`persist = enabled if enabled != config.enabled else None` 保留 YAML 硬关），启动时 `_apply_service_state` 应用（三态建门）。
 
 > **现状：** 已类型化，field 名有 Pydantic 校验，拼写错误在构造时即暴露。不再是无 schema 裸 dict。
 

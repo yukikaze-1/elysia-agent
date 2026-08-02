@@ -12,12 +12,12 @@
 │                                                              │
 │ __init__  创建所有组件、接线                                  │
 │ start()   按序: DB → token+prompt → tool_context →           │
-│           worker_pool → idle+events → tts → task_system →   │
+│           worker_pool → idle+events → service_state → tts → task_system →   │
 │           mailbox_polling → db_health                        │
 │ stop()    按序: flush → cancel → close → save                │
 │                                                              │
 │ AgentLifecycle  — 所有 _start_*/_stop_*/_flush_* 方法        │
-│ AgentServer    — run_server/run_repl + provider 切换          │
+│ AgentServer    — run_server/run_repl + switch_*/set_service 热插拔  │
 │ _types.py      — RunState, _PendingMessage, _BackgroundTask  │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -45,7 +45,8 @@ RUNNING → /restart → STOPPING → RESTARTING → start() → RUNNING
 
 - `STOPPING` 阶段有序关闭所有子系统
 - `RESTARTING` 阶段重新加载配置（`config.yaml` + `character/` + providers）
-- 热切换 LLM/STT/TTS 无需重启：`switch_llm()` 打断当前 LLM 调用后切换
+- 热切换 LLM/STT/TTS 无需重启：`switch_llm()` / `switch_stt()` / `switch_tts()`（先建后关，失败保留旧后端；`switch_stt` 真正建后端，不再只改 config）
+- STT/TTS 后端模式开关：`set_service(service, enabled)`——TTS off 回落逐字文本流、STT off 停喂音频；当前模型 + 模式经 `session.service_state` 持久化（30d TTL），重启后由 `_apply_service_state` 启动步骤应用（三态：显式值 or config 回退）
 
 ### 消息处理模式
 
@@ -72,10 +73,10 @@ core/agent/
 ├── __init__.py                  — 重导出 Agent, RunState
 ├── agent.py                     — Agent.__init__ + process_message + 后台任务
 ├── lifecycle.py                 — AgentLifecycle: start/stop 编排
-├── server.py                    — AgentServer: run_server/repl + switch_*/banner
+├── server.py                    — AgentServer: run_server/repl + switch_*/set_service + banner
 ├── _types.py                    — RunState, _PendingMessage, _BackgroundTaskEntry
 ├── _lifecycle_persistence.py    — 持久化层启停 (MongoDB/Milvus/session/repos)
-├── _lifecycle_services.py       — LLM/TTS/Output/TokenTracker 启停
+├── _lifecycle_services.py       — LLM/TTS/STT/Output/TokenTracker 启停 + _apply_service_state
 ├── _lifecycle_task_system.py    — TaskSystem/DelegationPreparer/mailbox 启停
 └── _lifecycle_tools.py          — ToolAdapter/Scheduler/IdleMonitor/event loop 启停
 ```

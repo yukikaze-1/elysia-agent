@@ -22,17 +22,17 @@ core/adapter/
 
 ## 组件
 
-### LLMAdapter（`llm_adapter.py`，213 行）
+### LLMAdapter（`llm_adapter.py`，210 行）
 
 封装 `Module/llm`：
 
 - `stream_think()` — 结构化流式输出 `{content, tool_calls}` chunks
 - 自动重试（429/500/502/503/504，指数退避 3 次）
-- `switch_model()` — 热切换底层 LLM 后端
+- `switch_model()` — 热切换底层 LLM 后端（先建后换，create 失败保留旧后端 + `_requested_model`）
 - `get_raw_client()` — 暴露底层 HTTP client（供 TaskSystem 直接使用）
 - 非流式 tool-call JSON 解析兜底
 
-### TTSStreamManager（`tts_adapter.py`，344 行）
+### TTSStreamManager（`tts_adapter.py`，423 行）
 
 封装 `Module/tts` + `Module/output`：
 
@@ -41,6 +41,7 @@ core/adapter/
 - `set_emotion()` — mood 文本 → TTS 情感参数映射
 - 文本预处理 — 暂停标签剥离、中文动作提示词过滤
 - Phase 1 下载 + Phase 2 串行门控播放
+- **`async set_enabled()`** — 后端模式开关：禁用时取消在途任务并 per-task `flush_on_cancel` 兜底广播未播句文本（中途关 TTS 不丢句）+ drain 后 flush emoji；`enabled` 独立于 `active`（后端可用性）
 
 ### ToolAdapter（`tool_adapter.py`，185 行）
 
