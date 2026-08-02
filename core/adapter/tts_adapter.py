@@ -77,6 +77,7 @@ class TTSStreamManager:
         self._tts = tts
         self._output = output
         self._char_name = character_name
+        self._enabled = True  # TTS 启用开关，仅由 set_enabled 控制（热插拔门控）
         self._preprocess = lambda text: text  # 默认：不预处理
         if tts is not None:
             fn = tts.get_preprocess()
@@ -118,6 +119,8 @@ class TTSStreamManager:
         Args:
             sentence: 待合成的句子文本。
         """
+        if not self._enabled:
+            return
         if not self._tts:
             return
         if is_emoji_only(sentence):
@@ -130,6 +133,15 @@ class TTSStreamManager:
         if not _clean:
             return
 
+        # 显示文本：enqueue 时算一次（任务局部自持，不共享注册表），
+        # 禁用取消时由 CancelledError 分支按此自刷，排队未播句不丢
+        display_text = strip_display_hidden(sentence).strip()
+        action_text = ""
+        m = STAGE_CN_RE.match(display_text)
+        if m:
+            action_text = m.group()
+            display_text = display_text[m.end():].strip()
+
         self._total += 1
         self._seq += 1
         sid = self._total
@@ -141,7 +153,7 @@ class TTSStreamManager:
         logger.debug("TTS 句内容: %s", _clean[:60])
 
         task = asyncio.create_task(
-            self._download_and_forward(sid, seq, sentence),
+            self._download_and_forward(sid, seq, sentence, display_text, action_text),
             name=f"tts-{sid}",
         )
         self._tasks.append(task)
@@ -210,12 +222,53 @@ class TTSStreamManager:
 
     @property
     def active(self) -> bool:
-        """TTS 后端是否可用。"""
+        """TTS 后端是否可用（active 语义保持"后端可用"，不随 enabled 变化）。"""
         return self._tts is not None
+
+    @property
+    def enabled(self) -> bool:
+        """TTS 是否启用（由 set_enabled 控制，默认 True）。"""
+        return self._enabled
+
+    async def set_enabled(self, enabled: bool) -> None:
+        """设置 TTS 启用状态（热插拔门控的唯一入口）。
+
+        禁用时：置位 → 捕获 pending（cancel_all 会清 _tasks，须先捕获）→
+        对每个任务置 per-task flush_on_cancel（让被取消任务自刷排队未播文本）→
+        cancel_all() → drain（wait_for 对齐 _lifecycle_services 超时模式）→
+        flush_emojis()（纯 emoji 句无任务，自刷覆盖不到）。TimeoutError 内吞：
+        flush_on_cancel 已置、cancel_all 已发，禁用本身已生效，异常冒泡到
+        set_service 会跳过 session.save() + capabilities 重播。
+        """
+        self._enabled = enabled
+        if not enabled:
+            # 先捕获 pending——cancel_all() 会 clear _tasks，之后 gather 拿到空列表
+            pending = [t for t in self._tasks if not t.done()]
+            for t in pending:
+                t.flush_on_cancel = True  # 仅禁用路径置位，保证只有禁用触发文本兜底
+            self.cancel_all()
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*pending, return_exceptions=True), timeout=3.0)
+                # drain 完成 → 被取消任务已自刷文本 → 才 flush 纯 emoji 句
+                await self.flush_emojis()
+            except asyncio.TimeoutError:
+                # 超时分支：不清除 _pending_emojis——被僵尸客户端卡住的任务稍后
+                # 完成时仍会广播其 display_text，此时 flush emoji 会让 emoji 提前
+                # 发出、依附到上一句（顺序破坏）。跳过 flush 保序，残留 emoji 随
+                # reset_for_turn 丢弃。
+                logger.warning("TTS disable drain 超时，跳过 emoji flush")
 
     # ---- 内部 ----
 
-    async def _download_and_forward(self, sid: int, seq: int, sentence: str) -> None:
+    async def _download_and_forward(
+        self,
+        sid: int,
+        seq: int,
+        sentence: str,
+        display_text: str,
+        action_text: str,
+    ) -> None:
         """下载 TTS 音频后按序转发到前端。
 
         Phase 1（并行）: 发送文本到云端，下载完整音频。
@@ -224,22 +277,21 @@ class TTSStreamManager:
         Args:
             sid: 全局流 ID（跨轮次递增）。
             seq: 本轮序号（用于门控排序）。
-            sentence: 待合成的句子文本。
+            sentence: 待合成的句子文本（用于 TTS 文本与字符统计）。
+            display_text: enqueue 时算好的显示文本（任务局部自持，不共享注册表）。
+            action_text: 句首中文舞台指示（单独一行显示）。
         """
+        if not self._enabled:
+            return
         if not self._tts:
             return
 
-        # 显示文本：去掉停顿标签与英文语气词（前端不显示 <#x#> / (sighs)）
-        display_text = strip_display_hidden(sentence).strip()
-        # 提取句首中文舞台指示，单独一行显示
-        action_text = ""
-        m = STAGE_CN_RE.match(display_text)
-        if m:
-            action_text = m.group()
-            display_text = display_text[m.end():].strip()
         # TTS 文本：保留停顿标签（MiniMax 原生支持 <#x#> 产生语音停顿），
         # 去掉中文舞台指示（英文语气标签保留，MiniMax 原生支持）
         tts_text = STAGE_CN_RE.sub("", sentence).strip()
+
+        # 文本是否已广播：False → 禁用取消时自刷兜底；True → 音频流中取消不重复广播
+        text_broadcast = False
 
         try:
             # Phase 1: 下载音频（并行，与其他句同时进行）
@@ -278,6 +330,7 @@ class TTSStreamManager:
                 )
                 await self._output.send("")
             # 发本句文字
+            text_broadcast = True  # 文本已广播，禁用取消时不再自刷（防双播）
             await self._output._broadcast(
                 "on_text_delta", display_text,
                 capability=ChannelCapability.TEXT_DELTA,
@@ -301,6 +354,19 @@ class TTSStreamManager:
                 )
                 await self._output.send("")
         except asyncio.CancelledError:
+            # 禁用兜底：per-task flush_on_cancel 时自刷排队未播文本（须读
+            # current_task——self 是 TTSStreamManager 不是任务，读 self 会复活
+            # 全局标志竞态；打断/异常取消的任务无该属性，getattr 兜底 False）
+            if (
+                getattr(asyncio.current_task(), "flush_on_cancel", False)
+                and not text_broadcast
+            ):
+                await self._output._broadcast(
+                    "on_text_delta", display_text,
+                    capability=ChannelCapability.TEXT_DELTA,
+                    stream_id=sid,
+                )
+                await self._output.send("")
             raise  # propagate to task
         except Exception:
             logger.warning(

@@ -969,14 +969,14 @@ class CognitiveLoop(CognitiveTools):
             if not speaking_started:
                 await self.phases.enter_speaking()
                 speaking_started = True
-            if self._tts_mgr.active:
+            if self._tts_mgr.active and self._tts_mgr.enabled:
                 self._tts_mgr.stream_sentence(sentence)
             else:
                 # text-only：TEXT_DELTA 已广播增量，此处只发句子边界信号结束气泡，避免整句重复显示
                 await self._output.send("")
 
         elif event.type == StreamEventType.TEXT_DELTA:
-            if not self._tts_mgr.active and event.text:
+            if not (self._tts_mgr.active and self._tts_mgr.enabled) and event.text:
                 await self._output._broadcast(
                     "on_text_delta", event.text,
                     capability=ChannelCapability.TEXT_DELTA,
