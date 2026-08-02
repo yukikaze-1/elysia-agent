@@ -90,6 +90,7 @@ class AgentServer:
         """热切换 LLM 模型。切换前打断当前 cognitive task 防止卡 thinking。
 
         custom/<name> 的 base_url/api_key 经 resolve_model_params 从 custom_providers.yaml 解析。
+        成功后写入 ServiceState.llm_model（config 保持默认不改写）。
 
         Args:
             model_id: 新的 LLM 模型标识符（如 ``deepseek/deepseek-v4-flash``）。
@@ -102,6 +103,9 @@ class AgentServer:
             from core.input.custom_providers import resolve_model_params
             params = resolve_model_params("llm", model_id)
             self._llm.switch_model(model_id, **params)
+            # 先建后换成功后写入运行时状态（config 保持默认不改写）
+            self.session.service_state.llm_model = model_id
+            await self.session.save()
             logger.info("LLM switched to: %s", model_id)
             return {"ok": True}
         except Exception as e:
@@ -109,17 +113,43 @@ class AgentServer:
             return {"ok": False, "error": str(e)}
 
     async def switch_stt(self, model_id: str) -> dict:
-        """运行时更新 STT model_id（下次 transcribe 请求生效）。
+        """热切换 STT 后端。先建后关 + 1s 连通性测试——成功后才替换并关闭旧后端。
+
+        custom/<name> 的 base_url/api_key 经 resolve_model_params 从 custom_providers.yaml 解析。
+        成功后写入 ServiceState.stt_model 并置 _stt_ok（config 保持默认不改写）。
 
         Args:
             model_id: 新的 STT 模型标识符（如 ``sensevoice/sense-voice``）。
 
         Returns:
-            包含 ``ok`` 状态的字典。
+            包含 ``ok`` 状态和可选的 ``error`` 信息的字典，失败时保留旧后端。
         """
-        self._config.stt.model = model_id
-        logger.info("STT model set to: %s (takes effect on next request)", model_id)
-        return {"ok": True}
+        try:
+            from Module.stt import STTFactory
+            from core.input.custom_providers import resolve_model_params
+            params = resolve_model_params("stt", model_id)
+            new_backend = STTFactory.create(model_id, **params)
+            # 1s 连通性测试——建好后先验证可用性再替换
+            result = await asyncio.wait_for(new_backend.test(), timeout=1.0)
+            if not result.get("ok"):
+                raise RuntimeError(result.get("error", "服务不可用"))
+            # 成功后才关闭旧后端并挂载新后端
+            if self._stt:
+                try:
+                    await self._stt.close()
+                except Exception:
+                    pass
+            self._stt = new_backend
+            self._stt_ok = True
+            # config 保持默认，写入运行时状态
+            self.session.service_state.stt_model = model_id
+            await self.session.save()
+            logger.info("STT switched to: %s", model_id)
+            return {"ok": True}
+        except Exception as e:
+            self._stt_ok = False
+            logger.error("STT switch failed: %s", e)
+            return {"ok": False, "error": str(e)}
 
     async def switch_tts(self, model_id: str) -> dict:
         """热切换 TTS 后端。更新 self._tts 和 self._cognitive._tts 引用。
@@ -132,18 +162,28 @@ class AgentServer:
         Returns:
             包含 ``ok`` 状态的字典，失败时含 ``error`` 信息。
         """
-        from Module.tts import TTSFactory
         try:
-            if self._tts:
-                try:
-                    await self._tts.close()
-                except Exception:
-                    pass
+            from Module.tts import TTSFactory
             from core.input.custom_providers import resolve_model_params
             params = resolve_model_params("tts", model_id)
             params["rate_limit_rpm"] = self._config.tts.rate_limit_rpm
-            self._tts = TTSFactory.create(model_id, **params)
+            new_backend = TTSFactory.create(model_id, **params)
+            # 1s 连通性测试——建好后先验证可用性再替换
+            result = await asyncio.wait_for(new_backend.test(), timeout=1.0)
+            if not result.get("ok"):
+                raise RuntimeError(result.get("error", "服务不可用"))
+            # 先换引用（configure 同步 CognitiveLoop），成功后才关闭旧后端
+            old_backend = self._tts
+            self._tts = new_backend
             self._cognitive.configure(tts=self._tts)  # 同步 CognitiveLoop 中的引用
+            if old_backend:
+                try:
+                    await old_backend.close()
+                except Exception:
+                    pass
+            # config 保持默认，写入运行时状态
+            self.session.service_state.tts_model = model_id
+            await self.session.save()
             logger.info("TTS switched to: %s", model_id)
             return {"ok": True}
         except Exception as e:

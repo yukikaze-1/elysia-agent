@@ -5,9 +5,12 @@
 """
 
 from collections import deque
+import unittest.mock as mock
 from unittest.mock import MagicMock, AsyncMock
 import pytest
 from core.agent.agent import Agent
+from core.adapter.llm_adapter import LLMAdapter
+from core.schema.service_state import ServiceState
 
 pytestmark = pytest.mark.service
 
@@ -68,3 +71,47 @@ class TestRegisterBackgroundTask:
         Agent._register_background_task(
             fake_agent, "task-2", MagicMock(), "intent-2", "t2")
         assert len(fake_agent._background_tasks) == 2
+
+
+class TestSwitchServiceState:
+    @pytest.mark.service
+    @pytest.mark.asyncio
+    async def test_switch_stt_writes_service_state_and_ok(self, fake_agent):
+        """switch_stt 先建后关：成功后才挂新后端 + 写 ServiceState，config 不改写。"""
+        agent = fake_agent
+        agent._stt = None                            # 必须——auto-create 的 _stt truthy 会让"close 旧后端"走 await MagicMock.close() TypeError
+        agent.session.save = mock.AsyncMock()        # 必须——真实 switch_stt await self.session.save()
+        agent.session.service_state = ServiceState() # 必须——auto-mock 会建不同对象，写读不一致
+        orig_cfg_model = agent.config.stt.model
+        with mock.patch("Module.stt.STTFactory.create") as mc, \
+             mock.patch("core.input.custom_providers.resolve_model_params", return_value={}):
+            backend = mock.MagicMock(); backend.model = "sensevoice/sense-voice"
+            backend.test = mock.AsyncMock(return_value={"ok": True, "latency_ms": 1})
+            mc.return_value = backend
+            result = await Agent.switch_stt(agent, "sensevoice/sense-voice")  # 绑定方法
+        assert result["ok"] is True
+        assert agent._stt is backend                 # 新后端已挂槽（switch_stt 写 self._stt）
+        assert agent.session.service_state.stt_model == "sensevoice/sense-voice"
+        assert agent.config.stt.model == orig_cfg_model   # config 不被改写（同对象 → == 成立）
+        assert agent._stt_ok is True                 # 断言后备字段（agent.stt_ok 在 mock 上是 auto-mock，is True 恒 False）
+
+    @pytest.mark.service
+    @pytest.mark.asyncio
+    async def test_switch_llm_create_failure_keeps_old(self, fake_agent):
+        """switch_llm 先建后换：LLMFactory.create 失败时旧后端 + _requested_model 均保留。"""
+        agent = fake_agent
+        agent.session.save = mock.AsyncMock()
+        agent.session.service_state = ServiceState()
+        test_backend = mock.MagicMock()
+        # 用 _test_backend 构造真实 LLMAdapter（llm_adapter.py:40 测试参）——避免构造时真建网络 client；
+        # mock 的 _llm.switch_model 不会走 LLMFactory.create，无法测 create 失败
+        agent._llm = LLMAdapter(model="deepseek/deepseek-v4-flash", _test_backend=test_backend)
+        with mock.patch("Module.llm.LLMFactory.create", side_effect=RuntimeError("boom")):
+            result = await Agent.switch_llm(agent, "deepseek/deepseek-v4-pro")  # 绑定方法
+        assert result["ok"] is False
+        assert agent._llm._backend is test_backend   # 先建后换：create 失败 _backend 未动
+        # 关键：_requested_model 必须保留旧值——当前代码（llm_adapter.py:195-196）先
+        # _requested_model = new 再 create，create 抛错时 _requested_model 被 clobber 成
+        # "deepseek/deepseek-v4-pro"；先建后换保留旧值。**没有这条断言，该测试对现状代码也是绿的**
+        # （_backend 未赋值 + ok is False 现状已成立），TDD 红阶段空转。
+        assert agent._llm._requested_model == "deepseek/deepseek-v4-flash"

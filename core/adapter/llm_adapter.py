@@ -176,24 +176,21 @@ class LLMAdapter:
             await reconnect_meth()
 
     def switch_model(self, new_model_id: str, **kwargs) -> None:
-        """热切换 LLM 模型。关闭当前后端，用新 model_id 创建后端。
+        """热切换 LLM 模型。先建后换——创建失败时旧后端与旧请求模型均保留。
 
         Args:
             new_model_id: 新的模型标识符（如 "deepseek/deepseek-v4-flash"）。
             **kwargs: 透传给 LLMFactory.create（如 custom provider 的 base_url/api_key）。
         """
-        if hasattr(self._backend, 'close'):
+        new_backend = LLMFactory.create(new_model_id, **kwargs)
+        old, self._backend, self._requested_model = self._backend, new_backend, new_model_id
+        # 先建后换：创建成功后旧后端 fire-and-forget 关闭（不阻塞切换返回）
+        close_meth = getattr(old, "close", None)
+        if close_meth is not None:
             try:
-                import asyncio as _asyncio
-                try:
-                    loop = _asyncio.get_running_loop()
-                    loop.create_task(self._backend.close())
-                except RuntimeError:
-                    pass
-            except Exception:
+                asyncio.get_running_loop().create_task(close_meth())
+            except RuntimeError:
                 pass
-        self._requested_model = new_model_id
-        self._backend = LLMFactory.create(new_model_id, **kwargs)
         logger.info("LLM switched to: %s", new_model_id)
 
     @property
