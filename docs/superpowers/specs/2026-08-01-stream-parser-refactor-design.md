@@ -50,6 +50,7 @@ LLM delta → StreamProcessor（mood/inner_voice 状态机）
 | 10a | `<pant>` 尖括号语气词 | 无识别，随 SPEECH 流过 | 识别为 ANGLE_EN token，**显示 + TTS 全丢弃**（F3 明令禁止尖括号写法，解析器兜底）| **修复** |
 | 10b | `♪`/`♡` 句尾 | 不作为句子边界，整句连到后续标点 | 加入句分隔符（句子以 `♪`/`♡` 结尾，`♪`/`♡` 保留在句内）| **修复** |
 | 11 | 未闭合 CODE/MARKDOWN | BlockFilter.flush 整体丢弃，不进 TTS | 同现状 | 现状 |
+| 12 | >64KB 代码块截断 | 无上界（闭合时 emit 全量内容） | **围栏块保头截断为前 64KB、tag 块（`<|code|>`/`<|markdown|>`/`<mood>`）保尾截断为最近 64KB**（堵无界缓冲内存隐患；2026-08-02 边界覆盖设计追加，实现要求见该设计 C 节）| **修复（新行为）** |
 
 ## 非目标（Out of Scope）
 

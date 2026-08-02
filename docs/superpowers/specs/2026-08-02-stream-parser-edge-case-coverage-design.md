@@ -55,6 +55,8 @@
 
 **关键断言**：第二次进入前无上一轮残留（如 fence 关闭后 `_held` 为空、`at_line_start` 正确）；事件序列为"各自完整"的预期。
 
+> **PAUSE 行与既有 `test_inline_pause_not_cut` 部分重叠**：A1 PAUSE 的价值在"两次 pause 的 re-enter 序列输出"（`<#0.5#>说<#1#>又说`），单 pause 内嵌已由既有测试覆盖。PAUSE 不持有状态，A1 的 re-enter 断言对 PAUSE 是低价值重复，可省略该行或仅保留序列输出断言。
+
 ### A2. 标签紧邻转换跨 chunk
 
 闭合紧接着开启，切分点落在转换处（标签闭合字符与下一标签起始字符跨 chunk）：
@@ -114,32 +116,46 @@ tokenizer 有两类闭合检测，截断策略必须与之兼容：
    - `FENCE_INFO_MAX = 256`——围栏信息串（首行）上限。
    - `PAUSE_MAX = 32`——PAUSE 数字串上限。
 
-2. **通用前截断 helper**（四个内容缓冲共用，`endswith` 依赖的尾部永远保留）：
+2. **两个 helper，按闭合检测机制分流**：
    ```python
-   def _append_bounded(self, attr: str, text: str) -> None:
+   # 结构化闭合缓冲（_fence_content/_fence_pending）——保头，保留代码开头（函数头）
+   def _append_head_bounded(self, attr: str, text: str) -> None:
        buf = getattr(self, attr) + text
        if len(buf) > FENCE_MAX_CONTENT:
-           buf = buf[-FENCE_MAX_CONTENT:]   # 前截断保尾
+           buf = buf[:FENCE_MAX_CONTENT]     # 保头截断
+       setattr(self, attr, buf)
+
+   # endswith 闭合缓冲（_code_content/_markdown_content/_meta_content）——保尾，
+   # 闭合标签靠尾部存活，截断保头会让 endswith 永不命中 → 整块丢弃（比现状更糟）
+   def _append_tail_bounded(self, attr: str, text: str) -> None:
+       buf = getattr(self, attr) + text
+       if len(buf) > FENCE_MAX_CONTENT:
+           buf = buf[-FENCE_MAX_CONTENT:]    # 保尾截断
        setattr(self, attr, buf)
    ```
-   应用：`_fence_content`（tokenizer.py:519,532,541,551,554,560,564 共 7 处）、`_code_content`（:476）、`_markdown_content`（:483）、`_meta_content`（:468）。
+   应用：`_fence_content` 走保头（tokenizer.py:519,532,541,551,554,560,564 共 7 处）、`_code_content` 走保尾（:476）、`_markdown_content` 走保尾（:483）、`_meta_content` 走保尾（:468）。
 
-3. **`_fence_pending`**（:508/526 累积空白/反引号）——同走 `_append_bounded`（前截断；`_fence_run_len` 是独立计数器，不依赖 pending 内容，结构化闭合不受影响）。
+3. **`_fence_pending`**（:508/526 累积空白/反引号）——走 `_append_head_bounded`（保头；`_fence_run_len` 是独立计数器，不依赖 pending 内容，结构化闭合不受影响）。
 
-4. **`_fence_infostr`**（:499）——**保头不保尾**（`_fence_lang()` 取首段 token，前截断会丢 lang）：达 `FENCE_INFO_MAX` 后停止累积（首段保留）。
+4. **`_fence_infostr`**（:499）——**保头**（`_fence_lang()` 取首段 token）：达 `FENCE_INFO_MAX` 后停止累积（首段保留）。
 
-5. **`_pause_buf`**（:399）——**不能前截断**（`PAUSE_RE.fullmatch(candidate)` 依赖 `<#` 前缀，截断保尾会丢前缀）：达 `PAUSE_MAX` 后按非数字字符处理——回落 SPEECH 释放。
+5. **`_pause_buf`**（:399）——**不能截断**（`PAUSE_RE.fullmatch(candidate)` 依赖 `<#` 前缀）：达 `PAUSE_MAX` 后按非数字字符处理——回落 SPEECH 释放。
 
-**语义**：超上限的闭合块 emit **截断内容 = 最近 FENCE_MAX_CONTENT 字符**（保尾）。**不强制回 NORMAL**（否则残余代码会泄漏进 TTS 被朗读，比截断更糟）。`_clear_fence()`/`reset()` 不变（已清空缓冲）。
+**语义**：超上限的闭合块 emit 截断内容——**围栏块保头 = 前 FENCE_MAX_CONTENT 字符**（保留函数头等开头，闭合检测不读内容故不受影响）；**tag 块保尾 = 最近 FENCE_MAX_CONTENT 字符**（闭合标签存活，endswith 仍命中）。**不强制回 NORMAL**（否则残余代码会泄漏进 TTS 被朗读，比截断更糟）。`_clear_fence()`/`reset()` 不变（已清空缓冲）。
 
-**行为影响（新行为，未登记 08-01 行为表）**：>64KB 的闭合代码块被截断为最近 64KB；未闭合超限块仍整体丢弃（同现状 #11），仅内存有界。合法内容（典型 <4KB）零影响。
+**实现要求**：helper 与各截断点必须加中文注释，说明保头/保尾的取舍依据（结构化闭合可保头；endswith 闭合必须保尾），对齐项目注释规范（CLAUDE.md 规则 2）。
+
+**行为影响（新行为，已登记 08-01 行为表 #12）**：>64KB 的闭合围栏块截断为前 64KB、tag 块截断为最近 64KB；未闭合超限块仍整体丢弃（同现状 #11），仅内存有界。合法内容（典型 <4KB）零影响。
 
 ### 测试（`core/text/tests/test_tokenizer.py`）
 
-- **闭合围栏**喂 >上限内容 → 内存有界 + CODE token 内容 = 最近 64KB（保尾截断）
-- **闭合 `<|code|>` / `<|markdown|>`** 喂 >上限内容 → **闭合仍被检测**（endswith 靠保尾存活）+ emit 截断块（关键：验证不落入"永不闭合丢弃"）
+- **闭合围栏**喂 >上限内容 → 内存有界 + CODE token 内容 = **前 64KB**（保头截断）
+- **闭合 `<|code|>` / `<|markdown|>`** 喂 >上限内容 → **闭合仍被检测**（endswith 靠保尾存活）+ emit 截断块 = **最近 64KB**（关键：验证不落入"永不闭合丢弃"）
 - **未闭合**围栏 / code_tag / markdown 喂 >上限内容 → 内存有界 + flush 整体丢弃（对齐 #11）
-- 未闭合 `<mood>` 喂 >上限内容 → `_meta_content` 有界（前截断）+ flush 不发事件（对齐 #7）
+- 未闭合 `<mood>` 喂 >上限内容 → `_meta_content` 有界（保尾截断）+ flush 不发事件（对齐 #7）
+- 长数字串 `<#111…`（>PAUSE_MAX）→ 回落 SPEECH
+- 长围栏首行无 `\n`（>FENCE_INFO_MAX）→ 信息串截断 + lang 保留首段
+- **正常（<上限）** 全部 → 行为与现状一致（回归）
 - 长数字串 `<#111…`（>PAUSE_MAX）→ 回落 SPEECH
 - 长围栏首行无 `\n`（>FENCE_INFO_MAX）→ 信息串截断 + lang 保留首段
 - **正常（<上限）** 全部 → 行为与现状一致（回归）
@@ -156,12 +172,12 @@ tokenizer 有两类闭合检测，截断策略必须与之兼容：
 
 **返回元组契约**：`_stream_llm_response` 返回 **7 元组** `(acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think, blocks, public_text)`（loop.py:804-806，现有测试已固定正确形态 test_empty_response_guard.py:46-48）。`mood_applied` 是**实例属性**（loop.py:944），**不在返回元组里**——守卫也只读 `raw_tool_calls` + `public_text`，不读 `mood_applied`。
 
-tags-only 的 stub 返回元组：`("", [], False, [], "我有点累", [], "")`——`public_text=""`、`iv_think="我有点累"`、`raw_tool_calls=[]`。
+tags-only 的 stub 返回元组：`("<mood>开心</mood><inner_voice>我有点累</inner_voice>", [], False, [], "我有点累", [], "")`——**`acc_text` 是含标签的原始输出**（loop.py:425 "LLM 原始输出全文（含标签）"），`public_text=""`、`iv_think="我有点累"`、`raw_tool_calls=[]`。
 
 **断言**：
 - 守卫**必须**触发（`public_text.strip()` 为空，即使 `iv_think` 非空）→ nudge 重试一次
 - 重试后仍 tags-only → 发兜底回复，`iv_think` 内容保留在 `_finalize_turn` 参数中
-- 该测试钉死"守卫基于 `public_text` 而非 `acc_text` 判断"的设计决策（若未来改成 `acc_text` 判断会漏掉此 case）
+- **钉死守卫判定依据**：`acc_text` **非空**（含标签）但守卫仍触发 → 证明守卫基于 `public_text` 而非 `acc_text`。若未来误改成 `acc_text.strip()` 判断，此测试立即失败（acc_text 非空 → 守卫不触发 → 断言落空）。若 stub 用 `acc_text=""` 则两种守卫都触发，无法区分，故此处必须用含标签的非空 `acc_text`。
 
 ### D2. 纯空白
 
