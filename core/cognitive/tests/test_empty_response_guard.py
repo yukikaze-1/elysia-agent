@@ -131,3 +131,66 @@ async def test_empty_with_tool_calls_not_retried():
     # 未注入 nudge（工具轮正常执行，第二轮的 [TOOL_EXECUTED] 与 nudge 不同）
     retry_messages = loop._stream_llm_response.await_args.args[0]
     assert all(m.get("content") != _EMPTY_RESPONSE_NUDGE for m in retry_messages)
+
+
+@pytest.mark.asyncio
+async def test_tags_only_retries_then_falls_back():
+    """只输出 <mood>/<inner_voice> 标签、无 speech → 守卫触发 → 重试 → 兜底。
+
+    acc_text 是含标签的非空输出（loop.py:425 'LLM 原始输出全文（含标签）'），
+    钉死'守卫基于 public_text 而非 acc_text'——若误改 acc_text.strip() 判断，
+    此测试立即失败（acc_text 非空 → 守卫不触发）。
+    """
+    loop = _make_loop()
+    tags_only = (
+        "<mood>开心</mood><inner_voice>我有点累</inner_voice>",  # acc_text（含标签）
+        [],                       # raw_tool_calls
+        False,                    # speaking_started
+        [],                       # all_sentences
+        "我有点累",               # iv_think
+        [],                       # blocks
+        "",                       # public_text（无 speech）
+    )
+    loop._stream_llm_response = AsyncMock(
+        side_effect=_stream_side_effect(tags_only, tags_only))
+
+    await loop._think_loop("hello", "user")
+
+    assert loop._stream_llm_response.await_count == 2
+    assert loop._finalize_turn.await_count == 1
+    args = loop._finalize_turn.await_args.args
+    assert args[0] == _EMPTY_RESPONSE_FALLBACK      # acc_text → 兜底
+    assert args[1] == [_EMPTY_RESPONSE_FALLBACK]    # all_sentences
+    assert args[2] == "我有点累"                    # iv_think 保留
+    assert args[7] == _EMPTY_RESPONSE_FALLBACK      # public_text
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_triggers_guard():
+    """纯空白 public_text → 守卫触发 → nudge 重试。"""
+    loop = _make_loop()
+    ws = ("", [], False, [], "", [], "\n\n  ")
+    valid = ("我在", [], True, ["我在"], "", [], "我在")
+    loop._stream_llm_response = AsyncMock(
+        side_effect=_stream_side_effect(ws, valid))
+
+    await loop._think_loop("hello", "user")
+
+    assert loop._stream_llm_response.await_count == 2
+    assert loop._finalize_turn.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_emoji_only_no_guard():
+    """纯 emoji 是可见回复 → 守卫不触发 → 直接收尾。"""
+    loop = _make_loop()
+    emoji = ("😊", [], False, ["😊"], "", [], "😊")
+    loop._stream_llm_response = AsyncMock(side_effect=_stream_side_effect(emoji))
+
+    await loop._think_loop("hello", "user")
+
+    assert loop._stream_llm_response.await_count == 1
+    assert loop._finalize_turn.await_count == 1
+    # 未注入 nudge
+    stream_args = loop._stream_llm_response.await_args.args
+    assert all(m.get("content") != _EMPTY_RESPONSE_NUDGE for m in stream_args[0])
