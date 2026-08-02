@@ -222,6 +222,20 @@ class TestEmotionEngine:
 # 5. Streaming integration tests
 # ============================================================================
 
+def _skip_if_no_real_llm_key():
+    """真实网络 LLM 测试的 key 守卫。
+
+    缺失或被测试环境污染为 sentinel（"test"）时跳过——对齐 workflow_engine
+    integration 测试的惯例（`pytest.skip("DEEPSEEK_API_KEY 未设置")`）。
+    无守卫时，进程 env 被 `setdefault("DEEPSEEK_API_KEY","test")` 污染后
+    会向真实 API 发假 key → 401 硬失败。
+    """
+    import os
+    key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not key or key == "test":
+        pytest.skip("DEEPSEEK_API_KEY 未设置或非真实 key，跳过真实网络测试")
+
+
 class TestStreamingIntegration:
     @pytest.mark.service
     @pytest.mark.asyncio
@@ -243,6 +257,7 @@ class TestStreamingIntegration:
         """Real LLM structured streaming yields content dicts."""
         from dotenv import load_dotenv
         load_dotenv()
+        _skip_if_no_real_llm_key()
         from core.adapter.llm_adapter import LLMAdapter
 
         adapter = LLMAdapter()
@@ -269,6 +284,7 @@ class TestStreamingIntegration:
         """First chunk should arrive quickly, not after full response."""
         from dotenv import load_dotenv
         load_dotenv()
+        _skip_if_no_real_llm_key()
         import time
         from core.adapter.llm_adapter import LLMAdapter
 
