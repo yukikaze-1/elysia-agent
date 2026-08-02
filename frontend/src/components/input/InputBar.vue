@@ -110,6 +110,12 @@ async function startMic() {
         echoCancellation: true,
       },
     })
+    // 等待权限期间 STT 被关闭 → 丢弃刚取得的流（watch 在 micStream 赋值前已跑过，
+    // 不会触发 stopMic；这里兜底拦截，避免向已关闭的后端发送 BINARY）
+    if (!micGateOk.value) {
+      stopMic()
+      return
+    }
     audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: MIC_SAMPLE_RATE })
     const source = audioCtx.createMediaStreamSource(micStream)
     scriptNode = audioCtx.createScriptProcessor(MIC_BUFFER_SIZE, 1, 1)

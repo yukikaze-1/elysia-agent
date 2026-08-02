@@ -326,6 +326,7 @@ async function copyText(text: string) {
         <ModelSelector
           service="llm"
           :current-model="settings.llmModel"
+          :default-model="settings.llmDefault"
           @switch="handleModelSwitch('llm', $event)"
           @open-config="openConfigModal('llm')"
         />
@@ -343,6 +344,7 @@ async function copyText(text: string) {
           service="stt"
           :current-model="settings.sttModel"
           :disabled="!settings.sttAvailable"
+          :default-model="settings.sttDefault"
           @switch="handleModelSwitch('stt', $event)"
           @open-config="openConfigModal('stt')"
         />
@@ -360,6 +362,7 @@ async function copyText(text: string) {
           service="tts"
           :current-model="settings.ttsModel"
           :disabled="!settings.ttsAvailable"
+          :default-model="settings.ttsDefault"
           @switch="handleModelSwitch('tts', $event)"
           @open-config="openConfigModal('tts')"
         />

@@ -8,6 +8,8 @@ const props = defineProps<{
   currentModel: string
   /** 服务未连接（如 STT 后端没启动）时禁用下拉，避免选一个不可用的模型。 */
   disabled?: boolean
+  /** 后端默认模型（capabilities 下发）；非空时在下拉下方显示「当前/默认」提示。 */
+  defaultModel?: string
 }>()
 
 const emit = defineEmits<{
@@ -109,6 +111,10 @@ function onChange(event: Event) {
       <span>还有 {{ unconfigured.length }} 个 provider 未配置（{{ unconfigured.map(e => e.name + ' → ' + e.env_vars.join('/')).join('、') }}）</span>
       <button class="unconf-link" @click="emit('open-config')">查看配置方式</button>
     </div>
+    <div
+      v-if="defaultModel"
+      class="model-hint"
+    >当前 {{ currentModel || '—' }} · 默认 {{ defaultModel }}</div>
   </div>
 </template>
 
@@ -137,4 +143,5 @@ function onChange(event: Event) {
 }
 .unconf-hint { font-size: 11px; color: var(--muted); margin-top: 4px; display: flex; gap: 6px; align-items: center; }
 .unconf-link { font-size: 11px; color: var(--accent); background: none; border: none; cursor: pointer; padding: 0; }
+.model-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
 </style>
