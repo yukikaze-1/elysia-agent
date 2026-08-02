@@ -65,6 +65,15 @@ from core.schema.utils import now_iso as _now_iso
 
 logger = logging.getLogger(__name__)
 
+# 空 LLM 响应守卫：LLM 返回 200 成功但无任何对用户可见的文本（含只输出
+# <mood>/<inner_voice> 标签、无 speech 的情况）且无工具调用时，整轮会被静默吞掉。
+# 对策：注入 nudge 系统消息重试一次；仍空则发兜底回复，保证用户始终看到回应。
+_EMPTY_RESPONSE_NUDGE = (
+    "你上一轮的回复没有输出任何对用户可见的内容（不能只输出标签）。"
+    "请直接以对话形式回复用户当前的话题。"
+)
+_EMPTY_RESPONSE_FALLBACK = "抱歉，我刚才走神了，你能再说一遍吗？"
+
 
 from .tools import CognitiveTools
 
@@ -788,12 +797,28 @@ class CognitiveLoop(CognitiveTools):
         await self._output.typing(True)
 
         # 2. ReAct 循环
+        empty_retried = False
         try:
             for round_num in range(self.MAX_TOOL_ROUNDS + 1):
                 self._phase = TurnPhase.STREAMING
                 acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think, \
                     blocks, public_text = \
                     await self._stream_llm_response(messages, tool_defs, round_num)
+
+                # 空 LLM 响应守卫：无文本、无工具调用 → 注入 nudge 重试一次；
+                # 重试后仍空 → 兜底回复（同时注入 all_sentences，保证 session 归档
+                # 与前端显示的文本一致——build_parts([]) 会产出空 parts）。
+                if not raw_tool_calls and not public_text.strip():
+                    if not empty_retried:
+                        empty_retried = True
+                        logger.warning(
+                            "LLM 返回空响应（无文本、无工具调用），注入 nudge 重试一次")
+                        messages.append({"role": "system", "content": _EMPTY_RESPONSE_NUDGE})
+                        continue
+                    logger.warning("LLM 重试后仍返回空响应，发送兜底回复")
+                    public_text = _EMPTY_RESPONSE_FALLBACK
+                    acc_text = _EMPTY_RESPONSE_FALLBACK
+                    all_sentences = [_EMPTY_RESPONSE_FALLBACK]
 
                 if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
                     self._phase = TurnPhase.EXECUTING_TOOLS
