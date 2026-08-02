@@ -1,6 +1,8 @@
 """业务 API 路由 — Providers, 图片上传, Chat REST, 消息归档。"""
 
+import asyncio
 import logging
+import time
 from pathlib import Path
 
 from aiohttp import web
@@ -44,54 +46,68 @@ def _archive_to_client(msgs: list[Message]) -> list[dict]:
     return result
 
 
+async def _run_usable_test(backend, service: str, request: web.Request, body: dict) -> dict:
+    """usable 级真实产出验证。LLM 发文本、TTS 合成音频、STT 转写样例。超时 30s。
+
+    STT 成功标准为"transcribe 调用无异常"——内置 tone 样例未必产生非空文本，
+    但能证明服务接受并处理音频（真实语音样本会返回文本，detail 报告实际识别结果）。
+    """
+    start = time.perf_counter()
+
+    if service == "llm":
+        text = await asyncio.wait_for(
+            backend.chat([{"role": "user", "content": "你好，请回一句话"}]),
+            timeout=30.0,
+        )
+        ok = bool(text.strip())
+        return {
+            "ok": ok,
+            "latency_ms": int((time.perf_counter() - start) * 1000),
+            "detail": text.strip()[:20] if ok else "",
+        }
+
+    if service == "tts":
+        # character 缺省 → agent 角色名（agent.character.name，注意不是 config.agent.character——
+        # 那是角色配置路径 "character/elysia/config.yaml"，传给 synthesize 当音色名必然失败）。
+        # 该角色在 provider 无对应音色时后端抛"未知发音人"，detail 带出（spec 允许）。
+        character = body.get("character", "")
+        if not character:
+            agent = request.app.get("agent")
+            if agent is not None:
+                character = getattr(getattr(agent, "character", None), "name", "") or ""
+        audio = await asyncio.wait_for(
+            backend.synthesize("你好，测试", character=character),
+            timeout=30.0,
+        )
+        ok = bool(audio)
+        return {
+            "ok": ok,
+            "latency_ms": int((time.perf_counter() - start) * 1000),
+            "detail": f"audio {len(audio)} bytes" if ok else "",
+        }
+
+    # stt — 内置样例。路径走 ProjectPath（全项目路径唯一定义点，不用 Path(__file__) 硬编码跨目录）
+    from paths import ProjectPath
+    sample_path = ProjectPath.STT_SAMPLE_WAV.resolve()
+    audio_bytes = sample_path.read_bytes()
+    text = await asyncio.wait_for(backend.transcribe(audio_bytes), timeout=30.0)
+    return {
+        "ok": True,
+        "latency_ms": int((time.perf_counter() - start) * 1000),
+        "detail": text.strip()[:20],
+    }
+
+
 def register_api_routes(app: web.Application) -> None:
     """注册所有业务 API 路由到 aiohttp Application。"""
 
     # ---- Provider 管理 ----
 
     async def providers_list_handler(request: web.Request) -> web.Response:
-        """返回可用 provider 列表（注册表 + custom_providers.yaml）。
-
-        Args:
-            request: aiohttp Request。
-
-        Returns:
-            web.Response: {"llm": ..., "stt": ..., "tts": ..., "custom": ...}。
-        """
+        """返回过滤后的 provider 列表（providers.yaml 单一来源 + env 过滤 + custom）。"""
         from core.input.custom_providers import load as load_custom
-
-        llm_registry = {
-            "deepseek": {"models": ["deepseek-v4-flash", "deepseek-v4-pro"]},
-            "openai": {"models": ["gpt-4", "gpt-4o", "gpt-5"]},
-            "ollama": {"models": ["qwen2.5:3b"]},
-            "mimo": {"models": ["mimo-v2.5", "mimo-v2.5-pro"]},
-            "gemini": {"models": []},
-            "custom": {"models": []},
-        }
-        stt_registry = {
-            "sensevoice": {"models": ["sense-voice"]},
-            "custom": {"models": []},
-        }
-        tts_registry = {
-            "gpt-sovits": {"models": ["default"]},
-            "custom": {"models": []},
-            "minimax": {"models": ["speech-2.8-hd"]},
-        }
-
-        custom_data = load_custom()
-        for entry in custom_data.get("llm", []):
-            llm_registry["custom"]["models"].append(entry["name"])
-        for entry in custom_data.get("stt", []):
-            stt_registry["custom"]["models"].append(entry["name"])
-        for entry in custom_data.get("tts", []):
-            tts_registry["custom"]["models"].append(entry["name"])
-
-        return web.json_response({
-            "llm": llm_registry,
-            "stt": stt_registry,
-            "tts": tts_registry,
-            "custom": custom_data,
-        })
+        from core.input.provider_registry import build_providers_response
+        return web.json_response(build_providers_response(load_custom()))
 
     async def providers_save_handler(request: web.Request) -> web.Response:
         """保存一个新的自定义 provider。
@@ -140,44 +156,90 @@ def register_api_routes(app: web.Application) -> None:
             return web.json_response({"ok": False, "error": str(e)}, status=500)
 
     async def providers_test_handler(request: web.Request) -> web.Response:
-        """测试自定义 provider 连通性。
+        """测试 provider 连通性（level=connectivity）或可使用性（level=usable）。
 
-        Args:
-            request: aiohttp Request，JSON body 包含 service、base_url、api_key、model。
-
-        Returns:
-            web.Response: 后端 test() 返回的结果或错误信息。
+        body: {service, provider, model, level, base_url?, api_key?, character?}
+        参数解析顺序见 spec「/api/providers/test 扩展」：provider+model 均缺省 → 回退配置模型；
+        仅 provider 缺省 → "custom"；level 缺省 → "connectivity"。
+        base_url/api_key 优先级：请求体非空 > custom_providers.yaml > env。
         """
         try:
             body = await request.json()
-            service = body.get("service", "")
-            base_url = body.get("base_url", "")
-            api_key = body.get("api_key", "")
-            model = body.get("model", "")
         except Exception:
             return web.json_response({"ok": False, "error": "无效的请求体"}, status=400)
+
+        service = body.get("service", "")
+        if service not in ("llm", "stt", "tts"):
+            return web.json_response({"ok": False, "error": f"未知 service: {service}"}, status=400)
+
+        level = body.get("level", "connectivity")
+        provider = body.get("provider", "")
+        model = body.get("model", "")
+        base_url = body.get("base_url", "")
+        api_key = body.get("api_key", "")
+
+        # provider+model 均缺省 → 回退该服务当前模型（完整 provider/model，直接 split）
+        if not provider and not model:
+            agent = request.app.get("agent")
+            if agent is None:
+                return web.json_response({"ok": False, "error": "agent 未注入"}, status=500)
+            if service == "llm":
+                model_id = agent.llm.model
+            elif service == "tts":
+                # disabled 态即 agent.tts is None——必须守卫，否则在 Factory.create 前抛 AttributeError
+                tts = agent.tts
+                model_id = tts.model if tts is not None else agent.config.tts.model
+            else:  # stt
+                model_id = agent.config.stt.model
+            try:
+                provider, model = model_id.split("/", 1)
+            except ValueError:
+                return web.json_response({"ok": False, "error": f"当前模型格式无效: {model_id}"})
+        elif not provider:
+            provider = "custom"
+
+        # base_url/api_key：请求体非空 > custom_providers.yaml（resolve_model_params）
+        if not base_url and provider == "custom":
+            from core.input.custom_providers import resolve_model_params
+            params = resolve_model_params(service, f"custom/{model}")
+            base_url = params.get("base_url", "")
+            if not api_key:
+                api_key = params.get("api_key", "")
+
+        create_kwargs = {}
+        if base_url:
+            create_kwargs["base_url"] = base_url
+        if api_key:
+            create_kwargs["api_key"] = api_key
 
         try:
             if service == "llm":
                 from Module.llm import LLMFactory
-                backend = LLMFactory.create(f"custom/{model}", base_url=base_url, api_key=api_key)
+                backend = LLMFactory.create(f"{provider}/{model}", **create_kwargs)
             elif service == "stt":
                 from Module.stt import STTFactory
-                backend = STTFactory.create(f"custom/{model}", base_url=base_url, api_key=api_key)
-            elif service == "tts":
-                from Module.tts import TTSFactory
-                backend = TTSFactory.create(f"custom/{model}", base_url=base_url, api_key=api_key)
+                backend = STTFactory.create(f"{provider}/{model}", **create_kwargs)
             else:
-                return web.json_response({"ok": False, "error": f"未知 service: {service}"}, status=400)
+                from Module.tts import TTSFactory
+                backend = TTSFactory.create(f"{provider}/{model}", **create_kwargs)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)})
 
-            result = await backend.test()
+        try:
+            if level == "usable":
+                result = await _run_usable_test(backend, service, request, body)
+            else:
+                result = await asyncio.wait_for(backend.test(), timeout=5.0)
+            return web.json_response(result)
+        except asyncio.TimeoutError:
+            return web.json_response({"ok": False, "error": "测试超时"})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)})
+        finally:
             try:
                 await backend.close()
             except Exception:
                 pass
-            return web.json_response(result)
-        except Exception as e:
-            return web.json_response({"ok": False, "error": str(e)})
 
     app.router.add_get("/api/providers", providers_list_handler)
     app.router.add_post("/api/providers", providers_save_handler)

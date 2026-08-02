@@ -52,6 +52,7 @@ class ProjectPath(str, Enum):
     CONFIG_YAML = "config.yaml"
     DOTENV = ".env"
     CUSTOM_PROVIDERS_YAML = "custom_providers.yaml"
+    STT_SAMPLE_WAV = "Module/stt/tests/fixtures/sample.wav"
     TOKEN_PENDING = "data/token_usage_pending.jsonl"
     SESSION_PENDING = "data/session_{session_id}.json"
     SESSION_PENDING_CHECK = "data/session_pending.jsonl"
