@@ -171,7 +171,10 @@ POST /api/providers/test
 - `provider`、`model` 均无 → **回退到该服务当前运行/配置的模型 id（完整 `provider/model`，split 后使用，不再套用 provider→"custom" 默认）**——否则会把 `sensevoice/sense-voice` 错拼成 `custom/sensevoice/sense-voice`。
 - `level` 缺省 → `"connectivity"`。
 
-回退模型来源：LLM → `agent.llm.model`；TTS → `agent.tts.model`（实际运行后端，热切换后不读陈旧 config）；STT → `agent.config.stt.model`。
+回退模型来源：
+- LLM → `agent.llm.model`。
+- TTS → `agent.tts.model if agent.tts is not None else agent.config.tts.model`——**必须守卫**：该回退只在 disabled 态触发，而 disabled 态正是 `agent.tts is None`（capabilities `"tts": agent.tts is not None`），直接读 `agent.tts.model` 会在 Factory.create 前抛 AttributeError（连错误兜底都接不到）。连接态用实际运行后端避开热切换陈旧 config，未连接态只能读 config。
+- STT → `agent.config.stt.model`。
 
 创建 backend：`Factory.create(f"{provider}/{model}", base_url=..., api_key=...)`。
 
