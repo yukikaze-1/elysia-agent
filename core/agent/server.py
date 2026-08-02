@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from core.cognitive import CognitiveLoop
     from Module.workflow_engine.workflow_engine import WorkflowEngine
     from Module.tts.protocol import TTSBackend
+    from Module.stt.protocol import STTBackend
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class AgentServer:
         _config_path: str | None
         _config: AppConfig
         _tts: TTSBackend | None
+        _stt: STTBackend | None
         _stt_ok: bool
         _req_counter: int
         _mongo_ok: bool
@@ -74,6 +76,16 @@ class AgentServer:
         banner = "\n".join(lines)
         logger.info(banner)
         return banner  # 调用方可 continue 追加服务器信息
+
+    def _stt_banner_status(self) -> str:
+        """STT 启动横幅状态行（可测）——读 self._stt + model。
+
+        STT 行在 run_server 内联 server_info 中无法直接测，故抽出独立方法。
+        返回形如 ``已连接 (model=sensevoice/sense-voice)`` / ``未连接``。
+        """
+        if self._stt:
+            return f"已连接 (model={self._stt.model})"
+        return "未连接"
 
     def next_request_id(self) -> str:
         """生成并返回请求 ID，同时设置 ContextVar。供外部模块（STT 等）使用。
@@ -266,25 +278,33 @@ class AgentServer:
         while True:
             host = self._config.server.host
             port = self._config.server.port
-            stt_enabled = self._config.stt.enabled
             wake_word_enabled = self._config.wake_word.enabled
 
-            if stt_enabled:
+            # 建门 = 有效 enabled（显式值优先，None 回退 config.stt.enabled）——热插拔
+            # "开"（config=false+显式 true）跨重启存活；config=false+None 保留 YAML 硬关
+            ss = self.session.service_state
+            stt_model = ss.stt_model or self._config.stt.model               # startup_stt_model
+            stt_gate = ss.stt_enabled if ss.stt_enabled is not None else self._config.stt.enabled
+            if stt_gate:
                 try:
                     from Module.stt import STTFactory
-                    stt_backend = STTFactory.create(self._config.stt.model)
-
+                    from core.input.custom_providers import resolve_model_params
+                    # 关键：custom/<name> 必须经 resolve_model_params 补 base_url（registry
+                    # 对 custom 无 base_url 抛 ValueError，裸 create 会让运行时切好的 custom
+                    # STT 重启后 available=false）
+                    stt_backend = STTFactory.create(stt_model, **resolve_model_params("stt", stt_model))
                     # 快速连通性测试——1s 超时，避免卡启动
-                    import asyncio as _asyncio
-                    result = await _asyncio.wait_for(stt_backend.test(), timeout=1.0)
+                    result = await asyncio.wait_for(stt_backend.test(), timeout=1.0)
                     if not result.get("ok"):
                         raise RuntimeError(result.get("error", "服务不可用"))
-
-                    # 挂载到 agent.stt 槽位——create_app/handle_ws 从槽位读取（支持热切换）
+                    # 显式赋槽位（只建一个）——create_app/handle_ws 从槽位读取（支持热切换）
                     self._stt = stt_backend
                     self._stt_ok = True
                     logger.info("STT backend connected for server mode")
                 except Exception:
+                    # 失败复位，防 stale
+                    self._stt = None
+                    self._stt_ok = False
                     logger.info("STT not available — text-only mode", exc_info=False)
 
             app = create_app(cast(Any, self), serve_static=True,
@@ -300,12 +320,11 @@ class AgentServer:
                 getattr(self, '_mongo_ok', False),
                 getattr(self, '_milvus_ok', False),
             )
-            stt_model = self._config.stt.model
             tts_model = self._config.tts.model
             server_info = "\n".join([
                 f"  ---",
                 f"  WebSocket: ws://{host}:{port}/ws  |  前端: http://{host}:{port}/",
-                f"  STT: {'已连接' if self._stt else '未连接'}  (model={stt_model})",
+                f"  STT: {self._stt_banner_status()}",
                 f"  TTS: {'已连接' if self._tts else '未连接'}  (model={tts_model})",
                 f"  退出: Ctrl+C 或浏览器关闭服务按钮",
                 f"{'='*50}",

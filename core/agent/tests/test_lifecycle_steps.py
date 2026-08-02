@@ -1,8 +1,12 @@
 # core/agent/tests/test_lifecycle_steps.py
 """AgentLifecycle _SHUTDOWN_STEPS / _STARTUP_STEPS 结构验证。"""
 
+from unittest import mock
+
 import pytest
+from core.agent._lifecycle_services import _LifecycleServices
 from core.agent.lifecycle import AgentLifecycle
+from core.schema.service_state import ServiceState
 
 pytestmark = pytest.mark.unit
 
@@ -52,3 +56,130 @@ class TestStartupSteps:
         for name, method_name in AgentLifecycle._STARTUP_STEPS:
             assert hasattr(AgentLifecycle, method_name), \
                 f"Step '{name}': method '{method_name}' not found"
+
+    def test_service_state_step_before_tts_step(self):
+        """service_state 步骤必须在 tts 步骤之前（ServiceState 应用先于建后端）。"""
+        names = [name for name, _ in AgentLifecycle._STARTUP_STEPS]
+        assert names.index("service_state") < names.index("tts")
+
+
+class TestApplyServiceState:
+    """_apply_service_state 启动步骤：读 ServiceState → 设模式槽位 → LLM 应用。"""
+
+    @pytest.mark.asyncio
+    async def test_sets_slots_and_switches_llm(self, fake_agent):
+        """service_state 显式值 → 槽位直接取显式值；llm_model ≠ config → switch_llm。"""
+        agent = fake_agent
+        agent.session.service_state = ServiceState(
+            llm_model="deepseek/deepseek-v4-pro",
+            stt_enabled=True,
+            tts_enabled=False,
+        )
+        agent._config.stt.enabled = True
+        agent._config.tts.enabled = True
+        agent._config.llm.model = "deepseek/deepseek-v4-flash"
+        agent.switch_llm = mock.AsyncMock(return_value={"ok": True})
+
+        await _LifecycleServices._apply_service_state(agent)
+
+        assert agent._stt_enabled is True
+        assert agent._tts_enabled is False
+        agent.switch_llm.assert_awaited_once_with("deepseek/deepseek-v4-pro")
+
+    @pytest.mark.asyncio
+    async def test_effective_enabled_falls_back_to_config(self, fake_agent):
+        """三态回退：enabled=None → 有效值 = config.<svc>.enabled。"""
+        agent = fake_agent
+        agent.session.service_state = ServiceState()  # enabled 全 None
+        agent._config.stt.enabled = True
+        agent._config.tts.enabled = False
+        agent._config.llm.model = "deepseek/deepseek-v4-flash"
+        agent.switch_llm = mock.AsyncMock(return_value={"ok": True})
+
+        await _LifecycleServices._apply_service_state(agent)
+
+        assert agent._stt_enabled is True
+        assert agent._tts_enabled is False
+        agent.switch_llm.assert_not_awaited()  # llm_model 为空 → 不应用
+
+    @pytest.mark.asyncio
+    async def test_no_switch_llm_when_same_as_config(self, fake_agent):
+        """llm_model == config.llm.model → 不触发 switch_llm。"""
+        agent = fake_agent
+        agent.session.service_state = ServiceState(llm_model="deepseek/deepseek-v4-flash")
+        agent._config.stt.enabled = False
+        agent._config.tts.enabled = False
+        agent._config.llm.model = "deepseek/deepseek-v4-flash"
+        agent.switch_llm = mock.AsyncMock(return_value={"ok": True})
+
+        await _LifecycleServices._apply_service_state(agent)
+
+        agent.switch_llm.assert_not_awaited()
+
+
+class TestStartTTSGate:
+    """_start_tts 建门（有效 enabled 三态）+ startup_tts_model。"""
+
+    def _setup_tts_agent(self, agent, service_state, cfg_enabled):
+        agent.session.service_state = service_state
+        agent._config.tts.enabled = cfg_enabled
+        agent._config.tts.model = "minimax/speech-2.8-hd"
+        agent._config.tts.rate_limit_rpm = 10
+        agent._tts_enabled = (
+            service_state.tts_enabled
+            if service_state.tts_enabled is not None else cfg_enabled
+        )
+        agent._tts = None  # 对齐 Agent.__init__ 初始值——MagicMock 未设时 auto-mock 恒真
+        agent._cognitive.configure = mock.MagicMock()
+        agent._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
+
+    @pytest.mark.asyncio
+    async def test_builds_with_startup_model_when_hotplug_open(self, fake_agent):
+        """config=false + 显式 true → 建（热插拔'开'跨重启存活），用 startup_tts_model。"""
+        agent = fake_agent
+        self._setup_tts_agent(
+            agent, ServiceState(tts_model="custom/mytts", tts_enabled=True), cfg_enabled=False)
+        backend = mock.MagicMock()
+        backend.test = mock.AsyncMock(return_value={"ok": True})
+        with mock.patch("Module.tts.TTSFactory.create", return_value=backend) as mc, \
+             mock.patch("core.input.custom_providers.resolve_model_params",
+                        return_value={"base_url": "http://tts.local"}):
+            await _LifecycleServices._start_tts(agent)
+
+        mc.assert_called_once_with(
+            "custom/mytts", base_url="http://tts.local", rate_limit_rpm=10)
+        assert agent._tts is backend
+        agent._cognitive.configure.assert_called_once_with(tts=backend)
+        agent._cognitive._tts_mgr.set_enabled.assert_awaited_once_with(True)
+
+    @pytest.mark.asyncio
+    async def test_gate_off_when_config_off_and_none(self, fake_agent):
+        """config=false + None → 不建（YAML 硬关保留）。"""
+        agent = fake_agent
+        self._setup_tts_agent(agent, ServiceState(), cfg_enabled=False)
+        with mock.patch("Module.tts.TTSFactory.create") as mc:
+            await _LifecycleServices._start_tts(agent)
+        mc.assert_not_called()
+        assert agent._tts is None
+
+    @pytest.mark.asyncio
+    async def test_gate_off_when_config_on_and_explicit_false(self, fake_agent):
+        """config=true + 显式 false → 不建（尊重用户关闭，免浪费连接测试）。"""
+        agent = fake_agent
+        self._setup_tts_agent(agent, ServiceState(tts_enabled=False), cfg_enabled=True)
+        with mock.patch("Module.tts.TTSFactory.create") as mc:
+            await _LifecycleServices._start_tts(agent)
+        mc.assert_not_called()
+        assert agent._tts is None
+
+    @pytest.mark.asyncio
+    async def test_gate_on_when_config_on_and_none(self, fake_agent):
+        """config=true + None → 建（现状行为），用 config 默认模型。"""
+        agent = fake_agent
+        self._setup_tts_agent(agent, ServiceState(), cfg_enabled=True)
+        backend = mock.MagicMock()
+        backend.test = mock.AsyncMock(return_value={"ok": True})
+        with mock.patch("Module.tts.TTSFactory.create", return_value=backend) as mc:
+            await _LifecycleServices._start_tts(agent)
+        mc.assert_called_once_with("minimax/speech-2.8-hd", rate_limit_rpm=10)
+        assert agent._tts is backend

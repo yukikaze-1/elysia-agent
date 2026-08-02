@@ -46,3 +46,19 @@ class TestStartupBanner:
             fake_agent, mongo_ok=True, milvus_ok=True)
         assert "A" * 60 in banner
         assert "..." in banner
+
+
+class TestSttBannerStatus:
+    """AgentServer._stt_banner_status 测试——STT 行在 run_server 内联不可直测，抽此助手。"""
+
+    def test_connected_shows_model(self, fake_agent):
+        backend = MagicMock()
+        backend.model = "sensevoice/sense-voice"
+        fake_agent._stt = backend
+        status = AgentServer._stt_banner_status(fake_agent)
+        assert status == "已连接 (model=sensevoice/sense-voice)"
+
+    def test_disconnected(self, fake_agent):
+        fake_agent._stt = None
+        status = AgentServer._stt_banner_status(fake_agent)
+        assert status == "未连接"

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from core.config import AppConfig
 from Module.output import OutputManager
@@ -38,6 +38,9 @@ class _LifecycleServices:
         _tts: TTSBackend | None
         _stt: STTBackend | None
         _llm: LLMAdapter
+        _stt_enabled: bool | None
+        _tts_enabled: bool | None
+        switch_llm: Callable[[str], Coroutine[Any, Any, dict]]
 
     async def _start_token_and_prompt(self) -> None:
         """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""
@@ -61,16 +64,37 @@ class _LifecycleServices:
             response_recorder=self._response_recorder,
         )
 
-    async def _start_tts(self) -> None:
-        """创建 TTS 后端（条件执行——由 config.tts.enabled 控制）。
+    async def _apply_service_state(self) -> None:
+        """启动步骤：读 ServiceState → 设模式槽位 → LLM 应用。位于 tts 步骤前。
 
-        创建后测试连通性，不可用时自动降级为纯文本模式。
+        三态语义：ServiceState.<svc>_enabled 非 None 用之（用户显式改过），否则回退
+        config.<svc>.enabled。LLM：llm_model 非空且 ≠ config.llm.model → switch_llm。
         """
-        if self._config.tts.enabled:
+        ss = self.session.service_state
+        self._stt_enabled = ss.stt_enabled if ss.stt_enabled is not None else self._config.stt.enabled
+        self._tts_enabled = ss.tts_enabled if ss.tts_enabled is not None else self._config.tts.enabled
+        if ss.llm_model and ss.llm_model != self._config.llm.model:
+            await self.switch_llm(ss.llm_model)
+
+    async def _start_tts(self) -> None:
+        """创建 TTS 后端（条件执行——建门 = 有效 enabled 三态）。
+
+        startup_tts_model = ServiceState.tts_model or config.tts.model；建门 = 有效
+        enabled（显式值优先，None 回退 config.tts.enabled）。创建后测试连通性，
+        不可用时自动降级为纯文本模式。
+        """
+        ss = self.session.service_state
+        model = ss.tts_model or self._config.tts.model                    # startup_tts_model
+        gate = ss.tts_enabled if ss.tts_enabled is not None else self._config.tts.enabled  # 有效 enabled
+        if gate:
             from Module.tts import TTSFactory
+            from core.input.custom_providers import resolve_model_params
             try:
+                # 关键：custom/<name> 必须经 resolve_model_params 补 base_url（registry.py
+                # 对 custom 无 base_url 抛 ValueError——裸 create 会让运行时切好的 custom TTS
+                # 重启后静默失效，与 STT 同款 bug）
                 self._tts = TTSFactory.create(
-                    self._config.tts.model,
+                    model, **resolve_model_params("tts", model),
                     rate_limit_rpm=self._config.tts.rate_limit_rpm,
                 )
                 # 快速连通性测试——1s 超时，避免卡启动
@@ -78,6 +102,7 @@ class _LifecycleServices:
                 result = await _asyncio.wait_for(self._tts.test(), timeout=1.0)
                 if result.get("ok"):
                     self._cognitive.configure(tts=self._tts)
+                    await self._cognitive._tts_mgr.set_enabled(self._tts_enabled)  # noqa: SLF001
                     logger.info("TTS backend connected")
                 else:
                     self._tts = None
