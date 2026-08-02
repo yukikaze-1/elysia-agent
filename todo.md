@@ -16,6 +16,7 @@
 | 低 | **`flush_after_response` 超时层不匹配** | 内层 `loop.py:875` 每 task 5s，外层 `lifecycle.py:170` 整体 10s。3+ task 同时超时可能被外层截断。实际 pending 典型 0-2 个、亚秒级完成，impact 极低。修法：外层 timeout 改为 `max(10.0, len(pending) * 5.0 + 1.0)` |
 | 低 | **`ConfirmModal` @keydown 在不可聚焦 `<div>`** | `frontend/src/debug/components/shared/ConfirmModal.vue:35` — overlay div 无 `tabindex`，依赖按钮聚焦后事件冒泡。弹窗内只有文字+两个按钮，点击文字不会失焦，现有行为已可靠。加固：加 `tabindex="0"` |
 | 中 | **STT 运行时切换不生效** | `switch_stt` 只改 `config.stt.model`，transcribe wrapper 是 `run_server` 启动时建的（持旧 backend），运行时切换需重启服务才生效。已与 LLM/TTS 热切换对比确认。修法：切换时重建 backend 并更新 transcribe wrapper 引用（需同步 ws_handler/server 的 wrapper 闭包） |
+| 低 | **`core/tests/test_phase2.py`/`test_phase3.py` 裸 `setdefault("DEEPSEEK_API_KEY","test")`** | 与 `test_task_scheduler._ensure_api_key` 同模式（后者已改 monkeypatch，2026-08-02）。当前 test-quick collection 顺序下未触发，但属进程 env 污染隐患——collection 顺序变化或并行跑时可能污染真实 LLM 集成测试。建议统一改 monkeypatch |
 
 ## 模块化评估（2026-08-01）
 
