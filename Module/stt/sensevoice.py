@@ -101,6 +101,11 @@ class SenseVoiceBackend(STTBackend):
 
         self._test_fn = make_test_method(_health_check)
 
+    @property
+    def provider_name(self) -> str:
+        """provider 标识。"""
+        return "sensevoice"
+
     async def test(self) -> dict:
         """测试连通性：GET /health。5 秒超时。"""
         return await self._test_fn(self)

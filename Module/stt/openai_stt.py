@@ -82,6 +82,11 @@ class OpenAICompatSTTBackend(STTBackend):
 
         self._test_fn = make_test_method(_health_check)
 
+    @property
+    def provider_name(self) -> str:
+        """provider 标识。"""
+        return "custom"
+
     async def test(self) -> dict:
         """测试连通性：发最小转录请求（静音 WAV）。5 秒超时。"""
         return await self._test_fn(self)

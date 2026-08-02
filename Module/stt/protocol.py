@@ -60,3 +60,22 @@ class STTBackend(ABC):
     @abstractmethod
     async def close(self) -> None:
         """关闭 HTTP client。"""
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        """返回 provider 标识：'sensevoice' / 'custom'。"""
+        ...
+
+    @property
+    def model(self) -> str:
+        """返回完整模型标识 ``provider/model``（如 ``sensevoice/sense-voice``）。
+
+        各后端把模型名存在 ``self._model``（如 ``sense-voice``），
+        这里拼上 ``provider_name`` 得到前端下拉选项一致的完整 id。
+        用于 capabilities 下发当前 STT 模型。
+        """
+        name = getattr(self, "_model", "")
+        if not name:
+            return ""
+        return f"{self.provider_name}/{name}"

@@ -52,8 +52,27 @@ class TestSTTBackendProtocol:
             async def close(self) -> None:
                 pass
 
+            @property
+            def provider_name(self) -> str:
+                return "sensevoice"
+
         backend = GoodBackend()
         assert isinstance(backend, STTBackend)
+
+    def test_model_composes_provider(self):
+        """model 由 provider_name/_model 拼接，无 _model 时返回空串。"""
+        class B(STTBackend):
+            async def transcribe(self, audio, **kwargs): return ""
+            async def transcribe_stream(self, audio, **kwargs): yield ""
+            async def test(self): return {"ok": True, "latency_ms": 0}
+            async def close(self): pass
+            @property
+            def provider_name(self): return "sensevoice"
+
+        b = B()
+        assert b.model == ""          # 无 _model → 空串
+        b._model = "sense-voice"      # noqa: SLF001 -- 测试直设后备字段
+        assert b.model == "sensevoice/sense-voice"
 
 
 # ============================================================
@@ -80,6 +99,8 @@ class TestSTTFactory:
     def test_sensevoice_model_parsing(self):
         backend = cast(SenseVoiceBackend, STTFactory.create("sensevoice/sense-voice"))
         assert backend._model == "sense-voice"
+        # model 拼 provider_name 得到完整 id，供 capabilities/前端下拉对齐
+        assert backend.model == "sensevoice/sense-voice"
 
     def test_custom_base_url(self):
         backend = cast(SenseVoiceBackend, STTFactory.create(
