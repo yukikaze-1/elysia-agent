@@ -13,9 +13,41 @@ from aiohttp import web, WSMsgType
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from core.agent import RunState
+from Module.stt.protocol import STTBackend
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
+
+class _FakeSTTBackend(STTBackend):
+    """capabilities 测试假 STT 后端——model 必须等于 config.stt.model。
+
+    实现 STTBackend 协议（transcribe/transcribe_stream/test/close/provider_name/model）。
+    build_capabilities 读 agent.stt.model，缺 model 会 AttributeError。
+    """
+
+    def __init__(self, model: str = "sensevoice/sense-voice") -> None:
+        self._model = model
+
+    @property
+    def provider_name(self) -> str:
+        return "sensevoice"
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    async def transcribe(self, audio: bytes, **kwargs) -> str:
+        return "test"
+
+    async def transcribe_stream(self, audio: bytes, **kwargs):
+        yield ""
+
+    async def test(self) -> dict:
+        return {"ok": True, "latency_ms": 0}
+
+    async def close(self) -> None:
+        pass
+
 
 def _make_agent():
     """Create a minimal mock agent for server tests."""
@@ -245,7 +277,7 @@ class TestWebSocketHandler:
         agent = _make_agent()
         await agent.start()
 
-        # 测试 app 不传 stt_transcribe → STT 未连接；默认 config tts 未启用 → TTS 未连接
+        # 测试 app 不注入 STT 后端 → STT 未连接；默认 config tts 未启用 → TTS 未连接
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
 
@@ -259,27 +291,28 @@ class TestWebSocketHandler:
                         cap = data
                         break
             assert cap is not None, "连接时未收到 capabilities 消息"
-            assert cap["llm_model"] == agent.llm.model
+            assert cap["services"]["llm"]["model"] == agent.llm.model
             # STT/TTS 未连接 → model 必须为 None（避免前端显示"选中"不可用模型）
-            assert cap["stt_model"] is None
-            assert cap["tts_model"] is None
+            assert cap["services"]["stt"]["available"] is False
+            assert cap["services"]["stt"]["model"] is None
+            assert cap["services"]["tts"]["available"] is False
+            assert cap["services"]["tts"]["model"] is None
 
         await agent.stop()
 
     @pytest.mark.asyncio
     async def test_ws_connect_capabilities_stt_model_when_connected(self, aiohttp_client):
-        """STT 连接时 stt_model 应携带当前模型，供前端回填下拉选中值。"""
+        """STT 连接时 stt model 应携带当前模型，供前端回填下拉选中值。"""
         import json
 
         from core.input.server import create_app
 
         agent = _make_agent()
         await agent.start()
+        # STT 注入改走 agent.stt 槽位（create_app 已移除 stt_transcribe 参数）
+        agent._stt = _FakeSTTBackend(agent.config.stt.model)
 
-        async def fake_transcribe(audio: bytes) -> str:
-            return "test"
-
-        app = create_app(agent, serve_static=False, stt_transcribe=fake_transcribe)
+        app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
 
         async with client.session.ws_connect(client.make_url('/ws')) as ws:
@@ -292,8 +325,8 @@ class TestWebSocketHandler:
                         cap = data
                         break
             assert cap is not None, "连接时未收到 capabilities 消息"
-            assert cap["stt"] is True
-            assert cap["stt_model"] == agent.config.stt.model
+            assert cap["services"]["stt"]["available"] is True
+            assert cap["services"]["stt"]["model"] == agent.config.stt.model
 
         await agent.stop()
 
@@ -526,6 +559,33 @@ class TestSetService:
                     resp = json.loads(msg.data)
                     break
             assert resp is not None and resp["ok"] is False  # llm 拒绝
+
+    @pytest.mark.asyncio
+    async def test_set_service_rebroadcasts_capabilities(self, aiohttp_client):
+        """set_service 成功后经 agent.output 向所有 WS 客户端重播嵌套 capabilities。"""
+        from core.input.server import create_app
+
+        agent = _make_agent()  # AppConfig 默认 config.tts.enabled=False
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        async with client.session.ws_connect(client.make_url("/ws")) as ws:
+            # 排空建连时的 capabilities，确保后续收到的是重播帧
+            for _ in range(10):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT and json.loads(msg.data).get("type") == "capabilities":
+                    break
+            await ws.send_json({"type": "set_service", "service": "tts", "enabled": False})
+            cap = None
+            for _ in range(8):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    if data.get("type") == "capabilities":
+                        cap = data
+                        break
+            assert cap is not None, "set_service 成功后未收到 capabilities 重播"
+            assert cap["services"]["tts"]["enabled"] is False
+            assert cap["services"]["stt"]["available"] is False
 
 
 # ============================================================

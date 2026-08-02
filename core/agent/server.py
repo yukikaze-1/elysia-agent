@@ -107,6 +107,8 @@ class AgentServer:
             self.session.service_state.llm_model = model_id
             await self.session.save()
             logger.info("LLM switched to: %s", model_id)
+            from core.input.capabilities import broadcast_capabilities
+            await broadcast_capabilities(self)
             return {"ok": True}
         except Exception as e:
             logger.error("LLM switch failed: %s", e)
@@ -145,6 +147,8 @@ class AgentServer:
             self.session.service_state.stt_model = model_id
             await self.session.save()
             logger.info("STT switched to: %s", model_id)
+            from core.input.capabilities import broadcast_capabilities
+            await broadcast_capabilities(self)
             return {"ok": True}
         except Exception as e:
             self._stt_ok = False
@@ -185,6 +189,8 @@ class AgentServer:
             self.session.service_state.tts_model = model_id
             await self.session.save()
             logger.info("TTS switched to: %s", model_id)
+            from core.input.capabilities import broadcast_capabilities
+            await broadcast_capabilities(self)
             return {"ok": True}
         except Exception as e:
             logger.error("TTS switch failed: %s", e)
@@ -234,7 +240,9 @@ class AgentServer:
         # 持久化 enabled（补建成功后才写，失败已 return）
         setattr(self.session.service_state, f"{service}_enabled", persist)
         await self.session.save()
-        # 重播 capabilities（Task 7 实现后替换为 build_capabilities 广播；此前可先跳过）
+        # 重播 capabilities——向所有 WebSocket 客户端广播（switch_* 补建路径自身也会播，幂等无害）
+        from core.input.capabilities import broadcast_capabilities
+        await broadcast_capabilities(self)
         return {"ok": True, "enabled": enabled}
 
     def get_wake_words(self) -> list[str]:
@@ -261,8 +269,6 @@ class AgentServer:
             stt_enabled = self._config.stt.enabled
             wake_word_enabled = self._config.wake_word.enabled
 
-            stt_transcribe = None
-            stt_emotion_state: dict[str, str | list[str]] = {"emotion": "NEUTRAL", "events": []}
             if stt_enabled:
                 try:
                     from Module.stt import STTFactory
@@ -274,20 +280,14 @@ class AgentServer:
                     if not result.get("ok"):
                         raise RuntimeError(result.get("error", "服务不可用"))
 
-                    async def transcribe_wrapper(audio: bytes) -> str:
-                        text = await stt_backend.transcribe(audio)
-                        stt_emotion_state["emotion"] = getattr(stt_backend, "last_emotion", "NEUTRAL")
-                        stt_emotion_state["events"] = list(getattr(stt_backend, "last_events", []))
-                        return text
-
-                    stt_transcribe = transcribe_wrapper
+                    # 挂载到 agent.stt 槽位——create_app/handle_ws 从槽位读取（支持热切换）
+                    self._stt = stt_backend
                     self._stt_ok = True
                     logger.info("STT backend connected for server mode")
                 except Exception:
                     logger.info("STT not available — text-only mode", exc_info=False)
 
-            app = create_app(cast(Any, self), stt_transcribe=stt_transcribe, serve_static=True,
-                            stt_emotion_state=stt_emotion_state,
+            app = create_app(cast(Any, self), serve_static=True,
                             wake_word_enabled=wake_word_enabled,
                             task_system=self._task_system,
                             auth_token=self._config.server.auth_token)
@@ -305,7 +305,7 @@ class AgentServer:
             server_info = "\n".join([
                 f"  ---",
                 f"  WebSocket: ws://{host}:{port}/ws  |  前端: http://{host}:{port}/",
-                f"  STT: {'已连接' if stt_transcribe else '未连接'}  (model={stt_model})",
+                f"  STT: {'已连接' if self._stt else '未连接'}  (model={stt_model})",
                 f"  TTS: {'已连接' if self._tts else '未连接'}  (model={tts_model})",
                 f"  退出: Ctrl+C 或浏览器关闭服务按钮",
                 f"{'='*50}",

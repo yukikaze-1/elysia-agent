@@ -7,7 +7,7 @@ Each client gets an independent WebSocketChannel (outbound) and AudioBuffer
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Coroutine
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 
@@ -30,21 +30,19 @@ _LIVE2D_DIR = ProjectPath.LIVE2D_ASSETS.resolve()
 
 def create_app(
     agent: "Agent",
-    stt_transcribe: "Callable[[bytes], Coroutine[object, object, str]] | None" = None,
     serve_static: bool = True,
-    stt_emotion_state: dict | None = None,
     wake_word_enabled: bool = False,
     task_system: "WorkflowEngine | None" = None,
     auth_token: str = "",
 ) -> web.Application:
     """Create an aiohttp Application with WebSocket handler and optional static files.
 
+    STT 不再经参数注入——handle_ws 直接读 ``agent.stt`` 槽位（含 stt_transcribe /
+    stt_emotion_state），支持热切换。
+
     Args:
         agent: Agent instance (needs _output, _bus, process_message())
-        stt_transcribe: async callable(bytes) -> str for STT (optional)
         serve_static: serve static/index.html at /
-        stt_emotion_state: mutable dict with 'emotion' and 'events' keys,
-            updated by the STT wrapper after each transcription.
         wake_word_enabled: enable wake word detection for audio input.
         task_system: WorkflowEngine instance for debug routes (optional)
         auth_token: if non-empty, /shutdown, /restart, /tools/reload, and
@@ -84,7 +82,7 @@ def create_app(
         Returns:
             web.WebSocketResponse: WebSocket 连接对象。
         """
-        return await handle_ws(request, agent, stt_transcribe, stt_emotion_state, wake_word_enabled)
+        return await handle_ws(request, agent, wake_word_enabled)
 
     app.router.add_get("/ws", ws_handler)
 

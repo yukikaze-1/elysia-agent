@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Callable, Coroutine
+from typing import TYPE_CHECKING
 
 from aiohttp import web, WSMsgType
 from pydantic import ValidationError
@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from core.schema.event import InterruptData, UserInputData
 from Module.output import WebSocketChannel
 from core.input.audio_buffer import AudioBuffer
+from core.input.capabilities import build_capabilities
 
 if TYPE_CHECKING:
     from core.agent import Agent
@@ -21,8 +22,6 @@ logger = logging.getLogger(__name__)
 async def handle_ws(
     request: web.Request,
     agent: "Agent",
-    stt_transcribe: "Callable[[bytes], Coroutine[object, object, str]] | None",
-    stt_emotion_state: dict | None = None,
     wake_word_enabled: bool = False,
 ) -> web.WebSocketResponse:
     """Handle an incoming WebSocket connection for a browser client.
@@ -30,11 +29,13 @@ async def handle_ws(
     Manages the full WS lifecycle: connection, session history replay,
     capability announcement, audio buffer setup, message routing, and cleanup.
 
+    STT 从 create_app 参数注入改为读 ``agent.stt`` 槽位：建连时
+    ``agent.stt is not None`` 才建 audio_buf，转写/情绪经 ``agent.stt_transcribe``
+    / ``agent.stt_emotion_state`` 读取（支持热切换）。
+
     Args:
         request: aiohttp Request initiating the WebSocket upgrade.
         agent: Agent instance providing output channels and message processing.
-        stt_transcribe: Async callable(bytes) -> str for speech-to-text, or None.
-        stt_emotion_state: Mutable dict updated with emotion/events from STT.
         wake_word_enabled: Enable wake word detection for this connection.
 
     Returns:
@@ -61,20 +62,11 @@ async def handle_ws(
     except Exception:
         logger.warning("Failed to send session on connect", exc_info=True)
 
-    # 发送服务能力状态（STT / TTS 是否可用 + 三个服务的当前模型）。
-    # llm/stt/tts_model 供前端回填设置面板下拉选中值——否则首次访问（无 localStorage）
+    # 发送服务能力状态（嵌套 per-service 形状：available/enabled/model/default）。
+    # model 供前端回填设置面板下拉选中值——否则首次访问（无 localStorage）
     # 下拉框显示"选择模型..."占位符，即使服务端已在运行某个模型。
     try:
-        await ws.send_json({
-            "type": "capabilities",
-            "stt": stt_transcribe is not None,
-            "tts": agent.tts is not None,
-            "llm_model": agent.llm.model,
-            # 未连接的服务不下发 model——否则前端会显示"选中"一个实际不可用的模型
-            "stt_model": agent.config.stt.model if stt_transcribe is not None else None,
-            "tts_model": agent.tts.model if agent.tts is not None else None,
-            "live2d_static_image": agent.config.live2d.static_image,
-        })
+        await ws.send_json(build_capabilities(agent))
     except Exception:
         logger.debug("Failed to send capabilities on connect", exc_info=True)
 
@@ -113,7 +105,7 @@ async def handle_ws(
 
     audio_buf: AudioBuffer | None = None
     monitor_task: asyncio.Task | None = None
-    if stt_transcribe:
+    if agent.stt is not None:
         wake_words = None
         if wake_word_enabled:
             try:
@@ -122,11 +114,11 @@ async def handle_ws(
                 logger.debug("Could not read wake_words from agent", exc_info=True)
 
         audio_buf = AudioBuffer(
-            stt_transcribe=stt_transcribe,
+            stt_transcribe=agent.stt_transcribe,
             aggressiveness=3,
             on_interrupt=lambda: do_interrupt(agent, skip_vad=True),
             on_transcription=lambda text: do_transcription(
-                agent, ws, text, audio_buf, stt_emotion_state,
+                agent, ws, text, audio_buf, agent.stt_emotion_state,
             ),
             wake_words=wake_words,
             on_wake_notify=lambda: send_wake(ws),
@@ -166,7 +158,9 @@ async def handle_ws(
                     await ws.send_json({"type": "error", "message": f"Invalid message content: {e}"})
 
             elif msg.type == WSMsgType.BINARY:
-                if audio_buf:
+                # 后端防御：STT 被禁用（agent.stt_enabled=False）时不喂音频，
+                # 防止关闭开关后仍触发 VAD/转写
+                if audio_buf and agent.stt_enabled:
                     await audio_buf.feed(msg.data)
 
             elif msg.type == WSMsgType.ERROR:
