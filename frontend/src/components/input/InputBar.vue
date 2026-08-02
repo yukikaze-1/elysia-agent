@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useAudioStore } from '@/stores/audioStore'
@@ -27,6 +27,9 @@ const connectionStore = useConnectionStore()
 const chat = useChatStore()
 const audioStore = useAudioStore()
 const settingsStore = useSettingsStore()
+
+// 麦克风门控：STT 后端已连接 + 模式开启（未连接或已关闭时禁用录音）
+const micGateOk = computed(() => settingsStore.sttAvailable && settingsStore.sttEnabled)
 
 const { uploadImage, onDragOver, onDragEnter, onDragLeave, onDrop } = useImageUpload(
   () => inputBarRef.value
@@ -95,8 +98,8 @@ function autoResize() {
 // ---- Mic ----
 
 async function startMic() {
-  if (!settingsStore.sttAvailable) {
-    chat.addStatusMessage('STT 服务不可用，语音识别已禁用')
+  if (!micGateOk.value) {
+    chat.addStatusMessage('STT 服务不可用或已关闭，语音识别已禁用')
     return
   }
   try {
@@ -144,6 +147,17 @@ function toggleMic() {
   if (micStream) { stopMic(); return }
   startMic()
 }
+
+// STT 模式被关闭且正在录音 → 停录音 + 停发 BINARY（复用 stopMic 既有清理逻辑）
+watch(
+  () => settingsStore.sttEnabled,
+  (val) => {
+    if (!val && micStream) {
+      chat.addStatusMessage('STT 已关闭，停止语音输入')
+      stopMic()
+    }
+  }
+)
 
 function onAttachClick() {
   fileInputRef.value?.click()
@@ -198,6 +212,7 @@ onUnmounted(() => {
       id="mic-btn"
       title="麦克风"
       :class="{ active: audioStore.isMicActive }"
+      :disabled="!micGateOk"
       @click="toggleMic"
     >🎤</button>
     <textarea
@@ -246,6 +261,7 @@ textarea:focus { border-color: var(--accent); }
   background: var(--border); color: var(--text);
 }
 #mic-btn.active { background: var(--accent); animation: mic-pulse 1.5s infinite; }
+#mic-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 @keyframes mic-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(233,69,96,.4); }

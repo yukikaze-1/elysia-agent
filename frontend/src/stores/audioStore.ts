@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 export interface AudioQueueItem {
   url: string
@@ -12,6 +12,8 @@ export const useAudioStore = defineStore('audio', () => {
   const audioChunks = ref<Record<number, Uint8Array[]>>({})
   const streamBubbles = ref<Record<number, string>>({})
   const isMicActive = ref(false)
+  // 当前播放中的 Audio 元素引用（取消播放用；未播放时为 null）
+  const currentAudio = ref<HTMLAudioElement | null>(null)
 
   function decodeBase64(b64: string): Uint8Array {
     const binary = atob(b64)
@@ -68,6 +70,7 @@ export const useAudioStore = defineStore('audio', () => {
 
     const item = audioQueue.value.shift()!
     const a = new Audio(item.url)
+    currentAudio.value = a
 
     const chatStore = useChatStore()
     chatStore.revealNextQueued()
@@ -76,6 +79,7 @@ export const useAudioStore = defineStore('audio', () => {
     a.volume = settingsStore.volume / 100
 
     a.onended = () => {
+      if (currentAudio.value === a) currentAudio.value = null
       URL.revokeObjectURL(item.url)
       if (item.streamId != null) {
         delete streamBubbles.value[item.streamId]
@@ -86,6 +90,7 @@ export const useAudioStore = defineStore('audio', () => {
     }
 
     a.play().catch(() => {
+      if (currentAudio.value === a) currentAudio.value = null
       audioPlaying.value = false
       URL.revokeObjectURL(item.url)
       if (item.streamId != null) {
@@ -115,6 +120,12 @@ export const useAudioStore = defineStore('audio', () => {
    * 在 WS 断开或 TTS 关闭时调用，防止 audioChunks 中残留的 chunks 内存泄漏。
    */
   function cleanup() {
+    // 取消当前播放的音频（若有），并释放其 Blob URL
+    if (currentAudio.value) {
+      currentAudio.value.pause()
+      URL.revokeObjectURL(currentAudio.value.src)
+      currentAudio.value = null
+    }
     // 释放所有已累积的 chunk 内存
     for (const streamId of Object.keys(audioChunks.value)) {
       delete audioChunks.value[Number(streamId)]
@@ -126,6 +137,14 @@ export const useAudioStore = defineStore('audio', () => {
     audioQueue.value = []
     audioPlaying.value = false
   }
+
+  // TTS 模式被关闭 → 立即取消当前播放 + 清空队列（防御：后端停产后残余音频立刻静音）
+  watch(
+    () => useSettingsStore().ttsEnabled,
+    (enabled) => {
+      if (!enabled) cleanup()
+    }
+  )
 
   return {
     audioQueue, audioPlaying, audioChunks, streamBubbles, isMicActive,

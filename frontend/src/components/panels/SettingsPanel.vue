@@ -88,6 +88,11 @@ function handleTtsToggle(val: boolean) {
   settings.setService('tts', val)
 }
 
+// STT 开关现在是后端模式：经 setService 乐观下发，等 service_mode_result/capabilities 回滚校正
+function handleSttToggle(val: boolean) {
+  settings.setService('stt', val)
+}
+
 // ---- Custom endpoints modal ----
 
 const customModalOpen = ref(false)
@@ -267,17 +272,19 @@ async function copyText(text: string) {
 
     <!-- Toggles -->
     <div class="setting-row">
-      <span class="setting-label">TTS 语音</span>
+      <span class="setting-label">TTS 语音<span v-if="!settings.ttsAvailable" class="unavailable-badge">（未连接）</span></span>
       <ToggleSwitch
-        v-if="settings.ttsAvailable"
         :model-value="settings.ttsEnabled"
         @update:model-value="handleTtsToggle"
       />
-      <span
-        v-else
-        class="unavailable-badge"
-        title="TTS 服务不可用"
-      >不可用</span>
+    </div>
+
+    <div class="setting-row">
+      <span class="setting-label">STT 语音<span v-if="!settings.sttAvailable" class="unavailable-badge">（未连接）</span></span>
+      <ToggleSwitch
+        :model-value="settings.sttEnabled"
+        @update:model-value="handleSttToggle"
+      />
     </div>
 
     <div class="setting-row">
