@@ -11,68 +11,84 @@ llm:
     env_key: "DEEPSEEK_API_KEY"
     supports_prefix: true
     supports_multimodal: false
+    models: ["deepseek-v4-flash", "deepseek-v4-pro"]
   openai:
     base_url: ""
     url_key: "OPENAI_URL"
     env_key: "OPENAI_API_KEY"
     supports_prefix: false
     supports_multimodal: false
+    models: ["gpt-4", "gpt-4o", "gpt-5"]
   ollama:
     base_url: ""
     url_key: "OLLAMA_URL"
     env_key: ""
+    local: true
     supports_prefix: false
     supports_multimodal: false
+    models: ["qwen2.5:3b"]
   gemini:
     base_url: ""
     url_key: "GEMINI_URL"
     env_key: "GEMINI_API_KEY"
     supports_prefix: false
     supports_multimodal: false
+    models: []
   mimo:
     base_url: ""
     url_key: "MIMO_URL"
     env_key: "MIMO_API_KEY"
     supports_prefix: false
     supports_multimodal: true
+    models: ["mimo-v2.5", "mimo-v2.5-pro"]
   custom:
     base_url: ""
     url_key: ""
     env_key: "CUSTOM_LLM_API_KEY"
     supports_prefix: false
     supports_multimodal: false
+    models: []
 
 tts:
   gpt-sovits:
     base_url: ""
     url_key: "GPT_SOVITS_URL"
     env_key: ""
+    local: true
+    models: ["default"]
   custom:
     base_url: ""
     url_key: ""
     env_key: "CUSTOM_TTS_API_KEY"
+    models: []
   minimax:
     base_url: ""
     url_key: "MINIMAX_TTS_URL"
     env_key: "MINIMAX_API_KEY"
+    models: ["speech-2.8-hd"]
 
 stt:
   sensevoice:
     base_url: ""
     url_key: "SENSEVOICE_URL"
     env_key: ""
+    local: true
+    models: ["sense-voice"]
   openai:
     base_url: ""
     url_key: "OPENAI_STT_URL"
     env_key: "OPENAI_API_KEY"
+    models: []
   deepgram:
     base_url: ""
     url_key: "DEEPGRAM_URL"
     env_key: "DEEPGRAM_API_KEY"
+    models: []
   custom:
     base_url: ""
     url_key: ""
     env_key: "CUSTOM_STT_API_KEY"
+    models: []
 
 embedding:
   huggingface:
