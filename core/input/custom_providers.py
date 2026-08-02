@@ -1,6 +1,7 @@
 """自定义 provider 持久化 — 读写 custom_providers.yaml。"""
 
 import logging
+import os
 from pathlib import Path
 
 import yaml
@@ -98,3 +99,30 @@ def remove_provider(service: str, name: str, path: str | Path | None = None) -> 
     data[service] = [e for e in data[service] if e.get("name") != name]
     save(data, path)
     return data
+
+
+def resolve_model_params(service: str, model_id: str) -> dict:
+    """解析切换/测试模型所需参数（switch + /api/providers/test 共用）。
+
+    Args:
+        service: 服务类型，"llm"/"stt"/"tts"。
+        model_id: 完整模型标识，如 "custom/myllm" 或 "deepseek/deepseek-v4-flash"。
+
+    Returns:
+        dict: "custom/name" → 查 custom_providers.yaml[name]，返回
+            {"base_url": ..., "api_key": os.getenv(api_key_env)}（api_key_env 缺失/为空时
+            跳过 api_key，避免 os.getenv(None) 抛 TypeError）；内置 provider → {}。
+    """
+    if "/" not in model_id or model_id.split("/", 1)[0] != "custom":
+        return {}
+    name = model_id.split("/", 1)[1]
+    for entry in load()[service]:
+        if entry.get("name") == name:
+            params = {"base_url": entry.get("base_url", "")}
+            env_name = entry.get("api_key_env", "")
+            api_key = os.getenv(env_name, "") if env_name else ""
+            # 空 api_key 不传——避免 "" 泄漏进 switch/test 调用（assert_called_once_with 严格相等会失败）
+            if api_key:
+                params["api_key"] = api_key
+            return params
+    return {}
