@@ -697,3 +697,46 @@ class TestSequenceEvents:
         # 语音文本跨 META 连续，无标签泄漏
         sentence_texts = [e.text for e in events if e.type == StreamEventType.SENTENCE]
         assert "好" in sentence_texts and "尾" in sentence_texts
+
+
+# ============================================================================
+# Group: 多代码块链路（spec 2026-08-02 B 节）
+# ============================================================================
+
+class TestMultipleCodeBlocks:
+    """同一轮多个代码块：after_sentence_idx 跨块计数 + get_blocks 顺序 + parts 交错。"""
+
+    def test_two_fences_blocks_and_events(self):
+        s = "第一段。\n```python\ncode1\n```\n第二段。\n```js\ncode2\n```\n结尾。"
+        proc = StreamProcessor()
+        events: list[StreamEvent] = []
+        events.extend(proc.feed(s))
+        events.extend(proc.flush())
+        # 两块按 token 顺序；第二个块 after_idx 跨块计数（2 > 1）
+        assert [(b[0], b[2], b[3]) for b in proc.get_blocks()] == [
+            ("code", "python", 1), ("code", "js", 2)]
+        # 代码内容不进 SENTENCE / TEXT_DELTA
+        assert not any(
+            e.type in (StreamEventType.SENTENCE, StreamEventType.TEXT_DELTA)
+            and ("code1" in e.text or "code2" in e.text)
+            for e in events
+        )
+
+    def test_build_parts_two_blocks_interleave(self):
+        from core.text.parts import build_parts
+        sentences = ["第一段。", "第二段。", "结尾。"]
+        blocks = [("code", "code1\n", "python", 1), ("code", "code2\n", "js", 2)]
+        parts, content_type = build_parts(sentences, blocks)
+        assert [p.content for p in parts] == ["第一段。", "code1", "第二段。", "code2", "结尾。"]
+        assert content_type == {"markdown": [], "code": [1, 3]}
+
+    def test_fence_then_markdown_tag_mixed(self):
+        s = "开头。\n```python\ncode1\n```\n中间。\n<|markdown|>m1</|markdown|>\n结尾。"
+        proc = StreamProcessor()
+        events: list[StreamEvent] = []
+        events.extend(proc.feed(s))
+        events.extend(proc.flush())
+        blocks = proc.get_blocks()
+        assert [(b[0], b[2]) for b in blocks] == [("code", "python"), ("markdown", "")]
+        # 第二个块 after_idx 跨块计数（markdown 块落在两个完成句之后）
+        assert blocks[0][3] == 1 and blocks[1][3] == 2
