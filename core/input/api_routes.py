@@ -276,11 +276,16 @@ def register_api_routes(app: web.Application) -> None:
             if field is None:
                 return web.json_response({"error": "未找到图片字段"}, status=400)
 
-            # read(max_bytes + 1) 限制单次读取——multipart 原始流不受
-            # client_max_size 约束，若整块 read() 会允许超大 body 造成内存尖峰（DoS 向量）
-            data = await cast(BodyPartReader, field).read(max_bytes + 1)
-            if len(data) > max_bytes:
-                return web.json_response({"error": f"图片过大，上限 {max_bytes // 1024 // 1024}MB"}, status=413)
+            # read_chunk() 逐块读取以限制内存——aiohttp 3.x 的 BodyPartReader.read()
+            # 不接受位置 size 参数（仅关键字 decode），整块 read() 会把超大 body
+            # 全部读入内存（multipart 原始流不受 client_max_size 约束，属 DoS 向量）。
+            # 读到超限即中断返回 413，避免继续读完整个 body。
+            field = cast(BodyPartReader, field)
+            data = bytearray()
+            while not field.at_eof():
+                data.extend(await field.read_chunk(max_bytes + 1))
+                if len(data) > max_bytes:
+                    return web.json_response({"error": f"图片过大，上限 {max_bytes // 1024 // 1024}MB"}, status=413)
 
             filename = getattr(field, "filename", "") or "image.png"
             ext = _os.path.splitext(filename)[1].lower()

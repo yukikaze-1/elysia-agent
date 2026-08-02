@@ -4,6 +4,7 @@ Run: python -m pytest core/input/tests/test_server.py -v --asyncio-mode=auto
 """
 
 import asyncio
+import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -613,6 +614,100 @@ class TestToolEndpoints:
         assert resp.status == 200
         data = await resp.json()
         assert data["ok"] is False
+
+
+# ============================================================
+# Image upload endpoint
+# ============================================================
+
+_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
+
+
+@pytest.mark.service
+class TestImageUpload:
+    """POST /api/images multipart 图片上传。
+
+    回归点：aiohttp 3.x 的 BodyPartReader.read() 只接受关键字参数
+    ``decode``，不接受位置 size 参数——之前 ``read(max_bytes + 1)``
+    直接 TypeError（BodyPartReader.read() takes 1 positional argument but 2 were given）。
+
+    注：不使用 pytest-aiohttp 的 aiohttp_client fixture（本环境未安装），
+    直接用 aiohttp.test_utils.TestClient 起真实服务器。
+    """
+
+    @pytest.fixture
+    def image_app(self, monkeypatch, tmp_path):
+        """构建带图片上传路由的最小 app，图片落盘重定向到 tmp_path。"""
+        from core.input.server import create_app
+
+        def _make(image_max_mb: int = 10,
+                  allowed_types: list[str] | None = None) -> web.Application:
+            agent = MagicMock()
+            agent.config = MagicMock()
+            agent.config.server.image_max_mb = image_max_mb
+            agent.config.server.image_allowed_types = allowed_types or [
+                "image/png", "image/jpeg", "image/gif", "image/webp",
+            ]
+            agent.output = MagicMock()
+            agent.bus = MagicMock()
+            monkeypatch.setenv(
+                "ELYSIA_PATH_DATA_UPLOADS_IMAGES",
+                str(tmp_path / "uploads" / "images"),
+            )
+            return create_app(agent, serve_static=False)
+
+        return _make
+
+    @pytest.mark.asyncio
+    async def _post(self, app: web.Application, filename: str,
+                    content: bytes, content_type: str) -> tuple[int, bytes]:
+        """起一个临时服务器并 POST multipart 到 /api/images。
+
+        在关闭连接前读取完整响应体，返回 (status, body)。
+        aiohttp ClientSession 的 dict data= 不保证编码为 multipart，
+        显式用 FormData 构造浏览器同款 multipart body。
+        """
+        from aiohttp import FormData
+        from aiohttp.test_utils import TestClient, TestServer
+
+        form = FormData()
+        form.add_field("image", content, filename=filename, content_type=content_type)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            resp = await client.post("/api/images", data=form)
+            body = await resp.read()
+            return resp.status, body
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_upload_png_returns_url(self, image_app):
+        """正常 PNG 上传应返回 200 + url（回归：修复前 500 TypeError）。"""
+        content = _PNG_HEADER + b"\x00" * 100
+        status, body = await self._post(image_app(), "test.png", content, "image/png")
+        assert status == 200, f"expected 200, got {status}: {body.decode()}"
+        data = json.loads(body)
+        assert "url" in data
+        assert data["mime"] == "image/png"
+        assert data["size"] == len(content)
+
+    @pytest.mark.asyncio
+    async def test_upload_oversize_rejected_413(self, image_app):
+        """超过 image_max_mb 的图片应返回 413。"""
+        big = _PNG_HEADER + b"\x00" * (1 * 1024 * 1024 + 1)
+        status, body = await self._post(image_app(image_max_mb=1), "big.png", big, "image/png")
+        assert status == 413, f"expected 413, got {status}: {body.decode()}"
+        data = json.loads(body)
+        assert "过大" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_upload_unsupported_type_rejected_415(self, image_app):
+        """非允许类型的文件应返回 415（仅允许 png 时上传 jpg）。"""
+        status, body = await self._post(
+            image_app(allowed_types=["image/png"]), "photo.jpg", b"\xff\xd8\xff", "image/jpeg",
+        )
+        assert status == 415, f"expected 415, got {status}: {body.decode()}"
 
 
 # ============================================================
