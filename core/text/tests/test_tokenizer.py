@@ -13,6 +13,10 @@ import pytest
 
 from core.text.tokenizer import StreamTokenizer, Token, TokenKind
 
+# 模块级 import：TestBoundedBuffers 用 monkeypatch.setattr 修改
+# tokenizer_module.FENCE_MAX_CONTENT 等常量（配合有界化测试）。
+import core.text.tokenizer as tokenizer_module
+
 
 pytestmark = pytest.mark.unit
 
@@ -580,3 +584,117 @@ class TestAdjacentTagTransition:
             Token(TokenKind.META, "累", meta_kind="mood"),
             Token(TokenKind.SPEECH, "世界"),
         ]
+
+
+# ============================================================================
+# Group: 无界缓冲加固（spec 2026-08-02 C 节）
+# 用 monkeypatch 把 FENCE_MAX_CONTENT 调小（16）加速测试；语义与 64KB 相同。
+# ============================================================================
+
+class TestBoundedBuffers:
+    """达上限后截断：结构化闭合保头、endswith 闭合保尾、闭合仍检测、内存有界。"""
+
+    def test_unclosed_fence_head_truncated(self, monkeypatch):
+        monkeypatch.setattr(tokenizer_module, "FENCE_MAX_CONTENT", 16)
+        tz = StreamTokenizer()
+        for ch in "```\n" + "x" * 40:
+            tz.feed(ch)
+        # flush() 末尾 reset() 会清空缓冲（tokenizer.py:200/222），缓冲断言必须在 flush 前
+        assert tz._fence_content == "x" * 16                 # 保头截断
+        toks = list(tz.flush())
+        assert not any(t.kind == TokenKind.CODE for t in toks)  # 未闭合丢弃
+
+    def test_closed_fence_over_cap_head_truncated(self, monkeypatch):
+        monkeypatch.setattr(tokenizer_module, "FENCE_MAX_CONTENT", 16)
+        tz = StreamTokenizer()
+        toks: list[Token] = []
+        for ch in "```python\n" + "x" * 40 + "\n```\n":
+            toks.extend(tz.feed(ch))
+        toks.extend(tz.flush())
+        codes = [t for t in toks if t.kind == TokenKind.CODE]
+        assert len(codes) == 1
+        assert codes[0].text == "x" * 16                     # 保头：前 16 字符
+        assert codes[0].lang == "python"
+
+    def test_closed_code_tag_over_cap_tail_truncated(self, monkeypatch):
+        monkeypatch.setattr(tokenizer_module, "FENCE_MAX_CONTENT", 16)
+        tz = StreamTokenizer()
+        toks: list[Token] = []
+        for ch in "<|code|>" + "x" * 40 + "</|code|>":
+            toks.extend(tz.feed(ch))
+        toks.extend(tz.flush())
+        codes = [t for t in toks if t.kind == TokenKind.CODE]
+        # 闭合仍被检测（endswith 靠保尾存活），内容有界
+        assert len(codes) == 1
+        assert len(codes[0].text) <= 16
+
+    def test_closed_markdown_over_cap_tail_truncated(self, monkeypatch):
+        monkeypatch.setattr(tokenizer_module, "FENCE_MAX_CONTENT", 16)
+        tz = StreamTokenizer()
+        toks: list[Token] = []
+        for ch in "<|markdown|>" + "x" * 40 + "</|markdown|>":
+            toks.extend(tz.feed(ch))
+        toks.extend(tz.flush())
+        marks = [t for t in toks if t.kind == TokenKind.MARKDOWN]
+        assert len(marks) == 1
+        assert len(marks[0].text) <= 16
+
+    def test_unclosed_mood_over_cap_tail_truncated(self, monkeypatch):
+        monkeypatch.setattr(tokenizer_module, "FENCE_MAX_CONTENT", 16)
+        tz = StreamTokenizer()
+        for ch in "<mood>" + "x" * 40:
+            tz.feed(ch)
+        assert tz._meta_content == "x" * 16                  # 保尾截断（flush 前断言，flush 会清空）
+        toks = list(tz.flush())
+        assert not any(t.kind == TokenKind.META for t in toks)  # 未闭合不发事件
+
+    def test_unclosed_code_tag_over_cap(self, monkeypatch):
+        monkeypatch.setattr(tokenizer_module, "FENCE_MAX_CONTENT", 16)
+        tz = StreamTokenizer()
+        for ch in "<|code|>" + "x" * 40:
+            tz.feed(ch)
+        assert tz._code_content == "x" * 16                  # 保尾截断（flush 前）
+        toks = list(tz.flush())
+        assert not any(t.kind == TokenKind.CODE for t in toks)  # 未闭合整体丢弃
+
+    def test_unclosed_markdown_over_cap(self, monkeypatch):
+        monkeypatch.setattr(tokenizer_module, "FENCE_MAX_CONTENT", 16)
+        tz = StreamTokenizer()
+        for ch in "<|markdown|>" + "x" * 40:
+            tz.feed(ch)
+        assert tz._markdown_content == "x" * 16              # 保尾截断（flush 前）
+        toks = list(tz.flush())
+        assert not any(t.kind == TokenKind.MARKDOWN for t in toks)  # 未闭合整体丢弃
+
+    def test_pause_overflow_releases_as_speech(self, monkeypatch):
+        monkeypatch.setattr(tokenizer_module, "PAUSE_MAX", 8)
+        tz = StreamTokenizer()
+        toks: list[Token] = []
+        for ch in "<#1111111111":
+            toks.extend(tz.feed(ch))
+        toks.extend(tz.flush())
+        assert not any(t.kind == TokenKind.PAUSE for t in toks)
+        assert any(t.kind == TokenKind.SPEECH for t in toks)
+
+    def test_fence_infostr_over_cap_keeps_first(self, monkeypatch):
+        monkeypatch.setattr(tokenizer_module, "FENCE_INFO_MAX", 8)
+        tz = StreamTokenizer()
+        toks: list[Token] = []
+        for ch in "```" + "a" * 20 + "\ncode\n```\n":
+            toks.extend(tz.feed(ch))
+        toks.extend(tz.flush())
+        codes = [t for t in toks if t.kind == TokenKind.CODE]
+        assert len(codes) == 1
+        assert codes[0].lang == "a" * 8                      # 首段保留（保头）
+
+    def test_normal_under_cap_unchanged(self):
+        """<上限行为与现状一致（回归）。"""
+        tz = StreamTokenizer()
+        toks: list[Token] = []
+        for ch in "```python\nprint(1)\n```\n":
+            toks.extend(tz.feed(ch))
+        toks.extend(tz.flush())
+        codes = [t for t in toks if t.kind == TokenKind.CODE]
+        assert len(codes) == 1
+        assert codes[0].text == "print(1)\n"
+        assert codes[0].lang == "python"

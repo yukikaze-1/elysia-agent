@@ -11,12 +11,14 @@
   - 标签起始前缀：前缀匹配持有——对完整起始串（含 `<mo`/`<moo` 等
     `<mood>` 的扩展前缀，即 tags.START_PREFIXES 最小字面前缀的完整展开）
     匹配；一旦不可能构成任何起始模式 → 释放为 SPEECH。
-  - PAUSE：尾串正则 `PAUSE_TAIL_RE` 驱动（内容无上界，固定前缀框不住）。
+  - PAUSE：尾串正则 `PAUSE_TAIL_RE` 驱动（内容上界 `PAUSE_MAX`）。
   - STAGE_CN：K/M 计数窗口——K=16 英文早退（无 CJK 提前回落）、
     M=64 CJK 上限（含 CJK 的未闭口持有到 M 才回落）。闭合时无 CJK 且内容为
     英文语气词 → STAGE_EN（显示剥离、TTS 保留）；否则回落 SPEECH。
   - ANGLE（尖括号英文语气词候选）：`<` + 字母进入，内容上界 ANGLE_MAX=16；
     `>` 时命中语气词 → ANGLE_EN（违规格式，全链路丢弃），否则回落 SPEECH。
+  - 围栏/块/元内容缓冲有界 `FENCE_MAX_CONTENT`（结构化闭合围栏保头截断、
+    endswith 闭合 tag 保尾截断）；围栏信息串有界 `FENCE_INFO_MAX`（保头）。
   - 围栏：`\n`/空格立即作为 SPEECH 发出（零延迟，不参与持有）；
     行首反引号前缀（1-2 个）跨 chunk 持有等待第 3 个。
 - **行首双状态**：布尔 `at_line_start` + 缩进计数；围栏判定只看 `at_line_start`。
@@ -53,6 +55,16 @@ from core.text.tags import (
 # 尖括号英文语气词（<pant>）持有窗口：内容上界（最长语气词「clears throat」12 字符
 # + 裕量）。超窗未闭合 → 回落 SPEECH（不延迟流式输出）。对齐 STAGE_K=16 语义。
 ANGLE_MAX: int = 16
+
+# 无界缓冲上限（spec 2026-08-02 C 节，行为表 #12）：
+# - 块/元内容缓冲（_fence_content/_code_content/_markdown_content/_meta_content）：
+#   码点数上限，典型代码块 <4KB，16× 富余
+# - _fence_pending：等待行尾判定的累积窗口
+# - _fence_infostr：围栏首行（lang 取首段 token，保头）
+# - _pause_buf：PAUSE 数字串
+FENCE_MAX_CONTENT: int = 64 * 1024
+FENCE_INFO_MAX: int = 256
+PAUSE_MAX: int = 32
 
 
 # ---- Token 模型 ----------------------------------------------------------
@@ -225,6 +237,30 @@ class StreamTokenizer:
         self._fence_close_state: str | None = None
         self._fence_phase = "info"
 
+    # ---- 有界缓冲辅助 --------------------------------------------------------
+
+    def _append_head_bounded(self, attr: str, text: str) -> None:
+        """保头截断追加：结构化闭合缓冲（_fence_content/_fence_pending）。
+
+        围栏闭合靠换行 + 反引号串判定，不读内容缓冲，可安全截断保头——
+        保留代码开头（函数头）等更有信息量的部分。
+        """
+        buf = getattr(self, attr) + text
+        if len(buf) > FENCE_MAX_CONTENT:
+            buf = buf[:FENCE_MAX_CONTENT]
+        setattr(self, attr, buf)
+
+    def _append_tail_bounded(self, attr: str, text: str) -> None:
+        """保尾截断追加：endswith 闭合缓冲（_code_content/_markdown_content/_meta_content）。
+
+        闭合标签靠缓冲尾部匹配（endswith），截断保头会让闭合标签永远进不了
+        缓冲 → 永不闭合 → flush 整块丢弃（比现状更糟）。保尾截断保留闭合标签。
+        """
+        buf = getattr(self, attr) + text
+        if len(buf) > FENCE_MAX_CONTENT:
+            buf = buf[-FENCE_MAX_CONTENT:]
+        setattr(self, attr, buf)
+
     # ---- NORMAL 态 ----------------------------------------------------------
 
     def _feed_normal(self, c: str, out: list[Token]) -> None:
@@ -396,7 +432,12 @@ class StreamTokenizer:
             self._exit_pause()
             return
         if PAUSE_TAIL_RE.search(candidate):
-            self._pause_buf = candidate
+            if len(candidate) >= PAUSE_MAX:
+                # 超窗：长数字串不是真实 pause，回落 SPEECH
+                self._emit_speech_text(candidate, out)
+                self._exit_pause()
+            else:
+                self._pause_buf = candidate
             return
         # 非数字/点字符 → 释放为 SPEECH（<#100元 → SPEECH）
         if c in ("\n", " "):
@@ -465,7 +506,8 @@ class StreamTokenizer:
     # ---- META / CODE_TAG / MARKDOWN 态（内容缓冲至闭合）---------------------
 
     def _feed_meta(self, c: str, out: list[Token]) -> None:
-        self._meta_content += c
+        # 保尾截断（endswith 靠尾部匹配，保尾保留闭合标签）
+        self._append_tail_bounded("_meta_content", c)
         close = META_TAGS[self._meta_kind][1]
         if self._meta_content.endswith(close):
             content = self._meta_content[:-len(close)]
@@ -473,14 +515,16 @@ class StreamTokenizer:
             self._exit_meta()
 
     def _feed_code_tag(self, c: str, out: list[Token]) -> None:
-        self._code_content += c
+        # 保尾截断（endswith 靠尾部匹配，保尾保留闭合标签）
+        self._append_tail_bounded("_code_content", c)
         if self._code_content.endswith(CODE_CLOSE):
             content = self._code_content[:-len(CODE_CLOSE)]
             out.append(Token(TokenKind.CODE, content, lang=self._code_lang))
             self._exit_code_tag()
 
     def _feed_markdown(self, c: str, out: list[Token]) -> None:
-        self._markdown_content += c
+        # 保尾截断（endswith 靠尾部匹配，保尾保留闭合标签）
+        self._append_tail_bounded("_markdown_content", c)
         if self._markdown_content.endswith(MARKDOWN_CLOSE):
             content = self._markdown_content[:-len(MARKDOWN_CLOSE)]
             out.append(Token(TokenKind.MARKDOWN, content))
@@ -496,7 +540,9 @@ class StreamTokenizer:
                 self._fence_close_state = "indent"
                 self._fence_pending = ""
             else:
-                self._fence_infostr += c
+                # 围栏信息串（lang 取首段 token）有界 FENCE_INFO_MAX，保头保留首段
+                if len(self._fence_infostr) < FENCE_INFO_MAX:
+                    self._fence_infostr += c
             return
         self._feed_fence_body(c, out)
 
@@ -505,7 +551,8 @@ class StreamTokenizer:
         if st == "strong":
             # 已看到 ≥ 开围栏长度的反引号行，等待行尾判定是否为收尾
             if c in _WS:
-                self._fence_pending += c
+                # 等待行尾判定的累积窗口保头截断（跨 chunk 持有，FENCE_MAX_CONTENT 上界）
+                self._append_head_bounded("_fence_pending", c)
                 return
             if c == "\n":
                 lang = self._fence_lang()
@@ -515,53 +562,57 @@ class StreamTokenizer:
                 self._at_line_start = True
                 self._clear_fence()
                 return
-            # 反引号后非空白 → 不是收尾围栏，整行算内容
-            self._fence_content += self._fence_pending + c
+            # 反引号后非空白 → 不是收尾围栏，整行算内容（保头截断）
+            self._append_head_bounded("_fence_content", self._fence_pending + c)
             self._fence_pending = ""
             self._fence_close_state = None
             return
         if st == "run":
             if c == "`":
-                self._fence_pending += c
+                # 反引号累积窗口保头截断（跨 chunk 持有；_fence_run_len 为闭合
+                # 计数器，不走有界缓冲）
+                self._append_head_bounded("_fence_pending", c)
                 self._fence_run_len += 1
                 return
             if self._fence_run_len >= self._fence_len:
                 self._fence_close_state = "strong"
                 self._feed_fence_body(c, out)
                 return
-            self._fence_content += self._fence_pending + c
+            self._append_head_bounded("_fence_content", self._fence_pending + c)
             self._fence_pending = ""
             self._fence_close_state = None
             return
         if st == "indent":
             if c == " ":
-                self._fence_pending += c
+                # 行首缩进累积窗口保头截断（≤3 空格约束受 FENCE_MAX_INDENT 控制）
+                self._append_head_bounded("_fence_pending", c)
                 if len(self._fence_pending) > FENCE_MAX_INDENT:
-                    # 缩进超 3 空格 → 非收尾围栏
-                    self._fence_content += self._fence_pending
+                    # 缩进超 3 空格 → 非收尾围栏（内容保头截断）
+                    self._append_head_bounded("_fence_content", self._fence_pending)
                     self._fence_pending = ""
                     self._fence_close_state = None
                 return
             if c == "`":
-                self._fence_pending += c
+                # 行首反引号累积窗口保头截断
+                self._append_head_bounded("_fence_pending", c)
                 self._fence_run_len = 1
                 self._fence_close_state = "run"
                 return
             if c == "\n":
-                self._fence_content += self._fence_pending + "\n"
+                self._append_head_bounded("_fence_content", self._fence_pending + "\n")
                 self._fence_pending = ""
                 return
-            self._fence_content += self._fence_pending + c
+            self._append_head_bounded("_fence_content", self._fence_pending + c)
             self._fence_pending = ""
             self._fence_close_state = None
             return
-        # 普通内容（非行首）
+        # 普通内容（非行首）——内容缓冲保头截断（围栏闭合不读缓冲）
         if c == "\n":
-            self._fence_content += "\n"
+            self._append_head_bounded("_fence_content", "\n")
             self._fence_close_state = "indent"
             self._fence_pending = ""
             return
-        self._fence_content += c
+        self._append_head_bounded("_fence_content", c)
 
     def _fence_lang(self) -> str:
         s = self._fence_infostr.strip()
