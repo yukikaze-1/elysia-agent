@@ -3,11 +3,11 @@ import os
 from typing import TYPE_CHECKING
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
-from .milvus import MilvusBackend
+from Module.database.vectordb.milvus import MilvusBackend
 
 if TYPE_CHECKING:
-    from .config import VectorDBConfig
-    from .protocol import VectorDBBackend
+    from Module.database.vectordb.config import VectorDBConfig
+    from Module.database.vectordb.protocol import VectorDBBackend
 
 _BACKENDS: dict[str, dict] = {
     "milvus": {

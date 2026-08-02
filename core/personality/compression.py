@@ -12,7 +12,7 @@ from typing import Any, TYPE_CHECKING
 
 from core.schema.compression import CompressionTrigger
 from core.schema.utils import now_iso
-from ._utils import _extract_tag
+from core.personality._utils import _extract_tag
 from paths import ProjectPath
 
 if TYPE_CHECKING:

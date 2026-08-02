@@ -4,9 +4,9 @@ import pytest
 
 from typing import cast
 
-from ..protocol import STTBackend
-from ..registry import STTFactory
-from ..sensevoice import SenseVoiceBackend
+from Module.stt.protocol import STTBackend
+from Module.stt.registry import STTFactory
+from Module.stt.sensevoice import SenseVoiceBackend
 
 pytestmark = pytest.mark.service
 
@@ -167,51 +167,51 @@ class TestClose:
 
 class TestParseEmotion:
     def test_extracts_happy(self):
-        from ..sensevoice import _parse_emotion
+        from Module.stt.sensevoice import _parse_emotion
         assert _parse_emotion("<|zh|><|HAPPY|><|Speech|><|withitn|>hello") == "HAPPY"
 
     def test_extracts_sad(self):
-        from ..sensevoice import _parse_emotion
+        from Module.stt.sensevoice import _parse_emotion
         assert _parse_emotion("<|zh|><|SAD|><|Speech|>sorry") == "SAD"
 
     def test_neutral_tag_returns_neutral(self):
-        from ..sensevoice import _parse_emotion
+        from Module.stt.sensevoice import _parse_emotion
         assert _parse_emotion("<|zh|><|NEUTRAL|><|Speech|>hello") == "NEUTRAL"
 
     def test_emo_unknown_returns_neutral(self):
-        from ..sensevoice import _parse_emotion
+        from Module.stt.sensevoice import _parse_emotion
         assert _parse_emotion("<|zh|><|EMO_UNKNOWN|><|Speech|>hello") == "NEUTRAL"
 
     def test_no_emotion_tag_returns_neutral(self):
-        from ..sensevoice import _parse_emotion
+        from Module.stt.sensevoice import _parse_emotion
         assert _parse_emotion("<|zh|><|Speech|>hello") == "NEUTRAL"
 
     def test_empty_string(self):
-        from ..sensevoice import _parse_emotion
+        from Module.stt.sensevoice import _parse_emotion
         assert _parse_emotion("") == "NEUTRAL"
 
 
 class TestParseEvents:
     def test_extracts_laughter(self):
-        from ..sensevoice import _parse_events
+        from Module.stt.sensevoice import _parse_events
         result = _parse_events("<|zh|><|NEUTRAL|><|Speech|><|Laughter|>hello")
         assert "Laughter" in result
 
     def test_speech_is_filtered_out(self):
-        from ..sensevoice import _parse_events
+        from Module.stt.sensevoice import _parse_events
         result = _parse_events("<|zh|><|Speech|>hello")
         assert "Speech" not in result
 
     def test_no_events_returns_empty_list(self):
-        from ..sensevoice import _parse_events
+        from Module.stt.sensevoice import _parse_events
         assert _parse_events("<|zh|><|NEUTRAL|>hello") == []
 
     def test_empty_string(self):
-        from ..sensevoice import _parse_events
+        from Module.stt.sensevoice import _parse_events
         assert _parse_events("") == []
 
     def test_multiple_events(self):
-        from ..sensevoice import _parse_events
+        from Module.stt.sensevoice import _parse_events
         result = _parse_events("<|Speech|><|Laughter|><|Applause|>text")
         assert "Laughter" in result
         assert "Applause" in result

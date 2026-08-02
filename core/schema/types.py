@@ -6,7 +6,7 @@ from pydantic import BeforeValidator
 
 from Module.workflow_contract.schema import SessionId
 
-from .utils import _normalize_iso_ts
+from core.schema.utils import _normalize_iso_ts
 
 
 IsoTimestamp = Annotated[str, BeforeValidator(_normalize_iso_ts)]

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.schema.types import SessionId
 from core.schema.compression import CompressionTrigger, VersionEntry
-from .base import Repository
+from core.storage.base import Repository
 
 if TYPE_CHECKING:
     from core.schema.types import IsoTimestamp

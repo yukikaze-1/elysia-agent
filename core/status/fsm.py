@@ -9,7 +9,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from .agent_fsm import AgentFSM, AgentState
+from core.status.agent_fsm import AgentFSM, AgentState
 from core.status.protocol import AgentStatus, CognitivePhaseController
 
 if TYPE_CHECKING:

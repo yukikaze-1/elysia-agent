@@ -8,7 +8,7 @@ import logging
 
 from pymilvus import DataType, MilvusClient
 
-from .protocol import VectorDBBackend
+from Module.database.vectordb.protocol import VectorDBBackend
 
 # 索引预设配置 — create_collection 时通过 index_preset 选择
 INDEX_PRESETS: dict[str, dict] = {

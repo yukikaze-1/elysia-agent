@@ -6,8 +6,8 @@ from aiohttp import web
 
 from core.schema.message import MessageRole
 from core.schema.types import SessionId
-from ..api_routes import _archive_to_client
-from ._common import sessions_to_client
+from core.input.api_routes import _archive_to_client
+from core.input.debug_routes._common import sessions_to_client
 
 logger = logging.getLogger(__name__)
 

@@ -14,7 +14,7 @@ from typing import AsyncIterator
 import httpx
 from openai import AsyncOpenAI
 
-from .protocol import LLMBackend
+from Module.llm.protocol import LLMBackend
 from Module._common.test_helpers import make_test_method
 
 

@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ..protocol import DocumentDBBackend
-from ..registry import DocumentDBFactory
+from Module.database.documentdb.protocol import DocumentDBBackend
+from Module.database.documentdb.registry import DocumentDBFactory
 
 
 # ============================================================

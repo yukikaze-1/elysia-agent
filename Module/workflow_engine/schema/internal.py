@@ -19,15 +19,8 @@ from Module.workflow_contract import (
 )
 from Module.tool.tool_descriptor import Tool
 
-from .types import (
-    ArtifactId,
-    IsoTimestamp,
-    NodeErrorCode,   # ★ 从 types.py 导入（原在 internal 区域）
-    NodeStatus,
-    WorkflowErrorCode,
-    now_iso,
-)
-from .output import TokenComponentType, TokenComponent
+from Module.workflow_engine.schema.types import ArtifactId, IsoTimestamp, NodeErrorCode, NodeStatus, WorkflowErrorCode, now_iso
+from Module.workflow_engine.schema.output import TokenComponentType, TokenComponent
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

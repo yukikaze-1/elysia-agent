@@ -18,13 +18,7 @@ from Module.workflow_contract import (
     WorkflowStatus,
 )
 
-from .types import (
-    IsoTimestamp,
-    NodeErrorCode,
-    NodeStatus,
-    WorkflowErrorCode,
-    now_iso,
-)
+from Module.workflow_engine.schema.types import IsoTimestamp, NodeErrorCode, NodeStatus, WorkflowErrorCode, now_iso
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

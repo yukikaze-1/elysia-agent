@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from core.schema.event import InterruptData, UserInputData
 from Module.output import WebSocketChannel
-from .audio_buffer import AudioBuffer
+from core.input.audio_buffer import AudioBuffer
 
 if TYPE_CHECKING:
     from core.agent import Agent

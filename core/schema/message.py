@@ -10,13 +10,13 @@ from typing import Literal, NotRequired, Sequence, TypedDict, Union
 
 from pydantic import BaseModel, Field
 
-from .error_type import ErrorType
+from core.schema.error_type import ErrorType
 
-from .part import Part
-from .token import TokenUsageSummary
-from .tool import ToolCall, ToolCallId
-from .utils import now_iso
-from .types import IsoTimestamp, MessageId, SessionId
+from core.schema.part import Part
+from core.schema.token import TokenUsageSummary
+from core.schema.tool import ToolCall, ToolCallId
+from core.schema.utils import now_iso
+from core.schema.types import IsoTimestamp, MessageId, SessionId
 
 
 class MessageRole(StrEnum):

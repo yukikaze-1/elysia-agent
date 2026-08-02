@@ -6,12 +6,12 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 if TYPE_CHECKING:
-    from ..monitoring.event_bus import EventBus
-    from ..cognitive import CognitiveLoop
-    from ..adapter.tool_adapter import ToolAdapter
+    from core.monitoring.event_bus import EventBus
+    from core.cognitive import CognitiveLoop
+    from core.adapter.tool_adapter import ToolAdapter
     from Module.workflow_engine.workflow_engine import WorkflowEngine
     from core.cognitive.delegation import DelegationPreparer
-    from ..adapter.llm_adapter import LLMAdapter
+    from core.adapter.llm_adapter import LLMAdapter
     from core.schema.types import IsoTimestamp
 
 logger = logging.getLogger(__name__)

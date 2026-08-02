@@ -12,7 +12,7 @@ from typing import AsyncIterator
 
 import httpx
 
-from .protocol import STTBackend
+from Module.stt.protocol import STTBackend
 from Module._common.test_helpers import make_test_method
 
 # SenseVoice 情绪标签

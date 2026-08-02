@@ -6,23 +6,23 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
-from ..monitoring.event_bus import EventBus, EventPriority, EventType
+from core.monitoring.event_bus import EventBus, EventPriority, EventType
 from core.status.agent_fsm import AgentFSM, AgentState
 from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )
 
 if TYPE_CHECKING:
-    from ..task import TaskScheduler
-    from ..memory.long_term import LongTermMemory
-    from ..config import AppConfig
-    from ..memory.session import SessionMemory
+    from core.task import TaskScheduler
+    from core.memory.long_term import LongTermMemory
+    from core.config import AppConfig
+    from core.memory.session import SessionMemory
     from core.monitoring.token_tracker import TokenTracker
     from Module.tts.protocol import TTSBackend
     from core.status import AgentStatus, CognitivePhaseController
-    from ..adapter.tool_adapter import ToolAdapter
-    from ..monitoring.idle_monitor import IdleMonitor
-    from ..cognitive import CognitiveLoop
+    from core.adapter.tool_adapter import ToolAdapter
+    from core.monitoring.idle_monitor import IdleMonitor
+    from core.cognitive import CognitiveLoop
 
 logger = logging.getLogger(__name__)
 

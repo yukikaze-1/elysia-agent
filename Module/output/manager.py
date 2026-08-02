@@ -15,7 +15,7 @@ import logging
 from typing import AsyncIterator, Callable
 
 from Module.logger import get_caller_logger
-from .protocol import ChannelCapability, OutputChannel
+from Module.output.protocol import ChannelCapability, OutputChannel
 
 
 class OutputManager:

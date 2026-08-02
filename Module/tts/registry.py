@@ -8,7 +8,7 @@ import yaml
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.config.providers import load_provider_defaults
-from .gpt_sovits import GPTSoVitsBackend
+from Module.tts.gpt_sovits import GPTSoVitsBackend
 
 
 def _load_voices(voices_config: str = "") -> dict:
@@ -28,8 +28,8 @@ def _load_voices(voices_config: str = "") -> dict:
 
 
 if TYPE_CHECKING:
-    from .config import TTSConfig
-    from .protocol import TTSBackend
+    from Module.tts.config import TTSConfig
+    from Module.tts.protocol import TTSBackend
 
 # provider 默认值统一由 Module/config/providers.yaml 管理
 _BACKENDS: dict[str, dict] = load_provider_defaults("tts")
@@ -87,7 +87,7 @@ class TTSFactory:
 
         # custom provider: 使用 OpenAI 兼容 TTS 协议
         if provider == "custom":
-            from .openai_tts import OpenAICompatTTSBackend
+            from Module.tts.openai_tts import OpenAICompatTTSBackend
             api_key = resolve_api_key(cfg["env_key"], cfg, kwargs.pop("api_key", None))
             if "logger" not in kwargs:
                 kwargs["logger"] = inject_logger(__name__)
@@ -95,7 +95,7 @@ class TTSFactory:
 
         # minimax: MiniMax TTS 云端服务
         if provider == "minimax":
-            from .minimax_tts import MiniMaxTTSBackend
+            from Module.tts.minimax_tts import MiniMaxTTSBackend
             api_key = resolve_api_key("MINIMAX_API_KEY", cfg, kwargs.pop("api_key", None))
             base_url = resolve_base_url(cfg.get("url_key", ""), cfg, explicit_base_url)
             if not base_url:

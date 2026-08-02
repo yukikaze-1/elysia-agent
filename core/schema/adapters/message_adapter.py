@@ -14,8 +14,8 @@ from typing import Annotated, Union
 
 from pydantic import Discriminator, Tag, TypeAdapter, ValidationError
 
-from ..part import Part, TextPart, ImagePart, FilePart, AudioPart, VideoPart, ImageMime
-from ..message import Message, AssistantMessage, ToolResultMessage, UserMessage
+from core.schema.part import Part, TextPart, ImagePart, FilePart, AudioPart, VideoPart, ImageMime
+from core.schema.message import Message, AssistantMessage, ToolResultMessage, UserMessage
 
 
 # ── dict → Part 边界转换 ──────────────────────────────

@@ -15,7 +15,7 @@ import enum
 
 import webrtcvad
 
-from .wakeword import WakeWordDetector
+from core.input.wakeword import WakeWordDetector
 
 logger = logging.getLogger(__name__)
 

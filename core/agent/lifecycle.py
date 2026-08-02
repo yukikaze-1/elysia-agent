@@ -6,11 +6,11 @@ import time
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
-from ._lifecycle_persistence import _LifecyclePersistence
-from ._lifecycle_services import _LifecycleServices
-from ._lifecycle_tools import _LifecycleTools
-from ._lifecycle_task_system import _LifecycleTaskSystem
-from ._types import RunState, _PendingMessage, _BackgroundTaskEntry
+from core.agent._lifecycle_persistence import _LifecyclePersistence
+from core.agent._lifecycle_services import _LifecycleServices
+from core.agent._lifecycle_tools import _LifecycleTools
+from core.agent._lifecycle_task_system import _LifecycleTaskSystem
+from core.agent._types import RunState, _PendingMessage, _BackgroundTaskEntry
 
 if TYPE_CHECKING:
     from core.storage.character_version_repo import CharacterVersionRepository
@@ -20,21 +20,21 @@ if TYPE_CHECKING:
     from core.monitoring.token_tracker import TokenTracker
     from core.debug.prompt_recorder import PromptRecorder
     from core.debug.response_recorder import ResponseRecorder
-    from ..memory.session import SessionMemory
-    from ..memory.long_term import LongTermMemory
-    from ..memory.consolidator import MemoryConsolidator
-    from ..personality import CharacterEngine
-    from ..task import TaskScheduler
-    from ..monitoring.event_bus import EventBus
+    from core.memory.session import SessionMemory
+    from core.memory.long_term import LongTermMemory
+    from core.memory.consolidator import MemoryConsolidator
+    from core.personality import CharacterEngine
+    from core.task import TaskScheduler
+    from core.monitoring.event_bus import EventBus
     from core.status.agent_fsm import AgentFSM
-    from ..cognitive import CognitiveLoop
-    from ..monitoring.idle_monitor import IdleMonitor
+    from core.cognitive import CognitiveLoop
+    from core.monitoring.idle_monitor import IdleMonitor
     from Module.workflow_engine.workflow_engine import WorkflowEngine
     from core.cognitive.delegation import DelegationPreparer
     from Module.tts.protocol import TTSBackend
     from Module.output import OutputManager
-    from ..adapter.llm_adapter import LLMAdapter
-    from ..config import AppConfig
+    from core.adapter.llm_adapter import LLMAdapter
+    from core.config import AppConfig
     from core.schema.types import IsoTimestamp
 
 logger = logging.getLogger(__name__)

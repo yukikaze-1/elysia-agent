@@ -6,15 +6,15 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
 
-from ._types import RunState
-from ..utils import set_request_id
+from core.agent._types import RunState
+from core.utils import set_request_id
 
 if TYPE_CHECKING:
-    from ..config import AppConfig, CharacterConfig
-    from ..adapter.llm_adapter import LLMAdapter
-    from ..memory.long_term import LongTermMemory
-    from ..adapter.tool_adapter import ToolAdapter
-    from ..cognitive import CognitiveLoop
+    from core.config import AppConfig, CharacterConfig
+    from core.adapter.llm_adapter import LLMAdapter
+    from core.memory.long_term import LongTermMemory
+    from core.adapter.tool_adapter import ToolAdapter
+    from core.cognitive import CognitiveLoop
     from Module.workflow_engine.workflow_engine import WorkflowEngine
     from Module.tts.protocol import TTSBackend
 

@@ -7,7 +7,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from ._utils import _extract_tag, _schedule
+from core.personality._utils import _extract_tag, _schedule
 
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter

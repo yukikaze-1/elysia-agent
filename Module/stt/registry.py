@@ -5,11 +5,11 @@ from typing import TYPE_CHECKING
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.config.providers import load_provider_defaults
-from .sensevoice import SenseVoiceBackend
+from Module.stt.sensevoice import SenseVoiceBackend
 
 if TYPE_CHECKING:
-    from .config import STTConfig
-    from .protocol import STTBackend
+    from Module.stt.config import STTConfig
+    from Module.stt.protocol import STTBackend
 
 # provider 默认值统一由 Module/config/providers.yaml 管理
 _BACKENDS: dict[str, dict] = load_provider_defaults("stt")
@@ -54,7 +54,7 @@ class STTFactory:
 
         # custom provider — 使用 OpenAI 兼容 STT 后端
         if provider == "custom":
-            from .openai_stt import OpenAICompatSTTBackend
+            from Module.stt.openai_stt import OpenAICompatSTTBackend
             if not base_url:
                 raise ValueError("custom STT provider requires base_url")
             if "logger" not in kwargs:

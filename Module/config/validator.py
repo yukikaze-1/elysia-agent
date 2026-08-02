@@ -4,21 +4,11 @@ import dataclasses
 import re
 import types
 
-from ._utils import is_dataclass_instance, safe_get_type_hints
+from Module.config._utils import is_dataclass_instance, safe_get_type_hints
 from typing import Any, Union, get_origin, get_args
 
-from .errors import (
-    ConfigConstraintError,
-    ConfigError,
-    ConfigMissingError,
-    ConfigTypeError,
-)
-from .field import (
-    _Constraint,
-    MISSING,
-    get_constraints,
-    is_required,
-)
+from Module.config.errors import ConfigConstraintError, ConfigError, ConfigMissingError, ConfigTypeError
+from Module.config.field import _Constraint, MISSING, get_constraints, is_required
 
 
 # ── built-in constraints ──────────────────────────────────────────────

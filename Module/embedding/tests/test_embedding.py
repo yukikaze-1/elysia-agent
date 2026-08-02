@@ -4,10 +4,10 @@ import pytest
 
 from typing import cast
 
-from ..huggingface import HuggingFaceBackend
-from ..openai_compat import OpenAICompatEmbeddingBackend
-from ..protocol import EmbeddingBackend
-from ..registry import EmbeddingFactory
+from Module.embedding.huggingface import HuggingFaceBackend
+from Module.embedding.openai_compat import OpenAICompatEmbeddingBackend
+from Module.embedding.protocol import EmbeddingBackend
+from Module.embedding.registry import EmbeddingFactory
 
 
 # ============================================================
@@ -335,7 +335,7 @@ class TestEmbeddingFactorySingleton:
 @pytest.mark.service
 class TestHuggingFaceFromConfig:
     def test_from_config_creates_backend(self):
-        from ..config import EmbeddingConfig
+        from Module.embedding.config import EmbeddingConfig
 
         cfg = EmbeddingConfig(api_key="")
         with patch(

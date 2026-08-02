@@ -12,7 +12,7 @@ from core.schema.memory_reflector import MemoryReflectorState
 from core.schema.message import Message
 from core.schema.types import IsoTimestamp, SessionId
 
-from .base import Repository
+from core.storage.base import Repository
 
 logger = logging.getLogger(__name__)
 COLLECTION = "sessions"

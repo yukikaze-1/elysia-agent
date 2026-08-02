@@ -12,12 +12,9 @@ from typing import Any, AsyncIterator
 
 import yaml
 
-from .capability import Capability
-from .protocol import (
-    ErrorType, PluginContext, ToolContext, ToolDefinition,
-    ToolEmitter, ToolPlugin, ToolResult, ToolExecutor,
-)
-from .safety import SafetyPipeline
+from Module.tool.capability import Capability
+from Module.tool.protocol import ErrorType, PluginContext, ToolContext, ToolDefinition, ToolEmitter, ToolPlugin, ToolResult, ToolExecutor
+from Module.tool.safety import SafetyPipeline
 
 logger = logging.getLogger(__name__)
 

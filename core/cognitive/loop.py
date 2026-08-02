@@ -21,40 +21,40 @@ from dataclasses import asdict
 from enum import Enum
 from typing import Callable, TYPE_CHECKING
 
-from ..utils import new_message_id
+from core.utils import new_message_id
 
-from .timing import TimingClock
+from core.cognitive.timing import TimingClock
 
 from Module.output import OutputManager, ChannelCapability
 from Module.tts import TTSBackend
 
 from core.status.agent_fsm import AgentFSM
-from ..monitoring.event_bus import EventBus
-from ..utils import set_request_id, get_request_id, log_conversation
+from core.monitoring.event_bus import EventBus
+from core.utils import set_request_id, get_request_id, log_conversation
 from Module.tool.protocol import ToolResult
-from ..adapter.prompt_assembler import PromptAssembler
-from ..memory.session import SessionMemory
-from ..text.stream_processor import StreamProcessor, StreamEvent, StreamEventType
-from ..adapter.llm_adapter import LLMAdapter
-from ..memory.consolidator import MemoryConsolidator
+from core.adapter.prompt_assembler import PromptAssembler
+from core.memory.session import SessionMemory
+from core.text.stream_processor import StreamProcessor, StreamEvent, StreamEventType
+from core.adapter.llm_adapter import LLMAdapter
+from core.memory.consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
 
 if TYPE_CHECKING:
     from core.cognitive.delegation import DelegationPreparer
     from Module.workflow_engine.workflow_engine import WorkflowEngine
     from core.cognitive.user_profile import UserProfile
-    from ..monitoring.token_tracker import TokenTracker
-    from ..debug.prompt_recorder import PromptRecorder
-    from ..debug.response_recorder import ResponseRecorder
-    from ..personality.engine import CharacterEngine
-    from ..adapter.tool_adapter import ToolAdapter
-    from ..memory.memory_reflector import MemoryReflector
+    from core.monitoring.token_tracker import TokenTracker
+    from core.debug.prompt_recorder import PromptRecorder
+    from core.debug.response_recorder import ResponseRecorder
+    from core.personality.engine import CharacterEngine
+    from core.adapter.tool_adapter import ToolAdapter
+    from core.memory.memory_reflector import MemoryReflector
 
-from ..text.parts import BlockRef, build_parts
-from ..adapter.tts_adapter import TTSStreamManager
-from ..adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
+from core.text.parts import BlockRef, build_parts
+from core.adapter.tts_adapter import TTSStreamManager
+from core.adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from Module.workflow_contract import WorkflowId
-from ..utils.text_utils import content_text_from_content, MessageObj
+from core.utils.text_utils import content_text_from_content, MessageObj
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageSummary
 from core.schema.tool import ToolCall, ToolCallId
@@ -75,7 +75,7 @@ _EMPTY_RESPONSE_NUDGE = (
 _EMPTY_RESPONSE_FALLBACK = "抱歉，我刚才走神了，你能再说一遍吗？"
 
 
-from .tools import CognitiveTools
+from core.cognitive.tools import CognitiveTools
 
 
 class TurnPhase(str, Enum):

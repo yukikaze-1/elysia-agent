@@ -13,9 +13,9 @@ from aiohttp import web
 
 from core.agent import Agent
 
-from .ws_handler import handle_ws
-from .api_routes import register_api_routes
-from .debug_routes import register_debug_routes
+from core.input.ws_handler import handle_ws
+from core.input.api_routes import register_api_routes
+from core.input.debug_routes import register_debug_routes
 
 if TYPE_CHECKING:
     from Module.workflow_engine.workflow_engine import WorkflowEngine

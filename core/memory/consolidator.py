@@ -22,8 +22,8 @@ from core.schema.memory import (
 )
 
 from paths import ProjectPath
-from .long_term import LongTermMemory
-from ..adapter.llm_adapter import LLMAdapter
+from core.memory.long_term import LongTermMemory
+from core.adapter.llm_adapter import LLMAdapter
 
 logger = logging.getLogger(__name__)
 

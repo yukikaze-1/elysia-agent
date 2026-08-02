@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .types import ResumeErrorCode
+from Module.workflow_engine.schema.types import ResumeErrorCode
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

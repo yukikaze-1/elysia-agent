@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from paths import ProjectPath
 from Module.system_prompt import PromptManager
-from ..adapter.llm_adapter import LLMAdapter
+from core.adapter.llm_adapter import LLMAdapter
 
 if TYPE_CHECKING:
     from core.personality.engine import CharacterEngine

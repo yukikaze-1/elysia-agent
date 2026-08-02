@@ -5,7 +5,7 @@ import re
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from .protocol import DocumentDBBackend
+from Module.database.documentdb.protocol import DocumentDBBackend
 
 # Collection 名白名单 — 仅允许字母、数字、下划线、连字符
 _COLLECTION_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")

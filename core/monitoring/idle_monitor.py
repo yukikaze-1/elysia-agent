@@ -10,9 +10,9 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from .event_bus import EventBus, EventPriority, EventType
+from core.monitoring.event_bus import EventBus, EventPriority, EventType
 from core.status.agent_fsm import AgentFSM
-from ..config.character_config import CharacterConfig
+from core.config.character_config import CharacterConfig
 from core.schema.event import SystemTickData
 
 if TYPE_CHECKING:

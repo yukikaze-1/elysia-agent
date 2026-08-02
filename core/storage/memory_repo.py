@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from Module.database.vectordb import VectorDBFactory, VectorDBBackend
-from .base import Repository
+from core.storage.base import Repository
 
 if TYPE_CHECKING:
     from core.memory.long_term import MemoryEntry

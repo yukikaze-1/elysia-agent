@@ -5,13 +5,13 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from ..config import AppConfig
+from core.config import AppConfig
 from Module.output import OutputManager
 
 if TYPE_CHECKING:
-    from ..adapter.llm_adapter import LLMAdapter
-    from ..cognitive import CognitiveLoop
-    from ..memory.session import SessionMemory
+    from core.adapter.llm_adapter import LLMAdapter
+    from core.cognitive import CognitiveLoop
+    from core.memory.session import SessionMemory
     from Module.tts.protocol import TTSBackend
     from core.monitoring.token_tracker import TokenTracker
     from core.debug.prompt_recorder import PromptRecorder

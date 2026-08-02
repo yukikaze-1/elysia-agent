@@ -50,34 +50,34 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..monitoring.token_tracker import TokenTracker
-    from ..debug.prompt_recorder import PromptRecorder
-    from ..debug.response_recorder import ResponseRecorder
+    from core.monitoring.token_tracker import TokenTracker
+    from core.debug.prompt_recorder import PromptRecorder
+    from core.debug.response_recorder import ResponseRecorder
     from Module.workflow_engine.mailbox import WorkflowMailbox
     from core.status import AgentStatus, CognitivePhaseController
 
 from Module.output import OutputManager, ConsoleChannel
 
-from ._types import RunState, _PendingMessage, _BackgroundTaskEntry
-from .lifecycle import AgentLifecycle
-from .server import AgentServer
+from core.agent._types import RunState, _PendingMessage, _BackgroundTaskEntry
+from core.agent.lifecycle import AgentLifecycle
+from core.agent.server import AgentServer
 
-from ..config import AppConfig
-from ..monitoring.event_bus import EventBus, EventPriority, EventType
+from core.config import AppConfig
+from core.monitoring.event_bus import EventBus, EventPriority, EventType
 from core.status.agent_fsm import AgentFSM, AgentState
-from ..utils import set_request_id, get_request_id
-from ..config import CharacterConfig
-from ..memory.session import SessionMemory
-from ..memory.long_term import LongTermMemory
-from ..adapter.prompt_assembler import PromptAssembler
+from core.utils import set_request_id, get_request_id
+from core.config import CharacterConfig
+from core.memory.session import SessionMemory
+from core.memory.long_term import LongTermMemory
+from core.adapter.prompt_assembler import PromptAssembler
 from core.adapter import ToolAdapter
 from core.tools import ALL_PLUGINS
-from ..monitoring.idle_monitor import IdleMonitor
-from ..adapter.llm_adapter import LLMAdapter
-from ..memory.consolidator import MemoryConsolidator
-from ..personality import CharacterEngine
+from core.monitoring.idle_monitor import IdleMonitor
+from core.adapter.llm_adapter import LLMAdapter
+from core.memory.consolidator import MemoryConsolidator
+from core.personality import CharacterEngine
 from core.personality.reflector import CharacterReflector
-from ..memory.memory_reflector import MemoryReflector
+from core.memory.memory_reflector import MemoryReflector
 from core.storage.character_version_repo import CharacterVersionRepository
 from core.schema.types import IsoTimestamp, SessionId
 from core.schema.character import CharacterState
@@ -85,7 +85,7 @@ from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )
 from Module.embedding import EmbeddingFactory
-from ..task import TaskScheduler
+from core.task import TaskScheduler
 from core.storage.session_repo import SessionRepository
 from core.storage.message_repo import MessageRepository
 from core.storage.token_repo import TokenRepository
@@ -211,7 +211,7 @@ class Agent(AgentLifecycle, AgentServer):
         self._prompt_recorder: "PromptRecorder | None" = None   # 在 start() 中创建
         self._response_recorder: "ResponseRecorder | None" = None # 在 start() 中创建
 
-        from ..cognitive import CognitiveLoop  # function-level: break circular import
+        from core.cognitive import CognitiveLoop  # function-level: break circular import
         self._cognitive = CognitiveLoop(
             llm=self._llm,
             fsm=self._fsm,

@@ -15,8 +15,8 @@ from typing import AsyncIterator
 import httpx
 import yaml
 
-from .protocol import TTSBackend
-from .text_preprocess import strip_for_minimax
+from Module.tts.protocol import TTSBackend
+from Module.tts.text_preprocess import strip_for_minimax
 from Module._common.test_helpers import make_test_method
 
 _TTS_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)

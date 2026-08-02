@@ -18,7 +18,7 @@ from core.adapter import ToolContext, ToolResult, ErrorType
 
 from core.schema.tool import ToolCall
 
-from .task import Task, TaskType, TaskStatus
+from core.task.task import Task, TaskType, TaskStatus
 
 if TYPE_CHECKING:
     from core.adapter.tool_adapter import ToolAdapter

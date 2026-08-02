@@ -22,11 +22,11 @@ from paths import ProjectPath
 
 from Module.system_prompt import PromptManager
 from Module.output import OutputManager
-from .compression import CompressionManager
-from .emotion import EmotionDetector
-from .awareness import AwarenessJudge
+from core.personality.compression import CompressionManager
+from core.personality.emotion import EmotionDetector
+from core.personality.awareness import AwarenessJudge
 from core.schema.compression import CompressionTrigger
-from ._utils import _schedule, _extract_tag  # _extract_tag 保持向后兼容
+from core.personality._utils import _schedule, _extract_tag  # _extract_tag 保持向后兼容
 from core.schema.utils import now_iso
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
@@ -126,7 +126,7 @@ class CharacterEngine:
         self._version_repo: "CharacterVersionRepository | None" = version_repo
 
         # 子组件: CharacterReflector
-        from .reflector import CharacterReflector
+        from core.personality.reflector import CharacterReflector
         self._reflector = CharacterReflector(
             engine=self,
             l1_core=base_personality,

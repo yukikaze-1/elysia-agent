@@ -11,7 +11,7 @@ from io import BytesIO
 import pytest
 from unittest.mock import patch
 
-from ..audio_buffer import AudioBuffer, pcm_to_wav, _FRAME_BYTES
+from core.input.audio_buffer import AudioBuffer, pcm_to_wav, _FRAME_BYTES
 
 
 def _loud(samples: int) -> bytes:

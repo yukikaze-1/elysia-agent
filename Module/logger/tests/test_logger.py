@@ -295,7 +295,7 @@ class TestCriticalLevel:
 
 class TestGetCallerLogger:
     def test_returns_logger_with_module_name(self):
-        from ..factory import get_caller_logger
+        from Module.logger.factory import get_caller_logger
         def _inner():
             return get_caller_logger()
         lg = _inner()

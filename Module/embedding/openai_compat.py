@@ -9,7 +9,7 @@ import os
 
 from openai import AsyncOpenAI
 
-from .protocol import EmbeddingBackend
+from Module.embedding.protocol import EmbeddingBackend
 
 
 class OpenAICompatEmbeddingBackend(EmbeddingBackend):

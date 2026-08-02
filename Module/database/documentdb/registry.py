@@ -2,11 +2,11 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
-from .mongodb import MongoDBBackend
+from Module.database.documentdb.mongodb import MongoDBBackend
 
 if TYPE_CHECKING:
-    from .config import DocumentDBConfig
-    from .protocol import DocumentDBBackend
+    from Module.database.documentdb.config import DocumentDBConfig
+    from Module.database.documentdb.protocol import DocumentDBBackend
 
 _BACKENDS: dict[str, dict] = {
     "mongodb": {

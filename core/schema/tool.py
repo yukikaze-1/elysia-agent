@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from .types import ToolCallId
+from core.schema.types import ToolCallId
 
 
 class ToolCallFunction(BaseModel):

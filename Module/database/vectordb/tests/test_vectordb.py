@@ -4,9 +4,9 @@ import pytest
 
 from typing import cast
 
-from ..milvus import MilvusBackend
-from ..protocol import VectorDBBackend
-from ..registry import VectorDBFactory
+from Module.database.vectordb.milvus import MilvusBackend
+from Module.database.vectordb.protocol import VectorDBBackend
+from Module.database.vectordb.registry import VectorDBFactory
 
 
 # ============================================================
@@ -281,32 +281,32 @@ class TestProtocolRemaining:
 class TestIndexPreset:
     @pytest.mark.asyncio
     async def test_default_metric_type_is_l2(self, backend):
-        from ..milvus import INDEX_PRESETS
+        from Module.database.vectordb.milvus import INDEX_PRESETS
         preset = INDEX_PRESETS["default"]
         assert preset["metric_type"] == "L2"
 
     @pytest.mark.asyncio
     async def test_cosine_preset(self):
-        from ..milvus import INDEX_PRESETS
+        from Module.database.vectordb.milvus import INDEX_PRESETS
         preset = INDEX_PRESETS["cosine"]
         assert preset["metric_type"] == "COSINE"
 
     @pytest.mark.asyncio
     async def test_ip_preset(self):
-        from ..milvus import INDEX_PRESETS
+        from Module.database.vectordb.milvus import INDEX_PRESETS
         preset = INDEX_PRESETS["ip"]
         assert preset["metric_type"] == "IP"
 
     @pytest.mark.asyncio
     async def test_hnsw_l2_preset(self):
-        from ..milvus import INDEX_PRESETS
+        from Module.database.vectordb.milvus import INDEX_PRESETS
         preset = INDEX_PRESETS["hnsw_l2"]
         assert preset["index_type"] == "HNSW"
 
     @pytest.mark.asyncio
     async def test_unknown_preset_raises(self):
         """未知 index_preset 抛 ValueError。"""
-        from ..milvus import INDEX_PRESETS
+        from Module.database.vectordb.milvus import INDEX_PRESETS
         assert "nonexistent" not in INDEX_PRESETS
 
 

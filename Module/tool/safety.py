@@ -31,8 +31,8 @@ def _sanitize_session_id(session_id: str) -> str:
 
 from pydantic import ValidationError
 
-from .capability import Capability
-from .protocol import ToolParameter, ToolProgress  # ToolParameter 旧版参数类型 — 过渡期保留
+from Module.tool.capability import Capability
+from Module.tool.protocol import ToolParameter, ToolProgress  # ToolParameter 旧版参数类型 — 过渡期保留
 
 logger = logging.getLogger(__name__)
 

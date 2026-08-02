@@ -5,7 +5,7 @@ import logging
 from bson import ObjectId
 
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
-from .base import Repository
+from core.storage.base import Repository
 from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.types import MessageId, SessionId
 from core.schema.message import Message, MessageRole

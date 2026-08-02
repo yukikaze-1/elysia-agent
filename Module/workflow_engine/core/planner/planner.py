@@ -18,8 +18,8 @@ from Module.workflow_engine.schema import (
     Plan,
 )
 
-from . import prompts
-from .parser import call_llm, parse_plan_from_dict, PlanParseError
+from Module.workflow_engine.core.planner import prompts
+from Module.workflow_engine.core.planner.parser import call_llm, parse_plan_from_dict, PlanParseError
 
 if TYPE_CHECKING:
     from Module.workflow_contract import AgentInfra

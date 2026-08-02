@@ -1,6 +1,6 @@
 """ConsoleChannel — 终端打字机效果输出。"""
 
-from .protocol import ChannelCapability, OutputChannel
+from Module.output.protocol import ChannelCapability, OutputChannel
 
 
 class ConsoleChannel(OutputChannel):

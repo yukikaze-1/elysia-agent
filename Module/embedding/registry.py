@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.config.providers import load_provider_defaults
-from .huggingface import HuggingFaceBackend
-from .openai_compat import OpenAICompatEmbeddingBackend
+from Module.embedding.huggingface import HuggingFaceBackend
+from Module.embedding.openai_compat import OpenAICompatEmbeddingBackend
 
 if TYPE_CHECKING:
-    from .config import EmbeddingConfig
-    from .protocol import EmbeddingBackend
+    from Module.embedding.config import EmbeddingConfig
+    from Module.embedding.protocol import EmbeddingBackend
 
 # provider 默认值统一由 Module/config/providers.yaml 管理
 _BACKENDS: dict[str, dict] = load_provider_defaults("embedding")

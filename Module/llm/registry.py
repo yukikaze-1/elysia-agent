@@ -5,11 +5,11 @@ from typing import TYPE_CHECKING
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.config.providers import load_provider_defaults
-from .openai_compat import OpenAICompatBackend
+from Module.llm.openai_compat import OpenAICompatBackend
 
 if TYPE_CHECKING:
-    from .config import LLMConfig
-    from .protocol import LLMBackend
+    from Module.llm.config import LLMConfig
+    from Module.llm.protocol import LLMBackend
 
 # provider 默认值统一由 Module/config/providers.yaml 管理
 _BACKENDS: dict[str, dict] = load_provider_defaults("llm")

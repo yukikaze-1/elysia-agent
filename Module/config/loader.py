@@ -6,10 +6,10 @@ from typing import Any, Generic, TypeVar
 
 import yaml
 
-from .errors import ConfigEnvFormatError, ConfigValidationError
-from .field import MISSING, get_env_name, is_secret
-from .validator import Validator
-from ._utils import is_dataclass_instance, safe_get_type_hints
+from Module.config.errors import ConfigEnvFormatError, ConfigValidationError
+from Module.config.field import MISSING, get_env_name, is_secret
+from Module.config.validator import Validator
+from Module.config._utils import is_dataclass_instance, safe_get_type_hints
 
 T = TypeVar("T")
 

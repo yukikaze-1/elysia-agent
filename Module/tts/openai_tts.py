@@ -9,8 +9,8 @@ from typing import AsyncIterator
 import httpx
 from openai import AsyncOpenAI
 
-from .protocol import TTSBackend
-from .text_preprocess import strip_all_markup
+from Module.tts.protocol import TTSBackend
+from Module.tts.text_preprocess import strip_all_markup
 from Module._common.test_helpers import make_test_method
 
 

@@ -13,7 +13,7 @@ from typing import Annotated, Literal, Union
 
 from pydantic import AfterValidator, BaseModel, Field
 
-from .utils import _validate_src
+from core.schema.utils import _validate_src
 
 
 # ── 枚举 ──────────────────────────────────────────────

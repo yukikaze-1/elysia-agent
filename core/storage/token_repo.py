@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
-from .base import Repository
+from core.storage.base import Repository
 
 if TYPE_CHECKING:
     from core.schema.token import TokenUsage

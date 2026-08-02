@@ -7,7 +7,7 @@ import random
 
 from core.schema.character import CharacterState
 from Module.output import OutputManager
-from ._utils import _schedule
+from core.personality._utils import _schedule
 
 logger = logging.getLogger(__name__)
 

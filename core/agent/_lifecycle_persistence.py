@@ -13,9 +13,9 @@ if TYPE_CHECKING:
     from core.storage.message_repo import MessageRepository
     from core.storage.session_repo import SessionRepository
     from core.storage.token_repo import TokenRepository
-    from ..memory.session import SessionMemory
-    from ..memory.long_term import LongTermMemory
-    from ..personality import CharacterEngine
+    from core.memory.session import SessionMemory
+    from core.memory.long_term import LongTermMemory
+    from core.personality import CharacterEngine
 
 logger = logging.getLogger(__name__)
 

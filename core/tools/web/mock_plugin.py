@@ -5,7 +5,7 @@ from typing import Any
 from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
-from .plugin import WebSearchParams
+from core.tools.web.plugin import WebSearchParams
 
 
 class MockWebSearchPlugin(ToolPlugin):

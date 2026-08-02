@@ -11,7 +11,7 @@ import time as _time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from .embedding_provider import EmbeddingProvider
+from core.memory.embedding_provider import EmbeddingProvider
 
 if TYPE_CHECKING:
     from core.storage.memory_repo import MemoryRepository

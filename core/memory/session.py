@@ -36,7 +36,7 @@ from core.storage.message_repo import MessageRepository
 from core.storage.session_repo import SessionRepository
 
 if TYPE_CHECKING:
-    from .memory_reflector import MemoryReflector
+    from core.memory.memory_reflector import MemoryReflector
 
 logger = logging.getLogger(__name__)
 

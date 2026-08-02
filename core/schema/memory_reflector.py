@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints
 
-from .memory import MemoryType
+from core.schema.memory import MemoryType
 
 
 class MemoryReflectorState(BaseModel):
