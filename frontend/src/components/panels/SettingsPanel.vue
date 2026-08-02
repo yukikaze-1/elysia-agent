@@ -5,6 +5,7 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import { useChatStore } from '@/stores/chatStore'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import ModelSelector from '@/components/ui/ModelSelector.vue'
+import type { UnconfiguredEntry } from '@/types/protocol'
 
 const settings = useSettingsStore()
 const connection = useConnectionStore()
@@ -172,6 +173,66 @@ async function testCustomProvider() {
     customTestWaiting.value = false
   }
 }
+
+// ---- Provider 测试 ----
+const testResult = ref<Record<'llm' | 'stt' | 'tts', string>>({ llm: '', stt: '', tts: '' })
+const testLoading = ref<Record<'llm' | 'stt' | 'tts', boolean>>({ llm: false, stt: false, tts: false })
+
+function currentModelId(service: 'llm' | 'stt' | 'tts'): string {
+  if (service === 'llm') return settings.llmModel
+  if (service === 'stt') return settings.sttModel
+  return settings.ttsModel
+}
+
+async function handleTest(service: 'llm' | 'stt' | 'tts', level: 'connectivity' | 'usable') {
+  if (testLoading.value[service]) return
+  testLoading.value[service] = true
+  testResult.value[service] = '测试中…'
+  const body: Record<string, string> = { service, level }
+  const modelId = currentModelId(service)
+  if (modelId && modelId.includes('/')) {
+    const [provider, ...rest] = modelId.split('/')
+    body.provider = provider
+    body.model = rest.join('/')
+  }
+  // 未选中（disabled 态）→ 不带 provider/model，后端回退配置模型
+  try {
+    const res = await fetch('/api/providers/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const data = await res.json()
+    if (data.ok) {
+      const detail = data.detail ? `（${data.detail}）` : ''
+      testResult.value[service] = `✓ 连通 (${data.latency_ms}ms)${detail}`
+    } else {
+      testResult.value[service] = `✗ 失败: ${data.error || '未知错误'}`
+    }
+  } catch (e: any) {
+    testResult.value[service] = `✗ 失败: ${e.message}`
+  } finally {
+    testLoading.value[service] = false
+  }
+}
+
+// ---- 未配置引导弹窗 ----
+const configModalOpen = ref(false)
+const configService = ref<'llm' | 'stt' | 'tts'>('llm')
+const configUnconfigured = ref<UnconfiguredEntry[]>([])
+
+function openConfigModal(service: 'llm' | 'stt' | 'tts') {
+  configService.value = service
+  configModalOpen.value = true
+  fetch('/api/providers')
+    .then(r => r.json())
+    .then((data) => { configUnconfigured.value = data.unconfigured?.[service] ?? [] })
+    .catch(() => { configUnconfigured.value = [] })
+}
+
+async function copyText(text: string) {
+  try { await navigator.clipboard.writeText(text) } catch { /* 忽略 */ }
+}
 </script>
 
 <template>
@@ -246,14 +307,23 @@ async function testCustomProvider() {
 
     <!-- Model selectors -->
     <div class="model-group">
+      <!-- LLM：始终启用 -->
       <div class="setting-row">
         <span class="setting-label">LLM 模型</span>
         <ModelSelector
           service="llm"
           :current-model="settings.llmModel"
           @switch="handleModelSwitch('llm', $event)"
+          @open-config="openConfigModal('llm')"
         />
       </div>
+      <div class="test-row">
+        <button class="panel-action-btn" :disabled="testLoading.llm" @click="handleTest('llm', 'connectivity')">测试连通性</button>
+        <button class="panel-action-btn" :disabled="testLoading.llm" @click="handleTest('llm', 'usable')">测试可使用性</button>
+        <span class="test-result" :class="{ success: testResult.llm.startsWith('✓'), fail: testResult.llm.startsWith('✗') }">{{ testResult.llm }}</span>
+      </div>
+
+      <!-- STT：保留 disabled（未连接禁用下拉） -->
       <div class="setting-row">
         <span class="setting-label">STT 模型<span v-if="!settings.sttAvailable" class="unavailable-badge">（未连接）</span></span>
         <ModelSelector
@@ -261,8 +331,16 @@ async function testCustomProvider() {
           :current-model="settings.sttModel"
           :disabled="!settings.sttAvailable"
           @switch="handleModelSwitch('stt', $event)"
+          @open-config="openConfigModal('stt')"
         />
       </div>
+      <div class="test-row">
+        <button class="panel-action-btn" :disabled="testLoading.stt" @click="handleTest('stt', 'connectivity')">测试连通性</button>
+        <button class="panel-action-btn" :disabled="testLoading.stt" @click="handleTest('stt', 'usable')">测试可使用性</button>
+        <span class="test-result" :class="{ success: testResult.stt.startsWith('✓'), fail: testResult.stt.startsWith('✗') }">{{ testResult.stt }}</span>
+      </div>
+
+      <!-- TTS：保留 disabled（同 STT） -->
       <div class="setting-row">
         <span class="setting-label">TTS 模型<span v-if="!settings.ttsAvailable" class="unavailable-badge">（未连接）</span></span>
         <ModelSelector
@@ -270,7 +348,13 @@ async function testCustomProvider() {
           :current-model="settings.ttsModel"
           :disabled="!settings.ttsAvailable"
           @switch="handleModelSwitch('tts', $event)"
+          @open-config="openConfigModal('tts')"
         />
+      </div>
+      <div class="test-row">
+        <button class="panel-action-btn" :disabled="testLoading.tts" @click="handleTest('tts', 'connectivity')">测试连通性</button>
+        <button class="panel-action-btn" :disabled="testLoading.tts" @click="handleTest('tts', 'usable')">测试可使用性</button>
+        <span class="test-result" :class="{ success: testResult.tts.startsWith('✓'), fail: testResult.tts.startsWith('✗') }">{{ testResult.tts }}</span>
       </div>
     </div>
 
@@ -410,6 +494,49 @@ async function testCustomProvider() {
           @click="saveCustomProvider"
         >
           保存
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Unconfigured config modal -->
+  <div
+    v-if="configModalOpen"
+    class="custom-modal-overlay"
+    @click="configModalOpen = false"
+  >
+    <div
+      class="custom-modal"
+      @click.stop
+    >
+      <h4>未配置的 {{ { llm: 'LLM', stt: 'STT', tts: 'TTS' }[configService] }} provider</h4>
+      <p
+        v-if="configUnconfigured.length === 0"
+        class="test-result"
+      >无——已全部配置。</p>
+      <div
+        v-for="entry in configUnconfigured"
+        :key="entry.name"
+        class="modal-field"
+      >
+        <label>{{ entry.name }}</label>
+        <div class="env-copy-row">
+          <code class="env-snippet">{{ entry.env_vars.map(v => `export ${v}=xxx`).join('\n') }}</code>
+          <button
+            class="panel-action-btn"
+            @click="copyText(entry.env_vars.map(v => `export ${v}=xxx`).join('\n'))"
+          >
+            复制
+          </button>
+        </div>
+      </div>
+      <p class="test-result">设置环境变量后刷新页面生效。</p>
+      <div class="modal-btn-row">
+        <button
+          class="panel-action-btn"
+          @click="configModalOpen = false"
+        >
+          关闭
         </button>
       </div>
     </div>
@@ -705,5 +832,45 @@ async function testCustomProvider() {
 .modal-btn-row .panel-action-btn {
   width: auto;
   min-width: 80px;
+}
+
+/* ---- Provider 测试按钮行（下拉兄弟行，flex 内联；.panel-action-btn 默认 width:100%，不覆盖会整行堆叠） ---- */
+
+.test-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.test-row .panel-action-btn {
+  width: auto;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* ---- 未配置引导弹窗：env 片段 + 复制按钮 ---- */
+
+.env-copy-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.env-copy-row .panel-action-btn {
+  width: auto;
+  padding: 4px 10px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.env-snippet {
+  flex: 1;
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
 }
 </style>

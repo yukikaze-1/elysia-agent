@@ -82,6 +82,27 @@ export interface CustomProvider {
   service?: string
 }
 
+export interface UnconfiguredEntry {
+  name: string
+  env_vars: string[]
+}
+
+export interface ProvidersResponse {
+  llm: Record<string, { models: string[] }>
+  stt: Record<string, { models: string[] }>
+  tts: Record<string, { models: string[] }>
+  custom?: {
+    llm?: CustomProvider[]
+    stt?: CustomProvider[]
+    tts?: CustomProvider[]
+  }
+  unconfigured?: {
+    llm?: UnconfiguredEntry[]
+    stt?: UnconfiguredEntry[]
+    tts?: UnconfiguredEntry[]
+  }
+}
+
 // ---- Server Messages ----
 
 export interface SessionMessage {

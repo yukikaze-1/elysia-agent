@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useAbortController } from '@/composables/useAbortController'
+import type { ProvidersResponse, UnconfiguredEntry } from '@/types/protocol'
 
 const props = defineProps<{
   service: 'llm' | 'stt' | 'tts'
@@ -11,11 +12,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   switch: [modelId: string]
+  'open-config': []
 }>()
-
-interface ProviderInfo {
-  models: string[]
-}
 
 interface CustomEntry {
   name: string
@@ -24,19 +22,9 @@ interface CustomEntry {
   models?: string[]
 }
 
-interface ProvidersResponse {
-  llm: Record<string, ProviderInfo>
-  stt: Record<string, ProviderInfo>
-  tts: Record<string, ProviderInfo>
-  custom?: {
-    llm?: CustomEntry[]
-    stt?: CustomEntry[]
-    tts?: CustomEntry[]
-  }
-}
-
 const options = ref<{ value: string; label: string }[]>([])
 const loading = ref(false)
+const unconfigured = ref<UnconfiguredEntry[]>([])
 const { signal } = useAbortController()
 
 async function refreshProviders() {
@@ -50,23 +38,26 @@ async function loadProviders() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data: ProvidersResponse = await res.json()
 
-    const registry = data[props.service]
+    const registry = data[props.service] as Record<string, { models: string[] }>
     const customEntries = (data.custom?.[props.service] as CustomEntry[] | undefined) ?? []
 
     const opts: { value: string; label: string }[] = []
 
     for (const [provider, info] of Object.entries(registry)) {
       if (!info.models || info.models.length === 0) continue
-      const models = provider === 'custom'
-        ? customEntries.map(e => e.name)
-        : info.models
-      for (const m of models) {
+      for (const m of info.models) {
         const value = `${provider}/${m}`
         opts.push({ value, label: value })
       }
     }
+    // 自定义 provider 从顶层 custom 键合并（custom 不在 data[service] 里）
+    for (const entry of customEntries) {
+      const value = `custom/${entry.name}`
+      opts.push({ value, label: value })
+    }
 
     options.value = opts
+    unconfigured.value = data.unconfigured?.[props.service] ?? []
   } catch (e) {
     if ((e as Error).name === 'AbortError') return
     console.warn('加载 provider 列表失败', e)
@@ -108,6 +99,13 @@ function onChange(event: Event) {
       </option>
     </template>
   </select>
+  <div
+    v-if="unconfigured.length > 0"
+    class="unconf-hint"
+  >
+    <span>还有 {{ unconfigured.length }} 个 provider 未配置（{{ unconfigured.map(e => e.name + ' → ' + e.env_vars.join('/')).join('、') }}）</span>
+    <button class="unconf-link" @click="emit('open-config')">查看配置方式</button>
+  </div>
 </template>
 
 <style scoped>
@@ -131,4 +129,6 @@ function onChange(event: Event) {
   cursor: not-allowed;
   opacity: 0.6;
 }
+.unconf-hint { font-size: 11px; color: var(--muted); margin-top: 4px; display: flex; gap: 6px; align-items: center; }
+.unconf-link { font-size: 11px; color: var(--accent); background: none; border: none; cursor: pointer; padding: 0; }
 </style>
