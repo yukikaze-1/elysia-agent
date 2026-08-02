@@ -10,6 +10,7 @@ from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.character import CharacterState
 from core.schema.memory_reflector import MemoryReflectorState
 from core.schema.message import Message
+from core.schema.service_state import ServiceState
 from core.schema.types import IsoTimestamp, SessionId
 
 from core.storage.base import Repository
@@ -101,7 +102,8 @@ class SessionRepository(Repository):
 
     async def save(self, session_id: SessionId, messages: Sequence[Message],
                    character_state: CharacterState,
-                   reflector_state: MemoryReflectorState | None = None) -> None:
+                   reflector_state: MemoryReflectorState | None = None,
+                   service_state: ServiceState | None = None) -> None:
         """保存或更新 session。
 
         Args:
@@ -109,6 +111,7 @@ class SessionRepository(Repository):
             messages: 消息列表。
             character_state: 角色状态。
             reflector_state: 记忆反射器状态，为 None 时写入空对象。
+            service_state: 服务运行时状态，为 None 时写入空对象。
         """
         if self._db is None:
             return
@@ -118,6 +121,7 @@ class SessionRepository(Repository):
             "messages": serialized,
             "character_state": character_state.model_dump(mode="json"),
             "reflector_state": reflector_state.model_dump(mode="json") if reflector_state else {},
+            "service_state": service_state.model_dump(mode="json") if service_state else {},
             "updated_at": now_iso(),
         }
         await self._db.update_one(
@@ -125,14 +129,14 @@ class SessionRepository(Repository):
         )
 
     async def load(self, session_id: SessionId
-                   ) -> tuple[list[Message], CharacterState, MemoryReflectorState] | None:
+                   ) -> tuple[list[Message], CharacterState, MemoryReflectorState, ServiceState] | None:
         """加载 session。
 
         Args:
             session_id: 会话 ID。
 
         Returns:
-            (消息列表, 角色状态, 记忆反射器状态) 元组，若不存在或数据库不可用返回 None。
+            (消息列表, 角色状态, 记忆反射器状态, 服务运行时状态) 元组，若不存在或数据库不可用返回 None。
         """
         if self._db is None:
             return None
@@ -148,7 +152,9 @@ class SessionRepository(Repository):
         cs = CharacterState.model_validate(cs_data) if cs_data else CharacterState(session_id=session_id)
         rs_data = doc.get("reflector_state", {})
         rs = MemoryReflectorState.model_validate(rs_data) if rs_data else MemoryReflectorState()
-        return messages, cs, rs
+        ss_data = doc.get("service_state", {})
+        ss = ServiceState.model_validate(ss_data) if ss_data else ServiceState()
+        return messages, cs, rs, ss
 
     async def delete(self, session_id: SessionId) -> int:
         """删除指定会话。

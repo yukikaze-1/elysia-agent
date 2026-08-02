@@ -20,6 +20,7 @@ from paths import ProjectPath
 from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.character import CharacterState
 from core.schema.memory_reflector import MemoryReflectorState
+from core.schema.service_state import ServiceState
 from core.schema.message import (
     AssistantMessage,
     ClientAssistantMessage,
@@ -75,7 +76,8 @@ class SessionMemory:
                  session_id: SessionId = SessionId("default"),
                  repo: SessionRepository | None = None,
                  msg_repo: MessageRepository | None = None,
-                 character_state: CharacterState | None = None):
+                 character_state: CharacterState | None = None,
+                 service_state: ServiceState | None = None):
         """初始化会话记忆。
 
         Args:
@@ -84,6 +86,7 @@ class SessionMemory:
             repo: SessionRepository 实例，用于 MongoDB 持久化。
             msg_repo: MessageRepository 实例，用于消息归档。
             character_state: 角色状态对象，None 时自动创建默认实例。
+            service_state: 服务运行时状态对象，None 时自动创建默认实例。
         """
         self._messages: deque[Message] = deque(maxlen=max_messages)
         self._max_messages = max_messages
@@ -92,6 +95,7 @@ class SessionMemory:
         self._msg_repo: MessageRepository | None = msg_repo
         self._pending_file = str(ProjectPath.SESSION_PENDING.resolve(session_id=session_id))
         self.character_state = character_state or CharacterState(session_id=session_id)
+        self.service_state = service_state or ServiceState()
         self.own_life: str = ""
         self._memory_reflector = None
         self._pre_save_hook: Callable[[], None] | None = None
@@ -250,6 +254,7 @@ class SessionMemory:
                                      if self._memory_reflector
                                         and hasattr(self._memory_reflector, "save_state")
                                      else None),
+                    service_state=self.service_state,
                 )
                 logger.debug("Session save to MongoDB OK: %d messages", len(self._messages))
                 return True
@@ -265,6 +270,7 @@ class SessionMemory:
                                     if self._memory_reflector
                                        and hasattr(self._memory_reflector, "save_state")
                                     else {}),
+                "service_state": self.service_state.model_dump(mode="json"),
                 "updated_at": now_iso(),
             }
             os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
@@ -337,6 +343,12 @@ class SessionMemory:
             if rs_data and self._memory_reflector and hasattr(self._memory_reflector, "restore_state"):
                 rs = MemoryReflectorState.model_validate(rs_data)
                 self._memory_reflector.restore_state(rs)
+            # 恢复 service_state（MongoDB 不可用时的 JSONL 落盘同样带此字段）
+            ss_data = doc.get("service_state", {})
+            if ss_data:
+                ss = ServiceState.model_validate(ss_data)
+                for field in type(ss).model_fields:
+                    setattr(self.service_state, field, getattr(ss, field))
             return True
         except Exception:
             logger.warning("从 %s 恢复 session 失败", self._pending_file, exc_info=True)
@@ -357,7 +369,7 @@ class SessionMemory:
         try:
             result = await self._repo.load(sid)
             if result is not None:
-                messages, cs, rs = result
+                messages, cs, rs, ss = result
                 self._session_id = sid
                 self._messages = deque(messages[-self._max_messages:], maxlen=self._max_messages)
                 # 原地更新 character_state
@@ -367,6 +379,10 @@ class SessionMemory:
                 if rs is not None and self._memory_reflector is not None:
                     if hasattr(self._memory_reflector, "restore_state"):
                         self._memory_reflector.restore_state(rs)
+                # 恢复 service_state
+                if ss is not None:
+                    for field in type(ss).model_fields:
+                        setattr(self.service_state, field, getattr(ss, field))
                 logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(messages))
                 return True
             return await self._load_from_jsonl()

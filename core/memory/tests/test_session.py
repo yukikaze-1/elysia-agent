@@ -125,6 +125,7 @@ class TestSessionMemorySaveLoad:
         from core.schema.part import TextPart
         from core.schema.character import CharacterState
         from core.schema.memory_reflector import MemoryReflectorState
+        from core.schema.service_state import ServiceState
         msg = UserMessage(
             message_id=MessageId("m1"),
             content=[TextPart(content="hello")],
@@ -133,7 +134,7 @@ class TestSessionMemorySaveLoad:
         cs = CharacterState(session_id=SessionId("test-load"), mood="happy")
         mock_repo = MagicMock()
         mock_repo._db = object()  # 模拟已连接
-        mock_repo.load = AsyncMock(return_value=([msg], cs, MemoryReflectorState()))
+        mock_repo.load = AsyncMock(return_value=([msg], cs, MemoryReflectorState(), ServiceState()))
         sm = SessionMemory(session_id=SessionId("test-load"), repo=mock_repo)
         result = await sm.load(SessionId("test-load"))
         assert result is True
@@ -162,3 +163,30 @@ class TestSessionMemorySaveLoad:
         assert result is True
         # Clean up
         os.remove(pending)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_service_state_roundtrip():
+    """ServiceState 经 save/load 4 元组回显，重启后仍可恢复；默认实例三态为 None。"""
+    repo = MagicMock()
+    doc: dict = {}
+    async def fake_save(sid, msgs, *, character_state=None, reflector_state=None, service_state=None, **kw):
+        doc.update(messages=list(msgs), character_state=character_state,
+                   reflector_state=reflector_state, service_state=service_state)
+    async def fake_load(sid):
+        return (doc.get("messages", []), doc.get("character_state"),
+                doc.get("reflector_state"), doc.get("service_state"))   # 回显 4 元组
+    repo.save = fake_save
+    repo.load = fake_load
+
+    s = SessionMemory(session_id="t", repo=repo)
+    s.service_state.tts_enabled = False
+    s.service_state.llm_model = "deepseek/deepseek-v4-pro"
+    await s.save()
+    loaded = SessionMemory(session_id="t", repo=repo)
+    await loaded.load("t")
+    assert loaded.service_state.tts_enabled is False
+    assert loaded.service_state.llm_model == "deepseek/deepseek-v4-pro"
+    fresh = SessionMemory(session_id="fresh")
+    assert fresh.service_state.stt_enabled is None   # 默认实例三态 None，非 True
