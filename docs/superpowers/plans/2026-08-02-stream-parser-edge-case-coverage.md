@@ -118,8 +118,8 @@ class TestAdjacentTagTransition:
     ADJACENT = [
         "<mood>开心</mood><#0.5#>说",
         "<inner_voice>思考</inner_voice>\n```python\ncode\n```\n尾",
-        "<#1#>说<mood>累</mood>世界",
-        "（笑）说<#1#>尾",
+        "<#1#><mood>累</mood>世界",
+        "（笑）<#1#>尾",
         "<|code|>x=1</|code|><#0.5#>尾",
         "首。\n```py\ncode\n```\n（继续说话）",
     ]
@@ -139,9 +139,8 @@ class TestAdjacentTagTransition:
         ]
 
     def test_pause_close_mood_open_expected(self):
-        assert _whole("<#1#>说<mood>累</mood>世界") == [
+        assert _whole("<#1#><mood>累</mood>世界") == [
             Token(TokenKind.PAUSE, "<#1#>"),
-            Token(TokenKind.SPEECH, "说"),
             Token(TokenKind.META, "累", meta_kind="mood"),
             Token(TokenKind.SPEECH, "世界"),
         ]
@@ -405,7 +404,10 @@ pytestmark = pytest.mark.unit
 
 SEED = 20260802
 ITERATIONS = 300
-_SENTINEL = "\n你好世界"  # 前导 \n 硬分隔符 → sentinel 独立成句
+# 哨兵必须用生成器无法产生的文本：语音池含"你好世界"，若哨兵与其相同，
+# 序列自身的"你好世界" token 会满足 any(...) 断言（幽灵 FENCE 吞掉真实
+# 哨兵时仍被逃过）。"哨兵#SENT#" 无分隔符、无标签前缀，恒为单一 SPEECH token。
+_SENTINEL = "\n哨兵#SENT#"  # 前导 \n 硬分隔符 → sentinel 独立成句
 
 
 def _random_closed_tag(rng) -> str:
@@ -496,7 +498,7 @@ def _token_key(t: Token):
 
 
 def _has_exact_sentinel(toks: list[Token]) -> bool:
-    return any(t.kind == TokenKind.SPEECH and t.text == "你好世界" for t in toks)
+    return any(t.kind == TokenKind.SPEECH and t.text == "哨兵#SENT#" for t in toks)
 
 
 class TestCrossChunkEquivalence:
@@ -586,11 +588,11 @@ class TestBoundedBuffers:
     def test_unclosed_fence_head_truncated(self, monkeypatch):
         monkeypatch.setattr(tokenizer_module, "FENCE_MAX_CONTENT", 16)
         tz = StreamTokenizer()
-        toks: list[Token] = []
         for ch in "```\n" + "x" * 40:
-            toks.extend(tz.feed(ch))
-        toks.extend(tz.flush())
+            tz.feed(ch)
+        # flush() 末尾 reset() 会清空缓冲（tokenizer.py:200/222），缓冲断言必须在 flush 前
         assert tz._fence_content == "x" * 16                 # 保头截断
+        toks = list(tz.flush())
         assert not any(t.kind == TokenKind.CODE for t in toks)  # 未闭合丢弃
 
     def test_closed_fence_over_cap_head_truncated(self, monkeypatch):
@@ -631,12 +633,29 @@ class TestBoundedBuffers:
     def test_unclosed_mood_over_cap_tail_truncated(self, monkeypatch):
         monkeypatch.setattr(tokenizer_module, "FENCE_MAX_CONTENT", 16)
         tz = StreamTokenizer()
-        toks: list[Token] = []
         for ch in "<mood>" + "x" * 40:
-            toks.extend(tz.feed(ch))
-        toks.extend(tz.flush())
-        assert tz._meta_content == "x" * 16                  # 保尾截断
+            tz.feed(ch)
+        assert tz._meta_content == "x" * 16                  # 保尾截断（flush 前断言，flush 会清空）
+        toks = list(tz.flush())
         assert not any(t.kind == TokenKind.META for t in toks)  # 未闭合不发事件
+
+    def test_unclosed_code_tag_over_cap(self, monkeypatch):
+        monkeypatch.setattr(tokenizer_module, "FENCE_MAX_CONTENT", 16)
+        tz = StreamTokenizer()
+        for ch in "<|code|>" + "x" * 40:
+            tz.feed(ch)
+        assert tz._code_content == "x" * 16                  # 保尾截断（flush 前）
+        toks = list(tz.flush())
+        assert not any(t.kind == TokenKind.CODE for t in toks)  # 未闭合整体丢弃
+
+    def test_unclosed_markdown_over_cap(self, monkeypatch):
+        monkeypatch.setattr(tokenizer_module, "FENCE_MAX_CONTENT", 16)
+        tz = StreamTokenizer()
+        for ch in "<|markdown|>" + "x" * 40:
+            tz.feed(ch)
+        assert tz._markdown_content == "x" * 16              # 保尾截断（flush 前）
+        toks = list(tz.flush())
+        assert not any(t.kind == TokenKind.MARKDOWN for t in toks)  # 未闭合整体丢弃
 
     def test_pause_overflow_releases_as_speech(self, monkeypatch):
         monkeypatch.setattr(tokenizer_module, "PAUSE_MAX", 8)
@@ -726,7 +745,7 @@ PAUSE_MAX: int = 32
 按以下规则替换 `tokenizer.py` 内的累积语句（**每个替换点加注释说明所属策略**）：
 
 1. `_feed_fence_body` 内全部 **7 处** `self._fence_content += X`（约 519/532/541/551/554/560/564 行）→ `self._append_head_bounded("_fence_content", X)`。
-2. `_feed_fence_body` 内全部 **2 处** `self._fence_pending += c`（约 508/526 行）→ `self._append_head_bounded("_fence_pending", c)`。
+2. `_feed_fence_body` 内全部 **4 处** `self._fence_pending += c`（strong 态约 508、run 态约 525、indent 态约 538/546 行）→ `self._append_head_bounded("_fence_pending", c)`。**508/525 是无界累积点**（空白串/反引号串）；538/546 受 indent 逻辑约束（≤3 空格 + 单反引号转 run）但有界化无害。**注意 526 行是 `self._fence_run_len += 1`（围栏闭合计数器，勿改）**。
 3. `_feed_fence` info 分支的 `self._fence_infostr += c`（约 499 行）→ 保头：
    ```python
    else:
@@ -748,13 +767,14 @@ PAUSE_MAX: int = 32
            self._pause_buf = candidate
        return
    ```
+8. **同步 docstring**：`tokenizer.py:14` 的"PAUSE：尾串正则 `PAUSE_TAIL_RE` 驱动（内容无上界，固定前缀框不住）"——PAUSE_MAX 实现后"内容无上界"已不准确，改为"内容上界 `PAUSE_MAX`"。另在文件顶部"持有上界"列表补一句：围栏/块/元内容缓冲有界 `FENCE_MAX_CONTENT`、信息串 `FENCE_INFO_MAX`。
 
 > 注意：替换后重新运行既有 tokenizer 测试确认 0 回归（所有 <上限 输入行为不变）。
 
 - [ ] **Step 6: 运行验证测试通过**
 
 Run: `python -m pytest core/text/tests/test_tokenizer.py -v --tb=short`
-Expected: 全部 PASS（既有 55 + 新增 8 个 C 用例）。
+Expected: 全部 PASS（既有用例 + 新增 10 个 C 用例）。
 
 - [ ] **Step 7: Commit**
 
@@ -770,7 +790,7 @@ git commit -m "fix(text): C 无界缓冲加固——FENCE_MAX_CONTENT 上限，�
 - [ ] **Step 1: 全量 test-quick**
 
 Run: `conda activate Elysia && make test-quick`
-Expected: 全绿（既有 1768 passed 基础上新增 ~20 个用例）。
+Expected: 全绿（既有全部用例保持绿，新增 **33 个**用例：Task1=13、Task2=3、Task3=3、Task4=4、Task5=10）。
 
 - [ ] **Step 2: 全量 text + cognitive 专项**
 
@@ -780,7 +800,7 @@ Expected: 全绿。
 - [ ] **Step 3: 检查 fuzz 计时**
 
 Run: `python -m pytest core/text/tests/test_fuzz_sequences.py --durations=3`
-Expected: fuzz 三个测试总耗时 <5s（若超时，把 `ITERATIONS` 从 300 降到 200 并记录）。
+Expected: fuzz **4 个**测试总耗时 <5s（若超时，把 `ITERATIONS` 从 300 降到 200 并记录）。
 
 - [ ] **Step 4: Commit（如无变更则跳过）**
 
@@ -804,3 +824,11 @@ Expected: fuzz 三个测试总耗时 <5s（若超时，把 `ITERATIONS` 从 300 
 **已知假设**：
 - Task 1/2 的 after_idx、token 文本等期望值是计划撰写时对当前代码实测所得。若实现后运行不一致，以实际为准并记录偏差。
 - Task 4 fuzz 若命中真实 bug，走 contingency（Step 3）。
+
+**计划 review 修订（2026-08-02）**：
+- Task 5 两个内部缓冲断言移到 **flush() 前**（flush 末尾 `reset()` 清空 `_fence_content`/`_meta_content`，flush 后断言恒失败）
+- Task 5 补未闭合 code_tag/markdown 超限测试（Task 5 共 10 个用例）
+- Task 5 `_fence_pending` 替换点更正为 4 处（508/525 无界、538/546 有界无害；526 是 `_fence_run_len` 计数器勿改）+ docstring 同步
+- Task 4 哨兵改 `"\n哨兵#SENT#"`（语音池含"你好世界"，原哨兵会被序列自身 token 满足，幽灵 FENCE 注入实测 100/300 逃过）
+- Task 1 A2 语料收紧为真紧邻（去掉中间插"说"的两个条目）
+- Task 6 计数修正：新增 33 个用例、fuzz 4 个测试、去掉过时 1768 基线
