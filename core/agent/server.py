@@ -117,7 +117,11 @@ class AgentServer:
             self._llm.switch_model(model_id, **params)
             # 先建后换成功后写入运行时状态（config 保持默认不改写）
             self.session.service_state.llm_model = model_id
-            await self.session.save()
+            try:
+                await self.session.save()
+            except Exception as e:
+                # 持久化失败不回滚已生效的切换——运行中后端是权威，仅告警
+                logger.warning("LLM switch 已生效但持久化失败: %s", e)
             logger.info("LLM switched to: %s", model_id)
             from core.input.capabilities import broadcast_capabilities
             await broadcast_capabilities(self)
@@ -138,6 +142,7 @@ class AgentServer:
         Returns:
             包含 ``ok`` 状态和可选的 ``error`` 信息的字典，失败时保留旧后端。
         """
+        new_backend = None
         try:
             from Module.stt import STTFactory
             from core.input.custom_providers import resolve_model_params
@@ -157,12 +162,22 @@ class AgentServer:
             self._stt_ok = True
             # config 保持默认，写入运行时状态
             self.session.service_state.stt_model = model_id
-            await self.session.save()
+            try:
+                await self.session.save()
+            except Exception as e:
+                # 持久化失败不回滚已生效的切换——运行中后端是权威，仅告警
+                logger.warning("STT switch 已生效但持久化失败: %s", e)
             logger.info("STT switched to: %s", model_id)
             from core.input.capabilities import broadcast_capabilities
             await broadcast_capabilities(self)
             return {"ok": True}
         except Exception as e:
+            # 失败（含 test 不 ok/超时）：关闭新建未挂载的后端防 HTTP 客户端泄漏
+            if new_backend is not None and new_backend is not self._stt:
+                try:
+                    await new_backend.close()
+                except Exception:
+                    pass
             self._stt_ok = False
             logger.error("STT switch failed: %s", e)
             return {"ok": False, "error": str(e)}
@@ -178,6 +193,7 @@ class AgentServer:
         Returns:
             包含 ``ok`` 状态的字典，失败时含 ``error`` 信息。
         """
+        new_backend = None
         try:
             from Module.tts import TTSFactory
             from core.input.custom_providers import resolve_model_params
@@ -199,12 +215,22 @@ class AgentServer:
                     pass
             # config 保持默认，写入运行时状态
             self.session.service_state.tts_model = model_id
-            await self.session.save()
+            try:
+                await self.session.save()
+            except Exception as e:
+                # 持久化失败不回滚已生效的切换——运行中后端是权威，仅告警
+                logger.warning("TTS switch 已生效但持久化失败: %s", e)
             logger.info("TTS switched to: %s", model_id)
             from core.input.capabilities import broadcast_capabilities
             await broadcast_capabilities(self)
             return {"ok": True}
         except Exception as e:
+            # 失败（含 test 不 ok/超时）：关闭新建未挂载的后端防 HTTP 客户端泄漏
+            if new_backend is not None and new_backend is not self._tts:
+                try:
+                    await new_backend.close()
+                except Exception:
+                    pass
             logger.error("TTS switch failed: %s", e)
             return {"ok": False, "error": str(e)}
 

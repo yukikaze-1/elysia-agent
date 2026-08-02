@@ -239,15 +239,20 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         # 广播给所有 WebSocket 客户端（而非仅发送者）——含失败时的 enabled 字段。
         # 不复制 switch_model_result 模式（那只回给请求方）。capabilities 重播在 Task 7 接入。
         from Module.output import WebSocketChannel
-        for ch in agent.output._channels:  # noqa: SLF001
-            if isinstance(ch, WebSocketChannel):
-                await ch._send_json({  # noqa: SLF001
-                    "type": "service_mode_result",
-                    "service": service,
-                    "enabled": result.get("enabled", enabled),
-                    "ok": result.get("ok", False),
-                    "error": result.get("error"),
-                })
+        try:
+            for ch in agent.output._channels:  # noqa: SLF001
+                if isinstance(ch, WebSocketChannel):
+                    await ch._send_json({  # noqa: SLF001
+                        "type": "service_mode_result",
+                        "service": service,
+                        "enabled": result.get("enabled", enabled),
+                        "ok": result.get("ok", False),
+                        "error": result.get("error"),
+                    })
+        except Exception:
+            # 并发 connect/disconnect 会改 _channels 列表长度——捕获记录，
+            # 不向请求方传播（per-channel 发送失败已由 _send_json 内部记录）
+            logger.warning("set_service 广播失败（连接并发变化？）", exc_info=True)
         logger.info("WS 设置服务开关: service=%s enabled=%s ok=%s", service, enabled, result.get("ok"))
     elif msg_type == "tool_approval":
         request_id = data.get("request_id", "")

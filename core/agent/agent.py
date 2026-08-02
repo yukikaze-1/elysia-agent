@@ -710,7 +710,7 @@ class Agent(AgentLifecycle, AgentServer):
             return ""  # shutdown 窗口 _stop_* 置 None 后 _stop_output 才关 channel
         text = await backend.transcribe(audio)
         self.stt_emotion_state["emotion"] = getattr(backend, "last_emotion", "NEUTRAL")
-        self.stt_emotion_state["events"] = list(getattr(backend, "last_events", []))
+        self.stt_emotion_state["events"] = list(getattr(backend, "last_events", None) or [])
         return text
 
     # ---- 状态写方法（引导主循环退出，不做清理）----

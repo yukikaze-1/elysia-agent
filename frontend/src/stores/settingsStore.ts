@@ -118,7 +118,10 @@ export const useSettingsStore = defineStore('settings', () => {
   function migrateLegacyTtsMode(): void {
     if (legacyTtsMigrated) return
     legacyTtsMigrated = true
-    if (localStorage.getItem('elysia_tts') === 'off') {
+    // 服务端已启用时绝不迁移：capabilities 是运行状态权威（建连时已播种覆盖），
+    // localStorage elysia_tts=off 可能是过期缓存（多客户端/清 storage）——
+    // 无条件 set_service(false) 会误关所有人的 TTS。
+    if (localStorage.getItem('elysia_tts') === 'off' && !ttsEnabled.value) {
       setService('tts', false)
     }
   }

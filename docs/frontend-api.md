@@ -33,7 +33,7 @@ WS 断开后 session 保留在服务端。重连时：
 
 ### 辅助通道：Binary 帧（麦克风）
 
-除 JSON 文本帧外，WS 还接受 **binary 帧** 用于语音输入。每帧为 Int16 PCM 音频（采样率取决于 STT 后端，通常 16000Hz/mono）。仅在服务端 STT 服务启用（`capabilities.services.stt.enabled` 为 `true`）时有效。纯文本前端可忽略。
+除 JSON 文本帧外，WS 还接受 **binary 帧** 用于语音输入。每帧为 Int16 PCM 音频（采样率取决于 STT 后端，通常 16000Hz/mono）。仅在服务端 STT 后端已连接且启用（`capabilities.services.stt.available` 与 `enabled` 均为 `true`）时有效。纯文本前端可忽略。
 
 ---
 

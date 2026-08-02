@@ -587,6 +587,73 @@ class TestSetService:
             assert cap["services"]["tts"]["enabled"] is False
             assert cap["services"]["stt"]["available"] is False
 
+    @pytest.mark.asyncio
+    async def test_set_service_stt_enable_build_success_persists(self, aiohttp_client):
+        """热插拔"开"路径：后端 None + switch_stt 补建成功 → 持久化 enabled +
+        capabilities 重播 available:true。"""
+        from core.input.server import create_app
+
+        agent = _make_agent()  # AppConfig 默认 config.stt.enabled=False
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+
+        def _mount_stt(model: str) -> dict:
+            # 模拟 switch_stt 补建成功：挂载假后端（capabilities available 由此判定）
+            agent._stt = _FakeSTTBackend(agent.config.stt.model)
+            agent._stt_ok = True
+            return {"ok": True}
+
+        agent.switch_stt = AsyncMock(side_effect=_mount_stt)
+
+        async with client.session.ws_connect(client.make_url("/ws")) as ws:
+            # 排空建连时的 capabilities，确保后续收到的是重播帧
+            for _ in range(10):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT and json.loads(msg.data).get("type") == "capabilities":
+                    break
+            await ws.send_json({"type": "set_service", "service": "stt", "enabled": True})
+            resp = None
+            cap = None
+            for _ in range(8):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    if data.get("type") == "service_mode_result":
+                        resp = data
+                    elif data.get("type") == "capabilities":
+                        cap = data
+                if resp is not None and cap is not None:
+                    break
+            assert resp is not None and resp["ok"] is True and resp["enabled"] is True
+            assert cap is not None, "set_service 成功后未收到 capabilities 重播"
+            assert cap["services"]["stt"]["available"] is True
+            assert cap["services"]["stt"]["enabled"] is True
+        assert agent.session.service_state.stt_enabled is True  # 补建成功 → 持久化
+        assert agent._stt_enabled is True  # 运行时槽位同步（原始 bool）
+
+    @pytest.mark.asyncio
+    async def test_set_service_tts_enable_build_failure_not_persisted(self, aiohttp_client):
+        """热插拔"开"路径：后端 None + switch_tts 补建失败 → 不持久化 enabled +
+        service_mode_result ok:false。"""
+        from core.input.server import create_app
+
+        agent = _make_agent()  # AppConfig 默认 config.tts.enabled=False
+        agent.switch_tts = AsyncMock(return_value={"ok": False, "error": "boom"})
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        async with client.session.ws_connect(client.make_url("/ws")) as ws:
+            await ws.send_json({"type": "set_service", "service": "tts", "enabled": True})
+            resp = None
+            for _ in range(5):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT and json.loads(msg.data).get("type") == "service_mode_result":
+                    resp = json.loads(msg.data)
+                    break
+            assert resp is not None and resp["ok"] is False
+            assert resp["error"] == "boom"
+        assert agent.session.service_state.tts_enabled is None  # 补建失败不持久化
+        assert agent._tts_enabled is None  # 运行时槽位未动（未挂载成功）
+
 
 # ============================================================
 # Health / ready endpoints

@@ -64,4 +64,6 @@ async def broadcast_capabilities(agent: "Agent") -> None:
             if isinstance(ch, WebSocketChannel):
                 await ch._send_json(payload)  # noqa: SLF001
     except Exception:
-        logger.debug("capabilities 重播失败", exc_info=True)
+        # 与 per-channel 发送失败（_send_json 内部已记录）区分：这里捕获的是
+        # build_capabilities 回归或 list-change——需 warning 级别才可见
+        logger.warning("capabilities 重播失败", exc_info=True)

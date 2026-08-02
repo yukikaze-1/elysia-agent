@@ -282,6 +282,19 @@ class TTSStreamManager:
             action_text: 句首中文舞台指示（单独一行显示）。
         """
         if not self._enabled:
+            # 禁用后尚未开始的任务：flush_on_cancel 置位时自刷排队未播文本。
+            # 此分支在首个 await 前同步 return，进不到下方 try 的 CancelledError
+            # 路径——不在此兜底会丢句子文本（违反"TTS 关闭不丢句"不变式）。
+            if getattr(asyncio.current_task(), "flush_on_cancel", False):
+                try:
+                    await self._output._broadcast(
+                        "on_text_delta", display_text,
+                        capability=ChannelCapability.TEXT_DELTA,
+                        stream_id=sid,
+                    )
+                    await self._output.send("")
+                except Exception:
+                    pass
             return
         if not self._tts:
             return

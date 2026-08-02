@@ -135,10 +135,12 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
       if (msg.service === 'stt') settings.sttEnabled = msg.enabled
       else settings.ttsEnabled = msg.enabled
     } else {
-      // 失败：回滚乐观切换（恢复切换前状态）；capabilities 重播为兜底校正
+      // 失败：用服务端携带的权威 enabled（取请求值）回滚乐观切换。
+      // 不用 !翻转——快速双击下会错位；msg.enabled 恒为服务端当前有效开关。
+      // capabilities 重播为兜底校正。
       console.warn('服务开关切换失败:', msg.service, msg.error)
-      if (msg.service === 'stt') settings.sttEnabled = !settings.sttEnabled
-      else settings.ttsEnabled = !settings.ttsEnabled
+      if (msg.service === 'stt') settings.sttEnabled = msg.enabled
+      else settings.ttsEnabled = msg.enabled
     }
   }
 
