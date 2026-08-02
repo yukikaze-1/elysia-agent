@@ -51,6 +51,8 @@ LLM delta → StreamProcessor（mood/inner_voice 状态机）
 | 10b | `♪`/`♡` 句尾 | 不作为句子边界，整句连到后续标点 | 加入句分隔符（句子以 `♪`/`♡` 结尾，`♪`/`♡` 保留在句内）| **修复** |
 | 11 | 未闭合 CODE/MARKDOWN | BlockFilter.flush 整体丢弃，不进 TTS | 同现状 | 现状 |
 | 12 | >64KB 代码块截断 | 无上界（闭合时 emit 全量内容） | **围栏块保头截断为前 64KB、tag 块（`<|code|>`/`<|markdown|>`/`<mood>`）保尾截断为最近 64KB**（堵无界缓冲内存隐患；2026-08-02 边界覆盖设计追加，实现要求见该设计 C 节）| **修复（新行为）** |
+| 13 | PAUSE 数字串超窗 | 内容无上界（`<#111…` 长数字串持续命中 `PAUSE_TAIL_RE` 持有） | 超 `PAUSE_MAX`(32) 回落 SPEECH（长数字串不是真实 pause，按非数字字符处理）| **修复（新行为）** |
+| 14 | 围栏信息串超窗 | 无上界（首行无 `\n` 时 `_fence_infostr` 无限累积） | 超 `FENCE_INFO_MAX`(256) 截断（lang 取首段 token，保头保留）| **修复（新行为）** |
 
 ## 非目标（Out of Scope）
 

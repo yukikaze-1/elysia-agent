@@ -815,7 +815,7 @@ Expected: fuzz **4 个**测试总耗时 <5s（若超时，把 `ITERATIONS` 从 3
 - B（多代码块链路）→ Task 2 ✓
 - D（Loop 层集成边界 D1-D3）→ Task 3 ✓（D4 已按 review 删除，由既有 splitter `test_forced_split_*` 覆盖）
 - E（自写 fuzz 两条不变式）→ Task 4 ✓
-- C（无界缓冲加固，保头/保尾分流）→ Task 5 ✓（已登记 08-01 行为表 #12）
+- C（无界缓冲加固，保头/保尾分流 + PAUSE/INFO 超窗）→ Task 5 ✓（已登记 08-01 行为表 #12-#14）
 
 **占位符扫描**：无 TBD/TODO/相似任务引用；所有测试代码完整给出。
 
