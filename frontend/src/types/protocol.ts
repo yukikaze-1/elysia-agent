@@ -111,14 +111,34 @@ export interface SessionMessage {
   token_stats?: TokenStats
 }
 
+/** 单服务的运行时能力（available=false 时 model 为 null，服务端权威） */
+export interface ServiceCapability {
+  available: boolean
+  enabled: boolean
+  model: string | null
+  default: string
+}
+
 export interface CapabilitiesMessage {
   type: 'capabilities'
-  stt?: boolean
-  tts?: boolean
-  llm_model?: string
-  stt_model?: string
-  tts_model?: string
-  live2d_static_image?: string
+  live2d_static_image: string
+  services: { llm: ServiceCapability; stt: ServiceCapability; tts: ServiceCapability }
+}
+
+/** 客户端 → 服务端：设置服务开关（stt/tts 后端模式） */
+export interface SetServiceMessage {
+  type: 'set_service'
+  service: 'stt' | 'tts'
+  enabled: boolean
+}
+
+/** 服务端 → 客户端：服务开关操作结果（ok=false 时前端回滚乐观切换） */
+export interface ServiceModeResultMessage {
+  type: 'service_mode_result'
+  service: 'stt' | 'tts' | 'llm'
+  enabled: boolean
+  ok: boolean
+  error: string | null
 }
 
 export interface DeltaMessage {
@@ -236,6 +256,7 @@ export type ServerMessage =
   | CommandMessage
   | WakeMessage
   | SwitchModelResultMessage
+  | ServiceModeResultMessage
   | HeartbeatAckMessage
   | ErrorMessage
   | UnknownMessage

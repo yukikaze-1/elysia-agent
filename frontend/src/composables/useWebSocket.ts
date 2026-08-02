@@ -6,8 +6,8 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import type {
   ActionMessage, AudioEndMessage, AudioMessage, CapabilitiesMessage, CommandMessage,
   DeltaMessage, ErrorMessage, ExpressionMessage, MessageMessage, ServerMessage,
-  SessionMessage, StateMessage, SwitchModelResultMessage, TokenUsageMessage,
-  TranscriptionMessage, TypingMessage,
+  ServiceModeResultMessage, SessionMessage, StateMessage, SwitchModelResultMessage,
+  TokenUsageMessage, TranscriptionMessage, TypingMessage,
 } from '@/types/protocol'
 
 // 转录情绪/事件 emoji 映射（与服务端同步）
@@ -52,7 +52,12 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
         chat.restoreFromServer(s.messages, s.token_stats)
         break
       }
-      case 'capabilities':  settings.updateCapabilities(m as CapabilitiesMessage); break
+      case 'capabilities': {
+        // 任何时刻到达都重播 store（幂等）；首包后触发一次旧值迁移
+        settings.updateCapabilities(m as CapabilitiesMessage)
+        settings.migrateLegacyTtsMode()
+        break
+      }
       case 'typing':        chat.typing = (m as TypingMessage).typing; break
       case 'transcription': {
         const t = m as TranscriptionMessage
@@ -83,6 +88,7 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
       case 'error':         console.warn('Server:', (m as ErrorMessage).message); break
       case 'wake':          if (settings.wakeEnabled) audio.flashWakeIndicator(); break
       case 'switch_model_result': handleSwitchResult(m as SwitchModelResultMessage); break
+      case 'service_mode_result': handleServiceModeResult(m as ServiceModeResultMessage); break
       default:              console.warn('Unknown type:', m.type); break
     }
   }
@@ -116,6 +122,23 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
       if (msg.service === 'llm') settings.llmModelName = msg.model
     } else {
       chat.addStatusMessage(msg.service.toUpperCase() + ' 切换失败: ' + (msg.error || '未知错误'))
+    }
+  }
+
+  function handleServiceModeResult(msg: ServiceModeResultMessage) {
+    if (msg.service === 'llm') {
+      // LLM 恒启用，后端 set_service 对 llm 恒返回 ok=false——忽略
+      return
+    }
+    if (msg.ok) {
+      // 成功：服务端 enabled 即当前有效开关
+      if (msg.service === 'stt') settings.sttEnabled = msg.enabled
+      else settings.ttsEnabled = msg.enabled
+    } else {
+      // 失败：回滚乐观切换（恢复切换前状态）；capabilities 重播为兜底校正
+      console.warn('服务开关切换失败:', msg.service, msg.error)
+      if (msg.service === 'stt') settings.sttEnabled = !settings.sttEnabled
+      else settings.ttsEnabled = !settings.ttsEnabled
     }
   }
 

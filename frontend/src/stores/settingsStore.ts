@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-import type { CustomProvider } from '@/types/protocol'
+import type { CapabilitiesMessage, CustomProvider } from '@/types/protocol'
 import { useConnectionStore } from '@/stores/connectionStore'
 
 /**
@@ -18,7 +18,10 @@ import { useConnectionStore } from '@/stores/connectionStore'
 export const useSettingsStore = defineStore('settings', () => {
   // ---- Persistent toggles (auto-synced to localStorage) ----
 
+  // ttsEnabled/sttEnabled 现为"后端服务模式"（服务端权威）；localStorage 降级为
+  // 建连前的一次性缓存——初始值读取仅用于旧值迁移，capabilities 建连后播种覆盖。
   const ttsEnabled = ref(localStorage.getItem('elysia_tts') !== 'off')
+  const sttEnabled = ref(localStorage.getItem('elysia_stt') !== 'off')
   const volume = ref(parseInt(localStorage.getItem('elysia_vol') || '80', 10))
   const wakeEnabled = ref(localStorage.getItem('elysia_wake') === 'on')
   const live2dEnabled = ref(localStorage.getItem('elysia_live2d') === 'on')
@@ -37,11 +40,18 @@ export const useSettingsStore = defineStore('settings', () => {
   const ttsAvailable = ref(true)
   const llmModelName = ref('')
   const live2dStaticImage = ref('')
+  const llmDefault = ref('')
+  const sttDefault = ref('')
+  const ttsDefault = ref('')
 
-  // ---- Watchers: sync toggles back to localStorage ----
+  // ---- Watchers: sync toggles back to localStorage（建连前缓存） ----
 
   watch(ttsEnabled, (val) => {
     localStorage.setItem('elysia_tts', val ? 'on' : 'off')
+  })
+
+  watch(sttEnabled, (val) => {
+    localStorage.setItem('elysia_stt', val ? 'on' : 'off')
   })
 
   watch(volume, (val) => {
@@ -65,28 +75,52 @@ export const useSettingsStore = defineStore('settings', () => {
   // ---- Actions ----
 
   /**
-   * Update capability flags from the server's capabilities message.
-   * Called once on initial connection; keeps all capability fields in one place.
-   *
-   * 服务端是运行模型的权威来源：把三个服务的当前模型回填到下拉选中值，
-   * 覆盖空值或过期的 localStorage 选择——否则首次访问（无 localStorage）
-   * 设置面板的三个模型下拉框显示"选择模型..."占位符，即使服务端已在运行某个模型。
+   * Update capability state from the server's capabilities message.
+   * 幂等、且可在任何时刻调用（不仅限于建连）：服务端是运行状态的权威来源，
+   * 把嵌套 per-service 的 enabled/available/model/default 全量回填到 store。
    */
-  function updateCapabilities(msg: {
-    stt?: boolean
-    tts?: boolean
-    llm_model?: string
-    stt_model?: string
-    tts_model?: string
-    live2d_static_image?: string
-  }): void {
-    sttAvailable.value = msg.stt !== false
-    ttsAvailable.value = msg.tts !== false
-    if (msg.llm_model) llmModel.value = msg.llm_model
-    if (msg.stt_model) sttModel.value = msg.stt_model
-    if (msg.tts_model) ttsModel.value = msg.tts_model
-    llmModelName.value = msg.llm_model || ''
+  function updateCapabilities(msg: CapabilitiesMessage): void {
+    // enabled + available：全量回填（修复扁平形状下 available 缺省时默认 true 的误报）
+    sttEnabled.value = msg.services.stt.enabled
+    ttsEnabled.value = msg.services.tts.enabled
+    sttAvailable.value = msg.services.stt.available
+    ttsAvailable.value = msg.services.tts.available
+    // default：全量回填
+    llmDefault.value = msg.services.llm.default
+    sttDefault.value = msg.services.stt.default
+    ttsDefault.value = msg.services.tts.default
+    // model：非空时回填到下拉选中值（覆盖过期 localStorage 选择；null/空保留既有）
+    if (msg.services.llm.model) llmModel.value = msg.services.llm.model
+    if (msg.services.stt.model) sttModel.value = msg.services.stt.model
+    if (msg.services.tts.model) ttsModel.value = msg.services.tts.model
+    llmModelName.value = msg.services.llm.model || ''
     live2dStaticImage.value = msg.live2d_static_image || ''
+  }
+
+  /**
+   * 设置服务开关（stt/tts 后端模式）。
+   * 乐观更新（对齐 switchModel 模式）：立即写 ref（watcher 同步 localStorage），
+   * fire-and-forget 发送 set_service，失败由 service_mode_result 回滚、
+   * capabilities 重播兜底校正——不等待回包。
+   */
+  function setService(service: 'stt' | 'tts', enabled: boolean): void {
+    if (service === 'stt') sttEnabled.value = enabled
+    else ttsEnabled.value = enabled
+    useConnectionStore().send({ type: 'set_service', service, enabled })
+  }
+
+  /**
+   * 旧值迁移：旧版"本机播放"本地开关 → 后端 TTS 模式。
+   * 建连后调用一次（幂等）：localStorage 中 elysia_tts=off 表示旧用户曾在本机关闭
+   * TTS，迁移为后端模式关闭并同步后端一次（服务端该时刻还不知道此旧偏好）。
+   */
+  let legacyTtsMigrated = false
+  function migrateLegacyTtsMode(): void {
+    if (legacyTtsMigrated) return
+    legacyTtsMigrated = true
+    if (localStorage.getItem('elysia_tts') === 'off') {
+      setService('tts', false)
+    }
   }
 
   /**
@@ -113,6 +147,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     ttsEnabled,
+    sttEnabled,
     volume,
     wakeEnabled,
     live2dEnabled,
@@ -125,7 +160,12 @@ export const useSettingsStore = defineStore('settings', () => {
     ttsAvailable,
     llmModelName,
     live2dStaticImage,
+    llmDefault,
+    sttDefault,
+    ttsDefault,
     updateCapabilities,
+    setService,
+    migrateLegacyTtsMode,
     switchModel,
   }
 })

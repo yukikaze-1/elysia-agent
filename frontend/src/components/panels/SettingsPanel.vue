@@ -83,6 +83,11 @@ function handleModelSwitch(service: 'llm' | 'stt' | 'tts', modelId: string) {
   // 不乐观插入——等后端 switch_model_result 回包后统一显示（避免成功/失败双插）
 }
 
+// TTS 开关现在是后端模式：经 setService 乐观下发，等 service_mode_result/capabilities 回滚校正
+function handleTtsToggle(val: boolean) {
+  settings.setService('tts', val)
+}
+
 // ---- Custom endpoints modal ----
 
 const customModalOpen = ref(false)
@@ -265,7 +270,8 @@ async function copyText(text: string) {
       <span class="setting-label">TTS 语音</span>
       <ToggleSwitch
         v-if="settings.ttsAvailable"
-        v-model="settings.ttsEnabled"
+        :model-value="settings.ttsEnabled"
+        @update:model-value="handleTtsToggle"
       />
       <span
         v-else
