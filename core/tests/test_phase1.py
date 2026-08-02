@@ -222,8 +222,8 @@ class TestEmotionEngine:
 # 5. Streaming integration tests
 # ============================================================================
 
-@pytest.mark.service
 class TestStreamingIntegration:
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_fake_llm_streaming(self):
         """FakeLLMBackend simulates streaming by yielding characters."""
