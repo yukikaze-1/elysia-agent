@@ -9,7 +9,32 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (retry x4)
+        shell: bash
+        env:
+          REPO_URL: "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+        run: |
+          # self-hosted runner 到 github.com 网络抖动时重试；HTTP/1.1 由 runner 全局 git config 保证
+          set -uo pipefail
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            echo "== checkout attempt ${attempt}/4 =="
+            rm -rf ./* ./.git 2>/dev/null || true
+            if git init -q . &&
+               git remote add origin "$REPO_URL" &&
+               git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&
+               git checkout --quiet --force refs/remotes/origin/target; then
+              echo "checkout succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            echo "checkout failed on attempt ${attempt}"
+            if [ "$attempt" -ge 4 ]; then
+              echo "FATAL: checkout failed after 4 attempts"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
       - name: Load .env
         run: cp /home/yomu/Agent/.env .env
       - name: Run full test suite
