@@ -1,4 +1,5 @@
 """/api/providers 与 /api/providers/test 端点测试。"""
+import asyncio
 import json
 import os
 from unittest.mock import AsyncMock, patch
@@ -117,3 +118,108 @@ async def test_test_endpoint_fallback_to_configured_model(aiohttp_client):
     assert data["ok"] is True
     # agent.llm.model 是完整 "provider/model"，直接 split，不套 custom 默认
     mock_create.assert_called_once_with(agent.llm.model)
+
+
+# ---- usable 级分派：真实产出验证（chat / synthesize / transcribe / 超时） ----
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_test_endpoint_usable_llm(aiohttp_client):
+    """usable 级 LLM：走 backend.chat（非 test()），detail 报告返回文本前缀。"""
+    from core.input.server import create_app
+    agent = _make_app_agent()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    with patch("Module.llm.registry.LLMFactory.create") as mock_create:
+        fake = AsyncMock()
+        fake.chat = AsyncMock(return_value="你好，我在")
+        fake.close = AsyncMock()
+        mock_create.return_value = fake
+        resp = await client.post("/api/providers/test", json={
+            "service": "llm", "provider": "deepseek",
+            "model": "deepseek-v4-flash", "level": "usable",
+        })
+        data = await resp.json()
+    assert data["ok"] is True
+    assert "你好，我在" in data["detail"]
+    # 证明 usable 级确实分派到 chat 而非 connectivity 的 test()
+    fake.chat.assert_awaited_once()
+    fake.test.assert_not_awaited()
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_test_endpoint_usable_tts(aiohttp_client):
+    """usable 级 TTS：走 backend.synthesize，detail 报告音频字节数。
+
+    缺省 character → agent 角色名（Elysia），synthesize 被 mock 不受音色影响。
+    """
+    from core.input.server import create_app
+    agent = _make_app_agent()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    with patch("Module.tts.registry.TTSFactory.create") as mock_create:
+        fake = AsyncMock()
+        fake.synthesize = AsyncMock(return_value=b"RIFFaudio")
+        fake.close = AsyncMock()
+        mock_create.return_value = fake
+        resp = await client.post("/api/providers/test", json={
+            "service": "tts", "provider": "minimax",
+            "model": "speech-2.8-hd", "level": "usable",
+        })
+        data = await resp.json()
+    assert data["ok"] is True
+    assert f"audio {len(b'RIFFaudio')} bytes" in data["detail"]
+    # 缺省 character 回退到 agent.character.name，验证 handler 的 fallback 逻辑
+    fake.synthesize.assert_awaited_once()
+    assert fake.synthesize.await_args.kwargs["character"] == "Elysia"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_test_endpoint_usable_stt(aiohttp_client):
+    """usable 级 STT：读内置样例音频走 backend.transcribe，detail 报告识别文本。"""
+    from core.input.server import create_app
+    agent = _make_app_agent()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    with patch("Module.stt.registry.STTFactory.create") as mock_create:
+        fake = AsyncMock()
+        fake.transcribe = AsyncMock(return_value="识别文本")
+        fake.close = AsyncMock()
+        mock_create.return_value = fake
+        resp = await client.post("/api/providers/test", json={
+            "service": "stt", "provider": "sensevoice",
+            "model": "sense-voice", "level": "usable",
+        })
+        data = await resp.json()
+    assert data["ok"] is True
+    assert data["detail"]
+    assert "识别文本" in data["detail"]
+    fake.transcribe.assert_awaited_once()
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_test_endpoint_usable_timeout(aiohttp_client):
+    """usable 级超时：backend.chat 抛 asyncio.TimeoutError → handler 捕获为"测试超时"。"""
+    from core.input.server import create_app
+    agent = _make_app_agent()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    with patch("Module.llm.registry.LLMFactory.create") as mock_create:
+        fake = AsyncMock()
+        fake.chat = AsyncMock(side_effect=asyncio.TimeoutError)
+        fake.close = AsyncMock()
+        mock_create.return_value = fake
+        resp = await client.post("/api/providers/test", json={
+            "service": "llm", "provider": "deepseek",
+            "model": "deepseek-v4-flash", "level": "usable",
+        })
+        data = await resp.json()
+    assert data["ok"] is False
+    assert data["error"] == "测试超时"
