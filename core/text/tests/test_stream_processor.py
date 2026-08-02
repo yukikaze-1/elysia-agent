@@ -658,3 +658,42 @@ class TestEventProperty:
             expected = _whole(s)
             got = _feed_split(list(s))
             assert got == expected, f"S={s!r} char-by-char\n  whole={expected}\n  got={got}"
+
+
+# ============================================================================
+# Group: 跨标签序列事件面（spec 2026-08-02 A 节）
+# ============================================================================
+
+class TestSequenceEvents:
+    """跨标签序列的事件面：状态残留会在事件序列暴露。"""
+
+    def test_fence_reenter_events_and_blocks(self):
+        s = "第一段。\n```python\n代码1\n```\n又说。\n```js\n代码2\n```\n结尾。"
+        proc = StreamProcessor()
+        events: list[StreamEvent] = []
+        events.extend(proc.feed(s))
+        events.extend(proc.flush())
+        # 代码内容不进 SENTENCE / TEXT_DELTA
+        assert not any(
+            e.type in (StreamEventType.SENTENCE, StreamEventType.TEXT_DELTA)
+            and ("代码1" in e.text or "代码2" in e.text)
+            for e in events
+        )
+        # 两个块按 token 顺序，lang 正确，after_idx 跨块计数
+        assert [(b[0], b[2], b[3]) for b in proc.get_blocks()] == [
+            ("code", "python", 1), ("code", "js", 2)]
+
+    def test_mood_inner_voice_fence_sequence(self):
+        s = "好<mood>开心</mood><inner_voice>思考</inner_voice>\n```python\ncode\n```\n尾"
+        proc = StreamProcessor()
+        events: list[StreamEvent] = []
+        events.extend(proc.feed(s))
+        events.extend(proc.flush())
+        types = [e.type for e in events]
+        assert types.count(StreamEventType.MOOD) == 1
+        assert types.count(StreamEventType.INNER_VOICE) == 1
+        # 代码块内容不进 SENTENCE
+        assert not any(e.type == StreamEventType.SENTENCE and "code" in e.text for e in events)
+        # 语音文本跨 META 连续，无标签泄漏
+        sentence_texts = [e.text for e in events if e.type == StreamEventType.SENTENCE]
+        assert "好" in sentence_texts and "尾" in sentence_texts

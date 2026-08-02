@@ -469,3 +469,114 @@ class TestInterface:
         t = Token(TokenKind.SPEECH, "x")
         with pytest.raises(Exception):
             t.text = "y"  # type: ignore[misc]
+
+
+# ============================================================================
+# Group: 跨标签序列（spec 2026-08-02 A 节）
+# 显式序列测试——状态残留 bug 与切分方式无关，property 不变式抓不到，
+# 必须显式断言输出序列。
+# ============================================================================
+
+class TestTagSequence:
+    """A1 进入→退出→再进入：每类标签完整进出两次，断言无状态残留。"""
+
+    def test_pause_reenter(self):
+        assert _whole("<#0.5#>说<#1#>又说") == [
+            Token(TokenKind.PAUSE, "<#0.5#>"),
+            Token(TokenKind.SPEECH, "说"),
+            Token(TokenKind.PAUSE, "<#1#>"),
+            Token(TokenKind.SPEECH, "又说"),
+        ]
+
+    def test_stage_cn_reenter(self):
+        assert _whole("（眨眼）说（叹气）又说") == [
+            Token(TokenKind.STAGE_CN, "（眨眼）"),
+            Token(TokenKind.SPEECH, "说"),
+            Token(TokenKind.STAGE_CN, "（叹气）"),
+            Token(TokenKind.SPEECH, "又说"),
+        ]
+
+    def test_stage_en_reenter(self):
+        assert _whole("(laughs)说(sighs)又说") == [
+            Token(TokenKind.STAGE_EN, "(laughs)"),
+            Token(TokenKind.SPEECH, "说"),
+            Token(TokenKind.STAGE_EN, "(sighs)"),
+            Token(TokenKind.SPEECH, "又说"),
+        ]
+
+    def test_angle_en_reenter(self):
+        assert _whole("<pant>说<pant>又说") == [
+            Token(TokenKind.ANGLE_EN, "<pant>"),
+            Token(TokenKind.SPEECH, "说"),
+            Token(TokenKind.ANGLE_EN, "<pant>"),
+            Token(TokenKind.SPEECH, "又说"),
+        ]
+
+    def test_mood_reenter(self):
+        assert _whole("你好<mood>开心</mood>世界<mood>累</mood>！") == [
+            Token(TokenKind.SPEECH, "你好"),
+            Token(TokenKind.META, "开心", meta_kind="mood"),
+            Token(TokenKind.SPEECH, "世界"),
+            Token(TokenKind.META, "累", meta_kind="mood"),
+            Token(TokenKind.SPEECH, "！"),
+        ]
+
+    def test_inner_voice_reenter(self):
+        assert _whole("<inner_voice>思考1</inner_voice>说<inner_voice>思考2</inner_voice>") == [
+            Token(TokenKind.META, "思考1", meta_kind="inner_voice"),
+            Token(TokenKind.SPEECH, "说"),
+            Token(TokenKind.META, "思考2", meta_kind="inner_voice"),
+        ]
+
+    def test_fence_reenter(self):
+        """围栏关闭后继续文本 + 再进围栏。回归 2026-08-01 幽灵 FENCE：
+        围栏经行首反引号路径打开时 _held 残留，会让关闭后下一个行首字符
+        触发幽灵围栏吞掉后续文本。"""
+        s = "第一段。\n```python\n代码1\n```\n又说。\n```js\n代码2\n```\n结尾。"
+        toks = _whole(s)
+        codes = [t for t in toks if t.kind == TokenKind.CODE]
+        assert [(t.lang, t.text) for t in codes] == [("python", "代码1\n"), ("js", "代码2\n")]
+        speech = "".join(t.text for t in toks if t.kind == TokenKind.SPEECH)
+        assert "第一段。" in speech and "又说。" in speech and "结尾。" in speech
+
+    def test_code_tag_reenter(self):
+        s = "<|code|>a=1</|code|>说<|code|>b=2</|code|>"
+        toks = _whole(s)
+        assert [t.text for t in toks if t.kind == TokenKind.CODE] == ["a=1", "b=2"]
+
+
+class TestAdjacentTagTransition:
+    """A2 标签紧邻转换跨 chunk：闭合紧接着开启，切分点落在转换处。
+
+    每个语料遍历所有切分点（含转换处），断言跨 chunk 与一次到达一致。
+    """
+
+    ADJACENT = [
+        "<mood>开心</mood><#0.5#>说",
+        "<inner_voice>思考</inner_voice>\n```python\ncode\n```\n尾",
+        "<#1#><mood>累</mood>世界",
+        "（笑）<#1#>尾",
+        "<|code|>x=1</|code|><#0.5#>尾",
+        "首。\n```py\ncode\n```\n（继续说话）",
+    ]
+
+    def test_every_split_point(self):
+        for s in self.ADJACENT:
+            expected = _whole(s)
+            for i in range(len(s) + 1):
+                got = _feed_split([s[:i], s[i:]])
+                assert got == expected, f"S={s!r} split={i!r}\n  whole={expected}\n  got={got}"
+
+    def test_mood_close_pause_open_expected(self):
+        assert _whole("<mood>开心</mood><#0.5#>说") == [
+            Token(TokenKind.META, "开心", meta_kind="mood"),
+            Token(TokenKind.PAUSE, "<#0.5#>"),
+            Token(TokenKind.SPEECH, "说"),
+        ]
+
+    def test_pause_close_mood_open_expected(self):
+        assert _whole("<#1#><mood>累</mood>世界") == [
+            Token(TokenKind.PAUSE, "<#1#>"),
+            Token(TokenKind.META, "累", meta_kind="mood"),
+            Token(TokenKind.SPEECH, "世界"),
+        ]
