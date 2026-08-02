@@ -24,10 +24,12 @@ core/input/provider_registry.py   ← 新增：env 过滤 + 组装 /api/provider
 /api/providers/test (POST) → 任意 provider + level(connectivity|usable)
         │
         ▼
-core/input/custom_providers.py   ← 新增 resolve_model_params：custom 切换参数解析
+core/input/custom_providers.py   ← 新增 resolve_model_params：custom 参数解析（switch + test 共用）
         │
-        ▼
-switch_llm/switch_tts → Factory.create(model_id, **resolve_model_params(...))
+        ├──────────────┐
+        ▼              ▼
+switch_llm/switch_tts   /api/providers/test
+   → Factory.create(model_id, **resolve_model_params(...))
 ```
 
 分层约束：`Module/` 工厂不依赖 core（providers.yaml 在 Module 层被读，env 过滤逻辑放 core/input）。
@@ -120,7 +122,7 @@ stt:
 4. 否则 `url_key` 非空且 `os.getenv(url_key)` 已设 → 已配置。
 5. 否则 → 未配置：进 `unconfigured[service]`，`env_vars` 列出非空的 `env_key`/`url_key` 项。
 
-> **local: true 的运行时可用性兜底**：STT/TTS 有 `capabilities.stt/tts` → `sttAvailable`/`ttsAvailable` 门控下拉（a810bc7）。**LLM 无可用性信号**（capabilities 只有 `llm_model` 字符串）——ollama 等本地 LLM 恒显示、可达性由切换时 `switch_model_result` 报错 + 本节测试按钮兜底，不声称"运行时检查"覆盖 LLM。若后续要 ollama 掉线即隐藏，需连通性探测（本次范围外）。
+> **local: true 的运行时可用性兜底**：STT/TTS 有 `capabilities.stt/tts` → `sttAvailable`/`ttsAvailable` 门控下拉（a810bc7）。**LLM 无可用性信号**（capabilities 只有 `llm_model` 字符串）——ollama 等本地 LLM 恒显示。注意**切换是惰性的**：`LLMFactory.create` → OpenAICompatBackend 构造无网络探测，切到挂掉的本地 LLM 时 `switch_llm` 仍返回 ok:true，失败要到首条 chat 才暴露——"切换时报错兜底"不成立，**测试按钮是切换前主动验证的唯一途径**。若后续要 ollama 掉线即隐藏，需连通性探测（本次范围外）。
 
 > **minimax 需要 URL + key 双变量**：过滤用单变量 OR 会高估（只配一个也显示）。接受此近似——不完整配置由测试按钮的 usable 检查暴露。如需精确需 per-provider `requires` 覆盖（本次不做）。
 
@@ -163,11 +165,20 @@ POST /api/providers/test
 }
 ```
 
-**默认值（向后兼容）**：`provider` 缺省 → `"custom"`；`level` 缺省 → `"connectivity"`。现有调用方（前端 testCustomProvider 发 `{service, base_url, api_key, model}`）行为不变。`provider`/`model` 均缺省时回退到该服务当前配置的模型（用于 disabled 态测试，见前端节）。
+**参数解析顺序（避免组合歧义）**：
+- `provider` 有、`model` 有 → 测该模型。
+- `provider` 无、`model` 有 → `provider` 视为 `"custom"`（向后兼容现有调用方 `{service, base_url, api_key, model}`）。
+- `provider`、`model` 均无 → **回退到该服务当前运行/配置的模型 id（完整 `provider/model`，split 后使用，不再套用 provider→"custom" 默认）**——否则会把 `sensevoice/sense-voice` 错拼成 `custom/sensevoice/sense-voice`。
+- `level` 缺省 → `"connectivity"`。
 
-创建 backend：`Factory.create(f"{provider}/{model}", base_url=..., api_key=...)`（custom 缺 base_url → Factory 抛错，捕获返回 `{ok:false, error}`）。
+回退模型来源：LLM → `agent.llm.model`；TTS → `agent.tts.model`（实际运行后端，热切换后不读陈旧 config）；STT → `agent.config.stt.model`。
 
-**base_url/api_key 透传规则**：仅在请求体**非空**时传给 `Factory.create`——`resolve_base_url` 用 `is not None`（而非 truthiness）判断，传空串 `""` 会覆盖 env 解析。内置 provider 未传时 Factory 自行 `os.getenv` 解析；custom 必传（缺失时 Factory 抛错）。
+创建 backend：`Factory.create(f"{provider}/{model}", base_url=..., api_key=...)`。
+
+**base_url/api_key 解析优先级**（请求体 > custom_providers.yaml > env）：
+1. 请求体 base_url/api_key **非空** → 直接传（custom"保存前测试"场景）。
+2. 请求体未传且 `provider == "custom"` → **复用 `resolve_model_params`** 从 custom_providers.yaml 解析 base_url + api_key（api_key_env → os.getenv）——否则下拉里选中的 custom provider 测试必抛 `ValueError("custom ... requires base_url")`（三个 Factory 都对缺 base_url 的 custom 抛错）。
+3. 内置 provider 请求体未传 → **不传**，Factory 自行 `os.getenv` 解析。注意 `resolve_base_url` 用 `is not None`（而非 truthiness）判断，传空串 `""` 会覆盖 env 解析。
 
 **TTS usable 测试的 `character` 参数**：请求体可选 `character` 字段；缺省时用该 provider 的默认音色（gpt-sovits: voices 配置首个，minimax: 默认 voice）。若后端抛"音色不存在"，错误信息在 `detail` 里提示。
 
@@ -245,7 +256,7 @@ ModelSelector 挂载 → fetch `/api/providers` → 过滤后 options（含 cust
 后端 unit/service：
 - env 过滤函数：mock `os.environ`（各分支：local 恒显示 / env_key 命中 / url_key 命中 / 未配置进 unconfigured / **custom 与空 models provider 跳过**）。
 - `resolve_model_params`：custom → 查 yaml + os.getenv；api_key_env 缺失不抛错；内置 → {}。
-- test 端点分派：mock backend 的 `test`/`chat`/`synthesize`/`transcribe`，断言 level 分派 + 超时 + 错误路径 + **provider/model 缺省回退到配置模型** + **空 base_url 不覆盖 env 解析**。
+- test 端点分派：mock backend 的 `test`/`chat`/`synthesize`/`transcribe`，断言 level 分派 + 超时 + 错误路径 + **provider/model 缺省回退到配置模型（不套 custom 默认）** + **空 base_url 不覆盖 env 解析** + **custom 缺 body base_url 时经 resolve_model_params 解析**。
 
 前端：无单测基建 → `vue-tsc --noEmit` + `npm run build` 验证。
 
