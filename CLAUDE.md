@@ -413,6 +413,11 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 - **`core/prompts/README.md`** — Prompt 模板命名规范（PascalCase `.j2`）+ 渲染方式（`str.replace()` / Jinja2 `render_macro()`，通过 `PromptManager`）。
 - **`Module/system_prompt/templates/README.md`** — System prompt 模板格式约定（XML wrapper + Markdown body，标签 snake_case）。
 
+## Import 风格
+
+- **禁相对导入**（`from .xxx` / `from ..xxx`），一律绝对导入：`from core.xxx import y` / `from Module.xxx import y`。用 `make lint`（ruff TID252）强制；`__init__.py`（重导出）与 `__main__.py`（`python -m` 入口）豁免，见 `ruff.toml`。
+- 循环导入规避：直接引子模块（`from core.monitoring.idle_monitor import IdleMonitor`），不要改经包重导出（`core.monitoring` 包用 lazy `__getattr__` 绕环）。
+
 ## 基础规则：
 
 1. README 用中文写。

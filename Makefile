@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-workflow-engine start
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-workflow-engine lint start
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -36,6 +36,10 @@ test-workflow-engine:
 
 check:
 	conda run -n $(CONDA_ENV) python app.py --check
+
+# 导入风格门禁：禁相对导入（TID252），__init__.py / __main__.py 豁免。见 ruff.toml
+lint:
+	ruff check core/ Module/ --exclude __pycache__
 
 start:
 	bash scripts/start.sh

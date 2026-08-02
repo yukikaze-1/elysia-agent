@@ -1,0 +1,13 @@
+# ruff 配置 — 仅启用 TID252（禁相对导入），强制绝对导入风格。
+# 豁免 __init__.py（重导出惯用法）与 __main__.py（python -m 入口）。
+# 其余规则（isort/排序等）暂不启用，见 docs/import-style.md。
+
+[lint]
+select = ["TID252"]
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[lint.per-file-ignores]
+"**/__init__.py" = ["TID252"]
+"**/__main__.py" = ["TID252"]
