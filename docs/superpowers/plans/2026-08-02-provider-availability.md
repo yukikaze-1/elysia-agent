@@ -558,6 +558,7 @@ ls -la Module/stt/tests/fixtures/sample.wav
 # core/input/tests/test_providers_api.py
 """/api/providers 与 /api/providers/test 端点测试。"""
 import json
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -851,7 +852,9 @@ Expected: PASS
 
 ```bash
 conda run -n Elysia python -m pytest core/input/tests/ Module/stt/tests/test_stt.py -q
-git add core/input/api_routes.py Module/stt/tests/fixtures/sample.wav core/input/tests/test_providers_api.py
+# paths.py 必须一并提交——STT usable 路径依赖 ProjectPath.STT_SAMPLE_WAV，
+# 漏掉则该提交快照的 _run_usable_test 在 .resolve() 前 AttributeError
+git add core/input/api_routes.py paths.py Module/stt/tests/fixtures/sample.wav core/input/tests/test_providers_api.py
 git commit -m "feat(input): /api/providers 走 registry + /api/providers/test 支持 level/任意 provider"
 ```
 
@@ -869,6 +872,8 @@ git commit -m "feat(input): /api/providers 走 registry + /api/providers/test �
 - Produces: 切到 `custom/<name>` 时 Factory.create 带 base_url/api_key（内置行为不变）。
 
 - [ ] **Step 1: 写失败测试（追加到 test_server.py）**
+
+先给 `core/input/tests/test_server.py` 顶部 import 区加 `import os`（当前只有 `import asyncio`/`from unittest.mock import ...`/`import pytest`/`from aiohttp import web, WSMsgType`，无模块级 `os`——本测试的 `patch.dict(os.environ, ...)` 依赖它，缺了 NameError）。
 
 ```python
     @pytest.mark.asyncio
@@ -1077,6 +1082,9 @@ export interface ProvidersResponse {
 ```css
 .unconf-hint { font-size: 11px; color: var(--muted); margin-top: 4px; display: flex; gap: 6px; align-items: center; }
 .unconf-link { font-size: 11px; color: var(--accent); background: none; border: none; cursor: pointer; padding: 0; }
+/* 测试按钮行：flex 内联，按钮宽度收敛（.panel-action-btn 默认 width:100%，不覆盖会整行堆叠） */
+.test-row { display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
+.test-row .panel-action-btn { width: auto; padding: 4px 10px; font-size: 12px; }
 ```
 
 - [ ] **Step 3: SettingsPanel.vue — 测试按钮行 + 配置入口弹窗**
