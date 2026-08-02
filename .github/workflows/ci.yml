@@ -52,6 +52,8 @@ jobs:
           done
       - name: Load .env
         run: cp /home/yomu/Agent/.env .env
+      - name: Lint (import style gate)
+        run: make lint
       - name: Run quick tests
         run: |
           set -a
@@ -94,6 +96,8 @@ jobs:
           done
       - name: Load .env
         run: cp /home/yomu/Agent/.env .env
+      - name: Lint (import style gate)
+        run: make lint
       - name: Run normal tests
         run: |
           set -a

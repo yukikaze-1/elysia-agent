@@ -27,6 +27,10 @@ make test-normal
 # 全量 — 推之前（~22min）
 make test-full
 # 或: pytest -q
+
+# 导入风格门禁（禁相对导入，秒级）
+make lint
+# 或: ruff check core/ Module/ --exclude __pycache__
 ```
 
 ### 按模块运行

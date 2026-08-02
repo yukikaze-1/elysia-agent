@@ -9,7 +9,7 @@
 | 2026-05 | 27 | [2026-05.md](completed/2026-05.md) |
 | 2026-06 | 33 | [2026-06.md](completed/2026-06.md) |
 | 2026-07 | 44 | 见下方 ↓ |
-| 2026-08 | 6 | 见下方 ↓ |
+| 2026-08 | 7 | 见下方 ↓ |
 
 ---
 
@@ -770,3 +770,15 @@ import 图分析发现 `core.agent ↔ core.status` 唯一硬环（eager 双向 
 **验证：** `make test-quick` + `make test-workflow-engine` 绿；`grep -rn "from core\.\|import core\." Module/workflow_engine Module/tool --include="*.py"` 为空；活跃文档 grep 零残留。
 
 **关联 commit：** `d1fa9cb` `2940743` `3ae5a2d` `38ec8d0` `3ffcf60` `1b6bd56` `875adca` `21daf5a` `403eb1c` `aaa7518` `45ea2ab` `276c637` `5ab3341` `77c1b88` `a2c924a`（+ Task 14 待提交）。设计：[spec](../docs/superpowers/specs/2026-08-01-workflow-engine-separation-design.md)。
+
+### 2026-08-02: 导入风格统一 — 全部相对导入改绝对 + ruff TID252 门禁
+
+项目长期混用相对导入（`from ..module`）与绝对导入（`from core.xxx`），同一语义两种拼法并存（如 `agent.py` 内 `from ..config` 与 `from core.status.agent_fsm`）。统一为**全绝对**，并用 ruff 强制锁死。
+
+**方案：** `ruff.toml` 启用 `TID252` + `ban-relative-imports = "all"`，`__init__.py`（重导出惯用法）与 `__main__.py`（`python -m` 入口）per-file-ignores 豁免。isort 排序规则暂不启用（全库强制会让 diff 从 81 膨胀到 248 文件）。
+
+**实现：** `ruff --fix --unsafe-fixes` 批量转换 337 处 / 81 文件（普通模块 71 + tests 10），`from .module`/`from ..module` → `from core.xxx`/`from Module.xxx`；豁免文件保留 122 处相对导入。`make lint` 目标 + CLAUDE.md「Import 风格」约定（含 `core.monitoring` 循环导入红线：直接引 `idle_monitor` 子模块，不走包重导出）。
+
+**验证：** `make lint` 绿；非豁免文件相对导入清零；test-quick 2069 passed / 2 skipped；app --check 12/13 passed。
+
+**关联 commit：** `898ef8f`（门禁）+ `073902f`（转换）。

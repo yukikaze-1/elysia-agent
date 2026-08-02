@@ -430,6 +430,9 @@ make test-normal
 
 # 全量（~22min）
 make test-full
+
+# 导入风格门禁（禁相对导入，秒级）
+make lint
 ```
 
 | marker | 标准 | 用途 |

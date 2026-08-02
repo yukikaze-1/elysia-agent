@@ -27,6 +27,23 @@ make test-normal
 # 全量 — 推之前（~20min）
 make test-full
 # 或: pytest -q
+
+# 导入风格门禁（秒级）
+make lint
+# 或: ruff check core/ Module/ --exclude __pycache__
+```
+
+## Import 门禁（ruff TID252）
+
+强制绝对导入：`from core.xxx import y` / `from Module.xxx import y`，禁止相对导入（`from .module` / `from ..module`）。`__init__.py`（重导出）与 `__main__.py`（`python -m` 入口）豁免。配置见根目录 `ruff.toml`；提交前用 `make lint` 验证。
+
+```bash
+# 自动修复相对导入 → 绝对（一次性迁移用）
+ruff check core/ Module/ --exclude __pycache__ --fix --unsafe-fixes
+
+# 查非豁免文件残留相对导入（应输出为空）
+grep -rEn "^from \." core/ Module/ --include="*.py" \
+  | grep -v __pycache__ | grep -vE "__init__\.py|__main__\.py|/tests/"
 ```
 
 ## 按模块运行
