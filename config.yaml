@@ -39,6 +39,8 @@ tts:
   #   minimax/speech-2.8-hd  → MiniMax API（音色映射: Module/tts/minimax_voices.yaml）
   #   gpt-sovits/default      → GPT-SoVits（音色映射: Module/tts/gpt_sovits_voices.yaml）
   model: minimax/speech-2.8-hd
+  # MiniMax 每分钟最大合成请求数（滑动窗口），0 关闭限速。默认 20（MiniMax 基础配额）
+  # rate_limit_rpm: 20
 
 # ---- STT 语音识别 ----
 stt:

@@ -5,7 +5,10 @@ synthesize_stream() 内部使用非流式 wav（MiniMax 流式仅 mp3，前端�
 获取完整音频后分块 yield。
 """
 
+import asyncio
 import logging
+import time
+from collections import deque
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -38,6 +41,47 @@ def _load_voice_map(voices_config: str = "") -> dict[str, str]:
     return {k: v["voice_id"] for k, v in raw.items()}
 
 
+class _RpmLimiter:
+    """滑动窗口 RPM 限速器 — 保证任意滚动 window 秒内请求数 ≤ max_per_minute。
+
+    MiniMax 配额 RPM=20 → 任意 60s 窗口内 ≤20 请求，否则返回
+    status_code=1002 (rate limit exceeded)。窗口空闲时允许突发（短回复不受影响），
+    持续高负载时按 max/min 节流，从源头杜绝 1002 报错。
+    """
+
+    def __init__(self, max_per_minute: int, window_seconds: float = 60.0) -> None:
+        """初始化限速器。
+
+        Args:
+            max_per_minute: 窗口内允许的最大请求数，0 表示关闭限速。
+            window_seconds: 滑动窗口时长（秒），默认 60s（与 RPM 语义一致）。
+        """
+        self._max = max_per_minute
+        self._window = window_seconds
+        self._hits: deque[float] = deque()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        """阻塞直到允许发起一个请求。"""
+        if self._max <= 0:
+            return
+        async with self._lock:
+            now = time.monotonic()
+            cutoff = now - self._window
+            # 严格 <：仅在窗口完全滑过时才剔除，避免边界瞬间的突发
+            # （如 MiniMax 用严格 "now - t > 60s" 判定时被拒）
+            while self._hits and self._hits[0] < cutoff:
+                self._hits.popleft()
+            if len(self._hits) < self._max:
+                self._hits.append(now)
+                return
+            # 窗口已满 → 等待最早请求滑出窗口
+            wait = self._hits[0] + self._window - now
+            await asyncio.sleep(wait)
+            self._hits.popleft()
+            self._hits.append(time.monotonic())
+
+
 class MiniMaxTTSBackend(TTSBackend):
     """MiniMax 语音合成后端。
 
@@ -60,6 +104,7 @@ class MiniMaxTTSBackend(TTSBackend):
         pitch: int = 0,
         sample_rate: int = 32000,
         audio_format: str = "wav",
+        rate_limit_rpm: int = 20,  # MiniMax 配额：任意 60s 窗口 ≤20 请求
         logger: logging.Logger | None = None,
     ):
         """初始化 MiniMax TTS 后端。
@@ -76,6 +121,8 @@ class MiniMaxTTSBackend(TTSBackend):
             pitch: 音调。
             sample_rate: 采样率（Hz）。
             audio_format: 音频格式（wav/mp3）。
+            rate_limit_rpm: 每分钟最大合成请求数（滑动窗口），0 关闭限速。
+                默认 20 与 MiniMax 基础配额一致；更高配额时按实际值调整。
             logger: 日志记录器，不传则使用模块默认 logger。
         """
         self._model = model
@@ -93,6 +140,8 @@ class MiniMaxTTSBackend(TTSBackend):
         self._audio_format = audio_format
         self._logger = logger or logging.getLogger(__name__)
         self._preprocess = strip_for_minimax
+        # 滑动窗口 RPM 限速 — 从源头避免 status_code=1002 (rate limit exceeded)
+        self._rate_limiter = _RpmLimiter(rate_limit_rpm)
 
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
@@ -136,6 +185,8 @@ class MiniMaxTTSBackend(TTSBackend):
         text = self._preprocess(text)
         voice_id = self._resolve_voice(character)
         payload = self._build_payload(text, voice_id, emotion, stream=False)
+        # RPM 限速：任意窗口内请求数超配额时阻塞等待，而非被 API 拒绝
+        await self._rate_limiter.acquire()
         try:
             resp = await self._client.post("/v1/t2a_v2", json=payload)
             resp.raise_for_status()

@@ -63,6 +63,10 @@ class TTSFactory:
                 f"Unknown provider '{provider}'. Known: {', '.join(sorted(_BACKENDS))}"
             )
 
+        # MiniMax 限速参数：仅对 minimax 后端生效，提前取出避免透传给其他后端
+        # （gpt-sovits / custom 构造函数不接受该 kwarg，传入会 TypeError）
+        rate_limit_rpm = kwargs.pop("rate_limit_rpm", None)
+
         cfg = _BACKENDS[provider]
         explicit_base_url = kwargs.get("base_url")  # minimax 分支需要原始值
         base_url = resolve_base_url(cfg.get("url_key", ""), cfg, kwargs.pop("base_url", None))
@@ -103,6 +107,8 @@ class TTSFactory:
                 raise ValueError("MiniMax TTS 需要 api_key，请设置 MINIMAX_API_KEY 环境变量或显式传入")
             if "logger" not in kwargs:
                 kwargs["logger"] = inject_logger(__name__)
+            if rate_limit_rpm is not None:
+                kwargs["rate_limit_rpm"] = rate_limit_rpm
             return MiniMaxTTSBackend(model=backend_name, api_key=api_key, base_url=base_url, **kwargs)
 
         # gpt-sovits: GPT-SoVits 专有协议
@@ -117,5 +123,6 @@ class TTSFactory:
         kwargs = {"base_url": config.base_url}
         if config.voices_config:
             kwargs["voices_config"] = config.voices_config
+        kwargs["rate_limit_rpm"] = config.rate_limit_rpm
         kwargs.update(overrides)
         return cls.create(model_id, **kwargs)

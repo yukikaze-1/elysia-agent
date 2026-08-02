@@ -1,12 +1,13 @@
 import asyncio
 import os
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ..protocol import TTSBackend
 from ..registry import TTSFactory
-from ..minimax_tts import MiniMaxTTSBackend
+from ..minimax_tts import MiniMaxTTSBackend, _RpmLimiter
 from ..text_preprocess import strip_all_markup, strip_action_only, strip_for_minimax
 
 pytestmark = pytest.mark.service
@@ -266,6 +267,34 @@ class TestTTSFactory:
                 base_url="https://api-bj.minimaxi.com",
             )
         assert mock_cls.call_args.kwargs["base_url"] == "https://api-bj.minimaxi.com"
+
+    def test_minimax_receives_rate_limit_rpm(self):
+        """rate_limit_rpm 透传给 minimax 后端。"""
+        with patch("Module.tts.minimax_tts.MiniMaxTTSBackend") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            TTSFactory.create(
+                "minimax/speech-2.8-hd",
+                api_key="sk-test",
+                rate_limit_rpm=7,
+            )
+        assert mock_cls.call_args.kwargs["rate_limit_rpm"] == 7
+
+    def test_gpt_sovits_ignores_rate_limit_rpm(self):
+        """rate_limit_rpm 被 factory 拦截，不透传给 gpt-sovits（避免 TypeError）。"""
+        with patch("Module.tts.registry.GPTSoVitsBackend") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            TTSFactory.create("gpt-sovits/default", rate_limit_rpm=7)
+        assert "rate_limit_rpm" not in mock_cls.call_args.kwargs
+
+    def test_custom_ignores_rate_limit_rpm(self):
+        """rate_limit_rpm 被 factory 拦截，不透传给 custom/openai 后端。"""
+        with patch("Module.tts.openai_tts.OpenAICompatTTSBackend") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            TTSFactory.create(
+                "custom/tts-1", api_key="sk", base_url="http://127.0.0.1:1",
+                rate_limit_rpm=7,
+            )
+        assert "rate_limit_rpm" not in mock_cls.call_args.kwargs
 
 
 # ============================================================
@@ -817,6 +846,115 @@ class TestMiniMaxCancel:
             count += 1
             break  # 只取首个 chunk 即退出
         assert count == 1
+
+
+# ============================================================
+# _RpmLimiter — 滑动窗口 RPM 限速器
+# ============================================================
+
+class TestRpmLimiter:
+    @pytest.mark.asyncio
+    async def test_burst_allowed_when_window_fresh(self):
+        """窗口空闲时可突发 — 短回复（<max 句）不受限速影响。"""
+        limiter = _RpmLimiter(max_per_minute=3, window_seconds=1.0)
+        t0 = time.monotonic()
+        for _ in range(3):
+            await limiter.acquire()
+        elapsed = time.monotonic() - t0
+        assert elapsed < 0.5  # 3 个瞬时通过，无等待
+
+    @pytest.mark.asyncio
+    async def test_throttles_when_window_full(self):
+        """窗口满后，下一个请求须等待最早请求滑出窗口。"""
+        limiter = _RpmLimiter(max_per_minute=2, window_seconds=0.3)
+        await limiter.acquire()  # 0s
+        await limiter.acquire()  # 0s — 窗口满
+        t0 = time.monotonic()
+        await limiter.acquire()  # 第 3 个 — 须等最早请求滑出 (≈0.3s)
+        elapsed = time.monotonic() - t0
+        assert elapsed >= 0.2
+
+    @pytest.mark.asyncio
+    async def test_sustained_spacing_holds(self):
+        """持续请求时，总耗时 >= 窗口时长（排队滑动，不超窗）。"""
+        limiter = _RpmLimiter(max_per_minute=2, window_seconds=0.4)
+        t0 = time.monotonic()
+        for _ in range(4):
+            await limiter.acquire()
+        elapsed = time.monotonic() - t0
+        # 前 2 个瞬时，后 2 个须等窗口滑动 → 总耗时 ≈ 0.4s
+        assert elapsed >= 0.35
+
+    @pytest.mark.asyncio
+    async def test_disabled_when_max_zero(self):
+        """max_per_minute=0 → 无限速，瞬时通过。"""
+        limiter = _RpmLimiter(max_per_minute=0, window_seconds=0.01)
+        t0 = time.monotonic()
+        for _ in range(5):
+            await limiter.acquire()
+        assert time.monotonic() - t0 < 0.3
+
+    @pytest.mark.asyncio
+    async def test_window_slides_after_elapse(self):
+        """窗口滑出后可再次突发 — 冷却后新请求不被旧请求拖累。"""
+        limiter = _RpmLimiter(max_per_minute=2, window_seconds=0.2)
+        await limiter.acquire()
+        await limiter.acquire()
+        await limiter.acquire()  # 阻塞直到第 1 个滑出 (≈0.2s)
+        await asyncio.sleep(0.25)  # 整个窗口滑空
+        t0 = time.monotonic()
+        for _ in range(2):
+            await limiter.acquire()  # 冷却后重新可突发
+        assert time.monotonic() - t0 < 0.3
+
+
+# ============================================================
+# MiniMaxTTSBackend — RPM 限速接线
+# ============================================================
+
+class TestMiniMaxRateLimit:
+    def test_default_rpm_is_20(self):
+        """默认按 MiniMax 配额 RPM=20 限速。"""
+        backend = MiniMaxTTSBackend(
+            api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice",
+        )
+        assert backend._rate_limiter._max == 20
+
+    def test_rpm_zero_disables_limiter(self):
+        """rate_limit_rpm=0 → 关闭限速（自托管/更高配额场景）。"""
+        backend = MiniMaxTTSBackend(
+            api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice",
+            rate_limit_rpm=0,
+        )
+        assert backend._rate_limiter._max == 0
+
+    @pytest.mark.asyncio
+    async def test_synthesize_obeys_rate_limiter(self):
+        """synthesize 走限速器；单次调用（<RPM）正常返回不受阻。"""
+        wav_bytes = b"RIFF....WAVE...."
+        backend = MiniMaxTTSBackend(
+            api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="test-voice",
+            rate_limit_rpm=1,
+        )
+
+        class MockResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "data": {"audio": wav_bytes.hex()},
+                    "base_resp": {"status_code": 0, "status_msg": "success"},
+                }
+
+        async def fake_post(url, *, json, **kw):
+            return MockResp()
+
+        backend._client.post = fake_post  # type: ignore[assignment]
+        result = await backend.synthesize("你好", character="test")
+        assert result == wav_bytes
 
 
 # ============================================================

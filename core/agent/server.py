@@ -141,6 +141,7 @@ class AgentServer:
                     pass
             from core.input.custom_providers import resolve_model_params
             params = resolve_model_params("tts", model_id)
+            params["rate_limit_rpm"] = self._config.tts.rate_limit_rpm
             self._tts = TTSFactory.create(model_id, **params)
             self._cognitive.configure(tts=self._tts)  # 同步 CognitiveLoop 中的引用
             logger.info("TTS switched to: %s", model_id)

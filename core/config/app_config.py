@@ -44,6 +44,11 @@ class TTSConfig:
     base_url: str = ConfigField(default="http://localhost:9880", env="TTS_API_URL")
     api_key: str = ConfigField(default="", secret=True, env="TTS_API_KEY")
     voices_config: str = ConfigField(default="")
+    rate_limit_rpm: int = ConfigField(
+        default=20,
+        env="TTS_RATE_LIMIT_RPM",
+        help="MiniMax 每分钟最大合成请求数（滑动窗口），0 关闭限速",
+    )
 
 
 @dataclass

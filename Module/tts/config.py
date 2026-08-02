@@ -26,3 +26,8 @@ class TTSConfig:
         default="",
         help="音色配置 YAML 文件路径，为空则使用内置 voices.yaml",
     )
+    rate_limit_rpm: int = ConfigField(
+        default=20,
+        env="TTS_RATE_LIMIT_RPM",
+        help="MiniMax 每分钟最大合成请求数（滑动窗口），0 关闭限速",
+    )

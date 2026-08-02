@@ -67,7 +67,10 @@ class _LifecycleServices:
         if self._config.tts.enabled:
             from Module.tts import TTSFactory
             try:
-                self._tts = TTSFactory.create(self._config.tts.model)
+                self._tts = TTSFactory.create(
+                    self._config.tts.model,
+                    rate_limit_rpm=self._config.tts.rate_limit_rpm,
+                )
                 # 快速连通性测试——1s 超时，避免卡启动
                 import asyncio as _asyncio
                 result = await _asyncio.wait_for(self._tts.test(), timeout=1.0)
