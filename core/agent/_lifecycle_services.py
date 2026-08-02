@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from core.cognitive import CognitiveLoop
     from core.memory.session import SessionMemory
     from Module.tts.protocol import TTSBackend
+    from Module.stt.protocol import STTBackend
     from core.monitoring.token_tracker import TokenTracker
     from core.debug.prompt_recorder import PromptRecorder
     from core.debug.response_recorder import ResponseRecorder
@@ -35,6 +36,7 @@ class _LifecycleServices:
         _cognitive: CognitiveLoop
         _config: AppConfig
         _tts: TTSBackend | None
+        _stt: STTBackend | None
         _llm: LLMAdapter
 
     async def _start_token_and_prompt(self) -> None:
@@ -85,7 +87,7 @@ class _LifecycleServices:
                 logger.info("TTS not available — text-only mode")
 
     async def _stop_llm_and_tts(self) -> None:
-        """关闭 LLM 和 TTS 客户端连接。"""
+        """关闭 LLM/TTS/STT 客户端连接，并置 None 以便热切换识别。"""
         logger.debug("Closing LLM client...")
         try:
             await asyncio.wait_for(self._llm.close(), timeout=3.0)
@@ -98,6 +100,17 @@ class _LifecycleServices:
                 await asyncio.wait_for(self._tts.close(), timeout=3.0)
             except asyncio.TimeoutError:
                 logger.warning("TTS close timed out")
+            self._tts = None
+            # 同步 CognitiveLoop 中的 TTS 引用——shutdown 后残留流式任务不再触碰旧后端
+            self._cognitive._tts_mgr.set_backend(None)
+
+        if self._stt:
+            logger.debug("Closing STT backend...")
+            try:
+                await asyncio.wait_for(self._stt.close(), timeout=3.0)
+            except asyncio.TimeoutError:
+                logger.warning("STT close timed out")
+            self._stt = None
 
     async def _stop_output(self) -> None:
         """关闭所有输出通道。"""

@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from core.debug.prompt_recorder import PromptRecorder
     from core.debug.response_recorder import ResponseRecorder
     from Module.workflow_engine.mailbox import WorkflowMailbox
+    from Module.stt.protocol import STTBackend
     from core.status import AgentStatus, CognitivePhaseController
 
 from Module.output import OutputManager, ConsoleChannel
@@ -190,6 +191,10 @@ class Agent(AgentLifecycle, AgentServer):
         )
 
         self._tts = None  # 在 _start_tts() 中创建
+        self._tts_enabled: bool | None = None  # TTS 有效开关（None → 回退 config.tts.enabled）
+        self._stt: STTBackend | None = None  # STT 后端 — stt_transcribe() 读取，支持热切换
+        self._stt_enabled: bool | None = None  # STT 有效开关（None → 回退 config.stt.enabled）
+        self._stt_emotion_state: dict = {"emotion": "NEUTRAL", "events": []}  # STT 情绪/事件状态
         self._stt_ok = False  # STT 连通性标志 — 在 run_server() 中设置
 
         self._consolidator = MemoryConsolidator(
@@ -594,6 +599,26 @@ class Agent(AgentLifecycle, AgentServer):
         return self._tts
 
     @property
+    def stt(self):
+        """STT 后端（只读，可能为 None）。"""
+        return self._stt
+
+    @property
+    def stt_enabled(self):
+        """STT 有效开关（三态回退：None → config.stt.enabled）。"""
+        return self._stt_enabled if self._stt_enabled is not None else self._config.stt.enabled
+
+    @property
+    def tts_enabled(self):
+        """TTS 有效开关（三态回退：None → config.tts.enabled）。"""
+        return self._tts_enabled if self._tts_enabled is not None else self._config.tts.enabled
+
+    @property
+    def stt_emotion_state(self):
+        """STT 语音情绪/事件状态（transcribe 后更新）。"""
+        return self._stt_emotion_state
+
+    @property
     def config(self):
         """应用配置。"""
         return self._config
@@ -677,6 +702,16 @@ class Agent(AgentLifecycle, AgentServer):
     def stt_ok(self):
         """STT 可用标志。"""
         return self._stt_ok
+
+    async def stt_transcribe(self, audio: bytes) -> str:
+        """STT 转写（公开接口）。读取当前 agent.stt 后端，支持热切换。"""
+        backend = self.stt
+        if backend is None:
+            return ""  # shutdown 窗口 _stop_* 置 None 后 _stop_output 才关 channel
+        text = await backend.transcribe(audio)
+        self.stt_emotion_state["emotion"] = getattr(backend, "last_emotion", "NEUTRAL")
+        self.stt_emotion_state["events"] = list(getattr(backend, "last_events", []))
+        return text
 
     # ---- 状态写方法（引导主循环退出，不做清理）----
 

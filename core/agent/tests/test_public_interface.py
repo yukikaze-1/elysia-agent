@@ -86,3 +86,26 @@ class TestWriteMethods:
 class TestPurgeMessagePublic:
     def test_purge_is_public_method(self, agent):
         assert callable(agent.purge_message_from_session)
+
+
+class TestSttPublicInterface:
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stt_slot_public_interface(self, agent):
+        """agent.stt 公开只读槽位 + stt_transcribe 空守卫 + 三态回退。"""
+        assert agent.stt is None                 # 初始 None
+        assert agent.stt_enabled is False        # 三态回退：_stt_enabled=None → 有效 = config.stt.enabled
+                                                 #（AppConfig 默认 False；不用 bool 默认 true——spec 明令禁止）
+        assert isinstance(agent.stt_emotion_state, dict)
+        assert await agent.stt_transcribe(b"audio") == ""   # None 空守卫，不 AttributeError
+
+    @pytest.mark.unit
+    def test_stt_is_readonly(self, agent):
+        """agent.stt 只读无 setter——写入抛 AttributeError（注入用 agent._stt）。"""
+        with pytest.raises(AttributeError):
+            agent.stt = None
+
+    @pytest.mark.unit
+    def test_enabled_three_state_fallback(self, agent):
+        """三态回退：_tts_enabled=None → 有效 = config.tts.enabled（默认 False）。"""
+        assert agent.tts_enabled is False
