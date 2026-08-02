@@ -81,34 +81,40 @@ function onChange(event: Event) {
 </script>
 
 <template>
-  <select
-    :value="disabled ? '' : currentModel"
-    :disabled="disabled"
-    class="model-select"
-    :class="{ 'is-disabled': disabled }"
-    @change="onChange"
-  >
-    <option value="" disabled>{{ disabled ? '未连接' : '选择模型...' }}</option>
-    <template v-if="!disabled">
-      <option
-        v-for="opt in options"
-        :key="opt.value"
-        :value="opt.value"
-      >
-        {{ opt.label }}
-      </option>
-    </template>
-  </select>
-  <div
-    v-if="unconfigured.length > 0"
-    class="unconf-hint"
-  >
-    <span>还有 {{ unconfigured.length }} 个 provider 未配置（{{ unconfigured.map(e => e.name + ' → ' + e.env_vars.join('/')).join('、') }}）</span>
-    <button class="unconf-link" @click="emit('open-config')">查看配置方式</button>
+  <!-- 容器包裹：select + unconf-hint 纵向堆叠。父级 .setting-row 是 flex 行，
+       若 hint 直接作为 flex 兄弟会横向挤占 select（长提示文本把下拉压扁）。 -->
+  <div class="model-selector">
+    <select
+      :value="disabled ? '' : currentModel"
+      :disabled="disabled"
+      class="model-select"
+      :class="{ 'is-disabled': disabled }"
+      @change="onChange"
+    >
+      <option value="" disabled>{{ disabled ? '未连接' : '选择模型...' }}</option>
+      <template v-if="!disabled">
+        <option
+          v-for="opt in options"
+          :key="opt.value"
+          :value="opt.value"
+        >
+          {{ opt.label }}
+        </option>
+      </template>
+    </select>
+    <div
+      v-if="unconfigured.length > 0"
+      class="unconf-hint"
+    >
+      <span>还有 {{ unconfigured.length }} 个 provider 未配置（{{ unconfigured.map(e => e.name + ' → ' + e.env_vars.join('/')).join('、') }}）</span>
+      <button class="unconf-link" @click="emit('open-config')">查看配置方式</button>
+    </div>
   </div>
 </template>
 
 <style scoped>
+/* flex:1 占满 setting-row 剩余宽度；min-width:0 允许收缩，防长内容撑破行 */
+.model-selector { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .model-select {
   width: 100%;
   padding: 6px 10px;
