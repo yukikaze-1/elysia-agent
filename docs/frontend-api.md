@@ -16,8 +16,9 @@
 ```
 客户端 ── WS 连接 ──→ /ws
          ←── { type: "session", messages: [...], token_stats: {...} }
-         ←── { type: "capabilities", stt: bool, tts: bool, llm_model: "...", ... }
-         ←── { type: "state", state: "idle" }
+         ←── { type: "capabilities", stt: bool, tts: bool, llm_model: "...", stt_model: "...", tts_model: "...", ... }
+         ←── { type: "expression", expression: "...", intensity: 0 }
+         （`state` 不随建连下发，仅在 FSM 状态转换时触发 notify_state）
          
          ... 正常通信 ...
          
@@ -27,7 +28,7 @@
 ### 重连行为
 
 WS 断开后 session 保留在服务端。重连时：
-- 再次收到完整的 `session`（全部历史消息）+ `capabilities` + `state`
+- 再次收到完整的 `session`（全部历史消息）+ `capabilities` + `expression`（当前心情）
 - 前端应**全量替换**消息列表，避免重复渲染
 
 ### 辅助通道：Binary 帧（麦克风）
@@ -41,11 +42,11 @@ WS 断开后 session 保留在服务端。重连时：
 ### 发送方向总览
 
 ```
-Server ──→ Client (16 种 type，action/command 含子类型):
+Server ──→ Client (18 种 type，action/command 含子类型):
   session, capabilities, state
   delta, message, typing
   expression
-  action  → tool_executing | tool_done | (Live2D)
+  action  → tool_executing | tool_done
   command → tool_approval | inner_voice | block
   audio, audio_end
   transcription, wake
@@ -79,7 +80,6 @@ Client ──→ Server (5 种):
       "content": [{ "type": "text", "content": "你好！有什么可以帮你的？" }],
       "content_type": {},
       "inner_voice": "她今天看起来心情不错，想用更温柔的语气回应",
-      "mood": "被妖梦的好消息感染，心里暖暖的",
       "tool_calls": [],
       "token_usage": { "rounds": [{ "round_num": 0, "input_tokens": 1234, "output_tokens": 567, "total_tokens": 1801 }], "turn_total": 1801 }
     },
@@ -107,7 +107,7 @@ Client ──→ Server (5 种):
 | `role` | 含义 | 关键字段 |
 |--------|------|---------|
 | `user` | 用户消息 | `content`（多模态数组）, `parts`（纯文本简化视图） |
-| `assistant` | AI 回复 | `content`, `parts`, `mood`, `tool_calls` |
+| `assistant` | AI 回复 | `content`, `parts`, `tool_calls` |
 | `tool` | 工具执行结果 | `tool_call_id`, `name`, `success`, `error`, `duration_ms` |
 
 **通用字段说明：**
@@ -118,7 +118,8 @@ Client ──→ Server (5 种):
 | `parts` | array | 纯文本简化视图 `[{ "content": "..." }]`——可直接拼接渲染 |
 | `content` | array | 多模态内容数组，每项 `{ "type": "text\|image", "content\|source": "...", "mime": "..." }` |
 | `content_type` | object | 多模态标记，如 `{"has_image": true, "image_count": 1}` |
-| `mood` | string | 仅 assistant，LLM 生成的自由文本心情描述 |
+
+> **注意：** `message` 消息不含 `mood` 字段（会话序列化与 `AssistantMessage` 均无）。心情经独立的 `expression` 事件下发，前端仅用其更新心情标签。
 
 **assistant 特有字段：**
 
@@ -150,6 +151,8 @@ Client ──→ Server (5 种):
   "stt": true,
   "tts": true,
   "llm_model": "deepseek/deepseek-v4-flash",
+  "stt_model": "sensevoice/sense-voice",
+  "tts_model": "minimax/speech-2.8-hd",
   "live2d_static_image": "/static/Elysia.png"
 }
 ```
@@ -159,6 +162,8 @@ Client ──→ Server (5 种):
 | `stt` | bool | 语音识别是否可用 |
 | `tts` | bool | 语音合成是否可用 |
 | `llm_model` | string | 当前 LLM 模型标识 |
+| `stt_model` | string \| null | 当前 STT 模型；服务未连接时（`stt: false`）为 `null`，前端应禁用下拉 |
+| `tts_model` | string \| null | 当前 TTS 模型；服务未连接时（`tts: false`）为 `null` |
 | `live2d_static_image` | string | Live2D 静态图（无 Live2D 时用） |
 
 ### 3. `state` — Agent 状态变更
@@ -210,7 +215,7 @@ Client ──→ Server (5 种):
   "type": "message",
   "role": "assistant",
   "content": "完整回复内容...",
-  "mood": "有点好奇，想了解更多"
+  "inner_voice": "内心独白（可选）"
 }
 ```
 
@@ -300,11 +305,14 @@ LLM 开始/结束生成时推送。前端可显示/隐藏 "..." 动画。
 
 #### 8c. Live2D 动作（可选）
 
+后端仅在工具调用时下发两个 action 子类型：
+
 ```json
-{ "type": "action", "action": "wave", "params": { "duration": 2.0 } }
+{ "type": "action", "action": "tool_executing", "params": { "tool_name": "web_search" } }
+{ "type": "action", "action": "tool_done", "params": { "tool_name": "web_search", "duration_ms": 1234 } }
 ```
 
-纯功能型客户端可忽略。仅 Live2D 前端使用。
+（`wave` 等通用动作子类型已废弃，后端与前端均不处理。）纯功能型客户端可忽略，仅 Live2D 前端使用。
 
 ### 9. `command` — 指令
 
@@ -338,9 +346,9 @@ LLM 开始/结束生成时推送。前端可显示/隐藏 "..." 动画。
 }
 ```
 
-Elysia 的内心独白——她想了但没说出来的话。前端应以淡色/斜体/小字渲染，出现在公开回复气泡的上方。inner_voice 在流式输出结束后一次性发送。
+Elysia 的内心独白——她想了但没说出来的话。前端应以淡色/斜体/小字渲染，出现在公开回复气泡的上方。流式输出中**每遇 `<inner_voice>` 标签发送一条**（loop.py 按 `StreamEventType.INNER_VOICE` 逐条 `command` 广播），非"结束后一次性发送"。
 
-前端设置面板提供"内心独白" toggle（`#inner-voice-toggle`）控制气泡显示/隐藏。关闭时 body 添加 `inner-voice-hidden` class，CSS 隐藏已有气泡 + JS guard 阻止新气泡创建。
+前端设置面板提供"内心独白" toggle（由 `settingsStore.innerVoiceEnabled` 控制）显隐气泡：关闭时隐藏已有气泡 + guard 阻止新气泡创建。
 
 #### 9c. `block` — 结构化内容块
 
@@ -677,10 +685,12 @@ state { state: "thinking" }   （或 "speaking" → 流式文字）
   "type": "text",
   "content": [
     { "type": "text", "content": "描述这张图片" },
-    { "type": "image", "source": "/uploads/img_abc123.png", "mime": "image/png" }
+    { "type": "image", "src": "/uploads/images/img_abc123.png", "mime": "image/png" }
   ]
 }
 ```
+
+图片内容块字段为 `src`（**不是** `source`）——前端契约 `ContentPart`（protocol.ts）与后端 `ImagePart` 均用 `src`，用 `source` 会被 Pydantic 校验丢弃。
 
 ### 2. `interrupt` — 打断
 
@@ -747,14 +757,15 @@ Content-Type: multipart/form-data
 **约束：**
 - 允许的 MIME: `image/png`, `image/jpeg`, `image/gif`, `image/webp`
 - 大小上限: 10 MB（可通过 `config.yaml` 的 `server.image_max_mb` 调整）
-- 超过上限返回 `{"ok": false, "error": "图片过大 (X MB)，最大 Y MB"}`
+- 超过上限返回 `413 {"error": "图片过大，上限 NMB"}`
+- 不支持的 MIME 返回 `415 {"error": "不支持的图片类型: <mime>"}`
 
 响应（成功）:
 ```json
-{ "ok": true, "path": "/uploads/img_abc123.png" }
+{ "url": "/uploads/images/img_abc123.png", "mime": "image/png", "size": 123456 }
 ```
 
-上传成功后，在 `text` 消息的 `content` 数组中通过 `"source": "/uploads/img_abc123.png"` 引用。
+上传成功后，在 `text` 消息的 `content` 数组中通过 `"src": "/uploads/images/img_abc123.png"` 引用（URL 含 `images/` 段）。
 
 ### 纯文本测试
 
@@ -784,13 +795,22 @@ GET /api/providers
 响应:
 ```json
 {
-  "llm": [
-    { "name": "deepseek/deepseek-v4-flash", "base_url": "https://api.deepseek.com/v1", "env_key": "DEEPSEEK_API_KEY" }
-  ],
-  "stt": [...],
-  "tts": [...]
+  "llm": {
+    "deepseek": { "models": ["deepseek/deepseek-v4-flash"] },
+    "openai": { "models": ["gpt-4o"] }
+  },
+  "stt": { "sensevoice": { "models": ["sense-voice"] } },
+  "tts": { "minimax": { "models": ["speech-2.8-hd"] } },
+  "custom": { "llm": [], "stt": [], "tts": [] },
+  "unconfigured": {
+    "llm": [ { "name": "ollama", "env_vars": ["OLLAMA_BASE_URL"] } ],
+    "stt": [],
+    "tts": []
+  }
 }
 ```
+
+各服务键（`llm`/`stt`/`tts`）为 **dict**：provider 名 → `{ "models": [...] }`。已配置 provider 进对应服务键；未配置进 `unconfigured[service]`（`env_vars` 为缺失的环境变量）。`custom` 为自定义 provider 的原始数据。
 
 **新增自定义 provider：**
 ```

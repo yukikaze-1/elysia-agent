@@ -1,10 +1,10 @@
-# TaskSystem — 实施计划
+# WorkflowEngine — 实施计划
 
-> 截至 2026-06-18，v1 核心已完成，目录结构重构已完成。本文件描述当前实际文件布局。
+> 截至 2026-08，v1 核心已完成，目录结构重构 + 改名（task_system → workflow_engine）+ 契约层提取已完成。本文件描述当前实际文件布局。
 
 **Goal:** 将当前紧耦合的 CognitiveLoop + TaskScheduler 重构为解耦的 Plan-Execute-Evaluate-Replan 架构，实现异步非阻塞任务执行。
 
-**Architecture:** 3 层（core/safety/learning）+ 顶层扁平模块。编排分两层：Sub-Agent（决策层）+ Orchestrator（执行层）。通过 TaskMailbox + HITLNotifier 与 CognitiveLoop 通信。DAG 图存储使用 NetworkX（PlanGraph 封装）。`submit_task` 注册为 LLM 工具，LLM 自主判断是否委派后台任务。
+**Architecture:** 3 层（core/safety/learning）+ 顶层扁平模块。编排分两层：Sub-Agent（决策层）+ Orchestrator（执行层）。通过 WorkflowMailbox + HITLNotifier 与 CognitiveLoop 通信。DAG 图存储使用 NetworkX（PlanGraph 封装）。`submit_task` 注册为 LLM 工具，LLM 自主判断是否委派后台任务。
 
 **Spec:** `Module/workflow_engine/docs/architecture.md`<br>
 **API:** `Module/workflow_engine/docs/api.md`
@@ -17,25 +17,23 @@
 
 ```
 Module/workflow_engine/
-├── __init__.py                # 公开 API facade（re-export 自 task_system.py）
-├── task_system.py             # TaskSystem 主类：生命周期 (start/stop) + submit + 薄封装委托 (~430 行)
-├── protocol.py                # HITLNotifier 等对外依赖协议（ABC）
+├── __init__.py                # 公开 API facade（re-export 自 workflow_engine.py）
+├── workflow_engine.py         # WorkflowEngine 主类：生命周期 (start/stop) + submit + 查询
 ├── (delegation_preparer.py 已迁 core/cognitive/delegation.py —— workflow_engine 分离 Task 9)
-├── infra.py                   # AgentInfra + 共享基础设施
-├── mailbox.py                 # TaskMailbox（单播，Agent 唯一消费者）
-├── checkpoint.py              # CheckpointManager: 节点级 TaskState 快照（内存版）
+├── (infra/AgentInfra 已迁 Module/workflow_contract/infra.py —— 契约层)
+├── mailbox.py                 # WorkflowMailbox（单播，Agent 唯一消费者）
+├── checkpoint.py              # CheckpointManager: 节点级 WorkflowState 快照（内存版）
 ├── artifact_store.py          # ArtifactStore: 节点大产物存储（内存版）
-├── query.py                   # 查询 API（11 个只读模块函数）
+├── query.py                   # 查询 API（只读查询方法）
 ├── lifecycle.py               # 任务操作（pause / cancel / submit_approval）
 ├── token_ledger.py            # TokenLedger: write-through + per-call 审计日志
-├── debug_api.py               # Debug WebUI 数据接口 + SSE 推送端点
-├── utils.py                   # 工具函数
+├── debug_api.py               # WorkflowDebugAPI：Debug WebUI 数据接口 + SSE 推送端点
 ├── schema/                    # 核心数据结构（5 文件，拆分自 schema.py）
 │   ├── __init__.py            # 全部 re-export，向后兼容
-│   ├── types.py               # 工具函数 + NewType 别名 + 基础枚举（含 NodeErrorCode）
-│   ├── protocol.py            # 跨层协议（ConstraintConfig, DelegationContext, HITLData 等）
-│   ├── output.py              # 事件 + 查询视图（TaskEvent, TaskSummary, TokenStats 等）
-│   └── internal.py            # 编排数据模型（DAGNode, Plan, TaskState, NodeResult 等）
+│   ├── types.py               # 基础枚举（WorkflowErrorCode/ResumeErrorCode/NodeStatus/NodeErrorCode）+ ArtifactId
+│   ├── protocol.py            # 引擎侧本地类型（ResumeError；跨边类型已迁契约层）
+│   ├── output.py              # 事件 + 查询视图（WorkflowEvent, WorkflowSummary, TokenStats 等）
+│   └── internal.py            # 编排数据模型（DAGNode, Plan, WorkflowState, NodeResult 等）
 ├── core/                      # 编排循环
 │   ├── __init__.py
 │   ├── sub_agent/             # SubAgent: 决策层——规划/Replan/熔断（拆分自 sub_agent.py）
@@ -104,10 +102,10 @@ Module/workflow_engine/
 ### 2026-06-18 重构要点
 
 **Schema 拆分**：`schema.py` (1287行) → `schema/` 包（5 文件）。
-- `types.py` — 工具函数 + NewType 别名 + 基础枚举
-- `protocol.py` — 跨层协议（ConstraintConfig, DelegationContext, HITLData）
-- `output.py` — 事件 + 查询视图（TaskEvent, TaskSummary, TokenStats）
-- `internal.py` — 编排数据模型（DAGNode, Plan, TaskState, NodeResult）
+- `types.py` — 基础枚举 + ArtifactId
+- `protocol.py` — 引擎侧本地类型（ResumeError；跨边类型已迁契约层）
+- `output.py` — 事件 + 查询视图（WorkflowEvent, WorkflowSummary, TokenStats）
+- `internal.py` — 编排数据模型（DAGNode, Plan, WorkflowState, NodeResult）
 - `__init__.py` — 全部 re-export，向后兼容
 - 关键修复：`NodeErrorCode` 从 internal 移入 `types.py`，切断 output ↔ internal 循环依赖。
 
@@ -126,7 +124,7 @@ Module/workflow_engine/
 - `replan.py` — Replan 决策
 - `__init__.py` — 公开导出
 
-**TaskSystem 拆分**：`task_system.py` (843行) → 3 文件（`task_system.py` + `query.py` + `lifecycle.py`）。所有提取函数接受显式参数替代 `self._xxx`，TaskSystem 公开 API 签名不变。
+**WorkflowEngine 拆分**：`task_system.py` (843行) → `workflow_engine.py` + `query.py` + `lifecycle.py`（2026-08 改名）。所有提取函数接受显式参数替代 `self._xxx`，WorkflowEngine 公开 API 签名不变。
 
 **Orchestrator 拆分**：`orchestrator.py` (708行) → 3 文件（`orchestrator.py` + `execution.py` + `finalize.py`）。薄封装签名与当前方法完全一致，`run()` 调用点零改动。
 
@@ -148,7 +146,7 @@ Module/workflow_engine/
 以下文件位于父项目（Elysia/Agent），不属于本仓库，仅供集成参考。
 
 ```
-core/cognitive_loop.py          # 注册 submit_task 工具 → DelegationPreparer → TaskSystem.submit()
+core/cognitive/loop.py          # 注册 submit_task 工具 → DelegationPreparer → WorkflowEngine.submit()
 core/agent.py                   # _process_events() + _process_task_events() 双协程
 core/agent_fsm.py               # 新增 AgentState.IDLE_BACKGROUND_TASK
 core/hitl.py                    # EventBusHITLNotifier 使用 HITL_REQUEST/HITL_CANCEL

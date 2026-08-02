@@ -122,74 +122,51 @@
 
 ---
 
-## 4. WorkflowEngine 类型 (Module/workflow_engine/schema/)
+## 4. WorkflowEngine 类型 (Module/workflow_engine/schema/ + Module/workflow_contract/)
 
-### 基础类型 (`types.py`)
+2026-08 重构后：跨边共享类型迁至独立契约层 `Module/workflow_contract/schema.py`（core ↔ workflow_engine 唯一类型来源），engine 内部模型留在 `Module/workflow_engine/schema/`。`UserProfile` 迁 `core/cognitive/user_profile.py`，`RBACLevel` 迁 `Module/tool/capability.py`，`Tool` 归位 `Module.tool`。
 
-**枚举 (12 个):**
+### 基础类型 (`types.py`) — 4 枚举 + 1 NewType
 
 | 名称 | 成员数 | 用途 |
 |------|--------|------|
-| `WorkflowStatus` | 11 (PENDING→PLANNING→RUNNING→PAUSED→CANCELLED→COMPLETED...) | 任务 FSM |
-| `SubmitRejectionCode` | 5 (NOT_READY/INVALID_PARAM/PLAN_TOO_LARGE...) | 提交拒绝码 |
 | `WorkflowErrorCode` | 10 (PLANNING_FAILED/TOOL_ERROR/PERMISSION_DENIED...) | 任务错误码 |
 | `ResumeErrorCode` | 6 (CHECKPOINT_NOT_FOUND/CORRUPTED/VERSION_MISMATCH...) | 恢复错误码 |
 | `NodeStatus` | 8 (PENDING/RUNNING/SUCCESS/FAILED/SKIPPED...) | DAG 节点状态 |
 | `NodeErrorCode` | 8 (TOOL_ERROR/TIMEOUT/NOT_FOUND/PERMISSION_DENIED...) | 节点错误码 |
-| `RBACLevel` | 3 (READ_ONLY/SAFE_WRITE/MUTATION) | 工具权限等级 |
 
-**NewType 别名 (6 个):** `WorkflowId`, `AgentId`, `ApprovalId`, `SessionId`, `NodeId`, `ArtifactId`
+**NewType 别名 (1 个):** `ArtifactId`（其余 `WorkflowId`/`AgentId`/`ApprovalId`/`SessionId`/`NodeId` 在契约层）
 
-### 跨层协议 (`protocol.py`)
+### 跨边契约层 (`Module/workflow_contract/schema.py`)
 
-**Pydantic BaseModel (12 个):**
+**Pydantic BaseModel (7 个) + 枚举 (5 个) + NewType (5 个) + ABC (1 个):**
 
-| 名称 | 用途 |
-|------|------|
-| `ConstraintConfig` | 全局约束（max_tokens, max_nodes, max_duration...） |
-| `TaskConstraints` | 任务级约束（可 override 全局） |
-| `UserProfile` | 用户画像（preferences, language, display_name） |
-| `Tool` | 轻量工具描述符（name, description, capabilities） |
-| `DelegationContext` | 委托沙箱上下文 |
-| `DelegationResult` | 委托准备结果 |
-| `SubmitError` | 提交拒绝错误 |
-| `ResumeError` | 恢复失败错误 |
-| `HITLData` | HITL 审批请求数据 |
+| 名称 | 类型 | 用途 |
+|------|------|------|
+| `WorkflowId` / `AgentId` / `ApprovalId` / `SessionId` / `NodeId` | NewType | 跨边标识符 |
+| `WorkflowStatus` | StrEnum (11) | 任务状态机 PENDING→...→COMPLETED |
+| `SubmitRejectionCode` | StrEnum (5) | submit() 同步拒绝码 |
+| `ConstraintConfig` | BaseModel | 全局约束（硬天花板） |
+| `WorkflowConstraints` | BaseModel | 任务级约束（与全局取 min） |
+| `ReturnMode` | StrEnum | 产出报告模式 |
+| `DelegationContext` | BaseModel | status=ok 时的委派上下文 |
+| `DelegationStatus` | StrEnum (3) | OK/NO_MATCHING_TOOLS/TOO_VAGUE |
+| `DelegationResult` | BaseModel | DelegationPreparer 产出 |
+| `SubmitError` / `ResumeError` | BaseModel | 拒绝/恢复失败错误 |
+| `HITLData` | BaseModel | HITL 审批请求数据 |
+| `WorkflowEventType` | StrEnum | 任务邮箱事件类型 |
+| `WorkflowEvent` | BaseModel | 任务邮箱事件 |
+| `HITLNotifier` | ABC | 审批快速通道协议 |
 
-**枚举 (3 个):** `ReturnMode` (NATURAL_LANGUAGE/STRUCTURED), `DelegationStatus` (OK/NO_MATCHING_TOOLS/TOO_VAGUE), `ResumeErrorCode`
+### 查询视图 (`output.py`) — 14 BaseModel + 4 StrEnum
 
-### 查询视图 (`output.py`)
-
-**Pydantic BaseModel (14 个):**
-
-| 名称 | 用途 |
-|------|------|
-| `WorkflowEvent` | 任务邮箱事件（PROGRESS/APPROVAL_NEEDED/COMPLETED/FAILED...） |
-| `WorkflowSummary` | 任务完成摘要（给 Debug WebUI） |
-| `WorkflowProgress` | 任务进度快照 |
-| `DAGNodeInfo` | DAG 节点展示信息 |
-| `WorkflowDAG` | DAG 可视化数据 |
-| `AgentInfo` / `AgentList` | Agent 运行时信息 |
-| `TokenComponent` / `TokenUsage` / `TokenStats` | Token 统计（**与 core/monitoring/token_tracker.py 的 TokenUsage 同名不同义**） |
+`WorkflowSummary` / `WorkflowProgress` / `DAGNodeInfo` / `WorkflowDAG` / `AgentInfo` / `AgentList` / `TokenComponent` / `TokenUsage` / `TokenStats`（**与 core/monitoring/token_tracker.py 的 TokenUsage 同名不同义**）+ `AgentType` / `AgentStatus` / `TokenPeriod` / `TokenComponentType`
 
 ### 编排内部模型 (`internal.py`)
 
-**Pydantic BaseModel (20+ 个):**
+`OrchestratorResult` / `NodeState` / `WorkflowState` / `ExecutionState` / `WorkflowCheckpoint` / `Plan` / `DAG` / `DAGNode` / `DAGPatch` / `ValidationResult` / `ValidationIssue` / `Artifact` / `NodeResult` / `NodeResultEvaluation` / `WorkflowResult` / `ExperienceRecord`
 
-| 名称 | 用途 |
-|------|------|
-| `OrchestratorResult` | 编排器运行结果 |
-| `NodeState` / `WorkflowState` / `ExecutionState` | 运行时状态 |
-| `WorkflowCheckpoint` | 任务检查点（WorkflowState + ExecutionState） |
-| `Plan` / `DAG` / `DAGNode` | 规划输出 |
-| `DAGPatch` | 增量 DAG 修改（Replan） |
-| `ValidationResult` / `ValidationIssue` | Plan 校验 |
-| `Artifact` | 节点输出产物 |
-| `NodeResult` / `NodeResultEvaluation` | 执行结果 + 评估 |
-| `WorkflowResult` | 任务完成结构 |
-| `ExperienceRecord` | 经验记忆记录 |
-
-> **总计：WorkflowEngine 独占约 40 个类型，组织较规范。不建议拆改。**
+> **总计：契约层约 18 类型 + engine schema/ 约 35 类型。跨边类型已契约层化，engine 内部模型不对外。**
 
 ---
 
@@ -213,29 +190,41 @@
 
 ---
 
-## 6. Session Params（裸 dict，无 schema）
+## 6. Session Params（已类型化）
 
-存储在 `session.params` 中，通过 `set_param(key, value)` / `get_param(key, default)` 读写。MongoDB 持久化。
+2026-08 已从裸 dict 迁入类型化 Pydantic 模型：`set_param`/`get_param` 已删除，字段拆分到 **`CharacterState`**（core/schema/character.py）与 **`MemoryReflectorState`**（core/schema/memory_reflector.py），随 session 持久化。
 
-| Key | 类型 | 读写位置 | 用途 |
-|-----|------|----------|------|
-| `mood` | str | personality/engine.py, cognitive/loop.py, personality/reflector.py | 当前情绪 (neutral/happy/sad/curious/excited/warm/concerned...) |
-| `mood_intensity` | float | personality/engine.py, personality/reflector.py | 情绪强度 0.0-1.0 |
-| `self_l2` | str | personality/engine.py, debug_info.py | **L2 Self — 长期自我认知** |
-| `state_l3` | str | personality/engine.py, debug_info.py | **L3 State — 短期状态** |
-| `state_history` | list[dict] | personality/engine.py, debug_info.py | L3 变化轨迹 [{timestamp, content}, ...] |
-| `compression_last_at` | float | personality/engine.py | 上次 L3→L2 压缩时间戳 |
-| `compression_last_count` | int | personality/engine.py | 上次压缩时 state_history 长度 |
-| `last_awareness_time` | float | personality/engine.py, debug_info.py | C9 冷却计时 |
-| `self_perception_history` | list[dict] | personality/reflector.py, debug_info.py | 自我认知历史 |
-| `reflector_buffer` | list[dict] | personality/reflector.py | CharacterReflector 事件缓冲 |
-| `reflector_context` | list[dict] | personality/reflector.py | CharacterReflector 上下文窗口 |
-| `own_life` | str | system_prompt/sections/own_life.py | Agent 自身生活叙事 |
-| `mr_round_count` | int | memory/memory_reflector.py | MemoryReflector 轮次计数 |
-| `mr_new_memory_count` | int | memory/memory_reflector.py | 新增记忆计数 |
-| `mr_last_summary` | dict | memory/memory_reflector.py | 上次记忆反思摘要 |
+### `CharacterState`（core/schema/character.py:16）
 
-> **问题：** 无类型、无文档、无集中定义。key 拼写错误只能在运行时发现。
+| 字段 | 类型 | 用途 |
+|------|------|------|
+| `self_l2` | str | **L2 Self — 长期自我认知** |
+| `state_l3` | str | **L3 State — 短期状态** |
+| `state_history` | list[StateHistoryEntry] | L3 变化轨迹 |
+| `last_awareness_time` | float \| None | C9 觉察冷却计时（epoch） |
+| `approved_awareness_text` | str | AwarenessJudge 批准的觉察文本 |
+| `approved_awareness_at` | float \| None | 批准时间戳（epoch） |
+| `awareness_show_count` | int | 已展示次数 |
+| `compression_last_at` | float \| None | 上次 L3→L2 压缩时间戳（epoch） |
+| `compression_last_count` | int | 上次压缩时 state_history 长度 |
+| `mood` | str | 当前情绪（默认"平静"） |
+| `mood_intensity` | float | 情绪强度 0.0-1.0（默认 0.5） |
+| `speaking_style_c6` | str | C6 动态文本（空串 = 用 L1 默认模板） |
+| `reflector_buffer` | list[tuple[str, str]] | CharacterReflector 事件缓冲 |
+| `reflector_context` | list[dict] | CharacterReflector 上下文窗口 |
+| `self_perception_history` | list[dict] | 自我认知历史 |
+
+（`own_life` 由 system_prompt section 直读，不存于 CharacterState。）
+
+### `MemoryReflectorState`（core/schema/memory_reflector.py:10）
+
+| 字段 | 类型 | 用途 |
+|------|------|------|
+| `mr_round_count` | int | MemoryReflector 轮次计数 |
+| `mr_new_memory_count` | int | 新增记忆计数 |
+| `mr_last_summary` | dict[str, object] | 上次记忆反思摘要 |
+
+> **现状：** 已类型化，field 名有 Pydantic 校验，拼写错误在构造时即暴露。不再是无 schema 裸 dict。
 
 ---
 

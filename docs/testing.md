@@ -2,14 +2,16 @@
 
 ## 分层体系
 
-1927 个测试按 4 层 markers 组织:
+2163 个测试按 4 层 markers 组织（`pytest --collect-only` 实测，2026-08-02）：
 
 | 层 | marker | 标准 | 测试数 | 耗时 |
 |---|--------|------|--------|------|
-| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 1112 | ~40s |
-| 服务 | `service` | 单模块 + mock，不启动 Agent | 728 | 秒级 |
+| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 1310 | ~40s |
+| 服务 | `service` | 单模块 + mock，不启动 Agent | 782 | 秒级 |
 | 集成 | `integration` | 需真实数据库或外部 API | 35 | 不定 |
-| 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | 52 | ~15min |
+| 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | 56 | ~15min |
+
+> 各层相加（1310+782+35+56=2183）比总数多 20：少数测试标记多 marker（如 `unit+service`），`-m` 收集时重复计入。
 
 ## 日常命令
 
@@ -18,11 +20,11 @@ conda activate Elysia
 
 # 日常开发 — 秒级验证（~60s）
 make test-quick
-# 或: pytest -m "unit or service" -q -x --tb=short
+# 或: pytest -m "unit or service" -q -x --tb=short --ignore=Module/workflow_engine/tests
 
 # 提交前 — 排除 slow（~5min）
 make test-normal
-# 或: pytest -m "not slow" -q --tb=short
+# 或: pytest -m "not slow" -q --tb=short --ignore=Module/workflow_engine/tests
 
 # 全量 — 推之前（~20min）
 make test-full
@@ -135,12 +137,14 @@ pytest core/tests/test_phase3.py -v
 | | `test_phase2.py` | 72 | unit+service+slow+integration |
 | | `test_phase3.py` | 110 | unit+service+slow |
 | | `test_request_id.py` | 3 | unit |
-| `core/status/tests/` | `test_agent_fsm.py` | 10 | unit |
-| | `test_types.py` | 5 | unit |
+| `core/status/tests/` | `test_agent_fsm.py` | 20 | unit |
+| `core/agent/tests/` | `test_types.py` | 5 | unit |
 | | `test_lifecycle_steps.py` | 7 | unit |
+| | `test_agent_methods.py` | 5 | service |
 | | `test_lifecycle_flush.py` | 7 | service |
 | | `test_server_banner.py` | 4 | service |
-| | `test_agent_methods.py` | 5 | service |
+| | `test_status.py` | 27 | unit+service |
+| | `test_public_interface.py` | 10 | service |
 | `core/config/tests/` | `test_database_config.py` | 6 | unit |
 | | `test_app_config.py` | 4 | unit |
 | | `test_character_config.py` | 8 | unit |
