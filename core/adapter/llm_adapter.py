@@ -175,11 +175,12 @@ class LLMAdapter:
         if reconnect_meth is not None:
             await reconnect_meth()
 
-    def switch_model(self, new_model_id: str) -> None:
+    def switch_model(self, new_model_id: str, **kwargs) -> None:
         """热切换 LLM 模型。关闭当前后端，用新 model_id 创建后端。
 
         Args:
             new_model_id: 新的模型标识符（如 "deepseek/deepseek-v4-flash"）。
+            **kwargs: 透传给 LLMFactory.create（如 custom provider 的 base_url/api_key）。
         """
         if hasattr(self._backend, 'close'):
             try:
@@ -192,7 +193,7 @@ class LLMAdapter:
             except Exception:
                 pass
         self._requested_model = new_model_id
-        self._backend = LLMFactory.create(new_model_id)
+        self._backend = LLMFactory.create(new_model_id, **kwargs)
         logger.info("LLM switched to: %s", new_model_id)
 
     @property

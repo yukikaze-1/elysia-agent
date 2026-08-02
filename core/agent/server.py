@@ -89,6 +89,8 @@ class AgentServer:
     async def switch_llm(self, model_id: str) -> dict:
         """热切换 LLM 模型。切换前打断当前 cognitive task 防止卡 thinking。
 
+        custom/<name> 的 base_url/api_key 经 resolve_model_params 从 custom_providers.yaml 解析。
+
         Args:
             model_id: 新的 LLM 模型标识符（如 ``deepseek/deepseek-v4-flash``）。
 
@@ -97,7 +99,9 @@ class AgentServer:
         """
         try:
             self._cognitive.cancel_current()  # 打断正在进行的 LLM 调用
-            self._llm.switch_model(model_id)
+            from core.input.custom_providers import resolve_model_params
+            params = resolve_model_params("llm", model_id)
+            self._llm.switch_model(model_id, **params)
             logger.info("LLM switched to: %s", model_id)
             return {"ok": True}
         except Exception as e:
@@ -120,6 +124,8 @@ class AgentServer:
     async def switch_tts(self, model_id: str) -> dict:
         """热切换 TTS 后端。更新 self._tts 和 self._cognitive._tts 引用。
 
+        custom/<name> 的 base_url/api_key 经 resolve_model_params 从 custom_providers.yaml 解析。
+
         Args:
             model_id: 新的 TTS 模型标识符（如 ``minimax/speech-2.8-hd``）。
 
@@ -133,7 +139,9 @@ class AgentServer:
                     await self._tts.close()
                 except Exception:
                     pass
-            self._tts = TTSFactory.create(model_id)
+            from core.input.custom_providers import resolve_model_params
+            params = resolve_model_params("tts", model_id)
+            self._tts = TTSFactory.create(model_id, **params)
             self._cognitive.configure(tts=self._tts)  # 同步 CognitiveLoop 中的引用
             logger.info("TTS switched to: %s", model_id)
             return {"ok": True}

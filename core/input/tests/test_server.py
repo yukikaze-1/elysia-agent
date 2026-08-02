@@ -4,6 +4,7 @@ Run: python -m pytest core/input/tests/test_server.py -v --asyncio-mode=auto
 """
 
 import asyncio
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -328,6 +329,36 @@ class TestWebSocketHandler:
             await _do_transcription(agent, ws, "测试", stt_emotion_state=stt_state)
             await asyncio.sleep(0.1)
 
+        await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_switch_llm_resolves_custom_params(self, tmp_path, aiohttp_client):
+        """switch_llm 切到 custom 时 resolve_model_params 解析 base_url 并传给 Factory。"""
+        from unittest.mock import patch
+        from core.input import custom_providers as cp
+        from core.input.server import create_app
+        import json as _json
+
+        agent = _make_agent()
+        await agent.start()
+
+        yaml_path = tmp_path / "custom_providers.yaml"
+        yaml_path.write_text(
+            "llm:\n  - name: myllm\n    base_url: http://myllm.local\n    api_key_env: MY_LLM_KEY\n    models: [m1]\n",
+            encoding="utf-8",
+        )
+
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+
+        # clear=True + 置空 MY_LLM_KEY → resolve 不返回 api_key，断言确定性
+        with patch.object(cp, "_DEFAULT_PATH", yaml_path), \
+             patch.dict(os.environ, {"MY_LLM_KEY": ""}, clear=True), \
+             patch.object(agent.llm, "switch_model") as mock_switch:
+            async with client.session.ws_connect(client.make_url('/ws')) as ws:
+                await ws.send_json({"type": "switch_model", "service": "llm", "model": "custom/myllm"})
+                await asyncio.sleep(0.2)
+        mock_switch.assert_called_once_with("custom/myllm", base_url="http://myllm.local")
         await agent.stop()
 
 
