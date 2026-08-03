@@ -360,6 +360,159 @@ export interface WakeToggleMessage {
   enabled: boolean
 }
 
+/** 单个已配置 provider（models 为可选用模型列表）。 */
+export interface ProviderEntry {
+  /** 可用模型列表 */
+  models: string[]
+}
+
+/** 自定义 provider 条目（custom_providers.yaml 持久化形状）。 */
+export interface CustomProvider {
+  /** provider 名称 */
+  name: string
+  /** Base URL */
+  base_url: string
+  /** API Key 环境变量名，可缺省 */
+  api_key_env?: string
+  /** 模型列表，可缺省 */
+  models?: string[]
+}
+
+/** 未配置 provider 引导条目（env_vars 列出缺失的环境变量）。 */
+export interface UnconfiguredEntry {
+  /** provider 名称 */
+  name: string
+  /** 缺失的环境变量列表 */
+  env_vars: string[]
+}
+
+/** /api/providers 响应：已配置 provider（动态 key）+ 自定义端点 + 未配置引导。 */
+export interface ProvidersResponse {
+  /** 已配置 LLM provider（名 → 条目） */
+  llm: Record<string, ProviderEntry>
+  /** 已配置 STT provider（名 → 条目） */
+  stt: Record<string, ProviderEntry>
+  /** 已配置 TTS provider（名 → 条目） */
+  tts: Record<string, ProviderEntry>
+  /** 自定义端点（service → 条目列表） */
+  custom: Record<string, CustomProvider[]>
+  /** 未配置 provider（service → 引导条目列表） */
+  unconfigured: Record<string, UnconfiguredEntry[]>
+}
+
+/** 图片上传成功响应。 */
+export interface ImageUploadResponse {
+  /** 可访问的图片 URL 路径 */
+  url: string
+  /** MIME 类型 */
+  mime: string
+  /** 图片字节数 */
+  size: number
+}
+
+/** 图片上传错误响应（无 ok 键，与 ApiFail 形状不同，不可套用）。 */
+export interface ImageUploadError {
+  /** 错误描述 */
+  error: string
+}
+
+/** 通用成功响应（ok 恒 True）。 */
+export interface ApiOk {
+  /** 恒为 true */
+  ok: true
+  /** 附加数据（更新后的配置等），可缺省 */
+  data?: object
+}
+
+/** 通用失败响应（ok 恒 False + error 描述）。 */
+export interface ApiFail {
+  /** 恒为 false */
+  ok: false
+  /** 错误描述 */
+  error: string
+}
+
+/** Provider 连通/可用测试结果（usable 与 connectivity 两 level 形状并集）。
+
+    error/detail 均可缺省：usable 只带 detail、connectivity 只带 error（error 仅失败带）——
+    若某字段建模为必填，另一 level 响应构造会校验失败；反之缺省省略保证 wire 不丢键。
+    latency_ms 亦缺省：超时/异常响应只带 {ok: False, error}，不带耗时。 */
+export interface ProviderTestResult {
+  /** 测试是否通过 */
+  ok: boolean
+  /** 耗时毫秒，可缺省 */
+  latency_ms?: number
+  /** 失败原因，可缺省 */
+  error?: string
+  /** 成功详情（识别文本/音频字节数等），可缺省 */
+  detail?: string
+}
+
+/** 归档消息中的纯文本 part（_archive_to_client 从 text part 提取）。 */
+export interface ArchivePart {
+  /** 文本内容 */
+  content: string
+}
+
+/** 归档消息契约视图（wire 形状自建，不引 core.schema.Message）。
+
+    发送点把 core.schema.Message 经 _archive_to_client 转成客户端 dict 后构造本模型：
+    block_index → content_type 归一化（对齐 session 回放 wire 命名）。
+    除前端消费字段（role/parts/content/content_type/inner_voice/tool_calls/token_usage）外，
+    保留 _id/message_id/timestamp/session_id/metadata 及 tool 消息字段——wire 字节等价，不丢键。 */
+export interface Message {
+  /** 消息角色（user/assistant/tool） */
+  role: string
+  /** 纯文本 parts 列表 */
+  parts: ArchivePart[]
+  /** 原始内容（parts dict 列表或纯文本） */
+  content: unknown
+  /** 内容类型 → 序号映射，可缺省 */
+  content_type?: Record<string, number[]>
+  /** 内心独白，可缺省 */
+  inner_voice?: string
+  /** 工具调用列表，可缺省 */
+  tool_calls?: Record<string, unknown>[]
+  /** token 统计，可缺省 */
+  token_usage?: Record<string, unknown>
+  /** 消息 ID */
+  message_id: string
+  /** ISO 时间戳 */
+  timestamp: string
+  /** 会话 ID */
+  session_id: string
+  /** 元数据（_mongo_id 已弹出） */
+  metadata: Record<string, unknown>
+  /** Mongo 归档 ID，可缺省（wire 键为 _id，Python 字段名不能以下划线开头） */
+  _id?: string
+  /** 工具调用 ID（tool 角色），可缺省 */
+  tool_call_id?: string
+  /** 工具名（tool 角色），可缺省 */
+  tool_name?: string
+  /** 工具是否成功，可缺省 */
+  success?: boolean
+  /** 工具错误信息，可缺省 */
+  error?: string
+  /** 工具错误类型，可缺省 */
+  error_type?: string
+  /** 工具耗时毫秒，可缺省 */
+  duration_ms?: number
+  /** 内容是否截断，可缺省 */
+  truncated?: boolean
+}
+
+/** 消息归档分页响应。 */
+export interface MessagesResponse {
+  /** 消息列表 */
+  messages: Message[]
+  /** 是否还有更多 */
+  has_more: boolean
+  /** 总消息数 */
+  total: number
+  /** 错误信息，可缺省 */
+  error?: string
+}
+
 export type ServerMessage =
   | SessionMessage
   | CapabilitiesMessage

@@ -4,7 +4,10 @@ export * from './contract.generated'
 // ContentPart 别名需要引用生成文件内的 TextPart/ImagePart（export * 不绑定本地名）
 import type { TextPart, ImagePart } from './contract.generated'
 
-// ---- 纯前端辅助类型（非 WS 契约，保留） ----
+// ---- 纯前端辅助类型（非契约生成，保留） ----
+// CustomProvider / UnconfiguredEntry / ProvidersResponse / ImageUploadResponse 等
+// REST 契约类型已由 frontend_contract/rest.py 建模 → contract.generated.ts（上方 export *），
+// 不再手写声明，避免与生成文件重复声明（vue-tsc Duplicate identifier）。
 
 /** 内容块联合别名——生成文件内联 `TextPart | ImagePart`，此处补别名供前端消费 */
 export type ContentPart = TextPart | ImagePart
@@ -19,33 +22,4 @@ export interface PluginInfo {
     filesystem_allowed?: boolean
   }
   capabilities?: string[]
-}
-
-export interface CustomProvider {
-  name: string
-  base_url: string
-  api_key_env?: string
-  models?: string[]
-  service?: string
-}
-
-export interface UnconfiguredEntry {
-  name: string
-  env_vars: string[]
-}
-
-export interface ProvidersResponse {
-  llm: Record<string, { models: string[] }>
-  stt: Record<string, { models: string[] }>
-  tts: Record<string, { models: string[] }>
-  custom?: {
-    llm?: CustomProvider[]
-    stt?: CustomProvider[]
-    tts?: CustomProvider[]
-  }
-  unconfigured?: {
-    llm?: UnconfiguredEntry[]
-    stt?: UnconfiguredEntry[]
-    tts?: UnconfiguredEntry[]
-  }
 }

@@ -9,7 +9,7 @@ _UNION_ORIGINS = (Union, types.UnionType)
 
 from pydantic import BaseModel
 
-from frontend_contract.base import ContractModel, field_is_ts_null
+from frontend_contract.base import ContractModel, field_is_ts_null, wire_key
 
 
 def _literal(v) -> str:
@@ -62,7 +62,11 @@ def _is_optional(annotation) -> bool:
 
 
 def _field_ts(name, field) -> str:
-    """字段 → TS 行。?/| null 在此集中决定（ts_null → | null；Optional 非 ts_null → ?）。"""
+    """字段 → TS 行。?/| null 在此集中决定（ts_null → | null；Optional 非 ts_null → ?）。
+
+    键名用 wire_key（serialization_alias 优先）——与 wire_dict by_alias 一致，保证
+    TS 类型与 wire 键对齐（如归档消息 _id 建模为 mongo_id + serialization_alias）。
+    """
     # field_is_ts_null：兼容 pydantic 2.11（Annotated 被剥、marker 移入 field.metadata）
     is_null = field_is_ts_null(field)
     optional = _is_optional(field.annotation) and not is_null
@@ -70,7 +74,7 @@ def _field_ts(name, field) -> str:
     t = f"{base} | null" if is_null else base
     q = "?" if optional else ""
     doc = field.description or ""
-    line = f"  {name}{q}: {t}"
+    line = f"  {wire_key(field, name)}{q}: {t}"
     return f"  /** {doc} */\n{line}" if doc else line
 
 

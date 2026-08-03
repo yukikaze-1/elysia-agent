@@ -33,31 +33,55 @@ def field_is_ts_null(field) -> bool:
     return any(getattr(m, "ts_null", False) for m in field.metadata)
 
 
+def wire_key(field, name: str) -> str:
+    """序列化键名：serialization_alias > alias > 字段名。
+
+    与 wire_dict 的 by_alias=True 一致（pydantic model_dump 递归用 serialization_alias
+    优先）。FieldInfo 不存字段名（name 是 model_fields 的 dict 键），故调用方传入。
+    需 wire 键带下划线等非法 Python 字段名时（如归档消息 _id），用
+    `Field(validation_alias="_id", serialization_alias="_id")` 建模，保证 wire 键不丢、
+    TS 生成器同样按此键名发射。
+    """
+    return field.serialization_alias or field.alias or name
+
+
 class ContractModel(BaseModel):
     """契约模型基类：wire_dict() 统一序列化。
 
     - exclude_none=True：可缺省字段（None）缺省省略
+    - by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
     - ts_null 标记字段：None 时补显式 null
     - 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict
     """
 
     def wire_dict(self) -> dict[str, Any]:
-        data = self.model_dump(mode="json", exclude_none=True)
+        data = self.model_dump(mode="json", exclude_none=True, by_alias=True)
         # type(self).model_fields：pydantic 2.11 起实例级访问已弃用，类级访问行为等价
         for name, field in type(self).model_fields.items():
             if field_is_ts_null(field) and getattr(self, name) is None:
-                data[name] = None
+                data[wire_key(field, name)] = None
         # 嵌套递归：ContractModel / dict[str, ContractModel] / list[ContractModel]
         for name, value in self.__dict__.items():
+            field = type(self).model_fields.get(name)
+            key = wire_key(field, name) if field is not None else name
             if isinstance(value, ContractModel):
-                data[name] = value.wire_dict()
+                data[key] = value.wire_dict()
             elif isinstance(value, dict):
-                data[name] = {
-                    k: v.wire_dict() if isinstance(v, ContractModel) else v
-                    for k, v in value.items()
-                }
+                # dict[str, ContractModel] / dict[str, list[ContractModel]] 递归
+                nested: dict[str, Any] = {}
+                for k, v in value.items():
+                    if isinstance(v, ContractModel):
+                        nested[k] = v.wire_dict()
+                    elif isinstance(v, list):
+                        nested[k] = [
+                            x.wire_dict() if isinstance(x, ContractModel) else x
+                            for x in v
+                        ]
+                    else:
+                        nested[k] = v
+                data[key] = nested
             elif isinstance(value, list):
-                data[name] = [
+                data[key] = [
                     v.wire_dict() if isinstance(v, ContractModel) else v
                     for v in value
                 ]

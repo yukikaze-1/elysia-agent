@@ -4,6 +4,20 @@
 后端发送点构造模型获得运行时校验；前端 TS 由生成器产出（// DO NOT EDIT 只读快照）。
 """
 from frontend_contract.base import ContractModel, TsNull, is_ts_null
+from frontend_contract.rest import (  # noqa: F401
+    ApiFail,
+    ApiOk,
+    ArchivePart,
+    CustomProvider,
+    ImageUploadError,
+    ImageUploadResponse,
+    Message,
+    MessagesResponse,
+    ProviderEntry,
+    ProvidersResponse,
+    ProviderTestResult,
+    UnconfiguredEntry,
+)
 from frontend_contract.ws_message import (  # noqa: F401
     ActionMessage,
     AudioEndMessage,
@@ -88,4 +102,17 @@ __all__ = [
     "SetServiceMessage",
     "ToolApprovalMessage",
     "WakeToggleMessage",
+    # 业务 REST 契约（rest.py）
+    "ProviderEntry",
+    "ProvidersResponse",
+    "CustomProvider",
+    "UnconfiguredEntry",
+    "ImageUploadResponse",
+    "ImageUploadError",
+    "ApiOk",
+    "ApiFail",
+    "ProviderTestResult",
+    "ArchivePart",
+    "Message",
+    "MessagesResponse",
 ]

@@ -10,6 +10,7 @@ from aiohttp.multipart import BodyPartReader
 from typing import cast
 
 from core.schema.message import Message
+from frontend_contract import rest as rest_contract
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,24 @@ def _archive_to_client(msgs: list[Message]) -> list[dict]:
             entry["parts"] = [{"content": ""}]
         result.append(entry)
     return result
+
+
+def _archive_msg_to_contract(d: dict) -> rest_contract.Message | None:
+    """客户端归档消息 dict → 契约 Message 视图（block_index → content_type 归一化）。
+
+    保留 _archive_to_client 的全部输出键（parts/_id/timestamp 等，前端分页游标与渲染依赖），
+    仅重命名 block_index 键对齐 session 回放 wire（SessionMessageItem.content_type）。
+    单条校验失败返回 None（调用方丢弃该条并告警，避免整页归档加载失败——与 Task 3 M2
+    逐条契约化兜底同一策略）。
+    """
+    wire = dict(d)
+    if "block_index" in wire:
+        wire["content_type"] = wire.pop("block_index")
+    try:
+        return rest_contract.Message.model_validate(wire)
+    except Exception:
+        logger.warning("Failed to contract-validate archive message: %s", d.get("message_id", "?"))
+        return None
 
 
 async def _run_usable_test(backend, service: str, request: web.Request, body: dict) -> dict:
@@ -107,7 +126,9 @@ def register_api_routes(app: web.Application) -> None:
         """返回过滤后的 provider 列表（providers.yaml 单一来源 + env 过滤 + custom）。"""
         from core.input.custom_providers import load as load_custom
         from core.input.provider_registry import build_providers_response
-        return web.json_response(build_providers_response(load_custom()))
+        return web.json_response(
+            rest_contract.ProvidersResponse.model_validate(
+                build_providers_response(load_custom())).wire_dict())
 
     async def providers_save_handler(request: web.Request) -> web.Response:
         """保存一个新的自定义 provider。
@@ -124,16 +145,16 @@ def register_api_routes(app: web.Application) -> None:
             service = body.get("service", "")
             entry = body.get("entry", {})
         except Exception:
-            return web.json_response({"ok": False, "error": "无效的请求体"}, status=400)
+            return web.json_response(rest_contract.ApiFail(error="无效的请求体").wire_dict(), status=400)
         if service not in ("llm", "stt", "tts"):
-            return web.json_response({"ok": False, "error": f"未知 service: {service}"}, status=400)
+            return web.json_response(rest_contract.ApiFail(error=f"未知 service: {service}").wire_dict(), status=400)
         if not entry.get("name") or not entry.get("base_url"):
-            return web.json_response({"ok": False, "error": "缺少 name 或 base_url"}, status=400)
+            return web.json_response(rest_contract.ApiFail(error="缺少 name 或 base_url").wire_dict(), status=400)
         try:
             data = add_provider(service, entry)
-            return web.json_response({"ok": True, "data": data})
+            return web.json_response(rest_contract.ApiOk(data=data).wire_dict())
         except Exception as e:
-            return web.json_response({"ok": False, "error": str(e)}, status=500)
+            return web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict(), status=500)
 
     async def providers_delete_handler(request: web.Request) -> web.Response:
         """删除一个自定义 provider。
@@ -148,12 +169,12 @@ def register_api_routes(app: web.Application) -> None:
         service = request.match_info.get("service", "")
         name = request.match_info.get("name", "")
         if service not in ("llm", "stt", "tts"):
-            return web.json_response({"ok": False, "error": f"未知 service: {service}"}, status=400)
+            return web.json_response(rest_contract.ApiFail(error=f"未知 service: {service}").wire_dict(), status=400)
         try:
             data = remove_provider(service, name)
-            return web.json_response({"ok": True, "data": data})
+            return web.json_response(rest_contract.ApiOk(data=data).wire_dict())
         except Exception as e:
-            return web.json_response({"ok": False, "error": str(e)}, status=500)
+            return web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict(), status=500)
 
     async def providers_test_handler(request: web.Request) -> web.Response:
         """测试 provider 连通性（level=connectivity）或可使用性（level=usable）。
@@ -166,11 +187,11 @@ def register_api_routes(app: web.Application) -> None:
         try:
             body = await request.json()
         except Exception:
-            return web.json_response({"ok": False, "error": "无效的请求体"}, status=400)
+            return web.json_response(rest_contract.ApiFail(error="无效的请求体").wire_dict(), status=400)
 
         service = body.get("service", "")
         if service not in ("llm", "stt", "tts"):
-            return web.json_response({"ok": False, "error": f"未知 service: {service}"}, status=400)
+            return web.json_response(rest_contract.ApiFail(error=f"未知 service: {service}").wire_dict(), status=400)
 
         level = body.get("level", "connectivity")
         provider = body.get("provider", "")
@@ -182,7 +203,7 @@ def register_api_routes(app: web.Application) -> None:
         if not provider and not model:
             agent = request.app.get("agent")
             if agent is None:
-                return web.json_response({"ok": False, "error": "agent 未注入"}, status=500)
+                return web.json_response(rest_contract.ApiFail(error="agent 未注入").wire_dict(), status=500)
             if service == "llm":
                 model_id = agent.llm.model
             elif service == "tts":
@@ -194,7 +215,7 @@ def register_api_routes(app: web.Application) -> None:
             try:
                 provider, model = model_id.split("/", 1)
             except ValueError:
-                return web.json_response({"ok": False, "error": f"当前模型格式无效: {model_id}"})
+                return web.json_response(rest_contract.ApiFail(error=f"当前模型格式无效: {model_id}").wire_dict())
         elif not provider:
             provider = "custom"
 
@@ -223,18 +244,18 @@ def register_api_routes(app: web.Application) -> None:
                 from Module.tts import TTSFactory
                 backend = TTSFactory.create(f"{provider}/{model}", **create_kwargs)
         except Exception as e:
-            return web.json_response({"ok": False, "error": str(e)})
+            return web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict())
 
         try:
             if level == "usable":
                 result = await _run_usable_test(backend, service, request, body)
             else:
                 result = await asyncio.wait_for(backend.test(), timeout=5.0)
-            return web.json_response(result)
+            return web.json_response(rest_contract.ProviderTestResult(**result).wire_dict())
         except asyncio.TimeoutError:
-            return web.json_response({"ok": False, "error": "测试超时"})
+            return web.json_response(rest_contract.ProviderTestResult(ok=False, error="测试超时").wire_dict())
         except Exception as e:
-            return web.json_response({"ok": False, "error": str(e)})
+            return web.json_response(rest_contract.ProviderTestResult(ok=False, error=str(e)).wire_dict())
         finally:
             try:
                 await backend.close()
@@ -274,7 +295,8 @@ def register_api_routes(app: web.Application) -> None:
             reader = await request.multipart()
             field = await reader.next()
             if field is None:
-                return web.json_response({"error": "未找到图片字段"}, status=400)
+                return web.json_response(
+                    rest_contract.ImageUploadError(error="未找到图片字段").wire_dict(), status=400)
 
             # read_chunk() 逐块读取以限制内存——aiohttp 3.x 的 BodyPartReader.read()
             # 不接受位置 size 参数（仅关键字 decode），整块 read() 会把超大 body
@@ -285,7 +307,10 @@ def register_api_routes(app: web.Application) -> None:
             while not field.at_eof():
                 data.extend(await field.read_chunk(max_bytes + 1))
                 if len(data) > max_bytes:
-                    return web.json_response({"error": f"图片过大，上限 {max_bytes // 1024 // 1024}MB"}, status=413)
+                    return web.json_response(
+                        rest_contract.ImageUploadError(
+                            error=f"图片过大，上限 {max_bytes // 1024 // 1024}MB").wire_dict(),
+                        status=413)
 
             filename = getattr(field, "filename", "") or "image.png"
             ext = _os.path.splitext(filename)[1].lower()
@@ -294,7 +319,9 @@ def register_api_routes(app: web.Application) -> None:
             mime = ext_to_mime.get(ext, "image/png")
 
             if mime not in allowed:
-                return web.json_response({"error": f"不支持的图片类型: {mime}"}, status=415)
+                return web.json_response(
+                    rest_contract.ImageUploadError(error=f"不支持的图片类型: {mime}").wire_dict(),
+                    status=415)
 
             _os.makedirs(str(_IMAGES_DIR), exist_ok=True)
             saved_name = f"{_uuid.uuid4().hex[:12]}{ext}"
@@ -302,9 +329,10 @@ def register_api_routes(app: web.Application) -> None:
             saved_path.write_bytes(data)
 
             url = f"/uploads/images/{saved_name}"
-            return web.json_response({"url": url, "mime": mime, "size": len(data)})
+            return web.json_response(
+                rest_contract.ImageUploadResponse(url=url, mime=mime, size=len(data)).wire_dict())
         except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
+            return web.json_response(rest_contract.ImageUploadError(error=str(e)).wire_dict(), status=500)
 
     app.router.add_post("/api/images", image_upload_handler)
 
@@ -326,13 +354,13 @@ def register_api_routes(app: web.Application) -> None:
             user_name = body.get("user_name", agent.user_name)
             text = body.get("text", "")
         except Exception:
-            return web.json_response({"ok": False, "error": "无效的 JSON 请求体"}, status=400)
+            return web.json_response(rest_contract.ApiFail(error="无效的 JSON 请求体").wire_dict(), status=400)
 
         if not content and not text:
-            return web.json_response({"ok": False, "error": "缺少 content 或 text"}, status=400)
+            return web.json_response(rest_contract.ApiFail(error="缺少 content 或 text").wire_dict(), status=400)
 
         await agent.process_message(text=text, user_name=user_name, content=content)
-        return web.json_response({"ok": True})
+        return web.json_response(rest_contract.ApiOk().wire_dict())
 
     app.router.add_post("/api/chat", chat_api_handler)
 
@@ -361,15 +389,16 @@ def register_api_routes(app: web.Application) -> None:
             messages, has_more = await repo.query(before=before, limit=limit)
             total = await repo.count()
             client_msgs = _archive_to_client(messages)
-            return web.json_response({
-                "messages": client_msgs,
-                "has_more": has_more,
-                "total": total,
-            })
+            # 逐条转契约视图，单条失败丢弃（_archive_msg_to_contract 返回 None），避免整页加载失败
+            contract_msgs = [m for m in (_archive_msg_to_contract(d) for d in client_msgs) if m]
+            resp = rest_contract.MessagesResponse(
+                messages=contract_msgs, has_more=has_more, total=total)
+            return web.json_response(resp.wire_dict())
         except Exception as e:
             logger.warning("Failed to query message archive: %s", e)
             return web.json_response(
-                {"messages": [], "has_more": False, "total": 0, "error": str(e)},
+                rest_contract.MessagesResponse(
+                    messages=[], has_more=False, total=0, error=str(e)).wire_dict(),
                 status=500,
             )
 

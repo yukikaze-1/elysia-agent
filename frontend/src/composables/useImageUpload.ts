@@ -1,4 +1,5 @@
 import { useChatStore } from '@/stores/chatStore'
+import type { ImageUploadError, ImageUploadResponse } from '@/types/protocol'
 
 /**
  * 共享图片上传 + 拖拽处理逻辑。
@@ -19,12 +20,12 @@ export function useImageUpload(dropTarget?: () => HTMLElement | null) {
     try {
       const resp = await fetch('/api/images', { method: 'POST', body: form })
       if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}))
+        const err = await resp.json().catch(() => ({ error: '' })) as ImageUploadError
         chat.addStatusMessage('图片上传失败: ' + (err.error || resp.status))
         return
       }
-      const { url, mime } = await resp.json()
-      chat.previewImages.push({ url, mime })
+      const data: ImageUploadResponse = await resp.json()
+      chat.previewImages.push({ url: data.url, mime: data.mime })
     } catch (e) {
       chat.addStatusMessage('图片上传失败: ' + (e as Error).message)
     }

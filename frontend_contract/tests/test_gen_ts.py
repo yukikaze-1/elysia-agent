@@ -2,7 +2,7 @@
 from typing import Annotated, Any, Literal, Optional, Union
 
 import pytest
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from frontend_contract.base import ContractModel, TsNull
 from frontend_contract.gen_ts import generate_ts
@@ -60,6 +60,26 @@ class ContentMessage(ContractModel):
     type: Literal["text"] = "text"
     content: str | list[ContentPart]        # 含 Annotated 成员 → pydantic 不归一化，origin 是 types.UnionType
     lazy: str | None = None                 # 可缺省 PEP 604 → lazy?: string
+
+
+class ArchiveMessage(ContractModel):
+    """alias 键发射测试（Message.mongo_id 场景：wire 键 _id 不能作 Python 字段名）。"""
+    model_config = ConfigDict(populate_by_name=True)
+    role: str = Field(description="消息角色")
+    mongo_id: Optional[str] = Field(
+        default=None, validation_alias="_id", serialization_alias="_id",
+        description="Mongo 归档 ID，可缺省")
+
+
+@pytest.mark.unit
+def test_emit_serialization_alias_key():
+    """serialization_alias 优先作为 TS 键名（_id 场景），字段名不泄漏。"""
+    out = generate_ts([ArchiveMessage])
+    assert "_id?: string" in out
+    assert "mongo_id:" not in out  # 字段名不泄漏（docstring 文本允许出现）
+    # wire_dict 同样按 alias 发射
+    d = ArchiveMessage(role="user", mongo_id="m1").wire_dict()
+    assert d == {"role": "user", "_id": "m1"}
 
 
 @pytest.mark.unit

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useAbortController } from '@/composables/useAbortController'
-import type { ProvidersResponse, UnconfiguredEntry } from '@/types/protocol'
+import type { CustomProvider, ProvidersResponse, UnconfiguredEntry } from '@/types/protocol'
 
 const props = defineProps<{
   service: 'llm' | 'stt' | 'tts'
@@ -16,13 +16,6 @@ const emit = defineEmits<{
   switch: [modelId: string]
   'open-config': []
 }>()
-
-interface CustomEntry {
-  name: string
-  base_url: string
-  api_key_env?: string
-  models?: string[]
-}
 
 const options = ref<{ value: string; label: string }[]>([])
 const loading = ref(false)
@@ -41,7 +34,7 @@ async function loadProviders() {
     const data: ProvidersResponse = await res.json()
 
     const registry = data[props.service] as Record<string, { models: string[] }>
-    const customEntries = (data.custom?.[props.service] as CustomEntry[] | undefined) ?? []
+    const customEntries: CustomProvider[] = data.custom[props.service] ?? []
 
     const opts: { value: string; label: string }[] = []
 
@@ -59,7 +52,7 @@ async function loadProviders() {
     }
 
     options.value = opts
-    unconfigured.value = data.unconfigured?.[props.service] ?? []
+    unconfigured.value = data.unconfigured[props.service] ?? []
   } catch (e) {
     if ((e as Error).name === 'AbortError') return
     console.warn('加载 provider 列表失败', e)
