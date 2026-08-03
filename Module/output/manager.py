@@ -473,6 +473,21 @@ class OutputManager:
             channels=v2,
         )
 
+    async def turn_cancelled(self, ctx, *, channels: list[OutputChannel] | None = None) -> None:
+        """取消（用户打断）：v2 发 generation.failed{CANCELLED}；v1 不发——
+        现状打断无 ❌ delta（state interrupted 由 FSM 承担），保持 v1 兼容。
+
+        Args:
+            ctx: GenerationContext。
+        """
+        _v1, v2 = self._split_versions(channels)
+        await self._broadcast(
+            "on_generation_failed",
+            generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
+            code="GENERATION_CANCELLED", message="已取消", retryable=False,
+            channels=v2,
+        )
+
     async def close(self) -> None:
         """关闭所有通道。"""
         tasks = [c.close() for c in self._channels]

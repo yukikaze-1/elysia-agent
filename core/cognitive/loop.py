@@ -201,6 +201,8 @@ class CognitiveLoop(CognitiveTools):
         # 批次 2：当前回合 GenerationContext（process() 创建，_dispatch_stream_event/
         # _finalize_turn/错误路径使用）；无活动回合为 None
         self._generation_ctx: GenerationContext | None = None
+        # 批次 2：本回合是否已发 generation.failed（终态唯一守卫——错误路径已发则打断不重发 CANCELLED）
+        self._turn_failed_emitted: bool = False
         self._response_recorder: ResponseRecorder | None = None  # 由 configure() 注入
         self._ttft_start: float = 0.0
         self._mood_applied: bool = False
@@ -353,6 +355,7 @@ class CognitiveLoop(CognitiveTools):
                 user_message_id=message_id or "",
                 assistant_message_id=new_message_id(),
             )
+            self._turn_failed_emitted = False
 
             self._current_task = asyncio.current_task()
             try:
@@ -394,6 +397,7 @@ class CognitiveLoop(CognitiveTools):
                     try:
                         await self._output.turn_failed(
                             code, err_msg, retryable, label, self._generation_ctx)
+                        self._turn_failed_emitted = True  # 终态唯一：打断不重发 CANCELLED
                     except Exception:
                         logger.debug("turn_failed 发射失败", exc_info=True)
                 await self._handle_interrupt()
@@ -1147,6 +1151,14 @@ class CognitiveLoop(CognitiveTools):
         """Clean up after interruption — cancel TTS tasks, return to IDLE."""
         if self.status.is_completely_idle:
             return
+        # 批次 2：活动 generation 且未被错误路径覆盖 → v2 发 generation.failed{CANCELLED}
+        # （终态唯一：错误路径已发 failed 则不重发；v1 不发，保持现状打断无 ❌）
+        if self._generation_ctx is not None and not self._turn_failed_emitted:
+            try:
+                await self._output.turn_cancelled(self._generation_ctx)
+                self._turn_failed_emitted = True
+            except Exception:
+                logger.debug("turn_cancelled 发射失败", exc_info=True)
         self._executing_tools.clear()
         self._tts_mgr.cancel_all()
         await self._output.typing(False)

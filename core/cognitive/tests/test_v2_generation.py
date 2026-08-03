@@ -214,3 +214,98 @@ class TestV2GenerationSequence:
             assert any("❌" in d for d in v1_deltas)
         finally:
             await agent.stop()
+
+
+class _SlowLLM(_UsageLLM):
+    """慢速 fake：token 间 sleep，供打断测试。"""
+
+    def __init__(self, response: str = _TAGGED, token_delay: float = 0.1):
+        import asyncio
+        self._asyncio = asyncio
+        super().__init__(response=response)
+        self._token_delay = token_delay
+
+    async def stream_think(self, messages, **kwargs):
+        for tok in self._tok.findall(self.response):
+            await self._asyncio.sleep(self._token_delay)
+            yield {"content": tok, "tool_calls": None}
+        yield {"content": None, "tool_calls": None, "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2, "cached_tokens": 0, "reasoning_tokens": 0}}
+
+
+@pytest.mark.service
+class TestV2Cancellation:
+    @pytest.mark.asyncio
+    async def test_v2_interrupt_emits_generation_cancelled(self, aiohttp_client, _fresh_idempotency):
+        """v2 生成中 interrupt → generation.failed{CANCELLED}，无 ❌ delta。"""
+        import time as _time
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_SlowLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            async with client.session.ws_connect(
+                client.make_url("/ws"), headers={"X-Protocol-Version": "2"},
+            ) as ws:
+                for _ in range(5):
+                    try:
+                        m = await asyncio.wait_for(ws.receive(), timeout=5)
+                        if m.type == WSMsgType.TEXT and json.loads(m.data).get("type") in ("capabilities", "server_info"):
+                            break
+                    except asyncio.TimeoutError:
+                        break
+                await ws.send_json({"type": "text", "content": "慢速生成", "clientRequestId": f"req_c_{_time.monotonic_ns()}"})
+                await asyncio.sleep(0.6)  # 让生成开始
+                await ws.send_json({"type": "interrupt"})
+                got_failed = False
+                for _ in range(20):
+                    m = await asyncio.wait_for(ws.receive(), timeout=10)
+                    if m.type != WSMsgType.TEXT:
+                        continue
+                    d = json.loads(m.data)
+                    if d.get("type") == "generation.failed":
+                        assert d["code"] == "GENERATION_CANCELLED"
+                        got_failed = True
+                        break
+                assert got_failed, "未收到 generation.failed{CANCELLED}"
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_error_path_single_terminal(self, aiohttp_client, _fresh_idempotency):
+        """错误路径已发 failed → interrupt 不重复发 CANCELLED（终态唯一）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM(fault="http_503"))
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            async with client.session.ws_connect(
+                client.make_url("/ws"), headers={"X-Protocol-Version": "2"},
+            ) as ws:
+                for _ in range(5):
+                    try:
+                        m = await asyncio.wait_for(ws.receive(), timeout=5)
+                        if m.type == WSMsgType.TEXT and json.loads(m.data).get("type") in ("capabilities", "server_info"):
+                            break
+                    except asyncio.TimeoutError:
+                        break
+                await ws.send_json({"type": "text", "content": "hi", "clientRequestId": "req_err_term"})
+                failed_codes = []
+                for _ in range(20):
+                    m = await asyncio.wait_for(ws.receive(), timeout=10)
+                    if m.type != WSMsgType.TEXT:
+                        continue
+                    d = json.loads(m.data)
+                    if d.get("type") == "generation.failed":
+                        failed_codes.append(d["code"])
+                    if d.get("type") == "state" and d.get("state") == "idle":
+                        break
+                assert failed_codes, "未收到 generation.failed"
+                # 终态唯一：只有一次 failed（错误路径的 code，不是 CANCELLED 双发）
+                assert failed_codes[0] in ("GENERATION_PROVIDER_UNAVAILABLE", "GENERATION_TIMEOUT")
+                assert len(failed_codes) == 1
+        finally:
+            await agent.stop()
