@@ -1,5 +1,5 @@
 """gen_ts 发射器测试：三态映射 + wire_dict 递归序列化（marker=unit）。"""
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Literal, Optional, Union
 
 import pytest
 from pydantic import Field
@@ -40,6 +40,28 @@ class ApiOk(ContractModel):
     ok: Literal[True] = True
 
 
+class TextPart(ContractModel):
+    """文本内容块。"""
+    type: Literal["text"] = "text"
+    content: str
+
+
+class ImagePart(ContractModel):
+    """图片内容块。"""
+    type: Literal["image"] = "image"
+    src: str
+
+
+ContentPart = Annotated[Union[TextPart, ImagePart], Field(discriminator="type")]
+
+
+class ContentMessage(ContractModel):
+    """PEP 604 + 联合内 list 测试（TextMessage.content 场景）。"""
+    type: Literal["text"] = "text"
+    content: str | list[ContentPart]        # 含 Annotated 成员 → pydantic 不归一化，origin 是 types.UnionType
+    lazy: str | None = None                 # 可缺省 PEP 604 → lazy?: string
+
+
 @pytest.mark.unit
 def test_emit_basic_interface():
     out = generate_ts([DeltaMessage, ServiceCapability, CapabilitiesMessage, SessionList, ApiOk])
@@ -54,6 +76,19 @@ def test_emit_basic_interface():
     assert "ok: true" in out                            # Literal[True] → true（小写，非 'True'）
     assert "import type" not in out                      # 拓扑序内联，无跨文件 import
     assert "服务能力" in out                             # docstring → JSDoc 保留中文
+
+
+@pytest.mark.unit
+def test_emit_pep604_union_and_parens():
+    """PEP 604 `X | Y`（types.UnionType）识别 + 联合内 list 加括号。
+
+    - str | list[Annotated[Union[TextPart, ImagePart]]] → string | (TextPart | ImagePart)[]
+      （TS 中 | 优先级低于 []，不括会解析成 string | TextPart | ImagePart[]）
+    - str | None（PEP 604 Optional）→ lazy?: string
+    """
+    out = generate_ts([ContentMessage, TextPart, ImagePart])
+    assert "content: string | (TextPart | ImagePart)[]" in out
+    assert "lazy?: string" in out
 
 
 @pytest.mark.unit

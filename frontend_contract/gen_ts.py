@@ -1,5 +1,11 @@
 """B2 发射器：frontend_contract BaseModel → contract.generated.ts（零第三方依赖）。"""
+import types
 from typing import Annotated, Literal, Union, get_args, get_origin
+
+# PEP 604 `X | Y`（types.UnionType）与 typing.Union 都是联合：含 Annotated 成员时
+# pydantic 不做归一化（如 TextMessage.content: str | list[Annotated[...]]），
+# 两处 origin 都要识别，否则 _ts_type 落到 __name__ 抛 AttributeError。
+_UNION_ORIGINS = (Union, types.UnionType)
 
 from pydantic import BaseModel
 
@@ -20,7 +26,7 @@ def _ts_type(annotation) -> str:
     origin = get_origin(annotation)
     if origin is Annotated:                       # 剥 Annotated
         return _ts_type(get_args(annotation)[0])
-    if origin is Union:
+    if origin in _UNION_ORIGINS:
         # 去 None 后 join 全部成员（Optional[X] → X；Optional[Union[A,B]] → A | B，
         # 不可只取第一个——否则 SessionMessageItem.content?: string | ContentPart[] 会丢类型）
         args = [a for a in get_args(annotation) if a is not type(None)]
@@ -28,7 +34,12 @@ def _ts_type(annotation) -> str:
     if origin is Literal:
         return " | ".join(_literal(v) for v in get_args(annotation))
     if origin is list:
-        return f"{_ts_type(get_args(annotation)[0])}[]"
+        inner = _ts_type(get_args(annotation)[0])
+        # 联合内层必须加括号：TS 中 | 优先级低于 []，(A | B)[] 才表示「元素为 A 或 B 的数组」，
+        # 否则 `A | B[]` 被解析为「单个 A 或全 B 数组」（如 content?: string | TextPart | ImagePart[]）
+        if "|" in inner:
+            inner = f"({inner})"
+        return f"{inner}[]"
     if origin is dict:
         return f"Record<string, {_ts_type(get_args(annotation)[1])}>"
     if annotation is str:
@@ -43,7 +54,7 @@ def _ts_type(annotation) -> str:
 def _is_optional(annotation) -> bool:
     """必填判定：Python 类型是否 Optional（非看 schema required）。"""
     origin = get_origin(annotation)
-    return origin is Union and type(None) in get_args(annotation)
+    return origin in _UNION_ORIGINS and type(None) in get_args(annotation)
 
 
 def _field_ts(name, field) -> str:
@@ -68,7 +79,7 @@ def _referenced_models(annotation, known: set[str]) -> list[type[BaseModel]]:
     origin = get_origin(annotation)
     if origin is Annotated:
         return _referenced_models(get_args(annotation)[0], known)
-    if origin in (list, dict, Union):
+    if origin in (list, dict, *_UNION_ORIGINS):
         result: list[type[BaseModel]] = []
         for a in get_args(annotation):
             result += _referenced_models(a, known)
