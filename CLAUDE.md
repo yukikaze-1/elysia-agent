@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-Elysia/Agent is a Python 3.11+ AI companion application. The codebase has two main layers:
+Elysia/Agent is a Python 3.11+ AI companion application. The codebase has three top-level packages:
 
 - **`Module/`** — backend-agnostic library for AI companion infrastructure: LLM, STT, TTS, embedding, vector/document databases, output channels, config, logging, system prompt engine, tool framework.
 - **`core/`** — the Elysia Agent application: `Agent`, `CognitiveLoop`, `CharacterEngine`, `CharacterReflector`, `MemoryConsolidator`, `MemoryReflector`, `SessionMemory`, `LongTermMemory`, `IdleMonitor`, task scheduler, debug info, character config.
+- **`frontend_contract/`** — 前后端契约单源（唯一类型来源 + 生成器 + 门禁）：可执行 Pydantic 契约模型（WS/REST/Debug）→ `gen_ts` 发射器 → `frontend/src/types/contract.generated.ts`（TS 只读快照）。后端发送点构造契约模型，`make check-types` 做漂移门禁。零依赖（仅 pydantic + stdlib）。
 
 Plain Python（无 `pyproject.toml` 等构建系统）。前端 Vue 3 + Vite + TypeScript（无框架 → Vite 构建步骤）。`Makefile` 提供常用任务入口。
 
@@ -30,7 +31,7 @@ make test-full
 
 # 导入风格门禁（禁相对导入，秒级）
 make lint
-# 或: ruff check core/ Module/ --exclude __pycache__
+# 或: ruff check core/ Module/ frontend_contract/ --exclude __pycache__
 ```
 
 ### 按模块运行
@@ -72,6 +73,7 @@ python -m pytest Module/logger/tests/ -v
 python -m pytest Module/database/vectordb/tests/ -v
 python -m pytest Module/database/documentdb/tests/ -v
 python -m pytest Module/tool/tests/ -v
+python -m pytest frontend_contract/tests/ -v
 ```
 
 ### pytest markers
@@ -171,6 +173,23 @@ core/
 └── tools/                 # Tool plugins (filesystem, web, memory, time, reminder, etc.)
 ```
 
+### frontend_contract/ layer (契约层)
+
+```
+frontend_contract/
+├── base.py                 # ContractModel 基类 + TsNull marker + wire_key + wire_dict 序列化
+├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（18 具名成员）+ 6 条 Client→Server + 支持类型
+├── rest.py                 # REST 业务契约：providers / images / messages / api 响应（12 模型）
+├── debug.py                # Debug API 契约：/debug/api 响应（DebugData 16 面板等 38 模型）
+├── gen_ts.py               # TS 发射器：BaseModel → contract.generated.ts（拓扑排序 + 同名安全网）
+├── __main__.py             # python -m frontend_contract：动态收集子模块 → 生成 / --check 漂移检测
+└── tests/                  # 契约建模测试（marker=unit，无 I/O）
+```
+
+前后端契约唯一类型来源：可执行 Pydantic 模型 → `gen_ts` 生成 `frontend/src/types/contract.generated.ts`
+（TS 只读快照）。后端发送点构造契约模型 + `wire_dict()` 序列化；`make gen-types` 重新生成、
+`make check-types` 漂移门禁（CI 强制）。零依赖（仅 pydantic + stdlib），不 import core/ Module/。
+
 ### Character config (`character/`)
 
 ```
@@ -216,6 +235,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.system_prompt` | System prompt engine | 12-section orchestration + templates |
 | `Module.workflow_engine` | 后台任务引擎（原 `task_system`）：ReAct 编排/规划/执行/子智能体。主类 `WorkflowEngine`；跨边类型经契约层 `Module/workflow_contract` | `orchestrator` + `planner` + `executor` + `sub_agent` |
 | `Module.workflow_contract` | 跨边契约层（core ↔ workflow_engine 唯一类型来源）：类型/枚举/协议 ABC/无状态纯函数/AgentInfra 运行时注入容器，零业务逻辑 | `schema` + `infra` + `utils` |
+| `frontend_contract` | 前后端契约单源（唯一类型来源 + 生成器 + 门禁）：可执行 Pydantic 契约模型（WS/REST/Debug）+ `gen_ts` 发射器 → `contract.generated.ts`，`make check-types` 漂移检测，零依赖（仅 pydantic + stdlib） | `base` + `ws_message` + `rest` + `debug` + `gen_ts` |
 | `core.schema` | Shared Pydantic types: EventData (discriminated union, 5 event types), ToolCall, ExtractedMemory/CompareAction (discriminated union), ReflectorActions, MemoryType, message types, mood, etc. | |
 | `Module.database.vectordb` | Vector DB (ANN search) | `milvus` |
 | `Module.database.documentdb` | Document DB | `mongodb` |

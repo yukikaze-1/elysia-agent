@@ -1088,6 +1088,15 @@ Agent/
 │   ├── tools/               #   Agent 工具集 (12 个插件)
 │   └── tests/               #   测试
 │
+├── frontend_contract/          # 前后端契约单源（零依赖，仅 pydantic + stdlib）
+│   ├── base.py                 #   ContractModel 基类 + TsNull marker + wire_dict 序列化
+│   ├── ws_message.py           #   WS 消息契约（ServerMessage 判别联合 18+6 + 支持类型）
+│   ├── rest.py                 #   REST 业务契约（providers/images/messages 等 12 模型）
+│   ├── debug.py                #   Debug API 契约（DebugData 16 面板等 38 模型）
+│   ├── gen_ts.py               #   TS 发射器：模型 → contract.generated.ts（只读快照）
+│   ├── __main__.py             #   python -m frontend_contract（生成 / --check 漂移门禁）
+│   └── tests/                  #   契约建模测试（marker=unit）
+│
 ├── character/
 │   ├── elysia/              # Elysia 角色
 │   │   ├── config.yaml       #   角色配置

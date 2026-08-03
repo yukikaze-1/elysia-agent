@@ -2,6 +2,17 @@
 
 > 供第三方前端（Web、.NET WPF、移动端等）对接 Elysia Agent 后端。
 
+> **⚠️ 契约权威变更（2026-08-03）**：前后端契约的**唯一权威来源**现为
+> [`frontend_contract/`](../frontend_contract/README.md)（可执行 Pydantic 模型，零依赖）。
+> 后端 WS/REST/Debug 发送点直接构造契约模型（`wire_dict()` 序列化）；前端 TS 类型由 `gen_ts`
+> 发射器生成 `frontend/src/types/contract.generated.ts`（只读快照，`// DO NOT EDIT`）。
+> **本文档已降级为面向第三方（.NET/WPF 等非 Vue 客户端）的参考视图**——wire 格式说明仍有效，
+> 但字段增删/类型变更以契约包为准，不再逐字段在此维护。
+>
+> **协议变更流程**：① 改 `frontend_contract/` 中的 Pydantic 模型 → ② `make gen-types`
+> 重新生成 TS → ③ 同步本文档描述（保持第三方参考与 wire 一致）。
+> `make check-types` 漂移检测保证生成快照与契约一致（CI 强制）。
+
 ## 连接信息
 
 | 项目 | 值 |

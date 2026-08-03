@@ -2,16 +2,16 @@
 
 ## 分层体系
 
-2187 个测试按 4 层 markers 组织（`pytest --collect-only` 实测，2026-08-03）：
+2214 个测试按 4 层 markers 组织（`pytest --collect-only` 实测，2026-08-03）：
 
 | 层 | marker | 标准 | 测试数 | 耗时 |
 |---|--------|------|--------|------|
-| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 1324 | ~40s |
-| 服务 | `service` | 单模块 + mock，不启动 Agent | 793 | 秒级 |
+| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 1349 | ~40s |
+| 服务 | `service` | 单模块 + mock，不启动 Agent | 795 | 秒级 |
 | 集成 | `integration` | 需真实数据库或外部 API | 35 | 不定 |
 | 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | 56 | ~15min |
 
-> 各层相加（1324+793+35+56=2208）比总数多 21：少数测试标记多 marker（如 `unit+service`），`-m` 收集时重复计入。
+> 各层相加（1349+795+35+56=2235）比总数多 21：少数测试标记多 marker（如 `unit+service`），`-m` 收集时重复计入。
 
 ## 日常命令
 
@@ -69,6 +69,7 @@ pytest core/task/tests/ -v                 # Task 调度
 pytest core/tools/ -v                      # 工具插件
 pytest Module/workflow_engine/tests/unit/ -v   # WorkflowEngine 单元
 pytest Module/workflow_engine/tests/integration/ -v  # WorkflowEngine 集成
+pytest frontend_contract/tests/ -v         # 前后端契约（建模 + TS 生成器）
 
 # 按文件运行
 pytest Module/llm/tests/ -v
@@ -192,6 +193,20 @@ pytest core/tests/test_phase3.py -v
 | | `test_session_repo.py` | 6 | unit |
 | | `test_token_repo.py` | 2 | unit |
 | `core/adapter/tests/` | `test_tool_adapter.py` | 11 | service |
+
+### frontend_contract/ 层（4 文件 / 23 测试）
+
+| 目录 | 文件 | 测试数 | 层级 |
+|------|------|--------|------|
+| `frontend_contract/tests/` | `test_ws_message.py` | 4 | unit |
+| | `test_rest.py` | 10 | unit |
+| | `test_gen_ts.py` | 7 | unit |
+| | `test_debug.py` | 2 | unit |
+
+`frontend_contract/` 为前后端契约单源包（Pydantic 模型 + TS 生成器，详见
+[frontend_contract/README.md](../frontend_contract/README.md)），测试为纯函数级（无 I/O、无 Agent）→
+marker=unit。`make gen-types` 重新生成 `frontend/src/types/contract.generated.ts`，
+`make check-types` 漂移门禁。
 
 ## Marker 标准
 

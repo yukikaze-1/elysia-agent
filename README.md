@@ -8,7 +8,7 @@
 
 > **运行环境：Linux**（Windows/Mac 用户请使用 WSL2 或虚拟机）
 
-> 最近 (2026-08-03): 服务运行时状态 + 热插拔——STT/TTS 后端模式开关（set_service）+ 模型/模式跨重启持久化（ServiceState）+ STT 槽位化热切换 + capabilities 嵌套 per-service。2026-08-02: 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）；导入风格门禁同步文档与 CI。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。当前 2187 测试。
+> 最近 (2026-08-03): 前后端契约单源化——顶层 `frontend_contract/` 包（Pydantic 唯一权威），WS/REST/Debug 契约建模 + `gen_ts.py` 发射器生成前端 TS 快照 + `make check-types` 漂移门禁。同日: 服务运行时状态 + 热插拔——STT/TTS 后端模式开关（set_service）+ 模型/模式跨重启持久化（ServiceState）+ STT 槽位化热切换 + capabilities 嵌套 per-service。2026-08-02: 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。当前 2214 测试。
 
 ---
 
@@ -232,7 +232,8 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | 文档 | 内容 |
 |------|------|
 | [docs/architecture.md](docs/architecture.md) | 完整架构详解（1000+ 行） |
-| [docs/frontend-api.md](docs/frontend-api.md) | 前端 API 文档 |
+| [frontend_contract/README.md](frontend_contract/README.md) | 前后端契约单源（可执行 Pydantic + TS 生成快照 + 漂移门禁） |
+| [docs/frontend-api.md](docs/frontend-api.md) | 前端 API 文档（面向第三方的参考视图） |
 | [CLAUDE.md](CLAUDE.md) | AI 助手指令 + 项目地图 |
 | [character/README.md](character/README.md) | 角色配置说明 |
 | [core/prompts/README.md](core/prompts/README.md) | Prompt 模板说明 |
@@ -421,7 +422,7 @@ Agent/
 
 ## 测试
 
-2187 个测试按 4 层 markers 组织（unit 1324 / service 793 / integration 35 / slow 56，少量多 marker 重复计入）。详见 [docs/testing.md](docs/testing.md)。
+2214 个测试按 4 层 markers 组织（unit 1349 / service 795 / integration 35 / slow 56，少量多 marker 重复计入）。详见 [docs/testing.md](docs/testing.md)。
 
 ```bash
 conda activate Elysia
