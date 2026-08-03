@@ -29,13 +29,18 @@ def _collect() -> tuple[list[type[BaseModel]], dict[str, list[type[BaseModel]]]]
     for name in _SUBMODULES:
         try:
             module = importlib.import_module(f"frontend_contract.{name}")
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as e:
+            # 只跳过「子模块本身缺失」；子模块内部 import 依赖失败（e.name 是别的模块）
+            # 必须冒泡——否则 gen 模式静默截断并覆盖 contract.generated.ts，check-types 对
+            # 截断文件照样通过（review 终审发现）
+            if e.name != f"frontend_contract.{name}":
+                raise
             continue
         for obj in vars(module).values():
             # 过滤基类（ContractModel 经子模块 import 进入命名空间，不滤会生成
             # 无字段的 export interface ContractModel {} 噪音）——见 plan Step 5
             if isinstance(obj, type) and issubclass(obj, BaseModel) \
-                    and obj is not ContractModel:
+                    and obj is not ContractModel and obj is not BaseModel:
                 models.append(obj)
         # ServerMessage 判别联合别名（Annotated[Union[...], Field(discriminator="type")]）
         server = getattr(module, "ServerMessage", None)

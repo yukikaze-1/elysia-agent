@@ -18,7 +18,7 @@ def test_server_message_members():
     members = get_args(get_args(w.ServerMessage)[0])
     assert len(members) == 18  # 19 = 18 具名 + UnknownMessage（发射器追加）
     assert all(m.__name__ != "UnknownMessage" for m in members)
-    assert all(getattr(m, "__fields__", None) is not None for m in members)  # 均为 BaseModel
+    assert all(getattr(m, "model_fields", None) is not None for m in members)  # 均为 BaseModel
 
 
 @pytest.mark.unit

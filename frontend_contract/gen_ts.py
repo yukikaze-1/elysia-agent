@@ -1,5 +1,6 @@
 """B2 发射器：frontend_contract BaseModel → contract.generated.ts（零第三方依赖）。"""
 import inspect
+import json
 import types
 from typing import Any, Annotated, Literal, Union, get_args, get_origin
 
@@ -14,9 +15,15 @@ from frontend_contract.base import ContractModel, field_is_ts_null, wire_key
 
 
 def _literal(v) -> str:
-    """Literal 值 → TS 字面量。统一单引号（对齐 protocol.ts 风格，如 type: 'delta'）；bool 小写。"""
+    """Literal 值 → TS 字面量。统一单引号（对齐 protocol.ts 风格，如 type: 'delta'）；bool 小写。
+
+    字符串经 json.dumps 转义（\\\\、双引号、控制字符 → 合法 TS 转义序列）再补转义单引号：
+    json.dumps 不转义 '，须手动补 \\'——否则未来 Literal[\"it's\"] 会产出非法 TS
+    （review 终审发现）。当前 ASCII 字面量（如 'delta'）输出与旧实现字节一致。
+    """
     if isinstance(v, str):
-        return f"'{v}'"
+        escaped = json.dumps(v, ensure_ascii=False)[1:-1].replace("'", "\\'")
+        return f"'{escaped}'"
     if isinstance(v, bool):
         return "true" if v else "false"
     return str(v)
