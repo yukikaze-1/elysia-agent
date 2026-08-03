@@ -17,6 +17,7 @@ from frontend_contract import (
     ErrorMessage,
     ExpressionMessage,
     SessionMessage,
+    SessionMessageItem,
     ServiceModeResultMessage,
     SwitchModelResultMessage,
     TranscriptionMessage,
@@ -27,6 +28,24 @@ if TYPE_CHECKING:
     from core.agent import Agent
 
 logger = logging.getLogger(__name__)
+
+
+def _build_session_items(session_msgs: list[dict]) -> list[SessionMessageItem]:
+    """逐条契约化会话消息——单条失败仅丢弃该条，保留其余回放（M2 加固）。
+
+    直接 ``SessionMessage(messages=session_msgs)`` 会整批校验：任一消息无法
+    契约化（如 content 含 Text/Image 之外 part）→ 整段回放丢失（try/except
+    捕获后仅告警，客户端拿到空历史）。这里逐条 model_validate，失败只跳
+    过该条并告警。
+    """
+    items: list[SessionMessageItem] = []
+    for m in session_msgs:
+        try:
+            items.append(SessionMessageItem.model_validate(m))
+        except Exception:
+            logger.warning("会话回放丢弃无法契约化的消息: %r", m.get("role"), exc_info=True)
+            continue
+    return items
 
 
 async def handle_ws(
@@ -70,9 +89,9 @@ async def handle_ws(
             token_stats = await agent.token_tracker.get_session_stats()
         # 契约模型序列化：error/error_type 等 None 缺省省略（I1 归一化），
         # message_id/timestamp 由模型字段承载（前端去重/时间分隔需要）。
-        await ws.send_json(SessionMessage(
-            messages=session_msgs, token_stats=token_stats,
-        ).wire_dict())
+        # 逐条契约化——单条失败仅丢弃该条（M2），不整段丢失回放。
+        items = _build_session_items(session_msgs)
+        await ws.send_json(SessionMessage(messages=items, token_stats=token_stats).wire_dict())
     except Exception:
         logger.warning("Failed to send session on connect", exc_info=True)
 

@@ -29,6 +29,9 @@ class ImagePart(ContractModel):
     type: Literal["image"] = "image"
     src: str = Field(description="图片来源（URL / data URI）")
     mime: Optional[str] = Field(default=None, description="MIME 类型，可缺省")
+    detail: Optional[str] = Field(default=None, description="分辨率细节（auto/low/high），可缺省")
+    width: Optional[int] = Field(default=None, description="图片宽度 px，可缺省")
+    height: Optional[int] = Field(default=None, description="图片高度 px，可缺省")
 
 
 ContentPart = Annotated[Union[TextPart, ImagePart], Field(discriminator="type")]
@@ -45,6 +48,7 @@ class ToolCallData(ContractModel):
     """工具调用数据。"""
 
     id: str = Field(description="工具调用 ID")
+    type: Optional[Literal["function"]] = Field(default=None, description="工具调用类型（function），可缺省")
     function: ToolCallFunction = Field(description="函数名 + JSON 参数")
 
 
@@ -63,6 +67,7 @@ class TokenRound(ContractModel):
     """单轮 token 消耗统计。"""
 
     model: Optional[str] = Field(default=None, description="模型名，可缺省")
+    session_id: Optional[str] = Field(default=None, description="会话 ID，可缺省")
     input_tokens: int = Field(description="输入 token 数")
     output_tokens: int = Field(description="输出 token 数")
     total_tokens: int = Field(description="总 token 数")

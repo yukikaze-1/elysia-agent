@@ -14,6 +14,12 @@ export interface ImagePart {
   src: string
   /** MIME 类型，可缺省 */
   mime?: string
+  /** 分辨率细节（auto/low/high），可缺省 */
+  detail?: string
+  /** 图片宽度 px，可缺省 */
+  width?: number
+  /** 图片高度 px，可缺省 */
+  height?: number
 }
 
 /** 工具函数名 + 参数。 */
@@ -28,6 +34,8 @@ export interface ToolCallFunction {
 export interface ToolCallData {
   /** 工具调用 ID */
   id: string
+  /** 工具调用类型（function），可缺省 */
+  type?: 'function'
   /** 函数名 + JSON 参数 */
   function: ToolCallFunction
 }
@@ -52,6 +60,8 @@ export interface ToolCallResult {
 export interface TokenRound {
   /** 模型名，可缺省 */
   model?: string
+  /** 会话 ID，可缺省 */
+  session_id?: string
   /** 输入 token 数 */
   input_tokens: number
   /** 输出 token 数 */

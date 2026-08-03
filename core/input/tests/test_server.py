@@ -705,6 +705,81 @@ class TestWireFormatContract:
             assert frame["error"] is None  # 键恒存在，成功为 null
 
 
+# ============================================================
+# Session 回放契约（I1'） + 逐条回放兜底（M2）
+# ============================================================
+
+@pytest.mark.unit
+class TestSessionReplayContract:
+    """session 回放 wire 契约。
+
+    I1'：messages_for_client 输出经 SessionMessage.wire_dict() 往返不得丢弃
+    未建模键（tool_calls.type / token_usage.rounds.session_id / image
+    detail/width/height）。M2：单条无法契约化的消息仅丢弃该条，不整段丢失回放。
+    """
+
+    def test_roundtrip_preserves_unmodeled_keys(self):
+        """tool_calls.type / token_usage.rounds.session_id / image detail/width/height 往返不丢。"""
+        from core.memory.session import SessionMemory
+        from core.schema.message import AssistantMessage
+        from core.schema.part import ImagePart, TextPart
+        from core.schema.token import TokenUsage, TokenUsageSummary
+        from core.schema.tool import ToolCall, ToolCallFunction
+        from core.schema.types import MessageId
+        from frontend_contract import SessionMessage
+
+        s = SessionMemory()
+        s.add_message(AssistantMessage(
+            content=[
+                TextPart(content="hi"),
+                ImagePart(src="http://x/i.png", mime="image/png", detail="high",
+                          width=800, height=600),
+            ],
+            message_id=MessageId("asst-1"),
+            tool_calls=[ToolCall(id="call_1",
+                                 function=ToolCallFunction(name="web_search", arguments="{}"))],
+            token_usage=TokenUsageSummary(
+                rounds=[TokenUsage(model="m", session_id="s1", round_num=1,
+                                   input_tokens=10, output_tokens=5, total_tokens=15)],
+                turn_total=15,
+            ),
+            inner_voice="thinking",
+            block_index={"text": [0]},
+        ))
+
+        frame = SessionMessage(messages=s.messages_for_client(), token_stats=None).wire_dict()
+        asst = next(m for m in frame["messages"] if m["role"] == "assistant")
+        # I1'：tool_calls[].type（"function"）不被丢弃
+        assert asst["tool_calls"][0]["type"] == "function"
+        # I1'：token_usage.rounds[].session_id 不被丢弃
+        assert asst["token_usage"]["rounds"][0]["session_id"] == "s1"
+        # I1'：image detail/width/height 不被丢弃
+        img = next(p for p in asst["content"] if p["type"] == "image")
+        assert img["detail"] == "high"
+        assert img["width"] == 800
+        assert img["height"] == 600
+        # message_id/timestamp 保留（前端去重/时间分隔依赖）
+        assert asst["message_id"] == "asst-1"
+        assert asst["timestamp"]
+
+    def test_build_session_items_drops_invalid_keeps_valid(self):
+        """单条无法契约化的消息（content 含 file part）仅丢弃该条，其余保留。"""
+        from core.input.ws_handler import _build_session_items
+
+        msgs = [
+            {"role": "user", "content": [{"type": "text", "content": "hi"}],
+             "message_id": "u1", "timestamp": "t1"},
+            # content 含 file part → ContentPart 判别联合只认 text/image → 契约校验失败
+            {"role": "assistant", "content": [{"type": "file", "src": "/tmp/x", "mime": "text/plain"}],
+             "message_id": "a1", "timestamp": "t2"},
+            {"role": "tool", "tool_call_id": "c1", "name": "web", "content": "ok",
+             "success": True, "duration_ms": 1.0, "truncated": False},
+        ]
+        items = _build_session_items(msgs)
+        assert len(items) == 2
+        assert [i.role for i in items] == ["user", "tool"]
+
+
 
 # ============================================================
 # Health / ready endpoints

@@ -161,9 +161,10 @@ class WebSocketChannel(OutputChannel):
         Args:
             data: token 消耗统计数据字典。
         """
-        # 注：暂不切 TokenUsageMessage——data.turn.rounds 由 core TokenUsage dump 而来
-        # （含 session_id 键，TokenRound 未建模），转换会丢该键；前端不消费，
-        # 留待契约收口。data 本身已是模型 dump，非手写字典。
+        # 注：暂不切 TokenUsageMessage——core TokenUsage dump 中 cached_tokens/
+        # reasoning_tokens 为 None 时仍带键（null），转换经 wire_dict(exclude_none)
+        # 会缺省省略（wire 行为变化）；session_id 已入 TokenRound（I1' 已收口），
+        # 仅剩 null 省略问题未决。data 本身已是模型 dump，非手写字典。
         await self._send_json({"type": "token_usage", **data})
 
     async def on_message(self, msg) -> None:
