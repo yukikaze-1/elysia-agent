@@ -1,80 +1,88 @@
 """Mood 引擎新功能测试 — _apply_mood, _mood_text_to_tts_emotion, analyze_assistant."""
+import asyncio
+
 import pytest
 
 
 @pytest.mark.unit
 class TestApplyMood:
+    def _run(self, raw, engine, tts_mgr, output):
+        """同步包装 async _apply_mood。"""
+        from core.cognitive.loop import _apply_mood
+        asyncio.run(_apply_mood(raw, engine, tts_mgr, output))
+
     def test_normal_with_intensity(self):
         """_apply_mood 正常解析 '心情描述|0.7'。"""
-        from core.cognitive.loop import _apply_mood
-        from unittest.mock import MagicMock
+        from unittest.mock import AsyncMock, MagicMock
 
         engine = MagicMock()
         engine.state.mood = "平静"
         engine.state.mood_intensity = 0.5
         tts_mgr = MagicMock()
+        output = AsyncMock()
 
-        _apply_mood("被夸奖后有点不好意思，但暗自开心|0.7", engine, tts_mgr)
+        self._run("被夸奖后有点不好意思，但暗自开心|0.7", engine, tts_mgr, output)
 
         assert engine.state.mood == "被夸奖后有点不好意思，但暗自开心"
         assert engine.state.mood_intensity == 0.7
-        engine._push_expression.assert_called_once_with(
+        # 统一心情发射：output.mood（v1 expression、v2 捕获不发）
+        output.mood.assert_called_once_with(
             "被夸奖后有点不好意思，但暗自开心", 0.7)
         tts_mgr.set_emotion.assert_called_once_with(
             "被夸奖后有点不好意思，但暗自开心")
 
     def test_no_intensity_defaults(self):
         """无 | 分隔符时强度默认 0.5。"""
-        from core.cognitive.loop import _apply_mood
-        from unittest.mock import MagicMock
+        from unittest.mock import AsyncMock, MagicMock
 
         engine = MagicMock()
         engine.state.mood = "平静"
         tts_mgr = MagicMock()
+        output = AsyncMock()
 
-        _apply_mood("心情很复杂", engine, tts_mgr)
+        self._run("心情很复杂", engine, tts_mgr, output)
 
         assert engine.state.mood == "心情很复杂"
         assert engine.state.mood_intensity == 0.5
 
     def test_intensity_not_numeric(self):
         """强度非数字时默认 0.5。"""
-        from core.cognitive.loop import _apply_mood
-        from unittest.mock import MagicMock
+        from unittest.mock import AsyncMock, MagicMock
 
         engine = MagicMock()
         tts_mgr = MagicMock()
+        output = AsyncMock()
 
-        _apply_mood("开心|很高", engine, tts_mgr)
+        self._run("开心|很高", engine, tts_mgr, output)
 
         assert engine.state.mood == "开心"
         assert engine.state.mood_intensity == 0.5
 
     def test_intensity_clamped(self):
         """强度超出 [0.1, 1.0] 时 clamp。"""
-        from core.cognitive.loop import _apply_mood
-        from unittest.mock import MagicMock
+        from unittest.mock import AsyncMock, MagicMock
 
         engine = MagicMock()
         tts_mgr = MagicMock()
+        output = AsyncMock()
 
-        _apply_mood("兴奋|1.5", engine, tts_mgr)
+        self._run("兴奋|1.5", engine, tts_mgr, output)
         assert engine.state.mood_intensity == 1.0
 
-        _apply_mood("低落|0.0", engine, tts_mgr)
+        self._run("低落|0.0", engine, tts_mgr, output)
         assert engine.state.mood_intensity == 0.1
 
     def test_empty_mood_text(self):
         """空 mood 文本时不更新状态。"""
-        from core.cognitive.loop import _apply_mood
-        from unittest.mock import MagicMock
+        from unittest.mock import AsyncMock, MagicMock
 
         engine = MagicMock()
         tts_mgr = MagicMock()
+        output = AsyncMock()
 
-        _apply_mood("|0.5", engine, tts_mgr)
-        # mood unchanged, push_expression not called
-        engine._push_expression.assert_not_called()
+        self._run("|0.5", engine, tts_mgr, output)
+        # mood unchanged, output.mood not called
+        output.mood.assert_not_called()
 
 
 @pytest.mark.unit

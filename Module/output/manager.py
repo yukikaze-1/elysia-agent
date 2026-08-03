@@ -237,15 +237,18 @@ class OutputManager:
         *,
         channels: list[OutputChannel] | None = None,
     ) -> None:
-        """广播 token 消耗统计到所有通道（前端实时更新用量）。
+        """广播 token 消耗统计（前端实时更新用量）。
+
+        批次 2：仅 v1 通道——v2 的 usage 由 generation.completed.usage 承载（spec §5.1 抑制表）。
 
         Args:
             data: token 消耗统计数据字典。
             channels: 候选通道列表，为 None 则使用全部已注册通道。
         """
+        v1, _v2 = self._split_versions(channels)
         await self._broadcast(
             "on_token_usage", data,
-            channels=channels,
+            channels=v1,
         )
 
     async def audio_chunk(

@@ -1,0 +1,202 @@
+"""批次 2 Task 6：v2 生成事件序列 + v1 wire 回归 + fault 注入（marker=service）。
+
+覆盖 spec §10 测试 4/5/7：
+- v2 连接：generation.started → inner_voice 段 → public_reply 段 → generation.completed
+- v1 连接：wire 帧序列与现状一致（v1 回归防护）
+- fault：v2 收 generation.failed 无 ❌ delta；v1 仍收 ❌ delta
+"""
+
+import asyncio
+import json
+
+import pytest
+from aiohttp import WSMsgType
+
+
+# FakeLLM 带标签响应：inner_voice + mood + 多句（触发真实事件序列）
+_TAGGED = (
+    "<inner_voice>我觉得这个话题很有意思，想认真回应一下。</inner_voice>"
+    "<mood>开心|0.8</mood>"
+    "你好！这是第一句话。第二句话进一步补充。第三句话作为收尾。"
+)
+
+
+class _UsageLLM:
+    """带 stream_think + usage 的 fake（镜像 scripts/capture_ws_trace.py）。"""
+
+    def __init__(self, response: str = _TAGGED, fault: str | None = None):
+        import re
+        self.response = response
+        self.fault = fault
+        self._model = "fake/test"
+        self._tok = re.compile(r"([一-鿿]|[\w]+|[^\w\s])")
+
+    async def chat(self, messages, **kwargs):
+        return self.response
+
+    async def test(self) -> dict:
+        return {"ok": True, "latency_ms": 0}
+
+    async def close(self):
+        pass
+
+    async def stream_think(self, messages, **kwargs):
+        if self.fault == "http_503":
+            import httpx
+            req = object()
+            resp = type("R", (), {"status_code": 503})()
+            raise httpx.HTTPStatusError("unavailable", request=req, response=resp)
+        for tok in self._tok.findall(self.response):
+            yield {"content": tok, "tool_calls": None}
+        yield {
+            "content": None, "tool_calls": None,
+            "usage": {"input_tokens": 12, "output_tokens": 18, "total_tokens": 30,
+                      "cached_tokens": 0, "reasoning_tokens": 0},
+        }
+
+
+def _make_agent_with(fake) -> "Agent":
+    import os as _os
+    _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+    from core.config import AppConfig
+    from core.agent import Agent
+    config = AppConfig()
+    config.tts.enabled = False
+    config.stt.enabled = False
+    agent = Agent(config=config)
+    agent.llm._backend = fake
+    return agent
+
+
+async def _send_and_collect(client, headers, content: str):
+    async with client.session.ws_connect(client.make_url("/ws"), headers=headers) as ws:
+        # 排空建连帧（v1 收 capabilities；v2 收 server_info）
+        for _ in range(5):
+            try:
+                msg = await asyncio.wait_for(ws.receive(), timeout=5)
+                if msg.type == WSMsgType.TEXT:
+                    t = json.loads(msg.data).get("type")
+                    if t in ("capabilities", "server_info"):
+                        break
+            except asyncio.TimeoutError:
+                break
+        await ws.send_json({"type": "text", "content": content})
+        frames = []
+        while True:
+            msg = await asyncio.wait_for(ws.receive(), timeout=10)
+            if msg.type != WSMsgType.TEXT:
+                continue
+            data = json.loads(msg.data)
+            frames.append(data)
+            if data.get("type") == "state" and data.get("state") == "idle":
+                break
+        return frames
+
+
+@pytest.mark.service
+class TestV2GenerationSequence:
+    @pytest.mark.asyncio
+    async def test_v2_generation_sequence(self, aiohttp_client):
+        """v2 连接：generation.started → inner_voice 段 → public_reply 段 → completed。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        agent.session._messages.clear()  # noqa: SLF001 空会话
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            frames = await _send_and_collect(
+                client, {"X-Protocol-Version": "2"}, "你好")
+            types = [f["type"] for f in frames]
+            # 关键序列：generation.started 先于 segments；completed 是终态
+            assert "generation.started" in types
+            assert "generation.segment.started" in types
+            assert "generation.segment.completed" in types
+            assert "generation.completed" in types
+            # 顺序：started → segment.started → ... → completed
+            i_started = types.index("generation.started")
+            i_completed = types.index("generation.completed")
+            assert i_started < i_completed
+            # inner_voice 段 + public_reply 段都存在
+            seg_types = [f.get("channel") for f in frames if f["type"] == "generation.segment.started"]
+            assert "inner_voice" in seg_types
+            assert "public_reply" in seg_types
+            # v2 抑制 v1 token_usage/expression（spec §5.1：usage 由 completed 承载、mood 落位）
+            assert not any(t == "token_usage" for t in types)
+            # completed 携带 usage/model/mood
+            completed = next(f for f in frames if f["type"] == "generation.completed")
+            assert completed["finishReason"] == "stop"
+            assert completed["usage"]["turn_total"] == 30
+            assert completed["model"]  # 实际模型（fake 后端下为配置模型，非空即可）
+            assert completed["mood"] == "开心"
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v1_wire_sequence_unchanged(self, aiohttp_client):
+        """v1 连接：wire 帧序列与现状一致（v1 回归防护——同 agent、v1 握手）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        agent.session._messages.clear()  # noqa: SLF001
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            frames = await _send_and_collect(client, None, "你好")
+            types = [f["type"] for f in frames]
+            # v1 现状序列：inner_voice command、expression（mood）、delta、message 句子边界、state idle
+            assert "command" in types
+            iv = next(f for f in frames if f["type"] == "command")
+            assert iv["command"] == "inner_voice"
+            assert "expression" in types  # <mood> 标签 → expression
+            assert "delta" in types
+            assert "message" in types     # 句子边界
+            assert "token_usage" in types
+            assert types[-1] == "state"   # 终态 idle
+            # v1 不应收到任何 v2 generation 帧
+            assert not any("generation" in t or t == "user_message.ack" for t in types)
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v2_fault_generation_failed_no_delta(self, aiohttp_client):
+        """fault（503）：v2 收 generation.failed 且无 ❌ delta；v1 仍收 ❌ delta。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM(fault="http_503"))
+        await agent.start()
+        agent.session._messages.clear()  # noqa: SLF001
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            # v2
+            v2_frames = await _send_and_collect(
+                client, {"X-Protocol-Version": "2"}, "hi")
+            v2_types = [f["type"] for f in v2_frames]
+            assert "generation.failed" in v2_types
+            failed = next(f for f in v2_frames if f["type"] == "generation.failed")
+            assert failed["code"] in ("GENERATION_PROVIDER_UNAVAILABLE", "GENERATION_TIMEOUT")
+            # v2 无 ❌ delta
+            v2_deltas = [f.get("content", "") for f in v2_frames if f["type"] == "delta"]
+            assert not any("❌" in d for d in v2_deltas)
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v1_fault_still_delta_error(self, aiohttp_client):
+        """fault（503）：v1 仍收 ❌ delta（兼容）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM(fault="http_503"))
+        await agent.start()
+        agent.session._messages.clear()  # noqa: SLF001
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            v1_frames = await _send_and_collect(client, None, "hi")
+            v1_deltas = [f.get("content", "") for f in v1_frames if f["type"] == "delta"]
+            assert any("❌" in d for d in v1_deltas)
+        finally:
+            await agent.stop()

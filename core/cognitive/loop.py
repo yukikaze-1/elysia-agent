@@ -22,8 +22,9 @@ from dataclasses import asdict
 from enum import Enum
 from typing import Callable, TYPE_CHECKING
 
-from core.utils import new_message_id
+from core.utils import new_message_id, new_generation_id
 
+from core.cognitive.generation import GenerationContext
 from core.cognitive.timing import TimingClock
 
 from Module.output import OutputManager, ChannelCapability
@@ -106,17 +107,20 @@ class TurnPhase(str, Enum):
     FINALIZING = "finalizing"
 
 
-def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamManager) -> None:
-    """解析 <mood> 标签内容，更新 CharacterState + push expression + TTS emotion。
+async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamManager,
+                      output) -> None:
+    """解析 <mood> 标签内容，更新 CharacterState + 统一心情发射 + TTS emotion。
 
     支持格式: "情绪文本" 或 "情绪文本|强度"（强度 0.1–1.0）。
     同时更新 CharacterEngine state.mood / state.mood_intensity，
-    推送表情（_push_expression），设置 TTS 情绪参数。
+    经 output.mood() 统一发射（v1 发 expression、v2 捕获不发——mood 由 turn_completed 落位），
+    设置 TTS 情绪参数。
 
     Args:
         raw: <mood> 标签内的原始文本
         engine: CharacterEngine 实例
         tts_mgr: TTSStreamManager 实例
+        output: OutputManager（统一心情发射）
     """
     if "|" in raw:
         mood_text, intensity_str = raw.rsplit("|", 1)
@@ -136,7 +140,7 @@ def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamManager) 
     prev = engine.state.mood
     engine.state.mood = mood_text
     engine.state.mood_intensity = intensity
-    engine._push_expression(mood_text, intensity)
+    await output.mood(mood_text, intensity)
     tts_mgr.set_emotion(mood_text)
     if prev != mood_text:
         logger.info("心情: %s → %s (%.0f%%)", prev, mood_text, intensity * 100)
@@ -194,6 +198,9 @@ class CognitiveLoop(CognitiveTools):
         self._tts = tts  # 保留供 agent.py stop() 读取
         self._token_tracker = token_tracker
         self._prompt_recorder = prompt_recorder
+        # 批次 2：当前回合 GenerationContext（process() 创建，_dispatch_stream_event/
+        # _finalize_turn/错误路径使用）；无活动回合为 None
+        self._generation_ctx: GenerationContext | None = None
         self._response_recorder: ResponseRecorder | None = None  # 由 configure() 注入
         self._ttft_start: float = 0.0
         self._mood_applied: bool = False
@@ -339,6 +346,14 @@ class CognitiveLoop(CognitiveTools):
 
             await self.phases.enter_thinking()
 
+            # 批次 2：每回合创建 GenerationContext——generation_id / assistant_message_id 预分配，
+            # 供统一回合事件与 _finalize_turn 落库（assistant 父消息 ID 贯通）。
+            self._generation_ctx = GenerationContext(
+                generation_id=new_generation_id(),
+                user_message_id=message_id or "",
+                assistant_message_id=new_message_id(),
+            )
+
             self._current_task = asyncio.current_task()
             try:
                 await self._think_loop(user_message, user_name,
@@ -365,20 +380,22 @@ class CognitiveLoop(CognitiveTools):
                 if _is_llm_layer_error(e):
                     logger.exception("<<< LLM 调用异常，回退到 IDLE")
                     label = "LLM 调用失败"
+                    code = "GENERATION_TIMEOUT" if isinstance(e, asyncio.TimeoutError) \
+                        else "GENERATION_PROVIDER_UNAVAILABLE"
+                    retryable = True
                 else:
                     logger.exception("<<< 处理回复时内部错误，回退到 IDLE")
                     label = "内部错误"
-                # 通知前端错误信息
+                    code = "INTERNAL"
+                    retryable = False
+                # 通知前端错误信息：统一回合事件（v1 复刻 ❌ delta + send("")；v2 发 generation.failed）
                 err_msg = str(e)[:200]
-                try:
-                    await self._output._broadcast(
-                        "on_text_delta",
-                        f"\n❌ {label}: {err_msg}",
-                        capability=ChannelCapability.TEXT_DELTA,
-                    )
-                    await self._output.send("")
-                except Exception:
-                    pass
+                if self._generation_ctx is not None:
+                    try:
+                        await self._output.turn_failed(
+                            code, err_msg, retryable, label, self._generation_ctx)
+                    except Exception:
+                        logger.debug("turn_failed 发射失败", exc_info=True)
                 await self._handle_interrupt()
             finally:
                 self._clock = None
@@ -742,9 +759,12 @@ class CognitiveLoop(CognitiveTools):
                 await self._output.send(msg)
         if public_text.strip():
             assistant_parts, content_type = build_parts(all_sentences, blocks)
+            # 批次 2：assistant 父消息 ID 用 generation 开始预分配的 ID（贯通 ACK/session 对齐）
+            assistant_msg_id = (self._generation_ctx.assistant_message_id
+                                if self._generation_ctx is not None else new_message_id())
             self._session.add_message(AssistantMessage(
                 content=assistant_parts,
-                message_id=new_message_id(),
+                message_id=assistant_msg_id,
                 inner_voice=iv_think_buf.strip() or None,
                 block_index=content_type,
                 token_usage=TokenUsageSummary(
@@ -782,6 +802,28 @@ class CognitiveLoop(CognitiveTools):
                 if kind == "code":
                     params["language"] = lang
                 await self._output.command("block", params=params)
+
+        # 批次 2：父完成（v2 generation.completed——usage/model/mood 落位；v1 NO-OP，token_usage 已实时广播）
+        if self._generation_ctx is not None:
+            try:
+                from frontend_contract import TokenRound, TokenUsage
+                rounds = [
+                    TokenRound.model_validate(r.model_dump(mode="json"))
+                    for r in (self._token_tracker.current_turn_usages
+                              if self._token_tracker is not None else [])
+                ]
+                usage = TokenUsage(
+                    rounds=rounds,
+                    turn_total=sum(r.total_tokens for r in
+                                   (self._token_tracker.current_turn_usages
+                                    if self._token_tracker is not None else [])),
+                )
+                mood = (self._character_engine.state.mood
+                        if self._character_engine is not None else None)
+                await self._output.turn_completed(
+                    "stop", usage, self._llm.model, mood, self._generation_ctx)
+            except Exception:
+                logger.debug("turn_completed 发射失败", exc_info=True)
 
         await self._transition_idle()
 
@@ -839,6 +881,10 @@ class CognitiveLoop(CognitiveTools):
             self._token_tracker.start_turn()
 
         await self._output.typing(True)
+
+        # 批次 2：生成开始（v2 generation.started；v1 无新增）
+        if self._generation_ctx is not None:
+            await self._output.turn_started(self._generation_ctx)
 
         # 2. ReAct 循环
         empty_retried = False
@@ -996,17 +1042,21 @@ class CognitiveLoop(CognitiveTools):
         """
         if event.type == StreamEventType.MOOD:
             if self._character_engine:
-                _apply_mood(event.text, self._character_engine, self._tts_mgr)
+                await _apply_mood(event.text, self._character_engine, self._tts_mgr,
+                                  self._output)
             self._mood_applied = True
 
         elif event.type == StreamEventType.INNER_VOICE:
             if event.text:
                 iv_think_buf_holder.append(event.text)
                 try:
-                    await self._output.command(
-                        "inner_voice",
-                        params={"content": event.text},
-                    )
+                    if self._generation_ctx is not None:
+                        # 统一发射：v1 command inner_voice；v2 作为 inner_voice 段
+                        await self._output.inner_voice(event.text, self._generation_ctx)
+                    else:
+                        # 防御（无 ctx，直接调用/旧路径）：v1 command 直发
+                        await self._output.command(
+                            "inner_voice", params={"content": event.text})
                 except Exception:
                     logger.debug("inner_voice broadcast failed", exc_info=True)
 
@@ -1025,18 +1075,35 @@ class CognitiveLoop(CognitiveTools):
             if not speaking_started:
                 await self.phases.enter_speaking()
                 speaking_started = True
-            if self._tts_mgr.active and self._tts_mgr.enabled:
+            tts_active = self._tts_mgr.active and self._tts_mgr.enabled
+            if tts_active:
                 self._tts_mgr.stream_sentence(sentence)
-            else:
+            ctx = self._generation_ctx
+            if ctx is not None and ctx.current_segment_id is not None:
+                # 统一发射：分段完成（v1 按 tts_active 决定 send("")，v2 恒发 segment.completed）
+                await self._output.segment_completed(sentence, ctx, tts_active=tts_active)
+                ctx.close_segment()
+            elif not tts_active:
                 # text-only：TEXT_DELTA 已广播增量，此处只发句子边界信号结束气泡，避免整句重复显示
                 await self._output.send("")
 
         elif event.type == StreamEventType.TEXT_DELTA:
-            if not (self._tts_mgr.active and self._tts_mgr.enabled) and event.text:
-                await self._output._broadcast(
-                    "on_text_delta", event.text,
-                    capability=ChannelCapability.TEXT_DELTA,
-                )
+            tts_active = self._tts_mgr.active and self._tts_mgr.enabled
+            ctx = self._generation_ctx
+            if event.text:
+                if ctx is not None:
+                    # 打开 public_reply 段（首个 delta 时）——TTS 模式下也开段（v2 segment.completed 恒发）
+                    if ctx.current_segment_id is None:
+                        ctx.open_segment("public_reply", "text")
+                        await self._output.segment_started(ctx)
+                    # loop 保留 TTS 门控：TTS 活跃时不发 delta（v1 现状；v2 段文本由 segment.completed 承载）
+                    if not tts_active:
+                        await self._output.text_delta(event.text, ctx)
+                elif not tts_active:
+                    await self._output._broadcast(
+                        "on_text_delta", event.text,
+                        capability=ChannelCapability.TEXT_DELTA,
+                    )
 
         return speaking_started, all_sentences
 
