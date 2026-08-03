@@ -30,6 +30,31 @@ _STATIC_DIR = ProjectPath.STATIC.resolve()
 _LIVE2D_DIR = ProjectPath.LIVE2D_ASSETS.resolve()
 
 
+def warn_if_unsecured(host: str, access_token: str) -> None:
+    """非回环绑定 + 无产品 access_token → ERROR 级显著阻塞告警。
+
+    满足 PRD「绑定非回环地址且未启用认证时应拒绝启动或输出显著阻塞告警」的
+    "或"分支——不拒绝启动（config 默认 host=0.0.0.0，拒绝会破坏本地开发）。
+
+    Args:
+        host: 服务绑定地址。
+        access_token: 产品 access token（AGENT_ACCESS_TOKEN），空 = 未启用认证。
+    """
+    if access_token:
+        return
+    if host in ("127.0.0.1", "localhost", "::1"):
+        return
+    logger.error(
+        "\n"
+        "==================================================================\n"
+        "  安全警告：服务绑定非回环地址 %r 且未配置产品认证。\n"
+        "  当前所有 /ws、/api/*、/uploads/* 匿名可访问，仅适用于本机开发。\n"
+        "  远程部署请设置环境变量 AGENT_ACCESS_TOKEN，并使用 HTTPS/WSS。\n"
+        "==================================================================",
+        host,
+    )
+
+
 def _make_access_auth_middleware(access_token: str):
     """产品认证中间件：护 `/ws`、`/api/*`、`/uploads/*`（Bearer 校验）。
 

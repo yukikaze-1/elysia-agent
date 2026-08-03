@@ -306,6 +306,10 @@ class AgentServer:
             port = self._config.server.port
             wake_word_enabled = self._config.wake_word.enabled
 
+            # 启动安全守卫（批次 1）：非回环绑定 + 无产品认证 → ERROR 显著阻塞告警
+            from core.input.server import warn_if_unsecured
+            warn_if_unsecured(host, self._config.server.access_token)
+
             # 建门 = 有效 enabled（显式值优先，None 回退 config.stt.enabled）——热插拔
             # "开"（config=false+显式 true）跨重启存活；config=false+None 保留 YAML 硬关
             ss = self.session.service_state

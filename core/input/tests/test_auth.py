@@ -128,3 +128,30 @@ class TestAuthAnonymousRegression:
         client = await aiohttp_client(app)
         async with client.session.ws_connect(client.make_url("/ws")) as ws:
             assert ws.closed is False
+
+
+@pytest.mark.service
+class TestStartupGuard:
+    def test_non_loopback_no_token_logs_error(self, caplog):
+        """非回环 host + 无 access_token → ERROR 级显著阻塞告警。"""
+        import logging
+        from core.input.server import warn_if_unsecured
+        with caplog.at_level(logging.ERROR, logger="core.input.server"):
+            warn_if_unsecured("0.0.0.0", "")
+        assert any("安全警告" in r.message for r in caplog.records)
+
+    def test_loopback_no_token_no_warning(self, caplog):
+        """回环 host + 无 token → 不告警（本地开发）。"""
+        import logging
+        from core.input.server import warn_if_unsecured
+        with caplog.at_level(logging.ERROR, logger="core.input.server"):
+            warn_if_unsecured("127.0.0.1", "")
+        assert not any("安全警告" in r.message for r in caplog.records)
+
+    def test_non_loopback_with_token_no_warning(self, caplog):
+        """非回环 + 有 access_token → 不告警（已认证）。"""
+        import logging
+        from core.input.server import warn_if_unsecured
+        with caplog.at_level(logging.ERROR, logger="core.input.server"):
+            warn_if_unsecured("0.0.0.0", "secret")
+        assert not any("安全警告" in r.message for r in caplog.records)
