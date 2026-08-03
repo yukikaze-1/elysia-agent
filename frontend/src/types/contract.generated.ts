@@ -434,9 +434,9 @@ export interface ApiFail {
 
 /** Provider 连通/可用测试结果（usable 与 connectivity 两 level 形状并集）。
 
-    error/detail 均可缺省：usable 只带 detail、connectivity 只带 error（error 仅失败带）——
-    若某字段建模为必填，另一 level 响应构造会校验失败；反之缺省省略保证 wire 不丢键。
-    latency_ms 亦缺省：超时/异常响应只带 {ok: False, error}，不带耗时。 */
+error/detail 均可缺省：usable 只带 detail、connectivity 只带 error（error 仅失败带）——
+若某字段建模为必填，另一 level 响应构造会校验失败；反之缺省省略保证 wire 不丢键。
+latency_ms 亦缺省：超时/异常响应只带 {ok: False, error}，不带耗时。 */
 export interface ProviderTestResult {
   /** 测试是否通过 */
   ok: boolean
@@ -456,10 +456,10 @@ export interface ArchivePart {
 
 /** 归档消息契约视图（wire 形状自建，不引 core.schema.Message）。
 
-    发送点把 core.schema.Message 经 _archive_to_client 转成客户端 dict 后构造本模型：
-    block_index → content_type 归一化（对齐 session 回放 wire 命名）。
-    除前端消费字段（role/parts/content/content_type/inner_voice/tool_calls/token_usage）外，
-    保留 _id/message_id/timestamp/session_id/metadata 及 tool 消息字段——wire 字节等价，不丢键。 */
+发送点把 core.schema.Message 经 _archive_to_client 转成客户端 dict 后构造本模型：
+block_index → content_type 归一化（对齐 session 回放 wire 命名）。
+除前端消费字段（role/parts/content/content_type/inner_voice/tool_calls/token_usage）外，
+保留 _id/message_id/timestamp/session_id/metadata 及 tool 消息字段——wire 字节等价，不丢键。 */
 export interface Message {
   /** 消息角色（user/assistant/tool） */
   role: string

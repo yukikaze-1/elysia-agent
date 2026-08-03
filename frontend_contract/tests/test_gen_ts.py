@@ -144,3 +144,24 @@ def test_wire_dict_omits_optional_none():
     d = DeltaMessage(content="hi", stream_id=None).wire_dict()
     assert "stream_id" not in d
     assert d["type"] == "delta"
+
+
+class DocstringIndentModel(ContractModel):
+    """跨解释器去缩进测试。
+
+        续行（源码缩进 8 格）。
+    """
+    field: str = Field(description="字段")
+
+
+@pytest.mark.unit
+def test_emit_multiline_docstring_dedent():
+    """多行类 docstring 经 inspect.getdoc 归一缩进（跨解释器字节一致）。
+
+    回归 review I：cls.__doc__.strip() 只去首尾空白——Python 3.12 保留源码缩进续行、
+    3.13 自动 dedent 类 __doc__ → generate_ts 输出跨解释器漂移（rest.py 多行 docstring 场景）。
+    inspect.getdoc（cleandoc）统一去缩进，任何解释器下生成字节一致。
+    """
+    out = generate_ts([DocstringIndentModel])
+    assert "续行（源码缩进 8 格）。" in out
+    assert "        续行（源码缩进 8 格）。" not in out  # 续行行首 8 空格必须被 cleandoc 去掉
