@@ -23,7 +23,7 @@
 
 ## 模块化评估（2026-08-01）
 
-基于 import 图分析（AST 解析全仓 28 个包、~340 py 文件、118 条包间依赖边）。总体分层健康（`core → Module` 正向为主）。**已修部分归档**：硬环拆除 + Agent 公开接口见 [docs/completed.md](docs/completed.md) 2026-08-01。
+基于 import 图分析（AST 解析全仓 28 个包、~340 py 文件、118 条包间依赖边）。总体分层健康（`core → Module` 正向为主）。**已修部分归档**：硬环拆除 + Agent 公开接口见 [docs/completed/2026-08.md](docs/completed/2026-08.md)。
 
 ### 反向依赖（Module → core，分层违规，未修）
 
@@ -56,7 +56,7 @@
 
 ## 来自 code-review-2026-07-31 的遗留问题
 
-已修复 42/44（详情见 [docs/completed.md](docs/completed.md) 2026-07-31 + [docs/review/code-review-2026-07-31.md](docs/review/code-review-2026-07-31.md)）。2 项遗留：
+已修复 42/44（详情见 [docs/completed/2026-07.md](docs/completed/2026-07.md) 2026-07-31 + [docs/review/code-review-2026-07-31.md](docs/review/code-review-2026-07-31.md)）。2 项遗留：
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
@@ -131,7 +131,7 @@
 | **高** | **无数据库迁移机制** | MongoDB 索引在 `connect()` 时 ad-hoc 创建，Milvus collection 硬编码创建。若字段/索引/维度需变更，无 upgrade path。`memory_repo.clear_all()` 是破坏性操作无安全守卫 |
 | 低 | **`character/cyrene/` 不可用** | 缺少 `config.yaml` 和 `personality.md`，仅含 GPT 参考材料，无法作为角色加载 |
 | 低 | **依赖无版本上限** | `requirements.txt` 中 pydantic、openai、torch 等均无上限约束，上游 breaking change 可导致不可预期问题。`torch` 是 2GB+ 重依赖 |
-| 低 | **`# type: ignore` + `Any` 类型清理** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（二/三梯队）。测试文件 IDE 类型错误已批量修复 ~155 处（2026-07-29/30：NewType 包装、ToolAdapter 替换、type: ignore 补充）。**`Any` 类型替换**：core/ 下 63 处→已消除 ~44 处（属性声明/task/emit 签名/mailbox/_process_events）。**剩余不可消除**：`dict[str, Any]` JSON 容器（~12 处）、流式协议 `**raw_params: Any`+`AsyncIterator[Any]`（5 处）、`Coroutine[Any, Any, Any]` 通用协程（3 处）、`_embed_task: Task[Any]`（2 处）。详见 `docs/completed.md` 2026-07-29 第一、三条 + 2026-07-30 第一条。 |
+| 低 | **`# type: ignore` + `Any` 类型清理** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（二/三梯队）。测试文件 IDE 类型错误已批量修复 ~155 处（2026-07-29/30：NewType 包装、ToolAdapter 替换、type: ignore 补充）。**`Any` 类型替换**：core/ 下 63 处→已消除 ~44 处（属性声明/task/emit 签名/mailbox/_process_events）。**剩余不可消除**：`dict[str, Any]` JSON 容器（~12 处）、流式协议 `**raw_params: Any`+`AsyncIterator[Any]`（5 处）、`Coroutine[Any, Any, Any]` 通用协程（3 处）、`_embed_task: Task[Any]`（2 处）。详见 `docs/completed/2026-07.md` 2026-07-29 第一、三条 + 2026-07-30 第一条。 |
 
 ## 多前端支持（2026-08-01 评估，场景 A：新前端连运行中的服务端）
 
@@ -173,4 +173,4 @@
 - 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
 - 上述覆盖率缺口中标记为"关键"和"高"的路径
 
-> 已完成的工作归档在 [docs/completed.md](docs/completed.md)。
+> 已完成的工作按月归档在 [docs/completed/](docs/completed/)。

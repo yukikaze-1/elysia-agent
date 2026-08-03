@@ -26,7 +26,7 @@
 | [superpowers/plans/archive/](superpowers/plans/archive/) | 已归档实施计划（按月分目录 `archive/<YYYY-MM>/`） |
 | [review/](review/) | 代码/文档审查报告（code-review、doc-review、frontend_completed） |
 | [legacy/](legacy/) | 已废弃文档（companion-*，保留作历史参考） |
-| [completed/](completed/) | 已完成月度归档（2026-05、2026-06） |
+| [completed/](completed/) | 已完成月度归档（2026-05 ~ 2026-08） |
 
 ## 约定
 
