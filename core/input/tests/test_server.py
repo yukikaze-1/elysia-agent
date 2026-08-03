@@ -656,6 +656,57 @@ class TestSetService:
 
 
 # ============================================================
+# WS wire 格式专项（迁移步 A 行为等价守护）
+# ============================================================
+
+@pytest.mark.service
+class TestWireFormatContract:
+    """WS 消息 wire 契约：switch_model_result 成功无 error 键；service_mode_result 成功 error 恒 null。
+
+    改造前手写 dict 已符合；切到契约模型 + wire_dict 后须保持——"行为等价"守护。
+    """
+
+    @pytest.mark.asyncio
+    async def test_switch_model_result_success_no_error_key(self, aiohttp_client):
+        """switch_model_result 成功：wire 无 error 键（缺省省略，非 null）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        async with client.session.ws_connect(client.make_url("/ws")) as ws:
+            await ws.send_json({"type": "switch_model", "service": "llm", "model": "deepseek/deepseek-v4-flash"})
+            frame = None
+            for _ in range(5):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT and json.loads(msg.data).get("type") == "switch_model_result":
+                    frame = json.loads(msg.data)
+                    break
+            assert frame is not None and frame["ok"] is True
+            assert "error" not in frame  # 成功路径不得出现 "error": null（ts_null 过度标记会破坏）
+
+    @pytest.mark.asyncio
+    async def test_service_mode_result_success_error_null(self, aiohttp_client):
+        """service_mode_result 成功：wire 恒有 error 键且为 null（ts_null）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        async with client.session.ws_connect(client.make_url("/ws")) as ws:
+            await ws.send_json({"type": "set_service", "service": "tts", "enabled": False})
+            frame = None
+            for _ in range(5):
+                msg = await ws.receive(timeout=5)
+                if msg.type == WSMsgType.TEXT and json.loads(msg.data).get("type") == "service_mode_result":
+                    frame = json.loads(msg.data)
+                    break
+            assert frame is not None and frame["ok"] is True
+            assert frame["error"] is None  # 键恒存在，成功为 null
+
+
+
+# ============================================================
 # Health / ready endpoints
 # ============================================================
 

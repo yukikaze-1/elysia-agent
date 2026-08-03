@@ -42,7 +42,7 @@ export interface ToolCallResult {
   error?: string
   /** 错误类型，可缺省 */
   error_type?: string
-  /** 耗时毫秒，可缺省 */
+  /** 耗时毫秒（可为小数），可缺省 */
   duration_ms?: number
   /** 结果是否截断，可缺省 */
   truncated?: boolean
@@ -96,6 +96,10 @@ export interface TokenTurnStats {
 export interface SessionMessageItem {
   /** 消息角色（user/assistant/tool） */
   role: string
+  /** 消息 ID（前端去重/归档去重），可缺省 */
+  message_id?: string
+  /** ISO 时间戳，可缺省 */
+  timestamp?: string
   /** 纯文本 parts 列表，可缺省 */
   parts?: Record<string, string>[]
   /** 消息内容（纯文本或内容块列表），可缺省 */
@@ -118,7 +122,7 @@ export interface SessionMessageItem {
   error?: string
   /** 工具错误类型，可缺省 */
   error_type?: string
-  /** 工具耗时毫秒，可缺省 */
+  /** 工具耗时毫秒（可为小数），可缺省 */
   duration_ms?: number
   /** 内容是否截断，可缺省 */
   truncated?: boolean
@@ -252,7 +256,7 @@ export interface ActionMessage {
 export interface CommandMessage {
   type: 'command'
   /** 指令标识 */
-  command: 'tool_approval' | 'block' | 'inner_voice'
+  command: 'tool_approval' | 'block' | 'inner_voice' | string
   /** 指令参数，可缺省 */
   params?: Record<string, unknown>
 }

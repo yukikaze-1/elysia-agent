@@ -12,6 +12,16 @@ from core.schema.event import InterruptData, UserInputData
 from Module.output import WebSocketChannel
 from core.input.audio_buffer import AudioBuffer
 from core.input.capabilities import build_capabilities
+from frontend_contract import (
+    CommandMessage,
+    ErrorMessage,
+    ExpressionMessage,
+    SessionMessage,
+    ServiceModeResultMessage,
+    SwitchModelResultMessage,
+    TranscriptionMessage,
+    WakeMessage,
+)
 
 if TYPE_CHECKING:
     from core.agent import Agent
@@ -55,10 +65,14 @@ async def handle_ws(
     # 发送会话历史给新连接的客户端
     try:
         session_msgs = agent.session.messages_for_client()
-        token_stats = {}
+        token_stats = None
         if hasattr(agent, 'token_tracker') and agent.token_tracker is not None:
             token_stats = await agent.token_tracker.get_session_stats()
-        await ws.send_json({"type": "session", "messages": session_msgs, "token_stats": token_stats})
+        # 契约模型序列化：error/error_type 等 None 缺省省略（I1 归一化），
+        # message_id/timestamp 由模型字段承载（前端去重/时间分隔需要）。
+        await ws.send_json(SessionMessage(
+            messages=session_msgs, token_stats=token_stats,
+        ).wire_dict())
     except Exception:
         logger.warning("Failed to send session on connect", exc_info=True)
 
@@ -66,7 +80,7 @@ async def handle_ws(
     # model 供前端回填设置面板下拉选中值——否则首次访问（无 localStorage）
     # 下拉框显示"选择模型..."占位符，即使服务端已在运行某个模型。
     try:
-        await ws.send_json(build_capabilities(agent))
+        await ws.send_json(build_capabilities(agent).wire_dict())
     except Exception:
         logger.debug("Failed to send capabilities on connect", exc_info=True)
 
@@ -75,11 +89,9 @@ async def handle_ws(
     # 连接时不推送，心情标签要等下一轮 <mood> 才出现。复用前端现有 handler，零改动。
     try:
         cs = agent.character_engine.state
-        await ws.send_json({
-            "type": "expression",
-            "expression": cs.mood,
-            "intensity": cs.mood_intensity,
-        })
+        await ws.send_json(ExpressionMessage(
+            expression=cs.mood, intensity=cs.mood_intensity,
+        ).wire_dict())
     except Exception:
         logger.debug("Failed to send mood on connect", exc_info=True)
 
@@ -89,15 +101,14 @@ async def handle_ws(
             pending = agent.tool_adapter._manager.get_pending_approvals()  # noqa: SLF001
             for request_id, tool_name, params in pending:
                 # 与正常路径（ToolManager._broadcast → websocket.on_command）格式一致
-                await ws.send_json({
-                    "type": "command",
-                    "command": "tool_approval",
-                    "params": {
+                await ws.send_json(CommandMessage(
+                    command="tool_approval",
+                    params={
                         "tool": tool_name,
                         "params": str(params)[:200],
                         "request_id": request_id,
                     },
-                })
+                ).wire_dict())
                 logger.debug("Re-broadcast pending approval to new client: %s (%s)",
                              request_id, tool_name)
     except Exception:
@@ -152,10 +163,10 @@ async def handle_ws(
                         raise ValidationError("WS 消息必须是 JSON 对象")
                     await handle_json_message(data, agent, audio_buf, ws)
                 except json.JSONDecodeError:
-                    await ws.send_json({"type": "error", "message": "Invalid JSON"})
+                    await ws.send_json(ErrorMessage(message="Invalid JSON").wire_dict())
                 except ValidationError as e:
                     logger.warning("WS 消息内容校验失败: %s", e)
-                    await ws.send_json({"type": "error", "message": f"Invalid message content: {e}"})
+                    await ws.send_json(ErrorMessage(message=f"Invalid message content: {e}").wire_dict())
 
             elif msg.type == WSMsgType.BINARY:
                 # 后端防御：STT 被禁用（agent.stt_enabled=False）时不喂音频，
@@ -222,12 +233,13 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             for ch in agent.output._channels:  # noqa: SLF001
                 if isinstance(ch, WebSocketChannel) and ch._ws is ws:  # noqa: SLF001
                     try:
-                        await ws.send_json({
-                            "type": "switch_model_result",
-                            "service": service,
-                            "model": model,
-                            **result,
-                        })
+                        # 契约：error 仅失败带（成功缺省省略，非 null）
+                        await ws.send_json(SwitchModelResultMessage(
+                            service=service,
+                            model=model,
+                            ok=result.get("ok", False),
+                            error=result.get("error"),
+                        ).wire_dict())
                     except Exception:
                         logger.debug("Failed to send switch_model_result", exc_info=True)
                     break
@@ -242,13 +254,13 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         try:
             for ch in agent.output._channels:  # noqa: SLF001
                 if isinstance(ch, WebSocketChannel):
-                    await ch._send_json({  # noqa: SLF001
-                        "type": "service_mode_result",
-                        "service": service,
-                        "enabled": result.get("enabled", enabled),
-                        "ok": result.get("ok", False),
-                        "error": result.get("error"),
-                    })
+                    # 契约：error 键恒存在（成功为 null，ts_null 标记）
+                    await ch._send_json(ServiceModeResultMessage(  # noqa: SLF001
+                        service=service,
+                        enabled=result.get("enabled", enabled),
+                        ok=result.get("ok", False),
+                        error=result.get("error"),
+                    ).wire_dict())
         except Exception:
             # 并发 connect/disconnect 会改 _channels 列表长度——捕获记录，
             # 不向请求方传播（per-channel 发送失败已由 _send_json 内部记录）
@@ -301,11 +313,12 @@ async def do_transcription(agent: "Agent", ws: "web.WebSocketResponse", text: st
 
     # Send transcription back to client so it can display the user's speech
     try:
-        msg: dict = {"type": "transcription", "text": text}
-        if emotion:
-            msg["emotion"] = emotion
-        if events:
-            msg["events"] = events
+        # 契约：emotion/events 空时缺省省略（X?），非空才带
+        msg = TranscriptionMessage(
+            text=text,
+            emotion=emotion or None,
+            events=events or None,
+        ).wire_dict()
         await ws.send_json(msg)
     except Exception:
         logger.debug("Failed to send transcription echo", exc_info=True)
@@ -331,6 +344,6 @@ async def send_wake(ws: "web.WebSocketResponse") -> None:
         ws: WebSocket connection to send the notification to.
     """
     try:
-        await ws.send_json({"type": "wake"})
+        await ws.send_json(WakeMessage().wire_dict())
     except Exception:
         logger.debug("Failed to send wake notification", exc_info=True)

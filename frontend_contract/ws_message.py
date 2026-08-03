@@ -55,7 +55,7 @@ class ToolCallResult(ContractModel):
     content: Optional[str] = Field(default=None, description="结果内容，可缺省")
     error: Optional[str] = Field(default=None, description="错误信息，可缺省")
     error_type: Optional[str] = Field(default=None, description="错误类型，可缺省")
-    duration_ms: Optional[int] = Field(default=None, description="耗时毫秒，可缺省")
+    duration_ms: Optional[float] = Field(default=None, description="耗时毫秒（可为小数），可缺省")
     truncated: Optional[bool] = Field(default=None, description="结果是否截断，可缺省")
 
 
@@ -97,6 +97,8 @@ class SessionMessageItem(ContractModel):
     """会话历史中的单条消息（兼容用户/助手/工具结果平铺形状）。"""
 
     role: str = Field(description="消息角色（user/assistant/tool）")
+    message_id: Optional[str] = Field(default=None, description="消息 ID（前端去重/归档去重），可缺省")
+    timestamp: Optional[str] = Field(default=None, description="ISO 时间戳，可缺省")
     parts: Optional[list[dict[str, str]]] = Field(default=None, description="纯文本 parts 列表，可缺省")
     content: Optional[str | list[ContentPart]] = Field(
         default=None, description="消息内容（纯文本或内容块列表），可缺省")
@@ -110,7 +112,7 @@ class SessionMessageItem(ContractModel):
     success: Optional[bool] = Field(default=None, description="工具是否成功，可缺省")
     error: Optional[str] = Field(default=None, description="工具错误信息，可缺省")
     error_type: Optional[str] = Field(default=None, description="工具错误类型，可缺省")
-    duration_ms: Optional[int] = Field(default=None, description="工具耗时毫秒，可缺省")
+    duration_ms: Optional[float] = Field(default=None, description="工具耗时毫秒（可为小数），可缺省")
     truncated: Optional[bool] = Field(default=None, description="内容是否截断，可缺省")
     token_usage: Optional[TokenUsage] = Field(default=None, description="消息附带的 token 统计，可缺省")
 
@@ -229,7 +231,7 @@ class CommandMessage(ContractModel):
     """前端指令（工具审批弹窗 / 阻塞 / 内心独白）。"""
 
     type: Literal["command"] = "command"
-    command: Literal["tool_approval", "block", "inner_voice"] = Field(description="指令标识")
+    command: Literal["tool_approval", "block", "inner_voice"] | str = Field(description="指令标识")
     params: Optional[dict[str, Any]] = Field(default=None, description="指令参数，可缺省")
 
 
