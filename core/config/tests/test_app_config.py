@@ -35,3 +35,28 @@ class TestAppConfigNesting:
         cfg = AppConfig()
         assert cfg.memory.session_max_messages == 20
         assert cfg.memory.ltm_max_entries == 10000
+
+
+class TestServerConfigBatch1:
+    """批次 1 新增：access_token / max_ws_connections / max_request_bytes。"""
+
+    def test_access_token_env_binding(self):
+        """access_token 绑定 env AGENT_ACCESS_TOKEN 且 secret=True（防落盘）。"""
+        import dataclasses
+        from core.config.app_config import ServerConfig
+        f = next(f for f in dataclasses.fields(ServerConfig) if f.name == "access_token")
+        assert f.metadata["_config_env"] == "AGENT_ACCESS_TOKEN"
+        assert f.metadata["_config_secret"] is True
+
+    def test_access_token_default_empty(self):
+        from core.config.app_config import ServerConfig
+        cfg = ServerConfig()
+        assert cfg.access_token == ""
+
+    def test_max_ws_connections_default(self):
+        from core.config.app_config import ServerConfig
+        assert ServerConfig().max_ws_connections == 64
+
+    def test_max_request_bytes_default(self):
+        from core.config.app_config import ServerConfig
+        assert ServerConfig().max_request_bytes == 8 * 1024 * 1024

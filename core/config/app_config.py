@@ -33,6 +33,11 @@ class ServerConfig:
     host: str = ConfigField(default="0.0.0.0")
     port: int = ConfigField(default=8765, constraints=[Range(1, 65535)])
     auth_token: str = ConfigField(default="", env="SERVER_AUTH_TOKEN")
+    # 产品访问 token（批次 1）：护 /ws + 业务 /api/* + /uploads/*；与 SERVER_AUTH_TOKEN
+    # （admin/debug）权限域分离。secret=True 防止写入 YAML/git。
+    access_token: str = ConfigField(default="", env="AGENT_ACCESS_TOKEN", secret=True)
+    max_ws_connections: int = ConfigField(default=64)
+    max_request_bytes: int = ConfigField(default=8 * 1024 * 1024)
     image_max_mb: int = ConfigField(default=10)
     image_allowed_types: list[str] = ConfigField(default_factory=lambda: ["image/png", "image/jpeg", "image/gif", "image/webp"])
 
