@@ -9,7 +9,12 @@ import logging
 from typing import TYPE_CHECKING
 
 from Module.output import WebSocketChannel
-from frontend_contract import CapabilitiesMessage, ServiceCapability
+from frontend_contract import (
+    CapabilitiesMessage,
+    ServerInfoFeatures,
+    ServerInfoMessage,
+    ServiceCapability,
+)
 
 if TYPE_CHECKING:
     from core.agent import Agent
@@ -40,6 +45,37 @@ def build_capabilities(agent: "Agent") -> CapabilitiesMessage:
     cfg = agent.config
     return CapabilitiesMessage(
         live2d_static_image=cfg.live2d.static_image,
+        services={
+            "llm": svc(True, True, agent.llm.model, cfg.llm.model),
+            "stt": svc(agent.stt is not None, agent.stt_enabled,
+                       agent.stt.model if agent.stt else None, cfg.stt.model),
+            "tts": svc(agent.tts is not None, agent.tts_enabled,
+                       agent.tts.model if agent.tts else None, cfg.tts.model),
+        },
+    )
+
+
+def build_server_info(agent: "Agent") -> ServerInfoMessage:
+    """构建 v2 server_info（protocol_version/features/services，取代 capabilities）。
+
+    `features` 严禁超前声明——每个字段必须如实反映后端当前真实能力：
+    结构化聊天/多会话/Desktop/转写分别在批次 2/3/4/6 实现后置 true，批次 1 全 false。
+    `services` 复用与 capabilities 相同的 per-service 形状，Electron 设置面板共用渲染。
+    """
+    from core.version import __version__
+
+    def svc(available: bool, enabled: bool, model: str | None, default: str) -> ServiceCapability:
+        return ServiceCapability(
+            available=available,
+            enabled=enabled,
+            model=model if available else None,
+            default=default,
+        )
+
+    cfg = agent.config
+    return ServerInfoMessage(
+        server_version=__version__,
+        features=ServerInfoFeatures(),  # 全 false（批次 1）
         services={
             "llm": svc(True, True, agent.llm.model, cfg.llm.model),
             "stt": svc(agent.stt is not None, agent.stt_enabled,

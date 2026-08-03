@@ -76,9 +76,13 @@ async def handle_ws(
     ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024, heartbeat=30, receive_timeout=60)
     await ws.prepare(request)
 
+    # 版本协商（批次 1）：握手头 X-Protocol-Version。缺省/1 → v1 路径（现状）；2 → v2 路径。
+    proto_header = request.headers.get("X-Protocol-Version", "")
+    protocol_version = 2 if proto_header == "2" else 1
+
     from core.utils import new_message_id
     client_id = new_message_id()
-    channel = WebSocketChannel(ws)
+    channel = WebSocketChannel(ws, protocol_version=protocol_version)
     agent.output.add_channel(channel)
 
     # 发送会话历史给新连接的客户端
@@ -96,10 +100,13 @@ async def handle_ws(
         logger.warning("Failed to send session on connect", exc_info=True)
 
     # 发送服务能力状态（嵌套 per-service 形状：available/enabled/model/default）。
-    # model 供前端回填设置面板下拉选中值——否则首次访问（无 localStorage）
-    # 下拉框显示"选择模型..."占位符，即使服务端已在运行某个模型。
+    # v2 客户端用 server_info（含 protocol_version/features）取代 capabilities，避免重复帧。
     try:
-        await ws.send_json(build_capabilities(agent).wire_dict())
+        if protocol_version >= 2:
+            from core.input.capabilities import build_server_info
+            await ws.send_json(build_server_info(agent).wire_dict())
+        else:
+            await ws.send_json(build_capabilities(agent).wire_dict())
     except Exception:
         logger.debug("Failed to send capabilities on connect", exc_info=True)
 

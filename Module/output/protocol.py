@@ -22,6 +22,9 @@ class OutputChannel(ABC):
     capabilities + on_message + close 为 abstract，必须实现。
     """
 
+    # 协商的协议版本：1=v1（默认），2=v2。连接握手时由 WebSocketChannel 设置。
+    protocol_version: int = 1
+
     @property
     @abstractmethod
     def capabilities(self) -> set[ChannelCapability]:

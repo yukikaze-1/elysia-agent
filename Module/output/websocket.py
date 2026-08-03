@@ -28,16 +28,19 @@ from frontend_contract import (
 class WebSocketChannel(OutputChannel):
     """WebSocket 输出通道 — 包装单个连接。连接生命周期由外部管理。"""
 
-    def __init__(self, ws, *, logger: logging.Logger | None = None):
+    def __init__(self, ws, *, logger: logging.Logger | None = None,
+                 protocol_version: int = 1):
         """初始化 WebSocket 输出通道。
 
         Args:
             ws: aiohttp WebSocket 连接对象。
             logger: 日志记录器，不传则自动检测调用模块。
+            protocol_version: 协商的协议版本（1=v1 默认，2=v2，握手时注入）。
         """
         self._ws = ws
         self._logger = logger or get_caller_logger()
         self._audio_seq: dict[int, int] = {}
+        self.protocol_version = protocol_version
 
     @property
     def capabilities(self) -> set[ChannelCapability]:

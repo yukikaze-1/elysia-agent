@@ -73,6 +73,8 @@ from frontend_contract.ws_message import (  # noqa: F401
     InterruptMessage,
     MessageMessage,
     ServerMessage,
+    ServerInfoFeatures,
+    ServerInfoMessage,
     ServiceCapability,
     ServiceModeResultMessage,
     SessionMessage,
@@ -117,6 +119,8 @@ __all__ = [
     "ServiceCapability",
     # Server→Client
     "ServerMessage",
+    "ServerInfoFeatures",
+    "ServerInfoMessage",
     "SessionMessage",
     "CapabilitiesMessage",
     "DeltaMessage",
