@@ -155,3 +155,28 @@ class TestStartupGuard:
         with caplog.at_level(logging.ERROR, logger="core.input.server"):
             warn_if_unsecured("0.0.0.0", "secret")
         assert not any("安全警告" in r.message for r in caplog.records)
+
+
+@pytest.mark.service
+class TestErrorEnvelopeConsistency:
+    @pytest.mark.asyncio
+    async def test_request_id_is_uuid_not_counter(self, make_auth_app, aiohttp_client):
+        """requestId 是 req_+hex 独立 UUID（非 agent.next_request_id 的三位计数器）。"""
+        import re
+        app = make_auth_app(access_token="secret")
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/providers")
+        env = await _parse_401(resp)
+        assert re.fullmatch(r"req_[0-9a-f]{24}", env["requestId"]), env["requestId"]
+
+    @pytest.mark.asyncio
+    async def test_details_public_safe(self, make_auth_app, aiohttp_client):
+        """错误信封 details 默认空 dict（不含密钥/正文/路径）。"""
+        app = make_auth_app(access_token="secret")
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/providers")
+        env = await _parse_401(resp)
+        assert env["details"] == {}
+        # 信封整体不含密钥痕迹
+        body = (await resp.read()).decode()
+        assert "sk-" not in body and "AGENT_ACCESS_TOKEN" not in body
