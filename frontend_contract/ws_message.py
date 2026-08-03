@@ -174,6 +174,95 @@ class ServerInfoMessage(ContractModel):
     services: dict[str, ServiceCapability] = Field(description="llm/stt/tts 三服务能力")
 
 
+# ─────────────────────────── 批次 2 v2 generation 事件 ───────────────────────────
+
+# 分段通道 / 分段类型 / 完成原因 / ACK 状态——语义见 batch2 spec §3.2（kind 仅 text/markdown 实现，其余预留）
+
+
+class UserAckMessage(ContractModel):
+    """用户消息确认（v2）：接受后跟 generation.*，rejected 带 error 不生成。"""
+
+    type: Literal["user_message.ack"] = "user_message.ack"
+    messageId: str = Field(description="正式用户消息 ID（预分配，落库一致）")
+    clientRequestId: str = Field(description="原客户端请求 ID")
+    clientMessageId: Optional[str] = Field(default=None, description="客户端本地消息 ID，可缺省")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，批次 2 恒 null，可缺省")
+    receivedAt: str = Field(description="接收时间（UTC ISO）")
+    status: Literal["accepted", "rejected"] = Field(description="accepted 进入生成；rejected 带 error")
+    error: Optional[dict[str, Any]] = Field(default=None, description="rejected 时的 {code,message,retryable}，可缺省")
+
+
+class GenerationStartedMessage(ContractModel):
+    """生成开始（v2）。messageId = assistant 父消息 ID（generation 开始预分配）。"""
+
+    type: Literal["generation.started"] = "generation.started"
+    generationId: str = Field(description="生成实例 ID（gen_ 前缀）")
+    messageId: str = Field(description="assistant 父消息 ID")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
+    requestId: Optional[str] = Field(default=None, description="回显 request_id（日志关联），可缺省")
+    model: Optional[str] = Field(default=None, description="实际模型，可缺省")
+
+
+class GenerationSegmentStartedMessage(ContractModel):
+    """分段开始（v2）。"""
+
+    type: Literal["generation.segment.started"] = "generation.segment.started"
+    generationId: str = Field(description="生成实例 ID")
+    segmentId: str = Field(description="分段 ID（seg_ 前缀）")
+    segmentIndex: int = Field(description="全局分段序号（跨 inner_voice/public_reply 单调递增）")
+    channel: Literal["inner_voice", "public_reply", "status"] = Field(description="分段通道")
+    kind: Literal["text", "markdown", "image", "video", "audio", "file", "sticker", "link"] = Field(description="分段类型（P0 仅 text/markdown）")
+
+
+class GenerationDeltaMessage(ContractModel):
+    """分段内增量（v2）。"""
+
+    type: Literal["generation.delta"] = "generation.delta"
+    generationId: str = Field(description="生成实例 ID")
+    segmentId: str = Field(description="分段 ID")
+    segmentIndex: int = Field(description="全局分段序号")
+    deltaSequence: int = Field(description="段内增量序号（从 0 递增）")
+    delta: str = Field(description="文本增量")
+
+
+class GenerationSegmentCompletedMessage(ContractModel):
+    """分段完成（v2）——不结束父回复。content 为完整段文本（public_reply 与 inner_voice 段都携带）。"""
+
+    type: Literal["generation.segment.completed"] = "generation.segment.completed"
+    generationId: str = Field(description="生成实例 ID")
+    segmentId: str = Field(description="分段 ID")
+    segmentIndex: int = Field(description="全局分段序号")
+    channel: Literal["inner_voice", "public_reply", "status"] = Field(description="分段通道")
+    kind: Literal["text", "markdown", "image", "video", "audio", "file", "sticker", "link"] = Field(description="分段类型")
+    content: Optional[str] = Field(default=None, description="完整段文本（客户端无需拼 delta 渲染），可缺省")
+
+
+class GenerationCompletedMessage(ContractModel):
+    """父完成（v2）——唯一终态（finishReason 只含 stop/tool_calls；取消/错误走 generation.failed）。"""
+
+    type: Literal["generation.completed"] = "generation.completed"
+    generationId: str = Field(description="生成实例 ID")
+    messageId: str = Field(description="assistant 父消息 ID")
+    channel: Literal["public_reply"] = Field(default="public_reply", description="父回复通道")
+    finishReason: Literal["stop", "tool_calls"] = Field(description="完成原因（限 stop/tool_calls）")
+    usage: TokenUsage = Field(description="回合 token 统计（turn_total=0/rounds=[] 表示无调用记录）")
+    model: str = Field(description="实际模型")
+    mood: Optional[str] = Field(default=None, description="心情（<mood> 标签落位），可缺省")
+    completeness: Literal["complete"] = Field(default="complete", description="完整性（P0 恒 complete）")
+
+
+class GenerationFailedMessage(ContractModel):
+    """父失败（v2）——取消/错误统一终态。code 用统一错误码目录。"""
+
+    type: Literal["generation.failed"] = "generation.failed"
+    generationId: str = Field(description="生成实例 ID")
+    messageId: Optional[str] = Field(default=None, description="assistant 父消息 ID（已接受后恒非空），可缺省")
+    code: str = Field(description="稳定错误码（GENERATION_PROVIDER_UNAVAILABLE/GENERATION_TIMEOUT/GENERATION_CANCELLED/INTERNAL 等）")
+    message: str = Field(description="公开说明")
+    retryable: bool = Field(description="是否可重试")
+    details: dict[str, Any] = Field(default_factory=dict, description="公开安全详情，可缺省")
+
+
 class DeltaMessage(ContractModel):
     """流式文字增量。"""
 
@@ -312,6 +401,20 @@ class TextMessage(ContractModel):
     content: str | list[ContentPart] = Field(description="纯文本或内容块列表")
 
 
+class V2TextMessage(ContractModel):
+    """v2 客户端文本消息（type=text + 幂等/定位字段；不进 ServerMessage 联合）。
+
+    handler 按连接 protocol_version 路由：v2 连接解析追加字段，v1 忽略。
+    非文本消息（content 数组）批次 2 沿用 v1 多模态路径。
+    """
+
+    type: Literal["text"] = "text"
+    content: str = Field(description="纯文本")
+    clientRequestId: str = Field(description="客户端请求 ID（幂等键，必填）")
+    clientMessageId: Optional[str] = Field(default=None, description="客户端本地消息 ID，可缺省")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，批次 2 忽略/恒 null，可缺省")
+
+
 class InterruptMessage(ContractModel):
     """客户端打断指令。"""
 
@@ -371,4 +474,11 @@ ServerMessage = Annotated[Union[
     ServiceModeResultMessage,
     HeartbeatAckMessage,
     ErrorMessage,
+    UserAckMessage,
+    GenerationStartedMessage,
+    GenerationSegmentStartedMessage,
+    GenerationDeltaMessage,
+    GenerationSegmentCompletedMessage,
+    GenerationCompletedMessage,
+    GenerationFailedMessage,
 ], Field(discriminator="type")]

@@ -198,6 +198,125 @@ export interface ServerInfoMessage {
   services: Record<string, ServiceCapability>
 }
 
+/** 用户消息确认（v2）：接受后跟 generation.*，rejected 带 error 不生成。 */
+export interface UserAckMessage {
+  type: 'user_message.ack'
+  /** 正式用户消息 ID（预分配，落库一致） */
+  messageId: string
+  /** 原客户端请求 ID */
+  clientRequestId: string
+  /** 客户端本地消息 ID，可缺省 */
+  clientMessageId?: string
+  /** 会话 ID，批次 2 恒 null，可缺省 */
+  conversationId?: string
+  /** 接收时间（UTC ISO） */
+  receivedAt: string
+  /** accepted 进入生成；rejected 带 error */
+  status: 'accepted' | 'rejected'
+  /** rejected 时的 {code,message,retryable}，可缺省 */
+  error?: Record<string, unknown>
+}
+
+/** 生成开始（v2）。messageId = assistant 父消息 ID（generation 开始预分配）。 */
+export interface GenerationStartedMessage {
+  type: 'generation.started'
+  /** 生成实例 ID（gen_ 前缀） */
+  generationId: string
+  /** assistant 父消息 ID */
+  messageId: string
+  /** 会话 ID，可缺省 */
+  conversationId?: string
+  /** 回显 request_id（日志关联），可缺省 */
+  requestId?: string
+  /** 实际模型，可缺省 */
+  model?: string
+}
+
+/** 分段开始（v2）。 */
+export interface GenerationSegmentStartedMessage {
+  type: 'generation.segment.started'
+  /** 生成实例 ID */
+  generationId: string
+  /** 分段 ID（seg_ 前缀） */
+  segmentId: string
+  /** 全局分段序号（跨 inner_voice/public_reply 单调递增） */
+  segmentIndex: number
+  /** 分段通道 */
+  channel: 'inner_voice' | 'public_reply' | 'status'
+  /** 分段类型（P0 仅 text/markdown） */
+  kind: 'text' | 'markdown' | 'image' | 'video' | 'audio' | 'file' | 'sticker' | 'link'
+}
+
+/** 分段内增量（v2）。 */
+export interface GenerationDeltaMessage {
+  type: 'generation.delta'
+  /** 生成实例 ID */
+  generationId: string
+  /** 分段 ID */
+  segmentId: string
+  /** 全局分段序号 */
+  segmentIndex: number
+  /** 段内增量序号（从 0 递增） */
+  deltaSequence: number
+  /** 文本增量 */
+  delta: string
+}
+
+/** 分段完成（v2）——不结束父回复。content 为完整段文本（public_reply 与 inner_voice 段都携带）。 */
+export interface GenerationSegmentCompletedMessage {
+  type: 'generation.segment.completed'
+  /** 生成实例 ID */
+  generationId: string
+  /** 分段 ID */
+  segmentId: string
+  /** 全局分段序号 */
+  segmentIndex: number
+  /** 分段通道 */
+  channel: 'inner_voice' | 'public_reply' | 'status'
+  /** 分段类型 */
+  kind: 'text' | 'markdown' | 'image' | 'video' | 'audio' | 'file' | 'sticker' | 'link'
+  /** 完整段文本（客户端无需拼 delta 渲染），可缺省 */
+  content?: string
+}
+
+/** 父完成（v2）——唯一终态（finishReason 只含 stop/tool_calls；取消/错误走 generation.failed）。 */
+export interface GenerationCompletedMessage {
+  type: 'generation.completed'
+  /** 生成实例 ID */
+  generationId: string
+  /** assistant 父消息 ID */
+  messageId: string
+  /** 父回复通道 */
+  channel: 'public_reply'
+  /** 完成原因（限 stop/tool_calls） */
+  finishReason: 'stop' | 'tool_calls'
+  /** 回合 token 统计（turn_total=0/rounds=[] 表示无调用记录） */
+  usage: TokenUsage
+  /** 实际模型 */
+  model: string
+  /** 心情（<mood> 标签落位），可缺省 */
+  mood?: string
+  /** 完整性（P0 恒 complete） */
+  completeness: 'complete'
+}
+
+/** 父失败（v2）——取消/错误统一终态。code 用统一错误码目录。 */
+export interface GenerationFailedMessage {
+  type: 'generation.failed'
+  /** 生成实例 ID */
+  generationId: string
+  /** assistant 父消息 ID（已接受后恒非空），可缺省 */
+  messageId?: string
+  /** 稳定错误码（GENERATION_PROVIDER_UNAVAILABLE/GENERATION_TIMEOUT/GENERATION_CANCELLED/INTERNAL 等） */
+  code: string
+  /** 公开说明 */
+  message: string
+  /** 是否可重试 */
+  retryable: boolean
+  /** 公开安全详情，可缺省 */
+  details: Record<string, unknown>
+}
+
 /** 流式文字增量。 */
 export interface DeltaMessage {
   type: 'delta'
@@ -347,6 +466,22 @@ export interface TextMessage {
   type: 'text'
   /** 纯文本或内容块列表 */
   content: string | (TextPart | ImagePart)[]
+}
+
+/** v2 客户端文本消息（type=text + 幂等/定位字段；不进 ServerMessage 联合）。
+
+handler 按连接 protocol_version 路由：v2 连接解析追加字段，v1 忽略。
+非文本消息（content 数组）批次 2 沿用 v1 多模态路径。 */
+export interface V2TextMessage {
+  type: 'text'
+  /** 纯文本 */
+  content: string
+  /** 客户端请求 ID（幂等键，必填） */
+  clientRequestId: string
+  /** 客户端本地消息 ID，可缺省 */
+  clientMessageId?: string
+  /** 会话 ID，批次 2 忽略/恒 null，可缺省 */
+  conversationId?: string
 }
 
 /** 客户端打断指令。 */
@@ -1198,6 +1333,13 @@ export type ServerMessage =
   | ServiceModeResultMessage
   | HeartbeatAckMessage
   | ErrorMessage
+  | UserAckMessage
+  | GenerationStartedMessage
+  | GenerationSegmentStartedMessage
+  | GenerationDeltaMessage
+  | GenerationSegmentCompletedMessage
+  | GenerationCompletedMessage
+  | GenerationFailedMessage
   | UnknownMessage
 
 export interface UnknownMessage { type: string; [key: string]: unknown }
