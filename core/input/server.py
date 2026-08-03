@@ -55,6 +55,15 @@ def warn_if_unsecured(host: str, access_token: str) -> None:
     )
 
 
+def _protocol_error_response(code: str, message: str, status: int = 401) -> web.Response:
+    """构造统一错误信封响应（code/message/retryable/requestId/error/details）。"""
+    env = ProtocolError(
+        code=code, message=message, retryable=False,
+        requestId=f"req_{uuid.uuid4().hex[:24]}", error=message,
+    ).wire_dict()
+    return web.json_response(env, status=status)
+
+
 def _make_access_auth_middleware(access_token: str):
     """产品认证中间件：护 `/ws`、`/api/*`、`/uploads/*`（Bearer 校验）。
 
@@ -72,13 +81,29 @@ def _make_access_auth_middleware(access_token: str):
             return await handler(request)
         code = "AUTH_REQUIRED" if not auth_header else "AUTH_INVALID"
         msg = "需要认证" if not auth_header else "认证失败"
-        env = ProtocolError(
-            code=code, message=msg, retryable=False,
-            requestId=f"req_{uuid.uuid4().hex[:24]}", error=msg,
-        ).wire_dict()
-        return web.json_response(env, status=401)
+        return _protocol_error_response(code, msg, 401)
 
     return _auth
+
+
+def _make_payload_middleware(cms: int):
+    """请求体超限（client_max_size）→ 413 REQUEST_TOO_LARGE 统一信封。
+
+    aiohttp 默认 413 是纯文本；且 handler 的 `except Exception` 会吞掉
+    HTTPRequestEntityTooLarge（变 400）。故在进 handler 前按 Content-Length 提前 413；
+    chunked（无 Content-Length）场景保留异常兜底。
+    """
+
+    @web.middleware
+    async def _payload(request: web.Request, handler):
+        if request.content_length is not None and request.content_length > cms:
+            return _protocol_error_response("REQUEST_TOO_LARGE", "请求体过大", 413)
+        try:
+            return await handler(request)
+        except web.HTTPPayloadTooLarge:
+            return _protocol_error_response("REQUEST_TOO_LARGE", "请求体过大", 413)
+
+    return _payload
 
 
 def create_app(
@@ -88,6 +113,8 @@ def create_app(
     task_system: "WorkflowEngine | None" = None,
     auth_token: str = "",
     access_token: str = "",
+    max_ws_connections: int | None = None,
+    max_request_bytes: int | None = None,
 ) -> web.Application:
     """Create an aiohttp Application with WebSocket handler and optional static files.
 
@@ -103,13 +130,18 @@ def create_app(
             /debug/api/* require Authorization: Bearer <auth_token> header.
         access_token: if non-empty, /ws, 业务 /api/*, /uploads/* require
             Authorization: Bearer <access_token>（产品认证，与 auth_token 权限域分离）。
+        max_ws_connections: 并发 WS 连接上限（0/None 不限）。超出拒绝升级（503 CONNECTION_LIMITED）。
+        max_request_bytes: 业务请求体上限（client_max_size，app 级；multipart 除外）。
 
     Returns:
         web.Application: Configured aiohttp Application instance.
     """
-    # 产品认证：access_token 为空 → 全匿名（本地开发，v1 兼容）；
-    # 非空 → /ws、/api/*、/uploads/* 要求 Bearer 头（401 + ProtocolError 信封）。
-    app = web.Application()
+    # 请求体上限：app 级 client_max_size（aiohttp 无按路由选项；multipart 手工限制不受其约束）
+    cms = max_request_bytes if max_request_bytes else 8 * 1024 * 1024
+    app = web.Application(client_max_size=cms)
+    # 请求体超限 → 413 REQUEST_TOO_LARGE 信封（恒挂载）
+    app.middlewares.append(_make_payload_middleware(cms))
+    # 产品认证：access_token 为空 → 全匿名（本地开发，v1 兼容）
     if access_token:
         app.middlewares.append(_make_access_auth_middleware(access_token))
 
@@ -134,7 +166,7 @@ def create_app(
         return auth_header == expected
 
     async def ws_handler(request: web.Request) -> web.WebSocketResponse:
-        """WebSocket 连接处理入口。
+        """WebSocket 连接处理入口（含并发上限检查）。
 
         Args:
             request: aiohttp Request。
@@ -142,6 +174,13 @@ def create_app(
         Returns:
             web.WebSocketResponse: WebSocket 连接对象。
         """
+        if max_ws_connections and max_ws_connections > 0:
+            from Module.output import WebSocketChannel
+            channels = getattr(agent.output, "_channels", None)
+            if isinstance(channels, (list, tuple)):
+                count = sum(1 for ch in channels if isinstance(ch, WebSocketChannel))
+                if count >= max_ws_connections:
+                    return _protocol_error_response("CONNECTION_LIMITED", "并发连接超限", 503)
         return await handle_ws(request, agent, wake_word_enabled)
 
     app.router.add_get("/ws", ws_handler)
