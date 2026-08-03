@@ -54,6 +54,8 @@ jobs:
         run: cp /home/yomu/Agent/.env .env
       - name: Lint (import style gate)
         run: make lint
+      - name: Contract drift check
+        run: make check-types
       - name: Run quick tests
         run: |
           set -a
