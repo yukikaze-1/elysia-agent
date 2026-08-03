@@ -287,6 +287,8 @@ class CognitiveLoop(CognitiveTools):
                        content: list[dict] | None = None,
                        is_task_result: bool = False,
                        task_result_context: dict | None = None,
+                       message_id: str | None = None,
+                       protocol_version: int = 1,
                        ) -> None:
         """处理用户消息，驱动一轮完整的 ReAct 认知循环。
 
@@ -299,6 +301,8 @@ class CognitiveLoop(CognitiveTools):
             content: 多模态内容数组（ChatMessageV2 content），优先级高于 user_message
             is_task_result: 是否为后台任务结果触发的唤醒
             task_result_context: 后台任务结果上下文，含 original_intent / result 等字段
+            message_id: v2 预分配用户消息 ID（落库优先用，ACK 一致）；v1 无则 None
+            protocol_version: 来源协议版本（1=v1，2=v2），默认 1
         """
         async with self._process_lock:
             if not self.status.is_accepting_input:
@@ -341,7 +345,9 @@ class CognitiveLoop(CognitiveTools):
                                        stt_emotion=stt_emotion, stt_events=stt_events,
                                        _on_tool_calls=_on_tool_calls, content=content,
                                        is_task_result=is_task_result,
-                                       task_result_context=task_result_context)
+                                       task_result_context=task_result_context,
+                                       message_id=message_id,
+                                       protocol_version=protocol_version)
                 clock.stop()
                 logger.info("<<< 回复生成完成 — %s", clock.summary())
                 # 存入 ring buffer 供 /debug 面板
@@ -384,6 +390,7 @@ class CognitiveLoop(CognitiveTools):
         content: list[dict] | None,
         stt_emotion: str, stt_events: list[str] | None,
         is_task_result: bool,
+        user_message_id: str | None = None,
     ) -> tuple[list[dict], list[dict]]:
         """构建本轮 LLM 调用的 messages + tool definitions。
 
@@ -394,6 +401,7 @@ class CognitiveLoop(CognitiveTools):
             stt_emotion: STT 情绪标签
             stt_events: STT 事件列表
             is_task_result: 是否为任务结果唤醒（决定是否写入 session）
+            user_message_id: v2 预分配用户消息 ID（落库优先用，保证 ACK 一致）；无则 new_message_id()
 
         Returns:
             (messages, tool_defs): LLM 消息列表 + 工具定义列表
@@ -415,7 +423,7 @@ class CognitiveLoop(CognitiveTools):
         if not is_task_result:
             self._session.add_message(UserMessage(
                 content=parts_from_dicts(user_content),
-                message_id=new_message_id(),
+                message_id=user_message_id or new_message_id(),
                 timestamp=_now_iso(),
             ))
         tool_defs = self._tool_adapter.definitions() if self._tool_adapter else None
@@ -785,6 +793,8 @@ class CognitiveLoop(CognitiveTools):
                           content: list[dict] | None = None,
                           is_task_result: bool = False,
                           task_result_context: dict | None = None,
+                          message_id: str | None = None,
+                          protocol_version: int = 1,
                           ) -> None:
         """ReAct 主循环：build → [stream → (execute | finalize)] × MAX_TOOL_ROUNDS。
 
@@ -805,6 +815,8 @@ class CognitiveLoop(CognitiveTools):
             content: 多模态内容数组
             is_task_result: 是否为后台任务结果唤醒
             task_result_context: 任务结果上下文（含 original_intent / result）
+            message_id: v2 预分配用户消息 ID（落库优先用）
+            protocol_version: 来源协议版本（1=v1，2=v2）
         """
         # 前置：STT 情绪分析 + 渐进式唤醒
         if self._character_engine:
@@ -816,7 +828,8 @@ class CognitiveLoop(CognitiveTools):
         # 1. 构建 prompt
         self._phase = TurnPhase.BUILD_PROMPT
         messages, tool_defs = await self._build_turn_prompt(
-            user_message, user_name, content, stt_emotion, stt_events, is_task_result)
+            user_message, user_name, content, stt_emotion, stt_events, is_task_result,
+            user_message_id=message_id)
 
         # 记录 prompt + token turn start
         if self._prompt_recorder is not None:

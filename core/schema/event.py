@@ -27,6 +27,9 @@ class UserInputData(BaseModel):
     content: list[dict] | None = None
     emotion: str = ""
     events: list[str] = Field(default_factory=list)
+    # 批次 2（v2 消息）：预分配用户消息 ID（ACK 一致）+ 来源协议版本
+    message_id: str | None = None
+    protocol_version: int = 1
 
 
 class SystemTickData(BaseModel):

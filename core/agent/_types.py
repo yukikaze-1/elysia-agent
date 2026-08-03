@@ -16,6 +16,8 @@ class _PendingMessage:
     user_name: str
     request_id: str
     content: list[dict] | None = None
+    # 批次 2（v2 消息）：预分配用户消息 ID——忙时排队出队后 ACK 与落库保持一致
+    message_id: str | None = None
 
 
 @dataclass

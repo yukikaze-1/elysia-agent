@@ -277,7 +277,9 @@ class Agent(AgentLifecycle, AgentServer):
     # ---- process_message ----
 
     async def process_message(self, text: str = "", user_name: str = "",
-                               content: list[dict] | None = None) -> None:
+                               content: list[dict] | None = None,
+                               message_id: str | None = None,
+                               protocol_version: int = 1) -> None:
         """处理单条用户消息，通过管道送入 CognitiveLoop。
 
         Agent 忙碌时消息入队（FIFO），IDLE 时出队处理。
@@ -287,6 +289,8 @@ class Agent(AgentLifecycle, AgentServer):
             text: 纯文本消息（兼容旧调用）。
             user_name: 发送者名称，为空时使用配置中的默认用户名。
             content: 多模态内容数组（ChatMessageV2 content），新接口。
+            message_id: v2 预分配用户消息 ID（ACK 一致，落库优先用）；v1 无则 None。
+            protocol_version: 来源协议版本（1=v1，2=v2），默认 1。
         """
         user_name = user_name or self._user_name
         if not text.strip() and not content:
@@ -306,12 +310,14 @@ class Agent(AgentLifecycle, AgentServer):
                        self.status.current_name(), len(self._pending_messages) + 1)
             self._pending_messages.append(_PendingMessage(
                 text=text, user_name=user_name, request_id=rid,
-                content=content,
+                content=content, message_id=message_id,
             ))
             return
 
         self._bus.post(UserInputData(text=text, user_name=user_name,
-                                     request_id=rid, content=content))
+                                     request_id=rid, content=content,
+                                     message_id=message_id,
+                                     protocol_version=protocol_version))
 
     # ---- Background task lifecycle ----
 
@@ -463,6 +469,8 @@ class Agent(AgentLifecycle, AgentServer):
         stt_events = data.events
         content = data.content
         rid = data.request_id
+        message_id = data.message_id
+        protocol_version = data.protocol_version
         logger.debug("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
                    "websocket" if stt_emotion else "text", stt_emotion or "无")
         # 取消上一个未完成的 task，防止快速连续事件造成孤儿
@@ -475,7 +483,9 @@ class Agent(AgentLifecycle, AgentServer):
                                     stt_emotion=stt_emotion,
                                     stt_events=stt_events,
                                     _on_tool_calls=_on_tool_calls,
-                                    content=content),
+                                    content=content,
+                                    message_id=message_id,
+                                    protocol_version=protocol_version),
             name=f"cognitive-{text[:20] if text else 'multimodal'}"
         )
         self._cognitive._current_task = task
@@ -545,6 +555,7 @@ class Agent(AgentLifecycle, AgentServer):
                     user_name=pending.user_name,
                     request_id=pending.request_id,
                     content=pending.content,
+                    message_id=pending.message_id,  # 批次 2：忙时排队不丢预分配 ID
                 ))
         await self._output.notify_state(state)
 
