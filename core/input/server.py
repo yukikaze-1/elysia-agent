@@ -6,6 +6,7 @@ Each client gets an independent WebSocketChannel (outbound) and AudioBuffer
 
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,7 @@ from core.agent import Agent
 from core.input.ws_handler import handle_ws
 from core.input.api_routes import register_api_routes
 from core.input.debug_routes import register_debug_routes
+from frontend_contract.rest import ProtocolError
 
 if TYPE_CHECKING:
     from Module.workflow_engine.workflow_engine import WorkflowEngine
@@ -28,12 +30,39 @@ _STATIC_DIR = ProjectPath.STATIC.resolve()
 _LIVE2D_DIR = ProjectPath.LIVE2D_ASSETS.resolve()
 
 
+def _make_access_auth_middleware(access_token: str):
+    """产品认证中间件：护 `/ws`、`/api/*`、`/uploads/*`（Bearer 校验）。
+
+    与 admin `_check_auth`（auth_token）权限域分离——本中间件只处理产品 access_token。
+    无 token 环境不挂载（create_app 仅 access_token 非空时 append），匿名回归零影响。
+    """
+
+    @web.middleware
+    async def _auth(request: web.Request, handler):
+        path = request.path
+        if not (path.startswith("/api/") or path.startswith("/uploads") or path == "/ws"):
+            return await handler(request)
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header == f"Bearer {access_token}":
+            return await handler(request)
+        code = "AUTH_REQUIRED" if not auth_header else "AUTH_INVALID"
+        msg = "需要认证" if not auth_header else "认证失败"
+        env = ProtocolError(
+            code=code, message=msg, retryable=False,
+            requestId=f"req_{uuid.uuid4().hex[:24]}", error=msg,
+        ).wire_dict()
+        return web.json_response(env, status=401)
+
+    return _auth
+
+
 def create_app(
     agent: "Agent",
     serve_static: bool = True,
     wake_word_enabled: bool = False,
     task_system: "WorkflowEngine | None" = None,
     auth_token: str = "",
+    access_token: str = "",
 ) -> web.Application:
     """Create an aiohttp Application with WebSocket handler and optional static files.
 
@@ -47,11 +76,17 @@ def create_app(
         task_system: WorkflowEngine instance for debug routes (optional)
         auth_token: if non-empty, /shutdown, /restart, /tools/reload, and
             /debug/api/* require Authorization: Bearer <auth_token> header.
+        access_token: if non-empty, /ws, 业务 /api/*, /uploads/* require
+            Authorization: Bearer <access_token>（产品认证，与 auth_token 权限域分离）。
 
     Returns:
         web.Application: Configured aiohttp Application instance.
     """
+    # 产品认证：access_token 为空 → 全匿名（本地开发，v1 兼容）；
+    # 非空 → /ws、/api/*、/uploads/* 要求 Bearer 头（401 + ProtocolError 信封）。
     app = web.Application()
+    if access_token:
+        app.middlewares.append(_make_access_auth_middleware(access_token))
 
     # Inject agent + stt + task_system into app context for handler access
     app["agent"] = agent

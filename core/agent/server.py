@@ -336,7 +336,8 @@ class AgentServer:
             app = create_app(cast(Any, self), serve_static=True,
                             wake_word_enabled=wake_word_enabled,
                             task_system=self._task_system,
-                            auth_token=self._config.server.auth_token)
+                            auth_token=self._config.server.auth_token,
+                            access_token=self._config.server.access_token)
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, host, port)
