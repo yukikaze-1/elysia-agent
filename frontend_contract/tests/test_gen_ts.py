@@ -1,5 +1,5 @@
 """gen_ts 发射器测试：三态映射 + wire_dict 递归序列化（marker=unit）。"""
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 import pytest
 from pydantic import Field
@@ -76,6 +76,23 @@ def test_emit_basic_interface():
     assert "ok: true" in out                            # Literal[True] → true（小写，非 'True'）
     assert "import type" not in out                      # 拓扑序内联，无跨文件 import
     assert "服务能力" in out                             # docstring → JSDoc 保留中文
+
+
+class ParamsModel(ContractModel):
+    """Any 类型映射测试（ActionMessage.params 场景）。"""
+    params: dict[str, Any]
+
+
+@pytest.mark.unit
+def test_emit_any_maps_to_unknown():
+    """dict[str, Any] → Record<string, unknown>（protocol.ts 惯例）。
+
+    回归 C1：此前 `_ts_type` 对 Any 落到 __name__ → 产出字面量 `Any`（非法 TS，
+    vue-tsc 报 TS2304 Cannot find name 'Any'，CI frontend job 红）。
+    """
+    out = generate_ts([ParamsModel])
+    assert "params: Record<string, unknown>" in out
+    assert "Record<string, Any>" not in out       # 非法 TS 字面量不得残留
 
 
 @pytest.mark.unit

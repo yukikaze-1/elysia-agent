@@ -245,7 +245,7 @@ export interface ActionMessage {
   /** 动作标识 */
   action: 'tool_executing' | 'tool_done' | string
   /** 动作参数 */
-  params: Record<string, Any>
+  params: Record<string, unknown>
 }
 
 /** 前端指令（工具审批弹窗 / 阻塞 / 内心独白）。 */
@@ -254,7 +254,7 @@ export interface CommandMessage {
   /** 指令标识 */
   command: 'tool_approval' | 'block' | 'inner_voice'
   /** 指令参数，可缺省 */
-  params?: Record<string, Any>
+  params?: Record<string, unknown>
 }
 
 /** 唤醒词检测通知。 */

@@ -1,6 +1,6 @@
 """B2 发射器：frontend_contract BaseModel → contract.generated.ts（零第三方依赖）。"""
 import types
-from typing import Annotated, Literal, Union, get_args, get_origin
+from typing import Any, Annotated, Literal, Union, get_args, get_origin
 
 # PEP 604 `X | Y`（types.UnionType）与 typing.Union 都是联合：含 Annotated 成员时
 # pydantic 不做归一化（如 TextMessage.content: str | list[Annotated[...]]），
@@ -48,6 +48,10 @@ def _ts_type(annotation) -> str:
         return "boolean"
     if annotation in (int, float):
         return "number"
+    if annotation is Any:
+        # Python Any 无 TS 对应物：落到 __name__ 会产出字面量 Any（TS2304 Cannot find name）。
+        # 映射为 unknown（protocol.ts 惯例 Record<string, unknown>），结构上与任何类型互容。
+        return "unknown"
     return annotation.__name__
 
 
