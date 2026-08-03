@@ -8,9 +8,17 @@
 
 import asyncio
 import json
+import time
 
 import pytest
 from aiohttp import WSMsgType
+from core.input.idempotency import reset_store
+
+
+@pytest.fixture(autouse=True)
+def _fresh_idempotency():
+    reset_store()
+    yield
 
 
 # FakeLLM 带标签响应：inner_voice + mood + 多句（触发真实事件序列）
@@ -68,7 +76,8 @@ def _make_agent_with(fake) -> "Agent":
     return agent
 
 
-async def _send_and_collect(client, headers, content: str):
+async def _send_and_collect(client, headers, content: str,
+                            client_request_id: str | None = None):
     async with client.session.ws_connect(client.make_url("/ws"), headers=headers) as ws:
         # 排空建连帧（v1 收 capabilities；v2 收 server_info）
         for _ in range(5):
@@ -80,10 +89,13 @@ async def _send_and_collect(client, headers, content: str):
                         break
             except asyncio.TimeoutError:
                 break
-        await ws.send_json({"type": "text", "content": content})
+        msg = {"type": "text", "content": content}
+        if client_request_id:
+            msg["clientRequestId"] = client_request_id
+        await ws.send_json(msg)
         frames = []
         while True:
-            msg = await asyncio.wait_for(ws.receive(), timeout=10)
+            msg = await asyncio.wait_for(ws.receive(), timeout=30)  # 满载下放宽超时
             if msg.type != WSMsgType.TEXT:
                 continue
             data = json.loads(msg.data)
@@ -107,7 +119,8 @@ class TestV2GenerationSequence:
         client = await aiohttp_client(app)
         try:
             frames = await _send_and_collect(
-                client, {"X-Protocol-Version": "2"}, "你好")
+                client, {"X-Protocol-Version": "2"}, "你好",
+                client_request_id=f"req_{time.monotonic_ns()}")
             types = [f["type"] for f in frames]
             # 关键序列：generation.started 先于 segments；completed 是终态
             assert "generation.started" in types
@@ -173,7 +186,8 @@ class TestV2GenerationSequence:
         try:
             # v2
             v2_frames = await _send_and_collect(
-                client, {"X-Protocol-Version": "2"}, "hi")
+                client, {"X-Protocol-Version": "2"}, "hi",
+                client_request_id=f"req_{time.monotonic_ns()}")
             v2_types = [f["type"] for f in v2_frames]
             assert "generation.failed" in v2_types
             failed = next(f for f in v2_frames if f["type"] == "generation.failed")

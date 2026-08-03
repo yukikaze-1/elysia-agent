@@ -1,17 +1,21 @@
 """WebSocket handler — WS lifecycle, message routing, interrupt, transcription."""
 
 import asyncio
+import hashlib
 import json
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from aiohttp import web, WSMsgType
 from pydantic import ValidationError
 
 from core.schema.event import InterruptData, UserInputData
+from core.schema.utils import now_iso
 from Module.output import WebSocketChannel
 from core.input.audio_buffer import AudioBuffer
 from core.input.capabilities import build_capabilities
+from core.input.idempotency import IdempotencyEntry, get_store
 from frontend_contract import (
     CommandMessage,
     ErrorMessage,
@@ -21,6 +25,7 @@ from frontend_contract import (
     ServiceModeResultMessage,
     SwitchModelResultMessage,
     TranscriptionMessage,
+    UserAckMessage,
     WakeMessage,
 )
 
@@ -216,6 +221,93 @@ async def handle_ws(
     return ws
 
 
+def _find_channel(agent: "Agent", ws: "web.WebSocketResponse | None") -> "WebSocketChannel | None":
+    """按 ws 找到对应 WebSocketChannel（用于读取 protocol_version）。
+
+    仿 switch_model 遍历 agent.output._channels；ws 为 None 或通道不可枚举时返回 None。
+    """
+    if ws is None:
+        return None
+    channels = getattr(agent.output, "_channels", None)
+    if not isinstance(channels, (list, tuple)):
+        return None
+    for ch in channels:
+        if isinstance(ch, WebSocketChannel) and getattr(ch, "_ws", None) is ws:
+            return ch
+    return None
+
+
+async def _send_ack(ws: "web.WebSocketResponse", message_id: str, client_request_id: str,
+                    client_message_id: str | None, conversation_id: str | None,
+                    status: str, error: dict | None = None) -> None:
+    """发送 v2 用户消息确认。"""
+    try:
+        await ws.send_json(UserAckMessage(
+            messageId=message_id, clientRequestId=client_request_id,
+            clientMessageId=client_message_id, conversationId=conversation_id,
+            receivedAt=now_iso(), status=status, error=error,
+        ).wire_dict())
+    except Exception:
+        logger.debug("发送 user_message.ack 失败", exc_info=True)
+
+
+async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
+                         text: str, data: dict) -> bool:
+    """v2 文本消息路由：ACK + 幂等 + 预分配 messageId。
+
+    返回 True 表示已按 v2 处理（含 rejected），False 表示走 v1 路径（非 v2 连接）。
+
+    Args:
+        agent: Agent 实例。
+        ws: 发送方连接（用于回 ACK 与协议版本判定）。
+        text: 文本内容（已 strip）。
+        data: 原始消息 dict（含 clientRequestId/clientMessageId/conversationId）。
+    """
+    if ws is None:
+        return False
+    channel = _find_channel(agent, ws)
+    if channel is None or channel.protocol_version < 2:
+        return False
+    client_request_id = data.get("clientRequestId", "")
+    client_message_id = data.get("clientMessageId")
+    conversation_id = data.get("conversationId")
+
+    if not client_request_id:
+        # 缺 clientRequestId → 契约错误拒绝（spec §4.2）
+        await _send_ack(ws, "", "", client_message_id, conversation_id, "rejected",
+                        error={"code": "CONTRACT_VALIDATION",
+                               "message": "缺少 clientRequestId", "retryable": False})
+        return True
+
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    store = get_store()
+    entry = store.lookup(client_request_id)
+    if entry is not None:
+        if entry.content_digest == digest:
+            # 幂等重放：重发原 ACK（同 messageId），不重复生成（spec §4.2）
+            await _send_ack(ws, entry.user_message_id, client_request_id,
+                            client_message_id, conversation_id, "accepted")
+        else:
+            # 同 ID 不同内容 → 协议错误拒绝
+            await _send_ack(ws, "", client_request_id, client_message_id,
+                            conversation_id, "rejected",
+                            error={"code": "CONTRACT_VALIDATION",
+                                   "message": "clientRequestId 冲突（内容摘要不同）",
+                                   "retryable": False})
+        return True
+
+    # 新请求：预分配用户消息 ID → ACK → 触发生成
+    from core.utils import new_message_id
+    message_id = new_message_id()
+    store.store(client_request_id,
+                IdempotencyEntry(user_message_id=message_id,
+                                 content_digest=digest, created_at=time.monotonic()))
+    await _send_ack(ws, message_id, client_request_id, client_message_id,
+                    conversation_id, "accepted")
+    await agent.process_message(text=text, message_id=message_id, protocol_version=2)
+    return True
+
+
 async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None) -> None:
     """Route a JSON message from the WebSocket client to the appropriate handler.
 
@@ -233,13 +325,16 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             logger.debug("唤醒词开关: %s", "开启" if enabled else "关闭")
     elif msg_type == "text":
         text_content = data.get("content", "")
-        if isinstance(text_content, list):
+        if isinstance(text_content, str) and text_content.strip():
+            # 批次 2 v2 路由（握手 protocol_version=2）：ACK + 幂等 + 预分配 messageId
+            if await _route_v2_text(agent, ws, text_content.strip(), data):
+                return
+            await agent.process_message(text=text_content.strip())
+            logger.debug("WS 收到文本: %s", text_content.strip()[:100])
+        elif isinstance(text_content, list):
             from core.schema.adapters.message_adapter import content_text, parts_from_dicts
             await agent.process_message(text=content_text(parts_from_dicts(text_content)), user_name=agent.user_name, content=text_content)
             logger.debug("WS 收到多模态消息")
-        elif isinstance(text_content, str) and text_content.strip():
-            await agent.process_message(text=text_content.strip())
-            logger.debug("WS 收到文本: %s", text_content.strip()[:100])
     elif msg_type == "interrupt":
         logger.debug("WS 收到打断指令")
         await do_interrupt(agent)
