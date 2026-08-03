@@ -178,10 +178,12 @@ async def _make_agent(fake: FakeLLMBackend):
     return agent
 
 
-async def _capture(fake: FakeLLMBackend, send_then, max_frames: int = 200, timeout: float = 30.0) -> list[str]:
+async def _capture(fake: FakeLLMBackend, send_then, max_frames: int = 200, timeout: float = 30.0,
+                   headers: dict | None = None) -> list[str]:
     """连接 WS，执行 send_then，逐帧记录直到 state idle 或超时。
 
     on_incoming 可选回调：收到某帧后可向 ws 发送应答（如 tool_approval 回传）。
+    headers: WS 握手 HTTP 头（如 X-Protocol-Version: 2）。
     """
     from core.input.server import create_app
 
@@ -194,7 +196,7 @@ async def _capture(fake: FakeLLMBackend, send_then, max_frames: int = 200, timeo
     client = TestClient(TestServer(app))
     await client.start_server()
     try:
-        async with client.session.ws_connect(client.make_url("/ws")) as ws:
+        async with client.session.ws_connect(client.make_url("/ws"), headers=headers) as ws:
             # 排空建连帧（session/capabilities/expression）
             for _ in range(5):
                 try:
@@ -240,6 +242,24 @@ async def main() -> int:
 
         async def _send(ws):
             await ws.send_json({"type": "text", "content": "你好，请介绍一下你自己"})
+
+    elif mode == "server_info":
+        # v2 握手：X-Protocol-Version: 2 → server_info（批次 1 交付物）
+        fake = FakeLLMWithUsage(response=CHAT_RESPONSE)
+        out = TRACES_DIR / "ws-server-info.jsonl"
+
+        async def _send(ws):
+            # 纯握手捕获：不发送任何消息，只记录建连帧（session/server_info/expression）
+            await asyncio.sleep(1.0)
+
+        frames = await _capture(fake, _send, max_frames=10,
+                                headers={"X-Protocol-Version": "2"})
+        lines = [_sanitize(f) for f in frames]
+        out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        for i, line in enumerate(lines):
+            json.loads(line)
+        print(f"[ok] 写入 {out}（{len(lines)} 行，全部可解析）")
+        return 0
 
     elif mode == "cancel":
         # token_delay 拉长生成 + 第一句后插入空格 flush delta，interrupt 落在生成中段

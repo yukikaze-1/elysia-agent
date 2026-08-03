@@ -180,3 +180,32 @@ class TestErrorEnvelopeConsistency:
         # 信封整体不含密钥痕迹
         body = (await resp.read()).decode()
         assert "sk-" not in body and "AGENT_ACCESS_TOKEN" not in body
+
+
+@pytest.mark.service
+class TestDeploymentSecurityPosture:
+    """远程部署安全姿势（TLS 由反代终止，后端认证决策可重复测试）。"""
+
+    @pytest.mark.asyncio
+    async def test_remote_posture_anonymous_rejected_valid_works(self, make_auth_app, aiohttp_client):
+        """有 token 环境（模拟远程）：匿名全拒、有效身份可用、/health 探活不受限。"""
+        app = make_auth_app(access_token="remote-token")
+        client = await aiohttp_client(app)
+        # 匿名全拒
+        assert (await client.get("/api/providers")).status == 401
+        # 有效身份可用
+        assert (await client.get("/api/providers", headers={"Authorization": "Bearer remote-token"})).status == 200
+        # 探活不受产品认证保护
+        assert (await client.get("/health")).status == 200
+
+    @pytest.mark.asyncio
+    async def test_logs_do_not_contain_token(self, make_auth_app, aiohttp_client, caplog):
+        """认证失败/成功路径日志不含 token（敏感信息纪律）。"""
+        import logging
+        app = make_auth_app(access_token="super-secret-token")
+        client = await aiohttp_client(app)
+        with caplog.at_level(logging.DEBUG):
+            await client.get("/api/providers")  # 匿名 → 401
+            await client.get("/api/providers", headers={"Authorization": "Bearer super-secret-token"})
+        joined = "\n".join(r.message for r in caplog.records)
+        assert "super-secret-token" not in joined
