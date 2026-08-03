@@ -99,6 +99,29 @@ class OutputChannel(ABC):
             data: token 消耗统计数据字典。
         """
 
+    # ── 批次 2 v2 结构化事件（协议版本 2 通道按需实现；默认 no-op） ──
+
+    async def on_user_message_ack(self, **kwargs) -> None:
+        """v2 用户消息确认（wire user_message.ack）。"""
+
+    async def on_generation_started(self, **kwargs) -> None:
+        """v2 生成开始（wire generation.started）。"""
+
+    async def on_generation_segment_started(self, **kwargs) -> None:
+        """v2 分段开始（wire generation.segment.started）。"""
+
+    async def on_generation_delta(self, **kwargs) -> None:
+        """v2 分段增量（wire generation.delta）。"""
+
+    async def on_generation_segment_completed(self, **kwargs) -> None:
+        """v2 分段完成（wire generation.segment.completed）。"""
+
+    async def on_generation_completed(self, **kwargs) -> None:
+        """v2 父完成（wire generation.completed）。"""
+
+    async def on_generation_failed(self, **kwargs) -> None:
+        """v2 父失败（wire generation.failed）。"""
+
     @abstractmethod
     async def on_message(self, msg) -> None:
         """完整消息 — 流式结束后发送，或非流式消息直接发送。

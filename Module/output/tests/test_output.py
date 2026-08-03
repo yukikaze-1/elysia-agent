@@ -746,3 +746,90 @@ class TestConsoleChannelNonStreaming:
         captured = capsys.readouterr()
         assert "Elysia" in captured.out
         assert "hello" in captured.out
+
+
+# ============================================================
+# WebSocketChannel v2 wire 方法（批次 2 Task 4）
+# ============================================================
+
+@pytest.mark.unit
+class TestWebSocketV2Methods:
+    def _make_ch(self):
+        ws = AsyncMock()
+        return WebSocketChannel(ws), ws
+
+    @pytest.mark.asyncio
+    async def test_on_user_message_ack_wire(self):
+        ch, ws = self._make_ch()
+        await ch.on_user_message_ack(
+            message_id="msg_u1", client_request_id="req_1", client_message_id=None,
+            conversation_id=None, received_at="2026-08-04T00:00:00+00:00", status="accepted",
+        )
+        sent = ws.send_json.await_args.args[0]
+        assert sent["type"] == "user_message.ack"
+        assert sent["messageId"] == "msg_u1"
+        assert sent["clientRequestId"] == "req_1"
+        assert sent["status"] == "accepted"
+
+    @pytest.mark.asyncio
+    async def test_on_generation_started_wire(self):
+        ch, ws = self._make_ch()
+        await ch.on_generation_started(
+            generation_id="gen_1", message_id="msg_a1", conversation_id=None,
+            request_id="req_1", model="fake/test",
+        )
+        sent = ws.send_json.await_args.args[0]
+        assert sent["type"] == "generation.started"
+        assert sent["generationId"] == "gen_1"
+        assert sent["messageId"] == "msg_a1"
+
+    @pytest.mark.asyncio
+    async def test_on_generation_segment_started_wire(self):
+        ch, ws = self._make_ch()
+        await ch.on_generation_segment_started(
+            generation_id="gen_1", segment_id="seg_1", segment_index=0,
+            channel="public_reply", kind="text",
+        )
+        sent = ws.send_json.await_args.args[0]
+        assert sent["type"] == "generation.segment.started"
+        assert sent["segmentId"] == "seg_1"
+        assert sent["channel"] == "public_reply"
+
+    @pytest.mark.asyncio
+    async def test_on_generation_delta_wire(self):
+        ch, ws = self._make_ch()
+        await ch.on_generation_delta(
+            generation_id="gen_1", segment_id="seg_1", segment_index=0,
+            delta_sequence=0, delta="你",
+        )
+        sent = ws.send_json.await_args.args[0]
+        assert sent["type"] == "generation.delta"
+        assert sent["deltaSequence"] == 0
+        assert sent["delta"] == "你"
+
+    @pytest.mark.asyncio
+    async def test_on_generation_completed_wire(self):
+        ch, ws = self._make_ch()
+        from frontend_contract import TokenUsage
+        usage = TokenUsage(rounds=[], turn_total=0)
+        await ch.on_generation_completed(
+            generation_id="gen_1", message_id="msg_a1", finish_reason="stop",
+            usage=usage, model="fake/test", mood="开心",
+        )
+        sent = ws.send_json.await_args.args[0]
+        assert sent["type"] == "generation.completed"
+        assert sent["finishReason"] == "stop"
+        assert sent["usage"]["turn_total"] == 0
+        assert sent["mood"] == "开心"
+
+    @pytest.mark.asyncio
+    async def test_on_generation_failed_wire(self):
+        ch, ws = self._make_ch()
+        await ch.on_generation_failed(
+            generation_id="gen_1", message_id="msg_a1",
+            code="GENERATION_CANCELLED", message="已取消", retryable=False,
+        )
+        sent = ws.send_json.await_args.args[0]
+        assert sent["type"] == "generation.failed"
+        assert sent["code"] == "GENERATION_CANCELLED"
+        assert sent["retryable"] is False

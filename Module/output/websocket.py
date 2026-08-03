@@ -19,9 +19,16 @@ from frontend_contract import (
     CommandMessage,
     DeltaMessage,
     ExpressionMessage,
+    GenerationCompletedMessage,
+    GenerationDeltaMessage,
+    GenerationFailedMessage,
+    GenerationSegmentCompletedMessage,
+    GenerationSegmentStartedMessage,
+    GenerationStartedMessage,
     MessageMessage,
     StateMessage,
     TypingMessage,
+    UserAckMessage,
 )
 
 
@@ -169,6 +176,77 @@ class WebSocketChannel(OutputChannel):
         # 会缺省省略（wire 行为变化）；session_id 已入 TokenRound（I1' 已收口），
         # 仅剩 null 省略问题未决。data 本身已是模型 dump，非手写字典。
         await self._send_json({"type": "token_usage", **data})
+
+    # ── 批次 2 v2 结构化事件（wire generation.* / user_message.ack） ──
+
+    async def on_user_message_ack(self, *, message_id: str, client_request_id: str,
+                                  client_message_id: str | None = None,
+                                  conversation_id: str | None = None,
+                                  received_at: str, status: str,
+                                  error: dict | None = None) -> None:
+        """发送 v2 用户消息确认。"""
+        await self._send_json(UserAckMessage(
+            messageId=message_id, clientRequestId=client_request_id,
+            clientMessageId=client_message_id, conversationId=conversation_id,
+            receivedAt=received_at, status=status, error=error,
+        ).wire_dict())
+
+    async def on_generation_started(self, *, generation_id: str, message_id: str,
+                                    conversation_id: str | None = None,
+                                    request_id: str | None = None,
+                                    model: str | None = None) -> None:
+        """发送 v2 生成开始。"""
+        await self._send_json(GenerationStartedMessage(
+            generationId=generation_id, messageId=message_id,
+            conversationId=conversation_id, requestId=request_id, model=model,
+        ).wire_dict())
+
+    async def on_generation_segment_started(self, *, generation_id: str, segment_id: str,
+                                            segment_index: int, channel: str, kind: str) -> None:
+        """发送 v2 分段开始。"""
+        await self._send_json(GenerationSegmentStartedMessage(
+            generationId=generation_id, segmentId=segment_id,
+            segmentIndex=segment_index, channel=channel, kind=kind,
+        ).wire_dict())
+
+    async def on_generation_delta(self, *, generation_id: str, segment_id: str,
+                                  segment_index: int, delta_sequence: int, delta: str) -> None:
+        """发送 v2 分段增量。"""
+        await self._send_json(GenerationDeltaMessage(
+            generationId=generation_id, segmentId=segment_id,
+            segmentIndex=segment_index, deltaSequence=delta_sequence, delta=delta,
+        ).wire_dict())
+
+    async def on_generation_segment_completed(self, *, generation_id: str, segment_id: str,
+                                              segment_index: int, channel: str, kind: str,
+                                              content: str | None = None) -> None:
+        """发送 v2 分段完成。"""
+        await self._send_json(GenerationSegmentCompletedMessage(
+            generationId=generation_id, segmentId=segment_id,
+            segmentIndex=segment_index, channel=channel, kind=kind, content=content,
+        ).wire_dict())
+
+    async def on_generation_completed(self, *, generation_id: str, message_id: str,
+                                      finish_reason: str, usage, model: str,
+                                      mood: str | None = None,
+                                      completeness: str = "complete",
+                                      channel: str = "public_reply") -> None:
+        """发送 v2 父完成。usage 为契约 TokenUsage（rounds + turn_total）。"""
+        await self._send_json(GenerationCompletedMessage(
+            generationId=generation_id, messageId=message_id, channel=channel,
+            finishReason=finish_reason, usage=usage, model=model,
+            mood=mood, completeness=completeness,
+        ).wire_dict())
+
+    async def on_generation_failed(self, *, generation_id: str, code: str, message: str,
+                                   retryable: bool, message_id: str | None = None,
+                                   details: dict | None = None) -> None:
+        """发送 v2 父失败。"""
+        await self._send_json(GenerationFailedMessage(
+            generationId=generation_id, messageId=message_id, code=code,
+            message=message, retryable=retryable,
+            details=details or {},
+        ).wire_dict())
 
     async def on_message(self, msg) -> None:
         """发送完整消息。
