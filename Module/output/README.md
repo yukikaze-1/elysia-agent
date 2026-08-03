@@ -62,7 +62,7 @@ await mgr.send(ChatMessage(role="Elysia", content="你好"))
 
 ### OutputChannel ABC
 
-所有方法默认 no-op，channel 按需 override。
+所有方法默认 no-op，channel 按需 override。`protocol_version` 类属性（1=v1 默认，2=v2，握手时由 `WebSocketChannel` 设置）——批次 2 版本感知扇出据此分发。
 
 | 方法 | 说明 |
 |------|------|

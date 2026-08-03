@@ -209,3 +209,30 @@ class TestDeploymentSecurityPosture:
             await client.get("/api/providers", headers={"Authorization": "Bearer super-secret-token"})
         joined = "\n".join(r.message for r in caplog.records)
         assert "super-secret-token" not in joined
+
+
+@pytest.mark.service
+class TestValidTokenWsChat:
+    @pytest.mark.asyncio
+    async def test_valid_token_ws_handshake_and_chat(self, aiohttp_client):
+        """有 token 环境：有效 Bearer 的 /ws 握手成功且可聊天（"有效身份可完整聊天"闭环）。"""
+        import asyncio
+        from unittest.mock import AsyncMock
+        from core.input.server import create_app
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        await agent.start()
+        agent.process_message = AsyncMock()
+        app = create_app(agent, serve_static=False, access_token="secret")
+        client = await aiohttp_client(app)
+        try:
+            async with client.session.ws_connect(
+                client.make_url("/ws"), headers={"Authorization": "Bearer secret"},
+            ) as ws:
+                assert ws.closed is False
+                await ws.send_json({"type": "text", "content": "hello"})
+                await asyncio.sleep(0.1)
+            agent.process_message.assert_called()
+        finally:
+            await agent.stop()

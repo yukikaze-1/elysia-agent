@@ -45,7 +45,17 @@ web.run_app(app, port=8000)
 
 ### create_app
 
-- `create_app(agent, *, serve_static, wake_word_enabled, task_system, auth_token)` — 创建 aiohttp Application。STT 不再参数注入：建连时 `ws_handler` 读 `agent.stt` 槽位（`agent.stt_transcribe` / `agent.stt_emotion_state`），支持运行时热切换；BINARY 帧经 `agent.stt_enabled` 防御门控。
+- `create_app(agent, *, serve_static, wake_word_enabled, task_system, auth_token, access_token, max_ws_connections, max_request_bytes)` — 创建 aiohttp Application。STT 不再参数注入：建连时 `ws_handler` 读 `agent.stt` 槽位（`agent.stt_transcribe` / `agent.stt_emotion_state`），支持运行时热切换；BINARY 帧经 `agent.stt_enabled` 防御门控。
+
+### 产品认证（批次 1，BE-010）
+
+- `access_token`（`AGENT_ACCESS_TOKEN`，显式参数默认 `""`）非空时，`/ws`、业务 `/api/*`、`/uploads/*` 要求 `Authorization: Bearer <access_token>`；匿名 → 401 `AUTH_REQUIRED`/`AUTH_INVALID` 统一错误信封。无 token 环境全匿名（v1 兼容）。与 `auth_token`（`SERVER_AUTH_TOKEN`，admin/debug）权限域分离。
+- `max_ws_connections`：并发 WS 上限，超出拒绝 503 `CONNECTION_LIMITED`；`max_request_bytes`：业务请求体上限（app 级 `client_max_size`），超出 413 `REQUEST_TOO_LARGE`。
+- 启动守卫：`warn_if_unsecured(host, access_token)` 非回环绑定 + 无产品认证 → ERROR 显著阻塞告警（`run_server` 每轮调用）。
+
+### 版本协商（批次 1，BE-020）
+
+- WS 握手头 `X-Protocol-Version: 2` → v2 路径：建连发 `server_info`（protocol_version/features/services，取代 capabilities）；缺省/1 → v1 路径（发 capabilities）。`features` 严禁超前声明（批次 1 全 false）。
 
 ### 服务模式开关
 

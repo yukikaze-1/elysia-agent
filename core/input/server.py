@@ -55,10 +55,18 @@ def warn_if_unsecured(host: str, access_token: str) -> None:
     )
 
 
-def _protocol_error_response(code: str, message: str, status: int = 401) -> web.Response:
-    """构造统一错误信封响应（code/message/retryable/requestId/error/details）。"""
+def _protocol_error_response(code: str, message: str, status: int = 401,
+                             retryable: bool = False) -> web.Response:
+    """构造统一错误信封响应（code/message/retryable/requestId/error/details）。
+
+    Args:
+        code: 稳定错误码。
+        message: 公开说明。
+        status: HTTP 状态码。
+        retryable: 是否可重试（错误码目录定义；CONNECTION_LIMITED=true，AUTH/REQUEST 等 false）。
+    """
     env = ProtocolError(
-        code=code, message=message, retryable=False,
+        code=code, message=message, retryable=retryable,
         requestId=f"req_{uuid.uuid4().hex[:24]}", error=message,
     ).wire_dict()
     return web.json_response(env, status=status)
@@ -180,7 +188,8 @@ def create_app(
             if isinstance(channels, (list, tuple)):
                 count = sum(1 for ch in channels if isinstance(ch, WebSocketChannel))
                 if count >= max_ws_connections:
-                    return _protocol_error_response("CONNECTION_LIMITED", "并发连接超限", 503)
+                    return _protocol_error_response("CONNECTION_LIMITED", "并发连接超限", 503,
+                                                    retryable=True)
         return await handle_ws(request, agent, wake_word_enabled)
 
     app.router.add_get("/ws", ws_handler)
