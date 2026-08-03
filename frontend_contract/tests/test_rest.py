@@ -168,3 +168,20 @@ def test_message_extra_keys_ignored():
     }).wire_dict()
     assert "block_index" not in d
     assert d["role"] == "user"
+
+
+@pytest.mark.unit
+def test_protocol_error_envelope():
+    """统一错误信封：code/message/retryable/requestId/error/details；error=message 兼容别名。"""
+    from frontend_contract.rest import ProtocolError
+    err = ProtocolError(
+        code="AUTH_REQUIRED", message="需要认证",
+        requestId="req_123", error="需要认证",
+    )
+    d = err.wire_dict()
+    assert d["code"] == "AUTH_REQUIRED"
+    assert d["message"] == "需要认证"
+    assert d["retryable"] is False
+    assert d["requestId"] == "req_123"
+    assert d["error"] == "需要认证"  # 兼容别名（v1 前端读 err.error）
+    assert d["details"] == {}

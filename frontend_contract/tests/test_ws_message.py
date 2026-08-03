@@ -11,12 +11,12 @@ from frontend_contract.base import field_is_ts_null
 
 @pytest.mark.unit
 def test_server_message_members():
-    """ServerMessage 判别联合：18 具名成员（UnknownMessage 由发射器追加，不在模型里）。"""
+    """ServerMessage 判别联合：19 具名成员（18 v1 + ServerInfoMessage；UnknownMessage 由发射器追加）。"""
     from typing import get_args
-    # ServerMessage = Annotated[Union[18 成员], Field(discriminator="type")]
+    # ServerMessage = Annotated[Union[19 成员], Field(discriminator="type")]
     # get_args(Annotated) 返回 (Union[...], FieldInfo) —— 必须先剥 Annotated 再剥 Union
     members = get_args(get_args(w.ServerMessage)[0])
-    assert len(members) == 18  # 19 = 18 具名 + UnknownMessage（发射器追加）
+    assert len(members) == 19  # 20 = 19 具名 + UnknownMessage（发射器追加）
     assert all(m.__name__ != "UnknownMessage" for m in members)
     assert all(getattr(m, "model_fields", None) is not None for m in members)  # 均为 BaseModel
 
@@ -42,3 +42,25 @@ def test_wire_dict_list_recursive():
     d = msg.wire_dict()
     assert d["messages"][0]["role"] == "assistant"
     assert d["token_stats"]["total"] == 1
+
+
+@pytest.mark.unit
+def test_server_info_message_wire():
+    """server_info：protocol_version/server_version/features/services；features 全 false 默认。"""
+    msg = w.ServerInfoMessage(
+        server_version="0.1.0",
+        features=w.ServerInfoFeatures(),
+        services={
+            "llm": w.ServiceCapability(
+                available=True, enabled=True, model="fake/test", default="fake/test"),
+        },
+    )
+    d = msg.wire_dict()
+    assert d["type"] == "server_info"
+    assert d["protocol_version"] == "2.0"
+    assert d["server_version"] == "0.1.0"
+    assert d["features"] == {
+        "structured_generation": False, "multi_conversation": False,
+        "desktop_runtime": False, "dictation": False,
+    }
+    assert d["services"]["llm"]["model"] == "fake/test"

@@ -170,6 +170,34 @@ export interface CapabilitiesMessage {
   services: Record<string, ServiceCapability>
 }
 
+/** 能力特征声明。严禁超前声明——每个字段必须如实反映后端当前真实能力。 */
+export interface ServerInfoFeatures {
+  /** 结构化聊天（generation.* 事件，批次 2） */
+  structured_generation: boolean
+  /** 多会话（批次 3） */
+  multi_conversation: boolean
+  /** Desktop 工具 Runtime（批次 4） */
+  desktop_runtime: boolean
+  /** 输入法转写（批次 6） */
+  dictation: boolean
+}
+
+/** 协议版本 + 服务器能力声明（仅 v2 客户端；取代 capabilities，避免重复帧）。
+
+`services` 复用 per-service 形状（available/enabled/model/default），
+Electron 设置面板与 v1 共用渲染逻辑。 */
+export interface ServerInfoMessage {
+  type: 'server_info'
+  /** 协商的协议版本 */
+  protocol_version: string
+  /** 服务器版本（core/version.py） */
+  server_version: string
+  /** 能力特征（严禁超前声明） */
+  features: ServerInfoFeatures
+  /** llm/stt/tts 三服务能力 */
+  services: Record<string, ServiceCapability>
+}
+
 /** 流式文字增量。 */
 export interface DeltaMessage {
   type: 'delta'
@@ -430,6 +458,25 @@ export interface ApiFail {
   ok: false
   /** 错误描述 */
   error: string
+}
+
+/** 统一错误信封（认证/限流/连接上限等新引入错误类，以及后续批次 generation 失败复用）。
+
+与 v1 `ApiFail`/`ImageUploadError` 并存——它们是不动现有 v1 契约模型；
+本模型是新错误类的标准形状。`error` 字段 = `message` 兼容别名（v1 前端读 `err.error`）。 */
+export interface ProtocolError {
+  /** 稳定错误码（见错误码目录） */
+  code: string
+  /** 用户可理解的公开说明 */
+  message: string
+  /** 是否可重试 */
+  retryable: boolean
+  /** 关联请求 ID（每请求独立 UUID，非三位计数器） */
+  requestId: string
+  /** 兼容别名，构造时恒等于 message */
+  error: string
+  /** 公开安全详情（禁密钥/正文/路径） */
+  details: Record<string, unknown>
 }
 
 /** Provider 连通/可用测试结果（usable 与 connectivity 两 level 形状并集）。
@@ -1134,6 +1181,7 @@ export interface TaskData {
 export type ServerMessage =
   | SessionMessage
   | CapabilitiesMessage
+  | ServerInfoMessage
   | DeltaMessage
   | MessageMessage
   | TokenUsageMessage

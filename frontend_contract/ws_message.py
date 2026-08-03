@@ -151,6 +151,29 @@ class CapabilitiesMessage(ContractModel):
     services: dict[str, ServiceCapability] = Field(description="llm/stt/tts 三服务能力")
 
 
+class ServerInfoFeatures(ContractModel):
+    """能力特征声明。严禁超前声明——每个字段必须如实反映后端当前真实能力。"""
+
+    structured_generation: bool = Field(default=False, description="结构化聊天（generation.* 事件，批次 2）")
+    multi_conversation: bool = Field(default=False, description="多会话（批次 3）")
+    desktop_runtime: bool = Field(default=False, description="Desktop 工具 Runtime（批次 4）")
+    dictation: bool = Field(default=False, description="输入法转写（批次 6）")
+
+
+class ServerInfoMessage(ContractModel):
+    """协议版本 + 服务器能力声明（仅 v2 客户端；取代 capabilities，避免重复帧）。
+
+    `services` 复用 per-service 形状（available/enabled/model/default），
+    Electron 设置面板与 v1 共用渲染逻辑。
+    """
+
+    type: Literal["server_info"] = "server_info"
+    protocol_version: str = Field(default="2.0", description="协商的协议版本")
+    server_version: str = Field(description="服务器版本（core/version.py）")
+    features: ServerInfoFeatures = Field(description="能力特征（严禁超前声明）")
+    services: dict[str, ServiceCapability] = Field(description="llm/stt/tts 三服务能力")
+
+
 class DeltaMessage(ContractModel):
     """流式文字增量。"""
 
@@ -331,6 +354,7 @@ class WakeToggleMessage(ContractModel):
 ServerMessage = Annotated[Union[
     SessionMessage,
     CapabilitiesMessage,
+    ServerInfoMessage,
     DeltaMessage,
     MessageMessage,
     TokenUsageMessage,

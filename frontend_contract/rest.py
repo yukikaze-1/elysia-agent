@@ -90,6 +90,24 @@ class ApiFail(ContractModel):
     error: str = Field(description="错误描述")
 
 
+# ────────────────────── 统一错误信封（批次 1，BE-080） ──────────────────────
+
+
+class ProtocolError(ContractModel):
+    """统一错误信封（认证/限流/连接上限等新引入错误类，以及后续批次 generation 失败复用）。
+
+    与 v1 `ApiFail`/`ImageUploadError` 并存——它们是不动现有 v1 契约模型；
+    本模型是新错误类的标准形状。`error` 字段 = `message` 兼容别名（v1 前端读 `err.error`）。
+    """
+
+    code: str = Field(description="稳定错误码（见错误码目录）")
+    message: str = Field(description="用户可理解的公开说明")
+    retryable: bool = Field(default=False, description="是否可重试")
+    requestId: str = Field(description="关联请求 ID（每请求独立 UUID，非三位计数器）")
+    error: str = Field(description="兼容别名，构造时恒等于 message")
+    details: dict[str, Any] = Field(default_factory=dict, description="公开安全详情（禁密钥/正文/路径）")
+
+
 # ────────────────────── Provider 测试（/api/providers/test） ──────────────────────
 
 
