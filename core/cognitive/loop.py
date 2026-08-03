@@ -622,6 +622,10 @@ class CognitiveLoop(CognitiveTools):
 
         for item in results:
             if isinstance(item, BaseException):
+                # gather(return_exceptions=True) 捕获的非 Exception 级异常
+                #（KeyboardInterrupt/SystemExit 等）——工具结果被丢弃意味着
+                # 该 tool_call 不会得到对应的 tool response，记录日志便于诊断。
+                logger.warning("工具执行返回异常，跳过该工具结果: %r", item)
                 continue
             tc, tool_result = item
             messages.append({

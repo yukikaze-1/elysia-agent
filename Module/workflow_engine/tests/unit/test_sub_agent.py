@@ -699,6 +699,22 @@ def test_meltdown_time_budget():
     assert "600" in reason
 
 
+def test_meltdown_time_fail_closed_on_malformed_created_at():
+    """created_at 畸形时 fail-closed——按已超时处理，时间熔断必须触发（S4）。
+
+    解析失败若静默返回 0.0，任务将失去时间上限保护，可无限烧资源。
+    """
+    from Module.workflow_engine.core.sub_agent.replan import check_meltdown
+
+    reason = check_meltdown(
+        plan_version=1, max_failure_count=5,
+        max_task_duration_s=600.0, created_at="not-a-timestamp",
+        token_ledger=None, max_total_tokens=100_000,
+    )
+    assert reason is not None
+    assert "耗时" in reason
+
+
 def test_meltdown_token_budget():
     """Token 消耗超过 max_total_tokens 时触发 token 熔断。"""
     from datetime import datetime, timezone

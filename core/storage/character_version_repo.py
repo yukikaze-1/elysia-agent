@@ -51,13 +51,21 @@ class CharacterVersionRepository(Repository):
                 {"$match": {"count": {"$gt": 1}}},
             ]
             try:
-                dups = await self._db.aggregate(COLLECTION, dup_pipeline)
-            except Exception:
-                dups = []  # aggregate 不支持时跳过检查
-            unique = len(list(dups)) == 0 if dups else True
-            if not unique:
+                dup_docs = await self._db.aggregate(COLLECTION, dup_pipeline)
+                unique = len(list(dup_docs)) == 0
+                if not unique:
+                    logger.warning(
+                        "CharacterVersionRepository: 发现重复文档，降级为非唯一索引")
+            except Exception as e:
+                # aggregate 失败（网络/API 不支持）时无法确认是否有重复——
+                # 保守建非唯一索引，避免 ensure_index 失败拖垮整个 repo（S8）。
+                # 原实现把失败当「无重复」→ 建唯一索引失败 → 整个 repo 降级不可用，
+                # 可恢复的数据完整性问题被伪装成可用性问题。
                 logger.warning(
-                    "CharacterVersionRepository: 发现重复文档，降级为非唯一索引")
+                    "CharacterVersionRepository: 重复检测失败，保守降级为非唯一索引 (%s)",
+                    e,
+                )
+                unique = False
             await self._db.ensure_index(COLLECTION, [
                 ("session_id", 1), ("content_type", 1), ("version", -1),
             ], unique=unique)

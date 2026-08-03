@@ -1,5 +1,6 @@
 """MessageRepository 单元测试。"""
 import asyncio
+import logging
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -110,3 +111,29 @@ class TestMessageRepository:
         messages, has_more = asyncio.run(repo.query(limit=20))
         assert messages == []
         assert has_more is False
+
+    def test_append_logs_warning_when_db_none(self, caplog):
+        """归档在 _db is None 时不能静默——必须留下可见日志（S1）。"""
+        repo = MessageRepository(db=None)
+        with caplog.at_level(logging.WARNING, logger="core.storage.message_repo"):
+            asyncio.run(repo.append(SessionId("sid"), _make_user_msg()))
+        assert any("message_archive" in r.message for r in caplog.records)
+
+    def test_health_check_returns_true_when_connected(self):
+        repo = MessageRepository(db=MagicMock())
+        assert asyncio.run(repo.health_check()) is True
+
+    def test_health_check_reconnects_when_db_none(self, monkeypatch):
+        """启动期 MongoDB 故障不应让归档永久失效——health_check 补重连（S1）。"""
+        from Module.database.documentdb import DocumentDBFactory
+
+        fake_backend = MagicMock()
+        fake_backend.ensure_index = AsyncMock()
+        monkeypatch.setattr(DocumentDBFactory, "create", lambda *a, **kw: fake_backend)
+
+        repo = MessageRepository(db=None)
+        ok = asyncio.run(repo.health_check())
+        assert ok is True
+        assert repo._db is fake_backend
+        # 重连后重建两个索引（session_id / session_id+_id）
+        assert fake_backend.ensure_index.call_count == 2

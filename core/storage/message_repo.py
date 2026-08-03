@@ -80,12 +80,15 @@ class MessageRepository(Repository):
             self._db = None
 
     async def health_check(self) -> bool:
-        """健康检查。
+        """健康检查。若连接断开则尝试重连并重建索引（与 session_repo 对称）。
 
         Returns:
             True 表示可用，False 表示不可用。
         """
-        return self._db is not None
+        if self._db is not None:
+            return True
+        # 启动期故障不应让归档永久失效——复用 connect() 的重连 + 建索引逻辑
+        return await self.connect()
 
     # ---- core operations ----
 
@@ -97,6 +100,12 @@ class MessageRepository(Repository):
             msg: 要归档的消息对象。
         """
         if self._db is None:
+            # 永久归档静默丢失——必须留下可见日志（S1）。消息本体仍在 session
+            # deque/JSONL，但 append-only message_archive 不落盘 = 永久丢失。
+            logger.warning(
+                "消息归档跳过：MessageRepository 未连接（MongoDB 不可用），"
+                "本条消息不落 message_archive"
+            )
             return
         doc = msg.model_dump(mode="json")
         doc["session_id"] = session_id

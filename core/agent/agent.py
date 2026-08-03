@@ -392,8 +392,13 @@ class Agent(AgentLifecycle, AgentServer):
                             )
                             break
                 except Exception:
-                    # get_nowait() 抛异常 = 队列空
-                    pass
+                    # 处理单个事件时的意外错误（event.data 访问 / TaskResultData
+                    # 构造 / bus.post 等）——不中断整体轮询，但必须留日志诊断。
+                    # 注意：队列空（asyncio.QueueEmpty）已在上方 get_nowait 分支
+                    # 显式处理，走到这里的是真实错误。
+                    logger.warning(
+                        "mailbox 轮询处理事件异常（task_id=%s）", task_id, exc_info=True,
+                    )
 
     # ---- Event dispatching ----
 

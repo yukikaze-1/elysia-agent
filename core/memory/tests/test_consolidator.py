@@ -9,7 +9,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.memory.consolidator import MemoryConsolidator, _parse_extraction, _parse_compare_actions
+from core.memory.consolidator import (
+    MemoryConsolidator,
+    _JsonArrayParseError,
+    _parse_extraction,
+    _parse_compare_actions,
+)
 from core.schema.memory import MemoryType
 from core.memory.long_term import LongTermMemory
 from core.adapter.llm_adapter import LLMAdapter
@@ -38,9 +43,12 @@ class TestParseExtraction:
         assert items[0].content == "hello"
 
     def test_parse_empty(self):
-        assert _parse_extraction("") == []
-        assert _parse_extraction("not json") == []
+        """合法空数组 → 空；不可解析文本 → 抛 _JsonArrayParseError（S9）。"""
         assert _parse_extraction("[]") == []
+        with pytest.raises(_JsonArrayParseError):
+            _parse_extraction("")
+        with pytest.raises(_JsonArrayParseError):
+            _parse_extraction("not json")
 
     def test_parse_json_embedded_in_text(self):
         """JSON array embedded in surrounding text should be extracted."""
@@ -51,30 +59,28 @@ class TestParseExtraction:
 
     def test_parse_multiple_arrays_returns_first(self):
         """When multiple arrays exist, greedy regex captures from first [ to last ],
-        producing invalid JSON → returns empty list."""
+        producing invalid JSON → 解析失败抛异常。"""
         text = '[{"type": "fact", "content": "a"}] other [{"type": "plan", "content": "b"}]'
-        items = _parse_extraction(text)
-        # Greedy regex matches first [ to last ] → invalid JSON → empty result
-        assert items == []
+        # Greedy regex matches first [ to last ] → invalid JSON → raise
+        with pytest.raises(_JsonArrayParseError):
+            _parse_extraction(text)
 
     def test_parse_trailing_comma(self):
-        """Trailing comma in JSON array (invalid JSON) returns empty."""
-        items = _parse_extraction(
-            '[{"type": "Fact", "content": "test"},]'
-        )
-        # Trailing comma is invalid JSON → json.loads + regex both fail → empty
-        assert items == []
+        """Trailing comma in JSON array (invalid JSON) → 解析失败抛异常。"""
+        # Trailing comma is invalid JSON → json.loads + regex both fail → raise
+        with pytest.raises(_JsonArrayParseError):
+            _parse_extraction('[{"type": "Fact", "content": "test"},]')
 
     def test_parse_whitespace_only(self):
-        assert _parse_extraction("   \n  ") == []
-        assert _parse_extraction("```json\n```") == []
+        with pytest.raises(_JsonArrayParseError):
+            _parse_extraction("   \n  ")
+        with pytest.raises(_JsonArrayParseError):
+            _parse_extraction("```json\n```")
 
     def test_parse_single_object_not_array(self):
-        """A single JSON object (not array) should return empty."""
-        items = _parse_extraction(
-            '{"type": "fact", "content": "not an array"}'
-        )
-        assert items == []
+        """A single JSON object (not array) → 解析失败抛异常。"""
+        with pytest.raises(_JsonArrayParseError):
+            _parse_extraction('{"type": "fact", "content": "not an array"}')
 
     def test_parse_array_with_invalid_items(self):
         """Items missing required fields should still parse."""
@@ -170,6 +176,22 @@ class TestMemoryConsolidator:
 
         items = await consolidator.consolidate("", "")
         assert items == []
+
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_parse_failure_retains_buffer(self):
+        """LLM 输出不可解析时保留缓冲（不静默清空），下次可重试（S9）。"""
+        from core.tests.fake_llm import FakeLLMBackend
+
+        adapter = LLMAdapter(_test_backend=FakeLLMBackend(response="这不是 JSON"))
+        mem = MagicMock()
+        consolidator = MemoryConsolidator(adapter, mem, "TestBot", buffer_threshold=1)
+
+        items = await consolidator.consolidate("用户消息", "助手回复")
+        assert items == []
+        # 解析失败 → 缓冲保留（clear 只在解析成功分支执行）
+        assert len(consolidator._buffer) == 1
 
         await adapter.close()
 

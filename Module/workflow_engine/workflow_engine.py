@@ -386,6 +386,12 @@ class WorkflowEngine:
                     caller="WorkflowEngine",
                 )
             finally:
+                # PAUSED 任务保持存活——与 submit 路径 _run_and_cleanup 对称。
+                # resume 后执行中再次被暂停时，checkpoint/mailbox/注册表全部保留，
+                # 否则重复暂停会删 checkpoint 使任务从此不可再 resume（S6）。
+                if (sub_agent._task_state is not None and
+                    sub_agent._task_state.status == WorkflowStatus.PAUSED):
+                    return
                 self._cleanup_task(task_id)
                 try:
                     await self._cleanup_storage(task_id, sub_agent)

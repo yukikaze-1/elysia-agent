@@ -195,3 +195,63 @@ class TestCharacterVersionRepoContentType:
         versions = await repo.list_versions(sid)
         assert len(versions) == 1
         assert versions[0].get("content_type", "l2") == "l2"
+
+
+@pytest.mark.unit
+class TestCharacterVersionRepoConnectFallback:
+    """连接期重复检测的保守降级（单元，mock DocumentDBFactory，无需 MongoDB）。"""
+
+    def _make_repo(self, monkeypatch, backend):
+        from unittest.mock import AsyncMock
+
+        from Module.database.documentdb import DocumentDBFactory
+        from core.storage.character_version_repo import CharacterVersionRepository
+
+        backend.ensure_index = AsyncMock()
+        monkeypatch.setattr(DocumentDBFactory, "create", lambda *a, **kw: backend)
+        return CharacterVersionRepository(), backend
+
+    @pytest.mark.asyncio
+    async def test_aggregate_failure_falls_back_to_non_unique_index(self, monkeypatch):
+        """aggregate 失败（网络/API 不支持）→ 保守建非唯一索引，repo 不被拖垮（S8）。
+
+        原实现把 aggregate 失败当成「无重复」→ 建唯一索引 → ensure_index 失败
+        → 整个 repo 降级不可用。现在区分：检测失败时保守用非唯一索引。
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
+        backend = MagicMock()
+        backend.aggregate = AsyncMock(side_effect=RuntimeError("network down"))
+        repo, backend = self._make_repo(monkeypatch, backend)
+
+        ok = await repo.connect()
+        assert ok is True
+        assert repo._db is not None
+        call_kwargs = backend.ensure_index.call_args.kwargs
+        assert call_kwargs.get("unique") is False
+
+    @pytest.mark.asyncio
+    async def test_real_duplicates_still_use_non_unique_index(self, monkeypatch):
+        """aggregate 返回真实重复 → 非唯一索引（既有行为保留）。"""
+        from unittest.mock import AsyncMock, MagicMock
+
+        backend = MagicMock()
+        backend.aggregate = AsyncMock(return_value=[{"_id": {"sid": "s"}, "count": 2}])
+        repo, backend = self._make_repo(monkeypatch, backend)
+
+        ok = await repo.connect()
+        assert ok is True
+        assert backend.ensure_index.call_args.kwargs.get("unique") is False
+
+    @pytest.mark.asyncio
+    async def test_no_duplicates_uses_unique_index(self, monkeypatch):
+        """无重复 → 唯一索引（正常路径）。"""
+        from unittest.mock import AsyncMock, MagicMock
+
+        backend = MagicMock()
+        backend.aggregate = AsyncMock(return_value=[])
+        repo, backend = self._make_repo(monkeypatch, backend)
+
+        ok = await repo.connect()
+        assert ok is True
+        assert backend.ensure_index.call_args.kwargs.get("unique") is True

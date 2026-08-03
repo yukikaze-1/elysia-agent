@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from Module.workflow_contract import (
@@ -72,6 +73,12 @@ def check_meltdown(
     # 2. 时间预算
     elapsed_s = _elapsed_seconds(created_at)
     if elapsed_s > max_task_duration_s:
+        if math.isinf(elapsed_s):
+            # fail-closed：created_at 无法解析 → 按已超时熔断
+            return (
+                f"任务耗时无法确定（创建时间解析失败），"
+                f"已按超时熔断（上限 {max_task_duration_s:.0f} 秒）"
+            )
         return (
             f"任务耗时已超过 {elapsed_s:.0f} 秒"
             f"（上限 {max_task_duration_s:.0f} 秒），已触发熔断"
@@ -90,13 +97,16 @@ def check_meltdown(
 
 
 def _elapsed_seconds(created_at: str) -> float:
-    """从 IsoTimestamp 计算已过去秒数。解析失败返回 0.0（优雅降级）。
+    """从 IsoTimestamp 计算已过去秒数。解析失败时 fail-closed（返回 +inf）。
+
+    解析失败视为时间预算已耗尽——时间熔断按已超时处理。若静默返回 0.0，
+    畸形 created_at 会让任务失去时间上限保护，REPLAN 可无限烧资源。
 
     Args:
         created_at: ISO 格式的时间戳字符串
 
     Returns:
-        从 created_at 到现在的秒数；解析失败时返回 0.0
+        从 created_at 到现在的秒数；解析失败时返回 float('inf')
     """
     from datetime import datetime, timezone
 
@@ -104,7 +114,8 @@ def _elapsed_seconds(created_at: str) -> float:
         created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
         return (datetime.now(timezone.utc) - created_dt).total_seconds()
     except (ValueError, TypeError):
-        return 0.0
+        logger.error("created_at 解析失败，按已超时处理（fail-closed）: %r", created_at)
+        return float("inf")
 
 
 def extract_node_results(checkpoint: WorkflowCheckpoint) -> dict[str, NodeState]:

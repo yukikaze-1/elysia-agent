@@ -77,7 +77,13 @@ class LLMAdapter:
             if "tool_calls" in parsed:
                 return ThoughtResult(tool_calls=normalize_tool_calls(parsed["tool_calls"]))
         except (json.JSONDecodeError, TypeError):
-            pass
+            if tools:
+                # 工具模式下响应不是合法 JSON——可能是畸形/截断的工具调用 JSON，
+                # 会被原样当回复文本返回（前端显示一堆 JSON）。记日志便于诊断。
+                logger.warning(
+                    "think(): 工具模式响应不是合法 JSON，按纯文本返回（可能截断）: %.200s",
+                    response,
+                )
 
         return ThoughtResult(text=response)
 

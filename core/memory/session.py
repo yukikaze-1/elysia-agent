@@ -58,7 +58,10 @@ async def _archive_with_limit(msg_repo, session_id, msg) -> None:
 
 
 def _archive_done(task: asyncio.Task) -> None:
-    """fire-and-forget 归档回调：静默吞掉异常（归档为 best-effort）。
+    """fire-and-forget 归档回调：归档失败记录 warning（归档为 best-effort）。
+
+    消息归档是 append-only 永久日志——失败必须可见，否则 MongoDB 故障期间
+    对话消息静默不落 archive（配合 session deque 窗口挤出即永久丢失）。
 
     Args:
         task: 已完成的归档 asyncio.Task。
@@ -66,7 +69,7 @@ def _archive_done(task: asyncio.Task) -> None:
     try:
         task.result()
     except Exception:
-        logger.debug("消息归档失败（fire-and-forget）", exc_info=True)
+        logger.warning("消息归档失败（fire-and-forget）", exc_info=True)
 
 
 class SessionMemory:

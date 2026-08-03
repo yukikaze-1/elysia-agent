@@ -16,6 +16,20 @@ def test_collection_constant_in_repo():
     assert REPO_COLLECTION == "sessions"
 
 
+@pytest.mark.unit
+def test_archive_done_logs_warning_on_failure(caplog):
+    """归档 fire-and-forget 失败不能只记 debug——必须 warning 可见（S1）。"""
+    from core.memory.session import _archive_done
+
+    class _FailingTask:
+        def result(self):
+            raise RuntimeError("mongo write failed")
+
+    with caplog.at_level(logging.WARNING, logger="core.memory.session"):
+        _archive_done(_FailingTask())
+    assert any("消息归档失败" in r.message for r in caplog.records)
+
+
 @pytest.mark.service
 class TestSessionMemoryConnect:
     """connect_db() 创建 SessionRepository 并委托连接。"""

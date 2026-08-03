@@ -70,6 +70,14 @@ def _get_compare_prompt() -> str:
 _compare_actions_adapter = TypeAdapter(list[CompareAction])
 
 
+class _JsonArrayParseError(ValueError):
+    """无法从 LLM 输出中解析出 JSON 数组。
+
+    与「合法空数组 []」区分：[] 是成功解析出的空结果（返回 [] 不抛），
+    解析失败抛本异常——调用方据此保留整合缓冲，避免整合机会静默丢失（S9）。
+    """
+
+
 def _extract_json_array(text: str) -> list[dict]:
     """纯文本→list[dict]。去掉 markdown fence → json.loads → regex fallback。
 
@@ -77,7 +85,10 @@ def _extract_json_array(text: str) -> list[dict]:
         text: LLM 输出的原始文本，可能包含 markdown 代码块。
 
     Returns:
-        解析出的 dict 列表，解析失败时返回空列表。
+        解析出的 dict 列表；合法空数组返回空列表。
+
+    Raises:
+        _JsonArrayParseError: 无法解析出 JSON 数组时抛出。
     """
     text = text.strip()
     if text.startswith("```"):
@@ -85,10 +96,14 @@ def _extract_json_array(text: str) -> list[dict]:
         text = "\n".join(lines[1:]) if len(lines) > 1 else text
         if text.endswith("```"):
             text = text[:-3]
+    text = text.strip()
+    if not text:
+        raise _JsonArrayParseError("提取输出为空")
     try:
         items = json.loads(text)
         if isinstance(items, list):
             return items
+        raise _JsonArrayParseError("JSON 顶层不是数组")
     except json.JSONDecodeError:
         match = re.search(r"\[.*\]", text, re.DOTALL)
         if match:
@@ -98,7 +113,7 @@ def _extract_json_array(text: str) -> list[dict]:
                     return items
             except json.JSONDecodeError:
                 pass
-    return []
+    raise _JsonArrayParseError("无法从文本中解析出 JSON 数组")
 
 
 def _parse_extraction(text: str) -> list[ExtractedMemory]:
@@ -248,7 +263,9 @@ class MemoryConsolidator:
                 extra_body={"thinking": {"type": "disabled"}})
             items = _parse_extraction(result.text)
         except Exception:
-            logger.debug("Consolidation extraction failed", exc_info=True)
+            # 解析失败（含 _JsonArrayParseError）→ 保留缓冲待下轮重试，
+            # 整合机会不静默丢失（S9）。warning 可见 LLM 输出异常。
+            logger.warning("Consolidation extraction failed（保留缓冲待重试）", exc_info=True)
             return []
 
         # LLM 成功 → 清空缓冲区，防止数据丢失

@@ -24,9 +24,8 @@ function closePanel() {
 
 async function handleReload(name: string) {
   reloadStatus.value = null
-  await toolsStore.reloadPlugin(name)
-  const plugin = toolsStore.plugins.find(p => p.name === name)
-  reloadStatus.value = { name, ok: !!plugin }
+  const ok = await toolsStore.reloadPlugin(name)
+  reloadStatus.value = { name, ok }
   setTimeout(() => { reloadStatus.value = null }, 3000)
 }
 
@@ -68,11 +67,18 @@ function safetyLabel(plugin: PluginInfo): string {
           <span class="tools-spinner" /> 加载中...
         </div>
 
+        <div v-else-if="toolsStore.error && toolsStore.plugins.length === 0" class="tools-panel-error">
+          加载失败：{{ toolsStore.error }}
+        </div>
+
         <div v-else-if="toolsStore.plugins.length === 0" class="tools-panel-empty">
           暂无可用工具插件
         </div>
 
         <div v-else class="tools-panel-list">
+          <div v-if="toolsStore.error" class="tools-panel-error-banner">
+            加载失败：{{ toolsStore.error }}（显示上次数据）
+          </div>
           <div
             v-for="plugin in toolsStore.plugins"
             :key="plugin.name"
@@ -209,6 +215,22 @@ function safetyLabel(plugin: PluginInfo): string {
   text-align: center;
   color: var(--muted);
   font-size: 13px;
+}
+
+.tools-panel-error {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.tools-panel-error-banner {
+  margin-bottom: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(233, 69, 96, 0.08);
+  color: var(--accent);
+  font-size: 12px;
 }
 
 .tools-spinner {

@@ -900,6 +900,39 @@ async def test_resume_paused_returns_mailbox():
     assert tid in ts._task_futures
 
 
+@pytest.mark.asyncio
+async def test_resume_paused_again_keeps_task_alive():
+    """resume 后任务执行中再次 PAUSED → keep-alive，不清理注册表（S6）。
+
+    与 submit 路径的 PAUSED keep-alive 对称——重复暂停的任务必须
+    保留 checkpoint/mailbox/注册表，否则从此不可再 resume。
+    """
+    ts = await _build_task_system()
+
+    tid = WorkflowId("t1")
+    task_state = _make_task_state("t1", WorkflowStatus.PAUSED)
+    exec_state = _make_exec_state()
+    sub_agent = _make_mock_sub_agent(task_state, exec_state)
+
+    async def _re_pause():
+        task_state.status = WorkflowStatus.PAUSED
+    sub_agent.resume_from_pause = AsyncMock(side_effect=_re_pause)
+
+    ts._tasks[tid] = sub_agent
+    ts._mailboxes[tid] = WorkflowMailbox(tid)
+
+    result = await ts.resume(tid)
+    assert isinstance(result, WorkflowMailbox)
+
+    # 等 _run_resume 跑完（resume_from_pause 完成 + finally 清理逻辑）
+    fut = ts._task_futures[tid]
+    await asyncio.wait_for(fut, timeout=3.0)
+
+    # 再次 PAUSED → 任务必须保留在注册表（不清理）
+    assert tid in ts._tasks, "resume 后再次 PAUSED 的任务应从注册表保留"
+    assert tid in ts._mailboxes
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PAUSED 查询可见性
 # ═══════════════════════════════════════════════════════════════════════════
