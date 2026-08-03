@@ -24,3 +24,4 @@ log.txt
 prompt_log.txt
 data/*.json
 .vscode/
+frontend-handoff/
