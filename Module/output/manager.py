@@ -305,6 +305,171 @@ class OutputManager:
                     type(ch).__name__, state, exc_info=True,
                 )
 
+    # ---- 批次 2 v2 版本感知统一回合事件（单一语义源，双 wire 呈现） ----
+
+    def _split_versions(self, channels: list[OutputChannel] | None = None):
+        """按协议版本拆分通道：v1（protocol_version=1）与 v2（>=2）。
+
+        Returns:
+            (v1_channels, v2_channels)
+        """
+        channels = channels if channels is not None else self._channels
+        v1 = [c for c in channels if getattr(c, "protocol_version", 1) == 1]
+        v2 = [c for c in channels if getattr(c, "protocol_version", 1) >= 2]
+        return v1, v2
+
+    async def turn_started(self, ctx, *, channels: list[OutputChannel] | None = None) -> None:
+        """生成开始：v2 发 generation.started；v1 无新增（typing/state 由现有路径）。
+
+        Args:
+            ctx: GenerationContext（含 generation_id / assistant_message_id）。
+            channels: 候选通道，None 用全部。
+        """
+        _v1, v2 = self._split_versions(channels)
+        await self._broadcast(
+            "on_generation_started",
+            generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
+            channels=v2,
+        )
+
+    async def segment_started(self, ctx, *, channels: list[OutputChannel] | None = None) -> None:
+        """分段开始：v2 发 generation.segment.started；v1 无。
+
+        Args:
+            ctx: GenerationContext（当前分段已由 loop 打开）。
+        """
+        _v1, v2 = self._split_versions(channels)
+        await self._broadcast(
+            "on_generation_segment_started",
+            generation_id=ctx.generation_id, segment_id=ctx.current_segment_id,
+            segment_index=ctx.current_segment_index, channel=ctx.channel, kind=ctx.kind,
+            channels=v2,
+        )
+
+    async def text_delta(self, text: str, ctx, *, channels: list[OutputChannel] | None = None) -> None:
+        """文本增量：v1 发 delta；v2 发 generation.delta（deltaSequence 由 ctx 分配）。
+
+        Args:
+            text: 文本增量。
+            ctx: GenerationContext。
+        """
+        v1, v2 = self._split_versions(channels)
+        await self._broadcast("on_text_delta", text,
+                              channels=v1, capability=ChannelCapability.TEXT_DELTA)
+        await self._broadcast(
+            "on_generation_delta",
+            generation_id=ctx.generation_id, segment_id=ctx.current_segment_id,
+            segment_index=ctx.current_segment_index, delta_sequence=ctx.next_delta(),
+            delta=text,
+            channels=v2,
+        )
+
+    async def segment_completed(self, text: str, ctx, *, tts_active: bool = False,
+                                channels: list[OutputChannel] | None = None) -> None:
+        """分段完成：v1 按 TTS 状态发 send("") 或不变；v2 恒发 generation.segment.completed。
+
+        Args:
+            text: 完整段文本。
+            ctx: GenerationContext。
+            tts_active: TTS 是否活跃（v1 呈现据此决定是否发空 message 句子边界）。
+        """
+        v1, v2 = self._split_versions(channels)
+        if not tts_active:
+            await self._broadcast("on_message", "",
+                                  channels=v1, capability=ChannelCapability.TEXT_MESSAGE)
+        await self._broadcast(
+            "on_generation_segment_completed",
+            generation_id=ctx.generation_id, segment_id=ctx.current_segment_id,
+            segment_index=ctx.current_segment_index, channel=ctx.channel, kind=ctx.kind,
+            content=text,
+            channels=v2,
+        )
+
+    async def inner_voice(self, text: str, ctx, *, channels: list[OutputChannel] | None = None) -> None:
+        """Inner Voice：v1 发 command inner_voice；v2 作为 inner_voice 段（started+completed，含文本）。
+
+        Args:
+            text: inner_voice 文本。
+            ctx: GenerationContext（方法内部打开 inner_voice 段并关闭）。
+        """
+        v1, v2 = self._split_versions(channels)
+        await self._broadcast("on_command", "inner_voice", params={"content": text},
+                              channels=v1, capability=ChannelCapability.COMMAND)
+        ctx.open_segment("inner_voice", "text")
+        sid = ctx.current_segment_id
+        idx = ctx.current_segment_index
+        await self._broadcast(
+            "on_generation_segment_started",
+            generation_id=ctx.generation_id, segment_id=sid, segment_index=idx,
+            channel="inner_voice", kind="text",
+            channels=v2,
+        )
+        await self._broadcast(
+            "on_generation_segment_completed",
+            generation_id=ctx.generation_id, segment_id=sid, segment_index=idx,
+            channel="inner_voice", kind="text", content=text,
+            channels=v2,
+        )
+        ctx.close_segment()
+
+    async def mood(self, expression: str, intensity: float = 1.0,
+                   *, channels: list[OutputChannel] | None = None) -> None:
+        """心情：v1 发 expression；v2 捕获不发（mood 由 turn_completed 落位）。
+
+        Args:
+            expression: 心情标识。
+            intensity: 强度 0.0~1.0。
+        """
+        v1, _v2 = self._split_versions(channels)
+        await self._broadcast("on_expression", expression, intensity=intensity,
+                              channels=v1, capability=ChannelCapability.EXPRESSION)
+
+    async def turn_completed(self, finish_reason: str, usage, model: str, mood: str | None,
+                             ctx, *, channels: list[OutputChannel] | None = None) -> None:
+        """父完成：v1 NO-OP（TokenTracker.record 已实时广播 v1 token_usage，防双发）；
+        v2 发 generation.completed。
+
+        Args:
+            finish_reason: stop/tool_calls。
+            usage: 契约 TokenUsage（rounds + turn_total）。
+            model: 实际模型。
+            mood: 心情。
+            ctx: GenerationContext。
+        """
+        _v1, v2 = self._split_versions(channels)
+        await self._broadcast(
+            "on_generation_completed",
+            generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
+            finish_reason=finish_reason, usage=usage, model=model, mood=mood,
+            channels=v2,
+        )
+
+    async def turn_failed(self, code: str, message: str, retryable: bool, label: str,
+                          ctx, *, channels: list[OutputChannel] | None = None) -> None:
+        """父失败：v1 逐字节复刻现状（\n❌ {label}: {msg[:200]} + send("")）；
+        v2 发 generation.failed。
+
+        Args:
+            code: 稳定错误码。
+            message: 公开说明。
+            retryable: 是否可重试。
+            label: v1 错误标签（LLM 调用失败/内部错误）。
+            ctx: GenerationContext。
+        """
+        v1, v2 = self._split_versions(channels)
+        await self._broadcast(
+            "on_text_delta", f"\n❌ {label}: {message[:200]}",
+            channels=v1, capability=ChannelCapability.TEXT_DELTA,
+        )
+        await self._broadcast("on_message", "",
+                              channels=v1, capability=ChannelCapability.TEXT_MESSAGE)
+        await self._broadcast(
+            "on_generation_failed",
+            generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
+            code=code, message=message, retryable=retryable,
+            channels=v2,
+        )
+
     async def close(self) -> None:
         """关闭所有通道。"""
         tasks = [c.close() for c in self._channels]
