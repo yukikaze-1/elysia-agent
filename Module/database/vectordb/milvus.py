@@ -198,4 +198,6 @@ class MilvusBackend(VectorDBBackend):
         try:
             await asyncio.to_thread(self._client.close)
         except Exception:
-            pass  # close 失败不阻塞——幂等，可容忍
+            # close 失败 = gRPC 通道/线程泄漏隐患，记录 warning 而非静默
+            self._logger.warning("MilvusClient close 失败（连接可能泄漏）",
+                                 exc_info=True)

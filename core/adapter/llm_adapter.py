@@ -196,7 +196,10 @@ class LLMAdapter:
             try:
                 asyncio.get_running_loop().create_task(close_meth())
             except RuntimeError:
-                pass
+                # 同步上下文无运行中的事件循环——旧后端连接池无法异步关闭，
+                # 记录 warning 暴露泄漏隐患
+                logger.warning(
+                    "switch_model: 同步上下文无法异步关闭旧后端（连接池可能泄漏）")
         logger.info("LLM switched to: %s", new_model_id)
 
     @property

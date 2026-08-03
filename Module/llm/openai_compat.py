@@ -231,8 +231,11 @@ class OpenAICompatBackend(LLMBackend):
                 **kwargs,
             )
             if not response.choices:
-                self._logger.error("LLM 返回空 choices — 模型=%s", self._model)
-                return
+                # 非流式空 choices——显式抛错让上层决策（CognitiveLoop 走空响应守卫/
+                # 重试）。原实现 error 后 return 空串，调用方收到「空白回复」无法感知（O2）。
+                raise RuntimeError(
+                    f"LLM 返回空 choices — 模型={self._model}"
+                )
             content = response.choices[0].message.content
             # 捕获 usage 统计
             if getattr(response, "usage", None):

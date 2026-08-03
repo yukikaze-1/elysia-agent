@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import json
 import logging
 import time
 from dataclasses import asdict
@@ -73,6 +74,25 @@ _EMPTY_RESPONSE_NUDGE = (
     "请直接以对话形式回复用户当前的话题。"
 )
 _EMPTY_RESPONSE_FALLBACK = "抱歉，我刚才走神了，你能再说一遍吗？"
+
+# 空响应兜底累计计数器——连续多轮兜底说明系统性异常（LLM 持续空响应），
+# 超阈值升 error，避免「走神」回复静默刷屏不升级告警。
+_EMPTY_RESPONSE_THRESHOLD = 5
+
+
+def _is_llm_layer_error(exc: BaseException) -> bool:
+    """判断异常是否属于 LLM/网络层失败（区别于代码 bug）。
+
+    CognitiveLoop.process() 顶层 except 需要区分归因（O7）：代码 bug 不应
+    误导用户为「LLM 调用失败」。LLM/网络失败的特征：
+    - 超时/OSError（网络层）
+    - httpx / openai SDK 异常（模块路径前缀）
+    - LLM 输出 JSON 解析失败
+    """
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError, OSError, json.JSONDecodeError)):
+        return True
+    mod = type(exc).__module__
+    return mod.startswith("httpx") or mod.startswith("openai")
 
 
 from core.cognitive.tools import CognitiveTools
@@ -197,6 +217,7 @@ class CognitiveLoop(CognitiveTools):
         self._phase: TurnPhase | None = None   # 当前轮次处理阶段（供 debug 面板）
         self._phases = None  # CognitivePhaseController（由 agent.py 注入，或懒加载）
         self._status = None  # AgentStatus（由 agent.py 注入，或懒加载）
+        self._empty_response_count = 0  # 连续空响应轮数（超阈值升 error）
 
     @property
     def phases(self):
@@ -334,13 +355,19 @@ class CognitiveLoop(CognitiveTools):
                 logger.info("<<< 用户打断")
                 await self._handle_interrupt()
             except Exception as e:
-                logger.exception("<<< LLM 调用异常，回退到 IDLE")
+                # 区分 LLM 层失败与代码 bug——代码 bug 不应误导用户为「LLM 调用失败」（O7）
+                if _is_llm_layer_error(e):
+                    logger.exception("<<< LLM 调用异常，回退到 IDLE")
+                    label = "LLM 调用失败"
+                else:
+                    logger.exception("<<< 处理回复时内部错误，回退到 IDLE")
+                    label = "内部错误"
                 # 通知前端错误信息
                 err_msg = str(e)[:200]
                 try:
                     await self._output._broadcast(
                         "on_text_delta",
-                        f"\n❌ LLM 调用失败: {err_msg}",
+                        f"\n❌ {label}: {err_msg}",
                         capability=ChannelCapability.TEXT_DELTA,
                     )
                     await self._output.send("")
@@ -819,10 +846,22 @@ class CognitiveLoop(CognitiveTools):
                             "LLM 返回空响应（无文本、无工具调用），注入 nudge 重试一次")
                         messages.append({"role": "system", "content": _EMPTY_RESPONSE_NUDGE})
                         continue
-                    logger.warning("LLM 重试后仍返回空响应，发送兜底回复")
+                    # 连续空响应计数器——超阈值升 error，防系统性 bug 持续发
+                    # 「走神」回复而不升级告警。
+                    self._empty_response_count += 1
+                    _log = (logger.error
+                            if self._empty_response_count >= _EMPTY_RESPONSE_THRESHOLD
+                            else logger.warning)
+                    _log(
+                        "LLM 重试后仍返回空响应（连续 %d 轮），发送兜底回复",
+                        self._empty_response_count,
+                    )
                     public_text = _EMPTY_RESPONSE_FALLBACK
                     acc_text = _EMPTY_RESPONSE_FALLBACK
                     all_sentences = [_EMPTY_RESPONSE_FALLBACK]
+                else:
+                    # 正常响应（有文本或工具调用）——重置空响应计数
+                    self._empty_response_count = 0
 
                 if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
                     self._phase = TurnPhase.EXECUTING_TOOLS

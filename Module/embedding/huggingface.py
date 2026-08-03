@@ -15,6 +15,8 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from paths import ProjectPath
 from Module.embedding.protocol import EmbeddingBackend
 
+logger = logging.getLogger(__name__)
+
 # 已知模型的向量维度 — 避免首次推理才能获取
 _KNOWN_DIMS: dict[str, int] = {
     "BAAI/bge-large-zh-v1.5": 1024,
@@ -95,6 +97,9 @@ class HuggingFaceBackend(EmbeddingBackend):
                     else:
                         device = "cpu"
                 except Exception:
+                    # GPU 能力查询失败——静默回退 CPU 掩盖硬件探测错误，留日志
+                    (logger or logging.getLogger(__name__)).warning(
+                        "CUDA 能力查询失败，回退到 CPU 设备", exc_info=True)
                     device = "cpu"
             else:
                 device = "cpu"

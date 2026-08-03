@@ -190,4 +190,5 @@ class WebSocketChannel(OutputChannel):
         try:
             await self._ws.close()
         except Exception:
-            pass  # 连接可能已经断开
+            # 连接可能已断开——常规良性情况，debug 级留痕（供诊断）
+            self._logger.debug("WebSocket close 失败（连接可能已断开）", exc_info=True)

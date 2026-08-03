@@ -129,7 +129,9 @@ class TokenTracker:
                     session_total = self.session_total
                 return {"total": session_total, "by_model": per_model}
             except Exception:
-                pass
+                # pending 文件读取/解析失败 → 回退内存数据，留 warning 可见
+                logger.warning("get_session_stats 读取失败，回退内存数据",
+                               exc_info=True)
         return {"total": self.session_total, "by_model": dict(self.per_model)}
 
     async def flush_pending(self) -> None:

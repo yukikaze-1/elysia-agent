@@ -362,15 +362,12 @@ class DelegationPreparer:
             # 从 tool_map 查找完整 Tool 对象（_validate_output 已保证 name 有效）
             selected_tools = [tool_map[n] for n in selected_names if n in tool_map]
             if not selected_tools:
-                # 防御：_validate_output 保证此分支不会进入，但保留 fallback
-                logger.error(
+                # _validate_output 已保证 status=ok 时必有有效工具——进入此分支
+                # 说明契约被破坏。fail-fast（O1）：返回降级结果会掩盖 bug，
+                # 让错误以「无匹配工具」形式出现而非崩溃暴露。
+                raise AssertionError(
                     "DelegationPreparer._build_result: status=ok 但无有效工具，"
                     "这不应该发生——_validate_output 未正确降级"
-                )
-                return DelegationResult(
-                    status=DelegationStatus.NO_MATCHING_TOOLS,
-                    reason="工具筛选后无有效工具",
-                    missing_tools=parsed.get("missing_tools", []),
                 )
 
             context = DelegationContext(

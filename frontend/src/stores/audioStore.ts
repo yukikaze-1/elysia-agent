@@ -89,7 +89,8 @@ export const useAudioStore = defineStore('audio', () => {
       playNext()
     }
 
-    a.play().catch(() => {
+    a.play().catch((e) => {
+      console.warn('TTS 播放失败:', e)
       if (currentAudio.value === a) currentAudio.value = null
       audioPlaying.value = false
       URL.revokeObjectURL(item.url)

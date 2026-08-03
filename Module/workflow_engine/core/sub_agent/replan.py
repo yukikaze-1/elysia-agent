@@ -48,8 +48,7 @@ def check_meltdown(
     """检查是否触发熔断——plan_version / 时间预算 / token 预算。
 
     plan_version 从 1 开始，每次 Replan 递增。用 > 比较意味着
-    max_failure_count=5 时允许多达 5 次 Replan（version 2→6），
-    version 7 触发熔断。
+    max_failure_count=5 时 plan_version=6 即触发熔断（允许 version 1→5）。
 
     Args:
         plan_version: 当前计划版本号，从 1 开始

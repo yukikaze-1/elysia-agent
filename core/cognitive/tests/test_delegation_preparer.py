@@ -309,17 +309,20 @@ class TestBuildResult:
         assert tc.max_failure_count == 3
 
     def test_ok_fallback_when_no_matching(self, sample_tools):
-        """_validate_output 防御失败时的 fallback——tools 为空。"""
+        """_validate_output 防御失败（status=ok 但工具为空）→ 契约破坏，fail-fast（O1）。
+
+        原实现降级为 NO_MATCHING_TOOLS——掩盖契约破坏，让错误以「无匹配工具」
+        形式出现而非崩溃暴露；现应 raise AssertionError。
+        """
         parsed = {
             "status": "ok",
             "tools": [],
             "summarized_context": "",
         }
-        result = DelegationPreparer._build_result(
-            parsed, "intent", None, sample_tools, SessionId("s1"),
-        )
-        assert result.status == DelegationStatus.NO_MATCHING_TOOLS
-        assert result.context is None
+        with pytest.raises(AssertionError):
+            DelegationPreparer._build_result(
+                parsed, "intent", None, sample_tools, SessionId("s1"),
+            )
 
     def test_no_matching_tools_result(self, sample_tools):
         parsed = {

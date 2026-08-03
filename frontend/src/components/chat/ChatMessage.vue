@@ -37,12 +37,23 @@ function imageParts(): any[] {
 }
 
 async function copyText() {
+  const text = contentText().trim()
   try {
-    await navigator.clipboard.writeText(contentText().trim())
-    copyState.value = 'copied'
-    if (copyTimer) clearTimeout(copyTimer)
-    copyTimer = setTimeout(() => { copyState.value = 'idle' }, 2000)
-  } catch { /* clipboard denied */ }
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // 复用 CodeBlock 的降级：clipboard API 不可用/被拒时 execCommand 兜底
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+  }
+  copyState.value = 'copied'
+  if (copyTimer) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => { copyState.value = 'idle' }, 2000)
 }
 </script>
 

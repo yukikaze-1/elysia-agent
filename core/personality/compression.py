@@ -114,7 +114,7 @@ class CompressionManager:
             except asyncio.TimeoutError:
                 logger.warning("CompressionManager: 压缩 flush 超时")
             except Exception:
-                logger.debug("CompressionManager: 压缩 flush 失败", exc_info=True)
+                logger.warning("CompressionManager: 压缩 flush 失败", exc_info=True)
 
     # ---- 内部方法（private，但 engine 委托方法暴露给测试）----
 

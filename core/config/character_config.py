@@ -124,9 +124,17 @@ class CharacterConfig:
             if p.exists():
                 return p.read_text("utf-8").strip()
 
+        tried = [str(c) for c in candidates]
+        if base_file:
+            # 显式指定 base_personality_file（正式部署声明）但文件不存在 →
+            # 配置错误 fail-fast（O6）。以空 L1 运行会让 C1 无核心性格。
+            raise FileNotFoundError(
+                f"L1 Core personality 文件不存在（base_personality_file={base_file}，"
+                f"tried: {tried}）"
+            )
         logger.warning(
             "L1 Core personality 文件不存在 (tried: %s)，C1 不使用 core 文本",
-            [str(c) for c in candidates]
+            tried,
         )
         return ""
 

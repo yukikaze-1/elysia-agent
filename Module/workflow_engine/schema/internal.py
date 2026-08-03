@@ -485,10 +485,10 @@ class NodeResultEvaluation(BaseModel):
     的实际产物，得出两个维度的判定，包裹原始 NodeResult 一起返回。
     """
     node_id: NodeId
-    execution_status: ExecutionStatus = ExecutionStatus.OK   # 工具是否正常返回？（5 态）
-    business_status: BusinessStatus = BusinessStatus.GOAL_ACHIEVED  # Plan 期望是否达成？（3 态）
+    execution_status: ExecutionStatus                 # 工具是否正常返回？（5 态）——必填，防漏传判定被静默当作成功（O5）
+    business_status: BusinessStatus                   # Plan 期望是否达成？（3 态）——必填
     reason: str = ""                       # 判定依据（为什么判这个结果）
-    suggested_action: EvaluatorAction = EvaluatorAction.CONTINUE  # Orchestrator 执行的下一步
+    suggested_action: EvaluatorAction                 # Orchestrator 执行的下一步——必填
     result: NodeResult                     # 被评定的原始执行结果
 
 

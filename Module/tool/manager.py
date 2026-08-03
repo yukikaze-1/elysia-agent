@@ -328,7 +328,10 @@ class ToolManager:
                         },
                     )
                 except Exception:
-                    pass  # broadcast failure should not block pipeline
+                    # OutputManager 长期故障时审批弹窗永不弹出且无人知晓，
+                    # 需审批工具等到 60s 超时——必须留 warning 可见
+                    logger.warning(
+                        "HITL 审批广播失败（审批弹窗可能不出现）", exc_info=True)
             self._pipeline.set_hitl_broadcast(_broadcast)
 
     async def reload_plugin(self, name: str) -> bool:

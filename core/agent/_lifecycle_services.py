@@ -97,6 +97,12 @@ class _LifecycleServices:
                     model, **resolve_model_params("tts", model),
                     rate_limit_rpm=self._config.tts.rate_limit_rpm,
                 )
+            except Exception:
+                # 配置错误（模型不存在/参数非法/custom 缺 base_url）——fail-fast，
+                # 不伪装成 text-only。原实现全吞让配置错误静默失效难排查。
+                logger.exception("TTS 后端创建失败——配置错误（模型=%s）", model)
+                raise
+            try:
                 # 快速连通性测试——1s 超时，避免卡启动
                 import asyncio as _asyncio
                 result = await _asyncio.wait_for(self._tts.test(), timeout=1.0)
@@ -108,8 +114,9 @@ class _LifecycleServices:
                     self._tts = None
                     logger.info("TTS not available — text-only mode (%s)", result.get("error", "unknown"))
             except Exception:
+                # 连通性失败（服务不可达/测试超时）——降级 text-only
                 self._tts = None
-                logger.info("TTS not available — text-only mode")
+                logger.warning("TTS 连通性测试失败，text-only mode", exc_info=True)
 
     async def _stop_llm_and_tts(self) -> None:
         """关闭 LLM/TTS/STT 客户端连接，并置 None 以便热切换识别。"""

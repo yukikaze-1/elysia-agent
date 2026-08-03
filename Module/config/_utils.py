@@ -17,7 +17,9 @@ def safe_get_type_hints(target_type: type) -> dict[str, type]:
     logger = logging.getLogger(__name__)
     try:
         return typing.get_type_hints(target_type)
-    except Exception:
+    except (NameError, TypeError, AttributeError):
+        # 仅限可预期的解析失败（前向引用未定义 / 注解非法）——其他异常
+        # 是真实 bug，应传播而非吞掉（O4），否则错误类型静默通过加载。
         logger.warning("safe_get_type_hints 失败，类型检查跳过 — type=%s", target_type.__name__,
                        exc_info=True)
         return {}

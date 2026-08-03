@@ -676,3 +676,30 @@ class TestYAMLEdges:
         loader = ConfigLoader(Cfg, yaml_path=str(yaml_path))
         with pytest.raises(Exception):  # YAMLError or similar
             loader.load()
+
+
+def test_safe_get_type_hints_catches_name_error():
+    """前向引用无法解析（NameError）→ 返回空 dict（类型检查跳过）。"""
+    from Module.config._utils import safe_get_type_hints
+
+    class _FwdRef:
+        attr: "UndefinedType"  # type: ignore[name-defined]
+
+    assert safe_get_type_hints(_FwdRef) == {}
+
+
+def test_safe_get_type_hints_propagates_unexpected():
+    """非预期异常（非 NameError/TypeError/AttributeError）→ 传播而非吞掉（O4）。
+
+    原实现 `except Exception` 全吞——错误类型静默通过加载，
+    问题推迟到运行时且难排查。
+    """
+    from unittest.mock import patch
+
+    import typing
+
+    from Module.config._utils import safe_get_type_hints
+
+    with patch.object(typing, "get_type_hints", side_effect=KeyError("boom")):
+        with pytest.raises(KeyError):
+            safe_get_type_hints(int)

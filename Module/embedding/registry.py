@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import logging
 from typing import TYPE_CHECKING
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
@@ -12,6 +13,8 @@ from Module.embedding.openai_compat import OpenAICompatEmbeddingBackend
 if TYPE_CHECKING:
     from Module.embedding.config import EmbeddingConfig
     from Module.embedding.protocol import EmbeddingBackend
+
+logger = logging.getLogger(__name__)
 
 # provider 默认值统一由 Module/config/providers.yaml 管理
 _BACKENDS: dict[str, dict] = load_provider_defaults("embedding")
@@ -91,7 +94,9 @@ class EmbeddingFactory:
             try:
                 await instance.close()
             except Exception:
-                pass
+                # close 失败 = 显存/连接泄漏隐患，记录 warning 而非静默
+                logger.warning("Embedding 实例 close 失败（可能泄漏）: %s", name,
+                               exc_info=True)
         cls._instances.clear()
 
     @classmethod

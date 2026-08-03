@@ -96,7 +96,7 @@ async def _character_rollback(agent: "Agent", content_type: str, target_version:
         try:
             await engine._refresh_c6()  # noqa: SLF001
         except Exception:
-            pass
+            logger.warning("L2 回滚后 C6 刷新失败", exc_info=True)
 
     result = contract.RollbackResult(
         status="ok", new_version=new_version, text=entry["text"])

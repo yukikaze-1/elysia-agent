@@ -420,4 +420,4 @@ class TTSStreamManager:
             )
             await self._output.audio_chunk(audio)
         except Exception:
-            logger.debug("TTS synthesis failed", exc_info=True)
+            logger.warning("TTS synthesis failed", exc_info=True)

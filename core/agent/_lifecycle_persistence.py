@@ -103,11 +103,11 @@ class _LifecyclePersistence:
                 prev_milvus_ok = milvus_ok
                 # 检查其他 repo 连接状态（不阻塞，仅日志）
                 if not await self._message_repo.health_check():
-                    logger.debug("MessageRepository 离线")
+                    logger.warning("MessageRepository 离线")
                 if not await self._token_repo.health_check():
-                    logger.debug("TokenRepository 离线")
+                    logger.warning("TokenRepository 离线")
             except Exception:
-                logger.debug("Database health check failed", exc_info=True)
+                logger.warning("Database health check failed", exc_info=True)
 
     async def _stop_db_health(self) -> None:
         """停止数据库健康检查循环。"""

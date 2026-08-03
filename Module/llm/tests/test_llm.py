@@ -177,6 +177,20 @@ class TestOpenAICompatChat:
         assert result == "hello world"
 
     @pytest.mark.asyncio
+    async def test_chat_empty_choices_raises(self, backend):
+        """非流式空 choices → 抛异常让上层决策，而非静默返回空串（O2）。
+
+        原实现 error 后 return——调用方收到空回复产生「空白回复」，
+        无法感知并重试；显式抛错才能让 CognitiveLoop 走空响应守卫。
+        """
+        resp = MagicMock()
+        resp.choices = []
+        mock_create = AsyncMock(return_value=resp)
+        with patch.object(backend._client.chat.completions, "create", mock_create):
+            with pytest.raises(RuntimeError):
+                await backend.chat([{"role": "user", "content": "hi"}])
+
+    @pytest.mark.asyncio
     async def test_chat_collects_stream_chunks(self, backend):
         """chat() uses non-streaming API call (stream=False)."""
         mock_create = AsyncMock(

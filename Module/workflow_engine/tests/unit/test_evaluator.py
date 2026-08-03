@@ -625,3 +625,17 @@ async def test_token_ledger_record_after_llm(evaluator, sample_node, sample_plan
     assert call_kwargs["prompt_tokens"] == 150
     assert call_kwargs["completion_tokens"] == 50
     assert call_kwargs["model"] == "deepseek-v4-pro"
+
+
+def test_node_result_evaluation_fields_required():
+    """NodeResultEvaluation 三判定字段必填——防漏传判定被静默当作成功（O5）。
+
+    所有构造点都显式赋值；去掉默认值后，未来任何漏传判定的构造路径
+    都会在构造时抛错，而非垃圾数据沿 DAG 传播。
+    """
+    from Module.workflow_engine.schema.internal import NodeResultEvaluation
+
+    for field in ("execution_status", "business_status", "suggested_action"):
+        assert NodeResultEvaluation.model_fields[field].is_required(), (
+            f"{field} 应改为必填"
+        )

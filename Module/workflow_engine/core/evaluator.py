@@ -387,4 +387,6 @@ class Evaluator:
                 return EvaluatorAction.REPLAN if node.required else EvaluatorAction.SKIP
             return EvaluatorAction.RETRY if node.required else EvaluatorAction.SKIP
 
-        return EvaluatorAction.CONTINUE
+        # 所有 ExecutionStatus 值已在上方覆盖——新增枚举值必须显式处理。
+        # 原默认 CONTINUE 是死代码：未来加第 6 个状态会被静默当成功继续（O8）。
+        raise RuntimeError(f"未处理的 ExecutionStatus: {execution_status}")

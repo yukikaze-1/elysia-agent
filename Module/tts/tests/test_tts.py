@@ -1067,3 +1067,15 @@ class TestOpenAISynthesize:
 
 		await backend.synthesize("(action)hello", character="nova")
 		assert captured[0] == "hello"  # strip_all_markup 会去掉 (action)
+
+
+def test_minimax_check_base_resp_missing_status_code_raises():
+    """base_resp 缺 status_code → fail-fast（O3）。
+
+    原实现 get("status_code", 0) 把缺失当成成功——API 契约若改字段名
+    会静默放行无效响应，把问题推迟到解析 audio 时。
+    """
+    from Module.tts.minimax_tts import MiniMaxTTSBackend
+
+    with pytest.raises(RuntimeError, match="status_code"):
+        MiniMaxTTSBackend._check_base_resp({"base_resp": {"status_msg": "x"}})

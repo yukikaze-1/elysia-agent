@@ -309,8 +309,14 @@ class MiniMaxTTSBackend(TTSBackend):
         base_resp = data.get("base_resp")
         if base_resp is None:
             raise RuntimeError("MiniMax API 响应缺少 base_resp 字段")
-        if base_resp.get("status_code", 0) != 0:
+        if "status_code" not in base_resp:
+            # API 契约若改字段名，这里静默放行会把问题推迟到解析 audio 时——
+            # fail-fast（O3），缺 status_code 视为无效响应
             raise RuntimeError(
-                f"MiniMax API 错误: status_code={base_resp.get('status_code')}, "
+                f"MiniMax API 响应缺少 status_code 字段: {base_resp}"
+            )
+        if base_resp["status_code"] != 0:
+            raise RuntimeError(
+                f"MiniMax API 错误: status_code={base_resp['status_code']}, "
                 f"status_msg={base_resp.get('status_msg', 'unknown')}"
             )

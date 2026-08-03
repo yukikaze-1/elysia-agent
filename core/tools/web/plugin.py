@@ -1,6 +1,7 @@
 """网络工具插件 — 网页搜索和抓取。"""
 
 import asyncio
+import logging
 import os
 import re
 from html.parser import HTMLParser
@@ -12,6 +13,8 @@ from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -137,6 +140,9 @@ class WebSearchPlugin(ToolPlugin):
             brave_key = ctx.get("brave_api_key")
             if brave_key:
                 return await _brave_search(params.query, params.limit, brave_key)
+            # 配置 brave 但缺 key——配置错误被静默掩盖为走 tavily，需可见
+            logger.warning(
+                "web_search 配置为 brave 但缺少 brave_api_key，回退到 tavily 后端")
 
         return await _tavily_search(params.query, params.limit)
 

@@ -94,7 +94,7 @@ class IdleMonitor:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.debug("IdleMonitor loop error", exc_info=True)
+                logger.warning("IdleMonitor loop error", exc_info=True)
 
     async def _check_proactive(self) -> None:
         """Evaluate whether to speak proactively."""
