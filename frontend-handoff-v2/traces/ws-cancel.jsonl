@@ -1,0 +1,15 @@
+{"type": "session", "messages": [], "token_stats": {"total": 0, "by_model": {}}}
+{"type": "capabilities", "live2d_static_image": "", "services": {"llm": {"available": true, "enabled": true, "model": "deepseek/deepseek-chat", "default": "deepseek/deepseek-chat"}, "stt": {"available": false, "enabled": false, "default": "sensevoice/sense-voice", "model": null}, "tts": {"available": false, "enabled": false, "default": "gpt-sovits/default", "model": null}}}
+{"type": "expression", "expression": "开心", "intensity": 0.5}
+{"type": "state", "state": "thinking"}
+{"type": "typing", "typing": true}
+{"type": "command", "command": "inner_voice", "params": {"content": "准备回答。"}}
+{"type": "delta", "content": "这是第一句会被打断的话。"}
+{"type": "typing", "typing": false}
+{"type": "state", "state": "speaking"}
+{"type": "message", "content": ""}
+{"type": "delta", "content": " "}
+{"type": "typing", "typing": false}
+{"type": "typing", "typing": false}
+{"type": "state", "state": "interrupted"}
+{"type": "state", "state": "idle"}

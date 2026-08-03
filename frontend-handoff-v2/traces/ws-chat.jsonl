@@ -1,0 +1,16 @@
+{"type": "session", "messages": [], "token_stats": {"total": 0, "by_model": {}}}
+{"type": "capabilities", "live2d_static_image": "", "services": {"llm": {"available": true, "enabled": true, "model": "deepseek/deepseek-chat", "default": "deepseek/deepseek-chat"}, "stt": {"available": false, "enabled": false, "default": "sensevoice/sense-voice", "model": null}, "tts": {"available": false, "enabled": false, "default": "gpt-sovits/default", "model": null}}}
+{"type": "expression", "expression": "开心", "intensity": 0.19999999999999998}
+{"type": "state", "state": "thinking"}
+{"type": "typing", "typing": true}
+{"type": "command", "command": "inner_voice", "params": {"content": "我觉得这个话题很有意思，想认真回应一下。"}}
+{"type": "token_usage", "turn": {"rounds": [{"model": "deepseek/deepseek-chat", "session_id": "default", "round_num": 0, "input_tokens": 12, "output_tokens": 18, "total_tokens": 30, "cached_tokens": 0, "reasoning_tokens": 0, "timestamp": "2026-08-03T21:15:12.485970+00:00"}], "turn_total": 30}, "session": {"total": 30, "by_model": {"deepseek/deepseek-chat": 30}}}
+{"type": "expression", "expression": "开心", "intensity": 0.8}
+{"type": "delta", "content": "你好！这是第一句话，回答你的问题。第二句话进一步补充说明。第三句话作为收尾，希望对你有所帮助。"}
+{"type": "typing", "typing": false}
+{"type": "state", "state": "speaking"}
+{"type": "message", "content": ""}
+{"type": "message", "content": ""}
+{"type": "message", "content": ""}
+{"type": "message", "content": ""}
+{"type": "state", "state": "idle"}

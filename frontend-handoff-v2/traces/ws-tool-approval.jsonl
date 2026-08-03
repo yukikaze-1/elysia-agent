@@ -1,0 +1,24 @@
+{"type": "session", "messages": [], "token_stats": {"total": 0, "by_model": {}}}
+{"type": "capabilities", "live2d_static_image": "", "services": {"llm": {"available": true, "enabled": true, "model": "deepseek/deepseek-chat", "default": "deepseek/deepseek-chat"}, "stt": {"available": false, "enabled": false, "default": "sensevoice/sense-voice", "model": null}, "tts": {"available": false, "enabled": false, "default": "gpt-sovits/default", "model": null}}}
+{"type": "expression", "expression": "开心", "intensity": 0.65}
+{"type": "state", "state": "thinking"}
+{"type": "typing", "typing": true}
+{"type": "command", "command": "inner_voice", "params": {"content": "让我先查一下记忆。"}}
+{"type": "delta", "content": "我正在帮你处理这个请求。"}
+{"type": "typing", "typing": false}
+{"type": "state", "state": "speaking"}
+{"type": "message", "content": ""}
+{"type": "message", "content": ""}
+{"type": "typing", "typing": false}
+{"type": "state", "state": "executing"}
+{"type": "action", "action": "tool_executing", "params": {"tool": "save_memory", "call_id": "call_save_memory_1", "args": {"content": "这是一条需要审批后保存的记忆"}}}
+{"type": "command", "command": "tool_approval", "params": {"tool": "save_memory", "params": "{'content': '这是一条需要审批后保存的记忆'}", "request_id": "msg_a7235d20036a4bbbbf5291699f"}}
+{"type": "action", "action": "tool_done", "params": {"tool": "save_memory", "call_id": "call_save_memory_1", "success": true, "content": "已保存 Fact 类型记忆: 这是一条需要审批后保存的记忆", "error": null, "error_type": null, "duration_ms": 4.309643196000252, "truncated": false}}
+{"type": "state", "state": "thinking"}
+{"type": "typing", "typing": true}
+{"type": "token_usage", "turn": {"rounds": [{"model": "deepseek/deepseek-chat", "session_id": "default", "round_num": 1, "input_tokens": 20, "output_tokens": 15, "total_tokens": 35, "cached_tokens": 0, "reasoning_tokens": 0, "timestamp": "2026-08-03T21:15:35.418747+00:00"}], "turn_total": 35}, "session": {"total": 35, "by_model": {"deepseek/deepseek-chat": 35}}}
+{"type": "delta", "content": "好的，我已经把这条记忆保存下来了。"}
+{"type": "typing", "typing": false}
+{"type": "state", "state": "speaking"}
+{"type": "message", "content": ""}
+{"type": "state", "state": "idle"}
