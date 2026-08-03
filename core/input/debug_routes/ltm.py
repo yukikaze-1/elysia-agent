@@ -1,9 +1,15 @@
-"""Debug LTM routes: CRUD for long-term memory entries."""
+"""Debug LTM routes: CRUD for long-term memory entries。
+
+响应构造 `frontend_contract.debug` 契约模型 + `wire_dict()`；`agent.long_term._entries`
+内部 MemoryEntry → 契约 `LtmEntry` 视图（timestamp/poignancy 保留原始数值）。
+"""
 
 import json
 import logging
 
 from aiohttp import web
+
+from frontend_contract import debug as contract
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +30,7 @@ async def ltm_list_handler(request: web.Request) -> web.Response:
         request: aiohttp Request, query params: search, type, limit, offset。
 
     Returns:
-        web.Response: {"total": ..., "entries": [...]}。
+        web.Response: LtmListResponse 契约 wire（total + entries）。
     """
     agent = request.app["agent"]
     search = request.query.get("search", "").strip()
@@ -45,20 +51,21 @@ async def ltm_list_handler(request: web.Request) -> web.Response:
 
     total = len(entries)
     page = entries[offset:offset + limit]
-    return web.json_response({
-        "total": total,
-        "entries": [
-            {
-                "id": e.id,
-                "text": e.text,
-                "memory_type": e.memory_type,
-                "poignancy": e.poignancy,
-                "timestamp": e.timestamp,
-                "metadata": e.metadata,
-            }
+    data = contract.LtmListResponse(
+        total=total,
+        entries=[
+            contract.LtmEntry(
+                id=e.id,
+                text=e.text,
+                memory_type=e.memory_type,
+                poignancy=e.poignancy,
+                timestamp=e.timestamp,
+                metadata=e.metadata,
+            )
             for e in page
         ],
-    })
+    )
+    return web.json_response(data.wire_dict())
 
 
 async def ltm_insert_handler(request: web.Request) -> web.Response:
@@ -68,7 +75,7 @@ async def ltm_insert_handler(request: web.Request) -> web.Response:
         request: aiohttp Request, JSON body: text, memory_type, poignancy。
 
     Returns:
-        web.Response: {"ok": True} or error.
+        web.Response: DebugResult 契约 wire（ok 恒 true）或错误。
     """
     agent = request.app["agent"]
     try:
@@ -83,7 +90,7 @@ async def ltm_insert_handler(request: web.Request) -> web.Response:
 
     await agent.long_term.insert(text, memory_type=mem_type, poignancy=poignancy)
     logger.info("DEBUG API: ltm_insert type=%s, text_len=%d, poignancy=%d", mem_type, len(text), poignancy)
-    return web.json_response({"ok": True})
+    return web.json_response(contract.DebugResult(ok=True).wire_dict())
 
 
 async def ltm_delete_single_handler(request: web.Request) -> web.Response:
@@ -93,7 +100,7 @@ async def ltm_delete_single_handler(request: web.Request) -> web.Response:
         request: aiohttp Request, URL path: /{entry_id}。
 
     Returns:
-        web.Response: {"ok": True/False}。
+        web.Response: DebugResult 契约 wire（ok 布尔）或错误。
     """
     agent = request.app["agent"]
     entry_id = request.match_info.get("entry_id", "")
@@ -101,7 +108,7 @@ async def ltm_delete_single_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "缺少 entry_id"}, status=400)
     ok = await agent.long_term.delete(entry_id)
     logger.warning("DEBUG API: ltm_delete entry_id=%s, ok=%s", entry_id, ok)
-    return web.json_response({"ok": ok})
+    return web.json_response(contract.DebugResult(ok=ok).wire_dict())
 
 
 async def ltm_update_handler(request: web.Request) -> web.Response:
@@ -111,7 +118,7 @@ async def ltm_update_handler(request: web.Request) -> web.Response:
         request: aiohttp Request, URL path: /{entry_id}, JSON body: text。
 
     Returns:
-        web.Response: {"ok": True/False}。
+        web.Response: DebugResult 契约 wire（ok 布尔）或错误。
     """
     agent = request.app["agent"]
     entry_id = request.match_info.get("entry_id", "")
@@ -123,7 +130,7 @@ async def ltm_update_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "text 不能为空"}, status=400)
     ok = await agent.long_term.update_text(entry_id, new_text)
     logger.info("DEBUG API: ltm_update entry_id=%s, text_len=%d, ok=%s", entry_id, len(new_text), ok)
-    return web.json_response({"ok": ok})
+    return web.json_response(contract.DebugResult(ok=ok).wire_dict())
 
 
 async def ltm_clear_handler(request: web.Request) -> web.Response:
@@ -133,9 +140,9 @@ async def ltm_clear_handler(request: web.Request) -> web.Response:
         request: aiohttp Request。
 
     Returns:
-        web.Response: {"ok": True, "deleted": count}。
+        web.Response: DebugResult 契约 wire（ok true + deleted 计数）。
     """
     agent = request.app["agent"]
     count = await agent.long_term.clear_all()
     logger.warning("DEBUG API: ltm_clear deleted=%d", count)
-    return web.json_response({"ok": True, "deleted": count})
+    return web.json_response(contract.DebugResult(ok=True, deleted=count).wire_dict())

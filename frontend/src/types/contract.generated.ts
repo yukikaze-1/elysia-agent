@@ -513,6 +513,624 @@ export interface MessagesResponse {
   error?: string
 }
 
+/** 单轮 token 消耗（debug 面板 current_turn 条目）。 */
+export interface TokenRoundItem {
+  /** 模型名 */
+  model: string
+  /** 输入 token 数 */
+  input_tokens: number
+  /** 输出 token 数 */
+  output_tokens: number
+  /** 总 token 数 */
+  total_tokens: number
+  /** 轮次序号 */
+  round_num: number
+}
+
+/** 会话级 token 统计（debug 面板；与 ws_message.TokenStats 形状不同，按命名策略改名）。 */
+export interface DebugTokenStats {
+  /** 会话累计 token 数 */
+  session_total: number
+  /** 按模型拆分的 token 数 */
+  per_model: Record<string, number>
+  /** 本轮各次调用消耗 */
+  current_turn: TokenRoundItem[]
+}
+
+/** 延迟聚合统计（ring buffer 前 100 条，空时各字段缺省）。 */
+export interface TimingStats {
+  /** 样本数，可缺省 */
+  count?: number
+  /** 平均耗时毫秒，可缺省 */
+  avg_ms?: number
+  /** P50 耗时毫秒，可缺省 */
+  p50_ms?: number
+  /** P95 耗时毫秒，可缺省 */
+  p95_ms?: number
+  /** P99 耗时毫秒，可缺省 */
+  p99_ms?: number
+  /** 最近一次耗时毫秒，可缺省 */
+  last_ms?: number
+}
+
+/** 进程内存（rss/vms/pct/threads），不是长期记忆。 */
+export interface ProcessMemory {
+  /** 常驻内存 MB */
+  rss_mb: number
+  /** 虚拟内存 MB */
+  vms_mb: number
+  /** 内存占用百分比 */
+  pct: number
+  /** 线程数 */
+  num_threads: number
+}
+
+/** LLM 调用 prompt 摘要（PromptRecorder 输出）。 */
+export interface PromptRecord {
+  /** 记录序号 */
+  index: number
+  /** ISO 时间戳 */
+  timestamp: string
+  /** 轮次序号 */
+  round_num: number
+  /** 消息条数 */
+  message_count: number
+  /** 系统提示词长度 */
+  system_prompt_len: number
+  /** 总字符数 */
+  total_chars: number
+  /** 模型名 */
+  model: string
+}
+
+/** LLM 调用原始回复摘要（ResponseRecorder 输出）。 */
+export interface ResponseRecord {
+  /** 记录序号 */
+  index: number
+  /** ISO 时间戳 */
+  timestamp: string
+  /** 轮次序号 */
+  round_num: number
+  /** 回复文本长度 */
+  text_len: number
+  /** 内心独白长度 */
+  inner_voice_len: number
+}
+
+/** 内容块（text/image 统一形状；与 ws_message.ContentPart 判别联合不同，按命名策略改名）。 */
+export interface DebugContentPart {
+  /** 内容块类型（text/image） */
+  type: string
+  /** 文本内容，可缺省 */
+  content?: string
+  /** 图片来源（URL / data URI），可缺省 */
+  src?: string
+  /** MIME 类型，可缺省 */
+  mime?: string
+}
+
+/** session 消息中的纯文本 part（前端拼接展示）。 */
+export interface DebugSessionPart {
+  /** 文本内容 */
+  content: string
+}
+
+/** 最近会话消息（OverviewTab 面板 9）。 */
+export interface SessionRecentItem {
+  /** 消息角色（user/assistant/tool） */
+  role: string
+  /** 纯文本 parts 列表 */
+  parts: DebugSessionPart[]
+  /** 内容块列表 */
+  content: DebugContentPart[]
+  /** 内容类型 → 序号映射，可缺省 */
+  content_type?: Record<string, unknown>
+}
+
+/** 最近长期记忆（OverviewTab 面板 10）。 */
+export interface LtmRecentItem {
+  /** 记忆 ID */
+  id: string
+  /** 记忆文本（已截断） */
+  text: string
+  /** 记忆类型（fact/plan/preference/event/note） */
+  memory_type: string
+  /** 重要性 1-10 */
+  poignancy: number
+  /** 附加元数据，可缺省 */
+  metadata?: Record<string, unknown>
+}
+
+/** 工具插件条目（OverviewTab 面板 11）。 */
+export interface ToolItem {
+  /** 工具名 */
+  name: string
+  /** 工具描述 */
+  description: string
+  /** 参数 schema，可缺省 */
+  parameters?: Record<string, unknown>
+}
+
+/** 工具执行历史（OverviewTab 面板 12）。 */
+export interface ToolHistoryItem {
+  /** 工具名 */
+  name: string
+  /** 调用参数，可缺省 */
+  args?: unknown
+  /** 执行结果，可缺省 */
+  result?: unknown
+  /** 错误信息，可缺省 */
+  error?: string
+  /** 是否成功，可缺省 */
+  success?: boolean
+  /** 错误类型，可缺省 */
+  error_type?: string
+  /** 耗时毫秒，可缺省 */
+  duration_ms?: number
+  /** 结果是否截断，可缺省 */
+  truncated?: boolean
+}
+
+/** 记忆合并结果（ExtractedMemory 契约视图，type 为 MemoryType 枚举值转 str）。 */
+export interface ConsolidationHistoryItem {
+  /** 记忆类型（fact/plan/preference/event/note） */
+  type: string
+  /** 记忆内容，可缺省 */
+  content?: string
+  /** 重要性 1-10，可缺省 */
+  poignancy?: number
+}
+
+/** Consolidator 面板 props（面板 13）。 */
+export interface ConsolidationInfo {
+  /** 缓冲消息对数 */
+  buffer_size: number
+  /** 触发合并阈值 */
+  threshold: number
+  /** 最近合并结果 */
+  history: ConsolidationHistoryItem[]
+}
+
+/** 记忆反射器面板 props（面板 14）。 */
+export interface MemoryReflectorInfo {
+  /** 反射器是否存在 */
+  exists: boolean
+  /** 已运行轮次 */
+  round_count: number
+  /** 轮次触发阈值 */
+  round_threshold: number
+  /** 新记忆计数 */
+  new_memory_count: number
+  /** 新记忆触发阈值 */
+  memory_threshold: number
+  /** 是否锁定 */
+  locked: boolean
+  /** 最近摘要，可缺省 */
+  last_summary?: Record<string, unknown>
+}
+
+/** 性格反射器面板 props（面板 15）。 */
+export interface CharacterReflectorInfo {
+  /** 反射器是否存在 */
+  exists: boolean
+  /** 缓冲对话对数 */
+  buffer_size: number
+  /** 上次反射 Unix 时间戳，可缺省 */
+  last_reflection_at?: number
+  /** 是否锁定 */
+  locked: boolean
+  /** 自我认知历史 */
+  self_perception_history: unknown[]
+  /** 上次系统提示词 */
+  last_prompt_system: string
+  /** 上次用户提示词 */
+  last_prompt_user: string
+  /** 上次文本长度 */
+  last_text_len: number
+  /** 上次耗时毫秒 */
+  last_duration_ms: number
+  /** 上次是否成功 */
+  last_success: boolean
+}
+
+/** 4 层性格引擎面板 props（面板 16）。 */
+export interface CharacterEngineInfo {
+  /** 引擎是否存在 */
+  exists: boolean
+  /** L2 Self 演化内容 */
+  self_l2: string
+  /** L3 State 短期状态 */
+  state_l3: string
+  /** L4 心情标签 */
+  mood: string
+  /** C9 上次触发 Unix 时间戳，可缺省 */
+  last_awareness_time?: number
+  /** L2 版本历史总数 */
+  l2_version_count: number
+  /** C6 版本历史总数 */
+  c6_version_count: number
+  /** L3 历史 */
+  state_history: unknown[]
+}
+
+/** prompt 摘要容器（records + 计数，recorder 未初始化时为空形状）。 */
+export interface PromptSummary {
+  /** 摘要记录列表 */
+  records: PromptRecord[]
+  /** 记录总数 */
+  total: number
+  /** 环形缓冲容量 */
+  max: number
+}
+
+/** 响应摘要容器（records + 计数）。 */
+export interface ResponseSummary {
+  /** 摘要记录列表 */
+  records: ResponseRecord[]
+  /** 记录总数 */
+  total: number
+  /** 环形缓冲容量 */
+  max: number
+}
+
+/** Debug 概览聚合数据（16 面板平铺字段，对照 DebugInfo dataclass）。 */
+export interface DebugData {
+  /** FSM 状态名 */
+  fsm_state: string
+  /** 上一 FSM 状态名，可缺省 */
+  fsm_previous?: string
+  /** 服务运行时长秒 */
+  uptime_seconds: number
+  /** 是否有任务在处理中 */
+  processing: boolean
+  /** 当前 LLM 模型 */
+  llm_model: string
+  /** TTS 后端可用 */
+  tts_ok: boolean
+  /** STT 后端可用 */
+  stt_ok: boolean
+  /** WebSocket 客户端数 */
+  ws_clients: number
+  /** 主动搭话开关 */
+  proactive_enabled: boolean
+  /** 主动搭话间隔秒，可缺省 */
+  proactive_interval?: number
+  /** 距上次交互秒，可缺省 */
+  last_interaction_ago?: number
+  /** 会话消息数 */
+  session_messages: number
+  /** 最近消息 */
+  session_recent: SessionRecentItem[]
+  /** 角色状态原始 JSON */
+  character_state_raw: Record<string, unknown>
+  /** 角色名 */
+  character_name: string
+  /** L1 基础人格摘要 */
+  base_personality_summary: string
+  /** 归档消息总数 */
+  archive_msg_count: number
+  /** 长期记忆总数 */
+  lt_count: number
+  /** 最近长期记忆 */
+  lt_recent: LtmRecentItem[]
+  /** Milvus 可用 */
+  milvus_ok: boolean
+  /** Embedding 可用 */
+  embedding_ok: boolean
+  /** MongoDB 可用 */
+  mongodb_ok: boolean
+  /** 正在执行的工具 */
+  currently_executing: string[]
+  /** 工具插件列表 */
+  tools: ToolItem[]
+  /** 工具执行历史 */
+  tool_history: ToolHistoryItem[]
+  /** Consolidator 缓冲对数 */
+  consolidator_buffer_size: number
+  /** Consolidator 触发阈值 */
+  consolidator_threshold: number
+  /** 最近合并结果 */
+  consolidation_history: ConsolidationHistoryItem[]
+  /** 记忆反射器是否存在 */
+  mreflector_exists: boolean
+  /** 已运行轮次 */
+  mreflector_round_count: number
+  /** 轮次触发阈值 */
+  mreflector_round_threshold: number
+  /** 新记忆计数 */
+  mreflector_new_memory_count: number
+  /** 新记忆触发阈值 */
+  mreflector_memory_threshold: number
+  /** 是否锁定 */
+  mreflector_locked: boolean
+  /** 最近摘要，可缺省 */
+  mreflector_last_summary?: Record<string, unknown>
+  /** 性格反射器是否存在 */
+  reflector_exists: boolean
+  /** 缓冲对话对数 */
+  reflector_buffer_size: number
+  /** 上次反射 Unix 时间戳，可缺省 */
+  reflector_last_reflection_at?: number
+  /** 是否锁定 */
+  reflector_locked: boolean
+  /** 自我认知历史 */
+  self_perception_history: unknown[]
+  /** 上次系统提示词 */
+  reflector_last_prompt_system: string
+  /** 上次用户提示词 */
+  reflector_last_prompt_user: string
+  /** 上次是否成功 */
+  reflector_last_success: boolean
+  /** 上次耗时毫秒 */
+  reflector_last_duration_ms: number
+  /** 上次文本长度 */
+  reflector_last_text_len: number
+  /** 4 层引擎是否存在 */
+  character_engine_exists: boolean
+  /** L2 Self 演化内容 */
+  self_l2: string
+  /** L3 State 短期状态 */
+  state_l3: string
+  /** L3 历史 */
+  state_history: unknown[]
+  /** C9 上次触发 Unix 时间戳，可缺省 */
+  last_awareness_time?: number
+  /** L2 版本历史总数 */
+  l2_version_count: number
+  /** C6 版本历史总数 */
+  c6_version_count: number
+  /** 会话 token 统计 */
+  token_stats: DebugTokenStats
+  /** 待处理 token 快照数 */
+  pending_token_count: number
+  /** 是否存在待处理 session */
+  pending_session_exists: boolean
+  /** prompt 摘要 */
+  prompt_summary: PromptSummary
+  /** 响应摘要 */
+  response_summary: ResponseSummary
+  /** 延迟环形历史 */
+  timing_history: unknown[]
+  /** 延迟聚合统计 */
+  timing_stats: TimingStats
+  /** 进程内存占用 */
+  memory: ProcessMemory
+  /** 当前心情标签 */
+  mood: string
+  /** 待执行任务数 */
+  scheduler_pending: number
+  /** 运行中任务数 */
+  scheduler_running: number
+  /** 累计任务数 */
+  scheduler_total: number
+  /** 任务 DAG 树 */
+  task_tree: Record<string, unknown>
+}
+
+/** 长期记忆库状态。 */
+export interface DbStatusLtm {
+  /** 记忆条数 */
+  count: number
+  /** Milvus 健康检查 */
+  milvus_ok: boolean
+  /** 待落盘脏 ID 数 */
+  dirty_count: number
+}
+
+/** 会话库状态。 */
+export interface DbStatusSession {
+  /** 会话数 */
+  count: number
+  /** 当前会话 ID */
+  current_id: string
+  /** MongoDB 健康检查 */
+  mongodb_ok: boolean
+}
+
+/** 归档库状态。 */
+export interface DbStatusArchive {
+  /** 归档消息数 */
+  count: number
+  /** MongoDB 健康检查 */
+  mongodb_ok: boolean
+}
+
+/** /debug/api/db-status 响应：ltm/session/archive 三库状态。 */
+export interface DbStatus {
+  /** 长期记忆库状态 */
+  ltm: DbStatusLtm
+  /** 会话库状态 */
+  session: DbStatusSession
+  /** 归档库状态 */
+  archive: DbStatusArchive
+}
+
+/** 长期记忆单条（ltm 列表，含 timestamp；lt_recent 面板条目不含）。 */
+export interface LtmEntry {
+  /** 记忆 ID */
+  id: string
+  /** 记忆文本 */
+  text: string
+  /** 记忆类型（fact/plan/preference/event/note） */
+  memory_type: string
+  /** 重要性 1-10 */
+  poignancy: number
+  /** Unix 时间戳 */
+  timestamp: number
+  /** 附加元数据，可缺省 */
+  metadata?: Record<string, unknown>
+}
+
+/** /debug/api/ltm 列表响应。 */
+export interface LtmListResponse {
+  /** 命中总数 */
+  total: number
+  /** 当前页条目 */
+  entries: LtmEntry[]
+}
+
+/** Debug 增删改操作通用结果（ok 判别 + 可选计数）。 */
+export interface DebugResult {
+  /** 操作是否成功 */
+  ok: boolean
+  /** 删除/清空计数，可缺省 */
+  deleted?: number
+  /** 同步清理的 session 消息数，可缺省 */
+  session_purged?: number
+}
+
+/** 角色版本回滚结果。 */
+export interface RollbackResult {
+  /** 状态（恒为 ok） */
+  status: string
+  /** 回滚产生的新版本号 */
+  new_version: number
+  /** 恢复的版本文本 */
+  text: string
+}
+
+/** 归档消息分页响应（messages 复用 rest.Message 契约视图）。 */
+export interface ArchiveListResponse {
+  /** 归档消息列表 */
+  messages: Message[]
+  /** 总消息数 */
+  total: number
+  /** 每页条数 */
+  limit: number
+  /** 偏移量 */
+  skip: number
+}
+
+/** 会话列表条目。 */
+export interface SessionInfo {
+  /** 会话 ID */
+  session_id: string
+  /** 消息条数 */
+  message_count: number
+  /** 最近更新时间 ISO 字符串 */
+  updated_at: string
+  /** token 总用量 */
+  token_total: number
+}
+
+/** 会话列表响应。 */
+export interface SessionListResponse {
+  /** 会话条目列表 */
+  sessions: SessionInfo[]
+}
+
+/** 会话详情单条消息（契约视图；兼容 sessions_to_client 与 messages_for_client 两来源）。 */
+export interface SessionDetailMessage {
+  /** 消息角色（user/assistant/tool） */
+  role: string
+  /** ISO 时间戳，可缺省 */
+  timestamp?: string
+  /** 内容类型 → 序号映射，可缺省 */
+  content_type?: Record<string, unknown>
+  /** 纯文本 parts 列表 */
+  parts: DebugSessionPart[]
+  /** 消息内容（文本或内容块列表） */
+  content: unknown
+}
+
+/** 会话详情响应。 */
+export interface SessionDetailResponse {
+  /** 会话 ID */
+  session_id: string
+  /** 消息列表 */
+  messages: SessionDetailMessage[]
+  /** 角色状态参数，可缺省 */
+  params?: Record<string, unknown>
+  /** 消息总数（归档源时存在），可缺省 */
+  total?: number
+}
+
+/** 完整 prompt 记录详情。 */
+export interface PromptDetail {
+  /** 记录序号 */
+  index: number
+  /** ISO 时间戳 */
+  timestamp: string
+  /** 轮次序号 */
+  round_num: number
+  /** 模型名 */
+  model: string
+  /** LLM 消息列表 */
+  messages: unknown[]
+  /** 工具定义列表 */
+  tools: unknown[]
+  /** 模板源码（path + sections），可缺省 */
+  template_source?: Record<string, unknown>
+}
+
+/** 完整原始回复详情。 */
+export interface ResponseDetail {
+  /** 记录序号 */
+  index: number
+  /** ISO 时间戳 */
+  timestamp: string
+  /** 轮次序号 */
+  round_num: number
+  /** 原始回复文本 */
+  raw_text: string
+  /** 内心独白，可缺省 */
+  inner_voice?: string
+  /** 回复文本长度 */
+  text_len: number
+  /** 内心独白长度 */
+  inner_voice_len: number
+}
+
+/** 角色版本历史列表响应（versions 保留 VersionEntry 全部 wire 键）。 */
+export interface CharacterVersionListResponse {
+  /** 版本条目列表 */
+  versions: unknown[]
+  /** 版本总数 */
+  total: number
+  /** 是否还有更早版本 */
+  has_more: boolean
+}
+
+/** 任务 DAG 节点。 */
+export interface TaskNode {
+  /** 节点 ID */
+  node_id: string
+  /** 节点状态 */
+  status: string
+  /** 尝试次数 */
+  attempt: number
+  /** 节点摘要 */
+  summary: string
+  /** 节点错误，可缺省 */
+  error?: string
+}
+
+/** 任务快照条目（TasksTab；workflow_engine 快照 wire 形状 + 前端 title 展示字段）。 */
+export interface TaskData {
+  /** 任务 ID */
+  task_id: string
+  /** 任务状态 */
+  status: string
+  /** 任务标题（前端展示用），可缺省 */
+  title?: string
+  /** 计划版本号 */
+  plan_version: number
+  /** 创建时间，可缺省 */
+  created_at?: string
+  /** 任务错误，可缺省 */
+  error?: string
+  /** 任务错误码，可缺省 */
+  error_code?: string
+  /** 当前执行阶段 */
+  phase: string
+  /** 邮箱待处理消息数 */
+  mailbox_depth: number
+  /** DAG 节点列表 */
+  nodes: TaskNode[]
+  /** DAG 边列表 [from, to] */
+  edges: string[][]
+}
+
 export type ServerMessage =
   | SessionMessage
   | CapabilitiesMessage

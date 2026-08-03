@@ -1,4 +1,10 @@
-"""Debug archive + sessions routes: message archive CRUD + session management."""
+"""Debug archive + sessions routes: message archive CRUD + session management。
+
+响应构造 `frontend_contract.debug` 契约模型 + `wire_dict()`；归档消息经
+`api_routes._archive_to_client`（内部 core.schema.Message → 客户端 dict）再经
+`_archive_msg_to_contract`（block_index → content_type 归一化）→ 契约 `rest.Message` 视图；
+session 详情消息经 `_common.sessions_to_client` → 契约 `SessionDetailMessage` 视图。
+"""
 
 import logging
 
@@ -6,8 +12,9 @@ from aiohttp import web
 
 from core.schema.message import MessageRole
 from core.schema.types import SessionId
-from core.input.api_routes import _archive_to_client
+from core.input.api_routes import _archive_to_client, _archive_msg_to_contract
 from core.input.debug_routes._common import sessions_to_client
+from frontend_contract import debug as contract
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +39,7 @@ async def archive_list_handler(request: web.Request) -> web.Response:
         request: aiohttp Request, query params: limit, skip, search, role。
 
     Returns:
-        web.Response: {"messages": [...], "total": ..., "limit": ..., "skip": ...}。
+        web.Response: ArchiveListResponse 契约 wire（messages/total/limit/skip）。
     """
     agent = request.app["agent"]
     repo = agent.message_repo
@@ -54,12 +61,10 @@ async def archive_list_handler(request: web.Request) -> web.Response:
     try:
         messages, total = await repo.query_offset(skip=skip, limit=limit, search=search, role=role)
         client_msgs = _archive_to_client(messages)
-        return web.json_response({
-            "messages": client_msgs,
-            "total": total,
-            "limit": limit,
-            "skip": skip,
-        })
+        contract_msgs = [m for d in client_msgs if (m := _archive_msg_to_contract(d)) is not None]
+        data = contract.ArchiveListResponse(
+            messages=contract_msgs, total=total, limit=limit, skip=skip)
+        return web.json_response(data.wire_dict())
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -71,7 +76,7 @@ async def archive_delete_handler(request: web.Request) -> web.Response:
         request: aiohttp Request, URL path: /{msg_id}。
 
     Returns:
-        web.Response: {"ok": True/False, "session_purged": count}。
+        web.Response: DebugResult 契约 wire（ok + session_purged 计数）。
     """
     agent = request.app["agent"]
     repo = agent.message_repo
@@ -85,7 +90,7 @@ async def archive_delete_handler(request: web.Request) -> web.Response:
     if session_purged:
         await agent.session.save()
     logger.info("DEBUG API: archive_delete msg_id=%s, ok=%s, session_purged=%d", msg_id, ok, session_purged)
-    return web.json_response({"ok": ok, "session_purged": session_purged})
+    return web.json_response(contract.DebugResult(ok=ok, session_purged=session_purged).wire_dict())
 
 
 async def archive_update_handler(request: web.Request) -> web.Response:
@@ -95,7 +100,7 @@ async def archive_update_handler(request: web.Request) -> web.Response:
         request: aiohttp Request, URL path: /{msg_id}, JSON body: text。
 
     Returns:
-        web.Response: {"ok": True/False}。
+        web.Response: DebugResult 契约 wire（ok 布尔）。
     """
     agent = request.app["agent"]
     repo = agent.message_repo
@@ -108,7 +113,7 @@ async def archive_update_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "text 不能为空"}, status=400)
     ok = await repo.update_text(msg_id, new_text)
     logger.info("DEBUG API: archive_update msg_id=%s, text_len=%d, ok=%s", msg_id, len(new_text), ok)
-    return web.json_response({"ok": ok})
+    return web.json_response(contract.DebugResult(ok=ok).wire_dict())
 
 
 async def archive_clear_handler(request: web.Request) -> web.Response:
@@ -118,7 +123,7 @@ async def archive_clear_handler(request: web.Request) -> web.Response:
         request: aiohttp Request。
 
     Returns:
-        web.Response: {"ok": True, "deleted": count}。
+        web.Response: DebugResult 契约 wire（ok true + deleted 计数）。
     """
     agent = request.app["agent"]
     deleted = await agent.message_repo.clear_all()
@@ -129,7 +134,7 @@ async def archive_clear_handler(request: web.Request) -> web.Response:
         session.clear()
         await session.save()
     logger.warning("DEBUG API: archive_clear deleted=%d, session_cleared=%d", deleted, n_session)
-    return web.json_response({"ok": True, "deleted": deleted})
+    return web.json_response(contract.DebugResult(ok=True, deleted=deleted).wire_dict())
 
 
 async def sessions_list_handler(request: web.Request) -> web.Response:
@@ -139,34 +144,36 @@ async def sessions_list_handler(request: web.Request) -> web.Response:
         request: aiohttp Request。
 
     Returns:
-        web.Response: {"sessions": [{session_id, message_count, updated_at, token_total}, ...]}。
+        web.Response: SessionListResponse 契约 wire（sessions 列表）。
     """
     agent = request.app["agent"]
     summaries = await agent.session_repo.list_all()
     if not summaries:
         # MongoDB 不可用，返回内存中的当前 session
-        return web.json_response({
-            "sessions": [{
-                "session_id": str(agent.session.session_id),
-                "message_count": len(agent.session.messages),
-                "updated_at": "",
-                "token_total": 0,
-            }],
-        })
+        data = contract.SessionListResponse(
+            sessions=[contract.SessionInfo(
+                session_id=str(agent.session.session_id),
+                message_count=len(agent.session.messages),
+                updated_at="",
+                token_total=0,
+            )],
+        )
+        return web.json_response(data.wire_dict())
     try:
         # 聚合 token 用量（MongoDB $group，单次查询）
         token_totals = await agent.token_repo.total_tokens_by_session()
-        return web.json_response({
-            "sessions": [
-                {
-                    "session_id": str(s.session_id),
-                    "message_count": s.message_count,
-                    "updated_at": s.updated_at,
-                    "token_total": token_totals.get(str(s.session_id), 0),
-                }
+        data = contract.SessionListResponse(
+            sessions=[
+                contract.SessionInfo(
+                    session_id=str(s.session_id),
+                    message_count=s.message_count,
+                    updated_at=s.updated_at,
+                    token_total=token_totals.get(str(s.session_id), 0),
+                )
                 for s in summaries
             ],
-        })
+        )
+        return web.json_response(data.wire_dict())
     except Exception as e:
         return web.json_response(
             {"error": f"查询失败: {e}"}, status=500)
@@ -179,7 +186,7 @@ async def session_detail_handler(request: web.Request) -> web.Response:
         request: aiohttp Request, URL path: /{session_id}。
 
     Returns:
-        web.Response: {"session_id": ..., "messages": [...], "params": {...}, "total": ...}。
+        web.Response: SessionDetailResponse 契约 wire（session_id/messages/params/total）。
     """
     agent = request.app["agent"]
     sid = request.match_info.get("session_id", "")
@@ -200,12 +207,11 @@ async def session_detail_handler(request: web.Request) -> web.Response:
             msgs, total = await agent.message_repo.query_by_session(sid, limit=20)
             formatted = sessions_to_client(msgs)
             character_state = await _get_character_state(SessionId(sid))
-            return web.json_response({
-                "session_id": sid,
-                "messages": formatted,
-                "params": character_state,
-                "total": total,
-            })
+            messages = [contract.SessionDetailMessage.model_validate(m) for m in formatted]
+            data = contract.SessionDetailResponse(
+                session_id=sid, messages=messages,
+                params=character_state, total=total)
+            return web.json_response(data.wire_dict())
         except Exception as e:
             logger.warning("message_repo query_by_session failed: %s", e)
 
@@ -214,19 +220,20 @@ async def session_detail_handler(request: web.Request) -> web.Response:
     if result is None:
         # MongoDB 不可用，返回当前内存 session（仅当 sid 匹配时）
         if sid == str(agent.session.session_id):
-            return web.json_response({
-                "session_id": sid,
-                "messages": agent.session.messages_for_client(),
-                "params": agent.session.character_state.model_dump(mode="json"),
-            })
+            msgs = agent.session.messages_for_client()
+            messages = [contract.SessionDetailMessage.model_validate(m) for m in msgs]
+            data = contract.SessionDetailResponse(
+                session_id=sid, messages=messages,
+                params=agent.session.character_state.model_dump(mode="json"))
+            return web.json_response(data.wire_dict())
         return web.json_response({"error": "会话不存在"}, status=404)
     raw_msgs, character_state, _, _ = result
     formatted = sessions_to_client(raw_msgs)
-    return web.json_response({
-        "session_id": sid,
-        "messages": formatted,
-        "params": character_state.model_dump(mode="json"),
-    })
+    messages = [contract.SessionDetailMessage.model_validate(m) for m in formatted]
+    data = contract.SessionDetailResponse(
+        session_id=sid, messages=messages,
+        params=character_state.model_dump(mode="json"))
+    return web.json_response(data.wire_dict())
 
 
 async def session_delete_handler(request: web.Request) -> web.Response:
@@ -236,7 +243,7 @@ async def session_delete_handler(request: web.Request) -> web.Response:
         request: aiohttp Request, URL path: /{session_id}。
 
     Returns:
-        web.Response: {"ok": True, "deleted": count} or error.
+        web.Response: DebugResult 契约 wire（ok true + deleted 计数）或错误。
     """
     agent = request.app["agent"]
     sid = request.match_info.get("session_id", "")
@@ -251,7 +258,7 @@ async def session_delete_handler(request: web.Request) -> web.Response:
                       sid, str(agent.session.session_id), deleted)
         if sid == str(agent.session.session_id):
             agent.session.clear()
-        return web.json_response({"ok": True, "deleted": deleted})
+        return web.json_response(contract.DebugResult(ok=True, deleted=deleted).wire_dict())
     except Exception as e:
         return web.json_response(
             {"error": f"删除失败: {e}"}, status=500)
@@ -264,7 +271,7 @@ async def sessions_clear_handler(request: web.Request) -> web.Response:
         request: aiohttp Request。
 
     Returns:
-        web.Response: {"ok": True, "deleted": count} or error.
+        web.Response: DebugResult 契约 wire（ok true + deleted 计数）或错误。
     """
     agent = request.app["agent"]
     if not await agent.session_repo.health_check():
@@ -274,7 +281,7 @@ async def sessions_clear_handler(request: web.Request) -> web.Response:
         deleted = await agent.session_repo.clear_all()
         logger.warning("DEBUG API: sessions_clear deleted=%d", deleted)
         agent.session.clear()
-        return web.json_response({"ok": True, "deleted": deleted})
+        return web.json_response(contract.DebugResult(ok=True, deleted=deleted).wire_dict())
     except Exception as e:
         return web.json_response(
             {"error": f"清空失败: {e}"}, status=500)

@@ -1,10 +1,16 @@
-"""Debug recording routes: prompt + response recorder inspection."""
+"""Debug recording routes: prompt + response recorder inspection。
+
+响应构造 `frontend_contract.debug` 契约模型 + `wire_dict()`；recorder 内部摘要/详情
+dict → 契约 `PromptSummary`/`PromptDetail`/`ResponseSummary`/`ResponseDetail` 视图。
+"""
 
 import logging
 import os
 
 from aiohttp import web
 from paths import ProjectPath
+
+from frontend_contract import debug as contract
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +30,15 @@ async def prompts_list_handler(request: web.Request) -> web.Response:
         request: aiohttp Request。
 
     Returns:
-        web.Response: {"records": [...], "total": ..., "max": ...}。
+        web.Response: PromptSummary 契约 wire（records/total/max）。
     """
     agent = request.app["agent"]
     recorder = getattr(agent, "prompt_recorder", None)
     if recorder is None:
-        return web.json_response({"records": [], "total": 0, "max": 0})
-    return web.json_response(recorder.list_summaries())
+        data = contract.PromptSummary()
+    else:
+        data = contract.PromptSummary.model_validate(recorder.list_summaries())
+    return web.json_response(data.wire_dict())
 
 
 async def prompt_detail_handler(request: web.Request) -> web.Response:
@@ -40,7 +48,7 @@ async def prompt_detail_handler(request: web.Request) -> web.Response:
         request: aiohttp Request, URL path: /{index}。
 
     Returns:
-        web.Response: {"index": ..., "timestamp": ..., "messages": [...], "tools": [...], ...}。
+        web.Response: PromptDetail 契约 wire（index/messages/tools/template_source）。
     """
     index = int(request.match_info["index"])
     agent = request.app["agent"]
@@ -66,15 +74,16 @@ async def prompt_detail_handler(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    return web.json_response({
-        "index": record.index,
-        "timestamp": record.timestamp,
-        "round_num": record.round_num,
-        "model": record.model,
-        "messages": record.messages,
-        "tools": record.tools,
-        "template_source": template_source,
-    })
+    data = contract.PromptDetail(
+        index=record.index,
+        timestamp=record.timestamp,
+        round_num=record.round_num,
+        model=record.model,
+        messages=record.messages,
+        tools=record.tools,
+        template_source=template_source,
+    )
+    return web.json_response(data.wire_dict())
 
 
 async def responses_list_handler(request: web.Request) -> web.Response:
@@ -84,13 +93,15 @@ async def responses_list_handler(request: web.Request) -> web.Response:
         request: aiohttp Request。
 
     Returns:
-        web.Response: {"records": [...], "total": ..., "max": ...}。
+        web.Response: ResponseSummary 契约 wire（records/total/max）。
     """
     agent = request.app["agent"]
     recorder = getattr(agent, "response_recorder", None)
     if recorder is None:
-        return web.json_response({"records": [], "total": 0, "max": 0})
-    return web.json_response(recorder.list_summaries())
+        data = contract.ResponseSummary()
+    else:
+        data = contract.ResponseSummary.model_validate(recorder.list_summaries())
+    return web.json_response(data.wire_dict())
 
 
 async def response_detail_handler(request: web.Request) -> web.Response:
@@ -100,7 +111,7 @@ async def response_detail_handler(request: web.Request) -> web.Response:
         request: aiohttp Request, URL path: /{index}。
 
     Returns:
-        web.Response: {"index": ..., "timestamp": ..., "raw_text": ..., "inner_voice": ...}。
+        web.Response: ResponseDetail 契约 wire（index/raw_text/inner_voice）。
     """
     index = int(request.match_info["index"])
     agent = request.app["agent"]
@@ -110,12 +121,13 @@ async def response_detail_handler(request: web.Request) -> web.Response:
     record = recorder.get_full(index)
     if record is None:
         raise web.HTTPNotFound(text=f"记录 #{index} 不存在")
-    return web.json_response({
-        "index": record.index,
-        "timestamp": record.timestamp,
-        "round_num": record.round_num,
-        "raw_text": record.raw_text,
-        "inner_voice": record.inner_voice,
-        "text_len": record.text_len,
-        "inner_voice_len": record.inner_voice_len,
-    })
+    data = contract.ResponseDetail(
+        index=record.index,
+        timestamp=record.timestamp,
+        round_num=record.round_num,
+        raw_text=record.raw_text,
+        inner_voice=record.inner_voice,
+        text_len=record.text_len,
+        inner_voice_len=record.inner_voice_len,
+    )
+    return web.json_response(data.wire_dict())
