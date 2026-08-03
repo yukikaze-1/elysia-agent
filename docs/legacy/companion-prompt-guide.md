@@ -10,7 +10,7 @@
 
 > **Section Provider 架构**: `Module/system_prompt/sections/` 下 12 个独立 PromptSection 模块。
 > 编辑 prompt 时直接修改对应 section 文件即可，无需 touch 整个单体模板。
-> 详见 `docs/superpowers/specs/archive/2026-07-04-prompt-section-provider-design.md`。
+> 详见 `docs/superpowers/specs/archive/2026-07/2026-07-04-prompt-section-provider-design.md`。
 
 ---
 

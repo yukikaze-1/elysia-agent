@@ -22,8 +22,8 @@
 |------|------|
 | [superpowers/specs/](superpowers/specs/) | 设计规格（`-design.md` 后缀） |
 | [superpowers/plans/](superpowers/plans/) | 实施计划（`-plan.md` 后缀） |
-| [superpowers/specs/archive/](superpowers/specs/archive/) | 已归档设计规格（2026-07 之前） |
-| [superpowers/plans/archive/](superpowers/plans/archive/) | 已归档实施计划（2026-07 之前） |
+| [superpowers/specs/archive/](superpowers/specs/archive/) | 已归档设计规格（按月分目录 `archive/<YYYY-MM>/`） |
+| [superpowers/plans/archive/](superpowers/plans/archive/) | 已归档实施计划（按月分目录 `archive/<YYYY-MM>/`） |
 | [review/](review/) | 代码/文档审查报告（code-review、doc-review、frontend_completed） |
 | [legacy/](legacy/) | 已废弃文档（companion-*，保留作历史参考） |
 | [completed/](completed/) | 已完成月度归档（2026-05、2026-06） |
@@ -32,4 +32,5 @@
 
 - spec 文件统一 `YYYY-MM-DD-<主题>-design.md` 命名；plan 文件推荐 `YYYY-MM-DD-<主题>-plan.md`（历史文件部分未带该后缀，见 `superpowers/plans/`）。
 - 新 spec/plan 一律放在 `superpowers/specs/` 和 `superpowers/plans/`（`docs/specs/`、`docs/plans/` 已废弃并入）。
+- 月度归档：已实施完成的 spec/plan 移入对应 `superpowers/<type>/archive/<YYYY-MM>/`，按月份分目录。
 - 审查报告放 `review/`；已废弃文档移入 `legacy/`。

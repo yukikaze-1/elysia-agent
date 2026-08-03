@@ -44,7 +44,7 @@
 
 ## token 统一结构（2026-07-31）遗留可接受项
 
-全链路统一 `TokenUsage` 模型的最终 review（opus）**APPROVE FOR MERGE** 后的可接受 residual，均为低优先级。详见 [docs/superpowers/specs/2026-07-31-token-usage-unified-structure-design.md](docs/superpowers/specs/2026-07-31-token-usage-unified-structure-design.md)。
+全链路统一 `TokenUsage` 模型的最终 review（opus）**APPROVE FOR MERGE** 后的可接受 residual，均为低优先级。详见 [docs/superpowers/specs/archive/2026-07/2026-07-31-token-usage-unified-structure-design.md](docs/superpowers/specs/archive/2026-07/2026-07-31-token-usage-unified-structure-design.md)。
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|

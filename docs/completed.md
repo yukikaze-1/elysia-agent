@@ -119,9 +119,9 @@
 **未修复**：docs/testing.md 测试数量/文件索引过时、data-structure-survey.md 行号偏移、companion-prompt-guide.md 多处不一致、各 README 行数过时等较次要问题，记录在 todo.md "文档审查遗留"。
 ### 2026-07-31: 项目路径统一管理
 
-**Spec**: [docs/superpowers/specs/2026-07-31-project-paths-unification-design.md](superpowers/specs/2026-07-31-project-paths-unification-design.md)
+**Spec**: [docs/superpowers/specs/archive/2026-07/2026-07-31-project-paths-unification-design.md](superpowers/specs/archive/2026-07/2026-07-31-project-paths-unification-design.md)
 
-**Plan**: [docs/superpowers/plans/2026-07-31-project-paths-unification.md](superpowers/plans/2026-07-31-project-paths-unification.md)
+**Plan**: [docs/superpowers/plans/archive/2026-07/2026-07-31-project-paths-unification.md](superpowers/plans/archive/2026-07/2026-07-31-project-paths-unification.md)
 
 新建顶层 `paths.py`（`ProjectPath(str, Enum)`，20 个枚举成员：13 目录 + 7 文件），项目根由 `ELYSIA_ROOT` 环境变量锚定（fallback 到 `paths.py` 所在目录）。每个路径支持 `ELYSIA_PATH_{NAME}` 环境变量覆盖。
 

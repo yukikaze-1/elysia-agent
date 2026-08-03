@@ -332,7 +332,7 @@ INTERRUPT 处理流程：
 
 ### 4.2 AgentStatus 接口层
 
-`AgentStatus` 是 FSM 之上的语义接口，将消费者与底层 `AgentFSM` 解耦。设计详见 [spec](superpowers/specs/2026-07-30-agent-status-interface-design.md)。
+`AgentStatus` 是 FSM 之上的语义接口，将消费者与底层 `AgentFSM` 解耦。设计详见 [spec](superpowers/specs/archive/2026-07/2026-07-30-agent-status-interface-design.md)。
 
 **对外只读：`AgentStatus`（`agent.status`）**
 - `is_accepting_input` — IDLE 或 IDLE_BACKGROUND_TASK
@@ -502,7 +502,7 @@ build_messages(user_message, stt_emotion, stt_events)
   └── {"role": "user", "content": user_message}
 ```
 
-**Section 提供者架构** (`Module/system_prompt/` protocol + sections + templates): 2026-07-04 重构，将 `Brain.j2` 单体拆分为 12 个独立的 `PromptSection` 模块（ConflictRules, OutputFormat, TTSMarkup, Sensory, Emotion, Memory, Personality, Relationship, SpeakingStyle, Proactive, OwnLife, SelfPerception）。每个 section 自管数据源、自管 `.j2` 模板、可独立 reload/validate。`SystemPromptManager` 按固定顺序 async render 并拼接。详见 `docs/superpowers/specs/archive/2026-07-04-prompt-section-provider-design.md`。
+**Section 提供者架构** (`Module/system_prompt/` protocol + sections + templates): 2026-07-04 重构，将 `Brain.j2` 单体拆分为 12 个独立的 `PromptSection` 模块（ConflictRules, OutputFormat, TTSMarkup, Sensory, Emotion, Memory, Personality, Relationship, SpeakingStyle, Proactive, OwnLife, SelfPerception）。每个 section 自管数据源、自管 `.j2` 模板、可独立 reload/validate。`SystemPromptManager` 按固定顺序 async render 并拼接。详见 `docs/superpowers/specs/archive/2026-07/2026-07-04-prompt-section-provider-design.md`。
 
 ### 4.8 空闲监控 (IdleMonitor)
 

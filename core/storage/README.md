@@ -30,4 +30,4 @@
 |------|------|
 | [项目 README](../../README.md) | 快速开始 + 文档导航 |
 | [core/schema/README.md](../schema/README.md) | 基础类型定义层 |
-| [存储层设计 spec](../../docs/superpowers/specs/2026-07-16-storage-layer-design.md) | 本模块的 spec |
+| [存储层设计 spec](../../docs/superpowers/specs/archive/2026-07/2026-07-16-storage-layer-design.md) | 本模块的 spec |
