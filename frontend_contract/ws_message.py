@@ -7,6 +7,7 @@
   - 其余 Optional 字段（stream_id/error?/format? 等）默认 X?（缺省省略）
 判别联合别名 `ServerMessage` 模块级可访问（__main__ 经 get_args 收集成员）。
 """
+from enum import Enum
 from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import Field
@@ -471,6 +472,81 @@ class ActivateSessionMessage(ContractModel):
     conversationId: str = Field(description="目标会话 ID（必填）")
 
 
+# ─────────────────────────── 批次 4 Desktop 工具桥（BE-040/041/043） ───────────────────────────
+
+
+class ToolStatusEnum(str, Enum):
+    """桌面工具状态（Client→Server `tool.status` 判别六态，D-m）。
+
+    str Enum 经 gen_ts 发射为 TS 判别联合（export type ToolStatusEnum = 'accepted' | ...）；
+    `ToolStatusMessage.status` 字段注解引用本枚举 → pydantic 校验 + wire 序列化为字符串值。
+    """
+
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    RUNNING = "running"
+    RESULT = "result"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+
+
+class ToolAttachment(ContractModel):
+    """桌面工具结果附件引用（后端托管 URL）。
+
+    Electron 先把附件字节经 REST `POST /api/uploads/desktop/{callId}` 上传落盘，
+    拿到 url 后再在 `tool.status{status=result}` 的 attachments 里回填（D-d）。
+    """
+
+    url: str = Field(description="附件 URL（后端托管 /uploads/...）")
+    mimeType: str = Field(description="MIME 类型")
+    label: Optional[str] = Field(default=None, description="附件标签，可缺省")
+
+
+class ToolRequestMessage(ContractModel):
+    """桌面工具执行请求（Server→Client，v2 定向投递 desktop channel）。
+
+    bridge._deliver 定位 `client_platform == "electron"` 的 v2 连接 → _send_json 本帧；
+    v1 连接不收 desktop 帧（D-l）。paramHash = 规范化 arguments 的 SHA-256（BE-043
+    篡改拒绝权威依据）；expiresAt = 桥 request_timeout 的绝对过期时间（UTC ISO）。
+    """
+
+    type: Literal["tool.request"] = "tool.request"
+    callId: str = Field(description="调用 ID（call_ 前缀）")
+    toolName: str = Field(description="工具名（desktop.file.read 等）")
+    toolVersion: str = Field(description="工具版本（语义化版本）")
+    runtime: str = Field(description="工具 Runtime（desktop）")
+    arguments: dict[str, Any] = Field(description="工具参数（input_schema 校验后）")
+    reason: Optional[str] = Field(default=None, description="调用原因（LLM 生成），可缺省")
+    riskLevel: str = Field(description="风险等级（safe/medium/high）")
+    permissionRequired: bool = Field(description="是否需要权限（risk != safe 或 requires_human_approval）")
+    approvalAuthority: str = Field(description="审批主体（desktop → client，D-h）")
+    paramHash: str = Field(description="参数摘要（SHA-256，规范化 JSON，篡改拒绝依据）")
+    expiresAt: str = Field(description="过期时间（UTC ISO）")
+    requestId: Optional[str] = Field(default=None, description="关联请求 ID（批次 1 错误信封惯例），可缺省")
+
+
+class ToolStatusMessage(ContractModel):
+    """桌面工具状态回传（Client→Server，判别消息六态，D-m）。
+
+    accepted/running：桥仅更新 repo（Electron 已接手/执行中）；
+    result/error/rejected/cancelled：桥 resolve 对应 future（§4.3 状态→ToolResult 映射）。
+    回传 toolName/toolVersion/runtime/paramHash 与登记不一致 → 桥拒绝（BE-043 篡改防护）。
+    """
+
+    type: Literal["tool.status"] = "tool.status"
+    callId: str = Field(description="调用 ID（call_ 前缀）")
+    status: ToolStatusEnum = Field(description="状态（accepted/rejected/running/result/error/cancelled）")
+    toolName: str = Field(description="工具名")
+    toolVersion: str = Field(description="工具版本")
+    runtime: str = Field(description="工具 Runtime（desktop）")
+    paramHash: str = Field(description="参数摘要（SHA-256，回传一致性校验）")
+    output: Optional[str] = Field(default=None, description="公开输出文本（status=result），可缺省")
+    error: Optional[dict[str, Any]] = Field(default=None, description="错误（{code,message}，status=error），可缺省")
+    attachments: Optional[list[ToolAttachment]] = Field(
+        default=None, description="附件引用（status=result，后端托管 URL），可缺省")
+    executionSummary: Optional[str] = Field(default=None, description="执行摘要（去本地路径），可缺省")
+
+
 # ─────────────────── ServerMessage 判别联合（模块级） ───────────────────
 
 ServerMessage = Annotated[Union[
@@ -500,4 +576,5 @@ ServerMessage = Annotated[Union[
     GenerationSegmentCompletedMessage,
     GenerationCompletedMessage,
     GenerationFailedMessage,
+    ToolRequestMessage,
 ], Field(discriminator="type")]

@@ -554,6 +554,81 @@ export interface ActivateSessionMessage {
   conversationId: string
 }
 
+/** 桌面工具结果附件引用（后端托管 URL）。
+
+Electron 先把附件字节经 REST `POST /api/uploads/desktop/{callId}` 上传落盘，
+拿到 url 后再在 `tool.status{status=result}` 的 attachments 里回填（D-d）。 */
+export interface ToolAttachment {
+  /** 附件 URL（后端托管 /uploads/...） */
+  url: string
+  /** MIME 类型 */
+  mimeType: string
+  /** 附件标签，可缺省 */
+  label?: string
+}
+
+/** 桌面工具执行请求（Server→Client，v2 定向投递 desktop channel）。
+
+bridge._deliver 定位 `client_platform == "electron"` 的 v2 连接 → _send_json 本帧；
+v1 连接不收 desktop 帧（D-l）。paramHash = 规范化 arguments 的 SHA-256（BE-043
+篡改拒绝权威依据）；expiresAt = 桥 request_timeout 的绝对过期时间（UTC ISO）。 */
+export interface ToolRequestMessage {
+  type: 'tool.request'
+  /** 调用 ID（call_ 前缀） */
+  callId: string
+  /** 工具名（desktop.file.read 等） */
+  toolName: string
+  /** 工具版本（语义化版本） */
+  toolVersion: string
+  /** 工具 Runtime（desktop） */
+  runtime: string
+  /** 工具参数（input_schema 校验后） */
+  arguments: Record<string, unknown>
+  /** 调用原因（LLM 生成），可缺省 */
+  reason?: string
+  /** 风险等级（safe/medium/high） */
+  riskLevel: string
+  /** 是否需要权限（risk != safe 或 requires_human_approval） */
+  permissionRequired: boolean
+  /** 审批主体（desktop → client，D-h） */
+  approvalAuthority: string
+  /** 参数摘要（SHA-256，规范化 JSON，篡改拒绝依据） */
+  paramHash: string
+  /** 过期时间（UTC ISO） */
+  expiresAt: string
+  /** 关联请求 ID（批次 1 错误信封惯例），可缺省 */
+  requestId?: string
+}
+
+/** 桌面工具状态回传（Client→Server，判别消息六态，D-m）。
+
+accepted/running：桥仅更新 repo（Electron 已接手/执行中）；
+result/error/rejected/cancelled：桥 resolve 对应 future（§4.3 状态→ToolResult 映射）。
+回传 toolName/toolVersion/runtime/paramHash 与登记不一致 → 桥拒绝（BE-043 篡改防护）。 */
+export interface ToolStatusMessage {
+  type: 'tool.status'
+  /** 调用 ID（call_ 前缀） */
+  callId: string
+  /** 状态（accepted/rejected/running/result/error/cancelled） */
+  status: ToolStatusEnum
+  /** 工具名 */
+  toolName: string
+  /** 工具版本 */
+  toolVersion: string
+  /** 工具 Runtime（desktop） */
+  runtime: string
+  /** 参数摘要（SHA-256，回传一致性校验） */
+  paramHash: string
+  /** 公开输出文本（status=result），可缺省 */
+  output?: string
+  /** 错误（{code,message}，status=error），可缺省 */
+  error?: Record<string, unknown>
+  /** 附件引用（status=result，后端托管 URL），可缺省 */
+  attachments?: ToolAttachment[]
+  /** 执行摘要（去本地路径），可缺省 */
+  executionSummary?: string
+}
+
 /** 单个已配置 provider（models 为可选用模型列表）。 */
 export interface ProviderEntry {
   /** 可用模型列表 */
@@ -903,6 +978,70 @@ export interface PendingQueryResponse {
   pendingMessages: PendingMessageItem[]
   /** 未处理工具审批列表（全局） */
   pendingApprovals: PendingApprovalItem[]
+}
+
+/** 桌面工具注册元数据（GET /api/tools 单工具条目；Electron 校验"只接受已注册工具和版本"）。
+
+desktop 工具 runtime=desktop、approvalAuthority=client（D-h）；available =
+bridge.is_available()（desktop 未连接时仍列出但 available=false，客户端可知晓存在）。 */
+export interface ToolMetadata {
+  /** 工具名（desktop.file.read 等） */
+  name: string
+  /** 工具描述 */
+  description: string
+  /** 工具 Runtime（backend/desktop/local_worker） */
+  runtime: string
+  /** 风险等级（safe/medium/high） */
+  riskLevel: string
+  /** 是否需要权限（risk != safe 或 requires_human_approval） */
+  permissionRequired: boolean
+  /** 审批主体（desktop → client，backend 工具恒 backend） */
+  approvalAuthority: string
+  /** 工具版本（语义化版本，schema 变更时手动 bump） */
+  version: string
+  /** 参数 JSON Schema（param_model 派生） */
+  inputSchema: Record<string, unknown>
+  /** 输出 JSON Schema（声明性，批次 4 内无强校验） */
+  outputSchema: Record<string, unknown>
+  /** 是否可用（desktop 工具 = bridge.is_available()，backend 恒 true） */
+  available: boolean
+}
+
+/** 工具注册表响应（GET /api/tools：完整元数据 + 桌面客户端可用性）。 */
+export interface ToolRegistryResponse {
+  /** 工具元数据列表 */
+  tools: ToolMetadata[]
+  /** 是否有 desktop 客户端连接可执行 */
+  desktopAvailable: boolean
+}
+
+/** 桌面调用状态查询响应（GET /api/tools/calls/{callId}，BE-043）。
+
+status 用 repo 枚举（pending/accepted/running/succeeded/failed/rejected/cancelled/
+expired/offline），与 wire `tool.status` 六态翻译固定（spec §9 映射表：result→succeeded、
+error→failed、rejected/cancelled 同名；accepted/running 同名；pending/expired/offline
+仅服务端）；toolVersion/runtime/paramHash 补齐供「相同 ID 工具/Runtime/版本/参数摘要变化时拒绝」经 REST 复核。 */
+export interface DesktopCallStatus {
+  /** 调用 ID（call_ 前缀） */
+  callId: string
+  /** 工具名 */
+  toolName: string
+  /** 工具版本 */
+  toolVersion: string
+  /** 工具 Runtime（desktop） */
+  runtime: string
+  /** 参数摘要（SHA-256） */
+  paramHash: string
+  /** repo 状态枚举（wire 六态翻译固定 + 服务端态） */
+  status: 'pending' | 'accepted' | 'running' | 'succeeded' | 'failed' | 'rejected' | 'cancelled' | 'expired' | 'offline'
+  /** 创建时间（UTC ISO） */
+  createdAt: string
+  /** 过期时间（UTC ISO） */
+  expiresAt: string
+  /** 结果（{output,attachments,execution_summary}），可缺省 */
+  result?: Record<string, unknown>
+  /** 错误（{code,message}），可缺省 */
+  error?: Record<string, unknown>
 }
 
 /** 单轮 token 消耗（debug 面板 current_turn 条目）。 */
@@ -1523,6 +1662,14 @@ export interface TaskData {
   edges: string[][]
 }
 
+export type ToolStatusEnum =
+  | 'accepted'
+  | 'rejected'
+  | 'running'
+  | 'result'
+  | 'error'
+  | 'cancelled'
+
 export type ServerMessage =
   | SessionMessage
   | CapabilitiesMessage
@@ -1550,6 +1697,7 @@ export type ServerMessage =
   | GenerationSegmentCompletedMessage
   | GenerationCompletedMessage
   | GenerationFailedMessage
+  | ToolRequestMessage
   | UnknownMessage
 
 export interface UnknownMessage { type: string; [key: string]: unknown }

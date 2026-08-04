@@ -73,6 +73,9 @@ from frontend_contract.rest import (  # noqa: F401
     SessionListResult,
     SessionSummary,
     UnconfiguredEntry,
+    DesktopCallStatus,
+    ToolMetadata,
+    ToolRegistryResponse,
 )
 from frontend_contract.ws_message import (  # noqa: F401
     ActionMessage,
@@ -123,6 +126,10 @@ from frontend_contract.ws_message import (  # noqa: F401
     TypingMessage,
     WakeMessage,
     WakeToggleMessage,
+    ToolAttachment,
+    ToolRequestMessage,
+    ToolStatusEnum,
+    ToolStatusMessage,
 )
 
 __all__ = [
@@ -180,6 +187,11 @@ __all__ = [
     "ToolApprovalMessage",
     "WakeToggleMessage",
     "ActivateSessionMessage",
+    # 批次 4 Desktop 工具桥（ws_message.py）
+    "ToolStatusEnum",
+    "ToolAttachment",
+    "ToolRequestMessage",
+    "ToolStatusMessage",
     # 业务 REST 契约（rest.py）
     "ProviderEntry",
     "ProvidersResponse",
@@ -210,6 +222,10 @@ __all__ = [
     "PendingApprovalItem",
     "PendingQueryResponse",
     "ConversationUsage",
+    # 批次 4 Desktop 工具注册表（rest.py）
+    "ToolMetadata",
+    "ToolRegistryResponse",
+    "DesktopCallStatus",
     # Debug API 契约（debug.py）
     "DebugData",
     "DebugContentPart",

@@ -1,4 +1,5 @@
 """gen_ts 发射器测试：三态映射 + wire_dict 递归序列化（marker=unit）。"""
+from enum import Enum
 from typing import Annotated, Any, Literal, Optional, Union
 
 import pytest
@@ -165,3 +166,37 @@ def test_emit_multiline_docstring_dedent():
     out = generate_ts([DocstringIndentModel])
     assert "续行（源码缩进 8 格）。" in out
     assert "        续行（源码缩进 8 格）。" not in out  # 续行行首 8 空格必须被 cleandoc 去掉
+
+
+class DesktopStatusEnum(str, Enum):
+    """桌面工具状态（批次 4 str Enum → TS 判别联合）。"""
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    RUNNING = "running"
+    RESULT = "result"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+
+
+class DesktopStatusMessage(ContractModel):
+    """桌面工具状态回传（字段引用 str Enum）。"""
+    type: Literal["tool.status"] = "tool.status"
+    callId: str
+    status: DesktopStatusEnum
+
+
+@pytest.mark.unit
+def test_emit_str_enum_union():
+    """str Enum → `export type X = 'a' | 'b'`（判别联合别名）+ 字段引用类型名。
+
+    批次 4 契约引入 ToolStatusEnum；若不发射枚举类型定义，字段会产出
+    `status: ToolStatusEnum` 且无定义 → vue-tsc 报 TS2304（同 Any→unknown 回归）。
+    """
+    out = generate_ts([DesktopStatusMessage])
+    assert "export type DesktopStatusEnum =" in out
+    for value in ("accepted", "rejected", "running", "result", "error", "cancelled"):
+        assert f"  | '{value}'" in out
+    assert "status: DesktopStatusEnum" in out
+    # 枚举与判别联合别名排布：枚举在接口之后、UnknownMessage 之前
+    assert out.index("export interface DesktopStatusMessage") < out.index("export type DesktopStatusEnum")
+    assert out.index("export type DesktopStatusEnum") < out.index("UnknownMessage")

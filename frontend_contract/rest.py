@@ -332,3 +332,57 @@ class ConversationUsage(ContractModel):
 
     total: int = Field(description="会话累计 token 数")
     byModel: dict[str, int] = Field(description="按模型拆分的累计 token 数")
+
+
+# ────────────────────── 批次 4 v2 契约：Desktop 工具注册表（BE-040/042/043） ──────────────────────
+
+
+class ToolMetadata(ContractModel):
+    """桌面工具注册元数据（GET /api/tools 单工具条目；Electron 校验"只接受已注册工具和版本"）。
+
+    desktop 工具 runtime=desktop、approvalAuthority=client（D-h）；available =
+    bridge.is_available()（desktop 未连接时仍列出但 available=false，客户端可知晓存在）。
+    """
+
+    name: str = Field(description="工具名（desktop.file.read 等）")
+    description: str = Field(description="工具描述")
+    runtime: str = Field(description="工具 Runtime（backend/desktop/local_worker）")
+    riskLevel: str = Field(description="风险等级（safe/medium/high）")
+    permissionRequired: bool = Field(description="是否需要权限（risk != safe 或 requires_human_approval）")
+    approvalAuthority: str = Field(description="审批主体（desktop → client，backend 工具恒 backend）")
+    version: str = Field(description="工具版本（语义化版本，schema 变更时手动 bump）")
+    inputSchema: dict[str, Any] = Field(description="参数 JSON Schema（param_model 派生）")
+    outputSchema: dict[str, Any] = Field(description="输出 JSON Schema（声明性，批次 4 内无强校验）")
+    available: bool = Field(description="是否可用（desktop 工具 = bridge.is_available()，backend 恒 true）")
+
+
+class ToolRegistryResponse(ContractModel):
+    """工具注册表响应（GET /api/tools：完整元数据 + 桌面客户端可用性）。"""
+
+    tools: list[ToolMetadata] = Field(description="工具元数据列表")
+    desktopAvailable: bool = Field(description="是否有 desktop 客户端连接可执行")
+
+
+class DesktopCallStatus(ContractModel):
+    """桌面调用状态查询响应（GET /api/tools/calls/{callId}，BE-043）。
+
+    status 用 repo 枚举（pending/accepted/running/succeeded/failed/rejected/cancelled/
+    expired/offline），与 wire `tool.status` 六态翻译固定（spec §9 映射表：result→succeeded、
+    error→failed、rejected/cancelled 同名；accepted/running 同名；pending/expired/offline
+    仅服务端）；toolVersion/runtime/paramHash 补齐供「相同 ID 工具/Runtime/版本/参数摘要变化时拒绝」经 REST 复核。
+    """
+
+    callId: str = Field(description="调用 ID（call_ 前缀）")
+    toolName: str = Field(description="工具名")
+    toolVersion: str = Field(description="工具版本")
+    runtime: str = Field(description="工具 Runtime（desktop）")
+    paramHash: str = Field(description="参数摘要（SHA-256）")
+    status: Literal[
+        "pending", "accepted", "running", "succeeded", "failed",
+        "rejected", "cancelled", "expired", "offline",
+    ] = Field(description="repo 状态枚举（wire 六态翻译固定 + 服务端态）")
+    createdAt: str = Field(description="创建时间（UTC ISO）")
+    expiresAt: str = Field(description="过期时间（UTC ISO）")
+    result: Optional[dict[str, Any]] = Field(
+        default=None, description="结果（{output,attachments,execution_summary}），可缺省")
+    error: Optional[dict[str, Any]] = Field(default=None, description="错误（{code,message}），可缺省")

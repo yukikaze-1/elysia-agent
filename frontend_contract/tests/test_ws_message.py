@@ -12,12 +12,12 @@ from frontend_contract.rest import ConversationUsage
 
 @pytest.mark.unit
 def test_server_message_members():
-    """ServerMessage 判别联合：26 具名成员（19 v1 层 + 7 v2 generation；UnknownMessage 由发射器追加）。"""
+    """ServerMessage 判别联合：27 具名成员（19 v1 层 + 7 v2 generation + 1 批次 4 tool.request；UnknownMessage 由发射器追加）。"""
     from typing import get_args
-    # ServerMessage = Annotated[Union[19 成员], Field(discriminator="type")]
+    # ServerMessage = Annotated[Union[成员], Field(discriminator="type")]
     # get_args(Annotated) 返回 (Union[...], FieldInfo) —— 必须先剥 Annotated 再剥 Union
     members = get_args(get_args(w.ServerMessage)[0])
-    assert len(members) == 26  # 27 = 26 具名 + UnknownMessage（发射器追加）
+    assert len(members) == 27  # 28 = 27 具名 + UnknownMessage（发射器追加）
     assert all(m.__name__ != "UnknownMessage" for m in members)
     assert all(getattr(m, "model_fields", None) is not None for m in members)  # 均为 BaseModel
 
