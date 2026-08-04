@@ -1,0 +1,3 @@
+# Desktop 工具插件配置
+# 安全边界（request_timeout=120.0 等）已在 plugin.py 的 SafetyProfile 中显式声明，
+# 无需在此覆盖。desktop 工具不触碰本地文件系统/网络——全部操作由 Electron Main 完成。

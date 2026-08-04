@@ -219,6 +219,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | Utils | [core/utils/README.md](core/utils/README.md) | 通用工具（message_id + log_setup） |
 | CharacterEngine | [core/personality/README.md](core/personality/README.md) | 四层性格+情绪模型（Core→Self→State→Mood） |
 | 工具总览 | [core/tools/README.md](core/tools/README.md) | 工具插件列表 + 开发指南 |
+| 工具: desktop | [core/tools/desktop/README.md](core/tools/desktop/README.md) | desktop.file.select / read / write + screen.capture（委托 Electron，批次 4） |
 | 工具: filesystem | [core/tools/filesystem/README.md](core/tools/filesystem/README.md) | read_file / list_directory / write_file |
 | 工具: memory | [core/tools/memory/README.md](core/tools/memory/README.md) | search_memory / save_memory |
 | 工具: reminder | [core/tools/reminder/README.md](core/tools/reminder/README.md) | set_reminder |

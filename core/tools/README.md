@@ -16,7 +16,8 @@ core/tools/
 ├── reminder/           # 提醒设置 (SetReminder)
 ├── runtime_config/     # 运行时配置查询 (GetRuntimeConfig)
 ├── self_state/         # 自身状态查询 (GetSelfState)
-└── vision/             # 图片识别 (DescribeImage)
+├── vision/             # 图片识别 (DescribeImage)
+└── desktop/            # Desktop 工具 (FileSelect/FileRead/FileWrite/ScreenCapture，委托 Electron)
 ```
 
 ## 插件列表
@@ -35,6 +36,12 @@ core/tools/
 | `RuntimeConfigPlugin` | `runtime_config/` | 查询运行配置 |
 | `SelfStatePlugin` | `self_state/` | 查询自身状态 |
 | `DescribeImagePlugin` | `vision/` | 图片内容识别 |
+| `DesktopFileSelectPlugin` | `desktop/` | 系统文件选择器（runtime=desktop） |
+| `DesktopFileReadPlugin` | `desktop/` | 读取用户电脑文件（runtime=desktop） |
+| `DesktopFileWritePlugin` | `desktop/` | 写入用户电脑文件（runtime=desktop） |
+| `DesktopScreenCapturePlugin` | `desktop/` | 截取用户屏幕（runtime=desktop） |
+
+Desktop 插件（批次 4，BE-040）`runtime="desktop"`，`execute()` 经 `ctx.services["desktop_bridge"]` 委托 Electron Main；无桌面客户端连接时返回 `UNAVAILABLE`。详见 [desktop/](desktop/README.md)。
 
 ## 添加新工具
 

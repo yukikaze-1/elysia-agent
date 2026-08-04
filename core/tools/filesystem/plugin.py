@@ -48,6 +48,7 @@ class ReadFilePlugin(ToolPlugin):
     description = "读取指定文件的内容（仅文本文件）"
     param_model = ReadFileParams
     capabilities = {Capability.FILESYSTEM_READ}
+    risk_level = "safe"  # 沙盒只读（§3.3）
     safety = SafetyProfile(
         filesystem_allowed=True,
         read_dirs=["/home/yomu/data/sandbox"],
@@ -129,6 +130,7 @@ class ListDirPlugin(ToolPlugin):
     description = "列出目录中的文件和子目录"
     param_model = ListDirParams
     capabilities = {Capability.FILESYSTEM_READ}
+    risk_level = "safe"  # 沙盒只读（§3.3）
     safety = SafetyProfile(
         filesystem_allowed=True,
         read_dirs=["/home/yomu/data/sandbox"],
@@ -218,6 +220,7 @@ class WriteFilePlugin(ToolPlugin):
     description = "在安全目录下写入文件（需用户确认）"
     param_model = WriteFileParams
     capabilities = {Capability.FILESYSTEM_WRITE}
+    risk_level = "high"  # 写沙盒 + requires_human_approval=True（§3.3）
     safety = SafetyProfile(
         filesystem_allowed=True,
         write_dir=ProjectPath.DATA_SANDBOX,

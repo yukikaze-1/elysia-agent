@@ -360,6 +360,34 @@ class ToolPlugin:
     capabilities: set = set()
     safety: Any = None  # SafetyProfile — 子类覆盖
 
+    # Runtime 感知元数据（BE-040，批次 4 新增）
+    runtime: str = "backend"  # "backend" | "desktop" | "local_worker"（local_worker 无实现，枚举保留）
+    version: str = "1.0.0"    # 显式版本，schema 变更时手动 bump（D-f）
+    risk_level: str = "safe"  # "safe" | "medium" | "high"（D-g）
+    output_schema: dict = {"type": "string", "description": "工具公开输出"}  # 声明性描述，批次 4 内无强校验
+
+    # ---- 派生属性（BE-040） ----
+
+    @property
+    def approval_authority(self) -> str:
+        """审批权威 — Desktop/Local Worker 工具由客户端本地授权，其余走后端（D-h）。
+
+        Returns:
+            "client"（runtime 为 desktop/local_worker）或 "backend"。
+        """
+        return "client" if self.runtime in ("desktop", "local_worker") else "backend"
+
+    @property
+    def permission_required(self) -> bool:
+        """是否需要权限确认 — 非 safe 风险或声明了人工审批（D-i）。
+
+        Returns:
+            True 当 risk_level != "safe" 或 safety.requires_human_approval 为真。
+        """
+        return self.risk_level != "safe" or bool(
+            self.safety and self.safety.requires_human_approval
+        )
+
     # ---- 生命周期 ----
 
     async def setup(self, ctx: PluginContext) -> None:

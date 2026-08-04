@@ -116,6 +116,7 @@ class WebSearchPlugin(ToolPlugin):
     description = "搜索互联网，返回相关网页的标题、URL 和摘要"
     param_model = WebSearchParams
     capabilities = {Capability.NETWORK, Capability.WEB_SEARCH}
+    risk_level = "medium"  # 外部网络（§3.3）
     safety = SafetyProfile(
         network_allowed=True,
         block_private_ips=True,
@@ -231,6 +232,7 @@ class WebFetchPlugin(ToolPlugin):
     description = "抓取并解析指定网页的文本内容"
     param_model = WebFetchParams
     capabilities = {Capability.NETWORK}
+    risk_level = "medium"  # 外部网络（§3.3）
     safety = SafetyProfile(
         network_allowed=True,
         block_private_ips=True,

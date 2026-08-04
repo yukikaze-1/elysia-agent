@@ -34,6 +34,7 @@ class RuntimeConfigPlugin(ToolPlugin):
     description = "查看当前运行时配置：模型、TTS/STT、文件/网络权限、工具列表、后台任务、内存使用"
     param_model = RuntimeConfigParams
     capabilities = {Capability.PROCESS}
+    risk_level = "medium"  # 读进程内存/服务配置/后台任务状态（§3.3）
     safety = SafetyProfile()
 
     async def execute(

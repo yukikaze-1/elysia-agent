@@ -77,6 +77,7 @@ class MemorySavePlugin(ToolPlugin):
     description = "将重要信息保存到长期记忆库以供未来检索"
     param_model = SaveMemoryParams
     capabilities = {Capability.DATABASE_WRITE}
+    risk_level = "medium"  # 写长期记忆（§3.3）
     safety = SafetyProfile(
         database_allowed=True,
         database_readonly=False,
