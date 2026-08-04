@@ -4,6 +4,7 @@ Run: python -m pytest core/test_phase3.py -v --asyncio-mode=auto
 """
 
 import asyncio
+import functools
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -24,6 +25,11 @@ from core.schema.event import StateChangeData
 from core.adapter.llm_adapter import LLMAdapter
 from core.tests.fake_llm import FakeLLMBackend
 from core.config import AppConfig
+
+
+async def _fixed_session_resolver(session, conversation_id, protocol_version):
+    """固定返回给定 session（批次 3：session= → session_resolver=）。"""
+    return session
 
 
 # ============================================================================
@@ -161,9 +167,12 @@ class TestCognitiveLoopMethods:
 
         loop = CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
-            prompt=prompt, session=session, tool_adapter=tools,
+            prompt=prompt, session_resolver=functools.partial(_fixed_session_resolver, session),
+            tool_adapter=tools,
             character_engine=char_engine, consolidator=consolidator, tts=tts,
         )
+        # 批次 3：直接调用 _after_response 的测试需显式注入 _session（process 才解析 target）
+        loop._session = session
         return loop
 
     @pytest.mark.asyncio
@@ -324,7 +333,8 @@ class TestCognitiveLoopTTS:
         tts.synthesize_stream = _fake_stream
         return CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
-            prompt=prompt, session=session, tool_adapter=tools, tts=tts,
+            prompt=prompt, session_resolver=functools.partial(_fixed_session_resolver, session),
+            tool_adapter=tools, tts=tts,
         )
 
     @pytest.mark.asyncio
@@ -422,7 +432,8 @@ class TestCognitiveLoopSync:
         tools = ToolAdapter([])
         return CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
-            prompt=prompt, session=session, tool_adapter=tools, tts=None,
+            prompt=prompt, session_resolver=functools.partial(_fixed_session_resolver, session),
+            tool_adapter=tools, tts=None,
         )
 
     @pytest.mark.asyncio
@@ -1717,8 +1728,10 @@ class TestHandleSubmitTask:
 
         loop = CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
-            prompt=prompt, session=session,
+            prompt=prompt, session_resolver=functools.partial(_fixed_session_resolver, session),
         )
+        # 批次 3：loop 不再持有固定 session——_handle_submit_task 直接调用的测试显式注入
+        loop._session = session
 
         # Mock WorkflowEngine
         ts = MagicMock()
@@ -1815,7 +1828,7 @@ class TestWakeUpMessage:
         loop = CognitiveLoop(
             llm=MagicMock(), fsm=AgentFSM(), event_bus=EventBus(),
             output=OutputManager(), prompt=MagicMock(),
-            session=SessionMemory(),
+            session_resolver=AsyncMock(),
         )
         ctx = {
             "original_intent": "查天气",

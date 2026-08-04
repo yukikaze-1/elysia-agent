@@ -17,6 +17,7 @@ from Module.output.protocol import ChannelCapability, OutputChannel
 from frontend_contract import (
     AudioEndMessage,
     CommandMessage,
+    ConversationUsage,
     DeltaMessage,
     ExpressionMessage,
     GenerationCompletedMessage,
@@ -230,12 +231,25 @@ class WebSocketChannel(OutputChannel):
                                       finish_reason: str, usage, model: str,
                                       mood: str | None = None,
                                       completeness: str = "complete",
-                                      channel: str = "public_reply") -> None:
-        """发送 v2 父完成。usage 为契约 TokenUsage（rounds + turn_total）。"""
+                                      channel: str = "public_reply",
+                                      conversation_id: str | None = None,
+                                      conversation_usage: dict | None = None) -> None:
+        """发送 v2 父完成。usage 为契约 TokenUsage（rounds + turn_total）。
+
+        conversation_usage: 批次 3 会话级累计 dict {total, by_model}（来自
+            get_session_stats），非 None 时填 conversationUsage。
+        """
+        conv_usage = None
+        if conversation_usage is not None:
+            conv_usage = ConversationUsage(
+                total=conversation_usage.get("total", 0),
+                byModel=conversation_usage.get("by_model", {}),
+            )
         await self._send_json(GenerationCompletedMessage(
             generationId=generation_id, messageId=message_id, channel=channel,
             finishReason=finish_reason, usage=usage, model=model,
             mood=mood, completeness=completeness,
+            conversationId=conversation_id, conversationUsage=conv_usage,
         ).wire_dict())
 
     async def on_generation_failed(self, *, generation_id: str, code: str, message: str,

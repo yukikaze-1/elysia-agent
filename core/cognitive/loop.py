@@ -20,9 +20,10 @@ import logging
 import time
 from dataclasses import asdict
 from enum import Enum
-from typing import Callable, TYPE_CHECKING
+from typing import Awaitable, Callable, TYPE_CHECKING
 
 from core.utils import new_message_id, new_generation_id
+from core.schema.types import SessionId
 
 from core.cognitive.generation import GenerationContext
 from core.cognitive.timing import TimingClock
@@ -160,7 +161,7 @@ class CognitiveLoop(CognitiveTools):
         event_bus: EventBus,
         output: OutputManager,
         prompt: PromptAssembler,
-        session: SessionMemory,
+        session_resolver: Callable[[SessionId | None, int], Awaitable[SessionMemory]],
         tool_adapter: ToolAdapter | None = None,
         character_engine: "CharacterEngine | None" = None,
         consolidator: MemoryConsolidator | None = None,
@@ -176,7 +177,8 @@ class CognitiveLoop(CognitiveTools):
             event_bus: 事件总线，广播 StateChangeData
             output: 多通道输出管理器
             prompt: 系统提示词组装器
-            session: 会话记忆
+            session_resolver: 会话解析器，接收 (conversation_id, protocol_version)
+                返回目标 SessionMemory（批次 3 multi-session：每轮 process 开头解析）。
             tool_adapter: 工具适配器（ToolAdapter 实例）
             character_engine: 角色引擎（4 层性格模型）
             consolidator: 记忆沉淀器，提取对话记忆
@@ -189,7 +191,9 @@ class CognitiveLoop(CognitiveTools):
         self._bus = event_bus
         self._output = output
         self._prompt = prompt
-        self._session = session
+        self._session_resolver = session_resolver
+        # 批次 3：self._session 不再在 __init__ 初始化——process() 开头按 resolver
+        # 解析本轮目标会话后动态赋值（CognitiveTools mixin 经 self._session 自动跟随）。
         self._tool_adapter = tool_adapter
         self._req_counter: int = 0
         self._character_engine = character_engine
@@ -227,6 +231,7 @@ class CognitiveLoop(CognitiveTools):
         self._phases = None  # CognitivePhaseController（由 agent.py 注入，或懒加载）
         self._status = None  # AgentStatus（由 agent.py 注入，或懒加载）
         self._empty_response_count = 0  # 连续空响应轮数（超阈值升 error）
+        self._interrupt_source: str | None = None  # 批次 3：cancel_current(source) 贯通到中断路径（Task 9 mark 拆分消费）
 
     @property
     def phases(self):
@@ -257,13 +262,15 @@ class CognitiveLoop(CognitiveTools):
 
     # ---- Public API ----
 
-    def cancel_current(self, source: str = "") -> bool:
+    def cancel_current(self, source: str | None = None) -> bool:
         """取消当前认知任务（如有）。返回 True 表示确实取消了任务。
 
         Args:
-            source: 中断来源（vad / button 等），批次 3 起贯通到取消路径，
-                供后续 mark 拆分（Task 9）区分「语音打断」与「手动停止」。
+            source: 中断来源（vad / disconnect / button 等），批次 3 起贯通到
+                取消路径——存到 _interrupt_source 供 _handle_interrupt 消费，
+                Task 9 mark 拆分据此区分「语音打断」与「断线」。
         """
+        self._interrupt_source = source
         if self._current_task is not None and not self._current_task.done():
             self._current_task.cancel()
             self._current_task = None
@@ -302,6 +309,7 @@ class CognitiveLoop(CognitiveTools):
                        is_task_result: bool = False,
                        task_result_context: dict | None = None,
                        message_id: str | None = None,
+                       conversation_id: str | None = None,
                        protocol_version: int = 1,
                        ) -> None:
         """处理用户消息，驱动一轮完整的 ReAct 认知循环。
@@ -316,12 +324,28 @@ class CognitiveLoop(CognitiveTools):
             is_task_result: 是否为后台任务结果触发的唤醒
             task_result_context: 后台任务结果上下文，含 original_intent / result 等字段
             message_id: v2 预分配用户消息 ID（落库优先用，ACK 一致）；v1 无则 None
+            conversation_id: 批次 3（multi-session）目标会话 ID；None = 未归属（v2 缺省 → active）
             protocol_version: 来源协议版本（1=v1，2=v2），默认 1
         """
         async with self._process_lock:
             if not self.status.is_accepting_input:
                 logger.warning("Agent not accepting input — skipping turn")
                 return
+
+            # 批次 3（multi-session，D-m）：每轮开头按协议版本 + conversation_id
+            # 解析目标会话。
+            #   - protocol_version < 2 → 恒 "default"（v1 行为与批次 0-2 一致）
+            #   - >=2 且 conversation_id → 该会话（v2 显式覆盖 active）
+            #   - >=2 且 None → 当前活动会话
+            target = await self._session_resolver(conversation_id, protocol_version)
+            if self._character_engine is not None:
+                # D-o 换绑：engine 的 state 视图切到 target 的 character_state，
+                # 防 v2 显式 conversationId 覆盖 active 时性格/心情/觉察串会话
+                self._character_engine.attach_session(target)
+            # 动态属性：self._session 指向本轮目标，CognitiveTools mixin 自动跟随
+            self._session = target
+            # D-n：prompt 各 session 依赖 section（Emotion/Memory/OwnLife）换绑 target
+            self._prompt.set_session(target)
 
             rid = get_request_id()
             if rid == "-":
@@ -355,10 +379,12 @@ class CognitiveLoop(CognitiveTools):
 
             # 批次 2：每回合创建 GenerationContext——generation_id / assistant_message_id 预分配，
             # 供统一回合事件与 _finalize_turn 落库（assistant 父消息 ID 贯通）。
+            # 批次 3：conversation_id 贯通（generation.* wire 的 conversationId 数据源）。
             self._generation_ctx = GenerationContext(
                 generation_id=new_generation_id(),
                 user_message_id=message_id or "",
                 assistant_message_id=new_message_id(),
+                conversation_id=conversation_id,
             )
             self._turn_failed_emitted = False
 
@@ -370,6 +396,8 @@ class CognitiveLoop(CognitiveTools):
                                        is_task_result=is_task_result,
                                        task_result_context=task_result_context,
                                        message_id=message_id,
+                                       conversation_id=conversation_id,
+                                       session=target,
                                        protocol_version=protocol_version)
                 clock.stop()
                 logger.info("<<< 回复生成完成 — %s", clock.summary())
@@ -417,6 +445,7 @@ class CognitiveLoop(CognitiveTools):
         stt_emotion: str, stt_events: list[str] | None,
         is_task_result: bool,
         user_message_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> tuple[list[dict], list[dict]]:
         """构建本轮 LLM 调用的 messages + tool definitions。
 
@@ -428,6 +457,7 @@ class CognitiveLoop(CognitiveTools):
             stt_events: STT 事件列表
             is_task_result: 是否为任务结果唤醒（决定是否写入 session）
             user_message_id: v2 预分配用户消息 ID（落库优先用，保证 ACK 一致）；无则 new_message_id()
+            conversation_id: 批次 3 目标会话 ID（贯通，供日志/归属追踪）
 
         Returns:
             (messages, tool_defs): LLM 消息列表 + 工具定义列表
@@ -468,6 +498,7 @@ class CognitiveLoop(CognitiveTools):
 
     async def _stream_llm_response(
         self, messages: list[dict], tool_defs: list[dict], round_num: int,
+        session_id: SessionId | None = None,
     ) -> tuple[str, list[dict], bool, list[str], str, list[BlockRef], str]:
         """流式调用 LLM，逐 chunk 分发 StreamProcessor 事件。
 
@@ -535,10 +566,12 @@ class CognitiveLoop(CognitiveTools):
 
                 if "usage" in chunk:
                     if self._token_tracker is not None:
+                        # 批次 3：record 归属本轮目标会话（conversationUsage 数据源）
                         await self._token_tracker.record(
                             usage=chunk["usage"],
                             model=self._llm.model,
                             round_num=round_num,
+                            session_id=session_id,
                         )
         except asyncio.CancelledError:
             raise
@@ -567,6 +600,7 @@ class CognitiveLoop(CognitiveTools):
     async def _execute_tool_round(
         self, messages: list[dict], acc_text: str,
         raw_tool_calls: list[dict], _on_tool_calls: Callable | None,
+        conversation_id: str | None = None,
     ) -> None:
         """执行一轮工具调用：submit_task 拦截 → Gate 校验 → dispatch → 结果注入。
 
@@ -581,6 +615,7 @@ class CognitiveLoop(CognitiveTools):
             acc_text: LLM 原始输出全文
             raw_tool_calls: streaming 累积的 tool_call delta（合并后未归一化）
             _on_tool_calls: 外部工具回调（测试/自定义 dispatch），None 时走 _execute_tools_directly
+            conversation_id: 批次 3 目标会话 ID（贯通，供日志/归属追踪）
         """
         # 切断气泡 — TTS tasks 独立运行，不 cancel
         await self.phases.enter_executing()
@@ -733,6 +768,9 @@ class CognitiveLoop(CognitiveTools):
         iv_think_buf: str, speaking_started: bool,
         user_message: str, round_num: int,
         blocks: list[BlockRef], public_text: str,
+        *,
+        conversation_id: str | None = None,
+        session: SessionMemory | None = None,
     ) -> None:
         """收尾本轮：mood fallback → 归档 session → 推送结构化块 → after_response。
 
@@ -749,7 +787,12 @@ class CognitiveLoop(CognitiveTools):
             round_num: 当前轮次编号（传给 response_recorder）
             blocks: BlockRef 列表 —— (kind, content, lang, after_sentence_idx)
             public_text: 重建后的公开文本（供 analyze_assistant / log_conversation / after_response）
+            conversation_id: 批次 3 目标会话 ID（generation.completed 的 conversationId）
+            session: 批次 3 本轮目标会话（局部捕获——_after_response / turn_completed
+                归属用，不读 self._session，防 active 切换后 in-flight 异步延续落错会话）
         """
+        # 批次 3：本轮目标会话局部捕获（process() 传入，_think_loop 贯通）
+        target = session if session is not None else self._session
         # 注意：不在此处 flush_emojis——最后一句 TTS 的 pop(sid-1) 在 wait_all 后才执行。
         # emoji 依附顺序由 finish_turn → wait_all → flush_emojis 保证（见 _transition_idle）。
 
@@ -771,7 +814,7 @@ class CognitiveLoop(CognitiveTools):
             # 批次 2：assistant 父消息 ID 用 generation 开始预分配的 ID（贯通 ACK/session 对齐）
             assistant_msg_id = (self._generation_ctx.assistant_message_id
                                 if self._generation_ctx is not None else new_message_id())
-            self._session.add_message(AssistantMessage(
+            target.add_message(AssistantMessage(
                 content=assistant_parts,
                 message_id=assistant_msg_id,
                 inner_voice=iv_think_buf.strip() or None,
@@ -794,7 +837,8 @@ class CognitiveLoop(CognitiveTools):
                 log_conversation("inner_voice", self._prompt._character.name,
                                  iv_think_buf.strip())
             task = asyncio.create_task(
-                self._after_response(user_message, public_text),
+                self._after_response(user_message, public_text,
+                                     session=target, engine=self._character_engine),
                 name="after-response")
             self._pending_after_response.append(task)
             # 清理已完成的 task，避免列表无限增长
@@ -827,10 +871,21 @@ class CognitiveLoop(CognitiveTools):
                                    (self._token_tracker.current_turn_usages
                                     if self._token_tracker is not None else [])),
                 )
+                # 批次 3：会话级 token 累计（get_session_stats 按目标会话取）
+                conversation_usage: dict | None = None
+                if self._token_tracker is not None:
+                    try:
+                        conversation_usage = await self._token_tracker.get_session_stats(
+                            target.session_id)
+                    except Exception:
+                        logger.debug("get_session_stats 失败，conversation_usage=None",
+                                     exc_info=True)
                 mood = (self._character_engine.state.mood
                         if self._character_engine is not None else None)
                 await self._output.turn_completed(
-                    "stop", usage, self._llm.model, mood, self._generation_ctx)
+                    "stop", usage, self._llm.model, mood, self._generation_ctx,
+                    conversation_id=conversation_id,
+                    conversation_usage=conversation_usage)
             except Exception:
                 logger.debug("turn_completed 发射失败", exc_info=True)
 
@@ -845,6 +900,8 @@ class CognitiveLoop(CognitiveTools):
                           is_task_result: bool = False,
                           task_result_context: dict | None = None,
                           message_id: str | None = None,
+                          conversation_id: str | None = None,
+                          session: SessionMemory | None = None,
                           protocol_version: int = 1,
                           ) -> None:
         """ReAct 主循环：build → [stream → (execute | finalize)] × MAX_TOOL_ROUNDS。
@@ -867,6 +924,8 @@ class CognitiveLoop(CognitiveTools):
             is_task_result: 是否为后台任务结果唤醒
             task_result_context: 任务结果上下文（含 original_intent / result）
             message_id: v2 预分配用户消息 ID（落库优先用）
+            conversation_id: 批次 3 目标会话 ID（贯通到 build/execute/finalize）
+            session: 批次 3 本轮目标会话（局部捕获，贯通到 stream/finalize）
             protocol_version: 来源协议版本（1=v1，2=v2）
         """
         # 前置：STT 情绪分析 + 渐进式唤醒
@@ -880,7 +939,7 @@ class CognitiveLoop(CognitiveTools):
         self._phase = TurnPhase.BUILD_PROMPT
         messages, tool_defs = await self._build_turn_prompt(
             user_message, user_name, content, stt_emotion, stt_events, is_task_result,
-            user_message_id=message_id)
+            user_message_id=message_id, conversation_id=conversation_id)
 
         # 记录 prompt + token turn start
         if self._prompt_recorder is not None:
@@ -902,7 +961,9 @@ class CognitiveLoop(CognitiveTools):
                 self._phase = TurnPhase.STREAMING
                 acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think, \
                     blocks, public_text = \
-                    await self._stream_llm_response(messages, tool_defs, round_num)
+                    await self._stream_llm_response(
+                        messages, tool_defs, round_num,
+                        session_id=(session.session_id if session is not None else None))
 
                 # 空 LLM 响应守卫：无文本、无工具调用 → 注入 nudge 重试一次；
                 # 重试后仍空 → 兜底回复（同时注入 all_sentences，保证 session 归档
@@ -934,7 +995,8 @@ class CognitiveLoop(CognitiveTools):
                 if raw_tool_calls and round_num < self.MAX_TOOL_ROUNDS:
                     self._phase = TurnPhase.EXECUTING_TOOLS
                     await self._execute_tool_round(
-                        messages, acc_text, raw_tool_calls, _on_tool_calls)
+                        messages, acc_text, raw_tool_calls, _on_tool_calls,
+                        conversation_id=conversation_id)
                     # 显式模式切换信号：帮助 LLM 从"工具执行模式"切回"对话模式"
                     messages.append({"role": "system", "content": "[TOOL_EXECUTED]"})
                     continue
@@ -942,7 +1004,8 @@ class CognitiveLoop(CognitiveTools):
                 self._phase = TurnPhase.FINALIZING
                 await self._finalize_turn(
                     acc_text, all_sentences, iv_think, speaking_started, user_message,
-                    round_num, blocks, public_text)
+                    round_num, blocks, public_text,
+                    conversation_id=conversation_id, session=session)
                 return
 
         except (Exception, asyncio.CancelledError):
@@ -953,7 +1016,9 @@ class CognitiveLoop(CognitiveTools):
 
     # ---- Post-response ----
 
-    async def _after_response(self, user_message: str, assistant_response: str) -> None:
+    async def _after_response(self, user_message: str, assistant_response: str, *,
+                              session: SessionMemory | None = None,
+                              engine: "CharacterEngine | None" = None) -> None:
         """Post-response hooks: consolidate memory, character reflection, save session.
 
         以 fire-and-forget 方式由 _finalize_turn 调用。
@@ -962,6 +1027,10 @@ class CognitiveLoop(CognitiveTools):
         Args:
             user_message: 用户原始输入
             assistant_response: 剥离标签后的公开回复文本
+            session: 批次 3 本轮目标会话（局部捕获——save 归属，防 active 切换后
+                in-flight 异步延续落错会话；None 时回退 self._session）
+            engine: 批次 3 本轮 CharacterEngine（局部捕获——buffer_message 归属；
+                None 时回退 self._character_engine）
         """
         # shutdown 门禁——stop() 开始后（cognitive task 已 cancel、LLM/session repo 将关闭），
         # 本轮 turn 收尾新创建的 after_response task 立即退出，避免与已关闭资源并发。
@@ -969,6 +1038,11 @@ class CognitiveLoop(CognitiveTools):
         if self._shutting_down:
             logger.debug("after_response 跳过——agent 正在关闭")
             return
+
+        # 局部捕获：不读 self._session / self._character_engine——resolver 切走后
+        # 本轮 in-flight 异步延续仍写发起会话 / 发起引擎。
+        target_session = session if session is not None else self._session
+        target_engine = engine if engine is not None else self._character_engine
 
         items = []  # 初始化，避免 NameError
         if self._consolidator:
@@ -982,9 +1056,9 @@ class CognitiveLoop(CognitiveTools):
                 raise
             except Exception:
                 logger.warning("记忆沉淀失败", exc_info=True)
-        if self._character_engine:
+        if target_engine:
             try:
-                self._character_engine.buffer_message(user_message, assistant_response)
+                target_engine.buffer_message(user_message, assistant_response)
             except Exception:
                 logger.warning("性格反思缓冲失败", exc_info=True)
         # 更新 MemoryReflector 计数器
@@ -999,7 +1073,7 @@ class CognitiveLoop(CognitiveTools):
                 logger.warning("MemoryReflector check failed", exc_info=True)
         # Save session asynchronously (fire-and-forget)
         try:
-            await self._session.save()
+            await target_session.save()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1160,8 +1234,16 @@ class CognitiveLoop(CognitiveTools):
             active_tasks = await self._task_system.list_active_tasks()
         await self.phases.finish_turn(has_background_tasks=bool(active_tasks))
 
-    async def _handle_interrupt(self) -> None:
-        """Clean up after interruption — cancel TTS tasks, return to IDLE."""
+    async def _handle_interrupt(self, source: str | None = None) -> None:
+        """Clean up after interruption — cancel TTS tasks, return to IDLE.
+
+        Args:
+            source: 中断来源（cancel_current 存入 _interrupt_source，此处消费；
+                显式传入优先）。Task 9 mark 拆分据此区分「语音打断」与「断线」。
+        """
+        if source is None:
+            source = self._interrupt_source
+        self._interrupt_source = None
         if self.status.is_completely_idle:
             return
         # 批次 2：活动 generation 且未被错误路径覆盖 → v2 发 generation.failed{CANCELLED}
@@ -1176,4 +1258,4 @@ class CognitiveLoop(CognitiveTools):
         self._tts_mgr.cancel_all()
         await self._output.typing(False)
         await self.phases.handle_interrupt()
-        logger.debug("Interrupt complete — agent is IDLE")
+        logger.debug("Interrupt complete (source=%s) — agent is IDLE", source or "unknown")

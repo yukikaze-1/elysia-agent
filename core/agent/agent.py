@@ -226,7 +226,7 @@ class Agent(AgentLifecycle, AgentServer):
             event_bus=self._bus,
             output=self._output,
             prompt=self._prompt,
-            session=self._session_manager.active,  # 批次 3 中间态：仍绑 default 实例（resolver 由 Task 8 接入）
+            session_resolver=lambda c, p: self.resolve_session(c, p),  # 批次 3：按 conversation_id + protocol_version 解析目标会话
             tool_adapter=self._tool_adapter,
             character_engine=self._character_engine,
             consolidator=self._consolidator,

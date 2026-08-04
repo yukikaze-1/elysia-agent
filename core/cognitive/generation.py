@@ -19,6 +19,7 @@ class GenerationContext:
         generation_id: 生成实例 ID（gen_ 前缀）。
         user_message_id: 触发本次生成的用户消息 ID（ACK 预分配，落库一致）。
         assistant_message_id: 本次生成产出的 assistant 父消息 ID（generation 开始预分配，落库用）。
+        conversation_id: 本次生成归属的会话 ID（批次 3 multi-session，经 loop process 贯通）。
         segment_index: 下一个分段将使用的全局序号（跨 inner_voice/public_reply/工具轮单调递增）。
         delta_sequence: 当前段内已分配的 delta 序号计数。
         current_segment_id: 当前打开分段的 ID（无活动分段为 None）。
@@ -29,6 +30,7 @@ class GenerationContext:
     generation_id: str
     user_message_id: str
     assistant_message_id: str
+    conversation_id: str | None = None
     segment_index: int = 0
     delta_sequence: int = 0
     current_segment_id: str | None = None

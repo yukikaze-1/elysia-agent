@@ -432,7 +432,9 @@ class OutputManager:
                               channels=v1, capability=ChannelCapability.EXPRESSION)
 
     async def turn_completed(self, finish_reason: str, usage, model: str, mood: str | None,
-                             ctx, *, channels: list[OutputChannel] | None = None) -> None:
+                             ctx, *, channels: list[OutputChannel] | None = None,
+                             conversation_id: str | None = None,
+                             conversation_usage: dict | None = None) -> None:
         """父完成：v1 NO-OP（TokenTracker.record 已实时广播 v1 token_usage，防双发）；
         v2 发 generation.completed。
 
@@ -442,12 +444,16 @@ class OutputManager:
             model: 实际模型。
             mood: 心情。
             ctx: GenerationContext。
+            conversation_id: 批次 3 目标会话 ID（v2 conversationId）。
+            conversation_usage: 批次 3 会话级 token 累计 dict {total, by_model}
+                （来自 get_session_stats，v2 填 conversationUsage）。
         """
         _v1, v2 = self._split_versions(channels)
         await self._broadcast(
             "on_generation_completed",
             generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
             finish_reason=finish_reason, usage=usage, model=model, mood=mood,
+            conversation_id=conversation_id, conversation_usage=conversation_usage,
             channels=v2,
         )
 

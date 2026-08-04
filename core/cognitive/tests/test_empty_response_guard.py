@@ -30,7 +30,7 @@ def _make_loop() -> CognitiveLoop:
         event_bus=MagicMock(),
         output=MagicMock(),
         prompt=MagicMock(),
-        session=MagicMock(),
+        session_resolver=AsyncMock(),
     )
     loop._character_engine = None
     loop._prompt_recorder = None

@@ -1,6 +1,7 @@
 """TaskScheduler 测试 — 调度层单元测试 + Agent 集成测试。"""
 
 import asyncio
+import functools
 import json
 import shutil
 import tempfile
@@ -20,6 +21,11 @@ from Module.tool.safety import SafetyProfile
 from core.adapter import ToolAdapter
 
 pytestmark = pytest.mark.service
+
+
+async def _fixed_session_resolver(session, conversation_id, protocol_version):
+    """固定返回给定 session 的 resolver（批次 3：session= → session_resolver=）。"""
+    return session
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -748,19 +754,22 @@ async def test_cognitive_loop_callback_wired():
     fsm = AgentFSM()
     bus = EventBus()
     tm = ToolAdapter([])
-    prompt = AsyncMock()
+    prompt = MagicMock()
     prompt._character = MagicMock(name="TestBot")
     prompt._character.traits = []
-    prompt.build_messages.return_value = [
+    # build_messages 需 awaitable——整对象 AsyncMock 会让 set_session（sync）也变 async
+    prompt.build_messages = AsyncMock(return_value=[
         {"role": "system", "content": "test"},
         {"role": "user", "content": "hello"},
-    ]
+    ])
     session = MagicMock(spec=SessionMemory)
     session.recent_messages.return_value = []
 
     loop = CognitiveLoop(
         llm=llm, fsm=fsm, event_bus=bus, output=output,
-        prompt=prompt, session=session, tool_adapter=tm,
+        prompt=prompt,
+        session_resolver=functools.partial(_fixed_session_resolver, session),
+        tool_adapter=tm,
     )
 
     callback_called = []
@@ -804,19 +813,22 @@ async def test_cognitive_loop_no_callback_backward_compat():
     fsm = AgentFSM()
     bus = EventBus()
     tm = ToolAdapter([])
-    prompt = AsyncMock()
+    prompt = MagicMock()
     prompt._character = MagicMock(name="TestBot")
     prompt._character.traits = []
-    prompt.build_messages.return_value = [
+    # build_messages 需 awaitable——整对象 AsyncMock 会让 set_session（sync）也变 async
+    prompt.build_messages = AsyncMock(return_value=[
         {"role": "system", "content": "test"},
         {"role": "user", "content": "hello"},
-    ]
+    ])
     session = MagicMock(spec=SessionMemory)
     session.recent_messages.return_value = []
 
     loop = CognitiveLoop(
         llm=llm, fsm=fsm, event_bus=bus, output=output,
-        prompt=prompt, session=session, tool_adapter=tm,
+        prompt=prompt,
+        session_resolver=functools.partial(_fixed_session_resolver, session),
+        tool_adapter=tm,
     )
 
     await loop.process("hello")

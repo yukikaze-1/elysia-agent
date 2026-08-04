@@ -3,7 +3,7 @@
 
 import asyncio
 import logging
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -24,7 +24,7 @@ def _make_loop() -> CognitiveLoop:
         event_bus=MagicMock(),
         output=MagicMock(),
         prompt=MagicMock(),
-        session=MagicMock(),
+        session_resolver=AsyncMock(),
     )
     loop._pending_after_response = []
     return loop
