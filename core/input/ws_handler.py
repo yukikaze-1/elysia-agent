@@ -53,6 +53,20 @@ def _build_session_items(session_msgs: list[dict]) -> list[SessionMessageItem]:
     return items
 
 
+async def _send_session_replay(ws: "web.WebSocketResponse", agent: "Agent",
+                               session) -> None:
+    """发送指定会话的 SessionMessage 回放（建连与 activate_session 复用）。
+
+    逐条契约化（M2）——单条失败仅丢弃该条，不整段丢失回放；token_stats 取该会话统计。
+    """
+    session_msgs = session.messages_for_client()
+    token_stats = None
+    if hasattr(agent, 'token_tracker') and agent.token_tracker is not None:
+        token_stats = await agent.token_tracker.get_session_stats(session.session_id)
+    items = _build_session_items(session_msgs)
+    await ws.send_json(SessionMessage(messages=items, token_stats=token_stats).wire_dict())
+
+
 async def handle_ws(
     request: web.Request,
     agent: "Agent",
@@ -91,16 +105,11 @@ async def handle_ws(
     agent.output.add_channel(channel)
 
     # 发送会话历史给新连接的客户端
+    # 批次 3：建连回放按 protocol_version resolve——v1 恒 default（active 切换不影响 v1），
+    # v2 用当前活动会话。token_stats 也取目标会话（v1/v2 各自独立统计）。
     try:
-        session_msgs = agent.session.messages_for_client()
-        token_stats = None
-        if hasattr(agent, 'token_tracker') and agent.token_tracker is not None:
-            token_stats = await agent.token_tracker.get_session_stats()
-        # 契约模型序列化：error/error_type 等 None 缺省省略（I1 归一化），
-        # message_id/timestamp 由模型字段承载（前端去重/时间分隔需要）。
-        # 逐条契约化——单条失败仅丢弃该条（M2），不整段丢失回放。
-        items = _build_session_items(session_msgs)
-        await ws.send_json(SessionMessage(messages=items, token_stats=token_stats).wire_dict())
+        target = await agent.resolve_session(None, protocol_version)
+        await _send_session_replay(ws, agent, target)
     except Exception:
         logger.warning("Failed to send session on connect", exc_info=True)
 
@@ -283,11 +292,20 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
     conversation_id = data.get("conversationId")
 
     if not client_request_id:
-        # 缺 clientRequestId → 契约错误拒绝（spec §4.2）
+        # 缺 clientRequestId → 契约错误拒绝（spec §4.2）。拒绝无目标会话，conversationId 回显原始值。
         await _send_ack(ws, "", "", client_message_id, conversation_id, "rejected",
                         error={"code": "CONTRACT_VALIDATION",
                                "message": "缺少 clientRequestId", "retryable": False})
         return True
+
+    # 批次 3：解析实际目标会话——ACK 的 conversationId 填目标会话
+    # （v2 缺省 → 当前活动会话，显式 → 该会话），非仅回显原始字段。
+    try:
+        target = await agent.resolve_session(conversation_id, 2)
+        ack_conversation_id = str(target.session_id)
+    except Exception:
+        logger.warning("_route_v2_text: resolve_session 失败，回退回显 conversationId", exc_info=True)
+        ack_conversation_id = conversation_id
 
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     store = get_store()
@@ -296,11 +314,11 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         if entry.content_digest == digest:
             # 幂等重放：重发原 ACK（同 messageId），不重复生成（spec §4.2）
             await _send_ack(ws, entry.user_message_id, client_request_id,
-                            client_message_id, conversation_id, "accepted")
+                            client_message_id, ack_conversation_id, "accepted")
         else:
             # 同 ID 不同内容 → 协议错误拒绝
             await _send_ack(ws, "", client_request_id, client_message_id,
-                            conversation_id, "rejected",
+                            ack_conversation_id, "rejected",
                             error={"code": "CONTRACT_VALIDATION",
                                    "message": "clientRequestId 冲突（内容摘要不同）",
                                    "retryable": False})
@@ -313,8 +331,9 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                 IdempotencyEntry(user_message_id=message_id,
                                  content_digest=digest, created_at=time.monotonic()))
     await _send_ack(ws, message_id, client_request_id, client_message_id,
-                    conversation_id, "accepted")
-    await agent.process_message(text=text, message_id=message_id, protocol_version=2)
+                    ack_conversation_id, "accepted")
+    await agent.process_message(text=text, message_id=message_id,
+                                protocol_version=2, conversation_id=conversation_id)
     return True
 
 
@@ -406,8 +425,47 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
                 logger.info("WS 审批结果: request=%s approved=%s", request_id, approved)
             else:
                 logger.debug("WS 审批结果: request=%s 不存在或已过期", request_id)
+    elif msg_type == "activate_session":
+        # 批次 3：切 active + 重发新活动会话回放；未知 conversationId → SESSION_NOT_FOUND
+        if ws is not None:
+            await _handle_activate_session(agent, ws, data)
+        else:
+            logger.debug("WS activate_session 无发送连接，忽略")
     else:
         logger.debug("WS 未知消息类型: %s", msg_type)
+
+
+async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", data: dict) -> None:
+    """处理 activate_session：切 active + 重发目标会话回放；未知会话 → 404。
+
+    spec §6.1：`await agent.switch_session(conversationId)` → 重发 SessionMessage
+    （新活动会话回放，复用建连回放路径）。未知 conversationId → 不发回放，
+    发 `ErrorMessage{code: SESSION_NOT_FOUND}`（批次 1 错误信封）。
+    """
+    sid = data.get("conversationId", "")
+    if not sid:
+        await ws.send_json(ErrorMessage(
+            message="缺少 conversationId",
+            code="CONTRACT_VALIDATION",
+        ).wire_dict())
+        return
+    try:
+        if not await agent.session_manager.has_session(sid):
+            logger.debug("activate_session: 未知会话 %s → SESSION_NOT_FOUND", sid)
+            await ws.send_json(ErrorMessage(
+                message=f"会话不存在: {sid}",
+                code="SESSION_NOT_FOUND",
+            ).wire_dict())
+            return
+        target = await agent.switch_session(sid)
+        await _send_session_replay(ws, agent, target)
+        logger.info("WS activate_session: 已切到会话 %s", sid)
+    except Exception:
+        logger.warning("activate_session 处理失败 sid=%s", sid, exc_info=True)
+        await ws.send_json(ErrorMessage(
+            message="激活会话失败",
+            code="INTERNAL_ERROR",
+        ).wire_dict())
 
 
 async def do_interrupt(agent: "Agent", skip_vad: bool = False) -> None:

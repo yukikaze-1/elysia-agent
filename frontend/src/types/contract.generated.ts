@@ -479,6 +479,8 @@ export interface ErrorMessage {
   type: 'error'
   /** 错误描述 */
   message: string
+  /** 错误码（如 SESSION_NOT_FOUND），可缺省 */
+  code?: string
 }
 
 /** 客户端发送文本/多模态消息。 */

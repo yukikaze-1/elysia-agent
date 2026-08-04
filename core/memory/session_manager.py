@@ -115,6 +115,23 @@ class SessionManager:
 
     # ---- resolve / switch ----
 
+    async def has_session(self, sid) -> bool:
+        """会话是否存在：内存缓存命中 或 持久层有 doc。
+
+        activate_session 404 判定用：`switch` 对未知 sid 会构造空会话（懒加载语义），
+        因此必须在切 active 前用此方法区分「已知会话」与「未知会话」。
+        内存缓存覆盖已构造/已加载会话；持久层覆盖已落库但缓存逐出的会话。
+        """
+        sid = SessionId(sid)
+        if sid in self._sessions:
+            return True
+        if self._repo is not None:
+            try:
+                return await self._repo.load(sid) is not None
+            except Exception:
+                logger.debug("has_session: repo.load 失败 sid=%s", sid, exc_info=True)
+        return False
+
     async def resolve(self, conversation_id, protocol_version) -> SessionMemory:
         """按协议版本 + conversation_id 解析目标会话并确保加载。"""
         version = int(protocol_version)

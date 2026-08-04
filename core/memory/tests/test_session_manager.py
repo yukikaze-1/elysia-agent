@@ -210,6 +210,32 @@ async def test_resolve_v2_explicit_conv():
     assert s.session_id == "conv_specific"
 
 
+# ───────────────────────── has_session ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_has_session_cache_hit():
+    """已构造/已加载会话（缓存命中）→ True；default eager 命中。"""
+    m = _make_manager()
+    assert await m.has_session("default") is True
+    m.get("conv_cached")  # get 已缓存（不 load）
+    assert await m.has_session("conv_cached") is True
+
+
+@pytest.mark.asyncio
+async def test_has_session_checks_repo_for_unknown():
+    """缓存未命中 → 查 repo：有 doc → True，无 → False（activate_session 404 判定）。"""
+    repo = FakeSessionRepo()
+    repo.sessions["conv_repo"] = {
+        "messages": [], "cs": CharacterState(session_id="conv_repo"),
+        "rs": MemoryReflectorState(), "ss": ServiceState(),
+        "title": "r", "updated_at": "2026-08-04T00:00:00Z",
+    }
+    m = _make_manager(repo)
+    assert await m.has_session("conv_repo") is True
+    assert await m.has_session("conv_ghost") is False
+
+
 # ───────────────────────── switch ─────────────────────────
 
 

@@ -71,6 +71,8 @@ class TestV2AckIdempotency:
             assert ack["messageId"].startswith("msg_")
             assert ack["clientRequestId"] == "req_1"
             assert ack["receivedAt"]
+            # 批次 3：ACK conversationId = 实际目标会话（v2 缺省 → 当前活动会话，default）
+            assert ack.get("conversationId") == "default"
             await ws.close()
         finally:
             await agent.stop()

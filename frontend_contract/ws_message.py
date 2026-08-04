@@ -397,6 +397,7 @@ class ErrorMessage(ContractModel):
 
     type: Literal["error"] = "error"
     message: str = Field(description="错误描述")
+    code: Optional[str] = Field(default=None, description="错误码（如 SESSION_NOT_FOUND），可缺省")
 
 
 # ─────────────────────────── Client→Server ───────────────────────────

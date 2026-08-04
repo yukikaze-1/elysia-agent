@@ -494,7 +494,8 @@ class Agent(AgentLifecycle, AgentServer):
                                     _on_tool_calls=_on_tool_calls,
                                     content=content,
                                     message_id=message_id,
-                                    protocol_version=protocol_version),
+                                    protocol_version=protocol_version,
+                                    conversation_id=data.conversation_id),
             name=f"cognitive-{text[:20] if text else 'multimodal'}"
         )
         self._cognitive._current_task = task
