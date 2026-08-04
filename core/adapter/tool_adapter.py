@@ -41,6 +41,7 @@ class ToolAdapter:
         config: "AppConfig | None" = None,
         services: dict[str, Any] | None = None,
         hitl_broadcast: "OutputManager | None" = None,
+        desktop_bridge: Any = None,
     ):
         """初始化工具适配器。
 
@@ -51,6 +52,8 @@ class ToolAdapter:
             config: 应用配置，传入 PluginContext 和 ToolContext。
             services: 初始服务字典（运行时依赖注入）。
             hitl_broadcast: HITL 审批广播输出管理器。
+            desktop_bridge: DesktopToolBridge 实例（构造绑定，definitions() D-j
+                过滤用——desktop 工具是否暴露给 LLM）。None 时 desktop 工具一律过滤。
         """
         self._plugins = plugins
         self._session_id = session_id
@@ -58,6 +61,7 @@ class ToolAdapter:
         self._config = config
         self._services = services or {}
         self._hitl_broadcast = hitl_broadcast
+        self._desktop_bridge = desktop_bridge
         self._started = False
 
         # 创建 ToolManager（构造时不加载插件）
@@ -164,13 +168,20 @@ class ToolAdapter:
     def definitions(self, format: str = "openai") -> list[dict]:
         """返回已注册工具的 LLM function schema 列表。
 
+        D-j 过滤：desktop 工具仅在 desktop_bridge 存在且可用时暴露给 LLM——
+        未连接 desktop 客户端时从 schema 移除，避免 LLM 选不可用工具。
+
         Args:
             format: 输出格式（默认 "openai"）。
 
         Returns:
             list[dict]: OpenAI function-calling 格式的工具定义列表。
         """
-        return self._manager.definitions(format)
+        filter_runtime = (
+            lambda rt: rt != "desktop"
+            or (self._desktop_bridge is not None and self._desktop_bridge.is_available())
+        )
+        return self._manager.definitions(format, filter_runtime=filter_runtime)
 
     async def cancel_all(self) -> None:
         """打断所有运行中的工具。"""

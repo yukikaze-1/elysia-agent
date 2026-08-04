@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from core.adapter.tool_adapter import ToolAdapter
     from core.monitoring.idle_monitor import IdleMonitor
     from core.cognitive import CognitiveLoop
+    from core.desktop.bridge import DesktopToolBridge
+    from Module.output import OutputManager
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +49,19 @@ class _LifecycleTools:
         _idle: IdleMonitor
         _event_task: asyncio.Task[None] | None
         _process_events: Callable[[], Coroutine[Any, Any, None]]
+        _desktop_bridge: DesktopToolBridge
+        _output: OutputManager
 
     async def _start_tool_context(self) -> None:
-        """启动 ToolAdapter，注入运行时服务。"""
-        await self._tool_adapter.start(extra_services={
+        """启动 ToolAdapter，注入运行时服务 + 绑定 desktop bridge deliver 回调。
+
+        注入双轨（spec §8 review 修正，两轨定死）：
+        ① **构造绑定**——desktop_bridge 在 Agent.__init__ 创建并传入 ToolAdapter
+           （definitions() D-j 过滤用，此处不建桥）；
+        ② **execute 运行时注入**——`start(extra_services={"desktop_bridge": bridge})`
+           经 ToolContext.services 供 desktop 插件 `ctx.services.get("desktop_bridge")`。
+        """
+        extra_services = {
             "memory": self._long_term,
             "scheduler": self._scheduler,
             "config": self._config,
@@ -60,9 +71,37 @@ class _LifecycleTools:
             "_token_tracker": self._token_tracker,
             "_fsm_state": self.status.current_name(),
             "_session_msg_count": len(self.session.messages),
-        })
+        }
+        bridge = getattr(self, "_desktop_bridge", None)
+        if bridge is not None:
+            # deliver 回调：bridge 定向投递 tool.request 到 electron 通道
+            bridge.bind_deliver(self._deliver_tool_request)
+            extra_services["desktop_bridge"] = bridge
+        await self._tool_adapter.start(extra_services=extra_services)
         self._cognitive.configure(tool_adapter=self._tool_adapter)
         self._scheduler.set_tool_adapter(self._tool_adapter)
+
+    async def _deliver_tool_request(self, frame: dict) -> None:
+        """Desktop 工具请求定向投递（bridge._deliver 回调，spec §5.2）。
+
+        bridge 已构造 `ToolRequestMessage(...).wire_dict()`（camelCase 帧），此处只负责
+        定位目标连接：遍历 `agent.output._channels` 找 `client_platform == "electron"`
+        的 WebSocketChannel → `_send_json(frame)`（定向单连接，非广播）。
+        无目标连接记 warning——插件层已提前拦截（is_available 守卫），此为兜底。
+
+        Args:
+            frame: tool.request wire 帧（camelCase dict）。
+        """
+        target = None
+        for ch in self._output._channels:  # noqa: SLF001 — 组合根内深度遍历通道
+            if getattr(ch, "client_platform", "") == "electron":
+                target = ch
+                break
+        if target is None:
+            logger.warning(
+                "DesktopToolBridge 投递：无 electron 目标连接，tool.request 丢弃")
+            return
+        await target._send_json(frame)  # noqa: SLF001 — 定向投递桌面帧
 
     async def _start_worker_pool(self) -> None:
         """启动 Worker Pool + embedding 预加载后台任务。"""

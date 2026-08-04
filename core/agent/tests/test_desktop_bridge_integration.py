@@ -1,0 +1,280 @@
+# core/agent/tests/test_desktop_bridge_integration.py
+"""批次 4 Task 6：Agent / ToolAdapter / 生命周期 desktop_bridge 集成测试。
+
+覆盖：
+  - Agent 构造后 desktop_bridge 只读属性存在、is_available() is False（无连接）
+  - 构造绑定：ToolAdapter._desktop_bridge 与 agent.desktop_bridge 同一实例
+  - definitions() D-j 过滤：bridge 未连接时 desktop 工具不出现在 LLM schema，
+    连接后出现（filter_runtime 双态）
+  - _start_tool_context：bridge.bind_deliver + start(extra_services 含 desktop_bridge)
+  - deliver 回调：定位 client_platform=="electron" 通道 → _send_json(frame)；
+    无目标连接记 warning 兜底
+  - _start_persistence：await bridge.connect_db()
+  - _stop_persistence：await bridge.save_all()
+"""
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+from core.agent import Agent
+from core.agent._lifecycle_persistence import _LifecyclePersistence
+from core.agent._lifecycle_tools import _LifecycleTools
+from core.config import AppConfig
+
+pytestmark = pytest.mark.service
+
+DESKTOP_TOOLS = {
+    "desktop.file.select", "desktop.file.read",
+    "desktop.file.write", "desktop.screen.capture",
+}
+
+
+@pytest.fixture
+def agent():
+    return Agent(config=AppConfig())
+
+
+class TestDesktopBridgeProperty:
+    """Agent 构造：desktop_bridge 属性 + 构造绑定。"""
+
+    def test_desktop_bridge_exists_and_unavailable(self, agent):
+        """构造后 desktop_bridge 存在，无连接时 is_available() is False。"""
+        assert agent.desktop_bridge is not None
+        assert agent.desktop_bridge.is_available() is False
+
+    def test_desktop_bridge_is_tool_adapter_bound(self, agent):
+        """构造绑定：ToolAdapter._desktop_bridge 与 agent.desktop_bridge 同一实例。"""
+        assert agent.tool_adapter._desktop_bridge is agent.desktop_bridge  # noqa: SLF001
+
+    def test_desktop_bridge_is_readonly(self, agent):
+        """只读属性——外部赋值抛 AttributeError（注入走 agent._desktop_bridge）。"""
+        with pytest.raises(AttributeError):
+            agent.desktop_bridge = None
+
+
+class TestDefinitionsFilter:
+    """ToolAdapter.definitions() 按 bridge.is_available() 过滤 desktop 工具（D-j）。"""
+
+    @pytest.mark.asyncio
+    async def test_desktop_tools_hidden_when_not_connected(self, agent):
+        """bridge 未连接：desktop 工具不出现在 definitions()，backend 工具保留。"""
+        await agent.tool_adapter.start()
+        try:
+            defs = agent.tool_adapter.definitions()
+            names = {d["function"]["name"] for d in defs}
+            assert not (names & DESKTOP_TOOLS)
+            assert "read_file" in names  # backend 工具不受影响
+        finally:
+            await agent.tool_adapter.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_desktop_tools_visible_when_connected(self, agent):
+        """bridge 连接后：desktop 工具出现在 definitions()（is_available 双态翻转）。"""
+        await agent.desktop_bridge.on_client_connect("conn_x")
+        await agent.tool_adapter.start()
+        try:
+            assert agent.desktop_bridge.is_available() is True
+            defs = agent.tool_adapter.definitions()
+            names = {d["function"]["name"] for d in defs}
+            assert DESKTOP_TOOLS.issubset(names)
+        finally:
+            await agent.tool_adapter.shutdown()
+
+
+class TestStartToolContext:
+    """_start_tool_context：deliver 绑定 + execute 运行时注入双轨。"""
+
+    @pytest.mark.asyncio
+    async def test_binds_deliver_and_injects_bridge(self):
+        """bind_deliver 被调 + start(extra_services) 含 desktop_bridge。"""
+        agent = MagicMock()
+        adapter = MagicMock()
+        adapter.start = AsyncMock()
+        agent._tool_adapter = adapter
+        agent._long_term = object()
+        agent._scheduler = MagicMock()
+        agent._scheduler.set_tool_adapter = MagicMock()
+        agent._config = object()
+        session = MagicMock()
+        session.messages = []
+        agent.session = session
+        agent._bus = object()
+        agent._started_at = 123.0
+        agent._token_tracker = object()
+        agent.status = MagicMock()
+        agent.status.current_name.return_value = "idle"
+        agent._cognitive = MagicMock()
+        agent._cognitive.configure = MagicMock()
+        bridge = MagicMock()
+        bridge.bind_deliver = MagicMock()
+        agent._desktop_bridge = bridge
+
+        await _LifecycleTools._start_tool_context(agent)
+
+        bridge.bind_deliver.assert_called_once()
+        services = adapter.start.call_args.kwargs["extra_services"]
+        assert services["desktop_bridge"] is bridge
+        agent._scheduler.set_tool_adapter.assert_called_once_with(adapter)
+
+    @pytest.mark.asyncio
+    async def test_bind_deliver_registers_async_callback(self):
+        """bind_deliver 注入的回调是 awaitable——bridge 以 await deliver(frame) 消费。"""
+        from core.adapter.tool_adapter import ToolAdapter
+
+        adapter = ToolAdapter(plugins=[], desktop_bridge=None)
+        agent = MagicMock()
+        agent._tool_adapter = adapter
+        agent._long_term = object()
+        agent._scheduler = MagicMock()
+        agent._scheduler.set_tool_adapter = MagicMock()
+        agent._config = object()
+        session = MagicMock()
+        session.messages = []
+        agent.session = session
+        agent._bus = object()
+        agent._started_at = 123.0
+        agent._token_tracker = object()
+        agent.status = MagicMock()
+        agent.status.current_name.return_value = "idle"
+        agent._cognitive = MagicMock()
+        agent._cognitive.configure = MagicMock()
+        agent._output = MagicMock()
+        agent._output._channels = []
+        agent._desktop_bridge = None
+
+        await _LifecycleTools._start_tool_context(agent)
+        # 无 bridge 时 start 照常（extra_services 不含 desktop_bridge），不抛
+        services = agent._tool_adapter.tool_context.services
+        assert "desktop_bridge" not in services
+
+
+class TestDeliverCallback:
+    """deliver 回调：定向 electron 通道 + 无目标兜底。"""
+
+    @pytest.mark.asyncio
+    async def test_delivers_to_electron_channel(self):
+        """client_platform=="electron" 的通道收到 _send_json(tool.request 帧)。"""
+        agent = MagicMock()
+        target = MagicMock()
+        target.client_platform = "electron"
+        target._send_json = AsyncMock()
+        other = MagicMock()
+        other.client_platform = "web"  # 非 electron 不收
+        agent._output._channels = [other, target]
+
+        frame = {"type": "tool.request", "callId": "call_x"}
+        await _LifecycleTools._deliver_tool_request(agent, frame)
+
+        target._send_json.assert_awaited_once_with(frame)
+        other._send_json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_getattr_compatible_before_task7(self):
+        """client_platform 属性尚未落地（Task 7）——getattr 缺省 "" 不抛。"""
+        agent = MagicMock()
+        ch = MagicMock()
+        del ch.client_platform  # 模拟无该属性的旧通道
+        ch._send_json = AsyncMock()
+        agent._output._channels = [ch]
+
+        await _LifecycleTools._deliver_tool_request(agent, {"type": "tool.request"})
+
+        ch._send_json.assert_not_awaited()  # 无 electron 通道 → 不投递（兜底）
+
+    @pytest.mark.asyncio
+    async def test_no_electron_channel_warns_without_raise(self):
+        """无 electron 目标连接：记 warning 不抛（插件层已提前拦截，此为兜底）。"""
+        agent = MagicMock()
+        agent._output._channels = []
+        await _LifecycleTools._deliver_tool_request(agent, {"type": "tool.request"})
+
+
+class TestStartPersistenceHook:
+    """_start_persistence 挂点：await bridge.connect_db()。"""
+
+    @pytest.mark.asyncio
+    async def test_start_persistence_connects_desktop_bridge(self):
+        """mongo 可用：bridge.connect_db 被 await 一次。"""
+        agent = MagicMock()
+        sm = MagicMock()
+        sm.connect_db = AsyncMock(return_value=True)
+        sm.load_active = AsyncMock()
+        sm.active.pending_file = "/nonexistent/session.jsonl"
+        agent._session_manager = sm
+        agent._long_term.connect = AsyncMock(return_value=True)
+        agent._message_repo.connect = AsyncMock(return_value=True)
+        agent._version_repo.connect = AsyncMock(return_value=True)
+        agent._character_engine.state = MagicMock()
+        agent._character_engine.state.last_awareness_time = None
+        agent._character_engine._reflector._restore_from_state = MagicMock()
+        bridge = MagicMock()
+        bridge.connect_db = AsyncMock(return_value=True)
+        agent._desktop_bridge = bridge
+
+        await _LifecyclePersistence._start_persistence(agent)
+
+        bridge.connect_db.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_start_persistence_bridge_offline_no_raise(self):
+        """Mongo 离线：bridge.connect_db 返回 False，不抛、流程继续。"""
+        agent = MagicMock()
+        sm = MagicMock()
+        sm.connect_db = AsyncMock(return_value=False)
+        sm.load_active = AsyncMock()
+        agent._session_manager = sm
+        agent._long_term.connect = AsyncMock(return_value=False)
+        agent._message_repo.connect = AsyncMock(return_value=True)
+        agent._version_repo.connect = AsyncMock(return_value=True)
+        agent._character_engine = MagicMock()
+        bridge = MagicMock()
+        bridge.connect_db = AsyncMock(return_value=False)
+        agent._desktop_bridge = bridge
+
+        mongo_ok, milvus_ok = await _LifecyclePersistence._start_persistence(agent)
+
+        assert mongo_ok is False
+        bridge.connect_db.assert_awaited_once()
+
+
+class TestStopPersistenceHook:
+    """_stop_persistence 挂点：await bridge.save_all()。"""
+
+    @pytest.mark.asyncio
+    async def test_stop_persistence_saves_desktop_bridge(self):
+        """关闭时 bridge.save_all 被 await（no-op 预留，repo 即时 upsert）。"""
+        agent = MagicMock()
+        agent._session_manager.save_all = AsyncMock()
+        agent._long_term.close = AsyncMock()
+        agent._session_repo.close = AsyncMock()
+        agent._message_repo.close = AsyncMock()
+        agent._token_repo.close = AsyncMock()
+        agent._version_repo.close = AsyncMock()
+        bridge = MagicMock()
+        bridge.save_all = AsyncMock()
+        agent._desktop_bridge = bridge
+
+        await _LifecyclePersistence._stop_persistence(agent)
+
+        bridge.save_all.assert_awaited_once()
+
+
+class TestSyncDesktopAvailable:
+    """_sync_desktop_available 同步入口：bridge 可用性写入 ToolManager。"""
+
+    def test_sync_writes_manager_available(self, agent):
+        """连接后同步 → tool_adapter._manager 的 desktop 可用性被更新。"""
+        # 预置 manager 状态（断言 _desktop_available 翻转）
+        agent.tool_adapter._manager.set_desktop_available(False)
+        assert agent.tool_adapter._manager._desktop_available is False  # noqa: SLF001
+
+        agent._sync_desktop_available()
+
+        assert agent.tool_adapter._manager._desktop_available is False  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_sync_flips_with_connection(self, agent):
+        """连接后 _sync_desktop_available → manager._desktop_available True。"""
+        await agent.desktop_bridge.on_client_connect("conn_x")
+        agent._sync_desktop_available()
+        assert agent.tool_adapter._manager._desktop_available is True  # noqa: SLF001

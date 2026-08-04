@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from core.memory.long_term import LongTermMemory
     from core.personality import CharacterEngine
     from core.cognitive.generation_registry import GenerationRegistry
+    from core.desktop.bridge import DesktopToolBridge
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class _LifecyclePersistence:
         _token_repo: TokenRepository
         _session_repo: SessionRepository
         _generation_registry: GenerationRegistry
+        _desktop_bridge: DesktopToolBridge
 
     def _start_db_health(self) -> None:
         """启动数据库健康检查后台任务。"""
@@ -56,6 +58,16 @@ class _LifecyclePersistence:
         )
         # 消息归档独立连接（与 session 共享 MongoDB，但使用独立 repo）
         await self._message_repo.connect()
+        # 批次 4：Desktop 调用注册表建连（desktop_calls 集合）。
+        # bridge 在 Agent.__init__ 创建（早于 _start_persistence），此处 connect_db
+        # 全量 reload 入进程内缓存；Mongo 离线降级为进程内缓存（幂等去重不失效）。
+        # try/except 沿用 generation_registry 先例——connect_db 失败不阻断 Agent 启动。
+        desktop_bridge = getattr(self, "_desktop_bridge", None)
+        if desktop_bridge is not None:
+            try:
+                await desktop_bridge.connect_db()
+            except Exception:
+                logger.warning("DesktopCallRepository 建连失败（降级为进程内缓存）", exc_info=True)
         # L2 版本历史
         if not await self._version_repo.connect():
             logger.warning("CharacterVersionRepository 离线")
@@ -151,6 +163,16 @@ class _LifecyclePersistence:
             logger.warning("Session save timed out")
         except Exception:
             logger.error("Session save failed on shutdown", exc_info=True)
+
+        # 批次 4：Desktop 桥保存（no-op 预留——repo 即时 upsert、无内存脏集可 flush）
+        desktop_bridge = getattr(self, "_desktop_bridge", None)
+        if desktop_bridge is not None:
+            try:
+                await asyncio.wait_for(desktop_bridge.save_all(), timeout=3.0)
+            except asyncio.TimeoutError:
+                logger.warning("Desktop bridge save timed out")
+            except Exception:
+                logger.error("Desktop bridge save failed on shutdown", exc_info=True)
 
         logger.debug("Closing long-term memory...")
         try:

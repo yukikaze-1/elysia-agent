@@ -91,6 +91,8 @@ from core.storage.session_repo import SessionRepository
 from core.storage.message_repo import MessageRepository
 from core.storage.token_repo import TokenRepository
 from core.storage.memory_repo import MemoryRepository
+from core.storage.desktop_call_repo import DesktopCallRepository
+from core.desktop.bridge import DesktopToolBridge
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +139,11 @@ class Agent(AgentLifecycle, AgentServer):
         self._version_repo = CharacterVersionRepository(
             base_url=db_cfg.mongodb_uri,
         )
+        # 批次 4 Desktop 调用注册表（desktop_calls 集合；Mongo 离线降级为进程内缓存）
+        self._desktop_call_repo = DesktopCallRepository(
+            database_name=db_cfg.db_name,
+            base_url=db_cfg.mongodb_uri,
+        )
 
         # ---- L2: Memory ----
         # 批次 3 (multi-session)：SessionManager 取代单一 self._session——
@@ -155,12 +162,17 @@ class Agent(AgentLifecycle, AgentServer):
         )
 
         # ---- L2: Tools ----
+        # 批次 4（review 修正，构造顺序 critical）：DesktopToolBridge 必须先于
+        # ToolAdapter 实例化——① 构造绑定注入（definitions() D-j 过滤）；② _start_persistence
+        # 早于 _STARTUP_STEPS/_start_tool_context，bridge 必须已存在供 connect_db()。
+        self._desktop_bridge = DesktopToolBridge(repo=self._desktop_call_repo)
         self._tool_adapter = ToolAdapter(
             ALL_PLUGINS,
             session_id="",
             user_name=self._user_name,
             config=self._config,
             hitl_broadcast=self._output,
+            desktop_bridge=self._desktop_bridge,
         )
 
         # ---- L1: Cognitive ----
@@ -702,6 +714,28 @@ class Agent(AgentLifecycle, AgentServer):
     def generation_registry(self):
         """generation 生命周期注册表（Agent 持有并注入 loop，启动时 connect）。"""
         return self._generation_registry
+
+    @property
+    def desktop_bridge(self):
+        """Desktop 工具桥（只读——批次 4 BE-041/043）。
+
+        Task 7/8 经此访问：on_client_connect/on_client_disconnect（ws_handler 握手）、
+        get_call/pending_calls（REST 状态查询）、request_and_wait（插件 execute 委托）。
+        连接/断开后调 `agent._sync_desktop_available()` 同步 ToolManager 的
+        desktop 可用性（plugin_list/registry_metadata available 数据源）。
+        """
+        return self._desktop_bridge
+
+    def _sync_desktop_available(self) -> None:
+        """同步 desktop 工具可用性到 ToolManager（bridge 连接/断开时调用）。
+
+        Task 7 ws_handler 在 `bridge.on_client_connect/disconnect` 后调用本入口，
+        把 `bridge.is_available()` 经 `tool_adapter._manager.set_desktop_available`
+        写入 `_desktop_available`——plugin_list/registry_metadata 中 desktop 工具
+        available 字段的数据源（BE-040 §3.2）。
+        """
+        self._tool_adapter._manager.set_desktop_available(  # noqa: SLF001 — 组合根内深度同步
+            self._desktop_bridge.is_available())
 
     @property
     def idle(self):
