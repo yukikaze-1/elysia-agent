@@ -7,8 +7,9 @@ import importlib
 import inspect
 import logging
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 import yaml
 
@@ -17,6 +18,29 @@ from Module.tool.protocol import ErrorType, PluginContext, ToolContext, ToolDefi
 from Module.tool.safety import SafetyPipeline
 
 logger = logging.getLogger(__name__)
+
+# 结构化参数摘要（BE-042 §7）中单参数 preview 的最大字符数
+_PARAM_PREVIEW_LIMIT = 100
+
+
+@dataclass(frozen=True)
+class ToolMetadata:
+    """工具元数据 — 序列化给客户端校验（BE-042）与工具面板/注册表导出。
+
+    派生字段（approval_authority / permission_required / available）由
+    ToolPlugin 属性或 desktop_available 推导，见 ToolManager._plugin_metadata。
+    """
+
+    name: str
+    description: str
+    runtime: str  # backend | desktop | local_worker
+    risk_level: str  # safe | medium | high
+    permission_required: bool
+    approval_authority: str  # backend | client
+    version: str
+    input_schema: dict
+    output_schema: dict
+    available: bool  # desktop 工具 = desktop_available；backend 恒 true
 
 
 class ToolManager:
@@ -36,6 +60,9 @@ class ToolManager:
         self._executing: set[str] = set()
         self._tasks: dict[str, asyncio.Task] = {}
         self._semaphores: dict[str, asyncio.Semaphore] = {}
+        # desktop 运行时可用性（bridge.is_available() 同步用，BE-040）——
+        # 影响 plugin_list/registry_metadata 中 desktop 工具的 available
+        self._desktop_available: bool = False
 
     # ---- Lifecycle ----
 
@@ -200,13 +227,21 @@ class ToolManager:
 
     # ---- Schema Export ----
 
-    def definitions(self, format: str = "openai") -> list[dict]:
+    def definitions(
+        self,
+        format: str = "openai",
+        filter_runtime: Callable[[str], bool] | None = None,
+    ) -> list[dict]:
         """导出已激活插件的 LLM function calling schema。
 
         支持 openai / anthropic / gemini 三种格式。
 
         Args:
             format: 输出格式 ("openai", "anthropic", "gemini")。
+            filter_runtime: 运行时过滤回调，接收 plugin.runtime，返回 True 保留。
+                默认 None = 全量（不做过滤）。D-j 用 lambda rt: rt != "desktop" or
+                bridge.is_available() 在 desktop 未连接时从 LLM schema 移除 desktop 工具。
+                ToolExecutor protocol 签名（无此参数）保持不变，过滤由 ToolAdapter 注入。
 
         Returns:
             各 provider 格式的 function/tool schema 字典列表。
@@ -225,6 +260,8 @@ class ToolManager:
 
         schemas = []
         for name, plugin in self._plugins.items():
+            if filter_runtime is not None and not filter_runtime(plugin.runtime):
+                continue
             if plugin.param_model is not None:
                 schema = plugin.param_model.model_json_schema()
                 schema = self._flatten_refs(schema)
@@ -274,6 +311,65 @@ class ToolManager:
             return [self._resolve_refs(item, defs) for item in node]
         return node
 
+    # ---- Metadata Export (BE-040) ----
+
+    def _plugin_metadata(self, plugin: ToolPlugin, desktop_available: bool) -> ToolMetadata:
+        """从插件派生 ToolMetadata。
+
+        input_schema 复用 definitions() 的 param_model JSON schema 路径（含 _flatten_refs）；
+        available：desktop 工具 = desktop_available、backend 恒 true。
+        派生字段（approval_authority/permission_required）由 ToolPlugin 属性提供（Task 2）。
+
+        Args:
+            plugin: 待导出的插件实例。
+            desktop_available: desktop 运行时是否可用（bridge.is_available()）。
+
+        Returns:
+            ToolMetadata 完整元数据。
+        """
+        if plugin.param_model is not None:
+            input_schema = plugin.param_model.model_json_schema()
+            input_schema = self._flatten_refs(input_schema)
+        else:
+            input_schema = {"type": "object", "properties": {}}
+        return ToolMetadata(
+            name=plugin.name,
+            description=plugin.description,
+            runtime=plugin.runtime,
+            risk_level=plugin.risk_level,
+            permission_required=plugin.permission_required,
+            approval_authority=plugin.approval_authority,
+            version=plugin.version,
+            input_schema=input_schema,
+            output_schema=plugin.output_schema,
+            available=desktop_available if plugin.runtime == "desktop" else True,
+        )
+
+    def registry_metadata(self, desktop_available: bool = False) -> list[ToolMetadata]:
+        """遍历 _plugins，返回完整元数据（BE-042 注册表导出）。
+
+        Args:
+            desktop_available: desktop 运行时可用性。false 时 desktop 工具仍列出
+                （available=false），供客户端知晓存在但不可调。
+
+        Returns:
+            list[ToolMetadata] 完整元数据列表。
+        """
+        return [
+            self._plugin_metadata(p, desktop_available)
+            for p in self._plugins.values()
+        ]
+
+    def set_desktop_available(self, available: bool) -> None:
+        """设置 desktop 运行时可用性（bridge.is_available() 同步用）。
+
+        影响 plugin_list / registry_metadata 中 desktop 工具的 available 字段。
+
+        Args:
+            available: desktop 客户端是否已连接可执行。
+        """
+        self._desktop_available = bool(available)
+
     # ---- Control ----
 
     async def cancel_all(self) -> None:
@@ -312,6 +408,11 @@ class ToolManager:
     def set_hitl_broadcast(self, output_manager) -> None:
         """绑定 HITL 审批广播回调到 OutputManager。
 
+        版本门控（spec §7）：按 protocol_version 两路广播——v1 通道收原样
+        `{tool, params: str(params)[:200], request_id}`（逐字节不变），v2 通道收
+        enrich 版（+ summary 结构化参数摘要 + runtime/version/riskLevel/
+        permissionRequired/approvalAuthority，取自 `_plugins[tool_name]` 元数据）。
+
         Args:
             output_manager: OutputManager 实例，用于 command("tool_approval", ...) 广播。
         """
@@ -319,20 +420,64 @@ class ToolManager:
             async def _broadcast(request_id: str, tool_name: str,
                                  params: dict) -> None:
                 try:
-                    await output_manager.command(
-                        "tool_approval",
-                        params={
-                            "tool": tool_name,
-                            "params": str(params)[:200],
-                            "request_id": request_id,
-                        },
-                    )
+                    # 基础字段（v1 wire 逐字节不变）
+                    base = {
+                        "tool": tool_name,
+                        "params": str(params)[:200],
+                        "request_id": request_id,
+                    }
+                    plugin = self._plugins.get(tool_name)
+                    split_versions = getattr(output_manager, "_split_versions", None)
+                    if plugin is None or split_versions is None:
+                        # 未知工具或 output_manager 无版本拆分能力：兜底广播基础字段到全部通道
+                        await output_manager.command("tool_approval", params=base)
+                        return
+                    v1, v2 = split_versions()
+                    if v1:
+                        await output_manager.command(
+                            "tool_approval", params=base, channels=v1,
+                        )
+                    if v2:
+                        enriched = dict(base)
+                        enriched["summary"] = self._build_param_summary(params)
+                        enriched["runtime"] = plugin.runtime
+                        enriched["version"] = plugin.version
+                        enriched["riskLevel"] = plugin.risk_level
+                        enriched["permissionRequired"] = plugin.permission_required
+                        enriched["approvalAuthority"] = plugin.approval_authority
+                        await output_manager.command(
+                            "tool_approval", params=enriched, channels=v2,
+                        )
                 except Exception:
                     # OutputManager 长期故障时审批弹窗永不弹出且无人知晓，
                     # 需审批工具等到 60s 超时——必须留 warning 可见
                     logger.warning(
                         "HITL 审批广播失败（审批弹窗可能不出现）", exc_info=True)
             self._pipeline.set_hitl_broadcast(_broadcast)
+
+    @staticmethod
+    def _build_param_summary(params: dict) -> dict:
+        """构造结构化参数摘要（BE-042 §7）：逐参数 {type, preview, truncated}。
+
+        保留 `str(params)[:200]` 兼容字段之外的结构化视图，供 v2 前端审批弹窗
+        逐参数展示。preview 超长截断到 _PARAM_PREVIEW_LIMIT。
+
+        Args:
+            params: 工具原始参数字典。
+
+        Returns:
+            {param_name: {"type": str, "preview": str, "truncated": bool}}。
+        """
+        summary = {}
+        for key, value in params.items():
+            preview = str(value)
+            truncated = len(preview) > _PARAM_PREVIEW_LIMIT
+            summary[key] = {
+                "type": type(value).__name__,
+                "preview": preview[:_PARAM_PREVIEW_LIMIT] if truncated else preview,
+                "truncated": truncated,
+            }
+        return summary
 
     async def reload_plugin(self, name: str) -> bool:
         """热重载单个插件。
@@ -409,10 +554,17 @@ class ToolManager:
 
     @property
     def plugin_list(self) -> list[dict]:
-        return [
-            {
-                "name": p.name,
-                "description": p.description,
+        """工具面板列表 — 每项含 runtime/version/risk_level/permission_required/
+        approval_authority/available（BE-040 §3.2，复用 registry_metadata 派生逻辑）。
+
+        desktop 工具 available 随 self._desktop_available 翻转、backend 恒 true。
+        """
+        result = []
+        for p in self._plugins.values():
+            meta = self._plugin_metadata(p, self._desktop_available)
+            result.append({
+                "name": meta.name,
+                "description": meta.description,
                 "capabilities": [c.value for c in p.capabilities],
                 "safety": {
                     "requires_human_approval": p.safety.requires_human_approval if p.safety else False,
@@ -434,9 +586,14 @@ class ToolManager:
                     "database_allowed": p.safety.database_allowed if p.safety else False,
                 },
                 "active": True,
-            }
-            for p in self._plugins.values()
-        ]
+                "runtime": meta.runtime,
+                "version": meta.version,
+                "risk_level": meta.risk_level,
+                "permission_required": meta.permission_required,
+                "approval_authority": meta.approval_authority,
+                "available": meta.available,
+            })
+        return result
 
     @property
     def executing_now(self) -> list[str]:
