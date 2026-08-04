@@ -37,18 +37,23 @@ class WebSocketChannel(OutputChannel):
     """WebSocket 输出通道 — 包装单个连接。连接生命周期由外部管理。"""
 
     def __init__(self, ws, *, logger: logging.Logger | None = None,
-                 protocol_version: int = 1):
+                 protocol_version: int = 1, client_platform: str = ""):
         """初始化 WebSocket 输出通道。
 
         Args:
             ws: aiohttp WebSocket 连接对象。
             logger: 日志记录器，不传则自动检测调用模块。
             protocol_version: 协商的协议版本（1=v1 默认，2=v2，握手时注入）。
+            client_platform: 客户端平台标识（批次 4，spec §5.1 D-l）：握手
+                `X-Client-Platform` 头解析，v2 + electron 连接为 "electron"——
+                Desktop 工具投递（bridge._deliver）与 desktop 语义的定向依据；
+                v1 连接恒 ""（忽略 platform 头）。
         """
         self._ws = ws
         self._logger = logger or get_caller_logger()
         self._audio_seq: dict[int, int] = {}
         self.protocol_version = protocol_version
+        self.client_platform = client_platform
 
     @property
     def capabilities(self) -> set[ChannelCapability]:

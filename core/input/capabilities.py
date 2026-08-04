@@ -77,7 +77,8 @@ def build_server_info(agent: "Agent") -> ServerInfoMessage:
         server_version=__version__,
         features=ServerInfoFeatures(
             structured_generation=True,  # 批次 2 已实现
-            multi_conversation=True,     # 批次 3 已实现（Task 13 回归收敛：批次 3 交付后置 true）；desktop/dictation 仍 false
+            multi_conversation=True,     # 批次 3 已实现（Task 13 回归收敛）；dictation 仍 false
+            desktop_runtime=True,        # 批次 4 已实现（D-s，spec §8）
         ),
         services={
             "llm": svc(True, True, agent.llm.model, cfg.llm.model),

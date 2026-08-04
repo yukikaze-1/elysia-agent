@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 from typing import TYPE_CHECKING
 
 from aiohttp import web, WSMsgType
@@ -100,10 +101,29 @@ async def handle_ws(
     proto_header = request.headers.get("X-Protocol-Version", "")
     protocol_version = 2 if proto_header == "2" else 1
 
+    # 批次 4（spec §5.1 D-l）：X-Client-Platform 头 → WebSocketChannel.client_platform。
+    # 仅 v2 连接解析——v1 无 desktop 概念，伪冒 platform 头在 v1 上不生效（负面隔离）。
+    client_platform = ""
+    if protocol_version >= 2:
+        client_platform = request.headers.get("X-Client-Platform", "")
+
     from core.utils import new_message_id
     client_id = new_message_id()
-    channel = WebSocketChannel(ws, protocol_version=protocol_version)
+    channel = WebSocketChannel(ws, protocol_version=protocol_version,
+                               client_platform=client_platform)
     agent.output.add_channel(channel)
+
+    # 批次 4（spec §5.1）：v2 + electron 握手 → 桥标记 connected + 同步 desktop 可用性
+    # （Task 6 集成：agent._sync_desktop_available 为组合根同步入口，跨模块私有访问豁免）。
+    desktop_conn_id: str | None = None
+    if protocol_version >= 2 and client_platform == "electron":
+        desktop_conn_id = f"conn_{uuid.uuid4().hex[:12]}"
+        try:
+            await agent.desktop_bridge.on_client_connect(desktop_conn_id)
+            agent._sync_desktop_available()  # noqa: SLF001 — 组合根私有同步入口（Task 6）
+            logger.info("WS desktop 客户端已连接: %s (%s)", client_id, desktop_conn_id)
+        except Exception:
+            logger.debug("Desktop bridge on_client_connect 失败", exc_info=True)
 
     # 发送会话历史给新连接的客户端
     # 批次 3：建连回放按 protocol_version resolve——v1 恒 default（active 切换不影响 v1），
@@ -147,14 +167,38 @@ async def handle_ws(
         if hasattr(agent, 'tool_adapter') and agent.tool_adapter is not None:
             pending = agent.tool_adapter._manager.get_pending_approvals()  # noqa: SLF001
             for request_id, tool_name, params in pending:
-                # 与正常路径（ToolManager._broadcast → websocket.on_command）格式一致
+                # 与正常路径（ToolManager._broadcast → websocket.on_command）格式一致。
+                # 批次 4 重放版本门控（spec §7）：v2 连接收 enrich 版（+ summary 结构化
+                # 参数摘要 + runtime/version/riskLevel/permissionRequired/approvalAuthority，
+                # 复用 Task 5 ToolManager 的元数据 + _build_param_summary 逻辑，保持一致）；
+                # v1 连接收原样 base——逐字节不变（兼容硬约束 §10.1）。
+                base = {
+                    "tool": tool_name,
+                    "params": str(params)[:200],
+                    "request_id": request_id,
+                }
+                if protocol_version >= 2:
+                    manager = agent.tool_adapter._manager  # noqa: SLF001
+                    plugin = manager._plugins.get(tool_name)  # noqa: SLF001
+                    if plugin is not None:
+                        enriched = dict(base)
+                        enriched["summary"] = manager._build_param_summary(params)  # noqa: SLF001
+                        enriched["runtime"] = plugin.runtime
+                        enriched["version"] = plugin.version
+                        enriched["riskLevel"] = plugin.risk_level
+                        enriched["permissionRequired"] = plugin.permission_required
+                        enriched["approvalAuthority"] = plugin.approval_authority
+                        await ws.send_json(CommandMessage(
+                            command="tool_approval",
+                            params=enriched,
+                        ).wire_dict())
+                        logger.debug(
+                            "Re-broadcast pending approval to new client (v2 enrich): %s (%s)",
+                            request_id, tool_name)
+                        continue
                 await ws.send_json(CommandMessage(
                     command="tool_approval",
-                    params={
-                        "tool": tool_name,
-                        "params": str(params)[:200],
-                        "request_id": request_id,
-                    },
+                    params=base,
                 ).wire_dict())
                 logger.debug("Re-broadcast pending approval to new client: %s (%s)",
                              request_id, tool_name)
@@ -232,6 +276,15 @@ async def handle_ws(
         if audio_buf:
             await audio_buf.flush()
         agent.output.remove_channel(channel)
+        # 批次 4（spec §5.1 D-o）：v2 + electron 连接断开 → 桥标 offline + 未接手 call
+        # 立即 resolve UNAVAILABLE + 同步 desktop 可用性（ToolManager available 字段）。
+        if desktop_conn_id is not None:
+            try:
+                await agent.desktop_bridge.on_client_disconnect(desktop_conn_id)
+                agent._sync_desktop_available()  # noqa: SLF001 — 组合根私有同步入口（Task 6）
+                logger.info("WS desktop 客户端已断开: %s (%s)", client_id, desktop_conn_id)
+            except Exception:
+                logger.debug("Desktop bridge on_client_disconnect 失败", exc_info=True)
         logger.info("WS client disconnected: %s", client_id)
         # 批次 2 重连语义（最小）：v2 源连接在生成中断开 → 取消在途 generation（标记中断）。
         # 客户端重连后经 session 回放获取部分消息，未见 generation.completed 即视为中断。
@@ -444,6 +497,17 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
                 logger.debug("WS activate_session: v1 连接忽略（v1 恒 default）")
             else:
                 await _handle_activate_session(agent, ws, data)
+    elif msg_type == "tool.status":
+        # 批次 4（spec §5.3）：桌面工具状态回传 → bridge.handle_status。
+        # 仅 v2 连接处理——v1 无 desktop 概念，忽略（含 v1 伪冒 platform 头隔离）。
+        if ws is None:
+            logger.debug("WS tool.status 无发送连接，忽略")
+        else:
+            channel = _find_channel(agent, ws)
+            if channel is None or channel.protocol_version < 2:
+                logger.debug("WS tool.status: v1 连接忽略")
+            else:
+                await agent.desktop_bridge.handle_status(data)
     else:
         logger.debug("WS 未知消息类型: %s", msg_type)
 
