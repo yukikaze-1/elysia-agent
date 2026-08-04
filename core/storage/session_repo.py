@@ -51,6 +51,7 @@ class SessionSummary:
     message_count: int
     updated_at: IsoTimestamp
     title: str = ""
+    active: bool = False  # 是否为当前活动会话（由 SessionManager.list 填充）
 
 
 class SessionRepository(Repository):
