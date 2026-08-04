@@ -100,26 +100,37 @@ class OutputChannel(ABC):
         """
 
     # ── 批次 2 v2 结构化事件（协议版本 2 通道按需实现；默认 no-op） ──
+    # 批次 3：全部 6 类 generation.* 加 conversation_id（会话归属，no-op 默认不变）。
 
     async def on_user_message_ack(self, **kwargs) -> None:
         """v2 用户消息确认（wire user_message.ack）。"""
 
-    async def on_generation_started(self, **kwargs) -> None:
+    async def on_generation_started(self, *, conversation_id: str | None = None,
+                                    **kwargs) -> None:
         """v2 生成开始（wire generation.started）。"""
 
-    async def on_generation_segment_started(self, **kwargs) -> None:
+    async def on_generation_segment_started(self, *, conversation_id: str | None = None,
+                                            **kwargs) -> None:
         """v2 分段开始（wire generation.segment.started）。"""
 
-    async def on_generation_delta(self, **kwargs) -> None:
+    async def on_generation_delta(self, *, conversation_id: str | None = None,
+                                  **kwargs) -> None:
         """v2 分段增量（wire generation.delta）。"""
 
-    async def on_generation_segment_completed(self, **kwargs) -> None:
+    async def on_generation_segment_completed(self, *, conversation_id: str | None = None,
+                                              **kwargs) -> None:
         """v2 分段完成（wire generation.segment.completed）。"""
 
-    async def on_generation_completed(self, **kwargs) -> None:
-        """v2 父完成（wire generation.completed）。"""
+    async def on_generation_completed(self, *, conversation_id: str | None = None,
+                                      conversation_usage: dict | None = None,
+                                      **kwargs) -> None:
+        """v2 父完成（wire generation.completed）。
 
-    async def on_generation_failed(self, **kwargs) -> None:
+        conversation_usage: 批次 3 会话级累计 dict {total, by_model}。
+        """
+
+    async def on_generation_failed(self, *, conversation_id: str | None = None,
+                                   **kwargs) -> None:
         """v2 父失败（wire generation.failed）。"""
 
     @abstractmethod

@@ -309,6 +309,9 @@ class OutputManager:
                 )
 
     # ---- 批次 2 v2 版本感知统一回合事件（单一语义源，双 wire 呈现） ----
+    # 批次 3：8 个统一方法全部透传 ctx.conversation_id 到 v2 的 on_generation_*
+    # （conversationId），turn_completed 另透传 conversation_usage（conversationUsage）；
+    # v1 通道不接收 generation.*，wire 保持字节不变。
 
     def _split_versions(self, channels: list[OutputChannel] | None = None):
         """按协议版本拆分通道：v1（protocol_version=1）与 v2（>=2）。
@@ -325,13 +328,15 @@ class OutputManager:
         """生成开始：v2 发 generation.started；v1 无新增（typing/state 由现有路径）。
 
         Args:
-            ctx: GenerationContext（含 generation_id / assistant_message_id）。
+            ctx: GenerationContext（含 generation_id / assistant_message_id /
+                conversation_id——批次 3 v2 conversationId 数据源）。
             channels: 候选通道，None 用全部。
         """
         _v1, v2 = self._split_versions(channels)
         await self._broadcast(
             "on_generation_started",
             generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
+            conversation_id=ctx.conversation_id,
             channels=v2,
         )
 
@@ -339,13 +344,14 @@ class OutputManager:
         """分段开始：v2 发 generation.segment.started；v1 无。
 
         Args:
-            ctx: GenerationContext（当前分段已由 loop 打开）。
+            ctx: GenerationContext（当前分段已由 loop 打开；conversation_id 透传 v2）。
         """
         _v1, v2 = self._split_versions(channels)
         await self._broadcast(
             "on_generation_segment_started",
             generation_id=ctx.generation_id, segment_id=ctx.current_segment_id,
             segment_index=ctx.current_segment_index, channel=ctx.channel, kind=ctx.kind,
+            conversation_id=ctx.conversation_id,
             channels=v2,
         )
 
@@ -364,6 +370,7 @@ class OutputManager:
             generation_id=ctx.generation_id, segment_id=ctx.current_segment_id,
             segment_index=ctx.current_segment_index, delta_sequence=ctx.next_delta(),
             delta=text,
+            conversation_id=ctx.conversation_id,
             channels=v2,
         )
 
@@ -389,6 +396,7 @@ class OutputManager:
                 generation_id=ctx.generation_id, segment_id=ctx.current_segment_id,
                 segment_index=ctx.current_segment_index, channel=ctx.channel, kind=ctx.kind,
                 content=text,
+                conversation_id=ctx.conversation_id,
                 channels=v2,
             )
 
@@ -409,12 +417,14 @@ class OutputManager:
             "on_generation_segment_started",
             generation_id=ctx.generation_id, segment_id=sid, segment_index=idx,
             channel="inner_voice", kind="text",
+            conversation_id=ctx.conversation_id,
             channels=v2,
         )
         await self._broadcast(
             "on_generation_segment_completed",
             generation_id=ctx.generation_id, segment_id=sid, segment_index=idx,
             channel="inner_voice", kind="text", content=text,
+            conversation_id=ctx.conversation_id,
             channels=v2,
         )
         ctx.close_segment()
@@ -480,6 +490,7 @@ class OutputManager:
             "on_generation_failed",
             generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
             code=code, message=message, retryable=retryable,
+            conversation_id=ctx.conversation_id,
             channels=v2,
         )
 
@@ -495,6 +506,7 @@ class OutputManager:
             "on_generation_failed",
             generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
             code="GENERATION_CANCELLED", message="已取消", retryable=False,
+            conversation_id=ctx.conversation_id,
             channels=v2,
         )
 
