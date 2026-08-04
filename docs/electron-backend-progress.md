@@ -72,10 +72,15 @@ subagent 验收 ACCEPTED（1 个中等问题 F1 CONNECTION_LIMITED retryable + 2
 - **ACK/幂等**：`IdempotencyStore`（进程内 + TTL）；缺 clientRequestId → rejected；重复同内容 → 重发原 ACK；不同内容 → CONTRACT_VALIDATION。
 - **取消/终态唯一**：interrupt → `generation.failed{CANCELLED}`（v2），v1 无 ❌；错误路径已发 failed 不重发。
 - **重连最小**：回放含稳定 messageId（ACK/completed 对齐）；v2 断线取消在途 generation。
+- **BE-022 每句独立段**：段生命周期按 SENTENCE 驱动（`4463870`）——4 句回复 4 个互异 `public_reply` 段，各带完整 content。
 - **轨迹**：`ws-v2-chat.jsonl` / `ws-v2-cancel.jsonl` / `ws-v2-fail.jsonl`（ack→started→…→completed/CANCELLED/PROVIDER_UNAVAILABLE）。
 - **文档**：`docs/electron-backend-protocol-v2.md`（v2 事件契约参考）。
-- **测试**：test-quick 通过（1949+）。
+- **测试**：test-quick 通过（1951）。
 
 ### 验收
 
-subagent 验收 **ACCEPTED**（1 中：features.structured_generation 应为 true；3 低：v2 空消息噪音/README/断言 → 全部修复收口于 4f27702）。
+subagent 验收 **ACCEPTED**（1 中：features.structured_generation 应为 true；3 低：v2 空消息噪音/README/断言 → 全部修复收口于 4f27702）。**PRD 审计补充修复**：BE-022 每句独立 segmentId（4463870）。
+
+### docs/14 PRD 审计
+
+批次 0-2 覆盖的 BE-001/BE-010/BE-020/BE-021/BE-022/BE-023/BE-080 逐项对照 docs/14 验收——全部满足（BE-022 每句独立段经 4463870 补修）。**BE-024 未完成**：事件游标 / generation 状态查询 / pending 用户消息与工具调用查询 / 终态安全重放均显式延后（spec §7 边界声明），批次 2 只做"标记中断 + 回放对齐"。其余 BE-030~081 属批次 3-7。

@@ -63,6 +63,11 @@ server → {"type":"state","state":"idle"}
 | `segmentIndex` | — | 全局分段序号（跨 inner_voice/public_reply/工具轮单调递增） |
 | `deltaSequence` | — | 段内增量序号（0 起） |
 
+**段粒度**：一个 public_reply 段 = 一个句子（PRD BE-022）。段按 SENTENCE 边界开合；
+每句有独立 `segmentId` 与全局 `segmentIndex`，`generation.segment.completed.content` 携带该句完整文本
+（客户端无需拼接 delta 即可渲染整句）。注：中文无空格文本的 delta 可能在首段聚合
+（tokenizer 按空格/换行 flush），但各句 content 以 `segment.completed` 为准。
+
 ## 4. 幂等
 
 - 相同 `clientRequestId` + 相同内容摘要 → **重发原 ACK（同 messageId），不重复生成**。
