@@ -83,6 +83,9 @@ class GenerationRepository(Repository):
         Returns:
             True 表示连接成功，False 表示连接失败。
         """
+        if self._db is not None:
+            # 已注入 db（测试内存 fake）——视为已连接，不覆盖为真实 Mongo。
+            return True
         try:
             self._db = DocumentDBFactory.create(
                 f"mongodb/{self._database_name}",

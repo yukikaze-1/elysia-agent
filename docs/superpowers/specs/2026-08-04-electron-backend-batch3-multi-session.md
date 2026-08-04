@@ -359,7 +359,7 @@ class CharacterEngine:
 - `GenerationCompletedMessage` 增 `conversationUsage: Optional[ConversationUsage]`；
 - `ActivateSessionMessage`（Client→Server，type=`activate_session`，conversationId 必填）加入 Client→Server 契约。
 
-错误目录新增码：`SESSION_NOT_FOUND`（404）、`GENERATION_NOT_FOUND`（404）、`INVALID_TIMEZONE`（400）。
+错误目录新增码：`SESSION_NOT_FOUND`（404）、`GENERATION_NOT_FOUND`（404）、`INVALID_TIMEZONE`（400）、`SESSION_PROTECTED`（409，默认会话删除保护）、`RESOURCE_NOT_FOUND`（404，消息/资源不存在，错误目录批次 1 已有码；message context 端点消息不存在时使用）。
 
 ## 10. 兼容性硬约束
 

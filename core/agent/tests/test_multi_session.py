@@ -17,7 +17,7 @@ from core.agent._types import _PendingMessage
 from core.agent.agent import Agent
 from core.agent._lifecycle_persistence import _LifecyclePersistence
 from core.config import AppConfig
-from core.schema.event import UserInputData, InterruptData
+from core.schema.event import UserInputData, InterruptData, StateChangeData
 
 pytestmark = pytest.mark.service
 
@@ -137,6 +137,23 @@ class TestProcessMessageConversationId:
         finally:
             await agent.stop()
 
+    @pytest.mark.asyncio
+    async def test_dequeue_preserves_conversation_and_protocol_version(self):
+        """review 修复（F3/链路#1）：busy 排队 v2 消息带 conversationId → 出队后
+        UserInputData 透传 conversation_id + protocol_version（不降级为 v1 恒 default）。"""
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()  # 未 start——纯内存调用，不连 DB
+        agent._bus.post = MagicMock()
+        agent._pending_messages.append(_PendingMessage(
+            text="hi", user_name="u", request_id="req_1",
+            message_id="msg_1", conversation_id="conv_x", protocol_version=2))
+        await agent._handle_state_change(StateChangeData(state="idle", request_id="req_1"))
+        posted = agent._bus.post.call_args.args[0]
+        assert isinstance(posted, UserInputData)
+        assert posted.conversation_id == "conv_x"
+        assert posted.protocol_version == 2
+
 
 class TestInterruptSource:
     def test_handle_interrupt_threads_source(self, fake_agent):
@@ -193,3 +210,53 @@ class TestStartPersistence:
         assert mongo_ok is False
         sm.connect_db.assert_awaited_once()
         sm.load_active.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_start_persistence_connects_generation_registry_and_marks_stale(self):
+        """review 修复（兼容#2）：_start_persistence 对 generation registry connect，
+        connect 成功后调 mark_stale_interrupted（cutoff=启动时刻-5min）。"""
+        agent = MagicMock()
+        sm = MagicMock()
+        sm.connect_db = AsyncMock(return_value=True)
+        sm.load_active = AsyncMock()
+        sm.active.pending_file = "/nonexistent/session.jsonl"
+        agent._session_manager = sm
+        agent._long_term.connect = AsyncMock(return_value=True)
+        agent._message_repo.connect = AsyncMock(return_value=True)
+        agent._version_repo.connect = AsyncMock(return_value=True)
+        agent._character_engine.state = MagicMock()
+        agent._character_engine.state.last_awareness_time = None
+        agent._character_engine._reflector._restore_from_state = MagicMock()
+        gen_reg = MagicMock()
+        gen_reg.connect = AsyncMock(return_value=True)
+        gen_reg.mark_stale_interrupted = AsyncMock(return_value=0)
+        agent._generation_registry = gen_reg
+
+        await _LifecyclePersistence._start_persistence(agent)
+
+        gen_reg.connect.assert_awaited_once()
+        gen_reg.mark_stale_interrupted.assert_awaited_once()
+        cutoff = gen_reg.mark_stale_interrupted.call_args.args[0]
+        assert isinstance(cutoff, str) and "T" in cutoff  # ISO UTC cutoff
+
+    @pytest.mark.asyncio
+    async def test_start_persistence_skips_mark_stale_when_connect_fails(self):
+        """connect 失败（Mongo 离线）：不调 mark_stale，不抛。"""
+        agent = MagicMock()
+        sm = MagicMock()
+        sm.connect_db = AsyncMock(return_value=False)
+        sm.load_active = AsyncMock()
+        agent._session_manager = sm
+        agent._long_term.connect = AsyncMock(return_value=False)
+        agent._message_repo.connect = AsyncMock(return_value=True)
+        agent._version_repo.connect = AsyncMock(return_value=True)
+        agent._character_engine = MagicMock()
+        gen_reg = MagicMock()
+        gen_reg.connect = AsyncMock(return_value=False)
+        gen_reg.mark_stale_interrupted = AsyncMock(return_value=0)
+        agent._generation_registry = gen_reg
+
+        await _LifecyclePersistence._start_persistence(agent)
+
+        gen_reg.connect.assert_awaited_once()
+        assert gen_reg.mark_stale_interrupted.await_count == 0

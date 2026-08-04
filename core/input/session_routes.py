@@ -283,7 +283,16 @@ async def sessions_list_handler(request: web.Request) -> web.Response:
     limit = _parse_limit(request, default=50)
     manager = agent.session_manager
     items, has_more, next_cursor = await manager.list(cursor=cursor, limit=limit, search=search)
-    summaries = [_to_contract_summary(s, manager.active_id) for s in items]
+    summaries = []
+    for s in items:
+        summary = _to_contract_summary(s, manager.active_id)
+        # review 修复（链路#8）：messageCount 统一为归档计数——与详情/历史 total 同源
+        # （列表 repo.list_all 的 message_count 是 ≤20 窗口数，与详情 count_by_session 不一致）。
+        try:
+            summary.messageCount = await agent.message_repo.count_by_session(s.session_id)
+        except Exception:
+            logger.debug("count_by_session 失败 sid=%s，保留窗口数", s.session_id, exc_info=True)
+        summaries.append(summary)
     resp = rest_contract.SessionListResult(
         sessions=summaries, has_more=has_more, cursor=next_cursor)
     return web.json_response(resp.wire_dict())
@@ -345,9 +354,15 @@ async def sessions_rename_handler(request: web.Request) -> web.Response:
 
 
 async def sessions_delete_handler(request: web.Request) -> web.Response:
-    """DELETE /api/sessions/{conversationId} — 删除（联动归档清理 + active 回落 default）。"""
+    """DELETE /api/sessions/{conversationId} — 删除（联动归档清理 + active 回落 default）。
+
+    保护（review 修复）：默认会话 "default" 不可删除——返回 409 SESSION_PROTECTED，
+    不执行删除（删 default 会让整个 v1/多会话链路失去锚点）。
+    """
     agent = request.app["agent"]
     sid = request.match_info["conversationId"]
+    if sid == "default":
+        return _error_response("SESSION_PROTECTED", "默认会话不可删除", 409)
     if not await _session_exists(agent, sid):
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
     deleted = await agent.session_manager.delete(sid)
@@ -402,10 +417,12 @@ async def message_context_handler(request: web.Request) -> web.Response:
     anchor, pre, post = await agent.message_repo.find_context(
         conversation_id, mid, before=before_n, after=after_n)
     if anchor is None:
-        return _error_response("SESSION_NOT_FOUND", f"消息不存在: {mid}", 404)
+        # review 修复（兼容#4）：消息不存在语义用 RESOURCE_NOT_FOUND（错误目录码），
+        # 非 SESSION_NOT_FOUND（会话不存在）。
+        return _error_response("RESOURCE_NOT_FOUND", f"消息不存在: {mid}", 404)
     anchor_msgs = _contract_messages([anchor])
     if not anchor_msgs:
-        return _error_response("SESSION_NOT_FOUND", f"消息契约化失败: {mid}", 404)
+        return _error_response("RESOURCE_NOT_FOUND", f"消息契约化失败: {mid}", 404)
     resp = rest_contract.MessageContextResponse(
         anchor=anchor_msgs[0],
         before=_contract_messages(pre),

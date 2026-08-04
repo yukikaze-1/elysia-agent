@@ -148,6 +148,31 @@ class TestActivateSession:
         finally:
             await agent.stop()
 
+    @pytest.mark.asyncio
+    async def test_activate_session_general_failure_uses_INTERNAL(self, aiohttp_client, fresh_idempotency):
+        """review 修复（兼容#4）：activate_session 通用失败 → ErrorMessage{code: INTERNAL}。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            _seed_session(agent, "conv_test_fail", "会话")
+
+            async def _boom(sid):
+                raise RuntimeError("boom")
+
+            agent.switch_session = _boom
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({"type": "activate_session", "conversationId": "conv_test_fail"})
+
+            err = await _receive_type(ws, "error")
+            assert err.get("code") == "INTERNAL", f"实际 {err.get('code')}"
+            await ws.close()
+        finally:
+            await agent.stop()
+
 
 @pytest.mark.service
 class TestConversationIdRouting:
@@ -268,6 +293,60 @@ class TestV1AlwaysDefault:
                 "v1 text 应写入 default"
             assert _message_ids(agent, "conv_test_c") == conv_c_before, \
                 "v1 写入不应影响 conv_test_c"
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v1_activate_session_ignored(self, aiohttp_client, fresh_idempotency):
+        """review 修复（兼容#5）：v1 连接发 activate_session 不生效（active 不切）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            _seed_session(agent, "conv_test_act_v1", "会话V1")
+            ws = await _drain(client, None)  # v1 握手
+            await ws.send_json({"type": "activate_session", "conversationId": "conv_test_act_v1"})
+            # v1 忽略：active 保持 default；短窗口内不出现 session 回放帧
+            try:
+                m = await asyncio.wait_for(ws.receive(), timeout=0.8)
+                assert m.type != WSMsgType.TEXT or json.loads(m.data).get("type") != "session"
+            except asyncio.TimeoutError:
+                pass
+            assert agent.active_session_id == "default", "v1 activate_session 不应切 active"
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v1_connect_mood_from_default(self, aiohttp_client, fresh_idempotency):
+        """review 修复（兼容#5）：v1 建连 expression mood 读 default 会话（active 切走不影响）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            _seed_session(agent, "conv_test_mood", "会话")
+            agent.session_manager.get("default").character_state.mood = "平静"
+            await agent.switch_session("conv_test_mood")
+            agent.character_engine.state.mood = "兴奋"  # active 会话 mood ≠ default
+
+            ws = await _drain(client, None)  # v1 握手
+            mood = None
+            for _ in range(6):
+                m = await asyncio.wait_for(ws.receive(), timeout=5)
+                if m.type != WSMsgType.TEXT:
+                    continue
+                d = json.loads(m.data)
+                if d.get("type") == "expression":
+                    mood = d.get("expression")
+                    break
+            assert mood == "平静", f"v1 建连 mood 应读 default 会话 mood，实际 {mood!r}"
             await ws.close()
         finally:
             await agent.stop()

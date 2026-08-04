@@ -172,15 +172,52 @@ def _sanitize(line: str) -> str:
     return line
 
 
+def _inject_fake_storage(agent):
+    """把 agent 的全部 Mongo repo 换成内存 fake（生产数据保护，review 修复 I1）。
+
+    无论 Mongo 是否在线，轨迹运行全程不连/不写真实 Mongo：start() 的 connect 落到
+    内存 FakeDocumentDBBackend（各 repo connect 对已注入 db 直接返回 True），stop()
+    的 save_all() 也只写内存 fake。generation registry 换为同一 fake db 实例
+    （agent 与 loop 同一引用）。同时换掉 eager default 与已构造 SessionMemory 的
+    repo 引用，保证任何路径都不触碰生产 default。
+    """
+    from core.cognitive.generation_registry import GenerationRegistry
+    from core.storage.character_version_repo import CharacterVersionRepository
+    from core.storage.generation_repo import GenerationRepository
+    from core.storage.message_repo import MessageRepository
+    from core.storage.session_repo import SessionRepository
+    from core.storage.token_repo import TokenRepository
+    from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+    backend = FakeDocumentDBBackend()
+    session_repo = SessionRepository(db=backend)
+    message_repo = MessageRepository(db=backend)
+    token_repo = TokenRepository(db=backend)
+    version_repo = CharacterVersionRepository(db=backend)
+    agent._session_repo = session_repo
+    agent._message_repo = message_repo
+    agent._token_repo = token_repo
+    agent._version_repo = version_repo
+    agent.session_manager._repo = session_repo
+    agent.session_manager._msg_repo = message_repo
+    for s in agent.session_manager._sessions.values():
+        s._repo = session_repo
+        s._msg_repo = message_repo
+    reg = GenerationRegistry(repo=GenerationRepository(db=backend))
+    agent._generation_registry = reg
+    agent.cognitive._generation_registry = reg
+    return agent
+
+
 async def _make_agent(fake: FakeLLMBackend):
     """构造真实 Agent（镜像 core/input/tests/test_server.py _make_agent）。
 
-    start() 后清空 session 消息——轨迹必须可重放，不得携带 MongoDB 真实历史会话。
+    start() 后清空 session 消息——轨迹必须可重放，不得携带真实历史会话。
 
-    注意（生产数据保护）：清空的是**内存 deque**（启动时从 Mongo 加载的副本），
-    绝不 repo.delete。若当前环境 Mongo 在线，agent.stop() 的 save_all() 会把清空后
-    的 deque 回写 Mongo——因此 v2session 轨迹改用 `_make_agent_isolated`（切隔离会话，
-    不清 default）。
+    注意（生产数据保护，review 修复 I1）：注入内存 fake 存储——清空的是内存 deque，
+    绝不连真 Mongo。若用真 repo 且 Mongo 在线，agent.stop() 的 save_all() 会把清空后
+    的 deque 回写 Mongo，覆盖生产 default。全部模式（chat/cancel/tool/server_info/
+    v2chat/v2cancel/v2fail/v2session）现统一走此隔离工厂。
     """
     from core.config import AppConfig
     from core.agent import Agent
@@ -190,6 +227,7 @@ async def _make_agent(fake: FakeLLMBackend):
     config.tts.enabled = False
     config.stt.enabled = False
     agent = Agent(config=config)
+    _inject_fake_storage(agent)
     agent.llm._backend = fake
     await agent.start()
     # 清空会话历史（SLF001 豁免：抓包工具需空会话保证轨迹稳定）
@@ -200,29 +238,17 @@ async def _make_agent(fake: FakeLLMBackend):
 async def _make_agent_isolated(fake: FakeLLMBackend):
     """v2session 轨迹用 agent 工厂：不清 default，切到隔离测试会话。
 
-    生产数据保护（Task 13 强制）：不清空/删除生产 "default" 会话——若清空其内存
-    deque 且 Mongo 在线，stop() 的 save_all() 会把空列表回写 Mongo，覆盖生产数据。
-    改为：仅把隔离测试会话 `conv_trace_x` 预注册进 SessionManager 缓存池
-    （内存构造，不触发 load、不落库），并把活动指针切到它——轨迹消息只落到该会话；
-    default 保持启动时加载的原样，stop() 时 save_all() 对 default 为幂等回写。
+    生产数据保护（Task 13 强制 + review 修复 I1）：基座 `_make_agent` 已注入内存
+    fake 存储（不连真 Mongo）；此处再切 active 到隔离测试会话 `conv_trace_x`——
+    v2 建连回放取 active（resolve(None, 2)），显示空会话，不泄露 default 历史。
     conv_trace_x 为测试会话：清空其内存 deque（轨迹空会话可重放），绝不触碰 default。
     """
-    from core.config import AppConfig
-    from core.agent import Agent
-
-    config = AppConfig()
-    config.tts.enabled = False
-    config.stt.enabled = False
-    agent = Agent(config=config)
-    agent.llm._backend = fake
-    await agent.start()
+    agent = await _make_agent(fake)
     # 预注册隔离测试会话（内存缓存构造，不触发 load/不落库）
     agent.session_manager.get("conv_trace_x")  # noqa: SLF001
-    # 生产数据保护：把活动指针切到隔离会话——v2 建连回放取 active（resolve(None, 2)），
-    # 即显示 conv_trace_x（空），不泄露 default 的 Mongo 历史消息。
+    # 把活动指针切到隔离会话——v2 建连回放取 active 即显示 conv_trace_x（空）
     await agent.session_manager.switch("conv_trace_x")
-    # 清空隔离会话内存 deque——轨迹从空会话开始可重放（conv_trace_x 为测试会话，
-    # 清 deque 可接受；default 绝不触碰）
+    # 清空隔离会话内存 deque——轨迹从空会话开始可重放
     agent.session_manager.get("conv_trace_x")._messages.clear()  # noqa: SLF001
     return agent
 

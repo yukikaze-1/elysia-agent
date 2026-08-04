@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import os
 import logging
 from typing import TYPE_CHECKING
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from core.memory.session_manager import SessionManager
     from core.memory.long_term import LongTermMemory
     from core.personality import CharacterEngine
+    from core.cognitive.generation_registry import GenerationRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,7 @@ class _LifecyclePersistence:
         _milvus_available: bool
         _token_repo: TokenRepository
         _session_repo: SessionRepository
+        _generation_registry: GenerationRegistry
 
     def _start_db_health(self) -> None:
         """启动数据库健康检查后台任务。"""
@@ -56,6 +59,19 @@ class _LifecyclePersistence:
         # L2 版本历史
         if not await self._version_repo.connect():
             logger.warning("CharacterVersionRepository 离线")
+        # 批次 3（review 修复，兼容#2）：generation registry 建连 + 崩溃残留清理。
+        # 此前 loop 自建 registry 的 repo db=None，register/mark 全量 no-op；此处 connect
+        # 后 register/mark 真正落库。connect 成功后再把启动时刻 5 分钟前仍 running 的
+        # 旧 generation 标为 interrupted（崩溃残留清理）。
+        gen_registry = getattr(self, "_generation_registry", None)
+        if gen_registry is not None:
+            try:
+                if await gen_registry.connect():
+                    cutoff = (datetime.datetime.now(datetime.timezone.utc)
+                              - datetime.timedelta(minutes=5)).isoformat()
+                    await gen_registry.mark_stale_interrupted(cutoff)
+            except Exception:
+                logger.warning("GenerationRegistry 建连/崩溃残留清理失败", exc_info=True)
         # 无条件 load_active：确保默认会话进入 _loaded（shutdown save_all() 依赖，
         # 否则 MongoDB 离线期间的内存会话在关闭时不会落 JSONL）
         await self._session_manager.load_active()

@@ -127,8 +127,14 @@ async def handle_ws(
     # 发送当前心情（expression 事件）。心情持久化在 session.character_state，
     # 重启后服务端已恢复，但前端 `chat.mood` 只由 expression 事件更新——
     # 连接时不推送，心情标签要等下一轮 <mood> 才出现。复用前端现有 handler，零改动。
+    # review 修复（兼容#5）：v1 恒读 default 会话的 mood（active 切走不影响 v1 心情），
+    # v2 才读 active（character_engine.state 跟随 active）。
     try:
-        cs = agent.character_engine.state
+        if protocol_version >= 2:
+            cs = agent.character_engine.state
+        else:
+            default_session = await agent.resolve_session(None, 1)
+            cs = default_session.character_state
         await ws.send_json(ExpressionMessage(
             expression=cs.mood, intensity=cs.mood_intensity,
         ).wire_dict())
@@ -427,10 +433,16 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
                 logger.debug("WS 审批结果: request=%s 不存在或已过期", request_id)
     elif msg_type == "activate_session":
         # 批次 3：切 active + 重发新活动会话回放；未知 conversationId → SESSION_NOT_FOUND
-        if ws is not None:
-            await _handle_activate_session(agent, ws, data)
-        else:
+        # review 修复（兼容#5）：activate_session 仅 v2 连接处理——v1 恒 default 无
+        # 切会话语义，处理会让 v1 连接意外切走 active 影响 v2 客户端。
+        if ws is None:
             logger.debug("WS activate_session 无发送连接，忽略")
+        else:
+            channel = _find_channel(agent, ws)
+            if channel is None or channel.protocol_version < 2:
+                logger.debug("WS activate_session: v1 连接忽略（v1 恒 default）")
+            else:
+                await _handle_activate_session(agent, ws, data)
     else:
         logger.debug("WS 未知消息类型: %s", msg_type)
 
@@ -464,7 +476,7 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
         logger.warning("activate_session 处理失败 sid=%s", sid, exc_info=True)
         await ws.send_json(ErrorMessage(
             message="激活会话失败",
-            code="INTERNAL_ERROR",
+            code="INTERNAL",  # review 修复（兼容#4）：INTERNAL_ERROR → 错误目录标准码 INTERNAL
         ).wire_dict())
 
 

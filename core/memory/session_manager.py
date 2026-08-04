@@ -84,6 +84,11 @@ class SessionManager:
 
     @property
     def active(self) -> SessionMemory:
+        # 防御（review 修复）：_active_id 指向已删会话时自愈回 default——
+        # 正常路径 delete() 已负责回落，此处兜底外部直接操作缓存池的场景。
+        if self._active_id not in self._sessions:
+            logger.warning("active: _active_id=%s 已不在缓存池，自愈回 default", self._active_id)
+            self._active_id = DEFAULT_SESSION
         return self._sessions[self._active_id]
 
     # ---- 缓存访问 ----
@@ -221,9 +226,15 @@ class SessionManager:
     async def delete(self, sid) -> int:
         """删除会话：msg_repo 清归档 + repo 删文档 + 丢缓存。
 
-        若删除的是活动会话，active 回落 "default"。返回删除的归档消息数。
+        保护（review 修复）：默认会话（"default"）不可删除——拒绝并返回 0。
+        若删除的是活动会话，active 回落 "default" 并重绑 CharacterEngine
+        （attach_session(default)），防 F4 孤儿 state（engine.state 仍挂在
+        已删会话的 character_state 上）。返回删除的归档消息数。
         """
         sid = SessionId(sid)
+        if sid == DEFAULT_SESSION:
+            logger.debug("delete: 拒绝删除默认会话 default")
+            return 0
         deleted_messages = 0
         if self._msg_repo is not None:
             deleted_messages = await self._msg_repo.delete_by_session(sid)
@@ -232,6 +243,10 @@ class SessionManager:
         self._loaded.discard(sid)
         if sid == self._active_id:
             self._active_id = DEFAULT_SESSION
+            # F4 修复：重绑 engine 到 default——防 _active_id 已回落但
+            # engine.state 视图仍挂在已删会话的 character_state 上（孤儿 state）。
+            if self._character_engine is not None:
+                self._character_engine.attach_session(self._sessions[DEFAULT_SESSION])
         return deleted_messages
 
     # ---- 持久化编排 ----

@@ -337,14 +337,32 @@ async def test_delete_drops_cache_archive_and_active_fallback():
 
 
 @pytest.mark.asyncio
-async def test_delete_active_default_stays_default():
-    """删除 default 会话：active 仍回落 default（自愈），不抛异常。"""
+async def test_delete_default_rejected():
+    """删除 default 会话被拒绝：返回 0，default 仍在缓存池且 active 不变（review 修复）。"""
     m = _make_manager()
     await m.ensure_loaded("default")
-    await m.delete("default")
+    n = await m.delete("default")
+    assert n == 0  # 拒绝删除
     assert m.active_id == "default"
-    # 可重新 get 出空 default
+    assert "default" in m._sessions
     assert m.get("default").session_id == "default"
+    assert m.active.session_id == "default"
+
+
+@pytest.mark.asyncio
+async def test_delete_active_conv_rebinds_engine_to_default():
+    """删除活动会话：active 回落 default + 重绑 engine（attach_session(default)）。"""
+    m = _make_manager()
+    engine = FakeEngine()
+    m.bind_character_engine(engine)
+    await m.ensure_loaded("default")
+    summary = await m.create(title="del-active")
+    await m.switch(summary.session_id)
+    assert m.active_id == summary.session_id
+    n = await m.delete(summary.session_id)
+    assert n == 0
+    assert m.active_id == "default"
+    assert engine.attached[-1] is m.get("default")  # 重绑到 default，非孤儿 state
 
 
 # ───────────────────────── list ─────────────────────────

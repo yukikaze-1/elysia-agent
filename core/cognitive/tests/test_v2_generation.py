@@ -63,23 +63,56 @@ class _UsageLLM:
         }
 
 
+def _inject_fake_storage(agent) -> "Agent":
+    """把 agent 的全部 Mongo repo 换成内存 fake（生产数据保护，review 修复 I3）。
+
+    这些测试原本连真 Mongo 写 default：start() 加载、stop() 的 save_all() 会把
+    测试消息回写生产 default 会话。注入后 connect 全落内存 FakeDocumentDBBackend，
+    任何测试都不覆盖/污染生产 default。generation registry 也换成同一 fake db 的
+    实例（agent 与 loop 同一引用，生命周期 connect 即用）。
+    """
+    from core.cognitive.generation_registry import GenerationRegistry
+    from core.storage.character_version_repo import CharacterVersionRepository
+    from core.storage.generation_repo import GenerationRepository
+    from core.storage.message_repo import MessageRepository
+    from core.storage.session_repo import SessionRepository
+    from core.storage.token_repo import TokenRepository
+    from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+    backend = FakeDocumentDBBackend()
+    session_repo = SessionRepository(db=backend)
+    message_repo = MessageRepository(db=backend)
+    token_repo = TokenRepository(db=backend)
+    version_repo = CharacterVersionRepository(db=backend)
+    agent._session_repo = session_repo
+    agent._message_repo = message_repo
+    agent._token_repo = token_repo
+    agent._version_repo = version_repo
+    agent.session_manager._repo = session_repo
+    agent.session_manager._msg_repo = message_repo
+    # eager default 与后续构造的 SessionMemory 持有旧 repo 引用——统一换到 fake
+    for s in agent.session_manager._sessions.values():
+        s._repo = session_repo
+        s._msg_repo = message_repo
+    reg = GenerationRegistry(repo=GenerationRepository(db=backend))
+    agent._generation_registry = reg
+    agent.cognitive._generation_registry = reg
+    return agent
+
+
 def _make_agent_with(fake) -> "Agent":
     import os as _os
     _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
     from core.config import AppConfig
     from core.agent import Agent
-    from core.cognitive.generation_registry import GenerationRegistry
-    from core.storage.generation_repo import GenerationRepository
-    from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
     config = AppConfig()
     config.tts.enabled = False
     config.stt.enabled = False
     agent = Agent(config=config)
     agent.llm._backend = fake
-    # 批次 3（Task 13）：注入内存 GenerationRegistry——取消/断线测试断言终态 mark
-    # （Mongo 离线自建 registry 为 no-op，无法断言终态）。
-    agent.cognitive._generation_registry = GenerationRegistry(  # noqa: SLF001
-        repo=GenerationRepository(db=FakeDocumentDBBackend()))
+    # 批次 3（Task 13 + review 修复 I3）：注入内存 fake 存储 + GenerationRegistry——
+    # 取消/断线测试断言终态 mark（真 Mongo 离线自建 registry 为 no-op），且不碰生产 default。
+    _inject_fake_storage(agent)
     return agent
 
 

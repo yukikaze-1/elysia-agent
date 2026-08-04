@@ -40,6 +40,21 @@ class GenerationRegistry:
         """
         self._repo = repo if repo is not None else GenerationRepository()
 
+    async def connect(self) -> bool:
+        """建立底层 GenerationRepository 连接（建索引 + TTL）。
+
+        review 修复（兼容#2）：agent 启动时调用——此前 loop 自建 registry 的 repo
+        db=None，upsert 全量 no-op；此处连接后 register/mark 真正落库。
+
+        Returns:
+            True 表示连接成功，False 表示失败（Mongo 离线，register/mark 继续降级 no-op）。
+        """
+        try:
+            return await self._repo.connect()
+        except Exception as e:
+            logger.debug("GenerationRegistry.connect 失败: %s", e)
+            return False
+
     async def register(self, generation_id: str, *, session_id: str,
                        user_message_id: str, message_id: str, model: str) -> None:
         """generation 开始建档（status=running）。

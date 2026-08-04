@@ -219,6 +219,12 @@ class Agent(AgentLifecycle, AgentServer):
         self._prompt_recorder: "PromptRecorder | None" = None   # 在 start() 中创建
         self._response_recorder: "ResponseRecorder | None" = None # 在 start() 中创建
 
+        # 批次 3（review 修复，兼容#2）：generation 生命周期持久化注册表由 Agent 持有，
+        # 经构造注入 loop（loop 不再自建）——agent 与 loop 是同一实例；生命周期启动时
+        # 对 registry 建连（connect），此后 register/mark 真正落库（不再全量 no-op）。
+        from core.cognitive.generation_registry import GenerationRegistry
+        self._generation_registry = GenerationRegistry()
+
         from core.cognitive import CognitiveLoop  # function-level: break circular import
         self._cognitive = CognitiveLoop(
             llm=self._llm,
@@ -232,6 +238,7 @@ class Agent(AgentLifecycle, AgentServer):
             consolidator=self._consolidator,
             tts=self._tts,
             token_tracker=self._token_tracker,
+            generation_registry=self._generation_registry,
         )
         self._cognitive.configure(memory_reflector=self._memory_reflector)
 
@@ -318,6 +325,7 @@ class Agent(AgentLifecycle, AgentServer):
                 text=text, user_name=user_name, request_id=rid,
                 content=content, message_id=message_id,
                 conversation_id=conversation_id,
+                protocol_version=protocol_version,
             ))
             return
 
@@ -566,6 +574,10 @@ class Agent(AgentLifecycle, AgentServer):
                     request_id=pending.request_id,
                     content=pending.content,
                     message_id=pending.message_id,  # 批次 2：忙时排队不丢预分配 ID
+                    # review 修复（F3/链路#1）：透传 conversation_id + protocol_version——
+                    # 否则 v2 排队消息出队后降级为 v1 语义（恒 default），丢失会话归属。
+                    conversation_id=pending.conversation_id,
+                    protocol_version=pending.protocol_version,
                 ))
         await self._output.notify_state(state)
 
@@ -682,6 +694,11 @@ class Agent(AgentLifecycle, AgentServer):
     def cognitive(self):
         """认知循环。"""
         return self._cognitive
+
+    @property
+    def generation_registry(self):
+        """generation 生命周期注册表（Agent 持有并注入 loop，启动时 connect）。"""
+        return self._generation_registry
 
     @property
     def idle(self):

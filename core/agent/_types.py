@@ -20,6 +20,9 @@ class _PendingMessage:
     message_id: str | None = None
     # 批次 3（multi-session）：可选会话 ID，None = 未归属（loop 路由消费）
     conversation_id: str | None = None
+    # review 修复（F3/链路#1）：来源协议版本——忙时排队出队重建 UserInputData 时必须
+    # 透传，否则 v2 排队消息出队后降级为 v1 语义（恒 default），丢失会话归属。
+    protocol_version: int = 1
 
 
 @dataclass

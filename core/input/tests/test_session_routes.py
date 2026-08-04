@@ -237,6 +237,26 @@ class TestSessionsCRUD:
         assert data["retryable"] is False
 
     @pytest.mark.asyncio
+    async def test_list_message_count_matches_detail(self, aiohttp_client):
+        """review 修复（链路#8）：列表与详情 messageCount 同源（归档计数）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_mc", "计数会话")
+        await _seed_text_messages(agent, "conv_test_mc", 7)
+        await _create_session(agent, "conv_test_mc2", "空会话")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/api/sessions")
+        data = await resp.json()
+        by_id = {s["conversationId"]: s for s in data["sessions"]}
+        assert by_id["conv_test_mc"]["messageCount"] == 7
+        assert by_id["conv_test_mc2"]["messageCount"] == 0
+
+        resp2 = await client.get("/api/sessions/conv_test_mc")
+        detail = await resp2.json()
+        assert detail["session"]["messageCount"] == 7  # 与列表一致
+
+    @pytest.mark.asyncio
     async def test_detail_returns_session_and_first_page(self, aiohttp_client):
         agent = _FakeAgent()
         await _create_session(agent, "conv_test_d", "详情会话")
@@ -312,6 +332,26 @@ class TestSessionsCRUD:
         resp = await client.delete("/api/sessions/conv_no_such")
         assert resp.status == 404
         assert (await resp.json())["code"] == "SESSION_NOT_FOUND"
+
+    @pytest.mark.asyncio
+    async def test_delete_default_rejected_409(self, aiohttp_client):
+        """删除 default 被拒绝：409 SESSION_PROTECTED，default 不被删除。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_keep", "保留会话")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.delete("/api/sessions/default")
+        assert resp.status == 409
+        data = await resp.json()
+        assert data["code"] == "SESSION_PROTECTED"
+
+        # default 仍在 repo 列表，其他会话不受影响
+        resp2 = await client.get("/api/sessions")
+        data2 = await resp2.json()
+        ids = {s["conversationId"] for s in data2["sessions"]}
+        assert "conv_test_keep" in ids
+        assert agent.active_session_id == "default"
 
     @pytest.mark.asyncio
     async def test_activate_switches_and_returns_id(self, aiohttp_client):
@@ -447,6 +487,9 @@ class TestMessageContext:
             "/api/messages/msg_ghost/context",
             params={"conversationId": "conv_test_ctx"})
         assert resp.status == 404
+        # review 修复（兼容#4）：消息不存在 → RESOURCE_NOT_FOUND（非 SESSION_NOT_FOUND）
+        data = await resp.json()
+        assert data["code"] == "RESOURCE_NOT_FOUND"
 
 
 # ───────────────────────── 搜索（§5.3） ────────────────────────────────────
