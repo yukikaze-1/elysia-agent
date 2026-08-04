@@ -56,9 +56,9 @@ subagent 验收 ACCEPTED（1 个中等问题 F1 CONNECTION_LIMITED retryable + 2
 
 ---
 
-## 批次 2：结构化聊天 v2 ⏳ 实施完成，待最终验收
+## 批次 2：结构化聊天 v2 ✅ 完成
 
-**提交：** `6fab1de`（契约）`531c95b`（ID）`901f792`（messageId 贯通）`5b47afe`（channel v2）`445f100`（版本扇出）`e3c7a49`（loop 重构）`d3fcb75`（ACK/幂等）`361b4ae`（取消）`待提交`（重连/轨迹/文档）
+**提交：** `6fab1de`（契约）`531c95b`（ID）`901f792`（messageId 贯通）`5b47afe`（channel v2）`445f100`（版本扇出）`e3c7a49`（loop 重构）`d3fcb75`（ACK/幂等）`361b4ae`（取消）`7eb8630`（重连/轨迹/文档）`4f27702`（验收修复）
 **Spec（v0.2，APPROVED）：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`
 **Plan（v0.2，reviewed+fixed）：** `docs/superpowers/plans/2026-08-04-electron-backend-batch2-chat-v2.md`
 
@@ -78,4 +78,4 @@ subagent 验收 ACCEPTED（1 个中等问题 F1 CONNECTION_LIMITED retryable + 2
 
 ### 验收
 
-待最终 subagent 验收。
+subagent 验收 **ACCEPTED**（1 中：features.structured_generation 应为 true；3 低：v2 空消息噪音/README/断言 → 全部修复收口于 4f27702）。
