@@ -31,6 +31,7 @@ from core.schema.utils import now_iso
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
     from core.config.character_config import CharacterConfig
+    from core.memory.session import SessionMemory
     from core.schema.character import CharacterState
     from core.storage.character_version_repo import CharacterVersionRepository
 
@@ -335,6 +336,30 @@ class CharacterEngine:
                 (u, a) for u, a in self._reflector._buffer
             ]
             self.state.reflector_context = list(self._reflector._context)
+
+    def attach_session(self, session: "SessionMemory") -> None:
+        """会话切换时重绑 state 视图到新会话的 character_state。
+
+        批次 3 (multi-session): session switching 时把 engine 的 state 视图切到新会话，
+        使每会话的 character_state 隔离生效。重绑:
+          - self.state 与三个子组件（compression/emotion/awareness）的 _state
+          - session._pre_save_hook = sync_reflector_to_state
+          - _last_awareness_time（新会话的 awareness 冷却计时，经 property 代理到
+            _awareness._last_awareness_time）
+
+        注意: 不调用 _restore_from_state —— reflector 的 live buffer 不随切换恢复。
+        切换时 outgoing 的 buffer 已由 _pre_save_hook() 落盘到旧 character_state；
+        incoming 会话的 buffer 随其 SessionMemory 实例内存独立（load 时已恢复）。
+        属 spec D-o 有意取舍，勿加回恢复调用。
+        """
+        new_state = session.character_state
+        self.state = new_state
+        self._compression._state = new_state
+        self._emotion._state = new_state
+        self._awareness._state = new_state
+        session._pre_save_hook = self.sync_reflector_to_state
+        # 同步新会话的 awareness 冷却状态
+        self._last_awareness_time = new_state.last_awareness_time or 0.0
 
     # ---- Reflector 代理 ----
 

@@ -69,22 +69,38 @@ class PromptAssembler:
             f"{_SECTION}/c9_self_perception.j2",
         )
 
+        # 会话依赖的 section — set_session 时重绑 session 引用
+        self._emotion_section = EmotionSection(f"{_SECTION}/c3_emotion.j2", session)
+        self._memory_section = MemorySection(f"{_SECTION}/c4_memory.j2", long_term, session)
+        self._own_life_section = OwnLifeSection(f"{_SECTION}/c8_own_life.j2", session)
+
         sections = [
             ConflictRulesSection(f"{_SECTION}/f1_conflict_rules.j2"),
             OutputFormatSection(f"{_SECTION}/f2_output_format.j2"),
             TTSMarkupSection(f"{_SECTION}/f3_tts_markup.j2"),
             SensorySection(f"{_SECTION}/c5_sensory.j2"),
-            EmotionSection(f"{_SECTION}/c3_emotion.j2", session),
-            MemorySection(f"{_SECTION}/c4_memory.j2", long_term, session),
+            self._emotion_section,
+            self._memory_section,
             self._personality_section,
             RelationshipSection(f"{_SECTION}/c2_relationship.j2", character.name),
             SpeakingStyleSection(f"{_SECTION}/c6_speaking_style.j2"),
             ProactiveSection(f"{_SECTION}/c7_proactive.j2"),
-            OwnLifeSection(f"{_SECTION}/c8_own_life.j2", session),
+            self._own_life_section,
             self._self_perception_section,
         ]
         self._manager = SystemPromptManager(sections)
         self._builder = MessageBuilder()
+
+    def set_session(self, session: SessionMemory) -> None:
+        """会话切换时重绑 session 引用（本对象 + 三个会话依赖 section）。
+
+        批次 3 (multi-session): EmotionSection/OwnLifeSection/MemorySection
+        在渲染时读取 session 内容，切换后必须指向新会话对象。
+        """
+        self._session = session
+        self._emotion_section._session = session
+        self._memory_section._session = session
+        self._own_life_section._session = session
 
     def _refresh_personality_data(self) -> None:
         """从 PersonalityEngine 拉取最新数据，更新 C1/C9 section。"""

@@ -543,3 +543,59 @@ class TestAwarenessJudge:
         engine._last_awareness_time = time.time()  # 刚刚展示
         result = engine.render_c9()
         assert result.awareness_text == ""
+
+
+@pytest.mark.unit
+class TestCharacterEngineAttachSession:
+    """attach_session: 会话切换时重绑 state 视图 + 子组件 + pre-save 钩子。"""
+
+    @staticmethod
+    def _make_session(state=None, last_awareness_time=None):
+        """构造 fake session：character_state + _pre_save_hook 可写。"""
+        cs = state or CharacterState(session_id=SessionId("session-b"))
+        if last_awareness_time is not None:
+            cs.last_awareness_time = last_awareness_time
+        session = MagicMock()
+        session.character_state = cs
+        session._pre_save_hook = None
+        return session
+
+    def test_attach_rebinds_state(self):
+        """attach 后 engine.state 指向新会话的 character_state。"""
+        engine = _make_engine()
+        session_b = self._make_session()
+        engine.attach_session(session_b)
+        assert engine.state is session_b.character_state
+
+    def test_attach_rebinds_subcomponent_states(self):
+        """三个子组件（awareness/compression/emotion）的 _state 全部重绑。"""
+        engine = _make_engine()
+        session_b = self._make_session()
+        engine.attach_session(session_b)
+        assert engine._awareness._state is session_b.character_state
+        assert engine._compression._state is session_b.character_state
+        assert engine._emotion._state is session_b.character_state
+
+    def test_attach_sets_pre_save_hook(self):
+        """attach 后 session._pre_save_hook 绑定到 sync_reflector_to_state。"""
+        engine = _make_engine()
+        session_b = self._make_session()
+        engine.attach_session(session_b)
+        # 绑定的方法是新创建的 bound method，is 恒 False；== 比较 __func__ + __self__
+        assert session_b._pre_save_hook == engine.sync_reflector_to_state
+
+    def test_attach_syncs_last_awareness_time(self):
+        """attach 同步新会话的 last_awareness_time 到 awareness 冷却计时。"""
+        engine = _make_engine()
+        session_b = self._make_session(last_awareness_time=1234.5)
+        engine.attach_session(session_b)
+        assert engine._awareness._last_awareness_time == 1234.5
+        assert engine._last_awareness_time == 1234.5
+
+    def test_attach_does_not_restore_reflector(self):
+        """D-o: 不调用 _restore_from_state，避免 clobber in-flight reflector buffer。"""
+        engine = _make_engine()
+        with patch.object(engine._reflector, "_restore_from_state") as mock_restore:
+            session_b = self._make_session()
+            engine.attach_session(session_b)
+            mock_restore.assert_not_called()
