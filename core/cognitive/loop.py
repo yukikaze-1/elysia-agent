@@ -1084,10 +1084,17 @@ class CognitiveLoop(CognitiveTools):
                 self._tts_mgr.stream_sentence(sentence)
             ctx = self._generation_ctx
             if ctx is not None:
-                # 统一发射：分段完成（v1 按 tts_active 决定 send("")——无活动段也发句子边界；
-                # v2 仅活动段发 segment.completed，空消息不泄漏到 v2）
-                await self._output.segment_completed(sentence, ctx, tts_active=tts_active)
-                ctx.close_segment()
+                if ctx.current_segment_id is not None:
+                    # 活动段（由本句 deltas 打开）→ 完成本句段
+                    await self._output.segment_completed(sentence, ctx, tts_active=tts_active)
+                    ctx.close_segment()
+                else:
+                    # 无活动段（deltas 合并到前段 / 本句无独立 delta 流）→ 为本句新开段再完成，
+                    # 保证每句独立 segmentId（PRD BE-022）
+                    ctx.open_segment("public_reply", "text")
+                    await self._output.segment_started(ctx)
+                    await self._output.segment_completed(sentence, ctx, tts_active=tts_active)
+                    ctx.close_segment()
             elif not tts_active:
                 # text-only：TEXT_DELTA 已广播增量，此处只发句子边界信号结束气泡，避免整句重复显示
                 await self._output.send("")

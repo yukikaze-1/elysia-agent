@@ -135,6 +135,12 @@ class TestV2GenerationSequence:
             seg_types = [f.get("channel") for f in frames if f["type"] == "generation.segment.started"]
             assert "inner_voice" in seg_types
             assert "public_reply" in seg_types
+            # PRD BE-022：每句独立 segmentId——4 句回复应有 4 个 public_reply 段，ID 互异
+            pub_segs = [f for f in frames
+                        if f["type"] == "generation.segment.started"
+                        and f.get("channel") == "public_reply"]
+            assert len(pub_segs) == 4, f"每句应独立段，实际 {len(pub_segs)} 个 public_reply 段"
+            assert len({s["segmentId"] for s in pub_segs}) == 4, "各段 segmentId 应互异"
             # v2 抑制 v1 token_usage/expression（spec §5.1：usage 由 completed 承载、mood 落位）
             assert not any(t == "token_usage" for t in types)
             # completed 携带 usage/model/mood

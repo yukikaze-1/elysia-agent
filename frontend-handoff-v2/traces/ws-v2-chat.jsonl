@@ -1,16 +1,22 @@
 {"type": "session", "messages": [], "token_stats": {"total": 0, "by_model": {}}}
 {"type": "server_info", "protocol_version": "2.0", "server_version": "0.1.0", "features": {"structured_generation": true, "multi_conversation": false, "desktop_runtime": false, "dictation": false}, "services": {"llm": {"available": true, "enabled": true, "model": "deepseek/deepseek-chat", "default": "deepseek/deepseek-chat"}, "stt": {"available": false, "enabled": false, "default": "sensevoice/sense-voice", "model": null}, "tts": {"available": false, "enabled": false, "default": "gpt-sovits/default", "model": null}}}
-{"type": "expression", "expression": "平静", "intensity": 0.5}
-{"type": "user_message.ack", "messageId": "msg_145d01864bea4570965bb857ad", "clientRequestId": "req_cap_1495acd6", "receivedAt": "2026-08-04T00:30:20.605823+00:00", "status": "accepted"}
+{"type": "expression", "expression": "开心", "intensity": 0.65}
+{"type": "user_message.ack", "messageId": "msg_8075dfb7c09e425e9e82683cc8", "clientRequestId": "req_cap_c4e19c07", "receivedAt": "2026-08-04T07:15:46.220448+00:00", "status": "accepted"}
 {"type": "state", "state": "thinking"}
 {"type": "typing", "typing": true}
-{"type": "generation.started", "generationId": "gen_abd0b852b7164e3fa0d04ba7ef", "messageId": "msg_b2661860200b4cf788159009a9"}
-{"type": "generation.segment.started", "generationId": "gen_abd0b852b7164e3fa0d04ba7ef", "segmentId": "seg_ec9966be7b4d4d638dcf1107ac", "segmentIndex": 0, "channel": "inner_voice", "kind": "text"}
-{"type": "generation.segment.completed", "generationId": "gen_abd0b852b7164e3fa0d04ba7ef", "segmentId": "seg_ec9966be7b4d4d638dcf1107ac", "segmentIndex": 0, "channel": "inner_voice", "kind": "text", "content": "我觉得这个话题很有意思，想认真回应一下。"}
-{"type": "generation.segment.started", "generationId": "gen_abd0b852b7164e3fa0d04ba7ef", "segmentId": "seg_e9f3124942404d04aff19c7c2f", "segmentIndex": 1, "channel": "public_reply", "kind": "text"}
-{"type": "generation.delta", "generationId": "gen_abd0b852b7164e3fa0d04ba7ef", "segmentId": "seg_e9f3124942404d04aff19c7c2f", "segmentIndex": 1, "deltaSequence": 0, "delta": "你好！这是第一句话，回答你的问题。第二句话进一步补充说明。第三句话作为收尾，希望对你有所帮助。"}
+{"type": "generation.started", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "messageId": "msg_9346cad7beae49bdae1d17e949"}
+{"type": "generation.segment.started", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "segmentId": "seg_50512c01a7c941598a04215ca3", "segmentIndex": 0, "channel": "inner_voice", "kind": "text"}
+{"type": "generation.segment.completed", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "segmentId": "seg_50512c01a7c941598a04215ca3", "segmentIndex": 0, "channel": "inner_voice", "kind": "text", "content": "我觉得这个话题很有意思，想认真回应一下。"}
+{"type": "generation.segment.started", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "segmentId": "seg_64d6bb595b0a45a0b85b2f9930", "segmentIndex": 1, "channel": "public_reply", "kind": "text"}
+{"type": "generation.delta", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "segmentId": "seg_64d6bb595b0a45a0b85b2f9930", "segmentIndex": 1, "deltaSequence": 0, "delta": "你好！这是第一句话，回答你的问题。第二句话进一步补充说明。第三句话作为收尾，希望对你有所帮助。"}
 {"type": "typing", "typing": false}
 {"type": "state", "state": "speaking"}
-{"type": "generation.segment.completed", "generationId": "gen_abd0b852b7164e3fa0d04ba7ef", "segmentId": "seg_e9f3124942404d04aff19c7c2f", "segmentIndex": 1, "channel": "public_reply", "kind": "text", "content": "你好！"}
-{"type": "generation.completed", "generationId": "gen_abd0b852b7164e3fa0d04ba7ef", "messageId": "msg_b2661860200b4cf788159009a9", "channel": "public_reply", "finishReason": "stop", "usage": {"rounds": [{"model": "deepseek/deepseek-chat", "session_id": "default", "input_tokens": 12, "output_tokens": 18, "total_tokens": 30, "cached_tokens": 0, "reasoning_tokens": 0, "round_num": 0, "timestamp": "2026-08-04T00:30:21.171092+00:00"}], "turn_total": 30}, "model": "deepseek/deepseek-chat", "mood": "开心", "completeness": "complete"}
+{"type": "generation.segment.completed", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "segmentId": "seg_64d6bb595b0a45a0b85b2f9930", "segmentIndex": 1, "channel": "public_reply", "kind": "text", "content": "你好！"}
+{"type": "generation.segment.started", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "segmentId": "seg_4067b869efb24b3386def2150b", "segmentIndex": 2, "channel": "public_reply", "kind": "text"}
+{"type": "generation.segment.completed", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "segmentId": "seg_4067b869efb24b3386def2150b", "segmentIndex": 2, "channel": "public_reply", "kind": "text", "content": "这是第一句话，回答你的问题。"}
+{"type": "generation.segment.started", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "segmentId": "seg_faaa00a0e7964857adfca6cf3e", "segmentIndex": 3, "channel": "public_reply", "kind": "text"}
+{"type": "generation.segment.completed", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "segmentId": "seg_faaa00a0e7964857adfca6cf3e", "segmentIndex": 3, "channel": "public_reply", "kind": "text", "content": "第二句话进一步补充说明。"}
+{"type": "generation.segment.started", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "segmentId": "seg_b43c1a6385994bb8a630b18e73", "segmentIndex": 4, "channel": "public_reply", "kind": "text"}
+{"type": "generation.segment.completed", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "segmentId": "seg_b43c1a6385994bb8a630b18e73", "segmentIndex": 4, "channel": "public_reply", "kind": "text", "content": "第三句话作为收尾，希望对你有所帮助。"}
+{"type": "generation.completed", "generationId": "gen_3966287ef7ff4f7ba9f9b61b45", "messageId": "msg_9346cad7beae49bdae1d17e949", "channel": "public_reply", "finishReason": "stop", "usage": {"rounds": [{"model": "deepseek/deepseek-chat", "session_id": "default", "input_tokens": 12, "output_tokens": 18, "total_tokens": 30, "cached_tokens": 0, "reasoning_tokens": 0, "round_num": 0, "timestamp": "2026-08-04T07:15:46.572283+00:00"}], "turn_total": 30}, "model": "deepseek/deepseek-chat", "mood": "开心", "completeness": "complete"}
 {"type": "state", "state": "idle"}
