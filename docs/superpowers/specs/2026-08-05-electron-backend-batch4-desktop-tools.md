@@ -247,7 +247,8 @@ class DesktopToolBridge:
 ### 5.1 Desktop 客户端握手标识（D-l）
 
 - Electron Main 连 `/ws` 时带：`Authorization: Bearer <token>` + `X-Protocol-Version: 2` + **`X-Client-Platform: electron`**。
-- `ws_handler.handle_ws` 解析 platform 头 → `WebSocketChannel` 增 `client_platform: str = ""` 属性 → v2 + electron 连接：`await agent.desktop_bridge.on_client_connect(connection_id)`；断开（`finally`）→ `on_client_disconnect`。
+- `ws_handler.handle_ws` 解析 platform 头 → `WebSocketChannel` 增 `client_platform: str = ""` 属性 → v2 + electron 连接：`await agent.desktop_bridge.on_client_connect(connection_id)`（`connection_id = conn_<uuid4 hex[:12]>`）；断开（`finally`）→ `on_client_disconnect`。
+- **`connection_id` 下发（review 修正，附件持有者校验闭环）**：v2 electron 连接的 `server_info` 帧（`build_server_info`）携带 `connectionId`（= 握手生成的 conn_id）——Electron 据此填附件上传 `X-Client-Connection` 头（Task 8 §5.4 持有者校验②依赖；**不下发则 Electron 无法取得 conn_id、合法上传全被 403 拦截，端到端不可用**）。`ServerInfoMessage` 契约增可选 `connectionId` 字段；非 electron 连接恒省略。
 - **仅 v2 连接**处理 desktop 语义（v1 无 desktop 概念，忽略 platform 头）。
 
 ### 5.2 Server→Client：`tool.request`
