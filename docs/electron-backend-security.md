@@ -92,6 +92,12 @@ server {
 - `max_ws_connections`（默认 64）：并发 WS 上限，超限 503 `CONNECTION_LIMITED`；
 - 图片上传大小/类型沿用 `image_max_mb` / `image_allowed_types`（415 `INVALID_REQUEST` 映射）。
 
+### 3.1 受保护会话与数据完整性（批次 3 多会话）
+
+- **`default` 会话禁删**：`DELETE /api/sessions/default` → 409 `SESSION_PROTECTED`（`default` 恒存在且受保护，禁删含其 append-only 消息归档与 character_state）；
+- **忙时门禁**：生成/TTS 进行中 `activate`（WS/REST）或删除**活动会话** → 409 `AGENT_BUSY`（retryable），防 engine 换绑与异步延续竞态；
+- 会话 ID 未登记即被 v2 显式 `conversationId` 路由会 lazy-create——不碰 `default`，仅可能产生幽灵会话文档（Demo 可接受，后续批次可加白名单校验）。
+
 ## 4. 已知缺口（后置批次）
 
 | 缺口 | 后置 |

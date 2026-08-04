@@ -16,6 +16,16 @@
 | [experience.md](experience.md) | 开发经验记录（踩坑笔记） |
 | [sync-lessons.md](sync-lessons.md) | 文字/语音同步演进经验 |
 
+### Electron 后端联调
+| 文档 | 内容 |
+|------|------|
+| [electron-backend-baseline.md](electron-backend-baseline.md) | 后端协议基线（v1 现状，批次 0） |
+| [electron-backend-protocol-v2.md](electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + 错误码目录（批次 2/3） |
+| [electron-backend-security.md](electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性（批次 1/3） |
+| [electron-backend-progress.md](electron-backend-progress.md) | 后端改造进度（批次 0-3） |
+| [14-Cyrene-后端配合改造任务清单-v0.1.md](14-Cyrene-后端配合改造任务清单-v0.1.md) | Electron 后端配合改造任务清单（BE-001~081，状态图例） |
+| [15-Cyrene-后端改造执行上下文与Prompt-v0.1.md](15-Cyrene-后端改造执行上下文与Prompt-v0.1.md) | 后端改造执行上下文与 Prompt |
+
 ## 子目录
 
 | 目录 | 内容 |

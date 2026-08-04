@@ -158,6 +158,19 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `GET /api/generations/{gid}` | generation 详情（404 `GENERATION_NOT_FOUND`） |
 | `GET /api/sessions/{id}/pending` | **pending 查询**：pendingMessages（按会话）+ pendingApprovals（全局） |
 
-错误信封统一（code/message/retryable）；未知会话 404 `SESSION_NOT_FOUND`；缺 conversationId 的
-context 查询 400 `CONTRACT_VALIDATION`；非法时区 400 `INVALID_TIMEZONE`；全部匿名 401
-（`AGENT_ACCESS_TOKEN` 配置时）。
+错误信封统一（code/message/retryable/requestId）；全部匿名 401（`AGENT_ACCESS_TOKEN` 配置时）。
+
+### 9.1 错误码目录（批次 3）
+
+| code | HTTP | retryable | 场景 |
+|---|---|---|---|
+| `SESSION_NOT_FOUND` | 404 | false | 未知会话（activate/CRUD/history/resources/pending/generations） |
+| `GENERATION_NOT_FOUND` | 404 | false | 未知 generation 详情 |
+| `RESOURCE_NOT_FOUND` | 404 | false | 消息不存在（context 窗口锚点缺失） |
+| `INVALID_TIMEZONE` | 400 | false | 搜索时区非法（zoneinfo 无法解析） |
+| `CONTRACT_VALIDATION` | 400 | false | 缺 conversationId / clientRequestId 冲突 / 其他契约错误 |
+| `SESSION_PROTECTED` | 409 | false | 删除受保护会话 `default`（禁删守卫） |
+| `AGENT_BUSY` | 409 | true | 生成/TTS 进行中切换或删除活动会话（FSM 忙时门禁） |
+| `GENERATION_CANCELLED` | — | false | WS interrupt → `generation.failed{CANCELLED}` |
+
+**数据保护语义**：`DELETE /api/sessions/default` → 409 `SESSION_PROTECTED`（`default` 恒存在且受保护，禁删——含其 append-only 归档）；生成/TTS 进行中 `activate`/`delete` 活动会话 → 409 `AGENT_BUSY`。
