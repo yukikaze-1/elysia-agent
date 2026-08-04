@@ -16,6 +16,7 @@ from core.agent import Agent
 
 from core.input.ws_handler import handle_ws
 from core.input.api_routes import register_api_routes
+from core.input.session_routes import register_session_routes
 from core.input.debug_routes import register_debug_routes
 from frontend_contract.rest import ProtocolError
 
@@ -351,6 +352,7 @@ def create_app(
 
     # 子模块路由
     register_api_routes(app)
+    register_session_routes(app)
     register_debug_routes(app, _check_auth)
 
     # ---- 用户上传文件目录 ----

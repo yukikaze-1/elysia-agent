@@ -1,0 +1,625 @@
+"""业务 API 路由 — REST 会话路由（批次 3 BE-030/031/032 + BE-024）。
+
+多会话 CRUD、会话内历史/增量、消息上下文、搜索、资源索引、generation 状态、pending 查询。
+wire 字段统一 `conversationId`；`/api/sessions` 路径参数即 conversationId 值。
+全部走批次 1 产品认证（`AGENT_ACCESS_TOKEN`，由 server.py app 级中间件覆盖 /api/*）。
+"""
+
+import base64
+import logging
+import re
+import uuid
+from zoneinfo import ZoneInfo
+
+from aiohttp import web
+
+from core.input.api_routes import _archive_to_client, _archive_msg_to_contract
+from core.schema.message import MessageRole
+from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart
+from core.schema.utils import now_iso
+from frontend_contract import rest as rest_contract
+from frontend_contract.rest import ProtocolError
+
+logger = logging.getLogger(__name__)
+
+# 链接 URL 提取统一正则（spec §8 link 类别；url 即下载引用，缩略图生成延后 BE-071）。
+# 排除结尾标点/括号/引号，避免把句号吸收进 URL。
+_LINK_URL_RE = re.compile(r"https?://[^\s<>\"'（）()]+")
+
+_MAX_LIMIT = 100
+_RESOURCE_CATEGORIES = {"image", "link", "video", "audio", "file", "sticker"}
+
+# 资源扫描每批消息数（消息级扫描，非命中直接跳过；批次足够大避免过多往返）。
+_RESOURCE_SCAN_BATCH = 200
+
+
+# ── 统一错误信封（ProtocolError 形状，错误码目录稳定码） ──────────────────────
+
+
+def _error_response(code: str, message: str, status: int = 400) -> web.Response:
+    """构造统一错误信封响应（与 server.py 认证中间件同形状）。
+
+    Args:
+        code: 稳定错误码（SESSION_NOT_FOUND / GENERATION_NOT_FOUND / INVALID_TIMEZONE / CONTRACT_VALIDATION）。
+        message: 公开说明。
+        status: HTTP 状态码。
+
+    Returns:
+        web.Response: ProtocolError 信封 JSON。
+    """
+    env = ProtocolError(
+        code=code, message=message, retryable=False,
+        requestId=f"req_{uuid.uuid4().hex[:24]}", error=message,
+    ).wire_dict()
+    return web.json_response(env, status=status)
+
+
+# ── 参数解析 helpers ────────────────────────────────────────────────────────
+
+
+def _parse_limit(request: web.Request, default: int = 20, cap: int = _MAX_LIMIT) -> int:
+    """解析 limit 查询参数并夹取到 [1, cap]。非法值回退 default。"""
+    try:
+        limit = int(request.query.get("limit", str(default)))
+    except ValueError:
+        limit = default
+    return max(1, min(limit, cap))
+
+
+def _parse_int_param(request: web.Request, name: str, default: int) -> int:
+    """解析整数查询参数（before/after 窗口等）。非法值回退 default。"""
+    try:
+        return int(request.query.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _parse_resource_before(value: str | None) -> str | None:
+    """解析 resources `before` 游标：base64(_id) 或直接 _id 字符串。
+
+    spec §8：上页 cursor 可 base64(_id) 或原样 _id。24 位 hex 的原始 _id
+    经 base64 解码通常不是合法 utf-8（或非 24-hex），据此区分两种形态。
+    """
+    if not value:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(value.encode("ascii")).decode("utf-8")
+        if re.fullmatch(r"[0-9a-fA-F]{24}", decoded):
+            return decoded
+    except Exception:
+        pass
+    return value
+
+
+# ── 契约转换 helpers ────────────────────────────────────────────────────────
+
+
+def _to_contract_summary(s, active_id: str) -> rest_contract.SessionSummary:
+    """仓库 SessionSummary dataclass → 契约 SessionSummary（title 空时缺省省略）。"""
+    return rest_contract.SessionSummary(
+        conversationId=str(s.session_id),
+        title=(s.title or None),
+        messageCount=s.message_count,
+        updatedAt=s.updated_at,
+        active=(str(s.session_id) == str(active_id)),
+    )
+
+
+def _contract_messages(messages) -> list[rest_contract.Message]:
+    """core.schema.Message 列表 → 契约 Message 列表（逐条契约化，单条失败丢弃）。"""
+    client_msgs = _archive_to_client(messages)
+    return [m for m in (_archive_msg_to_contract(d) for d in client_msgs) if m]
+
+
+async def _session_summary(agent, sid: str, message_count: int) -> rest_contract.SessionSummary | None:
+    """构造单会话 SessionSummary：title/updatedAt 取 session doc（repo.list_all 匹配），
+    messageCount 用归档计数（消息总数，比会话窗口更准确）。
+
+    Returns:
+        契约 SessionSummary；会话不在 repo 列表时返回 None。
+    """
+    repo = getattr(agent, "session_repo", None)
+    active_id = getattr(agent, "active_session_id", "") or ""
+    if repo is None:
+        return None
+    try:
+        summaries = await repo.list_all()
+    except Exception as e:
+        logger.warning("session summary list_all 失败: %s", e)
+        return None
+    for s in summaries:
+        if str(s.session_id) == str(sid):
+            summary = _to_contract_summary(s, active_id)
+            summary.messageCount = message_count
+            return summary
+    return None
+
+
+# ── 会话存在性检查 ──────────────────────────────────────────────────────────
+
+
+async def _session_exists(agent, sid: str) -> bool:
+    """会话是否存在（直通 SessionManager.has_session，区分已知/未知会话）。"""
+    manager = getattr(agent, "session_manager", None)
+    if manager is None:
+        return False
+    try:
+        return await manager.has_session(sid)
+    except Exception as e:
+        logger.warning("has_session 失败 sid=%s: %s", sid, e)
+        return False
+
+
+def _generation_registry(agent):
+    """取 GenerationRegistry（agent.cognitive._generation_registry），缺失返回 None。"""
+    cognitive = getattr(agent, "cognitive", None)
+    return getattr(cognitive, "_generation_registry", None)  # noqa: SLF001
+
+
+# ── 文本/资源提取 helpers（spec §8） ────────────────────────────────────────
+
+
+def _message_text(msg) -> str:
+    """提取消息纯文本（TextPart.content 拼接；兼容 dict part）。"""
+    parts = getattr(msg, "content", None) or []
+    out = []
+    for p in parts:
+        if isinstance(p, TextPart):
+            out.append(p.content)
+        elif isinstance(p, dict) and p.get("type") == "text":
+            out.append(p.get("content", ""))
+    return "".join(out)
+
+
+def _extract_urls(text: str) -> list[str]:
+    """从文本提取链接 URL（统一正则 helper，spec §8 link）。去重保序。"""
+    return list(dict.fromkeys(_LINK_URL_RE.findall(text)))
+
+
+def _extract_from_message(msg, category: str) -> list[dict]:
+    """按类别从单条消息提取资源项（{kind, url} 列表）。
+
+    image → ImagePart.src；link → TextPart.content URL 正则；
+    video/audio/file → 对应 Part.src；sticker → 恒空（无 part 类型，批次 7 定）。
+    """
+    parts = getattr(msg, "content", None) or []
+    results: list[dict] = []
+    if category == "image":
+        for p in parts:
+            if isinstance(p, ImagePart) and getattr(p, "src", ""):
+                results.append({"kind": "image", "url": p.src})
+    elif category == "link":
+        for url in _extract_urls(_message_text(msg)):
+            results.append({"kind": "link", "url": url})
+    elif category == "video":
+        for p in parts:
+            if isinstance(p, VideoPart) and getattr(p, "src", ""):
+                results.append({"kind": "video", "url": p.src})
+    elif category == "audio":
+        for p in parts:
+            if isinstance(p, AudioPart) and getattr(p, "src", ""):
+                results.append({"kind": "audio", "url": p.src})
+    elif category == "file":
+        for p in parts:
+            if isinstance(p, FilePart) and getattr(p, "src", ""):
+                results.append({"kind": "file", "url": p.src})
+    return results
+
+
+async def _scan_resources(message_repo, session_id: str, category: str,
+                          before: str | None, limit: int) -> tuple[list[dict], bool, str | None]:
+    """按需扫描归档提取资源（spec §8 分页）。
+
+    从 `before` 继续按 _id 倒序扫描，跳过不含目标类别 part 的消息，收集命中项
+    直到凑够 limit；随后**额外 peek** 一条命中项判定 has_more（peek 不到 = 无更多）。
+
+    cursor 语义（避免数据丢失）：cursor = 本页**最后一条命中项**所在消息的 _id
+    （即 limit-th hit，而非 peek 命中项——若指到 peek 命中项，下页 before 会把它
+    排除掉导致该资源永久丢失）。下页回传为 before 后从 limit-th hit 之后继续，
+    peek 命中项会在下页被正常返回。凑不够 limit（已扫到末尾）→ 无更多，cursor 缺省。
+
+    Returns:
+        (资源项 dict 列表, has_more, 下一页游标 _id)。
+    """
+    items: list[dict] = []
+    last_returned_id: str | None = None
+    scan_before = before
+
+    # 阶段一：收集命中项直到凑够 limit
+    while len(items) < limit:
+        msgs, _ = await message_repo.query_page(session_id, before=scan_before,
+                                                limit=_RESOURCE_SCAN_BATCH)
+        if not msgs:
+            break
+        for msg in msgs:
+            doc_id = msg.metadata.get("_mongo_id")
+            if not doc_id:
+                continue
+            scan_before = doc_id
+            for res in _extract_from_message(msg, category):
+                items.append({
+                    "messageId": str(msg.message_id),
+                    "timestamp": str(msg.timestamp),
+                    "kind": res["kind"],
+                    "url": res["url"],
+                })
+                if len(items) >= limit:
+                    last_returned_id = doc_id
+                    break
+            if len(items) >= limit:
+                break
+    if len(items) < limit:
+        # 未凑够 limit → 已扫到会话末尾，无更多命中
+        return items, False, None
+
+    # 阶段二：peek 一条命中项判定 has_more（只探不收集）
+    has_more = False
+    peek_before = scan_before
+    while True:
+        msgs, _ = await message_repo.query_page(session_id, before=peek_before,
+                                                limit=_RESOURCE_SCAN_BATCH)
+        if not msgs:
+            break
+        for msg in msgs:
+            peek_before = msg.metadata.get("_mongo_id")
+            if not peek_before:
+                continue
+            if _extract_from_message(msg, category):
+                has_more = True
+                break
+        if has_more:
+            break
+    return items, has_more, last_returned_id
+
+
+# ── 会话 CRUD（spec §4） ────────────────────────────────────────────────────
+
+
+async def sessions_list_handler(request: web.Request) -> web.Response:
+    """GET /api/sessions — 会话列表（cursor/limit/search，search 仅 title 大小写不敏感）。"""
+    agent = request.app["agent"]
+    cursor = request.query.get("cursor", "").strip() or None
+    search = request.query.get("search", "").strip()
+    limit = _parse_limit(request, default=50)
+    manager = agent.session_manager
+    items, has_more, next_cursor = await manager.list(cursor=cursor, limit=limit, search=search)
+    summaries = [_to_contract_summary(s, manager.active_id) for s in items]
+    resp = rest_contract.SessionListResult(
+        sessions=summaries, has_more=has_more, cursor=next_cursor)
+    return web.json_response(resp.wire_dict())
+
+
+async def sessions_create_handler(request: web.Request) -> web.Response:
+    """POST /api/sessions — 创建空会话（conv_<uuid4 hex[:12]>，title 可空）。"""
+    agent = request.app["agent"]
+    try:
+        body = await request.json()
+    except Exception:
+        return _error_response("CONTRACT_VALIDATION", "无效的 JSON 请求体")
+    title = body.get("title")
+    if title is not None and not isinstance(title, str):
+        return _error_response("CONTRACT_VALIDATION", "title 必须是字符串")
+    summary = await agent.session_manager.create(title=title or "")
+    resp = _to_contract_summary(summary, agent.active_session_id)
+    return web.json_response(resp.wire_dict())
+
+
+async def sessions_detail_handler(request: web.Request) -> web.Response:
+    """GET /api/sessions/{conversationId} — 会话详情（summary + 第一页消息 + active）。"""
+    agent = request.app["agent"]
+    sid = request.match_info["conversationId"]
+    if not await _session_exists(agent, sid):
+        return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
+    total = await agent.message_repo.count_by_session(sid)
+    summary = await _session_summary(agent, sid, total)
+    if summary is None:
+        # has_session 通过但 list_all 未命中（Mongo 离线等极端场景）→ 兜底空摘要
+        summary = rest_contract.SessionSummary(
+            conversationId=sid, messageCount=total, updatedAt="",
+            active=(str(sid) == str(agent.active_session_id)))
+    messages, _ = await agent.message_repo.query_page(sid, limit=20)
+    resp = rest_contract.SessionDetail(
+        session=summary, messages=_contract_messages(messages), active=summary.active)
+    return web.json_response(resp.wire_dict())
+
+
+async def sessions_rename_handler(request: web.Request) -> web.Response:
+    """PATCH /api/sessions/{conversationId} — 重命名（title 非空才写；空串清除）。"""
+    agent = request.app["agent"]
+    sid = request.match_info["conversationId"]
+    if not await _session_exists(agent, sid):
+        return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
+    try:
+        body = await request.json()
+    except Exception:
+        return _error_response("CONTRACT_VALIDATION", "无效的 JSON 请求体")
+    title = body.get("title")
+    if title is None or not isinstance(title, str):
+        return _error_response("CONTRACT_VALIDATION", "缺少 title 或类型错误")
+    await agent.session_manager.rename(sid, title)
+    total = await agent.message_repo.count_by_session(sid)
+    summary = await _session_summary(agent, sid, total)
+    if summary is None:
+        return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
+    return web.json_response(summary.wire_dict())
+
+
+async def sessions_delete_handler(request: web.Request) -> web.Response:
+    """DELETE /api/sessions/{conversationId} — 删除（联动归档清理 + active 回落 default）。"""
+    agent = request.app["agent"]
+    sid = request.match_info["conversationId"]
+    if not await _session_exists(agent, sid):
+        return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
+    deleted = await agent.session_manager.delete(sid)
+    return web.json_response({"ok": True, "deleted": deleted})
+
+
+async def sessions_activate_handler(request: web.Request) -> web.Response:
+    """POST /api/sessions/{conversationId}/activate — 仅切 active（回放走 WS activate_session）。"""
+    agent = request.app["agent"]
+    sid = request.match_info["conversationId"]
+    if not await _session_exists(agent, sid):
+        return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
+    await agent.switch_session(sid)
+    resp = rest_contract.SessionActivateResult(activeConversationId=str(sid))
+    return web.json_response(resp.wire_dict())
+
+
+# ── 会话内历史（spec §5.1） ─────────────────────────────────────────────────
+
+
+async def sessions_messages_handler(request: web.Request) -> web.Response:
+    """GET /api/sessions/{conversationId}/messages — 历史分页（before/limit）或增量（after=）。"""
+    agent = request.app["agent"]
+    sid = request.match_info["conversationId"]
+    if not await _session_exists(agent, sid):
+        return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
+    limit = _parse_limit(request, default=50, cap=200)
+    after = request.query.get("after", "").strip() or None
+    if after:
+        messages, has_more = await agent.message_repo.query_after(sid, after, limit=limit)
+    else:
+        before = request.query.get("before", "").strip() or None
+        messages, has_more = await agent.message_repo.query_page(sid, before=before, limit=limit)
+    total = await agent.message_repo.count_by_session(sid)
+    resp = rest_contract.MessagesPageResponse(
+        messages=_contract_messages(messages), has_more=has_more, total=total)
+    return web.json_response(resp.wire_dict())
+
+
+# ── 消息上下文窗口（spec §5.2） ─────────────────────────────────────────────
+
+
+async def message_context_handler(request: web.Request) -> web.Response:
+    """GET /api/messages/{messageId}/context — 锚点消息前后窗口（conversationId 必填）。"""
+    agent = request.app["agent"]
+    mid = request.match_info["messageId"]
+    conversation_id = request.query.get("conversationId", "").strip()
+    if not conversation_id:
+        return _error_response("CONTRACT_VALIDATION", "缺少 conversationId")
+    before_n = _parse_int_param(request, "before", 5)
+    after_n = _parse_int_param(request, "after", 5)
+    anchor, pre, post = await agent.message_repo.find_context(
+        conversation_id, mid, before=before_n, after=after_n)
+    if anchor is None:
+        return _error_response("SESSION_NOT_FOUND", f"消息不存在: {mid}", 404)
+    anchor_msgs = _contract_messages([anchor])
+    if not anchor_msgs:
+        return _error_response("SESSION_NOT_FOUND", f"消息契约化失败: {mid}", 404)
+    resp = rest_contract.MessageContextResponse(
+        anchor=anchor_msgs[0],
+        before=_contract_messages(pre),
+        after=_contract_messages(post),
+        conversationId=conversation_id,
+    )
+    return web.json_response(resp.wire_dict())
+
+
+# ── 搜索（spec §5.3） ────────────────────────────────────────────────────────
+
+
+async def search_messages_handler(request: web.Request) -> web.Response:
+    """GET /api/search/messages — 组合过滤 + keyset 分页搜索。"""
+    agent = request.app["agent"]
+    query = request.query.get("query", "").strip()
+    conversation_id = request.query.get("conversationId", "").strip() or None
+    date_from = request.query.get("date_from", "").strip() or None
+    date_to = request.query.get("date_to", "").strip() or None
+    tz_name = request.query.get("timezone", "UTC").strip() or "UTC"
+    category = request.query.get("category", "").strip() or None
+    cursor = request.query.get("cursor", "").strip() or None
+    limit = _parse_limit(request, default=20, cap=100)
+
+    # 时区校验：仅日期过滤时 zoneinfo 参与；未知时区 → 400 INVALID_TIMEZONE
+    # （query_search 内部吞掉异常返回空，故在调用前显式校验）。
+    if date_from or date_to:
+        try:
+            ZoneInfo(tz_name)
+        except Exception:
+            return _error_response("INVALID_TIMEZONE", f"未知时区: {tz_name}")
+
+    messages, has_more, next_cursor = await agent.message_repo.query_search(
+        session_id=conversation_id, query=query, date_from=date_from,
+        date_to=date_to, timezone=tz_name, category=category, cursor=cursor, limit=limit)
+
+    registry = _generation_registry(agent)
+    items = []
+    for msg in messages:
+        role = getattr(msg, "role", None)
+        # 契约 SearchMessageItem.role 只认 user/assistant（tool 角色无对应模型值）
+        if role not in (MessageRole.USER, MessageRole.ASSISTANT):
+            continue
+        response_id = None
+        message_id = getattr(msg, "message_id", None)
+        if registry is not None and message_id:
+            gen = await registry.find_by_message(str(message_id))
+            if gen:
+                response_id = gen.get("generation_id")
+        items.append(rest_contract.SearchMessageItem(
+            conversationId=str(getattr(msg, "session_id", "")),
+            messageId=str(message_id),
+            responseId=response_id,
+            segmentId=None,
+            role=role.value if hasattr(role, "value") else str(role),
+            timestamp=str(msg.timestamp),
+            snippet=_message_text(msg)[:100],
+        ).wire_dict())
+    resp = rest_contract.SearchMessagesResponse(
+        items=items, has_more=has_more, cursor=next_cursor)
+    return web.json_response(resp.wire_dict())
+
+
+# ── 资源索引（spec §8） ─────────────────────────────────────────────────────
+
+
+async def sessions_resources_handler(request: web.Request) -> web.Response:
+    """GET /api/sessions/{conversationId}/resources — 按需扫描资源索引。"""
+    agent = request.app["agent"]
+    sid = request.match_info["conversationId"]
+    if not await _session_exists(agent, sid):
+        return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
+    category = request.query.get("category", "").strip()
+    if category == "text":
+        # 非资源类：text 走搜索，不作为资源类别
+        return _error_response("CONTRACT_VALIDATION", "不支持的资源类别: text（走搜索）")
+    if category not in _RESOURCE_CATEGORIES:
+        return _error_response("CONTRACT_VALIDATION", f"不支持的资源类别: {category or '(空)'}")
+    if category == "sticker":
+        # 第一版恒空（无 part 类型，批次 7 定）
+        resp = rest_contract.ResourceListResponse(items=[], has_more=False, cursor=None)
+        return web.json_response(resp.wire_dict())
+    before = _parse_resource_before(request.query.get("before", "").strip() or None)
+    limit = _parse_limit(request, default=20)
+    items, has_more, cursor = await _scan_resources(agent.message_repo, sid, category, before, limit)
+    resources = [rest_contract.ResourceItem(**it) for it in items]
+    resp = rest_contract.ResourceListResponse(items=resources, has_more=has_more, cursor=cursor)
+    return web.json_response(resp.wire_dict())
+
+
+# ── generation 状态（spec §7.2） ────────────────────────────────────────────
+
+
+def _generation_status(doc: dict) -> rest_contract.GenerationStatus:
+    """generation 存储文档 → 契约 GenerationStatus（防御归一 finishReason/error）。
+
+    loop 侧对 failed 存 finish_reason="error"、error 为 str（非契约形状），
+    此处归一：finishReason 只透传 stop/tool_calls，error 非 dict 时包装为信封。
+    """
+    finish_reason = doc.get("finish_reason") or None
+    if finish_reason not in ("stop", "tool_calls"):
+        finish_reason = None
+    err = doc.get("error")
+    if isinstance(err, dict):
+        error = err
+    elif err is not None:
+        error = {"message": str(err), "retryable": False}
+    else:
+        error = None
+    return rest_contract.GenerationStatus(
+        generationId=doc.get("generation_id", ""),
+        conversationId=doc.get("session_id", ""),
+        messageId=doc.get("message_id", ""),
+        userMessageId=doc.get("user_message_id", ""),
+        status=doc.get("status", "running"),
+        model=doc.get("model") or None,
+        finishReason=finish_reason,
+        error=error,
+        createdAt=doc.get("created_at", ""),
+        finishedAt=doc.get("finished_at") or None,
+    )
+
+
+async def sessions_generations_handler(request: web.Request) -> web.Response:
+    """GET /api/sessions/{conversationId}/generations — generation 列表（status/cursor/limit）。"""
+    agent = request.app["agent"]
+    sid = request.match_info["conversationId"]
+    if not await _session_exists(agent, sid):
+        return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
+    status = request.query.get("status", "").strip() or None
+    cursor = request.query.get("cursor", "").strip() or None
+    limit = _parse_limit(request, default=20, cap=100)
+    registry = _generation_registry(agent)
+    if registry is None:
+        resp = rest_contract.GenerationListResponse(generations=[], has_more=False, cursor=None)
+        return web.json_response(resp.wire_dict())
+    docs, has_more, next_cursor = await registry.query_by_session(
+        sid, status=status, cursor=cursor, limit=limit)
+    generations = [_generation_status(d) for d in docs]
+    resp = rest_contract.GenerationListResponse(
+        generations=generations, has_more=has_more, cursor=next_cursor)
+    return web.json_response(resp.wire_dict())
+
+
+async def generation_detail_handler(request: web.Request) -> web.Response:
+    """GET /api/generations/{generationId} — generation 详情（未知 → 404 GENERATION_NOT_FOUND）。"""
+    agent = request.app["agent"]
+    gid = request.match_info["generationId"]
+    registry = _generation_registry(agent)
+    if registry is not None:
+        doc = await registry.get(gid)
+    else:
+        doc = None
+    if doc is None:
+        return _error_response("GENERATION_NOT_FOUND", f"generation 不存在: {gid}", 404)
+    return web.json_response(_generation_status(doc).wire_dict())
+
+
+# ── pending 查询（spec §7.3） ───────────────────────────────────────────────
+
+
+async def sessions_pending_handler(request: web.Request) -> web.Response:
+    """GET /api/sessions/{conversationId}/pending — pending 消息（按会话）+ 审批（全局）。"""
+    agent = request.app["agent"]
+    sid = request.match_info["conversationId"]
+    if not await _session_exists(agent, sid):
+        return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
+
+    pending_msgs = []
+    for pm in getattr(agent, "pending_messages", None) or []:
+        # 按会话过滤；conversation_id=None（v1/未归属）视为活动会话 best-effort
+        if pm.conversation_id is not None and str(pm.conversation_id) != str(sid):
+            continue
+        message_id = getattr(pm, "message_id", None)
+        if not message_id:
+            continue  # 未预分配 message_id 的排队消息无稳定 ID，跳过
+        # _PendingMessage 无创建时间戳字段 → createdAt 用查询时刻（best-effort）
+        pending_msgs.append(rest_contract.PendingMessageItem(
+            messageId=str(message_id),
+            snippet=(getattr(pm, "text", "") or "")[:50],
+            createdAt=now_iso(),
+        ))
+
+    approvals = []
+    tool_manager = getattr(getattr(agent, "tool_adapter", None), "_manager", None)  # noqa: SLF001
+    if tool_manager is not None and hasattr(tool_manager, "get_pending_approvals"):
+        try:
+            for request_id, tool, params in tool_manager.get_pending_approvals():
+                approvals.append(rest_contract.PendingApprovalItem(
+                    requestId=str(request_id), tool=str(tool),
+                    params=dict(params) if isinstance(params, dict) else {}))
+        except Exception as e:
+            logger.debug("get_pending_approvals 失败: %s", e)
+
+    resp = rest_contract.PendingQueryResponse(
+        pendingMessages=pending_msgs, pendingApprovals=approvals)
+    return web.json_response(resp.wire_dict())
+
+
+# ── 注册 ────────────────────────────────────────────────────────────────────
+
+
+def register_session_routes(app: web.Application) -> None:
+    """注册全部 REST 会话路由到 aiohttp Application（走 app 级产品认证中间件）。"""
+    app.router.add_get("/api/sessions", sessions_list_handler)
+    app.router.add_post("/api/sessions", sessions_create_handler)
+    app.router.add_get("/api/sessions/{conversationId}", sessions_detail_handler)
+    app.router.add_patch("/api/sessions/{conversationId}", sessions_rename_handler)
+    app.router.add_delete("/api/sessions/{conversationId}", sessions_delete_handler)
+    app.router.add_post("/api/sessions/{conversationId}/activate", sessions_activate_handler)
+    app.router.add_get("/api/sessions/{conversationId}/messages", sessions_messages_handler)
+    app.router.add_get("/api/sessions/{conversationId}/resources", sessions_resources_handler)
+    app.router.add_get("/api/sessions/{conversationId}/generations", sessions_generations_handler)
+    app.router.add_get("/api/sessions/{conversationId}/pending", sessions_pending_handler)
+    app.router.add_get("/api/messages/{messageId}/context", message_context_handler)
+    app.router.add_get("/api/search/messages", search_messages_handler)
+    app.router.add_get("/api/generations/{generationId}", generation_detail_handler)
