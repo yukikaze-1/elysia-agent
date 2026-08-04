@@ -63,24 +63,47 @@ class TokenTracker:
         self.per_model: dict[str, int] = {}
         self.current_turn_usages: list[TokenUsage] = []
 
+        # 批次 3（multi-session）：按会话累计。session_total 保持普通 int 属性，
+        # record 时同步为最近记录会话累计（debug/info.py、runtime_config 既有读取不破）。
+        self._session_totals: dict[SessionId, int] = {}
+        self._session_models: dict[SessionId, dict[str, int]] = {}
+        self._last_recorded_session: SessionId | None = None
+
     def start_turn(self) -> None:
         """新一轮用户对话开始前清空 turn 缓存。"""
         self.current_turn_usages.clear()
 
-    async def record(self, usage: dict, model: str, round_num: int) -> None:
+    async def record(
+        self,
+        usage: dict,
+        model: str = None,
+        round_num: int = None,
+        session_id: SessionId = None,
+    ) -> None:
         """记录一次 API 调用的 token 消耗。
 
         每轮 LLM 调用完成后由 CognitiveLoop 调用一次。
         自动完成：内存累计、WS 广播、持久化。
+        session_id 缺省 → 沿用实例 self.session_id。
+        批次 3（multi-session）：累计 _session_totals，并同步 session_total
+        为最近记录会话累计（保留普通属性，内部 += 写点不动）。
         """
+        sid = session_id if session_id is not None else self.session_id
         u = TokenUsage.from_api(
-            usage, model=model, session_id=self.session_id, round_num=round_num,
+            usage, model=model, session_id=sid, round_num=round_num,
         )
 
         # 1. 内存累计
         self.session_total += u.total_tokens
         self.per_model[model] = self.per_model.get(model, 0) + u.total_tokens
         self.current_turn_usages.append(u)
+
+        # 1b. 按会话累计；session_total 同步为最近记录会话累计
+        self._session_totals[sid] = self._session_totals.get(sid, 0) + u.total_tokens
+        session_models = self._session_models.setdefault(sid, {})
+        session_models[model] = session_models.get(model, 0) + u.total_tokens
+        self._last_recorded_session = sid
+        self.session_total = self._session_totals[sid]
 
         # 2. WS 广播（前端实时更新）
         await self._output.token_usage({
@@ -97,25 +120,29 @@ class TokenTracker:
         # 3. 持久化
         await self._persist(u)
 
-    async def get_session_stats(self) -> dict:
-        """获取当前 session 的 token 统计（用于前端重连恢复）。
+    async def get_session_stats(self, session_id: SessionId = None) -> dict:
+        """获取指定 session 的 token 统计（用于前端重连恢复）。
 
-        优先从 MongoDB 查询，补充 pending 文件中当前 session 的数据。
+        session_id 缺省 → 最近记录会话（兼容 ws_handler.py 零参调用）。
+        优先从 MongoDB 查询，补充 pending 文件中对应 session 的数据。
         如果 MongoDB 不可用，返回内存数据。
         """
+        sid = session_id if session_id is not None else (
+            self._last_recorded_session or self.session_id
+        )
         if self._repo is not None:
             try:
-                per_model = await self._repo.total_tokens_by_model(self.session_id)
+                per_model = await self._repo.total_tokens_by_model(sid)
                 session_total = sum(per_model.values())
 
-                # 补充 pending 文件中当前 session 的数据
+                # 补充 pending 文件中该 session 的数据
                 if os.path.exists(self._pending_file):
                     with open(self._pending_file) as f:
                         for line in f:
                             if not line.strip():
                                 continue
                             r = json.loads(line)
-                            if r.get("session_id") == self.session_id:
+                            if r.get("session_id") == sid:
                                 m = r["model"]
                                 per_model[m] = per_model.get(m, 0) + r["total_tokens"]
                                 session_total += r["total_tokens"]
@@ -132,7 +159,12 @@ class TokenTracker:
                 # pending 文件读取/解析失败 → 回退内存数据，留 warning 可见
                 logger.warning("get_session_stats 读取失败，回退内存数据",
                                exc_info=True)
-        return {"total": self.session_total, "by_model": dict(self.per_model)}
+        # 内存回退：按会话取；该会话无记录 → 回退最近会话/当前会话累计
+        total = self._session_totals.get(sid, self.session_total)
+        per_model = self._session_models.get(sid)
+        if per_model is None:
+            per_model = dict(self.per_model)
+        return {"total": total, "by_model": dict(per_model)}
 
     async def flush_pending(self) -> None:
         """将本地 pending 文件中的数据批量导入 MongoDB，成功后删除文件。

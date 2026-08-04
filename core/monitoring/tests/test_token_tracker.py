@@ -351,6 +351,80 @@ class TestTokenTracker:
             os.unlink(tracker._pending_file)
 
 
+    # ── 批次 3 multi-session：会话感知 ────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_record_per_session_totals_independent(self, tracker):
+        """不同 session_id 的记录累计相互独立，get_session_stats(sid) 按会话返回。"""
+        await tracker.record(
+            usage={"input_tokens": 800, "output_tokens": 200, "total_tokens": 1000},
+            model="deepseek/deepseek-chat", round_num=0, session_id="a",
+        )
+        await tracker.record(
+            usage={"input_tokens": 100, "output_tokens": 100, "total_tokens": 200},
+            model="deepseek/deepseek-chat", round_num=0, session_id="a",
+        )
+        await tracker.record(
+            usage={"input_tokens": 50, "output_tokens": 50, "total_tokens": 100},
+            model="deepseek/deepseek-chat", round_num=0, session_id="b",
+        )
+        stats_a = await tracker.get_session_stats("a")
+        stats_b = await tracker.get_session_stats("b")
+        assert stats_a["total"] == 1200
+        assert stats_b["total"] == 100
+        # 独立：b 的累计不影响 a
+        assert stats_a["by_model"]["deepseek/deepseek-chat"] == 1200
+        assert stats_b["by_model"]["deepseek/deepseek-chat"] == 100
+
+    @pytest.mark.asyncio
+    async def test_session_total_attribute_syncs_to_recent_session(self, tracker):
+        """session_total 保持普通 int 属性，record 后同步为最近记录会话累计。
+
+        debug/info.py（tracker.session_total）与 runtime_config（getattr+除0）读取方式不破。
+        """
+        await tracker.record(
+            usage={"input_tokens": 800, "output_tokens": 200, "total_tokens": 1000},
+            model="m", round_num=0, session_id="a",
+        )
+        await tracker.record(
+            usage={"input_tokens": 50, "output_tokens": 50, "total_tokens": 100},
+            model="m", round_num=0, session_id="b",
+        )
+        assert isinstance(tracker.session_total, int)  # 普通属性可读
+        assert tracker.session_total == 100  # 最近记录会话 = b
+        total = getattr(tracker, "session_total", 0)  # runtime_config 读取模式
+        assert total == 100
+
+    @pytest.mark.asyncio
+    async def test_get_session_stats_zero_arg_uses_recent_session(self, tracker):
+        """get_session_stats() 零参（ws_handler.py:98）与 get_session_stats(None) 返回最近记录会话。"""
+        await tracker.record(
+            usage={"input_tokens": 800, "output_tokens": 200, "total_tokens": 1000},
+            model="m", round_num=0, session_id="a",
+        )
+        await tracker.record(
+            usage={"input_tokens": 50, "output_tokens": 50, "total_tokens": 100},
+            model="m", round_num=0, session_id="b",
+        )
+        stats_zero = await tracker.get_session_stats()
+        stats_none = await tracker.get_session_stats(None)
+        assert stats_zero["total"] == 100
+        assert stats_none["total"] == 100
+        assert stats_zero["by_model"] == {"m": 100}
+
+    @pytest.mark.asyncio
+    async def test_record_default_session_id_falls_back_to_self(self, tracker):
+        """record 不传 session_id 时沿用实例 self.session_id。"""
+        await tracker.record(
+            usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+            model="m", round_num=0,
+        )
+        assert tracker._session_totals[tracker.session_id] == 15
+        stats = await tracker.get_session_stats()
+        assert stats["total"] == 15
+        assert stats["by_model"] == {"m": 15}
+
+
 @pytest.mark.unit
 class TestTokenTrackerClearAll:
     @pytest.mark.asyncio
