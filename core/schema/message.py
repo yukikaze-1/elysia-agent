@@ -47,6 +47,8 @@ class AssistantMessage(BaseModel):
     block_index: dict[str, list[int]] | None = None  # {"markdown": [3,7], "code": [1]}
     inner_voice: str | None = None
     token_usage: TokenUsageSummary | None = None
+    # 批次 3（multi-session）：可选归属会话 ID，空串 = 未归属（对齐 UserMessage）
+    session_id: SessionId = SessionId("")
     metadata: dict = Field(default_factory=dict)
 
 
@@ -63,6 +65,8 @@ class ToolResultMessage(BaseModel):
     truncated: bool = False
     message_id: MessageId = Field(default=MessageId(""))
     timestamp: IsoTimestamp = Field(default_factory=now_iso)
+    # 批次 3（multi-session）：可选归属会话 ID，空串 = 未归属（对齐 UserMessage）
+    session_id: SessionId = SessionId("")
     metadata: dict = Field(default_factory=dict)
 
 

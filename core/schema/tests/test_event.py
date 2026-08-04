@@ -74,6 +74,17 @@ class TestUserInputData:
         assert d.emotion == ""
         assert d.events == []
 
+    def test_default_conversation_id_none(self):
+        """批次 3：conversation_id 默认 None。"""
+        d = UserInputData(text="hi", user_name="妖梦", request_id="r1")
+        assert d.conversation_id is None
+
+    def test_conversation_id_round_trip(self):
+        """批次 3：conversation_id 可填值 round-trip。"""
+        d = UserInputData(text="hi", user_name="妖梦", request_id="r1",
+                          conversation_id="sess-9")
+        assert d.conversation_id == "sess-9"
+
 
 @pytest.mark.unit
 class TestSystemTickData:

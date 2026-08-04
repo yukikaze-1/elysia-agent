@@ -21,6 +21,22 @@ class TestPendingMessage:
                               content=content)
         assert msg.content == content
 
+    def test_default_conversation_id_none(self):
+        """批次 3：conversation_id 默认 None。"""
+        msg = _PendingMessage(text="hello", user_name="test", request_id="req-1")
+        assert msg.conversation_id is None
+
+    def test_with_conversation_id_does_not_break_construction(self):
+        """批次 3：带 conversation_id 构造不破坏现有字段。"""
+        content = [{"type": "text", "content": "hi"}]
+        msg = _PendingMessage(text="hello", user_name="test", request_id="req-1",
+                              content=content, message_id="msg-1",
+                              conversation_id="sess-9")
+        assert msg.conversation_id == "sess-9"
+        assert msg.text == "hello"
+        assert msg.content == content
+        assert msg.message_id == "msg-1"
+
 
 class TestBackgroundTaskEntry:
     def test_fields(self):

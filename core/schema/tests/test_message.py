@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 from core.schema.message import MessageRole, UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.part import TextPart
-from core.schema.types import MessageId, ToolCallId
+from core.schema.types import MessageId, SessionId, ToolCallId
 from core.schema.error_type import ErrorType
 
 
@@ -115,6 +115,24 @@ class TestAssistantMessage:
         )
         assert msg.block_index == {"markdown": [0], "code": []}
 
+    def test_default_session_id_empty(self):
+        """批次 3：session_id 默认空串（对齐 UserMessage）。"""
+        msg = AssistantMessage(
+            content=[TextPart(content="hi")],
+            message_id=MessageId("msg-s1"),
+        )
+        assert msg.session_id == ""
+
+    def test_session_id_round_trip(self):
+        """批次 3：session_id 可填值 round-trip。"""
+        msg = AssistantMessage(
+            content=[TextPart(content="hi")],
+            message_id=MessageId("msg-s2"),
+            session_id=SessionId("sess-42"),
+        )
+        assert msg.session_id == "sess-42"
+        assert isinstance(msg.session_id, str)
+
 
 @pytest.mark.unit
 class TestToolResultMessage:
@@ -146,3 +164,23 @@ class TestToolResultMessage:
         assert msg.success is False
         assert msg.error == "request timed out"
         assert msg.error_type == ErrorType.TIMEOUT
+
+    def test_default_session_id_empty(self):
+        """批次 3：ToolResultMessage.session_id 默认空串。"""
+        msg = ToolResultMessage(
+            content=[TextPart(content="done")],
+            tool_call_id=ToolCallId("call_003"),
+            tool_name="web_search",
+        )
+        assert msg.session_id == ""
+
+    def test_session_id_round_trip(self):
+        """批次 3：ToolResultMessage.session_id 可填值 round-trip。"""
+        msg = ToolResultMessage(
+            content=[TextPart(content="done")],
+            tool_call_id=ToolCallId("call_004"),
+            tool_name="web_search",
+            session_id=SessionId("sess-42"),
+        )
+        assert msg.session_id == "sess-42"
+        assert isinstance(msg.session_id, str)
