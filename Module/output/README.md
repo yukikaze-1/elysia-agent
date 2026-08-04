@@ -80,6 +80,25 @@ await mgr.send(ChatMessage(role="Elysia", content="你好"))
 ### OutputManager
 
 - `add_channel(ch)` / `remove_channel(ch)` — 管理通道
+- `_broadcast(method, ...)` / `_filter(channels, capability)` — 能力过滤广播
+
+#### 批次 2 v2 版本感知统一回合事件
+
+`OutputManager` 提供统一回合事件方法，按 `channel.protocol_version` 分发（单一语义源、双 wire 呈现）：
+
+| 方法 | v1 通道 | v2 通道 |
+|---|---|---|
+| `turn_started(ctx)` | 无新增 | `generation.started` |
+| `segment_started(ctx)` | 无 | `generation.segment.started` |
+| `text_delta(text, ctx)` | `delta` | `generation.delta` |
+| `segment_completed(text, ctx, tts_active)` | TTS 关→`message:""` | `generation.segment.completed`（无活动段不发） |
+| `inner_voice(text, ctx)` | `command inner_voice` | inner_voice 段 |
+| `mood(expr, intensity)` | `expression` | 捕获不发 |
+| `turn_completed(...)` | NO-OP（token_usage 已实时广播） | `generation.completed` |
+| `turn_failed(code, msg, retryable, label, ctx)` | `❌` delta + `message:""` | `generation.failed` |
+| `turn_cancelled(ctx)` | 不发 | `generation.failed{CANCELLED}` |
+
+`token_usage(data)` 对 v2 抑制（usage 由 `generation.completed.usage` 承载）。详见 [docs/electron-backend-protocol-v2.md](../../docs/electron-backend-protocol-v2.md)。
 - `stream(deltas, finalize, *, channels, capability)` — 流式，广播 delta + 最终消息
 - `send(msg, *, channels, capability)` — 非流式完整消息
 - `typing(typing, *, ...)` — 便捷方法，自动路由到 TYPING channel

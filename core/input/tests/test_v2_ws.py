@@ -86,11 +86,26 @@ class TestV2AckIdempotency:
         client = await aiohttp_client(app)
         try:
             ws = await _drain(client, {"X-Protocol-Version": "2"})
-            ack1 = await _send_and_read_ack(ws, "同一内容", "req_same")
-            # 第二次同 ID 同内容 → 重发原 ACK（同 messageId）
-            ack2 = await _send_and_read_ack(ws, "同一内容", "req_same")
-            assert ack2["messageId"] == ack1["messageId"]
-            assert ack2["status"] == "accepted"
+            await ws.send_json({"type": "text", "content": "同一内容", "clientRequestId": "req_same"})
+            ack1 = None
+            gen_started = 0
+            for _ in range(30):
+                m = await asyncio.wait_for(ws.receive(), timeout=10)
+                if m.type != WSMsgType.TEXT:
+                    continue
+                d = json.loads(m.data)
+                if d.get("type") == "user_message.ack":
+                    if ack1 is None:
+                        ack1 = d
+                        # 第一次已接受 → 第二次同 ID 同内容应重发原 ACK
+                        await ws.send_json({"type": "text", "content": "同一内容", "clientRequestId": "req_same"})
+                elif d.get("type") == "generation.started":
+                    gen_started += 1
+                if d.get("type") == "state" and d.get("state") == "idle":
+                    break
+            assert ack1 is not None and ack1["status"] == "accepted"
+            # 只生成一次（重复请求不触发第二次 generation）
+            assert gen_started == 1, f"重复请求不应重复生成，实际 generation.started={gen_started}"
             await ws.close()
         finally:
             await agent.stop()

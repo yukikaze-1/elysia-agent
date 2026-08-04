@@ -1083,8 +1083,9 @@ class CognitiveLoop(CognitiveTools):
             if tts_active:
                 self._tts_mgr.stream_sentence(sentence)
             ctx = self._generation_ctx
-            if ctx is not None and ctx.current_segment_id is not None:
-                # 统一发射：分段完成（v1 按 tts_active 决定 send("")，v2 恒发 segment.completed）
+            if ctx is not None:
+                # 统一发射：分段完成（v1 按 tts_active 决定 send("")——无活动段也发句子边界；
+                # v2 仅活动段发 segment.completed，空消息不泄漏到 v2）
                 await self._output.segment_completed(sentence, ctx, tts_active=tts_active)
                 ctx.close_segment()
             elif not tts_active:

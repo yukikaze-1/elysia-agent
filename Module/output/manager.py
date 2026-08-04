@@ -369,7 +369,10 @@ class OutputManager:
 
     async def segment_completed(self, text: str, ctx, *, tts_active: bool = False,
                                 channels: list[OutputChannel] | None = None) -> None:
-        """分段完成：v1 按 TTS 状态发 send("") 或不变；v2 恒发 generation.segment.completed。
+        """分段完成：v1 按 TTS 状态发 send("") 或不变；v2 仅活动段发 generation.segment.completed。
+
+        ctx 无活动段（current_segment_id None）时仍发 v1 句子边界，但 v2 不发——
+        避免空 message 噪音泄漏到 v2（v2 段语义由活动段承载）。
 
         Args:
             text: 完整段文本。
@@ -380,13 +383,14 @@ class OutputManager:
         if not tts_active:
             await self._broadcast("on_message", "",
                                   channels=v1, capability=ChannelCapability.TEXT_MESSAGE)
-        await self._broadcast(
-            "on_generation_segment_completed",
-            generation_id=ctx.generation_id, segment_id=ctx.current_segment_id,
-            segment_index=ctx.current_segment_index, channel=ctx.channel, kind=ctx.kind,
-            content=text,
-            channels=v2,
-        )
+        if ctx.current_segment_id is not None:
+            await self._broadcast(
+                "on_generation_segment_completed",
+                generation_id=ctx.generation_id, segment_id=ctx.current_segment_id,
+                segment_index=ctx.current_segment_index, channel=ctx.channel, kind=ctx.kind,
+                content=text,
+                channels=v2,
+            )
 
     async def inner_voice(self, text: str, ctx, *, channels: list[OutputChannel] | None = None) -> None:
         """Inner Voice：v1 发 command inner_voice；v2 作为 inner_voice 段（started+completed，含文本）。
