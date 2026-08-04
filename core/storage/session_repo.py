@@ -9,7 +9,8 @@ from core.schema.utils import now_iso
 from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.character import CharacterState
 from core.schema.memory_reflector import MemoryReflectorState
-from core.schema.message import Message
+from core.schema.message import Message, MessageRole
+from core.schema.part import TextPart
 from core.schema.service_state import ServiceState
 from core.schema.types import IsoTimestamp, SessionId
 
@@ -18,6 +19,30 @@ from core.storage.base import Repository
 logger = logging.getLogger(__name__)
 COLLECTION = "sessions"
 
+AUTO_TITLE_MAX_LEN = 20
+"""自动标题最大长度（首条 UserMessage 文本截取字符数）。"""
+
+
+def _derive_title(messages: Sequence[Message]) -> str:
+    """从首条 UserMessage 的文本内容派生自动标题（前 20 字符）。
+
+    幂等派生：仅在 session 文档无显式 title 时由 save() 调用，
+    首条 UserMessage 无文本（如纯图片）时返回空串。
+
+    Args:
+        messages: 消息序列。
+
+    Returns:
+        派生标题，可能为空串。
+    """
+    for m in messages:
+        if getattr(m, "role", None) != MessageRole.USER:
+            continue
+        text = "".join(p.content for p in getattr(m, "content", ()) if isinstance(p, TextPart))
+        text = text.strip()
+        return text[:AUTO_TITLE_MAX_LEN]
+    return ""
+
 
 @dataclass
 class SessionSummary:
@@ -25,6 +50,7 @@ class SessionSummary:
     session_id: SessionId
     message_count: int
     updated_at: IsoTimestamp
+    title: str = ""
 
 
 class SessionRepository(Repository):
@@ -124,9 +150,53 @@ class SessionRepository(Repository):
             "service_state": service_state.model_dump(mode="json") if service_state else {},
             "updated_at": now_iso(),
         }
+        # 标题语义：显式 title（create/rename 写入）必须保留；
+        # 仅当现有 doc 无 title 且 messages 非空时派生自动标题（幂等，无额外调用点）。
+        existing = await self._db.find(COLLECTION, {"session_id": session_id}, limit=1)
+        existing_title = existing[0].get("title", "") if existing else ""
+        doc["title"] = existing_title if existing_title else _derive_title(messages)
         await self._db.update_one(
             COLLECTION, {"session_id": session_id}, {"$set": doc}, upsert=True,
         )
+
+    async def create(self, session_id: SessionId, title: str = "") -> None:
+        """创建会话（写入 title 与空消息体）。
+
+        create 后 title 由 save() 保留（save 不覆盖非空 title 除非显式）。
+
+        Args:
+            session_id: 会话 ID。
+            title: 会话标题，默认空串（可由后续 save 自动派生）。
+        """
+        if self._db is None:
+            return
+        doc = {
+            "session_id": session_id,
+            "title": title,
+            "messages": [],
+            "updated_at": now_iso(),
+        }
+        await self._db.update_one(
+            COLLECTION, {"session_id": session_id}, {"$set": doc}, upsert=True,
+        )
+
+    async def rename(self, session_id: SessionId, title: str) -> bool:
+        """重命名会话。
+
+        Args:
+            session_id: 会话 ID。
+            title: 新标题。
+
+        Returns:
+            True 表示会话存在且已更新，False 表示会话不存在或数据库不可用。
+        """
+        if self._db is None:
+            return False
+        result = await self._db.update_one(
+            COLLECTION, {"session_id": session_id}, {"$set": {"title": title}},
+            upsert=False,
+        )
+        return result > 0
 
     async def load(self, session_id: SessionId
                    ) -> tuple[list[Message], CharacterState, MemoryReflectorState, ServiceState] | None:
@@ -185,6 +255,7 @@ class SessionRepository(Repository):
                 session_id=SessionId(d.get("session_id", "")),
                 message_count=len(d.get("messages", [])),
                 updated_at=d.get("updated_at", ""),
+                title=d.get("title", ""),
             )
             for d in docs
         ]

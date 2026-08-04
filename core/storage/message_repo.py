@@ -1,6 +1,9 @@
 """MessageRepository — MongoDB message_archive 集合操作。"""
 
+import base64
 import logging
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from bson import ObjectId
 
@@ -13,6 +16,60 @@ from core.schema.message import Message, MessageRole
 logger = logging.getLogger(__name__)
 
 COLLECTION = "message_archive"
+
+# query_search 支持的 category 取值 → content part 类型 / role 映射
+_CATEGORY_PART_TYPES = {"text", "image", "link", "video", "audio", "file"}
+
+
+def _oid(value: str) -> object:
+    """将字符串 _id 转 ObjectId（无法转换时原样返回）。"""
+    try:
+        return ObjectId(value)
+    except Exception:
+        return value
+
+
+def _encode_cursor(timestamp: str, doc_id: str) -> str:
+    """编码 keyset 游标：base64(`timestamp|_id`)。"""
+    raw = f"{timestamp}|{doc_id}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+def _decode_cursor(cursor: str) -> tuple[str, str]:
+    """解码 keyset 游标 → (timestamp, _id)。格式非法抛 ValueError。"""
+    raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+    timestamp, _, doc_id = raw.partition("|")
+    if not timestamp or not doc_id:
+        raise ValueError("游标格式非法")
+    return timestamp, doc_id
+
+
+def _build_date_bounds(date_from: str | None, date_to: str | None,
+                       tz: ZoneInfo) -> tuple[str | None, str | None]:
+    """把自然日区间转换为半开 UTC 时间戳区间。
+
+    date_from 含当天（dayStart）；date_to 含当天（nextDayStart 排他）。
+    仅 date_from → [dayStart, +inf)；仅 date_to → (-inf, nextDayStart)。
+    两个都缺失返回 (None, None)。非法日期格式抛 ValueError（由调用方兜底）。
+
+    Args:
+        date_from: 起始自然日 YYYY-MM-DD。
+        date_to: 结束自然日 YYYY-MM-DD。
+        tz: IANA 时区。
+
+    Returns:
+        (UTC 起始 ISO 字符串 | None, UTC 结束 ISO 字符串 | None)。
+    """
+    start: str | None = None
+    end: str | None = None
+    if date_from:
+        d = date.fromisoformat(date_from)
+        start = datetime(d.year, d.month, d.day, tzinfo=tz).astimezone(timezone.utc).isoformat()
+    if date_to:
+        d = date.fromisoformat(date_to)
+        next_day = datetime(d.year, d.month, d.day, tzinfo=tz) + timedelta(days=1)
+        end = next_day.astimezone(timezone.utc).isoformat()
+    return start, end
 
 
 def _doc_to_message(doc: dict) -> Message:
@@ -161,6 +218,179 @@ class MessageRepository(Repository):
             docs = docs[:limit]
         messages = [_doc_to_message(doc) for doc in docs]
         return messages, has_more
+
+    async def query_page(self, session_id: SessionId, *,
+                         before: ObjectId | str | None = None,
+                         limit: int = 20) -> tuple[list[Message], bool]:
+        """按 session 键集分页查询（_id 游标）。
+
+        批次 3（multi-session）：前端历史页用。limit+1 探测 has_more。
+
+        Args:
+            session_id: 会话 ID。
+            before: _id 游标，只返回此 _id 之前的消息。
+            limit: 每页条数，默认 20。
+
+        Returns:
+            (消息列表, has_more) 元组（按 _id 降序）。若数据库不可用返回 ([], False)。
+        """
+        if self._db is None:
+            return [], False
+        filter_expr: dict = {"session_id": session_id}
+        if before is not None:
+            oid = ObjectId(before) if isinstance(before, str) else before
+            filter_expr["_id"] = {"$lt": oid}
+        docs = await self._db.find(COLLECTION, filter_expr, sort=[("_id", -1)], limit=limit + 1)
+        has_more = len(docs) > limit
+        if has_more:
+            docs = docs[:limit]
+        messages = [_doc_to_message(doc) for doc in docs]
+        return messages, has_more
+
+    async def query_after(self, session_id: SessionId, message_id: MessageId, *,
+                          limit: int = 20) -> tuple[list[Message], bool]:
+        """定位锚点消息（{session_id, message_id}）之后的消息，正序返回。
+
+        Args:
+            session_id: 会话 ID。
+            message_id: 锚点消息 ID。
+            limit: 每页条数，默认 20。
+
+        Returns:
+            (锚点之后的消息列表, has_more) 元组（按 _id 升序）。锚点不存在或
+            数据库不可用时返回 ([], False)。
+        """
+        if self._db is None:
+            return [], False
+        anchor = await self._db.find(
+            COLLECTION, {"session_id": session_id, "message_id": message_id}, limit=1)
+        if not anchor:
+            return [], False
+        anchor_id = _oid(anchor[0]["_id"])
+        filter_expr = {"session_id": session_id, "_id": {"$gt": anchor_id}}
+        docs = await self._db.find(COLLECTION, filter_expr, sort=[("_id", 1)], limit=limit + 1)
+        has_more = len(docs) > limit
+        if has_more:
+            docs = docs[:limit]
+        messages = [_doc_to_message(doc) for doc in docs]
+        return messages, has_more
+
+    async def find_context(self, session_id: SessionId, message_id: MessageId, *,
+                           before: int = 5, after: int = 5
+                           ) -> tuple[Message | None, list[Message], list[Message]]:
+        """定位锚点消息及其前后窗口（用于搜索结果的上下文展示）。
+
+        Args:
+            session_id: 会话 ID。
+            message_id: 锚点消息 ID。
+            before: 锚点之前取多少条，默认 5。
+            after: 锚点之后取多少条，默认 5。
+
+        Returns:
+            (目标消息 | None, 之前消息列表(正序), 之后消息列表(正序))。
+            锚点不存在返回 (None, [], [])；数据库不可用返回 (None, [], [])。
+        """
+        if self._db is None:
+            return None, [], []
+        anchor = await self._db.find(
+            COLLECTION, {"session_id": session_id, "message_id": message_id}, limit=1)
+        if not anchor:
+            return None, [], []
+        anchor_id = _oid(anchor[0]["_id"])
+        target = _doc_to_message(anchor[0])
+        pre_docs = await self._db.find(
+            COLLECTION, {"session_id": session_id, "_id": {"$lt": anchor_id}},
+            sort=[("_id", -1)], limit=before)
+        # 之前窗口取 _id 降序最近 before 条，反转为正序
+        pre_msgs = [_doc_to_message(doc) for doc in reversed(pre_docs)]
+        post_docs = await self._db.find(
+            COLLECTION, {"session_id": session_id, "_id": {"$gt": anchor_id}},
+            sort=[("_id", 1)], limit=after)
+        post_msgs = [_doc_to_message(doc) for doc in post_docs]
+        return target, pre_msgs, post_msgs
+
+    async def query_search(self, *, session_id: SessionId | None = None,
+                           query: str = "", date_from: str | None = None,
+                           date_to: str | None = None, timezone: str = "UTC",
+                           category: str | None = None, cursor: str | None = None,
+                           limit: int = 20
+                           ) -> tuple[list[Message], bool, str | None]:
+        """组合过滤 + keyset 分页搜索。
+
+        组合 filter：session_id（None = 全部会话）、query（content.$elemMatch 正则）、
+        自然日时间区间（date_from/date_to + IANA timezone，半开 UTC 区间）、
+        category（part 类型 / role）。keyset 游标 base64(`timestamp|_id`)，
+        排序 timestamp DESC, _id DESC；谓词 `(timestamp<T) OR (timestamp=T AND _id<ID)`。
+
+        Args:
+            session_id: 会话 ID，None 时跨全部会话。
+            query: 内容搜索关键词（大小写不敏感）。
+            date_from: 起始自然日 YYYY-MM-DD（含当天）。
+            date_to: 结束自然日 YYYY-MM-DD（含当天）。
+            timezone: IANA 时区名，默认 "UTC"。非法时区不抛异常，返回空结果。
+            category: text|image|link|video|audio|file|tool。
+            cursor: keyset 游标。
+            limit: 每页条数，默认 20。
+
+        Returns:
+            (消息列表, has_more, next_cursor) 元组。数据库不可用或非法时区返回
+            ([], False, None)。
+        """
+        if self._db is None:
+            return [], False, None
+        filter_expr: dict = {}
+        if session_id is not None:
+            filter_expr["session_id"] = session_id
+
+        # 内容匹配：query 正则 + category part 类型合并为单条 $elemMatch
+        # （Mongo 不允许同字段两条 $elemMatch，故合并；category=tool 走 role 过滤）
+        elem: dict = {}
+        if query:
+            elem["content"] = {"$regex": query, "$options": "i"}
+        if category is not None and category in _CATEGORY_PART_TYPES:
+            elem["type"] = category
+        if elem:
+            filter_expr["content"] = {"$elemMatch": elem}
+        if category == "tool":
+            filter_expr["role"] = "tool"
+
+        # 自然日 → 半开 UTC 区间 [dayStart(date_from), nextDayStart(date_to))
+        if date_from or date_to:
+            try:
+                tz = ZoneInfo(timezone)
+                start, end = _build_date_bounds(date_from, date_to, tz)
+                ts_range: dict = {}
+                if start is not None:
+                    ts_range["$gte"] = start
+                if end is not None:
+                    ts_range["$lt"] = end
+                filter_expr["timestamp"] = ts_range
+            except Exception:
+                # 非法时区/日期格式：仓库方法不抛异常，返回空结果（调用方抛 INVALID_TIMEZONE）
+                return [], False, None
+
+        # keyset 游标
+        if cursor:
+            try:
+                ts, raw_id = _decode_cursor(cursor)
+            except Exception:
+                return [], False, None
+            filter_expr["$or"] = [
+                {"timestamp": {"$lt": ts}},
+                {"timestamp": ts, "_id": {"$lt": _oid(raw_id)}},
+            ]
+
+        docs = await self._db.find(
+            COLLECTION, filter_expr,
+            sort=[("timestamp", -1), ("_id", -1)], limit=limit + 1)
+        has_more = len(docs) > limit
+        if has_more:
+            docs = docs[:limit]
+        messages = [_doc_to_message(doc) for doc in docs]
+        next_cursor: str | None = None
+        if has_more and docs:
+            next_cursor = _encode_cursor(docs[-1].get("timestamp", ""), docs[-1]["_id"])
+        return messages, has_more, next_cursor
 
     async def count_by_session(self, session_id: SessionId) -> int:
         """按会话统计消息数。

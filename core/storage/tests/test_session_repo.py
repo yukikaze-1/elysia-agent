@@ -4,8 +4,22 @@ from unittest.mock import AsyncMock, MagicMock
 
 from core.schema.character import CharacterState
 from core.schema.memory_reflector import MemoryReflectorState
+from core.schema.message import UserMessage
+from core.schema.part import TextPart
 from core.schema.types import SessionId
-from core.storage.session_repo import SessionRepository
+from core.storage.session_repo import SessionRepository, SessionSummary
+
+from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+
+def _make_user_msg(content: str = "你好，这是一段用于测试自动标题的消息内容",
+                   msg_id: str = "msg-u1", session_id: str = "sid") -> UserMessage:
+    """构造最小 UserMessage。"""
+    return UserMessage(
+        content=[TextPart(content=content)],
+        message_id=msg_id,
+        session_id=SessionId(session_id),
+    )
 
 
 @pytest.mark.unit
@@ -13,6 +27,7 @@ class TestSessionRepository:
     def test_save_calls_update_one(self):
         import asyncio
         repo = SessionRepository(db=MagicMock())
+        repo._db.find = AsyncMock(return_value=[])  # type: ignore[reportOptionalMemberAccess]
         repo._db.update_one = AsyncMock()  # type: ignore[reportOptionalMemberAccess]
         cs = CharacterState(session_id=SessionId("sid"))
         rs = MemoryReflectorState()
@@ -22,6 +37,7 @@ class TestSessionRepository:
     def test_save_without_reflector_state(self):
         import asyncio
         repo = SessionRepository(db=MagicMock())
+        repo._db.find = AsyncMock(return_value=[])  # type: ignore[reportOptionalMemberAccess]
         repo._db.update_one = AsyncMock()  # type: ignore[reportOptionalMemberAccess]
         cs = CharacterState(session_id=SessionId("sid"))
         asyncio.run(repo.save(SessionId("sid"), [], cs))
@@ -51,3 +67,114 @@ class TestSessionRepository:
         repo = SessionRepository(db=None)
         result = asyncio.run(repo.delete(SessionId("sid")))
         assert result == 0
+
+    # ---- 批次 3：title / create / rename ----
+
+    def test_create_writes_title(self):
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        asyncio.run(repo.create(SessionId("s1"), title="我的会话"))
+        docs = asyncio.run(fake.find("sessions", {}))
+        assert len(docs) == 1
+        assert docs[0]["session_id"] == "s1"
+        assert docs[0]["title"] == "我的会话"
+        assert docs[0]["messages"] == []
+
+    def test_create_default_empty_title(self):
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        asyncio.run(repo.create(SessionId("s1")))
+        docs = asyncio.run(fake.find("sessions", {}))
+        assert docs[0]["title"] == ""
+
+    def test_rename_updates_title_returns_true(self):
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        asyncio.run(repo.create(SessionId("s1"), title="旧标题"))
+        ok = asyncio.run(repo.rename(SessionId("s1"), "新标题"))
+        assert ok is True
+        docs = asyncio.run(fake.find("sessions", {}))
+        assert docs[0]["title"] == "新标题"
+
+    def test_rename_returns_false_when_session_missing(self):
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        ok = asyncio.run(repo.rename(SessionId("nope"), "标题"))
+        assert ok is False
+
+    def test_rename_returns_false_when_db_none(self):
+        import asyncio
+        repo = SessionRepository(db=None)
+        assert asyncio.run(repo.rename(SessionId("s1"), "标题")) is False
+
+    def test_save_derives_auto_title_from_first_user_message(self):
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        cs = CharacterState(session_id=SessionId("s1"))
+        rs = MemoryReflectorState()
+        asyncio.run(repo.save(SessionId("s1"), [_make_user_msg(content="今天天气真不错我们去公园散步吧！")], cs, rs))
+        docs = asyncio.run(fake.find("sessions", {}))
+        assert docs[0]["title"] == "今天天气真不错我们去公园散步吧！"
+
+    def test_save_derives_title_truncated_to_20_chars(self):
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        cs = CharacterState(session_id=SessionId("s1"))
+        rs = MemoryReflectorState()
+        long_text = "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十"
+        assert len(long_text) >= 25
+        asyncio.run(repo.save(SessionId("s1"), [_make_user_msg(content=long_text)], cs, rs))
+        docs = asyncio.run(fake.find("sessions", {}))
+        assert len(docs[0]["title"]) == 20
+        assert docs[0]["title"] == long_text[:20]
+
+    def test_save_preserves_existing_title(self):
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        asyncio.run(repo.create(SessionId("s1"), title="显式标题"))
+        cs = CharacterState(session_id=SessionId("s1"))
+        rs = MemoryReflectorState()
+        asyncio.run(repo.save(SessionId("s1"), [_make_user_msg()], cs, rs))
+        docs = asyncio.run(fake.find("sessions", {}))
+        assert docs[0]["title"] == "显式标题"
+
+    def test_save_preserves_renamed_title(self):
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        asyncio.run(repo.create(SessionId("s1")))
+        asyncio.run(repo.rename(SessionId("s1"), "改名后"))
+        cs = CharacterState(session_id=SessionId("s1"))
+        rs = MemoryReflectorState()
+        asyncio.run(repo.save(SessionId("s1"), [_make_user_msg(content="新消息进来了")], cs, rs))
+        docs = asyncio.run(fake.find("sessions", {}))
+        assert docs[0]["title"] == "改名后"
+
+    def test_save_no_title_when_only_assistant_messages(self):
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        cs = CharacterState(session_id=SessionId("s1"))
+        rs = MemoryReflectorState()
+        asyncio.run(repo.save(SessionId("s1"), [], cs, rs))
+        docs = asyncio.run(fake.find("sessions", {}))
+        assert docs[0]["title"] == ""
+
+    def test_list_all_summary_includes_title(self):
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        asyncio.run(repo.create(SessionId("s1"), title="标题一"))
+        asyncio.run(repo.create(SessionId("s2"), title="标题二"))
+        summaries = asyncio.run(repo.list_all())
+        assert isinstance(summaries[0], SessionSummary)
+        titles = {s.session_id: s.title for s in summaries}
+        assert titles[SessionId("s1")] == "标题一"
+        assert titles[SessionId("s2")] == "标题二"

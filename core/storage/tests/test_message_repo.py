@@ -137,3 +137,263 @@ class TestMessageRepository:
         assert repo._db is fake_backend
         # 重连后重建两个索引（session_id / session_id+_id）
         assert fake_backend.ensure_index.call_count == 2
+
+
+def _archive_doc(role: str, content: object, msg_id: str, timestamp: str,
+                 session_id: str = "sid", **extra) -> dict:
+    """构造 message_archive 文档（content 为 str 时转成 text part）。"""
+    if isinstance(content, str):
+        content = [{"type": "text", "content": content}]
+    doc = {
+        "role": role,
+        "content": content,
+        "message_id": msg_id,
+        "timestamp": timestamp,
+        "session_id": session_id,
+    }
+    doc.update(extra)
+    return doc
+
+
+def _seed(fake, docs) -> None:
+    """批量灌入 message_archive 集合。"""
+    for d in docs:
+        asyncio.run(fake.insert_one("message_archive", d))
+
+
+@pytest.mark.unit
+class TestMessageRepositoryBatch3:
+    """批次 3：query_page / query_after / find_context / query_search。"""
+
+    def test_query_page_limit_probe_has_more(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        docs = [_archive_doc("user", f"m{i}", f"msg-{i}",
+                             f"2026-08-01T10:{i:02d}:00+00:00") for i in range(25)]
+        _seed(fake, docs)
+        messages, has_more = asyncio.run(repo.query_page("sid", limit=20))
+        assert len(messages) == 20
+        assert has_more is True
+        # _id DESC：最新一条在最前（插序 m24 最新）
+        assert messages[0].message_id == "msg-24"
+        # 下一页用 before 游标
+        before = messages[-1].metadata["_mongo_id"]
+        page2, has_more2 = asyncio.run(repo.query_page("sid", before=before, limit=20))
+        assert len(page2) == 5
+        assert has_more2 is False
+
+    def test_query_page_exact_limit_no_more(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [_archive_doc("user", f"m{i}", f"msg-{i}", f"2026-08-01T10:{i:02d}:00+00:00") for i in range(20)])
+        messages, has_more = asyncio.run(repo.query_page("sid", limit=20))
+        assert len(messages) == 20
+        assert has_more is False
+
+    def test_query_page_returns_empty_when_db_none(self):
+        repo = MessageRepository(db=None)
+        messages, has_more = asyncio.run(repo.query_page("sid"))
+        assert messages == []
+        assert has_more is False
+
+    def test_query_after_anchor_ascending(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [_archive_doc("user", f"m{i}", f"msg-{i}", f"2026-08-01T10:{i:02d}:00+00:00") for i in range(5)])
+        messages, has_more = asyncio.run(repo.query_after("sid", "msg-1"))
+        assert [m.message_id for m in messages] == ["msg-2", "msg-3", "msg-4"]
+        assert has_more is False
+
+    def test_query_after_limit_probe_has_more(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [_archive_doc("user", f"m{i}", f"msg-{i}", f"2026-08-01T10:{i:02d}:00+00:00") for i in range(8)])
+        messages, has_more = asyncio.run(repo.query_after("sid", "msg-0", limit=3))
+        assert [m.message_id for m in messages] == ["msg-1", "msg-2", "msg-3"]
+        assert has_more is True
+
+    def test_query_after_missing_anchor(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [_archive_doc("user", "x", "msg-0", "2026-08-01T10:00:00+00:00")])
+        messages, has_more = asyncio.run(repo.query_after("sid", "nope"))
+        assert messages == []
+        assert has_more is False
+
+    def test_find_context_window(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [_archive_doc("user", f"m{i}", f"msg-{i}", f"2026-08-01T10:{i:02d}:00+00:00") for i in range(7)])
+        target, pre, post = asyncio.run(repo.find_context("sid", "msg-3", before=2, after=2))
+        assert target is not None and target.message_id == "msg-3"
+        assert [m.message_id for m in pre] == ["msg-1", "msg-2"]  # 锚点前，正序
+        assert [m.message_id for m in post] == ["msg-4", "msg-5"]  # 锚点后，正序
+
+    def test_find_context_missing_anchor(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [_archive_doc("user", "x", "msg-0", "2026-08-01T10:00:00+00:00")])
+        target, pre, post = asyncio.run(repo.find_context("sid", "nope"))
+        assert target is None
+        assert pre == [] and post == []
+
+    def test_find_context_edge_short_history(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [_archive_doc("user", f"m{i}", f"msg-{i}", f"2026-08-01T10:{i:02d}:00+00:00") for i in range(2)])
+        target, pre, post = asyncio.run(repo.find_context("sid", "msg-0", before=5, after=5))
+        assert target.message_id == "msg-0"
+        assert pre == []
+        assert [m.message_id for m in post] == ["msg-1"]
+
+    def test_query_search_text_case_insensitive(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [
+            _archive_doc("user", "我喜欢吃 pizza", "msg-0", "2026-08-01T10:00:00+00:00"),
+            _archive_doc("assistant", "pizza 很好吃", "msg-1", "2026-08-01T10:01:00+00:00"),
+            _archive_doc("user", "今天天气不错", "msg-2", "2026-08-01T10:02:00+00:00"),
+        ])
+        messages, has_more, next_cursor = asyncio.run(
+            repo.query_search(query="PIZZA"))
+        assert {m.message_id for m in messages} == {"msg-0", "msg-1"}
+        assert has_more is False
+        assert next_cursor is None
+
+    def test_query_search_session_filter(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [
+            _archive_doc("user", "a", "msg-0", "2026-08-01T10:00:00+00:00", session_id="s1"),
+            _archive_doc("user", "b", "msg-1", "2026-08-01T10:01:00+00:00", session_id="s2"),
+        ])
+        messages, *_ = asyncio.run(repo.query_search(session_id="s2"))
+        assert [m.message_id for m in messages] == ["msg-1"]
+
+    def test_query_search_all_sessions_when_session_none(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [
+            _archive_doc("user", "a", "msg-0", "2026-08-01T10:00:00+00:00", session_id="s1"),
+            _archive_doc("user", "b", "msg-1", "2026-08-01T10:01:00+00:00", session_id="s2"),
+        ])
+        messages, *_ = asyncio.run(repo.query_search())
+        assert len(messages) == 2
+
+    def test_query_search_date_range_local_timezone(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        # Asia/Shanghai = UTC+8。自然日 08-02：[08-02T00:00+08:00, 08-03T00:00+08:00)
+        # = UTC [08-01T16:00, 08-02T16:00)
+        _seed(fake, [
+            _archive_doc("user", "before", "msg-0", "2026-08-01T15:59:59+00:00"),
+            _archive_doc("user", "start", "msg-1", "2026-08-01T16:00:00+00:00"),
+            _archive_doc("user", "mid", "msg-2", "2026-08-02T15:00:00+00:00"),
+            _archive_doc("user", "end", "msg-3", "2026-08-02T16:00:00+00:00"),
+        ])
+        messages, *_ = asyncio.run(repo.query_search(
+            date_from="2026-08-02", date_to="2026-08-02", timezone="Asia/Shanghai"))
+        assert {m.message_id for m in messages} == {"msg-1", "msg-2"}
+
+    def test_query_search_date_from_only(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [
+            _archive_doc("user", "old", "msg-0", "2026-08-01T23:59:59+00:00"),
+            _archive_doc("user", "new", "msg-1", "2026-08-02T00:00:00+00:00"),
+        ])
+        messages, *_ = asyncio.run(repo.query_search(date_from="2026-08-02"))
+        assert [m.message_id for m in messages] == ["msg-1"]
+
+    def test_query_search_bad_timezone_returns_empty(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [_archive_doc("user", "x", "msg-0", "2026-08-01T10:00:00+00:00")])
+        messages, has_more, next_cursor = asyncio.run(repo.query_search(
+            date_from="2026-08-01", timezone="Not/AZone"))
+        assert messages == []
+        assert has_more is False
+        assert next_cursor is None
+
+    def test_query_search_category_image(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [
+            _archive_doc("user", [{"type": "image", "src": "https://x/img.png"}], "msg-0", "2026-08-01T10:00:00+00:00"),
+            _archive_doc("user", "纯文本", "msg-1", "2026-08-01T10:01:00+00:00"),
+        ])
+        messages, *_ = asyncio.run(repo.query_search(category="image"))
+        assert [m.message_id for m in messages] == ["msg-0"]
+
+    def test_query_search_category_tool_uses_role(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [
+            _archive_doc("user", "u", "msg-0", "2026-08-01T10:00:00+00:00"),
+            _archive_doc("tool", "ok", "msg-1", "2026-08-01T10:01:00+00:00",
+                         tool_call_id="t1", tool_name="web_search"),
+        ])
+        messages, *_ = asyncio.run(repo.query_search(category="tool"))
+        assert [m.message_id for m in messages] == ["msg-1"]
+
+    def test_query_search_cursor_pagination_desc(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [
+            _archive_doc("user", "t1", "msg-1", "2026-08-01T10:01:00+00:00"),
+            _archive_doc("user", "t2", "msg-2", "2026-08-01T10:02:00+00:00"),
+            _archive_doc("user", "t3", "msg-3", "2026-08-01T10:03:00+00:00"),
+            _archive_doc("user", "t4", "msg-4", "2026-08-01T10:04:00+00:00"),
+            _archive_doc("user", "t5", "msg-5", "2026-08-01T10:05:00+00:00"),
+        ])
+        page1, has_more1, c1 = asyncio.run(repo.query_search(limit=2))
+        assert [m.message_id for m in page1] == ["msg-5", "msg-4"]
+        assert has_more1 is True and c1 is not None
+        page2, has_more2, c2 = asyncio.run(repo.query_search(cursor=c1, limit=2))
+        assert [m.message_id for m in page2] == ["msg-3", "msg-2"]
+        assert has_more2 is True and c2 is not None
+        page3, has_more3, c3 = asyncio.run(repo.query_search(cursor=c2, limit=2))
+        assert [m.message_id for m in page3] == ["msg-1"]
+        assert has_more3 is False and c3 is None
+
+    def test_query_search_cursor_tie_break_same_timestamp(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        ts = "2026-08-01T10:00:00+00:00"
+        _seed(fake, [
+            _archive_doc("user", "a", "msg-a", ts),
+            _archive_doc("user", "b", "msg-b", ts),
+            _archive_doc("user", "c", "msg-c", ts),
+        ])
+        page1, has_more1, c1 = asyncio.run(repo.query_search(limit=2))
+        # 同 timestamp 下按 _id DESC（后插的排前面）
+        assert [m.message_id for m in page1] == ["msg-c", "msg-b"]
+        assert has_more1 is True
+        page2, has_more2, _ = asyncio.run(repo.query_search(cursor=c1, limit=2))
+        assert [m.message_id for m in page2] == ["msg-a"]
+        assert has_more2 is False
+
+    def test_query_search_returns_empty_when_db_none(self):
+        repo = MessageRepository(db=None)
+        messages, has_more, next_cursor = asyncio.run(repo.query_search())
+        assert messages == []
+        assert has_more is False
+        assert next_cursor is None
