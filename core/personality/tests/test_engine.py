@@ -592,10 +592,67 @@ class TestCharacterEngineAttachSession:
         assert engine._awareness._last_awareness_time == 1234.5
         assert engine._last_awareness_time == 1234.5
 
-    def test_attach_does_not_restore_reflector(self):
-        """D-o: 不调用 _restore_from_state，避免 clobber in-flight reflector buffer。"""
+    def test_attach_calls_restore_from_state(self):
+        """D-o 修正：attach 换绑后调用 _restore_from_state 恢复 incoming buffer（flush+clear+restore）。
+
+        原 spec D-o 声明"不 restore"（基于 load 已恢复假设）；多会话切换下
+        flush+clear+restore 只迁移在途 buffer 不覆盖，恢复调用是安全的。
+        """
         engine = _make_engine()
         with patch.object(engine._reflector, "_restore_from_state") as mock_restore:
             session_b = self._make_session()
             engine.attach_session(session_b)
-            mock_restore.assert_not_called()
+            mock_restore.assert_called_once()
+
+    def test_attach_flushes_outgoing_buffer_to_outgoing_state(self):
+        """换绑前 flush：A 会话在途 buffer 落 A.character_state，内存 buffer 清空不残留 A。"""
+        from core.schema.types import SessionId
+
+        engine = _make_engine()
+        cs_a = CharacterState(session_id=SessionId("session-a"))
+        engine.attach_session(self._make_session(state=cs_a))
+        # 模拟 A 会话在途 buffer
+        engine._reflector._buffer.append(("你好", "你好呀"))
+        engine._reflector._context.append({"role": "u", "content": "你好", "inner_voice": "", "timestamp": 1.0})
+        session_b = self._make_session()
+        engine.attach_session(session_b)
+        # A 的 buffer 已 flush 到 A.character_state（不丢失）
+        assert cs_a.reflector_buffer == [("你好", "你好呀")]
+        assert cs_a.reflector_context == [{"role": "u", "content": "你好", "inner_voice": "", "timestamp": 1.0}]
+        # 内存 buffer 已清空（不残留 A 的 buffer）
+        assert engine._reflector._buffer == []
+        assert engine._reflector._context == []
+
+    def test_attach_restores_incoming_buffer(self):
+        """换绑后 restore：incoming.character_state.reflector_buffer 恢复到 live buffer。"""
+        from core.schema.types import SessionId
+
+        engine = _make_engine()
+        cs_b = CharacterState(session_id=SessionId("session-b"))
+        cs_b.reflector_buffer = [("B问", "B答")]
+        cs_b.reflector_context = [{"role": "u", "content": "B问", "inner_voice": "", "timestamp": 2.0}]
+        engine.attach_session(self._make_session(state=cs_b))
+        assert engine._reflector._buffer == [("B问", "B答")]
+        assert engine._reflector._context == [{"role": "u", "content": "B问", "inner_voice": "", "timestamp": 2.0}]
+
+    def test_alternating_sessions_save_each_own_buffer(self):
+        """两会话交替 save 各写各的：A.save 写 A.cs、B.save 写 B.cs，互不串。"""
+        from core.schema.types import SessionId
+
+        engine = _make_engine()
+        cs_a = CharacterState(session_id=SessionId("session-a"))
+        cs_b = CharacterState(session_id=SessionId("session-b"))
+        engine.attach_session(self._make_session(state=cs_a))
+        # A 会话缓冲 + save（sync_reflector_to_state 即 _pre_save_hook）
+        engine._reflector._buffer.append(("A问", "A答"))
+        engine.sync_reflector_to_state()
+        assert cs_a.reflector_buffer == [("A问", "A答")]
+        # 切到 B：flush A → 清空 → restore B（空）
+        engine.attach_session(self._make_session(state=cs_b))
+        assert cs_a.reflector_buffer == [("A问", "A答")]  # A 的数据不被覆盖
+        assert engine._reflector._buffer == []            # 内存清空不残留 A
+        # B 会话缓冲 + save
+        engine._reflector._buffer.append(("B问", "B答"))
+        engine.sync_reflector_to_state()
+        assert cs_b.reflector_buffer == [("B问", "B答")]
+        assert cs_a.reflector_buffer == [("A问", "A答")]  # 各写各的

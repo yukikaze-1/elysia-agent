@@ -53,6 +53,17 @@ class _FakeToolAdapter:
         self._manager = manager
 
 
+class _FakeStatus:
+    """F1(a) busy 门禁用的 fake status：is_accepting_input 可控。"""
+
+    def __init__(self, accepting: bool = True) -> None:
+        self._accepting = accepting
+
+    @property
+    def is_accepting_input(self) -> bool:
+        return self._accepting
+
+
 class _FakeAgent:
     """REST 路由消费的假 agent：真实 SessionManager + 内存 repo + 可控 pending/approvals。"""
 
@@ -67,6 +78,7 @@ class _FakeAgent:
         self._approvals = []
         self._cognitive = _FakeCognitive(self.gen_registry)
         self.tool_adapter = _FakeToolAdapter(_FakeToolManager(self._approvals))
+        self.status = _FakeStatus()
 
     @property
     def active_session_id(self) -> str:
@@ -374,6 +386,22 @@ class TestSessionsCRUD:
         assert resp.status == 404
         assert (await resp.json())["code"] == "SESSION_NOT_FOUND"
 
+    @pytest.mark.asyncio
+    async def test_activate_busy_rejected_409(self, aiohttp_client):
+        """F1(a): agent 忙（生成/TTS 中，is_accepting_input=False）→ 409 AGENT_BUSY，不切换。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_busy", "忙时目标会话")
+        agent.status = _FakeStatus(accepting=False)
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.post("/api/sessions/conv_test_busy/activate")
+        assert resp.status == 409
+        data = await resp.json()
+        assert data["code"] == "AGENT_BUSY"
+        assert data["retryable"] is True
+        assert agent.active_session_id == "default", "忙时不应切换 active"
+
 
 # ───────────────────────── 会话内历史（§5.1） ──────────────────────────────
 
@@ -605,6 +633,32 @@ class TestSearchMessages:
         assert "responseId" not in data2["items"][0]  # 无反查结果 → 缺省
 
     @pytest.mark.asyncio
+    async def test_search_category_tool_returns_tool_messages(self, aiohttp_client):
+        """链路#4: category=tool 返回 tool 消息（role=tool），不因契约过滤被丢弃。"""
+        from core.schema.message import ToolResultMessage
+
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_tool")
+        await _append(agent, "conv_test_tool", ToolResultMessage(
+            content=[TextPart(content="工具执行结果：找到了数据")],
+            tool_call_id="tc_1", tool_name="web_search", message_id=MessageId("m_tool1"),
+            timestamp="2026-08-01T10:00:00+00:00"))
+        await _append(agent, "conv_test_tool", UserMessage(
+            content=[TextPart(content="普通消息")], message_id=MessageId("m_user1"),
+            timestamp="2026-08-01T10:00:01+00:00"))
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/api/search/messages", params={"category": "tool"})
+        assert resp.status == 200
+        data = await resp.json()
+        assert len(data["items"]) == 1
+        item = data["items"][0]
+        assert item["role"] == "tool"
+        assert item["messageId"] == "m_tool1"
+        assert "找到了数据" in item["snippet"]
+
+    @pytest.mark.asyncio
     async def test_search_snippet_first_100(self, aiohttp_client):
         agent = _FakeAgent()
         await _create_session(agent, "conv_test_snip")
@@ -753,6 +807,41 @@ class TestResources:
         data3 = await resp3.json()
         assert {i["messageId"] for i in data3["items"]} == {"m_img0"}
         assert data3["has_more"] is False
+
+    @pytest.mark.asyncio
+    async def test_resource_cursor_multiple_resources_in_message(self, aiohttp_client):
+        """链路#2: 单条消息含多个同类资源 + limit 命中消息内部 → 资源级 cursor，两页各 2+1 不丢。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_multi")
+        # 单条消息含 3 个链接
+        await _append(agent, "conv_test_multi", UserMessage(
+            content=[TextPart(content="a https://x/1 b https://x/2 c https://x/3")],
+            message_id=MessageId("m_multi"), timestamp="2026-08-01T10:00:00+00:00"))
+        # 较新消息含 1 个链接（用于 has_more/跨消息扫描）
+        await _append(agent, "conv_test_multi", UserMessage(
+            content=[TextPart(content="https://x/4")],
+            message_id=MessageId("m_single"), timestamp="2026-08-01T10:00:01+00:00"))
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        # 第一页 limit=2：m_single 的 1 个 + m_multi 的第一个（最新在前）
+        resp = await client.get("/api/sessions/conv_test_multi/resources",
+                                params={"category": "link", "limit": "2"})
+        data = await resp.json()
+        assert len(data["items"]) == 2
+        assert data["has_more"] is True
+        assert data["cursor"]
+        urls1 = {i["url"] for i in data["items"]}
+        assert urls1 == {"https://x/4", "https://x/1"}
+
+        # 第二页：cursor 指向消息内 offset——m_multi 剩余 2 个链接不丢失（消息级 cursor 会丢）
+        resp2 = await client.get("/api/sessions/conv_test_multi/resources",
+                                 params={"category": "link", "limit": "2", "before": data["cursor"]})
+        data2 = await resp2.json()
+        assert len(data2["items"]) == 2
+        assert {i["url"] for i in data2["items"]} == {"https://x/2", "https://x/3"}
+        assert data2["has_more"] is False
+        assert urls1.isdisjoint({i["url"] for i in data2["items"]}), "两页不重叠、不丢资源"
 
     @pytest.mark.asyncio
     async def test_unknown_session_404(self, aiohttp_client):

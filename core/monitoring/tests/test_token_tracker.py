@@ -424,6 +424,40 @@ class TestTokenTracker:
         assert stats["total"] == 15
         assert stats["by_model"] == {"m": 15}
 
+    @pytest.mark.asyncio
+    async def test_get_session_stats_new_session_no_leak(self, tracker):
+        """F8（Mongo 离线）：新会话无记录 → total=0/空，不泄漏最近会话累计。
+
+        修复前内存回退 `_session_totals.get(sid, self.session_total)` 会返回
+        最近记录会话的累计——新会话（v1 建连）显示上个会话 token 数。
+        """
+        await tracker.record(
+            usage={"input_tokens": 800, "output_tokens": 200, "total_tokens": 1000},
+            model="m", round_num=0, session_id="recent_sid",
+        )
+        assert tracker.session_total == 1000  # 最近记录会话语义保持（debug/runtime_config 兼容）
+        stats = await tracker.get_session_stats("brand_new_sid")
+        assert stats["total"] == 0      # 非上个会话累计
+        assert stats["by_model"] == {}  # 非全局 per_model
+
+    @pytest.mark.asyncio
+    async def test_get_session_stats_mongodb_new_session_empty(self, output_mock):
+        """F8（Mongo 在线）：新会话 DB 无记录 → 返回 0/空，不泄漏最近会话累计。"""
+        repo_mock = MagicMock()
+        repo_mock.total_tokens_by_model = AsyncMock(return_value={})
+        repo_mock.record = AsyncMock()
+        tracker = TokenTracker(
+            session_id=SessionId("s1"), output_manager=output_mock, repo=repo_mock,
+        )
+        tracker._pending_file = "/tmp/test_stats_new_sid_nonexistent.jsonl"
+        await tracker.record(
+            usage={"input_tokens": 50, "output_tokens": 50, "total_tokens": 100},
+            model="m", round_num=0, session_id="s1",
+        )
+        stats = await tracker.get_session_stats("new_sid")
+        assert stats["total"] == 0
+        assert stats["by_model"] == {}
+
 
 @pytest.mark.unit
 class TestTokenTrackerClearAll:

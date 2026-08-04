@@ -8,7 +8,7 @@ import asyncio
 import pytest
 
 from core.memory.session import SessionMemory
-from core.memory.session_manager import SessionManager
+from core.memory.session_manager import SessionManager, SessionBusyError
 from core.schema.character import CharacterState
 from core.schema.memory_reflector import MemoryReflectorState
 from core.schema.message import UserMessage
@@ -270,6 +270,26 @@ async def test_switch_attaches_character_engine():
     assert engine.attached[-1] is target
 
 
+@pytest.mark.asyncio
+async def test_switch_rejects_when_busy_check_set():
+    """F1(a): switch 内部 busy check——忙（生成/TTS 中）→ 抛 SessionBusyError，不切换。"""
+    m = _make_manager()
+    m.set_busy_check(lambda: True)
+    with pytest.raises(SessionBusyError):
+        await m.switch("conv_busy")
+    assert m.active_id == "default"
+
+
+@pytest.mark.asyncio
+async def test_switch_allows_when_busy_check_false():
+    """F1(a): busy check 为 False（空闲）→ switch 正常执行。"""
+    m = _make_manager()
+    m.set_busy_check(lambda: False)
+    target = await m.switch("conv_ok")
+    assert m.active_id == "conv_ok"
+    assert m.active is target
+
+
 # ───────────────────────── create / rename / delete ─────────────────────────
 
 
@@ -470,6 +490,33 @@ async def test_evict_preserves_active():
     await asyncio.sleep(0)
     assert m.active_id == "a"
     assert "a" in m._sessions
+
+
+@pytest.mark.asyncio
+async def test_get_auto_evicts_when_over_capacity():
+    """F7: get() 构造新会话后自动 evict——超 max_sessions 时最旧非活动被逐出（不再无界增长）。"""
+    repo = FakeSessionRepo()
+    m = _make_manager(repo, max_sessions=2)
+    await m.ensure_loaded("a")      # {default, a} 未超
+    assert "a" in m._sessions
+    await m.ensure_loaded("b")      # {default, a, b} 超 → 自动逐出最旧非活动 a
+    await asyncio.sleep(0)          # 排空 fire-and-forget save
+    assert "a" not in m._sessions
+    assert "b" in m._sessions
+    assert "default" in m._sessions  # default 锚点不被逐出
+    assert "a" in repo.save_calls    # 逐出前已 save
+
+
+@pytest.mark.asyncio
+async def test_evict_never_evicts_default():
+    """F7: evict 永不逐出 default（默认锚点会话，与 delete 守卫同主题）。"""
+    repo = FakeSessionRepo()
+    m = _make_manager(repo, max_sessions=2)
+    await m.ensure_loaded("a")
+    await m.ensure_loaded("b")
+    await asyncio.sleep(0)
+    assert "default" in m._sessions
+    assert m.active_id == "default"
 
 
 @pytest.mark.asyncio

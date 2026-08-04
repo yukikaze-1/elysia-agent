@@ -246,7 +246,7 @@ class SearchMessageItem(ContractModel):
     messageId: str = Field(description="消息 ID")
     responseId: Optional[str] = Field(default=None, description="最近一条 generation ID（best-effort），可缺省")
     segmentId: Optional[str] = Field(default=None, description="分段 ID，消息级搜索恒 null，可缺省")
-    role: Literal["user", "assistant"] = Field(description="消息角色")
+    role: Literal["user", "assistant", "tool"] = Field(description="消息角色")
     timestamp: str = Field(description="ISO 时间戳")
     snippet: str = Field(description="内容摘要（前 100 字）")
 

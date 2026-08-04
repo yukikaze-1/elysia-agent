@@ -168,3 +168,107 @@ async def test_cancel_current_accepts_and_stores_source():
     with pytest.raises(asyncio.CancelledError):
         await task
     await loop._output.close()
+
+
+@pytest.mark.asyncio
+async def test_cancel_current_preserves_disconnect_source():
+    """F6: disconnect 来源不被后续 cancel_current() 覆盖；无来源 cancel 不清掉待消费来源。"""
+    loop = _make_loop({}, SessionMemory(session_id="default"))
+    loop.cancel_current("disconnect")
+    assert loop._interrupt_source == "disconnect"
+    loop.cancel_current()  # 后续无来源 cancel（如 system tick / 新任务）不清掉 disconnect
+    assert loop._interrupt_source == "disconnect"
+    loop.cancel_current("websocket")  # 非 disconnect 来源不覆盖已有 disconnect（断开是终态）
+    assert loop._interrupt_source == "disconnect"
+    await loop._output.close()
+
+
+@pytest.mark.asyncio
+async def test_process_start_clears_stale_generation_ctx():
+    """F5: process 开头（resolve 前）清掉上一轮残留 ctx——resolve 期间打断不会把上一轮
+    completed generation 重标 cancelled。"""
+    conv_x = SessionMemory(session_id="conv_x")
+    default = SessionMemory(session_id="default")
+    loop = _make_loop({"conv_x": conv_x}, default)
+    marks: list[tuple[str, str | None]] = []
+
+    class FakeReg:
+        async def register(self, *a, **k):
+            pass
+
+        async def mark(self, gid, **k):
+            marks.append((gid, k.get("status")))
+
+        async def get(self, gid):
+            return None
+
+    loop._generation_registry = FakeReg()
+
+    # 第一轮正常完成 → ctx 残留指向该轮 generation
+    await loop.process("first", protocol_version=2)
+    await _await_pending(loop)
+    gen1 = loop._generation_ctx.generation_id
+    assert gen1 and loop._generation_ctx is not None
+
+    # 第二轮：resolver 阻塞期间 ctx 应已清空（fix：process 开头 resolve 前清）
+    gate = asyncio.Event()
+
+    async def blocking_resolver(cid, ver):
+        await gate.wait()
+        return default
+
+    loop._session_resolver = blocking_resolver
+    task = asyncio.create_task(loop.process("second", protocol_version=2))
+    await asyncio.sleep(0.02)
+    assert loop._generation_ctx is None, "resolve 期间 ctx 应已清空（F5）"
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert all(s != "cancelled" for _, s in marks), "不应把上一轮 completed 重标 cancelled"
+    await loop._output.close()
+
+
+@pytest.mark.asyncio
+async def test_tts_window_interrupt_keeps_registry_completed():
+    """F9: mark(completed) 已在 turn_completed 前落位 → TTS 播放窗口打断不再标 cancelled。"""
+    default = SessionMemory(session_id="default")
+    loop = _make_loop({}, default)
+    marks: list[tuple[str, str | None]] = []
+
+    class FakeReg:
+        async def register(self, *a, **k):
+            pass
+
+        async def mark(self, gid, **k):
+            marks.append((gid, k.get("status")))
+
+        async def get(self, gid):
+            return None
+
+    loop._generation_registry = FakeReg()
+    # 模拟 TTS 播放窗口：finish_turn → wait_all 阻塞（长回复 5-30s）
+    gate = asyncio.Event()
+
+    async def _blocking_wait():
+        await gate.wait()
+
+    loop._tts_mgr.wait_all = _blocking_wait
+
+    task = asyncio.create_task(loop.process("你好"))
+    # 等生成完成并进入 TTS 窗口（wait_all 阻塞）
+    for _ in range(100):
+        if getattr(loop, "_generation_completed", False):
+            break
+        await asyncio.sleep(0.01)
+    assert getattr(loop, "_generation_completed", False) is True, "mark(completed) 应在 TTS 窗口前落位"
+    assert not task.done(), "process 应阻塞在 TTS 窗口"
+    assert marks and marks[-1][1] == "completed"
+
+    # TTS 窗口打断 → registry 保持 completed，不再标 cancelled
+    # （process 捕获 CancelledError → _handle_interrupt 后正常返回，不抛）
+    loop.cancel_current("websocket")
+    await task
+    assert not any(s == "cancelled" for _, s in marks), "completed 后打断不应重标 cancelled"
+    assert marks and marks[-1][1] == "completed"
+    await _await_pending(loop)
+    await loop._output.close()

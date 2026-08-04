@@ -36,19 +36,21 @@ _RESOURCE_SCAN_BATCH = 200
 # ── 统一错误信封（ProtocolError 形状，错误码目录稳定码） ──────────────────────
 
 
-def _error_response(code: str, message: str, status: int = 400) -> web.Response:
+def _error_response(code: str, message: str, status: int = 400,
+                    retryable: bool = False) -> web.Response:
     """构造统一错误信封响应（与 server.py 认证中间件同形状）。
 
     Args:
-        code: 稳定错误码（SESSION_NOT_FOUND / GENERATION_NOT_FOUND / INVALID_TIMEZONE / CONTRACT_VALIDATION）。
+        code: 稳定错误码（SESSION_NOT_FOUND / GENERATION_NOT_FOUND / INVALID_TIMEZONE / CONTRACT_VALIDATION / AGENT_BUSY）。
         message: 公开说明。
         status: HTTP 状态码。
+        retryable: 是否可重试（如 AGENT_BUSY——忙时拒绝后客户端可稍后重试）。
 
     Returns:
         web.Response: ProtocolError 信封 JSON。
     """
     env = ProtocolError(
-        code=code, message=message, retryable=False,
+        code=code, message=message, retryable=retryable,
         requestId=f"req_{uuid.uuid4().hex[:24]}", error=message,
     ).wire_dict()
     return web.json_response(env, status=status)
@@ -74,21 +76,39 @@ def _parse_int_param(request: web.Request, name: str, default: int) -> int:
         return default
 
 
-def _parse_resource_before(value: str | None) -> str | None:
-    """解析 resources `before` 游标：base64(_id) 或直接 _id 字符串。
+def _encode_resource_cursor(doc_id: str, offset: int) -> str:
+    """编码资源级游标：base64url(`_id|offset`)。
 
-    spec §8：上页 cursor 可 base64(_id) 或原样 _id。24 位 hex 的原始 _id
-    经 base64 解码通常不是合法 utf-8（或非 24-hex），据此区分两种形态。
+    批次 3 review 修复（链路#2）：消息级 cursor（base64(_id)）在 limit 命中某消息
+    内部（一条消息含多个同类资源）时，下页 before 排除整条消息 → 后续资源永久丢失。
+    资源级 cursor 记录「该消息内已返回的同类资源数 offset」，下页从 offset+1 续扫。
+    """
+    raw = f"{doc_id}|{offset}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+def _parse_resource_before(value: str | None) -> tuple[str, int] | None:
+    """解析 resources `before` 游标 → (消息 _id, 消息内已返回资源数 offset)。
+
+    新格式：base64url(`_id|offset`)（资源级）；兼容旧格式 base64(_id) / raw _id
+    → offset=0（从头扫该消息，不再丢整条）。非法格式返回 None（从头扫）。
     """
     if not value:
         return None
+    # 新格式：base64url(_id|offset)
     try:
         decoded = base64.urlsafe_b64decode(value.encode("ascii")).decode("utf-8")
+        raw_id, _, offset_str = decoded.partition("|")
+        if re.fullmatch(r"[0-9a-fA-F]{24}", raw_id) and offset_str.isdigit():
+            return raw_id, int(offset_str)
         if re.fullmatch(r"[0-9a-fA-F]{24}", decoded):
-            return decoded
+            return decoded, 0  # 兼容旧 base64(_id)
     except Exception:
         pass
-    return value
+    # 兼容旧格式：raw 24-hex _id 直接传入
+    if re.fullmatch(r"[0-9a-fA-F]{24}", value):
+        return value, 0
+    return None
 
 
 # ── 契约转换 helpers ────────────────────────────────────────────────────────
@@ -206,26 +226,92 @@ def _extract_from_message(msg, category: str) -> list[dict]:
     return results
 
 
-async def _scan_resources(message_repo, session_id: str, category: str,
-                          before: str | None, limit: int) -> tuple[list[dict], bool, str | None]:
-    """按需扫描归档提取资源（spec §8 分页）。
+def _items_from_message(msg, category: str, start_offset: int = 0):
+    """产出单条消息从 start_offset 起的同类资源 (item_dict, cursor) 序列。
 
-    从 `before` 继续按 _id 倒序扫描，跳过不含目标类别 part 的消息，收集命中项
-    直到凑够 limit；随后**额外 peek** 一条命中项判定 has_more（peek 不到 = 无更多）。
+    cursor = (消息 _id, 该消息内已返回资源数)，供资源级分页续扫。
 
-    cursor 语义（避免数据丢失）：cursor = 本页**最后一条命中项**所在消息的 _id
-    （即 limit-th hit，而非 peek 命中项——若指到 peek 命中项，下页 before 会把它
-    排除掉导致该资源永久丢失）。下页回传为 before 后从 limit-th hit 之后继续，
-    peek 命中项会在下页被正常返回。凑不够 limit（已扫到末尾）→ 无更多，cursor 缺省。
+    Args:
+        msg: 归档消息对象（metadata 含 _mongo_id）。
+        category: 资源类别。
+        start_offset: 消息内起始资源下标（0 从头；续扫时承接上页 offset）。
+
+    Yields:
+        (资源项 dict, 资源级 cursor tuple)。
+    """
+    doc_id = msg.metadata.get("_mongo_id")
+    for idx, res in enumerate(_extract_from_message(msg, category)[start_offset:],
+                              start=start_offset):
+        yield {
+            "messageId": str(msg.message_id),
+            "timestamp": str(msg.timestamp),
+            "kind": res["kind"],
+            "url": res["url"],
+        }, (doc_id, idx + 1)
+
+
+async def _next_hit(message_repo, session_id: str, category: str,
+                    doc_id: str, offset: int) -> tuple[dict, tuple[str, int]] | None:
+    """从 (doc_id, offset) 起找下一条命中资源（peek has_more 用）。
+
+    先查 cursor 消息从 offset 起的剩余资源，再扫其后消息。
 
     Returns:
-        (资源项 dict 列表, has_more, 下一页游标 _id)。
+        (资源项 dict, cursor) 或 None（无更多命中）。
     """
+    msg = await message_repo.get_by_mongo_id(session_id, doc_id)
+    if msg is not None:
+        for item, cursor in _items_from_message(msg, category, offset):
+            return item, cursor
+    scan_before = doc_id
+    while True:
+        msgs, _ = await message_repo.query_page(session_id, before=scan_before,
+                                                limit=_RESOURCE_SCAN_BATCH)
+        if not msgs:
+            return None
+        for msg in msgs:
+            did = msg.metadata.get("_mongo_id")
+            if not did:
+                continue
+            scan_before = did
+            for item, cursor in _items_from_message(msg, category):
+                return item, cursor
+    return None
+
+
+async def _scan_resources(message_repo, session_id: str, category: str,
+                          before: tuple[str, int] | None,
+                          limit: int) -> tuple[list[dict], bool, str | None]:
+    """按需扫描归档提取资源（spec §8 分页，资源级 cursor）。
+
+    从 `before`（(消息 _id, 消息内 offset)）继续按 _id 倒序扫描：先处理 cursor 消息
+    从 offset 起的剩余资源，再扫其后消息，收集命中项直到凑够 limit；随后**额外 peek**
+    一条命中资源判定 has_more（peek 不到 = 无更多）。
+
+    批次 3 review 修复（链路#2）：cursor 由消息级（base64(_id)）改为**资源级**
+    base64url(`_id|offset`)——limit 在某消息内部命中（一条消息含多个同类资源）时，
+    下页从该消息 offset+1 续扫，不再排除整条消息导致后续资源永久丢失。
+
+    Returns:
+        (资源项 dict 列表, has_more, 下一页资源级游标)。
+    """
+    start_id, start_offset = before if before is not None else (None, 0)
     items: list[dict] = []
-    last_returned_id: str | None = None
-    scan_before = before
+    last_cursor: tuple[str, int] | None = None
+    scan_before = start_id
 
     # 阶段一：收集命中项直到凑够 limit
+    # 续扫时先处理 cursor 消息从 start_offset 起的剩余资源（query_page 的 before
+    # 是排他的，不含 cursor 消息本身，需按 _id 单独取回）
+    if start_id is not None:
+        cursor_msg = await message_repo.get_by_mongo_id(session_id, start_id)
+        if cursor_msg is not None:
+            for item, cursor in _items_from_message(cursor_msg, category, start_offset):
+                if len(items) >= limit:
+                    break
+                items.append(item)
+                last_cursor = cursor
+    # 再扫 cursor 消息之后的消息（首页 start_id=None 直接从这里开始）
     while len(items) < limit:
         msgs, _ = await message_repo.query_page(session_id, before=scan_before,
                                                 limit=_RESOURCE_SCAN_BATCH)
@@ -236,40 +322,22 @@ async def _scan_resources(message_repo, session_id: str, category: str,
             if not doc_id:
                 continue
             scan_before = doc_id
-            for res in _extract_from_message(msg, category):
-                items.append({
-                    "messageId": str(msg.message_id),
-                    "timestamp": str(msg.timestamp),
-                    "kind": res["kind"],
-                    "url": res["url"],
-                })
+            for item, cursor in _items_from_message(msg, category):
                 if len(items) >= limit:
-                    last_returned_id = doc_id
                     break
+                items.append(item)
+                last_cursor = cursor
             if len(items) >= limit:
                 break
     if len(items) < limit:
         # 未凑够 limit → 已扫到会话末尾，无更多命中
         return items, False, None
+    if last_cursor is None:
+        return items, False, None
 
-    # 阶段二：peek 一条命中项判定 has_more（只探不收集）
-    has_more = False
-    peek_before = scan_before
-    while True:
-        msgs, _ = await message_repo.query_page(session_id, before=peek_before,
-                                                limit=_RESOURCE_SCAN_BATCH)
-        if not msgs:
-            break
-        for msg in msgs:
-            peek_before = msg.metadata.get("_mongo_id")
-            if not peek_before:
-                continue
-            if _extract_from_message(msg, category):
-                has_more = True
-                break
-        if has_more:
-            break
-    return items, has_more, last_returned_id
+    # 阶段二：peek 一条命中资源判定 has_more（只探不收集）
+    has_more = await _next_hit(message_repo, session_id, category, *last_cursor) is not None
+    return items, has_more, _encode_resource_cursor(*last_cursor)
 
 
 # ── 会话 CRUD（spec §4） ────────────────────────────────────────────────────
@@ -370,11 +438,19 @@ async def sessions_delete_handler(request: web.Request) -> web.Response:
 
 
 async def sessions_activate_handler(request: web.Request) -> web.Response:
-    """POST /api/sessions/{conversationId}/activate — 仅切 active（回放走 WS activate_session）。"""
+    """POST /api/sessions/{conversationId}/activate — 仅切 active（回放走 WS activate_session）。
+
+    批次 3 review 修复（F1-a）：切换前 FSM 门禁——agent 忙（生成/TTS 中，
+    is_accepting_input=False）→ 409 AGENT_BUSY（retryable），不执行切换。
+    """
     agent = request.app["agent"]
     sid = request.match_info["conversationId"]
     if not await _session_exists(agent, sid):
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
+    status = getattr(agent, "status", None)
+    if status is not None and not status.is_accepting_input:
+        return _error_response("AGENT_BUSY", "Agent 忙（生成/TTS 中），无法切换会话",
+                               409, retryable=True)
     await agent.switch_session(sid)
     resp = rest_contract.SessionActivateResult(activeConversationId=str(sid))
     return web.json_response(resp.wire_dict())
@@ -463,8 +539,10 @@ async def search_messages_handler(request: web.Request) -> web.Response:
     items = []
     for msg in messages:
         role = getattr(msg, "role", None)
-        # 契约 SearchMessageItem.role 只认 user/assistant（tool 角色无对应模型值）
-        if role not in (MessageRole.USER, MessageRole.ASSISTANT):
+        # 批次 3 review 修复（链路#4）：category=tool 搜索时 query_search 设 role=tool
+        # 过滤——handler 必须放行 tool 角色，否则 tool 消息全被丢弃恒空。契约
+        # SearchMessageItem.role 已加 "tool" 枚举值（v1 类型不变，新枚举值）。
+        if role not in (MessageRole.USER, MessageRole.ASSISTANT, MessageRole.TOOL):
             continue
         response_id = None
         message_id = getattr(msg, "message_id", None)

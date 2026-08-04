@@ -804,7 +804,7 @@ export interface SearchMessageItem {
   /** 分段 ID，消息级搜索恒 null，可缺省 */
   segmentId?: string
   /** 消息角色 */
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'tool'
   /** ISO 时间戳 */
   timestamp: string
   /** 内容摘要（前 100 字） */

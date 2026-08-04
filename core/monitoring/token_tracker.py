@@ -126,6 +126,10 @@ class TokenTracker:
         session_id 缺省 → 最近记录会话（兼容 ws_handler.py 零参调用）。
         优先从 MongoDB 查询，补充 pending 文件中对应 session 的数据。
         如果 MongoDB 不可用，返回内存数据。
+
+        批次 3 review 修复（F8）：get_session_stats(sid) **严格按 sid**——Mongo 离线
+        且该 sid 无记录时返回 0/空，不泄漏最近记录会话/全局累计。session_total 属性
+        仍保持「最近记录会话」语义（debug/runtime_config 兼容），但本方法不再回退它。
         """
         sid = session_id if session_id is not None else (
             self._last_recorded_session or self.session_id
@@ -147,23 +151,22 @@ class TokenTracker:
                                 per_model[m] = per_model.get(m, 0) + r["total_tokens"]
                                 session_total += r["total_tokens"]
 
-                if session_total > self.session_total:
-                    self.session_total = session_total
-                    self.per_model = per_model
-                else:
-                    # 内存是当前进程的 ground truth，取较大值
-                    per_model = dict(self.per_model)
-                    session_total = self.session_total
+                # F8：调和仅限该 sid 的内存累计——Mongo 是该 sid 的持久化记录，内存
+                # 是该 sid 在途未 flush 记录，取较大值；不掺其他会话（原 else 分支
+                # 回退 self.per_model/self.session_total 会把最近记录会话累计泄漏给
+                # 无记录的新会话，v1 建连 token_stats 显示其他会话数据）。
+                mem_total = self._session_totals.get(sid, 0)
+                if mem_total > session_total:
+                    per_model = dict(self._session_models.get(sid, {}))
+                    session_total = mem_total
                 return {"total": session_total, "by_model": per_model}
             except Exception:
                 # pending 文件读取/解析失败 → 回退内存数据，留 warning 可见
                 logger.warning("get_session_stats 读取失败，回退内存数据",
                                exc_info=True)
-        # 内存回退：按会话取；该会话无记录 → 回退最近会话/当前会话累计
-        total = self._session_totals.get(sid, self.session_total)
-        per_model = self._session_models.get(sid)
-        if per_model is None:
-            per_model = dict(self.per_model)
+        # F8：内存回退严格按 sid——无记录 = 0/空，不泄漏最近会话累计
+        total = self._session_totals.get(sid, 0)
+        per_model = self._session_models.get(sid, {})
         return {"total": total, "by_model": dict(per_model)}
 
     async def flush_pending(self) -> None:

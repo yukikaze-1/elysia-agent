@@ -173,6 +173,35 @@ class TestActivateSession:
         finally:
             await agent.stop()
 
+    @pytest.mark.asyncio
+    async def test_activate_session_busy_rejected(self, aiohttp_client, fresh_idempotency):
+        """F1(a): 生成/TTS 中（FSM 非 IDLE，is_accepting_input=False）→ activate_session 拒绝
+        AGENT_BUSY，不切 active（防 engine 换绑 vs 在途生成竞态）。"""
+        from core.input.server import create_app
+        from core.schema import AgentState
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            _seed_session(agent, "conv_test_busy", "忙时目标会话")
+            # 模拟生成/TTS 中：FSM 推进到 THINKING（IDLE → THINKING 合法）
+            agent._fsm.transition(AgentState.THINKING)
+            assert agent.status.is_accepting_input is False
+
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({"type": "activate_session", "conversationId": "conv_test_busy"})
+
+            err = await _receive_type(ws, "error")
+            assert err.get("code") == "AGENT_BUSY", f"实际 {err.get('code')}"
+            assert agent.active_session_id == "default", "忙时不应切 active"
+            # 恢复 IDLE（THINKING → INTERRUPTED → IDLE，避免测试残留非 IDLE 状态）
+            agent._fsm.interrupt()
+            await ws.close()
+        finally:
+            await agent.stop()
+
 
 @pytest.mark.service
 class TestConversationIdRouting:

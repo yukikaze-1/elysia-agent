@@ -110,19 +110,24 @@ class TurnPhase(str, Enum):
 
 
 async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamManager,
-                      output) -> None:
+                      output, target_session=None) -> None:
     """解析 <mood> 标签内容，更新 CharacterState + 统一心情发射 + TTS emotion。
 
     支持格式: "情绪文本" 或 "情绪文本|强度"（强度 0.1–1.0）。
-    同时更新 CharacterEngine state.mood / state.mood_intensity，
+    更新目标会话 character_state 的 mood / mood_intensity（而非 engine.state），
     经 output.mood() 统一发射（v1 发 expression、v2 捕获不发——mood 由 turn_completed 落位），
     设置 TTS 情绪参数。
 
+    批次 3 review 修复（F1-b）：target_session 捕获发起会话的 character_state——
+    engine 全局单例 state 随 attach_session 换绑，in-flight 生成延续若写 engine.state
+    mood/L3 会跨会话污染；写 target_session.character_state 使 mood 落在发起会话。
+
     Args:
         raw: <mood> 标签内的原始文本
-        engine: CharacterEngine 实例
+        engine: CharacterEngine 实例（仅作调用点守卫/兜底，状态写 target）
         tts_mgr: TTSStreamManager 实例
         output: OutputManager（统一心情发射）
+        target_session: 发起会话（本轮 target）；None 时回退 engine.state（兼容旧调用）
     """
     if "|" in raw:
         mood_text, intensity_str = raw.rsplit("|", 1)
@@ -139,9 +144,11 @@ async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamMan
         logger.debug("心情: <mood> 标签为空，跳过")
         return
 
-    prev = engine.state.mood
-    engine.state.mood = mood_text
-    engine.state.mood_intensity = intensity
+    # 状态目标：target 会话的 character_state（防换绑竞态跨会话污染）
+    state = target_session.character_state if target_session is not None else engine.state
+    prev = state.mood
+    state.mood = mood_text
+    state.mood_intensity = intensity
     await output.mood(mood_text, intensity)
     tts_mgr.set_emotion(mood_text)
     if prev != mood_text:
@@ -216,6 +223,10 @@ class CognitiveLoop(CognitiveTools):
         self._generation_ctx: GenerationContext | None = None
         # 批次 2：本回合是否已发 generation.failed（终态唯一守卫——错误路径已发则打断不重发 CANCELLED）
         self._turn_failed_emitted: bool = False
+        # 批次 3 review 修复（F9）：本回合是否已 mark(completed)（成功路径终态）。
+        # TTS 播放窗口（turn_completed 已发、_transition_idle 等 wait_all）内打断时，
+        # _handle_interrupt 检查此标志不再把已 completed 的 generation 重标 cancelled。
+        self._generation_completed: bool = False
         self._response_recorder: ResponseRecorder | None = None  # 由 configure() 注入
         self._ttft_start: float = 0.0
         self._mood_applied: bool = False
@@ -278,8 +289,15 @@ class CognitiveLoop(CognitiveTools):
             source: 中断来源（vad / disconnect / button 等），批次 3 起贯通到
                 取消路径——存到 _interrupt_source 供 _handle_interrupt 消费，
                 Task 9 mark 拆分据此区分「语音打断」与「断线」。
+
+        批次 3 review 修复（F6）：_interrupt_source 只增不减——
+          - source 为 None 不覆盖已有来源（后续 cancel_current() 如 system tick /
+            新任务启动不清掉待消费的 disconnect/websocket 来源）；
+          - 已有 disconnect 来源不被后续非 disconnect 来源覆盖（断开是终态语义）。
         """
-        self._interrupt_source = source
+        if source is not None:
+            if self._interrupt_source != "disconnect" or source == "disconnect":
+                self._interrupt_source = source
         if self._current_task is not None and not self._current_task.done():
             self._current_task.cancel()
             self._current_task = None
@@ -340,6 +358,14 @@ class CognitiveLoop(CognitiveTools):
             if not self.status.is_accepting_input:
                 logger.warning("Agent not accepting input — skipping turn")
                 return
+
+            # F5（review 修复）：process 开头（resolve 前）清掉上一轮残留的 generation ctx
+            # 与终态标志。上一轮完成（agent 已 idle）后 ctx 仍指向已完成 generation；若在
+            # 本轮 resolve / enter_thinking 与 ctx 重建之间被打断，_handle_interrupt 看到
+            # None 就不会把上一轮已 completed 的 generation 重标 cancelled。
+            self._generation_ctx = None
+            self._generation_completed = False
+            self._turn_failed_emitted = False
 
             # 批次 3（multi-session，D-m）：每轮开头按协议版本 + conversation_id
             # 解析目标会话。
@@ -536,6 +562,7 @@ class CognitiveLoop(CognitiveTools):
     async def _stream_llm_response(
         self, messages: list[dict], tool_defs: list[dict], round_num: int,
         session_id: SessionId | None = None,
+        session: SessionMemory | None = None,
     ) -> tuple[str, list[dict], bool, list[str], str, list[BlockRef], str]:
         """流式调用 LLM，逐 chunk 分发 StreamProcessor 事件。
 
@@ -547,6 +574,8 @@ class CognitiveLoop(CognitiveTools):
             messages: 已构建的 LLM 消息列表（含 system + history + user）
             tool_defs: 工具定义列表（OpenAI function calling 格式）
             round_num: 当前工具调用轮次（0 = 首轮）
+            session_id: 本轮目标会话 ID（token record 归属）
+            session: 本轮目标会话（F1-b 捕获——_apply_mood 写 target.character_state）
 
         Returns:
             (acc_text, raw_tool_calls, speaking_started, all_sentences,
@@ -595,6 +624,7 @@ class CognitiveLoop(CognitiveTools):
                                 speaking_started=speaking_started,
                                 all_sentences=all_sentences,
                                 iv_think_buf_holder=iv_think_buf_holder,
+                                session=session,
                             )
                         )
 
@@ -621,6 +651,7 @@ class CognitiveLoop(CognitiveTools):
                     speaking_started=speaking_started,
                     all_sentences=all_sentences,
                     iv_think_buf_holder=iv_think_buf_holder,
+                    session=session,
                 )
             )
 
@@ -837,7 +868,10 @@ class CognitiveLoop(CognitiveTools):
         if self._character_engine and not self._mood_applied:
             logger.debug("心情: <mood> 未检测到，使用关键词 fallback")
             self._character_engine.analyze_user(user_message)
-            self._tts_mgr.set_emotion(self._character_engine.state.mood)
+            # F1-b：读 target.character_state（FSM 门禁保证 engine 仍绑定 target）
+            fallback_mood = (target.character_state.mood
+                             if target is not None else self._character_engine.state.mood)
+            self._tts_mgr.set_emotion(fallback_mood)
 
         if public_text.strip():
             if self._character_engine:
@@ -893,6 +927,22 @@ class CognitiveLoop(CognitiveTools):
                     params["language"] = lang
                 await self._output.command("block", params=params)
 
+        # 批次 3 review 修复（F9）：成功路径 generation 终态 → completed，移到
+        # turn_completed 之前落位。此前 mark 放在 _transition_idle 之后——客户端已收
+        # generation.completed（turn_completed 先发）但 registry 仍 running，TTS 播放窗口
+        # （_transition_idle 等 wait_all 5-30s）内打断会把已完成的 generation 标 cancelled，
+        # 造成客户端 completed 与服务端 cancelled 不一致。前置后 _handle_interrupt 经
+        # _generation_completed 守卫不再重标。
+        if self._generation_ctx is not None:
+            self._generation_completed = True
+            if self._generation_registry is not None:
+                try:
+                    await self._generation_registry.mark(
+                        self._generation_ctx.generation_id,
+                        status="completed", finish_reason="stop")
+                except Exception:
+                    logger.debug("generation mark completed 失败", exc_info=True)
+
         # 批次 2：父完成（v2 generation.completed——usage/model/mood 落位；v1 NO-OP，token_usage 已实时广播）
         if self._generation_ctx is not None:
             try:
@@ -917,8 +967,10 @@ class CognitiveLoop(CognitiveTools):
                     except Exception:
                         logger.debug("get_session_stats 失败，conversation_usage=None",
                                      exc_info=True)
-                mood = (self._character_engine.state.mood
-                        if self._character_engine is not None else None)
+                # F1-b：mood 读 target.character_state（防换绑竞态下读错会话）
+                mood = (target.character_state.mood if target is not None else (
+                    self._character_engine.state.mood
+                    if self._character_engine is not None else None))
                 await self._output.turn_completed(
                     "stop", usage, self._llm.model, mood, self._generation_ctx,
                     conversation_id=conversation_id or target.session_id,
@@ -927,17 +979,6 @@ class CognitiveLoop(CognitiveTools):
                 logger.debug("turn_completed 发射失败", exc_info=True)
 
         await self._transition_idle()
-
-        # 批次 3（BE-024）：成功路径 generation 终态 → completed。放在 _transition_idle
-        # 之后——IDLE 转换中途被打断则此处不落，由 _handle_interrupt 按来源标
-        # cancelled/interrupted，避免「completed 被后续 cancelled 覆盖」。
-        if self._generation_registry is not None and self._generation_ctx is not None:
-            try:
-                await self._generation_registry.mark(
-                    self._generation_ctx.generation_id,
-                    status="completed", finish_reason="stop")
-            except Exception:
-                logger.debug("generation mark completed 失败", exc_info=True)
 
     # ---- Core loop: main orchestrator ----
 
@@ -1011,7 +1052,8 @@ class CognitiveLoop(CognitiveTools):
                     blocks, public_text = \
                     await self._stream_llm_response(
                         messages, tool_defs, round_num,
-                        session_id=(session.session_id if session is not None else None))
+                        session_id=(session.session_id if session is not None else None),
+                        session=session)
 
                 # 空 LLM 响应守卫：无文本、无工具调用 → 注入 nudge 重试一次；
                 # 重试后仍空 → 兜底回复（同时注入 all_sentences，保证 session 归档
@@ -1155,6 +1197,7 @@ class CognitiveLoop(CognitiveTools):
         self, event: StreamEvent, *,
         speaking_started: bool, all_sentences: list[str],
         iv_think_buf_holder: list[str],
+        session: SessionMemory | None = None,
     ) -> tuple[bool, list[str]]:
         """分发 StreamEvent → 副作用。
 
@@ -1167,6 +1210,7 @@ class CognitiveLoop(CognitiveTools):
             speaking_started: 当前轮是否已开始语音/文本输出
             all_sentences: 已累积的分句列表（in-place 追加）
             iv_think_buf_holder: 累积列表，逐条 append inner_voice 文本（可变容器绕过 Python 闭包限制）
+            session: 本轮目标会话（F1-b 捕获，_apply_mood 写其 character_state）
 
         Returns:
             (speaking_started, all_sentences): 更新后的状态
@@ -1174,7 +1218,7 @@ class CognitiveLoop(CognitiveTools):
         if event.type == StreamEventType.MOOD:
             if self._character_engine:
                 await _apply_mood(event.text, self._character_engine, self._tts_mgr,
-                                  self._output)
+                                  self._output, session)
             self._mood_applied = True
 
         elif event.type == StreamEventType.INNER_VOICE:
@@ -1293,6 +1337,16 @@ class CognitiveLoop(CognitiveTools):
             source = self._interrupt_source
         self._interrupt_source = None
         if self.status.is_completely_idle:
+            return
+        # 批次 3 review 修复（F9）：本回合已 mark(completed)（turn_completed 已发、
+        # TTS 窗口内打断）→ 不再发 CANCELLED/重标 cancelled——客户端已收 completed，
+        # 打断仅做 TTS 清理回 IDLE。
+        if self._generation_completed:
+            self._executing_tools.clear()
+            self._tts_mgr.cancel_all()
+            await self._output.typing(False)
+            await self.phases.handle_interrupt()
+            logger.debug("Interrupt after generation.completed — 保持 completed，仅清理")
             return
         # 批次 2：活动 generation 且未被错误路径覆盖 → v2 发 generation.failed{CANCELLED}
         # （终态唯一：错误路径已发 failed 则不重发；v1 不发，保持现状打断无 ❌）

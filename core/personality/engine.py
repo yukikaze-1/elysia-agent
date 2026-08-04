@@ -347,11 +347,23 @@ class CharacterEngine:
           - _last_awareness_time（新会话的 awareness 冷却计时，经 property 代理到
             _awareness._last_awareness_time）
 
-        注意: 不调用 _restore_from_state —— reflector 的 live buffer 不随切换恢复。
-        切换时 outgoing 的 buffer 已由 _pre_save_hook() 落盘到旧 character_state；
-        incoming 会话的 buffer 随其 SessionMemory 实例内存独立（load 时已恢复）。
-        属 spec D-o 有意取舍，勿加回恢复调用。
+        批次 3 review 修复（F2）：换绑前 flush outgoing 的 reflector buffer 到其
+        character_state → 清空 live buffer/context → 重绑 → _restore_from_state
+        恢复 incoming。flush+clear+restore 只**迁移**在途 buffer，不覆盖——多会话
+        常规交替下 A.save()/B.save() 各写各的（A 的 buffer 落 A.cs、B 的落 B.cs），
+        杜绝「A.save() 的 _pre_save_hook 把 A 的 buffer 写进 B.character_state」。
+        修正原 spec D-o「不 restore」注释（基于 load 已恢复假设；多会话切换下
+        flush 后清空使整体替换等价于 restore）。
         """
+        # F2：换绑前 flush outgoing 的 reflector buffer/context 到其 character_state
+        if self.state is not None and self._reflector is not None:
+            self.state.reflector_buffer = [(u, a) for u, a in self._reflector._buffer]
+            self.state.reflector_context = list(self._reflector._context)
+        # 清空 live buffer/context——随后 restore 整体替换，不残留 outgoing 在途数据
+        if self._reflector is not None:
+            self._reflector._buffer.clear()
+            self._reflector._context.clear()
+
         new_state = session.character_state
         self.state = new_state
         self._compression._state = new_state
@@ -360,6 +372,10 @@ class CharacterEngine:
         session._pre_save_hook = self.sync_reflector_to_state
         # 同步新会话的 awareness 冷却状态
         self._last_awareness_time = new_state.last_awareness_time or 0.0
+        # F2：换绑后从 incoming.character_state 恢复 buffer/context（live 已清空，
+        # 恢复只迁移不覆盖）
+        if self._reflector is not None and hasattr(self._reflector, "_restore_from_state"):
+            self._reflector._restore_from_state()
 
     # ---- Reflector 代理 ----
 

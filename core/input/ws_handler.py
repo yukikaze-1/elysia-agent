@@ -453,6 +453,11 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
     spec §6.1：`await agent.switch_session(conversationId)` → 重发 SessionMessage
     （新活动会话回放，复用建连回放路径）。未知 conversationId → 不发回放，
     发 `ErrorMessage{code: SESSION_NOT_FOUND}`（批次 1 错误信封）。
+
+    批次 3 review 修复（F1-a）：切换前 FSM 门禁——agent 忙（生成/TTS 中，
+    is_accepting_input=False）→ 拒绝 AGENT_BUSY（retryable 语义由码名表达），
+    不执行切换。防 engine 全局单例 attach_session 换绑与一次 v2 生成流式/TTS
+    并发 → mood/L3 跨会话污染。
     """
     sid = data.get("conversationId", "")
     if not sid:
@@ -462,6 +467,13 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
         ).wire_dict())
         return
     try:
+        if not getattr(agent.status, "is_accepting_input", True):
+            logger.info("activate_session: agent 忙（is_accepting_input=False），拒绝切换 %s", sid)
+            await ws.send_json(ErrorMessage(
+                message="Agent 忙（生成/TTS 中），无法切换会话",
+                code="AGENT_BUSY",
+            ).wire_dict())
+            return
         if not await agent.session_manager.has_session(sid):
             logger.debug("activate_session: 未知会话 %s → SESSION_NOT_FOUND", sid)
             await ws.send_json(ErrorMessage(

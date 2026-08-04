@@ -261,6 +261,9 @@ class Agent(AgentLifecycle, AgentServer):
         )
         self._cognitive.phases = self.phases
         self._cognitive.status = self.status
+        # 批次 3 review 修复（F1-a）：SessionManager.switch 忙时拒绝（生成/TTS 中
+        # 不换绑 engine，防 state 竞态）——activate 入口 FSM 门禁的双保险。
+        self._session_manager.set_busy_check(lambda: not self.status.is_accepting_input)
 
         # Worker Pool — 执行 AI 规划的工具子任务 + 后台任务
         self._scheduler = TaskScheduler(

@@ -32,7 +32,7 @@
 | D-l | **启动时序**：`Agent.__init__` eager 构造 default 空 `SessionMemory` 实例并注册到 SessionManager（**不 load**）；CharacterEngine 构造绑定该实例的 `character_state`；`_start_persistence` `connect_db()` 后 `await session_manager.load_active()` 从 DB/JSONL 恢复（SessionMemory.load 是**原地改字段**，同一实例生效）。运行时首次访问新会话 → 构造 + 异步 load。 |
 | D-m | **CognitiveLoop 注入 session resolver**：loop 构造移除 `session` 参数，改为 `session_resolver: Callable[[SessionId|None, int], Awaitable[SessionMemory]]`（agent 传入 `resolve_session` 闭包）。 |
 | D-n | **PromptAssembler 会话换绑**：`PromptAssembler.set_session(session)` 重绑 `_session` + `EmotionSection`/`OwnLifeSection`/`MemorySection` 的 session 引用。 |
-| D-o | **attach_session 语义**：切换前对 outgoing 会话调用 `_pre_save_hook()`（sync reflector buffer 到其 character_state，内存操作）；attach 时**只重绑引用**（`engine.state` + `_awareness`/`_compression`/`_emotion` 三个子组件的 `_state` + `_pre_save_hook` + `_last_awareness_time`），**不调 `_restore_from_state`**（reflector buffer 随各 SessionMemory 实例内存独立，load 时已恢复；避免覆盖在途 buffer）。 |
+| D-o | **attach_session 语义（F2 修正）**：换绑前 flush outgoing 的 reflector buffer/context 到其 character_state → 清空 live buffer → 重绑引用（`engine.state` + `_awareness`/`_compression`/`_emotion` 三个子组件的 `_state` + `_pre_save_hook` + `_last_awareness_time`）→ **调 `_restore_from_state()`** 从 incoming cs 恢复。原「不 restore」基于 load 已恢复假设；多会话交替下 `_pre_save_hook` 写当前绑定会跨会话污染，flush+clear+restore 仅迁移在途 buffer 不覆盖。 |
 | D-p | **TokenTracker 会话感知兼容**：保留 `session_total` 属性（返回最近记录会话累计，兼容 `debug/info.py` 与 `runtime_config/plugin.py` 既有读取）；新增 `_session_totals: dict[SessionId, int]`；`record()` 增加 `session_id` 参数（loop 传目标会话）。 |
 | D-q | **搜索返回 ID 语义**：搜索项返回 `{conversationId, messageId, responseId|null, segmentId|null, ...}`；`responseId` = GenerationRegistry 按 `message_id` 反查最近一条 generation（best-effort）；`segmentId` 消息级搜索不定位到段 → 恒 null（跳回消息后用 context 窗口定位），显式声明该取舍。 |
 
@@ -105,10 +105,17 @@ async def switch_session(self, sid: SessionId) -> SessionMemory    # → session
 ### 3.3 CharacterEngine 换绑（D-o）
 
 ```python
-# core/personality/engine.py 新增
+# core/personality/engine.py
 class CharacterEngine:
     def attach_session(self, session: SessionMemory) -> None:
-        """换绑当前会话状态：先 sync outgoing，再重绑引用（不 _restore_from_state）。"""
+        """换绑当前会话状态：flush outgoing buffer → 清空 live → 重绑 → restore incoming。"""
+        # F2：换绑前 flush outgoing 的 reflector buffer/context 到其 character_state
+        if self.state is not None and self._reflector is not None:
+            self.state.reflector_buffer = [(u, a) for u, a in self._reflector._buffer]
+            self.state.reflector_context = list(self._reflector._context)
+        if self._reflector is not None:
+            self._reflector._buffer.clear()
+            self._reflector._context.clear()
         self.state = session.character_state
         # 三个子组件各自持有 _state 引用——必须同步重绑（awareness/compression/emotion）
         self._awareness._state = session.character_state
@@ -116,11 +123,14 @@ class CharacterEngine:
         self._emotion._state = session.character_state
         session._pre_save_hook = self.sync_reflector_to_state
         self._last_awareness_time = session.character_state.last_awareness_time
+        # F2：换绑后 restore incoming buffer/context（live 已清空，恢复只迁移不覆盖）
+        if self._reflector is not None and hasattr(self._reflector, "_restore_from_state"):
+            self._reflector._restore_from_state()
 ```
 
 - **调用点**：`SessionManager.switch()` 换 active 时；loop 每轮 resolve 后（`bind_character_engine`/`attach` 幂等，重复绑定同一会话为无害）。
-- **outgoing 同步**：切换前由调用方（switch/轮次 resolve）先对 outgoing 会话调用 `_pre_save_hook()`（sync reflector buffer → 其 character_state，内存操作，非落盘）。
-- **不 `_restore_from_state`**：reflector buffer 随各 SessionMemory 实例内存独立，load 时已恢复；attach 时调用会覆盖在途 buffer，禁止。
+- **outgoing 同步**：切换时 attach 内部先 flush outgoing 的 reflector buffer 到其 character_state（内存操作，非落盘）；调用方（switch）也会先调 outgoing._pre_save_hook()，二者幂等。
+- **`_restore_from_state`（D-o 修正，review 修复 F2）**：原 spec 声明「不 restore」（基于「load 时已恢复」假设）；多会话常规交替下 `_pre_save_hook` 写当前绑定 `self.state`，A.save() 会把 A 的 buffer 写进 B.character_state——跨会话污染。修正为 **flush + clear + restore**：换绑前 flush outgoing buffer 到其 cs → 清空 live buffer/context → 重绑 → `_restore_from_state()` 从 incoming cs 恢复。flush 后清空使整体替换等价于 restore，不覆盖在途 buffer，仅迁移。两会话交替 save 各写各的。
 - 启动恢复：`_start_persistence` 中 default 会话 `load_active()` 后 C9 `_last_awareness_time` 与 reflector 恢复逻辑沿用现有（`_lifecycle_persistence` 现逻辑，仅换 manager 路径）。
 
 ### 3.4 CognitiveLoop 轮次目标会话（D-m）
@@ -359,7 +369,7 @@ class CharacterEngine:
 - `GenerationCompletedMessage` 增 `conversationUsage: Optional[ConversationUsage]`；
 - `ActivateSessionMessage`（Client→Server，type=`activate_session`，conversationId 必填）加入 Client→Server 契约。
 
-错误目录新增码：`SESSION_NOT_FOUND`（404）、`GENERATION_NOT_FOUND`（404）、`INVALID_TIMEZONE`（400）、`SESSION_PROTECTED`（409，默认会话删除保护）、`RESOURCE_NOT_FOUND`（404，消息/资源不存在，错误目录批次 1 已有码；message context 端点消息不存在时使用）。
+错误目录新增码：`SESSION_NOT_FOUND`（404）、`GENERATION_NOT_FOUND`（404）、`INVALID_TIMEZONE`（400）、`SESSION_PROTECTED`（409，默认会话删除保护）、`RESOURCE_NOT_FOUND`（404，消息/资源不存在，错误目录批次 1 已有码；message context 端点消息不存在时使用）、`AGENT_BUSY`（409，review 修复 F1-a：activate_session/activate 在 agent 忙（生成/TTS 中）时拒绝切换，retryable=true）。
 
 ## 10. 兼容性硬约束
 

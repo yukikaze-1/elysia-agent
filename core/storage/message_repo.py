@@ -250,6 +250,29 @@ class MessageRepository(Repository):
         messages = [_doc_to_message(doc) for doc in docs]
         return messages, has_more
 
+    async def get_by_mongo_id(self, session_id: SessionId, doc_id: str) -> Message | None:
+        """按 Mongo _id 取单条归档消息（资源索引分页续扫用——cursor 消息需从
+        消息内 offset 继续扫）。不存在/非法 _id/库不可用返回 None。
+
+        Args:
+            session_id: 会话 ID。
+            doc_id: Mongo ObjectId 字符串。
+
+        Returns:
+            对应 Message；找不到返回 None。
+        """
+        if self._db is None:
+            return None
+        try:
+            oid = ObjectId(doc_id)
+        except Exception:
+            return None
+        docs = await self._db.find(
+            COLLECTION, {"session_id": session_id, "_id": oid}, limit=1)
+        if not docs:
+            return None
+        return _doc_to_message(docs[0])
+
     async def query_after(self, session_id: SessionId, message_id: MessageId, *,
                           limit: int = 20) -> tuple[list[Message], bool]:
         """定位锚点消息（{session_id, message_id}）之后的消息，正序返回。

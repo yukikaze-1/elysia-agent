@@ -19,6 +19,7 @@ import base64
 import logging
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 
 from core.schema.utils import now_iso
 from core.schema.types import SessionId
@@ -29,6 +30,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SESSION = SessionId("default")
 """活动会话回落目标（删除活动会话时）。"""
+
+
+class SessionBusyError(RuntimeError):
+    """切换被拒——agent 忙（生成/TTS 中），换绑 engine 会与在途生成竞态。
+
+    批次 3 review 修复（F1-a）：activate 入口先经 FSM 门禁（is_accepting_input）
+    拒绝忙时切换；SessionManager.switch 内置 busy check 作为双保险。
+    """
 
 
 def _encode_cursor(updated_at: str, session_id: str) -> str:
@@ -68,6 +77,8 @@ class SessionManager:
         self._loaded: set[SessionId] = set()
         self._active_id = DEFAULT_SESSION
         self._character_engine = None
+        # F1(a)：switch 忙时拒绝的检查回调（agent 注入 `not status.is_accepting_input`）
+        self._busy_check = None
         # eager default 空实例
         self._sessions[DEFAULT_SESSION] = SessionMemory(
             max_messages=max_messages,
@@ -94,7 +105,11 @@ class SessionManager:
     # ---- 缓存访问 ----
 
     def get(self, sid) -> SessionMemory:
-        """内存命中返回；未命中构造空实例并缓存（不触发 load）。"""
+        """内存命中返回；未命中构造空实例并缓存（不触发 load）。
+
+        F7：构造新会话后调用 evict_if_needed()——超 max_sessions 时逐出最旧非活动
+        会话（此前 evict 无调用点，缓存无界增长）。
+        """
         sid = SessionId(sid)
         session = self._sessions.get(sid)
         if session is None:
@@ -105,6 +120,7 @@ class SessionManager:
                 msg_repo=self._msg_repo,
             )
             self._sessions[sid] = session
+            self.evict_if_needed()
         else:
             self._sessions.move_to_end(sid)
         return session
@@ -148,13 +164,26 @@ class SessionManager:
             target = self._active_id
         return await self.ensure_loaded(target)
 
+    def set_busy_check(self, check: "Callable[[], bool] | None") -> None:
+        """注入忙时检查回调（agent 构造后设置：`not status.is_accepting_input`）。
+
+        switch 命中忙（生成/TTS 中）→ 抛 SessionBusyError，不执行换绑（F1-a 双保险）。
+        """
+        self._busy_check = check
+
     async def switch(self, sid) -> SessionMemory:
         """切换到目标会话。
 
-        顺序：resolve/ensure-loaded → outgoing._pre_save_hook()（同步 reflector
-        buffer）→ 换 active 指针 → bind 的 engine.attach_session(target)。
+        顺序：busy check（F1-a）→ resolve/ensure-loaded → outgoing._pre_save_hook()
+        （同步 reflector buffer）→ 换 active 指针 → bind 的 engine.attach_session(target)。
+
+        Raises:
+            SessionBusyError: 已注入 busy check 且 agent 忙（生成/TTS 中）时拒绝切换。
         """
         sid = SessionId(sid)
+        if self._busy_check is not None and self._busy_check():
+            logger.debug("switch 拒绝：agent 忙（busy check 命中），sid=%s", sid)
+            raise SessionBusyError(sid)
         target = await self.ensure_loaded(sid)
         outgoing = self._sessions.get(self._active_id)
         if outgoing is not None and outgoing._pre_save_hook is not None:
@@ -273,11 +302,12 @@ class SessionManager:
         """超出 max_sessions 时逐出最久未用非活动会话（逐出前 save）。
 
         同步方法：save 经 fire-and-forget task 调度（无运行事件循环时跳过）。
+        保护（F7）：永不逐出默认会话 default（v1 锚点，与 delete 守卫同主题）。
         """
         while len(self._sessions) > self._max_sessions:
             evicted: tuple[SessionId, SessionMemory] | None = None
             for sid, session in list(self._sessions.items()):
-                if sid == self._active_id:
+                if sid == self._active_id or sid == DEFAULT_SESSION:
                     continue
                 evicted = (sid, session)
                 break
