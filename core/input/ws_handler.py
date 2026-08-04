@@ -217,6 +217,16 @@ async def handle_ws(
             await audio_buf.flush()
         agent.output.remove_channel(channel)
         logger.info("WS client disconnected: %s", client_id)
+        # 批次 2 重连语义（最小）：v2 源连接在生成中断开 → 取消在途 generation（标记中断）。
+        # 客户端重连后经 session 回放获取部分消息，未见 generation.completed 即视为中断。
+        if protocol_version >= 2:
+            try:
+                if not agent.status.is_completely_idle:
+                    from core.monitoring.event_bus import EventPriority
+                    agent.bus.post(InterruptData(source="disconnect"),
+                                   priority=EventPriority.INTERRUPT)
+            except Exception:
+                logger.debug("v2 断线取消 generation 失败", exc_info=True)
 
     return ws
 

@@ -54,6 +54,10 @@ LLM stream
 
 ## 关键机制
 
+### 批次 2：v2 结构化事件（generation.*）
+
+`process()` 每回合创建 `GenerationContext`（`core/cognitive/generation.py`，generation_id/assistant_message_id 预分配）；`_dispatch_stream_event` 经 `OutputManager` 统一回合事件发射（单一语义源、双 wire 呈现）——v1 通道复刻现状 wire（delta/message/command/expression），v2 通道发 `generation.started/segment.*/delta/completed/failed`（握手 `X-Protocol-Version: 2`）。`_finalize_turn` 用预分配 assistant 父消息 ID 落库；错误路径发 `turn_failed`、打断发 `turn_cancelled`（终态唯一）。详见 [docs/electron-backend-protocol-v2.md](../../docs/electron-backend-protocol-v2.md)。
+
 ### inner_voice 协议
 
 LLM 每条回复内嵌一个 `<inner_voice>` 块（1-2 句：当前感受 + 回应意图，不做推理链）。解析结果提取为 `mood`（当前情绪），影响 TTS 情感参数。标签检测逻辑由 `StreamProcessor` 独立实现（纯状态机，零 I/O），位于 `core/text/stream_processor.py`。

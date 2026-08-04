@@ -163,3 +163,85 @@ class TestV2AckIdempotency:
             await ws.close()
         finally:
             await agent.stop()
+
+
+@pytest.mark.service
+class TestV2Reconnect:
+    @pytest.mark.asyncio
+    async def test_reconnect_replay_stable_message_ids(self, aiohttp_client, fresh_idempotency):
+        """重连后 session 回放含稳定 messageId（预分配用户 ID + assistant 父 ID）。"""
+        import time as _time
+        from core.input.server import create_app
+        from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            # 第一次连接：生成完成，记录 ACK messageId + completed messageId
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({
+                "type": "text", "content": "你好",
+                "clientRequestId": f"req_r_{_time.monotonic_ns()}",
+            })
+            ack_msg_id = completed_msg_id = None
+            for _ in range(30):
+                m = await asyncio.wait_for(ws.receive(), timeout=10)
+                if m.type != WSMsgType.TEXT:
+                    continue
+                d = json.loads(m.data)
+                if d.get("type") == "user_message.ack":
+                    ack_msg_id = d.get("messageId")
+                elif d.get("type") == "generation.completed":
+                    completed_msg_id = d.get("messageId")
+                    break
+            assert ack_msg_id and completed_msg_id
+            await ws.close()
+
+            # 重连：直接读首帧 session 回放（_drain 会消费它）
+            ws2 = await client.session.ws_connect(
+                client.make_url("/ws"), headers={"X-Protocol-Version": "2"})
+            session = None
+            for _ in range(6):
+                m = await asyncio.wait_for(ws2.receive(), timeout=5)
+                if m.type == WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("type") == "session":
+                        session = d
+                        break
+            assert session is not None, "重连未收到 session 回放"
+            ids = [item.get("message_id") for item in session.get("messages", [])]
+            assert ack_msg_id in ids, "回放应含预分配用户消息 ID"
+            assert completed_msg_id in ids, "回放应含 assistant 父消息 ID"
+            await ws2.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v2_disconnect_cancels_inflight_generation(self, aiohttp_client, fresh_idempotency):
+        """v2 源连接生成中断开 → 取消在途 generation（agent 回 idle）。"""
+        import time as _time
+        from core.input.server import create_app
+        from core.cognitive.tests.test_v2_generation import _SlowLLM, _make_agent_with
+
+        agent = _make_agent_with(_SlowLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({
+                "type": "text", "content": "慢速生成",
+                "clientRequestId": f"req_d_{_time.monotonic_ns()}",
+            })
+            await asyncio.sleep(0.4)  # 生成开始
+            await ws.close()          # 生成中断开
+            # 等待取消 → agent 回 idle
+            for _ in range(30):
+                if agent.status.is_completely_idle:
+                    break
+                await asyncio.sleep(0.1)
+            assert agent.status.is_completely_idle, "v2 断线应取消在途 generation"
+        finally:
+            await agent.stop()

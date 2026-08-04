@@ -76,13 +76,23 @@ class FakeLLMWithUsage(FakeLLMBackend):
     """
 
     def __init__(self, response: str = "test response", token_delay: float = 0.0,
-                 space_after_first_dot: bool = False) -> None:
+                 space_after_first_dot: bool = False, fault: str | None = None) -> None:
         super().__init__(response=response)
         self._token_delay = token_delay
         self._space_after_first_dot = space_after_first_dot
         self._space_inserted = False
+        self._fault = fault
+        self._fault_call = 0
 
     async def stream_think(self, messages, **kwargs):
+        # 故障注入（复用 FakeLLMBackend._maybe_inject_fault 语义：http_503 → httpx 异常）
+        if self._fault:
+            self._fault_call += 1
+            if self._fault == "http_503":
+                import httpx
+                req = object()
+                resp = type("R", (), {"status_code": 503})()
+                raise httpx.HTTPStatusError("unavailable", request=req, response=resp)
         gt_count = 0  # 统计 `>`——第 2 个 `>` 即 `</inner_voice>` 闭合
         for tok in self._tokenize(self.response):
             if self._token_delay:
@@ -254,6 +264,43 @@ async def main() -> int:
 
         frames = await _capture(fake, _send, max_frames=10,
                                 headers={"X-Protocol-Version": "2"})
+        lines = [_sanitize(f) for f in frames]
+        out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        for i, line in enumerate(lines):
+            json.loads(line)
+        print(f"[ok] 写入 {out}（{len(lines)} 行，全部可解析）")
+        return 0
+
+    elif mode in ("v2chat", "v2cancel", "v2fail"):
+        # v2 轨迹（批次 2 交付物）：X-Protocol-Version: 2 + clientRequestId
+        rid = f"req_cap_{os.urandom(4).hex()}"
+        headers = {"X-Protocol-Version": "2"}
+        if mode == "v2chat":
+            fake = FakeLLMWithUsage(response=CHAT_RESPONSE)
+            out = TRACES_DIR / "ws-v2-chat.jsonl"
+
+            async def _send(ws):
+                await ws.send_json({"type": "text", "content": "你好，请介绍一下你自己",
+                                    "clientRequestId": rid})
+        elif mode == "v2cancel":
+            fake = FakeLLMWithUsage(response=CANCEL_RESPONSE, token_delay=0.05,
+                                    space_after_first_dot=True)
+            out = TRACES_DIR / "ws-v2-cancel.jsonl"
+
+            async def _send(ws):
+                await ws.send_json({"type": "text", "content": "请详细回答（将被打断）",
+                                    "clientRequestId": rid})
+                await asyncio.sleep(1.6)
+                await ws.send_json({"type": "interrupt"})
+        else:  # v2fail
+            fake = FakeLLMWithUsage(response=CHAT_RESPONSE, fault="http_503")
+            out = TRACES_DIR / "ws-v2-fail.jsonl"
+
+            async def _send(ws):
+                await ws.send_json({"type": "text", "content": "hi",
+                                    "clientRequestId": rid})
+
+        frames = await _capture(fake, _send, max_frames=80, timeout=20, headers=headers)
         lines = [_sanitize(f) for f in frames]
         out.write_text("\n".join(lines) + "\n", encoding="utf-8")
         for i, line in enumerate(lines):

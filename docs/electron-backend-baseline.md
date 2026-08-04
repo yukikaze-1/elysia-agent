@@ -45,6 +45,10 @@
 - 句子切分：`SpeechSplitter` 结构感知分句（硬分隔符 `。！？!?\n♪♡` + 点号/缩写保护），`StreamProcessor` 产出 SENTENCE + TEXT_DELTA。
 - **无** protocol_version / generation / response / segment / message ACK 字段。
 
+> **批次 2 已上线 v2**：握手 `X-Protocol-Version: 2` 的连接走结构化事件
+> （`user_message.ack` / `generation.*`），见 [docs/electron-backend-protocol-v2.md](electron-backend-protocol-v2.md)。
+> 本文件记录 v1 现状（v1 路径逐字节不变）。
+
 **一键回复事件序列**（实测 `ws-chat.jsonl`，纯文本、无工具、TTS 关）：
 
 ```
