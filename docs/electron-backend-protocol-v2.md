@@ -1,8 +1,8 @@
 # Electron 后端协议 v2 — 结构化聊天事件契约参考
 
-**文档版本：** v0.1（批次 2 产出，BE-021/022/023/024）
+**文档版本：** v0.2（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9）
 **关联：** `docs/electron-backend-baseline.md`（v1 现状）、`docs/electron-backend-security.md`（认证/版本协商）
-**Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）
+**Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）
 
 本文档是 Electron 前端联调 v2 协议的**事件契约参考**。v2 由 WS 握手头 `X-Protocol-Version: 2` 判定；未带版本头走 v1 路径（现状不变）。
 
@@ -51,7 +51,34 @@ server → {"type":"state","state":"idle"}
 ```
 
 - `clientRequestId` **必填**（幂等键）；缺省 → `user_message.ack{status:rejected, error:{code:CONTRACT_VALIDATION}}`。
-- `conversationId` 批次 2 忽略/恒 null（单会话）；非文本消息（content 数组）沿用 v1 多模态路径。
+- `conversationId` **批次 3 起生效**（多会话）：缺省 → 当前活动会话；显式 → 该会话（显式覆盖 active，见 §2.3）。非文本消息（content 数组）沿用 v1 多模态路径。
+
+### 2.3 多会话：activate_session 与 conversationId 路由（批次 3）
+
+**会话模型**：`SessionManager`（`core/memory/session_manager.py`）管理会话缓存池 + 活动指针。
+默认会话 `"default"`（无缝衔接既有 Mongo `sessions` doc）；新建 `conv_<uuid4 hex[:12]>`。
+
+**resolve 规则**（`agent.resolve_session(conversation_id, protocol_version)`，spec §3.1）：
+
+| protocol_version | conversationId | 目标会话 |
+|---|---|---|
+| < 2（v1） | 任意 | **恒 `"default"`**（active 切换不影响 v1，回放/写入/统计与批次 0-2 一致） |
+| ≥ 2（v2） | 缺省 | 当前活动会话（`agent.session_manager.active_id`） |
+| ≥ 2（v2） | 显式 | 该会话（显式覆盖 active） |
+
+**`activate_session`（Client→Server）**：
+
+```json
+{ "type": "activate_session", "conversationId": "conv_x" }
+```
+
+- 服务端切换活动会话 + 重发该会话 `session` 回放（复用建连回放路径）。
+- 未知 conversationId → `error{code: SESSION_NOT_FOUND}`（批次 1 错误信封）。
+- 缺 conversationId → `error{code: CONTRACT_VALIDATION}`。
+
+**`text` 携带 conversationId**：文本路由到指定会话，`user_message.ack.conversationId` 与
+generation.* 事件的 `conversationId` 均填**实际目标会话 ID**（非仅回显原始字段）。
+v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 
 ## 3. ID 语义
 
@@ -87,7 +114,7 @@ server → {"type":"state","state":"idle"}
 - 重连后 v2 客户端经 `session` 回放获取历史（消息含稳定 `messageId`，与 ACK/completed 对齐）。
 - v2 源连接在生成中断开 → 服务端取消在途 generation（标记中断）；部分消息保留。
 - 客户端判断：回放中消息未见对应 `generation.completed` → 视为中断，可用**新** `clientRequestId` 重新生成。
-- **批次 2 边界**：不做续传（断点续流）、不做事件游标/generation 状态查询、不做 pending 副作用重发保护——记入 BE-024 后续细化。
+- **批次 2 边界**：不做续传（断点续流）。事件游标/generation 状态查询/pending 查询由**批次 3**落地（见 §9 多会话 REST，spec BE-024）。
 
 ## 7. v2 通道对既有 v1 帧的收/抑制
 
@@ -108,5 +135,29 @@ server → {"type":"state","state":"idle"}
 - `ws-v2-chat.jsonl` — 完整生成（ack → started → inner_voice 段 → public_reply 段 → completed）。
 - `ws-v2-cancel.jsonl` — 取消（ack → started → … → generation.failed{CANCELLED} → interrupted）。
 - `ws-v2-fail.jsonl` — 失败（ack → started → generation.failed{GENERATION_PROVIDER_UNAVAILABLE}）。
+- `ws-v2-session.jsonl` — 多会话（批次 3）：`activate_session` 切隔离会话 → text 带 conversationId → generation.* conversationId=conv_trace_x。
 
-生成方式：`scripts/capture_ws_trace.py v2chat|v2cancel|v2fail`。
+生成方式：`scripts/capture_ws_trace.py v2chat|v2cancel|v2fail|v2session`。
+
+## 9. 多会话 REST 查询（批次 3，spec BE-030/031 + BE-024）
+
+产品级会话历史/搜索/资源/状态走 REST（`core/input/session_routes.py`），`/api/messages`
+仍为全库 `_id` 游标兼容接口（零改动保留，spec §10.3）。
+
+| 端点 | 说明 |
+|---|---|
+| `GET/POST /api/sessions` | 会话列表（cursor/limit/search，items 带 `active`）/ 创建（`conv_<uuid4>`） |
+| `GET/PATCH/DELETE /api/sessions/{id}` | 详情（含首页消息）/ 重命名 / 删除（联动归档 + active 回落 default） |
+| `POST /api/sessions/{id}/activate` | 激活会话（等价 WS `activate_session`） |
+| `GET /api/sessions/{id}/messages` | 历史分页：`before`（`_id` 倒序 + has_more）+ `total` |
+| `GET /api/sessions/{id}/messages?after={messageId}` | **增量拉取**（正序，仅锚点后新增） |
+| `GET /api/messages/{mid}/context` | 上下文窗口：`conversationId&before=5&after=5` |
+| `GET /api/search/messages` | 搜索：`query/conversationId/date_from/date_to/timezone/category/cursor/limit`（上限 100） |
+| `GET /api/sessions/{id}/resources` | 资源索引：`category=image|link|video|audio|file`（sticker 恒空，text 400） |
+| `GET /api/sessions/{id}/generations` | **generation 状态查询**：status/cursor/limit keyset 分页 |
+| `GET /api/generations/{gid}` | generation 详情（404 `GENERATION_NOT_FOUND`） |
+| `GET /api/sessions/{id}/pending` | **pending 查询**：pendingMessages（按会话）+ pendingApprovals（全局） |
+
+错误信封统一（code/message/retryable）；未知会话 404 `SESSION_NOT_FOUND`；缺 conversationId 的
+context 查询 400 `CONTRACT_VALIDATION`；非法时区 400 `INVALID_TIMEZONE`；全部匿名 401
+（`AGENT_ACCESS_TOKEN` 配置时）。

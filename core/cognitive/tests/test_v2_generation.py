@@ -68,12 +68,30 @@ def _make_agent_with(fake) -> "Agent":
     _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
     from core.config import AppConfig
     from core.agent import Agent
+    from core.cognitive.generation_registry import GenerationRegistry
+    from core.storage.generation_repo import GenerationRepository
+    from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
     config = AppConfig()
     config.tts.enabled = False
     config.stt.enabled = False
     agent = Agent(config=config)
     agent.llm._backend = fake
+    # 批次 3（Task 13）：注入内存 GenerationRegistry——取消/断线测试断言终态 mark
+    # （Mongo 离线自建 registry 为 no-op，无法断言终态）。
+    agent.cognitive._generation_registry = GenerationRegistry(  # noqa: SLF001
+        repo=GenerationRepository(db=FakeDocumentDBBackend()))
     return agent
+
+
+async def _registry_docs(agent) -> list[dict]:
+    """读取注入的 GenerationRegistry 全部文档（default 会话），供终态断言。
+
+    与 test_session_routes / test_generation_wiring 同构：query_by_session
+    返回 (docs, total, has_more) 三元组。
+    """
+    reg = agent.cognitive._generation_registry  # noqa: SLF001
+    docs, _, _ = await reg.query_by_session("default")
+    return docs
 
 
 async def _send_and_collect(client, headers, content: str,
@@ -149,6 +167,18 @@ class TestV2GenerationSequence:
             assert completed["usage"]["turn_total"] == 30
             assert completed["model"]  # 实际模型（fake 后端下为配置模型，非空即可）
             assert completed["mood"] == "开心"
+            # 批次 3（Task 13）：generation.* 事件补 conversationId（非空）——
+            # v2 缺省 conversationId → 活动会话（default），与 user_message.ack 解析一致
+            gen_frames = [f for f in frames if f["type"].startswith("generation.")]
+            assert gen_frames, "应收到 generation.* 事件"
+            assert all(f.get("conversationId") for f in gen_frames), \
+                "generation.* 六类事件应携带非空 conversationId"
+            assert completed["conversationId"] == "default"
+            # 终态 mark：成功路径 → registry 落 completed（BE-024）
+            docs = await _registry_docs(agent)
+            assert docs and docs[-1]["status"] == "completed"
+            assert docs[-1]["finish_reason"] == "stop"
+            assert docs[-1]["finished_at"]  # 终态带 finished_at
         finally:
             await agent.stop()
 
@@ -198,9 +228,15 @@ class TestV2GenerationSequence:
             assert "generation.failed" in v2_types
             failed = next(f for f in v2_frames if f["type"] == "generation.failed")
             assert failed["code"] in ("GENERATION_PROVIDER_UNAVAILABLE", "GENERATION_TIMEOUT")
+            # 批次 3（Task 13）：generation.failed 携带非空 conversationId
+            assert failed.get("conversationId"), "generation.failed 应携带 conversationId"
             # v2 无 ❌ delta
             v2_deltas = [f.get("content", "") for f in v2_frames if f["type"] == "delta"]
             assert not any("❌" in d for d in v2_deltas)
+            # 终态 mark：错误路径 → registry 落 failed（终态唯一，_handle_interrupt 不覆盖）
+            docs = await _registry_docs(agent)
+            assert docs and docs[-1]["status"] == "failed"
+            assert docs[-1]["finished_at"]
         finally:
             await agent.stop()
 
@@ -275,6 +311,11 @@ class TestV2Cancellation:
                         got_failed = True
                         break
                 assert got_failed, "未收到 generation.failed{CANCELLED}"
+                # 批次 3（Task 13）：中断 → registry 落终态 cancelled
+                # （ws interrupt source=websocket → 非 disconnect → cancelled）
+                docs = await _registry_docs(agent)
+                assert docs and docs[-1]["status"] == "cancelled"
+                assert docs[-1]["finished_at"]  # 终态带 finished_at
         finally:
             await agent.stop()
 
@@ -313,5 +354,9 @@ class TestV2Cancellation:
                 # 终态唯一：只有一次 failed（错误路径的 code，不是 CANCELLED 双发）
                 assert failed_codes[0] in ("GENERATION_PROVIDER_UNAVAILABLE", "GENERATION_TIMEOUT")
                 assert len(failed_codes) == 1
+                # 批次 3（Task 13）：错误路径终态唯一 → registry 只有一条 failed
+                docs = await _registry_docs(agent)
+                assert len(docs) == 1
+                assert docs[0]["status"] == "failed"
         finally:
             await agent.stop()

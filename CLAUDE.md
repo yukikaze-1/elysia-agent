@@ -117,7 +117,9 @@ core/
 ├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing + TurnPhase
 │   ├── loop.py            #   CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
 │   ├── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task + _gate_tool_calls
-│   └── timing.py          #   Timer + TimingClock latency tracking
+│   ├── timing.py          #   Timer + TimingClock latency tracking
+│   ├── generation.py      #   GenerationContext: generation_id/assistant_message_id/conversation_id 预分配贯通
+│   └── generation_registry.py # GenerationRegistry: generation 生命周期持久化（register/mark 终态 + stale 清理，Mongo 离线 no-op）
 ├── adapter/               # Adapter layer: wraps Module/ backends for core/ consumption
 │   ├── llm_adapter.py     #   LLMAdapter: tool-calling + retry + streaming + hot-switch
 │   ├── tts_adapter.py     #   TTSStreamManager: sentence queuing + emoji sync + gated playback + async set_enabled 禁用兜底（per-task flush_on_cancel）
@@ -150,6 +152,7 @@ core/
 │   ├── _utils.py          #   内部工具函数
 │   └── tests/
 ├── memory/
+│   ├── session_manager.py  # SessionManager: 会话缓存池 + 活动指针 + resolve/switch/CRUD（批次 3 多会话）
 │   ├── session.py          # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive; 专用类型字段 character_state/service_state 经 save/load 同步
 │   ├── long_term.py        # LongTermMemory: Milvus-backed vector search + reranking; count-based _evict_overflow; async mark_absorbed with Milvus cleanup
 │   ├── embedding_provider.py # EmbeddingProvider: 嵌入后端懒加载 + 超时 + OpenAI/HuggingFace fallback
@@ -160,6 +163,7 @@ core/
 │   ├── message_repo.py     #   MessageRepository: message archive append-only log
 │   ├── token_repo.py       #   TokenRepository: token usage statistics
 │   ├── memory_repo.py      #   MemoryRepository: LTM Milvus operations
+│   ├── generation_repo.py  #   GenerationRepository: generation 生命周期 upsert/query（BE-024）
 │   └── character_version_repo.py # CharacterVersionRepository: L2/C6 version history
 ├── config/                 # Config sub-package: character_config + app_config
 │   ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
@@ -241,7 +245,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.database.documentdb` | Document DB | `mongodb` |
 | `Module.database.graphdb` | Graph DB | stub only |
 | `Module.bench` | Latency benchmarking | Covers LLM/TTS/STT |
-| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (glue), `ws_handler.py`, `capabilities.py` (嵌套 per-service 能力声明), `api_routes.py`, `debug_routes/` (package, 7 modules) |
+| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (glue), `ws_handler.py`, `capabilities.py` (嵌套 per-service 能力声明), `api_routes.py`, `session_routes.py` (多会话/历史/搜索/资源/状态/pending REST), `debug_routes/` (package, 7 modules) |
 | `Module._common` | Shared utility layer | env, registry helpers, test helpers |
 
 ## Config system
@@ -260,7 +264,7 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **Logger injection**: `Factory.create()` auto-detects caller's module via `inspect`.
 - **env var precedence**: API keys and base URLs from `os.getenv()`, not YAML.
 - **MongoDB**: motor async driver. `insert_one/insert_many` pass `dict()` copy to avoid motor mutating callers' dicts.
-- **Session state**: 运行时状态用 SessionMemory 的**专用类型字段**（`character_state` / `service_state`；反射器状态非字段，由 `session.save()` 经 `save_state()` 派生），经 `session.save()` 同步、`load()` 恢复（MongoDB 30d TTL + JSONL fallback）。无 `set_param/get_param` 通用接口——新增状态仿 `character_state` 加字段 + save/load 两侧同步。`service_state`（服务运行时状态：当前模型 + STT/TTS 启用模式，enabled 三态 `bool | None`，None 回退 config）由 `agent.set_service` / `switch_*` 写、启动时经 `_apply_service_state` 应用。
+- **Session state**: 批次 3 起由 `SessionManager`（`core/memory/session_manager.py`）管理会话缓存池 + 活动指针（`agent.session_manager`；`agent.session` 仍指活动会话）。多会话路由：`agent.resolve_session(conversation_id, protocol_version)`——v1 恒 `"default"`、v2 显式 conversationId → 该会话、v2 缺省 → 活动会话；`activate_session` WS 消息切 active + 重发回放。运行时状态用 SessionMemory 的**专用类型字段**（`character_state` / `service_state`；反射器状态非字段，由 `session.save()` 经 `save_state()` 派生），经 `session.save()` 同步、`load()` 恢复（MongoDB 30d TTL + JSONL fallback）。无 `set_param/get_param` 通用接口——新增状态仿 `character_state` 加字段 + save/load 两侧同步。`service_state`（服务运行时状态：当前模型 + STT/TTS 启用模式，enabled 三态 `bool | None`，None 回退 config）由 `agent.set_service` / `switch_*` 写、启动时经 `_apply_service_state` 应用。
 - **inner_voice protocol**: Every reply has one `<inner_voice>` block (1-2 sentences: current feeling + response intent, no reasoning chains).
 - **Project paths**: `from paths import ProjectPath, get_project_root` — 所有项目文件系统路径的唯一定义点。`ProjectPath.X.resolve()` 返回基于 `ELYSIA_ROOT` 环境变量（fallback 为项目根目录）的绝对 `Path`。
 - **AgentStatus**: `agent.status`（`AgentStatus`）提供语义状态查询（`is_accepting_input` / `is_speaking` / `should_suppress_vad_interrupt` 等）；`agent.phases`（`CognitivePhaseController`）驱动阶段转换。底层 `AgentFSM` 不对外暴露。设计文档：[spec](docs/superpowers/specs/archive/2026-07/2026-07-30-agent-status-interface-design.md)。
@@ -396,9 +400,9 @@ cd frontend && npm run build
 
 **Stores**: `debugStore.ts` — Pinia (Composition API): poll lifecycle, activeTab switching, pause/resume, LTM/Archive pagination state.
 
-### Server routing (`core/input/` — `server.py` + `ws_handler.py` + `capabilities.py` + `api_routes.py` + `debug_routes/` package)
+### Server routing (`core/input/` — `server.py` + `ws_handler.py` + `capabilities.py` + `api_routes.py` + `session_routes.py` + `debug_routes/` package)
 
-`/` → `static/index.html`, `/debug` → `static/debug.html`, `/ws` → WebSocket, `/health` `/ready` `/shutdown` `/restart` `/api/chat` `/api/messages` `/api/images` `/api/providers` `/tools` `/tools/reload`。Debug API: `/debug/api` `/debug/api/prompts/{n}` `/debug/api/responses/{n}` `/debug/api/db-status` `/debug/api/ltm` `/debug/api/sessions` `/debug/api/archive` `/debug/api/tasks/stream`
+`/` → `static/index.html`, `/debug` → `static/debug.html`, `/ws` → WebSocket, `/health` `/ready` `/shutdown` `/restart` `/api/chat` `/api/messages` `/api/images` `/api/providers` `/tools` `/tools/reload`。批次 3 多会话 REST（`session_routes.py`）: `/api/sessions`（CRUD/activate）、`/api/sessions/{id}/messages`（before/after 分页）、`/api/messages/{mid}/context`、`/api/search/messages`、`/api/sessions/{id}/resources`、`/api/sessions/{id}/generations`、`/api/generations/{gid}`、`/api/sessions/{id}/pending`。Debug API: `/debug/api` `/debug/api/prompts/{n}` `/debug/api/responses/{n}` `/debug/api/db-status` `/debug/api/ltm` `/debug/api/sessions` `/debug/api/archive` `/debug/api/tasks/stream`
 
 ## CharacterEngine
 

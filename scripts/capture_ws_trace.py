@@ -2,10 +2,14 @@
 """真实 WS 事件轨迹抓取脚本（批次 0，BE-001）。
 
 用途：产出脱敏的真实 WebSocket JSONL 轨迹，供 Electron 前端联调参考。
-三个模式：
-  python scripts/capture_ws_trace.py chat     # 完整聊天：建连→消息→inner_voice→多句→token_usage→心情→idle
-  python scripts/capture_ws_trace.py cancel   # 生成中打断
-  python scripts/capture_ws_trace.py tool     # 工具审批往返（save_memory HITL）
+模式：
+  python scripts/capture_ws_trace.py chat       # 完整聊天：建连→消息→inner_voice→多句→token_usage→心情→idle
+  python scripts/capture_ws_trace.py cancel     # 生成中打断
+  python scripts/capture_ws_trace.py tool       # 工具审批往返（save_memory HITL）
+  python scripts/capture_ws_trace.py v2chat     # v2 聊天（X-Protocol-Version: 2 + clientRequestId）
+  python scripts/capture_ws_trace.py v2cancel   # v2 生成中打断
+  python scripts/capture_ws_trace.py v2fail     # v2 故障（503 → generation.failed）
+  python scripts/capture_ws_trace.py v2session  # v2 多会话：activate_session 切隔离会话 + text 带 conversationId
 
 原理：构造真实 Agent + FakeLLM（带 <inner_voice>/<mood> 标签 + 多句标点 + 可选 usage / tool_calls），
 起 aiohttp app，用 WS 客户端逐帧记录到 frontend-handoff-v2/traces/。
@@ -172,6 +176,11 @@ async def _make_agent(fake: FakeLLMBackend):
     """构造真实 Agent（镜像 core/input/tests/test_server.py _make_agent）。
 
     start() 后清空 session 消息——轨迹必须可重放，不得携带 MongoDB 真实历史会话。
+
+    注意（生产数据保护）：清空的是**内存 deque**（启动时从 Mongo 加载的副本），
+    绝不 repo.delete。若当前环境 Mongo 在线，agent.stop() 的 save_all() 会把清空后
+    的 deque 回写 Mongo——因此 v2session 轨迹改用 `_make_agent_isolated`（切隔离会话，
+    不清 default）。
     """
     from core.config import AppConfig
     from core.agent import Agent
@@ -188,16 +197,49 @@ async def _make_agent(fake: FakeLLMBackend):
     return agent
 
 
+async def _make_agent_isolated(fake: FakeLLMBackend):
+    """v2session 轨迹用 agent 工厂：不清 default，切到隔离测试会话。
+
+    生产数据保护（Task 13 强制）：不清空/删除生产 "default" 会话——若清空其内存
+    deque 且 Mongo 在线，stop() 的 save_all() 会把空列表回写 Mongo，覆盖生产数据。
+    改为：仅把隔离测试会话 `conv_trace_x` 预注册进 SessionManager 缓存池
+    （内存构造，不触发 load、不落库），并把活动指针切到它——轨迹消息只落到该会话；
+    default 保持启动时加载的原样，stop() 时 save_all() 对 default 为幂等回写。
+    conv_trace_x 为测试会话：清空其内存 deque（轨迹空会话可重放），绝不触碰 default。
+    """
+    from core.config import AppConfig
+    from core.agent import Agent
+
+    config = AppConfig()
+    config.tts.enabled = False
+    config.stt.enabled = False
+    agent = Agent(config=config)
+    agent.llm._backend = fake
+    await agent.start()
+    # 预注册隔离测试会话（内存缓存构造，不触发 load/不落库）
+    agent.session_manager.get("conv_trace_x")  # noqa: SLF001
+    # 生产数据保护：把活动指针切到隔离会话——v2 建连回放取 active（resolve(None, 2)），
+    # 即显示 conv_trace_x（空），不泄露 default 的 Mongo 历史消息。
+    await agent.session_manager.switch("conv_trace_x")
+    # 清空隔离会话内存 deque——轨迹从空会话开始可重放（conv_trace_x 为测试会话，
+    # 清 deque 可接受；default 绝不触碰）
+    agent.session_manager.get("conv_trace_x")._messages.clear()  # noqa: SLF001
+    return agent
+
+
 async def _capture(fake: FakeLLMBackend, send_then, max_frames: int = 200, timeout: float = 30.0,
-                   headers: dict | None = None) -> list[str]:
+                   headers: dict | None = None,
+                   make_agent=None) -> list[str]:
     """连接 WS，执行 send_then，逐帧记录直到 state idle 或超时。
 
     on_incoming 可选回调：收到某帧后可向 ws 发送应答（如 tool_approval 回传）。
     headers: WS 握手 HTTP 头（如 X-Protocol-Version: 2）。
+    make_agent: agent 工厂（默认 _make_agent；v2session 用 _make_agent_isolated）。
     """
     from core.input.server import create_app
 
-    agent = await _make_agent(fake)
+    make_agent = make_agent or _make_agent
+    agent = await make_agent(fake)
     app = create_app(agent, serve_static=False)
 
     from aiohttp.test_utils import TestClient, TestServer
@@ -308,6 +350,32 @@ async def main() -> int:
         print(f"[ok] 写入 {out}（{len(lines)} 行，全部可解析）")
         return 0
 
+    elif mode == "v2session":
+        # 批次 3（Task 13）多会话轨迹：activate_session 切隔离会话 + text 带
+        # conversationId + clientRequestId。用 _make_agent_isolated（不清 default，
+        # 预注册 conv_trace_x 内存会话）——生产数据保护：绝不删/清 default。
+        fake = FakeLLMWithUsage(response=CHAT_RESPONSE)
+        out = TRACES_DIR / "ws-v2-session.jsonl"
+        rid = f"req_cap_{os.urandom(4).hex()}"
+        headers = {"X-Protocol-Version": "2"}
+
+        async def _send(ws):
+            # 1) activate_session：切到隔离测试会话（服务端重发该会话回放）
+            await ws.send_json({"type": "activate_session", "conversationId": "conv_trace_x"})
+            await asyncio.sleep(0.6)  # 等 activate 回放帧落盘再发文本
+            # 2) text 带 conversationId → 生成落到 conv_trace_x
+            await ws.send_json({"type": "text", "content": "你好，请介绍一下你自己",
+                                "conversationId": "conv_trace_x", "clientRequestId": rid})
+
+        frames = await _capture(fake, _send, max_frames=120, timeout=30, headers=headers,
+                                make_agent=_make_agent_isolated)
+        lines = [_sanitize(f) for f in frames]
+        out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        for i, line in enumerate(lines):
+            json.loads(line)
+        print(f"[ok] 写入 {out}（{len(lines)} 行，全部可解析）")
+        return 0
+
     elif mode == "cancel":
         # token_delay 拉长生成 + 第一句后插入空格 flush delta，interrupt 落在生成中段
         fake = FakeLLMWithUsage(response=CANCEL_RESPONSE, token_delay=0.05,
@@ -328,7 +396,8 @@ async def main() -> int:
             await ws.send_json({"type": "text", "content": "请帮我保存一条记忆"})
 
     else:
-        print(f"未知模式: {mode}；用 chat|cancel|tool", file=sys.stderr)
+        print(f"未知模式: {mode}；用 chat|cancel|tool|server_info|v2chat|v2cancel|v2fail|v2session",
+              file=sys.stderr)
         return 1
 
     frames = await _capture(fake, _send)

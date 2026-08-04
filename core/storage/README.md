@@ -14,6 +14,7 @@
 | `message_repo.py` | MessageRepository — MongoDB message_archive 集合 |
 | `token_repo.py` | TokenRepository — MongoDB token_usage 集合 |
 | `memory_repo.py` | MemoryRepository — Milvus long_term_memory 集合 |
+| `generation_repo.py` | GenerationRepository — MongoDB generations 集合（BE-024 生命周期） |
 | `character_version_repo.py` | CharacterVersionRepository — MongoDB character_versions 集合（L2/C6 版本历史） |
 
 ## 设计原则

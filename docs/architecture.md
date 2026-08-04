@@ -559,6 +559,10 @@ L4 Mood（当前情绪）    LLM `<mood>` 标签每轮更新（自由文本）�
 
 ### 5.2 SessionMemory
 
+> **批次 3（多会话）**：单实例之外新增 `SessionManager`（`core/memory/session_manager.py`）——
+> 会话缓存池 + 活动指针 + `resolve(conversation_id, protocol_version)` + `switch`/`create`/`delete`。
+> `agent.session` 仍指活动会话；v1 恒 default、v2 显式 conversationId → 该会话、v2 缺省 → active。
+
 ```python
 class SessionMemory:
     _messages: deque[Message]     # 最多 max_messages 条 (config.yaml session_max_messages). Pydantic Message 对象
@@ -1014,7 +1018,9 @@ Agent/
 ├── cognitive/            #   CognitiveLoop 包 (loop + tools + timing)
 │   │   ├── loop.py           #     CognitiveLoop(CognitiveTools): process + _think_loop + _dispatch_stream_event
 │   │   ├── tools.py          #     CognitiveTools: 工具执行 + submit_task
-│   │   └── timing.py         #     Timer + TimingClock 延迟统计
+│   │   ├── timing.py         #     Timer + TimingClock 延迟统计
+│   │   ├── generation.py     #     GenerationContext: generation_id/assistant_message_id/conversation_id 预分配
+│   │   └── generation_registry.py # GenerationRegistry: generation 生命周期持久化（register/mark 终态 + stale 清理）
 │   ├── monitoring/            #   监控子包
 │   │   ├── event_bus.py       #     优先级事件总线
 │   │   ├── idle_monitor.py    #     空闲监控 + 主动触发
@@ -1039,6 +1045,7 @@ Agent/
 │   │   ├── message_repo.py   #     MessageRepository: 消息归档 append-only
 │   │   ├── token_repo.py     #     TokenRepository: token 统计持久化
 │   │   ├── memory_repo.py    #     MemoryRepository: LTM Milvus 操作
+│   │   ├── generation_repo.py #    GenerationRepository: generation 生命周期 upsert/query（BE-024）
 │   │   └── character_version_repo.py # CharacterVersionRepository: L2/C6 版本历史
 │   ├── debug/                #   Debug 仪表板包
 │   │   ├── info.py           #     /debug 数据聚合
@@ -1049,6 +1056,7 @@ Agent/
 │   │   ├── ws_handler.py     #     WebSocket 消息路由（set_service + BINARY 防御）
 │   │   ├── capabilities.py   #     build_capabilities 嵌套 per-service 能力声明 + 全量重播
 │   │   ├── api_routes.py     #     REST API 路由
+│   │   ├── session_routes.py #     多会话 REST（CRUD/历史/搜索/资源/generation 状态/pending，批次 3）
 │   │   ├── debug_routes/     #     Debug API 路由 (package: 7 modules)
 │   │   ├── audio_buffer.py   #     音频缓冲 + VAD
 │   │   ├── wakeword.py       #     唤醒词检测
@@ -1066,6 +1074,7 @@ Agent/
 │   │   ├── emotion.py       #     情绪分析 (LLM mood tag + keyword fallback)
 │   │   └── _utils.py        #     内部工具
 │   ├── memory/              #   记忆子系统
+│   │   ├── session_manager.py #   SessionManager（缓存池 + 活动指针 + resolve/switch/CRUD，批次 3 多会话）
 │   │   ├── session.py       #     SessionMemory (MongoDB + deque; character_state/service_state 专用字段)
 │   │   ├── long_term.py     #     LongTermMemory (Milvus + Embedding)
 │   │   ├── embedding_provider.py #  EmbeddingProvider: 嵌入懒加载 + fallback

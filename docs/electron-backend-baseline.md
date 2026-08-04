@@ -61,12 +61,18 @@ state speaking → message("") ×N（每句边界）→ state idle
 
 ## 4. 消息落库与会话结构
 
-- **单活动会话**：Agent 组合根只创建**一个** `SessionMemory`（`core/memory/session.py:75`，`session_id="default"`）；全代码库无会话选择/切换接口。
+> **批次 3 已上线多会话**：会话管理由 `SessionManager`（`core/memory/session_manager.py`）接管——
+> 缓存池 + 活动指针 + resolve/switch/CRUD。`agent.session` 仍指活动会话；`agent.session_manager.active_id`
+> 为活动指针；`agent.resolve_session(conversation_id, protocol_version)` 路由（v1 恒 default / v2 显式 /
+> v2 缺省 active）。产品级会话历史/搜索/资源见 [docs/electron-backend-protocol-v2.md §9](electron-backend-protocol-v2.md)。
+> 本文件以下仍为**单会话基线事实**（批次 0 测绘，v1 路径逐字节不变）。
+
+- **基线为单活动会话**：批次 0 时 Agent 组合根只创建**一个** `SessionMemory`（`core/memory/session.py:75`，`session_id="default"`）；全代码库无会话选择/切换接口（批次 3 起由 SessionManager 取代）。
 - `SessionMemory`：deque（maxlen `session_max_messages`）+ 双写：
   - 进程内 deque（LLM 上下文窗口）；
   - fire-and-forget 归档到 MongoDB `message_archive`（`MessageRepository.append`，`core/storage/message_repo.py:95`，**已按 session_id 建索引**，`query_by_session` 已存在——批次 3 多会话利好）。
   - MongoDB 不可用降级 JSONL。
-- 消息结构（`core/schema/message.py`）：`UserMessage`/`AssistantMessage`/`ToolResultMessage`，含 `message_id`（`msg_`+26hex，`core/utils/message_id.py`）、`role`、`content`（TextPart/ImagePart）、`timestamp`（UTC）、`metadata`；Assistant 另含 `inner_voice`/`tool_calls`/`token_usage`/`block_index`。
+- 消息结构（`core/schema/message.py`）：`UserMessage`/`AssistantMessage`/`ToolResultMessage`，含 `message_id`（`msg_`+26hex，`core/utils/message_id.py`）、`role`、`content`（TextPart/ImagePart）、`timestamp`（UTC）、`metadata`；Assistant 另含 `inner_voice`/`tool_calls`/`token_usage`/`block_index`。批次 3 补 `session_id`。
 - 落库点：用户消息 `_build_turn_prompt`（`loop.py:415-420`）；助手消息 `_finalize_turn`（`loop.py:736-746`）；工具消息 `_execute_tool_round`。
 - 会话回放：`session.messages_for_client()` → `SessionMessage(messages, token_stats)`，建连时发送（`ws_handler.py:84-94`），单条失败仅丢该条。
 
@@ -126,7 +132,7 @@ state speaking → message("") ×N（每句边界）→ state idle
 ## 10. 未决 / 已知缺口（供后续批次）
 
 - `/uploads/*` 永久匿名、无短期签名 URL（批次 7）；
-- 无产品级多会话 API（批次 3）；
-- 无协议版本协商 / server_info（批次 1）；
-- 无统一错误信封（批次 1）；
+- ~~无产品级多会话 API~~ — **批次 3 已交付**（`SessionManager` + `session_routes.py`，见 protocol-v2 §9）；
+- ~~无协议版本协商 / server_info~~ — **批次 1 已交付**；
+- ~~无统一错误信封~~ — **批次 1 已交付**；
 - `custom_providers.yaml` 明文落盘风险（批次 5 堵漏）。

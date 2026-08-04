@@ -347,6 +347,10 @@ class CognitiveLoop(CognitiveTools):
             #   - >=2 且 conversation_id → 该会话（v2 显式覆盖 active）
             #   - >=2 且 None → 当前活动会话
             target = await self._session_resolver(conversation_id, protocol_version)
+            # 批次 3（Task 13 回归收敛）：generation wire 的 conversationId = 实际目标会话
+            # ID。v2 显式 conversationId → 该会话；v2 缺省 → 活动会话（resolve 已返回）；
+            # v1 恒 default。与 user_message.ack 的解析规则一致（spec §6.3）。
+            gen_conversation_id = conversation_id or target.session_id
             if self._character_engine is not None:
                 # D-o 换绑：engine 的 state 视图切到 target 的 character_state，
                 # 防 v2 显式 conversationId 覆盖 active 时性格/心情/觉察串会话
@@ -393,7 +397,7 @@ class CognitiveLoop(CognitiveTools):
                 generation_id=new_generation_id(),
                 user_message_id=message_id or "",
                 assistant_message_id=new_message_id(),
-                conversation_id=conversation_id,
+                conversation_id=gen_conversation_id,
             )
             self._turn_failed_emitted = False
             # 批次 3（BE-024）：generation 建档（status=running）。只在 process 开头
@@ -917,7 +921,7 @@ class CognitiveLoop(CognitiveTools):
                         if self._character_engine is not None else None)
                 await self._output.turn_completed(
                     "stop", usage, self._llm.model, mood, self._generation_ctx,
-                    conversation_id=conversation_id,
+                    conversation_id=conversation_id or target.session_id,
                     conversation_usage=conversation_usage)
             except Exception:
                 logger.debug("turn_completed 发射失败", exc_info=True)

@@ -260,5 +260,10 @@ class TestV2Reconnect:
                     break
                 await asyncio.sleep(0.1)
             assert agent.status.is_completely_idle, "v2 断线应取消在途 generation"
+            # 批次 3（Task 13）：断线 → registry 落终态 interrupted（disconnect 来源）
+            reg = agent.cognitive._generation_registry  # noqa: SLF001
+            docs, _, _ = await reg.query_by_session("default")
+            assert docs and docs[-1]["status"] == "interrupted"
+            assert docs[-1]["finished_at"]
         finally:
             await agent.stop()

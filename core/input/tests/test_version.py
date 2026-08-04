@@ -44,10 +44,11 @@ class TestVersionNegotiation:
             assert caps is None, "v2 握手不应收到 capabilities（server_info 取代）"
             assert info["protocol_version"] == "2.0"
             assert info["server_version"]
-            # features 如实反映能力：structured_generation 批次 2 已实现（true），其余 false
+            # features 如实反映能力：structured_generation 批次 2、multi_conversation 批次 3 已实现（true），
+            # desktop/dictation 未实现（false）
             assert info["features"] == {
                 "structured_generation": True,
-                "multi_conversation": False,
+                "multi_conversation": True,
                 "desktop_runtime": False,
                 "dictation": False,
             }

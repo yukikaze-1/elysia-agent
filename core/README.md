@@ -158,10 +158,12 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | 子目录 | 说明 | 详细文档 |
 |--------|------|----------|
 | `core/agent/` | 组装入口：`Agent(AgentLifecycle, AgentServer)`，管理所有子系统引用和 RunState 生命周期 | [agent/README.md](agent/README.md) |
-| `core/cognitive/` | 认知循环：ReAct 调度器 + 工具执行 + 计时（流式解析协调器在 core/text） | [cognitive/README.md](cognitive/README.md) |
+| `core/cognitive/` | 认知循环：ReAct 调度器 + 工具执行 + 计时（流式解析协调器在 core/text）。批次 3 增 `generation.py`（GenerationContext）+ `generation_registry.py`（generation 生命周期持久化） | [cognitive/README.md](cognitive/README.md) |
 | `core/config/` | 配置子包：`character_config.py`（CharacterConfig，从 YAML 加载角色配置）+ `app_config.py`（AgentConfig，应用配置 dataclass） | [config/README.md](config/README.md) |
 | `core/adapter/` | 适配器层：LLMAdapter + TTSStreamManager + ToolAdapter + tool_call_parser，封装 Module/ 后端供 core/ 层使用 | [adapter/README.md](adapter/README.md) |
-| `core/memory/` | 记忆子系统：`SessionMemory`（对话窗口）、`LongTermMemory`（向量检索）、`MemoryConsolidator`（提取+比对+写入）、`MemoryReflector`（定期去重） | [memory/README.md](memory/README.md) |
+| `core/memory/` | 记忆子系统：`SessionManager`（会话缓存池 + 活动指针 + resolve/switch/CRUD，批次 3 多会话）、`SessionMemory`（对话窗口）、`LongTermMemory`（向量检索）、`MemoryConsolidator`（提取+比对+写入）、`MemoryReflector`（定期去重） | [memory/README.md](memory/README.md) |
+| `core/storage/` | 存储仓库层：`SessionRepository`/`MessageRepository`/`TokenRepository`/`MemoryRepository`/`CharacterVersionRepository`/`GenerationRepository`（MongoDB + Milvus） | -- |
+| `core/input/` | 输入层：WebSocket + HTTP server（`server.py`/`ws_handler.py`/`capabilities.py`/`api_routes.py`/`session_routes.py`/`debug_routes/`） | -- |
 | `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
 | `core/task/` | 任务子包：`task.py`（Task 数据模型 + TaskType/TaskStatus 枚举 + Future 绑定）+ `scheduler.py`（TaskScheduler Worker Pool） | [task/README.md](task/README.md) |
 | `core/text/` | 文本流处理管线：`tags`（标签注册表）+ `tokenizer`（结构感知切分）+ `splitter`（分句保护）+ `parts`（TextPart 构建）+ `stream_processor`（协调器） | [text/README.md](text/README.md) |

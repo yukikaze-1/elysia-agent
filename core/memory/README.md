@@ -59,6 +59,13 @@
 - `append()` 追加消息时 fire-and-forget 写入 MongoDB archive
 - `save()` / `restore()` 服务端会话恢复
 
+### SessionManager（批次 3 多会话）
+
+- 会话缓存池 + 活动指针（`active_id` / `active`）；懒加载（`ensure_loaded`，Mongo → JSONL fallback）
+- `resolve(conversation_id, protocol_version)`：v1 恒 `"default"`、v2 显式 conversationId → 该会话、v2 缺省 → 活动会话
+- `switch(sid)` 切活动（同步 reflector buffer + 换绑 CharacterEngine）；`create`/`rename`/`delete`（联动归档）
+- 启动 `load_active()` 恢复 default；`save_all()` 关机持久化所有已加载会话
+
 ### LongTermMemory
 
 - 后端：Milvus 向量搜索 + rerank（时效衰减 + poignancy 加权）
@@ -84,7 +91,8 @@
 
 ```
 core/memory/
-├── __init__.py            — re-export SessionMemory / LongTermMemory
+├── __init__.py            — re-export SessionMemory / LongTermMemory / SessionManager
+├── session_manager.py     — SessionManager: 会话缓存池 + 活动指针 + resolve/switch/CRUD（批次 3 多会话）
 ├── session.py             — SessionMemory: deque + MongoDB 持久化
 ├── long_term.py           — LongTermMemory: Milvus 向量搜索 + rerank
 ├── embedding_provider.py  — EmbeddingProvider: 嵌入后端懒加载 + 超时 + OpenAI/HuggingFace fallback
@@ -92,6 +100,7 @@ core/memory/
 ├── memory_reflector.py    — MemoryReflector: KMeans 聚类定期去重
 └── tests/
     ├── test_session.py
+    ├── test_session_manager.py
     ├── test_long_term.py
     ├── test_consolidator.py
     └── test_memory_reflector.py

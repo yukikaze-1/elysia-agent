@@ -84,3 +84,31 @@ subagent 验收 **ACCEPTED**（1 中：features.structured_generation 应为 tru
 ### docs/14 PRD 审计
 
 批次 0-2 覆盖的 BE-001/BE-010/BE-020/BE-021/BE-022/BE-023/BE-080 逐项对照 docs/14 验收——全部满足（BE-022 每句独立段经 4463870 补修）。**BE-024 未完成**：事件游标 / generation 状态查询 / pending 用户消息与工具调用查询 / 终态安全重放均显式延后（spec §7 边界声明），批次 2 只做"标记中断 + 回放对齐"。其余 BE-030~081 属批次 3-7。
+
+---
+
+## 批次 3：产品级多会话、历史、搜索与资源索引（BE-030/031/032 + BE-024） ✅ 完成
+
+**提交：** `4acab56`（plan）`b8a9bd1a`（spec）`a892a21b`（契约）`9fd91ddd`（schema）`72277a59`（storage）`17dfa654`（personality/adapter 换绑）`89a7f41c`（SessionManager）`fcbe0f7b`（TokenTracker 会话感知）`ea1216ae`（agent 集成）`3c3ac744`（loop session_resolver）`540a1bc6`（test_session_resolver 收敛）`d5dd826c`（GenerationRegistry）`0f7101e2`（output conversationId）`6d7de4fc`（ws activate_session 路由）`ad281de0`（session_routes REST）+ **Task 13**（`docs+batch3: 回归收敛 + v2 轨迹 + 文档更新`）
+**Spec（v0.2，APPROVED）：** `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`
+**Plan（v0.1）：** `docs/superpowers/plans/2026-08-04-electron-backend-batch3-multi-session.md`
+
+### 结果
+
+- **多会话核心（BE-030）**：`SessionManager`（`core/memory/session_manager.py`）缓存池 + 活动指针 + resolve/switch/CRUD；`agent.resolve_session(conversation_id, protocol_version)` 路由——v1 恒 `"default"`、v2 显式 conversationId → 该会话、v2 缺省 → 活动会话。`CharacterEngine.attach_session` / `PromptAssembler.set_session` 换绑防性格/心情/觉察串会话。
+- **会话级消息（BE-031）**：`Message.session_id` 补齐；`query_page`（before/limit has_more）、`query_after`（增量）、`find_context`（上下文窗口）、`query_search`（query/日期/时区/category/cursor）；session title 自动生成（首消息前 20 字）。
+- **历史/搜索/资源 REST（session_routes.py）**：`/api/sessions`（CRUD/activate + 404 `SESSION_NOT_FOUND`）、`/api/sessions/{id}/messages`（before/after）、`/api/messages/{mid}/context`、`/api/search/messages`（`INVALID_TIMEZONE` 400）、`/api/sessions/{id}/resources`（image/link/video/audio/file + sticker 恒空 + text 400）、`/api/sessions/{id}/generations`、`/api/generations/{gid}`、`/api/sessions/{id}/pending`（pendingMessages 按会话 + pendingApprovals 全局）；全部匿名 401。
+- **BE-024 落地**：`GenerationRegistry`（Mongo 持久化，离线 no-op）+ `generation_repo.py`；loop register/mark 挂点（completed/failed/cancelled/interrupted 终态唯一）+ stale running 启动清理；generation.* 六类事件补 `conversationId`（= 实际目标会话 ID）+ `generation.completed.conversationUsage`。
+- **WS 扩展**：`activate_session` 消息（切 active + 重发回放 + 未知 404）；v2 `text` 带 conversationId 路由；`user_message.ack.conversationId` 填实际目标会话；建连回放 v1 恒 default / v2 active。
+- **TokenTracker 会话感知**：`record(session_id)` 会话累计 + `get_session_stats(sid)` + `session_total` 兼容属性不破 debug/runtime_config。
+- **兼容硬约束**：v1 wire 逐字节不变（v1 恒 default，active 切换不影响 v1）；`/api/messages` 全库 `_id` 游标零改动保留（Task 13 新增 wire 回归锁定测试）；`contract.generated.ts` 纯增量。
+- **轨迹**：`frontend-handoff-v2/traces/ws-v2-session.jsonl`（v2 多会话：activate_session 切隔离会话 → text 带 conversationId → generation.* conversationId=conv_trace_x）。生产数据保护：`scripts/capture_ws_trace.py` 新增 `_make_agent_isolated`（不清 default、切隔离测试会话，绝不 repo.delete）。
+- **Task 13 回归**：`make test-quick` **2149 passed**；`make lint` 通过；`make check-types` 无漂移；`make test-normal` **2192 passed / 2 skipped**。generation.* 断言补 conversationId + 取消/断线 registry 终态 mark。
+
+### 安全事件说明（SDD ledger 摘录）
+
+批次 3 执行期间（Task 7）调试时曾执行 `SessionRepository.delete('default')` 误删生产 Mongo `default` 会话 doc（无授权）。用户判定开发阶段数据无所谓、不恢复；default character_state 丢失、消息窗口被 test 数据污染，archive 完整。**后续 Task 明令禁止删/清 default 会话**——Task 13 轨迹生成改用隔离测试会话（conv_trace_x），绝不复现。
+
+### 验收
+
+各 Task subagent 验收 ACCEPTED（12 任务独立提交，Task 13 总回归）。**BE-024** 由延后状态正式落地（generation 状态查询 + pending 查询 + 终态 mark）。
