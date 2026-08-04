@@ -26,6 +26,7 @@ from core.utils import new_message_id, new_generation_id
 from core.schema.types import SessionId
 
 from core.cognitive.generation import GenerationContext
+from core.cognitive.generation_registry import GenerationRegistry
 from core.cognitive.timing import TimingClock
 
 from Module.output import OutputManager, ChannelCapability
@@ -168,6 +169,7 @@ class CognitiveLoop(CognitiveTools):
         tts: TTSBackend | None = None,
         token_tracker: "TokenTracker | None" = None,
         prompt_recorder: "PromptRecorder | None" = None,
+        generation_registry: "GenerationRegistry | None" = None,
     ):
         """初始化认知循环。
 
@@ -185,6 +187,8 @@ class CognitiveLoop(CognitiveTools):
             tts: TTS 后端，经 TTSStreamManager 代理
             token_tracker: LLM token 用量追踪器
             prompt_recorder: LLM prompt 记录器（供 debug 面板）
+            generation_registry: generation 生命周期持久化注册表（批次 3 BE-024）；
+                None 时自建（Mongo 离线自动降级 no-op，不阻塞 generation）
         """
         self._llm = llm
         self._fsm = fsm
@@ -202,6 +206,11 @@ class CognitiveLoop(CognitiveTools):
         self._tts = tts  # 保留供 agent.py stop() 读取
         self._token_tracker = token_tracker
         self._prompt_recorder = prompt_recorder
+        # 批次 3（BE-024）：generation 生命周期持久化注册表（register/mark 挂点）。
+        # 默认自建——Mongo 离线时内部 try/except 降级 no-op，绝不阻塞 generation。
+        self._generation_registry = (generation_registry
+                                     if generation_registry is not None
+                                     else GenerationRegistry())
         # 批次 2：当前回合 GenerationContext（process() 创建，_dispatch_stream_event/
         # _finalize_turn/错误路径使用）；无活动回合为 None
         self._generation_ctx: GenerationContext | None = None
@@ -387,6 +396,20 @@ class CognitiveLoop(CognitiveTools):
                 conversation_id=conversation_id,
             )
             self._turn_failed_emitted = False
+            # 批次 3（BE-024）：generation 建档（status=running）。只在 process 开头
+            # 注册一次——严禁放 _dispatch_stream_event（逐帧分发，每 delta 都会重复
+            # upsert）。同步 await + try/except（Mongo 离线不阻塞 generation）。
+            if self._generation_registry is not None:
+                try:
+                    await self._generation_registry.register(
+                        generation_id=self._generation_ctx.generation_id,
+                        session_id=target.session_id,
+                        user_message_id=self._generation_ctx.user_message_id,
+                        message_id=self._generation_ctx.assistant_message_id,
+                        model=self._llm.model,
+                    )
+                except Exception:
+                    logger.debug("generation register 失败（Mongo 离线）", exc_info=True)
 
             self._current_task = asyncio.current_task()
             try:
@@ -430,9 +453,19 @@ class CognitiveLoop(CognitiveTools):
                     try:
                         await self._output.turn_failed(
                             code, err_msg, retryable, label, self._generation_ctx)
-                        self._turn_failed_emitted = True  # 终态唯一：打断不重发 CANCELLED
                     except Exception:
                         logger.debug("turn_failed 发射失败", exc_info=True)
+                    # 终态唯一：打断不重发 CANCELLED——flag 语义 = 错误路径已达（发射成败都置位）
+                    self._turn_failed_emitted = True
+                    # 批次 3（BE-024）：错误路径 generation 终态 → failed（随后
+                    # _handle_interrupt 的 mark 经 _turn_failed_emitted 守卫不覆盖）
+                    if self._generation_registry is not None:
+                        try:
+                            await self._generation_registry.mark(
+                                self._generation_ctx.generation_id,
+                                status="failed", finish_reason="error", error=err_msg)
+                        except Exception:
+                            logger.debug("generation mark failed 失败", exc_info=True)
                 await self._handle_interrupt()
             finally:
                 self._clock = None
@@ -891,6 +924,17 @@ class CognitiveLoop(CognitiveTools):
 
         await self._transition_idle()
 
+        # 批次 3（BE-024）：成功路径 generation 终态 → completed。放在 _transition_idle
+        # 之后——IDLE 转换中途被打断则此处不落，由 _handle_interrupt 按来源标
+        # cancelled/interrupted，避免「completed 被后续 cancelled 覆盖」。
+        if self._generation_registry is not None and self._generation_ctx is not None:
+            try:
+                await self._generation_registry.mark(
+                    self._generation_ctx.generation_id,
+                    status="completed", finish_reason="stop")
+            except Exception:
+                logger.debug("generation mark completed 失败", exc_info=True)
+
     # ---- Core loop: main orchestrator ----
 
     async def _think_loop(self, user_message: str, user_name: str,
@@ -1254,6 +1298,15 @@ class CognitiveLoop(CognitiveTools):
                 self._turn_failed_emitted = True
             except Exception:
                 logger.debug("turn_cancelled 发射失败", exc_info=True)
+            # 批次 3（BE-024）：中断来源分派——disconnect → interrupted；其余
+            # （vad/button/新输入等）→ cancelled。终态唯一：错误路径已标 failed 不覆盖。
+            if self._generation_registry is not None:
+                try:
+                    status = "interrupted" if source == "disconnect" else "cancelled"
+                    await self._generation_registry.mark(
+                        self._generation_ctx.generation_id, status=status)
+                except Exception:
+                    logger.debug("generation mark %s 失败", status, exc_info=True)
         self._executing_tools.clear()
         self._tts_mgr.cancel_all()
         await self._output.typing(False)
