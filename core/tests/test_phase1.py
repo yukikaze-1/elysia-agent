@@ -365,7 +365,7 @@ class TestInterruptIntegration:
         await agent.process_message("你好呀")
         await asyncio.sleep(3.0)
 
-        messages = agent._session.recent_messages()
+        messages = agent.session.recent_messages()
         # At minimum we should have some conversation history
         assert len(messages) > 0, "Expected at least some session messages"
         await agent.stop()
@@ -413,7 +413,7 @@ class TestMultiTurnConversation:
         # First turn (may be slower due to lazy embedding loading)
         await agent.process_message("我叫妖梦")
         await asyncio.sleep(15)  # Generous timeout for embedding lazy load + LLM
-        msgs_1 = agent._session.recent_messages()
+        msgs_1 = agent.session.recent_messages()
         assert any(
             isinstance(m.content, list) and
             any("我叫妖梦" in getattr(p, "content", "") for p in m.content)
@@ -423,7 +423,7 @@ class TestMultiTurnConversation:
         # Second turn (embedding already loaded, should be fast)
         await agent.process_message("你还记得我叫什么吗")
         await asyncio.sleep(5)
-        msgs_2 = agent._session.recent_messages()
+        msgs_2 = agent.session.recent_messages()
 
         # Session should have all messages (user + assistant from both turns)
         assert len(msgs_2) >= 3

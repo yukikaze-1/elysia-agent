@@ -27,7 +27,7 @@ class _LifecycleServices:
 
     if TYPE_CHECKING:
         _token_tracker: TokenTracker
-        _session: SessionMemory
+        session: SessionMemory
         _output: OutputManager
         _token_repo: TokenRepository
         _mongo_ok: bool
@@ -46,7 +46,7 @@ class _LifecycleServices:
         """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""
         from core.monitoring.token_tracker import TokenTracker
         self._token_tracker = TokenTracker(
-            session_id=self._session.session_id,
+            session_id=self.session.session_id,
             output_manager=self._output,
             repo=self._token_repo if self._mongo_ok else None,
         )

@@ -1594,18 +1594,18 @@ class TestDebugDbApi:
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
         from core.schema.types import MessageId
-        agent._session.add_message(UserMessage(
+        agent.session.add_message(UserMessage(
             content=[TextPart(content="hello")],
             message_id=MessageId("msg-test"),
         ))
-        if await agent._session_repo.health_check():
-            await agent._session.save()
+        if await agent.session_repo.health_check():
+            await agent.session.save()
 
         app = create_app(agent, serve_static=False)
         async with aiohttp.test_utils.TestServer(app) as srv:  # type: ignore[attr-defined]
             async with aiohttp.test_utils.TestClient(srv) as client:  # type: ignore[attr-defined]
                 resp = await client.get(
-                    "/debug/api/sessions/" + agent._session._session_id)
+                    "/debug/api/sessions/" + agent.session._session_id)
                 assert resp.status == 200
                 data = await resp.json()
                 assert "messages" in data

@@ -333,7 +333,7 @@ class TestMemoryIntegration:
 
         assert agent._fsm.state == AgentState.IDLE
         # Session should have multiple messages
-        messages = agent._session.recent_messages()
+        messages = agent.session.recent_messages()
         assert len(messages) >= 2
 
         await agent.stop()
@@ -359,7 +359,7 @@ class TestMemoryIntegration:
         await agent.process_message("我喜欢蓝色")
         await asyncio.sleep(3)
 
-        messages = agent._session.recent_messages()
+        messages = agent.session.recent_messages()
         # Should have at least user+assistant from both turns
         assert len(messages) >= 4
 
@@ -914,7 +914,6 @@ class TestMemoryStress:
         from core.schema.types import SessionId
         a1 = Agent(config=AppConfig())
         a1._llm._backend = FakeLLMBackend(response="好的我记住了")
-        a1._session._session_id = SessionId(sid1)
         await a1.start()
         await a1.process_message("只有agent1知道的消息")
         # Wait for cognitive task to start
@@ -927,22 +926,23 @@ class TestMemoryStress:
             if a1._fsm.state == "idle":
                 break
             await asyncio.sleep(0.01)
-        a1_msgs = len(a1._session.recent_messages())
+        a1_msgs = len(a1.session.recent_messages())
         await a1.stop()
 
         a2 = Agent(config=AppConfig())
         a2._llm._backend = FakeLLMBackend(response="你好")
-        a2._session._session_id = SessionId(sid2)
         await a2.start()
-        a2_msgs = len(a2._session.recent_messages())
+        # 批次 3：会话隔离走新 API——a2 切到独立会话，不继承 a1 的 default 会话数据
+        await a2.switch_session(sid2)
+        a2_msgs = len(a2.session.recent_messages())
         assert a1_msgs >= 2  # user msg + assistant reply
-        assert a2_msgs == 0  # fresh session
+        assert a2_msgs == 0  # a2 的独立会话是新的
         await a2.stop()
 
         # 清理测试遗留的 session 文档
         try:
-            await a1._session_repo.delete(SessionId(sid1))
-            await a1._session_repo.delete(SessionId(sid2))
+            await a1.session_repo.delete(SessionId(sid1))
+            await a1.session_repo.delete(SessionId(sid2))
         except Exception:
             pass
 

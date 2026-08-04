@@ -35,7 +35,7 @@ class _LifecycleTools:
         _long_term: LongTermMemory
         _scheduler: TaskScheduler
         _config: AppConfig
-        _session: SessionMemory
+        session: SessionMemory
         _started_at: float
         _token_tracker: TokenTracker
         _bus: EventBus
@@ -54,12 +54,12 @@ class _LifecycleTools:
             "memory": self._long_term,
             "scheduler": self._scheduler,
             "config": self._config,
-            "session": self._session,
+            "session": self.session,
             "_bus": self._bus,
             "_started_at": self._started_at,
             "_token_tracker": self._token_tracker,
             "_fsm_state": self.status.current_name(),
-            "_session_msg_count": len(self._session.messages),
+            "_session_msg_count": len(self.session.messages),
         })
         self._cognitive.configure(tool_adapter=self._tool_adapter)
         self._scheduler.set_tool_adapter(self._tool_adapter)

@@ -13,7 +13,7 @@ Component dependency graph (top-down):
                 ├── MemoryConfig ────┤                     │
                 └── ServerConfig     │                     │
                                      │                     │
-    Repos ───────┬── SessionMemory   │                     │
+    Repos ───────┬── SessionManager  │                     │   (批次 3: multi-session 池, active → SessionMemory)
                  ├── LongTermMemory  │                     │
                  └── VersionRepo ────┘                     │
                                                            │
@@ -68,7 +68,7 @@ from core.monitoring.event_bus import EventBus, EventPriority, EventType
 from core.status.agent_fsm import AgentFSM, AgentState
 from core.utils import set_request_id, get_request_id
 from core.config import CharacterConfig
-from core.memory.session import SessionMemory
+from core.memory.session_manager import SessionManager
 from core.memory.long_term import LongTermMemory
 from core.adapter.prompt_assembler import PromptAssembler
 from core.adapter import ToolAdapter
@@ -139,10 +139,12 @@ class Agent(AgentLifecycle, AgentServer):
         )
 
         # ---- L2: Memory ----
-        self._session = SessionMemory(
-            max_messages=config.memory.session_max_messages,
+        # 批次 3 (multi-session)：SessionManager 取代单一 self._session——
+        # 缓存池 + 活动指针，eager 构造 default 空实例。session property 直通 active。
+        self._session_manager = SessionManager(
             repo=self._session_repo,
             msg_repo=self._message_repo,
+            max_messages=config.memory.session_max_messages,
         )
         self._long_term = LongTermMemory(
             max_entries=config.memory.ltm_max_entries,
@@ -167,10 +169,12 @@ class Agent(AgentLifecycle, AgentServer):
         self._llm = LLMAdapter(model=config.llm.model)
 
         # ---- 性格 + 情绪引擎（合并）----
-        # 与 session.character_state 共用同一对象 — engine 写入 mood 等，session 持久化 + debug 读取
+        # 与 active session 的 character_state 共用同一对象 — engine 写入 mood 等，
+        # session 持久化 + debug 读取。构造顺序（D-l）：SessionManager(eager default)
+        # → CharacterEngine(state=default.character_state) → bind_character_engine。
         self._character_engine = CharacterEngine(
             llm=self._llm,
-            state=self._session.character_state,
+            state=self._session_manager.active.character_state,
             character_name=self._character.name,
             user_name=self._user_name,
             base_personality=self._character.base_personality,
@@ -178,15 +182,14 @@ class Agent(AgentLifecycle, AgentServer):
             output=self._output,
             version_repo=self._version_repo,
         )
+        # bind 时对 active(default) 调 attach_session：绑定 state 视图 + 设 pre_save_hook
+        self._session_manager.bind_character_engine(self._character_engine)
 
         # 保存 reflector 引用供 debug_info 使用
         self._character_reflector = self._character_engine._reflector
 
-        # 注册 pre-save 钩子：session.save() 前同步 reflector buffer → CharacterState
-        self._session._pre_save_hook = self._character_engine.sync_reflector_to_state
-
         self._prompt = PromptAssembler(
-            self._character, self._session, self._long_term,
+            self._character, self._session_manager.active, self._long_term,
             personality_engine=self._character_engine,
         )
 
@@ -208,7 +211,7 @@ class Agent(AgentLifecycle, AgentServer):
         self._memory_reflector = MemoryReflector(
             llm=self._llm,
             memory=self._long_term,
-            session=self._session,
+            session=self._session_manager.active,
         )
 
         # ---- Token 统计 ----
@@ -223,7 +226,7 @@ class Agent(AgentLifecycle, AgentServer):
             event_bus=self._bus,
             output=self._output,
             prompt=self._prompt,
-            session=self._session,
+            session=self._session_manager.active,  # 批次 3 中间态：仍绑 default 实例（resolver 由 Task 8 接入）
             tool_adapter=self._tool_adapter,
             character_engine=self._character_engine,
             consolidator=self._consolidator,
@@ -279,7 +282,8 @@ class Agent(AgentLifecycle, AgentServer):
     async def process_message(self, text: str = "", user_name: str = "",
                                content: list[dict] | None = None,
                                message_id: str | None = None,
-                               protocol_version: int = 1) -> None:
+                               protocol_version: int = 1,
+                               conversation_id: str | None = None) -> None:
         """处理单条用户消息，通过管道送入 CognitiveLoop。
 
         Agent 忙碌时消息入队（FIFO），IDLE 时出队处理。
@@ -291,6 +295,8 @@ class Agent(AgentLifecycle, AgentServer):
             content: 多模态内容数组（ChatMessageV2 content），新接口。
             message_id: v2 预分配用户消息 ID（ACK 一致，落库优先用）；v1 无则 None。
             protocol_version: 来源协议版本（1=v1，2=v2），默认 1。
+            conversation_id: 批次 3（multi-session）目标会话 ID；None = 未归属
+                （由 loop 侧 resolver 路由，Task 8 接入）。
         """
         user_name = user_name or self._user_name
         if not text.strip() and not content:
@@ -311,13 +317,15 @@ class Agent(AgentLifecycle, AgentServer):
             self._pending_messages.append(_PendingMessage(
                 text=text, user_name=user_name, request_id=rid,
                 content=content, message_id=message_id,
+                conversation_id=conversation_id,
             ))
             return
 
         self._bus.post(UserInputData(text=text, user_name=user_name,
                                      request_id=rid, content=content,
                                      message_id=message_id,
-                                     protocol_version=protocol_version))
+                                     protocol_version=protocol_version,
+                                     conversation_id=conversation_id))
 
     # ---- Background task lifecycle ----
 
@@ -348,13 +356,13 @@ class Agent(AgentLifecycle, AgentServer):
         Returns:
             实际移除的消息数量（0 或 1）。
         """
-        before = len(self._session.messages)
-        kept = [m for m in self._session.messages if m.message_id != msg_id]
+        before = len(self.session.messages)
+        kept = [m for m in self.session.messages if m.message_id != msg_id]
         purged = before - len(kept)
         if purged:
-            self._session.messages.clear()
+            self.session.messages.clear()
             for m in kept:
-                self._session.messages.append(m)
+                self.session.messages.append(m)
         return purged
 
     async def _poll_mailboxes(self):
@@ -450,7 +458,8 @@ class Agent(AgentLifecycle, AgentServer):
         """
         set_request_id("-")
         logger.info("EventBus: INTERRUPT (%s)", data.source)
-        self._cognitive.cancel_current()
+        # 批次 3：source 贯通到 loop 的 cancel 路径（mark 拆分由 Task 9 接入）
+        self._cognitive.cancel_current(source=data.source)
         for drained in self._bus.drain():
             if isinstance(drained.data, StateChangeData):
                 self._bus.post(drained.data, priority=drained.priority,
@@ -562,12 +571,36 @@ class Agent(AgentLifecycle, AgentServer):
     # Tool registration is done via ToolAdapter.start() in start()
 
     # ---- 公开只读接口（薄 getter 直通）----
-    # 27 个 @property：通往 Agent 组合根持有的子系统，可写性由子系统 API 自管。
+    # 30 个 @property：通往 Agent 组合根持有的子系统，可写性由子系统 API 自管。
+    # 批次 3 新增 session_manager / active_session_id / pending_messages。
 
     @property
     def session(self):
-        """当前会话内存。"""
-        return self._session
+        """当前会话内存（SessionManager 活动会话，switch 后指向新会话）。"""
+        return self._session_manager.active
+
+    @property
+    def session_manager(self):
+        """会话管理器（多会话缓存池 + 活动指针）。"""
+        return self._session_manager
+
+    @property
+    def active_session_id(self):
+        """当前活动会话 ID（SessionId/str）。"""
+        return self._session_manager.active_id
+
+    @property
+    def pending_messages(self):
+        """FIFO 队列中暂存的消息（只读快照视图，busy 时排队未出队）。"""
+        return list(self._pending_messages)
+
+    async def resolve_session(self, conversation_id, protocol_version):
+        """按协议版本 + conversation_id 解析目标会话并确保加载（直通 SessionManager）。"""
+        return await self._session_manager.resolve(conversation_id, protocol_version)
+
+    async def switch_session(self, sid):
+        """切换到目标会话（直通 SessionManager——engine attach + 活动指针更新）。"""
+        return await self._session_manager.switch(sid)
 
     @property
     def long_term(self):

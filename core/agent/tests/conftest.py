@@ -19,10 +19,10 @@ def fake_agent():
     a._consolidator = None
     a._character_engine = None
     a._memory_reflector = None
-    # session（带 deque messages）
-    a._session = MagicMock()
-    a._session.save = AsyncMock()
-    a._session.messages = deque(maxlen=20)
+    # session（带 deque messages）——批次 3：公开接口 agent.session（= session_manager.active）
+    a.session = MagicMock()
+    a.session.save = AsyncMock()
+    a.session.messages = deque(maxlen=20)
     # event bus + fsm + status
     a._bus = MagicMock()
     a._bus.post = MagicMock()

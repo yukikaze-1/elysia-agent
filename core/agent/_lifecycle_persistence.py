@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from core.storage.message_repo import MessageRepository
     from core.storage.session_repo import SessionRepository
     from core.storage.token_repo import TokenRepository
-    from core.memory.session import SessionMemory
+    from core.memory.session_manager import SessionManager
     from core.memory.long_term import LongTermMemory
     from core.personality import CharacterEngine
 
@@ -25,7 +25,7 @@ class _LifecyclePersistence:
 
     if TYPE_CHECKING:
         _db_health_task: asyncio.Task[None] | None
-        _session: SessionMemory
+        _session_manager: SessionManager
         _long_term: LongTermMemory
         _message_repo: MessageRepository
         _version_repo: CharacterVersionRepository
@@ -42,13 +42,13 @@ class _LifecyclePersistence:
         self._db_health_task = asyncio.create_task(self._db_health_loop())
 
     async def _start_persistence(self) -> tuple[bool, bool]:
-        """连接 MongoDB/Milvus，加载 session，恢复 JSONL 快照。
+        """连接 MongoDB/Milvus，加载活动会话，恢复 JSONL 快照。
 
         Returns:
             (mongo_ok, milvus_ok) 两个布尔值，分别表示 MongoDB 和 Milvus 是否连接成功。
         """
         mongo_ok, milvus_ok = await asyncio.gather(
-            self._session.connect_db(),
+            self._session_manager.connect_db(),
             self._long_term.connect(),
         )
         # 消息归档独立连接（与 session 共享 MongoDB，但使用独立 repo）
@@ -56,17 +56,20 @@ class _LifecyclePersistence:
         # L2 版本历史
         if not await self._version_repo.connect():
             logger.warning("CharacterVersionRepository 离线")
+        # 无条件 load_active：确保默认会话进入 _loaded（shutdown save_all() 依赖，
+        # 否则 MongoDB 离线期间的内存会话在关闭时不会落 JSONL）
+        await self._session_manager.load_active()
         if mongo_ok:
-            await self._session.load()
-            # CharacterState 已由 session.load() 原地恢复到 engine.state
+            # CharacterState 已由 load() 原地恢复到 engine.state（active=default）
             if self._character_engine.state.last_awareness_time:
                 self._character_engine._last_awareness_time = self._character_engine.state.last_awareness_time
             self._character_engine._reflector._restore_from_state()
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
-            if os.path.exists(self._session.pending_file):
-                if await self._session.load_from_jsonl(merge=True):
-                    if await self._session.save():
-                        os.remove(self._session.pending_file)
+            active = self._session_manager.active
+            if os.path.exists(active.pending_file):
+                if await active.load_from_jsonl(merge=True):
+                    if await active.save():
+                        os.remove(active.pending_file)
                         logger.info("Session JSONL 已导入 MongoDB 并删除")
                     else:
                         logger.warning("Session MongoDB 写入失败，保留 JSONL")
@@ -88,7 +91,7 @@ class _LifecyclePersistence:
         while True:
             await asyncio.sleep(120)
             try:
-                mongo_ok = await self._session.health_check()
+                mongo_ok = await self._session_manager.health_check()
                 milvus_ok = await self._long_term.health_check()
                 self._mongo_available = mongo_ok
                 self._milvus_available = milvus_ok
@@ -127,7 +130,7 @@ class _LifecyclePersistence:
         """
         logger.debug("Saving session...")
         try:
-            await asyncio.wait_for(self._session.save(), timeout=3.0)
+            await asyncio.wait_for(self._session_manager.save_all(), timeout=3.0)
         except asyncio.TimeoutError:
             logger.warning("Session save timed out")
         except Exception:

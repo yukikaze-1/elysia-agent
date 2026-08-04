@@ -21,31 +21,31 @@ class TestPurgeMessageFromSession:
         msg1 = MagicMock(message_id="id-1")
         msg2 = MagicMock(message_id="id-2")
         msg3 = MagicMock(message_id="id-3")
-        fake_agent._session.messages = deque([msg1, msg2, msg3], maxlen=20)
+        fake_agent.session.messages = deque([msg1, msg2, msg3], maxlen=20)
 
         purged = Agent.purge_message_from_session(fake_agent, "id-2")
         assert purged == 1
-        assert len(fake_agent._session.messages) == 2
-        remaining_ids = [m.message_id for m in fake_agent._session.messages]
+        assert len(fake_agent.session.messages) == 2
+        remaining_ids = [m.message_id for m in fake_agent.session.messages]
         assert "id-2" not in remaining_ids
         assert "id-1" in remaining_ids
         assert "id-3" in remaining_ids
 
     def test_purge_nonexistent_message(self, fake_agent):
         msg1 = MagicMock(message_id="id-1")
-        fake_agent._session.messages = deque([msg1], maxlen=20)
+        fake_agent.session.messages = deque([msg1], maxlen=20)
 
         purged = Agent.purge_message_from_session(fake_agent, "no-such-id")
         assert purged == 0
-        assert len(fake_agent._session.messages) == 1
+        assert len(fake_agent.session.messages) == 1
 
     def test_purge_all_messages(self, fake_agent):
         msg1 = MagicMock(message_id="id-1")
-        fake_agent._session.messages = deque([msg1], maxlen=20)
+        fake_agent.session.messages = deque([msg1], maxlen=20)
 
         purged = Agent.purge_message_from_session(fake_agent, "id-1")
         assert purged == 1
-        assert len(fake_agent._session.messages) == 0
+        assert len(fake_agent.session.messages) == 0
 
 
 class TestRegisterBackgroundTask:

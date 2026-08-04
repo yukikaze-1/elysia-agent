@@ -13,8 +13,8 @@ from core.config import AppConfig
 pytestmark = pytest.mark.service
 
 # (property 名, 内部属性名, 是否启动期创建)
+# 注：session 特例——批次 3 起直通 session_manager.active，单独测试
 SUBSYSTEM_PROPS = [
-    ("session", "_session", False),
     ("long_term", "_long_term", False),
     ("message_repo", "_message_repo", False),
     ("session_repo", "_session_repo", False),
@@ -53,6 +53,11 @@ class TestSubsystemProperties:
     @pytest.mark.parametrize("pub,priv,_", SUBSYSTEM_PROPS)
     def test_returns_internal_object(self, agent, pub, priv, _):
         assert getattr(agent, pub) is getattr(agent, priv)
+
+    def test_session_points_to_session_manager_active(self, agent):
+        """批次 3：session property 直通 session_manager.active。"""
+        assert agent.session is agent.session_manager.active
+        assert agent.active_session_id == "default"
 
 
 class TestStartupProperties:

@@ -257,8 +257,13 @@ class CognitiveLoop(CognitiveTools):
 
     # ---- Public API ----
 
-    def cancel_current(self) -> bool:
-        """取消当前认知任务（如有）。返回 True 表示确实取消了任务。"""
+    def cancel_current(self, source: str = "") -> bool:
+        """取消当前认知任务（如有）。返回 True 表示确实取消了任务。
+
+        Args:
+            source: 中断来源（vad / button 等），批次 3 起贯通到取消路径，
+                供后续 mark 拆分（Task 9）区分「语音打断」与「手动停止」。
+        """
         if self._current_task is not None and not self._current_task.done():
             self._current_task.cancel()
             self._current_task = None

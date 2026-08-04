@@ -86,7 +86,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _started_at: float
         _fsm: AgentFSM
         _llm: LLMAdapter
-        _session: SessionMemory
+        session: SessionMemory
         _long_term: LongTermMemory
         _message_repo: MessageRepository
         _version_repo: CharacterVersionRepository
