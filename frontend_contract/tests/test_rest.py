@@ -13,14 +13,30 @@ from frontend_contract.base import field_is_ts_null
 from frontend_contract.rest import (
     ApiFail,
     ApiOk,
+    ConversationUsage,
     CustomProvider,
+    GenerationListResponse,
+    GenerationStatus,
     ImageUploadError,
     ImageUploadResponse,
     Message,
+    MessageContextResponse,
+    MessagesPageResponse,
     MessagesResponse,
+    PendingApprovalItem,
+    PendingMessageItem,
+    PendingQueryResponse,
     ProviderEntry,
     ProvidersResponse,
     ProviderTestResult,
+    ResourceItem,
+    ResourceListResponse,
+    SearchMessageItem,
+    SearchMessagesResponse,
+    SessionActivateResult,
+    SessionDetail,
+    SessionListResult,
+    SessionSummary,
     UnconfiguredEntry,
 )
 
@@ -185,3 +201,207 @@ def test_protocol_error_envelope():
     assert d["requestId"] == "req_123"
     assert d["error"] == "需要认证"  # 兼容别名（v1 前端读 err.error）
     assert d["details"] == {}
+
+
+# ── 批次 3 v2 契约模型（多会话/历史/搜索/资源/状态） ──────────────────────────
+
+
+@pytest.mark.unit
+def test_session_summary_wire():
+    """SessionSummary：conversationId/title/messageCount/updatedAt/active（含 conversationId/title）。"""
+    s = SessionSummary(
+        conversationId="conv_abc", title="闲聊", messageCount=3,
+        updatedAt="2026-08-04T00:00:00+00:00", active=False,
+    )
+    d = s.wire_dict()
+    assert d == {
+        "conversationId": "conv_abc", "title": "闲聊", "messageCount": 3,
+        "updatedAt": "2026-08-04T00:00:00+00:00", "active": False,
+    }
+
+
+@pytest.mark.unit
+def test_session_summary_title_omitted_when_none():
+    """SessionSummary.title 可空（创建后未命名）→ None 缺省省略。"""
+    s = SessionSummary(conversationId="conv_abc", messageCount=0,
+                       updatedAt="2026-08-04T00:00:00+00:00", active=False)
+    d = s.wire_dict()
+    assert d["conversationId"] == "conv_abc"
+    assert "title" not in d
+
+
+@pytest.mark.unit
+def test_session_list_result_wire():
+    """SessionListResult：sessions 数组 + has_more + 可缺省 cursor（命名避开 debug.SessionListResponse）。"""
+    d = SessionListResult(sessions=[], has_more=False).wire_dict()
+    assert d == {"sessions": [], "has_more": False}
+    assert "cursor" not in d
+    d2 = SessionListResult(sessions=[], has_more=True, cursor="base64:x").wire_dict()
+    assert d2["cursor"] == "base64:x"
+
+
+@pytest.mark.unit
+def test_session_detail_wire():
+    """SessionDetail：session + messages（第一页）+ active。"""
+    msg = Message.model_validate({
+        "role": "user", "content": "hi", "message_id": "m1",
+        "timestamp": "t", "session_id": "conv_abc", "parts": [{"content": "hi"}],
+    })
+    summary = SessionSummary(conversationId="conv_abc", messageCount=1,
+                             updatedAt="t", active=True)
+    d = SessionDetail(session=summary, messages=[msg], active=True).wire_dict()
+    assert d["session"]["conversationId"] == "conv_abc"
+    assert d["messages"][0]["message_id"] == "m1"
+    assert d["active"] is True
+
+
+@pytest.mark.unit
+def test_session_activate_result_wire():
+    """SessionActivateResult：activeConversationId。"""
+    d = SessionActivateResult(activeConversationId="conv_abc").wire_dict()
+    assert d == {"activeConversationId": "conv_abc"}
+
+
+@pytest.mark.unit
+def test_messages_page_response_wire():
+    """MessagesPageResponse：messages 数组 + has_more/total（会话内历史第一页）。"""
+    msg = Message.model_validate({
+        "role": "assistant", "content": "hi", "message_id": "m2",
+        "timestamp": "t", "session_id": "conv_abc", "parts": [{"content": "hi"}],
+    })
+    d = MessagesPageResponse(messages=[msg], has_more=True, total=10).wire_dict()
+    assert d["messages"][0]["role"] == "assistant"
+    assert d["has_more"] is True and d["total"] == 10
+
+
+@pytest.mark.unit
+def test_message_context_response_wire():
+    """MessageContextResponse：anchor + before/after 窗口 + conversationId。"""
+    def mk(mid: str):
+        return Message.model_validate({
+            "role": "user", "content": mid, "message_id": mid, "timestamp": "t",
+            "session_id": "conv_abc", "parts": [{"content": mid}],
+        })
+
+    d = MessageContextResponse(
+        anchor=mk("a"), before=[mk("b1"), mk("b2")], after=[mk("c1")],
+        conversationId="conv_abc").wire_dict()
+    assert d["anchor"]["message_id"] == "a"
+    assert [m["message_id"] for m in d["before"]] == ["b1", "b2"]
+    assert [m["message_id"] for m in d["after"]] == ["c1"]
+    assert d["conversationId"] == "conv_abc"
+
+
+@pytest.mark.unit
+def test_search_message_item_wire():
+    """SearchMessageItem：conversationId/messageId/role/timestamp/snippet；responseId/segmentId 可空省略。"""
+    item = SearchMessageItem(
+        conversationId="conv_abc", messageId="msg_1", role="user",
+        timestamp="2026-08-04T00:00:00+00:00", snippet="你好",
+    )
+    d = item.wire_dict()
+    assert d["conversationId"] == "conv_abc"
+    assert d["messageId"] == "msg_1"
+    assert d["role"] == "user"
+    assert d["timestamp"] == "2026-08-04T00:00:00+00:00"
+    assert d["snippet"] == "你好"
+    assert "responseId" not in d  # 可空省略（无则缺省，best-effort）
+    assert "segmentId" not in d   # 可空省略（消息级搜索恒 null 定位语义）
+    # 带上 responseId 时发射
+    d2 = SearchMessageItem(
+        conversationId="conv_abc", messageId="msg_1", responseId="gen_1",
+        role="assistant", timestamp="t", snippet="hi").wire_dict()
+    assert d2["responseId"] == "gen_1"
+
+
+@pytest.mark.unit
+def test_search_messages_response_wire():
+    """SearchMessagesResponse：items 数组 + has_more + cursor。"""
+    item = SearchMessageItem(conversationId="c", messageId="m", role="user",
+                             timestamp="t", snippet="s")
+    d = SearchMessagesResponse(items=[item], has_more=True, cursor="c1").wire_dict()
+    assert d["items"][0]["messageId"] == "m"
+    assert d["has_more"] is True and d["cursor"] == "c1"
+
+
+@pytest.mark.unit
+def test_resource_item_and_list_wire():
+    """ResourceItem{messageId/timestamp/kind/url} + ResourceListResponse 分页。"""
+    item = ResourceItem(messageId="m1", timestamp="t", kind="image",
+                        url="http://x/a.png")
+    d = item.wire_dict()
+    assert d == {"messageId": "m1", "timestamp": "t", "kind": "image",
+                 "url": "http://x/a.png"}
+    resp = ResourceListResponse(items=[item], has_more=False).wire_dict()
+    assert resp["items"][0]["kind"] == "image"
+    assert resp["has_more"] is False
+    assert "cursor" not in resp
+
+
+@pytest.mark.unit
+def test_generation_status_wire():
+    """GenerationStatus：generationId/conversationId/messageId/userMessageId/status/model/finishReason/createdAt/finishedAt。"""
+    status = GenerationStatus(
+        generationId="gen_1", conversationId="conv_abc", messageId="msg_a",
+        userMessageId="msg_u", status="completed", model="fake/test",
+        finishReason="stop", createdAt="2026-08-04T00:00:00+00:00",
+        finishedAt="2026-08-04T00:00:01+00:00",
+    )
+    d = status.wire_dict()
+    assert d["generationId"] == "gen_1"
+    assert d["conversationId"] == "conv_abc"
+    assert d["messageId"] == "msg_a"
+    assert d["userMessageId"] == "msg_u"
+    assert d["status"] == "completed"
+    assert d["model"] == "fake/test"
+    assert d["finishReason"] == "stop"
+    assert d["createdAt"]
+    assert d["finishedAt"]
+    assert "error" not in d  # None 缺省省略
+
+
+@pytest.mark.unit
+def test_generation_status_nullable_and_enum():
+    """GenerationStatus：finishReason/error/finishedAt/model 可空省略；status 限 5 值。"""
+    running = GenerationStatus(
+        generationId="gen_2", conversationId="conv_abc", messageId="m",
+        userMessageId="u", status="running", createdAt="t",
+    )
+    d = running.wire_dict()
+    assert d["status"] == "running"
+    assert "finishReason" not in d
+    assert "model" not in d
+    assert "finishedAt" not in d
+    # 非法 status 校验失败
+    with pytest.raises(Exception):
+        GenerationStatus(generationId="x", conversationId="c", messageId="m",
+                         userMessageId="u", status="bogus", createdAt="t")
+
+
+@pytest.mark.unit
+def test_generation_list_response_wire():
+    """GenerationListResponse：generations 数组 + has_more + cursor。"""
+    g = GenerationStatus(generationId="gen_1", conversationId="c", messageId="m",
+                         userMessageId="u", status="completed", createdAt="t")
+    d = GenerationListResponse(generations=[g], has_more=False).wire_dict()
+    assert d["generations"][0]["generationId"] == "gen_1"
+    assert d["has_more"] is False
+
+
+@pytest.mark.unit
+def test_pending_query_response_wire():
+    """PendingQueryResponse：pendingMessages（按会话）+ pendingApprovals（全局，复用 ws 广播同源形状）。"""
+    resp = PendingQueryResponse(
+        pendingMessages=[PendingMessageItem(messageId="m1", snippet="你好…", createdAt="t")],
+        pendingApprovals=[PendingApprovalItem(requestId="r1", tool="time", params={})],
+    )
+    d = resp.wire_dict()
+    assert d["pendingMessages"][0] == {"messageId": "m1", "snippet": "你好…", "createdAt": "t"}
+    assert d["pendingApprovals"][0] == {"requestId": "r1", "tool": "time", "params": {}}
+
+
+@pytest.mark.unit
+def test_conversation_usage_wire():
+    """ConversationUsage：total + byModel（generation.completed 会话累计）。"""
+    d = ConversationUsage(total=42, byModel={"fake/test": 42}).wire_dict()
+    assert d == {"total": 42, "byModel": {"fake/test": 42}}

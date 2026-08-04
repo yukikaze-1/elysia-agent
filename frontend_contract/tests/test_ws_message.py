@@ -7,6 +7,7 @@ import pytest
 
 from frontend_contract import ws_message as w
 from frontend_contract.base import field_is_ts_null
+from frontend_contract.rest import ConversationUsage
 
 
 @pytest.mark.unit
@@ -156,3 +157,90 @@ def test_v2_text_message_model():
     assert d["content"] == "你好"
     assert d["clientRequestId"] == "req_1"
     assert "conversationId" not in d
+
+
+# ── 批次 3 v2 增量（generation conversationId / conversationUsage / activate_session） ──
+
+
+@pytest.mark.unit
+def test_generation_events_have_conversation_id_field():
+    """6 个 generation.* 均带 conversationId（Started 已有，其余 5 个批次 3 新增可缺省字段）。"""
+    for cls in (w.GenerationStartedMessage, w.GenerationSegmentStartedMessage,
+                w.GenerationDeltaMessage, w.GenerationSegmentCompletedMessage,
+                w.GenerationCompletedMessage, w.GenerationFailedMessage):
+        assert "conversationId" in cls.model_fields
+        assert cls.model_fields["conversationId"].is_required() is False
+
+
+@pytest.mark.unit
+def test_generation_segment_started_conversation_id():
+    """generation.segment.started 带 conversationId（None 缺省省略）。"""
+    msg = w.GenerationSegmentStartedMessage(
+        generationId="gen_1", segmentId="seg_1", segmentIndex=0,
+        channel="public_reply", kind="text", conversationId="conv_abc",
+    )
+    d = msg.wire_dict()
+    assert d["type"] == "generation.segment.started"
+    assert d["conversationId"] == "conv_abc"
+
+
+@pytest.mark.unit
+def test_generation_delta_conversation_id():
+    """generation.delta 带 conversationId。"""
+    msg = w.GenerationDeltaMessage(
+        generationId="gen_1", segmentId="seg_1", segmentIndex=0,
+        deltaSequence=2, delta="你", conversationId="conv_abc",
+    )
+    assert msg.wire_dict()["conversationId"] == "conv_abc"
+
+
+@pytest.mark.unit
+def test_generation_segment_completed_conversation_id():
+    """generation.segment.completed 带 conversationId。"""
+    msg = w.GenerationSegmentCompletedMessage(
+        generationId="gen_1", segmentId="seg_1", segmentIndex=0,
+        channel="public_reply", kind="text", content="你好", conversationId="conv_abc",
+    )
+    assert msg.wire_dict()["conversationId"] == "conv_abc"
+
+
+@pytest.mark.unit
+def test_generation_completed_conversation_id_and_usage():
+    """generation.completed 带 conversationId + conversationUsage（会话累计，可缺省省略）。"""
+    usage = w.TokenUsage(rounds=[], turn_total=0)
+    conv_usage = ConversationUsage(total=42, byModel={"fake/test": 42})
+    msg = w.GenerationCompletedMessage(
+        generationId="gen_1", messageId="msg_1", channel="public_reply",
+        finishReason="stop", usage=usage, model="fake/test",
+        conversationId="conv_abc", conversationUsage=conv_usage,
+    )
+    d = msg.wire_dict()
+    assert d["conversationId"] == "conv_abc"
+    assert d["conversationUsage"] == {"total": 42, "byModel": {"fake/test": 42}}
+    # conversationUsage 可缺省省略
+    msg2 = w.GenerationCompletedMessage(
+        generationId="gen_2", messageId="msg_2", channel="public_reply",
+        finishReason="stop", usage=usage, model="fake/test",
+    )
+    assert "conversationUsage" not in msg2.wire_dict()
+
+
+@pytest.mark.unit
+def test_generation_failed_conversation_id():
+    """generation.failed 带 conversationId。"""
+    msg = w.GenerationFailedMessage(
+        generationId="gen_1", messageId="msg_1", code="GENERATION_CANCELLED",
+        message="已取消", retryable=False, conversationId="conv_abc",
+    )
+    assert msg.wire_dict()["conversationId"] == "conv_abc"
+
+
+@pytest.mark.unit
+def test_activate_session_message():
+    """ActivateSessionMessage：Client→Server，type=activate_session，conversationId 必填。"""
+    msg = w.ActivateSessionMessage(conversationId="conv_abc")
+    d = msg.wire_dict()
+    assert d == {"type": "activate_session", "conversationId": "conv_abc"}
+    # conversationId 必填：缺失抛 ValidationError
+    with pytest.raises(Exception):
+        w.ActivateSessionMessage()

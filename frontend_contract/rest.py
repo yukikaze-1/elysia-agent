@@ -178,3 +178,157 @@ class MessagesResponse(ContractModel):
     has_more: bool = Field(description="是否还有更多")
     total: int = Field(description="总消息数")
     error: Optional[str] = Field(default=None, description="错误信息，可缺省")
+
+
+# ────────────────────── 批次 3 v2 契约：多会话/历史/搜索/资源/状态（BE-030/031/032 + BE-024） ──────────────────────
+
+
+class SessionSummary(ContractModel):
+    """会话摘要（/api/sessions 列表条目 / 创建 / 重命名响应）。
+
+    conversationId = 会话唯一标识（默认 "default"，新建 conv_<uuid4 hex[:12]>）；
+    title 可空（创建后可无标题，首条用户消息自动取前 20 字，可被重命名覆盖）。
+    """
+
+    conversationId: str = Field(description="会话 ID")
+    title: Optional[str] = Field(default=None, description="标题，可空（未命名时缺省省略）")
+    messageCount: int = Field(description="会话消息条数")
+    updatedAt: str = Field(description="最近更新时间（UTC ISO）")
+    active: bool = Field(description="是否为当前活动会话")
+
+
+class SessionListResult(ContractModel):
+    """会话列表响应（命名避开 debug.SessionListResponse——同名不同类型 gen_ts 抛 ValueError）。
+
+    cursor = keyset 游标 base64("{{updated_at}}|{{session_id}}")，无更多时缺省省略。
+    """
+
+    sessions: list[SessionSummary] = Field(description="会话摘要列表")
+    has_more: bool = Field(description="是否还有更多")
+    cursor: Optional[str] = Field(default=None, description="下一页游标，可缺省")
+
+
+class SessionDetail(ContractModel):
+    """会话详情（session + 第一页消息 + active）。"""
+
+    session: SessionSummary = Field(description="会话摘要")
+    messages: list[Message] = Field(description="会话历史第一页（倒序）")
+    active: bool = Field(description="是否为当前活动会话")
+
+
+class SessionActivateResult(ContractModel):
+    """会话激活响应（REST /activate 只切 active，回放走 WS activate_session）。"""
+
+    activeConversationId: str = Field(description="激活后的活动会话 ID")
+
+
+class MessagesPageResponse(ContractModel):
+    """会话内历史分页响应（before/after 两种游标复用同形状）。"""
+
+    messages: list[Message] = Field(description="消息列表")
+    has_more: bool = Field(description="是否还有更多")
+    total: int = Field(description="会话消息总数")
+
+
+class MessageContextResponse(ContractModel):
+    """消息上下文窗口响应（跳回来源消息定位锚点）。"""
+
+    anchor: Message = Field(description="锚点消息")
+    before: list[Message] = Field(default_factory=list, description="锚点前窗口（时间正序）")
+    after: list[Message] = Field(default_factory=list, description="锚点后窗口（时间正序）")
+    conversationId: str = Field(description="会话 ID（必填回填）")
+
+
+class SearchMessageItem(ContractModel):
+    """搜索结果项（消息级；responseId best-effort，segmentId 恒 null 由缺省省略表达）。"""
+
+    conversationId: str = Field(description="会话 ID")
+    messageId: str = Field(description="消息 ID")
+    responseId: Optional[str] = Field(default=None, description="最近一条 generation ID（best-effort），可缺省")
+    segmentId: Optional[str] = Field(default=None, description="分段 ID，消息级搜索恒 null，可缺省")
+    role: Literal["user", "assistant"] = Field(description="消息角色")
+    timestamp: str = Field(description="ISO 时间戳")
+    snippet: str = Field(description="内容摘要（前 100 字）")
+
+
+class SearchMessagesResponse(ContractModel):
+    """消息搜索响应（cursor = base64("{{timestamp}}|{{_id}}")）。"""
+
+    items: list[SearchMessageItem] = Field(description="搜索结果项列表")
+    has_more: bool = Field(description="是否还有更多")
+    cursor: Optional[str] = Field(default=None, description="下一页游标，可缺省")
+
+
+class ResourceItem(ContractModel):
+    """会话资源索引项（按需扫描提取，url 即下载引用/缩略图）。"""
+
+    messageId: str = Field(description="来源消息 ID")
+    timestamp: str = Field(description="ISO 时间戳")
+    kind: str = Field(description="资源类别（image/link/video/audio/file/sticker）")
+    url: str = Field(description="资源引用（URL 或 src）")
+
+
+class ResourceListResponse(ContractModel):
+    """资源索引分页响应（cursor 指向最后扫描消息 _id，下页回传为 before）。"""
+
+    items: list[ResourceItem] = Field(description="资源项列表")
+    has_more: bool = Field(description="是否还有更多")
+    cursor: Optional[str] = Field(default=None, description="下一页游标（最后扫描 _id），可缺省")
+
+
+class GenerationStatus(ContractModel):
+    """generation 状态查询响应（BE-024；与 generations 存储文档对称）。"""
+
+    generationId: str = Field(description="生成实例 ID（gen_ 前缀）")
+    conversationId: str = Field(description="会话 ID")
+    messageId: str = Field(description="assistant 父消息 ID")
+    userMessageId: str = Field(description="触发该 generation 的用户消息 ID")
+    status: Literal["running", "completed", "failed", "cancelled", "interrupted"] = Field(
+        description="generation 在途/终态状态")
+    model: Optional[str] = Field(default=None, description="实际模型，可缺省")
+    finishReason: Optional[Literal["stop", "tool_calls"]] = Field(
+        default=None, description="完成原因，可缺省")
+    error: Optional[dict[str, Any]] = Field(
+        default=None, description="失败详情（{code,message,retryable}），可缺省")
+    createdAt: str = Field(description="创建时间（UTC ISO）")
+    finishedAt: Optional[str] = Field(default=None, description="完成/失败时间（UTC ISO），可缺省")
+
+
+class GenerationListResponse(ContractModel):
+    """generation 列表响应（cursor = base64("{{created_at}}|{{generation_id}}")）。"""
+
+    generations: list[GenerationStatus] = Field(description="generation 状态列表")
+    has_more: bool = Field(description="是否还有更多")
+    cursor: Optional[str] = Field(default=None, description="下一页游标，可缺省")
+
+
+class PendingMessageItem(ContractModel):
+    """pending 用户消息项（重连后判断"我发过但未处理"）。"""
+
+    messageId: str = Field(description="消息 ID")
+    snippet: str = Field(description="内容摘要（前 50 字）")
+    createdAt: str = Field(description="创建时间（UTC ISO）")
+
+
+class PendingApprovalItem(ContractModel):
+    """pending 工具审批项（全局返回，不按会话过滤——D-b 全局工具语义）。"""
+
+    requestId: str = Field(description="审批请求 ID")
+    tool: str = Field(description="工具名")
+    params: dict[str, Any] = Field(default_factory=dict, description="工具调用参数")
+
+
+class PendingQueryResponse(ContractModel):
+    """pending 查询响应（BE-024：pendingMessages 按会话 + pendingApprovals 全局）。"""
+
+    pendingMessages: list[PendingMessageItem] = Field(
+        default_factory=list, description="未处理用户消息列表（按会话）")
+    pendingApprovals: list[PendingApprovalItem] = Field(
+        default_factory=list, description="未处理工具审批列表（全局）")
+
+
+class ConversationUsage(ContractModel):
+    """会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。"""
+
+    total: int = Field(description="会话累计 token 数")
+    byModel: dict[str, int] = Field(description="按模型拆分的累计 token 数")

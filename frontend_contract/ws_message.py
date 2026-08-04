@@ -12,6 +12,7 @@ from typing import Annotated, Any, Literal, Optional, Union
 from pydantic import Field
 
 from frontend_contract.base import ContractModel, TsNull
+from frontend_contract.rest import ConversationUsage
 
 # ───────────────────────────── 支持类型 ─────────────────────────────
 
@@ -212,6 +213,7 @@ class GenerationSegmentStartedMessage(ContractModel):
     segmentIndex: int = Field(description="全局分段序号（跨 inner_voice/public_reply 单调递增）")
     channel: Literal["inner_voice", "public_reply", "status"] = Field(description="分段通道")
     kind: Literal["text", "markdown", "image", "video", "audio", "file", "sticker", "link"] = Field(description="分段类型（P0 仅 text/markdown）")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
 
 
 class GenerationDeltaMessage(ContractModel):
@@ -223,6 +225,7 @@ class GenerationDeltaMessage(ContractModel):
     segmentIndex: int = Field(description="全局分段序号")
     deltaSequence: int = Field(description="段内增量序号（从 0 递增）")
     delta: str = Field(description="文本增量")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
 
 
 class GenerationSegmentCompletedMessage(ContractModel):
@@ -235,6 +238,7 @@ class GenerationSegmentCompletedMessage(ContractModel):
     channel: Literal["inner_voice", "public_reply", "status"] = Field(description="分段通道")
     kind: Literal["text", "markdown", "image", "video", "audio", "file", "sticker", "link"] = Field(description="分段类型")
     content: Optional[str] = Field(default=None, description="完整段文本（客户端无需拼 delta 渲染），可缺省")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
 
 
 class GenerationCompletedMessage(ContractModel):
@@ -249,6 +253,9 @@ class GenerationCompletedMessage(ContractModel):
     model: str = Field(description="实际模型")
     mood: Optional[str] = Field(default=None, description="心情（<mood> 标签落位），可缺省")
     completeness: Literal["complete"] = Field(default="complete", description="完整性（P0 恒 complete）")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
+    conversationUsage: Optional[ConversationUsage] = Field(
+        default=None, description="会话级 token 累计（get_session_stats 填充），可缺省")
 
 
 class GenerationFailedMessage(ContractModel):
@@ -261,6 +268,7 @@ class GenerationFailedMessage(ContractModel):
     message: str = Field(description="公开说明")
     retryable: bool = Field(description="是否可重试")
     details: dict[str, Any] = Field(default_factory=dict, description="公开安全详情，可缺省")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
 
 
 class DeltaMessage(ContractModel):
@@ -450,6 +458,16 @@ class WakeToggleMessage(ContractModel):
 
     type: Literal["wake_toggle"] = "wake_toggle"
     enabled: bool = Field(description="是否启用")
+
+
+class ActivateSessionMessage(ContractModel):
+    """客户端激活/切换会话（v2）：服务端切 active 并重发新活动会话回放。
+
+    未知 conversationId → 不回放，发 ErrorMessage{code: SESSION_NOT_FOUND}（批次 1 错误信封）。
+    """
+
+    type: Literal["activate_session"] = "activate_session"
+    conversationId: str = Field(description="目标会话 ID（必填）")
 
 
 # ─────────────────── ServerMessage 判别联合（模块级） ───────────────────
