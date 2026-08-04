@@ -5,6 +5,7 @@ wire 字段统一 `conversationId`；`/api/sessions` 路径参数即 conversatio
 全部走批次 1 产品认证（`AGENT_ACCESS_TOKEN`，由 server.py app 级中间件覆盖 /api/*）。
 """
 
+import asyncio
 import base64
 import logging
 import re
@@ -351,15 +352,25 @@ async def sessions_list_handler(request: web.Request) -> web.Response:
     limit = _parse_limit(request, default=50)
     manager = agent.session_manager
     items, has_more, next_cursor = await manager.list(cursor=cursor, limit=limit, search=search)
-    summaries = []
-    for s in items:
-        summary = _to_contract_summary(s, manager.active_id)
-        # review 修复（链路#8）：messageCount 统一为归档计数——与详情/历史 total 同源
-        # （列表 repo.list_all 的 message_count 是 ≤20 窗口数，与详情 count_by_session 不一致）。
+
+    # review 修复（批次 C）：messageCount 统一为归档计数——与详情/历史 total 同源
+    # （列表 repo.list_all 的 message_count 是 ≤20 窗口数，与详情 count_by_session 不一致）。
+    # 原实现对每会话顺序 await count_by_session（N+1 串行，≤50 次）→ asyncio.gather
+    # 并发统计，单条失败保留窗口数（与原有兜底语义一致）。
+
+    async def _count(s):
         try:
-            summary.messageCount = await agent.message_repo.count_by_session(s.session_id)
+            return await agent.message_repo.count_by_session(s.session_id)
         except Exception:
             logger.debug("count_by_session 失败 sid=%s，保留窗口数", s.session_id, exc_info=True)
+            return None
+
+    counts = await asyncio.gather(*(_count(s) for s in items))
+    summaries = []
+    for s, count in zip(items, counts):
+        summary = _to_contract_summary(s, manager.active_id)
+        if count is not None:
+            summary.messageCount = count
         summaries.append(summary)
     resp = rest_contract.SessionListResult(
         sessions=summaries, has_more=has_more, cursor=next_cursor)
@@ -433,6 +444,15 @@ async def sessions_delete_handler(request: web.Request) -> web.Response:
         return _error_response("SESSION_PROTECTED", "默认会话不可删除", 409)
     if not await _session_exists(agent, sid):
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
+    # review 修复（批次 C）：删除活动会话且 agent 忙（生成/TTS 中）→ 409 AGENT_BUSY。
+    # 删活动会话会 attach_session(default) 重绑 engine——忙时换绑与在途生成/TTS
+    # 竞态，门禁与 activate 一致（防未保护 engine 换绑向量）。非活动会话删除
+    # 无 engine 换绑，不设门禁。
+    if str(agent.active_session_id) == str(sid):
+        status = getattr(agent, "status", None)
+        if status is not None and not status.is_accepting_input:
+            return _error_response("AGENT_BUSY", "Agent 忙（生成/TTS 中），无法删除活动会话",
+                                   409, retryable=True)
     deleted = await agent.session_manager.delete(sid)
     return web.json_response({"ok": True, "deleted": deleted})
 

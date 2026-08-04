@@ -255,7 +255,14 @@ class GenerationRepository(Repository):
                 continue
             await self._db.update_one(
                 COLLECTION, {"generation_id": gen_id},
-                {"$set": {"status": STATUS_INTERRUPTED, "updated_at": now_iso()}},
+                {"$set": {
+                    "status": STATUS_INTERRUPTED,
+                    "updated_at": now_iso(),
+                    # review 修复（批次 C）：终态语义与 mark() 一致——stale 清理标
+                    # interrupted 一并写 finished_at（此前保持 None，契约
+                    # finishedAt 恒空，无法区分中断时刻）。
+                    "finished_at": now_iso(),
+                }},
             )
             modified += 1
         if modified:

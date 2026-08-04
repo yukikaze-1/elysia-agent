@@ -113,7 +113,10 @@ class TokenTracker:
             },
             "session": {
                 "total": self.session_total,
-                "by_model": dict(self.per_model),
+                # review 修复（批次 C）：by_model 按 sid 取（_session_models），与 total
+                # （最近会话累计）一致——此前广播全局 per_model，跨会话累计泄漏。
+                # self.per_model 属性保持全局（debug/runtime_config 既有读取兼容）。
+                "by_model": dict(self._session_models[sid]),
             },
         })
 

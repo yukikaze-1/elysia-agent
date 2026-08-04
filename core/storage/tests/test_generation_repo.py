@@ -161,6 +161,21 @@ class TestGenerationRepository:
         assert asyncio.run(repo.find_one("g_recent"))["status"] == "running"  # 未过期不动
         assert asyncio.run(repo.find_one("g_done"))["status"] == "completed"  # 非 running 不动
 
+    def test_mark_stale_writes_finished_at(self):
+        """批次 C：mark_stale 标 interrupted 时写 finished_at（终态语义与 mark() 一致）。
+
+        修复前只更新 status+updated_at，finished_at 保持 None——契约
+        GenerationStatus.finishedAt 对 stale 清理的 generation 恒空，前端无法
+        区分「中断于何时」。
+        """
+        repo = GenerationRepository(db=FakeDocumentDBBackend())
+        _upsert(repo, generation_id="g_stale", status="running",
+                created_at="2026-08-01T00:00:00+00:00")
+        asyncio.run(repo.mark_stale("running", "2026-08-03T00:00:00+00:00"))
+        doc = asyncio.run(repo.find_one("g_stale"))
+        assert doc["status"] == "interrupted"
+        assert doc["finished_at"], "stale 清理标 interrupted 应写 finished_at"
+
     def test_db_none_safe_defaults(self):
         repo = GenerationRepository(db=None)
         assert asyncio.run(repo.find_one("g1")) is None

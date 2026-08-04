@@ -377,6 +377,30 @@ class TestTokenTracker:
         assert stats_b["by_model"]["deepseek/deepseek-chat"] == 100
 
     @pytest.mark.asyncio
+    async def test_record_broadcast_by_model_per_session(self, tracker):
+        """批次 C：广播 session.by_model 按 sid（F8 只同步 total 未同步 per_model 的补齐）。
+
+        修复前广播 `by_model: dict(self.per_model)` 是跨会话全局累计——total=最近
+        会话、by_model=全局，前端 token_stats 显示其他会话模型累计，不一致。
+        """
+        await tracker.record(
+            usage={"input_tokens": 800, "output_tokens": 200, "total_tokens": 1000},
+            model="deepseek/deepseek-chat", round_num=0, session_id="a",
+        )
+        await tracker.record(
+            usage={"input_tokens": 50, "output_tokens": 50, "total_tokens": 100},
+            model="openai/gpt-4o", round_num=0, session_id="b",
+        )
+        # 最后一次广播：total=最近会话 b 的累计，by_model 也应只含 b 的模型
+        call_data = tracker._output.token_usage.call_args[0][0]
+        assert call_data["session"]["total"] == 100
+        assert call_data["session"]["by_model"] == {"openai/gpt-4o": 100}
+        assert "deepseek/deepseek-chat" not in call_data["session"]["by_model"], \
+            "广播 by_model 不应含其他会话累计"
+        # 兼容既有读取：self.per_model 属性仍保持全局累计（debug/runtime_config 不破）
+        assert tracker.per_model["deepseek/deepseek-chat"] == 1000
+
+    @pytest.mark.asyncio
     async def test_session_total_attribute_syncs_to_recent_session(self, tracker):
         """session_total 保持普通 int 属性，record 后同步为最近记录会话累计。
 

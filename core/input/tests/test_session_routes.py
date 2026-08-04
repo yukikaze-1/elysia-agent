@@ -366,6 +366,66 @@ class TestSessionsCRUD:
         assert agent.active_session_id == "default"
 
     @pytest.mark.asyncio
+    async def test_delete_active_busy_rejected_409(self, aiohttp_client):
+        """批次 C：删除活动会话且 agent 忙（生成/TTS 中）→ 409 AGENT_BUSY，不删除。
+
+        删活动会话会 attach_session(default) 重绑 engine——忙时换绑与在途生成/TTS
+        竞态，门禁与 activate 一致（防未保护 engine 换绑向量）。
+        """
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_delbusy", "忙时待删")
+        await agent.switch_session("conv_test_delbusy")
+        agent.status = _FakeStatus(accepting=False)
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.delete("/api/sessions/conv_test_delbusy")
+        assert resp.status == 409
+        data = await resp.json()
+        assert data["code"] == "AGENT_BUSY"
+        assert data["retryable"] is True
+        # 未删除：会话仍存在，active 未回落
+        assert agent.active_session_id == "conv_test_delbusy"
+        assert await agent.session_manager.has_session("conv_test_delbusy") is True
+
+    @pytest.mark.asyncio
+    async def test_delete_non_active_allowed_while_busy(self, aiohttp_client):
+        """批次 C：忙时删除非活动会话不拒绝（无 engine 换绑，不涉及竞态）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_nonactive", "非活动")
+        await _create_session(agent, "conv_test_activebusy", "活动")
+        await agent.switch_session("conv_test_activebusy")
+        agent.status = _FakeStatus(accepting=False)
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.delete("/api/sessions/conv_test_nonactive")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["ok"] is True
+        assert agent.active_session_id == "conv_test_activebusy", "非活动删除不影响 active"
+        assert await agent.session_manager.has_session("conv_test_nonactive") is False
+
+    @pytest.mark.asyncio
+    async def test_list_message_count_concurrent_gather(self, aiohttp_client):
+        """批次 C：列表 messageCount 用 asyncio.gather 并发统计（N+1 修复），计数正确。"""
+        agent = _FakeAgent()
+        for i in range(5):
+            await _create_session(agent, f"conv_test_g{i}", f"会话{i}")
+            await _seed_text_messages(agent, f"conv_test_g{i}", i + 1)
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/api/sessions")
+        assert resp.status == 200
+        data = await resp.json()
+        by_id = {s["conversationId"]: s for s in data["sessions"]}
+        assert len(by_id) == 5
+        for i in range(5):
+            assert by_id[f"conv_test_g{i}"]["messageCount"] == i + 1, \
+                f"conv_test_g{i} messageCount 应等于归档计数 {i + 1}"
+
+    @pytest.mark.asyncio
     async def test_activate_switches_and_returns_id(self, aiohttp_client):
         agent = _FakeAgent()
         await _create_session(agent, "conv_test_act", "激活会话")

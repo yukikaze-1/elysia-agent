@@ -149,6 +149,34 @@ class TestActivateSession:
             await agent.stop()
 
     @pytest.mark.asyncio
+    async def test_activate_session_busy_double_insurance_AGENT_BUSY(self, aiohttp_client, fresh_idempotency):
+        """批次 C：switch() 双保险 busy check 抛 SessionBusyError → 回复 AGENT_BUSY（非 INTERNAL）。
+
+        显式门禁（is_accepting_input=True）通过，但 switch 内 double-insurance busy
+        check 命中——此前被通用 except Exception 吞成 INTERNAL。
+        """
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            _seed_session(agent, "conv_test_double", "会话")
+            # 显式门禁通过（FSM IDLE → is_accepting_input True），仅 switch 内双保险命中
+            assert agent.status.is_accepting_input is True
+            agent.session_manager.set_busy_check(lambda: True)
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({"type": "activate_session", "conversationId": "conv_test_double"})
+
+            err = await _receive_type(ws, "error")
+            assert err.get("code") == "AGENT_BUSY", f"实际 {err.get('code')}"
+            assert agent.active_session_id == "default", "忙时不应切 active"
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
     async def test_activate_session_general_failure_uses_INTERNAL(self, aiohttp_client, fresh_idempotency):
         """review 修复（兼容#4）：activate_session 通用失败 → ErrorMessage{code: INTERNAL}。"""
         from core.input.server import create_app

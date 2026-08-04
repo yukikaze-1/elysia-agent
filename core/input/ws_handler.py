@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web, WSMsgType
 from pydantic import ValidationError
 
+from core.memory.session_manager import SessionBusyError
 from core.schema.event import InterruptData, UserInputData
 from core.schema.utils import now_iso
 from Module.output import WebSocketChannel
@@ -484,6 +485,14 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
         target = await agent.switch_session(sid)
         await _send_session_replay(ws, agent, target)
         logger.info("WS activate_session: 已切到会话 %s", sid)
+    except SessionBusyError:
+        # review 修复（批次 C）：switch() 双保险 busy check 抛 SessionBusyError——
+        # 此前被通用 except Exception 吞成 INTERNAL。单独捕获 → AGENT_BUSY（可重试）。
+        logger.info("activate_session: 双保险 busy check 命中（SessionBusyError），拒绝切换 %s", sid)
+        await ws.send_json(ErrorMessage(
+            message="Agent 忙（生成/TTS 中），无法切换会话",
+            code="AGENT_BUSY",
+        ).wire_dict())
     except Exception:
         logger.warning("activate_session 处理失败 sid=%s", sid, exc_info=True)
         await ws.send_json(ErrorMessage(
