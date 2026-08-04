@@ -124,29 +124,31 @@ async def test_after_response_writes_captured_target():
     default = SessionMemory(session_id="default")
     loop = _make_loop({"conv_a": conv_a, "conv_b": conv_b}, default)
 
-    # conv_a 的 save 阻塞在 gate——保证 after_response#1 的 save 在
-    # self._session 已被第二轮回话覆盖之后才真正执行。
+    # after_response#1 阻塞在 consolidator.consolidate——保证其后续 save 的
+    # self._session 读取发生在第二轮（self._session 已换绑为 conv_b）之后。
+    # 正确实现：session 参数在函数开头捕获（conv_a），save 落 conv_a；
+    # 错误实现：save 行读 self._session（=conv_b），conv_a_repo.save 恒 0。
     gate = asyncio.Event()
-    orig_save_a = conv_a.save
+    consolidator = MagicMock()
 
-    async def gated_save():
+    async def gated_consolidate(user, assistant):
         await gate.wait()
-        return await orig_save_a()
+        return []
 
-    conv_a.save = gated_save
+    consolidator.consolidate = gated_consolidate
+    loop._consolidator = consolidator
 
-    # 第一轮：conversation_id="conv_a" → after_response#1 阻塞在 conv_a.save
+    # 第一轮：conversation_id="conv_a" → after_response#1 阻塞在 consolidate
     await loop.process("msg1", conversation_id="conv_a", protocol_version=2)
     # 第二轮：conversation_id="conv_b" → self._session 已被换绑为 conv_b
     await loop.process("msg2", conversation_id="conv_b", protocol_version=2)
-    # 此刻释放 gate——after_response#1 的 save 执行。正确实现写 conv_a；
-    # 错误实现（读 self._session=conv_b）会写 conv_b。
+    # 释放 gate——after_response#1/#2 继续到 save
     gate.set()
     await _await_pending(loop)
 
     # after_response#1 落 conv_a（发起会话），after_response#2 落 conv_b
     assert conv_a_repo.save.await_count == 1
-    assert conv_b_repo.save.await_count >= 1
+    assert conv_b_repo.save.await_count == 1
     await loop._output.close()
 
 
