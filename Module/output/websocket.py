@@ -15,7 +15,10 @@ import logging
 from Module.logger import get_caller_logger
 from Module.output.protocol import ChannelCapability, OutputChannel
 from frontend_contract import (
+    AudioCancelledMessage,
     AudioEndMessage,
+    AudioMessage,
+    AudioStartMessage,
     CommandMessage,
     ConversationUsage,
     DeltaMessage,
@@ -138,18 +141,27 @@ class WebSocketChannel(OutputChannel):
             chunk: 音频字节数据。
             stream_id: 流标识，用于区分并发音频流。
         """
-        # 注：暂不切 AudioMessage——现 wire 带 is_final 键（AudioMessage 未建模），
-        # 转换会丢键破坏行为等价；is_final 为前端未消费的冗余键，留待契约收口。
+        # 批次 6：切 AudioMessage 建模（is_final=False 显式声明，wire 行为不变——
+        # wire_dict exclude_none 下 False 仍输出；stream_id/seq/data 键与旧手动 dict 一致）
         import base64
         seq = self._audio_seq.get(stream_id, 0)
         self._audio_seq[stream_id] = seq + 1
-        await self._send_json({
-            "type": "audio",
-            "data": base64.b64encode(chunk).decode("ascii"),
-            "stream_id": stream_id,
-            "seq": seq,
-            "is_final": False,
-        })
+        await self._send_json(AudioMessage(
+            stream_id=stream_id, seq=seq,
+            data=base64.b64encode(chunk).decode("ascii"), is_final=False).wire_dict())
+
+    async def on_audio_start(self, stream_id: int, *, format: str = "wav",
+                             sample_rate: int | None = None,
+                             duration_ms: int | None = None) -> None:
+        """音频流开始（stream_id = playback ID）。"""
+        await self._send_json(AudioStartMessage(
+            stream_id=stream_id, format=format, sampleRate=sample_rate,
+            durationMs=duration_ms).wire_dict())
+
+    async def on_audio_cancelled(self, stream_id: int) -> None:
+        """音频流被取消——清理 _audio_seq 残留 + 通知前端清理孤儿 chunk。"""
+        self._audio_seq.pop(stream_id, None)
+        await self._send_json(AudioCancelledMessage(stream_id=stream_id).wire_dict())
 
     async def on_audio_end(self, stream_id: int = 0, *, format: str = "wav") -> None:
         """发送音频流结束标记。

@@ -77,6 +77,14 @@ class OutputChannel(ABC):
             format: 音频格式，'wav' 或 'mp3'。
         """
 
+    async def on_audio_start(self, stream_id: int, *, format: str = "wav",
+                             sample_rate: int | None = None,
+                             duration_ms: int | None = None) -> None:
+        """音频流开始（BE-063）。默认空实现。"""
+
+    async def on_audio_cancelled(self, stream_id: int) -> None:
+        """音频流被取消（BE-063）。默认空实现。"""
+
     async def on_command(self, cmd: str, *, params: dict | None = None) -> None:
         """前端指令 — 换背景、播放特效、弹出图片
 

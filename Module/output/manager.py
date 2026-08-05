@@ -293,6 +293,24 @@ class OutputManager:
             channels=channels, capability=capability or ChannelCapability.AUDIO,
         )
 
+    async def audio_start(self, stream_id: int, *, format: str = "wav",
+                          sample_rate: int | None = None, duration_ms: int | None = None,
+                          channels: list[OutputChannel] | None = None,
+                          capability: ChannelCapability | None = None) -> None:
+        """广播音频流开始（stream_id = playback ID，BE-063）。"""
+        await self._broadcast(
+            "on_audio_start", stream_id, format=format, sample_rate=sample_rate,
+            duration_ms=duration_ms, channels=channels,
+            capability=capability or ChannelCapability.AUDIO)
+
+    async def audio_cancelled(self, stream_id: int, *,
+                              channels: list[OutputChannel] | None = None,
+                              capability: ChannelCapability | None = None) -> None:
+        """广播音频流被取消（BE-063）。"""
+        await self._broadcast(
+            "on_audio_cancelled", stream_id, channels=channels,
+            capability=capability or ChannelCapability.AUDIO)
+
     async def notify_state(self, state: str) -> None:
         """通知所有通道 FSM 状态变更（前端据此切换动画）。
 
