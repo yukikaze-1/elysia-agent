@@ -220,3 +220,27 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 - 批次 3 MINOR #2：搜索畸形日期吞空返回空结果（符合 spec 字面，只强制 INVALID_TIMEZONE 400）。MINOR #3：v2 text 未知 conversationId 懒加载静默建会话（设计取舍，404 仅 activate/CRUD/history 强制）。
 - 批次 4 LOW #1：重连后携带附件的 result 重传被持有者校验 403 拦截（spec §5.4 未定义 target_connection 重连更新机制，范围外）。LOW #2：tool.status 未校验发送连接==target_connection（桥四字段篡改校验兜底，加固建议）。LOW #3：`_locks` 无界增长（设计固有）。LOW #4：断连快照竞态（极窄窗口，无状态机破坏）。
 - 跨批次 INFO #4：`transcription` 仍自动提交触发 Agent（批次 6 场景 F 待隔离的既有行为，批次 0-4 诚实未做）。
+
+---
+
+## 批次 6：三种语音模式 + TTS 播放控制（BE-060~063） 🚧 已实施完成、待验收
+
+**提交：** `09bca10`（契约，Task 1）`9b10adb`（VoiceSessionManager，Task 2）`32db89c`（ws_handler 路由，Task 3）`2955010`（voice.commit v2 提交，Task 4）`c53e42d`（实时会话 service 层，Task 5）`854aa9c`（dictation stt_emotion 隔离，Task 6）`46d6201`（输出层 audio 控制，Task 7）`0e4212e`（adapter 层 audio 控制，Task 8）+ Task 9（本 commit：features + audio.cancel 路由 + 批次 6 文档）
+**Spec：** `docs/superpowers/specs/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md`（v0.7）
+**Plan：** `docs/superpowers/plans/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md`（10 Task）
+
+### 结果
+
+- **契约（Task 1）**：`frontend_contract/ws_message.py` 新增 24 个消息契约类——11 Server→Client 入 `ServerMessage` 判别联合（`VoiceTranscript`/`VoiceSessionStarted`/`Partial`/`Turn`/`Ack`/`Ended` + `DictationPartial`/`Final`/`Cancelled` + `AudioStart`/`AudioCancelled`，另 `AudioMessage` 增 `is_final`），13 Client→Server（`voice.record.start/stop/commit/discard` + `voice_session.start/pause/resume/stop/cancel` + `dictation.start/stop/cancel` + `audio.cancel`）；`ServerInfoFeatures` 增 `voice_recording`/`voice_realtime`（Task 1 仅加字段默认 false，Task 9 置 true）。`ServerMessage` 联合 28→39 成员。
+- **VoiceSessionManager（Task 2）**：`core/input/voice_sessions.py` 三模式状态机（IDLE/RECORDING/REALTIME/DICTATION）——RECORDING 四态（RECORDING→TRANSCRIBING→PENDING→commit/discard）、realtime/dictation 每会话一个 VAD `AudioBuffer`（dictation `on_interrupt=None` 隔离，review NEW-K/R）+ partial/turn/ack/idle 后台循环 + 错误码目录（`VOICE_SESSION_CONFLICT`/`VOICE_SESSION_NOT_FOUND`/`VOICE_RECORDING_NOT_FOUND`/`VOICE_RECORDING_TOO_LONG`/`DICTATION_NOT_FOUND`/`STT_UNAVAILABLE`/`CONTRACT_VALIDATION`）+ 空转写不进 PENDING + 录音 600s 上限。
+- **ws_handler 路由（Task 3）**：BINARY 帧按「活动语音会话 → `voice_mgr.feed_pcm()`，否则 legacy `AudioBuffer.feed()`（逐字节不变）」分流；12 条新消息路由分支（`voice.record.*`/`voice_session.*`/`dictation.*`）+ v2-only 门禁（`_is_v2`，v1 忽略不发错）+ `_send_voice_error` 信封 + `set_service('stt', False)` 成功 → `notify_stt_disabled`（结束活动 REALTIME/DICTATION）+ 断连 finally `voice_mgr.close()`。
+- **voice.commit v2 提交（Task 4）**：复用 `_route_v2_text` 幂等 + ACK 模式——缺 clientRequestId → rejected；幂等表命中 → 重发原 ACK（无视状态机门禁）；未命中 → PENDING 门禁 → 预分配 messageId + post `UserInputData`（emotion/events 快照随行，不重转写）。
+- **dictation 隔离（Task 6）**：转写前快照共享 `stt_emotion_state`（dict 复制）、结束后原地 clear/update 恢复（S5）——stop/cancel/close/STT 中途关闭（`notify_stt_disabled`）全路径恢复。
+- **TTS 播放控制（Task 7/8）**：`OutputManager.audio_start/audio_cancelled` 广播（capability=AUDIO）+ `WebSocketChannel.on_audio_start/on_audio_cancelled`（`_audio_seq.pop` 防残留）+ `on_audio_chunk` 改 `AudioMessage` 契约建模（修 `is_final` 漂移）；`TTSStreamManager._wav_info` 解析 WAV sampleRate/durationMs + `stream_sentence` Phase 2 放行后发 `audio_start` + `cancel_stream(stream_id) -> bool` + `cancel_all` 补 `audio_cancelled`（修中断孤儿 chunk）+ `Agent.tts_manager` 公开访问器（`agent.tts_manager.cancel_stream` = `audio.cancel` 入口）。
+- **Task 9（本 commit）**：`build_server_info` features 置 true（`dictation`/`voice_recording`/`voice_realtime`，spec §9.3 如实声明）；ws_handler `audio.cancel` 路由——缺/非数字 stream_id → `CONTRACT_VALIDATION`、`tts_manager` 缺失或 `cancel_stream` False → `PLAYBACK_NOT_FOUND`；文档闭环（protocol-v2 §12 + §9.1 错误码 25→32 + §1 features；security §3.4 语音临时音频不落盘）。
+- **错误码目录（批次 6）**：+`VOICE_SESSION_CONFLICT`(409)/`VOICE_SESSION_NOT_FOUND`(404)/`VOICE_RECORDING_NOT_FOUND`(404)/`VOICE_RECORDING_TOO_LONG`(413)/`DICTATION_NOT_FOUND`(404)/`STT_UNAVAILABLE`(503, retryable)/`PLAYBACK_NOT_FOUND`(404)——目录累计 32 码。完整表见 `docs/electron-backend-protocol-v2.md §9.1` + §12。
+- **测试（Task 9 自检）**：`core/input/tests/` **328 passed**（含 `test_voice_ws.py` 12 测、`test_voice_sessions.py` 13 测、`test_version.py` 2 测——features 精确断言已随 Task 9 同步为全 true）；`make test-quick` **2533 passed / 2 skipped / 87 deselected**（Task 10 全量回归另行收口）。
+
+### 验收
+
+**已实施完成，待验收**——最终验收结论由验收 agent 填写（docs/14 场景 F 后端侧：普通录音 commit 后 ack+generation / 实时语音 partial+turn / 输入法转写零副作用 / 三者 cancel 后不产生用户消息 / TTS audio_start→chunk→audio_end + audio.cancel→audio_cancelled）。

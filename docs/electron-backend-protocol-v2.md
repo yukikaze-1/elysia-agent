@@ -1,8 +1,8 @@
 # Electron 后端协议 v2 — 结构化聊天事件契约参考
 
-**文档版本：** v0.4（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9，批次 4 补充 Desktop 工具契约 §10/错误码目录，批次 5 补充模型 Profile 与 TTS 声音契约 §11 + 错误码 21→25）
+**文档版本：** v0.5（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9，批次 4 补充 Desktop 工具契约 §10/错误码目录，批次 5 补充模型 Profile 与 TTS 声音契约 §11 + 错误码 21→25，批次 6 补充三种语音与 TTS 播放契约 §12 + 错误码 25→32）
 **关联：** `docs/electron-backend-baseline.md`（v1 现状）、`docs/electron-backend-security.md`（认证/版本协商）
-**Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`（v0.2）
+**Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md`
 
 本文档是 Electron 前端联调 v2 协议的**事件契约参考**。v2 由 WS 握手头 `X-Protocol-Version: 2` 判定；未带版本头走 v1 路径（现状不变）。
 
@@ -13,7 +13,7 @@
 - Electron Main 连 `/ws` 时带：`Authorization: Bearer <access_token>`（远程）+ `X-Protocol-Version: 2` + **`X-Client-Platform: electron`**（批次 4，Desktop 工具桥定向投递目标标识，spec §5.1 D-l）。
 - v2 连接建连帧：`session`（历史回放）→ `server_info`（协议版本/能力/服务形状 + **`connectionId`**，批次 4）→ `expression`（当前心情）。
 - **`server_info.connectionId`（批次 4）**：仅 v2 + electron 连接下发（`conn_<uuid4 hex[:12]>`，= WS 握手生成的连接 ID）；普通 v2 / v1 恒省略。Electron 据此构造附件上传 `X-Client-Connection` 头（spec §5.4 持有者校验②依赖）。
-- `server_info.features` 如实反映能力：`structured_generation`（本批次 true 前为 false）、`multi_conversation`（批次 3）、`desktop_runtime`（**批次 4 = true**）、`dictation`（批次 6）。
+- `server_info.features` 如实反映能力：`structured_generation`（批次 2 = true）、`multi_conversation`（批次 3 = true）、`desktop_runtime`（**批次 4 = true**）、`dictation`/`voice_recording`/`voice_realtime`（**批次 6 = true**，spec BE-060~062，见 §12）。
 - **v1 忽略 `X-Client-Platform`**：v1 无 desktop 概念，伪冒 platform 头不生效（负面隔离，spec §5.1）。
 
 ## 2. 一次完整 v2 回复事件序列
@@ -162,7 +162,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 
 错误信封统一（code/message/retryable/requestId）；全部匿名 401（`AGENT_ACCESS_TOKEN` 配置时）。
 
-### 9.1 错误码目录（批次 1-5 累计）
+### 9.1 错误码目录（批次 1-6 累计）
 
 | code | HTTP | retryable | 场景 |
 |---|---|---|---|
@@ -179,7 +179,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `GENERATION_NOT_FOUND` | 404 | false | 未知 generation 详情 |
 | `RESOURCE_NOT_FOUND` | 404 | false | 消息不存在（context 窗口锚点缺失） |
 | `INVALID_TIMEZONE` | 400 | false | 搜索时区非法（zoneinfo 无法解析） |
-| `CONTRACT_VALIDATION` | 400 | false | 缺 conversationId / clientRequestId 冲突 / 畸形 before 游标 / 其他契约错误 |
+| `CONTRACT_VALIDATION` | 400 | false | 缺 conversationId / clientRequestId 冲突 / 畸形 before 游标 / 语音契约错误（缺/非法 stream_id、commit 文本不一致等，批次 6） |
 | `SESSION_PROTECTED` | 409 | false | 删除受保护会话 `default`（禁删守卫） |
 | `AGENT_BUSY` | 409 | true | 生成/TTS 进行中切换或删除活动会话（FSM 忙时门禁） |
 | `GENERATION_CANCELLED` | — | false | WS interrupt → `generation.failed{CANCELLED}` |
@@ -191,6 +191,13 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `PROFILE_IN_USE` | 409 | false | **落地**：删除当前激活 profile（活动会话 service_state / config / vision 指向 `custom/{name}`，批次 5） |
 | `PROFILE_INVALID_RUNTIME` | 400 | false | **落地**：runtime 枚举非法，或非 backend runtime 携带 api_key（批次 5） |
 | `PROFILE_RUNTIME_NOT_BACKEND` | 400 | false | **落地**：对 desktop/local 条目执行后端 test/switch（后端不代理本机 Profile，批次 5） |
+| `VOICE_SESSION_CONFLICT` | 409 | false | 已有活动录音/会话时再 start（recording/realtime/dictation 通用，批次 6） |
+| `VOICE_SESSION_NOT_FOUND` | 404 | false | pause/resume/stop/cancel 未知 sessionId（批次 6） |
+| `VOICE_RECORDING_NOT_FOUND` | 404 | false | IDLE 态收 stop/commit/discard（未知 recordingId，批次 6） |
+| `VOICE_RECORDING_TOO_LONG` | 413 | false | 录音缓冲超 `MAX_RECORDING_SECONDS`（600s ≈ 18.3MiB，批次 6） |
+| `DICTATION_NOT_FOUND` | 404 | false | 无活动 dictation 时收 `dictation.stop`/`dictation.cancel`（批次 6） |
+| `STT_UNAVAILABLE` | 503 | true | STT 未启用/后端不可用/活动 STT 为 desktop-local runtime（start 拒绝 / 转写失败 / 录音 stop 时 STT 已关，批次 6） |
+| `PLAYBACK_NOT_FOUND` | 404 | false | `audio.cancel` 未知**或已结束**的 stream_id（前端可忽略良性，批次 6） |
 
 **数据保护语义**：`DELETE /api/sessions/default` → 409 `SESSION_PROTECTED`（`default` 恒存在且受保护，禁删——含其 append-only 归档）；生成/TTS 进行中 `activate`/`delete` 活动会话 → 409 `AGENT_BUSY`。
 
@@ -337,3 +344,87 @@ Desktop 工具**不走 `tool_approval`**（approvalAuthority=client，Electron �
 | `POST /api/tts/preview` | `TtsPreviewResult{ok, mime?, duration_ms?, audio_base64?, error?}`——固定短文本（「你好，我是声音测试。」）试听，**不读真实聊天、不写历史**；body `{voice_id?}` 缺省用当前 voice |
 | WS `set_tts_voice` | Client→Server `{voice}` → 经活动会话激活 TTS 后端 `list_voices()` 校验存在 → 写活动会话 `service_state.tts_voice` + 回 `set_tts_voice_result {ok, voice?, error?}`；未知 voice/未启用 → `{ok: False, error}` **不改 state**（保留原选择） |
 | 合成生效 | `TTSBackend.synthesize(..., voice_id=None)`——voice_id 非空跳过 character→voice 映射；每 turn 由发起会话的 `service_state.tts_voice` 注入（v2 显式 conversationId 指向非活动会话时声音随发起会话） |
+
+---
+
+## 12. 三种语音与 TTS 播放契约（批次 6，spec BE-060~063）
+
+把唯一「WS BINARY PCM → VAD 自动提交」链路拆成三种隔离语音模式（普通录音 / 实时语音 / 输入法转写），并给 TTS 播放补 playback 语义。**三种语音模式均 v2-only**（v1 连接收到新消息**忽略**，debug 日志，不报错）；BINARY 帧按「有无活动语音会话」分流——有 → 喂给会话管理器，无 → legacy `AudioBuffer` VAD 自动提交（**v1/v2 逐字节不变**，保护现有 web 前端）。
+
+### 12.1 模式总览
+
+| 模式 | 触发 | VAD | 提交 | 字幕事件 |
+|---|---|---|---|---|
+| `RECORDING`（普通录音，BE-060） | `voice.record.start` | 否（全段缓冲） | 手动 `voice.commit` | `voice.transcript` |
+| `REALTIME`（实时语音，BE-061） | `voice_session.start` | 是 | 每 VAD 段自动 | `voice_session.partial` / `voice_session.turn` |
+| `DICTATION`（输入法转写，BE-062） | `dictation.start` | 是 | 无（只回文字） | `dictation.partial` / `dictation.final` |
+
+- 会话/录音 ID 客户端生成（`recordingId=rec_<uuid>` / `sessionId=vs_<uuid>`），唯一性仅限本连接内。
+- 已有活动会话再 start → `VOICE_SESSION_CONFLICT`；`agent.stt` 为 None 或未启用 → `STT_UNAVAILABLE`。
+- **音频不落盘**（内存缓冲）、不入消息 content——语音消息 = 纯文本消息（批次 7 才做音频附件，BE-070）。
+- 失败信封区分：`voice.commit` 违规 → `user_message.ack{rejected}`；`voice.record.start/stop/discard` 与 `voice_session.*`/`dictation.*`/`audio.cancel` 违规 → `error{code}`。
+
+### 12.2 普通录音（BE-060）
+
+```
+client → {"type":"voice.record.start","recordingId":"rec_…"}
+client → BINARY PCM × N（RECORDING 模式全段累积，不 VAD、不触发）
+client → {"type":"voice.record.stop","recordingId":"rec_…"}
+server → {"type":"voice.transcript","recordingId":"…","text":"…","emotion":"…"?"}（PENDING，待确认）
+client → {"type":"voice.commit","recordingId":"…","text":"…","clientRequestId":"req_…","clientMessageId":"msg_…"?,"conversationId":null}?
+server → {"type":"user_message.ack",…}（v2：幂等 + 预分配 messageId + 会话归属）
+server → generation.*（Agent 流程，复用字幕文本，不重转写）
+client → {"type":"voice.discard","recordingId":"…"}（丢弃，清缓冲）
+```
+
+- 空转写不发 `voice.transcript`（前端未收字幕即视为未识别，无需 commit）。
+- `voice.commit` 幂等（clientRequestId，digest = 携带 text）：重试命中 → 重发原 ACK 不重复生成；异摘要 / 缺 clientRequestId / 文本与 PENDING 字幕不一致 → `user_message.ack{rejected, CONTRACT_VALIDATION}`。
+- 录音缓冲超 600s（≈18.3MiB）→ `error{VOICE_RECORDING_TOO_LONG}` + 清缓冲；stop 时 STT 已关 → `error{STT_UNAVAILABLE}` + 清缓冲回 IDLE。
+
+### 12.3 实时语音会话（BE-061）
+
+```
+client → {"type":"voice_session.start","sessionId":"vs_…","conversationId":null}
+server → {"type":"voice_session.started","sessionId":"…","conversationId":…}（解析后实际目标会话）
+client → BINARY PCM × N（VAD 分段）
+server → {"type":"voice_session.ack","sessionId":"…","seq":N}（~1s 背压进度，seq=服务端已收帧序数）
+server → {"type":"voice_session.partial","sessionId":"…","turnId":1,"segmentIndex":0,"text":"…"}（字幕，该轮 final）
+server → {"type":"voice_session.turn","sessionId":"…","turnId":1,"messageId":"msg_…","conversationId":…,"text":"…"}（自动提交，触发 generation）
+client → {"type":"voice_session.pause"/"resume"/"stop"/"cancel","sessionId":"…"}
+server → {"type":"voice_session.ended","sessionId":"…","reason":"stopped|cancelled|timeout|stt_disabled"}
+```
+
+- 每 VAD 段 = 一轮：partial（字幕）后自动提交——预分配 messageId + post UserInputData + turn 确认。多轮快速连发只响应最后一轮为预期（语音打断语义）。`turnId` 每轮单调递增、`segmentIndex` 会话内全局单调。
+- 未知 sessionId 的 pause/resume/stop/cancel → `error{VOICE_SESSION_NOT_FOUND}`；暂停中再 pause / 未暂停再 resume → 幂等忽略。
+- 300s 无音频 → `ended{timeout}`（暂停期间挂起 idle 计时）；`set_service('stt', False)` 成功 → 活动会话 `ended{stt_disabled}`。
+
+### 12.4 输入法转写（BE-062）
+
+```
+client → {"type":"dictation.start","clientRequestId":"req_…"}
+client → BINARY PCM × N（VAD 分段）
+server → {"type":"dictation.partial","text":"…"}（累积字幕，仅显示）
+client → {"type":"dictation.stop","clientRequestId":"req_…"}
+server → {"type":"dictation.final","clientRequestId":"req_…","text":"…"}（只回文字）
+client → {"type":"dictation.cancel","clientRequestId":"req_…"}
+server → {"type":"dictation.cancelled","clientRequestId":"req_…"}
+```
+
+- **零消息副作用**：不写历史、不 post UserInputData、不触发 Agent、不自动发送；final 文本只经 `dictation.final` 返回（前端据此写草稿）。
+- 无活动 dictation 收 stop/cancel → `error{DICTATION_NOT_FOUND}`；空结果（静音）→ `final{text:""}` 仍返回；STT 中途关闭 → `dictation.cancelled`。
+
+### 12.5 TTS 播放控制（BE-063）
+
+`stream_id` 正式化为 **playback ID**（wire 键名不变，全链路统一 `stream_id`）。
+
+```
+server → {"type":"audio_start","stream_id":N,"format":"wav","sampleRate":…?,"durationMs":…?}（句开始播放，Phase 2 放行后、首 chunk 前）
+server → {"type":"audio","stream_id":N,"seq":…,"data":"…","is_final":false}（×N，chunk 转发）
+server → {"type":"audio_end","stream_id":N,"format":"wav"}（该句音频字节已全部下发 ≠ 播完）
+client → {"type":"audio.cancel","stream_id":N}（取消在途播放实例，v2-only 全局操作）
+server → {"type":"audio_cancelled","stream_id":N}（句被取消——audio.cancel / TTS 中断，前端清理孤儿 chunk）
+```
+
+- `sampleRate`/`durationMs` 从已合成 WAV bytes 解析（非流式合成完成后才有）；播放完成由前端本地 `onended` 判定（**不引入上行回执**）。
+- `audio.cancel` 为**全局播放操作**（TTS 全局广播，任一连接可取消在途播放实例）：命中在途句 → 停发 + `audio_cancelled`；未知/已结束 stream_id → `error{PLAYBACK_NOT_FOUND}`（打断双发竞态下前端可忽略良性）；缺 / 非数字 stream_id → `error{CONTRACT_VALIDATION}`。
+- 中断（`cancel_all`）不再静默丢——统一发 `audio_cancelled`（修「中断不补 audio_end」孤儿 chunk 缺口）。

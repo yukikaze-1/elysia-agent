@@ -87,8 +87,11 @@ def build_server_info(agent: "Agent", connection_id: str | None = None) -> Serve
         server_version=__version__,
         features=ServerInfoFeatures(
             structured_generation=True,  # 批次 2 已实现
-            multi_conversation=True,     # 批次 3 已实现（Task 13 回归收敛）；dictation 仍 false
+            multi_conversation=True,     # 批次 3 已实现
             desktop_runtime=True,        # 批次 4 已实现（D-s，spec §8）
+            dictation=True,        # 批次 6 已实现（BE-062）
+            voice_recording=True,  # 批次 6（BE-060）
+            voice_realtime=True,   # 批次 6（BE-061）
         ),
         services={
             "llm": svc(True, True, agent.llm.model, cfg.llm.model),

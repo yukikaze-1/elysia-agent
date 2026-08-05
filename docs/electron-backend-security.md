@@ -1,6 +1,6 @@
 # Electron 后端安全部署指南
 
-**文档版本：** v0.3（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新）
+**文档版本：** v0.4（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新）
 **关联：** `docs/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`
 
 本文件说明 Elysia Agent 后端的**远程安全部署**方式：产品认证、TLS 终止、防护范围与已知缺口。远程部署必须遵循本指南；本地开发（回环 + 无 token）维持匿名。
@@ -115,6 +115,14 @@ server {
 - **Header 允许名单**：自定义 backend 出站仅允许 `Authorization/Content-Type/Accept/User-Agent`；**跨源重定向剥除允许名单外全部 Header（含 Authorization）**——防 `X-API-Key` 等敏感头泄漏到内网重定向目标（docs/14 §10 显式要求）。
 - **已知取舍（显式认定）**：出站守卫在连接前校验、随后 httpx 二次解析建连，存在 TOCTOU 窗口（活跃 DNS rebinding 需 IP pinning，批次 5 未承诺，见 §4 已知缺口）。SSRF 错误消息统一「目标地址被拒绝或无法解析」，**不泄露 host/IP**（防内网拓扑枚举）。
 - **豁免范围**：内置 provider（含 `local: true` 如 ollama/gpt-sovits）为运维托管配置，不注入守卫；desktop/local 条目 base_url 后端不拨号、跳过 SSRF 且允许为空。
+
+### 3.4 语音临时音频不落盘（批次 6，BE-060~062）
+
+三种语音模式（普通录音 / 实时语音 / 输入法转写）的采集音频均为**内存缓冲**——不落盘、不入消息 content、不入数据库、不进日志：
+
+- **RECORDING**：`VoiceSessionManager` 内部 `list[bytes]` 累积裸 PCM → `stop` 时 `pcm_to_wav()` 仅驻留内存 → STT 转写 → 字幕文本；音频 bytes 随 commit / discard / 断连即弃（`_reset_recording`）。
+- **REALTIME / DICTATION**：`AudioBuffer` VAD 分段，段完成 → STT → 仅回字幕/轮次文本；buffer 随会话创建/销毁（`_teardown_session`）。
+- **日志不记音频**：logger 只记文本摘要（如 commit 日志记 `pending_text[:30]`）；`message_archive` 只存消息文本——语音消息 = 纯文本消息（批次 7 BE-070 才做音频附件落盘，届时走现有附件上传鉴权路径）。
 
 ## 4. 已知缺口（后置批次）
 

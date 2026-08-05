@@ -757,6 +757,26 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
                 await voice_mgr.cancel_dictation(data.get("clientRequestId", ""))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
+    elif msg_type == "audio.cancel":
+        # 批次 6（BE-063）：取消在途 TTS 播放实例（全局播放操作，v2-only）。
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("audio.cancel: 非 v2，忽略")
+        else:
+            sid = data.get("stream_id")
+            if sid is None:
+                await _send_voice_error(ws, VoiceSessionError(
+                    "CONTRACT_VALIDATION", "缺少 stream_id"))
+                return
+            try:
+                sid_int = int(sid)  # 非数字 → CONTRACT_VALIDATION（review #17）
+            except (TypeError, ValueError):
+                await _send_voice_error(ws, VoiceSessionError(
+                    "CONTRACT_VALIDATION", "stream_id 非法"))
+                return
+            tts_mgr = getattr(agent, "tts_manager", None)
+            if tts_mgr is None or not tts_mgr.cancel_stream(sid_int):
+                await _send_voice_error(ws, VoiceSessionError(
+                    "PLAYBACK_NOT_FOUND", "播放实例不存在或已结束"))
     else:
         logger.debug("WS 未知消息类型: %s", msg_type)
 

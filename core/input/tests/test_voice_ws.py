@@ -213,3 +213,39 @@ async def test_realtime_cancel_unknown_session():
         {"type": "voice_session.cancel", "sessionId": "vs_999"}, agent, None, ws, voice_mgr=mgr)
     errs = [s for s in ws.sent if s.get("type") == "error"]
     assert errs and errs[-1].get("code") == "VOICE_SESSION_NOT_FOUND"
+
+
+def test_server_info_features_true_after_batch6():
+    """批次 6 落地后 features 如实声明三种语音能力（spec §9.3，严禁超前）。"""
+    from core.input.capabilities import build_server_info
+
+    class Cfg:
+        live2d = type("L", (), {"static_image": "/img.png"})()
+        llm = type("L", (), {"model": "lm"})()
+        stt = type("S", (), {"model": "sm"})()
+        tts = type("T", (), {"model": "tm"})()
+
+    class A:
+        config = Cfg()
+        stt = type("S", (), {"model": "sm"})()
+        stt_enabled = True
+        tts = type("T", (), {"model": "tm"})()
+        tts_enabled = True
+        llm = type("L", (), {"model": "lm"})()
+
+    info = build_server_info(A())
+    assert info.features.dictation is True
+    assert info.features.voice_recording is True
+    assert info.features.voice_realtime is True
+
+
+@pytest.mark.asyncio
+async def test_audio_cancel_routes_to_tts_manager():
+    """audio.cancel{stream_id} v2 路由 → tts_manager.cancel_stream（BE-063）。"""
+    agent, ws, mgr = make()
+    cancelled = []
+    agent.tts_manager = type("TtsMgr", (), {
+        "cancel_stream": lambda self, sid: cancelled.append(sid) or True})()
+    await handle_json_message({"type": "audio.cancel", "stream_id": 7},
+                              agent, None, ws, voice_mgr=mgr)
+    assert cancelled == [7]
