@@ -18,6 +18,7 @@ CLAUDE.md
 data/sandbox/
 data/uploads/
 data/cache/
+data/secrets/
 data/token_usage_pending.jsonl
 .superpowers/
 log.txt

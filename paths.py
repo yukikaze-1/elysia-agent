@@ -41,6 +41,7 @@ class ProjectPath(str, Enum):
     DATA_SANDBOX = "data/sandbox/{session_id}"
     DATA_CACHE_VISION = "data/cache/vision"
     DATA_REF = "data/ref"
+    DATA_SECRETS = "data/secrets"
     LOG = "log"
     STATIC = "static"
     LIVE2D_ASSETS = "data/live2d-assets"
