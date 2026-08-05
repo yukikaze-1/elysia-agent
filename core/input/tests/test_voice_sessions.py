@@ -206,6 +206,25 @@ async def test_close_cleans_active_session():
 
 
 @pytest.mark.asyncio
+async def test_idle_timeout_emits_ended():
+    """300s idle 超时 → ended{timeout} 必须发出（teardown 不自取消当前任务，review NEW-1）。"""
+    import core.input.voice_sessions as vs
+    original = vs.IDLE_CHECK_INTERVAL
+    vs.IDLE_CHECK_INTERVAL = 0.01  # 加速 idle 循环
+    try:
+        mgr, emitted, _ = make_manager()
+        await mgr.start_realtime("vs_1", None)
+        mgr._last_audio_at = 0  # 远古 → 首轮检查即超时（time.monotonic() - 0 >> 300）
+        await asyncio.sleep(0.1)
+        ends = [e for e in emitted if e.get("type") == "voice_session.ended"]
+        assert ends and ends[-1]["reason"] == "timeout"
+        assert mgr.has_active_session() is False
+        await mgr.close()
+    finally:
+        vs.IDLE_CHECK_INTERVAL = original
+
+
+@pytest.mark.asyncio
 async def test_recording_too_long():
     mgr, emitted, _ = make_manager()
     await mgr.start_recording("rec_1")

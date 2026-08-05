@@ -132,9 +132,16 @@ class VoiceSessionManager:
         self._mode = VoiceMode.IDLE  # 必须复位——否则 RECORDING 一次后永久占用（review #1）
 
     def _teardown_session(self) -> None:
-        if self._ack_task is not None and not self._ack_task.done():
+        # 跳过当前任务自取消（review NEW-1）——_idle_check_loop 超时分支会调用本方法，
+        # 自我 cancel 置 _must_cancel，在下一次挂起点投递 CancelledError，中断随后的
+        # ended{timeout} 发送；stop/cancel/notify_stt_disabled/close 均从 ws_handler
+        # 协程调用，不受影响
+        current = asyncio.current_task()
+        if self._ack_task is not None and self._ack_task is not current \
+                and not self._ack_task.done():
             self._ack_task.cancel()
-        if self._idle_task is not None and not self._idle_task.done():
+        if self._idle_task is not None and self._idle_task is not current \
+                and not self._idle_task.done():
             self._idle_task.cancel()
         self._ack_task = None
         self._idle_task = None
