@@ -353,6 +353,20 @@ async def _send_voice_error(ws, error) -> None:
         logger.debug("发送 voice error 失败", exc_info=True)
 
 
+async def _voice_stt_gate(agent: "Agent", voice_mgr) -> None:
+    """会话 JSON 消息入口检查 stt_enabled（spec §5.3 NEW-D/NEW-W）。
+
+    stt 关闭 → 结束活动 REALTIME/DICTATION 会话——暂停中会话无帧流入、idle 计时
+    挂起，靠此入口检测避免静默悬挂至连接关闭；RECORDING 由 notify_stt_disabled
+    内部忽略（spec §3.2 NEW-XA）。"""
+    if (voice_mgr is not None and not getattr(agent, "stt_enabled", False)
+            and voice_mgr.has_active_session()):
+        try:
+            await voice_mgr.notify_stt_disabled()
+        except Exception:
+            logger.debug("voice stt 门控 notify 失败", exc_info=True)
+
+
 async def _send_ack(ws: "web.WebSocketResponse", message_id: str, client_request_id: str,
                     client_message_id: str | None, conversation_id: str | None,
                     status: str, error: dict | None = None) -> None:
@@ -696,6 +710,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("voice_session.start: 非 v2，忽略")
         else:
+            await _voice_stt_gate(agent, voice_mgr)
             try:
                 await voice_mgr.start_realtime(
                     data.get("sessionId", ""), data.get("conversationId"))
@@ -705,6 +720,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("voice_session.pause: 非 v2，忽略")
         else:
+            await _voice_stt_gate(agent, voice_mgr)
             try:
                 await voice_mgr.pause_session(data.get("sessionId", ""))
             except VoiceSessionError as e:
@@ -713,6 +729,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("voice_session.resume: 非 v2，忽略")
         else:
+            await _voice_stt_gate(agent, voice_mgr)
             try:
                 await voice_mgr.resume_session(data.get("sessionId", ""))
             except VoiceSessionError as e:
@@ -721,6 +738,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("voice_session.stop: 非 v2，忽略")
         else:
+            await _voice_stt_gate(agent, voice_mgr)
             try:
                 await voice_mgr.stop_session(data.get("sessionId", ""))
             except VoiceSessionError as e:
@@ -729,6 +747,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("voice_session.cancel: 非 v2，忽略")
         else:
+            await _voice_stt_gate(agent, voice_mgr)
             try:
                 await voice_mgr.cancel_session(data.get("sessionId", ""))
             except VoiceSessionError as e:
@@ -737,6 +756,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("dictation.start: 非 v2，忽略")
         else:
+            await _voice_stt_gate(agent, voice_mgr)
             try:
                 await voice_mgr.start_dictation(data.get("clientRequestId", ""))
             except VoiceSessionError as e:
@@ -745,6 +765,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("dictation.stop: 非 v2，忽略")
         else:
+            await _voice_stt_gate(agent, voice_mgr)
             try:
                 await voice_mgr.stop_dictation(data.get("clientRequestId", ""))
             except VoiceSessionError as e:
@@ -753,6 +774,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("dictation.cancel: 非 v2，忽略")
         else:
+            await _voice_stt_gate(agent, voice_mgr)
             try:
                 await voice_mgr.cancel_dictation(data.get("clientRequestId", ""))
             except VoiceSessionError as e:

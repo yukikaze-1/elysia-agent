@@ -117,6 +117,28 @@ async def test_stt_disabled_via_set_service_ws():
 
 
 @pytest.mark.asyncio
+async def test_paused_session_stt_disabled_via_json_entry():
+    """暂停中会话：跨连接关 STT（agent.stt_enabled=False 但本连接无 set_service 通知）→
+    任意会话 JSON 消息入口检测并 ended{stt_disabled}（spec §5.3 NEW-W/S2）。"""
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "voice_session.start", "sessionId": "vs_1", "conversationId": None},
+        agent, None, ws, voice_mgr=mgr)
+    await handle_json_message(
+        {"type": "voice_session.pause", "sessionId": "vs_1"}, agent, None, ws, voice_mgr=mgr)
+    agent.stt_enabled = False  # 模拟另一连接关 STT（本连接无 set_service 通知）
+    await handle_json_message(
+        {"type": "voice_session.resume", "sessionId": "vs_1"}, agent, None, ws, voice_mgr=mgr)
+    ends = [s for s in ws.sent if s.get("type") == "voice_session.ended"]
+    assert ends and ends[-1]["reason"] == "stt_disabled"
+    # 会话已结束 → 后续 stop 报 VOICE_SESSION_NOT_FOUND
+    await handle_json_message(
+        {"type": "voice_session.stop", "sessionId": "vs_1"}, agent, None, ws, voice_mgr=mgr)
+    errs = [s for s in ws.sent if s.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "VOICE_SESSION_NOT_FOUND"
+
+
+@pytest.mark.asyncio
 async def test_recording_full_flow():
     """start→stop→transcript→commit→ack+generation（完整流，依赖 _handle_voice_commit）。"""
     agent, ws, mgr = make()

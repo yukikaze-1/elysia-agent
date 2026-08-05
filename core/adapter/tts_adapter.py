@@ -218,6 +218,9 @@ class TTSStreamManager:
         for t in pending:
             t.cancel()
         self._tasks.clear()
+        # 同步剪除 _task_by_sid——否则窗口期 audio.cancel 对刚被取消的 sid 返回 True
+        # 而任务不再补 audio_cancelled（语义失真，review N3）
+        self._task_by_sid = {s: t for s, t in self._task_by_sid.items() if not t.done()}
 
     def cancel_stream(self, stream_id: int) -> bool:
         """取消指定播放实例（BE-063）；在途返回 True（任务补 audio_cancelled），否则 False。"""

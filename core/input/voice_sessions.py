@@ -469,6 +469,9 @@ class VoiceSessionManager:
                     sessionId=session_id, seq=self._received_frames).wire_dict())
         except asyncio.CancelledError:
             raise
+        except Exception:
+            # 连接已关等 emit 失败——后台循环降级 debug，防 task-exception 噪音（review N2）
+            logger.debug("voice_session ack 循环异常退出", exc_info=True)
 
     async def _idle_check_loop(self, session_id: str) -> None:
         try:
@@ -483,3 +486,5 @@ class VoiceSessionManager:
                     return
         except asyncio.CancelledError:
             raise
+        except Exception:
+            logger.debug("voice_session idle 检查循环异常退出", exc_info=True)
