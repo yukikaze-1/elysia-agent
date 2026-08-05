@@ -186,3 +186,30 @@ async def test_voice_commit_state_gate_before_submit():
     acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
     assert acks and acks[-1]["status"] == "rejected" \
         and acks[-1]["error"]["code"] == "VOICE_RECORDING_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_realtime_session_lifecycle():
+    """实时语音会话生命周期：start→started、pause/resume 幂等、stop→ended{stopped}（BE-061）。"""
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "voice_session.start", "sessionId": "vs_1", "conversationId": "conv_a"},
+        agent, None, ws, voice_mgr=mgr)
+    assert any(s.get("type") == "voice_session.started" for s in ws.sent)
+    await handle_json_message(
+        {"type": "voice_session.pause", "sessionId": "vs_1"}, agent, None, ws, voice_mgr=mgr)
+    await handle_json_message(
+        {"type": "voice_session.resume", "sessionId": "vs_1"}, agent, None, ws, voice_mgr=mgr)
+    await handle_json_message(
+        {"type": "voice_session.stop", "sessionId": "vs_1"}, agent, None, ws, voice_mgr=mgr)
+    ends = [s for s in ws.sent if s.get("type") == "voice_session.ended"]
+    assert ends and ends[-1]["reason"] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_realtime_cancel_unknown_session():
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "voice_session.cancel", "sessionId": "vs_999"}, agent, None, ws, voice_mgr=mgr)
+    errs = [s for s in ws.sent if s.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "VOICE_SESSION_NOT_FOUND"
