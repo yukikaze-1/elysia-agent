@@ -1,6 +1,7 @@
 """业务 API 路由 — Providers, 图片上传, Chat REST, 消息归档, Desktop 注册表/附件。"""
 
 import asyncio
+import base64
 import logging
 import os
 import time
@@ -16,6 +17,9 @@ from core.input.tts_profile import _active_tts_profile, _backend_default_voice
 from frontend_contract import rest as rest_contract
 
 logger = logging.getLogger(__name__)
+
+# TTS 试听固定短文本（Task 10，BE-051）：永不读聊天内容，仅用于音色试听合成。
+_PREVIEW_TEXT = "你好，我是声音测试。"
 
 
 # ---- 共享 helper（debug_routes.py 也需要） ----
@@ -369,7 +373,7 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_delete("/api/providers/{service}/{name}", providers_delete_handler)
     app.router.add_post("/api/providers/test", providers_test_handler)
 
-    # ---- TTS 声音（BE-051，Task 9） ----
+    # ---- TTS 声音（BE-051，Task 9 / Task 10） ----
 
     async def tts_voices_handler(request: web.Request) -> web.Response:
         """GET /api/tts/voices — 活动会话激活 TTS profile 的声音列表。
@@ -398,6 +402,43 @@ def register_api_routes(app: web.Application) -> None:
             voices=voices, current=current or None, source=source).wire_dict())
 
     app.router.add_get("/api/tts/voices", tts_voices_handler)
+
+    async def tts_preview_handler(request: web.Request) -> web.Response:
+        """POST /api/tts/preview — 固定短文本音色试听（不读聊天）。
+
+        body ``{voice_id?: str}``；合成 ``_PREVIEW_TEXT``（模块级固定常量）。
+        - TTS 未启用（_active_tts_profile → None）→ ``{ok: False, error: "TTS 未启用"}``。
+        - 否则 ``synthesize(_PREVIEW_TEXT, character=<角色名>, voice_id=voice_id)``
+          → ``{ok: True, mime, audio_base64}``；异常 → ``{ok: False, error}``。
+        """
+        agent = request.app.get("agent")
+        # body 容错：缺省/非法 JSON → 空 dict（voice_id 可选）
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        voice_id = payload.get("voice_id") if isinstance(payload, dict) else None
+        voice_id = voice_id or None  # 空串归一为 None（不传覆盖）
+
+        backend = _active_tts_profile(agent)
+        if backend is None:
+            return web.json_response(rest_contract.TtsPreviewResult(
+                ok=False, error="TTS 未启用").wire_dict())
+        try:
+            character = getattr(getattr(agent, "character", None), "name", "") or ""
+            audio = await backend.synthesize(
+                _PREVIEW_TEXT, character=character, voice_id=voice_id,
+            )
+            mime = f"audio/{getattr(backend, 'stream_format', 'wav')}"
+            audio_base64 = base64.b64encode(audio).decode("utf-8")
+            return web.json_response(rest_contract.TtsPreviewResult(
+                ok=True, mime=mime, audio_base64=audio_base64).wire_dict())
+        except Exception as e:
+            logger.warning("TTS 试听合成失败: %s", e)
+            return web.json_response(rest_contract.TtsPreviewResult(
+                ok=False, error=str(e)).wire_dict())
+
+    app.router.add_post("/api/tts/preview", tts_preview_handler)
 
     # ---- 图片上传 ----
 

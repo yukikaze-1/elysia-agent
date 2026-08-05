@@ -1,10 +1,18 @@
-"""/api/tts/voices 端点测试（Task 9，BE-051 声音列表路由）。
+"""/api/tts/voices + /api/tts/preview 端点测试（Task 9 BE-051 声音列表 + Task 10 试听）。
 
-覆盖：
+覆盖 voices：
 - TTS 启用 + 后端激活 → 200 含 voices（source=api for MiniMax / static 其余）；
 - TTS 未启用 → 200 空列表 + error="TTS 未启用"（不炸）；
 - current 随活动会话 service_state.tts_voice。
+
+覆盖 preview：
+- 激活后端 synthesize 返回 bytes → 200 {ok: True, mime, audio_base64} + 固定文本（非聊天）与 voice_id；
+- voice_id 缺省 → synthesize 不带 voice_id；
+- 后端抛错 → {ok: False, error}；
+- TTS 未启用 → {ok: False, error: "TTS 未启用"}。
 """
+import base64
+
 import pytest
 
 from core.input.server import create_app
@@ -123,3 +131,112 @@ async def test_tts_voices_default_current_no_service_state(aiohttp_client):
     assert resp.status == 200
     # 角色 Elysia 在 minimax_voices.yaml 映射为 elysia_test_001 → 默认 current 为该映射音色
     assert data.get("current") == "elysia_test_001"
+
+
+# ────────────────────── POST /api/tts/preview（Task 10 试听） ──────────────────────
+
+
+class _FakePreviewBackend:
+    """可注入的假 TTS 后端：synthesize 记录调用并返回固定 bytes，stream_format 可配。"""
+
+    def __init__(self, audio: bytes = b"RIFF\x00fake-wav", stream_format: str = "wav"):
+        self._audio = audio
+        self.stream_format = stream_format
+        self.calls: list[dict] = []
+        self.fail = False
+
+    async def synthesize(self, text, *, character, emotion=None, voice_id=None):
+        if self.fail:
+            raise RuntimeError("合成失败")
+        self.calls.append({"text": text, "character": character, "voice_id": voice_id})
+        return self._audio
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_tts_preview_ok_fixed_text_and_voice_id(aiohttp_client):
+    """激活后端 synthesize 返回 bytes → 200 {ok: True, mime, audio_base64}；收固定文本（非聊天）+ voice_id。"""
+    from core.input.api_routes import _PREVIEW_TEXT
+
+    agent = _make_app_agent()
+    audio = b"\x00\x01\x02fake-wav-bytes"
+    backend = _FakePreviewBackend(audio=audio)
+    agent._tts = backend  # noqa: SLF001 — 测试注入后端
+    agent._tts_enabled = True  # noqa: SLF001 — 测试注入有效开关
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    resp = await client.post("/api/tts/preview", json={"voice_id": "elysia_test_001"})
+    data = await resp.json()
+    assert resp.status == 200
+    assert data["ok"] is True
+    assert data["mime"] == "audio/wav"
+    assert data["audio_base64"] == base64.b64encode(audio).decode()
+    # 合成收到固定试听文本（非聊天内容）+ voice_id 透传 + 角色名
+    assert backend.calls == [{
+        "text": _PREVIEW_TEXT,
+        "character": "Elysia",
+        "voice_id": "elysia_test_001",
+    }]
+    # 常量逐字匹配 plan（防实现时改值）
+    assert _PREVIEW_TEXT == "你好，我是声音测试。"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_tts_preview_no_voice_id_default(aiohttp_client):
+    """body 缺省 voice_id → synthesize 不带 voice_id（None）。"""
+    from core.input.api_routes import _PREVIEW_TEXT
+
+    agent = _make_app_agent()
+    backend = _FakePreviewBackend()
+    agent._tts = backend  # noqa: SLF001
+    agent._tts_enabled = True  # noqa: SLF001
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    resp = await client.post("/api/tts/preview", json={})
+    data = await resp.json()
+    assert resp.status == 200
+    assert data["ok"] is True
+    assert backend.calls == [{
+        "text": _PREVIEW_TEXT, "character": "Elysia", "voice_id": None,
+    }]
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_tts_preview_backend_error(aiohttp_client):
+    """后端 synthesize 抛错 → 200 {ok: False, error}（不炸）。"""
+    agent = _make_app_agent()
+    backend = _FakePreviewBackend()
+    backend.fail = True
+    agent._tts = backend  # noqa: SLF001
+    agent._tts_enabled = True  # noqa: SLF001
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    resp = await client.post("/api/tts/preview", json={"voice_id": "v1"})
+    data = await resp.json()
+    assert resp.status == 200
+    assert data["ok"] is False
+    assert data["error"]  # 非空错误信息
+    assert data.get("audio_base64") is None
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_tts_preview_disabled(aiohttp_client):
+    """TTS 未启用（_active_tts_profile → None）→ {ok: False, error: "TTS 未启用"}。"""
+    agent = _make_app_agent()
+    agent._tts = None  # noqa: SLF001
+    agent._tts_enabled = False  # noqa: SLF001
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    resp = await client.post("/api/tts/preview", json={"voice_id": "v1"})
+    data = await resp.json()
+    assert resp.status == 200
+    assert data["ok"] is False
+    assert data["error"] == "TTS 未启用"
+    assert data.get("audio_base64") is None
