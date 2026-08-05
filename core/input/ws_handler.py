@@ -18,6 +18,7 @@ from Module.output import WebSocketChannel
 from core.input.audio_buffer import AudioBuffer
 from core.input.capabilities import build_capabilities
 from core.input.idempotency import IdempotencyEntry, get_store
+from core.input.voice_sessions import VoiceSessionError, VoiceSessionManager
 from frontend_contract import (
     CommandMessage,
     ErrorMessage,
@@ -211,6 +212,15 @@ async def handle_ws(
     except Exception:
         logger.debug("Failed to re-send pending approvals", exc_info=True)
 
+    # 批次 6（BE-060~062）：每连接一个 VoiceSessionManager——无条件创建（放在
+    # `if agent.stt is not None:` 块之外，否则 STT 为 None 时 voice_mgr 未定义，
+    # BINARY 分支 NameError，review #10）。emit 直接走本连接 send_json。
+    from core.input.voice_sessions import VoiceSessionManager
+    voice_mgr = VoiceSessionManager(
+        agent=agent, emit=lambda data: ws.send_json(data),
+        on_vad_interrupt=lambda: do_interrupt(agent, skip_vad=True),
+    )
+
     audio_buf: AudioBuffer | None = None
     monitor_task: asyncio.Task | None = None
     if agent.stt is not None:
@@ -258,7 +268,7 @@ async def handle_ws(
                     data = json.loads(msg.data)
                     if not isinstance(data, dict):
                         raise ValidationError("WS 消息必须是 JSON 对象")
-                    await handle_json_message(data, agent, audio_buf, ws)
+                    await handle_json_message(data, agent, audio_buf, ws, voice_mgr=voice_mgr)
                 except json.JSONDecodeError:
                     await ws.send_json(ErrorMessage(message="Invalid JSON").wire_dict())
                 except ValidationError as e:
@@ -266,9 +276,12 @@ async def handle_ws(
                     await ws.send_json(ErrorMessage(message=f"Invalid message content: {e}").wire_dict())
 
             elif msg.type == WSMsgType.BINARY:
-                # 后端防御：STT 被禁用（agent.stt_enabled=False）时不喂音频，
-                # 防止关闭开关后仍触发 VAD/转写
-                if audio_buf and agent.stt_enabled:
+                # 批次 6：有活动语音会话 → 喂给会话管理器（RECORDING/REALTIME/DICTATION 分流）；
+                # 否则 → legacy AudioBuffer VAD 自动提交（现状逐字节不变）。voice_mgr 恒非 None，
+                # 判空仅兜底。
+                if voice_mgr is not None and voice_mgr.has_active_session():
+                    await voice_mgr.feed_pcm(msg.data)
+                elif audio_buf and agent.stt_enabled:
                     await audio_buf.feed(msg.data)
 
             elif msg.type == WSMsgType.ERROR:
@@ -281,6 +294,8 @@ async def handle_ws(
             monitor_task.cancel()
         if audio_buf:
             await audio_buf.flush()
+        if voice_mgr is not None:
+            await voice_mgr.close()
         agent.output.remove_channel(channel)
         # 批次 4（spec §5.1 D-o）：v2 + electron 连接断开 → 桥标 offline + 未接手 call
         # 立即 resolve UNAVAILABLE + 同步 desktop 可用性（ToolManager available 字段）。
@@ -320,6 +335,22 @@ def _find_channel(agent: "Agent", ws: "web.WebSocketResponse | None") -> "WebSoc
         if isinstance(ch, WebSocketChannel) and getattr(ch, "_ws", None) is ws:
             return ch
     return None
+
+
+def _is_v2(agent: "Agent", ws: "web.WebSocketResponse | None") -> bool:
+    """三种语音模式消息 v2-only 门禁（仿 activate_session/tool.status）。"""
+    ch = _find_channel(agent, ws)
+    return ch is not None and ch.protocol_version >= 2
+
+
+async def _send_voice_error(ws, error) -> None:
+    """VoiceSessionError → error 信封。"""
+    from frontend_contract import ErrorMessage
+    try:
+        await ws.send_json(ErrorMessage(
+            message=error.message, code=error.code).wire_dict())
+    except Exception:
+        logger.debug("发送 voice error 失败", exc_info=True)
 
 
 async def _send_ack(ws: "web.WebSocketResponse", message_id: str, client_request_id: str,
@@ -403,7 +434,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
     return True
 
 
-async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None) -> None:
+async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None, voice_mgr=None) -> None:
     """Route a JSON message from the WebSocket client to the appropriate handler.
 
     Args:
@@ -411,6 +442,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         agent: Agent instance for processing messages and tool approvals.
         audio_buf: AudioBuffer instance for audio/wake-word handling, or None.
         ws: WebSocket connection for sending responses, or None.
+        voice_mgr: 批次 6 每连接 VoiceSessionManager（三模式语音路由），可为 None。
     """
     msg_type = data.get("type", "")
     if msg_type == "wake_toggle":
@@ -528,6 +560,13 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             # 不向请求方传播（per-channel 发送失败已由 _send_json 内部记录）
             logger.warning("set_service 广播失败（连接并发变化？）", exc_info=True)
         logger.info("WS 设置服务开关: service=%s enabled=%s ok=%s", service, enabled, result.get("ok"))
+        # 批次 6（spec §3.2 NEW-X/XA）：stt 关闭成功 → 通知本连接语音会话（RECORDING 除外）
+        if (service == "stt" and not enabled and result.get("ok")
+                and voice_mgr is not None):
+            try:
+                await voice_mgr.notify_stt_disabled()
+            except Exception:
+                logger.debug("notify_stt_disabled 失败", exc_info=True)
     elif msg_type == "tool_approval":
         request_id = data.get("request_id", "")
         approved = data.get("approved", False)
@@ -560,6 +599,100 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
                 logger.debug("WS tool.status: v1 连接忽略")
             else:
                 await agent.desktop_bridge.handle_status(data)
+    elif msg_type == "voice.record.start":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("voice.record.start: 非 v2 或无 mgr，忽略")
+        else:
+            try:
+                await voice_mgr.start_recording(data.get("recordingId", ""))
+            except VoiceSessionError as e:
+                await _send_voice_error(ws, e)
+    elif msg_type == "voice.record.stop":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("voice.record.stop: 非 v2 或无 mgr，忽略")
+        else:
+            try:
+                await voice_mgr.stop_recording(data.get("recordingId", ""))
+            except VoiceSessionError as e:
+                await _send_voice_error(ws, e)
+    elif msg_type == "voice.commit":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("voice.commit: 非 v2 或无 mgr，忽略")
+        else:
+            await _handle_voice_commit(agent, ws, voice_mgr, data)
+    elif msg_type == "voice.discard":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("voice.discard: 非 v2 或无 mgr，忽略")
+        else:
+            try:
+                await voice_mgr.discard_recording(data.get("recordingId", ""))
+            except VoiceSessionError as e:
+                await _send_voice_error(ws, e)
+    elif msg_type == "voice_session.start":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("voice_session.start: 非 v2，忽略")
+        else:
+            try:
+                await voice_mgr.start_realtime(
+                    data.get("sessionId", ""), data.get("conversationId"))
+            except VoiceSessionError as e:
+                await _send_voice_error(ws, e)
+    elif msg_type == "voice_session.pause":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("voice_session.pause: 非 v2，忽略")
+        else:
+            try:
+                await voice_mgr.pause_session(data.get("sessionId", ""))
+            except VoiceSessionError as e:
+                await _send_voice_error(ws, e)
+    elif msg_type == "voice_session.resume":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("voice_session.resume: 非 v2，忽略")
+        else:
+            try:
+                await voice_mgr.resume_session(data.get("sessionId", ""))
+            except VoiceSessionError as e:
+                await _send_voice_error(ws, e)
+    elif msg_type == "voice_session.stop":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("voice_session.stop: 非 v2，忽略")
+        else:
+            try:
+                await voice_mgr.stop_session(data.get("sessionId", ""))
+            except VoiceSessionError as e:
+                await _send_voice_error(ws, e)
+    elif msg_type == "voice_session.cancel":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("voice_session.cancel: 非 v2，忽略")
+        else:
+            try:
+                await voice_mgr.cancel_session(data.get("sessionId", ""))
+            except VoiceSessionError as e:
+                await _send_voice_error(ws, e)
+    elif msg_type == "dictation.start":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("dictation.start: 非 v2，忽略")
+        else:
+            try:
+                await voice_mgr.start_dictation(data.get("clientRequestId", ""))
+            except VoiceSessionError as e:
+                await _send_voice_error(ws, e)
+    elif msg_type == "dictation.stop":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("dictation.stop: 非 v2，忽略")
+        else:
+            try:
+                await voice_mgr.stop_dictation(data.get("clientRequestId", ""))
+            except VoiceSessionError as e:
+                await _send_voice_error(ws, e)
+    elif msg_type == "dictation.cancel":
+        if voice_mgr is None or not _is_v2(agent, ws):
+            logger.debug("dictation.cancel: 非 v2，忽略")
+        else:
+            try:
+                await voice_mgr.cancel_dictation(data.get("clientRequestId", ""))
+            except VoiceSessionError as e:
+                await _send_voice_error(ws, e)
     else:
         logger.debug("WS 未知消息类型: %s", msg_type)
 
