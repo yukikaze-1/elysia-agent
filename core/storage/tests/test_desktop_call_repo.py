@@ -119,6 +119,9 @@ class TestMarkMigrationGuard:
         ("running", "failed", True),
         ("running", "rejected", True),
         ("running", "cancelled", True),
+        # accepted ↔ running（客户端执行状态往返，Electron 回 tool.status{running}）
+        ("accepted", "running", True),
+        ("running", "accepted", True),
         # accepted/running → expired / offline
         ("accepted", "expired", True),
         ("accepted", "offline", True),
@@ -279,6 +282,17 @@ class TestConnect:
         assert asyncio.run(repo.get("c1")) is not None
         assert asyncio.run(repo.get("c2")) is not None
         assert asyncio.run(repo.get("c2"))["status"] == "accepted"
+
+    def test_reload_from_db_paginates_beyond_find_default_limit(self):
+        """reload_from_db 分页载入：超过 find 默认 limit=100 的记录不被截断。"""
+        repo = DesktopCallRepository(mongodb=FakeDocumentDBBackend())
+        for i in range(150):
+            asyncio.run(repo._db.insert_one(
+                COLLECTION, _call(call_id=f"call_{i}", status="pending")))
+        asyncio.run(repo.connect())
+        assert len(repo._cache) == 150          # 全量载入（修复前仅前 100 条）
+        assert asyncio.run(repo.get("call_0")) is not None
+        assert asyncio.run(repo.get("call_149")) is not None
 
     def test_health_check_reflects_db(self):
         repo = DesktopCallRepository(mongodb=None)

@@ -21,6 +21,7 @@ result/error 写字段但返回 False、offline→终态合法）；deliver 回�
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -113,6 +114,16 @@ class FakeDesktopRepo:
             dict(d) for d in self.calls.values()
             if d.get("status") in self._ACTIVE and (d.get("expires_at") or "") > cutoff
         ]
+
+    async def mark_stale_expired(self, cutoff: str) -> int:
+        """启动清理：pending/accepted/running 中 updated_at < cutoff 标 expired。"""
+        n = 0
+        for doc in self.calls.values():
+            if (doc.get("status") in self._ACTIVE
+                    and (doc.get("updated_at") or "") < cutoff):
+                doc["status"] = "expired"
+                n += 1
+        return n
 
 
 # ============================================================================
@@ -522,6 +533,37 @@ class TestLifecycleAndQuery:
         assert await bridge.health_check() is True
         await bridge.on_client_disconnect("conn_1")
         assert bridge.is_available() is False
+
+    @pytest.mark.asyncio
+    async def test_connect_db_cleans_stale_active_calls(self):
+        """connect_db 成功后启动清理：遗留 running/accepted 超时调用标 expired。
+
+        模拟「后端重启前遗留」的调用（reload 入缓存后仍 active），启动时经
+        mark_stale_expired（cutoff = now - timeout）批量标 expired（spec §4.1 启动
+        清理超时孤儿，对齐 generation mark_stale_interrupted 先例）。
+        """
+        repo = FakeDesktopRepo()
+        now = datetime.now(timezone.utc)
+        stale = (now - timedelta(seconds=300)).isoformat()
+        fresh = now.isoformat()
+        repo.calls["call_stale_running"] = {
+            "call_id": "call_stale_running", "tool_name": "desktop.file.read",
+            "status": "running", "updated_at": stale, "expires_at": stale,
+        }
+        repo.calls["call_stale_accepted"] = {
+            "call_id": "call_stale_accepted", "tool_name": "desktop.file.read",
+            "status": "accepted", "updated_at": stale, "expires_at": stale,
+        }
+        repo.calls["call_fresh"] = {
+            "call_id": "call_fresh", "tool_name": "desktop.file.read",
+            "status": "running", "updated_at": fresh, "expires_at": fresh,
+        }
+        bridge = DesktopToolBridge(repo, timeout=120.0)
+        ok = await bridge.connect_db()
+        assert ok is True
+        assert repo.calls["call_stale_running"]["status"] == "expired"
+        assert repo.calls["call_stale_accepted"]["status"] == "expired"
+        assert repo.calls["call_fresh"]["status"] == "running"  # 未超时不动
 
     @pytest.mark.asyncio
     async def test_target_connection_filled_in_doc(self):

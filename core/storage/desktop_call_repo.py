@@ -36,6 +36,7 @@ sessions/generations）。
 - pending → accepted/running（客户端接手）
 - pending → succeeded/failed/rejected/cancelled（客户端终态直达——先登记后投递）
 - pending → expired（超时未接手）/ offline（断连未接手）
+- accepted ↔ running（客户端执行状态往返，Electron 回 tool.status{accepted/running}）
 - accepted/running → succeeded/failed/rejected/cancelled（客户端结果）
 - accepted/running → expired（超时）/ offline（断连已接手）
 - offline → succeeded/failed/rejected/cancelled（晚到结果/重传闭环）
@@ -87,10 +88,12 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
         STATUS_EXPIRED, STATUS_OFFLINE,
     }),
     STATUS_ACCEPTED: frozenset({
+        STATUS_RUNNING,  # accepted → running（Electron 回 tool.status{running}）
         STATUS_SUCCEEDED, STATUS_FAILED, STATUS_REJECTED, STATUS_CANCELLED,
         STATUS_EXPIRED, STATUS_OFFLINE,
     }),
     STATUS_RUNNING: frozenset({
+        STATUS_ACCEPTED,  # running → accepted（双向放行，fake 已对称）
         STATUS_SUCCEEDED, STATUS_FAILED, STATUS_REJECTED, STATUS_CANCELLED,
         STATUS_EXPIRED, STATUS_OFFLINE,
     }),
@@ -103,6 +106,10 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     STATUS_CANCELLED: frozenset(),
     STATUS_EXPIRED: frozenset(),
 }
+
+
+# 启动全量 reload 的分页块大小（find 默认 limit=100 会截断，显式分批载入）
+_RELOAD_CHUNK = 500
 
 
 class DesktopCallRepository(Repository):
@@ -316,22 +323,31 @@ class DesktopCallRepository(Repository):
     async def reload_from_db(self) -> None:
         """connect 成功后从 Mongo 全量载入进程内缓存（缓存以 db 快照重建）。
 
-        db 不可用时静默跳过（保持现有缓存）。启动时缓存为空，重建即全量载入。
+        分页载入（skip/limit 循环）——DocumentDBBackend.find 默认 limit=100 会截断，
+        超 100 条调用只载入前 100。db 不可用时静默跳过（保持现有缓存）。
+        启动时缓存为空，重建即全量载入。
         """
         if self._db is None:
             return
+        loaded: dict[str, dict] = {}
+        skip = 0
         try:
-            docs = await self._db.find(COLLECTION, {})
+            while True:
+                docs = await self._db.find(COLLECTION, {}, limit=_RELOAD_CHUNK, skip=skip)
+                if not docs:
+                    break
+                for doc in docs:
+                    if doc.get("call_id"):
+                        loaded[doc["call_id"]] = dict(doc)
+                skip += len(docs)
+                if len(docs) < _RELOAD_CHUNK:
+                    break
         except Exception as e:
             logger.warning("DesktopCallRepository: 从 Mongo 全量载入失败 (%s)", e)
             return
-        self._cache = {
-            doc.get("call_id"): dict(doc)
-            for doc in docs
-            if doc.get("call_id")
-        }
-        if self._cache:
-            logger.info("DesktopCallRepository: reload_from_db 载入 %d 条调用", len(self._cache))
+        self._cache = loaded
+        if loaded:
+            logger.info("DesktopCallRepository: reload_from_db 载入 %d 条调用", len(loaded))
 
     # ---- internal helpers ----
 

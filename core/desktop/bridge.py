@@ -37,7 +37,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
 from Module.tool.protocol import ErrorType, MediaItem, ToolResult
@@ -90,8 +90,27 @@ class DesktopToolBridge:
         return self._connected
 
     async def connect_db(self) -> bool:
-        """建立 MongoDB 连接 + 全量 reload 入进程内缓存（_start_persistence 挂点）。"""
-        return await self._repo.connect()
+        """建立 MongoDB 连接 + 全量 reload 入进程内缓存 + 启动清理超时孤儿。
+
+        connect 成功后再把启动时刻 `timeout` 秒前仍 pending/accepted/running 的
+        desktop_calls 批量标 expired——后端重启后 Mongo 遗留的超时调用不滞留（spec
+        §4.1 启动清理，对齐 generation `mark_stale_interrupted` 先例）。清理失败不
+        阻断启动（仅 log）。
+
+        Returns:
+            True 表示 Mongo 建连成功（离线降级为进程内缓存时返回 False）。
+        """
+        ok = await self._repo.connect()
+        if ok:
+            try:
+                cutoff = (datetime.now(timezone.utc)
+                          - timedelta(seconds=self._timeout)).isoformat()
+                cleaned = await self._repo.mark_stale_expired(cutoff)
+                if cleaned:
+                    logger.info("DesktopToolBridge 启动清理 %d 条超时 desktop 调用", cleaned)
+            except Exception as e:  # noqa: BLE001 — 清理失败不阻断 Agent 启动
+                logger.warning("DesktopToolBridge 启动清理超时孤儿失败: %s", e)
+        return ok
 
     async def health_check(self) -> bool:
         """桥的健康状态：桌面客户端是否可用（repo 离线降级不视为桥不可用）。"""
