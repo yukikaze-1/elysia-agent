@@ -313,6 +313,56 @@ class _SlowLLM(_UsageLLM):
         yield {"content": None, "tool_calls": None, "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2, "cached_tokens": 0, "reasoning_tokens": 0}}
 
 
+class _ToolCallingLLM(_UsageLLM):
+    """多轮 tool-calling fake（批次 4 测试基建，spec §11）。
+
+    首轮 stream_think 产 `tool_calls=[{tool_name, arguments}]`；第二轮及以后
+    （messages 已含 role="tool" 结果，即工具执行完毕）返回带标签文本回复。
+
+    现有 `_UsageLLM`/`_SlowLLM` 恒 `yield tool_calls: None`（无法驱动桌面往返），
+    `scripts/capture_ws_trace.py::FakeLLMToolCall` 是脚本非 pytest 可导入——本类供
+    service 测试安全往返/断连重连/幂等/篡改全矩阵使用。
+
+    Args:
+        tool_name: 首轮产出的工具名（默认 desktop.file.read）。
+        arguments: 首轮工具参数 dict（默认 {"path": "/tmp/a.txt"}）。
+        response: 第二轮文本回复（默认 _TAGGED，含 inner_voice/mood/多句）。
+        extra_tool_calls: 同一轮额外 tool_call delta（幂等去重测试用——
+            两条同参 desktop.file.read 并发 → 桥去重仅一次投递）。
+    """
+
+    def __init__(self, tool_name: str = "desktop.file.read",
+                 arguments: dict | None = None, response: str = _TAGGED,
+                 extra_tool_calls: list[dict] | None = None):
+        super().__init__(response=response)
+        self.tool_name = tool_name
+        self.arguments = arguments or {"path": "/tmp/a.txt"}
+        self.extra_tool_calls = extra_tool_calls or []
+
+    async def stream_think(self, messages, **kwargs):
+        # 轮次判定：messages 已含 role="tool" 结果 → 工具执行完毕，产文本回复
+        has_tool_result = any(m.get("role") == "tool" for m in messages)
+        if not has_tool_result:
+            calls = [{
+                "id": "call_llm_desktop", "type": "function",
+                "function": {"name": self.tool_name,
+                             "arguments": json.dumps(self.arguments, ensure_ascii=False)},
+            }]
+            calls.extend(self.extra_tool_calls)
+            # merge_stream_tool_calls 按 delta["index"] 定位——多工具调用必须显式 index
+            # 区分（缺省 0 会覆盖首条，导致工具名拼接错乱 → gate 拒绝）
+            for i, c in enumerate(calls):
+                c["index"] = i
+            yield {"content": None, "tool_calls": calls}
+            yield {"content": None, "tool_calls": None, "usage": {
+                "input_tokens": 12, "output_tokens": 18, "total_tokens": 30,
+                "cached_tokens": 0, "reasoning_tokens": 0}}
+            return
+        # 后续轮：逐 token 文本回复（复用 _UsageLLM 的 token 流 + usage 终帧）
+        async for chunk in _UsageLLM.stream_think(self, messages, **kwargs):
+            yield chunk
+
+
 @pytest.mark.service
 class TestV2Cancellation:
     @pytest.mark.asyncio

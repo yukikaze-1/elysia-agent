@@ -1,8 +1,8 @@
 # Electron 后端协议 v2 — 结构化聊天事件契约参考
 
-**文档版本：** v0.2（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9）
+**文档版本：** v0.3（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9，批次 4 补充 Desktop 工具契约 §10/错误码目录）
 **关联：** `docs/electron-backend-baseline.md`（v1 现状）、`docs/electron-backend-security.md`（认证/版本协商）
-**Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）
+**Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`（v0.2）
 
 本文档是 Electron 前端联调 v2 协议的**事件契约参考**。v2 由 WS 握手头 `X-Protocol-Version: 2` 判定；未带版本头走 v1 路径（现状不变）。
 
@@ -10,9 +10,11 @@
 
 ## 1. 握手与版本
 
-- Electron Main 连 `/ws` 时带：`Authorization: Bearer <access_token>`（远程）+ `X-Protocol-Version: 2`。
-- v2 连接建连帧：`session`（历史回放）→ `server_info`（协议版本/能力/服务形状）→ `expression`（当前心情）。
-- `server_info.features` 如实反映能力：`structured_generation`（本批次 true 前为 false）、`multi_conversation`（批次 3）、`desktop_runtime`（批次 4）、`dictation`（批次 6）。
+- Electron Main 连 `/ws` 时带：`Authorization: Bearer <access_token>`（远程）+ `X-Protocol-Version: 2` + **`X-Client-Platform: electron`**（批次 4，Desktop 工具桥定向投递目标标识，spec §5.1 D-l）。
+- v2 连接建连帧：`session`（历史回放）→ `server_info`（协议版本/能力/服务形状 + **`connectionId`**，批次 4）→ `expression`（当前心情）。
+- **`server_info.connectionId`（批次 4）**：仅 v2 + electron 连接下发（`conn_<uuid4 hex[:12]>`，= WS 握手生成的连接 ID）；普通 v2 / v1 恒省略。Electron 据此构造附件上传 `X-Client-Connection` 头（spec §5.4 持有者校验②依赖）。
+- `server_info.features` 如实反映能力：`structured_generation`（本批次 true 前为 false）、`multi_conversation`（批次 3）、`desktop_runtime`（**批次 4 = true**）、`dictation`（批次 6）。
+- **v1 忽略 `X-Client-Platform`**：v1 无 desktop 概念，伪冒 platform 头不生效（负面隔离，spec §5.1）。
 
 ## 2. 一次完整 v2 回复事件序列
 
@@ -172,5 +174,125 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `SESSION_PROTECTED` | 409 | false | 删除受保护会话 `default`（禁删守卫） |
 | `AGENT_BUSY` | 409 | true | 生成/TTS 进行中切换或删除活动会话（FSM 忙时门禁） |
 | `GENERATION_CANCELLED` | — | false | WS interrupt → `generation.failed{CANCELLED}` |
+| `DESKTOP_UNAVAILABLE` | 503 | false | **目录登记，批次 4 内无错误信封生产者**（同批次 1 `RATE_LIMITED` 先例）——无 desktop 客户端时执行 desktop 工具以 `ToolResult.fail(error_type=UNAVAILABLE)` 呈现给 Agent（LLM 可见）；错误信封落地随后续 REST 暴露 |
+| `CALL_NOT_FOUND` | 404 | false | **落地**于 `GET /api/tools/calls/{callId}`（未知 callId）与附件上传（未知 callId → 404） |
+| `CALL_EXPIRED` | 408 | false | 目录成员；语义在桥内（超时 → `error_type=TIMEOUT` + repo status=expired），`GET /api/tools/calls/{callId}` 查询如实返回 `expired` 不抛错 |
+| `CALL_IDEMPOTENCY_CONFLICT` | 409 | false | 目录成员；语义在桥内（`handle_status` 参数篡改拒绝：mark failed + 立即 resolve 失败态 + return False） |
 
 **数据保护语义**：`DELETE /api/sessions/default` → 409 `SESSION_PROTECTED`（`default` 恒存在且受保护，禁删——含其 append-only 归档）；生成/TTS 进行中 `activate`/`delete` 活动会话 → 409 `AGENT_BUSY`。
+
+---
+
+## 10. Desktop 工具契约（批次 4，spec §4/§5/§6/§7）
+
+统一 Tool Runtime + Desktop 工具桥（BE-040~043）：四个 P0 Desktop 工具
+（`desktop.file.select/read/write` + `desktop.screen.capture`，`runtime="desktop"`、
+`approvalAuthority="client"`）经现有 v2 WS 连接完成「请求 → 客户端校验 → 用户审批 →
+执行 → 结果回传」安全往返。**`desktop.command.run` 不注册**；服务器沙盒 `read_file`/
+`write_file` 继续标 `runtime="backend"`（不伪装 Desktop）。
+
+### 10.1 客户端标识与连接
+
+- Electron Main 连 `/ws` 带 `X-Protocol-Version: 2` + `X-Client-Platform: electron`。
+  握手成功后桥 `is_available()=true`，`server_info.features.desktop_runtime=true`，
+  `server_info.connectionId = conn_<uuid4 hex[:12]>`（附件上传持有者校验头来源）。
+- **仅 v2 连接**处理 desktop 语义；v1 忽略 platform 头（伪冒隔离）。
+- **LLM 暴露过滤（D-j）**：desktop 工具仅客户端连接时出现在 LLM function schema
+  （`definitions()`）与工具面板（`plugin_list` 的 `available`）；未连接时 definitions
+  移除、plugin_list 保留 `available=false`。`GET /api/tools` 的 `desktopAvailable`
+  随连接状态翻转。
+
+### 10.2 Server→Client：`tool.request`
+
+```json
+{
+  "type": "tool.request",
+  "callId": "call_<uuid4 hex[:12]>",
+  "toolName": "desktop.file.read",
+  "toolVersion": "1.0.0",
+  "runtime": "desktop",
+  "arguments": {"path": "/home/user/doc.txt"},
+  "reason": "用户请求分析所选文件",
+  "riskLevel": "medium",
+  "permissionRequired": true,
+  "approvalAuthority": "client",
+  "paramHash": "sha256…",
+  "expiresAt": "2026-08-05T00:01:00+00:00",
+  "requestId": "req_…"
+}
+```
+
+- **定向单连接**投递到 `client_platform == "electron"` 的 v2 channel（非广播）；
+  无目标连接时插件层已提前拦截（`is_available` 守卫 → UNAVAILABLE）。
+- `paramHash` = `arguments` 的规范化 JSON（键排序 + 紧凑分隔 + 保留非 ASCII）SHA-256
+  ——BE-043 篡改拒绝权威依据（仅覆盖 `arguments`，不覆盖 result 的 output/attachments）。
+- `expiresAt` = 桥超时（120s）绝对过期时间。
+
+### 10.3 Client→Server：`tool.status`（判别六态）
+
+```json
+{
+  "type": "tool.status",
+  "callId": "call_…",
+  "status": "result",
+  "toolName": "desktop.file.read",
+  "toolVersion": "1.0.0",
+  "runtime": "desktop",
+  "paramHash": "sha256…",
+  "output": "…",
+  "error": {"code": "…", "message": "…"},
+  "attachments": [{"url": "/uploads/…", "mimeType": "image/png", "label": "截图"}],
+  "executionSummary": "已读取文件（4.2 KB）"
+}
+```
+
+| status | 语义 | 桥行为 |
+|---|---|---|
+| `accepted` / `running` | Electron 已接手 / 执行中 | 仅更新 repo（不 resolve，阶段推进 accepted↔running 合法） |
+| `result` | 成功（output + attachments + executionSummary） | repo `succeeded` + resolve；TextPart 用 `llm_summary`（executionSummary）优先 |
+| `error` | 失败 `{code,message}` | repo `failed` + resolve（error.message → Agent） |
+| `rejected` | 用户拒绝 | repo `rejected` + resolve（CANCELLED，"用户拒绝了该工具调用"） |
+| `cancelled` | 客户端取消 | repo `cancelled` + resolve（CANCELLED） |
+
+- **篡改拒绝（BE-043）**：回传 `toolName/toolVersion/runtime/paramHash` 与登记不一致 →
+  立即 `mark failed`（`CALL_IDEMPOTENCY_CONFLICT`）+ resolve 失败态
+  （TOOL_ERROR，"参数与请求不一致，已拒绝"）+ 丢弃该 status——不挂超时。
+- **断连（D-o）**：目标连接断开 → repo 标 `offline`。未接手（pending）call 立即 resolve
+  UNAVAILABLE（"桌面客户端已断开"）；已接手（accepted/running）call **不自动取消**
+  （Electron 可能已副作用），future 挂起到超时或**晚到结果**。**重连不自动重投执行请求**
+  （防重复副作用，仅可查/可重传 result）。
+- **重传结果闭环**：offline 半终态可被晚到 `result/error/rejected/cancelled` 覆盖为终态
+  （迁移表 `offline → succeeded/failed/…` 合法）；已终态 call 晚到 status 仅更新
+  `result/error` 字段（终态枚举不可覆盖）。
+- **幂等去重（BE-043）**：同 `(toolName, paramHash)` 且 call 仍 pending 的并发/重试 →
+  复用原 callId、仅一次投递（防重复弹窗）；offline/expired 不参与去重（重试即新调用）。
+
+### 10.4 附件上传
+
+- **传输路径**：附件字节经 REST `POST /api/uploads/desktop/{callId}`（multipart `file` 字段）
+  → 落盘 `/uploads/desktop/<callId>.<ext>` → 返回 `{url}` → Electron 在
+  `tool.status{status=result}` 的 `attachments` 回填该 url。
+- **持有者校验**：① callId 存在（否则 404 `CALL_NOT_FOUND`）；② 上传连接带
+  `X-Client-Connection` 头 = 握手 `connectionId` = `target_connection`（否则 403
+  `INVALID_REQUEST`）；③ call 处于可收结果状态（pending/accepted/running/offline，
+  终态拒绝 403——防伪附件）。校验失败不落盘。
+- **落盘为消息图片**：`tool_result.images`（image/* 附件）→ `ToolResultMessage.content`
+  = `[TextPart(llm_summary/execution_summary), ImagePart(src=url, mime)]`——截图经落盘
+  自动出现在历史回放/搜索/资源索引。
+
+### 10.5 注册表 REST（BE-042）
+
+| 端点 | 说明 |
+|---|---|
+| `GET /api/tools` | `ToolRegistryResponse{tools: ToolMetadata[16], desktopAvailable}`——完整元数据（runtime/riskLevel/version/permissionRequired/approvalAuthority/inputSchema/outputSchema/available）供 Electron 校验「只接受已注册工具和版本」 |
+| `GET /api/tools/calls/{callId}` | `DesktopCallStatus`（callId/toolName/toolVersion/runtime/paramHash/status/createdAt/expiresAt/result/error）；status 用 repo 枚举（`succeeded` 等），`expired` 如实返回不抛 408；未知 callId → 404 `CALL_NOT_FOUND` |
+
+认证走批次 1 产品认证（`AGENT_ACCESS_TOKEN` 配置时匿名 401）。
+
+### 10.6 后端审批 enrich 版本门控（BE-042）
+
+`tool_approval` 消息**类型不变**（v1 前端零破坏）：enrich 字段（`summary` 结构化参数摘要、
+`runtime`、`version`、`riskLevel`、`permissionRequired`、`approvalAuthority`）**仅 v2
+连接收到**；v1 连接收到与现状逐字节一致的原样 `{tool, request_id, params}`。
+Desktop 工具**不走 `tool_approval`**（approvalAuthority=client，Electron 自管本地授权），
+走 §10.2/§10.3 的 `tool.request`/`tool.status`。

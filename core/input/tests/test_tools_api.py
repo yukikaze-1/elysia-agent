@@ -163,6 +163,61 @@ class TestToolsRegistry:
 
 
 @pytest.mark.service
+class TestLlmExposureFilter:
+    """D-j：desktop 工具仅 desktop 客户端连接时暴露给 LLM。
+
+    definitions()（LLM function schema）与 plugin_list（工具面板）双断言——
+    desktop 未连接时 definitions 移除 desktop 工具（避免 LLM 选不可用工具）；
+    plugin_list 仍列出（available=false，客户端知晓存在但不可调，spec §3.2）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_definitions_and_plugin_list_gated_by_bridge(
+            self, aiohttp_client, fresh_idempotency):
+        """连接/断连 → definitions 含/不含 desktop 工具 + plugin_list available 翻转。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            adapter = agent.tool_adapter
+            manager = adapter._manager  # noqa: SLF001 — 测试内直读 manager 断言 plugin_list
+
+            # 未连接：definitions 无 desktop 工具；plugin_list 列出 desktop（available=False）
+            defs = [d["function"]["name"] for d in adapter.definitions()]
+            assert not any(n.startswith("desktop.") for n in defs)
+            assert "read_file" in defs and "write_file" in defs  # backend 恒在
+            plugs = {p["name"]: p for p in manager.plugin_list}
+            for name in DESKTOP_NAMES:
+                assert name in plugs, "plugin_list 仍列出 desktop 工具（存在但不可用）"
+                assert plugs[name]["available"] is False
+                assert plugs[name]["runtime"] == "desktop"
+            assert all(plugs[n]["available"] is True for n in plugs
+                       if n not in DESKTOP_NAMES)
+
+            # 连接：definitions 含 desktop 工具；plugin_list available=True
+            await agent.desktop_bridge.on_client_connect("conn_x")
+            agent._sync_desktop_available()  # noqa: SLF001 — 组合根私有同步入口
+            defs = [d["function"]["name"] for d in adapter.definitions()]
+            assert all(n in defs for n in DESKTOP_NAMES)
+            plugs = {p["name"]: p for p in manager.plugin_list}
+            assert all(plugs[n]["available"] is True for n in DESKTOP_NAMES)
+            assert "desktop.command.run" not in defs  # spec §四.7 不注册
+
+            # 断开：definitions 移除 desktop 工具；plugin_list 回到 available=False
+            await agent.desktop_bridge.on_client_disconnect("conn_x")
+            agent._sync_desktop_available()  # noqa: SLF001
+            defs = [d["function"]["name"] for d in adapter.definitions()]
+            assert not any(n.startswith("desktop.") for n in defs)
+            plugs = {p["name"]: p for p in manager.plugin_list}
+            assert all(plugs[n]["available"] is False for n in DESKTOP_NAMES)
+        finally:
+            await agent.stop()
+
+
+@pytest.mark.service
 class TestToolsCallStatus:
     """GET /api/tools/calls/{callId} 状态查询。"""
 

@@ -115,3 +115,28 @@ subagent 验收 **ACCEPTED**（1 中：features.structured_generation 应为 tru
 各 Task subagent 验收 ACCEPTED（12 任务独立提交，Task 13 总回归）。**BE-024** 由延后状态正式落地（generation 状态查询 + pending 查询 + 终态 mark）。
 
 **验收批次 3 独立复批（2026-08-05）**：ACCEPTED。验收员按 docs/14 BE-030/031/032 + BE-024 逐项核对 spec/代码/测试——全部满足：BE-030（列表游标/创建/详情+首页/切换+conversationId 路由/重命名/删除联动+active 回落/上下文·Token 隔离）；BE-031（before/limit has_more + after 增量 + find_context 上下文窗口 + query_search 组合过滤含自然日 IANA 时区半开区间 + 搜索项 ID 语义 + /api/messages 兼容接口零改动保留）；BE-032（image/video/sticker/file/audio/link 分类 + 来源消息 ID/时间/url + 分页/权限与会话一致）；BE-024（generation 状态查询/stale running 启动清理/pending 查询/终态重放按 generationId 去重/断线重连语义闭环）。回归 `make test-quick` **2176 passed / 2 skipped**；针对性测试 **204 + 160 通过**（session_routes/session_ws/session_manager/generation_registry/generation_wiring/session_resolver/messages_api_compat/multi_session/token_tracker/v2_generation 等）；`make lint` + `make check-types` 通过；`contract.generated.ts` v1 类型字节不变、`python -m frontend_contract --check` 无漂移。验收报告见 `.superpowers/sdd/2026-08-04-electron-backend-batch3-multi-session/acceptance-report.md`。
+
+---
+
+## 批次 4：统一 Tool Runtime 与 Desktop 工具桥（BE-040~043） ✅ 完成
+
+**提交：** `24b04ae1`（契约 tool.request/tool.status + ToolMetadata/ToolRegistryResponse/DesktopCallStatus）`ac1fe5dd`（ToolPlugin runtime/version/risk_level/output_schema + desktop 四插件）`d271afe6`（DesktopCallRepository）`e42a3357`（DesktopToolBridge）`d6b1f218`（ToolMetadata 导出 + definitions 运行时过滤 + tool_approval 版本门控）`68ae65ad`（agent 集成：desktop_bridge 构造/注入/生命周期 + ToolAdapter 过滤）`f8b54801`（X-Client-Platform 握手 + tool.status 路由 + 负面隔离 + desktop_runtime=true）`edac1c6b`（GET /api/tools + calls/{callId} + 附件上传持有者校验）`aac1f5a7`（server_info 下发 connectionId）+ **Task 10**（`docs+batch4: 回归收敛 + 测试矩阵 + 协议/进度/安全文档`，本批次收尾）
+**Spec（v0.2，吸收四角度 review 全部 findings）：** `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`
+**Plan：** `.superpowers/plans/2026-08-05-electron-backend-batch4-desktop-tools/`（Task 1-10 严格顺序）
+
+### 结果
+
+- **Runtime 感知 ToolRegistry（BE-040）**：`ToolPlugin` 增 `runtime/version/risk_level/output_schema`；12 个 backend 工具补 risk_level 标注（runtime=backend 继承默认零改动）；`ToolManager.registry_metadata()`（16 工具完整元数据）+ `definitions(filter_runtime)` LLM schema 运行时过滤 + `plugin_list` 元数据扩展（runtime/version/risk/permission/approvalAuthority/available）。
+- **Desktop 工具桥（BE-041/043）**：`DesktopCallRepository`（`desktop_calls` 集合，Mongo + 进程内缓存，离线读走缓存幂等不失效，状态迁移守卫终态不可覆盖/offline→终态合法）+ `DesktopToolBridge`（幂等去重锁同参并发单投、先登记后投递防极速竞态、future 终态唯一、篡改拒绝立即 resolve、断连 pending 立即 UNAVAILABLE/accepted 挂起可重传、超时 expired、重连不自动重投）。
+- **四 desktop 插件**（`core/tools/desktop/plugin.py`）：`desktop.file.select/read/write` + `desktop.screen.capture`（risk safe/medium/high/high，safety.request_timeout=120s 防 SafetyPipeline 30s 截断）；execute 委托桥；`desktop.command.run` 不注册。沙盒 `read_file/write_file` 仍 runtime=backend。
+- **WS 协议（spec §5）**：`X-Client-Platform: electron` 握手（仅 v2，v1 伪冒隔离）→ 桥 connected + `server_info.connectionId` 下发 + `desktop_runtime=true`；`tool.request`（Server→Client 定向投递单 electron 连接）+ `tool.status`（Client→Server 六态判别）经现有 v2 WS。
+- **注册表 REST（BE-042）**：`GET /api/tools`（16 工具元数据 + desktopAvailable 翻转）+ `GET /api/tools/calls/{callId}`（repo 枚举状态，expired 如实返回，未知 404 `CALL_NOT_FOUND`）；认证 401。
+- **附件上传（spec §5.4）**：`POST /api/uploads/desktop/{callId}` 持有着校验（callId 存在/连接=target_connection/可收结果状态）→ 落盘 `/uploads/desktop/<callId>.<ext>` → `ToolResult.images` → `ToolResultMessage.content = [TextPart, ImagePart]`（截图进聊天，回放/搜索/资源自动吃到；mime 非图片/空兜底过滤）。
+- **tool_approval 版本门控（BE-042）**：enrich（summary/runtime/version/riskLevel/permissionRequired/approvalAuthority）仅 v2 生效、v1 收原样 `{tool, request_id, params}` 逐字节不变；desktop 工具不走 tool_approval（approvalAuthority=client）。
+- **错误码目录（批次 4）**：`DESKTOP_UNAVAILABLE`(503, 目录登记无信封生产者)/`CALL_NOT_FOUND`(404, 落地于 calls/{callId}+附件上传)/`CALL_EXPIRED`(408, 目录成员语义在桥内)/`CALL_IDEMPOTENCY_CONFLICT`(409, 目录成员语义在桥内篡改拒绝)。完整表见 `docs/electron-backend-protocol-v2.md §9.1` + §10 Desktop 工具契约节。
+- **Task 10 测试收敛**：新增多轮 tool-calling fake LLM（`_ToolCallingLLM`，首轮 tool_calls + 结果后文本回复，pytest 可导入）+ `_inject_fake_storage` 注入 DesktopCallRepository（`agent._desktop_call_repo` + `agent.desktop_bridge._repo` 双引用同步）+ service 往返/断连重连/幂等/篡改全矩阵（`test_desktop_roundtrip.py` 6 测）+ LLM 暴露过滤双断言（definitions + plugin_list，`test_tools_api.py`）。spec §11 矩阵逐项收敛（握手/负面隔离/版本门控/注册表/附件/ImagePart/feature 由 Task 7/8/9 已覆盖）。
+- **回归**：`make test-quick` **2358 passed / 2 skipped / 87 deselected**（新增 182）；`make lint` 通过；`make check-types` 无漂移（`contract.generated.ts` v1 类型字节不变）。
+
+### 验收
+
+docs/14 场景 4（BE-040~043 门槛：四个 Desktop P0 工具完成安全往返）逐项满足：① electron 连接 → `GET /api/tools` 拉到 4 desktop 工具元数据；② LLM 选 `desktop.file.read` → 建 callId + 定向投递 `tool.request`（paramHash/expiresAt 完整）；③ `accepted→running→result` → Agent 拿 ToolResult + 截图附件上传 → 落盘消息含 ImagePart；④ backend write_file 审批 `tool_approval` v2 enrich/v1 原样、approvalAuthority=backend、desktop 不回退；⑤ 同参并发单投复用 callId、篡改拒绝及时失败、断连 pending 立即 UNAVAILABLE/accepted 标 offline 可查、重连重传 result → succeeded、`GET /api/tools/calls/{callId}` 可查；⑥ `desktop.command.run` 不在注册表、沙盒 read/write 仍 runtime=backend。Task 10 自检：测试矩阵与 spec §11 逐项对齐、错误码文档与实现一致、progress 批次 4 完整。

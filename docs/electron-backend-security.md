@@ -1,7 +1,7 @@
 # Electron 后端安全部署指南
 
-**文档版本：** v0.1（批次 1 产出，BE-010）
-**关联：** `docs/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`
+**文档版本：** v0.2（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口）
+**关联：** `docs/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`
 
 本文件说明 Elysia Agent 后端的**远程安全部署**方式：产品认证、TLS 终止、防护范围与已知缺口。远程部署必须遵循本指南；本地开发（回环 + 无 token）维持匿名。
 
@@ -23,8 +23,8 @@
 - `access_token` 为空 → **全匿名**（本地开发，v1 前端兼容）；
 - 非空 → 以下全部要求 `Authorization: Bearer <access_token>`：
   - `/ws` 握手（拒绝升级返回 401，非 101）；
-  - 全部业务 `/api/*`（`/api/chat` `/api/messages` `/api/providers` `/api/images`）；
-  - `/uploads/*` GET 资源读取。
+  - 全部业务 `/api/*`（`/api/chat` `/api/messages` `/api/providers` `/api/images` **`/api/tools` `/api/tools/calls/{callId}`**（批次 4，BE-042））；
+  - `/uploads/*` GET 资源读取（**含 `/uploads/desktop/*`**，批次 4 附件落盘目录）。
 - 未带凭据 → 401 `AUTH_REQUIRED`；凭据错误 → 401 `AUTH_INVALID`；均返回统一错误信封。
 
 ### 1.3 凭据载体
@@ -90,7 +90,7 @@ server {
 
 - `max_request_bytes`（默认 8MB）：业务 JSON body 上限，超限 413 `REQUEST_TOO_LARGE`；
 - `max_ws_connections`（默认 64）：并发 WS 上限，超限 503 `CONNECTION_LIMITED`；
-- 图片上传大小/类型沿用 `image_max_mb` / `image_allowed_types`（415 `INVALID_REQUEST` 映射）。
+- 图片上传大小/类型沿用 `image_max_mb` / `image_allowed_types`（415 `INVALID_REQUEST` 映射）——含 `POST /api/uploads/desktop/{callId}`（批次 4 桌面附件，图片走同约束 + `application/octet-stream` 等通用文件白名单）。
 
 ### 3.1 受保护会话与数据完整性（批次 3 多会话）
 
@@ -98,11 +98,20 @@ server {
 - **忙时门禁**：生成/TTS 进行中 `activate`（WS/REST）或删除**活动会话** → 409 `AGENT_BUSY`（retryable），防 engine 换绑与异步延续竞态；
 - 会话 ID 未登记即被 v2 显式 `conversationId` 路由会 lazy-create——不碰 `default`，仅可能产生幽灵会话文档（Demo 可接受，后续批次可加白名单校验）。
 
+### 3.2 Desktop 工具桥安全语义（批次 4，BE-040~043）
+
+- **客户端标识**：`X-Client-Platform: electron` 握手头**仅 v2 解析**（v1 伪冒隔离，负面隔离测试守护）；desktop 工具请求**定向投递**到该 electron 连接（非广播）。
+- **附件持有者校验**：`POST /api/uploads/desktop/{callId}` 三重校验（① callId 存在否则 404 `CALL_NOT_FOUND`；② 上传连接 `X-Client-Connection` = 握手 `connectionId` = `target_connection` 否则 403 `INVALID_REQUEST`；③ call 处于可收结果状态，终态拒绝 403 防伪附件）——校验失败不落盘。
+- **参数篡改拒绝（BE-043）**：`tool.status` 回传 `toolName/toolVersion/runtime/paramHash` 与登记不一致 → 立即 mark failed（`CALL_IDEMPOTENCY_CONFLICT`）+ resolve 失败态 + 丢弃（不挂超时）；paramHash = 规范化 arguments SHA-256。
+- **断连/重传**：断连 → repo 标 `offline`；未接手（pending）call 立即 resolve UNAVAILABLE（无副作用已发生，早收尾安全）；已接手（accepted/running）call 不自动取消（Electron 可能已副作用），靠重连后重传 result 对账（`offline → 终态` 迁移）。**重连不自动重投执行请求**（防重复副作用）。
+- **敏感纪律（D-p）**：`desktop_calls` 集合存完整 arguments（审计/幂等必需）；bridge/ws 层 logger 只记 callId/toolName/status，**不打印 arguments 值**；错误信封 `details` 不放本地路径/参数；附件只传后端托管 URL。
+- **信任边界（显式认定）**：`desktop.file.read` 的 `path` 接受任意值（LLM 可凭空捏造路径）——来源追踪与本地路径校验属 **Electron 本地安全职责**（黑名单/沙盒/用户选择记录，docs/15 §三.2），后端只负责结构化传输 + paramHash 绑定，不额外做跨调用 path 白名单。
+
 ## 4. 已知缺口（后置批次）
 
 | 缺口 | 后置 |
 |---|---|
-| `/uploads/*` 匿名 GET 已拒（有 token），但**短期签名 URL / 鉴权下载**未实现——当前 v2 客户端需带 `Authorization` 访问资源 | 批次 7（BE-070/071） |
+| `/uploads/*` 匿名 GET 已拒（有 token），但**短期签名 URL / 鉴权下载**未实现——当前 v2 客户端需带 `Authorization` 访问资源（**含 `/uploads/desktop/*` 附件**：上传路径仅产品认证保护，无 per-call/per-owner 的下载鉴权——callId 即 URL 路径，持有 callId 者若已通过产品认证即可 GET） | 批次 7（BE-070/071） |
 | 速率限制实现（`RATE_LIMITED` 仅入目录） | 批次 2+ |
 | 自定义模型密钥 Secret Store（当前 `api_key_env` 仅运维预配置） | 批次 5（BE-050） |
 | 日志无 token 已有测试守护；但 Provider 测试密钥不得经匿名明文连接（已由产品认证覆盖） | 批次 5 强化 |
