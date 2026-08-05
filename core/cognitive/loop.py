@@ -36,6 +36,7 @@ from core.status.agent_fsm import AgentFSM
 from core.monitoring.event_bus import EventBus
 from core.utils import set_request_id, get_request_id, log_conversation
 from Module.tool.protocol import ToolResult
+from core.storage.desktop_call_repo import STATUS_OFFLINE
 from core.adapter.prompt_assembler import PromptAssembler
 from core.memory.session import SessionMemory
 from core.text.stream_processor import StreamProcessor, StreamEvent, StreamEventType
@@ -63,7 +64,7 @@ from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.token import TokenUsageSummary
 from core.schema.tool import ToolCall, ToolCallId
 
-from core.schema.part import TextPart
+from core.schema.part import ImageMime, ImagePart, Part, TextPart
 from core.schema.adapters.message_adapter import parts_from_dicts
 from core.schema.utils import now_iso as _now_iso
 
@@ -96,6 +97,33 @@ def _is_llm_layer_error(exc: BaseException) -> bool:
         return True
     mod = type(exc).__module__
     return mod.startswith("httpx") or mod.startswith("openai")
+
+
+def _build_tool_result_parts(tool_result: ToolResult) -> list[Part]:
+    """组装 ToolResultMessage.content：文本摘要 + 图片 ImagePart（mime 白名单过滤）。
+
+    批次 4（spec §5.4）：工具返回图片附件（如 desktop.screen.capture 截图）经落盘
+    成为消息 ImagePart——回放/搜索/资源索引自动吃到，前端渲染属联调范围。文本部分
+    llm_summary 优先（非 text 结果给 LLM 看的描述），fallback content——text 结果
+    llm_summary 恒空，行为与既有 `[TextPart(content)]` 一致（wire 不变）。
+
+    ImagePart.mime 兜底（review 修正）：mime_type 命中 ImageMime 枚举
+    （image/png/jpeg/gif/webp）→ 原样；空（MediaItem 默认）/非图片（如 Task 8 附件
+    白名单的 application/octet-stream）→ 过滤不落 ImagePart——否则 ImagePart 构造抛
+    ValidationError 拖垮整轮工具结果。
+    """
+    parts: list[Part] = [
+        TextPart(content=tool_result.llm_summary or tool_result.content or ""),
+    ]
+    for item in tool_result.images:
+        if not item.url:  # 无 URL 无法渲染（且 _validate_src 拒绝空串）
+            continue
+        try:
+            mime = ImageMime(item.mime_type)
+        except ValueError:
+            continue  # 空/非图片 mime → 过滤
+        parts.append(ImagePart(src=item.url, mime=mime))
+    return parts
 
 
 from core.cognitive.tools import CognitiveTools
@@ -809,7 +837,7 @@ class CognitiveLoop(CognitiveTools):
                 "truncated": tool_result.truncated,
             })
             self._session.add_message(ToolResultMessage(
-                content=[TextPart(content=tool_result.content or "")],
+                content=_build_tool_result_parts(tool_result),
                 tool_call_id=tc.id,
                 tool_name=tc.function.name,
                 success=tool_result.success,
@@ -1326,6 +1354,33 @@ class CognitiveLoop(CognitiveTools):
             active_tasks = await self._task_system.list_active_tasks()
         await self.phases.finish_turn(has_background_tasks=bool(active_tasks))
 
+    async def _cancel_desktop_calls(self) -> None:
+        """中断/取消回合时取消在途 desktop 调用（interrupt 语义，spec §8）。
+
+        经 ToolAdapter.tool_context.services 取桥（Task 6/8：start() 时 extra_services
+        注入 desktop_bridge）。无桥 / 无在途调用 → no-op。遍历 pending_calls() 对
+        在途（pending，未接手）调用逐 cancel_call——桥内 future 立即 resolve(CANCELLED)
+        + repo mark cancelled，回合取消后不再挂起到 120s 超时。
+
+        offline 调用跳过（D-o）：断线标 offline 属断开规则，与 generation cancelled
+        不混用——已接手的 offline 调用靠 Electron 重连后重传 result（offline → 终态
+        迁移）闭环，取消会破坏该对账。
+        """
+        if self._tool_adapter is None:
+            return
+        bridge = self._tool_adapter.tool_context.services.get("desktop_bridge")
+        if bridge is None:
+            return
+        try:
+            for doc in await bridge.pending_calls():
+                if doc.get("status") == STATUS_OFFLINE:
+                    continue  # D-o：断线标 offline，保重传结果闭环
+                call_id = doc.get("call_id")
+                if call_id:
+                    await bridge.cancel_call(call_id)
+        except Exception:
+            logger.debug("取消在途 desktop 调用失败（桥不可用/断连竞态）", exc_info=True)
+
     async def _handle_interrupt(self, source: str | None = None) -> None:
         """Clean up after interruption — cancel TTS tasks, return to IDLE.
 
@@ -1365,6 +1420,8 @@ class CognitiveLoop(CognitiveTools):
                         self._generation_ctx.generation_id, status=status)
                 except Exception:
                     logger.debug("generation mark %s 失败", status, exc_info=True)
+        # 批次 4（spec §8）：取消在途 desktop 调用（interrupt 语义，无桥/无在途则 no-op）
+        await self._cancel_desktop_calls()
         self._executing_tools.clear()
         self._tts_mgr.cancel_all()
         await self._output.typing(False)
