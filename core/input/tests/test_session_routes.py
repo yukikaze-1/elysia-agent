@@ -494,6 +494,21 @@ class TestMessagesHistory:
         assert data2["total"] == 5
 
     @pytest.mark.asyncio
+    async def test_malformed_before_cursor_400(self, aiohttp_client):
+        """畸形 before 游标 → 400 CONTRACT_VALIDATION（验收修复：原 ObjectId 未捕获 500）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_bad")
+        await _seed_text_messages(agent, "conv_test_bad", 2)
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/api/sessions/conv_test_bad/messages",
+                                params={"before": "not-a-valid-objectid"})
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["code"] == "CONTRACT_VALIDATION"
+
+    @pytest.mark.asyncio
     async def test_after_incremental_asc(self, aiohttp_client):
         agent = _FakeAgent()
         await _create_session(agent, "conv_test_inc")

@@ -88,8 +88,10 @@ state speaking → message("") ×N（每句边界）→ state idle
 
 ## 6. 认证与上传现状
 
-- `auth_token`（`SERVER_AUTH_TOKEN`）仅护 `/shutdown` `/restart` `/tools` `/tools/reload` + `/debug/*`（`core/input/server.py:61-74` `_check_auth` + `register_debug_routes`）。`/ws`、`/api/*`、`/uploads/*`、`/health` `/ready` **匿名**。
-- `/uploads/*`：`add_static` 公开静态（`server.py:251`），图片 URL `/uploads/images/{name}` 永久匿名可访问。
+> **批次 0 快照注记**：本节为批次 0 时点的认证/上传现状，已被批次 1 取代——`AGENT_ACCESS_TOKEN` 现护 `/ws`、业务 `/api/*`、`/uploads/*`（匿名 401，见 `docs/electron-backend-security.md`）。`/uploads/images/{name}` 静态读取亦在认证覆盖下；`/health` `/ready` 不涉敏感数据保持开放。下文行号/细节为批次 0 快照事实，仅作演进起点。
+
+- `auth_token`（`SERVER_AUTH_TOKEN`）仅护 `/shutdown` `/restart` `/tools` `/tools/reload` + `/debug/*`（`core/input/server.py:61-74` `_check_auth` + `register_debug_routes`）。`/ws`、`/api/*`、`/uploads/*`、`/health` `/ready` **匿名**（批次 0）。
+- `/uploads/*`：`add_static` 公开静态（`server.py:251`），图片 URL `/uploads/images/{name}` 永久匿名可访问（批次 0）。
 - 业务 REST（`core/input/api_routes.py`）：`/api/providers`（CRUD + test）、`/api/images`（上传）、`/api/chat`（fire-and-forget，无 ACK）、`/api/messages`（**全库 `_id` 游标分页**，无会话/日期/搜索维度）。
 - 配置：`ServerConfig`（`core/config/app_config.py:32-37`）有 `host/port/auth_token/image_max_mb/image_allowed_types`；**无** access_token、无 HTTP 速率限制、无并发连接上限、无请求体大小上限（aiohttp 默认 client_max_size 1MB）。
 
@@ -131,7 +133,7 @@ state speaking → message("") ×N（每句边界）→ state idle
 
 ## 10. 未决 / 已知缺口（供后续批次）
 
-- `/uploads/*` 永久匿名、无短期签名 URL（批次 7）；
+- ~~`/uploads/*` 永久匿名~~ — **批次 1 已加产品认证**（`AGENT_ACCESS_TOKEN` 护上传与读取）；短期签名 URL 仍为批次 7 未决项。
 - ~~无产品级多会话 API~~ — **批次 3 已交付**（`SessionManager` + `session_routes.py`，见 protocol-v2 §9）；
 - ~~无协议版本协商 / server_info~~ — **批次 1 已交付**；
 - ~~无统一错误信封~~ — **批次 1 已交付**；

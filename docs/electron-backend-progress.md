@@ -39,12 +39,12 @@ subagent 验收 ACCEPTED（初 REJECTED：cancel 未真正打断 + 轨迹混入�
 
 - **产品认证（D2）**：`AGENT_ACCESS_TOKEN`（`ServerConfig.access_token`，`secret=True`，显式参数默认 `""`）护 `/ws` + 业务 `/api/*` + `/uploads/*`；匿名 401 `AUTH_REQUIRED`、错 token 401 `AUTH_INVALID`；无 token 环境全匿名（v1 兼容）。与 `SERVER_AUTH_TOKEN`（admin/debug）权限域分离。
 - **版本协商（D3）**：WS 握手头 `X-Protocol-Version: 2` → v2 发 `server_info`（`core/version.py` `__version__="0.1.0"`，features 全 false 严禁超前声明，取代 capabilities）；缺省 → v1 发 capabilities 零改动。
-- **统一错误（D7）**：`ProtocolError` 信封（code/message/retryable/requestId/error/details），`error`=message 兼容别名（v1 前端 `err.error` 不破坏），requestId 独立 UUID。错误码目录初始 12 码（`RATE_LIMITED` 仅入目录，限流器批次 2+）。
+- **统一错误（D7）**：`ProtocolError` 信封（code/message/retryable/requestId/error/details），`error`=message 兼容别名（v1 前端 `err.error` 不破坏），requestId 独立 UUID。错误码目录初始 13 码（`RATE_LIMITED` 仅入目录，限流器批次 2+；完整累计目录见 protocol-v2 §9.1）。
 - **限制（D8）**：`max_request_bytes`（app 级 client_max_size，超限 413 `REQUEST_TOO_LARGE` 信封，Content-Length 前置防 handler 吞异常）+ `max_ws_connections`（并发超限 503 `CONNECTION_LIMITED`，retryable=true）。
 - **启动守卫**：非回环绑定 + 无产品认证 → ERROR 显著阻塞告警（`warn_if_unsecured`，`run_server` 每轮调用）。
 - **安全文档**：`docs/electron-backend-security.md`（双 token 权限域、Nginx TLS/WSS 反代示例、限制、已知缺口、敏感纪律）。
 - **轨迹**：`frontend-handoff-v2/traces/ws-server-info.jsonl`（v2 握手：session → server_info → expression）。
-- **测试**：test-quick **1911 passed**（新增 auth 14 + version 2 + limits 3 + config 4 + contract 3）；`make check-types` 通过；`contract.generated.ts` 纯增量（v1 类型字节不变）。
+- **测试**：test-quick **1911 passed**（净增 28；新增 auth 17 + version 2 + limits 3 + config 4 + 契约测试）；`make check-types` 通过；`contract.generated.ts` 纯增量（v1 类型字节不变）。
 
 ### 验收
 
@@ -142,3 +142,41 @@ subagent 验收 **ACCEPTED**（1 中：features.structured_generation 应为 tru
 docs/14 场景 4（BE-040~043 门槛：四个 Desktop P0 工具完成安全往返）逐项满足：① electron 连接 → `GET /api/tools` 拉到 4 desktop 工具元数据；② LLM 选 `desktop.file.read` → 建 callId + 定向投递 `tool.request`（paramHash/expiresAt 完整）；③ `accepted→running→result` → Agent 拿 ToolResult + 截图附件上传 → 落盘消息含 ImagePart；④ backend write_file 审批 `tool_approval` v2 enrich/v1 原样、approvalAuthority=backend、desktop 不回退；⑤ 同参并发单投复用 callId、篡改拒绝及时失败、断连 pending 立即 UNAVAILABLE/accepted 标 offline 可查、重连重传 result → succeeded、`GET /api/tools/calls/{callId}` 可查；⑥ `desktop.command.run` 不在注册表、沙盒 read/write 仍 runtime=backend。Task 10 自检：测试矩阵与 spec §11 逐项对齐、错误码文档与实现一致、progress 批次 4 完整。
 
 **验收批次 4 独立复批（2026-08-05）**：ACCEPTED。验收员按 docs/14 BE-040/041/042/043 逐项核对 spec/代码/测试——全部满足：BE-040（`ToolPlugin.runtime/version/risk_level/output_schema` + 派生 `approval_authority`/`permission_required` + `ToolManager.registry_metadata`/`definitions(filter_runtime)`/`plugin_list` 元数据扩展；12 backend 工具 runtime=backend 零改动、沙盒 read_file/write_file 不伪装 Desktop）；BE-041（`DesktopCallRepository` Mongo+进程内缓存+迁移守卫、`DesktopToolBridge` 幂等去重锁+先登记后投递+future 终态唯一、四 desktop 插件 execute 委托桥、`tool.request`/`tool.status` 六态判别、`X-Client-Platform: electron` 握手 + `server_info.connectionId` + `desktop_runtime=true`、附件 `POST /api/uploads/desktop/{callId}` 持有者三重校验 → `ToolResult.images` → `ImagePart` 落盘）；BE-042（tool_approval enrich 版本门控 v2 收 enrich/v1 收原样逐字节不变、approvalAuthority=backend/client 派生规则、`str(params)[:200]` 保留为兼容摘要、`GET /api/tools` 认证注册表导出、无代码串执行字段、`desktop.command.run` 不注册）；BE-043（同参并发去重单投复用 callId、篡改拒绝 mark failed+立即 resolve、断连 pending 立即 UNAVAILABLE/accepted→offline 可查、重连重传 result → succeeded、`GET /api/tools/calls/{callId}` 状态查询含 expired 如实返回、终态不可覆盖、重连不自动重投）。回归 `make test-quick` **2362 passed / 2 skipped / 87 deselected**、`make test-normal` **2410 passed / 2 skipped / 39 deselected**；`make lint` 通过；`make check-types` 无漂移；`contract.generated.ts` v1 类型字节不变（纯增量 154 行）、`python -m frontend_contract --check` 通过。验收报告见 `.superpowers/sdd/2026-08-05-electron-backend-batch4-desktop-tools/acceptance-report.md`。
+
+---
+
+## 全批次独立复批（2026-08-05，批次 0-4 覆盖全部 15 项已完成 BE 任务）
+
+**验收方式**：6 路并行 subagent（批次 0/1/2/3/4 各 1 + 1 路跨批次 docs/15 Review 要点审查），全部静态核对（未跑 pytest/未写 Mongo/未启服务/未改文件），回归门禁由协调者另跑。报告见 `/tmp/electron-batch-acceptance/batchN-acceptance.md`（0/1/2/3/4）+ `batchX-crosscutting.md`。
+
+### verdict
+
+| 验收 | verdict | 结论 |
+|---|---|---|
+| 回归门禁（test-quick/lint/check-types/契约漂移） | ✅ | **2362 passed / 2 skipped / 87 deselected**，lint/check-types 通过、契约无漂移 |
+| 批次 0 BE-001 | ACCEPTED_WITH_ISSUES | 55/55 帧契约校验通过、UTC 时间戳、12 工具全 backend、批 0 未扰动测试基线 |
+| 批次 1 BE-010/020/080 | ACCEPTED_WITH_ISSUES | 匿名 401、权限域分离、错误信封、v1 契约 553 行纯增量 |
+| 批次 2 BE-021/022/023 | ACCEPTED_WITH_ISSUES | 幂等/每句独立 segmentId/终态唯一/v1 wire 逐字节 |
+| 批次 3 BE-030~032/024 | ACCEPTED | 两会话隔离、分页不重不漏、重连恢复闭环 |
+| 批次 4 BE-040~043 | ACCEPTED_WITH_ISSUES | 状态迁移表/幂等去重锁/审批门控/场景 D/E |
+| 跨批次 Review 要点（docs/15） | ACCEPTED_WITH_ISSUES | 无 v1 破坏、无泄漏、无造假、8 轨迹全契约 |
+
+**全部 15 项已完成 BE 任务满足 docs/14 + docs/15 验收**，无 critical/important 缺口。
+
+### 本轮顺手修复（低风险，随本记录提交）
+
+1. **畸形 before 游标 → 400**（批次 3 MINOR #1）：`session_routes.sessions_messages_handler` 加 `ObjectId` 合法性校验，`InvalidId` → 400 `CONTRACT_VALIDATION`（原 500）。TDD：新增 `TestMessagesHistory::test_malformed_before_cursor_400`，先 FAIL 后 PASS；`test_session_routes.py` 67 测全绿。
+2. **protocol-v2 §9.1 错误码目录补全**（跨批次 LOW #1）：目录由批次 3 的 12 码扩为批次 1-4 累计 17 码（补 AUTH_REQUIRED/AUTH_INVALID/RATE_LIMITED/CONNECTION_LIMITED/REQUEST_TOO_LARGE/INVALID_REQUEST/INTERNAL/GENERATION_PROVIDER_UNAVAILABLE/GENERATION_TIMEOUT），标题改「批次 1-4 累计」。
+3. **README/docs-README 批次号**（批次 4 INFO #5 = 跨批次 INFO #5）：「批次 0-3」→「批次 0-4」，protocol-v2/security 行补批次 4。
+4. **progress 批次 1 计数**（批次 1 LOW #1/#3 = 跨批次 LOW #3）：错误码 12→13 码；测试数「auth 14 + …」→「净增 28；auth 17 + …」。
+5. **baseline §6/§10 划销注记**（批次 0 MINOR #2）：标注批次 0 认证/上传现状已被批次 1 `AGENT_ACCESS_TOKEN` 取代。
+6. **traces README 历史快照注记**（批次 2 LOW #3 = 跨批次 LOW #2）：`frontend-handoff-v2/traces/README.md` 注明各轨迹捕获时点 + features 快照性质 + 帧数表。
+
+### 记录在案不修（spec 显式范围外 / 设计固有 / 加固建议 / 覆盖增强）
+
+- 批次 0 MINOR #1：baseline 行号随批次漂移（快照文档正常现象）。
+- 批次 1 LOW #2：spec §3.3「415 图片类型映射 INVALID_REQUEST 本批实现」过报——`/api/images` 415 走 v1 `ImageUploadError`（兼容硬约束使然，归档 spec）。
+- 批次 2 LOW #1：EmotionEngine 独立 `expression` 仍广播 v2（plan Task 5 明示照旧直发，记录在案）。LOW #2：CJK 持有上界致首段 delta 携带后续句（`segment.completed.content` 为准，仅 live-delta 显示保真）。INFO #4：ACK `clientMessageId` 回显无直接断言。INFO #5：v1 回归为帧类型断言非字节级（翻译层已静态比对）。
+- 批次 3 MINOR #2：搜索畸形日期吞空返回空结果（符合 spec 字面，只强制 INVALID_TIMEZONE 400）。MINOR #3：v2 text 未知 conversationId 懒加载静默建会话（设计取舍，404 仅 activate/CRUD/history 强制）。
+- 批次 4 LOW #1：重连后携带附件的 result 重传被持有者校验 403 拦截（spec §5.4 未定义 target_connection 重连更新机制，范围外）。LOW #2：tool.status 未校验发送连接==target_connection（桥四字段篡改校验兜底，加固建议）。LOW #3：`_locks` 无界增长（设计固有）。LOW #4：断连快照竞态（极窄窗口，无状态机破坏）。
+- 跨批次 INFO #4：`transcription` 仍自动提交触发 Agent（批次 6 场景 F 待隔离的既有行为，批次 0-4 诚实未做）。

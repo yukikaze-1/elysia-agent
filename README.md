@@ -252,9 +252,9 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | 文档 | 内容 |
 |------|------|
 | [docs/electron-backend-baseline.md](docs/electron-backend-baseline.md) | 后端协议基线（v1 现状，批次 0） |
-| [docs/electron-backend-protocol-v2.md](docs/electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + 错误码目录（批次 2/3） |
-| [docs/electron-backend-security.md](docs/electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性（批次 1/3） |
-| [docs/electron-backend-progress.md](docs/electron-backend-progress.md) | 后端改造进度（批次 0-3） |
+| [docs/electron-backend-protocol-v2.md](docs/electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 错误码目录（批次 2/3/4） |
+| [docs/electron-backend-security.md](docs/electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性（批次 1/3/4） |
+| [docs/electron-backend-progress.md](docs/electron-backend-progress.md) | 后端改造进度（批次 0-4） |
 | [docs/14-Cyrene-后端配合改造任务清单-v0.1.md](docs/14-Cyrene-后端配合改造任务清单-v0.1.md) | Electron 后端配合改造任务清单（BE-001~081，状态图例） |
 | [docs/15-Cyrene-后端改造执行上下文与Prompt-v0.1.md](docs/15-Cyrene-后端改造执行上下文与Prompt-v0.1.md) | 后端改造执行上下文与 Prompt |
 

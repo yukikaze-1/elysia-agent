@@ -13,6 +13,8 @@ import uuid
 from zoneinfo import ZoneInfo
 
 from aiohttp import web
+from bson import ObjectId
+from bson.errors import InvalidId
 
 from core.input.api_routes import _archive_to_client, _archive_msg_to_contract
 from core.schema.message import MessageRole
@@ -491,6 +493,12 @@ async def sessions_messages_handler(request: web.Request) -> web.Response:
         messages, has_more = await agent.message_repo.query_after(sid, after, limit=limit)
     else:
         before = request.query.get("before", "").strip() or None
+        # 畸形 before 游标 → 400 CONTRACT_VALIDATION（验收修复：原 ObjectId 未捕获 → 500）
+        if before is not None:
+            try:
+                ObjectId(before)  # 仅校验 24-hex 合法性，不用于查询
+            except InvalidId:
+                return _error_response("CONTRACT_VALIDATION", "非法 before 游标", 400)
         messages, has_more = await agent.message_repo.query_page(sid, before=before, limit=limit)
     total = await agent.message_repo.count_by_session(sid)
     resp = rest_contract.MessagesPageResponse(

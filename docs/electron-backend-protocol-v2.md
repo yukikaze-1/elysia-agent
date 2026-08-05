@@ -162,15 +162,24 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 
 错误信封统一（code/message/retryable/requestId）；全部匿名 401（`AGENT_ACCESS_TOKEN` 配置时）。
 
-### 9.1 错误码目录（批次 3）
+### 9.1 错误码目录（批次 1-4 累计）
 
 | code | HTTP | retryable | 场景 |
 |---|---|---|---|
+| `AUTH_REQUIRED` | 401 | false | 未带凭据访问受保护端点（`/ws`、业务 `/api/*`、`/uploads/*`，批次 1） |
+| `AUTH_INVALID` | 401 | false | 凭据错误（批次 1） |
+| `RATE_LIMITED` | 429 | false | 速率限制——**目录登记，限流器未实现**（无生产者） |
+| `CONNECTION_LIMITED` | 503 | true | 并发 WS 连接超上限（批次 1） |
+| `REQUEST_TOO_LARGE` | 413 | false | 请求体超限（`client_max_size`，Content-Length 前置，批次 1） |
+| `INVALID_REQUEST` | 403 | false | 参数/请求非法；desktop 附件上传持有者校验失败（连接 ≠ 目标连接、终态拒收，批次 1/4） |
+| `INTERNAL` | — | false | 未归类内部错误（`generation.failed` 携带，WS 事件无 HTTP 信封） |
+| `GENERATION_PROVIDER_UNAVAILABLE` | — | true | 模型服务不可用（`generation.failed` 携带，批次 2） |
+| `GENERATION_TIMEOUT` | — | true | 生成超时（`generation.failed` 携带，批次 2） |
 | `SESSION_NOT_FOUND` | 404 | false | 未知会话（activate/CRUD/history/resources/pending/generations） |
 | `GENERATION_NOT_FOUND` | 404 | false | 未知 generation 详情 |
 | `RESOURCE_NOT_FOUND` | 404 | false | 消息不存在（context 窗口锚点缺失） |
 | `INVALID_TIMEZONE` | 400 | false | 搜索时区非法（zoneinfo 无法解析） |
-| `CONTRACT_VALIDATION` | 400 | false | 缺 conversationId / clientRequestId 冲突 / 其他契约错误 |
+| `CONTRACT_VALIDATION` | 400 | false | 缺 conversationId / clientRequestId 冲突 / 畸形 before 游标 / 其他契约错误 |
 | `SESSION_PROTECTED` | 409 | false | 删除受保护会话 `default`（禁删守卫） |
 | `AGENT_BUSY` | 409 | true | 生成/TTS 进行中切换或删除活动会话（FSM 忙时门禁） |
 | `GENERATION_CANCELLED` | — | false | WS interrupt → `generation.failed{CANCELLED}` |
