@@ -37,6 +37,10 @@ jobs:
           done
       - name: Load .env
         run: cp /home/yomu/elysia-agent/.env .env
+      - name: Setup conda env (Elysia)
+        # self-hosted runner 默认 shell 无 conda——把 Elysia env 的 bin 加入 PATH，
+        # 使 ruff/pytest/python 可解析（等价 conda activate Elysia）
+        run: echo "/home/yomu/miniconda3/envs/Elysia/bin" >> $GITHUB_PATH
       - name: Run full test suite
         run: |
           set -a
