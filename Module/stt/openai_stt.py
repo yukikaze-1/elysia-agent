@@ -45,6 +45,7 @@ class OpenAICompatSTTBackend(STTBackend):
         api_key: str = "",
         base_url: str = "",
         logger: logging.Logger | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ):
         """初始化 OpenAI 兼容 STT 后端。
 
@@ -53,14 +54,20 @@ class OpenAICompatSTTBackend(STTBackend):
             api_key: API 密钥，不传则使用默认值 "stt"。
             base_url: 服务地址，为空则使用 OpenAI 默认地址。
             logger: 日志记录器，不传则使用模块默认 logger。
+            http_client: 出站守卫挂载点（批次 5）——注入的 httpx.AsyncClient，
+                非 None 时 AsyncOpenAI 复用该 client（供 Task 6/7 传守卫 client）。
         """
         self._model = model
         self._logger = logger or logging.getLogger(__name__)
-        self._client = AsyncOpenAI(
-            api_key=api_key or "stt",
-            base_url=base_url,
-            timeout=httpx.Timeout(30.0, connect=5.0),
-        )
+        self._injected_client: httpx.AsyncClient | None = http_client
+        client_kwargs: dict = {
+            "api_key": api_key or "stt",
+            "base_url": base_url,
+            "timeout": httpx.Timeout(30.0, connect=5.0),
+        }
+        if http_client is not None:
+            client_kwargs["http_client"] = http_client
+        self._client = AsyncOpenAI(**client_kwargs)
         self.last_emotion: str = "NEUTRAL"
         self.last_events: list[str] = []
 

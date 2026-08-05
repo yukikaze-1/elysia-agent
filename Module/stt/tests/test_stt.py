@@ -1,9 +1,12 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from typing import cast
 
+from Module.stt.openai_stt import OpenAICompatSTTBackend
 from Module.stt.protocol import STTBackend
 from Module.stt.registry import STTFactory
 from Module.stt.sensevoice import SenseVoiceBackend
@@ -364,3 +367,53 @@ class TestSenseVoiceEdges:
         with patch.object(backend._client, "post", mock_post):
             await backend.transcribe(b"audio", language="zh")
         # kwargs 目前被 _call_api 接受但不使用 — 至少不崩溃
+
+
+# ============================================================
+# http_client 注入（Task 5 批次 5 — custom 出站守卫挂载点）
+# ============================================================
+
+class TestHTTPClientInjection:
+    """OpenAICompatSTTBackend http_client 注入挂载点。"""
+
+    def test_injected_http_client_used(self):
+        """注入 http_client → 后端 client 使用该 client。"""
+        guard = httpx.AsyncClient()
+        try:
+            backend = OpenAICompatSTTBackend(
+                model="whisper-1",
+                api_key="sk-test",
+                base_url="https://guard.example.com/v1",
+                http_client=guard,
+            )
+            assert backend._injected_client is guard
+            assert backend._client._client is guard
+        finally:
+            asyncio.run(backend.close())
+            asyncio.run(guard.aclose())
+
+    def test_no_http_client_self_builds(self):
+        """不传 http_client → 后端自建（现状不破坏）。"""
+        with patch("Module.stt.openai_stt.AsyncOpenAI", return_value=MagicMock()) as mock_cls:
+            OpenAICompatSTTBackend(
+                model="whisper-1",
+                api_key="sk-test",
+                base_url="https://guard.example.com/v1",
+            )
+        assert "http_client" not in mock_cls.call_args.kwargs
+
+    def test_factory_passes_http_client_to_custom_backend(self):
+        """STTFactory.create("custom/x", ..., http_client=guard) → 后端收到。"""
+        guard = httpx.AsyncClient()
+        try:
+            backend = STTFactory.create(
+                "custom/whisper-1",
+                base_url="https://guard.example.com/v1",
+                api_key="sk-test",
+                http_client=guard,
+            )
+            assert backend._injected_client is guard
+            assert backend._client._client is guard
+        finally:
+            asyncio.run(backend.close())
+            asyncio.run(guard.aclose())

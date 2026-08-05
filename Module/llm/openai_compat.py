@@ -56,6 +56,7 @@ class OpenAICompatBackend(LLMBackend):
         beta_url: str = "",
         supports_prefix: bool = False,
         logger: logging.Logger | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ):
         """初始化 OpenAI 兼容协议后端。
 
@@ -67,6 +68,9 @@ class OpenAICompatBackend(LLMBackend):
                 非空时创建独立的 _beta_client。
             supports_prefix: 是否支持 prefix continuation 特性。
             logger: 日志记录器，未提供时自动创建。
+            http_client: 出站守卫挂载点（批次 5）——注入的 httpx.AsyncClient。
+                非 None 时 AsyncOpenAI 复用该 client（含 reconnect 重建），
+                供 Task 6/7 把 build_guarded_http_client 产出的守卫 client 传进来。
         """
         key = api_key or "ollama"  # Ollama accepts any non-empty value
         self._model = model
@@ -75,6 +79,7 @@ class OpenAICompatBackend(LLMBackend):
         self._api_key = key
         self._base_url = base_url
         self._beta_url = beta_url
+        self._injected_client: httpx.AsyncClient | None = http_client
         self._beta_client: AsyncOpenAI | None = None
         self.last_usage: dict | None = None  # 最近一次 API 调用的 token 消耗
         self._create_clients()
@@ -271,19 +276,16 @@ class OpenAICompatBackend(LLMBackend):
 
         创建 self._client（常规 API），如果提供了 beta_url 则额外创建
         self._beta_client。超时配置：60s 总超时，10s 连接超时。
+        注入的 http_client（批次 5 出站守卫挂载点）非 None 时透传给 AsyncOpenAI；
+        reconnect() 经本方法重建时复用同一注入 client（守卫不丢失）。
         """
         timeout = httpx.Timeout(60.0, connect=10.0)
-        self._client = AsyncOpenAI(
-            api_key=self._api_key,
-            base_url=self._base_url,
-            timeout=timeout,
-        )
+        client_kwargs: dict = {"api_key": self._api_key, "timeout": timeout}
+        if self._injected_client is not None:
+            client_kwargs["http_client"] = self._injected_client
+        self._client = AsyncOpenAI(base_url=self._base_url, **client_kwargs)
         if self._beta_url:
-            self._beta_client = AsyncOpenAI(
-                api_key=self._api_key,
-                base_url=self._beta_url,
-                timeout=timeout,
-            )
+            self._beta_client = AsyncOpenAI(base_url=self._beta_url, **client_kwargs)
 
 
 def _extract_prefix(messages: list[dict]) -> tuple[list[dict], bool]:

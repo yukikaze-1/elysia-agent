@@ -1,12 +1,14 @@
 import asyncio
 import os
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from Module.tts.protocol import TTSBackend
 from Module.tts.registry import TTSFactory
+from Module.tts.openai_tts import OpenAICompatTTSBackend
 from Module.tts.minimax_tts import MiniMaxTTSBackend, _RpmLimiter
 from Module.tts.text_preprocess import strip_all_markup, strip_action_only, strip_for_minimax
 
@@ -1079,3 +1081,68 @@ def test_minimax_check_base_resp_missing_status_code_raises():
 
     with pytest.raises(RuntimeError, match="status_code"):
         MiniMaxTTSBackend._check_base_resp({"base_resp": {"status_msg": "x"}})
+
+
+# ============================================================
+# http_client 注入（Task 5 批次 5 — custom 出站守卫挂载点）
+# ============================================================
+
+class TestOpenAIHTTPClientInjection:
+    """OpenAICompatTTSBackend http_client 注入挂载点。"""
+
+    def test_injected_http_client_used(self):
+        """注入 http_client → 后端 AsyncOpenAI client 使用该 client。"""
+        guard = httpx.AsyncClient()
+        try:
+            backend = OpenAICompatTTSBackend(
+                base_url="http://guard.example.com:8000",
+                http_client=guard,
+            )
+            assert backend._injected_client is guard
+            assert backend._client._client is guard
+        finally:
+            asyncio.run(backend.close())
+            asyncio.run(guard.aclose())
+
+    def test_no_http_client_self_builds(self):
+        """不传 http_client → 后端自建（现状不破坏）。"""
+        with patch("Module.tts.openai_tts.AsyncOpenAI", return_value=MagicMock()) as mock_cls:
+            OpenAICompatTTSBackend(base_url="http://guard.example.com:8000")
+        assert "http_client" not in mock_cls.call_args.kwargs
+
+    def test_factory_passes_http_client_to_custom_backend(self):
+        """TTSFactory.create("custom/x", ..., http_client=guard) → 后端收到。"""
+        guard = httpx.AsyncClient()
+        try:
+            backend = TTSFactory.create(
+                "custom/tts-1",
+                api_key="sk",
+                base_url="http://guard.example.com:8000",
+                http_client=guard,
+            )
+            assert backend._injected_client is guard
+            assert backend._client._client is guard
+        finally:
+            asyncio.run(backend.close())
+            asyncio.run(guard.aclose())
+
+    @pytest.mark.asyncio
+    async def test_health_check_reuses_injected_client(self):
+        """直连 httpx.AsyncClient 路径（health check）复用注入 client。"""
+        guard = httpx.AsyncClient()
+        backend = OpenAICompatTTSBackend(
+            base_url="http://guard.example.com:8000",
+            http_client=guard,
+        )
+        try:
+            mock_get = AsyncMock(return_value=MagicMock(status_code=200))
+            with patch.object(guard, "get", mock_get):
+                result = await backend.test()
+            assert result["ok"] is True
+            mock_get.assert_awaited_once()
+            url = mock_get.call_args.args[0]
+            assert "guard.example.com:8000" in str(url)
+            assert str(url).endswith("/health")
+        finally:
+            await backend.close()
+            await guard.aclose()

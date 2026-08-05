@@ -1,6 +1,8 @@
+import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from typing import cast
@@ -662,3 +664,86 @@ class TestUsageTracking:
             "input_tokens": 100, "output_tokens": 50, "total_tokens": 150,
             "cached_tokens": None, "reasoning_tokens": None,
         }
+
+
+# ============================================================
+# http_client 注入（Task 5 批次 5 — custom 出站守卫挂载点）
+# ============================================================
+
+class TestHTTPClientInjection:
+    """OpenAICompatBackend http_client 注入挂载点。
+
+    后续 Task 6/7 会把 build_guarded_http_client 产出的守卫 client 注入进来；
+    本测试锁定：注入即用、缺省自建、reconnect 复用同一注入 client。
+    注：AsyncOpenAI 构造时校验 http_client 必须是真实 httpx.AsyncClient，
+    因此测试用真实 AsyncClient 实例作注入对象（守卫 client 同为 AsyncClient）。
+    """
+
+    def test_injected_http_client_used_by_clients(self):
+        """注入 http_client → 常规 + beta client 都用该 client。"""
+        guard = httpx.AsyncClient()
+        try:
+            backend = OpenAICompatBackend(
+                model="guard-test",
+                api_key="sk-test",
+                base_url="https://guard.example.com/v1",
+                beta_url="https://guard.example.com/beta",
+                http_client=guard,
+            )
+            assert backend._injected_client is guard
+            assert backend._client._client is guard
+            assert backend._beta_client._client is guard  # type: ignore[union-attr]
+        finally:
+            asyncio.run(backend.close())
+            asyncio.run(guard.aclose())
+
+    def test_no_http_client_self_builds(self):
+        """不传 http_client → 后端自建（现状不破坏，不把 http_client 传给 AsyncOpenAI）。"""
+        with patch("Module.llm.openai_compat.AsyncOpenAI", return_value=MagicMock()) as mock_cls:
+            OpenAICompatBackend(
+                model="guard-test",
+                api_key="sk-test",
+                base_url="https://guard.example.com/v1",
+                beta_url="https://guard.example.com/beta",
+            )
+        assert mock_cls.call_args_list, "应至少创建常规 client"
+        for call in mock_cls.call_args_list:
+            assert "http_client" not in call.kwargs
+
+    @pytest.mark.asyncio
+    async def test_reconnect_reuses_injected_client(self):
+        """reconnect() 重建 AsyncOpenAI 但复用同一注入 client（守卫不丢失）。"""
+        guard = httpx.AsyncClient()
+        backend = OpenAICompatBackend(
+            model="guard-test",
+            api_key="sk-test",
+            base_url="https://guard.example.com/v1",
+            http_client=guard,
+        )
+        try:
+            first_sdk = backend._client
+            assert backend._client._client is guard
+            await backend.reconnect()
+            # AsyncOpenAI 重建，但注入的 http client 引用不变
+            assert backend._client is not first_sdk
+            assert backend._client._client is guard
+        finally:
+            await backend.close()
+            await guard.aclose()
+
+    def test_factory_passes_http_client_to_custom_backend(self):
+        """LLMFactory.create("custom/x", ..., http_client=guard) → 后端收到。"""
+        guard = httpx.AsyncClient()
+        try:
+            backend = LLMFactory.create(
+                "custom/guard-test",
+                base_url="https://guard.example.com/v1",
+                api_key="sk-test",
+                http_client=guard,
+            )
+            backend = cast(OpenAICompatBackend, backend)
+            assert backend._injected_client is guard
+            assert backend._client._client is guard
+        finally:
+            asyncio.run(backend.close())
+            asyncio.run(guard.aclose())
