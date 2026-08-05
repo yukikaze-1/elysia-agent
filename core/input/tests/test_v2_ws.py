@@ -272,6 +272,30 @@ class TestSetTtsVoice:
         finally:
             await agent.stop()
 
+    @pytest.mark.asyncio
+    async def test_set_tts_voice_empty_clears(self, aiohttp_client, fresh_idempotency):
+        """review 修正：空串 voice = 清除覆盖（回退 character 默认音色）——tts_voice 只进不出的死路径修复。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        agent._tts = _FakeTtsBackend([{"id": "v1"}])  # noqa: SLF001
+        agent._tts_enabled = True  # noqa: SLF001
+        agent.session.service_state.tts_voice = "v1"  # 先有覆盖
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            result = await _send_set_tts_voice_and_read(ws, "")
+            assert result["ok"] is True
+            # wire 省略 None（exclude_none）→ voice 键缺省
+            assert result.get("voice") is None
+            # 覆盖已清除 → 后端默认
+            assert agent.session.service_state.tts_voice is None
+            await ws.close()
+        finally:
+            await agent.stop()
+
 
 @pytest.mark.service
 class TestV2Reconnect:

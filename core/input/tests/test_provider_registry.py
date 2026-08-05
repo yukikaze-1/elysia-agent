@@ -66,7 +66,9 @@ def test_builtin_entries_have_new_fields():
     entry = resp["llm"]["deepseek"]
     assert entry["credentialConfigured"] is True
     assert entry["runtime"] == "backend"
-    assert entry["capabilities"] == {}
+    # review 修正：内置 capabilities 从 providers.yaml 带出已知键（spec D11）——supports_prefix/supports_multimodal
+    assert entry["capabilities"]["supports_prefix"] is True
+    assert "supports_multimodal" in entry["capabilities"]
 
 
 @pytest.mark.unit
@@ -88,6 +90,26 @@ def test_custom_entries_enriched_secret_configured(tmp_path):
     assert entries["nokey"]["credentialConfigured"] is False
     assert entries["myllm"]["runtime"] == "backend"
     assert entries["myllm"]["capabilities"] == {}
+
+
+@pytest.mark.unit
+def test_custom_desktop_runtime_credential_configured_false(tmp_path):
+    """review 修正：desktop/local 条目 credentialConfigured 恒 False（密钥归 Electron 管，
+    即使 Secret Store 有同名字符串或 api_key_env env 命中也不报 True——后端不管理本机密钥）。"""
+    from core.storage import secret_store
+    secret_store.set_secret("llm", "desk", "sk-secret", path=tmp_path)
+    with patch.dict(os.environ, {"DESK_KEY": "sk-env"}, clear=True):
+        custom_data = {
+            "llm": [
+                {"name": "desk", "base_url": "", "runtime": "desktop", "api_key_env": "DESK_KEY"},
+            ],
+            "stt": [],
+            "tts": [],
+        }
+        resp = build_providers_response(custom_data, secret_path=tmp_path)
+    entries = {e["name"]: e for e in resp["custom"]["llm"]}
+    assert entries["desk"]["runtime"] == "desktop"
+    assert entries["desk"]["credentialConfigured"] is False
 
 
 @pytest.mark.unit

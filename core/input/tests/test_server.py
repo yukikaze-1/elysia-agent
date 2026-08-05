@@ -398,10 +398,12 @@ class TestWebSocketHandler:
                 await asyncio.sleep(0.2)
         # 剥离 runtime 透传（Task 4 交接）——runtime 键不传给 switch_model（assert_called_once 严格匹配）
         mock_switch.assert_called_once_with("custom/myllm", base_url="http://myllm.local",
-                                            api_key="test-key", http_client=mock_switch.call_args.kwargs["http_client"])
+                                            api_key="test-key",
+                                            http_client_factory=mock_switch.call_args.kwargs["http_client_factory"])
         _, kwargs = mock_switch.call_args
         assert "runtime" not in kwargs                     # runtime 已剥离
-        assert isinstance(kwargs["http_client"]._transport, _SSRFTransport)  # 出站守卫注入
+        # 出站守卫工厂注入（review 修正：工厂而非实例——reconnect 可重建全新守卫 client）
+        assert isinstance(kwargs["http_client_factory"]()._transport, _SSRFTransport)
         await agent.stop()
 
 

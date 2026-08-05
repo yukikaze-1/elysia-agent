@@ -9,7 +9,7 @@ Prefix Continuation:
 import asyncio
 import logging
 import time
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 import httpx
 from openai import AsyncOpenAI
@@ -57,6 +57,7 @@ class OpenAICompatBackend(LLMBackend):
         supports_prefix: bool = False,
         logger: logging.Logger | None = None,
         http_client: httpx.AsyncClient | None = None,
+        http_client_factory: Callable[[], httpx.AsyncClient] | None = None,
     ):
         """初始化 OpenAI 兼容协议后端。
 
@@ -68,9 +69,12 @@ class OpenAICompatBackend(LLMBackend):
                 非空时创建独立的 _beta_client。
             supports_prefix: 是否支持 prefix continuation 特性。
             logger: 日志记录器，未提供时自动创建。
-            http_client: 出站守卫挂载点（批次 5）——注入的 httpx.AsyncClient。
-                非 None 时 AsyncOpenAI 复用该 client（含 reconnect 重建），
-                供 Task 6/7 把 build_guarded_http_client 产出的守卫 client 传进来。
+            http_client: 出站守卫挂载点（批次 5）——注入的 httpx.AsyncClient 实例。
+                仅静态复用（构造时使用），**reconnect 不重建**（单测/一次性场景）。
+            http_client_factory: 出站守卫工厂（批次 5 review 修正）——零参可调用，
+                每次调用返回**全新**守卫 client。生产 caller（switch/test/启动）传它：
+                AsyncOpenAI wrapper 关闭会连带关闭当前注入 client，reconnect 经工厂
+                重建全新守卫 client（守卫跨重启保留，修复"关闭后复用已关闭 client"）。
         """
         key = api_key or "ollama"  # Ollama accepts any non-empty value
         self._model = model
@@ -79,7 +83,10 @@ class OpenAICompatBackend(LLMBackend):
         self._api_key = key
         self._base_url = base_url
         self._beta_url = beta_url
+        self._http_client_factory = http_client_factory
         self._injected_client: httpx.AsyncClient | None = http_client
+        if http_client_factory is not None and http_client is None:
+            self._injected_client = http_client_factory()
         self._beta_client: AsyncOpenAI | None = None
         self.last_usage: dict | None = None  # 最近一次 API 调用的 token 消耗
         self._create_clients()
@@ -269,6 +276,10 @@ class OpenAICompatBackend(LLMBackend):
                 await self._beta_client.close()
             except Exception:
                 self._logger.warning("reconnect: 关闭旧 beta HTTP client 失败", exc_info=True)
+        # review 修正：AsyncOpenAI.close() 连带关闭当前注入 client（含守卫 client）。
+        # 有工厂时重建全新守卫 client——否则旧 client 已关闭仍被复用，custom LLM 重启即死。
+        if self._http_client_factory is not None:
+            self._injected_client = self._http_client_factory()
         self._create_clients()
 
     def _create_clients(self) -> None:
@@ -276,8 +287,9 @@ class OpenAICompatBackend(LLMBackend):
 
         创建 self._client（常规 API），如果提供了 beta_url 则额外创建
         self._beta_client。超时配置：60s 总超时，10s 连接超时。
-        注入的 http_client（批次 5 出站守卫挂载点）非 None 时透传给 AsyncOpenAI；
-        reconnect() 经本方法重建时复用同一注入 client（守卫不丢失）。
+        当前注入 client（批次 5 出站守卫挂载点，self._injected_client）非 None 时
+        透传给 AsyncOpenAI；reconnect() 已从工厂重建 self._injected_client（守卫
+        跨重启保留，不复用已关闭实例）。
         """
         timeout = httpx.Timeout(60.0, connect=10.0)
         client_kwargs: dict = {"api_key": self._api_key, "timeout": timeout}

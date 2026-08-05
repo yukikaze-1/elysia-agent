@@ -3,8 +3,8 @@
 覆盖 switch_llm/switch_stt/switch_tts 三路径：
 - runtime != backend → ok=False + PROFILE_RUNTIME_NOT_BACKEND，service_state 不改；
 - custom+backend SSRF（base_url=127.0.0.1 等内网）→ ok=False；
-- custom+backend 公网 → 注入守卫 http_client（_SSRFTransport）+ service_state 更新 + broadcast；
-- 内置 switch 保持：resolve 返回 {} → runtime 缺省 backend、无 http_client → ok=True；
+- custom+backend 公网 → 注入守卫 http_client_factory（_SSRFTransport）+ service_state 更新 + broadcast；
+- 内置 switch 保持：resolve 返回 {} → runtime 缺省 backend、无 http_client_factory → ok=True；
 - 剥离 runtime：resolve 返回 runtime 键 → 不透传给 Factory/switch_model（防构造 TypeError）。
 """
 
@@ -114,11 +114,11 @@ class TestSwitchSSRF:
 
 
 class TestSwitchOutboundGuard:
-    """custom+backend 公网 → 注入守卫 http_client + service_state 更新 + broadcast。"""
+    """custom+backend 公网 → 注入守卫 http_client_factory + service_state 更新 + broadcast。"""
 
     @pytest.mark.asyncio
     async def test_switch_llm_injects_guarded_client(self, fake_agent):
-        """LLM 公网 custom → switch_model 收到守卫 http_client（剥离 runtime），state 更新 + broadcast。"""
+        """LLM 公网 custom → switch_model 收到守卫 http_client_factory（剥离 runtime），state 更新 + broadcast。"""
         agent = fake_agent
         agent.session.save = mock.AsyncMock()
         agent.session.service_state = ServiceState()
@@ -135,13 +135,14 @@ class TestSwitchOutboundGuard:
         args, kwargs = agent._llm.switch_model.call_args
         assert args == ("custom/good",)
         assert "runtime" not in kwargs                       # 剥离 runtime 透传
-        assert isinstance(kwargs["http_client"]._transport, _SSRFTransport)  # 守卫类型
+        guard = kwargs["http_client_factory"]()
+        assert isinstance(guard._transport, _SSRFTransport)  # 守卫类型
         assert agent.session.service_state.llm_model == "custom/good"
         mock_bcast.assert_awaited_once_with(agent)
 
     @pytest.mark.asyncio
     async def test_switch_stt_injects_guarded_client(self, fake_agent):
-        """STT 公网 custom → STTFactory.create 收到守卫 http_client，后端挂槽 + state 更新。"""
+        """STT 公网 custom → STTFactory.create 收到守卫 http_client_factory，后端挂槽 + state 更新。"""
         agent = fake_agent
         agent._stt = None
         agent.session.save = mock.AsyncMock()
@@ -159,13 +160,14 @@ class TestSwitchOutboundGuard:
         assert result["ok"] is True
         _, kwargs = mc.call_args
         assert "runtime" not in kwargs
-        assert isinstance(kwargs["http_client"]._transport, _SSRFTransport)
+        guard = kwargs["http_client_factory"]()
+        assert isinstance(guard._transport, _SSRFTransport)
         assert agent._stt is backend
         assert agent.session.service_state.stt_model == "custom/good"
 
     @pytest.mark.asyncio
     async def test_switch_tts_injects_guarded_client(self, fake_agent):
-        """TTS 公网 custom → TTSFactory.create 收到守卫 http_client（含 rate_limit_rpm），后端挂槽。"""
+        """TTS 公网 custom → TTSFactory.create 收到守卫 http_client_factory（含 rate_limit_rpm），后端挂槽。"""
         agent = fake_agent
         agent._tts = None
         agent.session.save = mock.AsyncMock()
@@ -184,17 +186,18 @@ class TestSwitchOutboundGuard:
         assert result["ok"] is True
         _, kwargs = mc.call_args
         assert "runtime" not in kwargs
-        assert isinstance(kwargs["http_client"]._transport, _SSRFTransport)
+        guard = kwargs["http_client_factory"]()
+        assert isinstance(guard._transport, _SSRFTransport)
         assert agent._tts is backend
         assert agent.session.service_state.tts_model == "custom/good"
 
 
 class TestSwitchBuiltin:
-    """内置 switch 保持：resolve 返回 {} → runtime 缺省 backend、无 http_client → ok=True。"""
+    """内置 switch 保持：resolve 返回 {} → runtime 缺省 backend、无 http_client_factory → ok=True。"""
 
     @pytest.mark.asyncio
     async def test_switch_llm_builtin_no_http_client(self, fake_agent):
-        """内置 LLM switch：resolve 返回 {} → switch_model 只收 model_id，无 http_client。"""
+        """内置 LLM switch：resolve 返回 {} → switch_model 只收 model_id，无 http_client_factory。"""
         agent = fake_agent
         agent.session.save = mock.AsyncMock()
         agent.session.service_state = ServiceState()

@@ -109,9 +109,9 @@ async def test_test_endpoint_custom_resolves_from_yaml(aiohttp_client, tmp_path)
         })
         data = await resp.json()
     assert data["ok"] is True
-    # custom+backend → 注入出站守卫 http_client（guarded client）
+    # custom+backend → 注入出站守卫 http_client_factory（工厂，非实例——reconnect 可重建）
     mock_create.assert_called_once_with(
-        "custom/myllm", base_url="http://myllm.local", http_client=ANY)
+        "custom/myllm", base_url="http://myllm.local", http_client_factory=ANY)
 
 
 # ---- 批次 5：保存/删除/test 守卫（runtime 门控 + SSRF + 密钥入 Store + 信封双轨） ----
@@ -141,13 +141,21 @@ async def test_save_backend_with_api_key_stores_secret(aiohttp_client, tmp_path)
         # 密钥已入 Secret Store（patch 后默认目录 = tmp），不入 YAML
         assert secret_store.get_secret("llm", "myllm") == "sk-secret"
         assert "sk-secret" not in yaml_path.read_text(encoding="utf-8")
-    assert resp.status == 200
-    assert data["ok"] is True
-    entry = data["data"]
-    assert entry["name"] == "myllm"
-    assert entry["credentialConfigured"] is True
-    # 响应无密钥（API 永不打印密钥）
-    assert "sk-secret" not in json.dumps(data, ensure_ascii=False)
+        assert resp.status == 200
+        assert data["ok"] is True
+        # review 修正：save 响应恢复全量 custom 列表（spec §3.3 步骤 8，前批次 wire 形状）——
+        # 条目在 data["data"]["llm"] 中；credentialConfigured 经 GET /api/providers 获取。
+        saved = [e for e in data["data"]["llm"] if e.get("name") == "myllm"]
+        assert saved and saved[0]["name"] == "myllm"
+        # 响应无密钥（API 永不打印密钥）
+        assert "sk-secret" not in json.dumps(data, ensure_ascii=False)
+        # GET /api/providers 反映 credentialConfigured=True（密钥已入 Store，只回布尔；patch 仍在）
+        list_resp = await client.get("/api/providers")
+        list_data = await list_resp.json()
+        custom_llm = list_data["custom"]["llm"]
+        myllm = [e for e in custom_llm if e.get("name") == "myllm"]
+        assert myllm and myllm[0]["credentialConfigured"] is True
+        assert "sk-secret" not in json.dumps(list_data, ensure_ascii=False)
 
 
 @pytest.mark.service
@@ -351,6 +359,36 @@ async def test_test_endpoint_desktop_runtime_blocked(aiohttp_client, tmp_path):
          patch("socket.getaddrinfo", side_effect=_fake_getaddrinfo()):
         resp = await client.post("/api/providers/test", json={
             "service": "llm", "provider": "custom", "model": "desktop_prof",
+            "level": "connectivity",
+        })
+        data = await resp.json()
+    assert resp.status == 400
+    assert data["code"] == "PROFILE_RUNTIME_NOT_BACKEND"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_test_endpoint_desktop_local_base_url_not_ssrf(aiohttp_client, tmp_path):
+    """review 修正：desktop 条目带本地 base_url（D13 允许）→ 必须 400 PROFILE_RUNTIME_NOT_BACKEND，
+    而非 SSRF_BLOCKED——runtime 守卫先于 SSRF 校验（否则本地地址误报 SSRF）。"""
+    from core.input.server import create_app
+    from core.input import custom_providers as cp
+    from core.storage import secret_store
+    yaml_path = tmp_path / "custom_providers.yaml"
+    yaml_path.write_text(
+        "llm:\n  - name: local_prof\n    base_url: http://127.0.0.1:3000\n"
+        "    runtime: desktop\n    models: [m1]\n",
+        encoding="utf-8",
+    )
+    agent = _make_app_agent()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    with patch.object(cp, "_DEFAULT_PATH", yaml_path), \
+         patch.object(secret_store, "_DEFAULT_DIR", tmp_path), \
+         patch("socket.getaddrinfo", side_effect=_fake_getaddrinfo()):
+        resp = await client.post("/api/providers/test", json={
+            "service": "llm", "provider": "custom", "model": "local_prof",
             "level": "connectivity",
         })
         data = await resp.json()

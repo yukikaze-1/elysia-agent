@@ -89,36 +89,49 @@ class _LifecycleServices:
         if gate:
             from Module.tts import TTSFactory
             from core.input.custom_providers import resolve_model_params
-            try:
-                # 关键：custom/<name> 必须经 resolve_model_params 补 base_url（registry.py
-                # 对 custom 无 base_url 抛 ValueError——裸 create 会让运行时切好的 custom TTS
-                # 重启后静默失效，与 STT 同款 bug）
-                tts_params = resolve_model_params("tts", model)
-                tts_params.pop("runtime", None)  # 剥离 runtime——构造器无此形参，透传会 TypeError
-                self._tts = TTSFactory.create(
-                    model, **tts_params,
-                    rate_limit_rpm=self._config.tts.rate_limit_rpm,
-                )
-            except Exception:
-                # 配置错误（模型不存在/参数非法/custom 缺 base_url）——fail-fast，
-                # 不伪装成 text-only。原实现全吞让配置错误静默失效难排查。
-                logger.exception("TTS 后端创建失败——配置错误（模型=%s）", model)
-                raise
-            try:
-                # 快速连通性测试——1s 超时，避免卡启动
-                import asyncio as _asyncio
-                result = await _asyncio.wait_for(self._tts.test(), timeout=1.0)
-                if result.get("ok"):
-                    self._cognitive.configure(tts=self._tts)
-                    await self._cognitive._tts_mgr.set_enabled(self._tts_enabled)  # noqa: SLF001
-                    logger.info("TTS backend connected")
-                else:
-                    self._tts = None
-                    logger.info("TTS not available — text-only mode (%s)", result.get("error", "unknown"))
-            except Exception:
-                # 连通性失败（服务不可达/测试超时）——降级 text-only
+            # 批次 5（D16）：desktop/local Profile 由 Electron 执行，后端启动不代理——
+            # 跳过建 TTS（纯文本模式），否则空 base_url 的 custom 条目会让启动 fail-fast。
+            tts_params = resolve_model_params("tts", model)
+            tts_runtime = tts_params.pop("runtime", "backend")
+            if tts_runtime != "backend":
                 self._tts = None
-                logger.warning("TTS 连通性测试失败，text-only mode", exc_info=True)
+                logger.warning("TTS Profile %s 由 Electron 执行，后端不启动（纯文本模式）", model)
+            else:
+                try:
+                    # 关键：custom/<name> 必须经 resolve_model_params 补 base_url（registry.py
+                    # 对 custom 无 base_url 抛 ValueError——裸 create 会让运行时切好的 custom TTS
+                    # 重启后静默失效，与 STT 同款 bug）
+                    # custom+backend → 出站守卫工厂注入（reconnect 重建全新守卫 client）
+                    _base_url = tts_params.get("base_url", "")
+                    if model.startswith("custom/") and _base_url:
+                        from core.input.ssrf import build_guarded_http_client
+                        tts_params["http_client_factory"] = (
+                            lambda b=_base_url: build_guarded_http_client(b))
+                    self._tts = TTSFactory.create(
+                        model, **tts_params,
+                        rate_limit_rpm=self._config.tts.rate_limit_rpm,
+                    )
+                except Exception:
+                    # 配置错误（模型不存在/参数非法/custom 缺 base_url）——fail-fast，
+                    # 不伪装成 text-only。原实现全吞让配置错误静默失效难排查。
+                    logger.exception("TTS 后端创建失败——配置错误（模型=%s）", model)
+                    raise
+            if self._tts is not None:
+                try:
+                    # 快速连通性测试——1s 超时，避免卡启动（desktop/local 已跳过，不进此块）
+                    import asyncio as _asyncio
+                    result = await _asyncio.wait_for(self._tts.test(), timeout=1.0)
+                    if result.get("ok"):
+                        self._cognitive.configure(tts=self._tts)
+                        await self._cognitive._tts_mgr.set_enabled(self._tts_enabled)  # noqa: SLF001
+                        logger.info("TTS backend connected")
+                    else:
+                        self._tts = None
+                        logger.info("TTS not available — text-only mode (%s)", result.get("error", "unknown"))
+                except Exception:
+                    # 连通性失败（服务不可达/测试超时）——降级 text-only
+                    self._tts = None
+                    logger.warning("TTS 连通性测试失败，text-only mode", exc_info=True)
 
     async def _stop_llm_and_tts(self) -> None:
         """关闭 LLM/TTS/STT 客户端连接，并置 None 以便热切换识别。"""

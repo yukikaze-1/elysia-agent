@@ -183,7 +183,6 @@ def register_api_routes(app: web.Application) -> None:
         """
         from core.input.custom_providers import add_provider
         from core.input.ssrf import SSRFError, validate_endpoint
-        from core.storage import secret_store
         try:
             body = await request.json()
             service = body.get("service", "")
@@ -211,22 +210,12 @@ def register_api_routes(app: web.Application) -> None:
             # desktop/local 由 Electron 执行，后端不收密钥（D18）
             return _tool_error("PROFILE_INVALID_RUNTIME", "非 backend runtime 不接受 api_key", 400)
         try:
-            add_provider(service, entry)
+            data = add_provider(service, entry)
         except Exception as e:
             return web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict(), status=500)
-        # 响应条目含 credentialConfigured（Secret Store 已配置或本次 api_key）；永不回显密钥
-        name = entry.get("name", "")
-        api_key = entry.get("api_key", "")
-        entry_data = {
-            "name": name,
-            "base_url": entry.get("base_url", ""),
-            "api_key_env": entry.get("api_key_env"),
-            "models": entry.get("models"),
-            "runtime": runtime,
-            "capabilities": entry.get("capabilities", {}),
-            "credentialConfigured": bool(api_key) or secret_store.has_secret(service, name),
-        }
-        return web.json_response(rest_contract.ApiOk(data=entry_data).wire_dict())
+        # review 修正：响应恢复全量 custom 列表（spec §3.3 步骤 8 + 前批次 wire 形状），
+        # 不再返回单条目——避免偏离既有契约；credentialConfigured 经 GET /api/providers 获取。
+        return web.json_response(rest_contract.ApiOk(data=data).wire_dict())
 
     async def providers_delete_handler(request: web.Request) -> web.Response:
         """删除一个自定义 provider（批次 5：激活约束——活动会话/配置正在使用的不可删）。
@@ -308,6 +297,11 @@ def register_api_routes(app: web.Application) -> None:
             if not api_key:
                 api_key = params.get("api_key", "")
 
+        # runtime 守卫（review 修正：先于 SSRF——desktop/local 允许本地 base_url，
+        # 若先 SSRF 会误报 SSRF_BLOCKED；后端不代理本机 Profile，直接 400）
+        if runtime != "backend":
+            return _tool_error("PROFILE_RUNTIME_NOT_BACKEND", "该 Profile 由 Electron 执行，后端不发起测试", 400)
+
         # body base_url 非空时无论 provider 一律 SSRF 校验（空 base_url 跳过——
         # 内置无 body base_url 是空串，不误伤既有 connectivity 测试）。
         from core.input.ssrf import SSRFError, validate_endpoint
@@ -317,22 +311,18 @@ def register_api_routes(app: web.Application) -> None:
             except SSRFError as e:
                 return _tool_error("SSRF_BLOCKED", str(e), 400)
 
-        # runtime 守卫：desktop/local 由 Electron 执行，后端拒绝发起测试
-        if runtime != "backend":
-            return _tool_error("PROFILE_RUNTIME_NOT_BACKEND", "该 Profile 由 Electron 执行，后端不发起测试", 400)
-
         create_kwargs = {}
         if base_url:
             create_kwargs["base_url"] = base_url
         if api_key:
             create_kwargs["api_key"] = api_key
 
-        # custom+backend → 注入出站守卫 client（内置无 body base_url → 无 http_client 走现状）
-        http_client = None
+        # custom+backend → 注入出站守卫**工厂**（review 修正：工厂而非实例——create
+        # 失败时不产生待清理 client；后端关闭连带关闭守卫 client，finally 无需单独 aclose）
         if provider == "custom" and base_url:
             from core.input.ssrf import build_guarded_http_client
-            http_client = build_guarded_http_client(base_url)
-            create_kwargs["http_client"] = http_client
+            create_kwargs["http_client_factory"] = (
+                lambda b=base_url: build_guarded_http_client(b))
 
         try:
             if service == "llm":
@@ -362,11 +352,6 @@ def register_api_routes(app: web.Application) -> None:
                 await backend.close()
             except Exception:
                 pass
-            if http_client is not None:
-                try:
-                    await http_client.aclose()
-                except Exception:
-                    pass
 
     app.router.add_get("/api/providers", providers_list_handler)
     app.router.add_post("/api/providers", providers_save_handler)
@@ -418,7 +403,11 @@ def register_api_routes(app: web.Application) -> None:
         except Exception:
             payload = {}
         voice_id = payload.get("voice_id") if isinstance(payload, dict) else None
-        voice_id = voice_id or None  # 空串归一为 None（不传覆盖）
+        if not voice_id:
+            # review 修正：缺省 voice_id 回退活动会话当前 voice（service_state.tts_voice）——
+            # 与 /api/tts/voices 的 current 一致，试听听到的是 bot 实际会用的声音。
+            svc_state = getattr(getattr(agent, "session", None), "service_state", None)
+            voice_id = getattr(svc_state, "tts_voice", None) if svc_state is not None else None
 
         backend = _active_tts_profile(agent)
         if backend is None:

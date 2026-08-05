@@ -146,19 +146,36 @@ class TestStartTTSGate:
                         return_value={"base_url": "http://tts.local"}):
             await _LifecycleServices._start_tts(agent)
 
+        # custom+backend → 注入出站守卫工厂（review 修正：启动路径也出站守卫）
         mc.assert_called_once_with(
-            "custom/mytts", base_url="http://tts.local", rate_limit_rpm=10)
+            "custom/mytts", base_url="http://tts.local", rate_limit_rpm=10,
+            http_client_factory=mock.ANY)
         assert agent._tts is backend
         agent._cognitive.configure.assert_called_once_with(tts=backend)
         agent._cognitive._tts_mgr.set_enabled.assert_awaited_once_with(True)
+
+    @pytest.mark.asyncio
+    async def test_desktop_runtime_skips_creation(self, fake_agent):
+        """review 修正：TTS profile runtime=desktop → 后端启动不代理（D16），
+        跳过建 TTS（纯文本模式），不因空 base_url fail-fast。"""
+        agent = fake_agent
+        self._setup_tts_agent(
+            agent, ServiceState(tts_model="custom/desk", tts_enabled=True), cfg_enabled=False)
+        with mock.patch("Module.tts.TTSFactory.create") as mc, \
+             mock.patch("core.input.custom_providers.resolve_model_params",
+                        return_value={"base_url": "", "runtime": "desktop"}):
+            await _LifecycleServices._start_tts(agent)
+        # 不建后端、不测连通性、不崩
+        mc.assert_not_called()
+        assert agent._tts is None
+        agent._cognitive.configure.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_gate_off_when_config_off_and_none(self, fake_agent):
         """config=false + None → 不建（YAML 硬关保留）。"""
         agent = fake_agent
         self._setup_tts_agent(agent, ServiceState(), cfg_enabled=False)
-        with mock.patch("Module.tts.TTSFactory.create") as mc:
-            await _LifecycleServices._start_tts(agent)
+        with mock.patch("Module.tts.TTSFactory.create") as mc:            await _LifecycleServices._start_tts(agent)
         mc.assert_not_called()
         assert agent._tts is None
 

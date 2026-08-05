@@ -206,6 +206,30 @@ async def test_tts_preview_no_voice_id_default(aiohttp_client):
 
 @pytest.mark.service
 @pytest.mark.asyncio
+async def test_tts_preview_no_voice_falls_back_to_current(aiohttp_client):
+    """review 修正：body 缺省 voice_id 且活动会话 tts_voice 已设置 → synthesize 收到该 voice
+    （与 /api/tts/voices 的 current 一致，试听听到的是 bot 实际会用的声音）。"""
+    from core.input.api_routes import _PREVIEW_TEXT
+
+    agent = _make_app_agent()
+    backend = _FakePreviewBackend()
+    agent._tts = backend  # noqa: SLF001
+    agent._tts_enabled = True  # noqa: SLF001
+    agent.session.service_state.tts_voice = "v-current"
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    resp = await client.post("/api/tts/preview", json={})
+    data = await resp.json()
+    assert resp.status == 200
+    assert data["ok"] is True
+    assert backend.calls == [{
+        "text": _PREVIEW_TEXT, "character": "Elysia", "voice_id": "v-current",
+    }]
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
 async def test_tts_preview_backend_error(aiohttp_client):
     """后端 synthesize 抛错 → 200 {ok: False, error}（不炸）。"""
     agent = _make_app_agent()

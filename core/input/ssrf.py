@@ -4,6 +4,7 @@
 :func:`build_guarded_http_client` 注入校验传输层，重定向每跳过校验 + 跨源剥头。
 """
 
+import asyncio
 import ipaddress
 import logging
 import re
@@ -63,6 +64,10 @@ def _is_blocked_ip(ip: str) -> bool:
     except ValueError:
         # 非合法 IP 形态 → 拒绝（防解析产物异常形态绕过）
         return True
+    # IPv4-mapped IPv6（::ffff:x.x.x.x）归一为 IPv4——否则私网/CGNAT/保留属性全失守
+    # （ipaddress 对 mapped 地址 is_private 等恒 False，`in _CGNAT_NETWORK` 跨族恒 False）。
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
     return (
         addr.is_loopback
         or addr.is_link_local
@@ -132,8 +137,10 @@ class _SSRFTransport(httpx.AsyncHTTPTransport):
         self._origin = None
 
     async def handle_async_request(self, request):
-        # 每跳校验（连接前，覆盖 follow_redirects 的后续 hop）
-        validate_endpoint(str(request.url))
+        # 每跳校验（连接前，覆盖 follow_redirects 的后续 hop）。
+        # to_thread：同步 getaddrinfo 可能挂起解析，放在 worker 线程避免阻塞事件循环
+        # （auth 后 DoS 缓解；保存/切换/测试的冷路径同步调用仍接受，见 review 记录）。
+        await asyncio.to_thread(validate_endpoint, str(request.url))
         self._strip_cross_origin_headers(request)
         return await super().handle_async_request(request)
 

@@ -43,6 +43,13 @@ def fake_getaddrinfo(host, port, *args, **kwargs):
         "http://100.64.0.1",  # CGNAT
         "169.254.169.254",  # 无 scheme → https 后仍拒绝
         "http://metadata",  # host=metadata 字面量黑名单
+        # review 修正：IPv4-mapped IPv6（::ffff:x.x.x.x）必须归一为 IPv4 判类——
+        # 否则 ipaddress 对 mapped 地址 is_private/is_link_local 恒 False、CGNAT 跨族恒 False
+        "http://[::ffff:127.0.0.1]",  # mapped 回环
+        "http://[::ffff:10.0.0.1]",  # mapped 私网
+        "http://[::ffff:169.254.169.254]",  # mapped 链路本地（云元数据）
+        "http://[::ffff:100.100.100.200]",  # mapped CGNAT/元数据（阿里云 ECS 元数据端点）
+        "http://[::ffff:100.64.0.1]",  # mapped CGNAT
     ],
 )
 def test_validate_rejects_blocked(url):
@@ -59,6 +66,7 @@ def test_validate_rejects_blocked(url):
         "https://example.com",  # 解析公网
         "example.com",  # 无 scheme → https
         "http://example.com",  # 显式 http 公网
+        "http://[2001:4860:4860::8888]",  # 公网 IPv6
     ],
 )
 def test_validate_passes_public(url):

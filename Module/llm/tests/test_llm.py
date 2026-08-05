@@ -711,25 +711,43 @@ class TestHTTPClientInjection:
             assert "http_client" not in call.kwargs
 
     @pytest.mark.asyncio
-    async def test_reconnect_reuses_injected_client(self):
-        """reconnect() 重建 AsyncOpenAI 但复用同一注入 client（守卫不丢失）。"""
-        guard = httpx.AsyncClient()
+    async def test_reconnect_factory_rebuilds_fresh_guard(self):
+        """review 修正：http_client_factory 路径下 reconnect 重建**全新**守卫 client——
+        AsyncOpenAI wrapper.close() 连带关闭旧守卫，若复用旧实例则 custom LLM 重启即死；
+        工厂保证新守卫可用（守卫跨重启保留）。"""
+        calls: list = []
+
+        def factory():
+            c = httpx.AsyncClient()
+            calls.append(c)
+            return c
+
         backend = OpenAICompatBackend(
             model="guard-test",
             api_key="sk-test",
             base_url="https://guard.example.com/v1",
-            http_client=guard,
+            http_client_factory=factory,
         )
         try:
             first_sdk = backend._client
-            assert backend._client._client is guard
+            first_guard = calls[0]
+            assert backend._client._client is first_guard
             await backend.reconnect()
-            # AsyncOpenAI 重建，但注入的 http client 引用不变
+            # AsyncOpenAI 重建 + 工厂再次调用 → 全新守卫 client
             assert backend._client is not first_sdk
-            assert backend._client._client is guard
+            assert len(calls) == 2
+            assert backend._client._client is calls[1]
+            assert calls[1] is not first_guard
+            # 旧守卫随旧 wrapper 关闭（不复用已关闭实例），新守卫可用
+            assert first_guard.is_closed
+            assert not calls[1].is_closed
         finally:
             await backend.close()
-            await guard.aclose()
+            for c in calls:
+                try:
+                    await c.aclose()
+                except Exception:
+                    pass
 
     def test_factory_passes_http_client_to_custom_backend(self):
         """LLMFactory.create("custom/x", ..., http_client=guard) → 后端收到。"""

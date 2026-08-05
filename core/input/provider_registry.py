@@ -77,7 +77,12 @@ def build_providers_response(
                     "models": cfg.get("models", []),
                     "credentialConfigured": True,
                     "runtime": "backend",
-                    "capabilities": {},
+                    # 内置条目能力字段：从 providers.yaml 带出已知键（spec D11——
+                    # supports_prefix/supports_multimodal 等，空则空 dict）
+                    "capabilities": {
+                        k: cfg[k] for k in ("supports_prefix", "supports_multimodal")
+                        if k in cfg
+                    },
                 }
             else:
                 unconf.append({"name": name, "env_vars": _missing_env_vars(cfg)})
@@ -87,9 +92,15 @@ def build_providers_response(
     for service in _SERVICES:
         configured = secret_store.all_configured(service, path=secret_path)
         for entry in result["custom"].get(service, []):
-            env_key = entry.get("api_key_env", "")
-            env_configured = bool(env_key and os.getenv(env_key))
-            entry["credentialConfigured"] = entry.get("name", "") in configured or env_configured
+            runtime = entry.get("runtime", "backend")
+            # review 修正：desktop/local 条目密钥归 Electron 管、后端不管理——
+            # credentialConfigured 恒 false（spec §3.2），由 Electron 侧合并展示。
+            if runtime != "backend":
+                entry["credentialConfigured"] = False
+            else:
+                env_key = entry.get("api_key_env", "")
+                env_configured = bool(env_key and os.getenv(env_key))
+                entry["credentialConfigured"] = entry.get("name", "") in configured or env_configured
             entry.setdefault("runtime", "backend")
             entry.setdefault("capabilities", {})
     return result

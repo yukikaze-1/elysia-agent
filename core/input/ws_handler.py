@@ -467,8 +467,17 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         # 后端不可用 → {ok: False, error}，不改 state（失败保留原选择）。
         voice = data.get("voice", "")
         result: dict = {"ok": False, "error": "TTS 未启用"}
+        # review 修正：空串/缺省 voice = 清除覆盖，回退 character 默认音色——
+        # 否则 tts_voice 只进不出（list_voices 只含系统音色，角色默认不在列），无恢复路径。
+        if not voice:
+            agent.session.service_state.tts_voice = None
+            try:
+                await agent.session.save()
+            except Exception as e:
+                logger.warning("TTS voice 已清除但持久化失败: %s", e)
+            result = {"ok": True, "voice": None}
         backend = _active_tts_profile(agent)
-        if backend is not None:
+        if backend is not None and voice:
             try:
                 voices = await backend.list_voices()
                 if not any(v.get("id") == voice for v in voices):

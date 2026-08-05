@@ -3,7 +3,7 @@
 import logging
 import struct
 from io import BytesIO
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 import httpx
 from openai import AsyncOpenAI
@@ -46,6 +46,7 @@ class OpenAICompatSTTBackend(STTBackend):
         base_url: str = "",
         logger: logging.Logger | None = None,
         http_client: httpx.AsyncClient | None = None,
+        http_client_factory: Callable[[], httpx.AsyncClient] | None = None,
     ):
         """初始化 OpenAI 兼容 STT 后端。
 
@@ -54,19 +55,23 @@ class OpenAICompatSTTBackend(STTBackend):
             api_key: API 密钥，不传则使用默认值 "stt"。
             base_url: 服务地址，为空则使用 OpenAI 默认地址。
             logger: 日志记录器，不传则使用模块默认 logger。
-            http_client: 出站守卫挂载点（批次 5）——注入的 httpx.AsyncClient，
-                非 None 时 AsyncOpenAI 复用该 client（供 Task 6/7 传守卫 client）。
+            http_client: 出站守卫挂载点（批次 5）——注入的 httpx.AsyncClient 实例。
+            http_client_factory: 出站守卫工厂（批次 5 review 修正）——零参可调用，
+                每次调用返回全新守卫 client（本后端无 reconnect，构造时调用一次）。
         """
         self._model = model
         self._logger = logger or logging.getLogger(__name__)
+        self._http_client_factory = http_client_factory
         self._injected_client: httpx.AsyncClient | None = http_client
+        if http_client_factory is not None and http_client is None:
+            self._injected_client = http_client_factory()
         client_kwargs: dict = {
             "api_key": api_key or "stt",
             "base_url": base_url,
             "timeout": httpx.Timeout(30.0, connect=5.0),
         }
-        if http_client is not None:
-            client_kwargs["http_client"] = http_client
+        if self._injected_client is not None:
+            client_kwargs["http_client"] = self._injected_client
         self._client = AsyncOpenAI(**client_kwargs)
         self.last_emotion: str = "NEUTRAL"
         self.last_events: list[str] = []
