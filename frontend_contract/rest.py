@@ -442,3 +442,54 @@ class DesktopCallStatus(ContractModel):
     result: Optional[dict[str, Any]] = Field(
         default=None, description="结果（{output,attachments,execution_summary}），可缺省")
     error: Optional[dict[str, Any]] = Field(default=None, description="错误（{code,message}），可缺省")
+
+
+# ────────────────────── 批次 7 附件/表情（BE-070/071，P7-1/2/6） ──────────────────────
+
+
+class AttachmentInfo(ContractModel):
+    """上传响应中的附件条目（POST /api/uploads 响应 attachments[]）。
+
+    `signedUrl` 可缺省（fail-closed 省略——签发失败时不带签名 URL，前端渲染层
+    对稳定路径统一调签发端点解析）；`filename` 服务端脱敏后落盘名（I5，只留扩展名）。
+    """
+
+    attachmentId: str = Field(description="附件 ID（att_ 前缀）")
+    kind: str = Field(description="附件类别（image/video/audio/file）")
+    mime: str = Field(description="MIME 类型")
+    size: int = Field(description="附件字节数")
+    url: str = Field(description="稳定访问路径（/api/attachments/{id}，不随签名过期）")
+    signedUrl: Optional[str] = Field(
+        default=None, description="短期签名 URL（签发失败 fail-closed 省略），可缺省")
+    filename: str = Field(default="", description="落盘文件名（脱敏，只留扩展名）")
+
+
+class AttachmentUploadResponse(ContractModel):
+    """附件上传成功响应（POST /api/uploads）。"""
+
+    attachments: list[AttachmentInfo] = Field(description="上传成功附件列表")
+
+
+class AttachmentSignResponse(ContractModel):
+    """签发端点响应（GET /api/attachments/{id}/sign，C-1 渲染层签名解析）。"""
+
+    attachmentId: str = Field(description="附件 ID（att_ 前缀）")
+    url: str = Field(description="短期签名 URL（?sig=...&exp=...）")
+    expiresAt: str = Field(description="签名过期时间（UTC ISO）")
+
+
+class StickerEntry(ContractModel):
+    """内置表情条目（/api/stickers 列表项；契约单源，禁止 plain dict）。
+
+    表情是公共资源，走公开静态 `/static/stickers/{id}.png`——不落 attachments
+    集合、不 ref_count、不参与 GC（P7-6 四轮 review 定案）。
+    """
+
+    stickerId: str = Field(description="表情 ID（st_ 前缀）")
+    src: str = Field(description="静态资源路径（/static/stickers/{id}.png）")
+
+
+class StickerListResponse(ContractModel):
+    """表情列表响应（GET /api/stickers）。"""
+
+    stickers: list[StickerEntry] = Field(description="内置表情列表")

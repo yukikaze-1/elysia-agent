@@ -774,14 +774,14 @@ class TestSessionReplayContract:
         assert asst["timestamp"]
 
     def test_build_session_items_drops_invalid_keeps_valid(self):
-        """单条无法契约化的消息（content 含 file part）仅丢弃该条，其余保留。"""
+        """单条无法契约化的消息（content 含未知 type part）仅丢弃该条，其余保留。"""
         from core.input.ws_handler import _build_session_items
 
         msgs = [
             {"role": "user", "content": [{"type": "text", "content": "hi"}],
              "message_id": "u1", "timestamp": "t1"},
-            # content 含 file part → ContentPart 判别联合只认 text/image → 契约校验失败
-            {"role": "assistant", "content": [{"type": "file", "src": "/tmp/x", "mime": "text/plain"}],
+            # content 含未知 type → ContentPart 判别联合只认 text/image/file/audio/video/sticker → 契约校验失败
+            {"role": "assistant", "content": [{"type": "unknown"}],
              "message_id": "a1", "timestamp": "t2"},
             {"role": "tool", "tool_call_id": "c1", "name": "web", "content": "ok",
              "success": True, "duration_ms": 1.0, "truncated": False},

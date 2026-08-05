@@ -64,6 +64,7 @@ def test_server_info_message_wire():
         "structured_generation": False, "multi_conversation": False,
         "desktop_runtime": False, "dictation": False,
         "voice_recording": False, "voice_realtime": False,
+        "media_upload": False,
     }
     assert d["services"]["llm"]["model"] == "fake/test"
 

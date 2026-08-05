@@ -24,6 +24,7 @@ class PartType(StrEnum):
     FILE = "file"
     AUDIO = "audio"
     VIDEO = "video"
+    STICKER = "sticker"
 
 
 class ImageMime(StrEnum):
@@ -45,6 +46,8 @@ class FileMime(StrEnum):
     PDF = "application/pdf"
     PLAIN = "text/plain"
     JSON = "application/json"
+    APPLICATION_ZIP = "application/zip"
+    TEXT_MARKDOWN = "text/markdown"
 
 
 class AudioMime(StrEnum):
@@ -82,37 +85,52 @@ class ImagePart(BaseModel):
     detail: ImageDetail = ImageDetail.AUTO  # OpenAI 视觉模型分辨率控制
     width: int | None = None
     height: int | None = None
+    attachment_id: str | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
 
 
 class FilePart(BaseModel):
-    """文件附件（Phase 2 预留）。"""
+    """文件附件。"""
     type: Literal[PartType.FILE] = PartType.FILE
     src: Src = ""
     mime: FileMime = FileMime.OCTET_STREAM
     filename: str = ""
     size_bytes: int = 0
+    attachment_id: str | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
 
 
 class AudioPart(BaseModel):
-    """音频（Phase 2 预留）。"""
+    """音频。"""
     type: Literal[PartType.AUDIO] = PartType.AUDIO
     src: Src = ""
     mime: AudioMime = AudioMime.WAV
     duration_ms: int = 0
+    attachment_id: str | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
 
 
 class VideoPart(BaseModel):
-    """视频（Phase 2 预留）。"""
+    """视频。"""
     type: Literal[PartType.VIDEO] = PartType.VIDEO
     src: Src = ""
     mime: VideoMime = VideoMime.MP4
     duration_ms: int = 0
+    attachment_id: str | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
+
+
+class StickerPart(BaseModel):
+    """表情贴纸 — 内置公开资源（/static/stickers/{sticker_id}.png），非上传附件。
+
+    不落 attachments 集合、不 ref_count、不参与 GC（P7-6 四轮 review 定案）；
+    attachment_id 缺省（None）——sticker 是独立内置资源，不经过附件校验。
+    """
+    type: Literal[PartType.STICKER] = PartType.STICKER
+    sticker_id: str = ""
+    src: Src = ""
 
 
 # ── Discriminated Union ────────────────────────────────
 
 Part = Annotated[
-    Union[TextPart, ImagePart, FilePart, AudioPart, VideoPart],
+    Union[TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart],
     Field(discriminator="type"),
 ]
 """多模态 Part 联合类型。根据 type 字段自动区分具体 Part 子类。

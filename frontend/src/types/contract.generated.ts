@@ -15,7 +15,7 @@ export interface TextPart {
   content: string
 }
 
-/** 图片内容块（src 为 URL 或 data URI）。 */
+/** 图片内容块（src 为 URL / data URI / 稳定附件路径）。 */
 export interface ImagePart {
   type: 'image'
   /** 图片来源（URL / data URI） */
@@ -28,6 +28,58 @@ export interface ImagePart {
   width?: number
   /** 图片高度 px，可缺省 */
   height?: number
+  /** 附件 ID（att_ 前缀，批次 7 消息关联），可缺省 */
+  attachment_id?: string
+}
+
+/** 文件内容块（wire 镜像 core/schema/part.py FilePart）。 */
+export interface FilePart {
+  type: 'file'
+  /** 文件来源（稳定附件路径 /api/attachments/{id}） */
+  src: string
+  /** MIME 类型，可缺省 */
+  mime?: string
+  /** 文件名，可缺省 */
+  filename?: string
+  /** 文件字节数，可缺省 */
+  size_bytes?: number
+  /** 附件 ID（att_ 前缀，批次 7 消息关联），可缺省 */
+  attachment_id?: string
+}
+
+/** 音频内容块（wire 镜像 core/schema/part.py AudioPart）。 */
+export interface AudioPart {
+  type: 'audio'
+  /** 音频来源（稳定附件路径 /api/attachments/{id}） */
+  src: string
+  /** MIME 类型，可缺省 */
+  mime?: string
+  /** 音频时长毫秒，可缺省 */
+  duration_ms?: number
+  /** 附件 ID（att_ 前缀，批次 7 消息关联），可缺省 */
+  attachment_id?: string
+}
+
+/** 视频内容块（wire 镜像 core/schema/part.py VideoPart）。 */
+export interface VideoPart {
+  type: 'video'
+  /** 视频来源（稳定附件路径 /api/attachments/{id}） */
+  src: string
+  /** MIME 类型，可缺省 */
+  mime?: string
+  /** 视频时长毫秒，可缺省 */
+  duration_ms?: number
+  /** 附件 ID（att_ 前缀，批次 7 消息关联），可缺省 */
+  attachment_id?: string
+}
+
+/** 表情内容块（内置公开资源，非上传附件，无 attachment_id）。 */
+export interface StickerPart {
+  type: 'sticker'
+  /** 表情 ID（st_ 前缀） */
+  sticker_id: string
+  /** 静态资源路径（/static/stickers/{id}.png） */
+  src: string
 }
 
 /** 工具函数名 + 参数。 */
@@ -121,7 +173,7 @@ export interface SessionMessageItem {
   /** 纯文本 parts 列表，可缺省 */
   parts?: Record<string, string>[]
   /** 消息内容（纯文本或内容块列表），可缺省 */
-  content?: string | (TextPart | ImagePart)[]
+  content?: string | (TextPart | ImagePart | FilePart | AudioPart | VideoPart | StickerPart)[]
   /** 内容类型 → 序号映射，可缺省 */
   content_type?: Record<string, number[]>
   /** 情绪标签，可缺省 */
@@ -160,6 +212,19 @@ export interface ServiceCapability {
   default: string
 }
 
+/** v2 文本消息携带的附件引用（发送后随 user_message.ack 回显确认）。
+
+kind/mime 为**客户端提示值**，服务端以 attachments 集合记录为准（Minor 10，
+不校验提示与记录一致——校验失败会误拒合法文件，展示用记录值）。 */
+export interface AttachmentRef {
+  /** 附件 ID（att_ 前缀，POST /api/uploads 返回） */
+  attachmentId: string
+  /** 附件类别提示值（image/video/audio/file） */
+  kind: string
+  /** MIME 类型提示值 */
+  mime: string
+}
+
 /** 会话历史回放（新连接建立时发送）。 */
 export interface SessionMessage {
   type: 'session'
@@ -192,6 +257,8 @@ export interface ServerInfoFeatures {
   voice_recording: boolean
   /** 实时语音会话（批次 6） */
   voice_realtime: boolean
+  /** 附件上传（批次 7，POST /api/uploads） */
+  media_upload: boolean
 }
 
 /** 协议版本 + 服务器能力声明（仅 v2 客户端；取代 capabilities，避免重复帧）。
@@ -205,7 +272,7 @@ export interface ServerInfoMessage {
   type: 'server_info'
   /** 协商的协议版本 */
   protocol_version: string
-  /** 服务器版本（core/version.py） */
+  /** 服务器版本（core/version.py，含 +build_sha 后缀） */
   server_version: string
   /** 能力特征（严禁超前声明） */
   features: ServerInfoFeatures
@@ -213,6 +280,8 @@ export interface ServerInfoMessage {
   services: Record<string, ServiceCapability>
   /** 桌面客户端连接 ID（仅 v2 + electron 下发），可缺省 */
   connectionId?: string
+  /** 构建 git SHA（core/version.py get_build_sha，失败缺省省略），可缺省 */
+  build_sha?: string
 }
 
 /** 用户消息确认（v2）：接受后跟 generation.*，rejected 带 error 不生成。 */
@@ -501,13 +570,18 @@ export interface HeartbeatAckMessage {
   type: 'heartbeat_ack'
 }
 
-/** 错误消息。 */
+/** 错误消息。
+
+requestId（批次 7，P7-12）：关联 WS 侧请求 ID（来源 UserInputData.request_id，
+有则带、无则 None 缺省省略）——客户端可凭此关联日志/幂等排查。 */
 export interface ErrorMessage {
   type: 'error'
   /** 错误描述 */
   message: string
   /** 错误码（如 SESSION_NOT_FOUND），可缺省 */
   code?: string
+  /** 关联请求 ID（WS 侧 request_id），可缺省 */
+  requestId?: string
 }
 
 /** 普通录音预转写字幕（stop 后、commit 前）。 */
@@ -623,13 +697,17 @@ export interface AudioCancelledMessage {
 export interface TextMessage {
   type: 'text'
   /** 纯文本或内容块列表 */
-  content: string | (TextPart | ImagePart)[]
+  content: string | (TextPart | ImagePart | FilePart | AudioPart | VideoPart | StickerPart)[]
 }
 
 /** v2 客户端文本消息（type=text + 幂等/定位字段；不进 ServerMessage 联合）。
 
 handler 按连接 protocol_version 路由：v2 连接解析追加字段，v1 忽略。
-非文本消息（content 数组）批次 2 沿用 v1 多模态路径。 */
+非文本消息（content 数组）批次 2 沿用 v1 多模态路径。
+
+批次 7：加可选 `attachments`（附件引用，对应 POST /api/uploads 上传结果）与
+`stickerId`（内置表情，非附件）；二者与纯文本可共存或独立（sticker/附件-only
+消息触发生成，content 可为空）。 */
 export interface V2TextMessage {
   type: 'text'
   /** 纯文本 */
@@ -640,6 +718,10 @@ export interface V2TextMessage {
   clientMessageId?: string
   /** 会话 ID，批次 2 忽略/恒 null，可缺省 */
   conversationId?: string
+  /** 附件引用列表（POST /api/uploads 上传结果），可缺省 */
+  attachments?: AttachmentRef[]
+  /** 内置表情 ID（st_ 前缀，非附件），可缺省 */
+  stickerId?: string
 }
 
 /** 客户端打断指令。 */
@@ -1387,6 +1469,60 @@ export interface DesktopCallStatus {
   result?: Record<string, unknown>
   /** 错误（{code,message}），可缺省 */
   error?: Record<string, unknown>
+}
+
+/** 上传响应中的附件条目（POST /api/uploads 响应 attachments[]）。
+
+`signedUrl` 可缺省（fail-closed 省略——签发失败时不带签名 URL，前端渲染层
+对稳定路径统一调签发端点解析）；`filename` 服务端脱敏后落盘名（I5，只留扩展名）。 */
+export interface AttachmentInfo {
+  /** 附件 ID（att_ 前缀） */
+  attachmentId: string
+  /** 附件类别（image/video/audio/file） */
+  kind: string
+  /** MIME 类型 */
+  mime: string
+  /** 附件字节数 */
+  size: number
+  /** 稳定访问路径（/api/attachments/{id}，不随签名过期） */
+  url: string
+  /** 短期签名 URL（签发失败 fail-closed 省略），可缺省 */
+  signedUrl?: string
+  /** 落盘文件名（脱敏，只留扩展名） */
+  filename: string
+}
+
+/** 附件上传成功响应（POST /api/uploads）。 */
+export interface AttachmentUploadResponse {
+  /** 上传成功附件列表 */
+  attachments: AttachmentInfo[]
+}
+
+/** 签发端点响应（GET /api/attachments/{id}/sign，C-1 渲染层签名解析）。 */
+export interface AttachmentSignResponse {
+  /** 附件 ID（att_ 前缀） */
+  attachmentId: string
+  /** 短期签名 URL（?sig=...&exp=...） */
+  url: string
+  /** 签名过期时间（UTC ISO） */
+  expiresAt: string
+}
+
+/** 内置表情条目（/api/stickers 列表项；契约单源，禁止 plain dict）。
+
+表情是公共资源，走公开静态 `/static/stickers/{id}.png`——不落 attachments
+集合、不 ref_count、不参与 GC（P7-6 四轮 review 定案）。 */
+export interface StickerEntry {
+  /** 表情 ID（st_ 前缀） */
+  stickerId: string
+  /** 静态资源路径（/static/stickers/{id}.png） */
+  src: string
+}
+
+/** 表情列表响应（GET /api/stickers）。 */
+export interface StickerListResponse {
+  /** 内置表情列表 */
+  stickers: StickerEntry[]
 }
 
 /** 单轮 token 消耗（debug 面板 current_turn 条目）。 */

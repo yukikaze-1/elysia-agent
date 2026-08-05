@@ -26,7 +26,7 @@ class TextPart(ContractModel):
 
 
 class ImagePart(ContractModel):
-    """图片内容块（src 为 URL 或 data URI）。"""
+    """图片内容块（src 为 URL / data URI / 稳定附件路径）。"""
 
     type: Literal["image"] = "image"
     src: str = Field(description="图片来源（URL / data URI）")
@@ -34,9 +34,56 @@ class ImagePart(ContractModel):
     detail: Optional[str] = Field(default=None, description="分辨率细节（auto/low/high），可缺省")
     width: Optional[int] = Field(default=None, description="图片宽度 px，可缺省")
     height: Optional[int] = Field(default=None, description="图片高度 px，可缺省")
+    attachment_id: Optional[str] = Field(
+        default=None, description="附件 ID（att_ 前缀，批次 7 消息关联），可缺省")
 
 
-ContentPart = Annotated[Union[TextPart, ImagePart], Field(discriminator="type")]
+class FilePart(ContractModel):
+    """文件内容块（wire 镜像 core/schema/part.py FilePart）。"""
+
+    type: Literal["file"] = "file"
+    src: str = Field(description="文件来源（稳定附件路径 /api/attachments/{id}）")
+    mime: Optional[str] = Field(default=None, description="MIME 类型，可缺省")
+    filename: Optional[str] = Field(default=None, description="文件名，可缺省")
+    size_bytes: Optional[int] = Field(default=None, description="文件字节数，可缺省")
+    attachment_id: Optional[str] = Field(
+        default=None, description="附件 ID（att_ 前缀，批次 7 消息关联），可缺省")
+
+
+class AudioPart(ContractModel):
+    """音频内容块（wire 镜像 core/schema/part.py AudioPart）。"""
+
+    type: Literal["audio"] = "audio"
+    src: str = Field(description="音频来源（稳定附件路径 /api/attachments/{id}）")
+    mime: Optional[str] = Field(default=None, description="MIME 类型，可缺省")
+    duration_ms: Optional[int] = Field(default=None, description="音频时长毫秒，可缺省")
+    attachment_id: Optional[str] = Field(
+        default=None, description="附件 ID（att_ 前缀，批次 7 消息关联），可缺省")
+
+
+class VideoPart(ContractModel):
+    """视频内容块（wire 镜像 core/schema/part.py VideoPart）。"""
+
+    type: Literal["video"] = "video"
+    src: str = Field(description="视频来源（稳定附件路径 /api/attachments/{id}）")
+    mime: Optional[str] = Field(default=None, description="MIME 类型，可缺省")
+    duration_ms: Optional[int] = Field(default=None, description="视频时长毫秒，可缺省")
+    attachment_id: Optional[str] = Field(
+        default=None, description="附件 ID（att_ 前缀，批次 7 消息关联），可缺省")
+
+
+class StickerPart(ContractModel):
+    """表情内容块（内置公开资源，非上传附件，无 attachment_id）。"""
+
+    type: Literal["sticker"] = "sticker"
+    sticker_id: str = Field(description="表情 ID（st_ 前缀）")
+    src: str = Field(description="静态资源路径（/static/stickers/{id}.png）")
+
+
+ContentPart = Annotated[
+    Union[TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart],
+    Field(discriminator="type"),
+]
 
 
 class ToolCallFunction(ContractModel):
@@ -134,6 +181,18 @@ class ServiceCapability(ContractModel):
     default: str = Field(description="config.yaml 默认模型")
 
 
+class AttachmentRef(ContractModel):
+    """v2 文本消息携带的附件引用（发送后随 user_message.ack 回显确认）。
+
+    kind/mime 为**客户端提示值**，服务端以 attachments 集合记录为准（Minor 10，
+    不校验提示与记录一致——校验失败会误拒合法文件，展示用记录值）。
+    """
+
+    attachmentId: str = Field(description="附件 ID（att_ 前缀，POST /api/uploads 返回）")
+    kind: str = Field(description="附件类别提示值（image/video/audio/file）")
+    mime: str = Field(description="MIME 类型提示值")
+
+
 # ─────────────────────────── Server→Client ───────────────────────────
 
 
@@ -162,6 +221,7 @@ class ServerInfoFeatures(ContractModel):
     dictation: bool = Field(default=False, description="输入法转写（批次 6）")
     voice_recording: bool = Field(default=False, description="普通录音（批次 6）")
     voice_realtime: bool = Field(default=False, description="实时语音会话（批次 6）")
+    media_upload: bool = Field(default=False, description="附件上传（批次 7，POST /api/uploads）")
 
 
 class ServerInfoMessage(ContractModel):
@@ -176,11 +236,13 @@ class ServerInfoMessage(ContractModel):
 
     type: Literal["server_info"] = "server_info"
     protocol_version: str = Field(default="2.0", description="协商的协议版本")
-    server_version: str = Field(description="服务器版本（core/version.py）")
+    server_version: str = Field(description="服务器版本（core/version.py，含 +build_sha 后缀）")
     features: ServerInfoFeatures = Field(description="能力特征（严禁超前声明）")
     services: dict[str, ServiceCapability] = Field(description="llm/stt/tts 三服务能力")
     connectionId: Optional[str] = Field(
         default=None, description="桌面客户端连接 ID（仅 v2 + electron 下发），可缺省")
+    build_sha: Optional[str] = Field(
+        default=None, description="构建 git SHA（core/version.py get_build_sha，失败缺省省略），可缺省")
 
 
 # ─────────────────────────── 批次 2 v2 generation 事件 ───────────────────────────
@@ -416,11 +478,16 @@ class HeartbeatAckMessage(ContractModel):
 
 
 class ErrorMessage(ContractModel):
-    """错误消息。"""
+    """错误消息。
+
+    requestId（批次 7，P7-12）：关联 WS 侧请求 ID（来源 UserInputData.request_id，
+    有则带、无则 None 缺省省略）——客户端可凭此关联日志/幂等排查。
+    """
 
     type: Literal["error"] = "error"
     message: str = Field(description="错误描述")
     code: Optional[str] = Field(default=None, description="错误码（如 SESSION_NOT_FOUND），可缺省")
+    requestId: Optional[str] = Field(default=None, description="关联请求 ID（WS 侧 request_id），可缺省")
 
 
 # ─────────────────── 批次 6 三种语音（BE-060/061/062） ───────────────────
@@ -527,6 +594,10 @@ class V2TextMessage(ContractModel):
 
     handler 按连接 protocol_version 路由：v2 连接解析追加字段，v1 忽略。
     非文本消息（content 数组）批次 2 沿用 v1 多模态路径。
+
+    批次 7：加可选 `attachments`（附件引用，对应 POST /api/uploads 上传结果）与
+    `stickerId`（内置表情，非附件）；二者与纯文本可共存或独立（sticker/附件-only
+    消息触发生成，content 可为空）。
     """
 
     type: Literal["text"] = "text"
@@ -534,6 +605,10 @@ class V2TextMessage(ContractModel):
     clientRequestId: str = Field(description="客户端请求 ID（幂等键，必填）")
     clientMessageId: Optional[str] = Field(default=None, description="客户端本地消息 ID，可缺省")
     conversationId: Optional[str] = Field(default=None, description="会话 ID，批次 2 忽略/恒 null，可缺省")
+    attachments: Optional[list[AttachmentRef]] = Field(
+        default=None, description="附件引用列表（POST /api/uploads 上传结果），可缺省")
+    stickerId: Optional[str] = Field(
+        default=None, description="内置表情 ID（st_ 前缀，非附件），可缺省")
 
 
 class InterruptMessage(ContractModel):
