@@ -120,7 +120,7 @@ subagent 验收 **ACCEPTED**（1 中：features.structured_generation 应为 tru
 
 ## 批次 4：统一 Tool Runtime 与 Desktop 工具桥（BE-040~043） ✅ 完成
 
-**提交：** `24b04ae1`（契约 tool.request/tool.status + ToolMetadata/ToolRegistryResponse/DesktopCallStatus）`ac1fe5dd`（ToolPlugin runtime/version/risk_level/output_schema + desktop 四插件）`d271afe6`（DesktopCallRepository）`e42a3357`（DesktopToolBridge）`d6b1f218`（ToolMetadata 导出 + definitions 运行时过滤 + tool_approval 版本门控）`68ae65ad`（agent 集成：desktop_bridge 构造/注入/生命周期 + ToolAdapter 过滤）`f8b54801`（X-Client-Platform 握手 + tool.status 路由 + 负面隔离 + desktop_runtime=true）`edac1c6b`（GET /api/tools + calls/{callId} + 附件上传持有者校验）`aac1f5a7`（server_info 下发 connectionId）+ **Task 10**（`docs+batch4: 回归收敛 + 测试矩阵 + 协议/进度/安全文档`，本批次收尾）
+**提交：** `8cf9da11`（契约 tool.request/tool.status + ToolMetadata/ToolRegistryResponse/DesktopCallStatus）`8d996951`（ToolPlugin runtime/version/risk_level/output_schema + desktop 四插件）`bebd3817`（DesktopCallRepository）`9731a794`（DesktopToolBridge）`07d365dc`（ToolMetadata 导出 + definitions 运行时过滤 + tool_approval 版本门控）`56296cf1`（agent 集成：desktop_bridge 构造/注入/生命周期 + ToolAdapter 过滤）`1df8db34`（X-Client-Platform 握手 + tool.status 路由 + 负面隔离 + desktop_runtime=true）`1eacb550`（GET /api/tools + calls/{callId} + 附件上传持有者校验）`7f3d0347`（server_info 下发 connectionId）+ **Task 10**（`docs+batch4: 回归收敛 + 测试矩阵 + 协议/进度/安全文档`，本批次收尾）
 **Spec（v0.2，吸收四角度 review 全部 findings）：** `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`
 **Plan：** `.superpowers/plans/2026-08-05-electron-backend-batch4-desktop-tools/`（Task 1-10 严格顺序）
 

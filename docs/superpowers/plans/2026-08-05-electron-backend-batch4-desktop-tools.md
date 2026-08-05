@@ -4,7 +4,7 @@
 
 **Plan 版本：** v0.2（修订：吸收批次 4 plan 两路 review findings——plugin_list 元数据扩展/迁移表 pending→客户端终态/注入双引用同步/bridge 构造顺序/负面隔离回归拆分/execute 委托与 paramHash 测试/desktop_runtime 断言/target_connection 填充/mime 兜底/重放版本门控/软依赖注明）
 **依据 Spec：** `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`（v0.2）
-**前置：** 批次 0 基线 + 批次 1（认证/版本协商/错误信封）+ 批次 2（chat v2）+ 批次 3（多会话 + GenerationRegistry Mongo 持久化先例，HEAD `4e5d05b0`）
+**前置：** 批次 0 基线 + 批次 1（认证/版本协商/错误信封）+ 批次 2（chat v2）+ 批次 3（多会话 + GenerationRegistry Mongo 持久化先例，HEAD `a1a9d2c9`）
 **执行环境：** Elysia conda（`conda activate Elysia`）
 
 ---
