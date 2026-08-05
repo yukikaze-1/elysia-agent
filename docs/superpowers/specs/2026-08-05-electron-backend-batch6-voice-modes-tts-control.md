@@ -62,9 +62,11 @@ ws_handler 集成：
 - **`set_service('stt', False)` 成功后 → 通知 manager（结束活动 REALTIME/DICTATION 会话，review NEW-X/NEW-XA）**——暂停期无帧、无 JSON，需显式接线才不漏 stt_disabled 检测。**RECORDING 会话不因 set_service 结束**：录音继续，STT 关闭在 `voice.record.stop` 时以 §4.2 `STT_UNAVAILABLE` 呈现。
 - BINARY 帧：`manager.has_active_session()` → `manager.feed_pcm()`，否则 `audio_buf.feed()`。
 - **连接断开（handle_ws finally，review NEW-AA/NEW-XB/NEW-XC）**：结束活动语音会话（丢弃残段、取消在途 STT 段；取消在途轮次**复用**现有 finally 的 `InterruptData(source="disconnect")`，manager 不重复发、不发 `ended`——连接已关，发送无意义）。取消在途 STT 段的目的：realtime 防落半途消息（STT 完成后 on_transcription 会 post `UserInputData`）、dictation 防迟到 `dictation.partial` 发往已关连接。销毁会话 buffer。
-- **回声抑制（deafen）覆盖三模式**：会话模式不依赖建连时的 `_monitor_state`（STT 热切换后才可用时无该任务）——`manager.feed_pcm()` 入口统一检查 `agent.status.is_speaking`，为真则丢帧（deafen 等价），RECORDING 无 VAD 但同样跳过（防助手回声进录音）。
+- **回声抑制（deafen）覆盖 REALTIME/DICTATION（review N1 消歧）**：会话模式不依赖建连时的 `_monitor_state`（STT 热切换后才可用时无该任务）——`manager.feed_pcm()` 入口对 REALTIME/DICTATION 检查 `agent.status.is_speaking`，为真则丢帧（deafen 等价）；**RECORDING 不检查**（全量累积，助手播放期录音会录进回声，属下节「已知取舍」的有意选择）。
 
 **已知取舍（记录在案，review NEW-B）：** 会话模式下 TTS 播放期间用户语音被**静默丢弃而非 barge-in 打断**（`feed_pcm` 的 `is_speaking` 丢帧即回声抑制，与 legacy 播放期 deafen 一致）；打断只发生在对话间隙（非播放）的在途生成。若需真 barge-in 需在丢帧前先送 VAD 判定，复杂度高，不在此批次。RECORDING 模式无 VAD 去回声——用户录音时若助手正在播放，麦克风会录进助手语音，属有意选择（前端可提示「播放中录音」）。
+
+**断连在途段边界（记录在案，review S1）：** `feed_pcm` 内 `await buffer.feed()` 在段 STT 期间阻塞 ws 串行消息循环——`voice_session.stop`/`dictation.stop` 要等该段完成才被处理，故 **stop 天然等待在途段**（§5.2「等待完成并补发」语义满足，非丢失）。但**连接断开**时：循环在 feed_pcm await STT 中，aiohttp 不取消在途 handler，STT 完成后 `_on_segment` 先 post `UserInputData`（落一条半途用户消息），随后 loop 下一次 receive 才检测断连 → finally `InterruptData(source="disconnect")` 取消该 generation。此半途消息无法在 manager 层取消（feed_pcm 阻塞循环，close() 运行时该 STT 已完成），属架构固有限制——Demo 可接受（断连发生在 ~1-30s STT 窗口的概率低），记录在案不修。
 
 ### 3.3 RECORDING 状态机（显式）
 
