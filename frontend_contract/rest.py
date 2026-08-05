@@ -24,18 +24,33 @@ from frontend_contract.base import ContractModel
 
 
 class ProviderEntry(ContractModel):
-    """单个已配置 provider（models 为可选用模型列表）。"""
+    """单个已配置 provider（models 为可选用模型列表）。
+
+    批次 5 增 runtime/能力字段衔接批次 4 Desktop Profile：credentialConfigured（Secret Store
+    或 env 已配置密钥）、runtime（backend/desktop/local_worker 执行位置，缺省 backend）、
+    capabilities（能力描述 dict，如 {auth, execution}）。均为缺省值非 None → 必然上 wire。
+    """
 
     models: list[str] = Field(description="可用模型列表")
+    credentialConfigured: bool = Field(default=False, description="密钥是否已配置（Secret Store/env）")
+    runtime: str = Field(default="backend", description="Profile 执行位置（backend/desktop/local_worker）")
+    capabilities: dict[str, Any] = Field(default_factory=dict, description="能力描述 dict")
 
 
 class CustomProvider(ContractModel):
-    """自定义 provider 条目（custom_providers.yaml 持久化形状）。"""
+    """自定义 provider 条目（custom_providers.yaml 持久化形状）。
+
+    批次 5 增 runtime/credentialConfigured/capabilities（同 ProviderEntry，衔接批次 4 Profile）。
+    api_key 不入 YAML——经 Secret Store 承接（credentialConfigured 反映已配置状态）。
+    """
 
     name: str = Field(description="provider 名称")
     base_url: str = Field(description="Base URL")
     api_key_env: Optional[str] = Field(default=None, description="API Key 环境变量名，可缺省")
     models: Optional[list[str]] = Field(default=None, description="模型列表，可缺省")
+    runtime: str = Field(default="backend", description="Profile 执行位置（backend/desktop/local_worker）")
+    credentialConfigured: bool = Field(default=False, description="密钥是否已配置（Secret Store/env）")
+    capabilities: dict[str, Any] = Field(default_factory=dict, description="能力描述 dict")
 
 
 class UnconfiguredEntry(ContractModel):
@@ -123,6 +138,47 @@ class ProviderTestResult(ContractModel):
     latency_ms: Optional[int] = Field(default=None, description="耗时毫秒，可缺省")
     error: Optional[str] = Field(default=None, description="失败原因，可缺省")
     detail: Optional[str] = Field(default=None, description="成功详情（识别文本/音频字节数等），可缺省")
+
+
+# ────────────────────── TTS 声音（GET /api/tts/voices + POST /api/tts/preview，BE-051） ──────────────────────
+
+
+class TtsVoiceEntry(ContractModel):
+    """TTS 声音条目（`TTSBackend.list_voices()` 协议产物）。
+
+    languages/capabilities 缺省空（后端条目可省略）；缺省值非 None → 必然上 wire（spec §9 接受键新增）。
+    """
+
+    id: str = Field(description="声音 ID（provider 内唯一）")
+    name: Optional[str] = Field(default=None, description="显示名，可缺省")
+    languages: list[str] = Field(default_factory=list, description="支持语言列表")
+    capabilities: dict[str, Any] = Field(default_factory=dict, description="能力描述（音色性别/风格等）")
+
+
+class TtsVoicesResponse(ContractModel):
+    """声音列表响应（GET /api/tts/voices；恒作用于活动会话激活 TTS profile）。
+
+    source=static|api（数据源：静态声明 / MiniMax 动态拉取）；后端未启用 → 空列表 + error（200 不炸）。
+    """
+
+    voices: list[TtsVoiceEntry] = Field(description="声音列表")
+    current: Optional[str] = Field(
+        default=None, description="当前声音 ID（活动会话 service_state.tts_voice 或后端默认），可缺省")
+    source: str = Field(default="static", description="数据源（static|api）")
+    error: Optional[str] = Field(default=None, description="错误信息（后端未启用时带），可缺省")
+
+
+class TtsPreviewResult(ContractModel):
+    """声音试听结果（POST /api/tts/preview；固定短文本合成，不读聊天）。
+
+    成功 → {ok, mime, audio_base64, duration_ms?}；失败 → {ok: False, error}。
+    """
+
+    ok: bool = Field(description="试听是否成功")
+    mime: Optional[str] = Field(default=None, description="音频 MIME 类型，可缺省")
+    duration_ms: Optional[int] = Field(default=None, description="音频时长毫秒，可缺省")
+    audio_base64: Optional[str] = Field(default=None, description="base64 音频数据，可缺省")
+    error: Optional[str] = Field(default=None, description="失败原因，可缺省")
 
 
 # ────────────────────── 消息归档（/api/messages） ──────────────────────

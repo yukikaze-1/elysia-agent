@@ -270,6 +270,7 @@ class GenerationFailedMessage(ContractModel):
     type: Literal["generation.failed"] = "generation.failed"
     generationId: str = Field(description="生成实例 ID")
     messageId: Optional[str] = Field(default=None, description="assistant 父消息 ID（已接受后恒非空），可缺省")
+    model: Optional[str] = Field(default=None, description="实际模型（turn 启动快照，D8），可缺省")
     code: str = Field(description="稳定错误码（GENERATION_PROVIDER_UNAVAILABLE/GENERATION_TIMEOUT/GENERATION_CANCELLED/INTERNAL 等）")
     message: str = Field(description="公开说明")
     retryable: bool = Field(description="是否可重试")
@@ -392,6 +393,19 @@ class ServiceModeResultMessage(ContractModel):
     error: Annotated[Optional[str], TsNull()] = Field(default=None, description="错误，无则 null")
 
 
+class SetTtsVoiceResultMessage(ContractModel):
+    """TTS 声音设置结果（Server→Client，响应 set_tts_voice）。
+
+    成功带 voice 回显、失败带 error（均缺省省略）；与 switch_model_result/service_mode_result 同列——
+    加入 ServerMessage 判别联合，否则 gen_ts 不生成 TS 判别。恒作用于活动会话。
+    """
+
+    type: Literal["set_tts_voice_result"] = "set_tts_voice_result"
+    ok: bool = Field(description="设置是否成功")
+    voice: Optional[str] = Field(default=None, description="生效的声音 ID（成功回显），可缺省")
+    error: Optional[str] = Field(default=None, description="失败原因（校验失败/后端不可用），可缺省")
+
+
 class HeartbeatAckMessage(ContractModel):
     """心跳应答。"""
 
@@ -450,6 +464,17 @@ class SetServiceMessage(ContractModel):
     type: Literal["set_service"] = "set_service"
     service: Literal["stt", "tts"] = Field(description="服务名")
     enabled: bool = Field(description="是否启用")
+
+
+class SetTtsVoiceMessage(ContractModel):
+    """客户端设置 TTS 声音（v2，恒作用于活动会话，BE-051）。
+
+    服务端经活动会话激活 TTS 后端 `list_voices()` 校验 voice 存在后写入 service_state.tts_voice；
+    未知 voice/后端不可用 → set_tts_voice_result {ok: False, error}（不改 state）。
+    """
+
+    type: Literal["set_tts_voice"] = "set_tts_voice"
+    voice: str = Field(description="目标声音 ID（须在活动会话激活 TTS 后端 list_voices 结果内）")
 
 
 class ToolApprovalMessage(ContractModel):
@@ -572,6 +597,7 @@ ServerMessage = Annotated[Union[
     WakeMessage,
     SwitchModelResultMessage,
     ServiceModeResultMessage,
+    SetTtsVoiceResultMessage,
     HeartbeatAckMessage,
     ErrorMessage,
     UserAckMessage,

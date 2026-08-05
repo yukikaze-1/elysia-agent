@@ -330,6 +330,8 @@ export interface GenerationFailedMessage {
   generationId: string
   /** assistant 父消息 ID（已接受后恒非空），可缺省 */
   messageId?: string
+  /** 实际模型（turn 启动快照，D8），可缺省 */
+  model?: string
   /** 稳定错误码（GENERATION_PROVIDER_UNAVAILABLE/GENERATION_TIMEOUT/GENERATION_CANCELLED/INTERNAL 等） */
   code: string
   /** 公开说明 */
@@ -474,6 +476,20 @@ export interface ServiceModeResultMessage {
   error: string | null
 }
 
+/** TTS 声音设置结果（Server→Client，响应 set_tts_voice）。
+
+成功带 voice 回显、失败带 error（均缺省省略）；与 switch_model_result/service_mode_result 同列——
+加入 ServerMessage 判别联合，否则 gen_ts 不生成 TS 判别。恒作用于活动会话。 */
+export interface SetTtsVoiceResultMessage {
+  type: 'set_tts_voice_result'
+  /** 设置是否成功 */
+  ok: boolean
+  /** 生效的声音 ID（成功回显），可缺省 */
+  voice?: string
+  /** 失败原因（校验失败/后端不可用），可缺省 */
+  error?: string
+}
+
 /** 心跳应答。 */
 export interface HeartbeatAckMessage {
   type: 'heartbeat_ack'
@@ -532,6 +548,16 @@ export interface SetServiceMessage {
   service: 'stt' | 'tts'
   /** 是否启用 */
   enabled: boolean
+}
+
+/** 客户端设置 TTS 声音（v2，恒作用于活动会话，BE-051）。
+
+服务端经活动会话激活 TTS 后端 `list_voices()` 校验 voice 存在后写入 service_state.tts_voice；
+未知 voice/后端不可用 → set_tts_voice_result {ok: False, error}（不改 state）。 */
+export interface SetTtsVoiceMessage {
+  type: 'set_tts_voice'
+  /** 目标声音 ID（须在活动会话激活 TTS 后端 list_voices 结果内） */
+  voice: string
 }
 
 /** 客户端提交工具审批结果。 */
@@ -634,13 +660,26 @@ export interface ToolStatusMessage {
   executionSummary?: string
 }
 
-/** 单个已配置 provider（models 为可选用模型列表）。 */
+/** 单个已配置 provider（models 为可选用模型列表）。
+
+批次 5 增 runtime/能力字段衔接批次 4 Desktop Profile：credentialConfigured（Secret Store
+或 env 已配置密钥）、runtime（backend/desktop/local_worker 执行位置，缺省 backend）、
+capabilities（能力描述 dict，如 {auth, execution}）。均为缺省值非 None → 必然上 wire。 */
 export interface ProviderEntry {
   /** 可用模型列表 */
   models: string[]
+  /** 密钥是否已配置（Secret Store/env） */
+  credentialConfigured: boolean
+  /** Profile 执行位置（backend/desktop/local_worker） */
+  runtime: string
+  /** 能力描述 dict */
+  capabilities: Record<string, unknown>
 }
 
-/** 自定义 provider 条目（custom_providers.yaml 持久化形状）。 */
+/** 自定义 provider 条目（custom_providers.yaml 持久化形状）。
+
+批次 5 增 runtime/credentialConfigured/capabilities（同 ProviderEntry，衔接批次 4 Profile）。
+api_key 不入 YAML——经 Secret Store 承接（credentialConfigured 反映已配置状态）。 */
 export interface CustomProvider {
   /** provider 名称 */
   name: string
@@ -650,6 +689,12 @@ export interface CustomProvider {
   api_key_env?: string
   /** 模型列表，可缺省 */
   models?: string[]
+  /** Profile 执行位置（backend/desktop/local_worker） */
+  runtime: string
+  /** 密钥是否已配置（Secret Store/env） */
+  credentialConfigured: boolean
+  /** 能力描述 dict */
+  capabilities: Record<string, unknown>
 }
 
 /** 未配置 provider 引导条目（env_vars 列出缺失的环境变量）。 */
@@ -739,6 +784,50 @@ export interface ProviderTestResult {
   error?: string
   /** 成功详情（识别文本/音频字节数等），可缺省 */
   detail?: string
+}
+
+/** TTS 声音条目（`TTSBackend.list_voices()` 协议产物）。
+
+languages/capabilities 缺省空（后端条目可省略）；缺省值非 None → 必然上 wire（spec §9 接受键新增）。 */
+export interface TtsVoiceEntry {
+  /** 声音 ID（provider 内唯一） */
+  id: string
+  /** 显示名，可缺省 */
+  name?: string
+  /** 支持语言列表 */
+  languages: string[]
+  /** 能力描述（音色性别/风格等） */
+  capabilities: Record<string, unknown>
+}
+
+/** 声音列表响应（GET /api/tts/voices；恒作用于活动会话激活 TTS profile）。
+
+source=static|api（数据源：静态声明 / MiniMax 动态拉取）；后端未启用 → 空列表 + error（200 不炸）。 */
+export interface TtsVoicesResponse {
+  /** 声音列表 */
+  voices: TtsVoiceEntry[]
+  /** 当前声音 ID（活动会话 service_state.tts_voice 或后端默认），可缺省 */
+  current?: string
+  /** 数据源（static|api） */
+  source: string
+  /** 错误信息（后端未启用时带），可缺省 */
+  error?: string
+}
+
+/** 声音试听结果（POST /api/tts/preview；固定短文本合成，不读聊天）。
+
+成功 → {ok, mime, audio_base64, duration_ms?}；失败 → {ok: False, error}。 */
+export interface TtsPreviewResult {
+  /** 试听是否成功 */
+  ok: boolean
+  /** 音频 MIME 类型，可缺省 */
+  mime?: string
+  /** 音频时长毫秒，可缺省 */
+  duration_ms?: number
+  /** base64 音频数据，可缺省 */
+  audio_base64?: string
+  /** 失败原因，可缺省 */
+  error?: string
 }
 
 /** 归档消息中的纯文本 part（_archive_to_client 从 text part 提取）。 */
@@ -1693,6 +1782,7 @@ export type ServerMessage =
   | WakeMessage
   | SwitchModelResultMessage
   | ServiceModeResultMessage
+  | SetTtsVoiceResultMessage
   | HeartbeatAckMessage
   | ErrorMessage
   | UserAckMessage
