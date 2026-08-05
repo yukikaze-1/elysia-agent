@@ -45,12 +45,15 @@ class TestVersionNegotiation:
             assert info["protocol_version"] == "2.0"
             assert info["server_version"]
             # features 如实反映能力：structured_generation 批次 2、multi_conversation 批次 3、
-            # desktop_runtime 批次 4 已实现（true），dictation 未实现（false）
+            # desktop_runtime 批次 4 已实现（true），dictation 未实现（false）；
+            # voice_recording/voice_realtime（批次 6 契约字段，Task 1 仅加字段，Task 9 置 true）仍 false
             assert info["features"] == {
                 "structured_generation": True,
                 "multi_conversation": True,
                 "desktop_runtime": True,
                 "dictation": False,
+                "voice_recording": False,
+                "voice_realtime": False,
             }
             # services 复用 per-service 形状
             assert "llm" in info["services"]

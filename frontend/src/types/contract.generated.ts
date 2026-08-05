@@ -188,6 +188,10 @@ export interface ServerInfoFeatures {
   desktop_runtime: boolean
   /** 输入法转写（批次 6） */
   dictation: boolean
+  /** 普通录音（批次 6） */
+  voice_recording: boolean
+  /** 实时语音会话（批次 6） */
+  voice_realtime: boolean
 }
 
 /** 协议版本 + 服务器能力声明（仅 v2 客户端；取代 capabilities，避免重复帧）。
@@ -398,6 +402,8 @@ export interface AudioMessage {
   seq: number
   /** base64 音频数据 */
   data: string
+  /** 是否最终块 */
+  is_final: boolean
 }
 
 /** 音频流结束标记。 */
@@ -504,6 +510,115 @@ export interface ErrorMessage {
   code?: string
 }
 
+/** 普通录音预转写字幕（stop 后、commit 前）。 */
+export interface VoiceTranscriptMessage {
+  type: 'voice.transcript'
+  /** 录音 ID */
+  recordingId: string
+  /** 字幕文本 */
+  text: string
+  /** 情绪标签，可缺省 */
+  emotion?: string
+}
+
+/** 实时语音会话已开始（conversationId = 解析后实际目标会话）。 */
+export interface VoiceSessionStartedMessage {
+  type: 'voice_session.started'
+  /** 会话 ID */
+  sessionId: string
+  /** 实际目标会话，可缺省 */
+  conversationId?: string
+}
+
+/** 实时语音轮次字幕（每段一条 = 该轮 final 文本，仅显示）。 */
+export interface VoiceSessionPartialMessage {
+  type: 'voice_session.partial'
+  /** 会话 ID */
+  sessionId: string
+  /** 轮次序号（每轮单调递增） */
+  turnId: number
+  /** 全局分段序号（跨轮累计） */
+  segmentIndex: number
+  /** 该轮文本 */
+  text: string
+}
+
+/** 实时语音轮次已提交（自动触发 generation）。 */
+export interface VoiceSessionTurnMessage {
+  type: 'voice_session.turn'
+  /** 会话 ID */
+  sessionId: string
+  /** 轮次序号 */
+  turnId: number
+  /** 用户消息 ID（预分配，落库一致） */
+  messageId: string
+  /** 会话 ID，可缺省 */
+  conversationId?: string
+  /** 该轮最终文本 */
+  text: string
+}
+
+/** 实时语音背压进度通知（seq = 服务端已接收 BINARY 帧序数）。 */
+export interface VoiceSessionAckMessage {
+  type: 'voice_session.ack'
+  /** 会话 ID */
+  sessionId: string
+  /** 已接收帧序数 */
+  seq: number
+}
+
+/** 实时语音会话结束。 */
+export interface VoiceSessionEndedMessage {
+  type: 'voice_session.ended'
+  /** 会话 ID */
+  sessionId: string
+  /** 结束原因 */
+  reason: 'stopped' | 'cancelled' | 'timeout' | 'stt_disabled'
+}
+
+/** 输入法转写中间字幕（仅显示）。 */
+export interface DictationPartialMessage {
+  type: 'dictation.partial'
+  /** 累积文本 */
+  text: string
+}
+
+/** 输入法转写最终结果（只回文字，零消息副作用）。 */
+export interface DictationFinalMessage {
+  type: 'dictation.final'
+  /** 原请求 ID */
+  clientRequestId: string
+  /** 最终文字 */
+  text: string
+}
+
+/** 输入法转写已取消。 */
+export interface DictationCancelledMessage {
+  type: 'dictation.cancelled'
+  /** 原请求 ID */
+  clientRequestId: string
+}
+
+/** 音频流开始（stream_id = playback ID）。 */
+export interface AudioStartMessage {
+  type: 'audio_start'
+  /** playback ID */
+  stream_id: number
+  /** 音频格式 */
+  format: 'wav' | 'mp3'
+  /** 采样率（WAV header），可缺省 */
+  sampleRate?: number
+  /** 时长毫秒（WAV 计算），可缺省 */
+  durationMs?: number
+}
+
+/** 音频流被取消（前端清理孤儿 chunk）。 */
+export interface AudioCancelledMessage {
+  type: 'audio_cancelled'
+  /** playback ID */
+  stream_id: number
+}
+
 /** 客户端发送文本/多模态消息。 */
 export interface TextMessage {
   type: 'text'
@@ -583,6 +698,142 @@ export interface ActivateSessionMessage {
   type: 'activate_session'
   /** 目标会话 ID（必填） */
   conversationId: string
+}
+
+/** 开始普通录音（全段缓冲，不触发）。 */
+export interface VoiceRecordStartMessage {
+  type: 'voice.record.start'
+  /** 录音 ID（客户端生成 rec_ 前缀） */
+  recordingId: string
+}
+
+/** 停止普通录音并预转写。 */
+export interface VoiceRecordStopMessage {
+  type: 'voice.record.stop'
+  /** 录音 ID */
+  recordingId: string
+}
+
+/** 确认普通录音提交（v2：幂等 + 预分配 messageId）。text = 用户确认的字幕文本（幂等摘要依据）。 */
+export interface VoiceCommitMessage {
+  type: 'voice.commit'
+  /** 录音 ID */
+  recordingId: string
+  /** 确认的字幕文本 */
+  text: string
+  /** 幂等键（必填） */
+  clientRequestId: string
+  /** 客户端本地消息 ID，可缺省 */
+  clientMessageId?: string
+  /** 会话 ID，可缺省 */
+  conversationId?: string
+}
+
+/** 丢弃普通录音。 */
+export interface VoiceDiscardMessage {
+  type: 'voice.discard'
+  /** 录音 ID */
+  recordingId: string
+}
+
+/** 开始实时语音会话。 */
+export interface VoiceSessionStartMessage {
+  type: 'voice_session.start'
+  /** 会话 ID（客户端生成 vs_ 前缀） */
+  sessionId: string
+  /** 会话 ID，可缺省 */
+  conversationId?: string
+}
+
+/** 契约模型基类：wire_dict() 统一序列化。
+
+- exclude_none=True：可缺省字段（None）缺省省略
+- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
+- ts_null 标记字段：None 时补显式 null
+- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
+export interface VoiceSessionPauseMessage {
+  type: 'voice_session.pause'
+  /** 会话 ID */
+  sessionId: string
+}
+
+/** 契约模型基类：wire_dict() 统一序列化。
+
+- exclude_none=True：可缺省字段（None）缺省省略
+- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
+- ts_null 标记字段：None 时补显式 null
+- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
+export interface VoiceSessionResumeMessage {
+  type: 'voice_session.resume'
+  /** 会话 ID */
+  sessionId: string
+}
+
+/** 契约模型基类：wire_dict() 统一序列化。
+
+- exclude_none=True：可缺省字段（None）缺省省略
+- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
+- ts_null 标记字段：None 时补显式 null
+- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
+export interface VoiceSessionStopMessage {
+  type: 'voice_session.stop'
+  /** 会话 ID */
+  sessionId: string
+}
+
+/** 契约模型基类：wire_dict() 统一序列化。
+
+- exclude_none=True：可缺省字段（None）缺省省略
+- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
+- ts_null 标记字段：None 时补显式 null
+- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
+export interface VoiceSessionCancelMessage {
+  type: 'voice_session.cancel'
+  /** 会话 ID */
+  sessionId: string
+}
+
+/** 契约模型基类：wire_dict() 统一序列化。
+
+- exclude_none=True：可缺省字段（None）缺省省略
+- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
+- ts_null 标记字段：None 时补显式 null
+- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
+export interface DictationStartMessage {
+  type: 'dictation.start'
+  /** 请求 ID */
+  clientRequestId: string
+}
+
+/** 契约模型基类：wire_dict() 统一序列化。
+
+- exclude_none=True：可缺省字段（None）缺省省略
+- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
+- ts_null 标记字段：None 时补显式 null
+- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
+export interface DictationStopMessage {
+  type: 'dictation.stop'
+  /** 请求 ID */
+  clientRequestId: string
+}
+
+/** 契约模型基类：wire_dict() 统一序列化。
+
+- exclude_none=True：可缺省字段（None）缺省省略
+- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
+- ts_null 标记字段：None 时补显式 null
+- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
+export interface DictationCancelMessage {
+  type: 'dictation.cancel'
+  /** 请求 ID */
+  clientRequestId: string
+}
+
+/** 取消在途播放实例（全局操作，v2-only）。 */
+export interface AudioCancelMessage {
+  type: 'audio.cancel'
+  /** playback ID */
+  stream_id: number
 }
 
 /** 桌面工具结果附件引用（后端托管 URL）。
@@ -1793,6 +2044,17 @@ export type ServerMessage =
   | GenerationCompletedMessage
   | GenerationFailedMessage
   | ToolRequestMessage
+  | VoiceTranscriptMessage
+  | VoiceSessionStartedMessage
+  | VoiceSessionPartialMessage
+  | VoiceSessionTurnMessage
+  | VoiceSessionAckMessage
+  | VoiceSessionEndedMessage
+  | DictationPartialMessage
+  | DictationFinalMessage
+  | DictationCancelledMessage
+  | AudioStartMessage
+  | AudioCancelledMessage
   | UnknownMessage
 
 export interface UnknownMessage { type: string; [key: string]: unknown }

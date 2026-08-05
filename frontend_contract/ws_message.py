@@ -160,6 +160,8 @@ class ServerInfoFeatures(ContractModel):
     multi_conversation: bool = Field(default=False, description="多会话（批次 3）")
     desktop_runtime: bool = Field(default=False, description="Desktop 工具 Runtime（批次 4）")
     dictation: bool = Field(default=False, description="输入法转写（批次 6）")
+    voice_recording: bool = Field(default=False, description="普通录音（批次 6）")
+    voice_realtime: bool = Field(default=False, description="实时语音会话（批次 6）")
 
 
 class ServerInfoMessage(ContractModel):
@@ -325,6 +327,7 @@ class AudioMessage(ContractModel):
     stream_id: int = Field(description="音频流 ID")
     seq: int = Field(description="chunk 序号（从 0 递增）")
     data: str = Field(description="base64 音频数据")
+    is_final: bool = Field(default=False, description="是否最终块")
 
 
 class AudioEndMessage(ContractModel):
@@ -420,6 +423,95 @@ class ErrorMessage(ContractModel):
     code: Optional[str] = Field(default=None, description="错误码（如 SESSION_NOT_FOUND），可缺省")
 
 
+# ─────────────────── 批次 6 三种语音（BE-060/061/062） ───────────────────
+
+# Server→Client
+
+
+class VoiceTranscriptMessage(ContractModel):
+    """普通录音预转写字幕（stop 后、commit 前）。"""
+    type: Literal["voice.transcript"] = "voice.transcript"
+    recordingId: str = Field(description="录音 ID")
+    text: str = Field(description="字幕文本")
+    emotion: Optional[str] = Field(default=None, description="情绪标签，可缺省")
+
+
+class VoiceSessionStartedMessage(ContractModel):
+    """实时语音会话已开始（conversationId = 解析后实际目标会话）。"""
+    type: Literal["voice_session.started"] = "voice_session.started"
+    sessionId: str = Field(description="会话 ID")
+    conversationId: Optional[str] = Field(default=None, description="实际目标会话，可缺省")
+
+
+class VoiceSessionPartialMessage(ContractModel):
+    """实时语音轮次字幕（每段一条 = 该轮 final 文本，仅显示）。"""
+    type: Literal["voice_session.partial"] = "voice_session.partial"
+    sessionId: str = Field(description="会话 ID")
+    turnId: int = Field(description="轮次序号（每轮单调递增）")
+    segmentIndex: int = Field(description="全局分段序号（跨轮累计）")
+    text: str = Field(description="该轮文本")
+
+
+class VoiceSessionTurnMessage(ContractModel):
+    """实时语音轮次已提交（自动触发 generation）。"""
+    type: Literal["voice_session.turn"] = "voice_session.turn"
+    sessionId: str = Field(description="会话 ID")
+    turnId: int = Field(description="轮次序号")
+    messageId: str = Field(description="用户消息 ID（预分配，落库一致）")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
+    text: str = Field(description="该轮最终文本")
+
+
+class VoiceSessionAckMessage(ContractModel):
+    """实时语音背压进度通知（seq = 服务端已接收 BINARY 帧序数）。"""
+    type: Literal["voice_session.ack"] = "voice_session.ack"
+    sessionId: str = Field(description="会话 ID")
+    seq: int = Field(description="已接收帧序数")
+
+
+class VoiceSessionEndedMessage(ContractModel):
+    """实时语音会话结束。"""
+    type: Literal["voice_session.ended"] = "voice_session.ended"
+    sessionId: str = Field(description="会话 ID")
+    reason: Literal["stopped", "cancelled", "timeout", "stt_disabled"] = Field(description="结束原因")
+
+
+class DictationPartialMessage(ContractModel):
+    """输入法转写中间字幕（仅显示）。"""
+    type: Literal["dictation.partial"] = "dictation.partial"
+    text: str = Field(description="累积文本")
+
+
+class DictationFinalMessage(ContractModel):
+    """输入法转写最终结果（只回文字，零消息副作用）。"""
+    type: Literal["dictation.final"] = "dictation.final"
+    clientRequestId: str = Field(description="原请求 ID")
+    text: str = Field(description="最终文字")
+
+
+class DictationCancelledMessage(ContractModel):
+    """输入法转写已取消。"""
+    type: Literal["dictation.cancelled"] = "dictation.cancelled"
+    clientRequestId: str = Field(description="原请求 ID")
+
+
+# ─────────────────── 批次 6 TTS 播放控制（BE-063） ───────────────────
+
+class AudioStartMessage(ContractModel):
+    """音频流开始（stream_id = playback ID）。"""
+    type: Literal["audio_start"] = "audio_start"
+    stream_id: int = Field(description="playback ID")
+    format: Literal["wav", "mp3"] = Field(default="wav", description="音频格式")
+    sampleRate: Optional[int] = Field(default=None, description="采样率（WAV header），可缺省")
+    durationMs: Optional[int] = Field(default=None, description="时长毫秒（WAV 计算），可缺省")
+
+
+class AudioCancelledMessage(ContractModel):
+    """音频流被取消（前端清理孤儿 chunk）。"""
+    type: Literal["audio_cancelled"] = "audio_cancelled"
+    stream_id: int = Field(description="playback ID")
+
+
 # ─────────────────────────── Client→Server ───────────────────────────
 
 
@@ -500,6 +592,89 @@ class ActivateSessionMessage(ContractModel):
 
     type: Literal["activate_session"] = "activate_session"
     conversationId: str = Field(description="目标会话 ID（必填）")
+
+
+# ─────────────────── 批次 6 三种语音（BE-060/061/062） ───────────────────
+
+# Client→Server
+
+
+class VoiceRecordStartMessage(ContractModel):
+    """开始普通录音（全段缓冲，不触发）。"""
+    type: Literal["voice.record.start"] = "voice.record.start"
+    recordingId: str = Field(description="录音 ID（客户端生成 rec_ 前缀）")
+
+
+class VoiceRecordStopMessage(ContractModel):
+    """停止普通录音并预转写。"""
+    type: Literal["voice.record.stop"] = "voice.record.stop"
+    recordingId: str = Field(description="录音 ID")
+
+
+class VoiceCommitMessage(ContractModel):
+    """确认普通录音提交（v2：幂等 + 预分配 messageId）。text = 用户确认的字幕文本（幂等摘要依据）。"""
+    type: Literal["voice.commit"] = "voice.commit"
+    recordingId: str = Field(description="录音 ID")
+    text: str = Field(description="确认的字幕文本")
+    clientRequestId: str = Field(description="幂等键（必填）")
+    clientMessageId: Optional[str] = Field(default=None, description="客户端本地消息 ID，可缺省")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
+
+
+class VoiceDiscardMessage(ContractModel):
+    """丢弃普通录音。"""
+    type: Literal["voice.discard"] = "voice.discard"
+    recordingId: str = Field(description="录音 ID")
+
+
+class VoiceSessionStartMessage(ContractModel):
+    """开始实时语音会话。"""
+    type: Literal["voice_session.start"] = "voice_session.start"
+    sessionId: str = Field(description="会话 ID（客户端生成 vs_ 前缀）")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
+
+
+class VoiceSessionPauseMessage(ContractModel):
+    type: Literal["voice_session.pause"] = "voice_session.pause"
+    sessionId: str = Field(description="会话 ID")
+
+
+class VoiceSessionResumeMessage(ContractModel):
+    type: Literal["voice_session.resume"] = "voice_session.resume"
+    sessionId: str = Field(description="会话 ID")
+
+
+class VoiceSessionStopMessage(ContractModel):
+    type: Literal["voice_session.stop"] = "voice_session.stop"
+    sessionId: str = Field(description="会话 ID")
+
+
+class VoiceSessionCancelMessage(ContractModel):
+    type: Literal["voice_session.cancel"] = "voice_session.cancel"
+    sessionId: str = Field(description="会话 ID")
+
+
+class DictationStartMessage(ContractModel):
+    type: Literal["dictation.start"] = "dictation.start"
+    clientRequestId: str = Field(description="请求 ID")
+
+
+class DictationStopMessage(ContractModel):
+    type: Literal["dictation.stop"] = "dictation.stop"
+    clientRequestId: str = Field(description="请求 ID")
+
+
+class DictationCancelMessage(ContractModel):
+    type: Literal["dictation.cancel"] = "dictation.cancel"
+    clientRequestId: str = Field(description="请求 ID")
+
+
+# ─────────────────── 批次 6 TTS 播放控制（BE-063） ───────────────────
+
+class AudioCancelMessage(ContractModel):
+    """取消在途播放实例（全局操作，v2-only）。"""
+    type: Literal["audio.cancel"] = "audio.cancel"
+    stream_id: int = Field(description="playback ID")
 
 
 # ─────────────────────────── 批次 4 Desktop 工具桥（BE-040/041/043） ───────────────────────────
@@ -608,4 +783,17 @@ ServerMessage = Annotated[Union[
     GenerationCompletedMessage,
     GenerationFailedMessage,
     ToolRequestMessage,
+    # 批次 6 三种语音（BE-060/061/062）
+    VoiceTranscriptMessage,
+    VoiceSessionStartedMessage,
+    VoiceSessionPartialMessage,
+    VoiceSessionTurnMessage,
+    VoiceSessionAckMessage,
+    VoiceSessionEndedMessage,
+    DictationPartialMessage,
+    DictationFinalMessage,
+    DictationCancelledMessage,
+    # 批次 6 TTS 播放控制（BE-063）
+    AudioStartMessage,
+    AudioCancelledMessage,
 ], Field(discriminator="type")]
