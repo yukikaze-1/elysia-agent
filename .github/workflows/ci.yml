@@ -51,7 +51,7 @@ jobs:
             sleep $((attempt * 10))
           done
       - name: Load .env
-        run: cp /home/yomu/Agent/.env .env
+        run: cp /home/yomu/elysia-agent/.env .env
       - name: Lint (import style gate)
         run: make lint
       - name: Contract drift check
@@ -97,7 +97,7 @@ jobs:
             sleep $((attempt * 10))
           done
       - name: Load .env
-        run: cp /home/yomu/Agent/.env .env
+        run: cp /home/yomu/elysia-agent/.env .env
       - name: Lint (import style gate)
         run: make lint
       - name: Run normal tests

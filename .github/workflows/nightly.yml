@@ -36,7 +36,7 @@ jobs:
             sleep $((attempt * 10))
           done
       - name: Load .env
-        run: cp /home/yomu/Agent/.env .env
+        run: cp /home/yomu/elysia-agent/.env .env
       - name: Run full test suite
         run: |
           set -a
