@@ -214,3 +214,57 @@ async def test_recording_too_long():
     await mgr.feed_pcm(big)
     assert any(e.get("type") == "error" and e.get("code") == "VOICE_RECORDING_TOO_LONG"
                for e in emitted)
+
+
+@pytest.mark.asyncio
+async def test_dictation_restores_stt_emotion_state():
+    from core.input.voice_sessions import VoiceSessionManager
+    agent = FakeAgent()
+    agent.stt_emotion_state = {"emotion": "SAD", "events": []}  # dictation 前状态
+    emitted, bus_posts = [], []
+    agent.bus = type("Bus", (), {"post": lambda self, d: bus_posts.append(d)})()
+    agent.idle = type("Idle", (), {"touch": lambda self: None})()
+
+    # 让 stt_transcribe 原地改共享 dict（与真实 agent.stt_transcribe 语义一致，review #8）
+    real = agent.stt_transcribe
+    async def polluted_stt(wav):
+        agent.stt_emotion_state["emotion"] = "POLLUTED"
+        agent.stt_emotion_state["events"] = ["p"]
+        return await real(wav)
+    agent.stt_transcribe = polluted_stt
+
+    mgr = VoiceSessionManager(agent=agent, emit=async_emit(emitted), silence_duration=0.1)
+    await mgr.start_dictation("req_d2")
+    agent._last_text = "转写"
+    await _drive_segment(mgr)
+    await asyncio.sleep(0.05)
+    await mgr.stop_dictation("req_d2")
+    # dictation 结束后共享状态应被恢复为 dictation 前值（S5）
+    assert agent.stt_emotion_state.get("emotion") == "SAD"
+
+
+@pytest.mark.asyncio
+async def test_dictation_stt_disabled_restores_emotion():
+    """STT 中途关闭终止 dictation → 同样恢复 emotion（review NEW-3/C）。"""
+    from core.input.voice_sessions import VoiceSessionManager
+    agent = FakeAgent()
+    agent.stt_emotion_state = {"emotion": "SAD", "events": []}
+    emitted, bus_posts = [], []
+    agent.bus = type("Bus", (), {"post": lambda self, d: bus_posts.append(d)})()
+    agent.idle = type("Idle", (), {"touch": lambda self: None})()
+    real = agent.stt_transcribe
+    async def polluted_stt(wav):
+        agent.stt_emotion_state["emotion"] = "POLLUTED"
+        return await real(wav)
+    agent.stt_transcribe = polluted_stt
+
+    mgr = VoiceSessionManager(agent=agent, emit=async_emit(emitted), silence_duration=0.1)
+    await mgr.start_dictation("req_d3")
+    agent._last_text = "转写"
+    await _drive_segment(mgr)
+    await asyncio.sleep(0.05)
+    mgr._agent.stt_enabled = False
+    await mgr.notify_stt_disabled()
+    assert agent.stt_emotion_state.get("emotion") == "SAD"
+    cancelled = [e for e in emitted if e.get("type") == "dictation.cancelled"]
+    assert cancelled and cancelled[-1]["clientRequestId"] == "req_d3"

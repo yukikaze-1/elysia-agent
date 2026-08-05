@@ -149,6 +149,18 @@ class VoiceSessionManager:
         self._dict_text = []
         self._mode = VoiceMode.IDLE
 
+    def _restore_emotion(self) -> None:
+        """恢复共享 stt_emotion_state——原地 clear/update（不触发只读 property setter）。"""
+        if self._emotion_snapshot is not None:
+            try:
+                state = getattr(self._agent, "stt_emotion_state", None)
+                if isinstance(state, dict):
+                    state.clear()
+                    state.update(self._emotion_snapshot)
+            except Exception:
+                logger.debug("恢复 stt_emotion_state 失败", exc_info=True)
+        self._emotion_snapshot = None
+
     # ---- RECORDING（BE-060） ----
 
     async def start_recording(self, recording_id: str) -> None:
@@ -302,6 +314,11 @@ class VoiceSessionManager:
             raise VoiceSessionError(ERR_CONFLICT, "已有活动语音会话")
         if not self._stt_available():
             raise VoiceSessionError(ERR_STT_UNAVAILABLE, "STT 不可用", True)
+        # 快照共享 stt_emotion_state（dict 复制）——dictation 转写会原地改它，
+        # 结束后恢复（spec §7.2 S5）；Agent.stt_emotion_state 是只读 property，
+        # 不能整对象赋值，须复制 + 原地 clear/update（review #8）
+        es = getattr(self._agent, "stt_emotion_state", None)
+        self._emotion_snapshot = dict(es) if isinstance(es, dict) else None
         self._mode = VoiceMode.DICTATION
         self._session_id = "dictation"
         self._dict_request_id = client_request_id
@@ -322,6 +339,7 @@ class VoiceSessionManager:
             await self._buffer.flush()
         text = "".join(self._dict_text)
         self._teardown_session()
+        self._restore_emotion()
         from frontend_contract import DictationFinalMessage
         await self._emit(DictationFinalMessage(
             clientRequestId=client_request_id, text=text).wire_dict())
@@ -330,6 +348,7 @@ class VoiceSessionManager:
         if self._mode != VoiceMode.DICTATION:
             raise VoiceSessionError(ERR_DICTATION_NOT_FOUND, "无活动转写")
         self._teardown_session()
+        self._restore_emotion()
         from frontend_contract import DictationCancelledMessage
         await self._emit(DictationCancelledMessage(
             clientRequestId=client_request_id).wire_dict())
@@ -419,6 +438,7 @@ class VoiceSessionManager:
         elif self._mode == VoiceMode.DICTATION:
             rid = self._dict_request_id  # teardown 前缓存
             self._teardown_session()
+            self._restore_emotion()  # STT 中途关闭结束转写，同样恢复（review NEW-3）
             from frontend_contract import DictationCancelledMessage
             await self._emit(DictationCancelledMessage(
                 clientRequestId=rid).wire_dict())
@@ -435,6 +455,7 @@ class VoiceSessionManager:
         if self._in_flight_stt is not None and not self._in_flight_stt.done():
             self._in_flight_stt.cancel()
         self._teardown_session()
+        self._restore_emotion()
         self._reset_recording()
 
     # ---- 后台循环 ----
