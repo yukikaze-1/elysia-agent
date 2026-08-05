@@ -223,9 +223,9 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 
 ---
 
-## 批次 6：三种语音模式 + TTS 播放控制（BE-060~063） 🚧 已实施完成、待验收
+## 批次 6：三种语音模式 + TTS 播放控制（BE-060~063） ✅ 完成
 
-**提交：** `09bca10`（契约，Task 1）`9b10adb`（VoiceSessionManager，Task 2）`32db89c`（ws_handler 路由，Task 3）`2955010`（voice.commit v2 提交，Task 4）`c53e42d`（实时会话 service 层，Task 5）`854aa9c`（dictation stt_emotion 隔离，Task 6）`46d6201`（输出层 audio 控制，Task 7）`0e4212e`（adapter 层 audio 控制，Task 8）+ Task 9（本 commit：features + audio.cancel 路由 + 批次 6 文档）
+**提交：** `09bca10`（契约，Task 1）`9b10adb`（VoiceSessionManager，Task 2）`32db89c`（ws_handler 路由，Task 3）`2955010`（voice.commit v2 提交，Task 4）`c53e42d`（实时会话 service 层，Task 5）`854aa9c`（dictation stt_emotion 隔离，Task 6）`46d6201`（输出层 audio 控制，Task 7）`0e4212e`（adapter 层 audio 控制，Task 8）`00f71d2`（features + audio.cancel 路由 + 批次 6 文档，Task 9）`de36c37`（全量回归收口：test_paths 枚举 23 成员——批次 5 DATA_SECRETS 遗留断言漂移）+ 最终 review 修复 `27c4546`（会话 JSON 入口 stt_enabled 门控 + 后台循环异常捕获 + cancel_all 剪除）+ `61e2727`（spec 微修：RECORDING deafen 消歧 + 断连边界记录）+ `1836d6b`（idle 超时 ended 事件丢失——teardown 不自取消当前任务）
 **Spec：** `docs/superpowers/specs/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md`（v0.7）
 **Plan：** `docs/superpowers/plans/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md`（10 Task）
 
@@ -243,4 +243,13 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 
 ### 验收
 
-**已实施完成，待验收**——最终验收结论由验收 agent 填写（docs/14 场景 F 后端侧：普通录音 commit 后 ack+generation / 实时语音 partial+turn / 输入法转写零副作用 / 三者 cancel 后不产生用户消息 / TTS audio_start→chunk→audio_end + audio.cancel→audio_cancelled）。
+**✅ 2026-08-06 双 agent 验收通过：**
+
+- **docs/14（BE-060~063 + 场景 F）**：ACCEPTED。普通录音 stop→预转写→PENDING 只发 `voice.transcript` 不触发 Agent，commit 经幂等+ACK+UserInputData 后才生成；实时语音 VAD 段 partial+turn 自动提交 + 背压 ack + 暂停/取消/300s 超时 + stt 中途关闭；输入法转写零消息/零 UserInputData/零 Agent，emotion 快照全路径恢复；TTS stream_id=playback ID + audio_start/audio_cancelled/audio_end + audio.cancel；场景 F 三模式取消均不误发消息。批次 6 测试 35 passed + core/input+Module/output 421 passed + 契约门禁零漂移。
+- **docs/15（批次 6 门槛）**：ACCEPTED。三套独立 Session/命令（互斥 + `_require_session` 隔离）；普通录音 commit 语义、实时语音序号/背压/partial/final/VAD/轮次/暂停/取消、输入法零副作用；TTS playback ID/音频块 seq/格式 wav/取消/完成；**Inner Voice 不进入 TTS 抽查确认**（`loop.py:1296` `stream_sentence` 仅 SENTENCE 分支触发，INNER_VOICE 走 `output.inner_voice`）；三模式分别自动化测试 35 全绿；取消不误发消息。
+
+**记录在案不修（批次 6）：**
+- 断连在途段半途消息（spec §3.2 记录）：`feed_pcm` 在 ws 串行循环内 await 段 STT，aiohttp 不取消在途 handler——断连发生在 STT 窗口时，STT 完成后 `_on_segment` 先 post UserInputData（落半途消息），随后 finally `InterruptData(source="disconnect")` 取消该 generation。架构固有限制，窗口概率低，Demo 可接受。
+- realtime「partial/final」为**分段级**伪流式（VAD 分段字幕 + 轮次提交），非词级增量——非流式 STT 架构下的合理解释，spec P6-3 明示。
+- 背压「最大未确认块」为客户端窗口（`MAX_UNACKED=200`），服务端仅发 ack 不下发硬性限流（spec §5.3 明示设计）。
+- RECORDING 超长丢弃后残余 BINARY 回落 legacy 路径（超限边界）。
