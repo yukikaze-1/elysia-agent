@@ -1,0 +1,216 @@
+"""VoiceSessionManager 状态机测试——三模式隔离 + 边界（spec §3.3/§4/§5/§7）。"""
+import asyncio
+import struct
+
+import pytest
+
+from core.input.voice_sessions import (
+    VoiceSessionError, VoiceSessionManager,
+    MAX_RECORDING_BYTES,
+)
+
+pytestmark = pytest.mark.unit
+
+
+def _loud(samples: int) -> bytes:
+    return struct.pack(f"<{samples}h", *([20000] * samples))
+
+
+def _sil(samples: int) -> bytes:
+    return struct.pack(f"<{samples}h", *([5] * samples))
+
+
+class FakeAgent:
+    def __init__(self):
+        self.stt = object()
+        self.stt_enabled = True
+        self.stt_emotion_state = {"emotion": "HAPPY", "events": ["x"]}
+        self.user_name = "用户"
+        self.status = type("Status", (), {
+            "is_speaking": False, "is_completely_idle": True,
+            "should_suppress_vad_interrupt": False})()
+        self._rid = 0
+        self._last_text = ""
+
+    def next_request_id(self):
+        self._rid += 1
+        return f"req_{self._rid}"
+
+    async def stt_transcribe(self, wav):
+        return self._last_text
+
+    async def resolve_session(self, conversation_id, protocol_version):
+        return type("S", (), {"session_id": conversation_id or "default"})()
+
+
+def async_emit(emitted):
+    async def emit(d):
+        await asyncio.sleep(0)
+        emitted.append(d)
+    return emit
+
+
+def make_manager(agent=None):
+    agent = agent or FakeAgent()
+    emitted = []
+    bus_posts = []
+    agent.bus = type("Bus", (), {"post": lambda self, data: bus_posts.append(data)})()
+    agent.idle = type("Idle", (), {"touch": lambda self: None})()
+    # silence_duration=0.1 加速 VAD 分段（生产默认 1.5s）
+    mgr = VoiceSessionManager(agent=agent, emit=async_emit(emitted),
+                              silence_duration=0.1)
+    return mgr, emitted, bus_posts
+
+
+async def _drive_segment(mgr):
+    """喂 3s loud PCM + 触发 silence_duration 分段（须 silence_duration=0.1）。"""
+    for _ in range(30):
+        await mgr.feed_pcm(_loud(1600))  # 30 × 100ms = 3s 语音
+    await mgr.feed_pcm(_sil(1600))       # 开始静音
+    await asyncio.sleep(0.15)            # 超过 silence_duration
+    await mgr.feed_pcm(_sil(1600))       # 触发分段
+
+
+@pytest.mark.asyncio
+async def test_recording_lifecycle():
+    mgr, emitted, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(_loud(6400))
+    mgr._agent._last_text = "你好世界"
+    await mgr.stop_recording("rec_1")
+    await asyncio.sleep(0.05)  # 后台 STT 任务在同一 loop 内完成
+    assert any(e.get("type") == "voice.transcript" for e in emitted)
+    payload = mgr.commit_recording("rec_1", "你好世界")
+    assert payload[0] == "你好世界" and payload[1] == "HAPPY"
+
+
+@pytest.mark.asyncio
+async def test_commit_then_restart_recording():
+    """commit 后 _mode 复位 IDLE，可再次 start（_reset_recording 须重置 mode）。"""
+    mgr, _, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    mgr._agent._last_text = "第一条"
+    await mgr.stop_recording("rec_1")
+    await asyncio.sleep(0.05)
+    mgr.commit_recording("rec_1", "第一条")
+    assert mgr.has_active_session() is False
+    await mgr.start_recording("rec_2")  # 不抛 VOICE_SESSION_CONFLICT
+    assert mgr.has_active_session() is True
+
+
+@pytest.mark.asyncio
+async def test_recording_empty_transcript_no_pending():
+    mgr, emitted, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    mgr._agent._last_text = "   "
+    await mgr.stop_recording("rec_1")
+    await asyncio.sleep(0.05)
+    assert not any(e.get("type") == "voice.transcript" for e in emitted)
+    with pytest.raises(VoiceSessionError) as ei:
+        mgr.commit_recording("rec_1", "")
+    assert ei.value.code == "VOICE_RECORDING_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_recording_state_boundaries():
+    mgr, _, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    # RECORDING 态 commit → CONTRACT_VALIDATION
+    with pytest.raises(VoiceSessionError) as ei:
+        mgr.commit_recording("rec_1", "x")
+    assert ei.value.code == "CONTRACT_VALIDATION"
+    # TRANSCRIBING 态 stop → CONTRACT_VALIDATION
+    await mgr.stop_recording("rec_1")
+    with pytest.raises(VoiceSessionError) as ei:
+        await mgr.stop_recording("rec_1")
+    assert ei.value.code == "CONTRACT_VALIDATION"
+    # TRANSCRIBING 态 discard 允许 → 复位后二次 discard 报 NOT_FOUND
+    await mgr.discard_recording("rec_1")
+    with pytest.raises(VoiceSessionError) as ei:
+        await mgr.discard_recording("rec_1")
+    assert ei.value.code == "VOICE_RECORDING_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_mode_conflict():
+    mgr, _, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    with pytest.raises(VoiceSessionError) as ei:
+        await mgr.start_realtime("vs_1", None)
+    assert ei.value.code == "VOICE_SESSION_CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_dictation_isolation_no_bus_posts():
+    mgr, emitted, bus_posts = make_manager()
+    await mgr.start_dictation("req_d1")
+    mgr._agent._last_text = "转写文字"
+    await _drive_segment(mgr)
+    await asyncio.sleep(0.05)
+    await mgr.stop_dictation("req_d1")
+    assert any(e.get("type") == "dictation.partial" for e in emitted)
+    finals = [e for e in emitted if e.get("type") == "dictation.final"]
+    assert finals and finals[0]["text"] == "转写文字"
+    assert not bus_posts  # 零 UserInputData
+
+
+@pytest.mark.asyncio
+async def test_realtime_turn_submits_bus():
+    mgr, emitted, bus_posts = make_manager()
+    await mgr.start_realtime("vs_1", None)
+    mgr._agent._last_text = "实时轮次"
+    await _drive_segment(mgr)
+    await asyncio.sleep(0.05)
+    assert any(e.get("type") == "voice_session.partial" for e in emitted)
+    turns = [e for e in emitted if e.get("type") == "voice_session.turn"]
+    assert turns and turns[0]["text"] == "实时轮次"
+    assert any(getattr(p, "event_type", "") == "user_input" for p in bus_posts)
+    await mgr.close()  # 清理 ack/idle 后台任务（review B）
+
+
+@pytest.mark.asyncio
+async def test_stt_disabled_ends_session():
+    mgr, emitted, _ = make_manager()
+    await mgr.start_realtime("vs_1", None)
+    mgr._agent.stt_enabled = False
+    await mgr.notify_stt_disabled()
+    ends = [e for e in emitted if e.get("type") == "voice_session.ended"]
+    assert ends and ends[0]["reason"] == "stt_disabled"
+    assert ends[0]["sessionId"] == "vs_1"  # teardown 前缓存 ID
+
+
+@pytest.mark.asyncio
+async def test_pause_resume_idempotent_and_resets():
+    mgr, _, _ = make_manager()
+    await mgr.start_realtime("vs_1", None)
+    await mgr.pause_session("vs_1")
+    await mgr.pause_session("vs_1")  # 幂等忽略
+    await mgr.resume_session("vs_1")
+    await mgr.resume_session("vs_1")  # 幂等忽略
+    assert mgr._paused is False
+    await mgr.close()  # 清理 ack/idle 后台任务（review B）
+
+
+@pytest.mark.asyncio
+async def test_close_cleans_active_session():
+    """连接断开清理（spec §12 NEW-AA）：活动会话结束、不残留。"""
+    mgr, _, _ = make_manager()
+    await mgr.start_realtime("vs_1", None)
+    await mgr.feed_pcm(b"\x00" * 6400)  # 进入 realtime，有 activity
+    await mgr.close()
+    assert mgr.has_active_session() is False
+    assert mgr._buffer is None  # 会话 buffer 已销毁
+    # 关闭后可重新开始（mode 复位）
+    await mgr.start_realtime("vs_2", None)
+    assert mgr.has_active_session() is True
+
+
+@pytest.mark.asyncio
+async def test_recording_too_long():
+    mgr, emitted, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    big = b"\x00" * (MAX_RECORDING_BYTES // 2 + 1)
+    await mgr.feed_pcm(big)
+    await mgr.feed_pcm(big)
+    assert any(e.get("type") == "error" and e.get("code") == "VOICE_RECORDING_TOO_LONG"
+               for e in emitted)
