@@ -29,7 +29,9 @@ class TestEmbeddingFromConfig:
         assert str(backend._client.base_url).rstrip("/") == "https://custom.api/v1"
 
     def test_overrides_take_priority(self):
-        cfg = EmbeddingConfig(base_url="https://default.api/v1")
+        # api_key 只用于通过 openai 客户端初始化（迁移后新 openai 强制 credentials），
+        # 本测试只验证 base_url override 优先级，key 值无关。
+        cfg = EmbeddingConfig(base_url="https://default.api/v1", api_key="sk-test")
         backend = EmbeddingFactory.from_config(
             "openai/text-embedding-3-large", cfg, base_url="https://overridden.api/v1"
         )
