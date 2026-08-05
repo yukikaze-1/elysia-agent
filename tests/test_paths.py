@@ -97,9 +97,9 @@ class TestEnumMetadata:
         assert ProjectPath.LOG == "log"
 
     def test_count(self):
-        """成员数量正确 — 13 目录 + 8 文件 = 21。"""
+        """成员数量正确 — 14 目录 + 8 文件 = 22（批次 4 增 DATA_UPLOADS_DESKTOP）。"""
         members = list(ProjectPath)
-        assert len(members) == 21
+        assert len(members) == 22
 
     def test_all_members_have_values(self):
         """所有成员都有非空值。"""
