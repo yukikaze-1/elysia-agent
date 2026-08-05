@@ -67,6 +67,35 @@ def _archive_msg_to_contract(d: dict) -> rest_contract.Message | None:
         return None
 
 
+def _custom_profile_in_use(agent, service: str, name: str) -> bool:
+    """判定 custom/{name} Profile 是否正被使用（活动会话 service_state / config / vision）。
+
+    批次 5（Task 6）删除激活约束：活动会话 service_state.{svc}_model、config.{svc}.model、
+    vision.model（LLM 场景——vision 工具走 LLM provider）任一以 custom/{name} 开头 →
+    该 Profile 正被使用 → 409 PROFILE_IN_USE 拒绝删除。
+
+    Args:
+        agent: Agent 组合根（读 agent.session.service_state + agent.config）。
+        service: "llm"/"stt"/"tts"。
+        name: 自定义 provider 名（无 custom/ 前缀）。
+
+    Returns:
+        bool: True = 正在使用。
+    """
+    prefix = f"custom/{name}"
+    if service == "llm":
+        candidates = (
+            agent.session.service_state.llm_model,
+            agent.config.llm.model,
+            agent.config.vision.model,
+        )
+    elif service == "stt":
+        candidates = (agent.session.service_state.stt_model, agent.config.stt.model)
+    else:  # tts
+        candidates = (agent.session.service_state.tts_model, agent.config.tts.model)
+    return any(c.startswith(prefix) for c in candidates if c)
+
+
 async def _run_usable_test(backend, service: str, request: web.Request, body: dict) -> dict:
     """usable 级真实产出验证。LLM 发文本、TTS 合成音频、STT 转写样例。超时 30s。
 
@@ -133,15 +162,23 @@ def register_api_routes(app: web.Application) -> None:
                 build_providers_response(load_custom())).wire_dict())
 
     async def providers_save_handler(request: web.Request) -> web.Response:
-        """保存一个新的自定义 provider。
+        """保存一个新的自定义 provider（批次 5：runtime 门控 + SSRF + 密钥入 Store）。
 
-        Args:
-            request: aiohttp Request，JSON body 包含 service 和 entry。
+        body: {service, entry:{name, base_url?, api_key?, api_key_env?, models?,
+               runtime?, capabilities?}}。
+        - runtime 非法枚举 → 400 PROFILE_INVALID_RUNTIME（ProtocolError）。
+        - base_url 门控按 runtime：backend 缺 → v1 ApiFail（既有检查）；desktop/local
+          缺 → 放行（D13）；backend → validate_endpoint（非空时，SSRF）。
+        - 非 backend 带 api_key → 400 PROFILE_INVALID_RUNTIME（密钥仅 backend 后端执行可收）。
+        - api_key → add_provider 内部直存 Secret Store（不入 YAML）；D18 清理。
+        - 响应条目含 credentialConfigured。
 
         Returns:
-            web.Response: {"ok": True, "data": ...} 或错误信息。
+            web.Response: {"ok": True, "data": 保存条目(含 credentialConfigured)} 或错误信封。
         """
         from core.input.custom_providers import add_provider
+        from core.input.ssrf import SSRFError, validate_endpoint
+        from core.storage import secret_store
         try:
             body = await request.json()
             service = body.get("service", "")
@@ -150,28 +187,61 @@ def register_api_routes(app: web.Application) -> None:
             return web.json_response(rest_contract.ApiFail(error="无效的请求体").wire_dict(), status=400)
         if service not in ("llm", "stt", "tts"):
             return web.json_response(rest_contract.ApiFail(error=f"未知 service: {service}").wire_dict(), status=400)
-        if not entry.get("name") or not entry.get("base_url"):
+        if not entry.get("name"):
             return web.json_response(rest_contract.ApiFail(error="缺少 name 或 base_url").wire_dict(), status=400)
+        # runtime 解析：非法枚举 → PROFILE_INVALID_RUNTIME（新错误码走 ProtocolError 信封）
+        runtime = entry.get("runtime", "backend")
+        if runtime not in ("backend", "desktop", "local_worker"):
+            return _tool_error("PROFILE_INVALID_RUNTIME", f"非法 runtime: {runtime}", 400)
+        base_url = entry.get("base_url", "")
+        if runtime == "backend":
+            # backend 缺 base_url → v1 ApiFail（既有检查）；非空时 SSRF 校验
+            if not base_url:
+                return web.json_response(rest_contract.ApiFail(error="缺少 name 或 base_url").wire_dict(), status=400)
+            try:
+                validate_endpoint(base_url)
+            except SSRFError as e:
+                return _tool_error("SSRF_BLOCKED", str(e), 400)
+        elif entry.get("api_key"):
+            # desktop/local 由 Electron 执行，后端不收密钥（D18）
+            return _tool_error("PROFILE_INVALID_RUNTIME", "非 backend runtime 不接受 api_key", 400)
         try:
-            data = add_provider(service, entry)
-            return web.json_response(rest_contract.ApiOk(data=data).wire_dict())
+            add_provider(service, entry)
         except Exception as e:
             return web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict(), status=500)
+        # 响应条目含 credentialConfigured（Secret Store 已配置或本次 api_key）；永不回显密钥
+        name = entry.get("name", "")
+        api_key = entry.get("api_key", "")
+        entry_data = {
+            "name": name,
+            "base_url": entry.get("base_url", ""),
+            "api_key_env": entry.get("api_key_env"),
+            "models": entry.get("models"),
+            "runtime": runtime,
+            "capabilities": entry.get("capabilities", {}),
+            "credentialConfigured": bool(api_key) or secret_store.has_secret(service, name),
+        }
+        return web.json_response(rest_contract.ApiOk(data=entry_data).wire_dict())
 
     async def providers_delete_handler(request: web.Request) -> web.Response:
-        """删除一个自定义 provider。
+        """删除一个自定义 provider（批次 5：激活约束——活动会话/配置正在使用的不可删）。
 
-        Args:
-            request: aiohttp Request，URL 路径参数包含 service 和 name。
+        URL 路径参数包含 service 和 name。激活判定（_custom_profile_in_use）：活动会话
+        service_state.{svc}_model / config.{svc}.model / vision.model 任一以 custom/{name}
+        开头 → 409 PROFILE_IN_USE（ProtocolError）；非激活 → remove_provider（条目 +
+        Secret Store 密钥一并清理）。
 
         Returns:
-            web.Response: {"ok": True, "data": ...} 或错误信息。
+            web.Response: {"ok": True, "data": ...}、409 或 v1 ApiFail。
         """
         from core.input.custom_providers import remove_provider
         service = request.match_info.get("service", "")
         name = request.match_info.get("name", "")
         if service not in ("llm", "stt", "tts"):
             return web.json_response(rest_contract.ApiFail(error=f"未知 service: {service}").wire_dict(), status=400)
+        agent = request.app.get("agent")
+        if agent is not None and _custom_profile_in_use(agent, service, name):
+            return _tool_error("PROFILE_IN_USE", f"custom/{name} 正在使用，无法删除", 409)
         try:
             data = remove_provider(service, name)
             return web.json_response(rest_contract.ApiOk(data=data).wire_dict())
@@ -222,18 +292,42 @@ def register_api_routes(app: web.Application) -> None:
             provider = "custom"
 
         # base_url/api_key：请求体非空 > custom_providers.yaml（resolve_model_params）
-        if not base_url and provider == "custom":
+        # runtime 仅 custom 条目有（内置 resolve 返回 {} → 缺省 backend，容错）。
+        runtime = "backend"
+        if provider == "custom":
             from core.input.custom_providers import resolve_model_params
             params = resolve_model_params(service, f"custom/{model}")
-            base_url = params.get("base_url", "")
+            runtime = params.get("runtime", "backend")
+            if not base_url:
+                base_url = params.get("base_url", "")
             if not api_key:
                 api_key = params.get("api_key", "")
+
+        # body base_url 非空时无论 provider 一律 SSRF 校验（空 base_url 跳过——
+        # 内置无 body base_url 是空串，不误伤既有 connectivity 测试）。
+        from core.input.ssrf import SSRFError, validate_endpoint
+        if base_url:
+            try:
+                validate_endpoint(base_url)
+            except SSRFError as e:
+                return _tool_error("SSRF_BLOCKED", str(e), 400)
+
+        # runtime 守卫：desktop/local 由 Electron 执行，后端拒绝发起测试
+        if runtime != "backend":
+            return _tool_error("PROFILE_RUNTIME_NOT_BACKEND", "该 Profile 由 Electron 执行，后端不发起测试", 400)
 
         create_kwargs = {}
         if base_url:
             create_kwargs["base_url"] = base_url
         if api_key:
             create_kwargs["api_key"] = api_key
+
+        # custom+backend → 注入出站守卫 client（内置无 body base_url → 无 http_client 走现状）
+        http_client = None
+        if provider == "custom" and base_url:
+            from core.input.ssrf import build_guarded_http_client
+            http_client = build_guarded_http_client(base_url)
+            create_kwargs["http_client"] = http_client
 
         try:
             if service == "llm":
@@ -263,6 +357,11 @@ def register_api_routes(app: web.Application) -> None:
                 await backend.close()
             except Exception:
                 pass
+            if http_client is not None:
+                try:
+                    await http_client.aclose()
+                except Exception:
+                    pass
 
     app.router.add_get("/api/providers", providers_list_handler)
     app.router.add_post("/api/providers", providers_save_handler)

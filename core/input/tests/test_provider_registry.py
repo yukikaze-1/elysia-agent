@@ -53,3 +53,55 @@ def test_empty_models_and_custom_skipped_everywhere():
         # custom 永不在 data[service] / unconfigured
         assert "custom" not in resp["llm"]
         assert all(e["name"] != "custom" for e in resp["unconfigured"]["llm"])
+
+
+# ---- 批次 5：ProviderEntry 新字段（credentialConfigured/runtime/capabilities） ----
+
+
+@pytest.mark.unit
+def test_builtin_entries_have_new_fields():
+    """内置已配置条目含 credentialConfigured/runtime/capabilities 新字段。"""
+    with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-x"}, clear=True):
+        resp = build_providers_response({"llm": [], "stt": [], "tts": []})
+    entry = resp["llm"]["deepseek"]
+    assert entry["credentialConfigured"] is True
+    assert entry["runtime"] == "backend"
+    assert entry["capabilities"] == {}
+
+
+@pytest.mark.unit
+def test_custom_entries_enriched_secret_configured(tmp_path):
+    """custom 条目 enrich credentialConfigured（secret_path 注入）+ runtime/capabilities。"""
+    from core.storage import secret_store
+    secret_store.set_secret("llm", "myllm", "sk-secret", path=tmp_path)
+    custom_data = {
+        "llm": [
+            {"name": "myllm", "base_url": "https://example.com", "models": ["m1"]},
+            {"name": "nokey", "base_url": "https://other.com", "models": ["m2"]},
+        ],
+        "stt": [],
+        "tts": [],
+    }
+    resp = build_providers_response(custom_data, secret_path=tmp_path)
+    entries = {e["name"]: e for e in resp["custom"]["llm"]}
+    assert entries["myllm"]["credentialConfigured"] is True
+    assert entries["nokey"]["credentialConfigured"] is False
+    assert entries["myllm"]["runtime"] == "backend"
+    assert entries["myllm"]["capabilities"] == {}
+
+
+@pytest.mark.unit
+def test_custom_env_key_configured(tmp_path):
+    """custom 条目 api_key_env 命中 env → credentialConfigured True。"""
+    custom_data = {
+        "llm": [
+            {"name": "e1", "base_url": "https://e.com", "api_key_env": "MY_CUSTOM_KEY",
+             "models": ["m"]},
+        ],
+        "stt": [],
+        "tts": [],
+    }
+    with patch.dict(os.environ, {"MY_CUSTOM_KEY": "sk"}, clear=True):
+        resp = build_providers_response(custom_data, secret_path=tmp_path)
+    entry = resp["custom"]["llm"][0]
+    assert entry["credentialConfigured"] is True
