@@ -10,9 +10,22 @@ class TTSBackend(ABC):
     character 必传，对应音色配置。emotion 可选，部分后端不支持（传了会被忽略）。
     """
 
+    async def list_voices(self) -> list[dict]:
+        """返回后端可用声音列表。
+
+        默认 ``[]``（未实现列表能力的后端直接继承）；条目形状
+        ``{id, name?, languages?, capabilities?}``。供 GET /api/tts/voices
+        与声音覆盖校验（批次 5 BE-051）消费。MiniMax 动态拉取，其余静态声明。
+
+        Returns:
+            ``[{id, name?}]`` 声音列表。
+        """
+        return []
+
     @abstractmethod
     async def synthesize(
-        self, text: str, *, character: str, emotion: str | None = None
+        self, text: str, *, character: str, emotion: str | None = None,
+        voice_id: str | None = None,
     ) -> bytes:
         """非流式合成 — 返回完整 WAV bytes。
 
@@ -22,6 +35,8 @@ class TTSBackend(ABC):
             text: 要合成的文本。
             character: 发音人/音色名称，对应后端配置中的角色标识。
             emotion: 可选的情绪参数，部分后端不支持（传了会被忽略）。
+            voice_id: 显式音色 ID 覆盖（批次 5 BE-051）。非空时优先于 character
+                默认解析（试听/声音覆盖走此参数）；None 维持各后端既有默认。
 
         Returns:
             完整的 WAV 格式音频字节数据。
@@ -35,7 +50,8 @@ class TTSBackend(ABC):
 
     @abstractmethod
     def synthesize_stream(
-        self, text: str, *, character: str, emotion: str | None = None
+        self, text: str, *, character: str, emotion: str | None = None,
+        voice_id: str | None = None,
     ) -> AsyncGenerator[bytes, None]:
         """流式合成 — 边生成边产出音频 chunk。首 chunk 包含 WAV header 及初始音频数据。
 
@@ -43,6 +59,7 @@ class TTSBackend(ABC):
             text: 要合成的文本。
             character: 发音人/音色名称，对应后端配置中的角色标识。
             emotion: 可选的情绪参数，部分后端不支持（传了会被忽略）。
+            voice_id: 显式音色 ID 覆盖（与 synthesize 同语义）。
 
         Yields:
             音频字节数据 chunk。

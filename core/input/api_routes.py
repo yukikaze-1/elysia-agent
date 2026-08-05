@@ -12,6 +12,7 @@ from aiohttp.multipart import BodyPartReader
 from typing import cast
 
 from core.schema.message import Message
+from core.input.tts_profile import _active_tts_profile, _backend_default_voice
 from frontend_contract import rest as rest_contract
 
 logger = logging.getLogger(__name__)
@@ -367,6 +368,36 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_post("/api/providers", providers_save_handler)
     app.router.add_delete("/api/providers/{service}/{name}", providers_delete_handler)
     app.router.add_post("/api/providers/test", providers_test_handler)
+
+    # ---- TTS 声音（BE-051，Task 9） ----
+
+    async def tts_voices_handler(request: web.Request) -> web.Response:
+        """GET /api/tts/voices — 活动会话激活 TTS profile 的声音列表。
+
+        - TTS 未启用（_active_tts_profile → None）→ 200 ``{voices: [], current: None,
+          source: "static", error: "TTS 未启用"}``（不炸，前端可据此隐藏声音面板）。
+        - 否则 ``list_voices()``；source = api（MiniMax 动态拉取）/ static（静态声明）。
+        - current = 活动会话 ``service_state.tts_voice``（Task 11 引入后）或后端默认音色。
+        """
+        agent = request.app.get("agent")
+        backend = _active_tts_profile(agent)
+        if backend is None:
+            return web.json_response(rest_contract.TtsVoicesResponse(
+                voices=[], current=None, source="static", error="TTS 未启用").wire_dict())
+        try:
+            voices = await backend.list_voices()
+        except Exception as e:
+            # 后端 list_voices 已容错（MiniMax 失败 → []），这里兜底防未知异常
+            logger.warning("TTS list_voices 失败: %s", e)
+            voices = []
+        source = "api" if getattr(backend, "provider_name", "") == "minimax" else "static"
+        character = getattr(getattr(agent, "character", None), "name", "") or ""
+        current = getattr(agent.session.service_state, "tts_voice", None) \
+            or _backend_default_voice(backend, character)
+        return web.json_response(rest_contract.TtsVoicesResponse(
+            voices=voices, current=current or None, source=source).wire_dict())
+
+    app.router.add_get("/api/tts/voices", tts_voices_handler)
 
     # ---- 图片上传 ----
 

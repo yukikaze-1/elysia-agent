@@ -69,8 +69,20 @@ class GPTSoVitsBackend(TTSBackend):
         """测试连通性：GET /health。5 秒超时。"""
         return await self._test_fn(self)
 
+    async def list_voices(self) -> list[dict]:
+        """返回静态声音列表 = self._voices（gpt_sovits_voices.yaml）的 keys。
+
+        与可合成集锚定：list_voices 的 id 集即 synthesize 可接受的音色键，
+        防试听/覆盖层用不在表中的 voice_id 查 _call_api 抛 KeyError。
+
+        Returns:
+            ``[{id, name}]`` 音色列表（key 同时充当 id 与显示名）。
+        """
+        return [{"id": k, "name": k} for k in self._voices]
+
     async def synthesize(
-        self, text: str, *, character: str, emotion: str | None = None
+        self, text: str, *, character: str, emotion: str | None = None,
+        voice_id: str | None = None,
     ) -> bytes:
         """非流式合成 — 返回完整 WAV bytes。
 
@@ -78,17 +90,24 @@ class GPTSoVitsBackend(TTSBackend):
             text: 要合成的文本。
             character: 发音人/音色名称。
             emotion: 可选的情绪参数（GPT-SoVits 当前被忽略）。
+            voice_id: 显式音色 ID（批次 5 BE-051）。非空时直接按 voice_id 查
+                _voices（跳过 character 默认）；None 走既有 character 解析。
 
         Returns:
             完整的 WAV 格式音频字节数据。采样率 32000Hz/mono/int16。
         """
         chunks: list[bytes] = []
-        async for chunk in self._call_api(text, character, emotion, streaming=False):
-            chunks.append(chunk)
+        if voice_id:
+            async for chunk in self._call_api(text, character, emotion, streaming=False, voice_id=voice_id):
+                chunks.append(chunk)
+        else:
+            async for chunk in self._call_api(text, character, emotion, streaming=False):
+                chunks.append(chunk)
         return b"".join(chunks)
 
     async def synthesize_stream(
-        self, text: str, *, character: str, emotion: str | None = None
+        self, text: str, *, character: str, emotion: str | None = None,
+        voice_id: str | None = None,
     ) -> AsyncIterator[bytes]:
         """流式合成 — 边生成边产出音频 chunk。
 
@@ -96,15 +115,21 @@ class GPTSoVitsBackend(TTSBackend):
             text: 要合成的文本。
             character: 发音人/音色名称。
             emotion: 可选的情绪参数（GPT-SoVits 当前被忽略）。
+            voice_id: 显式音色 ID 覆盖（透传 _call_api）。
 
         Yields:
             音频字节数据 chunk。首 chunk 包含 WAV header。
         """
-        async for chunk in self._call_api(text, character, emotion, streaming=True):
-            yield chunk
+        if voice_id:
+            async for chunk in self._call_api(text, character, emotion, streaming=True, voice_id=voice_id):
+                yield chunk
+        else:
+            async for chunk in self._call_api(text, character, emotion, streaming=True):
+                yield chunk
 
     async def _call_api(
         self, text: str, character: str, emotion: str | None, streaming: bool,
+        voice_id: str | None = None,
     ) -> AsyncIterator[bytes]:
         """统一的 HTTP 调用入口。
 
@@ -116,20 +141,30 @@ class GPTSoVitsBackend(TTSBackend):
             character: 发音人/音色名称。
             emotion: 可选的情绪参数。
             streaming: 是否流式模式。
+            voice_id: 显式音色 ID（批次 5 BE-051）。非空时直接按 voice_id 查
+                _voices，跳过 character 默认解析。
 
         Yields:
             音频字节数据 chunk。
 
         Raises:
-            KeyError: 发音人名称未在音色配置中找到。
+            KeyError: 发音人/音色名称未在音色配置中找到。
             RuntimeError: 无法连接 GPT-SoVits 服务。
         """
-        try:
-            voice_cfg = self._voices[character]
-        except KeyError:
-            raise KeyError(
-                f"未知发音人 '{character}'，可用: {list(self._voices.keys())}"
-            ) from None
+        if voice_id:
+            try:
+                voice_cfg = self._voices[voice_id]
+            except KeyError:
+                raise KeyError(
+                    f"未知音色 '{voice_id}'，可用: {list(self._voices.keys())}"
+                ) from None
+        else:
+            try:
+                voice_cfg = self._voices[character]
+            except KeyError:
+                raise KeyError(
+                    f"未知发音人 '{character}'，可用: {list(self._voices.keys())}"
+                ) from None
         text = self._preprocess(text)
         if not text.strip():
             # 预处理后为空（如纯 markup 句子），跳过 TTS

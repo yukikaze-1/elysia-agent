@@ -142,6 +142,8 @@ class MiniMaxTTSBackend(TTSBackend):
         self._preprocess = strip_for_minimax
         # 滑动窗口 RPM 限速 — 从源头避免 status_code=1002 (rate limit exceeded)
         self._rate_limiter = _RpmLimiter(rate_limit_rpm)
+        # 系统音色列表进程缓存（惰性：首次 list_voices() 拉取后复用，不重复 POST）
+        self._voices_cache: list[dict] | None = None
 
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
@@ -166,8 +168,46 @@ class MiniMaxTTSBackend(TTSBackend):
     async def test(self) -> dict:
         return await self._test_fn(self)
 
+    async def list_voices(self) -> list[dict]:
+        """拉取 MiniMax 系统音色列表（POST /v1/get_voice，惰性进程缓存）。
+
+        实例内缓存：首次调用 POST，成功结果缓存复用（重复调不重复请求）；
+        失败（网络/API 错）→ ``[]``（不缓存，下次调用可重试恢复）。
+
+        Returns:
+            ``[{id, name}]`` 系统音色列表。
+        """
+        if self._voices_cache is not None:
+            return self._voices_cache
+        try:
+            resp = await self._client.post(
+                "/v1/get_voice",
+                json={"voice_type": "system"},
+                timeout=httpx.Timeout(5.0),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            self._check_base_resp(data)
+            items = (data.get("data") or {}).get("voice_items") or []
+            voices: list[dict] = []
+            for item in items:
+                voice_id = item.get("voice_id", "")
+                if not voice_id:
+                    continue
+                entry: dict = {"id": voice_id}
+                if item.get("voice_name"):
+                    entry["name"] = item["voice_name"]
+                voices.append(entry)
+            self._voices_cache = voices
+            return voices
+        except Exception:
+            # 失败 → []（调用方降级；不写缓存，避免一次性故障永久丢列表）
+            self._logger.debug("MiniMax 拉取系统音色列表失败，返回空列表")
+            return []
+
     async def synthesize(
-        self, text: str, *, character: str, emotion: str | None = None
+        self, text: str, *, character: str, emotion: str | None = None,
+        voice_id: str | None = None,
     ) -> bytes:
         """非流式合成 — 返回完整 WAV bytes。
 
@@ -175,6 +215,8 @@ class MiniMaxTTSBackend(TTSBackend):
             text: 要合成的文本。
             character: 发音人/音色名称，通过 voice_map 映射为 voice_id。
             emotion: 可选的情绪参数，映射为 MiniMax voice_setting.emotion。
+            voice_id: 显式音色 ID（批次 5 BE-051）。非空时跳过 voice_map 解析，
+                直接作 voice_setting.voice_id；None 走既有 map 默认。
 
         Returns:
             完整的 WAV 格式音频字节数据。
@@ -183,8 +225,11 @@ class MiniMaxTTSBackend(TTSBackend):
             RuntimeError: 无法连接 MiniMax 服务或 API 返回错误。
         """
         text = self._preprocess(text)
-        voice_id = self._resolve_voice(character)
-        payload = self._build_payload(text, voice_id, emotion, stream=False)
+        if voice_id:
+            resolved = voice_id  # 显式覆盖优先，跳过 _resolve_voice
+        else:
+            resolved = self._resolve_voice(character)
+        payload = self._build_payload(text, resolved, emotion, stream=False)
         # RPM 限速：任意窗口内请求数超配额时阻塞等待，而非被 API 拒绝
         await self._rate_limiter.acquire()
         try:
@@ -203,7 +248,8 @@ class MiniMaxTTSBackend(TTSBackend):
             ) from e
 
     async def synthesize_stream(
-        self, text: str, *, character: str, emotion: str | None = None
+        self, text: str, *, character: str, emotion: str | None = None,
+        voice_id: str | None = None,
     ) -> AsyncIterator[bytes]:
         """流式合成 — 委托给 synthesize()，下载完整 wav 后分块 yield。
 
@@ -214,12 +260,15 @@ class MiniMaxTTSBackend(TTSBackend):
             text: 要合成的文本。
             character: 发音人/音色名称。
             emotion: 可选的情绪参数。
+            voice_id: 显式音色 ID 覆盖（透传 synthesize）。
 
         Yields:
             音频字节数据 chunk（4096 字节每块）。
         """
         # 复用 synthesize() 的非流式 wav 逻辑
-        audio = await self.synthesize(text, character=character, emotion=emotion)
+        audio = await self.synthesize(
+            text, character=character, emotion=emotion, voice_id=voice_id,
+        )
         # 按 4096 字节分块 yield，与其他 backend 行为一致
         chunk_size = 4096
         for offset in range(0, len(audio), chunk_size):
