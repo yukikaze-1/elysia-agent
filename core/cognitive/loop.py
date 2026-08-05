@@ -426,6 +426,12 @@ class CognitiveLoop(CognitiveTools):
                 self._tool_adapter.tool_context.trace_id = new_message_id()
 
             self._tts_mgr.reset_for_turn()
+            # 批次 5（Task 11，BE-051）：每 turn 注入发起会话的 TTS 声音覆盖。
+            # 发起会话 = resolve_session 目标会话（非全局活动会话）——v2 显式
+            # conversationId 指向非活动会话时，声音随发起会话而非活动会话。
+            # voice 是 per-turn 可变状态，set_voice 幂等（None 走后端默认）。
+            self._tts_mgr.set_voice(
+                getattr(target.service_state, "tts_voice", None))
             clock = TimingClock()
             clock.start()
             self._clock = clock  # 供 _think_loop / _after_response 使用

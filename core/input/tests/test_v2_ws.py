@@ -182,6 +182,97 @@ class TestV2AckIdempotency:
             await agent.stop()
 
 
+class _FakeTtsBackend:
+    """假 TTS 后端：list_voices 返回固定列表（set_tts_voice 校验用）。"""
+
+    def __init__(self, voices, provider_name="minimax"):
+        self._voice_list = voices
+        self.provider_name = provider_name
+
+    async def list_voices(self):
+        return self._voice_list
+
+
+async def _send_set_tts_voice_and_read(ws, voice: str) -> dict:
+    """发 set_tts_voice 并读回 set_tts_voice_result 帧。"""
+    await ws.send_json({"type": "set_tts_voice", "voice": voice})
+    for _ in range(8):
+        m = await asyncio.wait_for(ws.receive(), timeout=5)
+        if m.type == WSMsgType.TEXT:
+            d = json.loads(m.data)
+            if d.get("type") == "set_tts_voice_result":
+                return d
+    raise AssertionError("未收到 set_tts_voice_result")
+
+
+@pytest.mark.service
+class TestSetTtsVoice:
+    @pytest.mark.asyncio
+    async def test_set_tts_voice_success(self, aiohttp_client, fresh_idempotency):
+        """set_tts_voice 已知音色 → result ok + 活动会话 tts_voice 写入。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        agent._tts = _FakeTtsBackend([{"id": "v1", "name": "音色一"}])  # noqa: SLF001 — 测试注入后端
+        agent._tts_enabled = True  # noqa: SLF001 — 测试注入有效开关
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            result = await _send_set_tts_voice_and_read(ws, "v1")
+            assert result["ok"] is True
+            assert result["voice"] == "v1"
+            # 活动会话 service_state.tts_voice 已写入
+            assert agent.session.service_state.tts_voice == "v1"
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_set_tts_voice_unknown_voice_keeps_state(self, aiohttp_client, fresh_idempotency):
+        """未知音色 → ok=False + error，活动会话 tts_voice 不变。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        agent._tts = _FakeTtsBackend([{"id": "v1"}])  # noqa: SLF001
+        agent._tts_enabled = True  # noqa: SLF001
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            result = await _send_set_tts_voice_and_read(ws, "nope")
+            assert result["ok"] is False
+            assert result["error"]
+            # 失败不改 state（保持 None）
+            assert agent.session.service_state.tts_voice is None
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_set_tts_voice_disabled(self, aiohttp_client, fresh_idempotency):
+        """TTS 未启用 → ok=False + error，不改 state。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        agent._tts = None  # noqa: SLF001
+        agent._tts_enabled = False  # noqa: SLF001
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            result = await _send_set_tts_voice_and_read(ws, "v1")
+            assert result["ok"] is False
+            assert result["error"]
+            assert agent.session.service_state.tts_voice is None
+            await ws.close()
+        finally:
+            await agent.stop()
+
+
 @pytest.mark.service
 class TestV2Reconnect:
     @pytest.mark.asyncio

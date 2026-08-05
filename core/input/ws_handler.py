@@ -25,11 +25,13 @@ from frontend_contract import (
     SessionMessage,
     SessionMessageItem,
     ServiceModeResultMessage,
+    SetTtsVoiceResultMessage,
     SwitchModelResultMessage,
     TranscriptionMessage,
     UserAckMessage,
     WakeMessage,
 )
+from core.input.tts_profile import _active_tts_profile
 
 if TYPE_CHECKING:
     from core.agent import Agent
@@ -458,6 +460,43 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
                         logger.debug("Failed to send switch_model_result", exc_info=True)
                     break
         logger.info("WS 切换模型: service=%s model=%s ok=%s", service, model, result.get("ok"))
+    elif msg_type == "set_tts_voice":
+        # 批次 5（Task 11，BE-051）：设置活动会话 TTS 声音覆盖。
+        # 经活动会话激活 TTS 后端 list_voices() 校验 voice 存在 → 写活动会话
+        # service_state.tts_voice + save → 回 set_tts_voice_result；未知 voice/
+        # 后端不可用 → {ok: False, error}，不改 state（失败保留原选择）。
+        voice = data.get("voice", "")
+        result: dict = {"ok": False, "error": "TTS 未启用"}
+        backend = _active_tts_profile(agent)
+        if backend is not None:
+            try:
+                voices = await backend.list_voices()
+                if not any(v.get("id") == voice for v in voices):
+                    result = {"ok": False, "error": f"未知音色: {voice}"}
+                else:
+                    agent.session.service_state.tts_voice = voice
+                    try:
+                        await agent.session.save()
+                    except Exception as e:
+                        # 持久化失败不回滚已生效的写入——运行中 state 是权威，仅告警
+                        logger.warning("TTS voice 已设置但持久化失败: %s", e)
+                    result = {"ok": True, "voice": voice}
+            except Exception as e:
+                result = {"ok": False, "error": str(e)}
+        from Module.output import WebSocketChannel
+        if ws is not None:
+            for ch in agent.output._channels:  # noqa: SLF001
+                if isinstance(ch, WebSocketChannel) and ch._ws is ws:  # noqa: SLF001
+                    try:
+                        await ws.send_json(SetTtsVoiceResultMessage(
+                            ok=result.get("ok", False),
+                            voice=result.get("voice"),
+                            error=result.get("error"),
+                        ).wire_dict())
+                    except Exception:
+                        logger.debug("Failed to send set_tts_voice_result", exc_info=True)
+                    break
+        logger.info("WS 设置 TTS 声音: voice=%s ok=%s", voice, result.get("ok"))
     elif msg_type == "set_service":
         service = data.get("service", "")
         enabled = data.get("enabled", False)

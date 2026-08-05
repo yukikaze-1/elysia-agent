@@ -197,10 +197,14 @@ async def test_service_state_roundtrip():
     s = SessionMemory(session_id="t", repo=repo)
     s.service_state.tts_enabled = False
     s.service_state.llm_model = "deepseek/deepseek-v4-pro"
+    # 批次 5（Task 11）：tts_voice 声音覆盖经泛化字段遍历自动 round-trip
+    s.service_state.tts_voice = "vA"
     await s.save()
     loaded = SessionMemory(session_id="t", repo=repo)
     await loaded.load("t")
     assert loaded.service_state.tts_enabled is False
     assert loaded.service_state.llm_model == "deepseek/deepseek-v4-pro"
+    assert loaded.service_state.tts_voice == "vA"
     fresh = SessionMemory(session_id="fresh")
     assert fresh.service_state.stt_enabled is None   # 默认实例三态 None，非 True
+    assert fresh.service_state.tts_voice is None      # 默认实例无声音覆盖

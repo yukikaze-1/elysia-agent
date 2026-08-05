@@ -84,6 +84,7 @@ class TTSStreamManager:
             if fn is not None:
                 self._preprocess = fn
         self._emotion: str | None = None
+        self._voice: str | None = None  # 音色覆盖（每 turn 注入；None 走后端默认）
         self._tasks: list[asyncio.Task] = []
         self._total: int = 0       # 全局计数器，跨轮次持续递增
         self._seq: int = 0          # 本轮计数器，reset_for_turn() 时归零
@@ -207,6 +208,18 @@ class TTSStreamManager:
         """
         self._emotion = _mood_text_to_tts_emotion(emotion) if emotion else None
 
+    def set_voice(self, voice: str | None) -> None:
+        """设置 TTS 音色 ID 覆盖（每 turn 注入；None 清除走后端默认）。
+
+        声音是 per-turn 可变状态，由 CognitiveLoop 每轮解析发起会话的
+        ``service_state.tts_voice`` 后注入——不随 reset_for_turn() 重置，
+        set_voice 幂等，重复注入同值无副作用。
+
+        Args:
+            voice: 音色 ID（须在激活后端 list_voices 结果内），None 走后端默认。
+        """
+        self._voice = voice
+
     def set_backend(self, tts: TTSBackend | None) -> None:
         """热切换 TTS 后端。
 
@@ -311,6 +324,7 @@ class TTSStreamManager:
             t_download = time.perf_counter()
             audio = await self._tts.synthesize(
                 tts_text, character=self._char_name, emotion=self._emotion,
+                voice_id=self._voice,
             )
             t_download_elapsed = (time.perf_counter() - t_download) * 1000
             logger.debug(
@@ -416,7 +430,7 @@ class TTSStreamManager:
             return
         try:
             audio = await self._tts.synthesize(
-                sentence, character=self._char_name,
+                sentence, character=self._char_name, voice_id=self._voice,
             )
             await self._output.audio_chunk(audio)
         except Exception:

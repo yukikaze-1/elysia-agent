@@ -77,3 +77,40 @@ async def test_active_stays_backend_and_enabled_gates():
     await mgr.set_enabled(False)
     assert mgr.enabled is False
     assert mgr.active is True            # enabled 独立于 active，不重定义
+
+
+class _VoiceTTS(_FakeTTS):
+    """假 TTS 后端：捕获 synthesize 收到的 voice_id（批次 5 Task 11 声音覆盖）。"""
+
+    def __init__(self, gate, captured):
+        super().__init__(gate)
+        self.captured = captured
+
+    async def synthesize(self, text, **kw):
+        self.captured["voice_id"] = kw.get("voice_id")
+        return b"RIFF" + b"\0" * 16
+
+
+@pytest.mark.asyncio
+async def test_set_voice_passes_voice_id_to_synthesize():
+    """set_voice('v2') 后合成 → 后端 synthesize 收到 voice_id='v2'。"""
+    captured = {}
+    out = _FakeOutput()
+    mgr = TTSStreamManager(_VoiceTTS(asyncio.Event(), captured), out, "test")
+    mgr.set_voice("v2")
+    mgr.reset_for_turn()  # 真实流程 process() 每轮先 reset
+    mgr.stream_sentence("测试句")
+    await mgr.wait_all()
+    assert captured["voice_id"] == "v2"
+
+
+@pytest.mark.asyncio
+async def test_no_voice_means_no_voice_id():
+    """未 set → synthesize 不传 voice_id（None 由后端走默认）。"""
+    captured = {}
+    out = _FakeOutput()
+    mgr = TTSStreamManager(_VoiceTTS(asyncio.Event(), captured), out, "test")
+    mgr.reset_for_turn()
+    mgr.stream_sentence("测试句")
+    await mgr.wait_all()
+    assert captured["voice_id"] is None

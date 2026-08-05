@@ -12,3 +12,7 @@ class ServiceState(BaseModel):
     tts_model: str = ""
     stt_enabled: bool | None = None
     tts_enabled: bool | None = None
+    # 批次 5（Task 11，BE-051）：用户设置的声音覆盖（每 turn 注入 TTS 合成）。
+    # None = 未显式设置，走后端默认（character 解析）；经 SessionMemory 泛化
+    # model_fields 遍历自动 save/load round-trip。
+    tts_voice: str | None = None
