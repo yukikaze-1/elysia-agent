@@ -430,8 +430,10 @@ class CognitiveLoop(CognitiveTools):
             # 发起会话 = resolve_session 目标会话（非全局活动会话）——v2 显式
             # conversationId 指向非活动会话时，声音随发起会话而非活动会话。
             # voice 是 per-turn 可变状态，set_voice 幂等（None 走后端默认）。
+            # 防御：target 可能无 service_state（如测试 Mock 会话），两步 getattr。
+            _svc_state = getattr(target, "service_state", None)
             self._tts_mgr.set_voice(
-                getattr(target.service_state, "tts_voice", None))
+                getattr(_svc_state, "tts_voice", None) if _svc_state is not None else None)
             clock = TimingClock()
             clock.start()
             self._clock = clock  # 供 _think_loop / _after_response 使用
