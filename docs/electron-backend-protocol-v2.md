@@ -1,6 +1,6 @@
 # Electron 后端协议 v2 — 结构化聊天事件契约参考
 
-**文档版本：** v0.3（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9，批次 4 补充 Desktop 工具契约 §10/错误码目录）
+**文档版本：** v0.4（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9，批次 4 补充 Desktop 工具契约 §10/错误码目录，批次 5 补充模型 Profile 与 TTS 声音契约 §11 + 错误码 21→25）
 **关联：** `docs/electron-backend-baseline.md`（v1 现状）、`docs/electron-backend-security.md`（认证/版本协商）
 **Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`（v0.2）
 
@@ -162,7 +162,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 
 错误信封统一（code/message/retryable/requestId）；全部匿名 401（`AGENT_ACCESS_TOKEN` 配置时）。
 
-### 9.1 错误码目录（批次 1-4 累计）
+### 9.1 错误码目录（批次 1-5 累计）
 
 | code | HTTP | retryable | 场景 |
 |---|---|---|---|
@@ -187,6 +187,10 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `CALL_NOT_FOUND` | 404 | false | **落地**于 `GET /api/tools/calls/{callId}`（未知 callId）与附件上传（未知 callId → 404） |
 | `CALL_EXPIRED` | 408 | false | 目录成员；语义在桥内（超时 → `error_type=TIMEOUT` + repo status=expired），`GET /api/tools/calls/{callId}` 查询如实返回 `expired` 不抛错 |
 | `CALL_IDEMPOTENCY_CONFLICT` | 409 | false | 目录成员；语义在桥内（`handle_status` 参数篡改拒绝：mark failed + 立即 resolve 失败态 + return False） |
+| `SSRF_BLOCKED` | 400 | false | **落地**：自定义 endpoint 命中私网/云元数据/链路本地/回环等 SSRF 规则，或无法解析目标主机（`/api/providers` 保存 / `/api/providers/test` body base_url / switch 路径，批次 5）；消息统一「目标地址被拒绝或无法解析」，不泄露 host/IP |
+| `PROFILE_IN_USE` | 409 | false | **落地**：删除当前激活 profile（活动会话 service_state / config / vision 指向 `custom/{name}`，批次 5） |
+| `PROFILE_INVALID_RUNTIME` | 400 | false | **落地**：runtime 枚举非法，或非 backend runtime 携带 api_key（批次 5） |
+| `PROFILE_RUNTIME_NOT_BACKEND` | 400 | false | **落地**：对 desktop/local 条目执行后端 test/switch（后端不代理本机 Profile，批次 5） |
 
 **数据保护语义**：`DELETE /api/sessions/default` → 409 `SESSION_PROTECTED`（`default` 恒存在且受保护，禁删——含其 append-only 归档）；生成/TTS 进行中 `activate`/`delete` 活动会话 → 409 `AGENT_BUSY`。
 
@@ -305,3 +309,31 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 连接收到**；v1 连接收到与现状逐字节一致的原样 `{tool, request_id, params}`。
 Desktop 工具**不走 `tool_approval`**（approvalAuthority=client，Electron 自管本地授权），
 走 §10.2/§10.3 的 `tool.request`/`tool.status`。
+
+---
+
+## 11. 模型 Profile 与 TTS 声音契约（批次 5，spec BE-050/051）
+
+### 11.1 模型 Profile（`/api/providers` 扩展）
+
+- **三类 Profile（llm/stt/tts）**：列表/新增/同名更新/测试/激活/删除 + 能力字段。`ProvidersResponse` 成员扩展（**既有键读取兼容，新增字段为纯增量**）：
+  - `ProviderEntry` 增 `credentialConfigured`（env_key/url_key 已配置 或 local 恒 true）/ `runtime`（内置恒 `backend`）/ `capabilities`（从 providers.yaml 带出 `supports_prefix`/`supports_multimodal` 等）。
+  - `CustomProvider` 增 `runtime`（`backend`/`desktop`/`local_worker`，缺省 `backend`）/ `credentialConfigured`（backend：Secret Store 有密钥 或 api_key_env env 已设；desktop/local：恒 false，密钥归 Electron 管理）/ `capabilities`。
+- **密钥只写不可读**：`POST /api/providers` body `entry.api_key` 一次性提交 → 后端写入 Secret Store（`data/secrets/`，0600 + gitignore），**永不读回**，响应只出 `credentialConfigured=true`；YAML 条目**不含密钥**。非 backend runtime 携带 api_key → 400 `PROFILE_INVALID_RUNTIME`。
+- **保存**：backend 条目 `base_url` 必填 + SSRF 校验（`SSRF_BLOCKED`）；desktop/local 条目 `base_url` 可空、跳过 SSRF。同名更新不带 api_key → 保留既有密钥；runtime 从 backend 改 desktop/local → 清除密钥。
+- **删除**：当前激活 profile（活动会话 `service_state.{svc}_model` / `config.{svc}.model` / `vision.model` 指向 `custom/{name}`）→ 409 `PROFILE_IN_USE`；非激活 → 删条目 + 清密钥。
+- **切换**：WS `switch_model`（复用批次 2 语义）——runtime ≠ backend → 400 `PROFILE_RUNTIME_NOT_BACKEND`（后端不代理本机 Profile）；custom+backend → SSRF 校验 + 出站守卫注入；失败保留原选择。
+- **测试**：`POST /api/providers/test` body `base_url` **非空时无论 provider 一律 SSRF 校验**（堵死任意拨号内网通道）；desktop/local 条目 → `PROFILE_RUNTIME_NOT_BACKEND`。
+
+### 11.2 本条回复实际模型（generation.model）
+
+`generation.started` / `generation.completed` / `generation.failed` 携带 `model`——generation 启动时的实际 LLM 模型快照（含热切换后），区别于 capabilities/switch 回显的"当前选择"。`completed.model` 保持必填。
+
+### 11.3 TTS 声音（BE-051）
+
+| 端点/消息 | 说明 |
+|---|---|
+| `GET /api/tts/voices` | `TtsVoicesResponse{voices: TtsVoiceEntry[], current?, source: "static"\|"api", error?}`——活动会话激活 TTS profile 的声音列表；TTS 未启用 → 200 `{voices:[], source:"static", error:"TTS 未启用"}`。数据源：MiniMax 动态拉取（`/v1/get_voice` + 进程内缓存）/ gpt-sovits 静态（已加载 YAML 的 voice keys）/ custom OpenAI 静态集（alloy/echo/fable/onyx/nova/shimmer） |
+| `POST /api/tts/preview` | `TtsPreviewResult{ok, mime?, duration_ms?, audio_base64?, error?}`——固定短文本（「你好，我是声音测试。」）试听，**不读真实聊天、不写历史**；body `{voice_id?}` 缺省用当前 voice |
+| WS `set_tts_voice` | Client→Server `{voice}` → 经活动会话激活 TTS 后端 `list_voices()` 校验存在 → 写活动会话 `service_state.tts_voice` + 回 `set_tts_voice_result {ok, voice?, error?}`；未知 voice/未启用 → `{ok: False, error}` **不改 state**（保留原选择） |
+| 合成生效 | `TTSBackend.synthesize(..., voice_id=None)`——voice_id 非空跳过 character→voice 映射；每 turn 由发起会话的 `service_state.tts_voice` 注入（v2 显式 conversationId 指向非活动会话时声音随发起会话） |

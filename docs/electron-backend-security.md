@@ -1,7 +1,7 @@
 # Electron 后端安全部署指南
 
-**文档版本：** v0.2（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口）
-**关联：** `docs/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`
+**文档版本：** v0.3（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新）
+**关联：** `docs/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`
 
 本文件说明 Elysia Agent 后端的**远程安全部署**方式：产品认证、TLS 终止、防护范围与已知缺口。远程部署必须遵循本指南；本地开发（回环 + 无 token）维持匿名。
 
@@ -107,17 +107,27 @@ server {
 - **敏感纪律（D-p）**：`desktop_calls` 集合存完整 arguments（审计/幂等必需）；bridge/ws 层 logger 只记 callId/toolName/status，**不打印 arguments 值**；错误信封 `details` 不放本地路径/参数；附件只传后端托管 URL。
 - **信任边界（显式认定）**：`desktop.file.read` 的 `path` 接受任意值（LLM 可凭空捏造路径）——来源追踪与本地路径校验属 **Electron 本地安全职责**（黑名单/沙盒/用户选择记录，docs/15 §三.2），后端只负责结构化传输 + paramHash 绑定，不额外做跨调用 path 白名单。
 
+### 3.3 模型 Profile 密钥与 SSRF（批次 5，BE-050）
+
+- **Secret Store 模型**：用户密钥存 `data/secrets/profiles.json`（目录 0700 + 文件 0600 + `.gitignore` + **不落 MongoDB**，防备份/导出泄漏）；原子写（tmp + `os.replace`）；**只写不可读**——所有响应/日志只出 `credentialConfigured` 布尔，错误信封 `details` 禁密钥。
+- **密钥作用域按 runtime**：`backend` 类 Profile 由后端管密钥（Secret Store 直存 或 api_key_env env）；`desktop/local_worker` 类 Profile 仅声明占位、密钥归 Electron 管（后端提交 api_key → 400，防"保存成功"假象）；此类条目的 test/switch 后端不代理（400 `PROFILE_RUNTIME_NOT_BACKEND`）。
+- **SSRF 防护（自定义 Endpoint）**：`validate_endpoint` 静态 + DNS 解析校验（scheme 缺省 https；拒绝云元数据/回环/链路本地/私网/保留/多播/CGNAT），作用于**保存、切换、测试三入口** + **`/api/providers/test` 请求体 base_url 无论 provider 一律校验**（堵死客户端任意拨号内网通道）；出站再校验——custom backend 的 HTTP 客户端注入校验传输层（openai `http_client=` / httpx transport），**重定向每跳校验**。
+- **Header 允许名单**：自定义 backend 出站仅允许 `Authorization/Content-Type/Accept/User-Agent`；**跨源重定向剥除允许名单外全部 Header（含 Authorization）**——防 `X-API-Key` 等敏感头泄漏到内网重定向目标（docs/14 §10 显式要求）。
+- **已知取舍（显式认定）**：出站守卫在连接前校验、随后 httpx 二次解析建连，存在 TOCTOU 窗口（活跃 DNS rebinding 需 IP pinning，批次 5 未承诺，见 §4 已知缺口）。SSRF 错误消息统一「目标地址被拒绝或无法解析」，**不泄露 host/IP**（防内网拓扑枚举）。
+- **豁免范围**：内置 provider（含 `local: true` 如 ollama/gpt-sovits）为运维托管配置，不注入守卫；desktop/local 条目 base_url 后端不拨号、跳过 SSRF 且允许为空。
+
 ## 4. 已知缺口（后置批次）
 
 | 缺口 | 后置 |
 |---|---|
 | `/uploads/*` 匿名 GET 已拒（有 token），但**短期签名 URL / 鉴权下载**未实现——当前 v2 客户端需带 `Authorization` 访问资源（**含 `/uploads/desktop/*` 附件**：上传路径仅产品认证保护，无 per-call/per-owner 的下载鉴权——callId 即 URL 路径，持有 callId 者若已通过产品认证即可 GET） | 批次 7（BE-070/071） |
 | 速率限制实现（`RATE_LIMITED` 仅入目录） | 批次 2+ |
-| 自定义模型密钥 Secret Store（当前 `api_key_env` 仅运维预配置） | 批次 5（BE-050） |
-| 日志无 token 已有测试守护；但 Provider 测试密钥不得经匿名明文连接（已由产品认证覆盖） | 批次 5 强化 |
+| **Secret Store 已落地（批次 5）**：`data/secrets/` 明文 0600 + gitignore + 不落 MongoDB（防备份泄漏）；密钥**只写不可读**，只回 `credentialConfigured`。遗留：明文待批次 7+ 评估加密 | 批次 7+（加密评估） |
+| DNS rebinding 完全闭合（IP pinning）——批次 5 出站守卫在连接前校验 + httpx 二次解析建连存在 TOCTOU 窗口（见 §3.3），未承诺防活跃 rebinding | 批次 7+（如需） |
 
 ## 5. 敏感信息纪律
 
 - token/API key 一律环境变量（`AGENT_ACCESS_TOKEN`/`SERVER_AUTH_TOKEN`/`*_API_KEY`），不落 YAML/git；
-- 错误信封 `details` 默认空 dict——禁止放入密钥、聊天正文、Inner Voice、未脱敏路径；
+- **用户提交的模型密钥**（批次 5）只进 Secret Store（`data/secrets/` 0600 + gitignore + 不落 MongoDB），响应/日志只出 `credentialConfigured` 布尔，**永不读回**；
+- 错误信封 `details` 默认空 dict——禁止放入密钥、聊天正文、Inner Voice、未脱敏路径；SSRF 拒绝消息不带 host/IP（防内网拓扑枚举）；
 - 日志使用关联 `requestId`，不记录正文与凭据。

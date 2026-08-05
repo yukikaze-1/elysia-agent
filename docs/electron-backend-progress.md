@@ -145,6 +145,34 @@ docs/14 场景 4（BE-040~043 门槛：四个 Desktop P0 工具完成安全往�
 
 ---
 
+---
+
+## 批次 5：模型 Profile 与密钥所有权 / TTS 声音（BE-050/051） ✅ 完成
+
+**提交：** `b0c22e6`（Secret Store）`50ea95a`（SSRFGuard）`7f77d4b`（契约层）`9b4c174`（custom_providers 解析统一）`8980d07`（后端 http_client 注入）`c8eb1f8`（generation.model 捕获）`4b6749e`（providers REST 三 handler）`a2adc09`（switch 路径守卫）`3af4201`（TTS 协议 list_voices + synthesize voice_id）`6099c2a`（POST /api/tts/preview）`f647357`（声音覆盖 service_state.tts_voice + WS set_tts_voice）`a0f8dfe`（fix：每 turn 声音注入防御性 getattr）
+**Spec（v0.3）：** `docs/superpowers/specs/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`
+**Plan：** `docs/superpowers/plans/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`（12 Task）
+
+### 决策（10 项拍板，2026-08-05）
+
+Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_env 并存不迁移 + Profile `runtime` 执行位置（Backend 管密钥/Desktop 归 Electron）+ SSRF 创建校验+出站再校验 + TTS 声音静态声明+MiniMax 动态拉取 + 新 `POST /api/tts/preview` 试听 + Generation `model` 字段（本条回复实际模型）+ 激活拒删 + `service_state.tts_voice` 运行时覆盖。完整决策表见 spec §2。
+
+### 结果
+
+- **Secret Store（BE-050）**：`core/storage/secret_store.py`（`data/secrets/profiles.json`，目录 0700 + 文件 0600 + gitignore + 原子写 + 损坏容错）；`ProjectPath.DATA_SECRETS`。密钥**只写不可读**——响应/日志只出 `credentialConfigured` 布尔。
+- **SSRFGuard（BE-050）**：`core/input/ssrf.py`——`validate_endpoint`（scheme 缺省 https + 字面量黑名单 + DNS 解析双保险，拒私网/元数据/回环/链路本地/保留/多播/CGNAT，空串放行）+ `build_guarded_http_client`（校验传输层每跳校验 + 跨源重定向剥敏感头 + Header 允许名单）。作用于保存/切换/测试三入口 + `/api/providers/test` body base_url 无论 provider 一律校验（堵死任意拨号内网通道）；custom backend 出站注入（openai `http_client=` + httpx transport）。内置 provider 豁免。
+- **Profile 契约**：`ProviderEntry`/`CustomProvider` 增 `credentialConfigured`/`runtime`/`capabilities`；`custom_providers.yaml` 条目支持 runtime/能力字段，api_key 入 Secret Store 不入 YAML（同名 upsert 保密钥，runtime 变更清理 D18）。REST 三 handler：保存（runtime 门控 base_url + SSRF + api_key 入 Store）/ 删除（激活 409 `PROFILE_IN_USE` + 清密钥）/ 测试（SSRF + 非 backend 400 `PROFILE_RUNTIME_NOT_BACKEND`）。WS switch 路径守卫（runtime 拦截 + SSRF + 出站注入 + 剥离 runtime 透传）。错误信封双轨：新码 ProtocolError / 老参数错误 v1 ApiFail。
+- **本条回复实际模型（D8）**：`GenerationContext.model_id` turn 启动快照 → `generation.started/completed/failed` 携带实际模型（`completed.model` 保持必填；registry 已存 model 零改动）。
+- **TTS 声音（BE-051）**：`TTSBackend.list_voices()`（MiniMax `/v1/get_voice` 动态 + 进程内缓存 / gpt-sovits 静态 = 已加载 YAML keys / custom OpenAI 静态集）+ `synthesize(..., voice_id=None)`（跳过 character 映射）；`GET /api/tts/voices` + `POST /api/tts/preview`（固定短文本，不读聊天）+ WS `set_tts_voice`（活动会话 + `list_voices` 校验 + 失败保留原选择）+ 每 turn 由发起会话 `service_state.tts_voice` 注入 TTSStreamManager。
+- **错误码目录（批次 5）**：+`SSRF_BLOCKED`(400)/`PROFILE_IN_USE`(409)/`PROFILE_INVALID_RUNTIME`(400)/`PROFILE_RUNTIME_NOT_BACKEND`(400)——目录累计 25 码。完整表见 `docs/electron-backend-protocol-v2.md §9.1` + §11。
+- **回归**：`make test-quick` **2484 passed / 2 skipped / 87 deselected**（批次 5 净增 ~121）；`make lint` 通过；`make check-types` 通过；`frontend_contract --check` 无漂移（`contract.generated.ts` 纯增量，v1 未改类型字节不变）。
+
+### 验收
+
+docs/14 场景 5（BE-050/051 门槛：三类 Profile 安全新增/测试/切换；普通查询不能读回密钥）验收进行中（见批次 5 验收节）。
+
+---
+
 ## 全批次独立复批（2026-08-05，批次 0-4 覆盖全部 15 项已完成 BE 任务）
 
 **验收方式**：6 路并行 subagent（批次 0/1/2/3/4 各 1 + 1 路跨批次 docs/15 Review 要点审查），全部静态核对（未跑 pytest/未写 Mongo/未启服务/未改文件），回归门禁由协调者另跑。报告见 `/tmp/electron-batch-acceptance/batchN-acceptance.md`（0/1/2/3/4）+ `batchX-crosscutting.md`。
