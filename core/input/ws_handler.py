@@ -434,6 +434,70 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
     return True
 
 
+async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None",
+                               voice_mgr, data: dict) -> None:
+    """voice.commit 处理顺序（spec §3.3 NEW-A/NEW-M/NEW-T）：
+    ① 解析目标会话 ack_conv（幂等重放分支也用，对齐 _route_v2_text，review #15）
+    ② 缺 clientRequestId → 直接 ack rejected（置于幂等与门禁之前）
+    ③ 幂等表查重（digest = commit 携带 text）→ 命中重发原 ACK / 异摘要 rejected
+    ④ 未命中 → 状态机 PENDING 门禁（commit_recording）→ ACK + post UserInputData。
+    """
+    recording_id = data.get("recordingId", "")
+    text = data.get("text", "")
+    client_request_id = data.get("clientRequestId", "")
+    client_message_id = data.get("clientMessageId")
+    conversation_id = data.get("conversationId")
+
+    try:
+        target = await agent.resolve_session(conversation_id, 2)
+        ack_conv = str(target.session_id)
+    except Exception:
+        ack_conv = conversation_id
+
+    if not client_request_id:
+        await _send_ack(ws, "", "", client_message_id, ack_conv, "rejected",
+                        error={"code": "CONTRACT_VALIDATION",
+                               "message": "缺少 clientRequestId", "retryable": False})
+        return
+
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    store = get_store()
+    entry = store.lookup(client_request_id)
+    if entry is not None:
+        if entry.content_digest == digest:
+            await _send_ack(ws, entry.user_message_id, client_request_id,
+                            client_message_id, ack_conv, "accepted")
+        else:
+            await _send_ack(ws, "", client_request_id, client_message_id,
+                            ack_conv, "rejected",
+                            error={"code": "CONTRACT_VALIDATION",
+                                   "message": "clientRequestId 冲突（内容摘要不同）",
+                                   "retryable": False})
+        return
+
+    try:
+        pending_text, emotion, events = voice_mgr.commit_recording(recording_id, text)
+    except VoiceSessionError as e:
+        await _send_ack(ws, "", client_request_id, client_message_id, ack_conv,
+                        "rejected", error={"code": e.code, "message": e.message,
+                                           "retryable": e.retryable})
+        return
+
+    from core.utils import new_message_id
+    message_id = new_message_id()
+    store.store(client_request_id, IdempotencyEntry(
+        user_message_id=message_id, content_digest=digest, created_at=time.monotonic()))
+    await _send_ack(ws, message_id, client_request_id, client_message_id, ack_conv, "accepted")
+    agent.idle.touch()
+    # conversation_id 传原始值（None=活动会话），与 _route_v2_text 传原始给 process_message 一致；
+    # ACK 侧已用解析后 ack_conv（review NEW-5）
+    agent.bus.post(UserInputData(
+        text=pending_text, user_name=agent.user_name, emotion=emotion, events=events,
+        request_id=agent.next_request_id(), message_id=message_id,
+        protocol_version=2, conversation_id=conversation_id))
+    logger.debug("voice.commit 提交成功: %s (%s)", pending_text[:30], recording_id)
+
+
 async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None, voice_mgr=None) -> None:
     """Route a JSON message from the WebSocket client to the appropriate handler.
 

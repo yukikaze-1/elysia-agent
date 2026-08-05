@@ -114,3 +114,75 @@ async def test_stt_disabled_via_set_service_ws():
     ends = [s for s in ws.sent if s.get("type") == "voice_session.ended"]
     assert ends and ends[-1]["reason"] == "stt_disabled"
     assert ends[-1]["sessionId"] == "vs_1"
+
+
+@pytest.mark.asyncio
+async def test_recording_full_flow():
+    """start→stop→transcript→commit→ack+generation（完整流，依赖 _handle_voice_commit）。"""
+    agent, ws, mgr = make()
+    await handle_json_message({"type": "voice.record.start", "recordingId": "rec_1"},
+                              agent, None, ws, voice_mgr=mgr)
+    agent._last_text = "你好"
+    await handle_json_message({"type": "voice.record.stop", "recordingId": "rec_1"},
+                              agent, None, ws, voice_mgr=mgr)
+    await asyncio.sleep(0.05)
+    assert any(s.get("type") == "voice.transcript" for s in ws.sent)
+    await handle_json_message(
+        {"type": "voice.commit", "recordingId": "rec_1", "text": "你好",
+         "clientRequestId": "req_c1", "clientMessageId": "msg_c1", "conversationId": None},
+        agent, None, ws, voice_mgr=mgr)
+    acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+    assert acks and acks[-1]["status"] == "accepted" and acks[-1]["messageId"]
+    assert any(getattr(p, "event_type", "") == "user_input" for p in agent.bus_posts)
+
+
+@pytest.mark.asyncio
+async def test_voice_commit_idempotent_replay():
+    agent, ws, mgr = make()
+    await handle_json_message({"type": "voice.record.start", "recordingId": "rec_1"},
+                              agent, None, ws, voice_mgr=mgr)
+    agent._last_text = "你好"
+    await handle_json_message({"type": "voice.record.stop", "recordingId": "rec_1"},
+                              agent, None, ws, voice_mgr=mgr)
+    await asyncio.sleep(0.05)
+    commit = {"type": "voice.commit", "recordingId": "rec_1", "text": "你好",
+              "clientRequestId": "req_same", "conversationId": None}
+    await handle_json_message(dict(commit), agent, None, ws, voice_mgr=mgr)
+    n_acks_1 = len([s for s in ws.sent if s.get("type") == "user_message.ack"])
+    n_input_1 = len(agent.bus_posts)
+    # 重试同 ID（状态已 IDLE，幂等表命中 → 重发 ACK，不重复生成）
+    await handle_json_message(dict(commit), agent, None, ws, voice_mgr=mgr)
+    n_acks_2 = len([s for s in ws.sent if s.get("type") == "user_message.ack"])
+    assert n_acks_2 == n_acks_1 + 1
+    assert len(agent.bus_posts) == n_input_1
+
+
+@pytest.mark.asyncio
+async def test_voice_commit_missing_client_request_id():
+    agent, ws, mgr = make()
+    await handle_json_message({"type": "voice.record.start", "recordingId": "rec_1"},
+                              agent, None, ws, voice_mgr=mgr)
+    agent._last_text = "你好"
+    await handle_json_message({"type": "voice.record.stop", "recordingId": "rec_1"},
+                              agent, None, ws, voice_mgr=mgr)
+    await asyncio.sleep(0.05)
+    await handle_json_message(
+        {"type": "voice.commit", "recordingId": "rec_1", "text": "你好",
+         "clientRequestId": "", "conversationId": None},
+        agent, None, ws, voice_mgr=mgr)
+    acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+    assert acks and acks[-1]["status"] == "rejected" \
+        and acks[-1]["error"]["code"] == "CONTRACT_VALIDATION"
+
+
+@pytest.mark.asyncio
+async def test_voice_commit_state_gate_before_submit():
+    # IDLE 态（无录音）commit → ack{rejected, VOICE_RECORDING_NOT_FOUND}
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "voice.commit", "recordingId": "rec_x", "text": "x",
+         "clientRequestId": "req_c2", "conversationId": None},
+        agent, None, ws, voice_mgr=mgr)
+    acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+    assert acks and acks[-1]["status"] == "rejected" \
+        and acks[-1]["error"]["code"] == "VOICE_RECORDING_NOT_FOUND"
