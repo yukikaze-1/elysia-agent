@@ -676,6 +676,11 @@ class Agent(AgentLifecycle, AgentServer):
         return self._tts
 
     @property
+    def tts_manager(self):
+        """TTS 流管理器（播放控制，BE-063 audio.cancel 入口）。"""
+        return self._cognitive._tts_mgr
+
+    @property
     def stt(self):
         """STT 后端（只读，可能为 None）。"""
         return self._stt

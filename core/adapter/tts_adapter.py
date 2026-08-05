@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import struct
 import time
 from typing import TYPE_CHECKING
 
@@ -53,6 +54,20 @@ def _mood_text_to_tts_emotion(mood_text: str) -> str:
 
 # ---- TTSStreamManager -----------------------------------------------------
 
+def _wav_info(audio: bytes) -> tuple[int | None, int | None]:
+    """解析 WAV header → (sample_rate, duration_ms)；非 WAV/异常返回 (None, None)。"""
+    try:
+        if len(audio) < 44 or audio[:4] != b"RIFF":
+            return None, None
+        sample_rate = struct.unpack("<I", audio[24:28])[0]
+        byte_rate = struct.unpack("<I", audio[28:32])[0]
+        data_size = struct.unpack("<I", audio[40:44])[0]
+        duration_ms = int(data_size * 1000 / byte_rate) if byte_rate else None
+        return sample_rate, duration_ms
+    except Exception:
+        return None, None
+
+
 class TTSStreamManager:
     """管理 TTS 流式播放、emoji 排队、句间同步。
 
@@ -86,6 +101,8 @@ class TTSStreamManager:
         self._emotion: str | None = None
         self._voice: str | None = None  # 音色覆盖（每 turn 注入；None 走后端默认）
         self._tasks: list[asyncio.Task] = []
+        self._task_by_sid: dict[int, asyncio.Task] = {}  # sid → 任务（BE-063 cancel）
+        self._audio_forwarding: set[int] = set()         # 已开始转发的 sid（cancel 补 audio_cancelled）
         self._total: int = 0       # 全局计数器，跨轮次持续递增
         self._seq: int = 0          # 本轮计数器，reset_for_turn() 时归零
         self._turn_chars: int = 0   # 本轮累计字符数
@@ -158,8 +175,10 @@ class TTSStreamManager:
             name=f"tts-{sid}",
         )
         self._tasks.append(task)
-        # Clean up completed tasks
+        self._task_by_sid[sid] = task
+        # 完成清理
         self._tasks = [t for t in self._tasks if not t.done()]
+        self._task_by_sid = {s: t for s, t in self._task_by_sid.items() if not t.done()}
 
     async def flush_emojis(self) -> None:
         """发送所有还未排出的 emoji（最后一句 TTS 之后的）。
@@ -199,6 +218,14 @@ class TTSStreamManager:
         for t in pending:
             t.cancel()
         self._tasks.clear()
+
+    def cancel_stream(self, stream_id: int) -> bool:
+        """取消指定播放实例（BE-063）；在途返回 True（任务补 audio_cancelled），否则 False。"""
+        task = self._task_by_sid.get(stream_id)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
 
     def set_emotion(self, emotion: str | None) -> None:
         """设置本轮 TTS 情绪。自由文本会自动映射为 TTS 参数 (happy/sad/neutral)。
@@ -364,14 +391,18 @@ class TTSStreamManager:
                 stream_id=sid,
             )
             await self._output.send("")
-            # 分块转发音频
+            # BE-063：句开始播放（stream_id = playback ID）+ WAV 元数据
+            fmt = self._tts.stream_format if self._tts else "wav"
+            sr, dur = _wav_info(audio)
+            self._audio_forwarding.add(sid)
+            await self._output.audio_start(sid, format=fmt, sample_rate=sr, duration_ms=dur)
             chunk_size = 4096
             for offset in range(0, len(audio), chunk_size):
                 await self._output.audio_chunk(
                     audio[offset:offset + chunk_size], stream_id=sid,
                 )
-            fmt = self._tts.stream_format if self._tts else "wav"
             await self._output.audio_end(sid, format=fmt)
+            self._audio_forwarding.discard(sid)
             # 发排在本句之后的 emoji
             for e in self._pending_emojis.pop(sid, []):
                 await self._output._broadcast(
@@ -394,6 +425,10 @@ class TTSStreamManager:
                     stream_id=sid,
                 )
                 await self._output.send("")
+            # BE-063：已开始转发的句被取消 → 补 audio_cancelled（前端清理孤儿 chunk）
+            if sid in self._audio_forwarding:
+                await self._output.audio_cancelled(sid)
+                self._audio_forwarding.discard(sid)
             raise  # propagate to task
         except Exception:
             logger.warning(
