@@ -109,7 +109,9 @@ def _make_payload_middleware(cms: int):
             return _protocol_error_response("REQUEST_TOO_LARGE", "请求体过大", 413)
         try:
             return await handler(request)
-        except web.HTTPPayloadTooLarge:
+        except web.HTTPRequestEntityTooLarge:
+            # aiohttp 3.12 将 413 异常类更名：HTTPPayloadTooLarge 已不存在，
+            # 须用 HTTPRequestEntityTooLarge（chunked 无 Content-Length 场景兜底）。
             return _protocol_error_response("REQUEST_TOO_LARGE", "请求体过大", 413)
 
     return _payload

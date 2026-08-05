@@ -73,6 +73,7 @@ def _inject_fake_storage(agent) -> "Agent":
     """
     from core.cognitive.generation_registry import GenerationRegistry
     from core.storage.character_version_repo import CharacterVersionRepository
+    from core.storage.desktop_call_repo import DesktopCallRepository
     from core.storage.generation_repo import GenerationRepository
     from core.storage.message_repo import MessageRepository
     from core.storage.session_repo import SessionRepository
@@ -97,6 +98,11 @@ def _inject_fake_storage(agent) -> "Agent":
     reg = GenerationRegistry(repo=GenerationRepository(db=backend))
     agent._generation_registry = reg
     agent.cognitive._generation_registry = reg
+    # 批次 4（spec §11 Fake 约定）：desktop 调用注册表也换同一 fake db——断言
+    # `GET /api/tools/calls/{callId}` 需可注入；bridge._repo 同步换（构造时绑定原 repo）。
+    desktop_repo = DesktopCallRepository(mongodb=backend)
+    agent._desktop_call_repo = desktop_repo
+    agent.desktop_bridge._repo = desktop_repo  # noqa: SLF001 — 测试内同步桥的 repo 引用
     return agent
 
 

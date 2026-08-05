@@ -37,6 +37,7 @@ class ProjectPath(str, Enum):
     DATA = "data"
     DATA_UPLOADS = "data/uploads"
     DATA_UPLOADS_IMAGES = "data/uploads/images"
+    DATA_UPLOADS_DESKTOP = "data/uploads/desktop"
     DATA_SANDBOX = "data/sandbox/{session_id}"
     DATA_CACHE_VISION = "data/cache/vision"
     DATA_REF = "data/ref"
