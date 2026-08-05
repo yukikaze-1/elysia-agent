@@ -319,7 +319,7 @@ Desktop 工具**不走 `tool_approval`**（approvalAuthority=client，Electron �
 - **三类 Profile（llm/stt/tts）**：列表/新增/同名更新/测试/激活/删除 + 能力字段。`ProvidersResponse` 成员扩展（**既有键读取兼容，新增字段为纯增量**）：
   - `ProviderEntry` 增 `credentialConfigured`（env_key/url_key 已配置 或 local 恒 true）/ `runtime`（内置恒 `backend`）/ `capabilities`（从 providers.yaml 带出 `supports_prefix`/`supports_multimodal` 等）。
   - `CustomProvider` 增 `runtime`（`backend`/`desktop`/`local_worker`，缺省 `backend`）/ `credentialConfigured`（backend：Secret Store 有密钥 或 api_key_env env 已设；desktop/local：恒 false，密钥归 Electron 管理）/ `capabilities`。
-- **密钥只写不可读**：`POST /api/providers` body `entry.api_key` 一次性提交 → 后端写入 Secret Store（`data/secrets/`，0600 + gitignore），**永不读回**，响应只出 `credentialConfigured=true`；YAML 条目**不含密钥**。非 backend runtime 携带 api_key → 400 `PROFILE_INVALID_RUNTIME`。
+- **密钥只写不可读**：`POST /api/providers` body `entry.api_key` 一次性提交 → 后端写入 Secret Store（`data/secrets/`，0600 + gitignore），**永不读回**，YAML 条目**不含密钥**；`credentialConfigured` 经 `GET /api/providers` 获取（save 响应返回全量 custom 列表，含密钥键剔除）。非 backend runtime 携带 api_key → 400 `PROFILE_INVALID_RUNTIME`。
 - **保存**：backend 条目 `base_url` 必填 + SSRF 校验（`SSRF_BLOCKED`）；desktop/local 条目 `base_url` 可空、跳过 SSRF。同名更新不带 api_key → 保留既有密钥；runtime 从 backend 改 desktop/local → 清除密钥。
 - **删除**：当前激活 profile（活动会话 `service_state.{svc}_model` / `config.{svc}.model` / `vision.model` 指向 `custom/{name}`）→ 409 `PROFILE_IN_USE`；非激活 → 删条目 + 清密钥。
 - **切换**：WS `switch_model`（复用批次 2 语义）——runtime ≠ backend → 400 `PROFILE_RUNTIME_NOT_BACKEND`（后端不代理本机 Profile）；custom+backend → SSRF 校验 + 出站守卫注入；失败保留原选择。

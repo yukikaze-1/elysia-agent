@@ -169,7 +169,19 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 
 ### 验收
 
-docs/14 场景 5（BE-050/051 门槛：三类 Profile 安全新增/测试/切换；普通查询不能读回密钥）验收进行中（见批次 5 验收节）。
+**批次 5 验收（2026-08-05，双路并行）**：
+
+- **docs/15 交叉验收（批次 5 门槛 + Review 要点）：ACCEPTED**。三 Profile 安全新增/测试/切换（runtime 门控 + SSRF + 守卫工厂 + 启动路径守卫）、普通查询永不读回密钥（遍历响应/错误/日志全路径）、敏感纪律、v1 读取兼容、诚实性（desktop/local 不造假 + TOCTOU 取舍声明）、文档闭环、测试覆盖全部满足。
+- **docs/14 BE-050/051 逐项验收：ACCEPTED_WITH_ISSUES**。10 项清单全部满足；F1（save/delete 响应 legacy api_key 回显加固）→ 已提交 `_strip_secret_keys`；F2（save 响应 credentialConfigured 文档漂移）→ docstring + protocol-v2 §11 措辞对齐；F3/F4 记录在案不修（见下）。
+- 回归门禁：`make test-quick` **2495 passed / 2 skipped / 87 deselected**；`make lint` 通过；`make check-types` 通过；`frontend_contract --check` 无漂移（`contract.generated.ts` 纯增量，v1 未改类型字节不变）。
+
+**记录在案不修（设计固有/显式取舍）**：
+1. **`_active_tts_profile` 返回全局后端，不随激活会话派生**（F3）：`activate_session` 切会话不重派后端——voices/preview/set_tts_voice 作用于全局单 TTS 后端（批次 3 单后端架构固有；单会话/活动会话路径一致）。
+2. **跨会话 voice 注入潜在不匹配**（F4）：set_tts_voice 校验于活动会话后端、每 turn 注入按发起会话——显式 conversationId 指向非活动会话且后端已切换时 voice 可能不在目标列表（TTS 合成失败但文本不受影响；spec §4.3 已明示 per-session voice 设计）。
+3. **LLM 初始配置 custom 无出站守卫**（review 记录）：`LLMAdapter.__init__` 不解析 custom 参数（config.llm.model=custom/x 属既有限制，批次 5 前已存在）；运行时切换路径（switch_llm）有守卫。
+4. **save/update 无 in-use 约束**（D9 只守卫 delete）：backend→desktop 更新活动 profile 会清密钥而内存后端继续运行至重启/切换（与 spec 一致）。
+
+**验收批次 5 独立复批后续**：docs/14 BE-050/051 已标 ✅（2026-08-05）。
 
 ---
 

@@ -153,6 +153,20 @@ async def _run_usable_test(backend, service: str, request: web.Request, body: di
     }
 
 
+def _strip_secret_keys(data: dict) -> dict:
+    """响应数据剔除 api_key 键（验收 LOW#1 加固）。
+
+    save/delete 响应的 data 是 load() 原始 custom 列表（裸 dict，不经契约白名单），
+    防遗留条目（批次 5 前误存过 api_key 字段）回显密钥——与 GET 经 model_validate
+    白名单丢弃的行为同口径。只处理 llm/stt/tts 三个已知 service 键，其余透传。
+    """
+    for svc in ("llm", "stt", "tts"):
+        for entry in data.get(svc, []):
+            if isinstance(entry, dict):
+                entry.pop("api_key", None)
+    return data
+
+
 def register_api_routes(app: web.Application) -> None:
     """注册所有业务 API 路由到 aiohttp Application。"""
 
@@ -176,10 +190,11 @@ def register_api_routes(app: web.Application) -> None:
           缺 → 放行（D13）；backend → validate_endpoint（非空时，SSRF）。
         - 非 backend 带 api_key → 400 PROFILE_INVALID_RUNTIME（密钥仅 backend 后端执行可收）。
         - api_key → add_provider 内部直存 Secret Store（不入 YAML）；D18 清理。
-        - 响应条目含 credentialConfigured。
+        - 响应 = 全量 custom 列表（spec §3.3 步骤 8，前批次 wire 形状）；credentialConfigured
+          经 GET /api/providers 获取（验收 F2：save 响应不含该布尔，避免偏离既有契约）。
 
         Returns:
-            web.Response: {"ok": True, "data": 保存条目(含 credentialConfigured)} 或错误信封。
+            web.Response: {"ok": True, "data": 全量 custom 列表（api_key 键已剔除）} 或错误信封。
         """
         from core.input.custom_providers import add_provider
         from core.input.ssrf import SSRFError, validate_endpoint
@@ -215,7 +230,9 @@ def register_api_routes(app: web.Application) -> None:
             return web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict(), status=500)
         # review 修正：响应恢复全量 custom 列表（spec §3.3 步骤 8 + 前批次 wire 形状），
         # 不再返回单条目——避免偏离既有契约；credentialConfigured 经 GET /api/providers 获取。
-        return web.json_response(rest_contract.ApiOk(data=data).wire_dict())
+        # 验收 LOW#1 加固：响应数据剔除 api_key 键——防遗留条目（批次 5 前误存过 api_key
+        # 字段）回显密钥（GET 经契约白名单丢弃、save/delete 是裸 dict，须同口径）。
+        return web.json_response(rest_contract.ApiOk(data=_strip_secret_keys(data)).wire_dict())
 
     async def providers_delete_handler(request: web.Request) -> web.Response:
         """删除一个自定义 provider（批次 5：激活约束——活动会话/配置正在使用的不可删）。
@@ -238,7 +255,8 @@ def register_api_routes(app: web.Application) -> None:
             return _tool_error("PROFILE_IN_USE", f"custom/{name} 正在使用，无法删除", 409)
         try:
             data = remove_provider(service, name)
-            return web.json_response(rest_contract.ApiOk(data=data).wire_dict())
+            # 验收 LOW#1：同 save，响应剔除 api_key 键（防遗留条目回显密钥）
+            return web.json_response(rest_contract.ApiOk(data=_strip_secret_keys(data)).wire_dict())
         except Exception as e:
             return web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict(), status=500)
 
