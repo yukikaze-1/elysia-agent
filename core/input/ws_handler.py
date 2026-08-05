@@ -136,10 +136,14 @@ async def handle_ws(
 
     # 发送服务能力状态（嵌套 per-service 形状：available/enabled/model/default）。
     # v2 客户端用 server_info（含 protocol_version/features）取代 capabilities，避免重复帧。
+    # 批次 4（BE-042 附件持有者校验闭环）：v2 + electron 建连时把握手生成的 conn_id
+    # 下发为 server_info.connectionId（Electron 据此构造附件上传 X-Client-Connection 头）；
+    # 非 electron 的 desktop_conn_id 恒 None → wire 缺省省略（v1 类型字节不变）。
     try:
         if protocol_version >= 2:
             from core.input.capabilities import build_server_info
-            await ws.send_json(build_server_info(agent).wire_dict())
+            await ws.send_json(
+                build_server_info(agent, connection_id=desktop_conn_id).wire_dict())
         else:
             await ws.send_json(build_capabilities(agent).wire_dict())
     except Exception:

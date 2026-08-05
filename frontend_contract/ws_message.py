@@ -167,6 +167,9 @@ class ServerInfoMessage(ContractModel):
 
     `services` 复用 per-service 形状（available/enabled/model/default），
     Electron 设置面板与 v1 共用渲染逻辑。
+    `connectionId`（批次 4）：桌面客户端连接 ID（Electron 附件上传 `X-Client-Connection`
+    头的取值来源，BE-042 持有者校验闭环）；仅 v2 + electron 建连时下发，
+    非 electron/普通 v2 恒省略（None → wire 缺省省略，v1 类型字节不变）。
     """
 
     type: Literal["server_info"] = "server_info"
@@ -174,6 +177,8 @@ class ServerInfoMessage(ContractModel):
     server_version: str = Field(description="服务器版本（core/version.py）")
     features: ServerInfoFeatures = Field(description="能力特征（严禁超前声明）")
     services: dict[str, ServiceCapability] = Field(description="llm/stt/tts 三服务能力")
+    connectionId: Optional[str] = Field(
+        default=None, description="桌面客户端连接 ID（仅 v2 + electron 下发），可缺省")
 
 
 # ─────────────────────────── 批次 2 v2 generation 事件 ───────────────────────────

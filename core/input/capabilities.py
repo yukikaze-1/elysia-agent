@@ -55,12 +55,22 @@ def build_capabilities(agent: "Agent") -> CapabilitiesMessage:
     )
 
 
-def build_server_info(agent: "Agent") -> ServerInfoMessage:
+def build_server_info(agent: "Agent", connection_id: str | None = None) -> ServerInfoMessage:
     """构建 v2 server_info（protocol_version/features/services，取代 capabilities）。
 
     `features` 严禁超前声明——每个字段必须如实反映后端当前真实能力：
     结构化聊天/多会话/Desktop/转写分别在批次 2/3/4/6 实现后置 true，批次 1 全 false。
     `services` 复用与 capabilities 相同的 per-service 形状，Electron 设置面板共用渲染。
+    `connection_id`（批次 4，BE-042 附件持有者校验闭环）：v2 + electron 建连时
+    ws_handler 传入握手生成的 conn_id → `server_info.connectionId`；非 electron/普通
+    v2 传 None → wire 缺省省略（None → exclude_none，v1 类型字节不变）。
+
+    Args:
+        agent: Agent 实例（只读公开属性 + config）。
+        connection_id: 桌面客户端连接 ID（仅 v2 + electron 建连时非 None）。
+
+    Returns:
+        ``ServerInfoMessage``（type=server_info + protocol_version + features + services）。
     """
     from core.version import __version__
 
@@ -87,6 +97,7 @@ def build_server_info(agent: "Agent") -> ServerInfoMessage:
             "tts": svc(agent.tts is not None, agent.tts_enabled,
                        agent.tts.model if agent.tts else None, cfg.tts.model),
         },
+        connectionId=connection_id,
     )
 
 

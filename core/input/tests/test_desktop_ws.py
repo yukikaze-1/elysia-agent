@@ -133,6 +133,91 @@ class TestDesktopWsHandshake:
 
 
 @pytest.mark.service
+class TestServerInfoConnectionId:
+    """server_info.connectionId 下发（BE-042 附件持有者校验闭环，review finding）。
+
+    仅 v2 + electron 建连时下发握手生成的 conn_id；v2 普通 / v1 恒省略
+    （None → wire exclude_none，v1 类型字节不变）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_v2_electron_server_info_has_connection_id(self, aiohttp_client, fresh_idempotency):
+        """v2 + electron 建连：server_info 帧带 connectionId（= 握手 conn_id）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws, frames = await _connect(
+                client, {"X-Protocol-Version": "2", "X-Client-Platform": "electron"},
+                collect=True, cap_type="server_info")
+            info = next(f for f in frames if f.get("type") == "server_info")
+            assert info["connectionId"] == agent.desktop_bridge._connection_id  # noqa: SLF001
+            assert info["connectionId"].startswith("conn_")
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v2_web_server_info_omits_connection_id(self, aiohttp_client, fresh_idempotency):
+        """v2 普通（无 platform 头）：server_info 帧不含 connectionId（缺省省略）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws, frames = await _connect(client, {"X-Protocol-Version": "2"},
+                                        collect=True, cap_type="server_info")
+            info = next(f for f in frames if f.get("type") == "server_info")
+            assert "connectionId" not in info
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v1_capabilities_frame_no_connection_id(self, aiohttp_client, fresh_idempotency):
+        """v1：收 capabilities 帧（非 server_info），不含 connectionId（逐字节不回归）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws, frames = await _connect(client, {}, collect=True, cap_type="capabilities")
+            cap = next(f for f in frames if f.get("type") == "capabilities")
+            assert "connectionId" not in cap
+            assert "live2d_static_image" in cap  # v1 capabilities 形状未变
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v1_forged_platform_header_no_connection_id(self, aiohttp_client, fresh_idempotency):
+        """v1 伪冒 platform 头：走 v1 capabilities 路径，不含 connectionId（负面隔离）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws, frames = await _connect(
+                client, {"X-Client-Platform": "electron"},  # 无 X-Protocol-Version → v1
+                collect=True, cap_type="capabilities")
+            cap = next(f for f in frames if f.get("type") == "capabilities")
+            assert "connectionId" not in cap
+            assert agent.desktop_bridge._connection_id is None  # noqa: SLF001 — v1 不建 bridge 连接
+            await ws.close()
+        finally:
+            await agent.stop()
+
+
+@pytest.mark.service
 class TestDesktopWsNegativeIsolation:
     """负面隔离回归：v1 伪冒 / v2 web 不收 desktop 语义 + server_info feature。"""
 

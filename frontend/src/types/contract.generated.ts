@@ -193,7 +193,10 @@ export interface ServerInfoFeatures {
 /** 协议版本 + 服务器能力声明（仅 v2 客户端；取代 capabilities，避免重复帧）。
 
 `services` 复用 per-service 形状（available/enabled/model/default），
-Electron 设置面板与 v1 共用渲染逻辑。 */
+Electron 设置面板与 v1 共用渲染逻辑。
+`connectionId`（批次 4）：桌面客户端连接 ID（Electron 附件上传 `X-Client-Connection`
+头的取值来源，BE-042 持有者校验闭环）；仅 v2 + electron 建连时下发，
+非 electron/普通 v2 恒省略（None → wire 缺省省略，v1 类型字节不变）。 */
 export interface ServerInfoMessage {
   type: 'server_info'
   /** 协商的协议版本 */
@@ -204,6 +207,8 @@ export interface ServerInfoMessage {
   features: ServerInfoFeatures
   /** llm/stt/tts 三服务能力 */
   services: Record<string, ServiceCapability>
+  /** 桌面客户端连接 ID（仅 v2 + electron 下发），可缺省 */
+  connectionId?: string
 }
 
 /** 用户消息确认（v2）：接受后跟 generation.*，rejected 带 error 不生成。 */
