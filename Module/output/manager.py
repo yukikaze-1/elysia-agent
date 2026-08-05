@@ -329,7 +329,8 @@ class OutputManager:
 
         Args:
             ctx: GenerationContext（含 generation_id / assistant_message_id /
-                conversation_id——批次 3 v2 conversationId 数据源）。
+                conversation_id——批次 3 v2 conversationId 数据源；
+                model_id——批次 5 D8 模型快照，Started.model 数据源）。
             channels: 候选通道，None 用全部。
         """
         _v1, v2 = self._split_versions(channels)
@@ -337,6 +338,7 @@ class OutputManager:
             "on_generation_started",
             generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
             conversation_id=ctx.conversation_id,
+            model=ctx.model_id or None,
             channels=v2,
         )
 
@@ -477,7 +479,7 @@ class OutputManager:
             message: 公开说明。
             retryable: 是否可重试。
             label: v1 错误标签（LLM 调用失败/内部错误）。
-            ctx: GenerationContext。
+            ctx: GenerationContext（model_id——批次 5 D8 模型快照，failed 帧 model 数据源）。
         """
         v1, v2 = self._split_versions(channels)
         await self._broadcast(
@@ -490,6 +492,7 @@ class OutputManager:
             "on_generation_failed",
             generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
             code=code, message=message, retryable=retryable,
+            model=ctx.model_id or None,
             conversation_id=ctx.conversation_id,
             channels=v2,
         )
@@ -499,13 +502,14 @@ class OutputManager:
         现状打断无 ❌ delta（state interrupted 由 FSM 承担），保持 v1 兼容。
 
         Args:
-            ctx: GenerationContext。
+            ctx: GenerationContext（model_id——批次 5 D8 模型快照，cancelled 帧 model 数据源）。
         """
         _v1, v2 = self._split_versions(channels)
         await self._broadcast(
             "on_generation_failed",
             generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
             code="GENERATION_CANCELLED", message="已取消", retryable=False,
+            model=ctx.model_id or None,
             conversation_id=ctx.conversation_id,
             channels=v2,
         )

@@ -447,11 +447,14 @@ class CognitiveLoop(CognitiveTools):
             # 批次 2：每回合创建 GenerationContext——generation_id / assistant_message_id 预分配，
             # 供统一回合事件与 _finalize_turn 落库（assistant 父消息 ID 贯通）。
             # 批次 3：conversation_id 贯通（generation.* wire 的 conversationId 数据源）。
+            # 批次 5（D8）：model_id 捕获 llm.model 快照——统一回合事件 Started/Completed/
+            # Failed 的 model 数据源，替代 completed 时即时读取（保证同一次快照）。
             self._generation_ctx = GenerationContext(
                 generation_id=new_generation_id(),
                 user_message_id=message_id or "",
                 assistant_message_id=new_message_id(),
                 conversation_id=gen_conversation_id,
+                model_id=self._llm.model,
             )
             self._turn_failed_emitted = False
             # 批次 3（BE-024）：generation 建档（status=running）。只在 process 开头
@@ -999,8 +1002,10 @@ class CognitiveLoop(CognitiveTools):
                 mood = (target.character_state.mood if target is not None else (
                     self._character_engine.state.mood
                     if self._character_engine is not None else None))
+                # 批次 5（D8）：model 用 ctx.model_id 快照（非即时读取 self._llm.model）——
+                # 与 generation.started 同一次快照，避免 completed 时读到已切换模型
                 await self._output.turn_completed(
-                    "stop", usage, self._llm.model, mood, self._generation_ctx,
+                    "stop", usage, self._generation_ctx.model_id, mood, self._generation_ctx,
                     conversation_id=conversation_id or target.session_id,
                     conversation_usage=conversation_usage)
             except Exception:

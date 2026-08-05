@@ -266,11 +266,12 @@ class WebSocketChannel(OutputChannel):
     async def on_generation_failed(self, *, generation_id: str, code: str, message: str,
                                    retryable: bool, message_id: str | None = None,
                                    details: dict | None = None,
+                                   model: str | None = None,
                                    conversation_id: str | None = None) -> None:
-        """发送 v2 父失败。"""
+        """发送 v2 父失败。model 为 turn 启动快照（批次 5 D8），可缺省省略。"""
         await self._send_json(GenerationFailedMessage(
             generationId=generation_id, messageId=message_id, code=code,
-            message=message, retryable=retryable,
+            message=message, retryable=retryable, model=model,
             details=details or {},
             conversationId=conversation_id,
         ).wire_dict())
