@@ -182,7 +182,7 @@ core/
 ```
 frontend_contract/
 ├── base.py                 # ContractModel 基类 + TsNull marker + wire_key + wire_dict 序列化
-├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（18 具名成员）+ 6 条 Client→Server + 支持类型
+├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（39 具名成员，批次 6 语音/TTS 播放契约）+ 多条 Client→Server + 支持类型
 ├── rest.py                 # REST 业务契约：providers / images / messages / api 响应（12 模型）
 ├── debug.py                # Debug API 契约：/debug/api 响应（DebugData 16 面板等 38 模型）
 ├── gen_ts.py               # TS 发射器：BaseModel → contract.generated.ts（拓扑排序 + 同名安全网）
@@ -245,7 +245,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.database.documentdb` | Document DB | `mongodb` |
 | `Module.database.graphdb` | Graph DB | stub only |
 | `Module.bench` | Latency benchmarking | Covers LLM/TTS/STT |
-| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (glue), `ws_handler.py`, `capabilities.py` (嵌套 per-service 能力声明), `api_routes.py`, `session_routes.py` (多会话/历史/搜索/资源/状态/pending REST), `debug_routes/` (package, 7 modules) |
+| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (glue), `ws_handler.py`, `capabilities.py` (嵌套 per-service 能力声明), `api_routes.py`, `session_routes.py` (多会话/历史/搜索/资源/状态/pending REST), `voice_sessions.py` (三模式语音状态机：普通录音/实时语音/输入法转写，BE-060~062), `audio_buffer.py` (VAD 分段 + STT 提交), `debug_routes/` (package, 7 modules) |
 | `Module._common` | Shared utility layer | env, registry helpers, test helpers |
 
 ## Config system
