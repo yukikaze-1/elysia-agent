@@ -367,9 +367,11 @@ class TestWebSocketHandler:
 
     @pytest.mark.asyncio
     async def test_switch_llm_resolves_custom_params(self, tmp_path, aiohttp_client):
-        """switch_llm 切到 custom 时 resolve_model_params 解析 base_url 并传给 Factory。"""
+        """switch_llm 切到 custom 时 resolve 解析 base_url/api_key、剥离 runtime 并注入守卫 http_client。"""
+        import socket as _socket
         from unittest.mock import patch
         from core.input import custom_providers as cp
+        from core.input.ssrf import _SSRFTransport
         from core.input.server import create_app
         import json as _json
 
@@ -385,14 +387,21 @@ class TestWebSocketHandler:
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
 
-        # clear=True + 置空 MY_LLM_KEY → resolve 不返回 api_key，断言确定性
+        # mock getaddrinfo 返回公网 IP——myllm.local 为不可解析 host，SSRF 校验会 NXDOMAIN 拒绝
+        public_infos = [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("8.8.8.8", 80))]
         with patch.object(cp, "_DEFAULT_PATH", yaml_path), \
-             patch.dict(os.environ, {"MY_LLM_KEY": ""}, clear=True), \
+             patch.dict(os.environ, {"MY_LLM_KEY": "test-key"}, clear=True), \
+             patch("core.input.ssrf.socket.getaddrinfo", return_value=public_infos), \
              patch.object(agent.llm, "switch_model") as mock_switch:
             async with client.session.ws_connect(client.make_url('/ws')) as ws:
                 await ws.send_json({"type": "switch_model", "service": "llm", "model": "custom/myllm"})
                 await asyncio.sleep(0.2)
-        mock_switch.assert_called_once_with("custom/myllm", base_url="http://myllm.local")
+        # 剥离 runtime 透传（Task 4 交接）——runtime 键不传给 switch_model（assert_called_once 严格匹配）
+        mock_switch.assert_called_once_with("custom/myllm", base_url="http://myllm.local",
+                                            api_key="test-key", http_client=mock_switch.call_args.kwargs["http_client"])
+        _, kwargs = mock_switch.call_args
+        assert "runtime" not in kwargs                     # runtime 已剥离
+        assert isinstance(kwargs["http_client"]._transport, _SSRFTransport)  # 出站守卫注入
         await agent.stop()
 
 

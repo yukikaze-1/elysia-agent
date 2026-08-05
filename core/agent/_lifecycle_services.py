@@ -93,8 +93,10 @@ class _LifecycleServices:
                 # 关键：custom/<name> 必须经 resolve_model_params 补 base_url（registry.py
                 # 对 custom 无 base_url 抛 ValueError——裸 create 会让运行时切好的 custom TTS
                 # 重启后静默失效，与 STT 同款 bug）
+                tts_params = resolve_model_params("tts", model)
+                tts_params.pop("runtime", None)  # 剥离 runtime——构造器无此形参，透传会 TypeError
                 self._tts = TTSFactory.create(
-                    model, **resolve_model_params("tts", model),
+                    model, **tts_params,
                     rate_limit_rpm=self._config.tts.rate_limit_rpm,
                 )
             except Exception:

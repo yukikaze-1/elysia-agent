@@ -21,6 +21,46 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# runtime != backend（desktop/local 由 Electron 执行）→ switch 拦截错误码
+_RUNTIME_NOT_BACKEND_MSG = "PROFILE_RUNTIME_NOT_BACKEND: 该 Profile 由 Electron 执行"
+
+
+def _resolve_switch_params(
+    svc: str, model_id: str,
+) -> tuple[dict, str, Any]:
+    """switch 参数守卫解析：resolve + 剥离 runtime + SSRF 校验 + 出站守卫 client。
+
+    custom/name 经 resolve_model_params 解析 base_url/api_key/runtime；**剥离 runtime**
+    ——不透传给后端构造器（构造器无 runtime 形参，Task 4 后 resolve 返回 runtime 键，
+    整包 **params 透传会 TypeError）。custom+backend 且 base_url 非空 → validate_endpoint
+    SSRF 校验 + build_guarded_http_client 出站守卫 client；内置（resolve 返回 {}）→
+    runtime 缺省 backend、无校验、无 http_client，走现状。
+
+    Args:
+        svc: 服务名（"llm"/"stt"/"tts"）。
+        model_id: 模型标识，如 "custom/name" 或 "deepseek/deepseek-v4-flash"。
+
+    Returns:
+        (params, runtime, http_client) 三元组：
+        - params：剥离 runtime 后的构造参数（base_url/api_key 等）。
+        - runtime：执行位置（"backend" 或 desktop/local）。
+        - http_client：custom+backend 且 base_url 非空的守卫 client；其余为 None。
+
+    Raises:
+        SSRFError: custom+backend 且 base_url 非空但校验失败（内网/解析失败）。
+    """
+    from core.input.custom_providers import resolve_model_params
+    from core.input.ssrf import build_guarded_http_client, validate_endpoint
+    params = resolve_model_params(svc, model_id)
+    runtime = params.pop("runtime", "backend")
+    http_client = None
+    if runtime == "backend":
+        base_url = params.get("base_url", "")
+        if base_url:
+            validate_endpoint(base_url)
+            http_client = build_guarded_http_client(base_url)
+    return params, runtime, http_client
+
 
 class AgentServer:
     """Agent 服务器 mixin — HTTP/REPL 入口 + provider 切换。
@@ -111,9 +151,14 @@ class AgentServer:
             包含 ``ok`` 状态和可选的 ``error`` 信息的字典。
         """
         try:
+            params, runtime, http_client = _resolve_switch_params("llm", model_id)
+            if runtime != "backend":
+                # desktop/local Profile 由 Electron 执行，后端侧拒绝切换（service_state 不改）
+                return {"ok": False, "error": _RUNTIME_NOT_BACKEND_MSG}
             self._cognitive.cancel_current()  # 打断正在进行的 LLM 调用
-            from core.input.custom_providers import resolve_model_params
-            params = resolve_model_params("llm", model_id)
+            if http_client is not None:
+                # custom+backend：出站守卫 client 注入（SSRF 校验在 _resolve_switch_params 内）
+                params["http_client"] = http_client
             self._llm.switch_model(model_id, **params)
             # 先建后换成功后写入运行时状态（config 保持默认不改写）
             self.session.service_state.llm_model = model_id
@@ -145,8 +190,13 @@ class AgentServer:
         new_backend = None
         try:
             from Module.stt import STTFactory
-            from core.input.custom_providers import resolve_model_params
-            params = resolve_model_params("stt", model_id)
+            params, runtime, http_client = _resolve_switch_params("stt", model_id)
+            if runtime != "backend":
+                # desktop/local Profile 由 Electron 执行，后端侧拒绝切换（service_state 不改）
+                return {"ok": False, "error": _RUNTIME_NOT_BACKEND_MSG}
+            if http_client is not None:
+                # custom+backend：出站守卫 client 注入（SSRF 校验在 _resolve_switch_params 内）
+                params["http_client"] = http_client
             new_backend = STTFactory.create(model_id, **params)
             # 1s 连通性测试——建好后先验证可用性再替换
             result = await asyncio.wait_for(new_backend.test(), timeout=1.0)
@@ -196,8 +246,13 @@ class AgentServer:
         new_backend = None
         try:
             from Module.tts import TTSFactory
-            from core.input.custom_providers import resolve_model_params
-            params = resolve_model_params("tts", model_id)
+            params, runtime, http_client = _resolve_switch_params("tts", model_id)
+            if runtime != "backend":
+                # desktop/local Profile 由 Electron 执行，后端侧拒绝切换（service_state 不改）
+                return {"ok": False, "error": _RUNTIME_NOT_BACKEND_MSG}
+            if http_client is not None:
+                # custom+backend：出站守卫 client 注入（SSRF 校验在 _resolve_switch_params 内）
+                params["http_client"] = http_client
             params["rate_limit_rpm"] = self._config.tts.rate_limit_rpm
             new_backend = TTSFactory.create(model_id, **params)
             # 1s 连通性测试——建好后先验证可用性再替换
@@ -322,7 +377,9 @@ class AgentServer:
                     # 关键：custom/<name> 必须经 resolve_model_params 补 base_url（registry
                     # 对 custom 无 base_url 抛 ValueError，裸 create 会让运行时切好的 custom
                     # STT 重启后 available=false）
-                    stt_backend = STTFactory.create(stt_model, **resolve_model_params("stt", stt_model))
+                    stt_params = resolve_model_params("stt", stt_model)
+                    stt_params.pop("runtime", None)  # 剥离 runtime——构造器无此形参，透传会 TypeError
+                    stt_backend = STTFactory.create(stt_model, **stt_params)
                     # 快速连通性测试——1s 超时，避免卡启动
                     result = await asyncio.wait_for(stt_backend.test(), timeout=1.0)
                     if not result.get("ok"):
