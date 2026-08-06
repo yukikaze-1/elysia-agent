@@ -11,7 +11,7 @@ from frontend_contract.rest import ProtocolError
 @pytest.fixture
 def make_auth_app():
     """构造带 access_token 的 app（access_token 作为 create_app 显式参数传入）。"""
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
     from core.agent import RunState
     from core.input.server import create_app
 
@@ -26,7 +26,9 @@ def make_auth_app():
         agent.status.current_name.return_value = "idle"
         agent.llm.model = "fake/test"
         agent.session._messages = []
+        agent.session.health_check = AsyncMock(return_value=True)
         agent.long_term.count = 0
+        agent.long_term.health_check = AsyncMock(return_value=True)
         agent.tool_adapter._manager.tool_names = ["t1"]
         return create_app(agent, serve_static=False, access_token=access_token)
 

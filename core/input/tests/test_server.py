@@ -806,7 +806,9 @@ class TestEndpoints:
         agent.status.current_name.return_value = "idle"
         agent.llm.model = "test-model"
         agent.session._messages = [1, 2, 3]
+        agent.session.health_check = AsyncMock(return_value=True)
         agent.long_term.count = 42
+        agent.long_term.health_check = AsyncMock(return_value=True)
         agent.tool_adapter._manager.tool_names = ["t1", "t2"]
         agent.output = MagicMock()
         agent.bus = MagicMock()

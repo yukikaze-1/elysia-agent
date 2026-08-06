@@ -4,8 +4,10 @@ Each client gets an independent WebSocketChannel (outbound) and AudioBuffer
 (inbound audio). Text and STT results are routed to the agent's EventBus.
 """
 
+import asyncio
 import json
 import logging
+import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,6 +21,7 @@ from core.input.api_routes import register_api_routes
 from core.input.attachment_routes import register_attachment_routes
 from core.input.session_routes import register_session_routes
 from core.input.debug_routes import register_debug_routes
+from core.version import build_server_version, get_build_sha
 from frontend_contract.rest import ProtocolError
 
 if TYPE_CHECKING:
@@ -27,6 +30,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 from paths import ProjectPath
+
+# 依赖健康检查超时（秒）——挂起/慢依赖视为 down，探活请求不无限阻塞
+_HEALTH_TIMEOUT = 2.0
+# 进程启动时刻（monotonic），/health uptime 用
+_PROCESS_START = time.monotonic()
 
 _STATIC_DIR = ProjectPath.STATIC.resolve()
 _LIVE2D_DIR = ProjectPath.LIVE2D_ASSETS.resolve()
@@ -120,6 +128,84 @@ def _make_payload_middleware(cms: int):
             return _protocol_error_response("REQUEST_TOO_LARGE", "请求体过大", 413)
 
     return _payload
+
+
+async def _collect_health_payload(agent: "Agent") -> dict:
+    """聚合健康探针负载：依赖检查（wait_for 超时/异常视为 down）+ 运行信息。
+
+    Args:
+        agent: Agent 实例（公开接口 session.health_check / long_term.health_check）。
+
+    Returns:
+        探针 JSON 负载：status/fsm/llm/memory/tools/version/build_sha/uptime/
+        request_id/dependencies{`mongo`, `milvus`}。
+    """
+    async def _probe(factory) -> bool:
+        try:
+            return bool(await asyncio.wait_for(factory(), timeout=_HEALTH_TIMEOUT))
+        except Exception:
+            # 超时 / 依赖抛异常 / mock 不可 await → 一律视为 down
+            return False
+
+    mongo_ok = await _probe(agent.session.health_check)
+    milvus_ok = await _probe(agent.long_term.health_check)
+    dependencies = {"mongo": mongo_ok, "milvus": milvus_ok}
+    status = "ok" if all(dependencies.values()) else "degraded"
+
+    try:
+        fsm_state = agent.status.current_name()
+    except Exception:
+        fsm_state = "unknown"
+
+    try:
+        rid = agent.next_request_id()
+        request_id = rid if isinstance(rid, str) else f"req_{uuid.uuid4().hex[:24]}"
+    except Exception:
+        request_id = f"req_{uuid.uuid4().hex[:24]}"
+
+    return {
+        "status": status,
+        "fsm": fsm_state,
+        "llm": getattr(agent.llm, "model", "unknown"),
+        "memory": {
+            "session_count": len(getattr(agent.session, "_messages", [])),
+            "long_term_count": getattr(agent.long_term, "count", 0),
+        },
+        "tools": getattr(agent.tool_adapter._manager, "tool_names", ["<loading>"]),  # noqa: SLF001
+        "version": build_server_version(),
+        "build_sha": get_build_sha(),
+        "uptime": round(time.monotonic() - _PROCESS_START, 1),
+        "request_id": request_id,
+        "dependencies": dependencies,
+    }
+
+
+async def health_handler(request: web.Request) -> web.Response:
+    """Liveness 探针——进程存活探测，恒 200；status 反映依赖健康度（ok/degraded）。
+
+    Args:
+        request: aiohttp Request。
+
+    Returns:
+        web.Response: 200 JSON 探针负载（依赖异常不阻断存活上报）。
+    """
+    agent = request.app["agent"]
+    return web.json_response(await _collect_health_payload(agent))
+
+
+async def ready_handler(request: web.Request) -> web.Response:
+    """Readiness 探针——依赖不 ok 时 503（流量路由/滚动发布用）。
+
+    Args:
+        request: aiohttp Request。
+
+    Returns:
+        web.Response: 依赖全 ok → 200，任一 down → 503（负载 status 同形状）。
+    """
+    agent = request.app["agent"]
+    payload = await _collect_health_payload(agent)
+    status_code = 200 if payload["status"] == "ok" else 503
+    return web.json_response(payload, status=status_code)
 
 
 def create_app(
@@ -238,33 +324,9 @@ def create_app(
                 return web.FileResponse(debug_path)
             app.router.add_get("/debug", debug_handler)
 
-    # Health check endpoint — for Docker/Kubernetes probes
-    async def health_handler(request: web.Request) -> web.Response:
-        """Health/readiness check endpoint for Docker/Kubernetes probes.
-
-        Args:
-            request: aiohttp Request。
-
-        Returns:
-            web.Response: JSON status including FSM state, LLM model, memory counts, tool list.
-        """
-        agent = request.app["agent"]
-        try:
-            fsm_state = agent.status.current_name()
-        except Exception:
-            fsm_state = "unknown"
-        return web.json_response({
-            "status": "ok",
-            "fsm": fsm_state,
-            "llm": getattr(agent.llm, 'model', 'unknown'),
-            "memory": {
-                "session_count": len(getattr(agent.session, '_messages', [])),
-                "long_term_count": getattr(agent.long_term, 'count', 0),
-            },
-            "tools": getattr(agent.tool_adapter._manager, 'tool_names', ["<loading>"]),  # noqa: SLF001
-        })
+    # Health check endpoints — Docker/Kubernetes liveness(/health) + readiness(/ready)
     app.router.add_get("/health", health_handler)
-    app.router.add_get("/ready", health_handler)
+    app.router.add_get("/ready", ready_handler)
 
     # Shutdown endpoint — triggers graceful agent stop
     async def shutdown_handler(request: web.Request) -> web.Response:
