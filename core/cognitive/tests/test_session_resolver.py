@@ -171,15 +171,33 @@ async def test_cancel_current_accepts_and_stores_source():
 
 
 @pytest.mark.asyncio
-async def test_cancel_current_preserves_disconnect_source():
-    """F6: disconnect 来源不被后续 cancel_current() 覆盖；无来源 cancel 不清掉待消费来源。"""
+async def test_cancel_current_no_task_does_not_record_source():
+    """D4: 无在途 task 时 cancel_current 不取消任何东西，也不留 sticky source
+    （IDLE_BG 窗口断线不再泄漏 source 锁死下一回合）。"""
     loop = _make_loop({}, SessionMemory(session_id="default"))
-    loop.cancel_current("disconnect")
+    loop._interrupt_source = None
+    assert loop.cancel_current("disconnect") is False
+    assert loop._interrupt_source is None
+    await loop._output.close()
+
+
+@pytest.mark.asyncio
+async def test_cancel_current_preserves_disconnect_source():
+    """F6: 有在途 task 时 disconnect 来源不被后续非 disconnect 来源覆盖；
+    无来源 cancel 不清掉待消费来源。"""
+    loop = _make_loop({}, SessionMemory(session_id="default"))
+
+    task = asyncio.create_task(asyncio.sleep(60))
+    loop._current_task = task
+
+    assert loop.cancel_current("disconnect") is True
     assert loop._interrupt_source == "disconnect"
     loop.cancel_current()  # 后续无来源 cancel（如 system tick / 新任务）不清掉 disconnect
     assert loop._interrupt_source == "disconnect"
     loop.cancel_current("websocket")  # 非 disconnect 来源不覆盖已有 disconnect（断开是终态）
     assert loop._interrupt_source == "disconnect"
+    with pytest.raises(asyncio.CancelledError):
+        await task
     await loop._output.close()
 
 

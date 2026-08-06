@@ -318,15 +318,15 @@ class CognitiveLoop(CognitiveTools):
                 取消路径——存到 _interrupt_source 供 _handle_interrupt 消费，
                 Task 9 mark 拆分据此区分「语音打断」与「断线」。
 
-        批次 3 review 修复（F6）：_interrupt_source 只增不减——
-          - source 为 None 不覆盖已有来源（后续 cancel_current() 如 system tick /
-            新任务启动不清掉待消费的 disconnect/websocket 来源）；
-          - 已有 disconnect 来源不被后续非 disconnect 来源覆盖（断开是终态语义）。
+        批次 3 review 修复（F6）的「只增不减」语义保留，但记录条件收窄到
+        「实际取消了任务」（D4）：task 已 done（IDLE_BG 窗口断线）不取消任何
+        东西，也就没有中断来源可消费——不留 sticky source，否则下一回合用户
+        取消被 disconnect 规则锁死成 interrupted。
         """
-        if source is not None:
-            if self._interrupt_source != "disconnect" or source == "disconnect":
-                self._interrupt_source = source
         if self._current_task is not None and not self._current_task.done():
+            if source is not None:
+                if self._interrupt_source != "disconnect" or source == "disconnect":
+                    self._interrupt_source = source
             self._current_task.cancel()
             self._current_task = None
             return True
