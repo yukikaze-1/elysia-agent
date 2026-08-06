@@ -168,6 +168,17 @@ class TestAuthMiddleware:
         resp = await client.get("/health")
         assert resp.status == 200
 
+    @pytest.mark.asyncio
+    async def test_auth_failure_logged_without_token(self, make_auth_app, aiohttp_client, caplog):
+        """认证失败记日志（code+path），且不含 token 原文（敏感信息纪律）。"""
+        app = make_auth_app(access_token="secret")
+        client = await aiohttp_client(app)
+        await client.get("/api/providers")
+        assert any("AUTH_REQUIRED" in r.message or "AUTH_INVALID" in r.message
+                   for r in caplog.records)
+        # 日志不含 token 原文
+        assert not any("secret" in r.message for r in caplog.records)
+
 
 @pytest.mark.service
 class TestAuthAnonymousRegression:

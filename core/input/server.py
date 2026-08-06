@@ -139,6 +139,7 @@ def _make_access_auth_middleware(access_token: str):
             return await handler(request)
         code = "AUTH_REQUIRED" if not auth_header else "AUTH_INVALID"
         msg = "需要认证" if not auth_header else "认证失败"
+        logger.warning("认证失败 code=%s path=%s", code, request.path)
         return _protocol_error_response(code, msg, 401)
 
     return _auth

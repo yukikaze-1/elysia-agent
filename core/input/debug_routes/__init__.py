@@ -29,6 +29,8 @@ def register_debug_routes(
             request: web.Request, handler: Callable,
         ) -> web.StreamResponse:
             if request.path.startswith("/debug/api") and not check_auth(request):
+                code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
+                logger.warning("认证失败 code=%s path=%s", code, request.path)
                 return web.json_response({"error": "unauthorized"}, status=401)
             return await handler(request)
         app.middlewares.append(_debug_auth_middleware)
