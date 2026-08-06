@@ -505,3 +505,96 @@ class TestV2EmptyTextAck:
             await ws.close()
         finally:
             await agent.stop()
+
+
+@pytest.mark.service
+class TestQueueFullAck:
+    """§3.7：纯文本队列满 → rejected QUEUE_FULL + entry 删；抛异常 → rejected INTERNAL + entry 删。"""
+
+    class _QueueFullAgent:
+        """process_message 返回 False（队列满）。"""
+        def __init__(self, ws):
+            from Module.output import WebSocketChannel
+            # 真实 WebSocketChannel——_route_v2_text 经 _find_channel 按 isinstance 匹配
+            self.output = type("O", (), {
+                "_channels": [WebSocketChannel(ws, protocol_version=2)]})()
+            self.resolve_calls = 0
+        async def resolve_session(self, conversation_id, protocol_version):
+            self.resolve_calls += 1
+            return type("S", (), {"session_id": "default"})()
+        async def process_message(self, **kwargs):
+            return False
+
+    class _RaisingAgent(_QueueFullAgent):
+        async def process_message(self, **kwargs):
+            raise RuntimeError("boom")
+
+    @pytest.mark.asyncio
+    async def test_plain_text_queue_full_rejected(self, fresh_idempotency):
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.input.idempotency import get_store
+        ws = FakeWs()
+        agent = self._QueueFullAgent(ws)
+        await handle_json_message(
+            {"type": "text", "content": "你好", "clientRequestId": "q1"},
+            agent, None, ws, voice_mgr=None)
+        ack = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert ack and ack[0]["status"] == "rejected"
+        assert ack[0]["error"]["code"] == "QUEUE_FULL"
+        assert ack[0]["error"]["retryable"] is True
+        # 幂等 entry 已删——同 clientRequestId 重试可重新进入（lookup 未命中）
+        assert get_store().lookup("q1") is None
+
+    @pytest.mark.asyncio
+    async def test_plain_text_exception_rejected_and_entry_deleted(self, fresh_idempotency):
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.input.idempotency import get_store
+        ws = FakeWs()
+        agent = self._RaisingAgent(ws)
+        await handle_json_message(
+            {"type": "text", "content": "你好", "clientRequestId": "q2"},
+            agent, None, ws, voice_mgr=None)
+        ack = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert ack and ack[0]["status"] == "rejected"
+        assert ack[0]["error"]["code"] == "INTERNAL"
+        assert get_store().lookup("q2") is None  # entry 已删——异常不残留
+
+    @pytest.mark.asyncio
+    async def test_plain_text_accepted_adds_sent_id(self, fresh_idempotency):
+        """accepted → sent_message_ids.add(message_id)（D1 归属接口，Task 9 消费）。"""
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        ws = FakeWs()
+        class _OkAgent(self._QueueFullAgent):
+            async def process_message(self, **kwargs):
+                return True
+        agent = _OkAgent(ws)
+        sent: set[str] = set()
+        await handle_json_message(
+            {"type": "text", "content": "你好", "clientRequestId": "q3"},
+            agent, None, ws, voice_mgr=None, sent_message_ids=sent)
+        assert len(sent) == 1
+
+    @pytest.mark.asyncio
+    async def test_media_exception_rejected_and_entry_deleted(self, fresh_idempotency):
+        """#12：附件消息 process_message 抛异常 → rejected INTERNAL + entry 删（异常不残留）。"""
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.input.idempotency import get_store
+        ws = FakeWs()
+        agent = self._RaisingAgent(ws)
+        async def _fake_get(self, aid):
+            return {"attachment_id": aid, "kind": "image", "status": "active",
+                    "mime": "image/png", "filename": "x.png",
+                    "stored_name": "x.png", "size": 10}
+        agent.attachment_repo = type("R", (), {"get": _fake_get})()
+        await handle_json_message(
+            {"type": "text", "content": "", "clientRequestId": "q4",
+             "attachments": [{"attachmentId": "att_1"}]},
+            agent, None, ws, voice_mgr=None)
+        ack = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert ack and ack[0]["status"] == "rejected"
+        assert ack[0]["error"]["code"] == "INTERNAL"
+        assert get_store().lookup("q4") is None  # entry 已删——重试可重新进入

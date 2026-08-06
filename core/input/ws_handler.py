@@ -467,12 +467,15 @@ def _build_media_parts(text: str, attachment_records: dict[str, dict],
 
 
 async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
-                         text: str, data: dict) -> bool:
+                         text: str, data: dict,
+                         sent_message_ids: set | None = None) -> bool:
     """v2 文本消息路由：ACK + 幂等 + 预分配 messageId（批次 7：附件/表情）。
 
-    纯文本：ACK 先于 process（现状时序）；附件/表情消息校验先于幂等 lookup、
-    ACK 延后到 process 后——accepted 才 refs+1，队列满 rejected（QUEUE_FULL）并
-    删幂等 entry 允许重试重新进入。
+    纯文本/附件：校验先于幂等 lookup、ACK 延后到 process 后——accepted 才 ACK +
+    refs+1（media），队列满 rejected（QUEUE_FULL）并
+    删幂等 entry 允许重试重新进入。批次 8b（§3.7）：纯文本/附件 process_message
+    抛异常 → 删幂等 entry + rejected INTERNAL（不 crash 连接）；accepted 时
+    ``sent_message_ids.add(message_id)``（D1 归属，Task 9 消费）。
 
     返回 True 表示已按 v2 处理（含 rejected），False 表示走 v1 路径（非 v2 连接）。
 
@@ -482,6 +485,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         text: 文本内容（已 strip）。
         data: 原始消息 dict（含 clientRequestId/clientMessageId/conversationId/
             attachments/stickerId）。
+        sent_message_ids: 可选接收集合——accepted 时登记 messageId（D1 接线）。
     """
     if ws is None:
         return False
@@ -584,12 +588,23 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         # 附件/表情消息：ACK 延后到 process 后（需 process 结果判定 accepted / QUEUE_FULL）
         parts = _build_media_parts(text, attachment_records, sticker_id)
         content = [p.model_dump() for p in parts]
-        accepted = await agent.process_message(
-            text=text, content=content, message_id=message_id,
-            protocol_version=2, conversation_id=conversation_id)
+        try:
+            accepted = await agent.process_message(
+                text=text, content=content, message_id=message_id,
+                protocol_version=2, conversation_id=conversation_id)
+        except Exception:
+            logger.warning("附件消息 process_message 抛异常——删幂等 entry", exc_info=True)
+            store.delete(client_request_id)
+            await _send_ack(ws, "", client_request_id, client_message_id,
+                            ack_conversation_id, "rejected",
+                            error={"code": "INTERNAL", "message": "消息处理失败",
+                                   "retryable": False})
+            return True
         if accepted:
             await _send_ack(ws, message_id, client_request_id, client_message_id,
                             ack_conversation_id, "accepted")
+            if sent_message_ids is not None:
+                sent_message_ids.add(message_id)   # D1 归属（media 路径同样登记）
             for aid in attachment_records:
                 try:
                     await agent.attachment_repo.add_ref(aid, message_id)
@@ -605,10 +620,30 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                                    "message": "Agent 忙，消息队列已满", "retryable": True})
         return True
 
-    await _send_ack(ws, message_id, client_request_id, client_message_id,
-                    ack_conversation_id, "accepted")
-    await agent.process_message(text=text, message_id=message_id,
-                                protocol_version=2, conversation_id=conversation_id)
+    try:
+        accepted = await agent.process_message(
+            text=text, message_id=message_id, protocol_version=2,
+            conversation_id=conversation_id)
+    except Exception:
+        logger.warning("process_message 抛异常——删幂等 entry，rejected", exc_info=True)
+        store.delete(client_request_id)
+        await _send_ack(ws, "", client_request_id, client_message_id,
+                        ack_conversation_id, "rejected",
+                        error={"code": "INTERNAL", "message": "消息处理失败",
+                               "retryable": False})
+        return True
+    if accepted:
+        await _send_ack(ws, message_id, client_request_id, client_message_id,
+                        ack_conversation_id, "accepted")
+        if sent_message_ids is not None:
+            sent_message_ids.add(message_id)   # D1 归属
+    else:
+        # 队列满 → 删幂等 entry（重试允许重新进入）+ rejected QUEUE_FULL
+        store.delete(client_request_id)
+        await _send_ack(ws, "", client_request_id, client_message_id,
+                        ack_conversation_id, "rejected",
+                        error={"code": "QUEUE_FULL",
+                               "message": "Agent 忙，消息队列已满", "retryable": True})
     return True
 
 
@@ -677,7 +712,7 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
     logger.debug("voice.commit 提交成功: %s (len=%d)", recording_id, len(pending_text))
 
 
-async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None, voice_mgr=None) -> None:
+async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None, voice_mgr=None, sent_message_ids: set | None = None) -> None:
     """Route a JSON message from the WebSocket client to the appropriate handler.
 
     Args:
@@ -686,6 +721,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         audio_buf: AudioBuffer instance for audio/wake-word handling, or None.
         ws: WebSocket connection for sending responses, or None.
         voice_mgr: 批次 6 每连接 VoiceSessionManager（三模式语音路由），可为 None。
+        sent_message_ids: 批次 8b（§3.7）D1 接线——v2 text 消息 accepted 时登记
+            messageId 的可选集合（透传给 _route_v2_text，Task 9 消费）。
     """
     msg_type = data.get("type", "")
     if msg_type == "wake_toggle":
@@ -699,7 +736,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             if text_content.strip() or data.get("stickerId") or data.get("attachments"):
                 # 批次 2 v2 路由（握手 protocol_version=2）：ACK + 幂等 + 预分配 messageId。
                 # 批次 7：入口门放宽——sticker/附件-only 消息（content 可空）也进 v2 路由。
-                if await _route_v2_text(agent, ws, text_content.strip(), data):
+                if await _route_v2_text(agent, ws, text_content.strip(), data,
+                                        sent_message_ids=sent_message_ids):
                     return
                 await agent.process_message(text=text_content.strip())
                 # BE-081 敏感纪律：只记文本长度 + 客户端消息 ID，不记正文
