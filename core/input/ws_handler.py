@@ -695,19 +695,26 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             logger.debug("唤醒词开关: %s", "开启" if enabled else "关闭")
     elif msg_type == "text":
         text_content = data.get("content", "")
-        if isinstance(text_content, str) and (text_content.strip()
-                                              or data.get("stickerId")
-                                              or data.get("attachments")):
-            # 批次 2 v2 路由（握手 protocol_version=2）：ACK + 幂等 + 预分配 messageId。
-            # 批次 7：入口门放宽——sticker/附件-only 消息（content 可空）也进 v2 路由。
-            if await _route_v2_text(agent, ws, text_content.strip(), data):
-                return
-            await agent.process_message(text=text_content.strip())
-            # BE-081 敏感纪律：只记文本长度 + 客户端消息 ID，不记正文
-            logger.debug("WS 收到文本 (len=%d, clientMessageId=%s)",
-                         len(text_content.strip()),
-                         data.get("clientMessageId", ""))
+        if isinstance(text_content, str):
+            if text_content.strip() or data.get("stickerId") or data.get("attachments"):
+                # 批次 2 v2 路由（握手 protocol_version=2）：ACK + 幂等 + 预分配 messageId。
+                # 批次 7：入口门放宽——sticker/附件-only 消息（content 可空）也进 v2 路由。
+                if await _route_v2_text(agent, ws, text_content.strip(), data):
+                    return
+                await agent.process_message(text=text_content.strip())
+                # BE-081 敏感纪律：只记文本长度 + 客户端消息 ID，不记正文
+                logger.debug("WS 收到文本 (len=%d, clientMessageId=%s)",
+                             len(text_content.strip()),
+                             data.get("clientMessageId", ""))
+            elif _is_v2(agent, ws):
+                # 批次 8b（§3.8）：v2 空文本 → rejected CONTRACT_VALIDATION（不再静默丢弃）
+                await _send_ack(ws, "", data.get("clientRequestId", ""),
+                                data.get("clientMessageId"), data.get("conversationId"),
+                                "rejected",
+                                error={"code": "CONTRACT_VALIDATION",
+                                       "message": "消息内容为空", "retryable": False})
         elif isinstance(text_content, list):
+            # 多模态 content-as-parts 分支原样保留（不动）
             from core.schema.adapters.message_adapter import content_text, parts_from_dicts
             await agent.process_message(text=content_text(parts_from_dicts(text_content)), user_name=agent.user_name, content=text_content)
             logger.debug("WS 收到多模态消息")

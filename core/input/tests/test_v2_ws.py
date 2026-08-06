@@ -471,3 +471,37 @@ class TestV2BinaryNoLegacy:
             await ws.close()
         finally:
             await agent.stop()
+
+
+@pytest.mark.service
+class TestV2EmptyTextAck:
+    """§3.8：v2 空文本 → rejected CONTRACT_VALIDATION（不再静默丢弃）。"""
+    @pytest.mark.asyncio
+    async def test_v2_empty_text_gets_rejected(self, aiohttp_client, fresh_idempotency):
+        from core.input.server import create_app
+        from core.cognitive.tests.test_v2_generation import _make_agent_with, _UsageLLM
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({"type": "text", "content": "   ",
+                                "clientRequestId": "req_empty"})
+            got = None
+            for _ in range(8):
+                m = await asyncio.wait_for(ws.receive(), timeout=5)
+                if m.type == WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("type") == "user_message.ack":
+                        got = d
+                        break
+            assert got is not None
+            assert got["status"] == "rejected"
+            assert got["error"]["code"] == "CONTRACT_VALIDATION"
+            assert got["error"]["retryable"] is False
+            assert got["clientRequestId"] == "req_empty"
+            await ws.close()
+        finally:
+            await agent.stop()
