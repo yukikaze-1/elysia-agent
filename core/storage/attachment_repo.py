@@ -178,10 +178,12 @@ class AttachmentRepository(Repository):
         return results[0] if results else None
 
     async def add_ref(self, attachment_id: str, message_id: str) -> None:
-        """消息关联：refs 加 message_id（幂等，至多入一次），ref_count 同步。
+        """幂等原子 add：仅当 refs 不含该 message_id 才 addToSet + inc。
 
-        读改写（$set）维护 ref_count==len(refs) 不变量；同 message_id 重复关联
-        幂等去重（发送重试不双计）。记录不存在时为 no-op（由 GC 规则 3 兜底）。
+        条件 update（$addToSet + $inc）替代读改写——并发多次 add_ref 不同
+        message_id 不丢更新，ref_count==len(refs) 不变量恒成立。同 message_id
+        重复关联不双计（$ne 过滤 + addToSet 幂等）。记录不存在时为 no-op
+        （由 GC 规则 3 兜底）。
 
         Args:
             attachment_id: 附件 ID。
@@ -191,22 +193,19 @@ class AttachmentRepository(Repository):
             StorageUnavailableError: MongoDB 未连接（离线）。
         """
         db = self._require_db()
-        doc = await self.get(attachment_id)
-        if doc is None:
-            return
-        refs = list(doc.get("refs") or [])
-        if message_id not in refs:
-            refs.append(message_id)
         await db.update_one(
-            COLLECTION, {"attachment_id": attachment_id},
-            {"$set": {"refs": refs, "ref_count": len(refs)}})
+            COLLECTION,
+            {"attachment_id": attachment_id, "refs": {"$ne": message_id}},
+            {"$addToSet": {"refs": message_id}, "$inc": {"ref_count": 1}},
+        )
 
     async def remove_ref(self, attachment_id: str, message_id: str) -> None:
-        """消息移除：refs 移除 message_id，ref_count 递减。
+        """原子 remove：pull + dec（仅当 refs 确实含该 message_id）；归零且 active → 软删。
 
-        读改写（$set）维护 ref_count==len(refs) 不变量。refs 归零且由「消息移除」
-        归零 → status=deleted + deleted_at=now（spec §3.1，文件保留 GC 延后删）。
-        记录不存在时为 no-op。
+        条件 update 替代读改写——首跳以 `"refs": message_id` 为过滤条件，仅当
+        refs 确实含该 message_id 才 $pull + $inc(-1)，重复 remove 不会把
+        ref_count 减成负数；归零且仍 active 才条件软删（ref_count==0 且
+        status==active），已是 deleted 不重复写。记录不存在时为 no-op。
 
         Args:
             attachment_id: 附件 ID。
@@ -216,17 +215,16 @@ class AttachmentRepository(Repository):
             StorageUnavailableError: MongoDB 未连接（离线）。
         """
         db = self._require_db()
-        doc = await self.get(attachment_id)
-        if doc is None:
-            return
-        refs = [r for r in (doc.get("refs") or []) if r != message_id]
-        update: dict = {"refs": refs, "ref_count": len(refs)}
-        if len(refs) == 0:
-            # ref_count 由消息移除归零 → 软删（I2，§5.3）
-            update["status"] = STATUS_DELETED
-            update["deleted_at"] = now_iso()
         await db.update_one(
-            COLLECTION, {"attachment_id": attachment_id}, {"$set": update})
+            COLLECTION,
+            {"attachment_id": attachment_id, "refs": message_id},
+            {"$pull": {"refs": message_id}, "$inc": {"ref_count": -1}},
+        )
+        await db.update_one(
+            COLLECTION,
+            {"attachment_id": attachment_id, "ref_count": 0, "status": STATUS_ACTIVE},
+            {"$set": {"status": "deleted", "deleted_at": now_iso()}},
+        )
 
     async def mark_deleted(self, attachment_id: str) -> None:
         """软删标记：status=deleted + deleted_at=now（文件保留，GC 延后物理删）。

@@ -176,6 +176,38 @@ class TestReferences:
         assert doc["status"] == STATUS_DELETED
         assert doc["deleted_at"]
 
+    def test_add_ref_concurrent_no_lost_update(self):
+        """并发多次 add_ref 不同 message_id → 原子 addToSet+inc 不丢更新（B 簇 minor）。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _run(repo.create(_doc(attachment_id="att_x")))
+
+        async def run():
+            await repo.add_ref("att_x", "m1")
+            await asyncio.gather(
+                *[repo.add_ref("att_x", f"m{i}") for i in range(2, 8)])
+            return await repo.get("att_x")
+
+        doc = _run(run())
+        assert doc["ref_count"] == len(doc["refs"]) == 7  # 不变量
+
+    def test_add_ref_idempotent_still_holds(self):
+        """幂等保持：重复 add 同 message_id → 不双计（既有语义回归）。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _run(repo.create(_doc(attachment_id="att_x")))
+        _run(repo.add_ref("att_x", "m1"))
+        _run(repo.add_ref("att_x", "m1"))
+        doc = _run(repo.get("att_x"))
+        assert doc["ref_count"] == 1 and doc["refs"] == ["m1"]
+
+    def test_remove_ref_soft_delete_on_zero(self):
+        """原子 remove 归零 → 条件软删（ref_count=0 且 active）。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _run(repo.create(_doc(attachment_id="att_x")))
+        _run(repo.add_ref("att_x", "m1"))
+        _run(repo.remove_ref("att_x", "m1"))
+        doc = _run(repo.get("att_x"))
+        assert doc["status"] == "deleted" and doc["ref_count"] == 0
+
 
 class TestStatus:
     def test_mark_deleted_sets_status_and_deleted_at(self):

@@ -5,6 +5,7 @@ $set + upsert），_id 用 bson.ObjectId 生成、find 返回时转 str（对齐
 仅用于单测，不涉及真实数据库。
 """
 
+import asyncio
 from typing import Any
 
 from bson import ObjectId
@@ -39,7 +40,11 @@ def _field_matches(field_val: Any, expected: Any) -> bool:
                 if not cmp_op(field_val, arg):
                     return False
             elif op == "$ne":
-                if field_val == arg:
+                # 数组字段按 Mongo 语义：无任何元素等于 arg 才算 $ne 命中
+                if isinstance(field_val, list):
+                    if arg in field_val:
+                        return False
+                elif field_val == arg:
                     return False
             elif op == "$exists":
                 if bool(arg) != (field_val is not None):
@@ -57,6 +62,11 @@ def _field_matches(field_val: Any, expected: Any) -> bool:
                     return False
             # 未知操作符：忽略（demo subset）
         return True
+    # 标量等值：数组字段按 Mongo 语义做元素包含匹配（{field: value} 命中含 value 的数组）
+    if isinstance(field_val, list):
+        if isinstance(expected, list):
+            return field_val == expected
+        return expected in field_val
     return field_val == expected
 
 
@@ -118,10 +128,27 @@ class FakeDocumentDBBackend(DocumentDBBackend):
     async def update_one(self, collection: str, filter_expr: dict,
                          update: dict, upsert: bool = False) -> int:
         coll = self._coll(collection)
+        # 模拟真实 Mongo 的事件循环分片：给并发 read-modify-write 一个可插入的
+        # 交错点，让竞态在测试中真实复现（批次 8a Task 13 add_ref 原子化）。
+        await asyncio.sleep(0)
         matched = [d for d in coll if _matches(d, filter_expr)]
         if matched:
+            doc = matched[0]
             if "$set" in update:
-                matched[0].update(update["$set"])
+                doc.update(update["$set"])
+            if "$inc" in update:
+                for key, value in update["$inc"].items():
+                    doc[key] = (doc.get(key) or 0) + value
+            if "$addToSet" in update:
+                for key, value in update["$addToSet"].items():
+                    cur = doc.get(key) or []
+                    if value not in cur:
+                        cur.append(value)
+                    doc[key] = cur
+            if "$pull" in update:
+                for key, value in update["$pull"].items():
+                    cur = doc.get(key) or []
+                    doc[key] = [item for item in cur if item != value]
             return 1
         if upsert:
             doc = dict(update.get("$set", {}))
