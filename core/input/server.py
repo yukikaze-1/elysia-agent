@@ -16,6 +16,7 @@ from core.agent import Agent
 
 from core.input.ws_handler import handle_ws
 from core.input.api_routes import register_api_routes
+from core.input.attachment_routes import register_attachment_routes
 from core.input.session_routes import register_session_routes
 from core.input.debug_routes import register_debug_routes
 from frontend_contract.rest import ProtocolError
@@ -83,6 +84,10 @@ def _make_access_auth_middleware(access_token: str):
     @web.middleware
     async def _auth(request: web.Request, handler):
         path = request.path
+        # 附件下载免 Bearer（签名即授权，spec §3.3）；/sign 签发端点保持 Bearer。
+        # 须先于 /api/ 判断——否则下载请求会被 Bearer 校验拦下。
+        if path.startswith("/api/attachments/") and not path.endswith("/sign"):
+            return await handler(request)
         if not (path.startswith("/api/") or path.startswith("/uploads") or path == "/ws"):
             return await handler(request)
         auth_header = request.headers.get("Authorization", "")
@@ -354,6 +359,7 @@ def create_app(
 
     # 子模块路由
     register_api_routes(app)
+    register_attachment_routes(app)
     register_session_routes(app)
     register_debug_routes(app, _check_auth)
 
