@@ -127,13 +127,13 @@ state speaking → message("") ×N（每句边界）→ state idle
 | 无 Desktop/Local Worker Runtime | **一致** |
 | Provider 支持元数据/测试/切换/custom；custom 密钥只引用 env | **一致**（`custom_providers.yaml` 存 `api_key_env` 不存明文；但 `add_provider` 接受任意 dict，存在明文落盘风险——批次 5 修复） |
 | STT 自动提交、无按住说话草稿 | **一致** |
-| 只有图片上传完整 | **一致** |
+| 只有图片上传完整 | **一致**（批次 7 已补通用上传 `POST /api/uploads`——filetype 白名单 + 签名下载/签发 + 附件消息关联，见 protocol-v2 §13；旧 `/api/images` 保留兼容） |
 | 存在 `frontend_contract/` + `contract.generated.ts` 生成流程 | **一致**（无漂移） |
 | 时间戳"UTC/本地互相矛盾" | **已消解**：核心数据 UTC（`now_iso()`），naive 仅展示路径 |
 
 ## 10. 未决 / 已知缺口（供后续批次）
 
-- ~~`/uploads/*` 永久匿名~~ — **批次 1 已加产品认证**（`AGENT_ACCESS_TOKEN` 护上传与读取）；短期签名 URL 仍为批次 7 未决项。
+- ~~`/uploads/*` 永久匿名~~ — **批次 1 已加产品认证**（`AGENT_ACCESS_TOKEN` 护上传与读取）；~~短期签名 URL 仍为批次 7 未决项~~ — **批次 7 已实现短期签名 URL**（BE-070：`GET /api/attachments/{id}` 签名下载 + `/{id}/sign` 签发，HMAC 24h 短签，见 protocol-v2 §13 + security §3.5）。
 - ~~无产品级多会话 API~~ — **批次 3 已交付**（`SessionManager` + `session_routes.py`，见 protocol-v2 §9）；
 - ~~无协议版本协商 / server_info~~ — **批次 1 已交付**；
 - ~~无统一错误信封~~ — **批次 1 已交付**；
