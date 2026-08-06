@@ -357,6 +357,10 @@ def create_app(
             )
     app.router.add_post("/tools/reload", tool_reload_handler)
 
+    # 内置表情注册表：create_app 启动时扫描 static/stickers/*.png 构建（批次 7 Task 6）
+    from core.input.sticker_registry import load_stickers
+    load_stickers()
+
     # 子模块路由
     register_api_routes(app)
     register_attachment_routes(app)

@@ -721,6 +721,27 @@ def register_api_routes(app: web.Application) -> None:
 
     app.router.add_post("/api/uploads", upload_handler)
 
+    # ---- 内置表情（批次 7 Task 6，BE-071） ----
+
+    async def stickers_handler(request: web.Request) -> web.Response:
+        """GET /api/stickers — 内置表情列表（契约单源）。
+
+        sticker_id = 文件名去扩展名；src 走公开静态路径 /static/stickers/{id}.png
+        （表情是公共资源，不落 attachments 集合）。列表按 id 排序保证稳定顺序。
+        """
+        from core.input.sticker_registry import load_stickers
+        stickers = [
+            rest_contract.StickerEntry(
+                stickerId=sticker_id,
+                src=f"/static/stickers/{sticker_id}.png",
+            )
+            for sticker_id in sorted(load_stickers())
+        ]
+        return web.json_response(
+            rest_contract.StickerListResponse(stickers=stickers).wire_dict())
+
+    app.router.add_get("/api/stickers", stickers_handler)
+
     # ---- Desktop 工具注册表 + 附件上传（批次 4，BE-042/043） ----
 
     def _tool_error(code: str, message: str, status: int) -> web.Response:
