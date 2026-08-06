@@ -58,5 +58,15 @@ class TestServerConfigBatch1:
         assert ServerConfig().max_ws_connections == 64
 
     def test_max_request_bytes_default(self):
+        """批次 7 提到 64MB（既有 8MB 会把 10MB 图片截住，I3）。"""
         from core.config.app_config import ServerConfig
-        assert ServerConfig().max_request_bytes == 8 * 1024 * 1024
+        assert ServerConfig().max_request_bytes == 64 * 1024 * 1024
+
+    def test_attachment_sig_secret_default_empty_and_env_binding(self):
+        """批次 7：attachment_sig_secret 缺省空 + 绑定 env ATTACHMENT_SIG_SECRET（secret）。"""
+        import dataclasses
+        from core.config.app_config import ServerConfig
+        assert ServerConfig().attachment_sig_secret == ""
+        f = next(f for f in dataclasses.fields(ServerConfig) if f.name == "attachment_sig_secret")
+        assert f.metadata["_config_env"] == "ATTACHMENT_SIG_SECRET"
+        assert f.metadata["_config_secret"] is True

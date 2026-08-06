@@ -1,0 +1,257 @@
+"""POST /api/uploads 通用上传端点测试（批次 7 Task 3，marker=service）。
+
+构造：真实 Agent（attachment_repo property 依赖）+ 内存 fake AttachmentRepository
+（经 agent._attachment_repo 注入，noqa: SLF001）+ aiohttp test client
+（pytest-aiohttp 的 aiohttp_client fixture，仿 test_server.py）。
+
+上传目录经 ELYSIA_PATH_DATA_UPLOADS(+_IMAGES/_DESKTOP) 重定向到 tmp_path，
+不触碰生产 data/uploads。
+"""
+
+import hashlib
+
+import pytest
+from aiohttp import FormData
+
+from core.schema.adapters import attachment_resolver as _ar
+from core.storage.attachment_repo import StorageUnavailableError
+
+pytestmark = pytest.mark.service
+
+# ── 各类型魔数字节（filetype.guess 可识别的真实头部）───────────────────────────
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+TEXT = b"this is a plain text file masquerading as a png, nothing more" * 3
+
+
+class _FakeAttachmentRepo:
+    """内存 fake AttachmentRepository——离线时 create 抛 StorageUnavailableError。
+
+    与真实 AttachmentRepository 的差异只在存储介质（list vs Mongo）：
+    上传 handler 只调用 create()，故最小接口即够；fail-closed 语义如实模拟。
+    """
+
+    def __init__(self, offline: bool = False) -> None:
+        self.offline = offline
+        self.records: list[dict] = []
+
+    async def create(self, doc: dict) -> None:
+        if self.offline:
+            raise StorageUnavailableError("attachments 集合不可用：MongoDB 未连接（离线）")
+        self.records.append(dict(doc))
+
+
+@pytest.fixture(autouse=True)
+def _clear_resolver_registry():
+    """清空 AttachmentFileResolver 模块级注册表，防跨测试污染（服务端模块级缓存）。"""
+    _ar._registry.clear()
+    yield
+    _ar._registry.clear()
+
+
+@pytest.fixture
+def make_app(tmp_path, monkeypatch):
+    """返回构建 upload app 的工厂（真实 Agent + 注入 fake attachment repo）。"""
+
+    def _make(*, sig_secret: str = "test-secret", access_token: str = "",
+              offline: bool = False, max_request_bytes: int | None = None):
+        from core.agent import Agent
+        from core.config import AppConfig
+        from core.config.app_config import ServerConfig
+        from core.input.server import create_app
+
+        agent = Agent(config=AppConfig(server=ServerConfig(
+            access_token=access_token,
+            attachment_sig_secret=sig_secret,
+        )))
+        agent._attachment_repo = _FakeAttachmentRepo(offline=offline)  # noqa: SLF001
+        monkeypatch.setenv("ELYSIA_PATH_DATA_UPLOADS", str(tmp_path / "uploads"))
+        monkeypatch.setenv("ELYSIA_PATH_DATA_UPLOADS_IMAGES",
+                           str(tmp_path / "uploads" / "images"))
+        monkeypatch.setenv("ELYSIA_PATH_DATA_UPLOADS_DESKTOP",
+                           str(tmp_path / "uploads" / "desktop"))
+        app = create_app(agent, serve_static=False,
+                         access_token=access_token,
+                         max_request_bytes=max_request_bytes)
+        return agent, app
+
+    return _make
+
+
+async def _post(client, *, filename="photo.png", content=PNG, kind="image",
+                extra_files: list[tuple[str, bytes]] | None = None,
+                headers=None):
+    """构造浏览器同款 multipart 并 POST /api/uploads。"""
+    form = FormData()
+    if kind is not None:
+        form.add_field("kind", kind)
+    form.add_field("files[]", content, filename=filename,
+                   content_type="application/octet-stream")
+    for name, data in (extra_files or []):
+        form.add_field("files[]", data, filename=name,
+                       content_type="application/octet-stream")
+    return await client.post("/api/uploads", data=form, headers=headers)
+
+
+class TestUploadEndpoint:
+    """POST /api/uploads 通用上传校验矩阵（spec §4.1 顺序）。"""
+
+    @pytest.mark.asyncio
+    async def test_forged_extension_415(self, make_app, aiohttp_client):
+        """伪造类型：改名 .png 的文本文件 → filetype 魔数判定失败 → 415 UNSUPPORTED_MEDIA_TYPE。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="evil.png", content=TEXT, kind="image")
+        assert resp.status == 415, f"expected 415, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert data["code"] == "UNSUPPORTED_MEDIA_TYPE"
+        # 未落盘、未写记录
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_too_many_files_400(self, make_app, aiohttp_client):
+        """数量超限：单次 11 文件 → 400 TOO_MANY_FILES。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        extra = [(f"f{i}.png", PNG) for i in range(1, 11)]
+        resp = await _post(client, filename="f0.png", content=PNG, kind="image",
+                           extra_files=extra)
+        assert resp.status == 400, f"expected 400, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert data["code"] == "TOO_MANY_FILES"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_kind_sticker_400(self, make_app, aiohttp_client):
+        """kind=sticker（非附件白名单）→ 400 CONTRACT_VALIDATION。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="st.png", content=PNG, kind="sticker")
+        assert resp.status == 400, f"expected 400, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert data["code"] == "CONTRACT_VALIDATION"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_success_registers_attachment(self, make_app, aiohttp_client, tmp_path):
+        """成功：attachmentId + signedUrl 含 sig=/exp= + 落盘 + 写记录 + resolver 已注册。"""
+        agent, app = make_app(sig_secret="test-secret")
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="photo.png", content=PNG, kind="image")
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert len(data["attachments"]) == 1
+        att = data["attachments"][0]
+        assert att["attachmentId"].startswith("att_")
+        assert att["kind"] == "image"
+        assert att["mime"] == "image/png"
+        assert att["size"] == len(PNG)
+        assert att["url"] == f"/api/attachments/{att['attachmentId']}"
+        assert "sig=" in att["signedUrl"] and "exp=" in att["signedUrl"]
+        # 落盘 data/uploads/image/{uuid}.png
+        files = list((tmp_path / "uploads" / "image").glob("*.png"))
+        assert len(files) == 1
+        # 写 attachments 记录
+        records = agent._attachment_repo.records  # noqa: SLF001
+        assert len(records) == 1
+        assert records[0]["attachment_id"] == att["attachmentId"]
+        assert records[0]["kind"] == "image"
+        assert records[0]["mime"] == "image/png"
+        assert records[0]["filename"] == "photo.png"
+        assert records[0]["sha256"] == hashlib.sha256(PNG).hexdigest()
+        assert records[0]["ref_count"] == 0
+        assert records[0]["status"] == "active"
+        # AttachmentFileResolver 已注册
+        resolved = _ar.resolve(att["attachmentId"])
+        assert resolved is not None and resolved.exists()
+
+    @pytest.mark.asyncio
+    async def test_offline_503_and_no_orphan(self, make_app, aiohttp_client, tmp_path):
+        """Mongo 离线（fake 抛 StorageUnavailableError）→ 503 + 已落盘文件被删（不留孤儿）。"""
+        agent, app = make_app(offline=True)
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="photo.png", content=PNG, kind="image")
+        assert resp.status == 503, f"expected 503, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert data["code"] == "STORAGE_UNAVAILABLE"
+        # 写记录失败 → 文件立即删除
+        assert not list((tmp_path / "uploads" / "image").glob("*.png"))
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_no_bearer_401(self, make_app, aiohttp_client):
+        """配置 AGENT_ACCESS_TOKEN 时无 Bearer → 401 AUTH_REQUIRED。"""
+        agent, app = make_app(access_token="secret-token")
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="photo.png", content=PNG, kind="image")
+        assert resp.status == 401, f"expected 401, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert data["code"] == "AUTH_REQUIRED"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_oversize_multipart_413(self, make_app, aiohttp_client):
+        """整体 multipart Content-Length > 64MB → 413 REQUEST_TOO_LARGE（中间件预检）。"""
+        agent, app = make_app()  # cms 默认 64MB
+        client = await aiohttp_client(app)
+        big = b"\x00" * (64 * 1024 * 1024 + 1)
+        resp = await _post(client, filename="big.png", content=big, kind="image")
+        assert resp.status == 413, f"expected 413, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert data["code"] == "REQUEST_TOO_LARGE"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_filename_sanitized(self, make_app, aiohttp_client):
+        """filename 脱敏：../../evil.png → 返回 filename 不含路径分隔符。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="../../evil.png", content=PNG, kind="image")
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        filename = data["attachments"][0]["filename"]
+        assert "/" not in filename and "\\" not in filename
+        # 落盘名是服务端 uuid.ext，绝不参与路径构造
+        stored = agent._attachment_repo.records[0]["stored_name"]  # noqa: SLF001
+        assert stored == stored.replace("/", "").replace("\\", "")
+
+    @pytest.mark.asyncio
+    async def test_fail_closed_omits_signed_url(self, make_app, aiohttp_client):
+        """AGENT_ACCESS_TOKEN 配 + SIG 未配 → 成功响应缺省 signedUrl（fail-closed）。"""
+        agent, app = make_app(access_token="secret-token", sig_secret="")
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="photo.png", content=PNG, kind="image",
+                           headers={"Authorization": "Bearer secret-token"})
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert "signedUrl" not in data["attachments"][0]
+        assert data["attachments"][0]["url"].startswith("/api/attachments/att_")
+
+
+class TestStaticMounts:
+    """静态挂载收敛（server.py）：新 kind 单数目录不公开；legacy images/desktop 仍挂载。"""
+
+    @pytest.mark.asyncio
+    async def test_new_kind_dir_not_publicly_mounted(self, make_app, aiohttp_client):
+        """上传落盘 data/uploads/image/ 后，GET /uploads/image/{uuid}.png → 404（路由不存在）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="photo.png", content=PNG, kind="image")
+        assert resp.status == 200
+        stored = agent._attachment_repo.records[0]["stored_name"]  # noqa: SLF001
+        resp = await client.get(f"/uploads/image/{stored}")
+        assert resp.status == 404, f"新 kind 单数目录不应被公开挂载: {resp.status}"
+
+    @pytest.mark.asyncio
+    async def test_legacy_images_dir_still_mounted(self, make_app, aiohttp_client, tmp_path):
+        """legacy data/uploads/images 目录仍被挂载（既有 /api/images 链路兼容）。"""
+        legacy_dir = tmp_path / "uploads" / "images"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        (legacy_dir / "legacy.png").write_bytes(PNG)
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await client.get("/uploads/images/legacy.png")
+        assert resp.status == 200, f"legacy images 目录应被挂载: {resp.status}"
+        # 不存在的 legacy 文件 → 404（路由已挂载，非 500/502）
+        resp = await client.get("/uploads/images/not-exist.png")
+        assert resp.status == 404

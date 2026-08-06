@@ -148,7 +148,7 @@ def create_app(
         web.Application: Configured aiohttp Application instance.
     """
     # 请求体上限：app 级 client_max_size（aiohttp 无按路由选项；multipart 手工限制不受其约束）
-    cms = max_request_bytes if max_request_bytes else 8 * 1024 * 1024
+    cms = max_request_bytes if max_request_bytes else 64 * 1024 * 1024
     app = web.Application(client_max_size=cms)
     # 请求体超限 → 413 REQUEST_TOO_LARGE 信封（恒挂载）
     app.middlewares.append(_make_payload_middleware(cms))
@@ -357,9 +357,14 @@ def create_app(
     register_session_routes(app)
     register_debug_routes(app, _check_auth)
 
-    # ---- 用户上传文件目录 ----
-    _UPLOADS_DIR = ProjectPath.DATA_UPLOADS.resolve()
-    _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    app.router.add_static("/uploads/", str(_UPLOADS_DIR), show_index=False)
+    # ---- 用户上传文件目录（批次 7 静态挂载收敛） ----
+    # 只公开 legacy images/desktop 目录（既有 /api/images 与批次 4 桌面截图链路兼容）；
+    # 新 kind 单数目录 data/uploads/{image,video,audio,file} 不公开——走 /api/attachments/{id} 签名下载。
+    _IMAGES_DIR = ProjectPath.DATA_UPLOADS_IMAGES.resolve()
+    _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    app.router.add_static("/uploads/images/", str(_IMAGES_DIR), show_index=False)
+    _DESKTOP_DIR = ProjectPath.DATA_UPLOADS_DESKTOP.resolve()
+    _DESKTOP_DIR.mkdir(parents=True, exist_ok=True)
+    app.router.add_static("/uploads/desktop/", str(_DESKTOP_DIR), show_index=False)
 
     return app

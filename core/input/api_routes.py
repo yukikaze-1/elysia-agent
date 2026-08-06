@@ -2,12 +2,15 @@
 
 import asyncio
 import base64
+import hashlib
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
 
+import filetype
 from aiohttp import web
 from aiohttp.multipart import BodyPartReader
 from typing import cast
@@ -20,6 +23,58 @@ logger = logging.getLogger(__name__)
 
 # TTS 试听固定短文本（Task 10，BE-051）：永不读聊天内容，仅用于音色试听合成。
 _PREVIEW_TEXT = "你好，我是声音测试。"
+
+# ---- 通用上传（批次 7，spec §4.1）：filetype 魔数白名单 + 大小上限 ----
+
+_ALLOWED_KINDS = ("image", "video", "audio", "file")
+
+# 各 kind 大小上限（字节）；归位后按最终 kind 复核（Minor #6）
+_KIND_LIMITS = {
+    "image": 10 * 1024 * 1024,
+    "video": 50 * 1024 * 1024,
+    "audio": 20 * 1024 * 1024,
+    "file": 20 * 1024 * 1024,
+}
+
+# 非 webm mime → 唯一 kind（webm 歧义走客户端 kind tiebreaker）
+_MIME_KIND = {
+    "image/png": "image",
+    "image/jpeg": "image",
+    "image/gif": "image",
+    "image/webp": "image",
+    "video/mp4": "video",
+    "audio/x-wav": "audio",
+    "audio/mpeg": "audio",
+    "audio/ogg": "audio",
+    "application/pdf": "file",
+    "application/zip": "file",
+}
+
+# mime → 允许扩展名集合（扩展名一致性校验，堵改名绕过）
+_MIME_EXTS = {
+    "image/png": {"png"},
+    "image/jpeg": {"jpg", "jpeg"},
+    "image/gif": {"gif"},
+    "image/webp": {"webp"},
+    "video/mp4": {"mp4"},
+    "video/webm": {"webm"},
+    "audio/x-wav": {"wav"},
+    "audio/mpeg": {"mp3"},
+    "audio/ogg": {"ogg"},
+    "application/pdf": {"pdf"},
+    "application/zip": {"zip"},
+}
+
+
+def _sign_url(secret: str, attachment_id: str) -> tuple[str, int]:
+    """HMAC 签名 URL（spec §3.3）。返回 (url, expires_unix)。"""
+    import hmac
+
+    expires_unix = int(time.time()) + 86400  # 24h
+    sig = hmac.new(secret.encode(), f"{attachment_id}:{expires_unix}".encode(),
+                   hashlib.sha256).hexdigest()
+    url = f"/api/attachments/{attachment_id}?sig={sig}&exp={expires_unix}"
+    return url, expires_unix
 
 
 # ---- 共享 helper（debug_routes.py 也需要） ----
@@ -515,6 +570,156 @@ def register_api_routes(app: web.Application) -> None:
             return web.json_response(rest_contract.ImageUploadError(error=str(e)).wire_dict(), status=500)
 
     app.router.add_post("/api/images", image_upload_handler)
+
+    # ---- 通用上传（批次 7，spec §4.1，BE-070） ----
+
+    async def upload_handler(request: web.Request) -> web.Response:
+        """POST /api/uploads — 通用附件上传（多文件 + kind 意图）。
+
+        multipart 字段：files[]（多个）+ kind（可选，客户端意图**不信任**）。
+        校验顺序（spec §4.1）：kind 枚举预检 → 数量 ≤10 → 每文件 filetype 魔数
+        白名单 → 扩展名一致性 → kind 归位（webm 以客户端 kind tiebreaker）+
+        归位后大小复核 → 写盘 data/uploads/{kind}/{uuid}.{ext} + sha256 +
+        attachments 落记录（fail-closed 离线 503，失败删已落盘文件不留孤儿）→
+        AttachmentFileResolver.register。整体聚合上限 64MB 由 payload 中间件
+        Content-Length 预检承担（server.py _make_payload_middleware）。
+        """
+        from core.input.server import _protocol_error_response
+        from core.schema.adapters import attachment_resolver
+        from core.schema.utils import now_iso
+        from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
+        from core.utils.message_id import _new_id
+
+        agent = request.app["agent"]
+        cfg = getattr(agent.config, "server", None)
+        sig_secret = getattr(cfg, "attachment_sig_secret", "") or ""
+        access_token_cfg = getattr(cfg, "access_token", "") or ""
+        repo = agent.attachment_repo
+
+        # 收集 multipart 字段（kind 文本 + files[] 文件；顺序无关，FormData 不保证）
+        kind = ""
+        files: list[tuple[str, bytes]] = []  # (原始文件名, 内容)
+        # 收集阶段 read_chunk 上限取各 kind 上限最大值（50MB）——kind 缺省分类前防 DoS
+        max_read = max(_KIND_LIMITS.values())
+        try:
+            reader = await request.multipart()
+        except Exception:
+            return _protocol_error_response("INVALID_REQUEST", "无效的 multipart 请求", 400)
+        while True:
+            try:
+                field = await reader.next()
+            except Exception:
+                return _protocol_error_response("INVALID_REQUEST", "multipart 解析失败", 400)
+            if field is None:
+                break
+            field = cast(BodyPartReader, field)
+            name = field.name or ""
+            if name == "kind":
+                raw = await field.read()
+                if isinstance(raw, (bytes, bytearray)):
+                    kind = bytes(raw).decode("utf-8", errors="replace").strip()
+                else:
+                    kind = str(raw or "").strip()
+            elif name.startswith("files"):
+                # read_chunk 逐块读取自限内存（整体上限由中间件预检兜底）
+                data = bytearray()
+                while not field.at_eof():
+                    data.extend(await field.read_chunk(max_read + 1))
+                    if len(data) > max_read:
+                        return _protocol_error_response(
+                            "REQUEST_TOO_LARGE", "单个文件过大", 413)
+                files.append((getattr(field, "filename", "") or "attachment", bytes(data)))
+            # 其他字段忽略
+
+        # 步骤 0：kind 枚举预检（缺省通过；sticker 与任意未知 kind 一视同仁）
+        if kind and kind not in _ALLOWED_KINDS:
+            return _protocol_error_response(
+                "CONTRACT_VALIDATION", f"未知 kind: {kind}", 400)
+        # 步骤 1：数量 ≤10
+        if len(files) > 10:
+            return _protocol_error_response("TOO_MANY_FILES", "单次上传文件数超限（≤10）", 400)
+
+        results = []
+        for filename_raw, data in files:
+            # 步骤 2：初步大小（kind 缺省跳过此步，仅以归位 kind 复核）
+            if kind and len(data) > _KIND_LIMITS[kind]:
+                return _protocol_error_response(
+                    "REQUEST_TOO_LARGE", f"文件过大，超过 {kind} 上限", 413)
+            # 步骤 3：filetype 魔数判定（不信任扩展名/content_type，堵伪造）
+            ft = filetype.guess(data)
+            if ft is None:
+                return _protocol_error_response("UNSUPPORTED_MEDIA_TYPE", "不支持的文件类型", 415)
+            mime = ft.mime
+            if mime != "video/webm" and mime not in _MIME_KIND:
+                return _protocol_error_response("UNSUPPORTED_MEDIA_TYPE", "不支持的文件类型", 415)
+            # 步骤 4：扩展名与判定一致（堵改名绕过；jpg/jpeg 归一化）
+            ext = os.path.splitext(filename_raw)[1].lower().lstrip(".")
+            if ext not in _MIME_EXTS.get(mime, set()):
+                return _protocol_error_response(
+                    "UNSUPPORTED_MEDIA_TYPE", "扩展名与文件内容不一致", 415)
+            # 步骤 5：kind 归位 + 归位后大小复核（webm tiebreaker）
+            if mime == "video/webm":
+                final_kind = "audio" if kind == "audio" else "video"
+            else:
+                final_kind = _MIME_KIND[mime]
+            if len(data) > _KIND_LIMITS[final_kind]:
+                return _protocol_error_response(
+                    "REQUEST_TOO_LARGE", f"文件过大，超过 {final_kind} 上限", 413)
+            # filename 脱敏（Minor 9）：去路径分隔符、截断 255、剥控制字符；仅展示用
+            filename = re.sub(r"[\\/]", "", filename_raw)
+            filename = re.sub(r"[\x00-\x1f\x7f]", "", filename)
+            filename = filename[:255] or "attachment"
+            # 步骤 6：写盘 data/uploads/{kind}/{uuid}.{ext} + sha256 + 落记录
+            stored_name = f"{uuid.uuid4().hex[:16]}.{ext}"
+            upload_dir = ProjectPath.DATA_UPLOADS.resolve() / final_kind
+            os.makedirs(str(upload_dir), exist_ok=True)
+            stored_path = upload_dir / stored_name
+            stored_path.write_bytes(data)
+            attachment_id = _new_id("att")
+            doc = {
+                "attachment_id": attachment_id,
+                "kind": final_kind,
+                "mime": mime,
+                "size": len(data),
+                "filename": filename,
+                "stored_name": stored_name,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "ref_count": 0,
+                "refs": [],
+                "status": STATUS_ACTIVE,
+                "created_at": now_iso(),
+            }
+            try:
+                await repo.create(doc)
+            except StorageUnavailableError:
+                # fail-closed：离线 → 删已落盘文件（不留孤儿）+ 503
+                stored_path.unlink(missing_ok=True)
+                return _protocol_error_response(
+                    "STORAGE_UNAVAILABLE", "附件存储不可用", 503, retryable=True)
+            except Exception as e:
+                stored_path.unlink(missing_ok=True)
+                logger.warning("附件记录写入失败，已删文件 %s: %s", stored_name, e)
+                return _protocol_error_response("INTERNAL", "附件记录写入失败", 500)
+            # 进程内映射注册（content_to_openai 同步定位落盘路径用，spec §4.5）
+            attachment_resolver.register(attachment_id, final_kind, stored_name)
+            # signedUrl（fail-closed 省略）：AGENT_ACCESS_TOKEN 配 + SIG 未配 → 省略
+            signed_url = None
+            if not ((not sig_secret) and access_token_cfg):
+                signed_url, _ = _sign_url(sig_secret, attachment_id)
+            results.append(rest_contract.AttachmentInfo(
+                attachmentId=attachment_id,
+                kind=final_kind,
+                mime=mime,
+                size=len(data),
+                url=f"/api/attachments/{attachment_id}",
+                signedUrl=signed_url,
+                filename=filename,
+            ))
+
+        return web.json_response(
+            rest_contract.AttachmentUploadResponse(attachments=results).wire_dict())
+
+    app.router.add_post("/api/uploads", upload_handler)
 
     # ---- Desktop 工具注册表 + 附件上传（批次 4，BE-042/043） ----
 

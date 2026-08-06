@@ -37,9 +37,14 @@ class ServerConfig:
     # （admin/debug）权限域分离。secret=True 防止写入 YAML/git。
     access_token: str = ConfigField(default="", env="AGENT_ACCESS_TOKEN", secret=True)
     max_ws_connections: int = ConfigField(default=64)
-    max_request_bytes: int = ConfigField(default=8 * 1024 * 1024)
+    # 业务请求体上限（app 级 client_max_size + payload 中间件 Content-Length 预检）。
+    # 批次 7 提到 64MB：既有 8MB 会把 10MB 图片 / 通用上传聚合体截住（I3）。
+    max_request_bytes: int = ConfigField(default=64 * 1024 * 1024)
     image_max_mb: int = ConfigField(default=10)
     image_allowed_types: list[str] = ConfigField(default_factory=lambda: ["image/png", "image/jpeg", "image/gif", "image/webp"])
+    # 附件签名密钥（批次 7，spec §3.4）：HMAC 签名 /api/attachments/{id} 下载 URL。
+    # 空 = 未配置（fail-closed：AGENT_ACCESS_TOKEN 配置而 SIG 未配时省略 signedUrl）。
+    attachment_sig_secret: str = ConfigField(default="", env="ATTACHMENT_SIG_SECRET", secret=True)
 
 
 @dataclass
