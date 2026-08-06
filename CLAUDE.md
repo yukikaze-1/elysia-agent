@@ -166,6 +166,7 @@ core/
 │   ├── generation_repo.py  #   GenerationRepository: generation 生命周期 upsert/query（BE-024）
 │   ├── character_version_repo.py # CharacterVersionRepository: L2/C6 version history
 │   ├── attachment_repo.py  #   AttachmentRepository: attachments 集合（fail-closed，BE-070——Mongo 离线 raise StorageUnavailableError → 503；refs/ref_count + 软删 status/deleted_at）
+│   ├── attachment_release.py # AttachmentRelease: 会话/消息删除的附件引用释放共享 helper（提取自 debug_routes/archive.py；REST DELETE /api/sessions/{id} 删除前先 release_session_attachments，批次 8a D5）
 │   └── attachment_gc.py    #   AttachmentGC: 启动兜底扫描四规则（软删超 24h 物理删 / active 文件缺失软删 / 未关联超 7 天软删 / 磁盘孤儿删文件，限四 kind 目录，BE-071）
 ├── config/                 # Config sub-package: character_config + app_config
 │   ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text

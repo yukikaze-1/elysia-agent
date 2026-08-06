@@ -1,7 +1,7 @@
 # Electron 后端安全部署指南
 
-**文档版本：** v0.5（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新；批次 7 补 §1.2 附件免 Bearer 豁免 + §3.5 附件下载/签名安全 + 已知缺口更新）
-**关联：** `docs/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`、`docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`
+**文档版本：** v0.6（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新；批次 7 补 §1.2 附件免 Bearer 豁免 + §3.5 附件下载/签名安全 + 已知缺口更新；批次 8a 补 §1.1 管理面认证 fallback + §1.4 启动守卫双 token 检查 + §3.5 下载校验序前置）
+**关联：** `docs/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`、`docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`、`docs/superpowers/specs/2026-08-06-electron-backend-batch8a-security-attachment-search.md`
 
 本文件说明 Elysia Agent 后端的**远程安全部署**方式：产品认证、TLS 终止、防护范围与已知缺口。远程部署必须遵循本指南；本地开发（回环 + 无 token）维持匿名。
 
@@ -17,6 +17,8 @@
 | `SERVER_AUTH_TOKEN` | `ServerConfig.auth_token`（env） | `/shutdown` `/restart` `/tools` `/tools/reload` `/debug/*` | **管理/运维** |
 
 两者独立配置、权限域分离——产品 token 不能访问管理端点，管理 token 不能用于产品 API。`AGENT_ACCESS_TOKEN` 标 `secret=True`（不落盘 YAML）。
+
+**管理面认证 fallback（批次 8a，`2c5a293`）**：`_check_auth` 闭包捕获 `auth_token` + `access_token`——两者都空 → 匿名本地开发；仅配置 `AGENT_ACCESS_TOKEN`（未配 `SERVER_AUTH_TOKEN`）→ 管理端点（`/shutdown` `/restart` `/tools` `/tools/reload` `/debug/api/*`）**回退用 access_token 校验**（Demo 单 token 语义，docs/14 §6「Demo 推荐：单用户访问 Token」）；两者都配 → 严格分离。双 token 下产品 token 不能访问管理端点、管理 token 不能用于产品 API（不变）。
 
 ### 1.2 认证语义
 
@@ -37,6 +39,8 @@
 ### 1.4 启动守卫
 
 服务绑定**非回环地址**（非 `127.0.0.1/localhost/::1`）且未配置 `AGENT_ACCESS_TOKEN` 时，启动输出 **ERROR 级显著阻塞告警**（指引如何配置）。这是 PRD「拒绝启动或输出显著阻塞告警」的"或"分支——不拒绝启动，避免破坏本地开发（config 默认 host=`0.0.0.0`）。
+
+**批次 8a（`2c5a293`）**：`warn_if_unsecured` 现在接收 `auth_token` 参数一并检查——非回环绑定下仅配置一个 token（`AGENT_ACCESS_TOKEN` / `SERVER_AUTH_TOKEN` 缺一）→ 输出 **WARNING 级告警**，建议补齐另一个 token（否则管理端点回退用 access_token 校验或保持匿名）；两者都空 → 维持 ERROR 级告警。
 
 ## 2. TLS / HTTPS-WSS 部署
 
@@ -135,9 +139,9 @@ server {
 |---|---|---|
 | 未配置 | 任意 | **fail-open**：下载跳过签名校验（仅 status=active 校验），本地开发匿名 |
 | 已配置 | 未配置 | **fail-closed**：下载/签发一律 403 `ATTACHMENT_SIGNATURE_DISABLED`（拒绝进入校验序；`signedUrl` 上传响应同样省略）——拒绝「匿名下载到受保护附件」的静默降级 |
-| 已配置 | 已配置 | 下载走签名校验序（sig 合法 hex → 记录 active → exp 窗口 → HMAC 验签），签发端点走 Bearer |
+| 已配置 | 已配置 | 下载走签名校验序（sig 合法 hex → exp 窗口 → HMAC 验签 → 通过后才查记录 active），签发端点走 Bearer |
 
-- **签名下载校验序**：① `sig` 存在且 64 位小写 hex（上界 128 防超长串拖慢 `compare_digest`，DoS 防护）→ 否则 403 `INVALID_SIGNATURE`；② 记录存在且 `status=active` → 否则 404 `ATTACHMENT_NOT_FOUND`（软删即拒绝，删除语义 = 不可再取；Mongo 离线 → 503 `STORAGE_UNAVAILABLE`）；③ `exp` 整数且在 `[now, now+86400]` → 否则 403 `SIGNATURE_EXPIRED`；④ HMAC 验签（`hmac.compare_digest` 防时序侧信道）→ 不匹配 403 `INVALID_SIGNATURE`。**`_SIG_TTL` 恒 86400**（与签发 `_sign_url` 一致），exp 夹紧上限。
+- **签名下载校验序**：① `sig` 存在且 64 位小写 hex（上界 128 防超长串拖慢 `compare_digest`，DoS 防护）→ 否则 403 `INVALID_SIGNATURE`；② `exp` 整数且在 `[now, now+86400]` → 否则 403 `SIGNATURE_EXPIRED`；③ HMAC 验签（`hmac.compare_digest` 防时序侧信道）→ 不匹配 403 `INVALID_SIGNATURE`；④ **前三步全部通过后才查询记录**——`status=active` 放行，否则 404 `ATTACHMENT_NOT_FOUND`（软删即拒绝，删除语义 = 不可再取；Mongo 离线 → 503 `STORAGE_UNAVAILABLE`）。**校验序前置（批次 8a，`7b0e0ba`）**：repo.get 移到验签之后——无效 sig 恒 403、不再经 404/403 差异枚举附件存在性（修复批次 7 记录在案不修的「下载存在性 oracle」）。**`_SIG_TTL` 恒 86400**（与签发 `_sign_url` 一致），exp 夹紧上限。
 - **`/uploads/` 静态挂载收敛**：只公开 legacy `images/` 与 `desktop/` 两个子目录（既有 `/api/images` 与批次 4 桌面截图链路兼容）；**新 kind 单数目录 `data/uploads/{image,video,audio,file}` 不静态暴露**——只能经 `/api/attachments/{id}` 签名下载（新附件不产生永久匿名 URL）。`/api/attachments/` 免 Bearer 豁免在认证中间件中**先于 `/api/` 前缀判断**，且 `path.endswith("/sign")` 排除签发端点。
 - **签名 URL 不记录 query string**：日志只记 `attachment_id`（不记 `sig`/`exp` 全文）；错误信封 `details` 默认空 dict——附件路径/密钥/正文不入错误体。旧 `/api/images` 链路安全由全局 Bearer 维持（不在签名/GC 保护内，见 §4）。
 - **附件持有者语义**：签名 URL 授权对象为「该 attachment_id」而非「上传者」——单用户 Demo 可接受；多用户需按 owner 过滤（非本批次，见 §4）。

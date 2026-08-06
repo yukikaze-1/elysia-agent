@@ -289,3 +289,22 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 5. **sticker 非附件**：内置公共资源，不落 attachments/不 ref_count/不参与 GC（P7-6 四轮 review 定案）。
 6. **下载存在性 oracle**（spec 七轮 Minor 7 记录在案不修）：校验序 ②（404）在 ④（403）前，匿名可区分「active」与「不存在」；attachment_id 104-bit 不可枚举 + 单用户 demo，风险低。
 7. **payload 中间件未豁免 `/api/uploads`**（spec I3/Minor 5 设计为前缀豁免）：实际实现保留中间件，聚合 64MB 由 Content-Length 预检承担、单文件 50MB 由 handler `read_chunk` 自限承担，两条 413 路径均为 `REQUEST_TOO_LARGE`——文档按实际实现记录。
+
+---
+
+## 批次 8a：审计修复——安全 / 附件 / 搜索（2026-08-06） ✅ 完成
+
+**提交范围：** `66be44f..565fc10`（16 commits，2026-08-06）
+**Spec/Plan：** `docs/superpowers/specs/2026-08-06-electron-backend-batch8a-security-attachment-search.md` / `docs/superpowers/plans/2026-08-06-electron-backend-batch8a-security-attachment-search.md`
+**依据：** `docs/electron-backend-audit-batches0-7.md`（A 安全 / B 附件 / C 搜索 三簇 + 探活 20 条发现 + BE-030/BE-031/BE-070 三项合规缺口）
+
+### 结果
+
+- **范围**：闭合审计报告 20 条发现 + 3 项合规缺口（BE-030/BE-031/BE-070——审计判 PARTIAL，批次 8a 全部收口；合规判定更新为 **24 SATISFIED / 0 PARTIAL**）。
+- **D1 管理面认证 fallback（`2c5a293`）**：`_check_auth` 闭包捕获 `auth_token` + `access_token`——auth_token 空 + access_token 非空 → 管理端点（`/shutdown` `/restart` `/tools` `/tools/reload` `/debug/api/*`）回退用 access_token 校验（Demo 单 token 语义）；两者都空 → 匿名本地开发；两者都配 → 严格分离。启动告警 `warn_if_unsecured` 接收 auth_token 参数——非回环仅配一个 token → warning 建议补齐。
+- **D2 tool.status 发送连接校验（`8b01a91`）**：每 v2 连接服务端分配稳定 `conn_<hex>` 身份存 `WebSocketChannel.connection_id`；`handle_status(status, *, sender_connection_id)` 校验 `doc.target_connection != sender` → 拒绝；offline 重连重传例外放行并迁移归属。残留「抢跑投递目标」移交后续批次。
+- **D3 下载签名校验前置（`7b0e0ba`）**：签名模式 sig hex → exp → HMAC 全部通过后才 repo.get——无效 sig 恒 403，防附件存在性枚举。
+- **D4 搜索分类组合过滤（`f69298a` / BE-031）**：query 与 category 拆两条 `$elemMatch` 用 `$and` 组合；category=link 特判 URL 内容正则；未知 category → 400 `CONTRACT_VALIDATION`。
+- **D5 会话删除附件引用释放（`82eaf04` / BE-030 + BE-070）**：新模块 `core/storage/attachment_release.py`（提取自 debug_routes/archive.py 共享 helper）；REST `DELETE /api/sessions/{id}` 先 `release_session_attachments(agent, sid)` 再删。
+- **Minor 修复**：SSRF 补 site-local IPv6 fec0::/10（`6958722`）；认证失败日志记 code/path 不记凭据（`ae590e1`）；GC 日志收敛（只记 aid/kind）+ 规则1 unlink 失败保留记录（`66be44f`）；错误信封 `str(e)` → 通用消息（`2b886b0`）；Inner Voice 应用日志降级 debug（`84b3775`）；Secret Store `threading.Lock` 防并发丢更新（`d0e556d`）；LLM 初始 custom 配置复用 SSRF 守卫（`963d1a8`）；add_ref/remove_ref 原子化——幂等 add + 归零条件软删（`9a16709`）；上传 kind 限长 + 多文件先校验再写盘（`716f2ad`）；探活改用独立 `req_<uuid>`（`f14d9c9`）；共享 fake 时序修复（`565fc10`）。
+- **测试**：批次 8a 全量回归 **2731 passed**（审计报告 §1 合规判定同步更新为 24 SATISFIED / 0 PARTIAL）。
