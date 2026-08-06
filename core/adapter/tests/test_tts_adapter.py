@@ -6,10 +6,11 @@
 """
 
 import asyncio
+import struct
 
 import pytest
 
-from core.adapter.tts_adapter import TTSStreamManager
+from core.adapter.tts_adapter import TTSStreamManager, _wav_info
 
 pytestmark = pytest.mark.unit
 
@@ -114,3 +115,50 @@ async def test_no_voice_means_no_voice_id():
     mgr.stream_sentence("测试句")
     await mgr.wait_all()
     assert captured["voice_id"] is None
+
+
+# ---- §3.11：_wav_info 遍历 chunk 表——含额外 chunk 的 WAV 正确解析 ----
+
+
+def _wav_standard(sample_rate=16000, byte_rate=32000, data_size=3200):
+    """标准 44 字节 WAV 头 + data。"""
+    header = b"RIFF" + struct.pack("<I", 36 + data_size) + b"WAVE"
+    fmt = b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, byte_rate, 2, 16)
+    data = b"data" + struct.pack("<I", data_size)
+    return header + fmt + data + b"\x00" * data_size
+
+
+def _wav_with_extra_chunks(sample_rate=16000, byte_rate=32000, data_size=3200):
+    """RIFF 头后先插 LIST/fact 额外 chunk，再 data——非 44 字节头。"""
+    body = b"RIFF" + b"WAVE"
+    # 直接构造：RIFF 头 12 字节 + LIST chunk + fmt chunk + data chunk
+    def chunk(cid, payload):
+        padded = payload if len(payload) % 2 == 0 else payload + b"\x00"
+        return cid + struct.pack("<I", len(payload)) + padded
+    list_payload = b"INFO" + b"\x00" * 20
+    fact_payload = struct.pack("<I", 400)
+    fmt_payload = struct.pack("<HHIIHH", 1, 1, sample_rate, byte_rate, 2, 16)
+    total = 4 + len(chunk(b"LIST", list_payload)) + len(chunk(b"fact", fact_payload)) \
+        + len(chunk(b"fmt ", fmt_payload)) + len(chunk(b"data", b""))
+    prefix = b"RIFF" + struct.pack("<I", total) + b"WAVE"
+    return prefix + chunk(b"LIST", list_payload) + chunk(b"fact", fact_payload) \
+        + chunk(b"fmt ", fmt_payload) + b"data" + struct.pack("<I", data_size) \
+        + b"\x00" * data_size
+
+
+def test_wav_info_standard_header():
+    sr, dur = _wav_info(_wav_standard())
+    assert sr == 16000
+    assert dur == int(3200 * 1000 / 32000)  # 100ms
+
+
+def test_wav_info_extra_chunks_correct_duration():
+    """含 LIST/fact 额外 chunk → durationMs 不再错（旧固定偏移 40 会读错 data size）。"""
+    sr, dur = _wav_info(_wav_with_extra_chunks())
+    assert sr == 16000
+    assert dur == int(3200 * 1000 / 32000)
+
+
+def test_wav_info_non_wav_returns_none():
+    assert _wav_info(b"\x00" * 64) == (None, None)
+    assert _wav_info(b"") == (None, None)

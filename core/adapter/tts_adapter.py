@@ -55,15 +55,28 @@ def _mood_text_to_tts_emotion(mood_text: str) -> str:
 # ---- TTSStreamManager -----------------------------------------------------
 
 def _wav_info(audio: bytes) -> tuple[int | None, int | None]:
-    """解析 WAV header → (sample_rate, duration_ms)；非 WAV/异常返回 (None, None)。"""
+    """解析 WAV header → (sample_rate, duration_ms)；非 WAV/异常返回 (None, None)。
+
+    遍历 RIFF chunk 表定位 fmt/data（不假设标准 44 字节头）——含额外 chunk
+    （LIST/fact/cue）的 WAV 同样正确解析（spec §3.11）。
+    """
     try:
-        if len(audio) < 44 or audio[:4] != b"RIFF":
+        if len(audio) < 12 or audio[:4] != b"RIFF":
             return None, None
-        sample_rate = struct.unpack("<I", audio[24:28])[0]
-        byte_rate = struct.unpack("<I", audio[28:32])[0]
-        data_size = struct.unpack("<I", audio[40:44])[0]
-        duration_ms = int(data_size * 1000 / byte_rate) if byte_rate else None
-        return sample_rate, duration_ms
+        sample_rate: int | None = None
+        byte_rate: int | None = None
+        offset = 12                      # 跳过 RIFF 头（12 字节），进入 chunk 表
+        while offset + 8 <= len(audio):
+            chunk_id = audio[offset:offset + 4]
+            size = struct.unpack("<I", audio[offset + 4:offset + 8])[0]
+            if chunk_id == b"fmt " and offset + 20 <= len(audio):
+                sample_rate = struct.unpack("<I", audio[offset + 12:offset + 16])[0]
+                byte_rate = struct.unpack("<I", audio[offset + 16:offset + 20])[0]
+            elif chunk_id == b"data":
+                duration_ms = int(size * 1000 / byte_rate) if byte_rate else None
+                return sample_rate, duration_ms
+            offset += 8 + size + (size & 1)   # chunk 数据 + 奇偶对齐
+        return sample_rate, None
     except Exception:
         return None, None
 
