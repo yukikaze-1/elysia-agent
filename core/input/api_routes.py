@@ -597,11 +597,14 @@ def register_api_routes(app: web.Application) -> None:
         """POST /api/uploads — 通用附件上传（多文件 + kind 意图）。
 
         multipart 字段：files[]（多个）+ kind（可选，客户端意图**不信任**）。
-        校验顺序（spec §4.1）：kind 枚举预检 → 数量 ≤10 → 每文件 filetype 魔数
-        白名单（文本类 txt/md/json 无魔数 → 扩展名白名单 + UTF-8 sanity，I6）→
-        扩展名一致性 → kind 归位（webm 以客户端 kind tiebreaker）+ 归位后大小复核 →
-        写盘 data/uploads/{kind}/{uuid}.{ext} + sha256 + attachments 落记录
+        校验顺序（spec §4.1）：kind 枚举预检（Task 14：read_chunk(65) 限长 64，超长即拒
+        不读入内存）→ 数量 ≤10 → 每文件 filetype 魔数白名单（文本类 txt/md/json
+        无魔数 → 扩展名白名单 + UTF-8 sanity，I6）→ 扩展名一致性 → kind 归位
+        （webm 以客户端 kind tiebreaker）+ 归位后大小复核 → 写盘
+        data/uploads/{kind}/{uuid}.{ext} + sha256 + attachments 落记录
         （fail-closed 离线 503，失败删已落盘文件不留孤儿）→ AttachmentFileResolver.register。
+        Task 14 两阶段：先全部校验（阶段 A，失败不写盘）→ 再统一写盘/建记录/注册
+        （阶段 B，任一失败清理本轮已写文件 + 已建记录 + 已注册映射，不留孤儿）。
         整体聚合上限 64MB：有 Content-Length 由 payload 中间件预检（server.py
         _make_payload_middleware），chunked（无 Content-Length）由本 handler 的
         total_bytes 累计强制（Critical #4）。
@@ -642,7 +645,12 @@ def register_api_routes(app: web.Application) -> None:
             field = cast(BodyPartReader, field)
             name = field.name or ""
             if name == "kind":
-                raw = await field.read()
+                # kind 限长（Task 14）：read_chunk(65) 读上限 65 字节才能检出 >64 超长
+                # （read() 整读无上限）——不读入超长字段内存即拒，限长分支在未知 kind
+                # 预检之前。
+                raw = await field.read_chunk(65)
+                if len(raw) > 64:
+                    return _protocol_error_response("INVALID_REQUEST", "kind 字段超长", 400)
                 if isinstance(raw, (bytes, bytearray)):
                     kind = bytes(raw).decode("utf-8", errors="replace").strip()
                 else:
@@ -672,7 +680,9 @@ def register_api_routes(app: web.Application) -> None:
         if len(files) > 10:
             return _protocol_error_response("TOO_MANY_FILES", "单次上传文件数超限（≤10）", 400)
 
-        results = []
+        # ---- 阶段 A：先全部校验（步骤 2-5：尺寸/魔数/扩展名/kind 归位）——
+        # 任一失败立即 4xx，此时未写盘、未建记录，无需清理（Task 14 两阶段）。
+        validated: list[dict] = []
         for filename_raw, data in files:
             # 步骤 2：初步大小（kind 缺省跳过此步，仅以归位 kind 复核）
             if kind and len(data) > _KIND_LIMITS[kind]:
@@ -715,12 +725,10 @@ def register_api_routes(app: web.Application) -> None:
             filename = re.sub(r"[\\/]", "", filename_raw)
             filename = re.sub(r"[\x00-\x1f\x7f]", "", filename)
             filename = filename[:255] or "attachment"
-            # 步骤 6：写盘 data/uploads/{kind}/{uuid}.{ext} + sha256 + 落记录
+            # 步骤 6 前半段：预计算写盘信息 + 记录文档（真正落盘留阶段 B 统一做）
             stored_name = f"{uuid.uuid4().hex[:16]}.{ext}"
             upload_dir = ProjectPath.DATA_UPLOADS.resolve() / final_kind
-            os.makedirs(str(upload_dir), exist_ok=True)
             stored_path = upload_dir / stored_name
-            stored_path.write_bytes(data)
             attachment_id = _new_id("att")
             doc = {
                 "attachment_id": attachment_id,
@@ -735,32 +743,84 @@ def register_api_routes(app: web.Application) -> None:
                 "status": STATUS_ACTIVE,
                 "created_at": now_iso(),
             }
-            try:
-                await repo.create(doc)
-            except StorageUnavailableError:
-                # fail-closed：离线 → 删已落盘文件（不留孤儿）+ 503
+            validated.append({
+                "data": data,
+                "stored_path": stored_path,
+                "stored_name": stored_name,
+                "final_kind": final_kind,
+                "mime": mime,
+                "attachment_id": attachment_id,
+                "doc": doc,
+            })
+
+        # ---- 阶段 B：统一持久化（全部校验通过后才写盘 + 建记录 + 注册）——
+        # 任一文件失败 → 清理本轮已写文件 + 已建记录 + 已注册映射（不留孤儿）。
+        class _PersistAbort(Exception):
+            """持久化中止信号：携带公开错误信封字段（str(e) 只进日志）。"""
+
+            def __init__(self, code: str, message: str, status: int,
+                         retryable: bool = False) -> None:
+                super().__init__(message)
+                self.code = code
+                self.message = message
+                self.status = status
+                self.retryable = retryable
+
+        results = []
+        written: list[Path] = []   # 已写盘文件（失败清理用）
+        created: list[str] = []    # 已建记录 attachment_id（失败清理用）
+
+        async def _cleanup() -> None:
+            """失败清理：删本轮已写文件 + 已注册映射 + 已建记录。"""
+            for stored_path in written:
                 stored_path.unlink(missing_ok=True)
-                return _protocol_error_response(
-                    "STORAGE_UNAVAILABLE", "附件存储不可用", 503, retryable=True)
-            except Exception as e:
-                stored_path.unlink(missing_ok=True)
-                logger.warning("附件记录写入失败，已删文件 %s: %s", stored_name, e)
-                return _protocol_error_response("INTERNAL", "附件记录写入失败", 500)
-            # 进程内映射注册（content_to_openai 同步定位落盘路径用，spec §4.5）
-            attachment_resolver.register(attachment_id, final_kind, stored_name)
-            # signedUrl（fail-closed 省略）：AGENT_ACCESS_TOKEN 配 + SIG 未配 → 省略
-            signed_url = None
-            if not ((not sig_secret) and access_token_cfg):
-                signed_url, _ = _sign_url(sig_secret, attachment_id)
-            results.append(rest_contract.AttachmentInfo(
-                attachmentId=attachment_id,
-                kind=final_kind,
-                mime=mime,
-                size=len(data),
-                url=f"/api/attachments/{attachment_id}",
-                signedUrl=signed_url,
-                filename=filename,
-            ))
+            for aid in created:
+                attachment_resolver.unregister(aid)
+                try:
+                    await repo.delete_record(aid)
+                except Exception as ce:
+                    logger.warning("失败清理删除附件记录 %s 失败: %s", aid, ce)
+
+        try:
+            for it in validated:
+                stored_path = it["stored_path"]
+                os.makedirs(str(stored_path.parent), exist_ok=True)
+                stored_path.write_bytes(it["data"])
+                written.append(stored_path)
+                try:
+                    await repo.create(it["doc"])
+                except StorageUnavailableError:
+                    # fail-closed：离线 → 走统一清理（已写文件 + 已建记录）+ 503
+                    raise _PersistAbort(
+                        "STORAGE_UNAVAILABLE", "附件存储不可用", 503, retryable=True)
+                except Exception as e:
+                    logger.warning("附件记录写入失败: %s", e)
+                    raise _PersistAbort("INTERNAL", "附件记录写入失败", 500)
+                created.append(it["attachment_id"])
+                # 进程内映射注册（content_to_openai 同步定位落盘路径用，spec §4.5）
+                attachment_resolver.register(
+                    it["attachment_id"], it["final_kind"], it["stored_name"])
+                # signedUrl（fail-closed 省略）：AGENT_ACCESS_TOKEN 配 + SIG 未配 → 省略
+                signed_url = None
+                if not ((not sig_secret) and access_token_cfg):
+                    signed_url, _ = _sign_url(sig_secret, it["attachment_id"])
+                results.append(rest_contract.AttachmentInfo(
+                    attachmentId=it["attachment_id"],
+                    kind=it["final_kind"],
+                    mime=it["mime"],
+                    size=len(it["data"]),
+                    url=f"/api/attachments/{it['attachment_id']}",
+                    signedUrl=signed_url,
+                    filename=it["doc"]["filename"],
+                ))
+        except _PersistAbort as e:
+            await _cleanup()
+            return _protocol_error_response(e.code, e.message, e.status, retryable=e.retryable)
+        except Exception as e:
+            # 兜底：写盘等意外失败同样清理不留孤儿，str(e) 只进日志
+            logger.warning("附件持久化失败，已清理本轮写入: %s", e)
+            await _cleanup()
+            return _protocol_error_response("INTERNAL", "附件持久化失败", 500)
 
         return web.json_response(
             rest_contract.AttachmentUploadResponse(attachments=results).wire_dict())

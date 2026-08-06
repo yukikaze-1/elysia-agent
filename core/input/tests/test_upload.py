@@ -28,17 +28,25 @@ class _FakeAttachmentRepo:
     """内存 fake AttachmentRepository——离线时 create 抛 StorageUnavailableError。
 
     与真实 AttachmentRepository 的差异只在存储介质（list vs Mongo）：
-    上传 handler 只调用 create()，故最小接口即够；fail-closed 语义如实模拟。
+    上传 handler 只调用 create()/delete_record()，故最小接口即够；fail-closed
+    语义如实模拟。fail_on_create 让第 N 次 create 抛错——测多文件持久化中途失败
+    的「已建记录也要清理」路径。
     """
 
-    def __init__(self, offline: bool = False) -> None:
+    def __init__(self, offline: bool = False, fail_on_create: int | None = None) -> None:
         self.offline = offline
+        self.fail_on_create = fail_on_create
         self.records: list[dict] = []
 
     async def create(self, doc: dict) -> None:
         if self.offline:
             raise StorageUnavailableError("attachments 集合不可用：MongoDB 未连接（离线）")
+        if self.fail_on_create is not None and len(self.records) + 1 == self.fail_on_create:
+            raise StorageUnavailableError("attachments 集合不可用：MongoDB 未连接（离线）")
         self.records.append(dict(doc))
+
+    async def delete_record(self, attachment_id: str) -> None:
+        self.records = [r for r in self.records if r["attachment_id"] != attachment_id]
 
 
 @pytest.fixture(autouse=True)
@@ -54,7 +62,8 @@ def make_app(tmp_path, monkeypatch):
     """返回构建 upload app 的工厂（真实 Agent + 注入 fake attachment repo）。"""
 
     def _make(*, sig_secret: str = "test-secret", access_token: str = "",
-              offline: bool = False, max_request_bytes: int | None = None):
+              offline: bool = False, max_request_bytes: int | None = None,
+              fail_on_create: int | None = None):
         from core.agent import Agent
         from core.config import AppConfig
         from core.config.app_config import ServerConfig
@@ -64,7 +73,8 @@ def make_app(tmp_path, monkeypatch):
             access_token=access_token,
             attachment_sig_secret=sig_secret,
         )))
-        agent._attachment_repo = _FakeAttachmentRepo(offline=offline)  # noqa: SLF001
+        agent._attachment_repo = _FakeAttachmentRepo(  # noqa: SLF001
+            offline=offline, fail_on_create=fail_on_create)
         monkeypatch.setenv("ELYSIA_PATH_DATA_UPLOADS", str(tmp_path / "uploads"))
         monkeypatch.setenv("ELYSIA_PATH_DATA_UPLOADS_IMAGES",
                            str(tmp_path / "uploads" / "images"))
@@ -224,6 +234,65 @@ class TestUploadEndpoint:
         # 写记录失败 → 文件立即删除
         assert not list((tmp_path / "uploads" / "image").glob("*.png"))
         assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_upload_kind_field_size_capped(self, make_app, aiohttp_client):
+        """kind 字段超长（>64 字节）→ 400 INVALID_REQUEST——不读入超长字段内存即拒。
+
+        旧实现整读 kind 字段后挂「未知 kind」CONTRACT_VALIDATION；新实现限长分支
+        （read_chunk(65) 检出 >64）在未知 kind 预检之前，断言 error code 区分两种
+        拒绝路径。用「合法 kind 值 + 超长后缀」构造，验证的是限长分支而非未知 kind 分支。
+        """
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="photo.png", content=PNG,
+                           kind="image" + "x" * 100)
+        assert resp.status == 400, f"expected 400, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert data["code"] == "INVALID_REQUEST"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_upload_second_file_invalid_no_orphan(self, make_app, aiohttp_client,
+                                                        tmp_path):
+        """第 2 个文件魔数非法 → 第 1 个文件不残留（先全部校验再统一写盘）。
+
+        旧实现逐文件「校验+写盘+建记录」→ 第 1 个文件已落盘残留；新实现两阶段
+        （先全部 _validate 通过再统一 _persist）→ 415 时无任何文件/记录/注册。
+        """
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="photo.png", content=PNG, kind="image",
+                           extra_files=[("evil.png", TEXT)])
+        assert resp.status == 415, f"expected 415, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert data["code"] == "UNSUPPORTED_MEDIA_TYPE"
+        # 先全部校验再写盘：第 1 个文件不落盘（目录为空）
+        assert not list((tmp_path / "uploads" / "image").glob("*.png"))
+        # 无记录、无注册
+        assert not agent._attachment_repo.records  # noqa: SLF001
+        assert not _ar._registry  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_persist_failure_cleans_prior_writes(self, make_app, aiohttp_client,
+                                                       tmp_path):
+        """持久化阶段第 2 个文件 create 失败 → 第 1 个文件也被清理（不留孤儿）。
+
+        两文件都通过校验（阶段 A 全绿），阶段 B 第 2 个文件落记录失败
+        （StorageUnavailableError → 503）：本轮已写文件 + 已建记录 + 已注册映射
+        必须全部清理，而不是只回滚失败文件。
+        """
+        agent, app = make_app(fail_on_create=2)
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="a.png", content=PNG, kind="image",
+                           extra_files=[("b.png", PNG)])
+        assert resp.status == 503, f"expected 503, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert data["code"] == "STORAGE_UNAVAILABLE"
+        # 第 1 个文件已写盘/建记录/注册，也被统一清理
+        assert not list((tmp_path / "uploads" / "image").glob("*.png"))
+        assert not agent._attachment_repo.records  # noqa: SLF001
+        assert not _ar._registry  # noqa: SLF001
 
     @pytest.mark.asyncio
     async def test_no_bearer_401(self, make_app, aiohttp_client):
