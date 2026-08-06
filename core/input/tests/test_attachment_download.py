@@ -18,6 +18,7 @@
 
 import hashlib
 import hmac
+import json
 import time
 from urllib.parse import parse_qs, urlparse
 
@@ -130,6 +131,20 @@ def _fresh_sig(attachment_id: str = "att_1") -> tuple[str, int]:
     """返回 (sig, exp)：exp = now+86400（与 _sign_url 同窗口）。"""
     exp = int(time.time()) + 86400
     return _sig(SIG_SECRET, attachment_id, exp), exp
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_download_wrong_hmac_sig_403_before_existence(make_app, aiohttp_client):
+    # 合法 hex 但 HMAC 错误的 sig + 不存在的 id → 403 INVALID_SIGNATURE（而非 404）
+    # 这是 D3 的枚举向量：修复前走到 ② repo.get → 404，修复后 ③④ 前置 → 403
+    agent, app = make_app()
+    client = await aiohttp_client(app)
+    exp = int(time.time()) + 3600
+    resp = await client.get(f"/api/attachments/att_不存在?sig={'0'*64}&exp={exp}")
+    assert resp.status == 403
+    body = json.loads((await resp.read()).decode())
+    assert body["code"] == "INVALID_SIGNATURE"
 
 
 class TestDownloadConfigured:

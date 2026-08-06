@@ -1,7 +1,7 @@
 """附件签名下载 + 签发端点（批次 7 Task 4，spec §3.3）。
 
 - GET /api/attachments/{attachment_id}      — 签名下载：fail-closed 校验序
-  （sig 格式 → 记录存在且 active → exp 窗口 → HMAC 验签）/ fail-open 直读
+  （sig 格式 → exp 窗口 → HMAC 验签 → 记录存在且 active）/ fail-open 直读
   （仅 status=active 校验）。成功走 aiohttp FileResponse（原生 Range/206）。
 - GET /api/attachments/{attachment_id}/sign — 签发端点：Bearer 由 server.py
   认证中间件保证（本模块不重复校验）；返回 AttachmentSignResponse
@@ -89,12 +89,12 @@ def _sig_disabled(agent) -> bool:
 async def _download_handler(request: web.Request) -> web.Response:
     """GET /api/attachments/{attachment_id} — 签名下载。
 
-    校验序（spec §3.3）：
+    校验序（spec §3.3，D3 重排——签名校验前置，防存在性枚举）：
       ① sig 存在且为合法 hex（缺失/格式不符 → 403 INVALID_SIGNATURE）；
-      ② repo.get 存在且 status=active（否则 404 ATTACHMENT_NOT_FOUND；
-         Mongo 离线 → 503 STORAGE_UNAVAILABLE）；
       ③ exp 为整数且在 [now, now+86400]（否则 403 SIGNATURE_EXPIRED）；
-      ④ hmac.compare_digest 验签（不匹配 → 403 INVALID_SIGNATURE）。
+      ④ hmac.compare_digest 验签（不匹配 → 403 INVALID_SIGNATURE）；
+      ② repo.get 存在且 status=active（否则 404 ATTACHMENT_NOT_FOUND；
+         Mongo 离线 → 503 STORAGE_UNAVAILABLE）。
     fail-open（token 空）→ 跳过 ①③④，仅 ② status=active 校验。
     成功 → 先检查落盘文件存在（记录在、文件删 → 404 不预热）→ FileResponse
     （原生 Range/206）+ AttachmentFileResolver 再预热（spec §4.5）。
@@ -129,17 +129,6 @@ async def _download_handler(request: web.Request) -> web.Response:
             exp = int(request.query.get("exp", "") or "")
         except ValueError:
             exp = -1
-
-    # ② 记录存在且 active（Mongo 离线 → 503）
-    try:
-        doc = await agent.attachment_repo.get(attachment_id)
-    except StorageUnavailableError:
-        return _error_response("STORAGE_UNAVAILABLE", "附件存储不可用", 503,
-                               retryable=True)
-    if doc is None or (doc.get("status") or "") != STATUS_ACTIVE:
-        return _error_response("ATTACHMENT_NOT_FOUND", "附件不存在", 404)
-
-    if verify_sig:
         # ③ exp 窗口 [now, now+86400]
         now = int(time.time())
         if exp < now or exp > now + _SIG_TTL:
@@ -150,6 +139,15 @@ async def _download_handler(request: web.Request) -> web.Response:
                             hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return _error_response("INVALID_SIGNATURE", "签名校验失败", 403)
+
+    # ② 记录存在且 active（Mongo 离线 → 503）
+    try:
+        doc = await agent.attachment_repo.get(attachment_id)
+    except StorageUnavailableError:
+        return _error_response("STORAGE_UNAVAILABLE", "附件存储不可用", 503,
+                               retryable=True)
+    if doc is None or (doc.get("status") or "") != STATUS_ACTIVE:
+        return _error_response("ATTACHMENT_NOT_FOUND", "附件不存在", 404)
 
     kind = doc.get("kind", "")
     stored_name = doc.get("stored_name", "")
