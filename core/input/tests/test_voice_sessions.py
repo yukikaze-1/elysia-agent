@@ -20,9 +20,19 @@ def _sil(samples: int) -> bytes:
     return struct.pack(f"<{samples}h", *([5] * samples))
 
 
+class _FakeSTTBackend:
+    """返回 _last_text 的假 STT——供 _transcribe_no_emotion 调 agent.stt.transcribe。"""
+
+    def __init__(self, agent):
+        self._agent = agent
+
+    async def transcribe(self, wav):
+        return self._agent._last_text
+
+
 class FakeAgent:
     def __init__(self):
-        self.stt = object()
+        self.stt = _FakeSTTBackend(self)
         self.stt_enabled = True
         self.stt_emotion_state = {"emotion": "HAPPY", "events": ["x"]}
         self.user_name = "用户"
@@ -236,54 +246,107 @@ async def test_recording_too_long():
 
 
 @pytest.mark.asyncio
-async def test_dictation_restores_stt_emotion_state():
-    from core.input.voice_sessions import VoiceSessionManager
-    agent = FakeAgent()
-    agent.stt_emotion_state = {"emotion": "SAD", "events": []}  # dictation 前状态
-    emitted, bus_posts = [], []
-    agent.bus = type("Bus", (), {"post": lambda self, d: bus_posts.append(d)})()
-    agent.idle = type("Idle", (), {"touch": lambda self: None})()
+async def test_dictation_never_touches_shared_emotion():
+    """D6：dictation 全程不碰共享 stt_emotion_state——不写也不恢复。
 
-    # 让 stt_transcribe 原地改共享 dict（与真实 agent.stt_transcribe 语义一致，review #8）
-    real = agent.stt_transcribe
-    async def polluted_stt(wav):
-        agent.stt_emotion_state["emotion"] = "POLLUTED"
-        agent.stt_emotion_state["events"] = ["p"]
-        return await real(wav)
-    agent.stt_transcribe = polluted_stt
-
-    mgr = VoiceSessionManager(agent=agent, emit=async_emit(emitted), silence_duration=0.1)
+    原「结束恢复快照」语义在 D6 后不再有意义（dictation 经 _transcribe_no_emotion
+    从不动共享 state）：用 _EmotionWritingAgent 验证 dictation 未走
+    agent.stt_transcribe 写点，进行中与结束后共享 state 保持一致。
+    """
+    agent = _EmotionWritingAgent()
+    agent.stt_emotion_state = {"emotion": "SAD", "events": []}  # dictation 前状态（其他连接写入）
+    mgr, emitted, _ = make_manager(agent=agent)
     await mgr.start_dictation("req_d2")
     agent._last_text = "转写"
     await _drive_segment(mgr)
     await asyncio.sleep(0.05)
+    assert agent.stt_emotion_state == {"emotion": "SAD", "events": []}  # 进行中不变
     await mgr.stop_dictation("req_d2")
-    # dictation 结束后共享状态应被恢复为 dictation 前值（S5）
-    assert agent.stt_emotion_state.get("emotion") == "SAD"
+    assert agent.stt_emotion_state == {"emotion": "SAD", "events": []}  # 结束后不变（无恢复覆盖）
 
 
 @pytest.mark.asyncio
-async def test_dictation_stt_disabled_restores_emotion():
-    """STT 中途关闭终止 dictation → 同样恢复 emotion（review NEW-3/C）。"""
-    from core.input.voice_sessions import VoiceSessionManager
-    agent = FakeAgent()
+async def test_dictation_stt_disabled_keeps_shared_emotion():
+    """D6：STT 中途关闭终止 dictation → 共享 state 全程不变（不写不恢复，review NEW-3/C）。"""
+    agent = _EmotionWritingAgent()
     agent.stt_emotion_state = {"emotion": "SAD", "events": []}
-    emitted, bus_posts = [], []
-    agent.bus = type("Bus", (), {"post": lambda self, d: bus_posts.append(d)})()
-    agent.idle = type("Idle", (), {"touch": lambda self: None})()
-    real = agent.stt_transcribe
-    async def polluted_stt(wav):
-        agent.stt_emotion_state["emotion"] = "POLLUTED"
-        return await real(wav)
-    agent.stt_transcribe = polluted_stt
-
-    mgr = VoiceSessionManager(agent=agent, emit=async_emit(emitted), silence_duration=0.1)
+    mgr, emitted, _ = make_manager(agent=agent)
     await mgr.start_dictation("req_d3")
     agent._last_text = "转写"
     await _drive_segment(mgr)
     await asyncio.sleep(0.05)
+    assert agent.stt_emotion_state == {"emotion": "SAD", "events": []}  # 进行中不变
     mgr._agent.stt_enabled = False
     await mgr.notify_stt_disabled()
-    assert agent.stt_emotion_state.get("emotion") == "SAD"
+    assert agent.stt_emotion_state == {"emotion": "SAD", "events": []}  # 关闭终止后不变
     cancelled = [e for e in emitted if e.get("type") == "dictation.cancelled"]
     assert cancelled and cancelled[-1]["clientRequestId"] == "req_d3"
+
+
+class _EmotionWritingAgent(FakeAgent):
+    """stt_transcribe 写共享 emotion——镜像真实 agent.stt_transcribe（agent.py:842）。"""
+
+    async def stt_transcribe(self, wav):
+        text = await super().stt_transcribe(wav)
+        backend = self.stt
+        self.stt_emotion_state["emotion"] = getattr(backend, "last_emotion", "NEUTRAL")
+        self.stt_emotion_state["events"] = list(getattr(backend, "last_events", None) or [])
+        return text
+
+
+# D6：dictation 不写共享 stt_emotion_state；§3.10：dictation ID 校验
+@pytest.mark.asyncio
+async def test_dictation_does_not_touch_shared_emotion():
+    """D6：dictation 转写不写 agent 级 stt_emotion_state——**dictation 进行中**即验证。
+
+    断言放在 stop 之前：旧代码 dictation 经 agent.stt_transcribe（_EmotionWritingAgent）
+    会把共享 state 写成 HAPPY/laughter → 进行中断言红；新代码 _transcribe_no_emotion
+    不写 → 共享 state 保持其他连接的 SAD/sigh。
+    """
+    agent = _EmotionWritingAgent()
+    # 共享状态预置"其他连接"写入的值
+    agent.stt_emotion_state = {"emotion": "SAD", "events": ["sigh"]}
+
+    class _NoEmotionSTT:
+        last_emotion = "HAPPY"
+        last_events = ["laughter"]
+        async def transcribe(self, wav):
+            return "听写内容"
+    agent.stt = _NoEmotionSTT()
+
+    mgr, emitted, _ = make_manager(agent=agent)
+    await mgr.start_dictation("req_d1")
+    agent._last_text = "听写内容"
+    for _ in range(4):
+        await mgr.feed_pcm(_loud(1600))  # 0.4s 语音 > MIN_SEGMENT_SECONDS(0.3s)，保证段触发
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.1)   # 段 STT（同步 fake 立即完成）
+    # dictation 进行中：共享 state 未被写成 HAPPY（旧代码会写）
+    assert agent.stt_emotion_state == {"emotion": "SAD", "events": ["sigh"]}
+    await mgr.stop_dictation("req_d1")
+    finals = [s for s in emitted if s.get("type") == "dictation.final"]
+    assert finals and finals[0]["text"] == "听写内容"
+
+
+@pytest.mark.asyncio
+async def test_stop_dictation_wrong_id_rejected():
+    """§3.10：clientRequestId 与 _dict_request_id 不一致 → DICTATION_NOT_FOUND。"""
+    mgr, _, _ = make_manager()
+    await mgr.start_dictation("req_d1")
+    with pytest.raises(VoiceSessionError) as exc:
+        await mgr.stop_dictation("req_wrong")
+    assert exc.value.code == "DICTATION_NOT_FOUND"
+    with pytest.raises(VoiceSessionError) as exc:
+        await mgr.cancel_dictation("req_wrong")
+    assert exc.value.code == "DICTATION_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_cancel_dictation_wrong_id_rejected():
+    mgr, _, _ = make_manager()
+    await mgr.start_dictation("req_d1")
+    with pytest.raises(VoiceSessionError) as exc:
+        await mgr.cancel_dictation("req_d1_other")
+    assert exc.value.code == "DICTATION_NOT_FOUND"
