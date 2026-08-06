@@ -104,3 +104,55 @@ async def test_cancel_all_emits_audio_cancelled():
 def test_cancel_unknown_returns_false():
     mgr = TTSStreamManager(tts=None, output=FakeOut(), character_name="elysia")
     assert mgr.cancel_stream(999) is False
+
+
+# §3.9：cancel_stream 以「正在转发」判定——已 audio_end 的任务返回 False（spec §8.2）
+from unittest.mock import AsyncMock, MagicMock
+
+
+def _make_mgr():
+    tts = MagicMock()
+    tts.stream_format = "wav"
+    tts.get_preprocess.return_value = None
+    tts.synthesize = AsyncMock(return_value=b"RIFFWAVE" + b"\x00" * 100)
+    output = MagicMock()
+    output._broadcast = AsyncMock()
+    output.send = AsyncMock()
+    for name in ("audio_start", "audio_chunk", "audio_end", "audio_cancelled",
+                 "typing", "turn_completed", "turn_cancelled"):
+        setattr(output, name, AsyncMock())
+    mgr = TTSStreamManager(tts=tts, output=output, character_name="测试")
+    return mgr, output
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_audio_end_returns_false():
+    """audio_end 已发（_audio_forwarding 已 discard）的任务 → False（PLAYBACK_NOT_FOUND）。"""
+    mgr, _ = _make_mgr()
+    # 构造一个「存活但已 audio_end」的任务：sid=1 已从 _audio_forwarding 移除
+    async def _hanging():
+        await asyncio.sleep(10)
+    task = asyncio.create_task(_hanging())
+    mgr._task_by_sid = {1: task}
+    mgr._audio_forwarding = set()          # 已 audio_end
+    assert mgr.cancel_stream(1) is False
+    assert task.done() is False            # 未取消——客户端应收到 PLAYBACK_NOT_FOUND
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_cancel_while_forwarding_returns_true():
+    """正在转发（_audio_forwarding 含 sid）→ True，任务被取消。"""
+    mgr, _ = _make_mgr()
+    async def _hanging():
+        await asyncio.sleep(10)
+    task = asyncio.create_task(_hanging())
+    mgr._task_by_sid = {1: task}
+    mgr._audio_forwarding = {1}
+    assert mgr.cancel_stream(1) is True
+    await asyncio.sleep(0)        # task.cancel() 后须让出事件循环，done() 才置位
+    assert task.done()
+    with pytest.raises(asyncio.CancelledError):
+        await task

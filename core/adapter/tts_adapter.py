@@ -236,10 +236,16 @@ class TTSStreamManager:
         self._task_by_sid = {s: t for s, t in self._task_by_sid.items() if not t.done()}
 
     def cancel_stream(self, stream_id: int) -> bool:
-        """取消指定播放实例（BE-063）；在途返回 True（任务补 audio_cancelled），否则 False。"""
+        """取消指定播放实例（BE-063）；正在转发（audio_start 后 audio_end 前）返回
+        True（任务补 audio_cancelled），已 audio_end / 不存在返回 False（PLAYBACK_NOT_FOUND，
+        spec §8.2）。判定与 CancelledError 分支是否补 audio_cancelled 对齐——用
+        _audio_forwarding 而非 task 存活，否则 audio_end 后的 emoji/finally 窗口
+        返回 True 却无事件（spec §3.9）。"""
         task = self._task_by_sid.get(stream_id)
         if task is None or task.done():
             return False
+        if stream_id not in self._audio_forwarding:
+            return False           # 已 audio_end（末尾 emoji/finally 窗口）——不再补事件
         task.cancel()
         return True
 
