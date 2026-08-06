@@ -296,7 +296,9 @@ def register_api_routes(app: web.Application) -> None:
         try:
             data = add_provider(service, entry)
         except Exception as e:
-            return web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict(), status=500)
+            # Task 9（批次 8a）：信封只给通用文案，str(e) 只进日志——防绝对路径/内部细节泄漏
+            logger.warning("保存 provider 失败: %s", e)
+            return web.json_response(rest_contract.ApiFail(error="保存失败，请稍后重试").wire_dict(), status=500)
         # review 修正：响应恢复全量 custom 列表（spec §3.3 步骤 8 + 前批次 wire 形状），
         # 不再返回单条目——避免偏离既有契约；credentialConfigured 经 GET /api/providers 获取。
         # 验收 LOW#1 加固：响应数据剔除 api_key 键——防遗留条目（批次 5 前误存过 api_key
@@ -327,7 +329,9 @@ def register_api_routes(app: web.Application) -> None:
             # 验收 LOW#1：同 save，响应剔除 api_key 键（防遗留条目回显密钥）
             return web.json_response(rest_contract.ApiOk(data=_strip_secret_keys(data)).wire_dict())
         except Exception as e:
-            return web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict(), status=500)
+            # Task 9（批次 8a）：信封只给通用文案，str(e) 只进日志——防绝对路径/内部细节泄漏
+            logger.warning("删除 provider 失败: %s", e)
+            return web.json_response(rest_contract.ApiFail(error="删除失败，请稍后重试").wire_dict(), status=500)
 
     async def providers_test_handler(request: web.Request) -> web.Response:
         """测试 provider 连通性（level=connectivity）或可使用性（level=usable）。
@@ -581,7 +585,9 @@ def register_api_routes(app: web.Application) -> None:
             return web.json_response(
                 rest_contract.ImageUploadResponse(url=url, mime=mime, size=len(data)).wire_dict())
         except Exception as e:
-            return web.json_response(rest_contract.ImageUploadError(error=str(e)).wire_dict(), status=500)
+            # Task 9（批次 8a）：信封只给通用文案，str(e) 只进日志——防绝对路径/内部细节泄漏
+            logger.warning("图片上传失败: %s", e)
+            return web.json_response(rest_contract.ImageUploadError(error="图片上传失败，请稍后重试").wire_dict(), status=500)
 
     app.router.add_post("/api/images", image_upload_handler)
 
@@ -957,7 +963,9 @@ def register_api_routes(app: web.Application) -> None:
             url = f"/uploads/desktop/{saved_name}"
             return web.json_response({"url": url})
         except Exception as e:
-            return _tool_error("INTERNAL", str(e), 500)
+            # Task 9（批次 8a）：信封只给通用文案，str(e) 只进日志——防绝对路径/内部细节泄漏
+            logger.warning("desktop 附件上传失败: %s", e)
+            return _tool_error("INTERNAL", "上传失败，请稍后重试", 500)
 
     app.router.add_get("/api/tools", tools_registry_handler)
     app.router.add_get("/api/tools/calls/{callId}", tools_call_status_handler)

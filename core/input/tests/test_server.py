@@ -1047,6 +1047,121 @@ class TestImageUpload:
         )
         assert status == 415, f"expected 415, got {status}: {body.decode()}"
 
+    @pytest.mark.asyncio
+    async def test_upload_write_error_envelope_no_exception_text(
+            self, image_app, monkeypatch):
+        """写盘抛 OSError（含绝对路径）→ 500 信封不含路径/异常原文（Task 9，:584）。"""
+        import os as _os
+
+        def boom(*args, **kwargs):
+            raise OSError("EACCES: /home/user/secret.png")
+
+        monkeypatch.setattr(_os, "makedirs", boom)
+        status, body = await self._post(
+            image_app(), "test.png", _PNG_HEADER + b"\x00" * 100, "image/png")
+        assert status == 500, f"expected 500, got {status}: {body.decode()}"
+        text = body.decode()
+        assert "/home/" not in text and "EACCES" not in text
+        assert "secret.png" not in text
+        data = json.loads(body)
+        assert "error" in data
+
+
+# ── Task 9（批次 8a A 簇 minor）：错误信封不泄漏异常文本/绝对路径 ────────────
+
+@pytest.mark.service
+class TestErrorEnvelopeNoExceptionText:
+    """Task 9（批次 8a）：错误信封只含通用文案，str(e) 只进日志。
+
+    四个信封点：api_routes.py:299（provider save）/ :330（provider delete）/
+    :584（image 上传 ImageUploadError）/ :960（desktop 上传 _tool_error）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_provider_save_error_envelope_no_exception_text(
+            self, aiohttp_client, monkeypatch):
+        """add_provider 抛 OSError（含绝对路径）→ 500 ApiFail 信封不含路径/异常原文。"""
+        from core.input import custom_providers as cp
+        from core.input.server import create_app
+
+        def boom(*args, **kwargs):
+            raise OSError("EACCES: /home/user/secret.txt")
+
+        monkeypatch.setattr(cp, "add_provider", boom)
+        app = create_app(_make_agent(), serve_static=False)
+        client = await aiohttp_client(app)
+        resp = await client.post("/api/providers", json={
+            "service": "llm",
+            "entry": {"name": "x", "runtime": "desktop"},
+        })
+        body = (await resp.read()).decode()
+        assert resp.status == 500, f"expected 500, got {resp.status}: {body}"
+        assert "/home/" not in body and "EACCES" not in body
+        assert "secret.txt" not in body
+        assert "error" in json.loads(body)
+
+    @pytest.mark.asyncio
+    async def test_provider_delete_error_envelope_no_exception_text(
+            self, aiohttp_client, monkeypatch):
+        """remove_provider 抛 OSError（含绝对路径）→ 500 ApiFail 信封不含路径/异常原文。"""
+        from core.input import custom_providers as cp
+        from core.input.server import create_app
+
+        def boom(*args, **kwargs):
+            raise OSError("EACCES: /home/user/secret.txt")
+
+        monkeypatch.setattr(cp, "remove_provider", boom)
+        app = create_app(_make_agent(), serve_static=False)
+        client = await aiohttp_client(app)
+        resp = await client.delete("/api/providers/llm/x")
+        body = (await resp.read()).decode()
+        assert resp.status == 500, f"expected 500, got {resp.status}: {body}"
+        assert "/home/" not in body and "EACCES" not in body
+        assert "secret.txt" not in body
+        assert "error" in json.loads(body)
+
+    @pytest.mark.asyncio
+    async def test_desktop_upload_error_envelope_no_exception_text(
+            self, aiohttp_client, monkeypatch, tmp_path):
+        """desktop 附件写盘抛 OSError（含绝对路径）→ 500 信封不含路径/异常原文。"""
+        from aiohttp import FormData
+        from core.input.server import create_app
+
+        agent = MagicMock()
+        agent.output = MagicMock()
+        agent.bus = MagicMock()
+        agent.config = MagicMock()
+        agent.config.server.attachment_sig_secret = "test-secret"
+        agent.config.server.image_max_mb = 10
+        agent.config.server.image_allowed_types = ["image/png"]
+        agent.desktop_bridge = MagicMock()
+        agent.desktop_bridge.get_call = AsyncMock(return_value={
+            "target_connection": "conn_test",
+            "status": "running",
+        })
+        monkeypatch.setenv("ELYSIA_PATH_DATA_UPLOADS_DESKTOP",
+                           str(tmp_path / "uploads" / "desktop"))
+
+        def boom(*args, **kwargs):
+            raise OSError("EACCES: /home/user/secret.bin")
+
+        monkeypatch.setattr(os, "makedirs", boom)
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+
+        form = FormData()
+        form.add_field("file", _PNG_HEADER + b"\x00" * 64,
+                       filename="shot.png", content_type="image/png")
+        resp = await client.post("/api/uploads/desktop/call_test",
+                                 data=form,
+                                 headers={"X-Client-Connection": "conn_test"})
+        body = (await resp.read()).decode()
+        assert resp.status == 500, f"expected 500, got {resp.status}: {body}"
+        assert "/home/" not in body and "EACCES" not in body
+        assert "secret.bin" not in body
+        data = json.loads(body)
+        assert "error" in data
+
 
 # ============================================================
 # Fix assertion-less tests
