@@ -465,6 +465,7 @@ class CognitiveLoop(CognitiveTools):
             # 批次 3：conversation_id 贯通（generation.* wire 的 conversationId 数据源）。
             # 批次 5（D8）：model_id 捕获 llm.model 快照——统一回合事件 Started/Completed/
             # Failed 的 model 数据源，替代 completed 时即时读取（保证同一次快照）。
+            # 批次 8b（D5）：protocol_version 贯通——空响应兜底按版本分支（v2 发 segment）。
             self._generation_ctx = GenerationContext(
                 generation_id=new_generation_id(),
                 user_message_id=message_id or "",
@@ -472,6 +473,7 @@ class CognitiveLoop(CognitiveTools):
                 conversation_id=gen_conversation_id,
                 model_id=self._llm.model,
                 request_id=rid,
+                protocol_version=protocol_version,
             )
             self._turn_failed_emitted = False
             # 批次 3（BE-024）：generation 建档（status=running）。只在 process 开头
@@ -927,8 +929,24 @@ class CognitiveLoop(CognitiveTools):
                 self._character_engine.analyze_assistant(public_text)
             if not speaking_started:
                 await self._output.typing(False)
-                msg = MessageObj(content=public_text)
-                await self._output.send(msg)
+                ctx = self._generation_ctx
+                if ctx is not None and ctx.protocol_version >= 2:
+                    # 批次 8b（D5）：v2 发 v2 兼容 segment（channel=public_reply）——
+                    # 替代 v1 message 帧，客户端以 segment.completed.content 为渲染真值
+                    # （protocol-v2 §2 注）。
+                    # F4：TEXT_DELTA 已流式开段但未出 SENTENCE 边界时 current_segment_id
+                    # 已非 None——直接完成现有段，不重复 open（防悬空段+文本重复）。
+                    if ctx.current_segment_id is not None:
+                        await self._output.segment_completed(public_text, ctx)
+                        ctx.close_segment()
+                    else:
+                        ctx.open_segment("public_reply", "text")
+                        await self._output.segment_started(ctx)
+                        await self._output.segment_completed(public_text, ctx)
+                        ctx.close_segment()
+                else:
+                    msg = MessageObj(content=public_text)
+                    await self._output.send(msg)
         if public_text.strip():
             assistant_parts, content_type = build_parts(all_sentences, blocks)
             # 批次 2：assistant 父消息 ID 用 generation 开始预分配的 ID（贯通 ACK/session 对齐）

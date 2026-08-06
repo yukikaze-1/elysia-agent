@@ -29,6 +29,8 @@ class GenerationContext:
         current_segment_id: 当前打开分段的 ID（无活动分段为 None）。
         current_segment_index: 当前分段的全局序号（无活动分段为 None）。
         channel / kind: 当前分段通道/类型（无活动分段为 None）。
+        protocol_version: 来源协议版本（1=v1，2=v2）。批次 8b D5：空响应兜底按
+            协议版本分支——v2 发 segment 帧，v1 保持 MessageObj。默认 1（既有构造兼容）。
     """
 
     generation_id: str
@@ -37,6 +39,7 @@ class GenerationContext:
     conversation_id: str | None = None
     model_id: str = ""
     request_id: str | None = None
+    protocol_version: int = 1
     segment_index: int = 0
     delta_sequence: int = 0
     current_segment_id: str | None = None
