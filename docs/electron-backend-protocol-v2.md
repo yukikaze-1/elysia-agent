@@ -520,6 +520,6 @@ multipart 字段：`files[]`（一个或多个文件字段）+ `kind`（可选�
 - `V2TextMessage` 增可选 **`attachments: AttachmentRef[]`** 与 **`stickerId: string`**：`AttachmentRef{attachmentId(att_), kind, mime}`——kind/mime 为**客户端提示值**，服务端以 `attachments` 集合记录为准（不校验提示与记录一致，展示用记录值）；stickerId（st_ 前缀）与 attachments 可共存或独立。附件/sticker-only 消息触发生成（`content` 可空）。
 - `ContentPart` 判别联合含 6 类：text/image/file/audio/video/sticker；Image/File/Audio/Video Part 均带 **`attachment_id`**（att_ 前缀，消息关联）；`StickerPart{sticker_id, src=/static/stickers/{id}.png}`（无 attachment_id）。
 - **幂等摘要输入含附件与 sticker**：`not attachments and stickerId is None → digest=sha256(text)`；否则 `digest=sha256(text + "\x00" + ",".join(sorted(attachment_ids)) + "\x00" + (stickerId or ""))`——同文本换附件/表情不误判重放（`attachments: []` 空数组等同缺省）。
-- 队列满（`process_message` 返回 False）→ ACK `rejected` + `error{code: QUEUE_FULL, retryable: true}`，幂等 entry 删除（重试允许重新进入），refs 不递增。
+- 队列满（`process_message` 返回 False）→ ACK `rejected` + `error{code: QUEUE_FULL, retryable: true}`，幂等 entry 删除（重试允许重新进入），refs 不递增。**批次 8b：纯文本 v2 路径与附件/表情路径统一**——均「先 process 后判定」，队列满/process_message 抛异常（`INTERNAL`，删 entry）都发 rejected，不再漏发 accepted。
 - **资源索引**：sticker 分类经 StickerPart 填充为 `/static/stickers/{id}.png`（§9 行同步）；附件项（`/api/attachments/{id}`）经 `_attachment_available` **软删过滤**——记录 deleted/不存在/Mongo 离线保守不展示。
 - **关联 ID（P7-12）**：`ErrorMessage.requestId` 数据源为 WS 侧请求 ID（UserInputData.request_id，`get_request_id()` ContextVar）；有则带、无则 None 缺省省略——客户端可凭此关联日志/幂等排查。`GenerationRegistry` 亦记 `request_id`。

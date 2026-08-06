@@ -326,7 +326,7 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 ### 结果
 
 - **范围**：闭合审计报告 D 簇 13 条发现（5 important + 8 minor）——WS 断连归属/ACK/幂等/空文本、语音三模式状态机边界（RECORDING/cancel/dictation）、TTS 播放控制、WAV 解析。
-- **测试**：批次 8b 全量回归 **2761 passed**（8a 基线 2731 → 净增 30）。
+- **测试**：批次 8b 全量回归 **2762 passed**（8a 基线 2731 → 净增 31）。
 
 ### 决策（D1-D6，2026-08-07 拍板）
 
