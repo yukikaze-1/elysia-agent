@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 COLLECTION = "message_archive"
 
-# query_search 支持的 category 取值 → content part 类型 / role 映射
+# query_search 支持的 category 取值 → content part 类型 / role 映射。
+# link 特殊：archive 无独立 link part，链接在 TextPart 内，category=link 走 URL 内容正则特判。
 _CATEGORY_PART_TYPES = {"text", "image", "link", "video", "audio", "file"}
 
 
@@ -388,15 +389,28 @@ class MessageRepository(Repository):
         if session_id is not None:
             filter_expr["session_id"] = session_id
 
-        # 内容匹配：query 正则 + category part 类型合并为单条 $elemMatch
-        # （Mongo 不允许同字段两条 $elemMatch，故合并；category=tool 走 role 过滤）
-        elem: dict = {}
+        # 内容匹配：query 与 category 拆两条 $elemMatch 用 $and（不同 part 元素可分别命中）
+        elem_text: dict = {}   # 关键词只命中 text part 的 content
+        elem_type: dict = {}   # category 命中对应 part 的 type
         if query:
-            elem["content"] = {"$regex": query, "$options": "i"}
-        if category is not None and category in _CATEGORY_PART_TYPES:
-            elem["type"] = category
-        if elem:
-            filter_expr["content"] = {"$elemMatch": elem}
+            elem_text = {"type": "text",
+                         "content": {"$regex": query, "$options": "i"}}
+        if category == "link":
+            elem_type = {"type": "text",
+                         "content": {"$regex": r"(https?://|www\.)", "$options": "i"}}
+        elif category in _CATEGORY_PART_TYPES - {"text", "link"}:
+            elem_type = {"type": category}
+        elif category == "text" and not query:
+            elem_type = {"type": "text"}
+        elem = []
+        if elem_text:
+            elem.append({"$elemMatch": elem_text})
+        if elem_type:
+            elem.append({"$elemMatch": elem_type})
+        if len(elem) == 1:
+            filter_expr["content"] = elem[0]
+        elif len(elem) == 2:
+            filter_expr["$and"] = [{"content": e} for e in elem]
         if category == "tool":
             filter_expr["role"] = "tool"
 

@@ -734,6 +734,20 @@ class TestSearchMessages:
         assert "找到了数据" in item["snippet"]
 
     @pytest.mark.asyncio
+    async def test_search_unknown_category_400(self, aiohttp_client):
+        """批次 8a D4：category 白名单外取值 → 400 CONTRACT_VALIDATION。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_cat")
+        await _seed_text_messages(agent, "conv_test_cat", 1, prefix="cat")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/api/search/messages", params={"category": "bogus"})
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["code"] == "CONTRACT_VALIDATION"
+
+    @pytest.mark.asyncio
     async def test_search_snippet_first_100(self, aiohttp_client):
         agent = _FakeAgent()
         await _create_session(agent, "conv_test_snip")

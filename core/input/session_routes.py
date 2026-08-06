@@ -585,6 +585,12 @@ async def search_messages_handler(request: web.Request) -> web.Response:
     cursor = request.query.get("cursor", "").strip() or None
     limit = _parse_limit(request, default=20, cap=100)
 
+    # category 白名单校验：非空且不在已知取值 → 400 CONTRACT_VALIDATION
+    # （D4/BE-031：未知 category 不能静默放行——query_search 只会恒空，掩盖请求错误）
+    if category is not None and category not in (
+            "text", "image", "video", "audio", "file", "link", "tool"):
+        return _error_response("CONTRACT_VALIDATION", f"不支持的 category: {category}")
+
     # 时区校验：仅日期过滤时 zoneinfo 参与；未知时区 → 400 INVALID_TIMEZONE
     # （query_search 内部吞掉异常返回空，故在调用前显式校验）。
     if date_from or date_to:

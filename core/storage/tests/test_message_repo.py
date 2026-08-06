@@ -352,6 +352,35 @@ class TestMessageRepositoryBatch3:
         messages, *_ = asyncio.run(repo.query_search(category="tool"))
         assert [m.message_id for m in messages] == ["msg-1"]
 
+    def test_query_search_category_link_matches_url_text(self):
+        # 含 https 链接的消息 → category=link 命中（链接在 TextPart 内，archive 无独立 link part）
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [
+            _archive_doc("user", "看 https://example.com 这里", "msg-0", "2026-08-01T10:00:00+00:00"),
+            _archive_doc("user", "www.example.org 也是链接", "msg-1", "2026-08-01T10:01:00+00:00"),
+            _archive_doc("user", "纯文本没有链接", "msg-2", "2026-08-01T10:02:00+00:00"),
+        ])
+        messages, *_ = asyncio.run(repo.query_search(category="link"))
+        assert {m.message_id for m in messages} == {"msg-0", "msg-1"}
+
+    def test_query_search_keyword_plus_category_and(self):
+        # query + category 组合（不同 part 元素）：关键词命中 text part、分类命中 image part
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [
+            _archive_doc("user", [{"type": "text", "content": "这是一张配图"},
+                                  {"type": "image", "src": "https://x/a.png"}],
+                         "msg-0", "2026-08-01T10:00:00+00:00"),
+            _archive_doc("user", [{"type": "text", "content": "配图"},
+                                  {"type": "text", "content": "但没有图片"}],
+                         "msg-1", "2026-08-01T10:01:00+00:00"),
+        ])
+        messages, *_ = asyncio.run(repo.query_search(query="配图", category="image"))
+        assert [m.message_id for m in messages] == ["msg-0"]
+
     def test_query_search_cursor_pagination_desc(self):
         from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
         fake = FakeDocumentDBBackend()
