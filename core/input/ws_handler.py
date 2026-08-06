@@ -302,11 +302,12 @@ async def handle_ws(
 
             elif msg.type == WSMsgType.BINARY:
                 # 批次 6：有活动语音会话 → 喂给会话管理器（RECORDING/REALTIME/DICTATION 分流）；
-                # 否则 → legacy AudioBuffer VAD 自动提交（现状逐字节不变）。voice_mgr 恒非 None，
-                # 判空仅兜底。
+                # 批次 8b（D2）：v2 连接 BINARY 只在 voice_mgr 会话内有效——无会话 → 丢弃，
+                # 不落 legacy audio_buf（否则 RECORDING 复位残留帧绕过 commit 自动成轮次）；
+                # legacy VAD 自动提交仅 v1（现状逐字节不变）。voice_mgr 恒非 None，判空仅兜底。
                 if voice_mgr is not None and voice_mgr.has_active_session():
                     await voice_mgr.feed_pcm(msg.data)
-                elif audio_buf and agent.stt_enabled:
+                elif protocol_version < 2 and audio_buf and agent.stt_enabled:
                     await audio_buf.feed(msg.data)
 
             elif msg.type == WSMsgType.ERROR:

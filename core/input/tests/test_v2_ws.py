@@ -9,6 +9,7 @@
 
 import asyncio
 import json
+import struct
 
 import pytest
 from aiohttp import WSMsgType
@@ -380,5 +381,93 @@ class TestV2Reconnect:
             docs, _, _ = await reg.query_by_session("default")
             assert docs and docs[-1]["status"] == "interrupted"
             assert docs[-1]["finished_at"]
+        finally:
+            await agent.stop()
+
+
+@pytest.mark.service
+class TestV2BinaryNoLegacy:
+    """D2：v2 连接 BINARY 只在 voice_mgr 会话内有效——无会话 → 丢弃，不落 legacy。
+
+    对照实验：v1 对同样响度音频走 legacy 路径触发 STT（证明 harness 能驱动 legacy）；
+    v2 实验组同音频零 STT 调用（D2 门生效）。全零 PCM 不触发 WebRTC VAD（静音），
+    必须用响度波形才能让旧代码真正红。
+    """
+
+    class _CountingSTT:
+        provider_name = "fake"
+        model = "fake/model"
+        def __init__(self, calls):
+            self._calls = calls
+        async def transcribe(self, audio: bytes, **kwargs):
+            self._calls.append(len(audio))
+            return "你好"
+        async def close(self):
+            pass
+
+    @staticmethod
+    def _loud(samples=1600):   # 0.1s @16kHz
+        return struct.pack(f"<{samples}h", *([20000] * samples))
+
+    @staticmethod
+    def _sil(samples=1600):
+        return struct.pack(f"<{samples}h", *([5] * samples))
+
+    async def _send_speech_and_wait(self, ws):
+        """喂 ~3s 响度语音 + 持续静音，等待 legacy VAD 分段触发（silence_duration=1.5s）。"""
+        for _ in range(30):
+            await ws.send_bytes(self._loud())
+            await asyncio.sleep(0.02)      # 30 × 0.1s ≈ 3s 语音
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + 3.0
+        while loop.time() < deadline:
+            await ws.send_bytes(self._sil())
+            await asyncio.sleep(0.2)       # 静音累积 → 段完成 → STT
+
+    def _make_agent(self):
+        from core.cognitive.tests.test_v2_generation import _make_agent_with, _UsageLLM
+        calls: list[int] = []
+        agent = _make_agent_with(_UsageLLM())
+        agent._stt = self._CountingSTT(calls)   # noqa: SLF001 — 测试注入只读槽位
+        return agent, calls
+
+    @staticmethod
+    def _enable_stt(agent) -> None:
+        # 必须在 start() 之后注入：_apply_service_state 启动时按 service_state/config
+        # 重写 _stt_enabled（config.stt.enabled=False），start 前设 True 会被覆盖掉。
+        agent._stt_enabled = True  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_v1_binary_drives_legacy_stt(self, aiohttp_client, fresh_idempotency):
+        """v1 对照：同音频 legacy 路径触发 STT——harness 有效（未改路径行为保持）。"""
+        from core.input.server import create_app
+        agent, calls = self._make_agent()
+        await agent.start()
+        self._enable_stt(agent)
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "1"})
+            await self._send_speech_and_wait(ws)
+            assert calls, "v1 legacy 路径应触发 STT（对照）"
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v2_binary_without_voice_session_never_transcribes(
+            self, aiohttp_client, fresh_idempotency):
+        """v2 实验组：同音频零 STT 调用——D2 门生效。"""
+        from core.input.server import create_app
+        agent, calls = self._make_agent()
+        await agent.start()
+        self._enable_stt(agent)
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await self._send_speech_and_wait(ws)
+            assert calls == []  # v2 无语音会话 → 不落 legacy，STT 零调用
+            await ws.close()
         finally:
             await agent.stop()
