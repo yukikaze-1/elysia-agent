@@ -115,6 +115,7 @@ async def run_attachment_gc(repo: Any, *, deleted_retention_hours: int = 24,
         # ---- 规则 1：软删超保留期 → 删文件 + 删记录 ----
         for doc in deleted:
             aid = doc.get("attachment_id")
+            kind = doc.get("kind")
             deleted_at = doc.get("deleted_at")
             if not aid or not deleted_at:
                 continue
@@ -127,9 +128,10 @@ async def run_attachment_gc(repo: Any, *, deleted_retention_hours: int = 24,
             if path is not None and path.is_file():
                 try:
                     path.unlink()
-                    logger.info("附件 GC：删除软删超期文件 %s (%s)", path, aid)
+                    logger.info("附件 GC：删除软删超期文件 aid=%s kind=%s", aid, kind)
                 except OSError:
-                    logger.warning("附件 GC：删文件失败 %s (%s)", path, aid, exc_info=True)
+                    logger.warning("附件 GC：删文件失败 aid=%s，保留记录待重试", aid)
+                    continue   # 不删记录，下次 GC 重试
             await repo.delete_record(aid)
             attachment_resolver.unregister(aid)
             stats["deleted_files"] += 1
@@ -149,7 +151,8 @@ async def run_attachment_gc(repo: Any, *, deleted_retention_hours: int = 24,
             attachment_resolver.unregister(aid)
             soft_deleted_ids.add(aid)
             stats["soft_deleted"] += 1
-            logger.warning("附件 GC：active 记录磁盘文件缺失，软删 %s (%s)", path, aid)
+            logger.warning("附件 GC：active 记录磁盘文件缺失，软删 aid=%s kind=%s",
+                           aid, doc.get("kind"))
 
         # ---- 规则 3：未关联（ref_count=0）超保留期 → 软删 ----
         for doc in unref_candidates:
@@ -183,9 +186,10 @@ async def run_attachment_gc(repo: Any, *, deleted_retention_hours: int = 24,
                     f.unlink()
                     stats["orphans_removed"] += 1
                     _unregister_matching(kind, f.name)
-                    logger.info("附件 GC：删除磁盘孤儿文件 %s", f)
+                    logger.info("附件 GC：删除磁盘孤儿文件 kind=%s name=%s", kind, f.name)
                 except OSError:
-                    logger.warning("附件 GC：删孤儿文件失败 %s", f, exc_info=True)
+                    logger.warning("附件 GC：删孤儿文件失败 kind=%s name=%s",
+                                   kind, f.name, exc_info=True)
     except StorageUnavailableError:
         logger.warning("附件 GC 中断：MongoDB 中途离线", exc_info=True)
         stats["skipped"] = True

@@ -18,6 +18,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -124,6 +125,44 @@ class TestRule1DeletedExpired:
         assert result["deleted_files"] == 0
         assert _run(repo.get("att_recent")) is not None  # 记录保留
         assert f.exists()                                # 文件保留
+
+    def test_gc_log_no_absolute_path(self, uploads, caplog):
+        """规则1 GC 日志不泄露绝对路径（I5——只记 aid/kind，不记 path）。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        old = _iso(datetime.now(timezone.utc) - timedelta(hours=25))
+        _run(repo.create(_doc(
+            attachment_id="att_log", status=STATUS_DELETED, deleted_at=old,
+            kind="image", stored_name="log.png")))
+        _write(uploads, "image/log.png")
+
+        # GC 规则1 日志是 INFO 级——须显式 at_level(INFO) 才会被捕获（I5）
+        with caplog.at_level(logging.INFO):
+            _run(run_attachment_gc(repo))
+
+        assert not any("/home/" in r.message or "data/uploads" in r.message
+                       for r in caplog.records)
+
+    def test_gc_rule1_keeps_record_on_unlink_error(self, uploads, monkeypatch, caplog):
+        """文件存在但 unlink 抛 OSError → 记录保留（不 delete_record），下次 GC 重试。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        old = _iso(datetime.now(timezone.utc) - timedelta(hours=25))
+        _run(repo.create(_doc(
+            attachment_id="att_keep", status=STATUS_DELETED, deleted_at=old,
+            kind="image", stored_name="keep.png")))
+        f = _write(uploads, "image/keep.png")
+
+        def raise_oserror(self, *args, **kwargs):
+            raise OSError("simulated unlink failure")
+
+        monkeypatch.setattr(Path, "unlink", raise_oserror)
+
+        with caplog.at_level(logging.WARNING):
+            result = _run(run_attachment_gc(repo))
+
+        assert _run(repo.get("att_keep")) is not None  # 记录仍在
+        assert result["deleted_files"] == 0            # 未计入删文件
+        assert f.exists()                              # 文件仍在
+        assert any("保留记录待重试" in r.getMessage() for r in caplog.records)
 
 
 class TestRule2ActiveFileMissing:
