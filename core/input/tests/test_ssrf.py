@@ -105,6 +105,15 @@ def test_is_blocked_ip_covers_cgnat_and_keeps_public():
 
 
 @pytest.mark.unit
+def test_is_blocked_ip_covers_site_local_ipv6():
+    from core.input.ssrf import _is_blocked_ip
+
+    assert _is_blocked_ip("fec0::1") is True  # site-local（当前漏判 → 放行）
+    assert _is_blocked_ip("fe80::1") is True  # link-local（已有）
+    assert _is_blocked_ip("2001:4860:4860::8888") is False  # 公网（既有 test_ssrf.py 用址）
+
+
+@pytest.mark.unit
 def test_allowed_headers_exact_set():
     """Header 允许名单：仅 Authorization/Content-Type/Accept/User-Agent。"""
     assert _ALLOWED_HEADERS == {

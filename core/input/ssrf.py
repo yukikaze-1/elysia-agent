@@ -71,6 +71,7 @@ def _is_blocked_ip(ip: str) -> bool:
     return (
         addr.is_loopback
         or addr.is_link_local
+        or getattr(addr, "is_site_local", False)  # 批次 8a：site-local IPv6 fec0::/10（仅 IPv6 有该属性）
         or addr.is_private
         or addr.is_reserved
         or addr.is_multicast
