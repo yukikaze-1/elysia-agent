@@ -76,6 +76,24 @@ class TestHealthEndpoints:
         assert isinstance(data["uptime"], (int, float))
 
     @pytest.mark.asyncio
+    async def test_health_does_not_advance_request_counter(self, app, aiohttp_client, monkeypatch):
+        """探活不扰动 request_id 计数器——3 次 /health 后 next_request_id 零调用（批次 8a Task 15）。"""
+        agent = app["agent"]
+        calls = {"n": 0}
+        orig = agent.next_request_id
+
+        def spy(*_args, **_kwargs):
+            calls["n"] += 1
+            return orig()
+
+        monkeypatch.setattr(agent, "next_request_id", spy)
+        client = await aiohttp_client(app)
+        for _ in range(3):
+            resp = await client.get("/health")
+            assert resp.status == 200
+        assert calls["n"] == 0
+
+    @pytest.mark.asyncio
     async def test_hanging_dep_timeout_treated_down(self, app, aiohttp_client):
         """依赖检查被 asyncio.wait_for 包裹——挂起依赖超时后按 down 处理，请求不阻塞。"""
         agent = app["agent"]

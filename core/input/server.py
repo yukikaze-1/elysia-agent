@@ -194,11 +194,9 @@ async def _collect_health_payload(agent: "Agent") -> dict:
     except Exception:
         fsm_state = "unknown"
 
-    try:
-        rid = agent.next_request_id()
-        request_id = rid if isinstance(rid, str) else f"req_{uuid.uuid4().hex[:24]}"
-    except Exception:
-        request_id = f"req_{uuid.uuid4().hex[:24]}"
+    # 探活不应扰动 request_id 计数器（批次 8a Task 15）：request_id 独立 uuid 生成，
+    # 不触碰 agent.next_request_id（该计数器由真实业务请求/生成链路驱动）。
+    request_id = f"req_{uuid.uuid4().hex[:24]}"
 
     return {
         "status": status,
