@@ -434,6 +434,51 @@ class TestAttachmentMessage:
         finally:
             await agent.stop()
 
+    @pytest.mark.asyncio
+    async def test_rest_delete_session_releases_attachments(self, aiohttp_client):
+        """REST 删会话 → 先释放归档消息附件 refs 再删会话（remove_ref 被调，BE-030+BE-070）。
+
+        批次 8a（D5）：sessions_delete_handler 在 session_manager.delete 前调
+        release_session_attachments——归档含 attachment_id="att_x" 消息的会话删除时
+        附件 remove_ref 必须被触发（否则附件记录 refs 泄漏成孤儿）。
+        """
+        from core.schema.message import UserMessage
+        from core.schema.part import ImagePart, TextPart
+
+        agent, app = _make_agent_app()
+        repo = agent._attachment_repo  # noqa: SLF001
+        _add_attachment(repo, "att_x")
+        client = await aiohttp_client(app)
+        await agent.start()
+        try:
+            # 会话 s1 存在（session_manager 内存缓存池构造）——REST 删除存在性检查前置
+            agent.session_manager.get("s1")
+            # 播种 s1 的一条含附件归档消息（attachment_id="att_x"）
+            await agent.message_repo.append("s1", UserMessage(
+                content=[TextPart(content="图片"),
+                         ImagePart(src="/api/attachments/att_x", attachment_id="att_x")],
+                message_id="msg_s1", session_id="s1",
+            ))
+            # 模拟已有引用
+            repo.records["att_x"]["refs"] = ["msg_s1"]
+            repo.records["att_x"]["ref_count"] = 1
+
+            # spy remove_ref：断言 REST 删除路径触发了附件引用释放
+            removed = []
+            original = agent.attachment_repo.remove_ref
+
+            async def spy(aid, mid):
+                removed.append((aid, mid))
+                await original(aid, mid)
+
+            agent.attachment_repo.remove_ref = spy
+
+            resp = await client.delete("/api/sessions/s1")
+            assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+            assert any(aid == "att_x" for aid, _ in removed)
+        finally:
+            await agent.stop()
+
 
 class TestResolveImageSource:
     @pytest.mark.asyncio

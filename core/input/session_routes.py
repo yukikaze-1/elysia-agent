@@ -20,6 +20,7 @@ from core.input.api_routes import _archive_to_client, _archive_msg_to_contract
 from core.schema.message import MessageRole
 from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart
 from core.schema.utils import now_iso
+from core.storage.attachment_release import release_session_attachments
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from frontend_contract import rest as rest_contract
 from frontend_contract.rest import ProtocolError
@@ -489,6 +490,13 @@ async def sessions_delete_handler(request: web.Request) -> web.Response:
         if status is not None and not status.is_accepting_input:
             return _error_response("AGENT_BUSY", "Agent 忙（生成/TTS 中），无法删除活动会话",
                                    409, retryable=True)
+    # 批次 8a（D5）：删除前释放该会话归档消息的附件 refs（附件软删联动，
+    # 闭合 BE-030 会话删除 + BE-070 附件引用释放闭环）。先 release 再 delete——
+    # session_manager.delete 会清空该会话归档，附件 refs 需在归档清空前取到。
+    try:
+        await release_session_attachments(agent, sid)
+    except Exception as e:
+        logger.warning("sessions_delete 附件释放失败 sid=%s: %s", sid, e)
     deleted = await agent.session_manager.delete(sid)
     return web.json_response({"ok": True, "deleted": deleted})
 
