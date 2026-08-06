@@ -89,7 +89,7 @@ server {
 
 ## 3. 限制保护
 
-- `max_request_bytes`（默认 8MB）：业务 JSON body 上限，超限 413 `REQUEST_TOO_LARGE`；
+- `max_request_bytes`（默认 64MB，批次 7 由 8MB 提高）：业务 JSON body 上限，超限 413 `REQUEST_TOO_LARGE`；上传端点经 handler 逐文件自限（10/50/20MB）+ 聚合 64MB 双重约束（批次 7 §13.1）；
 - `max_ws_connections`（默认 64）：并发 WS 上限，超限 503 `CONNECTION_LIMITED`；
 - 图片上传大小/类型沿用 `image_max_mb` / `image_allowed_types`（415 `INVALID_REQUEST` 映射）——含 `POST /api/uploads/desktop/{callId}`（批次 4 桌面附件，图片走同约束 + `application/octet-stream` 等通用文件白名单）。
 
