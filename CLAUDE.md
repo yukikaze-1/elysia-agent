@@ -164,7 +164,9 @@ core/
 │   ├── token_repo.py       #   TokenRepository: token usage statistics
 │   ├── memory_repo.py      #   MemoryRepository: LTM Milvus operations
 │   ├── generation_repo.py  #   GenerationRepository: generation 生命周期 upsert/query（BE-024）
-│   └── character_version_repo.py # CharacterVersionRepository: L2/C6 version history
+│   ├── character_version_repo.py # CharacterVersionRepository: L2/C6 version history
+│   ├── attachment_repo.py  #   AttachmentRepository: attachments 集合（fail-closed，BE-070——Mongo 离线 raise StorageUnavailableError → 503；refs/ref_count + 软删 status/deleted_at）
+│   └── attachment_gc.py    #   AttachmentGC: 启动兜底扫描四规则（软删超 24h 物理删 / active 文件缺失软删 / 未关联超 7 天软删 / 磁盘孤儿删文件，限四 kind 目录，BE-071）
 ├── config/                 # Config sub-package: character_config + app_config
 │   ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
 │   ├── app_config.py          # AgentConfig: YAML-loaded app configuration
@@ -182,8 +184,8 @@ core/
 ```
 frontend_contract/
 ├── base.py                 # ContractModel 基类 + TsNull marker + wire_key + wire_dict 序列化
-├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（39 具名成员，批次 6 语音/TTS 播放契约）+ 多条 Client→Server + 支持类型
-├── rest.py                 # REST 业务契约：providers / images / messages / api 响应（12 模型）
+├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（39 具名成员，批次 6 语音/TTS 播放契约）+ 多条 Client→Server + 支持类型（ContentPart 6 类判别联合 + AttachmentRef + V2TextMessage.attachments/stickerId + ErrorMessage.requestId + ServerInfoMessage.build_sha/media_upload，批次 7）
+├── rest.py                 # REST 业务契约：providers / images / messages / 多会话 / Desktop / 附件与表情（AttachmentInfo/AttachmentUploadResponse/AttachmentSignResponse/StickerEntry/StickerListResponse，批次 7）等 40 模型
 ├── debug.py                # Debug API 契约：/debug/api 响应（DebugData 16 面板等 38 模型）
 ├── gen_ts.py               # TS 发射器：BaseModel → contract.generated.ts（拓扑排序 + 同名安全网）
 ├── __main__.py             # python -m frontend_contract：动态收集子模块 → 生成 / --check 漂移检测
@@ -240,12 +242,12 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.workflow_engine` | 后台任务引擎（原 `task_system`）：ReAct 编排/规划/执行/子智能体。主类 `WorkflowEngine`；跨边类型经契约层 `Module/workflow_contract` | `orchestrator` + `planner` + `executor` + `sub_agent` |
 | `Module.workflow_contract` | 跨边契约层（core ↔ workflow_engine 唯一类型来源）：类型/枚举/协议 ABC/无状态纯函数/AgentInfra 运行时注入容器，零业务逻辑 | `schema` + `infra` + `utils` |
 | `frontend_contract` | 前后端契约单源（唯一类型来源 + 生成器 + 门禁）：可执行 Pydantic 契约模型（WS/REST/Debug）+ `gen_ts` 发射器 → `contract.generated.ts`，`make check-types` 漂移检测，零依赖（仅 pydantic + stdlib） | `base` + `ws_message` + `rest` + `debug` + `gen_ts` |
-| `core.schema` | Shared Pydantic types: EventData (discriminated union, 5 event types), ToolCall, ExtractedMemory/CompareAction (discriminated union), ReflectorActions, MemoryType, message types, mood, etc. | |
+| `core.schema` | Shared Pydantic types: EventData (discriminated union, 5 event types), ToolCall, ExtractedMemory/CompareAction (discriminated union), ReflectorActions, MemoryType, message types, mood, etc. `part.py`：Part 判别联合 6 类（含 StickerPart，批次 7）、Image/File/Audio/Video Part 带 `attachment_id`、FileMime 补值（pdf/zip/markdown） | |
 | `Module.database.vectordb` | Vector DB (ANN search) | `milvus` |
 | `Module.database.documentdb` | Document DB | `mongodb` |
 | `Module.database.graphdb` | Graph DB | stub only |
 | `Module.bench` | Latency benchmarking | Covers LLM/TTS/STT |
-| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (glue), `ws_handler.py`, `capabilities.py` (嵌套 per-service 能力声明), `api_routes.py`, `session_routes.py` (多会话/历史/搜索/资源/状态/pending REST), `voice_sessions.py` (三模式语音状态机：普通录音/实时语音/输入法转写，BE-060~062), `audio_buffer.py` (VAD 分段 + STT 提交), `debug_routes/` (package, 7 modules) |
+| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (glue), `ws_handler.py`, `capabilities.py` (嵌套 per-service 能力声明), `api_routes.py`, `attachment_routes.py` (附件签名下载 + 签发，BE-070), `session_routes.py` (多会话/历史/搜索/资源/状态/pending REST), `voice_sessions.py` (三模式语音状态机：普通录音/实时语音/输入法转写，BE-060~062), `sticker_registry.py` (内置表情注册表，BE-071), `audio_buffer.py` (VAD 分段 + STT 提交), `debug_routes/` (package, 7 modules) |
 | `Module._common` | Shared utility layer | env, registry helpers, test helpers |
 
 ## Config system
@@ -400,9 +402,9 @@ cd frontend && npm run build
 
 **Stores**: `debugStore.ts` — Pinia (Composition API): poll lifecycle, activeTab switching, pause/resume, LTM/Archive pagination state.
 
-### Server routing (`core/input/` — `server.py` + `ws_handler.py` + `capabilities.py` + `api_routes.py` + `session_routes.py` + `debug_routes/` package)
+### Server routing (`core/input/` — `server.py` + `ws_handler.py` + `capabilities.py` + `api_routes.py` + `attachment_routes.py` + `session_routes.py` + `debug_routes/` package)
 
-`/` → `static/index.html`, `/debug` → `static/debug.html`, `/ws` → WebSocket, `/health` `/ready` `/shutdown` `/restart` `/api/chat` `/api/messages` `/api/images` `/api/providers` `/tools` `/tools/reload`。批次 3 多会话 REST（`session_routes.py`）: `/api/sessions`（CRUD/activate）、`/api/sessions/{id}/messages`（before/after 分页）、`/api/messages/{mid}/context`、`/api/search/messages`、`/api/sessions/{id}/resources`、`/api/sessions/{id}/generations`、`/api/generations/{gid}`、`/api/sessions/{id}/pending`。Debug API: `/debug/api` `/debug/api/prompts/{n}` `/debug/api/responses/{n}` `/debug/api/db-status` `/debug/api/ltm` `/debug/api/sessions` `/debug/api/archive` `/debug/api/tasks/stream`
+`/` → `static/index.html`, `/debug` → `static/debug.html`, `/ws` → WebSocket, `/health`（liveness 恒 200）`/ready`（readiness，依赖不 ok → 503）`/shutdown` `/restart` `/api/chat` `/api/messages` `/api/images` `/api/providers` `/tools` `/tools/reload`。批次 3 多会话 REST（`session_routes.py`）: `/api/sessions`（CRUD/activate）、`/api/sessions/{id}/messages`（before/after 分页）、`/api/messages/{mid}/context`、`/api/search/messages`、`/api/sessions/{id}/resources`（sticker 分类经 StickerPart 填充 + 附件软删过滤，批次 7）、`/api/sessions/{id}/generations`、`/api/generations/{gid}`、`/api/sessions/{id}/pending`。批次 7 附件/媒体（`api_routes.py` + `attachment_routes.py`）: `POST /api/uploads`（通用附件上传，filetype 魔数校验 + 签名 URL）、`GET /api/attachments/{id}`（HMAC 短签下载，免 Bearer，Range/206）、`GET /api/attachments/{id}/sign`（签发，Bearer）、`GET /api/stickers`（内置表情包）、`POST /api/uploads/desktop/{callId}`（批次 4 桌面附件）。`/uploads/` 静态挂载收敛：仅 images/desktop 子目录（新 kind 目录不静态暴露）。Debug API: `/debug/api` `/debug/api/prompts/{n}` `/debug/api/responses/{n}` `/debug/api/db-status` `/debug/api/ltm` `/debug/api/sessions` `/debug/api/archive` `/debug/api/tasks/stream`
 
 ## CharacterEngine
 
@@ -431,6 +433,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 | `message_archive` | MongoDB `default.message_archive` | Permanent append-only message log |
 | `token_usage` | MongoDB `default.token_usage` | LLM token statistics |
 | `long_term_memory` | Milvus `long_term_memory` | ExtractedMemory (Pydantic) → CompareAction (insert/update/merge/skip) → vector with reranking |
+| `attachments` | MongoDB `default.attachments` | 附件元数据（BE-070，fail-closed）：ref_count/refs/status（软删 deleted_at）；TTL 不设，生命周期由 GC 管（24h/7d 规则） |
 
 ## Conventions
 

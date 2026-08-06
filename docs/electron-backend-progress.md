@@ -253,3 +253,39 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 - realtime「partial/final」为**分段级**伪流式（VAD 分段字幕 + 轮次提交），非词级增量——非流式 STT 架构下的合理解释，spec P6-3 明示。
 - 背压「最大未确认块」为客户端窗口（`MAX_UNACKED=200`），服务端仅发 ack 不下发硬性限流（spec §5.3 明示设计）。
 - RECORDING 超长丢弃后残余 BINARY 回落 legacy 路径（超限边界）。
+
+---
+
+## 批次 7：通用附件与媒体 / 版本与可观测性（BE-070/071/081） ✅ 完成
+
+**提交：** `6e0cadf`（契约层——媒体 Part/附件模型/签名响应/stickerId/build_sha/media_upload/requestId）`96dcb4e`（存储层——AttachmentRepository fail-closed + AttachmentFileResolver + agent.attachment_repo 归属）`b688412`（通用上传 /api/uploads + filetype 真值校验 + 签名 URL + 64MB/静态收敛）`35b182d`（附件签名下载 + Range + 签发端点 /sign + fail-closed/fail-open）`366cadb`（内置表情包——sticker_registry + /api/stickers）`19391f6`（附件/sticker 消息关联——v2 wire + process bool + refs + 删除联动含归档 + 视觉适配）`8fc909b`（启动 GC 兜底扫描——deleted/孤儿/未引用清理，限四 kind 目录）`5497e49`（版本——git build_sha + media_upload 如实声明）`158c633`（/health//ready 拆分 + 真依赖检查 + 版本/uptime/request_id）`38dde3a`（日志正文打印收敛 + 敏感扫描测试）`59d0927`（关联 ID——WS 错误带 requestId + GenerationRegistry 记 request_id）
+**Spec：** `docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`（9 轮 review 收口）
+**Plan：** `docs/superpowers/plans/2026-08-06-electron-backend-batch7-media-and-observability.md`（4 轮 review 收口）
+
+### 结果
+
+- **契约层（Task 1）**：`ContentPart` 判别联合 6 类（text/image/file/audio/video/sticker），Image/File/Audio/Video Part 加 `attachment_id`；`rest.py` 新增 `AttachmentInfo`/`AttachmentUploadResponse`/`AttachmentSignResponse`/`StickerEntry`/`StickerListResponse`；`V2TextMessage` 加 `attachments`（`AttachmentRef`）与 `stickerId`；`ServerInfoFeatures.media_upload` + `ServerInfoMessage.build_sha`；`ErrorMessage.requestId`（WS 侧请求 ID，P7-12）。
+- **附件存储（Task 2）**：`core/storage/attachment_repo.py`（`attachments` 集合，**fail-closed**——Mongo 离线所有读写 raise `StorageUnavailableError` → 503 `STORAGE_UNAVAILABLE`；schema：attachment_id/kind/mime/size/filename/stored_name/sha256/ref_count/refs/status/deleted_at；索引 attachment_id unique + status + ref_count + created_at，TTL 不设由 GC 管）+ `AttachmentFileResolver`（进程内 ID→路径映射，图片喂 LLM 转 data URI）+ `agent.attachment_repo` 归属。
+- **通用上传（Task 3）**：`POST /api/uploads`（multipart `files[]` + 可选 `kind` 客户端意图不信任）——filetype 魔数白名单（png/jpeg/gif/webp/mp4/webm/wav/mp3/ogg/pdf/zip）+ 扩展名一致性 + kind 归位（webm tiebreaker）+ 大小复核（image 10MB / video 50MB / audio 20MB / file 20MB）+ 落盘 `data/uploads/{kind}/{uuid}.{ext}` + sha256 + `attachments` 记录（离线删文件不留孤儿）+ `AttachmentFileResolver.register`；整体聚合 64MB（`client_max_size` + payload 中间件 Content-Length 预检）；filename 脱敏（去分隔符/截 255/剥控制字符）；响应 `signedUrl` fail-closed 省略。`/uploads/` 静态挂载**收敛**为仅 legacy images/desktop 子目录（新 kind 目录不静态暴露）。
+- **签名下载 + 签发（Task 4）**：`GET /api/attachments/{id}`（免 Bearer，HMAC 短签授权）校验序 sig 合法 hex → 记录 active → exp 窗口 → `compare_digest` 验签，成功走 aiohttp `FileResponse`（原生 Range/206）；fail-open（token 空）跳过签名仅校验 active；`GET /api/attachments/{id}/sign`（Bearer）返回 `AttachmentSignResponse`；`ATTACHMENT_SIG_SECRET` fail-closed（token 配 + sig 未配 → 一律 403 `ATTACHMENT_SIGNATURE_DISABLED`）。
+- **内置表情（Task 6，BE-071）**：`core/input/sticker_registry.py`（启动扫描 `static/stickers/*.png`）+ `GET /api/stickers`（`StickerListResponse`）；sticker 为内置公共资源（公开 `/static/stickers/{id}.png`），非附件（不落集合/不 ref_count/不 GC/不上传白名单，kind=sticker → 400 `CONTRACT_VALIDATION`）。
+- **消息关联（Task 5）**：v2 `attachments`/`stickerId` wire + `process_message` 返回 bool（附件/sticker-only 消息触发生成）+ ACK 延后（accepted 才 `add_ref`；队列满 → rejected `QUEUE_FULL` 重试允许）+ 删除联动（消息删除 `remove_ref` refs 归零软删，含归档）+ 视觉适配（图片经 resolver 内存映射喂 LLM；File/Audio/Video/Sticker 不喂 LLM）。
+- **GC（Task 7）**：`core/storage/attachment_gc.py` 启动兜底扫描四规则——① 软删超 24h 删文件+记录；② active 记录文件缺失软删；③ ref_count=0 超 7 天软删；④ 磁盘孤儿删文件；Mongo 离线 skipped。
+- **版本（Task 8，BE-081）**：`core/version.py` `get_build_sha()`（git rev-parse HEAD，模块级缓存）+ `build_server_version()`（`0.1.0+sha7`）；`server_info.build_sha` + `server_version` 后缀 + `features.media_upload=true`。
+- **/health//ready 拆分 + 可观测（Task 9）**：`/health`（liveness 恒 200，status ok/degraded）+ `/ready`（readiness，依赖不 ok → 503）；探针负载含真依赖检查（mongo/milvus，2s 超时）+ fsm/llm/memory/tools/version/build_sha/uptime/request_id。
+- **日志收敛 + 关联 ID（Task 10/11）**：`ws_handler`/`loop` 正文打印收敛（只记长度/ID）；`conversation.log` **明文保留**（调试审计通道，文档标注风险）；新增「日志敏感扫描」测试；`ErrorMessage.requestId` + `GenerationRegistry` 记 `request_id`。
+- **错误码目录（批次 7）**：+`ATTACHMENT_NOT_FOUND`(404)/`SIGNATURE_EXPIRED`(403)/`INVALID_SIGNATURE`(403)/`UNSUPPORTED_MEDIA_TYPE`(415)/`TOO_MANY_FILES`(400)/`ATTACHMENT_SIGNATURE_DISABLED`(403)/`STORAGE_UNAVAILABLE`(503, retryable)/`QUEUE_FULL`(429, retryable，WS ACK rejected)——目录累计 **40 码**。完整表见 `docs/electron-backend-protocol-v2.md §9.1` + §13。
+- **测试**：批次 7 新增针对性测试 **106 passed**（`test_upload.py`/`test_attachment_download.py`/`test_attachment_message.py`/`test_stickers.py`/`test_request_id.py`/`test_log_sensitivity.py`/`test_version.py`/`test_health.py`/`test_attachment_repo.py`/`test_attachment_gc.py`/`test_attachment_resolver.py`/`test_build_info.py`/`test_batch7_contract.py` 等）；`make test-quick` **2640 passed / 2 skipped / 87 deselected**（批次 6 基线 2533 → 净增 ~107）；`make lint` 通过；`make check-types` 无漂移（`contract.generated.ts` 纯增量，v1 类型字节不变）。
+
+### 验收
+
+**docs/14 BE-070/071/081 逐项验收（2026-08-06）**：BE-070（通用上传校验矩阵：数量/大小/MIME/编码 + 稳定附件 ID + 签名下载/签发 + Range/206 + 资源索引 sticker 填充与附件软删过滤 + 引用计数/删除联动 + 结构化错误）；BE-071（Range 播放、内置表情包、GC 四规则 24h/7d）；BE-081（build_sha/版本串、/health//ready 拆分、统一错误 40 码、requestId 关联、日志收敛）。回归 `make test-quick` 2640 passed + `make check-types` 无漂移。
+
+**记录在案的取舍（spec §10）：**
+1. **旧 `/api/images` 不纳入附件体系**：两链路并存，图片迁移由前端切换驱动；前端未切换期间旧图链路安全由全局 Bearer 维持（不在签名/GC 保护内）。
+2. **视频/音频/文件/表情不喂 LLM**：`content_to_openai` 仅 text/image 进上下文（图片经 AttachmentFileResolver 内存映射转 data URI）；sticker-only/附件-only 消息触发生成、空文本喂 LLM 为已知取舍。
+3. **软删保留期 24h + 未关联 7 天**：规则 1 软删超 24h 物理删、规则 3 未引用超 7 天软删；refs 写盘失败场景由规则 3 兜底（7 天后历史消息变「附件已删除」）。
+4. **`conversation.log` 明文保留**：调试审计通道有意设计，正文打印收敛后仍全文落盘（敏感扫描测试排除该通道）。
+5. **sticker 非附件**：内置公共资源，不落 attachments/不 ref_count/不参与 GC（P7-6 四轮 review 定案）。
+6. **下载存在性 oracle**（spec 七轮 Minor 7 记录在案不修）：校验序 ②（404）在 ④（403）前，匿名可区分「active」与「不存在」；attachment_id 104-bit 不可枚举 + 单用户 demo，风险低。
+7. **payload 中间件未豁免 `/api/uploads`**（spec I3/Minor 5 设计为前缀豁免）：实际实现保留中间件，聚合 64MB 由 Content-Length 预检承担、单文件 50MB 由 handler `read_chunk` 自限承担，两条 413 路径均为 `REQUEST_TOO_LARGE`——文档按实际实现记录。

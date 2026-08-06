@@ -1,7 +1,7 @@
 # Electron 后端安全部署指南
 
-**文档版本：** v0.4（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新）
-**关联：** `docs/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`
+**文档版本：** v0.5（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新；批次 7 补 §1.2 附件免 Bearer 豁免 + §3.5 附件下载/签名安全 + 已知缺口更新）
+**关联：** `docs/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`、`docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`
 
 本文件说明 Elysia Agent 后端的**远程安全部署**方式：产品认证、TLS 终止、防护范围与已知缺口。远程部署必须遵循本指南；本地开发（回环 + 无 token）维持匿名。
 
@@ -23,8 +23,9 @@
 - `access_token` 为空 → **全匿名**（本地开发，v1 前端兼容）；
 - 非空 → 以下全部要求 `Authorization: Bearer <access_token>`：
   - `/ws` 握手（拒绝升级返回 401，非 101）；
-  - 全部业务 `/api/*`（`/api/chat` `/api/messages` `/api/providers` `/api/images` **`/api/tools` `/api/tools/calls/{callId}`**（批次 4，BE-042））；
+  - 全部业务 `/api/*`（`/api/chat` `/api/messages` `/api/providers` `/api/images` **`/api/tools` `/api/tools/calls/{callId}`**（批次 4，BE-042）**`/api/uploads` `/api/stickers` `/api/attachments/{id}/sign`**（批次 7，BE-070/071））；
   - `/uploads/*` GET 资源读取（**含 `/uploads/desktop/*`**，批次 4 附件落盘目录）。
+- **唯一免 Bearer 的业务路径**：`/api/attachments/{attachment_id}`（**非 /sign**）——附件**签名下载**。短时 HMAC 签名（`?sig=&exp=`）即授权，属**短期下载授权、非账号凭据**（签名 URL 24h 过期、仅能下载该附件，见 §3.5）；`/api/attachments/{attachment_id}/sign`（签发端点）**保持 Bearer**。
 - 未带凭据 → 401 `AUTH_REQUIRED`；凭据错误 → 401 `AUTH_INVALID`；均返回统一错误信封。
 
 ### 1.3 凭据载体
@@ -124,11 +125,29 @@ server {
 - **REALTIME / DICTATION**：`AudioBuffer` VAD 分段，段完成 → STT → 仅回字幕/轮次文本；buffer 随会话创建/销毁（`_teardown_session`）。
 - **日志不记音频**：logger 只记文本摘要（如 commit 日志记 `pending_text[:30]`）；`message_archive` 只存消息文本——语音消息 = 纯文本消息（批次 7 BE-070 才做音频附件落盘，届时走现有附件上传鉴权路径）。
 
+### 3.5 附件下载与签名安全（批次 7，BE-070/071）
+
+**签名 URL 用 query 参数是刻意的豁免**：`sig`/`exp` 是**短时下载授权**（HMAC-SHA256(`attachment_id:exp`)，24h 过期、只授权该附件），不是账号凭据，故放查询参数走免 Bearer 下载路径（§1.2）；账号凭据（`AGENT_ACCESS_TOKEN`）仍只在 `Authorization` Header，绝不进 URL。
+
+- **fail-closed 决策表**（`ATTACHMENT_SIG_SECRET`，`ServerConfig.attachment_sig_secret`，`secret=True`）：
+
+| AGENT_ACCESS_TOKEN | ATTACHMENT_SIG_SECRET | 下载 / 签发 |
+|---|---|---|
+| 未配置 | 任意 | **fail-open**：下载跳过签名校验（仅 status=active 校验），本地开发匿名 |
+| 已配置 | 未配置 | **fail-closed**：下载/签发一律 403 `ATTACHMENT_SIGNATURE_DISABLED`（拒绝进入校验序；`signedUrl` 上传响应同样省略）——拒绝「匿名下载到受保护附件」的静默降级 |
+| 已配置 | 已配置 | 下载走签名校验序（sig 合法 hex → 记录 active → exp 窗口 → HMAC 验签），签发端点走 Bearer |
+
+- **签名下载校验序**：① `sig` 存在且 64 位小写 hex（上界 128 防超长串拖慢 `compare_digest`，DoS 防护）→ 否则 403 `INVALID_SIGNATURE`；② 记录存在且 `status=active` → 否则 404 `ATTACHMENT_NOT_FOUND`（软删即拒绝，删除语义 = 不可再取；Mongo 离线 → 503 `STORAGE_UNAVAILABLE`）；③ `exp` 整数且在 `[now, now+86400]` → 否则 403 `SIGNATURE_EXPIRED`；④ HMAC 验签（`hmac.compare_digest` 防时序侧信道）→ 不匹配 403 `INVALID_SIGNATURE`。**`_SIG_TTL` 恒 86400**（与签发 `_sign_url` 一致），exp 夹紧上限。
+- **`/uploads/` 静态挂载收敛**：只公开 legacy `images/` 与 `desktop/` 两个子目录（既有 `/api/images` 与批次 4 桌面截图链路兼容）；**新 kind 单数目录 `data/uploads/{image,video,audio,file}` 不静态暴露**——只能经 `/api/attachments/{id}` 签名下载（新附件不产生永久匿名 URL）。`/api/attachments/` 免 Bearer 豁免在认证中间件中**先于 `/api/` 前缀判断**，且 `path.endswith("/sign")` 排除签发端点。
+- **签名 URL 不记录 query string**：日志只记 `attachment_id`（不记 `sig`/`exp` 全文）；错误信封 `details` 默认空 dict——附件路径/密钥/正文不入错误体。旧 `/api/images` 链路安全由全局 Bearer 维持（不在签名/GC 保护内，见 §4）。
+- **附件持有者语义**：签名 URL 授权对象为「该 attachment_id」而非「上传者」——单用户 Demo 可接受；多用户需按 owner 过滤（非本批次，见 §4）。
+
 ## 4. 已知缺口（后置批次）
 
 | 缺口 | 后置 |
 |---|---|
-| `/uploads/*` 匿名 GET 已拒（有 token），但**短期签名 URL / 鉴权下载**未实现——当前 v2 客户端需带 `Authorization` 访问资源（**含 `/uploads/desktop/*` 附件**：上传路径仅产品认证保护，无 per-call/per-owner 的下载鉴权——callId 即 URL 路径，持有 callId 者若已通过产品认证即可 GET） | 批次 7（BE-070/071） |
+| ~~`/uploads/*` 匿名 GET 已拒（有 token），但短期签名 URL / 鉴权下载未实现~~ **已闭合（批次 7）**：新附件走 `/api/attachments/{id}` 签名下载（HMAC 24h 短签，免 Bearer）+ `/sign` 签发端点（Bearer）；`/uploads/` 静态挂载收敛为仅 legacy images/desktop 子目录。**遗留**：legacy `/uploads/images/*`、`/uploads/desktop/*` 仍只由产品认证保护（无 per-call/per-owner 下载鉴权，callId/文件名即 URL 路径）——旧链路与批次 4 桌面截图兼容，未迁移到签名体系，批次 7 记录在案（见 §3.5） | 已闭合；遗留迁移随前端切换驱动 |
+| 附件**多用户持有者过滤**：签名 URL 授权对象为 attachment_id 而非上传者，单用户 Demo 语义 | 批次 7+（多用户时按 owner 过滤） |
 | 速率限制实现（`RATE_LIMITED` 仅入目录） | 批次 2+ |
 | **Secret Store 已落地（批次 5）**：`data/secrets/` 明文 0600 + gitignore + 不落 MongoDB（防备份泄漏）；密钥**只写不可读**，只回 `credentialConfigured`。遗留：明文待批次 7+ 评估加密 | 批次 7+（加密评估） |
 | DNS rebinding 完全闭合（IP pinning）——批次 5 出站守卫在连接前校验 + httpx 二次解析建连存在 TOCTOU 窗口（见 §3.3），未承诺防活跃 rebinding | 批次 7+（如需） |
@@ -138,4 +157,5 @@ server {
 - token/API key 一律环境变量（`AGENT_ACCESS_TOKEN`/`SERVER_AUTH_TOKEN`/`*_API_KEY`），不落 YAML/git；
 - **用户提交的模型密钥**（批次 5）只进 Secret Store（`data/secrets/` 0600 + gitignore + 不落 MongoDB），响应/日志只出 `credentialConfigured` 布尔，**永不读回**；
 - 错误信封 `details` 默认空 dict——禁止放入密钥、聊天正文、Inner Voice、未脱敏路径；SSRF 拒绝消息不带 host/IP（防内网拓扑枚举）；
+- **附件日志**（批次 7）：签名 URL 不记录 query string，下载/签发/GC 日志只记 `attachment_id`（att_ 前缀，不可反查内容）；`ATTACHMENT_SIG_SECRET` 为 `secret=True` 不落 YAML/git、不进日志与错误体；
 - 日志使用关联 `requestId`，不记录正文与凭据。

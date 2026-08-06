@@ -8,7 +8,7 @@
 
 > **运行环境：Linux**（Windows/Mac 用户请使用 WSL2 或虚拟机）
 
-> 最近 (2026-08-03): 前后端契约单源化——顶层 `frontend_contract/` 包（Pydantic 唯一权威），WS/REST/Debug 契约建模 + `gen_ts.py` 发射器生成前端 TS 快照 + `make check-types` 漂移门禁。同日: 服务运行时状态 + 热插拔——STT/TTS 后端模式开关（set_service）+ 模型/模式跨重启持久化（ServiceState）+ STT 槽位化热切换 + capabilities 嵌套 per-service。2026-08-02: 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。当前 2214 测试。
+> 最近 (2026-08-06): 通用附件与媒体链路（批次 7）——`POST /api/uploads`（filetype 魔数校验 + 签名 URL）、`GET /api/attachments/{id}`（HMAC 短签下载 + Range/206）、`GET /api/attachments/{id}/sign`（签发）、`GET /api/stickers`（内置表情包）+ 附件 GC 四规则 + `/health`/`/ready` 拆分 + `build_sha`/`requestId`。2026-08-03: 前后端契约单源化——顶层 `frontend_contract/` 包（Pydantic 唯一权威），WS/REST/Debug 契约建模 + `gen_ts.py` 发射器生成前端 TS 快照 + `make check-types` 漂移门禁。同日: 服务运行时状态 + 热插拔——STT/TTS 后端模式开关（set_service）+ 模型/模式跨重启持久化（ServiceState）+ STT 槽位化热切换 + capabilities 嵌套 per-service。2026-08-02: 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。当前 2640 测试。
 
 ---
 
@@ -252,11 +252,13 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | 文档 | 内容 |
 |------|------|
 | [docs/electron-backend-baseline.md](docs/electron-backend-baseline.md) | 后端协议基线（v1 现状，批次 0） |
-| [docs/electron-backend-protocol-v2.md](docs/electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 错误码目录（批次 2/3/4/5） |
-| [docs/electron-backend-security.md](docs/electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF（批次 1/3/4/5） |
-| [docs/electron-backend-progress.md](docs/electron-backend-progress.md) | 后端改造进度（批次 0-5） |
-| [docs/14-Cyrene-后端配合改造任务清单-v0.1.md](docs/14-Cyrene-后端配合改造任务清单-v0.1.md) | Electron 后端配合改造任务清单（BE-001~081，状态图例） |
+| [docs/electron-backend-protocol-v2.md](docs/electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 三种语音/TTS 播放契约 + **通用附件与媒体契约（§13）** + 错误码目录 40 码（批次 2/3/4/5/6/7） |
+| [docs/electron-backend-security.md](docs/electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF + **附件签名下载与签发安全（§3.5）**（批次 1/3/4/5/6/7） |
+| [docs/electron-backend-progress.md](docs/electron-backend-progress.md) | 后端改造进度（批次 0-7，全部完成） |
+| [docs/14-Cyrene-后端配合改造任务清单-v0.1.md](docs/14-Cyrene-后端配合改造任务清单-v0.1.md) | Electron 后端配合改造任务清单（BE-001~081，24/24 完成） |
 | [docs/15-Cyrene-后端改造执行上下文与Prompt-v0.1.md](docs/15-Cyrene-后端改造执行上下文与Prompt-v0.1.md) | 后端改造执行上下文与 Prompt |
+
+**附件/媒体子系统（批次 7）**：上传/下载/签发/表情四端点（`POST /api/uploads`、`GET /api/attachments/{id}`、`GET /api/attachments/{id}/sign`、`GET /api/stickers`）+ 附件存储 `core/storage/attachment_repo.py`（MongoDB `attachments` 集合，fail-closed）+ 启动 GC 兜底扫描 `core/storage/attachment_gc.py`（软删 24h / 未关联 7 天 / 磁盘孤儿四规则）。契约见 protocol-v2 §13，安全见 security §3.5。
 
 ---
 
@@ -293,6 +295,8 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | 工具系统 Plugin 架构 — 12 插件 + SafetyPipeline + HITL 审批 | done |
 | **模型切换** — DeepSeek/OpenAI/Ollama/MiMo + 运行时热切换 | done |
 | **多模态** — 图片上传/预览/lightbox + describe_image 视觉工具 | done |
+| **通用附件与媒体** — POST /api/uploads + 签名下载（Range/206）+ 签发 + 内置表情包 + GC 清理（批次 7，BE-070/071） | done |
+| **版本与可观测** — /health（liveness）/ready（readiness）拆分 + git build_sha + 统一错误 40 码 + 请求 ID 关联（批次 7，BE-081） | done |
 | Live2D 虚拟角色渲染 (Cubism SDK，默认静态图、需自建 index.html) | 可选 |
 | 前端 Vue 3 重构 (Vite + Pinia + TypeScript) | done |
 | 配置系统 (YAML + env + 类型校验 + providers.yaml) | done |
@@ -433,7 +437,7 @@ Agent/
 
 ## 测试
 
-2214 个测试按 4 层 markers 组织（unit 1349 / service 795 / integration 35 / slow 56，少量多 marker 重复计入）。详见 [docs/testing.md](docs/testing.md)。
+2729 个测试按 4 层 markers 组织（unit 1486 / service 1180 / integration 16 / slow 39，少量多 marker 重复计入）；`make test-quick` 2640 passed / 2 skipped / 87 deselected。详见 [docs/testing.md](docs/testing.md)。
 
 ```bash
 conda activate Elysia

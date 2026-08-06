@@ -20,10 +20,10 @@
 | 文档 | 内容 |
 |------|------|
 | [electron-backend-baseline.md](electron-backend-baseline.md) | 后端协议基线（v1 现状，批次 0） |
-| [electron-backend-protocol-v2.md](electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 错误码目录（批次 2/3/4/5） |
-| [electron-backend-security.md](electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF（批次 1/3/4/5） |
-| [electron-backend-progress.md](electron-backend-progress.md) | 后端改造进度（批次 0-5） |
-| [14-Cyrene-后端配合改造任务清单-v0.1.md](14-Cyrene-后端配合改造任务清单-v0.1.md) | Electron 后端配合改造任务清单（BE-001~081，状态图例） |
+| [electron-backend-protocol-v2.md](electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 三种语音/TTS 播放契约 + 通用附件与媒体契约（§13）+ 错误码目录 40 码（批次 2/3/4/5/6/7） |
+| [electron-backend-security.md](electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF + 附件签名下载与签发安全（§3.5）（批次 1/3/4/5/6/7） |
+| [electron-backend-progress.md](electron-backend-progress.md) | 后端改造进度（批次 0-7，全部完成） |
+| [14-Cyrene-后端配合改造任务清单-v0.1.md](14-Cyrene-后端配合改造任务清单-v0.1.md) | Electron 后端配合改造任务清单（BE-001~081，24/24 完成） |
 | [15-Cyrene-后端改造执行上下文与Prompt-v0.1.md](15-Cyrene-后端改造执行上下文与Prompt-v0.1.md) | 后端改造执行上下文与 Prompt |
 
 ## 子目录

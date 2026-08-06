@@ -1,8 +1,8 @@
 # Electron 后端协议 v2 — 结构化聊天事件契约参考
 
-**文档版本：** v0.5（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9，批次 4 补充 Desktop 工具契约 §10/错误码目录，批次 5 补充模型 Profile 与 TTS 声音契约 §11 + 错误码 21→25，批次 6 补充三种语音与 TTS 播放契约 §12 + 错误码 25→32）
+**文档版本：** v0.6（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9，批次 4 补充 Desktop 工具契约 §10/错误码目录，批次 5 补充模型 Profile 与 TTS 声音契约 §11 + 错误码 21→25，批次 6 补充三种语音与 TTS 播放契约 §12 + 错误码 25→32，批次 7 补充通用附件与媒体契约 §13 + 错误码 32→40）
 **关联：** `docs/electron-backend-baseline.md`（v1 现状）、`docs/electron-backend-security.md`（认证/版本协商）
-**Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md`
+**Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md` + `docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`
 
 本文档是 Electron 前端联调 v2 协议的**事件契约参考**。v2 由 WS 握手头 `X-Protocol-Version: 2` 判定；未带版本头走 v1 路径（现状不变）。
 
@@ -13,7 +13,8 @@
 - Electron Main 连 `/ws` 时带：`Authorization: Bearer <access_token>`（远程）+ `X-Protocol-Version: 2` + **`X-Client-Platform: electron`**（批次 4，Desktop 工具桥定向投递目标标识，spec §5.1 D-l）。
 - v2 连接建连帧：`session`（历史回放）→ `server_info`（协议版本/能力/服务形状 + **`connectionId`**，批次 4）→ `expression`（当前心情）。
 - **`server_info.connectionId`（批次 4）**：仅 v2 + electron 连接下发（`conn_<uuid4 hex[:12]>`，= WS 握手生成的连接 ID）；普通 v2 / v1 恒省略。Electron 据此构造附件上传 `X-Client-Connection` 头（spec §5.4 持有者校验②依赖）。
-- `server_info.features` 如实反映能力：`structured_generation`（批次 2 = true）、`multi_conversation`（批次 3 = true）、`desktop_runtime`（**批次 4 = true**）、`dictation`/`voice_recording`/`voice_realtime`（**批次 6 = true**，spec BE-060~062，见 §12）。
+- **`server_info.build_sha`（批次 7，BE-081）**：构建 git HEAD 完整 SHA（`core/version.py` `get_build_sha()`，`git rev-parse HEAD`，非 git 仓库/失败 → None 缺省省略）；`server_version` 为 `__version__ + "+" + build_sha[:7]` 后缀（`build_server_version()`，无 git 时仅 `0.1.0`）。供前端展示/反馈定位。
+- `server_info.features` 如实反映能力：`structured_generation`（批次 2 = true）、`multi_conversation`（批次 3 = true）、`desktop_runtime`（**批次 4 = true**）、`dictation`/`voice_recording`/`voice_realtime`（**批次 6 = true**，spec BE-060~062，见 §12）、**`media_upload`（批次 7 = true，POST /api/uploads，见 §13）**。
 - **v1 忽略 `X-Client-Platform`**：v1 无 desktop 概念，伪冒 platform 头不生效（负面隔离，spec §5.1）。
 
 ## 2. 一次完整 v2 回复事件序列
@@ -91,6 +92,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `segmentId` | `seg_` | 一个分段（句子/多媒体块） |
 | `segmentIndex` | — | 全局分段序号（跨 inner_voice/public_reply/工具轮单调递增） |
 | `deltaSequence` | — | 段内增量序号（0 起） |
+| `attachmentId` | `att_` | 上传附件 ID（批次 7，POST /api/uploads 返回；消息 part 以 `attachment_id` 关联，见 §13） |
 
 **段粒度**：一个 public_reply 段 = 一个句子（PRD BE-022）。段按 SENTENCE 边界开合；
 每句有独立 `segmentId` 与全局 `segmentIndex`，`generation.segment.completed.content` 携带该句完整文本
@@ -155,14 +157,14 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `GET /api/sessions/{id}/messages?after={messageId}` | **增量拉取**（正序，仅锚点后新增） |
 | `GET /api/messages/{mid}/context` | 上下文窗口：`conversationId&before=5&after=5` |
 | `GET /api/search/messages` | 搜索：`query/conversationId/date_from/date_to/timezone/category/cursor/limit`（上限 100） |
-| `GET /api/sessions/{id}/resources` | 资源索引：`category=image|link|video|audio|file`（sticker 恒空，text 400） |
+| `GET /api/sessions/{id}/resources` | 资源索引：`category=image|link|video|audio|file|sticker`（sticker 经 StickerPart 填充为 `/static/stickers/{id}.png`，批次 7；text 400） |
 | `GET /api/sessions/{id}/generations` | **generation 状态查询**：status/cursor/limit keyset 分页 |
 | `GET /api/generations/{gid}` | generation 详情（404 `GENERATION_NOT_FOUND`） |
 | `GET /api/sessions/{id}/pending` | **pending 查询**：pendingMessages（按会话）+ pendingApprovals（全局） |
 
 错误信封统一（code/message/retryable/requestId）；全部匿名 401（`AGENT_ACCESS_TOKEN` 配置时）。
 
-### 9.1 错误码目录（批次 1-6 累计）
+### 9.1 错误码目录（批次 1-7 累计，40 码）
 
 | code | HTTP | retryable | 场景 |
 |---|---|---|---|
@@ -170,16 +172,16 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `AUTH_INVALID` | 401 | false | 凭据错误（批次 1） |
 | `RATE_LIMITED` | 429 | false | 速率限制——**目录登记，限流器未实现**（无生产者） |
 | `CONNECTION_LIMITED` | 503 | true | 并发 WS 连接超上限（批次 1） |
-| `REQUEST_TOO_LARGE` | 413 | false | 请求体超限（`client_max_size`，Content-Length 前置，批次 1） |
-| `INVALID_REQUEST` | 403 | false | 参数/请求非法；desktop 附件上传持有者校验失败（连接 ≠ 目标连接、终态拒收，批次 1/4） |
-| `INTERNAL` | — | false | 未归类内部错误（`generation.failed` 携带，WS 事件无 HTTP 信封） |
+| `REQUEST_TOO_LARGE` | 413 | false | 请求体超限（`client_max_size`，Content-Length 前置，批次 1）；通用上传单文件/聚合超限（批次 7，§13.1） |
+| `INVALID_REQUEST` | 403 | false | 参数/请求非法；desktop 附件上传持有者校验失败（连接 ≠ 目标连接、终态拒收，批次 1/4）。**既有漂移注明**：desktop 上传超限 / 类型非法用 `INVALID_REQUEST` + 413/415（目录行 HTTP=403 仅为通用映射，desktop 附件既有契约保持不动，批次 7 文档注明） |
+| `INTERNAL` | — | false | 未归类内部错误（`generation.failed` 携带，WS 事件无 HTTP 信封）；附件记录写入失败 500（批次 7） |
 | `GENERATION_PROVIDER_UNAVAILABLE` | — | true | 模型服务不可用（`generation.failed` 携带，批次 2） |
 | `GENERATION_TIMEOUT` | — | true | 生成超时（`generation.failed` 携带，批次 2） |
 | `SESSION_NOT_FOUND` | 404 | false | 未知会话（activate/CRUD/history/resources/pending/generations） |
 | `GENERATION_NOT_FOUND` | 404 | false | 未知 generation 详情 |
 | `RESOURCE_NOT_FOUND` | 404 | false | 消息不存在（context 窗口锚点缺失） |
 | `INVALID_TIMEZONE` | 400 | false | 搜索时区非法（zoneinfo 无法解析） |
-| `CONTRACT_VALIDATION` | 400 | false | 缺 conversationId / clientRequestId 冲突 / 畸形 before 游标 / 语音契约错误（缺/非法 stream_id、commit 文本不一致等，批次 6） |
+| `CONTRACT_VALIDATION` | 400 | false | 缺 conversationId / clientRequestId 冲突 / 畸形 before 游标 / 语音契约错误（缺/非法 stream_id、commit 文本不一致等，批次 6）；**未知 stickerId / 上传 kind=sticker / 未知上传 kind**（批次 7，sticker 非附件，拒绝走上传，见 §13.1） |
 | `SESSION_PROTECTED` | 409 | false | 删除受保护会话 `default`（禁删守卫） |
 | `AGENT_BUSY` | 409 | true | 生成/TTS 进行中切换或删除活动会话（FSM 忙时门禁） |
 | `GENERATION_CANCELLED` | — | false | WS interrupt → `generation.failed{CANCELLED}` |
@@ -198,6 +200,14 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `DICTATION_NOT_FOUND` | 404 | false | 无活动 dictation 时收 `dictation.stop`/`dictation.cancel`（批次 6） |
 | `STT_UNAVAILABLE` | 503 | true | STT 未启用/后端不可用/活动 STT 为 desktop-local runtime（start 拒绝 / 转写失败 / 录音 stop 时 STT 已关，批次 6） |
 | `PLAYBACK_NOT_FOUND` | 404 | false | `audio.cancel` 未知**或已结束**的 stream_id（前端可忽略良性，批次 6） |
+| `ATTACHMENT_NOT_FOUND` | 404 | false | **落地**：附件不存在或已软删（下载/签发，批次 7，见 §13.2/§13.3） |
+| `SIGNATURE_EXPIRED` | 403 | false | **落地**：签名 exp 非整数或不在 [now, now+24h] 窗口（下载校验序③，批次 7） |
+| `INVALID_SIGNATURE` | 403 | false | **落地**：sig 缺失/非法 hex / HMAC 不匹配（下载校验序①④，批次 7） |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | false | **落地**：filetype 魔数无法判定 / 不在白名单 / 扩展名与内容不一致（上传校验序③④⑤，批次 7，见 §13.1） |
+| `TOO_MANY_FILES` | 400 | false | **落地**：单次上传文件数 > 10（上传校验序②，批次 7） |
+| `ATTACHMENT_SIGNATURE_DISABLED` | 403 | false | **落地**：fail-closed——AGENT_ACCESS_TOKEN 配置而 ATTACHMENT_SIG_SECRET 未配置（下载/签发一律拒绝，批次 7，见 security §3.5） |
+| `STORAGE_UNAVAILABLE` | 503 | true | **落地**：附件存储 Mongo 离线（上传写记录/下载/签发一律 503，fail-closed；上传已落盘文件删除不留孤儿，批次 7） |
+| `QUEUE_FULL` | 429 | true | **落地**：Agent 忙队列满——v2 附件/sticker 消息 `process_message` 返回 False → `user_message.ack{status:rejected, error:{code:QUEUE_FULL, retryable:true}}`（WS ACK 错误，无 HTTP 信封，HTTP 429 为目录登记映射，批次 7，见 §13.7） |
 
 **数据保护语义**：`DELETE /api/sessions/default` → 409 `SESSION_PROTECTED`（`default` 恒存在且受保护，禁删——含其 append-only 归档）；生成/TTS 进行中 `activate`/`delete` 活动会话 → 409 `AGENT_BUSY`。
 
@@ -428,3 +438,88 @@ server → {"type":"audio_cancelled","stream_id":N}（句被取消——audio.ca
 - `sampleRate`/`durationMs` 从已合成 WAV bytes 解析（非流式合成完成后才有）；播放完成由前端本地 `onended` 判定（**不引入上行回执**）。
 - `audio.cancel` 为**全局播放操作**（TTS 全局广播，任一连接可取消在途播放实例）：命中在途句 → 停发 + `audio_cancelled`；未知/已结束 stream_id → `error{PLAYBACK_NOT_FOUND}`（打断双发竞态下前端可忽略良性）；缺 / 非数字 stream_id → `error{CONTRACT_VALIDATION}`。
 - 中断（`cancel_all`）不再静默丢——统一发 `audio_cancelled`（修「中断不补 audio_end」孤儿 chunk 缺口）。
+
+---
+
+## 13. 通用附件与媒体（批次 7，spec BE-070/071/081）
+
+通用附件/媒体链路四个端点：`POST /api/uploads`（通用上传）、`GET /api/attachments/{id}`（签名下载）、`GET /api/attachments/{id}/sign`（签发）、`GET /api/stickers`（内置表情）。附件是**服务端托管资源**：字节落盘 `data/uploads/{kind}/{uuid4hex[:16]}.{ext}` + 元数据落 MongoDB `attachments` 集合（`core/storage/attachment_repo.py`，fail-closed）。旧 `/api/images`（legacy `/uploads/images/`）与批次 4 `/uploads/desktop/` 为遗留链路，**不纳入**附件体系（不签名、不进 GC）；sticker 是内置公共静态资源（`/static/stickers/{id}.png`），**非附件**（不落集合、不 ref_count、不参与 GC）。视频/音频/文件/表情**不喂 LLM**（`content_to_openai` 仅 text/image 进上下文）。
+
+### 13.1 附件上传（POST /api/uploads）
+
+multipart 字段：`files[]`（一个或多个文件字段）+ `kind`（可选，客户端意图**不信任**，仅 webm 歧义作 tiebreaker）。服务端校验序为权威：
+
+| 步骤 | 校验 | 失败错误 |
+|---|---|---|
+| ① kind 枚举预检 | kind 缺省通过；不在 `image/video/audio/file` → 400 `CONTRACT_VALIDATION`（**含 kind=sticker**——sticker 非附件，拒绝走上传） | 400 `CONTRACT_VALIDATION` |
+| ② 数量 | 文件数 ≤ 10，超限 | 400 `TOO_MANY_FILES` |
+| ③ 单文件大小 | 读入逐块自限（各 kind 上限最大值 50MB）；kind 指定时按 kind 上限预检 | 413 `REQUEST_TOO_LARGE` |
+| ④ filetype 魔数 | `filetype.guess` 判定（不信任扩展名/Content-Type）；无法判定或不在白名单 | 415 `UNSUPPORTED_MEDIA_TYPE` |
+| ⑤ 扩展名一致性 | 判定 MIME 与原始文件扩展名一致（jpg/jpeg 归一）；改名绕过 | 415 `UNSUPPORTED_MEDIA_TYPE` |
+| ⑥ kind 归位 + 复核 | webm 以客户端 kind tiebreaker（audio/video），其余按 MIME→kind；归位后超 kind 上限 | 413 `REQUEST_TOO_LARGE` |
+| ⑦ 写盘 + 落记录 | `data/uploads/{kind}/{uuid}.{ext}` + sha256 + `attachments` 记录；Mongo 离线（fail-closed）→ 已落盘文件删除不留孤儿 | 503 `STORAGE_UNAVAILABLE`（retryable）/ 500 `INTERNAL` |
+
+- **整体聚合上限 64MB**：app `client_max_size` + payload 中间件 Content-Length 预检 → 413 `REQUEST_TOO_LARGE`（多文件总和超限同样被拦，2×50MB 视频属有意取舍）。
+- **filename 脱敏（Minor 9）**：去路径分隔符、截断 255、剥控制字符；仅展示用，不参与路径构造。
+- **响应** `AttachmentUploadResponse{attachments: AttachmentInfo[]}`；`AttachmentInfo{attachmentId(att_), kind, mime, size, url=/api/attachments/{id}（稳定路径，不随签名过期）, signedUrl?, filename}`。`signedUrl`（24h 短签）**fail-closed 省略**：AGENT_ACCESS_TOKEN 配置而 ATTACHMENT_SIG_SECRET 未配置时省略，其余模式恒带（见 security §3.5）。
+- 任一文件校验失败 → 整个请求返回对应 4xx 错误（不回部分成功；已写盘的前序文件由 GC 规则 3 兜底回收）。
+
+### 13.2 签名下载（GET /api/attachments/{attachment_id}）
+
+**免 Bearer**（签名即授权，认证中间件豁免非 /sign 的 `/api/attachments/` 路径）；`?sig=...&exp=...` 查询参数授权。校验序（fail-closed：AGENT_ACCESS_TOKEN 配 + SIG 未配 → 一律 403 `ATTACHMENT_SIGNATURE_DISABLED`，不进入校验序）：
+
+| 步骤 | 校验 | 失败错误 |
+|---|---|---|
+| ① sig 存在且合法 hex | 64 位小写 hex（上界 128 防超长串拖慢 `compare_digest`，DoS 防护） | 403 `INVALID_SIGNATURE` |
+| ② 记录存在且 active | `attachments` 集合 status=active；软删/不存在 | 404 `ATTACHMENT_NOT_FOUND`；Mongo 离线 → 503 `STORAGE_UNAVAILABLE`（retryable） |
+| ③ exp 窗口 | 整数且在 [now, now+86400] | 403 `SIGNATURE_EXPIRED` |
+| ④ HMAC 验签 | HMAC-SHA256(`attachment_id:exp`)，`hmac.compare_digest` 防时序侧信道 | 403 `INVALID_SIGNATURE` |
+
+- **fail-open**（access_token 空 = 本地开发）→ 跳过 ①③④，仅 ② status=active 校验。
+- 成功 → aiohttp `FileResponse`（**原生 Range/206**，视频/音频拖动播放）；`Content-Type` = 记录 mime；落盘文件缺失 → 404 `ATTACHMENT_NOT_FOUND`。
+- **既有记录在案**（spec 七轮 Minor 7）：校验序 ② 在 ④ 之前 → 匿名可对已知 attachment_id 区分「active（403）」与「不存在（404）」；attachment_id 104-bit 不可枚举、单用户 demo，风险低，非本批次闭合。
+
+### 13.3 签发端点（GET /api/attachments/{attachment_id}/sign）
+
+- **走 Bearer**（认证中间件不豁免本端点）。
+- fail-closed 早退同上 → 403 `ATTACHMENT_SIGNATURE_DISABLED`；记录不存在/非 active → 404 `ATTACHMENT_NOT_FOUND`；Mongo 离线 → 503。
+- 响应 `AttachmentSignResponse{attachmentId, url(?sig=&exp=), expiresAt(ISO UTC)}`。
+- **渲染层签名解析（C-1）**：消息 part 持久化用**稳定路径** `/api/attachments/{id}`；渲染层对稳定路径调本端点拿签名 URL（缓存 + 24h 复用 + 过期重取），`<img>/<video>` 用签名 URL。**资源索引附件项同样经签发端点解析**（不单独带 signedUrl）。前端**不接触** `ATTACHMENT_SIG_SECRET`、不自行计算签名。
+
+### 13.4 内置表情（GET /api/stickers）
+
+- 服务端预置 `static/stickers/*.png`（sticker_id = 文件名去扩展名，如 `st_happy` → `st_happy`），`create_app` 启动时 `core/input/sticker_registry.py` 扫描；响应 `StickerListResponse{stickers: StickerEntry[]}`（`StickerEntry{stickerId, src=/static/stickers/{id}.png}`），按 id 排序稳定。
+- 表情是**公共静态资源**（公开 `/static/stickers/{id}.png`，无鉴权）：不落 `attachments` 集合、不 ref_count、不参与 GC、不上传白名单。
+- 发送载体：v2 文本消息 `stickerId` 字段（见 §13.7）。
+
+### 13.5 MIME/编码矩阵
+
+| kind | MIME（filetype 魔数真值判定） | 允许扩展名 | 大小上限 |
+|---|---|---|---|
+| `image` | image/png / image/jpeg / image/gif / image/webp | png / jpg·jpeg / gif / webp | 10MB |
+| `video` | video/mp4 / video/webm | mp4 / webm | 50MB |
+| `audio` | audio/x-wav / audio/mpeg / audio/ogg | wav / mp3 / ogg | 20MB |
+| `file` | application/pdf / application/zip | pdf / zip | 20MB |
+
+- **webm 歧义**：mime=video/webm 时以客户端 kind 提示作 tiebreaker（kind=audio → audio，其余 → video），归位后按最终 kind 复核上限。
+- **编码收敛**：仅限上表扩展名（不接受其他编码）；**魔数判定为权威**（不信任 Content-Type/扩展名），扩展名一致性校验堵改名绕过。
+
+### 13.6 引用计数 / 软删 / GC 语义
+
+- **消息关联**：v2 附件/sticker 消息 `process_message` 接受后 `add_ref(attachment_id, message_id)`（refs 加消息 ID + ref_count 同步，幂等去重）；消息删除/移除联动 `remove_ref`（refs 归零 → 软删 `status=deleted` + `deleted_at`）。
+- **软删**：签名 URL 对软删附件直接 404（**删除语义 = 不可再取**）；文件保留，由 GC 延后物理删。
+- **GC 四规则**（启动兜底扫描，`core/storage/attachment_gc.py`，限四 kind 目录 `data/uploads/{image,video,audio,file}/`）：
+  - 规则 1：`status=deleted` 且 `deleted_at` 超 24h → 删文件 + 删记录；
+  - 规则 2：active 记录磁盘文件缺失 → 软删 + warning；
+  - 规则 3：active 且 `ref_count=0` 且 `created_at` 超 **7 天**（未使用上传）→ 软删（物理删由规则 1 延后）；
+  - 规则 4：磁盘四 kind 目录有文件但无记录（磁盘孤儿）→ 删文件。
+- Mongo 离线 → GC 跳过（`skipped`，附件操作 fail-closed）。legacy `data/uploads/images/`、`data/uploads/desktop/` 不在扫描范围。
+
+### 13.7 消息关联 wire（v2）
+
+- `V2TextMessage` 增可选 **`attachments: AttachmentRef[]`** 与 **`stickerId: string`**：`AttachmentRef{attachmentId(att_), kind, mime}`——kind/mime 为**客户端提示值**，服务端以 `attachments` 集合记录为准（不校验提示与记录一致，展示用记录值）；stickerId（st_ 前缀）与 attachments 可共存或独立。附件/sticker-only 消息触发生成（`content` 可空）。
+- `ContentPart` 判别联合含 6 类：text/image/file/audio/video/sticker；Image/File/Audio/Video Part 均带 **`attachment_id`**（att_ 前缀，消息关联）；`StickerPart{sticker_id, src=/static/stickers/{id}.png}`（无 attachment_id）。
+- **幂等摘要输入含附件与 sticker**：`not attachments and stickerId is None → digest=sha256(text)`；否则 `digest=sha256(text + "\x00" + ",".join(sorted(attachment_ids)) + "\x00" + (stickerId or ""))`——同文本换附件/表情不误判重放（`attachments: []` 空数组等同缺省）。
+- 队列满（`process_message` 返回 False）→ ACK `rejected` + `error{code: QUEUE_FULL, retryable: true}`，幂等 entry 删除（重试允许重新进入），refs 不递增。
+- **资源索引**：sticker 分类经 StickerPart 填充为 `/static/stickers/{id}.png`（§9 行同步）；附件项（`/api/attachments/{id}`）经 `_attachment_available` **软删过滤**——记录 deleted/不存在/Mongo 离线保守不展示。
+- **关联 ID（P7-12）**：`ErrorMessage.requestId` 数据源为 WS 侧请求 ID（UserInputData.request_id，`get_request_id()` ContextVar）；有则带、无则 None 缺省省略——客户端可凭此关联日志/幂等排查。`GenerationRegistry` 亦记 `request_id`。
