@@ -785,8 +785,9 @@ def register_api_routes(app: web.Application) -> None:
             for it in validated:
                 stored_path = it["stored_path"]
                 os.makedirs(str(stored_path.parent), exist_ok=True)
-                stored_path.write_bytes(it["data"])
+                # 先登记再写盘：write_bytes 抛异常时本文件也在清理清单（review Minor）
                 written.append(stored_path)
+                stored_path.write_bytes(it["data"])
                 try:
                     await repo.create(it["doc"])
                 except StorageUnavailableError:
@@ -1091,9 +1092,11 @@ def register_api_routes(app: web.Application) -> None:
             return web.json_response(resp.wire_dict())
         except Exception as e:
             logger.warning("Failed to query message archive: %s", e)
+            # 信封不携带异常文本（含路径/内部细节，review Minor）——只出通用消息
             return web.json_response(
                 rest_contract.MessagesResponse(
-                    messages=[], has_more=False, total=0, error=str(e)).wire_dict(),
+                    messages=[], has_more=False, total=0,
+                    error="查询消息归档失败").wire_dict(),
                 status=500,
             )
 

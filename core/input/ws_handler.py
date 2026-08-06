@@ -771,7 +771,9 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
                         logger.warning("TTS voice 已设置但持久化失败: %s", e)
                     result = {"ok": True, "voice": voice}
             except Exception as e:
-                result = {"ok": False, "error": str(e)}
+                logger.warning("set_tts_voice 失败: %s", e)
+                # 信封不携带异常文本（review Minor）——只出通用消息
+                result = {"ok": False, "error": "设置声音失败"}
         from Module.output import WebSocketChannel
         if ws is not None:
             for ch in agent.output._channels:  # noqa: SLF001

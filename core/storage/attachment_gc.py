@@ -188,8 +188,9 @@ async def run_attachment_gc(repo: Any, *, deleted_retention_hours: int = 24,
                     _unregister_matching(kind, f.name)
                     logger.info("附件 GC：删除磁盘孤儿文件 kind=%s name=%s", kind, f.name)
                 except OSError:
+                    # 不带 exc_info：OSError 消息含绝对路径，会重新泄漏（review Minor）
                     logger.warning("附件 GC：删孤儿文件失败 kind=%s name=%s",
-                                   kind, f.name, exc_info=True)
+                                   kind, f.name)
     except StorageUnavailableError:
         logger.warning("附件 GC 中断：MongoDB 中途离线", exc_info=True)
         stats["skipped"] = True

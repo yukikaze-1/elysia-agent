@@ -5,6 +5,7 @@ Each client gets an independent WebSocketChannel (outbound) and AudioBuffer
 """
 
 import asyncio
+import hmac
 import json
 import logging
 import time
@@ -313,7 +314,8 @@ def create_app(
             expected = f"Bearer {access_token}"
         else:
             return True
-        return request.headers.get("Authorization", "") == expected
+        return hmac.compare_digest(
+            request.headers.get("Authorization", ""), expected)
 
     async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         """WebSocket 连接处理入口（含并发上限检查）。
