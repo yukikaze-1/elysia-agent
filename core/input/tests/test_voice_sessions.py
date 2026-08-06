@@ -350,3 +350,193 @@ async def test_cancel_dictation_wrong_id_rejected():
     with pytest.raises(VoiceSessionError) as exc:
         await mgr.cancel_dictation("req_d1_other")
     assert exc.value.code == "DICTATION_NOT_FOUND"
+
+
+# D3：STT 后台解耦——cancel 丢弃残段、stop/dictation-stop 等待在途段、epoch 隔离、emotion 归属
+
+
+class _BlockableAgent(FakeAgent):
+    """stt_transcribe 与 stt.transcribe 都可手动放行——REALTIME/DICTATION 在途段可控。
+
+    REALTIME 走 agent.stt_transcribe（阻塞）；DICTATION 走 _transcribe_no_emotion →
+    agent.stt.transcribe（阻塞）。二者共享同一 released。
+    """
+
+    class _BlockSTT:
+        def __init__(self, agent):
+            self._agent = agent
+        async def transcribe(self, wav):
+            await self._agent.released.wait()
+            return self._agent._last_text
+
+    def __init__(self):
+        super().__init__()
+        self.released = asyncio.Event()
+        self._last_text = "在途段文本"
+        self.stt = self._BlockSTT(self)      # 覆盖 FakeAgent.stt = _FakeSTTBackend(self)
+
+    async def stt_transcribe(self, wav):
+        await self.released.wait()          # 阻塞直至放行——转写在途
+        return self._last_text
+
+
+@pytest.mark.asyncio
+async def test_cancel_discards_in_flight_segment():
+    """在途 STT 段 + cancel → 段不提交（无 partial/turn/UserInputData）。"""
+    agent = _BlockableAgent()
+    mgr, emitted, bus_posts = make_manager(agent=agent)
+    await mgr.start_realtime("rt_1", None)
+    # 喂一段触发 VAD 分段 → 派发后台 STT（阻塞在 released）
+    for _ in range(30):
+        await mgr.feed_pcm(_loud(1600))
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.05)               # 让后台任务进入 transcribe 阻塞
+    assert len(mgr._stt_tasks) >= 1
+    await mgr.cancel_session("rt_1")
+    agent.released.set()                    # 放行转写 → 迟到结果应被丢弃
+    await asyncio.sleep(0.1)
+    assert not any(s.get("type") == "voice_session.turn" for s in emitted)
+    assert not any(p for p in bus_posts)
+
+
+@pytest.mark.asyncio
+async def test_stop_waits_for_in_flight_segment():
+    """stop 等待在途段完成（残段仍提交为 turn）。"""
+    agent = _BlockableAgent()
+    mgr, emitted, bus_posts = make_manager(agent=agent)
+    await mgr.start_realtime("rt_1", None)
+    for _ in range(30):
+        await mgr.feed_pcm(_loud(1600))
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.05)
+    stop_task = asyncio.create_task(mgr.stop_session("rt_1"))
+    await asyncio.sleep(0.05)               # stop 卡在 drain
+    agent.released.set()
+    await asyncio.wait_for(stop_task, timeout=2)
+    assert any(s.get("type") == "voice_session.turn" for s in emitted)
+    assert any(s.get("type") == "voice_session.ended" for s in emitted)
+
+
+@pytest.mark.asyncio
+async def test_cancel_then_restart_epoch_isolation():
+    """cancel → 立即重启新会话，旧会话在途段不落入新会话首轮（B1 epoch 隔离）。"""
+    agent = _BlockableAgent()
+    mgr, emitted, _ = make_manager(agent=agent)
+    await mgr.start_realtime("rt_1", None)
+    for _ in range(30):
+        await mgr.feed_pcm(_loud(1600))
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.05)
+    await mgr.cancel_session("rt_1")        # teardown → epoch += 1
+    await mgr.start_realtime("rt_2", None)  # 新会话 epoch 已变
+    agent.released.set()                    # 旧会话在途段完成
+    await asyncio.sleep(0.1)
+    # 新会话无任何 turn（旧段被 epoch 隔离丢弃）
+    assert not any(s.get("type") == "voice_session.turn" for s in emitted)
+
+
+@pytest.mark.asyncio
+async def test_stop_dictation_keeps_final_segment():
+    """stop_dictation 等待最后一段提交进 _dict_text（F1）。"""
+    agent = _BlockableAgent()
+    mgr, emitted, _ = make_manager(agent=agent)
+    await mgr.start_dictation("req_d")
+    for _ in range(30):
+        await mgr.feed_pcm(_loud(1600))
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.05)
+    stop_task = asyncio.create_task(mgr.stop_dictation("req_d"))
+    await asyncio.sleep(0.05)
+    agent.released.set()
+    await asyncio.wait_for(stop_task, timeout=2)
+    finals = [s for s in emitted if s.get("type") == "dictation.final"]
+    assert finals and finals[0]["text"] == "在途段文本"
+
+
+class _TwoReleaseSTTAgent(FakeAgent):
+    """两段 STT 分别放行、各自写不同 emotion——验证 F3 锁下情绪归属 + 提交序。"""
+
+    class _Backend:
+        def __init__(self, agent):
+            self._agent = agent
+            self.calls = 0
+            self.release_a = asyncio.Event()
+            self.release_b = asyncio.Event()
+        async def transcribe(self, wav):
+            self.calls += 1
+            if self.calls == 1:
+                await self.release_a.wait()
+                self._agent.stt_emotion_state["emotion"] = "HAPPY"
+                return "第一段"
+            await self.release_b.wait()
+            self._agent.stt_emotion_state["emotion"] = "SAD"
+            return "第二段"
+
+    def __init__(self):
+        super().__init__()
+        self.stt_emotion_state = {"emotion": "NEUTRAL", "events": []}
+        self._two = self._Backend(self)
+        self.stt = self._two
+
+    async def stt_transcribe(self, wav):
+        return await self._two.transcribe(wav)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_segments_order_and_emotion():
+    """F3 + 提交序：并发两段反序放行 → 按 seq 顺序提交（turn_id 单调）+ 各自 emotion 取自本段。
+
+    锁缺失时：B 先完成写 SAD，A 的捕获会读到 SAD（张冠李戴）→ 测试红。
+    """
+    agent = _TwoReleaseSTTAgent()
+    mgr, emitted, bus_posts = make_manager(agent=agent)
+    await mgr.start_realtime("rt_1", None)
+    # 段1 派发 seq0（阻塞 release_a）
+    for _ in range(30):
+        await mgr.feed_pcm(_loud(1600))
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.05)
+    # 段2 派发 seq1（阻塞 release_b）——两段并发在途
+    for _ in range(30):
+        await mgr.feed_pcm(_loud(1600))
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.05)
+    assert len(mgr._stt_tasks) >= 2
+    # 反序放行：先 B（SAD）后 A（HAPPY）——锁保证各自捕获本段 emotion
+    agent._two.release_b.set()
+    await asyncio.sleep(0.1)
+    agent._two.release_a.set()
+    await asyncio.sleep(0.1)
+    turns = [s for s in emitted if s.get("type") == "voice_session.turn"]
+    assert [t["turnId"] for t in turns] == [1, 2]       # 提交锁 + seq 顺序
+    assert [p.emotion for p in bus_posts] == ["HAPPY", "SAD"]  # 各自本段 emotion
+
+
+@pytest.mark.asyncio
+async def test_realtime_segment_records_emitted_message_ids():
+    """D1 voice 侧：REALTIME 段提交后 emitted_message_ids 含该消息 ID（断连归属数据源）。"""
+    agent = FakeAgent()
+    agent._last_text = "实时段"
+    mgr, emitted, _ = make_manager(agent=agent)
+    await mgr.start_realtime("rt_1", None)
+    for _ in range(30):
+        await mgr.feed_pcm(_loud(1600))
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.1)
+    turns = [s for s in emitted if s.get("type") == "voice_session.turn"]
+    assert turns, "REALTIME 段应提交 turn"
+    assert mgr.emitted_message_ids == {turns[0]["messageId"]}

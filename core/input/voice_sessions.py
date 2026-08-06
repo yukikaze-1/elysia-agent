@@ -98,6 +98,15 @@ class VoiceSessionManager:
         self._idle_task: asyncio.Task | None = None
         self._dict_request_id = ""
         self._dict_text: list[str] = []
+        # D3（spec §3.3）：STT 后台派发状态——seq 单调、epoch 代际、pending 缓冲、任务集合、双锁
+        self._stt_seq = 0
+        self._stt_epoch = 0                 # 会话代际——teardown 时 +=1，绝不归零（B1）
+        self._stt_pending: dict[int, tuple[str, str, list[str]]] = {}
+        self._stt_commit_seq = 0
+        self._stt_tasks: set[asyncio.Task] = set()
+        self._stt_stt_lock = asyncio.Lock()
+        self._stt_commit_lock = asyncio.Lock()
+        self._emitted_message_ids: set[str] = set()   # D1 归属（Task 9 消费）
 
     # ---- 查询 ----
 
@@ -170,6 +179,11 @@ class VoiceSessionManager:
         self._received_frames = 0
         self._dict_request_id = ""
         self._dict_text = []
+        self._stt_seq = 0
+        self._stt_epoch += 1                 # 代际递增——旧会话在途任务提交前 epoch 失配被丢弃
+        self._stt_pending = {}
+        self._stt_commit_seq = 0
+        self._stt_tasks = set()
         self._mode = VoiceMode.IDLE
 
     # ---- RECORDING（BE-060） ----
@@ -269,7 +283,7 @@ class VoiceSessionManager:
         self._received_frames = 0
         self._last_audio_at = time.monotonic()
         self._buffer = AudioBuffer(
-            stt_transcribe=self._agent.stt_transcribe,
+            stt_transcribe=self._make_dispatch_stt(self._agent.stt_transcribe),
             aggressiveness=3,
             silence_duration=self._silence_duration,
             on_interrupt=self._on_vad_interrupt,
@@ -299,7 +313,8 @@ class VoiceSessionManager:
     async def stop_session(self, session_id: str) -> None:
         self._require_session(session_id)
         if self._buffer:
-            await self._buffer.flush()  # 残段处理（在途段等待完成，spec §5.2）
+            await self._buffer.flush()          # 派发最后一段（feed 立即返回）
+        await self._drain_dispatch_stt()        # 等待在途段完成再 teardown（残段仍提交）
         self._teardown_session()
         from frontend_contract import VoiceSessionEndedMessage
         await self._emit(VoiceSessionEndedMessage(
@@ -331,7 +346,7 @@ class VoiceSessionManager:
         self._dict_text = []
         self._last_audio_at = time.monotonic()
         self._buffer = AudioBuffer(
-            stt_transcribe=self._transcribe_no_emotion,   # D6：不写共享 emotion
+            stt_transcribe=self._make_dispatch_stt(self._transcribe_no_emotion),   # D6：不写共享 emotion
             aggressiveness=3,
             silence_duration=self._silence_duration,
             on_interrupt=None,  # DICTATION 不接（spec §3.2 NEW-K）
@@ -344,6 +359,7 @@ class VoiceSessionManager:
             raise VoiceSessionError(ERR_DICTATION_NOT_FOUND, "无活动转写")
         if self._buffer:
             await self._buffer.flush()
+        await self._drain_dispatch_stt()        # F1：等最后一段提交进 _dict_text 再 join
         text = "".join(self._dict_text)
         self._teardown_session()
         from frontend_contract import DictationFinalMessage
@@ -360,6 +376,68 @@ class VoiceSessionManager:
             clientRequestId=client_request_id).wire_dict())
 
     # ---- feed / 回调 / 后台 ----
+
+    def _make_dispatch_stt(self, transcriber):
+        """派发型 STT wrapper（D3）：立即后台转写 + 返回空串，feed 不阻塞。
+        transcriber: 真正转写可调用（REALTIME=agent.stt_transcribe；DICTATION=_transcribe_no_emotion）。"""
+        async def _dispatch(wav: bytes) -> str:
+            if self._mode == VoiceMode.IDLE:
+                return ""            # 会话已结束——丢弃（含 cancel 后迟到帧）
+            seq = self._stt_seq
+            self._stt_seq += 1
+            epoch = self._stt_epoch    # 捕获会话代际——防跨会话残段串流（B1）
+            task = asyncio.create_task(
+                self._run_dispatch_stt(wav, seq, epoch, transcriber),
+                name=f"voice-stt-{seq}")
+            self._stt_tasks.add(task)
+            return ""                # feed 立即返回，不阻塞消息循环
+        return _dispatch
+
+    async def _run_dispatch_stt(self, wav: bytes, seq: int, epoch: int,
+                                transcriber) -> None:
+        text = ""
+        emotion = ""
+        events: list[str] = []
+        try:
+            # 串行化「转写 + 情绪捕获」临界区（F3）：并发段转写共享 agent.stt_emotion_state，
+            # 不加锁时早段提交可能读到晚段 emotion。锁只串行 STT 本身，消息循环仍不阻塞。
+            async with self._stt_stt_lock:
+                text = await asyncio.wait_for(transcriber(wav), timeout=STT_TIMEOUT)
+                text = text.strip() if text else ""
+                es = getattr(self._agent, "stt_emotion_state", None) or {}
+                emotion = es.get("emotion", "") or ""
+                events = list(es.get("events", []) or [])
+        except asyncio.TimeoutError:
+            logger.warning("语音 STT 段转写超时（丢弃段 seq=%d）", seq)
+        except Exception:
+            logger.warning("语音 STT 段转写失败", exc_info=True)
+        finally:
+            self._stt_tasks.discard(asyncio.current_task())
+        if epoch != self._stt_epoch or self._mode == VoiceMode.IDLE:
+            return                   # 跨会话/teardown 后迟到结果——丢弃（B1 防线）
+        self._stt_pending[seq] = (text, emotion, events)
+        try:
+            await self._commit_ready_stt()
+        except Exception:
+            logger.debug("语音 STT 段提交失败（连接可能已关）", exc_info=True)
+
+    async def _commit_ready_stt(self) -> None:
+        """按派发序号顺序提交（提交锁串行化——防 partial/turn 帧交错）；防乱序破坏 turn_id。"""
+        async with self._stt_commit_lock:
+            while self._stt_commit_seq in self._stt_pending:
+                text, emotion, events = self._stt_pending.pop(self._stt_commit_seq)
+                self._stt_commit_seq += 1
+                if not text:
+                    continue         # 超时/失败段：不补 partial/turn
+                if self._mode in (VoiceMode.REALTIME, VoiceMode.DICTATION) \
+                        and not self._paused:
+                    await self._on_segment(text, emotion=emotion, events=events)
+
+    async def _drain_dispatch_stt(self) -> None:
+        """等待在途派发 STT 段完成（stop/dictation-stop 路径：残段仍提交，spec §5.2）。"""
+        pending = [t for t in self._stt_tasks if not t.done()]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def feed_pcm(self, chunk: bytes) -> None:
         if self._mode == VoiceMode.RECORDING and self._rec_state == _RecordingState.RECORDING:
@@ -383,7 +461,8 @@ class VoiceSessionManager:
             await self._buffer.feed(chunk)
         # IDLE / recording 非 RECORDING 态 → 忽略
 
-    async def _on_segment(self, text: str) -> None:
+    async def _on_segment(self, text: str, emotion: str | None = None,
+                          events: list[str] | None = None) -> None:
         text = text.strip() if text else ""
         if not text:
             return
@@ -395,12 +474,14 @@ class VoiceSessionManager:
             await self._emit(VoiceSessionPartialMessage(
                 sessionId=self._session_id, turnId=self._turn_id,
                 segmentIndex=seg, text=text).wire_dict())
-            # 自动提交轮次（spec §5.3）：预分配 messageId + post UserInputData
-            es = getattr(self._agent, "stt_emotion_state", None) or {}
+            if emotion is None:      # 缺省回退读共享 state（legacy AudioBuffer 回调路径）
+                es = getattr(self._agent, "stt_emotion_state", None) or {}
+            else:
+                es = {"emotion": emotion, "events": events or []}
             message_id = new_message_id()
             self._agent.idle.touch()
-            self._agent.bus.post(
-                self._build_user_input(text, es, message_id))
+            self._agent.bus.post(self._build_user_input(text, es, message_id))
+            self._emitted_message_ids.add(message_id)   # D1 归属（Task 9）
             await self._emit(VoiceSessionTurnMessage(
                 sessionId=self._session_id, turnId=self._turn_id,
                 messageId=message_id, conversationId=self._conv_id, text=text).wire_dict())
@@ -408,6 +489,11 @@ class VoiceSessionManager:
             from frontend_contract import DictationPartialMessage
             self._dict_text.append(text)
             await self._emit(DictationPartialMessage(text=text).wire_dict())
+
+    @property
+    def emitted_message_ids(self) -> set[str]:
+        """本连接语音段提交的用户消息 ID 集合（D1 断连归属判定，Task 9 消费）。"""
+        return set(self._emitted_message_ids)
 
     def _build_user_input(self, text: str, es: dict, message_id: str):
         from core.schema.event import UserInputData
