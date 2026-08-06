@@ -9,6 +9,10 @@ from typing import TYPE_CHECKING
 
 from Module.embedding import EmbeddingFactory
 
+from core.schema.adapters import attachment_resolver
+from core.storage.attachment_gc import run_attachment_gc
+from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
+
 if TYPE_CHECKING:
     from core.storage.character_version_repo import CharacterVersionRepository
     from core.storage.message_repo import MessageRepository
@@ -29,6 +33,7 @@ class _LifecyclePersistence:
 
     if TYPE_CHECKING:
         _db_health_task: asyncio.Task[None] | None
+        _attachment_gc_task: asyncio.Task[None] | None
         _session_manager: SessionManager
         _long_term: LongTermMemory
         _message_repo: MessageRepository
@@ -125,6 +130,56 @@ class _LifecyclePersistence:
         except Exception:
             logger.warning("AttachmentRepository 建连失败（附件操作将 fail-closed）",
                            exc_info=True)
+
+    async def _start_attachment_gc(self) -> None:
+        """启动附件 GC 兜底扫描（批次 7 Task 7，置于 attachment_repo 建连步骤后）。
+
+        先预热 AttachmentFileResolver（查一批 active 记录填充 ID→路径映射），随后
+        fire-and-forget 后台任务执行 run_attachment_gc——不阻塞启动。Mongo 离线时
+        find_by_status raise StorageUnavailableError → 跳过预热与扫描（记日志）。
+        """
+        repo = getattr(self, "_attachment_repo", None)
+        if repo is None:
+            return
+        try:
+            active = await repo.find_by_status(STATUS_ACTIVE)
+            if active:
+                attachment_resolver.load(active)
+                logger.info("AttachmentFileResolver 预热 %d 条 active 附件记录", len(active))
+        except StorageUnavailableError:
+            logger.warning("AttachmentRepository 离线——跳过 resolver 预热与 GC 扫描")
+            return
+        except Exception:
+            logger.warning("附件记录查询失败——跳过 resolver 预热", exc_info=True)
+            return
+        self._attachment_gc_task = asyncio.create_task(
+            self._attachment_gc_runner(), name="attachment-gc")
+
+    async def _attachment_gc_runner(self) -> None:
+        """后台执行附件 GC（fire-and-forget；异常不阻断启动/关停）。"""
+        repo = getattr(self, "_attachment_repo", None)
+        if repo is None:
+            return
+        try:
+            stats = await run_attachment_gc(repo)
+            logger.info("附件 GC 扫描完成: %s", stats)
+        except StorageUnavailableError:
+            logger.warning("附件 GC 跳过：MongoDB 离线")
+        except Exception:
+            logger.warning("附件 GC 扫描失败", exc_info=True)
+
+    async def _stop_attachment_gc(self) -> None:
+        """取消并等待附件 GC 后台任务（置于 _stop_attachment_repo 前）。"""
+        task = getattr(self, "_attachment_gc_task", None)
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=3.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+        self._attachment_gc_task = None
 
     async def _db_health_loop(self) -> None:
         """每 120s 检查数据库连接，失败时尝试自动重连。

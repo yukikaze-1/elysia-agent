@@ -63,6 +63,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         ("stop_idle",            "_stop_idle"),
         ("stop_embedding",       "_stop_embedding_if_running"),
         ("stop_persistence",     "_stop_persistence"),
+        ("stop_attachment_gc",   "_stop_attachment_gc"),
         ("stop_attachment_repo", "_stop_attachment_repo"),
         ("stop_llm_tts",         "_stop_llm_and_tts"),
         ("stop_output",          "_stop_output"),
@@ -81,6 +82,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         ("mailbox_polling",  "_start_mailbox_polling"),
         ("db_health",        "_start_db_health"),
         ("attachment_repo",  "_start_attachment_repo"),
+        ("attachment_gc",    "_start_attachment_gc"),
     ]
 
     if TYPE_CHECKING:
@@ -115,6 +117,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _event_task: asyncio.Task[None] | None
         _mailbox_task: asyncio.Task[None] | None
         _db_health_task: asyncio.Task[None] | None
+        _attachment_gc_task: asyncio.Task[None] | None
         _embed_task: asyncio.Task[Any] | None
         _pending_messages: list[_PendingMessage]
         _background_tasks: dict[str, _BackgroundTaskEntry]

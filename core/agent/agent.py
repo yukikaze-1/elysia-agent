@@ -302,6 +302,7 @@ class Agent(AgentLifecycle, AgentServer):
         self._mailbox_task: asyncio.Task | None = None
         self._db_health_task: asyncio.Task | None = None
         self._embed_task: asyncio.Task | None = None
+        self._attachment_gc_task: asyncio.Task | None = None
 
     # ---- process_message ----
 
