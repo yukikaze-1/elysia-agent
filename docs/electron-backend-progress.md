@@ -308,3 +308,10 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 - **D5 会话删除附件引用释放（`82eaf04` / BE-030 + BE-070）**：新模块 `core/storage/attachment_release.py`（提取自 debug_routes/archive.py 共享 helper）；REST `DELETE /api/sessions/{id}` 先 `release_session_attachments(agent, sid)` 再删。
 - **Minor 修复**：SSRF 补 site-local IPv6 fec0::/10（`6958722`）；认证失败日志记 code/path 不记凭据（`ae590e1`）；GC 日志收敛（只记 aid/kind）+ 规则1 unlink 失败保留记录（`66be44f`）；错误信封 `str(e)` → 通用消息（`2b886b0`）；Inner Voice 应用日志降级 debug（`84b3775`）；Secret Store `threading.Lock` 防并发丢更新（`d0e556d`）；LLM 初始 custom 配置复用 SSRF 守卫（`963d1a8`）；add_ref/remove_ref 原子化——幂等 add + 归零条件软删（`9a16709`）；上传 kind 限长 + 多文件先校验再写盘（`716f2ad`）；探活改用独立 `req_<uuid>`（`f14d9c9`）；共享 fake 时序修复（`565fc10`）。
 - **测试**：批次 8a 全量回归 **2731 passed**（审计报告 §1 合规判定同步更新为 24 SATISFIED / 0 PARTIAL）。
+
+### 后续批次（8b / 8c）——审计剩余项
+
+批次 8a 只覆盖 A 安全 / B 附件 / C 搜索 三簇 + 探活。审计报告 `docs/electron-backend-audit-batches0-7.md` 中**尚未修复**的条目按用户拍板的批次组织（8a spec §批次组织）归入：
+
+- **8b（D 簇 WS/语音行为）**：断连误杀其他连接 generation、队列满仍发 accepted ACK、`_interrupt_source` 跨回合泄漏、RECORDING 残留帧自动提交、cancel 无法抢占在途 VAD 段（5 important）；v2 空文本静默丢弃、空响应泄漏 v1 message 帧、dictation ID 校验、`_restore_emotion` 抹除他连接、cancel_stream audio_end 后返回 True、`_wav_info` 固定偏移、附件幂等 entry 异常残留（7 minor）。
+- **8c（E/F 簇契约/信封/ID/杂项）**：WS error 信封漏 retryable/details、admin/debug 裸 error 无统一信封、HeartbeatAckMessage 死契约面（3 important）；generation.started.requestId 不传值、畸形 cursor 500、generation 持久化 error 丢 code/retryable、pending 跨会话可见、llm_summary 未用、tools/calls snake_case、voices current 引用不存在、trace 脚本 2 条、chunked 413 兜底、并发 WS TOCTOU、v2 收 capabilities 帧、max_request_bytes=0 回落、build_sha 缓存、decode error 无 code、契约 docstring/wire key（16 minor）。
