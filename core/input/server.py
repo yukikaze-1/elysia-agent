@@ -40,8 +40,8 @@ _STATIC_DIR = ProjectPath.STATIC.resolve()
 _LIVE2D_DIR = ProjectPath.LIVE2D_ASSETS.resolve()
 
 
-def warn_if_unsecured(host: str, access_token: str) -> None:
-    """非回环绑定 + 无产品 access_token → ERROR 级显著阻塞告警。
+def warn_if_unsecured(host: str, access_token: str, auth_token: str = "") -> None:
+    """非回环绑定 + 未配置认证 token → 显著告警；仅配置一侧 → 提示同时配置。
 
     满足 PRD「绑定非回环地址且未启用认证时应拒绝启动或输出显著阻塞告警」的
     "或"分支——不拒绝启动（config 默认 host=0.0.0.0，拒绝会破坏本地开发）。
@@ -49,10 +49,23 @@ def warn_if_unsecured(host: str, access_token: str) -> None:
     Args:
         host: 服务绑定地址。
         access_token: 产品 access token（AGENT_ACCESS_TOKEN），空 = 未启用认证。
+        auth_token: 管理面 token（SERVER_AUTH_TOKEN），空 = 未启用管理认证。
     """
-    if access_token:
-        return
     if host in ("127.0.0.1", "localhost", "::1"):
+        return
+    if auth_token and access_token:
+        return
+    if access_token or auth_token:
+        logger.warning(
+            "\n"
+            "==================================================================\n"
+            "  安全建议：服务绑定非回环地址 %r 且仅配置了部分认证。\n"
+            "  远程部署建议同时配置 AGENT_ACCESS_TOKEN（产品 API /ws /uploads）与\n"
+            "  SERVER_AUTH_TOKEN（管理面 /shutdown /debug/api），二者缺一会导致\n"
+            "  部分端点匿名可访问。\n"
+            "==================================================================",
+            host,
+        )
         return
     logger.error(
         "\n"
@@ -284,7 +297,10 @@ def create_app(
         app["task_system"] = task_system
 
     def _check_auth(request: web.Request) -> bool:
-        """Return True if the request is authorized for sensitive endpoints.
+        """管理端点认证（/shutdown /restart /tools /debug/api/*）。
+
+        批次 8a（D1）fallback：auth_token 空 + access_token 非空 → 用 access_token 校验
+        （Demo 单 token 语义，docs/14 §6）；两者都空 → 匿名本地开发。
 
         Args:
             request: aiohttp Request with optional Authorization header.
@@ -292,11 +308,13 @@ def create_app(
         Returns:
             bool: True if authorized (no token set, or token matches).
         """
-        if not auth_token:
+        if auth_token:
+            expected = f"Bearer {auth_token}"
+        elif access_token:
+            expected = f"Bearer {access_token}"
+        else:
             return True
-        auth_header = request.headers.get("Authorization", "")
-        expected = f"Bearer {auth_token}"
-        return auth_header == expected
+        return request.headers.get("Authorization", "") == expected
 
     async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         """WebSocket 连接处理入口（含并发上限检查）。

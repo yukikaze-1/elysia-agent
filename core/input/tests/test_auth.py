@@ -10,12 +10,12 @@ from frontend_contract.rest import ProtocolError
 
 @pytest.fixture
 def make_auth_app():
-    """构造带 access_token 的 app（access_token 作为 create_app 显式参数传入）。"""
+    """构造带 token 的 app（access_token/auth_token 作为 create_app 显式参数传入）。"""
     from unittest.mock import AsyncMock, MagicMock
     from core.agent import RunState
     from core.input.server import create_app
 
-    def _make(access_token: str = ""):
+    def _make(access_token: str = "", auth_token: str = ""):
         agent = MagicMock()
         agent.output = MagicMock()
         agent.bus = MagicMock()
@@ -30,7 +30,63 @@ def make_auth_app():
         agent.long_term.count = 0
         agent.long_term.health_check = AsyncMock(return_value=True)
         agent.tool_adapter._manager.tool_names = ["t1"]
-        return create_app(agent, serve_static=False, access_token=access_token)
+        # /debug/api handler（collect → DebugData 契约）需要的属性 stub——批次 8a D1
+        # 测试断言管理端点带 token 时 200，MagicMock agent 需满足 DebugInfo.collect
+        # 全部读取路径（缺省则 async 字段 TypeError / 契约 MagicMock 校验失败 → 500）。
+        agent.status.previous_name.return_value = "idle"
+        agent.started_at = 0.0
+        agent.cognitive._phase = None
+        agent.cognitive._current_task = None
+        agent.cognitive._timing_history = []
+        agent.idle._character.proactive.enabled = False
+        agent.idle._character.proactive.interval = 60.0
+        agent.idle._last_interaction = None
+        agent.session.messages_for_client.return_value = []
+        agent.session.character_state.model_dump.return_value = {}
+        agent.session.character_state.mood = "calm"
+        agent.long_term._entries = []
+        agent.long_term._repo = MagicMock()
+        agent.long_term._embedding_provider._backend = None
+        agent.memory_repo.health_check = AsyncMock(return_value=True)
+        agent.session_repo.health_check = AsyncMock(return_value=True)
+        agent.tool_adapter._manager.plugin_list = []
+        agent.tool_adapter._manager.executing_now = []
+        agent.tool_adapter._manager.history = []
+        agent.consolidator._history = []
+        agent.consolidator._buffer = []
+        agent.consolidator._threshold = 6
+        agent.character.name = "mock"
+        agent.character.base_personality = "mock"
+        agent.character_engine.render_c1.return_value.self_personality = "mock"
+        agent.character_engine.state.state_l3 = "mock"
+        agent.character_engine.state.state_history = []
+        agent.character_engine.state.last_awareness_time = 0.0
+        agent.character_engine.state.self_perception_history = []
+        agent.character_engine._version_repo = None
+        agent.character_reflector.buffer_size = 50
+        agent.character_reflector.last_reflection_at = 0.0
+        agent.character_reflector.locked = False
+        agent.character_reflector.last_prompt_system = ""
+        agent.character_reflector.last_prompt_user = ""
+        agent.character_reflector.last_success = False
+        agent.character_reflector.last_duration_ms = 0.0
+        agent.character_reflector.last_text_len = 0
+        agent.stt_ok = False
+        agent.scheduler.pending_count = 0
+        agent.scheduler.running_count = 0
+        agent.scheduler.total_count = 0
+        agent.memory_reflector._round_count = 0
+        agent.memory_reflector.ROUND_THRESHOLD = 10
+        agent.memory_reflector._new_memory_count = 0
+        agent.memory_reflector.NEW_MEMORY_THRESHOLD = 5
+        agent.memory_reflector._lock = MagicMock()
+        agent.memory_reflector._lock.locked.return_value = False
+        agent.memory_reflector._last_summary = None
+        agent.token_tracker = None
+        agent.prompt_recorder = None
+        agent.response_recorder = None
+        return create_app(agent, serve_static=False,
+                          access_token=access_token, auth_token=auth_token)
 
     return _make
 
@@ -151,12 +207,67 @@ class TestStartupGuard:
         assert not any("安全警告" in r.message for r in caplog.records)
 
     def test_non_loopback_with_token_no_warning(self, caplog):
-        """非回环 + 有 access_token → 不告警（已认证）。"""
+        """非回环 + 双 token（access+auth）→ 不告警（已认证，语义防反转）。"""
         import logging
         from core.input.server import warn_if_unsecured
         with caplog.at_level(logging.ERROR, logger="core.input.server"):
-            warn_if_unsecured("0.0.0.0", "secret")
+            warn_if_unsecured("0.0.0.0", "secret", "admin")
         assert not any("安全警告" in r.message for r in caplog.records)
+
+    def test_non_loopback_one_token_warns(self, caplog):
+        """非回环 + 仅配置一侧 token → 提示同时配置另一侧（批次 8a D1）。"""
+        import logging
+        from core.input.server import warn_if_unsecured
+        with caplog.at_level(logging.WARNING, logger="core.input.server"):
+            warn_if_unsecured("0.0.0.0", "secret", "")
+        assert any("建议同时配置" in r.message for r in caplog.records)
+
+
+@pytest.mark.service
+class TestAdminAuthFallback:
+    """批次 8a D1：auth_token 空 + access_token 非空 → 管理端点 fallback 用 access_token。"""
+
+    @pytest.mark.asyncio
+    async def test_admin_anonymous_401_when_only_access_token(self, make_auth_app, aiohttp_client):
+        """仅配 access_token：匿名访问 /debug/api → 401（fallback 生效）。"""
+        app = make_auth_app(access_token="secret")
+        client = await aiohttp_client(app)
+        resp = await client.get("/debug/api")
+        assert resp.status == 401
+
+    @pytest.mark.asyncio
+    async def test_admin_with_access_token_ok(self, make_auth_app, aiohttp_client):
+        """仅配 access_token：access_token 访问 /debug/api → 放行（非 401 即通过）。"""
+        app = make_auth_app(access_token="secret")
+        client = await aiohttp_client(app)
+        resp = await client.get("/debug/api", headers={"Authorization": "Bearer secret"})
+        # 断言 200 而非 != 401（MagicMock agent 无 task_system 可能 500，M5）
+        assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_admin_wrong_token_401(self, make_auth_app, aiohttp_client):
+        """仅配 access_token：错误 token 访问 /debug/api → 401。"""
+        app = make_auth_app(access_token="secret")
+        client = await aiohttp_client(app)
+        resp = await client.get("/debug/api", headers={"Authorization": "Bearer wrong"})
+        assert resp.status == 401
+
+    @pytest.mark.asyncio
+    async def test_shutdown_with_access_token_not_401(self, make_auth_app, aiohttp_client):
+        """/shutdown 由 _check_auth 护——仅验认证通过后可到达 handler（handler 本身 mock）。"""
+        app = make_auth_app(access_token="secret")
+        client = await aiohttp_client(app)
+        resp = await client.post("/shutdown", headers={"Authorization": "Bearer secret"})
+        assert resp.status != 401
+
+    @pytest.mark.asyncio
+    async def test_two_tokens_strict_separation(self, make_auth_app, aiohttp_client):
+        """双 token：product token 不能访问管理端点；admin token 不能访问产品 API。"""
+        app = make_auth_app(access_token="prod", auth_token="admin")
+        client = await aiohttp_client(app)
+        assert (await client.get("/debug/api", headers={"Authorization": "Bearer prod"})).status == 401
+        assert (await client.get("/debug/api", headers={"Authorization": "Bearer admin"})).status != 401
+        assert (await client.get("/api/providers", headers={"Authorization": "Bearer admin"})).status == 401
 
 
 @pytest.mark.service
