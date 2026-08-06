@@ -92,6 +92,7 @@ from core.storage.message_repo import MessageRepository
 from core.storage.token_repo import TokenRepository
 from core.storage.memory_repo import MemoryRepository
 from core.storage.desktop_call_repo import DesktopCallRepository
+from core.storage.attachment_repo import AttachmentRepository
 from core.desktop.bridge import DesktopToolBridge
 
 logger = logging.getLogger(__name__)
@@ -144,6 +145,9 @@ class Agent(AgentLifecycle, AgentServer):
             database_name=db_cfg.db_name,
             base_url=db_cfg.mongodb_uri,
         )
+        # 批次 7：附件仓库——lazy 初始化（attachment_repo property 首访时构造，
+        # start() 建连；Mongo 离线附件操作 fail-closed）
+        self._attachment_repo: AttachmentRepository | None = None
 
         # ---- L2: Memory ----
         # 批次 3 (multi-session)：SessionManager 取代单一 self._session——
@@ -654,6 +658,17 @@ class Agent(AgentLifecycle, AgentServer):
     def token_repo(self):
         """token 用量仓库。"""
         return self._token_repo
+
+    @property
+    def attachment_repo(self):
+        """附件仓库（fail-closed 存储，懒初始化；首访时构造真实 repo）。"""
+        if self._attachment_repo is None:
+            db_cfg = self._config.database
+            self._attachment_repo = AttachmentRepository(
+                database_name=db_cfg.db_name,
+                base_url=db_cfg.mongodb_uri,
+            )
+        return self._attachment_repo
 
     @property
     def tool_adapter(self):

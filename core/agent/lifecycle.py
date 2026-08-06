@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from core.storage.session_repo import SessionRepository
     from core.storage.message_repo import MessageRepository
     from core.storage.token_repo import TokenRepository
+    from core.storage.attachment_repo import AttachmentRepository
     from core.monitoring.token_tracker import TokenTracker
     from core.debug.prompt_recorder import PromptRecorder
     from core.debug.response_recorder import ResponseRecorder
@@ -62,6 +63,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         ("stop_idle",            "_stop_idle"),
         ("stop_embedding",       "_stop_embedding_if_running"),
         ("stop_persistence",     "_stop_persistence"),
+        ("stop_attachment_repo", "_stop_attachment_repo"),
         ("stop_llm_tts",         "_stop_llm_and_tts"),
         ("stop_output",          "_stop_output"),
     ]
@@ -78,6 +80,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         ("task_system",      "_start_task_system"),
         ("mailbox_polling",  "_start_mailbox_polling"),
         ("db_health",        "_start_db_health"),
+        ("attachment_repo",  "_start_attachment_repo"),
     ]
 
     if TYPE_CHECKING:
@@ -101,6 +104,8 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _idle: IdleMonitor
         _consolidator: MemoryConsolidator
         _session_repo: SessionRepository
+        _attachment_repo: AttachmentRepository | None
+        attachment_repo: AttachmentRepository
         _task_system: WorkflowEngine | None
         _delegation_preparer: DelegationPreparer | None
         _token_tracker: TokenTracker

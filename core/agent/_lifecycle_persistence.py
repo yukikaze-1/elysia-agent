@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from core.storage.message_repo import MessageRepository
     from core.storage.session_repo import SessionRepository
     from core.storage.token_repo import TokenRepository
+    from core.storage.attachment_repo import AttachmentRepository
     from core.memory.session_manager import SessionManager
     from core.memory.long_term import LongTermMemory
     from core.personality import CharacterEngine
@@ -39,6 +40,7 @@ class _LifecyclePersistence:
         _milvus_available: bool
         _token_repo: TokenRepository
         _session_repo: SessionRepository
+        _attachment_repo: AttachmentRepository | None
         _generation_registry: GenerationRegistry
         _desktop_bridge: DesktopToolBridge
 
@@ -108,6 +110,21 @@ class _LifecyclePersistence:
         self._mongo_ok = mongo_ok
         self._milvus_ok = milvus_ok
         return mongo_ok, milvus_ok
+
+    async def _start_attachment_repo(self) -> None:
+        """连接附件仓库（批次 7 Task 2）。
+
+        repo 由 Agent.attachment_repo property lazy 构造（plan review C2 归属
+        定一）。失败记 warning 不阻塞 Agent 启动——附件操作 fail-closed：
+        MongoDB 离线时读写 raise StorageUnavailableError（503 STORAGE_UNAVAILABLE），
+        不做静默 no-op。
+        """
+        try:
+            if not await self.attachment_repo.connect():
+                logger.warning("AttachmentRepository 离线（附件操作将 fail-closed）")
+        except Exception:
+            logger.warning("AttachmentRepository 建连失败（附件操作将 fail-closed）",
+                           exc_info=True)
 
     async def _db_health_loop(self) -> None:
         """每 120s 检查数据库连接，失败时尝试自动重连。
@@ -209,3 +226,15 @@ class _LifecyclePersistence:
             await asyncio.wait_for(EmbeddingFactory.shutdown(), timeout=5.0)
         except asyncio.TimeoutError:
             logger.warning("Embedding factory shutdown timed out")
+
+    async def _stop_attachment_repo(self) -> None:
+        """关闭附件仓库连接（幂等；未初始化则跳过）。"""
+        repo = getattr(self, "_attachment_repo", None)
+        if repo is None:
+            return
+        try:
+            await asyncio.wait_for(repo.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Attachment repo close timed out")
+        except Exception:
+            logger.warning("Attachment repo close failed", exc_info=True)
