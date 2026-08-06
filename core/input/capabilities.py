@@ -72,7 +72,7 @@ def build_server_info(agent: "Agent", connection_id: str | None = None) -> Serve
     Returns:
         ``ServerInfoMessage``（type=server_info + protocol_version + features + services）。
     """
-    from core.version import __version__
+    from core.version import build_server_version, get_build_sha
 
     def svc(available: bool, enabled: bool, model: str | None, default: str) -> ServiceCapability:
         return ServiceCapability(
@@ -84,7 +84,8 @@ def build_server_info(agent: "Agent", connection_id: str | None = None) -> Serve
 
     cfg = agent.config
     return ServerInfoMessage(
-        server_version=__version__,
+        server_version=build_server_version(),
+        build_sha=get_build_sha(),  # 批次 7：build SHA 独立上 wire（前端展示/反馈定位）
         features=ServerInfoFeatures(
             structured_generation=True,  # 批次 2 已实现
             multi_conversation=True,     # 批次 3 已实现
@@ -92,6 +93,7 @@ def build_server_info(agent: "Agent", connection_id: str | None = None) -> Serve
             dictation=True,        # 批次 6 已实现（BE-062）
             voice_recording=True,  # 批次 6（BE-060）
             voice_realtime=True,   # 批次 6（BE-061）
+            media_upload=True,     # 批次 7 已实现（POST /api/uploads）
         ),
         services={
             "llm": svc(True, True, agent.llm.model, cfg.llm.model),

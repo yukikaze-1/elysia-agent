@@ -45,7 +45,8 @@ class TestVersionNegotiation:
             assert info["protocol_version"] == "2.0"
             assert info["server_version"]
             # features 如实反映能力：structured_generation 批次 2、multi_conversation 批次 3、
-            # desktop_runtime 批次 4、dictation/voice_recording/voice_realtime 批次 6 已实现（全 true）
+            # desktop_runtime 批次 4、dictation/voice_recording/voice_realtime 批次 6、
+            # media_upload 批次 7 已实现（全 true）
             assert info["features"] == {
                 "structured_generation": True,
                 "multi_conversation": True,
@@ -53,6 +54,7 @@ class TestVersionNegotiation:
                 "dictation": True,
                 "voice_recording": True,
                 "voice_realtime": True,
+                "media_upload": True,
             }
             # services 复用 per-service 形状
             assert "llm" in info["services"]

@@ -144,6 +144,11 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         self._state = RunState.RUNNING
         self._started_at = time.monotonic()
         self._fsm.reset()
+        # 预热 build_sha 缓存——git 只跑一次（build_server_info 每次握手构造时读取，
+        # 模块级缓存保证此处在启动时完成 subprocess，握手路径零延迟）
+        from core.version import get_build_sha
+
+        get_build_sha()
         try:
             await self._llm.reconnect()
         except Exception:
