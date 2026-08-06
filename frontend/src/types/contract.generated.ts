@@ -1474,7 +1474,8 @@ export interface DesktopCallStatus {
 /** 上传响应中的附件条目（POST /api/uploads 响应 attachments[]）。
 
 `signedUrl` 可缺省（fail-closed 省略——签发失败时不带签名 URL，前端渲染层
-对稳定路径统一调签发端点解析）；`filename` 服务端脱敏后落盘名（I5，只留扩展名）。 */
+对稳定路径统一调签发端点解析）；`filename` 脱敏后的原始文件名
+（去路径分隔符/截断 255/剥控制字符）。 */
 export interface AttachmentInfo {
   /** 附件 ID（att_ 前缀） */
   attachmentId: string
@@ -1488,7 +1489,7 @@ export interface AttachmentInfo {
   url: string
   /** 短期签名 URL（签发失败 fail-closed 省略），可缺省 */
   signedUrl?: string
-  /** 落盘文件名（脱敏，只留扩展名） */
+  /** 脱敏后的原始文件名（去路径分隔符/截断 255/剥控制字符） */
   filename: string
 }
 

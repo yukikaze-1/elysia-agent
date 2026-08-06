@@ -65,6 +65,29 @@ def warn_if_unsecured(host: str, access_token: str) -> None:
     )
 
 
+def warn_if_attachment_signature_disabled(sig_secret: str, access_token: str) -> None:
+    """附件签名未启用 → 启动 warning（spec §3.4 fail-open 提示）。
+
+    提示条件：ATTACHMENT_SIG_SECRET 空 + AGENT_ACCESS_TOKEN 空（无鉴权本地开发）。
+    签名已配置 → 无需提示；已启用产品认证（fail-closed 语义下无签名下载会被拒）→
+    同样无需提示。
+
+    Args:
+        sig_secret: 附件签名密钥（ATTACHMENT_SIG_SECRET），空 = 未配置。
+        access_token: 产品 access token（AGENT_ACCESS_TOKEN），空 = 未启用认证。
+    """
+    if sig_secret or access_token:
+        return
+    logger.warning(
+        "\n"
+        "==================================================================\n"
+        "  安全警告：附件签名未启用（ATTACHMENT_SIG_SECRET 未配置）。\n"
+        "  附件下载 URL 无签名保护，仅限无鉴权本地开发。\n"
+        "  远程部署请设置环境变量 ATTACHMENT_SIG_SECRET（配合 AGENT_ACCESS_TOKEN）。\n"
+        "==================================================================",
+    )
+
+
 def _protocol_error_response(code: str, message: str, status: int = 401,
                              retryable: bool = False) -> web.Response:
     """构造统一错误信封响应（code/message/retryable/requestId/error/details）。
@@ -246,6 +269,14 @@ def create_app(
     # 产品认证：access_token 为空 → 全匿名（本地开发，v1 兼容）
     if access_token:
         app.middlewares.append(_make_access_auth_middleware(access_token))
+
+    # 附件签名 fail-open 启动警告（spec §3.4）：SIG 未配置 + 无鉴权（access_token 空）
+    # → 提示仅限本地开发（有鉴权时无签名下载被 fail-closed 拒，无需提示）。
+    # 逐级 getattr 兜底（测试用 _FakeAgent 无 config 属性，容错跳过）。
+    sig_secret = getattr(
+        getattr(getattr(agent, "config", None), "server", None),
+        "attachment_sig_secret", "") or ""
+    warn_if_attachment_signature_disabled(sig_secret, access_token)
 
     # Inject agent + stt + task_system into app context for handler access
     app["agent"] = agent

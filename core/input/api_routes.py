@@ -48,6 +48,9 @@ _MIME_KIND = {
     "audio/ogg": "audio",
     "application/pdf": "file",
     "application/zip": "file",
+    "text/plain": "file",
+    "text/markdown": "file",
+    "application/json": "file",
 }
 
 # mime → 允许扩展名集合（扩展名一致性校验，堵改名绕过）
@@ -63,6 +66,17 @@ _MIME_EXTS = {
     "audio/ogg": {"ogg"},
     "application/pdf": {"pdf"},
     "application/zip": {"zip"},
+    "text/plain": {"txt"},
+    "text/markdown": {"md"},
+    "application/json": {"json"},
+}
+
+# 文本类扩展名（带点）→ mime（spec §4.1 I6）：filetype 魔数对纯文本/markdown/JSON
+# 返回 None → 走扩展名白名单 + UTF-8 内容 sanity，而非直接 415。
+_TEXT_EXT_TO_MIME = {
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".json": "application/json",
 }
 
 
@@ -578,11 +592,13 @@ def register_api_routes(app: web.Application) -> None:
 
         multipart 字段：files[]（多个）+ kind（可选，客户端意图**不信任**）。
         校验顺序（spec §4.1）：kind 枚举预检 → 数量 ≤10 → 每文件 filetype 魔数
-        白名单 → 扩展名一致性 → kind 归位（webm 以客户端 kind tiebreaker）+
-        归位后大小复核 → 写盘 data/uploads/{kind}/{uuid}.{ext} + sha256 +
-        attachments 落记录（fail-closed 离线 503，失败删已落盘文件不留孤儿）→
-        AttachmentFileResolver.register。整体聚合上限 64MB 由 payload 中间件
-        Content-Length 预检承担（server.py _make_payload_middleware）。
+        白名单（文本类 txt/md/json 无魔数 → 扩展名白名单 + UTF-8 sanity，I6）→
+        扩展名一致性 → kind 归位（webm 以客户端 kind tiebreaker）+ 归位后大小复核 →
+        写盘 data/uploads/{kind}/{uuid}.{ext} + sha256 + attachments 落记录
+        （fail-closed 离线 503，失败删已落盘文件不留孤儿）→ AttachmentFileResolver.register。
+        整体聚合上限 64MB：有 Content-Length 由 payload 中间件预检（server.py
+        _make_payload_middleware），chunked（无 Content-Length）由本 handler 的
+        total_bytes 累计强制（Critical #4）。
         """
         from core.input.server import _protocol_error_response
         from core.schema.adapters import attachment_resolver
@@ -595,12 +611,17 @@ def register_api_routes(app: web.Application) -> None:
         sig_secret = getattr(cfg, "attachment_sig_secret", "") or ""
         access_token_cfg = getattr(cfg, "access_token", "") or ""
         repo = agent.attachment_repo
+        # 聚合上限（spec §4.1 Critical #4 强制）：chunked（无 Content-Length）时中间件
+        # Content-Length 预检失效 → handler 内累计字节强制整体 ≤ cms。取 agent 配置同源
+        # （create_app 的 client_max_size 也是它，缺省 64MB）。
+        cms = getattr(cfg, "max_request_bytes", None) or 64 * 1024 * 1024
 
         # 收集 multipart 字段（kind 文本 + files[] 文件；顺序无关，FormData 不保证）
         kind = ""
         files: list[tuple[str, bytes]] = []  # (原始文件名, 内容)
         # 收集阶段 read_chunk 上限取各 kind 上限最大值（50MB）——kind 缺省分类前防 DoS
         max_read = max(_KIND_LIMITS.values())
+        total_bytes = 0  # 聚合字节累计（多文件跨 read_chunk 相加，超 cms 即中断）
         try:
             reader = await request.multipart()
         except Exception:
@@ -621,13 +642,19 @@ def register_api_routes(app: web.Application) -> None:
                 else:
                     kind = str(raw or "").strip()
             elif name.startswith("files"):
-                # read_chunk 逐块读取自限内存（整体上限由中间件预检兜底）
+                # read_chunk 逐块读取自限内存（每文件 ≤50MB，整体由 total_bytes 累计兜底）
                 data = bytearray()
                 while not field.at_eof():
                     data.extend(await field.read_chunk(max_read + 1))
                     if len(data) > max_read:
                         return _protocol_error_response(
                             "REQUEST_TOO_LARGE", "单个文件过大", 413)
+                total_bytes += len(data)
+                if total_bytes > cms:
+                    # 聚合超限：立即 413 中断，不继续读完 body（chunked 无 Content-Length
+                    # 时中间件拦不住，这里才是整体上限的强制点）
+                    return _protocol_error_response(
+                        "REQUEST_TOO_LARGE", "整体上传超过聚合上限", 413)
                 files.append((getattr(field, "filename", "") or "attachment", bytes(data)))
             # 其他字段忽略
 
@@ -645,15 +672,28 @@ def register_api_routes(app: web.Application) -> None:
             if kind and len(data) > _KIND_LIMITS[kind]:
                 return _protocol_error_response(
                     "REQUEST_TOO_LARGE", f"文件过大，超过 {kind} 上限", 413)
-            # 步骤 3：filetype 魔数判定（不信任扩展名/content_type，堵伪造）
+            # 文件扩展名（步骤 3/4 复用；带点形式供文本白名单查表）
+            ext_raw = os.path.splitext(filename_raw)[1].lower()
+            ext = ext_raw.lstrip(".")
+            # 步骤 3：类型判定（不信任扩展名/content_type，堵伪造）
             ft = filetype.guess(data)
             if ft is None:
-                return _protocol_error_response("UNSUPPORTED_MEDIA_TYPE", "不支持的文件类型", 415)
-            mime = ft.mime
-            if mime != "video/webm" and mime not in _MIME_KIND:
-                return _protocol_error_response("UNSUPPORTED_MEDIA_TYPE", "不支持的文件类型", 415)
-            # 步骤 4：扩展名与判定一致（堵改名绕过；jpg/jpeg 归一化）
-            ext = os.path.splitext(filename_raw)[1].lower().lstrip(".")
+                # 文本类（txt/md/json）无魔数：扩展名白名单 + UTF-8 内容 sanity（spec §4.1 I6）。
+                # 非文本扩展名且魔数未知 → 仍 415。
+                text_mime = _TEXT_EXT_TO_MIME.get(ext_raw)
+                if text_mime is None:
+                    return _protocol_error_response("UNSUPPORTED_MEDIA_TYPE", "不支持的文件类型", 415)
+                try:
+                    data.decode("utf-8")
+                except UnicodeDecodeError:
+                    # UTF-8 sanity 失败（内容非合法 UTF-8 文本）→ 拒绝
+                    return _protocol_error_response("UNSUPPORTED_MEDIA_TYPE", "不支持的文件类型", 415)
+                mime = text_mime
+            else:
+                mime = ft.mime
+                if mime != "video/webm" and mime not in _MIME_KIND:
+                    return _protocol_error_response("UNSUPPORTED_MEDIA_TYPE", "不支持的文件类型", 415)
+            # 步骤 4：扩展名与判定一致（堵改名绕过；jpg/jpeg 归一化；文本类同样受白名单约束）
             if ext not in _MIME_EXTS.get(mime, set()):
                 return _protocol_error_response(
                     "UNSUPPORTED_MEDIA_TYPE", "扩展名与文件内容不一致", 415)

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 from aiohttp import web
 
+from paths import ProjectPath
 from core.input.api_routes import _sign_url
 from core.schema.adapters import attachment_resolver
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
@@ -95,7 +96,8 @@ async def _download_handler(request: web.Request) -> web.Response:
       ③ exp 为整数且在 [now, now+86400]（否则 403 SIGNATURE_EXPIRED）；
       ④ hmac.compare_digest 验签（不匹配 → 403 INVALID_SIGNATURE）。
     fail-open（token 空）→ 跳过 ①③④，仅 ② status=active 校验。
-    成功 → FileResponse（原生 Range/206）+ AttachmentFileResolver 再预热。
+    成功 → 先检查落盘文件存在（记录在、文件删 → 404 不预热）→ FileResponse
+    （原生 Range/206）+ AttachmentFileResolver 再预热（spec §4.5）。
 
     Args:
         request: aiohttp Request（?sig=...&exp=...）。
@@ -153,13 +155,15 @@ async def _download_handler(request: web.Request) -> web.Response:
     stored_name = doc.get("stored_name", "")
     mime = doc.get("mime", "application/octet-stream")
 
-    # 进程内映射再预热（spec §4.5）并据此定位落盘路径
-    attachment_resolver.register(attachment_id, kind, stored_name)
-    path = attachment_resolver.resolve(attachment_id)
-    if path is None or not path.is_file():
+    # 先检查落盘文件存在（记录存在但文件被删——GC M8 场景）再 register：文件缺失 → 404
+    # 且不预热进程内映射，避免 register 无效条目（review Minor 10）。
+    local_path = ProjectPath.DATA_UPLOADS.resolve() / kind / stored_name
+    if not local_path.is_file():
         return _error_response("ATTACHMENT_NOT_FOUND", "附件文件不存在", 404)
+    # 文件存在 → 进程内映射再预热（spec §4.5）
+    attachment_resolver.register(attachment_id, kind, stored_name)
 
-    return web.FileResponse(path, headers={"Content-Type": mime})
+    return web.FileResponse(local_path, headers={"Content-Type": mime})
 
 
 async def _sign_handler(request: web.Request) -> web.Response:

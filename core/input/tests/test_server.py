@@ -83,6 +83,35 @@ def _find_routes_by_name(app, name_fragment: str):
 
 # ── tests ──────────────────────────────────────────────────────────────────
 
+@pytest.mark.service
+class TestAttachmentSigStartupWarning:
+    """附件签名 fail-open 启动警告（spec §3.4）：SIG 未配 + 无鉴权 → warning。"""
+
+    def test_sig_empty_no_token_logs_warning(self, caplog):
+        """SIG 未配 + access_token 空 → WARNING「附件签名未启用」。"""
+        import logging
+        from core.input.server import warn_if_attachment_signature_disabled
+        with caplog.at_level(logging.WARNING, logger="core.input.server"):
+            warn_if_attachment_signature_disabled("", "")
+        assert any("附件签名未启用" in r.message for r in caplog.records)
+
+    def test_sig_configured_no_warning(self, caplog):
+        """SIG 已配 → 不提示。"""
+        import logging
+        from core.input.server import warn_if_attachment_signature_disabled
+        with caplog.at_level(logging.WARNING, logger="core.input.server"):
+            warn_if_attachment_signature_disabled("test-secret", "")
+        assert not any("附件签名未启用" in r.message for r in caplog.records)
+
+    def test_token_configured_no_warning(self, caplog):
+        """SIG 未配但有 access_token（fail-closed 无签名下载被拒）→ 不提示。"""
+        import logging
+        from core.input.server import warn_if_attachment_signature_disabled
+        with caplog.at_level(logging.WARNING, logger="core.input.server"):
+            warn_if_attachment_signature_disabled("", "secret-token")
+        assert not any("附件签名未启用" in r.message for r in caplog.records)
+
+
 @pytest.mark.unit
 class TestCreateApp:
     def test_ws_route_exists(self):

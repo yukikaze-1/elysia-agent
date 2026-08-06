@@ -451,7 +451,8 @@ class AttachmentInfo(ContractModel):
     """上传响应中的附件条目（POST /api/uploads 响应 attachments[]）。
 
     `signedUrl` 可缺省（fail-closed 省略——签发失败时不带签名 URL，前端渲染层
-    对稳定路径统一调签发端点解析）；`filename` 服务端脱敏后落盘名（I5，只留扩展名）。
+    对稳定路径统一调签发端点解析）；`filename` 脱敏后的原始文件名
+    （去路径分隔符/截断 255/剥控制字符）。
     """
 
     attachmentId: str = Field(description="附件 ID（att_ 前缀）")
@@ -461,7 +462,7 @@ class AttachmentInfo(ContractModel):
     url: str = Field(description="稳定访问路径（/api/attachments/{id}，不随签名过期）")
     signedUrl: Optional[str] = Field(
         default=None, description="短期签名 URL（签发失败 fail-closed 省略），可缺省")
-    filename: str = Field(default="", description="落盘文件名（脱敏，只留扩展名）")
+    filename: str = Field(default="", description="脱敏后的原始文件名（去路径分隔符/截断 255/剥控制字符）")
 
 
 class AttachmentUploadResponse(ContractModel):

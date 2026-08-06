@@ -109,6 +109,53 @@ class TestUploadEndpoint:
         assert not agent._attachment_repo.records  # noqa: SLF001
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("filename,mime,content", [
+        ("notes.txt", "text/plain", b"hello world\n" * 10),
+        ("doc.md", "text/markdown", b"# Title\n\nsome markdown body\n"),
+        ("data.json", "application/json", b'{"key": "value", "n": 1}'),
+    ])
+    async def test_text_file_uploads_as_file(self, make_app, aiohttp_client, tmp_path,
+                                             filename, mime, content):
+        """纯文本（txt/md/json）→ filetype 魔数返回 None → 扩展名白名单 + UTF-8 sanity → 归 file（spec §4.1 I6）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename=filename, content=content, kind="file")
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        att = data["attachments"][0]
+        assert att["kind"] == "file"
+        assert att["mime"] == mime
+        assert att["filename"] == filename
+        # 落盘 data/uploads/file/{uuid}.{ext}
+        ext = filename.rsplit(".", 1)[-1]
+        assert len(list((tmp_path / "uploads" / "file").glob(f"*.{ext}"))) == 1
+        # 写记录（kind/mime 正确）
+        record = agent._attachment_repo.records[0]  # noqa: SLF001
+        assert record["kind"] == "file"
+        assert record["mime"] == mime
+
+    @pytest.mark.asyncio
+    async def test_text_renamed_png_415(self, make_app, aiohttp_client):
+        """文本内容改名 .png → 415（文本扩展名白名单只认 txt/md/json，扩展名不一致仍应拒）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="notes.png", content=b"plain text content", kind="file")
+        assert resp.status == 415, f"expected 415, got {resp.status}: {await resp.text()}"
+        assert (await resp.json())["code"] == "UNSUPPORTED_MEDIA_TYPE"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_text_invalid_utf8_415(self, make_app, aiohttp_client):
+        """.txt 但内容非合法 UTF-8 → 415（UTF-8 content sanity 失败，I6）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        bad = b"\xff\xfe\x00\x01" + b"\x00" * 100  # 非 UTF-8 字节序列
+        resp = await _post(client, filename="data.txt", content=bad, kind="file")
+        assert resp.status == 415, f"expected 415, got {resp.status}: {await resp.text()}"
+        assert (await resp.json())["code"] == "UNSUPPORTED_MEDIA_TYPE"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
     async def test_too_many_files_400(self, make_app, aiohttp_client):
         """数量超限：单次 11 文件 → 400 TOO_MANY_FILES。"""
         agent, app = make_app()
@@ -196,6 +243,26 @@ class TestUploadEndpoint:
         client = await aiohttp_client(app)
         big = b"\x00" * (64 * 1024 * 1024 + 1)
         resp = await _post(client, filename="big.png", content=big, kind="image")
+        assert resp.status == 413, f"expected 413, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert data["code"] == "REQUEST_TOO_LARGE"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_aggregate_oversize_chunked_413(self, make_app, aiohttp_client):
+        """chunked 多文件累计超 cms → 413 REQUEST_TOO_LARGE（handler total_bytes 强制）。
+
+        专测无 Content-Length（chunked）场景：中间件 Content-Length 预检失效，聚合上限
+        只能由 handler 内累计兜底。agent.config.server.max_request_bytes 收敛到 5MB
+        （create_app 仍 64MB，不预检 6MB Content-Length）——两文件累计 6MB 触发中断。
+        """
+        agent, app = make_app()
+        agent.config.server.max_request_bytes = 5 * 1024 * 1024  # 收敛 cms 以低内存触发
+        client = await aiohttp_client(app)
+        f1 = b"\x00" * (3 * 1024 * 1024)  # 3MB
+        f2 = b"\x00" * (3 * 1024 * 1024)  # 3MB → 累计 6MB > 5MB
+        resp = await _post(client, filename="a.png", content=f1, kind="image",
+                           extra_files=[("b.png", f2)])
         assert resp.status == 413, f"expected 413, got {resp.status}: {await resp.text()}"
         data = await resp.json()
         assert data["code"] == "REQUEST_TOO_LARGE"

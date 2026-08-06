@@ -229,6 +229,22 @@ class TestDownloadConfigured:
         assert resp.status == 503, f"expected 503, got {resp.status}: {await resp.text()}"
         assert (await resp.json())["code"] == "STORAGE_UNAVAILABLE"
 
+    @pytest.mark.asyncio
+    async def test_file_missing_404_and_no_register(self, make_app, aiohttp_client, tmp_path):
+        """记录存在但落盘文件被删（GC M8 场景）→ 404 ATTACHMENT_NOT_FOUND 且不预热 resolver（Minor 10）。"""
+        agent, app = make_app()
+        await _seed(agent, tmp_path)  # 写记录 + 落盘
+        # 删文件模拟「记录在、文件无」的不一致
+        for f in (tmp_path / "uploads" / "image").glob("*.png"):
+            f.unlink()
+        client = await aiohttp_client(app)
+        sig, exp = _fresh_sig()
+        resp = await client.get(_url("att_1", sig, exp))
+        assert resp.status == 404, f"expected 404, got {resp.status}: {await resp.text()}"
+        assert (await resp.json())["code"] == "ATTACHMENT_NOT_FOUND"
+        # register 前文件检查失败 → 不注册无效映射（preheat 无副作用）
+        assert "att_1" not in _ar._registry  # noqa: SLF001
+
 
 class TestSignEndpoint:
     """GET /api/attachments/{id}/sign 签发端点（Bearer 由中间件保证）。"""
