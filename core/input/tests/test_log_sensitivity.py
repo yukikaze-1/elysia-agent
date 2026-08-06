@@ -33,6 +33,9 @@ SENSITIVE_UPLOAD = "/uploads/be-081-scan/secret.png"
 SENSITIVE_SECRET = "ATTACHMENT_SIG_SECRET_9f8e7d6c5b4a3"
 SENSITIVE_BODY = f"量子青空鲸落-秘密特征正文 {SENSITIVE_UPLOAD} {SENSITIVE_SECRET}"
 
+# I5 收敛：内心独白正文（loop.py:949 的 💭 日志载荷）
+INNER_VOICE_BODY = "秘密内心独白-量子青空鲸落-8a-iv"
+
 LOGGER_WS = "core.input.ws_handler"
 LOGGER_LOOP = "core.cognitive.loop"
 
@@ -152,3 +155,31 @@ async def test_cognitive_loop_log_omits_body(caplog):
 
     # 收敛：不含正文 / 本地路径 / 密钥值
     _assert_no_sensitive(caplog.text)
+
+
+@pytest.mark.asyncio
+async def test_inner_voice_not_in_app_log(caplog):
+    """loop.py:949 内心独白仅 debug 可见——INFO 级应用日志不含正文（I5 收敛）。
+
+    当前实现是 logger.info("💭 %s", iv_think_buf)——须显式 at_level(INFO) 才能捕获；
+    降级为 debug 后 INFO 下不可见。
+    """
+    loop = _make_loop(SessionMemory(session_id="default"))
+
+    async def stream_with_inner_voice(messages, tools=None, **kw):
+        yield {"content": f"<inner_voice>{INNER_VOICE_BODY}</inner_voice>你好",
+               "tool_calls": None}
+
+    # 替换 fake stream：本轮输出带 <inner_voice> 标签，触发 _finalize_turn 的 💭 日志
+    loop._llm.stream_think = stream_with_inner_voice
+
+    with caplog.at_level(logging.INFO, logger=LOGGER_LOOP):
+        await loop.process("测试输入", user_name="测试用户")
+        await _await_pending(loop)
+    await loop._output.close()
+
+    records = [r for r in caplog.records if r.name == LOGGER_LOOP]
+    # 回合确实跑完 finalize（INFO 有「回复生成完成」等摘要），排除断言空转
+    assert any(r.levelno == logging.INFO for r in records)
+    # 收敛：INFO 级记录不含内心独白正文
+    assert not any(INNER_VOICE_BODY in r.getMessage() for r in records)
