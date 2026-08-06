@@ -648,7 +648,8 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
         text=pending_text, user_name=agent.user_name, emotion=emotion, events=events,
         request_id=agent.next_request_id(), message_id=message_id,
         protocol_version=2, conversation_id=conversation_id))
-    logger.debug("voice.commit 提交成功: %s (%s)", pending_text[:30], recording_id)
+    # BE-081 敏感纪律：只记 recordingId + 文本长度，不记正文
+    logger.debug("voice.commit 提交成功: %s (len=%d)", recording_id, len(pending_text))
 
 
 async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None, voice_mgr=None) -> None:
@@ -677,7 +678,10 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             if await _route_v2_text(agent, ws, text_content.strip(), data):
                 return
             await agent.process_message(text=text_content.strip())
-            logger.debug("WS 收到文本: %s", text_content.strip()[:100])
+            # BE-081 敏感纪律：只记文本长度 + 客户端消息 ID，不记正文
+            logger.debug("WS 收到文本 (len=%d, clientMessageId=%s)",
+                         len(text_content.strip()),
+                         data.get("clientMessageId", ""))
         elif isinstance(text_content, list):
             from core.schema.adapters.message_adapter import content_text, parts_from_dicts
             await agent.process_message(text=content_text(parts_from_dicts(text_content)), user_name=agent.user_name, content=text_content)
@@ -1045,7 +1049,9 @@ async def do_transcription(agent: "Agent", ws: "web.WebSocketResponse", text: st
     if audio_buf:
         audio_buf.deafen(2.0)
     rid = agent.next_request_id()
-    logger.debug("STT 识别: %s%s", text[:100], f" [{emotion}]" if emotion and emotion != "NEUTRAL" else "")
+    # BE-081 敏感纪律：只记 request_id + 文本长度，不记正文
+    logger.debug("STT 识别: rid=%s len=%d%s", rid, len(text),
+                 f" [{emotion}]" if emotion and emotion != "NEUTRAL" else "")
     # 语音路径绕过 process_message，需手动 touch——否则纯语音对话
     # 会被误判为"用户沉默"，触发 silence_timeout 主动搭话
     agent.idle.touch()

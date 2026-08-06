@@ -445,9 +445,10 @@ class CognitiveLoop(CognitiveTools):
                 if not log_text:
                     log_text = "[多模态消息]"
 
-            # 用户输入到达 — 记录时间和内容
+            # 用户输入到达 — 只记长度与 message_id，不记正文（BE-081 敏感纪律）
             emo_tag = f" [{stt_emotion}]" if stt_emotion and stt_emotion != "NEUTRAL" else ""
-            logger.info(">>> 用户输入 (%s)%s: %s", user_name, emo_tag, log_text[:200])
+            logger.info(">>> 用户输入 (%s)%s: len=%d message_id=%s",
+                        user_name, emo_tag, len(log_text), message_id or "")
             log_conversation("user", user_name, log_text)
 
             await self.phases.enter_thinking()
