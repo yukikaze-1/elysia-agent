@@ -22,6 +22,8 @@ class GenerationContext:
         conversation_id: 本次生成归属的会话 ID（批次 3 multi-session，经 loop process 贯通）。
         model_id: 本次生成实际使用模型（批次 5 D8：turn 启动时由 loop 捕获 llm.model 快照，
             统一回合事件 Started/Completed/Failed 的 model 数据源——替代 completed 即时读取）。
+        request_id: 本次生成关联的 WS 侧请求 ID（批次 7：来源 UserInputData.request_id，
+            贯通 GenerationRegistry 建档与关联排查；无则 None）。
         segment_index: 下一个分段将使用的全局序号（跨 inner_voice/public_reply/工具轮单调递增）。
         delta_sequence: 当前段内已分配的 delta 序号计数。
         current_segment_id: 当前打开分段的 ID（无活动分段为 None）。
@@ -34,6 +36,7 @@ class GenerationContext:
     assistant_message_id: str
     conversation_id: str | None = None
     model_id: str = ""
+    request_id: str | None = None
     segment_index: int = 0
     delta_sequence: int = 0
     current_segment_id: str | None = None

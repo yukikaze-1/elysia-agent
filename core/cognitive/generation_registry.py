@@ -56,7 +56,8 @@ class GenerationRegistry:
             return False
 
     async def register(self, generation_id: str, *, session_id: str,
-                       user_message_id: str, message_id: str, model: str) -> None:
+                       user_message_id: str, message_id: str, model: str,
+                       request_id: str | None = None) -> None:
         """generation 开始建档（status=running）。
 
         Mongo 离线/异常不抛——仅日志，绝不阻塞 generation。
@@ -67,6 +68,7 @@ class GenerationRegistry:
             user_message_id: 触发生成的用户消息 ID。
             message_id: assistant 父消息 ID（落库一致）。
             model: 生成所用模型。
+            request_id: 关联的 WS 侧请求 ID（批次 7，来源 UserInputData.request_id），无则 None。
         """
         if not generation_id:
             return
@@ -84,6 +86,8 @@ class GenerationRegistry:
             "updated_at": now,
             "finished_at": None,
         }
+        if request_id is not None:
+            doc["request_id"] = request_id
         try:
             await self._repo.upsert(doc)
         except Exception as e:

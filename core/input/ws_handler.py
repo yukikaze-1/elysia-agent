@@ -22,6 +22,7 @@ from core.input.capabilities import build_capabilities
 from core.input.idempotency import IdempotencyEntry, get_store
 from core.input.sticker_registry import get as get_sticker
 from core.input.voice_sessions import VoiceSessionError, VoiceSessionManager
+from core.utils import get_request_id
 from frontend_contract import (
     CommandMessage,
     ErrorMessage,
@@ -41,6 +42,17 @@ if TYPE_CHECKING:
     from core.agent import Agent
 
 logger = logging.getLogger(__name__)
+
+
+def _current_request_id() -> str | None:
+    """当前 ContextVar 请求 ID（批次 7 关联 ID；"-" 视为无 → None）。
+
+    WS 错误发送点构造 ``ErrorMessage.requestId`` 的数据源——handle_ws 同任务内
+    ``get_request_id()`` 反映最近一次 ``process_message``/``next_request_id`` 设置的
+    请求 ID（来源 UserInputData.request_id）。有则带、无则 None（缺省省略）。
+    """
+    rid = get_request_id()
+    return rid if rid and rid != "-" else None
 
 
 def _build_session_items(session_msgs: list[dict]) -> list[SessionMessageItem]:
@@ -273,10 +285,16 @@ async def handle_ws(
                         raise ValidationError("WS 消息必须是 JSON 对象")
                     await handle_json_message(data, agent, audio_buf, ws, voice_mgr=voice_mgr)
                 except json.JSONDecodeError:
-                    await ws.send_json(ErrorMessage(message="Invalid JSON").wire_dict())
+                    await ws.send_json(ErrorMessage(
+                        message="Invalid JSON",
+                        requestId=_current_request_id(),
+                    ).wire_dict())
                 except ValidationError as e:
                     logger.warning("WS 消息内容校验失败: %s", e)
-                    await ws.send_json(ErrorMessage(message=f"Invalid message content: {e}").wire_dict())
+                    await ws.send_json(ErrorMessage(
+                        message=f"Invalid message content: {e}",
+                        requestId=_current_request_id(),
+                    ).wire_dict())
 
             elif msg.type == WSMsgType.BINARY:
                 # 批次 6：有活动语音会话 → 喂给会话管理器（RECORDING/REALTIME/DICTATION 分流）；
@@ -351,7 +369,9 @@ async def _send_voice_error(ws, error) -> None:
     from frontend_contract import ErrorMessage
     try:
         await ws.send_json(ErrorMessage(
-            message=error.message, code=error.code).wire_dict())
+            message=error.message, code=error.code,
+            requestId=_current_request_id(),
+        ).wire_dict())
     except Exception:
         logger.debug("发送 voice error 失败", exc_info=True)
 
@@ -966,6 +986,7 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
         await ws.send_json(ErrorMessage(
             message="缺少 conversationId",
             code="CONTRACT_VALIDATION",
+            requestId=_current_request_id(),
         ).wire_dict())
         return
     try:
@@ -974,6 +995,7 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
             await ws.send_json(ErrorMessage(
                 message="Agent 忙（生成/TTS 中），无法切换会话",
                 code="AGENT_BUSY",
+                requestId=_current_request_id(),
             ).wire_dict())
             return
         if not await agent.session_manager.has_session(sid):
@@ -981,6 +1003,7 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
             await ws.send_json(ErrorMessage(
                 message=f"会话不存在: {sid}",
                 code="SESSION_NOT_FOUND",
+                requestId=_current_request_id(),
             ).wire_dict())
             return
         target = await agent.switch_session(sid)
@@ -993,12 +1016,14 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
         await ws.send_json(ErrorMessage(
             message="Agent 忙（生成/TTS 中），无法切换会话",
             code="AGENT_BUSY",
+            requestId=_current_request_id(),
         ).wire_dict())
     except Exception:
         logger.warning("activate_session 处理失败 sid=%s", sid, exc_info=True)
         await ws.send_json(ErrorMessage(
             message="激活会话失败",
             code="INTERNAL",  # review 修复（兼容#4）：INTERNAL_ERROR → 错误目录标准码 INTERNAL
+            requestId=_current_request_id(),
         ).wire_dict())
 
 

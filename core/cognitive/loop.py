@@ -464,6 +464,7 @@ class CognitiveLoop(CognitiveTools):
                 assistant_message_id=new_message_id(),
                 conversation_id=gen_conversation_id,
                 model_id=self._llm.model,
+                request_id=rid,
             )
             self._turn_failed_emitted = False
             # 批次 3（BE-024）：generation 建档（status=running）。只在 process 开头
@@ -477,6 +478,7 @@ class CognitiveLoop(CognitiveTools):
                         user_message_id=self._generation_ctx.user_message_id,
                         message_id=self._generation_ctx.assistant_message_id,
                         model=self._llm.model,
+                        request_id=self._generation_ctx.request_id,
                     )
                 except Exception:
                     logger.debug("generation register 失败（Mongo 离线）", exc_info=True)

@@ -13,7 +13,7 @@ import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from core.input.audio_buffer import AudioBuffer, pcm_to_wav
-from core.utils import new_message_id
+from core.utils import get_request_id, new_message_id
 
 if TYPE_CHECKING:
     from core.agent import Agent
@@ -116,7 +116,13 @@ class VoiceSessionManager:
 
     async def _emit_error(self, code: str, message: str, retryable: bool = False) -> None:
         from frontend_contract import ErrorMessage
-        await self._emit(ErrorMessage(message=message, code=code).wire_dict())
+        # 批次 7 关联 ID：当前 ContextVar request_id（来源 UserInputData.request_id），
+        # 有则带、无（"-"）则 None 缺省省略
+        rid = get_request_id()
+        await self._emit(ErrorMessage(
+            message=message, code=code,
+            requestId=rid if rid and rid != "-" else None,
+        ).wire_dict())
 
     def _reset_recording(self) -> None:
         self._recording_id = None
