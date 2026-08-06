@@ -60,6 +60,14 @@ class LLMFactory:
         if provider == "custom" and not base_url:
             raise ValueError("custom provider requires base_url")
 
+        # 批次 8a（T12）：custom + base_url 非空 → 初始配置 SSRF 守卫。
+        # 复用保存/切换/测试三入口同一校验（core.input.ssrf.validate_endpoint），
+        # 抛 SSRFError 传播给调用方；内置 provider（openai/ollama 等）跳过。
+        if provider == "custom" and base_url:
+            from core.input.ssrf import validate_endpoint
+
+            validate_endpoint(base_url)
+
         if "logger" not in kwargs:
             kwargs["logger"] = inject_logger(__name__)
 

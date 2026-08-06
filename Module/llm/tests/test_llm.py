@@ -750,12 +750,16 @@ class TestHTTPClientInjection:
                     pass
 
     def test_factory_passes_http_client_to_custom_backend(self):
-        """LLMFactory.create("custom/x", ..., http_client=guard) → 后端收到。"""
+        """LLMFactory.create("custom/x", ..., http_client=guard) → 后端收到。
+
+        批次 8a（T12）：custom 初始配置走 SSRF 守卫——base_url 用公网字面量 IP
+        （8.8.8.8）确定性通过校验（伪造域名会解析失败被守卫拦截，不用于此测试）。
+        """
         guard = httpx.AsyncClient()
         try:
             backend = LLMFactory.create(
                 "custom/guard-test",
-                base_url="https://guard.example.com/v1",
+                base_url="https://8.8.8.8/v1",
                 api_key="sk-test",
                 http_client=guard,
             )
