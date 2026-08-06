@@ -57,6 +57,10 @@ class WebSocketChannel(OutputChannel):
         self._audio_seq: dict[int, int] = {}
         self.protocol_version = protocol_version
         self.client_platform = client_platform
+        # 批次 8a（D2）：每 v2 连接的服务端分配稳定连接身份（`conn_<hex>`），
+        # 握手时由 ws_handler 注入；v1 连接恒 None。tool.status 路由以此校验
+        # 发送连接是投递目标（防伪造结果）。
+        self.connection_id: str | None = None
 
     @property
     def capabilities(self) -> set[ChannelCapability]:

@@ -129,13 +129,17 @@ async def handle_ws(
     client_id = new_message_id()
     channel = WebSocketChannel(ws, protocol_version=protocol_version,
                                client_platform=client_platform)
+    # 批次 8a（D2）：每 v2 连接分配稳定连接身份 conn_<hex> 存 channel.connection_id
+    # （tool.status 路由据其校验发送连接是投递目标）；v1 无 desktop 概念恒 None。
+    # electron 的该值即原 desktop_conn_id 语义（on_client_connect / server_info 沿用）。
+    conn_id = f"conn_{uuid.uuid4().hex[:12]}" if protocol_version >= 2 else None
+    channel.connection_id = conn_id
     agent.output.add_channel(channel)
 
     # 批次 4（spec §5.1）：v2 + electron 握手 → 桥标记 connected + 同步 desktop 可用性
     # （Task 6 集成：agent._sync_desktop_available 为组合根同步入口，跨模块私有访问豁免）。
-    desktop_conn_id: str | None = None
-    if protocol_version >= 2 and client_platform == "electron":
-        desktop_conn_id = f"conn_{uuid.uuid4().hex[:12]}"
+    desktop_conn_id: str | None = conn_id if client_platform == "electron" else None
+    if desktop_conn_id is not None:
         try:
             await agent.desktop_bridge.on_client_connect(desktop_conn_id)
             agent._sync_desktop_available()  # noqa: SLF001 — 组合根私有同步入口（Task 6）
@@ -835,14 +839,19 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
     elif msg_type == "tool.status":
         # 批次 4（spec §5.3）：桌面工具状态回传 → bridge.handle_status。
         # 仅 v2 连接处理——v1 无 desktop 概念，忽略（含 v1 伪冒 platform 头隔离）。
+        # 批次 8a（D2）：发送连接校验——channel.connection_id 作为 sender 传入
+        # handle_status（发送连接必须是投递目标）；v2 但无 conn_id（异常）→ 拒绝。
         if ws is None:
             logger.debug("WS tool.status 无发送连接，忽略")
         else:
             channel = _find_channel(agent, ws)
             if channel is None or channel.protocol_version < 2:
                 logger.debug("WS tool.status: v1 连接忽略")
+            elif channel.connection_id is None:
+                logger.warning("WS tool.status: channel 无 connection_id，拒绝")
             else:
-                await agent.desktop_bridge.handle_status(data)
+                await agent.desktop_bridge.handle_status(
+                    data, sender_connection_id=channel.connection_id)
     elif msg_type == "voice.record.start":
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("voice.record.start: 非 v2 或无 mgr，忽略")

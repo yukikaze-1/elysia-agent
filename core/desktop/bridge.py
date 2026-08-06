@@ -252,14 +252,19 @@ class DesktopToolBridge:
         self._dedup.pop(key, None)
         return result
 
-    async def handle_status(self, status: dict) -> bool:
-        """处理 Client→Server tool.status（校验 + 篡改拒绝 + 终态守卫 + resolve）。
+    async def handle_status(self, status: dict, *,
+                            sender_connection_id: str | None = None) -> bool:
+        """处理 Client→Server tool.status（发送连接校验 + 篡改拒绝 + 终态守卫 + resolve）。
 
         Args:
             status: wire 帧（camelCase）或已解析的 ToolStatusMessage。
+            sender_connection_id: 发送连接的 conn id（ws_handler 路由从
+                channel.connection_id 传入，批次 8a/D2）。None 表示未带（直接调用），
+                路由层保证真实流量恒带非 None 值。
 
         Returns:
-            True 表示已处理（含终态晚到仅记录）；False 表示拒绝（call 未知或篡改）。
+            True 表示已处理（含终态晚到仅记录）；False 表示拒绝（call 未知、发送连接
+            非投递目标或篡改）。
         """
         msg = status if isinstance(status, ToolStatusMessage) else self._parse_status(status)
         if msg is None:
@@ -269,6 +274,27 @@ class DesktopToolBridge:
         if doc is None:
             logger.warning("DesktopToolBridge tool.status 未知 callId=%s", call_id)
             return False
+
+        # 批次 8a（D2）：发送连接必须是投递目标（防伪造结果）。
+        # 例外（I2）：断连后重连的 Electron 换新 conn_id，在途 offline 调用的
+        # target_connection 仍是旧 id——重连重传结果是既有 offline→终态闭环
+        # （spec §4.2/D-o），须放行「当前已连接 electron 提交的 offline 调用重传」。
+        target = doc.get("target_connection")
+        doc_status = doc.get("status")
+        resend_after_reconnect = (
+            doc_status == STATUS_OFFLINE
+            and sender_connection_id is not None
+            and sender_connection_id == self._connection_id
+        )
+        # sender_connection_id 为 None（直接调用未带连接）不强制校验——ws_handler
+        # 路由已按「v2 无 conn_id 拒绝」收敛，桥内仅对带发送连接的真实流量严格校验。
+        if (target and sender_connection_id is not None
+                and not resend_after_reconnect and sender_connection_id != target):
+            logger.warning("DesktopToolBridge tool.status 发送连接非投递目标: call=%s", call_id)
+            return False
+        if resend_after_reconnect and target != sender_connection_id:
+            # 重传通过：把调用归属迁移到新连接，后续校验按新 id 对齐
+            await self._repo.mark(call_id, target_connection=sender_connection_id)
 
         # 篡改拒绝（BE-043）：wire toolName/toolVersion/runtime/paramHash 与登记一致
         if (msg.toolName != doc.get("tool_name")
