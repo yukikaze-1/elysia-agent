@@ -28,12 +28,16 @@ import json
 import logging
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
 from paths import ProjectPath
 
 logger = logging.getLogger(__name__)
+
+# 模块级锁：串行化 set/delete 的 load → 改 → save，防并发丢更新（TOCTOU）
+_LOCK = threading.Lock()
 
 # 默认存储目录（ProjectPath.DATA_SECRETS = "data/secrets"）
 _DEFAULT_DIR: Path = ProjectPath.DATA_SECRETS.resolve()
@@ -112,24 +116,26 @@ def get_secret(service: str, name: str, path: Path | str | None = None) -> str |
 def set_secret(
     service: str, name: str, value: str, path: Path | str | None = None,
 ) -> None:
-    """写入/覆盖密钥（原子写）。"""
+    """写入/覆盖密钥（原子写，模块级锁串行化防并发丢更新）。"""
     file_path = _resolve_path(path)
-    data = _load(file_path)
-    data.setdefault(str(service), {})[str(name)] = str(value)
-    _save(file_path, data)
+    with _LOCK:
+        data = _load(file_path)
+        data.setdefault(str(service), {})[str(name)] = str(value)
+        _save(file_path, data)
 
 
 def delete_secret(service: str, name: str, path: Path | str | None = None) -> None:
-    """删除密钥；不存在时静默成功。"""
+    """删除密钥；不存在时静默成功（模块级锁串行化防并发丢更新）。"""
     file_path = _resolve_path(path)
-    data = _load(file_path)
-    svc = data.get(str(service))
-    if svc is None or str(name) not in svc:
-        return
-    del svc[str(name)]
-    if not svc:
-        del data[str(service)]
-    _save(file_path, data)
+    with _LOCK:
+        data = _load(file_path)
+        svc = data.get(str(service))
+        if svc is None or str(name) not in svc:
+            return
+        del svc[str(name)]
+        if not svc:
+            del data[str(service)]
+        _save(file_path, data)
 
 
 def has_secret(service: str, name: str, path: Path | str | None = None) -> bool:

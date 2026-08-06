@@ -97,3 +97,20 @@ class TestSecretStoreCorruption:
         """文件不存在 → 空 dict。"""
         assert get_secret(SERVICE, NAME, path=tmp_path) is None
         assert all_configured(SERVICE, path=tmp_path) == set()
+
+
+@pytest.mark.unit
+class TestSecretStoreConcurrency:
+    def test_concurrent_set_no_lost_update(self, tmp_path):
+        """并发写不同 key 不丢更新（threading.Lock 防御 TOCTOU）。"""
+        from concurrent.futures import ThreadPoolExecutor
+        from core.storage import secret_store
+
+        path = tmp_path / "secrets.json"
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(
+                lambda i: secret_store.set_secret("svc", f"k{i}", f"v{i}", path=path),
+                range(8),
+            ))
+        data = secret_store.all_configured("svc", path=path)  # 或 _load
+        assert len(data) == 8  # 无丢更新
