@@ -309,9 +309,54 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 - **Minor 修复**：SSRF 补 site-local IPv6 fec0::/10（`6958722`）；认证失败日志记 code/path 不记凭据（`ae590e1`）；GC 日志收敛（只记 aid/kind）+ 规则1 unlink 失败保留记录（`66be44f`）；错误信封 `str(e)` → 通用消息（`2b886b0`）；Inner Voice 应用日志降级 debug（`84b3775`）；Secret Store `threading.Lock` 防并发丢更新（`d0e556d`）；LLM 初始 custom 配置复用 SSRF 守卫（`963d1a8`）；add_ref/remove_ref 原子化——幂等 add + 归零条件软删（`9a16709`）；上传 kind 限长 + 多文件先校验再写盘（`716f2ad`）；探活改用独立 `req_<uuid>`（`f14d9c9`）；共享 fake 时序修复（`565fc10`）。
 - **测试**：批次 8a 全量回归 **2731 passed**（审计报告 §1 合规判定同步更新为 24 SATISFIED / 0 PARTIAL）。
 
-### 后续批次（8b / 8c）——审计剩余项
+### 后续批次（8c）——审计剩余项（8b 已闭合，2026-08-07）
 
-批次 8a 只覆盖 A 安全 / B 附件 / C 搜索 三簇 + 探活。审计报告 `docs/electron-backend-audit-batches0-7.md` 中**尚未修复**的条目按用户拍板的批次组织（8a spec §批次组织）归入：
+批次 8a 闭合 A 安全 / B 附件 / C 搜索 三簇 + 探活，8b（2026-08-07）闭合 D 簇 WS/语音行为（见下节）。审计报告 `docs/electron-backend-audit-batches0-7.md` 中**尚未修复**的条目按用户拍板的批次组织（8a spec §批次组织）归入 8c：
 
-- **8b（D 簇 WS/语音行为）**：断连误杀其他连接 generation、队列满仍发 accepted ACK、`_interrupt_source` 跨回合泄漏、RECORDING 残留帧自动提交、cancel 无法抢占在途 VAD 段（5 important）；v2 空文本静默丢弃、空响应泄漏 v1 message 帧、dictation ID 校验、`_restore_emotion` 抹除他连接、cancel_stream audio_end 后返回 True、`_wav_info` 固定偏移、附件幂等 entry 异常残留（7 minor）。
 - **8c（E/F 簇契约/信封/ID/杂项）**：WS error 信封漏 retryable/details、admin/debug 裸 error 无统一信封、HeartbeatAckMessage 死契约面（3 important）；generation.started.requestId 不传值、畸形 cursor 500、generation 持久化 error 丢 code/retryable、pending 跨会话可见、llm_summary 未用、tools/calls snake_case、voices current 引用不存在、trace 脚本 2 条、chunked 413 兜底、并发 WS TOCTOU、v2 收 capabilities 帧、max_request_bytes=0 回落、build_sha 缓存、decode error 无 code、契约 docstring/wire key（16 minor）。
+
+---
+
+## 批次 8b：WS/语音行为修复（2026-08-07） ✅ 完成
+
+**提交范围：** `50fe313..da050d2`（12 commits，2026-08-07）
+**Spec/Plan：** `docs/superpowers/specs/2026-08-07-electron-backend-batch8b-ws-voice-behavior.md` / `docs/superpowers/plans/2026-08-07-electron-backend-batch8b-ws-voice-behavior.md`
+**依据：** `docs/electron-backend-audit-batches0-7.md`（D 簇 WS/语音行为 13 条发现）
+
+### 结果
+
+- **范围**：闭合审计报告 D 簇 13 条发现（5 important + 8 minor）——WS 断连归属/ACK/幂等/空文本、语音三模式状态机边界（RECORDING/cancel/dictation）、TTS 播放控制、WAV 解析。
+- **测试**：批次 8b 全量回归 **2761 passed**（8a 基线 2731 → 净增 30）。
+
+### 决策（D1-D6，2026-08-07 拍板）
+
+| 决策 | 内容 | 实现 commit |
+|------|------|------------|
+| D1 | 断连按归属取消——仅当在途 generation 由断开连接发起才取消 | `8cb42cf` |
+| D2 | v2 全程禁 legacy——v2 连接 BINARY 帧只在 voice_mgr 会话内有效，无会话丢弃 | `c2b1d2b` |
+| D3 | STT 后台解耦——语音段转写移后台任务，cancel 可丢弃残段 | `d45a973` |
+| D4 | `_interrupt_source` 仅在实际取消到任务时记录 | `32e6ca8` |
+| D5 | v2 空响应发 v2 兼容空 segment，不发 v1 message 帧 | `da050d2` |
+| D6 | dictation 用独立 STT wrapper，不写共享 `stt_emotion_state`，移除快照/恢复 | `003845f` |
+
+### 13 条审计发现修复明细
+
+| audit 发现 | commit |
+|---|---|
+| D1 断连误杀其他连接 generation（ws_handler.py:337） | `8cb42cf` |
+| §3.7 队列满仍发 accepted ACK（ws_handler.py:607） | `4e59ed4` |
+| §3.7 附件幂等 entry 异常残留（ws_handler.py:574） | `4e59ed4` |
+| §3.7 process_message 抛异常变体（ws_handler.py:603，x-contract） | `4e59ed4` |
+| D4 `_interrupt_source` 跨回合泄漏（loop.py:326） | `32e6ca8` |
+| D2 RECORDING 残留帧自动提交（voice_sessions.py:375） | `c2b1d2b` |
+| D3 cancel 无法抢占在途 VAD 段（voice_sessions.py:371） | `d45a973` |
+| §3.8 v2 空文本静默丢弃（ws_handler.py:695） | `3e28310` |
+| D5 空响应泄漏 v1 message 帧（loop.py:922） | `da050d2` |
+| §3.9 cancel_stream audio_end 后返回 True（tts_adapter.py:227） | `0fba1f3` |
+| §3.10 dictation ID 校验不一致（voice_sessions.py:348） | `003845f` |
+| D6 `_restore_emotion` 抹掉他连接 emotion（voice_sessions.py:165） | `003845f` |
+| §3.11 `_wav_info` 固定偏移（tts_adapter.py:57） | `8a0741b` |
+
+### 8c 承接
+
+批次 8c 承接审计报告剩余 E/F 簇（契约/信封/ID/杂项）**19 条**（WS error 信封漏 retryable/details、admin/debug 裸 error 无统一信封、HeartbeatAckMessage 死契约面 3 important + 16 minor，明细见上节）。

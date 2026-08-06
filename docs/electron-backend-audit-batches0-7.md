@@ -57,7 +57,7 @@
 
 ### [CONFIRMED] core/input/ws_handler.py:333（来源：b2）
 
-**⏳ 待 8b（D 簇 WS/语音行为）**：断连误杀其他连接 generation
+**✅ 批次 8b 已修复（2026-08-07，`8cb42cf` D1）：** 断连按归属取消——`current_generation_user_message_id` + 每连接已发消息集合，仅发起连接断开才取消。
 
 - **问题：** v2 连接断开时无条件取消当前在途 generation，会误杀其他连接的生成
 - **失败场景：** Tab A(v2) 发起一个慢生成，agent 处于 THINKING/SPEAKING；Tab B(v2) 此时关闭连接 → handle_ws finally 块（333-340）post InterruptData(source='disconnect')，agent._handle_interrupt（agent.py:495）→ cancel_current 取消的是『当前』认知任务——即 Tab A 的生成，Tab A 收到 generation.failed{GENERATION_CANCELLED} 且 registry 被标 interrupted。断开连接的客户端与 generation 无归属关联，导致一个用户多标签/多设备场景下 A 的回复被 B 的关闭打断。
@@ -65,7 +65,7 @@
 
 ### [CONFIRMED] core/input/ws_handler.py:603（来源：b2）
 
-**⏳ 待 8b（D 簇 WS/语音行为）**：队列满仍发 accepted ACK
+**✅ 批次 8b 已修复（2026-08-07，`4e59ed4` §3.7）：** 纯文本/附件统一先 process 后判定 ACK，队列满/抛异常 → 删幂等 entry + rejected（QUEUE_FULL/INTERNAL）。
 
 - **问题：** 纯文本 v2 路径忽略 process_message 返回的 False（队列满），仍发 accepted ACK
 - **失败场景：** agent 忙时排队且队列已满（max_pending_messages=32，config.yaml:9）→ process_message 返回 False 消息被丢弃（agent.py:343-345），但 _route_v2_text 已先发 user_message.ack{status:'accepted'} 且幂等 entry 已 store（574-576）；此后客户端按场景 B 用同一 clientRequestId 重试 → lookup 命中 → 重发原 accepted ACK 但不生成，客户端永远等不到回复也无任何错误。对比 has_media 路径（594-601）明确处理了 QUEUE_FULL：store.delete + rejected ACK。
@@ -89,7 +89,7 @@
 
 ### [CONFIRMED] core/cognitive/loop.py:326（来源：b3）
 
-**⏳ 待 8b（D 簇 WS/语音行为）**：_interrupt_source 跨回合泄漏
+**✅ 批次 8b 已修复（2026-08-07，`32e6ca8` D4）：** `cancel_current` 仅在实际取消任务时记录 source（IDLE_BG 断线不留 sticky）。
 
 - **问题：** _interrupt_source 跨回合泄漏：上回合完成后 IDLE_BG 窗口的断线来源未被消费，下一回合用户取消被持久化为 interrupted 而非 cancelled
 - **失败场景：** 回合 N 完成（含后台任务→agent 处于 IDLE_BACKGROUND_TASK，is_completely_idle=False）→ 客户端断线，ws_handler finally 投 InterruptData(source='disconnect')，cancel_current 存 sticky source 但 process 任务已 done 不取消、_handle_interrupt 不会被调用来消费 source；回合 N+1 用户发送消息后被 VAD/按钮打断（source='websocket'），sticky 规则『disconnect 不被非 disconnect 覆盖』阻止改写→mark(interrupted)；而 wire generation.failed 仍为 CANCELLED→重连后 GET /api/generations/{gid} 状态与客户端所见矛盾
@@ -105,7 +105,7 @@
 
 ### [CONFIRMED] core/input/voice_sessions.py:375（来源：b6）
 
-**⏳ 待 8b（D 簇 WS/语音行为）**：RECORDING 残留帧自动提交
+**✅ 批次 8b 已修复（2026-08-07，`c2b1d2b` D2）：** v2 BINARY 无语音会话 → 丢弃，不落 legacy（RECORDING 复位残留帧不绕过 commit）。
 
 - **问题：** RECORDING 模式超限/失败/空转写触发 _reset_recording() 后 _mode 复位 IDLE, 残余/持续流入的 BINARY 帧在 ws_handler 回落到 legacy AudioBuffer VAD 自动提交路径, 可不经 commit 直接创建用户消息并触发 Agent, 破坏 RECORDING '确认后才形成语音输入' 契约。
 - **失败场景：** 用户按住录音 >600s(或麦克风持续送帧), 服务端发 VOICE_RECORDING_TOO_LONG 并复位; 客户端/在途的后续 PCM 帧进入 audio_buf.feed()(ws_handler.py:280-282), 用户仍在说话 → VAD 段完成 → do_transcription → UserInputData → 自动生成一条未确认的用户消息。
@@ -113,7 +113,7 @@
 
 ### [CONFIRMED] core/input/voice_sessions.py:371（来源：b6）
 
-**⏳ 待 8b（D 簇 WS/语音行为）**：cancel 无法抢占在途 VAD 段
+**✅ 批次 8b 已修复（2026-08-07，`d45a973` D3）：** STT 后台解耦——派发 wrapper + 双锁（emotion 原子捕获/帧有序）+ epoch 代际隔离 + stop/dictation-stop drain。
 
 - **问题：** voice_session.cancel 无法抢占在途 VAD 段: ws 串行消息循环在 feed_pcm → buffer.feed → _process_segment → stt_transcribe(最长 30s)上被阻塞, cancel 消息只能等该段 STT 完成、_on_segment 已提交 partial+turn 并 post UserInputData 后才处理, 随后 InterruptData 才取消刚启动的 generation。
 - **失败场景：** 用户说一句话(段 STT 在途 ~2-30s)后立即发 voice_session.cancel → 该段仍被提交为轮次(消息落库/持久化 + turn 事件已发), cancel 只取消其 generation 并发 ended{cancelled}; 与 spec §5.2 cancel '丢弃残段' 及场景 F '取消后不误发消息' 的意图相悖(与已记录在案的断连半途消息 S1 同根因, 但 cancel 场景未记录)。
@@ -172,8 +172,8 @@
 - **[CONFIRMED] core/input/server.py:108**（b1）：认证失败无任何日志记录（spec §3.1『认证失败记录日志』未实现）——中间件直接 return 401 信封，AppRunner 默认无 access log，远程被扫描/爆破时无审计痕迹。**✅ 已修复（批次 8a，`ae590e1`）：** 访问中间件 + 管理域中间件 401 补 logger.warning（记 code/path，不记凭据）。
 - **[CONFIRMED] core/input/attachment_routes.py:133**（b1）：下载校验序在 HMAC 验签（④）之前先执行 repo.get（②），未认证调用者可用 404/403 差异枚举附件 ID 是否存在（绕过签名即泄露存在性）。**✅ 已修复（批次 8a，`7b0e0ba` D3）：** 签名校验前置——sig hex → exp → HMAC 全部通过后才 repo.get，无效 sig 恒 403，不再泄露附件存在性。
 - **[CONFIRMED] Module/output/manager.py:345**（b2）：generation.started.requestId 契约字段与 spec §3.2 要求回显 request_id，但 turn_started 从不传值 **⏳ 待 8c**：generation.started.requestId 从不传值
-- **[CONFIRMED] core/input/ws_handler.py:693**（b2）：v2 空文本消息（带合法 clientRequestId）被静默丢弃，不发任何 ACK **⏳ 待 8b**：v2 空文本静默丢弃
-- **[CONFIRMED] core/cognitive/loop.py:922**（b2）：空响应兜底路径向 v2 通道泄漏 v1 风格 message 帧（无 segment 关联） **⏳ 待 8b**：空响应泄漏 v1 message 帧
+- **[CONFIRMED] core/input/ws_handler.py:693**（b2）：v2 空文本消息（带合法 clientRequestId）被静默丢弃，不发任何 ACK **✅ 批次 8b 已修复（2026-08-07，`3e28310` §3.8）：** v2 空文本 → rejected CONTRACT_VALIDATION
+- **[CONFIRMED] core/cognitive/loop.py:922**（b2）：空响应兜底路径向 v2 通道泄漏 v1 风格 message 帧（无 segment 关联） **✅ 批次 8b 已修复（2026-08-07，`da050d2` D5）：** v2 空响应兜底发 segment.completed（F4 已有活动段直接完成）
 - **[CONFIRMED] core/memory/session_manager.py:236**（b3）：GET /api/sessions 畸形 cursor 未捕获 _decode_cursor 异常→500 而非 400 CONTRACT_VALIDATION（与 messages before 游标的校验不一致） **⏳ 待 8c**：畸形 cursor 500 非 400
 - **[CONFIRMED] core/input/session_routes.py:584**（b3）：search_messages_handler 未校验 category 取值：未知类别（含 sticker）不做任何过滤返回全量消息，而非 400。**✅ 已修复（批次 8a，`f69298a` D4）：** 未知 category → 400 `CONTRACT_VALIDATION`。
 - **[CONFIRMED] core/cognitive/loop.py:538**（b3）：generation 持久化 error 丢失 code/retryable：loop 存 str(err)[:200]，_generation_status 只包成 {message, retryable:false} **⏳ 待 8c**：generation 持久化 error 丢 code/retryable
@@ -184,17 +184,17 @@
 - **[PLAUSIBLE] core/storage/secret_store.py:112**（b5）：Secret Store 的 set_secret/delete_secret 为无锁 read-modify-write（整文件 load→改→save），并发写丢失更新。**✅ 已修复（批次 8a，`d0e556d`）：** `threading.Lock` 串行化 set/delete 读改写。
 - **[CONFIRMED] core/input/tts_profile.py:49**（b5）：GET /api/tts/voices 的 current 可能引用列表中不存在的音色（custom OpenAI TTS 默认返回角色名）。 **⏳ 待 8c**：voices current 引用不存在
 - **[CONFIRMED] core/adapter/llm_adapter.py:54**（b5）：LLM 初始配置路径（config.llm.model=custom/x）无出站 SSRF 守卫也不解析 base_url，裸 create 直接失败；仅 switch 路径有守卫。**✅ 已修复（批次 8a，`963d1a8`）：** `LLMFactory.create` custom 分支复用 `validate_endpoint` SSRF 守卫。
-- **[CONFIRMED] core/adapter/tts_adapter.py:227**（b6）：cancel_stream 对已过 audio_end(末尾 emoji/finally 窗口)仍存活的任务返回 True, 该任务被取消后 _audio_forwarding 已 discard 故不再发 audio_cancelled——客户端得到'成功'却无任何事件, 违背 spec §8.2 '已 audio_end → PLAYBACK_NOT_FOUND'。 **⏳ 待 8b**：cancel_stream audio_end 后返回 True
-- **[CONFIRMED] core/input/voice_sessions.py:348**（b6）：stop_dictation/cancel_dictation 只检查 _mode==DICTATION, 不校验传入 clientRequestId 与 _dict_request_id 一致, 与 voice.record.stop/voice_session.stop 的 ID 校验不一致。 **⏳ 待 8b**：dictation ID 校验不一致
-- **[CONFIRMED] core/input/voice_sessions.py:165**（b6）：_restore_emotion 用 clear+update 原地回写 agent 级共享 stt_emotion_state, 会抹掉 dictation 窗口内其他连接 STT 写入的 emotion/events。 **⏳ 待 8b**：_restore_emotion 抹掉他连接 emotion
-- **[PLAUSIBLE] core/adapter/tts_adapter.py:57**（b6）：_wav_info 以固定偏移 40 读 data chunk 大小, 假设标准 44 字节 WAV 头; 含额外 chunk(LIST/fact/cue)的 WAV 会得到错误的 durationMs。 **⏳ 待 8b**：_wav_info 固定偏移
+- **[CONFIRMED] core/adapter/tts_adapter.py:227**（b6）：cancel_stream 对已过 audio_end(末尾 emoji/finally 窗口)仍存活的任务返回 True, 该任务被取消后 _audio_forwarding 已 discard 故不再发 audio_cancelled——客户端得到'成功'却无任何事件, 违背 spec §8.2 '已 audio_end → PLAYBACK_NOT_FOUND'。 **✅ 批次 8b 已修复（2026-08-07，`0fba1f3` §3.9）：** `cancel_stream` 以 `_audio_forwarding` 判定，audio_end 后 False（PLAYBACK_NOT_FOUND）
+- **[CONFIRMED] core/input/voice_sessions.py:348**（b6）：stop_dictation/cancel_dictation 只检查 _mode==DICTATION, 不校验传入 clientRequestId 与 _dict_request_id 一致, 与 voice.record.stop/voice_session.stop 的 ID 校验不一致。 **✅ 批次 8b 已修复（2026-08-07，`003845f` §3.10）：** dictation stop/cancel 校验 clientRequestId
+- **[CONFIRMED] core/input/voice_sessions.py:165**（b6）：_restore_emotion 用 clear+update 原地回写 agent 级共享 stt_emotion_state, 会抹掉 dictation 窗口内其他连接 STT 写入的 emotion/events。 **✅ 批次 8b 已修复（2026-08-07，`003845f` D6）：** dictation 用 `_transcribe_no_emotion` 不写共享 emotion，删快照/恢复
+- **[PLAUSIBLE] core/adapter/tts_adapter.py:57**（b6）：_wav_info 以固定偏移 40 读 data chunk 大小, 假设标准 44 字节 WAV 头; 含额外 chunk(LIST/fact/cue)的 WAV 会得到错误的 durationMs。 **✅ 批次 8b 已修复（2026-08-07，`8a0741b` §3.11）：** `_wav_info` 遍历 chunk 表定位 fmt/data
 - **[CONFIRMED] core/storage/attachment_gc.py:133**（b7）：GC 规则1 在文件 unlink 抛 OSError 时仍删除记录，制造磁盘孤儿文件，且 GC 仅启动跑一次。**✅ 已修复（批次 8a，`66be44f`）：** 规则1 unlink 抛 OSError 时保留记录待重试（不再删记录造孤儿）。
 - **[CONFIRMED] core/storage/attachment_repo.py:193**（b7）：add_ref/remove_ref 为读改写（get 后 $set 全量 refs），并发下可丢更新、破坏 ref_count==len(refs) 不变量。**✅ 已修复（批次 8a，`9a16709`）：** add_ref/remove_ref 原子化——条件 update，幂等 add + 归零条件软删。
 - **[CONFIRMED] core/input/server.py:184**（b7）：/health 与 /ready 探活负载调用 agent.next_request_id()，突变全局请求计数器并覆写 request_id ContextVar，探活探针不应有状态副作用。**✅ 已修复（批次 8a，`f14d9c9`）：** 探活改用独立 `req_<uuid>`，不再扰动 `next_request_id()` 计数器。
-- **[CONFIRMED] core/input/ws_handler.py:574**（b7）：附件/表情消息幂等 entry 在 process_message 前落盘，process 抛异常（非返回 False）时 entry 残留，重试会重放 accepted 而消息从未入队。 **⏳ 待 8b**：附件幂等 entry 异常残留
+- **[CONFIRMED] core/input/ws_handler.py:574**（b7）：附件/表情消息幂等 entry 在 process_message 前落盘，process 抛异常（非返回 False）时 entry 残留，重试会重放 accepted 而消息从未入队。 **✅ 批次 8b 已修复（2026-08-07，`4e59ed4` §3.7）：** 附件 process 抛异常 → 删幂等 entry + rejected INTERNAL，连接不 crash
 - **[CONFIRMED] core/version.py:22**（x-contract）：get_build_sha caching is defeated on the failure path: on git error/empty output _build_sha is left None, so every WS handshake re-spawns a `git rev-parse HEAD` subprocess. **⏳ 待 8c**：get_build_sha 失败不缓存
 - **[CONFIRMED] core/input/ws_handler.py:287**（x-contract）：WS JSON decode / content-validation errors are sent as ErrorMessage with no `code` field. **⏳ 待 8c**：decode error 无 code
-- **[CONFIRMED] core/input/ws_handler.py:603**（x-contract）：v2 non-media path sends accepted ACK before process_message, and the idempotency entry is stored first — if process_message raises, the message is permanently lost and a retry silently replays the accepted ACK. **⏳ 待 8b**：与 §3 `ws_handler.py:603`（队列满返回 False）同根因——process_message 抛异常的变体路径，8b 修该点时连带覆盖。
+- **[CONFIRMED] core/input/ws_handler.py:603**（x-contract）：v2 non-media path sends accepted ACK before process_message, and the idempotency entry is stored first — if process_message raises, the message is permanently lost and a retry silently replays the accepted ACK. **✅ 批次 8b 已修复（2026-08-07，`4e59ed4` §3.7）：** 与 §3 `ws_handler.py:603`（队列满返回 False）同根因——process_message 抛异常变体随 §3.7 一并修复（删 entry + rejected INTERNAL，连接不 crash）。
 - **[CONFIRMED] core/input/api_routes.py:639**（x-contract）：In the upload handler the multipart `kind` field is read with `await field.read()` (no size cap), while only `files` fields are chunk-capped. **✅ 已修复（批次 8a，`716f2ad`）：** kind 字段改 `read_chunk(65)` 限长。
 - **[CONFIRMED] frontend_contract/ws_message.py:1**（x-contract）：Stale docstring and docs drift: module docstring still says 'Server→Client 18 具名成员' while the union has 39; TokenStats.by_model (snake) vs ConversationUsage.byModel (camel) are inconsistent wire key styles for the same concept. **⏳ 待 8c**：docstring 过时 + wire key 不一致
 - **[CONFIRMED] core/cognitive/loop.py:949**（x-security）：Inner Voice (model's private <inner_voice> monologue) is written to the application log via logger.info, beyond the intentionally-declared conversation.log audit channel. **✅ 已修复（批次 8a，`84b3775`）：** Inner Voice 应用日志降级为 debug。
