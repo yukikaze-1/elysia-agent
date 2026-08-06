@@ -308,6 +308,13 @@ class CognitiveLoop(CognitiveTools):
     def status(self, value):
         self._status = value
 
+    @property
+    def current_generation_user_message_id(self) -> str | None:
+        """当前在途 generation 的用户消息 ID（D1 断连归属判定）。无在途/未建档 → None。"""
+        if self._generation_ctx is None:
+            return None
+        return self._generation_ctx.user_message_id or None
+
     # ---- Public API ----
 
     def cancel_current(self, source: str | None = None) -> bool:

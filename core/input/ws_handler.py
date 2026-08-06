@@ -239,6 +239,10 @@ async def handle_ws(
         agent=agent, emit=lambda data: ws.send_json(data),
         on_vad_interrupt=lambda: do_interrupt(agent, skip_vad=True),
     )
+    # 批次 8b（D1）：本连接已发消息 ID 集合（文本/附件 accepted + voice.commit +
+    # REALTIME 段）——断连归属判定的数据源：仅当在途 generation 由本连接发起才取消，
+    # 多标签/多设备下 Tab B 断开不误杀 Tab A 的生成。
+    sent_message_ids: set[str] = set()
 
     audio_buf: AudioBuffer | None = None
     monitor_task: asyncio.Task | None = None
@@ -287,7 +291,8 @@ async def handle_ws(
                     data = json.loads(msg.data)
                     if not isinstance(data, dict):
                         raise ValidationError("WS 消息必须是 JSON 对象")
-                    await handle_json_message(data, agent, audio_buf, ws, voice_mgr=voice_mgr)
+                    await handle_json_message(data, agent, audio_buf, ws, voice_mgr=voice_mgr,
+                                              sent_message_ids=sent_message_ids)
                 except json.JSONDecodeError:
                     await ws.send_json(ErrorMessage(
                         message="Invalid JSON",
@@ -321,6 +326,9 @@ async def handle_ws(
         if audio_buf:
             await audio_buf.flush()
         if voice_mgr is not None:
+            # D1 语音归属：REALTIME 段/commit 的 message_id 并入本连接已发集合
+            # （_on_segment 已登记到 voice_mgr._emitted_message_ids，Task 6 覆盖）。
+            sent_message_ids.update(voice_mgr.emitted_message_ids)
             await voice_mgr.close()
         agent.output.remove_channel(channel)
         # 批次 4（spec §5.1 D-o）：v2 + electron 连接断开 → 桥标 offline + 未接手 call
@@ -333,11 +341,14 @@ async def handle_ws(
             except Exception:
                 logger.debug("Desktop bridge on_client_disconnect 失败", exc_info=True)
         logger.info("WS client disconnected: %s", client_id)
-        # 批次 2 重连语义（最小）：v2 源连接在生成中断开 → 取消在途 generation（标记中断）。
-        # 客户端重连后经 session 回放获取部分消息，未见 generation.completed 即视为中断。
+        # 批次 2 重连语义（最小）+ 批次 8b（D1）：仅当在途 generation 由本连接发起才取消——
+        # 多标签/多设备下 Tab B 断开不再误杀 Tab A 的生成。归属 = 当前 generation 的
+        # user_message_id ∈ 本连接已发消息集合（文本/附件/语音 commit/REALTIME 段）。
         if protocol_version >= 2:
             try:
-                if not agent.status.is_completely_idle:
+                gen_uid = getattr(getattr(agent, "cognitive", None),
+                                  "current_generation_user_message_id", None)
+                if gen_uid and gen_uid in sent_message_ids:
                     from core.monitoring.event_bus import EventPriority
                     agent.bus.post(InterruptData(source="disconnect"),
                                    priority=EventPriority.INTERRUPT)
@@ -648,12 +659,16 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
 
 
 async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None",
-                               voice_mgr, data: dict) -> None:
+                               voice_mgr, data: dict,
+                               sent_message_ids: set | None = None) -> None:
     """voice.commit 处理顺序（spec §3.3 NEW-A/NEW-M/NEW-T）：
     ① 解析目标会话 ack_conv（幂等重放分支也用，对齐 _route_v2_text，review #15）
     ② 缺 clientRequestId → 直接 ack rejected（置于幂等与门禁之前）
     ③ 幂等表查重（digest = commit 携带 text）→ 命中重发原 ACK / 异摘要 rejected
     ④ 未命中 → 状态机 PENDING 门禁（commit_recording）→ ACK + post UserInputData。
+
+    Args:
+        sent_message_ids: D1 归属接收集合——accepted 时登记 messageId（Task 9 消费）。
     """
     recording_id = data.get("recordingId", "")
     text = data.get("text", "")
@@ -701,6 +716,8 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
     store.store(client_request_id, IdempotencyEntry(
         user_message_id=message_id, content_digest=digest, created_at=time.monotonic()))
     await _send_ack(ws, message_id, client_request_id, client_message_id, ack_conv, "accepted")
+    if sent_message_ids is not None:
+        sent_message_ids.add(message_id)   # D1 归属（voice.commit 同样登记）
     agent.idle.touch()
     # conversation_id 传原始值（None=活动会话），与 _route_v2_text 传原始给 process_message 一致；
     # ACK 侧已用解析后 ack_conv（review NEW-5）
@@ -920,7 +937,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("voice.commit: 非 v2 或无 mgr，忽略")
         else:
-            await _handle_voice_commit(agent, ws, voice_mgr, data)
+            await _handle_voice_commit(agent, ws, voice_mgr, data,
+                                       sent_message_ids=sent_message_ids)
     elif msg_type == "voice.discard":
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("voice.discard: 非 v2 或无 mgr，忽略")

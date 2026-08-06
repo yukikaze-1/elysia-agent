@@ -598,3 +598,112 @@ class TestQueueFullAck:
         assert ack and ack[0]["status"] == "rejected"
         assert ack[0]["error"]["code"] == "INTERNAL"
         assert get_store().lookup("q4") is None  # entry 已删——重试可重新进入
+
+
+import re as _re
+
+
+class _HeldLLM:
+    """可手动放行的慢 LLM——生成在途可控（镜像 _UsageLLM 接口，stream_think 阻塞）。
+
+    _make_agent_with 把它作为 agent.llm._backend 注入；loop 经 LLMAdapter 调
+    stream_think，故须提供 _model/chat/test/close/stream_think 全接口。
+    """
+
+    def __init__(self, response: str = "你好，这是慢回复"):
+        self.response = response
+        self.released = asyncio.Event()
+        self._model = "fake/test"
+
+    async def chat(self, messages, **kwargs):
+        await self.released.wait()
+        return self.response
+
+    async def test(self) -> dict:
+        return {"ok": True, "latency_ms": 0}
+
+    async def close(self):
+        pass
+
+    async def stream_think(self, messages, **kwargs):
+        await self.released.wait()           # 生成在途——阻塞直至放行
+        for tok in _re.compile(r"(.)").findall(self.response):
+            yield {"content": tok, "tool_calls": None}
+        yield {"content": None, "tool_calls": None}
+
+
+@pytest.mark.service
+class TestDisconnectOwnership:
+    """D1：断连只取消本连接发起的 generation——Tab B 关闭不杀 Tab A 生成。"""
+
+    @pytest.mark.asyncio
+    async def test_other_connection_close_does_not_cancel_generation(
+            self, aiohttp_client, fresh_idempotency):
+        from core.input.server import create_app
+        from core.cognitive.tests.test_v2_generation import _make_agent_with
+
+        llm = _HeldLLM()
+        agent = _make_agent_with(llm)
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws_a = await _drain(client, {"X-Protocol-Version": "2"})
+            ws_b = await _drain(client, {"X-Protocol-Version": "2"})
+            # A 发消息 → 生成在途（阻塞在 released）
+            await ws_a.send_json({"type": "text", "content": "慢请求",
+                                  "clientRequestId": "slow_1"})
+            await asyncio.sleep(0.3)            # 等 generation 进入 THINKING/在途
+            # B 断开 → 不应取消 A 的生成
+            await ws_b.close()
+            await asyncio.sleep(0.3)
+            llm.released.set()                  # 放行 → A 应收到完整回复
+            got_completed = False
+            # 帧数上限取 30（对齐本文件既有 generation 流测试——completed 是
+            # 建连帧 + ack/state/typing/segment 之后的第 11+ 帧，range(10) 读不够）
+            for _ in range(30):
+                m = await asyncio.wait_for(ws_a.receive(), timeout=5)
+                if m.type == WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("type") == "generation.completed":
+                        got_completed = True
+                        break
+                    if d.get("type") == "generation.failed":
+                        break
+            assert got_completed               # B 断开未误杀 → completed
+            await ws_a.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_own_connection_close_cancels_generation(
+            self, aiohttp_client, fresh_idempotency):
+        from core.input.server import create_app
+        from core.cognitive.tests.test_v2_generation import (
+            _make_agent_with, _registry_docs,
+        )
+
+        llm = _HeldLLM()
+        agent = _make_agent_with(llm)
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({"type": "text", "content": "慢请求",
+                                "clientRequestId": "slow_2"})
+            await asyncio.sleep(0.3)
+            await ws.close()                    # 发起者断开 → 在途生成取消
+            # 轮询 registry 终态（宽限时序，仿既有 test_v2_disconnect 3s poll 模式）
+            loop = asyncio.get_event_loop()
+            deadline = loop.time() + 3.0
+            status = None
+            while loop.time() < deadline:
+                docs = await _registry_docs(agent)
+                if docs and docs[0].get("status"):
+                    status = docs[0]["status"]
+                    break
+                await asyncio.sleep(0.1)
+            assert status == "interrupted"      # 发起者断开 → 标 interrupted
+        finally:
+            await agent.stop()
