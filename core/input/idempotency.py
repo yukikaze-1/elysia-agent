@@ -42,6 +42,10 @@ class IdempotencyStore:
         """记录一次请求。"""
         self._entries[key] = entry
 
+    def delete(self, key: str) -> None:
+        """删除一条幂等记录（批次 7：附件消息队列满 rejected 后删除，允许重试重新进入）。"""
+        self._entries.pop(key, None)
+
     def clear(self) -> None:
         """清空（测试隔离用）。"""
         self._entries.clear()

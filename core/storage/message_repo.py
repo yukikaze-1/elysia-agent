@@ -273,6 +273,26 @@ class MessageRepository(Repository):
             return None
         return _doc_to_message(docs[0])
 
+    async def get_by_id(self, msg_id: str) -> Message | None:
+        """按 Mongo _id 取单条归档消息（跨会话，archive 删除联动取附件 part 用）。
+
+        Args:
+            msg_id: Mongo ObjectId 字符串（archive 删除端点的 msg_id）。
+
+        Returns:
+            对应 Message；不存在/非法 _id/库不可用返回 None。
+        """
+        if self._db is None:
+            return None
+        try:
+            oid = ObjectId(msg_id)
+        except Exception:
+            return None
+        docs = await self._db.find(COLLECTION, {"_id": oid}, limit=1)
+        if not docs:
+            return None
+        return _doc_to_message(docs[0])
+
     async def query_after(self, session_id: SessionId, message_id: MessageId, *,
                           limit: int = 20) -> tuple[list[Message], bool]:
         """定位锚点消息（{session_id, message_id}）之后的消息，正序返回。

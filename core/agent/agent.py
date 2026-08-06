@@ -309,7 +309,7 @@ class Agent(AgentLifecycle, AgentServer):
                                content: list[dict] | None = None,
                                message_id: str | None = None,
                                protocol_version: int = 1,
-                               conversation_id: str | None = None) -> None:
+                               conversation_id: str | None = None) -> bool:
         """处理单条用户消息，通过管道送入 CognitiveLoop。
 
         Agent 忙碌时消息入队（FIFO），IDLE 时出队处理。
@@ -323,10 +323,14 @@ class Agent(AgentLifecycle, AgentServer):
             protocol_version: 来源协议版本（1=v1，2=v2），默认 1。
             conversation_id: 批次 3（multi-session）目标会话 ID；None = 未归属
                 （由 loop 侧 resolver 路由，Task 8 接入）。
+
+        Returns:
+            bool: True = 消息已接受（已入队或直发）；False = 消息为空或队列满被丢弃。
+                调用方（v2 附件/sticker 路由）据此决定 ACK accepted / QUEUE_FULL rejected。
         """
         user_name = user_name or self._user_name
         if not text.strip() and not content:
-            return
+            return False
 
         rid = self.next_request_id()
 
@@ -337,7 +341,7 @@ class Agent(AgentLifecycle, AgentServer):
             max_queue = self._config.agent.max_pending_messages
             if len(self._pending_messages) >= max_queue:
                 logger.warning("消息队列已满 (%d) — 丢弃消息", max_queue)
-                return
+                return False
             logger.debug("Agent busy — 消息排队 (state=%s, queue=%d)",
                        self.status.current_name(), len(self._pending_messages) + 1)
             self._pending_messages.append(_PendingMessage(
@@ -346,13 +350,14 @@ class Agent(AgentLifecycle, AgentServer):
                 conversation_id=conversation_id,
                 protocol_version=protocol_version,
             ))
-            return
+            return True
 
         self._bus.post(UserInputData(text=text, user_name=user_name,
                                      request_id=rid, content=content,
                                      message_id=message_id,
                                      protocol_version=protocol_version,
                                      conversation_id=conversation_id))
+        return True
 
     # ---- Background task lifecycle ----
 

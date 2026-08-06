@@ -13,11 +13,14 @@ from pydantic import ValidationError
 
 from core.memory.session_manager import SessionBusyError
 from core.schema.event import InterruptData, UserInputData
+from core.schema.part import AudioPart, FilePart, ImagePart, StickerPart, TextPart, VideoPart
 from core.schema.utils import now_iso
+from core.storage.attachment_repo import StorageUnavailableError
 from Module.output import WebSocketChannel
 from core.input.audio_buffer import AudioBuffer
 from core.input.capabilities import build_capabilities
 from core.input.idempotency import IdempotencyEntry, get_store
+from core.input.sticker_registry import get as get_sticker
 from core.input.voice_sessions import VoiceSessionError, VoiceSessionManager
 from frontend_contract import (
     CommandMessage,
@@ -381,9 +384,70 @@ async def _send_ack(ws: "web.WebSocketResponse", message_id: str, client_request
         logger.debug("发送 user_message.ack 失败", exc_info=True)
 
 
+# 附件 kind → Part 子类映射（spec §3.2 附件四类；未知 kind 跳过不构造）
+_ATTACHMENT_PART_TYPES = {
+    "image": ImagePart, "file": FilePart, "audio": AudioPart, "video": VideoPart,
+}
+
+
+def _attachment_part(kind: str, attachment_id: str, doc: dict):
+    """附件记录 → 对应 Part（src=/api/attachments/{id} + attachment_id + 记录真值字段）。
+
+    mime 以 attachments 记录为准（客户端提示值仅展示用，spec §3.1 Minor 10）；
+    记录 mime 不在 Part 枚举时回退默认值（避免 pydantic 校验炸整条消息）。
+    """
+    cls = _ATTACHMENT_PART_TYPES.get(kind)
+    if cls is None:
+        logger.warning("未知附件 kind=%s，跳过构造 Part", kind)
+        return None
+    data: dict = {"src": f"/api/attachments/{attachment_id}", "attachment_id": attachment_id}
+    mime = doc.get("mime") or ""
+    if mime:
+        try:
+            cls(**{**data, "mime": mime})
+            data["mime"] = mime
+        except Exception:
+            pass  # mime 非枚举值 → 用 Part 默认 mime
+    if kind == "file":
+        filename = doc.get("filename")
+        if filename:
+            data["filename"] = filename
+        size = doc.get("size")
+        if size is not None:
+            try:
+                data["size_bytes"] = int(size)
+            except (TypeError, ValueError):
+                pass
+    return cls(**data)
+
+
+def _build_media_parts(text: str, attachment_records: dict[str, dict],
+                       sticker_id: str) -> list:
+    """附件/表情消息的 Part 列表：TextPart + 附件 Part（按 kind）+ StickerPart。
+
+    顺序：文本在前，附件按发送顺序，表情最后——喂给 LLM 前 content_to_openai
+    会把 image 块移到 text 块之前（MIMO 要求），故此处仅保证 Part 齐全。
+    """
+    parts: list = []
+    if text:
+        parts.append(TextPart(content=text))
+    for aid, doc in attachment_records.items():
+        part = _attachment_part(doc.get("kind", ""), aid, doc)
+        if part is not None:
+            parts.append(part)
+    if sticker_id:
+        parts.append(StickerPart(sticker_id=sticker_id,
+                                 src=f"/static/stickers/{sticker_id}.png"))
+    return parts
+
+
 async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                          text: str, data: dict) -> bool:
-    """v2 文本消息路由：ACK + 幂等 + 预分配 messageId。
+    """v2 文本消息路由：ACK + 幂等 + 预分配 messageId（批次 7：附件/表情）。
+
+    纯文本：ACK 先于 process（现状时序）；附件/表情消息校验先于幂等 lookup、
+    ACK 延后到 process 后——accepted 才 refs+1，队列满 rejected（QUEUE_FULL）并
+    删幂等 entry 允许重试重新进入。
 
     返回 True 表示已按 v2 处理（含 rejected），False 表示走 v1 路径（非 v2 连接）。
 
@@ -391,7 +455,8 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         agent: Agent 实例。
         ws: 发送方连接（用于回 ACK 与协议版本判定）。
         text: 文本内容（已 strip）。
-        data: 原始消息 dict（含 clientRequestId/clientMessageId/conversationId）。
+        data: 原始消息 dict（含 clientRequestId/clientMessageId/conversationId/
+            attachments/stickerId）。
     """
     if ws is None:
         return False
@@ -418,7 +483,55 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         logger.warning("_route_v2_text: resolve_session 失败，回退回显 conversationId", exc_info=True)
         ack_conversation_id = conversation_id
 
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    attachments = data.get("attachments") or []
+    sticker_id = data.get("stickerId") or ""
+    has_media = bool(attachments) or bool(sticker_id)
+
+    # 附件/表情消息：校验先于幂等 lookup（spec §4.2 扩展，批次 7）。
+    # 纯文本保持原 digest 语义 sha256(text)；附件/表情摘要含附件 ID 排序 + stickerId。
+    attachment_records: dict[str, dict] = {}
+    if has_media:
+        try:
+            for att in attachments:
+                aid = att.get("attachmentId") if isinstance(att, dict) \
+                    else getattr(att, "attachmentId", "")
+                if not aid:
+                    await _send_ack(ws, "", client_request_id, client_message_id,
+                                    ack_conversation_id, "rejected",
+                                    error={"code": "CONTRACT_VALIDATION",
+                                           "message": "attachments 缺 attachmentId",
+                                           "retryable": False})
+                    return True
+                doc = await agent.attachment_repo.get(aid)
+                if doc is None or (doc.get("status") or "") != "active":
+                    await _send_ack(ws, "", client_request_id, client_message_id,
+                                    ack_conversation_id, "rejected",
+                                    error={"code": "ATTACHMENT_NOT_FOUND",
+                                           "message": f"附件不存在或已删除: {aid}",
+                                           "retryable": False})
+                    return True
+                attachment_records[aid] = doc
+        except StorageUnavailableError:
+            await _send_ack(ws, "", client_request_id, client_message_id,
+                            ack_conversation_id, "rejected",
+                            error={"code": "STORAGE_UNAVAILABLE",
+                                   "message": "附件存储不可用（MongoDB 离线）",
+                                   "retryable": True})
+            return True
+        if sticker_id and get_sticker(sticker_id) is None:
+            await _send_ack(ws, "", client_request_id, client_message_id,
+                            ack_conversation_id, "rejected",
+                            error={"code": "CONTRACT_VALIDATION",
+                                   "message": f"未知 stickerId: {sticker_id}",
+                                   "retryable": False})
+            return True
+        ids = ",".join(sorted(attachment_records))
+        digest = hashlib.sha256(
+            text.encode("utf-8") + b"\x00" + ids.encode("utf-8")
+            + b"\x00" + sticker_id.encode("utf-8")).hexdigest()
+    else:
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
     store = get_store()
     entry = store.lookup(client_request_id)
     if entry is not None:
@@ -435,12 +548,38 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                                    "retryable": False})
         return True
 
-    # 新请求：预分配用户消息 ID → ACK → 触发生成
+    # 新请求：预分配用户消息 ID → store → ACK → 触发生成
     from core.utils import new_message_id
     message_id = new_message_id()
     store.store(client_request_id,
                 IdempotencyEntry(user_message_id=message_id,
                                  content_digest=digest, created_at=time.monotonic()))
+
+    if has_media:
+        # 附件/表情消息：ACK 延后到 process 后（需 process 结果判定 accepted / QUEUE_FULL）
+        parts = _build_media_parts(text, attachment_records, sticker_id)
+        content = [p.model_dump() for p in parts]
+        accepted = await agent.process_message(
+            text=text, content=content, message_id=message_id,
+            protocol_version=2, conversation_id=conversation_id)
+        if accepted:
+            await _send_ack(ws, message_id, client_request_id, client_message_id,
+                            ack_conversation_id, "accepted")
+            for aid in attachment_records:
+                try:
+                    await agent.attachment_repo.add_ref(aid, message_id)
+                except Exception as e:
+                    logger.warning("附件 refs 写盘失败 aid=%s message=%s: %s",
+                                   aid, message_id, e)
+        else:
+            # 队列满 → 删幂等 entry（重试允许重新进入）+ rejected QUEUE_FULL；refs 不递增
+            store.delete(client_request_id)
+            await _send_ack(ws, "", client_request_id, client_message_id,
+                            ack_conversation_id, "rejected",
+                            error={"code": "QUEUE_FULL",
+                                   "message": "Agent 忙，消息队列已满", "retryable": True})
+        return True
+
     await _send_ack(ws, message_id, client_request_id, client_message_id,
                     ack_conversation_id, "accepted")
     await agent.process_message(text=text, message_id=message_id,
@@ -530,8 +669,11 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             logger.debug("唤醒词开关: %s", "开启" if enabled else "关闭")
     elif msg_type == "text":
         text_content = data.get("content", "")
-        if isinstance(text_content, str) and text_content.strip():
-            # 批次 2 v2 路由（握手 protocol_version=2）：ACK + 幂等 + 预分配 messageId
+        if isinstance(text_content, str) and (text_content.strip()
+                                              or data.get("stickerId")
+                                              or data.get("attachments")):
+            # 批次 2 v2 路由（握手 protocol_version=2）：ACK + 幂等 + 预分配 messageId。
+            # 批次 7：入口门放宽——sticker/附件-only 消息（content 可空）也进 v2 路由。
             if await _route_v2_text(agent, ws, text_content.strip(), data):
                 return
             await agent.process_message(text=text_content.strip())

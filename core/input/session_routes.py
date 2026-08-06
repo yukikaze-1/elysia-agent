@@ -18,8 +18,9 @@ from bson.errors import InvalidId
 
 from core.input.api_routes import _archive_to_client, _archive_msg_to_contract
 from core.schema.message import MessageRole
-from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart
+from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart
 from core.schema.utils import now_iso
+from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from frontend_contract import rest as rest_contract
 from frontend_contract.rest import ProtocolError
 
@@ -203,7 +204,8 @@ def _extract_from_message(msg, category: str) -> list[dict]:
     """按类别从单条消息提取资源项（{kind, url} 列表）。
 
     image → ImagePart.src；link → TextPart.content URL 正则；
-    video/audio/file → 对应 Part.src；sticker → 恒空（无 part 类型，批次 7 定）。
+    video/audio/file → 对应 Part.src；sticker → StickerPart.sticker_id
+    → 静态路径 /static/stickers/{id}.png（批次 7，内置公开资源）。
     """
     parts = getattr(msg, "content", None) or []
     results: list[dict] = []
@@ -226,7 +228,32 @@ def _extract_from_message(msg, category: str) -> list[dict]:
         for p in parts:
             if isinstance(p, FilePart) and getattr(p, "src", ""):
                 results.append({"kind": "file", "url": p.src})
+    elif category == "sticker":
+        for p in parts:
+            if isinstance(p, StickerPart) and getattr(p, "sticker_id", ""):
+                results.append({"kind": "sticker",
+                                "url": f"/static/stickers/{p.sticker_id}.png"})
     return results
+
+
+async def _attachment_available(agent, url: str) -> bool:
+    """资源索引软删过滤：/api/attachments/{id} → 附件记录存在且 active；其余 URL 不过滤。
+
+    Mongo 离线（附件 repo fail-closed）保守过滤——附件不可校验 → 不展示（避免
+    指向已删/不可用文件）。legacy /uploads/images/* 非附件，不过滤。
+    """
+    if not url.startswith("/api/attachments/"):
+        return True
+    attachment_id = url.rsplit("/", 1)[-1]
+    repo = getattr(agent, "attachment_repo", None)
+    if repo is None:
+        return True
+    try:
+        doc = await repo.get(attachment_id)
+    except Exception:
+        # 附件 repo fail-closed（StorageUnavailableError 等）：保守过滤不展示
+        return False
+    return doc is not None and (doc.get("status") or "") == STATUS_ACTIVE
 
 
 def _items_from_message(msg, category: str, start_offset: int = 0):
@@ -253,11 +280,11 @@ def _items_from_message(msg, category: str, start_offset: int = 0):
         }, (doc_id, idx + 1)
 
 
-async def _next_hit(message_repo, session_id: str, category: str,
+async def _next_hit(agent, message_repo, session_id: str, category: str,
                     doc_id: str, offset: int) -> tuple[dict, tuple[str, int]] | None:
     """从 (doc_id, offset) 起找下一条命中资源（peek has_more 用）。
 
-    先查 cursor 消息从 offset 起的剩余资源，再扫其后消息。
+    先查 cursor 消息从 offset 起的剩余资源，再扫其后消息；软删附件项过滤。
 
     Returns:
         (资源项 dict, cursor) 或 None（无更多命中）。
@@ -265,7 +292,8 @@ async def _next_hit(message_repo, session_id: str, category: str,
     msg = await message_repo.get_by_mongo_id(session_id, doc_id)
     if msg is not None:
         for item, cursor in _items_from_message(msg, category, offset):
-            return item, cursor
+            if await _attachment_available(agent, item["url"]):
+                return item, cursor
     scan_before = doc_id
     while True:
         msgs, _ = await message_repo.query_page(session_id, before=scan_before,
@@ -278,18 +306,20 @@ async def _next_hit(message_repo, session_id: str, category: str,
                 continue
             scan_before = did
             for item, cursor in _items_from_message(msg, category):
-                return item, cursor
+                if await _attachment_available(agent, item["url"]):
+                    return item, cursor
     return None
 
 
-async def _scan_resources(message_repo, session_id: str, category: str,
+async def _scan_resources(agent, message_repo, session_id: str, category: str,
                           before: tuple[str, int] | None,
                           limit: int) -> tuple[list[dict], bool, str | None]:
     """按需扫描归档提取资源（spec §8 分页，资源级 cursor）。
 
     从 `before`（(消息 _id, 消息内 offset)）继续按 _id 倒序扫描：先处理 cursor 消息
     从 offset 起的剩余资源，再扫其后消息，收集命中项直到凑够 limit；随后**额外 peek**
-    一条命中资源判定 has_more（peek 不到 = 无更多）。
+    一条命中资源判定 has_more（peek 不到 = 无更多）。软删附件项（/api/attachments/
+    且附件记录 deleted/不存在）过滤不展示（批次 7）。
 
     批次 3 review 修复（链路#2）：cursor 由消息级（base64(_id)）改为**资源级**
     base64url(`_id|offset`)——limit 在某消息内部命中（一条消息含多个同类资源）时，
@@ -310,6 +340,8 @@ async def _scan_resources(message_repo, session_id: str, category: str,
         cursor_msg = await message_repo.get_by_mongo_id(session_id, start_id)
         if cursor_msg is not None:
             for item, cursor in _items_from_message(cursor_msg, category, start_offset):
+                if not await _attachment_available(agent, item["url"]):
+                    continue
                 if len(items) >= limit:
                     break
                 items.append(item)
@@ -326,6 +358,8 @@ async def _scan_resources(message_repo, session_id: str, category: str,
                 continue
             scan_before = doc_id
             for item, cursor in _items_from_message(msg, category):
+                if not await _attachment_available(agent, item["url"]):
+                    continue
                 if len(items) >= limit:
                     break
                 items.append(item)
@@ -339,7 +373,7 @@ async def _scan_resources(message_repo, session_id: str, category: str,
         return items, False, None
 
     # 阶段二：peek 一条命中资源判定 has_more（只探不收集）
-    has_more = await _next_hit(message_repo, session_id, category, *last_cursor) is not None
+    has_more = await _next_hit(agent, message_repo, session_id, category, *last_cursor) is not None
     return items, has_more, _encode_resource_cursor(*last_cursor)
 
 
@@ -607,13 +641,10 @@ async def sessions_resources_handler(request: web.Request) -> web.Response:
         return _error_response("CONTRACT_VALIDATION", "不支持的资源类别: text（走搜索）")
     if category not in _RESOURCE_CATEGORIES:
         return _error_response("CONTRACT_VALIDATION", f"不支持的资源类别: {category or '(空)'}")
-    if category == "sticker":
-        # 第一版恒空（无 part 类型，批次 7 定）
-        resp = rest_contract.ResourceListResponse(items=[], has_more=False, cursor=None)
-        return web.json_response(resp.wire_dict())
     before = _parse_resource_before(request.query.get("before", "").strip() or None)
     limit = _parse_limit(request, default=20)
-    items, has_more, cursor = await _scan_resources(agent.message_repo, sid, category, before, limit)
+    items, has_more, cursor = await _scan_resources(agent, agent.message_repo, sid,
+                                                    category, before, limit)
     resources = [rest_contract.ResourceItem(**it) for it in items]
     resp = rest_contract.ResourceListResponse(items=resources, has_more=has_more, cursor=cursor)
     return web.json_response(resp.wire_dict())

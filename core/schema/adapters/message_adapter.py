@@ -9,11 +9,13 @@
 """
 
 import base64 as _base64
+import re as _re
 from pathlib import Path as _Path
 from typing import Annotated, Union
 
 from pydantic import Discriminator, Tag, TypeAdapter, ValidationError
 
+from core.schema.adapters import attachment_resolver as _attachment_resolver
 from core.schema.part import Part, TextPart, ImagePart, FilePart, AudioPart, VideoPart, ImageMime
 from core.schema.message import Message, AssistantMessage, ToolResultMessage, UserMessage
 
@@ -148,6 +150,9 @@ from paths import ProjectPath as _ProjectPath
 _IMAGES_DIR = _ProjectPath.DATA_UPLOADS_IMAGES.resolve()
 _STATIC_DIR = _ProjectPath.STATIC.resolve()
 
+# 附件稳定路径 /api/attachments/{attachment_id}（批次 7 消息关联 wire 格式）
+_ATTACHMENT_SRC_RE = _re.compile(r"^/api/attachments/([^/]+)$")
+
 
 def _to_data_uri(path: _Path) -> str:
     """读取本地文件，编码为 data URI。
@@ -179,6 +184,13 @@ def _resolve_image_source(src: str) -> str:
         如果是本地文件则返回 base64 data URI，否则原样返回。
     """
     if src.startswith("data:"):
+        return src
+    # 批次 7：附件稳定路径 → AttachmentFileResolver 定位落盘文件 → data URI
+    m = _ATTACHMENT_SRC_RE.match(src)
+    if m:
+        local_path = _attachment_resolver.resolve(m.group(1))
+        if local_path is not None and local_path.is_file():
+            return _to_data_uri(local_path)
         return src
     if src.startswith("http://") or src.startswith("https://"):
         if "://localhost" in src or "://127.0.0.1" in src:
