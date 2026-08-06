@@ -177,9 +177,25 @@ class TestReferences:
         assert doc["deleted_at"]
 
     def test_add_ref_concurrent_no_lost_update(self):
-        """并发多次 add_ref 不同 message_id → 原子 addToSet+inc 不丢更新（B 簇 minor）。"""
-        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        """并发多次 add_ref 不同 message_id → 原子 addToSet+inc 不丢更新（B 簇 minor）。
+
+        共享 fake 不做人为 sleep 交错（会扰动无关异步测试，见 _fake_documentdb 注释），
+        故并发不变量在此不测真实竞态；原子性由调用形态断言（单次条件 update、
+        无 get 前置读改写）验证——这正是旧实现（get → $set 全量）做不到的。
+        """
+        fake = FakeDocumentDBBackend()
+        repo = AttachmentRepository(db=fake)
         _run(repo.create(_doc(attachment_id="att_x")))
+
+        # spy update_one：记录 filter + update 调用形态
+        calls: list[tuple[dict, dict]] = []
+        original = fake.update_one
+
+        async def spy(collection, filter_expr, update, upsert=False):
+            calls.append((filter_expr, update))
+            return await original(collection, filter_expr, update, upsert)
+
+        fake.update_one = spy  # type: ignore[method-assign]
 
         async def run():
             await repo.add_ref("att_x", "m1")
@@ -189,6 +205,15 @@ class TestReferences:
 
         doc = _run(run())
         assert doc["ref_count"] == len(doc["refs"]) == 7  # 不变量
+
+        # 原子性：add_ref 只发条件 update_one（refs 不含该 message_id），
+        # 且每次 update 同时 $addToSet + $inc（无 get 前置读改写）
+        add_calls = [c for c in calls if "$addToSet" in c[1]]
+        assert len(add_calls) == 7
+        for filter_expr, update in add_calls:
+            assert isinstance(filter_expr["refs"], dict) and "$ne" in filter_expr["refs"]
+            assert "$addToSet" in update and "$inc" in update
+            assert update["$inc"]["ref_count"] == 1
 
     def test_add_ref_idempotent_still_holds(self):
         """幂等保持：重复 add 同 message_id → 不双计（既有语义回归）。"""

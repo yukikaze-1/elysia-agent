@@ -5,7 +5,6 @@ $set + upsert），_id 用 bson.ObjectId 生成、find 返回时转 str（对齐
 仅用于单测，不涉及真实数据库。
 """
 
-import asyncio
 from typing import Any
 
 from bson import ObjectId
@@ -128,9 +127,10 @@ class FakeDocumentDBBackend(DocumentDBBackend):
     async def update_one(self, collection: str, filter_expr: dict,
                          update: dict, upsert: bool = False) -> int:
         coll = self._coll(collection)
-        # 模拟真实 Mongo 的事件循环分片：给并发 read-modify-write 一个可插入的
-        # 交错点，让竞态在测试中真实复现（批次 8a Task 13 add_ref 原子化）。
-        await asyncio.sleep(0)
+        # 注意：这里不插入 await 交错点——共享 fake 被所有用 DocumentDBBackend 的
+        # 测试使用，全局 sleep(0) 会扰动无关异步测试的时序（批次 8a Task 13 曾加过，
+        # 导致 test_v2_interrupt 读到旧状态；已移除）。并发竞态由调用方测试断言
+        # update 调用形态（原子条件 update）验证，不依赖 fake 时序复现。
         matched = [d for d in coll if _matches(d, filter_expr)]
         if matched:
             doc = matched[0]
