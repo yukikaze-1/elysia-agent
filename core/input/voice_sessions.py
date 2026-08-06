@@ -183,6 +183,12 @@ class VoiceSessionManager:
         self._stt_epoch += 1                 # 代际递增——旧会话在途任务提交前 epoch 失配被丢弃
         self._stt_pending = {}
         self._stt_commit_seq = 0
+        # D3（review 修复）：取消在途派发任务——否则 cancel 后立即重启新会话会
+        # 卡在旧任务占用的 STT 锁上（STT 串行化），且迟到结果浪费后端调用。
+        # 跳过当前任务自取消（若 teardown 由派发任务内部触发，防自杀）。
+        for t in list(self._stt_tasks):
+            if t is not asyncio.current_task() and not t.done():
+                t.cancel()
         self._stt_tasks = set()
         self._mode = VoiceMode.IDLE
 
@@ -467,6 +473,7 @@ class VoiceSessionManager:
         if not text:
             return
         if self._mode == VoiceMode.REALTIME:
+            epoch = self._stt_epoch    # 提交时快照会话代际（B1 提交路径防线）
             self._turn_id += 1
             seg = self._segment_index
             self._segment_index += 1
@@ -474,6 +481,11 @@ class VoiceSessionManager:
             await self._emit(VoiceSessionPartialMessage(
                 sessionId=self._session_id, turnId=self._turn_id,
                 segmentIndex=seg, text=text).wire_dict())
+            # 提交途中被 cancel/teardown（partial emit 期间事件循环切换）→ 丢弃残段：
+            # 不发 turn、不 post UserInputData——epoch 失配（含 cancel 后重启新会话）
+            # 或 mode 已非 REALTIME 均作废（spec §5.2，review Important 窗口）。
+            if epoch != self._stt_epoch or self._mode != VoiceMode.REALTIME:
+                return
             if emotion is None:      # 缺省回退读共享 state（legacy AudioBuffer 回调路径）
                 es = getattr(self._agent, "stt_emotion_state", None) or {}
             else:

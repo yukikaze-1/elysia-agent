@@ -475,9 +475,11 @@ class _TwoReleaseSTTAgent(FakeAgent):
             if self.calls == 1:
                 await self.release_a.wait()
                 self._agent.stt_emotion_state["emotion"] = "HAPPY"
+                await asyncio.sleep(0.05)   # 模拟真实 stt_transcribe 写 emotion 后的事件循环切换
                 return "第一段"
             await self.release_b.wait()
             self._agent.stt_emotion_state["emotion"] = "SAD"
+            await asyncio.sleep(0.05)
             return "第二段"
 
     def __init__(self):
@@ -514,14 +516,15 @@ async def test_concurrent_segments_order_and_emotion():
     await mgr.feed_pcm(_sil(1600))
     await asyncio.sleep(0.05)
     assert len(mgr._stt_tasks) >= 2
-    # 反序放行：先 B（SAD）后 A（HAPPY）——锁保证各自捕获本段 emotion
-    agent._two.release_b.set()
-    await asyncio.sleep(0.1)
+    # 制造竞态窗口：先 release_a（A 写 HAPPY 并 sleep），B 在 A sleep 期间写 SAD——
+    # 锁缺失时 A 的捕获读到 B 的 SAD（张冠李戴）→ 断言 [HAPPY, SAD] 红。
     agent._two.release_a.set()
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(0.02)   # A 进入「写 HAPPY + sleep」窗口
+    agent._two.release_b.set()
+    await asyncio.sleep(0.2)    # 两段完成
     turns = [s for s in emitted if s.get("type") == "voice_session.turn"]
     assert [t["turnId"] for t in turns] == [1, 2]       # 提交锁 + seq 顺序
-    assert [p.emotion for p in bus_posts] == ["HAPPY", "SAD"]  # 各自本段 emotion
+    assert [p.emotion for p in bus_posts] == ["HAPPY", "SAD"]  # 各自本段 emotion（F3 锁）
 
 
 @pytest.mark.asyncio
@@ -540,3 +543,41 @@ async def test_realtime_segment_records_emitted_message_ids():
     turns = [s for s in emitted if s.get("type") == "voice_session.turn"]
     assert turns, "REALTIME 段应提交 turn"
     assert mgr.emitted_message_ids == {turns[0]["messageId"]}
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_commit_discards_segment():
+    """残段提交途中 cancel（partial emit 期间 teardown）→ 不发 turn / 不 post UserInputData。
+
+    review Important 窗口：_on_segment 的 partial emit await 期间 cancel → teardown
+    取消在途任务 + epoch 复检丢弃残段（spec §5.2「丢弃残段」）。
+    """
+    agent = _BlockableAgent()
+    emitted: list = []
+    partial_gate = asyncio.Event()
+    partial_block = asyncio.Event()
+
+    async def slow_emit(d):
+        if d.get("type") == "voice_session.partial":
+            partial_gate.set()
+            await partial_block.wait()     # 卡住提交——留出 cancel 窗口
+        emitted.append(d)
+
+    bus_posts: list = []
+    agent.bus = type("Bus", (), {"post": lambda self, d: bus_posts.append(d)})()
+    agent.idle = type("Idle", (), {"touch": lambda self: None})()
+    mgr = VoiceSessionManager(agent=agent, emit=slow_emit, silence_duration=0.1)
+    await mgr.start_realtime("rt_1", None)
+    for _ in range(30):
+        await mgr.feed_pcm(_loud(1600))
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.05)
+    agent.released.set()                     # STT 完成 → 提交 → partial emit 卡在 slow_emit
+    await asyncio.wait_for(partial_gate.wait(), timeout=2)
+    await mgr.cancel_session("rt_1")         # partial emit 期间 cancel → teardown 取消在途任务
+    partial_block.set()                      # 放行（任务已被取消，不影响断言）
+    await asyncio.sleep(0.1)
+    assert not any(p for p in bus_posts)     # 残段不 post UserInputData
+    assert not any(s.get("type") == "voice_session.turn" for s in emitted)
