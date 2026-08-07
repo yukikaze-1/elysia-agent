@@ -388,7 +388,11 @@ async def sessions_list_handler(request: web.Request) -> web.Response:
     search = request.query.get("search", "").strip()
     limit = _parse_limit(request, default=50)
     manager = agent.session_manager
-    items, has_more, next_cursor = await manager.list(cursor=cursor, limit=limit, search=search)
+    # 畸形 cursor → 400 CONTRACT_VALIDATION（_decode_cursor 抛 ValueError，原未捕获 → 500）
+    try:
+        items, has_more, next_cursor = await manager.list(cursor=cursor, limit=limit, search=search)
+    except ValueError:
+        return _error_response("CONTRACT_VALIDATION", "cursor 格式非法")
 
     # review 修复（批次 C）：messageCount 统一为归档计数——与详情/历史 total 同源
     # （列表 repo.list_all 的 message_count 是 ≤20 窗口数，与详情 count_by_session 不一致）。
@@ -743,9 +747,13 @@ async def sessions_pending_handler(request: web.Request) -> web.Response:
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
 
     pending_msgs = []
+    # F7：None 归属（v1/未归属）映射到活动会话——仅活动会话展示，非活动会话不泄漏；
+    # active_id 为空（防御，无活动会话）时 None 归属不展示。
+    active_id = getattr(getattr(agent, "session_manager", None), "active_id", None)
     for pm in getattr(agent, "pending_messages", None) or []:
-        # 按会话过滤；conversation_id=None（v1/未归属）视为活动会话 best-effort
-        if pm.conversation_id is not None and str(pm.conversation_id) != str(sid):
+        cid = pm.conversation_id
+        effective = str(cid) if cid is not None else (str(active_id) if active_id else None)
+        if effective != str(sid):
             continue
         message_id = getattr(pm, "message_id", None)
         if not message_id:

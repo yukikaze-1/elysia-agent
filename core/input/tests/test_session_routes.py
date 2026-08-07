@@ -239,6 +239,17 @@ class TestSessionsCRUD:
         assert not (first_ids & second_ids)
 
     @pytest.mark.asyncio
+    async def test_sessions_list_malformed_cursor_400(self, aiohttp_client):
+        """畸形 cursor → 400 CONTRACT_VALIDATION（非 500）。"""
+        agent = _FakeAgent()
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/sessions?cursor=garbage")
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["code"] == "CONTRACT_VALIDATION"
+
+    @pytest.mark.asyncio
     async def test_detail_unknown_404(self, aiohttp_client):
         app = _make_app(_FakeAgent())
         client = await aiohttp_client(app)
@@ -1066,6 +1077,32 @@ class TestPending:
         data = await resp.json()
         assert [m["messageId"] for m in data["pendingMessages"]] == ["pm_1"]
         assert [m["snippet"] for m in data["pendingMessages"]] == ["会话一的消息"]
+
+    @pytest.mark.asyncio
+    async def test_pending_none_conversation_only_active_session(self, aiohttp_client):
+        """conversation_id=None（v1/未归属）pending 仅活动会话展示，非活动 sid 不展示。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_active")
+        await _create_session(agent, "conv_other")
+        # 活动会话 = conv_active（显式 switch）
+        await agent.switch_session("conv_active")
+        agent.pending_messages = [
+            self._pending("未归属消息", "pm_none", None),
+            self._pending("other 会话消息", "pm_other", "conv_other"),
+        ]
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/api/sessions/conv_active/pending")
+        data = await resp.json()
+        ids_active = [m["messageId"] for m in data["pendingMessages"]]
+        assert "pm_none" in ids_active        # None 归属 → 活动会话可见
+
+        resp2 = await client.get("/api/sessions/conv_other/pending")
+        data2 = await resp2.json()
+        ids_other = [m["messageId"] for m in data2["pendingMessages"]]
+        assert "pm_other" in ids_other
+        assert "pm_none" not in ids_other     # None 归属不在非活动会话
 
     @pytest.mark.asyncio
     async def test_pending_approvals_global(self, aiohttp_client):
