@@ -6,7 +6,7 @@ role 字段 frozen，构造时自动填值。
 """
 
 from enum import StrEnum
-from typing import NotRequired, Sequence, TypedDict, Union
+from typing import Literal, NotRequired, Sequence, TypedDict, Union
 
 from pydantic import BaseModel, Field
 
@@ -103,7 +103,7 @@ class ClientAssistantMessage(_ClientMessageBase, total=False):
 
 class ClientToolMessage(TypedDict):
     """工具执行结果客户端格式。"""
-    role: MessageRole.TOOL
+    role: Literal[MessageRole.TOOL]
     tool_call_id: str
     name: str
     content: str

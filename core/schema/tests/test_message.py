@@ -139,14 +139,24 @@ class TestClientToolMessageRole:
     """ClientToolMessage.role 引用 MessageRole.TOOL 枚举成员。"""
 
     def test_role_is_enum_member(self):
-        # Python 3.12 的 TypedDict 元类会把非 type 注解（如枚举成员）包成 ForwardRef，
-        # 解包后确认字段类型引用 MessageRole.TOOL（防裸字符串漂移）。
-        from typing import ForwardRef
+        # role 注解应能经 get_type_hints 正常解析（裸枚举成员会被 TypedDict 元类
+        # 包成 ForwardRef → get_type_hints 抛 NameError；Literal[...] 包裹则合法）。
+        import typing
+        from typing import Literal, get_args, get_origin
+
+        hints = typing.get_type_hints(ClientToolMessage)
+        ann = hints["role"]
+        assert get_origin(ann) is Literal
+        assert get_args(ann) == (MessageRole.TOOL,)
+
+    def test_role_annotation_not_forward_ref(self):
+        # 修复前：__annotations__ 是 ForwardRef('tool')；修复后应是 Literal[MessageRole.TOOL]
+        from typing import ForwardRef, Literal, get_args, get_origin
 
         ann = ClientToolMessage.__annotations__["role"]
-        if isinstance(ann, ForwardRef):
-            ann = ann.__forward_arg__
-        assert ann is MessageRole.TOOL
+        assert not isinstance(ann, ForwardRef), f"bare enum member wrapped: {ann!r}"
+        assert get_origin(ann) is Literal
+        assert get_args(ann) == (MessageRole.TOOL,)
 
 
 @pytest.mark.unit
