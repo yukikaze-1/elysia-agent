@@ -707,3 +707,35 @@ class TestDisconnectOwnership:
             assert status == "interrupted"      # 发起者断开 → 标 interrupted
         finally:
             await agent.stop()
+
+
+@pytest.mark.service
+class TestWsErrorEnvelope:
+    """批次 8c F18：WS decode/validation 错误信封带 CONTRACT_VALIDATION code。"""
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_error_has_code(self, aiohttp_client):
+        """非法 JSON → error 帧 code=CONTRACT_VALIDATION。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_str("{not json")
+            # 建连后可能有 expression 心情帧残留——循环读到 error 帧为止
+            d = None
+            for _ in range(10):
+                m = await asyncio.wait_for(ws.receive(), timeout=5)
+                if m.type != WSMsgType.TEXT:
+                    continue
+                d = json.loads(m.data)
+                if d.get("type") == "error":
+                    break
+            assert d is not None and d["type"] == "error"
+            assert d["code"] == "CONTRACT_VALIDATION"
+            await ws.close()
+        finally:
+            await agent.stop()

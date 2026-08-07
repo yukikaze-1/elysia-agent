@@ -296,12 +296,14 @@ async def handle_ws(
                 except json.JSONDecodeError:
                     await ws.send_json(ErrorMessage(
                         message="Invalid JSON",
+                        code="CONTRACT_VALIDATION",
                         requestId=_current_request_id(),
                     ).wire_dict())
                 except ValidationError as e:
                     logger.warning("WS 消息内容校验失败: %s", e)
                     await ws.send_json(ErrorMessage(
                         message=f"Invalid message content: {e}",
+                        code="CONTRACT_VALIDATION",
                         requestId=_current_request_id(),
                     ).wire_dict())
 
@@ -387,6 +389,7 @@ async def _send_voice_error(ws, error) -> None:
         await ws.send_json(ErrorMessage(
             message=error.message, code=error.code,
             requestId=_current_request_id(),
+            retryable=getattr(error, "retryable", None),
         ).wire_dict())
     except Exception:
         logger.debug("发送 voice error 失败", exc_info=True)

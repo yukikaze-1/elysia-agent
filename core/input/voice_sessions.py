@@ -139,7 +139,7 @@ class VoiceSessionManager:
         # 有则带、无（"-"）则 None 缺省省略
         rid = get_request_id()
         await self._emit(ErrorMessage(
-            message=message, code=code,
+            message=message, code=code, retryable=retryable,
             requestId=rid if rid and rid != "-" else None,
         ).wire_dict())
 

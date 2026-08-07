@@ -488,6 +488,8 @@ class ErrorMessage(ContractModel):
     message: str = Field(description="错误描述")
     code: Optional[str] = Field(default=None, description="错误码（如 SESSION_NOT_FOUND），可缺省")
     requestId: Optional[str] = Field(default=None, description="关联请求 ID（WS 侧 request_id），可缺省")
+    retryable: Optional[bool] = Field(default=None, description="是否可重试，可缺省")
+    details: Optional[dict[str, Any]] = Field(default=None, description="公开安全详情，可缺省")
 
 
 # ─────────────────── 批次 6 三种语音（BE-060/061/062） ───────────────────

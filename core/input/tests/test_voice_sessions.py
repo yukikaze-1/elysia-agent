@@ -581,3 +581,12 @@ async def test_cancel_during_commit_discards_segment():
     await asyncio.sleep(0.1)
     assert not any(p for p in bus_posts)     # 残段不 post UserInputData
     assert not any(s.get("type") == "voice_session.turn" for s in emitted)
+
+
+@pytest.mark.asyncio
+async def test_error_frame_carries_retryable():
+    """_emit_error(..., True) → error 帧带 retryable=true。"""
+    mgr, emitted, _ = make_manager()
+    await mgr._emit_error("STT_UNAVAILABLE", "STT 已关闭，录音丢弃", True)
+    assert any(e.get("type") == "error" and e.get("code") == "STT_UNAVAILABLE"
+               and e.get("retryable") is True for e in emitted)

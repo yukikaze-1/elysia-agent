@@ -246,3 +246,24 @@ def test_activate_session_message():
     # conversationId 必填：缺失抛 ValidationError
     with pytest.raises(Exception):
         w.ActivateSessionMessage()
+
+
+# ── 批次 8c error 信封完整化（F1/F18） ────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_error_message_retryable_details_wire():
+    """ErrorMessage：retryable/details 显式赋值 → wire_dict 保留。"""
+    m = w.ErrorMessage(message="x", code="STT_UNAVAILABLE",
+                       retryable=True, details={"n": 1})
+    d = m.wire_dict()
+    assert d["retryable"] is True
+    assert d["details"] == {"n": 1}
+
+
+@pytest.mark.unit
+def test_error_message_retryable_omitted_when_none():
+    """ErrorMessage：retryable/details 缺省 None → wire_dict 省略（exclude_none）。"""
+    d = w.ErrorMessage(message="x").wire_dict()
+    assert "retryable" not in d
+    assert "details" not in d

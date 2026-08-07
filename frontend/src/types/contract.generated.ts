@@ -582,6 +582,10 @@ export interface ErrorMessage {
   code?: string
   /** 关联请求 ID（WS 侧 request_id），可缺省 */
   requestId?: string
+  /** 是否可重试，可缺省 */
+  retryable?: boolean
+  /** 公开安全详情，可缺省 */
+  details?: Record<string, unknown>
 }
 
 /** 普通录音预转写字幕（stop 后、commit 前）。 */

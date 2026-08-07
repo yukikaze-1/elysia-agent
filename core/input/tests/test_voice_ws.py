@@ -271,3 +271,23 @@ async def test_audio_cancel_routes_to_tts_manager():
     await handle_json_message({"type": "audio.cancel", "stream_id": 7},
                               agent, None, ws, voice_mgr=mgr)
     assert cancelled == [7]
+
+
+class _FakeWS:
+    def __init__(self):
+        self.sent = []
+
+    async def send_json(self, d):
+        self.sent.append(d)
+
+
+@pytest.mark.asyncio
+async def test_send_voice_error_carries_retryable():
+    """VoiceSessionError.retryable → _send_voice_error → wire 帧带 retryable。"""
+    from core.input.ws_handler import _send_voice_error
+    from core.input.voice_sessions import VoiceSessionError
+    ws = _FakeWS()
+    err = VoiceSessionError("STT_UNAVAILABLE", "转写失败", retryable=True)
+    await _send_voice_error(ws, err)
+    assert ws.sent[0]["code"] == "STT_UNAVAILABLE"
+    assert ws.sent[0]["retryable"] is True
