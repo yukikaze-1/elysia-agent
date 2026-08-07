@@ -97,9 +97,9 @@ class MemorySavePlugin(ToolPlugin):
         Returns:
             保存结果字符串。
         """
-        try:
-            mem_type = MemoryType(params.type.strip().title())
-        except ValueError:
+        # 用 MemoryType.try_coerce 统一归一入口（与 schema 一致，替代手写 .title() 校验）
+        mem_type = MemoryType.try_coerce(params.type)
+        if mem_type is None:
             allowed = ", ".join(t.value for t in MemoryType)
             return f"无效的记忆类型 '{params.type}'，允许: {allowed}"
 
