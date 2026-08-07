@@ -820,6 +820,36 @@ class TestSessionReplayContract:
         assert [i.role for i in items] == ["user", "tool"]
 
 
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_session_replay_token_stats_camel_key(aiohttp_client):
+    """v1 建连回放 session 帧 token_stats wire 用 byModel 键（rename 后回放不崩）。"""
+    from core.input.server import create_app
+    from core.cognitive.tests.test_v2_generation import _make_agent_with, _UsageLLM
+
+    agent = _make_agent_with(_UsageLLM())
+    await agent.start()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+    try:
+        ws = await client.session.ws_connect(client.make_url("/ws"), headers={})
+        seen = None
+        for _ in range(10):
+            m = await asyncio.wait_for(ws.receive(), timeout=5)
+            if m.type == WSMsgType.TEXT:
+                d = json.loads(m.data)
+                if d.get("type") == "session":
+                    seen = d
+                    break
+        assert seen is not None, "未收到 session 回放帧"
+        ts = seen.get("token_stats") or {}
+        assert "byModel" in ts      # rename 后 wire 用 camel
+        assert "by_model" not in ts
+        await ws.close()
+    finally:
+        await agent.stop()
+
+
 
 # ============================================================
 # Health / ready endpoints

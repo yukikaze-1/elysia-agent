@@ -1,4 +1,4 @@
-"""WS 消息契约建模：Server→Client 18 具名成员 + Client→Server 消息 + 支持类型（零依赖）。
+"""WS 消息契约建模：Server→Client 38 具名成员 + Client→Server 消息 + 支持类型（零依赖）。
 
 对照 `frontend/src/types/protocol.ts` 逐字段对齐；ts_null vs X? 按发送点实际 wire 定性：
   - switch_model_result.error：`**result` 展开，成功无键 → Optional[str]（X?）
@@ -127,10 +127,10 @@ class TokenRound(ContractModel):
 
 
 class TokenStats(ContractModel):
-    """会话级 token 统计。"""
+    """会话级 token 统计（wire 用 camel byModel，对齐 ConversationUsage，批次 8c F19）。"""
 
     total: int = Field(description="总 token 数")
-    by_model: dict[str, int] = Field(description="按模型拆分的 token 数")
+    byModel: dict[str, int] = Field(description="按模型拆分的 token 数")
 
 
 class TokenUsage(ContractModel):

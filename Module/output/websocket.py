@@ -194,9 +194,9 @@ class WebSocketChannel(OutputChannel):
         Args:
             data: token 消耗统计数据字典。
         """
-        # 契约：模型化 TokenUsageMessage 发射（批次 8c F3）——TokenRound 经 wire_dict
-        # exclude_none 省略 null 的 cached_tokens/reasoning_tokens；session 本轮仍用
-        # TokenStats 既有 by_model 字段名（Task 15 再改 byModel）。
+        # 契约：模型化 TokenUsageMessage 发射（批次 8c F3/F19）——TokenRound 经 wire_dict
+        # exclude_none 省略 null 的 cached_tokens/reasoning_tokens；session 用 TokenStats
+        # 契约字段名 byModel（内部 data 仍为 by_model，此处显式转换）。
         turn = data.get("turn") or {}
         session = data.get("session") or {}
         await self._send_json(TokenUsageMessage(
@@ -206,7 +206,7 @@ class WebSocketChannel(OutputChannel):
             ) if turn else None,
             session=TokenStats(
                 total=session.get("total", 0),
-                by_model=session.get("by_model", {}),
+                byModel=session.get("by_model", {}),
             ) if session else None,
         ).wire_dict())
 

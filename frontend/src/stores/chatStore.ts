@@ -38,7 +38,7 @@ export const useChatStore = defineStore('chat', () => {
   const nextBubbleQueue = ref<string[]>([])
   const playingMessageId = ref<string | null>(null)
   const previewImages = ref<{ url: string; mime: string }[]>([])
-  const sessionTokens = ref<{ total: number; by_model: Record<string, number> }>({ total: 0, by_model: {} })
+  const sessionTokens = ref<{ total: number; byModel: Record<string, number> }>({ total: 0, byModel: {} })
   function appendDelta(text: string, streamId?: number) {
     const audioStore = useAudioStore()
     if (messages.value.length === 0 || lastRole.value !== 'assistant') {
@@ -197,10 +197,10 @@ export const useChatStore = defineStore('chat', () => {
         } as unknown as TokenUsage
       }
     }
-    // 更新 session 累计 token 统计（后端字段为 by_model）
+    // 更新 session 累计 token 统计（后端字段为 byModel）
     if (msg.session) {
-      const s = msg.session as { total: number; by_model: Record<string, number> }
-      sessionTokens.value = { total: s.total, by_model: s.by_model }
+      const s = msg.session as { total: number; byModel: Record<string, number> }
+      sessionTokens.value = { total: s.total, byModel: s.byModel }
     }
   }
 
@@ -240,7 +240,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function restoreFromServer(
     serverMessages: any[],
-    tokenStats?: { total: number; by_model: Record<string, number> },
+    tokenStats?: { total: number; byModel: Record<string, number> },
   ) {
     messages.value = []
     lastRole.value = ''
@@ -252,7 +252,7 @@ export const useChatStore = defineStore('chat', () => {
 
     // 恢复 session 累计 token（消除刷新/重连后 CharStatus 归零直到下次广播的缺口）
     if (tokenStats) {
-      sessionTokens.value = { total: tokenStats.total, by_model: tokenStats.by_model }
+      sessionTokens.value = { total: tokenStats.total, byModel: tokenStats.byModel }
     }
 
     for (const m of serverMessages) {

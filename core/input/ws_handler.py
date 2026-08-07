@@ -32,6 +32,7 @@ from frontend_contract import (
     ServiceModeResultMessage,
     SetTtsVoiceResultMessage,
     SwitchModelResultMessage,
+    TokenStats,
     TranscriptionMessage,
     UserAckMessage,
     WakeMessage,
@@ -82,7 +83,11 @@ async def _send_session_replay(ws: "web.WebSocketResponse", agent: "Agent",
     session_msgs = session.messages_for_client()
     token_stats = None
     if hasattr(agent, 'token_tracker') and agent.token_tracker is not None:
-        token_stats = await agent.token_tracker.get_session_stats(session.session_id)
+        raw = await agent.token_tracker.get_session_stats(session.session_id)
+        if raw:
+            # 内部 API 仍用 by_model 键；契约边界显式转换 to byModel（批次 8c F19，
+            # 裸 dict 直传会因 TokenStats.byModel 必填缺失校验失败 → 回放被吞）。
+            token_stats = TokenStats(total=raw.get("total", 0), byModel=raw.get("by_model", {}))
     items = _build_session_items(session_msgs)
     await ws.send_json(SessionMessage(messages=items, token_stats=token_stats).wire_dict())
 

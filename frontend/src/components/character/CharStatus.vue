@@ -14,7 +14,7 @@ const moodDisplay = computed(() =>
 const sessionTokenDisplay = computed(() => {
   const st = chat.sessionTokens
   if (!st || !st.total) return ''
-  const models = Object.entries(st.by_model || {})
+  const models = Object.entries(st.byModel || {})
   const parts = models.map(([m, t]) => {
     const short = m.split('/').pop() || m
     return short + ': ' + fmt(t as number)

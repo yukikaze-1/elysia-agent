@@ -39,7 +39,7 @@ def test_capabilities_model_is_ts_null():
 def test_wire_dict_list_recursive():
     """list[ContractModel] 元素递归 wire_dict（SessionMessage.messages 场景，base.py list 分支守护）。"""
     item = w.SessionMessageItem(role="assistant", content="hi")
-    msg = w.SessionMessage(messages=[item], token_stats=w.TokenStats(total=1, by_model={}))
+    msg = w.SessionMessage(messages=[item], token_stats=w.TokenStats(total=1, byModel={}))
     d = msg.wire_dict()
     assert d["messages"][0]["role"] == "assistant"
     assert d["token_stats"]["total"] == 1
@@ -288,3 +288,14 @@ def test_action_message_params_optional_omitted_when_none():
     assert "params" not in d
     d2 = w.ActionMessage(action="tool_executing", params={"tool": "t"}).wire_dict()
     assert d2["params"] == {"tool": "t"}
+
+
+# ── 批次 8c F19 TokenStats.byModel 对齐（Task 15） ─────────────────────────
+
+
+@pytest.mark.unit
+def test_token_stats_wire_camel_by_model():
+    """TokenStats wire 用 camel byModel（对齐 ConversationUsage）：byModel 识别 + by_model 键省略。"""
+    d = w.TokenStats(total=1, byModel={"m": 1}).wire_dict()
+    assert d["byModel"] == {"m": 1}
+    assert "by_model" not in d

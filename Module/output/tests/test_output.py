@@ -876,7 +876,7 @@ async def test_on_action_no_params_omits_key():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_on_token_usage_emits_modeled_message():
-    """on_token_usage → 模型化 TokenUsageMessage：null 键省略、session 保留 by_model（Task 15 再改）。"""
+    """on_token_usage → 模型化 TokenUsageMessage：null 键省略、session 保留 byModel（批次 8c F19）。"""
     from Module.output import WebSocketChannel
     ws = _FakeWS()
     ch = WebSocketChannel(ws, protocol_version=1)
@@ -887,5 +887,6 @@ async def test_on_token_usage_emits_modeled_message():
             "session": {"total": 3, "by_model": {"m": 3}}}
     await ch.on_token_usage(data)
     assert ws.sent[0]["type"] == "token_usage"
-    assert ws.sent[0]["session"]["by_model"] == {"m": 3}
+    assert ws.sent[0]["session"]["byModel"] == {"m": 3}
+    assert "by_model" not in ws.sent[0]["session"]
     assert "cached_tokens" not in ws.sent[0]["turn"]["rounds"][0]

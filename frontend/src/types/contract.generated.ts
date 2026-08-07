@@ -138,12 +138,12 @@ export interface TokenRound {
   timestamp?: string
 }
 
-/** 会话级 token 统计。 */
+/** 会话级 token 统计（wire 用 camel byModel，对齐 ConversationUsage，批次 8c F19）。 */
 export interface TokenStats {
   /** 总 token 数 */
   total: number
   /** 按模型拆分的 token 数 */
-  by_model: Record<string, number>
+  byModel: Record<string, number>
 }
 
 /** token 使用统计（按轮）。 */
