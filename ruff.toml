@@ -1,9 +1,11 @@
-# ruff 配置 — 仅启用 TID252（禁相对导入），强制绝对导入风格。
-# 豁免 __init__.py（重导出惯用法）与 __main__.py（python -m 入口）。
+# ruff 配置 — TID252（禁相对导入）+ ANN（参数类型注解门禁）。
+# 强制绝对导入风格；生产代码强制参数类型注解。
+# 豁免 __init__.py（重导出惯用法）与 __main__.py（python -m 入口）；
+# 测试文件豁免 ANN（pytest fixture 动态类型惯例，仅强制生产代码注解）。
 # 其余规则（isort/排序等）暂不启用，见 docs/import-style.md。
 
 [lint]
-select = ["TID252"]
+select = ["TID252", "ANN001", "ANN002", "ANN003"]
 
 [lint.flake8-tidy-imports]
 ban-relative-imports = "all"
@@ -11,3 +13,8 @@ ban-relative-imports = "all"
 [lint.per-file-ignores]
 "**/__init__.py" = ["TID252"]
 "**/__main__.py" = ["TID252"]
+"**/tests/**" = ["ANN001", "ANN002", "ANN003"]
+"**/conftest.py" = ["ANN001", "ANN002", "ANN003"]
+"**/test_*.py" = ["ANN001", "ANN002", "ANN003"]
+"**/fake_*.py" = ["ANN001", "ANN002", "ANN003"]
+"**/_common/config_test_helpers.py" = ["ANN001", "ANN002", "ANN003"]
