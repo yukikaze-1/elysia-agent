@@ -15,8 +15,11 @@ from frontend_contract.rest import (
     ApiOk,
     ConversationUsage,
     CustomProvider,
+    DesktopCallStatus,
+    FinishReason,
     GenerationListResponse,
     GenerationStatus,
+    GenerationStatusEnum,
     ImageUploadError,
     ImageUploadResponse,
     Message,
@@ -29,8 +32,10 @@ from frontend_contract.rest import (
     ProviderEntry,
     ProvidersResponse,
     ProviderTestResult,
+    RepoCallStatus,
     ResourceItem,
     ResourceListResponse,
+    Role,
     SearchMessageItem,
     SearchMessagesResponse,
     SessionActivateResult,
@@ -405,3 +410,28 @@ def test_conversation_usage_wire():
     """ConversationUsage：total + byModel（generation.completed 会话累计）。"""
     d = ConversationUsage(total=42, byModel={"fake/test": 42}).wire_dict()
     assert d == {"total": 42, "byModel": {"fake/test": 42}}
+
+
+# ── Literal → StrEnum 统一（plan Task 7） ─────────────────────────────────
+
+
+@pytest.mark.unit
+class TestRestEnums:
+    """rest 非判别字段 Literal → StrEnum：4 枚举成员值断言（值对齐 core.schema 但不 import core）。"""
+
+    def test_finish_reason(self):
+        assert {m.value for m in FinishReason} == {"stop", "tool_calls"}
+
+    def test_repo_call_status(self):
+        assert {m.value for m in RepoCallStatus} == {
+            "pending", "accepted", "running", "succeeded", "failed",
+            "rejected", "cancelled", "expired", "offline",
+        }
+
+    def test_generation_status(self):
+        assert {m.value for m in GenerationStatusEnum} == {
+            "running", "completed", "failed", "cancelled", "interrupted",
+        }
+
+    def test_role(self):
+        assert {m.value for m in Role} == {"user", "assistant", "tool"}

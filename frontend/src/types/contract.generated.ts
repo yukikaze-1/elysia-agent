@@ -1305,7 +1305,7 @@ export interface SearchMessageItem {
   /** 分段 ID，消息级搜索恒 null，可缺省 */
   segmentId?: string
   /** 消息角色 */
-  role: 'user' | 'assistant' | 'tool'
+  role: Role
   /** ISO 时间戳 */
   timestamp: string
   /** 内容摘要（前 100 字） */
@@ -1355,11 +1355,11 @@ export interface GenerationStatus {
   /** 触发该 generation 的用户消息 ID */
   userMessageId: string
   /** generation 在途/终态状态 */
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  status: GenerationStatusEnum
   /** 实际模型，可缺省 */
   model?: string
   /** 完成原因，可缺省 */
-  finishReason?: 'stop' | 'tool_calls'
+  finishReason?: FinishReason
   /** 失败详情（{code,message,retryable}），可缺省 */
   error?: Record<string, unknown>
   /** 创建时间（UTC ISO） */
@@ -1459,7 +1459,7 @@ export interface DesktopCallStatus {
   /** 参数摘要（SHA-256） */
   paramHash: string
   /** repo 状态枚举（wire 六态翻译固定 + 服务端态） */
-  status: 'pending' | 'accepted' | 'running' | 'succeeded' | 'failed' | 'rejected' | 'cancelled' | 'expired' | 'offline'
+  status: RepoCallStatus
   /** 创建时间（UTC ISO） */
   createdAt: string
   /** 过期时间（UTC ISO） */
@@ -2142,6 +2142,33 @@ export interface TaskData {
   /** DAG 边列表 [from, to] */
   edges: string[][]
 }
+
+export type FinishReason =
+  | 'stop'
+  | 'tool_calls'
+
+export type GenerationStatusEnum =
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+export type RepoCallStatus =
+  | 'pending'
+  | 'accepted'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'rejected'
+  | 'cancelled'
+  | 'expired'
+  | 'offline'
+
+export type Role =
+  | 'user'
+  | 'assistant'
+  | 'tool'
 
 export type ToolStatusEnum =
   | 'accepted'

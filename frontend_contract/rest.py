@@ -13,11 +13,55 @@
   （不引 core.schema.Message），发送点把 core.schema.Message 经 `_archive_to_client` 转成客户端 dict 后
   构造本模型（block_index → content_type 归一化，对齐 session 回放 wire）。
 """
+from enum import StrEnum
 from typing import Any, Literal, Optional
 
 from pydantic import ConfigDict, Field
 
 from frontend_contract.base import ContractModel
+
+
+# ────────────────────── 非判别受限字段枚举（plan Task 7，StrEnum） ──────────────────────
+
+
+class FinishReason(StrEnum):
+    """generation 完成原因（完成/未完成语义见 GenerationStatus.finishReason 与 ws generation.completed）。"""
+
+    STOP = "stop"
+    TOOL_CALLS = "tool_calls"
+
+
+class RepoCallStatus(StrEnum):
+    """桌面工具调用 repo 状态（GET /api/tools/calls/{callId}，BE-043；wire 六态翻译固定见 DesktopCallStatus）。"""
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+    OFFLINE = "offline"
+
+
+class GenerationStatusEnum(StrEnum):
+    """generation 在途/终态状态（GenerationStatus.status，BE-024）。"""
+
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
+
+
+class Role(StrEnum):
+    """消息角色（契约层自建，值对齐 core.schema.message.MessageRole，零依赖不 import core）。"""
+
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
+
 
 
 # ────────────────────── Provider 管理（/api/providers） ──────────────────────
@@ -302,7 +346,7 @@ class SearchMessageItem(ContractModel):
     messageId: str = Field(description="消息 ID")
     responseId: Optional[str] = Field(default=None, description="最近一条 generation ID（best-effort），可缺省")
     segmentId: Optional[str] = Field(default=None, description="分段 ID，消息级搜索恒 null，可缺省")
-    role: Literal["user", "assistant", "tool"] = Field(description="消息角色")
+    role: Role = Field(description="消息角色")
     timestamp: str = Field(description="ISO 时间戳")
     snippet: str = Field(description="内容摘要（前 100 字）")
 
@@ -339,10 +383,9 @@ class GenerationStatus(ContractModel):
     conversationId: str = Field(description="会话 ID")
     messageId: str = Field(description="assistant 父消息 ID")
     userMessageId: str = Field(description="触发该 generation 的用户消息 ID")
-    status: Literal["running", "completed", "failed", "cancelled", "interrupted"] = Field(
-        description="generation 在途/终态状态")
+    status: GenerationStatusEnum = Field(description="generation 在途/终态状态")
     model: Optional[str] = Field(default=None, description="实际模型，可缺省")
-    finishReason: Optional[Literal["stop", "tool_calls"]] = Field(
+    finishReason: Optional[FinishReason] = Field(
         default=None, description="完成原因，可缺省")
     error: Optional[dict[str, Any]] = Field(
         default=None, description="失败详情（{code,message,retryable}），可缺省")
@@ -433,10 +476,7 @@ class DesktopCallStatus(ContractModel):
     toolVersion: str = Field(description="工具版本")
     runtime: str = Field(description="工具 Runtime（desktop）")
     paramHash: str = Field(description="参数摘要（SHA-256）")
-    status: Literal[
-        "pending", "accepted", "running", "succeeded", "failed",
-        "rejected", "cancelled", "expired", "offline",
-    ] = Field(description="repo 状态枚举（wire 六态翻译固定 + 服务端态）")
+    status: RepoCallStatus = Field(description="repo 状态枚举（wire 六态翻译固定 + 服务端态）")
     createdAt: str = Field(description="创建时间（UTC ISO）")
     expiresAt: str = Field(description="过期时间（UTC ISO）")
     result: Optional[dict[str, Any]] = Field(
