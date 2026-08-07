@@ -65,6 +65,11 @@ class _LifecyclePersistence:
         )
         # 消息归档独立连接（与 session 共享 MongoDB，但使用独立 repo）
         await self._message_repo.connect()
+        # Token 用量独立连接——此前从未 connect（_db 恒 None → 健康循环每 120s
+        # 刷 "TokenRepository 离线" WARN，且 record() 静默丢弃 token 记录）。
+        # 与 message/session repo 对称：失败记 warning、不阻塞启动。
+        if not await self._token_repo.connect():
+            logger.warning("TokenRepository 离线")
         # 批次 4：Desktop 调用注册表建连（desktop_calls 集合）。
         # bridge 在 Agent.__init__ 创建（早于 _start_persistence），此处 connect_db
         # 全量 reload 入进程内缓存；Mongo 离线降级为进程内缓存（幂等去重不失效）。

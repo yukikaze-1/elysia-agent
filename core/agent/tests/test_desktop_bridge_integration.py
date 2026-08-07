@@ -203,6 +203,7 @@ class TestStartPersistenceHook:
         agent._session_manager = sm
         agent._long_term.connect = AsyncMock(return_value=True)
         agent._message_repo.connect = AsyncMock(return_value=True)
+        agent._token_repo.connect = AsyncMock(return_value=True)
         agent._version_repo.connect = AsyncMock(return_value=True)
         agent._character_engine.state = MagicMock()
         agent._character_engine.state.last_awareness_time = None
@@ -225,6 +226,7 @@ class TestStartPersistenceHook:
         agent._session_manager = sm
         agent._long_term.connect = AsyncMock(return_value=False)
         agent._message_repo.connect = AsyncMock(return_value=True)
+        agent._token_repo.connect = AsyncMock(return_value=True)
         agent._version_repo.connect = AsyncMock(return_value=True)
         agent._character_engine = MagicMock()
         bridge = MagicMock()

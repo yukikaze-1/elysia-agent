@@ -10,6 +10,8 @@
   - _start_persistence 走 session_manager.connect_db + load_active
 """
 
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -180,6 +182,7 @@ class TestStartPersistence:
         agent._session_manager = sm
         agent._long_term.connect = AsyncMock(return_value=True)
         agent._message_repo.connect = AsyncMock(return_value=True)
+        agent._token_repo.connect = AsyncMock(return_value=True)
         agent._version_repo.connect = AsyncMock(return_value=True)
         agent._character_engine.state = MagicMock()
         agent._character_engine.state.last_awareness_time = None
@@ -202,6 +205,7 @@ class TestStartPersistence:
         agent._session_manager = sm
         agent._long_term.connect = AsyncMock(return_value=False)
         agent._message_repo.connect = AsyncMock(return_value=True)
+        agent._token_repo.connect = AsyncMock(return_value=True)
         agent._version_repo.connect = AsyncMock(return_value=True)
         agent._character_engine = MagicMock()
 
@@ -223,6 +227,7 @@ class TestStartPersistence:
         agent._session_manager = sm
         agent._long_term.connect = AsyncMock(return_value=True)
         agent._message_repo.connect = AsyncMock(return_value=True)
+        agent._token_repo.connect = AsyncMock(return_value=True)
         agent._version_repo.connect = AsyncMock(return_value=True)
         agent._character_engine.state = MagicMock()
         agent._character_engine.state.last_awareness_time = None
@@ -249,6 +254,7 @@ class TestStartPersistence:
         agent._session_manager = sm
         agent._long_term.connect = AsyncMock(return_value=False)
         agent._message_repo.connect = AsyncMock(return_value=True)
+        agent._token_repo.connect = AsyncMock(return_value=True)
         agent._version_repo.connect = AsyncMock(return_value=True)
         agent._character_engine = MagicMock()
         gen_reg = MagicMock()
@@ -260,3 +266,47 @@ class TestStartPersistence:
 
         gen_reg.connect.assert_awaited_once()
         assert gen_reg.mark_stale_interrupted.await_count == 0
+
+
+@pytest.mark.asyncio
+class TestStartPersistenceTokenRepo:
+    """根因修复：_start_persistence 对 token_repo connect（此前从未连接，health 恒离线）。"""
+
+    def _agent(self, token_connect_result=True):
+        agent = MagicMock()
+        sm = MagicMock()
+        sm.connect_db = AsyncMock(return_value=True)
+        sm.load_active = AsyncMock()
+        sm.active.pending_file = "/nonexistent/session.jsonl"
+        agent._session_manager = sm
+        agent._long_term.connect = AsyncMock(return_value=True)
+        agent._message_repo.connect = AsyncMock(return_value=True)
+        token_repo = MagicMock()
+        token_repo.connect = AsyncMock(return_value=token_connect_result)
+        agent._token_repo = token_repo
+        agent._version_repo.connect = AsyncMock(return_value=True)
+        agent._character_engine.state = MagicMock()
+        agent._character_engine.state.last_awareness_time = None
+        agent._character_engine._reflector._restore_from_state = MagicMock()
+        # 无关挂点置空，避免 MagicMock 触发的噪音 warning
+        agent._desktop_bridge = None
+        agent._generation_registry = None
+        return agent, token_repo
+
+    async def test_start_persistence_connects_token_repo(self):
+        """token_repo.connect 被调用（修复前从未 connect → _db 恒 None → 120s WARN）。"""
+        agent, token_repo = self._agent()
+
+        await _LifecyclePersistence._start_persistence(agent)
+
+        token_repo.connect.assert_awaited_once()
+
+    async def test_start_persistence_token_repo_offline_logs_warning(self, caplog):
+        """connect 失败：记 "TokenRepository 离线" warning、不抛、流程继续。"""
+        agent, token_repo = self._agent(token_connect_result=False)
+
+        with caplog.at_level(logging.WARNING, logger="core.agent._lifecycle_persistence"):
+            await _LifecyclePersistence._start_persistence(agent)
+
+        token_repo.connect.assert_awaited_once()
+        assert "TokenRepository 离线" in caplog.text

@@ -4,6 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
+from core.storage.attachment_repo import StorageUnavailableError
 from core.storage.base import Repository
 
 if TYPE_CHECKING:
@@ -45,6 +46,9 @@ class TokenRepository(Repository):
                 f"mongodb/{self._database_name}",
                 base_url=self._base_url,
             )
+            # 真实验证可达性 + 建查询索引（与 message/session repo 对称；
+            # token_usage 按 session_id 查询/聚合）
+            await self._db.ensure_index(COLLECTION, [("session_id", 1)])
             logger.info("TokenRepository: MongoDB connected")
             return True
         except Exception as e:
@@ -59,23 +63,36 @@ class TokenRepository(Repository):
             self._db = None
 
     async def health_check(self) -> bool:
-        """健康检查。
+        """健康检查。若连接断开则尝试重连并重建索引（与 message/session repo 对称）。
 
         Returns:
             True 表示可用，False 表示不可用。
         """
-        return self._db is not None
+        if self._db is not None:
+            return True
+        # 启动期故障不应让 token 持久化永久失效——复用 connect() 的重连 + 建索引逻辑
+        return await self.connect()
 
     async def record(self, entry: "TokenUsage") -> None:
-        """记录一条 token 用量。"""
+        """记录一条 token 用量。
+
+        未连接（db=None）时抛 StorageUnavailableError——让调用方（TokenTracker._persist）
+        except 路径落 JSONL 兜底，不静默丢弃（修复前静默 return → 数据双失）。
+        """
         if self._db is None:
-            return
+            raise StorageUnavailableError("TokenRepository 未连接（MongoDB 不可用）")
         await self._db.insert_one(COLLECTION, entry.model_dump(mode="json"))
 
     async def flush(self, entries: list["TokenUsage"]) -> None:
-        """批量写入 token 用量。"""
-        if self._db is None or not entries:
+        """批量写入 token 用量。
+
+        未连接（db=None）且有数据时抛 StorageUnavailableError——flush_pending 的
+        os.remove 不执行，pending 文件保留下次启动重试（修复前静默 no-op + 删文件丢数据）。
+        """
+        if not entries:
             return
+        if self._db is None:
+            raise StorageUnavailableError("TokenRepository 未连接（MongoDB 不可用）")
         docs = [e.model_dump(mode="json") for e in entries]
         await self._db.insert_many(COLLECTION, docs)
 
