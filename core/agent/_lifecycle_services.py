@@ -111,6 +111,16 @@ class _LifecycleServices:
                         model, **tts_params,
                         rate_limit_rpm=self._config.tts.rate_limit_rpm,
                     )
+                except ValueError as e:
+                    # 缺 API key（如 minimax 无 MINIMAX_API_KEY）→ 配置缺欠而非错误，
+                    # 自动降级纯文本（warn 不崩，N5095 部署实录 issue #11）。其余
+                    # ValueError（未知 provider/缺 base_url 等）仍是配置错误 → fail-fast。
+                    if "api_key" in str(e) or "API key" in str(e):
+                        self._tts = None
+                        logger.warning("TTS 缺 API key，自动降级为纯文本模式（%s）", e)
+                    else:
+                        logger.exception("TTS 后端创建失败——配置错误（模型=%s）", model)
+                        raise
                 except Exception:
                     # 配置错误（模型不存在/参数非法/custom 缺 base_url）——fail-fast，
                     # 不伪装成 text-only。原实现全吞让配置错误静默失效难排查。

@@ -1,6 +1,7 @@
 # 测试文件：core/agent/tests/test_lifecycle_steps.py
 """AgentLifecycle _SHUTDOWN_STEPS / _STARTUP_STEPS 结构验证。"""
 
+import logging
 from unittest import mock
 
 import pytest
@@ -200,3 +201,38 @@ class TestStartTTSGate:
             await _LifecycleServices._start_tts(agent)
         mc.assert_called_once_with("minimax/speech-2.8-hd", rate_limit_rpm=10)
         assert agent._tts is backend
+
+    @pytest.mark.asyncio
+    async def test_missing_api_key_degrades_to_text_only(self, fake_agent, caplog):
+        """minimax 无 MINIMAX_API_KEY → 自动降级纯文本（warn 不崩），不再 fail-fast。
+
+        修复前：TTSFactory.create 抛 ValueError「需要 api_key」→ _start_tts 的
+        except 全吞成 fail-fast raise → 启动崩溃。修复后：缺 key 是配置缺欠而非
+        配置错误，降级为 text-only，其他配置错误仍 fail-fast。
+        """
+        agent = fake_agent
+        self._setup_tts_agent(agent, ServiceState(), cfg_enabled=True)
+        with mock.patch("Module.tts.TTSFactory.create", side_effect=ValueError(
+                "MiniMax TTS 需要 api_key，请设置 MINIMAX_API_KEY 环境变量或显式传入")) as mc, \
+             mock.patch("core.input.custom_providers.resolve_model_params",
+                        return_value={"base_url": "https://api.minimaxi.com"}):
+            with caplog.at_level(logging.WARNING, logger="core.agent._lifecycle_services"):
+                await _LifecycleServices._start_tts(agent)
+        mc.assert_called_once()
+        assert agent._tts is None
+        agent._cognitive.configure.assert_not_called()
+        assert "纯文本模式" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_non_key_config_error_still_fail_fast(self, fake_agent):
+        """非缺-key 配置错误（未知 provider）→ 仍 fail-fast（raise），不误降级。"""
+        agent = fake_agent
+        self._setup_tts_agent(agent, ServiceState(), cfg_enabled=True)
+        with mock.patch("Module.tts.TTSFactory.create", side_effect=ValueError(
+                "Unknown provider 'foo'. Known: ...")) as mc, \
+             mock.patch("core.input.custom_providers.resolve_model_params",
+                        return_value={"base_url": "http://x"}):
+            with pytest.raises(ValueError):
+                await _LifecycleServices._start_tts(agent)
+        mc.assert_called_once()
+
