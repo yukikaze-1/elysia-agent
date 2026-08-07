@@ -14,7 +14,7 @@ from Module.database.vectordb.registry import VectorDBFactory
 TestVectorDBConfigDefaults = pytest.mark.unit(
     make_config_test_classes(
         VectorDBConfig,
-        defaults={"base_url": "http://localhost:19530"},
+        defaults={"base_url": ""},
         overrides={"base_url": "http://test:19530"},
         env_key="MILVUS_URI",
         yaml_key="VectorDB",

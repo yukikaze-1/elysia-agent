@@ -13,7 +13,7 @@ class STTConfig:
     )
     base_url: str = ConfigField(
         default="http://localhost:20042",
-        env="STT_API_URL",
+        env="SENSEVOICE_URL",
         help="STT 服务端点",
     )
     api_key: str = ConfigField(

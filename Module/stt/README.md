@@ -101,7 +101,7 @@ backend = STTFactory.from_config("sensevoice/sense-voice", cfg)
 
 | 字段 | 默认值 | 环境变量 | 说明 |
 |------|--------|----------|------|
-| `base_url` | `http://localhost:20042` | `STT_API_URL` | STT 服务端点 |
+| `base_url` | `http://localhost:20042` | `SENSEVOICE_URL` | STT 服务端点 |
 
 ## 添加新后端
 

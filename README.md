@@ -143,7 +143,7 @@ bash scripts/setup.sh
 | 对话 | **是** | DeepSeek API | `DEEPSEEK_API_KEY` |
 | 数据库 | **是** | MongoDB + Milvus (Docker) | `MONGODB_URI` / `MILVUS_URI` |
 | 语音合成 | 否 | MiniMax / GPT-SoVits / OpenAI TTS | `MINIMAX_API_KEY` / `GPT_SOVITS_URL` / `CUSTOM_TTS_API_KEY` |
-| 语音识别 | 否 | SenseVoice（本地） / OpenAI STT | `STT_API_URL` / `OPENAI_API_KEY` |
+| 语音识别 | 否 | SenseVoice（本地） / OpenAI STT | `SENSEVOICE_URL` / `OPENAI_API_KEY` |
 | 网页搜索 | 否 | Tavily API | `TAVILY_API_KEY` |
 | 图片识别 | 否 | MiMo API | `MIMO_API_KEY` |
 | 嵌入模型 | **是** | BAAI/bge-large-zh-v1.5 (HuggingFace，默认 hf-mirror.com 镜像) | `MODEL_CACHE_DIR` |

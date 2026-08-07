@@ -206,7 +206,7 @@ class TestCheckSTTEnv:
         assert "跳过" in captured.out
 
     def test_sensevoice_key_missing_warns(self, monkeypatch, capsys):
-        monkeypatch.delenv("STT_API_URL", raising=False)
+        monkeypatch.delenv("SENSEVOICE_URL", raising=False)
         m = _fresh_module()
         _reset_counts(m)
         cfg = MagicMock()

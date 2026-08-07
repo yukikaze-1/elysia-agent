@@ -30,7 +30,15 @@ def make_config_test_classes(
     class TestDefaults:
         """默认值测试。"""
 
-        def test_defaults(self):
+        def test_defaults(self, monkeypatch):
+            # 环境隔离：禁用 .env 加载 + 清除被测 env 变量，避免本地 .env 污染
+            # 默认值（load() 会经 ensure_dotenv 把 .env 注入 os.environ，env 有值时
+            # 覆盖默认值；先 delenv 也会被 load() 重新注入，故需整体禁用）。
+            from Module.config.loader import EnvManager
+            monkeypatch.setattr(EnvManager, "ensure_dotenv",
+                                staticmethod(lambda *a, **k: None))
+            if env_key:
+                monkeypatch.delenv(env_key, raising=False)
             cfg = ConfigLoader(ConfigClass).load()
             for field, expected in defaults.items():
                 actual = getattr(cfg, field)

@@ -14,7 +14,7 @@ from Module.database.documentdb.registry import DocumentDBFactory
 TestDocumentDBConfigDefaults = pytest.mark.unit(
     make_config_test_classes(
         DocumentDBConfig,
-        defaults={"base_url": "mongodb://localhost:27017"},
+        defaults={"base_url": ""},
         overrides={"base_url": "mongodb://test:27017"},
         env_key="MONGODB_URI",
         yaml_key="DocumentDB",

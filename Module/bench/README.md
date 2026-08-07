@@ -11,7 +11,7 @@ from Module.bench import LatencyBench
 
 bench = LatencyBench(
     tts_url="http://localhost:9880",     # 或设置环境变量 TTS_API_URL
-    stt_url="http://localhost:20042",    # 或设置环境变量 STT_API_URL
+    stt_url="http://localhost:20042",    # 或设置环境变量 SENSEVOICE_URL
     audio_file="data/ref/Elysia.wav",
 )
 await bench.run_all()

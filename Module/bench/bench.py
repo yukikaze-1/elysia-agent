@@ -32,11 +32,11 @@ class LatencyBench:
         Args:
             audio_file: 用于 STT 测试的音频文件路径。
             tts_url: TTS 服务 base URL（默认从 TTS_API_URL 环境变量读取）。
-            stt_url: STT 服务 base URL（默认从 STT_API_URL 环境变量读取）。
+            stt_url: STT 服务 base URL（默认从 SENSEVOICE_URL 环境变量读取）。
         """
         self.audio_file = audio_file
         self.tts_url = tts_url or os.getenv("TTS_API_URL", "http://localhost:9880")
-        self.stt_url = stt_url or os.getenv("STT_API_URL", "http://localhost:20042")
+        self.stt_url = stt_url or os.getenv("SENSEVOICE_URL", "http://localhost:20042")
 
     # ---- helpers ----
 

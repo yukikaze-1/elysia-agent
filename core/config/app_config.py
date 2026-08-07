@@ -65,7 +65,7 @@ class TTSConfig:
 class STTConfig:
     enabled: bool = ConfigField(default=False)
     model: str = ConfigField(default="sensevoice/sense-voice")
-    base_url: str = ConfigField(default="http://localhost:20042", env="STT_API_URL")
+    base_url: str = ConfigField(default="http://localhost:20042", env="SENSEVOICE_URL")
     api_key: str = ConfigField(default="", secret=True, env="STT_API_KEY")
 
 
