@@ -80,3 +80,19 @@ class TestVersionNegotiation:
             assert caps["services"]["llm"]["model"] == agent.llm.model
         finally:
             await agent.stop()
+
+
+@pytest.mark.unit
+def test_get_build_sha_failure_cached(monkeypatch):
+    """git 失败 → 连续两次调用 subprocess.run 只跑一次。"""
+    import core.version as v
+    calls = []
+    def _fake_run(*a, **k):
+        calls.append(1)
+        raise OSError("no git")
+    monkeypatch.setattr(v.subprocess, "run", _fake_run)
+    monkeypatch.setattr(v, "_build_sha", None, raising=False)   # 红态无该属性
+    monkeypatch.setattr(v, "_build_sha_tried", False, raising=False)  # 红态无该属性
+    assert v.get_build_sha() is None
+    assert v.get_build_sha() is None
+    assert len(calls) == 1
