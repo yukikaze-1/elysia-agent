@@ -129,7 +129,7 @@
 
 ### [CONFIRMED] core/input/voice_sessions.py:117（来源：x-contract）
 
-**⏳ 待 8c（E/F 簇契约/信封/ID/杂项）**：WS error 信封漏 retryable/details
+**✅ 批次 8c 已修复（2026-08-07，`dcd88f8`）**：WS error 信封漏 retryable/details
 
 - **问题：** WS `error` message envelope omits retryable/details — the retryable flag is computed at every voice error site and then silently dropped on the wire.
 - **失败场景：** STT goes down during RECORDING: `_run_recording_stt` calls `_emit_error(ERR_STT_UNAVAILABLE, ..., True)` (voice_sessions.py:207/229/233) but `_emit_error` builds `ErrorMessage{message,code,requestId}` (frontend_contract/ws_message.py:480-491 has no retryable/details fields), and `_send_voice_error` (ws_handler.py:367-376) likewise drops `error.retryable`. The client receives `{type:'error', code:'STT_UNAVAILABLE'}` with no retryable flag, even though the error-code directory (docs/electron-backend-protocol-v2.md §9.1) documents STT_UNAVAILABLE retryable=true. Frontend cannot implement retry UX, and the unified envelope contract ({code,message,retryable,requestId,details}, docs/14 §12) is broken on every WS error frame. `generation.failed` and `user_message.ack` errors do carry retryable, so this is an inconsistency confined to the generic `error` type.
@@ -137,7 +137,7 @@
 
 ### [CONFIRMED] core/input/server.py:373（来源：x-contract）
 
-**⏳ 待 8c（E/F 簇契约/信封/ID/杂项）**：admin/debug 裸 error 无统一信封
+**✅ 批次 8c 已修复（2026-08-07，`378c16c`）**：admin/debug 裸 error 无统一信封
 
 - **问题：** Bare `{"error": ...}` responses without the unified envelope at admin endpoints and debug routes; v1 ApiFail/ImageUploadError shapes ({ok:false,error}/{error}) used throughout /api/providers, /api/chat, /api/images.
 - **失败场景：** Wrong/missing admin token on /shutdown, /restart, /tools, /tools/reload returns `{"error":"unauthorized"}` (server.py:373/393/412/431); debug routes return `{"error":...}` (debug_routes/__init__.py:32, archive.py:146, character.py:125 etc). /api/providers save/delete/test and /api/images return ApiFail/ImageUploadError (api_routes.py:275,277,299,343,371,425,434,436,584,984). None carry code/retryable/requestId/details, so a client error handler keyed on `code` (BE-080) cannot route or correlate these failures and cannot tell retryable from permanent. The ApiFail legacy shapes are explicitly documented as v1-compat (frontend_contract/rest.py:101-106, progress batch 5 '错误信封双轨'), but the admin/debug bare dicts are not — they violate the envelope with no documented justification.
@@ -145,7 +145,7 @@
 
 ### [CONFIRMED] frontend_contract/ws_message.py:474（来源：x-contract）
 
-**⏳ 待 8c（E/F 簇契约/信封/ID/杂项）**：HeartbeatAckMessage 死契约面
+**✅ 批次 8c 已修复（2026-08-07，`3761a7f`）**：HeartbeatAckMessage 死契约面
 
 - **问题：** Dead contract surface: HeartbeatAckMessage is a ServerMessage union member emitted by gen_ts but has no emitter anywhere in core/ or Module/; two live v1 emission sites bypass the contract models with raw dicts.
 - **失败场景：** (a) `HeartbeatAckMessage` (type 'heartbeat_ack', ws_message.py:474-478) appears in the 39-member union and contract.generated.ts but is never sent — dead TS surface the frontend must nevertheless type against. (b) `on_action` (Module/output/websocket.py:122-125) and `on_token_usage` (websocket.py:186-196) emit hand-built dicts instead of ActionMessage/TokenUsageMessage: the modeled ActionMessage would force `params: {}` on every frame (default_factory, excluded only by the bypass) and the modeled TokenUsage/TokenRound would drop null `cached_tokens`/`reasoning_tokens` keys that the real wire sends as null. The generated TS therefore does not describe the actual v1 wire bytes for these two frames.
@@ -163,26 +163,26 @@
 
 ## 4. Minor 发现（38 条：34 CONFIRMED + 4 PLAUSIBLE）
 
-- **[CONFIRMED] scripts/capture_ws_trace.py:49**（b0）：_ENV_RE (env-var value scrubber) is defined but never used; _sanitize only strips absolute paths and one literal placeholder, so the documented env-value sanitization guarantee does not hold. **⏳ 待 8c**：_ENV_RE 死代码
-- **[PLAUSIBLE] scripts/capture_ws_trace.py:285**（b0）：Connect-frame drain loop catches bare Exception (redundant with TimeoutError) and silently breaks, so a handshake/connection failure yields a truncated or empty trace file with no error. **⏳ 待 8c**：bare except 静默断
-- **[CONFIRMED] core/input/server.py:148**（b1）：payload 中间件的 except HTTPRequestEntityTooLarge 兜底对 chunked 请求实际不生效——handler 的宽 except Exception 先把异常吞成 400，413 REQUEST_TOO_LARGE 信封只对带 Content-Length 的请求产生（与中间件注释『chunked 场景保留异常兜底』矛盾，实测验证） **⏳ 待 8c**：chunked 413 兜底不生效
-- **[CONFIRMED] core/input/server.py:310**（b1）：并发 WS 上限是 TOCTOU 预检而非硬限制——计数在 handle_ws 通过 ws.prepare() 后 add_channel 之前读取，并发握手可全部通过检查并超过 max_ws_connections；且计数包含已关闭未移除的 channel **⏳ 待 8c**：并发 WS TOCTOU
-- **[CONFIRMED] core/input/capabilities.py:109**（b1）：broadcast_capabilities 在 switch_model/set_service 后向所有 WebSocketChannel 广播 capabilities 帧（含 v2 通道），与『v2 用 server_info 取代 capabilities』契约不一致 **⏳ 待 8c**：v2 收 capabilities 帧
-- **[CONFIRMED] core/input/server.py:265**（b1）：cms = max_request_bytes if max_request_bytes else 64MB——max_request_bytes 配置为 0 时静默回落 64MB 而非『不限』，与 ConfigField 无最小值约束的组合产生语义陷阱 **⏳ 待 8c**：max_request_bytes=0 静默回落
+- **[CONFIRMED] scripts/capture_ws_trace.py:49**（b0）：_ENV_RE (env-var value scrubber) is defined but never used; _sanitize only strips absolute paths and one literal placeholder, so the documented env-value sanitization guarantee does not hold. **✅ 批次 8c 已修复（2026-08-07，`ae74d09`）**：_ENV_RE 死代码
+- **[PLAUSIBLE] scripts/capture_ws_trace.py:285**（b0）：Connect-frame drain loop catches bare Exception (redundant with TimeoutError) and silently breaks, so a handshake/connection failure yields a truncated or empty trace file with no error. **✅ 批次 8c 已修复（2026-08-07，`ae74d09`）**：bare except 静默断
+- **[CONFIRMED] core/input/server.py:148**（b1）：payload 中间件的 except HTTPRequestEntityTooLarge 兜底对 chunked 请求实际不生效——handler 的宽 except Exception 先把异常吞成 400，413 REQUEST_TOO_LARGE 信封只对带 Content-Length 的请求产生（与中间件注释『chunked 场景保留异常兜底』矛盾，实测验证） **✅ 批次 8c 已修复（2026-08-07，`50379f0`）**：chunked 413 兜底不生效
+- **[CONFIRMED] core/input/server.py:310**（b1）：并发 WS 上限是 TOCTOU 预检而非硬限制——计数在 handle_ws 通过 ws.prepare() 后 add_channel 之前读取，并发握手可全部通过检查并超过 max_ws_connections；且计数包含已关闭未移除的 channel **✅ 批次 8c 已修复（2026-08-07，`4783ce7`）**：并发 WS TOCTOU
+- **[CONFIRMED] core/input/capabilities.py:109**（b1）：broadcast_capabilities 在 switch_model/set_service 后向所有 WebSocketChannel 广播 capabilities 帧（含 v2 通道），与『v2 用 server_info 取代 capabilities』契约不一致 **✅ 批次 8c 已修复（2026-08-07，`d3e947c`）**：v2 收 capabilities 帧
+- **[CONFIRMED] core/input/server.py:265**（b1）：cms = max_request_bytes if max_request_bytes else 64MB——max_request_bytes 配置为 0 时静默回落 64MB 而非『不限』，与 ConfigField 无最小值约束的组合产生语义陷阱 **✅ 批次 8c 已修复（2026-08-07，`1df7b33`）**：max_request_bytes=0 静默回落
 - **[CONFIRMED] core/input/server.py:108**（b1）：认证失败无任何日志记录（spec §3.1『认证失败记录日志』未实现）——中间件直接 return 401 信封，AppRunner 默认无 access log，远程被扫描/爆破时无审计痕迹。**✅ 已修复（批次 8a，`ae590e1`）：** 访问中间件 + 管理域中间件 401 补 logger.warning（记 code/path，不记凭据）。
 - **[CONFIRMED] core/input/attachment_routes.py:133**（b1）：下载校验序在 HMAC 验签（④）之前先执行 repo.get（②），未认证调用者可用 404/403 差异枚举附件 ID 是否存在（绕过签名即泄露存在性）。**✅ 已修复（批次 8a，`7b0e0ba` D3）：** 签名校验前置——sig hex → exp → HMAC 全部通过后才 repo.get，无效 sig 恒 403，不再泄露附件存在性。
-- **[CONFIRMED] Module/output/manager.py:345**（b2）：generation.started.requestId 契约字段与 spec §3.2 要求回显 request_id，但 turn_started 从不传值 **⏳ 待 8c**：generation.started.requestId 从不传值
+- **[CONFIRMED] Module/output/manager.py:345**（b2）：generation.started.requestId 契约字段与 spec §3.2 要求回显 request_id，但 turn_started 从不传值 **✅ 批次 8c 已修复（2026-08-07，`24d3d0c`）**：generation.started.requestId 从不传值
 - **[CONFIRMED] core/input/ws_handler.py:693**（b2）：v2 空文本消息（带合法 clientRequestId）被静默丢弃，不发任何 ACK **✅ 批次 8b 已修复（2026-08-07，`3e28310` §3.8）：** v2 空文本 → rejected CONTRACT_VALIDATION
 - **[CONFIRMED] core/cognitive/loop.py:922**（b2）：空响应兜底路径向 v2 通道泄漏 v1 风格 message 帧（无 segment 关联） **✅ 批次 8b 已修复（2026-08-07，`da050d2` D5）：** v2 空响应兜底发 segment.completed（F4 已有活动段直接完成）
-- **[CONFIRMED] core/memory/session_manager.py:236**（b3）：GET /api/sessions 畸形 cursor 未捕获 _decode_cursor 异常→500 而非 400 CONTRACT_VALIDATION（与 messages before 游标的校验不一致） **⏳ 待 8c**：畸形 cursor 500 非 400
+- **[CONFIRMED] core/memory/session_manager.py:236**（b3）：GET /api/sessions 畸形 cursor 未捕获 _decode_cursor 异常→500 而非 400 CONTRACT_VALIDATION（与 messages before 游标的校验不一致） **✅ 批次 8c 已修复（2026-08-07，`37d52fe`）**：畸形 cursor 500 非 400
 - **[CONFIRMED] core/input/session_routes.py:584**（b3）：search_messages_handler 未校验 category 取值：未知类别（含 sticker）不做任何过滤返回全量消息，而非 400。**✅ 已修复（批次 8a，`f69298a` D4）：** 未知 category → 400 `CONTRACT_VALIDATION`。
-- **[CONFIRMED] core/cognitive/loop.py:538**（b3）：generation 持久化 error 丢失 code/retryable：loop 存 str(err)[:200]，_generation_status 只包成 {message, retryable:false} **⏳ 待 8c**：generation 持久化 error 丢 code/retryable
-- **[CONFIRMED] core/input/session_routes.py:734**（b3）：pendingMessages 对 conversation_id=None（v1 排队消息）在任意请求会话下均展示，跨会话可见排队消息 **⏳ 待 8c**：pending 跨会话可见
-- **[CONFIRMED] core/desktop/bridge.py:427**（b4）：desktop.screen.capture 等 output 为空的结果，LLM 收到的 tool 消息 content 为空串（llm_summary 未被使用），与 spec §4.3『llm_summary（execution_summary 去路径）或 output』不符 **⏳ 待 8c**：llm_summary 未用
-- **[PLAUSIBLE] core/input/api_routes.py:838**（b4）：GET /api/tools/calls/{callId} 的 result 字段沿用 repo 的 snake_case 键（attachments[].mime_type / execution_summary），与 tool.status wire 的 camelCase（mimeType/executionSummary）不一致 **⏳ 待 8c**：tools/calls snake_case
+- **[CONFIRMED] core/cognitive/loop.py:538**（b3）：generation 持久化 error 丢失 code/retryable：loop 存 str(err)[:200]，_generation_status 只包成 {message, retryable:false} **✅ 批次 8c 已修复（2026-08-07，`be7cf09`）**：generation 持久化 error 丢 code/retryable
+- **[CONFIRMED] core/input/session_routes.py:734**（b3）：pendingMessages 对 conversation_id=None（v1 排队消息）在任意请求会话下均展示，跨会话可见排队消息 **✅ 批次 8c 已修复（2026-08-07，`37d52fe`）**：pending 跨会话可见
+- **[CONFIRMED] core/desktop/bridge.py:427**（b4）：desktop.screen.capture 等 output 为空的结果，LLM 收到的 tool 消息 content 为空串（llm_summary 未被使用），与 spec §4.3『llm_summary（execution_summary 去路径）或 output』不符 **✅ 批次 8c 已修复（2026-08-07，`e5ee98b`）**：llm_summary 未用
+- **[PLAUSIBLE] core/input/api_routes.py:838**（b4）：GET /api/tools/calls/{callId} 的 result 字段沿用 repo 的 snake_case 键（attachments[].mime_type / execution_summary），与 tool.status wire 的 camelCase（mimeType/executionSummary）不一致 **✅ 批次 8c 已修复（2026-08-07，`e5ee98b`）**：tools/calls snake_case
 - **[CONFIRMED] core/input/ssrf.py:57**（b5）：SSRF 校验未拦截 site-local IPv6 fec0::/10：_is_blocked_ip 未判 is_site_local，实测 validate_endpoint('http://[fec0::1]/') 放行。**✅ 已修复（批次 8a，`6958722`）：** `_is_blocked_ip` 补 `is_site_local`（fec0::/10）。
 - **[PLAUSIBLE] core/storage/secret_store.py:112**（b5）：Secret Store 的 set_secret/delete_secret 为无锁 read-modify-write（整文件 load→改→save），并发写丢失更新。**✅ 已修复（批次 8a，`d0e556d`）：** `threading.Lock` 串行化 set/delete 读改写。
-- **[CONFIRMED] core/input/tts_profile.py:49**（b5）：GET /api/tts/voices 的 current 可能引用列表中不存在的音色（custom OpenAI TTS 默认返回角色名）。 **⏳ 待 8c**：voices current 引用不存在
+- **[CONFIRMED] core/input/tts_profile.py:49**（b5）：GET /api/tts/voices 的 current 可能引用列表中不存在的音色（custom OpenAI TTS 默认返回角色名）。 **✅ 批次 8c 已修复（2026-08-07，`55dee99`）**：voices current 引用不存在
 - **[CONFIRMED] core/adapter/llm_adapter.py:54**（b5）：LLM 初始配置路径（config.llm.model=custom/x）无出站 SSRF 守卫也不解析 base_url，裸 create 直接失败；仅 switch 路径有守卫。**✅ 已修复（批次 8a，`963d1a8`）：** `LLMFactory.create` custom 分支复用 `validate_endpoint` SSRF 守卫。
 - **[CONFIRMED] core/adapter/tts_adapter.py:227**（b6）：cancel_stream 对已过 audio_end(末尾 emoji/finally 窗口)仍存活的任务返回 True, 该任务被取消后 _audio_forwarding 已 discard 故不再发 audio_cancelled——客户端得到'成功'却无任何事件, 违背 spec §8.2 '已 audio_end → PLAYBACK_NOT_FOUND'。 **✅ 批次 8b 已修复（2026-08-07，`0fba1f3` §3.9）：** `cancel_stream` 以 `_audio_forwarding` 判定，audio_end 后 False（PLAYBACK_NOT_FOUND）
 - **[CONFIRMED] core/input/voice_sessions.py:348**（b6）：stop_dictation/cancel_dictation 只检查 _mode==DICTATION, 不校验传入 clientRequestId 与 _dict_request_id 一致, 与 voice.record.stop/voice_session.stop 的 ID 校验不一致。 **✅ 批次 8b 已修复（2026-08-07，`003845f` §3.10）：** dictation stop/cancel 校验 clientRequestId
@@ -192,11 +192,11 @@
 - **[CONFIRMED] core/storage/attachment_repo.py:193**（b7）：add_ref/remove_ref 为读改写（get 后 $set 全量 refs），并发下可丢更新、破坏 ref_count==len(refs) 不变量。**✅ 已修复（批次 8a，`9a16709`）：** add_ref/remove_ref 原子化——条件 update，幂等 add + 归零条件软删。
 - **[CONFIRMED] core/input/server.py:184**（b7）：/health 与 /ready 探活负载调用 agent.next_request_id()，突变全局请求计数器并覆写 request_id ContextVar，探活探针不应有状态副作用。**✅ 已修复（批次 8a，`f14d9c9`）：** 探活改用独立 `req_<uuid>`，不再扰动 `next_request_id()` 计数器。
 - **[CONFIRMED] core/input/ws_handler.py:574**（b7）：附件/表情消息幂等 entry 在 process_message 前落盘，process 抛异常（非返回 False）时 entry 残留，重试会重放 accepted 而消息从未入队。 **✅ 批次 8b 已修复（2026-08-07，`4e59ed4` §3.7）：** 附件 process 抛异常 → 删幂等 entry + rejected INTERNAL，连接不 crash
-- **[CONFIRMED] core/version.py:22**（x-contract）：get_build_sha caching is defeated on the failure path: on git error/empty output _build_sha is left None, so every WS handshake re-spawns a `git rev-parse HEAD` subprocess. **⏳ 待 8c**：get_build_sha 失败不缓存
-- **[CONFIRMED] core/input/ws_handler.py:287**（x-contract）：WS JSON decode / content-validation errors are sent as ErrorMessage with no `code` field. **⏳ 待 8c**：decode error 无 code
+- **[CONFIRMED] core/version.py:22**（x-contract）：get_build_sha caching is defeated on the failure path: on git error/empty output _build_sha is left None, so every WS handshake re-spawns a `git rev-parse HEAD` subprocess. **✅ 批次 8c 已修复（2026-08-07，`916de10`）**：get_build_sha 失败不缓存
+- **[CONFIRMED] core/input/ws_handler.py:287**（x-contract）：WS JSON decode / content-validation errors are sent as ErrorMessage with no `code` field. **✅ 批次 8c 已修复（2026-08-07，`dcd88f8`）**：decode error 无 code
 - **[CONFIRMED] core/input/ws_handler.py:603**（x-contract）：v2 non-media path sends accepted ACK before process_message, and the idempotency entry is stored first — if process_message raises, the message is permanently lost and a retry silently replays the accepted ACK. **✅ 批次 8b 已修复（2026-08-07，`4e59ed4` §3.7）：** 与 §3 `ws_handler.py:603`（队列满返回 False）同根因——process_message 抛异常变体随 §3.7 一并修复（删 entry + rejected INTERNAL，连接不 crash）。
 - **[CONFIRMED] core/input/api_routes.py:639**（x-contract）：In the upload handler the multipart `kind` field is read with `await field.read()` (no size cap), while only `files` fields are chunk-capped. **✅ 已修复（批次 8a，`716f2ad`）：** kind 字段改 `read_chunk(65)` 限长。
-- **[CONFIRMED] frontend_contract/ws_message.py:1**（x-contract）：Stale docstring and docs drift: module docstring still says 'Server→Client 18 具名成员' while the union has 39; TokenStats.by_model (snake) vs ConversationUsage.byModel (camel) are inconsistent wire key styles for the same concept. **⏳ 待 8c**：docstring 过时 + wire key 不一致
+- **[CONFIRMED] frontend_contract/ws_message.py:1**（x-contract）：Stale docstring and docs drift: module docstring still says 'Server→Client 18 具名成员' while the union has 39; TokenStats.by_model (snake) vs ConversationUsage.byModel (camel) are inconsistent wire key styles for the same concept. **✅ 批次 8c 已修复（2026-08-07，`79c30ea`）**：docstring 过时 + wire key 不一致
 - **[CONFIRMED] core/cognitive/loop.py:949**（x-security）：Inner Voice (model's private <inner_voice> monologue) is written to the application log via logger.info, beyond the intentionally-declared conversation.log audit channel. **✅ 已修复（批次 8a，`84b3775`）：** Inner Voice 应用日志降级为 debug。
 - **[CONFIRMED] core/input/api_routes.py:960**（x-security）：Raw exception text (str(e)) is placed into client-facing error envelopes on upload/provider handlers, which can embed absolute server filesystem paths on I/O failures. **✅ 已修复（批次 8a，`2b886b0`）：** api_routes 4 处错误信封 `str(e)` → 通用消息，str(e) 只进日志。
 - **[CONFIRMED] core/input/api_routes.py:670**（x-security）：Multi-file upload writes and records each file inside the validation loop, so a validation failure on a later file leaves earlier files orphaned on disk and in Mongo with an error response. **✅ 已修复（批次 8a，`716f2ad`）：** 多文件先全部校验再写盘 + 失败清理（不留孤儿）。

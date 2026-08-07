@@ -309,7 +309,7 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 - **Minor 修复**：SSRF 补 site-local IPv6 fec0::/10（`6958722`）；认证失败日志记 code/path 不记凭据（`ae590e1`）；GC 日志收敛（只记 aid/kind）+ 规则1 unlink 失败保留记录（`66be44f`）；错误信封 `str(e)` → 通用消息（`2b886b0`）；Inner Voice 应用日志降级 debug（`84b3775`）；Secret Store `threading.Lock` 防并发丢更新（`d0e556d`）；LLM 初始 custom 配置复用 SSRF 守卫（`963d1a8`）；add_ref/remove_ref 原子化——幂等 add + 归零条件软删（`9a16709`）；上传 kind 限长 + 多文件先校验再写盘（`716f2ad`）；探活改用独立 `req_<uuid>`（`f14d9c9`）；共享 fake 时序修复（`565fc10`）。
 - **测试**：批次 8a 全量回归 **2731 passed**（审计报告 §1 合规判定同步更新为 24 SATISFIED / 0 PARTIAL）。
 
-### 后续批次（8c）——审计剩余项（8b 已闭合，2026-08-07）
+### 批次 8c 范围（E/F 簇契约/信封/ID/杂项，2026-08-07 定义，已闭合见下节）
 
 批次 8a 闭合 A 安全 / B 附件 / C 搜索 三簇 + 探活，8b（2026-08-07）闭合 D 簇 WS/语音行为（见下节）。审计报告 `docs/electron-backend-audit-batches0-7.md` 中**尚未修复**的条目按用户拍板的批次组织（8a spec §批次组织）归入 8c：
 
@@ -357,6 +357,67 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 | D6 `_restore_emotion` 抹掉他连接 emotion（voice_sessions.py:165） | `003845f` |
 | §3.11 `_wav_info` 固定偏移（tts_adapter.py:57） | `8a0741b` |
 
-### 8c 承接
+### 8c 闭合
 
-批次 8c 承接审计报告剩余 E/F 簇（契约/信封/ID/杂项）**19 条**（WS error 信封漏 retryable/details、admin/debug 裸 error 无统一信封、HeartbeatAckMessage 死契约面 3 important + 16 minor，明细见上节）。
+批次 8c 承接审计报告剩余 E/F 簇（契约/信封/ID/杂项）**19 条**（WS error 信封漏 retryable/details、admin/debug 裸 error 无统一信封、HeartbeatAckMessage 死契约面 3 important + 16 minor），全部闭合，见下节。
+
+---
+
+## 批次 8c：契约/信封/ID/杂项修复（2026-08-07） ✅ 完成
+
+**提交范围：** `dcd88f8..4c84200`（16 commits，2026-08-07）
+**Spec/Plan：** `docs/superpowers/specs/2026-08-07-electron-backend-batch8c-contract-envelope-id-misc.md` / `docs/superpowers/plans/2026-08-07-electron-backend-batch8c-contract-envelope-id-misc.md`
+**依据：** `docs/electron-backend-audit-batches0-7.md`（E/F 簇契约/信封/ID/杂项 19 条发现）
+
+### 结果
+
+- **范围**：闭合审计报告剩余 E/F 簇 19 条发现（3 important + 16 minor）——WS/REST 错误信封统一、HeartbeatAckMessage 死契约面、ID 回显、会话归属、desktop/tts/服务器 infra/脚本杂项。
+- **测试**：批次 8c 全量回归 **2797 passed**（8b 基线 2762 → 净增 35）。
+
+### 决策（D1-D3，2026-08-07 拍板）
+
+| 决策 | 内容 | 实现 commit |
+|------|------|------------|
+| D1 | 移除 HeartbeatAckMessage 死契约面 + 修 on_action/on_token_usage 模型化绕过（ActionMessage.params 可选，前端 handleAction 可选链） | `3761a7f` |
+| D2 | max_request_bytes=0 = 不限（对齐 max_ws_connections 0/None 不限；server cms/中间件/upload_handler 三处同步） | `1df7b33` |
+| D3 | voices current 缺失时追加到列表（current 恒 ∈ voices[]） | `55dee99` |
+
+### 记录中的推荐决策（按常驻指令记档，最终报告提出）
+
+- **F15** v2 跳过 capabilities 广播，不新增 server_info 重播（多客户端 v2 切换同步记为已知限制，spec §7）。
+- **F19** TokenStats.by_model → byModel（camelCase 对齐 ConversationUsage；ws_handler/on_token_usage 契约边界转换 + 前端 chatStore/CharStatus 同步）。
+- **F7** None 归属 pending 仅活动会话展示（含 active_id 空防御）。
+- **F9** tools/calls result 归 camelCase（mimeType/executionSummary，REST 边界转换不改 repo）。
+- **F18** decode/content-validation error 用既有 CONTRACT_VALIDATION 码（不新增错误码）。
+- **F2** admin/debug 认证失败用 AUTH_REQUIRED/AUTH_INVALID（与 access middleware 既有码一致）。
+- **F8** desktop 工具 output 空时 content 回退 executionSummary。
+
+### 19 条审计发现修复明细
+
+| audit 发现 | commit |
+|---|---|
+| F1 WS error 信封漏 retryable/details（ErrorMessage 补字段 + 发射点透传） | `dcd88f8` |
+| F18 decode error 无 code（CONTRACT_VALIDATION） | `dcd88f8` |
+| F2 admin/debug 裸 error 无统一信封（4 admin + debug 中间件 + 32 处业务错误） | `378c16c` |
+| F3 HeartbeatAckMessage 死契约面 + 两处绕过 | `3761a7f` |
+| F4 generation.started.requestId 从不传值（ctx.request_id 回显） | `24d3d0c` |
+| F5 畸形 cursor 500 非 400（→ CONTRACT_VALIDATION） | `37d52fe` |
+| F7 pending 跨会话可见（→ 仅活动会话） | `37d52fe` |
+| F6 generation 持久化 error 丢 code/retryable（→ 结构化 dict） | `be7cf09` |
+| F8 llm_summary 未用（output 空回退 executionSummary） | `e5ee98b` |
+| F9 tools/calls snake_case（→ camelCase） | `e5ee98b` |
+| F10 voices current 引用不存在（→ 追加） | `55dee99` |
+| F11 _ENV_RE 死代码（→ 接入 _sanitize） | `ae74d09` |
+| F12 trace bare except 静默断（→ 截断报告） | `ae74d09` |
+| F13 chunked 413 兜底不生效（14 处 re-raise） | `50379f0` |
+| F14 并发 WS TOCTOU（→ 闭包计数硬上限） | `4783ce7` |
+| F15 v2 收 capabilities 帧（→ v2 跳过） | `d3e947c` |
+| F16 max_request_bytes=0 静默回落（→ 不限） | `1df7b33` |
+| F17 get_build_sha 失败不缓存（→ 两态缓存）+ 既有测试同步 | `916de10` / `4c84200` |
+| F19 docstring 过时 + wire key 不一致（→ byModel + 38 成员） | `79c30ea` |
+
+### 已知限制（spec §7，记录）
+
+- F15 多客户端 v2 切换同步：v2 通道跳过 capabilities 广播后，非发起方 v2 客户端不感知其他连接切换（server_info 仅握手下发）；单客户端 Electron 不受影响。
+- F10 custom OpenAI current 追加条目 name=id（无本地化显示名）。
+- F13 chunked 413 兜底按模式枚举（api_routes/session_routes/debug_routes 14 处）；未来新增 body 读取 handler 需同样补 `except HTTPRequestEntityTooLarge: raise`（已写 create_app docstring 提示）。

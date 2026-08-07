@@ -55,7 +55,7 @@ web.run_app(app, port=8000)
 
 ### 版本协商（批次 1，BE-020）
 
-- WS 握手头 `X-Protocol-Version: 2` → v2 路径：建连发 `server_info`（protocol_version/features/services，取代 capabilities）；缺省/1 → v1 路径（发 capabilities）。`features` 严禁超前声明（批次 1 全 false）。
+- WS 握手头 `X-Protocol-Version: 2` → v2 路径：建连发 `server_info`（protocol_version/features/services，取代 capabilities）；缺省/1 → v1 路径（发 capabilities）。`features` 严禁超前声明（批次 1 全 false）。**批次 8c（F15）**：switch_model/set_service 后的 capabilities 重播仅达 v1 通道，跳过 v2（v2 用 server_info 取代，切换感知经自身回显）。
 
 ### 服务模式开关
 

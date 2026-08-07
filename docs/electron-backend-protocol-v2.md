@@ -12,6 +12,7 @@
 
 - Electron Main 连 `/ws` 时带：`Authorization: Bearer <access_token>`（远程）+ `X-Protocol-Version: 2` + **`X-Client-Platform: electron`**（批次 4，Desktop 工具桥定向投递目标标识，spec §5.1 D-l）。
 - v2 连接建连帧：`session`（历史回放）→ `server_info`（协议版本/能力/服务形状 + **`connectionId`**，批次 4）→ `expression`（当前心情）。
+- **批次 8c（F15）**：switch_model / set_service 后的 `capabilities` 重播仅达 v1 通道——v2 用 `server_info` 取代 capabilities，`broadcast_capabilities` 跳过 protocol_version ≥ 2 的通道；v2 对切换的感知经自身 `switch_model_result`/`service_mode_result` 回显（多客户端 v2 切换同步为已知限制）。
 - **`server_info.connectionId`（批次 4）**：仅 v2 + electron 连接下发（`conn_<uuid4 hex[:12]>`，= WS 握手生成的连接 ID）；普通 v2 / v1 恒省略。Electron 据此构造附件上传 `X-Client-Connection` 头（spec §5.4 持有者校验②依赖）。
 - **`server_info.build_sha`（批次 7，BE-081）**：构建 git HEAD 完整 SHA（`core/version.py` `get_build_sha()`，`git rev-parse HEAD`，非 git 仓库/失败 → None 缺省省略）；`server_version` 为 `__version__ + "+" + build_sha[:7]` 后缀（`build_server_version()`，无 git 时仅 `0.1.0`）。供前端展示/反馈定位。
 - `server_info.features` 如实反映能力：`structured_generation`（批次 2 = true）、`multi_conversation`（批次 3 = true）、`desktop_runtime`（**批次 4 = true**）、`dictation`/`voice_recording`/`voice_realtime`（**批次 6 = true**，spec BE-060~062，见 §12）、**`media_upload`（批次 7 = true，POST /api/uploads，见 §13）**。
@@ -162,14 +163,14 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `GET /api/generations/{gid}` | generation 详情（404 `GENERATION_NOT_FOUND`） |
 | `GET /api/sessions/{id}/pending` | **pending 查询**：pendingMessages（按会话）+ pendingApprovals（全局） |
 
-错误信封统一（code/message/retryable/requestId）；全部匿名 401（`AGENT_ACCESS_TOKEN` 配置时）。
+错误信封统一（code/message/retryable/requestId）；全部匿名 401（`AGENT_ACCESS_TOKEN` 配置时）。**批次 8c（F1/F2）：** 泛型 `error` 帧补 `retryable`/`details` 字段（语音错误站点透传）；admin/debug 端点（/shutdown、/restart、/tools、/tools/reload、/debug/api/*）错误响应统一走 ProtocolError 信封（`error` = message 兼容别名，v1 读 `.error` 不破坏），不再裸 `{"error":...}`。
 
 ### 9.1 错误码目录（批次 1-7 累计，40 码）
 
 | code | HTTP | retryable | 场景 |
 |---|---|---|---|
-| `AUTH_REQUIRED` | 401 | false | 未带凭据访问受保护端点（`/ws`、业务 `/api/*`、`/uploads/*`，批次 1） |
-| `AUTH_INVALID` | 401 | false | 凭据错误（批次 1） |
+| `AUTH_REQUIRED` | 401 | false | 未带凭据访问受保护端点（`/ws`、业务 `/api/*`、`/uploads/*`，批次 1；**批次 8c：admin/debug 端点同样**） |
+| `AUTH_INVALID` | 401 | false | 凭据错误（批次 1；**批次 8c：admin/debug 端点同样**） |
 | `RATE_LIMITED` | 429 | false | 速率限制——**目录登记，限流器未实现**（无生产者） |
 | `CONNECTION_LIMITED` | 503 | true | 并发 WS 连接超上限（批次 1） |
 | `REQUEST_TOO_LARGE` | 413 | false | 请求体超限（`client_max_size`，Content-Length 前置，批次 1）；通用上传单文件/聚合超限（批次 7，§13.1） |
@@ -181,7 +182,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `GENERATION_NOT_FOUND` | 404 | false | 未知 generation 详情 |
 | `RESOURCE_NOT_FOUND` | 404 | false | 消息不存在（context 窗口锚点缺失） |
 | `INVALID_TIMEZONE` | 400 | false | 搜索时区非法（zoneinfo 无法解析） |
-| `CONTRACT_VALIDATION` | 400 | false | 缺 conversationId / clientRequestId 冲突 / 畸形 before 游标 / 语音契约错误（缺/非法 stream_id、commit 文本不一致等，批次 6）；**未知 stickerId / 上传 kind=sticker / 未知上传 kind**（批次 7，sticker 非附件，拒绝走上传，见 §13.1） |
+| `CONTRACT_VALIDATION` | 400 | false | 缺 conversationId / clientRequestId 冲突 / 畸形 before 游标 / 语音契约错误（缺/非法 stream_id、commit 文本不一致等，批次 6）；**未知 stickerId / 上传 kind=sticker / 未知上传 kind**（批次 7，sticker 非附件，拒绝走上传，见 §13.1）；**WS JSON decode / 内容校验失败 + GET /api/sessions 畸形 cursor**（批次 8c F5/F18） |
 | `SESSION_PROTECTED` | 409 | false | 删除受保护会话 `default`（禁删守卫） |
 | `AGENT_BUSY` | 409 | true | 生成/TTS 进行中切换或删除活动会话（FSM 忙时门禁） |
 | `GENERATION_CANCELLED` | — | false | WS interrupt → `generation.failed{CANCELLED}` |

@@ -28,7 +28,7 @@
   - 全部业务 `/api/*`（`/api/chat` `/api/messages` `/api/providers` `/api/images` **`/api/tools` `/api/tools/calls/{callId}`**（批次 4，BE-042）**`/api/uploads` `/api/stickers` `/api/attachments/{id}/sign`**（批次 7，BE-070/071））；
   - `/uploads/*` GET 资源读取（**含 `/uploads/desktop/*`**，批次 4 附件落盘目录）。
 - **唯一免 Bearer 的业务路径**：`/api/attachments/{attachment_id}`（**非 /sign**）——附件**签名下载**。短时 HMAC 签名（`?sig=&exp=`）即授权，属**短期下载授权、非账号凭据**（签名 URL 24h 过期、仅能下载该附件，见 §3.5）；`/api/attachments/{attachment_id}/sign`（签发端点）**保持 Bearer**。
-- 未带凭据 → 401 `AUTH_REQUIRED`；凭据错误 → 401 `AUTH_INVALID`；均返回统一错误信封。
+- 未带凭据 → 401 `AUTH_REQUIRED`；凭据错误 → 401 `AUTH_INVALID`；均返回统一错误信封。**批次 8c（F2）**：admin/debug 端点（/shutdown、/restart、/tools、/tools/reload、/debug/api/*）认证失败与业务错误同样走统一信封（`error` = message 兼容别名），不再裸 `{"error":...}`。
 
 ### 1.3 凭据载体
 
