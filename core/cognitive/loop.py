@@ -540,11 +540,13 @@ class CognitiveLoop(CognitiveTools):
                     self._turn_failed_emitted = True
                     # 批次 3（BE-024）：错误路径 generation 终态 → failed（随后
                     # _handle_interrupt 的 mark 经 _turn_failed_emitted 守卫不覆盖）
+                    # 批次 8c（F6）：error 结构化 {code,message,retryable} 落库（dict 原样存）
                     if self._generation_registry is not None:
                         try:
                             await self._generation_registry.mark(
                                 self._generation_ctx.generation_id,
-                                status="failed", finish_reason="error", error=err_msg)
+                                status="failed", finish_reason="error",
+                                error={"code": code, "message": err_msg, "retryable": retryable})
                         except Exception:
                             logger.debug("generation mark failed 失败", exc_info=True)
                 await self._handle_interrupt()

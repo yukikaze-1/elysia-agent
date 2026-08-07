@@ -318,6 +318,28 @@ class TestV2GenerationSequence:
         finally:
             await agent.stop()
 
+    @pytest.mark.asyncio
+    async def test_generation_failed_error_is_structured(self, aiohttp_client):
+        """LLM 503 → generation 失败，注册表 doc error 为 {code,message,retryable} dict。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM(fault="http_503"))
+        await agent.start()
+        agent.session._messages.clear()  # noqa: SLF001 空会话
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            await _send_and_collect(
+                client, {"X-Protocol-Version": "2"}, "你好",
+                client_request_id=f"req_{time.monotonic_ns()}")  # 缺 clientRequestId 会被拒绝，无 generation
+            docs = await _registry_docs(agent)
+            failed = next(d for d in docs if d.get("status") == "failed")
+            err = failed["error"]
+            assert isinstance(err, dict)
+            assert "code" in err and "message" in err and "retryable" in err
+        finally:
+            await agent.stop()
+
 
 class _SlowLLM(_UsageLLM):
     """慢速 fake：token 间 sleep，供打断测试。"""

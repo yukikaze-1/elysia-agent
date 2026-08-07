@@ -95,7 +95,7 @@ class GenerationRegistry:
 
     async def mark(self, generation_id: str, *, status: str,
                    finish_reason: str | None = None,
-                   error: str | None = None) -> None:
+                   error: str | dict | None = None) -> None:
         """更新 generation 状态（upsert 语义，mark-before-register 也建档）。
 
         终态（completed/failed/cancelled/interrupted）同时落 finished_at。
@@ -104,7 +104,8 @@ class GenerationRegistry:
             generation_id: 生成实例 ID。
             status: 目标状态（running/completed/failed/cancelled/interrupted）。
             finish_reason: 完成原因（stop/error），非 None 时写入。
-            error: 错误信息（status=failed 时）。
+            error: 错误信息（status=failed 时）。批次 8c（F6）：接受结构化 dict
+                {"code","message","retryable"} 原样落库（向前兼容字符串）。
         """
         if not generation_id:
             return
