@@ -23,7 +23,7 @@
 | `id` | INT64（主键，自增） | 自动生成 |
 | `embedding` | FLOAT_VECTOR[1024]（openai/text-embedding-3-small）/ 1024（BAAI/bge-large-zh-v1.5 fallback） | 文本嵌入向量，主后端 openai，BGE 为离线 fallback |
 | `text` | VARCHAR（动态字段） | 记忆文本内容 |
-| `memory_type` | VARCHAR（动态字段） | 类型：`Fact` / `Preference` / `Event` / `Plan` / `Note` |
+| `memory_type` | VARCHAR（动态字段） | 类型：`Fact` / `Preference` / `Event` / `Plan` / `Note`。写入经 `MemoryType.coerce` 归一（lowercase/大小写混 → TitleCase，未知 → `Note`），存储恒为规范值 |
 | `poignancy` | INT（动态字段） | 重要性 1-10 |
 | `timestamp` | FLOAT（动态字段） | Unix 时间戳 |
 
@@ -138,7 +138,7 @@
 | `id` | str | `msg_` 前缀 + 26 位十六进制（`new_message_id()` 生成） |
 | `text` | str | 记忆文本 |
 | `embedding` | list[float] | 向量 |
-| `memory_type` | str | `Fact` / `Preference` / `Event` / `Plan` / `Note` |
+| `memory_type` | `MemoryType` | `Fact` / `Preference` / `Event` / `Plan` / `Note`。构造经 `__post_init__` coerce 归一（未知 → `Note`），`MemoryEntry` 字段类型即 `MemoryType` StrEnum |
 | `poignancy` | int | 重要性 1-10 |
 | `timestamp` | float | Unix 时间 |
 | `metadata` | dict | 扩展元数据 |
@@ -197,7 +197,7 @@
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/debug/api/db-status` | 数据库状态汇总 |
-| GET | `/debug/api/ltm?search=&type=&limit=&offset=` | 查询 LTM 条目 |
+| GET | `/debug/api/ltm?search=&type=&limit=&offset=` | 查询 LTM 条目。`type` 过滤大小写不敏感（`try_coerce` 归一），无效值返回空 |
 | POST | `/debug/api/ltm` | 新增条目 `{text, memory_type, poignancy}` |
 | DELETE | `/debug/api/ltm/{entry_id}` | 删除单条 |
 | DELETE | `/debug/api/ltm` | 清空全部（drop + recreate collection） |

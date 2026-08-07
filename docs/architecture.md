@@ -603,6 +603,8 @@ class LongTermMemory:
   → LLM 提取 → ExtractedMemory Pydantic 模型 (MemoryType: Fact/Preference/Event/Plan/Note, content, poignancy) → ConsolidationCompare → CompareAction 判别联合 (insert/update/merge/skip)
   → LongTermMemory.insert(poignancy=7, memory_type="Fact")
 
+`memory_type` 输入经 `MemoryType.coerce` 归一：lowercase/大小写混 → TitleCase（`"fact"`→`"Fact"`），未知 → `"Note"`；`search()`/`/debug/api/ltm` 过滤经 `try_coerce` 大小写不敏感，无效值返回空。
+
 _history: 最近 20 条 (供 /debug 面板)
 _buffer: 未达阈值的待处理对话
 ```

@@ -154,7 +154,7 @@ core/
 ├── memory/
 │   ├── session_manager.py  # SessionManager: 会话缓存池 + 活动指针 + resolve/switch/CRUD（批次 3 多会话）
 │   ├── session.py          # SessionMemory: deque (maxlen), MongoDB persistence (30d TTL), fire-and-forget archive; 专用类型字段 character_state/service_state 经 save/load 同步
-│   ├── long_term.py        # LongTermMemory: Milvus-backed vector search + reranking; count-based _evict_overflow; async mark_absorbed with Milvus cleanup
+│   ├── long_term.py        # LongTermMemory: Milvus-backed vector search + reranking; count-based _evict_overflow; async mark_absorbed with Milvus cleanup。MemoryEntry.memory_type 用 MemoryType StrEnum，构造/update/search 边界经 try_coerce/coerce 归一（未知→Note，过滤大小写不敏感）
 │   ├── embedding_provider.py # EmbeddingProvider: 嵌入后端懒加载 + 超时 + OpenAI/HuggingFace fallback
 │   ├── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM review)
 │   └── consolidator.py     # MemoryConsolidator: buffers 6 msgs → LLM extracts + compares → insert/update/merge/skip
