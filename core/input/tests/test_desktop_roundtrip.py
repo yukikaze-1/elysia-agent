@@ -501,3 +501,35 @@ async def test_tools_call_result_camel_case(aiohttp_client):
         assert data["result"]["attachments"][0]["mimeType"] == "image/png"
     finally:
         await agent.stop()
+
+
+# ============================================================================
+# capabilities 广播版本门控（批次 8c F15）
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_broadcast_capabilities_skips_v2():
+    """broadcast_capabilities 只重播 v1 通道；v2 通道跳过（server_info 取代 capabilities）。
+
+    v1 浏览器通道（无头）恒 protocol_version=1 → 保留重播；v2 Electron 建连收
+    server_info 后不再收 capabilities（spec F15）。真实 Agent + 假 ws 通道——
+    WebSocketChannel._send_json 只调 self._ws.send_json，假 ws 可捕获。
+    """
+    from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
+    from core.input.capabilities import broadcast_capabilities
+    from Module.output import WebSocketChannel
+
+    class _FakeWS:
+        def __init__(self):
+            self.sent = []
+
+        async def send_json(self, d):
+            self.sent.append(d)
+
+    agent = _make_agent_with(_UsageLLM())
+    v1 = WebSocketChannel(_FakeWS(), protocol_version=1)
+    v2 = WebSocketChannel(_FakeWS(), protocol_version=2)
+    agent.output._channels = [v1, v2]  # noqa: SLF001
+    await broadcast_capabilities(agent)
+    assert len(v1._ws.sent) == 1   # v1 收到 capabilities
+    assert len(v2._ws.sent) == 0   # v2 跳过
