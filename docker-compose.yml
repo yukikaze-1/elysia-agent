@@ -6,15 +6,17 @@
 #
 # 端口与 .env 默认值一致，无需额外配置。
 #
-# N5095 部署实录（docs/elysia-install-issues.md）：
-# - mongo:4.4 —— MongoDB 5.0+ 强制要求 CPU 支持 AVX 指令集，4.4 是最后支持
-#   非 AVX CPU 的版本（无 AVX 的机器用 mongo:7 会 exit 132 重启循环）。
-# - etcd + MinIO —— Milvus standalone 需外部 etcd/对象存储（UseEmbed=false），
+# 版本选择：默认使用当前稳定版（MongoDB 8 / Milvus 2.6）。
+# 老硬件回退（N5095 部署实录，docs/elysia-install-issues.md）：
+# - MongoDB 5.0+ 强制要求 CPU 支持 AVX 指令集——无 AVX 的旧 CPU 用 mongo:7/8
+#   会 exit 132 重启循环，此时把 image 改为 mongo:4.4（最后支持非 AVX 的版本）。
+# - 极老 CPU 上若 Milvus 2.6 启动异常，可回退 milvusdb/milvus:v2.4.0。
+# - etcd + MinIO：Milvus standalone 需外部 etcd/对象存储（UseEmbed=false），
 #   官方标准三件套配置；仅 milvus 单容器会刷 etcd 连接失败、19530 端口不通。
 
 services:
   mongodb:
-    image: mongo:4.4
+    image: mongo:8
     container_name: elysia-mongo
     ports:
       - "27017:27017"
@@ -50,7 +52,7 @@ services:
     restart: unless-stopped
 
   milvus:
-    image: milvusdb/milvus:v2.4.0
+    image: milvusdb/milvus:v2.6.22
     container_name: elysia-milvus
     command: ["milvus", "run", "standalone"]
     environment:
