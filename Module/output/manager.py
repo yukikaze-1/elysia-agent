@@ -348,7 +348,8 @@ class OutputManager:
         Args:
             ctx: GenerationContext（含 generation_id / assistant_message_id /
                 conversation_id——批次 3 v2 conversationId 数据源；
-                model_id——批次 5 D8 模型快照，Started.model 数据源）。
+                model_id——批次 5 D8 模型快照，Started.model 数据源；
+                request_id——批次 8c F4 关联请求 ID，Started.requestId 数据源）。
             channels: 候选通道，None 用全部。
         """
         _v1, v2 = self._split_versions(channels)
@@ -356,6 +357,7 @@ class OutputManager:
             "on_generation_started",
             generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
             conversation_id=ctx.conversation_id,
+            request_id=ctx.request_id,
             model=ctx.model_id or None,
             channels=v2,
         )

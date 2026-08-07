@@ -222,6 +222,28 @@ class TestV2GenerationSequence:
             await agent.stop()
 
     @pytest.mark.asyncio
+    async def test_generation_started_echoes_request_id(self, aiohttp_client):
+        """v2 generation.started 帧 requestId 非空（回显服务端 request_id，非 clientRequestId）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        agent.session._messages.clear()  # noqa: SLF001 空会话
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            rid = f"req_{time.monotonic_ns()}"
+            frames = await _send_and_collect(
+                client, {"X-Protocol-Version": "2"}, "你好", client_request_id=rid)
+            started = next(f for f in frames if f.get("type") == "generation.started")
+            # requestId 数据源 = 服务端 next_request_id()（"001" 递增计数，agent.py:336
+            # → UserInputData.request_id → ctx.request_id），与 clientRequestId 无关。
+            assert started.get("requestId"), "generation.started 应带非空 requestId"
+            assert started["requestId"] != rid  # 不是 clientRequestId 回显
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
     async def test_v1_wire_sequence_unchanged(self, aiohttp_client):
         """v1 连接：wire 帧序列与现状一致（v1 回归防护——同 agent、v1 握手）。"""
         from core.input.server import create_app
