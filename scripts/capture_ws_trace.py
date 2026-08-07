@@ -45,8 +45,8 @@ TRACES_DIR = Path(__file__).resolve().parent.parent / "frontend-handoff-v2" / "t
 
 # 去敏正则：绝对路径 /home/... 与 /tmp/...
 _PATH_RE = re.compile(r"/(?:home|tmp)/[^\s\",}]+")
-# 环境变量值脱敏：key 名保留，值替换
-_ENV_RE = re.compile(r"([A-Z][A-Z0-9_]{2,})")
+# 环境变量值脱敏：key 名保留，可剥值（KEY=value → KEY=***）
+_ENV_RE = re.compile(r"\b([A-Z][A-Z0-9_]{2,})=(?:[^\s\"',}]+|\"[^\"]*\"|'[^']*')")
 
 CHAT_RESPONSE = (
     "<inner_voice>我觉得这个话题很有意思，想认真回应一下。</inner_voice>"
@@ -165,9 +165,9 @@ class FakeLLMToolCall(FakeLLMBackend):
 
 
 def _sanitize(line: str) -> str:
-    """逐行去敏：绝对路径 + 长环境变量值 → 占位符。"""
+    """逐行去敏：绝对路径 + 环境变量值 → 占位符。"""
     line = _PATH_RE.sub("$SANITIZED_PATH", line)
-    # 脱敏形如 KEY=longvalue 中的值（保守：只替换已知敏感模式）
+    line = _ENV_RE.sub(lambda m: f"{m.group(1)}=***", line)
     line = line.replace("test-key-placeholder", "***")
     return line
 
@@ -253,6 +253,28 @@ async def _make_agent_isolated(fake: FakeLLMBackend):
     return agent
 
 
+async def _drain_connect_frames(ws, frames: list[str], *, max_connect: int = 5
+                                ) -> tuple[list[str], bool]:
+    """排空建连帧；异常（连接被 reset/EOF）→ 返回 (frames, truncated=True) 不静默。
+
+    返回 (frames, truncated)：truncated 表示连接异常截断（非正常 timeout 结束）。
+    """
+    truncated = False
+    for _ in range(max_connect):
+        try:
+            msg = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
+        except asyncio.TimeoutError:
+            break
+        except Exception as e:
+            truncated = True
+            print(f"[capture] 连接/握手失败，轨迹可能截断: {e}", file=sys.stderr)
+            break
+        frames.append(json.dumps(msg, ensure_ascii=False))
+        if msg.get("type") == "capabilities":
+            break
+    return frames, truncated
+
+
 async def _capture(fake: FakeLLMBackend, send_then, max_frames: int = 200, timeout: float = 30.0,
                    headers: dict | None = None,
                    make_agent=None) -> list[str]:
@@ -275,15 +297,8 @@ async def _capture(fake: FakeLLMBackend, send_then, max_frames: int = 200, timeo
     await client.start_server()
     try:
         async with client.session.ws_connect(client.make_url("/ws"), headers=headers) as ws:
-            # 排空建连帧（session/capabilities/expression）
-            for _ in range(5):
-                try:
-                    msg = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
-                    frames.append(json.dumps(msg, ensure_ascii=False))
-                    if msg.get("type") == "capabilities":
-                        break
-                except (asyncio.TimeoutError, Exception):
-                    break
+            # 排空建连帧（session/capabilities/expression）；异常截断打警示不静默
+            frames, truncated = await _drain_connect_frames(ws, frames)
             await send_then(ws)
             seen_idle = False
             for _ in range(max_frames):
@@ -304,6 +319,8 @@ async def _capture(fake: FakeLLMBackend, send_then, max_frames: int = 200, timeo
                     seen_idle = True
                     break
             print(f"[capture] frames={len(frames)} idle_seen={seen_idle}")
+            if truncated:
+                print("[capture] 警告：建连阶段连接异常，轨迹可能截断", file=sys.stderr)
     finally:
         await client.close()
         await agent.stop()
