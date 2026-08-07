@@ -2,9 +2,11 @@
 """core/schema/memory.py 测试。"""
 import pytest
 from pydantic import TypeAdapter, ValidationError
+from typing import Literal, get_args, get_origin
 
 from core.schema.memory import (
     CompareAction,
+    CompareActionType,
     ExtractedMemory,
     InsertAction,
     MemoryType,
@@ -78,3 +80,25 @@ class TestCompareActionDispatch:
                                         "merged_content": "合并内容"})
         assert a.type is None
         assert a.poignancy is None
+
+
+@pytest.mark.unit
+class TestCompareActionType:
+    """判别字段引用 CompareActionType 成员（防裸字符串漂移）。"""
+
+    def test_members_match(self):
+        assert {m.value for m in CompareActionType} == {"skip", "insert", "update", "merge"}
+
+    def test_action_discriminator_references_enum_member(self):
+        """判别字段必须是 Literal[CompareActionType.X]（防裸字符串漂移）。"""
+        ann = SkipAction.model_fields["action"].annotation
+        assert get_origin(ann) is Literal
+        assert get_args(ann) == (CompareActionType.SKIP,)
+
+    def test_discriminator_rejects_bad(self):
+        ta = TypeAdapter(CompareAction)
+        try:
+            ta.validate_python({"action": "nope"})
+            raise AssertionError("should reject")
+        except Exception:
+            pass

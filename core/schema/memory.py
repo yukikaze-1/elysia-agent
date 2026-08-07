@@ -15,6 +15,14 @@ class MemoryType(StrEnum):
     NOTE = "Note"
 
 
+class CompareActionType(StrEnum):
+    """Consolidator 比对动作枚举（CompareAction 判别字段值）。"""
+    SKIP = "skip"
+    INSERT = "insert"
+    UPDATE = "update"
+    MERGE = "merge"
+
+
 class ExtractedMemory(BaseModel):
     """LLM 提取的单条记忆。ExtractMemory.j2 输出格式。
 
@@ -27,11 +35,11 @@ class ExtractedMemory(BaseModel):
 
 
 class SkipAction(BaseModel):
-    action: Literal["skip"] = "skip"
+    action: Literal[CompareActionType.SKIP] = CompareActionType.SKIP
 
 
 class InsertAction(BaseModel):
-    action: Literal["insert"] = "insert"
+    action: Literal[CompareActionType.INSERT] = CompareActionType.INSERT
     content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     type: MemoryType
     poignancy: int = Field(ge=1, le=10)
@@ -39,7 +47,7 @@ class InsertAction(BaseModel):
 
 class UpdateAction(BaseModel):
     """type/poignancy 在执行分支中从不消费，设为可选保留降级兼容。"""
-    action: Literal["update"] = "update"
+    action: Literal[CompareActionType.UPDATE] = CompareActionType.UPDATE
     target_id: str = Field(min_length=1)
     new_content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     type: MemoryType | None = None
@@ -49,7 +57,7 @@ class UpdateAction(BaseModel):
 class MergeAction(BaseModel):
     """type/poignancy 传入 update_text()（其签名接受 None 表示"不更新此字段"）。
     可选以保留 LTM 的 None-语义。"""
-    action: Literal["merge"] = "merge"
+    action: Literal[CompareActionType.MERGE] = CompareActionType.MERGE
     target_id: str = Field(min_length=1)
     merged_content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     type: MemoryType | None = None
