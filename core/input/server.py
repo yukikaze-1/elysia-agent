@@ -389,7 +389,9 @@ def create_app(
             web.Response: {"status": "shutting_down"} or 401 unauthorized.
         """
         if not _check_auth(request):
-            return web.json_response({"error": "unauthorized"}, status=401)
+            code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
+            msg = "需要认证" if code == "AUTH_REQUIRED" else "认证失败"
+            return _protocol_error_response(code, msg, 401)
         import logging
         _log = logging.getLogger(__name__)
         _log.info("Shutdown requested via HTTP")
@@ -409,7 +411,9 @@ def create_app(
             web.Response: {"status": "restarting"} or 401 unauthorized.
         """
         if not _check_auth(request):
-            return web.json_response({"error": "unauthorized"}, status=401)
+            code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
+            msg = "需要认证" if code == "AUTH_REQUIRED" else "认证失败"
+            return _protocol_error_response(code, msg, 401)
         import logging
         _log = logging.getLogger(__name__)
         _log.info("Restart requested via HTTP")
@@ -428,7 +432,9 @@ def create_app(
             web.Response: {"plugins": [...]} or 401 unauthorized.
         """
         if not _check_auth(request):
-            return web.json_response({"error": "unauthorized"}, status=401)
+            code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
+            msg = "需要认证" if code == "AUTH_REQUIRED" else "认证失败"
+            return _protocol_error_response(code, msg, 401)
         agent = request.app["agent"]
         return web.json_response({
             "plugins": agent.tool_adapter._manager.plugin_list,  # noqa: SLF001
@@ -447,7 +453,9 @@ def create_app(
             web.Response: {"ok": True, "name": ...} or error.
         """
         if not _check_auth(request):
-            return web.json_response({"error": "unauthorized"}, status=401)
+            code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
+            msg = "需要认证" if code == "AUTH_REQUIRED" else "认证失败"
+            return _protocol_error_response(code, msg, 401)
         agent = request.app["agent"]
         try:
             body = await request.json()

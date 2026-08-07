@@ -39,10 +39,13 @@ async def ltm_list_handler(request: web.Request) -> web.Response:
         limit = int(request.query.get("limit", "50"))
         offset = int(request.query.get("offset", "0"))
     except ValueError:
-        return web.json_response({"error": "无效的分页参数"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "无效的分页参数", 400)
 
     if agent.long_term is None:
-        return web.json_response({"error": "长期记忆未初始化"}, status=503)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("STORAGE_UNAVAILABLE", "长期记忆未初始化", 503,
+                                        retryable=True)
     entries = agent.long_term._entries  # noqa: SLF001
     if search:
         entries = [e for e in entries if search in e.text]
@@ -82,11 +85,13 @@ async def ltm_insert_handler(request: web.Request) -> web.Response:
         body = await request.json()
         text = body.get("text", "").strip()
         if not text:
-            return web.json_response({"error": "text 不能为空"}, status=400)
+            from core.input.server import _protocol_error_response  # 懒导入绕环
+            return _protocol_error_response("CONTRACT_VALIDATION", "text 不能为空", 400)
         mem_type = body.get("memory_type", "note")
         poignancy = int(body.get("poignancy", 5))
     except (json.JSONDecodeError, ValueError):
-        return web.json_response({"error": "无效的请求体"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "无效的请求体", 400)
 
     await agent.long_term.insert(text, memory_type=mem_type, poignancy=poignancy)
     logger.info("DEBUG API: ltm_insert type=%s, text_len=%d, poignancy=%d", mem_type, len(text), poignancy)
@@ -105,7 +110,8 @@ async def ltm_delete_single_handler(request: web.Request) -> web.Response:
     agent = request.app["agent"]
     entry_id = request.match_info.get("entry_id", "")
     if not entry_id:
-        return web.json_response({"error": "缺少 entry_id"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "缺少 entry_id", 400)
     ok = await agent.long_term.delete(entry_id)
     logger.warning("DEBUG API: ltm_delete entry_id=%s, ok=%s", entry_id, ok)
     return web.json_response(contract.DebugResult(ok=ok).wire_dict())
@@ -123,11 +129,13 @@ async def ltm_update_handler(request: web.Request) -> web.Response:
     agent = request.app["agent"]
     entry_id = request.match_info.get("entry_id", "")
     if not entry_id:
-        return web.json_response({"error": "缺少 entry_id"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "缺少 entry_id", 400)
     body = await request.json()
     new_text = (body.get("text") or "").strip()
     if not new_text:
-        return web.json_response({"error": "text 不能为空"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "text 不能为空", 400)
     ok = await agent.long_term.update_text(entry_id, new_text)
     logger.info("DEBUG API: ltm_update entry_id=%s, text_len=%d, ok=%s", entry_id, len(new_text), ok)
     return web.json_response(contract.DebugResult(ok=ok).wire_dict())

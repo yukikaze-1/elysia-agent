@@ -39,11 +39,11 @@ async def _list_character_versions(agent: "Agent", content_type: str,
         before_version: Optional upper bound version number (exclusive).
 
     Returns:
-        tuple: (CharacterVersionListResponse | None, error_str | None, http_status_code)
+        tuple: (CharacterVersionListResponse | None, error_str | None, error_code | None, http_status_code)
     """
     engine = getattr(agent, "character_engine", None)
     if not engine or not getattr(engine, "_version_repo", None):
-        return None, "版本历史不可用", 503
+        return None, "版本历史不可用", "STORAGE_UNAVAILABLE", 503
     sid = agent.session.session_id
     versions = await engine._version_repo.list_versions(  # noqa: SLF001
         sid, limit=limit, before_version=before_version,
@@ -55,7 +55,7 @@ async def _list_character_versions(agent: "Agent", content_type: str,
         total=total,
         has_more=len(versions) == limit and versions[-1]["version"] > 1,
     )
-    return result, None, 200
+    return result, None, "", 200
 
 
 async def _character_rollback(agent: "Agent", content_type: str, target_version: int):
@@ -67,16 +67,16 @@ async def _character_rollback(agent: "Agent", content_type: str, target_version:
         target_version: Version number to rollback to.
 
     Returns:
-        tuple: (RollbackResult | None, error_str | None, http_status_code)
+        tuple: (RollbackResult | None, error_str | None, error_code | None, http_status_code)
     """
     engine = getattr(agent, "character_engine", None)
     if not engine or not getattr(engine, "_version_repo", None):
-        return None, "版本历史不可用", 503
+        return None, "版本历史不可用", "STORAGE_UNAVAILABLE", 503
     sid = agent.session.session_id
     entry = await engine._version_repo.get_version(sid, target_version,  # noqa: SLF001
                                                     content_type=content_type)
     if entry is None:
-        return None, f"版本 {target_version} 不存在", 404
+        return None, f"版本 {target_version} 不存在", "NOT_FOUND", 404
 
     # 恢复文本
     if content_type == "l2":
@@ -100,7 +100,7 @@ async def _character_rollback(agent: "Agent", content_type: str, target_version:
 
     result = contract.RollbackResult(
         status="ok", new_version=new_version, text=entry["text"])
-    return result, None, 200
+    return result, None, "", 200
 
 
 async def l2_versions_handler(request: web.Request) -> web.Response:
@@ -118,11 +118,13 @@ async def l2_versions_handler(request: web.Request) -> web.Response:
         before = request.query.get("before")
         before_version = int(before) if before else None
     except ValueError:
-        return web.json_response({"error": "limit/before 必须是整数"}, status=400)
-    result, error, status = await _list_character_versions(
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "limit/before 必须是整数", 400)
+    result, error, code, status = await _list_character_versions(
         agent, "l2", limit, before_version)
     if error:
-        return web.json_response({"error": error}, status=status)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response(code, error, status)
     return web.json_response(result.wire_dict())
 
 
@@ -140,13 +142,16 @@ async def l2_rollback_handler(request: web.Request) -> web.Response:
         body = await request.json()
         target_version = int(body["version"])
     except (ValueError, KeyError, TypeError):
-        return web.json_response({"error": "缺少 version 或格式错误"}, status=400)
-    result, error, status = await _character_rollback(
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "缺少 version 或格式错误", 400)
+    result, error, code, status = await _character_rollback(
         agent, "l2", target_version)
     if error:
-        return web.json_response({"error": error}, status=status)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response(code, error, status)
     if result is None:
-        return web.json_response({"error": "内部错误"}, status=500)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("INTERNAL", "内部错误", 500)
     logger.warning("DEBUG API: l2_rollback version=%d, new_version=%s",
                   target_version, result.new_version)
     return web.json_response(result.wire_dict())
@@ -164,17 +169,20 @@ async def character_versions_handler(request: web.Request) -> web.Response:
     agent = request.app["agent"]
     content_type = request.query.get("type", "l2")
     if content_type not in ("l2", "c6"):
-        return web.json_response({"error": "type 必须为 l2 或 c6"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "type 必须为 l2 或 c6", 400)
     try:
         limit = int(request.query.get("limit", "20"))
         before = request.query.get("before")
         before_version = int(before) if before else None
     except ValueError:
-        return web.json_response({"error": "limit/before 必须是整数"}, status=400)
-    result, error, status = await _list_character_versions(
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "limit/before 必须是整数", 400)
+    result, error, code, status = await _list_character_versions(
         agent, content_type, limit, before_version)
     if error:
-        return web.json_response({"error": error}, status=status)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response(code, error, status)
     return web.json_response(result.wire_dict())
 
 
@@ -193,15 +201,19 @@ async def character_rollback_handler(request: web.Request) -> web.Response:
         content_type = body["type"]
         target_version = int(body["version"])
     except (ValueError, KeyError, TypeError):
-        return web.json_response({"error": "缺少 type/version 或格式错误"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "缺少 type/version 或格式错误", 400)
     if content_type not in ("l2", "c6"):
-        return web.json_response({"error": "type 必须为 l2 或 c6"}, status=400)
-    result, error, status = await _character_rollback(
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "type 必须为 l2 或 c6", 400)
+    result, error, code, status = await _character_rollback(
         agent, content_type, target_version)
     if error:
-        return web.json_response({"error": error}, status=status)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response(code, error, status)
     if result is None:
-        return web.json_response({"error": "内部错误"}, status=500)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("INTERNAL", "内部错误", 500)
     logger.warning("DEBUG API: character_rollback type=%s, version=%d, new_version=%s",
                   content_type, target_version, result.new_version)
     return web.json_response(result.wire_dict())

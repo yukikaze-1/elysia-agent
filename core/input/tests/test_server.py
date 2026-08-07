@@ -1198,3 +1198,40 @@ class TestAssertionFixes:
 
             await ws.close()
         await agent.stop()
+
+
+# ============================================================
+# 批次 8c F2：admin/debug 裸 error 统一 ProtocolError 信封
+# ============================================================
+
+@pytest.mark.service
+class TestAdminDebugEnvelope:
+    @pytest.mark.asyncio
+    async def test_admin_unauthorized_unified_envelope(self, aiohttp_client):
+        """无 token 调 /shutdown → 401 ProtocolError 信封（code/retryable/requestId/error 别名）。"""
+        from core.input.server import create_app
+        agent = _make_agent()  # 文件内既有 stub
+        app = create_app(agent, serve_static=False, auth_token="secret")
+        client = await aiohttp_client(app)
+        resp = await client.post("/shutdown")
+        assert resp.status == 401
+        data = await resp.json()
+        assert data["code"] == "AUTH_REQUIRED"
+        assert data["retryable"] is False
+        assert data["requestId"]
+        assert data["error"] == data["message"]  # 兼容别名
+
+    @pytest.mark.asyncio
+    async def test_debug_ltm_bad_pagination_envelope(self, aiohttp_client):
+        """debug 业务错误（非法 limit 参数）→ 信封含 code。"""
+        from core.input.server import create_app
+        agent = _make_agent()  # 文件内既有 stub
+        app = create_app(agent, serve_static=False, auth_token="secret")
+        client = await aiohttp_client(app)
+        # debug 路由受 auth_token 保护——带正确 token 才进业务 handler
+        headers = {"Authorization": "Bearer secret"}
+        resp = await client.get("/debug/api/ltm?limit=abc", headers=headers)
+        assert resp.status == 400
+        data = await resp.json()
+        assert data.get("code") == "CONTRACT_VALIDATION"
+        assert data.get("error") == data.get("message")  # 兼容别名

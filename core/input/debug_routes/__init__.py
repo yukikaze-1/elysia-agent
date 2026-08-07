@@ -30,8 +30,10 @@ def register_debug_routes(
         ) -> web.StreamResponse:
             if request.path.startswith("/debug/api") and not check_auth(request):
                 code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
+                msg = "需要认证" if code == "AUTH_REQUIRED" else "认证失败"
                 logger.warning("认证失败 code=%s path=%s", code, request.path)
-                return web.json_response({"error": "unauthorized"}, status=401)
+                from core.input.server import _protocol_error_response  # 懒导入绕环
+                return _protocol_error_response(code, msg, 401)
             return await handler(request)
         app.middlewares.append(_debug_auth_middleware)
 

@@ -61,7 +61,8 @@ async def archive_list_handler(request: web.Request) -> web.Response:
     try:
         role = MessageRole(role_str) if role_str else None
     except ValueError:
-        return web.json_response({"error": f"非法 role: {role_str}"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", f"非法 role: {role_str}", 400)
 
     try:
         messages, total = await repo.query_offset(skip=skip, limit=limit, search=search, role=role)
@@ -71,7 +72,8 @@ async def archive_list_handler(request: web.Request) -> web.Response:
             messages=contract_msgs, total=total, limit=limit, skip=skip)
         return web.json_response(data.wire_dict())
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("INTERNAL", str(e), 500)
 
 
 async def archive_delete_handler(request: web.Request) -> web.Response:
@@ -87,7 +89,8 @@ async def archive_delete_handler(request: web.Request) -> web.Response:
     repo = agent.message_repo
     msg_id = request.match_info.get("msg_id", "")
     if not msg_id:
-        return web.json_response({"error": "缺少 msg_id"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "缺少 msg_id", 400)
     # 批次 7：删除前列出消息释放附件 refs（附件软删联动）
     msg = await repo.get_by_id(msg_id)
     if msg is not None:
@@ -115,11 +118,13 @@ async def archive_update_handler(request: web.Request) -> web.Response:
     repo = agent.message_repo
     msg_id = request.match_info.get("msg_id", "")
     if not msg_id:
-        return web.json_response({"error": "缺少 msg_id"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "缺少 msg_id", 400)
     body = await request.json()
     new_text = (body.get("text") or "").strip()
     if not new_text:
-        return web.json_response({"error": "text 不能为空"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "text 不能为空", 400)
     ok = await repo.update_text(msg_id, new_text)
     logger.info("DEBUG API: archive_update msg_id=%s, text_len=%d, ok=%s", msg_id, len(new_text), ok)
     return web.json_response(contract.DebugResult(ok=ok).wire_dict())
@@ -186,8 +191,9 @@ async def sessions_list_handler(request: web.Request) -> web.Response:
         )
         return web.json_response(data.wire_dict())
     except Exception as e:
-        return web.json_response(
-            {"error": f"查询失败: {e}"}, status=500)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response(
+            "INTERNAL", f"查询失败: {e}", 500)
 
 
 async def session_detail_handler(request: web.Request) -> web.Response:
@@ -202,7 +208,8 @@ async def session_detail_handler(request: web.Request) -> web.Response:
     agent = request.app["agent"]
     sid = request.match_info.get("session_id", "")
     if not sid:
-        return web.json_response({"error": "缺少 session_id"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "缺少 session_id", 400)
 
     # 辅助函数：从 session repo 取 character_state（目标 session，非当前 session）
     async def _get_character_state(sid: SessionId) -> dict:
@@ -237,7 +244,8 @@ async def session_detail_handler(request: web.Request) -> web.Response:
                 session_id=sid, messages=messages,
                 params=agent.session.character_state.model_dump(mode="json"))
             return web.json_response(data.wire_dict())
-        return web.json_response({"error": "会话不存在"}, status=404)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("SESSION_NOT_FOUND", "会话不存在", 404)
     raw_msgs, character_state, _, _ = result
     formatted = sessions_to_client(raw_msgs)
     messages = [contract.SessionDetailMessage.model_validate(m) for m in formatted]
@@ -259,10 +267,12 @@ async def session_delete_handler(request: web.Request) -> web.Response:
     agent = request.app["agent"]
     sid = request.match_info.get("session_id", "")
     if not sid:
-        return web.json_response({"error": "缺少 session_id"}, status=400)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("CONTRACT_VALIDATION", "缺少 session_id", 400)
     if not await agent.session_repo.health_check():
-        return web.json_response(
-            {"error": "MongoDB 不可用"}, status=503)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response(
+            "STORAGE_UNAVAILABLE", "MongoDB 不可用", 503, retryable=True)
     try:
         # 批次 7：删除前释放该会话归档消息的附件 refs（附件软删联动）
         try:
@@ -276,8 +286,9 @@ async def session_delete_handler(request: web.Request) -> web.Response:
             agent.session.clear()
         return web.json_response(contract.DebugResult(ok=True, deleted=deleted).wire_dict())
     except Exception as e:
-        return web.json_response(
-            {"error": f"删除失败: {e}"}, status=500)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response(
+            "INTERNAL", f"删除失败: {e}", 500)
 
 
 async def sessions_clear_handler(request: web.Request) -> web.Response:
@@ -291,8 +302,9 @@ async def sessions_clear_handler(request: web.Request) -> web.Response:
     """
     agent = request.app["agent"]
     if not await agent.session_repo.health_check():
-        return web.json_response(
-            {"error": "MongoDB 不可用"}, status=503)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response(
+            "STORAGE_UNAVAILABLE", "MongoDB 不可用", 503, retryable=True)
     try:
         # 批次 7：清空前释放全部归档消息的附件 refs（附件软删联动）
         try:
@@ -304,5 +316,6 @@ async def sessions_clear_handler(request: web.Request) -> web.Response:
         agent.session.clear()
         return web.json_response(contract.DebugResult(ok=True, deleted=deleted).wire_dict())
     except Exception as e:
-        return web.json_response(
-            {"error": f"清空失败: {e}"}, status=500)
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response(
+            "INTERNAL", f"清空失败: {e}", 500)
