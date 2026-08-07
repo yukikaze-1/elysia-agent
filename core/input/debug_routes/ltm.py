@@ -9,6 +9,7 @@ import logging
 
 from aiohttp import web
 
+from core.schema.memory import MemoryType
 from frontend_contract import debug as contract
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,8 @@ async def ltm_list_handler(request: web.Request) -> web.Response:
     if search:
         entries = [e for e in entries if search in e.text]
     if mem_type:
-        entries = [e for e in entries if e.memory_type == mem_type]
+        mt = MemoryType.try_coerce(mem_type)
+        entries = [e for e in entries if mt is not None and e.memory_type == mt]
 
     total = len(entries)
     page = entries[offset:offset + limit]
