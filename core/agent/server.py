@@ -349,7 +349,8 @@ class AgentServer:
         Returns:
             唤醒词字符串列表。
         """
-        return getattr(self._character, 'wake_words', [])
+        # _character 由 Agent.__init__ 恒加载（CharacterConfig），wake_words 字段恒存在
+        return self._character.wake_words
 
     async def run_server(self) -> None:
         """以 WebSocket 服务模式运行 agent。阻塞直至 Ctrl+C 或关闭。

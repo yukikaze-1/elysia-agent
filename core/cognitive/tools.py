@@ -262,12 +262,13 @@ class CognitiveTools:
         )
 
         if prep_result.status.value == "no_matching_tools":
-            missing = getattr(prep_result, 'missing_tools', [])
+            # Pydantic 字段恒存在，直接访问；`or []` 兜底 LLM 返回 null 的边界
+            missing = prep_result.missing_tools or []
             missing_str = ", ".join(missing) if missing else "未知"
             return ToolResult.fail(name="submit_task",
                 error=f"缺少能力: {missing_str}。请直接告知用户当前不支持此功能，不要重复尝试。")
         if prep_result.status.value == "too_vague":
-            suggestion = getattr(prep_result, 'suggestion', '') or '能再具体一点吗？'
+            suggestion = prep_result.suggestion or '能再具体一点吗？'
             return ToolResult.fail(name="submit_task",
                 error=f"意图不够明确: {suggestion}。请向用户澄清，不要重复尝试。")
 

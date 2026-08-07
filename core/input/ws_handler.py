@@ -396,7 +396,7 @@ async def _send_voice_error(ws: "web.WebSocketResponse",
         await ws.send_json(ErrorMessage(
             message=error.message, code=error.code,
             requestId=_current_request_id(),
-            retryable=getattr(error, "retryable", None),
+            retryable=error.retryable,
         ).wire_dict())
     except Exception:
         logger.debug("发送 voice error 失败", exc_info=True)

@@ -480,7 +480,9 @@ def register_api_routes(app: web.Application) -> None:
             voices = []
         source = "api" if getattr(backend, "provider_name", "") == "minimax" else "static"
         character = getattr(getattr(agent, "character", None), "name", "") or ""
-        current = getattr(agent.session.service_state, "tts_voice", None) \
+        # 防御：双跳守卫（与 tts_preview_handler 同款）——session 可能为 None（测试 Mock 会话）
+        svc_state = getattr(getattr(agent, "session", None), "service_state", None)
+        current = (getattr(svc_state, "tts_voice", None) if svc_state is not None else None) \
             or _backend_default_voice(backend, character)
         # F10：current 缺失时追加到列表，保证 current 恒 ∈ voices[]（角色默认音色等不在 list_voices 中）
         if current and not any(v.get("id") == current for v in voices):
@@ -552,10 +554,10 @@ def register_api_routes(app: web.Application) -> None:
         import os as _os
 
         agent = request.app["agent"]
-        cfg = getattr(agent.config, "server", None)
-        mb = getattr(cfg, "image_max_mb", None)
+        cfg = agent.config.server
+        mb = cfg.image_max_mb
         max_bytes = (mb if mb is not None and mb > 0 else 10) * 1024 * 1024
-        allowed = getattr(cfg, "image_allowed_types", None) or ["image/png", "image/jpeg", "image/gif", "image/webp"]
+        allowed = cfg.image_allowed_types or ["image/png", "image/jpeg", "image/gif", "image/webp"]
 
         try:
             reader = await request.multipart()
@@ -631,15 +633,15 @@ def register_api_routes(app: web.Application) -> None:
         from core.utils.message_id import _new_id
 
         agent = request.app["agent"]
-        cfg = getattr(agent.config, "server", None)
-        sig_secret = getattr(cfg, "attachment_sig_secret", "") or ""
-        access_token_cfg = getattr(cfg, "access_token", "") or ""
+        cfg = agent.config.server
+        sig_secret = cfg.attachment_sig_secret or ""
+        access_token_cfg = cfg.access_token or ""
         repo = agent.attachment_repo
         # 聚合上限（spec §4.1 Critical #4 强制）：chunked（无 Content-Length）时中间件
         # Content-Length 预检失效 → handler 内累计字节强制整体 ≤ cms。取 agent 配置同源
         # （create_app 的 client_max_size 也是它，缺省 64MB）。is not None 语义：0 → 0
         # 不限（与 server cms 同步），None/缺省 → 64MB（falsy 回落会误吞 0）。
-        cms = getattr(cfg, "max_request_bytes", None)
+        cms = cfg.max_request_bytes
         if cms is None:
             cms = 64 * 1024 * 1024
 
@@ -1021,10 +1023,10 @@ def register_api_routes(app: web.Application) -> None:
             return _tool_error("INVALID_REQUEST", "调用已结束，拒绝接收附件", 403)
 
         # 类型/尺寸约束（对齐 image_upload_handler）
-        cfg = getattr(agent.config, "server", None)
-        mb = getattr(cfg, "image_max_mb", None)
+        cfg = agent.config.server
+        mb = cfg.image_max_mb
         max_bytes = (mb if mb is not None and mb > 0 else 10) * 1024 * 1024
-        allowed = list(getattr(cfg, "image_allowed_types", None)
+        allowed = list(cfg.image_allowed_types
                        or ["image/png", "image/jpeg", "image/gif", "image/webp"])
         allowed.append("application/octet-stream")
 

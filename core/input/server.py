@@ -207,10 +207,13 @@ async def _collect_health_payload(agent: "Agent") -> dict:
         "fsm": fsm_state,
         "llm": getattr(agent.llm, "model", "unknown"),
         "memory": {
-            "session_count": len(getattr(agent.session, "_messages", [])),
-            "long_term_count": getattr(agent.long_term, "count", 0),
+            # 走公开接口 session.messages，不摸私有 _messages（改名时 getattr 会静默降级）
+            "session_count": len(agent.session.messages),
+            "long_term_count": agent.long_term.count,
         },
-        "tools": getattr(agent.tool_adapter._manager, "tool_names", ["<loading>"]),  # noqa: SLF001
+        # 双跳守卫：startup 早期 _manager 可能未就绪，getattr 兜底 "<loading>"
+        "tools": getattr(getattr(agent.tool_adapter, "_manager", None),  # noqa: SLF001
+                          "tool_names", ["<loading>"]),
         "version": build_server_version(),
         "build_sha": get_build_sha(),
         "uptime": round(time.monotonic() - _PROCESS_START, 1),

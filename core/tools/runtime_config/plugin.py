@@ -73,31 +73,32 @@ class RuntimeConfigPlugin(ToolPlugin):
         if config is None:
             return ""
         lines = []
-        llm_cfg = getattr(config, "llm", None)
-        tts_cfg = getattr(config, "tts", None)
-        stt_cfg = getattr(config, "stt", None)
-        server_cfg = getattr(config, "server", None)
+        # config 恒为 AppConfig（上句已排除 None），字段恒存在——直接访问暴露改名 bug
+        llm_cfg = config.llm
+        tts_cfg = config.tts
+        stt_cfg = config.stt
+        server_cfg = config.server
 
         if llm_cfg:
-            lines.append(f"模型: {getattr(llm_cfg, 'model', 'unknown')}")
+            lines.append(f"模型: {llm_cfg.model}")
         if tts_cfg or stt_cfg:
             parts = []
             if tts_cfg:
-                tts_model = getattr(tts_cfg, 'model', '')
+                tts_model = tts_cfg.model
                 parts.append(
-                    f"TTS: {'启用' if getattr(tts_cfg, 'enabled', False) else '禁用'}"
+                    f"TTS: {'启用' if tts_cfg.enabled else '禁用'}"
                     + (f" ({tts_model})" if tts_model else "")
                 )
             if stt_cfg:
-                stt_model = getattr(stt_cfg, 'model', '')
+                stt_model = stt_cfg.model
                 parts.append(
-                    f"STT: {'启用' if getattr(stt_cfg, 'enabled', False) else '禁用'}"
+                    f"STT: {'启用' if stt_cfg.enabled else '禁用'}"
                     + (f" ({stt_model})" if stt_model else "")
                 )
             lines.append("  |  ".join(parts))
         if server_cfg:
             lines.append(
-                f"服务地址: {getattr(server_cfg, 'host', '?')}:{getattr(server_cfg, 'port', '?')}"
+                f"服务地址: {server_cfg.host}:{server_cfg.port}"
             )
         return "\n".join(lines)
 
@@ -320,10 +321,10 @@ class RuntimeConfigPlugin(ToolPlugin):
         if tracker is None:
             return ""
         try:
-            total = getattr(tracker, 'session_total', 0)
+            total = tracker.session_total
             if total == 0:
                 return ""
-            per_model = getattr(tracker, 'per_model', {})
+            per_model = tracker.per_model
             parts = [f"合计 {total / 1000:.1f}K"]
             if per_model:
                 model_parts = [f"{m}: {t / 1000:.1f}K" for m, t in per_model.items()]
