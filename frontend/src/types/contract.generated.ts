@@ -298,7 +298,7 @@ export interface UserAckMessage {
   /** 接收时间（UTC ISO） */
   receivedAt: string
   /** accepted 进入生成；rejected 带 error */
-  status: 'accepted' | 'rejected'
+  status: AckStatus
   /** rejected 时的 {code,message,retryable}，可缺省 */
   error?: Record<string, unknown>
 }
@@ -328,9 +328,9 @@ export interface GenerationSegmentStartedMessage {
   /** 全局分段序号（跨 inner_voice/public_reply 单调递增） */
   segmentIndex: number
   /** 分段通道 */
-  channel: 'inner_voice' | 'public_reply' | 'status'
+  channel: MessageChannel
   /** 分段类型（P0 仅 text/markdown） */
-  kind: 'text' | 'markdown' | 'image' | 'video' | 'audio' | 'file' | 'sticker' | 'link'
+  kind: SegmentKind
   /** 会话 ID，可缺省 */
   conversationId?: string
 }
@@ -362,9 +362,9 @@ export interface GenerationSegmentCompletedMessage {
   /** 全局分段序号 */
   segmentIndex: number
   /** 分段通道 */
-  channel: 'inner_voice' | 'public_reply' | 'status'
+  channel: MessageChannel
   /** 分段类型 */
-  kind: 'text' | 'markdown' | 'image' | 'video' | 'audio' | 'file' | 'sticker' | 'link'
+  kind: SegmentKind
   /** 完整段文本（客户端无需拼 delta 渲染），可缺省 */
   content?: string
   /** 会话 ID，可缺省 */
@@ -381,7 +381,7 @@ export interface GenerationCompletedMessage {
   /** 父回复通道 */
   channel: 'public_reply'
   /** 完成原因（限 stop/tool_calls） */
-  finishReason: 'stop' | 'tool_calls'
+  finishReason: FinishReason
   /** 回合 token 统计（turn_total=0/rounds=[] 表示无调用记录） */
   usage: TokenUsage
   /** 实际模型 */
@@ -481,7 +481,7 @@ export interface AudioEndMessage {
   /** 音频流 ID */
   stream_id: number
   /** 音频格式，可缺省 */
-  format?: 'wav' | 'mp3'
+  format?: AudioFormat
 }
 
 /** 输入状态变更。 */
@@ -542,7 +542,7 @@ export interface SwitchModelResultMessage {
 export interface ServiceModeResultMessage {
   type: 'service_mode_result'
   /** 服务名 */
-  service: 'stt' | 'tts' | 'llm'
+  service: ServiceName
   /** 有效模式（永远随消息出现） */
   enabled: boolean
   /** 操作是否成功 */
@@ -646,7 +646,7 @@ export interface VoiceSessionEndedMessage {
   /** 会话 ID */
   sessionId: string
   /** 结束原因 */
-  reason: 'stopped' | 'cancelled' | 'timeout' | 'stt_disabled'
+  reason: VoiceEndReason
 }
 
 /** 输入法转写中间字幕（仅显示）。 */
@@ -678,7 +678,7 @@ export interface AudioStartMessage {
   /** playback ID */
   stream_id: number
   /** 音频格式 */
-  format: 'wav' | 'mp3'
+  format: AudioFormat
   /** 采样率（WAV header），可缺省 */
   sampleRate?: number
   /** 时长毫秒（WAV 计算），可缺省 */
@@ -740,7 +740,7 @@ export interface SwitchModelMessage {
 /** 客户端请求设置服务开关（stt/tts 后端模式）。 */
 export interface SetServiceMessage {
   type: 'set_service'
-  /** 服务名 */
+  /** 服务名（仅 stt/tts，不含 llm） */
   service: 'stt' | 'tts'
   /** 是否启用 */
   enabled: boolean
@@ -2143,6 +2143,14 @@ export interface TaskData {
   edges: string[][]
 }
 
+export type AckStatus =
+  | 'accepted'
+  | 'rejected'
+
+export type AudioFormat =
+  | 'wav'
+  | 'mp3'
+
 export type FinishReason =
   | 'stop'
   | 'tool_calls'
@@ -2153,6 +2161,11 @@ export type GenerationStatusEnum =
   | 'failed'
   | 'cancelled'
   | 'interrupted'
+
+export type MessageChannel =
+  | 'inner_voice'
+  | 'public_reply'
+  | 'status'
 
 export type RepoCallStatus =
   | 'pending'
@@ -2170,6 +2183,21 @@ export type Role =
   | 'assistant'
   | 'tool'
 
+export type SegmentKind =
+  | 'text'
+  | 'markdown'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'file'
+  | 'sticker'
+  | 'link'
+
+export type ServiceName =
+  | 'stt'
+  | 'tts'
+  | 'llm'
+
 export type ToolStatusEnum =
   | 'accepted'
   | 'rejected'
@@ -2177,6 +2205,12 @@ export type ToolStatusEnum =
   | 'result'
   | 'error'
   | 'cancelled'
+
+export type VoiceEndReason =
+  | 'stopped'
+  | 'cancelled'
+  | 'timeout'
+  | 'stt_disabled'
 
 export type ServerMessage =
   | SessionMessage

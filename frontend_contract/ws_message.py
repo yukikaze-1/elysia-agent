@@ -7,13 +7,67 @@
   - 其余 Optional 字段（stream_id/error?/format? 等）默认 X?（缺省省略）
 判别联合别名 `ServerMessage` 模块级可访问（__main__ 经 get_args 收集成员）。
 """
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import Field
 
 from frontend_contract.base import ContractModel, TsNull
-from frontend_contract.rest import ConversationUsage
+from frontend_contract.rest import ConversationUsage, FinishReason
+
+# ────────────────────── 非判别受限字段枚举（plan Task 6，StrEnum） ──────────────────────
+
+
+class MessageChannel(StrEnum):
+    """分段通道（generation.segment.* 与父回复 channel；语义见 batch2 spec §3.2）。"""
+
+    INNER_VOICE = "inner_voice"
+    PUBLIC_REPLY = "public_reply"
+    STATUS = "status"
+
+
+class SegmentKind(StrEnum):
+    """分段类型（P0 仅 text/markdown 实现，其余预留）。"""
+
+    TEXT = "text"
+    MARKDOWN = "markdown"
+    IMAGE = "image"
+    VIDEO = "video"
+    AUDIO = "audio"
+    FILE = "file"
+    STICKER = "sticker"
+    LINK = "link"
+
+
+class AudioFormat(StrEnum):
+    """音频流格式（audio_end/audio_start 帧）。"""
+
+    WAV = "wav"
+    MP3 = "mp3"
+
+
+class ServiceName(StrEnum):
+    """服务名（service_mode_result / set_service 帧）。"""
+
+    STT = "stt"
+    TTS = "tts"
+    LLM = "llm"
+
+
+class VoiceEndReason(StrEnum):
+    """实时语音会话结束原因（voice_session.ended）。"""
+
+    STOPPED = "stopped"
+    CANCELLED = "cancelled"
+    TIMEOUT = "timeout"
+    STT_DISABLED = "stt_disabled"
+
+
+class AckStatus(StrEnum):
+    """用户消息确认状态（user_message.ack）。"""
+
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
 
 # ───────────────────────────── 支持类型 ─────────────────────────────
 
@@ -259,7 +313,7 @@ class UserAckMessage(ContractModel):
     clientMessageId: Optional[str] = Field(default=None, description="客户端本地消息 ID，可缺省")
     conversationId: Optional[str] = Field(default=None, description="会话 ID，批次 2 恒 null，可缺省")
     receivedAt: str = Field(description="接收时间（UTC ISO）")
-    status: Literal["accepted", "rejected"] = Field(description="accepted 进入生成；rejected 带 error")
+    status: AckStatus = Field(description="accepted 进入生成；rejected 带 error")
     error: Optional[dict[str, Any]] = Field(default=None, description="rejected 时的 {code,message,retryable}，可缺省")
 
 
@@ -281,8 +335,8 @@ class GenerationSegmentStartedMessage(ContractModel):
     generationId: str = Field(description="生成实例 ID")
     segmentId: str = Field(description="分段 ID（seg_ 前缀）")
     segmentIndex: int = Field(description="全局分段序号（跨 inner_voice/public_reply 单调递增）")
-    channel: Literal["inner_voice", "public_reply", "status"] = Field(description="分段通道")
-    kind: Literal["text", "markdown", "image", "video", "audio", "file", "sticker", "link"] = Field(description="分段类型（P0 仅 text/markdown）")
+    channel: MessageChannel = Field(description="分段通道")
+    kind: SegmentKind = Field(description="分段类型（P0 仅 text/markdown）")
     conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
 
 
@@ -305,8 +359,8 @@ class GenerationSegmentCompletedMessage(ContractModel):
     generationId: str = Field(description="生成实例 ID")
     segmentId: str = Field(description="分段 ID")
     segmentIndex: int = Field(description="全局分段序号")
-    channel: Literal["inner_voice", "public_reply", "status"] = Field(description="分段通道")
-    kind: Literal["text", "markdown", "image", "video", "audio", "file", "sticker", "link"] = Field(description="分段类型")
+    channel: MessageChannel = Field(description="分段通道")
+    kind: SegmentKind = Field(description="分段类型")
     content: Optional[str] = Field(default=None, description="完整段文本（客户端无需拼 delta 渲染），可缺省")
     conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
 
@@ -317,8 +371,9 @@ class GenerationCompletedMessage(ContractModel):
     type: Literal["generation.completed"] = "generation.completed"
     generationId: str = Field(description="生成实例 ID")
     messageId: str = Field(description="assistant 父消息 ID")
-    channel: Literal["public_reply"] = Field(default="public_reply", description="父回复通道")
-    finishReason: Literal["stop", "tool_calls"] = Field(description="完成原因（限 stop/tool_calls）")
+    channel: Literal[MessageChannel.PUBLIC_REPLY] = Field(
+        default=MessageChannel.PUBLIC_REPLY, description="父回复通道")
+    finishReason: FinishReason = Field(description="完成原因（限 stop/tool_calls）")
     usage: TokenUsage = Field(description="回合 token 统计（turn_total=0/rounds=[] 表示无调用记录）")
     model: str = Field(description="实际模型")
     mood: Optional[str] = Field(default=None, description="心情（<mood> 标签落位），可缺省")
@@ -397,7 +452,7 @@ class AudioEndMessage(ContractModel):
 
     type: Literal["audio_end"] = "audio_end"
     stream_id: int = Field(description="音频流 ID")
-    format: Optional[Literal["wav", "mp3"]] = Field(default="wav", description="音频格式，可缺省")
+    format: Optional[AudioFormat] = Field(default=AudioFormat.WAV, description="音频格式，可缺省")
 
 
 class TypingMessage(ContractModel):
@@ -452,7 +507,7 @@ class ServiceModeResultMessage(ContractModel):
     """服务模式开关结果。error 恒存在（成功为 null → 用 ts_null）。"""
 
     type: Literal["service_mode_result"] = "service_mode_result"
-    service: Literal["stt", "tts", "llm"] = Field(description="服务名")
+    service: ServiceName = Field(description="服务名")
     enabled: bool = Field(description="有效模式（永远随消息出现）")
     ok: bool = Field(description="操作是否成功")
     error: Annotated[Optional[str], TsNull()] = Field(default=None, description="错误，无则 null")
@@ -536,7 +591,7 @@ class VoiceSessionEndedMessage(ContractModel):
     """实时语音会话结束。"""
     type: Literal["voice_session.ended"] = "voice_session.ended"
     sessionId: str = Field(description="会话 ID")
-    reason: Literal["stopped", "cancelled", "timeout", "stt_disabled"] = Field(description="结束原因")
+    reason: VoiceEndReason = Field(description="结束原因")
 
 
 class DictationPartialMessage(ContractModel):
@@ -564,7 +619,7 @@ class AudioStartMessage(ContractModel):
     """音频流开始（stream_id = playback ID）。"""
     type: Literal["audio_start"] = "audio_start"
     stream_id: int = Field(description="playback ID")
-    format: Literal["wav", "mp3"] = Field(default="wav", description="音频格式")
+    format: AudioFormat = Field(default=AudioFormat.WAV, description="音频格式")
     sampleRate: Optional[int] = Field(default=None, description="采样率（WAV header），可缺省")
     durationMs: Optional[int] = Field(default=None, description="时长毫秒（WAV 计算），可缺省")
 
@@ -625,7 +680,7 @@ class SetServiceMessage(ContractModel):
     """客户端请求设置服务开关（stt/tts 后端模式）。"""
 
     type: Literal["set_service"] = "set_service"
-    service: Literal["stt", "tts"] = Field(description="服务名")
+    service: Literal[ServiceName.STT, ServiceName.TTS] = Field(description="服务名（仅 stt/tts，不含 llm）")
     enabled: bool = Field(description="是否启用")
 
 

@@ -7,6 +7,7 @@ import pytest
 
 from frontend_contract import ws_message as w
 from frontend_contract.base import field_is_ts_null
+from frontend_contract.gen_ts import generate_ts
 from frontend_contract.rest import ConversationUsage
 
 
@@ -299,3 +300,28 @@ def test_token_stats_wire_camel_by_model():
     d = w.TokenStats(total=1, byModel={"m": 1}).wire_dict()
     assert d["byModel"] == {"m": 1}
     assert "by_model" not in d
+
+
+# ── Literal → StrEnum 统一（plan Task 6） ─────────────────────────────────
+
+
+@pytest.mark.unit
+class TestWsEnums:
+    """ws_message 非判别字段 Literal → StrEnum：枚举成员值 + 字段引用 + gen_ts 发射命名别名。"""
+
+    def test_new_enums_defined(self):
+        assert w.MessageChannel.INNER_VOICE == "inner_voice"
+        assert w.SegmentKind.MARKDOWN == "markdown"
+        assert w.AudioFormat.WAV == "wav"
+        assert w.ServiceName.STT == "stt"
+        assert w.VoiceEndReason.TIMEOUT == "timeout"
+
+    def test_user_ack_status_annotation_is_enum(self):
+        """UserAckMessage.status 必须是 AckStatus 类型（防回落 Literal）。"""
+        assert w.UserAckMessage.model_fields["status"].annotation is w.AckStatus
+
+    def test_gen_ts_emits_named_aliases(self):
+        out = generate_ts([w.GenerationSegmentStartedMessage, w.GenerationCompletedMessage])
+        assert "export type MessageChannel =" in out
+        assert "export type SegmentKind =" in out
+        assert "'inner_voice'" in out
