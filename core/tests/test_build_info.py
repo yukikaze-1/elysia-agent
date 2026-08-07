@@ -48,7 +48,10 @@ class TestGetBuildSha:
 
         monkeypatch.setattr(subprocess, "run", _fake_run)
         # 重置模块级缓存，保证本测试独立于其它测试先跑 git
+        # （批次 8c F17：缓存分 _build_sha/_build_sha_tried 两态，需一并重置——
+        # 否则前序测试已置 tried=True，git 不重跑、calls==0 断言失败）
         monkeypatch.setattr(version_mod, "_build_sha", None)
+        monkeypatch.setattr(version_mod, "_build_sha_tried", False)
 
         a = get_build_sha()
         b = get_build_sha()
