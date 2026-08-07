@@ -702,8 +702,8 @@ class TestLongTermMemoryEdgeCases:
 
         assert mem.count == 1
         entry = mem._entries[0]
-        assert entry.memory_type == "plan", (
-            f"Expected memory_type='plan', got {entry.memory_type!r}"
+        assert entry.memory_type == "Plan", (
+            f"Expected memory_type='Plan', got {entry.memory_type!r}"
         )
         # 'type' should NOT end up in metadata
         assert "type" not in entry.metadata
@@ -719,11 +719,11 @@ class TestLongTermMemoryEdgeCases:
 
         plans = await mem.search(query_text="工作", memory_type="plan", top_k=10)
         assert len(plans) >= 2
-        assert all(e.memory_type == "plan" for e in plans)
+        assert all(e.memory_type == "Plan" for e in plans)
 
         prefs = await mem.search(query_text="蓝色", memory_type="preference", top_k=10)
         assert len(prefs) >= 1
-        assert all(e.memory_type == "preference" for e in prefs)
+        assert all(e.memory_type == "Preference" for e in prefs)
 
     @pytest.mark.asyncio
     async def test_search_returns_entries_with_ids(self):

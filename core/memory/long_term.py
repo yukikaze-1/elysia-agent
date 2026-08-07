@@ -9,9 +9,10 @@ import logging
 import math
 import time as _time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from core.memory.embedding_provider import EmbeddingProvider
+from core.schema.memory import MemoryType
 
 if TYPE_CHECKING:
     from core.storage.memory_repo import MemoryRepository
@@ -24,11 +25,15 @@ class MemoryEntry:
     id: str = ""                    # 唯一标识（insert 时自动生成）
     text: str = ""
     embedding: list[float] = field(default_factory=list, repr=False)
-    memory_type: str = "Note"      # Fact / Preference / Event / Plan / Note
+    memory_type: MemoryType = MemoryType.NOTE   # Fact/Preference/Event/Plan/Note（构造时 coerce 归一）
     poignancy: int = 5             # 重要性 1-10
     timestamp: float = 0.0         # Unix 时间戳
     metadata: dict = field(default_factory=dict)
     _milvus_pk: int | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """构造时归一化 memory_type（dataclass 无自动校验，直接赋值会绕过）。"""
+        self.memory_type = MemoryType.coerce(self.memory_type)
 
     @property
     def dimension(self) -> int:
@@ -161,7 +166,7 @@ class LongTermMemory:
             # 在副本上操作，避免修改调用方传入的 dict
             meta: dict[str, Any] = dict(metadata)
             # 接受 'type' 作为 'memory_type' 的别名
-            memory_type: str = cast(str, meta.pop("memory_type", meta.pop("type", "Note")))
+            memory_type = meta.pop("memory_type", meta.pop("type", "Note"))
             entry = MemoryEntry(
                 id=new_message_id(),
                 text=text,
@@ -179,7 +184,7 @@ class LongTermMemory:
                         metadata=[{
                             "entry_id": entry.id,
                             "text": text,
-                            "memory_type": entry.memory_type,
+                            "memory_type": entry.memory_type.value,
                             "poignancy": entry.poignancy,
                             "timestamp": entry.timestamp,
                             **meta,
@@ -300,7 +305,7 @@ class LongTermMemory:
                     metadata=[{
                         "entry_id": entry.id,
                         "text": entry.text,
-                        "memory_type": entry.memory_type,
+                        "memory_type": entry.memory_type.value,
                         "poignancy": entry.poignancy,
                         "timestamp": entry.timestamp,
                         **entry.metadata,
@@ -341,7 +346,7 @@ class LongTermMemory:
                     if poignancy is not None:
                         e.poignancy = poignancy
                     if memory_type is not None:
-                        e.memory_type = memory_type
+                        e.memory_type = MemoryType.coerce(memory_type)
                     e.timestamp = _time.time()
                     if self._repo is not None and e._milvus_pk is not None:
                         old_pk = e._milvus_pk
@@ -357,7 +362,7 @@ class LongTermMemory:
                                     metadata=[{
                                         "entry_id": e.id,
                                         "text": new_text,
-                                        "memory_type": e.memory_type,
+                                        "memory_type": e.memory_type.value,
                                         "poignancy": e.poignancy,
                                         "timestamp": e.timestamp,
                                     }],
@@ -544,10 +549,10 @@ class LongTermMemory:
             score = 0.5 * sim + 0.3 * poi + 0.2 * rec
             scored.append((score, entry))
 
-        # 按 memory_type 过滤（如指定）
-        # 注意：精确匹配，调用方需传 TitleCase（如 "Fact"）
+        # 按 memory_type 过滤（如指定）——try_coerce 大小写不敏感，未知值不命中
         if memory_type:
-            scored = [(s, e) for s, e in scored if e.memory_type == memory_type]
+            mt = MemoryType.try_coerce(memory_type)
+            scored = [(s, e) for s, e in scored if mt is not None and e.memory_type == mt]
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [e for _, e in scored[:top_k]]

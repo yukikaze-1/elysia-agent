@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from core.memory.long_term import LongTermMemory, MemoryEntry
+from core.schema.memory import MemoryType
 
 
 @pytest.mark.service
@@ -265,3 +266,35 @@ class TestLongTermMemoryClearAll:
 
         assert deleted == 2
         assert len(ltm._entries) == 0
+
+
+@pytest.mark.unit
+class TestMemoryTypeNormalization:
+    """MemoryEntry 构造归一化 + search 过滤 lowercase。"""
+
+    def test_constructor_normalizes_lowercase(self):
+        from core.memory.long_term import MemoryEntry
+        e = MemoryEntry(id="x", text="t", memory_type="fact")
+        assert e.memory_type is MemoryType.FACT
+
+    def test_constructor_unknown_falls_back_note(self):
+        from core.memory.long_term import MemoryEntry
+        e = MemoryEntry(id="x", text="t", memory_type="bogus")
+        assert e.memory_type is MemoryType.NOTE
+
+    @pytest.mark.asyncio
+    async def test_search_filter_case_insensitive(self):
+        from core.memory.long_term import LongTermMemory
+        mem = LongTermMemory()
+        await mem.insert("工作计划A", memory_type="plan")
+        hits = await mem.search(query_text="工作", memory_type="PLAN", top_k=10)
+        assert len(hits) == 1
+        assert hits[0].memory_type is MemoryType.PLAN
+
+    @pytest.mark.asyncio
+    async def test_search_filter_unknown_returns_empty(self):
+        from core.memory.long_term import LongTermMemory
+        mem = LongTermMemory()
+        await mem.insert("工作计划A", memory_type="plan")
+        hits = await mem.search(query_text="工作", memory_type="bogus", top_k=10)
+        assert hits == []
