@@ -519,6 +519,19 @@ class WorkflowResult(BaseModel):
 
 # ── 经验记忆 ────────────────────────────────────────────────────────────────────
 
+class ExperienceStatus(StrEnum):
+    """经验记忆的验证状态——ExperienceRecord.status 枚举化（原 Literal 枚举化）。
+
+    值与原 Literal 对齐：
+        UNVERIFIED  — 未经人工/自动验证的经验
+        VERIFIED    — 已验证有效的经验
+        DEPRECATED  — 已失效/被取代的经验
+    """
+    UNVERIFIED = "unverified"
+    VERIFIED = "verified"
+    DEPRECATED = "deprecated"
+
+
 class ExperienceRecord(BaseModel):
     """单条任务经验记忆。
 
@@ -537,6 +550,6 @@ class ExperienceRecord(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     verified_count: int = 0
     success_after_apply: float = 0.0
-    status: Literal["unverified", "verified", "deprecated"] = "unverified"
+    status: ExperienceStatus = ExperienceStatus.UNVERIFIED
     occurrences: int = 0
     last_seen: str = ""                  # ISO 8601
