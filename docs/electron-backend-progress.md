@@ -378,9 +378,9 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 
 | 决策 | 内容 | 实现 commit |
 |------|------|------------|
-| D1 | 移除 HeartbeatAckMessage 死契约面 + 修 on_action/on_token_usage 模型化绕过（ActionMessage.params 可选，前端 handleAction 可选链） | `3761a7f` |
-| D2 | max_request_bytes=0 = 不限（对齐 max_ws_connections 0/None 不限；server cms/中间件/upload_handler 三处同步） | `1df7b33` |
-| D3 | voices current 缺失时追加到列表（current 恒 ∈ voices[]） | `55dee99` |
+| D1 | 移除 HeartbeatAckMessage 死契约面 + 修 on_action/on_token_usage 模型化绕过（ActionMessage.params 可选，前端 handleAction 可选链） | `de4c01d` |
+| D2 | max_request_bytes=0 = 不限（对齐 max_ws_connections 0/None 不限；server cms/中间件/upload_handler 三处同步） | `53b69db` |
+| D3 | voices current 缺失时追加到列表（current 恒 ∈ voices[]） | `395b78b` |
 
 ### 记录中的推荐决策（按常驻指令记档，最终报告提出）
 
@@ -396,25 +396,25 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 
 | audit 发现 | commit |
 |---|---|
-| F1 WS error 信封漏 retryable/details（ErrorMessage 补字段 + 发射点透传） | `dcd88f8` |
-| F18 decode error 无 code（CONTRACT_VALIDATION） | `dcd88f8` |
-| F2 admin/debug 裸 error 无统一信封（4 admin + debug 中间件 + 32 处业务错误） | `378c16c` |
-| F3 HeartbeatAckMessage 死契约面 + 两处绕过 | `3761a7f` |
-| F4 generation.started.requestId 从不传值（ctx.request_id 回显） | `24d3d0c` |
-| F5 畸形 cursor 500 非 400（→ CONTRACT_VALIDATION） | `37d52fe` |
-| F7 pending 跨会话可见（→ 仅活动会话） | `37d52fe` |
-| F6 generation 持久化 error 丢 code/retryable（→ 结构化 dict） | `be7cf09` |
-| F8 llm_summary 未用（output 空回退 executionSummary） | `e5ee98b` |
-| F9 tools/calls snake_case（→ camelCase） | `e5ee98b` |
-| F10 voices current 引用不存在（→ 追加） | `55dee99` |
-| F11 _ENV_RE 死代码（→ 接入 _sanitize） | `ae74d09` |
-| F12 trace bare except 静默断（→ 截断报告） | `ae74d09` |
-| F13 chunked 413 兜底不生效（14 处 re-raise） | `50379f0` |
-| F14 并发 WS TOCTOU（→ 闭包计数硬上限） | `4783ce7` |
-| F15 v2 收 capabilities 帧（→ v2 跳过） | `d3e947c` |
-| F16 max_request_bytes=0 静默回落（→ 不限） | `1df7b33` |
-| F17 get_build_sha 失败不缓存（→ 两态缓存）+ 既有测试同步 | `916de10` / `4c84200` |
-| F19 docstring 过时 + wire key 不一致（→ byModel + 38 成员） | `79c30ea` |
+| F1 WS error 信封漏 retryable/details（ErrorMessage 补字段 + 发射点透传） | `22a859e` |
+| F18 decode error 无 code（CONTRACT_VALIDATION） | `22a859e` |
+| F2 admin/debug 裸 error 无统一信封（4 admin + debug 中间件 + 32 处业务错误） | `d3f7e87` |
+| F3 HeartbeatAckMessage 死契约面 + 两处绕过 | `de4c01d` |
+| F4 generation.started.requestId 从不传值（ctx.request_id 回显） | `0d0b836` |
+| F5 畸形 cursor 500 非 400（→ CONTRACT_VALIDATION） | `53c2fa9` |
+| F7 pending 跨会话可见（→ 仅活动会话） | `53c2fa9` |
+| F6 generation 持久化 error 丢 code/retryable（→ 结构化 dict） | `67cd156` |
+| F8 llm_summary 未用（output 空回退 executionSummary） | `d46a928` |
+| F9 tools/calls snake_case（→ camelCase） | `d46a928` |
+| F10 voices current 引用不存在（→ 追加） | `395b78b` |
+| F11 _ENV_RE 死代码（→ 接入 _sanitize） | `332ae8f` |
+| F12 trace bare except 静默断（→ 截断报告） | `332ae8f` |
+| F13 chunked 413 兜底不生效（14 处 re-raise） | `f188b3e` |
+| F14 并发 WS TOCTOU（→ 闭包计数硬上限） | `7da6e56` |
+| F15 v2 收 capabilities 帧（→ v2 跳过） | `782471f` |
+| F16 max_request_bytes=0 静默回落（→ 不限） | `53b69db` |
+| F17 get_build_sha 失败不缓存（→ 两态缓存）+ 既有测试同步 | `ba5cb13` / `1efe2c0` |
+| F19 docstring 过时 + wire key 不一致（→ byModel + 38 成员） | `8800286` |
 
 ### 已知限制（spec §7，记录）
 
