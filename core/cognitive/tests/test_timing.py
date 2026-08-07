@@ -1,4 +1,4 @@
-"""Timer and TimingClock unit tests."""
+"""Timer 与 TimingClock 单元测试。"""
 
 import time
 
@@ -10,57 +10,57 @@ pytestmark = pytest.mark.service
 
 
 # ============================================================================
-# Timer
+# Timer（计时器）
 # ============================================================================
 
 
 class TestTimer:
-    """Timer context manager tests."""
+    """Timer 上下文管理器测试。"""
 
     def test_context_manager_records_elapsed_time(self):
-        """Context manager records elapsed time (> 0ms)."""
+        """上下文管理器记录耗时（> 0ms）。"""
         with Timer("test") as t:
             time.sleep(0.01)
         assert t.elapsed_ms > 0
 
     def test_elapsed_ms_is_int(self):
-        """elapsed_ms is an int (cast from float milliseconds)."""
+        """elapsed_ms 是整数（由浮点毫秒转换而来）。"""
         with Timer("test") as t:
             time.sleep(0.01)
         assert isinstance(t.elapsed_ms, int)
 
     def test_elapsed_ms_increases_after_sleep(self):
-        """elapsed_ms increases after sleep (sleep 0.02s -> at least 10ms)."""
+        """sleep 后 elapsed_ms 增大（sleep 0.02s → 至少 10ms）。"""
         with Timer("test") as t:
             time.sleep(0.02)
         assert t.elapsed_ms >= 10
 
     def test_label_is_stored(self):
-        """Timer stores the label passed at construction."""
+        """Timer 保存构造时传入的 label。"""
         t = Timer("my-label")
         assert t.label == "my-label"
 
     def test_default_label_is_empty_string(self):
-        """Timer default label is empty string."""
+        """Timer 默认 label 为空字符串。"""
         t = Timer()
         assert t.label == ""
 
     def test_elapsed_ms_zero_before_enter(self):
-        """elapsed_ms is 0 before the context manager is entered."""
+        """进入上下文管理器前 elapsed_ms 为 0。"""
         t = Timer("test")
         assert t.elapsed_ms == 0
 
 
 # ============================================================================
-# TimingClock
+# TimingClock（计时时钟）
 # ============================================================================
 
 
 class TestTimingClock:
-    """TimingClock tests."""
+    """TimingClock 测试。"""
 
     def test_span_records_duration(self):
-        """span() context manager records duration in clock._spans dict."""
+        """span() 上下文管理器将时长记录到 clock._spans 字典。"""
         clock = TimingClock()
         with clock.span("prompt"):
             time.sleep(0.01)
@@ -70,21 +70,21 @@ class TestTimingClock:
         assert "ms" in summary
 
     def test_multiple_spans_same_name_accumulate(self):
-        """Multiple spans with same name accumulate durations."""
+        """同名多个 span 的时长会累加。"""
         clock = TimingClock()
         with clock.span("test"):
             time.sleep(0.01)
         with clock.span("test"):
             time.sleep(0.01)
-        # Two spans of ~10ms each should total >= 15ms
+        # 两个约 10ms 的 span 合计应 >= 15ms
         assert clock._spans["test"] >= 15
         assert clock._counts["test"] == 2
-        # Summary includes count for repeated labels
+        # summary 包含重复标签的计数
         assert "(2)" in clock.summary()
         assert "test" in clock.summary()
 
     def test_total_ms_after_start_stop(self):
-        """total_ms reflects wall-clock time from start() to stop()."""
+        """total_ms 反映从 start() 到 stop() 的墙钟时间。"""
         clock = TimingClock()
         clock.start()
         time.sleep(0.01)
@@ -92,7 +92,7 @@ class TestTimingClock:
         assert clock.total_ms > 0
 
     def test_summary_contains_span_names_and_ms(self):
-        """summary() returns a string containing span names and 'ms'."""
+        """summary() 返回包含 span 名称与 'ms' 的字符串。"""
         clock = TimingClock()
         with clock.span("alpha"):
             time.sleep(0.01)
@@ -104,7 +104,7 @@ class TestTimingClock:
         assert "ms" in s
 
     def test_reset_clears_all_spans(self):
-        """reset() clears all spans and total."""
+        """reset() 清空所有 span 与 total。"""
         clock = TimingClock()
         with clock.span("test"):
             time.sleep(0.01)
@@ -115,22 +115,22 @@ class TestTimingClock:
         assert clock.total_ms == 0
 
     def test_empty_clock_total_ms_zero(self):
-        """Empty clock has total_ms == 0."""
+        """空 clock 的 total_ms == 0。"""
         clock = TimingClock()
         assert clock.total_ms == 0
 
     def test_start_stop_lifecycle(self):
-        """start()/stop() lifecycle works without error."""
+        """start()/stop() 生命周期应无错运行。"""
         clock = TimingClock()
         clock.start()
         time.sleep(0.01)
         clock.stop()
-        # No exception raised; total_ms reflects elapsed wall-clock time
+        # 未抛异常；total_ms 反映经过的墙钟时间
         assert clock.total_ms > 0
         assert isinstance(clock.total_ms, int)
 
     def test_summary_sorted_descending(self):
-        """summary() lists spans sorted by duration descending."""
+        """summary() 按时长降序列出 span。"""
         clock = TimingClock()
         with clock.span("short"):
             time.sleep(0.01)
@@ -141,7 +141,7 @@ class TestTimingClock:
         assert s.index("long") < s.index("short")
 
     def test_reset_then_reuse(self):
-        """After reset(), clock can be reused for new spans."""
+        """reset() 之后，clock 可复用于新的 span。"""
         clock = TimingClock()
         with clock.span("first"):
             time.sleep(0.01)
@@ -153,7 +153,7 @@ class TestTimingClock:
         assert clock._spans["second"] > 0
 
     def test_start_stop_with_spans(self):
-        """start()/stop() with interleaved spans — total >= sum of spans."""
+        """start()/stop() 带交错 span —— total >= 各 span 之和。"""
         clock = TimingClock()
         clock.start()
         with clock.span("a"):
@@ -162,5 +162,5 @@ class TestTimingClock:
             time.sleep(0.01)
         clock.stop()
         span_sum = sum(clock._spans.values())
-        # Wall-clock total should be at least the sum of individual spans
+        # 墙钟总时长应至少等于各 span 之和
         assert clock.total_ms >= span_sum

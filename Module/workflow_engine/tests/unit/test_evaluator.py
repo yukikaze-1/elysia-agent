@@ -74,7 +74,7 @@ def mock_artifact_store():
 
 @pytest.fixture
 def mock_infra(mock_llm_client):
-    """Mock AgentInfra。"""
+    """模拟 AgentInfra。"""
     infra = MagicMock()
     infra.llm = mock_llm_client
     return infra
@@ -82,7 +82,7 @@ def mock_infra(mock_llm_client):
 
 @pytest.fixture
 def token_ledger_mock():
-    """Mock TokenLedger。"""
+    """模拟 TokenLedger。"""
     return MagicMock()
 
 
@@ -160,7 +160,7 @@ def test_execution_status_mappings():
 
 
 def test_derive_action_ok_achieved():
-    """OK + goal_achieved → CONTINUE。"""
+    """OK + goal_achieved → CONTINUE（继续）。"""
     action = Evaluator._derive_action(
         ExecutionStatus.OK, BusinessStatus.GOAL_ACHIEVED,
         DAGNode(node_id=NodeId("n1"), required=True),
@@ -170,7 +170,7 @@ def test_derive_action_ok_achieved():
 
 
 def test_derive_action_ok_partial():
-    """OK + goal_partial → CONTINUE。"""
+    """OK + goal_partial → CONTINUE（继续）。"""
     action = Evaluator._derive_action(
         ExecutionStatus.OK, BusinessStatus.GOAL_PARTIAL,
         DAGNode(node_id=NodeId("n1"), required=True),
@@ -222,7 +222,7 @@ def test_derive_action_ok_failed_no_artifacts_optional():
 
 
 def test_derive_action_timeout_required():
-    """TIMEOUT + required → RETRY。"""
+    """TIMEOUT + required → RETRY（重试）。"""
     action = Evaluator._derive_action(
         ExecutionStatus.TIMEOUT, BusinessStatus.GOAL_FAILED,
         DAGNode(node_id=NodeId("n1"), required=True),
@@ -232,7 +232,7 @@ def test_derive_action_timeout_required():
 
 
 def test_derive_action_timeout_optional():
-    """TIMEOUT + !required → SKIP。"""
+    """TIMEOUT + !required → SKIP（跳过）。"""
     action = Evaluator._derive_action(
         ExecutionStatus.TIMEOUT, BusinessStatus.GOAL_FAILED,
         DAGNode(node_id=NodeId("n1"), required=False),
@@ -242,7 +242,7 @@ def test_derive_action_timeout_optional():
 
 
 def test_derive_action_error_required():
-    """ERROR + required → RETRY。"""
+    """ERROR + required → RETRY（重试）。"""
     action = Evaluator._derive_action(
         ExecutionStatus.ERROR, BusinessStatus.GOAL_FAILED,
         DAGNode(node_id=NodeId("n1"), required=True),
@@ -252,7 +252,7 @@ def test_derive_action_error_required():
 
 
 def test_derive_action_tool_not_found():
-    """TOOL_NOT_FOUND + required → REPLAN。"""
+    """TOOL_NOT_FOUND + required → REPLAN（重新规划）。"""
     action = Evaluator._derive_action(
         ExecutionStatus.ERROR, BusinessStatus.GOAL_FAILED,
         DAGNode(node_id=NodeId("n1"), required=True),
@@ -286,7 +286,7 @@ def test_derive_action_cancelled():
 
 
 def test_derive_action_tool_not_found_optional():
-    """TOOL_NOT_FOUND + !required → SKIP。"""
+    """TOOL_NOT_FOUND + !required → SKIP（跳过）。"""
     action = Evaluator._derive_action(
         ExecutionStatus.ERROR, BusinessStatus.GOAL_FAILED,
         DAGNode(node_id=NodeId("n1"), required=False),
@@ -296,7 +296,7 @@ def test_derive_action_tool_not_found_optional():
 
 
 def test_derive_action_context_overflow_required():
-    """CONTEXT_OVERFLOW + required → REPLAN。"""
+    """CONTEXT_OVERFLOW + required → REPLAN（重新规划）。"""
     action = Evaluator._derive_action(
         ExecutionStatus.ERROR, BusinessStatus.GOAL_FAILED,
         DAGNode(node_id=NodeId("n1"), required=True),
@@ -306,7 +306,7 @@ def test_derive_action_context_overflow_required():
 
 
 def test_derive_action_context_overflow_optional():
-    """CONTEXT_OVERFLOW + !required → SKIP。"""
+    """CONTEXT_OVERFLOW + !required → SKIP（跳过）。"""
     action = Evaluator._derive_action(
         ExecutionStatus.ERROR, BusinessStatus.GOAL_FAILED,
         DAGNode(node_id=NodeId("n1"), required=False),
@@ -373,7 +373,7 @@ async def test_evaluate_execution_error(evaluator, sample_node, sample_plan):
 
     assert evaluation.execution_status == ExecutionStatus.ERROR
     assert evaluation.business_status == BusinessStatus.GOAL_FAILED
-    # TOOL_ERROR + required → RETRY
+    # TOOL_ERROR + required → RETRY（重试）
     assert evaluation.suggested_action == EvaluatorAction.RETRY
 
 

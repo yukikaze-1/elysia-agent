@@ -168,14 +168,14 @@ class TestSessionMemorySaveLoad:
     @pytest.mark.asyncio
     async def test_load_falls_back_to_jsonl_when_no_repo(self, tmp_path):
         pending = os.path.join(str(tmp_path), "session_sid.json")
-        # Write a minimal JSON doc
+        # 写入一个最小 JSON 文档
         with open(pending, "w") as f:
             json.dump({"messages": [], "params": {}}, f)
         sm = SessionMemory(session_id=SessionId("sid"))
         sm._pending_file = pending
         result = await sm.load()
         assert result is True
-        # Clean up
+        # 清理
         os.remove(pending)
 
 

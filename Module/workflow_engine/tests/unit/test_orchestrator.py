@@ -120,7 +120,7 @@ def orchestrator(mock_infra, mock_executor, mock_evaluator, mock_hitl, mock_chec
 
 @pytest.fixture
 def mock_mailbox():
-    """Mock WorkflowMailbox。"""
+    """模拟 WorkflowMailbox。"""
     return MagicMock()
 
 
@@ -180,7 +180,7 @@ def _make_eval(node_id: str, action: EvaluatorAction) -> NodeResultEvaluation:
 
 @pytest.mark.asyncio
 async def test_apply_continue(orchestrator, mock_mailbox):
-    """CONTINUE → SUCCESS, push progress。"""
+    """CONTINUE → SUCCESS（成功），并推送进度。"""
     graph = _make_graph(["a"], [])
     ts = _task_state(graph=graph)
     es = orchestrator._init_exec_state(graph)
@@ -286,7 +286,7 @@ def _make_plan_with_node(nid: NodeId, **kwargs) -> Plan:
 
 @pytest.mark.asyncio
 async def test_apply_replan(orchestrator, mock_mailbox):
-    """REPLAN → FAILED, return REPLAN。"""
+    """REPLAN → FAILED（失败），返回 REPLAN。"""
     graph = _make_graph(["a"], [])
     ts = _task_state(graph=graph)
     es = orchestrator._init_exec_state(graph)
@@ -301,7 +301,7 @@ async def test_apply_replan(orchestrator, mock_mailbox):
 
 @pytest.mark.asyncio
 async def test_apply_ask_approval(orchestrator, mock_mailbox):
-    """ASK_APPROVAL → WAITING_APPROVAL + return ASK_APPROVAL。"""
+    """ASK_APPROVAL → WAITING_APPROVAL（等待审批），并返回 ASK_APPROVAL。"""
     graph = _make_graph(["a"], [])
     ts = _task_state(graph=graph)
     es = orchestrator._init_exec_state(graph)
@@ -317,7 +317,7 @@ async def test_apply_ask_approval(orchestrator, mock_mailbox):
 
 @pytest.mark.asyncio
 async def test_apply_abort(orchestrator, mock_mailbox):
-    """ABORT → FAILED, return ABORT。"""
+    """ABORT → FAILED（失败），返回 ABORT。"""
     graph = _make_graph(["a"], [])
     ts = _task_state(graph=graph)
     es = orchestrator._init_exec_state(graph)
@@ -429,7 +429,7 @@ async def test_run_abort(orchestrator, mock_mailbox, mock_evaluator):
 
 @pytest.mark.asyncio
 async def test_run_pause_requested(orchestrator, mock_mailbox):
-    """exec_state.pause_requested → PAUSED。"""
+    """exec_state.pause_requested → PAUSED（暂停）。"""
     graph = _make_graph(["a"], [])
     ts = _task_state(graph=graph)
 

@@ -193,7 +193,7 @@ class TestAttachmentMessage:
             assert calls[0]["text"] == "hi"
             assert calls[0]["message_id"] == ack["messageId"]
             assert calls[0]["protocol_version"] == 2
-            # refs+1
+            # refs 引用计数 +1
             doc = agent._attachment_repo.records["att_x"]  # noqa: SLF001
             assert doc["ref_count"] == 1
             assert ack["messageId"] in doc["refs"]

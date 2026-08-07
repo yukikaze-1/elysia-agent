@@ -1,4 +1,4 @@
-"""Tests for core/utils — set_request_id / get_request_id ContextVar propagation."""
+"""测试 core/utils —— set_request_id / get_request_id 的 ContextVar 传播。"""
 import asyncio
 import pytest
 from core.utils import set_request_id, get_request_id

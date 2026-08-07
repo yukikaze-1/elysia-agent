@@ -83,7 +83,7 @@ class TestSwitchSSRF:
 
     @pytest.mark.asyncio
     async def test_switch_llm_ssrf_blocked(self, fake_agent):
-        """LLM base_url=127.0.0.1 → ok=False（SSRFError）。"""
+        """LLM base_url=127.0.0.1 时 → ok=False（SSRFError）。"""
         agent = fake_agent
         agent.session.save = mock.AsyncMock()
         agent.session.service_state = ServiceState()

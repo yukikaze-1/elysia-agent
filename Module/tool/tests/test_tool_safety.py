@@ -10,7 +10,7 @@ from Module.tool.protocol import ToolParameter
 
 
 # ---------------------------------------------------------------------------
-# TestResolveSandboxPath
+# TestResolveSandboxPath（沙箱路径解析测试）
 # ---------------------------------------------------------------------------
 
 class TestResolveSandboxPath:
@@ -120,7 +120,7 @@ class TestResolveSandboxPath:
 
 
 # ---------------------------------------------------------------------------
-# TestValidatePath
+# TestValidatePath（路径校验测试）
 # ---------------------------------------------------------------------------
 
 class TestValidatePath:
@@ -241,7 +241,7 @@ class TestValidatePath:
 
 
 # ---------------------------------------------------------------------------
-# TestCoerceValue
+# TestCoerceValue（值转换测试）
 # ---------------------------------------------------------------------------
 
 class TestCoerceValue:
@@ -340,7 +340,7 @@ class TestCoerceValue:
 
 
 # ---------------------------------------------------------------------------
-# TestValidateArgs
+# TestValidateArgs（参数校验测试）
 # ---------------------------------------------------------------------------
 
 class TestValidateArgs:

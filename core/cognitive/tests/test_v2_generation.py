@@ -281,7 +281,7 @@ class TestV2GenerationSequence:
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
         try:
-            # v2
+            # v2 协议分支
             v2_frames = await _send_and_collect(
                 client, {"X-Protocol-Version": "2"}, "hi",
                 client_request_id=f"req_{time.monotonic_ns()}")

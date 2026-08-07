@@ -1,4 +1,4 @@
-# core/cognitive/tests/test_flush.py
+# 测试文件：core/cognitive/tests/test_flush.py
 """flush_after_response 单元测试 — shutdown 时内存持久化关键路径。"""
 
 import asyncio

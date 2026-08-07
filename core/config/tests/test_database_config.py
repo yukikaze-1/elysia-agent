@@ -1,4 +1,4 @@
-# core/config/tests/test_database_config.py
+# 测试文件：core/config/tests/test_database_config.py
 """DatabaseConfig 默认值 + 环境变量覆盖测试。"""
 
 import pytest

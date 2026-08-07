@@ -15,7 +15,7 @@ pytestmark = pytest.mark.service
 
 
 # ============================================================
-# Protocol — ABC constraints
+# 协议 —— ABC 抽象约束
 # ============================================================
 
 class TestSTTBackendProtocol:
@@ -79,7 +79,7 @@ class TestSTTBackendProtocol:
 
 
 # ============================================================
-# STTFactory
+# STTFactory（STT 工厂）
 # ============================================================
 
 class TestSTTFactory:
@@ -113,7 +113,7 @@ class TestSTTFactory:
 
 
 # ============================================================
-# SenseVoiceBackend — transcribe / transcribe_stream
+# SenseVoiceBackend —— transcribe / transcribe_stream（转录/流式转录）
 # ============================================================
 
 def _make_response(text: str):
@@ -173,7 +173,7 @@ class TestSenseVoiceTranscribe:
 
 
 # ============================================================
-# close
+# close（关闭）
 # ============================================================
 
 class TestClose:
@@ -243,7 +243,7 @@ class TestParseEvents:
 
 
 # ============================================================
-# SenseVoice — emotion/events state tracking + nospeech
+# SenseVoice —— 情绪/事件状态追踪 + nospeech
 # ============================================================
 
 class TestSenseVoiceStateTracking:
@@ -298,7 +298,7 @@ class TestSenseVoiceStateTracking:
 
 
 # ============================================================
-# SenseVoice — HTTP error handling
+# SenseVoice —— HTTP 错误处理
 # ============================================================
 
 class TestSenseVoiceErrors:
@@ -334,7 +334,7 @@ class TestSenseVoiceErrors:
 
 
 # ============================================================
-# SenseVoice — edge cases
+# SenseVoice —— 边界情况
 # ============================================================
 
 class TestSenseVoiceEdges:

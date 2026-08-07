@@ -561,7 +561,7 @@ class TestEmojiMerge:
 
 
 # ============================================================================
-# Group 11: get_blocks / rebuild_public_text
+# 分组 11：get_blocks / rebuild_public_text
 # ============================================================================
 
 class TestBlocksAndPublicText:

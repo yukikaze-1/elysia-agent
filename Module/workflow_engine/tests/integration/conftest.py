@@ -11,7 +11,7 @@ from pathlib import Path
 _env_file = Path(__file__).resolve().parents[4] / ".env"
 # 路径：conftest.py → integration/ → tests/ → workflow_engine/ → Module/ → Agent/ → .env
 # parents[0] = conftest.py 所在目录 (integration/)
-# parents[4] = Agent/ (repo root)
+# parents[4] = Agent/（仓库根目录）
 
 if _env_file.exists():
     with open(_env_file) as _f:

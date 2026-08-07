@@ -10,7 +10,7 @@ from Module.output.websocket import WebSocketChannel
 
 
 # ============================================================
-# OutputChannel ABC
+# OutputChannel ABC（输出通道抽象基类）
 # ============================================================
 
 @pytest.mark.unit
@@ -28,7 +28,7 @@ class TestOutputChannel:
                 pass
 
         ch = DefaultOnly()
-        # Default no-op methods should not raise
+        # 默认 no-op 方法不应抛异常
         asyncio.run(ch.on_typing(True))
         asyncio.run(ch.on_expression("happy"))
         asyncio.run(ch.on_action("wave"))
@@ -60,7 +60,7 @@ class TestOutputChannel:
 
 
 # ============================================================
-# ConsoleChannel
+# ConsoleChannel（控制台通道）
 # ============================================================
 
 @pytest.mark.unit
@@ -89,7 +89,7 @@ class TestConsoleChannel:
 
 
 # ============================================================
-# WebSocketChannel
+# WebSocketChannel（WebSocket 通道）
 # ============================================================
 
 @pytest.mark.service
@@ -180,7 +180,7 @@ class TestWebSocketChannel:
 
 
 # ============================================================
-# OutputManager
+# OutputManager（输出管理器）
 # ============================================================
 
 class _TestChannel(OutputChannel):
@@ -271,7 +271,7 @@ class TestOutputManager:
         mgr.add_channel(ch2)
 
         await mgr.typing(True)
-        # Neither has TYPING capability, so no events should fire
+        # 两者均无 TYPING 能力，因此不应触发任何事件
         assert len(ch1.events) == 0
         assert len(ch2.events) == 0
 
@@ -436,7 +436,7 @@ class TestWebSocketChannelErrorHandling:
 
 
 # ============================================================
-# AUDIO capability + command + stream lifecycle
+# AUDIO 能力 + 命令 + 流生命周期
 # ============================================================
 
 @pytest.mark.service
@@ -514,7 +514,7 @@ class TestStreamLifecycle:
 
 
 # ============================================================
-# Error isolation — more methods + close
+# 错误隔离 —— 更多方法 + close
 # ============================================================
 
 class _FullFailingChannel(OutputChannel):
@@ -604,7 +604,7 @@ class TestMoreErrorIsolation:
 
 
 # ============================================================
-# WebSocketChannel — method coverage
+# WebSocketChannel —— 方法覆盖
 # ============================================================
 
 @pytest.mark.service
@@ -713,30 +713,30 @@ class TestWebSocketChannelCoverage:
 
 
 # ============================================================
-# ConsoleChannel — non-streaming paths
+# ConsoleChannel —— 非流式路径
 # ============================================================
 
 @pytest.mark.unit
 class TestConsoleChannelNonStreaming:
     def test_on_message_str_path(self, capsys):
-        """on_message with str when _delta_printed=False — short return。"""
+        """on_message 在 _delta_printed=False 时传入 str —— 直接返回。"""
         ch = ConsoleChannel()
         asyncio.run(ch.on_message("hello"))
-        # str path with _delta_printed=False prints nothing
+        # str 路径且 _delta_printed=False 时不打印任何内容
         captured = capsys.readouterr()
         assert captured.out == ""
 
     def test_on_message_after_delta(self, capsys):
-        """on_message after on_text_delta — _delta_printed=True path。"""
+        """on_text_delta 之后的 on_message —— _delta_printed=True 路径。"""
         ch = ConsoleChannel()
         asyncio.run(ch.on_text_delta("streamed"))
         asyncio.run(ch.on_message(MagicMock(role="?", inner_voice="", content="")))
         captured = capsys.readouterr()
-        # Just prints newline, no content
+        # 仅打印换行，无内容
         assert "\n" in captured.out
 
     def test_on_message_with_inner_voice_non_streaming(self, capsys):
-        """_delta_printed=False with inner_voice — prints both。"""
+        """_delta_printed=False 且带 inner_voice —— 两者都打印。"""
         ch = ConsoleChannel()
         msg = MagicMock()
         msg.role = "Elysia"

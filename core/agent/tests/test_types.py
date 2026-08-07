@@ -1,4 +1,4 @@
-# core/agent/tests/test_types.py
+# 测试文件：core/agent/tests/test_types.py
 """Agent _types dataclass 验证。"""
 
 import pytest

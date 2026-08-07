@@ -18,7 +18,7 @@ from Module.tool.manager import ToolManager
 
 
 # ============================================================================
-# ErrorType
+# ErrorType（错误类型）
 # ============================================================================
 
 @pytest.mark.unit
@@ -47,7 +47,7 @@ class TestErrorType:
 
 
 # ============================================================================
-# Capability
+# Capability（能力）
 # ============================================================================
 
 @pytest.mark.unit
@@ -67,7 +67,7 @@ class TestCapability:
 
 
 # ============================================================================
-# ToolContext
+# ToolContext（工具上下文）
 # ============================================================================
 
 @pytest.mark.unit
@@ -94,7 +94,7 @@ class TestToolContext:
 
 
 # ============================================================================
-# PluginContext
+# PluginContext（插件上下文）
 # ============================================================================
 
 @pytest.mark.unit
@@ -121,7 +121,7 @@ class TestPluginContext:
 
 
 # ============================================================================
-# ToolPlugin
+# ToolPlugin（工具插件）
 # ============================================================================
 
 @pytest.mark.unit
@@ -201,7 +201,7 @@ class TestToolPlugin:
 
 
 # ============================================================================
-# SafetyProfile
+# SafetyProfile（安全配置）
 # ============================================================================
 
 @pytest.mark.unit
@@ -337,7 +337,7 @@ class TestURLValidation:
 
 
 # ============================================================================
-# SafetyPipeline
+# SafetyPipeline（安全管线）
 # ============================================================================
 
 @pytest.mark.unit
@@ -988,7 +988,7 @@ class TestToolResultExtended:
 
 
 # ============================================================
-# ToolManager — definitions (anthropic/gemini/invalid)
+# ToolManager —— 工具定义（anthropic/gemini/invalid）
 # ============================================================
 
 @pytest.mark.service
@@ -1014,7 +1014,7 @@ class TestToolManagerDefinitionsExtended:
 
 
 # ============================================================
-# ToolManager — cancel_all / executing_now / history
+# ToolManager —— cancel_all / executing_now / history（取消/执行/历史）
 # ============================================================
 
 @pytest.mark.service
@@ -1049,7 +1049,7 @@ class TestToolManagerControl:
 
 
 # ============================================================
-# ToolManager — reload_plugin
+# ToolManager —— reload_plugin（重载插件）
 # ============================================================
 
 class SimplePlugin(ToolPlugin):
@@ -1080,7 +1080,7 @@ class TestReloadPlugin:
 
 
 # ============================================================
-# ToolManager — set_hitl_broadcast
+# ToolManager —— set_hitl_broadcast（设置 HITL 广播）
 # ============================================================
 
 @pytest.mark.service
@@ -1097,11 +1097,11 @@ class TestSetHITLBroadcast:
     def test_set_hitl_broadcast_with_none_is_noop(self):
         tm = ToolManager()
         tm.set_hitl_broadcast(None)
-        # Should not crash
+        # 不应崩溃
 
 
 # ============================================================
-# Concurrent execution
+# 并发执行
 # ============================================================
 
 class SlowEchoPlugin(ToolPlugin):

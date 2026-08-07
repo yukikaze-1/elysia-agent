@@ -22,7 +22,7 @@ def _set_llm_urls(monkeypatch):
 
 
 # ============================================================
-# Protocol — ABC constraints
+# 协议 —— ABC 抽象约束
 # ============================================================
 
 class TestLLMBackendProtocol:
@@ -101,7 +101,7 @@ class TestExtractPrefix:
 
 
 # ============================================================
-# LLMFactory
+# LLMFactory（LLM 工厂）
 # ============================================================
 
 class TestLLMFactory:
@@ -140,7 +140,7 @@ class TestLLMFactory:
 
 
 # ============================================================
-# OpenAICompatBackend — chat / chat_stream
+# OpenAICompatBackend —— chat / chat_stream（对话/流式）
 # ============================================================
 
 def _make_nonstream_response(content: str):
@@ -194,7 +194,7 @@ class TestOpenAICompatChat:
 
     @pytest.mark.asyncio
     async def test_chat_collects_stream_chunks(self, backend):
-        """chat() uses non-streaming API call (stream=False)."""
+        """chat() 使用非流式 API 调用（stream=False）。"""
         mock_create = AsyncMock(
             return_value=_make_nonstream_response("collected")
         )
@@ -247,7 +247,7 @@ class TestOpenAICompatChat:
 
 
 # ============================================================
-# prefix continuation
+# prefix 续写
 # ============================================================
 
 class TestPrefixContinuation:
@@ -264,7 +264,7 @@ class TestPrefixContinuation:
         assert '"public_reply"' in result
         call_kwargs = mock_create.call_args.kwargs
         assert call_kwargs["extra_body"] == {"prefix": True}
-        # prefix field removed from messages sent to API
+        # 发给 API 的消息中已移除 prefix 字段
         sent_messages = call_kwargs["messages"]
         assert "prefix" not in sent_messages[1]
 
@@ -278,7 +278,7 @@ class TestPrefixContinuation:
 
 
 # ============================================================
-# close
+# close（关闭）
 # ============================================================
 
 class TestClose:
@@ -304,7 +304,7 @@ class TestClose:
 
 
 # ============================================================
-# stream_think
+# stream_think（思维流）
 # ============================================================
 
 class TestStreamThink:
@@ -394,7 +394,7 @@ class TestStreamThink:
 
 
 # ============================================================
-# API error handling
+# API 错误处理
 # ============================================================
 
 class TestAPIErrors:
@@ -444,7 +444,7 @@ class TestAPIErrors:
 
 
 # ============================================================
-# prefix continuation edges
+# prefix 续写边界情况
 # ============================================================
 
 class TestPrefixContinuationEdges:
@@ -494,7 +494,7 @@ class TestPrefixContinuationEdges:
 
 
 # ============================================================
-# Factory edge cases
+# 工厂边界情况
 # ============================================================
 
 class TestFactoryEdges:
@@ -515,7 +515,7 @@ class TestFactoryEdges:
 
 
 # ============================================================
-# Usage tracking
+# Token 用量统计
 # ============================================================
 
 class TestUsageTracking:

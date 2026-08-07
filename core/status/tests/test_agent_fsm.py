@@ -1,4 +1,4 @@
-# core/status/tests/test_agent_fsm.py
+# 测试文件：core/status/tests/test_agent_fsm.py
 """AgentFSM 状态机单元测试。"""
 
 import pytest

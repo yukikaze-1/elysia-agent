@@ -11,7 +11,7 @@ from Module.embedding.registry import EmbeddingFactory
 
 
 # ============================================================
-# Protocol — ABC constraints
+# 协议 —— ABC 抽象约束
 # ============================================================
 
 @pytest.mark.service
@@ -78,7 +78,7 @@ class TestEmbeddingBackendProtocol:
 
 
 # ============================================================
-# EmbeddingFactory
+# EmbeddingFactory（嵌入工厂）
 # ============================================================
 
 @pytest.mark.service
@@ -118,7 +118,7 @@ class TestEmbeddingFactory:
 
 
 # ============================================================
-# HuggingFaceBackend
+# HuggingFaceBackend（HuggingFace 后端）
 # ============================================================
 
 @pytest.fixture
@@ -163,7 +163,7 @@ class TestHuggingFaceBackend:
 
 
 # ============================================================
-# OpenAICompatEmbeddingBackend
+# OpenAICompatEmbeddingBackend（OpenAI 兼容嵌入后端）
 # ============================================================
 
 def _make_embedding_response(embeddings: list[list[float]], model: str = "text-embedding-3-large"):
@@ -203,7 +203,7 @@ class TestOpenAICompatEmbedding:
         with patch.object(openai_backend._client.embeddings, "create", mock_create):
             result = await openai_backend.embed_query("hello")
         assert result == [0.5, 0.6, 0.7]
-        # Verify it calls embed_documents with single-element list
+        # 验证它以单元素列表调用 embed_documents
         call_input = mock_create.call_args.kwargs["input"]
         assert call_input == ["hello"]
 
@@ -237,7 +237,7 @@ class TestOpenAICompatEmbedding:
 
 
 # ============================================================
-# EmbeddingFactory — shutdown
+# EmbeddingFactory —— shutdown（关闭）
 # ============================================================
 
 @pytest.mark.service
@@ -297,7 +297,7 @@ class TestEmbeddingFactoryShutdown:
 
 
 # ============================================================
-# EmbeddingFactory — singleton cache
+# EmbeddingFactory —— 单例缓存
 # ============================================================
 
 @pytest.mark.service
@@ -329,7 +329,7 @@ class TestEmbeddingFactorySingleton:
 
 
 # ============================================================
-# HuggingFaceBackend — from_config
+# HuggingFaceBackend —— from_config（配置加载）
 # ============================================================
 
 @pytest.mark.service
@@ -346,7 +346,7 @@ class TestHuggingFaceFromConfig:
 
 
 # ============================================================
-# API errors / empty input
+# API 错误 / 空输入
 # ============================================================
 
 @pytest.mark.service

@@ -1,4 +1,4 @@
-# core/schema/tests/test_tool.py
+# 测试文件：core/schema/tests/test_tool.py
 """core/schema/tool.py 测试。"""
 import pytest
 from core.schema.tool import ToolCall, ToolCallFunction

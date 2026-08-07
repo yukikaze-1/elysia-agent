@@ -279,7 +279,7 @@ class TestExcInfo:
 
 
 # ============================================================
-# CRITICAL level
+# CRITICAL 级别
 # ============================================================
 
 class TestCriticalLevel:
@@ -290,7 +290,7 @@ class TestCriticalLevel:
 
 
 # ============================================================
-# get_caller_logger
+# get_caller_logger（获取调用方 logger）
 # ============================================================
 
 class TestGetCallerLogger:
@@ -303,7 +303,7 @@ class TestGetCallerLogger:
 
 
 # ============================================================
-# Unicode in JSON
+# JSON 中的 Unicode
 # ============================================================
 
 class TestJsonUnicode:
@@ -320,7 +320,7 @@ class TestJsonUnicode:
 
 
 # ============================================================
-# Thread safety (smoke test)
+# 线程安全（冒烟测试）
 # ============================================================
 
 class TestConcurrency:

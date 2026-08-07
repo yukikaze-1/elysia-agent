@@ -1,4 +1,4 @@
-# core/agent/tests/test_lifecycle_steps.py
+# 测试文件：core/agent/tests/test_lifecycle_steps.py
 """AgentLifecycle _SHUTDOWN_STEPS / _STARTUP_STEPS 结构验证。"""
 
 from unittest import mock

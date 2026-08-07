@@ -32,7 +32,7 @@ class TestVersionFanOut:
     async def test_text_delta_v1_delta_v2_generation_delta(self):
         mgr, v1_ws, v2_ws = _make_channels()
         await mgr.text_delta("你", _ctx())
-        # v1 → delta；v2 → generation.delta
+        # v1 协议 → delta；v2 协议 → generation.delta
         assert v1_ws.send_json.await_args.args[0]["type"] == "delta"
         v2_sent = v2_ws.send_json.await_args.args[0]
         assert v2_sent["type"] == "generation.delta"
@@ -63,7 +63,7 @@ class TestVersionFanOut:
     async def test_inner_voice_v1_command_v2_segment(self):
         mgr, v1_ws, v2_ws = _make_channels()
         await mgr.inner_voice("我想想。", _ctx())
-        # v1 → command inner_voice
+        # v1 协议 → command inner_voice
         v1_sent = v1_ws.send_json.await_args.args[0]
         assert v1_sent["type"] == "command" and v1_sent["command"] == "inner_voice"
         # v2 → generation.segment.started + completed（inner_voice 通道，含文本）
@@ -104,7 +104,7 @@ class TestVersionFanOut:
         assert v1_sent[0]["type"] == "delta"
         assert v1_sent[0]["content"].startswith("\n❌ LLM 调用失败")
         assert v1_sent[1] == {"type": "message", "content": ""}
-        # v2 → generation.failed
+        # v2 协议 → generation.failed
         v2_sent = v2_ws.send_json.await_args.args[0]
         assert v2_sent["type"] == "generation.failed"
         assert v2_sent["code"] == "GENERATION_PROVIDER_UNAVAILABLE"

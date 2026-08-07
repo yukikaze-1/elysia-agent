@@ -30,7 +30,7 @@ class TestToolPluginMetadata:
         assert p.output_schema == {"type": "string", "description": "工具公开输出"}
 
     def test_desktop_runtime_approval_authority_client(self):
-        """runtime=desktop → approval_authority=client（D-h）。"""
+        """runtime=desktop → approval_authority=client（D-h 规则）。"""
 
         class DesktopPlugin(ToolPlugin):
             name = "desktop.foo"
@@ -68,7 +68,7 @@ class TestToolPluginMetadata:
         assert HighRiskPlugin().permission_required is True
 
     def test_permission_required_medium_risk(self):
-        """risk_level=medium → permission_required=True。"""
+        """risk_level=medium → permission_required=True（中等风险需授权）。"""
 
         class MediumPlugin(ToolPlugin):
             name = "medium_tool"

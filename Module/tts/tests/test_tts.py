@@ -22,7 +22,7 @@ def _set_minimax_url(monkeypatch):
 
 
 # ============================================================
-# text_preprocess
+# text_preprocess（文本预处理）
 # ============================================================
 
 class TestStripAllMarkup:
@@ -68,7 +68,7 @@ class TestStripActionOnly:
 
 
 # ============================================================
-# Protocol
+# 协议
 # ============================================================
 
 class TestTTSBackendProtocol:
@@ -215,7 +215,7 @@ class TestTTSBackendProtocol:
 
 
 # ============================================================
-# TTSFactory
+# TTSFactory（TTS 工厂）
 # ============================================================
 
 class TestTTSFactory:
@@ -300,11 +300,11 @@ class TestTTSFactory:
 
 
 # ============================================================
-# GPTSoVitsBackend
+# GPTSoVitsBackend（GPT-SoVITS 后端）
 # ============================================================
 
 def _make_stream_chunks(*chunks: bytes):
-    """Build an async context manager that yields bytes from aiter_bytes."""
+    """构建一个异步上下文管理器，从 aiter_bytes 产出 bytes。"""
 
     class _StreamBody:
         def __init__(self, data: tuple[bytes, ...]):
@@ -386,7 +386,7 @@ class TestGPTSoVitsSynthesize:
 
 
 # ============================================================
-# Emoji stripping
+# Emoji 剥离
 # ============================================================
 
 class TestEmojiStripping:
@@ -410,7 +410,7 @@ class TestEmojiStripping:
 
 
 # ============================================================
-# GPTSoVitsBackend — payload verification
+# GPTSoVitsBackend —— 请求体校验
 # ============================================================
 
 class TestGPTSoVitsErrors:
@@ -443,7 +443,7 @@ class TestGPTSoVitsErrors:
 
 
 # ============================================================
-# GPTSoVitsBackend — queue cancel path
+# GPTSoVitsBackend —— 队列取消路径
 # ============================================================
 
 class TestGPTSoVitsCancel:
@@ -469,7 +469,7 @@ class TestGPTSoVitsCancel:
 
 
 # ============================================================
-# strip_for_minimax
+# strip_for_minimax（MiniMax 专用剥离）
 # ============================================================
 
 class TestStripForMiniMax:
@@ -517,7 +517,7 @@ class TestStripForMiniMax:
 
 
 # ============================================================
-# MiniMaxTTSBackend
+# MiniMaxTTSBackend（MiniMax TTS 后端）
 # ============================================================
 
 class TestMiniMaxConstruction:
@@ -747,7 +747,7 @@ class TestMiniMaxSynthesizeStream:
 class TestMiniMaxErrors:
     @pytest.mark.asyncio
     async def test_base_resp_non_zero_raises(self):
-        """base_resp.status_code != 0 → RuntimeError"""
+        """base_resp.status_code != 0 → 抛 RuntimeError"""
         class MockResp:
             status_code = 200
 
@@ -771,7 +771,7 @@ class TestMiniMaxErrors:
 
     @pytest.mark.asyncio
     async def test_http_error_propagates(self):
-        """HTTP 4xx/5xx → httpx.HTTPStatusError"""
+        """HTTP 4xx/5xx → 抛 httpx.HTTPStatusError"""
         import httpx
 
         class MockResp:
@@ -960,7 +960,7 @@ class TestMiniMaxRateLimit:
 
 
 # ============================================================
-# TTSBackend provider_name + get_preprocess
+# TTSBackend provider_name + get_preprocess（提供方名与预处理）
 # ============================================================
 
 class TestTTSBackendProviderName:

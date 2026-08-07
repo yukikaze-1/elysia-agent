@@ -23,7 +23,7 @@ def fake_agent():
     a.session = MagicMock()
     a.session.save = AsyncMock()
     a.session.messages = deque(maxlen=20)
-    # event bus + fsm + status
+    # 事件总线 + fsm + 状态
     a._bus = MagicMock()
     a._bus.post = MagicMock()
     a._fsm = MagicMock()

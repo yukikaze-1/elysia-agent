@@ -1,4 +1,4 @@
-"""Phase 2 tests: persistent memory, vector search, consolidation.
+"""阶段 2 测试：持久化记忆、向量搜索、整合。
 
 Run:
     python -m pytest core/test_phase2.py -v --asyncio-mode=auto
@@ -55,7 +55,7 @@ class TestSessionPersistence:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_connect_db_creates_repo_and_connects(self):
-        """connect_db creates SessionRepository and delegates to repo.connect()."""
+        """connect_db 创建 SessionRepository 并委托给 repo.connect()。"""
         from unittest.mock import AsyncMock, patch
         from core.memory.session import SessionMemory
         from core.schema.types import SessionId
@@ -73,7 +73,7 @@ class TestSessionPersistence:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_connect_db_returns_false_when_mongo_unavailable(self):
-        """connect_db returns False when repo.connect() raises."""
+        """repo.connect() 抛异常时 connect_db 返回 False。"""
         from unittest.mock import AsyncMock, patch
         from core.memory.session import SessionMemory
         from core.schema.types import SessionId
@@ -100,14 +100,14 @@ class TestSessionPersistence:
 
         s = SessionMemory(session_id=SessionId("test-save-load"))
         s.add_message(UserMessage(content=[TextPart(content="hello")], message_id=MessageId("svld-1")))
-        # No connect_db called, so _db is None — local file fallback
+        # 未调用 connect_db，_db 为 None —— 本地文件回退
         assert await s.save() is True
         s2 = SessionMemory(session_id=SessionId("test-save-load"))
         ok = await s2.load()
         assert ok is True
         assert len(s2._messages) == 1
         assert s2._messages[0].role == "user"
-        # cleanup
+        # 清理
         try:
             _os.remove(s._pending_file)
         except Exception:
@@ -218,7 +218,7 @@ class TestLongTermMemory:
 
     @pytest.mark.asyncio
     async def test_insert_without_connect(self):
-        """Insert should work even without connect() — uses in-memory."""
+        """即使未 connect() 也应能插入 —— 使用内存存储。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         await mem.insert("test entry", type="note")
@@ -228,8 +228,8 @@ class TestLongTermMemory:
 
     @pytest.mark.asyncio
     async def test_insert_awaits_embedding_on_first_call(self):
-        """First insert() should wait for embedding load, so entry gets embedding
-        if any backend is available. Verifies the await pattern works."""
+        """首次 insert() 应等待嵌入加载，使条目在任一后端可用时
+        获得嵌入。验证 await 模式正常。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
 
@@ -243,11 +243,10 @@ class TestLongTermMemory:
 
     @pytest.mark.asyncio
     async def test_insert_allows_duplicates_with_different_metadata(self):
-        """Identical text with different metadata should create distinct entries.
+        """相同文本不同元数据应生成不同条目。
 
-        Note: dedup is deferred to a separate feature plan. Consolidator
-        may re-extract the same fact in different rounds, and those are
-        treated as independent confirmations rather than duplicates.
+        注意：去重延迟到单独的功能计划。Consolidator 可能在不同轮次
+        重新提取同一事实，这些被视为独立确认而非重复。
         """
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
@@ -264,7 +263,7 @@ class TestLongTermMemory:
 class TestMemoryIntegration:
     @pytest.mark.asyncio
     async def test_search_memory_tool(self):
-        """search_memory tool should find relevant entries."""
+        """search_memory 工具应能找到相关条目。"""
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
@@ -276,7 +275,7 @@ class TestMemoryIntegration:
         # 插入测试数据
         await agent._long_term.insert("上周和妖梦约定周六去爬香山", memory_type="plan", poignancy=7)
 
-        # Use the tool directly
+        # 直接使用工具
         result = await agent._tool_adapter.execute("search_memory", ctx=agent._tool_adapter.tool_context, query="爬山")
         assert result.success
         assert "爬山" in result.content or "香山" in result.content
@@ -286,7 +285,7 @@ class TestMemoryIntegration:
 
     @pytest.mark.asyncio
     async def test_save_memory_tool(self):
-        """save_memory tool should persist an entry (with HITL auto-approved for test)."""
+        """save_memory 工具应持久化条目（测试中 HITL 自动审批）。"""
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
@@ -294,7 +293,7 @@ class TestMemoryIntegration:
         from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
-        # Mock HITL to auto-approve in test environment
+        # 模拟 HITL 在测试环境中自动审批
         original_run_hitl = agent._tool_adapter._manager._pipeline._run_hitl
         async def _auto_approve(plugin, name, params):
             return True, "confirmed"
@@ -309,7 +308,7 @@ class TestMemoryIntegration:
 
     @pytest.mark.asyncio
     async def test_end_to_end_with_memory(self):
-        """Full pipeline: conversation that stores and retrieves memories."""
+        """完整管线：存储并检索记忆的对话。"""
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
@@ -318,21 +317,21 @@ class TestMemoryIntegration:
         from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
-        # Mock HITL to auto-approve in test environment
+        # 模拟 HITL 在测试环境中自动审批
         async def _auto_approve(plugin, name, params):
             return True, "confirmed"
         agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
 
-        # First turn: tell agent something memorable
+        # 第一轮：告诉 agent 某件值得记住的事
         await agent.process_message("记住，我下周要去东京出差")
         await asyncio.sleep(5)
 
-        # Second turn: ask about it
+        # 第二轮：询问这件事
         await agent.process_message("我之前跟你说过我要去哪里出差的？")
         await asyncio.sleep(8)
 
         assert agent._fsm.state == AgentState.IDLE
-        # Session should have multiple messages
+        # 会话应有多条消息
         messages = agent.session.recent_messages()
         assert len(messages) >= 2
 
@@ -340,7 +339,7 @@ class TestMemoryIntegration:
 
     @pytest.mark.asyncio
     async def test_session_state_persists_in_memory(self):
-        """Session should maintain state across multiple turns."""
+        """会话应在多轮对话间保持状态。"""
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
@@ -348,19 +347,19 @@ class TestMemoryIntegration:
         from core.config import AppConfig
         agent = Agent(config=AppConfig())
         await agent.start()
-        # Mock HITL to auto-approve in test environment
+        # 模拟 HITL 在测试环境中自动审批
         async def _auto_approve(plugin, name, params):
             return True, "confirmed"
         agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
 
-        # Multiple turns
+        # 多轮对话
         await agent.process_message("我叫妖梦")
         await asyncio.sleep(3)
         await agent.process_message("我喜欢蓝色")
         await asyncio.sleep(3)
 
         messages = agent.session.recent_messages()
-        # Should have at least user+assistant from both turns
+        # 两轮都应至少包含 user+assistant
         assert len(messages) >= 4
 
         await agent.stop()
@@ -389,7 +388,7 @@ class TestPromptAssembler:
         messages = await pa.build_messages("我生日是哪天", "妖梦")
 
         system = messages[0]["content"]
-        # System prompt should include recalled memory about birthday
+        # 系统提示应包含关于生日回忆的记忆
         assert "生日" in system or "5月" in system
 
     @pytest.mark.asyncio
@@ -417,7 +416,7 @@ class TestPromptAssembler:
 @pytest.mark.unit
 class TestSessionMemoryEdgeCases:
     def test_multiple_sessions_independent(self):
-        """Different session_ids should not interfere with each other."""
+        """不同 session_id 不应相互干扰。"""
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
@@ -437,7 +436,7 @@ class TestSessionMemoryEdgeCases:
         assert "bob msg" not in s1_msgs
 
     def test_bounded_window_overflow(self):
-        """Messages beyond max_messages should be dropped (FIFO)."""
+        """超出 max_messages 的消息应被丢弃（FIFO）。"""
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage, AssistantMessage
         from core.schema.part import TextPart
@@ -459,7 +458,7 @@ class TestSessionMemoryEdgeCases:
         assert "fifth" in contents
 
     def test_recent_messages_with_n(self):
-        """recent_messages(n) should return only the last n."""
+        """recent_messages(n) 应只返回最后 n 条。"""
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
@@ -473,7 +472,7 @@ class TestSessionMemoryEdgeCases:
         assert s.recent_messages(3)[-1].content[0].content == "msg9"  # type: ignore[reportAttributeAccessIssue]
 
     def test_meta_data_on_messages(self):
-        """Messages with extra metadata should preserve it."""
+        """带额外元数据的消息应保留该元数据。"""
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
@@ -491,7 +490,7 @@ class TestSessionMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_save_caps_messages_to_max(self):
-        """save/load should only persist max_messages worth of messages."""
+        """save/load 应只持久化 max_messages 数量的消息。"""
         import os as _os
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage
@@ -517,7 +516,7 @@ class TestSessionMemoryEdgeCases:
             pass
 
     def test_clear_preserves_session_id(self):
-        """Clear should empty messages but not change session_id."""
+        """Clear 应清空消息但不改变 session_id。"""
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage
         from core.schema.part import TextPart
@@ -532,7 +531,7 @@ class TestSessionMemoryEdgeCases:
         assert s.character_state.mood == "happy"  # clear only empties messages
 
     def test_messages_for_client_with_sentences(self):
-        """messages_for_client should convert TextPart list to parts array."""
+        """messages_for_client 应将 TextPart 列表转换为 parts 数组。"""
         from core.memory.session import SessionMemory
         from core.schema.message import AssistantMessage, UserMessage
         from core.schema.part import TextPart
@@ -553,7 +552,7 @@ class TestSessionMemoryEdgeCases:
         assert result[1]["role"] == "user"  # type: ignore[reportGeneralTypeIssues]
 
     def test_messages_for_client_new_format(self):
-        """messages_for_client should serialize Pydantic Message to client dict."""
+        """messages_for_client 应将 Pydantic Message 序列化为客户端字典。"""
         from core.memory.session import SessionMemory
         from core.schema.message import AssistantMessage
         from core.schema.part import TextPart
@@ -596,7 +595,7 @@ class TestSessionMemoryEdgeCases:
 class TestLongTermMemoryEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_search(self):
-        """Search on empty memory should return empty list."""
+        """空记忆搜索应返回空列表。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         results = await mem.search(query_text="anything")
@@ -604,7 +603,7 @@ class TestLongTermMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_search_no_query_returns_recent(self):
-        """Search with empty query should return most recent entries."""
+        """空查询搜索应返回最近的条目。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         await mem.insert("entry1", type="note")
@@ -615,7 +614,7 @@ class TestLongTermMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_many_entries(self):
-        """Insert and search across 50 entries."""
+        """跨 50 条条目的插入与搜索。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         for i in range(50):
@@ -627,7 +626,7 @@ class TestLongTermMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_insert_with_unicode_emoji(self):
-        """Emoji and unicode in memory entries should be preserved."""
+        """记忆条目中的 Emoji 与 unicode 应被保留。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         await mem.insert("妖梦喜欢🎨画画和🎵音乐", type="preference")
@@ -638,7 +637,7 @@ class TestLongTermMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_same_text_multiple_inserts(self):
-        """Inserting the same text multiple times should create distinct entries."""
+        """多次插入相同文本应生成不同条目。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         await mem.insert("重复的记忆", type="note")
@@ -650,7 +649,7 @@ class TestLongTermMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_insert_long_text(self):
-        """Very long text should be stored and searchable."""
+        """很长的文本应能存储并可搜索。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         long_text = "这是一个非常长的记忆条目，" + "包含很多细节和信息。" * 50
@@ -662,10 +661,10 @@ class TestLongTermMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_search_chinese_substring(self):
-        """Chinese text search should match on character overlap."""
+        """中文文本搜索应基于字符重叠匹配。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
-        # Don't call connect() — test in-memory fallback explicitly
+        # 不调用 connect() —— 显式测试内存回退
         await mem.insert("妖梦昨天去了朝阳公园散步", type="fact")
         await mem.insert("今天中午吃的是拉面", type="fact")
         await mem.insert("下周要开会讨论项目进度", type="plan")
@@ -683,7 +682,7 @@ class TestLongTermMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_search_score_ordering(self):
-        """Results should be ordered by relevance (score descending)."""
+        """结果应按相关性排序（分数降序）。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         await mem.insert("苹果是一种水果", type="fact")
@@ -696,7 +695,7 @@ class TestLongTermMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_insert_supports_type_alias_for_memory_type(self):
-        """insert() should accept 'type' as alias for 'memory_type'."""
+        """insert() 应接受 'type' 作为 'memory_type' 的别名。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         await mem.insert("test content", type="plan", poignancy=8)
@@ -711,7 +710,7 @@ class TestLongTermMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_search_filter_by_memory_type(self):
-        """search() with memory_type should only return matching types."""
+        """带 memory_type 的 search() 应只返回匹配的类型。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         await mem.insert("工作计划A", memory_type="plan")
@@ -728,7 +727,7 @@ class TestLongTermMemoryEdgeCases:
 
     @pytest.mark.asyncio
     async def test_search_returns_entries_with_ids(self):
-        """Search results should link back to _entries with proper IDs."""
+        """搜索结果应以正确 ID 关联回 _entries。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
         await mem.insert("妖梦最喜欢的颜色是蓝色", memory_type="preference", poignancy=9)
@@ -852,7 +851,7 @@ class TestCompareAndResolve:
 class TestMemoryStress:
     @pytest.mark.asyncio
     async def test_rapid_inserts_and_searches(self):
-        """Rapid alternating inserts and searches should not corrupt state."""
+        """快速交替的插入与搜索不应破坏状态。"""
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
 
@@ -867,7 +866,7 @@ class TestMemoryStress:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_session_snapshot_after_many_turns(self):
-        """After many conversation turns, save/load should be exact."""
+        """经过多轮对话后，save/load 应精确一致。"""
         import os as _os
         from core.memory.session import SessionMemory
         from core.schema.message import UserMessage, AssistantMessage
@@ -900,7 +899,7 @@ class TestMemoryStress:
     @pytest.mark.slow
     @pytest.mark.asyncio
     async def test_session_isolation_between_agents(self):
-        """Two Agent instances should have independent session memory."""
+        """两个 Agent 实例应各自拥有独立的会话记忆。"""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         import uuid
@@ -916,12 +915,12 @@ class TestMemoryStress:
         a1._llm._backend = FakeLLMBackend(response="好的我记住了")
         await a1.start()
         await a1.process_message("只有agent1知道的消息")
-        # Wait for cognitive task to start
+        # 等待认知任务启动
         for _ in range(100):
             if a1._fsm.state != "idle":
                 break
             await asyncio.sleep(0.01)
-        # Wait for it to finish
+        # 等待其完成
         for _ in range(100):
             if a1._fsm.state == "idle":
                 break
@@ -948,7 +947,7 @@ class TestMemoryStress:
 
 
 # ============================================================================
-# Runner
+# 运行入口
 # ============================================================================
 
 if __name__ == "__main__":
@@ -1105,7 +1104,7 @@ async def test_long_term_memory_sync_on_recovery():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_long_term_memory_eviction_cleans_dirty_ids():
-    """Evicted entries should also be removed from _dirty_ids."""
+    """被驱逐的条目也应从 _dirty_ids 中移除。"""
     from core.memory.long_term import LongTermMemory, MemoryEntry
     import time as _time
     mem = LongTermMemory()

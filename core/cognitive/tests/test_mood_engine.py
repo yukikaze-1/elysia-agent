@@ -81,7 +81,7 @@ class TestApplyMood:
         output = AsyncMock()
 
         self._run("|0.5", engine, tts_mgr, output)
-        # mood unchanged, output.mood not called
+        # mood 不变，output.mood 未被调用
         output.mood.assert_not_called()
 
     def test_apply_mood_writes_target_session_state(self):
@@ -170,7 +170,7 @@ class TestAnalyzeAssistantDecay:
         engine.analyze_assistant("好的")
 
         assert state.mood_intensity >= 0.1
-        # mood text is NOT reset — LLM handles it next turn via <mood>
+        # mood 文本不重置 —— 下一轮由 LLM 经 <mood> 处理
         assert state.mood == "被夸奖后很开心"
 
 

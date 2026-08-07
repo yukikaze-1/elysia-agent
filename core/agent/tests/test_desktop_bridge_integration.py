@@ -1,4 +1,4 @@
-# core/agent/tests/test_desktop_bridge_integration.py
+# 测试文件：core/agent/tests/test_desktop_bridge_integration.py
 """批次 4 Task 6：Agent / ToolAdapter / 生命周期 desktop_bridge 集成测试。
 
 覆盖：

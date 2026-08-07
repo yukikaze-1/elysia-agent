@@ -462,7 +462,7 @@ class TestTimeout:
 class TestTerminalMigrations:
     @pytest.mark.asyncio
     async def test_rejected_migration(self):
-        """handle_status{rejected} → ToolResult.fail(CANCELLED) + repo rejected。"""
+        """handle_status{rejected} → ToolResult.fail(CANCELLED) + repo 标记为 rejected。"""
         repo, bridge, frames = _make_bridge()
         task = asyncio.create_task(bridge.request_and_wait(call=_call()))
         await _until(lambda: len(frames) == 1)
@@ -493,7 +493,7 @@ class TestTerminalMigrations:
 
     @pytest.mark.asyncio
     async def test_cancel_call_migration(self):
-        """cancel_call → repo cancelled + future resolve(CANCELLED)。"""
+        """cancel_call → repo 标记为 cancelled + future resolve(CANCELLED)。"""
         repo, bridge, frames = _make_bridge()
         task = asyncio.create_task(bridge.request_and_wait(call=_call()))
         await _until(lambda: len(frames) == 1)

@@ -558,7 +558,7 @@ class TestConfigValidationError:
 
 
 # ============================================================
-# Constraint describe()
+# Constraint describe()（约束描述）
 # ============================================================
 
 class TestConstraintDescribe:
@@ -607,7 +607,7 @@ class TestConstraintDescribe:
 
 
 # ============================================================
-# EnvManager Optional[X]
+# EnvManager Optional[X]（可选类型）
 # ============================================================
 
 class TestEnvManagerOptional:
@@ -626,7 +626,7 @@ class TestEnvManagerOptional:
 
 
 # ============================================================
-# YAML edges
+# YAML 边界情况
 # ============================================================
 
 class TestYAMLEdges:

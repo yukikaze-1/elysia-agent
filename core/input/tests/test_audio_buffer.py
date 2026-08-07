@@ -1,4 +1,4 @@
-"""AudioBuffer and pcm_to_wav unit tests.
+"""AudioBuffer 与 pcm_to_wav 单元测试。
 
 Run: python -m pytest Module/input/test_audio_buffer.py -v --asyncio-mode=auto
 """
@@ -25,11 +25,11 @@ def _sil(samples: int) -> bytes:
 @pytest.mark.unit
 class TestPcmToWav:
     def test_header_structure(self):
-        """WAV header should have RIFF, WAVE, fmt, data chunks with correct sizes."""
+        """WAV 头应包含 RIFF、WAVE、fmt、data 块且尺寸正确。"""
         pcm = b"\x00\x00" * 160  # 160 samples (~10ms at 16kHz)
         wav_data = pcm_to_wav(pcm, sample_rate=16000, channels=1, bits=16)
 
-        # Verify RIFF header
+        # 验证 RIFF 头
         assert wav_data[:4] == b"RIFF"
         riff_size = struct.unpack("<I", wav_data[4:8])[0]
         assert riff_size == len(wav_data) - 8
@@ -37,7 +37,7 @@ class TestPcmToWav:
         assert wav_data[12:16] == b"fmt "
 
     def test_roundtrip_with_wave_module(self):
-        """Generated WAV should be readable by Python's wave module."""
+        """生成的 WAV 应能被 Python 的 wave 模块读取。"""
         pcm = b"\x01\x00\x02\x00\xff\xff\xfe\xff" * 100  # some audio data
         wav_data = pcm_to_wav(pcm, sample_rate=16000, channels=1, bits=16)
 
@@ -49,7 +49,7 @@ class TestPcmToWav:
             assert read_pcm == pcm
 
     def test_custom_params(self):
-        """WAV header should reflect custom sample_rate, channels, bits."""
+        """WAV 头应反映自定义的 sample_rate、channels、bits。"""
         pcm = b"\x00\x00" * 100
         wav_data = pcm_to_wav(pcm, sample_rate=44100, channels=2, bits=8)
 
@@ -59,7 +59,7 @@ class TestPcmToWav:
             assert wf.getframerate() == 44100
 
     def test_empty_pcm(self):
-        """Empty PCM should produce a valid WAV with zero data size."""
+        """空 PCM 应生成数据大小为 0 的有效 WAV。"""
         wav_data = pcm_to_wav(b"", sample_rate=16000, channels=1, bits=16)
         with wave.open(BytesIO(wav_data), "rb") as wf:
             assert wf.getnframes() == 0
@@ -68,28 +68,28 @@ class TestPcmToWav:
 class TestAudioBuffer:
     @pytest.fixture
     def make_silence(self):
-        """Generate N samples of near-silence PCM."""
+        """生成 N 个近静音 PCM 采样。"""
         def _make(count: int) -> bytes:
             return struct.pack(f"<{count}h", *([5] * count))
         return _make
 
     @pytest.fixture
     def make_loud(self):
-        """Generate N samples of loud PCM."""
+        """生成 N 个响亮 PCM 采样。"""
         def _make(count: int) -> bytes:
             return struct.pack(f"<{count}h", *([20000] * count))
         return _make
 
     @pytest.mark.unit
     def test_vad_silence(self, make_silence):
-        """Near-silence PCM should be classified as non-speech by VAD."""
+        """近静音 PCM 应被 VAD 判定为非语音。"""
         buf = AudioBuffer()
         chunk = make_silence(_FRAME_BYTES // 2)  # one 20ms frame at 16kHz
         assert buf._is_speech(chunk) is False
 
     @pytest.mark.unit
     def test_vad_loud(self, make_loud):
-        """Loud PCM should be classified as speech by VAD."""
+        """响亮 PCM 应被 VAD 判定为语音。"""
         buf = AudioBuffer()
         chunk = make_loud(_FRAME_BYTES // 2)  # one 20ms frame at 16kHz
         assert buf._is_speech(chunk) is True
@@ -113,7 +113,7 @@ class TestAudioBuffer:
             silence_duration=0.1,
         )
 
-        # Feed speech (loud) then silence — should trigger STT
+        # 喂入语音（响）再静音 —— 应触发 STT
         for _ in range(30):
             await buf.feed(make_loud(1600))  # 100ms per chunk = 3s total
         for _ in range(3):
@@ -139,7 +139,7 @@ class TestAudioBuffer:
             silence_duration=0.1,
         )
 
-        # Feed very short speech segment (< 0.3s)
+        # 喂入极短语音段（< 0.3s）
         await buf.feed(make_loud(1600))   # 100ms
         await buf.feed(make_loud(1600))   # 200ms
         await buf.flush()
@@ -164,14 +164,14 @@ class TestAudioBuffer:
     @pytest.mark.service
     @pytest.mark.asyncio
     async def test_no_stt_callable(self, make_loud, make_silence):
-        """When stt_transcribe is None, feed should not crash."""
+        """当 stt_transcribe 为 None 时，feed 不应崩溃。"""
         buf = AudioBuffer(stt_transcribe=None, silence_duration=0.1)
         for _ in range(20):
             await buf.feed(make_loud(1600))
         for _ in range(5):
             await buf.feed(make_silence(1600))
         await buf.flush()
-        # No crash is success
+        # 不崩溃即为成功
 
     @pytest.mark.service
     @pytest.mark.asyncio
@@ -182,7 +182,7 @@ class TestAudioBuffer:
             interrupt_calls.append(True)
 
         buf = AudioBuffer(on_interrupt=on_interrupt)
-        # Interrupt fires after MIN_SPEECH_CHUNKS_FOR_INTERRUPT=3 consecutive speech chunks
+        # 连续 3 个语音块后触发中断（MIN_SPEECH_CHUNKS_FOR_INTERRUPT=3）
         for _ in range(3):
             await buf.feed(make_loud(1600))
 
@@ -205,7 +205,7 @@ class TestAudioBuffer:
     @pytest.mark.service
     @pytest.mark.asyncio
     async def test_deafen_ignores_audio(self, make_loud):
-        """deafen() makes feed() a no-op for the specified duration."""
+        """deafen() 使 feed() 在指定时长内成为 no-op。"""
         stt_calls: list[bytes] = []
 
         async def fake_stt(audio: bytes) -> str:
@@ -221,20 +221,20 @@ class TestAudioBuffer:
     @pytest.mark.service
     @pytest.mark.asyncio
     async def test_deafen_clears_state(self, make_loud):
-        """deafen() resets speaking state."""
+        """deafen() 重置说话状态。"""
         buf = AudioBuffer()
-        # Feed some audio to get into speaking state
+        # 喂入一些音频以进入说话状态
         for _ in range(5):
             await buf.feed(make_loud(640))
         buf.deafen(0.1)
-        # State should be cleared
+        # 状态应被清除
         assert buf._speaking is False
         assert buf._chunks == []
 
     @pytest.mark.service
     @pytest.mark.asyncio
     async def test_flush_processes_remaining(self, make_loud):
-        """flush() processes buffered audio even without silence gap."""
+        """即使没有静音间隔，flush() 也应处理缓冲的音频。"""
         stt_calls: list[str] = []
 
         async def fake_stt(audio: bytes) -> str:
@@ -242,16 +242,16 @@ class TestAudioBuffer:
             return "transcribed text"
 
         buf = AudioBuffer(stt_transcribe=fake_stt)
-        # Feed enough to pass min segment length
+        # 喂入足够音频以超过最小分段长度
         for _ in range(30):
             await buf.feed(make_loud(640))
-        # Don't wait for silence — flush immediately
+        # 不等待静音 —— 立即 flush
         await buf.flush()
         assert "called" in stt_calls
 
 
 # ============================================================
-# VAD frame processing edges (using module-level _loud/_sil)
+# VAD 帧处理边界情况（使用模块级 _loud/_sil）
 # ============================================================
 
 @pytest.mark.unit
@@ -283,7 +283,7 @@ class TestVADFrameEdges:
 
 
 # ============================================================
-# Interrupt cooldown
+# 中断冷却
 # ============================================================
 
 @pytest.mark.service
@@ -330,7 +330,7 @@ class TestInterruptCooldown:
 
 
 # ============================================================
-# STT timeout / exception
+# STT 超时 / 异常
 # ============================================================
 
 @pytest.mark.service
@@ -351,7 +351,7 @@ class TestSTTErrors:
             await buf.feed(_loud(320))
         for _ in range(10):
             await buf.feed(_sil(320))
-        # Should not crash despite timeout
+        # 即使超时也不应崩溃
 
     @pytest.mark.asyncio
     async def test_stt_exception_does_not_crash(self):
@@ -371,7 +371,7 @@ class TestSTTErrors:
 
 
 # ============================================================
-# on_transcription=None
+# on_transcription=None（无回调）
 # ============================================================
 
 @pytest.mark.service
@@ -393,7 +393,7 @@ class TestOnTranscriptionNone:
 
 
 # ============================================================
-# reset() preserves _deafen_until
+# reset() 保留 _deafen_until
 # ============================================================
 
 @pytest.mark.unit
@@ -408,14 +408,14 @@ class TestResetDeafen:
 
 
 # ============================================================
-# Wake word gate tests
+# 唤醒词门控测试
 # ============================================================
 
 @pytest.mark.service
 class TestWakeWordGate:
     @pytest.mark.asyncio
     async def test_wake_words_none_still_works(self):
-        """wake_words=None: behavior unchanged (backward compat)."""
+        """wake_words=None：行为不变（向后兼容）。"""
         stt_calls: list[str] = []
 
         async def fake_stt(audio: bytes) -> str:
@@ -438,7 +438,7 @@ class TestWakeWordGate:
 
     @pytest.mark.asyncio
     async def test_wake_words_not_installed_passthrough(self):
-        """When openwakeword not installed, gate is open (passthrough)."""
+        """未安装 openwakeword 时，门控开放（透传）。"""
         stt_calls: list[str] = []
 
         async def fake_stt(audio: bytes) -> str:
@@ -461,14 +461,14 @@ class TestWakeWordGate:
 
     @pytest.mark.asyncio
     async def test_init_default_wake_words_none(self):
-        """Default constructor has wake_words=None, state=None."""
+        """默认构造器 wake_words=None、state=None。"""
         buf = AudioBuffer()
         assert buf._wake_state is None
         assert buf._wake_detector is None
 
     @pytest.mark.asyncio
     async def test_wake_state_passthrough_when_disabled(self):
-        """When models unavailable, _wake_state is None (passthrough)."""
+        """模型不可用时，_wake_state 为 None（透传）。"""
         buf = AudioBuffer(wake_words=["test"])
         assert buf._wake_detector is not None
         assert buf._wake_detector.enabled is False

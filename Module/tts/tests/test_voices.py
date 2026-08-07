@@ -50,7 +50,7 @@ class TestProtocolListVoicesDefault:
 
 
 # ============================================================
-# MiniMax
+# MiniMax（MiniMax 语音）
 # ============================================================
 
 def _make_minimax_resp(*items: dict) -> object:
@@ -183,7 +183,7 @@ class TestMiniMaxSynthesizeVoiceId:
 
 
 # ============================================================
-# gpt-sovits
+# gpt-sovits（GPT-SoVITS 语音）
 # ============================================================
 
 class TestGPTSoVitsListVoices:
@@ -214,7 +214,7 @@ class TestGPTSoVitsListVoices:
 
 
 # ============================================================
-# openai_tts
+# openai_tts（OpenAI TTS 语音）
 # ============================================================
 
 class TestOpenAICompatListVoices:

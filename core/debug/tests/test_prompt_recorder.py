@@ -1,4 +1,4 @@
-# core/test_prompt_recorder.py
+# 测试文件：core/test_prompt_recorder.py
 """PromptRecorder 单元测试"""
 import pytest
 from datetime import datetime

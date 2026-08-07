@@ -14,7 +14,7 @@ from core.tools.memory.plugin import (
 pytestmark = pytest.mark.service
 
 # ──────────────────────────────────────────────────────────────────
-# MemorySearchPlugin
+# MemorySearchPlugin（记忆搜索插件）
 # ──────────────────────────────────────────────────────────────────
 
 class TestMemorySearchPlugin:
@@ -90,7 +90,7 @@ class TestMemorySearchPlugin:
 
 
 # ──────────────────────────────────────────────────────────────────
-# MemorySavePlugin
+# MemorySavePlugin（记忆保存插件）
 # ──────────────────────────────────────────────────────────────────
 
 class TestMemorySavePlugin:

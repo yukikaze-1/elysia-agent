@@ -34,7 +34,7 @@ class TestLongTermMemoryHealthCheck:
 
     @pytest.mark.asyncio
     async def test_delegates_to_repo_when_connected(self):
-        """health_check delegates to repo.health_check when repo exists."""
+        """当 repo 存在时，health_check 委托给 repo.health_check。"""
         ltm = LongTermMemory(max_entries=10)
         mock_repo = MagicMock()
         mock_repo.health_check = AsyncMock(return_value=True)

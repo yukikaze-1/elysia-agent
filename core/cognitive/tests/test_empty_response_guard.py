@@ -1,4 +1,4 @@
-# core/cognitive/tests/test_empty_response_guard.py
+# 测试文件：core/cognitive/tests/test_empty_response_guard.py
 """空 LLM 响应守卫单元测试 — _think_loop 对"成功但无内容"响应的兜底。
 
 覆盖：无文本+无工具调用 → nudge 重试一次；仍空 → 兜底回复；正常路径零干扰；
@@ -44,7 +44,7 @@ def _make_loop() -> CognitiveLoop:
 
 
 # 空响应元组形状：(acc_text, raw_tool_calls, speaking_started, all_sentences,
-#                  iv_think, blocks, public_text)
+#                  iv_think、blocks、public_text 等)
 _EMPTY = ("", [], False, [], "", [], "")
 
 

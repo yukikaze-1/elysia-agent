@@ -209,7 +209,7 @@ def _wrap_llm_client(llm: AsyncOpenAI, label: str = "LLM") -> AsyncOpenAI:
         if hasattr(choice, "message") and choice.message:
             msg = choice.message
             if msg.tool_calls:
-                # Executor: tool call response
+                # Executor：工具调用响应
                 for tc in msg.tool_calls:
                     fn = tc.function
                     print(f"  │  ← LLM tool_call: {fn.name}({fn.arguments[:300]})")
@@ -853,7 +853,7 @@ async def test_e2e_cancel():
     assert first_event is not None
     _log_info(f"首个事件: {first_event.type.value}")
 
-    # cancel
+    # cancel（取消）
     step_start = _log_step(2, 6, "cancel() → 消费 CANCELLED 事件")
     assert await ts.cancel(task_id) is True
     _log_ok("cancel() 返回 True")
@@ -967,7 +967,7 @@ async def test_e2e_pause_resume():
     assert first_event is not None
     _log_info(f"首个事件: {first_event.type.value}")
 
-    # pause
+    # pause（暂停）
     step_start = _log_step(2, 6, "pause → 等 PAUSED 事件")
     try:
         await ts.pause(task_id)
@@ -1008,7 +1008,7 @@ async def test_e2e_pause_resume():
         return
     _record_timeline("2.pause→PAUSED", _elapsed() - step_start)
 
-    # resume
+    # resume（恢复）
     step_start = _log_step(3, 6, "resume → 等 COMPLETED")
     resume_result = await ts.resume(task_id)
     assert isinstance(resume_result, WorkflowMailbox)

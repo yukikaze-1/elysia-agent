@@ -51,23 +51,23 @@ class TestParseExtraction:
             _parse_extraction("not json")
 
     def test_parse_json_embedded_in_text(self):
-        """JSON array embedded in surrounding text should be extracted."""
+        """应能提取嵌在周围文本中的 JSON 数组。"""
         text = 'prefix text [{"type": "Fact", "content": "found"}] suffix text'
         items = _parse_extraction(text)
         assert len(items) == 1
         assert items[0].content == "found"
 
     def test_parse_multiple_arrays_returns_first(self):
-        """When multiple arrays exist, greedy regex captures from first [ to last ],
-        producing invalid JSON → 解析失败抛异常。"""
+        """存在多个数组时，贪婪正则从第一个 [ 捕获到最后一个 ]，
+        产生非法 JSON → 解析失败抛异常。"""
         text = '[{"type": "fact", "content": "a"}] other [{"type": "plan", "content": "b"}]'
-        # Greedy regex matches first [ to last ] → invalid JSON → raise
+        # 贪婪正则从第一个 [ 匹配到最后一个 ] → 非法 JSON → 抛异常
         with pytest.raises(_JsonArrayParseError):
             _parse_extraction(text)
 
     def test_parse_trailing_comma(self):
         """Trailing comma in JSON array (invalid JSON) → 解析失败抛异常。"""
-        # Trailing comma is invalid JSON → json.loads + regex both fail → raise
+        # 尾逗号是非法 JSON → json.loads 与正则均失败 → 抛异常
         with pytest.raises(_JsonArrayParseError):
             _parse_extraction('[{"type": "Fact", "content": "test"},]')
 
@@ -83,7 +83,7 @@ class TestParseExtraction:
             _parse_extraction('{"type": "fact", "content": "not an array"}')
 
     def test_parse_array_with_invalid_items(self):
-        """Items missing required fields should still parse."""
+        """缺少必填字段的条目仍应能解析。"""
         items = _parse_extraction(
             '[{"type": "Fact", "content": "ok"}, {"invalid": "item"}, {"type": "Plan"}]'
         )
@@ -197,7 +197,7 @@ class TestMemoryConsolidator:
 
     @pytest.mark.asyncio
     async def test_flush_consolidates_below_threshold(self):
-        """flush() should consolidate buffered turns even below threshold."""
+        """即使未达阈值，flush() 也应对缓冲的对话轮次进行整合。"""
 
         class FakeLLM:
             async def think(self, messages, extra_body=None):
@@ -225,7 +225,7 @@ class TestMemoryConsolidator:
 class TestMemoryConsolidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_consolidate_stores_in_memory(self):
-        """Consolidation should actually store extracted facts."""
+        """整合应真正存储提取到的事实。"""
         from core.tests.fake_llm import FakeLLMBackend
 
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
@@ -243,7 +243,7 @@ class TestMemoryConsolidatorEdgeCases:
 
     @pytest.mark.asyncio
     async def test_consolidate_very_long_messages(self):
-        """Should handle messages at the character limit gracefully."""
+        """应能优雅处理达到字符上限的消息。"""
         from core.tests.fake_llm import FakeLLMBackend
 
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())

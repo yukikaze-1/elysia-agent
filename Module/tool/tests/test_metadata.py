@@ -85,7 +85,7 @@ class TestRegistryMetadata:
     def test_derived_authority_and_permission(self):
         tm = _make_manager()
         by_name = _by_name(tm.registry_metadata())
-        # desktop → client；backend → backend
+        # 审批权映射：desktop → client；backend → backend
         assert by_name["desktop.file.read"].approval_authority == "client"
         assert by_name["write_file"].approval_authority == "backend"
         # high 风险 → permission_required=True

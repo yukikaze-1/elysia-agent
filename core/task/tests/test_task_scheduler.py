@@ -29,7 +29,7 @@ async def _fixed_session_resolver(session, conversation_id, protocol_version):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Param models
+# 参数模型
 # ═══════════════════════════════════════════════════════════════════
 
 class MsgParams(BaseModel):
@@ -38,7 +38,7 @@ class MsgParams(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Plugin classes
+# 插件类
 # ═══════════════════════════════════════════════════════════════════
 
 class EchoPlugin(ToolPlugin):
@@ -91,7 +91,7 @@ class WaiterPlugin(ToolPlugin):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Helpers
+# 辅助函数
 # ═══════════════════════════════════════════════════════════════════
 
 async def _make_manager() -> ToolAdapter:

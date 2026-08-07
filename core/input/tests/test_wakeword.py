@@ -1,4 +1,4 @@
-"""WakeWordDetector unit tests.
+"""WakeWordDetector 单元测试。
 
 Run: python -m pytest Module/input/test_wakeword.py -v
 """
@@ -29,27 +29,27 @@ class TestWakeWordDetectorNoModels:
     def test_feed_noop_when_disabled(self):
         detector = WakeWordDetector(wake_words=["nonexistent_word_xyz"])
         detector.feed(_loud_bytes(4096))  # 256ms at 16kHz
-        # No crash is success
+        # 不崩溃即为成功
 
 
 @pytest.mark.unit
 class TestWakeWordDetectorBuffer:
     def test_feed_noop_when_disabled_leaves_buffer_empty(self):
-        """When no models loaded, feed() skips buffering entirely."""
+        """未加载模型时，feed() 完全跳过缓冲。"""
         detector = WakeWordDetector(wake_words=["test"])
         assert detector.enabled is False
         detector.feed(_silence_bytes(1280))  # 80ms frame
         assert len(detector._buffer) == 0  # buffer untouched
 
     def test_feed_large_chunk_noop_when_disabled(self):
-        """Large chunks also skip buffering when disabled."""
+        """禁用时，大块数据同样跳过缓冲。"""
         detector = WakeWordDetector(wake_words=["test"])
         assert detector.enabled is False
         detector.feed(_loud_bytes(4096))  # 256ms
         assert len(detector._buffer) == 0
 
     def test_partial_chunk_noop_when_disabled(self):
-        """Small chunks also skip buffering when disabled."""
+        """禁用时，小块数据同样跳过缓冲。"""
         detector = WakeWordDetector(wake_words=["test"])
         assert detector.enabled is False
         detector.feed(_silence_bytes(640))  # 40ms

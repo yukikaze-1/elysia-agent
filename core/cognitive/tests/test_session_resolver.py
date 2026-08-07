@@ -1,4 +1,4 @@
-# core/cognitive/tests/test_session_resolver.py
+# 测试文件：core/cognitive/tests/test_session_resolver.py
 """批次 3 Task 8：CognitiveLoop session_resolver + target 归属 + conversation_id 贯通。
 
 覆盖 spec §3.4（D-m）：

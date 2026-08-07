@@ -447,7 +447,7 @@ async def test_pause_and_resume():
     first_event = await asyncio.wait_for(result.get(), timeout=30.0)
     assert first_event is not None, "未收到首个事件"
 
-    # pause
+    # pause（暂停）
     try:
         await ts.pause(task_id)
     except KeyError:
@@ -485,7 +485,7 @@ async def test_pause_and_resume():
     # 验证任务仍在注册表中（PAUSED 不清理）
     assert task_id in ts._tasks, "PAUSED 任务应从注册表保留"
 
-    # resume
+    # resume（恢复）
     resume_result = await ts.resume(task_id)
     assert isinstance(resume_result, WorkflowMailbox), \
         f"resume 应返回 WorkflowMailbox，实际: {type(resume_result)}"
@@ -547,7 +547,7 @@ async def test_cancel_on_paused_task():
     first_event = await asyncio.wait_for(result.get(), timeout=30.0)
     assert first_event is not None, "未收到首个事件"
 
-    # pause
+    # pause（暂停）
     try:
         await ts.pause(task_id)
     except KeyError:

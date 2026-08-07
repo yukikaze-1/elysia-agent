@@ -7,7 +7,7 @@ from Module.database.documentdb.registry import DocumentDBFactory
 
 
 # ============================================================
-# Protocol — ABC constraints
+# 协议 —— ABC 抽象约束
 # ============================================================
 
 @pytest.mark.service
@@ -46,7 +46,7 @@ class TestDocumentDBBackendProtocol:
 
 
 # ============================================================
-# DocumentDBFactory
+# DocumentDBFactory（文档数据库工厂）
 # ============================================================
 
 @pytest.mark.service
@@ -66,7 +66,7 @@ class TestDocumentDBFactory:
 
 
 # ============================================================
-# MongoDBBackend
+# MongoDBBackend（MongoDB 后端）
 # ============================================================
 
 def _make_insert_result(inserted_id="abc123"):
@@ -128,7 +128,7 @@ class TestMongoDBFind:
         mock_cursor.to_list = AsyncMock(
             return_value=[{"_id": MagicMock(), "text": "hello"}]
         )
-        # MotorCursor supports chaining
+        # MotorCursor 支持链式调用
         mock_cursor.sort.return_value = mock_cursor
         mock_cursor.skip.return_value = mock_cursor
         mock_cursor.limit.return_value = mock_cursor
@@ -209,7 +209,7 @@ class TestMongoDBClose:
 
 
 # ============================================================
-# Protocol — remaining abstract enforcement (6 methods)
+# 协议 —— 剩余抽象方法强制（6 个）
 # ============================================================
 
 @pytest.mark.service
@@ -288,7 +288,7 @@ class TestProtocolRemaining:
 
 
 # ============================================================
-# MongoDB — zero results / upsert / edge cases
+# MongoDB —— 零结果 / upsert / 边界情况
 # ============================================================
 
 @pytest.mark.service

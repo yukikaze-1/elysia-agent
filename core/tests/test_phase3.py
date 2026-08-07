@@ -1,4 +1,4 @@
-"""Phase 3 tests: CognitiveLoop, server, Agent, LLM adapter, edge cases.
+"""阶段 3 测试：CognitiveLoop、服务器、Agent、LLM 适配器、边界情况。
 
 Run: python -m pytest core/test_phase3.py -v --asyncio-mode=auto
 """
@@ -84,7 +84,7 @@ class TestMergeStreamToolCalls:
         accum: list[dict] = []
         delta = [{"index": 0, "id": "x"}]
         merge_stream_tool_calls(accum, delta)
-        # Should not crash
+        # 不应崩溃
         assert accum[0]["id"] == "x"
 
 
@@ -134,7 +134,7 @@ class TestNormalizeToolCalls:
 class TestCognitiveLoopMethods:
     @pytest.fixture
     def loop(self):
-        """Create a minimal CognitiveLoop with mocks for all dependencies."""
+        """为所有依赖创建带 mock 的最小 CognitiveLoop。"""
         from Module.output import OutputManager, ChannelCapability
         from core.adapter.prompt_assembler import PromptAssembler
         from core.adapter import ToolAdapter
@@ -179,7 +179,7 @@ class TestCognitiveLoopMethods:
     async def test_synthesize_legacy_tts_none(self, loop):
         loop._tts_mgr.set_backend(None)
         await loop._tts_mgr.synthesize_legacy("hello")
-        # Should return immediately without error
+        # 应立即返回且不报错
 
     @pytest.mark.asyncio
     async def test_synthesize_legacy_tts_success(self, loop):
@@ -199,7 +199,7 @@ class TestCognitiveLoopMethods:
         loop._tts_mgr.set_backend(loop._tts)
 
         await loop._tts_mgr.synthesize_legacy("hello")
-        # Should not raise
+        # 不应抛异常
 
     @pytest.mark.asyncio
     async def test_handle_interrupt(self, loop):
@@ -215,9 +215,9 @@ class TestCognitiveLoopMethods:
     async def test_process_rejects_invalid_fsm_state(self, loop):
         loop._fsm.transition(AgentState.THINKING)
         loop._fsm.interrupt()
-        # Now INTERRUPTED — can only go to IDLE, not THINKING
+        # 现在是 INTERRUPTED —— 只能转 IDLE，不能转 THINKING
         await loop.process("hello")
-        # Should warn and return without transitioning to THINKING
+        # 应告警并返回，不转移到 THINKING
         assert loop._fsm.state == AgentState.INTERRUPTED
 
     @pytest.mark.asyncio
@@ -233,7 +233,7 @@ class TestCognitiveLoopMethods:
     async def test_after_response_no_consolidator(self, loop):
         loop._consolidator = None
         await loop._after_response("user msg", "assistant reply")
-        # Should not raise
+        # 不应抛异常
 
     @pytest.mark.asyncio
     async def test_after_response_with_consolidator(self, loop):
@@ -243,7 +243,7 @@ class TestCognitiveLoopMethods:
 
     @pytest.mark.asyncio
     async def test_tool_cancelled_error_returns_fail(self, loop):
-        """Tool raising CancelledError returns ToolResult.fail via _execute_tools_directly."""
+        """工具抛出 CancelledError 时，经 _execute_tools_directly 返回 ToolResult.fail。"""
         from Module.tool.protocol import ToolResult
         import asyncio as _asyncio
 
@@ -267,7 +267,7 @@ class TestCognitiveLoopMethods:
 
     @pytest.mark.asyncio
     async def test_tool_exception_returns_fail(self, loop):
-        """Tool raising RuntimeError returns ToolResult.fail via _execute_tools_directly."""
+        """工具抛出 RuntimeError 时，经 _execute_tools_directly 返回 ToolResult.fail。"""
         from Module.tool.protocol import ToolResult
 
         async def failing_tool(*args, **kwargs):
@@ -322,12 +322,12 @@ class TestCognitiveLoopTTS:
         tools = ToolAdapter([])
         tts = MagicMock()
         tts.synthesize_stream = AsyncMock(return_value=AsyncMock())
-        # Make synthesize_stream return no chunks (empty stream)
+        # 让 synthesize_stream 返回空块（空流）
         async def _empty_stream(*args, **kwargs):
             return
             yield  # unreachable, makes it an async generator
         tts.synthesize_stream = MagicMock()
-        # Use a real async generator
+        # 使用真正的异步生成器
         async def _fake_stream(text, character=None):
             yield b"audio_chunk_1"
         tts.synthesize_stream = _fake_stream
@@ -339,25 +339,25 @@ class TestCognitiveLoopTTS:
 
     @pytest.mark.asyncio
     async def test_stream_sentence_creates_task(self, loop):
-        """stream_sentence creates a background TTS task."""
+        """stream_sentence 创建后台 TTS 任务。"""
         initial_count = len(loop._tts_mgr._tasks)
         loop._tts_mgr.stream_sentence("你好世界")
         assert len(loop._tts_mgr._tasks) == initial_count + 1
-        # Should clean up done tasks
+        # 应清理已完成的任务
         loop._tts_mgr.stream_sentence("第二句")
-        # At most initial+2 tasks (some may have completed)
+        # 最多 initial+2 个任务（部分可能已完成）
         assert len(loop._tts_mgr._tasks) <= initial_count + 2
         assert loop._tts_mgr._total >= 2
 
     @pytest.mark.asyncio
     async def test_multi_tool_round(self, loop):
-        """CognitiveLoop handles tool calls and loops correctly."""
+        """CognitiveLoop 正确处理工具调用与循环。"""
         import json
         from Module.tool import PluginContext, ToolContext
         from Module.tool.protocol import ToolPlugin
         from Module.tool.safety import SafetyProfile
         from pydantic import BaseModel, Field
-        # Use a fake backend that returns tool calls then final answer
+        # 使用假后端：先返回工具调用，再返回最终回答
         tool_json = json.dumps({
             "tool_calls": [{
                 "id": "call_1", "type": "function",
@@ -366,7 +366,7 @@ class TestCognitiveLoopTTS:
         })
         loop._llm._backend = FakeLLMBackend(response=tool_json)
 
-        # Register a tool using Plugin pattern
+        # 使用 Plugin 模式注册工具
         class _QParams(BaseModel):
             q: str = Field(default="")
 
@@ -381,14 +381,14 @@ class TestCognitiveLoopTTS:
 
         await loop._tool_adapter._manager.load_all([_TestTool], PluginContext(session_id="test"))
 
-        # After process, the tool should have been called (tool history)
+        # process 之后工具应已被调用（工具历史）
         await loop.process("use test_tool")
-        # Tool was registered, process completed without error
+        # 工具已注册，process 正常完成
         assert loop._fsm.state == AgentState.IDLE
 
     @pytest.mark.asyncio
     async def test_handle_interrupt_clears_state(self, loop):
-        """_handle_interrupt resets sentence buffer, cancels TTS tasks, returns to IDLE."""
+        """_handle_interrupt 重置句子缓冲、取消 TTS 任务并回到 IDLE。"""
         t = asyncio.create_task(asyncio.sleep(10))
         loop._tts_mgr._tasks.append(t)
         loop._fsm.transition("thinking")
@@ -445,7 +445,7 @@ class TestCognitiveLoopSync:
 
     @pytest.mark.asyncio
     async def test_process_lock_serializes(self, loop):
-        """Concurrent process() calls are serialized by the lock."""
+        """并发的 process() 调用由锁串行化。"""
         started = []
 
         async def tracked_process(msg):
@@ -456,7 +456,7 @@ class TestCognitiveLoopSync:
         t2 = asyncio.create_task(tracked_process("B"))
         await asyncio.gather(t1, t2)
 
-        # Both should have started (B waited for A)
+        # 两者都应已启动（B 等待 A）
         assert len(started) == 2
 
 
@@ -493,7 +493,7 @@ class TestFSMEdges:
         fsm.transition(AgentState.THINKING)
         fsm.interrupt()
         assert fsm.state == AgentState.INTERRUPTED
-        # From INTERRUPTED, interrupt should fail
+        # 从 INTERRUPTED 状态下 interrupt 应失败
         assert fsm.interrupt() is False
 
     def test_previous_property(self):
@@ -596,7 +596,7 @@ class TestLLMAdapter:
         async for chunk in adapter.stream_think([{"role": "user", "content": "你好"}]):
             chunks.append(chunk)
 
-        # FakeLLMBackend has no stream_think, falls back to chat() then streams chars
+        # FakeLLMBackend 无 stream_think，回退到 chat() 再逐字符流式输出
         text = "".join(c["content"] for c in chunks if c["content"])
         assert "你好呀" in text
 
@@ -637,7 +637,7 @@ class TestEmotionEngineEdges:
     def test_push_idle_empty_list(self, engine):
         engine._idle_expressions = []
         engine._push_idle()
-        # Should not raise
+        # 不应抛异常
 
     def test_intensity_capped_at_one(self, engine):
         engine.state.mood_intensity = 0.96
@@ -649,20 +649,20 @@ class TestEmotionEngineEdges:
         engine.state.mood_intensity = 0.12
         engine.analyze_assistant("好的")
         assert engine.state.mood_intensity >= 0.1
-        # mood text no longer reset by analyze_assistant
+        # analyze_assistant 不再重置 mood 文本
         assert engine.state.mood == "happy"
 
     def test_schedule_no_loop_does_not_raise(self, engine):
-        """_schedule should be a no-op when no event loop is running."""
-        # In sync test context, no running loop → should not raise
+        """无运行中的事件循环时 _schedule 应为 no-op。"""
+        # 同步测试上下文中无运行中的事件循环 —— 不应抛异常
         from core.personality.engine import CharacterEngine
         CharacterEngine._schedule(MagicMock())  # type: ignore[reportAttributeAccessIssue]  # coroutine mock, no loop
 
     @pytest.mark.asyncio
     async def test_push_idle_uses_list(self, engine):
-        """push_idle_expression picks from idle_expressions."""
+        """push_idle_expression 从 idle_expressions 中选取。"""
         engine._idle_expressions = ["neutral", "blink"]
-        # Should not raise — picks randomly from list
+        # 不应抛异常 —— 从列表随机选取
         await engine.push_idle_expression()
 
 
@@ -734,7 +734,7 @@ class TestAgentProcessMessage:
         agent._idle.touch = MagicMock()
         await agent.process_message("hi")
         agent._idle.touch.assert_called_once()
-        # Wait for cognitive task to start then finish
+        # 等待认知任务启动并完成
         for _ in range(100):
             if agent._fsm.state != AgentState.IDLE:
                 break
@@ -755,10 +755,10 @@ class TestAgentProcessMessage:
         agent._llm._backend = FakeLLMBackend(response="你好")
         await agent.start()
 
-        # Send two messages in rapid succession
+        # 快速连续发送两条消息
         await agent.process_message("hello")
         await agent.process_message("stop!")
-        # Both should be processed without error
+        # 两者都应无错处理
         await agent.stop()
 
 
@@ -894,14 +894,14 @@ class TestAudioBufferErrors:
             silence_duration=0.01,
         )
 
-        # Feed enough loud audio to create a segment
+        # 喂入足够大的响度音频以形成分段
         import struct
         loud = struct.pack("<8000h", *([20000] * 8000))
         await buf.feed(loud)
         await asyncio.sleep(0.1)
         await buf.flush()
 
-        # STT should have timed out, on_transcription not called
+        # STT 应已超时，on_transcription 未被调用
         assert len(trans_calls) == 0
 
     @pytest.mark.asyncio
@@ -924,7 +924,7 @@ class TestAudioBufferErrors:
         await asyncio.sleep(0.1)
         await buf.flush()
 
-        # Should not crash, on_transcription not called
+        # 不应崩溃，on_transcription 未被调用
         assert len(trans_calls) == 0
 
     @pytest.mark.asyncio
@@ -957,10 +957,10 @@ class TestAudioBufferErrors:
 
     @pytest.mark.asyncio
     async def test_vad_silence_detected(self):
-        """Near-silence PCM should be classified as non-speech by WebRTC VAD."""
+        """近静音 PCM 应被 WebRTC VAD 判定为非语音。"""
         from core.input.audio_buffer import AudioBuffer, _FRAME_BYTES
         buf = AudioBuffer(aggressiveness=3)
-        # Generate near-silence frame (very low amplitude)
+        # 生成接近静音的帧（极低振幅）
         import struct
         chunk = struct.pack(f"<{_FRAME_BYTES // 2}h", *([5] * (_FRAME_BYTES // 2)))
         assert buf._is_speech(chunk) is False
@@ -976,14 +976,14 @@ class TestConsoleChannelDedup:
     async def test_on_message_after_stream_skips_content(self, capsys):
         from Module.output import ConsoleChannel
         ch = ConsoleChannel()
-        # Simulate streaming
+        # 模拟流式输出
         await ch.on_text_delta("hello")
-        # on_message after streaming should not print content again
+        # 流式结束后 on_message 不应再次打印内容
         msg = MessageObj(content="hello")
         await ch.on_message(msg)
-        # Verify delta_printed flag is reset
+        # 验证 delta_printed 标记已重置
         assert ch._delta_printed is False
-        # Verify content was printed exactly once (from delta, not from on_message)
+        # 验证内容恰好打印一次（来自 delta，而非 on_message）
         captured = capsys.readouterr()
         assert captured.out.count("hello") == 1
 
@@ -993,7 +993,7 @@ class TestConsoleChannelDedup:
         ch = ConsoleChannel()
         msg = MessageObj(content="direct message")
         await ch.on_message(msg)
-        # No delta was printed, should not crash
+        # 未打印 delta，不应崩溃
 
     @pytest.mark.asyncio
     async def test_on_message_with_inner_voice_after_stream(self):
@@ -1007,7 +1007,7 @@ class TestConsoleChannelDedup:
         msg.inner_voice = "thinking..."
         msg.to_dict.return_value = {"role": "assistant", "content": "hello", "inner_voice": "thinking..."}
 
-        # Use on_message directly via send
+        # 通过 send 直接使用 on_message
         from Module.output import OutputManager, ChannelCapability
         mgr = OutputManager()
         mgr.add_channel(ch)
@@ -1042,14 +1042,14 @@ class TestMessageObj:
 class TestAgentLifecycle:
     @pytest.mark.asyncio
     async def test_register_tools(self):
-        """Tools load via ToolManager.load_all with correct names."""
+        """工具经 ToolManager.load_all 加载，名称正确。"""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
-        # Load tools directly (normally done in start())
+        # 直接加载工具（通常在 start() 中完成）
         await agent._tool_adapter.start()
         names = list(agent._tool_adapter._manager.tool_names)
         assert "search_memory" in names
@@ -1058,7 +1058,7 @@ class TestAgentLifecycle:
 
     @pytest.mark.asyncio
     async def test_tool_execute_search_memory(self):
-        """search_memory tool queries long-term memory."""
+        """search_memory 工具查询长期记忆。"""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from Module.tool import ToolContext
@@ -1066,9 +1066,9 @@ class TestAgentLifecycle:
 
         agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
-        # Load tools directly (normally done in start())
+        # 直接加载工具（通常在 start() 中完成）
         await agent._tool_adapter.start()
-        # Seed a memory entry
+        # 预置一条记忆
         from core.memory.long_term import MemoryEntry
         agent._long_term._entries.append(
             MemoryEntry(text="测试记忆", metadata={"type": "fact"}))
@@ -1080,7 +1080,7 @@ class TestAgentLifecycle:
 
     @pytest.mark.asyncio
     async def test_stop_cancels_cognitive_task(self):
-        """stop() cancels _current_task if still running."""
+        """stop() 在 _current_task 仍在运行时取消它。"""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
@@ -1089,7 +1089,7 @@ class TestAgentLifecycle:
         agent._llm._backend = FakeLLMBackend(response="ok")
         await agent.start()
 
-        # Simulate a running cognitive task
+        # 模拟运行中的认知任务
         async def fake_task():
             await asyncio.sleep(10)
         task = asyncio.create_task(fake_task())
@@ -1101,7 +1101,7 @@ class TestAgentLifecycle:
 
     @pytest.mark.asyncio
     async def test_stop_closes_output_channels(self):
-        """stop() closes all output channels."""
+        """stop() 关闭所有输出通道。"""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
@@ -1109,7 +1109,7 @@ class TestAgentLifecycle:
         agent = Agent(config=AppConfig())
         agent._llm._backend = FakeLLMBackend(response="ok")
         await agent.start()
-        # Add a mock channel
+        # 添加模拟通道
         mock_ch = MagicMock()
         mock_ch.capabilities = set()
         mock_ch.close = AsyncMock()
@@ -1119,7 +1119,7 @@ class TestAgentLifecycle:
 
     @pytest.mark.asyncio
     async def test_process_message_poll_waits_for_idle(self):
-        """process_message waits for FSM to return to IDLE after INTERRUPT."""
+        """process_message 在 INTERRUPT 后等待 FSM 回到 IDLE。"""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
@@ -1128,9 +1128,9 @@ class TestAgentLifecycle:
         agent._llm._backend = FakeLLMBackend(response="ok")
         await agent.start()
 
-        # Start processing a message
+        # 开始处理一条消息
         await agent.process_message("hello")
-        # Wait for processing to complete
+        # 等待处理完成
         for _ in range(200):
             if agent._fsm.state == "idle":
                 break
@@ -1254,7 +1254,7 @@ class TestLLMAdapterErrors:
             async def stream_think(self, messages, **kwargs):
                 call_count[0] += 1
                 if call_count[0] < 3:
-                    # simulate httpx.HTTPStatusError
+                    # 模拟 httpx.HTTPStatusError
                     import httpx
                     req = object()
                     resp = type('R', (), {'status_code': 429})()
@@ -1628,7 +1628,7 @@ class TestDebugDbApi:
 # 18. ToolManager (Module.tool) — integration smoke tests
 # ============================================================================
 
-# Helper to create a minimal ToolManager with an echo plugin
+# 辅助：创建带 echo 插件的最小 ToolManager
 class _EchoParams(BaseModel):
     x: int = Field(default=0)
 
@@ -1733,7 +1733,7 @@ class TestHandleSubmitTask:
         # 批次 3：loop 不再持有固定 session——_handle_submit_task 直接调用的测试显式注入
         loop._session = session
 
-        # Mock WorkflowEngine
+        # 模拟 WorkflowEngine
         ts = MagicMock()
         ts_mailbox = MagicMock()
         ts_mailbox.task_id = "task-001"
@@ -1742,7 +1742,7 @@ class TestHandleSubmitTask:
         ts.constraints = MagicMock()
         ts.list_active_tasks = MagicMock(return_value=[])
 
-        # Mock DelegationPreparer
+        # 模拟 DelegationPreparer
         dp = MagicMock()
         from Module.workflow_contract import (
             DelegationResult, DelegationStatus, DelegationContext, SessionId,
@@ -1843,7 +1843,7 @@ class TestWakeUpMessage:
 
 
 # ============================================================================
-# Runner
+# 运行入口
 # ============================================================================
 
 if __name__ == "__main__":

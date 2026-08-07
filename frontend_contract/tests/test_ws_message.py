@@ -106,7 +106,7 @@ def test_generation_segment_started_wire():
 
 @pytest.mark.unit
 def test_generation_delta_wire():
-    """generation.delta：deltaSequence + delta。"""
+    """generation.delta 消息：deltaSequence + delta。"""
     msg = w.GenerationDeltaMessage(
         generationId="gen_1", segmentId="seg_1", segmentIndex=0,
         deltaSequence=2, delta="你",

@@ -1,4 +1,4 @@
-"""Tests for core/input/server.py — WebSocket server.
+"""core/input/server.py 测试 —— WebSocket 服务器。
 
 Run: python -m pytest core/input/tests/test_server.py -v --asyncio-mode=auto
 """
@@ -50,7 +50,7 @@ class _FakeSTTBackend(STTBackend):
 
 
 def _make_agent():
-    """Create a minimal mock agent for server tests."""
+    """为服务器测试创建最小 mock agent。"""
     import os as _os
     _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
     from core.config import AppConfig
@@ -134,7 +134,7 @@ class TestCreateApp:
 
 @pytest.mark.service
 class TestCreateAppIntegration:
-    """Integration tests using a real aiohttp test client."""
+    """使用真实 aiohttp 测试客户端的集成测试。"""
 
     @pytest.mark.asyncio
     async def test_shutdown_endpoint(self, aiohttp_client):
@@ -222,7 +222,7 @@ class TestWebSocketHandler:
 
         async with client.session.ws_connect(client.make_url('/ws')) as ws:
             await ws.send_json({"type": "text", "content": "hello"})
-            # Give event loop time to process
+            # 给事件循环处理时间
             await asyncio.sleep(0.1)
 
         agent.process_message.assert_called_with(text="hello")
@@ -257,10 +257,10 @@ class TestWebSocketHandler:
 
         async with client.session.ws_connect(client.make_url('/ws')) as ws:
             await asyncio.sleep(0.1)
-            # WebSocketChannel should be added
+            # 应已添加 WebSocketChannel
             assert len(agent.output._channels) == initial_count + 1
 
-        # After disconnect, channel should be removed
+        # 断开后应移除通道
         await asyncio.sleep(0.1)
         assert len(agent.output._channels) == initial_count
 
@@ -371,7 +371,7 @@ class TestWebSocketHandler:
 
         async with client.session.ws_connect(client.make_url('/ws')) as ws:
             await ws.send_str("not valid json")
-            # Should not crash — error response or silent
+            # 不应崩溃 —— 错误响应或静默处理
             await asyncio.sleep(0.1)
 
         await agent.stop()
@@ -440,8 +440,8 @@ class TestWebSocketHandler:
 
 @pytest.mark.unit
 class TestDoInterruptSkipIf:
-    """VAD interrupt should skip during THINKING/EXECUTING, but allow
-    during SPEAKING and when no skip_if is set (explicit button)."""
+    """VAD 中断在 THINKING/EXECUTING 时应被跳过，但在
+    SPEAKING 及未设置 skip_if 时（显式按钮）应允许中断。"""
 
     @pytest.mark.asyncio
     async def test_vad_skips_during_thinking(self):
@@ -536,7 +536,7 @@ class TestHandleJsonEdges:
 
         agent = MagicMock()
         await _handle_json({"type": "unknown_cmd"}, agent)
-        # Should not crash
+        # 不应崩溃
 
     @pytest.mark.asyncio
     async def test_interrupt_type(self):
@@ -555,7 +555,7 @@ class TestHandleJsonEdges:
 
         agent = MagicMock()
         await _handle_json({}, agent)  # no "type" field
-        # Should not crash — defaults to "" → else branch
+        # 不应崩溃 —— 默认 "" → 走 else 分支
 
 
 # ============================================================
@@ -852,7 +852,7 @@ async def test_session_replay_token_stats_camel_key(aiohttp_client):
 
 
 # ============================================================
-# Health / ready endpoints
+# Health / ready 端点
 # ============================================================
 
 @pytest.mark.service
@@ -919,7 +919,7 @@ class TestEndpoints:
 
 
 # ============================================================
-# Tool plugin endpoints
+# 工具插件端点
 # ============================================================
 
 @pytest.mark.service
@@ -985,7 +985,7 @@ class TestToolEndpoints:
 
 
 # ============================================================
-# Image upload endpoint
+# 图片上传端点
 # ============================================================
 
 _PNG_HEADER = b"\x89PNG\r\n\x1a\n"
@@ -1194,7 +1194,7 @@ class TestErrorEnvelopeNoExceptionText:
 
 
 # ============================================================
-# Fix assertion-less tests
+# 修复无断言的测试
 # ============================================================
 
 @pytest.mark.slow

@@ -1,4 +1,4 @@
-# core/schema/tests/test_memory.py
+# 测试文件：core/schema/tests/test_memory.py
 """core/schema/memory.py 测试。"""
 import pytest
 from pydantic import TypeAdapter, ValidationError

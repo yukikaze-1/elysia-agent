@@ -1,4 +1,4 @@
-# core/schema/tests/test_part.py
+# 测试文件：core/schema/tests/test_part.py
 """core/schema/part.py 测试。"""
 import pytest
 from pydantic import ValidationError

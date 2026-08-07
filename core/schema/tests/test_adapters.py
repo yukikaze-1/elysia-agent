@@ -1,4 +1,4 @@
-# core/schema/tests/test_adapters.py
+# 测试文件：core/schema/tests/test_adapters.py
 """core/schema/adapters/message_adapter.py 测试。"""
 import pytest
 from pydantic import ValidationError

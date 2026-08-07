@@ -107,7 +107,7 @@ class TestMarkMigrationGuard:
         ("pending", "failed", True),
         ("pending", "rejected", True),
         ("pending", "cancelled", True),
-        # pending → expired / offline
+        # pending → 已过期 / 离线
         ("pending", "expired", True),
         ("pending", "offline", True),
         # accepted/running → 客户端结果
@@ -122,7 +122,7 @@ class TestMarkMigrationGuard:
         # accepted ↔ running（客户端执行状态往返，Electron 回 tool.status{running}）
         ("accepted", "running", True),
         ("running", "accepted", True),
-        # accepted/running → expired / offline
+        # accepted/running → 已过期 / 离线
         ("accepted", "expired", True),
         ("accepted", "offline", True),
         ("running", "expired", True),

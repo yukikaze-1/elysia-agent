@@ -10,7 +10,7 @@ from Module.database.vectordb.registry import VectorDBFactory
 
 
 # ============================================================
-# Protocol — ABC constraints
+# 协议 —— ABC 抽象约束
 # ============================================================
 
 @pytest.mark.service
@@ -60,7 +60,7 @@ class TestVectorDBBackendProtocol:
 
 
 # ============================================================
-# VectorDBFactory
+# VectorDBFactory（向量数据库工厂）
 # ============================================================
 
 @pytest.mark.service
@@ -95,7 +95,7 @@ class TestVectorDBFactory:
 
 
 # ============================================================
-# MilvusBackend
+# MilvusBackend（Milvus 后端）
 # ============================================================
 
 @pytest.fixture
@@ -212,7 +212,7 @@ class TestMilvusClose:
 
 
 # ============================================================
-# Protocol — remaining abstract enforcement (5 methods)
+# 协议 —— 剩余抽象方法强制（5 个）
 # ============================================================
 
 @pytest.mark.service
@@ -274,7 +274,7 @@ class TestProtocolRemaining:
 
 
 # ============================================================
-# index_preset / metric_type
+# index_preset / metric_type（索引预设 / 距离度量）
 # ============================================================
 
 @pytest.mark.service
@@ -311,7 +311,7 @@ class TestIndexPreset:
 
 
 # ============================================================
-# Connection failure
+# 连接失败
 # ============================================================
 
 @pytest.mark.service

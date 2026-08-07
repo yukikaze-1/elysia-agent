@@ -125,14 +125,14 @@ class TestDatetimeFilter:
 
 @pytest.fixture
 def pm(tmp_path):
-    """Shared PromptManager with tmp_path templates dir."""
+    """共享 PromptManager，模板目录使用 tmp_path。"""
     tpl_dir = tmp_path / "templates"
     tpl_dir.mkdir()
     return PromptManager(str(tpl_dir))
 
 
 # ============================================================
-# datetime filter custom formats
+# datetime 过滤器自定义格式
 # ============================================================
 
 class TestDatetimeFilterExtended:
@@ -159,7 +159,7 @@ class TestDatetimeFilterExtended:
 
 
 # ============================================================
-# Missing variable / None context
+# 缺失变量 / None 上下文
 # ============================================================
 
 class TestRenderErrors:

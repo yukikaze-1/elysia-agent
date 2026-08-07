@@ -149,7 +149,7 @@ class TestCharacterEngineCompression:
             text="<new_self>我似乎更在意妖梦的感受了</new_self>\n<changes>\n- 更在意妖梦了\n</changes>"
         )
 
-        # Mock PromptManager
+        # 模拟 PromptManager
         mock_pm = MagicMock()
         mock_pm.render_macro.return_value = "rendered prompt"
         engine._pm = mock_pm

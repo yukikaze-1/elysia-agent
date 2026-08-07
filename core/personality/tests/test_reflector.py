@@ -183,7 +183,7 @@ def test_reflector_submits_to_character_engine():
     llm = MagicMock()
     llm.think = AsyncMock(return_value=MagicMock(text="我注意到自己变得敷衍了"))
 
-    # Mock output and character config
+    # 模拟 output 与角色配置
     output = MagicMock()
     output.expression = MagicMock(return_value=MagicMock())
     from core.config import CharacterConfig

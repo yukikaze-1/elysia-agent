@@ -1,4 +1,4 @@
-"""Phase 1 comprehensive tests: streaming, interrupt, emotion, sentence buffer.
+"""阶段 1 综合测试：流式输出、中断、情绪、句子缓冲。
 
 Run:
     python -m pytest core/test_phase1.py -v
@@ -91,7 +91,7 @@ class TestAgentFSM:
         assert fsm.state == AgentState.IDLE
 
     def test_complex_transition_chain(self):
-        """Full lifecycle: IDLE -> THINKING -> EXECUTING -> THINKING -> SPEAKING -> IDLE"""
+        """完整生命周期：IDLE -> THINKING -> EXECUTING -> THINKING -> SPEAKING -> IDLE"""
         from core.status.agent_fsm import AgentFSM, AgentState
         fsm = AgentFSM()
 
@@ -138,7 +138,7 @@ class TestEmotionEngine:
         assert engine._detect_mood("哈哈太开心了") == "happy"
         assert engine._detect_mood("今天真开心") == "happy"
         # "太好了" matches both happy("太好了") and excited("!").
-        # Happy has higher keyword count, so it wins.
+        # Happy 关键词计数更高，因此胜出。
         assert engine._detect_mood("太好了") == "happy"
         assert engine._detect_mood("难过死了") == "sad"
         assert engine._detect_mood("为什么啊") == "curious"
@@ -168,7 +168,7 @@ class TestEmotionEngine:
     def test_neutral_after_decay(self, engine):
         engine.state.mood_intensity = 0.15
         engine.analyze_assistant("好的")
-        # Intensity dropped below 0.2, mood text no longer reset
+        # 强度降至 0.2 以下，mood 文本不再重置
         assert engine.state.mood == "平静"
 
     def test_same_mood_increases_intensity(self, engine):
@@ -187,7 +187,7 @@ class TestEmotionEngine:
         assert engine.state.mood == "sad"
 
     # ---- STT audio event handling ----
-    # analyze_user_stt no longer changes mood — mood decision is left to LLM (C5 Sensory).
+    # analyze_user_stt 不再改变 mood —— mood 判定交由 LLM（C5 感官）。
 
     def test_analyze_user_stt_does_not_change_mood(self, engine):
         """STT 不再修改 mood，mood 决策交给 LLM。"""
@@ -240,7 +240,7 @@ class TestStreamingIntegration:
     @pytest.mark.service
     @pytest.mark.asyncio
     async def test_fake_llm_streaming(self):
-        """FakeLLMBackend simulates streaming by yielding characters."""
+        """FakeLLMBackend 通过逐字符产出模拟流式输出。"""
         from core.tests.fake_llm import FakeLLMBackend
         backend = FakeLLMBackend(response="你好呀！今天过得怎么样？")
 
@@ -254,7 +254,7 @@ class TestStreamingIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_real_stream_think_structured(self):
-        """Real LLM structured streaming yields content dicts."""
+        """真实 LLM 结构化流式输出 content 字典。"""
         from dotenv import load_dotenv
         load_dotenv()
         _skip_if_no_real_llm_key()
@@ -273,15 +273,15 @@ class TestStreamingIntegration:
             chunks.append(chunk)
 
         assert len(chunks) > 0
-        # At least some chunks have content
+        # 至少部分块有内容
         assert any(c["content"] for c in chunks)
-        # No tool calls expected for this simple query (LLM decides)
+        # 这个简单查询不应有工具调用（由 LLM 决定）
         await adapter.close()
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_streaming_delivers_tokens_immediately(self):
-        """First chunk should arrive quickly, not after full response."""
+        """第一个块应快速到达，而不是在整个响应完成后。"""
         from dotenv import load_dotenv
         load_dotenv()
         _skip_if_no_real_llm_key()
@@ -314,7 +314,7 @@ class TestStreamingIntegration:
 class TestInterruptIntegration:
     @pytest.mark.asyncio
     async def test_interrupt_during_processing(self):
-        """Interrupt during LLM processing should return agent to IDLE."""
+        """LLM 处理过程中中断应使 agent 回到 IDLE。"""
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
@@ -324,11 +324,11 @@ class TestInterruptIntegration:
         agent = Agent(config=AppConfig())
         await agent.start()
 
-        # Start a request
+        # 发起一个请求
         await agent.process_message("写一首长诗，越多越好，我要看长篇")
         await asyncio.sleep(0.3)  # Let cognitive task start
 
-        # Post interrupt
+        # 中断之后
         agent._bus.post(InterruptData(source="test"), priority=0)
         await asyncio.sleep(2.0)
 
@@ -338,7 +338,7 @@ class TestInterruptIntegration:
 
     @pytest.mark.asyncio
     async def test_new_message_after_interrupt(self):
-        """After interrupt, a new message should be processable."""
+        """中断之后，新消息应可被处理。"""
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
@@ -348,31 +348,31 @@ class TestInterruptIntegration:
         agent = Agent(config=AppConfig())
         await agent.start()
 
-        # Interrupt first request
+        # 中断第一个请求
         await agent.process_message("写一首很长的诗，越长越好")
         await asyncio.sleep(0.5)  # Wait for LLM stream to start
         agent._bus.post(InterruptData(source="test"), priority=0)
         await asyncio.sleep(0.5)  # Give time for cancellation to propagate
 
-        # The agent should eventually return to IDLE
+        # agent 最终应回到 IDLE
         # (real LLM streams can't be instantly cancelled due to HTTP buffering)
         for _ in range(20):  # Wait up to 10 seconds
             if agent._fsm.state == AgentState.IDLE:
                 break
             await asyncio.sleep(0.5)
 
-        # Second request should work regardless
+        # 第二个请求无论如何都应正常工作
         await agent.process_message("你好呀")
         await asyncio.sleep(3.0)
 
         messages = agent.session.recent_messages()
-        # At minimum we should have some conversation history
+        # 至少应有一些对话历史
         assert len(messages) > 0, "Expected at least some session messages"
         await agent.stop()
 
     @pytest.mark.asyncio
     async def test_multiple_interrupts(self):
-        """Multiple rapid interrupts should not crash the agent."""
+        """多次快速中断不应使 agent 崩溃。"""
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
@@ -401,7 +401,7 @@ class TestInterruptIntegration:
 class TestMultiTurnConversation:
     @pytest.mark.asyncio
     async def test_session_context_preserved(self):
-        """Messages from previous turns appear in the system prompt context."""
+        """前几轮的消息应出现在系统提示上下文中。"""
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
@@ -410,7 +410,7 @@ class TestMultiTurnConversation:
         agent = Agent(config=AppConfig())
         await agent.start()
 
-        # First turn (may be slower due to lazy embedding loading)
+        # 第一轮（可能因嵌入懒加载而较慢）
         await agent.process_message("我叫妖梦")
         await asyncio.sleep(15)  # Generous timeout for embedding lazy load + LLM
         msgs_1 = agent.session.recent_messages()
@@ -420,19 +420,19 @@ class TestMultiTurnConversation:
             for m in msgs_1
         )
 
-        # Second turn (embedding already loaded, should be fast)
+        # 第二轮（嵌入已加载，应较快）
         await agent.process_message("你还记得我叫什么吗")
         await asyncio.sleep(5)
         msgs_2 = agent.session.recent_messages()
 
-        # Session should have all messages (user + assistant from both turns)
+        # 会话应有全部消息（两轮的 user + assistant）
         assert len(msgs_2) >= 3
 
         await agent.stop()
 
     @pytest.mark.asyncio
     async def test_tool_calling_with_real_llm(self):
-        """Real LLM may or may not call tools — verify both paths work."""
+        """真实 LLM 可能调用工具也可能不调用 —— 验证两条路径都可用。"""
         from dotenv import load_dotenv
         load_dotenv()
         from core.agent import Agent
@@ -451,7 +451,7 @@ class TestMultiTurnConversation:
     @pytest.mark.service
     @pytest.mark.asyncio
     async def test_character_personality_injected(self):
-        """Verify character config (base_personality) appears in the LLM request."""
+        """验证角色配置（base_personality）出现在 LLM 请求中。"""
         from dotenv import load_dotenv
         load_dotenv()
         from core.adapter.prompt_assembler import PromptAssembler
@@ -492,18 +492,18 @@ class TestEdgeCases:
 
         await agent.process_message("")
         await asyncio.sleep(0.5)
-        # Should not crash, state should remain IDLE
+        # 不应崩溃，状态应保持 IDLE
         assert agent._fsm.state in ("idle", "thinking")  # Could be idle or still in prev state
         await agent.stop()
 
 
 
 # ============================================================================
-# Runner
+# 运行入口
 # ============================================================================
 
 if __name__ == "__main__":
-    # Run all async tests
+    # 运行所有异步测试
     async def run_all():
         test_classes = [
             TestStreamingIntegration,
@@ -542,7 +542,7 @@ if __name__ == "__main__":
 
 
 # ============================================================
-# IdleMonitor — _check_proactive (basic smoke tests)
+# IdleMonitor —— _check_proactive（基础冒烟测试）
 # ============================================================
 
 @pytest.mark.service
