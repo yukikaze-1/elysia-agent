@@ -2,7 +2,7 @@
 """core/schema/message.py 测试。"""
 import pytest
 from pydantic import ValidationError
-from core.schema.message import MessageRole, UserMessage, AssistantMessage, ToolResultMessage
+from core.schema.message import ClientToolMessage, MessageRole, UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.part import TextPart
 from core.schema.types import MessageId, SessionId, ToolCallId
 from core.schema.error_type import ErrorType
@@ -132,6 +132,21 @@ class TestAssistantMessage:
         )
         assert msg.session_id == "sess-42"
         assert isinstance(msg.session_id, str)
+
+
+@pytest.mark.unit
+class TestClientToolMessageRole:
+    """ClientToolMessage.role 引用 MessageRole.TOOL 枚举成员。"""
+
+    def test_role_is_enum_member(self):
+        # Python 3.12 的 TypedDict 元类会把非 type 注解（如枚举成员）包成 ForwardRef，
+        # 解包后确认字段类型引用 MessageRole.TOOL（防裸字符串漂移）。
+        from typing import ForwardRef
+
+        ann = ClientToolMessage.__annotations__["role"]
+        if isinstance(ann, ForwardRef):
+            ann = ann.__forward_arg__
+        assert ann is MessageRole.TOOL
 
 
 @pytest.mark.unit
