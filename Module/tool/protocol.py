@@ -10,12 +10,32 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine, Literal, Protocol, AsyncIterator
+from enum import StrEnum
+from typing import Any, Callable, Coroutine, Protocol, AsyncIterator
 
 from Module._common.error_type import ErrorType
 
 ToolFunc = Callable[..., Coroutine[Any, Any, Any]]
-ResultType = Literal["text", "image", "audio", "file", "mixed"]
+
+
+class ToolResultType(StrEnum):
+    """工具产出类型——跨 Provider 的中性结果分类（原 ResultType Literal 枚举化）。
+
+    值与原 ResultType Literal 完全对齐，消除裸字符串散落。
+    """
+    TEXT = "text"
+    IMAGE = "image"
+    AUDIO = "audio"
+    FILE = "file"
+    MIXED = "mixed"
+
+
+class ToolStatus(StrEnum):
+    """工具执行进度状态——ToolProgress.status 枚举化（原 Literal 枚举化）。"""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    DONE = "done"
+    FAILED = "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +105,7 @@ class ToolProgress:
     （str/int/float/bool/list/dict），不要传入 Python 对象或 bytes。
     """
 
-    status: Literal["pending", "processing", "done", "failed"] = "processing"
+    status: ToolStatus = ToolStatus.PROCESSING
     percent: float | None = None   # 0.0 ~ 1.0
     message: str = ""
     data: Any = None               # 附加数据 — 必须可 JSON 序列化
@@ -256,7 +276,7 @@ class ToolDefinition:
     max_result_len: int = 4000            # 结果最大字符数
 
     # 工具属性声明
-    result_type: ResultType = "text"      # 工具产出类型
+    result_type: ToolResultType = ToolResultType.TEXT      # 工具产出类型
     requires: list[str] = field(default_factory=list)
         # 声明所需资源/能力: "web_search", "database:read", "network", "filesystem"
     side_effects: bool = False
@@ -504,7 +524,7 @@ class ToolResult:
     tool_name: str = ""
 
     # 结果类型 + 媒体数据
-    result_type: ResultType = "text"
+    result_type: ToolResultType = ToolResultType.TEXT
     images: list[MediaItem] = field(default_factory=list)
     audio: MediaItem | None = None
     files: list[MediaItem] = field(default_factory=list)
@@ -522,7 +542,7 @@ class ToolResult:
     @classmethod
     def ok(
         cls, name: str, content: str, duration_ms: float, truncated: bool = False,
-        result_type: ResultType = "text", llm_summary: str = "",
+        result_type: ToolResultType = ToolResultType.TEXT, llm_summary: str = "",
         images: list[MediaItem] | None = None,
         audio: MediaItem | None = None,
         files: list[MediaItem] | None = None,

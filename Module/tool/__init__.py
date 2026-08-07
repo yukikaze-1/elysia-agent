@@ -4,7 +4,6 @@ from .protocol import (
     ErrorType,
     MediaItem,
     PluginContext,
-    ResultType,
     ToolContext,
     ToolDefinition,
     ToolEmitter,
@@ -13,6 +12,8 @@ from .protocol import (
     ToolPlugin,
     ToolProgress,
     ToolResult,
+    ToolResultType,
+    ToolStatus,
 )
 from .capability import Capability, RBACLevel
 from .safety import SafetyProfile, SafetyPipeline
@@ -32,7 +33,8 @@ __all__ = [
     "Tool",
     "MediaItem",
     "PluginContext",
-    "ResultType",
+    "ToolResultType",
+    "ToolStatus",
     "ToolContext",
     "ToolDefinition",
     "ToolEmitter",
