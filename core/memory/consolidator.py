@@ -1,10 +1,9 @@
-"""MemoryConsolidator — extracts key facts from conversations.
+"""MemoryConsolidator — 从对话中提取关键事实。
 
-After each assistant response, runs a lightweight extraction to pull out
-plans, preferences, facts, and decisions. These are stored in long-term
-memory for future recall.
+每次 assistant 回复后，运行轻量提取以抓取计划、偏好、事实与决策，
+存入长期记忆供日后召回。
 
-Uses the same LLM backend as the cognitive loop (or mock).
+与认知循环使用同一个 LLM 后端（或 mock）。
 """
 
 import asyncio
@@ -169,7 +168,7 @@ def _parse_compare_actions(text: str, expected_count: int | None = None) -> list
 
 
 class MemoryConsolidator:
-    """Extracts and stores key facts from conversations."""
+    """从对话中提取并存储关键事实。"""
 
     BUFFER_THRESHOLD = 6  # 攒够 N 条消息再调 LLM 提取
 

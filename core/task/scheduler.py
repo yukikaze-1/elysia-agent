@@ -74,7 +74,7 @@ class TaskScheduler:
     async def start(self) -> None:
         """启动调度器：恢复 checkpoint，创建 worker 协程和清理协程。"""
         self._running = True
-        # Ensure checkpoint directory exists
+        # 确保 checkpoint 目录存在
         if self._checkpoint_path:
             Path(self._checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
         self._restore_checkpoint()
@@ -89,10 +89,10 @@ class TaskScheduler:
         """停止调度器：保存 checkpoint，取消所有 worker，清空队列和注册表。"""
         self._running = False
         self._save_checkpoint()
-        # Cancel prune task first
+        # 先取消清理任务
         if self._prune_task and not self._prune_task.done():
             self._prune_task.cancel()
-        # Cancel workers — workers will drain their current task then exit
+        # 取消 worker——worker 处理完当前任务后退出
         for w in self._workers:
             if not w.done():
                 w.cancel()
@@ -103,7 +103,7 @@ class TaskScheduler:
             await asyncio.gather(*gathers, return_exceptions=True)
         self._workers.clear()
         self._prune_task = None
-        # Drain queue and clear registry
+        # 排空队列并清空注册表
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
@@ -190,7 +190,7 @@ class TaskScheduler:
                 out.append((tc, raw))
         return out
 
-    async def dispatch_background(self, coro) -> str:
+    async def dispatch_background(self, coro: Any) -> str:
         """提交一个后台协程，返回 task_id。
 
         Args:

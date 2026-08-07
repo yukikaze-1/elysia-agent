@@ -129,13 +129,13 @@ class EmotionDetector:
                     _schedule(self._output.expression("surprised", intensity=0.5))
 
     async def push_idle_expression(self) -> None:
-        """Push a random idle expression (called periodically or on IDLE entry)."""
+        """推送一个随机空闲表情（周期性或在进入 IDLE 时调用）。"""
         self._push_idle()
 
     # ---- 私有方法 ----
 
     def _detect_mood(self, text: str) -> str:
-        """Simple keyword-based mood detection.
+        """基于关键词的简单情绪检测。
 
         Args:
             text: 要检测的文本。
@@ -165,7 +165,7 @@ class EmotionDetector:
         _schedule(self._output.expression(mood_text, intensity=intensity))
 
     def _push_idle(self) -> None:
-        """Push one of the idle expressions."""
+        """推送一个空闲表情。"""
         if self._idle_expressions:
             expr = random.choice(self._idle_expressions)
             _schedule(self._output.expression(expr, intensity=0.3))

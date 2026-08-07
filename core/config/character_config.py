@@ -1,4 +1,4 @@
-"""Character configuration — loaded from YAML, defines personality/voice/wake-words."""
+"""角色配置 — 从 YAML 加载，定义性格/语音/唤醒词。"""
 
 import logging
 from dataclasses import dataclass, field
@@ -139,7 +139,7 @@ class CharacterConfig:
         return ""
 
     def personality_block(self) -> str:
-        """Render a compact personality description for prompt injection。
+        """渲染紧凑的性格描述，供 prompt 注入。
 
         优先使用 base_personality，降级使用 traits + speaking_style（兼容旧 YAML）。
 

@@ -1,4 +1,4 @@
-"""Input layer — audio buffer + WebSocket server for browser clients."""
+"""输入层 —— 面向浏览器客户端的音频缓冲 + WebSocket 服务。"""
 
 from .audio_buffer import AudioBuffer, pcm_to_wav
 from .server import create_app

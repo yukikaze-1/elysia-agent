@@ -11,8 +11,8 @@ __all__ = [
 ]
 
 
-def __getattr__(name):
-    """Lazy import for IdleMonitor — breaks circular import via agent."""
+def __getattr__(name: str):
+    """IdleMonitor 懒加载——打破经 agent 的循环导入。"""
     if name == "IdleMonitor":
         from .idle_monitor import IdleMonitor
         return IdleMonitor

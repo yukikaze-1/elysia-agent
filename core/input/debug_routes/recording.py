@@ -1,4 +1,4 @@
-"""Debug recording routes: prompt + response recorder inspection。
+"""Debug recording 路由：prompt + response recorder 检查。
 
 响应构造 `frontend_contract.debug` 契约模型 + `wire_dict()`；recorder 内部摘要/详情
 dict → 契约 `PromptSummary`/`PromptDetail`/`ResponseSummary`/`ResponseDetail` 视图。

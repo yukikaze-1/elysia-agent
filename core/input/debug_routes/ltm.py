@@ -1,4 +1,4 @@
-"""Debug LTM routes: CRUD for long-term memory entries。
+"""Debug LTM 路由：长期记忆条目的 CRUD。
 
 响应构造 `frontend_contract.debug` 契约模型 + `wire_dict()`；`agent.long_term._entries`
 内部 MemoryEntry → 契约 `LtmEntry` 视图（timestamp/poignancy 保留原始数值）。
@@ -24,7 +24,7 @@ def register_ltm_routes(app: web.Application) -> None:
 
 
 async def ltm_list_handler(request: web.Request) -> web.Response:
-    """List LTM entries with optional search and type filter.
+    """列出 LTM 条目，支持可选搜索与类型过滤。
 
     Args:
         request: aiohttp Request, query params: search, type, limit, offset。
@@ -72,7 +72,7 @@ async def ltm_list_handler(request: web.Request) -> web.Response:
 
 
 async def ltm_insert_handler(request: web.Request) -> web.Response:
-    """Insert a new LTM entry.
+    """插入一条新的 LTM 条目。
 
     Args:
         request: aiohttp Request, JSON body: text, memory_type, poignancy。
@@ -101,7 +101,7 @@ async def ltm_insert_handler(request: web.Request) -> web.Response:
 
 
 async def ltm_delete_single_handler(request: web.Request) -> web.Response:
-    """Delete a single LTM entry by ID.
+    """按 ID 删除单条 LTM 条目。
 
     Args:
         request: aiohttp Request, URL path: /{entry_id}。
@@ -120,7 +120,7 @@ async def ltm_delete_single_handler(request: web.Request) -> web.Response:
 
 
 async def ltm_update_handler(request: web.Request) -> web.Response:
-    """Update an LTM entry's text by ID.
+    """按 ID 更新 LTM 条目的文本。
 
     Args:
         request: aiohttp Request, URL path: /{entry_id}, JSON body: text。
@@ -144,7 +144,7 @@ async def ltm_update_handler(request: web.Request) -> web.Response:
 
 
 async def ltm_clear_handler(request: web.Request) -> web.Response:
-    """Clear all LTM entries.
+    """清空所有 LTM 条目。
 
     Args:
         request: aiohttp Request。

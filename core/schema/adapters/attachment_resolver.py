@@ -19,7 +19,7 @@ from pathlib import Path
 
 from paths import ProjectPath
 
-# attachment_id → (kind, stored_name)
+# attachment_id → (kind, stored_name) 附件映射
 _registry: dict[str, tuple[str, str]] = {}
 
 

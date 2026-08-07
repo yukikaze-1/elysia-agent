@@ -1,4 +1,4 @@
-# core/schema/part.py
+# core/schema/part.py — 多模态 Part 类型
 """多模态 Part 类型 — Pydantic BaseModel + discriminated union。
 
 对齐 OpenAI multimodal content 格式：

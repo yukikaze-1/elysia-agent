@@ -1,14 +1,14 @@
-"""LLM adapter — wraps Module/llm backends with tool-calling support.
+"""LLM 适配器——包装 Module/llm 后端并提供工具调用支持。
 
-For tool calling we need structured responses. This adapter provides a unified
-think() API that detects tool calls from non-streaming responses.
+工具调用需要结构化响应。本适配器提供统一的 think() API，
+从非流式响应中检测工具调用。
 """
 
 import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from Module.llm import LLMBackend, LLMFactory
 
@@ -34,7 +34,7 @@ class ThoughtResult:
 
 
 class LLMAdapter:
-    """Unified LLM interface with tool-calling support."""
+    """统一的 LLM 接口，支持工具调用。"""
 
     def __init__(self, model: str | None = None, *,
                  _test_backend: "LLMBackend | None" = None):
@@ -55,7 +55,7 @@ class LLMAdapter:
         logger.info("LLM backend: %s", self._requested_model)
 
     async def think(self, messages: list[dict], tools: list[dict] | None = None,
-                    **kwargs) -> ThoughtResult:
+                    **kwargs: Any) -> ThoughtResult:
         """调用 LLM 并返回结构化结果（text + 可选 tool_calls）。
 
         Args:
@@ -100,7 +100,7 @@ class LLMAdapter:
             yield token
 
     async def stream_think(
-        self, messages: list[dict], tools: list[dict] | None = None, **kwargs
+        self, messages: list[dict], tools: list[dict] | None = None, **kwargs: Any
     ) -> AsyncIterator[dict]:
         """流式输出结构化 chunk，支持工具调用检测 + 429/5xx 重试。
 
@@ -159,11 +159,11 @@ class LLMAdapter:
         Returns:
             int | None: HTTP 状态码，无法提取时返回 None。
         """
-        # httpx.HTTPStatusError / openai.APIStatusError
+        # 可提取 status_code 的异常类型：httpx.HTTPStatusError / openai.APIStatusError
         status: int | None = getattr(exc, 'status_code', None)  # type: ignore[union-attr]
         if status is not None:
             return status
-        # httpx.HTTPStatusError — response.status_code
+        # httpx.HTTPStatusError —— 经 response.status_code 提取
         resp: object | None = getattr(exc, 'response', None)  # type: ignore[union-attr]
         if resp is not None:
             return getattr(resp, 'status_code', None)  # type: ignore[union-attr]
@@ -175,13 +175,13 @@ class LLMAdapter:
             await self._backend.close()
 
     async def reconnect(self) -> None:
-        """Recreate the underlying backend's HTTP client. Used on agent restart."""
+        """重建底层后端的 HTTP 客户端。在 agent 重启时使用。"""
         # LLMBackend protocol 未声明 reconnect，但部分后端实现了它
         reconnect_meth = getattr(self._backend, 'reconnect', None)  # type: ignore[union-attr]
         if reconnect_meth is not None:
             await reconnect_meth()
 
-    def switch_model(self, new_model_id: str, **kwargs) -> None:
+    def switch_model(self, new_model_id: str, **kwargs: Any) -> None:
         """热切换 LLM 模型。先建后换——创建失败时旧后端与旧请求模型均保留。
 
         Args:

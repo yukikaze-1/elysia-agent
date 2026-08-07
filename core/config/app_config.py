@@ -1,4 +1,4 @@
-"""App-level configuration dataclass — loaded via Module.config.ConfigLoader."""
+"""应用级配置 dataclass — 经 Module.config.ConfigLoader 加载。"""
 
 from dataclasses import dataclass
 
@@ -82,7 +82,7 @@ class Live2DConfig:
 
 @dataclass
 class VisionConfig:
-    """Vision model config — used by describe_image tool."""
+    """视觉模型配置 — 供 describe_image 工具使用。"""
     model: str = ConfigField(default="mimo/mimo-v2.5")
 
 

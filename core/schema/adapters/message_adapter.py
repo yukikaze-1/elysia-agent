@@ -1,4 +1,4 @@
-# core/schema/adapters/message_adapter.py
+# core/schema/adapters/message_adapter.py — 消息格式适配器
 """消息格式适配器 — OpenAI / Legacy 格式转换。
 
 纯函数，零状态。依赖 core/schema 类型。
@@ -11,7 +11,7 @@
 import base64 as _base64
 import re as _re
 from pathlib import Path as _Path
-from typing import Annotated, Union
+from typing import Annotated, Any, Union
 
 from pydantic import Discriminator, Tag, TypeAdapter, ValidationError
 
@@ -27,7 +27,7 @@ _PARTS_ADAPTER: TypeAdapter[list[Part]] = TypeAdapter(list[Part])
 
 # ── Message 校验 + 旧 token_usage 降级 ──────────────────
 
-def _discriminate_message_role(v) -> str | None:
+def _discriminate_message_role(v: Any) -> str | None:
     """按 role 判别 Message 联合成员。非 dict 输入返回 None。"""
     if isinstance(v, dict):
         return v.get("role")
@@ -242,5 +242,5 @@ def content_to_openai(parts: list[Part]) -> str | list[dict]:
             })
         elif isinstance(p, TextPart):
             text_blocks.append({"type": "text", "text": p.content})
-        # FilePart/AudioPart/VideoPart: Phase 2
+        # FilePart/AudioPart/VideoPart：Phase 2 阶段再处理
     return image_blocks + text_blocks

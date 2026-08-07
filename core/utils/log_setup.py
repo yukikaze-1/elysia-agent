@@ -1,8 +1,8 @@
-"""Logging setup — double-file output, clean terminal.
+"""日志配置——双文件输出，保持终端干净。
 
-Noisy libraries write to log/*.log (mongo.log, milvus.log, http.log, etc.).
-Core app: stderr (INFO, or DEBUG with --verbose) + app.log (INFO+) + app-debug.log (DEBUG).
-Stdout reserved for conversation output only.
+噪音大的库写 log/*.log（mongo.log、milvus.log、http.log 等）。
+核心应用：stderr（INFO，或 --verbose 时 DEBUG）+ app.log（INFO+）+ app-debug.log（DEBUG）。
+stdout 仅保留给对话输出。
 """
 
 import contextvars
@@ -74,7 +74,7 @@ def setup(verbose: bool = False) -> None:
     """
     LOG_DIR.mkdir(exist_ok=True)
 
-    # Root logger: quiet, don't propagate to stdout
+    # 根 logger：静默，不向 stdout 传播
     root = logging.getLogger()
     root.setLevel(logging.DEBUG if verbose else logging.WARNING)
     root.handlers.clear()
@@ -135,8 +135,8 @@ def setup(verbose: bool = False) -> None:
         logger.addHandler(stderr_handler)
         logger.addHandler(app_file_handler)
         logger.addHandler(debug_file_handler)
-        # Keep propagate=True so child loggers' messages flow up through these
-        # handlers. Child loggers (core.cognitive_loop etc.) have no own handlers.
+        # 保持 propagate=True，让子 logger 的消息经这些 handler 向上传递。
+        # 子 logger（core.cognitive_loop 等）没有自己的 handler。
 
     # ---- Database operation log → mongo.log (app-level, not library) ----
     _mongo_handler = logging.handlers.RotatingFileHandler(
@@ -168,10 +168,10 @@ def setup(verbose: bool = False) -> None:
         milvus_logger = logging.getLogger(name)
         milvus_logger.addHandler(_milvus_handler)
 
-    # Torch warnings → file
+    # Torch 警告 → 文件
     _file_logger("torch", "torch.log", logging.WARNING)
 
-    # Motor (MongoDB async driver) → mongo log
+    # Motor（MongoDB 异步驱动）→ mongo 日志
     _file_logger("motor", "mongo.log", logging.WARNING)
 
     # ---- Conversation content → log/conversation.log ----

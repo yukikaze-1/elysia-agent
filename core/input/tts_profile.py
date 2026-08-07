@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from Module.tts.protocol import TTSBackend
 
 
-def _active_tts_profile(agent) -> Optional["TTSBackend"]:
+def _active_tts_profile(agent: "Agent") -> Optional["TTSBackend"]:
     """返回活动会话激活 TTS 后端；TTS 未启用或无后端 → None。
 
     激活判定对齐 switch_tts / set_service / TTS 启动的有效开关逻辑：
@@ -32,7 +32,7 @@ def _active_tts_profile(agent) -> Optional["TTSBackend"]:
     return backend
 
 
-def _backend_default_voice(backend, character: str = "") -> str:
+def _backend_default_voice(backend: "TTSBackend", character: str = "") -> str:
     """后端默认音色 ID（service_state.tts_voice 未设置时 voices 响应的 current）。
 
     与 synthesize 无 voice_id 覆盖时的实际默认一致：
@@ -51,6 +51,6 @@ def _backend_default_voice(backend, character: str = "") -> str:
         resolve = getattr(backend, "_resolve_voice", None)  # noqa: SLF001 — 默认音色解析
         if resolve is not None and character:
             return resolve(character)
-        return getattr(backend, "_voice_id", "")  # noqa: SLF001 — MiniMax fallback voice_id
+        return getattr(backend, "_voice_id", "")  # noqa: SLF001 — MiniMax 回退 voice_id
     # gpt-sovits / openai：character 即音色键
     return character

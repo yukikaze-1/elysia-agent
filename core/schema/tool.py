@@ -1,4 +1,4 @@
-# core/schema/tool.py
+# core/schema/tool.py — 工具调用类型
 """工具调用类型 — OpenAI 兼容 tool_calls 结构。"""
 
 import json

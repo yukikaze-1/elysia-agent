@@ -1,4 +1,4 @@
-"""Debug character routes: L2 / C6 version history + rollback。
+"""Debug character 路由：L2 / C6 版本历史 + 回滚。
 
 响应构造 `frontend_contract.debug` 契约模型 + `wire_dict()`；内部 VersionEntry
 (TypedDict，trigger 已为 CompressionTrigger.value 字符串) → 契约
@@ -30,13 +30,13 @@ def register_character_routes(app: web.Application) -> None:
 
 async def _list_character_versions(agent: "Agent", content_type: str,
                                     limit: int, before_version: int | None):
-    """List character version history (L2 or C6) for the current session.
+    """列出当前会话的角色版本历史（L2 或 C6）。
 
     Args:
-        agent: Agent instance with character engine.
-        content_type: "l2" or "c6".
-        limit: Maximum number of versions to return.
-        before_version: Optional upper bound version number (exclusive).
+        agent: 带 character engine 的 Agent 实例。
+        content_type: "l2" 或 "c6"。
+        limit: 最多返回的版本数量。
+        before_version: 可选的上界版本号（不包含）。
 
     Returns:
         tuple: (CharacterVersionListResponse | None, error_str | None, error_code | None, http_status_code)
@@ -59,12 +59,12 @@ async def _list_character_versions(agent: "Agent", content_type: str,
 
 
 async def _character_rollback(agent: "Agent", content_type: str, target_version: int):
-    """Rollback character content (L2 or C6) to a specific version.
+    """将角色内容（L2 或 C6）回滚到指定版本。
 
     Args:
-        agent: Agent instance with character engine.
-        content_type: "l2" or "c6".
-        target_version: Version number to rollback to.
+        agent: 带 character engine 的 Agent 实例。
+        content_type: "l2" 或 "c6"。
+        target_version: 要回滚到的版本号。
 
     Returns:
         tuple: (RollbackResult | None, error_str | None, error_code | None, http_status_code)
@@ -104,7 +104,7 @@ async def _character_rollback(agent: "Agent", content_type: str, target_version:
 
 
 async def l2_versions_handler(request: web.Request) -> web.Response:
-    """List L2 self-image version history (legacy route).
+    """列出 L2 自我形象版本历史（legacy 路由）。
 
     Args:
         request: aiohttp Request, query params: limit, before。
@@ -130,7 +130,7 @@ async def l2_versions_handler(request: web.Request) -> web.Response:
 
 
 async def l2_rollback_handler(request: web.Request) -> web.Response:
-    """Rollback L2 self-image to a specific version (legacy route).
+    """将 L2 自我形象回滚到指定版本（legacy 路由）。
 
     Args:
         request: aiohttp Request, JSON body: version。
@@ -162,7 +162,7 @@ async def l2_rollback_handler(request: web.Request) -> web.Response:
 
 
 async def character_versions_handler(request: web.Request) -> web.Response:
-    """List character version history (L2 or C6).
+    """列出角色版本历史（L2 或 C6）。
 
     Args:
         request: aiohttp Request, query params: type (l2/c6), limit, before。
@@ -192,7 +192,7 @@ async def character_versions_handler(request: web.Request) -> web.Response:
 
 
 async def character_rollback_handler(request: web.Request) -> web.Response:
-    """Rollback character content (L2 or C6) to a specific version.
+    """将角色内容（L2 或 C6）回滚到指定版本。
 
     Args:
         request: aiohttp Request, JSON body: type (l2/c6), version。

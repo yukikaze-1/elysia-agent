@@ -116,7 +116,7 @@ class DelegationPreparer:
     """
 
     def __init__(self) -> None:
-        """Initialize the delegation preparer with a DeepSeek LLM client."""
+        """用 DeepSeek LLM client 初始化委托准备器。"""
         api_key = os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
             raise ValueError(

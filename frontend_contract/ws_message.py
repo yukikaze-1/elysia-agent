@@ -247,7 +247,7 @@ class AttachmentRef(ContractModel):
     mime: str = Field(description="MIME 类型提示值")
 
 
-# ─────────────────────────── Server→Client ───────────────────────────
+# ─────────────────────────── 服务端→客户端 ───────────────────────────
 
 
 class SessionMessage(ContractModel):
@@ -543,7 +543,7 @@ class ErrorMessage(ContractModel):
 
 # ─────────────────── 批次 6 三种语音（BE-060/061/062） ───────────────────
 
-# Server→Client
+# 服务端→客户端
 
 
 class VoiceTranscriptMessage(ContractModel):
@@ -630,7 +630,7 @@ class AudioCancelledMessage(ContractModel):
     stream_id: int = Field(description="playback ID")
 
 
-# ─────────────────────────── Client→Server ───────────────────────────
+# ─────────────────────────── 客户端→服务器 ───────────────────────────
 
 
 class TextMessage(ContractModel):
@@ -722,7 +722,7 @@ class ActivateSessionMessage(ContractModel):
 
 # ─────────────────── 批次 6 三种语音（BE-060/061/062） ───────────────────
 
-# Client→Server
+# 客户端→服务器
 
 
 class VoiceRecordStartMessage(ContractModel):

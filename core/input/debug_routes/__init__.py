@@ -68,10 +68,10 @@ def register_debug_routes(
 # WorkflowDebugAPI 生命周期管理
 
 async def _on_startup(app: web.Application) -> None:
-    """Start WorkflowDebugAPI on application startup.
+    """应用启动时启动 WorkflowDebugAPI。
 
     Args:
-        app: aiohttp Application instance.
+        app: aiohttp Application 实例。
     """
     task_api = app.get('task_debug_api')
     if task_api:
@@ -79,10 +79,10 @@ async def _on_startup(app: web.Application) -> None:
 
 
 async def _on_shutdown(app: web.Application) -> None:
-    """Stop WorkflowDebugAPI on application shutdown.
+    """应用关闭时停止 WorkflowDebugAPI。
 
     Args:
-        app: aiohttp Application instance.
+        app: aiohttp Application 实例。
     """
     task_api = app.get('task_debug_api')
     if task_api:

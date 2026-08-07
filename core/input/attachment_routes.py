@@ -19,8 +19,12 @@ import re
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from aiohttp import web
+
+if TYPE_CHECKING:
+    from core.agent import Agent
 
 from paths import ProjectPath
 from core.input.api_routes import _sign_url
@@ -59,7 +63,7 @@ def _error_response(code: str, message: str, status: int = 400,
     return web.json_response(env, status=status)
 
 
-def _server_config(agent):
+def _server_config(agent: "Agent"):
     """读取 agent.config.server（容错 getattr，与 api_routes 既有取法一致）。
 
     Args:
@@ -71,7 +75,7 @@ def _server_config(agent):
     return getattr(getattr(agent, "config", None), "server", None)
 
 
-def _sig_disabled(agent) -> bool:
+def _sig_disabled(agent: "Agent") -> bool:
     """fail-closed 早退判定：AGENT_ACCESS_TOKEN 配置 + 签名密钥未配置。
 
     Args:

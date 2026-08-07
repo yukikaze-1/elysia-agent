@@ -1,13 +1,13 @@
-"""Agent — wires all L0/L1/L2 components into a runnable Agent.
+"""Agent —— 将 L0/L1/L2 各组件装配成一个可运行的 Agent。
 
-Usage:
+用法:
     agent = Agent(config=config)
     await agent.start()
-    await agent.process_message("你好")       # single turn
-    await agent.run_repl()                   # interactive REPL
+    await agent.process_message("你好")       # 单轮对话
+    await agent.run_repl()                   # 交互式 REPL
     await agent.stop()
 
-Component dependency graph (top-down):
+组件依赖图（自顶向下）:
     AppConfig ──┬── CharacterConfig ──┐
                 ├── LLMAdapter ──────┼── CharacterEngine ──┐
                 ├── MemoryConfig ────┤                     │
@@ -35,9 +35,9 @@ Component dependency graph (top-down):
                                │
                                └── TaskScheduler
 
-    Two-phase init: __init__ creates 22 components; start() creates 8 more
-    (token_tracker, tts, task_system, etc.) once session_id is available.
-    Cross-wiring via CognitiveLoop.configure() in start().
+    两阶段初始化：__init__ 创建 22 个组件；start() 在拿到 session_id 后再创建 8 个
+    (token_tracker, tts, task_system 等)。交叉装配经 start() 中的
+    CognitiveLoop.configure() 完成。
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ logger = logging.getLogger(__name__)
 
 
 class Agent(AgentLifecycle, AgentServer):
-    """Complete Agent wired from L0/L1/L2 components."""
+    """由 L0/L1/L2 各组件装配而成的完整 Agent。"""
 
     def __init__(self, *, config: AppConfig, config_path: str | None = None):
         """初始化 Agent 并创建所有 L0/L1/L2 组件。
@@ -241,7 +241,7 @@ class Agent(AgentLifecycle, AgentServer):
         from core.cognitive.generation_registry import GenerationRegistry
         self._generation_registry = GenerationRegistry()
 
-        from core.cognitive import CognitiveLoop  # function-level: break circular import
+        from core.cognitive import CognitiveLoop  # 函数级导入：打破循环导入
         self._cognitive = CognitiveLoop(
             llm=self._llm,
             fsm=self._fsm,
@@ -338,7 +338,7 @@ class Agent(AgentLifecycle, AgentServer):
         self._idle.touch()
 
         if not self.status.is_accepting_input:
-            # Queue message instead of interrupting
+            # 排队消息而不是打断当前流程
             max_queue = self._config.agent.max_pending_messages
             if len(self._pending_messages) >= max_queue:
                 logger.warning("消息队列已满 (%d) — 丢弃消息", max_queue)
@@ -450,10 +450,10 @@ class Agent(AgentLifecycle, AgentServer):
     # ---- Event dispatching ----
 
     async def _process_events(self) -> None:
-        """Main event loop: consume events from EventBus and dispatch.
+        """主事件循环：从 EventBus 消费事件并分发。
 
-        Cognitive processing runs in a separate task so the event loop stays
-        responsive to INTERRUPT events during LLM streaming.
+        认知处理在独立任务中运行，保证事件循环在 LLM 流式输出期间
+        仍能响应 INTERRUPT 事件。
         """
         while self._state == RunState.RUNNING:
             try:
@@ -606,7 +606,7 @@ class Agent(AgentLifecycle, AgentServer):
                 ))
         await self._output.notify_state(state)
 
-    # Tool registration is done via ToolAdapter.start() in start()
+    # 工具注册在 start() 中经 ToolAdapter.start() 完成
 
     # ---- 公开只读接口（薄 getter 直通）----
     # 30 个 @property：通往 Agent 组合根持有的子系统，可写性由子系统 API 自管。
@@ -632,11 +632,12 @@ class Agent(AgentLifecycle, AgentServer):
         """FIFO 队列中暂存的消息（只读快照视图，busy 时排队未出队）。"""
         return list(self._pending_messages)
 
-    async def resolve_session(self, conversation_id, protocol_version):
+    async def resolve_session(self, conversation_id: str | None,
+                              protocol_version: int | str):
         """按协议版本 + conversation_id 解析目标会话并确保加载（直通 SessionManager）。"""
         return await self._session_manager.resolve(conversation_id, protocol_version)
 
-    async def switch_session(self, sid):
+    async def switch_session(self, sid: SessionId | str):
         """切换到目标会话（直通 SessionManager——engine attach + 活动指针更新）。"""
         return await self._session_manager.switch(sid)
 

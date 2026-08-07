@@ -1,7 +1,7 @@
-"""IdleMonitor — wake-word detection + proactive speaking triggers.
+"""IdleMonitor — 唤醒词检测 + 主动搭话触发。
 
-Runs in IDLE state. Simulates wake-word via keyboard (press Enter to "wake").
-Proactive mode triggers a lightweight "should I speak?" check on a timer.
+在 IDLE 状态下运行。用键盘模拟唤醒词（按回车「唤醒」）。
+主动模式按定时器触发轻量「是否该开口？」检查。
 """
 
 import asyncio
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class IdleMonitor:
-    """Monitors IDLE state for wake and proactive triggers."""
+    """监听 IDLE 状态下的唤醒与主动触发。"""
 
     def __init__(
         self,
@@ -53,7 +53,7 @@ class IdleMonitor:
         self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        """Start the idle monitor loop."""
+        """启动空闲监听循环。"""
         self._running = True
         self._task = asyncio.create_task(self._loop())
         logger.info("IdleMonitor started (wake_words=%s, proactive=%s)",
@@ -72,7 +72,7 @@ class IdleMonitor:
             self._task = None
 
     def touch(self) -> None:
-        """Mark user interaction — resets silence timer."""
+        """标记用户交互——重置静默计时器。"""
         self._last_interaction = time.monotonic()
 
     async def _loop(self) -> None:
@@ -81,12 +81,12 @@ class IdleMonitor:
 
         while self._running:
             try:
-                await asyncio.sleep(1.0)  # Tick every second
+                await asyncio.sleep(1.0)  # 每秒 tick 一次
 
                 if not self.status.is_completely_idle:
                     continue
 
-                # Check proactive triggers
+                # 检查主动搭话触发条件
                 if self._character.proactive.enabled:
                     elapsed = time.monotonic() - self._last_interaction
                     if elapsed >= proactive_interval:
@@ -97,7 +97,7 @@ class IdleMonitor:
                 logger.warning("IdleMonitor loop error", exc_info=True)
 
     async def _check_proactive(self) -> None:
-        """Evaluate whether to speak proactively."""
+        """判断是否应主动搭话。"""
         triggers = self._character.proactive.triggers
         if not triggers:
             return

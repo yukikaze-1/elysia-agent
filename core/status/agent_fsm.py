@@ -1,9 +1,9 @@
-"""Agent finite state machine.
+"""Agent 有限状态机。
 
-States: IDLE → THINKING → EXECUTING → THINKING → SPEAKING → IDLE
+状态：IDLE → THINKING → EXECUTING → THINKING → SPEAKING → IDLE
         SPEAKING → IDLE_BACKGROUND_TASK
         IDLE_BACKGROUND_TASK → THINKING / INTERRUPTED
-INTERRUPTED can be entered from any state (except IDLE).
+INTERRUPTED 可从任意状态进入（IDLE 除外）。
 """
 
 import logging
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentFSM:
-    """Finite state machine for the Agent cognitive pipeline."""
+    """Agent 认知管线的有限状态机。"""
 
     def __init__(self):
         """初始化状态机，默认进入 IDLE 状态。"""
@@ -68,7 +68,7 @@ class AgentFSM:
         logger.debug("FSM: %s → %s", self._previous, self._state)
 
     def interrupt(self) -> bool:
-        """Attempt interrupt from current state. Returns True if interrupt was valid."""
+        """尝试从当前状态中断。返回 True 表示中断有效。"""
         if self._state == AgentState.IDLE:
             return False
         if self.can_transition(AgentState.INTERRUPTED):
@@ -77,7 +77,7 @@ class AgentFSM:
         return False
 
     def reset(self) -> None:
-        """Force reset to IDLE. Used on service restart to clear any stuck state."""
+        """强制重置回 IDLE。服务重启时用于清除任何卡住的状态。"""
         self._previous = self._state
         self._state = AgentState.IDLE
         logger.debug("FSM: reset %s → IDLE", self._previous)

@@ -131,7 +131,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _poll_mailboxes: Callable[[], Coroutine[Any, Any, None]]
 
     async def start(self) -> None:
-        """Start the agent: connect persistence, idle monitor, event loop.
+        """启动 agent：连接持久化层、空闲监视器、事件循环。
 
         幂等：已在 RUNNING 状态时 no-op。失败时回滚已启动的步骤（调 stop()），
         避免留下 _state=RUNNING 的僵尸 Agent 和重复后台循环。

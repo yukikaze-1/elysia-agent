@@ -76,7 +76,7 @@ class VoiceSessionManager:
         self._on_vad_interrupt = on_vad_interrupt
         self._silence_duration = silence_duration
         self._mode = VoiceMode.IDLE
-        # RECORDING
+        # RECORDING 状态
         self._recording_id: str | None = None
         self._rec_state = _RecordingState.IDLE
         self._rec_pcm: list[bytes] = []
@@ -85,7 +85,7 @@ class VoiceSessionManager:
         self._pending_emotion = ""
         self._pending_events: list[str] = []
         self._in_flight_stt: asyncio.Task | None = None
-        # REALTIME / DICTATION
+        # REALTIME / DICTATION 状态
         self._session_id: str | None = None
         self._conv_id: str | None = None
         self._buffer: AudioBuffer | None = None
@@ -383,7 +383,8 @@ class VoiceSessionManager:
 
     # ---- feed / 回调 / 后台 ----
 
-    def _make_dispatch_stt(self, transcriber):
+    def _make_dispatch_stt(self,
+                           transcriber: Callable[[bytes], Awaitable[str]]):
         """派发型 STT wrapper（D3）：立即后台转写 + 返回空串，feed 不阻塞。
         transcriber: 真正转写可调用（REALTIME=agent.stt_transcribe；DICTATION=_transcribe_no_emotion）。"""
         async def _dispatch(wav: bytes) -> str:
@@ -400,7 +401,7 @@ class VoiceSessionManager:
         return _dispatch
 
     async def _run_dispatch_stt(self, wav: bytes, seq: int, epoch: int,
-                                transcriber) -> None:
+                                transcriber: Callable[[bytes], Awaitable[str]]) -> None:
         text = ""
         emotion = ""
         events: list[str] = []

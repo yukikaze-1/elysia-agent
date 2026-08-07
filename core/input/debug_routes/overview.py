@@ -1,4 +1,4 @@
-"""Debug overview routes: aggregated info + database status。
+"""Debug overview 路由：聚合信息 + 数据库状态。
 
 响应构造 `frontend_contract.debug` 契约模型 + `wire_dict()`；内部 DebugInfo dataclass
 经 `asdict` → 契约视图（session_recent 的 tool 消息 content 为 str → 归一为 DebugContentPart 列表）。
@@ -42,7 +42,7 @@ def _normalize_session_recent(items: list[dict]) -> list[dict]:
 
 
 async def debug_api_handler(request: web.Request) -> web.Response:
-    """Return aggregated debug info for the overview dashboard.
+    """返回用于 overview 仪表盘的聚合 debug 信息。
 
     Args:
         request: aiohttp Request。
@@ -58,7 +58,7 @@ async def debug_api_handler(request: web.Request) -> web.Response:
 
 
 async def db_status_handler(request: web.Request) -> web.Response:
-    """Return database status (LTM count, session count, archive count, health checks).
+    """返回数据库状态（LTM 数量、会话数量、归档数量、健康检查）。
 
     Args:
         request: aiohttp Request。

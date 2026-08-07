@@ -469,7 +469,7 @@ class DesktopToolBridge:
             tool_result = ToolResult.fail(
                 name=tool_name, error="用户拒绝了该工具调用", error_type=ErrorType.CANCELLED)
             return STATUS_REJECTED, None, None, tool_result
-        # CANCELLED
+        # CANCELLED——客户端取消，走最终分支
         tool_result = ToolResult.fail(
             name=tool_name, error="客户端取消了该调用", error_type=ErrorType.CANCELLED)
         return STATUS_CANCELLED, None, None, tool_result

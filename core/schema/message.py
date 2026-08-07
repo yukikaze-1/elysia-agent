@@ -1,4 +1,4 @@
-# core/schema/message.py
+# core/schema/message.py — 消息类型
 """消息类型 — 按 role 拆分的 Pydantic BaseModel。
 
 UserMessage / AssistantMessage / ToolResultMessage 各管各的字段。

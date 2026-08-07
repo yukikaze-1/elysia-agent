@@ -193,7 +193,7 @@ __all__ = [
     "TokenTurnStats",
     "SessionMessageItem",
     "ServiceCapability",
-    # Server→Client
+    # 服务端→客户端
     "ServerMessage",
     "ServerInfoFeatures",
     "ServerInfoMessage",
@@ -222,7 +222,7 @@ __all__ = [
     "SwitchModelResultMessage",
     "ServiceModeResultMessage",
     "ErrorMessage",
-    # Client→Server
+    # 客户端→服务器
     "TextMessage",
     "InterruptMessage",
     "SwitchModelMessage",

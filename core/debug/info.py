@@ -1,6 +1,6 @@
-"""DebugInfo — aggregates internal agent state for the /debug dashboard.
+"""DebugInfo — 聚合 Agent 内部状态，供 /debug 仪表盘使用。
 
-Usage:
+用法:
     info = await collect(agent)
     return web.json_response(asdict(info))
 """
@@ -21,40 +21,40 @@ if TYPE_CHECKING:
 
 @dataclass
 class DebugInfo:
-    # System
+    # 系统
     fsm_state: str = "idle"
     fsm_previous: str | None = None
     turn_phase: str | None = None          # CognitiveLoop 内部处理阶段
     processing: bool = False
     uptime_seconds: float = 0.0           # 服务运行时长
 
-    # IdleMonitor
+    # IdleMonitor（空闲监听）
     proactive_enabled: bool = False
     proactive_interval: float = 0.0
     last_interaction_ago: float = 0.0     # 距上次用户交互的秒数
 
-    # Session
+    # 会话
     session_messages: int = 0
     session_recent: list[dict] = field(default_factory=list)
     character_state_raw: dict = field(default_factory=dict)
     archive_msg_count: int = 0            # 归档消息总数
 
-    # Long-term memory
+    # 长期记忆
     lt_count: int = 0
     lt_recent: list[dict] = field(default_factory=list)
     milvus_ok: bool = False
     embedding_ok: bool = False
     mongodb_ok: bool = False
 
-    # Tools
+    # 工具
     currently_executing: list[str] = field(default_factory=list)
     tools: list[dict] = field(default_factory=list)
     tool_history: list[dict] = field(default_factory=list)
 
-    # Consolidation
+    # 记忆沉淀（Consolidator）
     consolidation_history: list[dict] = field(default_factory=list)
 
-    # Character Reflector
+    # 性格反思（CharacterReflector）
     reflector_exists: bool = False
     reflector_buffer_size: int = 0
     reflector_last_reflection_at: float | None = None
@@ -66,11 +66,11 @@ class DebugInfo:
     reflector_last_duration_ms: float = 0.0
     reflector_last_text_len: int = 0
 
-    # Character
+    # 角色
     character_name: str = ""
     base_personality_summary: str = ""
 
-    # CharacterEngine (4-layer model, merged PersonalityEngine + EmotionEngine)
+    # CharacterEngine（4 层模型，合并 PersonalityEngine + EmotionEngine）
     character_engine_exists: bool = False
     self_l2: str = ""              # L2 Self — 长期性格演化
     state_l3: str = ""             # L3 State — 短期状态
@@ -79,12 +79,12 @@ class DebugInfo:
     l2_version_count: int = 0       # L2 版本历史总数
     c6_version_count: int = 0       # C6 版本历史总数
 
-    # Connections
+    # 连接
     tts_ok: bool = False
     stt_ok: bool = False
     ws_clients: int = 0
 
-    # LLM
+    # LLM（大语言模型）
     llm_model: str = ""
 
     # Token 统计
@@ -96,11 +96,11 @@ class DebugInfo:
     prompt_summary: dict = field(default_factory=dict)
     response_summary: dict = field(default_factory=dict)
 
-    # Latency (ring buffer — last 100 requests)
+    # 延迟（环形缓冲区——最近 100 次请求）
     timing_history: list[dict] = field(default_factory=list)
     timing_stats: dict = field(default_factory=dict)
 
-    # MemoryReflector
+    # MemoryReflector（记忆去重）
     mreflector_exists: bool = False
     mreflector_round_count: int = 0
     mreflector_round_threshold: int = 0
@@ -109,17 +109,17 @@ class DebugInfo:
     mreflector_locked: bool = False
     mreflector_last_summary: dict = field(default_factory=dict)
 
-    # Consolidator buffer
+    # 沉淀器缓冲
     consolidator_buffer_size: int = 0
     consolidator_threshold: int = 0
 
-    # Mood (L4 Emotion)
+    # 心情（L4 情绪）
     mood: str = ""
 
-    # Memory
+    # 记忆
     memory: dict = field(default_factory=dict)
 
-    # Scheduler Worker Pool
+    # 调度器工作线程池
     scheduler_pending: int = 0
     scheduler_running: int = 0
     scheduler_total: int = 0
@@ -156,7 +156,7 @@ async def collect(agent: "Agent") -> DebugInfo:
     info.turn_phase = phase.value if phase else None
     ct = agent.cognitive._current_task  # noqa: SLF001
     info.processing = ct is not None and not ct.done()
-    # uptime
+    # 运行时长
     info.uptime_seconds = time.monotonic() - agent.started_at
 
     # ---- IdleMonitor ----

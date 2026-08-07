@@ -13,7 +13,10 @@ from pathlib import Path
 import filetype
 from aiohttp import web
 from aiohttp.multipart import BodyPartReader
-from typing import cast
+from typing import Any, TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from core.agent import Agent
 
 from core.schema.message import Message
 from core.input.tts_profile import _active_tts_profile, _backend_default_voice
@@ -141,7 +144,7 @@ def _archive_msg_to_contract(d: dict) -> rest_contract.Message | None:
         return None
 
 
-def _custom_profile_in_use(agent, service: str, name: str) -> bool:
+def _custom_profile_in_use(agent: "Agent", service: str, name: str) -> bool:
     """判定 custom/{name} Profile 是否正被使用（活动会话 service_state / config / vision）。
 
     批次 5（Task 6）删除激活约束：活动会话 service_state.{svc}_model、config.{svc}.model、
@@ -170,7 +173,8 @@ def _custom_profile_in_use(agent, service: str, name: str) -> bool:
     return any(c.startswith(prefix) for c in candidates if c)
 
 
-async def _run_usable_test(backend, service: str, request: web.Request, body: dict) -> dict:
+async def _run_usable_test(backend: Any, service: str, request: web.Request,
+                           body: dict) -> dict:
     """usable 级真实产出验证。LLM 发文本、TTS 合成音频、STT 转写样例。超时 30s。
 
     STT 成功标准为"transcribe 调用无异常"——内置 tone 样例未必产生非空文本，
@@ -887,7 +891,7 @@ def register_api_routes(app: web.Application) -> None:
         ).wire_dict()
         return web.json_response(env, status=status)
 
-    def _tool_metadata_to_contract(meta) -> rest_contract.ToolMetadata:
+    def _tool_metadata_to_contract(meta: Any) -> rest_contract.ToolMetadata:
         """Module.tool.manager.ToolMetadata（snake_case dataclass）→ 契约 ToolMetadata（camelCase）。
 
         Args:

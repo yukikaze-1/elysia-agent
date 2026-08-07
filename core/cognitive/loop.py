@@ -1,14 +1,14 @@
-"""CognitiveLoop — the core ReAct scheduler.
+"""CognitiveLoop —— 核心 ReAct 调度器。
 
-Orchestrates THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE.
-Uses structured streaming for sub-100ms TTFT and simultaneous tool-call detection.
+编排 THINKING → (EXECUTING → THINKING)* → SPEAKING → IDLE 流程。
+使用结构化流式实现亚 100ms TTFT，并同时进行工具调用检测。
 
-Sub-modules:
-  text/stream_processor.py     — streaming parser coordinator (tokenizer + splitter + blocks)
-  text/parts.py                — sentence/block interleave → TextPart + public_text rebuild
-  adapter/tts_adapter.py       — TTS stream manager + emoji queuing
-  adapter/tool_call_parser.py  — merge/normalize streaming tool_call deltas
-  utils/text_utils.py          — content text extraction + MessageObj
+子模块：
+  text/stream_processor.py     — 流式解析协调器（tokenizer + splitter + blocks）
+  text/parts.py                — 句子/块交错 → TextPart + public_text 重建
+  adapter/tts_adapter.py       — TTS 流管理器 + emoji 排队
+  adapter/tool_call_parser.py  — 合并/规整流式工具调用增量
+  utils/text_utils.py          — 内容文本提取 + MessageObj
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import logging
 import time
 from dataclasses import asdict
 from enum import Enum
-from typing import Awaitable, Callable, TYPE_CHECKING
+from typing import Awaitable, Any, Callable, TYPE_CHECKING
 
 from core.utils import new_message_id, new_generation_id
 from core.schema.types import SessionId
@@ -45,6 +45,7 @@ from core.memory.consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
 
 if TYPE_CHECKING:
+    from core.status.fsm import FSMBackedPhaseController, FSMBackedStatus
     from core.cognitive.delegation import DelegationPreparer
     from Module.workflow_engine.workflow_engine import WorkflowEngine
     from core.cognitive.user_profile import UserProfile
@@ -138,7 +139,7 @@ class TurnPhase(str, Enum):
 
 
 async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamManager,
-                      output, target_session=None) -> None:
+                      output: OutputManager, target_session: SessionMemory | None = None) -> None:
     """解析 <mood> 标签内容，更新 CharacterState + 统一心情发射 + TTS emotion。
 
     支持格式: "情绪文本" 或 "情绪文本|强度"（强度 0.1–1.0）。
@@ -186,7 +187,7 @@ async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamMan
 
 
 class CognitiveLoop(CognitiveTools):
-    """ReAct cognitive loop with streaming delivery and tool-call detection."""
+    """ReAct 认知循环：流式投递 + 工具调用检测。"""
 
     MAX_TOOL_ROUNDS = 5
 
@@ -263,7 +264,7 @@ class CognitiveLoop(CognitiveTools):
         self._tts_task: asyncio.Task | None = None  # 保留供 agent.py stop() 读取
         self._pending_after_response: list[asyncio.Task] = []  # shutdown 时等待
         self._shutting_down: bool = False  # shutdown 门禁——after_response 检查后提前退出
-        # TTS streaming manager — extracted sub-system
+        # TTS 流管理器——抽取出来的子系统
         self._tts_mgr = TTSStreamManager(
             tts, output,
             prompt._character.name if prompt and hasattr(prompt, '_character') else "unknown",
@@ -293,7 +294,7 @@ class CognitiveLoop(CognitiveTools):
         return self._phases
 
     @phases.setter
-    def phases(self, value):
+    def phases(self, value: "FSMBackedPhaseController"):
         self._phases = value
 
     @property
@@ -305,7 +306,7 @@ class CognitiveLoop(CognitiveTools):
         return self._status
 
     @status.setter
-    def status(self, value):
+    def status(self, value: "FSMBackedStatus"):
         self._status = value
 
     @property
@@ -346,7 +347,7 @@ class CognitiveLoop(CognitiveTools):
         """
         self._shutting_down = True
 
-    def configure(self, **kwargs) -> None:
+    def configure(self, **kwargs: Any) -> None:
         """一次性注入所有延迟依赖（替代 10 个 setter 方法）。
 
         由 agent.py 在 __init__ / start() 中调用。有副作用的属性（如 tts）
@@ -423,7 +424,7 @@ class CognitiveLoop(CognitiveTools):
 
             rid = get_request_id()
             if rid == "-":
-                # Fallback: idle monitor proactive messages have no request_id yet
+                # 兜底：空闲监听主动消息还没有 request_id
                 self._req_counter += 1
                 rid = f"P{self._req_counter:03d}"
                 set_request_id(rid)
@@ -696,7 +697,7 @@ class CognitiveLoop(CognitiveTools):
         except asyncio.CancelledError:
             raise
 
-        # Flush StreamProcessor
+        # Flush StreamProcessor（冲刷流处理器剩余事件）
         for event in proc.flush():
             speaking_started, all_sentences = (
                 await self._dispatch_stream_event(
@@ -814,7 +815,7 @@ class CognitiveLoop(CognitiveTools):
             tool_calls=normalized if normalized else None,
         ))
 
-        # Emit tool_executing actions for UI (before dispatch)
+        # 为 UI 发射 tool_executing 动作（在分发前）
         for tc in dispatch_tcs:
             func_name = tc.function.name
             call_id = tc.id
@@ -872,7 +873,7 @@ class CognitiveLoop(CognitiveTools):
                 truncated=tool_result.truncated,
             ))
 
-        # Clean up executing tools tracking
+        # 清理执行中的工具追踪
         for tc in dispatch_tcs:
             func_name = tc.function.name
             try:
@@ -1180,7 +1181,7 @@ class CognitiveLoop(CognitiveTools):
     async def _after_response(self, user_message: str, assistant_response: str, *,
                               session: SessionMemory | None = None,
                               engine: "CharacterEngine | None" = None) -> None:
-        """Post-response hooks: consolidate memory, character reflection, save session.
+        """Post-response 钩子：沉淀记忆、性格反思、保存会话。
 
         以 fire-and-forget 方式由 _finalize_turn 调用。
         执行顺序：Consolidator 提取记忆 → CharacterReflector 缓冲 → MemoryReflector 去重 → 保存 session。
@@ -1232,7 +1233,7 @@ class CognitiveLoop(CognitiveTools):
                 await self._memory_reflector.check_and_reflect()
             except Exception:
                 logger.warning("MemoryReflector check failed", exc_info=True)
-        # Save session asynchronously (fire-and-forget)
+        # 异步保存会话（fire-and-forget，不阻塞本轮）
         try:
             await target_session.save()
         except asyncio.CancelledError:
@@ -1425,7 +1426,7 @@ class CognitiveLoop(CognitiveTools):
             logger.debug("取消在途 desktop 调用失败（桥不可用/断连竞态）", exc_info=True)
 
     async def _handle_interrupt(self, source: str | None = None) -> None:
-        """Clean up after interruption — cancel TTS tasks, return to IDLE.
+        """中断后的清理：取消 TTS 任务、回到 IDLE 状态。
 
         Args:
             source: 中断来源（cancel_current 存入 _interrupt_source，此处消费；

@@ -19,7 +19,7 @@ from core.text.tokenizer import Token, TokenKind
 
 
 # 块引用：(kind, content, lang, after_sentence_idx)
-#   kind               = "markdown" | "code"
+#   kind               = "markdown" | "code"（块类型）
 #   content            = 块内容（已去 <|code|>/``` 标记，tokenizer 产出的原文）
 #   lang               = 语言标记（围栏信息串首 token / <|code|lang>；显示路径用）
 #   after_sentence_idx = 块闭合时已"完成"的句子数——含 min_chunk 暂留的短句

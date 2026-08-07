@@ -11,17 +11,23 @@ import logging
 import re
 import uuid
 from zoneinfo import ZoneInfo
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 from bson import ObjectId
 from bson.errors import InvalidId
 
+if TYPE_CHECKING:
+    from core.agent import Agent
+
 from core.input.api_routes import _archive_to_client, _archive_msg_to_contract
-from core.schema.message import MessageRole
+from core.schema.message import Message, MessageRole
 from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart
 from core.schema.utils import now_iso
 from core.storage.attachment_release import release_session_attachments
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
+from core.storage.message_repo import MessageRepository
+from core.storage.session_repo import SessionSummary
 from frontend_contract import rest as rest_contract
 from frontend_contract.rest import ProtocolError
 
@@ -119,7 +125,7 @@ def _parse_resource_before(value: str | None) -> tuple[str, int] | None:
 # ── 契约转换 helpers ────────────────────────────────────────────────────────
 
 
-def _to_contract_summary(s, active_id: str) -> rest_contract.SessionSummary:
+def _to_contract_summary(s: SessionSummary, active_id: str) -> rest_contract.SessionSummary:
     """仓库 SessionSummary dataclass → 契约 SessionSummary（title 空时缺省省略）。"""
     return rest_contract.SessionSummary(
         conversationId=str(s.session_id),
@@ -130,13 +136,14 @@ def _to_contract_summary(s, active_id: str) -> rest_contract.SessionSummary:
     )
 
 
-def _contract_messages(messages) -> list[rest_contract.Message]:
+def _contract_messages(messages: list[Message]) -> list[rest_contract.Message]:
     """core.schema.Message 列表 → 契约 Message 列表（逐条契约化，单条失败丢弃）。"""
     client_msgs = _archive_to_client(messages)
     return [m for m in (_archive_msg_to_contract(d) for d in client_msgs) if m]
 
 
-async def _session_summary(agent, sid: str, message_count: int) -> rest_contract.SessionSummary | None:
+async def _session_summary(agent: "Agent", sid: str,
+                           message_count: int) -> rest_contract.SessionSummary | None:
     """构造单会话 SessionSummary：title/updatedAt 取 session doc（repo.list_all 匹配），
     messageCount 用归档计数（消息总数，比会话窗口更准确）。
 
@@ -163,7 +170,7 @@ async def _session_summary(agent, sid: str, message_count: int) -> rest_contract
 # ── 会话存在性检查 ──────────────────────────────────────────────────────────
 
 
-async def _session_exists(agent, sid: str) -> bool:
+async def _session_exists(agent: "Agent", sid: str) -> bool:
     """会话是否存在（直通 SessionManager.has_session，区分已知/未知会话）。"""
     manager = getattr(agent, "session_manager", None)
     if manager is None:
@@ -175,7 +182,7 @@ async def _session_exists(agent, sid: str) -> bool:
         return False
 
 
-def _generation_registry(agent):
+def _generation_registry(agent: "Agent"):
     """取 GenerationRegistry（agent.cognitive._generation_registry），缺失返回 None。"""
     cognitive = getattr(agent, "cognitive", None)
     return getattr(cognitive, "_generation_registry", None)  # noqa: SLF001
@@ -184,7 +191,7 @@ def _generation_registry(agent):
 # ── 文本/资源提取 helpers（spec §8） ────────────────────────────────────────
 
 
-def _message_text(msg) -> str:
+def _message_text(msg: Message) -> str:
     """提取消息纯文本（TextPart.content 拼接；兼容 dict part）。"""
     parts = getattr(msg, "content", None) or []
     out = []
@@ -201,7 +208,7 @@ def _extract_urls(text: str) -> list[str]:
     return list(dict.fromkeys(_LINK_URL_RE.findall(text)))
 
 
-def _extract_from_message(msg, category: str) -> list[dict]:
+def _extract_from_message(msg: Message, category: str) -> list[dict]:
     """按类别从单条消息提取资源项（{kind, url} 列表）。
 
     image → ImagePart.src；link → TextPart.content URL 正则；
@@ -237,7 +244,7 @@ def _extract_from_message(msg, category: str) -> list[dict]:
     return results
 
 
-async def _attachment_available(agent, url: str) -> bool:
+async def _attachment_available(agent: "Agent", url: str) -> bool:
     """资源索引软删过滤：/api/attachments/{id} → 附件记录存在且 active；其余 URL 不过滤。
 
     Mongo 离线（附件 repo fail-closed）保守过滤——附件不可校验 → 不展示（避免
@@ -257,7 +264,7 @@ async def _attachment_available(agent, url: str) -> bool:
     return doc is not None and (doc.get("status") or "") == STATUS_ACTIVE
 
 
-def _items_from_message(msg, category: str, start_offset: int = 0):
+def _items_from_message(msg: Message, category: str, start_offset: int = 0):
     """产出单条消息从 start_offset 起的同类资源 (item_dict, cursor) 序列。
 
     cursor = (消息 _id, 该消息内已返回资源数)，供资源级分页续扫。
@@ -281,7 +288,8 @@ def _items_from_message(msg, category: str, start_offset: int = 0):
         }, (doc_id, idx + 1)
 
 
-async def _next_hit(agent, message_repo, session_id: str, category: str,
+async def _next_hit(agent: "Agent", message_repo: MessageRepository, session_id: str,
+                    category: str,
                     doc_id: str, offset: int) -> tuple[dict, tuple[str, int]] | None:
     """从 (doc_id, offset) 起找下一条命中资源（peek has_more 用）。
 
@@ -312,7 +320,8 @@ async def _next_hit(agent, message_repo, session_id: str, category: str,
     return None
 
 
-async def _scan_resources(agent, message_repo, session_id: str, category: str,
+async def _scan_resources(agent: "Agent", message_repo: MessageRepository,
+                          session_id: str, category: str,
                           before: tuple[str, int] | None,
                           limit: int) -> tuple[list[dict], bool, str | None]:
     """按需扫描归档提取资源（spec §8 分页，资源级 cursor）。
@@ -399,7 +408,7 @@ async def sessions_list_handler(request: web.Request) -> web.Response:
     # 原实现对每会话顺序 await count_by_session（N+1 串行，≤50 次）→ asyncio.gather
     # 并发统计，单条失败保留窗口数（与原有兜底语义一致）。
 
-    async def _count(s):
+    async def _count(s: SessionSummary):
         try:
             return await agent.message_repo.count_by_session(s.session_id)
         except Exception:

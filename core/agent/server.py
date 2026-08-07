@@ -352,7 +352,7 @@ class AgentServer:
         return getattr(self._character, 'wake_words', [])
 
     async def run_server(self) -> None:
-        """Run agent in WebSocket server mode. Blocks until Ctrl+C or shutdown.
+        """以 WebSocket 服务模式运行 agent。阻塞直至 Ctrl+C 或关闭。
 
         支持通过 /restart 端点在停止后重新加载配置并重启服务。
         """
@@ -477,7 +477,7 @@ class AgentServer:
         print("再见！")
 
     async def run_repl(self) -> None:
-        """Run an interactive REPL loop (stdin). Blocks until /quit or Ctrl+D."""
+        """运行交互式 REPL 循环（stdin）。阻塞直至 /quit 或 Ctrl+D。"""
         await self.start()
         self._print_startup_banner(
             getattr(self, '_mongo_ok', False),

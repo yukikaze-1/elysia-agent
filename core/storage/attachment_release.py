@@ -13,16 +13,22 @@
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from core.schema.adapters import attachment_resolver as _ar
+from core.schema.message import Message
+from core.schema.types import SessionId
 from core.storage.attachment_repo import StorageUnavailableError
+
+if TYPE_CHECKING:
+    from core.agent import Agent
 
 logger = logging.getLogger(__name__)
 
 _ATTACHMENT_RELEASE_BATCH = 200
 
 
-def attachment_ids_from_message(msg) -> list[str]:
+def attachment_ids_from_message(msg: Message) -> list[str]:
     """提取消息 content 中附件 Part 的 attachment_id（ImagePart/FilePart/AudioPart/VideoPart）。
 
     兼容 Part 对象与 dict part（归档消息统一为 Part 对象，防御性兼容 dict）。
@@ -35,7 +41,7 @@ def attachment_ids_from_message(msg) -> list[str]:
     return ids
 
 
-async def release_message_attachments(agent, msg) -> None:
+async def release_message_attachments(agent: "Agent", msg: Message) -> None:
     """单条消息删除联动：附件 remove_ref(message_id)；refs 归零 → 取消 resolver 注册。
 
     remove_ref 在 refs 归零时已写 status=deleted + deleted_at（repo 语义，spec §3.1），
@@ -58,13 +64,13 @@ async def release_message_attachments(agent, msg) -> None:
             logger.warning("附件 refs 释放失败 aid=%s: %s", aid, e)
 
 
-async def release_messages_attachments(agent, messages) -> None:
+async def release_messages_attachments(agent: "Agent", messages: list[Message]) -> None:
     """批量消息删除联动（清空/会话删除用）。"""
     for msg in messages:
         await release_message_attachments(agent, msg)
 
 
-async def release_all_attachments(agent) -> None:
+async def release_all_attachments(agent: "Agent") -> None:
     """释放全部归档消息的附件 refs（archive/sessions 清空场景，分页遍历）。"""
     skip = 0
     while True:
@@ -78,7 +84,7 @@ async def release_all_attachments(agent) -> None:
             break
 
 
-async def release_session_attachments(agent, sid) -> None:
+async def release_session_attachments(agent: "Agent", sid: SessionId) -> None:
     """释放单会话归档消息的附件 refs（会话删除场景，_id 游标遍历全部消息）。"""
     before = None
     while True:

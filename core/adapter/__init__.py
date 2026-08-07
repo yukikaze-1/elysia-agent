@@ -11,7 +11,7 @@ from .tts_adapter import TTSStreamManager, is_emoji_only
 from .message_builder import MessageBuilder
 from .tool_adapter import ToolAdapter
 
-# Re-export ToolResult, ErrorType, ToolContext for consumer convenience
+# 重导出 ToolResult、ErrorType、ToolContext，方便消费方统一导入
 from Module.tool.protocol import ToolResult
 from core.schema.error_type import ErrorType
 from Module.tool import ToolContext

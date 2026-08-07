@@ -1,4 +1,4 @@
-# core/prompt_recorder.py
+# core/prompt_recorder.py — LLM Prompt 记录器
 """LLM Prompt 记录器 — 内存环形缓冲区，捕获每次 LLM 调用的完整 messages 数组。"""
 from collections import deque
 from dataclasses import dataclass, field

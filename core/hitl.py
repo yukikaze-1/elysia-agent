@@ -38,7 +38,7 @@ class EventBusHITLNotifier(HITLNotifier):
     HITL_CANCEL = "hitl_cancel"
 
     def __init__(self, bus: Any) -> None:
-        """Initialize the EventBus-based HITL notifier.
+        """初始化基于 EventBus 的 HITL 通知器。
 
         Args:
             bus: core.event_bus.EventBus 实例。

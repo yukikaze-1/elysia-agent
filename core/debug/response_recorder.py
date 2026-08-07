@@ -1,4 +1,4 @@
-# core/response_recorder.py
+# core/response_recorder.py — LLM Response 记录器
 """LLM Response 记录器 — 内存环形缓冲区，捕获每次 LLM 调用的原始回复文本。"""
 
 from collections import deque

@@ -20,11 +20,16 @@ import logging
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from core.schema.utils import now_iso
 from core.schema.types import SessionId
 from core.storage.session_repo import SessionRepository, SessionSummary
+from core.storage.message_repo import MessageRepository
 from core.memory.session import SessionMemory
+
+if TYPE_CHECKING:
+    from core.personality.engine import CharacterEngine
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +63,7 @@ def _decode_cursor(cursor: str) -> tuple[str, str]:
 class SessionManager:
     """多会话缓存池 + 活动指针。"""
 
-    def __init__(self, repo: SessionRepository, msg_repo,
+    def __init__(self, repo: SessionRepository, msg_repo: MessageRepository,
                  max_sessions: int = 20, max_messages: int = 20):
         """初始化 SessionManager。
 
@@ -104,7 +109,7 @@ class SessionManager:
 
     # ---- 缓存访问 ----
 
-    def get(self, sid) -> SessionMemory:
+    def get(self, sid: SessionId) -> SessionMemory:
         """内存命中返回；未命中构造空实例并缓存（不触发 load）。
 
         F7：构造新会话后调用 evict_if_needed()——超 max_sessions 时逐出最旧非活动
@@ -125,7 +130,7 @@ class SessionManager:
             self._sessions.move_to_end(sid)
         return session
 
-    async def ensure_loaded(self, sid) -> SessionMemory:
+    async def ensure_loaded(self, sid: SessionId) -> SessionMemory:
         """首次调用 await load（Mongo → JSONL fallback）；重复调用不重复 load。"""
         sid = SessionId(sid)
         session = self.get(sid)
@@ -136,7 +141,7 @@ class SessionManager:
 
     # ---- resolve / switch ----
 
-    async def has_session(self, sid) -> bool:
+    async def has_session(self, sid: SessionId) -> bool:
         """会话是否存在：内存缓存命中 或 持久层有 doc。
 
         activate_session 404 判定用：`switch` 对未知 sid 会构造空会话（懒加载语义），
@@ -153,7 +158,7 @@ class SessionManager:
                 logger.debug("has_session: repo.load 失败 sid=%s", sid, exc_info=True)
         return False
 
-    async def resolve(self, conversation_id, protocol_version) -> SessionMemory:
+    async def resolve(self, conversation_id: str | None, protocol_version: int) -> SessionMemory:
         """按协议版本 + conversation_id 解析目标会话并确保加载。"""
         version = int(protocol_version)
         if version < 2:
@@ -171,7 +176,7 @@ class SessionManager:
         """
         self._busy_check = check
 
-    async def switch(self, sid) -> SessionMemory:
+    async def switch(self, sid: SessionId) -> SessionMemory:
         """切换到目标会话。
 
         顺序：busy check（F1-a）→ resolve/ensure-loaded → outgoing._pre_save_hook()
@@ -193,7 +198,7 @@ class SessionManager:
             self._character_engine.attach_session(target)
         return target
 
-    def bind_character_engine(self, engine) -> None:
+    def bind_character_engine(self, engine: "CharacterEngine") -> None:
         """绑定 CharacterEngine；切换会话时对 target 调用 attach_session。"""
         self._character_engine = engine
         engine.attach_session(self._sessions[self._active_id])
@@ -248,11 +253,11 @@ class SessionManager:
             next_cursor = _encode_cursor(last.updated_at, last.session_id)
         return items, has_more, next_cursor
 
-    async def rename(self, sid, title: str) -> bool:
+    async def rename(self, sid: SessionId, title: str) -> bool:
         """重命名会话，返回是否更新成功。"""
         return await self._repo.rename(SessionId(sid), title)
 
-    async def delete(self, sid) -> int:
+    async def delete(self, sid: SessionId) -> int:
         """删除会话：msg_repo 清归档 + repo 删文档 + 丢缓存。
 
         保护（review 修复）：默认会话（"default"）不可删除——拒绝并返回 0。

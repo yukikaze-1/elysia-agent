@@ -104,7 +104,7 @@ def _is_dot_boundary(
 
     word = text[left:dot_pos].lower()
 
-    # Dr. / Mr. / etc.
+    # Dr. / Mr. 等称谓缩写
     if word in abbreviations:
         return False
 

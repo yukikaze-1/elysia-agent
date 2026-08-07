@@ -1,6 +1,7 @@
 """契约模型基类 + TsNull marker（零依赖，仅 pydantic）。"""
 from typing import Annotated, Any, get_origin, get_args
 from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 
 
 class TsNull:
@@ -12,7 +13,7 @@ class TsNull:
     ts_null = True
 
 
-def is_ts_null(annotation) -> bool:
+def is_ts_null(annotation: Any) -> bool:
     """检测原始注解是否带 TsNull marker（Annotated 元数据）。"""
     origin = get_origin(annotation)
     if origin is not Annotated:
@@ -21,7 +22,7 @@ def is_ts_null(annotation) -> bool:
     return any(getattr(m, "ts_null", False) for m in meta)
 
 
-def field_is_ts_null(field) -> bool:
+def field_is_ts_null(field: FieldInfo) -> bool:
     """检测 FieldInfo 是否带 TsNull marker。
 
     pydantic 2.11 起 Annotated 外层被剥掉（field.annotation 只剩内层类型，marker 移入
@@ -33,7 +34,7 @@ def field_is_ts_null(field) -> bool:
     return any(getattr(m, "ts_null", False) for m in field.metadata)
 
 
-def wire_key(field, name: str) -> str:
+def wire_key(field: FieldInfo, name: str) -> str:
     """序列化键名：serialization_alias > alias > 字段名。
 
     与 wire_dict 的 by_alias=True 一致（pydantic model_dump 递归用 serialization_alias

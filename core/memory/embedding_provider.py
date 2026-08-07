@@ -92,7 +92,7 @@ class EmbeddingProvider:
             return []
 
     def _try_load_sync(self) -> "EmbeddingBackend | None":
-        """Try to load embedding backend. Runs in thread.
+        """尝试加载 embedding 后端。在线程中运行。
 
         不直接写 self._backend——由调用方 coroutine 赋值，
         确保 timeout 后线程即使继续运行也不会产生竞态写入。

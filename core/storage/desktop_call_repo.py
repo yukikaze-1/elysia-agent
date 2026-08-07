@@ -49,6 +49,7 @@ offline 为**准终态**：无主动过期定时器——offline → expired 表
 """
 
 import logging
+from typing import Any
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.schema.utils import now_iso
@@ -225,7 +226,7 @@ class DesktopCallRepository(Repository):
             and (doc.get("expires_at") or "") > cutoff
         ]
 
-    async def mark(self, call_id: str, **fields) -> bool:
+    async def mark(self, call_id: str, **fields: Any) -> bool:
         """按 call_id 更新字段，带状态迁移守卫（spec §4.1 表）。
 
         守卫规则：

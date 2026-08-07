@@ -1,4 +1,4 @@
-"""Message ID generation."""
+"""消息 ID 生成。"""
 from __future__ import annotations
 
 import uuid

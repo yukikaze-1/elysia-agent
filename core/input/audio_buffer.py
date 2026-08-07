@@ -1,8 +1,7 @@
-"""Audio buffer with WebRTC VAD for WebSocket audio streams.
+"""面向 WebSocket 音频流的 WebRTC VAD 音频缓冲。
 
-Receives raw Int16 PCM chunks from browser mic, detects speech segments
-via WebRTC VAD (voice activity detection based on Gaussian Mixture Model),
-and feeds complete WAV segments to STT.
+接收浏览器麦克风的原始 Int16 PCM 块，通过 WebRTC VAD（基于高斯混合模型的
+语音活动检测）识别语音片段，并将完整 WAV 片段送入 STT。
 """
 
 import asyncio
@@ -28,8 +27,8 @@ class WakeState(enum.Enum):
 Callback = Callable[[], Coroutine[object, object, None]]
 TranscriptionCallback = Callable[[str], Coroutine[object, object, None]]
 
-# WebRTC VAD frame sizes (16kHz mono 16-bit).
-# 20ms = 320 samples × 2 bytes = 640 bytes.
+# WebRTC VAD 帧尺寸（16kHz 单声道 16-bit）。
+# 20ms = 320 样本 × 2 字节 = 640 字节。
 _FRAME_MS = 20
 _FRAME_SAMPLES = int(16000 * _FRAME_MS / 1000)   # 320
 _FRAME_BYTES = _FRAME_SAMPLES * 2                  # 640
@@ -41,16 +40,16 @@ def pcm_to_wav(
     channels: int = 1,
     bits: int = 16,
 ) -> bytes:
-    """Wrap raw PCM data with a WAV header. Pure Python, no dependencies.
+    """给原始 PCM 数据加上 WAV 头。纯 Python 实现，无外部依赖。
 
     Args:
-        pcm_data: Raw PCM audio data (Int16 samples).
-        sample_rate: Audio sample rate in Hz.
-        channels: Number of audio channels (1 = mono).
-        bits: Bit depth per sample.
+        pcm_data: 原始 PCM 音频数据（Int16 样本）。
+        sample_rate: 音频采样率（Hz）。
+        channels: 音频通道数（1 = 单声道）。
+        bits: 每个样本的位深。
 
     Returns:
-        bytes: WAV file data including RIFF header.
+        bytes: 含 RIFF 头的 WAV 文件数据。
     """
     byte_rate = sample_rate * channels * bits // 8
     block_align = channels * bits // 8
@@ -58,8 +57,8 @@ def pcm_to_wav(
     header = struct.pack(
         "<4sI4s4sIHHIIHH4sI",
         b"RIFF", 36 + data_size, b"WAVE", b"fmt ",
-        16,             # sub-chunk size (PCM)
-        1,              # audio format (PCM=1)
+        16,             # 子块大小 (PCM)
+        1,              # 音频格式 (PCM=1)
         channels,
         sample_rate,
         byte_rate,
@@ -72,21 +71,21 @@ def pcm_to_wav(
 
 
 class AudioBuffer:
-    """Buffers raw PCM audio chunks and detects speech segments via WebRTC VAD.
+    """缓冲原始 PCM 音频块，并通过 WebRTC VAD 检测语音片段。
 
-    Uses a Gaussian Mixture Model to distinguish speech from noise (keyboard,
-    fan, background music), unlike RMS which only looks at energy level.
+    使用高斯混合模型区分语音与噪声（键盘、风扇、背景音乐），
+    不同于仅看能量水平的 RMS。
 
-    When a speech segment ends (silence duration exceeded), accumulates PCM
-    data, wraps it as WAV, and sends to STT. Results are delivered via callback.
+    语音片段结束（静音超时）时，累积 PCM 数据并包装为 WAV 发给 STT。
+    结果经回调交付。
     """
 
-    # Minimum segment length in seconds (shorter segments are likely noise)
+    # 最小片段时长（秒），更短的片段大概率是噪声
     MIN_SEGMENT_SECONDS = 0.3
-    # WOKEN timeout — user has this many seconds to start speaking after wake word
+    # WOKEN 超时 —— 唤醒词后用户须在该秒数内开始说话
     WOKEN_TIMEOUT = 5.0
-    # Consecutive speech chunks required before firing interrupt (avoids
-    # single-frame false positives from background noise).
+    # 触发打断前所需的连续语音块数（避免
+    # 背景噪声导致的单帧误报）。
     MIN_SPEECH_CHUNKS_FOR_INTERRUPT = 3
 
     def __init__(
@@ -101,36 +100,36 @@ class AudioBuffer:
         wake_words: list[str] | None = None,
         on_wake_notify: Callback | None = None,
     ):
-        """Initialize the audio buffer with VAD and STT pipeline.
+        """用 VAD 与 STT 管线初始化音频缓冲。
 
         Args:
-            aggressiveness: WebRTC VAD aggressiveness (0=least, 3=most).
-            silence_duration: Seconds of silence to end a speech segment.
-            sample_rate: Audio sample rate in Hz.
-            on_interrupt: Callback when speech interruption is detected.
-            on_transcription: Callback invoked with transcribed text.
-            stt_transcribe: Async callable(bytes) -> str for speech-to-text.
-            wake_words: List of wake words for voice activation.
-            on_wake_notify: Callback when a wake word is detected.
+            aggressiveness: WebRTC VAD 灵敏度（0=最不灵敏，3=最灵敏）。
+            silence_duration: 结束语音片段的静音时长（秒）。
+            sample_rate: 音频采样率（Hz）。
+            on_interrupt: 检测到语音打断时的回调。
+            on_transcription: 收到转写文本时调用的回调。
+            stt_transcribe: 语音转文本的异步 callable(bytes) -> str。
+            wake_words: 用于语音激活的唤醒词列表。
+            on_wake_notify: 检测到唤醒词时的回调。
         """
         self._aggressiveness = aggressiveness
-        self._silence_dur = silence_duration       # seconds of silence to end segment
+        self._silence_dur = silence_duration       # 结束片段的静音秒数
         self._sample_rate = sample_rate
         self._on_interrupt = on_interrupt
         self._on_transcription = on_transcription
-        self._stt_transcribe = stt_transcribe      # STT callable
+        self._stt_transcribe = stt_transcribe      # STT 可调用对象
         self._on_wake_notify = on_wake_notify
 
         self._chunks: list[bytes] = []
         self._speaking: bool = False
-        self._speech_chunk_count: int = 0           # consecutive speech chunks
-        self._interrupt_fired: bool = False         # interrupt already sent for this segment
+        self._speech_chunk_count: int = 0           # 连续语音块数
+        self._interrupt_fired: bool = False         # 本片段已发送打断
         self._silence_start: float | None = None
-        self._deafen_until: float = 0.0            # Ignore audio until this timestamp
-        self._last_interrupt: float = 0.0          # Last interrupt time for cooldown
-        self._interrupt_cooldown: float = 0.5      # Min seconds between interrupts
+        self._deafen_until: float = 0.0            # 忽略音频直到该时间戳
+        self._last_interrupt: float = 0.0          # 上次打断时间（冷却用）
+        self._interrupt_cooldown: float = 0.5      # 打断之间的最小秒数
 
-        # Wake word state
+        # 唤醒词状态
         if wake_words:
             self._wake_detector = WakeWordDetector(
                 wake_words=wake_words,
@@ -148,7 +147,7 @@ class AudioBuffer:
         self._woken_at: float = 0.0
 
     def deafen(self, duration: float = 1.0) -> None:
-        """Ignore audio for `duration` seconds. Call when TTS starts playing."""
+        """忽略音频 `duration` 秒。TTS 开始播放时调用。"""
         self._deafen_until = time.monotonic() + duration
         self._chunks.clear()
         self._speaking = False
@@ -159,9 +158,9 @@ class AudioBuffer:
             self._wake_detector.reset()
 
     def _on_wake(self) -> None:
-        """Called by WakeWordDetector when a wake word is detected."""
+        """WakeWordDetector 检测到唤醒词时调用。"""
         if self._wake_state == WakeState.LISTENING:
-            return  # already listening, keep accumulating
+            return  # 已在监听，继续累积
 
         self._wake_state = WakeState.WOKEN
         self._woken_at = time.monotonic()
@@ -174,23 +173,23 @@ class AudioBuffer:
         logger.debug("Wake word detected → WOKEN")
 
     def _is_speech(self, chunk: bytes) -> bool:
-        """Check if a PCM chunk contains speech using WebRTC VAD.
+        """用 WebRTC VAD 检查 PCM 块是否包含语音。
 
-        Splits the chunk into 20ms frames and checks each frame.
-        Creates a fresh VAD instance per call to avoid state drift —
-        WebRTC VAD accumulates a noise estimate that can cause false
-        negatives after processing many chunks.
+        将块切成 20ms 帧并逐帧检查。
+        每次调用创建新的 VAD 实例以避免状态漂移 ——
+        WebRTC VAD 会累积噪声估计，处理大量块后可能导致误判
+        为静音。
 
         Args:
-            chunk: Raw Int16 PCM audio chunk.
+            chunk: 原始 Int16 PCM 音频块。
 
         Returns:
-            bool: True if speech is detected in the chunk.
+            bool: 块中检测到语音时返回 True。
         """
         if len(chunk) < _FRAME_BYTES:
             return False
 
-        # Fresh VAD per call — avoids noise-estimate drift
+        # 每次调用使用新的 VAD —— 避免噪声估计漂移
         vad = webrtcvad.Vad(self._aggressiveness)
         speech_frames = 0
         total_frames = 0
@@ -209,21 +208,21 @@ class AudioBuffer:
         return speech_frames > total_frames * 0.5
 
     async def feed(self, chunk: bytes) -> None:
-        """Feed a raw Int16 PCM chunk. Triggers STT when a segment completes."""
-        # Ignore audio during deafen (TTS playback / echo avoidance)
+        """喂入原始 Int16 PCM 块。片段完成时触发 STT。"""
+        # 静音期间忽略音频（TTS 播放 / 回声抑制）
         if time.monotonic() < self._deafen_until:
             return
 
-        # Wake word streaming detection (parallel to VAD)
+        # 唤醒词流式检测（与 VAD 并行）
         if self._wake_detector and self._wake_detector.enabled:
             prev_state = self._wake_state
             self._wake_detector.feed(chunk)
-            # Notify if wake word was just detected (must be in async context)
+            # 刚检测到唤醒词时通知（须在异步上下文中）
             if prev_state != self._wake_state and self._wake_state == WakeState.WOKEN:
                 if self._on_wake_notify:
                     await self._on_wake_notify()
 
-        # WOKEN timeout check
+        # WOKEN 超时检查
         if self._wake_state == WakeState.WOKEN:
             if time.monotonic() - self._woken_at > self.WOKEN_TIMEOUT:
                 self._wake_state = WakeState.AWAITING
@@ -240,11 +239,11 @@ class AudioBuffer:
             self._speech_chunk_count += 1
             self._chunks.append(chunk)
 
-            # Transition WOKEN → LISTENING on first speech
+            # 首次语音时 WOKEN → LISTENING
             if self._wake_state == WakeState.WOKEN:
                 self._wake_state = WakeState.LISTENING
 
-            # Only fire interrupt after enough consecutive speech chunks
+            # 连续语音块数足够时才触发打断
             if not self._interrupt_fired and self._speech_chunk_count >= self.MIN_SPEECH_CHUNKS_FOR_INTERRUPT:
                 now = time.monotonic()
                 if now - self._last_interrupt >= self._interrupt_cooldown:
@@ -256,12 +255,12 @@ class AudioBuffer:
             now = time.monotonic()
             if self._silence_start is None:
                 self._silence_start = now
-                self._chunks.append(chunk)  # include trailing silence for STT
+                self._chunks.append(chunk)  # 连同尾部静音一并交 STT
             elif now - self._silence_start >= self._silence_dur:
                 await self._process_segment()
 
     async def flush(self) -> None:
-        """Force-process any remaining buffered audio."""
+        """强制处理任何剩余的缓冲音频。"""
         if self._chunks:
             await self._process_segment()
 
@@ -275,9 +274,9 @@ class AudioBuffer:
 
         min_bytes = int(self._sample_rate * self.MIN_SEGMENT_SECONDS * 2)
         if len(audio) < min_bytes:
-            return  # too short, probably noise
+            return  # 太短，大概率是噪声
 
-        # Gate: if wake words active, only process in LISTENING state
+        # 门控：启用唤醒词时只在 LISTENING 状态处理
         if self._wake_state is not None and self._wake_state != WakeState.LISTENING:
             return
 
@@ -300,21 +299,21 @@ class AudioBuffer:
         except Exception:
             logger.warning("STT transcription failed", exc_info=True)
         finally:
-            # Back to AWAITING after STT (pass or fail)
+            # STT 结束后回到 AWAITING（无论成功失败）
             if self._wake_state == WakeState.LISTENING:
                 self._wake_state = WakeState.AWAITING
 
     def set_wake_enabled(self, enabled: bool) -> None:
-        """Enable or disable wake word detection at runtime."""
+        """运行时启用或禁用唤醒词检测。"""
         if enabled and self._wake_detector and self._wake_detector.enabled:
             self._wake_state = WakeState.AWAITING
             logger.debug("Wake word detection enabled → AWAITING")
         else:
-            self._wake_state = None  # passthrough
+            self._wake_state = None  # 直通模式
             logger.debug("Wake word detection disabled → passthrough")
 
     def reset(self) -> None:
-        """Clear all buffered state (e.g., on interruption)."""
+        """清空所有缓冲状态（如被打断时）。"""
         self._chunks.clear()
         self._speaking = False
         self._speech_chunk_count = 0

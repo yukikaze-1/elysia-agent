@@ -10,6 +10,7 @@ import logging
 import re
 import socket
 import urllib.parse
+from typing import Any
 
 import httpx
 
@@ -132,12 +133,12 @@ def validate_endpoint(url: str) -> None:
 class _SSRFTransport(httpx.AsyncHTTPTransport):
     """出站守卫传输层：连接前校验目标 host（覆盖重定向每跳）+ 跨源重定向剥敏感头。"""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         # 首次请求 origin（scheme://netloc），用于跨源判定
         self._origin = None
 
-    async def handle_async_request(self, request):
+    async def handle_async_request(self, request: httpx.Request):
         # 每跳校验（连接前，覆盖 follow_redirects 的后续 hop）。
         # to_thread：同步 getaddrinfo 可能挂起解析，放在 worker 线程避免阻塞事件循环
         # （auth 后 DoS 缓解；保存/切换/测试的冷路径同步调用仍接受，见 review 记录）。
@@ -145,7 +146,7 @@ class _SSRFTransport(httpx.AsyncHTTPTransport):
         self._strip_cross_origin_headers(request)
         return await super().handle_async_request(request)
 
-    def _strip_cross_origin_headers(self, request):
+    def _strip_cross_origin_headers(self, request: httpx.Request):
         """跨源重定向：剥除允许名单外全部 Header（含 Authorization），防敏感头泄漏到重定向目标。"""
         origin = f"{request.url.scheme}://{request.url.netloc.decode('ascii')}"
         if self._origin is None:

@@ -1,4 +1,4 @@
-"""Debug archive + sessions routes: message archive CRUD + session management。
+"""Debug 归档 + 会话路由：消息归档 CRUD + 会话管理。
 
 响应构造 `frontend_contract.debug` 契约模型 + `wire_dict()`；归档消息经
 `api_routes._archive_to_client`（内部 core.schema.Message → 客户端 dict）再经
@@ -78,7 +78,7 @@ async def archive_list_handler(request: web.Request) -> web.Response:
 
 
 async def archive_delete_handler(request: web.Request) -> web.Response:
-    """Delete a single archived message by ID，同时从当前 session 中移除。
+    """按 ID 删除单条归档消息，同时从当前 session 中移除。
 
     Args:
         request: aiohttp Request, URL path: /{msg_id}。
@@ -107,7 +107,7 @@ async def archive_delete_handler(request: web.Request) -> web.Response:
 
 
 async def archive_update_handler(request: web.Request) -> web.Response:
-    """Update an archived message's text by ID.
+    """按 ID 更新归档消息的文本。
 
     Args:
         request: aiohttp Request, URL path: /{msg_id}, JSON body: text。
@@ -155,7 +155,7 @@ async def archive_clear_handler(request: web.Request) -> web.Response:
 
 
 async def sessions_list_handler(request: web.Request) -> web.Response:
-    """List all sessions with message counts and token totals.
+    """列出所有会话及其消息数与 token 总量。
 
     Args:
         request: aiohttp Request。
@@ -199,7 +199,7 @@ async def sessions_list_handler(request: web.Request) -> web.Response:
 
 
 async def session_detail_handler(request: web.Request) -> web.Response:
-    """Get session detail: messages, character state params, and total count.
+    """获取会话详情：消息、character state 参数与总数。
 
     Args:
         request: aiohttp Request, URL path: /{session_id}。
@@ -258,7 +258,7 @@ async def session_detail_handler(request: web.Request) -> web.Response:
 
 
 async def session_delete_handler(request: web.Request) -> web.Response:
-    """Delete a session by ID. Clears in-memory session if it matches the current one.
+    """按 ID 删除会话。若与当前会话匹配，则同时清空内存中的会话。
 
     Args:
         request: aiohttp Request, URL path: /{session_id}。
@@ -295,7 +295,7 @@ async def session_delete_handler(request: web.Request) -> web.Response:
 
 
 async def sessions_clear_handler(request: web.Request) -> web.Response:
-    """Clear all sessions and in-memory session state.
+    """清空所有会话及内存中的会话状态。
 
     Args:
         request: aiohttp Request。

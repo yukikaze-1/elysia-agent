@@ -464,6 +464,6 @@ class CharacterEngine:
         return self._emotion._idle_expressions
 
     @_idle_expressions.setter
-    def _idle_expressions(self, value):
+    def _idle_expressions(self, value: list[str]):
         self._emotion._idle_expressions = value
 

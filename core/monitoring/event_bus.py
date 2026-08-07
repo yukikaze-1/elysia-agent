@@ -1,8 +1,8 @@
-"""Priority-based event bus for the Agent system.
+"""Agent 系统的优先级事件总线。
 
-Priority 0: INTERRUPT — cancel everything, return to IDLE
-Priority 1: STATE_CHANGE — FSM transitions for UI
-Priority 2: USER_INPUT, SYSTEM_TICK — normal I/O
+Priority 0: INTERRUPT — 取消一切，回到 IDLE
+Priority 1: STATE_CHANGE — FSM 转换（供 UI）
+Priority 2: USER_INPUT, SYSTEM_TICK — 常规 I/O
 """
 
 import asyncio
@@ -22,9 +22,9 @@ class Event:
 
 
 class EventBus:
-    """Priority-based event bus backed by asyncio.PriorityQueue.
+    """基于 asyncio.PriorityQueue 的优先级事件总线。
 
-    Lower priority value = higher urgency. INTERRUPT(0) events jump the queue.
+    优先级值越小越紧急。INTERRUPT(0) 事件插队。
     """
 
     def __init__(self):
@@ -49,14 +49,14 @@ class EventBus:
         self._queue.put_nowait(event)
 
     async def next(self) -> Event:
-        """Await the next event. Blocks until an event is available."""
+        """等待下一个事件。阻塞直到有事件可用。"""
         return await self._queue.get()
 
     def drain(self) -> list[Event]:
-        """Drain all pending events from the queue. Non-blocking.
+        """排空队列中所有待处理事件。非阻塞。
 
-        Safe to call concurrently with next() — catches QueueEmpty
-        if another consumer steals an event between empty() and get_nowait().
+        可与 next() 并发调用——若其他消费者在 empty() 与 get_nowait() 之间
+        抢走事件，捕获 QueueEmpty。
         """
         events: list[Event] = []
         while not self._queue.empty():

@@ -1,7 +1,7 @@
-"""WebSocket server — bridges browser clients to the agent pipeline.
+"""WebSocket 服务 —— 将浏览器客户端桥接到 agent 管线。
 
-Each client gets an independent WebSocketChannel (outbound) and AudioBuffer
-(inbound audio). Text and STT results are routed to the agent's EventBus.
+每个客户端获得独立的 WebSocketChannel（出站）和 AudioBuffer（入站音频）。
+文本与 STT 结果路由到 agent 的 EventBus。
 """
 
 import asyncio
@@ -11,7 +11,7 @@ import logging
 import time
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, Awaitable, Callable, TYPE_CHECKING
 
 from aiohttp import web
 
@@ -127,7 +127,8 @@ def _make_access_auth_middleware(access_token: str):
     """
 
     @web.middleware
-    async def _auth(request: web.Request, handler):
+    async def _auth(request: web.Request,
+                    handler: Callable[[web.Request], Awaitable[web.StreamResponse]]):
         path = request.path
         # 附件下载免 Bearer（签名即授权，spec §3.3）；/sign 签发端点保持 Bearer。
         # 须先于 /api/ 判断——否则下载请求会被 Bearer 校验拦下。
@@ -155,7 +156,8 @@ def _make_payload_middleware(cms: int):
     """
 
     @web.middleware
-    async def _payload(request: web.Request, handler):
+    async def _payload(request: web.Request,
+                       handler: Callable[[web.Request], Awaitable[web.StreamResponse]]):
         # cms=0 时不预检（不限语义；aiohttp client_max_size=0 原生不限，亦无异常可兜）
         if cms and request.content_length is not None and request.content_length > cms:
             return _protocol_error_response("REQUEST_TOO_LARGE", "请求体过大", 413)
@@ -179,7 +181,7 @@ async def _collect_health_payload(agent: "Agent") -> dict:
         探针 JSON 负载：status/fsm/llm/memory/tools/version/build_sha/uptime/
         request_id/dependencies{`mongo`, `milvus`}。
     """
-    async def _probe(factory) -> bool:
+    async def _probe(factory: Callable[[], Any]) -> bool:
         try:
             return bool(await asyncio.wait_for(factory(), timeout=_HEALTH_TIMEOUT))
         except Exception:
@@ -255,26 +257,26 @@ def create_app(
     max_ws_connections: int | None = None,
     max_request_bytes: int | None = None,
 ) -> web.Application:
-    """Create an aiohttp Application with WebSocket handler and optional static files.
+    """创建一个带 WebSocket handler 和可选静态文件的 aiohttp Application。
 
     STT 不再经参数注入——handle_ws 直接读 ``agent.stt`` 槽位（含 stt_transcribe /
     stt_emotion_state），支持热切换。
 
     Args:
-        agent: Agent instance (needs _output, _bus, process_message())
-        serve_static: serve static/index.html at /
-        wake_word_enabled: enable wake word detection for audio input.
-        task_system: WorkflowEngine instance for debug routes (optional)
-        auth_token: if non-empty, /shutdown, /restart, /tools/reload, and
-            /debug/api/* require Authorization: Bearer <auth_token> header.
-        access_token: if non-empty, /ws, 业务 /api/*, /uploads/* require
+        agent: Agent 实例（需具备 _output、_bus、process_message()）。
+        serve_static: 是否在 / 提供 static/index.html。
+        wake_word_enabled: 是否对音频输入启用唤醒词检测。
+        task_system: WorkflowEngine 实例，供 debug 路由使用（可选）。
+        auth_token: 非空时，/shutdown、/restart、/tools/reload 与 /debug/api/*
+            需要 Authorization: Bearer <auth_token> 请求头。
+        access_token: 非空时，/ws、业务 /api/*、/uploads/* 需要
             Authorization: Bearer <access_token>（产品认证，与 auth_token 权限域分离）。
         max_ws_connections: 并发 WS 连接上限（0/None 不限）。超出拒绝升级（503 CONNECTION_LIMITED）。
         max_request_bytes: 业务请求体上限（client_max_size，app 级；0=不限，None/缺省 64MB；
             multipart 除外——upload_handler 同源同步）。
 
     Returns:
-        web.Application: Configured aiohttp Application instance.
+        web.Application: 配置好的 aiohttp Application 实例。
     """
     # 请求体上限：app 级 client_max_size（aiohttp 无按路由选项；multipart 手工限制不受其约束）。
     # is not None 语义：0 → 0（aiohttp 原生不限），None/缺省 → 64MB（falsy 回落会误吞 0）。
@@ -294,7 +296,7 @@ def create_app(
         "attachment_sig_secret", "") or ""
     warn_if_attachment_signature_disabled(sig_secret, access_token)
 
-    # Inject agent + stt + task_system into app context for handler access
+    # 将 agent + stt + task_system 注入 app context，供 handler 访问
     app["agent"] = agent
     if task_system is not None:
         app["task_system"] = task_system
@@ -354,49 +356,49 @@ def create_app(
     if _LIVE2D_DIR.is_dir():
         app.router.add_static("/live2d/", _LIVE2D_DIR, show_index=False)
 
-    # Serve index.html at /
+    # 在 / 提供 index.html
     index_path = _STATIC_DIR / "index.html"
     if index_path.is_file():
         async def index_handler(_request: web.Request) -> web.FileResponse:
-            """Serve the main chat application HTML page.
+            """提供主聊天应用 HTML 页面。
 
             Args:
-                _request: aiohttp Request (unused).
+                _request: aiohttp Request（未使用）。
 
             Returns:
-                web.FileResponse: index.html file response.
+                web.FileResponse: index.html 文件响应。
             """
             return web.FileResponse(index_path)
         app.router.add_get("/", index_handler)
 
-        # Debug page
+        # Debug 页面
         debug_path = _STATIC_DIR / "debug.html"
         if debug_path.is_file():
             async def debug_handler(_request: web.Request) -> web.FileResponse:
-                """Serve the debug dashboard HTML page.
+                """提供 Debug 仪表盘 HTML 页面。
 
                 Args:
-                    _request: aiohttp Request (unused).
+                    _request: aiohttp Request（未使用）。
 
                 Returns:
-                    web.FileResponse: debug.html file response.
+                    web.FileResponse: debug.html 文件响应。
                 """
                 return web.FileResponse(debug_path)
             app.router.add_get("/debug", debug_handler)
 
-    # Health check endpoints — Docker/Kubernetes liveness(/health) + readiness(/ready)
+    # 健康检查端点 —— Docker/Kubernetes liveness(/health) + readiness(/ready)
     app.router.add_get("/health", health_handler)
     app.router.add_get("/ready", ready_handler)
 
-    # Shutdown endpoint — triggers graceful agent stop
+    # 关闭端点 —— 触发优雅的 agent 停止
     async def shutdown_handler(request: web.Request) -> web.Response:
-        """Graceful shutdown endpoint. Sets agent state to STOPPING.
+        """优雅关闭端点。将 agent 状态置为 STOPPING。
 
         Args:
-            request: aiohttp Request (requires auth if token is set).
+            request: aiohttp Request（设置 token 时需要认证）。
 
         Returns:
-            web.Response: {"status": "shutting_down"} or 401 unauthorized.
+            web.Response: {"status": "shutting_down"} 或 401 unauthorized。
         """
         if not _check_auth(request):
             code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
@@ -410,15 +412,15 @@ def create_app(
     app.router.add_post("/shutdown", shutdown_handler)
     app.router.add_get("/shutdown", shutdown_handler)  # 也接受浏览器直接访问
 
-    # Restart endpoint — triggers graceful restart with config reload
+    # 重启端点 —— 触发带配置重新加载的优雅重启
     async def restart_handler(request: web.Request) -> web.Response:
-        """Graceful restart endpoint. Sets agent state to RESTARTING.
+        """优雅重启端点。将 agent 状态置为 RESTARTING。
 
         Args:
-            request: aiohttp Request (requires auth if token is set).
+            request: aiohttp Request（设置 token 时需要认证）。
 
         Returns:
-            web.Response: {"status": "restarting"} or 401 unauthorized.
+            web.Response: {"status": "restarting"} 或 401 unauthorized。
         """
         if not _check_auth(request):
             code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
@@ -431,15 +433,15 @@ def create_app(
         return web.json_response({"status": "restarting"})
     app.router.add_post("/restart", restart_handler)
 
-    # Tools endpoint — list loaded plugins
+    # Tools 端点 —— 列出已加载的插件
     async def tools_handler(request: web.Request) -> web.Response:
-        """List loaded tool plugins.
+        """列出已加载的工具插件。
 
         Args:
-            request: aiohttp Request (requires auth if token is set).
+            request: aiohttp Request（设置 token 时需要认证）。
 
         Returns:
-            web.Response: {"plugins": [...]} or 401 unauthorized.
+            web.Response: {"plugins": [...]} 或 401 unauthorized。
         """
         if not _check_auth(request):
             code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
@@ -451,16 +453,16 @@ def create_app(
         })
     app.router.add_get("/tools", tools_handler)
 
-    # Tool reload endpoint — hot-reload a single plugin
+    # Tool 重载端点 —— 热重载单个插件
     async def tool_reload_handler(request: web.Request) -> web.Response:
-        """Hot-reload a single tool plugin.
+        """热重载单个工具插件。
 
         Args:
-            request: aiohttp Request (requires auth if token is set),
-                JSON body with plugin "name".
+            request: aiohttp Request（设置 token 时需要认证），
+                JSON 请求体需含插件 "name"。
 
         Returns:
-            web.Response: {"ok": True, "name": ...} or error.
+            web.Response: {"ok": True, "name": ...} 或错误。
         """
         if not _check_auth(request):
             code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"

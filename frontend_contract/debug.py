@@ -227,7 +227,7 @@ class DebugData(ContractModel):
     tts_ok: bool = Field(default=False, description="TTS 后端可用")
     stt_ok: bool = Field(default=False, description="STT 后端可用")
     ws_clients: int = Field(default=0, description="WebSocket 客户端数")
-    # IdleMonitor
+    # IdleMonitor（主动搭话）
     proactive_enabled: bool = Field(default=False, description="主动搭话开关")
     proactive_interval: Optional[float] = Field(default=None, description="主动搭话间隔秒，可缺省")
     last_interaction_ago: Optional[float] = Field(default=None, description="距上次交互秒，可缺省")
@@ -238,7 +238,7 @@ class DebugData(ContractModel):
     character_name: str = Field(default="", description="角色名")
     base_personality_summary: str = Field(default="", description="L1 基础人格摘要")
     archive_msg_count: int = Field(default=0, description="归档消息总数")
-    # Long-term memory
+    # Long-term memory（长期记忆）
     lt_count: int = Field(default=0, description="长期记忆总数")
     lt_recent: list[LtmRecentItem] = Field(default_factory=list, description="最近长期记忆")
     milvus_ok: bool = Field(default=False, description="Milvus 可用")
@@ -295,7 +295,7 @@ class DebugData(ContractModel):
     timing_stats: TimingStats = Field(default_factory=TimingStats, description="延迟聚合统计")
     # 进程内存（面板 4）
     memory: ProcessMemory = Field(default_factory=ProcessMemory, description="进程内存占用")
-    # Mood（L4 Emotion）
+    # Mood（L4 情绪）
     mood: str = Field(default="", description="当前心情标签")
     # Scheduler（面板 5）
     scheduler_pending: int = Field(default=0, description="待执行任务数")

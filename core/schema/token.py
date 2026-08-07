@@ -24,7 +24,8 @@ class TokenUsage(BaseModel):
     timestamp: IsoTimestamp = Field(default_factory=now_iso)
 
     @classmethod
-    def from_api(cls, usage: dict[str, Any], *, model, session_id, round_num) -> "TokenUsage":
+    def from_api(cls, usage: dict[str, Any], *, model: str, session_id: SessionId,
+                 round_num: int) -> "TokenUsage":
         """从 LLM 层归一化 usage dict 构造（含字段校验）。
 
         usage 键名契约（由 LLM 层 _extract_usage 产出）：

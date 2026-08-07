@@ -1,7 +1,7 @@
 # core/storage/ — Repository 存储中间层
 #
 # 子模块:
-#   base                 — Repository ABC（connect / health_check / close）
+#   base                 — Repository 抽象基类（connect / health_check / close）
 #   session_repo         — SessionRepository（MongoDB sessions 集合）
 #   message_repo         — MessageRepository（MongoDB message_archive 集合）
 #   token_repo           — TokenRepository（MongoDB token_usage 集合）

@@ -1,8 +1,7 @@
-"""Session context — in-memory with optional MongoDB persistence.
+"""会话上下文——内存队列，可选 MongoDB 持久化。
 
-Auto-detects MongoDB availability. When available, sessions survive
-process restarts via save_session() / load_session().
-Otherwise falls back to in-memory deque (existing behavior).
+自动探测 MongoDB 可用性。可用时会话经 save_session() / load_session()
+在进程重启后保留；否则回退为内存 deque（既有行为）。
 """
 
 from __future__ import annotations
@@ -45,7 +44,8 @@ logger = logging.getLogger(__name__)
 _archive_semaphore = asyncio.Semaphore(8)
 
 
-async def _archive_with_limit(msg_repo, session_id, msg) -> None:
+async def _archive_with_limit(msg_repo: MessageRepository, session_id: SessionId,
+                              msg: Message) -> None:
     """受并发限制的归档写入。
 
     Args:
@@ -73,7 +73,7 @@ def _archive_done(task: asyncio.Task) -> None:
 
 
 class SessionMemory:
-    """Bounded conversation window with optional MongoDB persistence."""
+    """有界会话窗口，可选 MongoDB 持久化。"""
 
     def __init__(self, max_messages: int = 20,
                  session_id: SessionId = SessionId("default"),
@@ -177,7 +177,7 @@ class SessionMemory:
                 }
                 result.append(tool_entry)
             else:
-                # UserMessage / AssistantMessage
+                # UserMessage / AssistantMessage 普通消息分支
                 text_parts = [
                     {"content": p.content}
                     for p in msg.content

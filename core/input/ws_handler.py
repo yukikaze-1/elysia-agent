@@ -1,4 +1,4 @@
-"""WebSocket handler — WS lifecycle, message routing, interrupt, transcription."""
+"""WebSocket handler —— WS 生命周期、消息路由、打断、转写。"""
 
 import asyncio
 import hashlib
@@ -41,6 +41,7 @@ from core.input.tts_profile import _active_tts_profile
 
 if TYPE_CHECKING:
     from core.agent import Agent
+    from core.memory.session import SessionMemory
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ def _build_session_items(session_msgs: list[dict]) -> list[SessionMessageItem]:
 
 
 async def _send_session_replay(ws: "web.WebSocketResponse", agent: "Agent",
-                               session) -> None:
+                               session: "SessionMemory") -> None:
     """发送指定会话的 SessionMessage 回放（建连与 activate_session 复用）。
 
     逐条契约化（M2）——单条失败仅丢弃该条，不整段丢失回放；token_stats 取该会话统计。
@@ -97,22 +98,22 @@ async def handle_ws(
     agent: "Agent",
     wake_word_enabled: bool = False,
 ) -> web.WebSocketResponse:
-    """Handle an incoming WebSocket connection for a browser client.
+    """处理来自浏览器客户端的 WebSocket 连接。
 
-    Manages the full WS lifecycle: connection, session history replay,
-    capability announcement, audio buffer setup, message routing, and cleanup.
+    管理完整 WS 生命周期：连接、会话历史回放、能力宣告、音频缓冲区搭建、
+    消息路由与清理。
 
     STT 从 create_app 参数注入改为读 ``agent.stt`` 槽位：建连时
     ``agent.stt is not None`` 才建 audio_buf，转写/情绪经 ``agent.stt_transcribe``
     / ``agent.stt_emotion_state`` 读取（支持热切换）。
 
     Args:
-        request: aiohttp Request initiating the WebSocket upgrade.
-        agent: Agent instance providing output channels and message processing.
-        wake_word_enabled: Enable wake word detection for this connection.
+        request: 发起 WebSocket 升级的 aiohttp Request。
+        agent: 提供输出通道与消息处理的 Agent 实例。
+        wake_word_enabled: 是否对本连接启用唤醒词检测。
 
     Returns:
-        web.WebSocketResponse: The WebSocket connection object after close.
+        web.WebSocketResponse: 关闭后的 WebSocket 连接对象。
     """
     # heartbeat=30s 定期发 ping 检测半开连接；receive_timeout=60s 关闭僵尸连接，
     # 防止休眠/断 Wi-Fi 客户端产生永久僵尸 channel（_send_json 每次广播打 warning、
@@ -270,7 +271,7 @@ async def handle_ws(
             on_wake_notify=lambda: send_wake(ws),
         )
 
-        # Monitor FSM state to deafen mic when assistant is speaking (echo prevention)
+        # 监视 FSM 状态：assistant 说话时 deafen 麦克风（回声抑制）
         # 只在上升沿 deafen 一次 2s 不够——长回复（5-30s 多句 TTS）后半段回声会越过
         # deafen 窗口触发 VAD interrupt，自我打断剩余回复。改为 SPEAKING 期间持续刷新。
         async def _monitor_state():
@@ -387,7 +388,8 @@ def _is_v2(agent: "Agent", ws: "web.WebSocketResponse | None") -> bool:
     return ch is not None and ch.protocol_version >= 2
 
 
-async def _send_voice_error(ws, error) -> None:
+async def _send_voice_error(ws: "web.WebSocketResponse",
+                            error: VoiceSessionError) -> None:
     """VoiceSessionError → error 信封。"""
     from frontend_contract import ErrorMessage
     try:
@@ -400,7 +402,8 @@ async def _send_voice_error(ws, error) -> None:
         logger.debug("发送 voice error 失败", exc_info=True)
 
 
-async def _voice_stt_gate(agent: "Agent", voice_mgr) -> None:
+async def _voice_stt_gate(agent: "Agent",
+                          voice_mgr: "VoiceSessionManager | None") -> None:
     """会话 JSON 消息入口检查 stt_enabled（spec §5.3 NEW-D/NEW-W）。
 
     stt 关闭 → 结束活动 REALTIME/DICTATION 会话——暂停中会话无帧流入、idle 计时
@@ -667,7 +670,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
 
 
 async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None",
-                               voice_mgr, data: dict,
+                               voice_mgr: "VoiceSessionManager | None", data: dict,
                                sent_message_ids: set | None = None) -> None:
     """voice.commit 处理顺序（spec §3.3 NEW-A/NEW-M/NEW-T）：
     ① 解析目标会话 ack_conv（幂等重放分支也用，对齐 _route_v2_text，review #15）
@@ -737,14 +740,14 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
     logger.debug("voice.commit 提交成功: %s (len=%d)", recording_id, len(pending_text))
 
 
-async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None, voice_mgr=None, sent_message_ids: set | None = None) -> None:
-    """Route a JSON message from the WebSocket client to the appropriate handler.
+async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None, voice_mgr: "VoiceSessionManager | None" = None, sent_message_ids: set | None = None) -> None:
+    """将来自 WebSocket 客户端的 JSON 消息路由到对应 handler。
 
     Args:
-        data: Parsed JSON message dict with a "type" key.
-        agent: Agent instance for processing messages and tool approvals.
-        audio_buf: AudioBuffer instance for audio/wake-word handling, or None.
-        ws: WebSocket connection for sending responses, or None.
+        data: 已解析的 JSON 消息 dict，含 "type" 键。
+        agent: 处理消息与工具审批的 Agent 实例。
+        audio_buf: 用于音频/唤醒词处理的 AudioBuffer 实例，可为 None。
+        ws: 用于发送响应的 WebSocket 连接，可为 None。
         voice_mgr: 批次 6 每连接 VoiceSessionManager（三模式语音路由），可为 None。
         sent_message_ids: 批次 8b（§3.7）D1 接线——v2 text 消息 accepted 时登记
             messageId 的可选集合（透传给 _route_v2_text，Task 9 消费）。
@@ -1111,12 +1114,12 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
 
 
 async def do_interrupt(agent: "Agent", skip_vad: bool = False) -> None:
-    """Post INTERRUPT event.
+    """发布 INTERRUPT 事件。
 
     Args:
-        agent: Agent instance.
-        skip_vad: If True, suppress during THINKING/EXECUTING (VAD false-positive).
-                  Button-press interrupts should pass skip_vad=False (default).
+        agent: Agent 实例。
+        skip_vad: 为 True 时，THINKING/EXECUTING 阶段抑制打断（VAD 误报防护）。
+                  按钮打断应传 skip_vad=False（默认值）。
     """
     if skip_vad and agent.status.should_suppress_vad_interrupt:
         return
@@ -1127,14 +1130,14 @@ async def do_interrupt(agent: "Agent", skip_vad: bool = False) -> None:
 async def do_transcription(agent: "Agent", ws: "web.WebSocketResponse", text: str,
                            audio_buf: "AudioBuffer | None" = None,
                            stt_emotion_state: dict | None = None) -> None:
-    """Handle an STT transcription result: echo to client, deafen mic, post event.
+    """处理 STT 转写结果：回显给客户端、deafen 麦克风、发布事件。
 
     Args:
-        agent: Agent instance for output and event posting.
-        ws: WebSocket connection to echo transcription back to client.
-        text: Transcribed text from STT.
-        audio_buf: AudioBuffer to deafen during TTS playback, or None.
-        stt_emotion_state: Optional dict with 'emotion' and 'events' from STT.
+        agent: 用于输出与事件发布的 Agent 实例。
+        ws: 用于将转写回显给客户端的 WebSocket 连接。
+        text: STT 转写的文本。
+        audio_buf: TTS 播放期间 deafen 的 AudioBuffer，可为 None。
+        stt_emotion_state: 可选的 dict，含 STT 的 'emotion' 与 'events'。
     """
     emotion = ""
     events: list[str] = []
@@ -1142,7 +1145,7 @@ async def do_transcription(agent: "Agent", ws: "web.WebSocketResponse", text: st
         emotion = stt_emotion_state.get("emotion", "")
         events = stt_emotion_state.get("events", [])
 
-    # Send transcription back to client so it can display the user's speech
+    # 将转写结果发回客户端，供其显示用户语音
     try:
         # 契约：emotion/events 空时缺省省略（X?），非空才带
         msg = TranscriptionMessage(
@@ -1171,10 +1174,10 @@ async def do_transcription(agent: "Agent", ws: "web.WebSocketResponse", text: st
 
 
 async def send_wake(ws: "web.WebSocketResponse") -> None:
-    """Notify frontend that a wake word was detected.
+    """通知前端已检测到唤醒词。
 
     Args:
-        ws: WebSocket connection to send the notification to.
+        ws: 用于发送通知的 WebSocket 连接。
     """
     try:
         await ws.send_json(WakeMessage().wire_dict())

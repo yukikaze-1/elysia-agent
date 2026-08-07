@@ -1,7 +1,7 @@
-"""Long-term memory — in-memory fallback with optional Milvus + embedding.
+"""长期记忆——内存兜底，可选 Milvus + embedding。
 
-Startup is fast: only Milvus connection is attempted. Embedding is loaded
-lazily on first insert/search, with a short timeout to avoid blocking.
+启动快速：仅尝试连接 Milvus。Embedding 在首次 insert/search 时懒加载，
+带短超时避免阻塞。
 """
 
 import asyncio
@@ -37,16 +37,15 @@ class MemoryEntry:
 
 
 class LongTermMemory:
-    """Long-term memory with optional Milvus vector search and embedding.
+    """长期记忆，可选 Milvus 向量检索 + embedding。
 
-    Graceful degradation:
-    - Milvus available → stores vectors in Milvus, semantic ANN search
-    - No Milvus → in-memory list + character-overlap search
-    - Embedding available → auto-embed on insert for better search
-    - No embedding → text-only storage, substring search
+    优雅降级：
+    - 有 Milvus → 向量存 Milvus，语义 ANN 检索
+    - 无 Milvus → 内存列表 + 字符重叠检索
+    - 有 embedding → insert 时自动嵌入以提升检索质量
+    - 无 embedding → 纯文本存储，子串检索
 
-    Embedding is loaded lazily on first use (not at connect time),
-    with a 10s timeout to avoid blocking startup.
+    Embedding 首次使用时懒加载（不在连接时），带 10s 超时避免阻塞启动。
     """
 
     def __init__(self, max_entries: int = 10000, max_age_days: int = 90,
@@ -159,9 +158,9 @@ class LongTermMemory:
 
         async with self._write_lock:
             from core.utils import new_message_id
-            # Work on a copy to avoid mutating caller's dict
+            # 在副本上操作，避免修改调用方传入的 dict
             meta: dict[str, Any] = dict(metadata)
-            # Accept 'type' as alias for 'memory_type'
+            # 接受 'type' 作为 'memory_type' 的别名
             memory_type: str = cast(str, meta.pop("memory_type", meta.pop("type", "Note")))
             entry = MemoryEntry(
                 id=new_message_id(),
@@ -465,9 +464,9 @@ class LongTermMemory:
             return []
 
         candidates: list[MemoryEntry] = []
-        distances: dict[int, float | None] = {}  # id(entry) → L2 distance or None (fallback flag)
+        distances: dict[int, float | None] = {}  # id(entry) → L2 distance 或 None（fallback 标记）
 
-        # Try Milvus — fetch top_k * 4 for rerank candidate pool
+        # 尝试 Milvus——取 top_k * 4 作为 rerank 候选池
         if self._repo is not None and await self._repo.health_check():
             vec = query_embedding
             if vec is None and query_text and backend is not None:
@@ -483,7 +482,7 @@ class LongTermMemory:
                         top_k=min(top_k * 4, 20),
                         output_fields=["id", "text", "memory_type", "poignancy", "timestamp"],
                     )
-                    # Build PK→distance + text→distance (fallback) from Milvus results
+                    # 从 Milvus 结果构建 PK→distance + text→distance（fallback）映射
                     pk_to_distance: dict[int, float] = {}
                     text_fb: dict[str, float] = {}
                     for r in raw:
@@ -495,7 +494,7 @@ class LongTermMemory:
                         else:
                             text_fb[text] = d
 
-                    # Match Milvus results against in-memory entries: PK first, text fallback
+                    # 将 Milvus 结果与内存条目匹配：优先 PK，文本兜底
                     for e in self._entries:
                         if e._milvus_pk is not None and e._milvus_pk in pk_to_distance:
                             candidates.append(e)
@@ -507,16 +506,16 @@ class LongTermMemory:
                 except Exception as e:
                     logger.warning("Milvus search failed: %s", e)
 
-        # Exclude absorbed entries from search results
+        # 从搜索结果中排除已吸收条目
         candidates = [e for e in candidates if e.id not in self._absorbed_ids]
 
-        # Fall back to in-memory if no candidates from Milvus
+        # Milvus 无候选时回退到内存搜索
         fb_scores: dict[int, float] = {}
         if not candidates:
             fallback_results = self._search_fallback(
                 query_text, min(top_k * 2, len(self._entries))
             )
-            # Exclude absorbed entries from fallback results
+            # 从兜底结果中排除已吸收条目
             fallback_results = [(s, e) for s, e in fallback_results if e.id not in self._absorbed_ids]
             fb_scores = {id(e): s for s, e in fallback_results}
             for fb_score, entry in fallback_results:
@@ -526,26 +525,26 @@ class LongTermMemory:
         if not candidates:
             return []
 
-        # Rerank: 0.5 × similarity + 0.3 × poignancy + 0.2 × recency
+        # 重排序：0.5 × 相似度 + 0.3 × 重要性 + 0.2 × 新鲜度
         now = _time.time()
         scored: list[tuple[float, MemoryEntry]] = []
         for entry in candidates:
-            # Similarity: 1/(1+L2_distance) for Milvus, or fallback overlap score
+            # 相似度：Milvus 用 1/(1+L2_distance)，否则用兜底重叠分数
             dist = distances.get(id(entry), 0.0)
             if dist is not None:
                 sim = 1.0 / (1.0 + dist)
             else:
                 sim = fb_scores.get(id(entry), 0.3)
 
-            poi = min(entry.poignancy, 10) / 10.0  # normalize to [0,1]
+            poi = min(entry.poignancy, 10) / 10.0  # 归一化到 [0,1]
 
             age_days = (now - entry.timestamp) / 86400 if entry.timestamp > 0 else 30
-            rec = math.exp(-0.1 * age_days)  # exponential decay, half-life ~6.9 days
+            rec = math.exp(-0.1 * age_days)  # 指数衰减，半衰期约 6.9 天
 
             score = 0.5 * sim + 0.3 * poi + 0.2 * rec
             scored.append((score, entry))
 
-        # Filter by memory_type if requested
+        # 按 memory_type 过滤（如指定）
         # 注意：精确匹配，调用方需传 TitleCase（如 "Fact"）
         if memory_type:
             scored = [(s, e) for s, e in scored if e.memory_type == memory_type]
@@ -572,7 +571,7 @@ class LongTermMemory:
             text_lower = e.text.lower()
             raw = sum(1 for ch in query_lower if ch != " " and ch in text_lower)
             if raw > 0:
-                # Normalize overlap score relative to query length
+                # 相对查询长度归一化重叠分数
                 score = raw / max(len(query.strip()), 1)
                 scored.append((score, e))
         scored.sort(key=lambda x: x[0], reverse=True)

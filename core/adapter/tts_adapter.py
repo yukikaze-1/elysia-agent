@@ -451,7 +451,7 @@ class TTSStreamManager:
             if sid in self._audio_forwarding:
                 await self._output.audio_cancelled(sid)
                 self._audio_forwarding.discard(sid)
-            raise  # propagate to task
+            raise  # 上抛给任务
         except Exception:
             logger.warning(
                 "TTS 句 %d (总#%d) 下载/播放失败", seq, sid, exc_info=True,

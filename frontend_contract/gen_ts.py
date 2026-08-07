@@ -11,11 +11,12 @@ from typing import Any, Annotated, Literal, Union, get_args, get_origin
 _UNION_ORIGINS = (Union, types.UnionType)
 
 from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 
 from frontend_contract.base import ContractModel, field_is_ts_null, wire_key
 
 
-def _literal(v) -> str:
+def _literal(v: Any) -> str:
     """Literal 值 → TS 字面量。统一单引号（对齐 protocol.ts 风格，如 type: 'delta'）；bool 小写。
 
     字符串经 json.dumps 转义（\\\\、双引号、控制字符 → 合法 TS 转义序列）再补转义单引号：
@@ -30,7 +31,7 @@ def _literal(v) -> str:
     return str(v)
 
 
-def _ts_type(annotation) -> str:
+def _ts_type(annotation: Any) -> str:
     """类型 → TS 类型。Optional 语义（?/| null）由 _field_ts 集中处理，此处去 Optional 返回内层。"""
     origin = get_origin(annotation)
     if origin is Annotated:                       # 剥 Annotated
@@ -64,13 +65,13 @@ def _ts_type(annotation) -> str:
     return annotation.__name__
 
 
-def _is_optional(annotation) -> bool:
+def _is_optional(annotation: Any) -> bool:
     """必填判定：Python 类型是否 Optional（非看 schema required）。"""
     origin = get_origin(annotation)
     return origin in _UNION_ORIGINS and type(None) in get_args(annotation)
 
 
-def _field_ts(name, field) -> str:
+def _field_ts(name: str, field: FieldInfo) -> str:
     """字段 → TS 行。?/| null 在此集中决定（ts_null → | null；Optional 非 ts_null → ?）。
 
     键名用 wire_key（serialization_alias 优先）——与 wire_dict by_alias 一致，保证
@@ -87,7 +88,7 @@ def _field_ts(name, field) -> str:
     return f"  /** {doc} */\n{line}" if doc else line
 
 
-def _referenced_models(annotation, known: set[str]) -> list[type[BaseModel]]:
+def _referenced_models(annotation: Any, known: set[str]) -> list[type[BaseModel]]:
     """从字段注解提取引用的 ContractModel 子类（剥 Annotated/list/dict/Union 包装）。
 
     用于 _topo_sort 的 DFS：只返回已知集合（传入 generate_ts 的模型集）内的引用，
@@ -107,7 +108,7 @@ def _referenced_models(annotation, known: set[str]) -> list[type[BaseModel]]:
     return []
 
 
-def _referenced_enums(annotation) -> list[type[Enum]]:
+def _referenced_enums(annotation: Any) -> list[type[Enum]]:
     """从字段注解提取 Enum 子类（剥 Annotated/list/dict/Union 包装）。
 
     用于 generate_ts 的 str Enum 收集：字段注解引用的 Enum 经发射为 TS 判别联合

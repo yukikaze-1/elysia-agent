@@ -1,4 +1,4 @@
-# core/storage/base.py
+# core/storage/base.py — Repository 抽象基类
 """Repository 抽象基类 — 所有存储后端的最低接口。"""
 
 from abc import ABC, abstractmethod

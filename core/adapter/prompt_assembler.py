@@ -1,7 +1,7 @@
-"""PromptAssembler — builds the final messages[] for LLM calls.
+"""PromptAssembler —— 构建发送给 LLM 的最终 messages[]。
 
-Glue layer: creates PromptSection instances, wires them into
-SystemPromptManager, delegates message assembly to MessageBuilder.
+胶水层：创建 PromptSection 实例、接入 SystemPromptManager，
+并将消息组装委托给 MessageBuilder。
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ _SECTION = str(ProjectPath.SYSTEM_PROMPT_TEMPLATES.resolve())
 
 
 class PromptAssembler:
-    """Glue layer: creates sections, delegates to SystemPromptManager."""
+    """胶水层：创建 section，委托给 SystemPromptManager。"""
 
     def __init__(
         self,
