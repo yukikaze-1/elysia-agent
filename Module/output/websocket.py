@@ -15,6 +15,7 @@ import logging
 from Module.logger import get_caller_logger
 from Module.output.protocol import ChannelCapability, OutputChannel
 from frontend_contract import (
+    ActionMessage,
     AudioCancelledMessage,
     AudioEndMessage,
     AudioMessage,
@@ -31,6 +32,10 @@ from frontend_contract import (
     GenerationStartedMessage,
     MessageMessage,
     StateMessage,
+    TokenRound,
+    TokenStats,
+    TokenTurnStats,
+    TokenUsageMessage,
     TypingMessage,
     UserAckMessage,
 )
@@ -121,12 +126,8 @@ class WebSocketChannel(OutputChannel):
             action: 动作标识（如 wave, nod, surprised）。
             params: 可选的动作参数。
         """
-        # 注：暂不切 ActionMessage——其 params 非 Optional（default_factory={}），
-        # 转换后空参数会多发 "params": {}（当前省略），破坏行为等价。
-        payload: dict[str, object] = {"type": "action", "action": action}
-        if params:
-            payload["params"] = params
-        await self._send_json(payload)
+        # 契约：params None → 缺省省略（X?）；ActionMessage.params 已 Optional（批次 8c F3）
+        await self._send_json(ActionMessage(action=action, params=params).wire_dict())
 
     async def on_command(self, cmd: str, *, params: dict | None = None) -> None:
         """发送前端指令。
@@ -193,11 +194,21 @@ class WebSocketChannel(OutputChannel):
         Args:
             data: token 消耗统计数据字典。
         """
-        # 注：暂不切 TokenUsageMessage——core TokenUsage dump 中 cached_tokens/
-        # reasoning_tokens 为 None 时仍带键（null），转换经 wire_dict(exclude_none)
-        # 会缺省省略（wire 行为变化）；session_id 已入 TokenRound（I1' 已收口），
-        # 仅剩 null 省略问题未决。data 本身已是模型 dump，非手写字典。
-        await self._send_json({"type": "token_usage", **data})
+        # 契约：模型化 TokenUsageMessage 发射（批次 8c F3）——TokenRound 经 wire_dict
+        # exclude_none 省略 null 的 cached_tokens/reasoning_tokens；session 本轮仍用
+        # TokenStats 既有 by_model 字段名（Task 15 再改 byModel）。
+        turn = data.get("turn") or {}
+        session = data.get("session") or {}
+        await self._send_json(TokenUsageMessage(
+            turn=TokenTurnStats(
+                rounds=[TokenRound.model_validate(r) for r in (turn.get("rounds") or [])],
+                turn_total=turn.get("turn_total"),
+            ) if turn else None,
+            session=TokenStats(
+                total=session.get("total", 0),
+                by_model=session.get("by_model", {}),
+            ) if session else None,
+        ).wire_dict())
 
     # ── 批次 2 v2 结构化事件（wire generation.* / user_message.ack） ──
 

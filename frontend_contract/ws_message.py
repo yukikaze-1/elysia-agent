@@ -421,7 +421,7 @@ class ActionMessage(ContractModel):
 
     type: Literal["action"] = "action"
     action: Literal["tool_executing", "tool_done"] | str = Field(description="动作标识")
-    params: dict[str, Any] = Field(default_factory=dict, description="动作参数")
+    params: Optional[dict[str, Any]] = Field(default=None, description="动作参数，可缺省")
 
 
 class CommandMessage(ContractModel):
@@ -469,12 +469,6 @@ class SetTtsVoiceResultMessage(ContractModel):
     ok: bool = Field(description="设置是否成功")
     voice: Optional[str] = Field(default=None, description="生效的声音 ID（成功回显），可缺省")
     error: Optional[str] = Field(default=None, description="失败原因（校验失败/后端不可用），可缺省")
-
-
-class HeartbeatAckMessage(ContractModel):
-    """心跳应答。"""
-
-    type: Literal["heartbeat_ack"] = "heartbeat_ack"
 
 
 class ErrorMessage(ContractModel):
@@ -850,7 +844,6 @@ ServerMessage = Annotated[Union[
     SwitchModelResultMessage,
     ServiceModeResultMessage,
     SetTtsVoiceResultMessage,
-    HeartbeatAckMessage,
     ErrorMessage,
     UserAckMessage,
     GenerationStartedMessage,

@@ -95,9 +95,9 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
 
   function handleAction(msg: ActionMessage) {
     if (msg.action === 'tool_executing')
-      chat.addToolCard(msg.params.tool as string, msg.params.call_id as string, msg.params.args as Record<string, unknown> | undefined)
+      chat.addToolCard(msg.params?.tool as string, msg.params?.call_id as string, msg.params?.args as Record<string, unknown> | undefined)
     else if (msg.action === 'tool_done')
-      chat.updateToolCard(msg.params.call_id as string, msg.params as any)
+      chat.updateToolCard(msg.params?.call_id as string, msg.params as any)
   }
 
   function handleCommand(msg: CommandMessage) {

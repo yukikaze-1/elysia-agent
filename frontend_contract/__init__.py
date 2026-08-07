@@ -101,7 +101,6 @@ from frontend_contract.ws_message import (  # noqa: F401
     AudioPart,
     VideoPart,
     StickerPart,
-    HeartbeatAckMessage,
     ImagePart,
     InterruptMessage,
     MessageMessage,
@@ -222,7 +221,6 @@ __all__ = [
     "WakeMessage",
     "SwitchModelResultMessage",
     "ServiceModeResultMessage",
-    "HeartbeatAckMessage",
     "ErrorMessage",
     # Client→Server
     "TextMessage",

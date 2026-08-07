@@ -833,3 +833,59 @@ class TestWebSocketV2Methods:
         assert sent["type"] == "generation.failed"
         assert sent["code"] == "GENERATION_CANCELLED"
         assert sent["retryable"] is False
+
+
+# ============================================================
+# 批次 8c F3 模型化发射（ActionMessage/TokenUsageMessage，Task 3）
+# ============================================================
+
+class _FakeWS:
+    """假 WebSocket：仅收集 send_json 载荷（_send_json 只调 self._ws.send_json）。"""
+
+    def __init__(self):
+        self.sent = []
+
+    async def send_json(self, d):
+        self.sent.append(d)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_on_action_emits_modeled_message():
+    """on_action 带 params → 模型化 ActionMessage wire（行为回归守卫）。"""
+    from Module.output import WebSocketChannel
+    ws = _FakeWS()
+    ch = WebSocketChannel(ws, protocol_version=1)
+    await ch.on_action("tool_executing", params={"tool": "t", "call_id": "c"})
+    assert ws.sent[0]["type"] == "action"
+    assert ws.sent[0]["params"] == {"tool": "t", "call_id": "c"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_on_action_no_params_omits_key():
+    """on_action 无 params → wire 省略 params 键（行为回归守卫）。"""
+    from Module.output import WebSocketChannel
+    ws = _FakeWS()
+    ch = WebSocketChannel(ws, protocol_version=1)
+    await ch.on_action("wave")
+    assert ws.sent[0]["type"] == "action"
+    assert "params" not in ws.sent[0]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_on_token_usage_emits_modeled_message():
+    """on_token_usage → 模型化 TokenUsageMessage：null 键省略、session 保留 by_model（Task 15 再改）。"""
+    from Module.output import WebSocketChannel
+    ws = _FakeWS()
+    ch = WebSocketChannel(ws, protocol_version=1)
+    data = {"turn": {"rounds": [{"model": "m", "input_tokens": 1, "output_tokens": 2,
+                                  "total_tokens": 3, "round_num": 0,
+                                  "cached_tokens": None, "reasoning_tokens": None}],
+                     "turn_total": 3},
+            "session": {"total": 3, "by_model": {"m": 3}}}
+    await ch.on_token_usage(data)
+    assert ws.sent[0]["type"] == "token_usage"
+    assert ws.sent[0]["session"]["by_model"] == {"m": 3}
+    assert "cached_tokens" not in ws.sent[0]["turn"]["rounds"][0]

@@ -12,12 +12,12 @@ from frontend_contract.rest import ConversationUsage
 
 @pytest.mark.unit
 def test_server_message_members():
-    """ServerMessage 判别联合：39 具名成员（28 既有 + 11 批次 6 语音/播放；UnknownMessage 由发射器追加）。"""
+    """ServerMessage 判别联合：38 具名成员（27 既有 + 11 批次 6 语音/播放；UnknownMessage 由发射器追加）。"""
     from typing import get_args
     # ServerMessage = Annotated[Union[成员], Field(discriminator="type")]
     # get_args(Annotated) 返回 (Union[...], FieldInfo) —— 必须先剥 Annotated 再剥 Union
     members = get_args(get_args(w.ServerMessage)[0])
-    assert len(members) == 39  # 40 = 39 具名 + UnknownMessage（发射器追加）
+    assert len(members) == 38  # 39 = 38 具名 + UnknownMessage（发射器追加）
     assert all(m.__name__ != "UnknownMessage" for m in members)
     assert all(getattr(m, "model_fields", None) is not None for m in members)  # 均为 BaseModel
 
@@ -267,3 +267,24 @@ def test_error_message_retryable_omitted_when_none():
     d = w.ErrorMessage(message="x").wire_dict()
     assert "retryable" not in d
     assert "details" not in d
+
+
+# ── 批次 8c F3 死契约面移除 + ActionMessage.params 可选（Task 3） ──────────────────
+
+
+@pytest.mark.unit
+def test_heartbeat_ack_removed_from_union():
+    """HeartbeatAckMessage 死契约面：已从 ServerMessage 联合移除（零发射点/零前端消费）。"""
+    from frontend_contract.tests.test_batch6_contract import _union_members
+    members = _union_members()
+    assert "HeartbeatAckMessage" not in members
+    assert len(members) == 38
+
+
+@pytest.mark.unit
+def test_action_message_params_optional_omitted_when_none():
+    """ActionMessage.params 可选：None 缺省省略，显式传值保留。"""
+    d = w.ActionMessage(action="tool_executing").wire_dict()
+    assert "params" not in d
+    d2 = w.ActionMessage(action="tool_executing", params={"tool": "t"}).wire_dict()
+    assert d2["params"] == {"tool": "t"}

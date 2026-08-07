@@ -507,8 +507,8 @@ export interface ActionMessage {
   type: 'action'
   /** 动作标识 */
   action: 'tool_executing' | 'tool_done' | string
-  /** 动作参数 */
-  params: Record<string, unknown>
+  /** 动作参数，可缺省 */
+  params?: Record<string, unknown>
 }
 
 /** 前端指令（工具审批弹窗 / 阻塞 / 内心独白）。 */
@@ -563,11 +563,6 @@ export interface SetTtsVoiceResultMessage {
   voice?: string
   /** 失败原因（校验失败/后端不可用），可缺省 */
   error?: string
-}
-
-/** 心跳应答。 */
-export interface HeartbeatAckMessage {
-  type: 'heartbeat_ack'
 }
 
 /** 错误消息。
@@ -2175,7 +2170,6 @@ export type ServerMessage =
   | SwitchModelResultMessage
   | ServiceModeResultMessage
   | SetTtsVoiceResultMessage
-  | HeartbeatAckMessage
   | ErrorMessage
   | UserAckMessage
   | GenerationStartedMessage
