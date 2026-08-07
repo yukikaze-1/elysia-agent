@@ -76,7 +76,7 @@ async def _character_rollback(agent: "Agent", content_type: str, target_version:
     entry = await engine._version_repo.get_version(sid, target_version,  # noqa: SLF001
                                                     content_type=content_type)
     if entry is None:
-        return None, f"版本 {target_version} 不存在", "NOT_FOUND", 404
+        return None, f"版本 {target_version} 不存在", "RESOURCE_NOT_FOUND", 404
 
     # 恢复文本
     if content_type == "l2":
@@ -124,7 +124,8 @@ async def l2_versions_handler(request: web.Request) -> web.Response:
         agent, "l2", limit, before_version)
     if error:
         from core.input.server import _protocol_error_response  # 懒导入绕环
-        return _protocol_error_response(code, error, status)
+        return _protocol_error_response(code, error, status,
+                            retryable=(code == "STORAGE_UNAVAILABLE"))
     return web.json_response(result.wire_dict())
 
 
@@ -150,7 +151,8 @@ async def l2_rollback_handler(request: web.Request) -> web.Response:
         agent, "l2", target_version)
     if error:
         from core.input.server import _protocol_error_response  # 懒导入绕环
-        return _protocol_error_response(code, error, status)
+        return _protocol_error_response(code, error, status,
+                            retryable=(code == "STORAGE_UNAVAILABLE"))
     if result is None:
         from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("INTERNAL", "内部错误", 500)
@@ -184,7 +186,8 @@ async def character_versions_handler(request: web.Request) -> web.Response:
         agent, content_type, limit, before_version)
     if error:
         from core.input.server import _protocol_error_response  # 懒导入绕环
-        return _protocol_error_response(code, error, status)
+        return _protocol_error_response(code, error, status,
+                            retryable=(code == "STORAGE_UNAVAILABLE"))
     return web.json_response(result.wire_dict())
 
 
@@ -214,7 +217,8 @@ async def character_rollback_handler(request: web.Request) -> web.Response:
         agent, content_type, target_version)
     if error:
         from core.input.server import _protocol_error_response  # 懒导入绕环
-        return _protocol_error_response(code, error, status)
+        return _protocol_error_response(code, error, status,
+                            retryable=(code == "STORAGE_UNAVAILABLE"))
     if result is None:
         from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("INTERNAL", "内部错误", 500)

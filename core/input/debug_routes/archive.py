@@ -71,9 +71,10 @@ async def archive_list_handler(request: web.Request) -> web.Response:
         data = contract.ArchiveListResponse(
             messages=contract_msgs, total=total, limit=limit, skip=skip)
         return web.json_response(data.wire_dict())
-    except Exception as e:
+    except Exception:
         from core.input.server import _protocol_error_response  # 懒导入绕环
-        return _protocol_error_response("INTERNAL", str(e), 500)
+        logger.warning("DEBUG API: 归档查询失败", exc_info=True)
+        return _protocol_error_response("INTERNAL", "查询失败", 500)
 
 
 async def archive_delete_handler(request: web.Request) -> web.Response:
@@ -190,10 +191,11 @@ async def sessions_list_handler(request: web.Request) -> web.Response:
             ],
         )
         return web.json_response(data.wire_dict())
-    except Exception as e:
+    except Exception:
         from core.input.server import _protocol_error_response  # 懒导入绕环
+        logger.warning("DEBUG API: 消息查询失败", exc_info=True)
         return _protocol_error_response(
-            "INTERNAL", f"查询失败: {e}", 500)
+            "INTERNAL", "查询失败", 500)
 
 
 async def session_detail_handler(request: web.Request) -> web.Response:
@@ -285,10 +287,11 @@ async def session_delete_handler(request: web.Request) -> web.Response:
         if sid == str(agent.session.session_id):
             agent.session.clear()
         return web.json_response(contract.DebugResult(ok=True, deleted=deleted).wire_dict())
-    except Exception as e:
+    except Exception:
         from core.input.server import _protocol_error_response  # 懒导入绕环
+        logger.warning("DEBUG API: 删除归档消息失败", exc_info=True)
         return _protocol_error_response(
-            "INTERNAL", f"删除失败: {e}", 500)
+            "INTERNAL", "删除失败", 500)
 
 
 async def sessions_clear_handler(request: web.Request) -> web.Response:
@@ -315,7 +318,8 @@ async def sessions_clear_handler(request: web.Request) -> web.Response:
         logger.warning("DEBUG API: sessions_clear deleted=%d", deleted)
         agent.session.clear()
         return web.json_response(contract.DebugResult(ok=True, deleted=deleted).wire_dict())
-    except Exception as e:
+    except Exception:
         from core.input.server import _protocol_error_response  # 懒导入绕环
+        logger.warning("DEBUG API: 清空会话失败", exc_info=True)
         return _protocol_error_response(
-            "INTERNAL", f"清空失败: {e}", 500)
+            "INTERNAL", "清空失败", 500)
