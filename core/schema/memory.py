@@ -14,6 +14,32 @@ class MemoryType(StrEnum):
     PLAN = "Plan"
     NOTE = "Note"
 
+    @classmethod
+    def try_coerce(cls, value: object) -> "MemoryType | None":
+        """任意来源 → MemoryType；未知/None/非 str 返回 None（不抛）。
+
+        精确匹配 → 大小写不敏感（.title()）匹配。过滤边界用它：未知值 → None → 不命中。
+        """
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                try:
+                    return cls(text)          # 精确匹配（"Fact"）
+                except ValueError:
+                    pass
+                try:
+                    return cls(text.title())  # 大小写不敏感（"fact"/"FACT"/"preference"）
+                except ValueError:
+                    pass
+        return None
+
+    @classmethod
+    def coerce(cls, value: object) -> "MemoryType":
+        """try_coerce 的 NOTE 兜底版——存储/构造边界用（未知值归一为 Note，不崩）。"""
+        return cls.try_coerce(value) or cls.NOTE
+
 
 class CompareActionType(StrEnum):
     """Consolidator 比对动作枚举（CompareAction 判别字段值）。"""

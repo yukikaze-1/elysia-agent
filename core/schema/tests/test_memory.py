@@ -102,3 +102,42 @@ class TestCompareActionType:
             raise AssertionError("should reject")
         except Exception:
             pass
+
+
+@pytest.mark.unit
+class TestMemoryTypeCoerce:
+    """MemoryType.try_coerce / coerce — 不可信字符串入口的归一化。"""
+
+    def test_try_coerce_passthrough_member(self):
+        assert MemoryType.try_coerce(MemoryType.FACT) is MemoryType.FACT
+
+    def test_try_coerce_exact_str(self):
+        assert MemoryType.try_coerce("Fact") is MemoryType.FACT
+
+    def test_try_coerce_case_insensitive(self):
+        # lowercase / 全大写 / mixed → title 归一
+        assert MemoryType.try_coerce("fact") is MemoryType.FACT
+        assert MemoryType.try_coerce("FACT") is MemoryType.FACT
+        assert MemoryType.try_coerce("preference") is MemoryType.PREFERENCE
+        assert MemoryType.try_coerce("NOTE") is MemoryType.NOTE
+        assert MemoryType.try_coerce("Note") is MemoryType.NOTE
+
+    def test_try_coerce_strips_whitespace(self):
+        assert MemoryType.try_coerce("  Fact  ") is MemoryType.FACT
+
+    def test_try_coerce_unknown_returns_none(self):
+        assert MemoryType.try_coerce("bogus") is None
+        assert MemoryType.try_coerce("fact-1") is None
+        assert MemoryType.try_coerce("") is None
+        assert MemoryType.try_coerce(None) is None
+        assert MemoryType.try_coerce(123) is None
+
+    def test_coerce_unknown_falls_back_to_note(self):
+        assert MemoryType.coerce("bogus") is MemoryType.NOTE
+        assert MemoryType.coerce(None) is MemoryType.NOTE
+        assert MemoryType.coerce(123) is MemoryType.NOTE
+        assert MemoryType.coerce("") is MemoryType.NOTE
+
+    def test_coerce_valid_unchanged(self):
+        assert MemoryType.coerce("fact") is MemoryType.FACT
+        assert MemoryType.coerce(MemoryType.PLAN) is MemoryType.PLAN
