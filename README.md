@@ -123,6 +123,10 @@ docker compose logs milvus # 查看日志
 docker compose restart     # 重启
 ```
 
+> **低配置 CPU（无 AVX 指令集）**：MongoDB 5.0+ 强制要求 CPU 支持 AVX，`mongo:7` 会以 exit 132 无限重启。项目 compose 已用 `mongo:4.4`（最后支持非 AVX 的版本），无需改动；若自建 MongoDB 请注意版本。
+>
+> **嵌入模型下载失败（代理/镜像）**：TUN 透明代理会劫持直连流量导致 `SSL UNEXPECTED_EOF`；`huggingface_hub>=1.26` 存在 client closed / SSL EOF bug。用本地 HTTP 代理手动下载模型，或 `pip install "huggingface_hub==1.5.0"` 降级。完整实录见 [docs/elysia-install-issues.md](docs/elysia-install-issues.md)。
+
 **预检报错**
 ```bash
 bash scripts/check.sh --full    # 完整预检，准确定位问题
@@ -148,7 +152,7 @@ bash scripts/setup.sh
 | 图片识别 | 否 | MiMo API | `MIMO_API_KEY` |
 | 嵌入模型 | **是** | BAAI/bge-large-zh-v1.5 (HuggingFace，默认 hf-mirror.com 镜像) | `MODEL_CACHE_DIR` |
 
-不配置的可选服务会自动降级或跳过，不影响文字对话功能。
+不配置的可选服务会自动降级或跳过，不影响文字对话功能（如无 `MINIMAX_API_KEY`，TTS 自动降级为纯文本模式并告警，不阻断启动）。
 数据库和嵌入模型是必需的——`app.py --check` 会验证。
 
 ---
@@ -307,7 +311,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | 会话恢复 (localStorage + 服务端持久化) | done |
 | **一键部署** — setup.sh + start.sh + download_model.py | done |
 | **环境预检** — app.py --check / --check --full (16 项：11 基础 + 5 连通性) | done |
-| **Docker 数据库** — docker-compose.yml (MongoDB 7 + Milvus v2.4) | done |
+| **Docker 数据库** — docker-compose.yml (MongoDB 4.4 + Milvus v2.4 + etcd + MinIO) | done |
 
 ---
 
