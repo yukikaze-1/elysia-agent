@@ -110,6 +110,43 @@ async def test_tts_voices_current_follows_service_state(aiohttp_client):
 
 @pytest.mark.service
 @pytest.mark.asyncio
+async def test_tts_voices_current_not_in_list_gets_appended(aiohttp_client):
+    """F10：current 不在列表 → 追加保证 current 恒 ∈ voices[]。"""
+    agent = _make_app_agent()
+    agent._tts = _FakeBackend([{"id": "alloy"}], provider_name="openai")  # noqa: SLF001
+    agent._tts_enabled = True  # noqa: SLF001
+    agent.session.service_state.tts_voice = "elysia"  # noqa: SLF001 — 注入 current（不在列表）
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    resp = await client.get("/api/tts/voices")
+    data = await resp.json()
+    ids = [v["id"] for v in data["voices"]]
+    assert data["current"] == "elysia"
+    assert "elysia" in ids         # 追加保证 current 在列表
+    assert len(ids) == 2           # 原 1 + 追加 1
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_tts_voices_current_in_list_not_duplicated(aiohttp_client):
+    """F10：current 已在列表 → 不重复追加。"""
+    agent = _make_app_agent()
+    agent._tts = _FakeBackend([{"id": "elysia"}], provider_name="openai")  # noqa: SLF001
+    agent._tts_enabled = True  # noqa: SLF001
+    agent.session.service_state.tts_voice = "elysia"  # noqa: SLF001 — current 已在列表
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    resp = await client.get("/api/tts/voices")
+    data = await resp.json()
+    ids = [v["id"] for v in data["voices"]]
+    assert data["current"] == "elysia"
+    assert ids.count("elysia") == 1   # 不重复追加
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
 async def test_tts_voices_default_current_no_service_state(aiohttp_client):
     """service_state.tts_voice 未设置 → current 回退后端默认（MiniMax 按角色解析默认音色）。"""
     from unittest.mock import AsyncMock, patch

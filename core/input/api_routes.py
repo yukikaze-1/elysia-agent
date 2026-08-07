@@ -474,6 +474,9 @@ def register_api_routes(app: web.Application) -> None:
         character = getattr(getattr(agent, "character", None), "name", "") or ""
         current = getattr(agent.session.service_state, "tts_voice", None) \
             or _backend_default_voice(backend, character)
+        # F10：current 缺失时追加到列表，保证 current 恒 ∈ voices[]（角色默认音色等不在 list_voices 中）
+        if current and not any(v.get("id") == current for v in voices):
+            voices.append(rest_contract.TtsVoiceEntry(id=current, name=current))
         return web.json_response(rest_contract.TtsVoicesResponse(
             voices=voices, current=current or None, source=source).wire_dict())
 
