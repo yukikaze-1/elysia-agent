@@ -372,7 +372,7 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 ### 结果
 
 - **范围**：闭合审计报告剩余 E/F 簇 19 条发现（3 important + 16 minor）——WS/REST 错误信封统一、HeartbeatAckMessage 死契约面、ID 回显、会话归属、desktop/tts/服务器 infra/脚本杂项。
-- **测试**：批次 8c 全量回归 **2797 passed**（8b 基线 2762 → 净增 35）。
+- **测试**：批次 8c 全量回归 **2798 passed**（8b 基线 2762 → 净增 36；含最终 review 补的 F16 cms=0 HTTP E2E 测试）。
 
 ### 决策（D1-D3，2026-08-07 拍板）
 
