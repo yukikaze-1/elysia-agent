@@ -1,7 +1,9 @@
 """core/schema/event.py 的 EventData union 模型测试。"""
 import pytest
 from pydantic import TypeAdapter, ValidationError
+from typing import Literal, get_args, get_origin
 
+from core.schema.agent import EventType
 from core.schema.event import (
     EventData,
     InterruptData,
@@ -103,3 +105,31 @@ class TestSystemTickData:
         d = SystemTickData(reason="time_of_day", time="08:00")
         assert d.time == "08:00"
         assert d.elapsed is None
+
+
+@pytest.mark.unit
+class TestEventTypeEnumBinding:
+    """判别字段引用 EventType 成员 + VoiceReason 枚举（防裸字符串漂移）。"""
+
+    def test_event_type_discriminator_references_enum_member(self):
+        """判别字段必须是 Literal[EventType.MEMBER] 形式（防裸字符串漂移）。"""
+        ann = InterruptData.model_fields["event_type"].annotation
+        assert get_origin(ann) is Literal
+        assert get_args(ann) == (EventType.INTERRUPT,)
+
+    def test_discriminator_still_rejects_bad_value(self):
+        # 判别值引用枚举后，非法值仍被拒（part.py 已证此模式）
+        try:
+            TypeAdapter(EventData).validate_python({"event_type": "nope"})
+            raise AssertionError("should reject")
+        except Exception:
+            pass
+
+    def test_system_tick_reason_is_enum(self):
+        from core.schema.event import VoiceReason
+        assert {m.value for m in VoiceReason} == {"silence_timeout", "time_of_day"}
+        ann = SystemTickData.model_fields["reason"].annotation
+        assert ann is VoiceReason
+        ta = TypeAdapter(SystemTickData)
+        v = ta.validate_python({"event_type": "system_tick", "reason": "silence_timeout"})
+        assert v.reason == "silence_timeout"

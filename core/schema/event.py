@@ -3,26 +3,34 @@
 每个模型自带 event_type discriminator，形成 EventData union。
 """
 
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
+from core.schema.agent import EventType
 from core.schema.types import SessionId
 
 
+class VoiceReason(StrEnum):
+    """SystemTickData 的触发原因枚举。"""
+    SILENCE_TIMEOUT = "silence_timeout"
+    TIME_OF_DAY = "time_of_day"
+
+
 class InterruptData(BaseModel):
-    event_type: Literal["interrupt"] = "interrupt"
+    event_type: Literal[EventType.INTERRUPT] = EventType.INTERRUPT
     source: str = Field(default="?")
 
 
 class StateChangeData(BaseModel):
-    event_type: Literal["state_change"] = "state_change"
+    event_type: Literal[EventType.STATE_CHANGE] = EventType.STATE_CHANGE
     state: str
     request_id: str
 
 
 class UserInputData(BaseModel):
-    event_type: Literal["user_input"] = "user_input"
+    event_type: Literal[EventType.USER_INPUT] = EventType.USER_INPUT
     text: str
     user_name: str
     request_id: str
@@ -37,14 +45,14 @@ class UserInputData(BaseModel):
 
 
 class SystemTickData(BaseModel):
-    event_type: Literal["system_tick"] = "system_tick"
-    reason: Literal["silence_timeout", "time_of_day"]
+    event_type: Literal[EventType.SYSTEM_TICK] = EventType.SYSTEM_TICK
+    reason: VoiceReason
     elapsed: float | None = None
     time: str | None = None
 
 
 class TaskResultData(BaseModel):
-    event_type: Literal["task_result"] = "task_result"
+    event_type: Literal[EventType.TASK_RESULT] = EventType.TASK_RESULT
     task_id: str
     result: str
     original_intent: str
