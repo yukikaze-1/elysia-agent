@@ -34,10 +34,10 @@ class TokenLedger:
     """
 
     def __init__(self, task_state: WorkflowState) -> None:
-        """Initialize the token ledger.
+        """初始化 token 台账。
 
         Args:
-            task_state: WorkflowState to write token entries into.
+            task_state: 用于写入 token 条目的 WorkflowState。
         """
         self._ts = task_state
 
@@ -84,5 +84,5 @@ class TokenLedger:
 
     @property
     def total_tokens(self) -> int:
-        """Return the total number of tokens consumed across all entries."""
+        """返回所有条目累计消耗的 token 总数。"""
         return sum(e.total_tokens for e in self._ts.token_entries)

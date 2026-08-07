@@ -70,7 +70,7 @@ class Evaluator:
         artifact_store: ArtifactStore,
         token_ledger: TokenLedger | None = None,
     ) -> None:
-        """Initialize the Evaluator.
+        """初始化 Evaluator。
 
         Args:
             infra: 跨任务共享的底层资源容器（LLM client）。

@@ -19,7 +19,7 @@ from Module.workflow_contract import (
 logger = logging.getLogger(__name__)
 
 # 有界队列上限。溢出时丢弃最旧的 progress 事件，保留关键事件（approval_needed/
-# completed/failed/cancelled/paused）。
+# completed/failed/cancelled/paused 等终态事件）。
 _MAXSIZE = 100
 
 
@@ -41,10 +41,10 @@ class WorkflowMailbox:
     """
 
     def __init__(self, task_id: WorkflowId) -> None:
-        """Initialize a mailbox for a single task.
+        """为单个任务初始化 mailbox。
 
         Args:
-            task_id: The task this mailbox belongs to.
+            task_id: 该 mailbox 所属的任务。
         """
         self.task_id: WorkflowId = task_id
         self._deque: deque[WorkflowEvent] = deque()

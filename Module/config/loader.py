@@ -18,7 +18,7 @@ T = TypeVar("T")
 
 
 class EnvManager:
-    """Centralised .env loading — ensures ``load_dotenv()`` runs at most once."""
+    """集中式 .env 加载 —— 确保 ``load_dotenv()`` 最多执行一次。"""
 
     _loaded: bool = False
 
@@ -68,7 +68,7 @@ class EnvManager:
         """
         origin = getattr(target_type, "__origin__", None)
         base_type = origin if origin is not None else target_type
-        # unwrap Optional[X] / Union[X, ...]  →  first non-None type
+        # 解包 Optional[X] / Union[X, ...] → 第一个非 None 类型
         if origin is not None:
             args = getattr(target_type, "__args__", ())
             non_none = [a for a in args if a is not type(None)]  # noqa: E721
@@ -88,7 +88,7 @@ class EnvManager:
             return float(value_str)
         if base_type is str:
             return value_str
-        # list / dict — try JSON
+        # list / dict —— 尝试 JSON 解析
         if base_type in (list, dict):
             import json
             return json.loads(value_str)
@@ -99,7 +99,7 @@ class EnvManager:
 
 
 class ConfigLoader(Generic[T]):
-    """Load a dataclass config from defaults < YAML < env vars, then validate.
+    """从默认值 < YAML < 环境变量加载 dataclass 配置，然后校验。
 
     Usage::
 
@@ -203,10 +203,10 @@ class ConfigLoader(Generic[T]):
         return raw if isinstance(raw, dict) else {}
 
     def _merge_yaml(self, instance: Any, yaml_data: dict[str, Any]) -> None:
-        """Recursively merge *yaml_data* into *instance* fields.
+        """将 *yaml_data* 递归合并进 *instance* 的字段。
 
-        - ``secret=True`` fields are skipped (never read from YAML).
-        - Nested dataclass fields are recursed into.
+        - ``secret=True`` 的字段被跳过（永不从 YAML 读取）。
+        - 嵌套的 dataclass 字段会递归处理。
         """
         if not yaml_data:
             return
@@ -230,10 +230,10 @@ class ConfigLoader(Generic[T]):
                 setattr(instance, field_name, yaml_value)
 
     def _override_from_env(self, instance: Any, prefix: str = "") -> None:
-        """Walk every field; if an env var exists, coerce and set it.
+        """遍历每个字段；若存在对应环境变量则转换并设置。
 
-        Recurses into nested dataclass fields, building the env var name
-        from the chain of field names (e.g. ``inner_x`` → ``INNER_X``).
+        递归进入嵌套 dataclass 字段，按字段名链拼接环境变量名
+        （如 ``inner_x`` → ``INNER_X``）。
         """
         cls = type(instance)
         hints = self._safe_get_type_hints(cls)

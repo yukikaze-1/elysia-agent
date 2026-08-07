@@ -9,7 +9,7 @@ Prefix Continuation:
 import asyncio
 import logging
 import time
-from typing import AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable
 
 import httpx
 from openai import AsyncOpenAI
@@ -18,7 +18,7 @@ from Module.llm.protocol import LLMBackend
 from Module._common.test_helpers import make_test_method
 
 
-def _extract_usage(u) -> dict:
+def _extract_usage(u: Any) -> dict:
     """从 SDK usage 对象提取归一化 token 消耗 dict（input/output 语义）。
 
     产出契约（供 TokenUsage.from_api 消费）：
@@ -76,7 +76,7 @@ class OpenAICompatBackend(LLMBackend):
                 AsyncOpenAI wrapper 关闭会连带关闭当前注入 client，reconnect 经工厂
                 重建全新守卫 client（守卫跨重启保留，修复"关闭后复用已关闭 client"）。
         """
-        key = api_key or "ollama"  # Ollama accepts any non-empty value
+        key = api_key or "ollama"  # Ollama 接受任意非空值
         self._model = model
         self._supports_prefix = supports_prefix
         self._logger = logger or logging.getLogger(__name__)
@@ -108,20 +108,20 @@ class OpenAICompatBackend(LLMBackend):
         """测试连通性：发最小 chat 请求，测延迟。5 秒超时。"""
         return await self._test_fn(self)
 
-    async def chat(self, messages: list[dict], **kwargs) -> str:
+    async def chat(self, messages: list[dict], **kwargs: Any) -> str:
         """非流式对话 — 内部调用 _call_api(stream=False)，拼接所有 chunk 返回。"""
         chunks: list[str] = []
         async for chunk in self._call_api(messages, stream=False, **kwargs):
             chunks.append(chunk)
         return "".join(chunks)
 
-    async def chat_stream(self, messages: list[dict], **kwargs) -> AsyncIterator[str]:
+    async def chat_stream(self, messages: list[dict], **kwargs: Any) -> AsyncIterator[str]:
         """流式对话 — 内部调用 _call_api(stream=True)，逐 chunk 产出。"""
         async for chunk in self._call_api(messages, stream=True, **kwargs):
             yield chunk
 
     async def stream_think(
-        self, messages: list[dict], **kwargs
+        self, messages: list[dict], **kwargs: Any
     ) -> AsyncIterator[dict]:
         """流式思考 — 逐 chunk 产出结构化 dict，同时支持 text 和 tool_calls 检测。
 
@@ -132,7 +132,7 @@ class OpenAICompatBackend(LLMBackend):
             yield chunk
 
     async def _stream_structured(
-        self, messages: list[dict], **kwargs
+        self, messages: list[dict], **kwargs: Any
     ) -> AsyncIterator[dict]:
         """结构化流式 API 调用 — 产出包含 content 和 tool_calls 的 dict。"""
         cleaned, has_prefix = _extract_prefix(messages)
@@ -186,7 +186,7 @@ class OpenAICompatBackend(LLMBackend):
             yield {"content": content, "tool_calls": tool_calls}
 
     async def _call_api(
-        self, messages: list[dict], *, stream: bool, **kwargs
+        self, messages: list[dict], *, stream: bool, **kwargs: Any
     ) -> AsyncIterator[str]:
         """统一 API 调用入口。
 

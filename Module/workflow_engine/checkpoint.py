@@ -42,7 +42,7 @@ class CheckpointManager:
     """
 
     def __init__(self) -> None:
-        """Initialize the checkpoint manager with empty in-memory store."""
+        """初始化 checkpoint 管理器：空的内存存储。"""
         self._store: dict[str, WorkflowCheckpoint] = {}
 
     # ── 持久化 ──────────────────────────────────────────────────────────

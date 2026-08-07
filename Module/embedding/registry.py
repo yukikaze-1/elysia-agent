@@ -3,7 +3,7 @@
 import dataclasses
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.config.providers import load_provider_defaults
@@ -29,7 +29,7 @@ class EmbeddingFactory:
     _instances: dict[str, "EmbeddingBackend"] = {}
 
     @classmethod
-    def create(cls, model_id: str, **kwargs) -> "EmbeddingBackend":
+    def create(cls, model_id: str, **kwargs: Any) -> "EmbeddingBackend":
         """创建或返回缓存的 embedding 后端实例。
 
         Args:
@@ -100,7 +100,7 @@ class EmbeddingFactory:
         cls._instances.clear()
 
     @classmethod
-    def from_config(cls, model_id: str, config: "EmbeddingConfig", **overrides) -> "EmbeddingBackend":
+    def from_config(cls, model_id: str, config: "EmbeddingConfig", **overrides: Any) -> "EmbeddingBackend":
         """从 EmbeddingConfig dataclass 创建后端。
 
         Args:

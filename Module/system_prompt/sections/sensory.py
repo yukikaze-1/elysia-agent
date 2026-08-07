@@ -1,5 +1,6 @@
 """C5: 感官输入。"""
 from datetime import datetime
+from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
 
 # STT 情绪 → emoji 映射（内联自 core.schema.mood，消除跨层依赖）
@@ -43,7 +44,7 @@ class SensorySection(Jinja2Section):
         self._stt_emotion = ""
         self._stt_events: list[str] = []
 
-    def set_context(self, **kwargs) -> None:
+    def set_context(self, **kwargs: Any) -> None:
         self._stt_emotion = kwargs.get("stt_emotion", "")
         self._stt_events = kwargs.get("stt_events", [])
 

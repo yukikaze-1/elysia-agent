@@ -9,7 +9,7 @@ from .websocket import WebSocketChannel
 
 
 class FakeMsg:
-    def __init__(self, role="Elysia", content="", inner_voice=""):
+    def __init__(self, role: str = "Elysia", content: str = "", inner_voice: str = ""):
         self.role = role
         self.content = content
         self.inner_voice = inner_voice
@@ -22,11 +22,11 @@ async def main():
     mgr = OutputManager()
     mgr.add_channel(ConsoleChannel())
 
-    # 1. Non-streaming send
+    # 1. 非流式发送
     print("=== 非流式 send ===")
     await mgr.send(FakeMsg(role="Elysia", content="你好，世界！", inner_voice="这是一条测试消息"))
 
-    # 2. Streaming with typing indicator
+    # 2. 流式 + typing 指示器
     print()
     print("=== 流式 + typing ===")
 
@@ -43,27 +43,27 @@ async def main():
     await mgr.typing(False)
     print(f"\n  result: {result}")
 
-    # 3. Expression
+    # 3. 表情
     print()
     print("=== 表情 ===")
     await mgr.expression("happy", 0.8)
 
-    # 4. Action
+    # 4. 动作
     print()
     print("=== 动作 ===")
     await mgr.action("wave")
 
-    # 5. Command
+    # 5. 指令
     print()
     print("=== 指令 ===")
     await mgr.command("change_bg", params={"bg": "night_sky"})
 
-    # 6. WebSocket channel (mock)
+    # 6. WebSocket 通道（mock）
     print()
     print("=== WebSocket 通道 (mock) ===")
 
     class MockWS:
-        async def send_json(self, data):
+        async def send_json(self, data: dict):
             print(f"  WS → {data}")
 
     ws_mgr = OutputManager()

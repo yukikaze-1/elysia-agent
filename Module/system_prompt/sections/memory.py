@@ -1,6 +1,7 @@
 """C4: 记忆。"""
 import logging
 import time
+from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
 
 logger = logging.getLogger(__name__)
@@ -11,7 +12,7 @@ class MemorySection(Jinja2Section):
     version = "2.0.0"
     description = "她记得的过去 + 可靠性规则"
 
-    def __init__(self, template_path: str, long_term=None, session=None):
+    def __init__(self, template_path: str, long_term: Any = None, session: Any = None):
         """初始化 Memory section。
 
         Args:
@@ -24,7 +25,7 @@ class MemorySection(Jinja2Section):
         self._session = session
         self._user_message = ""
 
-    def set_context(self, **kwargs) -> None:
+    def set_context(self, **kwargs: Any) -> None:
         self._user_message = kwargs.get("user_message", "")
 
     async def render(self) -> str:

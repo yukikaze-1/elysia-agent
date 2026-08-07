@@ -2,12 +2,12 @@ from typing import Any
 
 
 class ConfigError(Exception):
-    """Base class for all configuration errors."""
+    """所有配置错误的基类。"""
     pass
 
 
 class ConfigMissingError(ConfigError):
-    """A required field has no value after loading.
+    """加载后必填字段没有值。
 
     Args:
         class_name: 所属 dataclass 类名。
@@ -21,7 +21,7 @@ class ConfigMissingError(ConfigError):
 
 
 class ConfigTypeError(ConfigError):
-    """A field's value does not match the declared type annotation.
+    """字段值不匹配声明的类型注解。
 
     Args:
         class_name: 所属 dataclass 类名。
@@ -41,7 +41,7 @@ class ConfigTypeError(ConfigError):
 
 
 class ConfigConstraintError(ConfigError):
-    """A constraint on a field was violated.
+    """字段约束被违反。
 
     Args:
         class_name: 所属 dataclass 类名。
@@ -61,7 +61,7 @@ class ConfigConstraintError(ConfigError):
 
 
 class ConfigEnvFormatError(ConfigError):
-    """An environment variable string could not be coerced to the target type.
+    """环境变量字符串无法转换为目标类型。
 
     Args:
         env_key: 环境变量名。
@@ -79,7 +79,7 @@ class ConfigEnvFormatError(ConfigError):
 
 
 class ConfigValidationError(ConfigError):
-    """Aggregate error that collects multiple ConfigError instances.
+    """聚合多个 ConfigError 实例的错误。
 
     Args:
         errors: 收集到的 ConfigError 列表。

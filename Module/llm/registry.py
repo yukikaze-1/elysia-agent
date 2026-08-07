@@ -1,7 +1,7 @@
 """LLM 后端注册表 + 工厂。按 provider/model 标识创建后端实例。"""
 
 import dataclasses
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.config.providers import load_provider_defaults
@@ -19,7 +19,7 @@ class LLMFactory:
     """LLM 后端工厂 — LLMFactory.create("deepseek/deepseek-v4-pro") 返回配置好的 backend。"""
 
     @staticmethod
-    def create(model_id: str, **kwargs) -> "LLMBackend":
+    def create(model_id: str, **kwargs: Any) -> "LLMBackend":
         """创建 LLM 后端实例。
 
         Args:
@@ -81,7 +81,7 @@ class LLMFactory:
         )
 
     @classmethod
-    def from_config(cls, model_id: str, config: "LLMConfig", **overrides) -> "LLMBackend":
+    def from_config(cls, model_id: str, config: "LLMConfig", **overrides: Any) -> "LLMBackend":
         """从 LLMConfig dataclass 创建后端。
 
         Args:

@@ -196,7 +196,7 @@ class LatencyBench:
             return
 
         try:
-            # Non-streaming
+            # 非流式
             t0 = time.perf_counter()
             reply = await backend.chat(
                 [{"role": "user", "content": "用一句话介绍你自己"}]
@@ -204,7 +204,7 @@ class LatencyBench:
             elapsed = time.perf_counter() - t0
             print(f"  chat()              total={self._fmt(elapsed):>10}  reply={len(reply)} chars")
 
-            # Streaming
+            # 流式
             t0 = time.perf_counter()
             ttft = None
             num_tokens = 0
@@ -220,7 +220,7 @@ class LatencyBench:
                   f"total={self._fmt(elapsed):>10}  "
                   f"chars={num_tokens}  rate={tps:.0f} chars/s")
 
-            # Prefix (non-streaming)
+            # Prefix（非流式）
             t0 = time.perf_counter()
             reply = await backend.chat([
                 {"role": "system", "content": "以JSON格式回复，包含name和greeting两个字段"},
@@ -229,7 +229,7 @@ class LatencyBench:
             elapsed = time.perf_counter() - t0
             print(f"  chat(prefix)        total={self._fmt(elapsed):>10}  reply={len(reply)} chars")
 
-            # No thinking — non-streaming
+            # 关闭思考 —— 非流式
             t0 = time.perf_counter()
             reply = await backend.chat(
                 [{"role": "user", "content": "用一句话介绍你自己"}],
@@ -238,7 +238,7 @@ class LatencyBench:
             elapsed = time.perf_counter() - t0
             print(f"  chat(no-thinking)   total={self._fmt(elapsed):>10}  reply={len(reply)} chars")
 
-            # No thinking — streaming
+            # 关闭思考 —— 流式
             t0 = time.perf_counter()
             ttft = None
             num_tokens = 0
@@ -313,7 +313,7 @@ class LatencyBench:
         text = "你好，今天天气真不错呢。"
 
         try:
-            # Non-streaming
+            # 非流式
             synth_kwargs: dict = {}
             if character:
                 synth_kwargs["character"] = character
@@ -324,7 +324,7 @@ class LatencyBench:
             print(f"  synthesize()        total={self._fmt(elapsed):>10}  "
                   f"audio={self._fmt(audio_dur)}  RTF={self._rtf(audio_dur, elapsed)}")
 
-            # Streaming
+            # 流式
             t0 = time.perf_counter()
             ttfc = None
             chunks: list[bytes] = []
@@ -431,7 +431,7 @@ class LatencyBench:
             audio_bytes = f.read()
 
         try:
-            # Non-streaming
+            # 非流式
             t0 = time.perf_counter()
             text = await backend.transcribe(audio_bytes)
             elapsed = time.perf_counter() - t0
@@ -439,7 +439,7 @@ class LatencyBench:
                   f"audio={self._fmt(audio_dur)}  RTF={self._rtf(audio_dur, elapsed)}  "
                   f"result={len(text)} chars")
 
-            # Streaming
+            # 流式
             t0 = time.perf_counter()
             first = None
             num_chunks = 0

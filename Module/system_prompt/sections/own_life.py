@@ -1,4 +1,5 @@
 """C8: 她自己的事。"""
+from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
 
 
@@ -7,7 +8,7 @@ class OwnLifeSection(Jinja2Section):
     version = "1.0.0"
     description = "她自己的事：最近在干嘛"
 
-    def __init__(self, template_path: str, session=None):
+    def __init__(self, template_path: str, session: Any = None):
         """初始化 OwnLife section。
 
         Args:

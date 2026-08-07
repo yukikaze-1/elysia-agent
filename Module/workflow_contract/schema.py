@@ -185,7 +185,8 @@ class WorkflowConstraints(BaseModel):
         import logging
         _log = logging.getLogger(__name__)
 
-        def _resolve_field(name: str, task_val, global_val, clamp_reason: str = ""):
+        def _resolve_field(name: str, task_val: int | float | None, global_val: int | float | None,
+                           clamp_reason: str = ""):
             """解析单个字段：None → global；> global → clamp+warn；≤ global → task。"""
             if task_val is None:
                 return global_val
@@ -381,7 +382,7 @@ class WorkflowEvent(BaseModel):
 
     # ── data shape 参考 ──────────────────────────────────────────────────────
 
-    # progress: {
+    # progress（进度）: {
     #     "task_id": WorkflowId,
     #     "node_id": NodeId,
     #     "node_description": str,  # 当前节点在做什么
@@ -389,7 +390,7 @@ class WorkflowEvent(BaseModel):
     #     "message": str,           # 简短描述
     # }
 
-    # approval_needed: {            # 与 HITLData 字段一一对应
+    # approval_needed（待审批）: {            # 与 HITLData 字段一一对应
     #     "task_id": WorkflowId,
     #     "approval_id": ApprovalId,
     #     "agent_id": AgentId,
@@ -401,7 +402,7 @@ class WorkflowEvent(BaseModel):
     #     "risk_summary": str,
     # }
 
-    # completed: {
+    # completed（完成）: {
     #     "task_id": WorkflowId,
     #     "result": str,            # 自然语言摘要
     #     "summary": str,           # 简短摘要
@@ -410,18 +411,18 @@ class WorkflowEvent(BaseModel):
     #     "failed_nodes": int,
     # }
 
-    # failed: {
+    # failed（失败）: {
     #     "task_id": WorkflowId,
     #     "error": str,             # 人类可读错误描述
     #     "error_type": WorkflowErrorCode,  # 任务级错误码
     # }
 
-    # cancelled: {
+    # cancelled（取消）: {
     #     "task_id": WorkflowId,
     #     "reason": str,            # 取消原因
     # }
 
-    # paused: {
+    # paused（暂停）: {
     #     "task_id": WorkflowId,
     #     "message": str,           # 暂停说明
     # }

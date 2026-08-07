@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 import torch
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -49,7 +50,7 @@ def _find_local_model(model_name: str, cache_folder: str | None) -> str | None:
     for base in (hf_home, os.path.join(hf_home, "hub")):
         hub_path = os.path.join(base, hub_name)
         if os.path.isdir(hub_path):
-            # Find latest snapshot
+            # 查找最新 snapshot
             snapshots = os.path.join(hub_path, "snapshots")
             if os.path.isdir(snapshots):
                 for snap in sorted(os.listdir(snapshots), reverse=True):
@@ -114,7 +115,7 @@ class HuggingFaceBackend(EmbeddingBackend):
         self._dimension = dimension or _KNOWN_DIMS.get(model_name, 0)
         self._logger = logger or logging.getLogger(__name__)
 
-        # Find model in local cache — avoid network access entirely
+        # 在本地缓存中查找模型 —— 完全避免网络访问
         local_path = _find_local_model(model_name, cache_folder)
         if local_path:
             self._logger.info("Using local model: %s", local_path)
@@ -141,14 +142,14 @@ class HuggingFaceBackend(EmbeddingBackend):
             )
         return self._dimension
 
-    async def embed_documents(self, texts: list[str], **kwargs) -> list[list[float]]:
+    async def embed_documents(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
         """批量文本 → 向量列表。同步推理在线程池中执行。"""
         async with self._lock:
             if self._embeddings is None:
                 raise RuntimeError("Embedding 模型已关闭")
             return await asyncio.to_thread(self._embeddings.embed_documents, texts)
 
-    async def embed_query(self, text: str, **kwargs) -> list[float]:
+    async def embed_query(self, text: str, **kwargs: Any) -> list[float]:
         """单条文本 → 单个向量。"""
         async with self._lock:
             if self._embeddings is None:

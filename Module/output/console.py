@@ -1,13 +1,15 @@
 """ConsoleChannel — 终端打字机效果输出。"""
 
+from typing import Any
+
 from Module.output.protocol import ChannelCapability, OutputChannel
 
 
 class ConsoleChannel(OutputChannel):
     """终端输出通道。支持流式 delta 和完整消息。
 
-    When text is streamed via on_text_delta, on_message only prints the
-    inner_voice (if any) — the content was already delivered by the stream.
+    当文本经 on_text_delta 流式输出时，on_message 仅打印 inner_voice（如有）——
+    内容已由流式通道投递。
     """
 
     def __init__(self):
@@ -28,7 +30,7 @@ class ConsoleChannel(OutputChannel):
         self._delta_printed = True
         print(delta, end="", flush=True)
 
-    async def on_message(self, msg) -> None:
+    async def on_message(self, msg: Any) -> None:
         """打印格式化消息。
 
         Args:
@@ -45,13 +47,13 @@ class ConsoleChannel(OutputChannel):
         content = getattr(msg, "content", "")
 
         if self._delta_printed:
-            # Content already streamed — just finalize the line and show inner_voice
+            # 内容已流式输出 —— 只需收尾并展示 inner_voice
             print()
             self._delta_printed = False
             if inner:
                 print(f"  [{role} 💭] {inner}")
         else:
-            # Non-streaming delivery — print full content
+            # 非流式投递 —— 打印完整内容
             if inner:
                 print(f"  [{role} 💭] {inner}")
             print(f"  [{role}]: {content}")

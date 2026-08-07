@@ -139,12 +139,12 @@ async def list_active_tasks(
                 elif ns.status == NodeStatus.SKIPPED:
                     nodes_skipped += 1
 
-        # extract intent from plan
+        # 从 plan 提取意图
         intent = ""
         if ts.plan and ts.plan.dag.nodes:
             intent = ts.plan.dag.nodes[0].description
 
-        # calculate duration
+        # 计算耗时
         duration_ms = 0
         if ts.created_at:
             try:

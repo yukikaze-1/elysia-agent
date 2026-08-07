@@ -2,6 +2,7 @@
 
 import logging
 import re
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -115,7 +116,7 @@ class MongoDBBackend(DocumentDBBackend):
     # ---- Index ----
 
     async def ensure_index(
-        self, collection: str, keys: list[tuple[str, int]], **kwargs
+        self, collection: str, keys: list[tuple[str, int]], **kwargs: Any
     ) -> str:
         """创建索引（如不存在）。返回索引名。"""
         _validate_collection(collection)

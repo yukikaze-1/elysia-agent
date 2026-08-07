@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
+from typing import Any
 
 
 class STTBackend(ABC):
@@ -20,7 +21,7 @@ class STTBackend(ABC):
     """
 
     @abstractmethod
-    async def transcribe(self, audio: bytes, **kwargs) -> str:
+    async def transcribe(self, audio: bytes, **kwargs: Any) -> str:
         """非流式识别 — 返回完整转写文本。
 
         Args:
@@ -33,7 +34,7 @@ class STTBackend(ABC):
         ...
 
     @abstractmethod
-    async def transcribe_stream(self, audio: bytes, **kwargs) -> AsyncGenerator[str, None]:
+    async def transcribe_stream(self, audio: bytes, **kwargs: Any) -> AsyncGenerator[str, None]:
         """流式识别 — 逐句/逐词产出识别结果。
 
         后端不支持流式时可 yield 完整结果作为单个 chunk。

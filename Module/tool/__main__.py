@@ -7,12 +7,13 @@
 """
 
 import asyncio
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from .protocol import (
     PluginContext, ToolContext, ToolPlugin, ToolProgress, ToolResult,
-    ErrorType,
+    ErrorType, ToolEmitter,
 )
 from .safety import SafetyProfile
 from .manager import ToolManager
@@ -27,7 +28,8 @@ class GetTimePlugin(ToolPlugin):
     capabilities = set()
     safety = SafetyProfile(request_timeout=5.0)
 
-    async def execute(self, *, ctx: ToolContext, emit=None, params=None) -> str:
+    async def execute(self, *, ctx: ToolContext, emit: ToolEmitter | None = None,
+                      params: Any = None) -> str:
         from datetime import datetime
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -44,7 +46,7 @@ class SearchMemoryPlugin(ToolPlugin):
     capabilities = set()
     safety = SafetyProfile()
 
-    async def execute(self, *, ctx: ToolContext, emit=None, params: SearchParams) -> str:
+    async def execute(self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: SearchParams) -> str:
         return f"搜索 '{params.query}' 找到了 {params.limit} 条结果"
 
 
@@ -55,7 +57,8 @@ class FailingPlugin(ToolPlugin):
     capabilities = set()
     safety = SafetyProfile()
 
-    async def execute(self, *, ctx: ToolContext, emit=None, params=None) -> str:
+    async def execute(self, *, ctx: ToolContext, emit: ToolEmitter | None = None,
+                      params: Any = None) -> str:
         raise RuntimeError("模拟的错误")
 
 
@@ -66,7 +69,8 @@ class SlowPlugin(ToolPlugin):
     capabilities = set()
     safety = SafetyProfile(request_timeout=0.1)
 
-    async def execute(self, *, ctx: ToolContext, emit=None, params=None) -> str:
+    async def execute(self, *, ctx: ToolContext, emit: ToolEmitter | None = None,
+                      params: Any = None) -> str:
         await asyncio.sleep(0.5)
         return "never arrives"
 
@@ -82,7 +86,7 @@ class StreamScanPlugin(ToolPlugin):
     capabilities = set()
     safety = SafetyProfile(request_timeout=5.0)
 
-    async def execute_stream(self, *, ctx: ToolContext, emit=None, params: StreamScanParams):
+    async def execute_stream(self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: StreamScanParams):
         yield ToolProgress(message=f"开始扫描: {params.scope}", percent=0.0)
         yield ToolProgress(message="扫描中...", percent=0.5)
         await asyncio.sleep(0.05)
@@ -97,7 +101,8 @@ class CancellablePlugin(ToolPlugin):
     capabilities = set()
     safety = SafetyProfile(request_timeout=10.0)
 
-    async def execute_stream(self, *, ctx: ToolContext, emit=None, params=None):
+    async def execute_stream(self, *, ctx: ToolContext, emit: ToolEmitter | None = None,
+                             params: Any = None):
         for i in range(10):
             yield ToolProgress(message=f"处理中... {i+1}/10", percent=(i + 1) / 10)
             await asyncio.sleep(0.01)

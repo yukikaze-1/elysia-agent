@@ -10,7 +10,7 @@ async def main():
     TMP.mkdir(exist_ok=True)
     tts = TTSFactory.create("gpt-sovits/default", base_url="http://192.168.1.18:9880")
 
-    # Test 1: stream with emotion
+    # 测试 1：流式 + 情绪
     print("=== Test 1: synthesize_stream ===")
     chunks: list[bytes] = []
     async for chunk in tts.synthesize_stream(  # type: ignore[misc]
@@ -24,13 +24,13 @@ async def main():
     (TMP / "test1_stream.wav").write_bytes(b"".join(chunks))
     print(f"  -> tmp/test1_stream.wav  {total} bytes, ~{total / 64000:.1f}s\n")
 
-    # Test 2: non-stream
+    # 测试 2：非流式
     print("=== Test 2: synthesize ===")
     wav = await tts.synthesize("好的，我在这里等你。", character="Elysia")
     (TMP / "test2_synthesize.wav").write_bytes(wav)
     print(f"  -> tmp/test2_synthesize.wav  {len(wav)} bytes, ~{len(wav) / 64000:.1f}s\n")
 
-    # Test 3: early break (async generator cleanup)
+    # 测试 3：提前中断（async generator 清理）
     print("=== Test 3: early break ===")
     async for chunk in tts.synthesize_stream(  # type: ignore[misc]
         "测试提前中断。", character="Elysia"

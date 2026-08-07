@@ -76,8 +76,8 @@ from .internal import (
 # parse_iso 已随契约层迁至 Module.workflow_contract.utils（Task 6）
 # now_iso 因编排层 (orchestrator/sub_agent/workflow_engine/parser) 大量使用，保留在公开导出中
 # 已迁契约层的类型: AgentId/ApprovalId/NodeId/SessionId/WorkflowId/WorkflowStatus/
-#   SubmitRejectionCode/ConstraintConfig/WorkflowConstraints/ReturnMode/
-#   DelegationContext/DelegationResult/DelegationStatus/SubmitError/HITLData/
-#   WorkflowEvent/WorkflowEventType/Tool
+#   SubmitRejectionCode/ConstraintConfig/WorkflowConstraints/ReturnMode/（同左）
+#   DelegationContext/DelegationResult/DelegationStatus/SubmitError/HITLData/（同左）
+#   WorkflowEvent/WorkflowEventType/Tool（同左）
 # RBACLevel 已归位 Module/tool/capability.py（Task 8）——契约层 HITLData 延迟引用
 # UserProfile 已归位 core/cognitive/user_profile.py（Task 8）——CognitiveLoop 拥有

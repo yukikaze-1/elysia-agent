@@ -67,7 +67,7 @@ def make_config_test_classes(
                 )
 
         def test_overrides_take_priority(self):
-            """YAML value > dataclass default."""
+            """YAML 值优先于 dataclass 默认值。"""
             val = next(iter(overrides.values()))
             field = next(iter(overrides.keys()))
             with tempfile.NamedTemporaryFile(

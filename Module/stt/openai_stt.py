@@ -3,7 +3,7 @@
 import logging
 import struct
 from io import BytesIO
-from typing import AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable
 
 import httpx
 from openai import AsyncOpenAI
@@ -103,7 +103,7 @@ class OpenAICompatSTTBackend(STTBackend):
         """测试连通性：发最小转录请求（静音 WAV）。5 秒超时。"""
         return await self._test_fn(self)
 
-    async def transcribe(self, audio: bytes, **kwargs) -> str:
+    async def transcribe(self, audio: bytes, **kwargs: Any) -> str:
         """非流式识别 — 返回完整转写文本。
 
         Args:
@@ -122,7 +122,7 @@ class OpenAICompatSTTBackend(STTBackend):
         self.last_events = []
         return result.text
 
-    async def transcribe_stream(self, audio: bytes, **kwargs) -> AsyncIterator[str]:
+    async def transcribe_stream(self, audio: bytes, **kwargs: Any) -> AsyncIterator[str]:
         """流式识别 — OpenAI 兼容后端不支持真正流式，yield 完整结果作为单个 chunk。
 
         Args:

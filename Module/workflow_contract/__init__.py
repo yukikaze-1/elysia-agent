@@ -61,7 +61,7 @@ __all__ = [
     "DelegationStatus",
     "ReturnMode",
     "SubmitError",
-    # HITL
+    # HITL 协议
     "HITLData",
     "HITLNotifier",
     # 事件

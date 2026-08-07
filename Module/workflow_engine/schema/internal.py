@@ -103,7 +103,7 @@ class NodeState(BaseModel):
     #                                          retry / replan / abort 时写入。
     #                                          ExperienceRecord / Planner 做结构化匹配用。
     evaluation: NodeResultEvaluation | None = None  # Evaluator 完整判定（含 execution_status、
-    #                                                  business_status、suggested_action），
+    #                                                  business_status、suggested_action 等字段），
     #                                                  Replanner.replan() 做诊断决策用。
 
 

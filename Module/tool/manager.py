@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator, Callable
 
 import yaml
 
+from Module.output.manager import OutputManager
 from Module.tool.capability import Capability
 from Module.tool.protocol import ErrorType, PluginContext, ToolContext, ToolDefinition, ToolEmitter, ToolPlugin, ToolResult, ToolExecutor
 from Module.tool.safety import SafetyPipeline
@@ -139,7 +140,7 @@ class ToolManager:
     # ---- Execution ----
 
     async def execute(
-        self, name: str, *, ctx: ToolContext, **raw_params,
+        self, name: str, *, ctx: ToolContext, **raw_params: Any,
     ) -> ToolResult:
         """执行工具（非流式）。
 
@@ -405,7 +406,7 @@ class ToolManager:
         """
         return self._pipeline.get_pending_approvals()
 
-    def set_hitl_broadcast(self, output_manager) -> None:
+    def set_hitl_broadcast(self, output_manager: OutputManager | None) -> None:
         """绑定 HITL 审批广播回调到 OutputManager。
 
         版本门控（spec §7）：按 protocol_version 两路广播——v1 通道收原样

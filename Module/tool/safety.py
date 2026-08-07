@@ -8,7 +8,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -157,7 +157,7 @@ def _truncate_text(
             + text[-tail_chars:],
             True,
         )
-    # head_only (including forced for streaming)
+    # head_only（含流式强制场景）
     chars = int(len(text) * (max_tokens / est))
     return text[:chars] + "\n...[截断]", True
 
@@ -326,7 +326,7 @@ class SafetyPipeline:
             if not event.is_set()
         ]
 
-    def set_hitl_broadcast(self, callback) -> None:
+    def set_hitl_broadcast(self, callback: Callable[..., Any]) -> None:
         """设置 HITL 审批广播回调。
 
         Args:
@@ -365,7 +365,7 @@ class SafetyPipeline:
         logger.info("工具开始: %s(%s)", name, _format_args(raw_params))
 
         # 统一日志 + 返回
-        def _finish(result):
+        def _finish(result: Any):
             elapsed = int((asyncio.get_event_loop().time() - start) * 1000)
             if result.success:
                 logger.info("工具完成: %s — OK — %dms", name, elapsed)
@@ -474,7 +474,7 @@ class SafetyPipeline:
         """
         from Module.tool.protocol import ToolResult, ErrorType  # noqa: F811
 
-        # Pre-checks
+        # 预检查
         if plugin.param_model is not None:
             try:
                 params = plugin.param_model(**raw_params)
@@ -514,7 +514,7 @@ class SafetyPipeline:
                 )
                 return
 
-        # Stream execution
+        # 流式执行
         acc_text = ""
         max_tokens = plugin.safety.max_result_tokens if plugin.safety else 2000
         gen = None
@@ -571,12 +571,12 @@ class SafetyPipeline:
             getattr(ctx, "session_id", "default") or "default"
         )
 
-        # Network capability enforcement: plugins that access the network MUST declare Capability.NETWORK
+        # 网络能力强制：访问网络的插件必须声明 Capability.NETWORK
         if profile.network_allowed:
             if Capability.NETWORK not in getattr(plugin, "capabilities", set()):
                 return "插件声明了 network_allowed 但未声明 Capability.NETWORK"
 
-        # URL safety: check params whose name contains "url" (e.g. url, source_url, api_url)
+        # URL 安全：检查名称包含 "url" 的参数（如 url、source_url、api_url）
         if profile.network_allowed:
             for key, value in raw_params.items():
                 if "url" in key.lower() and isinstance(value, str):
@@ -584,7 +584,7 @@ class SafetyPipeline:
                     if err:
                         return err
 
-        # Path safety: check params whose name contains "path" (e.g. path, file_path, output_path)
+        # 路径安全：检查名称包含 "path" 的参数（如 path、file_path、output_path）
         if profile.filesystem_allowed:
             is_write = Capability.FILESYSTEM_WRITE in getattr(plugin, "capabilities", set())
             for key, value in raw_params.items():
@@ -683,7 +683,7 @@ class SafetyPipeline:
 # 旧版工具函数 — register.py 过渡期仍需使用，后续删除
 # ============================================================================
 
-async def execute_with_timeout(func, kwargs: dict, timeout: float) -> Any:
+async def execute_with_timeout(func: Callable[..., Any], kwargs: dict, timeout: float) -> Any:
     """带超时的函数执行包装。
 
     Args:

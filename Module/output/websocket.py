@@ -11,6 +11,7 @@ wire format:
 """
 
 import logging
+from typing import Any
 
 from Module.logger import get_caller_logger
 from Module.output.protocol import ChannelCapability, OutputChannel
@@ -44,7 +45,7 @@ from frontend_contract import (
 class WebSocketChannel(OutputChannel):
     """WebSocket 输出通道 — 包装单个连接。连接生命周期由外部管理。"""
 
-    def __init__(self, ws, *, logger: logging.Logger | None = None,
+    def __init__(self, ws: Any, *, logger: logging.Logger | None = None,
                  protocol_version: int = 1, client_platform: str = ""):
         """初始化 WebSocket 输出通道。
 
@@ -266,7 +267,7 @@ class WebSocketChannel(OutputChannel):
         ).wire_dict())
 
     async def on_generation_completed(self, *, generation_id: str, message_id: str,
-                                      finish_reason: str, usage, model: str,
+                                      finish_reason: str, usage: Any, model: str,
                                       mood: str | None = None,
                                       completeness: str = "complete",
                                       channel: str = "public_reply",
@@ -303,7 +304,7 @@ class WebSocketChannel(OutputChannel):
             conversationId=conversation_id,
         ).wire_dict())
 
-    async def on_message(self, msg) -> None:
+    async def on_message(self, msg: Any) -> None:
         """发送完整消息。
 
         Args:

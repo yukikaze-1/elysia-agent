@@ -73,7 +73,7 @@ class WorkflowEngine:
         *,
         max_sub_agents: int = 5,
     ) -> None:
-        """Initialize the WorkflowEngine.
+        """初始化 WorkflowEngine。
 
         Args:
             infra: 跨任务共享的底层资源容器。
@@ -94,8 +94,8 @@ class WorkflowEngine:
 
         # ── 内部组件（per-task 化——由 SubAgent.run() 内部创建）──
         # 不再在此持有组件引用。移除了以下字段：
-        # self._planner, self._plan_validator, self._executor,
-        # self._evaluator, self._checkpoint_mgr, self._artifact_store
+        # self._planner, self._plan_validator, self._executor,  # 旧字段（已移除）
+        # self._evaluator, self._checkpoint_mgr, self._artifact_store  # 旧字段（已移除）
 
         # 防误用：submit() 前必须调 start()
         self._started = False
@@ -127,7 +127,7 @@ class WorkflowEngine:
         logger.info("WorkflowEngine.start: max_sub_agents=%d", self._max_sub_agents)
 
     async def stop(self, timeout: float = 10.0) -> None:
-        """Graceful shutdown。
+        """优雅关闭。
 
         1. 拒绝新提交（_started = False）
         2. 等待活跃任务自然完成（最多 timeout 秒）

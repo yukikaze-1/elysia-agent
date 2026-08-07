@@ -1,6 +1,6 @@
 """TTS 后端注册表 + 工厂。按 provider/model 标识创建后端实例。"""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pathlib import Path
 
@@ -39,7 +39,7 @@ class TTSFactory:
     """静态工厂 — TTSFactory.create("gpt-sovits/default")。"""
 
     @staticmethod
-    def create(model_id: str, **kwargs) -> "TTSBackend":
+    def create(model_id: str, **kwargs: Any) -> "TTSBackend":
         """根据 model_id 创建 TTS 后端实例。
 
         Args:
@@ -118,7 +118,7 @@ class TTSFactory:
         return GPTSoVitsBackend(model=backend_name, base_url=base_url, **kwargs)
 
     @classmethod
-    def from_config(cls, model_id: str, config: "TTSConfig", **overrides) -> "TTSBackend":
+    def from_config(cls, model_id: str, config: "TTSConfig", **overrides: Any) -> "TTSBackend":
         """从 TTSConfig dataclass 创建后端，overrides 优先级最高。"""
         kwargs = {"base_url": config.base_url}
         if config.voices_config:

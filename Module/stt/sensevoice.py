@@ -8,7 +8,7 @@ raw_text 格式: <|语种|><|情绪|><|事件|><|文本规范|>识别文本
 
 import logging
 import re
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -110,13 +110,13 @@ class SenseVoiceBackend(STTBackend):
         """测试连通性：GET /health。5 秒超时。"""
         return await self._test_fn(self)
 
-    async def transcribe(self, audio: bytes, **kwargs) -> str:
+    async def transcribe(self, audio: bytes, **kwargs: Any) -> str:
         chunks: list[str] = []
         async for chunk in self._call_api(audio, **kwargs):
             chunks.append(chunk)
         return "".join(chunks)
 
-    async def transcribe_stream(self, audio: bytes, **kwargs) -> AsyncIterator[str]:
+    async def transcribe_stream(self, audio: bytes, **kwargs: Any) -> AsyncIterator[str]:
         """流式识别 — 当前 yield 完整结果（SenseVoice 是整句识别，非真正流式）。
 
         Args:
@@ -129,7 +129,7 @@ class SenseVoiceBackend(STTBackend):
         async for chunk in self._call_api(audio, **kwargs):
             yield chunk
 
-    async def _call_api(self, audio: bytes, **kwargs) -> AsyncIterator[str]:
+    async def _call_api(self, audio: bytes, **kwargs: Any) -> AsyncIterator[str]:
         try:
             response = await self._client.post(
                 "/predict/sentence",

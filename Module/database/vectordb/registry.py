@@ -1,6 +1,6 @@
 import dataclasses
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.database.vectordb.milvus import MilvusBackend
@@ -29,7 +29,7 @@ class VectorDBFactory:
     """向量数据库工厂 — 按 provider/name 格式标识创建后端实例。"""
 
     @staticmethod
-    def create(provider_id: str, **kwargs) -> "VectorDBBackend":
+    def create(provider_id: str, **kwargs: Any) -> "VectorDBBackend":
         """创建向量数据库后端实例。
 
         Args:
@@ -74,7 +74,7 @@ class VectorDBFactory:
         return MilvusBackend(uri=base_url, token=token, name=name, **kwargs)
 
     @classmethod
-    def from_config(cls, provider_id: str, config: "VectorDBConfig", **overrides) -> "VectorDBBackend":
+    def from_config(cls, provider_id: str, config: "VectorDBConfig", **overrides: Any) -> "VectorDBBackend":
         """从 VectorDBConfig dataclass 创建后端。
 
         Args:

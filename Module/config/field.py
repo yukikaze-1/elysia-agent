@@ -3,19 +3,19 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
-# Metadata keys stored on dataclasses.Field.metadata
+# 存储在 dataclasses.Field.metadata 上的元数据键
 _KEY_SECRET = "_config_secret"
 _KEY_ENV = "_config_env"
 _KEY_CONSTRAINTS = "_config_constraints"
 _KEY_REQUIRED = "_config_required"
 
-# Sentinel to distinguish "not set" from None / "" / False
+# 哨兵值：用于区分「未设置」与 None / "" / False
 MISSING: Any = object()
 
 
-# Forward declaration so constraint types can reference themselves in annotations.
+# 前向声明：让约束类型可以在注解中引用自身。
 class _Constraint:
-    """Base class for field constraints. Subclass and implement check()."""
+    """字段约束基类。子类需实现 check()。"""
 
     def check(self, value: Any) -> None:
         """检查 value 是否满足约束，不满足则抛出异常。
@@ -45,33 +45,30 @@ def ConfigField(
     help: str = "",
     **field_kwargs: Any,
 ) -> Any:
-    """Create a dataclass field with configuration semantics.
+    """创建带配置语义的 dataclass 字段。
 
     Parameters
     ----------
     default:
-        Default value for the field. If omitted, the field starts as MISSING
-        and must be supplied via YAML or env var (or a required error is raised).
+        字段默认值。省略时字段以 MISSING 开始，必须通过 YAML 或环境变量提供
+        （否则触发 required 错误）。
     default_factory:
-        Zero-argument callable that produces a default. Mutually exclusive
-        with *default*.
+        生成默认值的零参可调用对象。与 *default* 互斥。
     env:
-        Explicit environment variable name. When ``None`` (the default), the
-        variable name is derived from the field name upper-cased, optionally
-        prefixed by the loader's *env_prefix*.
+        显式环境变量名。为 ``None``（默认）时，变量名由字段名大写推导，
+        可选地加上 loader 的 *env_prefix* 前缀。
     secret:
-        If ``True`` the field is never read from YAML — it can only be set
-        via an environment variable. Implies ``required=True``.
+        为 ``True`` 时字段永不从 YAML 读取 —— 只能通过环境变量设置。
+        隐含 ``required=True``。
     required:
-        If ``True`` the loader will raise ``ConfigMissingError`` when the
-        value is still MISSING after YAML merge and env override.
+        为 ``True`` 时，YAML 合并与环境变量覆盖后值仍为 MISSING 则抛出
+        ``ConfigMissingError``。
     constraints:
-        List of constraint objects (``Range``, ``Choices``, ``Regex``, etc.)
-        that the value must satisfy after loading.
+        加载后值必须满足的约束对象列表（``Range``、``Choices``、``Regex`` 等）。
     help:
-        Human-readable description of the field.
+        字段的人类可读描述。
     **field_kwargs:
-        Passed through to ``dataclasses.field()`` (e.g. ``repr``, ``compare``).
+        透传给 ``dataclasses.field()``（如 ``repr``、``compare``）。
     """
     if secret and not required:
         required = True

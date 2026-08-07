@@ -6,6 +6,7 @@ dimension 从首次 API 响应自动获取。
 
 import logging
 import os
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -50,7 +51,7 @@ class OpenAICompatEmbeddingBackend(EmbeddingBackend):
     def dimension(self) -> int:
         return self._dimension
 
-    async def embed_documents(self, texts: list[str], **kwargs) -> list[list[float]]:
+    async def embed_documents(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
         response = await self._client.embeddings.create(
             model=self._model,
             input=texts,
@@ -61,7 +62,7 @@ class OpenAICompatEmbeddingBackend(EmbeddingBackend):
             self._dimension = len(response.data[0].embedding)
         return [d.embedding for d in response.data]
 
-    async def embed_query(self, text: str, **kwargs) -> list[float]:
+    async def embed_query(self, text: str, **kwargs: Any) -> list[float]:
         vecs = await self.embed_documents([text], **kwargs)
         return vecs[0]
 

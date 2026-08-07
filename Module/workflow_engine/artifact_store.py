@@ -38,7 +38,7 @@ class ArtifactStore:
     """
 
     def __init__(self) -> None:
-        """Initialize the artifact store with empty internal storage and indexes."""
+        """初始化产物存储：空内部存储与索引。"""
         self._artifacts: dict[ArtifactId, Artifact] = {}
         self._by_node: dict[NodeId, set[ArtifactId]] = {}   # NodeId → {ArtifactId}
         self._by_task: dict[WorkflowId, set[ArtifactId]] = {}   # WorkflowId → {ArtifactId}

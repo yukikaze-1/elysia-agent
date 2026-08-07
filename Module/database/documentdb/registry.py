@@ -1,5 +1,5 @@
 import dataclasses
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.database.documentdb.mongodb import MongoDBBackend
@@ -20,7 +20,7 @@ class DocumentDBFactory:
     """文档数据库工厂 — 按 provider/database 格式标识创建后端实例。"""
 
     @staticmethod
-    def create(provider_id: str, **kwargs) -> "DocumentDBBackend":
+    def create(provider_id: str, **kwargs: Any) -> "DocumentDBBackend":
         """创建文档数据库后端实例。
 
         Args:
@@ -60,7 +60,7 @@ class DocumentDBFactory:
         return MongoDBBackend(uri=base_url, database=database, **kwargs)
 
     @classmethod
-    def from_config(cls, provider_id: str, config: "DocumentDBConfig", **overrides) -> "DocumentDBBackend":
+    def from_config(cls, provider_id: str, config: "DocumentDBConfig", **overrides: Any) -> "DocumentDBBackend":
         """从 DocumentDBConfig dataclass 创建后端。
 
         Args:

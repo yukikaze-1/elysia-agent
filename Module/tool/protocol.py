@@ -296,7 +296,7 @@ class ToolDefinition:
     # ---- Provider-specific export ----
 
     def to_openai(self) -> dict:
-        """OpenAI function-calling format."""
+        """OpenAI function-calling 格式。"""
         return {
             "type": "function",
             "function": {
@@ -307,7 +307,7 @@ class ToolDefinition:
         }
 
     def to_anthropic(self) -> dict:
-        """Anthropic tool use format."""
+        """Anthropic tool use 格式。"""
         return {
             "name": self.name,
             "description": self.description,
@@ -315,7 +315,7 @@ class ToolDefinition:
         }
 
     def to_gemini(self) -> dict:
-        """Google Gemini function declaration format."""
+        """Google Gemini function declaration 格式。"""
         return {
             "name": self.name,
             "description": self.description,
@@ -472,7 +472,7 @@ class ToolExecutor(Protocol):
     """CognitiveLoop 通过此接口使用工具系统 — 接口抽象，不依赖具体实现。"""
 
     async def execute(
-        self, name: str, *, ctx: ToolContext, **raw_params,
+        self, name: str, *, ctx: ToolContext, **raw_params: Any,
     ) -> ToolResult: ...
 
     async def execute_stream(
@@ -629,7 +629,7 @@ class ToolResult:
                 f"is currently unavailable. Error: {self.error}. "
                 f"Do not retry this action. Try an alternative approach or inform the user."
             )
-        # TOOL_ERROR, CANCELLED, UNKNOWN_TOOL, or no error_type
+        # TOOL_ERROR、CANCELLED、UNKNOWN_TOOL，或没有 error_type
         return (
             f"Action '{self.tool_name}' failed. "
             f"Error: {self.error or 'Unknown error'}. "

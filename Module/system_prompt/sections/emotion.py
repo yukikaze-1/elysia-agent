@@ -1,4 +1,5 @@
 """C3: 情感。"""
+from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
 
 
@@ -7,7 +8,7 @@ class EmotionSection(Jinja2Section):
     version = "3.1.0"
     description = "当前心情 + 情绪响应规则（sol_pro 基准，含心理结构）"
 
-    def __init__(self, template_path: str, session=None):
+    def __init__(self, template_path: str, session: Any = None):
         """初始化 Emotion section。
 
         Args:
@@ -20,7 +21,7 @@ class EmotionSection(Jinja2Section):
         self._user_pronoun = "她"
         self._mood = "neutral"  # 可由 set_context(mood=...) 覆盖
 
-    def set_context(self, **kwargs) -> None:
+    def set_context(self, **kwargs: Any) -> None:
         self._user_name = kwargs.get("user_name", "")
         self._user_pronoun = kwargs.get("user_pronoun", "她")
         if "mood" in kwargs:

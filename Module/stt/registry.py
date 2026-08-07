@@ -1,7 +1,7 @@
 """STT 后端注册表 + 工厂。按 provider/model 标识创建后端实例。"""
 
 import dataclasses
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.config.providers import load_provider_defaults
@@ -19,7 +19,7 @@ class STTFactory:
     """静态工厂 — STTFactory.create("sensevoice/sense-voice")。"""
 
     @staticmethod
-    def create(model_id: str, **kwargs) -> "STTBackend":
+    def create(model_id: str, **kwargs: Any) -> "STTBackend":
         """根据 model_id 创建 STT 后端实例。
 
         Args:
@@ -72,7 +72,7 @@ class STTFactory:
         )
 
     @classmethod
-    def from_config(cls, model_id: str, config: "STTConfig", **overrides) -> "STTBackend":
+    def from_config(cls, model_id: str, config: "STTConfig", **overrides: Any) -> "STTBackend":
         """从 STTConfig dataclass 创建后端，overrides 优先级最高。"""
         kwargs = dataclasses.asdict(config)
         # model/api_key 由 registry.create() 处理，不通过 config 传递

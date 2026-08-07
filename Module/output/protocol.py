@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from enum import StrEnum
+from typing import Any
 
 
 class ChannelCapability(StrEnum):
@@ -110,39 +111,39 @@ class OutputChannel(ABC):
     # ── 批次 2 v2 结构化事件（协议版本 2 通道按需实现；默认 no-op） ──
     # 批次 3：全部 6 类 generation.* 加 conversation_id（会话归属，no-op 默认不变）。
 
-    async def on_user_message_ack(self, **kwargs) -> None:
+    async def on_user_message_ack(self, **kwargs: Any) -> None:
         """v2 用户消息确认（wire user_message.ack）。"""
 
     async def on_generation_started(self, *, conversation_id: str | None = None,
-                                    **kwargs) -> None:
+                                    **kwargs: Any) -> None:
         """v2 生成开始（wire generation.started）。"""
 
     async def on_generation_segment_started(self, *, conversation_id: str | None = None,
-                                            **kwargs) -> None:
+                                            **kwargs: Any) -> None:
         """v2 分段开始（wire generation.segment.started）。"""
 
     async def on_generation_delta(self, *, conversation_id: str | None = None,
-                                  **kwargs) -> None:
+                                  **kwargs: Any) -> None:
         """v2 分段增量（wire generation.delta）。"""
 
     async def on_generation_segment_completed(self, *, conversation_id: str | None = None,
-                                              **kwargs) -> None:
+                                              **kwargs: Any) -> None:
         """v2 分段完成（wire generation.segment.completed）。"""
 
     async def on_generation_completed(self, *, conversation_id: str | None = None,
                                       conversation_usage: dict | None = None,
-                                      **kwargs) -> None:
+                                      **kwargs: Any) -> None:
         """v2 父完成（wire generation.completed）。
 
         conversation_usage: 批次 3 会话级累计 dict {total, by_model}。
         """
 
     async def on_generation_failed(self, *, conversation_id: str | None = None,
-                                   **kwargs) -> None:
+                                   **kwargs: Any) -> None:
         """v2 父失败（wire generation.failed）。"""
 
     @abstractmethod
-    async def on_message(self, msg) -> None:
+    async def on_message(self, msg: Any) -> None:
         """完整消息 — 流式结束后发送，或非流式消息直接发送。
 
         Args:

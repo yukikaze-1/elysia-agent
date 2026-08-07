@@ -21,12 +21,12 @@ from .manager import ToolManager
 from .tool_descriptor import Tool
 
 __all__ = [
-    # Base classes
+    # 基类
     "ToolPlugin",
     "ToolExecutor",
-    # Management
+    # 管理
     "ToolManager",
-    # Data models
+    # 数据模型
     "ErrorType",
     "Capability",
     "RBACLevel",
@@ -41,7 +41,7 @@ __all__ = [
     "ToolParameter",
     "ToolProgress",
     "ToolResult",
-    # Safety
+    # 安全
     "SafetyProfile",
     "SafetyPipeline",
 ]

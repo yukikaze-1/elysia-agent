@@ -3,6 +3,7 @@
 import os
 import logging
 from datetime import datetime
+from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
@@ -48,14 +49,14 @@ class PromptManager:
             auto_reload=auto_reload,
         )
 
-        def _datetime_filter(value, fmt="%Y-%m-%d %H:%M:%S"):
+        def _datetime_filter(value: Any, fmt: str = "%Y-%m-%d %H:%M:%S"):
             if value is None:
                 return ""
             return datetime.fromtimestamp(float(value)).strftime(fmt)
 
         self.env.filters["datetime"] = _datetime_filter
 
-    def render(self, template_name: str, **kwargs) -> str:
+    def render(self, template_name: str, **kwargs: Any) -> str:
         """渲染整个模板文件。
 
         Args:
@@ -85,7 +86,7 @@ class PromptManager:
             ) from e
 
     def render_macro(
-        self, template_name: str, macro_name: str, **kwargs
+        self, template_name: str, macro_name: str, **kwargs: Any
     ) -> str:
         """渲染模板中的指定 macro。
 

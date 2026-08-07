@@ -255,8 +255,8 @@ def _check_writable_dirs() -> None:
 # ---- 连通性探活 (--full) ----
 # 使用各 backend 的 test() 方法，实际验证 API key 有效性 + 服务功能。
 # LLM: 发送 "hi" + max_tokens=1 的真实请求（~1 token）。
-# TTS: MiniMax → POST /v1/get_voice；GPT-SoVits → GET /health；OpenAI → GET /v1/models。
-# STT: SenseVoice → GET /health；OpenAI → GET /v1/models。
+# TTS 连通性：MiniMax → POST /v1/get_voice；GPT-SoVits → GET /health；OpenAI → GET /v1/models。
+# STT 连通性：SenseVoice → GET /health；OpenAI → GET /v1/models。
 # 每种 backend 的 test() 实现可能不同，但都是该 backend 的官方连通性验证方式。
 
 
@@ -380,7 +380,7 @@ def run(config: Any, full: bool = False) -> bool:
     _check_mongo_env()
     _check_milvus_env()
 
-    # Phase 2: WARN
+    # 阶段 2：WARN
     _check_tts_env(config)
     _check_stt_env(config)
     _check_writable_dirs()

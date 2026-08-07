@@ -15,7 +15,7 @@ from Module.config.field import _Constraint, MISSING, get_constraints, is_requir
 
 
 class Range(_Constraint):
-    """Value must be within [*min*, *max*] (inclusive by default)."""
+    """值必须位于 [*min*, *max*] 区间内（默认含端点）。"""
 
     def __init__(self, min: float | int | None = None, max: float | int | None = None):
         """初始化范围约束。
@@ -40,7 +40,7 @@ class Range(_Constraint):
 
 
 class Choices(_Constraint):
-    """Value must be one of the *allowed* values."""
+    """值必须是 *allowed* 中的其中一个。"""
 
     def __init__(self, allowed: list[Any]):
         """初始化选项约束。
@@ -64,7 +64,7 @@ class Choices(_Constraint):
 
 
 class Regex(_Constraint):
-    """Value (str) must match *pattern* (uses ``re.search`` — matches anywhere)."""
+    """值（str）必须匹配 *pattern*（使用 ``re.search`` —— 任意位置匹配）。"""
 
     def __init__(self, pattern: str, *, message: str | None = None):
         """初始化正则约束。
@@ -88,21 +88,21 @@ class Regex(_Constraint):
 
 
 class Validator:
-    """Post-load validation for a dataclass config instance.
+    """dataclass 配置实例的加载后校验。
 
-    Runs three checks in order:
-    1. Required fields — must not be MISSING.
-    2. Type check — value must be an instance of the annotated type.
-    3. Constraints — each constraint.check(value) must pass.
+    按顺序执行三项检查：
+    1. 必填字段 —— 不能为 MISSING。
+    2. 类型检查 —— 值必须是注解类型的实例。
+    3. 约束 —— 每个 constraint.check(value) 必须通过。
 
-    All errors are collected before raising.
+    抛错前会先收集所有错误。
     """
 
     @staticmethod
     def validate(instance: Any) -> list[ConfigError]:
-        """Validate *instance*. Returns a list of errors (empty = valid).
+        """校验 *instance*，返回错误列表（空 = 通过）。
 
-        Does NOT raise — callers decide how to handle the list.
+        不抛异常 —— 由调用方决定如何处理该列表。
         """
         errors: list[ConfigError] = []
         Validator._validate_one(instance, errors)
@@ -129,10 +129,10 @@ class Validator:
             # 2. type check
             expected_type = hints.get(field_name)
             if expected_type is not None and value is not None:
-                # handle Optional[X] (Union[X, None]) — cannot isinstance against raw Union
+                # 处理 Optional[X]（Union[X, None]）—— 不能直接对原始 Union 做 isinstance
                 origin = get_origin(expected_type)
                 if origin is not None and origin in (Union, types.UnionType):
-                    # Optional[X] = Union[X, None]; X | None = UnionType
+                    # Optional[X] = Union[X, None]；X | None 即 UnionType
                     check_types = [t for t in get_args(expected_type) if t is not type(None)]
                     if not any(isinstance(value, t) for t in check_types):
                         errors.append(ConfigTypeError(class_name, field_name, expected_type, value))

@@ -110,8 +110,8 @@ class Orchestrator:
         self._exec_state: ExecutionState | None = None
 
         # ── 扩展点（v1 不启用）─────────────────────────────────────────────
-        # self._scheduler: Scheduler | None = None
-        # self._event_log: EventLog | None = None
+        # self._scheduler: Scheduler | None = None  # 预留
+        # self._event_log: EventLog | None = None  # 预留
 
     # ── 主循环 ─────────────────────────────────────────────────────────────────
 

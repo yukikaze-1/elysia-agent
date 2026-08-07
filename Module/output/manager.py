@@ -12,7 +12,7 @@
 
 import asyncio
 import logging
-from typing import AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable
 
 from Module.logger import get_caller_logger
 from Module.output.protocol import ChannelCapability, OutputChannel
@@ -69,7 +69,8 @@ class OutputManager:
             result = [c for c in result if capability in c.capabilities]
         return result
 
-    async def _broadcast(self, method: str, *args, channels=None, capability=None, **kwargs):
+    async def _broadcast(self, method: str, *args: Any, channels: list[OutputChannel] | None = None,
+                         capability: ChannelCapability | None = None, **kwargs: Any):
         """向筛选后的通道广播指定方法。单通道失败不影响其他通道。
 
         Args:
@@ -130,7 +131,7 @@ class OutputManager:
 
     async def send(
         self,
-        msg,
+        msg: Any,
         *,
         channels: list[OutputChannel] | None = None,
         capability: ChannelCapability | None = None,
@@ -342,7 +343,7 @@ class OutputManager:
         v2 = [c for c in channels if getattr(c, "protocol_version", 1) >= 2]
         return v1, v2
 
-    async def turn_started(self, ctx, *, channels: list[OutputChannel] | None = None) -> None:
+    async def turn_started(self, ctx: Any, *, channels: list[OutputChannel] | None = None) -> None:
         """生成开始：v2 发 generation.started；v1 无新增（typing/state 由现有路径）。
 
         Args:
@@ -362,7 +363,7 @@ class OutputManager:
             channels=v2,
         )
 
-    async def segment_started(self, ctx, *, channels: list[OutputChannel] | None = None) -> None:
+    async def segment_started(self, ctx: Any, *, channels: list[OutputChannel] | None = None) -> None:
         """分段开始：v2 发 generation.segment.started；v1 无。
 
         Args:
@@ -377,7 +378,7 @@ class OutputManager:
             channels=v2,
         )
 
-    async def text_delta(self, text: str, ctx, *, channels: list[OutputChannel] | None = None) -> None:
+    async def text_delta(self, text: str, ctx: Any, *, channels: list[OutputChannel] | None = None) -> None:
         """文本增量：v1 发 delta；v2 发 generation.delta（deltaSequence 由 ctx 分配）。
 
         Args:
@@ -396,7 +397,7 @@ class OutputManager:
             channels=v2,
         )
 
-    async def segment_completed(self, text: str, ctx, *, tts_active: bool = False,
+    async def segment_completed(self, text: str, ctx: Any, *, tts_active: bool = False,
                                 channels: list[OutputChannel] | None = None) -> None:
         """分段完成：v1 按 TTS 状态发 send("") 或不变；v2 仅活动段发 generation.segment.completed。
 
@@ -422,7 +423,7 @@ class OutputManager:
                 channels=v2,
             )
 
-    async def inner_voice(self, text: str, ctx, *, channels: list[OutputChannel] | None = None) -> None:
+    async def inner_voice(self, text: str, ctx: Any, *, channels: list[OutputChannel] | None = None) -> None:
         """Inner Voice：v1 发 command inner_voice；v2 作为 inner_voice 段（started+completed，含文本）。
 
         Args:
@@ -463,8 +464,8 @@ class OutputManager:
         await self._broadcast("on_expression", expression, intensity=intensity,
                               channels=v1, capability=ChannelCapability.EXPRESSION)
 
-    async def turn_completed(self, finish_reason: str, usage, model: str, mood: str | None,
-                             ctx, *, channels: list[OutputChannel] | None = None,
+    async def turn_completed(self, finish_reason: str, usage: Any, model: str, mood: str | None,
+                             ctx: Any, *, channels: list[OutputChannel] | None = None,
                              conversation_id: str | None = None,
                              conversation_usage: dict | None = None) -> None:
         """父完成：v1 NO-OP（TokenTracker.record 已实时广播 v1 token_usage，防双发）；
@@ -490,7 +491,7 @@ class OutputManager:
         )
 
     async def turn_failed(self, code: str, message: str, retryable: bool, label: str,
-                          ctx, *, channels: list[OutputChannel] | None = None) -> None:
+                          ctx: Any, *, channels: list[OutputChannel] | None = None) -> None:
         """父失败：v1 逐字节复刻现状（\n❌ {label}: {msg[:200]} + send("")）；
         v2 发 generation.failed。
 
@@ -517,7 +518,7 @@ class OutputManager:
             channels=v2,
         )
 
-    async def turn_cancelled(self, ctx, *, channels: list[OutputChannel] | None = None) -> None:
+    async def turn_cancelled(self, ctx: Any, *, channels: list[OutputChannel] | None = None) -> None:
         """取消（用户打断）：v2 发 generation.failed{CANCELLED}；v1 不发——
         现状打断无 ❌ delta（state interrupted 由 FSM 承担），保持 v1 兼容。
 

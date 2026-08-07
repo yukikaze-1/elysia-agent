@@ -10,7 +10,7 @@ def is_dataclass_instance(obj: Any) -> bool:
 
 
 def safe_get_type_hints(target_type: type) -> dict[str, type]:
-    """Return resolved type hints for *target_type*, or empty dict on failure."""
+    """解析 *target_type* 的类型注解，失败时返回空 dict。"""
     import logging
     import typing
 

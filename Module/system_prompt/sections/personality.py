@@ -1,4 +1,5 @@
 """C1: 人格。"""
+from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
 
 
@@ -23,7 +24,7 @@ class PersonalitySection(Jinja2Section):
         self._user_name = ""
         self._user_pronoun = "她"
 
-    def set_context(self, **kwargs) -> None:
+    def set_context(self, **kwargs: Any) -> None:
         self._user_name = kwargs.get("user_name", "")
         self._user_pronoun = kwargs.get("user_pronoun", "她")
 

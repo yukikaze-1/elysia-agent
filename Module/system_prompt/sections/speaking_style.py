@@ -1,4 +1,5 @@
 """C6: 说话方式。"""
+from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
 
 
@@ -17,7 +18,7 @@ class SpeakingStyleSection(Jinja2Section):
         self._user_name = ""
         self._speaking_style_c6 = ""
 
-    def set_context(self, **kwargs) -> None:
+    def set_context(self, **kwargs: Any) -> None:
         self._user_name = kwargs.get("user_name", "")
         self._speaking_style_c6 = kwargs.get("speaking_style_c6", "")
 

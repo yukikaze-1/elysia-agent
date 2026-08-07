@@ -39,10 +39,10 @@ class WorkflowDebugAPI:
     """
 
     def __init__(self, task_system: WorkflowEngine) -> None:
-        """Initialize the debug API.
+        """初始化 debug API。
 
         Args:
-            task_system: WorkflowEngine instance to collect debug data from.
+            task_system: 用于收集 debug 数据的 WorkflowEngine 实例。
         """
         self._ts = task_system
         self._subscribers: dict[str, asyncio.Queue[dict]] = {}
@@ -54,14 +54,14 @@ class WorkflowDebugAPI:
     # ── 生命周期 ───────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """Start the background polling loop if not already running."""
+        """启动后台轮询循环（若尚未运行）。"""
         if self._poll_task is not None:
             return
         self._poll_task = asyncio.create_task(self._poll_loop())
         logger.info("WorkflowDebugAPI: 轮询已启动 (interval=%ss)", _POLL_INTERVAL)
 
     async def stop(self) -> None:
-        """Stop the polling loop and notify all subscribers to disconnect."""
+        """停止轮询循环并通知所有订阅者断开。"""
         if self._poll_task is not None:
             self._poll_task.cancel()
             try:
@@ -256,10 +256,10 @@ class WorkflowDebugAPI:
         return sid, q
 
     async def unsubscribe(self, sid: str) -> None:
-        """Remove a subscriber.
+        """移除一个订阅者。
 
         Args:
-            sid: Subscriber ID returned by subscribe().
+            sid: 由 subscribe() 返回的订阅者 ID。
         """
         self._subscribers.pop(sid, None)
         logger.info("WorkflowDebugAPI: subscriber %s 已断开 (total=%d)", sid, len(self._subscribers))

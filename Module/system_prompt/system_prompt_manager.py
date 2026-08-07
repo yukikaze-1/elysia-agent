@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from typing import Any
 from Module.system_prompt.protocol import PromptSection
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ class SystemPromptManager:
                 parts.append(result)
         return "\n\n".join(parts)
 
-    def set_context(self, **kwargs) -> None:
+    def set_context(self, **kwargs: Any) -> None:
         """透传 per-request 上下文给所有 section。
 
         Args:

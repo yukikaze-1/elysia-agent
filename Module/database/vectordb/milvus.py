@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+from typing import Any
 
 from pymilvus import DataType, MilvusClient
 
@@ -61,7 +62,7 @@ class MilvusBackend(VectorDBBackend):
         replace: bool = False,
         index_preset: str = "default",
         metric_type: str | None = None,
-        **schema_kwargs,
+        **schema_kwargs: Any,
     ) -> None:
         preset = INDEX_PRESETS.get(index_preset)
         if preset is None:
@@ -79,7 +80,7 @@ class MilvusBackend(VectorDBBackend):
                 )
             await asyncio.to_thread(self._client.drop_collection, name)
 
-        # Schema: id (auto) + embedding (float vector)
+        # Schema：id（自增）+ embedding（float 向量）
         schema = self._client.create_schema(
             auto_id=True, enable_dynamic_field=True
         )

@@ -1,4 +1,4 @@
-"""PromptSection ABC + StaticSection + Jinja2Section。"""
+"""PromptSection 抽象基类 + StaticSection + Jinja2Section。"""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from jinja2 import Environment, TemplateSyntaxError
 
@@ -55,7 +56,7 @@ class PromptSection(ABC):
         """
         return []
 
-    def set_context(self, **kwargs) -> None:
+    def set_context(self, **kwargs: Any) -> None:
         """注入 per-request 上下文。
 
         子类覆盖以接收需要的参数（如 user_name、mood 等）。
@@ -116,7 +117,7 @@ class Jinja2Section(PromptSection):
         """
         return Path(self._template_path).read_text("utf-8")
 
-    def _render_template(self, **vars) -> str:
+    def _render_template(self, **vars: Any) -> str:
         """用给定变量渲染模板。
 
         Args:
