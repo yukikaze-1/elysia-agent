@@ -89,6 +89,8 @@ async def ltm_insert_handler(request: web.Request) -> web.Response:
             return _protocol_error_response("CONTRACT_VALIDATION", "text 不能为空", 400)
         mem_type = body.get("memory_type", "note")
         poignancy = int(body.get("poignancy", 5))
+    except web.HTTPRequestEntityTooLarge:
+        raise  # chunked 超限放行——交中间件统一 413 信封（F13）
     except (json.JSONDecodeError, ValueError):
         from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("CONTRACT_VALIDATION", "无效的请求体", 400)

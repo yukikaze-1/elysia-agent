@@ -271,6 +271,8 @@ def register_api_routes(app: web.Application) -> None:
             body = await request.json()
             service = body.get("service", "")
             entry = body.get("entry", {})
+        except web.HTTPRequestEntityTooLarge:
+            raise  # chunked 超限放行——交中间件统一 413 信封（F13）
         except Exception:
             return web.json_response(rest_contract.ApiFail(error="无效的请求体").wire_dict(), status=400)
         if service not in ("llm", "stt", "tts"):
@@ -343,6 +345,8 @@ def register_api_routes(app: web.Application) -> None:
         """
         try:
             body = await request.json()
+        except web.HTTPRequestEntityTooLarge:
+            raise  # chunked 超限放行——交中间件统一 413 信封（F13）
         except Exception:
             return web.json_response(rest_contract.ApiFail(error="无效的请求体").wire_dict(), status=400)
 
@@ -494,6 +498,8 @@ def register_api_routes(app: web.Application) -> None:
         # body 容错：缺省/非法 JSON → 空 dict（voice_id 可选）
         try:
             payload = await request.json()
+        except web.HTTPRequestEntityTooLarge:
+            raise  # chunked 超限放行——交中间件统一 413 信封（F13）
         except Exception:
             payload = {}
         voice_id = payload.get("voice_id") if isinstance(payload, dict) else None
@@ -587,6 +593,8 @@ def register_api_routes(app: web.Application) -> None:
             url = f"/uploads/images/{saved_name}"
             return web.json_response(
                 rest_contract.ImageUploadResponse(url=url, mime=mime, size=len(data)).wire_dict())
+        except web.HTTPRequestEntityTooLarge:
+            raise  # chunked 超限放行——交中间件统一 413 信封（F13）
         except Exception as e:
             # Task 9（批次 8a）：信封只给通用文案，str(e) 只进日志——防绝对路径/内部细节泄漏
             logger.warning("图片上传失败: %s", e)
@@ -636,11 +644,15 @@ def register_api_routes(app: web.Application) -> None:
         total_bytes = 0  # 聚合字节累计（多文件跨 read_chunk 相加，超 cms 即中断）
         try:
             reader = await request.multipart()
+        except web.HTTPRequestEntityTooLarge:
+            raise  # chunked 超限放行——交中间件统一 413 信封（F13）
         except Exception:
             return _protocol_error_response("INVALID_REQUEST", "无效的 multipart 请求", 400)
         while True:
             try:
                 field = await reader.next()
+            except web.HTTPRequestEntityTooLarge:
+                raise  # chunked 超限放行——交中间件统一 413 信封（F13）
             except Exception:
                 return _protocol_error_response("INVALID_REQUEST", "multipart 解析失败", 400)
             if field is None:
@@ -1043,6 +1055,8 @@ def register_api_routes(app: web.Application) -> None:
 
             url = f"/uploads/desktop/{saved_name}"
             return web.json_response({"url": url})
+        except web.HTTPRequestEntityTooLarge:
+            raise  # chunked 超限放行——交中间件统一 413 信封（F13）
         except Exception as e:
             # Task 9（批次 8a）：信封只给通用文案，str(e) 只进日志——防绝对路径/内部细节泄漏
             logger.warning("desktop 附件上传失败: %s", e)
@@ -1069,6 +1083,8 @@ def register_api_routes(app: web.Application) -> None:
             content = body.get("content")
             user_name = body.get("user_name", agent.user_name)
             text = body.get("text", "")
+        except web.HTTPRequestEntityTooLarge:
+            raise  # chunked 超限放行——交中间件统一 413 信封（F13）
         except Exception:
             return web.json_response(rest_contract.ApiFail(error="无效的 JSON 请求体").wire_dict(), status=400)
 

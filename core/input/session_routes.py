@@ -423,6 +423,8 @@ async def sessions_create_handler(request: web.Request) -> web.Response:
     agent = request.app["agent"]
     try:
         body = await request.json()
+    except web.HTTPRequestEntityTooLarge:
+        raise  # chunked 超限放行——交中间件统一 413 信封（F13）
     except Exception:
         return _error_response("CONTRACT_VALIDATION", "无效的 JSON 请求体")
     title = body.get("title")
@@ -460,6 +462,8 @@ async def sessions_rename_handler(request: web.Request) -> web.Response:
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
     try:
         body = await request.json()
+    except web.HTTPRequestEntityTooLarge:
+        raise  # chunked 超限放行——交中间件统一 413 信封（F13）
     except Exception:
         return _error_response("CONTRACT_VALIDATION", "无效的 JSON 请求体")
     title = body.get("title")

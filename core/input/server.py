@@ -460,6 +460,8 @@ def create_app(
         try:
             body = await request.json()
             name = body.get("name", "")
+        except web.HTTPRequestEntityTooLarge:
+            raise  # chunked 超限放行——交中间件统一 413 信封（F13）
         except Exception:
             return web.json_response(
                 {"ok": False, "error": "无效的请求体"}, status=400,

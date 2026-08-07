@@ -141,6 +141,8 @@ async def l2_rollback_handler(request: web.Request) -> web.Response:
     try:
         body = await request.json()
         target_version = int(body["version"])
+    except web.HTTPRequestEntityTooLarge:
+        raise  # chunked 超限放行——交中间件统一 413 信封（F13）
     except (ValueError, KeyError, TypeError):
         from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("CONTRACT_VALIDATION", "缺少 version 或格式错误", 400)
@@ -200,6 +202,8 @@ async def character_rollback_handler(request: web.Request) -> web.Response:
         body = await request.json()
         content_type = body["type"]
         target_version = int(body["version"])
+    except web.HTTPRequestEntityTooLarge:
+        raise  # chunked 超限放行——交中间件统一 413 信封（F13）
     except (ValueError, KeyError, TypeError):
         from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("CONTRACT_VALIDATION", "缺少 type/version 或格式错误", 400)

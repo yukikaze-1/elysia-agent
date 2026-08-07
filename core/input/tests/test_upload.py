@@ -391,3 +391,102 @@ class TestStaticMounts:
         # 不存在的 legacy 文件 → 404（路由已挂载，非 500/502）
         resp = await client.get("/uploads/images/not-exist.png")
         assert resp.status == 404
+
+
+class TestF13Chunked413Envelope:
+    """F13：chunked（无 Content-Length）超限 body → 413 REQUEST_TOO_LARGE 信封（非 400）。
+
+    中间件 Content-Length 预检对 chunked 失效，aiohttp 在读体时抛
+    HTTPRequestEntityTooLarge——handler 宽 except Exception 必须放行（re-raise）
+    交给 server.py `_make_payload_middleware` 统一 413 信封，否则被吞成 400。
+    """
+
+    async def _chunked_json(self):
+        """chunked JSON body（async generator → 无 Content-Length）。"""
+        yield b'{"content": "'
+        yield b"x" * 5000
+        yield b'"}'
+
+    async def _chunked_multipart(self):
+        """chunked multipart body（async generator → 无 Content-Length）。"""
+        yield b"--boundary8c\r\n"
+        yield b'Content-Disposition: form-data; name="kind"\r\n\r\n'
+        yield b"image\r\n"
+        yield b"--boundary8c\r\n"
+        yield b'Content-Disposition: form-data; name="files[]"; filename="big.png"\r\n'
+        yield b"Content-Type: application/octet-stream\r\n\r\n"
+        yield b"\x00" * 5000
+        yield b"\r\n--boundary8c--\r\n"
+
+    @pytest.mark.asyncio
+    async def test_chat_chunked_overlimit_413_envelope(self, aiohttp_client):
+        """chunked（无 Content-Length）超限 json → 413 REQUEST_TOO_LARGE（非 400）。"""
+        from unittest.mock import MagicMock
+        from core.agent import RunState
+        from core.input.server import create_app
+
+        agent = MagicMock()
+        agent.output = MagicMock()
+        agent.bus = MagicMock()
+        agent._state = RunState.RUNNING
+        agent.process_message = None
+        app = create_app(agent, serve_static=False, max_request_bytes=100)
+        client = await aiohttp_client(app)
+        resp = await client.post("/api/chat", data=self._chunked_json(),
+                                 headers={"Content-Type": "application/json"})
+        assert resp.status == 413
+        assert (await resp.json())["code"] == "REQUEST_TOO_LARGE"
+
+    @pytest.mark.asyncio
+    async def test_upload_chunked_overlimit_413_envelope(self, make_app, aiohttp_client):
+        """chunked multipart 超限 → 413 REQUEST_TOO_LARGE（非 400/415/500）。
+
+        multipart 读体走 read_chunk（不经 request.read()/field.read()），aiohttp 的
+        client_max_size 不在该路径触发——聚合上限由 handler 自算 cms（agent 配置同源）
+        total_bytes 强制。收敛 handler cms 使小 body 即超限。
+        """
+        agent, app = make_app()
+        agent.config.server.max_request_bytes = 100  # 收敛 handler 自算 cms（与 create_app 同源语义）
+        client = await aiohttp_client(app)
+        resp = await client.post(
+            "/api/uploads", data=self._chunked_multipart(),
+            headers={"Content-Type": "multipart/form-data; boundary=boundary8c"})
+        assert resp.status == 413
+        assert (await resp.json())["code"] == "REQUEST_TOO_LARGE"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_sessions_create_chunked_overlimit_413_envelope(self, aiohttp_client):
+        """chunked 超限 json → POST /api/sessions → 413（非 400 CONTRACT_VALIDATION）。"""
+        from unittest.mock import MagicMock
+        from core.agent import RunState
+        from core.input.server import create_app
+
+        agent = MagicMock()
+        agent.output = MagicMock()
+        agent.bus = MagicMock()
+        agent._state = RunState.RUNNING
+        app = create_app(agent, serve_static=False, max_request_bytes=100)
+        client = await aiohttp_client(app)
+        resp = await client.post("/api/sessions", data=self._chunked_json(),
+                                 headers={"Content-Type": "application/json"})
+        assert resp.status == 413
+        assert (await resp.json())["code"] == "REQUEST_TOO_LARGE"
+
+    @pytest.mark.asyncio
+    async def test_ltm_insert_chunked_overlimit_413_envelope(self, aiohttp_client):
+        """chunked 超限 json → POST /debug/api/ltm → 413（回归守卫）。"""
+        from unittest.mock import MagicMock
+        from core.agent import RunState
+        from core.input.server import create_app
+
+        agent = MagicMock()
+        agent.output = MagicMock()
+        agent.bus = MagicMock()
+        agent._state = RunState.RUNNING
+        app = create_app(agent, serve_static=False, max_request_bytes=100)
+        client = await aiohttp_client(app)
+        resp = await client.post("/debug/api/ltm", data=self._chunked_json(),
+                                 headers={"Content-Type": "application/json"})
+        assert resp.status == 413
+        assert (await resp.json())["code"] == "REQUEST_TOO_LARGE"
