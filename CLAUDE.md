@@ -453,7 +453,8 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 ## 基础规则：
 
 1. README 用中文写。
-2. 代码注释用中文。
+2. 代码注释用中文（docstring 同理；中英混合注释——中文嵌英文技术术语——可接受）。
 3. 使用 conda 环境: `conda activate Elysia`。
 4. 所有敏感信息必须通过环境变量传递。
 5. 新增 core/tools 插件必须包含 `plugin.py` + `config.yaml` + `README.md` 三元组。
+6. 生产代码函数参数必须类型注解（`make lint` 强制 ANN001/002/003；测试文件豁免——pytest fixture 动态类型惯例，`**kwargs: Any` / `*args: Any` 兜底）。
