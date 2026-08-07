@@ -317,8 +317,13 @@ def create_app(
         return hmac.compare_digest(
             request.headers.get("Authorization", ""), expected)
 
+    # 并发 WS 硬上限（批次 8c F14）：闭包计数 check+自增在同一事件循环调度内原子
+    # （无 await 分隔），杜绝 TOCTOU 预检（旧实现对 output._channels 计数，并发握手
+    # 或陈旧 channel 会误判）；连接关闭（handle_ws 返回）finally 自减。
+    _ws_active = 0
+
     async def ws_handler(request: web.Request) -> web.WebSocketResponse:
-        """WebSocket 连接处理入口（含并发上限检查）。
+        """WebSocket 连接处理入口（含并发上限硬检查）。
 
         Args:
             request: aiohttp Request。
@@ -326,14 +331,16 @@ def create_app(
         Returns:
             web.WebSocketResponse: WebSocket 连接对象。
         """
+        nonlocal _ws_active
         if max_ws_connections and max_ws_connections > 0:
-            from Module.output import WebSocketChannel
-            channels = getattr(agent.output, "_channels", None)
-            if isinstance(channels, (list, tuple)):
-                count = sum(1 for ch in channels if isinstance(ch, WebSocketChannel))
-                if count >= max_ws_connections:
-                    return _protocol_error_response("CONNECTION_LIMITED", "并发连接超限", 503,
-                                                    retryable=True)
+            if _ws_active >= max_ws_connections:
+                return _protocol_error_response("CONNECTION_LIMITED", "并发连接超限", 503,
+                                                retryable=True)
+            _ws_active += 1
+            try:
+                return await handle_ws(request, agent, wake_word_enabled)
+            finally:
+                _ws_active -= 1
         return await handle_ws(request, agent, wake_word_enabled)
 
     app.router.add_get("/ws", ws_handler)

@@ -1,11 +1,24 @@
-"""批次 1 限制保护测试：请求体超限 413 REQUEST_TOO_LARGE + 并发 WS 超限 503 CONNECTION_LIMITED（marker=service）。"""
+"""批次 1 限制保护测试：请求体超限 413 REQUEST_TOO_LARGE + 并发 WS 超限 503 CONNECTION_LIMITED（marker=service）。
 
+批次 8c（F14）：并发握手硬上限——闭包计数 check+自增原子，非 TOCTOU 预检。
+"""
+
+import asyncio
 import json
 
 import pytest
 
 from frontend_contract.rest import ProtocolError
 from core.input.tests.test_server import _make_agent
+
+
+async def _open_ws(client):
+    """打开 WS 连接（成功返回 ws，超限 503 返回 None）。"""
+    import aiohttp
+    try:
+        return await client.session.ws_connect(client.make_url("/ws"))
+    except aiohttp.WSServerHandshakeError:
+        return None
 
 
 @pytest.mark.service
@@ -74,5 +87,25 @@ class TestWsConcurrencyLimit:
                     pass
             assert exc.value.status == 503
             await ws1.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_ws_concurrent_handshake_hard_limit(self, aiohttp_client):
+        """max=1 下并发两个握手 → 恰一个成功（硬上限非 TOCTOU 预检）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        await agent.start()
+        app = create_app(agent, serve_static=False, max_ws_connections=1)
+        client = await aiohttp_client(app)
+        try:
+            # 两连接保持打开到两个握手都结束（避免首个 close 释放槽位引入竞态）
+            ws1, ws2 = await asyncio.gather(_open_ws(client), _open_ws(client))
+            ok = sum(1 for ws in (ws1, ws2) if ws is not None)
+            assert ok == 1
+            for ws in (ws1, ws2):
+                if ws is not None:
+                    await ws.close()
         finally:
             await agent.stop()
