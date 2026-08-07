@@ -64,6 +64,23 @@ class TestRequestSizeLimit:
         # 通过大小校验 → 走到 handler（无 process_message → 400/500，但非 413）
         assert resp.status != 413
 
+    @pytest.mark.asyncio
+    async def test_max_request_bytes_zero_sets_unlimited_cms(self, aiohttp_client):
+        """max_request_bytes=0 → app.client_max_size==0（aiohttp 原生不限），非回落 64MB。"""
+        from unittest.mock import MagicMock
+        from core.agent import RunState
+        from core.input.server import create_app
+
+        agent = MagicMock()
+        agent.output = MagicMock()
+        agent.bus = MagicMock()
+        agent._state = RunState.RUNNING
+        agent.process_message = None
+        app0 = create_app(agent, serve_static=False, max_request_bytes=0)
+        assert app0._client_max_size == 0          # 修复前为 64MB → 红
+        app_def = create_app(agent, serve_static=False, max_request_bytes=None)
+        assert app_def._client_max_size == 64 * 1024 * 1024   # 缺省仍 64MB
+
 
 @pytest.mark.service
 class TestWsConcurrencyLimit:

@@ -633,8 +633,11 @@ def register_api_routes(app: web.Application) -> None:
         repo = agent.attachment_repo
         # 聚合上限（spec §4.1 Critical #4 强制）：chunked（无 Content-Length）时中间件
         # Content-Length 预检失效 → handler 内累计字节强制整体 ≤ cms。取 agent 配置同源
-        # （create_app 的 client_max_size 也是它，缺省 64MB）。
-        cms = getattr(cfg, "max_request_bytes", None) or 64 * 1024 * 1024
+        # （create_app 的 client_max_size 也是它，缺省 64MB）。is not None 语义：0 → 0
+        # 不限（与 server cms 同步），None/缺省 → 64MB（falsy 回落会误吞 0）。
+        cms = getattr(cfg, "max_request_bytes", None)
+        if cms is None:
+            cms = 64 * 1024 * 1024
 
         # 收集 multipart 字段（kind 文本 + files[] 文件；顺序无关，FormData 不保证）
         kind = ""
@@ -679,7 +682,8 @@ def register_api_routes(app: web.Application) -> None:
                         return _protocol_error_response(
                             "REQUEST_TOO_LARGE", "单个文件过大", 413)
                 total_bytes += len(data)
-                if total_bytes > cms:
+                # cms=0 不限（与 app 级 client_max_size 同源语义）；cms>0 时累计强制整体上限
+                if cms and total_bytes > cms:
                     # 聚合超限：立即 413 中断，不继续读完 body（chunked 无 Content-Length
                     # 时中间件拦不住，这里才是整体上限的强制点）
                     return _protocol_error_response(

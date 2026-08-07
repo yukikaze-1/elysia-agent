@@ -295,6 +295,16 @@ class TestUploadEndpoint:
         assert not _ar._registry  # noqa: SLF001
 
     @pytest.mark.asyncio
+    async def test_upload_reads_max_request_bytes_from_config(self, make_app, aiohttp_client):
+        """/api/uploads 聚合上限读 agent.config.server.max_request_bytes。"""
+        agent, app = make_app()  # app cms 缺省 64MB，handler cms 走 config
+        agent.config.server.max_request_bytes = 100  # noqa: SLF001 — 注入小上限
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="big.bin", content=b"\x00" * 1000, kind="file")
+        assert resp.status == 413
+        assert (await resp.json())["code"] == "REQUEST_TOO_LARGE"
+
+    @pytest.mark.asyncio
     async def test_no_bearer_401(self, make_app, aiohttp_client):
         """配置 AGENT_ACCESS_TOKEN 时无 Bearer → 401 AUTH_REQUIRED。"""
         agent, app = make_app(access_token="secret-token")

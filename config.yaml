@@ -28,7 +28,7 @@ server:
   # attachment_sig_secret: 通过环境变量 ATTACHMENT_SIG_SECRET 设置。
   #   批次 7 附件签名密钥（HMAC 签名 /api/attachments/{id} 下载 URL）。
   #   AGENT_ACCESS_TOKEN 配置而本密钥未配置时，上传响应省略 signedUrl（fail-closed）。
-  # max_request_bytes: 业务请求体上限，默认 64MB（批次 7：通用上传聚合体 + 既有 10MB 图片）。
+  # max_request_bytes: 业务请求体上限，默认 64MB；0 = 不限（None/缺省回落 64MB）。
   image_max_mb: 10                     # 图片上传上限 (MB)
   image_allowed_types:
     - image/png

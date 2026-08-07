@@ -156,7 +156,8 @@ def _make_payload_middleware(cms: int):
 
     @web.middleware
     async def _payload(request: web.Request, handler):
-        if request.content_length is not None and request.content_length > cms:
+        # cms=0 时不预检（不限语义；aiohttp client_max_size=0 原生不限，亦无异常可兜）
+        if cms and request.content_length is not None and request.content_length > cms:
             return _protocol_error_response("REQUEST_TOO_LARGE", "请求体过大", 413)
         try:
             return await handler(request)
@@ -269,13 +270,15 @@ def create_app(
         access_token: if non-empty, /ws, 业务 /api/*, /uploads/* require
             Authorization: Bearer <access_token>（产品认证，与 auth_token 权限域分离）。
         max_ws_connections: 并发 WS 连接上限（0/None 不限）。超出拒绝升级（503 CONNECTION_LIMITED）。
-        max_request_bytes: 业务请求体上限（client_max_size，app 级；multipart 除外）。
+        max_request_bytes: 业务请求体上限（client_max_size，app 级；0=不限，None/缺省 64MB；
+            multipart 除外——upload_handler 同源同步）。
 
     Returns:
         web.Application: Configured aiohttp Application instance.
     """
-    # 请求体上限：app 级 client_max_size（aiohttp 无按路由选项；multipart 手工限制不受其约束）
-    cms = max_request_bytes if max_request_bytes else 64 * 1024 * 1024
+    # 请求体上限：app 级 client_max_size（aiohttp 无按路由选项；multipart 手工限制不受其约束）。
+    # is not None 语义：0 → 0（aiohttp 原生不限），None/缺省 → 64MB（falsy 回落会误吞 0）。
+    cms = max_request_bytes if max_request_bytes is not None else 64 * 1024 * 1024
     app = web.Application(client_max_size=cms)
     # 请求体超限 → 413 REQUEST_TOO_LARGE 信封（恒挂载）
     app.middlewares.append(_make_payload_middleware(cms))
