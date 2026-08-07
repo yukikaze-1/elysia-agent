@@ -440,7 +440,7 @@ class DesktopCallStatus(ContractModel):
     createdAt: str = Field(description="创建时间（UTC ISO）")
     expiresAt: str = Field(description="过期时间（UTC ISO）")
     result: Optional[dict[str, Any]] = Field(
-        default=None, description="结果（{output,attachments,execution_summary}），可缺省")
+        default=None, description="结果（{output,attachments,executionSummary}），可缺省；attachments[] 键 {url,mimeType,label}")
     error: Optional[dict[str, Any]] = Field(default=None, description="错误（{code,message}），可缺省")
 
 

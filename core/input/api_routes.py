@@ -893,12 +893,29 @@ def register_api_routes(app: web.Application) -> None:
     def _desktop_call_to_status(doc: dict) -> rest_contract.DesktopCallStatus:
         """repo 调用文档 → 契约 DesktopCallStatus（status 用 repo 枚举，spec §9 映射权威）。
 
+        result 为 REST 边界转换：repo 存 snake 键（output/attachments/execution_summary，
+        attachments[].mime_type），wire 归一 camelCase（executionSummary/mimeType）——
+        repo 存储不改，仅出站转换。
+
         Args:
             doc: DesktopCallRepository.get() 返回的调用文档。
 
         Returns:
             rest_contract.DesktopCallStatus：查询响应。
         """
+        result = doc.get("result")
+        if isinstance(result, dict):
+            result = dict(result)
+            if "execution_summary" in result:
+                result["executionSummary"] = result.pop("execution_summary")
+            attachments = result.get("attachments")
+            if isinstance(attachments, list):
+                result["attachments"] = [
+                    {"url": a.get("url"),
+                     "mimeType": a.get("mime_type", a.get("mimeType")),
+                     "label": a.get("label")}
+                    for a in attachments if isinstance(a, dict)
+                ]
         return rest_contract.DesktopCallStatus(
             callId=doc.get("call_id") or "",
             toolName=doc.get("tool_name") or "",
@@ -908,7 +925,7 @@ def register_api_routes(app: web.Application) -> None:
             status=doc.get("status") or "pending",
             createdAt=doc.get("created_at") or "",
             expiresAt=doc.get("expires_at") or "",
-            result=doc.get("result"),
+            result=result,
             error=doc.get("error"),
         )
 

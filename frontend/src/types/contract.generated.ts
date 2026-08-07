@@ -1464,7 +1464,7 @@ export interface DesktopCallStatus {
   createdAt: string
   /** 过期时间（UTC ISO） */
   expiresAt: string
-  /** 结果（{output,attachments,execution_summary}），可缺省 */
+  /** 结果（{output,attachments,executionSummary}），可缺省；attachments[] 键 {url,mimeType,label} */
   result?: Record<string, unknown>
   /** 错误（{code,message}），可缺省 */
   error?: Record<string, unknown>

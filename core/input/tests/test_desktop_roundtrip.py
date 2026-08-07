@@ -12,7 +12,10 @@ tool_approval 版本门控，本文件补完整往返闭环）：
   `offline → succeeded`（BE-043「重传结果」闭环）；**重连不自动重投**（新连接无二次
   tool.request）；
 - **幂等**：同轮两条同参 `desktop.file.read` 并发 → 桥锁内去重仅一次投递（单 tool.request）；
-- **篡改**：回传改 paramHash → 拒绝 + Agent 及时收到失败（非挂 120s 超时）。
+- **篡改**：回传改 paramHash → 拒绝 + Agent 及时收到失败（非挂 120s 超时）；
+- **tools/calls camelCase（批次 8c F9）**：`GET /api/tools/calls/{id}` result 键归
+  camelCase（execution_summary→executionSummary、attachments[].mime_type→mimeType），
+  repo 存储 snake 键不变，REST 边界转换。
 
 Fake 约定（spec §11）：多轮 tool-calling fake LLM（`_ToolCallingLLM`，test_v2_generation.py）
 + `_inject_fake_storage`（已注入 DesktopCallRepository + `bridge._repo` 双引用同步，
@@ -465,3 +468,36 @@ class TestDesktopIdempotencyTamper:
         """轮询等工具结果落盘（短超时——篡改拒绝应立即 resolve）。"""
         await _until(lambda: _desktop_result(agent, tool_name) is not None, timeout=timeout)
         return _desktop_result(agent, tool_name)
+
+
+# ============================================================================
+# tools/calls REST 边界 camelCase（批次 8c F9）
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_tools_call_result_camel_case(aiohttp_client):
+    """GET /api/tools/calls/{id} result 键归 camelCase（executionSummary/mimeType）。
+
+    repo 存储仍为 snake 键（execution_summary/mime_type），转换只在 REST 边界；
+    测试经注入的 fake desktop repo 直接 upsert snake 键 doc 验证归一。
+    """
+    from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
+    from core.input.server import create_app
+
+    agent = _make_agent_with(_UsageLLM())
+    await agent.start()
+    await agent._desktop_call_repo.upsert({  # noqa: SLF001
+        "call_id": "call_1", "tool_name": "t", "tool_version": "1", "runtime": "desktop",
+        "arguments_hash": "h", "status": "succeeded", "created_at": "t", "expires_at": "t2",
+        "result": {"output": "o", "execution_summary": "s",
+                   "attachments": [{"url": "u", "mime_type": "image/png", "label": "l"}]},
+    })
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+    try:
+        resp = await client.get("/api/tools/calls/call_1")
+        data = await resp.json()
+        assert data["result"]["executionSummary"] == "s"
+        assert data["result"]["attachments"][0]["mimeType"] == "image/png"
+    finally:
+        await agent.stop()

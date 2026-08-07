@@ -14,7 +14,9 @@
 - future 唯一：超时后晚到 result → 不抛 InvalidStateError、repo 记录 result 不覆盖
   expired 枚举（终态守卫，mark 返回 False 但字段已写）；
 - rejected/cancelled 迁移：handle_status{rejected} → ToolResult.fail(CANCELLED) + repo
-  rejected；cancel_call → repo cancelled + future resolve(CANCELLED)。
+  rejected；cancel_call → repo cancelled + future resolve(CANCELLED)；
+- _map_terminal（批次 8c F8）：output 空时 content 回退 executionSummary（llm_summary
+  同步回退）；output 非空时 content 保持 output。
 
 Fake 约定：注入 FakeDesktopRepo（镜像 Task 3 repo 的 mark 迁移守卫语义——终态晚到
 result/error 写字段但返回 False、offline→终态合法）；deliver 回调记录投递帧。
@@ -26,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from core.desktop.bridge import DesktopToolBridge
+from frontend_contract.ws_message import ToolStatusEnum, ToolStatusMessage
 from Module.tool.protocol import ErrorType
 
 pytestmark = pytest.mark.unit
@@ -604,3 +607,26 @@ class TestLifecycleAndQuery:
     async def test_save_all_noop(self):
         repo, bridge, frames = _make_bridge()
         await bridge.save_all()
+
+
+# ============================================================================
+# _map_terminal output 空回退 executionSummary（批次 8c F8）
+# ============================================================================
+
+def test_map_terminal_empty_output_falls_back_to_summary():
+    """output 空 → content 回退 executionSummary（llm_summary 同步回退）。"""
+    msg = ToolStatusMessage(toolName="desktop.screen.capture", status=ToolStatusEnum.RESULT,
+                            callId="call_1", toolVersion="1", runtime="desktop", paramHash="h",
+                            output="", executionSummary="截图已保存")
+    _s, result_field, _e, tool_result = DesktopToolBridge._map_terminal(msg)
+    assert tool_result.content == "截图已保存"
+    assert tool_result.llm_summary == "截图已保存"
+
+
+def test_map_terminal_nonempty_output_keeps_output():
+    """output 非空 → content 保持 output（不回退 executionSummary）。"""
+    msg = ToolStatusMessage(toolName="t", status=ToolStatusEnum.RESULT,
+                            callId="call_1", toolVersion="1", runtime="desktop", paramHash="h",
+                            output="o", executionSummary="s")
+    _s, _rf, _e, tool_result = DesktopToolBridge._map_terminal(msg)
+    assert tool_result.content == "o"

@@ -450,7 +450,7 @@ class DesktopToolBridge:
                 "execution_summary": msg.executionSummary,
             }
             images, files = DesktopToolBridge._split_attachments(msg.attachments)
-            content = msg.output or ""
+            content = msg.output or (msg.executionSummary or "")
             llm_summary = msg.executionSummary or content
             tool_result = ToolResult.ok(
                 name=tool_name, content=content, duration_ms=0.0,
