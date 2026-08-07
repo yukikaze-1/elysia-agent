@@ -1,14 +1,20 @@
-# Elysia Agent — 数据库服务 (MongoDB + Milvus)
+# Elysia Agent — 数据库服务 (MongoDB + Milvus + etcd + MinIO)
 #
 # 启动: docker compose up -d
 # 停止: docker compose down
 # 清除数据: docker compose down -v
 #
 # 端口与 .env 默认值一致，无需额外配置。
+#
+# N5095 部署实录（docs/elysia-install-issues.md）：
+# - mongo:4.4 —— MongoDB 5.0+ 强制要求 CPU 支持 AVX 指令集，4.4 是最后支持
+#   非 AVX CPU 的版本（无 AVX 的机器用 mongo:7 会 exit 132 重启循环）。
+# - etcd + MinIO —— Milvus standalone 需外部 etcd/对象存储（UseEmbed=false），
+#   官方标准三件套配置；仅 milvus 单容器会刷 etcd 连接失败、19530 端口不通。
 
 services:
   mongodb:
-    image: mongo:7
+    image: mongo:4.4
     container_name: elysia-mongo
     ports:
       - "27017:27017"
@@ -16,17 +22,52 @@ services:
       - mongo_data:/data/db
     restart: unless-stopped
 
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.14
+    container_name: elysia-etcd
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - etcd_data:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    container_name: elysia-minio
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    restart: unless-stopped
+
   milvus:
     image: milvusdb/milvus:v2.4.0
     container_name: elysia-milvus
     command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
     ports:
       - "19530:19530"
       - "9091:9091"
     volumes:
       - milvus_data:/var/lib/milvus
+    depends_on:
+      - etcd
+      - minio
     restart: unless-stopped
 
 volumes:
   mongo_data:
+  etcd_data:
+  minio_data:
   milvus_data:

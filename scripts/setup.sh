@@ -31,13 +31,15 @@ if command -v conda &> /dev/null; then
     if conda env list 2>/dev/null | grep -q "^Elysia "; then
         echo -e "  ${GREEN}✓${NC} conda 环境 'Elysia' 已存在，跳过创建"
     else
-        echo -n "  创建 conda 环境 'Elysia' (python=3.13)? [Y/n] "
+        echo -n "  创建 conda 环境 'Elysia' (python=3.12)? [Y/n] "
         read -r answer
         if [[ "$answer" =~ ^[Nn]$ ]]; then
             echo "  跳过。将使用系统 python3。"
         else
             echo "  正在创建 conda 环境..."
-            conda create -n Elysia python=3.13 -y
+            # python=3.12：3.13 下 openwakeword/tflite-runtime 等无预编译 wheel，
+            # typing.TypedDict 在 Pydantic 2.10+ 也要求 Python>=3.12（N5095 部署实录）
+            conda create -n Elysia python=3.12 -y
             echo -e "  ${GREEN}✓${NC} conda 环境已创建"
         fi
     fi
