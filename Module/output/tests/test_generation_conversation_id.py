@@ -51,7 +51,7 @@ class TestWireConversationId:
         ch, ws = _make_ch()
         await ch.on_generation_segment_started(
             generation_id="gen_1", segment_id="seg_1", segment_index=0,
-            channel="public_reply", kind="text", conversation_id="conv_x",
+            channel=MessageChannel.PUBLIC_REPLY, kind=SegmentKind.TEXT, conversation_id="conv_x",
         )
         sent = ws.send_json.await_args.args[0]
         assert sent["type"] == "generation.segment.started"
@@ -73,7 +73,7 @@ class TestWireConversationId:
         ch, ws = _make_ch()
         await ch.on_generation_segment_completed(
             generation_id="gen_1", segment_id="seg_1", segment_index=0,
-            channel="public_reply", kind="text", content="第一句。",
+            channel=MessageChannel.PUBLIC_REPLY, kind=SegmentKind.TEXT, content="第一句。",
             conversation_id="conv_x",
         )
         sent = ws.send_json.await_args.args[0]

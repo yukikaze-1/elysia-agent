@@ -7,6 +7,7 @@ from Module.output.protocol import ChannelCapability, OutputChannel
 from Module.output.manager import OutputManager
 from Module.output.console import ConsoleChannel
 from Module.output.websocket import WebSocketChannel
+from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 
 # ============================================================
@@ -788,7 +789,7 @@ class TestWebSocketV2Methods:
         ch, ws = self._make_ch()
         await ch.on_generation_segment_started(
             generation_id="gen_1", segment_id="seg_1", segment_index=0,
-            channel="public_reply", kind="text",
+            channel=MessageChannel.PUBLIC_REPLY, kind=SegmentKind.TEXT,
         )
         sent = ws.send_json.await_args.args[0]
         assert sent["type"] == "generation.segment.started"

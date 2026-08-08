@@ -40,6 +40,7 @@ from frontend_contract import (
     TypingMessage,
     UserAckMessage,
 )
+from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 
 class WebSocketChannel(OutputChannel):
@@ -236,7 +237,7 @@ class WebSocketChannel(OutputChannel):
         ).wire_dict())
 
     async def on_generation_segment_started(self, *, generation_id: str, segment_id: str,
-                                            segment_index: int, channel: str, kind: str,
+                                            segment_index: int, channel: MessageChannel, kind: SegmentKind,
                                             conversation_id: str | None = None) -> None:
         """发送 v2 分段开始。"""
         await self._send_json(GenerationSegmentStartedMessage(
@@ -256,7 +257,7 @@ class WebSocketChannel(OutputChannel):
         ).wire_dict())
 
     async def on_generation_segment_completed(self, *, generation_id: str, segment_id: str,
-                                              segment_index: int, channel: str, kind: str,
+                                              segment_index: int, channel: MessageChannel, kind: SegmentKind,
                                               content: str | None = None,
                                               conversation_id: str | None = None) -> None:
         """发送 v2 分段完成。"""
