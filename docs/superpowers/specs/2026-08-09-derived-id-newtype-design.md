@@ -85,7 +85,7 @@ def new_task_id() -> TaskId:
 | `core/storage/attachment_repo.py` | 5 个方法（`get`/`add_ref`/`remove_ref`/`mark_deleted`/`delete_record`）参数 `attachment_id: str` → `AttachmentId`；`create(doc: dict)` 无参数（id 在 doc 内，`doc.get("attachment_id")` 为 Any，无需收口） |
 | `core/storage/attachment_release.py` | `attachment_ids_from_message(msg) -> list[str]` → `list[AttachmentId]`（Part 字段改后从对象读取即 NewType，dict 分支需收口）；`release_message_attachments`/`release_messages_attachments` 内 `repo.get/remove_ref` 直传 |
 | `core/storage/attachment_gc.py` | `run_attachment_gc(repo: Any, ...)` 经 `Any` 类型 repo 调用（`attachment_gc.py:82`），静态不检查，**无需收口** |
-| `core/input/attachment_routes.py:116` | `match_info` 取裸 str（wire 豁免）→ 进 `repo.get`/`_sign_url` 前收口 `AttachmentId(...)` |
+| `core/input/attachment_routes.py:116,190` | 两个 handler（`_download_handler` :116 / `_sign_handler` :190）`match_info` 取裸 str（wire 豁免）→ 进 :149/:199 `repo.get` 前各收口 `AttachmentId(...)` |
 | 契约层 + attachment_resolver | 不动（裸 str 豁免，决策 3） |
 
 ### Task 3 — MemoryId 贯通
