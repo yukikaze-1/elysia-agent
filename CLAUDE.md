@@ -440,6 +440,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 
 项目有以下约束文档，所有代码和文档变更必须遵守：
 
+- **`docs/code-style-guide.md`** — 代码风格与类型约束。写代码前先读：ID NewType 体系 + 类型权威归属（core 定义 vs 契约层定义）+ StrEnum/coerce 用法 + getattr 使用纪律。
 - **`docs/readme-conventions.md`** — README 编写规范。新增/修改模块时必须按模板写 README（面包屑 + 相关文档节），并在根 README 文档导航中注册。
 - **`docs/testing.md`** — 测试分层体系。新测试必须加 marker（unit/service/integration/slow），日常用 `make test-quick` / `make test-normal` / `make test-full`。
 - **`core/prompts/README.md`** — Prompt 模板命名规范（PascalCase `.j2`）+ 渲染方式（`str.replace()` / Jinja2 `render_macro()`，通过 `PromptManager`）。

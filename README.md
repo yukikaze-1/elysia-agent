@@ -248,6 +248,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | [scripts/README.md](scripts/README.md) | 工具脚本（启动/预检/清理数据库） |
 | [docs/readme-conventions.md](docs/readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
 | [docs/data-structure-survey.md](docs/data-structure-survey.md) | 全项目数据结构普查（2026-07-15） |
+| [docs/code-style-guide.md](docs/code-style-guide.md) | 代码风格与类型约束（ID NewType 体系 + 权威归属 + StrEnum/coerce + getattr 纪律） |
 | [docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md) | Agent 公开接口设计（31 个 @property + 写方法） |
 | [docs/superpowers/specs/2026-08-02-service-runtime-state-design.md](docs/superpowers/specs/2026-08-02-service-runtime-state-design.md) | 服务运行时状态 + 热插拔设计（ServiceState + set_service + capabilities 嵌套） |
 | [docs/review/doc-review-2026-07-18.md](docs/review/doc-review-2026-07-18.md) | 文档审查报告（2026-07-18） |
