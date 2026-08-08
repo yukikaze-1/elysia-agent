@@ -133,7 +133,7 @@ core 内部（无 wire 边界）。收口点 = Task 构造处 / scheduler 参数
 - `core/tools/memory/plugin.py:57` `entry_id = getattr(r, "id", "?")` 是 LLM payload display-only，包 NewType 收益低，保持 str 可接受。
 - `Task.depends_on`/`children_ids` 当前无实际消费者（DAG 预留），类型化到 `list[TaskId]` 是前瞻一致，不引入额外逻辑。
 - `Task.parent_id` 语义混乱（实收 RequestId、字段名暗示 TaskId）是既有问题，本批仅收口 `Task.id` 体系，parent_id 裁决留待未来 Task/Workflow 体系 spec。
-- `scheduler.py:156` `_tasks.get(parent_id)` 是既有死代码（RequestId 查 TaskId 字典恒 miss），本批类型收口后加 ignore + 注释，不改行为。
+- `scheduler.py:156` `_tasks.get(parent_id)` 是既有死代码（RequestId 查 TaskId 字典恒 miss），本批类型收口后加 ignore + 注释，不改行为。**复审决策（2026-08-09）**：曾评估删除绑定块，后确认保留现状——① 全项目文档（含 14/15-Cyrene 前端需求）均无 children 绑定需求定义；② 该块从未生效（`children_ids` 生产恒空），保留/删除都不影响未来接入（`children_ids` 字段 + `add_child` API + `get_tree` 展示完整保留，未来用正确 parent_id 填充即可）；③ 用户倾向保守。死代码已注释记录，未来接入时见注释即明。
 - 附件 dict 中间态（上传流程 `it["attachment_id"]`）是 `dict[str, Any]` JSON 容器豁免，仅契约构造点直传 NewType 值。
 
 ## 关联文档
