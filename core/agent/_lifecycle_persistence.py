@@ -46,6 +46,7 @@ class _LifecyclePersistence:
         _token_repo: TokenRepository
         _session_repo: SessionRepository
         _attachment_repo: AttachmentRepository | None
+        attachment_repo: AttachmentRepository  # 类型占位：运行时来自 Agent @property（lazy 构造，首访必非 None）
         _generation_registry: GenerationRegistry
         _desktop_bridge: DesktopToolBridge
 

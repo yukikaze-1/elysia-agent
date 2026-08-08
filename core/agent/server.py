@@ -14,11 +14,13 @@ if TYPE_CHECKING:
     from core.config import AppConfig, CharacterConfig
     from core.adapter.llm_adapter import LLMAdapter
     from core.memory.long_term import LongTermMemory
+    from core.memory.session import SessionMemory
     from core.adapter.tool_adapter import ToolAdapter
     from core.cognitive import CognitiveLoop
     from Module.workflow_engine.workflow_engine import WorkflowEngine
     from Module.tts.protocol import TTSBackend
     from Module.stt.protocol import STTBackend
+    from Module.output import OutputManager
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +68,22 @@ def _resolve_switch_params(
 
 
 class AgentServer:
-    """Agent 服务器 mixin — HTTP/REPL 入口 + provider 切换。
+    """Server/REPL 生命周期 mixin——运行时与 Agent 组合，session 等属性来自 Agent。
 
     所有属性由 Agent.__init__ 初始化，本 mixin 不含 __init__。
     """
+
+    # 类型占位：运行时由 Agent @property 提供（mixin 组合，本类无 __init__ 赋值）
+    session: SessionMemory    # 类型占位：运行时来自 Agent @property（mixin 组合）
+    output: "OutputManager"   # 占位：broadcast_capabilities/build_capabilities 用
+    stt_enabled: bool
+    tts_enabled: bool
+    # build_capabilities（capabilities.py 参数放宽为 Agent | AgentServer）所需——
+    # Agent 是 AgentServer 子类，union 坍缩为 AgentServer 后须声明这些公开属性
+    config: AppConfig
+    llm: LLMAdapter
+    stt: STTBackend | None
+    tts: TTSBackend | None
 
     if TYPE_CHECKING:
         _character: CharacterConfig

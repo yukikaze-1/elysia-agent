@@ -307,7 +307,9 @@ class TTSStreamManager:
             # 先捕获 pending——cancel_all() 会 clear _tasks，之后 gather 拿到空列表
             pending = [t for t in self._tasks if not t.done()]
             for t in pending:
-                t.flush_on_cancel = True  # 仅禁用路径置位，保证只有禁用触发文本兜底
+                # asyncio.Task 动态属性（pyright 不识别）；仅禁用路径置位，
+                # 保证只有禁用触发文本兜底
+                t.flush_on_cancel = True  # type: ignore[attr-defined]
             self.cancel_all()
             try:
                 await asyncio.wait_for(

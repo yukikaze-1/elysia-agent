@@ -18,15 +18,17 @@ from frontend_contract import (
 
 if TYPE_CHECKING:
     from core.agent import Agent
+    from core.agent.server import AgentServer
 
 logger = logging.getLogger(__name__)
 
 
-def build_capabilities(agent: "Agent") -> CapabilitiesMessage:
+def build_capabilities(agent: "Agent | AgentServer") -> CapabilitiesMessage:
     """构建嵌套 per-service capabilities 契约模型。
 
     Args:
-        agent: Agent 实例（只读公开属性 + config）。
+        agent: Agent 或 AgentServer mixin（只读公开属性 + config；
+            运行时经 Agent 组合，属性实际由 Agent 提供）。
 
     Returns:
         ``CapabilitiesMessage``（type=capabilities + live2d_static_image +
@@ -106,7 +108,7 @@ def build_server_info(agent: "Agent", connection_id: str | None = None) -> Serve
     )
 
 
-async def broadcast_capabilities(agent: "Agent") -> None:
+async def broadcast_capabilities(agent: "Agent | AgentServer") -> None:
     """服务状态变化（switch_*/set_service 成功）后向 v1 WebSocketChannel 重播。
 
     不复制 switch_model_result 仅回请求方的模式——遍历 ``agent.output._channels``，
@@ -117,7 +119,7 @@ async def broadcast_capabilities(agent: "Agent") -> None:
     取代 capabilities），跳过避免双轨下发。
 
     Args:
-        agent: Agent 实例。
+        agent: Agent 或 AgentServer mixin（switch_*/set_service 内以 self 调用）。
     """
     try:
         payload = build_capabilities(agent)

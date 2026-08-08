@@ -299,7 +299,9 @@ class RuntimeConfigPlugin(ToolPlugin):
             elif isinstance(t, dict):
                 intent = str(t.get("intent", ""))[:60]
             duration = ""
-            if hasattr(t, 'created_at') and t.created_at:
+            # dict 先行排除——pyright 对 Any 的 hasattr 会错误收窄为 dict[Unknown, Unknown]
+            # （dict 无 created_at 属性、key 走 []），排除后 hasattr 命中对象路径（WorkflowSummary）
+            if not isinstance(t, dict) and hasattr(t, 'created_at') and t.created_at:
                 from Module.workflow_contract.utils import parse_iso
                 try:
                     created = parse_iso(str(t.created_at))

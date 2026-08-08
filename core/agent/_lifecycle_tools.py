@@ -4,13 +4,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from core.monitoring.event_bus import EventBus, EventPriority, EventType
 from core.status.agent_fsm import AgentFSM, AgentState
 from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )
+# 运行时导入：cast(WebSocketChannel, target) 的实参类型名须在运行时解析
+# （Module.output 不依赖 core，无环）
+from Module.output import WebSocketChannel
 
 if TYPE_CHECKING:
     from core.task import TaskScheduler
@@ -101,7 +104,9 @@ class _LifecycleTools:
             logger.warning(
                 "DesktopToolBridge 投递：无 electron 目标连接，tool.request 丢弃")
             return
-        await target._send_json(frame)  # noqa: SLF001 — 定向投递桌面帧
+        # _send_json 仅 WebSocketChannel 定义（OutputChannel ABC 无此方法），
+        # 已按 client_platform == "electron" 过滤，运行时必为 WebSocketChannel
+        await cast(WebSocketChannel, target)._send_json(frame)  # noqa: SLF001 — 定向投递桌面帧
 
     async def _start_worker_pool(self) -> None:
         """启动 Worker Pool + embedding 预加载后台任务。"""
