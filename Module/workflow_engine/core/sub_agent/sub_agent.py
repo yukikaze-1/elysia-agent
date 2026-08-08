@@ -217,6 +217,9 @@ class SubAgent:
         ts.updated_at = now_iso()
 
         self._require("_checkpoint_mgr", "_mailbox")
+        # _require 只做运行时守卫（返回 None），pyright 不窄化——逐组件 assert 窄化类型
+        assert self._checkpoint_mgr is not None
+        assert self._mailbox is not None
         checkpoint = await self._checkpoint_mgr.load(self._mailbox.task_id)
         if checkpoint is None:
             ts.status = WorkflowStatus.FAILED
@@ -229,6 +232,7 @@ class SubAgent:
             raise RuntimeError("graph 缺失，无法恢复")
 
         self._require("_context")
+        assert self._context is not None
 
         # 清零中断标志
         checkpoint.exec.pause_requested = False
@@ -314,6 +318,9 @@ class SubAgent:
             校验通过时返回 PlanGraph，ABORT 时返回 None。
         """
         self._require("_planner", "_plan_validator")
+        # _require 只做运行时守卫（返回 None），pyright 不窄化——逐组件 assert 窄化类型
+        assert self._planner is not None
+        assert self._plan_validator is not None
         return await planning.plan_and_validate(
             self._planner, self._plan_validator, context, task_state, mailbox,
             self._infra.constraints, self._push_mailbox, self._abort_error_code,
@@ -339,6 +346,7 @@ class SubAgent:
             resume_from: 恢复执行时传入的 ExecutionState，首次执行为 None。
         """
         self._require("_orchestrator")
+        assert self._orchestrator is not None
         return await execution_loop.execute_loop(
             self._orchestrator, task_state, graph, mailbox, context, resume_from,
             self._dispatch_result, self._push_mailbox,
@@ -410,6 +418,7 @@ class SubAgent:
             mailbox: 任务邮箱。
         """
         self._require("_checkpoint_mgr")
+        assert self._checkpoint_mgr is not None
         return await result_handlers.handle_paused(
             result, task_state, mailbox, self._checkpoint_mgr, self._push_mailbox,
         )
@@ -438,6 +447,11 @@ class SubAgent:
             (False, None)         — 终止循环
         """
         self._require("_replanner", "_plan_validator", "_orchestrator", "_checkpoint_mgr")
+        # _require 只做运行时守卫（返回 None），pyright 不窄化——逐组件 assert 窄化类型
+        assert self._replanner is not None
+        assert self._plan_validator is not None
+        assert self._orchestrator is not None
+        assert self._checkpoint_mgr is not None
         return await replan.handle_replan(
             result, task_state, graph, mailbox, context,
             self._replanner, self._plan_validator, self._orchestrator,
