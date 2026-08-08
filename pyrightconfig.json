@@ -1,5 +1,5 @@
 {
-  "include": ["core/"],
+  "include": ["core/", "Module/", "frontend_contract/"],
   "exclude": ["**/tests/**", "**/test_*.py", "**/__pycache__"],
   "pythonVersion": "3.12",
   "typeCheckingMode": "basic",
