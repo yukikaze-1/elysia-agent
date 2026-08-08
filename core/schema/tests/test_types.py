@@ -2,7 +2,7 @@
 import pytest
 from datetime import datetime, timezone
 from pydantic import BaseModel, ValidationError
-from core.schema import IsoTimestamp, now_iso, SessionId, MessageId, ToolCallId
+from core.schema import IsoTimestamp, now_iso, SessionId, MessageId, ToolCallId, GenerationId, SegmentId, RequestId
 
 
 @pytest.mark.unit
@@ -62,3 +62,18 @@ class TestNewTypes:
     def test_tool_call_id_is_str(self):
         tcid = ToolCallId("call-001")
         assert isinstance(tcid, str)
+
+    def test_generation_id_is_str(self):
+        gid = GenerationId("gen_1")
+        assert isinstance(gid, str)
+        assert gid == "gen_1"
+
+    def test_segment_id_is_str(self):
+        sid = SegmentId("seg_1")
+        assert isinstance(sid, str)
+        assert sid == "seg_1"
+
+    def test_request_id_is_str(self):
+        rid = RequestId("001")
+        assert isinstance(rid, str)
+        assert rid == "001"

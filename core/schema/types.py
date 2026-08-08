@@ -23,3 +23,12 @@ MessageId = NewType("MessageId", str)
 
 ToolCallId = NewType("ToolCallId", str)
 """工具调用唯一标识符。"""
+
+GenerationId = NewType("GenerationId", str)
+"""生成实例唯一标识符（gen_ 前缀）。"""
+
+SegmentId = NewType("SegmentId", str)
+"""生成分段唯一标识符（seg_ 前缀）。"""
+
+RequestId = NewType("RequestId", str)
+"""请求唯一标识符（`{_req_counter:03d}` 三位计数器格式，非 UUID——与 server.py:132 实现一致）。"""
