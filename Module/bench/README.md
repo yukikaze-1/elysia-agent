@@ -54,10 +54,6 @@ LLM 默认测试 V4 Pro 和 V4 Flash 两个模型，各含默认/关闭思考两
 - **RTF** — Real-Time Factor，实时率 = 音频时长 / 处理耗时。> 1x 表示比实时快
 - **rate** — chars/sec，流式产出速率
 
-## 备注
-
-此模块本质是工具而非 Module 子模块，后续将移动到 `tools/bench/`。
-
 ---
 
 ## 相关文档

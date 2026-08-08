@@ -14,8 +14,8 @@
 │    ├─ USER_INPUT / STATE_CHANGE / TASK_RESULT / INTERRUPT │
 │    └─ 3 级优先级（INTERRUPT / STATE_CHANGE / NORMAL）          │
 │                                                          │
-│  IdleMonitor       ── 空闲检测 + 唤醒词 + 主动搭话          │
-│    ├─ 唤醒词检测（openWakeWord）                            │
+│  IdleMonitor       ── 空闲检测 + 文本唤醒词 + 主动搭话        │
+│    ├─ 唤醒词检测（character.wake_words 文本唤醒词）           │
 │    ├─ 空闲超时主动搭话                                     │
 │    └─ 后台任务结果唤醒                                     │
 │                                                          │
@@ -38,7 +38,7 @@
 ### IdleMonitor
 
 - **检测引擎**：定时器（可配间隔），检查上次交互距今时间
-- **唤醒通道**：语音唤醒词（openWakeWord 模型）+ 文本唤醒词（`/config.yaml` `wake_words`）
+- **唤醒通道**：文本唤醒词（`character.wake_words`，来自角色 config）——IdleMonitor 本身只读该文本词表，不含 openWakeWord；语音唤醒词（openWakeWord 模型）检测在 `core/input/wakeword.py`（WakeWordDetector）+ `core/input/audio_buffer.py`（VAD 并行流式检测），由 input 层消费
 - **主动搭话**：`proactive` 配置段——空闲超时 + 上下文条件 + cooldown
 - **后台任务**：`TaskResultData` 事件触发，构造 wakeup message 注入 CognitiveLoop
 
@@ -55,7 +55,7 @@
 core/monitoring/
 ├── __init__.py        — 重导出 + IdleMonitor PEP 562 懒加载
 ├── event_bus.py       — EventBus + EventPriority + EventType
-├── idle_monitor.py    — IdleMonitor + 唤醒词 + 主动搭话
+├── idle_monitor.py    — IdleMonitor + 文本唤醒词（character.wake_words）+ 主动搭话
 ├── token_tracker.py   — TokenTracker（TokenUsage 在 core.schema.token）
 └── tests/
     └── test_token_tracker.py
@@ -86,4 +86,3 @@ core/
 | [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 并发模型 |
 | [core/README.md](../README.md) | Core 层总览 |
 | [core/agent/README.md](../agent/README.md) | Agent 组装——Monitoring 子系统的拥有者 |
-| [docs/frontend-api.md](../../docs/frontend-api.md) | `on_token_usage` WebSocket 消息 |

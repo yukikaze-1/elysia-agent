@@ -1,3 +1,5 @@
+> ⚠️ 已归档（2026-08-09）：剩余活项已并入 [todo.md](../../todo.md) 功能改进区。完成项见 [docs/review/frontend_completed.md](../review/frontend_completed.md)。
+
 # 前端代码审查 — TODO（剩余）
 
 审查日期：2026-07-30

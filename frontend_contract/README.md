@@ -22,8 +22,8 @@ interface 各维护一份，两端漂移只能靠联调发现。本包把契约�
 ```
 frontend_contract/
 ├── base.py                 # ContractModel 基类 + TsNull marker + wire_key + wire_dict 序列化
-├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（18 具名成员）+ 6 条 Client→Server + 支持类型
-├── rest.py                 # REST 业务契约：providers / images / messages / api 响应（12 模型）
+├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（38 具名成员）+ 22 条 Client→Server + 支持类型
+├── rest.py                 # REST 业务契约：providers / images / messages / api 响应（44 模型）
 ├── debug.py                # Debug API 契约：/debug/api 响应（DebugData 16 面板等 38 模型）
 ├── gen_ts.py               # TS 发射器：BaseModel → contract.generated.ts（拓扑排序 + 同名安全网）
 ├── __main__.py             # python -m frontend_contract：动态收集子模块 → 生成 / --check 漂移检测
@@ -32,6 +32,11 @@ frontend_contract/
 ```
 
 生成产物：`frontend/src/types/contract.generated.ts`（只读快照，提交入库）。
+
+> 契约已覆盖批次 5/6/7 全部新增面：多会话 REST（session_routes）、Desktop 附件上传、
+> 附件/表情（AttachmentInfo/StickerEntry 等）、三种语音模式（Voice*/Dictation*）与
+> TTS 播放控制（AudioStart/AudioCancelled）。<br>
+> 历史包 `frontend-handoff-v2/` 已被本包取代，仅作 wire 形状参考。
 
 ## 建模硬性要求
 
@@ -76,4 +81,4 @@ python -m pytest frontend_contract/tests/ -v
 |------|------|
 | [项目 README](../README.md) | 快速开始 + 文档导航 |
 | [docs/architecture.md](../docs/architecture.md) | 完整架构 |
-| [docs/frontend-api.md](../docs/frontend-api.md) | 面向第三方的协议参考视图（wire 格式说明） |
+| [docs/electron-backend-protocol-v2.md](../docs/electron-backend-protocol-v2.md) | Electron 后端联调协议（wire 格式说明） |

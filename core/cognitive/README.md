@@ -56,7 +56,7 @@ LLM stream
 
 ### 批次 2：v2 结构化事件（generation.*）
 
-`process()` 每回合创建 `GenerationContext`（`core/cognitive/generation.py`，generation_id/assistant_message_id 预分配）；`_dispatch_stream_event` 经 `OutputManager` 统一回合事件发射（单一语义源、双 wire 呈现）——v1 通道复刻现状 wire（delta/message/command/expression），v2 通道发 `generation.started/segment.*/delta/completed/failed`（握手 `X-Protocol-Version: 2`）。`_finalize_turn` 用预分配 assistant 父消息 ID 落库；错误路径发 `turn_failed`、打断发 `turn_cancelled`（终态唯一）。详见 [docs/electron-backend-protocol-v2.md](../../docs/electron-backend-protocol-v2.md)。
+`process()` 每回合创建 `GenerationContext`（`core/cognitive/generation.py`，generation_id/assistant_message_id/conversation_id 预分配贯通，ID 字段用 NewType：`GenerationId`/`MessageId`/`SegmentId`/`RequestId`；`channel`/`kind` 对齐契约层枚举——`from frontend_contract.ws_message import MessageChannel, SegmentKind`，经 `open_segment(channel, kind)` 打开分段）；`_dispatch_stream_event` 经 `OutputManager` 统一回合事件发射（单一语义源、双 wire 呈现）——v1 通道复刻现状 wire（delta/message/command/expression），v2 通道发 `generation.started/segment.*/delta/completed/failed`（握手 `X-Protocol-Version: 2`）。`_finalize_turn` 用预分配 assistant 父消息 ID 落库；错误路径发 `turn_failed`、打断发 `turn_cancelled`（终态唯一）。详见 [docs/electron-backend-protocol-v2.md](../../docs/electron-backend-protocol-v2.md)。
 
 ### inner_voice 协议
 
@@ -109,13 +109,14 @@ core/cognitive/
 ├── loop.py               — CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
 ├── tools.py              — CognitiveTools mixin: _execute_tools_directly + _handle_submit_task
 ├── timing.py      — Timer + TimingClock 延迟统计
-├── generation.py  — GenerationContext: generation_id/assistant_message_id/conversation_id 预分配贯通（批次 2）
+├── generation.py  — GenerationContext: generation_id/assistant_message_id/conversation_id 预分配贯通（ID NewType；channel/kind 对齐契约枚举 MessageChannel/SegmentKind，批次 2）
 ├── generation_registry.py — GenerationRegistry: generation 生命周期持久化（register/mark 终态 + stale 清理，批次 3 BE-024）
 ├── delegation.py  — DelegationPreparer: submit_task 前的委派准备（工具筛选/摘要/约束）
 ├── user_profile.py — UserProfile: 用户画像模型（CognitiveLoop 管理）
 └── tests/
     ├── test_timing.py
-    ├── test_tools.py
+    ├── test_tool_gate.py
+    ├── test_tool_image_parts.py
     ├── test_generation_wiring.py
     ├── test_generation_registry.py
     ├── test_v2_generation.py

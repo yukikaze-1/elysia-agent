@@ -1,3 +1,5 @@
+> ⚠️ 已归档（2026-08-09）：历史记录，不再随代码库更新。当前有效文档见 [../README.md](../README.md)。
+
 # TaskSystem 类型迁移清单
 
 > 记录 workflow_engine 分离项目中从 TaskSystem（现 WorkflowEngine）模块移出的跨边类型与组件。

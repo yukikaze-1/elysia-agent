@@ -15,7 +15,7 @@ frontend/
     ├── main.ts                 # 聊天应用入口（Pinia + marked + hljs）
     ├── App.vue                 # 根组件：全局快捷键 + approval 透传
     │
-    ├── types/protocol.ts       # WebSocket 消息类型（ServerMessage 判别联合，18 类型）
+    ├── types/protocol.ts       # 契约类型 re-export（单源 frontend_contract → contract.generated.ts，ServerMessage 判别联合 38 成员；勿手改）
     │
     ├── stores/                 # Pinia 状态管理
     │   ├── connectionStore.ts  # WebSocket 连接 + 指数退避重连
@@ -144,6 +144,7 @@ connectionStore.onmessage → _onMessage
 ## 相关文档
 
 - [项目 CLAUDE.md](../CLAUDE.md) — 完整架构文档
-- [前端代码审查 TODO](../frontend_todo.md) — 已知问题清单及修复状态
+- [前后端契约单源 frontend_contract](../frontend_contract/README.md) — 类型唯一权威来源（生成 contract.generated.ts）
+- [前端代码审查 TODO](../docs/archive/frontend_todo.md) — 已知问题清单及修复状态（已归档，剩余活项并入 [todo.md](../todo.md)）
 - [后端 API 路由](../core/input/api_routes.py)
 - [WebSocket 协议](../core/input/ws_handler.py)

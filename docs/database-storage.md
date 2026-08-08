@@ -1,6 +1,6 @@
 # 数据库存储表格
 
-项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），5 个集合，外加若干内存/文件存储结构。没有使用 SQL 数据库。
+项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），共 **8 个集合**（Milvus 1 + MongoDB 7），外加若干内存/文件存储结构。没有使用 SQL 数据库。
 
 | 集合 | 位置 | 用途 | 保留策略 |
 |------|------|------|----------|
@@ -9,6 +9,9 @@
 | `message_archive` | MongoDB | 对话消息永久归档 | 永久, 只增不删 |
 | `token_usage` | MongoDB | LLM token 统计 | 永久, 只增不删 |
 | `character_versions` | MongoDB | L2/C6 性格版本历史 | 永久，per content_type 独立计数 |
+| `generations` | MongoDB | generation 生命周期状态（BE-024） | 30天 TTL |
+| `attachments` | MongoDB | 附件元数据（BE-070，fail-closed） | TTL 不设，生命周期由 GC 管（软删 24h / 未关联 7d） |
+| `desktop_calls` | MongoDB | 桌面工具调用状态（批次 4） | 30天 TTL（按 updated_at） |
 
 ---
 
@@ -46,8 +49,9 @@
 | `session_id` | String | 会话唯一标识 |
 | `messages` | Array\<Object\> | 消息数组 |
 | `character_state` | Object | CharacterState 序列化（mood + personality L2/L3 + reflector buffer/context + awareness 冷却 + state_history） |
-| `reflector_state` | Object | MemoryReflectorState 序列化（round_count / new_memory_count） |
-| `params` | Object | 运行时参数（legacy） |
+| `reflector_state` | Object | MemoryReflectorState 序列化（round_count / new_memory_count）。save() 时经 `set_memory_reflector()` 同步派生（session.py:258） |
+| `service_state` | Object | 服务运行时状态（批次 3）：当前模型 + STT/TTS 启用模式（enabled 三态 `bool \| None`，None 回退 config；`agent.set_service` / `switch_*` 写、启动经 `_apply_service_state` 应用） |
+| `params` | Object | 运行时参数（legacy，向后兼容读取 mood/mood_intensity） |
 | `updated_at` | String（ISO 格式） | 最后更新时间 |
 
 **messages 子文档结构**（新格式）:
@@ -118,6 +122,53 @@
 
 **操作**: `insert_one`（每次 LLM 调用后），`find`（按 session 聚合统计）。无 TTL，无上限。
 
+### 集合: `generations`（数据库: `default`，BE-024）
+
+每次 LLM 回合（generation）的生命周期状态，由 `GenerationRegistry` 写入（`register` / `mark` 终态 + stale 清理）。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `generation_id` | String | generation 唯一标识（NewType） |
+| `session_id` | String | 所属会话 |
+| `message_id` | String | 关联消息 ID |
+| `status` | String | `started` / `segment_started` / `segment_completed` / `completed` / `failed` |
+| `updated_at` | String（ISO） | 最后更新时间（TTL 基准） |
+
+**索引**: `generation_id` unique + `(session_id, updated_at)` + `message_id`。
+**TTL**: 30 天（`expireAfterSeconds` 按 `updated_at` 过期，与 sessions 对齐）。Mongo 离线时 `GenerationRegistry` no-op。
+
+### 集合: `attachments`（数据库: `default`，BE-070）
+
+附件元数据（fail-closed：Mongo 离线 `StorageUnavailableError` → 503）。文件本体存 `data/uploads/`，本集合管元数据 + 引用计数。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `attachment_id` | String | 附件唯一标识 |
+| `session_id` | String | 所属会话 |
+| `owner_connection` | String? | 上传者 WS 连接（持有者校验闭环） |
+| `filename` / `filetype` / `size` | — | 文件元信息（filetype 魔数校验） |
+| `status` | String | `active` / `deleted`（软删 `deleted_at`） |
+| `ref_count` | Int | 被消息引用计数；`refs` 数组记录引用消息 |
+| `created_at` | String（ISO） | 创建时间 |
+
+**索引**: `attachment_id` unique + `status` + `ref_count` + `created_at`。
+**TTL**: 不设——附件生命周期由 `AttachmentGC` 兜底扫描管（软删超 24h 物理删 / active 文件缺失软删 / 未关联超 7 天软删 / 磁盘孤儿删文件，限四 kind 目录）。会话/消息删除时经 `AttachmentRelease` 释放引用。
+
+### 集合: `desktop_calls`（数据库: `default`，批次 4）
+
+桌面工具调用状态，`DesktopCallRepository`（Mongo + 进程内缓存 + 迁移守卫 + 离线降级）。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `call_id` | String | 调用唯一标识 |
+| `status` | String | `pending` / `accepted` / `running` / `succeeded` / `failed` / `rejected` / `cancelled` / `expired` / `offline` |
+| `params` / `result` / `error` | — | 调用参数 / 结果 / 错误 |
+| `expires_at` | String（ISO） | 超时截止 |
+| `updated_at` | String（ISO） | 最后更新（TTL 基准） |
+
+**索引**: `call_id` unique + `(status, updated_at)` + `updated_at` TTL。
+**TTL**: 30 天（`expireAfterSeconds` 按 `updated_at` 过期，与 sessions/generations 对齐）。
+
 ---
 
 ## 三、内存/文件存储（非数据库表）
@@ -127,9 +178,20 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `_messages` | deque[Message] | 当前会话消息缓冲 (maxlen config.yaml 可配, 默认 20). 存 Pydantic Message 对象 |
-| `_character_state` | CharacterState \| None | 性格+情绪+reflector 状态（Pydantic 模型，替代原 _params） |
-| `_reflector_state` | MemoryReflectorState \| None | MR 计数器（Pydantic 模型） |
+| `character_state` | CharacterState | 性格+情绪+reflector buffer 等状态（Pydantic 模型，替代原 _params） |
+| `service_state` | ServiceState | 服务运行时状态（当前模型 + STT/TTS 启用模式，enabled 三态 `bool \| None`） |
 | `_session_id` | str | 会话 ID |
+
+运行时状态经专用类型字段持久化：`save()` 写 `character_state` + `service_state`（reflector 计数器经 `set_memory_reflector()` 并入，无独立 `_reflector_state` 属性），`load()` / `load_from_jsonl()` 恢复。多会话由 `SessionManager`（`core/memory/session_manager.py`）缓存池管理。
+
+### Secret Store（文件存储，`core/storage/secret_store.py`，批次 5）
+
+自定义 provider 的 API 密钥存储，位置 `data/secrets/profiles.json`（`ProjectPath.DATA_SECRETS`）。
+
+- 格式：按 provider service 分组的密钥 Profile（`{"<service>": {"<name>": "<secret-value>", ...}}`，LLM/STT/TTS 共用，value 为 api_key 等敏感值）
+- 安全：文件 `0600` 权限 + 原子写（临时文件 + `os.replace`）+ 损坏容错（解析失败不崩溃）+ 并发锁（threading.Lock 防丢更新）；`api_key` 存读写都过 Secret Store，**永不读回**（列表/详情响应剔除密钥）
+- 关联：`custom_providers` 解析统一 secret store 优先；switch 路径守卫 + SSRF 校验（批次 5/8a）
+- 与 `sessions.service_state` 协同：运行中的 provider 配置经 service_state 跨重启存活
 
 ### MemoryEntry（内存 dataclass，`core/memory/long_term.py`）
 

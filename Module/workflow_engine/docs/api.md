@@ -671,16 +671,24 @@ class TokenStats:
 
 ---
 
-## 16. CognitiveLoop 侧类型（占位）
+## 16. CognitiveLoop 侧类型（已迁移归位）
+
+> 本节类型原为占位，已随契约层提取（Task 9 / migration.md）迁至真实归属，WorkflowEngine 只读消费，不再于本模块定义。
+
+**UserProfile** — canonical home：`core/cognitive/user_profile.py`（`UserProfile`，Pydantic BaseModel，`model_config={"extra": "allow"}`）。DelegationPreparer 只读消费。已含真实字段：
 
 ```python
 class UserProfile(BaseModel):
-    """用户画像。CognitiveLoop 管理，DelegationPreparer 只读消费。"""
-    # TODO: 字段由 CognitiveLoop 侧定义，当前占位
+    preferences: str | dict[str, str] = ""   # 用户偏好（供集成测试，后续由 CognitiveLoop 填充）
+    language: str = "zh"                     # 语言
+    display_name: str = ""                   # 用户显示名（来自 config.agent.user_name）
+```
 
+**Tool** — canonical home：`Module/tool/tool_descriptor.py`（`Tool` 描述符）。WorkflowEngine 对 Module/tool 工具的轻量投影，仅持执行所需字段，参数 schema 由 Executor 运行时从 `ToolManager.definitions()` 获取：
+
+```python
 class Tool(BaseModel):
-    """工具描述。ToolRegistry 管理，DelegationPreparer 从全量中筛选。"""
-    name: str                            # 工具唯一标识符
-    description: str = ""                # 工具功能描述
-    capabilities: list[str]              # 工具能力标签
+    name: str                                # 工具唯一标识符（与 ToolPlugin.name 对应）
+    description: str = ""                    # 工具功能描述（Planner 注入 prompt）
+    capabilities: list[str] = Field(default_factory=list)  # 能力标签（对齐 Module/tool.Capability）
 ```

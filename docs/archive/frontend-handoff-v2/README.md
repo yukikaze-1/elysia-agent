@@ -1,3 +1,5 @@
+> ⚠️ 已归档（2026-08-09）：交接包历史快照。当前契约为 frontend_contract 单源 + [docs/electron-backend-protocol-v2.md](../../electron-backend-protocol-v2.md)。轨迹仅作 wire 形状参考。
+
 # Electron 后端交接包（frontend-handoff-v2）
 
 **定位：** 后端 → Electron 前端交接快照。批次 0-6 的真实 WS 轨迹与捕获时点说明见 `traces/`（`traces/README.md`）；本文件为**批次 7 交付说明**（Commit / 能力矩阵 / 契约摘要 / 测试报告 / 兼容升级 / 数据保护）。

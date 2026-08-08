@@ -13,7 +13,7 @@
 │ __init__  创建所有组件、接线                                  │
 │ start()   按序: DB → token+prompt → tool_context →           │
 │           worker_pool → idle+events → service_state → tts → task_system →   │
-│           mailbox_polling → db_health                        │
+│           mailbox_polling → db_health → attachment_repo → attachment_gc  │
 │ stop()    按序: flush → cancel → close → save                │
 │                                                              │
 │ AgentLifecycle  — 所有 _start_*/_stop_*/_flush_* 方法        │
@@ -64,7 +64,7 @@ RUNNING → /restart → STOPPING → RESTARTING → start() → RUNNING
 
 ### Archive-Session 同步
 
-`_purge_message_from_session(msg_id)` — 从当前 session 中移除指定消息。Archive（`message_archive` 集合）和 session（`sessions` 集合）是独立存储，debug 页面删除 Archive 消息时同步调用此方法，确保 LLM prompt 不再包含已删消息。仅在消息实际存在于 session 中时才执行清理和 `save()` 持久化。
+`purge_message_from_session(msg_id)` — 从当前 session 中移除指定消息。Archive（`message_archive` 集合）和 session（`sessions` 集合）是独立存储，debug 页面删除 Archive 消息时同步调用此方法，确保 LLM prompt 不再包含已删消息。仅在消息实际存在于 session 中时才执行清理和 `save()` 持久化。
 
 ## 文件布局
 

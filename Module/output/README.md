@@ -67,15 +67,26 @@ await mgr.send(ChatMessage(role="Elysia", content="你好"))
 | 方法 | 说明 |
 |------|------|
 | `on_text_delta(delta)` | 流式文本 token |
-| `on_text_message(msg)` | 完整文本消息 |
+| `on_message(msg)` | 完整文本消息（abstract，必须实现） |
 | `on_typing(typing)` | 输入状态指示 |
 | `on_expression(expr, intensity)` | 表情/情绪变更 |
 | `on_action(action)` | 动作变更 |
 | `on_command(cmd)` | 前端指令 |
 | `on_audio_chunk(chunk, stream_id)` | 音频流片段 |
 | `on_audio_end(stream_id, format)` | 音频流结束 |
+| `on_audio_start(stream_id, *, format, ...)` | 音频流开始（BE-063，默认 no-op） |
+| `on_audio_cancelled(stream_id)` | 音频流取消（BE-063，默认 no-op） |
 | `on_state(state)` | 状态变更通知 |
 | `on_token_usage(data)` | Token 用量统计 |
+| `on_user_message_ack(...)` | v2 用户消息确认（默认 no-op） |
+| `on_generation_started(...)` | v2 生成开始（默认 no-op） |
+| `on_generation_segment_started(...)` | v2 分段开始（默认 no-op） |
+| `on_generation_delta(...)` | v2 分段增量（默认 no-op） |
+| `on_generation_segment_completed(...)` | v2 分段完成（默认 no-op） |
+| `on_generation_completed(...)` | v2 父完成（默认 no-op） |
+| `on_generation_failed(...)` | v2 父失败（默认 no-op） |
+
+v2 方法均带 `conversation_id`/`conversation_usage` 关键字参数，v2 通道按需实现，其余通道默认 no-op。详见下文「批次 2 v2 版本感知统一回合事件」。
 
 ### OutputManager
 

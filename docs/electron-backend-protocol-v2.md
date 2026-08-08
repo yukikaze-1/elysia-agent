@@ -1,7 +1,7 @@
 # Electron 后端协议 v2 — 结构化聊天事件契约参考
 
 **文档版本：** v0.6（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9，批次 4 补充 Desktop 工具契约 §10/错误码目录，批次 5 补充模型 Profile 与 TTS 声音契约 §11 + 错误码 21→25，批次 6 补充三种语音与 TTS 播放契约 §12 + 错误码 25→32，批次 7 补充通用附件与媒体契约 §13 + 错误码 32→40）
-**关联：** `docs/electron-backend-baseline.md`（v1 现状）、`docs/electron-backend-security.md`（认证/版本协商）
+**关联：** `docs/archive/electron-backend-baseline.md`（v1 现状）、`docs/electron-backend-security.md`（认证/版本协商）
 **Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md` + `docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`
 
 本文档是 Electron 前端联调 v2 协议的**事件契约参考**。v2 由 WS 握手头 `X-Protocol-Version: 2` 判定；未带版本头走 v1 路径（现状不变）。
@@ -135,7 +135,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 
 ## 8. 真实轨迹
 
-`frontend-handoff-v2/traces/`：
+`docs/archive/frontend-handoff-v2/traces/`：
 
 - `ws-v2-chat.jsonl` — 完整生成（ack → started → inner_voice 段 → public_reply 段 → completed）。
 - `ws-v2-cancel.jsonl` — 取消（ack → started → … → generation.failed{CANCELLED} → interrupted）。

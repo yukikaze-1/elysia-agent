@@ -35,7 +35,7 @@
 ```
 启动:
   elysia.yaml → CharacterConfig.from_yaml()
-    → 读取 elysia_personality.txt
+    → 读取 elysia_personality.md
     → CharacterEngine.__init__(base_personality=L1, state=session.character_state)
     → engine.state 与 session.character_state 共用同一对象（engine 是权威来源，session 负责持久化）
 
@@ -175,7 +175,7 @@ Module/system_prompt/
 
 1. YAML 所在目录 → `yaml_dir / base_personality_file`
 2. 项目根目录 → `cwd / base_personality_file`
-3. 自动推导 → `yaml_dir / {name}_personality.txt`
+3. 自动推导 → `yaml_dir / {name}_personality.md`
 4. 都找不到 → WARN，C1 不含 core 文本
 
 ## 调试

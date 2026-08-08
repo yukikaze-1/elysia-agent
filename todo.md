@@ -88,13 +88,21 @@
 - **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
 - **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + SenseVoice + GPT-SoVits）。数据库已完成 docker-compose.yml（MongoDB + Milvus）
 - **F2 代码块格式重新启用**: `f2_output_format.j2` 中 `<|code|>` 和 `<|markdown|>` 格式已注释。等需要代码/Markdown 渲染功能时取消注释即可启用。**注（2026-08-01）**：解析器已支持 ```` ``` ```` 围栏 + `<|code|>`/`<|markdown|>`（core/text tokenizer），LLM 主动输出代码块时即可正确分拣（不进 TTS、finalize parts）；仅需 F2 模板取消注释 + 前端代码渲染确认
-- **意图路由 + 渐进式工具披露**: 当前 12 个工具全量暴露给 LLM，每人次 ~1,643 schema tokens。大部分对话只用 2–4 个工具，~70% schema token 是浪费的。评估结论：12 个工具未到临界点，暂不做。触发条件：工具数 > 15 考虑规则分类，> 20 必须引入分类层，或累计 ≥ 3 次工具误用事件。推荐方案：关键词匹配分组（filesystem/web/memory/utility），零延迟零 token 成本，无命中则全量兜底。
+- **意图路由 + 渐进式工具披露**: 当前 16 个工具全量暴露给 LLM，每人次 ~1,643 schema tokens。大部分对话只用 2–4 个工具，~70% schema token 是浪费的。评估结论：16 个工具未到临界点，暂不做。触发条件：工具数 > 15 考虑规则分类，> 20 必须引入分类层，或累计 ≥ 3 次工具误用事件。推荐方案：关键词匹配分组（filesystem/web/memory/utility），零延迟零 token 成本，无命中则全量兜底。
 - **CharacterEngine Phase 2**（原 PersonalityEngine Phase 2）:
   - CharacterReflector.j2 模板 ~140 行偏长，LLM 注意力可能被稀释，后续观察产出质量决定是否精简
   - C3 情绪传染规则动态化
   - C7 主动性动态化
   - L4→L3 情绪汇聚统计（需 CharacterEngine 改接口）
   - 用户话题检测触发 C9（目前只看状态存在+冷却）
+
+**前端（合并自 frontend_todo.md 归档，2026-07-30 前端审查遗留）**：
+- **迁移至 AudioWorklet**: `InputBar.vue` 仍用已废弃的 `audioCtx.createScriptProcessor()`。阻塞原因：AudioWorklet 需独立 `.js` 文件 + 复杂重构
+- **messageRouter 统一消息分发**: `useWebSocket.ts` 各 case 分支已显式类型收窄，建议进一步集中管理映射 + try/catch 边界
+- **useLocalStorage composable**: `settingsStore.ts` 5 组 localStorage watch 模式完全相同，可提取复用
+- **Vue 错误边界**: 目前无 `errorCaptured` 钩子或全局 `app.config.errorHandler`
+- **L-#13 ArchivePanel 分页参数命名**: `ArchivePanel.vue` API 契约不变，仅命名建议
+- **L-#15 硬编码颜色**: `variables.css:33` 绕过 CSS 变量，不影响功能
 
 
 ## 代码清理

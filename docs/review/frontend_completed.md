@@ -4,7 +4,7 @@
 修复日期：2026-07-30
 提交：`60ac3e5` + `99e821c`（第一轮，34 文件） + `c912a8f`（第二轮，14 文件）
 
-> 本文归档已修复的问题。未修复项见 [frontend_todo.md](../../frontend_todo.md)。
+> 本文归档已修复的问题。未修复项已并入 [todo.md](../../todo.md) 功能改进区（原 [frontend_todo.md](../archive/frontend_todo.md) 已归档）。
 
 ---
 

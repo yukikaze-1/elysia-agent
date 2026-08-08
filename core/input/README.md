@@ -1,6 +1,6 @@
 # Input Module
 
-> 文档导航：[项目文档](../../README.md) → [Module 文档](../README.md)
+> 文档导航：[项目文档](../../README.md) → [Core 文档](../README.md)
 
 输入层模块。负责接收浏览器客户端的音频和文本输入，管理 WebSocket 连接和音频缓冲区。
 
@@ -8,18 +8,25 @@
 
 ```
 input/
-├── __init__.py          # 导出
-├── __main__.py          # 集成测试 (python -m core.input)
-├── audio_buffer.py      # AudioBuffer — VAD 分帧 + 音频缓冲 + PCM/WAV 转换
-├── server.py            # 胶水组装 + 基础路由
-├── ws_handler.py        # WebSocket 处理（set_service 路由 + BINARY 防御）
-├── capabilities.py      # build_capabilities — 嵌套 per-service 能力声明 + 全量重播
-├── api_routes.py        # 业务 API 路由
-├── debug_routes/         # Debug API 路由 (package: 7 modules)
-├── custom_providers.py  # 自定义 provider 持久化（JSON 文件读写）
-├── provider_registry.py # /api/providers 响应组装（已配置/未配置区分）
-├── wakeword.py          # WakeWordDetector — 唤醒词检测
-├── tests/               # 单元测试
+├── __init__.py              # 导出
+├── __main__.py              # 集成测试 (python -m core.input)
+├── server.py                # 胶水组装 + create_app + 基础路由
+├── ws_handler.py            # WebSocket 处理（set_service 路由 + BINARY 防御）
+├── capabilities.py          # build_capabilities — 嵌套 per-service 能力声明 + 全量重播
+├── api_routes.py            # 业务 API 路由（/api/uploads 上传、/api/stickers 表情等）
+├── session_routes.py        # 多会话 REST（/api/sessions CRUD/activate/messages/resources/generations/pending、/api/messages/{id}/context、/api/search/messages，批次 3）
+├── attachment_routes.py     # 附件 HMAC 短签下载 + 签发（GET /api/attachments/{id} + /sign，BE-070）
+├── voice_sessions.py        # 三模式语音状态机（普通录音/实时语音/输入法转写，BE-060~062）
+├── audio_buffer.py          # AudioBuffer — VAD 分帧 + 音频缓冲 + PCM/WAV 转换 + 唤醒词并行检测
+├── wakeword.py              # WakeWordDetector — openWakeWord 流式唤醒词检测
+├── sticker_registry.py      # 内置表情包注册表（扫描 static/stickers/*.png，BE-071）
+├── ssrf.py                  # SSRFGuard — 自定义 Endpoint 防 SSRF（静态校验 + 出站守卫传输层，批次 5）
+├── idempotency.py           # v2 幂等存储 — clientRequestId → 用户消息记录（进程内 dict + TTL，批次 2）
+├── tts_profile.py           # TTS profile 共享 helper — 活动会话激活 TTS 后端 + 默认音色解析
+├── custom_providers.py      # 自定义 provider 持久化（JSON 文件读写）
+├── provider_registry.py     # /api/providers 响应组装（已配置/未配置区分）
+├── debug_routes/            # Debug API 路由 (package: 7 modules)
+├── tests/                   # 单元测试
 └── README.md
 ```
 
@@ -61,6 +68,12 @@ web.run_app(app, port=8000)
 
 - `set_service {service, enabled}` WS 消息 → `agent.set_service()` → `service_mode_result` 广播（所有 client）。TTS off → `_tts_mgr` 停用回落逐字文本流；STT off → 前端停麦 + 后端 BINARY 防御。模式与当前模型经 `session.service_state` 持久化（30d TTL），启动时 `_apply_service_state` 应用。
 
+### REST API
+
+**批次 3 多会话 REST**（`session_routes.py`）：`/api/sessions`（CRUD/activate）、`/api/sessions/{id}/messages`（before/after 分页）、`/api/messages/{id}/context`、`/api/search/messages`、`/api/sessions/{id}/resources`（sticker 分类 + 附件软删过滤）、`/api/sessions/{id}/generations`、`/api/generations/{gid}`、`/api/sessions/{id}/pending`。
+
+**批次 7 附件/表情**：`POST /api/uploads`（通用附件上传，filetype 魔数校验 + 签名 URL）、`GET /api/attachments/{id}`（HMAC 短签下载，免 Bearer，Range/206）、`GET /api/attachments/{id}/sign`（签发，Bearer）、`GET /api/stickers`（内置表情包）。附件元数据存 `attachments` 集合（BE-070 fail-closed：refs/ref_count + 软删 status/deleted_at，TTL 由 AttachmentGC 管理）。
+
 ## 测试
 
 ```bash
@@ -74,7 +87,7 @@ python -m core.input
 
 | 文档 | 内容 |
 |------|------|
-| [Module 文档](../README.md) | 所有 Module 服务总览 + 架构模式 |
+| [Core 文档](../README.md) | Core 层总览 |
 | [Module/stt/README.md](../../Module/stt/README.md) | STT（音频输入消费者） |
 | [Module/output/README.md](../../Module/output/README.md) | 输出通道（WebSocket 方向） |
 | [docs/architecture.md](../../docs/architecture.md) | 输入输出系统架构 |

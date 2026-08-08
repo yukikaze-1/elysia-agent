@@ -112,7 +112,7 @@ conda run -n Elysia python -m pytest Module/workflow_engine/tests Module/workflo
 - `vis-network` DAG 可视化（hierarchical TB 布局，status 着色节点）
 - SSE 实时流（`/debug/api/tasks/stream`），自动重连 + exponential backoff
 
-后端 API：`GET /debug/api/tasks/stream`（SSE），`GET /debug/api` → `info.scheduler_queue_size`
+后端 API：`GET /debug/api/tasks/stream`（SSE），`GET /debug/api` → `info.scheduler_pending` / `info.scheduler_running` / `info.scheduler_total`（调度器工作线程池快照，见 `core/debug/info.py`）
 
 ---
 

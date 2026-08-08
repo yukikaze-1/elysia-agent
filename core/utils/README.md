@@ -16,7 +16,7 @@ core/utils/
 
 ## 组件
 
-### message_id.py（15 行）
+### message_id.py（30 行）
 
 `new_message_id()` — 返回 `msg_` + 26 位 hex UUID4。被 `task/task.py`、`cognitive/loop.py`、`memory/long_term.py` 等多处使用。
 

@@ -24,7 +24,8 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 ├── compression.py  # CompressionTrigger + VersionEntry — L3→L2 压缩版本管理类型
 ├── error_type.py   # ErrorType — 工具错误分类（从 Module/_common 重导出）
 └── adapters/
-    └── message_adapter.py  # parts_from_dicts, content_to_openai, content_text 等纯函数适配器
+    ├── message_adapter.py  # parts_from_dicts, content_to_openai, content_text 等纯函数适配器
+    └── attachment_resolver.py  # AttachmentFileResolver — 附件 ID → 磁盘路径进程内映射（Mongo 离线兜底定位，批次 7）
 ```
 
 数据流：外部数据（session 存储 / WebSocket 请求）是 `list[dict]`，在边界处用 `parts_from_dicts()` 转为 `list[Part]`；内部逻辑只处理 Part；发往 LLM 前用 `content_to_openai()` 转为 OpenAI multimodal 格式。

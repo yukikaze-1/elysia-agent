@@ -10,7 +10,7 @@ Module/ 内部共享的零依赖工具函数，供各子模块的 registry、con
 |------|------|
 | `env.py` | `dotenv` 统一入口——`ensure_dotenv()` 查找项目根 `.env` 并加载。所有 `__main__.py` 应通过此函数加载环境变量 |
 | `registry_helpers.py` | Registry 共享工具：`resolve_api_key()` / `resolve_base_url()`（从 env var / YAML / kwargs 解析）、`inject_logger()`（按调用栈注入 logger） |
-| `test_helpers.py` | `test()` 工厂——消除 5 个 backend（LLM/STT/TTS/Embedding/DocumentDB）中逐字相同的连通性测试实现 |
+| `test_helpers.py` | `make_test_method()` 工厂——消除 5 个 backend（LLM/STT/TTS/Embedding/DocumentDB）中逐字相同的连通性测试实现 |
 | `config_test_helpers.py` | Config 测试工厂——`make_config_test_classes()` 参数化生成 `TestDefaults` + `TestFromConfig` 两个 test class |
 | `main_runner.py` | 统一 `__main__` 入口——`ensure_dotenv()` + `asyncio.run()`，一行启动集成烟雾测试 |
 | `error_type.py` | `ErrorType` 工具错误分类枚举（纯 enum，零依赖）——Module.tool 与 core.schema 共用，`core.schema.error_type` 为此处的重导出壳 |
@@ -18,12 +18,16 @@ Module/ 内部共享的零依赖工具函数，供各子模块的 registry、con
 ## 使用
 
 ```python
-from Module._common.env import ensure_dotenv
-from Module._common.main_runner import run_main
+from Module._common.main_runner import run_module_main
 
-ensure_dotenv()
-# ... setup ...
-run_main(main_coro)
+
+async def main():
+    # ... setup ...
+    ...
+
+
+if __name__ == "__main__":
+    run_module_main(main)   # 加载 .env + asyncio.run()
 ```
 
 ---

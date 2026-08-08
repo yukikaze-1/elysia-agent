@@ -48,7 +48,7 @@
 | SessionMemory | MongoDB `sessions` | LLM prompt 上下文窗口（权威消息源） |
 | MessageRepository | MongoDB `message_archive` | 永久归档（fire-and-forget） |
 
-`add_message()` 同时写入两处。debug 页面删除 Archive 消息时调用 `Agent._purge_message_from_session()` 同步清理 session，确保 LLM prompt 不再包含已删消息。
+`add_message()` 同时写入两处。debug 页面删除 Archive 消息时调用 `Agent.purge_message_from_session()` 同步清理 session，确保 LLM prompt 不再包含已删消息。
 
 ## 关键机制
 
@@ -70,6 +70,7 @@
 
 - 后端：Milvus 向量搜索 + rerank（时效衰减 + poignancy 加权）
 - `search(query_text="", query_embedding=None, top_k=5, memory_type=None)` 返回最相关记忆
+- **memory_type 归一**：`core/schema/memory.py` 的 `MemoryType` StrEnum（Fact/Preference/Event/Plan/Note）是 LTM 记忆类型权威来源；构造/update/search 边界经 `try_coerce`/`coerce` 归一——过滤大小写不敏感，未知值 → `None`（过滤不命中）或 `Note`（存储兜底，不崩）
 - `_absorbed_ids` 追踪合并记录，避免重复返回
 - 无 Milvus 时降级为纯本地匹配（不 crash）
 
@@ -78,6 +79,7 @@
 - 缓冲阈值：`BUFFER_THRESHOLD = 6` 条消息对
 - 提取 prompt：`core/prompts/ExtractMemory.j2`（`Path(__file__)` 相对路径）
 - 比对 prompt：`core/prompts/ConsolidationCompare.j2`
+- 提取类型为 `MemoryType` StrEnum（Fact/Preference/Event/Plan/Note，`core/schema/memory.py`），与 ExtractMemory.j2 / ConsolidationCompare.j2 的大写词表一致
 - `flushing` 标志防止并发 flush
 
 ### MemoryReflector
@@ -108,7 +110,7 @@ core/memory/
 关联文件:
 core/
 ├── adapter/llm_adapter.py  — LLM 适配器（consolidator + reflector 共用）
-└── schema/memory.py   — ExtractedMemory / CompareAction 判别联合
+└── schema/memory.py   — MemoryType StrEnum（try_coerce/coerce 归一，未知→None/NOTE）+ ExtractedMemory / CompareAction 判别联合
 
 core/prompts/
 ├── ExtractMemory.j2         — 记忆提取模板

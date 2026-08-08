@@ -21,7 +21,7 @@ Module/
 │   ├── vectordb/         # 向量数据库（Milvus）
 │   ├── documentdb/       # 文档数据库（MongoDB）
 │   └── graphdb/          # 图数据库（预留）
-├── workflow_engine/      # 异步任务编排（Planner/Orchestrator/Executor）
+├── workflow_engine/      # 异步任务编排（Sub-Agent 决策 + Orchestrator 执行）
 ├── workflow_contract/    # 跨边契约层（core ↔ workflow_engine 类型来源，零业务逻辑）
 └── bench/                # 延迟基准测试
 ```
@@ -64,7 +64,7 @@ await backend.close()
 
 ### STT — 语音识别
 
-当前仅实现 SenseVoice（本地部署），OpenAI / DeepGram 为占位。
+当前实现 SenseVoice（本地部署）与 Custom（OpenAI 兼容 Whisper），OpenAI / DeepGram 为占位。
 
 ```python
 from Module.stt import STTFactory
@@ -78,7 +78,7 @@ await backend.close()
 
 ### TTS — 语音合成
 
-对接 GPT-SoVITS 服务端，输出 32000Hz / mono / int16 WAV。音色通过 `gpt_sovits_voices.yaml` 配置。
+默认 MiniMax API（`minimax/speech-2.8-hd`，音色映射 `Module/tts/minimax_voices.yaml`），亦可对接 GPT-SoVITS 服务端（输出 32000Hz / mono / int16 WAV）。音色通过各后端 voices YAML 配置。
 
 ```python
 from Module.tts import TTSFactory
@@ -232,7 +232,7 @@ results = await backend.search("micro_memory", query_vector, top_k=10)
 
 ### Input — 音频输入 + WebSocket 服务器
 
-`AudioBuffer` 管理麦克风 PCM 缓冲 + WebRTC VAD 语音活动检测。`server.py`（胶水组装）+ `ws_handler.py` + `api_routes.py` + `debug_routes/`（包，7 个模块）提供 36 路由的 aiohttp 应用（WebSocket、REST API、静态文件、debug API）。
+`AudioBuffer` 管理麦克风 PCM 缓冲 + WebRTC VAD 语音活动检测。`server.py`（胶水组装）+ `ws_handler.py` + `api_routes.py` + `debug_routes/`（包，7 个模块）提供约 49 条路由的 aiohttp 应用（WebSocket、REST API、静态文件、debug API）。
 
 ```python
 from core.input import AudioBuffer
@@ -247,7 +247,7 @@ if buf.is_speech_complete():  # VAD 检测到完整语音段
 
 ### WorkflowEngine — 异步任务编排
 
-Planner/Orchestrator/Executor 三层架构，支持子 Agent 委托、DAG 依赖图、checkpoint 持久化、mailbox 轮询。主类 `WorkflowEngine`；跨边类型（`AgentInfra`/`HITLNotifier`/`DelegationContext` 等）自契约层 `Module/workflow_contract` 解析。
+Sub-Agent（决策层）+ Orchestrator（执行层）两层架构，支持子 Agent 委托、DAG 依赖图、checkpoint 持久化、mailbox 轮询。主类 `WorkflowEngine`；跨边类型（`AgentInfra`/`HITLNotifier`/`DelegationContext` 等）自契约层 `Module/workflow_contract` 解析。
 
 ```python
 from Module.workflow_engine import WorkflowEngine

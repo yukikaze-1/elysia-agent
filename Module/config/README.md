@@ -13,7 +13,7 @@ Module/config/
 ├── field.py             # ConfigField — dataclass 字段描述符
 ├── validator.py         # 类型校验 + 约束验证
 ├── errors.py            # ConfigValidationError 错误类型
-├── providers.py         # 自定义 provider 端点管理（CRUD + 连通性测试）
+├── providers.py         # 加载 providers.yaml 默认值（load_provider_defaults，无 CRUD）
 ├── preflight.py         # 环境预检（app.py --check）
 ├── _utils.py            # 内部工具
 ├── providers.yaml       # 内置 provider 注册表（LLM/STT/TTS 默认端点）

@@ -1,3 +1,5 @@
+> ⚠️ 已归档（2026-08-09）：轨迹参考，仅作历史 wire 形状记录。
+
 # Electron 后端真实 WS 轨迹（脱敏快照）
 
 本目录的 JSONL 为各批次**捕获时点**的真实脱敏 WS 轨迹，由 `scripts/capture_ws_trace.py` 生成（aiohttp TestClient + 内存 fake 存储，不 bind 端口、不连真 Mongo、TTS/STT 禁用）。

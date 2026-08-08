@@ -8,7 +8,7 @@
 
 > **运行环境：Linux**（Windows/Mac 用户请使用 WSL2 或虚拟机）
 
-> 最近 (2026-08-06): 通用附件与媒体链路（批次 7）——`POST /api/uploads`（filetype 魔数校验 + 签名 URL）、`GET /api/attachments/{id}`（HMAC 短签下载 + Range/206）、`GET /api/attachments/{id}/sign`（签发）、`GET /api/stickers`（内置表情包）+ 附件 GC 四规则 + `/health`/`/ready` 拆分 + `build_sha`/`requestId`。2026-08-03: 前后端契约单源化——顶层 `frontend_contract/` 包（Pydantic 唯一权威），WS/REST/Debug 契约建模 + `gen_ts.py` 发射器生成前端 TS 快照 + `make check-types` 漂移门禁。同日: 服务运行时状态 + 热插拔——STT/TTS 后端模式开关（set_service）+ 模型/模式跨重启持久化（ServiceState）+ STT 槽位化热切换 + capabilities 嵌套 per-service。2026-08-02: 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。当前 2640 测试。
+> 最近 (2026-08-09): core 生产代码 pyright 门禁——`make pyright`（锁 Elysia env）清 92 处报错 + 全项目文档体检（删除/归档过时文档）。2026-08-08: core ID NewType 化 + channel/kind 对齐契约枚举（MessageChannel/SegmentKind StrEnum）+ MemoryEntry.memory_type 对齐（try_coerce/coerce 归一）。2026-08-06: 通用附件与媒体链路（批次 7）——`POST /api/uploads`（filetype 魔数校验 + 签名 URL）、`GET /api/attachments/{id}`（HMAC 短签下载 + Range/206）、`GET /api/attachments/{id}/sign`（签发）、`GET /api/stickers`（内置表情包）+ 附件 GC 四规则 + `/health`/`/ready` 拆分 + `build_sha`/`requestId`。2026-08-03: 前后端契约单源化——顶层 `frontend_contract/` 包（Pydantic 唯一权威），WS/REST/Debug 契约建模 + `gen_ts.py` 发射器生成前端 TS 快照 + `make check-types` 漂移门禁。同日: 服务运行时状态 + 热插拔——STT/TTS 后端模式开关（set_service）+ 模型/模式跨重启持久化（ServiceState）+ STT 槽位化热切换 + capabilities 嵌套 per-service。2026-08-02: 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。当前 3186 测试。
 
 ---
 
@@ -71,11 +71,8 @@ Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板
 | `log/milvus.log` | Milvus 操作日志 |
 | `log/README.md` | 日志文件详细说明 |
 | `.model_cache/` | 嵌入模型（`BAAI/bge-large-zh-v1.5/`，约 1.3GB） |
-| `data/ref/Elysia.wav` | GPT-SoVits 音色克隆参考音频（1.6MB） |
 | `frontend/` | Vue 3 前端源码（Vite + Pinia + TypeScript，含 Debug 应用）。详见 [frontend/README.md](frontend/README.md) |
 | `static/` | Vite 构建产物 + 非代码资源（由 aiohttp serve） |
-| `static/live2d-demo/` | Live2D 前端（Cubism SDK，index.html 待创建） |
-| `data/live2d-assets/` | Live2D 角色模型（.moc3 + 纹理，服务端映射到 `/live2d/`） |
 | `static/debug.md` | Debug 面板完整文档（标签页、API、技术实现） |
 
 > `scripts/download_model.py` 将模型下载到 `.model_cache/`。运行时按 `MODEL_CACHE_DIR` → `.model_cache/` → `~/.cache/huggingface/hub/` 顺序查找。
@@ -125,7 +122,7 @@ docker compose restart     # 重启
 
 > **低配置 CPU（无 AVX 指令集）**：MongoDB 5.0+ 强制要求 CPU 支持 AVX，`mongo:8` 会以 exit 132 无限重启。compose 默认 mongo:8；无 AVX 的旧 CPU 请把 image 改为 `mongo:4.4`（最后支持非 AVX 的版本）。极老 CPU 上 Milvus 2.6 若异常可回退 `milvusdb/milvus:v2.4.0`。
 >
-> **嵌入模型下载失败（代理/镜像）**：TUN 透明代理会劫持直连流量导致 `SSL UNEXPECTED_EOF`；`huggingface_hub>=1.26` 存在 client closed / SSL EOF bug。用本地 HTTP 代理手动下载模型，或 `pip install "huggingface_hub==1.5.0"` 降级。完整实录见 [docs/elysia-install-issues.md](docs/elysia-install-issues.md)。
+> **嵌入模型下载失败（代理/镜像）**：TUN 透明代理会劫持直连流量导致 `SSL UNEXPECTED_EOF`；`huggingface_hub>=1.26` 存在 client closed / SSL EOF bug。用本地 HTTP 代理手动下载模型，或 `pip install "huggingface_hub==1.5.0"` 降级。完整实录见 [docs/archive/elysia-install-issues.md](docs/archive/elysia-install-issues.md)。
 
 **预检报错**
 ```bash
@@ -238,30 +235,29 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 |------|------|
 | [docs/architecture.md](docs/architecture.md) | 完整架构详解（1000+ 行） |
 | [frontend_contract/README.md](frontend_contract/README.md) | 前后端契约单源（可执行 Pydantic + TS 生成快照 + 漂移门禁） |
-| [docs/frontend-api.md](docs/frontend-api.md) | 前端 API 文档（面向第三方的参考视图） |
+| [docs/completed.md](docs/completed.md) | 已完成工作月度归档索引 |
 | [CLAUDE.md](CLAUDE.md) | AI 助手指令 + 项目地图 |
 | [character/README.md](character/README.md) | 角色配置说明 |
 | [core/prompts/README.md](core/prompts/README.md) | Prompt 模板说明 |
 | [docs/database-storage.md](docs/database-storage.md) | 数据库存储设计 |
-| [docs/sync-lessons.md](docs/sync-lessons.md) | 同步经验笔记 |
-| [docs/experience.md](docs/experience.md) | 开发经验记录 |
+| [docs/testing.md](docs/testing.md) | 测试命令速查 + 分层体系 |
 | [scripts/README.md](scripts/README.md) | 工具脚本（启动/预检/清理数据库） |
 | [docs/readme-conventions.md](docs/readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
-| [docs/data-structure-survey.md](docs/data-structure-survey.md) | 全项目数据结构普查（2026-07-15） |
 | [docs/code-style-guide.md](docs/code-style-guide.md) | 代码风格与类型约束（ID NewType 体系 + 权威归属 + StrEnum/coerce + getattr 纪律） |
 | [docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md) | Agent 公开接口设计（31 个 @property + 写方法） |
 | [docs/superpowers/specs/2026-08-02-service-runtime-state-design.md](docs/superpowers/specs/2026-08-02-service-runtime-state-design.md) | 服务运行时状态 + 热插拔设计（ServiceState + set_service + capabilities 嵌套） |
 | [docs/review/doc-review-2026-07-18.md](docs/review/doc-review-2026-07-18.md) | 文档审查报告（2026-07-18） |
+| [docs/archive/](docs/archive/) | 归档文档（历史记录，不再随代码库更新）：electron 基线/迁移/进度/审计、经验与同步笔记、数据结构普查、前端交接包、WorkflowEngine 历史设计 |
 
-### Electron 后端联调（协议 / 安全 / 进度）
+### Electron 后端联调（协议 / 安全）
 | 文档 | 内容 |
 |------|------|
-| [docs/electron-backend-baseline.md](docs/electron-backend-baseline.md) | 后端协议基线（v1 现状，批次 0） |
-| [docs/electron-backend-protocol-v2.md](docs/electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 三种语音/TTS 播放契约 + **通用附件与媒体契约（§13）** + 错误码目录 40 码（批次 2/3/4/5/6/7） |
-| [docs/electron-backend-security.md](docs/electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF + **附件签名下载与签发安全（§3.5）**（批次 1/3/4/5/6/7） |
-| [docs/electron-backend-progress.md](docs/electron-backend-progress.md) | 后端改造进度（批次 0-7，全部完成） |
-| [docs/14-Cyrene-后端配合改造任务清单-v0.1.md](docs/14-Cyrene-后端配合改造任务清单-v0.1.md) | Electron 后端配合改造任务清单（BE-001~081，24/24 完成） |
-| [docs/15-Cyrene-后端改造执行上下文与Prompt-v0.1.md](docs/15-Cyrene-后端改造执行上下文与Prompt-v0.1.md) | 后端改造执行上下文与 Prompt |
+| [docs/electron-backend-protocol-v2.md](docs/electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 三种语音/TTS 播放契约 + **通用附件与媒体契约（§13）** + 错误码目录 40 码（批次 2-8c） |
+| [docs/electron-backend-security.md](docs/electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF + **附件签名下载与签发安全（§3.5）**（批次 1-8c） |
+| [docs/archive/electron-backend-baseline.md](docs/archive/electron-backend-baseline.md) | 后端协议基线（v1 现状，批次 0）⚠️ 已归档 |
+| [docs/archive/electron-backend-progress.md](docs/archive/electron-backend-progress.md) | 后端改造进度（批次 0-8c，全部完成）⚠️ 已归档 |
+| [docs/archive/electron-backend-migration.md](docs/archive/electron-backend-migration.md) | v1→v2 迁移/升级说明（部署清单见 security）⚠️ 已归档 |
+| [docs/archive/electron-backend-audit-batches0-7.md](docs/archive/electron-backend-audit-batches0-7.md) | 批次 0-7 全量审查报告（56 条发现全部闭合）⚠️ 已归档 |
 
 **附件/媒体子系统（批次 7）**：上传/下载/签发/表情四端点（`POST /api/uploads`、`GET /api/attachments/{id}`、`GET /api/attachments/{id}/sign`、`GET /api/stickers`）+ 附件存储 `core/storage/attachment_repo.py`（MongoDB `attachments` 集合，fail-closed）+ 启动 GC 兜底扫描 `core/storage/attachment_gc.py`（软删 24h / 未关联 7 天 / 磁盘孤儿四规则）。契约见 protocol-v2 §13，安全见 security §3.5。
 
@@ -273,8 +269,8 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 |------|------|------|
 | 🥇 对话风格 | ✅ | Brain Prompt 模块化——12 个独立 section，自然对话/克制/关系模型 |
 | 🥈 内心世界 | ✅ | `<inner_voice>` 标签输出 + 前端气泡 + 持久化 + 日志 |
-| 🥉 记忆人格化 | 待做 | 记忆融入对话，不是"引用"是"记得" |
-| 🏅 主动性 | 待做 | 注意到离开/回来，深夜关心 |
+| 🥉 记忆人格化 | ✅ | LTM 记忆沉淀 + 召回，C4 回忆渲染进 System Prompt |
+| 🏅 主动性 | ✅ | IdleMonitor proactive 触发（离开/回来/深夜关心，config 可配 triggers） |
 
 详见 [`docs/legacy/companion-roadmap.md`](docs/legacy/companion-roadmap.md) 和 [`docs/legacy/companion-prompt-guide.md`](docs/legacy/companion-prompt-guide.md)
 
@@ -295,14 +291,14 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | STT 语音识别 (SenseVoice / OpenAI-compatible) + 情绪标签 | done |
 | TTS 流式合成 (MiniMax / GPT-SoVits / OpenAI-compatible) + 句队列 | done |
 | 文字/语音绑定 + 逐句独立气泡 | done |
-| **WorkflowEngine v1** — DAG 编排 + Planner/Executor/Evaluator (339 tests) | done |
+| **WorkflowEngine v1** — DAG 编排 + Planner/Executor/Evaluator (293 tests) | done |
 | **Token 追踪** — TokenTracker + PromptRecorder + 前端标签 | done |
-| 工具系统 Plugin 架构 — 12 插件 + SafetyPipeline + HITL 审批 | done |
+| 工具系统 Plugin 架构 — 16 插件 + SafetyPipeline + HITL 审批 | done |
 | **模型切换** — DeepSeek/OpenAI/Ollama/MiMo + 运行时热切换 | done |
 | **多模态** — 图片上传/预览/lightbox + describe_image 视觉工具 | done |
 | **通用附件与媒体** — POST /api/uploads + 签名下载（Range/206）+ 签发 + 内置表情包 + GC 清理（批次 7，BE-070/071） | done |
 | **版本与可观测** — /health（liveness）/ready（readiness）拆分 + git build_sha + 统一错误 40 码 + 请求 ID 关联（批次 7，BE-081） | done |
-| Live2D 虚拟角色渲染 (Cubism SDK，默认静态图、需自建 index.html) | 可选 |
+| ~~Live2D 虚拟角色渲染~~（Cubism SDK 目录已移除，改用静态图 AvatarDisplay） | 已移除 |
 | 前端 Vue 3 重构 (Vite + Pinia + TypeScript) | done |
 | 配置系统 (YAML + env + 类型校验 + providers.yaml) | done |
 | [/debug 面板](static/debug.md) (16+ 面板: FSM/记忆/工具/Token/DAG/LLM Prompt/Raw Response/数据库管理) | done |
@@ -337,10 +333,7 @@ Agent/
 ├── todo.md                 # 开发计划 + 已知 Bug
 ├── log/                    # 日志输出 (gitignore)
 ├── data/                   # 数据存储 (gitignore)
-│   ├── cache/              #   缓存
-│   ├── live2d-assets/      #   Live2D 角色模型
-│   ├── ref/                #   参考音频
-│   └── uploads/            #   上传文件
+│   └── uploads/            #   上传文件（images/desktop 子目录）
 ├── character/              # 角色配置
 │   ├── elysia/             #   Elysia 角色
 │   ├── cyrene/             #   Cyrene 角色
@@ -359,7 +352,7 @@ Agent/
 │   ├── system_prompt/      # Brain Prompt 引擎 — SystemPromptManager + 12 PromptSections
 │   ├── tool/               # 工具框架 (129 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB
-│   ├── workflow_engine/    # WorkflowEngine v1 (339 tests)
+│   ├── workflow_engine/    # WorkflowEngine v1 (293 tests)
 │   │   └── tests/          #     测试
 │   ├── workflow_contract/  # 跨边契约层 (types/enums/AgentInfra)
 │   └── bench/              # 延迟基准
@@ -377,7 +370,7 @@ Agent/
 │   ├── monitoring/          # 可观测性: EventBus + IdleMonitor + TokenTracker
 │   ├── personality/         # CharacterEngine: 四层性格模型
 │   ├── schema/              # 共享 Pydantic 类型 (Event, Message, Part 等)
-│   ├── storage/             # Repository 层 (Session/Message/Token/Memory/CharacterVersion)
+│   ├── storage/             # Repository 层 (Session/Message/Token/Memory/Generation/Attachment/DesktopCall + SecretStore + GC)
 │   ├── tools/               # 工具插件 (filesystem, web, memory 等)
 │   ├── tests/               # 测试套件
 │   ├── config/               # 配置子包 (AppConfig + CharacterConfig)
@@ -408,7 +401,7 @@ Agent/
 │   ├── src/components/         # 21 个聊天 Vue 组件
 │   ├── src/stores/             # 6 个 Pinia store
 │   ├── src/composables/        # 4 个 composables (useWebSocket/useAbortController/useImageUpload/useLightbox)
-│   ├── src/types/protocol.ts   # WebSocket 消息类型定义
+│   ├── src/types/protocol.ts   # 契约类型 re-export（contract.generated.ts 单源）
 │   ├── src/styles/variables.css # 全局 CSS 变量
 │   └── src/debug/              # 独立 Debug 应用（Vite 多入口）
 │       ├── main.ts             #   Pinia 注入入口
@@ -431,7 +424,7 @@ Agent/
 │   ├── debug.html          #   Debug 页面 HTML（Vite 构建产物）
 │   ├── debug.md            #   Debug 面板设计文档
 │   ├── Elysia.png          #   角色头像（非代码资源）
-│   ├── live2d-demo/        #   Live2D Cubism SDK（非代码资源）
+│   ├── stickers/           #   内置表情包（批次 7）
 │   └── assets/             #   Vite 构建产物（JS/CSS bundle，带 content hash）
 ├── docs/                   # 文档
 │
@@ -442,7 +435,7 @@ Agent/
 
 ## 测试
 
-2729 个测试按 4 层 markers 组织（unit 1486 / service 1180 / integration 16 / slow 39，少量多 marker 重复计入）；`make test-quick` 2640 passed / 2 skipped / 87 deselected。详见 [docs/testing.md](docs/testing.md)。
+3186 个测试按 4 层 markers 组织（unit 1833 / service 1258 / integration 35 / slow 56，少量多 marker 重复计入）；`make test-normal`（排除 slow）收集 2854。详见 [docs/testing.md](docs/testing.md)。
 
 ```bash
 conda activate Elysia
@@ -466,43 +459,6 @@ make lint
 | `service` | 单模块 + mock | 日常开发 |
 | `integration` | 需真实 DB 或 API | 提交前 |
 | `slow` | Agent 启动/端到端 | 推之前 |
-
----
-
-## Live2D 角色显示（可选）
-
-项目默认以静态图片代替。启用动态 Live2D 角色需要两步：
-
-**1. 获取 Cubism SDK for Web**
-
-从 [Live2D 官网](https://www.live2d.com/download/cubism-sdk/) 下载 `CubismSdkForWeb-5-r.5.zip`，解压后放入 `static/live2d-demo/`：
-
-```
-static/live2d-demo/
-├── Core/
-│   └── live2dcubismcore.js  # 核心渲染引擎
-├── Framework/
-│   └── dist/                  # 编译好的 TypeScript 框架
-├── Samples/                   # 官方示例模型（可选）
-└── index.html                 # 你的 Live2D 加载页面
-```
-
-> 当前 `static/live2d-demo/` 已包含 SDK 的 `Core/` + `Framework/`，但缺 `index.html` 加载页面
-
-**2. 获取角色模型**
-
-从 [Live2D 商城](https://www.live2d.com/en/products/) 下载角色模型包，放入 `data/live2d-assets/`：
-
-```
-data/live2d-assets/
-└── <角色名>/
-    ├── <角色名>.moc3            # 模型数据
-    ├── <角色名>.model3.json     # 模型配置（入口文件）
-    ├── <角色名>.physics3.json   # 物理模拟
-    └── <角色名>.8192/           # 纹理贴图
-```
-
-服务端将 `data/live2d-assets/` 映射到 `/live2d/`，前端通过 iframe 加载 `/static/live2d-demo/index.html`（需自行创建加载页面）。
 
 ---
 

@@ -6,7 +6,7 @@
 
 **Architecture:** 3 层（core/safety/learning）+ 顶层扁平模块。编排分两层：Sub-Agent（决策层）+ Orchestrator（执行层）。通过 WorkflowMailbox + HITLNotifier 与 CognitiveLoop 通信。DAG 图存储使用 NetworkX（PlanGraph 封装）。`submit_task` 注册为 LLM 工具，LLM 自主判断是否委派后台任务。
 
-**Spec:** `Module/workflow_engine/docs/architecture.md`<br>
+**Spec:** `docs/archive/architecture.md`（TaskSystem 时代设计文档，已归档）<br>
 **API:** `Module/workflow_engine/docs/api.md`
 
 ---
@@ -43,7 +43,7 @@ Module/workflow_engine/
 │   │   ├── execution_loop.py  # 执行循环：orchestrator.run() + 结果处理
 │   │   ├── result_handlers.py # 结果处理函数
 │   │   └── replan.py          # Replan 决策：evaluator 判定 → replan 触发
-│   ├── orchestrator.py        # Orchestrator: 执行层——按 Plan 推进 DAG (421 行)
+│   ├── orchestrator.py        # Orchestrator: 执行层——按 Plan 推进 DAG (587 行)
 │   ├── graph.py               # PlanGraph: NetworkX DiGraph 封装（图算法层）
 │   ├── planner/               # Planner: LLM → DAG 骨架 / DAGPatch（拆分自 planner.py）
 │   │   ├── __init__.py        # 公开导出
@@ -75,7 +75,7 @@ Module/workflow_engine/
 │   │   ├── test_evaluator.py
 │   │   ├── test_executor.py
 │   │   ├── test_planner.py
-│   │   ├── test_delegation_preparer.py
+│   │   ├── test_schema.py
 │   │   ├── test_checkpoint.py
 │   │   ├── test_mailbox.py
 │   │   └── test_token_ledger.py
@@ -84,7 +84,7 @@ Module/workflow_engine/
 │   │   ├── conftest.py
 │   │   ├── test_workflow_engine_lifecycle.py
 │   │   ├── test_e2e_mvp.py
-│   │   ├── test_delegation_preparer.py
+│   │   ├── test_delegation_preparer.py   # DelegationPreparer 单测已迁 core/cognitive/tests/
 │   │   ├── test_executor.py
 │   │   └── test_planner.py
 │   ├── safety/

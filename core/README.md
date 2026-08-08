@@ -72,7 +72,7 @@ Agent.start()
 
 ## 核心组件
 
-`core/` 根目录 + 子包共约 120 个 `.py` 文件。其中 10 个为核心组件（详细描述），12 个为支撑模块（简表），另有 15 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`, `input/` 等）和 3 个子目录（`tools/`, `tests/`, `schema/`）在各自 README 中详述。
+`core/` 根目录 + 子包共 154 个 `.py` 文件（排除 tests/__pycache__）。其中 10 个为核心组件（详细描述），13 个为支撑模块（简表），另有 19 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`, `input/`, `desktop/`, `prompts/` 等，含 `tools/`/`tests/`/`schema/`）在各自 README 中详述。
 
 ### 核心组件详解（10 个）
 
@@ -80,7 +80,7 @@ Agent.start()
 
 组装入口，持有所有子系统的引用。使用双 mixin 模式：`Agent(AgentLifecycle, AgentServer)`。`__init__` 创建 L0/L1/L2 全部组件；`AgentLifecycle.start()` 按序连接数据库、启动后台任务、加载插件；`AgentLifecycle.stop()` 按序 flush → cancel → close → save。暴露 `process_message()` 接收用户输入（支持纯文本和多模态 content 数组），`AgentServer.run_server()` 启动 WebSocket 服务，`AgentServer.run_repl()` 启动交互式命令行。管理 `RunState` 生命周期（STOPPED / RUNNING / STOPPING / RESTARTING），支持 `/restart` 热重载配置。共享类型（`RunState`, `_PendingMessage`, `_BackgroundTaskEntry`）在 `_types.py` 中。
 
-**公开接口**：作为组合根，通过 31 个同名 `@property` 公开子系统访问路径——`agent.session` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.stt_enabled` / `agent.tts_enabled` / `agent.stt_emotion_state` / `agent.config` / `agent.bus` / `agent.cognitive` / `agent.idle` / `agent.scheduler` / `agent.consolidator` / `agent.memory_reflector` / `agent.character_engine` / `agent.character_reflector` / `agent.character` / `agent.token_tracker` / `agent.prompt_recorder` / `agent.response_recorder` / `agent.user_name` / `agent.state` / `agent.started_at` / `agent.stt_ok`。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）。公开方法 `agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口（debug 深读用 `# noqa: SLF001` 豁免）。设计文档：[spec](../docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+**公开接口**：作为组合根，通过 38 个同名 `@property` 公开子系统访问路径——`agent.session` / `agent.session_manager` / `agent.active_session_id` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.attachment_repo` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.tts_manager` / `agent.stt_enabled` / `agent.tts_enabled` / `agent.stt_emotion_state` / `agent.config` / `agent.bus` / `agent.cognitive` / `agent.generation_registry` / `agent.idle` / `agent.scheduler` / `agent.consolidator` / `agent.memory_reflector` / `agent.character_engine` / `agent.character_reflector` / `agent.character` / `agent.token_tracker` / `agent.prompt_recorder` / `agent.response_recorder` / `agent.user_name` / `agent.state` / `agent.pending_messages` / `agent.started_at` / `agent.stt_ok` / `agent.desktop_bridge`。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）。公开方法 `agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口（debug 深读用 `# noqa: SLF001` 豁免）。设计文档：[spec](../docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
 
 关键方法：`start()`, `stop()`, `process_message()`, `run_server()`, `run_repl()`, `switch_llm()`, `switch_stt()`, `switch_tts()`, `set_service()`, `request_shutdown()`, `request_restart()`, `purge_message_from_session()`
 
@@ -100,7 +100,7 @@ Agent.start()
 
 关键方法：`post()`, `next()`, `drain()`
 
-#### CognitiveLoop (`cognitive/` package, 5 files)
+#### CognitiveLoop (`cognitive/` package, 7 files)
 
 ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的核心执行引擎。使用 mixin 模式：`CognitiveLoop(CognitiveTools)`。流式标签检测（mood + inner_voice）由 `StreamProcessor` (`core/text/stream_processor.py`) 独立处理——纯状态机，零 I/O，将标签解析结果以 `StreamEvent` 事件流输出。`_dispatch_stream_event()` 负责事件→副作用翻译（mood 更新、inner_voice 广播、TTS 分发、FSM 切换）。工具调用检测后最多 5 轮工具循环。`_handle_submit_task` 拦截后台任务委托。`_after_response()` 触发记忆沉淀、性格反思、MemoryReflector 检查、session 保存。`tools.py` 包含 `_execute_tools_directly`、`_submit_task_definition`、`_default_user_profile`。`timing.py` 包含 `Timer` context manager + `TimingClock` 请求级聚合（span 嵌套）。`delegation.py` 包含 `DelegationPreparer`（submit_task 前的委派准备）。`user_profile.py` 定义 `UserProfile` 用户画像模型。
 
@@ -126,7 +126,7 @@ ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的�
 
 #### IdleMonitor (`monitoring/idle_monitor.py`)
 
-空闲监控 + 主动触发（位于 monitoring/ 子包）。每秒 tick，检查 `silence_timeout` 和 `time_of_day` 触发条件。`touch()` 重置交互计时器。触发时通过 EventBus 投递 `SYSTEM_TICK` 事件，Agent 注入自然开场白提示给 CognitiveLoop。唤醒词检测待集成（openWakeWord 模型已就位）。
+空闲监控 + 主动触发（位于 monitoring/ 子包）。每秒 tick，检查 `silence_timeout` 和 `time_of_day` 触发条件。`touch()` 重置交互计时器。触发时通过 EventBus 投递 `SYSTEM_TICK` 事件，Agent 注入自然开场白提示给 CognitiveLoop。语音唤醒词检测（openWakeWord）已集成于 `core/input/wakeword.py`（WakeWordDetector）+ `core/input/audio_buffer.py`（VAD 并行流式检测）；IdleMonitor 本身只读 `character.wake_words` 文本唤醒词。
 
 关键方法：`start()`, `stop()`, `touch()`, `_check_proactive()`
 
@@ -150,7 +150,8 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `debug/` | Debug 面板数据聚合包：`DebugInfo` dataclass 涵盖 FSM（含 mood）、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator（含 buffer）、MemoryReflector、Character Reflector、CharacterEngine 等所有子系统状态。`collect()` 遍历 Agent 聚合数据，前端 16 面板。`PromptRecorder`/`ResponseRecorder` 环形缓冲区（容量 20），捕获 LLM 调用完整 messages/tools/回复/inner_voice，供 debug 面板查看。详见 [`debug/`](debug/) |
 | `monitoring/token_tracker.py` | Token 消耗追踪：`record()` 记录每次 LLM 调用的 token usage，`get_session_stats()` 聚合统计。支持 MongoDB 持久化和 OutputManager 广播 |
 | `task/` | 任务子包：`task.py`（Task 数据模型：`Task` dataclass + `TaskType`/`TaskStatus` 枚举 + `asyncio.Future` 双向绑定。支持 retry 和序列化）+ `scheduler.py`（TaskScheduler Worker Pool，N=5，dispatch_tool_calls/cancel_all/prune_loop） |
-| `schema/` | 共享类型包：`AgentState`、`EventData` 判别联合（5 种事件类型）、多模态 Part、`ToolCall`、`ExtractedMemory`/`CompareAction` 判别联合、`MemoryReflectorState`/`ReflectorActions`、消息、token、character/mood 状态等，含 `adapters/` 适配层。14 个 `.py` 文件 + `adapters/` 适配层 |
+| `schema/` | 共享类型包：`AgentState`、`EventData` 判别联合（5 种事件类型）、多模态 Part、`ToolCall`、`ExtractedMemory`/`CompareAction` 判别联合、`MemoryReflectorState`/`ReflectorActions`、消息、token、character/mood 状态等，含 `adapters/` 适配层。16 个 `.py` 文件（含 `__init__.py`）+ `adapters/` 适配层 |
+| `version.py` | 版本号单一事实来源：`__version__` + `get_build_sha()`/`build_server_version()`（server_info.server_version 用） |
 | `__init__.py` | 包标记，当前为空 |
 
 ### 子目录
@@ -163,13 +164,14 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `core/adapter/` | 适配器层：LLMAdapter + TTSStreamManager + ToolAdapter + tool_call_parser，封装 Module/ 后端供 core/ 层使用 | [adapter/README.md](adapter/README.md) |
 | `core/memory/` | 记忆子系统：`SessionManager`（会话缓存池 + 活动指针 + resolve/switch/CRUD，批次 3 多会话）、`SessionMemory`（对话窗口）、`LongTermMemory`（向量检索）、`MemoryConsolidator`（提取+比对+写入）、`MemoryReflector`（定期去重） | [memory/README.md](memory/README.md) |
 | `core/storage/` | 存储仓库层：`SessionRepository`/`MessageRepository`/`TokenRepository`/`MemoryRepository`/`CharacterVersionRepository`/`GenerationRepository`（MongoDB + Milvus） | -- |
-| `core/input/` | 输入层：WebSocket + HTTP server（`server.py`/`ws_handler.py`/`capabilities.py`/`api_routes.py`/`session_routes.py`/`debug_routes/`） | -- |
+| `core/input/` | 输入层：WebSocket + HTTP server（`server.py`/`ws_handler.py`/`capabilities.py`/`api_routes.py`/`session_routes.py`/`attachment_routes.py`/`voice_sessions.py`/`audio_buffer.py`/`sticker_registry.py`/`ssrf.py`/`idempotency.py`/`provider_registry.py`/`custom_providers.py`/`wakeword.py`/`tts_profile.py`/`debug_routes/`） | -- |
 | `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
 | `core/task/` | 任务子包：`task.py`（Task 数据模型 + TaskType/TaskStatus 枚举 + Future 绑定）+ `scheduler.py`（TaskScheduler Worker Pool） | [task/README.md](task/README.md) |
 | `core/text/` | 文本流处理管线：`tags`（标签注册表）+ `tokenizer`（结构感知切分）+ `splitter`（分句保护）+ `parts`（TextPart 构建）+ `stream_processor`（协调器） | [text/README.md](text/README.md) |
 | `core/utils/` | 通用工具：`new_message_id()` 消息 ID 生成 + `set_request_id()`/`get_request_id()` ContextVar 请求追踪 + `log_conversation()` 对话日志 + `content_text_from_content()`/`MessageObj` 文本提取 | [utils/README.md](utils/README.md) |
 | `core/debug/` | Debug 仪表板数据层：`DebugInfo`（16 panel 聚合）+ `PromptRecorder`/`ResponseRecorder`（LLM 交互录制） | [debug/README.md](debug/README.md) |
 | `core/tools/` | 工具插件：filesystem、web、memory、time、reminder、vision 等。每个插件 `plugin.py` + `config.yaml` + `README.md` | [tools/README.md](tools/README.md) |
+| `core/desktop/` | Desktop 工具桥：`bridge.py`（DesktopToolBridge——请求 → 幂等去重 → 定向投递 → 结果回传，批次 4 BE-041/043）+ 配套 `DesktopCallRepository` | -- |
 | `core/tests/` | 测试套件：覆盖 Agent、CognitiveLoop、CharacterEngine、MemoryConsolidator 等核心组件的单元/集成测试 | -- |
 
 ---
@@ -259,23 +261,25 @@ Agent 生命周期中的关键扩展点：
 
 | 文件 | 行数 | 类型 |
 |------|------|------|
-| `agent/agent.py` | 689 | 核心组件 |
+| `agent/agent.py` | 857 | 核心组件 |
 | `status/agent_fsm.py` | 83 | 核心组件 |
 | `monitoring/event_bus.py` | 76 | 核心组件 |
-| `cognitive/loop.py` | 1031 | 核心组件 |
-| `personality/engine.py` | 428 | 核心组件 |
-| `memory/consolidator.py` | 350 | 核心组件 |
-| `adapter/prompt_assembler.py` | 170 | 核心组件 |
-| `monitoring/idle_monitor.py` | 128 | 核心组件 |
+| `cognitive/loop.py` | 1478 | 核心组件 |
+| `personality/engine.py` | 469 | 核心组件 |
+| `memory/consolidator.py` | 366 | 核心组件 |
+| `adapter/prompt_assembler.py` | 186 | 核心组件 |
+| `monitoring/idle_monitor.py` | 133 | 核心组件 |
 | `task/scheduler.py` | 510 | 核心组件 |
-| `config/character_config.py` | 149 | 支撑模块 |
-| `config/app_config.py` | 112 | 支撑模块 |
+| `config/character_config.py` | 157 | 支撑模块 |
+| `config/app_config.py` | 122 | 支撑模块 |
 | `text/` | 6 文件 (1519) | 支撑模块 |
-| `utils/message_id.py` | 15 | 支撑模块 |
+| `utils/message_id.py` | 30 | 支撑模块 |
 | `debug/` | 4 文件 (631) | 支撑模块 |
 | `utils/log_setup.py` | 215 | 支撑模块 |
-| `monitoring/token_tracker.py` | 176 | 支撑模块 |
+| `monitoring/token_tracker.py` | 218 | 支撑模块 |
 | `task/task.py` | 222 | 支撑模块 |
-| `input/debug_routes/` | 7 文件 (922) | 支撑模块 |
-| `schema/` | 目录（13 .py + adapters/） | 支撑模块 |
+| `input/debug_routes/` | 7 文件 (1075) | 支撑模块 |
+| `schema/` | 目录（16 .py + adapters/） | 支撑模块 |
+| `desktop/bridge.py` | 488 | 支撑模块 |
+| `version.py` | 54 | 支撑模块 |
 | `__init__.py` | 0 | 包标记 |

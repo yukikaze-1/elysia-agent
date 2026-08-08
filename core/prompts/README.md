@@ -33,8 +33,6 @@ Jinja2 `.j2` 模板目录，PascalCase 命名。运行时通过 Python `str.repl
 GPT 生成的原始版本归档，snake_case 命名：
 
 - `prompt_gpt_5.6_sol_pro.md` — ConsolidationCompare + MemoryReflector（sol_pro 版本，已采用）
-- `prompt_gpt_5.6_terra_pro.md` — 同上（terra_pro 版本，未采用）
-- `optimized_prompt_gpt_5.6_sol_pro.md` — 优化版（含 `{character_name}` 变量，未采用——与 `.replace()` 冲突）
 - `extract_memory_gpt_5.6_sol_pro.md` — ExtractMemory（sol_pro 版本，已采用）
 - `awareness-judge-requirements.md` — C9 觉察判定需求文档（AwarenessJudge.j2 设计依据）
 

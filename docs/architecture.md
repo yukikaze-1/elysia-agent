@@ -295,7 +295,7 @@ sandbox = ProjectPath.DATA_SANDBOX.resolve(session_id="a") # → <root>/data/san
 
 - **项目根检测**: `ELYSIA_ROOT` 环境变量 > `paths.py` 所在目录
 - **环境变量覆盖**: `ELYSIA_PATH_{NAME}` 可逐路径覆盖（如 `ELYSIA_PATH_LOG=/var/log/elysia`）
-- **21 个枚举成员**: 13 目录 + 8 文件（含 `SESSION_PENDING_CHECK`），枚举类 `ProjectPath(str, Enum)`
+- **23 个枚举成员**: 15 目录 + 8 文件（含 `SESSION_PENDING_CHECK`），枚举类 `ProjectPath(str, Enum)`。批次 4 新增 `DATA_UPLOADS_DESKTOP`、批次 5 新增 `DATA_SECRETS`（`data/uploads/desktop` + `data/secrets`），批次 7 的 `DATA_UPLOADS_IMAGES` 也已预置
 - **语义**: `resolve()` 纯计算返回 `pathlib.Path`，不检查存在性
 
 ---
@@ -460,7 +460,7 @@ MOOD_KEYWORDS = {
 ```
 文本关键词路径作为 fallback（LLM 未输出 `<mood>` 时降级使用）。
 
-**衰减**: `analyze_assistant()` 每次回复后 intensity -= 0.15，低于 0.2 推送闲置表情。mood 文本不再重置——LLM 下轮通过 `<mood>` 自行描述心情变化。
+**衰减**: `analyze_assistant()` 每次回复后 `new_intensity = max(0.1, intensity - 0.15)`（每轮 -0.15，下限 0.1；`emotion.py:110`），低于 0.2 推送闲置表情。mood 文本不再重置——LLM 下轮通过 `<mood>` 自行描述心情变化。
 
 **Expression 映射**: `mood` 文本（str）直接作为 expression 名透传 → OutputManager.expression()
 
@@ -554,7 +554,7 @@ L4 Mood（当前情绪）    LLM `<mood>` 标签每轮更新（自由文本）�
 | 层 | 存储 | 生命周期 | 容量 | 用途 |
 |------|------|------|------|------|
 | Working | 内存 (单次推理) | 单次 LLM 调用 | 动态 | PromptAssembler 组装 |
-| Session | MongoDB / deque | 跨进程重启 | 代码默认 20，config.yaml 覆盖为 50 | 对话上下文 + CharacterState/reflector_state |
+| Session | MongoDB / deque | 跨进程重启 | 代码默认 20，config.yaml 覆盖为 50 | 对话上下文 + CharacterState / ServiceState（专用类型字段经 save/load 持久化） |
 | Long-term | Milvus + 内存 | 跨会话 | 无上限 | 事实/偏好/计划 语义搜索 |
 
 ### 5.2 SessionMemory
@@ -566,11 +566,13 @@ L4 Mood（当前情绪）    LLM `<mood>` 标签每轮更新（自由文本）�
 ```python
 class SessionMemory:
     _messages: deque[Message]     # 最多 max_messages 条 (config.yaml session_max_messages). Pydantic Message 对象
-    _character_state: CharacterState | None  # 性格+情绪+reflector 状态（替代原 _params）
-    _reflector_state: MemoryReflectorState | None  # MR 计数器
+    character_state: CharacterState  # 性格+情绪+reflector buffer 等（专用类型字段）
+    service_state: ServiceState      # 服务运行时状态（当前模型 + STT/TTS 启用模式，enabled 三态 bool|None）
     _db: DocumentDBBackend | None # MongoDB 或降级
 
-    # MongoDB 自动检测 — 不可用时静默降级为 in-memory
+    # 运行时状态经专用类型字段持久化：save() 写 character_state + service_state
+    # （reflector 计数器经 set_memory_reflector() 在 save 时并入 character_state，session.py:210/246），
+    # load()/load_from_jsonl() 恢复（MongoDB 30d TTL + JSONL fallback）。已无 _reflector_state 字段。
     async connect_db() → bool
     async save() → bool           # Upsert by session_id（MongoDB 优先，不可用时降级 JSONL）
     async load(sid?) → bool       # 从 MongoDB 恢复（JSONL fallback）
@@ -633,7 +635,7 @@ tool_adapter = ToolAdapter(ALL_PLUGINS, ...); await tool_adapter.start()
 
 详见 `Module/tool/README.md`。
 
-已注册工具（12 个）：
+已注册工具（16 个）：
 | 工具 | 参数 | 功能 |
 |------|------|------|
 | `search_memory` | query, limit | 语义搜索长期记忆 |
@@ -648,6 +650,10 @@ tool_adapter = ToolAdapter(ALL_PLUGINS, ...); await tool_adapter.start()
 | `get_runtime_config` | query | 查询运行时配置和状态 |
 | `get_self_state` | — | 查询 Agent 自身状态 |
 | `describe_image` | prompt, image_index, image_indices | 视觉模型描述图片（单图/批量互斥） |
+| `desktop.file.select` | — | 桌面端文件选择器（批次 4，经 DesktopToolBridge 委托执行，remote 侧结果回调） |
+| `desktop.file.read` | path, range | 桌面端文件读取（批次 4） |
+| `desktop.file.write` | path, content | 桌面端文件写入（批次 4） |
+| `desktop.screen.capture` | region, scale | 桌面端屏幕截图（批次 4） |
 
 CognitiveLoop 使用 `asyncio.gather` 并行执行无依赖工具。
 
@@ -675,73 +681,93 @@ Browser Microphone
 
 ### 6.2 WebSocket 消息协议
 
-**Server → Browser:**
+协议已**契约层化**：前后端消息类型的唯一类型来源是 `frontend_contract/ws_message.py`（Pydantic 判别联合 + `gen_ts` 生成 `contract.generated.ts` 只读快照）。本表只列消息类别概要，**字段定义与序列化以契约模型为准**。
 
-| type | payload | 说明 |
-|------|---------|------|
-| `delta` | `{"content": "..."}` | 流式文字增量 |
-| `message` | `{"role":"assistant","content":"..."}` | 完整消息（流式结束） |
-| `typing` | `{"typing": true/false}` | 输入中指示器 |
-| `state` | `{"state": "idle/thinking/speaking/..."}` | FSM 状态 |
-| `action` | `{"action":"wave","params":{...}}` | 动作指令（预制动画） |
-| `expression` | `{"expression":"happy","intensity":0.8}` | 情绪/表情 |
-| `audio` | `{"data":"base64...","stream_id":...,"seq":...,"is_final":false}` | 音频 chunk |
-| `audio_end` | `{"stream_id": ...,"format":"wav"}` | 音频流结束 |
-| `transcription` | `{"text":"...","emotion":"HAPPY","events":["Laughter"]}` | STT 结果 |
-| `command` | `{"command":"inner_voice","params":{"content":"..."}}` | AI 内心独白（淡色气泡） |
-| `command` | `{"command":"tool_approval","params":{...}}` | 工具审批请求 |
-| `command` | `{"command":"block","params":{...}}` | 结构化内容块 |
-| `session` | `{"type":"session","messages":[...],"token_stats":{...}}` | 连接时推送会话历史 |
-| `capabilities` | `{"type":"capabilities","live2d_static_image":"...","services":{"llm":{"available":true,"enabled":true,"model":"...","default":"..."},"stt":{...},"tts":{...}}}` | 服务能力声明（嵌套 per-service；`model` 在 `available:false` 时为 null；建连 + set_service/switch_model 后重播） |
-| `wake` | `{"type":"wake"}` | 唤醒词检测通知 |
-| `token_usage` | `{"turn":{"rounds":[...],"turn_total":N},"session":{"total":N,"by_model":{...}}}` | Token 消耗统计 |
-| `switch_model_result` | `{"type":"switch_model_result","service":"...","ok":true}` | 模型切换结果 |
-| `service_mode_result` | `{"type":"service_mode_result","service":"stt|tts","enabled":true,"ok":true,"error":null}` | STT/TTS 模式开关结果（失败也带 `enabled`，前端回滚乐观 UI） |
-| `error` | `{"type":"error","message":"..."}` | 错误通知 |
+**Server → Browser**（`ServerMessage` 判别联合，现 38 具名成员）：
 
-**Browser → Server:**
+| 类别 | 成员 | 说明 |
+|------|------|------|
+| 会话/能力 | `SessionMessage`、`CapabilitiesMessage`、`ServerInfoMessage`、`WakeMessage` | 建连会话历史、能力声明（v2 改由 `server_info` 取代）、唤醒通知 |
+| 流式文字 | `DeltaMessage`、`MessageMessage`、`TypingMessage` | 增量 / 完整消息 / 输入中指示器 |
+| TTS 音频 | `AudioMessage`、`AudioEndMessage`、`AudioStartMessage`、`AudioCancelledMessage` | 音频 chunk / 结束 / 开始 / 取消（BE-063 播放控制） |
+| 状态/情绪 | `StateMessage`、`ExpressionMessage`、`ActionMessage`、`CommandMessage` | FSM 状态、表情、动作、inner_voice/tool_approval/block 指令 |
+| STT | `TranscriptionMessage`、`VoiceTranscriptMessage` | 声学结果、实时语音转写 |
+| 语音会话（批次 6） | `VoiceSessionStartedMessage` / `VoiceSessionPartialMessage` / `VoiceSessionTurnMessage` / `VoiceSessionAckMessage` / `VoiceSessionEndedMessage`、`DictationPartialMessage` / `DictationFinalMessage` / `DictationCancelledMessage` | 三模式语音状态机（普通录音/实时语音/输入法转写，BE-060~062） |
+| generation 生命周期（批次 2） | `GenerationStartedMessage` / `GenerationSegmentStartedMessage` / `GenerationDeltaMessage` / `GenerationSegmentCompletedMessage` / `GenerationCompletedMessage` / `GenerationFailedMessage` | 统一回合事件双 wire 呈现 |
+| 工具 | `ToolRequestMessage`、`UserAckMessage` | HITL 审批请求、用户确认（批次 4） |
+| 服务管理 | `SwitchModelResultMessage`、`ServiceModeResultMessage`、`SetTtsVoiceResultMessage` | 模型切换 / STT·TTS 模式开关 / TTS 声音选择（批次 5） |
+| 统计/错误 | `TokenUsageMessage`、`ErrorMessage` | Token 统计、统一错误信封（含 retryable/details） |
 
-| type | payload | 说明 |
-|------|---------|------|
-| `text` | `{"type":"text","content":"你好"}` | 文本输入（content 可为 string 或 content array） |
-| `interrupt` | `{"type":"interrupt"}` | 打断按钮 |
-| `wake_toggle` | `{"type":"wake_toggle","enabled":true}` | 唤醒词开关 |
-| `switch_model` | `{"type":"switch_model","service":"llm","model":"..."}` | 切换模型 |
-| `set_service` | `{"type":"set_service","service":"stt|tts","enabled":false}` | 开/关 STT/TTS 后端模式（热插拔，后端补建/停用） |
-| `tool_approval` | `{"type":"tool_approval","request_id":"...","approved":true}` | 工具审批回复 |
-| binary | Int16 PCM bytes | 麦克风音频 |
+**Browser → Server**：`text`（文本/附件，含 requestId 幂等）/ `interrupt` / `wake_toggle` / `switch_model` / `set_service` / `set_tts_voice`（批次 5）/ `tool_approval` / `activate_session`（批次 3 多会话切换）/ `tool.status`（批次 4 桌面调用状态）/ 语音控制（`voice.start` / `voice.stop` / `audio.cancel` 等，批次 6）/ binary（Int16 PCM 麦克风音频）。客户端消息同样在 `frontend_contract/ws_message.py` 中定义。
+
+> **注意**：早期版本在本文档手工枚举 payload 字段（delta/message/typing/…）的做法已废弃——前后端契约单源机制落地后，任何字段变更只改 `frontend_contract/ws_message.py`，用 `make gen-types` 再生成 TS 快照、`make check-types` 做漂移门禁。
 
 ### 6.3 WebSocket 服务器 (core/input/)
 
 ```
-aiohttp Application (45 条路由):
+aiohttp Application（约 64 条业务/WS/debug 路由，另有 4 个静态挂载；定义分布见 `core/input/server.py` + `api_routes.py` + `session_routes.py` + `attachment_routes.py` + `debug_routes/`）：
+
+**server.py（10）：**
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
 | GET | `/` | static/index.html |
 | GET | `/debug` | static/debug.html |
 | GET | `/ws` | WebSocket handler |
-| GET | `/health`, `/ready` | 健康检查 |
+| GET | `/health`, `/ready` | 健康检查（批次 7 拆分：liveness/readiness + 真依赖检查） |
 | GET\|POST | `/shutdown` | 关闭服务 |
 | POST | `/restart` | 重启服务 |
-| GET | `/static/` | 静态文件（JS/CSS/HTML） |
-| GET | `/live2d/` | Live2D 角色模型资源 |
-| GET | `/uploads/` | 用户上传文件 |
-| POST | `/api/chat` | JSON chat API |
-| GET | `/api/messages` | 消息归档分页查询 |
-| POST | `/api/images` | 图片上传 |
-| GET | `/api/providers` | 模型 provider 列表 |
-| POST | `/api/providers` | 添加自定义 provider |
-| DELETE | `/api/providers/{service}/{name}` | 删除自定义 provider |
-| POST | `/api/providers/test` | 连通性测试 |
 | GET | `/tools` | 工具插件列表 |
 | POST | `/tools/reload` | 热重载工具插件 |
-| GET | `/debug/api` | DebugInfo 完整 JSON |
-| GET | `/debug/api/prompts` | Prompt 记录列表 |
-| GET | `/debug/api/prompts/{n}` | Prompt 详情 |
-| GET | `/debug/api/responses` | Response 记录列表 |
-| GET | `/debug/api/responses/{n}` | Response 详情 |
+
+**api_routes.py（14）：**
+
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| POST | `/api/chat` | JSON chat API |
+| GET | `/api/messages` | 消息归档分页查询 |
+| POST | `/api/images` | 图片上传（遗留端点） |
+| GET\|POST | `/api/providers` | 模型 provider 列表 / 添加自定义 provider（批次 5：密钥入 Secret Store + SSRF/runtime 守卫） |
+| DELETE | `/api/providers/{service}/{name}` | 删除自定义 provider（激活中禁止） |
+| POST | `/api/providers/test` | 连通性测试（批次 5：SSRF 守卫 + runtime 门控） |
+| GET | `/api/tts/voices` | TTS 声音列表（批次 5 BE-051） |
+| POST | `/api/tts/preview` | TTS 固定短文本试听（批次 5，不读聊天） |
+| GET | `/api/tools` | 工具元数据导出（批次 4，runtime 过滤） |
+| GET | `/api/tools/calls/{callId}` | 桌面调用状态查询（批次 4） |
+| POST | `/api/uploads` | 通用附件上传（批次 7，filetype 魔数校验 + 签名 URL + 64MB） |
+| GET | `/api/stickers` | 内置表情包列表（批次 7，sticker_registry） |
+| POST | `/api/uploads/desktop/{callId}` | 桌面附件上传（批次 4，持有者校验） |
+
+**session_routes.py（13，批次 3 多会话）：**
+
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| GET\|POST | `/api/sessions` | 会话列表 / 创建 |
+| GET\|PATCH\|DELETE | `/api/sessions/{conversationId}` | 会话详情 / 重命名 / 删除 |
+| POST | `/api/sessions/{conversationId}/activate` | 切换活动会话 |
+| GET | `/api/sessions/{conversationId}/messages` | 会话消息历史（before/after 分页） |
+| GET | `/api/sessions/{conversationId}/resources` | 会话资源（sticker 分类 + 附件软删过滤） |
+| GET | `/api/sessions/{conversationId}/generations` | 会话 generation 列表（BE-024） |
+| GET | `/api/sessions/{conversationId}/pending` | 会话 pending 消息 |
+| GET | `/api/messages/{messageId}/context` | 消息上下文窗口 |
+| GET | `/api/search/messages` | 全库消息搜索 |
+| GET | `/api/generations/{generationId}` | generation 详情（BE-024） |
+
+**attachment_routes.py（2，批次 7 BE-070）：**
+
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| GET | `/api/attachments/{attachment_id}` | 附件签名下载（HMAC 短签，Range/206） |
+| GET | `/api/attachments/{attachment_id}/sign` | 签发下载签名（Bearer） |
+
+**debug_routes/（25）：**
+
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| GET | `/debug/api` | DebugInfo 完整 JSON（16 面板） |
 | GET | `/debug/api/db-status` | 数据库连接状态 |
+| GET | `/debug/api/prompts` + `{n}` | Prompt 记录列表/详情 |
+| GET | `/debug/api/responses` + `{n}` | Response 记录列表/详情 |
 | GET\|POST | `/debug/api/ltm` | LTM 列表 / 新增记忆 |
 | PUT\|DELETE | `/debug/api/ltm/{entry_id}` | 更新 / 删除单条记忆 |
 | DELETE | `/debug/api/ltm` | 清空全部 LTM |
@@ -755,6 +781,8 @@ aiohttp Application (45 条路由):
 | POST | `/debug/api/l2-rollback` | L2 self-image 回滚（指定版本） |
 | GET | `/debug/api/character-versions` | Character 版本历史（L2/C6，通过 type 参数选择） |
 | POST | `/debug/api/character-rollback` | Character 内容回滚（L2/C6，通过 type/version 参数） |
+
+**静态挂载（4）**：`/static/`（构建产物）、`/live2d/`（Live2D 资源）、`/uploads/images/` + `/uploads/desktop/`（附件静态目录——已收窄：只挂 images/desktop 两个子目录，新 kind 目录走 `/api/attachments/{id}` 签名下载，见 `server.py:509-515` 注释）。
 
 每个 WS 连接:
   └── 创建 WebSocketChannel → OutputManager
@@ -871,7 +899,7 @@ proactive:
 **标签页：**
 | 标签 | 数据来源 | 功能 |
 |------|---------|------|
-| 概览 | `/debug/api` 轮询 | 12+ 卡片面板：System、Memory（含 Session Params 可展开）、Latency、Process Memory、Scheduler、Token、Prompt 查看器、Raw Response、LTM、Tools、Tool History、Consolidation、Character Reflector、CharacterEngine |
+| 概览 | `/debug/api` 轮询 | 16 面板（2 列 grid）：System、Memory（含 Session 展开）、Latency、Process Memory、Scheduler、Token、LLM Prompt 查看器、Raw Response、LTM Recent、Tools、Tool History、Consolidation、Memory Reflector、Character Reflector、CharacterEngine |
 | 数据库 | `/debug/api/db-status` + `/debug/api/ltm` + `/debug/api/sessions` + `/debug/api/archive` | LTM CRUD + 分页 + 搜索；Session 管理（从 archive 权威源读取，限 20 条）；Archive CRUD |
 | 任务 | `/debug/api/tasks/stream` SSE | WorkflowEngine 实时监控 + DAG 可视化 (vis-network) |
 
@@ -885,7 +913,7 @@ class Agent:
         # L0: OutputManager + ConsoleChannel
         # Character: CharacterConfig.from_yaml(config.agent.character)
         # L2: SessionMemory + LongTermMemory + ToolAdapter
-        #     + register 12 tools (ALL_PLUGINS)
+        #     + register 16 tools (ALL_PLUGINS)
         # L1: EventBus + AgentFSM + LLMAdapter + PromptAssembler
         #     + CharacterEngine + MemoryConsolidator
         #     + CognitiveLoop + IdleMonitor
@@ -966,7 +994,7 @@ core/utils/log_setup.py:
 
 ## 11. 测试架构
 
-2,163 个测试按 4 层 markers 组织（unit / service / integration / slow）。
+3,186 个测试按 4 层 markers 组织（unit / service / integration / slow；全量收集，`make test-normal` 口径 not-slow 2,854）。
 
 完整分层体系、测试文件索引、按模块运行命令 → [docs/testing.md](testing.md)
 
@@ -1042,28 +1070,40 @@ Agent/
 │   ├── status/                #   AgentStatus 接口层 (protocol + FSMBacked 实现)
 │   │   ├── protocol.py       #     AgentStatus（对外只读）+ CognitivePhaseController（对内写）
 │   │   └── fsm.py            #     FSMBackedStatus + FSMBackedPhaseController
-│   ├── storage/               #   存储层 — Repository 模式 (MongoDB/Milvus)
-│   │   ├── session_repo.py   #     SessionRepository: session CRUD + TTL
+│   ├── storage/               #   存储层 — Repository 模式 (MongoDB/Milvus)（12 文件）
+│   │   ├── base.py           #     Repository 基类 + 共享连接/索引辅助
+│   │   ├── session_repo.py   #     SessionRepository: session CRUD + 30d TTL
 │   │   ├── message_repo.py   #     MessageRepository: 消息归档 append-only
 │   │   ├── token_repo.py     #     TokenRepository: token 统计持久化
 │   │   ├── memory_repo.py    #     MemoryRepository: LTM Milvus 操作
-│   │   ├── generation_repo.py #    GenerationRepository: generation 生命周期 upsert/query（BE-024）
-│   │   └── character_version_repo.py # CharacterVersionRepository: L2/C6 版本历史
+│   │   ├── generation_repo.py #    GenerationRepository: generation 生命周期 upsert/query（BE-024，TTL 30d）
+│   │   ├── character_version_repo.py # CharacterVersionRepository: L2/C6 版本历史
+│   │   ├── attachment_repo.py #    AttachmentRepository: 附件元数据（BE-070，fail-closed，ref_count/refs 软删，TTL 不设由 GC 管）
+│   │   ├── attachment_release.py #  AttachmentRelease: 会话/消息删除的附件引用释放共享 helper
+│   │   ├── attachment_gc.py  #     AttachmentGC: 启动兜底扫描四规则（软删/孤儿/未关联/磁盘）
+│   │   ├── desktop_call_repo.py #  DesktopCallRepository: 桌面调用状态（Mongo + 进程内缓存 + 30d TTL，批次 4）
+│   │   └── secret_store.py   #     SecretStore: 密钥存储（data/secrets/profiles.json，0600 + 原子写，批次 5）
 │   ├── debug/                #   Debug 仪表板包
 │   │   ├── info.py           #     /debug 数据聚合
 │   │   ├── prompt_recorder.py #   Prompt 记录器
 │   │   └── response_recorder.py # Response 记录器
 │   ├── input/                #   Input: WebSocket + HTTP 服务器
-│   │   ├── server.py         #     aiohttp 应用入口（create_app 读 agent.stt 槽位，不再参数注入 STT）
-│   │   ├── ws_handler.py     #     WebSocket 消息路由（set_service + BINARY 防御）
+│   │   ├── server.py         #     aiohttp 应用入口（create_app 读 agent.stt 槽位，不再参数注入 STT；4 静态挂载）
+│   │   ├── ws_handler.py     #     WebSocket 消息路由（set_service + BINARY 防御 + v2 路由）
 │   │   ├── capabilities.py   #     build_capabilities 嵌套 per-service 能力声明 + 全量重播
-│   │   ├── api_routes.py     #     REST API 路由
+│   │   ├── api_routes.py     #     REST API 路由（chat/messages/providers/tts/uploads/stickers/tools）
 │   │   ├── session_routes.py #     多会话 REST（CRUD/历史/搜索/资源/generation 状态/pending，批次 3）
-│   │   ├── debug_routes/     #     Debug API 路由 (package: 7 modules)
+│   │   ├── attachment_routes.py #  附件签名下载 + 签发（批次 7 BE-070）
+│   │   ├── voice_sessions.py #     三模式语音状态机（普通录音/实时语音/输入法转写，批次 6 BE-060~062）
+│   │   ├── sticker_registry.py #  内置表情注册表（批次 7 BE-071）
+│   │   ├── tts_profile.py   #     TTS 声音 Profile（批次 5 BE-051）
+│   │   ├── debug_routes/     #     Debug API 路由 (package: 25 路由 / 7 模块)
 │   │   ├── audio_buffer.py   #     音频缓冲 + VAD
 │   │   ├── wakeword.py       #     唤醒词检测
-│   │   ├── custom_providers.py #   自定义 provider 路由
-│   │   └── provider_registry.py # /api/providers 响应组装（env 过滤 + 未配置引导）
+│   │   ├── custom_providers.py #   自定义 provider 路由（批次 5：Secret Store 优先 + runtime/能力）
+│   │   ├── provider_registry.py # /api/providers 响应组装（env 过滤 + 未配置引导）
+│   │   ├── idempotency.py   #     v2 消息幂等存储
+│   │   └── ssrf.py          #     批次 5 SSRFGuard（validate_endpoint + guarded transport）
 │   ├── config/               #   配置子包
 │   │   ├── __init__.py       #     重导出 AppConfig + CharacterConfig
 │   │   ├── app_config.py     #     App 配置
@@ -1096,12 +1136,12 @@ Agent/
 │   │   ├── Utils.j2                  # 工具宏
 │   │   ├── PersonalityCompression.j2     # L3→L2 性格压缩
 │   │   └── ref/                      # GPT 生成原始版本
-│   ├── tools/               #   Agent 工具集 (12 个插件)
+│   ├── tools/               #   Agent 工具集 (16 个插件)
 │   └── tests/               #   测试
 │
 ├── frontend_contract/          # 前后端契约单源（零依赖，仅 pydantic + stdlib）
 │   ├── base.py                 #   ContractModel 基类 + TsNull marker + wire_dict 序列化
-│   ├── ws_message.py           #   WS 消息契约（ServerMessage 判别联合 18+6 + 支持类型）
+│   ├── ws_message.py           #   WS 消息契约（ServerMessage 判别联合 38 具名成员 + 支持类型 + Client 消息）
 │   ├── rest.py                 #   REST 业务契约（providers/images/messages 等 12 模型）
 │   ├── debug.py                #   Debug API 契约（DebugData 16 面板等 38 模型）
 │   ├── gen_ts.py               #   TS 发射器：模型 → contract.generated.ts（只读快照）
@@ -1135,15 +1175,17 @@ Agent/
 │   └── live2d-demo/            # Live2D Cubism SDK + demo
 
 ├── docs/                   # 文档
+│   ├── README.md           #   文档导航索引
 │   ├── architecture.md     #   架构详解（本文档）
-│   ├── frontend-api.md     #   前端 API
 │   ├── testing.md          #   测试指南
 │   ├── readme-conventions.md #  README 编写规范
 │   ├── database-storage.md #   数据库存储设计
+│   ├── code-style-guide.md #   代码风格与类型约束指南
 │   ├── completed.md        #   已完成记录
 │   ├── completed/          #   已完成月度归档
-│   ├── experience.md       #   开发经验
-│   ├── sync-lessons.md     #   同步经验
+│   ├── electron-backend-protocol-v2.md #  Electron 后端协议 v2
+│   ├── electron-backend-security.md    #  Electron 后端安全
+│   ├── archive/            #   历史归档（data-structure-survey / sync-lessons / experience 等）
 │   ├── review/             #   代码/文档审查报告
 │   ├── legacy/             #   已废弃文档（历史参考）
 │   └── superpowers/
@@ -1239,12 +1281,12 @@ INTERRUPT:
   1. ✅ 消息排队 — pending_messages + 容量上限，busy 时暂存
   2. ✅ 后台任务 — WorkflowEngine v1: Planner/Executor/Evaluator DAG 编排 + Mailbox 轮询
   3. ✅ 流式中断 — CancelledError 防御 + FSM 幂等
+  4. ✅ 多会话 — 批次 3 SessionManager 缓存池 + 活动指针 + resolve/switch/CRUD（v1 恒 default、v2 显式 conversationId）
 
 待解决:
   4. 主动对话 — C7 Proactive section 已有规则 + 冷却机制。IdleMonitor 驱动待完善
   5. 记忆人格化 — C4 Memory section 已有可靠性规则（当前说法优先、不推测当事实），CharacterEngine Phase 2 深化
-  6. 多 Session — 当前 session_id 硬编码为 "default"，无多会话管理
-  7. 角色切换 — CharacterConfig 重载 + TTS voice 热切换
+  6. 角色切换 — CharacterConfig 重载 + TTS voice 热切换
 ```
 
 ---
