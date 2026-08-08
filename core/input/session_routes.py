@@ -24,7 +24,7 @@ from core.input.api_routes import _archive_to_client, _archive_msg_to_contract
 from core.schema.message import Message, MessageRole
 from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart
 from core.schema.utils import now_iso
-from core.schema.types import GenerationId, MessageId, SessionId
+from core.schema.types import AttachmentId, GenerationId, MessageId, SessionId
 from core.storage.attachment_release import release_session_attachments
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from core.storage.message_repo import MessageRepository
@@ -258,7 +258,7 @@ async def _attachment_available(agent: "Agent", url: str) -> bool:
     if repo is None:
         return True
     try:
-        doc = await repo.get(attachment_id)
+        doc = await repo.get(AttachmentId(attachment_id))
     except Exception:
         # 附件 repo fail-closed（StorageUnavailableError 等）：保守过滤不展示
         return False

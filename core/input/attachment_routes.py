@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 from paths import ProjectPath
 from core.input.api_routes import _sign_url
 from core.schema.adapters import attachment_resolver
+from core.schema.types import AttachmentId
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from frontend_contract import rest as rest_contract
 from frontend_contract.rest import ProtocolError
@@ -146,7 +147,7 @@ async def _download_handler(request: web.Request) -> web.StreamResponse:
 
     # ② 记录存在且 active（Mongo 离线 → 503）
     try:
-        doc = await agent.attachment_repo.get(attachment_id)
+        doc = await agent.attachment_repo.get(AttachmentId(attachment_id))
     except StorageUnavailableError:
         return _error_response("STORAGE_UNAVAILABLE", "附件存储不可用", 503,
                                retryable=True)
@@ -196,7 +197,7 @@ async def _sign_handler(request: web.Request) -> web.Response:
 
     # 记录存在且 active
     try:
-        doc = await agent.attachment_repo.get(attachment_id)
+        doc = await agent.attachment_repo.get(AttachmentId(attachment_id))
     except StorageUnavailableError:
         return _error_response("STORAGE_UNAVAILABLE", "附件存储不可用", 503,
                                retryable=True)

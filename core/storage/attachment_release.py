@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from core.schema.adapters import attachment_resolver as _ar
 from core.schema.message import Message
-from core.schema.types import SessionId
+from core.schema.types import AttachmentId, SessionId
 from core.storage.attachment_repo import StorageUnavailableError
 
 if TYPE_CHECKING:
@@ -28,12 +28,12 @@ logger = logging.getLogger(__name__)
 _ATTACHMENT_RELEASE_BATCH = 200
 
 
-def attachment_ids_from_message(msg: Message) -> list[str]:
+def attachment_ids_from_message(msg: Message) -> list[AttachmentId]:
     """提取消息 content 中附件 Part 的 attachment_id（ImagePart/FilePart/AudioPart/VideoPart）。
 
     兼容 Part 对象与 dict part（归档消息统一为 Part 对象，防御性兼容 dict）。
     """
-    ids: list[str] = []
+    ids: list[AttachmentId] = []
     for p in (getattr(msg, "content", None) or []):
         aid = p.get("attachment_id") if isinstance(p, dict) else getattr(p, "attachment_id", None)
         if aid:

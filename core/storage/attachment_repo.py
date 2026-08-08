@@ -30,6 +30,7 @@
 import logging
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
+from core.schema.types import AttachmentId
 from core.schema.utils import now_iso
 from core.storage.base import Repository
 
@@ -161,7 +162,7 @@ class AttachmentRepository(Repository):
         await db.update_one(
             COLLECTION, {"attachment_id": attachment_id}, {"$set": doc}, upsert=True)
 
-    async def get(self, attachment_id: str) -> dict | None:
+    async def get(self, attachment_id: AttachmentId) -> dict | None:
         """按 attachment_id 取单条附件文档。
 
         Args:
@@ -177,7 +178,7 @@ class AttachmentRepository(Repository):
         results = await db.find(COLLECTION, {"attachment_id": attachment_id}, limit=1)
         return results[0] if results else None
 
-    async def add_ref(self, attachment_id: str, message_id: str) -> None:
+    async def add_ref(self, attachment_id: AttachmentId, message_id: str) -> None:
         """幂等原子 add：仅当 refs 不含该 message_id 才 addToSet + inc。
 
         条件 update（$addToSet + $inc）替代读改写——并发多次 add_ref 不同
@@ -199,7 +200,7 @@ class AttachmentRepository(Repository):
             {"$addToSet": {"refs": message_id}, "$inc": {"ref_count": 1}},
         )
 
-    async def remove_ref(self, attachment_id: str, message_id: str) -> None:
+    async def remove_ref(self, attachment_id: AttachmentId, message_id: str) -> None:
         """原子 remove：pull + dec（仅当 refs 确实含该 message_id）；归零且 active → 软删。
 
         条件 update 替代读改写——首跳以 `"refs": message_id` 为过滤条件，仅当
@@ -226,7 +227,7 @@ class AttachmentRepository(Repository):
             {"$set": {"status": "deleted", "deleted_at": now_iso()}},
         )
 
-    async def mark_deleted(self, attachment_id: str) -> None:
+    async def mark_deleted(self, attachment_id: AttachmentId) -> None:
         """软删标记：status=deleted + deleted_at=now（文件保留，GC 延后物理删）。
 
         Args:
@@ -240,7 +241,7 @@ class AttachmentRepository(Repository):
             COLLECTION, {"attachment_id": attachment_id},
             {"$set": {"status": STATUS_DELETED, "deleted_at": now_iso()}})
 
-    async def delete_record(self, attachment_id: str) -> None:
+    async def delete_record(self, attachment_id: AttachmentId) -> None:
         """物理删除附件记录（GC 规则 1 用：软删记录直接删记录，再删文件）。
 
         注意：DocumentDBBackend 抽象无 delete_one，attachment_id 唯一，

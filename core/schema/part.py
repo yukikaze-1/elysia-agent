@@ -13,6 +13,7 @@ from typing import Annotated, Literal, Union
 
 from pydantic import AfterValidator, BaseModel, Field
 
+from core.schema.types import AttachmentId
 from core.schema.utils import _validate_src
 
 
@@ -85,7 +86,7 @@ class ImagePart(BaseModel):
     detail: ImageDetail = ImageDetail.AUTO  # OpenAI 视觉模型分辨率控制
     width: int | None = None
     height: int | None = None
-    attachment_id: str | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
+    attachment_id: AttachmentId | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
 
 
 class FilePart(BaseModel):
@@ -95,7 +96,7 @@ class FilePart(BaseModel):
     mime: FileMime = FileMime.OCTET_STREAM
     filename: str = ""
     size_bytes: int = 0
-    attachment_id: str | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
+    attachment_id: AttachmentId | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
 
 
 class AudioPart(BaseModel):
@@ -104,7 +105,7 @@ class AudioPart(BaseModel):
     src: Src = ""
     mime: AudioMime = AudioMime.WAV
     duration_ms: int = 0
-    attachment_id: str | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
+    attachment_id: AttachmentId | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
 
 
 class VideoPart(BaseModel):
@@ -113,7 +114,7 @@ class VideoPart(BaseModel):
     src: Src = ""
     mime: VideoMime = VideoMime.MP4
     duration_ms: int = 0
-    attachment_id: str | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
+    attachment_id: AttachmentId | None = None  # 附件 ID（att_ 前缀，批次 7 消息关联）
 
 
 class StickerPart(BaseModel):

@@ -16,7 +16,7 @@ from core.schema.event import InterruptData, UserInputData
 from core.schema.message import ClientMessageDict
 from core.schema.part import AudioPart, FilePart, ImagePart, StickerPart, TextPart, VideoPart
 from core.schema.utils import now_iso
-from core.schema.types import SessionId
+from core.schema.types import AttachmentId, SessionId
 from core.storage.attachment_repo import StorageUnavailableError
 from Module.output import WebSocketChannel
 from core.input.audio_buffer import AudioBuffer
@@ -563,7 +563,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                                            "message": "attachments 缺 attachmentId",
                                            "retryable": False})
                     return True
-                doc = await agent.attachment_repo.get(aid)
+                doc = await agent.attachment_repo.get(AttachmentId(aid))
                 if doc is None or (doc.get("status") or "") != "active":
                     await _send_ack(ws, "", client_request_id, client_message_id,
                                     ack_conversation_id, "rejected",
@@ -639,7 +639,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                 sent_message_ids.add(message_id)   # D1 归属（media 路径同样登记）
             for aid in attachment_records:
                 try:
-                    await agent.attachment_repo.add_ref(aid, message_id)
+                    await agent.attachment_repo.add_ref(AttachmentId(aid), message_id)
                 except Exception as e:
                     logger.warning("附件 refs 写盘失败 aid=%s message=%s: %s",
                                    aid, message_id, e)

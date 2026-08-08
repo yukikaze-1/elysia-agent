@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from core.agent import Agent
 
 from core.schema.message import Message
+from core.schema.types import AttachmentId
 from core.input.tts_profile import _active_tts_profile, _backend_default_voice
 from frontend_contract import rest as rest_contract
 from frontend_contract.rest import RepoCallStatus
@@ -633,7 +634,7 @@ def register_api_routes(app: web.Application) -> None:
         from core.schema.adapters import attachment_resolver
         from core.schema.utils import now_iso
         from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
-        from core.utils.message_id import _new_id
+        from core.utils.message_id import new_attachment_id
 
         agent = request.app["agent"]
         cfg = agent.config.server
@@ -757,7 +758,7 @@ def register_api_routes(app: web.Application) -> None:
             stored_name = f"{uuid.uuid4().hex[:16]}.{ext}"
             upload_dir = ProjectPath.DATA_UPLOADS.resolve() / final_kind
             stored_path = upload_dir / stored_name
-            attachment_id = _new_id("att")
+            attachment_id = new_attachment_id()
             doc = {
                 "attachment_id": attachment_id,
                 "kind": final_kind,
@@ -796,7 +797,7 @@ def register_api_routes(app: web.Application) -> None:
 
         results = []
         written: list[Path] = []   # 已写盘文件（失败清理用）
-        created: list[str] = []    # 已建记录 attachment_id（失败清理用）
+        created: list[AttachmentId] = []    # 已建记录 attachment_id（失败清理用）
 
         async def _cleanup() -> None:
             """失败清理：删本轮已写文件 + 已注册映射 + 已建记录。"""
