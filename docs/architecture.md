@@ -1021,7 +1021,7 @@ Agent/
 │   │   ├── loop.py           #     CognitiveLoop(CognitiveTools): process + _think_loop + _dispatch_stream_event
 │   │   ├── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   │   ├── timing.py         #     Timer + TimingClock 延迟统计
-│   │   ├── generation.py     #     GenerationContext: generation_id/assistant_message_id/conversation_id 预分配
+│   │   ├── generation.py     #     GenerationContext: generation_id/assistant_message_id/conversation_id 预分配（ID 字段对齐 NewType：GenerationId/MessageId/SessionId/RequestId/SegmentId）
 │   │   └── generation_registry.py # GenerationRegistry: generation 生命周期持久化（register/mark 终态 + stale 清理）
 │   ├── monitoring/            #   监控子包
 │   │   ├── event_bus.py       #     优先级事件总线

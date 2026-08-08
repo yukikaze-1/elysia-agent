@@ -9,7 +9,7 @@ core/ 层共享的基础类型：Agent 状态机、事件类型、多模态消�
 ```
 core.schema（统一入口，__init__.py re-export 全部类型）
 ├── agent.py     # AgentState, VALID_TRANSITIONS, EventPriority, EventType — FSM/EventBus 类型
-├── types.py     # IsoTimestamp, now_iso, SessionId, MessageId, ToolCallId — 时间戳/标识符别名
+├── types.py     # IsoTimestamp, now_iso, SessionId, MessageId, ToolCallId, GenerationId, SegmentId, RequestId — 时间戳/标识符 NewType 别名
 ├── utils.py     # now_iso, _normalize_iso_ts, _validate_src — 时间戳/校验工具函数
 ├── part.py      # TextPart / ImagePart / FilePart / AudioPart / VideoPart → Part（discriminated union）
 ├── tool.py      # ToolCall, ToolCallFunction — OpenAI 兼容 tool_calls 结构
@@ -41,7 +41,7 @@ core.schema（统一入口，__init__.py re-export 全部类型）
 | 文件 | 内容 |
 |------|------|
 | `agent.py` | AgentState, EventType, EventPriority, VALID_TRANSITIONS — FSM/EventBus 类型 |
-| `types.py` | IsoTimestamp, now_iso, SessionId, MessageId, ToolCallId — 时间戳/标识符别名 |
+| `types.py` | IsoTimestamp, now_iso, SessionId, MessageId, ToolCallId, GenerationId, SegmentId, RequestId — 时间戳/标识符 NewType 别名（core 内部 ID 流转对齐，input 边界裸 str 收口包一层；frontend_contract 契约层保持裸 str） |
 | `part.py` | TextPart / ImagePart / FilePart / AudioPart / VideoPart — Part（discriminated union） |
 | `tool.py` | ToolCall, ToolCallFunction — OpenAI 兼容 tool_calls 结构 |
 | `memory.py` | MemoryType, ExtractedMemory, SkipAction, InsertAction, UpdateAction, MergeAction, CompareAction — MemoryConsolidator LLM 输出类型 |
