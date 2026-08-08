@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from core.schema.types import GenerationId, MessageId, RequestId, SegmentId, SessionId
 from core.utils.message_id import new_segment_id
+from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 
 @dataclass
@@ -45,10 +46,10 @@ class GenerationContext:
     delta_sequence: int = 0
     current_segment_id: SegmentId | None = None
     current_segment_index: int | None = None
-    channel: str | None = None
-    kind: str | None = None
+    channel: MessageChannel | None = None
+    kind: SegmentKind | None = None
 
-    def open_segment(self, channel: str, kind: str = "text") -> SegmentId:
+    def open_segment(self, channel: MessageChannel, kind: SegmentKind = SegmentKind.TEXT) -> SegmentId:
         """打开一个新分段：分配 seg_ ID、全局序号递增、重置段内 delta。
 
         Args:

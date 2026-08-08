@@ -4,6 +4,7 @@ from typing import get_type_hints
 
 import pytest
 
+from frontend_contract.ws_message import MessageChannel, SegmentKind
 from core.cognitive.generation import GenerationContext
 from core.schema import GenerationId, MessageId, RequestId, SegmentId, SessionId
 from core.utils.message_id import new_generation_id, new_segment_id
@@ -34,15 +35,15 @@ def test_generation_context_open_segment_increments():
         generation_id=GenerationId("gen_1"), user_message_id=MessageId("msg_u1"),
         assistant_message_id=MessageId("msg_a1"),
     )
-    sid0 = ctx.open_segment("inner_voice")
+    sid0 = ctx.open_segment(MessageChannel.INNER_VOICE)
     assert sid0.startswith("seg_")
     assert ctx.current_segment_index == 0
-    assert ctx.channel == "inner_voice"
+    assert ctx.channel == MessageChannel.INNER_VOICE
     # 段内 delta 递增
     assert ctx.next_delta() == 0
     assert ctx.next_delta() == 1
 
-    sid1 = ctx.open_segment("public_reply")
+    sid1 = ctx.open_segment(MessageChannel.PUBLIC_REPLY)
     assert ctx.current_segment_index == 1  # 全局递增
     assert ctx.next_delta() == 0  # 新段重置
     assert sid1 != sid0
@@ -55,9 +56,9 @@ def test_generation_context_tool_round_does_not_reset_index():
         generation_id=GenerationId("gen_1"), user_message_id=MessageId("msg_u1"),
         assistant_message_id=MessageId("msg_a1"),
     )
-    ctx.open_segment("public_reply")
-    ctx.open_segment("public_reply")
-    ctx.open_segment("public_reply")  # 工具轮后的分段
+    ctx.open_segment(MessageChannel.PUBLIC_REPLY)
+    ctx.open_segment(MessageChannel.PUBLIC_REPLY)
+    ctx.open_segment(MessageChannel.PUBLIC_REPLY)  # 工具轮后的分段
     assert ctx.current_segment_index == 2
 
 
@@ -72,3 +73,11 @@ def test_generation_context_id_field_types():
     assert hints["request_id"] == RequestId | None
     assert hints["current_segment_id"] == SegmentId | None
     assert hints["model_id"] is str  # 模型名非 ID 语义，保持 str
+
+
+@pytest.mark.unit
+def test_open_segment_channel_kind_enum_types():
+    """open_segment 的 channel/kind 对齐契约层 StrEnum（get_type_hints 查注解）。"""
+    hints = get_type_hints(GenerationContext.open_segment)
+    assert hints["channel"] is MessageChannel
+    assert hints["kind"] is SegmentKind
