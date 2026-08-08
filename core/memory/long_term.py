@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from core.memory.embedding_provider import EmbeddingProvider
 from core.schema.memory import MemoryType
+from core.schema.types import MemoryId
 
 if TYPE_CHECKING:
     from core.storage.memory_repo import MemoryRepository
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MemoryEntry:
-    id: str = ""                    # 唯一标识（insert 时自动生成）
+    id: MemoryId = MemoryId("")         # 唯一标识（insert 时自动生成）
     text: str = ""
     embedding: list[float] = field(default_factory=list, repr=False)
     memory_type: MemoryType = MemoryType.NOTE   # Fact/Preference/Event/Plan/Note（构造时 coerce 归一）
@@ -69,10 +70,10 @@ class LongTermMemory:
         self._entries: list[MemoryEntry] = []
         self._repo: "MemoryRepository | None" = repo
         self._embedding_provider = EmbeddingProvider(embed_timeout)
-        self._dirty_ids: set[str] = set()  # 未同步到 Milvus 的条目 ID
+        self._dirty_ids: set[MemoryId] = set()  # 未同步到 Milvus 的条目 ID
         self._max_entries = max_entries
         self._max_age_days = max_age_days
-        self._absorbed_ids: set[str] = set()  # 被 merge 吸收但尚未 delete 的条目 ID
+        self._absorbed_ids: set[MemoryId] = set()  # 被 merge 吸收但尚未 delete 的条目 ID
         self._enable_eviction = enable_eviction
         self._write_lock = asyncio.Lock()     # 保护所有修改操作的并发锁
 
@@ -112,7 +113,7 @@ class LongTermMemory:
             logger.warning("LongTermMemory: 从 Milvus 加载失败: %s", e)
             return 0
 
-        from core.utils import new_message_id
+        from core.utils import new_memory_id
 
         loaded = 0
         for row in results:
@@ -120,9 +121,9 @@ class LongTermMemory:
             # 优先使用存储的 entry_id，兼容无 entry_id 字段的旧数据
             entry_id = row.get("entry_id", "")
             if not entry_id or not isinstance(entry_id, str):
-                entry_id = new_message_id()
+                entry_id = new_memory_id()
             entry = MemoryEntry(
-                id=str(entry_id),
+                id=MemoryId(entry_id),
                 text=row.get("text", ""),
                 embedding=[],  # 不加载向量 — 太大，搜索走 Milvus
                 memory_type=row.get("memory_type", "Note"),
@@ -162,13 +163,13 @@ class LongTermMemory:
         embedding = await self._embedding_provider.embed(text)
 
         async with self._write_lock:
-            from core.utils import new_message_id
+            from core.utils import new_memory_id
             # 在副本上操作，避免修改调用方传入的 dict
             meta: dict[str, Any] = dict(metadata)
             # 接受 'type' 作为 'memory_type' 的别名
             memory_type = meta.pop("memory_type", meta.pop("type", "Note"))
             entry = MemoryEntry(
-                id=new_message_id(),
+                id=new_memory_id(),
                 text=text,
                 embedding=embedding,
                 memory_type=memory_type,
@@ -240,7 +241,7 @@ class LongTermMemory:
                        removed, len(self._entries))
         return removed
 
-    def _get_by_id(self, entry_id: str) -> MemoryEntry | None:
+    def _get_by_id(self, entry_id: MemoryId) -> MemoryEntry | None:
         """通过 ID 查找条目。
 
         Args:
@@ -262,7 +263,7 @@ class LongTermMemory:
         """
         return [e for e in self._entries if e.id not in self._absorbed_ids]
 
-    async def mark_absorbed(self, entry_id: str) -> None:
+    async def mark_absorbed(self, entry_id: MemoryId) -> None:
         """标记条目已被 merge 吸收，同步清理 Milvus + 内存。
 
         Args:
@@ -324,7 +325,7 @@ class LongTermMemory:
     # ---- Delete ----
 
     async def update_text(
-        self, entry_id: str, new_text: str,
+        self, entry_id: MemoryId, new_text: str,
         poignancy: int | None = None,
         memory_type: str | None = None,
     ) -> bool:
@@ -385,7 +386,7 @@ class LongTermMemory:
                     return True
             return False
 
-    async def delete(self, entry_id: str) -> bool:
+    async def delete(self, entry_id: MemoryId) -> bool:
         """删除单条记忆（内存 + Milvus）。
 
         Args:

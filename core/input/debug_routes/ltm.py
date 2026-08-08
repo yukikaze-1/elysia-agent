@@ -10,6 +10,7 @@ import logging
 from aiohttp import web
 
 from core.schema.memory import MemoryType
+from core.schema.types import MemoryId
 from frontend_contract import debug as contract
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ async def ltm_delete_single_handler(request: web.Request) -> web.Response:
     if not entry_id:
         from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("CONTRACT_VALIDATION", "缺少 entry_id", 400)
-    ok = await agent.long_term.delete(entry_id)
+    ok = await agent.long_term.delete(MemoryId(entry_id))
     logger.warning("DEBUG API: ltm_delete entry_id=%s, ok=%s", entry_id, ok)
     return web.json_response(contract.DebugResult(ok=ok).wire_dict())
 
@@ -140,7 +141,7 @@ async def ltm_update_handler(request: web.Request) -> web.Response:
     if not new_text:
         from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("CONTRACT_VALIDATION", "text 不能为空", 400)
-    ok = await agent.long_term.update_text(entry_id, new_text)
+    ok = await agent.long_term.update_text(MemoryId(entry_id), new_text)
     logger.info("DEBUG API: ltm_update entry_id=%s, text_len=%d, ok=%s", entry_id, len(new_text), ok)
     return web.json_response(contract.DebugResult(ok=ok).wire_dict())
 

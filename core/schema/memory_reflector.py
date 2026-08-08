@@ -5,6 +5,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field, StringConstraints
 
 from core.schema.memory import MemoryType
+from core.schema.types import MemoryId
 
 
 class MemoryReflectorState(BaseModel):
@@ -15,7 +16,7 @@ class MemoryReflectorState(BaseModel):
 
 class MergeItem(BaseModel):
     """合并操作：ids[0] 保留并更新内容，其余标记 absorbed。"""
-    ids: list[str] = Field(min_length=2)
+    ids: list[MemoryId] = Field(min_length=2)
     merged_content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     type: MemoryType | None = None
     poignancy: int | None = Field(default=None, ge=1, le=10)
@@ -23,13 +24,13 @@ class MergeItem(BaseModel):
 
 class UpdateItem(BaseModel):
     """更新操作：改写单条记忆内容。"""
-    id: str = Field(min_length=1)
+    id: MemoryId = Field(min_length=1)
     new_content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class DeleteItem(BaseModel):
     """删除操作。"""
-    id: str = Field(min_length=1)
+    id: MemoryId = Field(min_length=1)
 
 
 class ReflectorActions(BaseModel):

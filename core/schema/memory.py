@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints
 
+from core.schema.types import MemoryId
+
 
 class MemoryType(StrEnum):
     """记忆类型枚举。值与 ExtractMemory.j2 / ConsolidationCompare.j2 的大写词表一致。"""
@@ -74,7 +76,7 @@ class InsertAction(BaseModel):
 class UpdateAction(BaseModel):
     """type/poignancy 在执行分支中从不消费，设为可选保留降级兼容。"""
     action: Literal[CompareActionType.UPDATE] = CompareActionType.UPDATE
-    target_id: str = Field(min_length=1)
+    target_id: MemoryId = Field(min_length=1)
     new_content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     type: MemoryType | None = None
     poignancy: int | None = Field(default=None, ge=1, le=10)
@@ -84,7 +86,7 @@ class MergeAction(BaseModel):
     """type/poignancy 传入 update_text()（其签名接受 None 表示"不更新此字段"）。
     可选以保留 LTM 的 None-语义。"""
     action: Literal[CompareActionType.MERGE] = CompareActionType.MERGE
-    target_id: str = Field(min_length=1)
+    target_id: MemoryId = Field(min_length=1)
     merged_content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     type: MemoryType | None = None
     poignancy: int | None = Field(default=None, ge=1, le=10)
