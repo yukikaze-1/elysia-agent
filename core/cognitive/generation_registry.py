@@ -8,6 +8,7 @@ mark 为 upsert（mark-before-register 仍能建档）。
 
 import logging
 
+from core.schema.types import GenerationId, MessageId, RequestId, SessionId
 from core.schema.utils import now_iso
 from core.storage.generation_repo import (
     GenerationRepository,
@@ -55,9 +56,9 @@ class GenerationRegistry:
             logger.debug("GenerationRegistry.connect 失败: %s", e)
             return False
 
-    async def register(self, generation_id: str, *, session_id: str,
-                       user_message_id: str, message_id: str, model: str,
-                       request_id: str | None = None) -> None:
+    async def register(self, generation_id: GenerationId, *, session_id: SessionId,
+                       user_message_id: MessageId, message_id: MessageId, model: str,
+                       request_id: RequestId | None = None) -> None:
         """generation 开始建档（status=running）。
 
         Mongo 离线/异常不抛——仅日志，绝不阻塞 generation。
@@ -93,7 +94,7 @@ class GenerationRegistry:
         except Exception as e:
             logger.debug("GenerationRegistry.register 失败（Mongo 离线？）: %s", e)
 
-    async def mark(self, generation_id: str, *, status: str,
+    async def mark(self, generation_id: GenerationId, *, status: str,
                    finish_reason: str | None = None,
                    error: str | dict | None = None) -> None:
         """更新 generation 状态（upsert 语义，mark-before-register 也建档）。
@@ -126,7 +127,7 @@ class GenerationRegistry:
         except Exception as e:
             logger.debug("GenerationRegistry.mark 失败（Mongo 离线？）: %s", e)
 
-    async def get(self, generation_id: str) -> dict | None:
+    async def get(self, generation_id: GenerationId) -> dict | None:
         """按 generation_id 取文档。异常/离线返回 None。"""
         try:
             return await self._repo.find_one(generation_id)
@@ -134,7 +135,7 @@ class GenerationRegistry:
             logger.debug("GenerationRegistry.get 失败: %s", e)
             return None
 
-    async def query_by_session(self, session_id: str, *, status: str | None = None,
+    async def query_by_session(self, session_id: SessionId, *, status: str | None = None,
                                cursor: str | None = None,
                                limit: int = 20) -> tuple[list[dict], bool, str | None]:
         """按 session 查询 generation（支持状态过滤 + keyset 分页）。
@@ -149,7 +150,7 @@ class GenerationRegistry:
             logger.debug("GenerationRegistry.query_by_session 失败: %s", e)
             return [], False, None
 
-    async def find_by_message(self, message_id: str) -> dict | None:
+    async def find_by_message(self, message_id: MessageId) -> dict | None:
         """按 assistant 父消息 ID 反查最近一条 generation（D-q 搜索用）。"""
         try:
             return await self._repo.find_by_message(message_id)

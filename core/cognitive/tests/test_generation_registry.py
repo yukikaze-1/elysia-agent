@@ -11,11 +11,13 @@ GenerationRegistry 是 GenerationRepository 之上的薄封装。覆盖：
 """
 
 import asyncio
+from typing import get_type_hints
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from core.cognitive.generation_registry import GenerationRegistry
+from core.schema import GenerationId, MessageId, SessionId, RequestId
 from core.storage.generation_repo import GenerationRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 
@@ -32,9 +34,10 @@ class TestGenerationRegistry:
     def test_register_get_running(self):
         reg = _registry()
         asyncio.run(reg.register(
-            "gen_1", session_id="s1", user_message_id="msg_u1",
-            message_id="msg_a1", model="mock"))
-        doc = asyncio.run(reg.get("gen_1"))
+            GenerationId("gen_1"), session_id=SessionId("s1"),
+            user_message_id=MessageId("msg_u1"), message_id=MessageId("msg_a1"),
+            model="mock"))
+        doc = asyncio.run(reg.get(GenerationId("gen_1")))
         assert doc is not None
         assert doc["status"] == "running"
         assert doc["session_id"] == "s1"
@@ -47,10 +50,11 @@ class TestGenerationRegistry:
     def test_mark_completed_sets_terminal_state(self):
         reg = _registry()
         asyncio.run(reg.register(
-            "gen_1", session_id="s1", user_message_id="msg_u1",
-            message_id="msg_a1", model="mock"))
-        asyncio.run(reg.mark("gen_1", status="completed", finish_reason="stop"))
-        doc = asyncio.run(reg.get("gen_1"))
+            GenerationId("gen_1"), session_id=SessionId("s1"),
+            user_message_id=MessageId("msg_u1"), message_id=MessageId("msg_a1"),
+            model="mock"))
+        asyncio.run(reg.mark(GenerationId("gen_1"), status="completed", finish_reason="stop"))
+        doc = asyncio.run(reg.get(GenerationId("gen_1")))
         assert doc["status"] == "completed"
         assert doc["finish_reason"] == "stop"
         assert doc["finished_at"]  # 终态落 finished_at
@@ -58,19 +62,21 @@ class TestGenerationRegistry:
     def test_mark_before_register_creates_doc(self):
         """mark upsert 语义：先 mark 后 register 也建档（mark-before-register）。"""
         reg = _registry()
-        asyncio.run(reg.mark("gen_orphan", status="cancelled"))
-        doc = asyncio.run(reg.get("gen_orphan"))
+        asyncio.run(reg.mark(GenerationId("gen_orphan"), status="cancelled"))
+        doc = asyncio.run(reg.get(GenerationId("gen_orphan")))
         assert doc is not None
         assert doc["status"] == "cancelled"
 
     def test_query_by_session_status_filter(self):
         reg = _registry()
         asyncio.run(reg.register(
-            "g1", session_id="s1", user_message_id="u1", message_id="a1", model="m"))
+            GenerationId("g1"), session_id=SessionId("s1"),
+            user_message_id=MessageId("u1"), message_id=MessageId("a1"), model="m"))
         asyncio.run(reg.register(
-            "g2", session_id="s1", user_message_id="u2", message_id="a2", model="m"))
-        asyncio.run(reg.mark("g2", status="completed"))
-        docs, has_more, cursor = asyncio.run(reg.query_by_session("s1", status="running"))
+            GenerationId("g2"), session_id=SessionId("s1"),
+            user_message_id=MessageId("u2"), message_id=MessageId("a2"), model="m"))
+        asyncio.run(reg.mark(GenerationId("g2"), status="completed"))
+        docs, has_more, cursor = asyncio.run(reg.query_by_session(SessionId("s1"), status="running"))
         assert [d["generation_id"] for d in docs] == ["g1"]
         assert has_more is False
         assert cursor is None
@@ -78,10 +84,12 @@ class TestGenerationRegistry:
     def test_find_by_message(self):
         reg = _registry()
         asyncio.run(reg.register(
-            "g1", session_id="s1", user_message_id="u1", message_id="msg_a1", model="m"))
+            GenerationId("g1"), session_id=SessionId("s1"),
+            user_message_id=MessageId("u1"), message_id=MessageId("msg_a1"), model="m"))
         asyncio.run(reg.register(
-            "g2", session_id="s1", user_message_id="u2", message_id="msg_a2", model="m"))
-        doc = asyncio.run(reg.find_by_message("msg_a2"))
+            GenerationId("g2"), session_id=SessionId("s1"),
+            user_message_id=MessageId("u2"), message_id=MessageId("msg_a2"), model="m"))
+        doc = asyncio.run(reg.find_by_message(MessageId("msg_a2")))
         assert doc["generation_id"] == "g2"
 
     def test_mark_stale_interrupted(self):
@@ -101,15 +109,15 @@ class TestGenerationRegistry:
         }))
         modified = asyncio.run(reg.mark_stale_interrupted("2026-08-03T00:00:00+00:00"))
         assert modified == 1
-        assert asyncio.run(reg.get("g_stale"))["status"] == "interrupted"
+        assert asyncio.run(reg.get(GenerationId("g_stale")))["status"] == "interrupted"
 
     def test_mongo_offline_register_no_throw(self):
         """Mongo 离线（repo db=None）register 不抛——降级为 no-op。"""
         reg = GenerationRegistry(repo=GenerationRepository(db=None))
         asyncio.run(reg.register(
-            "gen_1", session_id="s1", user_message_id="u1",
-            message_id="a1", model="mock"))  # 不抛
-        assert asyncio.run(reg.get("gen_1")) is None
+            GenerationId("gen_1"), session_id=SessionId("s1"),
+            user_message_id=MessageId("u1"), message_id=MessageId("a1"), model="mock"))  # 不抛
+        assert asyncio.run(reg.get(GenerationId("gen_1"))) is None
 
     def test_mongo_db_error_no_throw(self):
         """Mongo 后端调用抛异常时 register/mark 不抛（try/except 兜底）。"""
@@ -117,7 +125,28 @@ class TestGenerationRegistry:
         repo._db.update_one = AsyncMock(side_effect=RuntimeError("mongo down"))
         reg = GenerationRegistry(repo=repo)
         asyncio.run(reg.register(
-            "gen_1", session_id="s1", user_message_id="u1",
-            message_id="a1", model="mock"))  # 不抛
-        asyncio.run(reg.mark("gen_1", status="completed"))  # 不抛
-        assert asyncio.run(reg.get("gen_1")) is None  # find_one 也降级为 None
+            GenerationId("gen_1"), session_id=SessionId("s1"),
+            user_message_id=MessageId("u1"), message_id=MessageId("a1"), model="mock"))  # 不抛
+        asyncio.run(reg.mark(GenerationId("gen_1"), status="completed"))  # 不抛
+        assert asyncio.run(reg.get(GenerationId("gen_1"))) is None  # find_one 也降级为 None
+
+
+@pytest.mark.unit
+class TestSignatureTypes:
+    """registry/repo 签名对齐 NewType（get_type_hints 查注解）。"""
+
+    def test_register_signature(self):
+        hints = get_type_hints(GenerationRegistry.register)
+        assert hints["generation_id"] is GenerationId
+        assert hints["session_id"] is SessionId
+        assert hints["user_message_id"] is MessageId
+        assert hints["message_id"] is MessageId
+        assert hints["request_id"] == RequestId | None
+
+    def test_repo_signatures(self):
+        hints = get_type_hints(GenerationRepository.find_by_session)
+        assert hints["session_id"] is SessionId
+        hints2 = get_type_hints(GenerationRepository.find_by_message)
+        assert hints2["message_id"] is MessageId
+        hints3 = get_type_hints(GenerationRepository.find_one)
+        assert hints3["generation_id"] is GenerationId

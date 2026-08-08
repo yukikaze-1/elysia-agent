@@ -19,7 +19,7 @@ from core.input.voice_sessions import (
     VoiceSessionError,
     VoiceSessionManager,
 )
-from core.schema import RequestId
+from core.schema import GenerationId, MessageId, RequestId, SessionId
 from core.storage.generation_repo import GenerationRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 from core.utils import set_request_id
@@ -138,9 +138,10 @@ class TestGenerationRegistryRequestId:
         """register 传入 request_id → doc 含 request_id 字段。"""
         reg = _registry()
         asyncio.run(reg.register(
-            "gen_1", session_id="s1", user_message_id="u1",
-            message_id="a1", model="mock", request_id="req_1"))
-        doc = asyncio.run(reg.get("gen_1"))
+            GenerationId("gen_1"), session_id=SessionId("s1"),
+            user_message_id=MessageId("u1"), message_id=MessageId("a1"),
+            model="mock", request_id=RequestId("req_1")))
+        doc = asyncio.run(reg.get(GenerationId("gen_1")))
         assert doc is not None
         assert doc["request_id"] == "req_1"
 
@@ -148,9 +149,9 @@ class TestGenerationRegistryRequestId:
         """register 不传 request_id → doc 无 request_id 字段。"""
         reg = _registry()
         asyncio.run(reg.register(
-            "gen_1", session_id="s1", user_message_id="u1",
-            message_id="a1", model="mock"))
-        doc = asyncio.run(reg.get("gen_1"))
+            GenerationId("gen_1"), session_id=SessionId("s1"),
+            user_message_id=MessageId("u1"), message_id=MessageId("a1"), model="mock"))
+        doc = asyncio.run(reg.get(GenerationId("gen_1")))
         assert doc is not None
         assert doc.get("request_id") is None
 

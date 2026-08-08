@@ -25,6 +25,7 @@ import base64
 import logging
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
+from core.schema.types import GenerationId, MessageId, SessionId
 from core.schema.utils import now_iso
 from core.storage.base import Repository
 
@@ -157,14 +158,14 @@ class GenerationRepository(Repository):
         await self._db.update_one(
             COLLECTION, {"generation_id": generation_id}, {"$set": doc}, upsert=True)
 
-    async def find_one(self, generation_id: str) -> dict | None:
+    async def find_one(self, generation_id: GenerationId) -> dict | None:
         """按 generation_id 取单条文档。不存在或数据库不可用返回 None。"""
         if self._db is None:
             return None
         results = await self._db.find(COLLECTION, {"generation_id": generation_id}, limit=1)
         return results[0] if results else None
 
-    async def find_by_message(self, message_id: str) -> dict | None:
+    async def find_by_message(self, message_id: MessageId) -> dict | None:
         """按 assistant 父消息 ID 反查最近一条 generation（D-q 搜索用）。
 
         message_id 为 assistant 消息 ID（generation 开始预分配，落库一致）。
@@ -183,7 +184,7 @@ class GenerationRepository(Repository):
             sort=[("created_at", -1)], limit=1)
         return results[0] if results else None
 
-    async def find_by_session(self, session_id: str, *, status: str | None = None,
+    async def find_by_session(self, session_id: SessionId, *, status: str | None = None,
                               cursor: str | None = None,
                               limit: int = 20) -> tuple[list[dict], bool, str | None]:
         """按 session 键集分页查询 generation（D-q 搜索用）。
