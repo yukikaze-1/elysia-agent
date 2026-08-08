@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-workflow-engine lint start gen-types check-types
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-workflow-engine lint pyright start gen-types check-types
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -40,6 +40,10 @@ check:
 # 导入风格门禁：禁相对导入（TID252），__init__.py / __main__.py 豁免。见 ruff.toml
 lint:
 	ruff check core/ Module/ frontend_contract/ --exclude __pycache__
+
+# 类型检查门禁（pyright，core 生产代码；须 Elysia env 运行——base env 无 aiohttp 会漏报 25 处）
+pyright:
+	conda run -n $(CONDA_ENV) pyright
 
 # 前后端契约单源：Pydantic 模型 → contract.generated.ts（前端只读快照）
 gen-types:

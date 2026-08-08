@@ -1,0 +1,7 @@
+{
+  "include": ["core/"],
+  "exclude": ["**/tests/**", "**/test_*.py", "**/__pycache__"],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": false
+}
