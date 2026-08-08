@@ -197,7 +197,7 @@ class TestLongTermMemory:
         mem = LongTermMemory()
         await mem.insert("test entry", type="note")
         assert mem._entries[0].id
-        assert mem._entries[0].id.startswith("msg_")
+        assert mem._entries[0].id.startswith("mem_")
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -1058,7 +1058,7 @@ async def test_long_term_memory_tracks_dirty_entries():
 
     # 验证 ID 生成 (new_message_id() 返回 "msg_" + 26 hex)
     entry = ltm._entries[-1]
-    assert entry.id.startswith("msg_")
+    assert entry.id.startswith("mem_")
     assert len(entry.id) == 30
 
 

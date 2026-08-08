@@ -8,8 +8,8 @@ pytestmark = pytest.mark.unit
 
 def test_new_tool_call_has_valid_id():
     t = Task.new_tool_call("parent-1", "web_search", {"query": "hello"})
-    assert t.id.startswith("msg_")
-    assert len(t.id) == 30
+    assert t.id.startswith("task_")
+    assert len(t.id) == 31
     assert t.type == TaskType.TOOL_CALL
     assert t.parent_id == "parent-1"
     assert t.payload["tool_name"] == "web_search"

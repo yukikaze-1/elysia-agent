@@ -19,15 +19,15 @@
 | `SegmentId` | `core/schema/types.py` | **core** | `seg_` + 26 hex |
 | `RequestId` | `core/schema/types.py` | **core** | `{req_counter:03d}`（三位计数器，非 UUID） |
 | `AttachmentId` | `core/schema/types.py` | **core** | `att_` + 26 hex |
-| `MemoryId` | `core/schema/types.py` | **core** | `msg_` + 26 hex |
-| `TaskId` | `core/schema/types.py` | **core** | `msg_` + 26 hex |
+| `MemoryId` | `core/schema/types.py` | **core** | `mem_` + 26 hex（Milvus 旧 `msg_` 数据读回兼容） |
+| `TaskId` | `core/schema/types.py` | **core** | `task_` + 26 hex |
 | `SessionId` | `Module/workflow_contract/schema.py`（core 再导出） | **契约层** | `conv_` + 12 hex / `default` |
 | `WorkflowId`/`AgentId`/`ApprovalId`/`NodeId` | `Module/workflow_contract/schema.py` | **契约层** | workflow 内部 |
 | `ArtifactId` | `Module/workflow_engine/schema/types.py` | **契约层** | 产物 ID |
 
 统一从 `core.schema` 导入（`from core.schema import MessageId, SessionId` 或 `from core.schema.types import ...`），
 **禁相对导入**。生成函数（`new_message_id`/`new_generation_id`/`new_segment_id`/`new_attachment_id`/`new_memory_id`/`new_task_id`/`next_request_id`）返回类型标注对应 NewType。
-`MemoryId`/`TaskId` 与 `MessageId` 值空间相同（同 `_new_id("msg")`），语义靠 NewType 名区分。
+`MemoryId`/`TaskId` 值空间与 `MessageId` **隔离**（独立前缀 `mem_`/`task_`，2026-08-09 定案）；Milvus 历史 `msg_` 记忆条目经 `MemoryId(...)` 收口读回兼容。
 
 ### 1.2 类型权威归属原则（核心）
 

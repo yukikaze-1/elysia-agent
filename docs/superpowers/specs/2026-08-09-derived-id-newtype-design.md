@@ -20,13 +20,13 @@
 
 ### 决策 1：三个独立 NewType（用户拍板）
 
-`AttachmentId`/`MemoryId`/`TaskId` 都新建独立 NewType，不互相别名、不对齐 MessageId——记忆条目、调度任务、附件是不同语义实体，值空间共享 `new_message_id` 产物是历史实现细节，不构成类型别名理由。
+`AttachmentId`/`MemoryId`/`TaskId` 都新建独立 NewType，不互相别名、不对齐 MessageId——记忆条目、调度任务、附件是不同语义实体。值空间彼此独立（独立前缀，见决策 2）。
 
 ```python
 # core/schema/types.py（追加，与既有 NewType 并列）
 AttachmentId = NewType("AttachmentId", str)  # 附件 ID（att_ 前缀）
-MemoryId     = NewType("MemoryId", str)      # LTM 记忆条目 ID（new_message_id 值空间）
-TaskId       = NewType("TaskId", str)        # 调度中心任务 ID
+MemoryId     = NewType("MemoryId", str)      # LTM 记忆条目 ID（mem_ 前缀；Milvus 旧 msg_ 数据读回兼容）
+TaskId       = NewType("TaskId", str)        # 调度中心任务 ID（task_ 前缀）
 ```
 
 ### 决策 2：生成 helper 对齐既有模式（对设计草案的修正）
@@ -39,15 +39,15 @@ def new_attachment_id() -> AttachmentId:
     return AttachmentId(_new_id("att"))
 
 def new_memory_id() -> MemoryId:
-    return MemoryId(_new_id("msg"))
+    return MemoryId(_new_id("mem"))
 
 def new_task_id() -> TaskId:
-    return TaskId(_new_id("msg"))
+    return TaskId(_new_id("task"))
 ```
 
 > **决策记录（2026-08-09）**：设计草案原定「构造处包一层」。写 spec 时发现 message_id.py 既有 helper 模式，改为新增 helper 保持一致。修订原因：DRY（生成点共用同一前缀逻辑）、与既有 helper 模式对称、类型权威集中在 message_id.py。
 >
-> 注：`new_memory_id`/`new_task_id` 与 `new_message_id` 值空间/格式完全一致（都 `msg_` 前缀），code-style-guide §1.1 将出现 3 行同格式——语义靠 NewType 名区分（记忆条目 vs 调度任务 vs 消息），类型层面已隔离，不构成运行时歧义。
+> **决策记录（2026-08-09 复审）**：初版 `new_memory_id`/`new_task_id` 内部沿用 `_new_id("msg")`（值空间与 MessageId 共享，语义靠 NewType 名区分）。代码 review 质疑后**改为独立前缀 `mem_`/`task_`**——ID 前缀自解释（日志一眼区分类型）、值空间完全隔离；Task 不持久化（内存 dict）零迁移成本，MemoryId 的 Milvus 历史 `msg_` 数据经 `MemoryId(...)` 收口读回兼容（NewType 不校验前缀）。
 
 ### 决策 3：边界与豁免（沿用 §1.2/§1.3）
 

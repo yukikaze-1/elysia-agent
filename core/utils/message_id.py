@@ -7,7 +7,7 @@ from core.schema.types import AttachmentId, GenerationId, MemoryId, MessageId, S
 
 
 def _new_id(prefix: str) -> str:
-    """生成 prefix_ + 26 位十六进制字符（v1 前缀 msg_；批次 2 独立前缀 gen_/seg_，wire 可区分）。"""
+    """生成 prefix_ + 26 位十六进制字符（v1 前缀 msg_；批次 2 独立前缀 gen_/seg_；批次 9 衍生 ID att_/mem_/task_，wire 可区分）。"""
     return f"{prefix}_{uuid.uuid4().hex[:26]}"
 
 
@@ -36,10 +36,10 @@ def new_attachment_id() -> AttachmentId:
 
 
 def new_memory_id() -> MemoryId:
-    """生成一个新的 LTM 记忆条目 ID（'msg_' 前缀，与消息 ID 值空间相同，语义靠 NewType 名区分）。"""
-    return MemoryId(_new_id("msg"))
+    """生成一个新的 LTM 记忆条目 ID（'mem_' 前缀，与消息 ID 值空间隔离；Milvus 旧 'msg_' 数据读回兼容）。"""
+    return MemoryId(_new_id("mem"))
 
 
 def new_task_id() -> TaskId:
-    """生成一个新的调度任务 ID（'msg_' 前缀，与消息 ID 值空间相同，语义靠 NewType 名区分）。"""
-    return TaskId(_new_id("msg"))
+    """生成一个新的调度任务 ID（'task_' 前缀，与消息 ID 值空间隔离）。"""
+    return TaskId(_new_id("task"))
