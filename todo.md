@@ -10,7 +10,7 @@
 | 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec |
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
-| 低 | **`test_integration_global_constraints_respected` 偶发失败** | `Module/workflow_engine/tests/integration/test_delegation_preparer.py`: 全量跑偶发 FAIL，单独跑 PASS，疑似 WorkflowEngine 集成测试时序/资源竞争 |
+| 低 | **`test_integration_global_constraints_respected`/`test_integration_global_constraints_default_ok` 偶发失败** | `Module/workflow_engine/tests/integration/test_delegation_preparer.py`: 真实 LLM 集成测试，全量/单独跑均偶发 FAIL——根因是 **LLM 判定不稳定**（intent 缺收件人邮箱 → 时而 `too_vague` 时而不，非约束逻辑/时序）。2026-08-09 实测确认与 pyright 批次的 schema 泛型改动无关 |
 | 低 | **`test_multi_step_task` 偶发失败** | `Module/workflow_engine/tests/integration/test_planner.py`: DeepSeek API 偶发返回截断 JSON (`Unterminated string`)，LLM 输出不稳定导致 `PlanParseError` |
 | 中 | **TTS 密集短句导致 wait_all 阻塞** | TTS 连续 5+ 短句密集入队时 MiniMax 部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING。已缩短 read timeout 120s→30s 缓解，根因（wait_all 无超时）待重现后修复。 |
 | 低 | **`flush_after_response` 超时层不匹配** | 内层 `loop.py:897` 每 task 5s，外层 `lifecycle.py:191` 整体 10s。3+ task 同时超时可能被外层截断。实际 pending 典型 0-2 个、亚秒级完成，impact 极低。修法：外层 timeout 改为 `max(10.0, len(pending) * 5.0 + 1.0)` |

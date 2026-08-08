@@ -33,7 +33,7 @@ make test-full
 make lint
 # 或: ruff check core/ Module/ frontend_contract/ --exclude __pycache__
 
-# pyright 类型检查门禁（core 生产代码，basic + 排除测试；须 Elysia env——base env 无 aiohttp 会漏报 ~25 处）
+# pyright 类型检查门禁（core + Module + frontend_contract 生产代码，basic + 排除测试；须 Elysia env——base env 无 aiohttp 会漏报 ~25 处）
 make pyright
 # 或: conda run -n Elysia pyright
 ```
@@ -445,7 +445,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 项目有以下约束文档，所有代码和文档变更必须遵守：
 
 - **`docs/code-style-guide.md`** — 代码风格与类型约束。写代码前先读：ID NewType 体系 + 类型权威归属（core 定义 vs 契约层定义）+ StrEnum/coerce 用法 + getattr 使用纪律。
-- **pyright 门禁** — `make pyright`（`pyrightconfig.json`：include `core/`、排除 `**/tests/**`、`typeCheckingMode: basic`、`pythonVersion: 3.12`）。须在 Elysia env 运行——base env 无 aiohttp 会漏报 ~25 处（基线 67 vs Elysia 92）。
+- **pyright 门禁** — `make pyright`（`pyrightconfig.json`：include `core/` + `Module/` + `frontend_contract/`、排除 `**/tests/**`、`typeCheckingMode: basic`、`pythonVersion: 3.12`）。须在 Elysia env 运行——base env 无 aiohttp 会漏报 ~25 处。
 - **`docs/readme-conventions.md`** — README 编写规范。新增/修改模块时必须按模板写 README（面包屑 + 相关文档节），并在根 README 文档导航中注册。
 - **`docs/testing.md`** — 测试分层体系。新测试必须加 marker（unit/service/integration/slow），日常用 `make test-quick` / `make test-normal` / `make test-full`。
 - **`core/prompts/README.md`** — Prompt 模板命名规范（PascalCase `.j2`）+ 渲染方式（`str.replace()` / Jinja2 `render_macro()`，通过 `PromptManager`）。
