@@ -16,6 +16,7 @@ from typing import Any, AsyncIterator, Callable
 
 from Module.logger import get_caller_logger
 from Module.output.protocol import ChannelCapability, OutputChannel
+from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 
 class OutputManager:
@@ -433,20 +434,20 @@ class OutputManager:
         v1, v2 = self._split_versions(channels)
         await self._broadcast("on_command", "inner_voice", params={"content": text},
                               channels=v1, capability=ChannelCapability.COMMAND)
-        ctx.open_segment("inner_voice", "text")
+        ctx.open_segment(MessageChannel.INNER_VOICE, SegmentKind.TEXT)
         sid = ctx.current_segment_id
         idx = ctx.current_segment_index
         await self._broadcast(
             "on_generation_segment_started",
             generation_id=ctx.generation_id, segment_id=sid, segment_index=idx,
-            channel="inner_voice", kind="text",
+            channel=ctx.channel, kind=ctx.kind,
             conversation_id=ctx.conversation_id,
             channels=v2,
         )
         await self._broadcast(
             "on_generation_segment_completed",
             generation_id=ctx.generation_id, segment_id=sid, segment_index=idx,
-            channel="inner_voice", kind="text", content=text,
+            channel=ctx.channel, kind=ctx.kind, content=text,
             conversation_id=ctx.conversation_id,
             channels=v2,
         )

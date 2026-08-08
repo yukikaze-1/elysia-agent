@@ -7,6 +7,7 @@ import pytest
 from core.cognitive.generation import GenerationContext
 from core.cognitive.loop import CognitiveLoop
 from core.schema import GenerationId, MessageId, SessionId
+from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 pytestmark = pytest.mark.unit
 
@@ -47,7 +48,7 @@ async def test_v2_fallback_emits_segment_not_message():
 async def test_v2_fallback_completes_existing_segment():
     """F4：已有活动段（delta 已开段无 SENTENCE）→ 直接完成现有段，不重复 open_segment。"""
     loop = _make_loop()
-    loop._generation_ctx.open_segment("public_reply", "text")   # 模拟 delta 已开段
+    loop._generation_ctx.open_segment(MessageChannel.PUBLIC_REPLY, SegmentKind.TEXT)   # 模拟 delta 已开段
     loop._output.segment_started = AsyncMock()
     loop._output.segment_completed = AsyncMock()
     loop._output.send = AsyncMock()

@@ -32,6 +32,8 @@ from core.cognitive.timing import TimingClock
 from Module.output import OutputManager, ChannelCapability
 from Module.tts import TTSBackend
 
+from frontend_contract.ws_message import MessageChannel, SegmentKind
+
 from core.status.agent_fsm import AgentFSM
 from core.monitoring.event_bus import EventBus
 from core.utils import set_request_id, get_request_id, log_conversation
@@ -946,7 +948,7 @@ class CognitiveLoop(CognitiveTools):
                         await self._output.segment_completed(public_text, ctx)
                         ctx.close_segment()
                     else:
-                        ctx.open_segment("public_reply", "text")
+                        ctx.open_segment(MessageChannel.PUBLIC_REPLY, SegmentKind.TEXT)
                         await self._output.segment_started(ctx)
                         await self._output.segment_completed(public_text, ctx)
                         ctx.close_segment()
@@ -1337,7 +1339,7 @@ class CognitiveLoop(CognitiveTools):
                 else:
                     # 无活动段（deltas 合并到前段 / 本句无独立 delta 流）→ 为本句新开段再完成，
                     # 保证每句独立 segmentId（PRD BE-022）
-                    ctx.open_segment("public_reply", "text")
+                    ctx.open_segment(MessageChannel.PUBLIC_REPLY, SegmentKind.TEXT)
                     await self._output.segment_started(ctx)
                     await self._output.segment_completed(sentence, ctx, tts_active=tts_active)
                     ctx.close_segment()
@@ -1352,7 +1354,7 @@ class CognitiveLoop(CognitiveTools):
                 if ctx is not None:
                     # 打开 public_reply 段（首个 delta 时）——TTS 模式下也开段（v2 segment.completed 恒发）
                     if ctx.current_segment_id is None:
-                        ctx.open_segment("public_reply", "text")
+                        ctx.open_segment(MessageChannel.PUBLIC_REPLY, SegmentKind.TEXT)
                         await self._output.segment_started(ctx)
                     # loop 保留 TTS 门控：TTS 活跃时不发 delta（v1 现状；v2 段文本由 segment.completed 承载）
                     if not tts_active:

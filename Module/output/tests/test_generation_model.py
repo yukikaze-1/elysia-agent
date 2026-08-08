@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 from Module.output.manager import OutputManager
 from Module.output.websocket import WebSocketChannel
 from core.cognitive.generation import GenerationContext
+from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 
 def _make_both():
@@ -30,7 +31,7 @@ def _ctx(model_id: str = "") -> GenerationContext:
         generation_id="gen_1", user_message_id="msg_u1", assistant_message_id="msg_a1",
         model_id=model_id,
     )
-    ctx.open_segment("public_reply", "text")
+    ctx.open_segment(MessageChannel.PUBLIC_REPLY, SegmentKind.TEXT)
     return ctx
 
 
