@@ -198,8 +198,8 @@ class DescribeImagePlugin(ToolPlugin):
         """
         indices = params.image_indices
 
-        # 校验索引范围
-        bad = [i for i in indices if i < 0 or i >= len(images)]
+        # 校验索引范围（indices 可为 None，空列表兜底）
+        bad = [i for i in (indices or []) if i < 0 or i >= len(images)]
         if bad:
             return ToolResult.fail(
                 name=self.name,
@@ -208,7 +208,7 @@ class DescribeImagePlugin(ToolPlugin):
 
         # 解析所有图片 → base64 data URI
         resolved: list[tuple[int, str]] = []
-        for idx in indices:
+        for idx in (indices or []):
             image = images[idx]
             source = image.src
             data_uri = _resolve_image_source(source)
