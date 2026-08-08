@@ -9,6 +9,7 @@
 """
 
 import asyncio
+from typing import get_type_hints
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,6 +19,7 @@ from core.monitoring.event_bus import EventBus
 from Module.output import OutputManager
 from core.memory.session import SessionMemory
 from core.cognitive import CognitiveLoop
+from core.schema import MessageId, SessionId
 from core.adapter.llm_adapter import LLMAdapter
 
 pytestmark = pytest.mark.service
@@ -88,7 +90,7 @@ async def test_process_routes_to_conversation_session():
     default = SessionMemory(session_id="default")
     loop = _make_loop({"conv_x": conv_x}, default)
 
-    await loop.process("hello", conversation_id="conv_x", protocol_version=2)
+    await loop.process("hello", conversation_id=SessionId("conv_x"), protocol_version=2)
     await _await_pending(loop)
 
     assert loop._resolver_calls == [("conv_x", 2)]
@@ -139,9 +141,9 @@ async def test_after_response_writes_captured_target():
     loop._consolidator = consolidator
 
     # 第一轮：conversation_id="conv_a" → after_response#1 阻塞在 consolidate
-    await loop.process("msg1", conversation_id="conv_a", protocol_version=2)
+    await loop.process("msg1", conversation_id=SessionId("conv_a"), protocol_version=2)
     # 第二轮：conversation_id="conv_b" → self._session 已被换绑为 conv_b
-    await loop.process("msg2", conversation_id="conv_b", protocol_version=2)
+    await loop.process("msg2", conversation_id=SessionId("conv_b"), protocol_version=2)
     # 释放 gate——after_response#1/#2 继续到 save
     gate.set()
     await _await_pending(loop)
@@ -290,3 +292,11 @@ async def test_tts_window_interrupt_keeps_registry_completed():
     assert marks and marks[-1][1] == "completed"
     await _await_pending(loop)
     await loop._output.close()
+
+
+@pytest.mark.unit
+def test_process_id_param_types():
+    """loop.process 的 message_id/conversation_id 对齐 NewType。"""
+    hints = get_type_hints(CognitiveLoop.process)
+    assert hints["message_id"] == MessageId | None
+    assert hints["conversation_id"] == SessionId | None

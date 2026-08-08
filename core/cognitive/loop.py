@@ -23,7 +23,7 @@ from enum import Enum
 from typing import Awaitable, Any, Callable, TYPE_CHECKING
 
 from core.utils import new_message_id, new_generation_id
-from core.schema.types import SessionId
+from core.schema.types import MessageId, RequestId, SessionId
 
 from core.cognitive.generation import GenerationContext
 from core.cognitive.generation_registry import GenerationRegistry
@@ -371,8 +371,8 @@ class CognitiveLoop(CognitiveTools):
                        content: list[dict] | None = None,
                        is_task_result: bool = False,
                        task_result_context: dict | None = None,
-                       message_id: str | None = None,
-                       conversation_id: str | None = None,
+                       message_id: MessageId | None = None,
+                       conversation_id: SessionId | None = None,
                        protocol_version: int = 1,
                        ) -> None:
         """处理用户消息，驱动一轮完整的 ReAct 认知循环。
@@ -386,8 +386,9 @@ class CognitiveLoop(CognitiveTools):
             content: 多模态内容数组（ChatMessageV2 content），优先级高于 user_message
             is_task_result: 是否为后台任务结果触发的唤醒
             task_result_context: 后台任务结果上下文，含 original_intent / result 等字段
-            message_id: v2 预分配用户消息 ID（落库优先用，ACK 一致）；v1 无则 None
-            conversation_id: 批次 3（multi-session）目标会话 ID；None = 未归属（v2 缺省 → active）
+            message_id: v2 预分配用户消息 ID（MessageId NewType，落库优先用，ACK 一致）；v1 无则 None
+            conversation_id: 批次 3（multi-session）目标会话 ID（SessionId NewType）；
+                None = 未归属（v2 缺省 → active）
             protocol_version: 来源协议版本（1=v1，2=v2），默认 1
         """
         async with self._process_lock:
@@ -469,11 +470,11 @@ class CognitiveLoop(CognitiveTools):
             # 批次 8b（D5）：protocol_version 贯通——空响应兜底按版本分支（v2 发 segment）。
             self._generation_ctx = GenerationContext(
                 generation_id=new_generation_id(),
-                user_message_id=message_id or "",
+                user_message_id=MessageId(message_id or ""),      # 收口点 B：message_id 为 NewType，缺省产 MessageId("")
                 assistant_message_id=new_message_id(),
-                conversation_id=gen_conversation_id,
+                conversation_id=gen_conversation_id,              # gen_conversation_id = conversation_id or target.session_id，已 SessionId
                 model_id=self._llm.model,
-                request_id=rid,
+                request_id=RequestId(rid),                        # 收口点 B：rid 来自 get_request_id()（str）或 P 兜底
                 protocol_version=protocol_version,
             )
             self._turn_failed_emitted = False
@@ -561,8 +562,8 @@ class CognitiveLoop(CognitiveTools):
         content: list[dict] | None,
         stt_emotion: str, stt_events: list[str] | None,
         is_task_result: bool,
-        user_message_id: str | None = None,
-        conversation_id: str | None = None,
+        user_message_id: MessageId | None = None,
+        conversation_id: SessionId | None = None,
     ) -> tuple[list[dict], list[dict]]:
         """构建本轮 LLM 调用的 messages + tool definitions。
 
@@ -573,8 +574,9 @@ class CognitiveLoop(CognitiveTools):
             stt_emotion: STT 情绪标签
             stt_events: STT 事件列表
             is_task_result: 是否为任务结果唤醒（决定是否写入 session）
-            user_message_id: v2 预分配用户消息 ID（落库优先用，保证 ACK 一致）；无则 new_message_id()
-            conversation_id: 批次 3 目标会话 ID（贯通，供日志/归属追踪）
+            user_message_id: v2 预分配用户消息 ID（MessageId NewType，落库优先用，
+                保证 ACK 一致）；无则 new_message_id()
+            conversation_id: 批次 3 目标会话 ID（SessionId NewType，贯通，供日志/归属追踪）
 
         Returns:
             (messages, tool_defs): LLM 消息列表 + 工具定义列表
@@ -722,7 +724,7 @@ class CognitiveLoop(CognitiveTools):
     async def _execute_tool_round(
         self, messages: list[dict], acc_text: str,
         raw_tool_calls: list[dict], _on_tool_calls: Callable | None,
-        conversation_id: str | None = None,
+        conversation_id: SessionId | None = None,
     ) -> None:
         """执行一轮工具调用：submit_task 拦截 → Gate 校验 → dispatch → 结果注入。
 
@@ -737,7 +739,7 @@ class CognitiveLoop(CognitiveTools):
             acc_text: LLM 原始输出全文
             raw_tool_calls: streaming 累积的 tool_call delta（合并后未归一化）
             _on_tool_calls: 外部工具回调（测试/自定义 dispatch），None 时走 _execute_tools_directly
-            conversation_id: 批次 3 目标会话 ID（贯通，供日志/归属追踪）
+            conversation_id: 批次 3 目标会话 ID（SessionId NewType，贯通，供日志/归属追踪）
         """
         # 切断气泡 — TTS tasks 独立运行，不 cancel
         await self.phases.enter_executing()
@@ -891,7 +893,7 @@ class CognitiveLoop(CognitiveTools):
         user_message: str, round_num: int,
         blocks: list[BlockRef], public_text: str,
         *,
-        conversation_id: str | None = None,
+        conversation_id: SessionId | None = None,
         session: SessionMemory | None = None,
     ) -> None:
         """收尾本轮：mood fallback → 归档 session → 推送结构化块 → after_response。
@@ -909,7 +911,8 @@ class CognitiveLoop(CognitiveTools):
             round_num: 当前轮次编号（传给 response_recorder）
             blocks: BlockRef 列表 —— (kind, content, lang, after_sentence_idx)
             public_text: 重建后的公开文本（供 analyze_assistant / log_conversation / after_response）
-            conversation_id: 批次 3 目标会话 ID（generation.completed 的 conversationId）
+            conversation_id: 批次 3 目标会话 ID（SessionId NewType，generation.completed
+                的 conversationId）
             session: 批次 3 本轮目标会话（局部捕获——_after_response / turn_completed
                 归属用，不读 self._session，防 active 切换后 in-flight 异步延续落错会话）
         """
@@ -1060,8 +1063,8 @@ class CognitiveLoop(CognitiveTools):
                           content: list[dict] | None = None,
                           is_task_result: bool = False,
                           task_result_context: dict | None = None,
-                          message_id: str | None = None,
-                          conversation_id: str | None = None,
+                          message_id: MessageId | None = None,
+                          conversation_id: SessionId | None = None,
                           session: SessionMemory | None = None,
                           protocol_version: int = 1,
                           ) -> None:
@@ -1084,8 +1087,8 @@ class CognitiveLoop(CognitiveTools):
             content: 多模态内容数组
             is_task_result: 是否为后台任务结果唤醒
             task_result_context: 任务结果上下文（含 original_intent / result）
-            message_id: v2 预分配用户消息 ID（落库优先用）
-            conversation_id: 批次 3 目标会话 ID（贯通到 build/execute/finalize）
+            message_id: v2 预分配用户消息 ID（MessageId NewType，落库优先用）
+            conversation_id: 批次 3 目标会话 ID（SessionId NewType，贯通到 build/execute/finalize）
             session: 批次 3 本轮目标会话（局部捕获，贯通到 stream/finalize）
             protocol_version: 来源协议版本（1=v1，2=v2）
         """
