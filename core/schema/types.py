@@ -32,3 +32,7 @@ SegmentId = NewType("SegmentId", str)
 
 RequestId = NewType("RequestId", str)
 """请求唯一标识符（`{_req_counter:03d}` 三位计数器格式，非 UUID——与 server.py:132 实现一致）。"""
+
+AttachmentId = NewType("AttachmentId", str)  # 附件 ID（att_ 前缀）
+MemoryId = NewType("MemoryId", str)          # LTM 记忆条目 ID（new_message_id 值空间）
+TaskId = NewType("TaskId", str)              # 调度中心任务 ID

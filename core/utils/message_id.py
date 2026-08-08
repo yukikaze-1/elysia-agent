@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from core.schema.types import GenerationId, MessageId, SegmentId
+from core.schema.types import AttachmentId, GenerationId, MemoryId, MessageId, SegmentId, TaskId
 
 
 def _new_id(prefix: str) -> str:
@@ -28,3 +28,18 @@ def new_generation_id() -> GenerationId:
 def new_segment_id() -> SegmentId:
     """生成一个分段 ID（'seg_' 前缀，批次 2）。"""
     return SegmentId(_new_id("seg"))
+
+
+def new_attachment_id() -> AttachmentId:
+    """生成一个新的附件 ID，格式为 'att_' + 26 位十六进制字符。"""
+    return AttachmentId(_new_id("att"))
+
+
+def new_memory_id() -> MemoryId:
+    """生成一个新的 LTM 记忆条目 ID（'msg_' 前缀，与消息 ID 值空间相同，语义靠 NewType 名区分）。"""
+    return MemoryId(_new_id("msg"))
+
+
+def new_task_id() -> TaskId:
+    """生成一个新的调度任务 ID（'msg_' 前缀，与消息 ID 值空间相同，语义靠 NewType 名区分）。"""
+    return TaskId(_new_id("msg"))
