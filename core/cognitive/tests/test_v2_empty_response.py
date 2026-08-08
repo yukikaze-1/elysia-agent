@@ -6,6 +6,7 @@ import pytest
 
 from core.cognitive.generation import GenerationContext
 from core.cognitive.loop import CognitiveLoop
+from core.schema import GenerationId, MessageId, SessionId
 
 pytestmark = pytest.mark.unit
 
@@ -16,8 +17,8 @@ def _make_loop():
         output=MagicMock(), prompt=MagicMock(), session_resolver=MagicMock(),
     )
     loop._generation_ctx = GenerationContext(
-        generation_id="gen_1", user_message_id="msg_1",
-        assistant_message_id="msg_a", conversation_id="default",
+        generation_id=GenerationId("gen_1"), user_message_id=MessageId("msg_1"),
+        assistant_message_id=MessageId("msg_a"), conversation_id=SessionId("default"),
         protocol_version=2,
     )
     loop._output.segment_started = AsyncMock()
@@ -65,8 +66,8 @@ async def test_v1_fallback_still_emits_message():
     """v1 保持 MessageObj 行为。"""
     loop = _make_loop()
     loop._generation_ctx = GenerationContext(
-        generation_id="gen_1", user_message_id="msg_1",
-        assistant_message_id="msg_a", conversation_id="default",
+        generation_id=GenerationId("gen_1"), user_message_id=MessageId("msg_1"),
+        assistant_message_id=MessageId("msg_a"), conversation_id=SessionId("default"),
         protocol_version=1,
     )
     sent = []

@@ -5,7 +5,7 @@ from typing import get_type_hints
 import pytest
 
 from core.cognitive.generation import GenerationContext
-from core.schema import GenerationId, SegmentId
+from core.schema import GenerationId, MessageId, RequestId, SegmentId, SessionId
 from core.utils.message_id import new_generation_id, new_segment_id
 
 
@@ -31,7 +31,8 @@ def test_new_segment_id_format():
 def test_generation_context_open_segment_increments():
     """open_segment 分配 seg_ ID、递增全局 segmentIndex、重置段内 delta。"""
     ctx = GenerationContext(
-        generation_id="gen_1", user_message_id="msg_u1", assistant_message_id="msg_a1",
+        generation_id=GenerationId("gen_1"), user_message_id=MessageId("msg_u1"),
+        assistant_message_id=MessageId("msg_a1"),
     )
     sid0 = ctx.open_segment("inner_voice")
     assert sid0.startswith("seg_")
@@ -51,9 +52,23 @@ def test_generation_context_open_segment_increments():
 def test_generation_context_tool_round_does_not_reset_index():
     """工具轮（新一次 open_segment）不重置 segmentIndex——跨轮单调递增。"""
     ctx = GenerationContext(
-        generation_id="gen_1", user_message_id="msg_u1", assistant_message_id="msg_a1",
+        generation_id=GenerationId("gen_1"), user_message_id=MessageId("msg_u1"),
+        assistant_message_id=MessageId("msg_a1"),
     )
     ctx.open_segment("public_reply")
     ctx.open_segment("public_reply")
     ctx.open_segment("public_reply")  # 工具轮后的分段
     assert ctx.current_segment_index == 2
+
+
+@pytest.mark.unit
+def test_generation_context_id_field_types():
+    """GenerationContext 的 ID 字段全部对齐 NewType（get_type_hints 查注解）。"""
+    hints = get_type_hints(GenerationContext)
+    assert hints["generation_id"] is GenerationId
+    assert hints["user_message_id"] is MessageId
+    assert hints["assistant_message_id"] is MessageId
+    assert hints["conversation_id"] == SessionId | None
+    assert hints["request_id"] == RequestId | None
+    assert hints["current_segment_id"] == SegmentId | None
+    assert hints["model_id"] is str  # 模型名非 ID 语义，保持 str

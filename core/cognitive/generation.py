@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.schema.types import GenerationId, MessageId, RequestId, SegmentId, SessionId
 from core.utils.message_id import new_segment_id
 
 
@@ -33,21 +34,21 @@ class GenerationContext:
             协议版本分支——v2 发 segment 帧，v1 保持 MessageObj。默认 1（既有构造兼容）。
     """
 
-    generation_id: str
-    user_message_id: str
-    assistant_message_id: str
-    conversation_id: str | None = None
+    generation_id: GenerationId
+    user_message_id: MessageId
+    assistant_message_id: MessageId
+    conversation_id: SessionId | None = None
     model_id: str = ""
-    request_id: str | None = None
+    request_id: RequestId | None = None
     protocol_version: int = 1
     segment_index: int = 0
     delta_sequence: int = 0
-    current_segment_id: str | None = None
+    current_segment_id: SegmentId | None = None
     current_segment_index: int | None = None
     channel: str | None = None
     kind: str | None = None
 
-    def open_segment(self, channel: str, kind: str = "text") -> str:
+    def open_segment(self, channel: str, kind: str = "text") -> SegmentId:
         """打开一个新分段：分配 seg_ ID、全局序号递增、重置段内 delta。
 
         Args:
