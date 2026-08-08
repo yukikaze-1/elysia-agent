@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from core.status import AgentStatus, CognitivePhaseController
 
 from Module.output import OutputManager, ConsoleChannel
+from Module.workflow_contract.schema import WorkflowId
 
 from core.agent._types import RunState, _PendingMessage, _BackgroundTaskEntry
 from core.agent.lifecycle import AgentLifecycle
@@ -298,7 +299,7 @@ class Agent(AgentLifecycle, AgentServer):
         # ---- WorkflowEngine ----
         self._task_system = None   # WorkflowEngine | None
         self._delegation_preparer = None  # DelegationPreparer | None
-        self._background_tasks: dict[str, _BackgroundTaskEntry] = {}
+        self._background_tasks: dict[WorkflowId, _BackgroundTaskEntry] = {}
         self._mailbox_task: asyncio.Task | None = None
         self._db_health_task: asyncio.Task | None = None
         self._embed_task: asyncio.Task | None = None
@@ -364,7 +365,7 @@ class Agent(AgentLifecycle, AgentServer):
 
     # ---- Background task lifecycle ----
 
-    def _register_background_task(self, task_id: str, mailbox: WorkflowMailbox, intent: str, dispatched_at: IsoTimestamp) -> None:
+    def _register_background_task(self, task_id: WorkflowId, mailbox: WorkflowMailbox, intent: str, dispatched_at: IsoTimestamp) -> None:
         """CognitiveLoop 提交后台任务后调用——注册到轮询列表。
 
         Args:
@@ -590,7 +591,7 @@ class Agent(AgentLifecycle, AgentServer):
         """
         state = data.state
         logger.info("FSM → %s", state)
-        if state in ("idle", "idle_background_task"):
+        if state in (AgentState.IDLE, AgentState.IDLE_BACKGROUND_TASK):
             set_request_id("-")
             if self._pending_messages:
                 pending = self._pending_messages.pop(0)

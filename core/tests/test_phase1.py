@@ -30,7 +30,7 @@ class TestEventBus:
 
         bus.post(UserInputData(text="data1", user_name="test", request_id=RequestId("?")), type="normal", priority=EventPriority.NORMAL)
         bus.post(InterruptData(), priority=EventPriority.INTERRUPT)
-        bus.post(StateChangeData(state="test", request_id="?"), priority=EventPriority.STATE_CHANGE)
+        bus.post(StateChangeData(state="idle", request_id="?"), priority=EventPriority.STATE_CHANGE)
 
         e1 = await bus.next()
         e2 = await bus.next()

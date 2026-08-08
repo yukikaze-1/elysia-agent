@@ -527,16 +527,16 @@ class TestEventBusEdges:
     def test_pending_count(self):
         bus = EventBus()
         assert bus.pending_count == 0
-        bus.post(StateChangeData(state="a", request_id="r1"))
-        bus.post(StateChangeData(state="b", request_id="r2"))
+        bus.post(StateChangeData(state="idle", request_id="r1"))
+        bus.post(StateChangeData(state="thinking", request_id="r2"))
         assert bus.pending_count == 2
 
     @pytest.mark.asyncio
     async def test_fifo_within_same_priority(self):
         bus = EventBus()
-        bus.post(StateChangeData(state="a", request_id="r1"), type="first", priority=EventPriority.NORMAL)
-        bus.post(StateChangeData(state="b", request_id="r2"), type="second", priority=EventPriority.NORMAL)
-        bus.post(StateChangeData(state="c", request_id="r3"), type="third", priority=EventPriority.NORMAL)
+        bus.post(StateChangeData(state="idle", request_id="r1"), type="first", priority=EventPriority.NORMAL)
+        bus.post(StateChangeData(state="thinking", request_id="r2"), type="second", priority=EventPriority.NORMAL)
+        bus.post(StateChangeData(state="executing", request_id="r3"), type="third", priority=EventPriority.NORMAL)
         e1 = await bus.next()
         e2 = await bus.next()
         e3 = await bus.next()

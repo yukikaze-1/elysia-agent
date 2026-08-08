@@ -14,7 +14,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from Module.workflow_contract import WorkflowId
+from Module.workflow_contract import NodeId, SessionId, WorkflowId
 from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
     Artifact,
@@ -103,7 +103,7 @@ class Executor:
         node: DAGNode,
         task_id: WorkflowId,
         tools: list[Tool],
-        session_id: str = "",
+        session_id: SessionId = SessionId(""),
     ) -> NodeResult:
         """执行单个 DAGNode——LLM 匹配工具（或直出文本）→ 调用/存储结果。
 
@@ -411,8 +411,8 @@ class Executor:
         tool_name: str,
         params: dict[str, Any],
         task_id: WorkflowId,
-        node_id: Any,
-        session_id: str = "",
+        node_id: NodeId,
+        session_id: SessionId = SessionId(""),
     ) -> ToolResult:
         """通过 ToolRegistry 执行工具——v1 直接透传。
 

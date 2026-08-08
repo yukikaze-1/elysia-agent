@@ -224,7 +224,7 @@ async def session_detail_handler(request: web.Request) -> web.Response:
     if await agent.message_repo.health_check():
         # 从 message archive（权威源）读取消息
         try:
-            msgs, total = await agent.message_repo.query_by_session(sid, limit=20)
+            msgs, total = await agent.message_repo.query_by_session(SessionId(sid), limit=20)
             formatted = sessions_to_client(msgs)
             character_state = await _get_character_state(SessionId(sid))
             messages = [contract.SessionDetailMessage.model_validate(m) for m in formatted]
@@ -236,7 +236,7 @@ async def session_detail_handler(request: web.Request) -> web.Response:
             logger.warning("message_repo query_by_session failed: %s", e)
 
     # MessageRepo 不可用 — 降级读 sessions 快照（或内存）
-    result = await agent.session_repo.load(sid)
+    result = await agent.session_repo.load(SessionId(sid))
     if result is None:
         # MongoDB 不可用，返回当前内存 session（仅当 sid 匹配时）
         if sid == str(agent.session.session_id):
@@ -281,7 +281,7 @@ async def session_delete_handler(request: web.Request) -> web.Response:
             await release_session_attachments(agent, SessionId(sid))
         except Exception as e:
             logger.warning("session_delete 附件释放失败 sid=%s: %s", sid, e)
-        deleted = await agent.session_repo.delete(sid)
+        deleted = await agent.session_repo.delete(SessionId(sid))
         logger.warning("DEBUG API: session_delete sid=%s, current=%s, deleted=%d",
                       sid, str(agent.session.session_id), deleted)
         if sid == str(agent.session.session_id):

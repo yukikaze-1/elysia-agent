@@ -1106,7 +1106,7 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
                 requestId=_current_request_id(),
             ).wire_dict())
             return
-        target = await agent.switch_session(sid)
+        target = await agent.switch_session(SessionId(sid))
         await _send_session_replay(ws, agent, target)
         logger.info("WS activate_session: 已切到会话 %s", sid)
     except SessionBusyError:

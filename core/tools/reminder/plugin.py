@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
+from Module.workflow_contract.schema import WorkflowId
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,8 @@ class SetReminderPlugin(ToolPlugin):
                 from core.schema.event import TaskResultData
                 bus.post(
                     TaskResultData(
-                        task_id=task_id,
+                        # reminder 自生成 ID 适配 TaskResultData.task_id（WorkflowId 语义）
+                        task_id=WorkflowId(task_id),
                         result=reminder_msg,
                         original_intent=f"在 {params.delay_seconds} 秒后提醒用户: {params.message}",
                         dispatched_at="",

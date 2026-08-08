@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from core.status.agent_fsm import AgentFSM, AgentState
 from core.status.protocol import AgentStatus, CognitivePhaseController
+from core.schema.types import RequestId
 
 if TYPE_CHECKING:
     from core.adapter.tts_adapter import TTSStreamManager
@@ -118,7 +119,7 @@ class FSMBackedPhaseController(CognitivePhaseController):
 
         self._fsm.transition(AgentState.THINKING)
         self._bus.post(
-            StateChangeData(state="thinking", request_id=get_request_id()),
+            StateChangeData(state=AgentState.THINKING, request_id=RequestId(get_request_id())),
             priority=EventPriority.STATE_CHANGE,
         )
         await self._status._notify("thinking")
@@ -132,7 +133,7 @@ class FSMBackedPhaseController(CognitivePhaseController):
         await self._output.typing(False)
         self._fsm.transition(AgentState.EXECUTING)
         self._bus.post(
-            StateChangeData(state="executing", request_id=get_request_id()),
+            StateChangeData(state=AgentState.EXECUTING, request_id=RequestId(get_request_id())),
             priority=EventPriority.STATE_CHANGE,
         )
         await self._status._notify("executing")
@@ -144,7 +145,7 @@ class FSMBackedPhaseController(CognitivePhaseController):
 
         self._fsm.transition(AgentState.THINKING)
         self._bus.post(
-            StateChangeData(state="thinking", request_id=get_request_id()),
+            StateChangeData(state=AgentState.THINKING, request_id=RequestId(get_request_id())),
             priority=EventPriority.STATE_CHANGE,
         )
         await self._output.typing(True)
@@ -158,7 +159,7 @@ class FSMBackedPhaseController(CognitivePhaseController):
         await self._output.typing(False)
         self._fsm.transition(AgentState.SPEAKING)
         self._bus.post(
-            StateChangeData(state="speaking", request_id=get_request_id()),
+            StateChangeData(state=AgentState.SPEAKING, request_id=RequestId(get_request_id())),
             priority=EventPriority.STATE_CHANGE,
         )
         await self._status._notify("speaking")
@@ -183,7 +184,7 @@ class FSMBackedPhaseController(CognitivePhaseController):
                 self._fsm.transition(AgentState.IDLE_BACKGROUND_TASK)
             self._bus.post(
                 StateChangeData(
-                    state="idle_background_task", request_id=get_request_id(),
+                    state=AgentState.IDLE_BACKGROUND_TASK, request_id=RequestId(get_request_id()),
                 ),
                 priority=EventPriority.STATE_CHANGE,
             )
@@ -193,7 +194,7 @@ class FSMBackedPhaseController(CognitivePhaseController):
                 self._fsm.transition(AgentState.SPEAKING)
             self._fsm.transition(AgentState.IDLE)
             self._bus.post(
-                StateChangeData(state="idle", request_id=get_request_id()),
+                StateChangeData(state=AgentState.IDLE, request_id=RequestId(get_request_id())),
                 priority=EventPriority.STATE_CHANGE,
             )
             await self._status._notify("idle")
@@ -205,14 +206,14 @@ class FSMBackedPhaseController(CognitivePhaseController):
 
         self._fsm.transition(AgentState.INTERRUPTED)
         self._bus.post(
-            StateChangeData(state="interrupted", request_id=get_request_id()),
+            StateChangeData(state=AgentState.INTERRUPTED, request_id=RequestId(get_request_id())),
             priority=EventPriority.STATE_CHANGE,
         )
         await self._status._notify("interrupted")
         await asyncio.sleep(0.05)
         self._fsm.transition(AgentState.IDLE)
         self._bus.post(
-            StateChangeData(state="idle", request_id=get_request_id()),
+            StateChangeData(state=AgentState.IDLE, request_id=RequestId(get_request_id())),
             priority=EventPriority.STATE_CHANGE,
         )
         await self._status._notify("idle")

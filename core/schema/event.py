@@ -8,8 +8,9 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from core.schema.agent import EventType
+from core.schema.agent import AgentState, EventType
 from core.schema.types import MessageId, RequestId, SessionId
+from Module.workflow_contract.schema import WorkflowId
 
 
 class VoiceReason(StrEnum):
@@ -25,8 +26,8 @@ class InterruptData(BaseModel):
 
 class StateChangeData(BaseModel):
     event_type: Literal[EventType.STATE_CHANGE] = EventType.STATE_CHANGE
-    state: str
-    request_id: str
+    state: AgentState
+    request_id: RequestId
 
 
 class UserInputData(BaseModel):
@@ -53,7 +54,7 @@ class SystemTickData(BaseModel):
 
 class TaskResultData(BaseModel):
     event_type: Literal[EventType.TASK_RESULT] = EventType.TASK_RESULT
-    task_id: str
+    task_id: WorkflowId
     result: str
     original_intent: str
     dispatched_at: str

@@ -451,14 +451,14 @@ async def sessions_detail_handler(request: web.Request) -> web.Response:
     sid = request.match_info["conversationId"]
     if not await _session_exists(agent, sid):
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
-    total = await agent.message_repo.count_by_session(sid)
+    total = await agent.message_repo.count_by_session(SessionId(sid))
     summary = await _session_summary(agent, sid, total)
     if summary is None:
         # has_session 通过但 list_all 未命中（Mongo 离线等极端场景）→ 兜底空摘要
         summary = rest_contract.SessionSummary(
             conversationId=sid, messageCount=total, updatedAt="",
             active=(str(sid) == str(agent.active_session_id)))
-    messages, _ = await agent.message_repo.query_page(sid, limit=20)
+    messages, _ = await agent.message_repo.query_page(SessionId(sid), limit=20)
     resp = rest_contract.SessionDetail(
         session=summary, messages=_contract_messages(messages), active=summary.active)
     return web.json_response(resp.wire_dict())
@@ -480,7 +480,7 @@ async def sessions_rename_handler(request: web.Request) -> web.Response:
     if title is None or not isinstance(title, str):
         return _error_response("CONTRACT_VALIDATION", "缺少 title 或类型错误")
     await agent.session_manager.rename(sid, title)
-    total = await agent.message_repo.count_by_session(sid)
+    total = await agent.message_repo.count_by_session(SessionId(sid))
     summary = await _session_summary(agent, sid, total)
     if summary is None:
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
@@ -550,7 +550,7 @@ async def sessions_messages_handler(request: web.Request) -> web.Response:
     limit = _parse_limit(request, default=50, cap=200)
     after = request.query.get("after", "").strip() or None
     if after:
-        messages, has_more = await agent.message_repo.query_after(sid, after, limit=limit)
+        messages, has_more = await agent.message_repo.query_after(SessionId(sid), MessageId(after), limit=limit)
     else:
         before = request.query.get("before", "").strip() or None
         # 畸形 before 游标 → 400 CONTRACT_VALIDATION（验收修复：原 ObjectId 未捕获 → 500）
@@ -559,8 +559,8 @@ async def sessions_messages_handler(request: web.Request) -> web.Response:
                 ObjectId(before)  # 仅校验 24-hex 合法性，不用于查询
             except InvalidId:
                 return _error_response("CONTRACT_VALIDATION", "非法 before 游标", 400)
-        messages, has_more = await agent.message_repo.query_page(sid, before=before, limit=limit)
-    total = await agent.message_repo.count_by_session(sid)
+        messages, has_more = await agent.message_repo.query_page(SessionId(sid), before=before, limit=limit)
+    total = await agent.message_repo.count_by_session(SessionId(sid))
     resp = rest_contract.MessagesPageResponse(
         messages=_contract_messages(messages), has_more=has_more, total=total)
     return web.json_response(resp.wire_dict())
@@ -579,7 +579,7 @@ async def message_context_handler(request: web.Request) -> web.Response:
     before_n = _parse_int_param(request, "before", 5)
     after_n = _parse_int_param(request, "after", 5)
     anchor, pre, post = await agent.message_repo.find_context(
-        conversation_id, mid, before=before_n, after=after_n)
+        SessionId(conversation_id), MessageId(mid), before=before_n, after=after_n)
     if anchor is None:
         # review 修复（兼容#4）：消息不存在语义用 RESOURCE_NOT_FOUND（错误目录码），
         # 非 SESSION_NOT_FOUND（会话不存在）。
@@ -626,7 +626,7 @@ async def search_messages_handler(request: web.Request) -> web.Response:
             return _error_response("INVALID_TIMEZONE", f"未知时区: {tz_name}")
 
     messages, has_more, next_cursor = await agent.message_repo.query_search(
-        session_id=conversation_id, query=query, date_from=date_from,
+        session_id=SessionId(conversation_id) if conversation_id else None, query=query, date_from=date_from,
         date_to=date_to, timezone=tz_name, category=category, cursor=cursor, limit=limit)
 
     registry = _generation_registry(agent)
