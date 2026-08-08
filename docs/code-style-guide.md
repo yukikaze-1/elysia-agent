@@ -41,6 +41,7 @@
 - **wire 输入保持裸 str**：`Agent.process_message` 签名、ws_handler/session_routes 从 `data.get(...)`/`match_info` 取值的变量——它们是不可信字符串入口，类型标注裸 `str` 是诚实的。
 - **收口点在进入 core 内部处**：`MessageId(x) if x else None` / `SessionId(x) if x else None` 包一层，
   之后流转全程 NewType。典型收口点：`Agent.process_message` 开头、`loop.process` 构造 GenerationContext 处、`UserInputData` 构造点、registry/repo 调用处。
+- **跨层边界同样裸 str**（core→Module.tool 协议层，2026-08-09 定案）：`ToolContext.session_id/trace_id/agent_id`、`ToolResult.async_task_id` 等 ID 字段保持裸 `str`——`Module.tool` 是后端无关库，不依赖 workflow_contract 的 NewType（同 frontend_contract 零依赖裸 str 模式）。core 侧传 NewType 值（NewType 是 str 子类，直传不拆包）；消费侧 `WorkflowId(...)` 包回即边界收口。**勿在此边界引入 workflow_contract NewType**——会闭合 `workflow_contract.schema → Module.tool.tool_descriptor` 的 import 环。
 - **NewType 是 str 子类型**：可直接传给契约层裸 `str` 参数（wire 发射无需 `.value` 拆包）。
 
 ### 1.4 NewType 陷阱
