@@ -114,6 +114,7 @@
 | 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 246 行，保留参考 |
 | 中 | `Module/bench/` 位置不当 | bench.py 自注释"将移至 tools/bench/"，依赖 core/，后续考虑迁移 |
 | 低 | **FilePart/AudioPart/VideoPart 预留代码** | `part.py` 130 行 + `message_adapter.py` 3 个 helper + `Part` union。`message_adapter.py:188` 注释明确 Phase 2。暂保留 |
+| ~~低~~ ✅ | **衍生 ID 未类型化** | 2026-08-09 已修：AttachmentId/MemoryId/TaskId 立项 + 贯通（part/repo/long_term/schema/memory_reflector/task/scheduler/input）。spec/plan 见 [spec](docs/superpowers/specs/2026-08-09-derived-id-newtype-design.md) / [plan](docs/superpowers/plans/2026-08-09-derived-id-newtype-plan.md)。已知权衡：Task.parent_id 语义混乱留待未来、scheduler:159 死代码 ignore |
 
 ## 模块化改进
 
