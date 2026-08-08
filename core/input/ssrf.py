@@ -126,7 +126,9 @@ def validate_endpoint(url: str) -> None:
         logger.warning("SSRF 校验解析失败: %s", exc)
         raise SSRFError()
     for info in infos:
-        if _is_blocked_ip(info[4][0]):
+        # getaddrinfo 返回的 sockaddr 首字段是 str | int（AF_INET IPv4 → str，AF_INET6 族首字段可能是 int），
+        # 显式 str() 收窄再判类
+        if _is_blocked_ip(str(info[4][0])):
             raise SSRFError()
 
 

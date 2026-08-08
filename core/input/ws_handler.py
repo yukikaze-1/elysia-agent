@@ -6,13 +6,14 @@ import json
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web, WSMsgType
 from pydantic import ValidationError
 
 from core.memory.session_manager import SessionBusyError
 from core.schema.event import InterruptData, UserInputData
+from core.schema.message import ClientMessageDict
 from core.schema.part import AudioPart, FilePart, ImagePart, StickerPart, TextPart, VideoPart
 from core.schema.utils import now_iso
 from core.schema.types import SessionId
@@ -59,7 +60,9 @@ def _current_request_id() -> str | None:
     return rid if rid and rid != "-" else None
 
 
-def _build_session_items(session_msgs: list[dict]) -> list[SessionMessageItem]:
+def _build_session_items(
+    session_msgs: list[ClientMessageDict] | list[dict],
+) -> list[SessionMessageItem]:
     """逐条契约化会话消息——单条失败仅丢弃该条，保留其余回放（M2 加固）。
 
     直接 ``SessionMessage(messages=session_msgs)`` 会整批校验：任一消息无法
@@ -215,7 +218,7 @@ async def handle_ws(
                     manager = agent.tool_adapter._manager  # noqa: SLF001
                     plugin = manager._plugins.get(tool_name)  # noqa: SLF001
                     if plugin is not None:
-                        enriched = dict(base)
+                        enriched: dict[str, Any] = dict(base)
                         enriched["summary"] = manager._build_param_summary(params)  # noqa: SLF001
                         enriched["runtime"] = plugin.runtime
                         enriched["version"] = plugin.version

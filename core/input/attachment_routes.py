@@ -90,7 +90,7 @@ def _sig_disabled(agent: "Agent") -> bool:
     return bool(access_token) and not sig_secret
 
 
-async def _download_handler(request: web.Request) -> web.Response:
+async def _download_handler(request: web.Request) -> web.StreamResponse:
     """GET /api/attachments/{attachment_id} — 签名下载。
 
     校验序（spec §3.3，D3 重排——签名校验前置，防存在性枚举）：
@@ -107,7 +107,7 @@ async def _download_handler(request: web.Request) -> web.Response:
         request: aiohttp Request（?sig=...&exp=...）。
 
     Returns:
-        web.Response: 文件响应或错误信封。
+        web.StreamResponse: FileResponse（文件/206）或错误信封（Response）。
     """
     agent = request.app["agent"]
     cfg = _server_config(agent)

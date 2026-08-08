@@ -164,7 +164,9 @@ class SessionMemory:
                     p.content for p in msg.content
                     if isinstance(p, TextPart)
                 )
-                tool_entry: ClientToolMessage = {
+                # role 键运行时是 str（"tool"），与 TypedDict 的 Literal[MessageRole.TOOL]
+                # 仅类型层面不一致（StrEnum 值序列化后即 "tool"），cast 收口。
+                tool_entry = cast(ClientToolMessage, {
                     "role": "tool",
                     "tool_call_id": msg.tool_call_id,
                     "name": msg.tool_name,
@@ -174,7 +176,7 @@ class SessionMemory:
                     "error_type": msg.error_type.value if msg.error_type else None,
                     "duration_ms": msg.duration_ms,
                     "truncated": msg.truncated,
-                }
+                })
                 result.append(tool_entry)
             else:
                 # UserMessage / AssistantMessage 普通消息分支

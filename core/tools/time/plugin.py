@@ -1,6 +1,6 @@
 """时间工具插件 — 获取当前时间（支持时区和格式）。"""
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, tzinfo
 from typing import Any
 
 try:
@@ -46,7 +46,8 @@ class TimePlugin(ToolPlugin):
             当前时间字符串。
         """
         tz_str = params.timezone.strip()
-        tz: timezone | None = None
+        # 可变 tz：timezone（±偏移/UTC）与 zoneinfo.ZoneInfo（IANA 名称）均为 tzinfo 子类
+        tz: tzinfo | None = None
         if tz_str.startswith(("+", "-")):
             try:
                 hours = int(tz_str)

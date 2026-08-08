@@ -237,7 +237,8 @@ class MemoryReflector:
         import numpy as np
         n_clusters = max(1, (n + MemoryReflector.CLUSTER_SIZE - 1) // MemoryReflector.CLUSTER_SIZE)
         X = np.array(embeddings)
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        # sklearn stub 对 n_init 标注为 str（实际接受 int 或 "auto"），误报 → 显式忽略
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)  # type: ignore[arg-type]
         return kmeans.fit_predict(X)
 
     async def _review_group(self, group: list) -> ReflectorActions:

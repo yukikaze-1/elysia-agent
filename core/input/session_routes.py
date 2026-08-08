@@ -286,7 +286,7 @@ def _items_from_message(msg: Message, category: str, start_offset: int = 0):
             "timestamp": str(msg.timestamp),
             "kind": res["kind"],
             "url": res["url"],
-        }, (doc_id, idx + 1)
+        }, (str(doc_id), idx + 1)
 
 
 async def _next_hit(agent: "Agent", message_repo: MessageRepository, session_id: str,

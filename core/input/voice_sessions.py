@@ -12,7 +12,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from core.input.audio_buffer import AudioBuffer, pcm_to_wav
+from core.input.audio_buffer import AudioBuffer, Callback, pcm_to_wav
 from core.schema.types import MessageId, SessionId
 from core.utils import get_request_id, new_message_id
 
@@ -70,7 +70,7 @@ class VoiceSessionManager:
     """每连接一个：三模式语音状态机 + realtime/dictation VAD buffer 生命周期。"""
 
     def __init__(self, *, agent: "Agent", emit: Emit,
-                 on_vad_interrupt: Callable[[], Awaitable[None]] | None = None,
+                 on_vad_interrupt: Callback | None = None,
                  silence_duration: float = 1.5):
         self._agent = agent
         self._emit = emit

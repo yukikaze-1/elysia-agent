@@ -330,14 +330,14 @@ def create_app(
     # 或陈旧 channel 会误判）；连接关闭（handle_ws 返回）finally 自减。
     _ws_active = 0
 
-    async def ws_handler(request: web.Request) -> web.WebSocketResponse:
+    async def ws_handler(request: web.Request) -> web.Response | web.WebSocketResponse:
         """WebSocket 连接处理入口（含并发上限硬检查）。
 
         Args:
             request: aiohttp Request。
 
         Returns:
-            web.WebSocketResponse: WebSocket 连接对象。
+            web.Response | web.WebSocketResponse: 并发超限错误响应或 WebSocket 连接对象。
         """
         nonlocal _ws_active
         if max_ws_connections and max_ws_connections > 0:

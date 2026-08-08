@@ -485,11 +485,13 @@ def register_api_routes(app: web.Application) -> None:
         svc_state = getattr(getattr(agent, "session", None), "service_state", None)
         current = (getattr(svc_state, "tts_voice", None) if svc_state is not None else None) \
             or _backend_default_voice(backend, character)
-        # F10：current 缺失时追加到列表，保证 current 恒 ∈ voices[]（角色默认音色等不在 list_voices 中）
-        if current and not any(v.get("id") == current for v in voices):
-            voices.append(rest_contract.TtsVoiceEntry(id=current, name=current))
+        # F10：current 缺失时追加到列表，保证 current 恒 ∈ voices[]（角色默认音色等不在 list_voices 中）。
+        # backend 原始 dict 先定型为契约模型（TtsVoiceEntry）再检查/追加——voices（list[dict]）仅内部消费。
+        entries = [rest_contract.TtsVoiceEntry(**v) for v in voices]
+        if current and not any(e.id == current for e in entries):
+            entries.append(rest_contract.TtsVoiceEntry(id=current, name=current))
         return web.json_response(rest_contract.TtsVoicesResponse(
-            voices=voices, current=current or None, source=source).wire_dict())
+            voices=entries, current=current or None, source=source).wire_dict())
 
     app.router.add_get("/api/tts/voices", tts_voices_handler)
 
