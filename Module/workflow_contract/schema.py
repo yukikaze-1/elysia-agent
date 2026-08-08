@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Any, NewType
+from typing import Any, NewType, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -145,6 +145,10 @@ class ConstraintConfig(BaseModel):
     max_tool_error_chars: int   = Field(default=2000,      ge=0)
 
 
+T = TypeVar("T", bound=int | float)
+"""_resolve_field 泛型参数——int/float 双字段共用。"""
+
+
 class WorkflowConstraints(BaseModel):
     """任务级约束（DelegationPreparer 产出）。
 
@@ -185,12 +189,13 @@ class WorkflowConstraints(BaseModel):
         import logging
         _log = logging.getLogger(__name__)
 
-        def _resolve_field(name: str, task_val: int | float | None, global_val: int | float | None,
-                           clamp_reason: str = ""):
+        def _resolve_field(
+            name: str, task_val: T | None, global_val: T | None, clamp_reason: str = "",
+        ) -> T | None:
             """解析单个字段：None → global；> global → clamp+warn；≤ global → task。"""
             if task_val is None:
                 return global_val
-            if task_val > global_val:
+            if global_val is not None and task_val > global_val:
                 _log.warning(
                     "WorkflowConstraints.resolve: %s=%s 超过全局上限 %s，clamp 到全局值（%s）",
                     name, task_val, global_val, clamp_reason,
