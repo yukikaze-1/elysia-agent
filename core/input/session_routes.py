@@ -24,6 +24,7 @@ from core.input.api_routes import _archive_to_client, _archive_msg_to_contract
 from core.schema.message import Message, MessageRole
 from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart
 from core.schema.utils import now_iso
+from core.schema.types import GenerationId, MessageId, SessionId
 from core.storage.attachment_release import release_session_attachments
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from core.storage.message_repo import MessageRepository
@@ -640,7 +641,7 @@ async def search_messages_handler(request: web.Request) -> web.Response:
         response_id = None
         message_id = getattr(msg, "message_id", None)
         if registry is not None and message_id:
-            gen = await registry.find_by_message(str(message_id))
+            gen = await registry.find_by_message(MessageId(str(message_id)))
             if gen:
                 response_id = gen.get("generation_id")
         items.append(rest_contract.SearchMessageItem(
@@ -728,7 +729,7 @@ async def sessions_generations_handler(request: web.Request) -> web.Response:
         resp = rest_contract.GenerationListResponse(generations=[], has_more=False, cursor=None)
         return web.json_response(resp.wire_dict())
     docs, has_more, next_cursor = await registry.query_by_session(
-        sid, status=status, cursor=cursor, limit=limit)
+        SessionId(sid), status=status, cursor=cursor, limit=limit)
     generations = [_generation_status(d) for d in docs]
     resp = rest_contract.GenerationListResponse(
         generations=generations, has_more=has_more, cursor=next_cursor)
@@ -741,7 +742,7 @@ async def generation_detail_handler(request: web.Request) -> web.Response:
     gid = request.match_info["generationId"]
     registry = _generation_registry(agent)
     if registry is not None:
-        doc = await registry.get(gid)
+        doc = await registry.get(GenerationId(gid))
     else:
         doc = None
     if doc is None:

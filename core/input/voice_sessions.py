@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from core.input.audio_buffer import AudioBuffer, pcm_to_wav
+from core.schema.types import SessionId
 from core.utils import get_request_id, new_message_id
 
 if TYPE_CHECKING:
@@ -516,7 +517,7 @@ class VoiceSessionManager:
             events=es.get("events", []) or [],
             request_id=self._agent.next_request_id(),
             message_id=message_id, protocol_version=2,
-            conversation_id=self._conv_id)
+            conversation_id=SessionId(self._conv_id) if self._conv_id else None)
 
     async def _resolve_conversation(self, conversation_id: str | None) -> str:
         try:

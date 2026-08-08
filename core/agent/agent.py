@@ -80,7 +80,7 @@ from core.personality import CharacterEngine
 from core.personality.reflector import CharacterReflector
 from core.memory.memory_reflector import MemoryReflector
 from core.storage.character_version_repo import CharacterVersionRepository
-from core.schema.types import IsoTimestamp, SessionId
+from core.schema.types import IsoTimestamp, MessageId, SessionId
 from core.schema.character import CharacterState
 from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
@@ -329,6 +329,8 @@ class Agent(AgentLifecycle, AgentServer):
             bool: True = 消息已接受（已入队或直发）；False = 消息为空或队列满被丢弃。
                 调用方（v2 附件/sticker 路由）据此决定 ACK accepted / QUEUE_FULL rejected。
         """
+        message_id_nt = MessageId(message_id) if message_id else None
+        conversation_id_nt = SessionId(conversation_id) if conversation_id else None
         user_name = user_name or self._user_name
         if not text.strip() and not content:
             return False
@@ -347,17 +349,17 @@ class Agent(AgentLifecycle, AgentServer):
                        self.status.current_name(), len(self._pending_messages) + 1)
             self._pending_messages.append(_PendingMessage(
                 text=text, user_name=user_name, request_id=rid,
-                content=content, message_id=message_id,
-                conversation_id=conversation_id,
+                content=content, message_id=message_id_nt,
+                conversation_id=conversation_id_nt,
                 protocol_version=protocol_version,
             ))
             return True
 
         self._bus.post(UserInputData(text=text, user_name=user_name,
                                      request_id=rid, content=content,
-                                     message_id=message_id,
+                                     message_id=message_id_nt,
                                      protocol_version=protocol_version,
-                                     conversation_id=conversation_id))
+                                     conversation_id=conversation_id_nt))
         return True
 
     # ---- Background task lifecycle ----

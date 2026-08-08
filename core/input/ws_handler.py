@@ -15,6 +15,7 @@ from core.memory.session_manager import SessionBusyError
 from core.schema.event import InterruptData, UserInputData
 from core.schema.part import AudioPart, FilePart, ImagePart, StickerPart, TextPart, VideoPart
 from core.schema.utils import now_iso
+from core.schema.types import SessionId
 from core.storage.attachment_repo import StorageUnavailableError
 from Module.output import WebSocketChannel
 from core.input.audio_buffer import AudioBuffer
@@ -735,7 +736,8 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
     agent.bus.post(UserInputData(
         text=pending_text, user_name=agent.user_name, emotion=emotion, events=events,
         request_id=agent.next_request_id(), message_id=message_id,
-        protocol_version=2, conversation_id=conversation_id))
+        protocol_version=2,
+        conversation_id=SessionId(conversation_id) if conversation_id else None))
     # BE-081 敏感纪律：只记 recordingId + 文本长度，不记正文
     logger.debug("voice.commit 提交成功: %s (len=%d)", recording_id, len(pending_text))
 
