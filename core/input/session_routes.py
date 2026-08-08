@@ -639,9 +639,9 @@ async def search_messages_handler(request: web.Request) -> web.Response:
         if role not in (MessageRole.USER, MessageRole.ASSISTANT, MessageRole.TOOL):
             continue
         response_id = None
-        message_id = getattr(msg, "message_id", None)
+        message_id = getattr(msg, "message_id", None)   # 已是 MessageId（Message 模型字段）
         if registry is not None and message_id:
-            gen = await registry.find_by_message(MessageId(str(message_id)))
+            gen = await registry.find_by_message(MessageId(message_id))
             if gen:
                 response_id = gen.get("generation_id")
         items.append(rest_contract.SearchMessageItem(

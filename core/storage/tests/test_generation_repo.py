@@ -14,6 +14,7 @@ import asyncio
 
 import pytest
 
+from core.schema.types import GenerationId, MessageId, SessionId
 from core.storage.generation_repo import GenerationRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 
@@ -50,7 +51,7 @@ class TestGenerationRepository:
     def test_upsert_then_find_one_running(self):
         repo = GenerationRepository(db=FakeDocumentDBBackend())
         _upsert(repo, generation_id="g1")
-        doc = asyncio.run(repo.find_one("g1"))
+        doc = asyncio.run(repo.find_one(GenerationId("g1")))
         assert doc is not None
         assert doc["generation_id"] == "g1"
         assert doc["status"] == "running"
@@ -61,7 +62,7 @@ class TestGenerationRepository:
         """mark-before-register：先写终态也能建档（upsert 语义）。"""
         repo = GenerationRepository(db=FakeDocumentDBBackend())
         asyncio.run(repo.upsert(_doc(generation_id="g1", status="cancelled")))
-        doc = asyncio.run(repo.find_one("g1"))
+        doc = asyncio.run(repo.find_one(GenerationId("g1")))
         assert doc["status"] == "cancelled"
         # 二次 upsert 更新而非重复插入
         asyncio.run(repo.upsert(_doc(generation_id="g1", status="completed",
@@ -81,7 +82,7 @@ class TestGenerationRepository:
             "finish_reason": "stop",
             "updated_at": "2026-08-04T02:00:00+00:00",
         }))
-        doc = asyncio.run(repo.find_one("g1"))
+        doc = asyncio.run(repo.find_one(GenerationId("g1")))
         assert doc["status"] == "completed"
         assert doc["finish_reason"] == "stop"
         assert doc["session_id"] == "s9"     # 不被覆盖
@@ -96,12 +97,12 @@ class TestGenerationRepository:
                 created_at="2026-08-04T11:00:00+00:00")
         _upsert(repo, generation_id="g3", message_id="msg_a2",
                 created_at="2026-08-04T12:00:00+00:00")
-        doc = asyncio.run(repo.find_by_message("msg_a1"))
+        doc = asyncio.run(repo.find_by_message(MessageId("msg_a1")))
         assert doc["generation_id"] == "g2"  # 最近一条按 assistant 父消息 ID 反查
 
     def test_find_by_message_missing_returns_none(self):
         repo = GenerationRepository(db=FakeDocumentDBBackend())
-        assert asyncio.run(repo.find_by_message("nope")) is None
+        assert asyncio.run(repo.find_by_message(MessageId("nope"))) is None
 
     def test_find_by_session_status_filter(self):
         repo = GenerationRepository(db=FakeDocumentDBBackend())
@@ -109,7 +110,7 @@ class TestGenerationRepository:
         _upsert(repo, generation_id="g2", status="completed")
         _upsert(repo, generation_id="g3", status="failed")
         docs, has_more, cursor = asyncio.run(
-            repo.find_by_session("s1", status="running"))
+            repo.find_by_session(SessionId("s1"), status="running"))
         assert [d["generation_id"] for d in docs] == ["g1"]
         assert has_more is False
         assert cursor is None
@@ -125,13 +126,13 @@ class TestGenerationRepository:
         for gid, ts in timestamps.items():
             _upsert(repo, generation_id=gid, created_at=ts)
 
-        page1, has_more1, cursor1 = asyncio.run(repo.find_by_session("s1", limit=2))
+        page1, has_more1, cursor1 = asyncio.run(repo.find_by_session(SessionId("s1"), limit=2))
         assert [d["generation_id"] for d in page1] == ["g4", "g3"]
         assert has_more1 is True
         assert cursor1 is not None
 
         page2, has_more2, cursor2 = asyncio.run(
-            repo.find_by_session("s1", cursor=cursor1, limit=2))
+            repo.find_by_session(SessionId("s1"), cursor=cursor1, limit=2))
         assert [d["generation_id"] for d in page2] == ["g2", "g1"]
         assert has_more2 is False
         assert cursor2 is None
@@ -144,7 +145,7 @@ class TestGenerationRepository:
         repo = GenerationRepository(db=FakeDocumentDBBackend())
         _upsert(repo, generation_id="g1", session_id="s1")
         _upsert(repo, generation_id="g2", session_id="s2")
-        docs, _, _ = asyncio.run(repo.find_by_session("s1"))
+        docs, _, _ = asyncio.run(repo.find_by_session(SessionId("s1")))
         assert [d["generation_id"] for d in docs] == ["g1"]
 
     def test_mark_stale_interrupts_old_running(self):
@@ -157,9 +158,9 @@ class TestGenerationRepository:
                 created_at="2026-08-01T00:00:00+00:00")
         modified = asyncio.run(repo.mark_stale("running", "2026-08-03T00:00:00+00:00"))
         assert modified == 1
-        assert asyncio.run(repo.find_one("g_old"))["status"] == "interrupted"
-        assert asyncio.run(repo.find_one("g_recent"))["status"] == "running"  # 未过期不动
-        assert asyncio.run(repo.find_one("g_done"))["status"] == "completed"  # 非 running 不动
+        assert asyncio.run(repo.find_one(GenerationId("g_old")))["status"] == "interrupted"
+        assert asyncio.run(repo.find_one(GenerationId("g_recent")))["status"] == "running"  # 未过期不动
+        assert asyncio.run(repo.find_one(GenerationId("g_done")))["status"] == "completed"  # 非 running 不动
 
     def test_mark_stale_writes_finished_at(self):
         """批次 C：mark_stale 标 interrupted 时写 finished_at（终态语义与 mark() 一致）。
@@ -172,14 +173,14 @@ class TestGenerationRepository:
         _upsert(repo, generation_id="g_stale", status="running",
                 created_at="2026-08-01T00:00:00+00:00")
         asyncio.run(repo.mark_stale("running", "2026-08-03T00:00:00+00:00"))
-        doc = asyncio.run(repo.find_one("g_stale"))
+        doc = asyncio.run(repo.find_one(GenerationId("g_stale")))
         assert doc["status"] == "interrupted"
         assert doc["finished_at"], "stale 清理标 interrupted 应写 finished_at"
 
     def test_db_none_safe_defaults(self):
         repo = GenerationRepository(db=None)
-        assert asyncio.run(repo.find_one("g1")) is None
-        assert asyncio.run(repo.find_by_message("m1")) is None
-        docs, has_more, cursor = asyncio.run(repo.find_by_session("s1"))
+        assert asyncio.run(repo.find_one(GenerationId("g1"))) is None
+        assert asyncio.run(repo.find_by_message(MessageId("m1"))) is None
+        docs, has_more, cursor = asyncio.run(repo.find_by_session(SessionId("s1")))
         assert (docs, has_more, cursor) == ([], False, None)
         assert asyncio.run(repo.mark_stale("running", "iso")) == 0

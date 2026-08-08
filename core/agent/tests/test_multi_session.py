@@ -20,6 +20,7 @@ from core.agent.agent import Agent
 from core.agent._lifecycle_persistence import _LifecyclePersistence
 from core.config import AppConfig
 from core.schema.event import UserInputData, InterruptData, StateChangeData
+from core.schema.types import RequestId
 
 pytestmark = pytest.mark.service
 
@@ -94,16 +95,16 @@ class TestPendingMessages:
     def test_pending_messages_returns_queued(self, agent):
         """pending_messages 返回未出队列表。"""
         agent._pending_messages.append(
-            _PendingMessage(text="hi", user_name="u", request_id="r"))
+            _PendingMessage(text="hi", user_name="u", request_id=RequestId("r")))
         assert len(agent.pending_messages) == 1
         assert agent.pending_messages[0].text == "hi"
 
     def test_pending_messages_is_readonly_snapshot(self, agent):
         """返回的是快照——外部 append 不污染内部队列。"""
         agent._pending_messages.append(
-            _PendingMessage(text="hi", user_name="u", request_id="r"))
+            _PendingMessage(text="hi", user_name="u", request_id=RequestId("r")))
         view = agent.pending_messages
-        view.append(_PendingMessage(text="x", user_name="u", request_id="x"))
+        view.append(_PendingMessage(text="x", user_name="u", request_id=RequestId("x")))
         assert len(agent._pending_messages) == 1
 
 

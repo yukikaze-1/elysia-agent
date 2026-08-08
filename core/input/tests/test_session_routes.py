@@ -24,6 +24,7 @@ from core.cognitive.generation_registry import GenerationRegistry
 from core.memory.session_manager import SessionManager
 from core.schema.message import MessageId, UserMessage, AssistantMessage
 from core.schema.part import TextPart, ImagePart, VideoPart, FilePart, AudioPart
+from core.schema.types import RequestId
 from core.storage.generation_repo import GenerationRepository
 from core.storage.message_repo import MessageRepository
 from core.storage.session_repo import SessionRepository
@@ -1057,7 +1058,7 @@ class TestPending:
         from core.agent._types import _PendingMessage
 
         return _PendingMessage(
-            text=text, user_name="u", request_id=f"req_{message_id}",
+            text=text, user_name="u", request_id=RequestId(f"req_{message_id}"),
             message_id=message_id, conversation_id=conversation_id)
 
     @pytest.mark.asyncio
