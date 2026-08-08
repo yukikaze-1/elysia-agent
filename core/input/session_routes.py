@@ -636,9 +636,9 @@ async def search_messages_handler(request: web.Request) -> web.Response:
         # 批次 3 review 修复（链路#4）：category=tool 搜索时 query_search 设 role=tool
         # 过滤——handler 必须放行 tool 角色，否则 tool 消息全被丢弃恒空。契约
         # SearchMessageItem.role 已加 "tool" 枚举值（v1 类型不变，新枚举值）。
-        if role not in (MessageRole.USER, MessageRole.ASSISTANT, MessageRole.TOOL):
-            continue
-        if role is None:   # pyright 收窄：getattr 带默认值是 MessageRole | None
+        # pyright 收窄 + 防 plain-str：role 必须为 MessageRole 成员（getattr 默认 None；
+        # 旧 `role.value if hasattr else str(role)` 的 str 兜底已移除——非枚举值直接丢弃）
+        if not isinstance(role, MessageRole):
             continue
         response_id = None
         message_id = getattr(msg, "message_id", None)   # 已是 MessageId（Message 模型字段）
