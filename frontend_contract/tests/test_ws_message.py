@@ -9,6 +9,7 @@ from frontend_contract import ws_message as w
 from frontend_contract.base import field_is_ts_null
 from frontend_contract.gen_ts import generate_ts
 from frontend_contract.rest import ConversationUsage
+from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 
 @pytest.mark.unit
@@ -95,7 +96,7 @@ def test_generation_segment_started_wire():
     """generation.segment.started：channel/kind/segmentIndex。"""
     msg = w.GenerationSegmentStartedMessage(
         generationId="gen_1", segmentId="seg_1", segmentIndex=0,
-        channel="public_reply", kind="text",
+        channel=MessageChannel.PUBLIC_REPLY, kind=SegmentKind.TEXT,
     )
     d = msg.wire_dict()
     assert d["type"] == "generation.segment.started"
@@ -122,7 +123,7 @@ def test_generation_completed_wire():
     """generation.completed：finishReason 限 stop|tool_calls + usage/model/mood。"""
     usage = w.TokenUsage(rounds=[], turn_total=0)
     msg = w.GenerationCompletedMessage(
-        generationId="gen_1", messageId="msg_1", channel="public_reply",
+        generationId="gen_1", messageId="msg_1", channel=MessageChannel.PUBLIC_REPLY,
         finishReason="stop", usage=usage, model="fake/test", mood="开心",
         completeness="complete",
     )
@@ -180,7 +181,7 @@ def test_generation_segment_started_conversation_id():
     """generation.segment.started 带 conversationId（None 缺省省略）。"""
     msg = w.GenerationSegmentStartedMessage(
         generationId="gen_1", segmentId="seg_1", segmentIndex=0,
-        channel="public_reply", kind="text", conversationId="conv_abc",
+        channel=MessageChannel.PUBLIC_REPLY, kind=SegmentKind.TEXT, conversationId="conv_abc",
     )
     d = msg.wire_dict()
     assert d["type"] == "generation.segment.started"
@@ -202,7 +203,7 @@ def test_generation_segment_completed_conversation_id():
     """generation.segment.completed 带 conversationId。"""
     msg = w.GenerationSegmentCompletedMessage(
         generationId="gen_1", segmentId="seg_1", segmentIndex=0,
-        channel="public_reply", kind="text", content="你好", conversationId="conv_abc",
+        channel=MessageChannel.PUBLIC_REPLY, kind=SegmentKind.TEXT, content="你好", conversationId="conv_abc",
     )
     assert msg.wire_dict()["conversationId"] == "conv_abc"
 
@@ -213,7 +214,7 @@ def test_generation_completed_conversation_id_and_usage():
     usage = w.TokenUsage(rounds=[], turn_total=0)
     conv_usage = ConversationUsage(total=42, byModel={"fake/test": 42})
     msg = w.GenerationCompletedMessage(
-        generationId="gen_1", messageId="msg_1", channel="public_reply",
+        generationId="gen_1", messageId="msg_1", channel=MessageChannel.PUBLIC_REPLY,
         finishReason="stop", usage=usage, model="fake/test",
         conversationId="conv_abc", conversationUsage=conv_usage,
     )
@@ -222,7 +223,7 @@ def test_generation_completed_conversation_id_and_usage():
     assert d["conversationUsage"] == {"total": 42, "byModel": {"fake/test": 42}}
     # conversationUsage 可缺省省略
     msg2 = w.GenerationCompletedMessage(
-        generationId="gen_2", messageId="msg_2", channel="public_reply",
+        generationId="gen_2", messageId="msg_2", channel=MessageChannel.PUBLIC_REPLY,
         finishReason="stop", usage=usage, model="fake/test",
     )
     assert "conversationUsage" not in msg2.wire_dict()
