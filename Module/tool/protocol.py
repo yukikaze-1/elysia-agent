@@ -149,7 +149,8 @@ class ToolEmitter:
         """
         if self._queue is not None:
             await self._queue.put(ToolProgress(
-                status="processing", percent=percent, message=message, data=data,
+                status=ToolStatus.PROCESSING, percent=percent,
+                message=message, data=data,
             ))
 
     def is_cancelled(self) -> bool:

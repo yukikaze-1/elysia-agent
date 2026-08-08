@@ -439,7 +439,7 @@ class ToolManager:
                             "tool_approval", params=base, channels=v1,
                         )
                     if v2:
-                        enriched = dict(base)
+                        enriched: dict[str, Any] = dict(base)
                         enriched["summary"] = self._build_param_summary(params)
                         enriched["runtime"] = plugin.runtime
                         enriched["version"] = plugin.version

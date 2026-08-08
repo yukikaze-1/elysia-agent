@@ -120,7 +120,7 @@ class TTSFactory:
     @classmethod
     def from_config(cls, model_id: str, config: "TTSConfig", **overrides: Any) -> "TTSBackend":
         """从 TTSConfig dataclass 创建后端，overrides 优先级最高。"""
-        kwargs = {"base_url": config.base_url}
+        kwargs: dict[str, Any] = {"base_url": config.base_url}
         if config.voices_config:
             kwargs["voices_config"] = config.voices_config
         kwargs["rate_limit_rpm"] = config.rate_limit_rpm

@@ -5,7 +5,7 @@
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, cast
 
 from pymilvus import DataType, MilvusClient
 
@@ -115,7 +115,8 @@ class MilvusBackend(VectorDBBackend):
         await asyncio.to_thread(self._client.load_collection, name)
 
     async def collection_exists(self, name: str) -> bool:
-        return await asyncio.to_thread(self._client.has_collection, name)
+        return cast(bool, await asyncio.to_thread(
+            self._client.has_collection, name))
 
     # ---- Write ----
 

@@ -214,12 +214,11 @@ class OpenAICompatBackend(LLMBackend):
         extra_body_final = extra_body if extra_body else None
 
         if stream:
-            stream_opts = {"include_usage": True}
             response = await client.chat.completions.create(
                 model=self._model,
                 messages=cleaned,  # type: ignore[arg-type]
                 stream=True,
-                stream_options=stream_opts,
+                stream_options={"include_usage": True},
                 extra_body=extra_body_final,
                 **kwargs,
             )
