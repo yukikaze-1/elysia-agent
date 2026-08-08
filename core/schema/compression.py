@@ -2,6 +2,8 @@
 from enum import StrEnum
 from typing import TypedDict
 
+from core.schema.types import SessionId
+
 
 class CompressionTrigger(StrEnum):
     COMPRESSION = "compression"
@@ -11,7 +13,7 @@ class CompressionTrigger(StrEnum):
 
 
 class VersionEntry(TypedDict):
-    session_id: str
+    session_id: SessionId
     version: int
     text: str
     timestamp: str       # IsoTimestamp

@@ -14,6 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from core.schema import RequestId
 from core.schema.event import InterruptData, StateChangeData, UserInputData
 
 # ============================================================================
@@ -27,7 +28,7 @@ class TestEventBus:
         from core.monitoring.event_bus import EventBus, EventPriority
         bus = EventBus()
 
-        bus.post(UserInputData(text="data1", user_name="test", request_id="?"), type="normal", priority=EventPriority.NORMAL)
+        bus.post(UserInputData(text="data1", user_name="test", request_id=RequestId("?")), type="normal", priority=EventPriority.NORMAL)
         bus.post(InterruptData(), priority=EventPriority.INTERRUPT)
         bus.post(StateChangeData(state="test", request_id="?"), priority=EventPriority.STATE_CHANGE)
 
@@ -42,9 +43,9 @@ class TestEventBus:
     def test_drain(self):
         from core.monitoring.event_bus import EventBus, EventPriority
         bus = EventBus()
-        bus.post(UserInputData(text="", user_name="", request_id=""), type="a", priority=EventPriority.NORMAL)
-        bus.post(UserInputData(text="", user_name="", request_id=""), type="b", priority=EventPriority.NORMAL)
-        bus.post(UserInputData(text="", user_name="", request_id=""), type="c", priority=EventPriority.NORMAL)
+        bus.post(UserInputData(text="", user_name="", request_id=RequestId("")), type="a", priority=EventPriority.NORMAL)
+        bus.post(UserInputData(text="", user_name="", request_id=RequestId("")), type="b", priority=EventPriority.NORMAL)
+        bus.post(UserInputData(text="", user_name="", request_id=RequestId("")), type="c", priority=EventPriority.NORMAL)
 
         drained = bus.drain()
         assert len(drained) == 3

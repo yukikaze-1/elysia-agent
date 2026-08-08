@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 from core.schema.agent import EventType
-from core.schema.types import SessionId
+from core.schema.types import MessageId, RequestId, SessionId
 
 
 class VoiceReason(StrEnum):
@@ -33,12 +33,12 @@ class UserInputData(BaseModel):
     event_type: Literal[EventType.USER_INPUT] = EventType.USER_INPUT
     text: str
     user_name: str
-    request_id: str
+    request_id: RequestId
     content: list[dict] | None = None
     emotion: str = ""
     events: list[str] = Field(default_factory=list)
     # 批次 2（v2 消息）：预分配用户消息 ID（ACK 一致）+ 来源协议版本
-    message_id: str | None = None
+    message_id: MessageId | None = None
     protocol_version: int = 1
     # 批次 3（multi-session）：可选会话 ID，None = 未归属
     conversation_id: SessionId | None = None

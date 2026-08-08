@@ -1,8 +1,9 @@
 """core/schema/event.py 的 EventData union 模型测试。"""
 import pytest
 from pydantic import TypeAdapter, ValidationError
-from typing import Literal, get_args, get_origin
+from typing import Literal, get_args, get_origin, get_type_hints
 
+from core.schema import MessageId, RequestId, SessionId
 from core.schema.agent import EventType
 from core.schema.event import (
     EventData,
@@ -66,25 +67,25 @@ class TestTaskResultData:
 @pytest.mark.unit
 class TestUserInputData:
     def test_stt_path_no_content_valid(self):
-        d = UserInputData(text="hi", user_name="妖梦", request_id="r1",
+        d = UserInputData(text="hi", user_name="妖梦", request_id=RequestId("r1"),
                           emotion="happy", events=["laugh"])
         assert d.content is None
 
     def test_text_path_no_emotion_valid(self):
-        d = UserInputData(text="hi", user_name="妖梦", request_id="r1",
+        d = UserInputData(text="hi", user_name="妖梦", request_id=RequestId("r1"),
                           content=[{"type": "text", "text": "hi"}])
         assert d.emotion == ""
         assert d.events == []
 
     def test_default_conversation_id_none(self):
         """批次 3：conversation_id 默认 None。"""
-        d = UserInputData(text="hi", user_name="妖梦", request_id="r1")
+        d = UserInputData(text="hi", user_name="妖梦", request_id=RequestId("r1"))
         assert d.conversation_id is None
 
     def test_conversation_id_round_trip(self):
         """批次 3：conversation_id 可填值 round-trip。"""
-        d = UserInputData(text="hi", user_name="妖梦", request_id="r1",
-                          conversation_id="sess-9")
+        d = UserInputData(text="hi", user_name="妖梦", request_id=RequestId("r1"),
+                          conversation_id=SessionId("sess-9"))
         assert d.conversation_id == "sess-9"
 
 
@@ -133,3 +134,11 @@ class TestEventTypeEnumBinding:
         ta = TypeAdapter(SystemTickData)
         v = ta.validate_python({"event_type": "system_tick", "reason": "silence_timeout"})
         assert v.reason == "silence_timeout"
+
+
+@pytest.mark.unit
+def test_user_input_data_id_field_types():
+    """UserInputData 的 message_id/request_id 对齐 NewType（conversation_id 已 SessionId）。"""
+    hints = get_type_hints(UserInputData)
+    assert hints["message_id"] == MessageId | None
+    assert hints["request_id"] is RequestId

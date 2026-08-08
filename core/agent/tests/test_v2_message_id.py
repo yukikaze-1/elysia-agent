@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.agent._types import _PendingMessage
+from core.schema import MessageId
 from core.schema.event import UserInputData
 
 
@@ -13,7 +14,7 @@ def test_user_input_data_message_id_fields():
     """UserInputData 新可选字段：message_id + protocol_version。"""
     data = UserInputData(
         text="hi", user_name="u", request_id="r",
-        message_id="msg_x", protocol_version=2,
+        message_id=MessageId("msg_x"), protocol_version=2,
     )
     assert data.message_id == "msg_x"
     assert data.protocol_version == 2
