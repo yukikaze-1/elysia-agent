@@ -16,9 +16,12 @@ core/utils/
 
 ## 组件
 
-### message_id.py（30 行）
+### message_id.py（45 行）
 
-`new_message_id()` — 返回 `msg_` + 26 位 hex UUID4。被 `task/task.py`、`cognitive/loop.py`、`memory/long_term.py` 等多处使用。
+ID 生成 helper 族（core ID NewType 权威生成处）：
+- `new_message_id()` — `msg_` + 26 位 hex UUID4。被 `cognitive/loop.py` 等使用。
+- `new_generation_id()` / `new_segment_id()` — `gen_` / `seg_` 前缀，同上模式。
+- `new_attachment_id()` / `new_memory_id()` / `new_task_id()` — `att_` / `msg_` 前缀（2026-08-09 新增，衍生 ID 独立 NewType）。分别被 `input/api_routes.py`（附件）、`memory/long_term.py`（记忆条目）、`task/task.py`（调度任务）使用。
 
 ### text_utils.py（42 行）
 
