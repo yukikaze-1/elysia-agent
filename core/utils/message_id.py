@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from core.schema.types import MessageId
+from core.schema.types import GenerationId, MessageId, SegmentId
 
 
 def _new_id(prefix: str) -> str:
@@ -20,11 +20,11 @@ def new_message_id() -> MessageId:
     return MessageId(_new_id("msg"))
 
 
-def new_generation_id() -> str:
+def new_generation_id() -> GenerationId:
     """生成一次生成实例 ID（'gen_' 前缀，与 messageId 语义区分，批次 2）。"""
-    return _new_id("gen")
+    return GenerationId(_new_id("gen"))
 
 
-def new_segment_id() -> str:
+def new_segment_id() -> SegmentId:
     """生成一个分段 ID（'seg_' 前缀，批次 2）。"""
-    return _new_id("seg")
+    return SegmentId(_new_id("seg"))

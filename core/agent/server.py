@@ -7,6 +7,7 @@ from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
 
 from core.agent._types import RunState
+from core.schema.types import RequestId
 from core.utils import set_request_id
 
 if TYPE_CHECKING:
@@ -129,16 +130,16 @@ class AgentServer:
             return f"已连接 (model={self._stt.model})"
         return "未连接"
 
-    def next_request_id(self) -> str:
+    def next_request_id(self) -> RequestId:
         """生成并返回请求 ID，同时设置 ContextVar。供外部模块（STT 等）使用。
 
         Returns:
-            格式为 ``{req_counter:03d}`` 的请求 ID 字符串。
+            格式为 ``{req_counter:03d}`` 的请求 ID 字符串（RequestId NewType）。
         """
         self._req_counter += 1
         rid = f"{self._req_counter:03d}"
         set_request_id(rid)
-        return rid
+        return RequestId(rid)
 
     async def switch_llm(self, model_id: str) -> dict:
         """热切换 LLM 模型。切换前打断当前 cognitive task 防止卡 thinking。

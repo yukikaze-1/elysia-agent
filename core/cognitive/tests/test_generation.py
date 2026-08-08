@@ -1,8 +1,11 @@
 """ID 生成器 + GenerationContext 测试（批次 2 Task 2，marker=unit）。"""
 
+from typing import get_type_hints
+
 import pytest
 
 from core.cognitive.generation import GenerationContext
+from core.schema import GenerationId, SegmentId
 from core.utils.message_id import new_generation_id, new_segment_id
 
 
@@ -10,6 +13,7 @@ from core.utils.message_id import new_generation_id, new_segment_id
 def test_new_generation_id_format():
     """generation ID 独立前缀 gen_（与 messageId 的 msg_ 区分）。"""
     gid = new_generation_id()
+    assert get_type_hints(new_generation_id)["return"] is GenerationId
     assert gid.startswith("gen_")
     assert len(gid) == len("gen_") + 26
 
@@ -18,6 +22,7 @@ def test_new_generation_id_format():
 def test_new_segment_id_format():
     """segment ID 独立前缀 seg_。"""
     sid = new_segment_id()
+    assert get_type_hints(new_segment_id)["return"] is SegmentId
     assert sid.startswith("seg_")
     assert len(sid) == len("seg_") + 26
 

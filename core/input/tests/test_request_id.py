@@ -9,6 +9,7 @@
 """
 
 import asyncio
+from typing import get_type_hints
 
 import pytest
 
@@ -18,6 +19,7 @@ from core.input.voice_sessions import (
     VoiceSessionError,
     VoiceSessionManager,
 )
+from core.schema import RequestId
 from core.storage.generation_repo import GenerationRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 from core.utils import set_request_id
@@ -151,3 +153,11 @@ class TestGenerationRegistryRequestId:
         doc = asyncio.run(reg.get("gen_1"))
         assert doc is not None
         assert doc.get("request_id") is None
+
+
+@pytest.mark.unit
+def test_next_request_id_returns_request_id():
+    """next_request_id 返回 RequestId（NewType）。"""
+    from core.agent.server import AgentServer
+    hints = get_type_hints(AgentServer.next_request_id)
+    assert hints["return"] is RequestId
