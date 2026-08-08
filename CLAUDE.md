@@ -118,7 +118,7 @@ core/
 │   ├── loop.py            #   CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
 │   ├── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task + _gate_tool_calls
 │   ├── timing.py          #   Timer + TimingClock latency tracking
-│   ├── generation.py      #   GenerationContext: generation_id/assistant_message_id/conversation_id 预分配贯通
+│   ├── generation.py      #   GenerationContext: generation_id/assistant_message_id/conversation_id 预分配贯通（ID 字段 NewType；channel/kind 对齐契约层 MessageChannel/SegmentKind StrEnum）
 │   └── generation_registry.py # GenerationRegistry: generation 生命周期持久化（register/mark 终态 + stale 清理，Mongo 离线 no-op）
 ├── adapter/               # Adapter layer: wraps Module/ backends for core/ consumption
 │   ├── llm_adapter.py     #   LLMAdapter: tool-calling + retry + streaming + hot-switch
