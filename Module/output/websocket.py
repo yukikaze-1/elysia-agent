@@ -11,7 +11,7 @@ wire format:
 """
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from Module.logger import get_caller_logger
 from Module.output.protocol import ChannelCapability, OutputChannel
@@ -40,7 +40,8 @@ from frontend_contract import (
     TypingMessage,
     UserAckMessage,
 )
-from frontend_contract.ws_message import MessageChannel, SegmentKind
+from frontend_contract.rest import FinishReason
+from frontend_contract.ws_message import AckStatus, AudioFormat, MessageChannel, SegmentKind
 
 
 class WebSocketChannel(OutputChannel):
@@ -162,7 +163,7 @@ class WebSocketChannel(OutputChannel):
                              duration_ms: int | None = None) -> None:
         """音频流开始（stream_id = playback ID）。"""
         await self._send_json(AudioStartMessage(
-            stream_id=stream_id, format=format, sampleRate=sample_rate,
+            stream_id=stream_id, format=AudioFormat(format), sampleRate=sample_rate,
             durationMs=duration_ms).wire_dict())
 
     async def on_audio_cancelled(self, stream_id: int) -> None:
@@ -179,7 +180,7 @@ class WebSocketChannel(OutputChannel):
         """
         self._audio_seq.pop(stream_id, None)
         await self._send_json(AudioEndMessage(
-            stream_id=stream_id, format=format,
+            stream_id=stream_id, format=AudioFormat(format),
         ).wire_dict())
 
     async def on_state(self, state: str) -> None:
@@ -223,7 +224,7 @@ class WebSocketChannel(OutputChannel):
         await self._send_json(UserAckMessage(
             messageId=message_id, clientRequestId=client_request_id,
             clientMessageId=client_message_id, conversationId=conversation_id,
-            receivedAt=received_at, status=status, error=error,
+            receivedAt=received_at, status=AckStatus(status), error=error,
         ).wire_dict())
 
     async def on_generation_started(self, *, generation_id: str, message_id: str,
@@ -270,8 +271,8 @@ class WebSocketChannel(OutputChannel):
     async def on_generation_completed(self, *, generation_id: str, message_id: str,
                                       finish_reason: str, usage: Any, model: str,
                                       mood: str | None = None,
-                                      completeness: str = "complete",
-                                      channel: str = "public_reply",
+                                      completeness: Literal["complete"] = "complete",
+                                      channel: Literal[MessageChannel.PUBLIC_REPLY] = MessageChannel.PUBLIC_REPLY,
                                       conversation_id: str | None = None,
                                       conversation_usage: dict | None = None) -> None:
         """发送 v2 父完成。usage 为契约 TokenUsage（rounds + turn_total）。
@@ -287,7 +288,7 @@ class WebSocketChannel(OutputChannel):
             )
         await self._send_json(GenerationCompletedMessage(
             generationId=generation_id, messageId=message_id, channel=channel,
-            finishReason=finish_reason, usage=usage, model=model,
+            finishReason=FinishReason(finish_reason), usage=usage, model=model,
             mood=mood, completeness=completeness,
             conversationId=conversation_id, conversationUsage=conv_usage,
         ).wire_dict())
