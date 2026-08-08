@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from core.monitoring.event_bus import EventBus, EventPriority, EventType
 from core.status.agent_fsm import AgentFSM
 from core.config.character_config import CharacterConfig
-from core.schema.event import SystemTickData
+from core.schema.event import SystemTickData, VoiceReason
 
 if TYPE_CHECKING:
     from core.status import AgentStatus
@@ -109,7 +109,7 @@ class IdleMonitor:
                 elapsed = time.monotonic() - self._last_interaction
                 if elapsed >= duration:
                     self._bus.post(
-                        SystemTickData(reason="silence_timeout", elapsed=elapsed),
+                        SystemTickData(reason=VoiceReason("silence_timeout"), elapsed=elapsed),
                         priority=EventPriority.NORMAL,
                     )
                     logger.info("Proactive trigger: silence_timeout (elapsed=%ds)", int(elapsed))
@@ -126,7 +126,7 @@ class IdleMonitor:
                 if now[11:] in times:
                     self._last_time_of_day_trigger = now
                     self._bus.post(
-                        SystemTickData(reason="time_of_day", time=now),
+                        SystemTickData(reason=VoiceReason("time_of_day"), time=now),
                         priority=EventPriority.NORMAL,
                     )
                     logger.info("Proactive trigger: time_of_day (%s)", now[11:])

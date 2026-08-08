@@ -38,6 +38,7 @@ from frontend_contract import (
     UserAckMessage,
     WakeMessage,
 )
+from frontend_contract.ws_message import AckStatus
 from core.input.tts_profile import _active_tts_profile
 
 if TYPE_CHECKING:
@@ -426,7 +427,7 @@ async def _send_ack(ws: "web.WebSocketResponse", message_id: str, client_request
         await ws.send_json(UserAckMessage(
             messageId=message_id, clientRequestId=client_request_id,
             clientMessageId=client_message_id, conversationId=conversation_id,
-            receivedAt=now_iso(), status=status, error=error,
+            receivedAt=now_iso(), status=AckStatus(status), error=error,
         ).wire_dict())
     except Exception:
         logger.debug("发送 user_message.ack 失败", exc_info=True)

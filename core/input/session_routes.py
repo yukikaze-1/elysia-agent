@@ -30,7 +30,7 @@ from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from core.storage.message_repo import MessageRepository
 from core.storage.session_repo import SessionSummary
 from frontend_contract import rest as rest_contract
-from frontend_contract.rest import ProtocolError
+from frontend_contract.rest import FinishReason, ProtocolError, Role
 
 logger = logging.getLogger(__name__)
 
@@ -299,14 +299,14 @@ async def _next_hit(agent: "Agent", message_repo: MessageRepository, session_id:
     Returns:
         (资源项 dict, cursor) 或 None（无更多命中）。
     """
-    msg = await message_repo.get_by_mongo_id(session_id, doc_id)
+    msg = await message_repo.get_by_mongo_id(SessionId(session_id), doc_id)
     if msg is not None:
         for item, cursor in _items_from_message(msg, category, offset):
             if await _attachment_available(agent, item["url"]):
                 return item, cursor
     scan_before = doc_id
     while True:
-        msgs, _ = await message_repo.query_page(session_id, before=scan_before,
+        msgs, _ = await message_repo.query_page(SessionId(session_id), before=scan_before,
                                                 limit=_RESOURCE_SCAN_BATCH)
         if not msgs:
             return None
@@ -348,7 +348,7 @@ async def _scan_resources(agent: "Agent", message_repo: MessageRepository,
     # 续扫时先处理 cursor 消息从 start_offset 起的剩余资源（query_page 的 before
     # 是排他的，不含 cursor 消息本身，需按 _id 单独取回）
     if start_id is not None:
-        cursor_msg = await message_repo.get_by_mongo_id(session_id, start_id)
+        cursor_msg = await message_repo.get_by_mongo_id(SessionId(session_id), start_id)
         if cursor_msg is not None:
             for item, cursor in _items_from_message(cursor_msg, category, start_offset):
                 if not await _attachment_available(agent, item["url"]):
@@ -359,7 +359,7 @@ async def _scan_resources(agent: "Agent", message_repo: MessageRepository,
                 last_cursor = cursor
     # 再扫 cursor 消息之后的消息（首页 start_id=None 直接从这里开始）
     while len(items) < limit:
-        msgs, _ = await message_repo.query_page(session_id, before=scan_before,
+        msgs, _ = await message_repo.query_page(SessionId(session_id), before=scan_before,
                                                 limit=_RESOURCE_SCAN_BATCH)
         if not msgs:
             break
@@ -512,7 +512,7 @@ async def sessions_delete_handler(request: web.Request) -> web.Response:
     # 闭合 BE-030 会话删除 + BE-070 附件引用释放闭环）。先 release 再 delete——
     # session_manager.delete 会清空该会话归档，附件 refs 需在归档清空前取到。
     try:
-        await release_session_attachments(agent, sid)
+        await release_session_attachments(agent, SessionId(sid))
     except Exception as e:
         logger.warning("sessions_delete 附件释放失败 sid=%s: %s", sid, e)
     deleted = await agent.session_manager.delete(sid)
@@ -533,7 +533,7 @@ async def sessions_activate_handler(request: web.Request) -> web.Response:
     if status is not None and not status.is_accepting_input:
         return _error_response("AGENT_BUSY", "Agent 忙（生成/TTS 中），无法切换会话",
                                409, retryable=True)
-    await agent.switch_session(sid)
+    await agent.switch_session(SessionId(sid))
     resp = rest_contract.SessionActivateResult(activeConversationId=str(sid))
     return web.json_response(resp.wire_dict())
 
@@ -638,6 +638,8 @@ async def search_messages_handler(request: web.Request) -> web.Response:
         # SearchMessageItem.role 已加 "tool" 枚举值（v1 类型不变，新枚举值）。
         if role not in (MessageRole.USER, MessageRole.ASSISTANT, MessageRole.TOOL):
             continue
+        if role is None:   # pyright 收窄：getattr 带默认值是 MessageRole | None
+            continue
         response_id = None
         message_id = getattr(msg, "message_id", None)   # 已是 MessageId（Message 模型字段）
         if registry is not None and message_id:
@@ -649,7 +651,7 @@ async def search_messages_handler(request: web.Request) -> web.Response:
             messageId=str(message_id),
             responseId=response_id,
             segmentId=None,
-            role=role.value if hasattr(role, "value") else str(role),
+            role=Role(role.value),
             timestamp=str(msg.timestamp),
             snippet=_message_text(msg)[:100],
         ).wire_dict())
@@ -708,7 +710,7 @@ def _generation_status(doc: dict) -> rest_contract.GenerationStatus:
         userMessageId=doc.get("user_message_id", ""),
         status=doc.get("status", "running"),
         model=doc.get("model") or None,
-        finishReason=finish_reason,
+        finishReason=FinishReason(finish_reason) if finish_reason is not None else None,
         error=error,
         createdAt=doc.get("created_at", ""),
         finishedAt=doc.get("finished_at") or None,

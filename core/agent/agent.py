@@ -635,11 +635,11 @@ class Agent(AgentLifecycle, AgentServer):
         return list(self._pending_messages)
 
     async def resolve_session(self, conversation_id: str | None,
-                              protocol_version: int | str):
+                              protocol_version: int):
         """按协议版本 + conversation_id 解析目标会话并确保加载（直通 SessionManager）。"""
         return await self._session_manager.resolve(conversation_id, protocol_version)
 
-    async def switch_session(self, sid: SessionId | str):
+    async def switch_session(self, sid: SessionId):
         """切换到目标会话（直通 SessionManager——engine attach + 活动指针更新）。"""
         return await self._session_manager.switch(sid)
 

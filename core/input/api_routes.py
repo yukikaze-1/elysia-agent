@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 from core.schema.message import Message
 from core.input.tts_profile import _active_tts_profile, _backend_default_voice
 from frontend_contract import rest as rest_contract
+from frontend_contract.rest import RepoCallStatus
 
 logger = logging.getLogger(__name__)
 
@@ -947,7 +948,7 @@ def register_api_routes(app: web.Application) -> None:
             toolVersion=doc.get("tool_version") or "",
             runtime=doc.get("runtime") or "",
             paramHash=doc.get("arguments_hash") or "",
-            status=doc.get("status") or "pending",
+            status=RepoCallStatus(doc.get("status") or "pending"),
             createdAt=doc.get("created_at") or "",
             expiresAt=doc.get("expires_at") or "",
             result=result,

@@ -278,7 +278,7 @@ async def session_delete_handler(request: web.Request) -> web.Response:
     try:
         # 批次 7：删除前释放该会话归档消息的附件 refs（附件软删联动）
         try:
-            await release_session_attachments(agent, sid)
+            await release_session_attachments(agent, SessionId(sid))
         except Exception as e:
             logger.warning("session_delete 附件释放失败 sid=%s: %s", sid, e)
         deleted = await agent.session_repo.delete(sid)

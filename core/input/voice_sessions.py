@@ -13,7 +13,7 @@ import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from core.input.audio_buffer import AudioBuffer, pcm_to_wav
-from core.schema.types import SessionId
+from core.schema.types import MessageId, SessionId
 from core.utils import get_request_id, new_message_id
 
 if TYPE_CHECKING:
@@ -323,9 +323,9 @@ class VoiceSessionManager:
             await self._buffer.flush()          # 派发最后一段（feed 立即返回）
         await self._drain_dispatch_stt()        # 等待在途段完成再 teardown（残段仍提交）
         self._teardown_session()
-        from frontend_contract import VoiceSessionEndedMessage
+        from frontend_contract.ws_message import VoiceEndReason, VoiceSessionEndedMessage
         await self._emit(VoiceSessionEndedMessage(
-            sessionId=session_id, reason="stopped").wire_dict())
+            sessionId=session_id, reason=VoiceEndReason("stopped")).wire_dict())
 
     async def cancel_session(self, session_id: str) -> None:
         self._require_session(session_id)
@@ -336,9 +336,9 @@ class VoiceSessionManager:
             self._agent.bus.post(InterruptData(source="voice_cancel"),
                                  priority=EventPriority.INTERRUPT)
         self._teardown_session()
-        from frontend_contract import VoiceSessionEndedMessage
+        from frontend_contract.ws_message import VoiceEndReason, VoiceSessionEndedMessage
         await self._emit(VoiceSessionEndedMessage(
-            sessionId=session_id, reason="cancelled").wire_dict())
+            sessionId=session_id, reason=VoiceEndReason("cancelled")).wire_dict())
 
     # ---- DICTATION（BE-062） ----
 
@@ -509,7 +509,7 @@ class VoiceSessionManager:
         """本连接语音段提交的用户消息 ID 集合（D1 断连归属判定，Task 9 消费）。"""
         return set(self._emitted_message_ids)
 
-    def _build_user_input(self, text: str, es: dict, message_id: str):
+    def _build_user_input(self, text: str, es: dict, message_id: MessageId):
         from core.schema.event import UserInputData
         return UserInputData(
             text=text, user_name=self._agent.user_name,
@@ -538,9 +538,9 @@ class VoiceSessionManager:
         if self._mode == VoiceMode.REALTIME:
             sid = self._session_id  # teardown 前缓存（review #2）
             self._teardown_session()
-            from frontend_contract import VoiceSessionEndedMessage
+            from frontend_contract.ws_message import VoiceEndReason, VoiceSessionEndedMessage
             await self._emit(VoiceSessionEndedMessage(
-                sessionId=sid or "", reason="stt_disabled").wire_dict())
+                sessionId=sid or "", reason=VoiceEndReason("stt_disabled")).wire_dict())
         elif self._mode == VoiceMode.DICTATION:
             rid = self._dict_request_id  # teardown 前缓存
             self._teardown_session()
@@ -584,9 +584,9 @@ class VoiceSessionManager:
                 if not self._paused and time.monotonic() - self._last_audio_at \
                         > VOICE_SESSION_IDLE_TIMEOUT:
                     self._teardown_session()
-                    from frontend_contract import VoiceSessionEndedMessage
+                    from frontend_contract.ws_message import VoiceEndReason, VoiceSessionEndedMessage
                     await self._emit(VoiceSessionEndedMessage(
-                        sessionId=session_id, reason="timeout").wire_dict())
+                        sessionId=session_id, reason=VoiceEndReason("timeout")).wire_dict())
                     return
         except asyncio.CancelledError:
             raise
