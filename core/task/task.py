@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, TypedDict
 
-from core.utils import new_message_id
+from core.schema.types import TaskId
+from core.utils import new_task_id
 
 
 class TaskType(Enum):
@@ -47,13 +48,13 @@ class Task:
     运行时字段 (_future, _worker_task) 不持久化。
     """
 
-    id: str
+    id: TaskId
     type: TaskType
     status: TaskStatus = TaskStatus.PENDING
     priority: int = 5               # 0=最高, 5=默认, 9=后台
-    parent_id: str | None = None
-    depends_on: list[str] = field(default_factory=list)   # 预留: DAG 依赖
-    children_ids: list[str] = field(default_factory=list)
+    parent_id: str | None = None    # 实收 RequestId，本批不裁决（TaskId 贯通范围外）
+    depends_on: list[TaskId] = field(default_factory=list)   # 预留: DAG 依赖
+    children_ids: list[TaskId] = field(default_factory=list)
     payload: ToolCallPayload | dict[str, Any] = field(default_factory=dict)  # dict = BACKGROUND/other
     result: Any = None
     error: str | None = None
@@ -105,7 +106,7 @@ class Task:
 
     # ---- 树操作 ----
 
-    def add_child(self, child_id: str) -> None:
+    def add_child(self, child_id: TaskId) -> None:
         """添加子任务 ID。
 
         Args:
@@ -136,7 +137,7 @@ class Task:
         """
         payload: ToolCallPayload = {"tool_name": tool_name, "arguments": arguments}
         return cls(  # type: ignore[reportCallIssue]
-            id=new_message_id(),
+            id=new_task_id(),
             type=TaskType.TOOL_CALL,
             parent_id=parent_id,
             priority=priority,
@@ -159,7 +160,7 @@ class Task:
             Task: 新创建的后台任务
         """
         return cls(  # type: ignore[reportCallIssue]
-            id=new_message_id(),
+            id=new_task_id(),
             type=TaskType.BACKGROUND,
             priority=priority,
             run_in_background=True,

@@ -18,6 +18,8 @@ from core.adapter import ToolContext, ToolResult, ErrorType
 
 from core.schema.tool import ToolCall
 
+from core.schema.types import RequestId, TaskId
+
 from core.task.task import Task, TaskType, TaskStatus
 
 if TYPE_CHECKING:
@@ -55,7 +57,7 @@ class TaskScheduler:
         self._num_workers = num_workers
         self._checkpoint_path = checkpoint_path
         self._queue: asyncio.PriorityQueue[tuple[int, int, Task]] = asyncio.PriorityQueue()
-        self._tasks: dict[str, Task] = {}
+        self._tasks: dict[TaskId, Task] = {}
         self._workers: list[asyncio.Task] = []
         self._prune_task: asyncio.Task | None = None
         self._running = False
@@ -115,7 +117,7 @@ class TaskScheduler:
 
     # ---- 提交 ----
 
-    async def submit(self, task: Task) -> str:
+    async def submit(self, task: Task) -> TaskId:
         """提交任务到 Worker Pool。
 
         Args:
@@ -131,7 +133,7 @@ class TaskScheduler:
         return task.id
 
     async def dispatch_tool_calls(
-        self, parent_id: str, calls: list[ToolCall],
+        self, parent_id: RequestId, calls: list[ToolCall],
     ) -> list[tuple[ToolCall, ToolResult | BaseException]]:
         """CognitiveLoop 调用：将 tool_calls 创建为子任务，并行执行，返回结果。
 
@@ -153,7 +155,8 @@ class TaskScheduler:
 
         # 绑定 children
         if parent_id:
-            parent = self._tasks.get(parent_id)
+            # 死代码：parent_id 是 RequestId 查 TaskId 字典恒不命中，本批不改行为
+            parent = self._tasks.get(parent_id)  # type: ignore[arg-type]
             if parent is not None:
                 for st in sub_tasks:
                     parent.add_child(st.id)
@@ -190,7 +193,7 @@ class TaskScheduler:
                 out.append((tc, raw))
         return out
 
-    async def dispatch_background(self, coro: Any) -> str:
+    async def dispatch_background(self, coro: Any) -> TaskId:
         """提交一个后台协程，返回 task_id。
 
         Args:
@@ -206,7 +209,7 @@ class TaskScheduler:
         logger.info("Background task dispatched: %s", t.id)
         return t.id
 
-    def cancel(self, task_id: str, _visited: set | None = None) -> bool:
+    def cancel(self, task_id: TaskId, _visited: set | None = None) -> bool:
         """取消任务 — 级联取消子任务 + 取消 Worker 执行 + 取消 Future。
 
         Args:
@@ -244,7 +247,7 @@ class TaskScheduler:
 
     # ---- 查询 ----
 
-    def get_task(self, task_id: str) -> Task | None:
+    def get_task(self, task_id: TaskId) -> Task | None:
         """按 ID 获取任务。
 
         Args:
@@ -255,7 +258,7 @@ class TaskScheduler:
         """
         return self._tasks.get(task_id)
 
-    def get_tree(self, task_id: str) -> dict[str, Any]:
+    def get_tree(self, task_id: TaskId) -> dict[str, Any]:
         """递归构建任务树，给 /debug 面板。
 
         Args:
