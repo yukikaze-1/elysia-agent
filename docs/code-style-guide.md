@@ -47,8 +47,9 @@
 
 - **`isinstance(x, NewType(...))` 在 Python 3.12 抛 `TypeError: isinstance() arg 2 must be a type`**（实测）——
   测试断言类型**必须用 `typing.get_type_hints()` 查注解**（单类型 `is`、联合类型 `==`），禁止 isinstance(x, NewType)。
-- **项目无 mypy/pyright 门禁**（仅 ruff TID252+ANN）——NewType 是 IDE 级文档标注，运行时即 str、
-  pydantic 无校验差异、`make check-types` 不受影响。类型卫生不是 CI 强制的，靠自觉。
+- **pyright 门禁（2026-08 引入）**：`make pyright`（`conda run -n Elysia pyright`）检 **core/ 生产代码**，
+  basic 模式 + 排除测试，须 **Elysia env** 运行（base env 无 aiohttp 会漏报 ~25 处）。无 mypy。
+  NewType 运行时即 str、pydantic 无校验差异、`make check-types` 不受影响。
 
 ---
 
