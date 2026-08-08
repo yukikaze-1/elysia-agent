@@ -185,12 +185,12 @@ class DesktopToolBridge:
             existing_id = self._dedup.get(key)
             if existing_id is not None:
                 existing = await self._repo.get(existing_id)
-                future = self._pending.get(existing_id)
+                reuse_future = self._pending.get(existing_id)
                 if (existing is not None
                         and existing.get("status") in _ACTIVE_STATES
-                        and future is not None):
+                        and reuse_future is not None):
                     # 复用原 future（锁内 await——同参并发串行化为一次投递）
-                    result = await self._await_with_timeout(future)
+                    result = await self._await_with_timeout(reuse_future)
                     if result is None:
                         # 超时：清理登记 + mark expired（幂等——首方可能已标）
                         self._pending.pop(existing_id, None)

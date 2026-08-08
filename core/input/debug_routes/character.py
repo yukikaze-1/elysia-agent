@@ -126,6 +126,9 @@ async def l2_versions_handler(request: web.Request) -> web.Response:
         from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response(code, error, status,
                             retryable=(code == "STORAGE_UNAVAILABLE"))
+    if result is None:
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("INTERNAL", "内部错误", 500)
     return web.json_response(result.wire_dict())
 
 
@@ -188,6 +191,9 @@ async def character_versions_handler(request: web.Request) -> web.Response:
         from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response(code, error, status,
                             retryable=(code == "STORAGE_UNAVAILABLE"))
+    if result is None:
+        from core.input.server import _protocol_error_response  # 懒导入绕环
+        return _protocol_error_response("INTERNAL", "内部错误", 500)
     return web.json_response(result.wire_dict())
 
 

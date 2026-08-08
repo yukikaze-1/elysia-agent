@@ -76,9 +76,9 @@ class TokenTracker:
     async def record(
         self,
         usage: dict,
-        model: str = None,
-        round_num: int = None,
-        session_id: SessionId = None,
+        model: str | None = None,
+        round_num: int | None = None,
+        session_id: SessionId | None = None,
     ) -> None:
         """记录一次 API 调用的 token 消耗。
 
@@ -88,6 +88,8 @@ class TokenTracker:
         批次 3（multi-session）：累计 _session_totals，并同步 session_total
         为最近记录会话累计（保留普通属性，内部 += 写点不动）。
         """
+        model = model or ""
+        round_num = round_num or 0
         sid = session_id if session_id is not None else self.session_id
         u = TokenUsage.from_api(
             usage, model=model, session_id=sid, round_num=round_num,
@@ -123,7 +125,7 @@ class TokenTracker:
         # 3. 持久化
         await self._persist(u)
 
-    async def get_session_stats(self, session_id: SessionId = None) -> dict:
+    async def get_session_stats(self, session_id: SessionId | None = None) -> dict:
         """获取指定 session 的 token 统计（用于前端重连恢复）。
 
         session_id 缺省 → 最近记录会话（兼容 ws_handler.py 零参调用）。

@@ -390,9 +390,11 @@ def _is_v2(agent: "Agent", ws: "web.WebSocketResponse | None") -> bool:
     return ch is not None and ch.protocol_version >= 2
 
 
-async def _send_voice_error(ws: "web.WebSocketResponse",
+async def _send_voice_error(ws: "web.WebSocketResponse | None",
                             error: VoiceSessionError) -> None:
-    """VoiceSessionError → error 信封。"""
+    """VoiceSessionError → error 信封（ws 可空——缺发送连接时静默跳过）。"""
+    if ws is None:
+        return
     from frontend_contract import ErrorMessage
     try:
         await ws.send_json(ErrorMessage(
@@ -419,10 +421,13 @@ async def _voice_stt_gate(agent: "Agent",
             logger.debug("voice stt 门控 notify 失败", exc_info=True)
 
 
-async def _send_ack(ws: "web.WebSocketResponse", message_id: str, client_request_id: str,
+async def _send_ack(ws: "web.WebSocketResponse | None", message_id: str,
+                    client_request_id: str,
                     client_message_id: str | None, conversation_id: str | None,
                     status: str, error: dict | None = None) -> None:
-    """发送 v2 用户消息确认。"""
+    """发送 v2 用户消息确认（ws 可空——缺发送连接时静默跳过）。"""
+    if ws is None:
+        return
     try:
         await ws.send_json(UserAckMessage(
             messageId=message_id, clientRequestId=client_request_id,
@@ -683,6 +688,9 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
     Args:
         sent_message_ids: D1 归属接收集合——accepted 时登记 messageId（Task 9 消费）。
     """
+    if voice_mgr is None:
+        logger.debug("voice.commit 无 voice_mgr，忽略")
+        return
     recording_id = data.get("recordingId", "")
     text = data.get("text", "")
     client_request_id = data.get("clientRequestId", "")

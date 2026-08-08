@@ -481,7 +481,8 @@ class VoiceSessionManager:
             self._segment_index += 1
             from frontend_contract import VoiceSessionPartialMessage, VoiceSessionTurnMessage
             await self._emit(VoiceSessionPartialMessage(
-                sessionId=self._session_id, turnId=self._turn_id,
+                sessionId=str(self._session_id) if self._session_id else "",
+                turnId=self._turn_id,
                 segmentIndex=seg, text=text).wire_dict())
             # 提交途中被 cancel/teardown（partial emit 期间事件循环切换）→ 丢弃残段：
             # 不发 turn、不 post UserInputData——epoch 失配（含 cancel 后重启新会话）
@@ -497,7 +498,8 @@ class VoiceSessionManager:
             self._agent.bus.post(self._build_user_input(text, es, message_id))
             self._emitted_message_ids.add(message_id)   # D1 归属（Task 9）
             await self._emit(VoiceSessionTurnMessage(
-                sessionId=self._session_id, turnId=self._turn_id,
+                sessionId=str(self._session_id) if self._session_id else "",
+                turnId=self._turn_id,
                 messageId=message_id, conversationId=self._conv_id, text=text).wire_dict())
         elif self._mode == VoiceMode.DICTATION:
             from frontend_contract import DictationPartialMessage

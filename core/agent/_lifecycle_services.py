@@ -133,6 +133,10 @@ class _LifecycleServices:
                     result = await _asyncio.wait_for(self._tts.test(), timeout=1.0)
                     if result.get("ok"):
                         self._cognitive.configure(tts=self._tts)
+                        if self._tts_enabled is None:
+                            # 三态语义：_apply_service_state 已把 None 回退为 config.tts.enabled，
+                            # 此处 None 理论不可达，仅作类型收窄防御。
+                            return
                         await self._cognitive._tts_mgr.set_enabled(self._tts_enabled)  # noqa: SLF001
                         logger.info("TTS backend connected")
                     else:
