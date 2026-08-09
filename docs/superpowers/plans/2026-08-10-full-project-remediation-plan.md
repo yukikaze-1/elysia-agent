@@ -94,7 +94,7 @@ A1/A2
 - [x] A1 附件 GC 完整分页、复核和 fail-closed
 - [x] A2 PR CI 与宿主凭据隔离
 - [x] B1 统一存储不可用语义与真实健康检查
-- [ ] B2 Session durable save/load/pending 恢复
+- [x] B2 Session durable save/load/pending 恢复
 - [ ] B3 归档任务所有权与 durable 删除
 - [ ] B4 accepted ACK 前建立附件引用
 - [ ] B5 Consolidator/LTM 离线一致性
@@ -1188,6 +1188,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：无
 - 契约或 Electron 影响：无 wire 变化；`/ready` 现在聚合 session+message+attachment 真实 ping，Mongo 断网即 503
 - 剩余风险/计划偏差：B1 计划列的“repo 写语义禁止静默 return”拆到 B2（session save/load）、B3（delete/archive）、B5（LTM dirty/tombstone）逐一转换调用方（避免一次大爆炸破坏未转换 caller）；desktop_call_repo 保留设计内“离线写 cache”降级（不 raise）
+
+### B2 — Session durable save/load/pending 恢复
+
+- 状态：完成
+- Commit：`<见 B2 提交>`
+- 变更文件：`core/storage/session_repo.py`、`core/memory/session.py`、`core/memory/session_manager.py`、`core/agent/_lifecycle_persistence.py`、`core/memory/tests/test_session.py`、`core/memory/tests/test_session_manager.py`
+- 新增失败测试：`TestSessionDurablePersistence`（repo 离线 save 落 JSONL / Mongo durable 删 pending / `_storage_unavailable` 标志区分 not-found）；`TestEnsureLoadedConcurrency`（并发合并单次 load / 存储不可用不标记 loaded 可重试）；`TestRecoverPendingSessions`（多 pending 全扫 / 损坏忽略 / Mongo 可用导入删 pending）；离线 create/list/rename 读后写一致
+- 目标测试：`pytest core/memory/ core/agent/ core/input/ core/cognitive/ core/personality/` → 1019 passed；`pytest core/memory/tests/test_session.py core/memory/tests/test_session_manager.py` → 61 passed
+- 批次门禁：`ruff check` → All checks passed；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：pending JSON 格式不变；Mongo durable 成功后删除 pending（原本 `_start_persistence` 手动删，现收敛到 save()）
+- 契约或 Electron 影响：无 wire 变化
+- 剩余风险：运行中「failed-load 会话收到新消息后部分覆盖 Mongo 旧上下文」的 partial-clobber 未完全闭合（空覆盖已挡；partial 需 B6 读前合并）；非活动 pending 的启动扫描已加，运行中新建 pending 的即时 import 待恢复协调器（已由 B1 的 session 恢复 hook 覆盖 load_active）
 
 ## 14. 需要停止并请求决策的情况
 

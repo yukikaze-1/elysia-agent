@@ -5,6 +5,8 @@
 """
 
 import asyncio
+import json
+
 import pytest
 
 from core.memory.session import SessionMemory
@@ -142,6 +144,129 @@ def test_eager_default_instance_identity():
 
 
 # ───────────────────────── ensure_loaded ─────────────────────────
+
+
+class TestEnsureLoadedConcurrency:
+    """B2/P1-01：并发 ensure_loaded 合并为一次 load；失败允许重试。"""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_load_single_repo_call(self):
+        """两个并发 ensure_loaded → repo.load 只调一次，两个 caller 拿到同一已加载会话。"""
+        repo = FakeSessionRepo()
+        msg = UserMessage(message_id=MessageId("m1"), content=[TextPart(content="hello")])
+        repo.sessions["conv_x"] = {
+            "messages": [msg], "cs": CharacterState(session_id="conv_x"),
+            "rs": MemoryReflectorState(), "ss": ServiceState(),
+            "title": "x", "updated_at": "2026-08-04T00:00:00Z",
+        }
+        m = _make_manager(repo)
+
+        async def call():
+            return await m.ensure_loaded(SessionId("conv_x"))
+
+        s1, s2 = await asyncio.gather(call(), call())
+
+        assert s1 is s2
+        assert SessionId("conv_x") in m._loaded  # noqa: SLF001
+        assert repo.load_calls.count("conv_x") == 1  # 只 load 一次
+
+    @pytest.mark.asyncio
+    async def test_storage_unavailable_does_not_mark_loaded_and_allows_retry(self):
+        """存储不可用（load 抛 StorageUnavailableError）→ 不标记 loaded；重试成功标记。"""
+        from core.storage.base import StorageUnavailableError
+
+        class FlakyRepo(FakeSessionRepo):
+            def __init__(self):
+                super().__init__()
+                self._fail_once = True
+
+            async def load(self, sid):
+                if self._fail_once:
+                    self._fail_once = False
+                    raise StorageUnavailableError("simulated offline")
+                return await super().load(sid)
+
+        repo = FlakyRepo()
+        repo.sessions["conv_y"] = {
+            "messages": [], "cs": CharacterState(session_id="conv_y"),
+            "rs": MemoryReflectorState(), "ss": ServiceState(),
+            "title": "y", "updated_at": "2026-08-04T00:00:00Z",
+        }
+        m = _make_manager(repo)
+
+        s1 = await m.ensure_loaded(SessionId("conv_y"))
+        assert SessionId("conv_y") not in m._loaded  # noqa: SLF001 — 存储不可用不标记
+
+        s2 = await m.ensure_loaded(SessionId("conv_y"))
+        assert SessionId("conv_y") in m._loaded  # noqa: SLF001 — 重试成功
+        assert s1 is s2
+
+
+class TestRecoverPendingSessions:
+    """B2/P2-01：启动扫描所有 pending JSONL（非活动也在内）。"""
+
+    @pytest.mark.asyncio
+    async def test_scans_all_pending_files(self, tmp_path):
+        """多个 pending 文件全部恢复进内存缓存，并标记 loaded。"""
+        m = _make_manager()
+        p1 = tmp_path / "session_conv_p1.json"
+        p2 = tmp_path / "session_conv_p2.json"
+        msg = UserMessage(message_id=MessageId("m1"), content=[TextPart(content="hi")])
+        doc1 = {"session_id": "conv_p1",
+                "messages": [msg.model_dump(mode="json")],
+                "character_state": {}, "reflector_state": {}, "service_state": {},
+                "updated_at": "2026-08-04T00:00:00Z"}
+        doc2 = {"session_id": "conv_p2",
+                "messages": [], "character_state": {},
+                "reflector_state": {}, "service_state": {},
+                "updated_at": "2026-08-04T00:00:00Z"}
+        p1.write_text(json.dumps(doc1), encoding="utf-8")
+        p2.write_text(json.dumps(doc2), encoding="utf-8")
+
+        recovered = await m.recover_pending_sessions(pending_dir=str(tmp_path))
+
+        assert recovered == 2
+        assert SessionId("conv_p1") in m._loaded  # noqa: SLF001
+        assert SessionId("conv_p2") in m._loaded  # noqa: SLF001
+        assert len(m.get("conv_p1").messages) == 1
+        # 非活动会话对 has_session 可见（离线 list/detail）
+        assert await m.has_session("conv_p1") is True
+
+    @pytest.mark.asyncio
+    async def test_corrupt_file_ignored(self, tmp_path):
+        """损坏 JSON 忽略不计数，不阻断其他 pending 恢复。"""
+        m = _make_manager()
+        bad = tmp_path / "session_conv_bad.json"
+        bad.write_text("{not valid json", encoding="utf-8")
+        good = tmp_path / "session_conv_good.json"
+        good.write_text(json.dumps({"session_id": "conv_good", "messages": [],
+                                    "character_state": {}, "reflector_state": {},
+                                    "service_state": {}, "updated_at": ""}),
+                        encoding="utf-8")
+
+        recovered = await m.recover_pending_sessions(pending_dir=str(tmp_path))
+
+        assert recovered == 1
+        assert SessionId("conv_good") in m._loaded  # noqa: SLF001
+        assert SessionId("conv_bad") not in m._loaded  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_import_to_mongo_deletes_pending(self, tmp_path):
+        """Mongo 可用时导入并删除 pending（save() durable 后删）。"""
+        repo = FakeSessionRepo()
+        m = _make_manager(repo)
+        p = tmp_path / "session_conv_imp.json"
+        p.write_text(json.dumps({"session_id": "conv_imp", "messages": [],
+                                 "character_state": {}, "reflector_state": {},
+                                 "service_state": {}, "updated_at": ""}),
+                     encoding="utf-8")
+
+        recovered = await m.recover_pending_sessions(pending_dir=str(tmp_path),
+                                                     import_to_mongo=True)
+
+        assert recovered == 1
+        # Mongo durable（fake repo.save 成功）→ pending 文件已删除
+        assert not p.exists()
 
 
 @pytest.mark.asyncio

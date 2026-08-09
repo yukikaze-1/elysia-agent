@@ -34,6 +34,7 @@ from core.schema.part import TextPart
 from core.schema.types import SessionId
 from core.storage.message_repo import MessageRepository
 from core.storage.session_repo import SessionRepository
+from core.storage.base import StorageUnavailableError
 
 if TYPE_CHECKING:
     from core.memory.memory_reflector import MemoryReflector
@@ -102,6 +103,10 @@ class SessionMemory:
         self.own_life: str = ""
         self._memory_reflector = None
         self._pre_save_hook: Callable[[], None] | None = None
+        # B2/P1-01：最近一次 load 是否因存储不可用而失败（区别于「not found 新会话」）。
+        # ensure_loaded 据此决定是否标记 loaded（存储不可用 → 不标记，允许重试；
+        # not found → 合法新会话，标记 loaded 以便 save_all 持久化）。
+        self._storage_unavailable = False
 
     # ---- public properties ----
 
@@ -240,8 +245,13 @@ class SessionMemory:
     async def save(self) -> bool:
         """持久化当前会话。MongoDB 不可用时降级到本地 JSONL 文件。
 
+        B2/P1-01 语义：repo 未连接时 repo.save 抛 StorageUnavailableError →
+        落 JSONL（不再假成功）；Mongo durable 成功后删除本地 pending JSONL
+        （冗余副本，只有 durable success 才删）。
+
         Returns:
-            True 表示保存成功，False 表示所有存储方式均失败。
+            True 表示保存成功（Mongo 或 JSONL 至少一种 durable），
+            False 表示所有存储方式均失败。
         """
         # 同步子系统的内存状态到 character_state（reflector buffer 等）
         if self._pre_save_hook:
@@ -261,6 +271,15 @@ class SessionMemory:
                                      else None),
                     service_state=self.service_state,
                 )
+                # Mongo durable → 本地 pending JSONL 冗余，删除（只有 durable success 才删）
+                if os.path.exists(self._pending_file):
+                    try:
+                        os.remove(self._pending_file)
+                        logger.debug("session Mongo durable，删除 pending %s",
+                                     self._pending_file)
+                    except OSError:
+                        logger.warning("session 删除 pending 文件失败（无害）：%s",
+                                       self._pending_file)
                 logger.debug("Session save to MongoDB OK: %d messages", len(self._messages))
                 return True
             except Exception:
@@ -371,6 +390,7 @@ class SessionMemory:
         if self._repo is None:
             return await self._load_from_jsonl()
         sid = session_id or self._session_id
+        self._storage_unavailable = False
         try:
             result = await self._repo.load(sid)
             if result is not None:
@@ -390,6 +410,11 @@ class SessionMemory:
                         setattr(self.service_state, field, getattr(ss, field))
                 logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(messages))
                 return True
+            return await self._load_from_jsonl()
+        except StorageUnavailableError:
+            # B2/P1-01：存储不可用（区别于 not found）——标记供 ensure_loaded 判定
+            self._storage_unavailable = True
+            logger.warning("SessionMemory load from MongoDB unavailable, trying JSONL")
             return await self._load_from_jsonl()
         except Exception:
             logger.warning("SessionMemory load from MongoDB failed, trying JSONL", exc_info=True)

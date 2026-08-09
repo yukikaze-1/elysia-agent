@@ -101,6 +101,14 @@ class _LifecyclePersistence:
         # 无条件 load_active：确保默认会话进入 _loaded（shutdown save_all() 依赖，
         # 否则 MongoDB 离线期间的内存会话在关闭时不会落 JSONL）
         await self._session_manager.load_active()
+        # B2/P2-01：扫描所有 pending JSONL 会话（非活动也在内），Mongo 可用时导入
+        try:
+            recovered = await self._session_manager.recover_pending_sessions(
+                import_to_mongo=mongo_ok)
+            if recovered:
+                logger.info("SessionManager 恢复 %d 个 pending 会话", recovered)
+        except Exception:
+            logger.warning("pending 会话扫描/导入失败", exc_info=True)
         if mongo_ok:
             # CharacterState 已由 load() 原地恢复到 engine.state（active=default）
             if self._character_engine.state.last_awareness_time:
@@ -111,8 +119,12 @@ class _LifecyclePersistence:
             if os.path.exists(active.pending_file):
                 if await active.load_from_jsonl(merge=True):
                     if await active.save():
-                        os.remove(active.pending_file)
-                        logger.info("Session JSONL 已导入 MongoDB 并删除")
+                        # save() 在 Mongo durable 成功后已删除 pending；若仍存在
+                        # 说明走了 JSONL fallback（Mongo 写入失败），保留数据
+                        if not os.path.exists(active.pending_file):
+                            logger.info("Session JSONL 已导入 MongoDB 并删除")
+                        else:
+                            logger.warning("Session MongoDB 写入失败，保留 JSONL")
                     else:
                         logger.warning("Session MongoDB 写入失败，保留 JSONL")
         if not mongo_ok:

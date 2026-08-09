@@ -116,10 +116,15 @@ class TestSessionMemorySaveLoad:
 
     @pytest.mark.asyncio
     async def test_save_delegates_to_repo(self):
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+
         mock_repo = MagicMock()
         mock_repo._db = object()  # 模拟已连接
         mock_repo.save = AsyncMock()
         sm = SessionMemory(session_id=SessionId("test-save"), repo=mock_repo)
+        sm.add_message(UserMessage(message_id=MessageId("m1"),
+                                   content=[TextPart(content="hi")]))
         result = await sm.save()
         assert result is True
         mock_repo.save.assert_called_once()
@@ -177,6 +182,76 @@ class TestSessionMemorySaveLoad:
         assert result is True
         # 清理
         os.remove(pending)
+
+
+class TestSessionDurablePersistence:
+    """B2/P1-01：离线不假成功、Mongo durable 后删 pending、空未加载不覆盖。"""
+
+    @pytest.mark.asyncio
+    async def test_save_falls_back_to_jsonl_when_repo_offline(self, tmp_path):
+        """repo 存在但未连接（_db=None）→ save() 不能假成功，必须落 JSONL（P1-01 复现）。
+
+        修复前 repo.save 静默 return → save() 返回 True 但 Mongo 无记录也无 JSONL。
+        """
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        from core.storage.session_repo import SessionRepository
+
+        repo = SessionRepository(db=None)  # 未连接——repo.save 抛 StorageUnavailableError
+        pending = os.path.join(str(tmp_path), "session_offline.json")
+        sm = SessionMemory(session_id=SessionId("offline"), repo=repo)
+        sm._pending_file = pending
+        sm.add_message(UserMessage(message_id=MessageId("m1"),
+                                   content=[TextPart(content="hi")]))
+
+        result = await sm.save()
+
+        assert result is True
+        assert os.path.exists(pending)  # JSONL fallback 落盘（修复前不存在 → 数据双失）
+
+    @pytest.mark.asyncio
+    async def test_save_deletes_pending_after_mongo_success(self, tmp_path):
+        """Mongo durable 成功后删除 pending JSONL（只有 durable success 才删）。"""
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+
+        mock_repo = MagicMock()
+        mock_repo._db = object()
+        mock_repo.save = AsyncMock()
+        pending = os.path.join(str(tmp_path), "session_p.json")
+        sm = SessionMemory(session_id=SessionId("sid"), repo=mock_repo)
+        sm._pending_file = pending
+        sm.add_message(UserMessage(message_id=MessageId("m1"),
+                                   content=[TextPart(content="hi")]))
+        with open(pending, "w") as f:
+            f.write("{}")
+
+        result = await sm.save()
+
+        assert result is True
+        assert not os.path.exists(pending)  # Mongo durable → pending 已删
+
+    @pytest.mark.asyncio
+    async def test_load_sets_storage_unavailable_flag(self):
+        """repo 未连接 → load 标记 _storage_unavailable（ensure_loaded 据此不标 loaded）。"""
+        from core.storage.session_repo import SessionRepository
+
+        repo = SessionRepository(db=None)
+        sm = SessionMemory(session_id=SessionId("sid"), repo=repo)
+        result = await sm.load()
+        assert result is False
+        assert sm._storage_unavailable is True  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_load_new_session_not_storage_unavailable(self):
+        """存储可达但 not found → 不标记 _storage_unavailable（合法新会话）。"""
+        mock_repo = MagicMock()
+        mock_repo._db = object()
+        mock_repo.load = AsyncMock(return_value=None)
+        sm = SessionMemory(session_id=SessionId("sid"), repo=mock_repo)
+        result = await sm.load()
+        assert result is False
+        assert sm._storage_unavailable is False  # noqa: SLF001
 
 
 @pytest.mark.unit

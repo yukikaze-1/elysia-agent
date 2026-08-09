@@ -14,7 +14,7 @@ from core.schema.part import TextPart
 from core.schema.service_state import ServiceState
 from core.schema.types import IsoTimestamp, SessionId
 
-from core.storage.base import Repository
+from core.storage.base import Repository, StorageUnavailableError
 
 logger = logging.getLogger(__name__)
 COLLECTION = "sessions"
@@ -126,9 +126,14 @@ class SessionRepository(Repository):
             character_state: 角色状态。
             reflector_state: 记忆反射器状态，为 None 时写入空对象。
             service_state: 服务运行时状态，为 None 时写入空对象。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（B2/P1-01——禁止静默
+                return 被 caller 当作成功；caller 捕获后落 JSONL fallback）。
         """
         if self._db is None:
-            return
+            raise StorageUnavailableError(
+                "SessionRepository 未连接（MongoDB 不可用），session 未持久化")
         serialized = [m.model_dump(mode="json") for m in messages]
         doc = {
             "session_id": session_id,
@@ -155,9 +160,13 @@ class SessionRepository(Repository):
         Args:
             session_id: 会话 ID。
             title: 会话标题，默认空串（可由后续 save 自动派生）。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（B2/P1-01）。
         """
         if self._db is None:
-            return
+            raise StorageUnavailableError(
+                "SessionRepository 未连接（MongoDB 不可用），session 未创建")
         doc = {
             "session_id": session_id,
             "title": title,
@@ -194,10 +203,15 @@ class SessionRepository(Repository):
             session_id: 会话 ID。
 
         Returns:
-            (消息列表, 角色状态, 记忆反射器状态, 服务运行时状态) 元组，若不存在或数据库不可用返回 None。
+            (消息列表, 角色状态, 记忆反射器状态, 服务运行时状态) 元组，不存在返回 None。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（B2/P1-01——区分「不可用」
+                与「not found」；caller 捕获后走 JSONL fallback）。
         """
         if self._db is None:
-            return None
+            raise StorageUnavailableError(
+                "SessionRepository 未连接（MongoDB 不可用），session 无法加载")
         results = await self._db.find(COLLECTION, {"session_id": session_id}, limit=1)
         if not results:
             return None

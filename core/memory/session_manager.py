@@ -20,11 +20,19 @@ import logging
 import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from paths import ProjectPath
 
 from core.schema.utils import now_iso
 from core.schema.types import SessionId
-from core.storage.session_repo import SessionRepository, SessionSummary
+from core.storage.base import StorageUnavailableError
+from core.storage.session_repo import (
+    SessionRepository,
+    SessionSummary,
+    _derive_title,
+)
 from core.storage.message_repo import MessageRepository
 from core.memory.session import SessionMemory
 
@@ -89,6 +97,9 @@ class SessionManager:
         # OrderedDict：访问/插入移到尾部，头部即最久未用（LRU）
         self._sessions: OrderedDict[SessionId, SessionMemory] = OrderedDict()
         self._loaded: set[SessionId] = set()
+        # B2/P1-01：每会话 in-flight load future——并发 ensure_loaded 合并为一次 load；
+        # 仅成功后加入 _loaded，失败移除 future 允许重试。
+        self._load_futures: dict[SessionId, asyncio.Future[SessionMemory]] = {}
         self._active_id = DEFAULT_SESSION
         self._character_engine = None
         # F1(a)：switch 忙时拒绝的检查回调（agent 注入 `not status.is_accepting_input`）
@@ -153,12 +164,32 @@ class SessionManager:
         return session
 
     async def ensure_loaded(self, sid: SessionId) -> SessionMemory:
-        """首次调用 await load（Mongo → JSONL fallback）；重复调用不重复 load。"""
+        """首次调用 await load（Mongo → JSONL fallback）；重复调用不重复 load。
+
+        B2/P1-01：并发 caller 经 per-session in-flight future 合并为一次 load。
+        loaded 标记规则：load 成功（Mongo/JSONL 有数据）或「存储可达但 not found」
+        （合法新会话）都标记；存储不可用（load 失败）不标记——避免第二个并发
+        caller 看到「已标记 loaded 的空会话」，也不让失败永久卡住（下次重试）。
+        """
         sid = SessionId(sid)
         session = self.get(sid)
-        if sid not in self._loaded:
-            self._loaded.add(sid)
-            await session.load(sid)
+        if sid in self._loaded:
+            return session
+        future = self._load_futures.get(sid)
+        if future is not None:
+            await future
+            return session
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._load_futures[sid] = future
+        try:
+            ok = await session.load(sid)
+            if ok or not session._storage_unavailable:  # noqa: SLF001
+                self._loaded.add(sid)
+        finally:
+            if not future.done():
+                future.set_result(session)
+            self._load_futures.pop(sid, None)
         return session
 
     # ---- resolve / switch ----
@@ -299,7 +330,11 @@ class SessionManager:
         成功后 text/附件/voice 携带该 conversationId 不再被严格检查判为幽灵会话。
         """
         sid = SessionId(f"conv_{uuid.uuid4().hex[:12]}")
-        await self._repo.create(sid, title)
+        try:
+            await self._repo.create(sid, title)
+        except StorageUnavailableError:
+            # B2/P1-01：repo 未连接 → 进程内继续（local_summary 降级），不抛给 REST
+            logger.debug("SessionManager.create: Mongo 离线，仅进程内创建 %s", sid)
         await self.ensure_loaded(sid)
         summary = SessionSummary(
             session_id=sid,
@@ -488,6 +523,55 @@ class SessionManager:
     async def load_active(self) -> None:
         """加载当前活动会话（启动时调用）。"""
         await self.ensure_loaded(self._active_id)
+
+    async def recover_pending_sessions(self, *, pending_dir: str | None = None,
+                                       import_to_mongo: bool = True) -> int:
+        """启动扫描所有 pending JSONL 会话（非活动也在内），恢复内存并导入 Mongo。
+
+        B2/P2-01：此前只加载 active 的 pending；非活动会话的离线数据重启后不可见。
+        这里 glob ``data/session_*.json``，逐个 ``load_from_jsonl`` 恢复并标记
+        loaded；Mongo 可用时 ``save()``（Mongo durable 后自动删除 pending）。
+        损坏/空文件忽略（不计数）。路径解析限制在 pending 根目录。
+
+        Args:
+            pending_dir: 覆盖 pending 目录（测试用）；默认取 SESSION_PENDING 目录。
+            import_to_mongo: Mongo 可用时是否导入并删除 pending。
+
+        Returns:
+            成功恢复的会话数。
+        """
+        if pending_dir is None:
+            root = Path(str(ProjectPath.SESSION_PENDING.resolve(session_id="x"))).parent
+        else:
+            root = Path(pending_dir)
+        if not root.is_dir():
+            return 0
+        recovered = 0
+        for f in sorted(root.glob("session_*.json")):
+            sid = SessionId(f.name[len("session_"):-len(".json")])
+            try:
+                session = self.get(sid)
+                # 指向扫描到的实际文件（生产=真实 pending 路径；测试=覆盖目录）
+                session._pending_file = str(f)  # noqa: SLF001
+                if not await session.load_from_jsonl(merge=True):
+                    continue  # 损坏/空文件——忽略，不计数
+                self._loaded.add(sid)
+                # 非活动会话也进本地摘要，使离线 list/has_session 可见
+                summary = self._local_summaries.get(sid)
+                if summary is None:
+                    summary = SessionSummary(
+                        session_id=sid, message_count=len(session.messages),
+                        updated_at=now_iso(), title=_derive_title(session.messages))
+                    self._local_summaries[sid] = summary
+                else:
+                    summary.message_count = len(session.messages)
+                if import_to_mongo:
+                    # save() 在 Mongo durable 成功后删除 pending；失败保留
+                    await session.save()
+                recovered += 1
+            except Exception:
+                logger.warning("pending 会话恢复失败: %s", f.name, exc_info=True)
+        return recovered
 
     def evict_if_needed(self) -> None:
         """超出 max_sessions 时逐出最久未用非活动会话（逐出前 save）。
