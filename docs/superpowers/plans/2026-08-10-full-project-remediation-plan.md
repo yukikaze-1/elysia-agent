@@ -92,7 +92,7 @@ A1/A2
 
 - [x] A0 执行前安全快照与运行约束
 - [x] A1 附件 GC 完整分页、复核和 fail-closed
-- [ ] A2 PR CI 与宿主凭据隔离
+- [x] A2 PR CI 与宿主凭据隔离
 - [ ] B1 统一存储不可用语义与真实健康检查
 - [ ] B2 Session durable save/load/pending 恢复
 - [ ] B3 归档任务所有权与 durable 删除
@@ -1164,6 +1164,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：无新索引；物理删除改两阶段 quarantine（`.quarantine/{kind}/`，同文件系统可恢复，规则 5 默认 7 天后 unlink）。恢复：误隔离文件可从 `.quarantine` 还原 + 重建记录
 - 契约或 Electron 影响：无（内部 GC，无 wire 变化）
 - 剩余风险：quarantine 区在 `data/uploads/.quarantine`，`git status` 若该目录在版本控制内需确认 ignore；已确认不在 KINDS 扫描范围
+
+### A2 — PR CI 与宿主凭据隔离
+
+- 状态：完成
+- Commit：`<见 A2 提交>`
+- 变更文件：`.github/workflows/ci.yml`、`scripts/check_ci_isolation.py`（新）、`scripts/tests/test_check_ci_isolation.py`（新）
+- 新增失败测试：`TestRejectInsecure`（旧模式 `pull_request + self-hosted + cp /home/.../.env` 必须拒绝）；`TestAcceptSecure`（PR 用 GitHub-hosted、push-only self-hosted 通过；PR 可达 self-hosted 仍拒绝）
+- 目标测试：`pytest scripts/tests/test_check_ci_isolation.py` → 4 passed；`python scripts/check_ci_isolation.py .github/workflows/ci.yml` → 通过
+- 批次门禁：无 key 环境模拟 PR runner：`env -u DEEPSEEK_API_KEY ... pytest -m "unit or service"` → 2914 passed, 2 skipped, 95 deselected（证明 PR job 无 host secret 可全绿）
+- 数据迁移/回滚：无
+- 契约或 Electron 影响：无（仅 CI 信任边界）
+- 剩余风险：push 到 main 的 self-hosted job 仍引用宿主 `.env`（受信 ref 故意保留，`if: github.event_name == 'push'` guard + 门禁脚本双保险）；外部真实凭据 E2E 的 workflow_dispatch/environment job 拆分在 F1/E4 落地
 
 ## 14. 需要停止并请求决策的情况
 
