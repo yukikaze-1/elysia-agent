@@ -61,3 +61,34 @@ def test_all_generation_frames_have_conversation_id():
             if frame["type"].startswith("generation."):
                 assert frame.get("conversationId"), \
                     f"{name} 的 {frame['type']} 缺 conversationId: {frame}"
+
+
+@pytest.mark.parametrize("name", ["ws-v2-cancel.jsonl", "ws-v2-fail.jsonl"])
+def test_cancel_and_fail_are_current_contract_goldens(name: str):
+    """取消/失败文件由当前契约生成：能力全开、ACK/生成归属完整、父终态唯一。"""
+    frames = _frames(name)
+    info = next(f for f in frames if f["type"] == "server_info")
+    assert all(info["features"].values()), f"{name} 不应保留旧 features=false 快照"
+    ack = next(f for f in frames if f["type"] == "user_message.ack")
+    assert ack["conversationId"] == "default"
+    terminals = [f for f in frames
+                 if f["type"] in ("generation.completed", "generation.failed")]
+    assert len(terminals) == 1, f"{name} 父终态必须唯一: {terminals}"
+    assert terminals[0]["type"] == "generation.failed"
+    assert terminals[0]["conversationId"] == "default"
+    assert terminals[0]["model"] == "deepseek/deepseek-chat"
+    assert [f.get("state") for f in frames if f["type"] == "state"][-2:] \
+        == ["interrupted", "idle"]
+
+
+def test_cancel_and_fail_error_semantics():
+    """取消不可重试；Provider 故障可重试，错误码使用当前稳定目录值。"""
+    cancelled = next(f for f in _frames("ws-v2-cancel.jsonl")
+                     if f["type"] == "generation.failed")
+    assert cancelled["code"] == "GENERATION_CANCELLED"
+    assert cancelled["retryable"] is False
+
+    failed = next(f for f in _frames("ws-v2-fail.jsonl")
+                  if f["type"] == "generation.failed")
+    assert failed["code"] == "GENERATION_PROVIDER_UNAVAILABLE"
+    assert failed["retryable"] is True

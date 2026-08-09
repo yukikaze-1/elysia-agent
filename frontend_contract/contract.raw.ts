@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: fb130496c6ca6774
+// schemaHash: a24d636802801fe2
 
 /** 会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。 */
 export interface ConversationUsage {
@@ -964,9 +964,11 @@ export interface ToolAttachment {
 
 /** 桌面工具执行请求（Server→Client，v2 定向投递 desktop channel）。
 
-bridge._deliver 定位 `client_platform == "electron"` 的 v2 连接 → _send_json 本帧；
-v1 连接不收 desktop 帧（D-l）。paramHash = 规范化 arguments 的 SHA-256（BE-043
-篡改拒绝权威依据）；expiresAt = 桥 request_timeout 的绝对过期时间（UTC ISO）。 */
+bridge._deliver 按 call 登记的 `target_connection` 精确定位
+`client_platform == "electron"` 且 `connection_id` 相等的 v2 连接，再 _send_json
+本帧；v1/其它 Electron 连接不收 desktop 帧（D-l）。paramHash = 规范化 arguments
+的 SHA-256（BE-043 篡改拒绝权威依据）；expiresAt = 桥 request_timeout 的绝对
+过期时间（UTC ISO）。 */
 export interface ToolRequestMessage {
   type: 'tool.request'
   /** 调用 ID（call_ 前缀） */

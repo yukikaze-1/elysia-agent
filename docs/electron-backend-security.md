@@ -1,6 +1,6 @@
 # Electron 后端安全部署指南
 
-**文档版本：** v0.6（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新；批次 7 补 §1.2 附件免 Bearer 豁免 + §3.5 附件下载/签名安全 + 已知缺口更新；批次 8a 补 §1.1 管理面认证 fallback + §1.4 启动守卫双 token 检查 + §3.5 下载校验序前置）
+**文档版本：** v0.7（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新；批次 7 补 §1.2 附件免 Bearer 豁免 + §3.5 附件下载/签名安全 + 已知缺口更新；批次 8a 补 §1.1 管理面认证 fallback + §1.4 启动守卫双 token 检查 + §3.5 下载校验序前置；2026-08-10 接入复审同步会话与 Desktop 精确投递现状）
 **关联：** `docs/archive/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`、`docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`、`docs/superpowers/specs/2026-08-06-electron-backend-batch8a-security-attachment-search.md`
 
 本文件说明 Elysia Agent 后端的**远程安全部署**方式：产品认证、TLS 终止、防护范围与已知缺口。远程部署必须遵循本指南；本地开发（回环 + 无 token）维持匿名。
@@ -101,11 +101,11 @@ server {
 
 - **`default` 会话禁删**：`DELETE /api/sessions/default` → 409 `SESSION_PROTECTED`（`default` 恒存在且受保护，禁删含其 append-only 消息归档与 character_state）；
 - **忙时门禁**：生成/TTS 进行中 `activate`（WS/REST）或删除**活动会话** → 409 `AGENT_BUSY`（retryable），防 engine 换绑与异步延续竞态；
-- 会话 ID 未登记即被 v2 显式 `conversationId` 路由会 lazy-create——不碰 `default`，仅可能产生幽灵会话文档（Demo 可接受，后续批次可加白名单校验）。
+- **显式会话存在性**：v2 text、附件、`voice.commit`、realtime voice 对非空 `conversationId` 均在接受工作前验证登记状态；未知、拼错、已删除或处于删除 tombstone 的 ID 直接返回 `SESSION_NOT_FOUND`，不得 lazy-create 幽灵会话。缺省 ID 才解析为当前 active，并在 accepted 时固化归属。
 
 ### 3.2 Desktop 工具桥安全语义（批次 4，BE-040~043）
 
-- **客户端标识**：`X-Client-Platform: electron` 握手头**仅 v2 解析**（v1 伪冒隔离，负面隔离测试守护）；desktop 工具请求**定向投递**到该 electron 连接（非广播）。
+- **客户端标识与精确投递**：`X-Client-Platform: electron` 握手头**仅 v2 解析**（v1 伪冒隔离，负面隔离测试守护）；bridge 把最新握手 `connectionId` 登记为 call 的 `target_connection`，投递时同时匹配 `client_platform=electron` 与该 ID。重连期间新旧连接并存时旧连接不收新请求；精确目标不存在则立即失败为 `DESKTOP_UNAVAILABLE`，不广播、不静默丢帧。
 - **附件持有者校验**：`POST /api/uploads/desktop/{callId}` 三重校验（① callId 存在否则 404 `CALL_NOT_FOUND`；② 上传连接 `X-Client-Connection` = 握手 `connectionId` = `target_connection` 否则 403 `INVALID_REQUEST`；③ call 处于可收结果状态，终态拒绝 403 防伪附件）——校验失败不落盘。
 - **参数篡改拒绝（BE-043）**：`tool.status` 回传 `toolName/toolVersion/runtime/paramHash` 与登记不一致 → 立即 mark failed（`CALL_IDEMPOTENCY_CONFLICT`）+ resolve 失败态 + 丢弃（不挂超时）；paramHash = 规范化 arguments SHA-256。
 - **断连/重传**：断连 → repo 标 `offline`；未接手（pending）call 立即 resolve UNAVAILABLE（无副作用已发生，早收尾安全）；已接手（accepted/running）call 不自动取消（Electron 可能已副作用），靠重连后重传 result 对账（`offline → 终态` 迁移）。**重连不自动重投执行请求**（防重复副作用）。

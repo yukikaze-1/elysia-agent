@@ -863,9 +863,11 @@ class ToolAttachment(ContractModel):
 class ToolRequestMessage(ContractModel):
     """桌面工具执行请求（Server→Client，v2 定向投递 desktop channel）。
 
-    bridge._deliver 定位 `client_platform == "electron"` 的 v2 连接 → _send_json 本帧；
-    v1 连接不收 desktop 帧（D-l）。paramHash = 规范化 arguments 的 SHA-256（BE-043
-    篡改拒绝权威依据）；expiresAt = 桥 request_timeout 的绝对过期时间（UTC ISO）。
+    bridge._deliver 按 call 登记的 `target_connection` 精确定位
+    `client_platform == "electron"` 且 `connection_id` 相等的 v2 连接，再 _send_json
+    本帧；v1/其它 Electron 连接不收 desktop 帧（D-l）。paramHash = 规范化 arguments
+    的 SHA-256（BE-043 篡改拒绝权威依据）；expiresAt = 桥 request_timeout 的绝对
+    过期时间（UTC ISO）。
     """
 
     type: Literal["tool.request"] = "tool.request"

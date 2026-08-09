@@ -1,14 +1,14 @@
-{"type": "session", "messages": [], "token_stats": {"total": 0, "by_model": {}}}
-{"type": "server_info", "protocol_version": "2.0", "server_version": "0.1.0", "features": {"structured_generation": false, "multi_conversation": false, "desktop_runtime": false, "dictation": false}, "services": {"llm": {"available": true, "enabled": true, "model": "deepseek/deepseek-chat", "default": "deepseek/deepseek-chat"}, "stt": {"available": false, "enabled": false, "default": "sensevoice/sense-voice", "model": null}, "tts": {"available": false, "enabled": false, "default": "gpt-sovits/default", "model": null}}}
+{"type": "session", "conversationId": "default", "messages": [], "token_stats": {"total": 0, "byModel": {}}}
+{"type": "server_info", "protocol_version": "2.0", "server_version": "0.1.0", "features": {"structured_generation": true, "multi_conversation": true, "desktop_runtime": true, "dictation": true, "voice_recording": true, "voice_realtime": true, "media_upload": true}, "services": {"llm": {"available": true, "enabled": true, "model": "deepseek/deepseek-chat", "default": "deepseek/deepseek-chat"}, "stt": {"available": false, "enabled": false, "default": "sensevoice/sense-voice", "model": null}, "tts": {"available": false, "enabled": false, "default": "gpt-sovits/default", "model": null}}, "connectionId": "conn_frame_0001", "build_sha": "0123abcd"}
 {"type": "expression", "expression": "开心", "intensity": 0.65}
-{"type": "user_message.ack", "messageId": "msg_a7127bc5bbde4501b43d5bc774", "clientRequestId": "req_cap_748af8a8", "receivedAt": "2026-08-04T00:02:06.603593+00:00", "status": "accepted"}
+{"type": "user_message.ack", "messageId": "msg_frame_cancel_ack", "clientRequestId": "req_frame_cancel1", "conversationId": "default", "receivedAt": "2026-08-09T00:00:00+00:00", "status": "accepted"}
 {"type": "state", "state": "thinking"}
 {"type": "typing", "typing": true}
-{"type": "generation.started", "generationId": "gen_5d3fe30bb5c14caab4e1ec5fa4", "messageId": "msg_058a8df542dc424eae7271216c"}
-{"type": "generation.segment.started", "generationId": "gen_5d3fe30bb5c14caab4e1ec5fa4", "segmentId": "seg_c31c4cb636a14bac963008bd53", "segmentIndex": 0, "channel": "inner_voice", "kind": "text"}
-{"type": "generation.segment.completed", "generationId": "gen_5d3fe30bb5c14caab4e1ec5fa4", "segmentId": "seg_c31c4cb636a14bac963008bd53", "segmentIndex": 0, "channel": "inner_voice", "kind": "text", "content": "准备回答。"}
+{"type": "generation.started", "generationId": "gen_frame_cancel1", "messageId": "msg_frame_cancel_ast", "conversationId": "default", "model": "deepseek/deepseek-chat"}
+{"type": "generation.segment.started", "generationId": "gen_frame_cancel1", "segmentId": "seg_frame_cancel_pub0", "segmentIndex": 0, "channel": "public_reply", "kind": "text", "conversationId": "default"}
+{"type": "generation.delta", "generationId": "gen_frame_cancel1", "segmentId": "seg_frame_cancel_pub0", "segmentIndex": 0, "deltaSequence": 0, "delta": "正在生成的部分内容", "conversationId": "default"}
 {"type": "typing", "typing": false}
-{"type": "generation.failed", "generationId": "gen_5d3fe30bb5c14caab4e1ec5fa4", "messageId": "msg_058a8df542dc424eae7271216c", "code": "GENERATION_CANCELLED", "message": "已取消", "retryable": false, "details": {}}
+{"type": "generation.failed", "generationId": "gen_frame_cancel1", "messageId": "msg_frame_cancel_ast", "model": "deepseek/deepseek-chat", "code": "GENERATION_CANCELLED", "message": "已取消", "retryable": false, "details": {}, "conversationId": "default"}
 {"type": "typing", "typing": false}
 {"type": "state", "state": "interrupted"}
 {"type": "state", "state": "idle"}

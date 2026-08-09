@@ -187,7 +187,7 @@ def _make_bridge(timeout: float = 120.0) -> tuple[FakeDesktopRepo, DesktopToolBr
     bridge = DesktopToolBridge(repo, timeout=timeout)
     frames: list[dict] = []
 
-    async def deliver(frame: dict) -> None:
+    async def deliver(_target_connection: str | None, frame: dict) -> None:
         frames.append(frame)
 
     bridge.bind_deliver(deliver)
@@ -267,7 +267,7 @@ class TestFastResponse:
         bridge = DesktopToolBridge(repo, timeout=1.0)
         resolved: list = []
 
-        async def deliver(frame):
+        async def deliver(_target_connection, frame):
             # 投递帧里立即回 result——若先投递后登记，handle_status 找不到 future → 超时
             resolved.append(await bridge.handle_status(_status(frame["callId"], "result", output="fast")))
 
@@ -283,7 +283,7 @@ class TestFastResponse:
         repo = FakeDesktopRepo()
         bridge = DesktopToolBridge(repo, timeout=1.0)
 
-        async def deliver(frame):
+        async def deliver(_target_connection, frame):
             await bridge.handle_status(_status(
                 frame["callId"], "error", error={"code": "E", "message": "boom"}))
 
@@ -292,6 +292,35 @@ class TestFastResponse:
         assert not result.success
         assert result.error_type == ErrorType.TOOL_ERROR
         assert result.error == "boom"
+
+
+# ============================================================================
+# 精确目标投递 / 快速失败
+# ============================================================================
+
+class TestTargetedDelivery:
+    @pytest.mark.asyncio
+    async def test_delivery_receives_snapshotted_target_connection(self):
+        """投递回调拿到 call 登记的目标连接，失败立即 UNAVAILABLE 而非等待超时。"""
+        repo = FakeDesktopRepo()
+        bridge = DesktopToolBridge(repo, timeout=120.0)
+        await bridge.on_client_connect("conn_latest")
+        delivered: list[tuple[str | None, dict]] = []
+
+        async def deliver(target_connection: str | None, frame: dict) -> None:
+            delivered.append((target_connection, frame))
+            raise RuntimeError("目标连接已消失")
+
+        bridge.bind_deliver(deliver)
+        result = await bridge.request_and_wait(call=_call())
+
+        assert not result.success
+        assert result.error_type == ErrorType.UNAVAILABLE
+        assert delivered[0][0] == "conn_latest"
+        call_id = delivered[0][1]["callId"]
+        assert repo.calls[call_id]["target_connection"] == "conn_latest"
+        assert repo.calls[call_id]["status"] == "failed"
+        assert repo.calls[call_id]["error"]["code"] == "DESKTOP_UNAVAILABLE"
 
 
 # ============================================================================

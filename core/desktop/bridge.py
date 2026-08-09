@@ -10,7 +10,8 @@ wire 帧经契约层 `ToolRequestMessage`/`ToolStatusMessage`（frontend_contrac
   复用 callId + await 原 future，不二次投递（防重复弹窗，BE-043）。offline/expired
   不参与去重（断连后原弹窗不可恢复，重试即新调用）。
 - **先登记后投递（顺序不可颠倒）**：`self._pending[call_id] = future` 必须先于
-  `deliver(tool.request)`；否则 Electron 极速回 status 时 `handle_status` 在登记前执行
+  `deliver(target_connection, tool.request)`；否则 Electron 极速回 status 时
+  `handle_status` 在登记前执行
   → 结果丢弃、future 挂超时。投递失败清理登记。
 - **进程内 future 终态唯一**：`_pending[call_id]` 为 request_and_wait 的唤醒源；所有
   resolve 路径经 `if not future.done()` 防护——超时/取消/结果到达竞态不抛
@@ -80,8 +81,10 @@ class DesktopToolBridge:
         self._dedup: dict[tuple[str, str], str] = {}
         self._connected: bool = False
         self._connection_id: str | None = None
-        # 投递回调：agent 层注入（Task 6），定位 electron channel → _send_json(tool.request)
-        self._deliver: Callable[[dict], Awaitable[None]] | None = None
+        # 投递回调：agent 层注入（Task 6），按登记的 target_connection 精确定位
+        # electron channel → _send_json(tool.request)。目标可空仅为竞争窗口兜底；
+        # 生产回调会明确失败，由 request_and_wait 收敛为 DESKTOP_UNAVAILABLE。
+        self._deliver: Callable[[str | None, dict], Awaitable[None]] | None = None
 
     # ---- 生命周期 ----
 
@@ -116,8 +119,10 @@ class DesktopToolBridge:
         """桥的健康状态：桌面客户端是否可用（repo 离线降级不视为桥不可用）。"""
         return self._connected
 
-    def bind_deliver(self, deliver: Callable[[dict], Awaitable[None]]) -> None:
-        """绑定投递回调（Task 6 _start_tool_context 注入）。"""
+    def bind_deliver(
+        self, deliver: Callable[[str | None, dict], Awaitable[None]],
+    ) -> None:
+        """绑定精确目标投递回调（Task 6 _start_tool_context 注入）。"""
         self._deliver = deliver
 
     # ---- 连接状态（ws_handler 握手/断开挂点） ----
@@ -226,7 +231,8 @@ class DesktopToolBridge:
             try:
                 if self._deliver is None:
                     raise RuntimeError("deliver 回调未绑定")
-                await self._deliver(self._build_request_frame(doc))
+                await self._deliver(
+                    doc.get("target_connection"), self._build_request_frame(doc))
             except Exception as e:  # noqa: BLE001 — 投递失败属预期路径，兜底清理
                 logger.warning("DesktopToolBridge 投递失败 (call=%s): %s", call_id, e)
                 self._pending.pop(call_id, None)

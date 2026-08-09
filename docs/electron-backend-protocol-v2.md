@@ -1,6 +1,6 @@
 # Electron 后端协议 v2 — 结构化聊天事件契约参考
 
-**文档版本：** v0.6（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9，批次 4 补充 Desktop 工具契约 §10/错误码目录，批次 5 补充模型 Profile 与 TTS 声音契约 §11 + 错误码 21→25，批次 6 补充三种语音与 TTS 播放契约 §12 + 错误码 25→32，批次 7 补充通用附件与媒体契约 §13 + 错误码 32→40）
+**文档版本：** v0.7（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9，批次 4 补充 Desktop 工具契约 §10/错误码目录，批次 5 补充模型 Profile 与 TTS 声音契约 §11 + 错误码 21→25，批次 6 补充三种语音与 TTS 播放契约 §12 + 错误码 25→32，批次 7 补充通用附件与媒体契约 §13 + 错误码 32→40，2026-08-10 接入复审补当前 cancel/fail golden、Desktop 精确连接投递、错误码 40→41 与媒体/签名文档同步）
 **关联：** `docs/archive/electron-backend-baseline.md`（v1 现状）、`docs/electron-backend-security.md`（认证/版本协商）
 **Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md` + `docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`
 
@@ -14,7 +14,7 @@
 - **版本协商（批次 9B）**：`X-Protocol-Version` 支持集合 **{缺省/空 → v1, `"1"` → v1, `"2"` → v2}**；其余显式值（`"2.0"`/`"3"`/乱写）在**升级前**返回 HTTP 400 `ProtocolError`（`code=CONTRACT_VALIDATION`，message 明示支持集合）。传输 token 与展示版本分离：握手头只能用 `"2"`；`server_info.protocol_version` 为展示值 `"2.0"`（**不可**回填握手头，否则 400）。机器契约产物 `contract.raw.ts`/`contract.schema.json` 文件头带 `transportVersion: "2"`（握手可用值）。
 - v2 连接建连帧：`session`（历史回放，**含 `conversationId` = 本回放消息所属会话，批次 9A**）→ `server_info`（协议版本/能力/服务形状 + **`connectionId`**，批次 4）→ `expression`（当前心情）。
 - **批次 8c（F15）**：switch_model / set_service 后的 `capabilities` 重播仅达 v1 通道——v2 用 `server_info` 取代 capabilities，`broadcast_capabilities` 跳过 protocol_version ≥ 2 的通道；v2 对切换的感知经自身 `switch_model_result`/`service_mode_result` 回显（多客户端 v2 切换同步为已知限制）。
-- **`server_info.connectionId`（批次 4）**：仅 v2 + electron 连接下发（`conn_<uuid4 hex[:12]>`，= WS 握手生成的连接 ID）；普通 v2 / v1 恒省略。Electron 据此构造附件上传 `X-Client-Connection` 头（spec §5.4 持有者校验②依赖）。
+- **`server_info.connectionId`（批次 4）**：仅 v2 + electron 连接下发（`conn_<uuid4 hex[:12]>`，= WS 握手生成的连接 ID）；普通 v2 / v1 恒省略。Electron 据此构造附件上传 `X-Client-Connection` 头（spec §5.4 持有者校验②依赖）。Desktop 工具 call 同样登记该 ID 为 `target_connection`，后端只向 `client_platform=electron && connection_id=target_connection` 的精确通道投递；重连期间旧连接即使尚未移除也不会收到新请求。
 - **`server_info.build_sha`（批次 7，BE-081）**：构建 git HEAD 完整 SHA（`core/version.py` `get_build_sha()`，`git rev-parse HEAD`，非 git 仓库/失败 → None 缺省省略）；`server_version` 为 `__version__ + "+" + build_sha[:7]` 后缀（`build_server_version()`，无 git 时仅 `0.1.0`）。供前端展示/反馈定位。
 - `server_info.features` 如实反映能力：`structured_generation`（批次 2 = true）、`multi_conversation`（批次 3 = true）、`desktop_runtime`（**批次 4 = true**）、`dictation`/`voice_recording`/`voice_realtime`（**批次 6 = true**，spec BE-060~062，见 §12）、**`media_upload`（批次 7 = true，POST /api/uploads，见 §13）**。
 - **v1 忽略 `X-Client-Platform`**：v1 无 desktop 概念，伪冒 platform 头不生效（负面隔离，spec §5.1）。
@@ -134,16 +134,21 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `token_usage` | **抑制**（由 `generation.completed.usage` 承载） |
 | `expression` | **抑制**（心情由 `generation.completed.mood` 落位 + 建连 mood 推送） |
 
-## 8. 真实轨迹
+## 8. 契约 replay 样例与历史轨迹
 
 `docs/archive/frontend-handoff-v2/traces/`：
 
-- `ws-v2-chat.jsonl` — 完整生成（ack → started → inner_voice 段 → public_reply 段 → completed）。
-- `ws-v2-cancel.jsonl` — 取消（ack → started → … → generation.failed{CANCELLED} → interrupted）。
-- `ws-v2-fail.jsonl` — 失败（ack → started → generation.failed{GENERATION_PROVIDER_UNAVAILABLE}）。
-- `ws-v2-session.jsonl` — 多会话（批次 3）：`activate_session` 切隔离会话 → text 带 conversationId → generation.* conversationId=conv_trace_x。
+- `ws-v2-handshake.jsonl` — 当前 v2 握手（session → server_info → expression）。
+- `ws-v2-chat.jsonl` — 当前完整生成（ack → started → inner_voice/public_reply → completed）。
+- `ws-v2-cancel.jsonl` — 当前取消（partial segment → `GENERATION_CANCELLED` → interrupted → idle）。
+- `ws-v2-fail.jsonl` — 当前 Provider 失败（started → `GENERATION_PROVIDER_UNAVAILABLE` → idle）。
+- `ws-v2-session.jsonl` — 当前多会话 conversationId 贯通。
+- `ws-v2-tool.jsonl` / `ws-v2-voice.jsonl` — 当前 Desktop 工具与实时语音样例。
 
-生成方式：`scripts/capture_ws_trace.py v2chat|v2cancel|v2fail|v2session`。
+上述七个无 `legacy` 后缀的文件由 `scripts/gen_contract_frames.py` 从
+`frontend_contract/` 确定性生成，并由 `--check` 做漂移门禁。批次 2 真实抓包改名为
+`ws-v2-cancel-legacy-batch2.jsonl` / `ws-v2-fail-legacy-batch2.jsonl`，只作历史参考；
+已停用的 `scripts/capture_ws_trace.py` 不是当前契约生成入口。
 
 ## 9. 多会话 REST 查询（批次 3，spec BE-030/031 + BE-024）
 
@@ -168,7 +173,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 
 错误信封统一（code/message/retryable/requestId）；全部匿名 401（`AGENT_ACCESS_TOKEN` 配置时）。**批次 8c（F1/F2）：** 泛型 `error` 帧补 `retryable`/`details` 字段（语音错误站点透传）；admin/debug 端点（/shutdown、/restart、/tools、/tools/reload、/debug/api/*）错误响应统一走 ProtocolError 信封（`error` = message 兼容别名，v1 读 `.error` 不破坏），不再裸 `{"error":...}`。
 
-### 9.1 错误码目录（批次 1-7 累计，40 码）
+### 9.1 错误码目录（批次 1-9C 累计，41 码）
 
 | code | HTTP | retryable | 场景 |
 |---|---|---|---|
@@ -203,10 +208,11 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `VOICE_RECORDING_TOO_LONG` | 413 | false | 录音缓冲超 `MAX_RECORDING_SECONDS`（600s ≈ 18.3MiB，批次 6） |
 | `DICTATION_NOT_FOUND` | 404 | false | 无活动 dictation 时收 `dictation.stop`/`dictation.cancel`（批次 6） |
 | `STT_UNAVAILABLE` | 503 | true | STT 未启用/后端不可用/活动 STT 为 desktop-local runtime（start 拒绝 / 转写失败 / 录音 stop 时 STT 已关，批次 6） |
+| `STT_PROFILE_NOT_FOUND` | — | false | `dictation.start.sttProfileId` 不存在，或 profile runtime 不是 backend、后端不能执行（批次 9C；WS `error` 帧） |
 | `PLAYBACK_NOT_FOUND` | 404 | false | `audio.cancel` 未知**或已结束**的 stream_id（前端可忽略良性，批次 6） |
 | `ATTACHMENT_NOT_FOUND` | 404 | false | **落地**：附件不存在或已软删（下载/签发，批次 7，见 §13.2/§13.3） |
-| `SIGNATURE_EXPIRED` | 403 | false | **落地**：签名 exp 非整数或不在 [now, now+24h] 窗口（下载校验序③，批次 7） |
-| `INVALID_SIGNATURE` | 403 | false | **落地**：sig 缺失/非法 hex / HMAC 不匹配（下载校验序①④，批次 7） |
+| `SIGNATURE_EXPIRED` | 403 | false | **落地**：签名 exp 非整数或不在 [now, now+24h] 窗口（下载校验序②，批次 7/8a） |
+| `INVALID_SIGNATURE` | 403 | false | **落地**：sig 缺失/非法 hex / HMAC 不匹配（下载校验序①③，批次 7/8a） |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | false | **落地**：filetype 魔数无法判定 / 不在白名单 / 扩展名与内容不一致（上传校验序③④⑤，批次 7，见 §13.1） |
 | `TOO_MANY_FILES` | 400 | false | **落地**：单次上传文件数 > 10（上传校验序②，批次 7） |
 | `ATTACHMENT_SIGNATURE_DISABLED` | 403 | false | **落地**：fail-closed——AGENT_ACCESS_TOKEN 配置而 ATTACHMENT_SIG_SECRET 未配置（下载/签发一律拒绝，批次 7，见 security §3.5） |
@@ -460,7 +466,7 @@ multipart 字段：`files[]`（一个或多个文件字段）+ `kind`（可选�
 | ① kind 枚举预检 | kind 缺省通过；不在 `image/video/audio/file` → 400 `CONTRACT_VALIDATION`（**含 kind=sticker**——sticker 非附件，拒绝走上传） | 400 `CONTRACT_VALIDATION` |
 | ② 数量 | 文件数 ≤ 10，超限 | 400 `TOO_MANY_FILES` |
 | ③ 单文件大小 | 读入逐块自限（各 kind 上限最大值 50MB）；kind 指定时按 kind 上限预检 | 413 `REQUEST_TOO_LARGE` |
-| ④ filetype 魔数 | `filetype.guess` 判定（不信任扩展名/Content-Type）；无法判定或不在白名单 | 415 `UNSUPPORTED_MEDIA_TYPE` |
+| ④ 内容类型 | 二进制用 `filetype.guess` 魔数判定（不信任扩展名/Content-Type）；txt/md/json 走扩展名白名单 + UTF-8 内容 sanity；无法判定或不在白名单 | 415 `UNSUPPORTED_MEDIA_TYPE` |
 | ⑤ 扩展名一致性 | 判定 MIME 与原始文件扩展名一致（jpg/jpeg 归一）；改名绕过 | 415 `UNSUPPORTED_MEDIA_TYPE` |
 | ⑥ kind 归位 + 复核 | webm 以客户端 kind tiebreaker（audio/video），其余按 MIME→kind；归位后超 kind 上限 | 413 `REQUEST_TOO_LARGE` |
 | ⑦ 写盘 + 落记录 | `data/uploads/{kind}/{uuid}.{ext}` + sha256 + `attachments` 记录；Mongo 离线（fail-closed）→ 已落盘文件删除不留孤儿 | 503 `STORAGE_UNAVAILABLE`（retryable）/ 500 `INTERNAL` |
@@ -477,13 +483,13 @@ multipart 字段：`files[]`（一个或多个文件字段）+ `kind`（可选�
 | 步骤 | 校验 | 失败错误 |
 |---|---|---|
 | ① sig 存在且合法 hex | 64 位小写 hex（上界 128 防超长串拖慢 `compare_digest`，DoS 防护） | 403 `INVALID_SIGNATURE` |
-| ② 记录存在且 active | `attachments` 集合 status=active；软删/不存在 | 404 `ATTACHMENT_NOT_FOUND`；Mongo 离线 → 503 `STORAGE_UNAVAILABLE`（retryable） |
-| ③ exp 窗口 | 整数且在 [now, now+86400] | 403 `SIGNATURE_EXPIRED` |
-| ④ HMAC 验签 | HMAC-SHA256(`attachment_id:exp`)，`hmac.compare_digest` 防时序侧信道 | 403 `INVALID_SIGNATURE` |
+| ② exp 窗口 | 整数且在 [now, now+86400] | 403 `SIGNATURE_EXPIRED` |
+| ③ HMAC 验签 | HMAC-SHA256(`attachment_id:exp`)，`hmac.compare_digest` 防时序侧信道 | 403 `INVALID_SIGNATURE` |
+| ④ 记录存在且 active | 前三步通过后查 `attachments` 集合 status=active；软删/不存在 | 404 `ATTACHMENT_NOT_FOUND`；Mongo 离线 → 503 `STORAGE_UNAVAILABLE`（retryable） |
 
-- **fail-open**（access_token 空 = 本地开发）→ 跳过 ①③④，仅 ② status=active 校验。
+- **fail-open**（access_token 空 = 本地开发）→ 跳过 ①②③，仅执行 ④ status=active 校验。
 - 成功 → aiohttp `FileResponse`（**原生 Range/206**，视频/音频拖动播放）；`Content-Type` = 记录 mime；落盘文件缺失 → 404 `ATTACHMENT_NOT_FOUND`。
-- **既有记录在案**（spec 七轮 Minor 7）：校验序 ② 在 ④ 之前 → 匿名可对已知 attachment_id 区分「active（403）」与「不存在（404）」；attachment_id 104-bit 不可枚举、单用户 demo，风险低，非本批次闭合。
+- **批次 8a 已闭合存在性 oracle**：有鉴权模式先验签、后查记录；无效签名恒 403，不能再借 404/403 差异判断 attachment_id 是否存在。
 
 ### 13.3 签发端点（GET /api/attachments/{attachment_id}/sign）
 
@@ -505,10 +511,10 @@ multipart 字段：`files[]`（一个或多个文件字段）+ `kind`（可选�
 | `image` | image/png / image/jpeg / image/gif / image/webp | png / jpg·jpeg / gif / webp | 10MB |
 | `video` | video/mp4 / video/webm | mp4 / webm | 50MB |
 | `audio` | audio/x-wav / audio/mpeg / audio/ogg | wav / mp3 / ogg | 20MB |
-| `file` | application/pdf / application/zip | pdf / zip | 20MB |
+| `file` | application/pdf / application/zip / text/plain / text/markdown / application/json | pdf / zip / txt / md / json | 20MB |
 
 - **webm 歧义**：mime=video/webm 时以客户端 kind 提示作 tiebreaker（kind=audio → audio，其余 → video），归位后按最终 kind 复核上限。
-- **编码收敛**：仅限上表扩展名（不接受其他编码）；**魔数判定为权威**（不信任 Content-Type/扩展名），扩展名一致性校验堵改名绕过。
+- **编码收敛**：仅限上表扩展名（不接受其他编码）；二进制以**魔数判定为权威**并校验扩展名一致性；txt/md/json 因无稳定魔数，按扩展名白名单并要求内容可解码为 UTF-8，客户端 Content-Type 均不作为信任依据。
 
 ### 13.6 引用计数 / 软删 / GC 语义
 

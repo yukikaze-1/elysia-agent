@@ -84,28 +84,37 @@ class _LifecycleTools:
         self._cognitive.configure(tool_adapter=self._tool_adapter)
         self._scheduler.set_tool_adapter(self._tool_adapter)
 
-    async def _deliver_tool_request(self, frame: dict) -> None:
+    async def _deliver_tool_request(
+        self, target_connection_id: str | None, frame: dict,
+    ) -> None:
         """Desktop 工具请求定向投递（bridge._deliver 回调，spec §5.2）。
 
         bridge 已构造 `ToolRequestMessage(...).wire_dict()`（camelCase 帧），此处只负责
-        定位目标连接：遍历 `agent.output._channels` 找 `client_platform == "electron"`
-        的 WebSocketChannel → `_send_json(frame)`（定向单连接，非广播）。
-        无目标连接记 warning——插件层已提前拦截（is_available 守卫），此为兜底。
+        定位目标连接：遍历 `agent.output._channels`，只匹配
+        `client_platform == "electron" && connection_id == target_connection_id` 的
+        WebSocketChannel → `_send_json(frame)`（定向单连接，非广播）。找不到精确目标
+        时抛错，让 bridge 立即收敛为 DESKTOP_UNAVAILABLE，而不是静默丢帧后等超时。
 
         Args:
+            target_connection_id: bridge 在 call doc 中登记的目标 Electron 连接 ID。
             frame: tool.request wire 帧（camelCase dict）。
+
+        Raises:
+            RuntimeError: 目标连接为空或已经不在输出通道中。
         """
+        if not target_connection_id:
+            raise RuntimeError("DesktopToolBridge 投递缺少目标连接")
         target = None
         for ch in self._output._channels:  # noqa: SLF001 — 组合根内深度遍历通道
-            if getattr(ch, "client_platform", "") == "electron":
+            if (getattr(ch, "client_platform", "") == "electron"
+                    and getattr(ch, "connection_id", None) == target_connection_id):
                 target = ch
                 break
         if target is None:
-            logger.warning(
-                "DesktopToolBridge 投递：无 electron 目标连接，tool.request 丢弃")
-            return
+            raise RuntimeError(
+                f"DesktopToolBridge 目标连接不可用: {target_connection_id}")
         # _send_json 仅 WebSocketChannel 定义（OutputChannel ABC 无此方法），
-        # 已按 client_platform == "electron" 过滤，运行时必为 WebSocketChannel
+        # 已按 electron + connection_id 精确过滤，运行时必为 WebSocketChannel
         await cast(WebSocketChannel, target)._send_json(frame)  # noqa: SLF001 — 定向投递桌面帧
 
     async def _start_worker_pool(self) -> None:

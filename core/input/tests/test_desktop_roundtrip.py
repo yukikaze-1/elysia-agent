@@ -11,6 +11,8 @@ tool_approval 版本门控，本文件补完整往返闭环）：
 - **断连/重连**：accepted 断连 → offline（future 挂起）+ 重连重发 result →
   `offline → succeeded`（BE-043「重传结果」闭环）；**重连不自动重投**（新连接无二次
   tool.request）；
+- **重连交叠投递**：新旧 Electron WS 同时存在时，tool.request 只发给 bridge 登记的
+  最新 connectionId，旧连接不执行副作用；
 - **幂等**：同轮两条同参 `desktop.file.read` 并发 → 桥锁内去重仅一次投递（单 tool.request）；
 - **篡改**：回传改 paramHash → 拒绝 + Agent 及时收到失败（非挂 120s 超时）；
 - **tools/calls camelCase（批次 8c F9）**：`GET /api/tools/calls/{id}` result 键归
@@ -248,6 +250,39 @@ class TestDesktopRoundtrip:
             assert doc["result"]["output"] == "文件内容：hello desktop"
             assert doc["result"]["execution_summary"] == "已读取文件（4.2 KB）"
             await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_overlapping_electron_connections_deliver_only_to_latest(
+            self, aiohttp_client, fresh_idempotency):
+        """重连交叠窗口：旧连接仍注册时，tool.request 只投递给最新连接。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_ToolCallingLLM(
+            tool_name="desktop.file.read", arguments={"path": "/tmp/a.txt"}))
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            old_ws, old_conn = await _connect(client)
+            new_ws, new_conn = await _connect(client)
+            assert old_conn != new_conn
+            assert agent.desktop_bridge._connection_id == new_conn  # noqa: SLF001
+
+            tool_req, _ = await _send_text_wait_tool_request(new_ws, "读取文件")
+            assert not await _receive_tool_request_within(old_ws, window=0.3)
+
+            await new_ws.send_json(_status(
+                tool_req, "result", output="ok", executionSummary="最新连接完成"))
+            frames = await _collect_until_idle(new_ws)
+            assert "generation.completed" in [f["type"] for f in frames]
+            doc = await agent.desktop_bridge.get_call(tool_req["callId"])
+            assert doc["target_connection"] == new_conn
+            assert doc["status"] == "succeeded"
+
+            await old_ws.close()
+            await new_ws.close()
         finally:
             await agent.stop()
 

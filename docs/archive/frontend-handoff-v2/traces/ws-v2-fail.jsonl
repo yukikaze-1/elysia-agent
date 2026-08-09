@@ -1,12 +1,12 @@
-{"type": "session", "messages": [], "token_stats": {"total": 0, "by_model": {}}}
-{"type": "server_info", "protocol_version": "2.0", "server_version": "0.1.0", "features": {"structured_generation": false, "multi_conversation": false, "desktop_runtime": false, "dictation": false}, "services": {"llm": {"available": true, "enabled": true, "model": "deepseek/deepseek-chat", "default": "deepseek/deepseek-chat"}, "stt": {"available": false, "enabled": false, "default": "sensevoice/sense-voice", "model": null}, "tts": {"available": false, "enabled": false, "default": "gpt-sovits/default", "model": null}}}
+{"type": "session", "conversationId": "default", "messages": [], "token_stats": {"total": 0, "byModel": {}}}
+{"type": "server_info", "protocol_version": "2.0", "server_version": "0.1.0", "features": {"structured_generation": true, "multi_conversation": true, "desktop_runtime": true, "dictation": true, "voice_recording": true, "voice_realtime": true, "media_upload": true}, "services": {"llm": {"available": true, "enabled": true, "model": "deepseek/deepseek-chat", "default": "deepseek/deepseek-chat"}, "stt": {"available": false, "enabled": false, "default": "sensevoice/sense-voice", "model": null}, "tts": {"available": false, "enabled": false, "default": "gpt-sovits/default", "model": null}}, "connectionId": "conn_frame_0001", "build_sha": "0123abcd"}
 {"type": "expression", "expression": "开心", "intensity": 0.65}
-{"type": "user_message.ack", "messageId": "msg_e5b1c044dc1547969914eea1d7", "clientRequestId": "req_cap_c20f21ae", "receivedAt": "2026-08-04T00:07:36.961280+00:00", "status": "accepted"}
+{"type": "user_message.ack", "messageId": "msg_frame_fail_ack", "clientRequestId": "req_frame_fail1", "conversationId": "default", "receivedAt": "2026-08-09T00:00:00+00:00", "status": "accepted"}
 {"type": "state", "state": "thinking"}
 {"type": "typing", "typing": true}
-{"type": "generation.started", "generationId": "gen_d1e0bb8a0c194d3c985af7ef47", "messageId": "msg_74a8ce92df8643b6a93ab4fb86"}
+{"type": "generation.started", "generationId": "gen_frame_fail1", "messageId": "msg_frame_fail_ast", "conversationId": "default", "model": "deepseek/deepseek-chat"}
 {"type": "typing", "typing": false}
-{"type": "generation.failed", "generationId": "gen_d1e0bb8a0c194d3c985af7ef47", "messageId": "msg_74a8ce92df8643b6a93ab4fb86", "code": "GENERATION_PROVIDER_UNAVAILABLE", "message": "unavailable", "retryable": true, "details": {}}
+{"type": "generation.failed", "generationId": "gen_frame_fail1", "messageId": "msg_frame_fail_ast", "model": "deepseek/deepseek-chat", "code": "GENERATION_PROVIDER_UNAVAILABLE", "message": "模型服务暂时不可用", "retryable": true, "details": {}, "conversationId": "default"}
 {"type": "typing", "typing": false}
 {"type": "state", "state": "interrupted"}
 {"type": "state", "state": "idle"}

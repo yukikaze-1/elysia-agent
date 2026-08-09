@@ -7,8 +7,8 @@
   - definitions() D-j 过滤：bridge 未连接时 desktop 工具不出现在 LLM schema，
     连接后出现（filter_runtime 双态）
   - _start_tool_context：bridge.bind_deliver + start(extra_services 含 desktop_bridge)
-  - deliver 回调：定位 client_platform=="electron" 通道 → _send_json(frame)；
-    无目标连接记 warning 兜底
+  - deliver 回调：按 target_connection 精确定位 electron 通道 → _send_json(frame)；
+    无精确目标立即抛错，由 bridge 收敛为 DESKTOP_UNAVAILABLE
   - _start_persistence：await bridge.connect_db()
   - _stop_persistence：await bridge.save_all()
 """
@@ -153,20 +153,42 @@ class TestDeliverCallback:
 
     @pytest.mark.asyncio
     async def test_delivers_to_electron_channel(self):
-        """client_platform=="electron" 的通道收到 _send_json(tool.request 帧)。"""
+        """精确 connection_id 对应的 electron 通道收到 tool.request 帧。"""
         agent = MagicMock()
         target = MagicMock()
         target.client_platform = "electron"
+        target.connection_id = "conn_target"
         target._send_json = AsyncMock()
         other = MagicMock()
         other.client_platform = "web"  # 非 electron 不收
+        other.connection_id = "conn_target"
         agent._output._channels = [other, target]
 
         frame = {"type": "tool.request", "callId": "call_x"}
-        await _LifecycleTools._deliver_tool_request(agent, frame)
+        await _LifecycleTools._deliver_tool_request(agent, "conn_target", frame)
 
         target._send_json.assert_awaited_once_with(frame)
         other._send_json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reconnect_overlap_delivers_only_to_latest_target(self):
+        """新旧 Electron 并存时按目标 ID 投递，不再误取列表中的旧连接。"""
+        agent = MagicMock()
+        old = MagicMock()
+        old.client_platform = "electron"
+        old.connection_id = "conn_old"
+        old._send_json = AsyncMock()
+        new = MagicMock()
+        new.client_platform = "electron"
+        new.connection_id = "conn_new"
+        new._send_json = AsyncMock()
+        agent._output._channels = [old, new]
+
+        frame = {"type": "tool.request", "callId": "call_reconnect"}
+        await _LifecycleTools._deliver_tool_request(agent, "conn_new", frame)
+
+        old._send_json.assert_not_awaited()
+        new._send_json.assert_awaited_once_with(frame)
 
     @pytest.mark.asyncio
     async def test_getattr_compatible_before_task7(self):
@@ -177,16 +199,20 @@ class TestDeliverCallback:
         ch._send_json = AsyncMock()
         agent._output._channels = [ch]
 
-        await _LifecycleTools._deliver_tool_request(agent, {"type": "tool.request"})
+        with pytest.raises(RuntimeError, match="目标连接不可用"):
+            await _LifecycleTools._deliver_tool_request(
+                agent, "conn_missing", {"type": "tool.request"})
 
         ch._send_json.assert_not_awaited()  # 无 electron 通道 → 不投递（兜底）
 
     @pytest.mark.asyncio
-    async def test_no_electron_channel_warns_without_raise(self):
-        """无 electron 目标连接：记 warning 不抛（插件层已提前拦截，此为兜底）。"""
+    async def test_no_electron_channel_raises_for_bridge_fast_failure(self):
+        """无精确目标时抛错，让 bridge 立即返回 UNAVAILABLE 而非挂到超时。"""
         agent = MagicMock()
         agent._output._channels = []
-        await _LifecycleTools._deliver_tool_request(agent, {"type": "tool.request"})
+        with pytest.raises(RuntimeError, match="目标连接不可用"):
+            await _LifecycleTools._deliver_tool_request(
+                agent, "conn_missing", {"type": "tool.request"})
 
 
 class TestStartPersistenceHook:

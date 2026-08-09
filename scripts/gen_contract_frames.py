@@ -3,7 +3,7 @@
 
 无网络：构造 `ServerMessage` 契约模型 → `wire_dict()` → 标准 JSONL（每个非空行
 都是 JSON 对象）写
-`docs/archive/frontend-handoff-v2/traces/ws-v2-{handshake,session,chat,tool,voice}.jsonl`。
+`docs/archive/frontend-handoff-v2/traces/ws-v2-{handshake,session,chat,cancel,fail,tool,voice}.jsonl`。
 
 帧序列为固定测试数据（确定性——漂移门禁要求字节稳定，不取 datetime.now），
 由 frontend_contract 契约源生成，**非事实源**：真实捕获已停用
@@ -11,7 +11,7 @@
 真实 wire 形状/事件序列以 `frontend_contract/` 契约 + `docs/electron-backend-protocol-v2.md` 为准。
 
 模式：
-  python scripts/gen_contract_frames.py         # 写 5 个 frames 到 traces 归档
+  python scripts/gen_contract_frames.py         # 写 7 个 frames 到 traces 归档
   python scripts/gen_contract_frames.py --check # 生成到 tempfile 后 git diff 比对（漂移返回 1）
 """
 import json
@@ -122,6 +122,72 @@ def _chat() -> list[str]:
               typing_off, speaking, reply_done, completed, idle)
 
 
+def _cancel() -> list[str]:
+    """v2 取消：当前握手 + accepted → started → partial segment → failed → idle。
+
+    事件顺序对齐 CognitiveLoop：流式任务取消的异常收尾先 typing=false；随后
+    turn_cancelled 发唯一 generation.failed{GENERATION_CANCELLED}；统一 interrupt
+    清理再发 typing=false、state interrupted、state idle。未完成 segment 不伪造
+    segment.completed，前端以 generation.failed 结束父回复并保留已收增量。
+    """
+    ack = wm.UserAckMessage(messageId="msg_frame_cancel_ack",
+                            clientRequestId="req_frame_cancel1",
+                            conversationId="default", receivedAt=_TS,
+                            status=wm.AckStatus.ACCEPTED)
+    thinking = wm.StateMessage(state="thinking")
+    typing_on = wm.TypingMessage(typing=True)
+    started = wm.GenerationStartedMessage(
+        generationId="gen_frame_cancel1", messageId="msg_frame_cancel_ast",
+        conversationId="default", model="deepseek/deepseek-chat")
+    seg_start = wm.GenerationSegmentStartedMessage(
+        generationId="gen_frame_cancel1", segmentId="seg_frame_cancel_pub0",
+        segmentIndex=0, channel=wm.MessageChannel.PUBLIC_REPLY,
+        kind=wm.SegmentKind.TEXT, conversationId="default")
+    delta = wm.GenerationDeltaMessage(
+        generationId="gen_frame_cancel1", segmentId="seg_frame_cancel_pub0",
+        segmentIndex=0, deltaSequence=0, delta="正在生成的部分内容",
+        conversationId="default")
+    typing_off_stream = wm.TypingMessage(typing=False)
+    failed = wm.GenerationFailedMessage(
+        generationId="gen_frame_cancel1", messageId="msg_frame_cancel_ast",
+        model="deepseek/deepseek-chat", code="GENERATION_CANCELLED",
+        message="已取消", retryable=False, conversationId="default")
+    typing_off_interrupt = wm.TypingMessage(typing=False)
+    interrupted = wm.StateMessage(state="interrupted")
+    idle = wm.StateMessage(state="idle")
+    return _handshake() + _f(
+        ack, thinking, typing_on, started, seg_start, delta, typing_off_stream,
+        failed, typing_off_interrupt, interrupted, idle)
+
+
+def _fail() -> list[str]:
+    """v2 Provider 失败：当前握手 + accepted → started → failed → idle。
+
+    Provider 在首个 token 前失败，因此没有 segment 帧；generation.failed 是唯一父终态，
+    retryable=true。异常收尾与统一 interrupt 清理会各发一次 typing=false。
+    """
+    ack = wm.UserAckMessage(messageId="msg_frame_fail_ack",
+                            clientRequestId="req_frame_fail1",
+                            conversationId="default", receivedAt=_TS,
+                            status=wm.AckStatus.ACCEPTED)
+    thinking = wm.StateMessage(state="thinking")
+    typing_on = wm.TypingMessage(typing=True)
+    started = wm.GenerationStartedMessage(
+        generationId="gen_frame_fail1", messageId="msg_frame_fail_ast",
+        conversationId="default", model="deepseek/deepseek-chat")
+    typing_off_stream = wm.TypingMessage(typing=False)
+    failed = wm.GenerationFailedMessage(
+        generationId="gen_frame_fail1", messageId="msg_frame_fail_ast",
+        model="deepseek/deepseek-chat", code="GENERATION_PROVIDER_UNAVAILABLE",
+        message="模型服务暂时不可用", retryable=True, conversationId="default")
+    typing_off_interrupt = wm.TypingMessage(typing=False)
+    interrupted = wm.StateMessage(state="interrupted")
+    idle = wm.StateMessage(state="idle")
+    return _handshake() + _f(
+        ack, thinking, typing_on, started, typing_off_stream, failed,
+        typing_off_interrupt, interrupted, idle)
+
+
 def _session() -> list[str]:
     """v2 多会话：建连 → activate 回放（conversationId 贯通）→ 生成 → idle。"""
     session_default = wm.SessionMessage(conversationId="default", messages=[],
@@ -204,6 +270,8 @@ _ARTIFACTS = {
     "ws-v2-handshake.jsonl": "\n".join(_handshake()) + "\n",
     "ws-v2-session.jsonl": "\n".join(_session()) + "\n",
     "ws-v2-chat.jsonl": "\n".join(_chat()) + "\n",
+    "ws-v2-cancel.jsonl": "\n".join(_cancel()) + "\n",
+    "ws-v2-fail.jsonl": "\n".join(_fail()) + "\n",
     "ws-v2-tool.jsonl": "\n".join(_tool()) + "\n",
     "ws-v2-voice.jsonl": "\n".join(_voice()) + "\n",
 }
