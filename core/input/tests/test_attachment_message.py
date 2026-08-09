@@ -233,6 +233,38 @@ class TestAttachmentMessage:
             await agent.stop()
 
     @pytest.mark.asyncio
+    async def test_attachment_unknown_conversation_rejected(self, aiohttp_client):
+        """9a3：合法附件 + 显式未知会话 → rejected SESSION_NOT_FOUND；附件 refs 不增。
+
+        会话校验先于附件校验——未知显式 ID 直接拒绝，不触附件 add_ref、不调 process_message。
+        """
+        agent, app = _make_agent_app()
+        _add_attachment(agent._attachment_repo, "att_x")  # noqa: SLF001
+        client = await aiohttp_client(app)
+        await agent.start()
+        try:
+            calls: list[dict] = []
+            _record_calls(agent, calls)
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({
+                "type": "text", "content": "hi",
+                "clientRequestId": "req_unknown_conv",
+                "conversationId": "conv_ghost",
+                "attachments": [{"attachmentId": "att_x", "kind": "image", "mime": "image/png"}],
+            })
+            ack = await _read_ack(ws)
+            assert ack["status"] == "rejected"
+            assert ack["error"]["code"] == "SESSION_NOT_FOUND", f"实际 {ack.get('error')}"
+            # 附件 refs 不增（未 add_ref）
+            doc = agent._attachment_repo.records["att_x"]  # noqa: SLF001
+            assert doc["ref_count"] == 0 and not doc["refs"]
+            # process_message 从未被调
+            assert calls == []
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
     async def test_sticker_not_in_registry_rejected(self, aiohttp_client):
         """stickerId 不在注册表 → rejected CONTRACT_VALIDATION。"""
         agent, app = _make_agent_app()

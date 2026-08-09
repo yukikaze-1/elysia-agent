@@ -522,6 +522,12 @@ class VoiceSessionManager:
             conversation_id=SessionId(self._conv_id) if self._conv_id else None)
 
     async def _resolve_conversation(self, conversation_id: str | None) -> str:
+        # 9a3（Q4）：显式 ID 先验证存在——has_session 校验置于函数顶部、try 之外，
+        # 避免被下方 fallback（return conversation_id or "default"）吞掉 raise。
+        # 未知会话 → VoiceSessionError 中止 start_realtime（不建 buffer 不切 REALTIME 态）。
+        if conversation_id:
+            if not await self._agent.session_manager.has_session(SessionId(conversation_id)):
+                raise VoiceSessionError("SESSION_NOT_FOUND", f"会话不存在: {conversation_id}")
         try:
             target = await self._agent.resolve_session(conversation_id, 2)
             return str(target.session_id)

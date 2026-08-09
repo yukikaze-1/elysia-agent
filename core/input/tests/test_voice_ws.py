@@ -24,6 +24,22 @@ class FakeOutput:
         self._channels = [WebSocketChannel(ws, protocol_version=2)]
 
 
+class _FakeSessionManager:
+    """session_manager stub：known 会话 set + 简易 resolve/ensure_loaded（9a3 has_session 校验）。"""
+
+    def __init__(self, known: set | None = None):
+        self._known = set(known or {"conv_a", "default"})
+
+    async def has_session(self, sid) -> bool:
+        return str(sid) in self._known
+
+    async def resolve(self, conversation_id, protocol_version):
+        return type("S", (), {"session_id": conversation_id or "default"})()
+
+    async def ensure_loaded(self, sid):
+        return type("S", (), {"session_id": str(sid)})()
+
+
 class FakeAgent:
     def __init__(self, ws):
         self.output = FakeOutput(ws)
@@ -37,6 +53,7 @@ class FakeAgent:
         self._rid = 0
         self.idle = type("Idle", (), {"touch": lambda self: None})()
         self._last_text = ""
+        self.session_manager = _FakeSessionManager()
 
     def next_request_id(self):
         self._rid += 1
@@ -208,6 +225,43 @@ async def test_voice_commit_state_gate_before_submit():
     acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
     assert acks and acks[-1]["status"] == "rejected" \
         and acks[-1]["error"]["code"] == "VOICE_RECORDING_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_voice_commit_unknown_conversation_rejected():
+    """9a3（Q9）：voice.commit + 未知会话 → user_message.ack rejected + SESSION_NOT_FOUND。
+
+    ACK 通道（非 ErrorMessage）：不提交、不产生 messageId、零 bus post。
+    """
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "voice.commit", "recordingId": "rec_1", "text": "hi",
+         "clientRequestId": "req_ghost", "clientMessageId": "msg_ghost",
+         "conversationId": "conv_ghost"},
+        agent, None, ws, voice_mgr=mgr)
+    acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+    assert acks and acks[-1]["status"] == "rejected", f"实际 {ws.sent}"
+    assert acks[-1]["error"]["code"] == "SESSION_NOT_FOUND", f"实际 {acks[-1].get('error')}"
+    assert not acks[-1].get("messageId"), "未知会话拒绝不应生成 messageId"
+    assert not any(s.get("type") == "error" for s in ws.sent), "voice.commit 走 ACK 通道，非 ErrorMessage"
+    assert not agent.bus_posts, "未知会话不应提交 UserInputData"
+
+
+@pytest.mark.asyncio
+async def test_realtime_start_unknown_conversation_rejected():
+    """9a3（Q4）：voice_session.start + 未知会话 → ErrorMessage SESSION_NOT_FOUND。
+
+    不建 audio buffer、不切 REALTIME 态（禁止懒创建幽灵会话）。
+    """
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "voice_session.start", "sessionId": "vs_ghost",
+         "conversationId": "conv_ghost"},
+        agent, None, ws, voice_mgr=mgr)
+    errs = [s for s in ws.sent if s.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "SESSION_NOT_FOUND", f"实际 {ws.sent}"
+    assert not any(s.get("type") == "voice_session.started" for s in ws.sent)
+    assert mgr.has_active_session() is False, "未知会话不应进入 REALTIME 态"
 
 
 @pytest.mark.asyncio

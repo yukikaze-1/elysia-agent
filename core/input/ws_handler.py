@@ -443,6 +443,19 @@ async def _send_ack(ws: "web.WebSocketResponse | None", message_id: str,
         logger.debug("发送 user_message.ack 失败", exc_info=True)
 
 
+async def _session_or_none(agent: "Agent", conversation_id: str | None) -> "SessionMemory | None":
+    """9a3：v2 目标会话解析——显式 ID 先验证存在，未知返回 None；缺省 → 当前 active。
+
+    禁止懒创建幽灵会话：显式 conversationId 必须经 ``has_session`` 确认存在才
+    ensure_loaded（只读、不构造）；缺省（None）→ resolve(None, 2) 活动会话。
+    """
+    if conversation_id:
+        if not await agent.session_manager.has_session(SessionId(conversation_id)):
+            return None
+        return await agent.session_manager.ensure_loaded(SessionId(conversation_id))
+    return await agent.session_manager.resolve(None, 2)
+
+
 # 附件 kind → Part 子类映射（spec §3.2 附件四类；未知 kind 跳过不构造）
 _ATTACHMENT_PART_TYPES = {
     "image": ImagePart, "file": FilePart, "audio": AudioPart, "video": VideoPart,
@@ -537,13 +550,21 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                                "message": "缺少 clientRequestId", "retryable": False})
         return True
 
-    # 批次 3：解析实际目标会话——ACK 的 conversationId 填目标会话
+    # 批次 3/9a3：解析实际目标会话——ACK 的 conversationId 填目标会话
     # （v2 缺省 → 当前活动会话，显式 → 该会话），非仅回显原始字段。
+    # 9a3：显式 ID 先 has_session 验证存在——未知会话 rejected SESSION_NOT_FOUND
+    # （禁止懒创建幽灵会话）；外层 try/except 保留（ensure_loaded 失败降级回显，不杀连接）。
     try:
-        target = await agent.resolve_session(conversation_id, 2)
+        target = await _session_or_none(agent, conversation_id)
+        if target is None:
+            await _send_ack(ws, "", client_request_id, client_message_id, conversation_id,
+                            "rejected", error={"code": "SESSION_NOT_FOUND",
+                                               "message": f"会话不存在: {conversation_id}",
+                                               "retryable": False})
+            return True
         ack_conversation_id = str(target.session_id)
     except Exception:
-        logger.warning("_route_v2_text: resolve_session 失败，回退回显 conversationId", exc_info=True)
+        logger.warning("_route_v2_text: 会话解析失败，回退回显 conversationId", exc_info=True)
         ack_conversation_id = conversation_id
 
     attachments = data.get("attachments") or []
@@ -702,8 +723,16 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
     client_message_id = data.get("clientMessageId")
     conversation_id = data.get("conversationId")
 
+    # 9a3（Q9）：显式 ID 先 has_session 验证存在——未知会话走 ACK rejected
+    # SESSION_NOT_FOUND（非 ErrorMessage）；不提交、不产生 messageId。
     try:
-        target = await agent.resolve_session(conversation_id, 2)
+        target = await _session_or_none(agent, conversation_id)
+        if target is None:
+            await _send_ack(ws, "", client_request_id, client_message_id, conversation_id,
+                            "rejected", error={"code": "SESSION_NOT_FOUND",
+                                               "message": f"会话不存在: {conversation_id}",
+                                               "retryable": False})
+            return
         ack_conv = str(target.session_id)
     except Exception:
         ack_conv = conversation_id

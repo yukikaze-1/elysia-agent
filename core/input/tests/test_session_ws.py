@@ -18,7 +18,7 @@ import pytest
 from aiohttp import WSMsgType
 
 from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
-from core.input.idempotency import reset_store
+from core.input.idempotency import get_store, reset_store
 from core.schema.message import MessageId, UserMessage
 from core.schema.part import TextPart
 
@@ -304,6 +304,43 @@ class TestConversationIdRouting:
             ack = await _receive_type(ws, "user_message.ack")
             assert ack["status"] == "accepted"
             assert ack.get("conversationId") == "conv_test_d", "v2 缺省 → 当前活动会话"
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_text_unknown_conversation_rejected(self, aiohttp_client, fresh_idempotency):
+        """9a3：v2 text 显式未知 conversationId → ack rejected SESSION_NOT_FOUND。
+
+        禁止懒创建幽灵会话：未知显式 ID 拒绝——不生成 messageId、不落库、不落幂等 entry。
+        """
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            default_before = _message_ids(agent, "default")
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({
+                "type": "text",
+                "content": "hi",
+                "clientRequestId": "req_deadbeef",
+                "conversationId": "conv_deadbeef",
+            })
+
+            ack = await _receive_type(ws, "user_message.ack")
+            assert ack["status"] == "rejected"
+            assert ack.get("error", {}).get("code") == "SESSION_NOT_FOUND", \
+                f"实际 {ack.get('error')}"
+            assert not ack.get("messageId"), "未知会话拒绝不应生成 messageId"
+            # 不落库：default 无新增消息（未知会话也未构造）
+            assert _message_ids(agent, "default") == default_before
+            assert not await agent.session_manager.has_session("conv_deadbeef"), \
+                "未知会话不应被懒创建"
+            # 不落幂等 entry：重试同 ID 仍走拒绝路径（非 accepted 重放）
+            assert get_store().lookup("req_deadbeef") is None
             await ws.close()
         finally:
             await agent.stop()
