@@ -508,6 +508,13 @@ async def sessions_delete_handler(request: web.Request) -> web.Response:
         if status is not None and not status.is_accepting_input:
             return _error_response("AGENT_BUSY", "Agent 忙（生成/TTS 中），无法删除活动会话",
                                    409, retryable=True)
+    # 9abc R3：会话有排队消息（已 ACK accepted 未出队）→ 拒绝删除（retryable）。
+    # loop 捕获 SessionNotFoundError 丢弃在途消息且无错误帧——删会话会让已确认消息
+    # 永久无响应；先清空/等待 pending 再删。按会话过滤（pending 归属他会话不挡）。
+    if any(str(getattr(p, "conversation_id", "") or "") == sid
+           for p in getattr(agent, "pending_messages", None) or []):
+        return _error_response("AGENT_BUSY", "会话有排队消息，先清空/等待",
+                               409, retryable=True)
     # 批次 8a（D5）：删除前释放该会话归档消息的附件 refs（附件软删联动，
     # 闭合 BE-030 会话删除 + BE-070 附件引用释放闭环）。先 release 再 delete——
     # session_manager.delete 会清空该会话归档，附件 refs 需在归档清空前取到。

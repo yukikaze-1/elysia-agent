@@ -24,7 +24,7 @@ from core.cognitive.generation_registry import GenerationRegistry
 from core.memory.session_manager import SessionManager
 from core.schema.message import MessageId, UserMessage, AssistantMessage
 from core.schema.part import TextPart, ImagePart, VideoPart, FilePart, AudioPart
-from core.schema.types import RequestId
+from core.schema.types import RequestId, SessionId
 from core.storage.generation_repo import GenerationRepository
 from core.storage.message_repo import MessageRepository
 from core.storage.session_repo import SessionRepository
@@ -417,6 +417,54 @@ class TestSessionsCRUD:
         assert data["ok"] is True
         assert agent.active_session_id == "conv_test_activebusy", "非活动删除不影响 active"
         assert await agent.session_manager.has_session("conv_test_nonactive") is False
+
+    @pytest.mark.asyncio
+    async def test_delete_session_with_pending_rejected_409(self, aiohttp_client):
+        """9abc R3：会话有排队消息（已 ACK accepted 未出队）→ DELETE 409 AGENT_BUSY 不删除。
+
+        loop 捕获 SessionNotFoundError 丢弃在途消息且无错误帧——客户端已收到
+        user_message.ack{accepted} 却永久无响应。防护：该会话有 pending 时拒绝
+        删除（retryable，先清空/等待），不产生孤儿排队消息。
+        """
+        from core.agent._types import _PendingMessage
+
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_pending", "有排队消息")
+        agent.pending_messages.append(_PendingMessage(
+            text="排队消息", user_name="用户", request_id=RequestId("req_p"),
+            content=None, message_id=None,
+            conversation_id=SessionId("conv_test_pending"), protocol_version=2))
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.delete("/api/sessions/conv_test_pending")
+        assert resp.status == 409
+        data = await resp.json()
+        assert data["code"] == "AGENT_BUSY"
+        assert data["retryable"] is True
+        # 未删除：会话仍存在
+        assert await agent.session_manager.has_session("conv_test_pending") is True
+
+    @pytest.mark.asyncio
+    async def test_delete_allowed_when_pending_on_other_session(self, aiohttp_client):
+        """9abc R3：pending 归属其他会话 → 本会话无 pending，正常删除（门禁按会话过滤）。"""
+        from core.agent._types import _PendingMessage
+
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_delclean", "待删")
+        await _create_session(agent, "conv_test_other", "其他会话")
+        agent.pending_messages.append(_PendingMessage(
+            text="别的会话排队", user_name="用户", request_id=RequestId("req_o"),
+            content=None, message_id=None,
+            conversation_id=SessionId("conv_test_other"), protocol_version=2))
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.delete("/api/sessions/conv_test_delclean")
+        assert resp.status == 200
+        assert (await resp.json())["ok"] is True
+        assert await agent.session_manager.has_session("conv_test_delclean") is False
+        assert await agent.session_manager.has_session("conv_test_other") is True
 
     @pytest.mark.asyncio
     async def test_list_message_count_concurrent_gather(self, aiohttp_client):

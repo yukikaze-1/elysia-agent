@@ -911,8 +911,14 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
                 raw_crid = data.get("clientRequestId", "")
                 if not isinstance(raw_crid, str):
                     raw_crid = ""
+                # 9abc R4：clientMessageId/conversationId 同收口——非 str → None，
+                # 否则 UserAckMessage 的 Optional[str] 校验抛 → bare except 吞 ACK，
+                # 客户端拿到已拒绝的校验错误却无响应。
+                raw_cmid = data.get("clientMessageId")
+                raw_cid = data.get("conversationId")
                 await _send_ack(ws, "", raw_crid,
-                                data.get("clientMessageId"), data.get("conversationId"),
+                                raw_cmid if isinstance(raw_cmid, str) else None,
+                                raw_cid if isinstance(raw_cid, str) else None,
                                 "rejected",
                                 error={"code": "CONTRACT_VALIDATION",
                                        "message": f"消息校验失败: {e}",

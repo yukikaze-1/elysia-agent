@@ -818,16 +818,48 @@ class TestClientMessageValidation:
 
     @pytest.mark.asyncio
     async def test_v2_list_content_text_ack_rejected(self):
-        """v2 list-content text → ACK rejected CONTRACT_VALIDATION（Q6 content 非 str 前置检查）。"""
+        """v2 list-content text → ACK rejected CONTRACT_VALIDATION，连接存活。
+
+        9abc R1：content-as-list 仅 v1 多模态（v2 媒体走 attachments/stickerId，
+        content 恒为 str）；v2 收到 `content=[{"type":"text","text":"hi"}]` →
+        ACK rejected CONTRACT_VALIDATION（非 ErrorMessage、非断连），随后合法
+        interrupt 仍被处理。
+        """
         from core.input.ws_handler import handle_json_message
 
         agent, ws, mgr = await self._make()
-        await handle_json_message({"type": "text", "content": ["x"]},
-                                  agent, None, ws, voice_mgr=mgr)
+        await handle_json_message(
+            {"type": "text",
+             "content": [{"type": "text", "text": "hi"}],
+             "clientRequestId": "r1"},
+            agent, None, ws, voice_mgr=mgr)
         acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
         assert acks and acks[-1]["status"] == "rejected"
         assert acks[-1]["error"]["code"] == "CONTRACT_VALIDATION"
         assert not any(s.get("type") == "error" for s in ws.sent)  # 走 ACK 通道非 ErrorMessage
+        # 连接存活：后续合法 interrupt 仍被处理（bus.post 收到 InterruptData）
+        await handle_json_message({"type": "interrupt"}, agent, None, ws, voice_mgr=mgr)
+        assert self._has_interrupt(agent), f"interrupt 未被处理: {ws.sent}"
+
+    @pytest.mark.asyncio
+    async def test_validation_ack_non_str_ids_sanitized(self):
+        """9abc R4：v2 text 校验失败 ACK 把非 str clientMessageId/conversationId 收口为 None。
+
+        旧实现把 data.get("clientMessageId")（如 123）原样传给 _send_ack →
+        UserAckMessage.clientMessageId Optional[str] 校验抛 → bare except 吞 ACK，
+        客户端无响应。修复后 123 → None，ACK rejected CONTRACT_VALIDATION 正常送达。
+        """
+        from core.input.ws_handler import handle_json_message
+
+        agent, ws, mgr = await self._make()
+        await handle_json_message(
+            {"type": "text", "content": "hi",
+             "clientRequestId": "r1", "clientMessageId": 123},
+            agent, None, ws, voice_mgr=mgr)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected"
+        assert acks[-1]["error"]["code"] == "CONTRACT_VALIDATION"
+        assert acks[-1]["error"]["retryable"] is False
 
     @pytest.mark.asyncio
     async def test_non_text_missing_required_rejected(self):

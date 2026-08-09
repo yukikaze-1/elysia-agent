@@ -8,7 +8,6 @@
 """
 import hashlib
 import json
-import logging
 from pathlib import Path
 from typing import Annotated, Any, Union, get_args, get_origin
 
@@ -17,7 +16,6 @@ from pydantic import BaseModel, TypeAdapter
 from frontend_contract import debug, rest, ws_message
 from frontend_contract.version import PROTOCOL_VERSION, TRANSPORT_VERSION
 
-logger = logging.getLogger(__name__)
 OUTPUT = Path(__file__).parent / "contract.schema.json"
 
 
@@ -45,8 +43,10 @@ def build_document() -> dict:
     for name, model in build_models():
         try:
             schemas[name] = TypeAdapter[Any](model).json_schema()
-        except Exception:
-            logger.warning("JSON Schema 生成跳过模型: %s", name)  # 不静默吞——告警
+        except Exception as e:
+            # 9abc R5：fail-fast——某模型 json_schema 失败不能静默跳过，否则 schema.json
+            # 缺类型而 gen_ts 仍发射，两单源产物漂移且 --check 各自独立通过不被捕获。
+            raise RuntimeError(f"JSON Schema 生成失败: {name}: {e}") from e
     body: dict[str, object] = {
         "transportVersion": TRANSPORT_VERSION,
         "protocolVersion": PROTOCOL_VERSION,

@@ -566,7 +566,13 @@ class VoiceSessionManager:
             # _rec_state/_recording_id 且误发 REALTIME 型 ended{recording_id}；
             # REALTIME/DICTATION 仍走完整 teardown + 对应收尾帧（现状保留）。
             if self._mode == VoiceMode.RECORDING:
-                self._reset_recording()
+                # 9abc R2：仅录音中（RECORDING 态）才 _reset_recording()——已 stop 进入
+                # TRANSCRIBING/PENDING（在途 STT / 待 commit）时，迟到的 >1MiB 帧只丢弃、
+                # 不碰转录状态（否则毁掉在途/待提交转录，后续 voice.commit 报 NOT_FOUND）。
+                if self._rec_state == _RecordingState.RECORDING:
+                    self._reset_recording()
+                else:
+                    logger.debug("超限帧在转录/待提交窗口，忽略")
                 return
             if self._mode == VoiceMode.DICTATION:
                 rid = self._dict_request_id            # teardown 前缓存（review #2 惯例）

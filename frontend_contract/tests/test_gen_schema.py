@@ -24,3 +24,28 @@ def test_schema_valid_for_discriminated_union():
 def test_schema_hash_deterministic():
     """schemaHash 由同一序列化（sort_keys + ensure_ascii=False）算出，重复调用稳定。"""
     assert gen_schema.build_document()["schemaHash"] == gen_schema.build_document()["schemaHash"]
+
+
+@pytest.mark.unit
+def test_build_document_fails_fast_on_json_schema_error(monkeypatch):
+    """9abc R5：某模型 json_schema 失败 → build_document fail-fast（RuntimeError 含模型名）。
+
+    旧实现 except Exception 静默跳过——schema.json 缺类型而 gen_ts 仍发射，两单源
+    产物漂移且 --check 各自独立通过，漂移不被门禁捕获。修复后抛 RuntimeError。
+    """
+    from pydantic import BaseModel, ConfigDict
+
+    class _Unrepresentable:
+        """无 JSON schema 表示的任意类型（arbitrary_types_allowed 下 json_schema 抛）。"""
+
+    class BrokenModel(BaseModel):
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+        field: _Unrepresentable
+
+    # 注入 gen_schema 遍历的子模块——build_models 会收集到该模型并触发生成失败
+    #（raising=False：向模块注入新属性）
+    monkeypatch.setattr(gen_schema.ws_message, "BrokenModel", BrokenModel, raising=False)
+    with pytest.raises(RuntimeError) as ei:
+        gen_schema.build_document()
+    assert "BrokenModel" in str(ei.value)
+    assert "JSON Schema 生成失败" in str(ei.value)

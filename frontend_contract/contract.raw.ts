@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: 6bc1487b4377cd22
+// schemaHash: fb130496c6ca6774
 
 /** 会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。 */
 export interface ConversationUsage {
@@ -707,8 +707,12 @@ export interface TextMessage {
 
 /** v2 客户端文本消息（type=text + 幂等/定位字段；不进 ServerMessage 联合）。
 
+v2 `content` 恒为 str——媒体/表情走 `attachments`/`stickerId`（批次 7），不沿用
+v1 多模态 content-as-parts 路径。content-as-list 仅 v1 连接（data.get 老路径）
+支持；v2 连接收到 content 非 str（如数组）→ ACK rejected CONTRACT_VALIDATION
+（9abc R1：v2 收紧，媒体必须在 attachments/stickerId 字段携带）。
+
 handler 按连接 protocol_version 路由：v2 连接解析追加字段，v1 忽略。
-非文本消息（content 数组）批次 2 沿用 v1 多模态路径。
 
 批次 7：加可选 `attachments`（附件引用，对应 POST /api/uploads 上传结果）与
 `stickerId`（内置表情，非附件）；二者与纯文本可共存或独立（sticker/附件-only

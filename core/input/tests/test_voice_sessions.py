@@ -945,6 +945,28 @@ async def test_chunk_too_large_recording_resets_state_no_ended():
 
 
 @pytest.mark.asyncio
+async def test_oversized_chunk_during_pending_keeps_transcript():
+    """9abc R2：录音 stop 后（PENDING 待 commit）迟到超大帧 → 只丢该 chunk，转录保留。
+
+    旧实现 RECORDING 模式超限分支无条件 _reset_recording()——已 stop（PENDING 待
+    commit）时收到迟到 >1MiB 帧毁掉在途/待提交转录，后续 voice.commit 报
+    RECORDING_NOT_FOUND。修复后仅录音中（RECORDING 态）才复位，其余态只丢弃。
+    """
+    mgr, emitted, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(b"\x00" * 6400)  # F3：≥ 一帧 PCM，否则 stop 丢弃不转写
+    mgr._agent._last_text = "你好世界"
+    await mgr.stop_recording("rec_1")
+    await asyncio.sleep(0.05)  # 后台 STT 任务完成 → PENDING 待 commit
+    # 迟到超大帧（PENDING 窗口）：CONTRACT_VALIDATION 照发，但不碰转录状态
+    await mgr.feed_pcm(b"\x00" * (MAX_CHUNK_BYTES + 1))
+    errs = [e for e in emitted if e.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "CONTRACT_VALIDATION"
+    payload = mgr.commit_recording("rec_1", "你好世界")
+    assert payload[0] == "你好世界" and payload[1] == "HAPPY"
+
+
+@pytest.mark.asyncio
 async def test_chunk_too_large_dictation_emits_cancelled():
     """F4（review）：DICTATION 超限 chunk → teardown + DictationCancelled（非 REALTIME ended）。"""
     mgr, emitted, _ = make_manager()
