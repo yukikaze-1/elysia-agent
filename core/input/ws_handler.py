@@ -95,7 +95,9 @@ async def _send_session_replay(ws: "web.WebSocketResponse", agent: "Agent",
             # 裸 dict 直传会因 TokenStats.byModel 必填缺失校验失败 → 回放被吞）。
             token_stats = TokenStats(total=raw.get("total", 0), byModel=raw.get("by_model", {}))
     items = _build_session_items(session_msgs)
-    await ws.send_json(SessionMessage(messages=items, token_stats=token_stats).wire_dict())
+    await ws.send_json(SessionMessage(
+        conversationId=str(session.session_id),
+        messages=items, token_stats=token_stats).wire_dict())
 
 
 async def handle_ws(

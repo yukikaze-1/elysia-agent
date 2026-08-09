@@ -225,9 +225,11 @@ export interface AttachmentRef {
   mime: string
 }
 
-/** 会话历史回放（新连接建立时发送）。 */
+/** 会话历史回放（新连接建立时发送）。conversationId = 本回放消息所属会话。 */
 export interface SessionMessage {
   type: 'session'
+  /** 本回放消息所属会话 ID */
+  conversationId: string
   /** 会话消息列表 */
   messages: SessionMessageItem[]
   /** 会话级 token 统计，可缺省 */

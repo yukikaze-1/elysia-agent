@@ -41,10 +41,20 @@ def test_capabilities_model_is_ts_null():
 def test_wire_dict_list_recursive():
     """list[ContractModel] 元素递归 wire_dict（SessionMessage.messages 场景，base.py list 分支守护）。"""
     item = w.SessionMessageItem(role="assistant", content="hi")
-    msg = w.SessionMessage(messages=[item], token_stats=w.TokenStats(total=1, byModel={}))
+    msg = w.SessionMessage(messages=[item], token_stats=w.TokenStats(total=1, byModel={}),
+                           conversationId="conv_x")
     d = msg.wire_dict()
     assert d["messages"][0]["role"] == "assistant"
     assert d["token_stats"]["total"] == 1
+
+
+@pytest.mark.unit
+def test_session_message_has_conversation_id():
+    """SessionMessage 必发 conversationId（批次 9a1）：wire 携带 + type=session。"""
+    msg = w.SessionMessage(messages=[], token_stats=None, conversationId="conv_abc123")
+    wire = msg.wire_dict()
+    assert wire["conversationId"] == "conv_abc123"
+    assert wire["type"] == "session"
 
 
 @pytest.mark.unit

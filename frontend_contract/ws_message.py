@@ -251,9 +251,10 @@ class AttachmentRef(ContractModel):
 
 
 class SessionMessage(ContractModel):
-    """会话历史回放（新连接建立时发送）。"""
+    """会话历史回放（新连接建立时发送）。conversationId = 本回放消息所属会话。"""
 
     type: Literal["session"] = "session"
+    conversationId: str = Field(description="本回放消息所属会话 ID")
     messages: list[SessionMessageItem] = Field(description="会话消息列表")
     token_stats: Optional[TokenStats] = Field(default=None, description="会话级 token 统计，可缺省")
 

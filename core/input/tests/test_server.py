@@ -787,7 +787,9 @@ class TestSessionReplayContract:
             block_index={"text": [0]},
         ))
 
-        frame = SessionMessage(messages=s.messages_for_client(), token_stats=None).wire_dict()
+        frame = SessionMessage(messages=s.messages_for_client(), token_stats=None,
+                               conversationId="conv_replay").wire_dict()
+        assert frame["conversationId"] == "conv_replay"  # 批次 9a1：必发 conversationId
         asst = next(m for m in frame["messages"] if m["role"] == "assistant")
         # I1'：tool_calls[].type（"function"）不被丢弃
         assert asst["tool_calls"][0]["type"] == "function"

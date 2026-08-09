@@ -121,6 +121,7 @@ class TestActivateSession:
             await ws.send_json({"type": "activate_session", "conversationId": "conv_test_a"})
 
             replay = await _receive_type(ws, "session")
+            assert replay.get("conversationId") == "conv_test_a", "回放应携带被切会话 ID"
             texts = [_first_text(item) for item in replay.get("messages", [])]
             assert "会话A的预置消息" in texts, "activate_session 应重发目标会话回放"
             assert agent.active_session_id == "conv_test_a"
