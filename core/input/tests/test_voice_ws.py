@@ -451,3 +451,92 @@ async def test_descriptor_omitted_default_format():
     assert mgr.has_active_session() is True
     await handle_json_message(
         {"type": "voice_session.stop", "sessionId": "vs_1"}, agent, None, ws, voice_mgr=mgr)
+
+
+@pytest.mark.service
+class TestProfileDictationSttGate:
+    """P1-2：profile dictation 独立于全局 STT 门禁（depends_on_global_stt）。
+
+    review 复现：全局 STT 关闭 + profile dictation → stop 被 _voice_stt_gate 先 teardown
+    （cancelled）+ 再 stop_dictation NOT_FOUND 双终态矛盾。修复后 profile dictation
+    不受全局开关影响，每路径唯一终态。
+    """
+
+    def _make_set_service(self, agent):
+        async def set_service(service, enabled):
+            agent.stt_enabled = enabled
+            return {"ok": True, "enabled": enabled}
+        agent.set_service = set_service
+        return set_service
+
+    @pytest.mark.asyncio
+    async def test_profile_dictation_global_stt_off_still_finals(self):
+        """全局 STT 初始关闭 + profile start/feed/stop → 唯一终态 dictation.final。"""
+        from unittest.mock import patch
+
+        from core.input.tests.test_voice_sessions import _ProfileSTTBackend
+        agent, ws, mgr = make()
+        agent.stt_enabled = False
+        fake = _ProfileSTTBackend(text="profile")
+        with patch("core.input.voice_sessions.STTFactory.create", return_value=fake):
+            await handle_json_message(
+                {"type": "dictation.start", "clientRequestId": "req_p",
+                 "sttProfileId": "sensevoice/sense-voice"},
+                agent, None, ws, voice_mgr=mgr)
+        assert mgr.has_active_session() is True
+        await mgr.feed_pcm(b"\x00" * 6400)
+        await handle_json_message(
+            {"type": "dictation.stop", "clientRequestId": "req_p"},
+            agent, None, ws, voice_mgr=mgr)
+        finals = [s for s in ws.sent if s.get("type") == "dictation.final"]
+        cancelled = [s for s in ws.sent if s.get("type") == "dictation.cancelled"]
+        not_found = [s for s in ws.sent if s.get("type") == "error"
+                     and s.get("code") == "DICTATION_NOT_FOUND"]
+        assert finals and len(finals) == 1, f"应收到唯一 dictation.final: {ws.sent}"
+        assert not cancelled, f"不应有 dictation.cancelled: {ws.sent}"
+        assert not not_found, f"不应有 DICTATION_NOT_FOUND: {ws.sent}"
+        assert mgr.has_active_session() is False
+
+    @pytest.mark.asyncio
+    async def test_profile_dictation_survives_set_service_stt_off(self):
+        """profile dictation 途中 set_service(stt=false) → 会话保持，stop → final。"""
+        from unittest.mock import patch
+
+        from core.input.tests.test_voice_sessions import _ProfileSTTBackend
+        agent, ws, mgr = make()
+        self._make_set_service(agent)
+        fake = _ProfileSTTBackend(text="profile")
+        with patch("core.input.voice_sessions.STTFactory.create", return_value=fake):
+            await handle_json_message(
+                {"type": "dictation.start", "clientRequestId": "req_p",
+                 "sttProfileId": "sensevoice/sense-voice"},
+                agent, None, ws, voice_mgr=mgr)
+        assert mgr.has_active_session() is True
+        await handle_json_message(
+            {"type": "set_service", "service": "stt", "enabled": False},
+            agent, None, ws, voice_mgr=mgr)
+        assert mgr.has_active_session() is True, "profile dictation 不应被 set_service 取消"
+        assert not any(s.get("type") == "dictation.cancelled" for s in ws.sent)
+        await handle_json_message(
+            {"type": "dictation.stop", "clientRequestId": "req_p"},
+            agent, None, ws, voice_mgr=mgr)
+        finals = [s for s in ws.sent if s.get("type") == "dictation.final"]
+        assert finals and len(finals) == 1, f"stop 应收到唯一 dictation.final: {ws.sent}"
+
+    @pytest.mark.asyncio
+    async def test_no_profile_dictation_stt_off_cancelled(self):
+        """无 profile（缺省全局 STT）dictation 途中关闭全局 STT → 唯一终态 cancelled。"""
+        agent, ws, mgr = make()
+        self._make_set_service(agent)
+        await handle_json_message(
+            {"type": "dictation.start", "clientRequestId": "req_d"},
+            agent, None, ws, voice_mgr=mgr)
+        assert mgr.has_active_session() is True
+        await handle_json_message(
+            {"type": "set_service", "service": "stt", "enabled": False},
+            agent, None, ws, voice_mgr=mgr)
+        cancelled = [s for s in ws.sent if s.get("type") == "dictation.cancelled"]
+        finals = [s for s in ws.sent if s.get("type") == "dictation.final"]
+        assert cancelled and len(cancelled) == 1, f"应收到唯一 dictation.cancelled: {ws.sent}"
+        assert not finals, f"不应有 dictation.final: {ws.sent}"
+        assert mgr.has_active_session() is False

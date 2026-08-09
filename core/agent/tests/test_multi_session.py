@@ -86,7 +86,8 @@ class TestResolveSession:
 
     @pytest.mark.asyncio
     async def test_resolve_v2_conversation_id(self, agent):
-        """resolve_session("conv_z", 2) → 指定会话。"""
+        """resolve_session("conv_z", 2) → 指定会话（已知会话；9abc P2-1 后未知抛错）。"""
+        agent.session_manager.get("conv_z")  # 预建缓存——严格 resolver 只解析已知会话
         result = await agent.resolve_session("conv_z", 2)
         assert result.session_id == "conv_z"
 

@@ -18,6 +18,7 @@ from core.status.agent_fsm import AgentFSM
 from core.monitoring.event_bus import EventBus
 from Module.output import OutputManager
 from core.memory.session import SessionMemory
+from core.memory.session_manager import SessionManager, SessionNotFoundError
 from core.cognitive import CognitiveLoop
 from core.schema import MessageId, SessionId
 from core.adapter.llm_adapter import LLMAdapter
@@ -113,6 +114,52 @@ async def test_no_conversation_id_v1_routes_to_default():
     assert loop._resolver_calls == [(None, 1)]
     assert len(default.recent_messages()) >= 2
     assert len(conv_x.recent_messages()) == 0
+    await loop._output.close()
+
+
+@pytest.mark.asyncio
+async def test_deleted_session_resolve_raises_and_loop_drops():
+    """P2-1：入口 has_session 通过 → 删除 → loop 消费 resolve 抛 SessionNotFoundError → 丢弃。
+
+    用真实 SessionManager（内存 fake db）作 resolver：删除后显式 resolve 抛错，
+    CognitiveLoop.process 捕获后丢弃该消息，不复活会话、不归档、不生成。
+    """
+    from core.storage.session_repo import SessionRepository
+    from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+    class _FakeMsgRepo:
+        def __init__(self):
+            self.appended = []
+        async def append(self, session_id, msg):
+            self.appended.append((session_id, msg))
+        async def delete_by_session(self, sid):
+            return 0
+
+    backend = FakeDocumentDBBackend()
+    repo = SessionRepository(db=backend)
+    msg_repo = _FakeMsgRepo()
+    sm = SessionManager(repo, msg_repo)
+    summary = await sm.create(title="race")
+    sid = str(summary.session_id)
+    assert await sm.has_session(sid) is True       # 入口检查通过
+    await sm.delete(sid)                            # 竞态窗口：删除
+    assert await sm.has_session(sid) is False
+    with pytest.raises(SessionNotFoundError):
+        await sm.resolve(sid, 2)                    # 最终 resolver 严格化
+
+    default = SessionMemory(session_id="default")
+    loop = _make_loop({}, default)
+    loop._session_resolver = lambda c, p: sm.resolve(c, p)
+    await loop.process("在途消息", conversation_id=SessionId(sid), protocol_version=2)
+    await _await_pending(loop)
+
+    # 不复活：缓存/持久层无该会话
+    assert sid not in sm._sessions
+    items, _, _ = await sm.list()
+    assert all(str(i.session_id) != sid for i in items), f"已删会话不应出现在列表: {items}"
+    # 无归档 / 无生成到已删会话
+    assert all(s != sid for (s, _) in msg_repo.appended), f"不应归档到已删会话: {msg_repo.appended}"
+    assert len(default.recent_messages()) == 0
     await loop._output.close()
 
 

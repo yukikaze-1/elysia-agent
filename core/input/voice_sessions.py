@@ -125,6 +125,22 @@ class VoiceSessionManager:
     def has_active_session(self) -> bool:
         return self._mode != VoiceMode.IDLE
 
+    def depends_on_global_stt(self) -> bool:
+        """本会话是否依赖全局 STT 开关（9abc P1-2：profile dictation 独立）。
+
+        判定结果被 ws_handler 的 ``_voice_stt_gate`` 与 ``set_service(stt=false)``
+        通知共用——stt 门禁只对依赖全局开关的会话生效：
+        - REALTIME / RECORDING：恒依赖全局 STT；
+        - DICTATION：仅当无 profile 快照（``_dictation_stt is None``，缺省落全局
+          agent.stt）时依赖；有快照后端（``sttProfileId``）则独立于全局开关；
+        - IDLE：无会话，恒 False。
+        """
+        if self._mode == VoiceMode.IDLE:
+            return False
+        if self._mode == VoiceMode.DICTATION and self._dictation_stt is not None:
+            return False  # profile 快照独立于全局活动 STT
+        return True
+
     # ---- 通用 ----
 
     def _stt_available(self) -> bool:

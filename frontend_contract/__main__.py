@@ -68,14 +68,18 @@ def main() -> int:
     """生成入口：默认写文件，--check 只校验不写。返回进程退出码。"""
     models, discriminated = _collect()
     schema_doc = gen_schema.build_document()
+    # 9abc P1-4：ClientMessage 不追加 UnknownMessage——出站消息必须只含后端当前支持
+    # 的具名成员（与 JSON Schema 严格 oneOf 一致）；ServerMessage 保留 catch-all
+    # 供前端接收未来服务端帧 forward compat。
+    _NO_UNKNOWN = {"ClientMessage"}
     artifacts: dict[str, str] = {
-        "ts": generate_ts(models, discriminated),
+        "ts": generate_ts(models, discriminated, no_unknown=_NO_UNKNOWN),
         # F6（review）：schema 序列化与 gen_schema 单源（sort_keys + indent=2 +
         # ensure_ascii=False）——与 schemaHash 计算同参数，产物可复现
         "schema": gen_schema.serialize_document(schema_doc),
         "raw_ts": generate_raw_ts(
             models, discriminated, TRANSPORT_VERSION, PROTOCOL_VERSION,
-            schema_doc["schemaHash"]),
+            schema_doc["schemaHash"], no_unknown=_NO_UNKNOWN),
     }
     if "--check" in sys.argv:
         # F5（review）：TemporaryDirectory 自动清理——NamedTemporaryFile(delete=False)

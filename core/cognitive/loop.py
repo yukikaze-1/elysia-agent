@@ -36,6 +36,7 @@ from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 from core.status.agent_fsm import AgentFSM
 from core.monitoring.event_bus import EventBus
+from core.memory.session_manager import SessionNotFoundError
 from core.utils import set_request_id, get_request_id, log_conversation
 from Module.tool.protocol import ToolResult
 from core.storage.desktop_call_repo import STATUS_OFFLINE
@@ -411,7 +412,14 @@ class CognitiveLoop(CognitiveTools):
             #   - protocol_version < 2 → 恒 "default"（v1 行为与批次 0-2 一致）
             #   - >=2 且 conversation_id → 该会话（v2 显式覆盖 active）
             #   - >=2 且 None → 当前活动会话
-            target = await self._session_resolver(conversation_id, protocol_version)
+            # 9abc P2-1：最终 resolver 严格化——显式 v2 会话已删除/未知 → 抛
+            # SessionNotFoundError，捕获后丢弃该消息（入口 has_session 通过后删除的
+            # 在途消息不复活幽灵会话，logger.warning 记录）。
+            try:
+                target = await self._session_resolver(conversation_id, protocol_version)
+            except SessionNotFoundError:
+                logger.warning("会话已删除，拒绝在途消息 conversation_id=%s", conversation_id)
+                return
             # 批次 3（Task 13 回归收敛）：generation wire 的 conversationId = 实际目标会话
             # ID。v2 显式 conversationId → 该会话；v2 缺省 → 活动会话（resolve 已返回）；
             # v1 恒 default。与 user_message.ack 的解析规则一致（spec §6.3）。

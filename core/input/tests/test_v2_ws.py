@@ -592,7 +592,8 @@ class TestQueueFullAck:
         agent.attachment_repo = type("R", (), {"get": _fake_get})()
         await handle_json_message(
             {"type": "text", "content": "", "clientRequestId": "q4",
-             "attachments": [{"attachmentId": "att_1"}]},
+             "attachments": [{"attachmentId": "att_1", "kind": "image",
+                              "mime": "image/png"}]},
             agent, None, ws, voice_mgr=None)
         ack = [s for s in ws.sent if s.get("type") == "user_message.ack"]
         assert ack and ack[0]["status"] == "rejected"
@@ -890,3 +891,119 @@ class TestClientMessageValidation:
             await ws.close()
         finally:
             await agent.stop()
+
+
+@pytest.mark.service
+class TestOfflineSessionVisible:
+    """P1-1：MongoDB 离线 create 的会话立即可见——strict has_session 不再误拒。"""
+
+    @pytest.mark.asyncio
+    async def test_offline_created_session_text_ack_accepted(self, aiohttp_client,
+                                                             fresh_idempotency):
+        """离线 create → has_session True + 用该 conversationId 走 v2 text ACK accepted。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        # 模拟 MongoDB 离线（start 后摘除 repo._db——create 静默不落库）
+        agent.session_manager._repo._db = None  # noqa: SLF001 — 测试注入离线状态
+        summary = await agent.session_manager.create(title="offline")
+        assert await agent.session_manager.has_session(summary.session_id) is True
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({
+                "type": "text", "content": "你好",
+                "clientRequestId": "req_offline",
+                "conversationId": str(summary.session_id),
+            })
+            ack = None
+            for _ in range(20):
+                m = await asyncio.wait_for(ws.receive(), timeout=10)
+                if m.type == WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("type") == "user_message.ack":
+                        ack = d
+                        break
+            assert ack is not None, f"未收到 ACK: 应 accepted（离线会话可见）"
+            assert ack["status"] == "accepted", f"实际 {ack}"
+            assert ack.get("conversationId") == str(summary.session_id)
+            await ws.close()
+        finally:
+            await agent.stop()
+
+
+@pytest.mark.service
+class TestV2TextValidation:
+    """P1-3：v2 text 完整帧 V2TextMessage 校验——畸形字段 → ACK rejected
+    CONTRACT_VALIDATION（非 ErrorMessage）+ 连接存活（不再 TypeError 断连）。"""
+
+    async def _make(self):
+        from core.input.tests.test_voice_ws import FakeAgent, FakeWs
+        from core.input.voice_sessions import VoiceSessionManager
+
+        ws = FakeWs()
+        agent = FakeAgent(ws)
+        agent.bus = type("Bus", (), {
+            "post": lambda self, d, **kw: agent.bus_posts.append(d)})()
+        mgr = VoiceSessionManager(agent=agent, emit=ws.send_json,
+                                  on_vad_interrupt=lambda: None)
+        reset_store()
+        return agent, ws, mgr
+
+    @staticmethod
+    def _has_interrupt(agent) -> bool:
+        return any(getattr(p, "event_type", "") == "interrupt" for p in agent.bus_posts)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payload", [
+        # 畸形 attachments（int）→ 旧实现抛 TypeError: 'int' object is not iterable
+        {"type": "text", "content": "hi", "clientRequestId": "r1", "attachments": 1},
+        # 畸形 clientRequestId（list）→ 旧实现抛 TypeError: unhashable type: 'list'
+        {"type": "text", "content": "hi", "clientRequestId": ["r2"]},
+        # 缺 clientRequestId → ValidationError → ACK rejected（回归既有语义）
+        {"type": "text", "content": "hi"},
+        # 非 str stickerId
+        {"type": "text", "content": "hi", "clientRequestId": "r4", "stickerId": 7},
+    ])
+    async def test_malformed_v2_text_ack_rejected_connection_alive(self, payload):
+        from core.input.ws_handler import handle_json_message
+
+        agent, ws, mgr = await self._make()
+        await handle_json_message(payload, agent, None, ws, voice_mgr=mgr)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected", f"实际 {ws.sent}"
+        assert acks[-1]["error"]["code"] == "CONTRACT_VALIDATION"
+        assert not any(s.get("type") == "error" for s in ws.sent), \
+            "v2 text 校验错误走 ACK 通道，非 ErrorMessage"
+        # 连接存活：后续合法 interrupt 被处理（原缺陷：TypeError 会断连）
+        await handle_json_message({"type": "interrupt"}, agent, None, ws, voice_mgr=mgr)
+        assert self._has_interrupt(agent), f"interrupt 未被处理: {ws.sent}"
+
+    @pytest.mark.asyncio
+    async def test_valid_v2_text_uses_validated_model(self):
+        """合法 text（含完整 AttachmentRef）→ 走 _route_v2_text，attachments 为已校验模型。"""
+        from core.input.ws_handler import handle_json_message
+
+        agent, ws, mgr = await self._make()
+
+        async def _fake_get(self, aid):
+            return {"attachment_id": aid, "kind": "image", "status": "active",
+                    "mime": "image/png", "filename": "x.png",
+                    "stored_name": "x.png", "size": 10}
+        agent.attachment_repo = type("R", (), {"get": _fake_get})()
+
+        async def _ok_process(**kwargs):
+            agent.processed_kwargs = kwargs
+            return True
+        agent.process_message = _ok_process
+        await handle_json_message(
+            {"type": "text", "content": "", "clientRequestId": "r5",
+             "attachments": [{"attachmentId": "att_1", "kind": "image",
+                              "mime": "image/png"}]},
+            agent, None, ws, voice_mgr=mgr)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "accepted", f"实际 {ws.sent}"
+        # process_message 收到校验后安全字段（conversation_id=None 缺省 → 未校验 data 无加法/索引）
+        assert agent.processed_kwargs["conversation_id"] is None

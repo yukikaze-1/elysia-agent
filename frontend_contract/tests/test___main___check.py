@@ -73,3 +73,27 @@ def test_generated_artifacts_include_client_message_union(tmp_path, monkeypatch)
         assert "export type ServerMessage =" in content, f"{label} 缺 ServerMessage union（回归 Guard）"
         assert "  | VoiceRecordStartMessage" in content, \
             f"{label} 缺 ClientMessage 成员 VoiceRecordStartMessage"
+
+
+@pytest.mark.unit
+def test_client_message_artifact_has_no_unknown():
+    """P1-4：契约产物 ClientMessage 段不含 UnknownMessage、ServerMessage 段保留。
+
+    机器契约与 JSON Schema 严格 oneOf 一致——任意 `{type:string}` 不再通过 TS。
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent.parent
+    artifacts = [
+        root / "frontend_contract" / "contract.raw.ts",
+        root / "frontend" / "src" / "types" / "contract.generated.ts",
+    ]
+    for path in artifacts:
+        content = path.read_text(encoding="utf-8")
+        assert "export type ClientMessage =" in content, f"{path} 缺 ClientMessage union"
+        sm_block = content[content.index("export type ServerMessage ="):
+                           content.index("export type ClientMessage =")]
+        assert "  | UnknownMessage" in sm_block, f"{path} ServerMessage 应保留 UnknownMessage"
+        cm_block = content[content.index("export type ClientMessage ="):
+                           content.index("export interface UnknownMessage")]
+        assert "UnknownMessage" not in cm_block, f"{path} ClientMessage 不应含 UnknownMessage"

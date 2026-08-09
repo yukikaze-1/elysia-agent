@@ -1,16 +1,16 @@
 # 由 frontend_contract 契约源生成（scripts/gen_contract_frames.py）——非事实源，漂移门禁兜底。
 # 帧序列 = 固定测试数据（确定性）；真实 wire 形状以 frontend_contract/ 契约为准。
 
-{"type": "user_message.ack", "messageId": "msg_frame_ack1", "clientRequestId": "req_frame_chat1", "receivedAt": "2026-08-09T00:00:00+00:00", "status": "accepted"}
+{"type": "user_message.ack", "messageId": "msg_frame_ack1", "clientRequestId": "req_frame_chat1", "conversationId": "default", "receivedAt": "2026-08-09T00:00:00+00:00", "status": "accepted"}
 {"type": "state", "state": "thinking"}
 {"type": "typing", "typing": true}
-{"type": "generation.started", "generationId": "gen_frame_1", "messageId": "msg_frame_ast1"}
-{"type": "generation.segment.started", "generationId": "gen_frame_1", "segmentId": "seg_frame_iv0", "segmentIndex": 0, "channel": "inner_voice", "kind": "text"}
-{"type": "generation.segment.completed", "generationId": "gen_frame_1", "segmentId": "seg_frame_iv0", "segmentIndex": 0, "channel": "inner_voice", "kind": "text", "content": "我想认真回应这个话题。"}
-{"type": "generation.segment.started", "generationId": "gen_frame_1", "segmentId": "seg_frame_pub1", "segmentIndex": 1, "channel": "public_reply", "kind": "text"}
-{"type": "generation.delta", "generationId": "gen_frame_1", "segmentId": "seg_frame_pub1", "segmentIndex": 1, "deltaSequence": 0, "delta": "你好！这是第一句话，回答你的问题。"}
+{"type": "generation.started", "generationId": "gen_frame_1", "messageId": "msg_frame_ast1", "conversationId": "default"}
+{"type": "generation.segment.started", "generationId": "gen_frame_1", "segmentId": "seg_frame_iv0", "segmentIndex": 0, "channel": "inner_voice", "kind": "text", "conversationId": "default"}
+{"type": "generation.segment.completed", "generationId": "gen_frame_1", "segmentId": "seg_frame_iv0", "segmentIndex": 0, "channel": "inner_voice", "kind": "text", "content": "我想认真回应这个话题。", "conversationId": "default"}
+{"type": "generation.segment.started", "generationId": "gen_frame_1", "segmentId": "seg_frame_pub1", "segmentIndex": 1, "channel": "public_reply", "kind": "text", "conversationId": "default"}
+{"type": "generation.delta", "generationId": "gen_frame_1", "segmentId": "seg_frame_pub1", "segmentIndex": 1, "deltaSequence": 0, "delta": "你好！这是第一句话，回答你的问题。", "conversationId": "default"}
 {"type": "typing", "typing": false}
 {"type": "state", "state": "speaking"}
-{"type": "generation.segment.completed", "generationId": "gen_frame_1", "segmentId": "seg_frame_pub1", "segmentIndex": 1, "channel": "public_reply", "kind": "text", "content": "你好！这是第一句话，回答你的问题。"}
-{"type": "generation.completed", "generationId": "gen_frame_1", "messageId": "msg_frame_ast1", "channel": "public_reply", "finishReason": "stop", "usage": {"rounds": [{"model": "deepseek/deepseek-chat", "session_id": "default", "input_tokens": 12, "output_tokens": 18, "total_tokens": 30, "cached_tokens": 0, "reasoning_tokens": 0, "round_num": 0, "timestamp": "2026-08-09T00:00:00+00:00"}], "turn_total": 30}, "model": "deepseek/deepseek-chat", "mood": "开心", "completeness": "complete", "conversationUsage": {"total": 30, "byModel": {"deepseek/deepseek-chat": 30}}}
+{"type": "generation.segment.completed", "generationId": "gen_frame_1", "segmentId": "seg_frame_pub1", "segmentIndex": 1, "channel": "public_reply", "kind": "text", "content": "你好！这是第一句话，回答你的问题。", "conversationId": "default"}
+{"type": "generation.completed", "generationId": "gen_frame_1", "messageId": "msg_frame_ast1", "channel": "public_reply", "finishReason": "stop", "usage": {"rounds": [{"model": "deepseek/deepseek-chat", "session_id": "default", "input_tokens": 12, "output_tokens": 18, "total_tokens": 30, "cached_tokens": 0, "reasoning_tokens": 0, "round_num": 0, "timestamp": "2026-08-09T00:00:00+00:00"}], "turn_total": 30}, "model": "deepseek/deepseek-chat", "mood": "开心", "completeness": "complete", "conversationId": "default", "conversationUsage": {"total": 30, "byModel": {"deepseek/deepseek-chat": 30}}}
 {"type": "state", "state": "idle"}

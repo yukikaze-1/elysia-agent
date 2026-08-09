@@ -2306,6 +2306,5 @@ export type ClientMessage =
   | DictationCancelMessage
   | AudioCancelMessage
   | ToolStatusMessage
-  | UnknownMessage
 
 export interface UnknownMessage { type: string; [key: string]: unknown }

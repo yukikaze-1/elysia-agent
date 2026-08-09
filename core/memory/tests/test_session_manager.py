@@ -8,7 +8,10 @@ import asyncio
 import pytest
 
 from core.memory.session import SessionMemory
-from core.memory.session_manager import SessionManager, SessionBusyError
+from core.memory.session_manager import (
+    SessionManager, SessionBusyError, SessionNotFoundError,
+)
+from core.storage.session_repo import SessionRepository
 from core.schema.character import CharacterState
 from core.schema.memory_reflector import MemoryReflectorState
 from core.schema.message import UserMessage
@@ -204,10 +207,49 @@ async def test_resolve_v2_none_returns_active():
 
 @pytest.mark.asyncio
 async def test_resolve_v2_explicit_conv():
-    """protocol_version>=2 且显式 conversation_id → 该会话。"""
+    """protocol_version>=2 且显式 conversation_id → 该会话（已知会话）。"""
     m = _make_manager()
-    s = await m.resolve("conv_specific", 2)
-    assert s.session_id == "conv_specific"
+    summary = await m.create()
+    s = await m.resolve(str(summary.session_id), 2)
+    assert s.session_id == summary.session_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_v2_explicit_unknown_raises_session_not_found():
+    """P2-1：protocol_version>=2 且显式 conversation_id 未知/已删 → SessionNotFoundError。
+
+    最终 resolver 严格化——禁止懒创建复活已删除会话（9A-3「已删除会话不得重建」）。
+    """
+    m = _make_manager()
+    with pytest.raises(SessionNotFoundError):
+        await m.resolve("conv_ghost", 2)
+    assert "conv_ghost" not in m._sessions
+    assert await m.has_session("conv_ghost") is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_v2_explicit_deleted_raises_and_does_not_resurrect():
+    """P2-1：已加载会话删除后显式 resolve → 抛错且不复活（缓存/持久层均无）。"""
+    repo = FakeSessionRepo()
+    msg_repo = FakeMsgRepo()
+    m = _make_manager(repo, msg_repo)
+    summary = await m.create(title="del-race")
+    sid = str(summary.session_id)
+    assert await m.has_session(sid) is True      # 入口检查通过
+    await m.delete(sid)                          # 竞态窗口：删除
+    assert await m.has_session(sid) is False
+    with pytest.raises(SessionNotFoundError):
+        await m.resolve(sid, 2)
+    assert sid not in m._sessions                # 缓存无该会话（未复活）
+    assert sid not in repo.sessions              # 持久层无该会话
+
+
+@pytest.mark.asyncio
+async def test_resolve_v2_explicit_default_still_ok():
+    """P2-1：显式 "default" 不受严格化影响（default eager 缓存命中）。"""
+    m = _make_manager()
+    s = await m.resolve("default", 2)
+    assert s.session_id == "default"
 
 
 # ───────────────────────── has_session ─────────────────────────
@@ -318,6 +360,21 @@ async def test_create_title_optional_and_not_active():
     summary = await m.create()
     assert summary.title == ""
     assert summary.active is False
+
+
+@pytest.mark.asyncio
+async def test_create_offline_repo_visible_to_has_session():
+    """P1-1：MongoDB 离线（repo._db=None）create → 新会话立即对 has_session 可见。
+
+    create() 追加 ensure_loaded 把新会话放入内存缓存 + _loaded——离线降级语义下
+    REST 创建成功后 text/附件/voice 携带该 conversationId 不再被严格检查判为幽灵。
+    """
+    repo = SessionRepository(db=None)  # 离线：create 静默不落库
+    m = _make_manager(repo, FakeMsgRepo())
+    summary = await m.create(title="offline")
+    assert await m.has_session(summary.session_id) is True   # 原缺陷：False
+    assert str(summary.session_id) in m._sessions            # 已入内存缓存
+    assert await m.has_session("conv_ghost") is False        # 真正未知仍 False
 
 
 @pytest.mark.asyncio

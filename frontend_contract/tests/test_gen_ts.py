@@ -200,3 +200,44 @@ def test_emit_str_enum_union():
     # 枚举与判别联合别名排布：枚举在接口之后、UnknownMessage 之前
     assert out.index("export interface DesktopStatusMessage") < out.index("export type DesktopStatusEnum")
     assert out.index("export type DesktopStatusEnum") < out.index("UnknownMessage")
+
+
+@pytest.mark.unit
+def test_no_unknown_applies_per_alias():
+    """P1-4：no_unknown 只对命中的判别联合生效——ClientMessage 不含 UnknownMessage、
+    ServerMessage 保留（前端接收 forward compat）。"""
+    out = generate_ts(
+        [DeltaMessage, TextPart, ImagePart],
+        discriminated={
+            "ServerMessage": [DeltaMessage],
+            "ClientMessage": [TextPart, ImagePart],
+        },
+        no_unknown={"ClientMessage"},
+    )
+    sm_start = out.index("export type ServerMessage =")
+    sm_end = out.index("export type ClientMessage =")
+    server_block = out[sm_start:sm_end]
+    assert "  | UnknownMessage" in server_block, "ServerMessage 应保留 UnknownMessage"
+    cm_start = out.index("export type ClientMessage =")
+    cm_end = out.index("export interface UnknownMessage")
+    client_block = out[cm_start:cm_end]
+    assert "UnknownMessage" not in client_block, "ClientMessage 不应含 UnknownMessage"
+    assert "  | UnknownMessage" not in client_block
+    # 成员本身仍发射
+    assert "  | TextPart" in client_block
+    assert "  | ImagePart" in client_block
+
+
+@pytest.mark.unit
+def test_no_unknown_default_adds_unknown_to_all():
+    """回归：未传 no_unknown → 全部判别联合追加 UnknownMessage（既有行为）。"""
+    out = generate_ts(
+        [DeltaMessage, TextPart, ImagePart],
+        discriminated={
+            "ServerMessage": [DeltaMessage],
+            "ClientMessage": [TextPart, ImagePart],
+        },
+    )
+    for alias in ("ServerMessage", "ClientMessage"):
+        block = out[out.index(f"export type {alias} ="):out.index("export interface UnknownMessage")]
+        assert "  | UnknownMessage" in block

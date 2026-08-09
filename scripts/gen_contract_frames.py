@@ -74,32 +74,42 @@ def _handshake() -> list[str]:
 
 
 def _chat() -> list[str]:
-    """v2 结构化聊天：ack → generation.* 完整序列 → idle。"""
+    """v2 结构化聊天：ack → generation.* 完整序列 → idle。
+
+    9abc P2-2：ACK 与全部 generation.* 补 conversationId="default"——真实 v2 text
+    缺省会话解析为活动会话（default），ACK 填实际 ID、generation.* 六类事件携带
+    非空实际 conversationId（runtime 语义对齐，供跨仓 replay）。
+    """
     ack = wm.UserAckMessage(messageId="msg_frame_ack1", clientRequestId="req_frame_chat1",
-                            receivedAt=_TS, status=wm.AckStatus.ACCEPTED)
+                            conversationId="default", receivedAt=_TS,
+                            status=wm.AckStatus.ACCEPTED)
     thinking = wm.StateMessage(state="thinking")
     typing_on = wm.TypingMessage(typing=True)
     started = wm.GenerationStartedMessage(generationId="gen_frame_1",
-                                          messageId="msg_frame_ast1")
+                                          messageId="msg_frame_ast1",
+                                          conversationId="default")
     iv_start = wm.GenerationSegmentStartedMessage(
         generationId="gen_frame_1", segmentId="seg_frame_iv0", segmentIndex=0,
-        channel=wm.MessageChannel.INNER_VOICE, kind=wm.SegmentKind.TEXT)
+        channel=wm.MessageChannel.INNER_VOICE, kind=wm.SegmentKind.TEXT,
+        conversationId="default")
     iv_done = wm.GenerationSegmentCompletedMessage(
         generationId="gen_frame_1", segmentId="seg_frame_iv0", segmentIndex=0,
         channel=wm.MessageChannel.INNER_VOICE, kind=wm.SegmentKind.TEXT,
-        content="我想认真回应这个话题。")
+        content="我想认真回应这个话题。", conversationId="default")
     reply_start = wm.GenerationSegmentStartedMessage(
         generationId="gen_frame_1", segmentId="seg_frame_pub1", segmentIndex=1,
-        channel=wm.MessageChannel.PUBLIC_REPLY, kind=wm.SegmentKind.TEXT)
+        channel=wm.MessageChannel.PUBLIC_REPLY, kind=wm.SegmentKind.TEXT,
+        conversationId="default")
     delta = wm.GenerationDeltaMessage(
         generationId="gen_frame_1", segmentId="seg_frame_pub1", segmentIndex=1,
-        deltaSequence=0, delta="你好！这是第一句话，回答你的问题。")
+        deltaSequence=0, delta="你好！这是第一句话，回答你的问题。",
+        conversationId="default")
     typing_off = wm.TypingMessage(typing=False)
     speaking = wm.StateMessage(state="speaking")
     reply_done = wm.GenerationSegmentCompletedMessage(
         generationId="gen_frame_1", segmentId="seg_frame_pub1", segmentIndex=1,
         channel=wm.MessageChannel.PUBLIC_REPLY, kind=wm.SegmentKind.TEXT,
-        content="你好！这是第一句话，回答你的问题。")
+        content="你好！这是第一句话，回答你的问题。", conversationId="default")
     completed = wm.GenerationCompletedMessage(
         generationId="gen_frame_1", messageId="msg_frame_ast1",
         channel=wm.MessageChannel.PUBLIC_REPLY, finishReason=rest.FinishReason.STOP,
@@ -110,6 +120,7 @@ def _chat() -> list[str]:
                                   timestamp=_TS)],
             turn_total=30),
         model="deepseek/deepseek-chat", mood="开心", completeness="complete",
+        conversationId="default",
         conversationUsage=rest.ConversationUsage(
             total=30, byModel={"deepseek/deepseek-chat": 30}))
     idle = wm.StateMessage(state="idle")
@@ -173,11 +184,15 @@ def _tool() -> list[str]:
 
 
 def _voice() -> list[str]:
-    """实时语音会话：started → partial 字幕 → turn 提交 → ack → 音频流 → ended。"""
+    """实时语音会话：started → partial 字幕 → turn 提交 → ack → 音频流 → ended。
+
+    9abc P2-2：首轮 partial/turn 的 turnId=1——真实 _on_segment 先 `self._turn_id
+    += 1` 再发帧（公开协议文档同样写 turnId=1）。
+    """
     started = wm.VoiceSessionStartedMessage(sessionId="vs_frame_1", conversationId="default")
-    partial = wm.VoiceSessionPartialMessage(sessionId="vs_frame_1", turnId=0,
+    partial = wm.VoiceSessionPartialMessage(sessionId="vs_frame_1", turnId=1,
                                             segmentIndex=0, text="你好")
-    turn = wm.VoiceSessionTurnMessage(sessionId="vs_frame_1", turnId=0,
+    turn = wm.VoiceSessionTurnMessage(sessionId="vs_frame_1", turnId=1,
                                       messageId="msg_frame_vs1",
                                       conversationId="default", text="你好")
     ack = wm.VoiceSessionAckMessage(sessionId="vs_frame_1", seq=1)

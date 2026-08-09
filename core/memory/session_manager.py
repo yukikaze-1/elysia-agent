@@ -45,6 +45,14 @@ class SessionBusyError(RuntimeError):
     """
 
 
+class SessionNotFoundError(RuntimeError):
+    """目标会话不存在（已删除/从未创建）——最终 resolver 严格化（9abc P2-1）。
+
+    显式 v2 conversation_id 在最终消费（CognitiveLoop resolve）时必须先验证存在，
+    禁止懒创建复活已删除会话（9A-3「已删除会话不得重建」）。缺省/`default` 不受影响。
+    """
+
+
 def _encode_cursor(updated_at: str, session_id: str) -> str:
     """编码 keyset 游标：base64url(`updated_at|session_id`)。"""
     raw = f"{updated_at}|{session_id}"
@@ -159,7 +167,17 @@ class SessionManager:
         return False
 
     async def resolve(self, conversation_id: str | None, protocol_version: int) -> SessionMemory:
-        """按协议版本 + conversation_id 解析目标会话并确保加载。"""
+        """按协议版本 + conversation_id 解析目标会话并确保加载。
+
+        9abc P2-1（最终 resolver 严格化）：显式 v2 conversation_id 先经
+        ``has_session`` 验证存在（内存缓存命中零开销，未知才查持久层）——已删除/
+        未知会话抛 ``SessionNotFoundError``，禁止懒创建复活幽灵会话；缺省/
+        `default`/v1 不受影响。
+
+        Raises:
+            SessionNotFoundError: protocol_version>=2 且显式 conversation_id
+                对应的会话不存在。
+        """
         version = int(protocol_version)
         if version < 2:
             target = DEFAULT_SESSION
@@ -167,6 +185,8 @@ class SessionManager:
             target = SessionId(conversation_id)
         else:
             target = self._active_id
+        if version >= 2 and conversation_id and not await self.has_session(target):
+            raise SessionNotFoundError(target)
         return await self.ensure_loaded(target)
 
     def set_busy_check(self, check: "Callable[[], bool] | None") -> None:
@@ -206,9 +226,16 @@ class SessionManager:
     # ---- CRUD ----
 
     async def create(self, title: str = "") -> SessionSummary:
-        """创建空会话：conv_<uuid4 hex[:12]>，落库（repo.create）。"""
+        """创建空会话：conv_<uuid4 hex[:12]>，落库（repo.create）+ 立即入内存缓存。
+
+        9abc P1-1：create 后追加 ``ensure_loaded(sid)``——把新会话放入内存缓存 +
+        ``_loaded``，使 ``has_session()`` 立即可见。MongoDB 离线时 ``repo.create``
+        静默不落库，但内存缓存仍保有该会话（JSONL fallback 降级语义），REST 创建
+        成功后 text/附件/voice 携带该 conversationId 不再被严格检查判为幽灵会话。
+        """
         sid = SessionId(f"conv_{uuid.uuid4().hex[:12]}")
         await self._repo.create(sid, title)
+        await self.ensure_loaded(sid)
         return SessionSummary(
             session_id=sid,
             message_count=0,

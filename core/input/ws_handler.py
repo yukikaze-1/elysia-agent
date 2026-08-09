@@ -39,7 +39,9 @@ from frontend_contract import (
     UserAckMessage,
     WakeMessage,
 )
-from frontend_contract.ws_message import AckStatus, AudioInputDescriptor, ClientMessage
+from frontend_contract.ws_message import (
+    AckStatus, AudioInputDescriptor, ClientMessage, V2TextMessage,
+)
 from frontend_contract.version import TRANSPORT_VERSION
 from core.input.tts_profile import _active_tts_profile
 
@@ -354,6 +356,19 @@ async def handle_ws(
                         code="CONTRACT_VALIDATION",
                         requestId=_current_request_id(),
                     ).wire_dict())
+                except Exception:
+                    # 9abc P1-3（DoD）：畸形消息不得断开连接——任何未预期异常兜底为
+                    # ErrorMessage{INTERNAL} 并继续循环（logger.exception 记录，不吞静默）。
+                    logger.exception("WS 消息处理未预期异常——回 INTERNAL error，连接存活")
+                    try:
+                        await ws.send_json(ErrorMessage(
+                            message="内部错误",
+                            code="INTERNAL",
+                            requestId=_current_request_id(),
+                        ).wire_dict())
+                    except Exception:
+                        logger.debug("发送 INTERNAL error 失败", exc_info=True)
+                    continue
 
             elif msg.type == WSMsgType.BINARY:
                 # 批次 6：有活动语音会话 → 喂给会话管理器（RECORDING/REALTIME/DICTATION 分流）；
@@ -471,9 +486,11 @@ async def _voice_stt_gate(agent: "Agent",
 
     stt 关闭 → 结束活动 REALTIME/DICTATION 会话——暂停中会话无帧流入、idle 计时
     挂起，靠此入口检测避免静默悬挂至连接关闭；RECORDING 由 notify_stt_disabled
-    内部忽略（spec §3.2 NEW-XA）。"""
+    内部忽略（spec §3.2 NEW-XA）。9abc P1-2：仅对依赖全局 STT 的会话生效——
+    profile dictation（`_dictation_stt` 快照）独立于全局开关，stop 不被此门禁取消。
+    """
     if (voice_mgr is not None and not getattr(agent, "stt_enabled", False)
-            and voice_mgr.has_active_session()):
+            and voice_mgr.depends_on_global_stt()):
         try:
             await voice_mgr.notify_stt_disabled()
         except Exception:
@@ -568,7 +585,7 @@ def _build_media_parts(text: str, attachment_records: dict[str, dict],
 
 
 async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
-                         text: str, data: dict,
+                         model: V2TextMessage,
                          sent_message_ids: set | None = None) -> bool:
     """v2 文本消息路由：ACK + 幂等 + 预分配 messageId（批次 7：附件/表情）。
 
@@ -578,14 +595,17 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
     抛异常 → 删幂等 entry + rejected INTERNAL（不 crash 连接）；accepted 时
     ``sent_message_ids.add(message_id)``（D1 归属，Task 9 消费）。
 
+    9abc P1-3：接收已完整校验的 ``V2TextMessage`` 模型（handle_json_message 已
+    ``model_validate``），内部只用 ``model.clientRequestId/content/conversationId/
+    attachments/stickerId`` 等校验后安全字段——attachments 为 ``list[AttachmentRef]``，
+    不再对未校验原始 ``data`` 做加法/索引（消除 TypeError 断连源）。
+
     返回 True 表示已按 v2 处理（含 rejected），False 表示走 v1 路径（非 v2 连接）。
 
     Args:
         agent: Agent 实例。
         ws: 发送方连接（用于回 ACK 与协议版本判定）。
-        text: 文本内容（已 strip）。
-        data: 原始消息 dict（含 clientRequestId/clientMessageId/conversationId/
-            attachments/stickerId）。
+        model: 已校验的 v2 文本消息模型。
         sent_message_ids: 可选接收集合——accepted 时登记 messageId（D1 接线）。
     """
     if ws is None:
@@ -593,9 +613,10 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
     channel = _find_channel(agent, ws)
     if channel is None or channel.protocol_version < 2:
         return False
-    client_request_id = data.get("clientRequestId", "")
-    client_message_id = data.get("clientMessageId")
-    conversation_id = data.get("conversationId")
+    text = model.content.strip()
+    client_request_id = model.clientRequestId
+    client_message_id = model.clientMessageId
+    conversation_id = model.conversationId
 
     if not client_request_id:
         # 缺 clientRequestId → 契约错误拒绝（spec §4.2）。拒绝无目标会话，conversationId 回显原始值。
@@ -621,8 +642,8 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         logger.warning("_route_v2_text: 会话解析失败，回退回显 conversationId", exc_info=True)
         ack_conversation_id = conversation_id
 
-    attachments = data.get("attachments") or []
-    sticker_id = data.get("stickerId") or ""
+    attachments = model.attachments or []
+    sticker_id = model.stickerId or ""
     has_media = bool(attachments) or bool(sticker_id)
 
     # 附件/表情消息：校验先于幂等 lookup（spec §4.2 扩展，批次 7）。
@@ -631,8 +652,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
     if has_media:
         try:
             for att in attachments:
-                aid = att.get("attachmentId") if isinstance(att, dict) \
-                    else getattr(att, "attachmentId", "")
+                aid = att.attachmentId
                 if not aid:
                     await _send_ack(ws, "", client_request_id, client_message_id,
                                     ack_conversation_id, "rejected",
@@ -878,26 +898,46 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             audio_buf.set_wake_enabled(enabled)
             logger.debug("唤醒词开关: %s", "开启" if enabled else "关闭")
     elif msg_type == "text":
-        text_content = data.get("content", "")
-        # Q6：v2 text content 非 str 检查放在 isinstance 分发之前——现有 list 分支直接走
-        # process_message 多模态路径（v2 已收紧为 str，媒体走 attachments/stickerId），
-        # 且 text_content.strip() 对 list 会 AttributeError。v1 多模态 text 不受影响。
-        if (channel is not None and channel.protocol_version >= 2
-                and not isinstance(text_content, str)):
-            await _send_ack(ws, "", data.get("clientRequestId", ""),
-                            data.get("clientMessageId"), data.get("conversationId"),
-                            "rejected",
-                            error={"code": "CONTRACT_VALIDATION",
-                                   "message": "v2 text content 必须为字符串",
-                                   "retryable": False})
+        # 9abc P1-3：v2 文本完整帧 V2TextMessage 校验——ValidationError → ACK
+        # rejected CONTRACT_VALIDATION（保留 v2 ACK rejected 通道，spec §4.2），
+        # 非 ErrorMessage；合法帧 → 校验后模型交给 _route_v2_text（attachments 等
+        # 为已校验字段，消除对未校验 data 加法/索引的 TypeError 断连源）。
+        if channel is not None and channel.protocol_version >= 2:
+            try:
+                text_model = V2TextMessage.model_validate(data)
+            except ValidationError as e:
+                # clientRequestId 缺失/非 str 也是 ValidationError——错误 ACK 只能回显
+                # 合法 str（非 str 原值直传会导致 UserAckMessage 构造失败、ACK 被吞）。
+                raw_crid = data.get("clientRequestId", "")
+                if not isinstance(raw_crid, str):
+                    raw_crid = ""
+                await _send_ack(ws, "", raw_crid,
+                                data.get("clientMessageId"), data.get("conversationId"),
+                                "rejected",
+                                error={"code": "CONTRACT_VALIDATION",
+                                       "message": f"消息校验失败: {e}",
+                                       "retryable": False})
+                return
+            # spec §3.8：v2 空文本/空媒体 → rejected CONTRACT_VALIDATION（不再静默丢弃）
+            if not (text_model.content.strip() or text_model.stickerId
+                    or text_model.attachments):
+                await _send_ack(ws, "", text_model.clientRequestId,
+                                text_model.clientMessageId, text_model.conversationId,
+                                "rejected",
+                                error={"code": "CONTRACT_VALIDATION",
+                                       "message": "消息内容为空", "retryable": False})
+                return
+            await _route_v2_text(agent, ws, text_model,
+                                 sent_message_ids=sent_message_ids)
+            # BE-081 敏感纪律：只记文本长度 + 客户端消息 ID，不记正文
+            logger.debug("WS 收到文本 (len=%d, clientMessageId=%s)",
+                         len(text_model.content.strip()),
+                         text_model.clientMessageId or "")
             return
+        # v1 老路径（data.get + 多模态 content-as-parts，v1 不受 v2 收紧影响）
+        text_content = data.get("content", "")
         if isinstance(text_content, str):
             if text_content.strip() or data.get("stickerId") or data.get("attachments"):
-                # 批次 2 v2 路由（握手 protocol_version=2）：ACK + 幂等 + 预分配 messageId。
-                # 批次 7：入口门放宽——sticker/附件-only 消息（content 可空）也进 v2 路由。
-                if await _route_v2_text(agent, ws, text_content.strip(), data,
-                                        sent_message_ids=sent_message_ids):
-                    return
                 await agent.process_message(text=text_content.strip())
                 # BE-081 敏感纪律：只记文本长度 + 客户端消息 ID，不记正文
                 logger.debug("WS 收到文本 (len=%d, clientMessageId=%s)",
@@ -1015,9 +1055,11 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             # 不向请求方传播（per-channel 发送失败已由 _send_json 内部记录）
             logger.warning("set_service 广播失败（连接并发变化？）", exc_info=True)
         logger.info("WS 设置服务开关: service=%s enabled=%s ok=%s", service, enabled, result.get("ok"))
-        # 批次 6（spec §3.2 NEW-X/XA）：stt 关闭成功 → 通知本连接语音会话（RECORDING 除外）
+        # 批次 6（spec §3.2 NEW-X/XA）：stt 关闭成功 → 通知本连接语音会话（RECORDING 除外）。
+        # 9abc P1-2：仅对依赖全局 STT 的会话生效——profile dictation 途中关闭全局 STT
+        # 不取消独立会话（depends_on_global_stt() 判定，与 _voice_stt_gate 共用）。
         if (service == "stt" and not enabled and result.get("ok")
-                and voice_mgr is not None):
+                and voice_mgr is not None and voice_mgr.depends_on_global_stt()):
             try:
                 await voice_mgr.notify_stt_disabled()
             except Exception:
