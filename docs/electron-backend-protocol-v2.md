@@ -11,7 +11,8 @@
 ## 1. 握手与版本
 
 - Electron Main 连 `/ws` 时带：`Authorization: Bearer <access_token>`（远程）+ `X-Protocol-Version: 2` + **`X-Client-Platform: electron`**（批次 4，Desktop 工具桥定向投递目标标识，spec §5.1 D-l）。
-- v2 连接建连帧：`session`（历史回放）→ `server_info`（协议版本/能力/服务形状 + **`connectionId`**，批次 4）→ `expression`（当前心情）。
+- **版本协商（批次 9B）**：`X-Protocol-Version` 支持集合 **{缺省/空 → v1, `"1"` → v1, `"2"` → v2}**；其余显式值（`"2.0"`/`"3"`/乱写）在**升级前**返回 HTTP 400 `ProtocolError`（`code=CONTRACT_VALIDATION`，message 明示支持集合）。传输 token 与展示版本分离：握手头只能用 `"2"`；`server_info.protocol_version` 为展示值 `"2.0"`（**不可**回填握手头，否则 400）。机器契约产物 `contract.raw.ts`/`contract.schema.json` 文件头带 `transportVersion: "2"`（握手可用值）。
+- v2 连接建连帧：`session`（历史回放，**含 `conversationId` = 本回放消息所属会话，批次 9A**）→ `server_info`（协议版本/能力/服务形状 + **`connectionId`**，批次 4）→ `expression`（当前心情）。
 - **批次 8c（F15）**：switch_model / set_service 后的 `capabilities` 重播仅达 v1 通道——v2 用 `server_info` 取代 capabilities，`broadcast_capabilities` 跳过 protocol_version ≥ 2 的通道；v2 对切换的感知经自身 `switch_model_result`/`service_mode_result` 回显（多客户端 v2 切换同步为已知限制）。
 - **`server_info.connectionId`（批次 4）**：仅 v2 + electron 连接下发（`conn_<uuid4 hex[:12]>`，= WS 握手生成的连接 ID）；普通 v2 / v1 恒省略。Electron 据此构造附件上传 `X-Client-Connection` 头（spec §5.4 持有者校验②依赖）。
 - **`server_info.build_sha`（批次 7，BE-081）**：构建 git HEAD 完整 SHA（`core/version.py` `get_build_sha()`，`git rev-parse HEAD`，非 git 仓库/失败 → None 缺省省略）；`server_version` 为 `__version__ + "+" + build_sha[:7]` 后缀（`build_server_version()`，无 git 时仅 `0.1.0`）。供前端展示/反馈定位。
@@ -154,14 +155,16 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `GET/POST /api/sessions` | 会话列表（cursor/limit/search，items 带 `active`）/ 创建（`conv_<uuid4>`） |
 | `GET/PATCH/DELETE /api/sessions/{id}` | 详情（含首页消息）/ 重命名 / 删除（联动归档 + active 回落 default） |
 | `POST /api/sessions/{id}/activate` | 激活会话（等价 WS `activate_session`） |
-| `GET /api/sessions/{id}/messages` | 历史分页：`before`（`_id` 倒序 + has_more）+ `total` |
-| `GET /api/sessions/{id}/messages?after={messageId}` | **增量拉取**（正序，仅锚点后新增） |
+| `GET /api/sessions/{id}/messages` | 历史分页：`before`（cursor 倒序，取更早）+ 响应 `messages/has_more/total` + **`cursor`** |
+| `GET /api/sessions/{id}/messages?after={cursor}` | **增量拉取**（正序，仅锚点后新增） |
 | `GET /api/messages/{mid}/context` | 上下文窗口：`conversationId&before=5&after=5` |
 | `GET /api/search/messages` | 搜索：`query/conversationId/date_from/date_to/timezone/category/cursor/limit`（上限 100） |
 | `GET /api/sessions/{id}/resources` | 资源索引：`category=image|link|video|audio|file|sticker`（sticker 经 StickerPart 填充为 `/static/stickers/{id}.png`，批次 7；text 400） |
 | `GET /api/sessions/{id}/generations` | **generation 状态查询**：status/cursor/limit keyset 分页 |
 | `GET /api/generations/{gid}` | generation 详情（404 `GENERATION_NOT_FOUND`） |
 | `GET /api/sessions/{id}/pending` | **pending 查询**：pendingMessages（按会话）+ pendingApprovals（全局） |
+
+- **分页 cursor（批次 9A，严格区分）**：`GET /api/sessions/{id}/messages` 的 `before`/`after` 参数**只接受上一响应返回的 `cursor`**（opaque——值为 Mongo `_id` 形式 24-hex，客户端**不解析只回传**）。响应在 `messages/has_more/total` 外新增 `cursor`（有更多页时返回：`before` 分页指向返回页最旧消息 `_id`、`after` 分页指向最新消息 `_id`；无更多/空页省略）。**稳定 messageId（`msg_`）不再作为分页参数**——`before={messageId}`/`after={messageId}` → 400 CONTRACT_VALIDATION。旧客户端手传 `_id` 值仍可用（值形式兼容）。
 
 错误信封统一（code/message/retryable/requestId）；全部匿名 401（`AGENT_ACCESS_TOKEN` 配置时）。**批次 8c（F1/F2）：** 泛型 `error` 帧补 `retryable`/`details` 字段（语音错误站点透传）；admin/debug 端点（/shutdown、/restart、/tools、/tools/reload、/debug/api/*）错误响应统一走 ProtocolError 信封（`error` = message 兼容别名，v1 读 `.error` 不破坏），不再裸 `{"error":...}`。
 
@@ -372,13 +375,14 @@ Desktop 工具**不走 `tool_approval`**（approvalAuthority=client，Electron �
 
 - 会话/录音 ID 客户端生成（`recordingId=rec_<uuid>` / `sessionId=vs_<uuid>`），唯一性仅限本连接内。
 - 已有活动会话再 start → `VOICE_SESSION_CONFLICT`；`agent.stt` 为 None 或未启用 → `STT_UNAVAILABLE`。
+- **音频输入契约（批次 9C，固定格式）**：三种 start 帧（`voice.record.start`/`voice_session.start`/`dictation.start`）可带可选 `audio` descriptor `{codec, sampleRate, channels}`；唯一支持 `codec="pcm_s16le"` + `sampleRate=16000` + `channels=1`，**不符 → 升级前 `error{CONTRACT_VALIDATION}`，不建会话**。`audio` 缺省 → 按默认 16k/mono/pcm_s16le 处理（向后兼容）。BINARY PCM 帧 feed 时校验 `MAX_CHUNK_BYTES`（1 MiB），超限 → `error{CONTRACT_VALIDATION}` + 会话终止（`voice_session.ended`/`dictation.cancelled`）。**段/WAV 边界整帧对齐**（640 字节/20ms）：非整帧尾部不进 STT（RECORDING stop 与 VAD 分段均截断至整帧；任意长度 chunk 可喂入，VAD 只扫整帧）。
 - **音频不落盘**（内存缓冲）、不入消息 content——语音消息 = 纯文本消息（批次 7 才做音频附件，BE-070）。
 - 失败信封区分：`voice.commit` 违规 → `user_message.ack{rejected}`；`voice.record.start/stop/discard` 与 `voice_session.*`/`dictation.*`/`audio.cancel` 违规 → `error{code}`。
 
 ### 12.2 普通录音（BE-060）
 
 ```
-client → {"type":"voice.record.start","recordingId":"rec_…"}
+client → {"type":"voice.record.start","recordingId":"rec_…","audio":{"codec":"pcm_s16le","sampleRate":16000,"channels":1}}?（audio 可缺省，缺省按 16k/mono/pcm_s16le）
 client → BINARY PCM × N（RECORDING 模式全段累积，不 VAD、不触发）
 client → {"type":"voice.record.stop","recordingId":"rec_…"}
 server → {"type":"voice.transcript","recordingId":"…","text":"…","emotion":"…"?"}（PENDING，待确认）
@@ -395,7 +399,7 @@ client → {"type":"voice.discard","recordingId":"…"}（丢弃，清缓冲）
 ### 12.3 实时语音会话（BE-061）
 
 ```
-client → {"type":"voice_session.start","sessionId":"vs_…","conversationId":null}
+client → {"type":"voice_session.start","sessionId":"vs_…","conversationId":null,"audio":{…}}?（audio 可缺省）
 server → {"type":"voice_session.started","sessionId":"…","conversationId":…}（解析后实际目标会话）
 client → BINARY PCM × N（VAD 分段）
 server → {"type":"voice_session.ack","sessionId":"…","seq":N}（~1s 背压进度，seq=服务端已收帧序数）
@@ -412,7 +416,7 @@ server → {"type":"voice_session.ended","sessionId":"…","reason":"stopped|can
 ### 12.4 输入法转写（BE-062）
 
 ```
-client → {"type":"dictation.start","clientRequestId":"req_…"}
+client → {"type":"dictation.start","clientRequestId":"req_…","audio":{…}?,"sttProfileId":"sensevoice/sense-voice"}?（audio/sttProfileId 均可缺省）
 client → BINARY PCM × N（VAD 分段）
 server → {"type":"dictation.partial","text":"…"}（累积字幕，仅显示）
 client → {"type":"dictation.stop","clientRequestId":"req_…"}
@@ -422,6 +426,7 @@ server → {"type":"dictation.cancelled","clientRequestId":"req_…"}
 ```
 
 - **零消息副作用**：不写历史、不 post UserInputData、不触发 Agent、不自动发送；final 文本只经 `dictation.final` 返回（前端据此写草稿）。
+- **`sttProfileId`（批次 9C）**：可选 `<provider>/<model>` 模型标识。指定 → start 时解析并**快照独立 backend 实例到本 dictation 会话**（**不修改**全局 `agent.stt`/`service_state`，与其它连接/模式隔离；custom provider 建后端走 SSRF 出站守卫）；缺省 → 用全局活动 STT。profile 不存在 / runtime=desktop/local（Electron 执行）→ `error{STT_PROFILE_NOT_FOUND}`；本会话新建实例在 stop/cancel 时关闭（fire-and-forget）。
 - 无活动 dictation 收 stop/cancel → `error{DICTATION_NOT_FOUND}`；空结果（静音）→ `final{text:""}` 仍返回；STT 中途关闭 → `dictation.cancelled`。
 
 ### 12.5 TTS 播放控制（BE-063）

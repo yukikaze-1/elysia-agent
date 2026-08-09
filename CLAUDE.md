@@ -8,7 +8,7 @@ Elysia/Agent is a Python 3.11+ AI companion application. The codebase has three 
 
 - **`Module/`** — backend-agnostic library for AI companion infrastructure: LLM, STT, TTS, embedding, vector/document databases, output channels, config, logging, system prompt engine, tool framework.
 - **`core/`** — the Elysia Agent application: `Agent`, `CognitiveLoop`, `CharacterEngine`, `CharacterReflector`, `MemoryConsolidator`, `MemoryReflector`, `SessionMemory`, `LongTermMemory`, `IdleMonitor`, task scheduler, debug info, character config.
-- **`frontend_contract/`** — 前后端契约单源（唯一类型来源 + 生成器 + 门禁）：可执行 Pydantic 契约模型（WS/REST/Debug）→ `gen_ts` 发射器 → `frontend/src/types/contract.generated.ts`（TS 只读快照）。后端发送点构造契约模型，`make check-types` 做漂移门禁。零依赖（仅 pydantic + stdlib）。
+- **`frontend_contract/`** — 前后端契约单源（唯一类型来源 + 生成器 + 门禁）：可执行 Pydantic 契约模型（WS/REST/Debug）→ `gen_ts`/`gen_schema` 发射器 → `frontend/src/types/contract.generated.ts`（TS 只读快照）+ `contract.schema.json` + `contract.raw.ts`（Electron 机器契约，批次 9B）。后端发送点构造契约模型，`make check-types` 做漂移门禁。零依赖（仅 pydantic + stdlib）。
 
 Plain Python（无 `pyproject.toml` 等构建系统）。前端 Vue 3 + Vite + TypeScript（无框架 → Vite 构建步骤）。`Makefile` 提供常用任务入口。
 
@@ -189,17 +189,22 @@ core/
 ```
 frontend_contract/
 ├── base.py                 # ContractModel 基类 + TsNull marker + wire_key + wire_dict 序列化
-├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（38 具名成员，批次 6 语音/TTS 播放契约）+ 多条 Client→Server + 支持类型（ContentPart 6 类判别联合 + AttachmentRef + V2TextMessage.attachments/stickerId + ErrorMessage.requestId + ServerInfoMessage.build_sha/media_upload，批次 7）
-├── rest.py                 # REST 业务契约：providers / images / messages / 多会话 / Desktop / 附件与表情（AttachmentInfo/AttachmentUploadResponse/AttachmentSignResponse/StickerEntry/StickerListResponse，批次 7）等 40 模型
+├── version.py              # TRANSPORT_VERSION="2"（握手头可用值）/ PROTOCOL_VERSION="2.0"（仅展示）——协议版本单源（批次 9B）
+├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（38 具名成员，批次 6 语音/TTS 播放契约）+ ClientMessage 判别联合（批次 9B，不含 TextMessage——type="text" 撞 discriminator）+ 支持类型（ContentPart 6 类 + AttachmentRef + AudioInputDescriptor + V2TextMessage.attachments/stickerId + ErrorMessage.requestId + ServerInfoMessage.build_sha/media_upload，批次 7/9C）
+├── rest.py                 # REST 业务契约：providers / images / messages / 多会话 / Desktop / 附件与表情（AttachmentInfo/AttachmentUploadResponse/AttachmentSignResponse/StickerEntry/StickerListResponse，批次 7）等 40 模型（MessagesPageResponse.cursor，批次 9A）
 ├── debug.py                # Debug API 契约：/debug/api 响应（DebugData 16 面板等 38 模型）
-├── gen_ts.py               # TS 发射器：BaseModel → contract.generated.ts（拓扑排序 + 同名安全网）
-├── __main__.py             # python -m frontend_contract：动态收集子模块 → 生成 / --check 漂移检测
+├── gen_ts.py               # TS 发射器：BaseModel → contract.generated.ts（拓扑排序 + 同名安全网）+ generate_raw_ts（raw wire 快照，批次 9B）
+├── gen_schema.py           # JSON Schema 发射器：Annotated 判别联合（get_origin 收集）+ BaseModel → contract.schema.json（transportVersion/protocolVersion/schemaHash，批次 9B）
+├── contract.schema.json    # 生成产物（机器契约 JSON Schema，批次 9B）
+├── contract.raw.ts         # 生成产物（Electron 可消费 raw wire 类型快照，批次 9B）
+├── __main__.py             # python -m frontend_contract：动态收集子模块 → 生成 ts/schema/raw_ts 三产物 / --check 漂移检测
 └── tests/                  # 契约建模测试（marker=unit，无 I/O）
 ```
 
 前后端契约唯一类型来源：可执行 Pydantic 模型 → `gen_ts` 生成 `frontend/src/types/contract.generated.ts`
-（TS 只读快照）。后端发送点构造契约模型 + `wire_dict()` 序列化；`make gen-types` 重新生成、
-`make check-types` 漂移门禁（CI 强制）。零依赖（仅 pydantic + stdlib），不 import core/ Module/。
+（TS 只读快照）+ `gen_schema` 生成 `contract.schema.json` + `gen_ts.generate_raw_ts` 生成 `contract.raw.ts`。
+后端发送点构造契约模型 + `wire_dict()` 序列化；`make gen-types` 重新生成、`make check-types` 漂移门禁
+（CI 强制，覆盖 ts/schema/raw_ts + `scripts/gen_contract_frames.py --check` golden frames）。零依赖（仅 pydantic + stdlib），不 import core/ Module/。
 
 ### Character config (`character/`)
 
@@ -246,7 +251,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.system_prompt` | System prompt engine | 12-section orchestration + templates |
 | `Module.workflow_engine` | 后台任务引擎（原 `task_system`）：ReAct 编排/规划/执行/子智能体。主类 `WorkflowEngine`；跨边类型经契约层 `Module/workflow_contract` | `orchestrator` + `planner` + `executor` + `sub_agent` |
 | `Module.workflow_contract` | 跨边契约层（core ↔ workflow_engine 唯一类型来源）：类型/枚举/协议 ABC/无状态纯函数/AgentInfra 运行时注入容器，零业务逻辑 | `schema` + `infra` + `utils` |
-| `frontend_contract` | 前后端契约单源（唯一类型来源 + 生成器 + 门禁）：可执行 Pydantic 契约模型（WS/REST/Debug）+ `gen_ts` 发射器 → `contract.generated.ts`，`make check-types` 漂移检测，零依赖（仅 pydantic + stdlib） | `base` + `ws_message` + `rest` + `debug` + `gen_ts` |
+| `frontend_contract` | 前后端契约单源（唯一类型来源 + 生成器 + 门禁）：可执行 Pydantic 契约模型（WS/REST/Debug）+ `gen_ts`/`gen_schema` 发射器 → `contract.generated.ts` + `contract.schema.json` + `contract.raw.ts`（机器契约，批次 9B），`make check-types` 漂移检测（含 golden frames --check），零依赖（仅 pydantic + stdlib） | `base` + `version` + `ws_message` + `rest` + `debug` + `gen_ts` + `gen_schema` |
 | `core.schema` | Shared Pydantic types: EventData (discriminated union, 5 event types), ToolCall, ExtractedMemory/CompareAction (discriminated union), ReflectorActions, MemoryType, message types, mood, etc. `types.py`：ID NewType（MessageId/SessionId/ToolCallId/GenerationId/SegmentId/RequestId/AttachmentId/MemoryId/TaskId）——core 内部 ID 流转对齐 NewType，input 边界（wire 裸 str）收口点包一层，frontend_contract 契约层保持裸 str（零依赖，不引 core）。`part.py`：Part 判别联合 6 类（含 StickerPart，批次 7）、Image/File/Audio/Video Part 带 `attachment_id`、FileMime 补值（pdf/zip/markdown） | |
 | `Module.database.vectordb` | Vector DB (ANN search) | `milvus` |
 | `Module.database.documentdb` | Document DB | `mongodb` |

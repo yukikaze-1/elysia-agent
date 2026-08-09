@@ -3,8 +3,9 @@
 > 文档导航：[项目文档](../README.md)
 
 前后端契约的**唯一权威来源**（可执行 Pydantic 模型）。契约模型 → `gen_ts.py` 发射器 →
-`frontend/src/types/contract.generated.ts`（TS 只读快照）。后端发送点构造契约模型
-（`wire_dict()` 序列化）获得运行时校验；前端 TS 类型由生成器产出，**禁止手写**。
+`frontend/src/types/contract.generated.ts`（Vue TS 只读快照）+ `gen_schema.py` →
+`contract.schema.json` + `gen_ts.generate_raw_ts` → `contract.raw.ts`（Electron 机器契约，批次 9B）。
+后端发送点构造契约模型（`wire_dict()` 序列化）获得运行时校验；前端 TS 类型由生成器产出，**禁止手写**。
 零依赖硬约束：仅 pydantic + stdlib，不 import `core/` / `Module/` 任何代码。
 
 ## 为什么需要单源
@@ -22,16 +23,22 @@ interface 各维护一份，两端漂移只能靠联调发现。本包把契约�
 ```
 frontend_contract/
 ├── base.py                 # ContractModel 基类 + TsNull marker + wire_key + wire_dict 序列化
-├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（38 具名成员）+ 22 条 Client→Server + 支持类型
+├── version.py              # TRANSPORT_VERSION="2"（握手头可用值）/ PROTOCOL_VERSION="2.0"（仅展示）——协议版本单源（批次 9B）
+├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（38 具名成员）+ ClientMessage 判别联合（批次 9B，不含 TextMessage）+ 支持类型
 ├── rest.py                 # REST 业务契约：providers / images / messages / api 响应（44 模型）
 ├── debug.py                # Debug API 契约：/debug/api 响应（DebugData 16 面板等 38 模型）
-├── gen_ts.py               # TS 发射器：BaseModel → contract.generated.ts（拓扑排序 + 同名安全网）
-├── __main__.py             # python -m frontend_contract：动态收集子模块 → 生成 / --check 漂移检测
+├── gen_ts.py               # TS 发射器：BaseModel → contract.generated.ts（拓扑排序 + 同名安全网）+ generate_raw_ts（raw wire 快照）
+├── gen_schema.py           # JSON Schema 发射器：Annotated 判别联合（get_origin 收集）+ BaseModel → contract.schema.json
+├── contract.schema.json    # 生成产物：机器契约 JSON Schema（transportVersion/protocolVersion/schemaHash，批次 9B）
+├── contract.raw.ts         # 生成产物：Electron 可消费 raw wire 类型快照（批次 9B）
+├── __main__.py             # python -m frontend_contract：动态收集子模块 → 生成 ts/schema/raw_ts 三产物 / --check 漂移检测
 ├── __init__.py             # 重导出全部契约模型 + __all__
 └── tests/                  # 契约建模测试（marker=unit，无 I/O）
 ```
 
-生成产物：`frontend/src/types/contract.generated.ts`（只读快照，提交入库）。
+生成产物：`frontend/src/types/contract.generated.ts`（Vue 只读快照）+ `contract.schema.json` / `contract.raw.ts`
+（Electron 机器契约，提交入库）。漂移门禁 `make check-types` = `python -m frontend_contract --check`（ts/schema/raw_ts）
++ `python scripts/gen_contract_frames.py --check`（golden frames）——改契约不跑生成 = CI 红。
 
 > 契约已覆盖批次 5/6/7 全部新增面：多会话 REST（session_routes）、Desktop 附件上传、
 > 附件/表情（AttachmentInfo/StickerEntry 等）、三种语音模式（Voice*/Dictation*）与
