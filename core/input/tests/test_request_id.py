@@ -16,6 +16,7 @@ import pytest
 from core.cognitive.generation_registry import GenerationRegistry
 from core.input.voice_sessions import (
     MAX_RECORDING_BYTES,
+    MAX_CHUNK_BYTES,
     VoiceSessionError,
     VoiceSessionManager,
 )
@@ -113,9 +114,9 @@ class TestVoiceSessionsEmitErrorRequestId:
         mgr, emitted = _make_voice_manager()
         set_request_id("req_voice_2")
         await mgr.start_recording("rec_rid")
-        big = b"\x00" * (MAX_RECORDING_BYTES // 2 + 1)
-        await mgr.feed_pcm(big)
-        await mgr.feed_pcm(big)
+        chunk = b"\x00" * MAX_CHUNK_BYTES       # ≤1 MiB，不触发 chunk 上限（9C-1）
+        for _ in range((MAX_RECORDING_BYTES // MAX_CHUNK_BYTES) + 2):
+            await mgr.feed_pcm(chunk)
         err = next(e for e in emitted if e.get("type") == "error")
         assert err["code"] == "VOICE_RECORDING_TOO_LONG"
         assert err["requestId"] == "req_voice_2"
@@ -126,9 +127,9 @@ class TestVoiceSessionsEmitErrorRequestId:
         mgr, emitted = _make_voice_manager()
         set_request_id("-")
         await mgr.start_recording("rec_rid2")
-        big = b"\x00" * (MAX_RECORDING_BYTES // 2 + 1)
-        await mgr.feed_pcm(big)
-        await mgr.feed_pcm(big)
+        chunk = b"\x00" * MAX_CHUNK_BYTES       # ≤1 MiB，不触发 chunk 上限（9C-1）
+        for _ in range((MAX_RECORDING_BYTES // MAX_CHUNK_BYTES) + 2):
+            await mgr.feed_pcm(chunk)
         err = next(e for e in emitted if e.get("type") == "error")
         assert err.get("requestId") is None
 

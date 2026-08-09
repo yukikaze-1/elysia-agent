@@ -360,3 +360,42 @@ def test_client_message_excludes_text_message():
     members = {c.__name__ for c in get_args(get_args(w.ClientMessage)[0])}
     assert "TextMessage" not in members
     assert "V2TextMessage" in members
+
+
+# ── 9C-1 输入音频契约（Task 7） ─────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_voice_start_audio_descriptor():
+    """9C-1：voice_session.start 携带 audio: AudioInputDescriptor（dict 自动建模）。"""
+    m = w.VoiceSessionStartMessage(
+        sessionId="s1",
+        audio={"codec": "pcm_s16le", "sampleRate": 16000, "channels": 1},
+    )
+    assert m.audio.sampleRate == 16000
+    assert m.audio.codec == "pcm_s16le"
+    assert m.audio.channels == 1
+
+
+@pytest.mark.unit
+def test_three_start_frames_have_audio_field():
+    """三种 start 帧均有可选 audio 字段（缺省 None → wire 省略，向后兼容）。"""
+    for cls in (w.VoiceRecordStartMessage, w.VoiceSessionStartMessage,
+                w.DictationStartMessage):
+        assert "audio" in cls.model_fields
+        assert cls.model_fields["audio"].is_required() is False
+    assert w.AudioInputDescriptor.model_fields["codec"].annotation is str
+    assert w.AudioInputDescriptor.model_fields["sampleRate"].annotation is int
+    assert w.AudioInputDescriptor.model_fields["channels"].annotation is int
+
+
+@pytest.mark.unit
+def test_audio_descriptor_wire_camel_keys():
+    """AudioInputDescriptor wire 键为 camelCase；audio 缺省省略。"""
+    m = w.VoiceRecordStartMessage(
+        recordingId="rec_1",
+        audio={"codec": "pcm_s16le", "sampleRate": 16000, "channels": 1},
+    )
+    assert m.wire_dict()["audio"] == {
+        "codec": "pcm_s16le", "sampleRate": 16000, "channels": 1}
+    assert "audio" not in w.VoiceRecordStartMessage(recordingId="rec_1").wire_dict()

@@ -345,3 +345,88 @@ async def test_send_voice_error_carries_retryable():
     await _send_voice_error(ws, err)
     assert ws.sent[0]["code"] == "STT_UNAVAILABLE"
     assert ws.sent[0]["retryable"] is True
+
+
+# ── 9C-1 输入音频契约（Task 7）：start 帧 descriptor 校验 ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_recording_start_bad_descriptor_rejected():
+    """voice.record.start 带 audio={codec:opus} → error CONTRACT_VALIDATION，不建会话。"""
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "voice.record.start", "recordingId": "rec_1",
+         "audio": {"codec": "opus", "sampleRate": 16000, "channels": 1}},
+        agent, None, ws, voice_mgr=mgr)
+    errs = [s for s in ws.sent if s.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "CONTRACT_VALIDATION"
+    assert mgr.has_active_session() is False
+
+
+@pytest.mark.asyncio
+async def test_realtime_bad_descriptor_rejected():
+    """voice_session.start 48k/stereo → error CONTRACT_VALIDATION，不建会话。"""
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "voice_session.start", "sessionId": "vs_1", "conversationId": None,
+         "audio": {"codec": "pcm_s16le", "sampleRate": 48000, "channels": 2}},
+        agent, None, ws, voice_mgr=mgr)
+    errs = [s for s in ws.sent if s.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "CONTRACT_VALIDATION"
+    assert mgr.has_active_session() is False
+
+
+@pytest.mark.asyncio
+async def test_dictation_start_bad_descriptor_rejected():
+    """dictation.start 带非法 descriptor → error CONTRACT_VALIDATION，不建会话。"""
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "dictation.start", "clientRequestId": "req_d",
+         "audio": {"codec": "pcm_s16le", "sampleRate": 8000, "channels": 1}},
+        agent, None, ws, voice_mgr=mgr)
+    errs = [s for s in ws.sent if s.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "CONTRACT_VALIDATION"
+    assert mgr.has_active_session() is False
+
+
+@pytest.mark.asyncio
+async def test_valid_descriptor_accepts_start():
+    """合法 descriptor（pcm_s16le/16000/1）→ start 正常，无错误。"""
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "voice_session.start", "sessionId": "vs_1", "conversationId": "conv_a",
+         "audio": {"codec": "pcm_s16le", "sampleRate": 16000, "channels": 1}},
+        agent, None, ws, voice_mgr=mgr)
+    assert any(s.get("type") == "voice_session.started" for s in ws.sent)
+    assert not any(s.get("type") == "error" for s in ws.sent)
+    assert mgr.has_active_session() is True
+    await handle_json_message(
+        {"type": "voice_session.stop", "sessionId": "vs_1"}, agent, None, ws, voice_mgr=mgr)
+
+
+@pytest.mark.asyncio
+async def test_chunk_too_large_rejected():
+    """BINARY > MAX_CHUNK_BYTES 经 feed_pcm → CONTRACT_VALIDATION + 会话终止。"""
+    from core.input.voice_sessions import MAX_CHUNK_BYTES
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "voice_session.start", "sessionId": "vs_1", "conversationId": "conv_a"},
+        agent, None, ws, voice_mgr=mgr)
+    await mgr.feed_pcm(b"\x00" * (MAX_CHUNK_BYTES + 1))
+    errs = [s for s in ws.sent if s.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "CONTRACT_VALIDATION"
+    assert mgr.has_active_session() is False
+    assert any(s.get("type") == "voice_session.ended" for s in ws.sent)
+
+
+@pytest.mark.asyncio
+async def test_descriptor_omitted_default_format():
+    """缺省 audio → 默认 16k/mono 正常（向后兼容）。"""
+    agent, ws, mgr = make()
+    await handle_json_message(
+        {"type": "voice_session.start", "sessionId": "vs_1", "conversationId": "conv_a"},
+        agent, None, ws, voice_mgr=mgr)
+    assert any(s.get("type") == "voice_session.started" for s in ws.sent)
+    assert mgr.has_active_session() is True
+    await handle_json_message(
+        {"type": "voice_session.stop", "sessionId": "vs_1"}, agent, None, ws, voice_mgr=mgr)

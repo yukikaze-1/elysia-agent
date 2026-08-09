@@ -284,6 +284,9 @@ class AudioBuffer:
             logger.debug("No STT configured, dropping %d bytes of audio", len(audio))
             return
 
+        # 9C-1（F8）：段边界整帧对齐——VAD 只扫整帧，尾部残帧不送 STT。
+        # 喂入 chunk 不强制 640 倍数（feed 不校验），join 后在此截断至 640 整帧倍数。
+        audio = audio[: len(audio) // _FRAME_BYTES * _FRAME_BYTES]
         wav = pcm_to_wav(audio, sample_rate=self._sample_rate)
         try:
             text = await asyncio.wait_for(

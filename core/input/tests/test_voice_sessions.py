@@ -6,7 +6,7 @@ import pytest
 
 from core.input.voice_sessions import (
     VoiceSessionError, VoiceSessionManager,
-    MAX_RECORDING_BYTES,
+    MAX_RECORDING_BYTES, MAX_CHUNK_BYTES,
 )
 
 pytestmark = pytest.mark.unit
@@ -236,11 +236,12 @@ async def test_idle_timeout_emits_ended():
 
 @pytest.mark.asyncio
 async def test_recording_too_long():
+    """9C-1 后 chunk 上限收紧为 1 MiB/条——用 ≤1 MiB chunk 累积仍触发 RECORDING_TOO_LONG。"""
     mgr, emitted, _ = make_manager()
     await mgr.start_recording("rec_1")
-    big = b"\x00" * (MAX_RECORDING_BYTES // 2 + 1)
-    await mgr.feed_pcm(big)
-    await mgr.feed_pcm(big)
+    chunk = b"\x00" * MAX_CHUNK_BYTES       # 恰好 1 MiB，不触发 chunk 上限（R15）
+    for _ in range((MAX_RECORDING_BYTES // MAX_CHUNK_BYTES) + 2):
+        await mgr.feed_pcm(chunk)
     assert any(e.get("type") == "error" and e.get("code") == "VOICE_RECORDING_TOO_LONG"
                for e in emitted)
 
@@ -590,3 +591,174 @@ async def test_error_frame_carries_retryable():
     await mgr._emit_error("STT_UNAVAILABLE", "STT 已关闭，录音丢弃", True)
     assert any(e.get("type") == "error" and e.get("code") == "STT_UNAVAILABLE"
                and e.get("retryable") is True for e in emitted)
+
+
+# ── 9C-1 输入音频契约（Task 7）：descriptor 校验 + chunk 上限 + 段整帧对齐 ──
+
+
+def _desc(codec: str = "pcm_s16le", rate: int = 16000, channels: int = 1):
+    from frontend_contract.ws_message import AudioInputDescriptor
+    return AudioInputDescriptor(codec=codec, sampleRate=rate, channels=channels)
+
+
+@pytest.mark.asyncio
+async def test_recording_start_bad_descriptor_rejected():
+    """voice.record.start 带 audio={codec:opus} → CONTRACT_VALIDATION，不建会话。"""
+    mgr, _, _ = make_manager()
+    with pytest.raises(VoiceSessionError) as exc:
+        await mgr.start_recording("rec_1", audio_descriptor=_desc(codec="opus"))
+    assert exc.value.code == "CONTRACT_VALIDATION"
+    assert mgr.has_active_session() is False
+
+
+@pytest.mark.asyncio
+async def test_realtime_bad_descriptor_rejected():
+    """voice_session.start 48k/stereo → CONTRACT_VALIDATION，不建会话。"""
+    mgr, _, _ = make_manager()
+    with pytest.raises(VoiceSessionError) as exc:
+        await mgr.start_realtime("vs_1", None,
+                                 audio_descriptor=_desc(rate=48000, channels=2))
+    assert exc.value.code == "CONTRACT_VALIDATION"
+    assert mgr.has_active_session() is False
+
+
+@pytest.mark.asyncio
+async def test_dictation_start_bad_descriptor_rejected():
+    """dictation.start 带非法 descriptor → CONTRACT_VALIDATION。"""
+    mgr, _, _ = make_manager()
+    with pytest.raises(VoiceSessionError) as exc:
+        await mgr.start_dictation("req_d", audio_descriptor=_desc(rate=8000))
+    assert exc.value.code == "CONTRACT_VALIDATION"
+    assert mgr.has_active_session() is False
+
+
+@pytest.mark.asyncio
+async def test_descriptor_omitted_default_format():
+    """缺省 audio → 默认 16k/mono 正常（向后兼容），三模式均可启动。"""
+    # RECORDING：缺省 descriptor → 正常启动
+    mgr, _, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    assert mgr.has_active_session() is True
+    # REALTIME：缺省 → 正常启动
+    mgr2, _, _ = make_manager()
+    await mgr2.start_realtime("vs_1", None)
+    assert mgr2.has_active_session() is True
+    await mgr2.close()
+    # DICTATION：缺省 → 正常启动
+    mgr3, _, _ = make_manager()
+    await mgr3.start_dictation("req_d")
+    assert mgr3.has_active_session() is True
+    await mgr3.cancel_dictation("req_d")
+
+
+@pytest.mark.asyncio
+async def test_chunk_too_large_rejected():
+    """feed_pcm 超 MAX_CHUNK_BYTES → CONTRACT_VALIDATION + 完整会话拆除 + ended 收尾。"""
+    mgr, emitted, _ = make_manager()
+    await mgr.start_realtime("vs_1", None)
+    await mgr.feed_pcm(b"\x00" * (MAX_CHUNK_BYTES + 1))
+    errs = [e for e in emitted if e.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "CONTRACT_VALIDATION"
+    assert mgr.has_active_session() is False                    # 会话已拆除
+    assert mgr._buffer is None and mgr._session_id is None      # 完整拆除（非 _reset_recording）
+    ends = [e for e in emitted if e.get("type") == "voice_session.ended"]
+    assert ends, "超限应发 voice_session.ended 收尾"
+    await mgr.close()
+
+
+@pytest.mark.asyncio
+async def test_chunk_too_large_recording_terminates():
+    """RECORDING 态超限 chunk → 同样 CONTRACT_VALIDATION + 终止，拆除后可重启。"""
+    mgr, emitted, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(b"\x00" * (MAX_CHUNK_BYTES + 1))
+    errs = [e for e in emitted if e.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "CONTRACT_VALIDATION"
+    assert mgr.has_active_session() is False
+    await mgr.start_recording("rec_2")                          # mode 已复位，可重启
+    assert mgr.has_active_session() is True
+
+
+@pytest.mark.asyncio
+async def test_arbitrary_length_chunk_accepted():
+    """非 640 倍数 chunk 喂入不报错（feed 不强制整帧，VAD 只扫整帧）。"""
+    mgr, emitted, _ = make_manager()
+    await mgr.start_realtime("vs_1", None)
+    await mgr.feed_pcm(b"\x00" * 100)     # 非 640 倍数
+    await mgr.feed_pcm(_loud(1234))       # 1234 样本 = 2468B，非对齐
+    await mgr.feed_pcm(_sil(700))         # 700B = 640 + 60 尾残
+    assert mgr.has_active_session() is True   # 无报错、无终止
+    assert not any(e.get("type") == "error" for e in emitted)
+    await mgr.close()
+
+
+@pytest.mark.asyncio
+async def test_record_stop_drops_tail():
+    """RECORDING stop：_rec_pcm 尾部 < 640B 丢弃，WAV 长度整帧倍数。"""
+    captured: list[bytes] = []
+    agent = FakeAgent()
+    original = agent.stt_transcribe
+
+    async def capturing(wav):
+        captured.append(wav)
+        return await original(wav)
+
+    agent.stt_transcribe = capturing
+    mgr, emitted, _ = make_manager(agent=agent)
+    await mgr.start_recording("rec_1")
+    for _ in range(3):
+        await mgr.feed_pcm(b"\x00" * 2000)      # 3×2000B = 6000B = 9 帧 + 240B 尾残
+    agent._last_text = "对齐"
+    await mgr.stop_recording("rec_1")
+    await asyncio.sleep(0.05)
+    assert captured, "stop 应调用 stt_transcribe"
+    import wave
+    from io import BytesIO
+    with wave.open(BytesIO(captured[0]), "rb") as wf:
+        pcm_len = wf.getnframes() * wf.getsampwidth() * wf.getnchannels()
+    assert pcm_len % 640 == 0
+    assert pcm_len == 6000 // 640 * 640           # 尾部 240B 被截断
+
+
+@pytest.mark.asyncio
+async def test_fixture_feeds_all_three_modes():
+    """真实 PCM fixture（1s 16k/mono/s16le）全链路喂入 recording/realtime/dictation。"""
+    import pathlib
+    pcm_path = pathlib.Path(__file__).parent / "fixtures" / "sample_16k_mono.pcm"
+    data = pcm_path.read_bytes()
+    assert len(data) == 32000
+    # RECORDING：全段缓冲 → stop → 转写
+    agent = FakeAgent()
+    agent._last_text = "录音识别"
+    mgr, emitted, _ = make_manager(agent=agent)
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(data)
+    await mgr.stop_recording("rec_1")
+    await asyncio.sleep(0.05)
+    assert any(e.get("type") == "voice.transcript" for e in emitted)
+    # REALTIME：VAD 分段 → partial
+    agent2 = FakeAgent()
+    agent2._last_text = "实时识别"
+    mgr2, emitted2, _ = make_manager(agent=agent2)
+    await mgr2.start_realtime("vs_1", None)
+    await mgr2.feed_pcm(data)
+    await mgr2.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr2.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.1)
+    assert any(e.get("type") == "voice_session.partial" for e in emitted2)
+    await mgr2.close()
+    # DICTATION：VAD 分段 → partial + final
+    agent3 = FakeAgent()
+    agent3._last_text = "听写识别"
+    mgr3, emitted3, _ = make_manager(agent=agent3)
+    await mgr3.start_dictation("req_d")
+    await mgr3.feed_pcm(data)
+    await mgr3.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr3.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.1)
+    assert any(e.get("type") == "dictation.partial" for e in emitted3)
+    await mgr3.stop_dictation("req_d")
+    finals = [e for e in emitted3 if e.get("type") == "dictation.final"]
+    assert finals and finals[0]["text"] == "听写识别"

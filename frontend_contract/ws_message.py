@@ -727,10 +727,25 @@ class ActivateSessionMessage(ContractModel):
 # 客户端→服务器
 
 
+class AudioInputDescriptor(ContractModel):
+    """客户端输入音频描述（9C-1）：固定格式，仅支持 pcm_s16le/16000Hz/单声道。
+
+    三种语音 start 帧（voice.record.start / voice_session.start / dictation.start）
+    的 `audio` 字段；缺省 → 默认 16k/mono/pcm_s16le（向后兼容）。语义校验
+    （codec/sampleRate/channels 唯一支持值）由 VoiceSessionManager 负责。
+    """
+
+    codec: str = Field(description="编码（唯一支持 pcm_s16le）")
+    sampleRate: int = Field(description="采样率（唯一支持 16000）")
+    channels: int = Field(description="声道数（唯一支持 1）")
+
+
 class VoiceRecordStartMessage(ContractModel):
     """开始普通录音（全段缓冲，不触发）。"""
     type: Literal["voice.record.start"] = "voice.record.start"
     recordingId: str = Field(description="录音 ID（客户端生成 rec_ 前缀）")
+    audio: Optional[AudioInputDescriptor] = Field(
+        default=None, description="输入音频描述（缺省按 16k/mono/pcm_s16le）")
 
 
 class VoiceRecordStopMessage(ContractModel):
@@ -760,6 +775,8 @@ class VoiceSessionStartMessage(ContractModel):
     type: Literal["voice_session.start"] = "voice_session.start"
     sessionId: str = Field(description="会话 ID（客户端生成 vs_ 前缀）")
     conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
+    audio: Optional[AudioInputDescriptor] = Field(
+        default=None, description="输入音频描述（缺省按 16k/mono/pcm_s16le）")
 
 
 class VoiceSessionPauseMessage(ContractModel):
@@ -785,6 +802,8 @@ class VoiceSessionCancelMessage(ContractModel):
 class DictationStartMessage(ContractModel):
     type: Literal["dictation.start"] = "dictation.start"
     clientRequestId: str = Field(description="请求 ID")
+    audio: Optional[AudioInputDescriptor] = Field(
+        default=None, description="输入音频描述（缺省按 16k/mono/pcm_s16le）")
 
 
 class DictationStopMessage(ContractModel):

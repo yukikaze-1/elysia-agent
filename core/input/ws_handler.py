@@ -39,7 +39,7 @@ from frontend_contract import (
     UserAckMessage,
     WakeMessage,
 )
-from frontend_contract.ws_message import AckStatus, ClientMessage
+from frontend_contract.ws_message import AckStatus, AudioInputDescriptor, ClientMessage
 from frontend_contract.version import TRANSPORT_VERSION
 from core.input.tts_profile import _active_tts_profile
 
@@ -444,6 +444,25 @@ async def _send_voice_error(ws: "web.WebSocketResponse | None",
         ).wire_dict())
     except Exception:
         logger.debug("发送 voice error 失败", exc_info=True)
+
+
+def _voice_descriptor(msg: Any, data: dict) -> AudioInputDescriptor | None:
+    """从 v2 判别联合 msg（已校验模型）或原始 data 提取输入音频描述（9C-1）。
+
+    v2 连接 msg 为校验后的 start 帧模型，``msg.audio`` 已是 ``AudioInputDescriptor``；
+    msg 为 None（防御路径）→ 走 ``data.get("audio")`` 原始 dict 解析，结构非法返回
+    None（语义校验 codec/rate/channels 由 ``VoiceSessionManager._validate_audio_descriptor``
+    负责，二者任一不符都会 CONTRACT_VALIDATION 拒绝）。
+    """
+    raw = msg.audio if msg is not None else data.get("audio")
+    if raw is None:
+        return None
+    if isinstance(raw, AudioInputDescriptor):
+        return raw
+    try:
+        return AudioInputDescriptor.model_validate(raw)
+    except ValidationError:
+        return None
 
 
 async def _voice_stt_gate(agent: "Agent",
@@ -1048,7 +1067,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         else:
             try:
                 await voice_mgr.start_recording(
-                    msg.recordingId if msg is not None else data.get("recordingId", ""))
+                    msg.recordingId if msg is not None else data.get("recordingId", ""),
+                    audio_descriptor=_voice_descriptor(msg, data))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "voice.record.stop":
@@ -1083,7 +1103,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             try:
                 await voice_mgr.start_realtime(
                     msg.sessionId if msg is not None else data.get("sessionId", ""),
-                    msg.conversationId if msg is not None else data.get("conversationId"))
+                    msg.conversationId if msg is not None else data.get("conversationId"),
+                    audio_descriptor=_voice_descriptor(msg, data))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "voice_session.pause":
@@ -1133,7 +1154,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             await _voice_stt_gate(agent, voice_mgr)
             try:
                 await voice_mgr.start_dictation(
-                    msg.clientRequestId if msg is not None else data.get("clientRequestId", ""))
+                    msg.clientRequestId if msg is not None else data.get("clientRequestId", ""),
+                    audio_descriptor=_voice_descriptor(msg, data))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "dictation.stop":

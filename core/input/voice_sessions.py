@@ -12,9 +12,10 @@ import logging
 import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from core.input.audio_buffer import AudioBuffer, Callback, pcm_to_wav
+from core.input.audio_buffer import AudioBuffer, Callback, pcm_to_wav, _FRAME_BYTES
 from core.schema.types import MessageId, SessionId
 from core.utils import get_request_id, new_message_id
+from frontend_contract.ws_message import AudioInputDescriptor
 
 if TYPE_CHECKING:
     from core.agent import Agent
@@ -28,6 +29,8 @@ VOICE_SESSION_IDLE_TIMEOUT = 300.0
 STT_TIMEOUT = 30.0
 ACK_INTERVAL = 1.0
 IDLE_CHECK_INTERVAL = 5.0
+# 9C-1（R15）：单条 BINARY chunk 上限——超过 → CONTRACT_VALIDATION + 会话拆除
+MAX_CHUNK_BYTES = 1 * 1024 * 1024
 
 # 错误码目录（spec §10）
 ERR_CONFLICT = "VOICE_SESSION_CONFLICT"
@@ -144,6 +147,18 @@ class VoiceSessionManager:
             requestId=rid if rid and rid != "-" else None,
         ).wire_dict())
 
+    def _validate_audio_descriptor(self, desc: AudioInputDescriptor | None) -> str | None:
+        """校验输入音频描述（9C-1 R15）：返回错误 code 或 None。
+
+        唯一支持 pcm_s16le / 16000Hz / 单声道；desc 为 None（缺省）→ 向后兼容默认
+        16k/mono。不符 → CONTRACT_VALIDATION（ws_handler 捕获 → _send_voice_error）。
+        """
+        if desc is None:
+            return None
+        if desc.codec != "pcm_s16le" or desc.sampleRate != 16000 or desc.channels != 1:
+            return "CONTRACT_VALIDATION"
+        return None
+
     def _reset_recording(self) -> None:
         self._recording_id = None
         self._rec_state = _RecordingState.IDLE
@@ -195,9 +210,13 @@ class VoiceSessionManager:
 
     # ---- RECORDING（BE-060） ----
 
-    async def start_recording(self, recording_id: str) -> None:
+    async def start_recording(self, recording_id: str,
+                              audio_descriptor: AudioInputDescriptor | None = None) -> None:
         if self._mode != VoiceMode.IDLE:
             raise VoiceSessionError(ERR_CONFLICT, "已有活动语音会话")
+        bad = self._validate_audio_descriptor(audio_descriptor)
+        if bad is not None:
+            raise VoiceSessionError(bad, "输入音频格式不兼容（仅支持 pcm_s16le/16000Hz/单声道）")
         if not self._stt_available():
             raise VoiceSessionError(ERR_STT_UNAVAILABLE, "STT 不可用", True)
         self._mode = VoiceMode.RECORDING
@@ -214,7 +233,10 @@ class VoiceSessionManager:
         if self._rec_state == _RecordingState.PENDING:
             raise VoiceSessionError(ERR_CONTRACT, "已转写完成，请 commit 或 discard")
         self._rec_state = _RecordingState.TRANSCRIBING
-        wav = pcm_to_wav(b"".join(self._rec_pcm))
+        # 9C-1（F8）：WAV 边界整帧对齐——丢弃 _rec_pcm 尾部残帧（VAD/STT 只认整帧）
+        rec_pcm = b"".join(self._rec_pcm)
+        rec_pcm = rec_pcm[: len(rec_pcm) // _FRAME_BYTES * _FRAME_BYTES]
+        wav = pcm_to_wav(rec_pcm)
         self._rec_pcm = []
         self._rec_bytes = 0
         self._in_flight_stt = asyncio.create_task(
@@ -276,9 +298,13 @@ class VoiceSessionManager:
 
     # ---- REALTIME（BE-061） ----
 
-    async def start_realtime(self, session_id: str, conversation_id: str | None) -> None:
+    async def start_realtime(self, session_id: str, conversation_id: str | None,
+                             audio_descriptor: AudioInputDescriptor | None = None) -> None:
         if self._mode != VoiceMode.IDLE:
             raise VoiceSessionError(ERR_CONFLICT, "已有活动语音会话")
+        bad = self._validate_audio_descriptor(audio_descriptor)
+        if bad is not None:
+            raise VoiceSessionError(bad, "输入音频格式不兼容（仅支持 pcm_s16le/16000Hz/单声道）")
         if not self._stt_available():
             raise VoiceSessionError(ERR_STT_UNAVAILABLE, "STT 不可用", True)
         target = await self._resolve_conversation(conversation_id)
@@ -342,9 +368,13 @@ class VoiceSessionManager:
 
     # ---- DICTATION（BE-062） ----
 
-    async def start_dictation(self, client_request_id: str) -> None:
+    async def start_dictation(self, client_request_id: str,
+                              audio_descriptor: AudioInputDescriptor | None = None) -> None:
         if self._mode != VoiceMode.IDLE:
             raise VoiceSessionError(ERR_CONFLICT, "已有活动语音会话")
+        bad = self._validate_audio_descriptor(audio_descriptor)
+        if bad is not None:
+            raise VoiceSessionError(bad, "输入音频格式不兼容（仅支持 pcm_s16le/16000Hz/单声道）")
         if not self._stt_available():
             raise VoiceSessionError(ERR_STT_UNAVAILABLE, "STT 不可用", True)
         self._mode = VoiceMode.DICTATION
@@ -448,6 +478,18 @@ class VoiceSessionManager:
             await asyncio.gather(*pending, return_exceptions=True)
 
     async def feed_pcm(self, chunk: bytes) -> None:
+        # 9C-1（R15）：单条 BINARY chunk 上限——超限 → CONTRACT_VALIDATION + 完整会话拆除。
+        # _teardown_session 是同步方法（勿 await）；完整拆除 REALTIME/DICTATION 的
+        # _buffer/_ack_task/_idle_task/_session_id——不能用只清 RECORDING 字段的
+        # _reset_recording()，那会留下 ack/idle 后台任务继续发帧（会话静默无声）。
+        if len(chunk) > MAX_CHUNK_BYTES:
+            await self._emit_error(ERR_CONTRACT, "音频 chunk 超过上限（1 MiB）")
+            sid = self._session_id or self._recording_id or ""
+            self._teardown_session()
+            from frontend_contract.ws_message import VoiceEndReason, VoiceSessionEndedMessage
+            await self._emit(VoiceSessionEndedMessage(
+                sessionId=sid, reason=VoiceEndReason("cancelled")).wire_dict())
+            return
         if self._mode == VoiceMode.RECORDING and self._rec_state == _RecordingState.RECORDING:
             self._rec_pcm.append(chunk)
             self._rec_bytes += len(chunk)

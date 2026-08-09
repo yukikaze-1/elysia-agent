@@ -783,11 +783,27 @@ export interface ActivateSessionMessage {
   conversationId: string
 }
 
+/** 客户端输入音频描述（9C-1）：固定格式，仅支持 pcm_s16le/16000Hz/单声道。
+
+三种语音 start 帧（voice.record.start / voice_session.start / dictation.start）
+的 `audio` 字段；缺省 → 默认 16k/mono/pcm_s16le（向后兼容）。语义校验
+（codec/sampleRate/channels 唯一支持值）由 VoiceSessionManager 负责。 */
+export interface AudioInputDescriptor {
+  /** 编码（唯一支持 pcm_s16le） */
+  codec: string
+  /** 采样率（唯一支持 16000） */
+  sampleRate: number
+  /** 声道数（唯一支持 1） */
+  channels: number
+}
+
 /** 开始普通录音（全段缓冲，不触发）。 */
 export interface VoiceRecordStartMessage {
   type: 'voice.record.start'
   /** 录音 ID（客户端生成 rec_ 前缀） */
   recordingId: string
+  /** 输入音频描述（缺省按 16k/mono/pcm_s16le） */
+  audio?: AudioInputDescriptor
 }
 
 /** 停止普通录音并预转写。 */
@@ -826,6 +842,8 @@ export interface VoiceSessionStartMessage {
   sessionId: string
   /** 会话 ID，可缺省 */
   conversationId?: string
+  /** 输入音频描述（缺省按 16k/mono/pcm_s16le） */
+  audio?: AudioInputDescriptor
 }
 
 /** 契约模型基类：wire_dict() 统一序列化。
@@ -886,6 +904,8 @@ export interface DictationStartMessage {
   type: 'dictation.start'
   /** 请求 ID */
   clientRequestId: string
+  /** 输入音频描述（缺省按 16k/mono/pcm_s16le） */
+  audio?: AudioInputDescriptor
 }
 
 /** 契约模型基类：wire_dict() 统一序列化。

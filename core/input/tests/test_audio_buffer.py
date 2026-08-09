@@ -473,3 +473,36 @@ class TestWakeWordGate:
         assert buf._wake_detector is not None
         assert buf._wake_detector.enabled is False
         assert buf._wake_state is None
+
+
+# ============================================================
+# 9C-1 段边界整帧对齐（Task 7）
+# ============================================================
+
+
+class TestSegmentFrameAligned:
+    @pytest.mark.service
+    @pytest.mark.asyncio
+    async def test_segment_wav_frame_aligned(self):
+        """_process_segment 构造的 WAV PCM 长度 = 640 整帧倍数（尾部残帧截断）。"""
+        wav_captured: list[bytes] = []
+
+        async def mock_stt(wav: bytes) -> str:
+            wav_captured.append(wav)
+            return "测试"
+
+        buf = AudioBuffer(stt_transcribe=mock_stt, silence_duration=0.1)
+        # 29×3220B（5 帧 + 20B 尾残）+ 静音 → 分段总长非 640 倍数
+        for _ in range(29):
+            await buf.feed(_loud(1610))     # 1610 样本 = 3220B = 5 帧 + 20B
+        await buf.feed(_sil(1600))
+        await asyncio.sleep(0.15)               # 静音超时
+        await buf.feed(_sil(1600))              # 触发分段
+        assert len(wav_captured) == 1, "应触发一段 STT"
+        import wave
+        from io import BytesIO
+        with wave.open(BytesIO(wav_captured[0]), "rb") as wf:
+            pcm_len = wf.getnframes() * wf.getsampwidth() * wf.getnchannels()
+        joined = 29 * 3220 + 3200               # 29 loud + 1 静音（触发前已 append）
+        assert pcm_len % 640 == 0
+        assert pcm_len == joined // 640 * 640   # 尾部残帧被截断
