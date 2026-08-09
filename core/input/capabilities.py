@@ -15,6 +15,7 @@ from frontend_contract import (
     ServerInfoMessage,
     ServiceCapability,
 )
+from frontend_contract.version import PROTOCOL_VERSION
 
 if TYPE_CHECKING:
     from core.agent import Agent
@@ -86,6 +87,9 @@ def build_server_info(agent: "Agent", connection_id: str | None = None) -> Serve
 
     cfg = agent.config
     return ServerInfoMessage(
+        # P7 单源：协议版本显式取 PROTOCOL_VERSION（frontend_contract.version）——
+        # 运行时不再手写 "2.0" 字面量，改协议版本只改 version.py + make gen-types
+        protocol_version=PROTOCOL_VERSION,
         server_version=build_server_version(),
         build_sha=get_build_sha(),  # 批次 7：build SHA 独立上 wire（前端展示/反馈定位）
         features=ServerInfoFeatures(

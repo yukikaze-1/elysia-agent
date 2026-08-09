@@ -82,6 +82,114 @@ class TestVersionNegotiation:
             await agent.stop()
 
 
+@pytest.mark.service
+class TestProtocolVersionRejection:
+    """9B-3 协议版本协商：不支持的显式版本 → HTTP 400 ProtocolError（升级前拒绝，非静默降级 v1）。"""
+
+    async def _assert_rejected_400(self, client, header_value: str) -> dict:
+        """断言不支持的版本头 → ws 握手 400（非 101）+ 响应体为 ProtocolError 信封。"""
+        import aiohttp
+        from frontend_contract.rest import ProtocolError
+
+        with pytest.raises(aiohttp.WSServerHandshakeError) as exc:
+            async with client.session.ws_connect(
+                client.make_url("/ws"), headers={"X-Protocol-Version": header_value}):
+                pass
+        assert exc.value.status == 400, \
+            f"{header_value!r} 应被显式拒绝（400 而非 101 升级/静默 v1）"
+        # 升级失败响应体 → ProtocolError 信封（code=CONTRACT_VALIDATION，明示支持集合）
+        # 注意：TestClient.get 内部经 make_url 解析相对路径——须传 "/ws" 而非绝对 URL
+        resp = await client.get("/ws", headers={"X-Protocol-Version": header_value})
+        assert resp.status == 400
+        env = ProtocolError.model_validate(
+            json.loads((await resp.read()).decode())).wire_dict()
+        assert env["code"] == "CONTRACT_VALIDATION"
+        assert env["retryable"] is False
+        assert "v1" in env["message"] and "v2" in env["message"]  # message 明示支持集合
+        return env
+
+    @pytest.mark.asyncio
+    async def test_v2dot0_handshake_rejected_400(self, aiohttp_client):
+        """X-Protocol-Version: "2.0"（展示版本，非握手可用值）→ HTTP 400 + ProtocolError。"""
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            await self._assert_rejected_400(client, "2.0")
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v3_handshake_rejected_400(self, aiohttp_client):
+        """X-Protocol-Version: "3"（未来版本）→ HTTP 400。"""
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            await self._assert_rejected_400(client, "3")
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_garbage_handshake_rejected_400(self, aiohttp_client):
+        """乱拼写版本头 → HTTP 400（不静默降级 v1）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            await self._assert_rejected_400(client, "latest")
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_explicit_v1_handshake_v1(self, aiohttp_client):
+        """X-Protocol-Version: "1" → 走 v1 legacy 路径（capabilities，非 server_info）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            async with client.session.ws_connect(
+                client.make_url("/ws"), headers={"X-Protocol-Version": "1"},
+            ) as ws:
+                caps = await _read_until_type(ws, "capabilities")
+                info = await _read_until_type(ws, "server_info")
+            assert caps is not None, '"1" 头应走 v1（收到 capabilities）'
+            assert info is None, '"1" 头不应收到 server_info'
+            assert caps["services"]["llm"]["model"] == agent.llm.model
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_default_handshake_v1(self, aiohttp_client):
+        """缺省版本头 → v1 legacy 路径（capabilities，既有回归）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent()
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            async with client.session.ws_connect(client.make_url("/ws")) as ws:
+                caps = await _read_until_type(ws, "capabilities")
+                info = await _read_until_type(ws, "server_info")
+            assert caps is not None, "缺省头应走 v1（收到 capabilities）"
+            assert info is None, "缺省头不应收到 server_info"
+        finally:
+            await agent.stop()
+
+
 @pytest.mark.unit
 def test_get_build_sha_failure_cached(monkeypatch):
     """git 失败 → 连续两次调用 subprocess.run 只跑一次。"""

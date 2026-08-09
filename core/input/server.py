@@ -17,7 +17,7 @@ from aiohttp import web
 
 from core.agent import Agent
 
-from core.input.ws_handler import handle_ws
+from core.input.ws_handler import handle_ws, resolve_protocol_version
 from core.input.api_routes import register_api_routes
 from core.input.attachment_routes import register_attachment_routes
 from core.input.session_routes import register_session_routes
@@ -331,15 +331,29 @@ def create_app(
     _ws_active = 0
 
     async def ws_handler(request: web.Request) -> web.Response | web.WebSocketResponse:
-        """WebSocket 连接处理入口（含并发上限硬检查）。
+        """WebSocket 连接处理入口（含并发上限硬检查 + 协议版本协商）。
+
+        9B-3：升级前协议版本协商——`X-Protocol-Version` 显式不支持的版本
+        （如 "2.0" 展示版本 / "3" / 乱拼写）→ HTTP 400 ProtocolError
+        （`CONTRACT_VALIDATION`，message 明示支持集合），不静默降级 v1；
+        拒绝优先于 platform 解析（未知版本不解析 X-Client-Platform）。
+        `handle_ws` 内 `resolve_protocol_version` 返回 None 理论上不可达（防御处理）。
 
         Args:
             request: aiohttp Request。
 
         Returns:
-            web.Response | web.WebSocketResponse: 并发超限错误响应或 WebSocket 连接对象。
+            web.Response | web.WebSocketResponse: 版本拒绝/并发超限错误响应或
+            WebSocket 连接对象。
         """
         nonlocal _ws_active
+        proto_header = request.headers.get("X-Protocol-Version", "")
+        if resolve_protocol_version(proto_header) is None:
+            logger.warning("不支持的协议版本拒绝: %r", proto_header)
+            return _protocol_error_response(
+                "CONTRACT_VALIDATION",
+                "不支持的协议版本 X-Protocol-Version（支持: 缺省/\"1\"→v1, \"2\"→v2）",
+                400, False)
         if max_ws_connections and max_ws_connections > 0:
             if _ws_active >= max_ws_connections:
                 return _protocol_error_response("CONNECTION_LIMITED", "并发连接超限", 503,

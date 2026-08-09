@@ -40,6 +40,7 @@ from frontend_contract import (
     WakeMessage,
 )
 from frontend_contract.ws_message import AckStatus, ClientMessage
+from frontend_contract.version import TRANSPORT_VERSION
 from core.input.tts_profile import _active_tts_profile
 
 if TYPE_CHECKING:
@@ -47,6 +48,26 @@ if TYPE_CHECKING:
     from core.memory.session import SessionMemory
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_protocol_version(header: str) -> int | None:
+    """X-Protocol-Version 头 → 协议版本号（9B-3 单源判定）。
+
+    支持集合：缺省/空 → 1（v1 legacy），``"1"`` → 1，``TRANSPORT_VERSION``("2") → 2；
+    其余显式值 → None——调用方拒绝（server.py ws_handler wrapper 升级前 400，
+    不静默降级 v1）。
+
+    Args:
+        header: X-Protocol-Version 头原始值（无头时 aiohttp 返回 ""）。
+
+    Returns:
+        1（v1）/ 2（v2）/ None（不支持的显式版本）。
+    """
+    if header in ("", "1"):
+        return 1
+    if header == TRANSPORT_VERSION:  # "2"
+        return 2
+    return None
 
 
 def _current_request_id() -> str | None:
@@ -128,9 +149,16 @@ async def handle_ws(
     ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024, heartbeat=30, receive_timeout=60)
     await ws.prepare(request)
 
-    # 版本协商（批次 1）：握手头 X-Protocol-Version。缺省/1 → v1 路径（现状）；2 → v2 路径。
+    # 版本协商（批次 1 + 9B-3）：握手头 X-Protocol-Version。缺省/空/"1" → v1 路径（现状）；
+    # TRANSPORT_VERSION("2") → v2 路径。其余显式值 → None——server.py ws_handler wrapper
+    # 已在升级前拒绝（HTTP 400），handle_ws 内不可达；此处仅防御处理（回退 v1 legacy）。
     proto_header = request.headers.get("X-Protocol-Version", "")
-    protocol_version = 2 if proto_header == "2" else 1
+    resolved = resolve_protocol_version(proto_header)
+    if resolved is None:
+        logger.warning("协议版本协商失败（wrapper 应已拦截）: %r → 回退 v1", proto_header)
+        protocol_version = 1
+    else:
+        protocol_version = resolved
 
     # 批次 4（spec §5.1 D-l）：X-Client-Platform 头 → WebSocketChannel.client_platform。
     # 仅 v2 连接解析——v1 无 desktop 概念，伪冒 platform 头在 v1 上不生效（负面隔离）。
