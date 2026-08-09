@@ -257,7 +257,13 @@ class Agent(AgentLifecycle, AgentServer):
             token_tracker=self._token_tracker,
             generation_registry=self._generation_registry,
         )
-        self._cognitive.configure(memory_reflector=self._memory_reflector)
+        self._cognitive.configure(
+            memory_reflector=self._memory_reflector,
+            # _after_response 是独立 task，主 process 返回后仍会保存 SessionMemory；
+            # 给它单独一份引用，避免删除后晚到 save upsert 复活幽灵会话。
+            session_work_reserver=lambda sid: self._session_manager.reserve_work(sid, 2),
+            session_work_releaser=self._session_manager.release_work,
+        )
 
         self._idle = IdleMonitor(
             character=self._character,
@@ -311,7 +317,9 @@ class Agent(AgentLifecycle, AgentServer):
                                content: list[dict] | None = None,
                                message_id: str | None = None,
                                protocol_version: int = 1,
-                               conversation_id: str | None = None) -> bool:
+                               conversation_id: str | None = None,
+                               emotion: str = "",
+                               events: list[str] | None = None) -> bool:
         """处理单条用户消息，通过管道送入 CognitiveLoop。
 
         Agent 忙碌时消息入队（FIFO），IDLE 时出队处理。
@@ -323,8 +331,10 @@ class Agent(AgentLifecycle, AgentServer):
             content: 多模态内容数组（ChatMessageV2 content），新接口。
             message_id: v2 预分配用户消息 ID（ACK 一致，落库优先用）；v1 无则 None。
             protocol_version: 来源协议版本（1=v1，2=v2），默认 1。
-            conversation_id: 批次 3（multi-session）目标会话 ID；None = 未归属
-                （由 loop 侧 resolver 路由，Task 8 接入）。
+            conversation_id: 批次 3（multi-session）目标会话 ID；v2 的 None 会在
+                accepted 前解析并固化为当时活动会话，v1 仍由 loop 解析到 default。
+            emotion: 语音 STT 情绪标签；文本消息为空。
+            events: 语音 STT 事件标签；文本消息为空。
 
         Returns:
             bool: True = 消息已接受（已入队或直发）；False = 消息为空或队列满被丢弃。
@@ -336,6 +346,15 @@ class Agent(AgentLifecycle, AgentServer):
         if not text.strip() and not content:
             return False
 
+        # v2 在 ACK accepted 前原子固定实际目标（None 也解析成当时 active）并登记
+        # accepted work。删除会话会在同一 SessionManager 生命周期锁下检查引用计数，
+        # 因而 EventBus/pending/生成中的消息不会被删除后静默丢弃或改投新 active。
+        session_work_reserved = False
+        if int(protocol_version) >= 2:
+            target = await self._session_manager.reserve_work(conversation_id, protocol_version)
+            conversation_id_nt = SessionId(target.session_id)
+            session_work_reserved = True
+
         rid = self.next_request_id()
 
         self._idle.touch()
@@ -345,22 +364,31 @@ class Agent(AgentLifecycle, AgentServer):
             max_queue = self._config.agent.max_pending_messages
             if len(self._pending_messages) >= max_queue:
                 logger.warning("消息队列已满 (%d) — 丢弃消息", max_queue)
+                if session_work_reserved and conversation_id_nt is not None:
+                    self._session_manager.release_work(conversation_id_nt)
                 return False
             logger.debug("Agent busy — 消息排队 (state=%s, queue=%d)",
                        self.status.current_name(), len(self._pending_messages) + 1)
             self._pending_messages.append(_PendingMessage(
                 text=text, user_name=user_name, request_id=rid,
-                content=content, message_id=message_id_nt,
+                content=content, emotion=emotion, events=list(events or []),
+                message_id=message_id_nt,
                 conversation_id=conversation_id_nt,
                 protocol_version=protocol_version,
+                session_work_reserved=session_work_reserved,
             ))
             return True
 
-        self._bus.post(UserInputData(text=text, user_name=user_name,
-                                     request_id=rid, content=content,
-                                     message_id=message_id_nt,
-                                     protocol_version=protocol_version,
-                                     conversation_id=conversation_id_nt))
+        try:
+            self._bus.post(UserInputData(
+                text=text, user_name=user_name, request_id=rid, content=content,
+                emotion=emotion, events=list(events or []), message_id=message_id_nt,
+                protocol_version=protocol_version, conversation_id=conversation_id_nt,
+                session_work_reserved=session_work_reserved))
+        except Exception:
+            if session_work_reserved and conversation_id_nt is not None:
+                self._session_manager.release_work(conversation_id_nt)
+            raise
         return True
 
     # ---- Background task lifecycle ----
@@ -500,7 +528,30 @@ class Agent(AgentLifecycle, AgentServer):
             if isinstance(drained.data, StateChangeData):
                 self._bus.post(drained.data, priority=drained.priority,
                                type=EventType.STATE_CHANGE)
+            elif isinstance(drained.data, UserInputData):
+                self._release_session_work(
+                    drained.data.conversation_id,
+                    drained.data.session_work_reserved,
+                )
+        for pending in self._pending_messages:
+            self._release_pending_session_work(pending)
         self._pending_messages.clear()
+
+    def _release_session_work(self, conversation_id: SessionId | None,
+                              reserved: bool) -> None:
+        """释放一份 v2 accepted work；供完成、排队丢弃、中断和 shutdown 共用。"""
+        if reserved and conversation_id is not None:
+            self._session_manager.release_work(conversation_id)
+
+    def _release_pending_session_work(self, pending: _PendingMessage | dict) -> None:
+        """释放 pending 引用；兼容少量旧测试/迁移代码使用的 dict 队列项。"""
+        if isinstance(pending, dict):
+            conversation_id = pending.get("conversation_id")
+            reserved = bool(pending.get("session_work_reserved", False))
+        else:
+            conversation_id = pending.conversation_id
+            reserved = pending.session_work_reserved
+        self._release_session_work(conversation_id, reserved)
 
     def _handle_user_input(self, data: UserInputData) -> None:
         """处理 USER_INPUT 事件：创建 cognitive task 异步运行。
@@ -523,17 +574,32 @@ class Agent(AgentLifecycle, AgentServer):
         _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
             parent_id=rid, calls=calls,
         )
-        task = asyncio.create_task(
-            self._cognitive.process(text, user_name=user_name,
-                                    stt_emotion=stt_emotion,
-                                    stt_events=stt_events,
-                                    _on_tool_calls=_on_tool_calls,
-                                    content=content,
-                                    message_id=message_id,
-                                    protocol_version=protocol_version,
-                                    conversation_id=data.conversation_id),
-            name=f"cognitive-{text[:20] if text else 'multimodal'}"
-        )
+
+        async def _run_with_session_lease() -> None:
+            try:
+                await self._cognitive.process(
+                    text, user_name=user_name,
+                    stt_emotion=stt_emotion,
+                    stt_events=stt_events,
+                    _on_tool_calls=_on_tool_calls,
+                    content=content,
+                    message_id=message_id,
+                    protocol_version=protocol_version,
+                    conversation_id=data.conversation_id,
+                )
+            finally:
+                self._release_session_work(
+                    data.conversation_id, data.session_work_reserved)
+
+        try:
+            task = asyncio.create_task(
+                _run_with_session_lease(),
+                name=f"cognitive-{text[:20] if text else 'multimodal'}",
+            )
+        except Exception:
+            self._release_session_work(
+                data.conversation_id, data.session_work_reserved)
+            raise
         self._cognitive._current_task = task
 
     def _handle_system_tick(self, data: SystemTickData) -> None:
@@ -596,17 +662,25 @@ class Agent(AgentLifecycle, AgentServer):
             if self._pending_messages:
                 pending = self._pending_messages.pop(0)
                 logger.debug("排队消息出队 (%d 条剩余)", len(self._pending_messages))
-                self._bus.post(UserInputData(
-                    text=pending.text,
-                    user_name=pending.user_name,
-                    request_id=pending.request_id,
-                    content=pending.content,
-                    message_id=pending.message_id,  # 批次 2：忙时排队不丢预分配 ID
-                    # review 修复（F3/链路#1）：透传 conversation_id + protocol_version——
-                    # 否则 v2 排队消息出队后降级为 v1 语义（恒 default），丢失会话归属。
-                    conversation_id=pending.conversation_id,
-                    protocol_version=pending.protocol_version,
-                ))
+                try:
+                    self._bus.post(UserInputData(
+                        text=pending.text,
+                        user_name=pending.user_name,
+                        request_id=pending.request_id,
+                        content=pending.content,
+                        emotion=pending.emotion,
+                        events=list(pending.events or []),
+                        message_id=pending.message_id,  # 批次 2：忙时排队不丢预分配 ID
+                        # review 修复（F3/链路#1）：透传 conversation_id + protocol_version——
+                        # 否则 v2 排队消息出队后降级为 v1 语义（恒 default），丢失会话归属。
+                        conversation_id=pending.conversation_id,
+                        protocol_version=pending.protocol_version,
+                        session_work_reserved=pending.session_work_reserved,
+                    ))
+                except Exception:
+                    self._release_session_work(
+                        pending.conversation_id, pending.session_work_reserved)
+                    raise
         await self._output.notify_state(state)
 
     # 工具注册在 start() 中经 ToolAdapter.start() 完成

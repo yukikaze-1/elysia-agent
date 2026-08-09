@@ -483,6 +483,29 @@ class TestWakeWordGate:
 class TestSegmentFrameAligned:
     @pytest.mark.service
     @pytest.mark.asyncio
+    async def test_subframe_binary_chunks_are_reassembled_without_loss(self):
+        """连续 256B 网络 chunk 可跨调用组成 640B VAD 帧，不再全部判静音丢弃。"""
+        wav_captured: list[bytes] = []
+
+        async def mock_stt(wav: bytes) -> str:
+            wav_captured.append(wav)
+            return "测试"
+
+        buf = AudioBuffer(stt_transcribe=mock_stt)
+        chunks = [_loud(128) for _ in range(200)]  # 200×256B = 1.6s
+        for chunk in chunks:
+            await buf.feed(chunk)
+        await buf.flush()
+
+        assert len(wav_captured) == 1
+        import wave
+        from io import BytesIO
+        with wave.open(BytesIO(wav_captured[0]), "rb") as wf:
+            pcm_len = wf.getnframes() * wf.getsampwidth() * wf.getnchannels()
+        assert pcm_len == sum(map(len, chunks)), "跨 chunk 重组不得丢失或重复 PCM"
+
+    @pytest.mark.service
+    @pytest.mark.asyncio
     async def test_segment_wav_frame_aligned(self):
         """_process_segment 构造的 WAV 含全部输入字节（非整帧尾部原样送 STT，不截断）。"""
         wav_captured: list[bytes] = []

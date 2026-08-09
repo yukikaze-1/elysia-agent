@@ -1,7 +1,4 @@
-# 由 frontend_contract 契约源生成（scripts/gen_contract_frames.py）——非事实源，漂移门禁兜底。
-# 帧序列 = 固定测试数据（确定性）；真实 wire 形状以 frontend_contract/ 契约为准。
-
 {"type": "tool.request", "callId": "call_frame_1", "toolName": "desktop.file.read", "toolVersion": "1.0.0", "runtime": "desktop", "arguments": {"path": "/tmp/frame_demo.txt", "offset": 0, "limit": 4096}, "reason": "读取文件内容供用户确认", "riskLevel": "high", "permissionRequired": true, "approvalAuthority": "client", "paramHash": "sha256_frame_demo", "expiresAt": "2026-08-09T00:00:00+00:00", "requestId": "req_frame_tool1"}
 {"type": "command", "command": "tool_approval", "params": {"request_id": "req_frame_tool1", "call_id": "call_frame_1", "tool": "desktop.file.read", "tool_version": "1.0.0", "runtime": "desktop", "risk": "high"}}
-{"type": "generation.completed", "generationId": "gen_frame_tool1", "messageId": "msg_frame_tool1", "channel": "public_reply", "finishReason": "tool_calls", "usage": {"rounds": [], "turn_total": 0}, "model": "deepseek/deepseek-chat", "completeness": "complete"}
+{"type": "generation.completed", "generationId": "gen_frame_tool1", "messageId": "msg_frame_tool1", "channel": "public_reply", "finishReason": "tool_calls", "usage": {"rounds": [], "turn_total": 0}, "model": "deepseek/deepseek-chat", "completeness": "complete", "conversationId": "default"}
 {"type": "state", "state": "idle"}

@@ -6,8 +6,9 @@
 
 1. **契约源 golden frames**（`ws-v2-*.jsonl`，Task 4/9B-1 起）：由
    `scripts/gen_contract_frames.py` 从 `frontend_contract/` 契约模型（`ServerMessage`
-   判别联合）确定性生成（固定测试 ID/时间戳），文件头 `#` 注释标注「非事实源，漂移门禁
-   兜底」。`make check-types` 对它们做 `git diff` 漂移检测——改契约不重跑 gen-frames = CI 红。
+   判别联合）确定性生成（固定测试 ID/时间戳）。文件保持标准 JSONL：每个非空行
+   都可直接 `JSON.parse/json.loads`；「非事实源、漂移门禁兜底」元数据仅记录在本
+   README。`make check-types` 对它们做 `git diff` 漂移检测——改契约不重跑 gen-frames = CI 红。
 2. **历史真实快照**（`ws-chat/cancel/tool-approval` + `ws-server-info` +
    `ws-v2-cancel/fail`）：批次 0~2 捕获时点的真实脱敏 WS 轨迹，由已停用的
    `scripts/capture_ws_trace.py` 生成（DEPRECATED），保留作历史参考。

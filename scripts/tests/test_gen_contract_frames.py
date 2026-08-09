@@ -16,7 +16,17 @@ pytestmark = pytest.mark.unit
 
 def _frames(name: str) -> list[dict]:
     return [json.loads(line) for line in _ARTIFACTS[name].splitlines()
-            if line.startswith("{")]
+            if line.strip()]
+
+
+def test_all_artifacts_are_standard_jsonl():
+    """跨仓 parser 可逐行直接 json.loads，不需要私有 `#` 注释跳过规则。"""
+    for name, content in _ARTIFACTS.items():
+        lines = [line for line in content.splitlines() if line.strip()]
+        assert lines, f"{name} 不应为空"
+        for line_no, line in enumerate(lines, 1):
+            parsed = json.loads(line)
+            assert isinstance(parsed, dict), f"{name}:{line_no} 必须是 JSON object"
 
 
 def test_voice_first_turn_id_is_one():
@@ -42,3 +52,12 @@ def test_chat_ack_and_generation_have_conversation_id():
     for f in gen_frames:
         assert f.get("conversationId") == "default", \
             f"{f['type']} 应带 conversationId=default: {f}"
+
+
+def test_all_generation_frames_have_conversation_id():
+    """所有 golden 的 generation.* 都携带非空实际会话，含 tool_calls 终态。"""
+    for name in _ARTIFACTS:
+        for frame in _frames(name):
+            if frame["type"].startswith("generation."):
+                assert frame.get("conversationId"), \
+                    f"{name} 的 {frame['type']} 缺 conversationId: {frame}"

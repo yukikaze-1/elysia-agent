@@ -375,7 +375,7 @@ Desktop 工具**不走 `tool_approval`**（approvalAuthority=client，Electron �
 
 - 会话/录音 ID 客户端生成（`recordingId=rec_<uuid>` / `sessionId=vs_<uuid>`），唯一性仅限本连接内。
 - 已有活动会话再 start → `VOICE_SESSION_CONFLICT`；`agent.stt` 为 None 或未启用 → `STT_UNAVAILABLE`。
-- **音频输入契约（批次 9C，固定格式）**：三种 start 帧（`voice.record.start`/`voice_session.start`/`dictation.start`）可带可选 `audio` descriptor `{codec, sampleRate, channels}`；唯一支持 `codec="pcm_s16le"` + `sampleRate=16000` + `channels=1`，**不符 → 升级前 `error{CONTRACT_VALIDATION}`，不建会话**。`audio` 缺省 → 按默认 16k/mono/pcm_s16le 处理（向后兼容）。BINARY PCM 帧 feed 时校验 `MAX_CHUNK_BYTES`（1 MiB），超限 → `error{CONTRACT_VALIDATION}` + 会话终止（`voice_session.ended`/`dictation.cancelled`；已 stop 的 TRANSCRIBING/PENDING 窗口只丢 chunk 不发 error）。**段/WAV 边界**：STT 接受任意长度 PCM；VAD **检测**按 640 字节/20ms 整帧扫描（非整帧尾部不参与语音判定，但**整段音频含尾部原样送 STT**，不截断）。
+- **音频输入契约（批次 9C，固定格式）**：三种 start 帧（`voice.record.start`/`voice_session.start`/`dictation.start`）可带可选 `audio` descriptor `{codec, sampleRate, channels}`；唯一支持 `codec="pcm_s16le"` + `sampleRate=16000` + `channels=1`，**不符 → 升级前 `error{CONTRACT_VALIDATION}`，不建会话**。`audio` 缺省 → 按默认 16k/mono/pcm_s16le 处理（向后兼容）。BINARY PCM 帧 feed 时校验 `MAX_CHUNK_BYTES`（1 MiB），超限 → `error{CONTRACT_VALIDATION}` + 会话终止（`voice_session.ended`/`dictation.cancelled`；已 stop 的 TRANSCRIBING/PENDING 窗口只丢 chunk 不发 error）。**网络 chunk 无需 640B 对齐**：后端会跨 BINARY chunk 重组连续的 640 字节/20ms VAD 帧；流末不足一帧的部分只暂存、不单独判静音，后续字节到达后继续检测。**段/WAV 边界**：原始段音频（含最终非整帧尾部）原样送 STT，不截断。
 - **音频不落盘**（内存缓冲）、不入消息 content——语音消息 = 纯文本消息（批次 7 才做音频附件，BE-070）。
 - 失败信封区分：`voice.commit` 违规 → `user_message.ack{rejected}`；`voice.record.start/stop/discard` 与 `voice_session.*`/`dictation.*`/`audio.cancel` 违规 → `error{code}`。
 

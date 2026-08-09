@@ -266,6 +266,11 @@ class CognitiveLoop(CognitiveTools):
         self._current_task: asyncio.Task | None = None
         self._tts_task: asyncio.Task | None = None  # 保留供 agent.py stop() 读取
         self._pending_after_response: list[asyncio.Task] = []  # shutdown 时等待
+        # Agent 可选注入：after_response 会异步保存目标 SessionMemory，必须独立持有
+        # accepted-work 引用，不能随主 cognitive task 返回就允许删除。
+        self._session_work_reserver: (
+            Callable[[SessionId], Awaitable[SessionMemory]] | None) = None
+        self._session_work_releaser: Callable[[SessionId], None] | None = None
         self._shutting_down: bool = False  # shutdown 门禁——after_response 检查后提前退出
         # TTS 流管理器——抽取出来的子系统
         self._tts_mgr = TTSStreamManager(
@@ -990,10 +995,28 @@ class CognitiveLoop(CognitiveTools):
                 logger.debug("💭 %s", iv_think_buf.strip())
                 log_conversation("inner_voice", self._prompt._character.name,
                                  iv_think_buf.strip())
-            task = asyncio.create_task(
-                self._after_response(user_message, public_text,
-                                     session=target, engine=self._character_engine),
-                name="after-response")
+            background_reserved = False
+            if self._session_work_reserver is not None:
+                await self._session_work_reserver(target.session_id)
+                background_reserved = True
+
+            async def _run_after_response() -> None:
+                try:
+                    await self._after_response(
+                        user_message, public_text,
+                        session=target, engine=self._character_engine)
+                finally:
+                    if (background_reserved
+                            and self._session_work_releaser is not None):
+                        self._session_work_releaser(target.session_id)
+
+            try:
+                task = asyncio.create_task(
+                    _run_after_response(), name="after-response")
+            except Exception:
+                if background_reserved and self._session_work_releaser is not None:
+                    self._session_work_releaser(target.session_id)
+                raise
             self._pending_after_response.append(task)
             # 清理已完成的 task，避免列表无限增长
             self._pending_after_response = [

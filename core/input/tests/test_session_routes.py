@@ -321,6 +321,35 @@ class TestSessionsCRUD:
         assert data["code"] == "CONTRACT_VALIDATION"
 
     @pytest.mark.asyncio
+    async def test_offline_create_list_detail_and_rename_consistent(self, aiohttp_client):
+        """Mongo 会话仓库离线时，REST create 的成功结果在后续读写接口中仍可见。"""
+        agent = _FakeAgent()
+        agent.session_repo = SessionRepository(db=None)
+        agent.session_manager = SessionManager(
+            repo=agent.session_repo, msg_repo=agent.message_repo)
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        created_resp = await client.post("/api/sessions", json={"title": "离线会话"})
+        assert created_resp.status == 200
+        created = await created_resp.json()
+        sid = created["conversationId"]
+
+        list_resp = await client.get("/api/sessions")
+        listed = {item["conversationId"]: item for item in (await list_resp.json())["sessions"]}
+        assert listed[sid]["title"] == "离线会话"
+
+        rename_resp = await client.patch(
+            f"/api/sessions/{sid}", json={"title": "离线已改名"})
+        assert rename_resp.status == 200
+        assert (await rename_resp.json())["title"] == "离线已改名"
+
+        detail_resp = await client.get(f"/api/sessions/{sid}")
+        assert detail_resp.status == 200
+        detail = await detail_resp.json()
+        assert detail["session"]["title"] == "离线已改名"
+
+    @pytest.mark.asyncio
     async def test_rename_unknown_404(self, aiohttp_client):
         app = _make_app(_FakeAgent())
         client = await aiohttp_client(app)
@@ -444,6 +473,27 @@ class TestSessionsCRUD:
         assert data["retryable"] is True
         # 未删除：会话仍存在
         assert await agent.session_manager.has_session("conv_test_pending") is True
+
+    @pytest.mark.asyncio
+    async def test_delete_session_with_eventbus_or_inflight_work_rejected_409(self, aiohttp_client):
+        """accepted work 已离开 FIFO 也受 manager 门禁保护，非活动会话同样不能删。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_reserved", "已接收工作")
+        await agent.session_manager.reserve_work("conv_test_reserved", 2)
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.delete("/api/sessions/conv_test_reserved")
+        assert resp.status == 409
+        data = await resp.json()
+        assert data["code"] == "AGENT_BUSY"
+        assert data["retryable"] is True
+        assert await agent.session_manager.has_session("conv_test_reserved") is True
+
+        agent.session_manager.release_work("conv_test_reserved")
+        resp = await client.delete("/api/sessions/conv_test_reserved")
+        assert resp.status == 200
+        assert await agent.session_manager.has_session("conv_test_reserved") is False
 
     @pytest.mark.asyncio
     async def test_delete_allowed_when_pending_on_other_session(self, aiohttp_client):

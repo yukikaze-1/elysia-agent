@@ -47,6 +47,26 @@ class _ProfileSTTBackend:
         self.closed = True
 
 
+class _SessionWorkManager:
+    """VoiceSessionManager 单测用的最小 accepted-work 会话管理器。"""
+
+    def __init__(self):
+        self.counts: dict[str, int] = {}
+
+    async def reserve_work(self, conversation_id, protocol_version):
+        sid = str(conversation_id or "default")
+        self.counts[sid] = self.counts.get(sid, 0) + 1
+        return type("S", (), {"session_id": sid})()
+
+    def release_work(self, sid):
+        key = str(sid)
+        count = self.counts.get(key, 0)
+        if count <= 1:
+            self.counts.pop(key, None)
+        else:
+            self.counts[key] = count - 1
+
+
 class FakeAgent:
     def __init__(self):
         self.stt = _FakeSTTBackend(self)
@@ -58,6 +78,7 @@ class FakeAgent:
             "should_suppress_vad_interrupt": False})()
         self._rid = 0
         self._last_text = ""
+        self.session_manager = _SessionWorkManager()
 
     def next_request_id(self):
         self._rid += 1

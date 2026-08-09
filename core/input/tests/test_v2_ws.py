@@ -1037,5 +1037,5 @@ class TestV2TextValidation:
             agent, None, ws, voice_mgr=mgr)
         acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
         assert acks and acks[-1]["status"] == "accepted", f"实际 {ws.sent}"
-        # process_message 收到校验后安全字段（conversation_id=None 缺省 → 未校验 data 无加法/索引）
-        assert agent.processed_kwargs["conversation_id"] is None
+        # 缺省 conversationId 在 ACK 前解析并固化为实际 active，避免消费前切 active 改投。
+        assert agent.processed_kwargs["conversation_id"] == "default"

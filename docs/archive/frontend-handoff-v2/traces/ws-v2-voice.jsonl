@@ -1,6 +1,3 @@
-# 由 frontend_contract 契约源生成（scripts/gen_contract_frames.py）——非事实源，漂移门禁兜底。
-# 帧序列 = 固定测试数据（确定性）；真实 wire 形状以 frontend_contract/ 契约为准。
-
 {"type": "voice_session.started", "sessionId": "vs_frame_1", "conversationId": "default"}
 {"type": "voice_session.partial", "sessionId": "vs_frame_1", "turnId": 1, "segmentIndex": 0, "text": "你好"}
 {"type": "voice_session.turn", "sessionId": "vs_frame_1", "turnId": 1, "messageId": "msg_frame_vs1", "conversationId": "default", "text": "你好"}

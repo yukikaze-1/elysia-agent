@@ -18,7 +18,9 @@ from core.status.agent_fsm import AgentFSM
 from core.monitoring.event_bus import EventBus
 from Module.output import OutputManager
 from core.memory.session import SessionMemory
-from core.memory.session_manager import SessionManager, SessionNotFoundError
+from core.memory.session_manager import (
+    SessionBusyError, SessionManager, SessionNotFoundError,
+)
 from core.cognitive import CognitiveLoop
 from core.schema import MessageId, SessionId
 from core.adapter.llm_adapter import LLMAdapter
@@ -198,6 +200,52 @@ async def test_after_response_writes_captured_target():
     # after_response#1 落 conv_a（发起会话），after_response#2 落 conv_b
     assert conv_a_repo.save.await_count == 1
     assert conv_b_repo.save.await_count == 1
+    await loop._output.close()
+
+
+@pytest.mark.asyncio
+async def test_after_response_holds_session_work_until_late_save_finishes():
+    """主 process 返回后，异步 after_response/save 仍阻止删除，杜绝晚到 upsert 复活。"""
+    from core.storage.session_repo import SessionRepository
+    from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+    class _FakeMsgRepo:
+        async def append(self, session_id, msg):
+            return None
+        async def delete_by_session(self, sid):
+            return 0
+
+    sm = SessionManager(
+        SessionRepository(db=FakeDocumentDBBackend()), _FakeMsgRepo())
+    summary = await sm.create(title="after-response")
+    target = await sm.ensure_loaded(summary.session_id)
+    loop = _make_loop(
+        {summary.session_id: target}, SessionMemory(session_id="default"))
+    loop.configure(
+        session_work_reserver=lambda sid: sm.reserve_work(sid, 2),
+        session_work_releaser=sm.release_work,
+    )
+    gate = asyncio.Event()
+    consolidator = MagicMock()
+
+    async def gated_consolidate(user, assistant):
+        await gate.wait()
+        return []
+
+    consolidator.consolidate = gated_consolidate
+    loop._consolidator = consolidator
+
+    await loop.process(
+        "hello", conversation_id=summary.session_id, protocol_version=2)
+    assert sm.work_count(summary.session_id) == 1
+    with pytest.raises(SessionBusyError):
+        await sm.delete(summary.session_id)
+
+    gate.set()
+    await _await_pending(loop)
+    assert sm.work_count(summary.session_id) == 0
+    await sm.delete(summary.session_id)
+    assert await sm.has_session(summary.session_id) is False
     await loop._output.close()
 
 

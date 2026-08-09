@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 from Module.stt import STTFactory
 from core.input.audio_buffer import AudioBuffer, Callback, pcm_to_wav, _FRAME_BYTES
 from core.input.custom_providers import resolve_model_params
+from core.memory.session_manager import SessionNotFoundError
 from core.schema.types import MessageId, SessionId
 from core.utils import get_request_id, new_message_id
 from frontend_contract.ws_message import AudioInputDescriptor
@@ -95,6 +96,9 @@ class VoiceSessionManager:
         # REALTIME / DICTATION 状态
         self._session_id: str | None = None
         self._conv_id: str | None = None
+        # REALTIME 生命周期本身持有一份会话引用；每个已提交 turn 另持一份，直到
+        # Agent/CognitiveLoop 消费终态。这样 stop 后 EventBus 中的残留 turn 仍受保护。
+        self._reserved_conv_id: SessionId | None = None
         self._buffer: AudioBuffer | None = None
         self._paused = False
         self._turn_id = 0
@@ -210,6 +214,9 @@ class VoiceSessionManager:
         self._idle_task = None
         self._buffer = None
         self._session_id = None
+        if self._reserved_conv_id is not None:
+            self._agent.session_manager.release_work(self._reserved_conv_id)
+            self._reserved_conv_id = None
         self._conv_id = None
         self._paused = False
         self._turn_id = 0
@@ -346,26 +353,31 @@ class VoiceSessionManager:
             raise VoiceSessionError(bad, "输入音频格式不兼容（仅支持 pcm_s16le/16000Hz/单声道）")
         if not self._stt_available():
             raise VoiceSessionError(ERR_STT_UNAVAILABLE, "STT 不可用", True)
-        target = await self._resolve_conversation(conversation_id)
-        self._mode = VoiceMode.REALTIME
-        self._session_id = session_id
-        self._conv_id = target
-        self._turn_id = 0
-        self._segment_index = 0
-        self._received_frames = 0
-        self._last_audio_at = time.monotonic()
-        self._buffer = AudioBuffer(
-            stt_transcribe=self._make_dispatch_stt(self._agent.stt_transcribe),
-            aggressiveness=3,
-            silence_duration=self._silence_duration,
-            on_interrupt=self._on_vad_interrupt,
-            on_transcription=self._on_segment,
-        )
-        self._ack_task = asyncio.create_task(self._ack_loop(session_id))
-        self._idle_task = asyncio.create_task(self._idle_check_loop(session_id))
-        from frontend_contract import VoiceSessionStartedMessage
-        await self._emit(VoiceSessionStartedMessage(
-            sessionId=session_id, conversationId=target).wire_dict())
+        target = await self._reserve_conversation(conversation_id)
+        self._reserved_conv_id = SessionId(target)
+        try:
+            self._mode = VoiceMode.REALTIME
+            self._session_id = session_id
+            self._conv_id = target
+            self._turn_id = 0
+            self._segment_index = 0
+            self._received_frames = 0
+            self._last_audio_at = time.monotonic()
+            self._buffer = AudioBuffer(
+                stt_transcribe=self._make_dispatch_stt(self._agent.stt_transcribe),
+                aggressiveness=3,
+                silence_duration=self._silence_duration,
+                on_interrupt=self._on_vad_interrupt,
+                on_transcription=self._on_segment,
+            )
+            self._ack_task = asyncio.create_task(self._ack_loop(session_id))
+            self._idle_task = asyncio.create_task(self._idle_check_loop(session_id))
+            from frontend_contract import VoiceSessionStartedMessage
+            await self._emit(VoiceSessionStartedMessage(
+                sessionId=session_id, conversationId=target).wire_dict())
+        except Exception:
+            self._teardown_session()
+            raise
 
     async def pause_session(self, session_id: str) -> None:
         self._require_session(session_id)
@@ -640,13 +652,29 @@ class VoiceSessionManager:
             else:
                 es = {"emotion": emotion, "events": events or []}
             message_id = new_message_id()
+            # 每个 turn 独立预占 accepted work；REALTIME 生命周期引用只保证会话在
+            # 录音期间存在，stop 后 EventBus/生成中的 turn 仍需自己的引用。
+            try:
+                target = await self._agent.session_manager.reserve_work(self._conv_id, 2)
+            except SessionNotFoundError:
+                await self._emit_error("SESSION_NOT_FOUND", "目标会话已不存在")
+                return
+            target_id = SessionId(target.session_id)
+            if epoch != self._stt_epoch or self._mode != VoiceMode.REALTIME:
+                self._agent.session_manager.release_work(target_id)
+                return
             self._agent.idle.touch()
-            self._agent.bus.post(self._build_user_input(text, es, message_id))
+            try:
+                self._agent.bus.post(
+                    self._build_user_input(text, es, message_id, target_id))
+            except Exception:
+                self._agent.session_manager.release_work(target_id)
+                raise
             self._emitted_message_ids.add(message_id)   # D1 归属（Task 9）
             await self._emit(VoiceSessionTurnMessage(
                 sessionId=str(self._session_id) if self._session_id else "",
-                turnId=self._turn_id,
-                messageId=message_id, conversationId=self._conv_id, text=text).wire_dict())
+                turnId=self._turn_id, messageId=message_id,
+                conversationId=str(target_id), text=text).wire_dict())
         elif self._mode == VoiceMode.DICTATION:
             from frontend_contract import DictationPartialMessage
             self._dict_text.append(text)
@@ -657,7 +685,8 @@ class VoiceSessionManager:
         """本连接语音段提交的用户消息 ID 集合（D1 断连归属判定，Task 9 消费）。"""
         return set(self._emitted_message_ids)
 
-    def _build_user_input(self, text: str, es: dict, message_id: MessageId):
+    def _build_user_input(self, text: str, es: dict, message_id: MessageId,
+                          conversation_id: SessionId):
         from core.schema.event import UserInputData
         return UserInputData(
             text=text, user_name=self._agent.user_name,
@@ -665,21 +694,17 @@ class VoiceSessionManager:
             events=es.get("events", []) or [],
             request_id=self._agent.next_request_id(),
             message_id=message_id, protocol_version=2,
-            conversation_id=SessionId(self._conv_id) if self._conv_id else None)
+            conversation_id=conversation_id,
+            session_work_reserved=True)
 
-    async def _resolve_conversation(self, conversation_id: str | None) -> str:
-        # 9a3（Q4）：显式 ID 先验证存在——has_session 校验置于函数顶部、try 之外，
-        # 避免被下方 fallback（return conversation_id or "default"）吞掉 raise。
-        # 未知会话 → VoiceSessionError 中止 start_realtime（不建 buffer 不切 REALTIME 态）。
-        if conversation_id:
-            if not await self._agent.session_manager.has_session(SessionId(conversation_id)):
-                raise VoiceSessionError("SESSION_NOT_FOUND", f"会话不存在: {conversation_id}")
+    async def _reserve_conversation(self, conversation_id: str | None) -> str:
+        """原子解析并预占 REALTIME 目标会话，失败时不进入活动语音态。"""
         try:
-            target = await self._agent.resolve_session(conversation_id, 2)
+            target = await self._agent.session_manager.reserve_work(conversation_id, 2)
             return str(target.session_id)
-        except Exception:
-            logger.warning("voice resolve_session 失败，回退", exc_info=True)
-            return conversation_id or "default"
+        except SessionNotFoundError as exc:
+            raise VoiceSessionError(
+                "SESSION_NOT_FOUND", f"会话不存在: {conversation_id or '(active)'}") from exc
 
     def _require_session(self, session_id: str) -> None:
         # 仅 REALTIME 接受 voice_session.* 消息（review #18：dictation 无这些消息，

@@ -19,6 +19,7 @@ from core.agent._types import _PendingMessage
 from core.agent.agent import Agent
 from core.agent._lifecycle_persistence import _LifecyclePersistence
 from core.config import AppConfig
+from core.memory.session_manager import SessionBusyError
 from core.schema.event import UserInputData, InterruptData, StateChangeData
 from core.schema.types import RequestId
 
@@ -157,6 +158,53 @@ class TestProcessMessageConversationId:
         assert isinstance(posted, UserInputData)
         assert posted.conversation_id == "conv_x"
         assert posted.protocol_version == 2
+
+    @pytest.mark.asyncio
+    async def test_v2_eventbus_work_blocks_delete_and_releases_after_cognitive_terminal(self):
+        """真实 Agent：EventBus 窗口也持有会话引用，CognitiveLoop 终态后成对释放。"""
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        await agent.start()
+        summary = await agent.session_manager.create(title="eventbus")
+        agent._bus.post = MagicMock()
+        agent._cognitive.process = AsyncMock(return_value=None)
+        try:
+            accepted = await agent.process_message(
+                "hello", protocol_version=2,
+                conversation_id=str(summary.session_id))
+            assert accepted is True
+            posted = agent._bus.post.call_args.args[0]
+            assert posted.conversation_id == summary.session_id
+            assert posted.session_work_reserved is True
+            assert agent.session_manager.work_count(summary.session_id) == 1
+            with pytest.raises(SessionBusyError):
+                await agent.session_manager.delete(summary.session_id)
+
+            agent._handle_user_input(posted)
+            await agent._cognitive._current_task
+            assert agent.session_manager.work_count(summary.session_id) == 0
+            await agent.session_manager.delete(summary.session_id)
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v2_missing_conversation_id_is_frozen_to_active_before_accept(self):
+        """ACK 时省略 ID 的消息不会在 EventBus 消费前随 active 切换改投 default。"""
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        await agent.start()
+        summary = await agent.session_manager.create(title="active")
+        await agent.switch_session(summary.session_id)
+        agent._bus.post = MagicMock()
+        try:
+            await agent.process_message("hello", protocol_version=2, conversation_id=None)
+            posted = agent._bus.post.call_args.args[0]
+            assert posted.conversation_id == summary.session_id
+            agent.session_manager.release_work(summary.session_id)
+        finally:
+            await agent.stop()
 
 
 class TestInterruptSource:

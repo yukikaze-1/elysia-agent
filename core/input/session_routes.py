@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from core.agent import Agent
 
 from core.input.api_routes import _archive_to_client, _archive_msg_to_contract
+from core.memory.session_manager import SessionBusyError
 from core.schema.message import Message, MessageRole
 from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart
 from core.schema.utils import now_iso
@@ -145,27 +146,26 @@ def _contract_messages(messages: list[Message]) -> list[rest_contract.Message]:
 
 async def _session_summary(agent: "Agent", sid: str,
                            message_count: int) -> rest_contract.SessionSummary | None:
-    """构造单会话 SessionSummary：title/updatedAt 取 session doc（repo.list_all 匹配），
+    """构造单会话 SessionSummary：摘要取 SessionManager 的 Mongo+本地合并视图，
     messageCount 用归档计数（消息总数，比会话窗口更准确）。
 
     Returns:
         契约 SessionSummary；会话不在 repo 列表时返回 None。
     """
-    repo = getattr(agent, "session_repo", None)
+    manager = getattr(agent, "session_manager", None)
     active_id = getattr(agent, "active_session_id", "") or ""
-    if repo is None:
+    if manager is None:
         return None
     try:
-        summaries = await repo.list_all()
+        summary_item = await manager.get_summary(SessionId(sid))
     except Exception as e:
-        logger.warning("session summary list_all 失败: %s", e)
+        logger.warning("session summary 获取失败: %s", e)
         return None
-    for s in summaries:
-        if str(s.session_id) == str(sid):
-            summary = _to_contract_summary(s, active_id)
-            summary.messageCount = message_count
-            return summary
-    return None
+    if summary_item is None:
+        return None
+    summary = _to_contract_summary(summary_item, active_id)
+    summary.messageCount = message_count
+    return summary
 
 
 # ── 会话存在性检查 ──────────────────────────────────────────────────────────
@@ -515,14 +515,22 @@ async def sessions_delete_handler(request: web.Request) -> web.Response:
            for p in getattr(agent, "pending_messages", None) or []):
         return _error_response("AGENT_BUSY", "会话有排队消息，先清空/等待",
                                409, retryable=True)
-    # 批次 8a（D5）：删除前释放该会话归档消息的附件 refs（附件软删联动，
-    # 闭合 BE-030 会话删除 + BE-070 附件引用释放闭环）。先 release 再 delete——
-    # session_manager.delete 会清空该会话归档，附件 refs 需在归档清空前取到。
+    # 删除 guard/tombstone 必须先于附件扫描，否则扫描期间仍能 ACK 新消息。附件释放
+    # 作为 manager.delete 的 before_delete 回调运行：此时新 work 已被 tombstone 拒绝，
+    # 归档又尚未清空，既保住 refs 联动，也闭合 TOCTOU。
+    async def _release_attachments(_: SessionId) -> None:
+        try:
+            await release_session_attachments(agent, SessionId(sid))
+        except Exception as e:
+            logger.warning("sessions_delete 附件释放失败 sid=%s: %s", sid, e)
+
     try:
-        await release_session_attachments(agent, SessionId(sid))
-    except Exception as e:
-        logger.warning("sessions_delete 附件释放失败 sid=%s: %s", sid, e)
-    deleted = await agent.session_manager.delete(sid)
+        deleted = await agent.session_manager.delete(
+            SessionId(sid), before_delete=_release_attachments)
+    except SessionBusyError:
+        return _error_response(
+            "AGENT_BUSY", "会话有已接收/在途消息或活动语音会话，无法删除",
+            409, retryable=True)
     return web.json_response({"ok": True, "deleted": deleted})
 
 

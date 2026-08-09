@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """契约层 golden frames 生成（Task 4，9B-1）。
 
-无网络：构造 `ServerMessage` 契约模型 → `wire_dict()` → 逐行 JSON 写
+无网络：构造 `ServerMessage` 契约模型 → `wire_dict()` → 标准 JSONL（每个非空行
+都是 JSON 对象）写
 `docs/archive/frontend-handoff-v2/traces/ws-v2-{handshake,session,chat,tool,voice}.jsonl`。
 
 帧序列为固定测试数据（确定性——漂移门禁要求字节稳定，不取 datetime.now），
@@ -27,13 +28,6 @@ from frontend_contract.version import PROTOCOL_VERSION  # noqa: E402
 TRACES_DIR = (Path(__file__).resolve().parent.parent
               / "docs" / "archive" / "frontend-handoff-v2" / "traces")
 
-# 文件头注释：标注非事实源 + 漂移门禁兜底（# 前缀，非 JSON 行，仅归档说明）
-_HEADER = (
-    "# 由 frontend_contract 契约源生成（scripts/gen_contract_frames.py）——非事实源，"
-    "漂移门禁兜底。\n"
-    "# 帧序列 = 固定测试数据（确定性）；真实 wire 形状以 frontend_contract/ 契约为准。\n"
-    "\n"
-)
 # 固定测试时间戳（确定性——漂移门禁要求字节稳定）
 _TS = "2026-08-09T00:00:00+00:00"
 
@@ -178,7 +172,8 @@ def _tool() -> list[str]:
         generationId="gen_frame_tool1", messageId="msg_frame_tool1",
         channel=wm.MessageChannel.PUBLIC_REPLY, finishReason=rest.FinishReason.TOOL_CALLS,
         usage=wm.TokenUsage(rounds=[], turn_total=0),
-        model="deepseek/deepseek-chat", completeness="complete")
+        model="deepseek/deepseek-chat", completeness="complete",
+        conversationId="default")
     idle = wm.StateMessage(state="idle")
     return _f(request, command, completed, idle)
 
@@ -204,13 +199,13 @@ def _voice() -> list[str]:
     return _f(started, partial, turn, ack, audio_start, audio_end, ended)
 
 
-# 文件名 → 完整内容（头注释 + 帧行；模块级求值——确定性）
+# 文件名 → 标准 JSONL 完整内容（模块级求值——确定性；元数据放 traces/README）
 _ARTIFACTS = {
-    "ws-v2-handshake.jsonl": _HEADER + "\n".join(_handshake()) + "\n",
-    "ws-v2-session.jsonl": _HEADER + "\n".join(_session()) + "\n",
-    "ws-v2-chat.jsonl": _HEADER + "\n".join(_chat()) + "\n",
-    "ws-v2-tool.jsonl": _HEADER + "\n".join(_tool()) + "\n",
-    "ws-v2-voice.jsonl": _HEADER + "\n".join(_voice()) + "\n",
+    "ws-v2-handshake.jsonl": "\n".join(_handshake()) + "\n",
+    "ws-v2-session.jsonl": "\n".join(_session()) + "\n",
+    "ws-v2-chat.jsonl": "\n".join(_chat()) + "\n",
+    "ws-v2-tool.jsonl": "\n".join(_tool()) + "\n",
+    "ws-v2-voice.jsonl": "\n".join(_voice()) + "\n",
 }
 
 

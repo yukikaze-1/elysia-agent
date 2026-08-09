@@ -5,6 +5,7 @@ import pytest
 
 from core.input.idempotency import reset_store
 from core.input.ws_handler import handle_json_message
+from core.memory.session_manager import SessionNotFoundError
 
 pytestmark = pytest.mark.service
 
@@ -38,6 +39,15 @@ class _FakeSessionManager:
 
     async def ensure_loaded(self, sid):
         return type("S", (), {"session_id": str(sid)})()
+
+    async def reserve_work(self, conversation_id, protocol_version):
+        sid = str(conversation_id or "default")
+        if sid not in self._known:
+            raise SessionNotFoundError(sid)
+        return type("S", (), {"session_id": sid})()
+
+    def release_work(self, sid):
+        return None
 
 
 class FakeAgent:

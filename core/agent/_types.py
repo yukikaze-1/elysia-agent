@@ -18,6 +18,8 @@ class _PendingMessage:
     user_name: str
     request_id: RequestId
     content: list[dict] | None = None
+    emotion: str = ""
+    events: list[str] | None = None
     # 批次 2（v2 消息）：预分配用户消息 ID——忙时排队出队后 ACK 与落库保持一致
     message_id: MessageId | None = None
     # 批次 3（multi-session）：可选会话 ID，None = 未归属（loop 路由消费）
@@ -25,6 +27,8 @@ class _PendingMessage:
     # review 修复（F3/链路#1）：来源协议版本——忙时排队出队重建 UserInputData 时必须
     # 透传，否则 v2 排队消息出队后降级为 v1 语义（恒 default），丢失会话归属。
     protocol_version: int = 1
+    # v2 accepted work 已预占目标会话；出队后透传给 UserInputData，终态释放。
+    session_work_reserved: bool = False
 
 
 @dataclass

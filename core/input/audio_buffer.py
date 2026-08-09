@@ -121,6 +121,9 @@ class AudioBuffer:
         self._on_wake_notify = on_wake_notify
 
         self._chunks: list[bytes] = []
+        # WebSocket BINARY 是网络分包，边界不保证等于 VAD 的 640B/20ms 帧。
+        # 跨 feed 保留不足一帧的尾部，下次与新 chunk 拼接后再交 VAD。
+        self._vad_remainder: bytes = b""
         self._speaking: bool = False
         self._speech_chunk_count: int = 0           # 连续语音块数
         self._interrupt_fired: bool = False         # 本片段已发送打断
@@ -150,6 +153,7 @@ class AudioBuffer:
         """忽略音频 `duration` 秒。TTS 开始播放时调用。"""
         self._deafen_until = time.monotonic() + duration
         self._chunks.clear()
+        self._vad_remainder = b""
         self._speaking = False
         self._speech_chunk_count = 0
         self._interrupt_fired = False
@@ -165,6 +169,7 @@ class AudioBuffer:
         self._wake_state = WakeState.WOKEN
         self._woken_at = time.monotonic()
         self._chunks.clear()
+        self._vad_remainder = b""
         self._speaking = False
         self._speech_chunk_count = 0
         self._interrupt_fired = False
@@ -176,9 +181,9 @@ class AudioBuffer:
         """用 WebRTC VAD 检查 PCM 块是否包含语音。
 
         将块切成 20ms 帧并逐帧检查。
-        每次调用创建新的 VAD 实例以避免状态漂移 ——
-        WebRTC VAD 会累积噪声估计，处理大量块后可能导致误判
-        为静音。
+        每个 20ms 帧创建新的 VAD 实例以避免状态漂移/hangover —— WebRTC VAD
+        会累积噪声估计，处理大量帧后可能导致误判；帧级隔离也保证网络 chunk
+        切分方式不改变多帧多数决。
 
         Args:
             chunk: 原始 Int16 PCM 音频块。
@@ -189,13 +194,14 @@ class AudioBuffer:
         if len(chunk) < _FRAME_BYTES:
             return False
 
-        # 每次调用使用新的 VAD —— 避免噪声估计漂移
-        vad = webrtcvad.Vad(self._aggressiveness)
         speech_frames = 0
         total_frames = 0
         for offset in range(0, len(chunk) - _FRAME_BYTES + 1, _FRAME_BYTES):
             frame = chunk[offset:offset + _FRAME_BYTES]
             try:
+                # 每帧使用新的 VAD，避免同一检测块里「残余语音帧」的 hangover
+                # 把后续静音帧一起判为语音；网络 chunk 切法不应改变多数决结果。
+                vad = webrtcvad.Vad(self._aggressiveness)
                 if vad.is_speech(frame, self._sample_rate):
                     speech_frames += 1
             except Exception:
@@ -228,23 +234,41 @@ class AudioBuffer:
                 self._wake_state = WakeState.AWAITING
                 logger.debug("WOKEN timeout → AWAITING")
 
-        is_speech = self._is_speech(chunk)
-
+        # 网络 chunk 可任意切分。先与上一 chunk 的残帧拼接，只把连续完整 VAD 帧
+        # 交给检测；不足一帧时等待下一次 feed，不能直接判静音并丢弃。
+        previous_remainder = self._vad_remainder
+        joined = previous_remainder + chunk
+        complete_len = len(joined) // _FRAME_BYTES * _FRAME_BYTES
+        if complete_len == 0:
+            self._vad_remainder = joined
+            if self._speaking:
+                # 已在段内时，子帧 chunk 也属于原始 PCM；VAD 延后判断，但音频不能丢。
+                self._chunks.append(chunk)
+            return
+        vad_chunk = joined[:complete_len]
+        self._vad_remainder = joined[complete_len:]
+        is_speech = self._is_speech(vad_chunk)
         if is_speech:
             self._silence_start = None
             if not self._speaking:
                 self._speaking = True
                 self._speech_chunk_count = 0
                 self._interrupt_fired = False
+                # 检测到首个完整语音帧时，把此前不足一帧的前缀也纳入原始段。
+                self._chunks.append(previous_remainder + chunk)
+            else:
+                # 音频存储与 VAD 检测缓冲分离：只追加本次网络 chunk，避免检测用
+                # previous_remainder 在跨 chunk 重组时被重复写入 STT 段。
+                self._chunks.append(chunk)
             self._speech_chunk_count += 1
-            self._chunks.append(chunk)
 
             # 首次语音时 WOKEN → LISTENING
             if self._wake_state == WakeState.WOKEN:
                 self._wake_state = WakeState.LISTENING
 
-            # 连续语音块数足够时才触发打断
-            if not self._interrupt_fired and self._speech_chunk_count >= self.MIN_SPEECH_CHUNKS_FOR_INTERRUPT:
+            # 连续语音帧数足够时才触发打断
+            if (not self._interrupt_fired
+                    and self._speech_chunk_count >= self.MIN_SPEECH_CHUNKS_FOR_INTERRUPT):
                 now = time.monotonic()
                 if now - self._last_interrupt >= self._interrupt_cooldown:
                     self._last_interrupt = now
@@ -255,16 +279,22 @@ class AudioBuffer:
             now = time.monotonic()
             if self._silence_start is None:
                 self._silence_start = now
-                self._chunks.append(chunk)  # 连同尾部静音一并交 STT
+                self._chunks.append(chunk)  # 连同首个网络静音块一并交 STT
             elif now - self._silence_start >= self._silence_dur:
                 await self._process_segment()
 
     async def flush(self) -> None:
         """强制处理任何剩余的缓冲音频。"""
+        # speaking 期间原始网络 chunk 已完整写入 _chunks（含非整帧尾部）；这里的
+        # remainder 只属于 VAD 检测缓冲，不能重复追加。
+        self._vad_remainder = b""
         if self._chunks:
             await self._process_segment()
 
     async def _process_segment(self) -> None:
+        # _chunks 存的是原始网络 chunk，非整帧尾部已在首次写入时保留；这里只清
+        # VAD 检测残帧，避免把触发静音超时的下一 chunk 尾部重复/错误并入旧段。
+        self._vad_remainder = b""
         audio = b"".join(self._chunks)
         self._chunks.clear()
         self._speaking = False
@@ -318,6 +348,7 @@ class AudioBuffer:
     def reset(self) -> None:
         """清空所有缓冲状态（如被打断时）。"""
         self._chunks.clear()
+        self._vad_remainder = b""
         self._speaking = False
         self._speech_chunk_count = 0
         self._interrupt_fired = False

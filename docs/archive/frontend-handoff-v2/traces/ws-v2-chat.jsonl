@@ -1,6 +1,3 @@
-# 由 frontend_contract 契约源生成（scripts/gen_contract_frames.py）——非事实源，漂移门禁兜底。
-# 帧序列 = 固定测试数据（确定性）；真实 wire 形状以 frontend_contract/ 契约为准。
-
 {"type": "user_message.ack", "messageId": "msg_frame_ack1", "clientRequestId": "req_frame_chat1", "conversationId": "default", "receivedAt": "2026-08-09T00:00:00+00:00", "status": "accepted"}
 {"type": "state", "state": "thinking"}
 {"type": "typing", "typing": true}

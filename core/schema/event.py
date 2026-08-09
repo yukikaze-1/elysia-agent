@@ -43,6 +43,9 @@ class UserInputData(BaseModel):
     protocol_version: int = 1
     # 批次 3（multi-session）：可选会话 ID，None = 未归属
     conversation_id: SessionId | None = None
+    # 内部生命周期标记：True 表示 Agent/voice 已在 SessionManager.reserve_work()
+    # 登记 accepted work；消费终态、丢弃或中断时必须成对 release_work()。
+    session_work_reserved: bool = False
 
 
 class SystemTickData(BaseModel):

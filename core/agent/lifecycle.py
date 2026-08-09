@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from core.debug.prompt_recorder import PromptRecorder
     from core.debug.response_recorder import ResponseRecorder
     from core.memory.session import SessionMemory
+    from core.memory.session_manager import SessionManager
     from core.memory.long_term import LongTermMemory
     from core.memory.consolidator import MemoryConsolidator
     from core.personality import CharacterEngine
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from Module.output import OutputManager
     from core.adapter.llm_adapter import LLMAdapter
     from core.config import AppConfig
-    from core.schema.types import IsoTimestamp
+    from core.schema.types import IsoTimestamp, SessionId
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _idle: IdleMonitor
         _consolidator: MemoryConsolidator
         _session_repo: SessionRepository
+        _session_manager: SessionManager
         _attachment_repo: AttachmentRepository | None
         attachment_repo: AttachmentRepository
         _task_system: WorkflowEngine | None
@@ -129,6 +131,8 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _process_events: Callable[[], Coroutine[Any, Any, None]]
         _register_background_task: Callable[[str, Any, str, IsoTimestamp], None]
         _poll_mailboxes: Callable[[], Coroutine[Any, Any, None]]
+        _release_session_work: Callable[[SessionId | None, bool], None]
+        _release_pending_session_work: Callable[[_PendingMessage | dict], None]
 
     async def start(self) -> None:
         """启动 agent：连接持久化层、空闲监视器、事件循环。
@@ -182,6 +186,8 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         """Stop the agent — 按 _SHUTDOWN_STEPS 顺序执行清理。"""
         logger.info("Agent stopping...")
         self._state = RunState.STOPPED
+        for pending in self._pending_messages:
+            self._release_pending_session_work(pending)
         self._pending_messages.clear()
         self._background_tasks.clear()  # restart 复用同一实例，清理残留后台任务
 
@@ -194,6 +200,10 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
                     await result
             except Exception:
                 logger.warning("Shutdown step %s failed", name, exc_info=True)
+
+        # 当前 cognitive task 已取消并完成 shutdown；清掉 EventBus 中未消费事件可能
+        # 留下的引用，保证同一 Agent 实例 restart 后无陈旧删除门禁。
+        self._session_manager.clear_work()
 
         logger.info("Agent stopped")
 
@@ -241,4 +251,3 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
                 logger.warning("CharacterEngine compression flush timed out")
             except Exception:
                 logger.warning("CharacterEngine compression flush failed", exc_info=True)
-

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web, WSMsgType
 from pydantic import TypeAdapter, ValidationError
 
-from core.memory.session_manager import SessionBusyError
+from core.memory.session_manager import SessionBusyError, SessionNotFoundError
 from core.schema.event import InterruptData, UserInputData
 from core.schema.message import ClientMessageDict
 from core.schema.part import AudioPart, FilePart, ImagePart, StickerPart, TextPart, VideoPart
@@ -720,7 +720,15 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         try:
             accepted = await agent.process_message(
                 text=text, content=content, message_id=message_id,
-                protocol_version=2, conversation_id=conversation_id)
+                protocol_version=2, conversation_id=ack_conversation_id)
+        except SessionNotFoundError:
+            store.delete(client_request_id)
+            await _send_ack(ws, "", client_request_id, client_message_id,
+                            ack_conversation_id, "rejected",
+                            error={"code": "SESSION_NOT_FOUND",
+                                   "message": f"会话不存在: {ack_conversation_id}",
+                                   "retryable": False})
+            return True
         except Exception:
             logger.warning("附件消息 process_message 抛异常——删幂等 entry", exc_info=True)
             store.delete(client_request_id)
@@ -752,7 +760,15 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
     try:
         accepted = await agent.process_message(
             text=text, message_id=message_id, protocol_version=2,
-            conversation_id=conversation_id)
+            conversation_id=ack_conversation_id)
+    except SessionNotFoundError:
+        store.delete(client_request_id)
+        await _send_ack(ws, "", client_request_id, client_message_id,
+                        ack_conversation_id, "rejected",
+                        error={"code": "SESSION_NOT_FOUND",
+                               "message": f"会话不存在: {ack_conversation_id}",
+                               "retryable": False})
+        return True
     except Exception:
         logger.warning("process_message 抛异常——删幂等 entry，rejected", exc_info=True)
         store.delete(client_request_id)
@@ -832,9 +848,22 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
                                    "retryable": False})
         return
 
+    # 在 commit 清除 PENDING 录音前，先原子预占 ACK 已解析出的实际会话。删除若已
+    # 开始则 rejected；预占成功后直到 CognitiveLoop 终态都不能删除该会话。
+    try:
+        reserved_target = await agent.session_manager.reserve_work(ack_conv, 2)
+    except SessionNotFoundError:
+        await _send_ack(ws, "", client_request_id, client_message_id, ack_conv,
+                        "rejected", error={"code": "SESSION_NOT_FOUND",
+                                           "message": f"会话不存在: {ack_conv}",
+                                           "retryable": False})
+        return
+    reserved_id = SessionId(reserved_target.session_id)
+
     try:
         pending_text, emotion, events = voice_mgr.commit_recording(recording_id, text)
     except VoiceSessionError as e:
+        agent.session_manager.release_work(reserved_id)
         await _send_ack(ws, "", client_request_id, client_message_id, ack_conv,
                         "rejected", error={"code": e.code, "message": e.message,
                                            "retryable": e.retryable})
@@ -848,13 +877,16 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
     if sent_message_ids is not None:
         sent_message_ids.add(message_id)   # D1 归属（voice.commit 同样登记）
     agent.idle.touch()
-    # conversation_id 传原始值（None=活动会话），与 _route_v2_text 传原始给 process_message 一致；
-    # ACK 侧已用解析后 ack_conv（review NEW-5）
-    agent.bus.post(UserInputData(
-        text=pending_text, user_name=agent.user_name, emotion=emotion, events=events,
-        request_id=agent.next_request_id(), message_id=message_id,
-        protocol_version=2,
-        conversation_id=SessionId(conversation_id) if conversation_id else None))
+    # 事件携带预占后实际会话 ID；缺省 conversationId 不再留到消费时二次解析。
+    try:
+        agent.bus.post(UserInputData(
+            text=pending_text, user_name=agent.user_name, emotion=emotion, events=events,
+            request_id=agent.next_request_id(), message_id=message_id,
+            protocol_version=2, conversation_id=reserved_id,
+            session_work_reserved=True))
+    except Exception:
+        agent.session_manager.release_work(reserved_id)
+        raise
     # BE-081 敏感纪律：只记 recordingId + 文本长度，不记正文
     logger.debug("voice.commit 提交成功: %s (len=%d)", recording_id, len(pending_text))
 

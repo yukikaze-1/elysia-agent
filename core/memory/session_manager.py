@@ -19,7 +19,7 @@ import base64
 import logging
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from core.schema.utils import now_iso
@@ -38,10 +38,11 @@ DEFAULT_SESSION = SessionId("default")
 
 
 class SessionBusyError(RuntimeError):
-    """切换被拒——agent 忙（生成/TTS 中），换绑 engine 会与在途生成竞态。
+    """会话操作被拒——agent 忙，或会话仍有已接收/在途工作。
 
     批次 3 review 修复（F1-a）：activate 入口先经 FSM 门禁（is_accepting_input）
-    拒绝忙时切换；SessionManager.switch 内置 busy check 作为双保险。
+    拒绝忙时切换；SessionManager.switch 内置 busy check 作为双保险。删除路径还会
+    检查按会话计数的 accepted work，避免 ACK 后到最终消费前被删除。
     """
 
 
@@ -92,6 +93,17 @@ class SessionManager:
         self._character_engine = None
         # F1(a)：switch 忙时拒绝的检查回调（agent 注入 `not status.is_accepting_input`）
         self._busy_check = None
+        # 会话生命周期锁 + accepted work 引用计数：消息在 ACK 前预占目标会话，
+        # 直到 CognitiveLoop 终态（含取消/异常）才释放。删除先在同一锁下检查计数并
+        # 写入 deleting tombstone，闭合 EventBus/pending/生成中的 TOCTOU 窗口。
+        self._lifecycle_lock = asyncio.Lock()
+        self._work_counts: dict[SessionId, int] = {}
+        self._deleting: set[SessionId] = set()
+        self._deleted: set[SessionId] = set()
+        # Mongo 离线时 CRUD 仍需在当前进程内保持完整的 list/detail/rename 语义。
+        # repo 恢复后，持久层摘要与这些本地摘要在读取时合并去重。
+        self._local_summaries: dict[SessionId, SessionSummary] = {}
+        self._local_title_overrides: set[SessionId] = set()
         # eager default 空实例
         self._sessions[DEFAULT_SESSION] = SessionMemory(
             max_messages=max_messages,
@@ -124,6 +136,8 @@ class SessionManager:
         会话（此前 evict 无调用点，缓存无界增长）。
         """
         sid = SessionId(sid)
+        if sid in self._deleting or sid in self._deleted:
+            raise SessionNotFoundError(sid)
         session = self._sessions.get(sid)
         if session is None:
             session = SessionMemory(
@@ -157,7 +171,11 @@ class SessionManager:
         内存缓存覆盖已构造/已加载会话；持久层覆盖已落库但缓存逐出的会话。
         """
         sid = SessionId(sid)
+        if sid in self._deleting or sid in self._deleted:
+            return False
         if sid in self._sessions:
+            return True
+        if sid in self._local_summaries:
             return True
         if self._repo is not None:
             try:
@@ -189,6 +207,50 @@ class SessionManager:
             raise SessionNotFoundError(target)
         return await self.ensure_loaded(target)
 
+    async def reserve_work(self, conversation_id: str | None,
+                           protocol_version: int) -> SessionMemory:
+        """原子解析目标会话并登记一份已接收工作引用。
+
+        v2 消息必须在对客户端确认 accepted 之前调用本方法。返回的会话 ID 是本次
+        工作的固定归属；即使请求省略 ``conversationId``，后续活动会话切换也不会
+        改变它。引用存续期间 ``delete`` 会返回 ``SessionBusyError``。
+
+        Raises:
+            SessionNotFoundError: 目标会话未知、已删除或正在删除。
+        """
+        async with self._lifecycle_lock:
+            version = int(protocol_version)
+            if version < 2:
+                target = DEFAULT_SESSION
+            elif conversation_id:
+                target = SessionId(conversation_id)
+            else:
+                target = self._active_id
+            if target in self._deleting or target in self._deleted:
+                raise SessionNotFoundError(target)
+            if version >= 2 and conversation_id and not await self.has_session(target):
+                raise SessionNotFoundError(target)
+            session = await self.ensure_loaded(target)
+            self._work_counts[target] = self._work_counts.get(target, 0) + 1
+            return session
+
+    def release_work(self, sid: SessionId) -> None:
+        """释放 ``reserve_work`` 建立的一份引用；重复/迟到释放安全 no-op。"""
+        sid = SessionId(sid)
+        count = self._work_counts.get(sid, 0)
+        if count <= 1:
+            self._work_counts.pop(sid, None)
+        else:
+            self._work_counts[sid] = count - 1
+
+    def work_count(self, sid: SessionId) -> int:
+        """返回会话当前 accepted/in-flight 工作数（删除门禁与诊断用）。"""
+        return self._work_counts.get(SessionId(sid), 0)
+
+    def clear_work(self) -> None:
+        """生命周期停止后清空引用计数，避免同一 Agent restart 残留。"""
+        self._work_counts.clear()
+
     def set_busy_check(self, check: "Callable[[], bool] | None") -> None:
         """注入忙时检查回调（agent 构造后设置：`not status.is_accepting_input`）。
 
@@ -206,17 +268,20 @@ class SessionManager:
             SessionBusyError: 已注入 busy check 且 agent 忙（生成/TTS 中）时拒绝切换。
         """
         sid = SessionId(sid)
-        if self._busy_check is not None and self._busy_check():
-            logger.debug("switch 拒绝：agent 忙（busy check 命中），sid=%s", sid)
-            raise SessionBusyError(sid)
-        target = await self.ensure_loaded(sid)
-        outgoing = self._sessions.get(self._active_id)
-        if outgoing is not None and outgoing._pre_save_hook is not None:
-            outgoing._pre_save_hook()
-        self._active_id = sid
-        if self._character_engine is not None:
-            self._character_engine.attach_session(target)
-        return target
+        async with self._lifecycle_lock:
+            if self._busy_check is not None and self._busy_check():
+                logger.debug("switch 拒绝：agent 忙（busy check 命中），sid=%s", sid)
+                raise SessionBusyError(sid)
+            if sid in self._deleting or sid in self._deleted:
+                raise SessionNotFoundError(sid)
+            target = await self.ensure_loaded(sid)
+            outgoing = self._sessions.get(self._active_id)
+            if outgoing is not None and outgoing._pre_save_hook is not None:
+                outgoing._pre_save_hook()
+            self._active_id = sid
+            if self._character_engine is not None:
+                self._character_engine.attach_session(target)
+            return target
 
     def bind_character_engine(self, engine: "CharacterEngine") -> None:
         """绑定 CharacterEngine；切换会话时对 target 调用 attach_session。"""
@@ -236,13 +301,63 @@ class SessionManager:
         sid = SessionId(f"conv_{uuid.uuid4().hex[:12]}")
         await self._repo.create(sid, title)
         await self.ensure_loaded(sid)
-        return SessionSummary(
+        summary = SessionSummary(
             session_id=sid,
             message_count=0,
             updated_at=now_iso(),
             title=title,
             active=False,
         )
+        self._local_summaries[sid] = summary
+        if title:
+            self._local_title_overrides.add(sid)
+        return self._copy_summary(summary)
+
+    @staticmethod
+    def _copy_summary(summary: SessionSummary) -> SessionSummary:
+        """复制摘要，避免 list 填 active 时修改 repo/local 缓存对象。"""
+        return SessionSummary(
+            session_id=SessionId(summary.session_id),
+            message_count=summary.message_count,
+            updated_at=summary.updated_at,
+            title=summary.title,
+            active=summary.active,
+        )
+
+    async def _merged_summaries(self) -> list[SessionSummary]:
+        """合并 Mongo 摘要与进程内离线摘要，并过滤删除 tombstone。"""
+        try:
+            persisted = await self._repo.list_all()
+        except Exception:
+            logger.warning("session list_all 失败，降级使用进程内摘要", exc_info=True)
+            persisted = []
+        merged = {
+            SessionId(s.session_id): self._copy_summary(s)
+            for s in persisted
+            if SessionId(s.session_id) not in self._deleting
+            and SessionId(s.session_id) not in self._deleted
+        }
+        for sid, local in self._local_summaries.items():
+            if sid in self._deleting or sid in self._deleted:
+                continue
+            current = merged.get(sid)
+            if current is None:
+                merged[sid] = self._copy_summary(local)
+                continue
+            current.message_count = max(current.message_count, local.message_count)
+            current.updated_at = max(current.updated_at, local.updated_at)
+            if sid in self._local_title_overrides or not current.title:
+                current.title = local.title
+        return list(merged.values())
+
+    async def get_summary(self, sid: SessionId) -> SessionSummary | None:
+        """获取单会话摘要；Mongo 离线时同样可返回本地创建/重命名结果。"""
+        sid = SessionId(sid)
+        for summary in await self._merged_summaries():
+            if summary.session_id == sid:
+                summary.active = (sid == self._active_id)
+                return summary
+        return None
 
     async def list(self, *, cursor: str | None = None, limit: int = 50,
                    search: str = "") -> tuple[list[SessionSummary], bool, str | None]:
@@ -256,7 +371,7 @@ class SessionManager:
         Returns:
             (items, has_more, next_cursor)。
         """
-        summaries = await self._repo.list_all()
+        summaries = await self._merged_summaries()
         if search:
             q = search.lower()
             summaries = [s for s in summaries if q in s.title.lower()]
@@ -281,10 +396,31 @@ class SessionManager:
         return items, has_more, next_cursor
 
     async def rename(self, sid: SessionId, title: str) -> bool:
-        """重命名会话，返回是否更新成功。"""
-        return await self._repo.rename(SessionId(sid), title)
+        """重命名会话；Mongo 离线时更新进程内摘要并保持 REST 读后写一致。"""
+        sid = SessionId(sid)
+        if sid in self._deleting or sid in self._deleted:
+            return False
+        known_local = sid in self._sessions or sid in self._local_summaries
+        persisted = await self._repo.rename(sid, title)
+        if not persisted and not known_local:
+            return False
+        current = self._local_summaries.get(sid)
+        if current is None:
+            current = SessionSummary(
+                session_id=sid, message_count=0, updated_at=now_iso(), title=title)
+            self._local_summaries[sid] = current
+        else:
+            current.title = title
+            current.updated_at = now_iso()
+        self._local_title_overrides.add(sid)
+        return True
 
-    async def delete(self, sid: SessionId) -> int:
+    async def delete(
+        self,
+        sid: SessionId,
+        *,
+        before_delete: Callable[[SessionId], Awaitable[None]] | None = None,
+    ) -> int:
         """删除会话：msg_repo 清归档 + repo 删文档 + 丢缓存。
 
         保护（review 修复）：默认会话（"default"）不可删除——拒绝并返回 0。
@@ -293,21 +429,44 @@ class SessionManager:
         已删会话的 character_state 上）。返回删除的归档消息数。
         """
         sid = SessionId(sid)
-        if sid == DEFAULT_SESSION:
-            logger.debug("delete: 拒绝删除默认会话 default")
-            return 0
-        deleted_messages = 0
-        if self._msg_repo is not None:
-            deleted_messages = await self._msg_repo.delete_by_session(sid)
-        await self._repo.delete(sid)
-        self._sessions.pop(sid, None)
-        self._loaded.discard(sid)
-        if sid == self._active_id:
-            self._active_id = DEFAULT_SESSION
-            # F4 修复：重绑 engine 到 default——防 _active_id 已回落但
-            # engine.state 视图仍挂在已删会话的 character_state 上（孤儿 state）。
-            if self._character_engine is not None:
-                self._character_engine.attach_session(self._sessions[DEFAULT_SESSION])
+        async with self._lifecycle_lock:
+            if sid == DEFAULT_SESSION:
+                logger.debug("delete: 拒绝删除默认会话 default")
+                return 0
+            if sid in self._deleted:
+                return 0
+            if sid in self._deleting or self.work_count(sid) > 0:
+                logger.debug("delete 拒绝：会话有 accepted/in-flight 工作 sid=%s count=%d",
+                             sid, self.work_count(sid))
+                raise SessionBusyError(sid)
+            # tombstone 必须先于附件扫描/存储删除：扫描期间到达的新消息也应被拒绝。
+            self._deleting.add(sid)
+
+        try:
+            if before_delete is not None:
+                await before_delete(sid)
+            deleted_messages = 0
+            if self._msg_repo is not None:
+                deleted_messages = await self._msg_repo.delete_by_session(sid)
+            await self._repo.delete(sid)
+        except Exception:
+            async with self._lifecycle_lock:
+                self._deleting.discard(sid)
+            raise
+
+        async with self._lifecycle_lock:
+            self._sessions.pop(sid, None)
+            self._loaded.discard(sid)
+            self._local_summaries.pop(sid, None)
+            self._local_title_overrides.discard(sid)
+            self._deleting.discard(sid)
+            self._deleted.add(sid)
+            if sid == self._active_id:
+                self._active_id = DEFAULT_SESSION
+                # F4 修复：重绑 engine 到 default——防 _active_id 已回落但
+                # engine.state 视图仍挂在已删会话的 character_state 上（孤儿 state）。
+                if self._character_engine is not None:
+                    self._character_engine.attach_session(self._sessions[DEFAULT_SESSION])
         return deleted_messages
 
     # ---- 持久化编排 ----

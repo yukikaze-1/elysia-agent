@@ -252,6 +252,61 @@ async def test_resolve_v2_explicit_default_still_ok():
     assert s.session_id == "default"
 
 
+@pytest.mark.asyncio
+async def test_reserved_work_blocks_delete_until_terminal_release():
+    """accepted work 覆盖 EventBus/pending/in-flight 窗口，引用释放前删除必须 409 语义。"""
+    m = _make_manager()
+    summary = await m.create(title="leased")
+    target = await m.reserve_work(summary.session_id, 2)
+    assert target.session_id == summary.session_id
+    assert m.work_count(summary.session_id) == 1
+
+    with pytest.raises(SessionBusyError):
+        await m.delete(summary.session_id)
+    assert await m.has_session(summary.session_id) is True
+
+    m.release_work(summary.session_id)
+    assert m.work_count(summary.session_id) == 0
+    await m.delete(summary.session_id)
+    assert await m.has_session(summary.session_id) is False
+
+
+@pytest.mark.asyncio
+async def test_reserve_none_freezes_actual_active_session():
+    """v2 缺省 conversationId 在 accepted 时固化，不随之后 active 切换而改投。"""
+    m = _make_manager()
+    summary = await m.create(title="active-at-ack")
+    await m.switch(summary.session_id)
+    reserved = await m.reserve_work(None, 2)
+    await m.switch("default")
+    assert reserved.session_id == summary.session_id
+    assert m.work_count(summary.session_id) == 1
+    assert m.work_count("default") == 0
+    m.release_work(summary.session_id)
+
+
+@pytest.mark.asyncio
+async def test_delete_tombstone_blocks_new_work_during_before_delete():
+    """附件扫描等删除前回调运行期间，tombstone 已生效，不能再接收新消息。"""
+    m = _make_manager()
+    summary = await m.create(title="deleting")
+    entered = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def before_delete(_sid):
+        entered.set()
+        await finish.wait()
+
+    task = asyncio.create_task(m.delete(summary.session_id, before_delete=before_delete))
+    await entered.wait()
+    assert await m.has_session(summary.session_id) is False
+    with pytest.raises(SessionNotFoundError):
+        await m.reserve_work(summary.session_id, 2)
+    finish.set()
+    await task
+    assert await m.has_session(summary.session_id) is False
+
+
 # ───────────────────────── has_session ─────────────────────────
 
 
@@ -378,6 +433,26 @@ async def test_create_offline_repo_visible_to_has_session():
 
 
 @pytest.mark.asyncio
+async def test_offline_create_list_and_rename_are_read_after_write_consistent():
+    """Mongo 离线：create 后 list/detail 摘要可见，rename 成功并立即读到新标题。"""
+    repo = SessionRepository(db=None)
+    m = _make_manager(repo, FakeMsgRepo())
+    summary = await m.create(title="离线标题")
+
+    items, has_more, cursor = await m.list()
+    assert has_more is False and cursor is None
+    assert [(item.session_id, item.title) for item in items] == [
+        (summary.session_id, "离线标题")]
+
+    assert await m.rename(summary.session_id, "离线改名") is True
+    detail = await m.get_summary(summary.session_id)
+    assert detail is not None
+    assert detail.title == "离线改名"
+    items, _, _ = await m.list(search="改名")
+    assert [item.session_id for item in items] == [summary.session_id]
+
+
+@pytest.mark.asyncio
 async def test_rename_updates_title():
     """rename：落库 title 更新；不存在返回 False。"""
     repo = FakeSessionRepo()
@@ -407,9 +482,10 @@ async def test_delete_drops_cache_archive_and_active_fallback():
     assert sid in msg_repo.deleted
     assert sid in repo.deleted
     assert sid not in repo.sessions
-    # 已丢缓存：删除后重新 get 得到的是新实例（非删除前实例 s）
+    # 已丢缓存 + tombstone：删除后 get/resolve 都不得再懒创建复活。
     assert sid not in m._sessions
-    assert m.get(sid) is not s
+    with pytest.raises(SessionNotFoundError):
+        m.get(sid)
     assert m.active_id == "default"
 
 
