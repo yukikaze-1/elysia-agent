@@ -41,7 +41,7 @@ check:
 lint:
 	ruff check core/ Module/ frontend_contract/ --exclude __pycache__
 
-# 类型检查门禁（pyright，core 生产代码；须 Elysia env 运行——base env 无 aiohttp 会漏报 25 处）
+# 类型检查门禁（pyright，全仓生产代码 core + Module + frontend_contract；须 Elysia env 运行——base env 无 aiohttp 会漏报 25 处）
 pyright:
 	conda run -n $(CONDA_ENV) pyright
 

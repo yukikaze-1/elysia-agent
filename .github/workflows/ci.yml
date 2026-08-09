@@ -58,6 +58,8 @@ jobs:
         run: echo "/home/yomu/miniconda3/envs/Elysia/bin" >> $GITHUB_PATH
       - name: Lint (import style gate)
         run: make lint
+      - name: Pyright (type check gate, 全仓生产代码)
+        run: make pyright
       - name: Contract drift check
         run: make check-types
       - name: Run quick tests
