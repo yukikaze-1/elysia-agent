@@ -484,7 +484,7 @@ class TestSegmentFrameAligned:
     @pytest.mark.service
     @pytest.mark.asyncio
     async def test_segment_wav_frame_aligned(self):
-        """_process_segment 构造的 WAV PCM 长度 = 640 整帧倍数（尾部残帧截断）。"""
+        """_process_segment 构造的 WAV 含全部输入字节（非整帧尾部原样送 STT，不截断）。"""
         wav_captured: list[bytes] = []
 
         async def mock_stt(wav: bytes) -> str:
@@ -504,5 +504,33 @@ class TestSegmentFrameAligned:
         with wave.open(BytesIO(wav_captured[0]), "rb") as wf:
             pcm_len = wf.getnframes() * wf.getsampwidth() * wf.getnchannels()
         joined = 29 * 3220 + 3200               # 29 loud + 1 静音（触发前已 append）
-        assert pcm_len % 640 == 0
-        assert pcm_len == joined // 640 * 640   # 尾部残帧被截断
+        assert pcm_len == joined, "STT 应收全段（含非整帧尾部），不得截断"
+
+    @pytest.mark.service
+    @pytest.mark.asyncio
+    async def test_process_segment_keeps_non_frame_tail(self):
+        """非 640 倍数段（15 帧 + 300B 尾）整段送 STT，尾部 300B 不丢。
+
+        VAD 检测只扫整帧（_is_speech/_FRAME_BYTES 保留），但 _process_segment 不再
+        截断到整帧倍数——整段音频含尾部原样送 STT（S3）。
+        """
+        wav_captured: list[bytes] = []
+
+        async def mock_stt(wav: bytes) -> str:
+            wav_captured.append(wav)
+            return "测试"
+
+        buf = AudioBuffer(stt_transcribe=mock_stt)
+        tail = 300
+        seg = 15 * 640 + tail                      # 9600B + 300B，非 640 倍数
+        # 分块喂入（VAD 对单一大块恒定振幅会漂移误判）：3×3220B + 1×240B = 9900B
+        for _ in range(3):
+            await buf.feed(_loud(1610))            # 3220B = 5 帧 + 20B 尾
+        await buf.feed(_loud(120))                 # 240B 尾残（VAD 判非语音→并入段）
+        await buf._process_segment()               # 直接触发段处理（> min_bytes 0.3s）
+        assert len(wav_captured) == 1, "应触发一次 STT"
+        import wave
+        from io import BytesIO
+        with wave.open(BytesIO(wav_captured[0]), "rb") as wf:
+            pcm_len = wf.getnframes() * wf.getsampwidth() * wf.getnchannels()
+        assert pcm_len == seg, f"应含尾部 {tail}B（收 {pcm_len}，期望 {seg}）"

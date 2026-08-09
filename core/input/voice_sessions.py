@@ -264,17 +264,17 @@ class VoiceSessionManager:
         if self._rec_state == _RecordingState.PENDING:
             raise VoiceSessionError(ERR_CONTRACT, "已转写完成，请 commit 或 discard")
         self._rec_state = _RecordingState.TRANSCRIBING
-        # 9C-1（F8）：WAV 边界整帧对齐——丢弃 _rec_pcm 尾部残帧（VAD/STT 只认整帧）
         rec_pcm = b"".join(self._rec_pcm)
-        # F3（review）：整帧截断前加最小长度守卫——< 一帧（640B）录音直接丢弃，不送
-        # STT、不触发转录（VAD 路径 _process_segment 有 min_bytes 0.3s 守卫，RECORDING
-        # 路径没有 → 空/超短 WAV 送 STT 的洞）。丢弃后重置回 IDLE（同空转写路径）。
+        # F3（review）：送 STT 前加最小长度守卫——< 一帧（640B）录音视为空转写直接
+        # 丢弃，不送 STT、不触发转录（VAD 路径 _process_segment 有 min_bytes 0.3s 守卫，
+        # RECORDING 路径没有 → 空/超短 WAV 送 STT 的洞）。丢弃后重置回 IDLE（同空转写）。
+        # S3（review 复验）：长度 ≥ 一帧的录音整段送 STT，不再截断到 640 整帧倍数
+        # （STT 接受任意长度 PCM，尾部残帧是真语音，截断丢字）。
         if len(rec_pcm) < _FRAME_BYTES:
             logger.info("录音过短（%d 字节 < 一帧 %d 字节）丢弃，不触发转录",
                         len(rec_pcm), _FRAME_BYTES)
             self._reset_recording()
             return
-        rec_pcm = rec_pcm[: len(rec_pcm) // _FRAME_BYTES * _FRAME_BYTES]
         wav = pcm_to_wav(rec_pcm)
         self._rec_pcm = []
         self._rec_bytes = 0
@@ -560,27 +560,28 @@ class VoiceSessionManager:
         # RECORDING 反其道——错误帧是 error 不是 ended，须用 _reset_recording() 清
         # _rec_pcm/_rec_state/_recording_id（F4，_teardown_session 不碰这些字段）。
         if len(chunk) > MAX_CHUNK_BYTES:
-            await self._emit_error(ERR_CONTRACT, "音频 chunk 超过上限（1 MiB）")
-            # F4（review）：超限按模式分流——RECORDING 的错误帧是 error 不是 ended：
-            # _teardown_session 只清 REALTIME/DICTATION 字段，会残留 _rec_pcm/
-            # _rec_state/_recording_id 且误发 REALTIME 型 ended{recording_id}；
-            # REALTIME/DICTATION 仍走完整 teardown + 对应收尾帧（现状保留）。
+            # S6（review 复验）：CONTRACT_VALIDATION 只在真正终止会话的分支内发。
+            # TRANSCRIBING/PENDING（已 stop、在途 STT/待 commit）窗口只丢 chunk 不
+            # emit error——否则客户端收到「chunk 超上限」后又收正常 transcript，矛盾信号。
             if self._mode == VoiceMode.RECORDING:
                 # 9abc R2：仅录音中（RECORDING 态）才 _reset_recording()——已 stop 进入
                 # TRANSCRIBING/PENDING（在途 STT / 待 commit）时，迟到的 >1MiB 帧只丢弃、
                 # 不碰转录状态（否则毁掉在途/待提交转录，后续 voice.commit 报 NOT_FOUND）。
                 if self._rec_state == _RecordingState.RECORDING:
+                    await self._emit_error(ERR_CONTRACT, "音频 chunk 超过上限（1 MiB）")
                     self._reset_recording()
                 else:
                     logger.debug("超限帧在转录/待提交窗口，忽略")
                 return
             if self._mode == VoiceMode.DICTATION:
+                await self._emit_error(ERR_CONTRACT, "音频 chunk 超过上限（1 MiB）")
                 rid = self._dict_request_id            # teardown 前缓存（review #2 惯例）
                 self._teardown_session()
                 from frontend_contract import DictationCancelledMessage
                 await self._emit(DictationCancelledMessage(
                     clientRequestId=rid).wire_dict())
                 return
+            await self._emit_error(ERR_CONTRACT, "音频 chunk 超过上限（1 MiB）")
             sid = self._session_id or ""
             self._teardown_session()
             from frontend_contract.ws_message import VoiceEndReason, VoiceSessionEndedMessage

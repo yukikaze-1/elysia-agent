@@ -794,8 +794,8 @@ async def test_arbitrary_length_chunk_accepted():
 
 
 @pytest.mark.asyncio
-async def test_record_stop_drops_tail():
-    """RECORDING stop：_rec_pcm 尾部 < 640B 丢弃，WAV 长度整帧倍数。"""
+async def test_record_stop_keeps_tail():
+    """RECORDING stop：非 640 倍数 _rec_pcm 整段送 STT，尾部残帧不截断（S3）。"""
     captured: list[bytes] = []
     agent = FakeAgent()
     original = agent.stt_transcribe
@@ -817,8 +817,7 @@ async def test_record_stop_drops_tail():
     from io import BytesIO
     with wave.open(BytesIO(captured[0]), "rb") as wf:
         pcm_len = wf.getnframes() * wf.getsampwidth() * wf.getnchannels()
-    assert pcm_len % 640 == 0
-    assert pcm_len == 6000 // 640 * 640           # 尾部 240B 被截断
+    assert pcm_len == 6000, f"STT 应收全段 6000B（含尾部 240B），实际 {pcm_len}"
 
 
 @pytest.mark.asyncio
@@ -946,11 +945,13 @@ async def test_chunk_too_large_recording_resets_state_no_ended():
 
 @pytest.mark.asyncio
 async def test_oversized_chunk_during_pending_keeps_transcript():
-    """9abc R2：录音 stop 后（PENDING 待 commit）迟到超大帧 → 只丢该 chunk，转录保留。
+    """9abc R2 + S6：录音 stop 后（PENDING 待 commit）迟到超大帧 → 只丢 chunk，不 emit error。
 
-    旧实现 RECORDING 模式超限分支无条件 _reset_recording()——已 stop（PENDING 待
+    旧实现超限分支对 RECORDING 模式无条件 _reset_recording()——已 stop（PENDING 待
     commit）时收到迟到 >1MiB 帧毁掉在途/待提交转录，后续 voice.commit 报
-    RECORDING_NOT_FOUND。修复后仅录音中（RECORDING 态）才复位，其余态只丢弃。
+    RECORDING_NOT_FOUND。R2 修复仅录音中（RECORDING 态）才复位；S6 修复错误帧
+    移到真正终止会话的分支内——TRANSCRIBING/PENDING 窗口只 log 不 emit error，
+    客户端不再收到「chunk 超上限」后又收到正常 transcript 的矛盾信号。
     """
     mgr, emitted, _ = make_manager()
     await mgr.start_recording("rec_1")
@@ -958,12 +959,48 @@ async def test_oversized_chunk_during_pending_keeps_transcript():
     mgr._agent._last_text = "你好世界"
     await mgr.stop_recording("rec_1")
     await asyncio.sleep(0.05)  # 后台 STT 任务完成 → PENDING 待 commit
-    # 迟到超大帧（PENDING 窗口）：CONTRACT_VALIDATION 照发，但不碰转录状态
+    # 迟到超大帧（PENDING 窗口）：只丢弃，不产生 error 帧（S6）
     await mgr.feed_pcm(b"\x00" * (MAX_CHUNK_BYTES + 1))
     errs = [e for e in emitted if e.get("type") == "error"]
-    assert errs and errs[-1].get("code") == "CONTRACT_VALIDATION"
+    assert not errs, f"PENDING 窗口不得 emit error，实际 {errs}"
+    # transcript 保留 + commit 成功
     payload = mgr.commit_recording("rec_1", "你好世界")
     assert payload[0] == "你好世界" and payload[1] == "HAPPY"
+
+
+@pytest.mark.asyncio
+async def test_oversized_chunk_during_transcribing_no_error():
+    """S6：录音 stop 后在途 STT（TRANSCRIBING）收超大帧 → 只丢弃不 emit error，转录保留。
+
+    TRANSCRIBING 窗口（_in_flight_stt 在途、尚未 commit）与 PENDING 同属「已 stop
+    的迟到大帧」——不得发 error 帧（否则与后续 transcript 矛盾），也不得碰转录状态。
+    """
+    gate = asyncio.Event()
+    release = asyncio.Event()
+    captured: list[bytes] = []
+
+    async def slow_stt(wav):
+        captured.append(wav)
+        gate.set()                # 通知测试：STT 已开始（TRANSCRIBING 在途）
+        await release.wait()      # 挂起，保持 TRANSCRIBING
+        return "在途转写"
+
+    agent = FakeAgent()
+    agent.stt_transcribe = slow_stt
+    mgr, emitted, _ = make_manager(agent=agent)
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(b"\x00" * 6400)
+    await mgr.stop_recording("rec_1")
+    await gate.wait()             # TRANSCRIBING（在途 STT）
+    # TRANSCRIBING 窗口超大帧：只丢弃，不 emit error（S6）
+    await mgr.feed_pcm(b"\x00" * (MAX_CHUNK_BYTES + 1))
+    errs = [e for e in emitted if e.get("type") == "error"]
+    assert not errs, f"TRANSCRIBING 窗口不得 emit error，实际 {errs}"
+    # STT 完成后转录保留 → PENDING → commit 成功
+    release.set()
+    await asyncio.sleep(0.05)
+    payload = mgr.commit_recording("rec_1", "在途转写")
+    assert payload[0] == "在途转写"
 
 
 @pytest.mark.asyncio
