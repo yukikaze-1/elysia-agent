@@ -260,6 +260,67 @@ class TestStatus:
         assert sorted(d["attachment_id"] for d in deleted) == ["att_1", "att_3"]
 
 
+class TestPagination:
+    """P0-01 回归：find_by_status / find_unreferenced_older_than 必须完整分页。
+
+    Mongo 默认 find limit=100 —— 只依赖默认值会截断第 101+ 条，导致 GC
+    规则 4 把仍有效、仍有引用的附件误判为磁盘孤儿并删除。
+    """
+
+    def test_find_by_status_returns_more_than_100(self):
+        """150 条 deleted 记录：完整分页必须全部返回，不能只剩 100。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        for i in range(150):
+            _run(repo.create(_doc(
+                attachment_id=f"att_{i:03d}", status=STATUS_DELETED,
+                deleted_at=_NOW)))
+        deleted = _run(repo.find_by_status(STATUS_DELETED))
+        assert len(deleted) == 150
+        assert {d["attachment_id"] for d in deleted} == {
+            f"att_{i:03d}" for i in range(150)}
+
+    def test_find_unreferenced_older_than_returns_more_than_100(self):
+        """150 条未关联候选：完整分页必须全部返回。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        for i in range(150):
+            _run(repo.create(_doc(
+                attachment_id=f"att_{i:03d}", ref_count=0,
+                created_at="2026-08-01T00:00:00+00:00")))
+        found = _run(repo.find_unreferenced_older_than("2026-08-03T00:00:00+00:00"))
+        assert len(found) == 150
+
+    def test_page_failure_fail_closed(self):
+        """分页中途 DB 失败 → 抛 StorageUnavailableError，绝不返回部分结果。"""
+        class _FailOnSecondFind(FakeDocumentDBBackend):
+            def __init__(self):
+                super().__init__()
+                self._find_count = 0
+
+            async def find(self, collection, filter_expr, *, sort=None,
+                           limit=100, skip=0):
+                self._find_count += 1
+                if self._find_count == 2:
+                    raise RuntimeError("simulated DB outage")
+                return await super().find(
+                    collection, filter_expr, sort=sort, limit=limit, skip=skip)
+
+        repo = AttachmentRepository(db=_FailOnSecondFind())
+        # 600 条 > 页大小（500）→ 强制跨页，第二页失败
+        for i in range(600):
+            _run(repo.create(_doc(attachment_id=f"att_{i:04d}")))
+        with pytest.raises(StorageUnavailableError):
+            _run(repo.find_by_status(STATUS_ACTIVE))
+
+    def test_find_by_stored_name(self):
+        """find_by_stored_name（GC 规则 4 逐文件复核）按 kind+stored_name 查单条。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _run(repo.create(_doc(
+            attachment_id="att_x", kind="image", stored_name="x.png")))
+        assert _run(repo.find_by_stored_name("image", "x.png")) is not None
+        assert _run(repo.find_by_stored_name("video", "x.png")) is None
+        assert _run(repo.find_by_stored_name("image", "y.png")) is None
+
+
 class TestGc:
     def test_find_unreferenced_older_than(self):
         """GC 规则 3（未关联 7 天回收）：ref_count==0 且 created_at < iso。"""

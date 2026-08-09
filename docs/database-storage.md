@@ -152,7 +152,14 @@
 | `created_at` | String（ISO） | 创建时间 |
 
 **索引**: `attachment_id` unique + `status` + `ref_count` + `created_at`。
-**TTL**: 不设——附件生命周期由 `AttachmentGC` 兜底扫描管（软删超 24h 物理删 / active 文件缺失软删 / 未关联超 7 天软删 / 磁盘孤儿删文件，限四 kind 目录）。会话/消息删除时经 `AttachmentRelease` 释放引用。
+**TTL**: 不设——附件生命周期由 `AttachmentGC` 兜底扫描管（软删超 24h 隔离+删记录 / active 文件缺失软删 / 未关联超 7 天软删 / 磁盘孤儿复核后隔离 / quarantine 超 7 天物理删，限四 kind 目录）。会话/消息删除时经 `AttachmentRelease` 释放引用。
+
+> **P0-01 加固（2026-08-10）**：
+> - `find_by_status` / `find_unreferenced_older_than` 为完整 keyset 分页，不再依赖 Mongo 默认 `limit=100`——第 101+ 条仍有效、仍有引用的附件不会被误判为磁盘孤儿。
+> - 磁盘孤儿候选隔离前逐文件复核数据库（`find_by_stored_name`），闭合扫描期间新建引用/记录窗口；任一页查询失败或复核时离线 → GC `skipped=True` 返回，**零删除**（fail-closed）。
+> - 物理删除改两阶段：先 `os.replace` 移入 `data/uploads/.quarantine/{kind}/`（同文件系统、可恢复），超 `quarantine_retention_hours`（默认 7 天）后才真正 `unlink`。
+> - `run_attachment_gc(..., dry_run=True)` 只计数候选不落盘不改库，供运维预演。
+> - 数据恢复：误隔离文件可从 `.quarantine/{kind}/` 按原文件名还原回 `data/uploads/{kind}/` 并重建记录。
 
 ### 集合: `desktop_calls`（数据库: `default`，批次 4）
 

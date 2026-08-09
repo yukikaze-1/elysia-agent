@@ -17,6 +17,8 @@
 
 import asyncio
 import logging
+import os
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -143,7 +145,7 @@ class TestRule1DeletedExpired:
                        for r in caplog.records)
 
     def test_gc_rule1_keeps_record_on_unlink_error(self, uploads, monkeypatch, caplog):
-        """文件存在但 unlink 抛 OSError → 记录保留（不 delete_record），下次 GC 重试。"""
+        """文件存在但移入 quarantine 抛 OSError → 记录保留（不 delete_record），下次 GC 重试。"""
         repo = AttachmentRepository(db=FakeDocumentDBBackend())
         old = _iso(datetime.now(timezone.utc) - timedelta(hours=25))
         _run(repo.create(_doc(
@@ -152,9 +154,9 @@ class TestRule1DeletedExpired:
         f = _write(uploads, "image/keep.png")
 
         def raise_oserror(self, *args, **kwargs):
-            raise OSError("simulated unlink failure")
+            raise OSError("simulated quarantine failure")
 
-        monkeypatch.setattr(Path, "unlink", raise_oserror)
+        monkeypatch.setattr(Path, "replace", raise_oserror)
 
         with caplog.at_level(logging.WARNING):
             result = _run(run_attachment_gc(repo))
@@ -268,6 +270,211 @@ class TestLegacyDirsExcluded:
         assert legacy_image.exists()    # 不被扫
         assert legacy_desktop.exists()  # 不被扫
         assert result["orphans_removed"] == 0
+
+
+class TestP0OrphanPagination:
+    """P0-01 回归：超过 100 条 active 记录时，规则 4 不得误删有效文件。
+
+    旧实现 find_by_status 依赖 Mongo 默认 limit=100，known 集合被截断，
+    第 101+ 个仍有记录引用的磁盘文件会被误判为孤儿并 unlink。
+    """
+
+    def test_101_active_referenced_files_not_deleted(self, uploads):
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        n = 101
+        for i in range(n):
+            aid = f"att_{i:04d}"
+            name = f"f{i:04d}.png"
+            _run(repo.create(_doc(
+                attachment_id=aid, kind="image", ref_count=1, refs=[f"m{i}"],
+                stored_name=name)))
+            _write(uploads, f"image/{name}")
+
+        result = _run(run_attachment_gc(repo))
+
+        assert result["orphans_removed"] == 0
+        for i in range(n):
+            assert (uploads / "image" / f"f{i:04d}.png").exists()
+
+    def test_500_active_referenced_files_not_deleted(self, uploads):
+        """500+ 跨页（页大小 500）：两页记录都进入 known，零误删。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        n = 520
+        for i in range(n):
+            aid = f"att_{i:04d}"
+            name = f"f{i:04d}.png"
+            _run(repo.create(_doc(
+                attachment_id=aid, kind="image", ref_count=1, refs=[f"m{i}"],
+                stored_name=name)))
+            _write(uploads, f"image/{name}")
+
+        result = _run(run_attachment_gc(repo))
+
+        assert result["orphans_removed"] == 0
+        for i in range(n):
+            assert (uploads / "image" / f"f{i:04d}.png").exists()
+
+    def test_active_deleted_mixed_cross_page_not_misjudged(self, uploads):
+        """active+deleted 混合跨页：全部进入 known，孤儿判定基于完整集合。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        n = 600
+        for i in range(n):
+            aid = f"att_{i:04d}"
+            name = f"f{i:04d}.png"
+            status = STATUS_ACTIVE if i % 2 == 0 else STATUS_DELETED
+            extra = {"deleted_at": _iso(datetime.now(timezone.utc) - timedelta(hours=25))} \
+                if status == STATUS_DELETED else {}
+            _run(repo.create(_doc(
+                attachment_id=aid, kind="image", ref_count=1, refs=[f"m{i}"],
+                stored_name=name, status=status, **extra)))
+            _write(uploads, f"image/{name}")
+
+        result = _run(run_attachment_gc(repo))
+
+        # 孤儿判定基于完整集合：零孤儿误判。偶数条 active → 保留原位；
+        # 奇数条 deleted 超期 → 规则 1 合法隔离（进 .quarantine，非永久误删）
+        assert result["orphans_removed"] == 0
+        for i in range(n):
+            if i % 2 == 0:
+                assert (uploads / "image" / f"f{i:04d}.png").exists()
+            else:
+                assert (uploads / ".quarantine" / "image" / f"f{i:04d}.png").exists()
+
+    def test_db_page_failure_zero_deletions(self, uploads, caplog):
+        """分页中途 DB 失败 → GC fail-closed：任何文件都不被删除。"""
+        class _FailOnSecondFind(FakeDocumentDBBackend):
+            def __init__(self):
+                super().__init__()
+                self._find_count = 0
+
+            async def find(self, collection, filter_expr, *, sort=None,
+                           limit=100, skip=0):
+                self._find_count += 1
+                if self._find_count == 2:
+                    raise RuntimeError("simulated DB outage")
+                return await super().find(
+                    collection, filter_expr, sort=sort, limit=limit, skip=skip)
+
+        repo = AttachmentRepository(db=_FailOnSecondFind())
+        n = 600
+        for i in range(n):
+            aid = f"att_{i:04d}"
+            name = f"f{i:04d}.png"
+            _run(repo.create(_doc(
+                attachment_id=aid, kind="image", ref_count=1, refs=[f"m{i}"],
+                stored_name=name)))
+            _write(uploads, f"image/{name}")
+
+        with caplog.at_level(logging.WARNING):
+            result = _run(run_attachment_gc(repo))
+
+        assert result["skipped"] is True
+        assert result["deleted_files"] == 0
+        assert result["soft_deleted"] == 0
+        assert result["orphans_removed"] == 0
+        for i in range(n):
+            assert (uploads / "image" / f"f{i:04d}.png").exists()
+
+
+class TestRule4Recheck:
+    """规则 4 逐文件复核：闭合扫描期间新建引用/记录窗口。"""
+
+    def test_newly_registered_file_not_removed(self, uploads, monkeypatch):
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _write(uploads, "file/race.bin", data=b"r")
+
+        async def fake_find_by_stored_name(kind, stored_name):
+            if stored_name == "race.bin":
+                return {
+                    "attachment_id": "att_race", "kind": "file",
+                    "stored_name": "race.bin", "status": STATUS_ACTIVE,
+                }
+            return None
+
+        monkeypatch.setattr(repo, "find_by_stored_name", fake_find_by_stored_name)
+
+        result = _run(run_attachment_gc(repo))
+
+        assert result["orphans_removed"] == 0
+        assert (uploads / "file" / "race.bin").exists()
+
+
+class TestQuarantine:
+    """两阶段物理删除：规则 1/4 先移入 .quarantine，规则 5 超期后再真正删除。"""
+
+    def test_rule1_expired_file_moved_to_quarantine(self, uploads):
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        old = _iso(datetime.now(timezone.utc) - timedelta(hours=25))
+        _run(repo.create(_doc(
+            attachment_id="att_q", status=STATUS_DELETED, deleted_at=old,
+            kind="image", stored_name="q.png")))
+        _write(uploads, "image/q.png")
+
+        result = _run(run_attachment_gc(repo))
+
+        assert result["deleted_files"] == 1
+        assert not (uploads / "image" / "q.png").exists()          # 原路径移除
+        assert (uploads / ".quarantine" / "image" / "q.png").exists()  # 进入隔离区
+        assert _run(repo.get("att_q")) is None                      # 记录已物理删
+
+    def test_rule4_orphan_moved_to_quarantine(self, uploads):
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _write(uploads, "audio/orphan.mp3", data=b"o")
+
+        result = _run(run_attachment_gc(repo))
+
+        assert result["orphans_removed"] == 1
+        assert not (uploads / "audio" / "orphan.mp3").exists()
+        assert (uploads / ".quarantine" / "audio" / "orphan.mp3").exists()
+
+    def test_quarantine_purged_after_retention(self, uploads):
+        """规则 5：quarantine 内超保留期文件被物理删除；新文件保留。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        qdir = uploads / ".quarantine" / "image"
+        qdir.mkdir(parents=True, exist_ok=True)
+        old = qdir / "old.png"
+        old.write_bytes(b"x")
+        fresh = qdir / "fresh.png"
+        fresh.write_bytes(b"y")
+        old_mtime = time.time() - 7200  # 2 小时前 → 超 1h 保留期
+        os.utime(old, (old_mtime, old_mtime))
+
+        result = _run(run_attachment_gc(repo, quarantine_retention_hours=1))
+
+        assert result["quarantine_purged"] == 1
+        assert not old.exists()
+        assert fresh.exists()
+
+    def test_recent_quarantine_kept(self, uploads):
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        qdir = uploads / ".quarantine" / "image"
+        qdir.mkdir(parents=True, exist_ok=True)
+        fresh = qdir / "fresh.png"
+        fresh.write_bytes(b"y")
+
+        result = _run(run_attachment_gc(repo, quarantine_retention_hours=168))
+
+        assert result["quarantine_purged"] == 0
+        assert fresh.exists()
+
+    def test_dry_run_does_not_mutate(self, uploads):
+        """dry_run：只计数候选，不隔离文件、不改库、不删 quarantine。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _write(uploads, "image/dry.png", data=b"d")
+        qdir = uploads / ".quarantine" / "image"
+        qdir.mkdir(parents=True, exist_ok=True)
+        old = qdir / "old.png"
+        old.write_bytes(b"x")
+        old_mtime = time.time() - 7200
+        os.utime(old, (old_mtime, old_mtime))
+
+        result = _run(run_attachment_gc(repo, dry_run=True,
+                                        quarantine_retention_hours=1))
+
+        assert result["orphans_removed"] == 1      # 候选计数
+        assert result["quarantine_purged"] == 1    # 候选计数
+        assert (uploads / "image" / "dry.png").exists()  # 未被隔离
+        assert old.exists()                               # 未被物理删
 
 
 class TestMongoOffline:

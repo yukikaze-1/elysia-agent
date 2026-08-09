@@ -45,6 +45,9 @@ STATUS_DELETED = "deleted"
 # 允许的 kind（spec §3.2：附件四类；sticker 非附件，内置资源）
 KINDS = ("image", "video", "audio", "file")
 
+# 完整分页页大小（P0-01）：按唯一 attachment_id keyset 分页，规避 Mongo 默认 limit=100
+_PAGE_SIZE = 500
+
 
 class StorageUnavailableError(RuntimeError):
     """附件存储不可用（MongoDB 未连接）。
@@ -256,33 +259,98 @@ class AttachmentRepository(Repository):
         db = self._require_db()
         await db.delete_many(COLLECTION, {"attachment_id": attachment_id})
 
+    async def _find_all(self, collection: str, filter_expr: dict) -> list[dict]:
+        """完整分页读取所有匹配文档（P0-01：keyset cursor by attachment_id）。
+
+        底层 find 默认 limit=100 —— GC 若直接依赖会截断第 101+ 条，把仍有效的
+        附件误判为磁盘孤儿。这里按唯一 attachment_id 升序做 keyset 分页，直到
+        读完或结果不足一页；任一分页失败包装为 StorageUnavailableError，
+        绝不把部分结果当完整结果交给删除阶段（fail-closed）。
+
+        Args:
+            collection: 目标 collection 名称。
+            filter_expr: 查询过滤条件。
+
+        Returns:
+            全部匹配文档列表（attachment_id 升序）。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接或任一页查询失败。
+        """
+        db = self._require_db()
+        out: list[dict] = []
+        last: str | None = None
+        while True:
+            cond = dict(filter_expr)
+            if last is not None:
+                cond["attachment_id"] = {"$gt": last}
+            try:
+                page = await db.find(
+                    collection, cond,
+                    sort=[("attachment_id", 1)], limit=_PAGE_SIZE)
+            except Exception as e:
+                raise StorageUnavailableError(
+                    f"附件完整分页失败（{collection}）：{e}") from e
+            if not page:
+                break
+            out.extend(page)
+            if len(page) < _PAGE_SIZE:
+                break
+            last = page[-1].get("attachment_id")
+            if not last:
+                # 防御：attachment_id 为唯一索引键，正常必有；无键无法继续 keyset。
+                raise StorageUnavailableError(
+                    "附件分页遇到缺少 attachment_id 的记录，中止完整读取")
+        return out
+
     async def find_by_status(self, status: str) -> list[dict]:
-        """按状态查询附件（如软删扫描）。
+        """按状态查询全部附件（完整分页，P0-01：不依赖默认 limit=100）。
 
         Args:
             status: active / deleted。
 
         Returns:
-            匹配状态的附件文档列表。
+            匹配状态的完整附件文档列表。
 
         Raises:
-            StorageUnavailableError: MongoDB 未连接（离线）。
+            StorageUnavailableError: MongoDB 未连接或分页中途失败。
         """
-        db = self._require_db()
-        return await db.find(COLLECTION, {"status": status})
+        return await self._find_all(COLLECTION, {"status": status})
 
     async def find_unreferenced_older_than(self, iso: str) -> list[dict]:
-        """未关联（ref_count==0）且 created_at < iso 的附件（GC 规则 3：7 天未关联回收）。
+        """未关联（ref_count==0）且 created_at < iso 的全部附件（GC 规则 3：7 天未关联回收）。
+
+        完整分页（P0-01）——候选可能超过 100 条，截断会让超期候选漏回收。
 
         Args:
             iso: 过期阈值（ISO UTC），created_at 严格小于才回收。
 
         Returns:
-            候选附件文档列表。
+            完整候选附件文档列表。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接或分页中途失败。
+        """
+        return await self._find_all(
+            COLLECTION, {"ref_count": 0, "created_at": {"$lt": iso}})
+
+    async def find_by_stored_name(self, kind: str, stored_name: str) -> dict | None:
+        """按 (kind, stored_name) 查单条附件（GC 规则 4 逐文件复核用）。
+
+        磁盘 orphan 候选 unlink/隔离前，用它复核数据库是否已存在对应记录，
+        闭合扫描期间新建引用/记录窗口（P0-01）。
+
+        Args:
+            kind: 附件 kind。
+            stored_name: 落盘文件名。
+
+        Returns:
+            匹配附件文档，不存在返回 None。
 
         Raises:
             StorageUnavailableError: MongoDB 未连接（离线）。
         """
         db = self._require_db()
-        return await db.find(
-            COLLECTION, {"ref_count": 0, "created_at": {"$lt": iso}})
+        results = await db.find(
+            COLLECTION, {"kind": kind, "stored_name": stored_name}, limit=1)
+        return results[0] if results else None
