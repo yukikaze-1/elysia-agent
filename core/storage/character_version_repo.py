@@ -28,6 +28,7 @@ class CharacterVersionRepository(Repository):
         """
         self._db: DocumentDBBackend | None = db
         self._base_url = base_url
+        self._injected_db = db is not None
 
     # ---- lifecycle ----
 
@@ -86,12 +87,12 @@ class CharacterVersionRepository(Repository):
             self._db = None
 
     async def health_check(self) -> bool:
-        """健康检查。
+        """健康检查：真实 ping（P1-05），失败时重连。
 
         Returns:
             True 表示可用，False 表示不可用。
         """
-        return self._db is not None
+        return await self._health_check()
 
     # ---- core API ----
 

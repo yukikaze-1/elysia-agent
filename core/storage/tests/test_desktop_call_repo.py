@@ -16,6 +16,7 @@ import asyncio
 
 import pytest
 
+from Module.database.documentdb import DocumentDBFactory
 from core.storage.desktop_call_repo import COLLECTION, DesktopCallRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 
@@ -256,8 +257,12 @@ class TestBulkOps:
         docs = asyncio.run(repo.query_pending(cutoff))
         assert sorted(d["call_id"] for d in docs) == ["c1", "c2", "c3"]
 
-    def test_offline_all_operations_no_throw(self):
+    def test_offline_all_operations_no_throw(self, monkeypatch):
         """mongodb=None：upsert/get/query_pending/mark 全走 cache 不抛。"""
+        # B1/P1-05：未连接时 health_check 自愈重连——模拟后端不可达（确定性 False）
+        def _create_fail(*a, **kw):
+            raise RuntimeError("Mongo unavailable")
+        monkeypatch.setattr(DocumentDBFactory, "create", _create_fail)
         repo = DesktopCallRepository(mongodb=None)
         asyncio.run(repo.upsert(_call(call_id="c1")))
         assert asyncio.run(repo.get("c1")) is not None
@@ -294,8 +299,13 @@ class TestConnect:
         assert asyncio.run(repo.get("call_0")) is not None
         assert asyncio.run(repo.get("call_149")) is not None
 
-    def test_health_check_reflects_db(self):
+    def test_health_check_reflects_db(self, monkeypatch):
+        # B1/P1-05：未连接时 health_check 尝试自愈重连——模拟后端不可达（确定性 False）
+        def _create_fail(*a, **kw):
+            raise RuntimeError("Mongo unavailable")
+        monkeypatch.setattr(DocumentDBFactory, "create", _create_fail)
         repo = DesktopCallRepository(mongodb=None)
         assert asyncio.run(repo.health_check()) is False
+        # 已注入可达 fake → 真实 ping 通过 → True
         repo2 = DesktopCallRepository(mongodb=FakeDocumentDBBackend())
         assert asyncio.run(repo2.health_check()) is True

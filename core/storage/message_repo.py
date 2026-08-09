@@ -108,6 +108,7 @@ class MessageRepository(Repository):
         self._db: DocumentDBBackend | None = db
         self._database_name = database_name
         self._base_url = base_url
+        self._injected_db = db is not None
 
     # ---- lifecycle ----
 
@@ -141,15 +142,12 @@ class MessageRepository(Repository):
             self._db = None
 
     async def health_check(self) -> bool:
-        """健康检查。若连接断开则尝试重连并重建索引（与 session_repo 对称）。
+        """健康检查：真实 ping（P1-05），失败时经 connect() 重连 + 建索引。
 
         Returns:
             True 表示可用，False 表示不可用。
         """
-        if self._db is not None:
-            return True
-        # 启动期故障不应让归档永久失效——复用 connect() 的重连 + 建索引逻辑
-        return await self.connect()
+        return await self._health_check()
 
     # ---- core operations ----
 

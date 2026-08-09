@@ -139,7 +139,17 @@ class TestTokenRepositoryConnect:
         assert repo._db is backend
 
     def test_health_check_true_when_db_set(self):
-        """已建连 → health_check 直接 True（不重复建连）。"""
+        """已建连且 ping 可达 → health_check True（真实 ping，B1/P1-05）。"""
         import asyncio
-        repo = TokenRepository(db=MagicMock())
+        fake = MagicMock()
+        fake.ping = AsyncMock(return_value=True)
+        repo = TokenRepository(db=fake)
         assert asyncio.run(repo.health_check()) is True
+
+    def test_health_check_false_when_ping_fails(self):
+        """已建连但 ping 失败（断网假阳性）→ health_check False（P1-05 核心）。"""
+        import asyncio
+        fake = MagicMock()
+        fake.ping = AsyncMock(return_value=False)
+        repo = TokenRepository(db=fake)
+        assert asyncio.run(repo.health_check()) is False

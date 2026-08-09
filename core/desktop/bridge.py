@@ -119,6 +119,13 @@ class DesktopToolBridge:
         """桥的健康状态：桌面客户端是否可用（repo 离线降级不视为桥不可用）。"""
         return self._connected
 
+    async def storage_health_check(self) -> bool:
+        """底层 DesktopCallRepository 健康检查（P1-05 恢复协调器用，公开避免 SLF001）。"""
+        try:
+            return await self._repo.health_check()
+        except Exception:
+            return False
+
     def bind_deliver(
         self, deliver: Callable[[str | None, dict], Awaitable[None]],
     ) -> None:

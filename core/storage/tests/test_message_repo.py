@@ -120,7 +120,11 @@ class TestMessageRepository:
         assert any("message_archive" in r.message for r in caplog.records)
 
     def test_health_check_returns_true_when_connected(self):
-        repo = MessageRepository(db=MagicMock())
+        from unittest.mock import AsyncMock
+
+        fake = MagicMock()
+        fake.ping = AsyncMock(return_value=True)  # B1/P1-05：真实 ping
+        repo = MessageRepository(db=fake)
         assert asyncio.run(repo.health_check()) is True
 
     def test_health_check_reconnects_when_db_none(self, monkeypatch):

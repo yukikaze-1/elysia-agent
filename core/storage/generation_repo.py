@@ -75,6 +75,7 @@ class GenerationRepository(Repository):
         self._db: DocumentDBBackend | None = db
         self._database_name = database_name
         self._base_url = base_url
+        self._injected_db = db is not None
 
     # ---- lifecycle ----
 
@@ -114,30 +115,12 @@ class GenerationRepository(Repository):
             self._db = None
 
     async def health_check(self) -> bool:
-        """健康检查。若连接断开则尝试重连并重建索引。
+        """健康检查：真实 ping（P1-05），失败时重连并重建索引。
 
         Returns:
             True 表示可用，False 表示不可用。
         """
-        if self._db is not None:
-            return True
-        try:
-            self._db = DocumentDBFactory.create(
-                f"mongodb/{self._database_name}",
-                base_url=self._base_url,
-            )
-            await self._db.ensure_index(COLLECTION, [("generation_id", 1)], unique=True)
-            await self._db.ensure_index(COLLECTION, [("session_id", 1), ("updated_at", -1)])
-            await self._db.ensure_index(COLLECTION, [("message_id", 1)])
-            try:
-                await self._db.ensure_index(
-                    COLLECTION, [("updated_at", 1)], expireAfterSeconds=GENERATIONS_TTL_SECONDS)
-            except Exception as e:
-                logger.warning("TTL index creation failed (%s)", e)
-            logger.info("GenerationRepository: MongoDB 已恢复连接")
-            return True
-        except Exception:
-            return False
+        return await self._health_check()
 
     # ---- core operations ----
 

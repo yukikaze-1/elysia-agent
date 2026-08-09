@@ -191,6 +191,19 @@ class MilvusBackend(VectorDBBackend):
 
     # ---- Management ----
 
+    async def ping(self) -> bool:
+        """真实连通性探测（P1-05）：list_collections 一次 server 往返。
+
+        Returns:
+            True 表示 Milvus 可达，False 表示不可达/超时。
+        """
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(self._client.list_collections), timeout=3.0)
+            return True
+        except Exception:
+            return False
+
     async def close(self) -> None:
         """关闭 Milvus 客户端连接，释放 gRPC 通道/线程池。
 

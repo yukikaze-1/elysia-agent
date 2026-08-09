@@ -30,6 +30,7 @@ class MemoryRepository(Repository):
         self._db: VectorDBBackend | None = db
         self._base_url = base_url
         self._token = token
+        self._injected_db = db is not None
 
     async def connect(self) -> bool:
         """建立 Milvus 连接，创建或加载 collection。
@@ -61,23 +62,12 @@ class MemoryRepository(Repository):
             self._db = None
 
     async def health_check(self) -> bool:
-        """健康检查。若连接断开则尝试重连。
+        """健康检查：真实 ping（P1-05），失败时重连。
 
         Returns:
             True 表示可用，False 表示不可用。
         """
-        if self._db is not None:
-            return True
-        try:
-            self._db = VectorDBFactory.create(
-                "milvus/memory",
-                base_url=self._base_url,
-                token=self._token,
-            )
-            logger.info("MemoryRepository: Milvus 已恢复连接")
-            return True
-        except Exception:
-            return False
+        return await self._health_check()
 
     async def insert(self, vectors: list[list[float]],
                      metadata: list[dict]) -> list[int]:

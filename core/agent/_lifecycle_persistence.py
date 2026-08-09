@@ -5,6 +5,7 @@ import asyncio
 import datetime
 import os
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from Module.embedding import EmbeddingFactory
@@ -188,35 +189,95 @@ class _LifecyclePersistence:
         self._attachment_gc_task = None
 
     async def _db_health_loop(self) -> None:
-        """每 120s 检查数据库连接，失败时尝试自动重连。
+        """统一恢复协调器：每 60s 检查全部存储依赖，恢复边界触发补偿 hook（P1-05）。
 
-        Milvus 从故障恢复时（False→True）同步脏条目——Milvus 写入失败的记忆
-        此前仅在内存（_milvus_pk=None，重启后丢失），恢复后补写建立向量索引。
+        覆盖 session/message/token/attachment/version/generation/desktop/LTM 全部
+        repo——不再只检查前四类。每个 repo 的 health_check 为真实 ping（断网即时
+        感知，`_db is not None` 假阳性已消除）。False→True 恢复边界触发各 repo
+        补偿 hook（session 加载 pending、LTM 同步脏条目、generation 崩溃残留清理）。
+
+        Raises:
+            单轮探测失败仅记日志，不中断循环。
         """
-        prev_milvus_ok: bool | None = None
+        prev: dict[str, bool] = {}
         while True:
-            await asyncio.sleep(120)
+            await asyncio.sleep(60)
             try:
-                mongo_ok = await self._session_manager.health_check()
-                milvus_ok = await self._long_term.health_check()
-                self._mongo_available = mongo_ok
-                self._milvus_available = milvus_ok
-                # Milvus 恢复边界触发脏条目同步
-                if prev_milvus_ok is not None and milvus_ok and not prev_milvus_ok:
+                probes: dict[str, Callable[[], Awaitable[bool]]] = {
+                    "session": self._session_manager.health_check,
+                    "ltm": self._long_term.health_check,
+                    "message": self._message_repo.health_check,
+                    "token": self._token_repo.health_check,
+                    "version": self._version_repo.health_check,
+                }
+                attachment = getattr(self, "_attachment_repo", None)
+                if attachment is not None:
+                    probes["attachment"] = attachment.health_check
+                gen_registry = getattr(self, "_generation_registry", None)
+                if gen_registry is not None:
+                    probes["generation"] = gen_registry.health_check
+                desktop_bridge = getattr(self, "_desktop_bridge", None)
+                if desktop_bridge is not None:
+                    probes["desktop"] = desktop_bridge.storage_health_check
+
+                results: dict[str, bool] = {}
+                for name, probe in probes.items():
                     try:
-                        synced = await self._long_term.sync_dirty_entries()
-                        if synced:
-                            logger.info("Milvus 恢复，同步 %d 条脏记忆", synced)
+                        results[name] = bool(
+                            await asyncio.wait_for(probe(), timeout=3.0))
                     except Exception:
-                        logger.warning("Milvus 恢复后同步脏条目失败", exc_info=True)
-                prev_milvus_ok = milvus_ok
-                # 检查其他 repo 连接状态（不阻塞，仅日志）
-                if not await self._message_repo.health_check():
-                    logger.warning("MessageRepository 离线")
-                if not await self._token_repo.health_check():
-                    logger.warning("TokenRepository 离线")
+                        results[name] = False
+
+                self._mongo_available = bool(
+                    results.get("session") and results.get("message"))
+                self._milvus_available = bool(results.get("ltm"))
+
+                # 恢复边界（False→True）→ 各 repo 补偿 hook；hook 失败保留 prev=False 下轮重试
+                for name, ok in results.items():
+                    if not ok:
+                        continue
+                    if name not in prev or prev[name]:
+                        continue
+                    if not await self._recover_dependency(name):
+                        results[name] = False  # 补偿未完成 → 下轮重试
+                prev = results
+
+                if not results.get("session", False):
+                    logger.warning("Session/Mongo 离线")
             except Exception:
                 logger.warning("Database health check failed", exc_info=True)
+
+    async def _recover_dependency(self, name: str) -> bool:
+        """依赖恢复补偿 hook（False→True 边界触发）。
+
+        Args:
+            name: 依赖名（session/ltm/generation 等）。
+
+        Returns:
+            True 表示补偿完成或无需补偿；False 表示补偿失败（协调器下轮重试）。
+        """
+        try:
+            if name == "ltm":
+                # Milvus 恢复：同步此前仅在内存（_milvus_pk=None）的脏记忆
+                synced = await self._long_term.sync_dirty_entries()
+                if synced:
+                    logger.info("Milvus 恢复，同步 %d 条脏记忆", synced)
+            elif name == "session":
+                # Session/Mongo 恢复：加载活动会话（pending JSONL 导入由 B2 加强）
+                await self._session_manager.load_active()
+                logger.info("Session/Mongo 恢复，加载活动会话")
+            elif name == "generation":
+                # generation 恢复：清理崩溃残留 running（5 分钟前）
+                gen_registry = getattr(self, "_generation_registry", None)
+                if gen_registry is not None:
+                    cutoff = (datetime.datetime.now(datetime.timezone.utc)
+                              - datetime.timedelta(minutes=5)).isoformat()
+                    await gen_registry.mark_stale_interrupted(cutoff)
+            # 其余 repo：health_check 内部已重连，无需额外补偿
+            return True
+        except Exception:
+            logger.warning("依赖恢复 hook 失败: %s", name, exc_info=True)
+            return False
 
     async def _stop_db_health(self) -> None:
         """停止数据库健康检查循环。"""

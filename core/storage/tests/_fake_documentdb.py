@@ -100,6 +100,12 @@ class FakeDocumentDBBackend(DocumentDBBackend):
 
     def __init__(self) -> None:
         self.collections: dict[str, list[dict]] = {}
+        # P1-05：可配置的连通性状态——False 模拟断网（health_check 必须感知）
+        self.ping_ok: bool = True
+
+    async def ping(self) -> bool:
+        """真实健康探测模拟：返回 ping_ok（断网 = False）。"""
+        return self.ping_ok
 
     def _coll(self, collection: str) -> list[dict]:
         return self.collections.setdefault(collection, [])

@@ -26,6 +26,9 @@ class TestHealthEndpoints:
         agent.session.health_check = AsyncMock(return_value=True)
         agent.long_term.count = 42
         agent.long_term.health_check = AsyncMock(return_value=True)
+        # P1-05：/ready 聚合 message/attachment repo 真实健康
+        agent.message_repo.health_check = AsyncMock(return_value=True)
+        agent.attachment_repo.health_check = AsyncMock(return_value=True)
         agent.tool_adapter._manager.tool_names = ["t1", "t2"]
         agent.output = MagicMock()
         agent.bus = MagicMock()

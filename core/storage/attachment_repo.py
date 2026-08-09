@@ -32,7 +32,7 @@ import logging
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.schema.types import AttachmentId
 from core.schema.utils import now_iso
-from core.storage.base import Repository
+from core.storage.base import Repository, StorageUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +48,8 @@ KINDS = ("image", "video", "audio", "file")
 # 完整分页页大小（P0-01）：按唯一 attachment_id keyset 分页，规避 Mongo 默认 limit=100
 _PAGE_SIZE = 500
 
-
-class StorageUnavailableError(RuntimeError):
-    """附件存储不可用（MongoDB 未连接）。
-
-    附件相关操作 fail-closed——离线时 raise，由调用方映射为 503 STORAGE_UNAVAILABLE。
-    """
+# StorageUnavailableError 自 core.storage.base 收口（B1）——附件操作 fail-closed 的
+# 统一 typed 异常；旧导入经此 re-export 保持兼容。
 
 
 class AttachmentRepository(Repository):
@@ -72,6 +68,7 @@ class AttachmentRepository(Repository):
         self._db: DocumentDBBackend | None = db
         self._database_name = database_name
         self._base_url = base_url
+        self._injected_db = db is not None
 
     def _require_db(self) -> DocumentDBBackend:
         """fail-closed：未连接（离线）时 raise StorageUnavailableError。
@@ -123,26 +120,12 @@ class AttachmentRepository(Repository):
             self._db = None
 
     async def health_check(self) -> bool:
-        """健康检查。若连接断开则尝试重连并重建索引。
+        """健康检查：真实 ping（P1-05），失败时重连并重建索引。
 
         Returns:
             True 表示可用，False 表示不可用。
         """
-        if self._db is not None:
-            return True
-        try:
-            self._db = DocumentDBFactory.create(
-                f"mongodb/{self._database_name}",
-                base_url=self._base_url,
-            )
-            await self._db.ensure_index(COLLECTION, [("attachment_id", 1)], unique=True)
-            await self._db.ensure_index(COLLECTION, [("status", 1)])
-            await self._db.ensure_index(COLLECTION, [("ref_count", 1)])
-            await self._db.ensure_index(COLLECTION, [("created_at", 1)])
-            logger.info("AttachmentRepository: MongoDB 已恢复连接")
-            return True
-        except Exception:
-            return False
+        return await self._health_check()
 
     # ---- core operations ----
 

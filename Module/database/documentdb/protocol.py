@@ -133,6 +133,18 @@ class DocumentDBBackend(ABC):
         ...
 
     @abstractmethod
+    async def ping(self) -> bool:
+        """真实连通性探测（带超时）。
+
+        B1/P1-05：`_db is not None` 不代表连接可用——Motor client 断网后仍非
+        None。健康检查必须经此方法做真实 server 往返，失败返回 False。
+
+        Returns:
+            True 表示后端可达，False 表示不可达/超时。
+        """
+        ...
+
+    @abstractmethod
     async def close(self) -> None:
         """关闭数据库连接。"""
         ...

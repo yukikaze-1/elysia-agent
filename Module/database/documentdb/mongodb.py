@@ -1,5 +1,6 @@
 """MongoDB 文档数据库后端 — motor (async-native)。"""
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -135,6 +136,18 @@ class MongoDBBackend(DocumentDBBackend):
         return docs
 
     # ---- Management ----
+
+    async def ping(self) -> bool:
+        """真实 server 往返探测（P1-05：`_db 非 None` ≠ 连接可用）。
+
+        Returns:
+            True 表示 Mongo server 可达，False 表示不可达/超时/解析失败。
+        """
+        try:
+            await asyncio.wait_for(self._db.command("ping"), timeout=3.0)
+            return True
+        except Exception:
+            return False
 
     async def close(self) -> None:
         self._client.close()

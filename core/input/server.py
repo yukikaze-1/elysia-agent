@@ -188,7 +188,13 @@ async def _collect_health_payload(agent: "Agent") -> dict:
             # 超时 / 依赖抛异常 / mock 不可 await → 一律视为 down
             return False
 
-    mongo_ok = await _probe(agent.session.health_check)
+    # P1-05：/ready 必须真实反映 mandatory 依赖。mongo = session + message + attachment
+    # 三个 repo 全部可达（各自真实 ping）；milvus = long_term。桌面/版本/生成降级不门禁。
+    mongo_ok = bool(
+        await _probe(agent.session.health_check)
+        and await _probe(agent.message_repo.health_check)
+        and await _probe(agent.attachment_repo.health_check)
+    )
     milvus_ok = await _probe(agent.long_term.health_check)
     dependencies = {"mongo": mongo_ok, "milvus": milvus_ok}
     status = "ok" if all(dependencies.values()) else "degraded"

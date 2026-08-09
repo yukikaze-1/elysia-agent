@@ -56,6 +56,13 @@ class GenerationRegistry:
             logger.debug("GenerationRegistry.connect 失败: %s", e)
             return False
 
+    async def health_check(self) -> bool:
+        """底层 GenerationRepository 健康检查（P1-05 恢复协调器用）。"""
+        try:
+            return await self._repo.health_check()
+        except Exception:
+            return False
+
     async def register(self, generation_id: GenerationId, *, session_id: SessionId,
                        user_message_id: MessageId, message_id: MessageId, model: str,
                        request_id: RequestId | None = None) -> None:

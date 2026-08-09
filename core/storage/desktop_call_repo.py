@@ -133,6 +133,7 @@ class DesktopCallRepository(Repository):
         self._db: DocumentDBBackend | None = mongodb
         self._database_name = database_name
         self._base_url = base_url
+        self._injected_db = mongodb is not None
         # 进程内调用缓存（唯一读权威，call_id → 文档）
         self._cache: dict[str, dict] = {}
 
@@ -177,8 +178,8 @@ class DesktopCallRepository(Repository):
             self._db = None
 
     async def health_check(self) -> bool:
-        """健康检查。缓存为读权威，离线功能不失效——仅反映 Mongo 是否可达。"""
-        return self._db is not None
+        """健康检查。缓存为读权威，离线功能不失效——真实 ping 反映 Mongo 是否可达（P1-05）。"""
+        return await self._health_check()
 
     # ---- core operations ----
 
