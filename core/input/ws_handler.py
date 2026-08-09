@@ -1155,6 +1155,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             try:
                 await voice_mgr.start_dictation(
                     msg.clientRequestId if msg is not None else data.get("clientRequestId", ""),
+                    data.get("sttProfileId"),
                     audio_descriptor=_voice_descriptor(msg, data))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)

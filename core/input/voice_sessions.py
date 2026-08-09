@@ -12,13 +12,16 @@ import logging
 import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
+from Module.stt import STTFactory
 from core.input.audio_buffer import AudioBuffer, Callback, pcm_to_wav, _FRAME_BYTES
+from core.input.custom_providers import resolve_model_params
 from core.schema.types import MessageId, SessionId
 from core.utils import get_request_id, new_message_id
 from frontend_contract.ws_message import AudioInputDescriptor
 
 if TYPE_CHECKING:
     from core.agent import Agent
+    from Module.stt.protocol import STTBackend
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +105,8 @@ class VoiceSessionManager:
         self._idle_task: asyncio.Task | None = None
         self._dict_request_id = ""
         self._dict_text: list[str] = []
+        # 9C-2：dictation 会话内 STT profile 快照后端（None → 用全局 agent.stt，不改全局活动 STT）
+        self._dictation_stt: "STTBackend | None" = None
         # D3（spec §3.3）：STT 后台派发状态——seq 单调、epoch 代际、pending 缓冲、任务集合、双锁
         self._stt_seq = 0
         self._stt_epoch = 0                 # 会话代际——teardown 时 +=1，绝不归零（B1）
@@ -131,8 +136,9 @@ class VoiceSessionManager:
 
         dictation 只回文字，本就不该触碰 agent 级情绪——隔离后无需快照/恢复，
         也不抹掉其他连接在 dictation 窗口内写入的 emotion/events。
+        9C-2：优先用会话内 STT profile 快照 backend；无快照（缺省 profile）才落全局 agent.stt。
         """
-        backend = getattr(self._agent, "stt", None)
+        backend = self._dictation_stt or getattr(self._agent, "stt", None)
         if backend is None:
             return ""
         return await backend.transcribe(wav)
@@ -206,6 +212,15 @@ class VoiceSessionManager:
             if t is not asyncio.current_task() and not t.done():
                 t.cancel()
         self._stt_tasks = set()
+        # 9C-2：释放 dictation 会话内 STT profile 快照 backend（fire-and-forget + guard，
+        # 照抄 llm_adapter.py:194-198）——不阻塞会话结束，close 失败也不外抛。
+        if self._dictation_stt is not None:
+            stt = self._dictation_stt
+            self._dictation_stt = None
+            try:
+                asyncio.get_running_loop().create_task(stt.close())
+            except RuntimeError:
+                logger.warning("dictation profile STT close 无 running loop，跳过（泄漏告警）")
         self._mode = VoiceMode.IDLE
 
     # ---- RECORDING（BE-060） ----
@@ -368,15 +383,51 @@ class VoiceSessionManager:
 
     # ---- DICTATION（BE-062） ----
 
-    async def start_dictation(self, client_request_id: str,
+    async def start_dictation(self, client_request_id: str, stt_profile_id: str | None = None,
                               audio_descriptor: AudioInputDescriptor | None = None) -> None:
+        """启动 dictation 会话（9C-2：可选会话内 STT profile，不改全局活动 STT）。
+
+        Args:
+            client_request_id: 客户端请求 ID（stop/cancel 对齐）。
+            stt_profile_id: STT profile（<provider>/<model>）——非空则解析创建独立快照
+                backend（_dictation_stt），会话期间转写走快照，global agent.stt/switch_stt
+                不受影响；缺省 None → 用全局活动 STT。
+            audio_descriptor: 输入音频描述（Task 7 三种 start 帧共用）。
+        """
         if self._mode != VoiceMode.IDLE:
             raise VoiceSessionError(ERR_CONFLICT, "已有活动语音会话")
         bad = self._validate_audio_descriptor(audio_descriptor)
         if bad is not None:
             raise VoiceSessionError(bad, "输入音频格式不兼容（仅支持 pcm_s16le/16000Hz/单声道）")
-        if not self._stt_available():
+        backend = None
+        if stt_profile_id:
+            # resolve_model_params 是同步函数（custom_providers.py:134 def），勿 await（P1）
+            params = resolve_model_params("stt", stt_profile_id)
+            runtime = (params or {}).pop("runtime", "backend")
+            if runtime != "backend":
+                await self._emit_error("STT_PROFILE_NOT_FOUND",
+                                       f"STT profile 不可由后端执行: {stt_profile_id}")
+                return
+            try:
+                if params and params.get("base_url"):
+                    # SSRF 出站守卫（Q5）：validate_endpoint/build_guarded_http_client 在
+                    # core.input.ssrf。custom+backend 须注入 http_client_factory **工厂**再
+                    # create——对齐 switch_stt（core/agent/server.py:58/65-66 lambda 工厂），
+                    # 仅静态 validate_endpoint 不防 OpenAI 系 backend 以默认 client 出站建连。
+                    from core.input.ssrf import build_guarded_http_client, validate_endpoint
+                    validate_endpoint(params["base_url"])
+                    params["http_client_factory"] = (
+                        lambda b=params["base_url"]: build_guarded_http_client(b))
+                backend = STTFactory.create(stt_profile_id, **params)   # params 已 pop runtime，勿透传
+            except Exception:
+                await self._emit_error("STT_PROFILE_NOT_FOUND", f"STT profile 不存在: {stt_profile_id}")
+                return
+        elif not self._stt_available():
+            # Q10：保留现状显式 raise（含 retryable=True）——_voice_stt_gate 只对已有活动
+            # 会话生效（has_active_session 首行），新 dictation 不兜底。缺省 profile 且全局
+            # STT 不可用 → 显式拒绝，否则静默进无后端 DICTATION 态。
             raise VoiceSessionError(ERR_STT_UNAVAILABLE, "STT 不可用", True)
+        self._dictation_stt = backend   # None → 用全局 agent.stt
         self._mode = VoiceMode.DICTATION
         self._session_id = "dictation"
         self._dict_request_id = client_request_id

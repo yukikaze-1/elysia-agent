@@ -902,8 +902,10 @@ export interface VoiceSessionCancelMessage {
 - 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface DictationStartMessage {
   type: 'dictation.start'
-  /** 请求 ID */
+  /** 客户端请求 ID */
   clientRequestId: string
+  /** STT profile（<provider>/<model>，缺省用全局活动 STT） */
+  sttProfileId?: string
   /** 输入音频描述（缺省按 16k/mono/pcm_s16le） */
   audio?: AudioInputDescriptor
 }

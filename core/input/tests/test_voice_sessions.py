@@ -1,11 +1,12 @@
 """VoiceSessionManager 状态机测试——三模式隔离 + 边界（spec §3.3/§4/§5/§7）。"""
 import asyncio
 import struct
+from unittest.mock import patch
 
 import pytest
 
 from core.input.voice_sessions import (
-    VoiceSessionError, VoiceSessionManager,
+    VoiceSessionError, VoiceSessionManager, VoiceMode,
     MAX_RECORDING_BYTES, MAX_CHUNK_BYTES,
 )
 
@@ -28,6 +29,22 @@ class _FakeSTTBackend:
 
     async def transcribe(self, wav):
         return self._agent._last_text
+
+
+class _ProfileSTTBackend:
+    """带 close() 的假 STT——供 dictation 会话内 profile 快照测试（9C-2）。"""
+
+    def __init__(self, text="profile_text"):
+        self._text = text
+        self.transcribed = 0
+        self.closed = False
+
+    async def transcribe(self, wav):
+        self.transcribed += 1
+        return self._text
+
+    async def close(self):
+        self.closed = True
 
 
 class FakeAgent:
@@ -630,6 +647,88 @@ async def test_dictation_start_bad_descriptor_rejected():
         await mgr.start_dictation("req_d", audio_descriptor=_desc(rate=8000))
     assert exc.value.code == "CONTRACT_VALIDATION"
     assert mgr.has_active_session() is False
+
+
+# ── 9C-2 dictation 会话内 STT profile（快照独立 backend，不改全局活动 STT） ──
+
+
+@pytest.mark.asyncio
+async def test_dictation_profile_uses_snapshot_backend():
+    """9C-2：dictation 带 profile → 转写走独立快照 backend；全局 agent.stt 与 service_state 不变。"""
+    mgr, emitted, _ = make_manager()
+    agent = mgr._agent
+    agent.service_state = {"stt_model": "global/model", "stt_enabled": True}
+    fake = _ProfileSTTBackend(text="profile_text")
+    with patch("core.input.voice_sessions.STTFactory.create", return_value=fake):
+        await mgr.start_dictation("r1", "sensevoice/sense-voice")
+    assert mgr.mode() is VoiceMode.DICTATION
+    assert mgr._dictation_stt is fake            # 快照已建立
+    assert agent.stt is not fake                 # 全局 agent.stt 未被替换
+    assert agent.service_state == {"stt_model": "global/model", "stt_enabled": True}
+    agent._last_text = "全局文本"
+    await _drive_segment(mgr)
+    await asyncio.sleep(0.05)
+    assert fake.transcribed >= 1                 # 转写走快照 backend
+    partials = [e for e in emitted if e.get("type") == "dictation.partial"]
+    assert partials and all(p.get("text") == "profile_text" for p in partials)
+    await mgr.stop_dictation("r1")
+
+
+@pytest.mark.asyncio
+async def test_dictation_profile_not_found():
+    """9C-2：未知 profile → STT_PROFILE_NOT_FOUND 错误，不进入 DICTATION 态。"""
+    mgr, emitted, _ = make_manager()
+    with patch("core.input.voice_sessions.STTFactory.create",
+               side_effect=ValueError("unknown provider")):
+        await mgr.start_dictation("r1", "no/such-provider")
+    errs = [e for e in emitted if e.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "STT_PROFILE_NOT_FOUND"
+    assert mgr.mode() is VoiceMode.IDLE
+    assert mgr._dictation_stt is None
+
+
+@pytest.mark.asyncio
+async def test_dictation_profile_runtime_desktop_rejected():
+    """9C-2：runtime=desktop 的 custom profile → 后端不可执行，STT_PROFILE_NOT_FOUND。"""
+    mgr, emitted, _ = make_manager()
+    with patch("core.input.voice_sessions.resolve_model_params",
+               return_value={"base_url": "https://stt.example.com", "runtime": "desktop"}):
+        await mgr.start_dictation("r1", "custom/my-provider")
+    errs = [e for e in emitted if e.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "STT_PROFILE_NOT_FOUND"
+    assert mgr.mode() is VoiceMode.IDLE
+    assert mgr._dictation_stt is None
+
+
+@pytest.mark.asyncio
+async def test_dictation_mid_switch_stt_keeps_snapshot():
+    """9C-2：dictation 进行中全局 switch_stt → 已开始会话继续用快照 backend。"""
+    mgr, emitted, _ = make_manager()
+    fake = _ProfileSTTBackend(text="快照文本")
+    with patch("core.input.voice_sessions.STTFactory.create", return_value=fake):
+        await mgr.start_dictation("r1", "sensevoice/sense-voice")
+    mgr._agent.stt = _FakeSTTBackend(mgr._agent)   # 模拟全局 switch_stt 替换
+    mgr._agent._last_text = "切换后全局"
+    await _drive_segment(mgr)
+    await asyncio.sleep(0.05)
+    partials = [e for e in emitted if e.get("type") == "dictation.partial"]
+    assert partials, "dictation 应产出 partial"
+    assert all(p.get("text") == "快照文本" for p in partials), "快照 backend 被全局替换影响"
+    await mgr.stop_dictation("r1")
+
+
+@pytest.mark.asyncio
+async def test_dictation_profile_released_on_stop():
+    """9C-2：stop_dictation → 快照 backend close() 被调（fire-and-forget 任务执行）。"""
+    mgr, _, _ = make_manager()
+    fake = _ProfileSTTBackend()
+    with patch("core.input.voice_sessions.STTFactory.create", return_value=fake):
+        await mgr.start_dictation("r1", "sensevoice/sense-voice")
+    assert mgr._dictation_stt is fake
+    await mgr.stop_dictation("r1")
+    assert mgr._dictation_stt is None            # 快照已释放
+    await asyncio.sleep(0.05)                    # 让 fire-and-forget close 任务执行
+    assert fake.closed is True
 
 
 @pytest.mark.asyncio

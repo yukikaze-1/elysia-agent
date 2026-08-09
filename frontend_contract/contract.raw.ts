@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: 6d8f27d0ed8dfbdd
+// schemaHash: 2494d4049c0df3ba
 
 /** 会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。 */
 export interface ConversationUsage {
@@ -906,8 +906,10 @@ export interface VoiceSessionCancelMessage {
 - 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface DictationStartMessage {
   type: 'dictation.start'
-  /** 请求 ID */
+  /** 客户端请求 ID */
   clientRequestId: string
+  /** STT profile（<provider>/<model>，缺省用全局活动 STT） */
+  sttProfileId?: string
   /** 输入音频描述（缺省按 16k/mono/pcm_s16le） */
   audio?: AudioInputDescriptor
 }

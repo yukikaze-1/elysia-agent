@@ -1,7 +1,7 @@
 {
   "transportVersion": "2",
   "protocolVersion": "2.0",
-  "schemaHash": "6d8f27d0ed8dfbdd",
+  "schemaHash": "2494d4049c0df3ba",
   "models": {
     "ContractModel": {
       "description": "契约模型基类：wire_dict() 统一序列化。\n\n- exclude_none=True：可缺省字段（None）缺省省略\n- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）\n- ts_null 标记字段：None 时补显式 null\n- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict",
@@ -5854,9 +5854,22 @@
           "type": "string"
         },
         "clientRequestId": {
-          "description": "请求 ID",
+          "description": "客户端请求 ID",
           "title": "Clientrequestid",
           "type": "string"
+        },
+        "sttProfileId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "STT profile（<provider>/<model>，缺省用全局活动 STT）",
+          "title": "Sttprofileid"
         },
         "audio": {
           "anyOf": [
@@ -6718,9 +6731,22 @@
               "type": "string"
             },
             "clientRequestId": {
-              "description": "请求 ID",
+              "description": "客户端请求 ID",
               "title": "Clientrequestid",
               "type": "string"
+            },
+            "sttProfileId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "STT profile（<provider>/<model>，缺省用全局活动 STT）",
+              "title": "Sttprofileid"
             },
             "audio": {
               "anyOf": [

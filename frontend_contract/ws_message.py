@@ -801,7 +801,9 @@ class VoiceSessionCancelMessage(ContractModel):
 
 class DictationStartMessage(ContractModel):
     type: Literal["dictation.start"] = "dictation.start"
-    clientRequestId: str = Field(description="请求 ID")
+    clientRequestId: str = Field(description="客户端请求 ID")
+    sttProfileId: Optional[str] = Field(
+        default=None, description="STT profile（<provider>/<model>，缺省用全局活动 STT）")
     audio: Optional[AudioInputDescriptor] = Field(
         default=None, description="输入音频描述（缺省按 16k/mono/pcm_s16le）")
 

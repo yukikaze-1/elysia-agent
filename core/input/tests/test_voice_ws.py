@@ -390,6 +390,22 @@ async def test_dictation_start_bad_descriptor_rejected():
 
 
 @pytest.mark.asyncio
+async def test_dictation_start_passes_stt_profile():
+    """9C-2：dictation.start 帧 sttProfileId 透传到 start_dictation（快照 profile）。"""
+    agent, ws, mgr = make()
+    seen = {}
+
+    async def fake_start(client_request_id, stt_profile_id=None, audio_descriptor=None):
+        seen["profile"] = stt_profile_id
+    mgr.start_dictation = fake_start
+    await handle_json_message(
+        {"type": "dictation.start", "clientRequestId": "req_d",
+         "sttProfileId": "sensevoice/sense-voice"},
+        agent, None, ws, voice_mgr=mgr)
+    assert seen.get("profile") == "sensevoice/sense-voice"
+
+
+@pytest.mark.asyncio
 async def test_valid_descriptor_accepts_start():
     """合法 descriptor（pcm_s16le/16000/1）→ start 正常，无错误。"""
     agent, ws, mgr = make()
