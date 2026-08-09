@@ -250,6 +250,14 @@ class VoiceSessionManager:
         self._rec_state = _RecordingState.TRANSCRIBING
         # 9C-1（F8）：WAV 边界整帧对齐——丢弃 _rec_pcm 尾部残帧（VAD/STT 只认整帧）
         rec_pcm = b"".join(self._rec_pcm)
+        # F3（review）：整帧截断前加最小长度守卫——< 一帧（640B）录音直接丢弃，不送
+        # STT、不触发转录（VAD 路径 _process_segment 有 min_bytes 0.3s 守卫，RECORDING
+        # 路径没有 → 空/超短 WAV 送 STT 的洞）。丢弃后重置回 IDLE（同空转写路径）。
+        if len(rec_pcm) < _FRAME_BYTES:
+            logger.info("录音过短（%d 字节 < 一帧 %d 字节）丢弃，不触发转录",
+                        len(rec_pcm), _FRAME_BYTES)
+            self._reset_recording()
+            return
         rec_pcm = rec_pcm[: len(rec_pcm) // _FRAME_BYTES * _FRAME_BYTES]
         wav = pcm_to_wav(rec_pcm)
         self._rec_pcm = []
@@ -529,13 +537,29 @@ class VoiceSessionManager:
             await asyncio.gather(*pending, return_exceptions=True)
 
     async def feed_pcm(self, chunk: bytes) -> None:
-        # 9C-1（R15）：单条 BINARY chunk 上限——超限 → CONTRACT_VALIDATION + 完整会话拆除。
-        # _teardown_session 是同步方法（勿 await）；完整拆除 REALTIME/DICTATION 的
-        # _buffer/_ack_task/_idle_task/_session_id——不能用只清 RECORDING 字段的
-        # _reset_recording()，那会留下 ack/idle 后台任务继续发帧（会话静默无声）。
+        # 9C-1（R15）：单条 BINARY chunk 上限——超限 → CONTRACT_VALIDATION + 按模式分流拆除。
+        # _teardown_session 是同步方法（勿 await）；REALTIME/DICTATION 完整拆除
+        # _buffer/_ack_task/_idle_task/_session_id（不能用只清 RECORDING 字段的
+        # _reset_recording()——那会留下 ack/idle 后台任务继续发帧，会话静默无声）；
+        # RECORDING 反其道——错误帧是 error 不是 ended，须用 _reset_recording() 清
+        # _rec_pcm/_rec_state/_recording_id（F4，_teardown_session 不碰这些字段）。
         if len(chunk) > MAX_CHUNK_BYTES:
             await self._emit_error(ERR_CONTRACT, "音频 chunk 超过上限（1 MiB）")
-            sid = self._session_id or self._recording_id or ""
+            # F4（review）：超限按模式分流——RECORDING 的错误帧是 error 不是 ended：
+            # _teardown_session 只清 REALTIME/DICTATION 字段，会残留 _rec_pcm/
+            # _rec_state/_recording_id 且误发 REALTIME 型 ended{recording_id}；
+            # REALTIME/DICTATION 仍走完整 teardown + 对应收尾帧（现状保留）。
+            if self._mode == VoiceMode.RECORDING:
+                self._reset_recording()
+                return
+            if self._mode == VoiceMode.DICTATION:
+                rid = self._dict_request_id            # teardown 前缓存（review #2 惯例）
+                self._teardown_session()
+                from frontend_contract import DictationCancelledMessage
+                await self._emit(DictationCancelledMessage(
+                    clientRequestId=rid).wire_dict())
+                return
+            sid = self._session_id or ""
             self._teardown_session()
             from frontend_contract.ws_message import VoiceEndReason, VoiceSessionEndedMessage
             await self._emit(VoiceSessionEndedMessage(
@@ -554,7 +578,13 @@ class VoiceSessionManager:
             if getattr(self._agent.status, "is_speaking", False):
                 self._last_audio_at = time.monotonic()  # 丢帧也刷新 idle 计时（review #19）
                 return  # deafen 等价（spec §3.2 NEW-B）
-            if not getattr(self._agent, "stt_enabled", False):
+            # F1（review）：dictation 会话内 STT profile 快照 backend 独立于全局
+            # stt_enabled——快照存在时首 chunk 不得因全局关闭被误拆会话（start_dictation
+            # 带 profile 时本就跳过全局 _stt_available）；无快照（缺省 profile 落全局）
+            # 才查全局 stt_enabled。REALTIME 无 profile 概念（_dictation_stt 恒 None），
+            # 判定与旧行为一致。
+            if self._dictation_stt is None \
+                    and not getattr(self._agent, "stt_enabled", False):
                 await self._end_session_stt_disabled()  # 检测点（spec §5.3 NEW-D）
                 return
             self._received_frames += 1

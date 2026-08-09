@@ -116,6 +116,7 @@ async def test_commit_then_restart_recording():
     """commit 后 _mode 复位 IDLE，可再次 start（_reset_recording 须重置 mode）。"""
     mgr, _, _ = make_manager()
     await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(b"\x00" * 6400)  # F3：≥ 一帧 PCM，否则 stop 丢弃不转写
     mgr._agent._last_text = "第一条"
     await mgr.stop_recording("rec_1")
     await asyncio.sleep(0.05)
@@ -147,6 +148,7 @@ async def test_recording_state_boundaries():
         mgr.commit_recording("rec_1", "x")
     assert ei.value.code == "CONTRACT_VALIDATION"
     # TRANSCRIBING 态 stop → CONTRACT_VALIDATION
+    await mgr.feed_pcm(b"\x00" * 6400)  # F3：≥ 一帧 PCM，否则 stop 丢弃直接回 IDLE
     await mgr.stop_recording("rec_1")
     with pytest.raises(VoiceSessionError) as ei:
         await mgr.stop_recording("rec_1")
@@ -861,3 +863,97 @@ async def test_fixture_feeds_all_three_modes():
     await mgr3.stop_dictation("req_d")
     finals = [e for e in emitted3 if e.get("type") == "dictation.final"]
     assert finals and finals[0]["text"] == "听写识别"
+
+
+# ── Batch 9 final review 修复回归测试：F1（profile dictation 全局 STT 关闭）/ F3（最小长度）/ F4（超限分流） ──
+
+
+@pytest.mark.asyncio
+async def test_dictation_profile_survives_global_stt_disabled():
+    """F1（review）：profile dictation 全局 STT 关闭仍可用——快照 backend 独立于全局。
+
+    start_dictation 带 profile 时跳过全局 _stt_available（用快照 backend），但旧
+    feed_pcm DICTATION 分支查全局 stt_enabled → 首 chunk 即 _end_session_stt_disabled
+    误拆会话（DictationCancelled）。修复后快照存在即视为可用，首 chunk 照常喂入。
+    """
+    mgr, emitted, _ = make_manager()
+    fake = _ProfileSTTBackend(text="快照可用")
+    with patch("core.input.voice_sessions.STTFactory.create", return_value=fake):
+        await mgr.start_dictation("req_f1", "sensevoice/sense-voice")
+    mgr._agent.stt_enabled = False               # 全局 STT 关闭——快照不受影响
+    await _drive_segment(mgr)
+    await asyncio.sleep(0.05)
+    assert mgr.mode() is VoiceMode.DICTATION     # 会话未被误拆
+    assert fake.transcribed >= 1                 # 转写走快照 backend
+    partials = [e for e in emitted if e.get("type") == "dictation.partial"]
+    assert partials and all(p.get("text") == "快照可用" for p in partials)
+    assert not any(e.get("type") == "dictation.cancelled" for e in emitted)
+    await mgr.stop_dictation("req_f1")
+
+
+@pytest.mark.asyncio
+async def test_recording_too_short_dropped_no_wav():
+    """F3（review）：< 640B（一帧）录音 stop → 直接丢弃，不送 STT、不触发转录。
+
+    VAD 路径有 min_bytes 0.3s 守卫，RECORDING 路径没有——空/超短 WAV 送 STT 的洞。
+    stop 截断前加最小守卫：< _FRAME_BYTES → 丢弃 + 重置回 IDLE（同空转写）。
+    """
+    captured: list[bytes] = []
+    agent = FakeAgent()
+    original = agent.stt_transcribe
+
+    async def capturing(wav):
+        captured.append(wav)
+        return await original(wav)
+
+    agent.stt_transcribe = capturing
+    mgr, emitted, _ = make_manager(agent=agent)
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(b"\x00" * 100)      # 100B < 一帧 640B
+    agent._last_text = "不应出现"
+    await mgr.stop_recording("rec_1")
+    await asyncio.sleep(0.05)
+    assert not captured, "过短录音不得送 STT（空 WAV 洞）"
+    assert not any(e.get("type") == "voice.transcript" for e in emitted)
+    # 会话已重置回 IDLE（不卡 TRANSCRIBING）——可重启录音
+    await mgr.start_recording("rec_2")
+    assert mgr.has_active_session() is True
+
+
+@pytest.mark.asyncio
+async def test_chunk_too_large_recording_resets_state_no_ended():
+    """F4（review）：RECORDING 超限 chunk → error 收尾（非 ended），_rec_pcm/_rec_state 清空。
+
+    旧实现超限分支对 RECORDING 也调 _teardown_session()（只清 REALTIME/DICTATION
+    字段）→ _rec_pcm/_rec_state/_recording_id 残留 + 误发 REALTIME 型
+    VoiceSessionEndedMessage{sessionId=recording_id}。
+    """
+    mgr, emitted, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(b"\x00" * 1280)     # 先喂 2 帧——确保有残留状态可验证
+    await mgr.feed_pcm(b"\x00" * (MAX_CHUNK_BYTES + 1))
+    errs = [e for e in emitted if e.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "CONTRACT_VALIDATION"
+    # RECORDING 的错误帧是 error 不是 ended（不得误发 REALTIME 型 ended）
+    assert not any(e.get("type") == "voice_session.ended" for e in emitted)
+    # _rec_pcm/_rec_state/_recording_id 已清（旧 _teardown_session 不碰这些字段）
+    assert mgr._rec_pcm == [] and mgr._recording_id is None
+    assert mgr._in_flight_stt is None
+    assert mgr.has_active_session() is False
+    await mgr.start_recording("rec_2")     # 状态已清，可重启
+    assert mgr.has_active_session() is True
+
+
+@pytest.mark.asyncio
+async def test_chunk_too_large_dictation_emits_cancelled():
+    """F4（review）：DICTATION 超限 chunk → teardown + DictationCancelled（非 REALTIME ended）。"""
+    mgr, emitted, _ = make_manager()
+    await mgr.start_dictation("req_f4")
+    await mgr.feed_pcm(b"\x00" * (MAX_CHUNK_BYTES + 1))
+    errs = [e for e in emitted if e.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "CONTRACT_VALIDATION"
+    assert not any(e.get("type") == "voice_session.ended" for e in emitted)
+    cancelled = [e for e in emitted if e.get("type") == "dictation.cancelled"]
+    assert cancelled and cancelled[-1]["clientRequestId"] == "req_f4"
+    assert mgr.mode() is VoiceMode.IDLE
+    assert mgr._dictation_stt is None      # teardown 已释放快照/清态

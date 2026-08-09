@@ -92,6 +92,7 @@ async def test_recording_stop_produces_transcript():
     agent, ws, mgr = make()
     await handle_json_message({"type": "voice.record.start", "recordingId": "rec_1"},
                               agent, None, ws, voice_mgr=mgr)
+    await mgr.feed_pcm(b"\x00" * 6400)  # F3：≥ 一帧 PCM，否则 stop 丢弃不转写
     agent._last_text = "你好"
     await handle_json_message({"type": "voice.record.stop", "recordingId": "rec_1"},
                               agent, None, ws, voice_mgr=mgr)
@@ -106,6 +107,7 @@ async def test_empty_transcript_ws_no_transcript():
     agent, ws, mgr = make()
     await handle_json_message({"type": "voice.record.start", "recordingId": "rec_1"},
                               agent, None, ws, voice_mgr=mgr)
+    await mgr.feed_pcm(b"\x00" * 6400)  # F3：有 PCM 才走 STT 空转写路径（否则被最小长度守卫丢弃）
     agent._last_text = "  "
     await handle_json_message({"type": "voice.record.stop", "recordingId": "rec_1"},
                               agent, None, ws, voice_mgr=mgr)
@@ -161,6 +163,7 @@ async def test_recording_full_flow():
     agent, ws, mgr = make()
     await handle_json_message({"type": "voice.record.start", "recordingId": "rec_1"},
                               agent, None, ws, voice_mgr=mgr)
+    await mgr.feed_pcm(b"\x00" * 6400)  # F3：≥ 一帧 PCM
     agent._last_text = "你好"
     await handle_json_message({"type": "voice.record.stop", "recordingId": "rec_1"},
                               agent, None, ws, voice_mgr=mgr)
@@ -180,6 +183,7 @@ async def test_voice_commit_idempotent_replay():
     agent, ws, mgr = make()
     await handle_json_message({"type": "voice.record.start", "recordingId": "rec_1"},
                               agent, None, ws, voice_mgr=mgr)
+    await mgr.feed_pcm(b"\x00" * 6400)  # F3：≥ 一帧 PCM
     agent._last_text = "你好"
     await handle_json_message({"type": "voice.record.stop", "recordingId": "rec_1"},
                               agent, None, ws, voice_mgr=mgr)
@@ -201,6 +205,7 @@ async def test_voice_commit_missing_client_request_id():
     agent, ws, mgr = make()
     await handle_json_message({"type": "voice.record.start", "recordingId": "rec_1"},
                               agent, None, ws, voice_mgr=mgr)
+    await mgr.feed_pcm(b"\x00" * 6400)  # F3：≥ 一帧 PCM
     agent._last_text = "你好"
     await handle_json_message({"type": "voice.record.stop", "recordingId": "rec_1"},
                               agent, None, ws, voice_mgr=mgr)

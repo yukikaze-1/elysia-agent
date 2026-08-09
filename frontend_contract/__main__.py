@@ -6,7 +6,6 @@
 - --check：各产物生成到临时文件，git diff --exit-code 校验无漂移（非零退出码 → CI 红）
 """
 import importlib
-import json
 import subprocess
 import sys
 import tempfile
@@ -33,7 +32,7 @@ _OUTPUTS: dict[str, Path] = {
 
 
 def _collect() -> tuple[list[type[BaseModel]], dict[str, list[type[BaseModel]]]]:
-    """动态收集存在的子模块里的 BaseModel 列表 + ServerMessage 判别联合成员。"""
+    """动态收集存在的子模块里的 BaseModel 列表 + 判别联合（ServerMessage/ClientMessage）成员。"""
     models: list[type[BaseModel]] = []
     discriminated: dict[str, list[type[BaseModel]]] = {}
     for name in _SUBMODULES:
@@ -52,12 +51,16 @@ def _collect() -> tuple[list[type[BaseModel]], dict[str, list[type[BaseModel]]]]
             if isinstance(obj, type) and issubclass(obj, BaseModel) \
                     and obj is not ContractModel and obj is not BaseModel:
                 models.append(obj)
-        # ServerMessage 判别联合别名（Annotated[Union[...], Field(discriminator="type")]）
-        server = getattr(module, "ServerMessage", None)
-        if server is not None and get_origin(server) is Annotated:
-            union = get_args(server)[0]
-            members = list(get_args(union)) if get_origin(union) is Union else [union]
-            discriminated["ServerMessage"] = members
+        # 判别联合别名（Annotated[Union[...], Field(discriminator="type")]）。
+        # F2（review）：ClientMessage 也注册——旧实现只注册 ServerMessage，ClientMessage
+        # 判别联合不发射到 TS 产物（9B-2 入站消息契约缺位，contract.raw.ts 缺 union）。
+        # 展开方式对齐 gen_schema.build_models（get_origin/get_args，参考 gen_schema）。
+        for alias in ("ServerMessage", "ClientMessage"):
+            union_alias = getattr(module, alias, None)
+            if union_alias is not None and get_origin(union_alias) is Annotated:
+                inner = get_args(union_alias)[0]
+                members = list(get_args(inner)) if get_origin(inner) is Union else [inner]
+                discriminated[alias] = members
     return models, discriminated
 
 
@@ -67,25 +70,29 @@ def main() -> int:
     schema_doc = gen_schema.build_document()
     artifacts: dict[str, str] = {
         "ts": generate_ts(models, discriminated),
-        "schema": json.dumps(schema_doc, indent=2, ensure_ascii=False) + "\n",
+        # F6（review）：schema 序列化与 gen_schema 单源（sort_keys + indent=2 +
+        # ensure_ascii=False）——与 schemaHash 计算同参数，产物可复现
+        "schema": gen_schema.serialize_document(schema_doc),
         "raw_ts": generate_raw_ts(
             models, discriminated, TRANSPORT_VERSION, PROTOCOL_VERSION,
             schema_doc["schemaHash"]),
     }
     if "--check" in sys.argv:
-        for name, content in artifacts.items():
-            with tempfile.NamedTemporaryFile("w", suffix=Path(_OUTPUTS[name]).suffix,
-                                             delete=False) as f:
-                f.write(content)
-                tmp = f.name
-            diff = subprocess.run(
-                ["git", "diff", "--exit-code", "--no-index", "--", tmp, str(_OUTPUTS[name])],
-                capture_output=True, text=True)
-            if diff.returncode != 0:
-                print(f"{_OUTPUTS[name].name} 漂移！请运行 make gen-types 重新生成后提交。",
-                      file=sys.stderr)
-                print(diff.stdout, file=sys.stderr)
-                return 1
+        # F5（review）：TemporaryDirectory 自动清理——NamedTemporaryFile(delete=False)
+        # 从不 unlink，CI 每次 --check 漏 3 个 /tmp 文件（对齐 gen_contract_frames.py 模式）
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, content in artifacts.items():
+                gen = Path(tmp) / ("check" + Path(_OUTPUTS[name]).suffix)
+                gen.write_text(content, encoding="utf-8")
+                diff = subprocess.run(
+                    ["git", "diff", "--exit-code", "--no-index", "--",
+                     str(gen), str(_OUTPUTS[name])],
+                    capture_output=True, text=True)
+                if diff.returncode != 0:
+                    print(f"{_OUTPUTS[name].name} 漂移！请运行 make gen-types 重新生成后提交。",
+                          file=sys.stderr)
+                    print(diff.stdout, file=sys.stderr)
+                    return 1
         return 0
     for name, content in artifacts.items():
         _OUTPUTS[name].write_text(content, encoding="utf-8")

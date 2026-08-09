@@ -50,16 +50,26 @@ def build_document() -> dict:
     body: dict[str, object] = {
         "transportVersion": TRANSPORT_VERSION,
         "protocolVersion": PROTOCOL_VERSION,
-        "schemaHash": "",
         "models": schemas,
     }
-    # hash 与写文件同一序列化（ensure_ascii=False）——schemaHash 是逻辑内容的稳定指纹
-    _serialized = json.dumps(body, sort_keys=True, ensure_ascii=False)
+    # F6（review）：schemaHash 可复现——先序列化**不含 schemaHash** 的 body 计算 hash
+    #（hash 输入不得含占位值，否则消费者无法从产物去字段后重算），插入 hash 后再以
+    # **同一序列化参数**（sort_keys + indent=2 + ensure_ascii=False）写文件。旧实现
+    # hash 用 no-indent、文件用 indent=2，fingerprint 无法从产物复现。
+    _serialized = json.dumps(body, sort_keys=True, indent=2, ensure_ascii=False)
     body["schemaHash"] = hashlib.sha256(_serialized.encode()).hexdigest()[:16]
     return body
+
+
+def serialize_document(doc: dict) -> str:
+    """schema 产物序列化——与 schemaHash 计算同一参数（sort_keys + indent=2 + ensure_ascii=False）。
+
+    单源：gen_schema.main() 与 __main__ 的 schema artifact 共用，防双写参数漂移。
+    """
+    return json.dumps(doc, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
 
 
 def main() -> None:
     """写 contract.schema.json（与 __main__ 主入口同一序列化，字节一致）。"""
     doc = build_document()
-    OUTPUT.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    OUTPUT.write_text(serialize_document(doc), encoding="utf-8")

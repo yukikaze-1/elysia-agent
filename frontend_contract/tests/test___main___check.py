@@ -48,3 +48,28 @@ def test_check_detects_drift(tmp_path, monkeypatch):
     (tmp_path / "contract.generated.ts").write_text("// tampered\n", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["frontend_contract", "--check"])
     assert main_mod.main() != 0
+
+
+@pytest.mark.unit
+def test_generated_artifacts_include_client_message_union(tmp_path, monkeypatch):
+    """F2（review）：ClientMessage 判别联合须发射到 TS 产物（9B-2 入站消息契约）。
+
+    _collect 只注册 ServerMessage 时 contract.raw.ts / contract.generated.ts 缺
+    `export type ClientMessage`——Electron 侧拿不到入站消息 union。生成后断言两个
+    产物都含 ClientMessage 判别联合别名 + 具名成员（V2TextMessage 等）。
+    """
+    outputs = {
+        "ts": tmp_path / "contract.generated.ts",
+        "schema": tmp_path / "contract.schema.json",
+        "raw_ts": tmp_path / "contract.raw.ts",
+    }
+    monkeypatch.setattr(main_mod, "_OUTPUTS", outputs)
+    assert main_mod.main() == 0
+    raw = (tmp_path / "contract.raw.ts").read_text(encoding="utf-8")
+    ts = (tmp_path / "contract.generated.ts").read_text(encoding="utf-8")
+    for content, label in ((raw, "contract.raw.ts"), (ts, "contract.generated.ts")):
+        assert "export type ClientMessage =" in content, f"{label} 缺 ClientMessage union"
+        assert "  | V2TextMessage" in content, f"{label} 缺 ClientMessage 成员 V2TextMessage"
+        assert "export type ServerMessage =" in content, f"{label} 缺 ServerMessage union（回归 Guard）"
+        assert "  | VoiceRecordStartMessage" in content, \
+            f"{label} 缺 ClientMessage 成员 VoiceRecordStartMessage"

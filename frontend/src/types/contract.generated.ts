@@ -2279,4 +2279,29 @@ export type ServerMessage =
   | AudioCancelledMessage
   | UnknownMessage
 
+export type ClientMessage =
+  | V2TextMessage
+  | InterruptMessage
+  | SwitchModelMessage
+  | SetServiceMessage
+  | SetTtsVoiceMessage
+  | ToolApprovalMessage
+  | WakeToggleMessage
+  | ActivateSessionMessage
+  | VoiceRecordStartMessage
+  | VoiceRecordStopMessage
+  | VoiceCommitMessage
+  | VoiceDiscardMessage
+  | VoiceSessionStartMessage
+  | VoiceSessionPauseMessage
+  | VoiceSessionResumeMessage
+  | VoiceSessionStopMessage
+  | VoiceSessionCancelMessage
+  | DictationStartMessage
+  | DictationStopMessage
+  | DictationCancelMessage
+  | AudioCancelMessage
+  | ToolStatusMessage
+  | UnknownMessage
+
 export interface UnknownMessage { type: string; [key: string]: unknown }

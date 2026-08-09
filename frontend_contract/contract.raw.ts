@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: 2494d4049c0df3ba
+// schemaHash: 6bc1487b4377cd22
 
 /** 会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。 */
 export interface ConversationUsage {
@@ -2281,6 +2281,31 @@ export type ServerMessage =
   | DictationCancelledMessage
   | AudioStartMessage
   | AudioCancelledMessage
+  | UnknownMessage
+
+export type ClientMessage =
+  | V2TextMessage
+  | InterruptMessage
+  | SwitchModelMessage
+  | SetServiceMessage
+  | SetTtsVoiceMessage
+  | ToolApprovalMessage
+  | WakeToggleMessage
+  | ActivateSessionMessage
+  | VoiceRecordStartMessage
+  | VoiceRecordStopMessage
+  | VoiceCommitMessage
+  | VoiceDiscardMessage
+  | VoiceSessionStartMessage
+  | VoiceSessionPauseMessage
+  | VoiceSessionResumeMessage
+  | VoiceSessionStopMessage
+  | VoiceSessionCancelMessage
+  | DictationStartMessage
+  | DictationStopMessage
+  | DictationCancelMessage
+  | AudioCancelMessage
+  | ToolStatusMessage
   | UnknownMessage
 
 export interface UnknownMessage { type: string; [key: string]: unknown }
