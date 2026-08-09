@@ -1,0 +1,6 @@
+# 由 frontend_contract 契约源生成（scripts/gen_contract_frames.py）——非事实源，漂移门禁兜底。
+# 帧序列 = 固定测试数据（确定性）；真实 wire 形状以 frontend_contract/ 契约为准。
+
+{"type": "session", "conversationId": "default", "messages": [], "token_stats": {"total": 0, "byModel": {}}}
+{"type": "server_info", "protocol_version": "2.0", "server_version": "0.1.0", "features": {"structured_generation": true, "multi_conversation": true, "desktop_runtime": true, "dictation": true, "voice_recording": true, "voice_realtime": true, "media_upload": true}, "services": {"llm": {"available": true, "enabled": true, "model": "deepseek/deepseek-chat", "default": "deepseek/deepseek-chat"}, "stt": {"available": false, "enabled": false, "default": "sensevoice/sense-voice", "model": null}, "tts": {"available": false, "enabled": false, "default": "gpt-sovits/default", "model": null}}, "connectionId": "conn_frame_0001", "build_sha": "0123abcd"}
+{"type": "expression", "expression": "开心", "intensity": 0.65}

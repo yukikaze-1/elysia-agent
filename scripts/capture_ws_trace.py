@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """真实 WS 事件轨迹抓取脚本（批次 0，BE-001）。
 
+> ⚠️ DEPRECATED（Task 4，9B-1）：不再作 traces 生成工具——`docs/archive/frontend-handoff-v2/traces/`
+> 改由 `scripts/gen_contract_frames.py` 契约源生成（确定性 golden frames + 漂移门禁），
+> 避免与契约源双写污染。本脚本保留作历史参考，勿用于生成新 traces。
+
 用途：产出脱敏的真实 WebSocket JSONL 轨迹，供 Electron 前端联调参考。
 模式：
   python scripts/capture_ws_trace.py chat       # 完整聊天：建连→消息→inner_voice→多句→token_usage→心情→idle
@@ -454,4 +458,7 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    print("[DEPRECATED] capture_ws_trace.py 已停用：traces 改由 "
+          "scripts/gen_contract_frames.py 契约源生成，勿再用于生成 traces。",
+          file=sys.stderr)
     sys.exit(asyncio.run(main()))

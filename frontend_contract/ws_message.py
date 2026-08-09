@@ -14,6 +14,7 @@ from pydantic import Field
 
 from frontend_contract.base import ContractModel, TsNull
 from frontend_contract.rest import ConversationUsage, FinishReason
+from frontend_contract.version import PROTOCOL_VERSION
 
 # ────────────────────── 非判别受限字段枚举（plan Task 6，StrEnum） ──────────────────────
 
@@ -290,7 +291,7 @@ class ServerInfoMessage(ContractModel):
     """
 
     type: Literal["server_info"] = "server_info"
-    protocol_version: str = Field(default="2.0", description="协商的协议版本")
+    protocol_version: str = Field(default=PROTOCOL_VERSION, description="协商的协议版本")
     server_version: str = Field(description="服务器版本（core/version.py，含 +build_sha 后缀）")
     features: ServerInfoFeatures = Field(description="能力特征（严禁超前声明）")
     services: dict[str, ServiceCapability] = Field(description="llm/stt/tts 三服务能力")

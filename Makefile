@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-workflow-engine lint pyright start gen-types check-types
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-workflow-engine lint pyright start gen-types gen-frames check-types
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -45,13 +45,19 @@ lint:
 pyright:
 	conda run -n $(CONDA_ENV) pyright
 
-# 前后端契约单源：Pydantic 模型 → contract.generated.ts（前端只读快照）
+# 前后端契约单源：Pydantic 模型 → contract.generated.ts + contract.schema.json + contract.raw.ts
 gen-types:
 	python -m frontend_contract
 
-# 漂移检测：生成到临时文件，git diff 校验无漂移（改契约不跑 gen-types = CI 红）
+# 契约层 golden frames：ServerMessage 契约模型 → docs/archive/frontend-handoff-v2/traces/ws-v2-*.jsonl
+gen-frames:
+	python scripts/gen_contract_frames.py
+
+# 漂移检测：ts/schema/raw_ts + frames 生成到临时文件，git diff 校验无漂移
+# （改契约不跑 gen-types / gen-frames = CI 红）
 check-types:
 	python -m frontend_contract --check
+	python scripts/gen_contract_frames.py --check
 
 start:
 	bash scripts/start.sh

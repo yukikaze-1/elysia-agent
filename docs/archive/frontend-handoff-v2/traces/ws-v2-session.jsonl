@@ -1,23 +1,13 @@
-{"type": "session", "messages": [], "token_stats": {"total": 0, "by_model": {}}}
-{"type": "server_info", "protocol_version": "2.0", "server_version": "0.1.0", "features": {"structured_generation": true, "multi_conversation": true, "desktop_runtime": false, "dictation": false}, "services": {"llm": {"available": true, "enabled": true, "model": "deepseek/deepseek-chat", "default": "deepseek/deepseek-chat"}, "stt": {"available": false, "enabled": false, "default": "sensevoice/sense-voice", "model": null}, "tts": {"available": false, "enabled": false, "default": "gpt-sovits/default", "model": null}}}
+# 由 frontend_contract 契约源生成（scripts/gen_contract_frames.py）——非事实源，漂移门禁兜底。
+# 帧序列 = 固定测试数据（确定性）；真实 wire 形状以 frontend_contract/ 契约为准。
+
+{"type": "session", "conversationId": "default", "messages": [], "token_stats": {"total": 0, "byModel": {}}}
+{"type": "server_info", "protocol_version": "2.0", "server_version": "0.1.0", "features": {"structured_generation": true, "multi_conversation": true, "desktop_runtime": true, "dictation": true, "voice_recording": true, "voice_realtime": true, "media_upload": true}, "services": {"llm": {"available": true, "enabled": true, "model": "deepseek/deepseek-chat", "default": "deepseek/deepseek-chat"}, "stt": {"available": false, "enabled": false, "default": "sensevoice/sense-voice", "model": null}, "tts": {"available": false, "enabled": false, "default": "gpt-sovits/default", "model": null}}, "connectionId": "conn_frame_0001", "build_sha": "0123abcd"}
 {"type": "expression", "expression": "开心", "intensity": 0.65}
-{"type": "session", "messages": [], "token_stats": {"total": 0, "by_model": {}}}
-{"type": "user_message.ack", "messageId": "msg_6b432f115cc74ce485a561e93e", "clientRequestId": "req_cap_9a0003d4", "conversationId": "conv_trace_x", "receivedAt": "2026-08-04T15:27:50.032117+00:00", "status": "accepted"}
-{"type": "state", "state": "thinking"}
-{"type": "typing", "typing": true}
-{"type": "generation.started", "generationId": "gen_4eef332825ed432b9b4108b664", "messageId": "msg_8bcbcc783678422fa7c1af1771", "conversationId": "conv_trace_x"}
-{"type": "generation.segment.started", "generationId": "gen_4eef332825ed432b9b4108b664", "segmentId": "seg_4ceea100e9ce411abf588af07f", "segmentIndex": 0, "channel": "inner_voice", "kind": "text", "conversationId": "conv_trace_x"}
-{"type": "generation.segment.completed", "generationId": "gen_4eef332825ed432b9b4108b664", "segmentId": "seg_4ceea100e9ce411abf588af07f", "segmentIndex": 0, "channel": "inner_voice", "kind": "text", "content": "我觉得这个话题很有意思，想认真回应一下。", "conversationId": "conv_trace_x"}
-{"type": "generation.segment.started", "generationId": "gen_4eef332825ed432b9b4108b664", "segmentId": "seg_2be81b352d144b85a1aa04559b", "segmentIndex": 1, "channel": "public_reply", "kind": "text", "conversationId": "conv_trace_x"}
-{"type": "generation.delta", "generationId": "gen_4eef332825ed432b9b4108b664", "segmentId": "seg_2be81b352d144b85a1aa04559b", "segmentIndex": 1, "deltaSequence": 0, "delta": "你好！这是第一句话，回答你的问题。第二句话进一步补充说明。第三句话作为收尾，希望对你有所帮助。", "conversationId": "conv_trace_x"}
-{"type": "typing", "typing": false}
-{"type": "state", "state": "speaking"}
-{"type": "generation.segment.completed", "generationId": "gen_4eef332825ed432b9b4108b664", "segmentId": "seg_2be81b352d144b85a1aa04559b", "segmentIndex": 1, "channel": "public_reply", "kind": "text", "content": "你好！", "conversationId": "conv_trace_x"}
-{"type": "generation.segment.started", "generationId": "gen_4eef332825ed432b9b4108b664", "segmentId": "seg_336a4e48619040d0ac5f40dc8b", "segmentIndex": 2, "channel": "public_reply", "kind": "text", "conversationId": "conv_trace_x"}
-{"type": "generation.segment.completed", "generationId": "gen_4eef332825ed432b9b4108b664", "segmentId": "seg_336a4e48619040d0ac5f40dc8b", "segmentIndex": 2, "channel": "public_reply", "kind": "text", "content": "这是第一句话，回答你的问题。", "conversationId": "conv_trace_x"}
-{"type": "generation.segment.started", "generationId": "gen_4eef332825ed432b9b4108b664", "segmentId": "seg_5d51c7eaa21e4faf9d60824a3f", "segmentIndex": 3, "channel": "public_reply", "kind": "text", "conversationId": "conv_trace_x"}
-{"type": "generation.segment.completed", "generationId": "gen_4eef332825ed432b9b4108b664", "segmentId": "seg_5d51c7eaa21e4faf9d60824a3f", "segmentIndex": 3, "channel": "public_reply", "kind": "text", "content": "第二句话进一步补充说明。", "conversationId": "conv_trace_x"}
-{"type": "generation.segment.started", "generationId": "gen_4eef332825ed432b9b4108b664", "segmentId": "seg_467865bb1cfb4f1e92f53a2c61", "segmentIndex": 4, "channel": "public_reply", "kind": "text", "conversationId": "conv_trace_x"}
-{"type": "generation.segment.completed", "generationId": "gen_4eef332825ed432b9b4108b664", "segmentId": "seg_467865bb1cfb4f1e92f53a2c61", "segmentIndex": 4, "channel": "public_reply", "kind": "text", "content": "第三句话作为收尾，希望对你有所帮助。", "conversationId": "conv_trace_x"}
-{"type": "generation.completed", "generationId": "gen_4eef332825ed432b9b4108b664", "messageId": "msg_8bcbcc783678422fa7c1af1771", "channel": "public_reply", "finishReason": "stop", "usage": {"rounds": [{"model": "deepseek/deepseek-chat", "session_id": "conv_trace_x", "input_tokens": 12, "output_tokens": 18, "total_tokens": 30, "cached_tokens": 0, "reasoning_tokens": 0, "round_num": 0, "timestamp": "2026-08-04T15:27:50.351549+00:00"}], "turn_total": 30}, "model": "deepseek/deepseek-chat", "mood": "开心", "completeness": "complete", "conversationId": "conv_trace_x", "conversationUsage": {"total": 30, "byModel": {"deepseek/deepseek-chat": 30}}}
+{"type": "session", "conversationId": "conv_frame_1", "messages": [], "token_stats": {"total": 0, "byModel": {}}}
+{"type": "user_message.ack", "messageId": "msg_frame_ack2", "clientRequestId": "req_frame_session1", "conversationId": "conv_frame_1", "receivedAt": "2026-08-09T00:00:00+00:00", "status": "accepted"}
+{"type": "generation.started", "generationId": "gen_frame_2", "messageId": "msg_frame_ast2", "conversationId": "conv_frame_1"}
+{"type": "generation.segment.started", "generationId": "gen_frame_2", "segmentId": "seg_frame_pub0", "segmentIndex": 0, "channel": "public_reply", "kind": "text", "conversationId": "conv_frame_1"}
+{"type": "generation.segment.completed", "generationId": "gen_frame_2", "segmentId": "seg_frame_pub0", "segmentIndex": 0, "channel": "public_reply", "kind": "text", "content": "已切换到会话 conv_frame_1。", "conversationId": "conv_frame_1"}
+{"type": "generation.completed", "generationId": "gen_frame_2", "messageId": "msg_frame_ast2", "channel": "public_reply", "finishReason": "stop", "usage": {"rounds": [], "turn_total": 0}, "model": "deepseek/deepseek-chat", "mood": "平静", "completeness": "complete", "conversationId": "conv_frame_1", "conversationUsage": {"total": 0, "byModel": {}}}
 {"type": "state", "state": "idle"}

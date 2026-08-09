@@ -1,9 +1,12 @@
-"""python -m frontend_contract → 跑 gen_ts 生成 contract.generated.ts（--check 漂移检测）。
+"""python -m frontend_contract → 生成三产物（ts/schema/raw_ts）--check 漂移检测。
 
-- 默认：收集存在的契约子模块模型 → generate_ts → 写 frontend/src/types/contract.generated.ts
-- --check：生成到临时文件，git diff --exit-code 校验无漂移（非零退出码 → CI 红）
+- 默认：收集存在的契约子模块模型 → generate_ts → 写 frontend/src/types/contract.generated.ts；
+  gen_schema.build_document → frontend_contract/contract.schema.json；
+  generate_raw_ts → frontend_contract/contract.raw.ts
+- --check：各产物生成到临时文件，git diff --exit-code 校验无漂移（非零退出码 → CI 红）
 """
 import importlib
+import json
 import subprocess
 import sys
 import tempfile
@@ -12,14 +15,21 @@ from typing import Annotated, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
+from frontend_contract import gen_schema
 from frontend_contract.base import ContractModel
-from frontend_contract.gen_ts import generate_ts
+from frontend_contract.gen_ts import generate_raw_ts, generate_ts
+from frontend_contract.version import PROTOCOL_VERSION, TRANSPORT_VERSION
 
 # 契约子模块：Task 2/4/5 逐步添加（ws_message / rest / debug），用 importlib 动态收集存在的
 _SUBMODULES = ("ws_message", "rest", "debug")
 
-_OUTPUT = (Path(__file__).resolve().parent.parent
-           / "frontend" / "src" / "types" / "contract.generated.ts")
+# 三产物输出路径（schema 与 gen_schema 共用同一路径定义，单一来源）
+_OUTPUTS: dict[str, Path] = {
+    "ts": (Path(__file__).resolve().parent.parent
+           / "frontend" / "src" / "types" / "contract.generated.ts"),
+    "schema": gen_schema.OUTPUT,
+    "raw_ts": Path(__file__).resolve().parent / "contract.raw.ts",
+}
 
 
 def _collect() -> tuple[list[type[BaseModel]], dict[str, list[type[BaseModel]]]]:
@@ -54,22 +64,32 @@ def _collect() -> tuple[list[type[BaseModel]], dict[str, list[type[BaseModel]]]]
 def main() -> int:
     """生成入口：默认写文件，--check 只校验不写。返回进程退出码。"""
     models, discriminated = _collect()
-    out = generate_ts(models, discriminated)
+    schema_doc = gen_schema.build_document()
+    artifacts: dict[str, str] = {
+        "ts": generate_ts(models, discriminated),
+        "schema": json.dumps(schema_doc, indent=2, ensure_ascii=False) + "\n",
+        "raw_ts": generate_raw_ts(
+            models, discriminated, TRANSPORT_VERSION, PROTOCOL_VERSION,
+            schema_doc["schemaHash"]),
+    }
     if "--check" in sys.argv:
-        with tempfile.NamedTemporaryFile("w", suffix=".ts", delete=False) as f:
-            f.write(out)
-            tmp = f.name
-        diff = subprocess.run(
-            ["git", "diff", "--exit-code", "--no-index", "--", tmp, str(_OUTPUT)],
-            capture_output=True, text=True)
-        if diff.returncode != 0:
-            print("contract.generated.ts 漂移！请运行 make gen-types 重新生成后提交。",
-                  file=sys.stderr)
-            print(diff.stdout, file=sys.stderr)
-            return 1
+        for name, content in artifacts.items():
+            with tempfile.NamedTemporaryFile("w", suffix=Path(_OUTPUTS[name]).suffix,
+                                             delete=False) as f:
+                f.write(content)
+                tmp = f.name
+            diff = subprocess.run(
+                ["git", "diff", "--exit-code", "--no-index", "--", tmp, str(_OUTPUTS[name])],
+                capture_output=True, text=True)
+            if diff.returncode != 0:
+                print(f"{_OUTPUTS[name].name} 漂移！请运行 make gen-types 重新生成后提交。",
+                      file=sys.stderr)
+                print(diff.stdout, file=sys.stderr)
+                return 1
         return 0
-    _OUTPUT.write_text(out, encoding="utf-8")
-    print(f"已生成 {_OUTPUT}")
+    for name, content in artifacts.items():
+        _OUTPUTS[name].write_text(content, encoding="utf-8")
+    print("已生成 " + ", ".join(str(_OUTPUTS[n]) for n in artifacts))
     return 0
 
 
