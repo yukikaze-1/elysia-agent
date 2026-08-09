@@ -328,6 +328,8 @@ class MessagesPageResponse(ContractModel):
     messages: list[Message] = Field(description="消息列表")
     has_more: bool = Field(description="是否还有更多")
     total: int = Field(description="会话消息总数")
+    cursor: Optional[str] = Field(
+        default=None, description="不透明游标（_id 形式），翻同方向下一页时回传 before/after；无更多或空页省略")
 
 
 class MessageContextResponse(ContractModel):

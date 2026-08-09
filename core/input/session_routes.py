@@ -542,7 +542,12 @@ async def sessions_activate_handler(request: web.Request) -> web.Response:
 
 
 async def sessions_messages_handler(request: web.Request) -> web.Response:
-    """GET /api/sessions/{conversationId}/messages — 历史分页（before/limit）或增量（after=）。"""
+    """GET /api/sessions/{conversationId}/messages — 历史分页（before/limit）或增量（after=）。
+
+    9A-2（严格区分）：before/after 只认 Mongo _id 游标（不透明 cursor 形式），
+    messageId 形式一律 400 CONTRACT_VALIDATION。响应 cursor 从 raw 消息列表
+    （契约转换前）最末条取——页内契约化失败被丢弃的消息不影响 raw 边界。
+    """
     agent = request.app["agent"]
     sid = request.match_info["conversationId"]
     if not await _session_exists(agent, sid):
@@ -550,7 +555,11 @@ async def sessions_messages_handler(request: web.Request) -> web.Response:
     limit = _parse_limit(request, default=50, cap=200)
     after = request.query.get("after", "").strip() or None
     if after:
-        messages, has_more = await agent.message_repo.query_after(SessionId(sid), MessageId(after), limit=limit)
+        try:
+            after_oid = ObjectId(after)
+        except InvalidId:
+            return _error_response("CONTRACT_VALIDATION", "非法 after 游标", 400)
+        messages, has_more = await agent.message_repo.query_after(SessionId(sid), after_oid, limit=limit)
     else:
         before = request.query.get("before", "").strip() or None
         # 畸形 before 游标 → 400 CONTRACT_VALIDATION（验收修复：原 ObjectId 未捕获 → 500）
@@ -561,8 +570,13 @@ async def sessions_messages_handler(request: web.Request) -> web.Response:
                 return _error_response("CONTRACT_VALIDATION", "非法 before 游标", 400)
         messages, has_more = await agent.message_repo.query_page(SessionId(sid), before=before, limit=limit)
     total = await agent.message_repo.count_by_session(SessionId(sid))
+    # cursor 从 raw messages（契约转换前）取，绝不可从 _contract_messages 输出取——
+    # 页内契约化失败被丢弃的消息仍在 raw 列表，cursor 须指向 raw 边界避免下页重复/漏
+    cursor = None
+    if messages and has_more:
+        cursor = messages[-1].metadata.get("_mongo_id")
     resp = rest_contract.MessagesPageResponse(
-        messages=_contract_messages(messages), has_more=has_more, total=total)
+        messages=_contract_messages(messages), has_more=has_more, total=total, cursor=cursor)
     return web.json_response(resp.wire_dict())
 
 

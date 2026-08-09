@@ -294,27 +294,25 @@ class MessageRepository(Repository):
             return None
         return _doc_to_message(docs[0])
 
-    async def query_after(self, session_id: SessionId, message_id: MessageId, *,
+    async def query_after(self, session_id: SessionId, after_oid: ObjectId, *,
                           limit: int = 20) -> tuple[list[Message], bool]:
-        """定位锚点消息（{session_id, message_id}）之后的消息，正序返回。
+        """定位锚点 ObjectId 之后的消息，正序返回（_id > after_oid 过滤器）。
+
+        9A-2：锚点从 message_id 改为 Mongo _id——不再按 message_id 查找锚点消息
+        （无缺失特判），直接过滤 _id > after_oid；锚点为会话最新（或所有更近消息
+        已删）时返回空页 + False。
 
         Args:
             session_id: 会话 ID。
-            message_id: 锚点消息 ID。
+            after_oid: 锚点消息的 Mongo ObjectId（游标）。
             limit: 每页条数，默认 20。
 
         Returns:
-            (锚点之后的消息列表, has_more) 元组（按 _id 升序）。锚点不存在或
-            数据库不可用时返回 ([], False)。
+            (锚点之后的消息列表, has_more) 元组（按 _id 升序）。数据库不可用时返回 ([], False)。
         """
         if self._db is None:
             return [], False
-        anchor = await self._db.find(
-            COLLECTION, {"session_id": session_id, "message_id": message_id}, limit=1)
-        if not anchor:
-            return [], False
-        anchor_id = _oid(anchor[0]["_id"])
-        filter_expr = {"session_id": session_id, "_id": {"$gt": anchor_id}}
+        filter_expr = {"session_id": session_id, "_id": {"$gt": after_oid}}
         docs = await self._db.find(COLLECTION, filter_expr, sort=[("_id", 1)], limit=limit + 1)
         has_more = len(docs) > limit
         if has_more:

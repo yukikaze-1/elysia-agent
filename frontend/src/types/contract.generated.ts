@@ -1282,6 +1282,8 @@ export interface MessagesPageResponse {
   has_more: boolean
   /** 会话消息总数 */
   total: number
+  /** 不透明游标（_id 形式），翻同方向下一页时回传 before/after；无更多或空页省略 */
+  cursor?: string
 }
 
 /** 消息上下文窗口响应（跳回来源消息定位锚点）。 */

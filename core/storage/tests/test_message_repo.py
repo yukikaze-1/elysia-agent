@@ -203,7 +203,9 @@ class TestMessageRepositoryBatch3:
         fake = FakeDocumentDBBackend()
         repo = MessageRepository(db=fake)
         _seed(fake, [_archive_doc("user", f"m{i}", f"msg-{i}", f"2026-08-01T10:{i:02d}:00+00:00") for i in range(5)])
-        messages, has_more = asyncio.run(repo.query_after("sid", "msg-1"))
+        # 9A-2：锚点传 ObjectId（Mongo _id），过滤器 _id > oid
+        anchor = next(d for d in fake.collections["message_archive"] if d["message_id"] == "msg-1")
+        messages, has_more = asyncio.run(repo.query_after("sid", anchor["_id"]))
         assert [m.message_id for m in messages] == ["msg-2", "msg-3", "msg-4"]
         assert has_more is False
 
@@ -212,16 +214,43 @@ class TestMessageRepositoryBatch3:
         fake = FakeDocumentDBBackend()
         repo = MessageRepository(db=fake)
         _seed(fake, [_archive_doc("user", f"m{i}", f"msg-{i}", f"2026-08-01T10:{i:02d}:00+00:00") for i in range(8)])
-        messages, has_more = asyncio.run(repo.query_after("sid", "msg-0", limit=3))
+        anchor = next(d for d in fake.collections["message_archive"] if d["message_id"] == "msg-0")
+        messages, has_more = asyncio.run(repo.query_after("sid", anchor["_id"], limit=3))
         assert [m.message_id for m in messages] == ["msg-1", "msg-2", "msg-3"]
         assert has_more is True
 
+    def test_query_after_oid_anchor_pages(self):
+        """9A-2：query_after 锚点改 _id——正序分页，两页无重无漏；锚点为会话最新 → 空页 + False。"""
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, [_archive_doc("user", f"m{i}", f"msg-{i}", f"2026-08-01T10:{i:02d}:00+00:00") for i in range(6)])
+        docs = fake.collections["message_archive"]
+        # 第一页：after=ObjectId(msg-2._id)，limit=2 → msg-3, msg-4（正序）
+        page1, has_more1 = asyncio.run(repo.query_after(
+            "sid", next(d for d in docs if d["message_id"] == "msg-2")["_id"], limit=2))
+        assert [m.message_id for m in page1] == ["msg-3", "msg-4"]
+        assert has_more1 is True
+        # 第二页：after=ObjectId(msg-4._id) → msg-5，两页无重无漏
+        page2, has_more2 = asyncio.run(repo.query_after(
+            "sid", next(d for d in docs if d["message_id"] == "msg-4")["_id"], limit=2))
+        assert [m.message_id for m in page2] == ["msg-5"]
+        assert has_more2 is False
+        # 无更近消息（锚点已是会话最新，或所有更近消息已删）→ ([], False)，不抛
+        page3, has_more3 = asyncio.run(repo.query_after(
+            "sid", next(d for d in docs if d["message_id"] == "msg-5")["_id"], limit=2))
+        assert page3 == []
+        assert has_more3 is False
+
     def test_query_after_missing_anchor(self):
+        """Q8：锚点改 ObjectId 后无 message_id 查找特判——「无更近消息」→ 空页 + False。"""
         from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
         fake = FakeDocumentDBBackend()
         repo = MessageRepository(db=fake)
         _seed(fake, [_archive_doc("user", "x", "msg-0", "2026-08-01T10:00:00+00:00")])
-        messages, has_more = asyncio.run(repo.query_after("sid", "nope"))
+        # 锚点取最新一条 _id（会话最新）→ 无更近消息 → 空页 + False
+        latest = fake.collections["message_archive"][-1]["_id"]
+        messages, has_more = asyncio.run(repo.query_after("sid", latest))
         assert messages == []
         assert has_more is False
 

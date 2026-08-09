@@ -528,12 +528,164 @@ class TestMessagesHistory:
         app = _make_app(agent)
         client = await aiohttp_client(app)
 
-        # 锚点 msg_2 之后的消息正序返回
-        resp = await client.get("/api/sessions/conv_test_inc/messages", params={"after": "msg_conv_test_inc_2"})
+        # 9A-2：after 只认 _id 游标（messageId 形式 → 400，见 test_invalid_cursor_400）——
+        # 先取锚点 msg_2 的 Mongo _id
+        resp = await client.get("/api/sessions/conv_test_inc/messages", params={"limit": "50"})
+        by_id = {m["message_id"]: m["_id"] for m in (await resp.json())["messages"]}
+        anchor = by_id["msg_conv_test_inc_2"]
+
+        # 锚点之后的消息正序返回
+        resp2 = await client.get("/api/sessions/conv_test_inc/messages", params={"after": anchor})
+        assert resp2.status == 200
+        data2 = await resp2.json()
+        assert [m["message_id"] for m in data2["messages"]] == ["msg_conv_test_inc_3", "msg_conv_test_inc_4"]
+        assert data2["total"] == 5
+
+    @pytest.mark.asyncio
+    async def test_page_returns_cursor(self, aiohttp_client):
+        """9A-2：before 分页响应携带 cursor（=页内最旧消息 _id），回传 before=<cursor> 无重无漏。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_pc")
+        await _seed_text_messages(agent, "conv_test_pc", 5)
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/api/sessions/conv_test_pc/messages", params={"limit": "2"})
         assert resp.status == 200
         data = await resp.json()
-        assert [m["message_id"] for m in data["messages"]] == ["msg_conv_test_inc_3", "msg_conv_test_inc_4"]
-        assert data["total"] == 5
+        assert len(data["messages"]) == 2
+        assert data["has_more"] is True
+        # cursor = 页内最旧消息（raw 最后一条）的 _id
+        assert data["cursor"] == _msg_id_from_page(data, -1)
+        first_ids = {m["message_id"] for m in data["messages"]}
+
+        resp2 = await client.get("/api/sessions/conv_test_pc/messages",
+                                 params={"limit": "2", "before": data["cursor"]})
+        data2 = await resp2.json()
+        assert len(data2["messages"]) == 2
+        second_ids = {m["message_id"] for m in data2["messages"]}
+        assert first_ids.isdisjoint(second_ids), "两页不重叠"
+        assert data2["has_more"] is True
+        # 两页无漏：前 4 条 = msg_4..msg_1
+        assert first_ids | second_ids == {
+            "msg_conv_test_pc_4", "msg_conv_test_pc_3",
+            "msg_conv_test_pc_2", "msg_conv_test_pc_1"}
+
+    @pytest.mark.asyncio
+    async def test_after_cursor_pagination(self, aiohttp_client):
+        """9A-2：after=<cursor> 正序分页两页无重无漏；末页无更多省略 cursor。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_ac")
+        await _seed_text_messages(agent, "conv_test_ac", 5)
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/api/sessions/conv_test_ac/messages", params={"limit": "50"})
+        by_id = {m["message_id"]: m["_id"] for m in (await resp.json())["messages"]}
+        anchor = by_id["msg_conv_test_ac_1"]
+
+        resp2 = await client.get("/api/sessions/conv_test_ac/messages",
+                                 params={"after": anchor, "limit": "2"})
+        data2 = await resp2.json()
+        assert [m["message_id"] for m in data2["messages"]] == ["msg_conv_test_ac_2", "msg_conv_test_ac_3"]
+        assert data2["has_more"] is True
+        assert data2["cursor"] == by_id["msg_conv_test_ac_3"]
+
+        resp3 = await client.get("/api/sessions/conv_test_ac/messages",
+                                 params={"after": data2["cursor"], "limit": "2"})
+        data3 = await resp3.json()
+        assert [m["message_id"] for m in data3["messages"]] == ["msg_conv_test_ac_4"]
+        assert data3["has_more"] is False
+        assert "cursor" not in data3  # 无更多 → 省略
+
+    @pytest.mark.asyncio
+    async def test_invalid_cursor_400(self, aiohttp_client):
+        """9A-2：before/after 只认 _id 游标——messageId 形式/非 hex → 400 CONTRACT_VALIDATION。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_ic")
+        await _seed_text_messages(agent, "conv_test_ic", 3)
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        for params in ({"before": "msg_conv_test_ic_1"},
+                       {"after": "msg_conv_test_ic_1"},
+                       {"after": "nothex"}):
+            resp = await client.get("/api/sessions/conv_test_ic/messages", params=params)
+            assert resp.status == 400, params
+            assert (await resp.json())["code"] == "CONTRACT_VALIDATION"
+
+    @pytest.mark.asyncio
+    async def test_deleted_anchor_empty_page(self, aiohttp_client):
+        """9A-2/Q8：after=已删锚点——锚点为会话最新 → 空页 + 无 cursor + has_more=false 不 500；
+        删非最新锚点 → 返回更新的消息（_id > oid 过滤器语义，非空页）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_da")
+        await _seed_text_messages(agent, "conv_test_da", 4)  # msg_0..msg_3
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/api/sessions/conv_test_da/messages", params={"limit": "50"})
+        by_id = {m["message_id"]: m["_id"] for m in (await resp.json())["messages"]}
+        assert "msg_conv_test_da_3" in by_id
+
+        # 删除锚点（会话最新一条 msg_3）→ after 无更近消息 → 空页 + False，不 500
+        await agent.message_repo.delete_one(MessageId(by_id["msg_conv_test_da_3"]))
+        resp2 = await client.get("/api/sessions/conv_test_da/messages",
+                                 params={"after": by_id["msg_conv_test_da_3"]})
+        assert resp2.status == 200
+        data2 = await resp2.json()
+        assert data2["messages"] == []
+        assert data2["has_more"] is False
+        assert "cursor" not in data2
+        assert data2["total"] == 3
+
+        # 删非最新锚点（msg_1）→ 返回更新的消息（_id > oid 语义，非空页）
+        await agent.message_repo.delete_one(MessageId(by_id["msg_conv_test_da_1"]))
+        resp3 = await client.get("/api/sessions/conv_test_da/messages",
+                                 params={"after": by_id["msg_conv_test_da_1"]})
+        assert resp3.status == 200
+        data3 = await resp3.json()
+        assert [m["message_id"] for m in data3["messages"]] == ["msg_conv_test_da_2"]
+        assert data3["has_more"] is False
+
+    @pytest.mark.asyncio
+    async def test_page_cursor_from_raw_not_contract(self, aiohttp_client, monkeypatch):
+        """9A-2：cursor 从 raw 消息取（契约转换前）——页内含契约化失败被丢弃的消息，cursor 仍指向 raw 边界。
+
+        当前契约下 `_doc_to_message` 输出与 rest.Message 近同构，自然归档消息几乎不会契约化失败；
+        用 stub query_page 注入一条 metadata._mongo_id 非 str 的 raw 坏消息（rest.Message 校验失败被丢弃），
+        验证 cursor 仍取 raw 列表最后一条（非契约输出），下一 before 页不会因此重复/漏消息。
+        """
+        from unittest.mock import AsyncMock
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_rnc")
+        raw_msgs = [
+            UserMessage(content=[TextPart(content="ok")], message_id=MessageId("m0"),
+                        timestamp="2026-08-01T10:00:00+00:00", metadata={"_mongo_id": "a" * 24}),
+            UserMessage(content=[TextPart(content="bad")], message_id=MessageId("m1"),
+                        timestamp="2026-08-01T10:00:01+00:00", metadata={"_mongo_id": 123}),
+            UserMessage(content=[TextPart(content="ok2")], message_id=MessageId("m2"),
+                        timestamp="2026-08-01T10:00:02+00:00", metadata={"_mongo_id": "b" * 24}),
+        ]
+        # stub 仓库查询：query_page 返回含坏消息的 raw 列表，count 返回总数
+        monkeypatch.setattr(agent.message_repo, "query_page",
+                            AsyncMock(return_value=(raw_msgs, True)))
+        monkeypatch.setattr(agent.message_repo, "count_by_session", AsyncMock(return_value=3))
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/api/sessions/conv_test_rnc/messages", params={"limit": "2"})
+        assert resp.status == 200
+        data = await resp.json()
+        # 坏消息（m1）契约化失败被丢弃，不出现在响应
+        assert [m["message_id"] for m in data["messages"]] == ["m0", "m2"]
+        assert data["has_more"] is True
+        # cursor 从 raw 消息列表最后一条取（契约转换前）→ 指向 raw 边界
+        assert data["cursor"] == "b" * 24
+        assert data["total"] == 3
 
     @pytest.mark.asyncio
     async def test_empty_session(self, aiohttp_client):
