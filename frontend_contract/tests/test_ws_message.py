@@ -336,3 +336,27 @@ class TestWsEnums:
         assert "export type MessageChannel =" in out
         assert "export type SegmentKind =" in out
         assert "'inner_voice'" in out
+
+
+# ── 9B-2 ClientMessage 判别联合（Task 5） ─────────────────────────────────
+
+
+@pytest.mark.unit
+def test_client_message_discriminated_union():
+    """ClientMessage 判别联合：type=text → V2TextMessage 实例（TextMessage 不入联合）。"""
+    from pydantic import TypeAdapter
+
+    m = TypeAdapter(w.ClientMessage).validate_python(
+        {"type": "text", "content": "hi", "clientRequestId": "r1"})
+    assert m.type == "text"
+    assert isinstance(m, w.V2TextMessage)
+
+
+@pytest.mark.unit
+def test_client_message_excludes_text_message():
+    """ClientMessage 不含 TextMessage——type=text 由 V2TextMessage 独占（discriminator 撞名）。"""
+    from typing import get_args
+
+    members = {c.__name__ for c in get_args(get_args(w.ClientMessage)[0])}
+    assert "TextMessage" not in members
+    assert "V2TextMessage" in members

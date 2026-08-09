@@ -879,6 +879,27 @@ class ToolStatusMessage(ContractModel):
     executionSummary: Optional[str] = Field(default=None, description="执行摘要（去本地路径），可缺省")
 
 
+# ─────────────────── ClientMessage 判别联合（模块级，9B-2） ───────────────────
+
+# 客户端→服务器入站消息判别联合：v2 连接 handle_json_message 入口统一
+# TypeAdapter(ClientMessage).validate_python 校验（未知 type/错误枚举/字段类型/缺必填
+# → ErrorMessage CONTRACT_VALIDATION）。**不含 `TextMessage`**——其 `type="text"` 与
+# `V2TextMessage` 撞 discriminator，pydantic 判别联合无法共存（定义即抛 TypeError）；
+# `type="text"` 由 `V2TextMessage` 独占，v1 多模态 text 走 data.get 老路径。
+
+ClientMessage = Annotated[
+    Union[
+        V2TextMessage, InterruptMessage, SwitchModelMessage, SetServiceMessage,
+        SetTtsVoiceMessage, ToolApprovalMessage, WakeToggleMessage, ActivateSessionMessage,
+        VoiceRecordStartMessage, VoiceRecordStopMessage, VoiceCommitMessage, VoiceDiscardMessage,
+        VoiceSessionStartMessage, VoiceSessionPauseMessage, VoiceSessionResumeMessage,
+        VoiceSessionStopMessage, VoiceSessionCancelMessage, DictationStartMessage,
+        DictationStopMessage, DictationCancelMessage, AudioCancelMessage, ToolStatusMessage,
+    ],
+    Field(discriminator="type"),
+]
+
+
 # ─────────────────── ServerMessage 判别联合（模块级） ───────────────────
 
 ServerMessage = Annotated[Union[

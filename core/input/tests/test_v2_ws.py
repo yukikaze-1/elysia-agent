@@ -739,3 +739,154 @@ class TestWsErrorEnvelope:
             await ws.close()
         finally:
             await agent.stop()
+
+
+@pytest.mark.service
+class TestClientMessageValidation:
+    """9B-2（Task 5）：v2 入站 ClientMessage 判别联合统一校验——负面表驱动 + 连接存活。
+
+    覆盖：unknown type / 错误枚举 / 缺必填 / 错误字段类型 → ErrorMessage
+    CONTRACT_VALIDATION；text 特判（缺 clientRequestId / list content）→ ACK
+    rejected CONTRACT_VALIDATION；非 dict 帧 → error 而非断连（修 :304 bug）。
+    """
+
+    async def _make(self):
+        """v2 FakeAgent + FakeWs（仿 test_voice_ws.make）+ 独立幂等表。"""
+        from core.input.tests.test_voice_ws import FakeAgent, FakeWs
+        from core.input.voice_sessions import VoiceSessionManager
+
+        ws = FakeWs()
+        agent = FakeAgent(ws)
+        agent.bus = type("Bus", (), {
+            "post": lambda self, d, **kw: agent.bus_posts.append(d)})()
+
+        async def set_service(service, enabled):
+            return {"ok": True, "enabled": enabled}
+        agent.set_service = set_service
+        mgr = VoiceSessionManager(agent=agent, emit=ws.send_json,
+                                  on_vad_interrupt=lambda: None)
+        reset_store()
+        return agent, ws, mgr
+
+    @staticmethod
+    def _last_error(ws) -> dict:
+        errs = [s for s in ws.sent if s.get("type") == "error"]
+        assert errs, f"无 error 帧: {ws.sent}"
+        return errs[-1]
+
+    @staticmethod
+    def _has_interrupt(agent) -> bool:
+        return any(getattr(p, "event_type", "") == "interrupt" for p in agent.bus_posts)
+
+    @pytest.mark.asyncio
+    async def test_unknown_type_rejected_connection_alive(self):
+        """unknown type → ErrorMessage CONTRACT_VALIDATION，连接存活（后续 interrupt 仍处理）。"""
+        from core.input.ws_handler import handle_json_message
+
+        agent, ws, mgr = await self._make()
+        await handle_json_message({"type": "nope"}, agent, None, ws, voice_mgr=mgr)
+        assert self._last_error(ws)["code"] == "CONTRACT_VALIDATION"
+        # 连接存活：后续合法 interrupt 仍被处理（bus.post 收到 InterruptData）
+        await handle_json_message({"type": "interrupt"}, agent, None, ws, voice_mgr=mgr)
+        assert self._has_interrupt(agent), f"interrupt 未被处理: {ws.sent}"
+
+    @pytest.mark.asyncio
+    async def test_set_service_illegal_service_rejected(self):
+        """错误枚举：set_service service=llm（非法，仅 stt/tts）→ CONTRACT_VALIDATION。"""
+        from core.input.ws_handler import handle_json_message
+
+        agent, ws, mgr = await self._make()
+        await handle_json_message(
+            {"type": "set_service", "service": "llm", "enabled": True},
+            agent, None, ws, voice_mgr=mgr)
+        assert self._last_error(ws)["code"] == "CONTRACT_VALIDATION"
+        assert not any(s.get("type") == "service_mode_result" for s in ws.sent)
+
+    @pytest.mark.asyncio
+    async def test_text_missing_client_request_id_ack_rejected(self):
+        """v2 text 缺 clientRequestId → ACK rejected CONTRACT_VALIDATION（text 不走判别联合）。"""
+        from core.input.ws_handler import handle_json_message
+
+        agent, ws, mgr = await self._make()
+        await handle_json_message({"type": "text", "content": "hi"},
+                                  agent, None, ws, voice_mgr=mgr)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected"
+        assert acks[-1]["error"]["code"] == "CONTRACT_VALIDATION"
+        assert not any(s.get("type") == "error" for s in ws.sent)  # 走 ACK 通道非 ErrorMessage
+
+    @pytest.mark.asyncio
+    async def test_v2_list_content_text_ack_rejected(self):
+        """v2 list-content text → ACK rejected CONTRACT_VALIDATION（Q6 content 非 str 前置检查）。"""
+        from core.input.ws_handler import handle_json_message
+
+        agent, ws, mgr = await self._make()
+        await handle_json_message({"type": "text", "content": ["x"]},
+                                  agent, None, ws, voice_mgr=mgr)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected"
+        assert acks[-1]["error"]["code"] == "CONTRACT_VALIDATION"
+        assert not any(s.get("type") == "error" for s in ws.sent)  # 走 ACK 通道非 ErrorMessage
+
+    @pytest.mark.asyncio
+    async def test_non_text_missing_required_rejected(self):
+        """非 text 缺必填：dictation.start 缺 clientRequestId → ErrorMessage CONTRACT_VALIDATION。"""
+        from core.input.ws_handler import handle_json_message
+
+        agent, ws, mgr = await self._make()
+        await handle_json_message({"type": "dictation.start"},
+                                  agent, None, ws, voice_mgr=mgr)
+        assert self._last_error(ws)["code"] == "CONTRACT_VALIDATION"
+
+    @pytest.mark.asyncio
+    async def test_wrong_field_type_rejected(self):
+        """错误字段类型：voice.record.start 缺 recordingId → ErrorMessage CONTRACT_VALIDATION。"""
+        from core.input.ws_handler import handle_json_message
+
+        agent, ws, mgr = await self._make()
+        await handle_json_message({"type": "voice.record.start"},
+                                  agent, None, ws, voice_mgr=mgr)
+        assert self._last_error(ws)["code"] == "CONTRACT_VALIDATION"
+        assert not any(s.get("type") == "voice.transcript" for s in ws.sent)
+
+    @pytest.mark.asyncio
+    async def test_interrupt_with_extra_field_still_processed(self):
+        """无必填字段消息带 extra 字段不影响：interrupt + extra → 正常处理（bus.post）。"""
+        from core.input.ws_handler import handle_json_message
+
+        agent, ws, mgr = await self._make()
+        await handle_json_message({"type": "interrupt", "extra": 123},
+                                  agent, None, ws, voice_mgr=mgr)
+        assert self._has_interrupt(agent)
+
+    @pytest.mark.asyncio
+    async def test_non_dict_frame_error_not_disconnect(self, aiohttp_client):
+        """非 dict 帧（顶层数组/字符串）→ error CONTRACT_VALIDATION 而非断连（修 :304 bug）。"""
+        import json as _json
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_str(_json.dumps(["top", "level"]))
+            await ws.send_str(_json.dumps("bare string"))
+            got = 0
+            for _ in range(8):
+                m = await asyncio.wait_for(ws.receive(), timeout=5)
+                if m.type == WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("type") == "error":
+                        assert d["code"] == "CONTRACT_VALIDATION"
+                        got += 1
+                    if got >= 2:
+                        break
+            assert got == 2, f"应收到 2 个 error 帧，实际 {got}"
+            # 连接存活：后续正常 v2 文本仍被处理（非断连）
+            ack = await _send_and_read_ack(ws, "还在线", "req_alive")
+            assert ack["status"] == "accepted"
+            await ws.close()
+        finally:
+            await agent.stop()

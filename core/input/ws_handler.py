@@ -9,7 +9,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web, WSMsgType
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from core.memory.session_manager import SessionBusyError
 from core.schema.event import InterruptData, UserInputData
@@ -39,7 +39,7 @@ from frontend_contract import (
     UserAckMessage,
     WakeMessage,
 )
-from frontend_contract.ws_message import AckStatus
+from frontend_contract.ws_message import AckStatus, ClientMessage
 from core.input.tts_profile import _active_tts_profile
 
 if TYPE_CHECKING:
@@ -303,7 +303,14 @@ async def handle_ws(
                 try:
                     data = json.loads(msg.data)
                     if not isinstance(data, dict):
-                        raise ValidationError("WS 消息必须是 JSON 对象")
+                        # 9B-2（Task 5）：非 dict 帧不再抛单参 ValidationError（pydantic 2.13
+                        # 构造抛 TypeError 导致断连）——直接回 error 帧，连接存活。
+                        await ws.send_json(ErrorMessage(
+                            message="WS 消息必须是 JSON 对象",
+                            code="CONTRACT_VALIDATION",
+                            requestId=_current_request_id(),
+                        ).wire_dict())
+                        continue
                     await handle_json_message(data, agent, audio_buf, ws, voice_mgr=voice_mgr,
                                               sent_message_ids=sent_message_ids)
                 except json.JSONDecodeError:
@@ -798,13 +805,45 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             messageId 的可选集合（透传给 _route_v2_text，Task 9 消费）。
     """
     msg_type = data.get("type", "")
+    # 9B-2（Task 5）：v2 连接入站统一走 ClientMessage 判别联合校验——未知 type /
+    # 错误枚举 / 错误字段类型 / 缺必填 → ErrorMessage CONTRACT_VALIDATION，连接存活。
+    # type="text" 特判跳过判别联合：text 由 V2TextMessage 独占（TextMessage 不入联合），
+    # 但保留既有 v2 ACK rejected 通道（缺 clientRequestId → ACK rejected 而非
+    # ErrorMessage，spec §4.2）；content 类型收紧由 text 分支内部完成（Q6）。
+    # v1 连接保持 data.get 老路径（不破坏 v1 多模态 text）。
+    msg: Any = None
+    channel = _find_channel(agent, ws)
+    if channel is not None and channel.protocol_version >= 2:
+        if data.get("type") == "text":
+            msg = None  # text 不走判别联合——保留既有 v2 text 错误通道
+        else:
+            try:
+                msg = TypeAdapter(ClientMessage).validate_python(data)
+            except ValidationError as e:
+                if ws is not None:  # _find_channel 命中即 ws 非空，此处仅满足 pyright 收紧
+                    await ws.send_json(ErrorMessage(
+                        message=f"Invalid message: {e}", code="CONTRACT_VALIDATION",
+                        requestId=_current_request_id()).wire_dict())
+                return
     if msg_type == "wake_toggle":
-        enabled = data.get("enabled", False)
+        enabled = msg.enabled if msg is not None else data.get("enabled", False)
         if audio_buf:
             audio_buf.set_wake_enabled(enabled)
             logger.debug("唤醒词开关: %s", "开启" if enabled else "关闭")
     elif msg_type == "text":
         text_content = data.get("content", "")
+        # Q6：v2 text content 非 str 检查放在 isinstance 分发之前——现有 list 分支直接走
+        # process_message 多模态路径（v2 已收紧为 str，媒体走 attachments/stickerId），
+        # 且 text_content.strip() 对 list 会 AttributeError。v1 多模态 text 不受影响。
+        if (channel is not None and channel.protocol_version >= 2
+                and not isinstance(text_content, str)):
+            await _send_ack(ws, "", data.get("clientRequestId", ""),
+                            data.get("clientMessageId"), data.get("conversationId"),
+                            "rejected",
+                            error={"code": "CONTRACT_VALIDATION",
+                                   "message": "v2 text content 必须为字符串",
+                                   "retryable": False})
+            return
         if isinstance(text_content, str):
             if text_content.strip() or data.get("stickerId") or data.get("attachments"):
                 # 批次 2 v2 路由（握手 protocol_version=2）：ACK + 幂等 + 预分配 messageId。
@@ -833,8 +872,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         logger.debug("WS 收到打断指令")
         await do_interrupt(agent)
     elif msg_type == "switch_model":
-        service = data.get("service", "")
-        model = data.get("model", "")
+        service = msg.service if msg is not None else data.get("service", "")
+        model = msg.model if msg is not None else data.get("model", "")
         if service == "llm":
             result = await agent.switch_llm(model)
         elif service == "stt":
@@ -864,7 +903,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         # 经活动会话激活 TTS 后端 list_voices() 校验 voice 存在 → 写活动会话
         # service_state.tts_voice + save → 回 set_tts_voice_result；未知 voice/
         # 后端不可用 → {ok: False, error}，不改 state（失败保留原选择）。
-        voice = data.get("voice", "")
+        voice = msg.voice if msg is not None else data.get("voice", "")
         result: dict = {"ok": False, "error": "TTS 未启用"}
         # review 修正：空串/缺省 voice = 清除覆盖，回退 character 默认音色——
         # 否则 tts_voice 只进不出（list_voices 只含系统音色，角色默认不在列），无恢复路径。
@@ -908,8 +947,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
                     break
         logger.info("WS 设置 TTS 声音: voice=%s ok=%s", voice, result.get("ok"))
     elif msg_type == "set_service":
-        service = data.get("service", "")
-        enabled = data.get("enabled", False)
+        service = msg.service if msg is not None else data.get("service", "")
+        enabled = msg.enabled if msg is not None else data.get("enabled", False)
         result = await agent.set_service(service, enabled)
         # 广播给所有 WebSocket 客户端（而非仅发送者）——含失败时的 enabled 字段。
         # 不复制 switch_model_result 模式（那只回给请求方）。capabilities 重播在 Task 7 接入。
@@ -937,8 +976,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             except Exception:
                 logger.debug("notify_stt_disabled 失败", exc_info=True)
     elif msg_type == "tool_approval":
-        request_id = data.get("request_id", "")
-        approved = data.get("approved", False)
+        request_id = msg.request_id if msg is not None else data.get("request_id", "")
+        approved = msg.approved if msg is not None else data.get("approved", False)
         if request_id:
             ok = agent.tool_adapter._manager.submit_approval(request_id, approved)  # noqa: SLF001
             if ok:
@@ -971,6 +1010,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             elif channel.connection_id is None:
                 logger.warning("WS tool.status: channel 无 connection_id，拒绝")
             else:
+                # data 已由判别联合校验为合法 ToolStatusMessage——bridge.handle_status
+                # 契约接受 wire 帧（camelCase dict），原样透传（既有行为保持）。
                 await agent.desktop_bridge.handle_status(
                     data, sender_connection_id=channel.connection_id)
     elif msg_type == "voice.record.start":
@@ -978,7 +1019,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             logger.debug("voice.record.start: 非 v2 或无 mgr，忽略")
         else:
             try:
-                await voice_mgr.start_recording(data.get("recordingId", ""))
+                await voice_mgr.start_recording(
+                    msg.recordingId if msg is not None else data.get("recordingId", ""))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "voice.record.stop":
@@ -986,7 +1028,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             logger.debug("voice.record.stop: 非 v2 或无 mgr，忽略")
         else:
             try:
-                await voice_mgr.stop_recording(data.get("recordingId", ""))
+                await voice_mgr.stop_recording(
+                    msg.recordingId if msg is not None else data.get("recordingId", ""))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "voice.commit":
@@ -1000,7 +1043,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             logger.debug("voice.discard: 非 v2 或无 mgr，忽略")
         else:
             try:
-                await voice_mgr.discard_recording(data.get("recordingId", ""))
+                await voice_mgr.discard_recording(
+                    msg.recordingId if msg is not None else data.get("recordingId", ""))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "voice_session.start":
@@ -1010,7 +1054,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             await _voice_stt_gate(agent, voice_mgr)
             try:
                 await voice_mgr.start_realtime(
-                    data.get("sessionId", ""), data.get("conversationId"))
+                    msg.sessionId if msg is not None else data.get("sessionId", ""),
+                    msg.conversationId if msg is not None else data.get("conversationId"))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "voice_session.pause":
@@ -1019,7 +1064,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         else:
             await _voice_stt_gate(agent, voice_mgr)
             try:
-                await voice_mgr.pause_session(data.get("sessionId", ""))
+                await voice_mgr.pause_session(
+                    msg.sessionId if msg is not None else data.get("sessionId", ""))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "voice_session.resume":
@@ -1028,7 +1074,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         else:
             await _voice_stt_gate(agent, voice_mgr)
             try:
-                await voice_mgr.resume_session(data.get("sessionId", ""))
+                await voice_mgr.resume_session(
+                    msg.sessionId if msg is not None else data.get("sessionId", ""))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "voice_session.stop":
@@ -1037,7 +1084,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         else:
             await _voice_stt_gate(agent, voice_mgr)
             try:
-                await voice_mgr.stop_session(data.get("sessionId", ""))
+                await voice_mgr.stop_session(
+                    msg.sessionId if msg is not None else data.get("sessionId", ""))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "voice_session.cancel":
@@ -1046,7 +1094,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         else:
             await _voice_stt_gate(agent, voice_mgr)
             try:
-                await voice_mgr.cancel_session(data.get("sessionId", ""))
+                await voice_mgr.cancel_session(
+                    msg.sessionId if msg is not None else data.get("sessionId", ""))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "dictation.start":
@@ -1055,7 +1104,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         else:
             await _voice_stt_gate(agent, voice_mgr)
             try:
-                await voice_mgr.start_dictation(data.get("clientRequestId", ""))
+                await voice_mgr.start_dictation(
+                    msg.clientRequestId if msg is not None else data.get("clientRequestId", ""))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "dictation.stop":
@@ -1064,7 +1114,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         else:
             await _voice_stt_gate(agent, voice_mgr)
             try:
-                await voice_mgr.stop_dictation(data.get("clientRequestId", ""))
+                await voice_mgr.stop_dictation(
+                    msg.clientRequestId if msg is not None else data.get("clientRequestId", ""))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "dictation.cancel":
@@ -1073,7 +1124,8 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         else:
             await _voice_stt_gate(agent, voice_mgr)
             try:
-                await voice_mgr.cancel_dictation(data.get("clientRequestId", ""))
+                await voice_mgr.cancel_dictation(
+                    msg.clientRequestId if msg is not None else data.get("clientRequestId", ""))
             except VoiceSessionError as e:
                 await _send_voice_error(ws, e)
     elif msg_type == "audio.cancel":
@@ -1081,7 +1133,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         if voice_mgr is None or not _is_v2(agent, ws):
             logger.debug("audio.cancel: 非 v2，忽略")
         else:
-            sid = data.get("stream_id")
+            sid = msg.stream_id if msg is not None else data.get("stream_id")
             if sid is None:
                 await _send_voice_error(ws, VoiceSessionError(
                     "CONTRACT_VALIDATION", "缺少 stream_id"))
