@@ -656,3 +656,41 @@ class TestCharacterEngineAttachSession:
         engine.sync_reflector_to_state()
         assert cs_b.reflector_buffer == [("B问", "B答")]
         assert cs_a.reflector_buffer == [("A问", "A答")]  # 各写各的
+
+
+@pytest.mark.asyncio
+async def test_buffer_message_fixed_reflector_not_rebound():
+    """C3/P1-10：显式 reflector 固化——session switch 后 engine._reflector 变了，
+    in-flight buffer 仍写到发起会话 reflector。"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    engine = _make_engine()
+    refl_a = MagicMock()
+    refl_a.buffer = AsyncMock()
+    refl_b = MagicMock()
+    refl_b.buffer = AsyncMock()
+    engine._reflector = refl_b  # noqa: SLF001 — 模拟已切到 B
+
+    task = engine.buffer_message("u", "a", reflector=refl_a)
+    assert task is not None
+    await task
+
+    refl_a.buffer.assert_awaited_once()  # A 会话内容只进 A
+    refl_b.buffer.assert_not_awaited()   # B 的 reflector 不被污染
+
+
+@pytest.mark.asyncio
+async def test_buffer_message_returns_trackable_task():
+    """C3/P1-10：buffer_message 返回 task（不再内部创建不可见 task）。"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    engine = _make_engine()
+    refl = MagicMock()
+    refl.buffer = AsyncMock()
+    engine._reflector = refl  # noqa: SLF001
+
+    task = engine.buffer_message("u", "a")
+
+    assert task is not None and not task.done()
+    await task
+    refl.buffer.assert_awaited_once()

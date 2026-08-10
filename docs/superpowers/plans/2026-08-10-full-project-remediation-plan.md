@@ -101,7 +101,7 @@ A1/A2
 - [x] B6 Session 查询、TTL 迁移与 reflector
 - [x] C1 用户消息 FIFO 与 work lease
 - [x] C2 Per-call ToolInvocation 与 call-ID task
-- [ ] C3 After-response 目标会话绑定
+- [x] C3 After-response 目标会话绑定
 - [ ] C4 shutdown 顺序与可重入 restart
 - [ ] C5 checkpoint 与 proactive event
 - [ ] D1 文件 containment/symlink/资源上限
@@ -1272,6 +1272,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：无
 - 契约或 Electron 影响：无
 - 剩余风险/计划偏差：审批 token/hash 显式绑定（call_id+session+规范化参数+expiry）未作为独立校验实现——per-call ctx 已使决策与执行天然同域（A 的规范化路径不会落到 B）；`cancel_all` 返回取消结果（而非只 gather）未实现；streaming emitter 仍经 ctx.services['_emit']（per-call 已隔离）；文件系统端到端 P1-09 复现测试在 D1 补
+
+### C3 — After-response/reflector 目标会话绑定
+
+- 状态：完成
+- Commit：`<见 C3 提交>`
+- 变更文件：`core/personality/engine.py`、`core/cognitive/loop.py`、`core/personality/tests/test_engine.py`
+- 新增失败测试：`test_buffer_message_fixed_reflector_not_rebound`（显式 reflector 固化，session switch 后仍写发起会话）、`test_buffer_message_returns_trackable_task`
+- 目标测试：`pytest core/personality/tests/test_engine.py core/cognitive/` → 213 passed
+- 批次门禁：`ruff check` → 通过；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：无
+- 契约或 Electron 影响：无
+- 剩余风险：`_pending_after_response` 只记录 after-response 顶层 task，reflector buffer task 在 `_after_response` 内追加（_finalize_turn 的清理在 buffer 前跑，靠 shutdown drain 兜底）；`_shutting_down` 复位仍归 C4
 
 ## 14. 需要停止并请求决策的情况
 

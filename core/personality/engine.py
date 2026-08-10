@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
     from core.config.character_config import CharacterConfig
     from core.memory.session import SessionMemory
+    from core.personality.reflector import CharacterReflector
     from core.schema.character import CharacterState
     from core.storage.character_version_repo import CharacterVersionRepository
 
@@ -379,22 +380,48 @@ class CharacterEngine:
 
     # ---- Reflector 代理 ----
 
-    async def _safe_buffer(self, user_msg: str, assistant_msg: str) -> None:
-        """安全缓冲：捕获 reflector.buffer 异常，避免 fire-and-forget task 异常丢失。"""
-        try:
-            await self._reflector.buffer(user_msg, assistant_msg)
-        except Exception:
-            logger.warning("buffer_message: reflector.buffer 失败", exc_info=True)
+    async def _safe_buffer(self, user_msg: str, assistant_msg: str,
+                           reflector: "CharacterReflector | None" = None) -> None:
+        """安全缓冲：捕获 reflector.buffer 异常，避免 fire-and-forget task 异常丢失。
 
-    def buffer_message(self, user_msg: str, assistant_msg: str) -> None:
-        """缓冲一轮对话到 CharacterReflector。
+        C3/P1-10：target 在调用时固化（发起会话的 reflector）——session switch
+        rebind engine._reflector 不影响在途 buffer 的目标。
 
         Args:
             user_msg: 用户消息文本。
             assistant_msg: 助手回复文本。
+            reflector: 显式目标 reflector；None 回退 self._reflector。
         """
-        if self._reflector:
-            asyncio.create_task(self._safe_buffer(user_msg, assistant_msg))
+        target = reflector if reflector is not None else self._reflector
+        if target is None:
+            return
+        try:
+            await target.buffer(user_msg, assistant_msg)
+        except Exception:
+            logger.warning("buffer_message: reflector.buffer 失败", exc_info=True)
+
+    def buffer_message(self, user_msg: str, assistant_msg: str,
+                       reflector: "CharacterReflector | None" = None
+                       ) -> "asyncio.Task | None":
+        """缓冲一轮对话到 CharacterReflector。
+
+        C3/P1-10：reflector 在调用时固化（发起会话的 reflector）——跨 session 切换
+        的 in-flight after-response 不写到新会话的 reflector；返回 task 供调用方
+        统一登记 tail registry（不再内部创建不可见 task）。
+
+        Args:
+            user_msg: 用户消息文本。
+            assistant_msg: 助手回复文本。
+            reflector: 显式目标 reflector（发起会话固化）；None 回退 self._reflector。
+
+        Returns:
+            缓冲 task（调用方登记统一 tail registry），无 reflector 时 None。
+        """
+        target = reflector if reflector is not None else self._reflector
+        if target is None:
+            return None
+        return asyncio.create_task(
+            self._safe_buffer(user_msg, assistant_msg, reflector=target))
 
     async def flush_reflector(self) -> None:
         """Agent shutdown 时调用 — 触发未完成的反思。"""

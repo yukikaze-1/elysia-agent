@@ -1241,6 +1241,9 @@ class CognitiveLoop(CognitiveTools):
         # 本轮 in-flight 异步延续仍写发起会话 / 发起引擎。
         target_session = session if session is not None else self._session
         target_engine = engine if engine is not None else self._character_engine
+        # C3/P1-10：在首个 await 前固化发起会话的 reflector——consolidate await 期间
+        # session switch 会 rebind engine._reflector，晚读会写到新会话的 reflector。
+        target_reflector = getattr(target_engine, "_reflector", None) if target_engine else None
 
         items = []  # 初始化，避免 NameError
         if self._consolidator:
@@ -1256,7 +1259,12 @@ class CognitiveLoop(CognitiveTools):
                 logger.warning("记忆沉淀失败", exc_info=True)
         if target_engine:
             try:
-                target_engine.buffer_message(user_message, assistant_response)
+                # C3/P1-10：用固化 reflector 缓冲——A 会话内容只进 A reflector；
+                # task 登记统一 tail registry（shutdown/delete 可 drain）
+                task = target_engine.buffer_message(
+                    user_message, assistant_response, reflector=target_reflector)
+                if task is not None:
+                    self._pending_after_response.append(task)
             except Exception:
                 logger.warning("性格反思缓冲失败", exc_info=True)
         # 更新 MemoryReflector 计数器
