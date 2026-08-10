@@ -1,0 +1,7 @@
+# 开发/测试/门禁工具（F2，2026-08-11）— environment.yml 与 setup.sh 共用的 dev 依赖单源。
+# runtime 在 requirements.txt；两者由 environment.lock.yml 锁精确版本（make lock-env 重新生成）。
+pytest
+ruff
+pyright
+pip-audit
+bandit

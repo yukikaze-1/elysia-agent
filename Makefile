@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright start gen-types gen-frames check-types check-compose
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -38,6 +38,20 @@ test-external:
 # workflow_engine / workflow_contract 独立迭代门禁（不含 external——真实 LLM）
 test-workflow-engine:
 	conda run -n Elysia python -m pytest Module/workflow_engine/tests Module/workflow_contract/tests -m "unit or service" -q --tb=short
+
+# 依赖锁（F2，统一 conda）：environment.yml 声明源 + environment.lock.yml 精确锁。
+# 增删依赖：改 requirements.txt / environment.yml → 重新生成锁 → 提交。
+lock-env:
+	conda env export -n $(CONDA_ENV) > environment.lock.yml
+	@echo "环境锁已重新生成 environment.lock.yml——确认 diff 后提交（含 pip 精确版本）"
+
+# 依赖与静态安全扫描（F2）：pip-audit（已知漏洞）+ Bandit（生产 Python 静态分析）
+# PYSEC-2026-3447（setuptools 80.10.2 → 83.0.0）为已接受的已知约束：修复版 83 移除
+# pkg_resources，而 webrtcvad 2.0.10 依赖它（requirements 钉 setuptools<81 即因此）。
+# 迁移到 webrtcvad-wheels（免 pkg_resources）后再解除此豁免，见 todo.md。
+audit:
+	conda run -n $(CONDA_ENV) pip-audit --ignore-vuln PYSEC-2026-3447
+	conda run -n $(CONDA_ENV) bandit -r core/ Module/ frontend_contract/ scripts/ -q -c bandit.yaml
 
 check:
 	conda run -n $(CONDA_ENV) python app.py --check

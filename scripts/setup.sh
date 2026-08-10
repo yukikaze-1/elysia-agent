@@ -72,6 +72,8 @@ fi
 echo ""
 echo -e "${BOLD}Step 2: pip install -r requirements.txt${NC}"
 $PYTHON -m pip install -r requirements.txt
+# F2：dev/test 工具（pytest/ruff/pyright/pip-audit/bandit）一并安装——CI 门禁依赖
+$PYTHON -m pip install -r requirements-dev.txt
 echo -e "${GREEN}✓${NC} pip 依赖安装完成"
 
 # ── Step 3: 前端构建（F3：backend-only 默认；--with-frontend 才构建 v1 UI）───

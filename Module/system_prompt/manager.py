@@ -42,7 +42,9 @@ class PromptManager:
         self._logger = logger or logging.getLogger(__name__)
         self.template_dir = template_dir
 
-        self.env = Environment(
+        # nosec B701——本地受信 .j2 模板（非用户 HTML），autoescape 关闭是刻意的
+        # （prompt 模板需原始控制，输出给 LLM 非浏览器）；bandit 静态误报 XSS。
+        self.env = Environment(  # nosec B701
             loader=FileSystemLoader(template_dir),
             trim_blocks=True,
             lstrip_blocks=True,

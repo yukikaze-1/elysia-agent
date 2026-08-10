@@ -105,7 +105,9 @@ class Jinja2Section(PromptSection):
             template_path: .j2 模板文件的绝对路径。
         """
         self._template_path = template_path
-        self._env = Environment(trim_blocks=True, lstrip_blocks=True)
+        # nosec B701——本地受信 .j2 模板（非用户 HTML），autoescape 关闭是刻意的
+        # （prompt 模板需原始控制，输出给 LLM 非浏览器）；bandit 静态误报 XSS。
+        self._env = Environment(trim_blocks=True, lstrip_blocks=True)  # nosec B701
         self._env.filters["datetime"] = _datetime_filter
         self._cached_template = None
 

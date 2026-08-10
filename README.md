@@ -25,10 +25,12 @@ cd Agent
 
 - **[Miniconda](https://docs.anaconda.com/miniconda/install/)** — Python 环境管理。装好后在终端输入 `conda --version` 确认
 - **[Docker Engine](https://docs.docker.com/engine/install/ubuntu/)** — 安装后自带 Docker Compose 插件。装好后输入 `docker --version` 确认
-- **[Node.js](https://nodejs.org/en/download)** — 前端构建需要（>= 18）。装好后输入 `node --version` 和 `npm --version` 确认
+- **[Node.js](https://nodejs.org/en/download)** — 仅构建 v1 网页 UI 需要（>= 18，backend-only 可省略）。装好后输入 `node --version` 和 `npm --version` 确认
 - **[DeepSeek API key](https://platform.deepseek.com/api_keys)** — 免费注册，在左侧「API Keys」页面点"创建 API key"，复制备用
 
 > 系统自带 Python >= 3.11 可替代 conda（建议配合 `python3 -m venv .venv` 使用，避免依赖污染系统环境）
+>
+> **依赖管理（F2，统一 conda）**：`environment.yml` 是声明单源（runtime = `requirements.txt`，dev/test 工具 = `requirements-dev.txt`）；`environment.lock.yml` 是精确可复现锁（`conda env export`，含版本 + build hash）。新机器 `conda env create -f environment.lock.yml` 即得与 CI 一致环境；增删依赖后跑 `make lock-env` 重新生成锁，`make audit`（pip-audit + bandit）做安全门禁。后续评估迁移 uv（见 todo.md）。
 
 ### 3. 首次安装（只需一次）
 

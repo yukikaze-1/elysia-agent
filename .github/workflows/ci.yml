@@ -47,7 +47,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
-          python -m pip install -r requirements.txt pytest ruff pyright
+          python -m pip install -r requirements.txt pytest ruff pyright pip-audit bandit
       - name: Lint (import style gate)
         # F4：scripts/ 纳入 lint（此前遗漏 17 个 ANN）
         run: python -m ruff check core/ Module/ frontend_contract/ scripts/ --exclude __pycache__
@@ -58,6 +58,14 @@ jobs:
           python -m frontend_contract --check
           python scripts/gen_contract_frames.py --check
           python scripts/check_error_codes.py
+      - name: Dependency lock drift check (F2)
+        # requirements.txt 顶层包必须在 environment.lock.yml 有精确 pin
+        run: python scripts/check_env_lock.py
+      - name: Security scan (F2, pip-audit + bandit)
+        # PYSEC-2026-3447 豁免理由见 Makefile audit target（webrtcvad/setuptools<81 约束）
+        run: |
+          python -m pip-audit --ignore-vuln PYSEC-2026-3447
+          python -m bandit -r core/ Module/ frontend_contract/ scripts/ -q -c bandit.yaml
       - name: CI trust boundary check
         run: python scripts/check_ci_isolation.py
       - name: Run quick tests (unit + service, 无外部 key; F1 含 WorkflowEngine unit/service)

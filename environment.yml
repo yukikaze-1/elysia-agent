@@ -1,0 +1,17 @@
+# Elysia Agent 依赖单源（F2，2026-08-11）
+# conda env create -f environment.yml       # 从声明源建环境（读 requirements*.txt）
+# conda env create -f environment.lock.yml  # 从精确锁复现（版本 + build hash，可复现）
+# conda env export -n Elysia > environment.lock.yml  # 重新生成锁（make lock-env）
+#
+# runtime 包列表在 requirements.txt、dev/test 工具在 requirements-dev.txt
+# （pip 子段引用，避免双份漂移）；environment.lock.yml 锁精确版本。
+
+name: Elysia
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -r requirements.txt
+      - -r requirements-dev.txt
