@@ -18,8 +18,10 @@
 |------|------|
 | [14-Cyrene-后端配合改造任务清单-v0.1.md](14-Cyrene-后端配合改造任务清单-v0.1.md) | 前端联调需求清单（BE-001~BE-062：目的 + 后端现状 + 验收标准）——联调验收依据（2026-08-09 从 git 历史恢复） |
 | [15-Cyrene-后端改造执行上下文与Prompt-v0.1.md](15-Cyrene-后端改造执行上下文与Prompt-v0.1.md) | 前端改造执行上下文：必须纠正的错误口径（架构纪律）+ 默认产品决策 + 批次实施顺序（2026-08-09 从 git 历史恢复） |
-| [electron-backend-protocol-v2.md](electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 三种语音/TTS 播放契约 + 通用附件与媒体契约（§13）+ 错误码目录 40 码（批次 2-8c） |
-| [electron-backend-security.md](electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF + 附件签名下载与签发安全（§3.5）（批次 1-8c） |
+| [electron-backend-protocol-v2.md](electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 三种语音/TTS 播放契约 + 通用附件与媒体契约（§13）+ 错误码目录 41 码（批次 2-9C/9D） |
+| [electron-backend-security.md](electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF + 附件签名下载与签发安全（§3.5）+ 公开入口限流/幂等持久化（§3.6，批次 1-9D） |
+| [contract-release-2026-08-11.md](contract-release-2026-08-11.md) | Contract 发版记录：transportVersion/protocolVersion/schemaHash/backend commit + 产物清单 |
+| [review/electron-v2-backend-change-list-2026-08-11.md](review/electron-v2-backend-change-list-2026-08-11.md) | Electron 后端契约变更清单（D6b/D6c：idempotency_durable / 幂等 fail-closed / RATE_LIMITED） |
 
 ## 子目录
 

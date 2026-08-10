@@ -12,6 +12,7 @@
 | `generations` | MongoDB | generation 生命周期状态（BE-024） | 30天 TTL |
 | `attachments` | MongoDB | 附件元数据（BE-070，fail-closed） | TTL 不设，生命周期由 GC 管（软删 24h / 未关联 7d） |
 | `desktop_calls` | MongoDB | 桌面工具调用状态（批次 4） | 30天 TTL（按 updated_at） |
+| `idempotency` | MongoDB | `clientRequestId` 幂等 claim（D6c，2026-08-11） | 1h TTL（`expires_at` BSON Date，TTL 索引）；`(conversation_id, client_request_id)` 唯一约束防并发双写 |
 
 ---
 

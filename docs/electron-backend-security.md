@@ -146,13 +146,18 @@ server {
 - **签名 URL 不记录 query string**：日志只记 `attachment_id`（不记 `sig`/`exp` 全文）；错误信封 `details` 默认空 dict——附件路径/密钥/正文不入错误体。旧 `/api/images` 链路安全由全局 Bearer 维持（不在签名/GC 保护内，见 §4）。
 - **附件持有者语义**：签名 URL 授权对象为「该 attachment_id」而非「上传者」——单用户 Demo 可接受；多用户需按 owner 过滤（非本批次，见 §4）。
 
+### 3.6 公开入口限流与幂等持久化（D6b/D6c，批次 9D，2026-08-11）
+
+- **限流（D6b）**：单进程 token-bucket，覆盖 WS 建连、消息（text/voice）、provider test、upload、search、工具审批。REST 超限 → **429 `RATE_LIMITED`** + `Retry-After: 60`；WS 建连超限 → 升级前 429；WS 消息超限 → `error{RATE_LIMITED, retryable, retryHint}` 连接存活。key **认证主体优先**、匿名回退 IP；**默认不信任 `X-Forwarded-For`**（伪造代理头不改变 key，防限流绕过与高基数内存 DoS）；内存有界（max_keys）+ 旧 key 定期清理。**单进程语义**——多实例部署需自建共享后端，`RATE_LIMITED` 不代表全局配额（产品化门禁登记）。默认配额（`config.yaml` `server.rate_limit_*_per_min`，env `RATE_LIMIT_*_PER_MIN` 覆盖，0 关闭）：ws 120 / messages 120 / provider_test 30 / upload 60 / search 60 / tools 120。
+- **幂等持久化（D6c）**：`clientRequestId` claim 持久化到 Mongo（`idempotency` 集合，`(conversation_id, client_request_id)` 唯一 + `expires_at` BSON Date TTL 1h）——ACK 丢失 + 后端重启后重试不重复生成。**产品模式 + Mongo 离线 → fail-closed**（v2 文本/`voice.commit` 幂等 lookup/claim 失败 → `user_message.ack{rejected, STORAGE_UNAVAILABLE, retryable}`，不生成 messageId）；**回环 dev + Mongo 离线 → 内存降级**，`server_info.features.idempotency_durable=false` 暴露非 durable 窗口（Mongo 恢复自动回 durable）。
+
 ## 4. 已知缺口（后置批次）
 
 | 缺口 | 后置 |
 |---|---|
 | ~~`/uploads/*` 匿名 GET 已拒（有 token），但短期签名 URL / 鉴权下载未实现~~ **已闭合（批次 7）**：新附件走 `/api/attachments/{id}` 签名下载（HMAC 24h 短签，免 Bearer）+ `/sign` 签发端点（Bearer）；`/uploads/` 静态挂载收敛为仅 legacy images/desktop 子目录。**遗留**：legacy `/uploads/images/*`、`/uploads/desktop/*` 仍只由产品认证保护（无 per-call/per-owner 下载鉴权，callId/文件名即 URL 路径）——旧链路与批次 4 桌面截图兼容，未迁移到签名体系，批次 7 记录在案（见 §3.5） | 已闭合；遗留迁移随前端切换驱动 |
 | 附件**多用户持有者过滤**：签名 URL 授权对象为 attachment_id 而非上传者，单用户 Demo 语义 | 批次 7+（多用户时按 owner 过滤） |
-| 速率限制实现（`RATE_LIMITED` 仅入目录） | 批次 2+ |
+| ~~速率限制实现（`RATE_LIMITED` 仅入目录）~~ **已闭合（D6b，2026-08-11）**：单进程 token-bucket 落地（REST 429 + WS RATE_LIMITED + retryHint），见 §3.6。**遗留**：多实例共享后端未实现（单进程语义文档化） | 多实例部署时自建共享后端 |
 | **Secret Store 已落地（批次 5）**：`data/secrets/` 明文 0600 + gitignore + 不落 MongoDB（防备份泄漏）；密钥**只写不可读**，只回 `credentialConfigured`。遗留：明文待批次 7+ 评估加密 | 批次 7+（加密评估） |
 | DNS rebinding 完全闭合（IP pinning）——批次 5 出站守卫在连接前校验 + httpx 二次解析建连存在 TOCTOU 窗口（见 §3.3），未承诺防活跃 rebinding | 批次 7+（如需） |
 
