@@ -78,6 +78,15 @@ class MilvusBackend(VectorDBBackend):
                 f"Known: {', '.join(sorted(INDEX_PRESETS))}"
             )
 
+        # review 复核 #10：metric 校验必须先于 drop/recreate——此前 replace=True 时
+        # 先 drop_collection 再校验显式 metric_type，无效 metric 会先破坏现有数据。
+        metric = (metric_type or preset["metric_type"]).upper()
+        if metric not in SUPPORTED_METRIC_TYPES:
+            raise ValueError(
+                f"Unsupported metric_type '{metric}' for collection '{name}'. "
+                f"Supported: {', '.join(sorted(SUPPORTED_METRIC_TYPES))}"
+            )
+
         exists = await asyncio.to_thread(self._client.has_collection, name)
         if exists:
             if not replace:
@@ -101,12 +110,6 @@ class MilvusBackend(VectorDBBackend):
             self._client.create_collection, name, schema=schema
         )
 
-        metric = (metric_type or preset["metric_type"]).upper()
-        if metric not in SUPPORTED_METRIC_TYPES:
-            raise ValueError(
-                f"Unsupported metric_type '{metric}' for collection '{name}'. "
-                f"Supported: {', '.join(sorted(SUPPORTED_METRIC_TYPES))}"
-            )
         self._metric_types[name] = metric
 
         index_params = self._client.prepare_index_params()

@@ -427,6 +427,18 @@ class TestMilvusMetricRestore:
             )
 
     @pytest.mark.asyncio
+    async def test_replace_validates_metric_before_drop(self, backend):
+        """review 复核 #10：replace=True 时显式 metric_type 校验必须先于 drop——
+        无效 metric 不得先破坏现有 collection 数据再抛错。"""
+        backend._client.has_collection.return_value = True
+        with pytest.raises(ValueError, match="Unsupported metric_type"):
+            await backend.create_collection(
+                "col_x", dimension=4, replace=True, metric_type="HAMMING"
+            )
+        backend._client.drop_collection.assert_not_called()
+        backend._client.create_collection.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_load_collection_restores_cosine(self, backend):
         """跨实例 load：从 Milvus index params 恢复 COSINE。"""
         backend._client.list_indexes.return_value = ["embedding"]
