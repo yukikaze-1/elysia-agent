@@ -7,7 +7,9 @@
 
 import pytest
 
-from Module.workflow_engine.schema.internal import ExperienceRecord, ExperienceStatus
+from Module.workflow_contract import SessionId, WorkflowId, WorkflowStatus
+from Module.workflow_engine.schema.internal import ExperienceRecord, ExperienceStatus, WorkflowState
+from Module.workflow_engine.schema.types import ResumeErrorCode
 
 pytestmark = pytest.mark.unit
 
@@ -19,3 +21,17 @@ class TestExperienceStatus:
     def test_experience_record_status_default(self):
         # 既有默认值 "unverified"（tool_name/error_pattern 为必填字段，需显式提供）
         assert ExperienceRecord(tool_name="x", error_pattern="y").status == "unverified"
+
+
+def test_resume_error_has_queue_full():
+    assert ResumeErrorCode.QUEUE_FULL.value == "QUEUE_FULL"
+
+
+def test_workflow_state_resume_pending_default_false():
+    st = WorkflowState(
+        task_id=WorkflowId("t1"),
+        status=WorkflowStatus.QUEUED,
+        tools=[],
+        session_id=SessionId("s1"),
+    )
+    assert st.resume_pending is False

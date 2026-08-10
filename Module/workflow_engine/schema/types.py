@@ -114,6 +114,7 @@ class ResumeErrorCode(StrEnum):
     INVALID_STATE = "invalid_state"                          # 非 PAUSED 状态 / CAS 冲突
     PENDING_APPROVALS_FAILED = "pending_approvals_failed"    # 重推审批请求失败
     NODE_RECOVERY_FAILED = "node_recovery_failed"            # 已完成节点恢复失败
+    QUEUE_FULL = "QUEUE_FULL"                                # resume 队列满，快速失败
 
 
 class NodeStatus(StrEnum):

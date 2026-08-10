@@ -128,6 +128,7 @@ class WorkflowState(BaseModel):
     error_code: WorkflowErrorCode | None = None    # 机器可读的任务级错误码（终态 FAILED 时写入）
     token_entries: list[TokenComponent] = Field(default_factory=list)  # TokenLedger write-through 逐条记录
     token_usage: dict[str, int] = Field(default_factory=dict)  # 按组件汇总 {"planner": N, "executor": N, ...}
+    resume_pending: bool = False                       # E2：resume 排队/直接恢复进行中标记（幂等去重）
 
     def is_terminal(self) -> bool:
         """任务是否已到达终态。

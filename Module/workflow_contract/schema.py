@@ -62,10 +62,10 @@ NewType 防止调用方把 task_id / artifact_id 误当 node_id 传入。
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class WorkflowStatus(StrEnum):
-    """任务状态机——11 态。
+    """任务状态机——12 态。
 
     入口阶段
-        PENDING → PLANNING → RUNNING
+        QUEUED → PENDING → PLANNING → RUNNING
 
     执行中分支（从 RUNNING 出发）
         软暂停:   RUNNING → PAUSE_REQUESTED → PAUSED → RESUMING → RUNNING
@@ -76,6 +76,7 @@ class WorkflowStatus(StrEnum):
         完成:     RUNNING → COMPLETED
 
     早期退出
+        QUEUED → CANCELLED（排队中取消）
         PENDING → CANCELLED（submit 后立即取消）
         PLANNING → CANCELLED（规划阶段取消）
         PLANNING → FAILED（规划阶段异常）
@@ -83,6 +84,7 @@ class WorkflowStatus(StrEnum):
     终态: COMPLETED / FAILED / CANCELLED（不可逆）
     内部: REPLAN 在 RUNNING 内部完成（Replanner.replan → apply_patch → 继续 RUNNING），不暴露为独立状态。
     """
+    QUEUED = "queued"
     PENDING = "pending"
     PLANNING = "planning"
     RUNNING = "running"
@@ -97,7 +99,7 @@ class WorkflowStatus(StrEnum):
 
 
 class SubmitRejectionCode(StrEnum):
-    """submit() 同步拒绝码——5 项。
+    """submit() 同步拒绝码——6 项。
 
     WorkflowEngine.submit() 参数校验不通过时返回，
     CognitiveLoop 据此生成用户可见的错误信息。
@@ -108,6 +110,7 @@ class SubmitRejectionCode(StrEnum):
     PLAN_TOO_LARGE = "plan_too_large"                   # DAG 预估节点数超限
     CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"  # 上下文窗口不足
     TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"     # 预估 token 消耗超用户剩余配额
+    QUEUE_FULL = "QUEUE_FULL"                           # 执行队列已满，快速失败
 
     # RBACLevel 已归位 Module/tool/capability.py（canonical home），顶部直接 import，供 HITLData.rbac_level 使用。
 
@@ -358,13 +361,14 @@ class HITLData(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class WorkflowEventType(StrEnum):
-    """WorkflowMailbox 事件类型——6 种。"""
+    """WorkflowMailbox 事件类型——7 种。"""
     PROGRESS = "progress"
     APPROVAL_NEEDED = "approval_needed"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
     PAUSED = "paused"
+    QUEUED = "queued"
 
 
 class WorkflowEvent(BaseModel):

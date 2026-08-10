@@ -11,6 +11,8 @@ from Module.workflow_contract import (
     DelegationStatus,
     HITLData,
     SessionId,
+    SubmitRejectionCode,
+    WorkflowEventType,
     WorkflowId,
     WorkflowStatus,
     WorkflowConstraints,
@@ -80,3 +82,15 @@ def test_constraint_resolve_clamps():
         ConstraintConfig(max_dag_nodes=20)
     )
     assert resolved.max_dag_nodes == 20
+
+
+def test_workflow_status_has_queued():
+    assert WorkflowStatus.QUEUED.value == "queued"
+
+
+def test_workflow_event_type_has_queued():
+    assert WorkflowEventType.QUEUED.value == "queued"
+
+
+def test_submit_rejection_has_queue_full():
+    assert SubmitRejectionCode.QUEUE_FULL.value == "QUEUE_FULL"
