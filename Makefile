@@ -38,10 +38,11 @@ check:
 	conda run -n $(CONDA_ENV) python app.py --check
 
 # 导入风格门禁：禁相对导入（TID252），__init__.py / __main__.py 豁免。见 ruff.toml
+# F4：scripts/ 纳入 lint（此前遗漏 17 个 ANN）。
 lint:
-	ruff check core/ Module/ frontend_contract/ --exclude __pycache__
+	ruff check core/ Module/ frontend_contract/ scripts/ --exclude __pycache__
 
-# 类型检查门禁（pyright，全仓生产代码 core + Module + frontend_contract；须 Elysia env 运行——base env 无 aiohttp 会漏报 25 处）
+# 类型检查门禁（pyright，全仓生产代码 core + Module + frontend_contract + scripts；须 Elysia env 运行——base env 无 aiohttp 会漏报 25 处）
 pyright:
 	conda run -n $(CONDA_ENV) pyright
 

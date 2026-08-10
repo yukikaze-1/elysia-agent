@@ -172,7 +172,8 @@ class TestCharacterReflector:
 
 
 @pytest.mark.service
-def test_reflector_submits_to_character_engine():
+@pytest.mark.asyncio
+async def test_reflector_submits_to_character_engine():
     """Reflector 完成后提交事件到 CharacterEngine。"""
     from core.personality import CharacterEngine
     from core.schema.character import CharacterState
@@ -202,6 +203,10 @@ def test_reflector_submits_to_character_engine():
     for _ in range(10):
         reflector_ref._buffer.append(("你好", "你好呀"))
 
-    asyncio.run(reflector_ref.flush())
+    await reflector_ref.flush()
+    # consume_trigger 触发 fire-and-forget 的 awareness 判定 task——显式让出
+    # 一个 tick 使其跑完。若用 asyncio.run 关循环，pending task 未 step 会让
+    # 内层 _judge 协程从未被 await（GC 时 "coroutine was never awaited" 警告）。
+    await asyncio.sleep(0)
     assert s.state_l3
     assert "敷衍" in s.state_l3

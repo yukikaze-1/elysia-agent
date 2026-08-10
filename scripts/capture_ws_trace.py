@@ -33,6 +33,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any, AsyncGenerator, Awaitable, Callable
 
 import os
 
@@ -43,6 +44,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ.setdefault("DEEPSEEK_API_KEY", "test")
 
+from aiohttp import ClientWebSocketResponse  # noqa: E402
+from core.agent import Agent  # noqa: E402
 from core.tests.fake_llm import FakeLLMBackend  # noqa: E402
 
 TRACES_DIR = Path(__file__).resolve().parent.parent / "frontend-handoff-v2" / "traces"
@@ -92,15 +95,19 @@ class FakeLLMWithUsage(FakeLLMBackend):
         self._fault = fault
         self._fault_call = 0
 
-    async def stream_think(self, messages, **kwargs):
+    async def stream_think(self, messages: list[dict], **kwargs: Any
+                            ) -> AsyncGenerator[dict, None]:
         # 故障注入（复用 FakeLLMBackend._maybe_inject_fault 语义：http_503 → httpx 异常）
         if self._fault:
             self._fault_call += 1
             if self._fault == "http_503":
                 import httpx
-                req = object()
-                resp = type("R", (), {"status_code": 503})()
-                raise httpx.HTTPStatusError("unavailable", request=req, response=resp)
+                # 故障注入：构造最小真实 httpx 异常（fake URL，不发网络请求）
+                raise httpx.HTTPStatusError(
+                    "unavailable",
+                    request=httpx.Request("GET", "http://fake.local"),
+                    response=httpx.Response(503),
+                )
         gt_count = 0  # 统计 `>`——第 2 个 `>` 即 `</inner_voice>` 闭合
         for tok in self._tokenize(self.response):
             if self._token_delay:
@@ -134,7 +141,8 @@ class FakeLLMToolCall(FakeLLMBackend):
         super().__init__(response=response)
         self._round = 0
 
-    async def stream_think(self, messages, **kwargs):
+    async def stream_think(self, messages: list[dict], **kwargs: Any
+                            ) -> AsyncGenerator[dict, None]:
         self._round += 1
         if self._round == 1:
             # 先流一段文本，再抛出工具调用
@@ -176,7 +184,7 @@ def _sanitize(line: str) -> str:
     return line
 
 
-def _inject_fake_storage(agent):
+def _inject_fake_storage(agent: Agent) -> Agent:
     """把 agent 的全部 Mongo repo 换成内存 fake（生产数据保护，review 修复 I1）。
 
     无论 Mongo 是否在线，轨迹运行全程不连/不写真实 Mongo：start() 的 connect 落到
@@ -248,16 +256,19 @@ async def _make_agent_isolated(fake: FakeLLMBackend):
     conv_trace_x 为测试会话：清空其内存 deque（轨迹空会话可重放），绝不触碰 default。
     """
     agent = await _make_agent(fake)
+    from core.schema.types import SessionId
+    trace_sid = SessionId("conv_trace_x")
     # 预注册隔离测试会话（内存缓存构造，不触发 load/不落库）
-    agent.session_manager.get("conv_trace_x")  # noqa: SLF001
+    agent.session_manager.get(trace_sid)  # noqa: SLF001
     # 把活动指针切到隔离会话——v2 建连回放取 active 即显示 conv_trace_x（空）
-    await agent.session_manager.switch("conv_trace_x")
+    await agent.session_manager.switch(trace_sid)
     # 清空隔离会话内存 deque——轨迹从空会话开始可重放
-    agent.session_manager.get("conv_trace_x")._messages.clear()  # noqa: SLF001
+    agent.session_manager.get(trace_sid)._messages.clear()  # noqa: SLF001
     return agent
 
 
-async def _drain_connect_frames(ws, frames: list[str], *, max_connect: int = 5
+async def _drain_connect_frames(ws: ClientWebSocketResponse, frames: list[str],
+                                *, max_connect: int = 5
                                 ) -> tuple[list[str], bool]:
     """排空建连帧；异常（连接被 reset/EOF）→ 返回 (frames, truncated=True) 不静默。
 
@@ -279,9 +290,12 @@ async def _drain_connect_frames(ws, frames: list[str], *, max_connect: int = 5
     return frames, truncated
 
 
-async def _capture(fake: FakeLLMBackend, send_then, max_frames: int = 200, timeout: float = 30.0,
+async def _capture(fake: FakeLLMBackend,
+                   send_then: Callable[[ClientWebSocketResponse], Awaitable[None]],
+                   max_frames: int = 200, timeout: float = 30.0,
                    headers: dict | None = None,
-                   make_agent=None) -> list[str]:
+                   make_agent: Callable[[FakeLLMBackend], Awaitable[Agent]] | None = None,
+                   ) -> list[str]:
     """连接 WS，执行 send_then，逐帧记录直到 state idle 或超时。
 
     on_incoming 可选回调：收到某帧后可向 ws 发送应答（如 tool_approval 回传）。
@@ -339,7 +353,7 @@ async def main() -> int:
         fake = FakeLLMWithUsage(response=CHAT_RESPONSE)
         out = TRACES_DIR / "ws-chat.jsonl"
 
-        async def _send(ws):
+        async def _send(ws: ClientWebSocketResponse):
             await ws.send_json({"type": "text", "content": "你好，请介绍一下你自己"})
 
     elif mode == "server_info":
@@ -347,7 +361,7 @@ async def main() -> int:
         fake = FakeLLMWithUsage(response=CHAT_RESPONSE)
         out = TRACES_DIR / "ws-server-info.jsonl"
 
-        async def _send(ws):
+        async def _send(ws: ClientWebSocketResponse):
             # 纯握手捕获：不发送任何消息，只记录建连帧（session/server_info/expression）
             await asyncio.sleep(1.0)
 
@@ -368,7 +382,7 @@ async def main() -> int:
             fake = FakeLLMWithUsage(response=CHAT_RESPONSE)
             out = TRACES_DIR / "ws-v2-chat.jsonl"
 
-            async def _send(ws):
+            async def _send(ws: ClientWebSocketResponse):
                 await ws.send_json({"type": "text", "content": "你好，请介绍一下你自己",
                                     "clientRequestId": rid})
         elif mode == "v2cancel":
@@ -376,7 +390,7 @@ async def main() -> int:
                                     space_after_first_dot=True)
             out = TRACES_DIR / "ws-v2-cancel.jsonl"
 
-            async def _send(ws):
+            async def _send(ws: ClientWebSocketResponse):
                 await ws.send_json({"type": "text", "content": "请详细回答（将被打断）",
                                     "clientRequestId": rid})
                 await asyncio.sleep(1.6)
@@ -385,7 +399,7 @@ async def main() -> int:
             fake = FakeLLMWithUsage(response=CHAT_RESPONSE, fault="http_503")
             out = TRACES_DIR / "ws-v2-fail.jsonl"
 
-            async def _send(ws):
+            async def _send(ws: ClientWebSocketResponse):
                 await ws.send_json({"type": "text", "content": "hi",
                                     "clientRequestId": rid})
 
@@ -406,7 +420,7 @@ async def main() -> int:
         rid = f"req_cap_{os.urandom(4).hex()}"
         headers = {"X-Protocol-Version": "2"}
 
-        async def _send(ws):
+        async def _send(ws: ClientWebSocketResponse):
             # 1) activate_session：切到隔离测试会话（服务端重发该会话回放）
             await ws.send_json({"type": "activate_session", "conversationId": "conv_trace_x"})
             await asyncio.sleep(0.6)  # 等 activate 回放帧落盘再发文本
@@ -429,7 +443,7 @@ async def main() -> int:
                                 space_after_first_dot=True)
         out = TRACES_DIR / "ws-cancel.jsonl"
 
-        async def _send(ws):
+        async def _send(ws: ClientWebSocketResponse):
             await ws.send_json({"type": "text", "content": "请详细回答（将被打断）"})
             # 等第一句 delta 流式出来（inner_voice ≈0.6s + 第一句+空格 ≈1.2s flush）再打断
             await asyncio.sleep(1.6)
@@ -439,7 +453,7 @@ async def main() -> int:
         fake = FakeLLMToolCall(response="tool")
         out = TRACES_DIR / "ws-tool-approval.jsonl"
 
-        async def _send(ws):
+        async def _send(ws: ClientWebSocketResponse):
             await ws.send_json({"type": "text", "content": "请帮我保存一条记忆"})
 
     else:

@@ -164,6 +164,10 @@ class TestCognitiveLoopMethods:
         )
         consolidator = MemoryConsolidator(llm, lt, "TestBot")
         tts = AsyncMock()
+        # get_preprocess 覆写为同步 MagicMock——AsyncMock 方法调用本身会创建未 await
+        # 的 _execute_mock_call 协程（即便 return_value=None 也泄漏），CognitiveLoop
+        # 构造器经 set_backend 同步调用它赋给 _preprocess，GC 时报 "was never awaited"。
+        tts.get_preprocess = MagicMock(return_value=None)
 
         loop = CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
@@ -184,6 +188,8 @@ class TestCognitiveLoopMethods:
     @pytest.mark.asyncio
     async def test_synthesize_legacy_tts_success(self, loop):
         loop._tts = AsyncMock()
+        # 同步 MagicMock——AsyncMock 的 get_preprocess() 调用创建未 await 协程（泄漏）
+        loop._tts.get_preprocess = MagicMock(return_value=None)
         loop._tts.synthesize.return_value = b"fakewav"
         loop._tts_mgr.set_backend(loop._tts)
 
@@ -195,6 +201,7 @@ class TestCognitiveLoopMethods:
     @pytest.mark.asyncio
     async def test_synthesize_legacy_tts_failure(self, loop):
         loop._tts = AsyncMock()
+        loop._tts.get_preprocess = MagicMock(return_value=None)
         loop._tts.synthesize.side_effect = RuntimeError("TTS down")
         loop._tts_mgr.set_backend(loop._tts)
 
@@ -1322,6 +1329,7 @@ class TestLLMAdapterErrors:
                 req = object()
                 resp = type('R', (), {'status_code': 400})()
                 raise httpx.HTTPStatusError("bad request", request=req, response=resp)  # type: ignore[arg-type]
+                yield  # 不可达——仅使本函数成为 async generator（无 yield 则成 coroutine，async for 不消费 → 悬空协程告警）
 
         adapter = LLMAdapter(_test_backend=FailBackend())  # type: ignore[arg-type]
         with pytest.raises(Exception):

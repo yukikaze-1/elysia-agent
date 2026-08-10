@@ -20,6 +20,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_SCRIPT_DIR))  # 使 core/ Module/ 可 import
 load_dotenv(_SCRIPT_DIR / ".env")
 
+from Module.database.documentdb import DocumentDBBackend
 from core.memory.session import SessionMemory
 from core.memory.long_term import LongTermMemory
 from core.storage.message_repo import MessageRepository, COLLECTION as MSG_ARCHIVE_COLLECTION
@@ -102,7 +103,7 @@ class MongoCleaner:
         finally:
             await db.close()
 
-    async def _clean(self, db) -> list[tuple[str, bool, int | str]]:
+    async def _clean(self, db: DocumentDBBackend) -> list[tuple[str, bool, int | str]]:
         results = []
 
         # sessions — 直接 delete_many
