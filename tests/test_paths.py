@@ -97,9 +97,26 @@ class TestEnumMetadata:
         assert ProjectPath.LOG == "log"
 
     def test_count(self):
-        """成员数量正确 — 14 目录 + 8 文件 + 1（批次 4 增 DATA_UPLOADS_DESKTOP、批次 5 增 DATA_SECRETS）= 23。"""
-        members = list(ProjectPath)
-        assert len(members) == 23
+        """成员集合显式列出——新增/删除 ProjectPath 成员必须同步此处。
+
+        用成员名集合替代总数魔法数：此前硬编码 23 已漂移两次（批次 7 增
+        MEMORY_PENDING_DELETES 后未更新；2026-08-10 增 MEMORY_PENDING_SYNCS /
+        SESSION_PENDING_CLEANUP 后 CI test-normal 显性失败）。集合精确匹配——
+        增/删路径都会强制在此登记，防止静默漂移。
+        """
+        expected = {
+            # 目录（15）
+            "DATA", "DATA_UPLOADS", "DATA_UPLOADS_IMAGES", "DATA_UPLOADS_DESKTOP",
+            "DATA_SANDBOX", "DATA_CACHE_VISION", "DATA_REF", "DATA_SECRETS",
+            "LOG", "STATIC", "LIVE2D_ASSETS", "PROMPTS", "SYSTEM_PROMPT_TEMPLATES",
+            "CHARACTERS", "MODEL_CACHE",
+            # 文件（11）
+            "CONFIG_YAML", "DOTENV", "CUSTOM_PROVIDERS_YAML", "STT_SAMPLE_WAV",
+            "TOKEN_PENDING", "SESSION_PENDING", "SESSION_PENDING_CHECK",
+            "SCHEDULER_CHECKPOINT", "MEMORY_PENDING_DELETES",
+            "MEMORY_PENDING_SYNCS", "SESSION_PENDING_CLEANUP",
+        }
+        assert {m.name for m in ProjectPath} == expected
 
     def test_all_members_have_values(self):
         """所有成员都有非空值。"""
