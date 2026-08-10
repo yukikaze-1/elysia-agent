@@ -360,3 +360,29 @@ class TestValidTokenWsChat:
             agent.process_message.assert_called()
         finally:
             await agent.stop()
+
+
+@pytest.mark.service
+class TestSecureBind:
+    """D6a：非回环绑定无 token → fail-closed 拒绝启动。"""
+
+    def test_nonloopback_no_token_raises(self):
+        from core.input.server import assert_secure_bind
+        with pytest.raises(RuntimeError, match="拒绝启动"):
+            assert_secure_bind("0.0.0.0", "")
+
+    def test_loopback_ok(self):
+        from core.input.server import assert_secure_bind
+        assert_secure_bind("127.0.0.1", "")
+        assert_secure_bind("localhost", "")
+        assert_secure_bind("::1", "")
+
+    def test_with_token_ok(self):
+        from core.input.server import assert_secure_bind
+        assert_secure_bind("0.0.0.0", "secret-token")
+        assert_secure_bind("0.0.0.0", "", "auth-token")
+
+    def test_allow_insecure_remote_ok(self, monkeypatch):
+        from core.input.server import assert_secure_bind
+        monkeypatch.setenv("ALLOW_INSECURE_REMOTE", "1")
+        assert_secure_bind("0.0.0.0", "")

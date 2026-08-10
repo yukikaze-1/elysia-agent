@@ -8,6 +8,7 @@ import asyncio
 import hmac
 import json
 import logging
+import os
 import time
 import uuid
 from pathlib import Path
@@ -39,6 +40,30 @@ _PROCESS_START = time.monotonic()
 
 _STATIC_DIR = ProjectPath.STATIC.resolve()
 _LIVE2D_DIR = ProjectPath.LIVE2D_ASSETS.resolve()
+
+
+def assert_secure_bind(host: str, access_token: str, auth_token: str = "") -> None:
+    """D6a：非回环绑定 + 无认证 token + 未显式 ALLOW_INSECURE_REMOTE → 拒绝启动。
+
+    fail-closed：默认配置无法匿名监听非回环地址。仅以下之一放行：
+    - host 是 loopback（127.0.0.1 / localhost / ::1）；
+    - 已配置 access_token 或 auth_token；
+    - 显式设 ALLOW_INSECURE_REMOTE=1（仅本地开发开关，日志/health 明确 insecure）。
+
+    Raises:
+        RuntimeError: fail-closed 条件成立。
+    """
+    if os.getenv("ALLOW_INSECURE_REMOTE", "") in ("1", "true", "True", "yes"):
+        return
+    if host in ("127.0.0.1", "localhost", "::1"):
+        return
+    if access_token or auth_token:
+        return
+    raise RuntimeError(
+        f"拒绝启动：服务绑定非回环地址 {host!r} 且未配置认证 token。\n"
+        "  - 远程部署：设置 AGENT_ACCESS_TOKEN（并建议 SERVER_AUTH_TOKEN），使用 HTTPS/WSS；\n"
+        "  - 本地开发：改用 127.0.0.1 绑定，或显式设置 ALLOW_INSECURE_REMOTE=1 并知悉风险。"
+    )
 
 
 def warn_if_unsecured(host: str, access_token: str, auth_token: str = "") -> None:

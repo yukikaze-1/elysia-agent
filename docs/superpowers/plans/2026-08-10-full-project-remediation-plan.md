@@ -109,7 +109,7 @@ A1/A2
 - [x] D3 搜索、WS/REST 输入上限和失败反馈
 - [x] D4 日志脱敏
 - [x] D5 上传活动内容与配置 secret
-- [ ] D6a 非回环 fail-closed 鉴权
+- [x] D6a 非回环 fail-closed 鉴权
 - [ ] D6b 公开入口限流
 - [ ] D6c durable idempotency
 - [ ] D7a Compose 网络与凭据
@@ -1368,6 +1368,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：无
 - 契约或 Electron 影响：/api/images 未知扩展/魔数不符 → 415（v1 行为收紧）；/uploads 响应带 nosniff
 - 剩余风险：legacy /uploads 目录未加 Content-Disposition: attachment（nosniff 已加；迁移到签名附件系统是长期方向）；desktop 上传 octet-stream 仍可上传任意二进制（受信任桌面客户端，危险活动内容扩展已拒）
+
+### D6a — 非回环部署 fail-closed 鉴权
+
+- 状态：完成
+- Commit：`<见 D6a 提交>`
+- 变更文件：`core/input/server.py`（assert_secure_bind）、`core/agent/server.py`（run_server 调用）、`core/input/tests/test_auth.py`
+- 新增失败测试：`TestSecureBind`（非回环无 token 抛错 / loopback 放行 / 有 token 放行 / ALLOW_INSECURE_REMOTE=1 放行）
+- 目标测试：`pytest core/input/tests/test_auth.py` → 28 passed
+- 批次门禁：`ruff check` → 通过；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：无
+- 契约或 Electron 影响：run_server 非回环无 token → 拒绝启动（需 ALLOW_INSECURE_REMOTE=1 或配 token）——部署行为变化
+- 剩余风险：D6b（限流）/D6c（跨进程幂等）未做（P2/已知门禁，见 todo）；统一认证矩阵（/ws /api /uploads 已由 access_token middleware 覆盖，management/debug 未单独覆盖）
 
 ## 14. 需要停止并请求决策的情况
 

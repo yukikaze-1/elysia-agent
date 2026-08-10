@@ -382,8 +382,11 @@ class AgentServer:
             port = self._config.server.port
             wake_word_enabled = self._config.wake_word.enabled
 
-            # 启动安全守卫（批次 1）：非回环绑定 + 无产品认证 → ERROR 显著阻塞告警
-            from core.input.server import warn_if_unsecured
+            # 启动安全守卫（批次 1 + D6a）：非回环绑定 + 无产品认证 → fail-closed 拒绝启动
+            # （显式 ALLOW_INSECURE_REMOTE=1 才放行）；否则显著告警
+            from core.input.server import assert_secure_bind, warn_if_unsecured
+            assert_secure_bind(host, self._config.server.access_token,
+                               self._config.server.auth_token)
             warn_if_unsecured(host, self._config.server.access_token,
                               self._config.server.auth_token)
 
