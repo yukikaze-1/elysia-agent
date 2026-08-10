@@ -23,6 +23,7 @@ from core.input.api_routes import register_api_routes
 from core.input.attachment_routes import register_attachment_routes
 from core.input.session_routes import register_session_routes
 from core.input.debug_routes import register_debug_routes
+from core.input.rate_limiter import RateLimiter, rate_key_for_request
 from core.version import build_server_version, get_build_sha
 from frontend_contract.rest import ProtocolError
 
@@ -199,6 +200,49 @@ def _make_payload_middleware(cms: int):
     return _payload
 
 
+# D6b：REST 高成本入口 → 限流类别映射（path 前缀，先长后短避免 /api/uploads 吞 /api/uploads/desktop）。
+# 覆盖 plan Task D6b 的 provider test / upload / search / chat（generation）。
+_REST_RATE_CATEGORY: tuple[tuple[str, str], ...] = (
+    ("/api/providers/test", "provider_test"),
+    ("/api/uploads/desktop/", "upload"),
+    ("/api/uploads", "upload"),
+    ("/api/images", "upload"),
+    ("/api/search/", "search"),
+    ("/api/chat", "messages"),
+)
+
+
+def _rest_rate_category(path: str) -> str | None:
+    """REST 路径 → 限流类别；未映射路径不限制。"""
+    for prefix, category in _REST_RATE_CATEGORY:
+        if path.startswith(prefix):
+            return category
+    return None
+
+
+def _make_rate_limit_middleware(limiter: RateLimiter):
+    """公开 REST 入口限流中间件（D6b）：超限 → 429 RATE_LIMITED + Retry-After。
+
+    先于 auth 挂载——认证失败/匿名 401 洪水同样被限（防凭据爆破）。/ws 不走此
+    中间件（WS 建连限流在 ws_handler 升级前单独检查）。
+    """
+
+    @web.middleware
+    async def _rate(request: web.Request,
+                    handler: Callable[[web.Request], Awaitable[web.StreamResponse]]):
+        if request.path != "/ws":
+            category = _rest_rate_category(request.path)
+            if category is not None and not limiter.check(
+                    category, rate_key_for_request(request)):
+                resp = _protocol_error_response(
+                    "RATE_LIMITED", "请求过于频繁，请稍后重试", 429, True)
+                resp.headers["Retry-After"] = "60"
+                return resp
+        return await handler(request)
+
+    return _rate
+
+
 async def _collect_health_payload(agent: "Agent") -> dict:
     """聚合健康探针负载：依赖检查（wait_for 超时/异常视为 down）+ 运行信息。
 
@@ -293,6 +337,7 @@ def create_app(
     access_token: str = "",
     max_ws_connections: int | None = None,
     max_request_bytes: int | None = None,
+    rate_limits: dict[str, int] | None = None,
 ) -> web.Application:
     """创建一个带 WebSocket handler 和可选静态文件的 aiohttp Application。
 
@@ -311,6 +356,10 @@ def create_app(
         max_ws_connections: 并发 WS 连接上限（0/None 不限）。超出拒绝升级（503 CONNECTION_LIMITED）。
         max_request_bytes: 业务请求体上限（client_max_size，app 级；0=不限，None/缺省 64MB；
             multipart 除外——upload_handler 同源同步）。
+        rate_limits: D6b 限流规则 {类别: rpm}（0 关闭）。None/空 → 不挂载限流。
+            REST 高成本入口（provider test/upload/search/chat）429 RATE_LIMITED；
+            WS 建连按「ws」类别、消息按类别（text/voice→messages、switch_model→provider_test、
+            tool_approval→tools）→ error RATE_LIMITED。key 认证主体优先、匿名回退 IP。
 
     Returns:
         web.Application: 配置好的 aiohttp Application 实例。
@@ -330,6 +379,13 @@ def create_app(
             resp.headers["X-Content-Type-Options"] = "nosniff"
         return resp
     app.middlewares.append(_nosniff_uploads)
+    # D6b：公开入口限流中间件（先于 auth——认证失败/匿名 401 洪水同样被限）。
+    # 单进程语义（per-process），不假装全局限流。
+    limiter: RateLimiter | None = None
+    if rate_limits:
+        limiter = RateLimiter(rate_limits)
+        app.middlewares.append(_make_rate_limit_middleware(limiter))
+        app["rate_limiter"] = limiter
     # 产品认证：access_token 为空 → 全匿名（本地开发，v1 兼容）
     if access_token:
         app.middlewares.append(_make_access_auth_middleware(access_token))
@@ -390,6 +446,12 @@ def create_app(
             WebSocket 连接对象。
         """
         nonlocal _ws_active
+        # D6b：WS 建连限流——per-key（认证主体优先、匿名回退 IP），升级前 429 拒绝
+        # （防重连风暴/滥用；配合 max_ws_connections 并发硬上限，二者正交）。
+        limiter = request.app.get("rate_limiter")
+        if limiter is not None and not limiter.check("ws", rate_key_for_request(request)):
+            return _protocol_error_response(
+                "RATE_LIMITED", "连接过于频繁，请稍后重试", 429, True)
         proto_header = request.headers.get("X-Protocol-Version", "")
         if resolve_protocol_version(proto_header) is None:
             logger.warning("不支持的协议版本拒绝: %r", proto_header)

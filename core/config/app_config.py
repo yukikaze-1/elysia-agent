@@ -40,6 +40,14 @@ class ServerConfig:
     # （admin/debug）权限域分离。secret=True 防止写入 YAML/git。
     access_token: str = ConfigField(default="", env="AGENT_ACCESS_TOKEN", secret=True)
     max_ws_connections: int = ConfigField(default=64)
+    # D6b：公开入口限流（类别 → rpm，0 关闭；单进程语义，不假装全局限流）。
+    # 覆盖 plan Task D6b：连接/消息（generation）/provider test/upload/search/工具。
+    rate_limit_ws_per_min: int = ConfigField(default=120, env="RATE_LIMIT_WS_PER_MIN")
+    rate_limit_messages_per_min: int = ConfigField(default=120, env="RATE_LIMIT_MESSAGES_PER_MIN")
+    rate_limit_provider_test_per_min: int = ConfigField(default=30, env="RATE_LIMIT_PROVIDER_TEST_PER_MIN")
+    rate_limit_upload_per_min: int = ConfigField(default=60, env="RATE_LIMIT_UPLOAD_PER_MIN")
+    rate_limit_search_per_min: int = ConfigField(default=60, env="RATE_LIMIT_SEARCH_PER_MIN")
+    rate_limit_tools_per_min: int = ConfigField(default=120, env="RATE_LIMIT_TOOLS_PER_MIN")
     # 业务请求体上限（app 级 client_max_size + payload 中间件 Content-Length 预检）。
     # 批次 7 提到 64MB：既有 8MB 会把 10MB 图片 / 通用上传聚合体截住（I3）。
     max_request_bytes: int = ConfigField(default=64 * 1024 * 1024)
@@ -48,6 +56,18 @@ class ServerConfig:
     # 附件签名密钥（批次 7，spec §3.4）：HMAC 签名 /api/attachments/{id} 下载 URL。
     # 空 = 未配置（fail-closed：AGENT_ACCESS_TOKEN 配置而 SIG 未配时省略 signedUrl）。
     attachment_sig_secret: str = ConfigField(default="", env="ATTACHMENT_SIG_SECRET", secret=True)
+
+    @property
+    def rate_limits(self) -> dict[str, int]:
+        """D6b 限流规则（类别 → rpm；0 关闭该类别）。create_app 消费。"""
+        return {
+            "ws": self.rate_limit_ws_per_min,
+            "messages": self.rate_limit_messages_per_min,
+            "provider_test": self.rate_limit_provider_test_per_min,
+            "upload": self.rate_limit_upload_per_min,
+            "search": self.rate_limit_search_per_min,
+            "tools": self.rate_limit_tools_per_min,
+        }
 
 
 @dataclass

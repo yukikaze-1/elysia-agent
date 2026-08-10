@@ -438,7 +438,8 @@ class AgentServer:
                             auth_token=self._config.server.auth_token,
                             access_token=self._config.server.access_token,
                             max_ws_connections=self._config.server.max_ws_connections,
-                            max_request_bytes=self._config.server.max_request_bytes)
+                            max_request_bytes=self._config.server.max_request_bytes,
+                            rate_limits=self._config.server.rate_limits)
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, host, port)

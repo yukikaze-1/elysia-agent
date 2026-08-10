@@ -22,6 +22,7 @@ from Module.output import WebSocketChannel
 from core.input.audio_buffer import AudioBuffer
 from core.input.capabilities import build_capabilities
 from core.input.idempotency import IdempotencyEntry, get_store
+from core.input.rate_limiter import RateLimiter, rate_key_for_request
 from core.input.sticker_registry import get as get_sticker
 from core.input.voice_sessions import VoiceSessionError, VoiceSessionManager
 from core.utils import get_request_id
@@ -81,6 +82,19 @@ def _current_request_id() -> str | None:
     """
     rid = get_request_id()
     return rid if rid and rid != "-" else None
+
+
+# D6b：WS 消息类型 → 限流类别（仅高成本/可滥用类别；低成本帧不限流）。
+# text/voice → 普通消息（generation 高成本）；switch_model → provider test；
+# tool_approval → 工具审批。
+_WS_MESSAGE_RATE_CATEGORY: dict[str, str] = {
+    "text": "messages",
+    "voice.commit": "messages",
+    "voice.record.start": "messages",
+    "voice_session.start": "messages",
+    "switch_model": "provider_test",
+    "tool_approval": "tools",
+}
 
 
 def _build_session_items(
@@ -341,8 +355,13 @@ async def handle_ws(
                             requestId=_current_request_id(),
                         ).wire_dict())
                         continue
-                    await handle_json_message(data, agent, audio_buf, ws, voice_mgr=voice_mgr,
-                                              sent_message_ids=sent_message_ids)
+                    await handle_json_message(
+                        data, agent, audio_buf, ws, voice_mgr=voice_mgr,
+                        sent_message_ids=sent_message_ids,
+                        limiter=request.app.get("rate_limiter"),
+                        rate_key=rate_key_for_request(request)
+                        if request.app.get("rate_limiter") is not None else None,
+                    )
                 except json.JSONDecodeError:
                     await ws.send_json(ErrorMessage(
                         message="Invalid JSON",
@@ -924,7 +943,7 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
     logger.debug("voice.commit 提交成功: %s (len=%d)", recording_id, len(pending_text))
 
 
-async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None, voice_mgr: "VoiceSessionManager | None" = None, sent_message_ids: set | None = None) -> None:
+async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None, voice_mgr: "VoiceSessionManager | None" = None, sent_message_ids: set | None = None, limiter: "RateLimiter | None" = None, rate_key: str | None = None) -> None:
     """将来自 WebSocket 客户端的 JSON 消息路由到对应 handler。
 
     Args:
@@ -935,8 +954,23 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         voice_mgr: 批次 6 每连接 VoiceSessionManager（三模式语音路由），可为 None。
         sent_message_ids: 批次 8b（§3.7）D1 接线——v2 text 消息 accepted 时登记
             messageId 的可选集合（透传给 _route_v2_text，Task 9 消费）。
+        limiter: D6b 限流器（create_app 挂载时传入，None 不检查）。
+        rate_key: 本连接限流 key（认证主体/IP，handle_ws 解析），None 不检查。
     """
     msg_type = data.get("type", "")
+    # D6b：WS 消息级限流——高成本类别超限 → error RATE_LIMITED（连接存活，可重试）。
+    # 置于判别联合校验前：畸形帧洪泛同样消耗 token（防解析滥用）。
+    if limiter is not None and rate_key is not None:
+        category = _WS_MESSAGE_RATE_CATEGORY.get(msg_type)
+        if category is not None and not limiter.check(category, rate_key):
+            await ws.send_json(ErrorMessage(
+                message="请求过于频繁，请稍后重试",
+                code="RATE_LIMITED",
+                requestId=_current_request_id(),
+                retryable=True,
+                details={"retryHint": "请稍后重试"},
+            ).wire_dict())
+            return
     # 9B-2（Task 5）：v2 连接入站统一走 ClientMessage 判别联合校验——未知 type /
     # 错误枚举 / 错误字段类型 / 缺必填 → ErrorMessage CONTRACT_VALIDATION，连接存活。
     # type="text" 特判跳过判别联合：text 由 V2TextMessage 独占（TextMessage 不入联合），
