@@ -31,6 +31,10 @@ class EventBus:
         """初始化事件总线，创建空优先队列。"""
         self._queue: asyncio.PriorityQueue[Event] = asyncio.PriorityQueue()
         self._seq = 0
+        # 待派发 USER_INPUT 事件计数（review 复核 #4）：post 增、next/drain 消费减。
+        # process_message 在「FSM 仍 accepting 但 bus 已有未派发 USER_INPUT」时据此
+        # 走排队路径并在接受时做容量检查——杜绝同 tick 突发「先 ACK 后丢弃」。
+        self._pending_user_inputs = 0
 
     def post(
         self, data: EventData, priority: int = EventPriority.NORMAL,
@@ -46,11 +50,29 @@ class EventBus:
         self._seq += 1
         event_type = type if type is not None else data.event_type  # noqa: SIM108
         event = Event(priority=priority, type=event_type, data=data, seq=self._seq)
+        if event_type == EventType.USER_INPUT:
+            self._pending_user_inputs += 1
         self._queue.put_nowait(event)
+
+    def _note_removed(self, event: Event) -> None:
+        """事件离开队列时修正 USER_INPUT 计数（消费/中断 drain 共用）。"""
+        if event.type == EventType.USER_INPUT:
+            self._pending_user_inputs = max(0, self._pending_user_inputs - 1)
+
+    @property
+    def pending_user_inputs(self) -> int:
+        """队列中待派发的 USER_INPUT 事件数。
+
+        Returns:
+            当前优先队列中未派发的 USER_INPUT 事件数量。
+        """
+        return self._pending_user_inputs
 
     async def next(self) -> Event:
         """等待下一个事件。阻塞直到有事件可用。"""
-        return await self._queue.get()
+        event = await self._queue.get()
+        self._note_removed(event)
+        return event
 
     def drain(self) -> list[Event]:
         """排空队列中所有待处理事件。非阻塞。
@@ -64,6 +86,8 @@ class EventBus:
                 events.append(self._queue.get_nowait())
             except asyncio.QueueEmpty:
                 break
+        for ev in events:
+            self._note_removed(ev)
         return events
 
     @property

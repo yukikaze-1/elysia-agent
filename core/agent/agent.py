@@ -364,8 +364,11 @@ class Agent(AgentLifecycle, AgentServer):
 
         self._idle.touch()
 
-        if not self.status.is_accepting_input:
-            # 排队消息而不是打断当前流程
+        if not self.status.is_accepting_input or self._bus.pending_user_inputs > 0:
+            # 排队消息而不是打断当前流程。review 复核 #4：bus 中已有未派发的
+            # USER_INPUT（同 tick 突发，FSM 仍 accepting）同样视为 busy——否则多次
+            # process_message 都走直接 post 返回 True，事件派发时才做 pre-start 队列
+            # 容量检查并静默丢弃（先 ACK 后丢弃）。接受时即做容量检查。
             max_queue = self._config.agent.max_pending_messages
             if len(self._pending_messages) >= max_queue:
                 logger.warning("消息队列已满 (%d) — 丢弃消息", max_queue)

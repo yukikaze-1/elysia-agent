@@ -62,3 +62,33 @@ class TestProcessMessageThreading:
             assert agent._pending_messages[0].message_id == "msg_pre"
         finally:
             await agent.stop()
+
+
+@pytest.mark.service
+class TestProcessMessageBurstCapacity:
+    """review 复核 #4：同 tick 突发——容量检查必须在接受时生效，不得先 ACK 后丢弃。"""
+
+    @pytest.mark.asyncio
+    async def test_burst_same_tick_no_ack_then_drop(self):
+        """事件未派发（同 tick）时连续三条 process_message：队列容量 1 → 第三条
+        必须在接受时返回 False（WS 据此发 QUEUE_FULL rejected），而不是先返回 True
+        （accepted ACK）再在事件处理时静默丢弃。"""
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        await agent.start()
+        try:
+            agent._config.agent.max_pending_messages = 1  # noqa: SLF001
+            # 暂停事件派发——复现同 tick 突发窗口（bus 中 USER_INPUT 不被消费）
+            if agent._event_task is not None:  # noqa: SLF001
+                agent._event_task.cancel()  # noqa: SLF001
+
+            r1 = await agent.process_message("first", protocol_version=1)
+            r2 = await agent.process_message("second", protocol_version=1)
+            r3 = await agent.process_message("third", protocol_version=1)
+
+            assert (r1, r2, r3) == (True, True, False)
+            # 第三条未接受、未入队——不产生任何 pending 残留
+            assert len(agent._pending_messages) == 1  # noqa: SLF001
+        finally:
+            await agent.stop()
