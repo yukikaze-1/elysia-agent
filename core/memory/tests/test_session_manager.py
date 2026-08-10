@@ -905,3 +905,30 @@ class TestMemoryReflectorBinding:
         assert m.get("conv_r1")._memory_reflector is reflector  # noqa: SLF001
         # 未来新建会话（get 懒构造）
         assert m.get("conv_r2")._memory_reflector is reflector  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_reopen_all_archives_after_drain():
+    """review 复核 #3：stop() 经 drain_all_archives 关闭全部归档，start() 必须
+    reopen_all_archives 重开——否则重启后新消息只在内存、不写 MessageRepository。"""
+    msg_repo = MagicMock()
+    msg_repo.append = AsyncMock()
+    sm = SessionManager(SessionRepository(db=MagicMock()), msg_repo)
+    session = sm.get("default")
+
+    def _msg(mid):
+        return UserMessage(message_id=MessageId(mid), content=[TextPart(content="hi")])
+
+    session.add_message(_msg("m1"))
+    await asyncio.sleep(0.05)
+    assert msg_repo.append.call_count == 1
+
+    await sm.drain_all_archives()            # stop 路径：关闭全部归档入口
+    session.add_message(_msg("m2"))
+    await asyncio.sleep(0.05)
+    assert msg_repo.append.call_count == 1   # 关闭后不再归档
+
+    sm.reopen_all_archives()                 # start 路径：重开全部归档入口
+    session.add_message(_msg("m3"))
+    await asyncio.sleep(0.05)
+    assert msg_repo.append.call_count == 2   # 重开后恢复归档

@@ -171,6 +171,9 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         try:
             # persistence 特殊处理——先于循环，返回值由 _start_persistence() 写入 self
             await self._start_persistence()
+            # review 复核 #3：stop() 经 drain_all_archives 关闭全部归档，restart 必须
+            # 重开——否则重启后 add_message 不再写 MessageRepository，新消息只在内存。
+            self._session_manager.reopen_all_archives()
 
             # 其余步骤走 _STARTUP_STEPS 数据驱动循环
             for name, method_name in self._STARTUP_STEPS:

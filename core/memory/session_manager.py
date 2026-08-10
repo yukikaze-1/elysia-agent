@@ -543,6 +543,17 @@ class SessionManager:
         for session in list(self._sessions.values()):
             await session.close_archive(timeout=timeout)
 
+    def reopen_all_archives(self) -> None:
+        """重新打开全部会话归档入口（review 复核 #3：热重启 start 用）。
+
+        stop() 经 ``drain_all_archives`` 关闭全部归档；同一 Agent 实例 restart 时
+        start() 必须重开——否则重启后 add_message 不再写 MessageRepository，
+        新消息只在内存队列（随淘汰/退出丢失）。与 delete 回滚的
+        ``session.reopen_archive()`` 对称。
+        """
+        for session in list(self._sessions.values()):
+            session.reopen_archive()
+
     async def connect_db(self) -> bool:
         """建立 repo 连接。"""
         return await self._repo.connect()
