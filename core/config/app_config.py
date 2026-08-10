@@ -30,7 +30,7 @@ class MemoryConfig:
 
 @dataclass
 class ServerConfig:
-    host: str = ConfigField(default="0.0.0.0")
+    host: str = ConfigField(default="127.0.0.1")
     port: int = ConfigField(default=8765, constraints=[Range(1, 65535)])
     auth_token: str = ConfigField(default="", env="SERVER_AUTH_TOKEN", secret=True)
     # 产品访问 token（批次 1）：护 /ws + 业务 /api/* + /uploads/*；与 SERVER_AUTH_TOKEN

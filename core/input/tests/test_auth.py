@@ -377,10 +377,17 @@ class TestSecureBind:
         assert_secure_bind("localhost", "")
         assert_secure_bind("::1", "")
 
-    def test_with_token_ok(self):
+    def test_with_access_token_ok(self):
         from core.input.server import assert_secure_bind
         assert_secure_bind("0.0.0.0", "secret-token")
-        assert_secure_bind("0.0.0.0", "", "auth-token")
+
+    def test_auth_token_only_nonloopback_raises(self):
+        """仅配 SERVER_AUTH_TOKEN（管理面）不足以放行远程绑定——业务端点
+        /api /ws /uploads 只受 AGENT_ACCESS_TOKEN 保护，auth_token 单独配置时
+        业务接口仍匿名可访问（review 复核 #1）。"""
+        from core.input.server import assert_secure_bind
+        with pytest.raises(RuntimeError, match="拒绝启动"):
+            assert_secure_bind("0.0.0.0", "", "auth-token")
 
     def test_allow_insecure_remote_ok(self, monkeypatch):
         from core.input.server import assert_secure_bind

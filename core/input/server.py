@@ -43,11 +43,13 @@ _LIVE2D_DIR = ProjectPath.LIVE2D_ASSETS.resolve()
 
 
 def assert_secure_bind(host: str, access_token: str, auth_token: str = "") -> None:
-    """D6a：非回环绑定 + 无认证 token + 未显式 ALLOW_INSECURE_REMOTE → 拒绝启动。
+    """D6a：非回环绑定 + 无产品认证 token + 未显式 ALLOW_INSECURE_REMOTE → 拒绝启动。
 
     fail-closed：默认配置无法匿名监听非回环地址。仅以下之一放行：
     - host 是 loopback（127.0.0.1 / localhost / ::1）；
-    - 已配置 access_token 或 auth_token；
+    - 已配置 access_token（AGENT_ACCESS_TOKEN）——业务 /api、/ws、/uploads 的
+      唯一鉴权；SERVER_AUTH_TOKEN（管理面）**不**单独放行远程绑定（review 复核
+      #1：仅配管理 token 时业务端点仍匿名可访问）；
     - 显式设 ALLOW_INSECURE_REMOTE=1（仅本地开发开关，日志/health 明确 insecure）。
 
     Raises:
@@ -57,11 +59,12 @@ def assert_secure_bind(host: str, access_token: str, auth_token: str = "") -> No
         return
     if host in ("127.0.0.1", "localhost", "::1"):
         return
-    if access_token or auth_token:
+    if access_token:
         return
     raise RuntimeError(
-        f"拒绝启动：服务绑定非回环地址 {host!r} 且未配置认证 token。\n"
-        "  - 远程部署：设置 AGENT_ACCESS_TOKEN（并建议 SERVER_AUTH_TOKEN），使用 HTTPS/WSS；\n"
+        f"拒绝启动：服务绑定非回环地址 {host!r} 且未配置产品认证 token。\n"
+        "  - 远程部署：设置 AGENT_ACCESS_TOKEN（护 /ws /api/* /uploads/*，唯一放行凭据），"
+        "建议同时配 SERVER_AUTH_TOKEN（管理面），使用 HTTPS/WSS；\n"
         "  - 本地开发：改用 127.0.0.1 绑定，或显式设置 ALLOW_INSECURE_REMOTE=1 并知悉风险。"
     )
 
