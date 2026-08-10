@@ -1432,6 +1432,14 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 实施步骤对应：backend-only 默认一等 mode ✓ / v1 UI 独立 opt-in target 用 npm ci ✓ / startup 不每次修改依赖树（移除 npm install 每次跑）✓ / preflight 失败默认非零退出 ✓ / shell smoke（无 node/npm、无 v1 build、无效配置失败、合法配置 dry-run）✓
 - 验证：smoke 11/11；bash -n 语法通过；README 同步
 
+### F4 — 扩展静态门禁并渐进拆分复杂入口（部分）
+
+- 状态：**门禁扩展完成；复杂度拆分 defer**（2026-08-11）
+- Commit：门禁扩展部分 `602c7ea`
+- 已完成（门禁扩展）：scripts/ 纳入 Ruff + Pyright（17 ANN + capture_ws_trace 类型错误清零，含废弃脚本窄 suppression）；`core/monitoring/__init__.py` TYPE_CHECKING IdleMonitor——全仓 pyright 0 warning；pytest.ini `coroutine was never awaited` 置 error（warnings-as-errors 起步，先清 15 条异步 warning 根因：test_phase3 AsyncMock get_preprocess / FailBackend stream_think / test_reflector asyncio.run 关循环悬空协程）
+- **Defer（复杂度拆分）**：`register_api_routes`（937 行闭包嵌套）/ `handle_json_message`（if/elif 链）/ `handle_ws`（生命周期+错误映射）拆分——行为锁定测试存在（input 套件全覆盖），但属 plan 明确的「渐进、不追求一次清零」高回归风险项；本批次已在联调前完成 F1-F3/F5 + F4 门禁，拆分离散做（每步先行为测试锁定 + 独立提交，避免在联调前一次性大重构）
+- 验证：pyright 0 errors 0 warnings / ruff 含 scripts 通过 / test-quick 3324 / system_prompt 62
+
 ## 14. 需要停止并请求决策的情况
 
 以下情况不能由代码代理自行假设：
