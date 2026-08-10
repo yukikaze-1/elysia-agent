@@ -30,7 +30,10 @@ class MemoryConfig:
 
 @dataclass
 class ServerConfig:
-    host: str = ConfigField(default="127.0.0.1")
+    # 默认绑定回环地址；远程暴露用 env SERVER_HOST=0.0.0.0 覆盖（开发期远程测试，
+    # scripts/start.sh 无需改 config.yaml 即可远程启动，配 ALLOW_INSECURE_REMOTE
+    # 或 AGENT_ACCESS_TOKEN 通过 bind 安全检查）。
+    host: str = ConfigField(default="127.0.0.1", env="SERVER_HOST")
     port: int = ConfigField(default=8765, constraints=[Range(1, 65535)])
     auth_token: str = ConfigField(default="", env="SERVER_AUTH_TOKEN", secret=True)
     # 产品访问 token（批次 1）：护 /ws + 业务 /api/* + /uploads/*；与 SERVER_AUTH_TOKEN

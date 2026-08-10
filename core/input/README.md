@@ -60,6 +60,14 @@ web.run_app(app, port=8000)
 - `max_ws_connections`：并发 WS 上限，超出拒绝 503 `CONNECTION_LIMITED`；`max_request_bytes`：业务请求体上限（app 级 `client_max_size`），超出 413 `REQUEST_TOO_LARGE`。
 - 启动守卫：`warn_if_unsecured(host, access_token)` 非回环绑定 + 无产品认证 → ERROR 显著阻塞告警（`run_server` 每轮调用）。
 
+### 开发期远程测试（SERVER_HOST）
+
+默认绑定回环地址（`config.yaml server.host: 127.0.0.1` / dataclass 默认）。远程测试机直连：
+
+- `.env` 写 `SERVER_HOST=0.0.0.0`（env 覆盖 config.yaml——`scripts/start.sh` 即可远程启动，无需改 config.yaml 或传 `--host`）。
+- 非回环绑定 + 无 `AGENT_ACCESS_TOKEN` → bind 守卫 fail-closed 拒绝启动，须显式 `ALLOW_INSECURE_REMOTE=1`（开发期匿名远程；生产改用 `AGENT_ACCESS_TOKEN`）。
+- 浏览器前端 WS 暂不支持携带 Bearer token（WS 握手不能设自定义头）——token 模式仅 REST 可用；匿名远程直连请用防火墙 / 内网 IP 缓解。
+
 ### 版本协商（批次 1，BE-020）
 
 - WS 握手头 `X-Protocol-Version: 2` → v2 路径：建连发 `server_info`（protocol_version/features/services，取代 capabilities）；缺省/1 → v1 路径（发 capabilities）。`features` 严禁超前声明（批次 1 全 false）。**批次 8c（F15）**：switch_model/set_service 后的 capabilities 重播仅达 v1 通道，跳过 v2（v2 用 server_info 取代，切换感知经自身回显）。

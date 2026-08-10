@@ -364,9 +364,14 @@ class TestValidTokenWsChat:
 
 @pytest.mark.service
 class TestSecureBind:
-    """D6a：非回环绑定无 token → fail-closed 拒绝启动。"""
+    """D6a：非回环绑定无 token → fail-closed 拒绝启动。
 
-    def test_nonloopback_no_token_raises(self):
+    隔离 ALLOW_INSECURE_REMOTE——开发者 .env 可能配了它（开发期远程直连），
+    否则 raise 断言在宿主环境会失效（bind 守卫被 env 放行）。
+    """
+
+    def test_nonloopback_no_token_raises(self, monkeypatch):
+        monkeypatch.delenv("ALLOW_INSECURE_REMOTE", raising=False)
         from core.input.server import assert_secure_bind
         with pytest.raises(RuntimeError, match="拒绝启动"):
             assert_secure_bind("0.0.0.0", "")
@@ -381,10 +386,11 @@ class TestSecureBind:
         from core.input.server import assert_secure_bind
         assert_secure_bind("0.0.0.0", "secret-token")
 
-    def test_auth_token_only_nonloopback_raises(self):
+    def test_auth_token_only_nonloopback_raises(self, monkeypatch):
         """仅配 SERVER_AUTH_TOKEN（管理面）不足以放行远程绑定——业务端点
         /api /ws /uploads 只受 AGENT_ACCESS_TOKEN 保护，auth_token 单独配置时
         业务接口仍匿名可访问（review 复核 #1）。"""
+        monkeypatch.delenv("ALLOW_INSECURE_REMOTE", raising=False)
         from core.input.server import assert_secure_bind
         with pytest.raises(RuntimeError, match="拒绝启动"):
             assert_secure_bind("0.0.0.0", "", "auth-token")

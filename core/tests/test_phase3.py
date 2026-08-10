@@ -1214,6 +1214,22 @@ class TestAppConfig:
         assert cfg.llm.model == "deepseek/deepseek-chat"
         assert cfg.memory.session_max_messages == 20
 
+    def test_host_env_override(self, monkeypatch):
+        """SERVER_HOST env 覆盖 config.yaml——开发期远程测试无需改 config.yaml /
+        传 --host，.env 写一行即可（scripts/start.sh 直接远程启动）。"""
+        from Module.config.loader import ConfigLoader, EnvManager
+        import os as _os
+        # 阻止 load_dotenv() 污染全局环境变量（同 test_load_from_yaml）
+        _orig_loaded = EnvManager._loaded
+        EnvManager._loaded = True
+        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+        try:
+            monkeypatch.setenv("SERVER_HOST", "0.0.0.0")
+            cfg = ConfigLoader(AppConfig, yaml_path="config.yaml").load()
+            assert cfg.server.host == "0.0.0.0"
+        finally:
+            EnvManager._loaded = _orig_loaded
+
     def test_load_from_yaml(self):
         from Module.config.loader import ConfigLoader, EnvManager
         import os as _os

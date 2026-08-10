@@ -91,6 +91,21 @@ python app.py --verbose          # 详细日志（调试用）
 python app.py --config custom.yaml --character custom/char.yaml  # 自定义配置
 ```
 
+### 远程访问（开发期）
+
+默认绑定回环地址 `127.0.0.1`（安全默认，本地开发无需 token）。远程测试机直连时：
+
+```bash
+# 推荐：.env 加两行（scripts/start.sh 直接远程启动，无需改 config.yaml / 传 --host）
+SERVER_HOST=0.0.0.0
+ALLOW_INSECURE_REMOTE=1        # 开发期匿名远程；生产改用 AGENT_ACCESS_TOKEN
+
+# 或临时覆盖（不动 .env）
+python app.py --host 0.0.0.0
+```
+
+> 安全说明：非回环绑定且未配置 `AGENT_ACCESS_TOKEN` 时启动被 fail-closed 拒绝（除非显式 `ALLOW_INSECURE_REMOTE=1`）。浏览器前端 WS 暂不支持携带 Bearer token（WS 握手不能设自定义头），token 模式仅 REST 可用——开发期匿名远程直连请用防火墙白名单 / 内网 IP 缓解，生产用 `AGENT_ACCESS_TOKEN` + HTTPS。详见 [core/input/README.md](core/input/README.md)「开发期远程测试」。
+
 ### 前端开发（可选）
 
 首次使用前需要构建前端（`bash scripts/setup.sh` 会自动完成）。修改 `frontend/` 源码后需要重新构建。

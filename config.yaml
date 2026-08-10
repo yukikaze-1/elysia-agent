@@ -20,8 +20,9 @@ memory:
 
 # ---- HTTP 服务器 ----
 server:
-  # 默认绑定回环地址：本地开发开箱即用（无 token 也安全）。远程部署显式改
-  # 0.0.0.0 并设置 AGENT_ACCESS_TOKEN（review 复核 #1：非回环绑定必须配业务 token）。
+  # 默认绑定回环地址：本地开发开箱即用（无 token 也安全）。远程暴露用环境变量
+  # SERVER_HOST=0.0.0.0 覆盖（无需改本文件），并配 AGENT_ACCESS_TOKEN 或
+  # ALLOW_INSECURE_REMOTE=1 通过 bind 安全检查（review 复核 #1：非回环绑定必须配业务 token）。
   host: 127.0.0.1
   port: 8765
   # auth_token: 通过环境变量 SERVER_AUTH_TOKEN 设置。
