@@ -114,32 +114,42 @@ _REDACTED_KEYS = frozenset(
     for k in ("token", "key", "password", "secret", "authorization", "cookie",
               "content", "prompt", "path", "base_url", "url", "query", "api_key")
 )
+# review 复核 #9：deny-by-default——**所有**字符串值默认只记长度，仅显式列入本
+# 白名单的 key 才记录原值（截断）。当前为空：任意字符串参数（如 Reminder 的
+# message、正文类字段）值一律不落日志，杜绝工具参数内容泄露。
+_SAFE_STRING_KEYS: frozenset[str] = frozenset()
 
 
 def _safe_arg_summary(raw_params: dict, max_len: int = 60) -> str:
     """工具参数的安全日志摘要（D4/P1-17）。
 
     默认只记录 key + 值类型/长度，不记录原值；敏感字段（token/key/password/
-    secret/authorization/content/prompt/path/base_url/url 等）恒为 ``<redacted>``。
-    防止日志携带 API token、聊天正文与完整路径。
+    secret/authorization/content/prompt/path/base_url/url 等）恒为 ``<redacted>``，
+    其余字符串值 deny-by-default 只记 ``<str:长度>``（review 复核 #9——此前
+    allowlist 脱敏会放行 Reminder 的 message 等字段原样入日志）。防止日志携带
+    API token、聊天正文与完整路径。
 
     Args:
         raw_params: 原始参数字典。
-        max_len: 非敏感值的最大展示长度。
+        max_len: 白名单字符串值的最大展示长度。
 
     Returns:
-        安全摘要字符串（如 "query=<str:5>, api_key=<redacted>"）。
+        安全摘要字符串（如 "query=<redacted>, delay_seconds=<int>, message=<str:7>"）。
     """
     if not raw_params:
         return ""
     parts = []
     for k, v in raw_params.items():
-        if k.lower() in _REDACTED_KEYS:
+        key = k.lower()
+        if key in _REDACTED_KEYS:
             parts.append(f"{k}=<redacted>")
             continue
         if isinstance(v, str):
-            s = v if len(v) <= max_len else v[:max_len] + "…"
-            parts.append(f"{k}={s!r}")
+            if key in _SAFE_STRING_KEYS:
+                s = v if len(v) <= max_len else v[:max_len] + "…"
+                parts.append(f"{k}={s!r}")
+            else:
+                parts.append(f"{k}=<str:{len(v)}>")
         else:
             parts.append(f"{k}=<{type(v).__name__}>")
     return ", ".join(parts)

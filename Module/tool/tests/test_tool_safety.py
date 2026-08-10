@@ -503,14 +503,24 @@ class TestLogRedaction:
         assert "api_key=<redacted>" in summary
         assert "content=<redacted>" in summary
         assert "path=<redacted>" in summary
-        # 非敏感 key 保留值（简短字符串）
-        assert "note='今天天气'" in summary
+        # review 复核 #9：deny-by-default——非白名单字符串值只记长度，不记原值
+        assert "note=<str:4>" in summary
+        assert "今天天气" not in summary
+
+    def test_string_value_deny_by_default(self):
+        """review 复核 #9：默认拒绝——任意字符串参数（如 Reminder 的 message）值不落
+        日志，只记长度；杜绝正文/提醒内容类泄露。"""
+        from Module.tool.safety import _safe_arg_summary
+        summary = _safe_arg_summary({"message": "提醒内容很敏感"})
+        assert "message=<str:7>" in summary
+        assert "提醒内容很敏感" not in summary
 
     def test_non_sensitive_long_value_truncated(self):
         from Module.tool.safety import _safe_arg_summary
         summary = _safe_arg_summary({"note": "a" * 100}, max_len=10)
-        assert "…" in summary
-        assert len(summary) < 50
+        # deny-by-default：长度而非截断值
+        assert "note=<str:100>" in summary
+        assert "…" not in summary
 
     def test_validation_error_format_no_input(self, caplog):
         """safety 的 validation 错误格式化不含 invalid input。"""
