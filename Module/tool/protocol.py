@@ -69,12 +69,17 @@ class ToolContext:
 
     调用方（Agent）创建此对象并传入 execute()，
     工具函数通过 ctx 参数获取所需资源。
+
+    C2/P1-08/P1-09：每次调用应经 ``clone_for_call()`` 构造不可变 invocation
+    副本（services 浅拷贝）——调用内写 ``_safe_path``/``_emit`` 等不再污染其他
+    调用/会话；``session_id`` 绑定请求 conversationId。
     """
 
     session_id: str = ""
     user_id: str = ""
     trace_id: str = ""              # 一次请求的全局追踪 ID（跨 Agent、跨工具串联）
     agent_id: str = "default"       # 触发该工具的 Agent 实例标识
+    call_id: str = ""               # C2：单次工具调用唯一 ID（任务跟踪/审批绑定）
     services: dict[str, Any] = field(default_factory=dict)
 
     def get(self, name: str, default: Any = None) -> Any:
@@ -88,6 +93,30 @@ class ToolContext:
             已注册的服务实例或 default。
         """
         return self.services.get(name, default)
+
+    def clone_for_call(self, *, call_id: str, session_id: str = "",
+                       trace_id: str = "") -> "ToolContext":
+        """构造一次调用的不可变副本（C2/P1-08/P1-09）。
+
+        services 浅拷贝——调用内写 ``_safe_path``（规范化参数）/``_emit``（流式
+        发射器）只落在本次调用的副本，后一并发调用无法覆盖前一调用的路径/决策。
+
+        Args:
+            call_id: 单次调用唯一 ID。
+            session_id: 目标会话 ID（覆盖调用方 session_id，绑定 conversationId）。
+            trace_id: 追踪 ID（覆盖）。
+
+        Returns:
+            新的 ToolContext 副本。
+        """
+        return ToolContext(
+            session_id=session_id or self.session_id,
+            user_id=self.user_id,
+            trace_id=trace_id or self.trace_id,
+            agent_id=self.agent_id,
+            call_id=call_id or self.call_id,
+            services=dict(self.services),
+        )
 
 
 # ---------------------------------------------------------------------------

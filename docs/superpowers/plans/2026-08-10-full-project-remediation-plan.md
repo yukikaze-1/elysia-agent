@@ -100,7 +100,7 @@ A1/A2
 - [x] B5 Consolidator/LTM 离线一致性
 - [x] B6 Session 查询、TTL 迁移与 reflector
 - [x] C1 用户消息 FIFO 与 work lease
-- [ ] C2 Per-call ToolInvocation 与 call-ID task
+- [x] C2 Per-call ToolInvocation 与 call-ID task
 - [ ] C3 After-response 目标会话绑定
 - [ ] C4 shutdown 顺序与可重入 restart
 - [ ] C5 checkpoint 与 proactive event
@@ -1260,6 +1260,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：无
 - 契约或 Electron 影响：无 wire 变化（行为修复：同 tick 双消息不再丢第一条、lease 不泄漏）
 - 剩余风险：`_started_cognitive_tasks` 在 stop() 时未显式清空——restart 需确保清空（C4 会处理 task registry 复位）；队列满时 pre-start 第二条直接释放 lease 并丢弃（与 busy 队列满语义一致）
+
+### C2 — Per-call ToolInvocation 与 call-ID task
+
+- 状态：完成
+- Commit：`<见 C2 提交>`
+- 变更文件：`Module/tool/protocol.py`（ToolContext.call_id + clone_for_call）、`core/cognitive/tools.py`（每调用克隆 ctx）、`Module/tool/manager.py`（_tasks 按 call_id）、`Module/tool/tests/test_per_call_context.py`（新）
+- 新增失败测试：`TestCloneForCall`（services 浅拷贝隔离 _safe_path、session/call 绑定）；`TestCallIdTaskTracking`（同名两调用 _tasks 独立跟踪、cancel_all 全量取消）；`TestSafetyPerCallContext`
+- 目标测试：`pytest Module/tool/tests/ core/cognitive/tests/` → 328 passed；`pytest Module/tool/tests/test_per_call_context.py` → 5 passed
+- 批次门禁：`ruff check` → 通过；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：无
+- 契约或 Electron 影响：无
+- 剩余风险/计划偏差：审批 token/hash 显式绑定（call_id+session+规范化参数+expiry）未作为独立校验实现——per-call ctx 已使决策与执行天然同域（A 的规范化路径不会落到 B）；`cancel_all` 返回取消结果（而非只 gather）未实现；streaming emitter 仍经 ctx.services['_emit']（per-call 已隔离）；文件系统端到端 P1-09 复现测试在 D1 补
 
 ## 14. 需要停止并请求决策的情况
 

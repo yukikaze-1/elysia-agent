@@ -161,14 +161,15 @@ class ToolManager:
         task = asyncio.create_task(
             self._pipeline.execute(plugin, name, ctx, raw_params, sem),
         )
-        self._tasks[name] = task
+        # C2/P1-13：_tasks 按 call_id 跟踪（同工具可同时多个调用，互不覆盖）
+        self._tasks[ctx.call_id or name] = task
         try:
             result = await task
             self._record(result)
             return result
         finally:
             self._executing.discard(name)
-            self._tasks.pop(name, None)
+            self._tasks.pop(ctx.call_id or name, None)
 
     async def execute_stream(
         self, name: str, *, ctx: ToolContext, emit: ToolEmitter | None = None, **raw_params: Any,
@@ -213,7 +214,8 @@ class ToolManager:
                 await queue.put(None)  # sentinel
 
         task = asyncio.create_task(_drive())
-        self._tasks[name] = task
+        # C2/P1-13：按 call_id 跟踪（流式同理）
+        self._tasks[ctx.call_id or name] = task
         try:
             while True:
                 item = await queue.get()
@@ -224,7 +226,7 @@ class ToolManager:
                 yield item
         finally:
             self._executing.discard(name)
-            self._tasks.pop(name, None)
+            self._tasks.pop(ctx.call_id or name, None)
 
     # ---- Schema Export ----
 
@@ -374,10 +376,9 @@ class ToolManager:
     # ---- Control ----
 
     async def cancel_all(self) -> None:
-        """取消所有 in-flight 工具执行任务。"""
-        for name in list(self._executing):
-            task = self._tasks.get(name)
-            if task and not task.done():
+        """取消所有 in-flight 工具执行任务（按 call_id 全量，C2/P1-13）。"""
+        for task in list(self._tasks.values()):
+            if not task.done():
                 task.cancel()
         self._executing.clear()
         self._tasks.clear()

@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import TYPE_CHECKING
 
 from core.adapter import ToolResult, ErrorType
@@ -68,7 +69,14 @@ class CognitiveTools:
             try:
                 if self._tool_adapter is None:
                     raise RuntimeError("ToolAdapter 未初始化")
-                tr = await self._tool_adapter.execute(func_name, ctx=self._tool_adapter.tool_context, **args)
+                # C2/P1-08/P1-09：每次调用构造不可变 context 副本——session_id 绑定
+                # 请求 conversationId，services 浅拷贝隔离 _safe_path/_emit 跨调用污染
+                # （并发调用 A/B 的审批路径与真实写路径不再串线）。
+                ctx = self._tool_adapter.tool_context.clone_for_call(
+                    call_id=tc.id or uuid.uuid4().hex,
+                    session_id=str(self._session.session_id),
+                )
+                tr = await self._tool_adapter.execute(func_name, ctx=ctx, **args)
             except asyncio.CancelledError:
                 logger.info("工具取消: %s", func_name)
                 tr = ToolResult.fail(name=func_name, error="用户取消")
