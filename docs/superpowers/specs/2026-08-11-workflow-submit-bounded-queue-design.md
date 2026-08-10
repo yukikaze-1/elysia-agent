@@ -179,6 +179,7 @@ async def _drain_queue(self) -> None:
 #       except asyncio.QueueFull:
 #           ts.resume_pending = False            # 入队失败清除标记
 #           return ResumeError(code=QUEUE_FULL, message="执行队列已满，请稍后再试")
+#       push_mailbox_event(mailbox, WorkflowEventType.QUEUED, {"task_id": str(task_id)})  # 排队可见（§7）
 #       # 任务状态保持 PAUSED，不回退为 QUEUED（resume_from_pause 要求 status==PAUSED，
 #       # 见 sub_agent.py:210——置 QUEUED 会让恢复路径抛 RuntimeError）
 #   return mailbox
