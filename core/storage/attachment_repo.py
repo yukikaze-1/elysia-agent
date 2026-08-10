@@ -186,6 +186,29 @@ class AttachmentRepository(Repository):
             {"$addToSet": {"refs": message_id}, "$inc": {"ref_count": 1}},
         )
 
+    async def release_reservation(self, attachment_id: AttachmentId, message_id: str) -> None:
+        """撤销未接受消息的附件预留（B4/P1-04）。
+
+        与 ``remove_ref`` 的区别：``remove_ref`` 用于已接受消息删除（归零即软删，
+        附件生命周期走向删除）；``release_reservation`` 用于消息被拒（QUEUE_FULL /
+        异常 / 部分预留失败）后回滚——只 pull 该 message_id 引用，**不触发归零软删**，
+        附件回到未关联 active 状态（由 GC 规则 3 的 7 天保留期兜底回收）。
+        条件 update 幂等：refs 不包含该 message_id 时为 no-op。
+
+        Args:
+            attachment_id: 附件 ID。
+            message_id: 预留引用的消息 ID。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（离线）。
+        """
+        db = self._require_db()
+        await db.update_one(
+            COLLECTION,
+            {"attachment_id": attachment_id, "refs": message_id},
+            {"$pull": {"refs": message_id}, "$inc": {"ref_count": -1}},
+        )
+
     async def remove_ref(self, attachment_id: AttachmentId, message_id: str) -> None:
         """原子 remove：pull + dec（仅当 refs 确实含该 message_id）；归零且 active → 软删。
 

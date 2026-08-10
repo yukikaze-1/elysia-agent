@@ -18,6 +18,11 @@ from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
 from core.input.idempotency import reset_store
 
 
+async def _noop_ref(self, aid, mid):
+    """测试 fake attachment repo 的 add_ref/release_reservation no-op。"""
+    return None
+
+
 @pytest.fixture
 def fresh_idempotency():
     """每个测试独立幂等表。"""
@@ -589,7 +594,9 @@ class TestQueueFullAck:
             return {"attachment_id": aid, "kind": "image", "status": "active",
                     "mime": "image/png", "filename": "x.png",
                     "stored_name": "x.png", "size": 10}
-        agent.attachment_repo = type("R", (), {"get": _fake_get})()
+        agent.attachment_repo = type("R", (), {"get": _fake_get,
+                                               "add_ref": _noop_ref,
+                                               "release_reservation": _noop_ref})()
         await handle_json_message(
             {"type": "text", "content": "", "clientRequestId": "q4",
              "attachments": [{"attachmentId": "att_1", "kind": "image",
@@ -1024,7 +1031,9 @@ class TestV2TextValidation:
             return {"attachment_id": aid, "kind": "image", "status": "active",
                     "mime": "image/png", "filename": "x.png",
                     "stored_name": "x.png", "size": 10}
-        agent.attachment_repo = type("R", (), {"get": _fake_get})()
+        agent.attachment_repo = type("R", (), {"get": _fake_get,
+                                               "add_ref": _noop_ref,
+                                               "release_reservation": _noop_ref})()
 
         async def _ok_process(**kwargs):
             agent.processed_kwargs = kwargs

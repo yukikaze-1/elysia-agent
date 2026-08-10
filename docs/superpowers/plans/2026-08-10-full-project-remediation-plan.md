@@ -96,7 +96,7 @@ A1/A2
 - [x] B1 统一存储不可用语义与真实健康检查
 - [x] B2 Session durable save/load/pending 恢复
 - [x] B3 归档任务所有权与 durable 删除
-- [ ] B4 accepted ACK 前建立附件引用
+- [x] B4 accepted ACK 前建立附件引用
 - [ ] B5 Consolidator/LTM 离线一致性
 - [ ] B6 Session 查询、TTL 迁移与 reflector
 - [ ] C1 用户消息 FIFO 与 work lease
@@ -1212,6 +1212,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：无新集合/索引；删除语义离线 → 503 retryable（不再假成功）
 - 契约或 Electron 影响：DELETE /api/sessions/{id} 离线/附件释放失败 → 503 STORAGE_UNAVAILABLE retryable（新增稳定错误码，Electron 需感知）
 - 剩余风险：durable deletion job/outbox（附件释放→删消息→删会话跨步幂等重试）未实现——当前为「任一存储操作失败即整体失败 + 503 retryable」，客户端重试即可收敛；多步部分成功（如消息已删、session 未删）需靠幂等重试收敛，无独立恢复 job
+
+### B4 — accepted ACK 前建立附件引用
+
+- 状态：完成
+- Commit：`<见 B4 提交>`
+- 变更文件：`core/input/ws_handler.py`、`core/storage/attachment_repo.py`、`core/input/tests/test_attachment_message.py`
+- 新增失败测试：`test_queue_full_rolls_back_ref_and_keeps_active`、`test_ref_rolled_back_when_process_raises`、`test_add_ref_failure_rejects_and_rolls_back_all`（多附件部分失败→STORAGE_UNAVAILABLE 拒绝、不调 process、全部回滚 active）
+- 目标测试：`pytest core/input/tests/test_attachment_message.py` → 15 passed
+- 批次门禁：`ruff check core/input/ws_handler.py core/storage/attachment_repo.py` → 通过；`pyright` → 0 errors（1 个既有 warning）；input 全量回归待确认
+- 数据迁移/回滚：新增 `attachment_repo.release_reservation`（幂等 pull，不触发归零软删）；无索引变化
+- 契约或 Electron 影响：无 wire 变化；附件 refs 持久化失败 → rejected STORAGE_UNAVAILABLE retryable（新增稳定错误码）
+- 剩余风险：预留后进程崩溃的悬挂 ref（消息未接受但 ref 存在）——安全方向（附件保留，不误删），由消息删除/reconciler 释放；当前无独立 reconciler
 
 ## 14. 需要停止并请求决策的情况
 

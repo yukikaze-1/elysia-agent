@@ -86,6 +86,17 @@ class _FakeAttachmentRepo:
             doc["status"] = "deleted"
             doc["deleted_at"] = "now"
 
+    async def release_reservation(self, attachment_id: str, message_id: str) -> None:
+        """B4：撤销未接受消息的附件预留——pull ref，不触发归零软删。"""
+        self._require()
+        doc = self.records.get(attachment_id)
+        if doc is None:
+            return
+        refs = [r for r in (doc.get("refs") or []) if r != message_id]
+        doc["refs"] = refs
+        doc["ref_count"] = len(refs)
+        # 不软删：附件回到未关联 active（由 GC 规则 3 7 天保留期兜底）
+
     async def mark_deleted(self, attachment_id: str) -> None:
         self._require()
         doc = self.records.get(attachment_id)
@@ -349,6 +360,99 @@ class TestAttachmentMessage:
             ack2 = await _read_ack(ws)
             assert ack2["status"] == "rejected"
             assert ack2["error"]["code"] == "QUEUE_FULL"
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_queue_full_rolls_back_ref_and_keeps_active(self, aiohttp_client):
+        """B4：QUEUE_FULL → refs 释放且附件保持 active（release_reservation 不软删）。"""
+        agent, app = _make_agent_app()
+        _add_attachment(agent._attachment_repo, "att_x")  # noqa: SLF001
+        client = await aiohttp_client(app)
+        await agent.start()
+        try:
+            async def _drop(**kwargs) -> bool:
+                return False
+            agent.process_message = _drop
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({
+                "type": "text", "content": "hi",
+                "clientRequestId": "req_q2",
+                "attachments": [{"attachmentId": "att_x", "kind": "image", "mime": "image/png"}],
+            })
+            ack = await _read_ack(ws)
+            assert ack["status"] == "rejected" and ack["error"]["code"] == "QUEUE_FULL"
+            doc = agent._attachment_repo.records["att_x"]  # noqa: SLF001
+            assert doc["ref_count"] == 0 and not doc["refs"]
+            assert doc["status"] == "active"  # 未被 remove_ref 误软删
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_ref_rolled_back_when_process_raises(self, aiohttp_client):
+        """B4：process_message 抛异常 → rejected INTERNAL + refs 释放回 active。"""
+        agent, app = _make_agent_app()
+        _add_attachment(agent._attachment_repo, "att_x")  # noqa: SLF001
+        client = await aiohttp_client(app)
+        await agent.start()
+        try:
+            async def _boom(**kwargs):
+                raise RuntimeError("boom")
+            agent.process_message = _boom
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({
+                "type": "text", "content": "hi",
+                "clientRequestId": "req_boom",
+                "attachments": [{"attachmentId": "att_x", "kind": "image", "mime": "image/png"}],
+            })
+            ack = await _read_ack(ws)
+            assert ack["status"] == "rejected" and ack["error"]["code"] == "INTERNAL"
+            doc = agent._attachment_repo.records["att_x"]  # noqa: SLF001
+            assert doc["ref_count"] == 0 and not doc["refs"]
+            assert doc["status"] == "active"
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_add_ref_failure_rejects_and_rolls_back_all(self, aiohttp_client):
+        """B4：多附件 add_ref 部分失败 → rejected STORAGE_UNAVAILABLE，不调 process，全部回滚。"""
+        agent, app = _make_agent_app()
+        repo = agent._attachment_repo  # noqa: SLF001
+        _add_attachment(repo, "att_x")
+        _add_attachment(repo, "att_y", kind="file", mime="application/octet-stream")
+        client = await aiohttp_client(app)
+        await agent.start()
+        try:
+            calls: list[dict] = []
+            _record_calls(agent, calls)
+            original_add_ref = repo.add_ref
+
+            async def _fail_on_second(aid, mid):
+                if str(aid) == "att_y":
+                    raise StorageUnavailableError("offline")
+                return await original_add_ref(aid, mid)
+            repo.add_ref = _fail_on_second
+
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({
+                "type": "text", "content": "hi",
+                "clientRequestId": "req_ab",
+                "attachments": [
+                    {"attachmentId": "att_x", "kind": "image", "mime": "image/png"},
+                    {"attachmentId": "att_y", "kind": "file", "mime": "application/octet-stream"},
+                ],
+            })
+            ack = await _read_ack(ws)
+            assert ack["status"] == "rejected"
+            assert ack["error"]["code"] == "STORAGE_UNAVAILABLE"
+            assert calls == []  # process_message 未被调（refs 未全持久化不 ACK）
+            # 已预留的 att_x 被回滚：回到未关联 active
+            doc_x = repo.records["att_x"]
+            assert doc_x["ref_count"] == 0 and not doc_x["refs"]
+            assert doc_x["status"] == "active"
             await ws.close()
         finally:
             await agent.stop()

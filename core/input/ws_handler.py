@@ -514,6 +514,17 @@ async def _send_ack(ws: "web.WebSocketResponse | None", message_id: str,
         logger.debug("发送 user_message.ack 失败", exc_info=True)
 
 
+async def _release_attachment_reservations(agent: "Agent", reserved: list[str],
+                                           message_id: str) -> None:
+    """幂等释放附件预留（B4/P1-04）：消息被拒/失败后回滚，不抛（尽力而为）。"""
+    for aid in reserved:
+        try:
+            await agent.attachment_repo.release_reservation(
+                AttachmentId(aid), message_id)
+        except Exception:
+            logger.warning("附件预留释放失败 aid=%s message=%s", aid, message_id)
+
+
 async def _session_or_none(agent: "Agent", conversation_id: str | None) -> "SessionMemory | None":
     """9a3：v2 目标会话解析——显式 ID 先验证存在，未知返回 None；缺省 → 当前 active。
 
@@ -717,12 +728,31 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         # 附件/表情消息：ACK 延后到 process 后（需 process 结果判定 accepted / QUEUE_FULL）
         parts = _build_media_parts(text, attachment_records, sticker_id)
         content = [p.model_dump() for p in parts]
+        # B4/P1-04：accepted ACK 前先持久建立附件引用（幂等 add_ref）。全部成功后才
+        # process_message；任一步失败 → 幂等释放已预留（绝不部分成功 ACK，历史媒体
+        # 不被未引用 GC 误删）。预留后崩溃的悬挂引用为安全方向（附件保留），由
+        # reconciler/消息删除释放（剩余风险）。
+        reserved: list[str] = []
+        try:
+            for aid in attachment_records:
+                await agent.attachment_repo.add_ref(AttachmentId(aid), message_id)
+                reserved.append(aid)
+        except Exception:
+            logger.warning("附件 refs 预留失败——释放已预留并拒绝", exc_info=True)
+            await _release_attachment_reservations(agent, reserved, message_id)
+            store.delete(client_request_id)
+            await _send_ack(ws, "", client_request_id, client_message_id,
+                            ack_conversation_id, "rejected",
+                            error={"code": "STORAGE_UNAVAILABLE",
+                                   "message": "附件引用持久化失败", "retryable": True})
+            return True
         try:
             accepted = await agent.process_message(
                 text=text, content=content, message_id=message_id,
                 protocol_version=2, conversation_id=ack_conversation_id)
         except SessionNotFoundError:
             store.delete(client_request_id)
+            await _release_attachment_reservations(agent, reserved, message_id)
             await _send_ack(ws, "", client_request_id, client_message_id,
                             ack_conversation_id, "rejected",
                             error={"code": "SESSION_NOT_FOUND",
@@ -732,6 +762,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         except Exception:
             logger.warning("附件消息 process_message 抛异常——删幂等 entry", exc_info=True)
             store.delete(client_request_id)
+            await _release_attachment_reservations(agent, reserved, message_id)
             await _send_ack(ws, "", client_request_id, client_message_id,
                             ack_conversation_id, "rejected",
                             error={"code": "INTERNAL", "message": "消息处理失败",
@@ -742,15 +773,12 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                             ack_conversation_id, "accepted")
             if sent_message_ids is not None:
                 sent_message_ids.add(message_id)   # D1 归属（media 路径同样登记）
-            for aid in attachment_records:
-                try:
-                    await agent.attachment_repo.add_ref(AttachmentId(aid), message_id)
-                except Exception as e:
-                    logger.warning("附件 refs 写盘失败 aid=%s message=%s: %s",
-                                   aid, message_id, e)
+            # refs 已在 process 前预留持久化——无需重复 add_ref
         else:
-            # 队列满 → 删幂等 entry（重试允许重新进入）+ rejected QUEUE_FULL；refs 不递增
+            # 队列满 → 删幂等 entry（重试允许重新进入）+ rejected QUEUE_FULL；
+            # 释放已预留 refs（附件回到未关联 active，不软删）
             store.delete(client_request_id)
+            await _release_attachment_reservations(agent, reserved, message_id)
             await _send_ack(ws, "", client_request_id, client_message_id,
                             ack_conversation_id, "rejected",
                             error={"code": "QUEUE_FULL",
