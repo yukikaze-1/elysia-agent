@@ -371,20 +371,24 @@ class WorkflowEngine:
                 caller="WorkflowEngine",
             )
         finally:
-            # PAUSED 任务保持存活——checkpoint/mailbox/SubAgent/semaphore
-            # 全部保留，等待 resume() 恢复执行。
+            # PAUSED 任务释放执行槽（E2 §5）——checkpoint/mailbox/SubAgent/注册表全部保留，
+            # 等待 resume() 恢复执行。slot 释放不变式：每取得一次 semaphore 恰释放一次。
             if (sub_agent._task_state is not None and
-                sub_agent._task_state.status == WorkflowStatus.PAUSED):
-                return
+                    sub_agent._task_state.status == WorkflowStatus.PAUSED):
+                if self._semaphore:
+                    self._semaphore.release()          # 释放执行槽，供 runner 派发下一个排队任务
+                self._active.discard(task_id)          # slot 持有集合同步
+                return                                 # checkpoint/mailbox/注册表保留
             self._cleanup_task(task_id)
+            if self._semaphore:
+                self._semaphore.release()              # 终态分支 release 先于 cleanup_storage（E3 §3.4）
+            self._active.discard(task_id)
             try:
                 await self._cleanup_storage(task_id, sub_agent)
             except Exception:
                 logger.exception(
                     "WorkflowEngine: task_id=%s 存储清理失败，槽位仍会释放", task_id,
                 )
-            if self._semaphore:
-                self._semaphore.release()
 
     def _get_debug_snapshot(self) -> dict:
         """供 WorkflowDebugAPI 内部轮询使用。

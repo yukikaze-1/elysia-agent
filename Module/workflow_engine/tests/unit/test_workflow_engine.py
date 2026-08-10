@@ -1160,3 +1160,34 @@ class TestSubmitNonBlocking:
         assert isinstance(result, SubmitError)
         assert result.code == SubmitRejectionCode.QUEUE_FULL
         await engine.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E2: PAUSED 释放执行 slot
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestPausedReleasesSlot:
+    @pytest.mark.asyncio
+    async def test_paused_branch_releases_slot_keeps_registry(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        sub_agent = MagicMock()
+        sub_agent._task_state = MagicMock()
+        sub_agent._task_state.status = WorkflowStatus.PAUSED
+        tid = WorkflowId("t1")
+        engine._tasks[tid] = sub_agent
+        engine._mailboxes[tid] = WorkflowMailbox(tid)
+        engine._contexts[tid] = DelegationContext(intent="t", session_id=SessionId("s1"))
+        await engine._semaphore.acquire()
+        engine._active.add(tid)
+
+        async def fake_run(context, mailbox):
+            sub_agent._task_state.status = WorkflowStatus.PAUSED   # run 中途暂停
+
+        sub_agent.run = fake_run
+        await engine._run_and_cleanup(sub_agent, tid)
+        assert engine._semaphore.locked() is False   # slot 已释放
+        assert tid in engine._tasks                   # registry 保留
+        assert tid not in engine._active
+        await engine.stop()
