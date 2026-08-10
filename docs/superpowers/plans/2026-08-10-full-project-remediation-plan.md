@@ -121,10 +121,10 @@ A1/A2
 - [x] E5 Milvus 输入与 metric
 - [ ] E6 Desktop golden runtime 单源
 - [x] F1 真正全量离线 CI
-- [ ] F2 依赖锁与安全扫描
-- [ ] F3 Backend-only setup/start
-- [ ] F4 静态门禁与关键复杂度拆分
-- [ ] F5 文档与 Electron 交接收口
+- [x] F2 依赖锁与安全扫描
+- [x] F3 Backend-only setup/start
+- [ ] F4 静态门禁与关键复杂度拆分（门禁扩展部分完成；复杂度拆分待做）
+- [ ] F5 文档与 Electron 交接收口（part 1 完成；运维说明待做）
 
 ## 4. 全局测试分层
 
@@ -1413,6 +1413,24 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 实施步骤对应：test-all 重定义 ✓ / CI 必跑（lint/pyright/contract drift/含 scripts；workflow unit/service 入 gate）✓ / external job 独立受保护 ✓ / warnings-as-errors 起步（coroutine 泄漏，先清 15 条异步 warning）✓
 - 验证：`make test-quick` 3324 passed（+257 workflow unit）/ `make test-normal` 3426 passed / `pytest --collect-only -m external` 36（workflow 真实 LLM E2E）/ `check_ci_isolation.py` 通过 / ci.yml YAML 有效
 - 剩余风险：test-full（含 external）仍跑真实 LLM E2E（flaky 已记 todo，E4 处理 fake-LLM 确定性）；docs-only path-ignore 保留（契约源在 frontend_contract/，文档变更不触发 drift 检查属预期）
+
+### F2 — 锁定 runtime/dev 依赖并增加安全扫描
+
+- 状态：完成（2026-08-11；拍板：统一 conda，uv 迁移记 todo.md 未来项）
+- Commit：本批次 F2 提交
+- 变更文件：`environment.yml`（声明单源：python=3.12 + `-r requirements.txt` runtime + `-r requirements-dev.txt` dev 工具）、`environment.lock.yml`（`conda env export` 精确锁，115 pip 包版本+hash）、`requirements-dev.txt`（pytest/ruff/pyright/pip-audit/bandit）、`bandit.yaml`（排除测试 + 10 项带理由跳过）、`scripts/check_env_lock.py`（锁-源漂移校验）、Makefile（`lock-env`/`audit` target）、CI pr-gate（锁漂移 + pip-audit + bandit）、setup.sh（一并装 dev 工具）、system_prompt 两处 B701 nosec（本地受信模板非 XSS）
+- 实施步骤对应：单一锁定工具（conda）✓ / runtime 与 dev 分离（requirements-dev.txt）✓ / CI clean-room 从锁建 env（`conda env create -f environment.lock.yml` 供部署复现；pr-gate 保持快速 CPU-torch 安装 + 锁漂移校验）✓ / pip-audit + Bandit 进受控门禁 ✓ / 容器镜像/action digest 固定 ⏳（记 todo 未来项）
+- 验证：`make audit` → pip-audit 0 vuln（2 ignored PYSEC-2026-3447）/ bandit 0 High 0 Medium 9 Low（原 7062 High 收敛）；`check_env_lock.py` 通过（19 顶层包在锁中）；system_prompt 62 passed
+- 已知豁免：PYSEC-2026-3447（setuptools 80.10.2→83.0.0 移除 pkg_resources，webrtcvad 2.0.10 依赖；迁移 webrtcvad-wheels 后再解除，todo.md 记录）
+- 剩余风险：pr-gate 未从锁建 env（torch CUDA 2GB+/PR 太慢）——锁为部署可复现保证，pr-gate 用锁漂移校验兜底；bandit 9 Low 未清零（噪音，后续专项）
+
+### F3 — Backend-only setup/start，不依赖 v1 前端
+
+- 状态：完成（2026-08-11）
+- Commit：本批次 F3 提交
+- 变更文件：`scripts/setup.sh`（backend-only 默认，`--with-frontend`/`--legacy-ui` 显式才构建 v1 UI 用 `npm ci`）、`scripts/start.sh`（构建前端 backend-only 默认 + `--with-frontend` 需 npm 拒绝 + preflight 失败默认非零退出 + `--skip-preflight` 显式降级）、`scripts/tests/test_backend_only_smoke.sh`（受控 PATH + fake python3，11 断言）、README（安装/启动说明）
+- 实施步骤对应：backend-only 默认一等 mode ✓ / v1 UI 独立 opt-in target 用 npm ci ✓ / startup 不每次修改依赖树（移除 npm install 每次跑）✓ / preflight 失败默认非零退出 ✓ / shell smoke（无 node/npm、无 v1 build、无效配置失败、合法配置 dry-run）✓
+- 验证：smoke 11/11；bash -n 语法通过；README 同步
 
 ## 14. 需要停止并请求决策的情况
 

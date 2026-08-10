@@ -90,11 +90,11 @@
 
 | 优先级 | 后端待办 | 当前行为与风险 | 完成标准（DoD） |
 |--------|----------|----------------|----------------|
-| 中 | **真正全量离线 CI（F1）** | `test-all` 名不副实（漏若干 `core/*/tests`、`frontend_contract/tests`、`scripts/tests`）；workflow 测试不入合并门禁 | `test-all` 改真正全仓非 external pytest（或重命名）；CI 必跑 lint/pyright/contract drift/Module/core/tools/frontend_contract/scripts/workflow unit+service；external job 独立受保护 |
-| 中 | **依赖锁与安全扫描（F2，P2-12）** | `requirements.txt` 只有下限无 lock/hash；pytest/ruff/pyright 未完整声明；CI 复用宿主 conda env | 用 uv/pip-tools/conda-lock 固定 runtime+dev；CI clean-room 安装；`pip-audit`/Bandit 进受控门禁；容器镜像/action 固定 digest |
-| 中 | **Backend-only setup/start（F3，P2-13）** | `setup.sh`/`start.sh` 强制装 v1 前端（无 npm 就退出）；preflight 被 `\|\| true` 吞 | backend-only 成为默认/一等 mode；v1 UI 移独立 `legacy-ui` target 用 `npm ci`；preflight 失败默认非零退出 |
-| 低 | **静态门禁扩展 + 关键入口拆分（F4，P3-01/P3-02）** | `scripts/` 未纳入 lint（17 个 ANN）；`core/monitoring/__init__.py` 无效 `IdleMonitor` export 致 pyright 1 warning；`api_routes/ws_handler` 复杂度高 | scripts 纳入 Ruff/Pyright；修 monitoring `__all__`；`register_api_routes`/`handle_json_message` 拆按领域注册/验证-dispatch 表 |
-| 低 | **文档/测试统计/Electron 交接（F5，P3-03）** | 活跃文档手写测试数 3186 vs 实际 3290+；错误码目录 40/41 不一致；contract 产物未发版 | 删除/自动生成易漂移统计；错误码由 contract 单源生成；生成最终 schema/raw TS/golden 并记录 version/sha；输出 Electron 变更清单 |
+| ~~中~~ ✅ | **真正全量离线 CI（F1）** | `test-all` 名不副实（漏若干 `core/*/tests`、`frontend_contract/tests`、`scripts/tests`）；workflow 测试不入合并门禁 | **2026-08-11 已完成**（`1a7cd94`）：external marker 取代 `--ignore`——WorkflowEngine unit/service 入合并门禁（test-quick 3324 / test-normal 3426）；`test-all` 真全仓非 external；`make test-external` + CI external job（workflow_dispatch 受信，self-hosted + 真实凭据）；pr-gate 去 ignore + ruff 含 scripts + coroutine warnings-as-errors |
+| ~~中~~ ✅ | **依赖锁与安全扫描（F2，P2-12）** | `requirements.txt` 只有下限无 lock/hash；pytest/ruff/pyright 未完整声明；CI 复用宿主 conda env | **2026-08-11 已完成**（拍板：统一 conda）：`environment.yml`（runtime=requirements.txt + dev=requirements-dev.txt 单源）+ `environment.lock.yml` 精确锁（115 pip 包版本+hash）；`make lock-env` 重生成 / `make audit`（pip-audit + bandit）；CI pr-gate 锁漂移校验 + 安全扫描。**豁免**：PYSEC-2026-3447（setuptools 83 移除 pkg_resources，webrtcvad 依赖）、bandit 10 项已知良性（bandit.yaml 带理由）。**未来项**：迁移 uv（见下）；容器镜像/action digest 固定未做 |
+| ~~中~~ ✅ | **Backend-only setup/start（F3，P2-13）** | `setup.sh`/`start.sh` 强制装 v1 前端（无 npm 就退出）；preflight 被 `\|\| true` 吞 | **2026-08-11 已完成**（`0df5753`）：backend-only 默认（无 Node 可安装/启动）；`--with-frontend`/`--legacy-ui` 显式构建 v1 UI（npm ci）；preflight（app.py --check）失败默认非零退出 + `--skip-preflight` 显式降级；shell smoke `scripts/tests/test_backend_only_smoke.sh`（11 断言） |
+| 低 | **静态门禁扩展 + 关键入口拆分（F4，P3-01/P3-02）** | `scripts/` 未纳入 lint（17 个 ANN）；`core/monitoring/__init__.py` 无效 `IdleMonitor` export 致 pyright 1 warning；`api_routes/ws_handler` 复杂度高 | **部分完成（2026-08-11，`602c7ea`）**：scripts 纳入 Ruff/Pyright（17 ANN 清零）+ monitoring warning 清零 + coroutine 泄漏 warnings-as-errors。**剩余**：`register_api_routes`/`handle_json_message` 复杂度拆分（单独提交，行为锁定先行） |
+| 低 | **文档/测试统计/Electron 交接（F5，P3-03）** | 活跃文档手写测试数 3186 vs 实际 3290+；错误码目录 40/41 不一致；contract 产物未发版 | **部分完成（2026-08-11，F5 part 1）**：`print_test_stats.py` 统计自动生成（3503）+ 错误码单源（`frontend_contract/errors.py` + `check_error_codes.py`，41 码一致）+ contract 发版记录 + Electron 变更清单。**剩余**：存储/GC/删除/TTL/restart 等运维说明更新 |
 | 低 | **Desktop golden 从 runtime 单源（E6，P2-14）** | `gen_contract_frames.py` 生成的 desktop read 参数含 `offset/limit`，真实 runtime 只支持 `path`；`--check` 只查生成器自洽 | desktop 参数 schema/risk/hash 抽成无副作用单源，runtime 与 generator 共同消费；`--check` 比对 runtime 语义等价 |
 
 ### D. 部分完成项（不影响对应 review 项主结论，后续补齐）
@@ -226,6 +226,7 @@
 | **高** | **无数据库迁移机制** | MongoDB 索引在 `connect()` 时 ad-hoc 创建，Milvus collection 硬编码创建。若字段/索引/维度需变更，无 upgrade path。`memory_repo.clear_all()` 是破坏性操作无安全守卫 |
 | 低 | **`character/cyrene/` 不可用** | 缺少 `config.yaml` 和 `personality.md`，仅含 GPT 参考材料，无法作为角色加载 |
 | 低 | **依赖无版本上限** | `requirements.txt` 中 pydantic、openai、torch 等均无上限约束，上游 breaking change 可导致不可预期问题。`torch` 是 2GB+ 重依赖 |
+| 低 | **未来项：依赖管理迁移 uv** | **2026-08-11 记录（F2 拍板）**：当前统一 conda（环境锁 + 可复现），暂不迁移。后续熟悉 uv 后评估迁移（uv 锁文件更轻、安装更快、CI 更干净）；迁移前提：uv lock 覆盖全部 runtime+dev 依赖 + CI 切 uv clean-room + 对比 conda 环境差异，迁移后再删 conda 锁文件 |
 | 低 | **`# type: ignore` + `Any` 类型清理** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（二/三梯队）。测试文件 IDE 类型错误已批量修复 ~155 处（2026-07-29/30：NewType 包装、ToolAdapter 替换、type: ignore 补充）。**`Any` 类型替换**：core/ 下 63 处→已消除 ~44 处（属性声明/task/emit 签名/mailbox/_process_events）。**剩余不可消除**：`dict[str, Any]` JSON 容器（~12 处）、流式协议 `**raw_params: Any`+`AsyncIterator[Any]`（5 处）、`Coroutine[Any, Any, Any]` 通用协程（3 处）、`_embed_task: Task[Any]`（2 处）。详见 `docs/completed/2026-07.md` 2026-07-29 第一、三条 + 2026-07-30 第一条。 |
 
 ## 多前端支持（2026-08-01 评估，场景 A：新前端连运行中的服务端）
