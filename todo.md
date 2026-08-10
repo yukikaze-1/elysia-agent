@@ -61,6 +61,51 @@
 4. ✅ **接入充分性复审收口**：Desktop 精确连接投递、当前 cancel/fail golden、公开文档同步——**2026-08-10 完成**；
 5. **产品化门禁（待做）**：远程鉴权 fail-closed、持久化幂等、实际请求限流。
 
+
+## 全项目修复计划剩余项（2026-08-10）
+
+> 源：`docs/review/full-project-review-2026-08-10.md` + 执行计划 `docs/superpowers/plans/2026-08-10-full-project-remediation-plan.md`。
+> 已执行 **23/41 Task**（全部 P0 + 全部 P1 + 约一半 P2），execution report 见 `docs/review/remediation-execution-report-2026-08-10.md`（含 review→fix 映射）。以下为**未做项**与**部分完成项**，记录以便后续继续。
+>
+> 每项执行时遵循计划纪律：先加失败测试 → 最小修复 → 回归 → 独立提交；完成后再把对应 plan 复选框改 `[x]` 并追加执行记录。
+
+### A. 需要产品决策/外部依赖（不宜擅自拍板）
+
+| 优先级 | 后端待办 | 当前行为与风险 | 完成标准（DoD） | 决策点 |
+|--------|----------|----------------|----------------|--------|
+| 中（产品化门禁） | **跨重启持久化幂等（D6c）** | `clientRequestId` 幂等表是进程内 dict、TTL 1h，重启后丢失——ACK 丢失 + 后端重启后 Electron 重试可能重复生成。见 `core/input/idempotency.py` | 持久化 `(conversation_id, client_request_id, content_digest, message_id, status, expires_at)` + 唯一索引；同键同内容重试返回原 ACK、同键异内容拒绝；`expires_at` 用 BSON Date 真 TTL；Mongo 不可用产品模式 fail-closed/503 | **需拍板**：Mongo 离线时产品模式 fail-closed 还是保留内存降级（降级需在 server_info 暴露非 durable 窗口） |
+| 中（产品化门禁） | **公开入口实际请求限流（D6b）** | 契约已登记 `RATE_LIMITED` 但无生产者；远程暴露时无应用层抵御突发/滥用 | 可配置 token-bucket/sliding-window；key 优先认证主体、匿名回退 IP；REST 429 / WS `RATE_LIMITED` + retry hint；limiter 内存有界、旧 key 清理 | **需拍板**：单进程内限流 vs 多实例共享 backend（计划禁止「假装全局限流」） |
+| 中 | **Workflow submit 立即返回且有界排队（E2，P2-07）** | `submit()` 先等 semaphore（PAUSED 任务占 slot）——`max_concurrent_tasks=1` 时首任务暂停会让第二次 submit 无限等待，阻塞当前聊天轮 | submit 先注册 mailbox 立即返回；acquire 移到后台 runner；显式 QUEUED 状态 + 队列上限；PAUSED 释放 slot | **需拍板**：计划推荐「立即返回 + 后台有界 QUEUED」；若改选快速 `BUSY/QUEUE_FULL` 必须先改公开契约与计划记录 |
+
+### B. Workflow 独立子系统（工作量大，非 P1）
+
+| 优先级 | 后端待办 | 当前行为与风险 | 完成标准（DoD） |
+|--------|----------|----------------|----------------|
+| 中 | **Workflow cancel/pause 终态单调性（E3，P2-08 + M19/M20）** | `planning.py` 返回后无条件写 RUNNING，cancel 期间可把终态逆转；resume 后再次 pause 会销毁 task/mailbox（M19） | 每 workflow 建 cancellation token/owned task；每个外部 await 后检查；CANCELLED/FAILED/COMPLETED 终态不可逆；terminal event 只推一次；M19：resume→pause 不销毁 task/mailbox |
+| 中 | **Workflow 测试确定性与外部 E2E 分层（E4，P2-11 部分）** | 全量 `pytest` 2 个失败均为带真实 `DEEPSEEK_API_KEY` 的 workflow 外部 E2E 首事件超时；`make test-quick/normal` 永久 `--ignore=Module/workflow_engine/tests` | 新增 `external` marker（真实 LLM 必须同时标 `integration+external`）；cancel/pause/mailbox 首事件用 fake LLM 确定性测试；`make test-workflow-engine` 覆盖核心 unit/service；`make test-external` 单独跑；修 `coroutine was never awaited` warning |
+| 中 | **工具热重载原子回滚（E1，P2-06）** | `importlib.reload()` 后读旧 `_plugin_classes[name]`（即使模块暴露 New class 仍是 Old class）；新 setup 失败后工具永久消失 | reload 后从新 module 重新 discover class；共用统一 config 流程；先构造/setup 新实例、成功后原子替换、等旧实例 in-flight 排空；setup 失败保留旧工具 |
+
+### C. 工程化/文档（F 批次，正式 release candidate 前置）
+
+| 优先级 | 后端待办 | 当前行为与风险 | 完成标准（DoD） |
+|--------|----------|----------------|----------------|
+| 中 | **真正全量离线 CI（F1）** | `test-all` 名不副实（漏若干 `core/*/tests`、`frontend_contract/tests`、`scripts/tests`）；workflow 测试不入合并门禁 | `test-all` 改真正全仓非 external pytest（或重命名）；CI 必跑 lint/pyright/contract drift/Module/core/tools/frontend_contract/scripts/workflow unit+service；external job 独立受保护 |
+| 中 | **依赖锁与安全扫描（F2，P2-12）** | `requirements.txt` 只有下限无 lock/hash；pytest/ruff/pyright 未完整声明；CI 复用宿主 conda env | 用 uv/pip-tools/conda-lock 固定 runtime+dev；CI clean-room 安装；`pip-audit`/Bandit 进受控门禁；容器镜像/action 固定 digest |
+| 中 | **Backend-only setup/start（F3，P2-13）** | `setup.sh`/`start.sh` 强制装 v1 前端（无 npm 就退出）；preflight 被 `\|\| true` 吞 | backend-only 成为默认/一等 mode；v1 UI 移独立 `legacy-ui` target 用 `npm ci`；preflight 失败默认非零退出 |
+| 低 | **静态门禁扩展 + 关键入口拆分（F4，P3-01/P3-02）** | `scripts/` 未纳入 lint（17 个 ANN）；`core/monitoring/__init__.py` 无效 `IdleMonitor` export 致 pyright 1 warning；`api_routes/ws_handler` 复杂度高 | scripts 纳入 Ruff/Pyright；修 monitoring `__all__`；`register_api_routes`/`handle_json_message` 拆按领域注册/验证-dispatch 表 |
+| 低 | **文档/测试统计/Electron 交接（F5，P3-03）** | 活跃文档手写测试数 3186 vs 实际 3290+；错误码目录 40/41 不一致；contract 产物未发版 | 删除/自动生成易漂移统计；错误码由 contract 单源生成；生成最终 schema/raw TS/golden 并记录 version/sha；输出 Electron 变更清单 |
+| 低 | **Desktop golden 从 runtime 单源（E6，P2-14）** | `gen_contract_frames.py` 生成的 desktop read 参数含 `offset/limit`，真实 runtime 只支持 `path`；`--check` 只查生成器自洽 | desktop 参数 schema/risk/hash 抽成无副作用单源，runtime 与 generator 共同消费；`--check` 比对 runtime 语义等价 |
+
+### D. 部分完成项（不影响对应 review 项主结论，后续补齐）
+
+| Review 项 | 已做 | 剩余 |
+|--------|------|------|
+| P2-01 | TTL 真实生效（BSON `ttl_expires_at`）+ reflector 持久化接线 | session 列表 keyset 分页下推（repo.list_all 仍预取 200，第 201+ 条不可分页/搜索）；显式 session 过期级联清理 worker |
+| P2-02 | 搜索 query 长度/字面化、context before/after 钳制、/api/chat 队列满 429 | contract 层 content/ID/attachments 业务长度上限（附件最多 10 个）+ 附件 bounded batch 查询（一帧数千附件仍串行查 DB） |
+| P2-09 | checkpoint 空则删 + 不可序列化跳过 + 版本隔离；time_of_day 未知 reason 告警 | EventBus lifecycle epoch（旧 epoch 事件潜在重放；stop 已 cancel event task，风险低） |
+
+
+
 ## 模块化评估（2026-08-01）
 
 基于 import 图分析（AST 解析全仓 28 个包、~340 py 文件、118 条包间依赖边）。总体分层健康（`core → Module` 正向为主）。**已修部分归档**：硬环拆除 + Agent 公开接口见 [docs/completed/2026-08.md](docs/completed/2026-08.md)。
