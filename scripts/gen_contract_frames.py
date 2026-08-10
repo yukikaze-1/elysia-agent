@@ -44,7 +44,8 @@ def _server_info() -> wm.ServerInfoMessage:
         server_version="0.1.0",
         features=wm.ServerInfoFeatures(
             structured_generation=True, multi_conversation=True, desktop_runtime=True,
-            dictation=True, voice_recording=True, voice_realtime=True, media_upload=True),
+            dictation=True, voice_recording=True, voice_realtime=True, media_upload=True,
+            idempotency_durable=True),  # D6c：当前契约支持幂等跨重启持久化
         services={
             "llm": wm.ServiceCapability(available=True, enabled=True,
                                         model="deepseek/deepseek-chat",

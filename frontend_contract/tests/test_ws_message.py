@@ -77,6 +77,7 @@ def test_server_info_message_wire():
         "desktop_runtime": False, "dictation": False,
         "voice_recording": False, "voice_realtime": False,
         "media_upload": False,
+        "idempotency_durable": False,  # D6c：默认非持久化
     }
     assert d["services"]["llm"]["model"] == "fake/test"
 

@@ -29,6 +29,7 @@ from frontend_contract.rest import ProtocolError
 
 if TYPE_CHECKING:
     from Module.workflow_engine.workflow_engine import WorkflowEngine
+    from core.storage.idempotency_repo import IdempotencyRepository
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,15 @@ _PROCESS_START = time.monotonic()
 
 _STATIC_DIR = ProjectPath.STATIC.resolve()
 _LIVE2D_DIR = ProjectPath.LIVE2D_ASSETS.resolve()
+
+
+def is_loopback_host(host: str) -> bool:
+    """host 是否为回环地址（127.0.0.1 / localhost / ::1）。
+
+    产品/dev 模式判定依据：回环 → 本地 dev（幂等可内存降级）；非回环 → 产品
+    （幂等 Mongo 离线 fail-closed）。与 D6a bind 守卫同一判定。
+    """
+    return host in ("127.0.0.1", "localhost", "::1")
 
 
 def assert_secure_bind(host: str, access_token: str, auth_token: str = "") -> None:
@@ -58,7 +68,7 @@ def assert_secure_bind(host: str, access_token: str, auth_token: str = "") -> No
     """
     if os.getenv("ALLOW_INSECURE_REMOTE", "") in ("1", "true", "True", "yes"):
         return
-    if host in ("127.0.0.1", "localhost", "::1"):
+    if is_loopback_host(host):
         return
     if access_token:
         return
@@ -81,7 +91,7 @@ def warn_if_unsecured(host: str, access_token: str, auth_token: str = "") -> Non
         access_token: 产品 access token（AGENT_ACCESS_TOKEN），空 = 未启用认证。
         auth_token: 管理面 token（SERVER_AUTH_TOKEN），空 = 未启用管理认证。
     """
-    if host in ("127.0.0.1", "localhost", "::1"):
+    if is_loopback_host(host):
         return
     if auth_token and access_token:
         return
@@ -338,6 +348,8 @@ def create_app(
     max_ws_connections: int | None = None,
     max_request_bytes: int | None = None,
     rate_limits: dict[str, int] | None = None,
+    product_mode: bool = False,
+    idempotency_repo: "IdempotencyRepository | None" = None,
 ) -> web.Application:
     """创建一个带 WebSocket handler 和可选静态文件的 aiohttp Application。
 
@@ -360,6 +372,10 @@ def create_app(
             REST 高成本入口（provider test/upload/search/chat）429 RATE_LIMITED；
             WS 建连按「ws」类别、消息按类别（text/voice→messages、switch_model→provider_test、
             tool_approval→tools）→ error RATE_LIMITED。key 认证主体优先、匿名回退 IP。
+        product_mode: D6c 产品/dev 模式——非回环绑定为 True。True + 幂等 Mongo
+            离线 → v2 幂等 fail-closed（503）；False + 离线 → 内存降级（capabilities
+            暴露非 durable 窗口）。
+        idempotency_repo: D6c 幂等 claim 仓库（agent.idempotency_repo），None → 纯内存。
 
     Returns:
         web.Application: 配置好的 aiohttp Application 实例。
@@ -386,6 +402,10 @@ def create_app(
         limiter = RateLimiter(rate_limits)
         app.middlewares.append(_make_rate_limit_middleware(limiter))
         app["rate_limiter"] = limiter
+    # D6c：幂等存储后端配置（product_mode 由绑定 host 判定——非回环=产品）。
+    # configure_store 幂等（多次 create_app/restart 安全）；测试经 reset_store 隔离。
+    from core.input.idempotency import configure_store
+    configure_store(idempotency_repo, product_mode=product_mode)
     # 产品认证：access_token 为空 → 全匿名（本地开发，v1 兼容）
     if access_token:
         app.middlewares.append(_make_access_auth_middleware(access_token))

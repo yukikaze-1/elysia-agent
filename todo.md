@@ -44,8 +44,8 @@
 | ~~中~~ ✅ | **所有 Client→Server WS JSON 统一走 Pydantic 判别联合校验** | `handle_json_message()` 仍大量使用 `data.get()` 手工解析，并未对 `V2TextMessage/ToolStatusMessage/Voice*` 等执行统一 `model_validate`。错误类型可能被静默忽略，甚至在幂等 dict 等位置以 `TypeError` 断开单连接；顶层目前只捕获 `JSONDecodeError/ValidationError`。见 `core/input/ws_handler.py:298/757` | 按协议版本对完整 ClientMessage 判别联合做一次入口校验，再把模型交给 handler；拒绝 unknown type、错误枚举、错误字段类型、缺必填字段，统一返回 `ErrorMessage/ACK rejected CONTRACT_VALIDATION`；handler 不再依赖宽松 `data.get()` 默认值；补 fuzz/表驱动负面测试并保证畸形消息不关闭连接。**注（2026-08-09）**：`ClientMessage` 判别联合**不含 `TextMessage`**（type="text" 撞 discriminator）；非 text 走判别联合；顺带修 `:304` 单参 `ValidationError` 非 dict 帧断连 bug。**注（2026-08-10，P1-3）**：v2 text **完整帧 `V2TextMessage.model_validate`**（ValidationError → ACK rejected CONTRACT_VALIDATION，保留 ACK 通道；`attachments` 类型错/`clientRequestId` 非 str 等畸形字段不再抛 TypeError 断连）；`handle_ws` TEXT 加 `except Exception` 兜底 INTERNAL 不关闭连接 |
 | ~~中~~ ✅ | **协议版本协商显式拒绝不兼容版本** | 握手头只有精确字符串 `"2"` 才走 v2；`"2.0"`、未来版本或拼写错误会静默降级 v1，而下发 `server_info.protocol_version` 又是 `"2.0"`，命名容易误用。见 `core/input/ws_handler.py:129`、`frontend_contract/ws_message.py:281` | 明确区分 transport negotiation token 与展示版本；对显式但不支持的版本在升级前返回 4xx/WS close code + 稳定错误，只有缺省头才兼容 v1；协议文档给出支持集合；覆盖 `2`、`2.0`、未知版本、缺省头与 Electron platform 组合测试。**注（2026-08-09）**：支持集合 {缺省/`"1"`→v1, `"2"`→v2}（显式 `"1"` 保留合法 v1，防现网回归）；`"2.0"`/`"3"`/乱写 → 升级前 400 ProtocolError |
 | **中（部署门禁）** | **非回环生产绑定改为可配置 fail-closed 鉴权** | 默认可绑定 `0.0.0.0`，未设 `AGENT_ACCESS_TOKEN/SERVER_AUTH_TOKEN` 时只记录显著日志，产品 `/ws`、`/api/*`、`/uploads/*` 仍可匿名访问；日志警告容易在桌面打包/守护启动时被忽略。见 `core/input/server.py:44` | 增加显式开发模式或 `ALLOW_INSECURE_REMOTE`；非回环且无完整鉴权时默认拒绝启动，只有显式 opt-in 才允许；生产文档要求 HTTPS/WSS、双 token、附件签名；覆盖回环开发、非回环拒绝、显式 insecure opt-in、完整鉴权四种启动测试 |
-| **低→产品化前中** | **幂等键跨进程持久化或明确限定重试窗口** | `clientRequestId` 幂等表是进程内 dict、TTL 1h，重启后丢失。Electron 在“消息已提交但 ACK 丢失 + 后端重启”后重试，可能重复生成；当前协议把它定义为 Demo 可接受限制。见 `core/input/idempotency.py` | 产品化前将 `(clientRequestId, contentDigest, messageId, conversationId, status, expiresAt)` 持久化并建唯一约束，或在 server_info/协议中明确暴露幂等能力与窗口；覆盖 ACK 丢失、同键同内容、同键异内容、重启后重试、过期回收 |
-| **中（产品化门禁）** | **为公开 WS/REST/上传入口实现实际请求限流** | 契约已登记 `RATE_LIMITED`，安全清单也声明限流待做，但目前没有请求限流器或该错误码的生产者；远程暴露时无法依赖应用层抵御突发/滥用 | 明确用户/IP/连接/高成本操作的限流粒度和可信代理边界；统一返回 `RATE_LIMITED` 与重试提示；覆盖 WS 建连与消息、REST、上传、并发突发、窗口恢复及代理头伪造测试 |
+| ~~低→产品化前中~~ ✅ | **幂等键跨进程持久化或明确限定重试窗口** | **2026-08-11 D6c 完成**：claim 持久化到 Mongo（`(conversation_id, client_request_id)` 唯一约束 + `expires_at` BSON Date TTL 1h）。产品模式（非回环绑定）+ Mongo 离线 → fail-closed `STORAGE_UNAVAILABLE`（已拍板）；本地 dev → 内存降级，`server_info.features.idempotency_durable` 暴露非 durable 窗口。见 `core/storage/idempotency_repo.py`、`core/input/idempotency.py` | 覆盖 ACK 丢失、同键同内容、同键异内容、重启后重试、过期回收 |
+| ~~中（产品化门禁）~~ ✅ | **为公开 WS/REST/上传入口实现实际请求限流** | **2026-08-11 D6b 完成**：单进程 token-bucket 限流（已拍板，per-process 语义文档化，多实例需自建共享后端）。REST 高成本入口 429 `RATE_LIMITED` + Retry-After；WS 建连/消息 `RATE_LIMITED` + retryHint（连接存活）。key 认证主体优先、匿名回退 IP，默认不信任 `X-Forwarded-For`；内存有界 + 旧 key 清理。见 `core/input/rate_limiter.py` | 覆盖 WS 建连与消息、REST、上传、并发突发、窗口恢复及代理头伪造测试 |
 
 ### 不应登记成后端缺陷的前端适配项
 
@@ -60,7 +60,7 @@
 2. ✅ **Batch 9B（契约工程化）**：机器契约（后端侧产物 + frames 归档，跨仓 replay defer）、统一入站校验、严格版本协商——**2026-08-09 完成**（0fac4da/d2f8178/ca74f0f）；
 3. ✅ **Batch 9C（语音联调）**：输入音频 descriptor/验证、dictation profile 隔离——**2026-08-09 完成**（778c859/d58493d）；
 4. ✅ **接入充分性复审收口**：Desktop 精确连接投递、当前 cancel/fail golden、公开文档同步——**2026-08-10 完成**；
-5. **产品化门禁（待做）**：远程鉴权 fail-closed、持久化幂等、实际请求限流。
+5. ✅ **产品化门禁**：远程鉴权 fail-closed（D6a，2026-08-10）、实际请求限流（D6b，2026-08-11）、持久化幂等（D6c，2026-08-11）——**已全部完成**。
 
 
 ## 全项目修复计划剩余项（2026-08-10）
@@ -74,8 +74,8 @@
 
 | 优先级 | 后端待办 | 当前行为与风险 | 完成标准（DoD） | 决策点 |
 |--------|----------|----------------|----------------|--------|
-| 中（产品化门禁） | **跨重启持久化幂等（D6c）** | `clientRequestId` 幂等表是进程内 dict、TTL 1h，重启后丢失——ACK 丢失 + 后端重启后 Electron 重试可能重复生成。见 `core/input/idempotency.py` | 持久化 `(conversation_id, client_request_id, content_digest, message_id, status, expires_at)` + 唯一索引；同键同内容重试返回原 ACK、同键异内容拒绝；`expires_at` 用 BSON Date 真 TTL；Mongo 不可用产品模式 fail-closed/503 | **需拍板**：Mongo 离线时产品模式 fail-closed 还是保留内存降级（降级需在 server_info 暴露非 durable 窗口） |
-| 中（产品化门禁） | **公开入口实际请求限流（D6b）** | 契约已登记 `RATE_LIMITED` 但无生产者；远程暴露时无应用层抵御突发/滥用 | 可配置 token-bucket/sliding-window；key 优先认证主体、匿名回退 IP；REST 429 / WS `RATE_LIMITED` + retry hint；limiter 内存有界、旧 key 清理 | **需拍板**：单进程内限流 vs 多实例共享 backend（计划禁止「假装全局限流」） |
+| ~~中（产品化门禁）~~ ✅ | **跨重启持久化幂等（D6c）** | **2026-08-11 完成（已拍板：产品 fail-closed + dev 内存降级）** | 持久化 `(conversation_id, client_request_id, content_digest, message_id, status, expires_at)` + 唯一索引；同键同内容重试返回原 ACK、同键异内容拒绝；`expires_at` 用 BSON Date 真 TTL；Mongo 不可用产品模式 fail-closed/503、dev 内存降级 + `server_info.features.idempotency_durable` 暴露 | commit 本批次（D6b `75e7aee` 后的 D6c 提交）：`core/storage/idempotency_repo.py` + `core/input/idempotency.py` + ws_handler 接线 + contract 字段 |
+| ~~中（产品化门禁）~~ ✅ | **公开入口实际请求限流（D6b）** | **2026-08-11 完成（已拍板：单进程 token-bucket，per-process 语义文档化）** | 可配置 token-bucket；key 优先认证主体、匿名回退 IP（默认不信任 X-Forwarded-For）；REST 429 / WS `RATE_LIMITED` + retry hint；limiter 内存有界、旧 key 清理 | commit `75e7aee`：`core/input/rate_limiter.py` + 中间件/WS 接线 + config |
 | 中 | **Workflow submit 立即返回且有界排队（E2，P2-07）** | `submit()` 先等 semaphore（PAUSED 任务占 slot）——`max_concurrent_tasks=1` 时首任务暂停会让第二次 submit 无限等待，阻塞当前聊天轮 | submit 先注册 mailbox 立即返回；acquire 移到后台 runner；显式 QUEUED 状态 + 队列上限；PAUSED 释放 slot | **需拍板**：计划推荐「立即返回 + 后台有界 QUEUED」；若改选快速 `BUSY/QUEUE_FULL` 必须先改公开契约与计划记录 |
 
 ### B. Workflow 独立子系统（工作量大，非 P1）

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from core.storage.session_repo import SessionRepository
     from core.storage.token_repo import TokenRepository
     from core.storage.attachment_repo import AttachmentRepository
+    from core.storage.idempotency_repo import IdempotencyRepository
     from core.memory.session_manager import SessionManager
     from core.memory.long_term import LongTermMemory
     from core.personality import CharacterEngine
@@ -48,6 +49,8 @@ class _LifecyclePersistence:
         _session_repo: SessionRepository
         _attachment_repo: AttachmentRepository | None
         attachment_repo: AttachmentRepository  # 类型占位：运行时来自 Agent @property（lazy 构造，首访必非 None）
+        _idempotency_repo: IdempotencyRepository | None
+        idempotency_repo: IdempotencyRepository  # 类型占位：运行时来自 Agent @property（D6c，首访必非 None）
         _generation_registry: GenerationRegistry
         _desktop_bridge: DesktopToolBridge
 
@@ -85,6 +88,13 @@ class _LifecyclePersistence:
         # L2 版本历史
         if not await self._version_repo.connect():
             logger.warning("CharacterVersionRepository 离线")
+        # D6c：幂等 claim 仓库建连（失败记警告不阻塞启动——产品模式幂等将
+        # fail-closed/503，dev 模式走内存降级；Mongo 恢复由健康循环重连）
+        try:
+            if not await self.idempotency_repo.connect():
+                logger.warning("IdempotencyRepository 离线（幂等走内存降级/产品 fail-closed）")
+        except Exception:
+            logger.warning("IdempotencyRepository 建连失败", exc_info=True)
         # 批次 3（review 修复，兼容#2）：generation registry 建连 + 崩溃残留清理。
         # 此前 loop 自建 registry 的 repo db=None，register/mark 全量 no-op；此处 connect
         # 后 register/mark 真正落库。connect 成功后再把启动时刻 5 分钟前仍 running 的

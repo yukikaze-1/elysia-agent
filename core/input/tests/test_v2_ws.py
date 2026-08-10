@@ -549,7 +549,7 @@ class TestQueueFullAck:
         assert ack[0]["error"]["code"] == "QUEUE_FULL"
         assert ack[0]["error"]["retryable"] is True
         # 幂等 entry 已删——同 clientRequestId 重试可重新进入（lookup 未命中）
-        assert get_store().lookup("q1") is None
+        assert await get_store().lookup("default", "q1") is None
 
     @pytest.mark.asyncio
     async def test_plain_text_exception_rejected_and_entry_deleted(self, fresh_idempotency):
@@ -564,7 +564,7 @@ class TestQueueFullAck:
         ack = [s for s in ws.sent if s.get("type") == "user_message.ack"]
         assert ack and ack[0]["status"] == "rejected"
         assert ack[0]["error"]["code"] == "INTERNAL"
-        assert get_store().lookup("q2") is None  # entry 已删——异常不残留
+        assert await get_store().lookup("default", "q2") is None  # entry 已删——异常不残留
 
     @pytest.mark.asyncio
     async def test_plain_text_accepted_adds_sent_id(self, fresh_idempotency):
@@ -605,7 +605,7 @@ class TestQueueFullAck:
         ack = [s for s in ws.sent if s.get("type") == "user_message.ack"]
         assert ack and ack[0]["status"] == "rejected"
         assert ack[0]["error"]["code"] == "INTERNAL"
-        assert get_store().lookup("q4") is None  # entry 已删——重试可重新进入
+        assert await get_store().lookup("default", "q4") is None  # entry 已删——重试可重新进入
 
 
 import re as _re

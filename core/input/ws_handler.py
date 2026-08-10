@@ -676,6 +676,9 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
     except Exception:
         logger.warning("_route_v2_text: 会话解析失败，回退回显 conversationId", exc_info=True)
         ack_conversation_id = conversation_id
+    if not ack_conversation_id:
+        # fallback 回显可能是 None（缺省 conversationId）→ 归一到默认会话（幂等键维度）
+        ack_conversation_id = "default"
 
     attachments = model.attachments or []
     sticker_id = model.stickerId or ""
@@ -726,7 +729,17 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     store = get_store()
-    entry = store.lookup(client_request_id)
+    # D6c：幂等 lookup——产品模式 + Mongo 离线 → fail-closed（ACK rejected
+    # STORAGE_UNAVAILABLE retryable，不生成 messageId/不重复 generation）。
+    try:
+        entry = await store.lookup(ack_conversation_id, client_request_id)
+    except StorageUnavailableError:
+        await _send_ack(ws, "", client_request_id, client_message_id,
+                        ack_conversation_id, "rejected",
+                        error={"code": "STORAGE_UNAVAILABLE",
+                               "message": "幂等存储不可用（MongoDB 离线）",
+                               "retryable": True})
+        return True
     if entry is not None:
         if entry.content_digest == digest:
             # 幂等重放：重发原 ACK（同 messageId），不重复生成（spec §4.2）
@@ -741,12 +754,25 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                                    "retryable": False})
         return True
 
-    # 新请求：预分配用户消息 ID → store → ACK → 触发生成
+    # 新请求：预分配用户消息 ID → claim store → ACK → 触发生成
     from core.utils import new_message_id
     message_id = new_message_id()
-    store.store(client_request_id,
-                IdempotencyEntry(user_message_id=message_id,
-                                 content_digest=digest, created_at=time.monotonic()))
+    try:
+        entry = await store.store(
+            ack_conversation_id, client_request_id,
+            IdempotencyEntry(user_message_id=message_id, content_digest=digest,
+                             created_at=time.monotonic(),
+                             conversation_id=ack_conversation_id))
+    except StorageUnavailableError:
+        # D6c：产品模式 + Mongo 离线 → fail-closed（claim 未建立，拒绝可安全重试）
+        await _send_ack(ws, "", client_request_id, client_message_id,
+                        ack_conversation_id, "rejected",
+                        error={"code": "STORAGE_UNAVAILABLE",
+                               "message": "幂等存储不可用（MongoDB 离线）",
+                               "retryable": True})
+        return True
+    # 并发同键时 claim 返回既有记录 → 用实际生效的 message_id（不重复 generation）
+    message_id = entry.user_message_id
 
     if has_media:
         # 附件/表情消息：ACK 延后到 process 后（需 process 结果判定 accepted / QUEUE_FULL）
@@ -764,7 +790,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         except Exception:
             logger.warning("附件 refs 预留失败——释放已预留并拒绝", exc_info=True)
             await _release_attachment_reservations(agent, reserved, message_id)
-            store.delete(client_request_id)
+            await store.delete(ack_conversation_id, client_request_id)
             await _send_ack(ws, "", client_request_id, client_message_id,
                             ack_conversation_id, "rejected",
                             error={"code": "STORAGE_UNAVAILABLE",
@@ -775,7 +801,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                 text=text, content=content, message_id=message_id,
                 protocol_version=2, conversation_id=ack_conversation_id)
         except SessionNotFoundError:
-            store.delete(client_request_id)
+            await store.delete(ack_conversation_id, client_request_id)
             await _release_attachment_reservations(agent, reserved, message_id)
             await _send_ack(ws, "", client_request_id, client_message_id,
                             ack_conversation_id, "rejected",
@@ -785,7 +811,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
             return True
         except Exception:
             logger.warning("附件消息 process_message 抛异常——删幂等 entry", exc_info=True)
-            store.delete(client_request_id)
+            await store.delete(ack_conversation_id, client_request_id)
             await _release_attachment_reservations(agent, reserved, message_id)
             await _send_ack(ws, "", client_request_id, client_message_id,
                             ack_conversation_id, "rejected",
@@ -798,10 +824,12 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
             if sent_message_ids is not None:
                 sent_message_ids.add(message_id)   # D1 归属（media 路径同样登记）
             # refs 已在 process 前预留持久化——无需重复 add_ref
+            # D6c：claim 标记完成（best-effort——失败仅丢状态字段，条目保留仍可重放）
+            await store.complete(ack_conversation_id, client_request_id)
         else:
             # 队列满 → 删幂等 entry（重试允许重新进入）+ rejected QUEUE_FULL；
             # 释放已预留 refs（附件回到未关联 active，不软删）
-            store.delete(client_request_id)
+            await store.delete(ack_conversation_id, client_request_id)
             await _release_attachment_reservations(agent, reserved, message_id)
             await _send_ack(ws, "", client_request_id, client_message_id,
                             ack_conversation_id, "rejected",
@@ -814,7 +842,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
             text=text, message_id=message_id, protocol_version=2,
             conversation_id=ack_conversation_id)
     except SessionNotFoundError:
-        store.delete(client_request_id)
+        await store.delete(ack_conversation_id, client_request_id)
         await _send_ack(ws, "", client_request_id, client_message_id,
                         ack_conversation_id, "rejected",
                         error={"code": "SESSION_NOT_FOUND",
@@ -823,7 +851,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         return True
     except Exception:
         logger.warning("process_message 抛异常——删幂等 entry，rejected", exc_info=True)
-        store.delete(client_request_id)
+        await store.delete(ack_conversation_id, client_request_id)
         await _send_ack(ws, "", client_request_id, client_message_id,
                         ack_conversation_id, "rejected",
                         error={"code": "INTERNAL", "message": "消息处理失败",
@@ -834,9 +862,11 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                         ack_conversation_id, "accepted")
         if sent_message_ids is not None:
             sent_message_ids.add(message_id)   # D1 归属
+        # D6c：claim 标记完成（best-effort）
+        await store.complete(ack_conversation_id, client_request_id)
     else:
         # 队列满 → 删幂等 entry（重试允许重新进入）+ rejected QUEUE_FULL
-        store.delete(client_request_id)
+        await store.delete(ack_conversation_id, client_request_id)
         await _send_ack(ws, "", client_request_id, client_message_id,
                         ack_conversation_id, "rejected",
                         error={"code": "QUEUE_FULL",
@@ -878,6 +908,9 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
         ack_conv = str(target.session_id)
     except Exception:
         ack_conv = conversation_id
+    if not ack_conv:
+        # fallback 回显可能是 None → 归一到默认会话（幂等键维度）
+        ack_conv = "default"
 
     if not client_request_id:
         await _send_ack(ws, "", "", client_message_id, ack_conv, "rejected",
@@ -887,7 +920,15 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
 
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     store = get_store()
-    entry = store.lookup(client_request_id)
+    # D6c：幂等 lookup——产品模式 + Mongo 离线 → fail-closed（ACK rejected）
+    try:
+        entry = await store.lookup(ack_conv, client_request_id)
+    except StorageUnavailableError:
+        await _send_ack(ws, "", client_request_id, client_message_id, ack_conv,
+                        "rejected", error={"code": "STORAGE_UNAVAILABLE",
+                                           "message": "幂等存储不可用（MongoDB 离线）",
+                                           "retryable": True})
+        return
     if entry is not None:
         if entry.content_digest == digest:
             await _send_ack(ws, entry.user_message_id, client_request_id,
@@ -923,11 +964,23 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
 
     from core.utils import new_message_id
     message_id = new_message_id()
-    store.store(client_request_id, IdempotencyEntry(
-        user_message_id=message_id, content_digest=digest, created_at=time.monotonic()))
+    try:
+        entry = await store.store(
+            ack_conv, client_request_id,
+            IdempotencyEntry(user_message_id=message_id, content_digest=digest,
+                             created_at=time.monotonic(), conversation_id=ack_conv))
+    except StorageUnavailableError:
+        await _send_ack(ws, "", client_request_id, client_message_id, ack_conv,
+                        "rejected", error={"code": "STORAGE_UNAVAILABLE",
+                                           "message": "幂等存储不可用（MongoDB 离线）",
+                                           "retryable": True})
+        return
+    message_id = entry.user_message_id  # 并发同键时用实际生效的 message_id
     await _send_ack(ws, message_id, client_request_id, client_message_id, ack_conv, "accepted")
     if sent_message_ids is not None:
         sent_message_ids.add(message_id)   # D1 归属（voice.commit 同样登记）
+    # D6c：claim 标记完成（best-effort）
+    await store.complete(ack_conv, client_request_id)
     agent.idle.touch()
     # 事件携带预占后实际会话 ID；缺省 conversationId 不再留到消费时二次解析。
     try:
@@ -963,13 +1016,15 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
     if limiter is not None and rate_key is not None:
         category = _WS_MESSAGE_RATE_CATEGORY.get(msg_type)
         if category is not None and not limiter.check(category, rate_key):
-            await ws.send_json(ErrorMessage(
-                message="请求过于频繁，请稍后重试",
-                code="RATE_LIMITED",
-                requestId=_current_request_id(),
-                retryable=True,
-                details={"retryHint": "请稍后重试"},
-            ).wire_dict())
+            # ws 可能为 None（音频流回调直调）；无发送目标则静默丢弃（限流即拒绝）
+            if ws is not None:
+                await ws.send_json(ErrorMessage(
+                    message="请求过于频繁，请稍后重试",
+                    code="RATE_LIMITED",
+                    requestId=_current_request_id(),
+                    retryable=True,
+                    details={"retryHint": "请稍后重试"},
+                ).wire_dict())
             return
     # 9B-2（Task 5）：v2 连接入站统一走 ClientMessage 判别联合校验——未知 type /
     # 错误枚举 / 错误字段类型 / 缺必填 → ErrorMessage CONTRACT_VALIDATION，连接存活。

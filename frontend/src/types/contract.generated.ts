@@ -261,6 +261,8 @@ export interface ServerInfoFeatures {
   voice_realtime: boolean
   /** 附件上传（批次 7，POST /api/uploads） */
   media_upload: boolean
+  /** 幂等 claim 跨重启持久化（D6c，true=durable / false=内存降级非 durable 窗口） */
+  idempotency_durable: boolean
 }
 
 /** 协议版本 + 服务器能力声明（仅 v2 客户端；取代 capabilities，避免重复帧）。

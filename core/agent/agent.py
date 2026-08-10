@@ -94,6 +94,7 @@ from core.storage.token_repo import TokenRepository
 from core.storage.memory_repo import MemoryRepository
 from core.storage.desktop_call_repo import DesktopCallRepository
 from core.storage.attachment_repo import AttachmentRepository
+from core.storage.idempotency_repo import IdempotencyRepository
 from core.storage.attachment_release import release_session_attachments
 from core.desktop.bridge import DesktopToolBridge
 
@@ -150,6 +151,9 @@ class Agent(AgentLifecycle, AgentServer):
         # 批次 7：附件仓库——lazy 初始化（attachment_repo property 首访时构造，
         # start() 建连；Mongo 离线附件操作 fail-closed）
         self._attachment_repo: AttachmentRepository | None = None
+        # D6c：幂等 claim 仓库——lazy 初始化（idempotency_repo property 首访构造，
+        # _start_persistence 建连；产品模式 Mongo 离线幂等 fail-closed）
+        self._idempotency_repo: IdempotencyRepository | None = None
 
         # ---- L2: Memory ----
         # 批次 3 (multi-session)：SessionManager 取代单一 self._session——
@@ -801,6 +805,17 @@ class Agent(AgentLifecycle, AgentServer):
                 base_url=db_cfg.mongodb_uri,
             )
         return self._attachment_repo
+
+    @property
+    def idempotency_repo(self):
+        """幂等 claim 仓库（D6c，懒初始化；首访构造真实 repo）。"""
+        if self._idempotency_repo is None:
+            db_cfg = self._config.database
+            self._idempotency_repo = IdempotencyRepository(
+                database_name=db_cfg.db_name,
+                base_url=db_cfg.mongodb_uri,
+            )
+        return self._idempotency_repo
 
     @property
     def tool_adapter(self):

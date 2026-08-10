@@ -16,7 +16,7 @@
 - **批次 8c（F15）**：switch_model / set_service 后的 `capabilities` 重播仅达 v1 通道——v2 用 `server_info` 取代 capabilities，`broadcast_capabilities` 跳过 protocol_version ≥ 2 的通道；v2 对切换的感知经自身 `switch_model_result`/`service_mode_result` 回显（多客户端 v2 切换同步为已知限制）。
 - **`server_info.connectionId`（批次 4）**：仅 v2 + electron 连接下发（`conn_<uuid4 hex[:12]>`，= WS 握手生成的连接 ID）；普通 v2 / v1 恒省略。Electron 据此构造附件上传 `X-Client-Connection` 头（spec §5.4 持有者校验②依赖）。Desktop 工具 call 同样登记该 ID 为 `target_connection`，后端只向 `client_platform=electron && connection_id=target_connection` 的精确通道投递；重连期间旧连接即使尚未移除也不会收到新请求。
 - **`server_info.build_sha`（批次 7，BE-081）**：构建 git HEAD 完整 SHA（`core/version.py` `get_build_sha()`，`git rev-parse HEAD`，非 git 仓库/失败 → None 缺省省略）；`server_version` 为 `__version__ + "+" + build_sha[:7]` 后缀（`build_server_version()`，无 git 时仅 `0.1.0`）。供前端展示/反馈定位。
-- `server_info.features` 如实反映能力：`structured_generation`（批次 2 = true）、`multi_conversation`（批次 3 = true）、`desktop_runtime`（**批次 4 = true**）、`dictation`/`voice_recording`/`voice_realtime`（**批次 6 = true**，spec BE-060~062，见 §12）、**`media_upload`（批次 7 = true，POST /api/uploads，见 §13）**。
+- `server_info.features` 如实反映能力：`structured_generation`（批次 2 = true）、`multi_conversation`（批次 3 = true）、`desktop_runtime`（**批次 4 = true**）、`dictation`/`voice_recording`/`voice_realtime`（**批次 6 = true**，spec BE-060~062，见 §12）、**`media_upload`（批次 7 = true，POST /api/uploads，见 §13）**、**`idempotency_durable`（批次 D6c：true=幂等跨重启持久化，false=内存降级非 durable 窗口）**。
 - **v1 忽略 `X-Client-Platform`**：v1 无 desktop 概念，伪冒 platform 头不生效（负面隔离，spec §5.1）。
 
 ## 2. 一次完整 v2 回复事件序列
@@ -105,7 +105,10 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 
 - 相同 `clientRequestId` + 相同内容摘要 → **重发原 ACK（同 messageId），不重复生成**。
 - 相同 `clientRequestId` + 不同内容摘要 → `user_message.ack{status:rejected, error:{code:CONTRACT_VALIDATION}}`，不生成。
-- 幂等表进程内 + TTL（1h）；重启丢失可接受（Demo）。
+- **D6c（2026-08-11）**：幂等 claim 持久化到 MongoDB（`(conversation_id, client_request_id)` 唯一约束 + `expires_at` BSON Date TTL，1h）——ACK 丢失 + 后端重启后重试**不重复生成**。
+  - **产品模式**（非回环绑定）：Mongo 离线 → v2 文本/voice.commit 幂等 fail-closed，`user_message.ack{rejected, STORAGE_UNAVAILABLE, retryable:true}`（不生成 messageId / 不重复 generation）。
+  - **本地 dev**（回环绑定）：Mongo 离线 → 内存降级（非 durable 窗口），`server_info.features.idempotency_durable=false` 暴露；Mongo 恢复自动回 durable。
+  - `idempotency_durable=true` = 当前 claim 跨重启持久化（`server_info.features` 新增字段，批次 D6c）。
 
 ## 5. 完成 / 失败 / 取消
 
@@ -179,7 +182,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 |---|---|---|---|
 | `AUTH_REQUIRED` | 401 | false | 未带凭据访问受保护端点（`/ws`、业务 `/api/*`、`/uploads/*`，批次 1；**批次 8c：admin/debug 端点同样**） |
 | `AUTH_INVALID` | 401 | false | 凭据错误（批次 1；**批次 8c：admin/debug 端点同样**） |
-| `RATE_LIMITED` | 429 | false | 速率限制——**目录登记，限流器未实现**（无生产者） |
+| `RATE_LIMITED` | 429 | true | **落地（D6b，2026-08-11）**：公开入口限流——REST 高成本入口（provider test/upload/search/chat）超限 → HTTP 429 + `Retry-After`；WS 建连超限 → 升级前 429；WS 消息超限 → `error{RATE_LIMITED}` + retryHint，连接存活。key 认证主体优先、匿名回退 IP，默认不信任 `X-Forwarded-For`；单进程语义（多实例需自建共享后端） |
 | `CONNECTION_LIMITED` | 503 | true | 并发 WS 连接超上限（批次 1） |
 | `REQUEST_TOO_LARGE` | 413 | false | 请求体超限（`client_max_size`，Content-Length 前置，批次 1）；通用上传单文件/聚合超限（批次 7，§13.1） |
 | `INVALID_REQUEST` | 403 | false | 参数/请求非法；desktop 附件上传持有者校验失败（连接 ≠ 目标连接、终态拒收，批次 1/4）。**既有漂移注明**：desktop 上传超限 / 类型非法用 `INVALID_REQUEST` + 413/415（目录行 HTTP=403 仅为通用映射，desktop 附件既有契约保持不动，批次 7 文档注明） |
@@ -216,7 +219,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | false | **落地**：filetype 魔数无法判定 / 不在白名单 / 扩展名与内容不一致（上传校验序③④⑤，批次 7，见 §13.1） |
 | `TOO_MANY_FILES` | 400 | false | **落地**：单次上传文件数 > 10（上传校验序②，批次 7） |
 | `ATTACHMENT_SIGNATURE_DISABLED` | 403 | false | **落地**：fail-closed——AGENT_ACCESS_TOKEN 配置而 ATTACHMENT_SIG_SECRET 未配置（下载/签发一律拒绝，批次 7，见 security §3.5） |
-| `STORAGE_UNAVAILABLE` | 503 | true | **落地**：附件存储 Mongo 离线（上传写记录/下载/签发一律 503，fail-closed；上传已落盘文件删除不留孤儿，批次 7） |
+| `STORAGE_UNAVAILABLE` | 503 | true | **落地**：附件存储 Mongo 离线（上传写记录/下载/签发一律 503，fail-closed；上传已落盘文件删除不留孤儿，批次 7）；D6c 幂等 claim（产品模式 + Mongo 离线 → v2 文本/voice.commit 拒绝，批次 D6c） |
 | `QUEUE_FULL` | 429 | true | **落地**：Agent 忙队列满——v2 附件/sticker 消息 `process_message` 返回 False → `user_message.ack{status:rejected, error:{code:QUEUE_FULL, retryable:true}}`（WS ACK 错误，无 HTTP 信封，HTTP 429 为目录登记映射，批次 7，见 §13.7） |
 
 **数据保护语义**：`DELETE /api/sessions/default` → 409 `SESSION_PROTECTED`（`default` 恒存在且受保护，禁删——含其 append-only 归档）；生成/TTS 进行中 `activate`/`delete` 活动会话 → 409 `AGENT_BUSY`。

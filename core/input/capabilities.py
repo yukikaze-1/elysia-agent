@@ -76,6 +76,7 @@ def build_server_info(agent: "Agent", connection_id: str | None = None) -> Serve
         ``ServerInfoMessage``（type=server_info + protocol_version + features + services）。
     """
     from core.version import build_server_version, get_build_sha
+    from core.input.idempotency import get_store
 
     def svc(available: bool, enabled: bool, model: str | None, default: str) -> ServiceCapability:
         return ServiceCapability(
@@ -100,6 +101,7 @@ def build_server_info(agent: "Agent", connection_id: str | None = None) -> Serve
             voice_recording=True,  # 批次 6（BE-060）
             voice_realtime=True,   # 批次 6（BE-061）
             media_upload=True,     # 批次 7 已实现（POST /api/uploads）
+            idempotency_durable=get_store().durable,  # D6c：true=跨重启持久化 / false=内存降级窗口
         ),
         services={
             "llm": svc(True, True, agent.llm.model, cfg.llm.model),

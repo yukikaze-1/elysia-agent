@@ -243,7 +243,7 @@ class TestAttachmentMessage:
             assert ack["status"] == "rejected"
             assert ack["error"]["code"] == "ATTACHMENT_NOT_FOUND"
             # 不落幂等 entry：重试同 ID 同内容 → 仍 rejected（非幂等重放）
-            assert get_store().lookup("req_missing") is None
+            assert await get_store().lookup("default", "req_missing") is None
             await ws.send_json(payload)
             ack2 = await _read_ack(ws)
             assert ack2["status"] == "rejected"
@@ -362,7 +362,7 @@ class TestAttachmentMessage:
             doc = agent._attachment_repo.records["att_x"]  # noqa: SLF001
             assert doc["ref_count"] == 0 and not doc["refs"]
             # 幂等 entry 已删：重试重新进入（不重发 accepted）
-            assert get_store().lookup("req_qfull") is None
+            assert await get_store().lookup("default", "req_qfull") is None
             await ws.send_json({
                 "type": "text", "content": "hi",
                 "clientRequestId": "req_qfull",

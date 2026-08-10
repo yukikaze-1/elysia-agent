@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: a24d636802801fe2
+// schemaHash: 30ece81962a4a669
 
 /** 会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。 */
 export interface ConversationUsage {
@@ -265,6 +265,8 @@ export interface ServerInfoFeatures {
   voice_realtime: boolean
   /** 附件上传（批次 7，POST /api/uploads） */
   media_upload: boolean
+  /** 幂等 claim 跨重启持久化（D6c，true=durable / false=内存降级非 durable 窗口） */
+  idempotency_durable: boolean
 }
 
 /** 协议版本 + 服务器能力声明（仅 v2 客户端；取代 capabilities，避免重复帧）。

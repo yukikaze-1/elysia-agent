@@ -110,8 +110,8 @@ A1/A2
 - [x] D4 日志脱敏
 - [x] D5 上传活动内容与配置 secret
 - [x] D6a 非回环 fail-closed 鉴权
-- [ ] D6b 公开入口限流
-- [ ] D6c durable idempotency
+- [x] D6b 公开入口限流
+- [x] D6c durable idempotency
 - [x] D7a Compose 网络与凭据
 - [x] D7b embedding 模型供应链
 - [ ] E1 工具热重载原子回滚
@@ -1380,6 +1380,30 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：无
 - 契约或 Electron 影响：run_server 非回环无 token → 拒绝启动（需 ALLOW_INSECURE_REMOTE=1 或配 token）——部署行为变化
 - 剩余风险：D6b（限流）/D6c（跨进程幂等）未做（P2/已知门禁，见 todo）；统一认证矩阵（/ws /api /uploads 已由 access_token middleware 覆盖，management/debug 未单独覆盖）
+
+### D6b — 公开入口统一限流
+
+- 状态：完成（2026-08-11；拍板：单进程 token-bucket，per-process 语义文档化，不假装全局限流）
+- Commit：`75e7aee`
+- 变更文件：`core/input/rate_limiter.py`（新）、`core/input/server.py`（限流中间件 + WS 建连限流）、`core/input/ws_handler.py`（handle_json_message 消息级限流 + RATE_LIMITED error）、`core/config/app_config.py`（ServerConfig 6 个 rate_limit_*_per_min + env）、`config.yaml`、`core/agent/server.py`（run_server 传 rate_limits）
+- 新增失败测试：`core/input/tests/test_rate_limit.py`（16 用例：TokenBucket 容量/回填/封顶、RateLimiter 禁用/per-key 隔离/内存有界/旧 key 回收、key 解析不信任 X-Forwarded-For、REST 429 + Retry-After、WS 消息 RATE_LIMITED 连接存活、WS 建连 429）
+- 目标测试：`pytest core/input/tests/test_rate_limit.py` → 16 passed；`pytest core/input/tests/` → 552 passed（D6b 后回归）
+- 批次门禁：`ruff check` → 通过；pyright → 0 errors
+- 数据迁移/回滚：无
+- 契约或 Electron 影响：`RATE_LIMITED` 有真实生产者——REST 高成本入口 429 + `Retry-After`；WS 建连/消息 `error{RATE_LIMITED}` + retryHint（连接存活，不关闭）
+- 剩余风险：单进程语义——多实例部署需自建共享 backend；限流 key 对共享出口 NAT 的匿名用户按 IP 合并计数（假阳性偏高，可接受）
+
+### D6c — 跨重启 durable idempotency
+
+- 状态：完成（2026-08-11；拍板：产品 fail-closed + dev 内存降级，capabilities 暴露非 durable 窗口）
+- Commit：本批次（D6b `75e7aee` 之后的 D6c 提交）
+- 变更文件：`core/storage/idempotency_repo.py`（新，唯一 + TTL 索引）、`core/input/idempotency.py`（async 门面 + configure/durable + 内存降级）、`core/input/ws_handler.py`（_route_v2_text/_handle_voice_commit 异步 claim + 产品模式 STORAGE_UNAVAILABLE + complete）、`core/agent/agent.py`（idempotency_repo property）、`core/agent/_lifecycle_persistence.py`（建连）、`core/input/server.py`（create_app product_mode/idempotency_repo + is_loopback_host）、`core/agent/server.py`（run_server 传 product_mode）、`frontend_contract/ws_message.py`（ServerInfoFeatures.idempotency_durable）+ 三产物再生成 + golden frames
+- 新增失败测试：`core/storage/tests/test_idempotency_repo.py`（fail-closed/claim 新键/并发回读/会话隔离/complete/release/索引）、`core/input/tests/test_idempotency_durable.py`（内存默认语义/产品 fail-closed/dev 降级/durable 重启恢复/ws_handler 503/capabilities）
+- 目标测试：两个新文件 22 passed；`pytest core/input/tests/ core/storage/tests/` → 820 passed + test_version 断言更新
+- 批次门禁：`ruff check` → 通过；pyright → 0 errors；contract/schema/raw/frames 无漂移
+- 数据迁移/回滚：idempotency 集合新建（TTL 1h 自清，无需迁移）
+- 契约或 Electron 影响：`server_info.features.idempotency_durable`（true=持久化 / false=内存降级窗口）；产品模式 + Mongo 离线 → v2 文本/voice.commit `user_message.ack{rejected, STORAGE_UNAVAILABLE, retryable}`；幂等表现按 `(conversation_id, client_request_id)` 维度
+- 剩余风险：dev 降级窗口内（Mongo 离线 + 回环绑定）跨重启不保证去重（capabilities 如实暴露）；release/complete best-effort——release 失败时条目保留到 TTL（重试重放原 ACK，安全方向）；并发同键双写由唯一索引兜底
 
 ## 14. 需要停止并请求决策的情况
 

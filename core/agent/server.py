@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from Module.tts.protocol import TTSBackend
     from Module.stt.protocol import STTBackend
     from Module.output import OutputManager
+    from core.storage.idempotency_repo import IdempotencyRepository
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ class AgentServer:
         _req_counter: int
         _mongo_ok: bool
         _milvus_ok: bool
+        idempotency_repo: "IdempotencyRepository"  # D6c：运行时来自 Agent @property
         start: Callable[..., Coroutine[Any, Any, None]]
         stop: Callable[..., Coroutine[Any, Any, None]]
         process_message: Callable[..., Coroutine[Any, Any, None]]
@@ -384,7 +386,7 @@ class AgentServer:
 
             # 启动安全守卫（批次 1 + D6a）：非回环绑定 + 无产品认证 → fail-closed 拒绝启动
             # （显式 ALLOW_INSECURE_REMOTE=1 才放行）；否则显著告警
-            from core.input.server import assert_secure_bind, warn_if_unsecured
+            from core.input.server import assert_secure_bind, warn_if_unsecured, is_loopback_host
             assert_secure_bind(host, self._config.server.access_token,
                                self._config.server.auth_token)
             warn_if_unsecured(host, self._config.server.access_token,
@@ -439,7 +441,9 @@ class AgentServer:
                             access_token=self._config.server.access_token,
                             max_ws_connections=self._config.server.max_ws_connections,
                             max_request_bytes=self._config.server.max_request_bytes,
-                            rate_limits=self._config.server.rate_limits)
+                            rate_limits=self._config.server.rate_limits,
+                            product_mode=not is_loopback_host(host),
+                            idempotency_repo=self.idempotency_repo)
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, host, port)

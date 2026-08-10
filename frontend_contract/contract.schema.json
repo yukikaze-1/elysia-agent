@@ -8430,6 +8430,12 @@
           "title": "Dictation",
           "type": "boolean"
         },
+        "idempotency_durable": {
+          "default": false,
+          "description": "幂等 claim 跨重启持久化（D6c，true=durable / false=内存降级非 durable 窗口）",
+          "title": "Idempotency Durable",
+          "type": "boolean"
+        },
         "media_upload": {
           "default": false,
           "description": "附件上传（批次 7，POST /api/uploads）",
@@ -8479,6 +8485,12 @@
               "default": false,
               "description": "输入法转写（批次 6）",
               "title": "Dictation",
+              "type": "boolean"
+            },
+            "idempotency_durable": {
+              "default": false,
+              "description": "幂等 claim 跨重启持久化（D6c，true=durable / false=内存降级非 durable 窗口）",
+              "title": "Idempotency Durable",
               "type": "boolean"
             },
             "media_upload": {
@@ -9891,6 +9903,12 @@
               "default": false,
               "description": "输入法转写（批次 6）",
               "title": "Dictation",
+              "type": "boolean"
+            },
+            "idempotency_durable": {
+              "default": false,
+              "description": "幂等 claim 跨重启持久化（D6c，true=durable / false=内存降级非 durable 窗口）",
+              "title": "Idempotency Durable",
               "type": "boolean"
             },
             "media_upload": {
@@ -17654,6 +17672,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "a24d636802801fe2",
+  "schemaHash": "30ece81962a4a669",
   "transportVersion": "2"
 }

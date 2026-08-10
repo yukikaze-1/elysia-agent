@@ -9,7 +9,7 @@
 
 ## 1. 一句话总览
 
-**后端**：P0 ×2 + P1 ×19 已全部修复清零，本机/受控联调可用；正式发布仍被 F 批次工程化 + D6b/D6c 产品门禁 + Workflow E 项挡住。
+**后端**：P0 ×2 + P1 ×19 已全部修复清零，D6b/D6c 产品化门禁 **2026-08-11 完成**，本机/受控联调可用；正式发布仍被 F 批次工程化 + Workflow E 项挡住。
 
 **前端适配**（Cyrene Electron）：阶段 1 安全骨架三块全部落地并全量验证；阶段 2 块 A（领域契约 + raw wire 层 + frame mapper）收尾中；两端已具备**首次真实后端联调**条件。
 
@@ -74,8 +74,8 @@
 
 | 项 | 现状 | 决策点 |
 |---|---|---|
-| **D6c 跨重启持久化幂等** | `clientRequestId` 幂等表是进程内 dict、TTL 1h，重启丢失——ACK 丢失 + 后端重启后 Electron 重试可能重复生成 | Mongo 离线时 fail-closed 还是内存降级 |
-| **D6b 公开入口实际限流** | 契约已登记 `RATE_LIMITED` 但无生产者，远程暴露无应用层抵御 | 单进程内限流 vs 多实例共享 backend |
+| ~~D6c 跨重启持久化幂等~~ ✅ | **2026-08-11 完成**：claim Mongo 持久化（唯一约束 + TTL）；产品模式离线 fail-closed、dev 内存降级 + `idempotency_durable` 暴露 | 已拍板：产品 fail-closed + dev 降级 |
+| ~~D6b 公开入口实际限流~~ ✅ | **2026-08-11 完成**：单进程 token-bucket，REST 429 / WS RATE_LIMITED，内存有界 | 已拍板：单进程（per-process 语义文档化）|
 | **E2 Workflow submit 有界排队** | `submit()` 先等 semaphore，PAUSED 任务占 slot 时第二次 submit 无限等待 | 计划推荐「立即返回 + 后台 QUEUED」 |
 
 #### B. Workflow 独立子系统（工作量大，非 P1）
@@ -105,8 +105,8 @@
 |---|---|---|
 | 本机 / 测试数据 / 受控联调 | **可用** | 数据备份；不要当作重启可靠性证明 |
 | 内部多人试用 / 真实会话附件 | **可用（推荐先故障注入复验）** | P1 已清 |
-| 非回环 / 远程生产 | **不推荐** | D6b 限流 + D6c 幂等 + F 批次 |
-| 正式发布 | **不通过** | F1-F5 + D6b/D6c + E 项清完 |
+| 非回环 / 远程生产 | **有条件（2026-08-11 后）** | D6b 限流 + D6c 幂等已落地；F 批次 + Workflow E 项仍缺 |
+| 正式发布 | **不通过** | F1-F5 + E 项清完 |
 
 ---
 
@@ -183,7 +183,7 @@
 
 ### 3.6 前端发布判断
 
-阶段 1 三块全落地 + 后端契约封口完毕 → **阶段 2 可以开始真实后端联调**。但前端尚未走到阶段 7/8，且受后端正式发布门禁（F 批次 + D6b/D6c）约束——**两端都尚不构成正式发布**。
+阶段 1 三块全落地 + 后端契约封口完毕 → **阶段 2 可以开始真实后端联调**。但前端尚未走到阶段 7/8，且受后端正式发布门禁（F 批次 + Workflow E 项）约束——**两端都尚不构成正式发布**。
 
 ---
 
@@ -199,7 +199,7 @@
 ### 4.2 已知联调阻塞
 
 - **WS Bearer token 缺口（已记 todo.md）**：业务中间件只认 `Authorization` 头，WS 握手不能设自定义 Header → `AGENT_ACCESS_TOKEN` 模式下浏览器前端 WS 连不上。开发期远程用 `ALLOW_INSECURE_REMOTE=1` 规避；**若 `.env` 同时配 `AGENT_ACCESS_TOKEN` + `ALLOW_INSECURE_REMOTE=1`，bind 守卫被放行但前端 WS 仍连不上**。修法：WS 握手接受 query param token（`/ws?token=...`）+ 前端接线（约一个提交，进入联调/发布阶段时做）。
-- **后端产品化门禁**：D6b 限流、D6c 跨重启幂等、E2/E3 Workflow——远程发布前必须。
+- **后端产品化门禁**：D6b 限流、D6c 跨重启幂等 **已于 2026-08-11 完成**（拍板：单进程限流 + 产品 fail-closed/dev 降级）；剩余 E2/E3 Workflow——远程发布前仍需。
 - **前端 Mock→真实切换**：阶段 2 前 Adapter 主要靠 Mock 推进，标注「已开发、未联调」。
 
 ### 4.3 远程开发（开发期）说明
@@ -207,6 +207,7 @@
 - `SERVER_HOST` env 覆盖绑定 host（默认回环 `127.0.0.1`）；
 - 远程直连：`AGENT_ACCESS_TOKEN` + `ALLOW_INSECURE_REMOTE=1`（README 有开发期说明）；
 - 正式远程方案：HTTPS/WSS + 双 token + 附件签名（生产文档要求）。
+- **2026-08-11 补充（D6b/D6c）**：远程（非回环）绑定即产品模式——限流默认生效（config.yaml `rate_limit_*_per_min`，0 关闭）；幂等 claim Mongo 持久化（离线 fail-closed 503 `STORAGE_UNAVAILABLE`，`server_info.features.idempotency_durable` 反映持久化状态）。
 
 ---
 
@@ -214,16 +215,16 @@
 
 ### 5.1 待拍板（后端产品化门禁，`todo.md` A 组）
 
-| 项 | 问题 |
-|---|---|
-| D6c 幂等 | Mongo 离线时 fail-closed 还是保留内存降级（降级需在 server_info 暴露非 durable 窗口）|
-| D6b 限流 | 单进程内限流 vs 多实例共享 backend（计划禁止「假装全局限流」）|
-| E2 submit | 计划推荐「立即返回 + 后台有界 QUEUED」；若改选快速 `BUSY/QUEUE_FULL` 须先改公开契约与计划记录 |
+| 项 | 问题 | 状态 |
+|---|---|---|
+| D6c 幂等 | Mongo 离线时 fail-closed 还是保留内存降级（降级需在 server_info 暴露非 durable 窗口）| ✅ **2026-08-11 拍板 + 完成**：产品 fail-closed + dev 内存降级 |
+| D6b 限流 | 单进程内限流 vs 多实例共享 backend（计划禁止「假装全局限流」）| ✅ **2026-08-11 拍板 + 完成**：单进程 token-bucket，per-process 语义文档化 |
+| E2 submit | 计划推荐「立即返回 + 后台有界 QUEUED」；若改选快速 `BUSY/QUEUE_FULL` 须先改公开契约与计划记录 | ⬜ 待拍板 |
 
 ### 5.2 建议的推进顺序
 
 **并行轨**：
-- 后端：F 批次工程化（F1 CI 矩阵 + F2 依赖锁）可先做（不依赖拍板）→ D6b/D6c 等你拍板后清 → E 批次（Workflow 子系统，工作量大）。
+- 后端：D6b/D6c **已完成（2026-08-11）** → 剩余 F 批次工程化（F1 CI 矩阵 + F2 依赖锁，不依赖拍板）→ E 批次（Workflow 子系统，工作量大，含 E2 待拍板）。
 - 前端：阶段 2 块 A 收尾（review + 进度文档 doc16 同步）→ 进入阶段 2「核心聊天纵向闭环」，用真实后端做首次联调。
 - 联调衔接：做 WS query-param token 支持（一个提交）以解除远程联调阻塞。
 

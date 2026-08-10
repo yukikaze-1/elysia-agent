@@ -340,7 +340,7 @@ class TestConversationIdRouting:
             assert not await agent.session_manager.has_session("conv_deadbeef"), \
                 "未知会话不应被懒创建"
             # 不落幂等 entry：重试同 ID 仍走拒绝路径（非 accepted 重放）
-            assert get_store().lookup("req_deadbeef") is None
+            assert await get_store().lookup("default", "req_deadbeef") is None
             await ws.close()
         finally:
             await agent.stop()
