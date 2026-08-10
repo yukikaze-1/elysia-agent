@@ -64,6 +64,7 @@ gen-frames:
 check-types:
 	python -m frontend_contract --check
 	python scripts/gen_contract_frames.py --check
+	python scripts/check_error_codes.py
 
 # Compose 安全策略门禁（P1-19）：数据服务仅 loopback 端口、无默认凭据/空 token、
 # 生产不发布数据库管理端口。无需 docker/凭据即可运行（静态解析 compose 文件）。

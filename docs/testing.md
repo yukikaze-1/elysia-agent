@@ -2,17 +2,17 @@
 
 ## 分层体系
 
-3186 个测试按 4 层 markers 组织（`pytest --collect-only` 实测，2026-08-08）：
+测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-08-11）全量收集 3503：
 
-| 层 | marker | 标准 | 测试数 | 耗时 |
-|---|--------|------|--------|------|
-| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 1833 | ~40s |
-| 服务 | `service` | 单模块 + mock，不启动 Agent | 1258 | 秒级 |
-| 集成 | `integration` | 需真实数据库或外部 API | 35 | 不定 |
-| 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | 56 | ~15min |
+| 层 | marker | 标准 | 测试数 |
+|---|--------|------|--------|
+| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 1956 |
+| 服务 | `service` | 单模块 + mock，不启动 Agent | 1398 |
+| 集成 | `integration` | 需真实数据库或外部 API | 35 |
+| 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | 56 |
+| 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 36 |
 
-> 各层相加（1833+1258+35+56=3182）比全量 3186 少 4：极少数测试未标记四层 marker（`-m` 收集漏计），个别标记多 marker（如 `unit+service`）则重复计入。
-> **口径说明**：全量 3186（含 `Module/workflow_engine` 293 个）；`make test-normal`（`-m "not slow" --ignore=Module/workflow_engine/tests`）为 2854；纯 not-slow 全量 3130。
+> **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁；合并门禁 `-m "not external"` 收集 3467。`make test-quick`（`-m "unit or service"`，含 WorkflowEngine unit）3326；`make test-normal`（`-m "not slow and not external"`）3428。各层相加与全量的差异（多 marker 重复计入 / 未标记四层）以脚本输出为准。
 
 ## 日常命令
 
@@ -21,7 +21,7 @@ conda activate Elysia
 
 # 日常开发 — 秒级验证（~60s）
 make test-quick
-# 或: pytest -m "unit or service" -q -x --tb=short --ignore=Module/workflow_engine/tests
+# 或: pytest -m "unit or service" -q -x --tb=short
 
 # 提交前 — 排除 slow（~5min）
 make test-normal

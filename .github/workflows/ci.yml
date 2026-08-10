@@ -57,6 +57,7 @@ jobs:
         run: |
           python -m frontend_contract --check
           python scripts/gen_contract_frames.py --check
+          python scripts/check_error_codes.py
       - name: CI trust boundary check
         run: python scripts/check_ci_isolation.py
       - name: Run quick tests (unit + service, 无外部 key; F1 含 WorkflowEngine unit/service)

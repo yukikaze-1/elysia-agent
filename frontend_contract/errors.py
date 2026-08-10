@@ -1,0 +1,52 @@
+"""错误码单源（F5）— 协议文档 §9.1 错误码目录的权威列表。
+
+契约 `code` 字段为自由 str（wire 不枚举），但公开错误码必须可追溯。本模块是
+**唯一权威列表**；`scripts/check_error_codes.py` 比对 `docs/electron-backend-
+protocol-v2.md` §9.1 表与本文——增删错误码必须同时改两处，CI 防漂移（40/41 不一致）。
+
+零依赖（仅 stdlib），符合 frontend_contract 契约层约束。
+"""
+
+KNOWN_ERROR_CODES: frozenset[str] = frozenset({
+    "AUTH_REQUIRED",
+    "AUTH_INVALID",
+    "RATE_LIMITED",
+    "CONNECTION_LIMITED",
+    "REQUEST_TOO_LARGE",
+    "INVALID_REQUEST",
+    "INTERNAL",
+    "GENERATION_PROVIDER_UNAVAILABLE",
+    "GENERATION_TIMEOUT",
+    "SESSION_NOT_FOUND",
+    "GENERATION_NOT_FOUND",
+    "RESOURCE_NOT_FOUND",
+    "INVALID_TIMEZONE",
+    "CONTRACT_VALIDATION",
+    "SESSION_PROTECTED",
+    "AGENT_BUSY",
+    "GENERATION_CANCELLED",
+    "DESKTOP_UNAVAILABLE",
+    "CALL_NOT_FOUND",
+    "CALL_EXPIRED",
+    "CALL_IDEMPOTENCY_CONFLICT",
+    "SSRF_BLOCKED",
+    "PROFILE_IN_USE",
+    "PROFILE_INVALID_RUNTIME",
+    "PROFILE_RUNTIME_NOT_BACKEND",
+    "VOICE_SESSION_CONFLICT",
+    "VOICE_SESSION_NOT_FOUND",
+    "VOICE_RECORDING_NOT_FOUND",
+    "VOICE_RECORDING_TOO_LONG",
+    "DICTATION_NOT_FOUND",
+    "STT_UNAVAILABLE",
+    "STT_PROFILE_NOT_FOUND",
+    "PLAYBACK_NOT_FOUND",
+    "ATTACHMENT_NOT_FOUND",
+    "SIGNATURE_EXPIRED",
+    "INVALID_SIGNATURE",
+    "UNSUPPORTED_MEDIA_TYPE",
+    "TOO_MANY_FILES",
+    "ATTACHMENT_SIGNATURE_DISABLED",
+    "STORAGE_UNAVAILABLE",
+    "QUEUE_FULL",
+})
