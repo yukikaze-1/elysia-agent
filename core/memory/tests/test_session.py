@@ -254,6 +254,20 @@ class TestSessionDurablePersistence:
         assert result is False
         assert sm._storage_unavailable is False  # noqa: SLF001
 
+    @pytest.mark.asyncio
+    async def test_load_raw_connection_error_marks_storage_unavailable(self):
+        """review 复核 #2：repo.load 抛非 StorageUnavailable 的连接异常（如 Motor
+        ServerSelectionTimeoutError 未及包装）→ 同样标记 _storage_unavailable，
+        否则 ensure_loaded 会把它当「存储可达但 not found」永久标 loaded，之后用
+        不完整的本地状态覆盖远端历史。"""
+        mock_repo = MagicMock()
+        mock_repo._db = object()  # 模拟已连接
+        mock_repo.load = AsyncMock(side_effect=ConnectionError("server selection timeout"))
+        sm = SessionMemory(session_id=SessionId("test-down"), repo=mock_repo)
+        result = await sm.load(SessionId("test-down"))
+        assert result is False
+        assert sm._storage_unavailable is True  # noqa: SLF001
+
 
 class TestArchiveOwnership:
     """B3/P1-02：归档任务按会话登记、可 drain、关闭后不再新增。"""

@@ -58,6 +58,32 @@ class TestSessionRepository:
         result = asyncio.run(repo.list_all())
         assert result == []
 
+    def test_load_wraps_connection_error_as_storage_unavailable(self):
+        """review 复核 #2：find 抛连接异常（如 Motor ServerSelectionTimeoutError）
+        → 转换为 StorageUnavailableError 并置 _db=None，触发健康循环真正重连——
+        而非以普通异常冒泡被 caller 当作「存储为空」。"""
+        import asyncio
+        from core.storage.base import StorageUnavailableError
+        db = MagicMock()
+        db.find = AsyncMock(side_effect=ConnectionError("server selection timeout"))
+        repo = SessionRepository(db=None)
+        repo._db = db  # 模拟已连接但断网（db=None 构造 → _injected_db=False）
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.load(SessionId("sid")))
+        assert repo._db is None  # 状态失效，下一轮健康检查重连
+
+    def test_load_wraps_error_injected_db_kept(self):
+        """注入 fake（_injected_db=True）连接错误同样转 StorageUnavailableError，
+        但不置 _db=None（测试 fake 由测试控制生命周期）。"""
+        import asyncio
+        from core.storage.base import StorageUnavailableError
+        db = MagicMock()
+        db.find = AsyncMock(side_effect=ConnectionError("down"))
+        repo = SessionRepository(db=db)
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.load(SessionId("sid")))
+        assert repo._db is db
+
     def test_load_returns_none_when_db_none(self):
         import asyncio
         from core.storage.base import StorageUnavailableError

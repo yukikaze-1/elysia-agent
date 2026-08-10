@@ -15,12 +15,17 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable, TypeVar
 
 if TYPE_CHECKING:
     from Module.database.documentdb import DocumentDBBackend
+
+logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 def bson_expires(days: int, *, now: datetime | None = None) -> datetime:
@@ -114,3 +119,38 @@ class Repository(ABC):
     def _mark_unavailable(self, reason: str) -> None:
         """使后端状态失效（P1-05）：下次健康检查/操作触发真正重连。"""
         self._db = None
+
+    async def _call(
+        self,
+        coro_factory: Callable[[], Awaitable[_T]],
+        *,
+        reason: str = "存储操作失败",
+    ) -> _T:
+        """执行后端操作，连接异常 → StorageUnavailableError + 状态失效（review 复核 #2）。
+
+        B1 之后只有健康检查经 `_mark_unavailable` 感知断线；find/insert/update 抛出的
+        连接异常（Motor ServerSelectionTimeoutError 等）会以普通异常冒泡，被 caller
+        当作「not found / 存储为空」——session 假加载即源于此。本 helper 把后端操作的
+        真实失败转换为统一 StorageUnavailableError 并置 `_db=None`，触发下一轮健康检查
+        真正重连（fail-closed，禁止静默 return 被 caller 当成功）。
+
+        Args:
+            coro_factory: 返回 awaitable 的零参 callable（惰性求值，避免异常发生在
+                await 之前被误判）。
+            reason: 日志/错误描述（标记状态失效的原因）。
+
+        Returns:
+            后端操作返回值。
+
+        Raises:
+            StorageUnavailableError: 后端操作抛异常（连接失败等）。
+        """
+        try:
+            return await coro_factory()
+        except StorageUnavailableError:
+            raise
+        except Exception as e:
+            logger.warning("%s: %s", reason, e)
+            if not self._injected_db:
+                self._mark_unavailable(reason)
+            raise StorageUnavailableError(reason) from e

@@ -454,6 +454,10 @@ class SessionMemory:
             logger.warning("SessionMemory load from MongoDB unavailable, trying JSONL")
             return await self._load_from_jsonl()
         except Exception:
+            # review 复核 #2：repo 抛出的非 StorageUnavailable 连接异常（未及包装）
+            # 同样视为存储不可用——否则 ensure_loaded 会把它当「存储可达 but not
+            # found」永久标 loaded，之后用不完整的本地状态覆盖远端历史。
+            self._storage_unavailable = True
             logger.warning("SessionMemory load from MongoDB failed, trying JSONL", exc_info=True)
             return await self._load_from_jsonl()
 
