@@ -112,13 +112,13 @@ A1/A2
 - [x] D6a 非回环 fail-closed 鉴权
 - [ ] D6b 公开入口限流
 - [ ] D6c durable idempotency
-- [ ] D7a Compose 网络与凭据
-- [ ] D7b embedding 模型供应链
+- [x] D7a Compose 网络与凭据
+- [x] D7b embedding 模型供应链
 - [ ] E1 工具热重载原子回滚
 - [ ] E2 Workflow 非阻塞有界 submit
 - [ ] E3 Workflow cancel/pause 终态
 - [ ] E4 Workflow 测试分层
-- [ ] E5 Milvus 输入与 metric
+- [x] E5 Milvus 输入与 metric
 - [ ] E6 Desktop golden runtime 单源
 - [ ] F1 真正全量离线 CI
 - [ ] F2 依赖锁与安全扫描

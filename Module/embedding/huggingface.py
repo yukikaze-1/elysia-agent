@@ -2,6 +2,12 @@
 
 同步推理通过 asyncio.to_thread() 包装为异步。
 优先使用本地缓存，离线可用。
+
+供应链安全（P1-18）：
+- 默认 ``trust_remote_code=False``；仅 manifest + remote-code allowlist 内的
+  特殊模型可显式开启。
+- 已登记 manifest 的模型加载前校验全部文件 sha256，被篡改/缺失时拒绝启动。
+- 未登记 manifest 的模型允许加载但保持 trust_remote_code=False。
 """
 
 import asyncio
@@ -14,6 +20,11 @@ import torch
 from langchain_huggingface import HuggingFaceEmbeddings
 
 from paths import ProjectPath
+from Module.embedding.model_manifest import (
+    get_manifest,
+    trust_remote_code_for,
+    verify_manifest_dir,
+)
 from Module.embedding.protocol import EmbeddingBackend
 
 logger = logging.getLogger(__name__)
@@ -58,6 +69,49 @@ def _find_local_model(model_name: str, cache_folder: str | None) -> str | None:
                     if os.path.isfile(os.path.join(snap_path, "config.json")):
                         return snap_path
     return None
+
+
+def _verified_local_path(model_name: str, local_path: str | None) -> str | None:
+    """返回供应链校验通过的本地模型路径，未找到时返回 None。
+
+    对已登记 manifest 的模型：
+    - 本地路径缺失 → 抛 RuntimeError，提示先运行 download_model.py。
+    - hash 校验失败 → 抛 RuntimeError，拒绝加载（缓存可能被篡改/镜像内容不同）。
+    对未登记 manifest 的模型：无法校验，打印 warning 并返回原路径
+    （trust_remote_code 仍保持 False，不执行远程代码）。
+
+    Args:
+        model_name: HuggingFace 模型名。
+        local_path: _find_local_model 找到的本地路径，可为 None。
+
+    Returns:
+        校验通过的本地模型路径字符串，或 None（未找到且未登记 manifest）。
+
+    Raises:
+        RuntimeError: manifest 模型本地缺失或缓存 hash 校验失败。
+    """
+    manifest = get_manifest(model_name)
+    if manifest is None:
+        logger.warning(
+            "模型 %s 未登记固定 manifest，无法校验 hash；trust_remote_code 保持 False",
+            model_name,
+        )
+        return local_path
+    if local_path is None:
+        raise RuntimeError(
+            f"模型 {model_name} 本地缓存缺失，拒绝加载。"
+            f"请先运行 `python scripts/download_model.py` "
+            f"（固定 revision {manifest.revision}）。"
+        )
+    ok, failures = verify_manifest_dir(Path(local_path), manifest)
+    if not ok:
+        raise RuntimeError(
+            f"模型 {model_name} 缓存校验失败（供应链保护），拒绝加载。"
+            "缓存可能被篡改或镜像内容不同，请重新运行 "
+            "`python scripts/download_model.py`。失败明细: "
+            + "; ".join(failures)
+        )
+    return local_path
 
 
 class HuggingFaceBackend(EmbeddingBackend):
@@ -115,18 +169,22 @@ class HuggingFaceBackend(EmbeddingBackend):
         self._dimension = dimension or _KNOWN_DIMS.get(model_name, 0)
         self._logger = logger or logging.getLogger(__name__)
 
-        # 在本地缓存中查找模型 —— 完全避免网络访问
-        local_path = _find_local_model(model_name, cache_folder)
+        # 在本地缓存中查找模型 —— 完全避免网络访问。
+        # 供应链校验：manifest 模型加载前全量 hash 校验，失败拒绝加载。
+        local_path = _verified_local_path(model_name, _find_local_model(model_name, cache_folder))
         if local_path:
             self._logger.info("Using local model: %s", local_path)
         model_path = local_path or model_name
+
+        # 默认关闭 remote code；仅 allowlist + 固定 revision/hash 模型可显式开启
+        trust_remote_code = trust_remote_code_for(model_name)
 
         self._lock = asyncio.Lock()  # 保护 embed() 和 close() 之间的竞态
         self._embeddings = HuggingFaceEmbeddings(
             model_name=model_path,
             model_kwargs={
                 "device": device,
-                "trust_remote_code": True,
+                "trust_remote_code": trust_remote_code,
                 "local_files_only": True,
             },
             encode_kwargs={"normalize_embeddings": normalize},

@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,6 +9,25 @@ from Module.embedding.huggingface import HuggingFaceBackend
 from Module.embedding.openai_compat import OpenAICompatEmbeddingBackend
 from Module.embedding.protocol import EmbeddingBackend
 from Module.embedding.registry import EmbeddingFactory
+
+
+# ============================================================
+# 工具 —— HuggingFace 后端创建（打桩供应链校验收口）
+# ============================================================
+
+@contextmanager
+def _hf_backend_patch():
+    """创建 HuggingFace 后端所需的 patch 组合。
+
+    _verified_local_path 是供应链校验收口点：打桩绕过真实 hash 校验，
+    使测试不依赖本机模型缓存（真实校验逻辑在 scripts/tests/ 单独覆盖）。
+    """
+    with (
+        patch("Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()),
+        patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False),
+        patch("Module.embedding.huggingface._verified_local_path", return_value="/fake/model"),
+    ):
+        yield
 
 
 # ============================================================
@@ -92,18 +112,14 @@ class TestEmbeddingFactory:
             EmbeddingFactory.create("unknown/model")
 
     def test_huggingface_model_parsing(self):
-        with patch(
-            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
-        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+        with _hf_backend_patch():
             backend = EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")
         backend = cast(HuggingFaceBackend, backend)
         assert backend._model_name == "BAAI/bge-large-zh-v1.5"
         assert backend.dimension == 1024
 
     def test_huggingface_unknown_model_dimension(self):
-        with patch(
-            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
-        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+        with _hf_backend_patch():
             backend = EmbeddingFactory.create(
                 "huggingface/unknown-model", dimension=512
             )
@@ -150,9 +166,7 @@ class TestHuggingFaceBackend:
         assert hf_backend.dimension == 1024
 
     def test_dimension_unknown_raises(self):
-        with patch(
-            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
-        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+        with _hf_backend_patch():
             backend = EmbeddingFactory.create("huggingface/unknown-model")
         with pytest.raises(RuntimeError, match="Unknown dimension"):
             _ = backend.dimension
@@ -245,9 +259,7 @@ class TestEmbeddingFactoryShutdown:
     @pytest.mark.asyncio
     async def test_shutdown_closes_all_instances(self):
         """shutdown() 关闭所有缓存的实例。"""
-        with patch(
-            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
-        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+        with _hf_backend_patch():
             b1 = EmbeddingFactory.create("huggingface/bge-m3")
             b2 = EmbeddingFactory.create("huggingface/bge-large-zh-v1.5")
 
@@ -264,9 +276,7 @@ class TestEmbeddingFactoryShutdown:
     @pytest.mark.asyncio
     async def test_shutdown_handles_close_exception(self):
         """某个实例 close() 异常不影响其他实例关闭和清理。"""
-        with patch(
-            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
-        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+        with _hf_backend_patch():
             b1 = EmbeddingFactory.create("huggingface/bge-m3")
             b2 = EmbeddingFactory.create("huggingface/bge-large-zh-v1.5")
 
@@ -281,9 +291,7 @@ class TestEmbeddingFactoryShutdown:
     @pytest.mark.asyncio
     async def test_create_after_shutdown_returns_new_instance(self):
         """shutdown 后 create() 返回新实例而非旧缓存。"""
-        with patch(
-            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
-        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+        with _hf_backend_patch():
             b1 = EmbeddingFactory.create("huggingface/bge-m3")
             await EmbeddingFactory.shutdown()
             b2 = EmbeddingFactory.create("huggingface/bge-m3")
@@ -303,25 +311,19 @@ class TestEmbeddingFactoryShutdown:
 @pytest.mark.service
 class TestEmbeddingFactorySingleton:
     def test_same_model_returns_same_instance(self):
-        with patch(
-            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
-        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+        with _hf_backend_patch():
             b1 = EmbeddingFactory.create("huggingface/bge-m3")
             b2 = EmbeddingFactory.create("huggingface/bge-m3")
         assert b1 is b2
 
     def test_different_model_returns_different_instance(self):
-        with patch(
-            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
-        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+        with _hf_backend_patch():
             b1 = EmbeddingFactory.create("huggingface/bge-m3")
             b2 = EmbeddingFactory.create("huggingface/bge-large-zh-v1.5")
         assert b1 is not b2
 
     def test_instances_dict_tracks_correctly(self):
-        with patch(
-            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
-        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+        with _hf_backend_patch():
             b1 = EmbeddingFactory.create("huggingface/bge-m3")
             b2 = EmbeddingFactory.create("huggingface/bge-large-zh-v1.5")
         assert EmbeddingFactory._instances["huggingface/bge-m3|{}"] is b1
@@ -338,9 +340,7 @@ class TestHuggingFaceFromConfig:
         from Module.embedding.config import EmbeddingConfig
 
         cfg = EmbeddingConfig(api_key="")
-        with patch(
-            "Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()
-        ), patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+        with _hf_backend_patch():
             backend = EmbeddingFactory.from_config("huggingface/BAAI/bge-large-zh-v1.5", cfg)
         assert backend.dimension == 1024
 

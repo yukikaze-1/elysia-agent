@@ -1004,7 +1004,7 @@ core/utils/log_setup.py:
 Agent/
 ├── Makefile                # 测试/构建命令
 ├── requirements.txt        # Python 依赖
-├── docker-compose.yml      # 数据库容器
+├── docker-compose.yml      # 数据库容器（dev/production profile，仅 127.0.0.1 端口 + 启用认证）
 ├── pytest.ini              # pytest 配置（markers）
 ├── data/                   # 应用数据（上传、缓存、Live2D）
 ├── app.py                  # 入口 (argparse + ConfigLoader + CLI overrides)

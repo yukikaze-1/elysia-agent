@@ -1,10 +1,24 @@
 # Elysia Agent — 数据库服务 (MongoDB + Milvus + etcd + MinIO)
 #
-# 启动: docker compose up -d
-# 停止: docker compose down
-# 清除数据: docker compose down -v
+# 启动（开发）: docker compose --profile dev up -d
+# 启动（生产）: docker compose --profile production up -d
+# 停止:         docker compose --profile <dev|production> down
+# 清除数据:     docker compose --profile <dev|production> down -v
 #
-# 端口与 .env 默认值一致，无需额外配置。
+# 安全策略（P1-19，2026-08-10 全项目 review）:
+# - 数据服务宿主端口一律只绑定 127.0.0.1（仅本机进程可访问，外部网络扫描不可达）；
+#   服务间通信走内部 docker network（服务名解析），不依赖宿主端口。
+# - 凭据全部从 .env 读取，用 ${VAR:?} 强制——缺 secret 时 compose 拒绝启动（dev 与
+#   production 均要求）。文件内不含任何默认密码（历史默认 root 凭据已移除）。
+# - MongoDB 启用认证（mongod --auth + root 用户）；Milvus 启用授权
+#   （authorizationEnabled + defaultRootPassword）；MinIO 使用强随机 root 凭据。
+# - production profile 不发布数据库管理端口（MinIO console 9001 / Milvus metrics
+#   9091），仅发布后端必需的数据端口（27017/19530，且仅绑定 127.0.0.1）。
+#
+# 注意: 本机 `docker compose up -d`（不带 --profile）不会启动任何服务——必须显式
+#       选择 dev 或 production（空 profile 即"什么都不起"，fail-closed）。
+# 注意: dev 与 production 不应同时启动（会竞争端口与内部网络）；mongodb/etcd 为
+#       dev/production 共享服务，minio/milvus 按 profile 使用独立数据卷。
 #
 # 版本选择：默认使用当前稳定版（MongoDB 8 / Milvus 2.6）。
 # 老硬件回退（N5095 部署实录，docs/elysia-install-issues.md）：
@@ -14,19 +28,34 @@
 # - etcd + MinIO：Milvus standalone 需外部 etcd/对象存储（UseEmbed=false），
 #   官方标准三件套配置；仅 milvus 单容器会刷 etcd 连接失败、19530 端口不通。
 
+# ---- 数据服务公共配置（dev/production 复用，避免重复） ----
+x-datastore: &datastore
+  restart: unless-stopped
+  networks:
+    - internal
+
 services:
+  # ---- MongoDB（dev/production 共享；仅 127.0.0.1 发布数据端口；启用认证） ----
   mongodb:
+    <<: *datastore
     image: mongo:8
     container_name: elysia-mongo
+    profiles: ["dev", "production"]
+    command: ["mongod", "--auth"]
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo_data:/data/db
-    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?在 .env 设置 MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?在 .env 设置 MONGO_INITDB_ROOT_PASSWORD}
 
+  # ---- etcd（无宿主端口，仅内部网络；dev/production 共享） ----
   etcd:
+    <<: *datastore
     image: quay.io/coreos/etcd:v3.5.14
     container_name: elysia-etcd
+    profiles: ["dev", "production"]
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -35,41 +64,85 @@ services:
     volumes:
       - etcd_data:/etcd
     command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
-    restart: unless-stopped
 
+  # ---- MinIO dev（仅 127.0.0.1 暴露 9000/9001 供本地调试） ----
   minio:
+    <<: *datastore
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
     container_name: elysia-minio
+    profiles: ["dev"]
     environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?在 .env 设置 MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?在 .env 设置 MINIO_ROOT_PASSWORD}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"   # S3 API（调试）
+      - "127.0.0.1:9001:9001"   # 管理控制台（调试）
     volumes:
       - minio_data:/minio_data
     command: minio server /minio_data --console-address ":9001"
-    restart: unless-stopped
 
+  # ---- MinIO production（无宿主端口，仅内部网络供 Milvus 使用） ----
+  minio-prod:
+    <<: *datastore
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    container_name: elysia-minio-prod
+    profiles: ["production"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?在 .env 设置 MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?在 .env 设置 MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data_prod:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+
+  # ---- Milvus dev（仅 127.0.0.1 暴露 19530/9091 供调试；启用授权） ----
   milvus:
+    <<: *datastore
     image: milvusdb/milvus:v2.6.22
     container_name: elysia-milvus
+    profiles: ["dev"]
     command: ["milvus", "run", "standalone"]
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
+      common.security.authorizationEnabled: "true"
+      common.security.defaultRootPassword: ${MILVUS_ROOT_PASSWORD:?在 .env 设置 MILVUS_ROOT_PASSWORD}
     ports:
-      - "19530:19530"
-      - "9091:9091"
+      - "127.0.0.1:19530:19530"  # gRPC（后端连接）
+      - "127.0.0.1:9091:9091"     # metrics（调试）
     volumes:
       - milvus_data:/var/lib/milvus
     depends_on:
       - etcd
       - minio
-    restart: unless-stopped
+
+  # ---- Milvus production（仅 127.0.0.1 暴露 19530；不发布 metrics 9091） ----
+  milvus-prod:
+    <<: *datastore
+    image: milvusdb/milvus:v2.6.22
+    container_name: elysia-milvus-prod
+    profiles: ["production"]
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio-prod:9000
+      common.security.authorizationEnabled: "true"
+      common.security.defaultRootPassword: ${MILVUS_ROOT_PASSWORD:?在 .env 设置 MILVUS_ROOT_PASSWORD}
+    ports:
+      - "127.0.0.1:19530:19530"  # gRPC（后端连接）
+    volumes:
+      - milvus_data_prod:/var/lib/milvus
+    depends_on:
+      - etcd
+      - minio-prod
 
 volumes:
   mongo_data:
   etcd_data:
   minio_data:
+  minio_data_prod:
   milvus_data:
+  milvus_data_prod:
+
+networks:
+  internal:
+    name: elysia-internal

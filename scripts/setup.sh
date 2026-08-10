@@ -121,6 +121,67 @@ else
     echo "  其他可选配置见 .env.example 中的注释。"
 fi
 
+# ── Step 4b: 数据库凭据（P1-19，docker compose 必需）──────────────────────
+
+echo ""
+echo -e "${BOLD}Step 3b: 数据库凭据（docker compose）${NC}"
+
+# 生成随机十六进制密码（openssl 不可用时退回 python secrets）
+_rand_hex() {
+    if command -v openssl &> /dev/null; then
+        openssl rand -hex 24
+    else
+        $PYTHON -c "import secrets; print(secrets.token_hex(24))"
+    fi
+}
+
+# 若 .env 缺失某键则补写；默认值非空时用默认值，为空时生成随机密码
+_ensure_env() { # $1=var_name  $2=default_value
+    local name=$1 default_value=$2
+    if ! grep -qE "^${name}=" .env; then
+        if [[ -n "$default_value" ]]; then
+            echo "${name}=${default_value}" >> .env
+        else
+            echo "${name}=$(_rand_hex)" >> .env
+        fi
+        echo -e "  ${GREEN}✓${NC} 已生成 ${name}"
+    else
+        echo -e "  ${GREEN}✓${NC} ${name} 已存在"
+    fi
+}
+
+# Mongo/MinIO/Milvus 服务端凭据（compose 用 ${VAR:?} 强制引用，缺一即拒启）
+_ensure_env MONGO_INITDB_ROOT_USERNAME elysia
+_ensure_env MONGO_INITDB_ROOT_PASSWORD ""
+_ensure_env MINIO_ROOT_USER elysia-minio
+_ensure_env MINIO_ROOT_PASSWORD ""
+_ensure_env MILVUS_ROOT_PASSWORD ""
+
+# 读取 .env 中的实际值，派生应用侧连接串（保持 root:<密码> 与 Mongo URI 一致）
+_MONGO_USER="$(grep -E "^MONGO_INITDB_ROOT_USERNAME=" .env | tail -1 | cut -d= -f2-)"
+_MONGO_PW="$(grep -E "^MONGO_INITDB_ROOT_PASSWORD=" .env | tail -1 | cut -d= -f2-)"
+_MILVUS_PW="$(grep -E "^MILVUS_ROOT_PASSWORD=" .env | tail -1 | cut -d= -f2-)"
+
+# MONGODB_URI：缺失（含被 .env.example 注释掉）时补写带认证连接串；仅当仍是
+# "无凭据 localhost 默认值"时改写。自定义（远程/已有认证）URI 不做修改。
+if ! grep -qE "^MONGODB_URI=.+" .env; then
+    echo "MONGODB_URI=mongodb://${_MONGO_USER}:${_MONGO_PW}@127.0.0.1:27017/default?authSource=admin" >> .env
+    echo -e "  ${GREEN}✓${NC} MONGODB_URI 已补写为带认证连接串"
+elif grep -qE "^MONGODB_URI=mongodb://(localhost|127\.0\.0\.1):27017$" .env; then
+    sed -i "s|^MONGODB_URI=.*|MONGODB_URI=mongodb://${_MONGO_USER}:${_MONGO_PW}@127.0.0.1:27017/default?authSource=admin|" .env
+    echo -e "  ${GREEN}✓${NC} MONGODB_URI 已改写为带认证连接串"
+fi
+
+# MILVUS_TOKEN：缺失或为空时补写 root:<milvus 密码>
+if ! grep -qE "^MILVUS_TOKEN=.+" .env; then
+    if grep -qE "^MILVUS_TOKEN=" .env; then
+        sed -i "s|^MILVUS_TOKEN=.*|MILVUS_TOKEN=root:${_MILVUS_PW}|" .env
+    else
+        echo "MILVUS_TOKEN=root:${_MILVUS_PW}" >> .env
+    fi
+    echo -e "  ${GREEN}✓${NC} MILVUS_TOKEN 已补写为 root:<密码>"
+fi
+
 # ── Step 5: 嵌入模型 ───────────────────────────────────────────────────────
 
 echo ""
@@ -135,7 +196,7 @@ fi
 if [[ -n "$CACHE_DIR" ]]; then
     echo -e "  ${GREEN}✓${NC} 嵌入模型已缓存 ($CACHE_DIR)"
 else
-    echo -e "  ${YELLOW}→${NC} 嵌入模型未缓存，正在下载（约 1.3GB，默认使用 hf-mirror.com 镜像）..."
+    echo -e "  ${YELLOW}→${NC} 嵌入模型未缓存，正在下载（约 1.3GB，默认官方源 + 固定 revision + hash 校验；镜像需显式 HF_MIRROR opt-in）..."
     $PYTHON scripts/download_model.py
     if [[ $? -ne 0 ]]; then
         echo -e "  ${RED}✗${NC} 嵌入模型下载失败"
@@ -164,6 +225,10 @@ echo -e "${BOLD}=== 安装完成 ===${NC}"
 echo ""
 echo "启动服务:"
 echo "  bash scripts/start.sh    # 一键启动 (http://localhost:8765)"
+echo ""
+echo "数据库（已自动生成凭据到 .env）:"
+echo "  docker compose --profile dev up -d            # 开发（宿主端口仅 127.0.0.1）"
+echo "  docker compose --profile production up -d     # 生产（不发布管理端口）"
 echo ""
 echo "其他:"
 echo "  交互模式:  $PYTHON app.py"

@@ -11,8 +11,9 @@
 | `setup.sh` | 一键安装（conda 环境 + pip 依赖 + 嵌入模型下载） | `bash scripts/setup.sh` |
 | `start.sh` | 一键启动（conda 激活 → 数据库检查 → 预检 → 启动服务） | `bash scripts/start.sh` |
 | `check.sh` | 环境预检（conda/python 版本 + 依赖 + 配置文件） | `bash scripts/check.sh` |
-| `download_model.py` | 嵌入模型下载（BAAI/bge-large-zh-v1.5，约 1.3GB） | `conda run -n Elysia python scripts/download_model.py` |
+| `download_model.py` | 嵌入模型下载（默认 `BAAI/bge-large-zh-v1.5`，固定 revision + sha256 校验，默认官方源） | `conda run -n Elysia python scripts/download_model.py` |
 | `clean_db.py` | 数据库清理（清空 MongoDB + Milvus + 本地持久化文件） | `conda run -n Elysia python scripts/clean_db.py` |
+| `check_compose_security.py` | Compose 安全策略门禁（P1-19）：数据服务端口仅 loopback、无默认凭据/空 token、生产不发布管理端口 | `conda run -n Elysia python scripts/check_compose_security.py` |
 
 ## clean_db.py
 
@@ -54,6 +55,29 @@ conda run -n Elysia python scripts/clean_db.py --mongo-only
 
 # 检查连接但不执行清理
 conda run -n Elysia python scripts/clean_db.py --dry-run
+```
+
+---
+
+## download_model.py（供应链安全）
+
+模型下载已做供应链固定（P1-18），防止镜像/上游 tag/本地缓存被替换后执行非预期代码：
+
+- 默认走**官方 HuggingFace**，默认模型 `BAAI/bge-large-zh-v1.5` 固定不可变 commit
+  revision，并维护所需文件的 sha256 manifest（单源 `Module/embedding/model_manifest.py`）。
+- 第三方 mirror 只能**显式 opt-in**：`HF_MIRROR` 环境变量或 `--mirror` CLI；
+  镜像内容仍按同一 manifest 校验 hash，内容不同会被拒绝。
+- 下载先落 `.model_cache/.tmp` 临时目录，全部文件 sha256 校验通过后**原子切换**到
+  最终快照；失败保留旧可用版本。
+- 默认 `trust_remote_code=False`；未登记 manifest 的模型打印未固定警告。
+
+```bash
+# 官方源（默认，固定 revision + hash 校验）
+conda run -n Elysia python scripts/download_model.py
+
+# 显式 opt-in 镜像（仍校验相同 hash）
+HF_MIRROR=https://hf-mirror.com conda run -n Elysia python scripts/download_model.py
+conda run -n Elysia python scripts/download_model.py --mirror
 ```
 
 ---

@@ -44,10 +44,10 @@ if $MILVUS_OK && $MONGODB_OK; then
     echo "  数据库均已运行，跳过"
 elif command -v docker &> /dev/null; then
     if ! $MILVUS_OK; then
-        docker compose up -d milvus 2>/dev/null && echo "  ✓ Milvus 已启动" || echo "  ⚠ Milvus 启动失败"
+        docker compose --profile dev up -d milvus 2>/dev/null && echo "  ✓ Milvus 已启动" || echo "  ⚠ Milvus 启动失败"
     fi
     if ! $MONGODB_OK; then
-        docker compose up -d mongodb 2>/dev/null && echo "  ✓ MongoDB 已启动" || echo "  ⚠ MongoDB 启动失败"
+        docker compose --profile dev up -d mongodb 2>/dev/null && echo "  ✓ MongoDB 已启动" || echo "  ⚠ MongoDB 启动失败"
     fi
 else
     echo "  ⚠ Docker 未安装且数据库未运行"

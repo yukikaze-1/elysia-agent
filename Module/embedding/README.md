@@ -94,7 +94,31 @@ await EmbeddingFactory.shutdown()  # 释放所有缓存的模型 + CUDA cache �
 - 模型缓存于 `~/.cache/huggingface/`
 - 同步推理通过 `asyncio.to_thread()` 包装为异步
 - 默认启用 L2 归一化（`normalize_embeddings=True`）
-- 无网络开销，适合本地部署
+
+## 模型供应链安全（P1-18）
+
+默认模型供应链已固定，防镜像/上游 tag/本地缓存被替换后执行非预期代码：
+
+- **固定 revision**：默认模型 `BAAI/bge-large-zh-v1.5` 固定不可变 commit revision
+  （`Module/embedding/model_manifest.py` 的 `DEFAULT_MODEL_REVISION`）。
+- **hash manifest**：manifest 记录模型所需全部文件的 sha256，加载前全量校验，
+  不以目录/单文件存在作为成功。校验失败（篡改/缺文件）→ 拒绝加载并提示重新下载。
+- **默认官方源**：下载默认走官方 HuggingFace；第三方 mirror 只能显式 opt-in
+  （`HF_MIRROR` 环境变量或 `--mirror` CLI），且镜像内容仍按相同 hash 校验。
+- **默认关闭 remote code**：`trust_remote_code=False`；仅同时满足「已登记固定
+  manifest（revision + hash）」且在 remote-code allowlist 内的特殊模型才可显式开启
+  （当前无启用项）。
+- **原子切换**：下载先落 `.model_cache/.tmp` 临时目录，全部校验通过后原子切换到
+  最终快照；失败保留旧可用版本。
+
+手动下载模型：`conda run -n Elysia python scripts/download_model.py`（默认官方 +
+固定 revision + hash 校验）。
+
+| 术语 | 位置 |
+|------|------|
+| manifest 单源 | `Module/embedding/model_manifest.py` |
+| 下载脚本 | `scripts/download_model.py` |
+| 加载校验闸门 | `Module/embedding/huggingface.py`（`_verified_local_path`） |
 
 ## OpenAI 后端细节
 

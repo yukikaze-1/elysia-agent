@@ -45,7 +45,8 @@ bash scripts/setup.sh
 cd frontend && npm install && npm run build && cd ..
 
 # 启动数据库（Docker 容器，重启后自动保持运行）
-docker compose up -d
+# setup.sh 已自动把随机数据库密码写入 .env；如需手动配置见 .env.example 注释
+docker compose --profile dev up -d
 ```
 
 ### 启动（每次使用）
@@ -75,7 +76,7 @@ Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板
 | `static/` | Vite 构建产物 + 非代码资源（由 aiohttp serve） |
 | `static/debug.md` | Debug 面板完整文档（标签页、API、技术实现） |
 
-> `scripts/download_model.py` 将模型下载到 `.model_cache/`。运行时按 `MODEL_CACHE_DIR` → `.model_cache/` → `~/.cache/huggingface/hub/` 顺序查找。
+> `scripts/download_model.py` 将模型下载到 `.model_cache/`（默认官方 HuggingFace + 固定 revision + sha256 校验；第三方镜像经 `HF_MIRROR` 显式 opt-in）。运行时按 `MODEL_CACHE_DIR` → `.model_cache/` → `~/.cache/huggingface/hub/` 顺序查找。
 
 ### 高级用法（可选）
 
@@ -115,10 +116,11 @@ python app.py --port 8766
 
 **Docker 起不来**
 ```bash
-docker compose ps          # 确认服务状态
-docker compose logs milvus # 查看日志
-docker compose restart     # 重启
+docker compose --profile dev ps       # 查看 dev 服务状态
+docker compose --profile dev logs milvus # 查看日志
+docker compose --profile dev restart  # 重启
 ```
+> 数据库凭据从 `.env` 读取（`${VAR:?}` 强制）。若启动报"required variable ... is missing a value"，说明 `.env` 缺少数据库密码——运行 `bash scripts/setup.sh` 自动生成，或按 `.env.example` 数据库段注释手动设置。
 
 > **低配置 CPU（无 AVX 指令集）**：MongoDB 5.0+ 强制要求 CPU 支持 AVX，`mongo:8` 会以 exit 132 无限重启。compose 默认 mongo:8；无 AVX 的旧 CPU 请把 image 改为 `mongo:4.4`（最后支持非 AVX 的版本）。极老 CPU 上 Milvus 2.6 若异常可回退 `milvusdb/milvus:v2.4.0`。
 >
@@ -142,15 +144,48 @@ bash scripts/setup.sh
 | 功能 | 必需？ | 服务/API | 环境变量 |
 |------|--------|----------|----------|
 | 对话 | **是** | DeepSeek API | `DEEPSEEK_API_KEY` |
-| 数据库 | **是** | MongoDB + Milvus (Docker) | `MONGODB_URI` / `MILVUS_URI` |
+| 数据库 | **是** | MongoDB + Milvus (Docker) | `MONGODB_URI` / `MILVUS_URI` / `MILVUS_TOKEN`（Mongo 启用认证，连接串须带用户名密码；Milvus 启用授权，token 格式 `root:<密码>`） |
 | 语音合成 | 否 | MiniMax / GPT-SoVits / OpenAI TTS | `MINIMAX_API_KEY` / `GPT_SOVITS_URL` / `CUSTOM_TTS_API_KEY` |
 | 语音识别 | 否 | SenseVoice（本地） / OpenAI STT | `SENSEVOICE_URL` / `OPENAI_API_KEY` |
 | 网页搜索 | 否 | Tavily API | `TAVILY_API_KEY` |
 | 图片识别 | 否 | MiMo API | `MIMO_API_KEY` |
-| 嵌入模型 | **是** | BAAI/bge-large-zh-v1.5 (HuggingFace，默认 hf-mirror.com 镜像) | `MODEL_CACHE_DIR` |
+| 嵌入模型 | **是** | BAAI/bge-large-zh-v1.5 (HuggingFace，固定 revision + sha256 校验，默认官方源) | `MODEL_CACHE_DIR` |
 
 不配置的可选服务会自动降级或跳过，不影响文字对话功能（如无 `MINIMAX_API_KEY`，TTS 自动降级为纯文本模式并告警，不阻断启动）。
 数据库和嵌入模型是必需的——`app.py --check` 会验证。
+
+### 数据库服务部署（docker compose）
+
+数据库容器由 `docker-compose.yml` 管理（MongoDB 8 + Milvus v2.6 + etcd + MinIO），按 profile 划分：
+
+| Profile | 命令 | 宿主端口 |
+|---------|------|----------|
+| `dev`（开发） | `docker compose --profile dev up -d` | Mongo 27017 / Milvus 19530+9091 / MinIO 9000+9001，全部仅绑定 `127.0.0.1` |
+| `production`（生产） | `docker compose --profile production up -d` | 仅 Mongo 27017 / Milvus 19530（`127.0.0.1`）；**不发布** MinIO console 9001 / Milvus metrics 9091 等管理端口 |
+
+不带 `--profile` 的 `docker compose up -d` 不会启动任何服务（空 profile 即 fail-closed）。
+
+**安全策略（P1-19）**：
+
+- **网络最小暴露**：数据服务宿主端口一律只绑定 `127.0.0.1`——仅本机进程可访问，外部网络扫描不可达；服务间通信走内部 docker network（`internal`），不依赖宿主端口。
+- **无默认凭据**：Mongo/MinIO/Milvus 凭据全部从 `.env` 读取，用 `${VAR:?}` 强制（缺一即 compose 拒启）。`setup.sh` 首次安装自动生成随机密码。
+- **启用认证**：Mongo 以 `--auth` 启动并创建 root 用户；Milvus 开启授权（`common.security.authorizationEnabled=true` + `defaultRootPassword`）；MinIO 使用强随机 root 凭据。
+- **CI 门禁**：`scripts/check_compose_security.py` 静态检查 compose——数据服务仅 loopback 端口、无 `minioadmin`/`root`/空 token、生产不发布管理端口。
+
+**凭据变量（`.env`）**：
+
+| 变量 | 用途 |
+|------|------|
+| `MONGO_INITDB_ROOT_USERNAME` / `MONGO_INITDB_ROOT_PASSWORD` | Mongo root 用户（compose 侧，mongo:8 以 `--auth` 启动） |
+| `MONGODB_URI` | Mongo 连接串（应用侧；启用认证后须带用户名密码，如 `mongodb://elysia:<密码>@127.0.0.1:27017/default?authSource=admin`） |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | MinIO root 凭据（仅调试控制台需要） |
+| `MILVUS_ROOT_PASSWORD` | Milvus root 密码（compose 侧启用授权） |
+| `MILVUS_URI` / `MILVUS_TOKEN` | Milvus 端点 / 认证 token（应用侧；`MILVUS_TOKEN=root:<与 MILVUS_ROOT_PASSWORD 相同>`） |
+
+**备份与凭据轮换**：
+
+- **备份**：数据落在 named volume（`mongo_data` / `milvus_data` / `etcd_data` / `minio_data`；生产用 `minio_data_prod` / `milvus_data_prod`）。备份示例：`docker run --rm -v <项目名>_mongo_data:/data -v $(pwd):/backup alpine tar czf /backup/mongo_backup.tar.gz -C /data .`。
+- **凭据轮换**：修改 `.env` 密码变量 → `docker compose --profile <dev|production> down` → `up -d` 重建容器。**注意**：Mongo/Milvus root 凭据只在首次初始化（空数据目录）时生效，已有数据卷需先备份再用 `down -v` 重建，或手动在库内轮换用户密码。
 
 ---
 
@@ -309,7 +344,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | 会话恢复 (localStorage + 服务端持久化) | done |
 | **一键部署** — setup.sh + start.sh + download_model.py | done |
 | **环境预检** — app.py --check / --check --full (16 项：11 基础 + 5 连通性) | done |
-| **Docker 数据库** — docker-compose.yml (MongoDB 8 + Milvus v2.6 + etcd + MinIO；无 AVX 旧 CPU 回退 mongo:4.4) | done |
+| **Docker 数据库** — docker-compose.yml (MongoDB 8 + Milvus v2.6 + etcd + MinIO；dev/production profile、宿主端口仅 127.0.0.1、启用认证、${VAR:?} 强制凭据；无 AVX 旧 CPU 回退 mongo:4.4) | done |
 
 ---
 
@@ -320,7 +355,7 @@ Agent/
 ├── app.py                  # 入口
 ├── config.yaml             # 总配置
 ├── requirements.txt        # Python 依赖
-├── docker-compose.yml      # 数据库服务
+├── docker-compose.yml      # 数据库服务（dev/production profile，凭据从 .env 强制读取）
 ├── Makefile                # 测试/检查/启动命令
 ├── pytest.ini              # pytest 配置（4 层 markers）
 ├── .env.example            # 环境变量模板
@@ -576,4 +611,4 @@ Elysia:
   prompt_text: "参考音频对应的文本"
 ```
 
-> `Module/config/providers.yaml` 和 `docker-compose.yml` 是内部默认值，通常不需要改。
+> `Module/config/providers.yaml` 是内部默认值，通常不需要改；`docker-compose.yml` 的数据服务端口/凭据见上方「数据库服务部署」一节（凭据必须从 `.env` 提供，不能内置默认密码）。

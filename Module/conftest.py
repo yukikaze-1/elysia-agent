@@ -56,8 +56,11 @@ def _clear_embedding_cache():
 
 @pytest.fixture
 def huggingface_backend():
+    # _verified_local_path 是供应链校验收口点：测试中打桩绕过真实 hash 校验
+    # （真实校验逻辑单独在 scripts/tests/test_download_model_manifest.py 覆盖）
     with patch("Module.embedding.huggingface.HuggingFaceEmbeddings", MagicMock()), \
-         patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False):
+         patch("Module.embedding.huggingface.torch.cuda.is_available", return_value=False), \
+         patch("Module.embedding.huggingface._verified_local_path", return_value="/fake/model"):
         from Module.embedding.registry import EmbeddingFactory
         yield EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")
 

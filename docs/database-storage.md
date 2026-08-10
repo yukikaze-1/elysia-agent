@@ -17,7 +17,8 @@
 
 ## 一、Milvus 向量数据库
 
-**连接**: 优先级 环境变量 → `config.yaml` → 默认值。YAML 路径 `database.milvus_uri` / `database.milvus_token`，环境变量 `MILVUS_URI`（默认 `http://localhost:19530`）/ `MILVUS_TOKEN`
+**连接**: 优先级 环境变量 → `config.yaml` → 默认值。YAML 路径 `database.milvus_uri` / `database.milvus_token`，环境变量 `MILVUS_URI`（默认 `http://localhost:19530`）/ `MILVUS_TOKEN`。
+**认证（P1-19）**: docker-compose 的 Milvus 默认开启授权（`common.security.authorizationEnabled=true`），root 密码由 `.env` 的 `MILVUS_ROOT_PASSWORD` 提供；应用侧 `MILVUS_TOKEN=root:<同一密码>` 必须设置，否则连接被拒。`setup.sh` 首次安装会自动生成并写入 `.env`。
 
 ### 集合: `long_term_memory`
 
@@ -31,6 +32,8 @@
 | `timestamp` | FLOAT（动态字段） | Unix 时间戳 |
 
 - **索引**: IVF_FLAT，metric_type=L2，nlist=1024
+- **metric 持久化（P2-10）**: metric_type（L2/COSINE/IP）持久化于 Milvus index params——create_collection 时写入，`load_collection`/`search` 时从 Milvus index 描述读取恢复（跨实例/重启保持排序语义）。读取失败、index 缺失或 metric 不受支持时抛 ValueError（fail closed），禁止静默默认 L2 后返回看似正常的排序。白名单见 `Module/database/vectordb/milvus.py` 的 `SUPPORTED_METRIC_TYPES`。
+- **bulk insert 校验（P2-10）**: 调用 Milvus 前校验 vectors/metadata 非空、数量相等、各向量维度一致；不合法输入抛 ValueError 且零写入（不做 `zip` 静默截断）。
 - **检索方式**: ANN 向量搜索 + 重排序（0.5 × 相似度 + 0.3 × 重要性 + 0.2 × 时效性）
 - **淘汰策略**: max_entries=10000 数量上限驱逐（保留最新 N 条，驱逐时同步删除 Milvus）；max_age_days=90 当前未使用（预留供后续实现）
 - **降级**: Milvus 不可用时回退到内存列表 + 文本重叠搜索
@@ -39,7 +42,8 @@
 
 ## 二、MongoDB 文档数据库
 
-**连接**: 优先级 环境变量 → `config.yaml` → 默认值。YAML 路径 `database.mongodb_uri`，环境变量 `MONGODB_URI`（默认 `mongodb://localhost:27017`）
+**连接**: 优先级 环境变量 → `config.yaml` → 默认值。YAML 路径 `database.mongodb_uri`，环境变量 `MONGODB_URI`（默认 `mongodb://localhost:27017`）。
+**认证（P1-19）**: docker-compose 的 Mongo 以 `--auth` 启动（`MONGO_INITDB_ROOT_USERNAME`/`MONGO_INITDB_ROOT_PASSWORD`，见 `.env`），应用侧 `MONGODB_URI` 必须携带用户名密码，如 `mongodb://elysia:<密码>@127.0.0.1:27017/default?authSource=admin`。`setup.sh` 首次安装会自动改写 `.env` 中的默认 `MONGODB_URI`。
 
 ### 集合: `sessions`（数据库: `default`，可配置）
 
@@ -302,9 +306,11 @@ database:
   db_name: default                       # MongoDB 数据库名
 ```
 
+> **认证（P1-19）**：docker-compose 的 Mongo/Milvus 默认启用认证，`MONGODB_URI` 需带用户名密码（如 `mongodb://elysia:<密码>@127.0.0.1:27017/default?authSource=admin`）、`MILVUS_TOKEN` 需为 `root:<密码>`，否则连接被拒。`setup.sh` 首次安装会自动生成密码并写入 `.env`。
+
 | 变量 | YAML 路径 | 用途 | 默认值 |
 |------|-----------|------|--------|
 | `MILVUS_URI` | `database.milvus_uri` | Milvus 连接地址 | `http://localhost:19530` |
-| `MILVUS_TOKEN` | `database.milvus_token` | Milvus 认证令牌 | 空 |
-| `MONGODB_URI` | `database.mongodb_uri` | MongoDB 连接地址 | `mongodb://localhost:27017` |
+| `MILVUS_TOKEN` | `database.milvus_token` | Milvus 认证令牌（`root:<密码>`） | 空 |
+| `MONGODB_URI` | `database.mongodb_uri` | MongoDB 连接地址（认证后须带用户名密码） | `mongodb://localhost:27017` |
 | `OPENAI_API_KEY` | — | 嵌入模型 API Key（可选） | 空 |

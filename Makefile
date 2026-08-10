@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-workflow-engine lint pyright start gen-types gen-frames check-types
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-workflow-engine lint pyright start gen-types gen-frames check-types check-compose
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -58,6 +58,11 @@ gen-frames:
 check-types:
 	python -m frontend_contract --check
 	python scripts/gen_contract_frames.py --check
+
+# Compose 安全策略门禁（P1-19）：数据服务仅 loopback 端口、无默认凭据/空 token、
+# 生产不发布数据库管理端口。无需 docker/凭据即可运行（静态解析 compose 文件）。
+check-compose:
+	conda run -n $(CONDA_ENV) python scripts/check_compose_security.py
 
 start:
 	bash scripts/start.sh
