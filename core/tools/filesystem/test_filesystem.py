@@ -277,3 +277,52 @@ class TestListDirPlugin:
         assert "deep.txt" not in result
         # 但子目录本身应该出现
         assert "sub/" in result
+
+
+class TestListDirHardening:
+    """D1/P1-14：allow_symlinks=False 跳过 symlink、不泄解析后绝对路径。"""
+
+    @staticmethod
+    def _ctx(path: str) -> ToolContext:
+        ctx = ToolContext()
+        ctx.services["_safe_path"] = path
+        return ctx
+
+    @pytest.mark.asyncio
+    async def test_symlink_dir_skipped_when_disallowed(self, tmp_path):
+        """allow_symlinks=False → 不列出 symlink（目录/文件），不进入外部。"""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("s")
+        listed = tmp_path / "listed"
+        listed.mkdir()
+        (listed / "ok.txt").write_text("ok")
+        (listed / "link").symlink_to(outside)
+
+        plugin = ListDirPlugin()
+        plugin.safety.allow_symlinks = False
+        result = await plugin.execute(
+            ctx=self._ctx(str(listed)), emit=None,
+            params=ListDirParams(path=str(listed), depth=2),
+        )
+
+        assert "ok.txt" in result
+        assert "secret.txt" not in result   # symlink 外部文件未进入
+        # 除目录头外不得出现 symlink entry（named "link"）——排除头部绝对路径含 link 的干扰
+        body = result.split("\n")[1:]
+        assert not any("link" in line for line in body)
+
+    @pytest.mark.asyncio
+    async def test_output_header_uses_requested_path(self, tmp_path):
+        """目录头回显调用方路径（params.path），不泄露解析后绝对路径。"""
+        listed = tmp_path / "listed"
+        listed.mkdir()
+
+        plugin = ListDirPlugin()
+        plugin.safety.allow_symlinks = False
+        result = await plugin.execute(
+            ctx=self._ctx(str(listed)), emit=None,
+            params=ListDirParams(path="relative-ish", depth=1),
+        )
+
+        assert "目录: relative-ish" in result

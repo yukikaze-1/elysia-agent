@@ -1,5 +1,6 @@
 """文件系统工具插件 — 读取文件、列出目录、写入文件。"""
 
+import asyncio
 import os
 import time
 from pathlib import Path
@@ -160,13 +161,30 @@ class ListDirPlugin(ToolPlugin):
             return f"不是目录: {path}"
 
         depth = max(1, min(params.depth, self.safety.max_dir_depth))
+        allow_symlinks = self.safety.allow_symlinks
         visited: set[int] = set()
+        # D1/P1-14 + P2-05：遍历过程限制节点数/输出字节（不能先收集整棵树再截断），
+        # 且 allow_symlinks=False 时跳过全部 symlink entry（不进入 symlink 目录）。
+        node_budget = getattr(self.safety, "max_list_nodes", 500)
+        output_budget = 6000
+        collected: list[str] = []
+        exhausted = False
 
-        def _walk(p: Path, d: int) -> list[str]:
-            lines: list[str] = []
-            inode = p.stat().st_ino if not p.is_symlink() else None
+        def _walk(p: Path, d: int) -> None:
+            nonlocal exhausted, node_budget
+            if exhausted or node_budget <= 0:
+                return
+            if p.is_symlink() and not allow_symlinks:
+                return  # D1：不进入 symlink 目录
+            inode: int | None = None
+            try:
+                if not p.is_symlink():
+                    inode = p.stat().st_ino
+            except OSError:
+                pass
             if inode and inode in visited:
-                return [f"{'  ' * (depth - d)}[循环] {p}"]
+                collected.append(f"{'  ' * (depth - d)}[循环] {p}")
+                return
             if inode:
                 visited.add(inode)
 
@@ -176,34 +194,43 @@ class ListDirPlugin(ToolPlugin):
                     key=lambda x: (not x.is_dir(), x.name.lower()),
                 )
             except PermissionError:
-                return [f"{'  ' * (depth - d)}[权限不足] {p}"]
+                collected.append(f"{'  ' * (depth - d)}[权限不足] {p}")
+                return
 
             prefix = "  " * (depth - d)
             for entry in entries:
+                node_budget -= 1
+                if node_budget <= 0:
+                    exhausted = True
+                    collected.append("…[目录节点数已达上限，已停止遍历]")
+                    return
+                if entry.is_symlink() and not allow_symlinks:
+                    continue  # D1：不列出 symlink（含文件与目录）
                 try:
                     st = entry.stat()
                 except OSError:
-                    lines.append(f"{prefix}{entry.name}/ (?)")
+                    collected.append(f"{prefix}{entry.name}/ (?)")
                     continue
 
                 mtime = time.strftime(
                     "%m-%d %H:%M", time.localtime(st.st_mtime),
                 )
-                if entry.is_dir():
-                    lines.append(f"{prefix}{entry.name}/ ({mtime})")
+                if entry.is_dir() and not entry.is_symlink():
+                    collected.append(f"{prefix}{entry.name}/ ({mtime})")
                     if d > 1:
-                        lines.extend(_walk(entry, d - 1))
+                        _walk(entry, d - 1)
                 else:
                     size = _format_size(st.st_size)
-                    lines.append(f"{prefix}{entry.name}  {size}  {mtime}")
-            return lines
+                    collected.append(f"{prefix}{entry.name}  {size}  {mtime}")
+                if sum(len(x) for x in collected) > output_budget:
+                    exhausted = True
+                    collected.append("…[输出已截断]")
+                    return
 
-        lines = [f"目录: {resolved}\n"]
-        lines.extend(_walk(resolved, depth))
-        output = "\n".join(lines)
-        if len(output) > 6000:
-            output = output[:6000] + "\n\n…[输出已截断]"
-        return output
+        # D1/P1-14：不泄露允许根之外的绝对路径——只回显调用方提供的路径参数
+        collected.append(f"目录: {params.path}")
+        _walk(resolved, depth)
+        return "\n".join(collected)
 
 
 # ============================================================================
@@ -250,16 +277,23 @@ class WriteFilePlugin(ToolPlugin):
             self.safety.write_dir.replace("{session_id}", safe_sid)
         ).resolve()
 
-        if not (
-            str(resolved) == str(write_dir)
-            or str(resolved).startswith(str(write_dir) + os.sep)
-        ):
+        # D1/P1-14 + P2-05：is_relative_to 替代 startswith（sibling 逃逸）；
+        # 检查待写内容的真实 UTF-8 字节数（新建文件当前大小 0 会绕过 max_file_bytes）
+        if not resolved.is_relative_to(write_dir):
             return f"拒绝写入: 路径 '{params.path}' 越过了 sandbox 边界"
+        try:
+            content_bytes = params.content.encode("utf-8")
+        except UnicodeEncodeError:
+            return "写入失败: 内容无法编码为 UTF-8"
+        if len(content_bytes) > self.safety.max_file_bytes:
+            return (f"内容过大 ({len(content_bytes)} bytes)，"
+                    f"最大允许 {self.safety.max_file_bytes} bytes")
 
         resolved.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            resolved.write_text(params.content, encoding="utf-8")
+            # P2-05：阻塞文件 I/O 放线程池，避免阻塞 event loop
+            await asyncio.to_thread(resolved.write_text, params.content, "utf-8")
             size = resolved.stat().st_size
             return f"已写入 {resolved.name} ({size} bytes)"
         except Exception as e:

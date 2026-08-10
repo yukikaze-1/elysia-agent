@@ -259,3 +259,52 @@ class TestWriteFilePlugin:
 
         assert "已写入" in result
         assert "11 bytes" in result
+
+
+class TestWriteFileHardening:
+    """D1/P2-05：待写内容 UTF-8 字节上限 + sibling 边界。"""
+
+    @staticmethod
+    def _plugin(sandbox_dir: str, max_bytes: int) -> WriteFilePlugin:
+        plugin = WriteFilePlugin()
+        plugin.safety = SafetyProfile(
+            filesystem_allowed=True,
+            write_dir=sandbox_dir,
+            max_file_bytes=max_bytes,
+            requires_human_approval=True,
+        )
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_content_bytes_exceeding_limit_rejected(self, tmp_path):
+        """新建文件当前大小 0 会绕过旧上限——按待写 UTF-8 字节拒绝。"""
+        sandbox = tmp_path / "sandbox"
+        plugin = self._plugin(str(sandbox), max_bytes=8)
+        ctx = ToolContext(session_id="test_session")
+        ctx.services["_safe_path"] = str(sandbox / "new.txt")
+
+        result = await plugin.execute(
+            ctx=ctx,
+            params=WriteFileParams(path="new.txt", content="九个字节的内容"),
+        )
+
+        assert "过大" in result  # 内容 UTF-8 超 8 bytes → 拒绝且不落盘
+        assert not (sandbox / "new.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_sibling_prefix_write_rejected(self, tmp_path):
+        """write_dir=/sandbox，请求 /sandbox_evil/secret → 拒绝（is_relative_to 修复）。"""
+        sandbox = tmp_path / "sandbox"
+        evil = tmp_path / "sandbox_evil"
+        evil.mkdir(parents=True)
+        plugin = self._plugin(str(sandbox), max_bytes=1024)
+        ctx = ToolContext(session_id="test_session")
+        ctx.services["_safe_path"] = str(evil / "secret.txt")
+
+        result = await plugin.execute(
+            ctx=ctx,
+            params=WriteFileParams(path="secret.txt", content="x"),
+        )
+
+        assert "越过了 sandbox" in result
+        assert not (evil / "secret.txt").exists()

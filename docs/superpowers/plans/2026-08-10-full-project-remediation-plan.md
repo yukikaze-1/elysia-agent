@@ -104,7 +104,7 @@ A1/A2
 - [x] C3 After-response 目标会话绑定
 - [x] C4 shutdown 顺序与可重入 restart
 - [x] C5 checkpoint 与 proactive event
-- [ ] D1 文件 containment/symlink/资源上限
+- [x] D1 文件 containment/symlink/资源上限
 - [ ] D2 SSRF 与 Web response 上限
 - [ ] D3 搜索、WS/REST 输入上限和失败反馈
 - [ ] D4 日志脱敏
@@ -1308,6 +1308,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：checkpoint 版本仍为 1；空 checkpoint 自动删除旧文件（无 format 变化）
 - 契约或 Electron 影响：无
 - 剩余风险：time_of_day 仍无 consumer（仅告警，产品行为待定）；checkpoint 恢复后未「consume」（restored-but-pending 任务会再次 checkpoint——正确语义，完成即清）；TaskScheduler pending 空时不覆盖旧 checkpoint 已修复
+
+### D1 — 文件 containment/symlink/资源上限
+
+- 状态：完成
+- Commit：`<见 D1 提交>`
+- 变更文件：`Module/tool/safety.py`、`core/tools/filesystem/plugin.py`、`Module/tool/tests/test_tool_safety.py`、`core/tools/filesystem/test_write_file.py`、`core/tools/filesystem/test_filesystem.py`
+- 新增失败测试：`TestContainmentHardening`（sibling `/sandbox_evil` 拒绝、symlink 中间组件拒绝）；`TestWriteFileHardening`（待写 UTF-8 字节上限、sibling 写拒绝）；`TestListDirHardening`（allow_symlinks=False 跳过 symlink、不泄解析后绝对路径）
+- 目标测试：`pytest Module/tool/tests/ core/tools/` → 269 passed
+- 批次门禁：`ruff check` → 通过；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：无
+- 契约或 Electron 影响：无
+- 剩余风险：TOCTOU（check→open 竞态）未用 openat/O_NOFOLLOW——resolve 后逐组件 symlink 检查已挡常见逃逸，替换竞态留文档；ListDir 节点预算用 getattr 默认 500（未加独立 config 字段）；read 路径仍未 to_thread（write/list 已异步化）
 
 ## 14. 需要停止并请求决策的情况
 

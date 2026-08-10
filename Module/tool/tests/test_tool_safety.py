@@ -446,3 +446,41 @@ class TestValidateArgs:
         assert coerced["query"] == "hello"
         assert coerced["limit"] == 20
         assert coerced["debug"] is True
+
+
+class TestContainmentHardening:
+    """D1/P1-14：sibling 前缀与 symlink 中间组件不再逃逸。"""
+
+    def test_sibling_prefix_rejected(self, tmp_path):
+        """允许 /sandbox，请求 /sandbox_evil/secret → 拒绝（startswith 误判修复）。"""
+        from Module.tool.safety import _resolve_sandbox_path, _validate_path, SafetyProfile
+        sandbox = tmp_path / "sandbox"
+        sandbox.mkdir()
+        evil = tmp_path / "sandbox_evil"
+        evil.mkdir()
+        (evil / "secret.txt").write_text("s")
+
+        profile = SafetyProfile(read_dirs=[str(sandbox)], allow_symlinks=False)
+        resolved, err = _resolve_sandbox_path(str(evil / "secret.txt"), profile,
+                                              session_id="default", is_write=False)
+        assert err is None  # 路径本身解析成功
+        assert _validate_path(resolved, profile, raw=evil / "secret.txt") is not None
+
+    def test_symlink_middle_component_rejected(self, tmp_path):
+        """路径中间组件是 symlink（resolve 后指向外部）→ 拒绝。"""
+        from Module.tool.safety import _resolve_sandbox_path, _validate_path, SafetyProfile
+        read_dir = tmp_path / "read"
+        read_dir.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("s")
+        sub = read_dir / "sub"
+        sub.mkdir()
+        (sub / "link").symlink_to(outside)
+
+        profile = SafetyProfile(read_dirs=[str(read_dir)], allow_symlinks=False)
+        target = sub / "link" / "secret.txt"
+        resolved, err = _resolve_sandbox_path(str(target), profile,
+                                              session_id="default", is_write=False)
+        # resolved 会跟随 symlink 到 outside/secret.txt——但 raw 链含 symlink → 拒绝
+        assert _validate_path(resolved, profile, raw=target) is not None

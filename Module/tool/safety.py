@@ -222,20 +222,39 @@ def _resolve_sandbox_path(
         write_dir = Path(
             profile.write_dir.replace("{session_id}", safe_sid)
         ).resolve()
-        if not str(resolved).startswith(str(write_dir)):
+        # D1/P1-14：containment 用 is_relative_to——字符串 startswith 会把
+        # /sandbox 误判为 /sandbox_evil 的父级（sibling 逃逸）。
+        if not resolved.is_relative_to(write_dir):
             return resolved, f"写入路径必须在 '{write_dir}' 下"
 
     return resolved, None
 
 
+def _path_has_symlink(path: Path) -> bool:
+    """路径任意组件是否为符号链接（resolve 前判定）。
+
+    D1/P1-14：resolved 已跟随 symlink（.resolve() deref），对 resolved 检查
+    is_symlink() 会漏——/sandbox/link 指向外部时 resolved 是外部真实路径，
+    但 link 本身是 symlink。必须在 resolve 前沿原始路径链逐组件检查。
+    """
+    p = path if path.is_absolute() else Path.cwd() / path
+    current = Path(p.anchor)
+    for part in p.parts[1:] if p.anchor else p.parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
 def _validate_path(
-    resolved: Path, profile: SafetyProfile,
+    resolved: Path, profile: SafetyProfile, raw: Path | None = None,
 ) -> str | None:
     """路径安全检查。
 
     Args:
         resolved: 已解析的绝对路径。
         profile: 安全配置声明。
+        raw: resolve 前的原始路径（symlink 判定用）；None 时跳过 symlink 检查。
 
     Returns:
         None 表示通过检查，否则返回错误描述字符串。
@@ -243,17 +262,19 @@ def _validate_path(
     path_str = str(resolved)
 
     if profile.read_dirs:
+        # D1/P1-14：is_relative_to 替代 startswith（sibling 前缀不再误判）
         allowed = any(
-            path_str.startswith(str(Path(d).resolve()))
+            resolved.is_relative_to(Path(d).resolve())
             for d in profile.read_dirs
         )
         if not allowed:
             return f"路径 '{path_str}' 不在允许的目录中"
 
     if not profile.allow_symlinks:
-        for parent in [resolved, *resolved.parents]:
-            if parent.is_symlink():
-                return f"路径 '{path_str}' 包含符号链接，已被拒绝"
+        # D1/P1-14：resolved 本身是 symlink，或 resolve 前的原始路径链含 symlink
+        # （resolve 已 deref，只查 resolved 会漏中间组件）→ 都拒绝
+        if resolved.is_symlink() or (raw is not None and _path_has_symlink(raw)):
+            return f"路径 '{path_str}' 包含符号链接，已被拒绝"
 
     if resolved.exists() and resolved.is_file():
         if resolved.stat().st_size > profile.max_file_bytes:
@@ -589,12 +610,13 @@ class SafetyPipeline:
             is_write = Capability.FILESYSTEM_WRITE in getattr(plugin, "capabilities", set())
             for key, value in raw_params.items():
                 if "path" in key.lower() and isinstance(value, str):
+                    # D1/P1-14：传 raw（resolve 前）供 symlink 判定——resolve 已 deref
                     resolved, err = _resolve_sandbox_path(
                         value, profile, session_id, is_write,
                     )
                     if err:
                         return err
-                    err = _validate_path(resolved, profile)
+                    err = _validate_path(resolved, profile, raw=Path(value))
                     if err:
                         return err
                     # 将验证后的安全路径注入 ctx
