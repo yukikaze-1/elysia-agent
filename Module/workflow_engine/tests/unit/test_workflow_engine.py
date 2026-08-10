@@ -1191,3 +1191,59 @@ class TestPausedReleasesSlot:
         assert tid in engine._tasks                   # registry 保留
         assert tid not in engine._active
         await engine.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E2: 有界 resume——槽空直接 / 槽满入队 + resume_pending 幂等
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestResumeBounded:
+    def _paused_task(self, engine, tid="t1"):
+        sa = MagicMock()
+        ts = MagicMock()
+        ts.status = WorkflowStatus.PAUSED
+        ts.is_terminal.return_value = False
+        ts.resume_pending = False                      # 关键：显式设 False，防 Mock 真值短路
+        sa._task_state = ts
+        engine._tasks[WorkflowId(tid)] = sa
+        engine._mailboxes[WorkflowId(tid)] = WorkflowMailbox(WorkflowId(tid))
+        return sa, ts
+
+    @pytest.mark.asyncio
+    async def test_resume_slot_busy_enqueues_stays_paused(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        sa, ts = self._paused_task(engine)
+        await engine._semaphore.acquire()            # 槽占满
+        result = await engine.resume(WorkflowId("t1"))
+        assert isinstance(result, WorkflowMailbox)
+        assert ts.status == WorkflowStatus.PAUSED      # 保持 PAUSED
+        assert ts.resume_pending is True               # 入队标记
+        assert engine._queue.qsize() == 1
+        await engine.stop()
+
+    @pytest.mark.asyncio
+    async def test_resume_double_idempotent(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        sa, ts = self._paused_task(engine)
+        await engine._semaphore.acquire()
+        await engine.resume(WorkflowId("t1"))
+        await engine.resume(WorkflowId("t1"))         # 二次 → 幂等短路
+        assert engine._queue.qsize() == 1
+        await engine.stop()
+
+    @pytest.mark.asyncio
+    async def test_resume_queue_full_returns_error(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1, max_queue_size=1)
+        await engine.start()
+        sa, ts = self._paused_task(engine)
+        await engine._semaphore.acquire()
+        await engine.resume(WorkflowId("t1"))          # 入队占满
+        sa2, ts2 = self._paused_task(engine, tid="t2")
+        result = await engine.resume(WorkflowId("t2")) # 队满 → 失败
+        assert isinstance(result, ResumeError)
+        assert result.code == ResumeErrorCode.QUEUE_FULL
+        assert ts2.resume_pending is False             # 入队失败清标记
+        await engine.stop()

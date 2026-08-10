@@ -420,8 +420,11 @@ class WorkflowEngine:
     async def resume(self, task_id: WorkflowId) -> WorkflowMailbox | ResumeError:
         """从 PAUSED 恢复执行。
 
-        幂等——已在 RUNNING/RESUMING 的任务直接返回 mailbox。
+        幂等——已在 RUNNING/RESUMING 的任务直接返回 mailbox；resume_pending
+        排队/恢复进行中重复 resume 短路返回同一 mailbox（不二次入队）。
         仅 PAUSED 状态经过 CAS 检查后进入实际恢复流程。
+        E2 有界恢复：执行槽空闲 → 直接恢复；槽满 → 入队（保持 PAUSED，公平 FIFO）；
+        队列满 → ResumeError(QUEUE_FULL) 快速失败。
         v1 限制：使用原始 DelegationContext，不支持注入新上下文。
 
         Args:
@@ -429,7 +432,7 @@ class WorkflowEngine:
 
         Returns:
             WorkflowMailbox: 恢复成功，返回 mailbox 继续消费事件流。
-            ResumeError: 恢复失败（任务不存在、状态不允许等）。
+            ResumeError: 恢复失败（任务不存在、状态不允许、队列满等）。
         """
         sub_agent = self._tasks.get(task_id)
         if sub_agent is None:
@@ -471,60 +474,38 @@ class WorkflowEngine:
                 message="mailbox 缺失，内部状态不一致",
             )
 
-        async def _run_resume() -> None:
-            """包装 resume_from_pause，处理异常 + 终态清理。
+        if ts.resume_pending:
+            return mailbox                                  # 幂等短路——已在排队/恢复中
 
-            和 submit() 的 _run_and_cleanup 对称——resume 后的终态
-            （COMPLETED/FAILED/CANCELLED）由此 finally 块负责清理。
-            """
+        if self._semaphore is None or self._queue is None:
+            return ResumeError(
+                code=ResumeErrorCode.INVALID_STATE,
+                message="WorkflowEngine 尚未 start()，无法 resume",
+            )
+
+        if not self._semaphore.locked():                    # 槽空闲 → 直接恢复
+            await self._semaphore.acquire()
+            self._active.add(task_id)
+            ts.resume_pending = True                        # 直接路径也置标记——防 spawn 后重复 resume 二次入队
             try:
-                await sub_agent.resume_from_pause()
-            except asyncio.CancelledError:
-                push_mailbox_event(
-                    mailbox, WorkflowEventType.FAILED, {
-                        "task_id": str(task_id),
-                        "error": "任务被取消",
-                        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
-                    },
-                    caller="WorkflowEngine",
-                )
-                raise
+                task = asyncio.create_task(self._run_resume(sub_agent, task_id))
             except Exception:
-                logger.exception("WorkflowEngine: task_id=%s resume 异常", task_id)
-                push_mailbox_event(
-                    mailbox, WorkflowEventType.FAILED, {
-                        "task_id": str(task_id),
-                        "error": "resume 执行异常",
-                        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
-                    },
-                    caller="WorkflowEngine",
-                )
-            finally:
-                # PAUSED 任务保持存活——与 submit 路径 _run_and_cleanup 对称。
-                # resume 后执行中再次被暂停时，checkpoint/mailbox/注册表全部保留，
-                # 否则重复暂停会删 checkpoint 使任务从此不可再 resume（S6）。
-                if (sub_agent._task_state is not None and
-                    sub_agent._task_state.status == WorkflowStatus.PAUSED):
-                    return
-                self._cleanup_task(task_id)
-                try:
-                    await self._cleanup_storage(task_id, sub_agent)
-                except Exception:
-                    logger.exception(
-                        "WorkflowEngine: task_id=%s resume 后存储清理失败", task_id,
-                    )
-                if self._semaphore:
-                    self._semaphore.release()
-
-        try:
-            task = asyncio.create_task(self._run_resume(sub_agent, task_id))
-        except Exception:
-            logger.exception("WorkflowEngine.resume: task_id=%s create_task 失败", task_id)
-            self._cleanup_task(task_id)
-            if self._semaphore:
+                self._active.discard(task_id)
                 self._semaphore.release()
-            raise
-        self._task_futures[task_id] = task
+                ts.resume_pending = False
+                raise
+            self._task_futures[task_id] = task
+        else:                                               # 槽满 → 入队（保持 PAUSED，公平 FIFO）
+            ts.resume_pending = True
+            try:
+                self._queue.put_nowait(QueuedItem(task_id, QueuedItemKind.RESUME))
+            except asyncio.QueueFull:
+                ts.resume_pending = False                   # 入队失败清除标记
+                return ResumeError(
+                    code=ResumeErrorCode.QUEUE_FULL,
+                    message="执行队列已满，请稍后再试",
+                )
+            push_mailbox_event(mailbox, WorkflowEventType.QUEUED, {"task_id": str(task_id)})  # 排队可见（§7）
         logger.info("WorkflowEngine.resume: task_id=%s 已恢复", task_id)
         return mailbox
 
@@ -535,6 +516,8 @@ class WorkflowEngine:
         （COMPLETED/FAILED/CANCELLED）由此 finally 块负责清理。
         从 resume() 闭包提取为方法（E2），供 _drain_queue 后台派发。
         """
+        if sub_agent._task_state is not None:
+            sub_agent._task_state.resume_pending = False   # 统一清理点：已开始执行，清除排队标记
         mailbox = self._mailboxes[task_id]
         try:
             await sub_agent.resume_from_pause()
@@ -559,21 +542,24 @@ class WorkflowEngine:
                 caller="WorkflowEngine",
             )
         finally:
-            # PAUSED 任务保持存活——与 submit 路径 _run_and_cleanup 对称。
-            # resume 后执行中再次被暂停时，checkpoint/mailbox/注册表全部保留，
-            # 否则重复暂停会删 checkpoint 使任务从此不可再 resume（S6）。
+            # PAUSED 任务释放执行槽（与 _run_and_cleanup 对称，E2 §5）——resume 已 acquire，
+            # 再次 PAUSED 时释放 slot + 移出 _active，checkpoint/mailbox/注册表保留。
             if (sub_agent._task_state is not None and
-                sub_agent._task_state.status == WorkflowStatus.PAUSED):
-                return
+                    sub_agent._task_state.status == WorkflowStatus.PAUSED):
+                if self._semaphore:
+                    self._semaphore.release()          # 释放执行槽（resume 已 acquire，对称）
+                self._active.discard(task_id)
+                return                                 # checkpoint/mailbox/注册表保留
             self._cleanup_task(task_id)
+            if self._semaphore:
+                self._semaphore.release()
+            self._active.discard(task_id)
             try:
                 await self._cleanup_storage(task_id, sub_agent)
             except Exception:
                 logger.exception(
                     "WorkflowEngine: task_id=%s resume 后存储清理失败", task_id,
                 )
-            if self._semaphore:
-                self._semaphore.release()
 
     async def cancel(self, task_id: WorkflowId) -> bool:
         """软取消任务——委托给 lifecycle.cancel()。
