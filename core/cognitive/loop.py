@@ -355,6 +355,19 @@ class CognitiveLoop(CognitiveTools):
         """
         self._shutting_down = True
 
+    def reset_lifecycle_state(self) -> None:
+        """C4/P1-07：同一 Agent 实例 restart 前复位生命周期状态。
+
+        修复前 stop() 后 `_shutting_down` 恒 True——再次 start 的 turn 收尾
+        after_response 永久跳过（记忆沉淀/性格反思不再执行）。这里复位：
+        - `_shutting_down` 恢复 False；
+        - 清空 after-response tail registry（stop 已 drain，此处兜底）；
+        - 断开 `_current_task` 引用（stop 已取消）。
+        """
+        self._shutting_down = False
+        self._pending_after_response = []
+        self._current_task = None
+
     def configure(self, **kwargs: Any) -> None:
         """一次性注入所有延迟依赖（替代 10 个 setter 方法）。
 

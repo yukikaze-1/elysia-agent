@@ -29,18 +29,20 @@ class TestShutdownSteps:
                 f"Step '{name}': method '{method_name}' not found"
 
     def test_flush_steps_before_stop_steps(self):
-        """flush 步骤排在 stop/close 步骤之前"""
-        flush_indices = [
-            i for i, (name, _) in enumerate(AgentLifecycle._SHUTDOWN_STEPS)
-            if name.startswith("flush")
-        ]
-        stop_indices = [
-            i for i, (name, _) in enumerate(AgentLifecycle._SHUTDOWN_STEPS)
-            if name.startswith("stop")
-        ]
-        if flush_indices and stop_indices:
-            assert max(flush_indices) < min(stop_indices), \
-                "flush steps must run before stop steps"
+        """flush 步骤排在 stop/close 步骤之前（C4/P1-13 新顺序）。"""
+        steps = AgentLifecycle._SHUTDOWN_STEPS
+        index = {name: i for i, (name, _) in enumerate(steps)}
+        flush_indices = [i for i, (name, _) in enumerate(steps)
+                         if name.startswith("flush")]
+        # C4/P1-13：先关 admission/consumer + generation，再 flush tail——
+        # flush 期间不再产生新 after-response tail。
+        assert index["stop_event_task"] < min(flush_indices), \
+            "stop_event_task 必须先于 flush（关 admission，防 flush 期间新 tail）"
+        assert index["stop_cognitive_tts"] < min(flush_indices), \
+            "stop_cognitive_tts 必须先于 flush（停 generation，防新 tail）"
+        # 资源 close（stop_db_health 起）在 flush 之后
+        assert max(flush_indices) < index["stop_db_health"], \
+            "flush 必须在关闭持久层资源之前"
 
 
 class TestStartupSteps:

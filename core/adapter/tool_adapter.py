@@ -119,8 +119,14 @@ class ToolAdapter:
         logger.info("ToolAdapter: %d 个工具已加载", len(self._manager._plugins))
 
     async def shutdown(self) -> None:
-        """关闭所有插件。委托给 ToolManager.shutdown()。"""
+        """关闭所有插件。委托给 ToolManager.shutdown()。
+
+        C4/P1-07：shutdown 后复位 `_started`——同一 Agent 实例 restart 时
+        start() 能完整重新注册 plugin/schema/registry（修复前 _started 恒 True，
+        再次 start 提前返回，工具为空）。
+        """
         await self._manager.shutdown()
+        self._started = False
 
     # ---- 属性 ----
 

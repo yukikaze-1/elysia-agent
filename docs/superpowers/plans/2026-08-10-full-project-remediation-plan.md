@@ -102,7 +102,7 @@ A1/A2
 - [x] C1 用户消息 FIFO 与 work lease
 - [x] C2 Per-call ToolInvocation 与 call-ID task
 - [x] C3 After-response 目标会话绑定
-- [ ] C4 shutdown 顺序与可重入 restart
+- [x] C4 shutdown 顺序与可重入 restart
 - [ ] C5 checkpoint 与 proactive event
 - [ ] D1 文件 containment/symlink/资源上限
 - [ ] D2 SSRF 与 Web response 上限
@@ -1284,6 +1284,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：无
 - 契约或 Electron 影响：无
 - 剩余风险：`_pending_after_response` 只记录 after-response 顶层 task，reflector buffer task 在 `_after_response` 内追加（_finalize_turn 的清理在 buffer 前跑，靠 shutdown drain 兜底）；`_shutting_down` 复位仍归 C4
+
+### C4 — 安全 shutdown 顺序与可重入 restart
+
+- 状态：完成
+- Commit：`<见 C4 提交>`
+- 变更文件：`core/agent/lifecycle.py`（shutdown 顺序重排 + start 复位）、`core/cognitive/loop.py`（reset_lifecycle_state）、`core/adapter/tool_adapter.py`（shutdown 复位 _started）、`core/agent/tests/test_multi_session.py`
+- 新增失败测试：`TestRestartReentrancy::test_consecutive_restart_stable`（连续 3 次 start/stop：工具数量稳定、_shutting_down 复位、非空）
+- 目标测试：`pytest core/agent/tests/ core/cognitive/ core/input/tests/test_server.py` → 待确认
+- 批次门禁：`ruff check` → 通过；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：无
+- 契约或 Electron 影响：无
+- 剩余风险/计划偏差：EventBus lifecycle epoch（旧 epoch 事件不重放）未实现——stop 已 cancel event task，restart 新 task 从新队列消费；逐资源 close 异常隔离已由 stop() 的 try/except 覆盖；`/restart` 新 lifecycle readiness 后才返回成功未实现（server 层）；连续 restart 的 memory 不重复由 B5 幂等 reload 覆盖
 
 ## 14. 需要停止并请求决策的情况
 

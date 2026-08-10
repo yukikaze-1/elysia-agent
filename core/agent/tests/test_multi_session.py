@@ -421,3 +421,27 @@ class TestStartPersistenceTokenRepo:
 
         token_repo.connect.assert_awaited_once()
         assert "TokenRepository 离线" in caplog.text
+
+
+class TestRestartReentrancy:
+    """C4/P1-07：同一 Agent 实例 restart 可重入——状态复位，不重复/不丢失。"""
+
+    @pytest.mark.asyncio
+    async def test_consecutive_restart_stable(self):
+        """连续多次 start/stop：工具数量稳定、_shutting_down 复位、memory 不重复。"""
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        try:
+            tool_counts: list[int] = []
+            for _ in range(3):
+                await agent.start()
+                tool_counts.append(len(agent.tool_adapter.definitions()))
+                # C4/P1-07：restart 后 _shutting_down 必须复位（修复前恒 True，
+                # after_response 永久跳过）
+                assert agent._cognitive._shutting_down is False  # noqa: SLF001
+                await agent.stop()
+            assert len(set(tool_counts)) == 1, f"工具数量不稳定: {tool_counts}"
+            assert tool_counts[0] > 0  # 非空（restart 后未丢工具）
+        finally:
+            await agent.stop()

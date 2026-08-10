@@ -49,13 +49,16 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
     """
 
     # shutdown 步骤按依赖顺序排列（stop() 中正序执行）
+    # C4/P1-13：先关 admission/consumer（不再 post 新 turn）→ cancel/await generation
+    # （不再产生新 tail）→ 再 drain after-response tail → flush 记忆 → 逐资源 close。
+    # 修复前 flush 在关 consumer 之前——flush 期间当前 turn 还能创建新 tail task。
     _SHUTDOWN_STEPS: list[tuple[str, str]] = [
+        ("stop_event_task",      "_stop_event_task"),
+        ("stop_cognitive_tts",   "_stop_cognitive_and_tts"),
         ("flush_after_response", "_flush_after_response"),
         ("flush_consolidator",   "_flush_consolidator"),
         ("flush_reflector",      "_flush_reflector"),
         ("flush_compression",    "_flush_compression"),
-        ("stop_event_task",      "_stop_event_task"),
-        ("stop_cognitive_tts",   "_stop_cognitive_and_tts"),
         ("stop_db_health",       "_stop_db_health"),
         ("stop_mailbox",         "_stop_mailbox"),
         ("stop_task_system",     "_stop_task_system"),
@@ -148,6 +151,10 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         self._state = RunState.RUNNING
         self._started_at = time.monotonic()
         self._fsm.reset()
+        # C4/P1-07：同一 Agent 实例 restart 复位——_shutting_down 恢复 False、
+        # after-response registry 清空、C1 的 started-task 集合清空
+        self._cognitive.reset_lifecycle_state()
+        self._started_cognitive_tasks.clear()
         # 预热 build_sha 缓存——git 只跑一次（build_server_info 每次握手构造时读取，
         # 模块级缓存保证此处在启动时完成 subprocess，握手路径零延迟）
         from core.version import get_build_sha
