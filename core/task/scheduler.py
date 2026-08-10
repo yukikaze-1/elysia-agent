@@ -454,13 +454,29 @@ class TaskScheduler:
     # ---- Checkpoint ----
 
     def _save_checkpoint(self) -> None:
-        """保存 checkpoint：将待处理的后台任务持久化到文件。"""
+        """保存 checkpoint：将待处理的后台任务持久化到文件。
+
+        C5/P2-09：
+        - 无 pending 时删除旧文件（防陈旧 checkpoint 重启重放已执行任务）；
+        - 跳过 payload 含不可序列化值（如协程/future）的后台任务——checkpoint 只
+          持久化可重建 descriptor，不序列化运行时对象。
+        """
         if not self._checkpoint_path:
             return
         try:
-            pending = [t.to_dict() for t in self._tasks.values()
-                       if t.status == TaskStatus.PENDING and t.type == TaskType.BACKGROUND]
+            pending = []
+            for t in self._tasks.values():
+                if t.status != TaskStatus.PENDING or t.type != TaskType.BACKGROUND:
+                    continue
+                try:
+                    json.dumps(t.payload)  # 可序列化才 checkpoint（排除 coro）
+                except TypeError:
+                    logger.debug("Checkpoint 跳过不可序列化后台任务 %s", t.id)
+                    continue
+                pending.append(t.to_dict())
             if not pending:
+                # 无待恢复任务 → 删除旧 checkpoint，防陈旧状态重放
+                Path(self._checkpoint_path).unlink(missing_ok=True)
                 return
             data = {"version": 1, "tasks": pending}
             tmp = self._checkpoint_path + ".tmp"
@@ -476,7 +492,10 @@ class TaskScheduler:
                 pass
 
     def _restore_checkpoint(self) -> None:
-        """恢复 checkpoint：从文件加载待处理任务并重新入队。"""
+        """恢复 checkpoint：从文件加载待处理任务并重新入队。
+
+        C5/P2-09：版本/schema 校验——损坏或不兼容文件隔离（记 warning 不阻断启动）。
+        """
         if not self._checkpoint_path:
             return
         path = Path(self._checkpoint_path)
@@ -491,15 +510,21 @@ class TaskScheduler:
             return
         try:
             data = json.loads(path.read_text())
-            for td in data.get("tasks", []):
+            if not isinstance(data, dict) or data.get("version") != 1:
+                logger.warning("Checkpoint 版本不兼容/损坏，隔离不恢复")
+                return
+            tasks_raw = data.get("tasks", [])
+            if not isinstance(tasks_raw, list):
+                raise ValueError("checkpoint tasks 不是数组")
+            for td in tasks_raw:
                 t = Task.from_dict(td)
                 t.status = TaskStatus.PENDING
                 self._tasks[t.id] = t
                 self._seq += 1
                 self._queue.put_nowait((t.priority, self._seq, t))
-            logger.info("Checkpoint 恢复: %d 个任务", len(data.get("tasks", [])))
+            logger.info("Checkpoint 恢复: %d 个任务", len(tasks_raw))
         except Exception:
-            logger.warning("Checkpoint 恢复失败", exc_info=True)
+            logger.warning("Checkpoint 恢复失败（隔离不阻断启动）", exc_info=True)
 
     # ----
 

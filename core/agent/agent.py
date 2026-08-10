@@ -646,7 +646,8 @@ class Agent(AgentLifecycle, AgentServer):
             data: 系统定时事件数据，包含触发原因和已过秒数。
         """
         # TODO: time_of_day 事件未处理——producer 在 idle_monitor._check_proactive 中，
-        #       此处只消费 silence_timeout。time_of_day 事件静默丢弃，等待后续实现。
+        #       此处只消费 silence_timeout。C5/P2-09：未知 proactive kind 不再静默吞——
+        #       记 warning 便于后续实现/观测（明确消费行为）。
         if data.reason == "silence_timeout":
             elapsed = data.elapsed or 0
             rid = self.next_request_id()
@@ -663,6 +664,8 @@ class Agent(AgentLifecycle, AgentServer):
                 name="cognitive-proactive"
             )
             self._cognitive._current_task = task
+        else:
+            logger.warning("SYSTEM_TICK 未知 proactive reason=%s（暂未消费）", data.reason)
 
     def _handle_task_result(self, data: TaskResultData) -> None:
         """处理 TASK_RESULT 事件——后台任务完成，唤醒 CognitiveLoop。

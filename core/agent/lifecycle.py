@@ -126,6 +126,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _embed_task: asyncio.Task[Any] | None
         _pending_messages: list[_PendingMessage]
         _background_tasks: dict[str, _BackgroundTaskEntry]
+        _started_cognitive_tasks: set[asyncio.Task]  # C1/P1-06（agent 定义，lifecycle 复位）
         _mongo_ok: bool
         _milvus_ok: bool
         _mongo_available: bool

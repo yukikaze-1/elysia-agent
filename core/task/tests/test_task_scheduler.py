@@ -951,3 +951,73 @@ async def test_scheduler_state_in_debug_info(monkeypatch):
     assert isinstance(info.task_tree, dict)
 
     await agent.stop()
+
+
+@pytest.mark.service
+class TestCheckpoint:
+    """C5/P2-09：checkpoint 空则删、coroutine 不可序列化跳过、损坏/版本隔离。"""
+
+    def test_save_empty_deletes_stale_file(self, tmp_path):
+        """无 pending 任务 → 删除旧 checkpoint（防重启重放已执行任务）。"""
+        cp = str(tmp_path / "sched.json")
+        Path(cp).write_text('{"version": 1, "tasks": []}')
+        sched = TaskScheduler(checkpoint_path=cp)
+
+        sched._save_checkpoint()
+
+        assert not Path(cp).exists()  # 陈旧文件已删
+
+    def test_save_skips_non_serializable_payload(self, tmp_path):
+        """后台任务 payload 含不可序列化值（set 模拟 coro）→ 不写入 checkpoint。"""
+        cp = str(tmp_path / "sched.json")
+        sched = TaskScheduler(checkpoint_path=cp)
+
+        t = Task.new_background(payload={"coro": set()})
+        t.status = TaskStatus.PENDING
+        sched._tasks[t.id] = t
+
+        sched._save_checkpoint()
+
+        # checkpoint 不写（payload 不可序列化），文件不存在
+        assert not Path(cp).exists()
+
+    def test_restore_corrupt_checkpoint_isolated(self, tmp_path):
+        """损坏文件 → 隔离（warning 不阻断），无任务恢复。"""
+        cp = str(tmp_path / "sched.json")
+        Path(cp).write_text("{not valid json")
+        sched = TaskScheduler(checkpoint_path=cp, num_workers=0)
+
+        sched._restore_checkpoint()
+
+        assert sched.pending_count == 0  # 未恢复任何任务
+
+    def test_restore_version_mismatch_isolated(self, tmp_path):
+        """version != 1 → 隔离不恢复。"""
+        cp = str(tmp_path / "sched.json")
+        Path(cp).write_text('{"version": 99, "tasks": []}')
+        sched = TaskScheduler(checkpoint_path=cp, num_workers=0)
+
+        sched._restore_checkpoint()
+
+        assert sched.pending_count == 0
+
+
+@pytest.mark.service
+class TestSystemTickUnknownReason:
+    """C5/P2-09：未知 proactive kind 记 warning 不静默吞。"""
+
+    @pytest.mark.asyncio
+    async def test_time_of_day_reason_logs_warning(self, caplog):
+        import logging
+        from core.schema.event import SystemTickData
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        await agent.start()
+        try:
+            with caplog.at_level(logging.WARNING, logger="core.agent.agent"):
+                agent._handle_system_tick(  # noqa: SLF001
+                    SystemTickData(reason="time_of_day", elapsed=0))
+            assert any("time_of_day" in r.message for r in caplog.records)
+        finally:
+            await agent.stop()
