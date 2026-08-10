@@ -61,6 +61,13 @@ class ProjectPath(str, Enum):
     SESSION_PENDING_CHECK = "data/session_pending.jsonl"
     SCHEDULER_CHECKPOINT = "data/scheduler_checkpoint.json"
     MEMORY_PENDING_DELETES = "data/memory_pending_deletes.json"
+    # 未同步到 Milvus 的待写条目 journal（review 复核 #6）：Milvus 离线时 insert 的
+    # 记忆此前仅在内存 _dirty_ids，进程退出即丢失；本 journal 与 memory_pending_deletes
+    # 同模式持久化，重启/重连后恢复补写。
+    MEMORY_PENDING_SYNCS = "data/memory_pending_syncs.json"
+    # 会话删除提交后清理失败 journal（review 复核 #5 D2）：doc 已删但 refs/归档
+    # 未清，健康循环按此重试（与 memory_pending_deletes 同模式）
+    SESSION_PENDING_CLEANUP = "data/session_pending_cleanup.json"
 
     def resolve(self, **kwargs: Any) -> Path:
         """返回绝对路径。

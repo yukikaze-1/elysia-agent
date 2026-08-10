@@ -46,6 +46,11 @@ async def release_message_attachments(agent: "Agent", msg: Message) -> None:
 
     remove_ref 在 refs 归零时已写 status=deleted + deleted_at（repo 语义，spec §3.1），
     此处补充进程内 AttachmentFileResolver.unregister（Mongo 离线定位兜底不再可用）。
+
+    Raises:
+        StorageUnavailableError: 附件存储不可用——必须传播（review 复核 #5），否则
+            caller（会话删除 manager、debug 路由）无法感知释放失败，refs 残留导致
+            附件被 GC 永久跳过或删除「假成功」。调用方决定是 503 还是登记待清理。
     """
     ids = attachment_ids_from_message(msg)
     if not ids:
@@ -59,7 +64,7 @@ async def release_message_attachments(agent: "Agent", msg: Message) -> None:
             if doc is None or (doc.get("ref_count") or 0) == 0:
                 _ar.unregister(aid)
         except StorageUnavailableError:
-            logger.warning("附件存储不可用，跳过 remove_ref: %s", aid)
+            raise
         except Exception as e:
             logger.warning("附件 refs 释放失败 aid=%s: %s", aid, e)
 

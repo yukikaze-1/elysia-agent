@@ -94,6 +94,7 @@ from core.storage.token_repo import TokenRepository
 from core.storage.memory_repo import MemoryRepository
 from core.storage.desktop_call_repo import DesktopCallRepository
 from core.storage.attachment_repo import AttachmentRepository
+from core.storage.attachment_release import release_session_attachments
 from core.desktop.bridge import DesktopToolBridge
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,10 @@ class Agent(AgentLifecycle, AgentServer):
             msg_repo=self._message_repo,
             max_messages=config.memory.session_max_messages,
         )
+        # review 复核 #5 D2：会话删除提交后释放该会话归档消息的附件 refs（失败由
+        # manager journal 重试）。lazy 闭包——delete/retry 时才解引用 self 的 repo。
+        self._session_manager.set_attachment_cleanup(
+            lambda sid: release_session_attachments(self, sid))
         self._long_term = LongTermMemory(
             max_entries=config.memory.ltm_max_entries,
             max_age_days=config.memory.ltm_max_age_days,

@@ -932,3 +932,64 @@ async def test_reopen_all_archives_after_drain():
     session.add_message(_msg("m3"))
     await asyncio.sleep(0.05)
     assert msg_repo.append.call_count == 2   # 重开后恢复归档
+
+
+# ───────────────────────── review 复核 #5 D2：提交点前置 ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_delete_commit_first_cleanup_failure_journals(tmp_path):
+    """review 复核 #5 D2：会话 doc 删除（提交点）成功后，附件释放失败**不阻塞删除**
+    ——登记待清理 journal，retry_pending_cleanup 重试成功即清除。"""
+    from core.storage.base import StorageUnavailableError
+
+    m = _make_manager(pending_cleanup_file=tmp_path / "cleanup.json")
+    summary = await m.create(title="to-delete")
+    sid = summary.session_id
+
+    async def _fail_cleanup(_sid):
+        raise StorageUnavailableError("offline")
+
+    m.set_attachment_cleanup(_fail_cleanup)
+    n = await m.delete(sid)
+
+    assert await m.has_session(sid) is False   # doc 已删——用户要的删除生效
+    assert n == 0                              # 清理未完成，未计归档删除数
+    assert sid in m._pending_cleanup           # noqa: SLF001 — 已登记待清理
+    assert (tmp_path / "cleanup.json").is_file()
+
+    m.set_attachment_cleanup(None)             # 存储恢复后重试
+    await m.retry_pending_cleanup()
+    assert sid not in m._pending_cleanup       # noqa: SLF001 — 重试成功清除
+    assert not (tmp_path / "cleanup.json").exists()  # journal 清空
+
+
+@pytest.mark.asyncio
+async def test_delete_doc_failure_rolls_back_before_cleanup(tmp_path):
+    """review 复核 #5 D2：提交点（doc 删除）失败 → 回滚（重开归档 + 释放 tombstone），
+    附件 cleanup 不执行——不再出现「doc 存活但 refs/归档已被清空」。"""
+    from core.storage.base import StorageUnavailableError
+
+    m = _make_manager(pending_cleanup_file=tmp_path / "cleanup.json")
+    summary = await m.create(title="to-delete")
+    sid = summary.session_id
+    cleaned: list = []
+
+    async def _cleanup(s):
+        cleaned.append(s)
+
+    m.set_attachment_cleanup(_cleanup)
+    original_delete = m._repo.delete  # noqa: SLF001
+
+    async def _fail_delete(s):
+        raise StorageUnavailableError("offline")
+
+    m._repo.delete = _fail_delete  # noqa: SLF001
+    with pytest.raises(StorageUnavailableError):
+        await m.delete(sid)
+
+    assert cleaned == []                       # cleanup 未执行——doc 未删前不破坏数据
+    assert sid not in m._deleting              # noqa: SLF001 — tombstone 已释放
+    assert sid not in m._pending_cleanup       # noqa: SLF001 — 未登记（提交未发生）
+    assert await m.has_session(sid) is True    # doc 仍在，可安全重试
+    m._repo.delete = original_delete  # noqa: SLF001

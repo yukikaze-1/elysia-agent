@@ -26,7 +26,7 @@ from core.schema.message import Message, MessageRole
 from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart
 from core.schema.utils import now_iso
 from core.schema.types import AttachmentId, GenerationId, MessageId, SessionId
-from core.storage.attachment_release import release_session_attachments
+
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from core.storage.message_repo import MessageRepository
 from core.storage.session_repo import SessionSummary
@@ -519,27 +519,18 @@ async def sessions_delete_handler(request: web.Request) -> web.Response:
            for p in getattr(agent, "pending_messages", None) or []):
         return _error_response("AGENT_BUSY", "会话有排队消息，先清空/等待",
                                409, retryable=True)
-    # 删除 guard/tombstone 必须先于附件扫描，否则扫描期间仍能 ACK 新消息。附件释放
-    # 作为 manager.delete 的 before_delete 回调运行：此时新 work 已被 tombstone 拒绝，
-    # 归档又尚未清空，既保住 refs 联动，也闭合 TOCTOU。
-    async def _release_attachments(_: SessionId) -> None:
-        try:
-            await release_session_attachments(agent, SessionId(sid))
-        except StorageUnavailableError:
-            # B3/P1-03：附件引用未释放（存储不可用）→ 不允许假成功，返回 503 retryable
-            raise
-        except Exception as e:
-            logger.warning("sessions_delete 附件释放失败 sid=%s: %s", sid, e)
-
+    # 删除 guard/tombstone 必须先于删除步骤，否则期间仍能 ACK 新消息。附件释放
+    # 由 SessionManager 在删除提交（doc 已删）后经注入的 cleanup 执行（review 复核
+    # #5 D2）——失败 journal 重试、不阻塞删除，此处不再传 before_delete 回调。
     try:
-        deleted = await agent.session_manager.delete(
-            SessionId(sid), before_delete=_release_attachments)
+        deleted = await agent.session_manager.delete(SessionId(sid))
     except SessionBusyError:
         return _error_response(
             "AGENT_BUSY", "会话有已接收/在途消息或活动语音会话，无法删除",
             409, retryable=True)
     except StorageUnavailableError:
-        # B3/P1-03：存储不可用 → 删除未持久化确认，返回 503 不假成功
+        # review 复核 #5 D2：提交点（会话 doc 删除）本身失败 → 删除未持久化，
+        # 返回 503 不假成功（此时附件 refs / 归档均未动，可安全重试）
         return _error_response(
             "STORAGE_UNAVAILABLE", "存储不可用，删除未确认，请重试",
             503, retryable=True)

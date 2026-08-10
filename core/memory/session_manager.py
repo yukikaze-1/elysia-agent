@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
+import os
 import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
@@ -82,7 +84,8 @@ class SessionManager:
     """多会话缓存池 + 活动指针。"""
 
     def __init__(self, repo: SessionRepository, msg_repo: MessageRepository,
-                 max_sessions: int = 20, max_messages: int = 20):
+                 max_sessions: int = 20, max_messages: int = 20,
+                 pending_cleanup_file: str | Path | None = None):
         """初始化 SessionManager。
 
         Args:
@@ -90,6 +93,8 @@ class SessionManager:
             msg_repo: MessageRepository（或等价 fake）——消息归档。
             max_sessions: 缓存池会话数上限，超出触发逐出。
             max_messages: 每个 SessionMemory 的消息窗口上限。
+            pending_cleanup_file: 待清理 journal 路径（测试注入），默认
+                ProjectPath.SESSION_PENDING_CLEANUP。
         """
         self._repo = repo
         self._msg_repo = msg_repo
@@ -119,6 +124,13 @@ class SessionManager:
         # repo 恢复后，持久层摘要与这些本地摘要在读取时合并去重。
         self._local_summaries: dict[SessionId, SessionSummary] = {}
         self._local_title_overrides: set[SessionId] = set()
+        # review 复核 #5 D2：提交后清理（附件 refs + 归档）由 agent 注入（经
+        # set_attachment_cleanup 接 release_session_attachments）；失败登记
+        # _pending_cleanup journal，健康循环 retry_pending_cleanup 重试。
+        self._attachment_cleanup: Callable[[SessionId], Awaitable[None]] | None = None
+        self._pending_cleanup: set[SessionId] = set()
+        self._pending_cleanup_file_path = pending_cleanup_file
+        self._load_pending_cleanup()
         # eager default 空实例
         self._sessions[DEFAULT_SESSION] = SessionMemory(
             max_messages=max_messages,
@@ -304,6 +316,16 @@ class SessionManager:
         """
         self._busy_check = check
 
+    def set_attachment_cleanup(
+        self, cleanup: "Callable[[SessionId], Awaitable[None]] | None",
+    ) -> None:
+        """注入会话删除提交后的附件释放回调（review 复核 #5 D2）。
+
+        agent 构造后接 `release_session_attachments`——删除会话 doc 成功后释放
+        该会话归档消息的附件 refs；失败由 manager 登记待清理 journal 重试。
+        """
+        self._attachment_cleanup = cleanup
+
     async def switch(self, sid: SessionId) -> SessionMemory:
         """切换到目标会话。
 
@@ -471,12 +493,18 @@ class SessionManager:
         *,
         before_delete: Callable[[SessionId], Awaitable[None]] | None = None,
     ) -> int:
-        """删除会话：msg_repo 清归档 + repo 删文档 + 丢缓存。
+        """删除会话：提交点前置（先删会话 doc）+ 提交后清理（附件 refs + 归档）。
 
         保护（review 修复）：默认会话（"default"）不可删除——拒绝并返回 0。
         若删除的是活动会话，active 回落 "default" 并重绑 CharacterEngine
         （attach_session(default)），防 F4 孤儿 state（engine.state 仍挂在
         已删会话的 character_state 上）。返回删除的归档消息数。
+
+        review 复核 #5 D2（提交点前置）：会话 doc 删除是持久化确认（commit），
+        先执行——失败即回滚（重开归档 + 释放 tombstone），未破坏任何数据；
+        成功后再尽力释放附件 refs + 删归档。清理失败**不阻塞删除**（用户要的
+        删除已生效），登记待清理 journal 由健康循环 retry_pending_cleanup 重试
+        ——不再出现「doc 未删但 refs/归档已清空，会话活着内容被掏空」。
         """
         sid = SessionId(sid)
         async with self._lifecycle_lock:
@@ -489,7 +517,7 @@ class SessionManager:
                 logger.debug("delete 拒绝：会话有 accepted/in-flight 工作 sid=%s count=%d",
                              sid, self.work_count(sid))
                 raise SessionBusyError(sid)
-            # tombstone 必须先于附件扫描/存储删除：扫描期间到达的新消息也应被拒绝。
+            # tombstone 必须先于任何删除步骤：提交/清理期间到达的新消息也应被拒绝。
             self._deleting.add(sid)
 
         try:
@@ -500,9 +528,8 @@ class SessionManager:
                 await session.close_archive()
             if before_delete is not None:
                 await before_delete(sid)
-            deleted_messages = 0
-            if self._msg_repo is not None:
-                deleted_messages = await self._msg_repo.delete_by_session(sid)
+            # 提交点前置：会话 doc 删除是删除的持久化确认。失败 → 回滚，路由 503，
+            # 附件 refs / 归档均未动（不再有「doc 存活但内容被掏空」）。
             await self._repo.delete(sid)
         except Exception:
             async with self._lifecycle_lock:
@@ -510,6 +537,20 @@ class SessionManager:
             if session is not None:
                 session.reopen_archive()
             raise
+
+        # 提交后清理（尽力而为）：释放附件 refs + 删归档。失败不阻塞——doc 已删，
+        # 只留可回收垃圾，登记 journal 由健康循环重试。
+        deleted_messages = 0
+        try:
+            if self._attachment_cleanup is not None:
+                await self._attachment_cleanup(sid)
+            if self._msg_repo is not None:
+                deleted_messages = await self._msg_repo.delete_by_session(sid)
+        except Exception as e:
+            self._pending_cleanup.add(sid)
+            self._save_pending_cleanup()
+            logger.warning(
+                "会话 %s 删除已提交，但提交后清理失败（refs/归档待重试）: %s", sid, e)
 
         async with self._lifecycle_lock:
             self._sessions.pop(sid, None)
@@ -553,6 +594,65 @@ class SessionManager:
         """
         for session in list(self._sessions.values()):
             session.reopen_archive()
+
+    # ---- 待清理 journal（review 复核 #5 D2）----
+
+    def _pending_cleanup_file(self) -> str:
+        """待清理会话 journal 路径。"""
+        return str(self._pending_cleanup_file_path or ProjectPath.SESSION_PENDING_CLEANUP.resolve())
+
+    def _load_pending_cleanup(self) -> None:
+        """启动时从 journal 加载待清理会话（doc 已删但 refs/归档未清）。"""
+        try:
+            path = self._pending_cleanup_file()
+            if not Path(path).is_file():
+                return
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            self._pending_cleanup = {SessionId(str(s)) for s in (data or [])}
+        except Exception:
+            logger.warning("读取 session pending-cleanup journal 失败", exc_info=True)
+            self._pending_cleanup = set()
+
+    def _save_pending_cleanup(self) -> None:
+        """持久化待清理会话（原子写；空集合删除 journal）。"""
+        try:
+            path = self._pending_cleanup_file()
+            if not self._pending_cleanup:
+                if Path(path).is_file():
+                    os.remove(path)
+                return
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(sorted(str(s) for s in self._pending_cleanup), f)
+            os.replace(tmp, path)
+        except Exception:
+            logger.warning("写入 session pending-cleanup journal 失败", exc_info=True)
+
+    async def retry_pending_cleanup(self) -> None:
+        """重试待清理会话（健康循环 session 恢复时调用）。
+
+        doc 已删但提交后清理失败（附件 refs / 归档）的会话按 journal 重试——
+        幂等（release_session_attachments 重复 release 是条件 update；delete_by_session
+        对已删归档返回 0）。会话 doc 若重新存在（删除后同 sid 重建）则跳过，避免
+        误删新会话数据。失败保留 journal 下轮重试。
+        """
+        if not self._pending_cleanup:
+            return
+        for sid in list(self._pending_cleanup):
+            try:
+                if await self._repo.load(sid) is not None:
+                    # doc 还在（会话被重建）——不动，避免误删新会话的归档
+                    continue
+                if self._attachment_cleanup is not None:
+                    await self._attachment_cleanup(sid)
+                if self._msg_repo is not None:
+                    await self._msg_repo.delete_by_session(sid)
+                self._pending_cleanup.discard(sid)
+            except Exception:
+                logger.debug("待清理会话重试失败 sid=%s", sid, exc_info=True)
+        self._save_pending_cleanup()
 
     async def connect_db(self) -> bool:
         """建立 repo 连接。"""

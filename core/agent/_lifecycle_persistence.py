@@ -277,6 +277,8 @@ class _LifecyclePersistence:
             elif name == "session":
                 # Session/Mongo 恢复：加载活动会话（pending JSONL 导入由 B2 加强）
                 await self._session_manager.load_active()
+                # review 复核 #5 D2：重试「删除已提交但 refs/归档未清」的待清理会话
+                await self._session_manager.retry_pending_cleanup()
                 logger.info("Session/Mongo 恢复，加载活动会话")
             elif name == "generation":
                 # generation 恢复：清理崩溃残留 running（5 分钟前）
