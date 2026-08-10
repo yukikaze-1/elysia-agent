@@ -16,8 +16,12 @@ import pytest
 from Module.workflow_contract import (
     AgentId,
     ConstraintConfig,
+    DelegationContext,
     NodeId,
+    SessionId,
     SubmitError,
+    SubmitRejectionCode,
+    WorkflowEventType,
     WorkflowId,
     WorkflowStatus,
 )
@@ -41,6 +45,7 @@ from Module.workflow_engine.schema import (
     now_iso,
 )
 from Module.workflow_engine.mailbox import WorkflowMailbox
+from Module.workflow_engine.workflow_engine import WorkflowEngine
 
 pytestmark = pytest.mark.unit
 
@@ -1046,3 +1051,31 @@ def test_submit_approval_no_tool_manager():
         approved=True,
     )
     assert result is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E2: 提取的 _run_and_cleanup 方法
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestRunCleanupExtracted:
+    @pytest.mark.asyncio
+    async def test_submit_run_cleanup_completes(self):
+        """提取的 _run_and_cleanup 方法：调 sub_agent.run → 完成清理。"""
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        sub_agent = MagicMock()
+        ts = MagicMock()
+        ts.status = WorkflowStatus.PENDING
+        ts.is_terminal.return_value = False
+        sub_agent._task_state = ts
+        sub_agent.run = AsyncMock()
+        engine._tasks[WorkflowId("t1")] = sub_agent
+        engine._mailboxes[WorkflowId("t1")] = WorkflowMailbox(WorkflowId("t1"))
+        engine._contexts[WorkflowId("t1")] = DelegationContext(intent="t", session_id=SessionId("s1"))
+        await engine._semaphore.acquire()                     # 必须 acquire——finally 终态分支无条件 release（防越界 ValueError）
+        engine._active.add(WorkflowId("t1"))
+        await engine._run_and_cleanup(sub_agent, WorkflowId("t1"))
+        sub_agent.run.assert_awaited_once()      # 用 _contexts/_mailboxes 正确取参调 run
+        assert WorkflowId("t1") not in engine._tasks
+        await engine.stop()

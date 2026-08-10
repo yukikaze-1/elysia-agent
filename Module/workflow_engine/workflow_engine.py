@@ -72,6 +72,7 @@ class WorkflowEngine:
         hitl_notifier: HITLNotifier,
         *,
         max_sub_agents: int = 5,
+        max_queue_size: int = 5,
     ) -> None:
         """初始化 WorkflowEngine。
 
@@ -79,10 +80,12 @@ class WorkflowEngine:
             infra: 跨任务共享的底层资源容器。
             hitl_notifier: 审批快速通道实现。
             max_sub_agents: 最大并发 Sub-Agent 数量。
+            max_queue_size: 排队队列最大长度（E2 非阻塞有界排队）。
         """
         self._infra = infra
         self._hitl = hitl_notifier
         self._max_sub_agents = max_sub_agents
+        self._max_queue_size = max_queue_size
 
         # ── 并发控制（start() 时创建）──
         self._semaphore: asyncio.BoundedSemaphore | None = None
@@ -91,6 +94,12 @@ class WorkflowEngine:
         self._tasks: dict[WorkflowId, SubAgent] = {}
         self._mailboxes: dict[WorkflowId, WorkflowMailbox] = {}
         self._task_futures: dict[WorkflowId, asyncio.Task[None]] = {}  # 追踪 fire-and-forget 协程，供 stop() 等待/取消
+        self._contexts: dict[WorkflowId, DelegationContext] = {}  # E2：委派上下文注册表（run 包装取参）
+
+        # ── E2 有界排队（start() 时激活）──
+        self._queue: asyncio.Queue["QueuedItem"] | None = None
+        self._queue_worker: asyncio.Task[None] | None = None
+        self._active: set[WorkflowId] = set()  # 已持有执行槽的任务（slots 精确计数）
 
         # ── 内部组件（per-task 化——由 SubAgent.run() 内部创建）──
         # 不再在此持有组件引用。移除了以下字段：
@@ -220,53 +229,11 @@ class WorkflowEngine:
         await self._semaphore.acquire()
         self._tasks[task_id] = sub_agent
         self._mailboxes[task_id] = mailbox
+        self._contexts[task_id] = context
 
         # ── fire-and-forget 启动 ──
-        async def _run_and_cleanup() -> None:
-            try:
-                await sub_agent.run(context, mailbox)
-            except asyncio.CancelledError:
-                # stop() 触发的取消——推送 FAILED 后重新抛出，让 cancel 正确传播
-                push_mailbox_event(
-                    mailbox, WorkflowEventType.FAILED, {
-                        "task_id": str(task_id),
-                        "error": "任务被取消",
-                        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
-                    },
-                    caller="WorkflowEngine",
-                )
-                raise
-            except Exception:
-                logger.exception("WorkflowEngine: task_id=%s 执行异常", task_id)
-                # 补推送 FAILED 事件——SubAgent 在 run() 前期阶段
-                # （Planner/Validator）抛异常时可能来不及推送，
-                # WorkflowEngine 在此兜底，确保 mailbox 消费者不会永久阻塞
-                push_mailbox_event(
-                    mailbox, WorkflowEventType.FAILED, {
-                        "task_id": str(task_id),
-                        "error": "任务执行异常",
-                        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
-                    },
-                    caller="WorkflowEngine",
-                )
-            finally:
-                # PAUSED 任务保持存活——checkpoint/mailbox/SubAgent/semaphore
-                # 全部保留，等待 resume() 恢复执行。
-                if (sub_agent._task_state is not None and
-                    sub_agent._task_state.status == WorkflowStatus.PAUSED):
-                    return
-                self._cleanup_task(task_id)
-                try:
-                    await self._cleanup_storage(task_id, sub_agent)
-                except Exception:
-                    logger.exception(
-                        "WorkflowEngine: task_id=%s 存储清理失败，槽位仍会释放", task_id,
-                    )
-                if self._semaphore:
-                    self._semaphore.release()
-
         try:
-            task = asyncio.create_task(_run_and_cleanup())
+            task = asyncio.create_task(self._run_and_cleanup(sub_agent, task_id))
         except Exception:
             logger.exception("WorkflowEngine.submit: task_id=%s create_task 失败", task_id)
             self._cleanup_task(task_id)
@@ -275,6 +242,56 @@ class WorkflowEngine:
         self._task_futures[task_id] = task
         logger.info("WorkflowEngine.submit: task_id=%s, intent=%.60s...", task_id, context.intent)
         return mailbox
+
+    async def _run_and_cleanup(self, sub_agent: SubAgent, task_id: WorkflowId) -> None:
+        """执行新提交任务的包装——从注册表取 context/mailbox，处理异常 + 终态清理。
+
+        从 submit() 闭包提取为方法（E2），供 _drain_queue 后台派发。
+        context/mailbox 从 self._contexts/self._mailboxes 取参，不再闭包捕获。
+        """
+        context = self._contexts[task_id]
+        mailbox = self._mailboxes[task_id]
+        try:
+            await sub_agent.run(context, mailbox)
+        except asyncio.CancelledError:
+            # stop() 触发的取消——推送 FAILED 后重新抛出，让 cancel 正确传播
+            push_mailbox_event(
+                mailbox, WorkflowEventType.FAILED, {
+                    "task_id": str(task_id),
+                    "error": "任务被取消",
+                    "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
+                },
+                caller="WorkflowEngine",
+            )
+            raise
+        except Exception:
+            logger.exception("WorkflowEngine: task_id=%s 执行异常", task_id)
+            # 补推送 FAILED 事件——SubAgent 在 run() 前期阶段
+            # （Planner/Validator）抛异常时可能来不及推送，
+            # WorkflowEngine 在此兜底，确保 mailbox 消费者不会永久阻塞
+            push_mailbox_event(
+                mailbox, WorkflowEventType.FAILED, {
+                    "task_id": str(task_id),
+                    "error": "任务执行异常",
+                    "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
+                },
+                caller="WorkflowEngine",
+            )
+        finally:
+            # PAUSED 任务保持存活——checkpoint/mailbox/SubAgent/semaphore
+            # 全部保留，等待 resume() 恢复执行。
+            if (sub_agent._task_state is not None and
+                sub_agent._task_state.status == WorkflowStatus.PAUSED):
+                return
+            self._cleanup_task(task_id)
+            try:
+                await self._cleanup_storage(task_id, sub_agent)
+            except Exception:
+                logger.exception(
+                    "WorkflowEngine: task_id=%s 存储清理失败，槽位仍会释放", task_id,
+                )
+            if self._semaphore:
+                self._semaphore.release()
 
     def _get_debug_snapshot(self) -> dict:
         """供 WorkflowDebugAPI 内部轮询使用。
@@ -403,7 +420,7 @@ class WorkflowEngine:
                     self._semaphore.release()
 
         try:
-            task = asyncio.create_task(_run_resume())
+            task = asyncio.create_task(self._run_resume(sub_agent, task_id))
         except Exception:
             logger.exception("WorkflowEngine.resume: task_id=%s create_task 失败", task_id)
             self._cleanup_task(task_id)
@@ -413,6 +430,53 @@ class WorkflowEngine:
         self._task_futures[task_id] = task
         logger.info("WorkflowEngine.resume: task_id=%s 已恢复", task_id)
         return mailbox
+
+    async def _run_resume(self, sub_agent: SubAgent, task_id: WorkflowId) -> None:
+        """恢复暂停任务的包装——处理异常 + 终态清理。
+
+        和 _run_and_cleanup 对称——resume 后的终态
+        （COMPLETED/FAILED/CANCELLED）由此 finally 块负责清理。
+        从 resume() 闭包提取为方法（E2），供 _drain_queue 后台派发。
+        """
+        mailbox = self._mailboxes[task_id]
+        try:
+            await sub_agent.resume_from_pause()
+        except asyncio.CancelledError:
+            push_mailbox_event(
+                mailbox, WorkflowEventType.FAILED, {
+                    "task_id": str(task_id),
+                    "error": "任务被取消",
+                    "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
+                },
+                caller="WorkflowEngine",
+            )
+            raise
+        except Exception:
+            logger.exception("WorkflowEngine: task_id=%s resume 异常", task_id)
+            push_mailbox_event(
+                mailbox, WorkflowEventType.FAILED, {
+                    "task_id": str(task_id),
+                    "error": "resume 执行异常",
+                    "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
+                },
+                caller="WorkflowEngine",
+            )
+        finally:
+            # PAUSED 任务保持存活——与 submit 路径 _run_and_cleanup 对称。
+            # resume 后执行中再次被暂停时，checkpoint/mailbox/注册表全部保留，
+            # 否则重复暂停会删 checkpoint 使任务从此不可再 resume（S6）。
+            if (sub_agent._task_state is not None and
+                sub_agent._task_state.status == WorkflowStatus.PAUSED):
+                return
+            self._cleanup_task(task_id)
+            try:
+                await self._cleanup_storage(task_id, sub_agent)
+            except Exception:
+                logger.exception(
+                    "WorkflowEngine: task_id=%s resume 后存储清理失败", task_id,
+                )
+            if self._semaphore:
+                self._semaphore.release()
 
     async def cancel(self, task_id: WorkflowId) -> bool:
         """软取消任务——委托给 lifecycle.cancel()。
@@ -555,6 +619,7 @@ class WorkflowEngine:
         """
         self._tasks.pop(task_id, None)
         self._mailboxes.pop(task_id, None)
+        self._contexts.pop(task_id, None)
         self._task_futures.pop(task_id, None)  # 允许 asyncio.Task 被 GC
         logger.info("WorkflowEngine: task_id=%s 注册表清理完成", task_id)
 
