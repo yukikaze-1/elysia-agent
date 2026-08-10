@@ -1204,7 +1204,8 @@ class TestCharacterConfig:
 class TestAppConfig:
     def test_default_values(self):
         cfg = AppConfig()
-        assert cfg.server.host == "0.0.0.0"
+        # review 复核 #1：默认绑定改为回环地址（config.yaml + dataclass 默认同步）
+        assert cfg.server.host == "127.0.0.1"
         assert cfg.server.port == 8765
         assert cfg.tts.enabled is False
         assert cfg.stt.enabled is False

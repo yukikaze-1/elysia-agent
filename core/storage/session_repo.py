@@ -129,6 +129,7 @@ class SessionRepository(Repository):
         if self._db is None:
             raise StorageUnavailableError(
                 "SessionRepository 未连接（MongoDB 不可用），session 未持久化")
+        db = self._db
         serialized = [m.model_dump(mode="json") for m in messages]
         doc = {
             "session_id": session_id,
@@ -141,13 +142,13 @@ class SessionRepository(Repository):
         # 标题语义：显式 title（create/rename 写入）必须保留；
         # 仅当现有 doc 无 title 且 messages 非空时派生自动标题（幂等，无额外调用点）。
         existing = await self._call(
-            lambda: self._db.find(COLLECTION, {"session_id": session_id}, limit=1),
+            lambda: db.find(COLLECTION, {"session_id": session_id}, limit=1),
             reason="SessionRepository.save 查询失败",
         )
         existing_title = existing[0].get("title", "") if existing else ""
         doc["title"] = existing_title if existing_title else _derive_title(messages)
         await self._call(
-            lambda: self._db.update_one(
+            lambda: db.update_one(
                 COLLECTION, {"session_id": session_id}, {"$set": doc}, upsert=True,
             ),
             reason="SessionRepository.save 写入失败",
@@ -168,6 +169,7 @@ class SessionRepository(Repository):
         if self._db is None:
             raise StorageUnavailableError(
                 "SessionRepository 未连接（MongoDB 不可用），session 未创建")
+        db = self._db
         doc = {
             "session_id": session_id,
             "title": title,
@@ -175,7 +177,7 @@ class SessionRepository(Repository):
             "updated_at": now_iso(),
         }
         await self._call(
-            lambda: self._db.update_one(
+            lambda: db.update_one(
                 COLLECTION, {"session_id": session_id}, {"$set": doc}, upsert=True,
             ),
             reason="SessionRepository.create 写入失败",
@@ -193,8 +195,9 @@ class SessionRepository(Repository):
         """
         if self._db is None:
             return False
+        db = self._db
         result = await self._call(
-            lambda: self._db.update_one(
+            lambda: db.update_one(
                 COLLECTION, {"session_id": session_id}, {"$set": {"title": title}},
                 upsert=False,
             ),
@@ -219,8 +222,9 @@ class SessionRepository(Repository):
         if self._db is None:
             raise StorageUnavailableError(
                 "SessionRepository 未连接（MongoDB 不可用），session 无法加载")
+        db = self._db
         results = await self._call(
-            lambda: self._db.find(COLLECTION, {"session_id": session_id}, limit=1),
+            lambda: db.find(COLLECTION, {"session_id": session_id}, limit=1),
             reason="SessionRepository.load 查询失败",
         )
         if not results:
@@ -254,8 +258,9 @@ class SessionRepository(Repository):
         if self._db is None:
             raise StorageUnavailableError(
                 "SessionRepository 未连接（MongoDB 不可用），session 未删除")
+        db = self._db
         result = await self._call(
-            lambda: self._db.delete_many(COLLECTION, {"session_id": session_id}),
+            lambda: db.delete_many(COLLECTION, {"session_id": session_id}),
             reason="SessionRepository.delete 删除失败",
         )
         logger.info("SessionRepository delete: session_id=%s, deleted=%d", session_id, result)

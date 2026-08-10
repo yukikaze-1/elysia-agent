@@ -23,3 +23,19 @@ def _no_network_embedding(monkeypatch):
             return [[0.1] * 1024 for _ in texts]
 
     monkeypatch.setattr(EmbeddingProvider, "_try_load_sync", lambda self: _FakeEmbedding())
+
+
+@pytest.fixture(autouse=True)
+def _isolate_pending_syncs(tmp_path, monkeypatch):
+    """review 复核 #6：pending-syncs journal 隔离到 tmp 目录。
+
+    LTM 离线 insert（repo=None / 返回空 PK）每次都会写 journal——若不隔离会污染
+    真实 data/ 目录并跨测试串扰（同一进程内下一测试构造 LongTermMemory 时
+    _load_pending_syncs 读到上一测试的脏条目，count 虚高）。
+    """
+    from core.memory.long_term import LongTermMemory
+
+    monkeypatch.setattr(
+        LongTermMemory, "_pending_syncs_file",
+        lambda self: str(tmp_path / "memory_pending_syncs.json"),
+    )
