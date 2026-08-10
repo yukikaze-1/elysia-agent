@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -140,16 +141,27 @@ class SubAgent:
         """
         task_id = mailbox.task_id
 
-        # 0. 创建 WorkflowState
-        task_state = WorkflowState(
-            task_id=task_id,
-            status=WorkflowStatus.PENDING,
-            tools=context.tools,
-            session_id=context.session_id,
-            created_at=now_iso(),
-            updated_at=now_iso(),
-        )
-        self._task_state = task_state
+        # 0. 创建/复用 WorkflowState
+        if self._task_state is None:
+            # 原创建逻辑（保留）——直接使用 SubAgent 的测试路径
+            task_state = WorkflowState(
+                task_id=task_id,
+                status=WorkflowStatus.PENDING,
+                tools=context.tools,
+                session_id=context.session_id,
+                created_at=now_iso(),
+                updated_at=now_iso(),
+            )
+            self._task_state = task_state
+        else:
+            # E2：submit() 已预创建 QUEUED 状态，复用并转入 PENDING
+            task_state = self._task_state                              # 关键：本地 task_state 必须绑定（下游使用）
+            if task_state.is_terminal():                               # 终态守卫：drain 复核后、run() 执行前被 cancel → 不再复活
+                raise asyncio.CancelledError()
+            task_state.status = WorkflowStatus.PENDING
+            task_state.tools = context.tools
+            task_state.session_id = context.session_id
+            task_state.updated_at = now_iso()
         self._context = context   # resume 时需要 intent/tools/constraints
         self._mailbox = mailbox   # resume 时复用同一个 mailbox
 

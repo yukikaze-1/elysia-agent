@@ -33,10 +33,12 @@ from Module.workflow_engine.schema import (
     WorkflowDAG,
     WorkflowErrorCode,
     WorkflowProgress,
+    WorkflowState,
     WorkflowSummary,
     TokenPeriod,
     TokenStats,
     TokenUsage,
+    now_iso,
 )
 
 from Module.workflow_engine.core.sub_agent import SubAgent
@@ -278,9 +280,9 @@ class WorkflowEngine:
                 message="WorkflowEngine 尚未 start()，请先调用 start()",
             )
 
-        # start() 已调用，信号量必定初始化
-        if self._semaphore is None:
-            raise RuntimeError("WorkflowEngine 信号量未初始化，请先调用 start()")
+        # start() 已调用，执行队列必定初始化
+        if self._queue is None:
+            raise RuntimeError("WorkflowEngine 执行队列未初始化，请先调用 start()")
 
         # ── 参数校验 ──
         if not context.intent.strip():
@@ -295,27 +297,42 @@ class WorkflowEngine:
         # ── 创建 Mailbox（先于 SubAgent——保证返回时已有队列可用）──
         mailbox: WorkflowMailbox = WorkflowMailbox(task_id)
 
-        # ── 构造 SubAgent ──
+        # ── 构造 SubAgent + 预创建 QUEUED 状态（不等待槽位）──
         sub_agent = SubAgent(
             infra=self._infra,
             hitl_notifier=self._hitl,
         )
+        task_state = WorkflowState(
+            task_id=task_id,
+            status=WorkflowStatus.QUEUED,
+            tools=context.tools,
+            session_id=context.session_id,
+            created_at=now_iso(),
+            updated_at=now_iso(),
+        )
+        sub_agent._task_state = task_state
 
-        # ── 获取并发槽位 + 注册 ──
-        await self._semaphore.acquire()
+        # ── 注册（_tasks/_mailboxes/_contexts 就位，QUEUED 对外可见）──
         self._tasks[task_id] = sub_agent
         self._mailboxes[task_id] = mailbox
         self._contexts[task_id] = context
 
-        # ── fire-and-forget 启动 ──
+        # ── 推 QUEUED 事件到 mailbox（排队可见）──
+        push_mailbox_event(
+            mailbox, WorkflowEventType.QUEUED, {"task_id": str(task_id)},
+            caller="WorkflowEngine",
+        )
+
+        # ── 入队（有界，满则快速失败）──
         try:
-            task = asyncio.create_task(self._run_and_cleanup(sub_agent, task_id))
-        except Exception:
-            logger.exception("WorkflowEngine.submit: task_id=%s create_task 失败", task_id)
+            self._queue.put_nowait(QueuedItem(task_id, QueuedItemKind.SUBMIT))
+        except asyncio.QueueFull:
             self._cleanup_task(task_id)
-            self._semaphore.release()
-            raise
-        self._task_futures[task_id] = task
+            return SubmitError(
+                code=SubmitRejectionCode.QUEUE_FULL,
+                message="任务队列已满，请稍后再试",
+            )
+
         logger.info("WorkflowEngine.submit: task_id=%s, intent=%.60s...", task_id, context.intent)
         return mailbox
 

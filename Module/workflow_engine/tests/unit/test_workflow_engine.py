@@ -1127,3 +1127,36 @@ class TestDrainQueue:
         await asyncio.sleep(0.05)
         assert engine._queue.qsize() == 0
         await engine.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E2: 非阻塞 submit
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestSubmitNonBlocking:
+    @pytest.mark.asyncio
+    async def test_submit_returns_mailbox_immediately(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        await engine._semaphore.acquire()           # 占满唯一槽（Python 3.12 无 acquire_nowait，await 时队列为空无干扰）
+        engine._active.add(WorkflowId("busy"))
+        ctx = DelegationContext(intent="test", session_id=SessionId("s1"))
+        started = time.monotonic()
+        result = await asyncio.wait_for(engine.submit(ctx), timeout=1.0)   # 旧实现会挂起 → wait_for 超时失败
+        assert isinstance(result, WorkflowMailbox)
+        assert time.monotonic() - started < 1.0
+        assert engine.get_task_status(result.task_id) == WorkflowStatus.QUEUED
+        await engine.stop()
+
+    @pytest.mark.asyncio
+    async def test_submit_queue_full_returns_error(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1, max_queue_size=1)
+        await engine.start()
+        await engine._semaphore.acquire()           # 占满唯一槽
+        ctx = DelegationContext(intent="t", session_id=SessionId("s1"))
+        await engine.submit(ctx)                    # 第 1 个入队
+        result = await engine.submit(ctx)           # 第 2 个 → 队满
+        assert isinstance(result, SubmitError)
+        assert result.code == SubmitRejectionCode.QUEUE_FULL
+        await engine.stop()
