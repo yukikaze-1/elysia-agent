@@ -403,3 +403,29 @@ class TestHuggingFaceLoadSide:
         (snap / "config.json").write_text("tampered")  # 其余 manifest 文件缺失
         with pytest.raises(RuntimeError, match="缓存校验失败"):
             _verified_local_path(DEFAULT_MODEL_ID, str(snap))
+
+
+class TestMainExitCodeArgv:
+    """review 复核 #11：download_model.py 失败必须非零退出码（setup.sh 据此判定）。"""
+
+    def test_main_exit_one_on_download_failure(self, tmp_path, monkeypatch):
+        import sys
+        from scripts.download_model import main
+
+        monkeypatch.setattr(sys, "argv", ["download_model.py"])  # argparse 不读 pytest argv
+        monkeypatch.setattr("scripts.download_model.cached_model_valid", lambda *a, **k: False)
+        monkeypatch.setattr("scripts.download_model.download_model", lambda *a, **k: False)
+        monkeypatch.setattr("scripts.download_model.find_project_root", lambda: tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+
+    def test_main_exit_zero_on_download_success(self, tmp_path, monkeypatch):
+        import sys
+        from scripts.download_model import main
+
+        monkeypatch.setattr(sys, "argv", ["download_model.py"])
+        monkeypatch.setattr("scripts.download_model.cached_model_valid", lambda *a, **k: False)
+        monkeypatch.setattr("scripts.download_model.download_model", lambda *a, **k: True)
+        monkeypatch.setattr("scripts.download_model.find_project_root", lambda: tmp_path)
+        main()  # 不抛 SystemExit = exit 0

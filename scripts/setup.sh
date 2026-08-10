@@ -186,23 +186,16 @@ fi
 
 echo ""
 echo -e "${BOLD}Step 4: 嵌入模型${NC}"
-CACHE_DIR=""
-if [[ -d ".model_cache/models--BAAI--bge-large-zh-v1.5" || -d ".model_cache/BAAI/bge-large-zh-v1.5" ]]; then
-    CACHE_DIR=".model_cache"
-elif [[ -d "$HOME/.cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5" || -d "$HOME/.cache/huggingface/hub/BAAI/bge-large-zh-v1.5" ]]; then
-    CACHE_DIR="$HOME/.cache/huggingface"
+# review 复核 #11：不再按「目录存在」跳过——恒调用 download_model.py（内部
+# cached_model_valid 做 manifest + sha256 校验：已缓存且合法秒过；目录存在但
+# 损坏/不完整/被篡改时重新下载）。此前仅查目录会跳过校验，损坏缓存被当成功。
+echo -e "${YELLOW}→${NC} 校验/准备嵌入模型（约 1.3GB，默认官方源 + 固定 revision + hash 校验；镜像需显式 HF_MIRROR opt-in；已缓存且校验通过则秒过）..."
+$PYTHON scripts/download_model.py
+if [[ $? -ne 0 ]]; then
+    echo -e "  ${RED}✗${NC} 嵌入模型下载/校验失败"
+    exit 1
 fi
-
-if [[ -n "$CACHE_DIR" ]]; then
-    echo -e "  ${GREEN}✓${NC} 嵌入模型已缓存 ($CACHE_DIR)"
-else
-    echo -e "  ${YELLOW}→${NC} 嵌入模型未缓存，正在下载（约 1.3GB，默认官方源 + 固定 revision + hash 校验；镜像需显式 HF_MIRROR opt-in）..."
-    $PYTHON scripts/download_model.py
-    if [[ $? -ne 0 ]]; then
-        echo -e "  ${RED}✗${NC} 嵌入模型下载失败"
-        exit 1
-    fi
-fi
+echo -e "  ${GREEN}✓${NC} 嵌入模型就绪"
 
 # ── Step 6: 创建目录 ───────────────────────────────────────────────────────
 

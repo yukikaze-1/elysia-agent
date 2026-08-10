@@ -228,10 +228,14 @@ def main() -> None:
         return
 
     ok = download_model(args.model, cache_dir)
-    if ok:
-        print()
-        print(f"提示: 确保 MODEL_CACHE_DIR 指向 {cache_dir}")
-        print("  或在项目根创建软链接: ln -s /path/to/model_cache .model_cache")
+    if not ok:
+        # review 复核 #11：下载/校验失败必须以非零退出码结束——setup.sh 据此
+        # 判定失败；此前返回 0 让「下载失败」被当成功（目录半成品残留）。
+        print("✗ 模型下载/校验失败，请重试或检查网络/镜像配置", file=sys.stderr)
+        sys.exit(1)
+    print()
+    print(f"提示: 确保 MODEL_CACHE_DIR 指向 {cache_dir}")
+    print("  或在项目根创建软链接: ln -s /path/to/model_cache .model_cache")
 
 
 if __name__ == "__main__":
