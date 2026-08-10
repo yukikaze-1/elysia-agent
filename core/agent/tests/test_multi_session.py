@@ -10,6 +10,7 @@
   - _start_persistence 走 session_manager.connect_db + load_active
 """
 
+import asyncio
 import logging
 
 import pytest
@@ -185,6 +186,66 @@ class TestProcessMessageConversationId:
             await agent._cognitive._current_task
             assert agent.session_manager.work_count(summary.session_id) == 0
             await agent.session_manager.delete(summary.session_id)
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_prestart_cancel_releases_lease_via_done_callback(self):
+        """C1/P1-06：pre-start 取消的 cognitive task 也释放 lease（done callback 兜底）。
+
+        修复前 pre-start cancel 不进 coroutine finally → lease 永久泄漏，
+        该会话后续删除持续 409 busy。
+        """
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        await agent.start()
+        agent._bus.post = MagicMock()
+        agent._cognitive.process = AsyncMock(return_value=None)
+        try:
+            s = await agent.session_manager.create(title="lease")
+            sid = str(s.session_id)
+            await agent.process_message("hello", protocol_version=2,
+                                        conversation_id=sid)
+            posted = agent._bus.post.call_args.args[0]
+            assert agent.session_manager.work_count(sid) == 1
+
+            agent._handle_user_input(posted)
+            task = agent._cognitive._current_task
+            task.cancel()  # pre-start 取消（coroutine 尚未进入）
+            await asyncio.sleep(0.05)  # done callback 触发
+            assert agent.session_manager.work_count(sid) == 0  # lease 已释放
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_same_tick_second_message_queues_not_cancels(self):
+        """C1/P1-06：同 tick 第二条 v2 消息不取消 pre-start 第一条，入队等待。"""
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        await agent.start()
+        agent._bus.post = MagicMock()
+        agent._cognitive.process = AsyncMock(return_value=None)
+        try:
+            s = await agent.session_manager.create(title="burst")
+            sid = str(s.session_id)
+            await agent.process_message("m1", protocol_version=2,
+                                        conversation_id=sid)
+            await agent.process_message("m2", protocol_version=2,
+                                        conversation_id=sid)
+            posts = agent._bus.post.call_args_list
+            assert len(posts) == 2  # 同 tick 都见 IDLE，两条都 accepted
+
+            agent._handle_user_input(posts[0].args[0])  # m1 → task（pre-start）
+            agent._handle_user_input(posts[1].args[0])  # m2 → 应排队
+            assert len(agent._pending_messages) == 1     # 未取消 m1，m2 入队
+            assert agent.session_manager.work_count(sid) == 2  # 两 lease 都在
+
+            await agent._cognitive._current_task  # m1 执行完
+            await asyncio.sleep(0.05)
+            assert agent._cognitive.process.await_count == 1  # m1 未被取消
+            assert agent.session_manager.work_count(sid) == 1  # m2 lease 仍在
         finally:
             await agent.stop()
 

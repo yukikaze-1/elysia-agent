@@ -303,6 +303,9 @@ class Agent(AgentLifecycle, AgentServer):
         self._req_counter: int = 0
         # FIFO 消息排队 — FSM != IDLE 时暂存消息
         self._pending_messages: list[_PendingMessage] = []
+        # C1/P1-06：已真正开始执行的 cognitive task 集合——pre-start 任务不被后一
+        # handler 取消（第二条消息排队），只在任务真正运行时才允许打断。
+        self._started_cognitive_tasks: set[asyncio.Task] = set()
 
         # ---- WorkflowEngine ----
         self._task_system = None   # WorkflowEngine | None
@@ -571,27 +574,58 @@ class Agent(AgentLifecycle, AgentServer):
         protocol_version = data.protocol_version
         logger.debug("EventBus: USER_INPUT 到达 (来源=%s, STT=%s)",
                    "websocket" if stt_emotion else "text", stt_emotion or "无")
-        # 取消上一个未完成的 task，防止快速连续事件造成孤儿
+        # C1/P1-06：前一条 cognitive task 若尚未真正开始（同 tick 第二条已 accepted 的
+        # 消息，pre-start）——不得隐式取消它（否则已 ACK 消息静默丢失且 lease 泄漏），
+        # 改为入队等待；只有任务真正在跑时才允许「新输入打断当前生成」。
+        prev = self._cognitive._current_task
+        if prev is not None and not prev.done() and prev not in self._started_cognitive_tasks:
+            max_queue = self._config.agent.max_pending_messages
+            if len(self._pending_messages) >= max_queue:
+                self._release_session_work(data.conversation_id, data.session_work_reserved)
+                return
+            logger.debug("Agent pre-start——新消息排队 (queue=%d)",
+                       len(self._pending_messages) + 1)
+            self._pending_messages.append(_PendingMessage(
+                text=data.text, user_name=data.user_name, request_id=data.request_id,
+                content=data.content, emotion=data.emotion, events=list(data.events or []),
+                message_id=data.message_id,
+                conversation_id=data.conversation_id,
+                protocol_version=data.protocol_version,
+                session_work_reserved=data.session_work_reserved,
+            ))
+            return
+        # 取消上一个未完成的 task（仅真正在跑时），防止快速连续事件造成孤儿
         self._cognitive.cancel_current()
         _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
             parent_id=rid, calls=calls,
         )
 
         async def _run_with_session_lease() -> None:
-            try:
-                await self._cognitive.process(
-                    text, user_name=user_name,
-                    stt_emotion=stt_emotion,
-                    stt_events=stt_events,
-                    _on_tool_calls=_on_tool_calls,
-                    content=content,
-                    message_id=message_id,
-                    protocol_version=protocol_version,
-                    conversation_id=data.conversation_id,
-                )
-            finally:
-                self._release_session_work(
-                    data.conversation_id, data.session_work_reserved)
+            # 标记任务已真正开始（进入 coroutine）——pre-start 判定依据
+            task = asyncio.current_task()
+            if task is not None:
+                self._started_cognitive_tasks.add(task)
+            await self._cognitive.process(
+                text, user_name=user_name,
+                stt_emotion=stt_emotion,
+                stt_events=stt_events,
+                _on_tool_calls=_on_tool_calls,
+                content=content,
+                message_id=message_id,
+                protocol_version=protocol_version,
+                conversation_id=data.conversation_id,
+            )
+
+        def _lease_release_done(task: asyncio.Task) -> None:
+            """done callback：唯一 lease 释放点（正常/异常/取消都会触发，恰一次）。
+
+            C1/P1-06：pre-start cancel 不进入 coroutine finally——必须经 done
+            callback 释放，否则 work lease 永久泄漏、删除持续 409 busy。释放恰好
+            一次（不在 finally 里重复释放，否则会误扣其他在途消息的 lease）。
+            """
+            self._started_cognitive_tasks.discard(task)
+            self._release_session_work(
+                data.conversation_id, data.session_work_reserved)
 
         try:
             task = asyncio.create_task(
@@ -602,6 +636,7 @@ class Agent(AgentLifecycle, AgentServer):
             self._release_session_work(
                 data.conversation_id, data.session_work_reserved)
             raise
+        task.add_done_callback(_lease_release_done)
         self._cognitive._current_task = task
 
     def _handle_system_tick(self, data: SystemTickData) -> None:

@@ -99,7 +99,7 @@ A1/A2
 - [x] B4 accepted ACK 前建立附件引用
 - [x] B5 Consolidator/LTM 离线一致性
 - [x] B6 Session 查询、TTL 迁移与 reflector
-- [ ] C1 用户消息 FIFO 与 work lease
+- [x] C1 用户消息 FIFO 与 work lease
 - [ ] C2 Per-call ToolInvocation 与 call-ID task
 - [ ] C3 After-response 目标会话绑定
 - [ ] C4 shutdown 顺序与可重入 restart
@@ -1248,6 +1248,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：generations/desktop_calls 新增 `ttl_expires_at`（BSON Date），启动幂等回填旧记录；TTL 索引从失效的 updated_at 迁到 ttl_expires_at；sessions 移除自动 TTL（改显式删除）
 - 契约或 Electron 影响：无
 - 剩余风险/计划偏差：session 列表分页下推（P2-01 的「第 201 条可分页/搜索」）未实现——当前 repo.list_all 仍预取 200；显式 session 过期级联清理 worker 未实现（已移除静默孤儿 TTL，删除走 REST/B3）；reflector 仍为跨会话共享单例（per-session 实例由 C3 收口）
+
+### C1 — 用户消息 FIFO 与 work lease
+
+- 状态：完成
+- Commit：`<见 C1 提交>`
+- 变更文件：`core/agent/agent.py`、`core/agent/tests/test_multi_session.py`
+- 新增失败测试：`test_prestart_cancel_releases_lease_via_done_callback`（pre-start cancel 释放 lease）、`test_same_tick_second_message_queues_not_cancels`（同 tick 第二条不取消 pre-start 第一条，入队等待）
+- 目标测试：`pytest core/agent/tests/test_multi_session.py::TestProcessMessageConversationId` → 7 passed；agent/cognitive/input 全量回归待确认
+- 批次门禁：`ruff check` → 通过；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：无
+- 契约或 Electron 影响：无 wire 变化（行为修复：同 tick 双消息不再丢第一条、lease 不泄漏）
+- 剩余风险：`_started_cognitive_tasks` 在 stop() 时未显式清空——restart 需确保清空（C4 会处理 task registry 复位）；队列满时 pre-start 第二条直接释放 lease 并丢弃（与 busy 队列满语义一致）
 
 ## 14. 需要停止并请求决策的情况
 
