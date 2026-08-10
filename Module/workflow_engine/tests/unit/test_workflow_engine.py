@@ -1274,3 +1274,43 @@ class TestStopTerminalizes:
         assert WorkflowId("p1") not in engine._tasks
         assert captured[WorkflowId("q1")].count() >= 1  # 用捕获的引用断言 CANCELLED 事件
         assert captured[WorkflowId("p1")].count() >= 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E2: cancel QUEUED 分支 + PAUSED 去 double release
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestCancelBounded:
+    @pytest.mark.asyncio
+    async def test_cancel_queued_no_release(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        sa = MagicMock()
+        ts = MagicMock()
+        ts.status = WorkflowStatus.QUEUED
+        ts.is_terminal.return_value = False
+        sa._task_state = ts
+        tid = WorkflowId("q1")
+        engine._tasks[tid] = sa
+        engine._mailboxes[tid] = WorkflowMailbox(tid)
+        await engine._semaphore.acquire()
+        ok = await engine.cancel(tid)
+        assert ok is True
+        assert tid not in engine._tasks
+        assert engine._semaphore.locked() is True   # 未被 release（我们占的 1 个仍占用）
+
+    @pytest.mark.asyncio
+    async def test_cancel_after_pause_no_double_release(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        sa = MagicMock()
+        ts = MagicMock()
+        ts.status = WorkflowStatus.PAUSED
+        ts.is_terminal.return_value = False
+        sa._task_state = ts
+        tid = WorkflowId("p1")
+        engine._tasks[tid] = sa
+        engine._mailboxes[tid] = WorkflowMailbox(tid)
+        await engine.cancel(tid)                    # 不应抛 ValueError
+        await engine.stop()

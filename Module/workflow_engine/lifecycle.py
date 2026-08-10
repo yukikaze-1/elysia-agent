@@ -98,21 +98,26 @@ async def cancel(
 ) -> bool:
     """软取消任务。幂等。
 
-    PAUSED 分支在内部完成 cleanup_task() + cleanup_storage()
-    + semaphore.release()。调用方不得再次释放。
+    PAUSED 分支在内部完成 cleanup_task() + cleanup_storage()，
+    **不 release semaphore**——E2 §5 起 PAUSED 暂停时已释放执行槽，
+    此处再 release 构成双重释放（BoundedSemaphore 越界抛 ValueError）。
+    调用方不得再次释放。
+
+    QUEUED 分支（E2）同样不 release——排队任务从未 acquire 槽位。
 
     二次确认由 CognitiveLoop 在上层处理。
 
     幂等——所有路径返回 True：
     - RUNNING → 设置 exec_state.cancel_requested → Orchestrator 检测 → CANCELLED
     - PAUSED  → 直接标记 CANCELLED，已有 checkpoint
+    - QUEUED  → 直接标记 CANCELLED，未消耗槽位
     - 已终态   → True（无需操作）
     - 已清理   → True（任务已不存在）
 
     Args:
         tasks: 所有活跃任务的 SubAgent 映射。
         mailboxes: 所有活跃任务的事件邮箱映射。
-        semaphore: 并发控制信号量，PAUSED 分支需 release()。
+        semaphore: 并发控制信号量（E2 起 cancel 各分支均不 release）。
         cleanup_task: 清理任务注册表回调。
         cleanup_storage: 清理存储（checkpoint + artifact）回调。
         task_id: 要取消的任务 ID。
@@ -131,6 +136,25 @@ async def cancel(
     if ts is None or ts.is_terminal():
         return True  # 已终态 = 已取消
 
+    # ── 分支 0: QUEUED → 直接 CANCELLED（排队中取消，从未 acquire 槽位）──
+    if ts.status == WorkflowStatus.QUEUED:
+        ts.status = WorkflowStatus.CANCELLED
+        ts.updated_at = now_iso()
+        mailbox = mailboxes.get(task_id)
+        if mailbox:
+            push_mailbox_event(mailbox, WorkflowEventType.CANCELLED, {
+                "task_id": str(task_id),
+                "reason": "用户取消",
+            })
+        cleanup_task(task_id)
+        try:
+            await cleanup_storage(task_id, sub_agent)
+        except Exception:
+            logger.exception(
+                "lifecycle: task_id=%s cancel(QUEUED) 存储清理失败", task_id,
+            )
+        return True
+
     # ── 分支 1: PAUSED → 直接 CANCELLED ──
     if ts.status == WorkflowStatus.PAUSED:
         ts.status = WorkflowStatus.CANCELLED
@@ -142,7 +166,8 @@ async def cancel(
                 "reason": "用户取消",
             })
         # PAUSED 时 _run_and_cleanup 的 finally 已跳过清理（early return），
-        # 此处必须显式清理注册表 + storage + semaphore，否则永久泄漏。
+        # 此处必须显式清理注册表 + storage，否则永久泄漏。
+        # 不 release semaphore——E2 §5 起 PAUSED 暂停时已释放执行槽（防双重释放）。
         cleanup_task(task_id)
         try:
             await cleanup_storage(task_id, sub_agent)
@@ -150,8 +175,6 @@ async def cancel(
             logger.exception(
                 "lifecycle: task_id=%s cancel(PAUSED) 存储清理失败", task_id,
             )
-        if semaphore:
-            semaphore.release()
         return True
 
     # ── 分支 2: RUNNING / PLANNING → 设取消标志 ──
