@@ -45,7 +45,7 @@ from Module.workflow_engine.schema import (
     now_iso,
 )
 from Module.workflow_engine.mailbox import WorkflowMailbox
-from Module.workflow_engine.workflow_engine import WorkflowEngine
+from Module.workflow_engine.workflow_engine import QueuedItem, QueuedItemKind, WorkflowEngine
 
 pytestmark = pytest.mark.unit
 
@@ -1078,4 +1078,52 @@ class TestRunCleanupExtracted:
         await engine._run_and_cleanup(sub_agent, WorkflowId("t1"))
         sub_agent.run.assert_awaited_once()      # 用 _contexts/_mailboxes 正确取参调 run
         assert WorkflowId("t1") not in engine._tasks
+        await engine.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E2: 有界队列 drain loop + 后台 worker
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDrainQueue:
+    @pytest.mark.asyncio
+    async def test_start_creates_queue_and_worker(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_queue_size=2)
+        await engine.start()
+        assert engine._queue is not None and engine._queue.maxsize == 2
+        assert engine._queue_worker is not None and not engine._queue_worker.done()
+        await engine.stop()
+
+    @pytest.mark.asyncio
+    async def test_submit_item_dispatches_run_and_cleanup(self, monkeypatch):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        sub_agent = MagicMock()
+        ts = MagicMock()
+        ts.status = WorkflowStatus.QUEUED
+        ts.is_terminal.return_value = False
+        sub_agent._task_state = ts
+        tid = WorkflowId("t1")
+        engine._tasks[tid] = sub_agent
+        engine._mailboxes[tid] = WorkflowMailbox(tid)
+        engine._contexts[tid] = DelegationContext(intent="t", session_id=SessionId("s1"))
+        ran = []
+
+        async def fake(sub, task_id):
+            ran.append(task_id)
+
+        monkeypatch.setattr(engine, "_run_and_cleanup", fake)
+        engine._queue.put_nowait(QueuedItem(tid, QueuedItemKind.SUBMIT))
+        await asyncio.sleep(0.05)
+        assert ran == [tid]
+        await engine.stop()
+
+    @pytest.mark.asyncio
+    async def test_missing_task_skipped(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock())
+        await engine.start()
+        engine._queue.put_nowait(QueuedItem(WorkflowId("nope"), QueuedItemKind.SUBMIT))
+        await asyncio.sleep(0.05)
+        assert engine._queue.qsize() == 0
         await engine.stop()

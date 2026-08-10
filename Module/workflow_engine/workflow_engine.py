@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from Module.workflow_engine import lifecycle
@@ -45,6 +47,26 @@ if TYPE_CHECKING:
     from Module.workflow_contract import HITLNotifier
 
 logger = logging.getLogger(__name__)
+
+
+class QueuedItemKind(StrEnum):
+    """排队条目判别——新提交 vs 恢复暂停。
+
+    队列必须携带 kind——_drain_queue 无法从 WorkflowId 判别
+    「新提交」还是「恢复暂停」，二者派发不同的执行包装。
+    """
+    SUBMIT = "submit"    # 新任务：派发 _run_and_cleanup
+    RESUME = "resume"    # 恢复暂停：派发 _run_resume
+
+
+@dataclass(frozen=True)
+class QueuedItem:
+    """有界队列元素——(task_id, kind) 判别条目。
+
+    由 submit()/resume() 写入、_drain_queue 后台 worker 消费。
+    """
+    task_id: WorkflowId
+    kind: QueuedItemKind
 
 
 class WorkflowEngine:
@@ -132,8 +154,62 @@ class WorkflowEngine:
             return
 
         self._semaphore = asyncio.BoundedSemaphore(self._max_sub_agents)
+        self._queue = asyncio.Queue(maxsize=self._max_queue_size)
+        self._queue_worker = asyncio.create_task(self._drain_queue())
         self._started = True
         logger.info("WorkflowEngine.start: max_sub_agents=%d", self._max_sub_agents)
+
+    async def _drain_queue(self) -> None:
+        """后台派发循环——单任务，非阻塞聊天轮。
+
+        从队列取出条目 → 终态复核 → acquire 槽位 → 派发执行。
+        槽位所有权：已派发 → 归执行包装（_run_and_cleanup/_run_resume 的 finally）所有；
+        未派发被 stop() 取消 → 由本循环释放，防泄漏。
+        """
+        while True:
+            item: QueuedItem = await self._queue.get()   # 阻塞等排队条目
+            task_id = item.task_id
+            dispatched = False
+            held_permit = False
+            try:
+                sub_agent = self._tasks.get(task_id)
+                if sub_agent is None:
+                    continue                          # 已 cancel/stop 清理，跳过（不 acquire）
+                ts = sub_agent._task_state
+                if ts is None or ts.is_terminal():
+                    self._cleanup_task(task_id)        # 兜底清理（cancel 侧通常已清）
+                    continue
+                await self._semaphore.acquire()        # acquire 移到此处——不阻塞聊天轮
+                held_permit = True
+                self._active.add(task_id)
+                if task_id not in self._tasks:         # acquire 等待期间被 cancel/stop 清理
+                    self._active.discard(task_id)
+                    self._semaphore.release()
+                    held_permit = False
+                    continue
+                try:
+                    if item.kind is QueuedItemKind.SUBMIT:
+                        task = asyncio.create_task(self._run_and_cleanup(sub_agent, task_id))
+                    else:
+                        task = asyncio.create_task(self._run_resume(sub_agent, task_id))
+                except Exception:
+                    # create_task 罕见失败（如事件循环关闭）：释放槽位 + 清理注册表，防槽位泄漏
+                    self._active.discard(task_id)
+                    self._semaphore.release()
+                    held_permit = False
+                    self._cleanup_task(task_id)
+                    continue
+                self._task_futures[task_id] = task     # 必须登记——stop() 靠它等待/取消
+                dispatched = True                      # 已派发：槽位归执行包装所有
+            except asyncio.CancelledError:
+                if held_permit and not dispatched:
+                    # stop() 取消：已 acquire 未派发 → 释放槽位 + 移出 _active
+                    # （执行包装不存在，槽位不能泄漏；acquire 等待中被取消则 held_permit=False，无槽位可释放）
+                    self._active.discard(task_id)
+                    self._semaphore.release()
+                raise
+            finally:
+                self._queue.task_done()
 
     async def stop(self, timeout: float = 10.0) -> None:
         """优雅关闭。
