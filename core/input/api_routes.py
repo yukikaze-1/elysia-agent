@@ -418,9 +418,10 @@ def register_api_routes(app: web.Application) -> None:
         if api_key:
             create_kwargs["api_key"] = api_key
 
-        # custom+backend → 注入出站守卫**工厂**（review 修正：工厂而非实例——create
-        # 失败时不产生待清理 client；后端关闭连带关闭守卫 client，finally 无需单独 aclose）
-        if provider == "custom" and base_url:
+        # D2/P1-15：base_url 覆盖（无论 custom/内置）→ 注入统一守卫 transport 工厂。
+        # 内置 provider 同走 OpenAICompatBackend（接受 http_client_factory）——
+        # 重定向每跳重新校验，防公开 base_url 302 到 loopback/metadata 的第二跳绕过。
+        if base_url:
             from core.input.ssrf import build_guarded_http_client
             create_kwargs["http_client_factory"] = (
                 lambda b=base_url: build_guarded_http_client(b))

@@ -165,6 +165,8 @@ def build_guarded_http_client(
     base_url: str | None = None,
     headers: dict | None = None,
     timeout: httpx.Timeout | None = None,
+    max_redirects: int = 20,
+    proxy: str | None = None,
 ) -> httpx.AsyncClient:
     """构造带出站守卫的 httpx.AsyncClient（校验传输层 + 跨源剥头 + follow_redirects=True）。
 
@@ -172,15 +174,21 @@ def build_guarded_http_client(
         base_url: 目标端点（可空——仅对实际发出的请求做每跳校验）。
         headers: 客户端级默认 Header。
         timeout: 超时配置；None 时用 httpx 默认。
+        max_redirects: 重定向上限（D2/P1-15：有限跳数防重定向放大）。
+        proxy: 显式代理（web 工具经环境变量代理出站）。
 
     Returns:
-        校验传输层的 httpx.AsyncClient，可作 ``http_client`` 注入自定义后端。
+        校验传输层的 httpx.AsyncClient，可作 ``http_client`` 注入自定义后端或
+        web 工具出站。
     """
     kwargs: dict = {
         "base_url": base_url or "",
         "transport": _SSRFTransport(),
         "follow_redirects": True,
+        "max_redirects": max_redirects,
     }
+    if proxy:
+        kwargs["proxy"] = proxy
     if headers is not None:
         kwargs["headers"] = headers
     if timeout is not None:

@@ -231,19 +231,38 @@ class TestWebFetchPlugin:
 
     def _make_client_mock(self, text="", content_type="text/html; charset=utf-8",
                           status_code=200, raise_for_status_error=None):
-        """创建一个 httpx.AsyncClient mock，模拟 HTTP 响应。"""
+        """创建一个 httpx.AsyncClient mock，模拟 HTTP 流式响应（D2：stream + aiter_bytes）。"""
         mock_response = MagicMock()
-        mock_response.text = text
-        mock_response.headers = {"content-type": content_type}
+        body = text.encode("utf-8")
+        mock_response.headers = {"content-type": content_type,
+                                 "content-length": str(len(body))}
         mock_response.status_code = status_code
+        mock_response.raise_for_status = MagicMock(side_effect=raise_for_status_error)
 
-        if raise_for_status_error is not None:
-            mock_response.raise_for_status = MagicMock(side_effect=raise_for_status_error)
-        else:
-            mock_response.raise_for_status = MagicMock()
+        class _Resp:
+            """最小 stream 响应：async CM + headers + raise_for_status + aiter_bytes。"""
+
+            def __init__(self, resp):
+                self._resp = resp
+                self.headers = resp.headers
+                self.status_code = resp.status_code
+                self.raise_for_status = resp.raise_for_status
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def aiter_bytes(self):
+                yield body
+
+        def _stream(method, url):
+            return _Resp(mock_response)
 
         mock_client = MagicMock()
         mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.stream = _stream
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -302,6 +321,8 @@ class TestWebFetchPlugin:
 
         mock_response = MagicMock()
         mock_response.status_code = 404
+        mock_response.headers = {"content-type": "text/html; charset=utf-8",
+                                 "content-length": "9"}
         mock_response.raise_for_status = MagicMock(
             side_effect=httpx.HTTPStatusError(
                 "Not Found", request=MagicMock(), response=mock_response
@@ -309,8 +330,23 @@ class TestWebFetchPlugin:
         )
         mock_response.text = "Not Found"
 
+        class _Resp404:
+            def __init__(self, r):
+                self.headers = r.headers
+                self.status_code = r.status_code
+                self.raise_for_status = r.raise_for_status
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def aiter_bytes(self):
+                yield b"Not Found"
+
         mock_client = MagicMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.stream = lambda m, u: _Resp404(mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -375,3 +411,33 @@ class TestWebFetchPlugin:
             )
             assert "Hello World" in result
             assert "Line 2" in result
+
+
+class TestWebFetchSSRF:
+    """D2/P1-15：WebFetch 出站走统一守卫 transport——loopback/私网拒绝。"""
+
+    def test_rejects_loopback_url(self):
+        """http://127.0.0.1 → 守卫 transport 拒绝（无需真实服务器）。"""
+        import asyncio
+        from core.tools.web.plugin import WebFetchPlugin, WebFetchParams
+
+        plugin = WebFetchPlugin()
+        ctx = ToolContext(session_id="test")
+        result = asyncio.run(
+            plugin.execute(ctx=ctx, emit=None,
+                           params=WebFetchParams(url="http://127.0.0.1/secret"))
+        )
+        assert "目标地址被拒绝" in result
+
+    def test_rejects_localhost_hostname(self):
+        """localhost → 拒绝（DNS 解析到 loopback）。"""
+        import asyncio
+        from core.tools.web.plugin import WebFetchPlugin, WebFetchParams
+
+        plugin = WebFetchPlugin()
+        ctx = ToolContext(session_id="test")
+        result = asyncio.run(
+            plugin.execute(ctx=ctx, emit=None,
+                           params=WebFetchParams(url="http://localhost/secret"))
+        )
+        assert "目标地址被拒绝" in result

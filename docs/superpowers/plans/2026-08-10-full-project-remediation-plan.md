@@ -105,7 +105,7 @@ A1/A2
 - [x] C4 shutdown 顺序与可重入 restart
 - [x] C5 checkpoint 与 proactive event
 - [x] D1 文件 containment/symlink/资源上限
-- [ ] D2 SSRF 与 Web response 上限
+- [x] D2 SSRF 与 Web response 上限
 - [ ] D3 搜索、WS/REST 输入上限和失败反馈
 - [ ] D4 日志脱敏
 - [ ] D5 上传活动内容与配置 secret
@@ -1320,6 +1320,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：无
 - 契约或 Electron 影响：无
 - 剩余风险：TOCTOU（check→open 竞态）未用 openat/O_NOFOLLOW——resolve 后逐组件 symlink 检查已挡常见逃逸，替换竞态留文档；ListDir 节点预算用 getattr 默认 500（未加独立 config 字段）；read 路径仍未 to_thread（write/list 已异步化）
+
+### D2 — 统一 SSRF transport、逐跳校验与 Web 流式上限
+
+- 状态：完成
+- Commit：`<见 D2 提交>`
+- 变更文件：`core/tools/web/plugin.py`、`core/input/ssrf.py`、`core/input/api_routes.py`、`core/tools/web/test_web.py`
+- 新增失败测试：`TestWebFetchSSRF`（loopback/localhost 拒绝）；`_make_client_mock` 改流式（stream+aiter_bytes）支撑新实现
+- 目标测试：`pytest core/tools/ core/input/tests/test_ssrf.py core/input/tests/test_server.py` → 196 passed
+- 批次门禁：`ruff check` → 通过；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：无
+- 契约或 Electron 影响：无 wire 变化；web_fetch 对超限/被拒 URL 返回稳定错误文案
+- 剩余风险/计划偏差：DNS rebinding（连接 IP 钉扎）未实现——每跳 validate_endpoint + 跨源剥头已挡常见 redirect/私网第二跳，rebinding 需 transport 级 IP 钉扎（httpx 不支持，留文档）；usable 测试回显内部响应片段未收敛；压缩炸弹解压后字节上限未单独处理（流式原始字节上限已挡总量）
 
 ## 14. 需要停止并请求决策的情况
 
