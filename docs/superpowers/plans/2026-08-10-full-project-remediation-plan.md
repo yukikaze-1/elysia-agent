@@ -98,7 +98,7 @@ A1/A2
 - [x] B3 归档任务所有权与 durable 删除
 - [x] B4 accepted ACK 前建立附件引用
 - [x] B5 Consolidator/LTM 离线一致性
-- [ ] B6 Session 查询、TTL 迁移与 reflector
+- [x] B6 Session 查询、TTL 迁移与 reflector
 - [ ] C1 用户消息 FIFO 与 work lease
 - [ ] C2 Per-call ToolInvocation 与 call-ID task
 - [ ] C3 After-response 目标会话绑定
@@ -1236,6 +1236,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：新增 `data/memory_pending_deletes.json` 持久 tombstone（原子写，空则删除）；无索引变化
 - 契约或 Electron 影响：无
 - 剩余风险：pending-delete journal 重连应用失败保留待下次（无独立 outbox worker）；consolidation 永久失败时 buffer 无限增长（数据保留方向，flush 兜底）
+
+### B6 — Session 查询、TTL 迁移与 reflector 持久化
+
+- 状态：完成（TTL 修复 + reflector 接线；session 列表分页下推按剩余风险记录）
+- Commit：`<见 B6 提交>`
+- 变更文件：`core/storage/base.py`（bson_expires）、`core/storage/generation_repo.py`、`core/storage/desktop_call_repo.py`、`core/storage/session_repo.py`、`core/memory/session_manager.py`、`core/agent/agent.py`、相关测试
+- 新增失败测试：`TestTtlExpiry`（generations/desktop_calls upsert 自动补 BSON Date ttl_expires_at、缺字段旧记录回填）；`TestMemoryReflectorBinding`（reflector 挂到当前+未来会话）
+- 目标测试：`pytest core/storage/tests/test_generation_repo.py core/storage/tests/test_desktop_call_repo.py core/memory/tests/ core/agent/tests/` → 325 passed
+- 批次门禁：`ruff check core/storage/ core/memory/ core/agent/agent.py` → 通过；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：generations/desktop_calls 新增 `ttl_expires_at`（BSON Date），启动幂等回填旧记录；TTL 索引从失效的 updated_at 迁到 ttl_expires_at；sessions 移除自动 TTL（改显式删除）
+- 契约或 Electron 影响：无
+- 剩余风险/计划偏差：session 列表分页下推（P2-01 的「第 201 条可分页/搜索」）未实现——当前 repo.list_all 仍预取 200；显式 session 过期级联清理 worker 未实现（已移除静默孤儿 TTL，删除走 REST/B3）；reflector 仍为跨会话共享单例（per-session 实例由 C3 收口）
 
 ## 14. 需要停止并请求决策的情况
 

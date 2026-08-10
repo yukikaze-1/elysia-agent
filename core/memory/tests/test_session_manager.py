@@ -888,3 +888,20 @@ async def test_load_active_loads_default():
     m = _make_manager()
     await m.load_active()
     assert m.active.session_id == "default"
+
+
+class TestMemoryReflectorBinding:
+    """B6/P2-01：reflector 挂到所有（含未来）会话——反思状态可持久化。"""
+
+    @pytest.mark.asyncio
+    async def test_bind_applies_to_current_and_future_sessions(self):
+        m = _make_manager()
+        await m.ensure_loaded("conv_r1")
+        reflector = MagicMock()
+
+        m.bind_memory_reflector(reflector)
+
+        # 已存在的会话
+        assert m.get("conv_r1")._memory_reflector is reflector  # noqa: SLF001
+        # 未来新建会话（get 懒构造）
+        assert m.get("conv_r2")._memory_reflector is reflector  # noqa: SLF001

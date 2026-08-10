@@ -230,6 +230,8 @@ class Agent(AgentLifecycle, AgentServer):
             memory=self._long_term,
             session=self._session_manager.active,
         )
+        # B6/P2-01：把 reflector 挂到所有会话——反思状态经 session save/load 持久化
+        self._session_manager.bind_memory_reflector(self._memory_reflector)
 
         # ---- Token 统计 ----
         self._token_tracker: "TokenTracker | None" = None  # 在 start() 中创建（需要 session_id）

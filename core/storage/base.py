@@ -16,10 +16,29 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from Module.database.documentdb import DocumentDBBackend
+
+
+def bson_expires(days: int, *, now: datetime | None = None) -> datetime:
+    """返回 BSON Date 兼容的过期时间戳（aware UTC datetime）。
+
+    B6/P2-01：Mongo TTL 只扫描 BSON Date 字段——ISO 字符串永不触发过期。
+    临时记录（generations/desktop_calls）的 TTL 基准必须用本函数生成的 datetime，
+    落库即 BSON Date，TTL 索引才真正生效。
+
+    Args:
+        days: 保留天数。
+        now: 基准时刻（测试注入），默认当前 UTC。
+
+    Returns:
+        aware UTC datetime（now + days）。
+    """
+    base = now if now is not None else datetime.now(timezone.utc)
+    return base + timedelta(days=days)
 
 
 class StorageUnavailableError(RuntimeError):

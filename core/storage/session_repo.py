@@ -88,11 +88,6 @@ class SessionRepository(Repository):
             )
             await self._db.ensure_index(COLLECTION, [("session_id", 1)])
             await self._db.ensure_index(COLLECTION, [("updated_at", -1)])
-            try:
-                await self._db.ensure_index(
-                    COLLECTION, [("updated_at", 1)], expireAfterSeconds=30 * 86400)
-            except Exception as e:
-                logger.warning("SessionRepository: TTL index failed (%s)", e)
             logger.info("SessionRepository: MongoDB connected")
             return True
         except Exception as e:

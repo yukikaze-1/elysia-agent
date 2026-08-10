@@ -184,3 +184,33 @@ class TestGenerationRepository:
         docs, has_more, cursor = asyncio.run(repo.find_by_session(SessionId("s1")))
         assert (docs, has_more, cursor) == ([], False, None)
         assert asyncio.run(repo.mark_stale("running", "iso")) == 0
+
+
+class TestTtlExpiry:
+    """B6/P2-01：generation 临时记录 TTL 基于真实 BSON Date ttl_expires_at。"""
+
+    def test_upsert_sets_bson_expires(self):
+        """upsert 自动补 ttl_expires_at（datetime → Mongo BSON Date，TTL 才生效）。"""
+        from datetime import datetime, timezone
+        repo = GenerationRepository(db=FakeDocumentDBBackend())
+        asyncio.run(repo.upsert({"generation_id": "g_ttl", "status": "running"}))
+        doc = asyncio.run(repo.find_one(GenerationId("g_ttl")))
+        expires = doc.get("ttl_expires_at")
+        assert isinstance(expires, datetime), f"ttl_expires_at 应为 BSON Date，实际 {type(expires)}"
+        assert expires.tzinfo is not None
+        assert expires > datetime.now(timezone.utc)  # 未来 30 天
+
+    def test_backfill_fills_missing_ttl(self):
+        """旧记录缺 ttl_expires_at → 启动回填（幂等）。"""
+        from datetime import datetime
+        repo = GenerationRepository(db=FakeDocumentDBBackend())
+        asyncio.run(repo.upsert({"generation_id": "g_old", "status": "completed"}))
+        # 手动去掉 ttl_expires_at 模拟旧数据
+        coll = repo._db.collections["generations"]  # noqa: SLF001
+        for d in coll:
+            d.pop("ttl_expires_at", None)
+
+        asyncio.run(repo._backfill_ttl())  # noqa: SLF001
+
+        doc = asyncio.run(repo.find_one(GenerationId("g_old")))
+        assert isinstance(doc.get("ttl_expires_at"), datetime)

@@ -309,3 +309,29 @@ class TestConnect:
         # 已注入可达 fake → 真实 ping 通过 → True
         repo2 = DesktopCallRepository(mongodb=FakeDocumentDBBackend())
         assert asyncio.run(repo2.health_check()) is True
+
+
+class TestTtlExpiry:
+    """B6/P2-01：desktop_calls 临时记录 TTL 基于真实 BSON Date ttl_expires_at。"""
+
+    def test_upsert_sets_bson_expires(self):
+        from datetime import datetime, timezone
+        repo = DesktopCallRepository(mongodb=FakeDocumentDBBackend())
+        asyncio.run(repo.upsert(_call(call_id="c_ttl", status="pending")))
+        docs = asyncio.run(repo._db.find(COLLECTION, {"call_id": "c_ttl"}))  # noqa: SLF001
+        assert docs
+        expires = docs[0].get("ttl_expires_at")
+        assert isinstance(expires, datetime)
+        assert expires > datetime.now(timezone.utc)
+
+    def test_backfill_fills_missing_ttl(self):
+        from datetime import datetime
+        repo = DesktopCallRepository(mongodb=FakeDocumentDBBackend())
+        asyncio.run(repo.upsert(_call(call_id="c_old", status="succeeded")))
+        for d in repo._db.collections[COLLECTION]:  # noqa: SLF001
+            d.pop("ttl_expires_at", None)
+
+        asyncio.run(repo._backfill_ttl())  # noqa: SLF001
+
+        docs = asyncio.run(repo._db.find(COLLECTION, {"call_id": "c_old"}))  # noqa: SLF001
+        assert isinstance(docs[0].get("ttl_expires_at"), datetime)

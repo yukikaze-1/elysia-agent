@@ -38,6 +38,7 @@ from core.memory.session import SessionMemory
 
 if TYPE_CHECKING:
     from core.personality.engine import CharacterEngine
+    from core.memory.memory_reflector import MemoryReflector
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,9 @@ class SessionManager:
         self._msg_repo = msg_repo
         self._max_sessions = max_sessions
         self._max_messages = max_messages
+        # B6/P2-01：共享 MemoryReflector（agent 注入）——挂到所有会话使 reflector
+        # 状态经 save/load 持久化（真正的 per-session reflector 由 C3 收口）。
+        self._shared_reflector = None
         # OrderedDict：访问/插入移到尾部，头部即最久未用（LRU）
         self._sessions: OrderedDict[SessionId, SessionMemory] = OrderedDict()
         self._loaded: set[SessionId] = set()
@@ -157,11 +161,22 @@ class SessionManager:
                 repo=self._repo,
                 msg_repo=self._msg_repo,
             )
+            if self._shared_reflector is not None:
+                session.set_memory_reflector(self._shared_reflector)
             self._sessions[sid] = session
             self.evict_if_needed()
         else:
             self._sessions.move_to_end(sid)
         return session
+
+    def bind_memory_reflector(self, mr: "MemoryReflector") -> None:
+        """把 MemoryReflector 挂到所有（含未来）会话（B6/P2-01）。
+
+        reflector 状态经 session save/load 持久化——不接线则反思状态重启丢失。
+        """
+        self._shared_reflector = mr
+        for session in self._sessions.values():
+            session.set_memory_reflector(mr)
 
     async def ensure_loaded(self, sid: SessionId) -> SessionMemory:
         """首次调用 await load（Mongo → JSONL fallback）；重复调用不重复 load。

@@ -53,7 +53,7 @@ from typing import Any
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.schema.utils import now_iso
-from core.storage.base import Repository
+from core.storage.base import Repository, bson_expires
 
 logger = logging.getLogger(__name__)
 
@@ -159,10 +159,13 @@ class DesktopCallRepository(Repository):
             await self._db.ensure_index(COLLECTION, [("call_id", 1)], unique=True)
             await self._db.ensure_index(COLLECTION, [("status", 1), ("updated_at", 1)])
             try:
+                # B6/P2-01：TTL 基于真实 BSON Date ttl_expires_at（旧 updated_at ISO 不生效）
                 await self._db.ensure_index(
-                    COLLECTION, [("updated_at", 1)], expireAfterSeconds=DESKTOP_CALLS_TTL_SECONDS)
+                    COLLECTION, [("ttl_expires_at", 1)],
+                    expireAfterSeconds=DESKTOP_CALLS_TTL_SECONDS)
             except Exception as e:
                 logger.warning("DesktopCallRepository: TTL 索引创建失败 (%s)", e)
+            await self._backfill_ttl()
             await self.reload_from_db()
             logger.info("DesktopCallRepository: MongoDB connected")
             return True
@@ -170,6 +173,24 @@ class DesktopCallRepository(Repository):
             logger.warning("DesktopCallRepository: MongoDB 不可用 (%s)", e)
             self._db = None
             return False
+
+    async def _backfill_ttl(self) -> None:
+        """为缺 ttl_expires_at 的旧记录回填（B6/P2-01 迁移，幂等）。"""
+        if self._db is None:
+            return
+        try:
+            stale = await self._db.find(
+                COLLECTION, {"ttl_expires_at": {"$exists": False}}, limit=500)
+            for doc in stale:
+                try:
+                    await self._db.update_one(
+                        COLLECTION,
+                        {"call_id": doc.get("call_id")},
+                        {"$set": {"ttl_expires_at": bson_expires(30)}})
+                except Exception:
+                    logger.debug("desktop call ttl 回填失败（幂等，下次重试）", exc_info=True)
+        except Exception:
+            logger.warning("desktop call ttl 回填查询失败", exc_info=True)
 
     async def close(self) -> None:
         """关闭数据库连接，释放资源（进程内缓存保留，不阻断后续查询）。"""
@@ -196,6 +217,8 @@ class DesktopCallRepository(Repository):
             return
         doc = dict(call)
         doc.setdefault("updated_at", now_iso())
+        # B6/P2-01：TTL 基准 BSON Date（业务 expires_at 是调用超时，非回收 TTL）
+        doc.setdefault("ttl_expires_at", bson_expires(30))
         self._cache[call_id] = doc
         await self._persist(call_id, doc)
 

@@ -27,13 +27,14 @@ import logging
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.schema.types import GenerationId, MessageId, SessionId
 from core.schema.utils import now_iso
-from core.storage.base import Repository
+from core.storage.base import Repository, bson_expires
 
 logger = logging.getLogger(__name__)
 
 COLLECTION = "generations"
 
-# TTL：30 天，按 updated_at 过期（与 sessions 对齐）
+# TTL：30 天（B6/P2-01：改按真实 BSON Date `ttl_expires_at` 过期——旧 updated_at
+# 为 ISO 字符串，Mongo TTL 不生效，临时记录永不回收）
 GENERATIONS_TTL_SECONDS = 30 * 86400
 
 # generation 生命周期状态常量
@@ -97,16 +98,37 @@ class GenerationRepository(Repository):
             await self._db.ensure_index(COLLECTION, [("session_id", 1), ("updated_at", -1)])
             await self._db.ensure_index(COLLECTION, [("message_id", 1)])
             try:
+                # B6/P2-01：TTL 基于真实 BSON Date ttl_expires_at（旧 updated_at ISO 不生效）
                 await self._db.ensure_index(
-                    COLLECTION, [("updated_at", 1)], expireAfterSeconds=GENERATIONS_TTL_SECONDS)
+                    COLLECTION, [("ttl_expires_at", 1)],
+                    expireAfterSeconds=GENERATIONS_TTL_SECONDS)
             except Exception as e:
                 logger.warning("GenerationRepository: TTL index failed (%s)", e)
+            await self._backfill_ttl()
             logger.info("GenerationRepository: MongoDB connected")
             return True
         except Exception as e:
             logger.warning("GenerationRepository: MongoDB unavailable (%s)", e)
             self._db = None
             return False
+
+    async def _backfill_ttl(self) -> None:
+        """为缺 ttl_expires_at 的旧记录回填（B6/P2-01 迁移，幂等）。"""
+        if self._db is None:
+            return
+        try:
+            stale = await self._db.find(
+                COLLECTION, {"ttl_expires_at": {"$exists": False}}, limit=500)
+            for doc in stale:
+                try:
+                    await self._db.update_one(
+                        COLLECTION,
+                        {"generation_id": doc.get("generation_id")},
+                        {"$set": {"ttl_expires_at": bson_expires(30)}})
+                except Exception:
+                    logger.debug("generation ttl 回填失败（幂等，下次重试）", exc_info=True)
+        except Exception:
+            logger.warning("generation ttl 回填查询失败", exc_info=True)
 
     async def close(self) -> None:
         """关闭数据库连接，释放资源。"""
@@ -138,6 +160,8 @@ class GenerationRepository(Repository):
         generation_id = doc.get("generation_id")
         if not generation_id:
             return
+        # B6/P2-01：TTL 基准 BSON Date——新写记录补 ttl_expires_at
+        doc.setdefault("ttl_expires_at", bson_expires(30))
         await self._db.update_one(
             COLLECTION, {"generation_id": generation_id}, {"$set": doc}, upsert=True)
 
