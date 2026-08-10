@@ -1247,3 +1247,30 @@ class TestResumeBounded:
         assert result.code == ResumeErrorCode.QUEUE_FULL
         assert ts2.resume_pending is False             # 入队失败清标记
         await engine.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E2: stop() 终态化 QUEUED/PAUSED 任务
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestStopTerminalizes:
+    @pytest.mark.asyncio
+    async def test_stop_terminalizes_queued_and_paused(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        captured = {}
+        for status, tid in [(WorkflowStatus.QUEUED, "q1"), (WorkflowStatus.PAUSED, "p1")]:
+            sa = MagicMock()
+            ts = MagicMock()
+            ts.status = status
+            sa._task_state = ts
+            wid = WorkflowId(tid)
+            engine._tasks[wid] = sa
+            engine._mailboxes[wid] = WorkflowMailbox(wid)
+            captured[wid] = engine._mailboxes[wid]     # 先捕获引用
+        await engine.stop()
+        assert WorkflowId("q1") not in engine._tasks
+        assert WorkflowId("p1") not in engine._tasks
+        assert captured[WorkflowId("q1")].count() >= 1  # 用捕获的引用断言 CANCELLED 事件
+        assert captured[WorkflowId("p1")].count() >= 1

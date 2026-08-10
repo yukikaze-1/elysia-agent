@@ -217,16 +217,48 @@ class WorkflowEngine:
         """优雅关闭。
 
         1. 拒绝新提交（_started = False）
-        2. 等待活跃任务自然完成（最多 timeout 秒）
-        3. 超时后 cancel 剩余任务——CancelledError 传播到 Orchestrator 的
+        2. 停后台队列 worker（cancel + gather）——worker 的 except CancelledError
+           已处理「已 acquire 未派发」的槽位释放；未 acquire 的条目留在队列，
+           由第 3 步的 _tasks 扫描终态化覆盖（条目无论仍在队列 / 已被取走 / 已取未派发）。
+        3. 终态化未派发/暂停任务：扫描 _tasks——task_state 为空、status in
+           (QUEUED, PAUSED)、或 task_id 不在 _task_futures → 置 CANCELLED +
+           推 CANCELLED 事件 + _cleanup_task（+ best-effort _cleanup_storage）。
+        4. 等待活跃任务自然完成（最多 timeout 秒）
+        5. 超时后 cancel 剩余任务——CancelledError 传播到 Orchestrator 的
            下一个 await 点，finally 块自动执行 cleanup + semaphore.release
-        4. 兜底清理（防止 finally 未执行的情况）
+        6. 兜底清理（防止 finally 未执行的情况）
 
         Args:
             timeout: 等待活跃任务自然完成的超时秒数。
         """
         logger.info("WorkflowEngine.stop: 活跃任务数=%d, timeout=%.0fs", len(self._tasks), timeout)
         self._started = False
+
+        # 停后台队列 worker（cancel 触发 _drain_queue 的 CancelledError 槽位归还）
+        if self._queue_worker is not None and not self._queue_worker.done():
+            self._queue_worker.cancel()
+            await asyncio.gather(self._queue_worker, return_exceptions=True)
+
+        # 终态化未派发/暂停任务（以 _tasks 为唯一权威扫描，不依赖队列归还）
+        for task_id in list(self._tasks.keys()):
+            sub_agent = self._tasks.get(task_id)
+            if sub_agent is None:
+                continue
+            ts = sub_agent._task_state
+            if (ts is None or ts.status in (WorkflowStatus.QUEUED, WorkflowStatus.PAUSED)
+                    or task_id not in self._task_futures):
+                if ts is not None:
+                    ts.status = WorkflowStatus.CANCELLED
+                    ts.updated_at = now_iso()
+                mailbox = self._mailboxes.get(task_id)
+                if mailbox:
+                    push_mailbox_event(mailbox, WorkflowEventType.CANCELLED,
+                                       {"task_id": str(task_id), "reason": "服务停止"})
+                self._cleanup_task(task_id)
+                try:
+                    await self._cleanup_storage(task_id, sub_agent)
+                except Exception:
+                    logger.exception("WorkflowEngine.stop: task_id=%s 清理失败", task_id)
 
         futures = list(self._task_futures.values())
         if futures:
