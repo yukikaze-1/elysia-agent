@@ -74,39 +74,39 @@ echo -e "${BOLD}Step 2: pip install -r requirements.txt${NC}"
 $PYTHON -m pip install -r requirements.txt
 echo -e "${GREEN}✓${NC} pip 依赖安装完成"
 
-# ── Step 3: 前端构建 ────────────────────────────────────────────────────────
+# ── Step 3: 前端构建（F3：backend-only 默认；--with-frontend 才构建 v1 UI）───
 
 echo ""
 echo -e "${BOLD}Step 3: 前端构建 (Vue 3 + Vite)${NC}"
 
-if ! command -v node &> /dev/null; then
-    echo -e "  ${RED}✗${NC} 未找到 Node.js — 请先安装 Node.js >= 18 (https://nodejs.org)"
-    exit 1
-fi
+# backend-only 默认（Electron/后端部署无 Node 也能安装）；显式 --with-frontend /
+# --legacy-ui 才构建 v1 UI（用 npm ci，干净安装）。缺 Node 且未显式请求 → 跳过，不报错。
+BUILD_FRONTEND=false
+for arg in "$@"; do
+    if [[ "$arg" == "--with-frontend" || "$arg" == "--legacy-ui" ]]; then
+        BUILD_FRONTEND=true
+    fi
+done
 
-if ! command -v npm &> /dev/null; then
-    echo -e "  ${RED}✗${NC} 未找到 npm — 请检查 Node.js 安装"
+if ! $BUILD_FRONTEND; then
+    echo -e "  ${YELLOW}→${NC} 跳过前端构建（backend-only）——如需 v1 UI 用: bash scripts/setup.sh --with-frontend"
+elif ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
+    echo -e "  ${RED}✗${NC} --with-frontend 需要 Node.js >= 18 + npm——请先安装，或去掉该 flag 用 backend-only"
     exit 1
-fi
-
-NODE_VER=$(node --version | sed 's/v//' | cut -d. -f1)
-if [[ "$NODE_VER" -lt 18 ]]; then
-    echo -e "  ${RED}✗${NC} Node.js >= 18  (当前 $(node --version))"
-    exit 1
-fi
-echo -e "  ${GREEN}✓${NC} Node.js $(node --version)"
-
-if [[ -d "frontend/node_modules" ]]; then
-    echo -e "  ${GREEN}✓${NC} node_modules 已安装，跳过 npm install"
 else
-    echo -n "  正在 npm install..."
-    cd frontend && npm install --silent 2>&1 && cd ..
-    echo -e "  ${GREEN}✓${NC} npm install 完成"
+    NODE_VER=$(node --version | sed 's/v//' | cut -d. -f1)
+    if [[ "$NODE_VER" -lt 18 ]]; then
+        echo -e "  ${RED}✗${NC} Node.js >= 18  (当前 $(node --version))"
+        exit 1
+    fi
+    echo -e "  ${GREEN}✓${NC} Node.js $(node --version)"
+    echo -n "  正在 npm ci (clean install)..."
+    cd frontend && npm ci --silent 2>&1 && cd ..
+    echo -e "  ${GREEN}✓${NC} npm ci 完成"
+    echo -n "  正在 npm run build..."
+    cd frontend && npm run build --silent 2>&1 && cd ..
+    echo -e "  ${GREEN}✓${NC} 前端构建完成 → static/"
 fi
-
-echo -n "  正在 npm run build..."
-cd frontend && npm run build --silent 2>&1 && cd ..
-echo -e "  ${GREEN}✓${NC} 前端构建完成 → static/"
 
 # ── Step 4: 配置 .env ──────────────────────────────────────────────────────
 

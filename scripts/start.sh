@@ -53,22 +53,44 @@ else
     echo "  ⚠ Docker 未安装且数据库未运行"
 fi
 
-# ── 2. 构建前端 ──────────────────────────────────────────────────────────────
+# ── 2. 构建前端（F3：backend-only 默认；--with-frontend 才构建 v1 UI）───
+
+# 参数解析：--with-frontend 显式构建 v1 UI（需 npm）；--skip-preflight 显式降级跳过预检
+WITH_FRONTEND=false
+SKIP_PREFLIGHT=false
+for arg in "$@"; do
+    case "$arg" in
+        --with-frontend) WITH_FRONTEND=true ;;
+        --skip-preflight) SKIP_PREFLIGHT=true ;;
+    esac
+done
 
 echo "→ 构建前端..."
-
-if command -v npm &> /dev/null; then
-    cd frontend && npm install --silent 2>&1 && npm run build --silent 2>&1 && cd ..
-    echo "  ✓ 前端构建完成"
+if $WITH_FRONTEND; then
+    if command -v npm &> /dev/null; then
+        cd frontend && npm ci --silent 2>&1 && npm run build --silent 2>&1 && cd ..
+        echo "  ✓ 前端构建完成"
+    else
+        echo "  ✗ --with-frontend 需要 npm——请先安装 Node.js/npm，或去掉该 flag 用 backend-only"
+        exit 1
+    fi
+elif [[ -f "static/index.html" ]]; then
+    echo "  ✓ 跳过前端构建（static/ 已存在）"
 else
-    echo "  错误: 未找到 npm。请先运行 bash scripts/setup.sh"
-    exit 1
+    echo "  ⚠ 跳过前端构建（backend-only，无 static/）——访问 / 将无 v1 UI，仅 WS/REST 可用"
 fi
 
-# ── 3. 快速预检 ─────────────────────────────────────────────────────────────
+# ── 3. 快速预检（F3：失败默认非零退出；--skip-preflight 显式降级）───
 
-echo "→ 预检..."
-$PYTHON app.py --check 2>/dev/null || true
+if $SKIP_PREFLIGHT; then
+    echo "  ⚠ 跳过预检（显式 --skip-preflight 降级）"
+else
+    echo "→ 预检..."
+    if ! $PYTHON app.py --check; then
+        echo "  ✗ 预检失败——配置/依赖有问题，拒绝启动。修复后重试；或显式 --skip-preflight 降级启动"
+        exit 1
+    fi
+fi
 
 # ── 4. 启动服务 ────────────────────────────────────────────────────────────
 

@@ -33,7 +33,9 @@ cd Agent
 ### 3. 首次安装（只需一次）
 
 ```bash
-# 安装环境 + 下载模型（约 1.3GB，需网络）
+# 安装环境 + 下载模型（约 1.3GB，需网络）。
+# backend-only 默认——无需 Node/npm（Electron/后端部署可直接用）；
+# 需要 v1 网页 UI 时: bash scripts/setup.sh --with-frontend
 bash scripts/setup.sh
 
 # 编辑 .env，填入 API key（nano .env，或用桌面文本编辑器打开）
@@ -41,7 +43,7 @@ bash scripts/setup.sh
 #   语音: MINIMAX_API_KEY（TTS，免费注册 https://platform.minimaxi.com）
 # 更多可选配置见 .env.example 中的注释
 
-# 构建前端页面（Vue 3 + Vite）
+# 构建前端页面（Vue 3 + Vite，仅 --with-frontend 安装时执行）
 cd frontend && npm install && npm run build && cd ..
 
 # 启动数据库（Docker 容器，重启后自动保持运行）
@@ -52,10 +54,13 @@ docker compose --profile dev up -d
 ### 启动（每次使用）
 
 ```bash
-bash scripts/start.sh
+bash scripts/start.sh          # backend-only 默认（无 Node 也能启动；预检失败即拒绝启动）
+bash scripts/start.sh --with-frontend   # 显式构建 v1 UI（需 npm）
+bash scripts/start.sh --skip-preflight  # 显式跳过预检（降级，慎用）
 ```
 
 自动完成：conda 激活 → 数据库检查 → 快速预检 → 启动服务（WebSocket 服务器）。
+预检（`app.py --check`）失败默认非零退出——配置/依赖有问题时不再静默继续（`--skip-preflight` 显式降级）。
 
 打开浏览器访问 **`http://localhost:8765`**，在聊天界面与 AI 对话。日志输出到 `log/` 目录（主日志 `app.log`，全量 `app-debug.log`。详见 `log/README.md`）。停止：`Ctrl+C`。
 
