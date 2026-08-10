@@ -120,7 +120,7 @@ A1/A2
 - [ ] E4 Workflow 测试分层
 - [x] E5 Milvus 输入与 metric
 - [ ] E6 Desktop golden runtime 单源
-- [ ] F1 真正全量离线 CI
+- [x] F1 真正全量离线 CI
 - [ ] F2 依赖锁与安全扫描
 - [ ] F3 Backend-only setup/start
 - [ ] F4 静态门禁与关键复杂度拆分
@@ -1404,6 +1404,15 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：idempotency 集合新建（TTL 1h 自清，无需迁移）
 - 契约或 Electron 影响：`server_info.features.idempotency_durable`（true=持久化 / false=内存降级窗口）；产品模式 + Mongo 离线 → v2 文本/voice.commit `user_message.ack{rejected, STORAGE_UNAVAILABLE, retryable}`；幂等表现按 `(conversation_id, client_request_id)` 维度
 - 剩余风险：dev 降级窗口内（Mongo 离线 + 回环绑定）跨重启不保证去重（capabilities 如实暴露）；release/complete best-effort——release 失败时条目保留到 TTL（重试重放原 ACK，安全方向）；并发同键双写由唯一索引兜底
+
+### F1 — 建立真正全量的离线 CI 矩阵
+
+- 状态：完成（2026-08-11）
+- Commit：`1a7cd94`
+- 变更文件：`Makefile`（test-all 真全仓非 external / test-quick 去 ignore / test-normal `not slow and not external` / 新增 test-external）、`pytest.ini`（external marker + coroutine warnings-as-errors）、5 个 workflow 集成测试文件（标 external）、`.github/workflows/ci.yml`（pr-gate 去 ignore + ruff 含 scripts + 新增 external job）、`scripts/check_ci_isolation.py`（_is_push_only 认 workflow_dispatch/schedule）
+- 实施步骤对应：test-all 重定义 ✓ / CI 必跑（lint/pyright/contract drift/含 scripts；workflow unit/service 入 gate）✓ / external job 独立受保护 ✓ / warnings-as-errors 起步（coroutine 泄漏，先清 15 条异步 warning）✓
+- 验证：`make test-quick` 3324 passed（+257 workflow unit）/ `make test-normal` 3426 passed / `pytest --collect-only -m external` 36（workflow 真实 LLM E2E）/ `check_ci_isolation.py` 通过 / ci.yml YAML 有效
+- 剩余风险：test-full（含 external）仍跑真实 LLM E2E（flaky 已记 todo，E4 处理 fake-LLM 确定性）；docs-only path-ignore 保留（契约源在 frontend_contract/，文档变更不触发 drift 检查属预期）
 
 ## 14. 需要停止并请求决策的情况
 
