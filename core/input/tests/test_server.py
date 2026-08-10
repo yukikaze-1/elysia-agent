@@ -1101,6 +1101,42 @@ class TestImageUpload:
         data = json.loads(body)
         assert "error" in data
 
+    @pytest.mark.asyncio
+    async def test_upload_html_extension_rejected_415(self, image_app):
+        """D5/P2-03：.html 扩展拒绝（不默认为 image/png）。"""
+        status, body = await self._post(
+            image_app(), "evil.html", b"<html><script>alert(1)</script></html>",
+            "text/html")
+        assert status == 415, f"expected 415, got {status}: {body.decode()}"
+
+    @pytest.mark.asyncio
+    async def test_upload_content_type_mismatch_rejected_415(self, image_app):
+        """D5/P2-03：.png 扩展但内容是 HTML（polyglot）→ 魔数不符拒绝。"""
+        import json as _json
+        status, body = await self._post(
+            image_app(), "fake.png", b"<html><script>alert(1)</script></html>",
+            "image/png")
+        assert status == 415, f"expected 415, got {status}: {body.decode()}"
+        assert "不符" in _json.loads(body.decode())["error"]
+
+    @pytest.mark.asyncio
+    async def test_uploads_static_response_has_nosniff(self, image_app, tmp_path):
+        """D5/P2-03：legacy /uploads/ 静态响应带 X-Content-Type-Options: nosniff。"""
+        app = image_app()
+        img_dir = tmp_path / "uploads" / "images"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        (img_dir / "x.png").write_bytes(_PNG_HEADER + b"\x00" * 20)
+
+        from aiohttp import FormData
+        from aiohttp.test_utils import TestClient, TestServer
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            resp = await client.get("/uploads/images/x.png")
+            assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+        finally:
+            await client.close()
+
 
 # ── Task 9（批次 8a A 簇 minor）：错误信封不泄漏异常文本/绝对路径 ────────────
 

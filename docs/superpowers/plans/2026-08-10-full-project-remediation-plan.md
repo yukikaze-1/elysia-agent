@@ -108,7 +108,7 @@ A1/A2
 - [x] D2 SSRF 与 Web response 上限
 - [x] D3 搜索、WS/REST 输入上限和失败反馈
 - [x] D4 日志脱敏
-- [ ] D5 上传活动内容与配置 secret
+- [x] D5 上传活动内容与配置 secret
 - [ ] D6a 非回环 fail-closed 鉴权
 - [ ] D6b 公开入口限流
 - [ ] D6c durable idempotency
@@ -1356,6 +1356,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：无
 - 契约或 Electron 影响：WS CONTRACT_VALIDATION 错误消息改为 loc:type 摘要（不含 invalid input）——Electron 展示更安全但文案变化
 - 剩余风险：异常链/repr/第三方 exception 的安全映射未全覆盖（生产 traceback 不返回已由 server 层错误处理覆盖）；`docs/electron-backend-security.md` 字段清单更新未做（F5 文档交接统一）
+
+### D5 — 上传活动内容隔离与配置 secret 纪律
+
+- 状态：完成
+- Commit：`<见 D5 提交>`
+- 变更文件：`core/input/api_routes.py`（/api/images 未知扩展拒绝 + 魔数校验 + 安全扩展名；desktop 上传危险扩展拒绝）、`core/input/server.py`（/uploads nosniff middleware）、`core/config/app_config.py`（SERVER_AUTH_TOKEN secret=True）、`core/input/tests/test_server.py`
+- 新增失败测试：`test_upload_html_extension_rejected_415`、`test_upload_content_type_mismatch_rejected_415`（polyglot）、`test_uploads_static_response_has_nosniff`
+- 目标测试：`pytest core/input/tests/test_server.py -k "upload or nosniff"` → 8 passed；`pytest core/config/tests/` → 24 passed
+- 批次门禁：`ruff check` → 通过；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：无
+- 契约或 Electron 影响：/api/images 未知扩展/魔数不符 → 415（v1 行为收紧）；/uploads 响应带 nosniff
+- 剩余风险：legacy /uploads 目录未加 Content-Disposition: attachment（nosniff 已加；迁移到签名附件系统是长期方向）；desktop 上传 octet-stream 仍可上传任意二进制（受信任桌面客户端，危险活动内容扩展已拒）
 
 ## 14. 需要停止并请求决策的情况
 

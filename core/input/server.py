@@ -293,6 +293,15 @@ def create_app(
     app = web.Application(client_max_size=cms)
     # 请求体超限 → 413 REQUEST_TOO_LARGE 信封（恒挂载）
     app.middlewares.append(_make_payload_middleware(cms))
+    # D5/P2-03：legacy /uploads/ 静态响应加 nosniff（防浏览器按实际扩展嗅探执行活动内容）
+    @web.middleware
+    async def _nosniff_uploads(request: web.Request,
+                               handler: Callable[[web.Request], Awaitable[web.StreamResponse]]):
+        resp = await handler(request)
+        if request.path.startswith("/uploads/"):
+            resp.headers["X-Content-Type-Options"] = "nosniff"
+        return resp
+    app.middlewares.append(_nosniff_uploads)
     # 产品认证：access_token 为空 → 全匿名（本地开发，v1 兼容）
     if access_token:
         app.middlewares.append(_make_access_auth_middleware(access_token))

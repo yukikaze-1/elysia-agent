@@ -589,14 +589,30 @@ def register_api_routes(app: web.Application) -> None:
             ext = _os.path.splitext(filename)[1].lower()
             ext_to_mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                            ".gif": "image/gif", ".webp": "image/webp"}
-            mime = ext_to_mime.get(ext, "image/png")
+            # D5/P2-03：未知扩展拒绝（不默认为 image/png）——防 HTML/SVG/JS/EXE
+            # 以图片名义上传后经静态挂载被同源执行
+            if ext not in ext_to_mime:
+                return web.json_response(
+                    rest_contract.ImageUploadError(
+                        error=f"不支持的图片扩展名: {ext or '(无扩展名)'}").wire_dict(),
+                    status=415)
+            mime = ext_to_mime[ext]
 
             if mime not in allowed:
                 return web.json_response(
                     rest_contract.ImageUploadError(error=f"不支持的图片类型: {mime}").wire_dict(),
                     status=415)
 
+            # D5/P2-03：魔数校验——内容实际类型须与扩展一致（polyglot/伪装拒绝）
+            detected = filetype.guess(bytes(data)) if data else None
+            if detected is None or detected.mime != mime:
+                return web.json_response(
+                    rest_contract.ImageUploadError(
+                        error="图片内容与扩展名不符（已拒绝）").wire_dict(),
+                    status=415)
+
             _os.makedirs(str(_IMAGES_DIR), exist_ok=True)
+            # D5/P2-03：服务端生成安全文件名（扩展名由白名单派生，不信任用户输入）
             saved_name = f"{_uuid.uuid4().hex[:12]}{ext}"
             saved_path = _IMAGES_DIR / saved_name
             saved_path.write_bytes(data)
@@ -1057,6 +1073,12 @@ def register_api_routes(app: web.Application) -> None:
             ext_to_mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                            ".gif": "image/gif", ".webp": "image/webp",
                            ".txt": "text/plain", ".json": "application/json"}
+            # D5/P2-03：危险活动内容扩展一律拒绝（HTML/SVG/JS/可执行），
+            # 防经静态挂载同源执行；octet-stream 只保留安全扩展
+            _dangerous_ext = {".html", ".htm", ".svg", ".xhtml", ".xml", ".js",
+                              ".mjs", ".exe", ".sh", ".bat", ".cmd", ".php", ".jsp"}
+            if ext in _dangerous_ext:
+                return _tool_error("INVALID_REQUEST", "不允许的附件类型", 415)
             mime = ext_to_mime.get(ext, "application/octet-stream")
             if mime not in allowed:
                 return _tool_error("INVALID_REQUEST", f"不支持的附件类型: {mime}", 415)
